@@ -7,6 +7,7 @@ from PyQt5.QtCore import QThread, pyqtSignal, Qt
 from PyQt5.QtGui import QPixmap
 from io import BytesIO
 from time import time, strftime, gmtime
+from concurrent.futures import ThreadPoolExecutor
 
 class DownloadThread(QThread):
     progress = pyqtSignal(int, str)
@@ -15,45 +16,70 @@ class DownloadThread(QThread):
     resumed = pyqtSignal()
     stopped = pyqtSignal()
 
-    def __init__(self, video_url, output_path):
+    def __init__(self, video_url, output_path, num_threads=8):  # 기본 스레드 수를 8로 설정
         super().__init__()
         self.video_url = video_url
         self.output_path = output_path
+        self.num_threads = num_threads
         self._is_paused = False
         self._is_stopped = False
+        self.thread_progress = [0] * num_threads
+        self.thread_speed = [0] * num_threads
 
     def run(self):
         try:
-            response = requests.get(self.video_url, stream=True)
+            response = requests.head(self.video_url)
             response.raise_for_status()
 
             total_size = int(response.headers.get('content-length', 0))
-            downloaded_size = 0
-            start_time = time()
+            part_size = total_size // self.num_threads
+            ranges = [(i * part_size, (i + 1) * part_size - 1) for i in range(self.num_threads)]
+            ranges[-1] = (ranges[-1][0], total_size - 1)  # Adjust the last part
 
             with open(self.output_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if self._is_stopped:
+                f.truncate(total_size)
+
+            def download_part(start, end, part_num):
+                headers = {'Range': f'bytes={start}-{end}'}
+                response = requests.get(self.video_url, headers=headers, stream=True)
+                response.raise_for_status()
+                downloaded_size = 0
+                start_time = time()
+                with open(self.output_path, 'r+b') as f:
+                    f.seek(start)
+                    for chunk in response.iter_content(chunk_size=8192):
+                        while self._is_paused:
+                            self.paused.emit()
+                            self.msleep(100)
+                        if self._is_stopped:
+                            return
+                        if chunk:
+                            f.write(chunk)
+                            downloaded_size += len(chunk)
+                            elapsed_time = time() - start_time
+                            if elapsed_time > 0:
+                                self.thread_speed[part_num] = downloaded_size / elapsed_time / 1024  # KB/s
+                            self.thread_progress[part_num] = downloaded_size
+                            self.update_progress(total_size)
+                return part_num
+
+            with ThreadPoolExecutor(max_workers=self.num_threads) as executor:
+                futures = [executor.submit(download_part, start, end, part_num) for part_num, (start, end) in enumerate(ranges)]
+                for future in futures:
+                    if future.result() is None:
                         self.stopped.emit()
                         return
-                    while self._is_paused:
-                        self.paused.emit()
-                        self.msleep(100)
-                    if chunk:
-                        f.write(chunk)
-                        downloaded_size += len(chunk)
-                        elapsed_time = time() - start_time
-                        if elapsed_time > 0:
-                            speed = downloaded_size / elapsed_time / 1024  # KB/s 단위로 속도 계산
-                        else:
-                            speed = 0
-                        progress = int((downloaded_size / total_size) * 100)
-                        status_message = f"{downloaded_size / (1024 * 1024):.2f}MB/{total_size / (1024 * 1024):.2f}MB ({speed:.2f} KB/s)"
-                        self.progress.emit(progress, status_message)
 
             self.completed.emit("다운로드 완료!")
         except requests.RequestException as e:
             self.completed.emit(f"다운로드 실패: {e}")
+
+    def update_progress(self, total_size):
+        downloaded_size = sum(self.thread_progress)
+        total_speed = sum(self.thread_speed)
+        progress = int((downloaded_size / total_size) * 100)
+        status_message = f"{downloaded_size / (1024 * 1024):.2f}MB/{total_size / (1024 * 1024):.2f}MB ({total_speed:.2f} KB/s)"
+        self.progress.emit(progress, status_message)
 
     def pause(self):
         self._is_paused = True
@@ -173,6 +199,13 @@ class VodDownloader(QWidget):
 
         self.resolutionButtonsLayout = QVBoxLayout()
         layout.addLayout(self.resolutionButtonsLayout)
+
+        self.threadsLabel = QLabel('Threads:', self)  # 다운로드 스레드 수 라벨
+        layout.addWidget(self.threadsLabel)
+
+        self.threadsInput = QLineEdit(self)
+        self.threadsInput.setPlaceholderText("Enter number of threads (Default: 8)")
+        layout.addWidget(self.threadsInput)
 
         self.progressBar = QProgressBar(self)
         layout.addWidget(self.progressBar)
@@ -308,7 +341,9 @@ class VodDownloader(QWidget):
             self.fetchButton.setEnabled(False)  # Disable Fetch Resolutions button
             self.set_resolution_buttons_enabled(False)  # Disable resolution buttons
 
-            self.downloadThread = DownloadThread(base_url, output_path)
+            num_threads = int(self.threadsInput.text()) if self.threadsInput.text().isdigit() else 8  # 사용자 입력 스레드 수
+
+            self.downloadThread = DownloadThread(base_url, output_path, num_threads=num_threads)  # Increased number of threads for faster download
             self.downloadThread.progress.connect(self.updateProgress)
             self.downloadThread.completed.connect(self.onDownloadCompleted)
             self.downloadThread.paused.connect(self.onPaused)
