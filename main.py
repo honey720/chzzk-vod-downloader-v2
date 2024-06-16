@@ -3,7 +3,7 @@ import re
 import requests
 import xml.etree.ElementTree as ET
 import threading
-from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QLineEdit, QPushButton, QLabel, QFileDialog, QProgressBar, QSpinBox)
+from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QLineEdit, QPushButton, QLabel, QFileDialog, QProgressBar, QSpinBox, QHBoxLayout)
 from PyQt5.QtCore import QThread, pyqtSignal, Qt
 from PyQt5.QtGui import QPixmap
 from io import BytesIO
@@ -15,9 +15,10 @@ class DownloadThread(QThread):
     completed = pyqtSignal(str)
     paused = pyqtSignal()
     resumed = pyqtSignal()
-    stopped = pyqtSignal()  # 인자 없이 정의
+    stopped = pyqtSignal()
     ready = pyqtSignal()
-    update_threads = pyqtSignal(int, int)  # 스레드 상태 업데이트 시그널 추가
+    update_threads = pyqtSignal(int, int, int)
+    update_time = pyqtSignal(str, str)
 
     def __init__(self, video_url, output_path, num_threads=8):
         super().__init__()
@@ -29,7 +30,9 @@ class DownloadThread(QThread):
         self.thread_progress = [0] * num_threads
         self.thread_speed = [0] * num_threads
         self.lock = threading.Lock()
-        self.completed_threads = 0  # 완료된 스레드 수 추적
+        self.completed_threads = 0
+        self.failed_threads = 0
+        self.completed_progress = 0
 
     def run(self):
         try:
@@ -72,9 +75,14 @@ class DownloadThread(QThread):
                                         self.update_progress(total_size)
                     with self.lock:
                         self.completed_threads += 1
-                        self.update_threads.emit(self.completed_threads, self.num_threads)  # 스레드 상태 업데이트 시그널 emit
+                        self.completed_progress += self.thread_progress[part_num]
+                        self.thread_progress[part_num] = 0
+                        self.update_threads.emit(self.completed_threads, self.num_threads, self.failed_threads)
                     return part_num
                 except requests.RequestException as e:
+                    with self.lock:
+                        self.failed_threads += 1
+                        self.update_threads.emit(self.completed_threads, self.num_threads, self.failed_threads)
                     print(f"다운로드 실패 (스레드 {part_num}): {e}")
                     return None
 
@@ -98,20 +106,21 @@ class DownloadThread(QThread):
             self.stopped.emit()
 
     def update_progress(self, total_size):
-        downloaded_size = sum(self.thread_progress)
+        active_downloaded_size = sum(self.thread_progress)
+        total_downloaded_size = self.completed_progress + active_downloaded_size
         total_speed = sum(self.thread_speed)
-        progress = int((downloaded_size / total_size) * 100)
-        status_message = f"{downloaded_size / (1024 * 1024):.2f}MB/{total_size / (1024 * 1024):.2f}MB ({total_speed / 1024:.1f} MB/s)"
+        progress = int((total_downloaded_size / total_size) * 100)
+        status_message = f"{total_downloaded_size / (1024 * 1024):.2f}MB/{total_size / (1024 * 1024):.2f}MB ({total_speed / 1024:.1f} MB/s)"
         elapsed_time = time() - self.start_time
         elapsed_time_str = strftime('%H:%M:%S', gmtime(elapsed_time))
         if total_speed > 0:
-            remaining_time = (total_size - downloaded_size) / (total_speed * 1024)
+            remaining_time = (total_size - total_downloaded_size) / (total_speed * 1024)
             completion_time = elapsed_time + remaining_time
             completion_time_str = strftime('%H:%M:%S', gmtime(completion_time))
-            status_message += f" {elapsed_time_str}/{completion_time_str}"
         else:
-            status_message += f" {elapsed_time_str}"
+            completion_time_str = "N/A"
         self.progress.emit(progress, status_message)
+        self.update_time.emit(elapsed_time_str, completion_time_str)
 
     def pause(self):
         self._is_paused = True
@@ -244,6 +253,11 @@ class VodDownloader(QWidget):
         self.downloadStatusLabel = QLabel('', self)
         layout.addWidget(self.downloadStatusLabel)
 
+        time_layout = QHBoxLayout()
+        self.timeLabel = QLabel('', self)
+        time_layout.addWidget(self.timeLabel)
+        layout.addLayout(time_layout)
+
         self.pauseResumeButton = QPushButton('Pause', self)
         self.pauseResumeButton.clicked.connect(self.onPauseResume)
         self.pauseResumeButton.setEnabled(False)
@@ -254,7 +268,7 @@ class VodDownloader(QWidget):
         self.stopButton.setEnabled(False)
         layout.addWidget(self.stopButton)
 
-        self.threadStatusLabel = QLabel('', self)  # 완료된 스레드와 총 스레드를 표시하는 라벨 추가
+        self.threadStatusLabel = QLabel('', self)
         layout.addWidget(self.threadStatusLabel)
 
         self.setLayout(layout)
@@ -280,8 +294,9 @@ class VodDownloader(QWidget):
         self.channelImageLabel.clear()
         self.thumbnailLabel.clear()
         self.progressBar.setValue(0)
-        self.downloadStatusLabel.setText('상태:')
-        self.threadStatusLabel.setText('')  # 스레드 상태 초기화
+        self.downloadStatusLabel.clear()
+        self.timeLabel.clear()
+        self.threadStatusLabel.clear()
 
     def onFetch(self):
         vod_url = self.urlInput.text()
@@ -383,13 +398,16 @@ class VodDownloader(QWidget):
             self.downloadThread.paused.connect(self.onPaused)
             self.downloadThread.resumed.connect(self.onResumed)
             self.downloadThread.stopped.connect(self.onStopped)
-            self.downloadThread.update_threads.connect(self.updateThreadStatus)  # 스레드 상태 업데이트 시그널 연결
+            self.downloadThread.update_threads.connect(self.updateThreadStatus)
+            self.downloadThread.update_time.connect(self.updateTimeStatus)
             self.downloadThread.start()
             self.pauseResumeButton.setEnabled(True)
             self.stopButton.setEnabled(True)
 
     def updateDownloadStatus(self):
         self.downloadStatusLabel.setText("다운로드 준비 중...")
+        self.updateThreadStatus(0, self.threadsInput.value(), 0)  # 초기 스레드 상태 표시
+        self.updateTimeStatus("00:00:00", "00:00:00")
 
     def onPauseResume(self):
         if self.downloadThread:
@@ -428,8 +446,11 @@ class VodDownloader(QWidget):
         self.fetchButton.setEnabled(True)
         self.set_resolution_buttons_enabled(True)
 
-    def updateThreadStatus(self, completed, total):
-        self.threadStatusLabel.setText(f"Completed Threads: {completed}/{total}")
+    def updateThreadStatus(self, completed, total, failed):
+        self.threadStatusLabel.setText(f"Completed Threads: {completed}/{total} (Failed: {failed})")
+
+    def updateTimeStatus(self, elapsed, remaining):
+        self.timeLabel.setText(f'경과 시간/예상 시간: {elapsed}/{remaining}')
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
