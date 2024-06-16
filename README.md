@@ -1,4 +1,4 @@
-![image](https://github.com/honey720/chzzk-vod-downloader-v2/assets/101120544/37b0dcd7-29d0-492e-9e9f-b28633bc36cb)
+![image](https://github.com/honey720/chzzk-vod-downloader-v2/assets/101120544/6ee85360-66ae-4ad6-97b9-f605184cd159)
 
 - 치지직 VOD 다운로더 v2
 - [chzzk-vod-downloader](https://github.com/24802/chzzk-vod-downloader)를 참고하였습니다.
@@ -8,3 +8,6 @@
 - 다운로드 일시정지/재개 토글버튼 사용 가능합니다.
 - 다운로드 중단버튼 사용 가능합니다.
 - 다운로드 성능 향상을 위한 static한 병렬-스레드 다운로드 로직을 구현했습니다. (범위:1~128)
+  - 스레드 수는 본인의 인터넷 속도에 맞춰 설정하세요 (예를 들어 60MB/s: 60개)
+- 경과 시간과 예상 시간이 출력됩니다.
+- 완료된 스레드와 실패한 스레드 수가 출력됩니다.
