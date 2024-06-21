@@ -1,13 +1,7 @@
-![image](https://github.com/honey720/chzzk-vod-downloader-v2/assets/101120544/6ee85360-66ae-4ad6-97b9-f605184cd159)
+![image](https://github.com/honey720/chzzk-vod-downloader-v2/assets/101120544/1b2d7cc0-71ba-4230-8d4a-b39392fc8160)
 
 - 치지직 VOD 다운로더 v2
 - [chzzk-vod-downloader](https://github.com/24802/chzzk-vod-downloader)를 참고하였습니다.
 - `Python`과 `ChatGPT 4o`를 사용하여 개발했습니다.
-- VOD URL을 입력하면 API 요청을 통해 메타데이터 정보가 출력되며 동영상 화질별로 다운로드 버튼이 생성됩니다.
+- VOD URL을 입력하면 API 요청을 통해 메타데이터 정보가 출력됩니다.
 - 각 해상도 버튼을 클릭하면 영상을 다운로드 할 수 있습니다.
-- 다운로드 일시정지/재개 토글버튼 사용 가능합니다.
-- 다운로드 중단버튼 사용 가능합니다.
-- 다운로드 성능 향상을 위한 static한 병렬-스레드 다운로드 로직을 구현했습니다. (범위:1~128)
-  - 스레드 수는 본인의 인터넷 속도에 맞춰 설정하세요 (예를 들어 60MB/s: 60개)
-- 경과 시간과 예상 시간이 출력됩니다.
-- 완료된 스레드와 실패한 스레드 수가 출력됩니다.
