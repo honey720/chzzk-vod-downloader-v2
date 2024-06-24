@@ -3,9 +3,10 @@ import re
 import requests
 import xml.etree.ElementTree as ET
 import threading
+import resources
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QLineEdit, QPushButton, QLabel, QFileDialog, QProgressBar, QHBoxLayout)
 from PyQt5.QtCore import QThread, pyqtSignal, Qt
-from PyQt5.QtGui import QPixmap
+from PyQt5.QtGui import QPixmap, QIcon
 from io import BytesIO
 from time import time, strftime, gmtime
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -352,7 +353,9 @@ class VodDownloader(QWidget):
 
         self.setLayout(layout)
         self.setWindowTitle('치지직 VOD 다운로더')
+        self.setWindowIcon(QIcon('chzzk.ico'))
         self.setGeometry(300, 300, 300, 300)
+        self.show()
 
     def create_label(self, layout, text=''):
         label = QLabel(text, self)
@@ -569,5 +572,5 @@ class VodDownloader(QWidget):
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     ex = VodDownloader()
-    ex.show()
+    ex.setWindowIcon(QIcon(resources.icon))
     sys.exit(app.exec_())
