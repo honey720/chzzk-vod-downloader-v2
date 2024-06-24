@@ -22,10 +22,11 @@ class DownloadThread(QThread):
     update_active_threads = pyqtSignal(int)
     update_avg_speed = pyqtSignal(float)
 
-    def __init__(self, video_url, output_path, initial_threads=8):
+    def __init__(self, video_url, output_path, height, initial_threads=8):
         super().__init__()
         self.video_url = video_url
         self.output_path = output_path
+        self.height = height
         self._is_paused = False
         self._is_stopped = False
         self.lock = threading.Lock()
@@ -46,19 +47,27 @@ class DownloadThread(QThread):
             response.raise_for_status()
 
             total_size = int(response.headers.get('content-length', 0))
-            part_size = 20 * 1024 * 1024  # 20MB
+
+            part_size = 1024 * 1024  # 1MB
+            
+            if self.height == '144':
+                part_size *= 1  # 1MB
+            elif self.height == '720':
+                part_size *= 5  # 5MB
+            else:
+                part_size *= 10  # 10MB
+            
             ranges = [(i * part_size, min((i + 1) * part_size - 1, total_size - 1)) for i in range((total_size + part_size - 1) // part_size)]
             self.total_ranges = len(ranges)
             self.thread_progress = [0] * len(ranges)
             self.thread_speed = [0] * len(ranges)
-            self.max_threads = len(ranges)  
+            self.max_threads = len(ranges)
 
             with open(self.output_path, 'wb') as f:
                 pass
 
             def download_part(start, end, part_num):
-                with self.lock:
-                    self.thread_speed[part_num] = 0  # 초기 속도는 0
+                self.thread_speed[part_num] = 0  # 초기 속도는 0
                 while not self._is_stopped :
                     try:
                         # print(f"시작 {part_num} , {start} , {end}") # Debugging
@@ -81,7 +90,7 @@ class DownloadThread(QThread):
                                     elapsed_time = time() - part_start_time
                                     if elapsed_time > 0:
                                         with self.lock:
-                                            #print(f"{part_num} 작업 중...")
+                                            # print(f"{part_num} 작업 중...") # Debugging
                                             speed = downloaded_size / elapsed_time / 1024  # KB/s
                                             self.thread_speed[part_num] = speed  # 스레드 속도 업데이트
                                             self.thread_progress[part_num] = downloaded_size
@@ -451,10 +460,10 @@ class VodDownloader(QWidget):
 
     def add_representation_button(self, width, height, base_url):
         button = QPushButton(f'{width}x{height}', self)
-        button.clicked.connect(lambda: self.onDownload(base_url))
+        button.clicked.connect(lambda: self.onDownload(base_url, height))
         self.resolutionButtonsLayout.addWidget(button)
 
-    def onDownload(self, base_url):
+    def onDownload(self, base_url, height):
         if self.metadata:
             title = self.metadata.get('title', 'Unknown Title')
             category = self.metadata.get('videoCategoryValue', 'Unknown Category')
@@ -471,7 +480,7 @@ class VodDownloader(QWidget):
             self.fetchButton.setEnabled(False)
             self.set_resolution_buttons_enabled(False)
 
-            self.downloadThread = DownloadThread(base_url, output_path)
+            self.downloadThread = DownloadThread(base_url, output_path, height)
             self.downloadThread.progress.connect(self.updateProgress)
             self.downloadThread.completed.connect(self.onDownloadCompleted)
             self.downloadThread.paused.connect(self.onPaused)
