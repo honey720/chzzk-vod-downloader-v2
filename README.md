@@ -1,4 +1,4 @@
-![image](https://github.com/honey720/chzzk-vod-downloader-v2/assets/101120544/1b2d7cc0-71ba-4230-8d4a-b39392fc8160)
+![image](https://github.com/honey720/chzzk-vod-downloader-v2/assets/101120544/c141cf77-10e9-4872-876e-e42c7417e48a)
 
 - 치지직 VOD 다운로더 v2
 - [chzzk-vod-downloader](https://github.com/24802/chzzk-vod-downloader)를 참고하였습니다.

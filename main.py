@@ -423,6 +423,7 @@ class VodDownloader(QWidget):
                 base_url = rep.find(".//mpd:BaseURL", namespaces=ns).text
 
                 if (width, height) not in unique_reps:
+                    # print("생성중") #  Debugging
                     unique_reps.add((width, height))
                     self.representations.append((width, height, base_url))
                     self.add_representation_button(width, height, base_url)
@@ -462,6 +463,26 @@ class VodDownloader(QWidget):
         button = QPushButton(f'{width}x{height}', self)
         button.clicked.connect(lambda: self.onDownload(base_url, height))
         self.resolutionButtonsLayout.addWidget(button)
+        
+        def update_button_text():
+            try:
+                response = requests.head(base_url)
+                response.raise_for_status()
+
+                size = int(response.headers.get('content-length', 0))
+                units = ["B", "KB", "MB", "GB", "TB"]
+                unit_index = 0
+
+                while size >= 1024 and unit_index < len(units) - 1:
+                    size /= 1024
+                    unit_index += 1
+
+                new_text = f'{width}x{height} ({size:.2f} {units[unit_index]})'
+                button.setText(new_text)
+            except Exception as e:
+                print(f"Failed to retrieve content length: {e}")
+
+        threading.Thread(target=update_button_text).start()
 
     def onDownload(self, base_url, height):
         if self.metadata:
