@@ -493,6 +493,9 @@ class VodDownloader(QWidget):
             category = self.metadata.get('videoCategoryValue', 'Unknown Category')
             live_open_date = self.metadata.get('liveOpenDate', 'Unknown Date')
 
+            title = re.sub(r'[\\/:\*\?"<>|]', '', title)
+            category = re.sub(r'[\\/:\*\?"<>|]', '', category)
+
             default_filename = f"{live_open_date.split(' ')[0]}) [{category}] {title}.mp4"
         else:
             default_filename = "video.mp4"
