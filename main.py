@@ -4,6 +4,7 @@ import requests
 import xml.etree.ElementTree as ET
 import threading
 import resources
+import os
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QLineEdit, QPushButton, QLabel, QFileDialog, QProgressBar, QHBoxLayout)
 from PyQt5.QtCore import QThread, pyqtSignal, Qt
 from PyQt5.QtGui import QPixmap, QIcon
@@ -23,7 +24,7 @@ class DownloadThread(QThread):
     update_active_threads = pyqtSignal(int)
     update_avg_speed = pyqtSignal(float)
 
-    def __init__(self, video_url, output_path, height, initial_threads=8):
+    def __init__(self, video_url, output_path, height, initial_threads=min(32, os.cpu_count() + 4)):
         super().__init__()
         self.video_url = video_url
         self.output_path = output_path
