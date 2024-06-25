@@ -5,7 +5,7 @@ import xml.etree.ElementTree as ET
 import threading
 import resources
 import os
-from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QLineEdit, QPushButton, QLabel, QFileDialog, QProgressBar, QHBoxLayout)
+from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QLineEdit, QPushButton, QLabel, QFileDialog, QProgressBar, QHBoxLayout, QMessageBox)
 from PyQt5.QtCore import QThread, pyqtSignal, Qt
 from PyQt5.QtGui import QPixmap, QIcon
 from io import BytesIO
@@ -37,7 +37,7 @@ class DownloadThread(QThread):
         self.completed_progress = 0
         self.adjust_threads = initial_threads
         self.max_threads = initial_threads
-        self.thread_speed = []  # 현재 스레드 속도를 저장할 배열 추가
+        self.thread_speed = []
         self.future_count = 0
         self.future_dict = {}
         self.remaining_ranges = []
@@ -130,6 +130,11 @@ class DownloadThread(QThread):
                             adjust_count += 1
                         elif average_active_speed < 0.5:
                             adjust_count -= 1
+                        else:
+                            if adjust_count > 0:
+                                adjust_count -= 1
+                            elif adjust_count < 0:
+                                adjust_count += 1
                         
                         if adjust_count > 4:
                             self.adjust_threads = min(self.max_threads, self.adjust_threads * 2)
@@ -139,7 +144,6 @@ class DownloadThread(QThread):
                             self.adjust_threads = max(1, self.adjust_threads // 2)
                             adjust_count = 0
                             # print(self.adjust_threads) # Debugging
-                            
                 # print("조정 중지") # Debugging
 
             def get_remaining_ranges():
@@ -208,8 +212,6 @@ class DownloadThread(QThread):
             # print(f"다운로드 실패: {e}") # Debugging
             self._is_stopped = True
             self.stopped.emit("다운로드 실패")
-
-    # def update_debug(self):
         
     def update_progress(self, total_size):
         active_downloaded_size = sum(self.thread_progress)
@@ -234,71 +236,14 @@ class DownloadThread(QThread):
         
     def pause(self):
         self._is_paused = True
-        # self.paused.emit()
 
     def resume(self):
         self._is_paused = False
-        # self.resumed.emit()
 
     def stop(self):
         self._is_paused = False
         self._is_stopped = True
-        # self.stopped.emit()
-
-def extract_video_no(vod_url):
-    if not vod_url.startswith("http://") and not vod_url.startswith("https://"):
-        vod_url = "https://" + vod_url
-    match = re.match(r'https?://chzzk\.naver\.com/video/(?P<video_no>\d+)', vod_url)
-    if match:
-        return match.group("video_no"), vod_url
-    return None, vod_url
-
-def get_video_info(video_no):
-    api_url = f"https://api.chzzk.naver.com/service/v2/videos/{video_no}"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    response = requests.get(api_url, headers=headers)
-    response.raise_for_status()
-    content = response.json().get('content', {})
-    video_id = content.get('videoId')
-    in_key = content.get('inKey')
-
-    metadata = {
-        'title': content.get('videoTitle', 'Unknown Title'),
-        'thumbnailImageUrl': content.get('thumbnailImageUrl', 'Unknown URL'),
-        'videoCategoryValue': content.get('videoCategoryValue', 'Unknown Category'),
-        'channelName': content.get('channel', {}).get('channelName', 'Unknown Channel'),
-        'channelImageUrl': content.get('channel', {}).get('channelImageUrl', 'Unknown URL'),
-        'liveOpenDate': content.get('liveOpenDate', 'Unknown Date'),
-        'duration': content.get('duration', 0)
-    }
-
-    return video_id, in_key, metadata
-
-def get_dash_manifest(video_id, in_key):
-    video_url = f"https://apis.naver.com/neonplayer/vodplay/v2/playback/{video_id}?key={in_key}"
-    headers = {"Accept": "application/dash+xml"}
-    response = requests.get(video_url, headers=headers)
-    response.raise_for_status()
-    root = ET.fromstring(response.text)
-    ns = {"mpd": "urn:mpeg:dash:schema:mpd:2011", "nvod": "urn:naver:vod:2020"}
-    base_url_element = root.find(".//mpd:BaseURL", namespaces=ns)
-    return base_url_element.text if base_url_element is not None else None
-
-def get_video_base_url(vod_url):
-    video_no, vod_url = extract_video_no(vod_url)
-    if not video_no:
-        raise ValueError("Invalid VOD URL")
     
-    video_id, in_key, metadata = get_video_info(video_no)
-    if not video_id or not in_key:
-        raise ValueError("Failed to get video info")
-
-    base_url = get_dash_manifest(video_id, in_key)
-    if not base_url:
-        raise ValueError("Failed to get DASH manifest")
-    
-    return base_url, metadata
-
 class VodDownloader(QWidget):
     def __init__(self):
         super().__init__()
@@ -316,6 +261,26 @@ class VodDownloader(QWidget):
         self.fetchButton = QPushButton('Fetch Resolutions', self)
         self.fetchButton.clicked.connect(self.onFetch)
         layout.addWidget(self.fetchButton)
+
+        self.toggleButton = QPushButton('Show Cookies', self)
+        self.toggleButton.clicked.connect(self.toggleCookies)
+        layout.addWidget(self.toggleButton)
+
+        self.nidaut = QLineEdit(self)
+        self.nidaut.setPlaceholderText("NID_AUT 쿠키 값을 입력하세요.")
+        self.nidaut.setVisible(False)
+        layout.addWidget(self.nidaut)
+
+        self.nidses = QLineEdit(self)
+        self.nidses.setPlaceholderText("NID_SES 쿠키 값을 입력하세요.")
+        self.nidses.setVisible(False)
+        layout.addWidget(self.nidses)
+
+        self.cookiehelp = QLabel("<a href='#'>쿠키를 찾으시나요?</a>", self)
+        self.cookiehelp.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        self.cookiehelp.linkActivated.connect(self.showPopup)
+        self.cookiehelp.setVisible(False)
+        layout.addWidget(self.cookiehelp)
 
         self.channelNameLabel = self.create_label(layout)
         self.channelImageLabel = self.create_image_label(layout, 100, 100)
@@ -358,6 +323,21 @@ class VodDownloader(QWidget):
         self.setGeometry(300, 300, 300, 300)
         self.show()
 
+    def toggleCookies(self):
+        current_visibility = self.nidaut.isVisible()
+        self.nidaut.setVisible(not current_visibility)
+        self.nidses.setVisible(not current_visibility)
+        self.cookiehelp.setVisible(not current_visibility)
+        if current_visibility:
+            self.toggleButton.setText('Show Cookies')
+        else:
+            self.toggleButton.setText('Hide Cookies')
+
+    def showPopup(self):
+        link = "https://chzzk.naver.com"
+        msg = "치지직 쿠키 얻는 방법<br><br>1. <a href='%s'>치지직</a>에 로그인 하세요. <br>2. F12를 눌러 개발자 도구를 열어주세요. <br>3. Application 탭에서 Cookies > https://chzzk.naver.com을 클릭하세요. <br>4. \'NID_AUT\', \'NID_SES\' Name의 Value 값을 붙여 넣으세요." % link
+        QMessageBox.information(self, "치지직 vod 다운로더 도우미", msg)
+
     def create_label(self, layout, text=''):
         label = QLabel(text, self)
         layout.addWidget(label)
@@ -395,46 +375,86 @@ class VodDownloader(QWidget):
         self.threadStatusLabel.clear()
 
     def onFetch(self):
-        vod_url = self.urlInput.text()
         self.clear_metadata_display()
+        self.clear_resolutions()
+        vod_url = self.urlInput.text()
+        cookies = {
+            'NID_AUT': self.nidaut.text(),
+            'NID_SES': self.nidses.text()
+        }
+
         try:
-            self.clear_resolutions()
             self.linkStatusLabel.setText('Fetching resolutions...')
 
-            video_no, vod_url = extract_video_no(vod_url)
+            video_no = self.extract_video_no(vod_url)
             if not video_no:
                 raise ValueError("Invalid VOD URL")
 
-            video_id, in_key, metadata = get_video_info(video_no)
+            video_id, in_key, metadata = self.get_video_info(video_no, cookies)
             if not video_id or not in_key:
-                raise ValueError("Failed to get video info")
+                raise ValueError("Invalid cookies value")
+
+            unique_reps = self.get_dash_manifest(video_id, in_key)
+            if not unique_reps:
+                raise ValueError("Failed to get DASH manifest")
 
             self.metadata = metadata
-
-            manifest_url = f"https://apis.naver.com/neonplayer/vodplay/v2/playback/{video_id}?key={in_key}"
-            response = requests.get(manifest_url, headers={"Accept": "application/dash+xml"})
-            response.raise_for_status()
-            root = ET.fromstring(response.text)
-
             self.display_metadata(metadata)
+            for width, height, base_url in unique_reps:
+                self.add_representation_button(width, height, base_url)
 
-            self.representations = []
-            unique_reps = set()
-            ns = {"mpd": "urn:mpeg:dash:schema:mpd:2011", "nvod": "urn:naver:vod:2020"}
-            for rep in root.findall(".//mpd:Representation", namespaces=ns):
-                width = rep.get('width')
-                height = rep.get('height')
-                base_url = rep.find(".//mpd:BaseURL", namespaces=ns).text
-
-                if (width, height) not in unique_reps:
-                    # print("생성중") #  Debugging
-                    unique_reps.add((width, height))
-                    self.representations.append((width, height, base_url))
-                    self.add_representation_button(width, height, base_url)
             self.linkStatusLabel.setText('Resolutions fetched successfully.')
 
         except Exception as e:
             self.linkStatusLabel.setText(f'오류 발생: {e}')
+
+    def extract_video_no(self, vod_url):
+        if not vod_url.startswith("http://") and not vod_url.startswith("https://"):
+            vod_url = "https://" + vod_url
+        match = re.match(r'https?://chzzk\.naver\.com/video/(?P<video_no>\d+)', vod_url)
+        if match:
+            return match.group("video_no")
+        return None
+
+    def get_video_info(self, video_no, cookies):
+        api_url = f"https://api.chzzk.naver.com/service/v2/videos/{video_no}"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = requests.get(api_url, cookies=cookies, headers=headers)
+        response.raise_for_status()
+        content = response.json().get('content', {})
+        video_id = content.get('videoId')
+        in_key = content.get('inKey')
+
+        metadata = {
+            'title': content.get('videoTitle', 'Unknown Title'),
+            'thumbnailImageUrl': content.get('thumbnailImageUrl', 'Unknown URL'),
+            'videoCategoryValue': content.get('videoCategoryValue', 'Unknown Category'),
+            'channelName': content.get('channel', {}).get('channelName', 'Unknown Channel'),
+            'channelImageUrl': content.get('channel', {}).get('channelImageUrl', 'Unknown URL'),
+            'liveOpenDate': content.get('liveOpenDate', 'Unknown Date'),
+            'duration': content.get('duration', 0)
+        }
+
+        return video_id, in_key, metadata
+
+    def get_dash_manifest(self, video_id, in_key):
+        manifest_url = f"https://apis.naver.com/neonplayer/vodplay/v2/playback/{video_id}?key={in_key}"
+        headers = {"Accept": "application/dash+xml"}
+        response = requests.get(manifest_url, headers=headers)
+        response.raise_for_status()
+        root = ET.fromstring(response.text)
+
+        unique_reps = set()
+        ns = {"mpd": "urn:mpeg:dash:schema:mpd:2011", "nvod": "urn:naver:vod:2020"}
+        for rep in root.findall(".//mpd:Representation", namespaces=ns):
+            width = rep.get('width')
+            height = rep.get('height')
+            base_url = rep.find(".//mpd:BaseURL", namespaces=ns).text
+            # print(width, height, base_url) #  Debugging
+            if (width, height) not in [(w, h) for w, h, b in unique_reps]:
+                # print("생성중") #  Debugging
+                unique_reps.add((width, height, base_url))
+        return unique_reps
 
     def display_metadata(self, metadata):
         title = metadata.get('title', 'Unknown Title')
@@ -497,7 +517,10 @@ class VodDownloader(QWidget):
             title = re.sub(r'[\\/:\*\?"<>|]', '', title)
             category = re.sub(r'[\\/:\*\?"<>|]', '', category)
 
-            default_filename = f"{live_open_date.split(' ')[0]}) [{category}] {title}.mp4"
+            if not category:
+                default_filename = f"{live_open_date.split(' ')[0]}) {title}.mp4"
+            else:
+                default_filename = f"{live_open_date.split(' ')[0]}) [{category}] {title}.mp4"
         else:
             default_filename = "video.mp4"
 
