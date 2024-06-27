@@ -19,7 +19,7 @@ class DownloadThread(QThread):
     paused = pyqtSignal()
     resumed = pyqtSignal()
     stopped = pyqtSignal(str)
-    update_threads = pyqtSignal(int, int, int)
+    update_threads = pyqtSignal(int, int, int, int)
     update_time = pyqtSignal(str, str)
     update_active_threads = pyqtSignal(int)
     update_avg_speed = pyqtSignal(float)
@@ -34,6 +34,7 @@ class DownloadThread(QThread):
         self.lock = threading.Lock()
         self.completed_threads = 0
         self.failed_threads = 0
+        self.restart_threads = 0
         self.completed_progress = 0
         self.adjust_threads = initial_threads
         self.max_threads = initial_threads
@@ -70,6 +71,7 @@ class DownloadThread(QThread):
                 pass
 
             def download_part(start, end, part_num):
+                slow_download_speed_count = 0
                 # self.thread_speed[part_num] = 0 # Debugging
                 while not self._is_stopped :
                     try:
@@ -94,13 +96,23 @@ class DownloadThread(QThread):
                                     if elapsed_time > 0:
                                         with self.lock:
                                             # print(f"{part_num} 작업 중...") # Debugging
-                                            # speed = downloaded_size / elapsed_time / 1024  # KB/s # Debugging
+                                            speed = downloaded_size / elapsed_time / 1024  # KB/s
+                                            if speed < 100:
+                                                if slow_download_speed_count == 5:
+                                                    # print(f"스레드 {part_num} 속도가 느려 재시작합니다.")
+                                                    download_stop_callback(start, end, part_num)
+                                                    return part_num
+                                                else:
+                                                    slow_download_speed_count += 1
+                                            else:
+                                                slow_download_speed_count = 0
                                             # self.thread_speed[part_num] = speed  # 스레드 속도 업데이트 # Debugging
                                             self.thread_progress[part_num] = downloaded_size
                                             self.update_progress(total_size)  # 진행 상황을 더 자주 업데이트, 이것 때문에 다운 속도 저하됨. 아마 함수 자체에서 리소스를 많이 먹는 듯
                                     if downloaded_size >= end - start + 1:
                                         break
                             with self.lock:
+                                # print(f"{part_num} 스레드 다운로드 완료") # Debugging
                                 self.completed_threads += 1
                                 self.completed_progress += downloaded_size
                                 self.thread_progress[part_num] = 0  # 스레드 진행 상황 초기화
@@ -108,10 +120,8 @@ class DownloadThread(QThread):
                         return part_num
                     except requests.RequestException as e:
                         with self.lock:
-                            self.failed_threads += 1
-                            self.update_threads.emit(self.completed_threads, self.total_ranges, self.failed_threads)
-                            self.remaining_ranges.append((start, end))
-                        # print(f"다운로드 실패 (스레드 {part_num}, {self.thread_speed[part_num]}): {e}") # Debugging
+                            # print(f"다운로드 실패 (스레드 {part_num}, {self.thread_speed[part_num]}): {e}") # Debugging
+                            download_failed_callback(start, end, part_num)
 
             def adjust_threads():
                 adjust_count = 0
@@ -124,9 +134,9 @@ class DownloadThread(QThread):
 
                     average_active_speed = self.total_active_speed / self.future_count if self.future_count > 0 else 0
 
-                    if average_active_speed > 1.5:
+                    if average_active_speed > 2:
                         adjust_count += 1
-                    elif average_active_speed < 0.5:
+                    elif average_active_speed < 1:
                         adjust_count -= 1
                     else:
                         if adjust_count > 0:
@@ -154,20 +164,32 @@ class DownloadThread(QThread):
                         self.remaining_ranges.append((start, end))
                 return self.remaining_ranges
             
+            def download_failed_callback(start, end, part_num):
+                self.failed_threads += 1
+                self.thread_progress[part_num] = 0  # 스레드 진행 상황 초기화
+                # self.thread_speed[part_num] = 0 # Debugging
+                self.remaining_ranges.append((start, end))
+
+            def download_stop_callback(start, end, part_num):
+                self.restart_threads += 1
+                self.thread_progress[part_num] = 0  # 스레드 진행 상황 초기화
+                # self.thread_speed[part_num] = 0 # Debugging
+                self.remaining_ranges.append((start, end))
+            
             def download_completed_callback(future):
                 try:
                     future.result()
                     for part_num, (start, end, f) in self.future_dict.items():
                         if f == future:
-                            self.future_count -= 1
                             # print(f"끝남. {part_num}") # Debugging
                             del self.future_dict[part_num]
+                            self.future_count -= 1
                             self.update_progress(total_size)  # 진행 상황을 더 자주 업데이트
                             self.update_active_threads.emit(self.future_count)  # 활성 스레드 수
-                            self.update_threads.emit(self.completed_threads, self.total_ranges, self.failed_threads)
+                            self.update_threads.emit(self.completed_threads, self.total_ranges, self.failed_threads, self.restart_threads)
                             break
                 except Exception as e:
-                    print(f"다운로드 실패: 일부 스레드가 오류로 인해 중단되었습니다. {e}")
+                    # print(f"다운로드 실패: 일부 스레드가 오류로 인해 중단되었습니다. {e}")
                     self._is_stopped = True
                     self.stopped.emit("다운로드 실패")
 
@@ -191,7 +213,7 @@ class DownloadThread(QThread):
                                     future = executor.submit(download_part, start, end, part_num)
                                     futures.append(future)
                                     self.future_dict[part_num] = (start, end, future)
-                                    self.update_active_threads.emit(self.future_count)  # 활성 스레드 수 # Debugging
+                                    self.update_active_threads.emit(self.future_count)  # 활성 스레드 수
                     
                     for future in as_completed(futures):
                         future.add_done_callback(download_completed_callback)
@@ -567,7 +589,7 @@ class VodDownloader(QWidget):
         self.downloadStatusLabel.setText(status_message)
 
     def onDownloadCompleted(self, message):
-        # print("완료!") # Debugging
+        # print("다운로드 완료!") # Debugging
         self.downloadStatusLabel.setText(message)
         self.pauseResumeButton.setEnabled(False)
         self.stopButton.setEnabled(False)
@@ -585,8 +607,8 @@ class VodDownloader(QWidget):
         self.fetchButton.setEnabled(True)
         self.set_resolution_buttons_enabled(True)
 
-    def updateThreadStatus(self, completed, total, failed):
-        self.threadStatusLabel.setText(f"Completed Threads: {completed}/{total} (Failed: {failed})")
+    def updateThreadStatus(self, completed, total, failed, restart):
+        self.threadStatusLabel.setText(f"Segments: {completed}/{total} (Failed: {failed}, Restart: {restart})")
 
     def updateTimeStatus(self, elapsed, remaining):
         self.timeLabel.setText(f'경과 시간/예상 시간: {elapsed}/{remaining}')
