@@ -56,6 +56,8 @@ class DownloadThread(QThread):
             
             if self.height == '144':
                 part_size *= 1  # 1MB
+            elif self.height == '360' or '480':
+                part_size *= 2 # 2MB
             elif self.height == '720':
                 part_size *= 5  # 5MB
             else:
