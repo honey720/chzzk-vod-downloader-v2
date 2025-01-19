@@ -1,9 +1,8 @@
 import os
-import threading
 import config.config as config
 
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QFrame, QSizePolicy, QGridLayout, QLineEdit, QPushButton, QLabel, QScrollArea, QHBoxLayout, QDialog, QMessageBox, QFileDialog, QApplication
-from PyQt5.QtCore import Qt
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QFrame, QSizePolicy, QGridLayout, QLineEdit, QPushButton, QLabel, QScrollArea, QHBoxLayout, QDialog, QMessageBox, QFileDialog, QApplication
+from PySide6.QtCore import Qt
 
 from threads import DownloadThread
 from ui.metadataCard import MetadataCard
@@ -246,7 +245,8 @@ class VodDownloader(QWidget):
         다운로드 경로를 찾기위한 버튼.
         """
         downloadPath = QFileDialog.getExistingDirectory()
-        self.downloadPathInput.setText(downloadPath)
+        if downloadPath != '':
+            self.downloadPathInput.setText(downloadPath)
 
     def onStop(self, card:MetadataCard):
         """
@@ -256,7 +256,8 @@ class VodDownloader(QWidget):
             self.downloadThread.stop()
             self.downloadThread.wait()  # 스레드가 완전히 종료될 때까지 대기
             self.downloadButton.setText('Download')
-            card.stopButton.setEnabled(False)
+            if card is not None:
+                card.stopButton.setEnabled(False)
             self.downloadThread = None  # 스레드 객체를 삭제
 
     def onDeleteCard(self, card:MetadataCard):
@@ -294,6 +295,9 @@ class VodDownloader(QWidget):
         특정 해상도에 대한 다운로드 스레드를 생성 및 시작하기 전 UI 상태 업데이트를 수행한다.
         """
 
+        if self.downloadThread is not None:
+            if self.downloadThread.isRunning():
+                self.downloadThread.wait()
         self.downloadThread = DownloadThread(base_url, output_path, height)
         self._connectThreadSignals(card)
         self.downloadThread.start()
@@ -325,3 +329,23 @@ class VodDownloader(QWidget):
         다운로드 갯수 라벨을 업데이트한다.
         """
         self.downloadCountLabel.setText(f'Downloads: {self.completed_downloads}/{self.total_downloads}')
+
+    def closeEvent(self, event):
+        """
+        창을 닫을 때 실행되는 이벤트
+        """
+        if self.downloadThread and self.downloadThread.isRunning():
+            reply = QMessageBox.warning(
+                self,
+                "다운로드 중",
+                "다운로드가 진행 중입니다. 종료하시겠습니까?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if reply == QMessageBox.No:
+                event.ignore()  # 창 닫기 취소
+                return
+            else:
+                self.onStop(None)  # 스레드 중지
+
+        event.accept()  # 창 닫기 진행

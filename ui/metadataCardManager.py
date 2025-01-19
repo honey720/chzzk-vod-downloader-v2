@@ -1,18 +1,18 @@
 import os
 
-from PyQt5.QtWidgets import QWidget, QVBoxLayout
+from PySide6.QtWidgets import QWidget, QVBoxLayout
 from ui.metadataCard import MetadataCard
-from PyQt5.QtCore import Qt, pyqtSignal
+from PySide6.QtCore import Qt, Signal
 
 class MetadataCardManager(QWidget):
     """
     메타데이터 카드를 관리하는 클래스.
     """
-    downloadRequested = pyqtSignal(object, str, str, str)  # (base_url, output_path, height)
-    stopRequested = pyqtSignal(object)
-    deleteCardRequested = pyqtSignal(object)
-    downloadFinishedRequested = pyqtSignal(object)
-    downloadAllFinishedRequested = pyqtSignal()
+    downloadRequested = Signal(object, str, str, str)  # (base_url, output_path, height)
+    stopRequested = Signal(object)
+    deleteCardRequested = Signal(object)
+    downloadFinishedRequested = Signal(object)
+    downloadAllFinishedRequested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)

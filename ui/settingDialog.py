@@ -1,5 +1,5 @@
 import config.config as config
-from PyQt5.QtWidgets import QDialog, QFormLayout, QLineEdit, QPushButton, QMessageBox
+from PySide6.QtWidgets import QDialog, QFormLayout, QLineEdit, QPushButton, QMessageBox
 
 class SettingDialog(QDialog):
     """

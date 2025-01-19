@@ -2,9 +2,9 @@ import re
 import requests
 import threading
 
-from PyQt5.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QSizePolicy, QPushButton, QProgressBar
-from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QPixmap
+from PySide6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QSizePolicy, QPushButton, QProgressBar, QStyle
+from PySide6.QtCore import Qt, Signal, QUrl
+from PySide6.QtGui import QPixmap, QDesktopServices
 from io import BytesIO
 
 
@@ -12,10 +12,10 @@ class MetadataCard(QFrame):
     """
     메타데이터를 표시하는 카드 클래스.
     """
-    deleteClicked = pyqtSignal(object)                      # 삭제 버튼 클릭 시 카드 객체를 전달
-    downloadClicked = pyqtSignal(object, str, str, str)     # 다운로드 버튼 클릭 시 (base_url, height) 전달
-    stopClicked = pyqtSignal(object)                        # Stop 버튼 클릭 시 카드 객체를 전달
-    downloadFinished = pyqtSignal(object)
+    deleteClicked = Signal(object)                      # 삭제 버튼 클릭 시 카드 객체를 전달
+    downloadClicked = Signal(object, str, str, str)     # 다운로드 버튼 클릭 시 (base_url, height) 전달
+    stopClicked = Signal(object)                        # Stop 버튼 클릭 시 카드 객체를 전달
+    downloadFinished = Signal(object)
 
     def __init__(self, metadata, downloadPath, parent=None):
         super().__init__(parent)
@@ -79,13 +79,26 @@ class MetadataCard(QFrame):
         self.categoryLabel = QLabel('')
         self.liveOpenDateLabel = QLabel('')
         self.durationLabel = QLabel('')
-        self.downloadPathLabel = QLabel('')
 
         self.vodInfoLayout.addWidget(self.titleLabel)
         self.vodInfoLayout.addWidget(self.categoryLabel)
         self.vodInfoLayout.addWidget(self.liveOpenDateLabel)
         self.vodInfoLayout.addWidget(self.durationLabel)
-        self.vodInfoLayout.addWidget(self.downloadPathLabel)
+
+        # 다운로드 경로, 저장 위치 폴더 열기 버튼
+        self.downloadPathLayout = QHBoxLayout()
+
+        self.downloadPathLabel = QLabel('')
+        self.downloadPathButton = QPushButton('폴더 열기', self)
+        folder_icon = self.style().standardIcon(QStyle.SP_DirIcon)
+        self.downloadPathButton.setIcon(folder_icon)
+        self.downloadPathButton.clicked.connect(self.onDownloadPath)
+
+        self.downloadPathLayout.addWidget(self.downloadPathLabel)
+        self.downloadPathLayout.addStretch()
+        self.downloadPathLayout.addWidget(self.downloadPathButton)
+
+        self.vodInfoLayout.addLayout(self.downloadPathLayout)
         
         # 하단 우측: 해상도 버튼
         self.resolutionSection, self.resolutionLayout = self.create_frame("V", margins=(0, 0, 0, 0), spacing=5)
@@ -101,12 +114,11 @@ class MetadataCard(QFrame):
         self.progressFuncLayout = QHBoxLayout()
         
         self.progressBar = QProgressBar()
-        self.progressFuncLayout.addWidget(self.progressBar)
-
         self.stopButton = QPushButton('Stop')
         self.stopButton.setEnabled(False)
         self.stopButton.clicked.connect(self.onStop)
 
+        self.progressFuncLayout.addWidget(self.progressBar)
         self.progressFuncLayout.addWidget(self.stopButton)
 
         self.progressLayout.addLayout(self.progressFuncLayout)
@@ -281,6 +293,12 @@ class MetadataCard(QFrame):
         for i in range(self.resolutionButtonsLayout.count()):
             self.resolutionButtonsLayout.itemAt(i).widget().setEnabled(enabled)
 
+    def onDownloadPath(self):
+        """
+        저장할 폴더를 여는 버튼 클릭 시 발생하는 핸들러
+        """
+        QDesktopServices.openUrl(QUrl.fromLocalFile(self.downloadPath))
+
     def onDelete(self):
         """
         삭제 버튼 클릭 시 발생하는 핸들러
@@ -319,14 +337,13 @@ class MetadataCard(QFrame):
             self.set_resolution_buttons_enabled(True)
         else: # 다운로드 완료
             self.isFinish = True
-            self.deleteButton.setEnabled(True)
             self.downloadFinished.emit(self)
 
     def updateThreadStatus(self, completed, total, failed, restart):
         self.threadStatusLabel.setText(f"Seg.: {completed}/{total} (F: {failed}, R: {restart})")
 
     def updateTimeStatus(self, elapsed, remaining):
-        self.timeLabel.setText(f'Ele.T/Est.T: {elapsed}/{remaining}')
+        self.timeLabel.setText(f'Ela.T/Est.T: {elapsed}/{remaining}')
 
     def updateActiveThreads(self, active_threads):
         self.maxThreadsLabel.setText(f'Threads: {active_threads}')

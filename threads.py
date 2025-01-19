@@ -3,7 +3,7 @@ import threading
 import requests
 from time import time, strftime, gmtime
 
-from PyQt5.QtCore import QThread, pyqtSignal
+from PySide6.QtCore import QThread, Signal
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
@@ -11,15 +11,15 @@ class DownloadThread(QThread):
     """
     VOD 파일을 multi-thread로 다운로드하는 작업 스레드 클래스
     """
-    progress = pyqtSignal(int, str)
-    completed = pyqtSignal(str)
-    paused = pyqtSignal()
-    resumed = pyqtSignal()
-    stopped = pyqtSignal(str)
-    update_threads = pyqtSignal(int, int, int, int)
-    update_time = pyqtSignal(str, str)
-    update_active_threads = pyqtSignal(int)
-    update_avg_speed = pyqtSignal(float)
+    progress = Signal(int, str)
+    completed = Signal(str)
+    paused = Signal()
+    resumed = Signal()
+    stopped = Signal(str)
+    update_threads = Signal(int, int, int, int)
+    update_time = Signal(str, str)
+    update_active_threads = Signal(int)
+    update_avg_speed = Signal(float)
 
     def __init__(self, video_url, output_path, height, initial_threads=None):
         super().__init__()
@@ -28,6 +28,8 @@ class DownloadThread(QThread):
         self.height = height
         self._is_paused = False
         self._is_stopped = False
+        self._pause_event = threading.Event()
+        self._pause_event.set()
         self.lock = threading.Lock()
 
         # 진행도/실패/재시작/스레드 관련 변수
@@ -130,7 +132,6 @@ class DownloadThread(QThread):
         """
         slow_count = 0
         downloaded_size = 0
-        paused_signal_sent = False  # paused 시그널이 이미 전송되었는지 여부를 추적
         while not self._is_stopped:
             try:
                 headers = {'Range': f'bytes={start}-{end}'}
@@ -143,12 +144,10 @@ class DownloadThread(QThread):
                     for chunk in response.iter_content(chunk_size=8192):
                         if self._is_stopped:
                             return
-                        while self._is_paused:
-                            if not paused_signal_sent:  # paused 상태일 때 한 번만 시그널 전송
-                                self.paused.emit()
-                                paused_signal_sent = True
-                            self.sleep(1)
-                        paused_signal_sent = False
+                        if self._is_paused:
+                            # print(f"{part_num} 대기중") # Debugging
+                            self.paused.emit()
+                            self._pause_event.wait()
 
                         if chunk:
                             f.write(chunk)
@@ -246,29 +245,31 @@ class DownloadThread(QThread):
         adjust_count = 0
         while not self._is_stopped and self.remaining_ranges:
             if self._is_paused:
-                continue
-            threading.Event().wait(1)
-
-            avg_active_speed = (
-                self.total_active_speed / self.future_count if self.future_count > 0 else 0
-            )
-
-            if avg_active_speed > 2:
-                adjust_count += 1
-            elif avg_active_speed < 1:
-                adjust_count -= 1
+                self._pause_event.wait()
+                if self._is_stopped:
+                    break
             else:
-                if adjust_count > 0:
-                    adjust_count -= 1
-                elif adjust_count < 0:
-                    adjust_count += 1
+                avg_active_speed = (
+                    self.total_active_speed / self.future_count if self.future_count > 0 else 0
+                )
 
-            if adjust_count > 4:
-                self.adjust_threads = min(self.max_threads, self.adjust_threads * 2)
-                adjust_count = 0
-            elif adjust_count < -4:
-                self.adjust_threads = max(1, self.adjust_threads // 2)
-                adjust_count = 0
+                if avg_active_speed > 2:
+                    adjust_count += 1
+                elif avg_active_speed < 1:
+                    adjust_count -= 1
+                else:
+                    if adjust_count > 0:
+                        adjust_count -= 1
+                    elif adjust_count < 0:
+                        adjust_count += 1
+                
+                if adjust_count > 4:
+                    self.adjust_threads = min(self.max_threads, self.adjust_threads * 2)
+                    adjust_count = 0
+                elif adjust_count < -4:
+                    self.adjust_threads = max(1, self.adjust_threads // 2)
+                    adjust_count = 0
+                threading.Event().wait(1)
 
     # ============ 유틸 메서드 ============
 
@@ -312,12 +313,10 @@ class DownloadThread(QThread):
     # ============ 진행 상황 업데이트 / 제어 메서드 ============
 
     def update_progress(self, total_size=None):
-        # print("다운로드 현황을 업데이트 합니다.") # Debugging
         """
         진행률, 다운로드 속도, 예상 남은 시간 등 정보를 계산 후 시그널로 전송한다.
         """
         if self._is_stopped or self._is_paused:  # 중단 플래그 확인
-            # print(self._is_stopped, self._is_paused) # Debugging
             return
         if total_size is None:
             # 콜백에서 이 메서드를 호출할 때 total_size를 명시적으로 안 넘겼다면
@@ -363,17 +362,17 @@ class DownloadThread(QThread):
     # ============ 일시정지/중지 메서드 ============
 
     def pause(self):
-        # print("다운로드를 정지합니다.") # Debugging
         self._is_paused = True
+        self._pause_event.clear() # 대기 상태로 들어감
+        self.paused.emit()
 
     def resume(self):
-        # print("다운로드를 재개합니다.") # Debugging
         self._is_paused = False
+        self._pause_event.set()  # -> paused 스레드들이 깨어난다
         self.resumed.emit()
 
     def stop(self):
-        # print("다운로드를 중단합니다.") # Debugging
         self._is_paused = False
         self._is_stopped = True
-
+        self._pause_event.set()
         self.stopped.emit("다운로드 중단")
