@@ -1,9 +1,14 @@
 import sys
 import os
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMainWindow
 from PySide6.QtGui import QIcon
 
-from ui.vodDownloader import VodDownloader
+from downloader.main_window import VodDownloader
+
+class main(QMainWindow):
+    def __init__(self):
+        super().__init__()
+
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

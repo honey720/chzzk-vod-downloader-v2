@@ -1,14 +1,14 @@
 import os
 import config.config as config
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QFrame, QSizePolicy, QGridLayout, QLineEdit, QPushButton, QLabel, QScrollArea, QHBoxLayout, QDialog, QMessageBox, QFileDialog, QApplication
-from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QFrame, QSizePolicy, QGridLayout, QLineEdit, QPushButton, QLabel, QHBoxLayout, QDialog, QMessageBox, QFileDialog, QApplication
+from PySide6.QtCore import Qt, QTimer
 
-from threads import DownloadThread
-from ui.metadataCard import MetadataCard
-from ui.metadataCardManager import MetadataCardManager
-from ui.settingDialog import SettingDialog
-from utils import extract_video_no, get_video_info, get_dash_manifest
+from download.manager import DownloadManager
+from metadata.data import MetadataItem
+from metadata.manager import MetadataManager
+from config.dialog import SettingDialog
+from download.state import DownloadState
 
 
 class VodDownloader(QWidget):
@@ -17,9 +17,9 @@ class VodDownloader(QWidget):
     """
     def __init__(self):
         super().__init__()
-        self.downloadThread = None
-        # 메타데이터 카드 관리 객체 생성
-        self.cardManager = MetadataCardManager()
+        self.metadataManager = MetadataManager()
+        self.downloadManager = DownloadManager()
+        self._connectThreadSignals()
 
         # 쿠키 값 저장 변수
         self.nidaut_value = config.NID_AUT
@@ -44,7 +44,7 @@ class VodDownloader(QWidget):
         screen_height = screen_size.height()
 
 
-        width_ratio = 0.5
+        width_ratio = 0.25
         height_ratio = 0.5
         min_width = int(screen_width * width_ratio)
         min_height = int(screen_height * height_ratio)
@@ -63,7 +63,6 @@ class VodDownloader(QWidget):
         headerFrame.setFrameShape(QFrame.Box)      # 테두리 모양(Box, Panel 등)
         headerFrame.setFrameShadow(QFrame.Raised)  # Raised, Sunken 등
         headerFrame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.mainLayout.addWidget(headerFrame)
 
         headerFrameLayout = QGridLayout(headerFrame)
         headerFrameLayout.setContentsMargins(5, 5, 5, 5)
@@ -92,44 +91,29 @@ class VodDownloader(QWidget):
         self.downloadPathInput.setText(os.getcwd())  # 초기 경로 설정
         headerFrameLayout.addWidget(self.downloadPathInput, 1, 1)
 
-        self.downloadPathButton = QPushButton('경로 찾기')
+        self.downloadPathButton = QPushButton('Find path')
         self.downloadPathButton.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         headerFrameLayout.addWidget(self.downloadPathButton, 1, 2, Qt.AlignRight)
 
         self.linkStatusLabel = QLabel('')
         headerFrameLayout.addWidget(self.linkStatusLabel, 2, 0, 1, 2)
 
-        self.downloadButton = QPushButton("Download")
-        self.downloadButton.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        headerFrameLayout.addWidget(self.downloadButton, 2, 2, Qt.AlignRight)
+        self.settingButton = QPushButton("Settings")
+        self.settingButton.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        headerFrameLayout.addWidget(self.settingButton, 2, 2, Qt.AlignRight)
 
         headerFrameLayout.setColumnStretch(1, 10)  # 다운로드 경로 입력 창 확장
         headerFrameLayout.setColumnStretch(0, 1)
         headerFrameLayout.setColumnStretch(2, 1)
+        
+        self.mainLayout.addWidget(headerFrame)
 
         # ───────────────────────────────────────────
         # 2) 메타데이터 영역
         # ───────────────────────────────────────────
 
         # 스크롤 영역
-        scrollArea = QScrollArea()
-        scrollArea.setFrameShape(QFrame.Box)      # 테두리 모양(Box, Panel 등)
-        scrollArea.setFrameShadow(QFrame.Raised)  # Raised, Sunken 등
-        scrollArea.setWidgetResizable(True)  # 내부 위젯 크기에 따라 스크롤 가능
-        scrollArea.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-
-        # 시그널 연결
-        self.cardManager.downloadRequested.connect(self.startDownload)
-        self.cardManager.stopRequested.connect(self.onStop)
-        self.cardManager.deleteCardRequested.connect(self.onDeleteCard)
-        self.cardManager.downloadFinishedRequested.connect(self.onDownloadFinishedCard)
-        self.cardManager.downloadAllFinishedRequested.connect(self.onDownloadAllFinished)
-
-        # 스크롤 영역에 메타 데이터 카드 관리 객체 설정
-        scrollArea.setWidget(self.cardManager)
-
-        # 스크롤 영역을 메인 레이아웃에 추가
-        self.mainLayout.addWidget(scrollArea)
+        self.mainLayout.addWidget(self.metadataManager)
 
         # ───────────────────────────────────────────
         # 3) 추가 정보(다운로드 현황)
@@ -147,9 +131,20 @@ class VodDownloader(QWidget):
         self.downloadCountLabel = QLabel('Downloads: 0/0')  # 초기값 설정
         infoLayout.addWidget(self.downloadCountLabel)
 
-        self.settingButton = QPushButton("Settings")
-        self.settingButton.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        infoLayout.addWidget(self.settingButton)
+        self.clearFinishedButton = QPushButton("Clear Finished")
+        self.clearFinishedButton.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        infoLayout.addWidget(self.clearFinishedButton)
+
+        infoLayout.addStretch()
+
+        self.downloadButton = QPushButton("Download")
+        self.downloadButton.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        infoLayout.addWidget(self.downloadButton)
+
+        self.stopButton = QPushButton("Stop")
+        self.stopButton.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.setStopButtonEnable(False)
+        infoLayout.addWidget(self.stopButton)
 
         self.mainLayout.addWidget(infoFrame)
 
@@ -161,20 +156,38 @@ class VodDownloader(QWidget):
         """
         각종 버튼 클릭 시그널 및 UI 내 이벤트를 핸들링할 슬롯을 연결한다.
         """
+        self.urlInput.returnPressed.connect(self.onFetch)
         self.fetchButton.clicked.connect(self.onFetch)
-        self.downloadButton.clicked.connect(self.onDownloadPause)
-        self.settingButton.clicked.connect(self.onSetting)
         self.downloadPathButton.clicked.connect(self.onFindPath)
+        self.settingButton.clicked.connect(self.onSetting)
+        self.clearFinishedButton.clicked.connect(self.metadataManager.clrearFinishedItems)
+        self.downloadButton.clicked.connect(self.onDownloadPause)
+        self.stopButton.clicked.connect(self.onStop)
 
-    def onFetch(self):
+    def fetchMetadatas(self, urls: str):
+        # URL 목록을 미리 준비합니다.
+        self.urlsToFetch = [url.strip() for url in urls.splitlines() if url.strip() != '']
+        self.currentUrlIndex = 0
+        self.scheduleNextFetch()
+
+    def scheduleNextFetch(self):
+        if self.currentUrlIndex < len(self.urlsToFetch):
+            # 다음 URL을 가져와 처리합니다.
+            url = self.urlsToFetch[self.currentUrlIndex]
+            self.currentUrlIndex += 1
+            self.onFetch(url)
+            # 0.1초(100밀리초) 후에 다음 작업을 스케줄합니다.
+            QTimer.singleShot(100, self.scheduleNextFetch)
+
+    def onFetch(self, url = None):
         """
         VOD URL을 입력받아 메타데이터를 가져오고, 메타데이터 카드를 생성합니다.
         """
-        vod_url = self.urlInput.text()
-        if not vod_url:
-            QMessageBox.warning(self, "경고", "VOD URL을 입력하세요.")
-            return
-        
+        if url:
+            vod_url = url
+        else:
+            vod_url = self.urlInput.text().strip()
+
         if not vod_url:
             QMessageBox.warning(self, "경고", "VOD URL을 입력하세요.")
             return
@@ -184,52 +197,40 @@ class VodDownloader(QWidget):
             'NID_AUT': data.get("NID_AUT", ""),
             'NID_SES': data.get("NID_SES", "")
         }
-        try:
-            self.linkStatusLabel.setText('Fetching resolutions...')
-            video_no = extract_video_no(vod_url)
-            if not video_no:
-                raise ValueError("Invalid VOD URL")
+        self.linkStatusLabel.setText('Fetching resolutions...')
 
-            # 비디오 정보 가져오기
-            video_id, in_key, metadata = get_video_info(video_no, cookies)
-            if not video_id or not in_key:
-                raise ValueError("Invalid cookies value")
+        # 결과 처리
+        downloadPath = self.downloadPathInput.text().strip() or os.getcwd()
 
-            # DASH 매니페스트 가져오기
-            unique_reps = get_dash_manifest(video_id, in_key)
-            if not unique_reps:
-                raise ValueError("Failed to get DASH manifest")
+        if not os.path.exists(downloadPath):
+            QMessageBox.warning(self, "경고", "경로가 존재하지 않습니다.")
+            return
+        # TODO:  코드 수정 및 테스트 예정
 
-            # 결과 처리
-            downloadPath = self.downloadPathInput.text()
-            if downloadPath == '':
-                downloadPath = os.getcwd()
-            self.cardManager.addCard(metadata, unique_reps, downloadPath)
-            self.total_downloads += 1
-            self.updateDownloadCountLabel()
+        self.metadataManager.fetchMetadata(vod_url, cookies, downloadPath)
 
-            self.linkStatusLabel.setText('Resolutions fetched successfully.')
-        except Exception as e:
-            self.linkStatusLabel.setText(f'오류 발생: {e}')
+        self.linkStatusLabel.setText('Resolutions fetched successfully.')
     
+    def showErrorDialog(self, errorMessage):
+        QMessageBox.critical(self, "오류 발생", f"메타데이터 요청 중 오류가 발생했습니다:\n{errorMessage}")
+
     def onDownloadPause(self):
         """
         추가한 동영상에 대한 다운로드 버튼.
         """
-
-        if self.downloadThread:
+        if self.downloadManager.d_thread:
             if self.downloadButton.text() == 'Pause':
-                self.downloadThread.pause()
+                self.downloadManager.pause()
                 self.downloadButton.setText('Download')
             else:
-                self.downloadThread.resume()
+                self.downloadManager.resume()
                 self.downloadButton.setText('Pause')
         else:
-            if not self.cardManager.metadataCards:
+            if not self.metadataManager.findItem()[0]:
                 QMessageBox.warning(self, "경고", "추가된 VOD 가 없습니다.")
                 return
-            self.cardManager.downloadCard()
             self.downloadButton.setText('Pause')
+            self.metadataManager.downloadItem()
     
     def onSetting(self):
         """
@@ -248,81 +249,96 @@ class VodDownloader(QWidget):
         if downloadPath != '':
             self.downloadPathInput.setText(downloadPath)
 
-    def onStop(self, card:MetadataCard):
+    def onStop(self):
         """
         중지 버튼 콜백.
         """
-        if self.downloadThread:
-            self.downloadThread.stop()
-            self.downloadThread.wait()  # 스레드가 완전히 종료될 때까지 대기
+        if self.downloadManager.task:
+            self.downloadManager.stop("다운로드 중단")
             self.downloadButton.setText('Download')
-            if card is not None:
-                card.stopButton.setEnabled(False)
-            self.downloadThread = None  # 스레드 객체를 삭제
+            self.setStopButtonEnable(False)
+            self.downloadManager.removeThreads()
+        #TODO: onStop시 다운로드 매니저로 stop 시그널 전달
 
-    def onDeleteCard(self, card:MetadataCard):
+    def onInsertItem(self, row):
+        self.total_downloads = row
+        self.updateDownloadCountLabel()
+
+    def onDeleteItem(self, item:MetadataItem, index):
         """
         메타데이터 카드 삭제 버튼 콜백.
         """
-        if card.isFinish:
+        if item.downloadState == DownloadState.FINISHED:
             self.completed_downloads -= 1
-        self.total_downloads -= 1
+        self.total_downloads = index
         self.updateDownloadCountLabel()
     
-    def onDownloadFinishedCard(self, card:MetadataCard):
+    def onFinishedItem(self, item:MetadataItem):
         """
         메타데이터 카드 다운로드 완료 콜백.
         """
-        if card.isFinish:
+        if item.downloadState == DownloadState.FINISHED:
             self.completed_downloads += 1
             self.updateDownloadCountLabel()
-            # print("download2")
-            # self.cardManager.downloadCard()
 
     def onDownloadAllFinished(self):
         """
         모든 메타데이터 카드 다운로드 완료 콜백.
         """
         self.downloadButton.setText('Download')
+        self.setStopButtonEnable(False)
         QMessageBox.information(self, "완료", "다운로드를 완료했습니다.")
-        self.downloadThread = None  # 스레드 객체를 삭제
 
+    def setStopButtonEnable(self, bool):
+        self.stopButton.setEnabled(bool)
 
     # ============ 다운로드 진행 준비 및 상태 업데이트 ============
 
-    def startDownload(self, card:MetadataCard, base_url, output_path, height):
+    def startDownload(self, item:MetadataItem):
         """
         특정 해상도에 대한 다운로드 스레드를 생성 및 시작하기 전 UI 상태 업데이트를 수행한다.
         """
+        self.metadataManager.start(item)
+        self.downloadManager.start(item)
+        self.setStopButtonEnable(True)
 
-        if self.downloadThread is not None:
-            if self.downloadThread.isRunning():
-                self.downloadThread.wait()
-        self.downloadThread = DownloadThread(base_url, output_path, height)
-        self._connectThreadSignals(card)
-        self.downloadThread.start()
-        
-        card.set_resolution_buttons_enabled(False)
-        card.stopButton.setEnabled(True)
-        card.deleteButton.setEnabled(False)
-
-    def _connectThreadSignals(self, card: MetadataCard):
+    def _connectThreadSignals(self):
         """
         다운로드 스레드와 UI를 연결하는 시그널 슬롯 설정.
         """
+        self.downloadManager.progress.connect(self._onProgress)
+        self.downloadManager.paused.connect(self._onPaused)
+        self.downloadManager.resumed.connect(self._onResumed)
+        self.downloadManager.stopped.connect(self._onStopped)
+        self.downloadManager.finished.connect(self._onFinished)
+        # TODO 동시 다운로드 기능 추가시 로직 수정 필요
 
-        # MetadataCard 업데이트
-        self.downloadThread.progress.connect(lambda value, status_message: card.updateProgress(value, status_message))
-        self.downloadThread.paused.connect(lambda: card.updateStatus("다운로드 정지"))
-        self.downloadThread.resumed.connect(lambda: card.updateStatus("다운로드 재개"))
-        self.downloadThread.stopped.connect(lambda: card.updateStatus("다운로드 중단"))
-        self.downloadThread.completed.connect(lambda: card.updateStatus("다운로드 완료"))
+        self.metadataManager.metadataError.connect(self.showErrorDialog)
+        self.metadataManager.fetchRequested.connect(self.fetchMetadatas)
+        self.metadataManager.deleteItemRequested.connect(self.onDeleteItem)
+        self.metadataManager.insertItemRequested.connect(self.onInsertItem)
+        self.metadataManager.downloadRequested.connect(self.startDownload)
+        self.metadataManager.stopRequested.connect(self.onStop)
+        self.metadataManager.finishedRequested.connect(self.onFinishedItem)
+        self.metadataManager.finishedAllRequested.connect(self.onDownloadAllFinished)
 
-        # 추가적인 상태 업데이트
-        self.downloadThread.update_threads.connect(lambda completed, total, failed, restart: card.updateThreadStatus(completed, total, failed, restart))
-        self.downloadThread.update_time.connect(lambda elapsed, remaining: card.updateTimeStatus(elapsed, remaining))
-        self.downloadThread.update_active_threads.connect(lambda active_threads: card.updateActiveThreads(active_threads))
-        self.downloadThread.update_avg_speed.connect(lambda avg_speed: card.updateAvgSpeed(avg_speed))
+    def _onProgress(self, rem, size, spd, prog, item):
+        """
+        progress 시그널이 발생할 때마다, 지금 다운로드 중인 item 업데이트.
+        """
+        self.metadataManager.update_progress(rem, size, spd, prog, item)
+
+    def _onPaused(self, item):
+        self.metadataManager.pause(item)
+
+    def _onResumed(self, item):
+        self.metadataManager.resume(item)
+
+    def _onStopped(self, item):
+        self.metadataManager.stop(item)
+
+    def _onFinished(self, item):
+        self.metadataManager.finish(item)
 
     def updateDownloadCountLabel(self):
         """
@@ -334,7 +350,7 @@ class VodDownloader(QWidget):
         """
         창을 닫을 때 실행되는 이벤트
         """
-        if self.downloadThread and self.downloadThread.isRunning():
+        if self.downloadManager.d_thread or self.downloadManager.m_thread:
             reply = QMessageBox.warning(
                 self,
                 "다운로드 중",
@@ -346,6 +362,5 @@ class VodDownloader(QWidget):
                 event.ignore()  # 창 닫기 취소
                 return
             else:
-                self.onStop(None)  # 스레드 중지
-
+                self.onStop()  # 스레드 중지
         event.accept()  # 창 닫기 진행
