@@ -144,7 +144,8 @@ class MetadataManager(QWidget):
     def resume(self, item):
         self.view.onDownloadResumed(item)
 
-    def finish(self, item):
+    def finish(self, item: MetadataItem, download_time):
+        item.download_time = download_time
         self.view.onDownloadFinished(item, True)
         self.emitFinishedRequest(item)
     

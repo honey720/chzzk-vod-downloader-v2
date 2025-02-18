@@ -11,52 +11,44 @@ DEFAULT_CONFIG = {
     "cookies": {
         "NID_AUT": "",
         "NID_SES": ""
-    }
+    },
+    "threads": 4,
+    "afterDownloadComplete": "none"
 }
-
-# 모듈 전역 변수
-NID_AUT = ""
-NID_SES = ""
 
 # 설정 로드 함수
 def load_config():
-    global NID_AUT, NID_SES
-    
+
     if not os.path.exists(CONFIG_DIR):
         os.makedirs(CONFIG_DIR)  # 디렉토리 생성
 
     if not os.path.exists(CONFIG_FILE):
         save_config(DEFAULT_CONFIG)  # 파일 생성
 
-    with open(CONFIG_FILE, "r") as file:
-        data = json.load(file)
-
-    # cookies 섹션에서 값 로드
-    cookies = data.get("cookies", {})
-    NID_AUT = cookies.get("NID_AUT", "")
-    NID_SES = cookies.get("NID_SES", "")
-
-    return data
+    with open(CONFIG_FILE, "r") as f:
+        config = json.load(f)
+        
+    return config
 
 # 설정 저장 함수
 def save_config(config):
-    if not os.path.exists(CONFIG_DIR):
-        os.makedirs(CONFIG_DIR)  # 디렉토리 생성
-
     with open(CONFIG_FILE, "w") as file:
         json.dump(config, file, indent=4)
 
-# 쿠키 가져오기 함수
-def get_cookies():
-    config = load_config()
-    return config.get('cookies', {})
-
-# 쿠키 설정 함수
-def set_cookies(nidaut, nidses):
-    global NID_AUT, NID_SES
-    NID_AUT = nidaut
-    NID_SES = nidses
-
-    config = load_config()
-    config['cookies'] = {"NID_AUT": nidaut, "NID_SES": nidses}
-    save_config(config)
+def merge_config(default, current):
+    """
+    default: 기본 설정 딕셔너리 (DEFAULT_CONFIG)
+    current: 기존 설정 딕셔너리 (config.json에서 로드한 값)
+    누락된 key가 있으면 기본값을 추가하고, 변경되었다면 True를 반환.
+    """
+    updated = False
+    for key, default_value in default.items():
+        if key not in current:
+            current[key] = default_value
+            updated = True
+        else:
+            # 만약 값이 딕셔너리이면, 재귀적으로 병합합니다.
+            if isinstance(default_value, dict) and isinstance(current[key], dict):
+                if merge_config(default_value, current[key]):
+                    updated = True
+    return updated

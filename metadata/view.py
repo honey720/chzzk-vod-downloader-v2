@@ -108,14 +108,12 @@ class MetadataListView(QListView):
             overlay_color = QColor(0, 0, 0, 128)  # (R, G, B, Alpha) Alpha=128은 50% 투명도
             painter.fillRect(self.viewport().rect(), overlay_color)
             # 중앙에 흰색 텍스트를 그립니다.
-            painter.setPen(Qt.white)
             painter.drawText(self.viewport().rect(), Qt.AlignCenter, "Drag the URL here.")
             painter.end()
         elif self.model().isEmpty():
             painter = QPainter(self.viewport())
             painter.setRenderHint(QPainter.Antialiasing)
             # 중앙에 흰색 텍스트를 그립니다.
-            painter.setPen(Qt.white)
             painter.drawText(self.viewport().rect(), Qt.AlignCenter, "Add VOD or Drag the URL here.")
             painter.end()
 

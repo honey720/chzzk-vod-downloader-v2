@@ -1,7 +1,7 @@
 import os, requests, threading
 from PySide6.QtWidgets import QWidget, QFrame, QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit, QSizePolicy, QMessageBox
 from PySide6.QtGui import QPixmap, QDesktopServices
-from PySide6.QtCore import Qt, QSize, Signal, QUrl
+from PySide6.QtCore import Qt, QSize, Signal, QUrl, QDir, QProcess
 from metadata.data import MetadataItem
 from download.state import DownloadState
 from io import BytesIO
@@ -64,10 +64,13 @@ class MetadataItemWidget(QWidget):
         self.channel_label.setToolTip("채널명")
 
         self.status_label = QLabel("다운로드 대기")
+        self.status_label.setStyleSheet("color: white;")
 
         self.size_label = QLabel("")
+        self.size_label.setStyleSheet("color: white;")
 
         self.progress_label = QLabel("")
+        self.progress_label.setStyleSheet("color: white;")
 
         self.delete_btn = QPushButton("❌")
         self.delete_btn.setFixedSize(30, 30)
@@ -95,7 +98,7 @@ class MetadataItemWidget(QWidget):
         # ✅ 중간 (제목, 수정 가능)
         self.title_layout = QHBoxLayout()
         self.title_label = QLabel(self.item.title)
-        self.title_label.setStyleSheet("font-size: 14px;")
+        self.title_label.setStyleSheet("color: white; font-size: 14px;")
         self.title_label.mousePressEvent = self.startTitleEditing
         self.title_label.setToolTip("제목")
 
@@ -120,7 +123,7 @@ class MetadataItemWidget(QWidget):
 
         self.directory_edit = QLineEdit(self.item.download_path)
         self.directory_edit.setVisible(False)
-        self.directory_edit.setStyleSheet("color: white; font-size: 12px;")
+        self.directory_edit.setStyleSheet("font-size: 12px;")
         self.directory_edit.editingFinished.connect(self.finishPathEditing)
 
         self.open_folder_btn = QPushButton("📁")
@@ -238,19 +241,19 @@ class MetadataItemWidget(QWidget):
             self.progress_label.setText(" ")
 
         elif self.item.downloadState == DownloadState.RUNNING:
-            self.status_label.setText(f"{item.download_remain_time} 남음 {item.download_speed}")
-            self.size_label.setText(f" {self.setSize(item.download_size)} / {item.total_size}")
-            self.progress_label.setText(f" {item.download_progress}% ")
+            self.status_label.setText(f"{item.download_remain_time}  {item.download_speed}")
+            self.size_label.setText(f"  {self.setSize(item.download_size)} / {item.total_size}")
+            self.progress_label.setText(f"  {item.download_progress}% ")
 
         elif self.item.downloadState == DownloadState.PAUSED:
             self.status_label.setText("다운로드 정지")
-            self.size_label.setText(f" {self.setSize(item.download_size)} / {item.total_size}")
-            self.progress_label.setText(f" {item.download_progress}% ")
+            self.size_label.setText(f"  {self.setSize(item.download_size)} / {item.total_size}")
+            self.progress_label.setText(f"  {item.download_progress}% ")
 
         elif self.item.downloadState == DownloadState.FINISHED:
-            self.status_label.setText("다운로드 완료!")
-            self.size_label.setText(f" {self.setSize(item.download_size)} / {item.total_size}")
-            self.progress_label.setText(f" {item.download_progress}% ")
+            self.status_label.setText(f"{item.download_time}")
+            self.size_label.setText(f"  {self.setSize(item.download_size)} / {item.total_size}")
+            self.progress_label.setText(f"  {item.download_progress}% ")
 
     def getData(self) -> MetadataItem:
         """✅ 위젯에서 입력된 데이터를 가져와서 MetadataItem으로 반환"""
@@ -317,9 +320,17 @@ class MetadataItemWidget(QWidget):
 
     def requestOpenDir(self):
         try:
-            url = QUrl.fromLocalFile(self.directory_label.text())
-            if not QDesktopServices.openUrl(url):  # openUrl이 False를 반환하면 실패
-                raise OSError(f"'{self.directory_label.text()}'을(를) 열 수 없습니다.")
+            path = self.directory_label.text()
+            if self.item.downloadState != DownloadState.WAITING:
+                path = self.item.output_path
+            if os.path.isfile(path):
+                nativePath = QDir.toNativeSeparators(path)
+                if not QProcess.startDetached("explorer.exe", ["/select,", nativePath]):
+                    raise OSError(f"'{path}'을(를) 찾을 수 없습니다.")
+            else:
+                url = QUrl.fromLocalFile(path)
+                if not QDesktopServices.openUrl(url):  # openUrl이 False를 반환하면 실패
+                    raise OSError(f"'{path}'을(를) 열 수 없습니다.")
         except Exception as e:
             QMessageBox.warning(self, "경고", str(e))
             return

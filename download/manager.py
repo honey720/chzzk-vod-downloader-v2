@@ -14,7 +14,7 @@ class DownloadManager(QObject):
     paused = Signal(object)
     resumed = Signal(object)
     stopped = Signal(object, str)
-    finished = Signal(object)
+    finished = Signal(object, str)
 
     update_threads = Signal(int, int, int, int)
     update_time = Signal(str, str)
@@ -76,5 +76,6 @@ class DownloadManager(QObject):
     def finish(self):
         self.task.finish()
         self.m_thread.update_progress()
+        download_time = self.m_thread.get_download_time()
         self.removeThreads()
-        self.finished.emit(self.item)
+        self.finished.emit(self.item, download_time)

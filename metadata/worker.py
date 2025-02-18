@@ -17,15 +17,17 @@ class MetadataWorker(QObject):
         try:
             video_no = NetworkManager.extract_video_no(self.vod_url)
             if not video_no:
-                raise ValueError("Invalid VOD URL")
+                raise ValueError(f"{self.vod_url}\nInvalid VOD URL")
         
-            video_id, in_key, metadata = NetworkManager.get_video_info(video_no, self.cookies)
-            if not video_id or not in_key:
-                raise ValueError("Invalid cookies value")
+            video_id, in_key, adult, vodStatus, metadata = NetworkManager.get_video_info(video_no, self.cookies)
+            if adult and not video_id:
+                raise ValueError(f"{self.vod_url}\nInvalid cookies value")
+            elif vodStatus == 'NONE':
+                raise ValueError(f"{self.vod_url}\nUnencoded Video(.m3u8)")
             
             unique_reps, height, base_url = NetworkManager.get_dash_manifest(video_id, in_key)
             if not unique_reps:
-                raise ValueError("Failed to get DASH manifest")
+                raise ValueError(f"{self.vod_url}\nFailed to get DASH manifest")
             
             # 네트워크 작업 결과를 tuple 형태로 묶어서 전달
             result = (self.vod_url, metadata, unique_reps, height, base_url, self.downloadPath, self.cookies)

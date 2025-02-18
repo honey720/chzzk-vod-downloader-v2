@@ -26,6 +26,8 @@ class NetworkManager:
         content = response.json().get('content', {})
         video_id = content.get('videoId')
         in_key = content.get('inKey')
+        adult = content.get('adult')
+        vodStatus = content.get('vodStatus')
 
         metadata = {
             'title': content.get('videoTitle', 'Unknown Title'),
@@ -36,7 +38,7 @@ class NetworkManager:
             'liveOpenDate': content.get('liveOpenDate', 'Unknown Date'),
             'duration': content.get('duration', 0),
         }
-        return video_id, in_key, metadata
+        return video_id, in_key, adult, vodStatus, metadata
     
     @staticmethod
     def get_dash_manifest(video_id: str, in_key: str):

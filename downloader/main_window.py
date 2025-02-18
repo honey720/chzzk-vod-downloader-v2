@@ -1,7 +1,7 @@
 import os
 import config.config as config
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QFrame, QSizePolicy, QGridLayout, QLineEdit, QPushButton, QLabel, QHBoxLayout, QDialog, QMessageBox, QFileDialog, QApplication
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QFrame, QSizePolicy, QGridLayout, QLineEdit, QPushButton, QLabel, QHBoxLayout, QMessageBox, QFileDialog, QApplication
 from PySide6.QtCore import Qt, QTimer
 
 from download.manager import DownloadManager
@@ -20,10 +20,6 @@ class VodDownloader(QWidget):
         self.metadataManager = MetadataManager()
         self.downloadManager = DownloadManager()
         self._connectThreadSignals()
-
-        # 쿠키 값 저장 변수
-        self.nidaut_value = config.NID_AUT
-        self.nidses_value = config.NID_SES
 
         # 카드 갯수 추적 변수 초기화
         self.total_downloads = 0
@@ -209,6 +205,8 @@ class VodDownloader(QWidget):
 
         self.metadataManager.fetchMetadata(vod_url, cookies, downloadPath)
 
+        self.urlInput.clear()
+
         self.linkStatusLabel.setText('Resolutions fetched successfully.')
     
     def showErrorDialog(self, errorMessage):
@@ -236,10 +234,15 @@ class VodDownloader(QWidget):
         """
         설정 파일에 저장된 값 불러오기 버튼.
         """
-        data = config.load_config()
-        dialog = SettingDialog(parent=self)
-        if dialog.exec_() == QDialog.Accepted:
-            data['cookies'] = {"NID_AUT": self.nidaut_value, "NID_SES": self.nidses_value}
+        self.dialog = SettingDialog(parent=self)
+        self.dialog.requestTest.connect(self.onTest)
+        self.dialog.exec_()
+
+    def onTest(self):
+        flag = True
+        if self.downloadManager.task and self.downloadManager.task.isRunning:
+            flag = False
+        self.dialog.start_speed_test(flag)
 
     def onFindPath(self):
         """
@@ -254,11 +257,19 @@ class VodDownloader(QWidget):
         중지 버튼 콜백.
         """
         if self.downloadManager.task:
-            self.downloadManager.stop("다운로드 중단")
-            self.downloadButton.setText('Download')
-            self.setStopButtonEnable(False)
-            self.downloadManager.removeThreads()
-        #TODO: onStop시 다운로드 매니저로 stop 시그널 전달
+            reply = QMessageBox.warning(
+                self,
+                "다운로드 중",
+                "다운로드가 진행 중입니다. 종료하시겠습니까?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            #TODO: 메시지박스 중복 경고
+            if reply == QMessageBox.Yes:
+                self.downloadManager.stop("다운로드 중단")
+                self.downloadButton.setText('Download')
+                self.setStopButtonEnable(False)
+                self.downloadManager.removeThreads()
 
     def onInsertItem(self, row):
         self.total_downloads = row
@@ -287,6 +298,14 @@ class VodDownloader(QWidget):
         """
         self.downloadButton.setText('Download')
         self.setStopButtonEnable(False)
+        
+        afterDownlaodComplete = config.load_config().get('afterDownloadComplete')
+
+        if afterDownlaodComplete == "sleep":
+            os.system("rundll32.exe powrprof.dll,SetSuspendState 0,1,0 ")
+        elif afterDownlaodComplete == "shutdown":
+            os.system("shutdown -s -t 0")
+
         QMessageBox.information(self, "완료", "다운로드를 완료했습니다.")
 
     def setStopButtonEnable(self, bool):
@@ -337,8 +356,8 @@ class VodDownloader(QWidget):
     def _onStopped(self, item):
         self.metadataManager.stop(item)
 
-    def _onFinished(self, item):
-        self.metadataManager.finish(item)
+    def _onFinished(self, item, download_time):
+        self.metadataManager.finish(item, download_time)
 
     def updateDownloadCountLabel(self):
         """

@@ -1,5 +1,6 @@
 import os
 import threading
+import config.config as config
 
 class DownloadData:
     def __init__(self, video_url, output_path, height):
@@ -12,10 +13,11 @@ class DownloadData:
         #TODO: Task로 옮길지에 대해 논의
 
         # CPU 개수를 바탕으로 초깃값 지정
-        self.adjust_threads = min(32, os.cpu_count() + 4)
+        self.adjust_threads = config.load_config().get('threads')
         self.max_threads = self.adjust_threads
 
         self.start_time = 0
+        self.end_time = 0
         self.future_count = 0
 
         self.total_ranges = 0

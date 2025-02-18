@@ -1,6 +1,6 @@
 import requests
 import threading
-from time import time, strftime, gmtime
+from time import time
 
 from PySide6.QtCore import QThread, Signal
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -83,6 +83,7 @@ class DownloadThread(QThread):
                         break
 
                 if self.task.state == DownloadState.RUNNING:
+                    self.s.end_time = time()
                     self.completed.emit()
 
         except requests.RequestException as e:

@@ -29,6 +29,7 @@ class MetadataItem(QObject):
         self.download_progress = 0  # 다운로드 진행률 (0~100)
         self.download_speed = ""  # 다운로드 속도 (예: "2.5 MB/s")
         self.download_remain_time = ""  # 남은 다운로드 예상 시간 (예: "00:00:01")
+        self.download_time = ""
         self.stateMessage = "다운로드 대기"
 
         self.downloadState = DownloadState.WAITING  # 초기 상태

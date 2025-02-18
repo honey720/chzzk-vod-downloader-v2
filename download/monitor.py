@@ -3,7 +3,7 @@ import time as t
 from PySide6.QtCore import QThread, Signal
 from download.task import DownloadTask
 from download.state import DownloadState
-from time import time, strftime, gmtime
+from time import strftime, gmtime
 
 class MonitorThread(QThread):
     """
@@ -58,8 +58,8 @@ class MonitorThread(QThread):
             elif self.adjust_count < 0:
                 self.adjust_count += 1
         
-        if self.adjust_count > 4:
-            self.data.adjust_threads = min(self.data.max_threads, self.data.adjust_threads * 2)
+        if self.adjust_count > 1:
+            self.data.adjust_threads = min(self.data.max_threads, self.data.adjust_threads + 4)
             self.adjust_count = 0
         elif self.adjust_count < -4:
             self.data.adjust_threads = max(1, self.data.adjust_threads // 2)
@@ -72,9 +72,9 @@ class MonitorThread(QThread):
 
             # MB/s로 변환
             self.data.speed_mb = speed / (1024*1024)
-            # print(f"활성 스레드 수: {self.s.future_count}")
-            # print(f"Download Speed: {self.s.speed_mb:.1f} MB/s")
-            # print(f"Average Threads Speed: {self.s.speed_mb / self.s.future_count if self.s.future_count > 0 else 0:.2f} MB/s")
+            # print(f"활성 스레드 수: {self.data.future_count}")
+            # print(f"Download Speed: {self.data.speed_mb:.1f} MB/s")
+            # print(f"Average Threads Speed: {self.data.speed_mb / self.data.future_count if self.data.future_count > 0 else 0:.2f} MB/s")
             # print(f"")
 
     def update_progress(self):
@@ -101,3 +101,8 @@ class MonitorThread(QThread):
         
         # 시그널 전송
         self.progress.emit(remaining_time_str, str(self.data.total_downloaded_size), f"{self.data.speed_mb:.1f} MB/s", progress)
+
+    def get_download_time(self):
+        download_time = self.data.end_time - self.data.start_time
+        download_time_str = strftime('%H:%M:%S', gmtime(download_time))
+        return download_time_str
