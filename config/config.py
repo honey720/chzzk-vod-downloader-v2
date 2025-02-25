@@ -1,9 +1,16 @@
 import json
 import os
+import platform
 
 # 설정 파일 경로 (AppData 디렉토리에 저장)
 APP_NAME = "chzzk-vod-downloader-v2"
-CONFIG_DIR = os.path.join(os.getenv("APPDATA"), APP_NAME)  # C:\Users\<User>\AppData\Roaming\chzzk-vod-downloader
+
+if platform.system() == "Windows":
+    CONFIG_DIR = os.path.join(os.getenv("APPDATA"), APP_NAME)  # C:\Users\<User>\AppData\Roaming\chzzk-vod-downloader
+
+elif platform.system() == "Linux":
+    CONFIG_DIR = config_dir = os.path.join(os.getenv("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), APP_NAME)
+
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 
 # 초기 설정
