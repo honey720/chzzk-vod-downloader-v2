@@ -5,6 +5,7 @@ from PySide6.QtCore import Qt, QSize, Signal, QUrl, QDir, QProcess
 from metadata.data import MetadataItem
 from download.state import DownloadState
 from io import BytesIO
+import platform
 
 class MetadataItemWidget(QWidget):
     """✅ 다운로드 메타데이터 정보를 표시하는 커스텀 위젯"""
@@ -325,8 +326,15 @@ class MetadataItemWidget(QWidget):
                 path = self.item.output_path
             if os.path.isfile(path):
                 nativePath = QDir.toNativeSeparators(path)
-                if not QProcess.startDetached("explorer.exe", ["/select,", nativePath]):
-                    raise OSError(f"'{path}'을(를) 찾을 수 없습니다.")
+                success = False
+
+                if platform.system() == "Windows":
+                    success = QProcess.startDetached("explorer.exe", ["/select,", nativePath])
+                elif platform.system() == "Linux":
+                    success = QProcess.startDetached("nautilus", [nativePath])
+
+            if not success:
+                raise OSError(f"'{path}'을(를) 찾을 수 없습니다.")
             else:
                 url = QUrl.fromLocalFile(path)
                 if not QDesktopServices.openUrl(url):  # openUrl이 False를 반환하면 실패
