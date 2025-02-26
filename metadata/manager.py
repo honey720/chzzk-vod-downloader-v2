@@ -1,4 +1,4 @@
-import os, re
+import os, re, platform
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 from PySide6.QtCore import Qt, Signal, QThreadPool
@@ -116,7 +116,11 @@ class MetadataManager(QWidget):
         else:
             default_filename = "video.mp4"
 
-        item.output_path = item.download_path + '\\' + default_filename
+        if platform.system() == "Windows":
+            item.output_path = item.download_path + '\\' + default_filename
+
+        elif platform.system() == "Linux":
+            item.output_path = item.download_path + '/' + default_filename
 
         if item.output_path:
             # 다운로드 요청 시그널 발행
