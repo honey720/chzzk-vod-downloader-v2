@@ -266,10 +266,13 @@ class VodDownloader(QWidget):
             )
             #TODO: 메시지박스 중복 경고
             if reply == QMessageBox.Yes:
-                self.downloadManager.stop("다운로드 중단")
-                self.downloadButton.setText('Download')
-                self.setStopButtonEnable(False)
-                self.downloadManager.removeThreads()
+                self.stopDownload()
+
+    def stopDownload(self):
+        self.downloadManager.stop("다운로드 중단")
+        self.downloadButton.setText('Download')
+        self.setStopButtonEnable(False)
+        self.downloadManager.removeThreads()
 
     def onInsertItem(self, row):
         self.total_downloads = row
@@ -381,5 +384,5 @@ class VodDownloader(QWidget):
                 event.ignore()  # 창 닫기 취소
                 return
             else:
-                self.onStop()  # 스레드 중지
+                self.stopDownload()
         event.accept()  # 창 닫기 진행
