@@ -111,7 +111,7 @@ class MetadataManager(QWidget):
             title = item.title
             height = item.height 
             # 특수 문자 제거
-            title = re.sub(r'[\\/:\*\?"<>|]', '', title)
+            title = re.sub(r'[\\/:\*\?"<>|\n]', '', title)
             default_filename = f" {title} {height}p.mp4"
         else:
             default_filename = "video.mp4"
