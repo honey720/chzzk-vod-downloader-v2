@@ -1,4 +1,5 @@
 import os
+import platform
 import config.config as config
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QFrame, QSizePolicy, QGridLayout, QLineEdit, QPushButton, QLabel, QHBoxLayout, QMessageBox, QFileDialog, QApplication
@@ -302,12 +303,24 @@ class VodDownloader(QWidget):
         self.downloadButton.setText('Download')
         self.setStopButtonEnable(False)
         
-        afterDownlaodComplete = config.load_config().get('afterDownloadComplete')
+        os_type = platform.system()
 
-        if afterDownlaodComplete == "sleep":
-            os.system("rundll32.exe powrprof.dll,SetSuspendState 0,1,0 ")
-        elif afterDownlaodComplete == "shutdown":
-            os.system("shutdown -s -t 0")
+        afterDownloadComplete = config.load_config().get('afterDownloadComplete')
+
+        if afterDownloadComplete == "sleep":
+            if os_type == "Windows":
+                os.system("rundll32.exe powrprof.dll,SetSuspendState 0,1,0")
+            elif os_type == "Linux":
+                os.system("systemctl suspend")
+            else:
+                print(f"절전 모드는 {os_type}에서 지원되지 않습니다.")
+        elif afterDownloadComplete == "shutdown":
+            if os_type == "Windows":
+                os.system("shutdown -s -t 0")
+            elif os_type == "Linux":
+                os.system("shutdown -h now")
+            else:
+                print(f"시스템 종료는 {os_type}에서 지원되지 않습니다.")
 
         QMessageBox.information(self, "완료", "다운로드를 완료했습니다.")
 

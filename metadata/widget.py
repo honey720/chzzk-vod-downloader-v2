@@ -333,8 +333,8 @@ class MetadataItemWidget(QWidget):
                 elif platform.system() == "Linux":
                     success = QProcess.startDetached("nautilus", [nativePath])
 
-            if not success:
-                raise OSError(f"'{path}'을(를) 찾을 수 없습니다.")
+                if not success:
+                    raise OSError(f"'{path}'을(를) 찾을 수 없습니다.")
             else:
                 url = QUrl.fromLocalFile(path)
                 if not QDesktopServices.openUrl(url):  # openUrl이 False를 반환하면 실패

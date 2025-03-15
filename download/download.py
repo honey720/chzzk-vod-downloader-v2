@@ -1,9 +1,9 @@
 import requests
 import threading
-from time import time
+import time as tm
 
 from PySide6.QtCore import QThread, Signal
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from download.task import DownloadTask
 from download.state import DownloadState
 
@@ -24,7 +24,6 @@ class DownloadThread(QThread):
         self.s = self.task.data
         self.future_dict = {}
         self.lock = threading.Lock()
-        # TODO lock이 사용된 위치의 합리성 논의
 
     def run(self):
         """
@@ -32,7 +31,7 @@ class DownloadThread(QThread):
         실제 다운로드 파이프라인이 여기서 진행된다.
         """
         try:
-            self.s.start_time = time()
+            self.s.start_time = tm.time()
             total_size = self.s.total_size = self._get_total_size()
 
             # part_size 결정(해상도별 가중 적용)
@@ -53,7 +52,7 @@ class DownloadThread(QThread):
 
             with ThreadPoolExecutor(max_workers=self.s.max_threads) as executor:
                 self.s.remaining_ranges = self._get_remaining_ranges(ranges)
-                futures = []
+                self.s.future_count = 0
 
                 while not self.task.state == DownloadState.WAITING:
                     # (1) 현재 활성 스레드 수보다 적으면 -> 추가 스레드 할당
@@ -62,28 +61,25 @@ class DownloadThread(QThread):
                             if not self.s.remaining_ranges:
                                 break
                             with self.lock:
-                                if self.future_dict.get(part_num) is None:
+                                if part_num not in self.future_dict:
                                     start, end = self.s.remaining_ranges.pop(0)
                                     self.s.future_count += 1
                                     future = executor.submit(
                                         self._download_part,
                                         start, end, part_num, total_size
                                     )
-                                    futures.append(future)
+                                    future.add_done_callback(self._download_completed_callback)
                                     self.future_dict[part_num] = (start, end, future)
 
-                    # (2) 완료된 future 처리
-                    for future in as_completed(futures):
-                        future.add_done_callback(self._download_completed_callback)
-                        futures.remove(future)
-                        break  # 한 번에 모두 확인하면 속도 저하 -> 첫 번째 완료만 처리하고 반복
+                    # (2) 주기적으로 상태 확인 (non-blocking)
+                    tm.sleep(0.1)
 
                     # (3) 남은 작업이 없고 스레드도 없으면 종료
                     if not self.s.remaining_ranges and not self.future_dict:
                         break
 
                 if self.task.state == DownloadState.RUNNING:
-                    self.s.end_time = time()
+                    self.s.end_time = tm.time()
                     self.completed.emit()
 
         except requests.RequestException as e:
@@ -104,7 +100,7 @@ class DownloadThread(QThread):
                 headers = {'Range': f'bytes={start}-{end}'}
                 response = requests.get(self.s.video_url, headers=headers, stream=True)
                 response.raise_for_status()
-                part_start_time = time()
+                part_start_time = tm.time()
 
                 with open(self.s.output_path, 'r+b') as f:
                     f.seek(start)
@@ -117,7 +113,7 @@ class DownloadThread(QThread):
                         if chunk:
                             f.write(chunk)
                             downloaded_size += len(chunk)
-                            elapsed = time() - part_start_time
+                            elapsed = tm.time() - part_start_time
 
                             if elapsed > 0:
                                 speed_kb_s = downloaded_size / elapsed / 1024
@@ -128,7 +124,8 @@ class DownloadThread(QThread):
                                     slow_count += 1
                                     if slow_count > 5:
                                         # 속도가 너무 느리면 스레드 재시작
-                                        self._download_stop_callback(start, end, part_num)
+                                        with self.lock:
+                                            self._download_stop_callback(start, end, part_num)
                                         return part_num
                                 else:
                                     slow_count = 0
@@ -147,6 +144,7 @@ class DownloadThread(QThread):
                 with self.lock:
                     self._download_failed_callback(start, end, part_num)
                 print(e)
+                return part_num
 
     def _check_speed_and_update_progress(self, part_num, downloaded_size, total_size, speed_kb_s):
         """
@@ -163,15 +161,13 @@ class DownloadThread(QThread):
         특정 future(스레드)가 끝났을 때 호출되는 콜백.
         """
         try:
-            future.result()
+            part_num = future.result()
             # part_num 식별 후 future_dict에서 제거
-            for part_num, (start, end, f) in list(self.future_dict.items()):
-                if f == future:
-                    with self.lock:
-                        del self.future_dict[part_num]
-                        self.s.future_count -= 1
-                    self.update_progress()  # 즉각적 진행도 반영
-                    break
+            with self.lock:
+                if part_num in self.future_dict:
+                    del self.future_dict[part_num]
+                    self.s.future_count -= 1
+            self.update_progress()  # 즉각적 진행도 반영
 
         except Exception as e:
             # 일부 스레드가 오류로 중단된 경우
