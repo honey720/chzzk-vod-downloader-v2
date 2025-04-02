@@ -3,6 +3,7 @@
 
 > 치지직 다시보기 동영상, 클립(추후 지원)을 다운로드하는 프로그램입니다.
 
+![main](https://github.com/user-attachments/assets/ae01a231-e3d0-425c-a76f-0042d49a2a8b)
 ---
 
 ## 📌 특징
@@ -11,6 +12,8 @@
 - **다중 VOD 다운로드**를 지원하여 여러 VOD를 추가하고 다운로드합니다.
 - **해상도 선택**버튼으로 다양한 해상도를 선택하여 다운로드합니다.
 - **쿠키 저장** 기능으로 연령 제한이 있는 VOD에 접근 가능합니다.
+
+![usage](https://github.com/user-attachments/assets/857b3cfc-dbb1-4e5b-a6f8-027eb48f2e35)
 
 ---
 
