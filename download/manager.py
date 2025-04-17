@@ -32,7 +32,7 @@ class DownloadManager(QObject):
     # ============ 일시정지/중지 메서드 ============
 
     def start(self, item:MetadataItem):
-        self.data = DownloadData(item.base_url, item.output_path, item.height)
+        self.data = DownloadData(item.base_url, item.output_path, item.resolution)
         self.item = item
         self.task = DownloadTask(self.data, self.item)
         self.d_thread = DownloadThread(self.task)

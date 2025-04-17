@@ -20,7 +20,8 @@ DEFAULT_CONFIG = {
         "NID_SES": ""
     },
     "threads": 4,
-    "afterDownloadComplete": "none"
+    "afterDownloadComplete": "none",
+    "language": "en_US"
 }
 
 # 설정 로드 함수

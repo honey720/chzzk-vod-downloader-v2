@@ -56,14 +56,17 @@ class NetworkManager:
         for rep in root.findall(".//mpd:Representation", namespaces=ns):
             width = rep.get('width')
             height = rep.get('height')
+            resolution = min(int(width), int(height))
+            # print(width, height) # Debugging
+            # print(f"Resolution: {resolution}") # Debugging
             base_url = rep.find(".//mpd:BaseURL", namespaces=ns).text
             if base_url.endswith('/hls/'):
                 continue
-            reps.append([width, height, base_url])
+            reps.append([resolution, base_url])
         
-        sorted_reps = sorted(reps, key=lambda x: int(x[1]) if x[1].isdigit() else 9999)
-        auto_height = sorted_reps[-1][1]
-        auto_base_url = sorted_reps[-1][2]
+        sorted_reps = sorted(reps, key=lambda x: x[0])
+        auto_resolution = sorted_reps[-1][0]
+        auto_base_url = sorted_reps[-1][1]
 
         # 중복 제거한 뒤, 리스트로 변환
-        return sorted_reps, auto_height, auto_base_url
+        return sorted_reps, auto_resolution, auto_base_url

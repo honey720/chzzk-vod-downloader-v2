@@ -55,16 +55,17 @@ class MetadataItemWidget(QWidget):
         top_layout = QHBoxLayout()
         self.index_label = QLabel(f"#{self.index}")
         self.index_label.setStyleSheet("color: white; font-weight: bold;")
-        self.index_label.setToolTip("대기열 순서")
+        self.index_label.setToolTip(self.tr("Queue number"))
 
         self.channel_image_label = QLabel()
         self.channel_image_label.resize(30, 30)
+        self.channel_image_label.setToolTip(self.tr("Channel image"))
 
         self.channel_label = QLabel(self.item.channel_name)
         self.channel_label.setStyleSheet("color: white; font-weight: bold;")
-        self.channel_label.setToolTip("채널명")
+        self.channel_label.setToolTip(self.tr("Channel name"))
 
-        self.status_label = QLabel("다운로드 대기")
+        self.status_label = QLabel(self.tr("Download waiting"))
         self.status_label.setStyleSheet("color: white;")
 
         self.size_label = QLabel("")
@@ -76,7 +77,7 @@ class MetadataItemWidget(QWidget):
         self.delete_btn = QPushButton("❌")
         self.delete_btn.setFixedSize(30, 30)
         self.delete_btn.clicked.connect(self.requestDelete)  # ✅ 삭제 요청
-        self.delete_btn.setToolTip("삭제")
+        self.delete_btn.setToolTip(self.tr("Delete"))
 
         top_layout.addWidget(self.index_label)
         top_layout.addWidget(self.channel_image_label)
@@ -90,7 +91,9 @@ class MetadataItemWidget(QWidget):
         # 중간 정보 (왼쪽 썸네일, 오른쪽 컨텐츠 정보)
         center_layout = QHBoxLayout()
 
-        self.thumbnail_label = QLabel("썸네일")
+        self.thumbnail_label = QLabel("")
+        self.thumbnail_label.setToolTip(self.tr("Video thumbnail"))
+
         center_layout.addWidget(self.thumbnail_label)  # 썸네일은 왼쪽
 
         # 컨텐츠 정보 (제목, 다운로드 위치 등)
@@ -101,7 +104,7 @@ class MetadataItemWidget(QWidget):
         self.title_label = QLabel(self.item.title)
         self.title_label.setStyleSheet("color: white; font-size: 14px;")
         self.title_label.mousePressEvent = self.startTitleEditing
-        self.title_label.setToolTip("제목")
+        self.title_label.setToolTip(self.tr("Title"))
 
         self.title_edit = QLineEdit(self.item.title)
         self.title_edit.setVisible(False)
@@ -120,7 +123,7 @@ class MetadataItemWidget(QWidget):
         self.directory_label.setStyleSheet("color: white; font-size: 12px;")
         self.directory_label.mousePressEvent = self.startPathEditing
         self.directory_label.setText(self.item.download_path)
-        self.directory_label.setToolTip("다운로드 위치")
+        self.directory_label.setToolTip(self.tr("Download location"))
 
         self.directory_edit = QLineEdit(self.item.download_path)
         self.directory_edit.setVisible(False)
@@ -130,7 +133,7 @@ class MetadataItemWidget(QWidget):
         self.open_folder_btn = QPushButton("📁")
         self.open_folder_btn.setFixedSize(30, 30)
         self.open_folder_btn.clicked.connect(self.requestOpenDir)  # ✅ 삭제 요청
-        self.open_folder_btn.setToolTip("폴더 열기")
+        self.open_folder_btn.setToolTip(self.tr("Open folder"))
 
         bottom_layout.addWidget(self.directory_label)
         bottom_layout.addWidget(self.directory_edit, 1)
@@ -155,17 +158,17 @@ class MetadataItemWidget(QWidget):
         for unique_rep in self.item.unique_reps:
             unique_rep.append("Unknown")  # 초기 값 설정
 
-        self.setHeightUrlSize(self.item.unique_reps[-1][1], self.item.unique_reps[-1][2], -1)
+        self.setresolutionUrlSize(self.item.unique_reps[-1][0], self.item.unique_reps[-1][1], -1)
 
-        for index, (width, height, base_url, _) in enumerate(self.item.unique_reps):
-            self.addRepresentationButton(height, base_url, index)
+        for index, (resolution, base_url, _) in enumerate(self.item.unique_reps):
+            self.addRepresentationButton(resolution, base_url, index)
 
-    def addRepresentationButton(self, height, base_url, index):
+    def addRepresentationButton(self, resolution, base_url, index):
         """
         해상도 버튼을 추가하고, 비동기로 파일 사이즈를 헤더에서 가져와 버튼 텍스트를 업데이트한다.
         """
-        button = QPushButton(f'{height}p', self)
-        button.clicked.connect(lambda: self.setHeightUrlSize(height, base_url, index, button))
+        button = QPushButton(f'{resolution}p', self)
+        button.clicked.connect(lambda: self.setresolutionUrlSize(resolution, base_url, index, button))
         self.title_layout.addWidget(button)
         button.setFixedSize(60, 30)
         button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -181,7 +184,7 @@ class MetadataItemWidget(QWidget):
                 self.item.unique_reps[index][-1] = size_text
 
                 if len(self.item.unique_reps) - 1 == index:
-                    self.setHeightUrlSize(height, base_url, index, button)
+                    self.setresolutionUrlSize(resolution, base_url, index, button)
 
                 button.setToolTip(size_text)
             except Exception:
@@ -190,13 +193,13 @@ class MetadataItemWidget(QWidget):
         thread = threading.Thread(target=update_button_text, daemon=True)
         thread.start()
 
-    def setHeightUrlSize(self, height, base_url, index=None, button:QPushButton = None):
+    def setresolutionUrlSize(self, resolution, base_url, index=None, button:QPushButton = None):
         if self.item.downloadState == DownloadState.WAITING:
             if button is not None:
                 for btn in self.buttons:
                     btn.setEnabled(True)
                 button.setDisabled(True)
-            self.item.height = height
+            self.item.resolution = resolution
             self.item.base_url = base_url
             if index is not None:
                 self.item.total_size = self.item.unique_reps[index][-1]
@@ -247,7 +250,7 @@ class MetadataItemWidget(QWidget):
             self.progress_label.setText(f"  {item.download_progress}% ")
 
         elif self.item.downloadState == DownloadState.PAUSED:
-            self.status_label.setText("다운로드 정지")
+            self.status_label.setText(self.tr("Download paused"))
             self.size_label.setText(f"  {self.setSize(item.download_size)} / {item.total_size}")
             self.progress_label.setText(f"  {item.download_progress}% ")
 

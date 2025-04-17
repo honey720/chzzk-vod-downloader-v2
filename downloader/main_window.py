@@ -33,7 +33,7 @@ class VodDownloader(QWidget):
         """
         UI 레이아웃 및 위젯을 초기화. (레이아웃마다 QFrame으로 테두리를 표시)
         """
-        self.setWindowTitle('치지직 VOD 다운로더')
+        self.setWindowTitle(self.tr('Chzzk VOD Downloader'))
 
         screen = QApplication.primaryScreen()
         screen_size = screen.size()  # QSize 객체 반환
@@ -65,37 +65,37 @@ class VodDownloader(QWidget):
         headerFrameLayout.setContentsMargins(5, 5, 5, 5)
         headerFrameLayout.setSpacing(5)
 
-        self.urlInputLabel = QLabel('치지직 VOD URL:')  # 초기값 설정
+        self.urlInputLabel = QLabel(self.tr('Chzzk VOD URL:'))  # 초기값 설정
         self.urlInputLabel.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         headerFrameLayout.addWidget(self.urlInputLabel, 0, 0, Qt.AlignLeft)
 
         self.urlInput = QLineEdit()
-        self.urlInput.setPlaceholderText("치지직 URL 입력")
+        self.urlInput.setPlaceholderText(self.tr("Enter Chzzk URL"))
         headerFrameLayout.addWidget(self.urlInput, 0, 1)
 
-        self.fetchButton = QPushButton('Add VOD')
+        self.fetchButton = QPushButton(self.tr('Add VOD'))
         self.fetchButton.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         headerFrameLayout.addWidget(self.fetchButton, 0, 2, Qt.AlignRight)
 
         headerFrameLayout.setColumnStretch(1, 10)  # URL 입력 창 확장
 
-        self.downloadPathLabel = QLabel('다운로드 경로:')  # 초기값 설정
+        self.downloadPathLabel = QLabel(self.tr('Download Path:'))  # 초기값 설정
         self.downloadPathLabel.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         headerFrameLayout.addWidget(self.downloadPathLabel, 1, 0, Qt.AlignLeft)
 
         self.downloadPathInput = QLineEdit()
-        self.downloadPathInput.setPlaceholderText("다운로드 경로 입력")
+        self.downloadPathInput.setPlaceholderText(self.tr("Enter download path"))
         self.downloadPathInput.setText(os.getcwd())  # 초기 경로 설정
         headerFrameLayout.addWidget(self.downloadPathInput, 1, 1)
 
-        self.downloadPathButton = QPushButton('Find path')
+        self.downloadPathButton = QPushButton(self.tr('Find path'))
         self.downloadPathButton.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         headerFrameLayout.addWidget(self.downloadPathButton, 1, 2, Qt.AlignRight)
 
         self.linkStatusLabel = QLabel('')
         headerFrameLayout.addWidget(self.linkStatusLabel, 2, 0, 1, 2)
 
-        self.settingButton = QPushButton("Settings")
+        self.settingButton = QPushButton(self.tr("Settings"))
         self.settingButton.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         headerFrameLayout.addWidget(self.settingButton, 2, 2, Qt.AlignRight)
 
@@ -125,20 +125,20 @@ class VodDownloader(QWidget):
         infoFrame.setLayout(infoLayout)
 
         # 다운로드 갯수 표시 QLabel 추가
-        self.downloadCountLabel = QLabel('Downloads: 0/0')  # 초기값 설정
+        self.downloadCountLabel = QLabel(self.tr('Downloads: {}/{}').format(self.completed_downloads, self.total_downloads))  # 초기값 설정
         infoLayout.addWidget(self.downloadCountLabel)
 
-        self.clearFinishedButton = QPushButton("Clear Finished")
+        self.clearFinishedButton = QPushButton(self.tr("Clear Finished"))
         self.clearFinishedButton.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         infoLayout.addWidget(self.clearFinishedButton)
 
         infoLayout.addStretch()
 
-        self.downloadButton = QPushButton("Download")
+        self.downloadButton = QPushButton(self.tr("Download"))
         self.downloadButton.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         infoLayout.addWidget(self.downloadButton)
 
-        self.stopButton = QPushButton("Stop")
+        self.stopButton = QPushButton(self.tr("Stop"))
         self.stopButton.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.setStopButtonEnable(False)
         infoLayout.addWidget(self.stopButton)
@@ -186,7 +186,7 @@ class VodDownloader(QWidget):
             vod_url = self.urlInput.text().strip()
 
         if not vod_url:
-            QMessageBox.warning(self, "경고", "VOD URL을 입력하세요.")
+            QMessageBox.warning(self, self.tr("Warning"), self.tr("Please enter VOD URL."))
             return
         
         data = config.load_config().get("cookies", {})
@@ -194,13 +194,13 @@ class VodDownloader(QWidget):
             'NID_AUT': data.get("NID_AUT", ""),
             'NID_SES': data.get("NID_SES", "")
         }
-        self.linkStatusLabel.setText('Fetching resolutions...')
+        self.linkStatusLabel.setText(self.tr('Fetching resolutions...'))
 
         # 결과 처리
         downloadPath = self.downloadPathInput.text().strip() or os.getcwd()
 
         if not os.path.exists(downloadPath):
-            QMessageBox.warning(self, "경고", "경로가 존재하지 않습니다.")
+            QMessageBox.warning(self, self.tr("Warning"), self.tr("Path does not exist."))
             return
         # TODO:  코드 수정 및 테스트 예정
 
@@ -208,27 +208,29 @@ class VodDownloader(QWidget):
 
         self.urlInput.clear()
 
-        self.linkStatusLabel.setText('Resolutions fetched successfully.')
+        self.linkStatusLabel.setText(self.tr('Resolutions fetched successfully.'))
     
     def showErrorDialog(self, errorMessage):
-        QMessageBox.critical(self, "오류 발생", f"메타데이터 요청 중 오류가 발생했습니다:\n{errorMessage}")
+        errorTitle = self.tr("Error")
+        errorBody = self.tr("Error occurred during metadata request:") + "\n" + errorMessage
+        QMessageBox.critical(self, errorTitle, errorBody)
 
     def onDownloadPause(self):
         """
         추가한 동영상에 대한 다운로드 버튼.
         """
         if self.downloadManager.d_thread:
-            if self.downloadButton.text() == 'Pause':
+            if self.downloadButton.text() == self.tr('Pause'):
                 self.downloadManager.pause()
-                self.downloadButton.setText('Download')
+                self.downloadButton.setText(self.tr('Download'))
             else:
                 self.downloadManager.resume()
-                self.downloadButton.setText('Pause')
+                self.downloadButton.setText(self.tr('Pause'))
         else:
             if not self.metadataManager.findItem()[0]:
-                QMessageBox.warning(self, "경고", "추가된 VOD 가 없습니다.")
+                QMessageBox.warning(self, self.tr("Warning"), self.tr("No VODs added."))
                 return
-            self.downloadButton.setText('Pause')
+            self.downloadButton.setText(self.tr('Pause'))
             self.metadataManager.downloadItem()
     
     def onSetting(self):
@@ -260,8 +262,8 @@ class VodDownloader(QWidget):
         if self.downloadManager.task:
             reply = QMessageBox.warning(
                 self,
-                "다운로드 중",
-                "다운로드가 진행 중입니다. 종료하시겠습니까?",
+                self.tr("Downloading"),
+                self.tr("Download is in progress. Do you want to quit?"),
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No
             )
@@ -270,8 +272,8 @@ class VodDownloader(QWidget):
                 self.stopDownload()
 
     def stopDownload(self):
-        self.downloadManager.stop("다운로드 중단")
-        self.downloadButton.setText('Download')
+        self.downloadManager.stop(self.tr("Download stopped"))
+        self.downloadButton.setText(self.tr('Download'))
         self.setStopButtonEnable(False)
         self.downloadManager.removeThreads()
 
@@ -300,7 +302,7 @@ class VodDownloader(QWidget):
         """
         모든 메타데이터 카드 다운로드 완료 콜백.
         """
-        self.downloadButton.setText('Download')
+        self.downloadButton.setText(self.tr('Download'))
         self.setStopButtonEnable(False)
         
         os_type = platform.system()
@@ -322,7 +324,7 @@ class VodDownloader(QWidget):
             else:
                 print(f"시스템 종료는 {os_type}에서 지원되지 않습니다.")
 
-        QMessageBox.information(self, "완료", "다운로드를 완료했습니다.")
+        QMessageBox.information(self, self.tr("Completed"), self.tr("Download completed."))
 
     def setStopButtonEnable(self, bool):
         self.stopButton.setEnabled(bool)
@@ -379,7 +381,7 @@ class VodDownloader(QWidget):
         """
         다운로드 갯수 라벨을 업데이트한다.
         """
-        self.downloadCountLabel.setText(f'Downloads: {self.completed_downloads}/{self.total_downloads}')
+        self.downloadCountLabel.setText(self.tr('Downloads: {}/{}').format(self.completed_downloads, self.total_downloads))
 
     def closeEvent(self, event):
         """
@@ -388,8 +390,8 @@ class VodDownloader(QWidget):
         if self.downloadManager.d_thread or self.downloadManager.m_thread:
             reply = QMessageBox.warning(
                 self,
-                "다운로드 중",
-                "다운로드가 진행 중입니다. 종료하시겠습니까?",
+                self.tr("Downloading"),
+                self.tr("Download is in progress. Do you want to quit?"),
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No
             )

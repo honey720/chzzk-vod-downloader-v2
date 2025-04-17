@@ -57,17 +57,17 @@ class MetadataManager(QWidget):
         self.threadpool.start(lambda: worker.run())
 
     def onWorkerFinished(self, result):
-        # result는 (vod_url, metadata, unique_reps, height, base_url, downloadPath) 형식
-        vod_url, metadata, unique_reps, height, base_url, downloadPath, cookies = result
+        # result는 (vod_url, metadata, unique_reps, resolution, base_url, downloadPath) 형식
+        vod_url, metadata, unique_reps, resolution, base_url, downloadPath, cookies = result
         self.cookies = cookies
         self.downloadPath = downloadPath
-        self.addItem(vod_url, metadata, unique_reps, height, base_url, downloadPath)
+        self.addItem(vod_url, metadata, unique_reps, resolution, base_url, downloadPath)
 
     def onWorkerError(self, error_message):
         self.metadataError.emit(error_message)
 
-    def addItem(self, vod_url, metadata, unique_reps, height, base_url, downloadPath):
-        item = MetadataItem(vod_url, metadata, unique_reps, height, base_url, downloadPath)
+    def addItem(self, vod_url, metadata, unique_reps, resolution, base_url, downloadPath):
+        item = MetadataItem(vod_url, metadata, unique_reps, resolution, base_url, downloadPath)
         self.model.addItem(item)
         row = self.model.rowCount()
         self.insertItemRequested.emit(row)
@@ -94,10 +94,10 @@ class MetadataManager(QWidget):
         if found:
             try:
                 if not os.path.exists(item.download_path):
-                    raise ValueError("Invalid file path")
+                    raise ValueError(self.tr("Invalid file path"))
                 self.onDownload(item)
             except Exception as e:
-                item.stateMessage = f'오류 발생: {e}'
+                item.stateMessage = self.tr("Error occurred: {e}").format(e=e)
                 self.model.dataChanged.emit(index, index)
                 self.fail(item)
         else:
@@ -109,10 +109,10 @@ class MetadataManager(QWidget):
         """
         if item:
             title = item.title
-            height = item.height 
+            resolution = item.resolution
             # 특수 문자 제거
             title = re.sub(r'[\\/:\*\?"<>|\n]', '', title)
-            default_filename = f" {title} {height}p.mp4"
+            default_filename = f" {title} {resolution}p.mp4"
         else:
             default_filename = "video.mp4"
 

@@ -4,7 +4,7 @@ from download.state import DownloadState
 class MetadataItem(QObject):
     # 메타데이터 카드 리스트 아이템 데이터(DTO)
 
-    def __init__(self, vod_url, metadata, unique_reps, height, base_url, download_path):
+    def __init__(self, vod_url, metadata, unique_reps, resolution, base_url, download_path):
         self.vod_url = vod_url
         
         self.default_title = metadata.get('title', 'Unknown Title')
@@ -18,7 +18,7 @@ class MetadataItem(QObject):
 
         self.unique_reps = unique_reps
         
-        self.height = height
+        self.resolution = resolution
         self.total_size = ""
         self.base_url = base_url
 
@@ -30,7 +30,7 @@ class MetadataItem(QObject):
         self.download_speed = ""  # 다운로드 속도 (예: "2.5 MB/s")
         self.download_remain_time = ""  # 남은 다운로드 예상 시간 (예: "00:00:01")
         self.download_time = ""
-        self.stateMessage = "다운로드 대기"
+        self.stateMessage = self.tr("Download waiting")
 
         self.downloadState = DownloadState.WAITING  # 초기 상태
 

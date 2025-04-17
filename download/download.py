@@ -83,7 +83,7 @@ class DownloadThread(QThread):
                     self.completed.emit()
 
         except requests.RequestException as e:
-            self.stopped.emit("다운로드 실패")
+            self.stopped.emit(self.tr("Download failed"))
             print(e)
 
     # ============ 다운로드 동작 관련 메서드들 ============
@@ -171,7 +171,7 @@ class DownloadThread(QThread):
 
         except Exception as e:
             # 일부 스레드가 오류로 중단된 경우
-            self.stopped.emit("다운로드 실패")
+            self.stopped.emit(self.tr("Download failed"))
             print(e)
 
     def _download_failed_callback(self, start, end, part_num):
@@ -205,11 +205,11 @@ class DownloadThread(QThread):
         해상도에 따라 파트 크기 가중치를 달리 부여한다.
         """
         base_part_size = 1024 * 1024  # 1MB
-        if self.s.height == '144':
+        if self.s.resolution == '144':
             return base_part_size * 1
-        elif self.s.height in ['360', '480']:
+        elif self.s.resolution in ['360', '480']:
             return base_part_size * 2
-        elif self.s.height == '720':
+        elif self.s.resolution == '720':
             return base_part_size * 5
         else:
             return base_part_size * 10
