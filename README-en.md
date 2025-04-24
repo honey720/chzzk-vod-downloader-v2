@@ -6,7 +6,7 @@
 
 # Chzzk VOD Downloader v2
 
-> A program for downloading Chzzk videos and (soon-to-be-supported) clips.
+> A program for downloading Chzzk videos and clips.
 
 ![main](https://github.com/user-attachments/assets/ae01a231-e3d0-425c-a76f-0042d49a2a8b)  
 ---
@@ -26,7 +26,7 @@
 
 1. **Add VOD**
    - Enter the VOD URL and press the **Add VOD** button or hit Enter to add it to the download queue.
-   - Simply drag and drop Chzzk video card or a list of URLs to add them.
+   - Simply drag and drop Chzzk video, clip card or a list of URLs to add them.
 
 2. **Select Resolution**
    - Click on a resolution button on the card to choose your desired quality.
