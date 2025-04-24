@@ -52,9 +52,9 @@ class MonitorThread(QThread):
             self.data.speed_mb / self.data.future_count if self.data.future_count > 0 else 0
         )
 
-        if avg_active_speed > 2:
+        if avg_active_speed > 4:
             self.adjust_count += 1
-        elif avg_active_speed < 1:
+        elif avg_active_speed < 2:
             self.adjust_count -= 1
         else:
             if self.adjust_count > 0:

@@ -122,7 +122,7 @@ class SettingDialog(QDialog):
 
     def on_result(self, result):
         download_speed = result['download'] / 8e6
-        threads = int((download_speed // 8) * 4)
+        threads = int(download_speed // 8)
         self.initial_threads = max(threads, 4)
         self.threads.setText(
             self.tr("Download speed: {} MB/s\nThread count: {}").format(download_speed, self.initial_threads)

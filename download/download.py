@@ -102,7 +102,7 @@ class DownloadThread(QThread):
         while not self.task.state == DownloadState.WAITING:
             try:
                 headers = {'Range': f'bytes={start}-{end}'}
-                response = requests.get(self.s.video_url, headers=headers, stream=True)
+                response = requests.get(self.s.video_url, headers=headers, stream=True, timeout=30)
                 response.raise_for_status()
                 part_start_time = tm.time()
 
@@ -110,7 +110,7 @@ class DownloadThread(QThread):
                     f.seek(start)
                     for chunk in response.iter_content(chunk_size=8192):
                         if self.task.state == DownloadState.WAITING:
-                            return
+                            return part_num
                         if self.task.state == DownloadState.PAUSED:
                             self.s._pause_event.wait()
 
@@ -145,7 +145,7 @@ class DownloadThread(QThread):
                 self.logger.log_thread_complete(part_num, downloaded_size)
                 return part_num
 
-            except requests.RequestException as e:
+            except (requests.RequestException, requests.Timeout) as e:
                 with self.lock:
                     self._download_failed_callback(start, end, part_num)
                 self.logger.log_error(f"Part {part_num} download failed", e)
