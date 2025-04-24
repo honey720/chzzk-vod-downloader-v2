@@ -1,6 +1,5 @@
 from PySide6.QtWidgets import QStyledItemDelegate
-from PySide6.QtCore import Qt, QSize
-from metadata.data import MetadataItem
+from PySide6.QtCore import QSize
 
 class MetadataListDelegate(QStyledItemDelegate):
     """✅ 리스트 아이템을 렌더링하는 Delegate"""

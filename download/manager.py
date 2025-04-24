@@ -16,11 +16,6 @@ class DownloadManager(QObject):
     stopped = Signal(object, str)
     finished = Signal(object, str)
 
-    update_threads = Signal(int, int, int, int)
-    update_time = Signal(str, str)
-    update_active_threads = Signal(int)
-    update_avg_speed = Signal(float)
-
     def __init__(self):
         super().__init__()
         self.d_thread = None

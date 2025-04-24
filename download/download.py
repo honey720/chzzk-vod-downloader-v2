@@ -13,10 +13,6 @@ class DownloadThread(QThread):
     """
     completed = Signal()
     stopped = Signal(str)
-    update_threads = Signal(int, int, int, int)
-    update_time = Signal(str, str)
-    update_active_threads = Signal(int)
-    update_avg_speed = Signal(float)
 
     def __init__(self, task: DownloadTask):
         super().__init__()

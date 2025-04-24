@@ -23,7 +23,6 @@ class MetadataManager(QWidget):
     def __init__(self, parent = None):
         super().__init__(parent)
         self.initUI()
-        self.cookies = {}
         self.downloadPath = ""
         self.threadpool = QThreadPool()
 
@@ -58,8 +57,7 @@ class MetadataManager(QWidget):
 
     def onWorkerFinished(self, result):
         # result는 (vod_url, metadata, unique_reps, resolution, base_url, downloadPath) 형식
-        vod_url, metadata, unique_reps, resolution, base_url, downloadPath, cookies = result
-        self.cookies = cookies
+        vod_url, metadata, unique_reps, resolution, base_url, downloadPath = result
         self.downloadPath = downloadPath
         self.addItem(vod_url, metadata, unique_reps, resolution, base_url, downloadPath)
 
