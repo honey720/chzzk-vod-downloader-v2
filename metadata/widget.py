@@ -176,7 +176,7 @@ class MetadataItemWidget(QWidget):
 
         def update_button_text():
             try:
-                resp = requests.get(base_url, stream=True)
+                resp = requests.head(base_url)
                 resp.raise_for_status()
                 size = int(resp.headers.get('content-length', 0))
                 

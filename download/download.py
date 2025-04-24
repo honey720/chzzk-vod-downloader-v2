@@ -196,7 +196,7 @@ class DownloadThread(QThread):
         """
         HEAD 요청으로 total_size를 구한다.
         """
-        response = requests.get(self.s.video_url, stream=True)
+        response = requests.head(self.s.video_url)
         response.raise_for_status()
         return int(response.headers.get('content-length', 0))
 
