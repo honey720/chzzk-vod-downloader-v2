@@ -55,11 +55,12 @@ class SettingDialog(QDialog):
         layout.addWidget(self.testButton)
 
         self.afterDownloadComplete = QComboBox()
-        self.afterDownloadComplete.addItem(self.tr("none"))
-        self.afterDownloadComplete.addItem(self.tr("sleep"))
-        self.afterDownloadComplete.addItem(self.tr("shutdown"))
+        self.afterDownloadComplete.addItem(self.tr("none"), "none")
+        self.afterDownloadComplete.addItem(self.tr("sleep"), "sleep")
+        self.afterDownloadComplete.addItem(self.tr("shutdown"), "shutdown")
 
-        index = self.afterDownloadComplete.findText(self.config.get("afterDownloadComplete"), Qt.MatchFlag.MatchExactly)
+        current_after_download_complete = self.config.get("afterDownloadComplete", "none")
+        index = self.afterDownloadComplete.findData(current_after_download_complete)
         if index != -1:
             self.afterDownloadComplete.setCurrentIndex(index)
 
@@ -152,7 +153,7 @@ class SettingDialog(QDialog):
         """
         self.config['cookies'] = {"NID_AUT": self.nidaut.text(), "NID_SES": self.nidses.text()}
         self.config['threads'] = self.initial_threads
-        self.config['afterDownloadComplete'] = self.afterDownloadComplete.currentText()
+        self.config['afterDownloadComplete'] = self.afterDownloadComplete.currentData()
         self.config['language'] = self.language.currentData()  # 선택된 언어 코드 저장
         config.save_config(self.config)
         self.accept()
