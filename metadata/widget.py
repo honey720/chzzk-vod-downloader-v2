@@ -41,8 +41,8 @@ class MetadataItemWidget(QWidget):
         layout.addWidget(self.frame)  # ✅ 프레임 추가
 
         self.initUI()
-        self.loadImageFromUrl(self.channel_image_label, self.item.channel_image_url, 30, 30)
-        self.loadImageFromUrl(self.thumbnail_label, self.item.thumbnail_url, 107, 60)
+        self.loadImageFromUrl(self.channel_image_label, self.item.channel_image_url, 30)
+        self.loadImageFromUrl(self.thumbnail_label, self.item.thumbnail_url, 60)
 
     def initUI(self):   
         """✅ UI 초기화"""
@@ -205,26 +205,37 @@ class MetadataItemWidget(QWidget):
                 self.item.total_size = self.item.unique_reps[index][-1]
                 self.size_label.setText(f" {self.item.unique_reps[index][-1]}")
 
-    def loadImageFromUrl(self, label, url, width, height):
+    def loadImageFromUrl(self, label, url, height):
         """
         주어진 URL에서 이미지를 다운로드해 QLabel에 띄운다.
+        세로 높이를 고정하고 가로 크기를 비율에 맞게 조정한다.
         """
         if not url:
             label.clear()
             return
         
         # 이미지 로딩 스레드 시작
-        thread = threading.Thread(target=self.fetchImage, args=(label, url, width, height), daemon=True)
+        thread = threading.Thread(target=self.fetchImage, args=(label, url, height), daemon=True)
         thread.start()
 
-    def fetchImage(self, label, url, width, height):
+    def fetchImage(self, label, url, height):
         try:
             response = requests.get(url)
             response.raise_for_status()
             image = QPixmap()
             image.loadFromData(BytesIO(response.content).read())
+            
+            # 원본 이미지의 비율 계산
+            original_width = image.width()
+            original_height = image.height()
+            aspect_ratio = original_width / original_height
+            
+            # 세로 높이를 고정하고 가로 크기를 비율에 맞게 계산
+            new_height = height
+            new_width = int(new_height * aspect_ratio)
+            
             scaled_image = image.scaled(
-                width, height, Qt.IgnoreAspectRatio, Qt.SmoothTransformation
+                new_width, new_height, Qt.KeepAspectRatio, Qt.SmoothTransformation
             )
             label.setPixmap(scaled_image)
         except Exception as e:
