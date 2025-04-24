@@ -4,17 +4,19 @@ from download.state import DownloadState
 class MetadataItem(QObject):
     # 메타데이터 카드 리스트 아이템 데이터(DTO)
 
-    def __init__(self, vod_url, metadata, unique_reps, resolution, base_url, download_path):
+    def __init__(self, vod_url, metadata, unique_reps, resolution, base_url, download_path, content_type):
         self.vod_url = vod_url
         
         self.default_title = metadata.get('title', 'Unknown Title')
         self.title = self.default_title
         self.thumbnail_url = metadata.get('thumbnailImageUrl', '')
-        self.category = metadata.get('videoCategoryValue', 'Unknown Category')
+        self.category = metadata.get('category', 'Unknown Category')
         self.channel_name = metadata.get('channelName', 'Unknown Channel')
         self.channel_image_url = metadata.get('channelImageUrl', '')
-        self.live_open_date = metadata.get('liveOpenDate', 'Unknown Date')
+        self.live_open_date = metadata.get('createdDate', 'Unknown Date')
         self.duration = metadata.get('duration', 0)
+
+        self.content_type = content_type
 
         self.unique_reps = unique_reps
         

@@ -211,11 +211,13 @@ class DownloadThread(QThread):
         해상도에 따라 파트 크기 가중치를 달리 부여한다.
         """
         base_part_size = 1024 * 1024  # 1MB
-        if self.s.resolution == '144':
-            return base_part_size * 1
-        elif self.s.resolution in ['360', '480']:
+        if self.s.content_type == 'clips':
             return base_part_size * 2
-        elif self.s.resolution == '720':
+        elif self.s.resolution == 144:
+            return base_part_size * 1
+        elif self.s.resolution in [360, 480]:
+            return base_part_size * 2
+        elif self.s.resolution == 720:
             return base_part_size * 5
         else:
             return base_part_size * 10

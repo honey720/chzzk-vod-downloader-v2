@@ -55,17 +55,17 @@ class MetadataManager(QWidget):
 
         self.threadpool.start(lambda: worker.run())
 
-    def onWorkerFinished(self, result):
+    def onWorkerFinished(self, result, content_type):
         # result는 (vod_url, metadata, unique_reps, resolution, base_url, downloadPath) 형식
         vod_url, metadata, unique_reps, resolution, base_url, downloadPath = result
         self.downloadPath = downloadPath
-        self.addItem(vod_url, metadata, unique_reps, resolution, base_url, downloadPath)
+        self.addItem(vod_url, metadata, unique_reps, resolution, base_url, downloadPath, content_type)
 
     def onWorkerError(self, error_message):
         self.metadataError.emit(error_message)
 
-    def addItem(self, vod_url, metadata, unique_reps, resolution, base_url, downloadPath):
-        item = MetadataItem(vod_url, metadata, unique_reps, resolution, base_url, downloadPath)
+    def addItem(self, vod_url, metadata, unique_reps, resolution, base_url, downloadPath, content_type):
+        item = MetadataItem(vod_url, metadata, unique_reps, resolution, base_url, downloadPath, content_type)
         self.model.addItem(item)
         row = self.model.rowCount()
         self.insertItemRequested.emit(row)
