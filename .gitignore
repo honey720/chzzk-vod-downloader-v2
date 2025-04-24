@@ -207,4 +207,7 @@ pyrightconfig.json
 .history
 .ionide
 
+# Video file
+*.mp4
+
 # End of https://www.toptal.com/developers/gitignore/api/git,visualstudiocode,python
