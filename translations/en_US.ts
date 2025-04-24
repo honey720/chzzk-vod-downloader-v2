@@ -4,8 +4,8 @@
 <context>
     <name>DownloadThread</name>
     <message>
-        <location filename="../download/download.py" line="86"/>
-        <location filename="../download/download.py" line="174"/>
+        <location filename="../download/download.py" line="90"/>
+        <location filename="../download/download.py" line="180"/>
         <source>Download failed</source>
         <translation>Download failed</translation>
     </message>
@@ -13,7 +13,7 @@
 <context>
     <name>MetadataItem</name>
     <message>
-        <location filename="../metadata/data.py" line="35"/>
+        <location filename="../metadata/data.py" line="37"/>
         <source>Download waiting</source>
         <translation>Download waiting</translation>
     </message>
@@ -66,7 +66,7 @@
         <translation>Open folder</translation>
     </message>
     <message>
-        <location filename="../metadata/widget.py" line="253"/>
+        <location filename="../metadata/widget.py" line="264"/>
         <source>Download paused</source>
         <translation>Download paused</translation>
     </message>
@@ -87,12 +87,12 @@
 <context>
     <name>MetadataManager</name>
     <message>
-        <location filename="../metadata/manager.py" line="97"/>
+        <location filename="../metadata/manager.py" line="95"/>
         <source>Invalid file path</source>
         <translation>Invalid file path</translation>
     </message>
     <message>
-        <location filename="../metadata/manager.py" line="100"/>
+        <location filename="../metadata/manager.py" line="98"/>
         <source>Error occurred: {e}</source>
         <translation>Error occurred: {e}</translation>
     </message>
@@ -105,17 +105,20 @@
         <translation>Invalid VOD URL</translation>
     </message>
     <message>
-        <location filename="../metadata/worker.py" line="26"/>
+        <location filename="../metadata/worker.py" line="36"/>
+        <location filename="../metadata/worker.py" line="59"/>
         <source>Invalid cookies value</source>
         <translation>Invalid cookies value</translation>
     </message>
     <message>
-        <location filename="../metadata/worker.py" line="29"/>
+        <location filename="../metadata/worker.py" line="39"/>
+        <location filename="../metadata/worker.py" line="54"/>
         <source>Unencoded Video(.m3u8)</source>
         <translation>Unencoded Video(.m3u8)</translation>
     </message>
     <message>
-        <location filename="../metadata/worker.py" line="34"/>
+        <location filename="../metadata/worker.py" line="44"/>
+        <location filename="../metadata/worker.py" line="62"/>
         <source>Failed to get DASH manifest</source>
         <translation>Failed to get DASH manifest</translation>
     </message>
@@ -123,106 +126,116 @@
 <context>
     <name>SettingDialog</name>
     <message>
-        <location filename="../config/dialog.py" line="16"/>
+        <location filename="../config/dialog.py" line="17"/>
         <source>Settings</source>
         <translation>Settings</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="44"/>
+        <location filename="../config/dialog.py" line="45"/>
         <source>Help</source>
         <translation>Help</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="50"/>
+        <location filename="../config/dialog.py" line="51"/>
         <source>Threads</source>
         <translation>Threads</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="52"/>
+        <location filename="../config/dialog.py" line="53"/>
         <source>Speed Test Start</source>
         <translation>Speed Test Start</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="57"/>
+        <location filename="../config/dialog.py" line="58"/>
         <source>none</source>
         <translation>none</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="58"/>
+        <location filename="../config/dialog.py" line="59"/>
         <source>sleep</source>
         <translation>sleep</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="59"/>
+        <location filename="../config/dialog.py" line="60"/>
         <source>shutdown</source>
         <translation>shutdown</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="65"/>
+        <location filename="../config/dialog.py" line="66"/>
         <source>After download complete</source>
         <translation>After download complete</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="77"/>
+        <location filename="../config/dialog.py" line="78"/>
         <source>Language</source>
         <translation>Language</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="79"/>
+        <location filename="../config/dialog.py" line="80"/>
+        <source>Open</source>
+        <translation>Open</translation>
+    </message>
+    <message>
+        <location filename="../config/dialog.py" line="82"/>
+        <source>Logs Folder</source>
+        <translation>Logs Folder</translation>
+    </message>
+    <message>
+        <location filename="../config/dialog.py" line="84"/>
         <source>Apply</source>
         <translation>Apply</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="96"/>
+        <location filename="../config/dialog.py" line="101"/>
         <source>How to get a Chzzk cookie&lt;br&gt;1. Log in to &lt;a href=&apos;{}&apos;&gt;Chzzk&lt;/a&gt;.&lt;br&gt;2. Press F12 to open the developer tool. &lt;br&gt;3. Click Cookies &gt; https://chzzk.naver.com on the Application tab. &lt;br&gt;4. Add the values of &apos;NID_AUT&apos; and &apos;NID_SES&apos;.</source>
         <translation>How to get a Chzzk cookie&lt;br&gt;1. Log in to &lt;a href=&apos;{}&apos;&gt;Chzzk&lt;/a&gt;.&lt;br&gt;2. Press F12 to open the developer tool. &lt;br&gt;3. Click Cookies &gt; https://chzzk.naver.com on the Application tab. &lt;br&gt;4. Add the values of &apos;NID_AUT&apos; and &apos;NID_SES&apos;.</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="97"/>
+        <location filename="../config/dialog.py" line="102"/>
         <source>Helper</source>
         <translation>Helper</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="105"/>
+        <location filename="../config/dialog.py" line="110"/>
         <source>Testing...</source>
         <translation>Testing...</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="116"/>
+        <location filename="../config/dialog.py" line="121"/>
         <source>Download is in progress. Please stop the download and try again.</source>
         <translation>Download is in progress. Please stop the download and try again.</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="116"/>
+        <location filename="../config/dialog.py" line="121"/>
         <source>Warning</source>
         <translation>Warning</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="123"/>
-        <source>Download speed: {} MB/s
+        <location filename="../config/dialog.py" line="128"/>
+        <source>Download speed: {:.2f} MB/s
 Thread count: {}</source>
-        <translation>Download speed: {} MB/s
-        Thread count: {}</translation>
+        <translation>Download speed: {:.2f} MB/s
+Thread count: {}</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="128"/>
+        <location filename="../config/dialog.py" line="133"/>
         <source>Error</source>
         <translation>Error</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="128"/>
+        <location filename="../config/dialog.py" line="133"/>
         <source>Error occurred during test:
 {}</source>
         <translation>Error occurred during test:
         {}</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="159"/>
+        <location filename="../config/dialog.py" line="167"/>
         <source>Testing</source>
         <translation>Testing</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="160"/>
+        <location filename="../config/dialog.py" line="168"/>
         <source>Test is in progress.</source>
         <translation>Test is in progress.</translation>
     </message>

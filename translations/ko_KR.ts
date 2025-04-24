@@ -4,8 +4,8 @@
 <context>
     <name>DownloadThread</name>
     <message>
-        <location filename="../download/download.py" line="86"/>
-        <location filename="../download/download.py" line="174"/>
+        <location filename="../download/download.py" line="90"/>
+        <location filename="../download/download.py" line="180"/>
         <source>Download failed</source>
         <translation>다운로드 실패</translation>
     </message>
@@ -13,7 +13,7 @@
 <context>
     <name>MetadataItem</name>
     <message>
-        <location filename="../metadata/data.py" line="35"/>
+        <location filename="../metadata/data.py" line="37"/>
         <source>Download waiting</source>
         <translation>다운로드 대기</translation>
     </message>
@@ -66,7 +66,7 @@
         <translation>폴더 열기</translation>
     </message>
     <message>
-        <location filename="../metadata/widget.py" line="253"/>
+        <location filename="../metadata/widget.py" line="264"/>
         <source>Download paused</source>
         <translation>다운로드 정지</translation>
     </message>
@@ -87,12 +87,12 @@
 <context>
     <name>MetadataManager</name>
     <message>
-        <location filename="../metadata/manager.py" line="97"/>
+        <location filename="../metadata/manager.py" line="95"/>
         <source>Invalid file path</source>
         <translation>유효하지 않은 파일 경로</translation>
     </message>
     <message>
-        <location filename="../metadata/manager.py" line="100"/>
+        <location filename="../metadata/manager.py" line="98"/>
         <source>Error occurred: {e}</source>
         <translation>오류 발생: {e}</translation>
     </message>
@@ -105,17 +105,20 @@
         <translation>VOD URL이 올바르지 않습니다</translation>
     </message>
     <message>
-        <location filename="../metadata/worker.py" line="26"/>
+        <location filename="../metadata/worker.py" line="36"/>
+        <location filename="../metadata/worker.py" line="59"/>
         <source>Invalid cookies value</source>
         <translation>쿠키가 올바르지 않습니다</translation>
     </message>
     <message>
-        <location filename="../metadata/worker.py" line="29"/>
+        <location filename="../metadata/worker.py" line="39"/>
+        <location filename="../metadata/worker.py" line="54"/>
         <source>Unencoded Video(.m3u8)</source>
         <translation>비디오가 인코딩되지 않았습니다(.m3u8)</translation>
     </message>
     <message>
-        <location filename="../metadata/worker.py" line="34"/>
+        <location filename="../metadata/worker.py" line="44"/>
+        <location filename="../metadata/worker.py" line="62"/>
         <source>Failed to get DASH manifest</source>
         <translation>DASH 매니페스트를 가져오는데 실패했습니다</translation>
     </message>
@@ -123,106 +126,116 @@
 <context>
     <name>SettingDialog</name>
     <message>
-        <location filename="../config/dialog.py" line="16"/>
+        <location filename="../config/dialog.py" line="17"/>
         <source>Settings</source>
         <translation>설정</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="44"/>
+        <location filename="../config/dialog.py" line="45"/>
         <source>Help</source>
         <translation>도움말</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="50"/>
+        <location filename="../config/dialog.py" line="51"/>
         <source>Threads</source>
         <translation>스레드</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="52"/>
+        <location filename="../config/dialog.py" line="53"/>
         <source>Speed Test Start</source>
         <translation>속도 테스트 시작</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="57"/>
+        <location filename="../config/dialog.py" line="58"/>
         <source>none</source>
         <translation>없음</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="58"/>
+        <location filename="../config/dialog.py" line="59"/>
         <source>sleep</source>
         <translation>절전</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="59"/>
+        <location filename="../config/dialog.py" line="60"/>
         <source>shutdown</source>
         <translation>시스템 종료</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="65"/>
+        <location filename="../config/dialog.py" line="66"/>
         <source>After download complete</source>
         <translation>다운로드 완료 후</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="77"/>
+        <location filename="../config/dialog.py" line="78"/>
         <source>Language</source>
         <translation>언어</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="79"/>
+        <location filename="../config/dialog.py" line="80"/>
+        <source>Open</source>
+        <translation>열기</translation>
+    </message>
+    <message>
+        <location filename="../config/dialog.py" line="82"/>
+        <source>Logs Folder</source>
+        <translation>로그 폴더</translation>
+    </message>
+    <message>
+        <location filename="../config/dialog.py" line="84"/>
         <source>Apply</source>
         <translation>적용</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="96"/>
+        <location filename="../config/dialog.py" line="101"/>
         <source>How to get a Chzzk cookie&lt;br&gt;1. Log in to &lt;a href=&apos;{}&apos;&gt;Chzzk&lt;/a&gt;.&lt;br&gt;2. Press F12 to open the developer tool. &lt;br&gt;3. Click Cookies &gt; https://chzzk.naver.com on the Application tab. &lt;br&gt;4. Add the values of &apos;NID_AUT&apos; and &apos;NID_SES&apos;.</source>
         <translation>치지직 쿠키 얻는 방법&lt;br&gt;&lt;br&gt;1. &lt;a href=&apos;{}&apos;&gt;치지직&lt;/a&gt;에 로그인 하세요. &lt;br&gt;2. F12를 눌러 개발자 도구를 열어주세요. &lt;br&gt;3. Application 탭에서 Cookies &gt; https://chzzk.naver.com을 클릭하세요. &lt;br&gt;4. &apos;NID_AUT&apos;, &apos;NID_SES&apos; Name의 Value 값을 붙여 넣으세요.</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="97"/>
+        <location filename="../config/dialog.py" line="102"/>
         <source>Helper</source>
         <translation>도움말</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="105"/>
+        <location filename="../config/dialog.py" line="110"/>
         <source>Testing...</source>
         <translation>테스트 진행 중...</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="116"/>
+        <location filename="../config/dialog.py" line="121"/>
         <source>Download is in progress. Please stop the download and try again.</source>
         <translation>현재 다운로드 중입니다. 다운로드를 멈추고 시도하세요.</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="116"/>
+        <location filename="../config/dialog.py" line="121"/>
         <source>Warning</source>
         <translation>경고</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="123"/>
-        <source>Download speed: {} MB/s
+        <location filename="../config/dialog.py" line="128"/>
+        <source>Download speed: {:.2f} MB/s
 Thread count: {}</source>
-        <translation>다운로드 속도: {} MB/s
-        스레드 수: {}</translation>
+        <translation>다운로드 속도: {:.2f} MB/s
+스레드 수: {}</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="128"/>
+        <location filename="../config/dialog.py" line="133"/>
         <source>Error</source>
         <translation>오류</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="128"/>
+        <location filename="../config/dialog.py" line="133"/>
         <source>Error occurred during test:
 {}</source>
         <translation>테스트 중 오류 발생:
         {}</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="159"/>
+        <location filename="../config/dialog.py" line="167"/>
         <source>Testing</source>
         <translation>테스트 중</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="160"/>
+        <location filename="../config/dialog.py" line="168"/>
         <source>Test is in progress.</source>
         <translation>테스트가 진행 중입니다.</translation>
     </message>

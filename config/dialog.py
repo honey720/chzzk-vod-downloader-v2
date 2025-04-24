@@ -125,7 +125,7 @@ class SettingDialog(QDialog):
         threads = int(download_speed // 8)
         self.initial_threads = max(threads, 4)
         self.threads.setText(
-            self.tr("Download speed: {} MB/s\nThread count: {}").format(download_speed, self.initial_threads)
+            self.tr("Download speed: {:.2f} MB/s\nThread count: {}").format(download_speed, self.initial_threads)
         )
 
     def on_error(self, error_message):
