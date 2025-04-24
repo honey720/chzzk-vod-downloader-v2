@@ -4,8 +4,8 @@
 <context>
     <name>DownloadThread</name>
     <message>
-        <location filename="../download/download.py" line="90"/>
-        <location filename="../download/download.py" line="180"/>
+        <location filename="../download/download.py" line="89"/>
+        <location filename="../download/download.py" line="179"/>
         <source>Download failed</source>
         <translation>다운로드 실패</translation>
     </message>
@@ -161,81 +161,81 @@
         <translation>시스템 종료</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="66"/>
+        <location filename="../config/dialog.py" line="67"/>
         <source>After download complete</source>
         <translation>다운로드 완료 후</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="78"/>
+        <location filename="../config/dialog.py" line="79"/>
         <source>Language</source>
         <translation>언어</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="80"/>
+        <location filename="../config/dialog.py" line="81"/>
         <source>Open</source>
         <translation>열기</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="82"/>
+        <location filename="../config/dialog.py" line="83"/>
         <source>Logs Folder</source>
         <translation>로그 폴더</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="84"/>
+        <location filename="../config/dialog.py" line="85"/>
         <source>Apply</source>
         <translation>적용</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="101"/>
+        <location filename="../config/dialog.py" line="102"/>
         <source>How to get a Chzzk cookie&lt;br&gt;1. Log in to &lt;a href=&apos;{}&apos;&gt;Chzzk&lt;/a&gt;.&lt;br&gt;2. Press F12 to open the developer tool. &lt;br&gt;3. Click Cookies &gt; https://chzzk.naver.com on the Application tab. &lt;br&gt;4. Add the values of &apos;NID_AUT&apos; and &apos;NID_SES&apos;.</source>
         <translation>치지직 쿠키 얻는 방법&lt;br&gt;&lt;br&gt;1. &lt;a href=&apos;{}&apos;&gt;치지직&lt;/a&gt;에 로그인 하세요. &lt;br&gt;2. F12를 눌러 개발자 도구를 열어주세요. &lt;br&gt;3. Application 탭에서 Cookies &gt; https://chzzk.naver.com을 클릭하세요. &lt;br&gt;4. &apos;NID_AUT&apos;, &apos;NID_SES&apos; Name의 Value 값을 붙여 넣으세요.</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="102"/>
+        <location filename="../config/dialog.py" line="103"/>
         <source>Helper</source>
         <translation>도움말</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="110"/>
+        <location filename="../config/dialog.py" line="111"/>
         <source>Testing...</source>
         <translation>테스트 진행 중...</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="121"/>
+        <location filename="../config/dialog.py" line="122"/>
         <source>Download is in progress. Please stop the download and try again.</source>
         <translation>현재 다운로드 중입니다. 다운로드를 멈추고 시도하세요.</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="121"/>
+        <location filename="../config/dialog.py" line="122"/>
         <source>Warning</source>
         <translation>경고</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="128"/>
+        <location filename="../config/dialog.py" line="129"/>
         <source>Download speed: {:.2f} MB/s
 Thread count: {}</source>
         <translation>다운로드 속도: {:.2f} MB/s
 스레드 수: {}</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="133"/>
+        <location filename="../config/dialog.py" line="134"/>
         <source>Error</source>
         <translation>오류</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="133"/>
+        <location filename="../config/dialog.py" line="134"/>
         <source>Error occurred during test:
 {}</source>
         <translation>테스트 중 오류 발생:
         {}</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="167"/>
+        <location filename="../config/dialog.py" line="168"/>
         <source>Testing</source>
         <translation>테스트 중</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="168"/>
+        <location filename="../config/dialog.py" line="169"/>
         <source>Test is in progress.</source>
         <translation>테스트가 진행 중입니다.</translation>
     </message>

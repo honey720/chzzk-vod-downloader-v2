@@ -4,8 +4,8 @@
 <context>
     <name>DownloadThread</name>
     <message>
-        <location filename="../download/download.py" line="90"/>
-        <location filename="../download/download.py" line="180"/>
+        <location filename="../download/download.py" line="89"/>
+        <location filename="../download/download.py" line="179"/>
         <source>Download failed</source>
         <translation>Download failed</translation>
     </message>
@@ -161,81 +161,81 @@
         <translation>shutdown</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="66"/>
+        <location filename="../config/dialog.py" line="67"/>
         <source>After download complete</source>
         <translation>After download complete</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="78"/>
+        <location filename="../config/dialog.py" line="79"/>
         <source>Language</source>
         <translation>Language</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="80"/>
+        <location filename="../config/dialog.py" line="81"/>
         <source>Open</source>
         <translation>Open</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="82"/>
+        <location filename="../config/dialog.py" line="83"/>
         <source>Logs Folder</source>
         <translation>Logs Folder</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="84"/>
+        <location filename="../config/dialog.py" line="85"/>
         <source>Apply</source>
         <translation>Apply</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="101"/>
+        <location filename="../config/dialog.py" line="102"/>
         <source>How to get a Chzzk cookie&lt;br&gt;1. Log in to &lt;a href=&apos;{}&apos;&gt;Chzzk&lt;/a&gt;.&lt;br&gt;2. Press F12 to open the developer tool. &lt;br&gt;3. Click Cookies &gt; https://chzzk.naver.com on the Application tab. &lt;br&gt;4. Add the values of &apos;NID_AUT&apos; and &apos;NID_SES&apos;.</source>
         <translation>How to get a Chzzk cookie&lt;br&gt;1. Log in to &lt;a href=&apos;{}&apos;&gt;Chzzk&lt;/a&gt;.&lt;br&gt;2. Press F12 to open the developer tool. &lt;br&gt;3. Click Cookies &gt; https://chzzk.naver.com on the Application tab. &lt;br&gt;4. Add the values of &apos;NID_AUT&apos; and &apos;NID_SES&apos;.</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="102"/>
+        <location filename="../config/dialog.py" line="103"/>
         <source>Helper</source>
         <translation>Helper</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="110"/>
+        <location filename="../config/dialog.py" line="111"/>
         <source>Testing...</source>
         <translation>Testing...</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="121"/>
+        <location filename="../config/dialog.py" line="122"/>
         <source>Download is in progress. Please stop the download and try again.</source>
         <translation>Download is in progress. Please stop the download and try again.</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="121"/>
+        <location filename="../config/dialog.py" line="122"/>
         <source>Warning</source>
         <translation>Warning</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="128"/>
+        <location filename="../config/dialog.py" line="129"/>
         <source>Download speed: {:.2f} MB/s
 Thread count: {}</source>
         <translation>Download speed: {:.2f} MB/s
 Thread count: {}</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="133"/>
+        <location filename="../config/dialog.py" line="134"/>
         <source>Error</source>
         <translation>Error</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="133"/>
+        <location filename="../config/dialog.py" line="134"/>
         <source>Error occurred during test:
 {}</source>
         <translation>Error occurred during test:
         {}</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="167"/>
+        <location filename="../config/dialog.py" line="168"/>
         <source>Testing</source>
         <translation>Testing</translation>
     </message>
     <message>
-        <location filename="../config/dialog.py" line="168"/>
+        <location filename="../config/dialog.py" line="169"/>
         <source>Test is in progress.</source>
         <translation>Test is in progress.</translation>
     </message>
