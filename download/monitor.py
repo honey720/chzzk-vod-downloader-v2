@@ -1,4 +1,5 @@
 import time as t
+import threading
 
 from PySide6.QtCore import QThread, Signal
 from download.task import DownloadTask
@@ -10,10 +11,12 @@ class MonitorThread(QThread):
     VOD 파일을 multi-thread로 다운로드하는 작업 스레드 클래스
     """
     progress = Signal(str, str, str, int)
+
     def __init__(self, task: DownloadTask):
         super().__init__()
         self.task = task
         self.data = self.task.data
+        self.logger = self.task.logger # 로거 초기화
         self.adjust_count = 0
 
     def run(self):
@@ -21,6 +24,7 @@ class MonitorThread(QThread):
         스레드가 시작될 때 자동으로 호출되는 메서드.
         실제 다운로드 파이프라인이 여기서 진행된다.
         """
+        threading.current_thread().name = "MonitorThread"  # 스레드 시작 시 이름 재설정
         t.sleep(1)
         while self.task.state in [DownloadState.RUNNING, DownloadState.PAUSED]:
             if not self.data._pause_event.is_set():
@@ -60,9 +64,11 @@ class MonitorThread(QThread):
         
         if self.adjust_count > 1:
             self.data.adjust_threads = min(self.data.max_threads, self.data.adjust_threads + 4)
+            self.logger.log_thread_adjust(self.data.adjust_threads, self.data.speed_mb) # 스레드 조정 로그
             self.adjust_count = 0
         elif self.adjust_count < -4:
             self.data.adjust_threads = max(1, self.data.adjust_threads // 2)
+            self.logger.log_thread_adjust(self.data.adjust_threads, self.data.speed_mb) # 스레드 조정 로그
             self.adjust_count = 0
 
     def measure_speed(self):
@@ -72,10 +78,8 @@ class MonitorThread(QThread):
 
             # MB/s로 변환
             self.data.speed_mb = speed / (1024*1024)
-            # print(f"활성 스레드 수: {self.data.future_count}")
-            # print(f"Download Speed: {self.data.speed_mb:.1f} MB/s")
-            # print(f"Average Threads Speed: {self.data.speed_mb / self.data.future_count if self.data.future_count > 0 else 0:.2f} MB/s")
-            # print(f"")
+            avg_speed = self.data.speed_mb / self.data.future_count if self.data.future_count > 0 else 0
+            self.logger.log_thread_debug(self.data.future_count, self.data.speed_mb, avg_speed)
 
     def update_progress(self):
         """

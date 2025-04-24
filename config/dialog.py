@@ -1,3 +1,4 @@
+import os
 import config.config as config
 from config.worker import SpeedTestWorker
 from PySide6.QtWidgets import QDialog, QFormLayout, QLineEdit, QPushButton, QMessageBox, QLabel, QComboBox
@@ -76,6 +77,10 @@ class SettingDialog(QDialog):
 
         layout.addRow(self.tr("Language"), self.language)
 
+        self.logsFolder = QPushButton(self.tr("Open"))
+        self.logsFolder.clicked.connect(self.openLogsFolder)
+        layout.addRow(self.tr("Logs Folder"), self.logsFolder)
+
         self.closeButton = QPushButton(self.tr("Apply"))
         self.closeButton.clicked.connect(self.onApply)
         layout.addWidget(self.closeButton)
@@ -131,6 +136,9 @@ class SettingDialog(QDialog):
         # 테스트가 완료되면 버튼을 다시 활성화
         self.testButton.setEnabled(True)
         self.closeButton.setEnabled(True)
+
+    def openLogsFolder(self):
+        os.startfile(os.path.join(config.CONFIG_DIR, "logs"))
 
     def getCookies(self):
         """

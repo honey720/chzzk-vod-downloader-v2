@@ -4,6 +4,7 @@ from .monitor import MonitorThread
 from download.data import DownloadData
 from metadata.data import MetadataItem
 from download.task import DownloadTask
+from download.logger import DownloadLogger
 
 class DownloadManager(QObject):
     """
@@ -13,7 +14,7 @@ class DownloadManager(QObject):
 
     paused = Signal(object)
     resumed = Signal(object)
-    stopped = Signal(object, str)
+    stopped = Signal(object)
     finished = Signal(object, str)
 
     def __init__(self):
@@ -23,13 +24,15 @@ class DownloadManager(QObject):
         self.task = None
         self.data = None
         self.item = None
+        self.logger = None
 
     # ============ 일시정지/중지 메서드 ============
 
     def start(self, item:MetadataItem):
         self.data = DownloadData(item.base_url, item.output_path, item.resolution)
         self.item = item
-        self.task = DownloadTask(self.data, self.item)
+        self.logger = DownloadLogger()
+        self.task = DownloadTask(self.data, self.item, self.logger)
         self.d_thread = DownloadThread(self.task)
         self.m_thread = MonitorThread(self.task)
         
@@ -47,6 +50,7 @@ class DownloadManager(QObject):
             self.m_thread.wait()
         self.m_thread = None
         self.task = None
+        self.logger = None
 
     def connectSignal(self):
         self.d_thread.completed.connect(self.finish)
@@ -66,7 +70,7 @@ class DownloadManager(QObject):
 
     def stop(self, message: str):
         self.task.stop(message)
-        self.stopped.emit(self.item, message)
+        self.stopped.emit(self.item)
 
     def finish(self):
         self.task.finish()

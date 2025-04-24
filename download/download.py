@@ -20,6 +20,7 @@ class DownloadThread(QThread):
         self.s = self.task.data
         self.future_dict = {}
         self.lock = threading.Lock()
+        self.logger = self.task.logger
 
     def run(self):
         """
@@ -27,6 +28,7 @@ class DownloadThread(QThread):
         실제 다운로드 파이프라인이 여기서 진행된다.
         """
         try:
+            threading.current_thread().name = "DownloadThread"  # 스레드 시작 시 이름 재설정
             self.s.start_time = tm.time()
             total_size = self.s.total_size = self._get_total_size()
 
@@ -38,15 +40,16 @@ class DownloadThread(QThread):
                 (i * part_size, min((i + 1) * part_size - 1, total_size - 1))
                 for i in range((total_size + part_size - 1) // part_size)
             ]
-            self.s.total_ranges = len(ranges)
+            self.s.max_threads = self.s.total_ranges = len(ranges)
+            self.s.adjust_threads = min(self.s.adjust_threads, self.s.max_threads)
             self.s.threads_progress = [0] * self.s.total_ranges
-            self.s.max_threads = len(ranges)
+            self.logger.log_download_start(total_size, part_size, self.s.total_ranges, self.s.adjust_threads)
 
             # 빈 파일 생성(사이즈: 0)
             with open(self.s.output_path, 'wb'):
                 pass
 
-            with ThreadPoolExecutor(max_workers=self.s.max_threads) as executor:
+            with ThreadPoolExecutor(max_workers=self.s.max_threads, thread_name_prefix="DownloadWorker") as executor:
                 self.s.remaining_ranges = self._get_remaining_ranges(ranges)
                 self.s.future_count = 0
 
@@ -60,6 +63,7 @@ class DownloadThread(QThread):
                                 if part_num not in self.future_dict:
                                     start, end = self.s.remaining_ranges.pop(0)
                                     self.s.future_count += 1
+                                    self.logger.log_thread_start(part_num, start, end)
                                     future = executor.submit(
                                         self._download_part,
                                         start, end, part_num, total_size
@@ -76,11 +80,15 @@ class DownloadThread(QThread):
 
                 if self.task.state == DownloadState.RUNNING:
                     self.s.end_time = tm.time()
+                    total_time = self.s.end_time - self.s.start_time
+                    self.logger.log_download_complete(total_time)
+                    self.logger.save_and_close()
                     self.completed.emit()
 
         except requests.RequestException as e:
             self.stopped.emit(self.tr("Download failed"))
-            print(e)
+            self.logger.log_error("Download failed", e)
+            self.logger.save_and_close()
 
     # ============ 다운로드 동작 관련 메서드들 ============
 
@@ -134,12 +142,13 @@ class DownloadThread(QThread):
                     self.s.completed_threads += 1
                     self.s.completed_progress += downloaded_size
                     self.s.threads_progress[part_num] = 0
+                self.logger.log_thread_complete(part_num, downloaded_size)
                 return part_num
 
             except requests.RequestException as e:
                 with self.lock:
                     self._download_failed_callback(start, end, part_num)
-                print(e)
+                self.logger.log_error(f"Part {part_num} download failed", e)
                 return part_num
 
     def _check_speed_and_update_progress(self, part_num, downloaded_size, total_size, speed_kb_s):
@@ -168,7 +177,7 @@ class DownloadThread(QThread):
         except Exception as e:
             # 일부 스레드가 오류로 중단된 경우
             self.stopped.emit(self.tr("Download failed"))
-            print(e)
+            self.logger.log_error("Thread failed", e)
 
     def _download_failed_callback(self, start, end, part_num):
         """
@@ -185,6 +194,7 @@ class DownloadThread(QThread):
         self.s.restart_threads += 1
         self.s.threads_progress[part_num] = 0
         self.s.remaining_ranges.append((start, end))
+        self.logger.warning(f"Part {part_num} stopped due to slow speed, will retry")
 
     # ============ 유틸 메서드 ============
 

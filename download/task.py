@@ -1,16 +1,19 @@
 from download.data import DownloadData
 from metadata.data import MetadataItem
+from download.logger import DownloadLogger
 from download.state import DownloadState
 
 class DownloadTask:
-    def __init__(self, data: DownloadData, item: MetadataItem):
+    def __init__(self, data: DownloadData, item: MetadataItem, logger: DownloadLogger):
         self.data = data
         self.item = item
         self.state = DownloadState.WAITING  # 초기 상태로 설정
+        self.logger = logger
 
     def start(self):
         self.state = DownloadState.RUNNING
         self.item.setDownloadState(self.state)
+        self.logger.log_download_info(self.item)
         # 필요 시, metadata_item에 상태를 전달하여 업데이트
 
     def pause(self):

@@ -27,8 +27,8 @@ DEFAULT_CONFIG = {
 # 설정 로드 함수
 def load_config():
 
-    if not os.path.exists(CONFIG_DIR):
-        os.makedirs(CONFIG_DIR)  # 디렉토리 생성
+    os.makedirs(CONFIG_DIR, exist_ok=True)  # 디렉토리 생성
+    os.makedirs(os.path.join(CONFIG_DIR, "logs"), exist_ok=True)  # logs 디렉토리 생성
 
     if not os.path.exists(CONFIG_FILE):
         save_config(DEFAULT_CONFIG)  # 파일 생성
