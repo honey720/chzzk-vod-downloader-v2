@@ -118,7 +118,7 @@
     </message>
     <message>
         <location filename="../metadata/worker.py" line="44"/>
-        <location filename="../metadata/worker.py" line="62"/>
+        <location filename="../metadata/worker.py" line="63"/>
         <source>Failed to get DASH manifest</source>
         <translation>DASH 매니페스트를 가져오는데 실패했습니다</translation>
     </message>
