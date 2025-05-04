@@ -48,16 +48,17 @@ class MetadataWorker(QObject):
             
 
     def fetchClip(self, clip_no: str):
-        video_id, adult, vodStatus, metadata = NetworkManager.get_clip_info(clip_no, self.cookies)
+        video_id, vodStatus, metadata = NetworkManager.get_clip_info(clip_no, self.cookies)
         if vodStatus == 'NONE':
             errorMessage = self.tr("Unencoded Video(.m3u8)")
             raise ValueError(f"{self.vod_url}\n{errorMessage}")
         
-        unique_reps, resolution, base_url = NetworkManager.get_clip_manifest(video_id, self.cookies)
-        if adult and not unique_reps:
+        unique_reps, resolution, base_url, error = NetworkManager.get_clip_manifest(video_id, self.cookies)
+        if error and error.get("errorCode") == "ADULT_AUTH_REQUIRED":
             errorMessage = self.tr("Invalid cookies value")
             raise ValueError(f"{self.vod_url}\n{errorMessage}")
-        elif not unique_reps:
+        
+        if not unique_reps:
             errorMessage = self.tr("Failed to get DASH manifest")
             raise ValueError(f"{self.vod_url}\n{errorMessage}")
         

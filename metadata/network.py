@@ -96,7 +96,6 @@ class NetworkManager:
 
         content = response.json().get('content', {})
         video_id = content.get('videoId')
-        adult = content.get('adult')
         vodStatus = content.get('vodStatus')
 
         metadata = {
@@ -108,7 +107,7 @@ class NetworkManager:
             'createdDate': content.get('createdDate', 'Unknown Date'),
             'duration': content.get('duration', 0),
         }
-        return video_id, adult, vodStatus, metadata
+        return video_id, vodStatus, metadata
 
     @staticmethod
     def get_clip_manifest(clip_id: str, cookies: dict):
@@ -126,7 +125,12 @@ class NetworkManager:
 
         #오류현상 예외처리
 
-        video_list = data['card']['content']['vod']['playback']['videos']['list']
+        content = data['card']['content']
+        if 'error' in content:
+            error = content['error']
+            return None, None, None, error
+        
+        video_list = content['vod']['playback']['videos']['list']
 
         for video in video_list:
             encoding = video.get("encodingOption", {})
@@ -142,4 +146,4 @@ class NetworkManager:
         auto_resolution = sorted_resolutions[-1][0]
         auto_base_url = sorted_resolutions[-1][1]
 
-        return sorted_resolutions, auto_resolution, auto_base_url
+        return sorted_resolutions, auto_resolution, auto_base_url, None
