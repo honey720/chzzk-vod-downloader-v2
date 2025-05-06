@@ -161,7 +161,7 @@ class VodDownloader(QWidget):
         self.downloadButton.clicked.connect(self.onDownloadPause)
         self.stopButton.clicked.connect(self.onStop)
 
-    def fetchMetadatas(self, urls: str):
+    def fetchContents(self, urls: str):
         # URL 목록을 미리 준비합니다.
         self.urlsToFetch = [url.strip() for url in urls.splitlines() if url.strip() != '']
         self.currentUrlIndex = 0
@@ -204,7 +204,7 @@ class VodDownloader(QWidget):
             return
         # TODO:  코드 수정 및 테스트 예정
 
-        self.contentManager.fetchMetadata(vod_url, cookies, downloadPath)
+        self.contentManager.fetchContent(vod_url, cookies, downloadPath)
 
         self.urlInput.clear()
 
@@ -350,8 +350,8 @@ class VodDownloader(QWidget):
         self.downloadManager.finished.connect(self._onFinished)
         # TODO 동시 다운로드 기능 추가시 로직 수정 필요
 
-        self.contentManager.metadataError.connect(self.showErrorDialog)
-        self.contentManager.fetchRequested.connect(self.fetchMetadatas)
+        self.contentManager.contentError.connect(self.showErrorDialog)
+        self.contentManager.fetchRequested.connect(self.fetchContents)
         self.contentManager.deleteItemRequested.connect(self.onDeleteItem)
         self.contentManager.insertItemRequested.connect(self.onInsertItem)
         self.contentManager.downloadRequested.connect(self.startDownload)

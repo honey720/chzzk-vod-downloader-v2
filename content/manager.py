@@ -18,7 +18,7 @@ class ContentManager(QWidget):
     finishedRequested = Signal(object)
     finishedAllRequested = Signal()
     fetchRequested = Signal(str)
-    metadataError = Signal(str)  # ✅ UI에서 오류를 처리할 수 있도록 signal 추가
+    contentError = Signal(str)  # ✅ UI에서 오류를 처리할 수 있도록 signal 추가
 
     def __init__(self, parent = None):
         super().__init__(parent)
@@ -45,7 +45,7 @@ class ContentManager(QWidget):
     def fetchReuest(self, urls):
         self.fetchRequested.emit(urls)
 
-    def fetchMetadata(self, vod_url: str, cookies: dict, downloadPath: str) -> None:
+    def fetchContent(self, vod_url: str, cookies: dict, downloadPath: str) -> None:
         worker = ContentWorker(vod_url, cookies, downloadPath)
 
         # 시그널/슬롯 연결
@@ -62,7 +62,7 @@ class ContentManager(QWidget):
         self.addItem(vod_url, metadata, unique_reps, resolution, base_url, downloadPath, content_type)
 
     def onWorkerError(self, error_message):
-        self.metadataError.emit(error_message)
+        self.contentError.emit(error_message)
 
     def addItem(self, vod_url, metadata, unique_reps, resolution, base_url, downloadPath, content_type):
         item = ContentItem(vod_url, metadata, unique_reps, resolution, base_url, downloadPath, content_type)

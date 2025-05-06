@@ -11,4 +11,4 @@ class ContentListDelegate(QStyledItemDelegate):
 
     def sizeHint(self, option, index):
         #✅ 아이템 크기를 위젯 크기에 맞게 조정
-        return QSize(450, 120)  # ✅ `MetadataItemWidget`과 동일한 크기 설정
+        return QSize(450, 120)  # ✅ `ContentItemWidget`과 동일한 크기 설정

@@ -14,13 +14,13 @@ class DownloadTask:
         self.state = DownloadState.RUNNING
         self.item.setDownloadState(self.state)
         self.logger.log_download_info(self.item)
-        # 필요 시, metadata_item에 상태를 전달하여 업데이트
+        # 필요 시, ContentItem에 상태를 전달하여 업데이트
 
     def pause(self):
         self.state = DownloadState.PAUSED
         self.data._pause_event.clear() # 대기 상태로 들어감
         self.item.setDownloadState(self.state)
-        # metadata_item에 상태 전달
+        # ContentItem에 상태 전달
 
     def resume(self):
         self.state = DownloadState.RUNNING
