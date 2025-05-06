@@ -2,20 +2,20 @@ import os, requests, threading
 from PySide6.QtWidgets import QWidget, QFrame, QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit, QSizePolicy, QMessageBox
 from PySide6.QtGui import QPixmap, QDesktopServices
 from PySide6.QtCore import Qt, QSize, Signal, QUrl, QDir, QProcess
-from metadata.data import MetadataItem
+from content.data import ContentItem
 from download.state import DownloadState
 from io import BytesIO
 import platform
 
-class MetadataItemWidget(QWidget):
+class ContentItemWidget(QWidget):
     """✅ 다운로드 메타데이터 정보를 표시하는 커스텀 위젯"""
 
     textChanged = Signal(str)
     deleteRequest = Signal()
 
-    def __init__(self, item: MetadataItem, index=0, parent=None):
+    def __init__(self, item: ContentItem, index=0, parent=None):
         super().__init__(parent)
-        self.item = item  # ✅ MetadataItem 저장
+        self.item = item  # ✅ ContentItem 저장
         self.index = index  # ✅ 인덱스 저장
         self.isEditing = False
 
@@ -241,7 +241,7 @@ class MetadataItemWidget(QWidget):
         except Exception as e:
             print(f"Error loading image from {url}: {e}")
 
-    def setData(self, item: MetadataItem, index: int):
+    def setData(self, item: ContentItem, index: int):
         """✅ 모델 데이터를 위젯에 반영"""
         self.item = item
         self.index = index
@@ -270,9 +270,9 @@ class MetadataItemWidget(QWidget):
             self.size_label.setText(f"  {self.setSize(item.download_size)} / {item.total_size}")
             self.progress_label.setText(f"  {item.download_progress}% ")
 
-    def getData(self) -> MetadataItem:
-        """✅ 위젯에서 입력된 데이터를 가져와서 MetadataItem으로 반환"""
-        return MetadataItem(
+    def getData(self) -> ContentItem:
+        """✅ 위젯에서 입력된 데이터를 가져와서 ContentItem으로 반환"""
+        return ContentItem(
             #index=self.item.index,
             channel_name=self.channel_label.text(),
             title=self.title_edit.text(),

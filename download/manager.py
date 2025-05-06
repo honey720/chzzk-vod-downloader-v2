@@ -2,7 +2,7 @@ from PySide6.QtCore import QObject, Signal
 from .download import DownloadThread
 from .monitor import MonitorThread
 from download.data import DownloadData
-from metadata.data import MetadataItem
+from content.data import ContentItem
 from download.task import DownloadTask
 from download.logger import DownloadLogger
 
@@ -28,7 +28,7 @@ class DownloadManager(QObject):
 
     # ============ 일시정지/중지 메서드 ============
 
-    def start(self, item:MetadataItem):
+    def start(self, item:ContentItem):
         self.data = DownloadData(item.base_url, item.output_path, item.resolution, item.content_type)
         self.item = item
         self.logger = DownloadLogger()

@@ -4,7 +4,7 @@ from PySide6.QtWidgets import QApplication, QMainWindow
 from PySide6.QtGui import QIcon
 from PySide6.QtCore import QTranslator, QLocale
 
-from downloader.main_window import VodDownloader
+from application.mainWindow import VodDownloader
 import config.config as config
 
 class main(QMainWindow):

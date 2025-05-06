@@ -1,7 +1,7 @@
 from PySide6.QtCore import QObject
 from download.state import DownloadState
 
-class MetadataItem(QObject):
+class ContentItem(QObject):
     # 메타데이터 카드 리스트 아이템 데이터(DTO)
 
     def __init__(self, vod_url, metadata, unique_reps, resolution, base_url, download_path, content_type):

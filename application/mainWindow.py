@@ -6,8 +6,8 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QFrame, QSizePolicy, QGridLa
 from PySide6.QtCore import Qt, QTimer
 
 from download.manager import DownloadManager
-from metadata.data import MetadataItem
-from metadata.manager import MetadataManager
+from content.data import ContentItem
+from content.manager import ContentManager
 from config.dialog import SettingDialog
 from download.state import DownloadState
 
@@ -18,7 +18,7 @@ class VodDownloader(QWidget):
     """
     def __init__(self):
         super().__init__()
-        self.metadataManager = MetadataManager()
+        self.contentManager = ContentManager()
         self.downloadManager = DownloadManager()
         self._connectThreadSignals()
 
@@ -110,7 +110,7 @@ class VodDownloader(QWidget):
         # ───────────────────────────────────────────
 
         # 스크롤 영역
-        self.mainLayout.addWidget(self.metadataManager)
+        self.mainLayout.addWidget(self.contentManager)
 
         # ───────────────────────────────────────────
         # 3) 추가 정보(다운로드 현황)
@@ -157,7 +157,7 @@ class VodDownloader(QWidget):
         self.fetchButton.clicked.connect(self.onFetch)
         self.downloadPathButton.clicked.connect(self.onFindPath)
         self.settingButton.clicked.connect(self.onSetting)
-        self.clearFinishedButton.clicked.connect(self.metadataManager.clrearFinishedItems)
+        self.clearFinishedButton.clicked.connect(self.contentManager.clrearFinishedItems)
         self.downloadButton.clicked.connect(self.onDownloadPause)
         self.stopButton.clicked.connect(self.onStop)
 
@@ -204,7 +204,7 @@ class VodDownloader(QWidget):
             return
         # TODO:  코드 수정 및 테스트 예정
 
-        self.metadataManager.fetchMetadata(vod_url, cookies, downloadPath)
+        self.contentManager.fetchMetadata(vod_url, cookies, downloadPath)
 
         self.urlInput.clear()
 
@@ -212,7 +212,7 @@ class VodDownloader(QWidget):
     
     def showErrorDialog(self, errorMessage):
         errorTitle = self.tr("Error")
-        errorBody = self.tr("Error occurred during metadata request:") + "\n" + errorMessage
+        errorBody = self.tr("Error occurred during content request:") + "\n" + errorMessage
         QMessageBox.critical(self, errorTitle, errorBody)
 
     def onDownloadPause(self):
@@ -227,11 +227,11 @@ class VodDownloader(QWidget):
                 self.downloadManager.resume()
                 self.downloadButton.setText(self.tr('Pause'))
         else:
-            if not self.metadataManager.findItem()[0]:
+            if not self.contentManager.findItem()[0]:
                 QMessageBox.warning(self, self.tr("Warning"), self.tr("No VODs added."))
                 return
             self.downloadButton.setText(self.tr('Pause'))
-            self.metadataManager.downloadItem()
+            self.contentManager.downloadItem()
     
     def onSetting(self):
         """
@@ -281,7 +281,7 @@ class VodDownloader(QWidget):
         self.total_downloads = row
         self.updateDownloadCountLabel()
 
-    def onDeleteItem(self, item:MetadataItem, index):
+    def onDeleteItem(self, item:ContentItem, index):
         """
         메타데이터 카드 삭제 버튼 콜백.
         """
@@ -290,7 +290,7 @@ class VodDownloader(QWidget):
         self.total_downloads = index
         self.updateDownloadCountLabel()
     
-    def onFinishedItem(self, item:MetadataItem):
+    def onFinishedItem(self, item:ContentItem):
         """
         메타데이터 카드 다운로드 완료 콜백.
         """
@@ -331,11 +331,11 @@ class VodDownloader(QWidget):
 
     # ============ 다운로드 진행 준비 및 상태 업데이트 ============
 
-    def startDownload(self, item:MetadataItem):
+    def startDownload(self, item:ContentItem):
         """
         특정 해상도에 대한 다운로드 스레드를 생성 및 시작하기 전 UI 상태 업데이트를 수행한다.
         """
-        self.metadataManager.start(item)
+        self.contentManager.start(item)
         self.downloadManager.start(item)
         self.setStopButtonEnable(True)
 
@@ -350,32 +350,32 @@ class VodDownloader(QWidget):
         self.downloadManager.finished.connect(self._onFinished)
         # TODO 동시 다운로드 기능 추가시 로직 수정 필요
 
-        self.metadataManager.metadataError.connect(self.showErrorDialog)
-        self.metadataManager.fetchRequested.connect(self.fetchMetadatas)
-        self.metadataManager.deleteItemRequested.connect(self.onDeleteItem)
-        self.metadataManager.insertItemRequested.connect(self.onInsertItem)
-        self.metadataManager.downloadRequested.connect(self.startDownload)
-        self.metadataManager.stopRequested.connect(self.onStop)
-        self.metadataManager.finishedRequested.connect(self.onFinishedItem)
-        self.metadataManager.finishedAllRequested.connect(self.onDownloadAllFinished)
+        self.contentManager.metadataError.connect(self.showErrorDialog)
+        self.contentManager.fetchRequested.connect(self.fetchMetadatas)
+        self.contentManager.deleteItemRequested.connect(self.onDeleteItem)
+        self.contentManager.insertItemRequested.connect(self.onInsertItem)
+        self.contentManager.downloadRequested.connect(self.startDownload)
+        self.contentManager.stopRequested.connect(self.onStop)
+        self.contentManager.finishedRequested.connect(self.onFinishedItem)
+        self.contentManager.finishedAllRequested.connect(self.onDownloadAllFinished)
 
     def _onProgress(self, rem, size, spd, prog, item):
         """
         progress 시그널이 발생할 때마다, 지금 다운로드 중인 item 업데이트.
         """
-        self.metadataManager.update_progress(rem, size, spd, prog, item)
+        self.contentManager.update_progress(rem, size, spd, prog, item)
 
     def _onPaused(self, item):
-        self.metadataManager.pause(item)
+        self.contentManager.pause(item)
 
     def _onResumed(self, item):
-        self.metadataManager.resume(item)
+        self.contentManager.resume(item)
 
     def _onStopped(self, item):
-        self.metadataManager.stop(item)
+        self.contentManager.stop(item)
 
     def _onFinished(self, item, download_time):
-        self.metadataManager.finish(item, download_time)
+        self.contentManager.finish(item, download_time)
 
     def updateDownloadCountLabel(self):
         """

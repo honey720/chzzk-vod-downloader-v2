@@ -2,14 +2,14 @@ import os, re, platform
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 from PySide6.QtCore import Qt, Signal, QThreadPool
-from metadata.model import MetadataListModel
-from metadata.view import MetadataListView
-from metadata.delegate import MetadataListDelegate
-from metadata.data import MetadataItem
+from content.model import ContentListModel
+from content.view import ContentListView
+from content.delegate import ContentListDelegate
+from content.data import ContentItem
 from download.state import DownloadState
-from metadata.worker import MetadataWorker
+from content.worker import ContentWorker
 
-class MetadataManager(QWidget):
+class ContentManager(QWidget):
     # 메타데이터 매니저 UI
     downloadRequested = Signal(object)
     stopRequested = Signal(object)
@@ -30,11 +30,11 @@ class MetadataManager(QWidget):
         """UI 초기화 및 View 설정"""
         self.metadataLayout = QVBoxLayout(self)
 
-        self.model = MetadataListModel()
+        self.model = ContentListModel()
         
-        self.view = MetadataListView()
+        self.view = ContentListView()
         self.view.setModel(self.model)
-        self.view.setItemDelegate(MetadataListDelegate())
+        self.view.setItemDelegate(ContentListDelegate())
 
         self.view.deleteRequest.connect(self.removeItem)
         self.view.fetchRequested.connect(self.fetchReuest)
@@ -46,7 +46,7 @@ class MetadataManager(QWidget):
         self.fetchRequested.emit(urls)
 
     def fetchMetadata(self, vod_url: str, cookies: dict, downloadPath: str) -> None:
-        worker = MetadataWorker(vod_url, cookies, downloadPath)
+        worker = ContentWorker(vod_url, cookies, downloadPath)
 
         # 시그널/슬롯 연결
         worker.finished.connect(self.onWorkerFinished)  # 결과 처리 슬롯
@@ -65,7 +65,7 @@ class MetadataManager(QWidget):
         self.metadataError.emit(error_message)
 
     def addItem(self, vod_url, metadata, unique_reps, resolution, base_url, downloadPath, content_type):
-        item = MetadataItem(vod_url, metadata, unique_reps, resolution, base_url, downloadPath, content_type)
+        item = ContentItem(vod_url, metadata, unique_reps, resolution, base_url, downloadPath, content_type)
         self.model.addItem(item)
         row = self.model.rowCount()
         self.insertItemRequested.emit(row)
@@ -74,13 +74,13 @@ class MetadataManager(QWidget):
         if not self.model.isEmpty():
             for row in reversed(range(self.model.rowCount())):
                 index = self.model.index(row, 0)
-                item: MetadataItem = self.model.data(index, Qt.ItemDataRole.UserRole)
+                item: ContentItem = self.model.data(index, Qt.ItemDataRole.UserRole)
                 # 아이템이 완료 상태이면 삭제
                 if item.downloadState == DownloadState.FINISHED:
                     self.removeItem(item)
 
 
-    def removeItem(self, item: MetadataItem):
+    def removeItem(self, item: ContentItem):
         row = self.model.getRow(item)  # ✅ 객체의 row 찾기
         if row is not None:
             self.model.removeRows(row, 1)  # ✅ 올바른 삭제 요청
@@ -101,7 +101,7 @@ class MetadataManager(QWidget):
         else:
             self.finishedAllRequested.emit()
 
-    def onDownload(self, item: MetadataItem):
+    def onDownload(self, item: ContentItem):
         """
         해상도 버튼 클릭 시 다운로드 진행.
         """
@@ -124,7 +124,7 @@ class MetadataManager(QWidget):
             # 다운로드 요청 시그널 발행
             self.downloadRequested.emit(item)
 
-    def update_progress(self, rem, size, spd, prog, item: MetadataItem):
+    def update_progress(self, rem, size, spd, prog, item: ContentItem):
         item.download_remain_time = rem
         item.download_size = size
         item.download_speed = spd
@@ -146,20 +146,20 @@ class MetadataManager(QWidget):
     def resume(self, item):
         self.view.onDownloadResumed(item)
 
-    def finish(self, item: MetadataItem, download_time):
+    def finish(self, item: ContentItem, download_time):
         item.download_time = download_time
         self.view.onDownloadFinished(item, True)
         self.emitFinishedRequest(item)
     
-    def fail(self, item: MetadataItem):
+    def fail(self, item: ContentItem):
         item.downloadState = DownloadState.FAILED
         self.view.onDownloadFinished(item, False)
         self.emitFinishedRequest(item)
 
-    def emitStopRequested(self, item: MetadataItem):
+    def emitStopRequested(self, item: ContentItem):
         self.stopRequested.emit(item)
     
-    def emitFinishedRequest(self, item: MetadataItem):
+    def emitFinishedRequest(self, item: ContentItem):
         self.finishedRequested.emit(item)
         self.downloadItem()
 
@@ -167,7 +167,7 @@ class MetadataManager(QWidget):
         row_count = self.model.rowCount()
         for row in range(row_count):
             index = self.model.index(row, 0)
-            item: MetadataItem = self.model.data(index, Qt.ItemDataRole.UserRole)
+            item: ContentItem = self.model.data(index, Qt.ItemDataRole.UserRole)
             if not item.downloadState in [DownloadState.FINISHED, DownloadState.FAILED]:
                 return True, item, index
         return False, None, None

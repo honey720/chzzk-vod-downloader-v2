@@ -1,8 +1,8 @@
-from metadata.network import NetworkManager
+from content.network import NetworkManager
 
 from PySide6.QtCore import QObject, Signal
 
-class MetadataWorker(QObject):
+class ContentWorker(QObject):
     # 작업이 완료되면 결과를 tuple로 전달 (혹은 필요한 데이터 구조로 전달)
     finished = Signal(object, str)
     error = Signal(str)

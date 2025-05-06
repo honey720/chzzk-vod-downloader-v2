@@ -1,10 +1,10 @@
 from download.data import DownloadData
-from metadata.data import MetadataItem
+from content.data import ContentItem
 from download.logger import DownloadLogger
 from download.state import DownloadState
 
 class DownloadTask:
-    def __init__(self, data: DownloadData, item: MetadataItem, logger: DownloadLogger):
+    def __init__(self, data: DownloadData, item: ContentItem, logger: DownloadLogger):
         self.data = data
         self.item = item
         self.state = DownloadState.WAITING  # 초기 상태로 설정

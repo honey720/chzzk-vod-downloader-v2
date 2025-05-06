@@ -1,10 +1,10 @@
 from PySide6.QtWidgets import QListView
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDragLeaveEvent, QDropEvent, QPainter, QColor
-from metadata.widget import MetadataItemWidget
-from metadata.data import MetadataItem
+from content.widget import ContentItemWidget
+from content.data import ContentItem
 
-class MetadataListView(QListView):
+class ContentListView(QListView):
     """✅ QTableView 기반으로 메타데이터 리스트를 표시하는 View"""
 
     deleteRequest = Signal(object)
@@ -18,7 +18,7 @@ class MetadataListView(QListView):
         self.setAcceptDrops(True)
         self.setDragEnabled(True)
 
-        self._dragActive = False
+        self._dragActive = False    # 드래그 상태 플래그 TODO: 대체 가능한 메서드 사용
 
     def setModel(self, model):
         """✅ 모델을 설정하고 위젯을 자동으로 연결"""
@@ -38,14 +38,14 @@ class MetadataListView(QListView):
         for row in range(model.rowCount()):
             index = model.index(row, 0)
             item = model.data(index, Qt.ItemDataRole.UserRole)
-            if isinstance(item, MetadataItem):
+            if isinstance(item, ContentItem):
                 # 기존 위젯이 있으면 업데이트, 없으면 새로 생성
-                widget: MetadataItemWidget = self.indexWidget(index)
+                widget: ContentItemWidget = self.indexWidget(index)
                 if widget:
                     # print("view - setData") # Debugging
                     widget.setData(item, row)  # ✅ 기존 위젯 업데이트
                 else:
-                    widget = MetadataItemWidget(item, row, self)
+                    widget = ContentItemWidget(item, row, self)
                     widget.deleteRequest.connect(lambda: self.onDeleteItem(item))
                     widget.addRepresentationButtons()
                     self.setIndexWidget(index, widget)  # ✅ 새 위젯 생성
@@ -60,7 +60,7 @@ class MetadataListView(QListView):
             index = self.model().index(row, 0)
             item = self.model().data(index, Qt.ItemDataRole.UserRole)
 
-            if isinstance(item, MetadataItem):
+            if isinstance(item, ContentItem):
                 widget = self.indexWidget(index)
                 if widget:
                     widget.setData(item)  # ✅ 변경된 데이터만 업데이트
@@ -103,55 +103,55 @@ class MetadataListView(QListView):
         # 드래그 중일 때만 오버레이 텍스트 출력
         if self._dragActive:
             painter = QPainter(self.viewport())
-            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             # 전체 영역에 반투명 검은색 오버레이를 그립니다.
             overlay_color = QColor(0, 0, 0, 128)  # (R, G, B, Alpha) Alpha=128은 50% 투명도
             painter.fillRect(self.viewport().rect(), overlay_color)
             # 중앙에 흰색 텍스트를 그립니다.
-            painter.drawText(self.viewport().rect(), Qt.AlignCenter, self.tr("Drag the URL here."))
+            painter.drawText(self.viewport().rect(), Qt.AlignmentFlag.AlignCenter, self.tr("Drag the URL here."))
             painter.end()
         elif self.model().isEmpty():
             painter = QPainter(self.viewport())
-            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             # 중앙에 흰색 텍스트를 그립니다.
-            painter.drawText(self.viewport().rect(), Qt.AlignCenter, self.tr("Add VOD or Drag the URL here."))
+            painter.drawText(self.viewport().rect(), Qt.AlignmentFlag.AlignCenter, self.tr("Add VOD or Drag the URL here."))
             painter.end()
 
 
-    def onDownloadStarted(self, item: MetadataItem):
+    def onDownloadStarted(self, item: ContentItem):
         row = self.model().getRow(item)
         index = self.model().index(row, 0)
-        widget: MetadataItemWidget = self.indexWidget(index)
+        widget: ContentItemWidget = self.indexWidget(index)
         if widget:
             widget.delete_btn.setEnabled(False)
             widget.setData(item, row)
 
-    def onDownloadStoped(self, item: MetadataItem):
+    def onDownloadStoped(self, item: ContentItem):
         row = self.model().getRow(item)
         index = self.model().index(row, 0)
-        widget: MetadataItemWidget = self.indexWidget(index)
+        widget: ContentItemWidget = self.indexWidget(index)
         if widget:
             widget.delete_btn.setEnabled(True)
             widget.setData(item, row)
 
-    def onDownloadPaused(self, item: MetadataItem):
+    def onDownloadPaused(self, item: ContentItem):
         row = self.model().getRow(item)
         index = self.model().index(row, 0)
-        widget: MetadataItemWidget = self.indexWidget(index)
+        widget: ContentItemWidget = self.indexWidget(index)
         if widget:
             widget.setData(item, row)
 
-    def onDownloadResumed(self, item: MetadataItem):
+    def onDownloadResumed(self, item: ContentItem):
         row = self.model().getRow(item)
         index = self.model().index(row, 0)
-        widget: MetadataItemWidget = self.indexWidget(index)
+        widget: ContentItemWidget = self.indexWidget(index)
         if widget:
             widget.setData(item, row)
     
-    def onDownloadFinished(self, item: MetadataItem, isFinish: bool):
+    def onDownloadFinished(self, item: ContentItem, isFinish: bool):
         row = self.model().getRow(item)
         index = self.model().index(row, 0)
-        widget: MetadataItemWidget = self.indexWidget(index)
+        widget: ContentItemWidget = self.indexWidget(index)
         if widget:
             widget.delete_btn.setEnabled(True)
             if isFinish:

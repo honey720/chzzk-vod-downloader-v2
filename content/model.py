@@ -1,7 +1,7 @@
 from PySide6.QtCore import Qt, QAbstractListModel, QModelIndex, Signal
-from metadata.data import MetadataItem
+from content.data import ContentItem
 
-class MetadataListModel(QAbstractListModel):
+class ContentListModel(QAbstractListModel):
     # 메타데이터 리스트 데이터
 
     def __init__(self, parent=None):
@@ -37,7 +37,7 @@ class MetadataListModel(QAbstractListModel):
         
         return False
     
-    def addItem(self, item: MetadataItem):
+    def addItem(self, item: ContentItem):
         """실제 MetadataItem을 바로 모델에 삽입"""
         row = self.rowCount()  # 항상 맨 끝에 삽입하거나, 필요한 위치를 row로 지정
         self.beginInsertRows(QModelIndex(), row, row)

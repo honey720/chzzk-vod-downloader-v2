@@ -3,7 +3,7 @@ import logging
 from datetime import datetime
 from typing import Optional
 import config.config as config
-from metadata.data import MetadataItem
+from content.data import ContentItem
 
 class DownloadLogger:
     """
@@ -100,7 +100,7 @@ class DownloadLogger:
         if self.logger:
             self.logger.critical(message)
     
-    def log_download_info(self, item: MetadataItem):
+    def log_download_info(self, item: ContentItem):
         self.info(f"content_type: {item.content_type}")
         self.info(f"title: {item.title}")
         self.info(f"channel_name: {item.channel_name}")
