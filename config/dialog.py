@@ -15,7 +15,6 @@ class SettingDialog(QDialog, Ui_SettingDialog):
         super().__init__(parent)
 
         self.config = config.load_config()
-        self.initial_threads = self.config.get("threads")
         self.worker = None
 
         self.setupUi(self)

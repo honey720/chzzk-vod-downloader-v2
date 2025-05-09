@@ -13,7 +13,7 @@ class DownloadData:
         #TODO: Task로 옮길지에 대해 논의
 
         # CPU 개수를 바탕으로 초깃값 지정
-        self.adjust_threads = config.load_config().get('threads')
+        self.adjust_threads = 4
         self.max_threads = self.adjust_threads
 
         self.start_time = 0
