@@ -1,4 +1,4 @@
-import speedtest
+from config.speedtest.InterruptibleSpeedtest import InterruptibleSpeedtest
 from PySide6.QtCore import QThread, Signal
 
 class SpeedTestWorker(QThread):
@@ -6,17 +6,27 @@ class SpeedTestWorker(QThread):
     result_ready = Signal(dict)
     error_occurred = Signal(str)
 
+    def __init__(self):
+        super().__init__()
+        self.tester = InterruptibleSpeedtest(secure=1)
+
     def run(self):
         try:
-            self.st = speedtest.Speedtest(secure = 1)
-            self.st.get_best_server()
+            self.tester.get_best_server()
 
-            download_speed = self.st.download()
+            if self.tester.is_interrupted():
+                return
+            
+            download_speed = self.tester.download()
 
-            result = {
-                'download': download_speed
-            }
+            if self.tester.is_interrupted():
+                return
 
+            result = {'download': download_speed}
             self.result_ready.emit(result)
+
         except Exception as e:
             self.error_occurred.emit(str(e))
+
+    def stop(self):
+        self.tester.interrupt()

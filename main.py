@@ -1,15 +1,11 @@
 import sys
 import os
-from PySide6.QtWidgets import QApplication, QMainWindow
+from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QIcon
 from PySide6.QtCore import QTranslator, QLocale
 
 from application.mainWindow import VodDownloader
 import config.config as config
-
-class main(QMainWindow):
-    def __init__(self):
-        super().__init__()
 
 def resource_path(relative_path):
     """Get absolute path to resource, works for dev and for PyInstaller"""
@@ -17,18 +13,12 @@ def resource_path(relative_path):
         # PyInstaller creates a temp folder and stores path in _MEIPASS
         base_path = sys._MEIPASS
     except Exception:
+        print("sys._MEIPASS not found")
         base_path = os.path.abspath(".")
     
     return os.path.join(base_path, relative_path)
 
-if __name__ == '__main__':
-    app = QApplication(sys.argv)
-
-    # 설정 파일 로드
-    app_config = config.load_config()
-    
-    # 번역 시스템 초기화
-    translator = QTranslator()
+def set_language(app_config, translator):
     
     # 1. 설정 파일에서 언어 가져오기
     language = app_config.get('language')
@@ -65,10 +55,20 @@ if __name__ == '__main__':
             app_config['language'] = language
             config.save_config(app_config)
 
+
+if __name__ == '__main__':
+    app = QApplication(sys.argv)
+
+    # 설정 파일 로드
+    app_config = config.load_config()
+    
+    # 번역 시스템 초기화
+    translator = QTranslator()
+    
+    set_language(app_config, translator)
+
     icon_path = os.path.join(os.path.dirname(__file__), 'resources', 'chzzk.ico')
     app.setWindowIcon(QIcon(icon_path))
     # 메인 UI 실행
     ex = VodDownloader()
-    ex.setWindowIcon(QIcon(icon_path))
-
     sys.exit(app.exec())

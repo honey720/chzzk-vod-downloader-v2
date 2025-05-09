@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt, QAbstractListModel, QModelIndex, Signal
+from PySide6.QtCore import Qt, QAbstractListModel, QModelIndex
 from content.data import ContentItem
 
 class ContentListModel(QAbstractListModel):
@@ -15,7 +15,7 @@ class ContentListModel(QAbstractListModel):
         if not index.isValid() or index.row() >= len(self.items):
             return None
         
-        item = self.items[index.row()]
+        item: ContentItem = self.items[index.row()]
 
         if role == Qt.ItemDataRole.UserRole:
             return item

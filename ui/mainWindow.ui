@@ -1,0 +1,180 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>VodDownloader</class>
+ <widget class="QMainWindow" name="VodDownloader">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>600</width>
+    <height>800</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Chzzk VOD Downloader</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <layout class="QVBoxLayout" name="centralWidgetLayout">
+    <item>
+     <widget class="QFrame" name="headerFrame">
+      <property name="frameShape">
+       <enum>QFrame::Shape::Box</enum>
+      </property>
+      <property name="frameShadow">
+       <enum>QFrame::Shadow::Sunken</enum>
+      </property>
+      <layout class="QGridLayout" name="headerFrameLayout">
+       <item row="4" column="2">
+        <widget class="QPushButton" name="settingButton">
+         <property name="text">
+          <string>Settings</string>
+         </property>
+        </widget>
+       </item>
+       <item row="0" column="1">
+        <widget class="QLineEdit" name="urlInput">
+         <property name="placeholderText">
+          <string>Enter Chzzk URL</string>
+         </property>
+         <property name="clearButtonEnabled">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item row="0" column="0">
+        <widget class="QLabel" name="urlInputLabel">
+         <property name="text">
+          <string>Chzzk VOD URL:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="4" column="0" colspan="2">
+        <widget class="QLabel" name="linkStatusLabel"/>
+       </item>
+       <item row="1" column="0">
+        <widget class="QLabel" name="downloadPathLabel">
+         <property name="text">
+          <string>Download Path:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="1" column="1">
+        <widget class="QLineEdit" name="downloadPathInput">
+         <property name="placeholderText">
+          <string>Enter download path</string>
+         </property>
+         <property name="clearButtonEnabled">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item row="0" column="2">
+        <widget class="QPushButton" name="fetchButton">
+         <property name="text">
+          <string>Add VOD</string>
+         </property>
+        </widget>
+       </item>
+       <item row="1" column="2">
+        <widget class="QPushButton" name="downloadPathButton">
+         <property name="text">
+          <string>Find path</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </item>
+    <item>
+     <widget class="ContentListView" name="listView">
+      <property name="acceptDrops">
+       <bool>true</bool>
+      </property>
+      <property name="dragEnabled">
+       <bool>true</bool>
+      </property>
+      <property name="dragDropMode">
+       <enum>QAbstractItemView::DragDropMode::DragDrop</enum>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QFrame" name="infoFrame">
+      <property name="frameShape">
+       <enum>QFrame::Shape::Box</enum>
+      </property>
+      <property name="frameShadow">
+       <enum>QFrame::Shadow::Sunken</enum>
+      </property>
+      <layout class="QHBoxLayout" name="infoLayout">
+       <item>
+        <widget class="QLabel" name="downloadCountLabel">
+         <property name="text">
+          <string>Downloads: {}/{}</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="clearFinishedButton">
+         <property name="text">
+          <string>Clear Finished</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="horizontalSpacer">
+         <property name="orientation">
+          <enum>Qt::Orientation::Horizontal</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>0</width>
+           <height>0</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+       <item>
+        <widget class="QPushButton" name="downloadButton">
+         <property name="text">
+          <string>Download</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="stopButton">
+         <property name="enabled">
+          <bool>false</bool>
+         </property>
+         <property name="text">
+          <string>Stop</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </item>
+   </layout>
+  </widget>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>ContentListView</class>
+   <extends>QListView</extends>
+   <header>content/view.h</header>
+  </customwidget>
+ </customwidgets>
+ <tabstops>
+  <tabstop>urlInput</tabstop>
+  <tabstop>fetchButton</tabstop>
+  <tabstop>downloadPathInput</tabstop>
+  <tabstop>downloadPathButton</tabstop>
+  <tabstop>settingButton</tabstop>
+  <tabstop>listView</tabstop>
+  <tabstop>clearFinishedButton</tabstop>
+  <tabstop>downloadButton</tabstop>
+  <tabstop>stopButton</tabstop>
+ </tabstops>
+ <resources/>
+ <connections/>
+</ui>

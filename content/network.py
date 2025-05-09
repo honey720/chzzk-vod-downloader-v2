@@ -43,7 +43,7 @@ class NetworkManager:
         vodStatus = content.get('vodStatus')
 
         metadata = {
-            'title': content.get('videoTitle', 'Unknown Title'),
+            'title': re.sub(r'[\\/:\*\?"<>|\n]', '', content.get('videoTitle', 'Unknown Title')), # 정규식으로 특수문자 제거
             'thumbnailImageUrl': content.get('thumbnailImageUrl', ''),
             'category': content.get('videoCategoryValue', 'Unknown Category'),
             'channelName': content.get('channel', {}).get('channelName', 'Unknown Channel'),
@@ -99,7 +99,7 @@ class NetworkManager:
         vodStatus = content.get('vodStatus')
 
         metadata = {
-            'title': content.get('clipTitle', 'Unknown Title'),
+            'title': re.sub(r'[\\/:\*\?"<>|\n]', '', content.get('clipTitle', 'Unknown Title')), # 정규식으로 특수문자 제거
             'thumbnailImageUrl': content.get('thumbnailImageUrl', ''),
             'category': content.get('clipCategory', 'Unknown Category'),
             'channelName': content.get('optionalProperty', {}).get('ownerChannel', {}).get('channelName', 'Unknown Channel'),

@@ -28,10 +28,10 @@ class DownloadTask:
         self.item.setDownloadState(self.state)
         # 상태 업데이트 전달
 
-    def stop(self, message:str):
+    def stop(self):
         self.state = DownloadState.WAITING
         self.data._pause_event.set()
-        self.item.setDownloadState(self.state, message)
+        self.item.setDownloadState(self.state)
         # 상태 업데이트 전달
 
     def finish(self):

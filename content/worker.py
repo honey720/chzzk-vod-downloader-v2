@@ -23,6 +23,7 @@ class ContentWorker(QObject):
             if content_type == 'video':
                 result = self.fetchVideo(content_no)
             elif content_type == 'clips':
+                content_type = 'clip'
                 result = self.fetchClip(content_no)
                 
             self.finished.emit(result, content_type)

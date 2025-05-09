@@ -1,7 +1,6 @@
 import os, re, platform
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout
-from PySide6.QtCore import Qt, Signal, QThreadPool
+from PySide6.QtCore import Qt, Signal, QThreadPool, QObject
 from content.model import ContentListModel
 from content.view import ContentListView
 from content.delegate import ContentListDelegate
@@ -9,7 +8,7 @@ from content.data import ContentItem
 from download.state import DownloadState
 from content.worker import ContentWorker
 
-class ContentManager(QWidget):
+class ContentManager(QObject):
     # 메타데이터 매니저 UI
     downloadRequested = Signal(object)
     stopRequested = Signal(object)
@@ -20,27 +19,18 @@ class ContentManager(QWidget):
     fetchRequested = Signal(str)
     contentError = Signal(str)  # ✅ UI에서 오류를 처리할 수 있도록 signal 추가
 
-    def __init__(self, parent = None):
+    def __init__(self, view: ContentListView, parent = None):
         super().__init__(parent)
-        self.initUI()
-        self.downloadPath = ""
-        self.threadpool = QThreadPool()
-
-    def initUI(self):
-        """UI 초기화 및 View 설정"""
-        self.metadataLayout = QVBoxLayout(self)
-
-        self.model = ContentListModel()
         
-        self.view = ContentListView()
+        self.view = view
+        self.model = ContentListModel()
         self.view.setModel(self.model)
         self.view.setItemDelegate(ContentListDelegate())
-
         self.view.deleteRequest.connect(self.removeItem)
         self.view.fetchRequested.connect(self.fetchReuest)
 
-        self.metadataLayout.addWidget(self.view)
-        self.setLayout(self.metadataLayout)
+        self.downloadPath = ""
+        self.threadpool = QThreadPool()
 
     def fetchReuest(self, urls):
         self.fetchRequested.emit(urls)
@@ -108,8 +98,6 @@ class ContentManager(QWidget):
         if item:
             title = item.title
             resolution = item.resolution
-            # 특수 문자 제거
-            title = re.sub(r'[\\/:\*\?"<>|\n]', '', title)
             default_filename = f"{title} {resolution}p.mp4"
         else:
             default_filename = "video.mp4"

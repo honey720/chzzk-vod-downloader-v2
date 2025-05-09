@@ -1,160 +1,58 @@
 import os, requests, threading
-from PySide6.QtWidgets import QWidget, QFrame, QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit, QSizePolicy, QMessageBox
+from PySide6.QtWidgets import QWidget, QPushButton, QMessageBox
 from PySide6.QtGui import QPixmap, QDesktopServices
 from PySide6.QtCore import Qt, QSize, Signal, QUrl, QDir, QProcess
 from content.data import ContentItem
 from download.state import DownloadState
+from ui.contentItemWidget import Ui_ContentItemWidget
 from io import BytesIO
 import platform
 
-class ContentItemWidget(QWidget):
-    """✅ 다운로드 메타데이터 정보를 표시하는 커스텀 위젯"""
+class ContentItemWidget(QWidget, Ui_ContentItemWidget):
+    """컨텐츠 정보를 표시하는 커스텀 위젯"""
 
     textChanged = Signal(str)
     deleteRequest = Signal()
 
     def __init__(self, item: ContentItem, index=0, parent=None):
         super().__init__(parent)
-        self.item = item  # ✅ ContentItem 저장
-        self.index = index  # ✅ 인덱스 저장
+        self.item = item  # ContentItem 저장
+        self.index = index  # 인덱스 저장
         self.isEditing = False
+        self.setupUi(self)  # TODO: 테마별 스타일시트 설정하기
+        self.setupDynamicUi()  # TODO: 테마별 스타일시트 설정하기
+        self.setupSignals()  # 시그널 연결
 
-        # ✅ 전체 배경을 위한 QFrame 추가 (크기 조정 가능하도록 설정)
-        self.frame = QFrame(self)
-        self.frame.setFrameShape(QFrame.Box)
-        self.frame.setFrameShadow(QFrame.Plain)
-        self.frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)  # ✅ 가로 확장 설정 
+    def setupDynamicUi(self):
+        self.loadImageFromUrl(self.channelImageLabel, self.item.channel_image_url, 30, "channel")
+        self.loadImageFromUrl(self.thumbnailLabel, self.item.thumbnail_url, 66, "thumbnail")
+        self.contentTypeLabel.setText(self.item.content_type) # 콘텐츠 타입 업데이트
+        self.channelNameLabel.setText(self.item.channel_name) # 채널 이름 업데이트
+        self.progressLabel.setText("") # 진행률 업데이트
+        self.deleteButton.setText("❌")
+        self.indexLabel.setText(f"#{self.index}") # 인덱스 업데이트
+        self.titleLabel.setText(self.item.title) # 제목 업데이트
+        self.titleEdit.setText(self.item.title) # 제목 업데이트
+        self.titleEdit.setVisible(False) # 제목 수정용 QLineEdit 숨김
+        self.directoryLabel.setText(self.item.download_path) # 다운로드 경로 업데이트
+        self.directoryEdit.setText(self.item.download_path) # 다운로드 경로 업데이트
+        self.directoryEdit.setVisible(False) # 다운로드 경로 수정용 QLineEdit 숨김
+        self.openDirectoryButton.setText("📁")
 
-        # ✅ ✅ ✅ **프레임 배경 설정 (내부 위젯이 덮이지 않도록 수정)** ✅ ✅ ✅
-        self.frame.setStyleSheet("""
-            QFrame {
-                background-color: #424242;  /* ✅ 불투명한 배경 */
-                border-radius: 8px;  
-                padding: 0px;
-            }
-        """)
-
-        # ✅ 메인 레이아웃 (위젯 전체를 감싸도록 설정)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 0)  # ✅ 마진 제거
-        layout.setSpacing(0)  # ✅ 간격 제거
-        layout.addWidget(self.frame)  # ✅ 프레임 추가
-
-        self.initUI()
-        self.loadImageFromUrl(self.channel_image_label, self.item.channel_image_url, 30)
-        self.loadImageFromUrl(self.thumbnail_label, self.item.thumbnail_url, 60)
-
-    def initUI(self):   
-        """✅ UI 초기화"""
-        # ✅ 프레임 내부 레이아웃 (크기 확장 가능하도록 설정)
-        main_layout = QVBoxLayout(self.frame)
-        main_layout.setSpacing(0)
-        self.frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)  # ✅ 프레임 확장 가능 설정
-
-        # ✅ 상단 정보 (번호, 채널명, 진행 상태)
-        top_layout = QHBoxLayout()
-        self.index_label = QLabel(f"#{self.index}")
-        self.index_label.setStyleSheet("color: white; font-weight: bold;")
-        self.index_label.setToolTip(self.tr("Queue number"))
-
-        self.channel_image_label = QLabel()
-        self.channel_image_label.resize(30, 30)
-        self.channel_image_label.setToolTip(self.tr("Channel image"))
-
-        self.channel_label = QLabel(self.item.channel_name)
-        self.channel_label.setStyleSheet("color: white; font-weight: bold;")
-        self.channel_label.setToolTip(self.tr("Channel name"))
-
-        self.status_label = QLabel(self.tr("Download waiting"))
-        self.status_label.setStyleSheet("color: white;")
-
-        self.size_label = QLabel("")
-        self.size_label.setStyleSheet("color: white;")
-
-        self.progress_label = QLabel("")
-        self.progress_label.setStyleSheet("color: white;")
-
-        self.delete_btn = QPushButton("❌")
-        self.delete_btn.setFixedSize(30, 30)
-        self.delete_btn.clicked.connect(self.requestDelete)  # ✅ 삭제 요청
-        self.delete_btn.setToolTip(self.tr("Delete"))
-
-        top_layout.addWidget(self.index_label)
-        top_layout.addWidget(self.channel_image_label)
-        top_layout.addWidget(self.channel_label)
-        top_layout.addStretch()
-        top_layout.addWidget(self.status_label)
-        top_layout.addWidget(self.size_label)
-        top_layout.addWidget(self.progress_label)
-        top_layout.addWidget(self.delete_btn)
-
-        # 중간 정보 (왼쪽 썸네일, 오른쪽 컨텐츠 정보)
-        center_layout = QHBoxLayout()
-
-        self.thumbnail_label = QLabel("")
-        self.thumbnail_label.setToolTip(self.tr("Video thumbnail"))
-
-        center_layout.addWidget(self.thumbnail_label)  # 썸네일은 왼쪽
-
-        # 컨텐츠 정보 (제목, 다운로드 위치 등)
-        content_layout = QVBoxLayout()
-
-        # ✅ 중간 (제목, 수정 가능)
-        self.title_layout = QHBoxLayout()
-        self.title_label = QLabel(self.item.title)
-        self.title_label.setStyleSheet("color: white; font-size: 14px;")
-        self.title_label.mousePressEvent = self.startTitleEditing
-        self.title_label.setToolTip(self.tr("Title"))
-
-        self.title_edit = QLineEdit(self.item.title)
-        self.title_edit.setVisible(False)
-        self.title_edit.setStyleSheet("font-size: 14px;")
-        self.title_edit.editingFinished.connect(self.finishTitleEditing)
-
-        self.buttons = []
-
-        self.title_layout.addWidget(self.title_label)
-        self.title_layout.addWidget(self.title_edit, 1)
-        self.title_layout.addStretch()
-
-        # ✅ 하단 (파일 경로, 진행 상태, 버튼)
-        bottom_layout = QHBoxLayout()
-        self.directory_label = QLabel("")
-        self.directory_label.setStyleSheet("color: white; font-size: 12px;")
-        self.directory_label.mousePressEvent = self.startPathEditing
-        self.directory_label.setText(self.item.download_path)
-        self.directory_label.setToolTip(self.tr("Download location"))
-
-        self.directory_edit = QLineEdit(self.item.download_path)
-        self.directory_edit.setVisible(False)
-        self.directory_edit.setStyleSheet("font-size: 12px;")
-        self.directory_edit.editingFinished.connect(self.finishPathEditing)
-
-        self.open_folder_btn = QPushButton("📁")
-        self.open_folder_btn.setFixedSize(30, 30)
-        self.open_folder_btn.clicked.connect(self.requestOpenDir)  # ✅ 삭제 요청
-        self.open_folder_btn.setToolTip(self.tr("Open folder"))
-
-        bottom_layout.addWidget(self.directory_label)
-        bottom_layout.addWidget(self.directory_edit, 1)
-        bottom_layout.addStretch()
-        bottom_layout.addWidget(self.open_folder_btn)
-
-        content_layout.addLayout(self.title_layout)
-        content_layout.addLayout(bottom_layout)
-
-        center_layout.addLayout(content_layout)
-
-        # ✅ 레이아웃 추가
-        main_layout.addLayout(top_layout)
-        main_layout.addLayout(center_layout)
-        self.frame.setLayout(main_layout)
+    def setupSignals(self):
+        self.deleteButton.clicked.connect(self.requestDelete)
+        self.titleLabel.mousePressEvent = self.startTitleEditing
+        self.titleEdit.editingFinished.connect(self.finishTitleEditing)
+        self.directoryLabel.mousePressEvent = self.startPathEditing
+        self.directoryEdit.editingFinished.connect(self.finishPathEditing)
+        self.openDirectoryButton.clicked.connect(self.requestOpenDir)
 
     def addRepresentationButtons(self):
         """
         해상도 목록(Representation)을 정렬 후, 버튼을 생성해 Resolution 영역에 배치한다.
         """
 
+        self.buttons = []
         for unique_rep in self.item.unique_reps:
             unique_rep.append("Unknown")  # 초기 값 설정
 
@@ -169,7 +67,7 @@ class ContentItemWidget(QWidget):
         """
         button = QPushButton(f'{resolution}p', self)
         button.clicked.connect(lambda: self.setresolutionUrlSize(resolution, base_url, index, button))
-        self.title_layout.addWidget(button)
+        self.titleLayout.addWidget(button)
         button.setFixedSize(60, 30)
         button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.buttons.append(button)
@@ -203,9 +101,9 @@ class ContentItemWidget(QWidget):
             self.item.base_url = base_url
             if index is not None:
                 self.item.total_size = self.item.unique_reps[index][-1]
-                self.size_label.setText(f" {self.item.unique_reps[index][-1]}")
+                self.fileSizeLabel.setText(f" {self.item.unique_reps[index][-1]}")
 
-    def loadImageFromUrl(self, label, url, height):
+    def loadImageFromUrl(self, label, url, maxHeight, type):
         """
         주어진 URL에서 이미지를 다운로드해 QLabel에 띄운다.
         세로 높이를 고정하고 가로 크기를 비율에 맞게 조정한다.
@@ -215,10 +113,10 @@ class ContentItemWidget(QWidget):
             return
         
         # 이미지 로딩 스레드 시작
-        thread = threading.Thread(target=self.fetchImage, args=(label, url, height), daemon=True)
+        thread = threading.Thread(target=self.fetchImage, args=(label, url, maxHeight, type), daemon=True)
         thread.start()
 
-    def fetchImage(self, label, url, height):
+    def fetchImage(self, label, url, maxHeight, type):
         try:
             response = requests.get(url)
             response.raise_for_status()
@@ -228,14 +126,20 @@ class ContentItemWidget(QWidget):
             # 원본 이미지의 비율 계산
             original_width = image.width()
             original_height = image.height()
-            aspect_ratio = original_width / original_height
             
-            # 세로 높이를 고정하고 가로 크기를 비율에 맞게 계산
-            new_height = height
-            new_width = int(new_height * aspect_ratio)
+            if type == "channel" and original_height > original_width:
+                # 가로 높이를 고정하고 세로 크기를 비율에 맞게 계산
+                aspect_ratio = original_height / original_width
+                new_width = maxHeight
+                new_height = int(maxHeight * aspect_ratio)
+            else:      
+                # 세로 높이를 고정하고 가로 크기를 비율에 맞게 계산      
+                aspect_ratio = original_width / original_height
+                new_height = maxHeight
+                new_width = int(new_height * aspect_ratio)
             
             scaled_image = image.scaled(
-                new_width, new_height, Qt.KeepAspectRatio, Qt.SmoothTransformation
+                new_width, new_height, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
             )
             label.setPixmap(scaled_image)
         except Exception as e:
@@ -245,43 +149,42 @@ class ContentItemWidget(QWidget):
         """✅ 모델 데이터를 위젯에 반영"""
         self.item = item
         self.index = index
-        self.index_label.setText(f"#{index}")  # ✅ 인덱스 업데이트
-        self.channel_label.setText(item.channel_name)
-        self.title_label.setText(item.title)
-        self.directory_label.setText(item.download_path)
+        self.indexLabel.setText(f"#{index}")  # ✅ 인덱스 업데이트
+        self.channelNameLabel.setText(item.channel_name)
+        self.titleLabel.setText(item.title)
+        self.directoryLabel.setText(item.download_path)
 
         if self.item.downloadState == DownloadState.WAITING:
-            self.status_label.setText(item.stateMessage)
-            self.size_label.setText(f" {item.total_size}")
-            self.progress_label.setText(" ")
+            self.statusLabel.setText(self.tr("Download waiting"))
+            self.fileSizeLabel.setText(f" {item.total_size}")
+            self.progressLabel.setText(" ")
 
         elif self.item.downloadState == DownloadState.RUNNING:
-            self.status_label.setText(f"{item.download_remain_time}  {item.download_speed}")
-            self.size_label.setText(f"  {self.setSize(item.download_size)} / {item.total_size}")
-            self.progress_label.setText(f"  {item.download_progress}% ")
+            self.statusLabel.setText(f"{item.download_remain_time}  {item.download_speed}")
+            self.fileSizeLabel.setText(f"  {self.setSize(item.download_size)} / {item.total_size}")
+            self.progressLabel.setText(f"  {item.download_progress}% ")
 
         elif self.item.downloadState == DownloadState.PAUSED:
-            self.status_label.setText(self.tr("Download paused"))
-            self.size_label.setText(f"  {self.setSize(item.download_size)} / {item.total_size}")
-            self.progress_label.setText(f"  {item.download_progress}% ")
+            self.statusLabel.setText(self.tr("Download paused"))
+            self.fileSizeLabel.setText(f"  {self.setSize(item.download_size)} / {item.total_size}")
+            self.progressLabel.setText(f"  {item.download_progress}% ")
 
         elif self.item.downloadState == DownloadState.FINISHED:
-            self.status_label.setText(f"{item.download_time}")
-            self.size_label.setText(f"  {self.setSize(item.download_size)} / {item.total_size}")
-            self.progress_label.setText(f"  {item.download_progress}% ")
+            self.statusLabel.setText(f"{item.download_time}")
+            self.fileSizeLabel.setText(f"  {self.setSize(item.download_size)} / {item.total_size}")
+            self.progressLabel.setText(f"  {item.download_progress}% ")
 
     def getData(self) -> ContentItem:
         """✅ 위젯에서 입력된 데이터를 가져와서 ContentItem으로 반환"""
         return ContentItem(
             #index=self.item.index,
-            channel_name=self.channel_label.text(),
-            title=self.title_edit.text(),
-            directory=self.directory_label.text(),
-            #status=self.status_label.text(),
-            progress=self.progress_label.text(),
-            #remaining_time=self.remaining_time_label.text(),
-            #size_info=self.size_info_label.text(),
-            #color=self.item.color
+            channel_name=self.channelNameLabel.text(),
+            title=self.titleEdit.text(),
+            directory=self.directoryLabel.text(),
+            #status=self.statusLabel.text(),
+            progress=self.progressLabel.text(),
+            #remaining_time=self.remainingTimeLabel.text(),
+            #size_info=self.sizeInfoLabel.text(),
         )
 
     def startTitleEditing(self, event):
@@ -289,42 +192,42 @@ class ContentItemWidget(QWidget):
         if self.item.downloadState == DownloadState.WAITING:
             if not self.isEditing:
                 self.isEditing = True
-                self.title_edit.setText(self.title_label.text())  # ✅ 현재 값 적용
-                self.title_label.setVisible(False)
-                self.title_edit.setVisible(True)
-                self.title_edit.setFocus()  # ✅ 포커스 이동
+                self.titleEdit.setText(self.titleLabel.text())  # ✅ 현재 값 적용
+                self.titleLabel.setVisible(False)
+                self.titleEdit.setVisible(True)
+                self.titleEdit.setFocus()  # ✅ 포커스 이동
 
     def finishTitleEditing(self):
         """✅ QLineEdit에서 Enter 또는 포커스 해제 시 QLabel로 복귀"""
         self.isEditing = False
-        self.title_edit.setVisible(False)
-        self.title_label.setVisible(True)
-        new_text = self.title_edit.text().strip()
+        self.titleEdit.setVisible(False)
+        self.titleLabel.setVisible(True)
+        new_text = self.titleEdit.text().strip()
         if new_text:
-            self.title_label.setText(new_text)  # ✅ UI 업데이트
+            self.titleLabel.setText(new_text)  # ✅ UI 업데이트
             self.item.title = new_text  # ✅ 데이터 업데이트
             self.textChanged.emit(new_text)  # ✅ 모델에도 반영하도록 시그널 전송
         else:
-            self.title_label.setText(self.item.default_title)
+            self.titleLabel.setText(self.item.default_title)
             
     def startPathEditing(self, event):
         """✅ QLabel을 더블클릭하면 QLineEdit로 변경"""
         if self.item.downloadState == DownloadState.WAITING:
             if not self.isEditing:
                 self.isEditing = True
-                self.directory_edit.setText(self.directory_label.text())  # ✅ 현재 값 적용
-                self.directory_label.setVisible(False)
-                self.directory_edit.setVisible(True)
-                self.directory_edit.setFocus()  # ✅ 포커스 이동
+                self.directoryEdit.setText(self.directoryLabel.text())  # ✅ 현재 값 적용
+                self.directoryLabel.setVisible(False)
+                self.directoryEdit.setVisible(True)
+                self.directoryEdit.setFocus()  # ✅ 포커스 이동
 
     def finishPathEditing(self):
         """✅ QLineEdit에서 Enter 또는 포커스 해제 시 QLabel로 복귀"""
         self.isEditing = False
-        self.directory_edit.setVisible(False)
-        self.directory_label.setVisible(True)
-        new_path = self.directory_edit.text().strip()
+        self.directoryEdit.setVisible(False)
+        self.directoryLabel.setVisible(True)
+        new_path = self.directoryEdit.text().strip()
         if new_path and os.path.exists(new_path):
-            self.directory_label.setText(new_path)  # ✅ UI 업데이트
+            self.directoryLabel.setText(new_path)  # ✅ UI 업데이트
             self.item.download_path = new_path  # ✅ 데이터 업데이트
             self.textChanged.emit(new_path)  # ✅ 모델에도 반영하도록 시그널 전송
 
@@ -335,7 +238,7 @@ class ContentItemWidget(QWidget):
 
     def requestOpenDir(self):
         try:
-            path = self.directory_label.text()
+            path = self.directoryLabel.text()
             if self.item.downloadState != DownloadState.WAITING:
                 path = self.item.output_path
             if os.path.isfile(path):

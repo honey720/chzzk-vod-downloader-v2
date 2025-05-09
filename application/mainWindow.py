@@ -2,154 +2,70 @@ import os
 import platform
 import config.config as config
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QFrame, QSizePolicy, QGridLayout, QLineEdit, QPushButton, QLabel, QHBoxLayout, QMessageBox, QFileDialog, QApplication
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtWidgets import QMainWindow, QMessageBox, QFileDialog, QApplication
+from PySide6.QtCore import QTimer
 
-from download.manager import DownloadManager
+from config.dialog import SettingDialog
 from content.data import ContentItem
 from content.manager import ContentManager
-from config.dialog import SettingDialog
+from download.manager import DownloadManager
 from download.state import DownloadState
+from ui.mainWindow import Ui_VodDownloader
 
 
-class VodDownloader(QWidget):
+class VodDownloader(QMainWindow, Ui_VodDownloader):
     """
     치지직 VOD 다운로더 메인 UI 클래스.
     """
-    def __init__(self):
-        super().__init__()
-        self.contentManager = ContentManager()
-        self.downloadManager = DownloadManager()
-        self._connectThreadSignals()
-
-        # 카드 갯수 추적 변수 초기화
-        self.total_downloads = 0
-        self.completed_downloads = 0
-
-        self._initUI()
-        self._setupSignals()
-
-    def _initUI(self):
-        """
-        UI 레이아웃 및 위젯을 초기화. (레이아웃마다 QFrame으로 테두리를 표시)
-        """
-        self.setWindowTitle(self.tr('Chzzk VOD Downloader'))
-
-        screen = QApplication.primaryScreen()
-        screen_size = screen.size()  # QSize 객체 반환
-        screen_width = screen_size.width()
-        screen_height = screen_size.height()
-
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setupUi(self)
+        self.setupDynamicUi()
 
         width_ratio = 0.25
         height_ratio = 0.5
-        min_width = int(screen_width * width_ratio)
-        min_height = int(screen_height * height_ratio)
-        
+        min_width = int(QApplication.primaryScreen().size().width() * width_ratio)
+        min_height = int(QApplication.primaryScreen().size().height() * height_ratio)
         self.setMinimumSize(min_width, min_height)
         self.resize(min_width, min_height)
 
-        # 메인 레이아웃
-        self.mainLayout = QVBoxLayout()
-
-        # ───────────────────────────────────────────
-        # 1) 상단: URL 입력 / 다운로드 버튼
-        # ───────────────────────────────────────────
-
-        headerFrame = QFrame()
-        headerFrame.setFrameShape(QFrame.Box)      # 테두리 모양(Box, Panel 등)
-        headerFrame.setFrameShadow(QFrame.Raised)  # Raised, Sunken 등
-        headerFrame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-
-        headerFrameLayout = QGridLayout(headerFrame)
-        headerFrameLayout.setContentsMargins(5, 5, 5, 5)
-        headerFrameLayout.setSpacing(5)
-
-        self.urlInputLabel = QLabel(self.tr('Chzzk VOD URL:'))  # 초기값 설정
-        self.urlInputLabel.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
-        headerFrameLayout.addWidget(self.urlInputLabel, 0, 0, Qt.AlignLeft)
-
-        self.urlInput = QLineEdit()
-        self.urlInput.setPlaceholderText(self.tr("Enter Chzzk URL"))
-        headerFrameLayout.addWidget(self.urlInput, 0, 1)
-
-        self.fetchButton = QPushButton(self.tr('Add VOD'))
-        self.fetchButton.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        headerFrameLayout.addWidget(self.fetchButton, 0, 2, Qt.AlignRight)
-
-        headerFrameLayout.setColumnStretch(1, 10)  # URL 입력 창 확장
-
-        self.downloadPathLabel = QLabel(self.tr('Download Path:'))  # 초기값 설정
-        self.downloadPathLabel.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
-        headerFrameLayout.addWidget(self.downloadPathLabel, 1, 0, Qt.AlignLeft)
-
-        self.downloadPathInput = QLineEdit()
-        self.downloadPathInput.setPlaceholderText(self.tr("Enter download path"))
-        self.downloadPathInput.setText(os.getcwd())  # 초기 경로 설정
-        headerFrameLayout.addWidget(self.downloadPathInput, 1, 1)
-
-        self.downloadPathButton = QPushButton(self.tr('Find path'))
-        self.downloadPathButton.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        headerFrameLayout.addWidget(self.downloadPathButton, 1, 2, Qt.AlignRight)
-
-        self.linkStatusLabel = QLabel('')
-        headerFrameLayout.addWidget(self.linkStatusLabel, 2, 0, 1, 2)
-
-        self.settingButton = QPushButton(self.tr("Settings"))
-        self.settingButton.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        headerFrameLayout.addWidget(self.settingButton, 2, 2, Qt.AlignRight)
-
-        headerFrameLayout.setColumnStretch(1, 10)  # 다운로드 경로 입력 창 확장
-        headerFrameLayout.setColumnStretch(0, 1)
-        headerFrameLayout.setColumnStretch(2, 1)
+        self.contentManager = ContentManager(self.listView)
+        self.downloadManager = DownloadManager()
+        self.setupThreadSignals()
+        self.setupSignals()
         
-        self.mainLayout.addWidget(headerFrame)
-
-        # ───────────────────────────────────────────
-        # 2) 메타데이터 영역
-        # ───────────────────────────────────────────
-
-        # 스크롤 영역
-        self.mainLayout.addWidget(self.contentManager)
-
-        # ───────────────────────────────────────────
-        # 3) 추가 정보(다운로드 현황)
-        # ───────────────────────────────────────────
-        
-        infoFrame = QFrame()
-        infoFrame.setFrameShape(QFrame.Box)
-        infoFrame.setFrameShadow(QFrame.Raised)
-        infoFrame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-
-        infoLayout = QHBoxLayout()
-        infoFrame.setLayout(infoLayout)
-
-        # 다운로드 갯수 표시 QLabel 추가
-        self.downloadCountLabel = QLabel(self.tr('Downloads: {}/{}').format(self.completed_downloads, self.total_downloads))  # 초기값 설정
-        infoLayout.addWidget(self.downloadCountLabel)
-
-        self.clearFinishedButton = QPushButton(self.tr("Clear Finished"))
-        self.clearFinishedButton.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        infoLayout.addWidget(self.clearFinishedButton)
-
-        infoLayout.addStretch()
-
-        self.downloadButton = QPushButton(self.tr("Download"))
-        self.downloadButton.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        infoLayout.addWidget(self.downloadButton)
-
-        self.stopButton = QPushButton(self.tr("Stop"))
-        self.stopButton.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        self.setStopButtonEnable(False)
-        infoLayout.addWidget(self.stopButton)
-
-        self.mainLayout.addWidget(infoFrame)
-
-        # 메인 레이아웃 설정
-        self.setLayout(self.mainLayout)
         self.show()
+        
+    def setupDynamicUi(self):
+        """
+        UI 동적 설정을 수행한다.
+        """
+        self.total_downloads = 0
+        self.completed_downloads = 0
+        self.downloadPathInput.setText(os.getcwd())  # 초기 경로 설정
+        self.downloadCountLabel.setText(self.downloadCountLabel.text().format(self.completed_downloads, self.total_downloads))  # 초기값 설정
 
-    def _setupSignals(self):
+    def setupThreadSignals(self):
+        """
+        다운로드 스레드와 UI를 연결하는 시그널 슬롯 설정.
+        """
+        self.downloadManager.progress.connect(self._onProgress)
+        self.downloadManager.paused.connect(self._onPaused)
+        self.downloadManager.resumed.connect(self._onResumed)
+        self.downloadManager.stopped.connect(self._onStopped)
+        self.downloadManager.finished.connect(self._onFinished)
+        # TODO 동시 다운로드 기능 추가시 로직 수정 필요
+
+        self.contentManager.contentError.connect(self.showErrorDialog)
+        self.contentManager.fetchRequested.connect(self.fetchContents)
+        self.contentManager.deleteItemRequested.connect(self.onDeleteItem)
+        self.contentManager.insertItemRequested.connect(self.onInsertItem)
+        self.contentManager.downloadRequested.connect(self.startDownload)
+        self.contentManager.stopRequested.connect(self.onStop)
+        self.contentManager.finishedRequested.connect(self.onFinishedItem)
+        self.contentManager.finishedAllRequested.connect(self.onDownloadAllFinished)
+
+    def setupSignals(self):
         """
         각종 버튼 클릭 시그널 및 UI 내 이벤트를 핸들링할 슬롯을 연결한다.
         """
@@ -245,7 +161,7 @@ class VodDownloader(QWidget):
         flag = True
         if self.downloadManager.task and self.downloadManager.task.isRunning:
             flag = False
-        self.dialog.start_speed_test(flag)
+        self.dialog.startSpeedTest(flag)
 
     def onFindPath(self):
         """
@@ -272,7 +188,7 @@ class VodDownloader(QWidget):
                 self.stopDownload()
 
     def stopDownload(self):
-        self.downloadManager.stop(self.tr("Download stopped"))
+        self.downloadManager.stop()
         self.downloadButton.setText(self.tr('Download'))
         self.setStopButtonEnable(False)
         self.downloadManager.removeThreads()
@@ -307,16 +223,16 @@ class VodDownloader(QWidget):
         
         os_type = platform.system()
 
-        afterDownloadComplete = config.load_config().get('afterDownloadComplete')
+        afterDownload = config.load_config().get('afterDownload')
 
-        if afterDownloadComplete == "sleep":
+        if afterDownload == "sleep":
             if os_type == "Windows":
                 os.system("rundll32.exe powrprof.dll,SetSuspendState 0,1,0")
             elif os_type == "Linux":
                 os.system("systemctl suspend")
             else:
                 print(f"절전 모드는 {os_type}에서 지원되지 않습니다.")
-        elif afterDownloadComplete == "shutdown":
+        elif afterDownload == "shutdown":
             if os_type == "Windows":
                 os.system("shutdown -s -t 0")
             elif os_type == "Linux":
@@ -338,26 +254,6 @@ class VodDownloader(QWidget):
         self.contentManager.start(item)
         self.downloadManager.start(item)
         self.setStopButtonEnable(True)
-
-    def _connectThreadSignals(self):
-        """
-        다운로드 스레드와 UI를 연결하는 시그널 슬롯 설정.
-        """
-        self.downloadManager.progress.connect(self._onProgress)
-        self.downloadManager.paused.connect(self._onPaused)
-        self.downloadManager.resumed.connect(self._onResumed)
-        self.downloadManager.stopped.connect(self._onStopped)
-        self.downloadManager.finished.connect(self._onFinished)
-        # TODO 동시 다운로드 기능 추가시 로직 수정 필요
-
-        self.contentManager.contentError.connect(self.showErrorDialog)
-        self.contentManager.fetchRequested.connect(self.fetchContents)
-        self.contentManager.deleteItemRequested.connect(self.onDeleteItem)
-        self.contentManager.insertItemRequested.connect(self.onInsertItem)
-        self.contentManager.downloadRequested.connect(self.startDownload)
-        self.contentManager.stopRequested.connect(self.onStop)
-        self.contentManager.finishedRequested.connect(self.onFinishedItem)
-        self.contentManager.finishedAllRequested.connect(self.onDownloadAllFinished)
 
     def _onProgress(self, rem, size, spd, prog, item):
         """

@@ -14,9 +14,6 @@ class ContentListView(QListView):
         super().__init__(parent)
         self.setResizeMode(QListView.ResizeMode.Adjust)
         self.setSelectionMode(QListView.SelectionMode.SingleSelection)
-        self.setDragDropMode(QListView.DragDropMode.DragDrop)
-        self.setAcceptDrops(True)
-        self.setDragEnabled(True)
 
         self._dragActive = False    # 드래그 상태 플래그 TODO: 대체 가능한 메서드 사용
 
@@ -43,9 +40,10 @@ class ContentListView(QListView):
                 widget: ContentItemWidget = self.indexWidget(index)
                 if widget:
                     # print("view - setData") # Debugging
-                    widget.setData(item, row)  # ✅ 기존 위젯 업데이트
+                    widget.setData(item, row)  # 기존 위젯 데이터 업데이트
                 else:
                     widget = ContentItemWidget(item, row, self)
+                    widget.setData(item, row)  # 새 위젯 데이터 초기화
                     widget.deleteRequest.connect(lambda: self.onDeleteItem(item))
                     widget.addRepresentationButtons()
                     self.setIndexWidget(index, widget)  # ✅ 새 위젯 생성
@@ -123,7 +121,7 @@ class ContentListView(QListView):
         index = self.model().index(row, 0)
         widget: ContentItemWidget = self.indexWidget(index)
         if widget:
-            widget.delete_btn.setEnabled(False)
+            widget.deleteButton.setEnabled(False)
             widget.setData(item, row)
 
     def onDownloadStoped(self, item: ContentItem):
@@ -131,7 +129,7 @@ class ContentListView(QListView):
         index = self.model().index(row, 0)
         widget: ContentItemWidget = self.indexWidget(index)
         if widget:
-            widget.delete_btn.setEnabled(True)
+            widget.deleteButton.setEnabled(True)
             widget.setData(item, row)
 
     def onDownloadPaused(self, item: ContentItem):
@@ -153,21 +151,23 @@ class ContentListView(QListView):
         index = self.model().index(row, 0)
         widget: ContentItemWidget = self.indexWidget(index)
         if widget:
-            widget.delete_btn.setEnabled(True)
+            widget.deleteButton.setEnabled(True)
             if isFinish:
-                widget.frame.setStyleSheet("""
-                QFrame {
+                widget.contentFrame.setStyleSheet("""
+                #contentFrame {
                     background-color: #55B5FF;  /* ✅ 불투명한 배경 */
                     border-radius: 8px;  
                     padding: 0px;
+                    color: #ffffff;
                 }                       
                 """)
             else:
-                widget.frame.setStyleSheet("""
-                QFrame {
+                widget.contentFrame.setStyleSheet("""
+                #contentFrame {
                     background-color: #FF6969;  /* ✅ 불투명한 배경 */
                     border-radius: 8px;  
                     padding: 0px;
+                    color: #ffffff;
                 }                       
                 """)
             widget.setData(item, row)

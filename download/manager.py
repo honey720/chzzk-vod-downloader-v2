@@ -68,8 +68,8 @@ class DownloadManager(QObject):
         self.task.resume()
         self.resumed.emit(self.item)
 
-    def stop(self, message: str):
-        self.task.stop(message)
+    def stop(self):
+        self.task.stop()
         self.stopped.emit(self.item)
 
     def finish(self):

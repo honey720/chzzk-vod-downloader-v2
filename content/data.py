@@ -1,7 +1,6 @@
-from PySide6.QtCore import QObject
 from download.state import DownloadState
 
-class ContentItem(QObject):
+class ContentItem:
     # 메타데이터 카드 리스트 아이템 데이터(DTO)
 
     def __init__(self, vod_url, metadata, unique_reps, resolution, base_url, download_path, content_type):
@@ -32,11 +31,9 @@ class ContentItem(QObject):
         self.download_speed = ""  # 다운로드 속도 (예: "2.5 MB/s")
         self.download_remain_time = ""  # 남은 다운로드 예상 시간 (예: "00:00:01")
         self.download_time = ""
-        self.stateMessage = self.tr("Download waiting")
 
         self.downloadState = DownloadState.WAITING  # 초기 상태
 
-    def setDownloadState(self, state: DownloadState, message: str = None):
-        self.stateMessage = message
+    def setDownloadState(self, state: DownloadState):
         if self.downloadState != state:
             self.downloadState = state

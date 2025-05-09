@@ -1,0 +1,327 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>ContentItemWidget</class>
+ <widget class="QWidget" name="ContentItemWidget">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>600</width>
+    <height>134</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>ContentItemWidget</string>
+  </property>
+  <layout class="QVBoxLayout" name="contentItemLayout">
+   <property name="leftMargin">
+    <number>10</number>
+   </property>
+   <property name="topMargin">
+    <number>10</number>
+   </property>
+   <property name="rightMargin">
+    <number>10</number>
+   </property>
+   <property name="bottomMargin">
+    <number>0</number>
+   </property>
+   <item>
+    <widget class="QFrame" name="contentFrame">
+     <property name="styleSheet">
+      <string notr="true">            #contentFrame {
+                background-color: #424242;
+                border-radius: 8px;
+                padding: 0px;
+            }
+
+            QFrame {
+                color: #ffffff;
+            }</string>
+     </property>
+     <property name="frameShape">
+      <enum>QFrame::Shape::StyledPanel</enum>
+     </property>
+     <property name="frameShadow">
+      <enum>QFrame::Shadow::Raised</enum>
+     </property>
+     <layout class="QVBoxLayout" name="contentFrameLayout">
+      <item>
+       <layout class="QHBoxLayout" name="topLayout">
+        <item>
+         <widget class="QLabel" name="indexLabel">
+          <property name="minimumSize">
+           <size>
+            <width>30</width>
+            <height>30</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>30</width>
+            <height>30</height>
+           </size>
+          </property>
+          <property name="toolTip">
+           <string>Queue number</string>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">font-size: 14px;</string>
+          </property>
+          <property name="text">
+           <string>Queue number</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="contentTypeLabel">
+          <property name="toolTip">
+           <string>Content type</string>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">font-size: 14px;</string>
+          </property>
+          <property name="text">
+           <string>Content type</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="channelImageLabel">
+          <property name="minimumSize">
+           <size>
+            <width>30</width>
+            <height>30</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>30</width>
+            <height>30</height>
+           </size>
+          </property>
+          <property name="toolTip">
+           <string>Channel image</string>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">font-size: 14px;</string>
+          </property>
+          <property name="text">
+           <string>Channel image</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignmentFlag::AlignCenter</set>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="channelNameLabel">
+          <property name="toolTip">
+           <string>Channel name</string>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">font-size: 14px;</string>
+          </property>
+          <property name="text">
+           <string>Channel name</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <spacer name="topSpacer">
+          <property name="orientation">
+           <enum>Qt::Orientation::Horizontal</enum>
+          </property>
+          <property name="sizeHint" stdset="0">
+           <size>
+            <width>40</width>
+            <height>20</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
+        <item>
+         <widget class="QLabel" name="statusLabel">
+          <property name="toolTip">
+           <string>Status</string>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">font-size: 14px;</string>
+          </property>
+          <property name="text">
+           <string>Status</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="progressLabel">
+          <property name="toolTip">
+           <string>Progress</string>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">font-size: 14px;</string>
+          </property>
+          <property name="text">
+           <string>Progress</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="fileSizeLabel">
+          <property name="toolTip">
+           <string>File size</string>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">font-size: 14px;</string>
+          </property>
+          <property name="text">
+           <string>File size</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="deleteButton">
+          <property name="minimumSize">
+           <size>
+            <width>30</width>
+            <height>30</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>30</width>
+            <height>30</height>
+           </size>
+          </property>
+          <property name="toolTip">
+           <string>Delete</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </item>
+      <item>
+       <layout class="QHBoxLayout" name="centerLayout">
+        <item>
+         <widget class="QLabel" name="thumbnailLabel">
+          <property name="minimumSize">
+           <size>
+            <width>116</width>
+            <height>66</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>105</width>
+            <height>60</height>
+           </size>
+          </property>
+          <property name="toolTip">
+           <string>Thumbnail</string>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">            #thumbnailLabel {
+                background-color: #333333;
+            }</string>
+          </property>
+          <property name="text">
+           <string>Thumbnail</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignmentFlag::AlignCenter</set>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <layout class="QVBoxLayout" name="contentLayout">
+          <property name="spacing">
+           <number>0</number>
+          </property>
+          <item>
+           <layout class="QHBoxLayout" name="titleLayout">
+            <item>
+             <widget class="QLabel" name="titleLabel">
+              <property name="toolTip">
+               <string>Title</string>
+              </property>
+              <property name="styleSheet">
+               <string notr="true">font-size: 14px;</string>
+              </property>
+              <property name="text">
+               <string>Title</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLineEdit" name="titleEdit">
+              <property name="styleSheet">
+               <string notr="true">font-size: 14px;</string>
+              </property>
+              <property name="clearButtonEnabled">
+               <bool>true</bool>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="directoryLayout">
+            <property name="spacing">
+             <number>0</number>
+            </property>
+            <item>
+             <widget class="QLabel" name="directoryLabel">
+              <property name="toolTip">
+               <string>Directory</string>
+              </property>
+              <property name="styleSheet">
+               <string notr="true">font-size: 14px;</string>
+              </property>
+              <property name="text">
+               <string>Directory</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLineEdit" name="directoryEdit">
+              <property name="styleSheet">
+               <string notr="true">font-size: 14px;</string>
+              </property>
+              <property name="clearButtonEnabled">
+               <bool>true</bool>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="openDirectoryButton">
+              <property name="minimumSize">
+               <size>
+                <width>30</width>
+                <height>30</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>30</width>
+                <height>30</height>
+               </size>
+              </property>
+              <property name="toolTip">
+               <string>Open directory</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+         </layout>
+        </item>
+       </layout>
+      </item>
+     </layout>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

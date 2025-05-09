@@ -6,7 +6,7 @@ import platform
 APP_NAME = "chzzk-vod-downloader-v2"
 
 if platform.system() == "Windows":
-    CONFIG_DIR = os.path.join(os.getenv("APPDATA"), APP_NAME)  # C:\Users\<User>\AppData\Roaming\chzzk-vod-downloader
+    CONFIG_DIR = os.path.join(os.getenv("APPDATA"), APP_NAME)  # C:\Users\<User>\AppData\Roaming\chzzk-vod-downloader-v2
 
 elif platform.system() == "Linux":
     CONFIG_DIR = config_dir = os.path.join(os.getenv("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), APP_NAME)
@@ -20,7 +20,7 @@ DEFAULT_CONFIG = {
         "NID_SES": ""
     },
     "threads": 4,
-    "afterDownloadComplete": "none",
+    "afterDownload": "none",
     "language": "en_US"
 }
 
@@ -32,9 +32,13 @@ def load_config():
 
     if not os.path.exists(CONFIG_FILE):
         save_config(DEFAULT_CONFIG)  # 파일 생성
-
-    with open(CONFIG_FILE, "r") as f:
-        config = json.load(f)
+        
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            config = json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"Error reading config file: {e}")
+        return DEFAULT_CONFIG  # 기본값을 반환하거나 예외 처리
         
     return config
 

@@ -1,10 +1,12 @@
 import os
 import config.config as config
-from config.worker import SpeedTestWorker
-from PySide6.QtWidgets import QDialog, QFormLayout, QLineEdit, QPushButton, QMessageBox, QLabel, QComboBox
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtWidgets import QDialog, QMessageBox
+from PySide6.QtCore import Signal
 
-class SettingDialog(QDialog):
+from config.worker import SpeedTestWorker
+from ui.settingDialog import Ui_SettingDialog
+
+class SettingDialog(QDialog, Ui_SettingDialog):
     """
     쿠키 설정을 위한 팝업창 예시.
     이전에 저장된 쿠키값을 인자로 받아, QLineEdit에 미리 세팅한다.
@@ -14,79 +16,53 @@ class SettingDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(self.tr("Settings"))
 
-        self.load_and_update_config()
+        self.config = config.load_config()
         self.initial_threads = self.config.get("threads")
         self.worker = None
 
-        self.initUI()
+        self.setupUi(self)
+        self.setupDynamicUi()
 
-    def load_and_update_config(self):
-        # 설정 파일을 불러오고 누락된 항목 병합
-        config_data = config.load_config()
-
-        if config.merge_config(config.DEFAULT_CONFIG, config_data):
-            config.save_config(config_data)
-        
-        self.config = config_data      
-
-    def initUI(self):
-        layout = QFormLayout()
-
-        self.nidaut = QLineEdit()
-        self.nidses = QLineEdit()
-        self.nidaut.setText(self.config.get("cookies", {}).get("NID_AUT", ""))
+    def setupDynamicUi(self):
+        self.nidaut.setText(self.config.get("cookies", {}).get("NID_AUT", "")) # 쿠키값을 불러와서 QLineEdit에 세팅
         self.nidses.setText(self.config.get("cookies", {}).get("NID_SES", ""))
 
-        layout.addRow("NID_AUT", self.nidaut)
-        layout.addRow("NID_SES", self.nidses)
+        self.helpButton.clicked.connect(self.showHelp) # 도움말 버튼 클릭 시 showHelp 메소드 호출
 
-        self.helpButton = QPushButton(self.tr("Help"))
-        self.helpButton.clicked.connect(self.showHelp)
-        layout.addWidget(self.helpButton)
+        self.threads.setText(str(self.initial_threads)) # 초기 스레드 수를 QLabel에 세팅
 
-        self.threads = QLabel()
-        self.threads.setText(str(self.initial_threads))
-        layout.addRow(self.tr("Threads"), self.threads)
+        self.testButton.clicked.connect(self.onTestStop) # 스피드 테스트 버튼 클릭 시 onTest 메소드 호출
 
-        self.testButton = QPushButton(self.tr("Speed Test Start"))
-        self.testButton.clicked.connect(self.onTest)
-        layout.addWidget(self.testButton)
+        self.afterDownload.addItem(self.tr("none"), "none") # 다운로드 완료 후 동작을 선택할 수 있는 QComboBox 생성
+        self.afterDownload.addItem(self.tr("sleep"), "sleep")
+        self.afterDownload.addItem(self.tr("shutdown"), "shutdown")
 
-        self.afterDownloadComplete = QComboBox()
-        self.afterDownloadComplete.addItem(self.tr("none"), "none")
-        self.afterDownloadComplete.addItem(self.tr("sleep"), "sleep")
-        self.afterDownloadComplete.addItem(self.tr("shutdown"), "shutdown")
-
-        current_after_download_complete = self.config.get("afterDownloadComplete", "none")
-        index = self.afterDownloadComplete.findData(current_after_download_complete)
+        currentAfterDownload = self.config.get("afterDownload", "none") # 현재 설정된 afterDownload 값을 불러옴
+        index = self.afterDownload.findData(currentAfterDownload)
         if index != -1:
-            self.afterDownloadComplete.setCurrentIndex(index)
+            self.afterDownload.setCurrentIndex(index)
 
-        layout.addRow(self.tr("After download complete"), self.afterDownloadComplete)
-
-        self.language = QComboBox()
-        self.language.addItem("English", "en_US")
+        self.language.addItem("English", "en_US") # 언어 선택을 위한 QComboBox 생성 TODO: 언어 리스트는 project.pro에서 관리
         self.language.addItem("한국어", "ko_KR")
 
-        # 현재 설정된 언어에 맞는 인덱스 찾기
-        current_lang = self.config.get("language", "en_US")
-        index = self.language.findData(current_lang)
+        currentLang = self.config.get("language", "en_US") # 현재 설정된 언어에 맞는 인덱스 찾기
+        index = self.language.findData(currentLang)
         if index != -1:
             self.language.setCurrentIndex(index)
+        
+        self.logsFolder.clicked.connect(self.openLogsFolder) # 로그 폴더 열기 버튼 클릭 시 openLogsFolder 메소드 호출
 
-        layout.addRow(self.tr("Language"), self.language)
-
-        self.logsFolder = QPushButton(self.tr("Open"))
-        self.logsFolder.clicked.connect(self.openLogsFolder)
-        layout.addRow(self.tr("Logs Folder"), self.logsFolder)
-
-        self.closeButton = QPushButton(self.tr("Apply"))
-        self.closeButton.clicked.connect(self.onApply)
-        layout.addWidget(self.closeButton)
-
-        self.setLayout(layout)
+    def accept(self):
+        if self.checkStopAndClose():
+            self.onApply()
+            return super().accept()
+        return False
+    
+    def reject(self):
+        if self.checkStopAndClose():
+            return super().reject()
+        return False
 
     def showHelp(self):
         """
@@ -102,15 +78,13 @@ class SettingDialog(QDialog):
             ).format(link, link)
         QMessageBox.information(self, self.tr("Helper"), msg)
 
-    def onTest(self):
+    def onStartTest(self):
         self.requestTest.emit()
 
-    def start_speed_test(self, flag):
+    def startSpeedTest(self, flag):
         if flag:
             # 버튼 클릭 시 상태 업데이트 및 버튼 비활성화(중복 실행 방지)
             self.threads.setText(self.tr("Testing..."))
-            self.testButton.setEnabled(False)
-            self.closeButton.setEnabled(False)
             
             # 스레드 생성 및 시그널 연결
             self.worker = SpeedTestWorker()
@@ -120,6 +94,19 @@ class SettingDialog(QDialog):
             self.worker.start()
         else:
             QMessageBox.warning(self, self.tr("Warning"), self.tr("Download is in progress. Please stop the download and try again."))
+
+    def onTestStop(self):
+        if self.testButton.text() == self.tr('Stop'):
+            self.onStopTest()
+            self.testButton.setText(self.tr('Speed Test'))
+        else:
+            self.onStartTest()
+            self.testButton.setText(self.tr('Stop'))
+
+
+    def onStopTest(self):
+        self.worker.stop()  # 스레드 중지
+        self.threads.setText(str(self.initial_threads))
 
     def on_result(self, result):
         download_speed = result['download'] / 8e6
@@ -134,9 +121,7 @@ class SettingDialog(QDialog):
         QMessageBox.warning(self, self.tr("Error"), self.tr("Error occurred during test:\n{}").format(error_message))
 
     def on_finished(self):
-        # 테스트가 완료되면 버튼을 다시 활성화
-        self.testButton.setEnabled(True)
-        self.closeButton.setEnabled(True)
+        self.testButton.setText(self.tr('Speed Test'))
 
     def openLogsFolder(self):
         os.startfile(os.path.join(config.CONFIG_DIR, "logs"))
@@ -153,23 +138,32 @@ class SettingDialog(QDialog):
         """
         self.config['cookies'] = {"NID_AUT": self.nidaut.text(), "NID_SES": self.nidses.text()}
         self.config['threads'] = self.initial_threads
-        self.config['afterDownloadComplete'] = self.afterDownloadComplete.currentData()
+        self.config['afterDownload'] = self.afterDownload.currentData()
         self.config['language'] = self.language.currentData()  # 선택된 언어 코드 저장
         config.save_config(self.config)
-        self.accept()
         
     def closeEvent(self, event):
         """
         창을 닫을 때 실행되는 이벤트
         """
-        if self.worker and self.worker.isRunning():
+        if self.checkStopAndClose():
+            event.accept()  # 창 닫기 진행
+        else:
+            event.ignore()  # 창 닫기 취소
+    
+    def checkStopAndClose(self):
+        """
+        테스트가 진행 중일 때, 사용자가 창을 닫으려 할 경우 확인 메시지를 띄운다.
+        """
+        if self.worker and self.worker.isRunning() and not self.worker.tester.is_interrupted():
             reply = QMessageBox.warning(
                 self,
                 self.tr("Testing"),
-                self.tr("Test is in progress."),
-                QMessageBox.Ok
+                self.tr("Test is in progress. Do you want to stop it?"),
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
             )
-            if reply == QMessageBox.Ok:
-                event.ignore()  # 창 닫기 취소
-                return
-        event.accept()  # 창 닫기 진행
+            if reply == QMessageBox.No:
+                return False
+            self.onStopTest()
+        return True
