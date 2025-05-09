@@ -212,7 +212,7 @@ class DownloadThread(QThread):
         """
         base_part_size = 1024 * 1024  # 1MB
         if self.s.content_type == 'clips':
-            return base_part_size * 2
+            return base_part_size * 1
         elif self.s.resolution == 144:
             return base_part_size * 1
         elif self.s.resolution in [360, 480]:
