@@ -1,0 +1,19 @@
+{
+    "projectFile": "project.json",
+    "sources": [
+        "application/mainWindow.py",
+        "content/widget.py",
+        "content/view.py",
+        "content/manager.py",
+        "content/worker.py",
+        "download/download.py",
+        "config/dialog.py",
+        "ui/settingDialog.ui",
+        "ui/mainWindow.ui",
+        "ui/contentItemWidget.ui"
+    ],
+    "translations": [
+        "translations/ko_KR.ts",
+        "translations/en_US.ts"
+    ]
+}

@@ -1,3 +1,8 @@
+r"""
+This script is used to compile .ts files into .qm files for PySide6 applications.
+If you want to add a new translation, you can add new .ts files in project.json. The format is "language_country" (e.g., "ko_KR").
+After adding the new .ts files, run "pyside6-lupdate -project .\project.json -no-obsolete -locations none" in the terminal to generate the .ts files.
+"""
 import os
 import subprocess
 
