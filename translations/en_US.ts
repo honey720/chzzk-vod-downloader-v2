@@ -139,38 +139,6 @@
         <translation>Helper</translation>
     </message>
     <message>
-        <source>Testing...</source>
-        <translation>Testing...</translation>
-    </message>
-    <message>
-        <source>Warning</source>
-        <translation>Warning</translation>
-    </message>
-    <message>
-        <source>Download is in progress. Please stop the download and try again.</source>
-        <translation>Download is in progress. Please stop the download and try again.</translation>
-    </message>
-    <message>
-        <source>Download speed: {:.2f} MB/s
-Thread count: {}</source>
-        <translation>Download speed: {:.2f} MB/s
-Thread count: {}</translation>
-    </message>
-    <message>
-        <source>Error</source>
-        <translation>Error</translation>
-    </message>
-    <message>
-        <source>Error occurred during test:
-{}</source>
-        <translation>Error occurred during test:
-{}</translation>
-    </message>
-    <message>
-        <source>Testing</source>
-        <translation>Testing</translation>
-    </message>
-    <message>
         <source>Cookies</source>
         <translation>Cookies</translation>
     </message>
@@ -191,14 +159,6 @@ Thread count: {}</translation>
         <translation>Download</translation>
     </message>
     <message>
-        <source>Threads</source>
-        <translation>Threads</translation>
-    </message>
-    <message>
-        <source>Speed Test</source>
-        <translation>Speed Test</translation>
-    </message>
-    <message>
         <source>After Download</source>
         <translation>After Download</translation>
     </message>
@@ -217,14 +177,6 @@ Thread count: {}</translation>
     <message>
         <source>Open</source>
         <translation>Open</translation>
-    </message>
-    <message>
-        <source>Stop</source>
-        <translation>Stop</translation>
-    </message>
-    <message>
-        <source>Test is in progress. Do you want to stop it?</source>
-        <translation>Test is in progress. Do you want to stop it?</translation>
     </message>
 </context>
 <context>

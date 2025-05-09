@@ -154,14 +154,7 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         설정 파일에 저장된 값 불러오기 버튼.
         """
         self.dialog = SettingDialog(parent=self)
-        self.dialog.requestTest.connect(self.onTest)
         self.dialog.exec_()
-
-    def onTest(self):
-        flag = True
-        if self.downloadManager.task and self.downloadManager.task.isRunning:
-            flag = False
-        self.dialog.startSpeedTest(flag)
 
     def onFindPath(self):
         """

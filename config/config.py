@@ -19,7 +19,6 @@ DEFAULT_CONFIG = {
         "NID_AUT": "",
         "NID_SES": ""
     },
-    "threads": 4,
     "afterDownload": "none",
     "language": "en_US"
 }

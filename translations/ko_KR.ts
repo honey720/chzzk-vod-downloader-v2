@@ -123,10 +123,6 @@
         <translation>도움말</translation>
     </message>
     <message>
-        <source>Threads</source>
-        <translation>스레드</translation>
-    </message>
-    <message>
         <source>none</source>
         <translation>없음</translation>
     </message>
@@ -159,38 +155,6 @@
         <translation>도움말</translation>
     </message>
     <message>
-        <source>Testing...</source>
-        <translation>테스트 중...</translation>
-    </message>
-    <message>
-        <source>Warning</source>
-        <translation>경고</translation>
-    </message>
-    <message>
-        <source>Download is in progress. Please stop the download and try again.</source>
-        <translation>현재 다운로드 중입니다. 다운로드를 멈추고 시도하세요.</translation>
-    </message>
-    <message>
-        <source>Download speed: {:.2f} MB/s
-Thread count: {}</source>
-        <translation>다운로드 속도: {:.2f} MB/s
-스레드 수: {}</translation>
-    </message>
-    <message>
-        <source>Error</source>
-        <translation>오류</translation>
-    </message>
-    <message>
-        <source>Error occurred during test:
-{}</source>
-        <translation>테스트 중 오류 발생:
-        {}</translation>
-    </message>
-    <message>
-        <source>Testing</source>
-        <translation>테스트 중</translation>
-    </message>
-    <message>
         <source>Cookies</source>
         <translation>쿠키</translation>
     </message>
@@ -207,24 +171,12 @@ Thread count: {}</source>
         <translation>다운로드</translation>
     </message>
     <message>
-        <source>Speed Test</source>
-        <translation>속도 테스트</translation>
-    </message>
-    <message>
         <source>After Download</source>
         <translation>다운로드 후</translation>
     </message>
     <message>
         <source>Common</source>
         <translation>일반</translation>
-    </message>
-    <message>
-        <source>Stop</source>
-        <translation>중지</translation>
-    </message>
-    <message>
-        <source>Test is in progress. Do you want to stop it?</source>
-        <translation>테스트가 진행 중입니다. 중단하시겠습니까?</translation>
     </message>
 </context>
 <context>

@@ -24,7 +24,7 @@ class Ui_SettingDialog(object):
     def setupUi(self, SettingDialog):
         if not SettingDialog.objectName():
             SettingDialog.setObjectName(u"SettingDialog")
-        SettingDialog.resize(400, 400)
+        SettingDialog.resize(400, 350)
         self.settingLayout = QVBoxLayout(SettingDialog)
         self.settingLayout.setObjectName(u"settingLayout")
         self.dialogLayout = QVBoxLayout()
@@ -71,34 +71,15 @@ class Ui_SettingDialog(object):
         self.downloadBox.setObjectName(u"downloadBox")
         self.formLayout = QFormLayout(self.downloadBox)
         self.formLayout.setObjectName(u"formLayout")
-        self.threadsLabel = QLabel(self.downloadBox)
-        self.threadsLabel.setObjectName(u"threadsLabel")
-
-        self.formLayout.setWidget(0, QFormLayout.LabelRole, self.threadsLabel)
-
-        self.threads = QLabel(self.downloadBox)
-        self.threads.setObjectName(u"threads")
-
-        self.formLayout.setWidget(0, QFormLayout.FieldRole, self.threads)
-
-        self.testButton = QPushButton(self.downloadBox)
-        self.testButton.setObjectName(u"testButton")
-
-        self.formLayout.setWidget(1, QFormLayout.LabelRole, self.testButton)
-
-        self.downloadSpacer = QSpacerItem(0, 0, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
-
-        self.formLayout.setItem(1, QFormLayout.FieldRole, self.downloadSpacer)
-
         self.afterDownloadLabel = QLabel(self.downloadBox)
         self.afterDownloadLabel.setObjectName(u"afterDownloadLabel")
 
-        self.formLayout.setWidget(2, QFormLayout.LabelRole, self.afterDownloadLabel)
+        self.formLayout.setWidget(0, QFormLayout.LabelRole, self.afterDownloadLabel)
 
         self.afterDownload = QComboBox(self.downloadBox)
         self.afterDownload.setObjectName(u"afterDownload")
 
-        self.formLayout.setWidget(2, QFormLayout.FieldRole, self.afterDownload)
+        self.formLayout.setWidget(0, QFormLayout.FieldRole, self.afterDownload)
 
 
         self.dialogLayout.addWidget(self.downloadBox)
@@ -157,8 +138,6 @@ class Ui_SettingDialog(object):
         self.nidsesLabel.setText(QCoreApplication.translate("SettingDialog", u"NID_SES", None))
         self.helpButton.setText(QCoreApplication.translate("SettingDialog", u"Help", None))
         self.downloadBox.setTitle(QCoreApplication.translate("SettingDialog", u"Download", None))
-        self.threadsLabel.setText(QCoreApplication.translate("SettingDialog", u"Threads", None))
-        self.testButton.setText(QCoreApplication.translate("SettingDialog", u"Speed Test", None))
         self.afterDownloadLabel.setText(QCoreApplication.translate("SettingDialog", u"After Download", None))
         self.commonBox.setTitle(QCoreApplication.translate("SettingDialog", u"Common", None))
         self.languageLabel.setText(QCoreApplication.translate("SettingDialog", u"Language", None))
