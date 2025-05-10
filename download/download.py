@@ -198,13 +198,19 @@ class DownloadThread(QThread):
 
     # ============ 유틸 메서드 ============
 
-    def _get_total_size(self):
+    def _get_total_size(self): #: TODO: 컨텐츠 아이템에 content-length 추가(중복된 로직 제거)
         """
         HEAD 요청으로 total_size를 구한다.
         """
         response = requests.head(self.s.video_url)
         response.raise_for_status()
-        return int(response.headers.get('content-length', 0))
+        size = int(response.headers.get('content-length', 0))
+        if size == 0:
+            resp = requests.get(self.s.video_url, stream=True)
+            resp.raise_for_status()
+            size = int(resp.headers.get('content-length', 0))
+            resp.close()
+        return size
 
     def _decide_part_size(self):
         """
