@@ -81,6 +81,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
                     resp = requests.get(base_url, stream=True)
                     resp.raise_for_status()
                     size = int(resp.headers.get('content-length', 0))
+                    resp.close()
                 
                 size_text = self.setSize(size)
                 self.item.unique_reps[index][-1] = size_text
@@ -125,7 +126,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             response = requests.get(url)
             response.raise_for_status()
             image = QPixmap()
-            image.loadFromData(BytesIO(response.content).read())
+            image.loadFromData(response.content)
             
             # 원본 이미지의 비율 계산
             original_width = image.width()
