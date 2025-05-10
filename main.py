@@ -60,7 +60,7 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
 
     # 설정 파일 로드
-    app_config = config.load_config()
+    app_config = config.update_config()
     
     # 번역 시스템 초기화
     translator = QTranslator()

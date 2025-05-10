@@ -1,6 +1,7 @@
 import json
 import os
 import platform
+from collections import OrderedDict
 
 # 설정 파일 경로 (AppData 디렉토리에 저장)
 APP_NAME = "chzzk-vod-downloader-v2"
@@ -12,9 +13,11 @@ elif platform.system() == "Linux":
     CONFIG_DIR = config_dir = os.path.join(os.getenv("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), APP_NAME)
 
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
+CONFIG_VERSION = 2
 
 # 초기 설정
 DEFAULT_CONFIG = {
+    "version": CONFIG_VERSION,
     "cookies": {
         "NID_AUT": "",
         "NID_SES": ""
@@ -24,7 +27,7 @@ DEFAULT_CONFIG = {
 }
 
 # 설정 로드 함수
-def load_config():
+def load_config(): # TODO: config.json에서 추출한 값들을 ENUM으로 변환하여 반환
 
     os.makedirs(CONFIG_DIR, exist_ok=True)  # 디렉토리 생성
     os.makedirs(os.path.join(CONFIG_DIR, "logs"), exist_ok=True)  # logs 디렉토리 생성
@@ -46,20 +49,55 @@ def save_config(config):
     with open(CONFIG_FILE, "w") as file:
         json.dump(config, file, indent=4)
 
-def merge_config(default, current):
+
+def update_config():
     """
-    default: 기본 설정 딕셔너리 (DEFAULT_CONFIG)
-    current: 기존 설정 딕셔너리 (config.json에서 로드한 값)
-    누락된 key가 있으면 기본값을 추가하고, 변경되었다면 True를 반환.
+    config.json을 최신 상태로 유지하며,
+    버전별 마이그레이션과 값 검증을 수행한다.
     """
-    updated = False
-    for key, default_value in default.items():
-        if key not in current:
-            current[key] = default_value
-            updated = True
-        else:
-            # 만약 값이 딕셔너리이면, 재귀적으로 병합합니다.
-            if isinstance(default_value, dict) and isinstance(current[key], dict):
-                if merge_config(default_value, current[key]):
-                    updated = True
-    return updated
+    config = load_config()
+    current_version = config.get("version", 1)
+
+    if current_version < CONFIG_VERSION:
+        print(f"Migrating config from version {current_version} to {CONFIG_VERSION}...")
+        while current_version < CONFIG_VERSION:
+            migrate_func = MIGRATIONS.get(current_version)
+            if not migrate_func:
+                raise Exception(f"No migration function for version {current_version}")
+            config = migrate_func(config)
+            current_version = config["version"]
+
+        print("Configuration file has been updated to the latest version.")
+    else:
+        print("Configuration file is up to date.")
+    config = reorder_config(config) # 순서 변경이 필요한 경우에만 정렬
+    save_config(config)
+    return config
+
+def reorder_config(config):
+    ordered = OrderedDict()
+    # 기본 설정에 있는 키들만 ordered에 추가
+    for key in DEFAULT_CONFIG:
+        if key in config:
+            ordered[key] = config[key]
+    
+    # 기본 설정에 없는 키를 삭제
+    config = {key: value for key, value in config.items() if key in DEFAULT_CONFIG}
+    
+    # 수정된 config 반환
+    return ordered
+
+def migrate_v1_to_v2(config):
+    # 예: 기존 "afterDownloadComplete"를 "afterDownload"로 이관
+    if "afterDownloadComplete" in config:
+        config["afterDownload"] = config.pop("afterDownloadComplete")
+    if "threads" in config:
+        del config["threads"]
+
+    config["version"] = 2
+    return config
+
+# 마이그레이션 맵
+MIGRATIONS = {
+    1: migrate_v1_to_v2,
+}
