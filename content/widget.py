@@ -77,6 +77,10 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
                 resp = requests.head(base_url)
                 resp.raise_for_status()
                 size = int(resp.headers.get('content-length', 0))
+                if size == 0:
+                    resp = requests.get(base_url, stream=True)
+                    resp.raise_for_status()
+                    size = int(resp.headers.get('content-length', 0))
                 
                 size_text = self.setSize(size)
                 self.item.unique_reps[index][-1] = size_text
