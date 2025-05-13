@@ -15,7 +15,6 @@ class MonitorThread(QThread):
     def __init__(self, task: DownloadTask):
         super().__init__()
         self.task = task
-        self.data = self.task.data
         self.logger = self.task.logger # 로거 초기화
         self.adjust_count = 0
 
@@ -27,8 +26,8 @@ class MonitorThread(QThread):
         threading.current_thread().name = "MonitorThread"  # 스레드 시작 시 이름 재설정
         t.sleep(1)
         while self.task.state in [DownloadState.RUNNING, DownloadState.PAUSED]:
-            if not self.data._pause_event.is_set():
-                self.data._pause_event.wait()
+            if not self.task._pause_event.is_set():
+                self.task._pause_event.wait()
                 self.measure_speed()
             else:
                 self._adjust_threads()
@@ -49,7 +48,7 @@ class MonitorThread(QThread):
         """
 
         avg_active_speed = (
-            self.data.speed_mb / self.data.future_count if self.data.future_count > 0 else 0
+            self.task.speed_mb / self.task.future_count if self.task.future_count > 0 else 0
         )
 
         if avg_active_speed > 4:
@@ -63,38 +62,38 @@ class MonitorThread(QThread):
                 self.adjust_count += 1
         
         if self.adjust_count > 1:
-            self.data.adjust_threads = min(self.data.max_threads, self.data.adjust_threads + 4)
-            self.logger.log_thread_adjust(self.data.adjust_threads, self.data.speed_mb) # 스레드 조정 로그
+            self.task.adjust_threads = min(self.task.max_threads, self.task.adjust_threads + 4)
+            self.logger.log_thread_adjust(self.task.adjust_threads, self.task.speed_mb) # 스레드 조정 로그
             self.adjust_count = 0
         elif self.adjust_count < -4:
-            self.data.adjust_threads = max(1, self.data.adjust_threads // 2)
-            self.logger.log_thread_adjust(self.data.adjust_threads, self.data.speed_mb) # 스레드 조정 로그
+            self.task.adjust_threads = max(1, self.task.adjust_threads // 2)
+            self.logger.log_thread_adjust(self.task.adjust_threads, self.task.speed_mb) # 스레드 조정 로그
             self.adjust_count = 0
 
     def measure_speed(self):
-            current_size = self.data.total_downloaded_size
-            speed = current_size - self.data.prev_size
-            self.data.prev_size = current_size
+            current_size = self.task.total_downloaded_size
+            speed = current_size - self.task.prev_size
+            self.task.prev_size = current_size
 
             # MB/s로 변환
-            self.data.speed_mb = speed / (1024*1024)
-            avg_speed = self.data.speed_mb / self.data.future_count if self.data.future_count > 0 else 0
-            self.logger.log_thread_debug(self.data.future_count, self.data.speed_mb, avg_speed)
+            self.task.speed_mb = speed / (1024*1024)
+            avg_speed = self.task.speed_mb / self.task.future_count if self.task.future_count > 0 else 0
+            self.logger.log_thread_debug(self.task.future_count, self.task.speed_mb, avg_speed)
 
     def update_progress(self):
         """
         진행률, 다운로드 속도, 예상 남은 시간 등 정보를 계산 후 시그널로 전송한다.
         """
-        active_downloaded_size = sum(self.data.threads_progress)
-        self.data.total_downloaded_size = self.data.completed_progress + active_downloaded_size
+        active_downloaded_size = sum(self.task.threads_progress)
+        self.task.total_downloaded_size = self.task.completed_progress + active_downloaded_size
         # elapsed_time = time() - self.data.start_time
 
-        progress = int((self.data.total_downloaded_size / self.data.total_size) * 100) if self.data.total_size > 0 else 0
+        progress = int((self.task.total_downloaded_size / self.task.total_size) * 100) if self.task.total_size > 0 else 0
 
-        if self.data.speed_mb > 0:
+        if self.task.speed_mb > 0:
             remaining_time = (
-                (self.data.total_size - self.data.total_downloaded_size)
-                / (self.data.speed_mb * 1024 * 1024)
+                (self.task.total_size - self.task.total_downloaded_size)
+                / (self.task.speed_mb * 1024 * 1024)
             )
             #completion_time = elapsed_time + remaining_time
             #completion_time_str = strftime('%H:%M:%S', gmtime(completion_time))
@@ -104,9 +103,9 @@ class MonitorThread(QThread):
             remaining_time_str = "N/A"
         
         # 시그널 전송
-        self.progress.emit(remaining_time_str, str(self.data.total_downloaded_size), f"{self.data.speed_mb:.1f} MB/s", progress)
+        self.progress.emit(remaining_time_str, str(self.task.total_downloaded_size), f"{self.task.speed_mb:.1f} MB/s", progress)
 
     def get_download_time(self):
-        download_time = self.data.end_time - self.data.start_time
+        download_time = self.task.end_time - self.task.start_time
         download_time_str = strftime('%H:%M:%S', gmtime(download_time))
         return download_time_str

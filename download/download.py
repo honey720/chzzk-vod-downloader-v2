@@ -17,7 +17,7 @@ class DownloadThread(QThread):
     def __init__(self, task: DownloadTask):
         super().__init__()
         self.task = task
-        self.s = self.task.data
+        self.item = task.item
         self.future_dict = {}
         self.lock = threading.Lock()
         self.logger = self.task.logger
@@ -29,8 +29,8 @@ class DownloadThread(QThread):
         """
         try:
             threading.current_thread().name = "DownloadThread"  # 스레드 시작 시 이름 재설정
-            self.s.start_time = tm.time()
-            total_size = self.s.total_size = self._get_total_size()
+            self.task.start_time = tm.time()
+            total_size = self.task.total_size = self._get_total_size()
 
             # part_size 결정(해상도별 가중 적용)
             part_size = self._decide_part_size()
@@ -40,29 +40,29 @@ class DownloadThread(QThread):
                 (i * part_size, min((i + 1) * part_size - 1, total_size - 1))
                 for i in range((total_size + part_size - 1) // part_size)
             ]
-            self.s.max_threads = self.s.total_ranges = len(ranges)
-            self.s.adjust_threads = min(self.s.adjust_threads, self.s.max_threads)
-            self.s.threads_progress = [0] * self.s.total_ranges
-            self.logger.log_download_start(total_size, part_size, self.s.total_ranges, self.s.adjust_threads)
+            self.task.max_threads = self.task.total_ranges = len(ranges)
+            self.task.adjust_threads = min(self.task.adjust_threads, self.task.max_threads)
+            self.task.threads_progress = [0] * self.task.total_ranges
+            self.logger.log_download_start(total_size, part_size, self.task.total_ranges, self.task.adjust_threads)
 
             # 빈 파일 생성(사이즈: 0)
-            with open(self.s.output_path, 'wb'):
+            with open(self.item.output_path, 'wb'):
                 pass
 
-            with ThreadPoolExecutor(max_workers=self.s.max_threads, thread_name_prefix="DownloadWorker") as executor:
-                self.s.remaining_ranges = self._get_remaining_ranges(ranges)
-                self.s.future_count = 0
+            with ThreadPoolExecutor(max_workers=self.task.max_threads, thread_name_prefix="DownloadWorker") as executor:
+                self.task.remaining_ranges = self._get_remaining_ranges(ranges)
+                self.task.future_count = 0
 
                 while not self.task.state == DownloadState.WAITING:
                     # (1) 현재 활성 스레드 수보다 적으면 -> 추가 스레드 할당
-                    while self.s.future_count < self.s.adjust_threads and self.s.remaining_ranges:
-                        for part_num in range(self.s.adjust_threads):
-                            if not self.s.remaining_ranges:
+                    while self.task.future_count < self.task.adjust_threads and self.task.remaining_ranges:
+                        for part_num in range(self.task.adjust_threads):
+                            if not self.task.remaining_ranges:
                                 break
                             with self.lock:
                                 if part_num not in self.future_dict:
-                                    start, end = self.s.remaining_ranges.pop(0)
-                                    self.s.future_count += 1
+                                    start, end = self.task.remaining_ranges.pop(0)
+                                    self.task.future_count += 1
                                     self.logger.log_thread_start(part_num, start, end)
                                     future = executor.submit(
                                         self._download_part,
@@ -75,12 +75,12 @@ class DownloadThread(QThread):
                     tm.sleep(0.1)
 
                     # (3) 남은 작업이 없고 스레드도 없으면 종료
-                    if not self.s.remaining_ranges and not self.future_dict:
+                    if not self.task.remaining_ranges and not self.future_dict:
                         break
 
                 if self.task.state == DownloadState.RUNNING:
-                    self.s.end_time = tm.time()
-                    total_time = self.s.end_time - self.s.start_time
+                    self.task.end_time = tm.time()
+                    total_time = self.task.end_time - self.task.start_time
                     self.logger.log_download_complete(total_time)
                     self.logger.save_and_close()
                     self.completed.emit()
@@ -102,17 +102,17 @@ class DownloadThread(QThread):
         while not self.task.state == DownloadState.WAITING:
             try:
                 headers = {'Range': f'bytes={start}-{end}'}
-                response = requests.get(self.s.video_url, headers=headers, stream=True, timeout=30)
+                response = requests.get(self.item.base_url, headers=headers, stream=True, timeout=30)
                 response.raise_for_status()
                 part_start_time = tm.time()
 
-                with open(self.s.output_path, 'r+b') as f:
+                with open(self.item.output_path, 'r+b') as f:
                     f.seek(start)
                     for chunk in response.iter_content(chunk_size=8192):
                         if self.task.state == DownloadState.WAITING:
                             return part_num
                         if self.task.state == DownloadState.PAUSED:
-                            self.s._pause_event.wait()
+                            self.task._pause_event.wait()
 
                         if chunk:
                             f.write(chunk)
@@ -139,9 +139,9 @@ class DownloadThread(QThread):
 
                 # 성공적으로 마무리된 경우
                 with self.lock:
-                    self.s.completed_threads += 1
-                    self.s.completed_progress += downloaded_size
-                    self.s.threads_progress[part_num] = 0
+                    self.task.completed_threads += 1
+                    self.task.completed_progress += downloaded_size
+                    self.task.threads_progress[part_num] = 0
                 self.logger.log_thread_complete(part_num, downloaded_size)
                 return part_num
 
@@ -156,7 +156,7 @@ class DownloadThread(QThread):
         스레드가 다운로드 중일 때 속도 체크 및 진행 상황 업데이트.
         """
         with self.lock:
-            self.s.threads_progress[part_num] = downloaded_size
+            self.task.threads_progress[part_num] = downloaded_size
             self.update_progress()
 
     # ============ 다운로드 조정 및 콜백 메서드 ============
@@ -171,7 +171,7 @@ class DownloadThread(QThread):
             with self.lock:
                 if part_num in self.future_dict:
                     del self.future_dict[part_num]
-                    self.s.future_count -= 1
+                    self.task.future_count -= 1
             self.update_progress()  # 즉각적 진행도 반영
 
         except Exception as e:
@@ -183,17 +183,17 @@ class DownloadThread(QThread):
         """
         예외 발생 시 파일 구간을 다시 다운로드할 수 있도록 remaining_ranges에 등록.
         """
-        self.s.failed_threads += 1
-        self.s.threads_progress[part_num] = 0
-        self.s.remaining_ranges.append((start, end))
+        self.task.failed_threads += 1
+        self.task.threads_progress[part_num] = 0
+        self.task.remaining_ranges.append((start, end))
 
     def _download_stop_callback(self, start, end, part_num):
         """
         특정 스레드를 중도 중단하고, 해당 구간을 재시작하도록 설정.
         """
-        self.s.restart_threads += 1
-        self.s.threads_progress[part_num] = 0
-        self.s.remaining_ranges.append((start, end))
+        self.task.restart_threads += 1
+        self.task.threads_progress[part_num] = 0
+        self.task.remaining_ranges.append((start, end))
         self.logger.warning(f"Part {part_num} stopped due to slow speed, will retry")
 
     # ============ 유틸 메서드 ============
@@ -202,11 +202,11 @@ class DownloadThread(QThread):
         """
         HEAD 요청으로 total_size를 구한다.
         """
-        response = requests.head(self.s.video_url)
+        response = requests.head(self.item.base_url)
         response.raise_for_status()
         size = int(response.headers.get('content-length', 0))
         if size == 0:
-            resp = requests.get(self.s.video_url, stream=True)
+            resp = requests.get(self.item.base_url, stream=True)
             resp.raise_for_status()
             size = int(resp.headers.get('content-length', 0))
             resp.close()
@@ -217,13 +217,13 @@ class DownloadThread(QThread):
         해상도에 따라 파트 크기 가중치를 달리 부여한다.
         """
         base_part_size = 1024 * 1024  # 1MB
-        if self.s.content_type == 'clips':
+        if self.item.content_type == 'clips':
             return base_part_size * 1
-        elif self.s.resolution == 144:
+        elif self.item.resolution == 144:
             return base_part_size * 1
-        elif self.s.resolution in [360, 480]:
+        elif self.item.resolution in [360, 480]:
             return base_part_size * 2
-        elif self.s.resolution == 720:
+        elif self.item.resolution == 720:
             return base_part_size * 5
         else:
             return base_part_size * 10
@@ -233,7 +233,7 @@ class DownloadThread(QThread):
         중단 이후 재시작 같은 상황 고려(현재 파일크기 등을 바탕으로),
         아직 다운로드되지 않은 구간만 남겨 반환한다.
         """
-        with open(self.s.output_path, 'r+b') as f:
+        with open(self.item.output_path, 'r+b') as f:
             f.seek(0, 2)
             file_size = f.tell()
 
@@ -252,5 +252,5 @@ class DownloadThread(QThread):
         if self.task.state in [DownloadState.PAUSED, DownloadState.WAITING]:    # 중단 플래그 확인
             return
 
-        active_downloaded_size = sum(self.s.threads_progress)
-        self.s.total_downloaded_size = self.s.completed_progress + active_downloaded_size
+        active_downloaded_size = sum(self.task.threads_progress)
+        self.task.total_downloaded_size = self.task.completed_progress + active_downloaded_size
