@@ -2,7 +2,7 @@ from PySide6.QtWidgets import QListView
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDragLeaveEvent, QDropEvent, QPainter, QColor
 from content.widget import ContentItemWidget
-from content.data import ContentItem
+from content.item.base import ContentItem
 
 class ContentListView(QListView):
     """✅ QTableView 기반으로 메타데이터 리스트를 표시하는 View"""

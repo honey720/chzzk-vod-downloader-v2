@@ -2,7 +2,7 @@ from PySide6.QtCore import QObject, Signal
 from .download import DownloadThread
 from .monitor import MonitorThread
 from download.data import DownloadData
-from content.data import ContentItem
+from content.item.base import ContentItem
 from download.task import DownloadTask
 from download.logger import DownloadLogger
 

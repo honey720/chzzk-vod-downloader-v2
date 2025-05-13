@@ -4,7 +4,7 @@ from PySide6.QtCore import Qt, Signal, QThreadPool, QObject
 from content.model import ContentListModel
 from content.view import ContentListView
 from content.delegate import ContentListDelegate
-from content.data import ContentItem
+from content.item.base import ContentItem
 from download.state import DownloadState
 from content.worker import ContentWorker
 

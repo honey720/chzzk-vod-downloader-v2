@@ -1,5 +1,5 @@
 from download.data import DownloadData
-from content.data import ContentItem
+from content.item.base import ContentItem
 from download.logger import DownloadLogger
 from download.state import DownloadState
 

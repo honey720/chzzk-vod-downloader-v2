@@ -6,7 +6,7 @@ from PySide6.QtWidgets import QMainWindow, QMessageBox, QFileDialog, QApplicatio
 from PySide6.QtCore import QTimer
 
 from config.dialog import SettingDialog
-from content.data import ContentItem
+from content.item.base import ContentItem
 from content.manager import ContentManager
 from download.manager import DownloadManager
 from download.state import DownloadState

@@ -2,7 +2,7 @@ import os, requests, threading
 from PySide6.QtWidgets import QWidget, QPushButton, QMessageBox
 from PySide6.QtGui import QPixmap, QDesktopServices
 from PySide6.QtCore import Qt, QSize, Signal, QUrl, QDir, QProcess
-from content.data import ContentItem
+from content.item.base import ContentItem
 from download.state import DownloadState
 from ui.contentItemWidget import Ui_ContentItemWidget
 from io import BytesIO

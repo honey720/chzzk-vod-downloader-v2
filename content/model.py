@@ -1,5 +1,5 @@
 from PySide6.QtCore import Qt, QAbstractListModel, QModelIndex
-from content.data import ContentItem
+from content.item.base import ContentItem
 
 class ContentListModel(QAbstractListModel):
     # 메타데이터 리스트 데이터
