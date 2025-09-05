@@ -94,6 +94,11 @@ class DownloadLogger:
         """에러 레벨 로그를 기록합니다."""
         if self.logger:
             self.logger.error(message)
+    
+    def exception(self, message: str):
+        """예외 레벨 로그를 기록합니다."""
+        if self.logger:
+            self.logger.exception(message)
 
     def critical(self, message: str):
         """치명적 에러 레벨 로그를 기록합니다."""
@@ -145,6 +150,10 @@ class DownloadLogger:
             self.error(f"{error_message} - Exception: {str(exception)}")
         else:
             self.error(error_message)
+
+    def log_exception(self, error_message: str, exception: Optional[Exception] = None):
+        """예외 정보를 로깅합니다."""
+        self.exception(f"{error_message} - Exception: {str(exception)}")
 
     def log_thread_adjust(self, active_threads: int, avg_speed: float):
         """스레드 조정 정보를 로깅합니다."""

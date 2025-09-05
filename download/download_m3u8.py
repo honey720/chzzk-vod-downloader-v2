@@ -148,7 +148,7 @@ class DownloadM3U8Thread(QThread):
                 os.remove(self.s.output_path)
                 self.task.item.post_process = False
             self.stopped.emit(self.tr("Download failed"))
-            self.logger.log_error("Download failed", e)
+            self.logger.log_exception("Download failed", e)
             self.logger.save_and_close()
 
         # 사용자가 강제로 중단한 경우 임시 파일과 다운로드 파일 삭제
