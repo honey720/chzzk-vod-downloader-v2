@@ -47,9 +47,11 @@ class MonitorM3U8Thread(QThread):
         """
         다운로드 진행 중, 속도 등에 따라 스레드 수를 동적으로 조정하는 예시 스레드.
         """
+        with self.task.lock:
+            future_count = self.data.future_count
 
         avg_active_speed = (
-            self.data.speed_mb / self.data.future_count if self.data.future_count > 0 else 0
+            self.data.speed_mb / future_count if future_count > 0 else 0
         )
 
         standard_speed = self._get_standard_speed()
@@ -78,10 +80,12 @@ class MonitorM3U8Thread(QThread):
             speed = current_size - self.data.prev_size
             self.data.prev_size = current_size
 
+            with self.task.lock:
+                future_count = self.data.future_count
             # MB/s로 변환
             self.data.speed_mb = speed / (1024*1024)
-            avg_speed = self.data.speed_mb / self.data.future_count if self.data.future_count > 0 else 0
-            self.logger.log_thread_debug(self.data.future_count, self.data.speed_mb, avg_speed)
+            avg_speed = self.data.speed_mb / future_count if future_count > 0 else 0
+            self.logger.log_thread_debug(future_count, self.data.speed_mb, avg_speed)
 
     def update_progress(self):
         """

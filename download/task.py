@@ -2,6 +2,7 @@ from download.data import DownloadData
 from content.data import ContentItem
 from download.logger import DownloadLogger
 from download.state import DownloadState
+import threading
 
 class DownloadTask:
     def __init__(self, data: DownloadData, item: ContentItem, logger: DownloadLogger):
@@ -9,6 +10,7 @@ class DownloadTask:
         self.item = item
         self.state = DownloadState.WAITING  # 초기 상태로 설정
         self.logger = logger
+        self.lock = threading.Lock()  # 상태 변경 시 동기화용 락
 
     def start(self):
         self.state = DownloadState.RUNNING

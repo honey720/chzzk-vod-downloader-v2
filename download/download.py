@@ -20,7 +20,7 @@ class DownloadThread(QThread):
         self.task = task
         self.s = self.task.data
         self.future_dict = {}
-        self.lock = threading.Lock()
+        self.lock = self.task.lock
         self.logger = self.task.logger
 
     def run(self):
@@ -52,7 +52,10 @@ class DownloadThread(QThread):
 
             with ThreadPoolExecutor(max_workers=self.s.max_threads, thread_name_prefix="DownloadWorker") as executor:
                 self.s.remaining_ranges = self._get_remaining_ranges(ranges)
-                self.s.future_count = 0
+                # 재사용 시 초기화 필수
+                with self.lock:
+                    self.s.future_count = 0
+                    self.future_dict = {}
 
                 while not self.task.state == DownloadState.WAITING:
                     # (1) 현재 활성 스레드 수보다 적으면 -> 추가 스레드 할당

@@ -24,7 +24,7 @@ class DownloadM3U8Thread(QThread):
         self.task = task
         self.s = self.task.data
         self.future_dict = {}
-        self.lock = threading.Lock()
+        self.lock = self.task.lock
         self.logger = self.task.logger
 
     def run(self):
@@ -77,7 +77,10 @@ class DownloadM3U8Thread(QThread):
 
             with ThreadPoolExecutor(max_workers=self.s.max_threads, thread_name_prefix="DownloadM3U8Worker") as executor:
                 self.s.remaining_ranges = list(enumerate(segments))
-                self.s.future_count = 0
+                # 재사용 시 초기화 필수
+                with self.lock:
+                    self.s.future_count = 0
+                    self.future_dict = {}
 
                 while not self.task.state == DownloadState.WAITING:
                     while self.s.future_count < self.s.adjust_threads and self.s.remaining_ranges:
