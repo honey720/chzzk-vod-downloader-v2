@@ -125,13 +125,13 @@ class MonitorM3U8Thread(QThread):
 
     def _get_standard_speed(self):
         """
-        해상도에 따라 파트 크기 가중치를 달리 부여한다.
+        해상도에 따른 표준 속도 값을 반환합니다.
         """
         if self.data.resolution == 144:
             return 0.2
         elif self.data.resolution in [360, 480]:
             return 0.5
         elif self.data.resolution == 720:
-            return 2
+            return 1.2
         else:
-            return 4
+            return 3
