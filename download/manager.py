@@ -1,6 +1,8 @@
 from PySide6.QtCore import QObject, Signal
 from .download import DownloadThread
+from .download_m3u8 import DownloadM3U8Thread
 from .monitor import MonitorThread
+from .monitor_m3u8 import MonitorM3U8Thread
 from download.data import DownloadData
 from content.data import ContentItem
 from download.task import DownloadTask
@@ -29,12 +31,17 @@ class DownloadManager(QObject):
     # ============ 일시정지/중지 메서드 ============
 
     def start(self, item:ContentItem):
-        self.data = DownloadData(item.base_url, item.output_path, item.resolution, item.content_type)
         self.item = item
+        self.data = DownloadData(item.base_url, item.vod_url, item.output_path, item.resolution, item.content_type)
         self.logger = DownloadLogger()
         self.task = DownloadTask(self.data, self.item, self.logger)
-        self.d_thread = DownloadThread(self.task)
-        self.m_thread = MonitorThread(self.task)
+        
+        if self.item.content_type == "m3u8":
+            self.d_thread = DownloadM3U8Thread(self.task)
+            self.m_thread = MonitorM3U8Thread(self.task)
+        else:
+            self.d_thread = DownloadThread(self.task)
+            self.m_thread = MonitorThread(self.task)
         
         self.connectSignal()
         self.task.start()
@@ -69,12 +76,14 @@ class DownloadManager(QObject):
         self.resumed.emit(self.item)
 
     def stop(self):
-        self.task.stop()
+        if self.task is not None:
+            self.task.stop()
         self.stopped.emit(self.item)
 
     def finish(self):
-        self.task.finish()
-        self.m_thread.update_progress()
-        download_time = self.m_thread.get_download_time()
-        self.removeThreads()
-        self.finished.emit(self.item, download_time)
+        if self.task is not None:
+            self.task.finish()
+            self.m_thread.update_progress()
+            download_time = self.m_thread.get_download_time()
+            self.removeThreads()
+            self.finished.emit(self.item, download_time)

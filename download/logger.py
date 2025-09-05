@@ -122,6 +122,10 @@ class DownloadLogger:
         """스레드 시작 정보를 로깅합니다."""
         self.debug(f"Thread {thread_id} started - Range: {start}-{end}")
 
+    def log_m3u8_thread_start(self, thread_id: int, segment_url: str):
+        """스레드 시작 정보를 로깅합니다."""
+        self.debug(f"Thread {thread_id} started - Segment URL: {segment_url}")
+
     def log_thread_complete(self, thread_id: int, downloaded_size: int):
         """스레드 완료 정보를 로깅합니다."""
         self.debug(f"Thread {thread_id} completed - Downloaded: {downloaded_size} bytes")

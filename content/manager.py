@@ -46,16 +46,16 @@ class ContentManager(QObject):
         self.threadpool.start(lambda: worker.run())
 
     def onWorkerFinished(self, result, content_type):
-        # result는 (vod_url, metadata, unique_reps, resolution, base_url, downloadPath) 형식
-        vod_url, metadata, unique_reps, resolution, base_url, downloadPath = result
+        # result는 (vod_url, metadata, unique_reps, resolution, base_url, downloadPath, liveRewindPlaybackJson) 형식
+        vod_url, metadata, unique_reps, resolution, base_url, downloadPath, liveRewindPlaybackJson = result
         self.downloadPath = downloadPath
-        self.addItem(vod_url, metadata, unique_reps, resolution, base_url, downloadPath, content_type)
+        self.addItem(vod_url, metadata, unique_reps, resolution, base_url, downloadPath, content_type, liveRewindPlaybackJson)
 
     def onWorkerError(self, error_message):
         self.contentError.emit(error_message)
 
-    def addItem(self, vod_url, metadata, unique_reps, resolution, base_url, downloadPath, content_type):
-        item = ContentItem(vod_url, metadata, unique_reps, resolution, base_url, downloadPath, content_type)
+    def addItem(self, vod_url, metadata, unique_reps, resolution, base_url, downloadPath, content_type, liveRewindPlaybackJson):
+        item = ContentItem(vod_url, metadata, unique_reps, resolution, base_url, downloadPath, content_type, liveRewindPlaybackJson)
         self.model.addItem(item)
         row = self.model.rowCount()
         self.insertItemRequested.emit(row)

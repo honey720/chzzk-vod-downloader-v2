@@ -3,7 +3,7 @@ from download.state import DownloadState
 class ContentItem:
     # 메타데이터 카드 리스트 아이템 데이터(DTO)
 
-    def __init__(self, vod_url, metadata, unique_reps, resolution, base_url, download_path, content_type):
+    def __init__(self, vod_url, metadata, unique_reps, resolution, base_url, download_path, content_type, liveRewindPlaybackJson):
         self.vod_url = vod_url
         
         self.default_title = metadata.get('title', 'Unknown Title')
@@ -16,6 +16,8 @@ class ContentItem:
         self.duration = metadata.get('duration', 0)
 
         self.content_type = content_type
+        self.liveRewindPlaybackJson = liveRewindPlaybackJson
+        self.post_process = False
 
         self.unique_reps = unique_reps
         

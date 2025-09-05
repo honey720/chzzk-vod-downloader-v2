@@ -1,5 +1,7 @@
 import re
 import requests
+import json
+from urllib.parse import urljoin
 import xml.etree.ElementTree as ET
 
 NAVER_API = "https://apis.naver.com"
@@ -41,6 +43,7 @@ class NetworkManager:
         in_key = content.get('inKey')
         adult = content.get('adult')
         vodStatus = content.get('vodStatus')
+        liveRewindPlaybackJson = content.get('liveRewindPlaybackJson')
 
         metadata = {
             'title': re.sub(r'[\\/:\*\?"<>|\n]', '', content.get('videoTitle', 'Unknown Title')), # 정규식으로 특수문자 제거
@@ -51,7 +54,7 @@ class NetworkManager:
             'createdDate': content.get('liveOpenDate', 'Unknown Date'),
             'duration': content.get('duration', 0),
         }
-        return video_id, in_key, adult, vodStatus, metadata
+        return video_id, in_key, adult, vodStatus, liveRewindPlaybackJson, metadata
     
     @staticmethod
     def get_video_dash_manifest(video_id: str, in_key: str):
@@ -83,6 +86,51 @@ class NetworkManager:
 
         # 중복 제거한 뒤, 리스트로 변환
         return sorted_reps, auto_resolution, auto_base_url
+    
+    @staticmethod
+    def get_video_m3u8_manifest(json_str: str):
+        """
+        m3u8 정보가 포함된 json형식의 문자열을 받아서 Representation 목록을 파싱한다.
+        """
+        data = json.loads(json_str)
+        media = data.get("media", [])
+        encoding_track = media[0].get("encodingTrack", [])
+        reps = []
+        for encoding in encoding_track:
+            width = encoding.get("videoWidth")
+            height = encoding.get("videoHeight")
+            resolution = min(int(width), int(height))
+            base_url = None
+            reps.append([resolution, base_url])
+
+        sorted_reps = sorted(reps, key=lambda x: x[0])
+        auto_resolution = sorted_reps[-1][0]
+        auto_base_url = sorted_reps[-1][1]
+        return sorted_reps, auto_resolution, auto_base_url
+    
+    @staticmethod
+    def get_video_m3u8_base_url(json_str: str, resolution: int) -> str:
+        """
+        m3u8 정보가 포함된 json형식의 문자열을 받아서 base_url을 파싱한다.
+        """
+        data = json.loads(json_str)
+        media = data.get("media", [])
+        path = media[0].get("path")
+        response = requests.get(path)
+        response.raise_for_status()
+        content = response.text.splitlines()
+
+        # 정규식으로 해상도 매칭
+        resolution_pattern = re.compile(rf"RESOLUTION=\d+x{resolution}")
+        
+        for i, line in enumerate(content):
+            if resolution_pattern.search(line):
+                # 다음 줄이 해당 해상도의 세부 플레이리스트 경로
+                relative_path = content[i + 1].strip()
+                base_url = urljoin(path, relative_path)
+                return base_url
+
+        raise ValueError(f"{resolution} 해상도 스트림을 찾을 수 없습니다.")
     
     @staticmethod
     def get_clip_info(clip_no: str, cookies: dict):

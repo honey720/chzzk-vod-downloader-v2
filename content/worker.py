@@ -22,6 +22,8 @@ class ContentWorker(QObject):
             
             if content_type == 'video':
                 result = self.fetchVideo(content_no)
+                if result[6]:
+                    content_type = "m3u8"
             elif content_type == 'clips':
                 content_type = 'clip'
                 result = self.fetchClip(content_no)
@@ -31,21 +33,20 @@ class ContentWorker(QObject):
             self.error.emit(str(e))
 
     def fetchVideo(self, video_no: str):
-        video_id, in_key, adult, vodStatus, metadata = NetworkManager.get_video_info(video_no, self.cookies)
+        video_id, in_key, adult, vodStatus, liveRewindPlaybackJson, metadata = NetworkManager.get_video_info(video_no, self.cookies)
         if adult and not video_id:
             errorMessage = self.tr("Invalid cookies value")
             raise ValueError(f"{self.vod_url}\n{errorMessage}")
-        elif vodStatus == 'NONE':
-            errorMessage = self.tr("Unencoded Video(.m3u8)")
-            raise ValueError(f"{self.vod_url}\n{errorMessage}")
-        
-        unique_reps, resolution, base_url = NetworkManager.get_video_dash_manifest(video_id, in_key)
+        elif liveRewindPlaybackJson:
+            unique_reps, resolution, base_url = NetworkManager.get_video_m3u8_manifest(liveRewindPlaybackJson)
+        else:
+            unique_reps, resolution, base_url = NetworkManager.get_video_dash_manifest(video_id, in_key)
         if not unique_reps:
             errorMessage = self.tr("Failed to get DASH manifest")
             raise ValueError(f"{self.vod_url}\n{errorMessage}")
         
         # 네트워크 작업 결과를 tuple 형태로 묶어서 전달
-        return (self.vod_url, metadata, unique_reps, resolution, base_url, self.downloadPath)
+        return (self.vod_url, metadata, unique_reps, resolution, base_url, self.downloadPath, liveRewindPlaybackJson)
             
 
     def fetchClip(self, clip_no: str):
@@ -63,4 +64,4 @@ class ContentWorker(QObject):
             errorMessage = self.tr("Failed to get DASH manifest")
             raise ValueError(f"{self.vod_url}\n{errorMessage}")
         
-        return (self.vod_url, metadata, unique_reps, resolution, base_url, self.downloadPath)
+        return (self.vod_url, metadata, unique_reps, resolution, base_url, self.downloadPath, None)

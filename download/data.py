@@ -26,6 +26,7 @@ class DownloadData:
         self.remaining_ranges = []
 
         self.speed_mb = 0
+        self.merged_segments = 0
 
         # DownloadThread 내부 변수
         self.base_url = base_url

@@ -6,6 +6,7 @@ from content.data import ContentItem
 from download.state import DownloadState
 from ui.contentItemWidget import Ui_ContentItemWidget
 from io import BytesIO
+from time import strftime, gmtime
 import platform
 
 class ContentItemWidget(QWidget, Ui_ContentItemWidget):
@@ -74,23 +75,23 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
 
         def update_button_text():
             try:
-                resp = requests.head(base_url)
-                resp.raise_for_status()
-                size = int(resp.headers.get('content-length', 0))
-                if size == 0:
-                    resp = requests.get(base_url, stream=True)
+                if self.item.content_type != "m3u8":
+                    resp = requests.head(base_url)
                     resp.raise_for_status()
                     size = int(resp.headers.get('content-length', 0))
-                    resp.close()
+                    if size == 0:
+                        resp = requests.get(base_url, stream=True)
+                        resp.raise_for_status()
+                        size = int(resp.headers.get('content-length', 0))
+                        resp.close()
                 
-                size_text = self.setSize(size)
-                self.item.unique_reps[index][-1] = size_text
-
+                    size_text = self.setSize(size)
+                    self.item.unique_reps[index][-1] = size_text
+                    button.setToolTip(size_text)
                 if len(self.item.unique_reps) - 1 == index:
                     self.setresolutionUrlSize(resolution, base_url, index, button)
 
-                button.setToolTip(size_text)
-            except Exception:
+            except Exception as e:
                 pass
 
         thread = threading.Thread(target=update_button_text, daemon=True)
@@ -104,7 +105,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
                 button.setDisabled(True)
             self.item.resolution = resolution
             self.item.base_url = base_url
-            if index is not None:
+            # m3u8인 경우, base_url과 total_size가 None이므로 처리하지 않음
+            if self.item.content_type != "m3u8" and index is not None:
                 self.item.total_size = self.item.unique_reps[index][-1]
                 self.fileSizeLabel.setText(f" {self.item.unique_reps[index][-1]}")
 
@@ -161,22 +163,33 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
 
         if self.item.downloadState == DownloadState.WAITING:
             self.statusLabel.setText(self.tr("Download waiting"))
-            self.fileSizeLabel.setText(f" {item.total_size}")
+            if self.item.content_type == "m3u8":
+                self.fileSizeLabel.setText(f" {strftime('%H:%M:%S', gmtime(item.duration))}")
+            else:
+                self.fileSizeLabel.setText(f" {item.total_size}")
             self.progressLabel.setText(" ")
 
         elif self.item.downloadState == DownloadState.RUNNING:
             self.statusLabel.setText(f"{item.download_remain_time}  {item.download_speed}")
-            self.fileSizeLabel.setText(f"  {self.setSize(item.download_size)} / {item.total_size}")
+            if self.item.content_type == "m3u8":
+                if self.item.post_process:
+                    self.statusLabel.setText("Post-processing")
+                self.fileSizeLabel.setText(f"  {self.setSize(item.download_size)}")
+            else:
+                self.fileSizeLabel.setText(f"  {self.setSize(item.download_size)} / {item.total_size}")
             self.progressLabel.setText(f"  {item.download_progress}% ")
 
         elif self.item.downloadState == DownloadState.PAUSED:
             self.statusLabel.setText(self.tr("Download paused"))
-            self.fileSizeLabel.setText(f"  {self.setSize(item.download_size)} / {item.total_size}")
+            if self.item.content_type == "m3u8":
+                self.fileSizeLabel.setText(f"  {self.setSize(item.download_size)}")
+            else:
+                self.fileSizeLabel.setText(f"  {self.setSize(item.download_size)} / {item.total_size}")
             self.progressLabel.setText(f"  {item.download_progress}% ")
 
         elif self.item.downloadState == DownloadState.FINISHED:
             self.statusLabel.setText(f"{item.download_time}")
-            self.fileSizeLabel.setText(f"  {self.setSize(item.download_size)} / {item.total_size}")
+            self.fileSizeLabel.setText(f"  {self.setSize(item.download_size)}")
             self.progressLabel.setText(f"  {item.download_progress}% ")
 
     def getData(self) -> ContentItem:
