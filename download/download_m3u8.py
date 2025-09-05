@@ -128,7 +128,7 @@ class DownloadM3U8Thread(QThread):
                                         if self.task.state == DownloadState.PAUSED:
                                             self.s._pause_event.wait()
                                 # 세그먼트 파일 합친 후 삭제
-                                os.remove(seg_path)
+                                self.safe_remove(seg_path)
                                 self.s.merged_segments += 1
                                 
                     self.s.end_time = tm.time()
@@ -137,8 +137,8 @@ class DownloadM3U8Thread(QThread):
                     self.logger.save_and_close()
                     self.completed.emit()
                 
-                # (5) 임시 폴더 삭제
-                shutil.rmtree(self.temp_dir)
+            # (5) 임시 폴더 삭제
+            shutil.rmtree(self.temp_dir)
 
         except Exception as e:
             # 오류 발생 시 임시 파일과 다운로드 파일 삭제
@@ -273,3 +273,15 @@ class DownloadM3U8Thread(QThread):
         
         active_downloaded_size = sum(self.s.threads_progress)
         self.s.total_downloaded_size = self.s.completed_progress + active_downloaded_size
+
+    def safe_remove(self, path, retries=5, delay=0.2):
+        """
+        파일 삭제 시도 (PermissionError 방지용 재시도 포함)
+        """
+        for i in range(int(retries)):
+            try:
+                os.remove(path)
+                return
+            except PermissionError:  # [WinError 32]
+                tm.sleep(delay)
+        raise PermissionError(f"Failed to remove {path} after {retries} attempts")
