@@ -102,7 +102,7 @@ class DownloadThread(QThread):
         while not self.task.state == DownloadState.WAITING:
             try:
                 headers = {'Range': f'bytes={start}-{end}'}
-                response = requests.get(self.s.video_url, headers=headers, stream=True, timeout=30)
+                response = requests.get(self.s.base_url, headers=headers, stream=True, timeout=30)
                 response.raise_for_status()
                 part_start_time = tm.time()
 
@@ -202,11 +202,11 @@ class DownloadThread(QThread):
         """
         HEAD 요청으로 total_size를 구한다.
         """
-        response = requests.head(self.s.video_url)
+        response = requests.head(self.s.base_url)
         response.raise_for_status()
         size = int(response.headers.get('content-length', 0))
         if size == 0:
-            resp = requests.get(self.s.video_url, stream=True)
+            resp = requests.get(self.s.base_url, stream=True)
             resp.raise_for_status()
             size = int(resp.headers.get('content-length', 0))
             resp.close()

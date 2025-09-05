@@ -3,7 +3,7 @@ import threading
 import config.config as config
 
 class DownloadData:
-    def __init__(self, video_url, output_path, resolution, content_type):
+    def __init__(self, base_url, vod_url, output_path, resolution, content_type):
         self.total_downloaded_size = 0
         self.total_size = 0
         
@@ -28,7 +28,8 @@ class DownloadData:
         self.speed_mb = 0
 
         # DownloadThread 내부 변수
-        self.video_url = video_url
+        self.base_url = base_url
+        self.vod_url = vod_url
         self.output_path = output_path
         self.resolution = resolution
         self.content_type = content_type
