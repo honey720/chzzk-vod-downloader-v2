@@ -6,6 +6,9 @@
 
 # 치지직 VOD 다운로더 v2
 
+> ⚠ 주인장의 현생 이슈로, 당분간 업데이트를 중단합니다. 프로그램을 이용해주셔서 감사합니다.  
+⚠ Due to the personal reasons of the developer, we are suspending the update for the time being. Thank you for using this program.
+
 > 치지직 다시보기 동영상, 클립을 다운로드하는 프로그램입니다.
 
 ![main](https://github.com/user-attachments/assets/ae01a231-e3d0-425c-a76f-0042d49a2a8b)
