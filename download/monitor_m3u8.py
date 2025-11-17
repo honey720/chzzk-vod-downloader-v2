@@ -101,18 +101,15 @@ class MonitorM3U8Thread(QThread):
             progress = int((self.data.completed_threads / self.data.max_threads) * 100) if self.data.max_threads > 0 else 0
 
 
-        if self.data.speed_mb > 0:
+        if self.data.speed_mb > 0 and self.data.completed_threads > 0:
             avg_segment_size = self.data.total_downloaded_size / self.data.completed_threads
             remaining_segments = self.data.max_threads - self.data.completed_threads
             remaining_time = (
                 (avg_segment_size * remaining_segments)
                 / (self.data.speed_mb * 1024 * 1024)
             )
-            #completion_time = elapsed_time + remaining_time
-            #completion_time_str = strftime('%H:%M:%S', gmtime(completion_time))
             remaining_time_str = strftime('%H:%M:%S', gmtime(remaining_time))
         else:
-            #completion_time_str = "N/A"
             remaining_time_str = "N/A"
         
         # 시그널 전송

@@ -265,6 +265,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
 
                 if platform.system() == "Windows":
                     success = QProcess.startDetached("explorer.exe", ["/select,", nativePath])
+                elif platform.system() == "Darwin":
+                    success = QProcess.startDetached("open", ["-R", nativePath])
                 elif platform.system() == "Linux":
                     success = QProcess.startDetached("nautilus", [nativePath])
 
