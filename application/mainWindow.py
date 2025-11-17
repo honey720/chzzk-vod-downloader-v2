@@ -221,6 +221,8 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         if afterDownload == "sleep":
             if os_type == "Windows":
                 os.system("rundll32.exe powrprof.dll,SetSuspendState 0,1,0")
+            elif os_type == "Darwin":
+                os.system("pmset sleepnow")
             elif os_type == "Linux":
                 os.system("systemctl suspend")
             else:
@@ -228,6 +230,8 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         elif afterDownload == "shutdown":
             if os_type == "Windows":
                 os.system("shutdown -s -t 0")
+            elif os_type == "Darwin":
+                os.system("osascript -e 'tell app \"System Events\" to shut down'")
             elif os_type == "Linux":
                 os.system("shutdown -h now")
             else:

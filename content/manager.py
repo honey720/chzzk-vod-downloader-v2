@@ -102,11 +102,7 @@ class ContentManager(QObject):
         else:
             default_filename = "video.mp4"
 
-        if platform.system() == "Windows":
-            item.output_path = item.download_path + '\\' + default_filename
-
-        elif platform.system() == "Linux":
-            item.output_path = item.download_path + '/' + default_filename
+        item.output_path = os.path.join(item.download_path, default_filename)
 
         if item.output_path:
             # 다운로드 요청 시그널 발행
