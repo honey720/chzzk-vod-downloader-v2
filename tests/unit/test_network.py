@@ -1,7 +1,7 @@
-"""content.network의 URL 파싱·DASH 매니페스트 파싱 박제 테스트.
+"""content.network의 URL 파싱·DASH 매니페스트 파싱 테스트.
 
-목적은 "올바른 동작" 검증이 아니라 현재 동작의 보존이다 (#27).
-현재 결과가 이상해 보여도 그 결과 그대로를 기대값으로 삼는다.
+- URL 파싱(TestExtractContentNo): #33에서 허용 범위를 넓힌 **요구 동작 검증** 테스트다.
+- DASH 매니페스트 파싱(TestGetVideoDashManifest): #27의 현재 동작 보존(박제) 테스트다.
 """
 
 import pytest
@@ -12,12 +12,16 @@ from tests.mocks.mock_http import MockResponse
 
 
 class TestExtractContentNo:
-    """NetworkManager.extract_content_no의 (type, content_no) 결과 박제."""
+    """NetworkManager.extract_content_no의 요구 동작 검증 (#33).
+
+    브라우저 주소창을 그대로 복사한 URL 변형(쿼리스트링·후행 슬래시·www)은 허용하고,
+    live URL·다른 도메인·형식이 깨진 URL은 거부해야 한다.
+    """
 
     @pytest.mark.parametrize(
         ("vod_url", "expected"),
         [
-            # 정상 케이스: video / clips, 스킴 유무
+            # 기본 형태: video / clips, 스킴 유무
             ("https://chzzk.naver.com/video/1510760", ("video", "1510760")),
             ("http://chzzk.naver.com/video/1510760", ("video", "1510760")),
             ("chzzk.naver.com/video/1510760", ("video", "1510760")),
@@ -25,20 +29,32 @@ class TestExtractContentNo:
             ("chzzk.naver.com/clips/abcDEF12345", ("clips", "abcDEF12345")),
             # content_no는 \w+ 이므로 언더스코어는 허용된다
             ("https://chzzk.naver.com/clips/abc_123", ("clips", "abc_123")),
-            # 경계 케이스: 현재 구현은 fullmatch라서 아래는 전부 (None, None)
-            ("https://chzzk.naver.com/video/1510760?t=120", (None, None)),  # 쿼리스트링
-            ("https://chzzk.naver.com/video/1510760/", (None, None)),  # 후행 슬래시
-            ("https://chzzk.naver.com/clips/abc-def", (None, None)),  # 하이픈은 \w 미포함
-            ("https://chzzk.naver.com/live/channelid00", (None, None)),  # live는 미지원
+            # 쿼리스트링은 무시하고 파싱한다 (#33)
+            ("https://chzzk.naver.com/video/1510760?t=120", ("video", "1510760")),
+            ("https://chzzk.naver.com/video/1510760?t=120&utm_source=share", ("video", "1510760")),
+            ("https://chzzk.naver.com/clips/abcDEF12345?sharePlatform=web", ("clips", "abcDEF12345")),
+            ("chzzk.naver.com/video/1510760?t=120", ("video", "1510760")),  # 스킴 생략 + 쿼리
+            # 후행 슬래시를 허용한다 (#33)
+            ("https://chzzk.naver.com/video/1510760/", ("video", "1510760")),
+            ("https://chzzk.naver.com/video/1510760/?t=120", ("video", "1510760")),  # 슬래시+쿼리
+            # www 서브도메인을 허용한다 (#33)
+            ("https://www.chzzk.naver.com/video/1510760", ("video", "1510760")),
+            ("https://www.chzzk.naver.com/clips/abcDEF12345/", ("clips", "abcDEF12345")),
+            # 계속 거부: live URL (녹화 기능 전까지 미지원)
+            ("https://chzzk.naver.com/live/channelid00", (None, None)),
+            # 계속 거부: 다른 도메인·스킴
+            ("https://youtube.com/video/1510760", (None, None)),
+            ("https://mchzzk.naver.com/video/1510760", (None, None)),  # 유사 도메인
+            ("ftp://chzzk.naver.com/video/1510760", (None, None)),
+            # 계속 거부: 형식이 깨진 URL
             ("https://chzzk.naver.com/video/", (None, None)),  # content_no 누락
-            ("https://www.chzzk.naver.com/video/1510760", (None, None)),  # www 서브도메인
-            ("https://youtube.com/video/1510760", (None, None)),  # 다른 도메인
-            ("ftp://chzzk.naver.com/video/1510760", (None, None)),  # 다른 스킴
+            ("https://chzzk.naver.com/clips/abc-def", (None, None)),  # 하이픈은 \w 미포함
+            ("https://chzzk.naver.com/video/1510760//", (None, None)),  # 이중 슬래시
             ("", (None, None)),  # 빈 문자열
         ],
     )
     def test_extract_content_no(self, vod_url: str, expected: tuple):
-        """URL별 (type, content_no) 추출 결과를 현재 동작 그대로 고정한다."""
+        """URL별 (type, content_no) 추출 결과가 요구 동작과 일치해야 한다."""
         assert NetworkManager.extract_content_no(vod_url) == expected
 
 
