@@ -39,24 +39,19 @@ class DownloadLogger:
         for handler in self.logger.handlers[:]:
             self.logger.removeHandler(handler)
         
-        # 파일 핸들러 설정
+        # 파일 핸들러 설정 (다운로드 전용 로그 파일)
         file_handler = logging.FileHandler(self.log_file, encoding='utf-8')
         file_handler.setLevel(self.log_level)
-        
-        # 콘솔 핸들러 설정
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(self.log_level)
-        
+
         # 포맷터 설정
         formatter = logging.Formatter(
             '%(asctime)s - %(levelname)s - [%(threadName)s] - %(message)s'
         )
         file_handler.setFormatter(formatter)
-        console_handler.setFormatter(formatter)
-        
-        # 핸들러 추가
+
+        # 핸들러 추가 — 콘솔 출력은 자체 핸들러 대신 공통 로깅 설정(루트 로거,
+        # config/log_setup.py)으로 전파되어 처리된다 (#30)
         self.logger.addHandler(file_handler)
-        self.logger.addHandler(console_handler)
 
     def save_and_close(self):
         """

@@ -1,7 +1,10 @@
 import json
+import logging
 import os
 import platform
 from collections import OrderedDict
+
+logger = logging.getLogger(__name__)
 
 # 설정 파일 경로 (AppData 디렉토리에 저장)
 APP_NAME = "chzzk-vod-downloader-v2"
@@ -42,7 +45,7 @@ def load_config(): # TODO: config.json에서 추출한 값들을 ENUM으로 변�
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             config = json.load(f)
     except json.JSONDecodeError as e:
-        print(f"Error reading config file: {e}")
+        logger.error(f"Error reading config file: {e}")
         return DEFAULT_CONFIG  # 기본값을 반환하거나 예외 처리
         
     return config
@@ -62,7 +65,7 @@ def update_config():
     current_version = config.get("version", 1)
 
     if current_version < CONFIG_VERSION:
-        print(f"Migrating config from version {current_version} to {CONFIG_VERSION}...")
+        logger.info(f"Migrating config from version {current_version} to {CONFIG_VERSION}...")
         while current_version < CONFIG_VERSION:
             migrate_func = MIGRATIONS.get(current_version)
             if not migrate_func:
@@ -70,9 +73,9 @@ def update_config():
             config = migrate_func(config)
             current_version = config["version"]
 
-        print("Configuration file has been updated to the latest version.")
+        logger.info("Configuration file has been updated to the latest version.")
     else:
-        print("Configuration file is up to date.")
+        logger.info("Configuration file is up to date.")
     config = reorder_config(config) # 순서 변경이 필요한 경우에만 정렬
     save_config(config)
     return config
