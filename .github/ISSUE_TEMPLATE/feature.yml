@@ -1,0 +1,33 @@
+name: "기능 추가"
+description: "새 기능 요청 또는 구현 계획"
+title: "[Feat] "
+labels: ["feature"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: 목적
+      description: 이 기능이 왜 필요한가? 어떤 문제를 해결하는가?
+    validations:
+      required: true
+  - type: textarea
+    id: spec
+    attributes:
+      label: 요구사항
+      description: 구현해야 할 동작을 구체적으로. UI가 있다면 어느 인터페이스에 들어가는지 명시.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: 작업 범위
+      description: 수정이 예상되는 모듈/파일. 제안 구역(구조·의존성·플러그인 인터페이스)을 건드리면 반드시 명시.
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: 완료 조건
+      description: 이 이슈가 닫혀도 되는 기준 (테스트 포함)
+    validations:
+      required: true

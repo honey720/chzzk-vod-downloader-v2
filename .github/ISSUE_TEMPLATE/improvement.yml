@@ -1,0 +1,33 @@
+name: "개선 제안"
+description: "리팩토링, 최적화, 의존성 교체 등 제안 구역 작업 (승인 전 착수 금지)"
+title: "[Improve] "
+labels: ["improvement"]
+body:
+  - type: textarea
+    id: current
+    attributes:
+      label: 현재 상태와 문제
+      description: 무엇이 왜 문제인가? 도구 출력(ruff/bandit/pip-audit 등)이 근거라면 인용.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 제안 내용
+      description: 어떻게 바꾸자는 것인지. 라이브러리 교체라면 대안의 유지보수 상태·마이그레이션 비용 포함.
+    validations:
+      required: true
+  - type: textarea
+    id: risk
+    attributes:
+      label: 리스크와 영향 범위
+      description: 깨질 수 있는 것, 영향받는 모듈, 예상 작업량
+    validations:
+      required: true
+  - type: checkboxes
+    id: gate
+    attributes:
+      label: 착수 조건
+      options:
+        - label: 이 작업은 소유자가 `approved` 라벨을 달기 전에는 시작하지 않는다.
+          required: true

@@ -1,0 +1,32 @@
+name: "버그 리포트"
+description: "동작 오류 보고"
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: expected
+    attributes:
+      label: 기대 동작
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 실제 동작
+      description: 에러 로그가 있으면 첨부
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: 재현 절차
+      description: 1. ..., 2. ..., 3. ...
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: 환경
+      description: OS / 앱 버전(태그) / 실행 방식(소스·exe)
+    validations:
+      required: true
