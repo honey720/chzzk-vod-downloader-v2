@@ -45,6 +45,17 @@
 
 ---
 
+## 🛠 소스에서 실행 (개발)
+
+의존성은 [uv](https://docs.astral.sh/uv/)로 관리합니다. Python 3.13 이상이 필요합니다.
+
+```bash
+uv sync                  # 의존성 설치
+uv run python main.py    # 앱 실행
+```
+
+---
+
 ## 📚 참고 자료
 - 본 프로그램은 [chzzk-vod-downloader](https://github.com/24802/chzzk-vod-downloader)를 참고하여 개발되었습니다.
 

@@ -2,11 +2,10 @@
 name = "cvdv2"
 version = "2.8.0"
 description = "Chzzk VOD Downloader v2"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 dependencies = [
-    "PySide6",
-    "PySide6-Fluent-Widgets",
-    "qt-material",
+    "PySide6>=6.8.1.1",
+    "requests>=2.32.5",
 ]
 
 [dependency-groups]
@@ -19,7 +18,18 @@ dev = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py313"
+
+# Phase 0 베이스라인: 기존 코드의 위반은 이 단계에서 고치지 않는다 (#26).
+# 아래 파일별 예외는 후속 이슈에서 코드 정리와 함께 점진적으로 제거한다.
+[tool.ruff.lint.per-file-ignores]
+"config/dialog.py" = ["F401"]
+"content/manager.py" = ["E401", "E713", "F401"]
+"content/widget.py" = ["E401", "F401", "F841"]
+"download/data.py" = ["F401"]
+"ui/contentItemWidget.py" = ["F401"]
+"ui/mainWindow.py" = ["F401"]
+"ui/settingDialog.py" = ["F401"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
