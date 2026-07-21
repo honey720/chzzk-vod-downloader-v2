@@ -64,28 +64,23 @@ jobs:
         if: runner.os == 'macOS'
         run: >
           uv run python -m nuitka
-          --onefile
+          --standalone
           --assume-yes-for-downloads
           --enable-plugin=pyside6
           --macos-create-app-bundle
+          --macos-app-name=CVDv2
           --include-data-dir=resources=resources
           --include-data-dir=translations=translations
-          --output-filename=${{ matrix.artifact }}
           --output-dir=build
           main.py
 
-      # macOS: 유저 배포용 zip 하나만 남긴다 (.app 번들만 포장, 원시 바이너리·빌드 잔여물 제외)
       - name: Package app bundle (macOS)
         if: runner.os == 'macOS'
         run: |
           cd build
           ls -la
-          if compgen -G "*.app" > /dev/null; then
-            zip -r "${{ matrix.artifact }}.zip" *.app
-          else
-            zip "${{ matrix.artifact }}.zip" "${{ matrix.artifact }}"
-          fi
-          rm -f "${{ matrix.artifact }}"
+          mv main.app CVDv2.app
+          zip -r "${{ matrix.artifact }}.zip" CVDv2.app
 
       - name: Build (Linux)
         if: runner.os == 'Linux'
