@@ -49,13 +49,11 @@ def set_language(app_config, translator):
             config.save_config(app_config)
     else:
         logger.warning("translation file load failed")
-        # 번역 파일 로드 실패 -> 기본 언어(en_US) 사용
+        # 번역 파일 로드 실패 -> 이번 실행에 한해 기본 언어(en_US) 사용.
+        # 실패는 일시적일 수 있으므로 유저가 저장한 language 설정은 덮어쓰지 않는다
         language = "en_US"
         if translator.load(resource_path(f"translations/{language}.qm")):
             app.installTranslator(translator)
-            # 기본 언어로 설정 저장
-            app_config['language'] = language
-            config.save_config(app_config)
 
 
 if __name__ == '__main__':
