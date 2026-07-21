@@ -74,9 +74,18 @@ jobs:
           --output-dir=build
           main.py
 
+      # macOS: 유저 배포용 zip 하나만 남긴다 (.app 번들만 포장, 원시 바이너리·빌드 잔여물 제외)
       - name: Package app bundle (macOS)
         if: runner.os == 'macOS'
-        run: cd build && zip -r "${{ matrix.artifact }}.zip" .
+        run: |
+          cd build
+          ls -la
+          if compgen -G "*.app" > /dev/null; then
+            zip -r "${{ matrix.artifact }}.zip" *.app
+          else
+            zip "${{ matrix.artifact }}.zip" "${{ matrix.artifact }}"
+          fi
+          rm -f "${{ matrix.artifact }}"
 
       - name: Build (Linux)
         if: runner.os == 'Linux'
@@ -110,18 +119,35 @@ jobs:
           path: dist
           merge-multiple: true
 
+      # 릴리즈 생성 전에 스캔 → 링크를 본문에 직접 주입 (태그 이벤트에서도 확실히 동작)
+      - name: VirusTotal scan
+        id: vt
+        uses: crazy-max/ghaction-virustotal@v4
+        with:
+          vt_api_key: ${{ secrets.VT_API_KEY }}
+          files: dist/*
+
+      - name: Format VT links
+        id: vtmd
+        run: |
+          {
+            echo 'body<<VTEOF'
+            echo '### 🛡 VirusTotal 검사 결과'
+            echo ''
+            IFS=',' read -ra items <<< "${{ steps.vt.outputs.analysis }}"
+            for i in "${items[@]}"; do
+              name="${i%%=*}"; url="${i#*=}"
+              echo "- \`${name##*/}\`: [분석 보기](${url})"
+            done
+            echo ''
+            echo '> Windows Defender 등에서 경고가 뜰 수 있으나, 이는 Python 컴파일 실행파일에서 흔한 머신러닝 휴리스틱 오탐입니다. 위 링크에서 전체 엔진 검사 결과를 확인할 수 있습니다.'
+            echo 'VTEOF'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
+          body: ${{ steps.vtmd.outputs.body }}
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, '-') }}
-
-      - name: VirusTotal scan
-        uses: crazy-max/ghaction-virustotal@v4
-        with:
-          vt_api_key: ${{ secrets.VT_API_KEY }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          update_release_body: true
-          files: |
-            dist/*
