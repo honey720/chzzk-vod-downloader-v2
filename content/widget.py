@@ -8,6 +8,9 @@ from ui.contentItemWidget import Ui_ContentItemWidget
 from io import BytesIO
 from time import strftime, gmtime
 import platform
+import logging
+
+logger = logging.getLogger(__name__)
 
 class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     """컨텐츠 정보를 표시하는 커스텀 위젯"""
@@ -150,7 +153,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             )
             label.setPixmap(scaled_image)
         except Exception as e:
-            print(f"Error loading image from {url}: {e}")
+            logger.error(f"Error loading image from {url}: {e}")
 
     def setData(self, item: ContentItem, index: int):
         """✅ 모델 데이터를 위젯에 반영"""

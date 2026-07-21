@@ -1,3 +1,4 @@
+import logging
 import os
 import platform
 import config.config as config
@@ -11,6 +12,8 @@ from content.manager import ContentManager
 from download.manager import DownloadManager
 from download.state import DownloadState
 from ui.mainWindow import Ui_VodDownloader
+
+logger = logging.getLogger(__name__)
 
 
 class VodDownloader(QMainWindow, Ui_VodDownloader):
@@ -226,7 +229,7 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
             elif os_type == "Linux":
                 os.system("systemctl suspend")
             else:
-                print(f"절전 모드는 {os_type}에서 지원되지 않습니다.")
+                logger.warning(f"절전 모드는 {os_type}에서 지원되지 않습니다.")
         elif afterDownload == "shutdown":
             if os_type == "Windows":
                 os.system("shutdown -s -t 0")
@@ -235,7 +238,7 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
             elif os_type == "Linux":
                 os.system("shutdown -h now")
             else:
-                print(f"시스템 종료는 {os_type}에서 지원되지 않습니다.")
+                logger.warning(f"시스템 종료는 {os_type}에서 지원되지 않습니다.")
 
         QMessageBox.information(self, self.tr("Completed"), self.tr("Download completed."))
 

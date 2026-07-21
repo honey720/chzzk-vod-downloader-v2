@@ -1,11 +1,15 @@
 import sys
 import os
+import logging
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QIcon
 from PySide6.QtCore import QTranslator, QLocale
 
 from application.mainWindow import VodDownloader
 import config.config as config
+from config.log_setup import setup_logging
+
+logger = logging.getLogger(__name__)
 
 def resource_path(relative_path):
     """Get absolute path to resource, works for dev and for PyInstaller"""
@@ -13,7 +17,7 @@ def resource_path(relative_path):
         # PyInstaller creates a temp folder and stores path in _MEIPASS
         base_path = sys._MEIPASS
     except Exception:
-        print("sys._MEIPASS not found")
+        logger.debug("sys._MEIPASS not found")
         base_path = os.path.abspath(".")
     
     return os.path.join(base_path, relative_path)
@@ -23,21 +27,21 @@ def set_language(app_config, translator):
     # 1. 설정 파일에서 언어 가져오기
     language = app_config.get('language')
     is_language_in_config = language is not None
-    print("config_language :", language)
-    print("is_language_in_config :", is_language_in_config)
-    
+    logger.debug("config_language : %s", language)
+    logger.debug("is_language_in_config : %s", is_language_in_config)
+
     if not is_language_in_config:
         # 설정 파일에 언어가 없는 경우 시스템 언어 사용
         language = QLocale.system().name()
-        print("local_language :", language)
-    
+        logger.debug("local_language : %s", language)
+
     # 2. 번역 파일 로드 시도
     translation_file = resource_path(f"translations/{language}.qm")
-    print(f"translation_file path: {translation_file}")
-    print("translation_file :", os.path.exists(translation_file))
+    logger.debug(f"translation_file path: {translation_file}")
+    logger.debug("translation_file : %s", os.path.exists(translation_file))
 
     if os.path.exists(translation_file) and translator.load(translation_file):
-        print("translation file load success")
+        logger.info("translation file load success")
         # 번역 파일 로드 성공   
         app.installTranslator(translator)
         
@@ -46,7 +50,7 @@ def set_language(app_config, translator):
             app_config['language'] = language
             config.save_config(app_config)
     else:
-        print("translation file load failed")
+        logger.warning("translation file load failed")
         # 번역 파일 로드 실패 -> 기본 언어(en_US) 사용
         language = "en_US"
         if translator.load(f"translations/{language}.qm"):
@@ -57,6 +61,9 @@ def set_language(app_config, translator):
 
 
 if __name__ == '__main__':
+    # 공통 로깅 설정 (콘솔 + logs/ 회전 파일)
+    setup_logging()
+
     app = QApplication(sys.argv)
 
     # 설정 파일 로드
