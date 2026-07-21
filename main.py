@@ -11,15 +11,13 @@ from config.log_setup import setup_logging
 
 logger = logging.getLogger(__name__)
 
-def resource_path(relative_path):
-    """Get absolute path to resource, works for dev and for PyInstaller"""
-    try:
-        # PyInstaller creates a temp folder and stores path in _MEIPASS
-        base_path = sys._MEIPASS
-    except Exception:
-        logger.debug("sys._MEIPASS not found")
-        base_path = os.path.abspath(".")
-    
+def resource_path(relative_path: str) -> str:
+    """소스 실행과 Nuitka onefile 빌드 양쪽에서 동작하는 리소스 절대 경로를 반환한다.
+
+    Nuitka onefile은 리소스를 임시 해제 경로에 풀고 __file__도 그 안을 가리키므로,
+    CWD가 아니라 이 파일의 위치를 기준으로 해석해야 한다 (#43).
+    """
+    base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
 
 def set_language(app_config, translator):
@@ -51,13 +49,11 @@ def set_language(app_config, translator):
             config.save_config(app_config)
     else:
         logger.warning("translation file load failed")
-        # 번역 파일 로드 실패 -> 기본 언어(en_US) 사용
+        # 번역 파일 로드 실패 -> 이번 실행에 한해 기본 언어(en_US) 사용.
+        # 실패는 일시적일 수 있으므로 유저가 저장한 language 설정은 덮어쓰지 않는다
         language = "en_US"
-        if translator.load(f"translations/{language}.qm"):
+        if translator.load(resource_path(f"translations/{language}.qm")):
             app.installTranslator(translator)
-            # 기본 언어로 설정 저장
-            app_config['language'] = language
-            config.save_config(app_config)
 
 
 if __name__ == '__main__':
@@ -74,7 +70,8 @@ if __name__ == '__main__':
     
     set_language(app_config, translator)
 
-    icon_path = os.path.join(os.path.dirname(__file__), 'resources', 'chzzk.ico')
+    # 아이콘도 번역과 같은 기준(__file__)으로 해석한다 (#43)
+    icon_path = resource_path('resources/chzzk.ico')
     app.setWindowIcon(QIcon(icon_path))
     # 메인 UI 실행
     ex = VodDownloader()
