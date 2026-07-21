@@ -42,6 +42,10 @@ jobs:
             exit 1
           fi
 
+      - name: Install Linux build deps
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y patchelf
+
       - name: Build (Windows)
         if: runner.os == 'Windows'
         run: >
@@ -74,10 +78,6 @@ jobs:
         if: runner.os == 'macOS'
         run: cd build && zip -r "${{ matrix.artifact }}.zip" .
 
-      - name: Install Linux build deps
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y patchelf
-
       - name: Build (Linux)
         if: runner.os == 'Linux'
         run: >
@@ -91,9 +91,28 @@ jobs:
           --output-dir=build
           main.py
 
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            build/${{ matrix.artifact }}
+            build/${{ matrix.artifact }}.zip
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: build/${{ matrix.artifact }}*
+          files: dist/*
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, '-') }}
