@@ -48,17 +48,27 @@ jobs:
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
-        run: >
-          uv run python -m nuitka
-          --onefile
-          --assume-yes-for-downloads
-          --enable-plugin=pyside6
-          --windows-console-mode=disable
-          --include-data-dir=resources=resources
-          --include-data-dir=translations=translations
-          --output-filename=${{ matrix.artifact }}
-          --output-dir=build
-          main.py
+        shell: bash
+        run: |
+          VERSION_NUM="${GITHUB_REF_NAME#v}"
+          VERSION_NUM="${VERSION_NUM%%-*}"
+          uv run python -m nuitka \
+            --onefile \
+            --assume-yes-for-downloads \
+            --enable-plugin=pyside6 \
+            --windows-console-mode=disable \
+            --windows-icon-from-ico=resources/chzzk.ico \
+            --company-name=honey720 \
+            --product-name="Chzzk VOD Downloader" \
+            --file-description="Chzzk VOD Downloader v2" \
+            --file-version="$VERSION_NUM" \
+            --product-version="$VERSION_NUM" \
+            --copyright="honey720" \
+            --include-data-dir=resources=resources \
+            --include-data-dir=translations=translations \
+            --output-filename="${{ matrix.artifact }}" \
+            --output-dir=build \
+            main.py
 
       - name: Build (macOS)
         if: runner.os == 'macOS'
