@@ -46,14 +46,14 @@ class TestGetVideoDashManifest:
     """NetworkManager.get_video_dash_manifest의 XML 파싱 결과 박제 (HTTP는 mock)."""
 
     def _patch_get(self, monkeypatch: pytest.MonkeyPatch, xml_text: str) -> list:
-        """content.network.requests.get을 목으로 바꾸고 호출 기록 리스트를 반환한다."""
+        """공유 세션(network._session)의 get을 목으로 바꾸고 호출 기록 리스트를 반환한다."""
         calls = []
 
         def fake_get(url, **kwargs):
             calls.append((url, kwargs))
             return MockResponse(text=xml_text)
 
-        monkeypatch.setattr(network.requests, "get", fake_get)
+        monkeypatch.setattr(network._session, "get", fake_get)
         return calls
 
     def test_parses_sorts_and_skips_hls(self, monkeypatch, load_mock_response):

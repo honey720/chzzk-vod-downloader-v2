@@ -7,6 +7,7 @@ from PySide6.QtCore import QThread, Signal
 from concurrent.futures import ThreadPoolExecutor
 from download.task import DownloadTask
 from download.state import DownloadState
+from content.network import get_thread_session
 
 
 def decide_part_size(content_type: str, resolution: int) -> int:
@@ -143,7 +144,8 @@ class DownloadThread(QThread):
         while not self.task.state == DownloadState.WAITING:
             try:
                 headers = {'Range': f'bytes={start}-{end}'}
-                response = requests.get(self.s.base_url, headers=headers, stream=True, timeout=30)
+                # 스레드로컬 세션으로 같은 워커의 반복 요청 간 연결을 재사용한다 (#31)
+                response = get_thread_session().get(self.s.base_url, headers=headers, stream=True, timeout=30)
                 response.raise_for_status()
                 part_start_time = tm.time()
 
@@ -243,11 +245,11 @@ class DownloadThread(QThread):
         """
         HEAD 요청으로 total_size를 구한다.
         """
-        response = requests.head(self.s.base_url)
+        response = get_thread_session().head(self.s.base_url)
         response.raise_for_status()
         size = int(response.headers.get('content-length', 0))
         if size == 0:
-            resp = requests.get(self.s.base_url, stream=True)
+            resp = get_thread_session().get(self.s.base_url, stream=True)
             resp.raise_for_status()
             size = int(resp.headers.get('content-length', 0))
             resp.close()
