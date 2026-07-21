@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 세로 영상(width < height) 단일 해상도 매니페스트 픽스처.
+     해상도가 min(width, height)로 계산되는 현재 동작을 고정하기 위한 경계 케이스 (#27). -->
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static">
+  <Period>
+    <AdaptationSet mimeType="video/mp4" contentType="video">
+      <Representation id="portrait" width="720" height="1280" bandwidth="3000000">
+        <BaseURL>https://vod-example.invalid/chzzk/portrait_720.mp4</BaseURL>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>

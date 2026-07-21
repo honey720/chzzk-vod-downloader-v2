@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 치지직 DASH 매니페스트 응답 픽스처.
+     get_video_dash_manifest의 파싱 로직이 소비하는 형태 기준으로 작성 (#27).
+     - 해상도 3종(1080/720/480)을 내림차순으로 배치해 정렬 동작을 검증
+     - BaseURL이 '/hls/'로 끝나는 Representation은 파서가 건너뛰어야 함 -->
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="PT1H2M3S">
+  <Period>
+    <AdaptationSet mimeType="video/mp4" contentType="video">
+      <Representation id="1080p" width="1920" height="1080" bandwidth="8000000" codecs="avc1.640028">
+        <BaseURL>https://vod-example.invalid/chzzk/video_1080p.mp4</BaseURL>
+      </Representation>
+      <Representation id="720p" width="1280" height="720" bandwidth="4000000" codecs="avc1.64001f">
+        <BaseURL>https://vod-example.invalid/chzzk/video_720p.mp4</BaseURL>
+      </Representation>
+      <Representation id="480p" width="854" height="480" bandwidth="2000000" codecs="avc1.64001e">
+        <BaseURL>https://vod-example.invalid/chzzk/video_480p.mp4</BaseURL>
+      </Representation>
+      <Representation id="hls" width="1920" height="1080" bandwidth="8000000">
+        <BaseURL>https://vod-example.invalid/chzzk/hls/</BaseURL>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>
