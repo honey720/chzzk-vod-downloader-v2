@@ -1,12 +1,48 @@
 import re
 import requests
 import json
+import threading
+from http.cookiejar import DefaultCookiePolicy
 from urllib.parse import urljoin
 import xml.etree.ElementTree as ET
 
 NAVER_API = "https://apis.naver.com"
 CHZZK_API = "https://api.chzzk.naver.com"
 VIDEOHUB_API = "https://api-videohub.naver.com"
+
+
+def _make_session() -> requests.Session:
+    """연결 재사용용 Session을 만든다 (#31).
+
+    기존에는 매 호출 requests.get()이 독립적이라 응답의 Set-Cookie가 다음 요청으로
+    이어지지 않았다. 이 이슈는 연결 재사용만 도입하므로, 응답 쿠키 저장을 차단해
+    쿠키 동작을 기존과 동일하게 유지한다. 요청별 cookies= 인자는 그대로 전송된다.
+    """
+    session = requests.Session()
+    session.cookies.set_policy(DefaultCookiePolicy(allowed_domains=[]))
+    return session
+
+
+# NetworkManager API 호출용 모듈 수준 공유 세션.
+# 응답 쿠키를 저장하지 않으므로 여러 스레드에서 호출해도 상태 공유 문제가 없다.
+_session = _make_session()
+
+# 다운로드 워커용 스레드로컬 세션 저장소
+_thread_local = threading.local()
+
+
+def get_thread_session() -> requests.Session:
+    """호출한 스레드 전용 Session을 반환한다 (없으면 생성).
+
+    requests.Session은 스레드 간 완전한 안전이 보장되지 않으므로, 다운로드 워커처럼
+    동시 요청이 많은 경로는 스레드마다 별도 Session을 사용해 연결 재사용만 취한다.
+    """
+    session = getattr(_thread_local, "session", None)
+    if session is None:
+        session = _make_session()
+        _thread_local.session = session
+    return session
+
 
 class NetworkManager:
 
@@ -35,7 +71,7 @@ class NetworkManager:
         """
         api_url = f"{CHZZK_API}/service/v2/videos/{video_no}"
         headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(api_url, cookies=cookies, headers=headers)
+        response = _session.get(api_url, cookies=cookies, headers=headers)
         response.raise_for_status()
 
         content = response.json().get('content', {})
@@ -63,7 +99,7 @@ class NetworkManager:
         """
         manifest_url = f"{NAVER_API}/neonplayer/vodplay/v2/playback/{video_id}?key={in_key}"
         headers = {"Accept": "application/dash+xml"}
-        response = requests.get(manifest_url, headers=headers)
+        response = _session.get(manifest_url, headers=headers)
         response.raise_for_status()
 
         root = ET.fromstring(response.text)
@@ -116,7 +152,7 @@ class NetworkManager:
         data = json.loads(json_str)
         media = data.get("media", [])
         path = media[0].get("path")
-        response = requests.get(path)
+        response = _session.get(path)
         response.raise_for_status()
         content = response.text.splitlines()
 
@@ -139,7 +175,7 @@ class NetworkManager:
         """
         api_url = f"{CHZZK_API}/service/v1/clips/{clip_no}/detail?optionalProperties=OWNER_CHANNEL"
         headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(api_url, cookies=cookies, headers=headers)
+        response = _session.get(api_url, cookies=cookies, headers=headers)
         response.raise_for_status()
 
         content = response.json().get('content', {})
@@ -164,7 +200,7 @@ class NetworkManager:
         """
         manifest_url = f"{VIDEOHUB_API}/shortformhub/feeds/v3/card?serviceType=CHZZK&seedMediaId={clip_id}&mediaType=VOD"
         headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(manifest_url, cookies=cookies, headers=headers)
+        response = _session.get(manifest_url, cookies=cookies, headers=headers)
         response.raise_for_status()
 
         data = response.json()

@@ -10,7 +10,7 @@ from PySide6.QtCore import QThread, Signal
 from concurrent.futures import ThreadPoolExecutor
 from download.task import DownloadTask
 from download.state import DownloadState
-from content.network import NetworkManager
+from content.network import NetworkManager, get_thread_session
 
 class DownloadM3U8Thread(QThread):
     """
@@ -44,7 +44,7 @@ class DownloadM3U8Thread(QThread):
             threading.current_thread().name = "DownloadM3U8Thread"  # 스레드 시작 시 이름 재설정
             self.s.start_time = tm.time()
 
-            response = requests.get(self.s.base_url)
+            response = get_thread_session().get(self.s.base_url)
             response.raise_for_status()
             lines = response.text.splitlines()
             segments = [line for line in lines if line and not line.startswith("#")]
@@ -73,7 +73,7 @@ class DownloadM3U8Thread(QThread):
             init_segment_path = os.path.join(self.temp_dir, f"{0:0{self.width}d}.m4s")
             # 초기화 세그먼트 다운로드
             with open(init_segment_path, 'wb') as f:
-                f.write(requests.get(init_url).content)
+                f.write(get_thread_session().get(init_url).content)
 
             with ThreadPoolExecutor(max_workers=self.s.max_threads, thread_name_prefix="DownloadM3U8Worker") as executor:
                 self.s.remaining_ranges = list(enumerate(segments))
@@ -170,7 +170,8 @@ class DownloadM3U8Thread(QThread):
         segment_url = urljoin(self.s.base_url, segment)
         while not self.task.state == DownloadState.WAITING:
             try:
-                response = requests.get(segment_url, stream=True, timeout=30)
+                # 스레드로컬 세션으로 같은 워커의 세그먼트 요청 간 연결을 재사용한다 (#31)
+                response = get_thread_session().get(segment_url, stream=True, timeout=30)
                 response.raise_for_status()
                 part_start_time = tm.time()
 
