@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync
+
+      # 태그 버전과 pyproject.toml 버전이 일치하는지 검증
+      - name: Verify version matches tag
+        shell: bash
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PY_VERSION=$(uv run python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "tag=$TAG_VERSION pyproject=$PY_VERSION"
+          if [ "$TAG_VERSION" != "$PY_VERSION" ]; then
+            echo "::error::태그 버전($TAG_VERSION)과 pyproject.toml 버전($PY_VERSION)이 다릅니다."
+            exit 1
+          fi
+
+      - name: Build with Nuitka
+        run: >
+          uv run python -m nuitka
+          --onefile
+          --assume-yes-for-downloads
+          --enable-plugin=pyside6
+          --windows-console-mode=disable
+          --include-data-dir=app/resources=app/resources
+          --output-filename=CVDv2-${{ github.ref_name }}.exe
+          --output-dir=build
+          CVDv2.py
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/CVDv2-${{ github.ref_name }}.exe
+          generate_release_notes: true
+          # 태그에 '-'가 포함되면 (v2.9.0-beta.1 등) pre-release로 표시
+          prerelease: ${{ contains(github.ref_name, '-') }}
