@@ -13,7 +13,7 @@ dev = [
     "pytest",
     "pytest-qt",
     "ruff",
-    "nuitka",
+    "nuitka[onefile]",
 ]
 
 [tool.ruff]

@@ -93,7 +93,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "nuitka" },
+    { name = "nuitka", extras = ["onefile"] },
     { name = "pytest" },
     { name = "pytest-qt" },
     { name = "ruff" },
