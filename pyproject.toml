@@ -2,11 +2,10 @@
 name = "cvdv2"
 version = "2.8.0"
 description = "Chzzk VOD Downloader v2"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 dependencies = [
-    "PySide6",
-    "PySide6-Fluent-Widgets",
-    "qt-material",
+    "PySide6>=6.8.1.1",
+    "requests>=2.32.5",
 ]
 
 [dependency-groups]
@@ -19,7 +18,19 @@ dev = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py313"
+
+# Phase 0 베이스라인: 기존 코드의 위반은 이 단계에서 고치지 않는다 (#26).
+# 아래 파일별 예외는 후속 이슈에서 코드 정리와 함께 점진적으로 제거한다.
+# F401(미사용 import), E401(한 줄 다중 import), E713(not-in 표현), F841(미사용 변수)
+[tool.ruff.lint.per-file-ignores]
+"config/dialog.py" = ["F401"]                   # F401 1건
+"content/manager.py" = ["E401", "E713", "F401"] # E401 1건, E713 1건, F401 2건
+"content/widget.py" = ["E401", "F401", "F841"]  # E401 1건, F401 1건, F841 1건
+"download/data.py" = ["F401"]                   # F401 2건
+"ui/contentItemWidget.py" = ["F401"]            # F401 26건
+"ui/mainWindow.py" = ["F401"]                   # F401 28건
+"ui/settingDialog.py" = ["F401"]                # F401 30건
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
