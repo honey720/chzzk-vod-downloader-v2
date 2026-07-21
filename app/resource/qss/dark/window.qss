@@ -1,0 +1,8 @@
+Window {
+    background-color: rgb(32, 32, 32);
+}
+
+Window>QLabel {
+    color: --ThemeColorPrimary;
+    font: 14px --FontFamilies;
+}

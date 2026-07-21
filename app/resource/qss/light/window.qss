@@ -1,0 +1,8 @@
+Window {
+    background-color: rgb(249, 249, 249);
+}
+
+Window>QLabel {
+    color: --ThemeColorPrimary;   /* Use the theme color of qfluentwidgets */
+    font: 14px --FontFamilies;    /* Use the font families of qfluentwidgets */
+}
