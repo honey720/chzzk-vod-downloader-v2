@@ -116,6 +116,10 @@ class NetworkManager:
         for rep in root.findall(".//mpd:Representation", namespaces=ns):
             width = rep.get('width')
             height = rep.get('height')
+            # 오디오 전용 Representation(audio/mp4)은 width/height 속성이 없다.
+            # 해상도를 계산할 수 없으므로 목록에서 제외한다 (#38)
+            if width is None or height is None:
+                continue
             resolution = min(int(width), int(height))
             # print(width, height) # Debugging
             # print(f"Resolution: {resolution}") # Debugging
