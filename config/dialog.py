@@ -1,7 +1,6 @@
 import os
 import config.config as config
 from PySide6.QtWidgets import QDialog, QMessageBox
-from PySide6.QtCore import Signal
 
 from ui.settingDialog import Ui_SettingDialog
 

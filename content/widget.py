@@ -1,4 +1,5 @@
-import os, requests, threading
+import os
+import threading
 from PySide6.QtWidgets import QWidget, QPushButton, QMessageBox
 from PySide6.QtGui import QPixmap, QDesktopServices
 from PySide6.QtCore import Qt, QSize, Signal, QUrl, QDir, QProcess
@@ -6,7 +7,6 @@ from content.data import ContentItem
 from content.network import get_thread_session
 from download.state import DownloadState
 from ui.contentItemWidget import Ui_ContentItemWidget
-from io import BytesIO
 from time import strftime, gmtime
 import platform
 import logging
@@ -95,7 +95,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
                 if len(self.item.unique_reps) - 1 == index:
                     self.setresolutionUrlSize(resolution, base_url, index, button)
 
-            except Exception as e:
+            except Exception:
                 pass
 
         thread = threading.Thread(target=update_button_text, daemon=True)

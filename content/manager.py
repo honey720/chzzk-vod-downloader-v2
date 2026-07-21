@@ -1,4 +1,4 @@
-import os, re, platform
+import os
 
 from PySide6.QtCore import Qt, Signal, QThreadPool, QObject
 from content.model import ContentListModel
@@ -152,6 +152,6 @@ class ContentManager(QObject):
         for row in range(row_count):
             index = self.model.index(row, 0)
             item: ContentItem = self.model.data(index, Qt.ItemDataRole.UserRole)
-            if not item.downloadState in [DownloadState.FINISHED, DownloadState.FAILED]:
+            if item.downloadState not in [DownloadState.FINISHED, DownloadState.FAILED]:
                 return True, item, index
         return False, None, None

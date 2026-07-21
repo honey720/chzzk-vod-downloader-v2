@@ -20,17 +20,11 @@ dev = [
 line-length = 100
 target-version = "py313"
 
-# Phase 0 베이스라인: 기존 코드의 위반은 이 단계에서 고치지 않는다 (#26).
-# 아래 파일별 예외는 후속 이슈에서 코드 정리와 함께 점진적으로 제거한다.
-# F401(미사용 import), E401(한 줄 다중 import), E713(not-in 표현), F841(미사용 변수)
 [tool.ruff.lint.per-file-ignores]
-"config/dialog.py" = ["F401"]                   # F401 1건
-"content/manager.py" = ["E401", "E713", "F401"] # E401 1건, E713 1건, F401 2건
-"content/widget.py" = ["E401", "F401", "F841"]  # E401 1건, F401 1건, F841 1건
-"download/data.py" = ["F401"]                   # F401 2건
-"ui/contentItemWidget.py" = ["F401"]            # F401 26건
-"ui/mainWindow.py" = ["F401"]                   # F401 28건
-"ui/settingDialog.py" = ["F401"]                # F401 30건
+# ui/*.py는 pyside6-uic 자동 생성 파일(.ui 원본 존재)이다. 수동으로 미사용 import를
+# 지워도 재생성 시 되살아나므로 F401 예외를 유지한다 (#32). 손으로 작성한 파일의
+# 예외는 전부 해소되어 제거됨.
+"ui/*.py" = ["F401"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

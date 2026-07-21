@@ -1,6 +1,4 @@
-import os
 import threading
-import config.config as config
 
 class DownloadData:
     def __init__(self, base_url, vod_url, output_path, resolution, content_type):
