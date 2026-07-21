@@ -98,6 +98,30 @@ class TestGetVideoDashManifest:
             )
         ]
 
+    def test_skips_audio_only_representation(self, monkeypatch, load_mock_response):
+        """width/height 없는 오디오 전용 Representation은 건너뛰어야 한다 (#38).
+
+        픽스처는 videoNo 14158884의 실제 매니페스트 박제본이다: video/mp4 3종(1080/720/144)
+        + video/mp2t 3종(BaseURL이 '/hls/'로 끝나 기존 로직이 스킵) + audio/mp4 1종
+        (width/height 없음 — 기존에는 여기서 TypeError로 전체 파싱이 실패했다).
+        """
+        self._patch_get(
+            monkeypatch, load_mock_response("dash_manifest_audio_only_14158884.xml")
+        )
+
+        sorted_reps, auto_resolution, auto_base_url = NetworkManager.get_video_dash_manifest(
+            "test-video-id", "test-in-key"
+        )
+
+        # 영상 3종만 남는다: 오디오 전용(m4a)·hls 항목은 제외, 해상도 오름차순
+        assert [rep[0] for rep in sorted_reps] == [144, 720, 1080]
+        assert auto_resolution == 1080
+        for _, base_url in sorted_reps:
+            assert base_url.endswith(".mp4?_lsu_sa_=REDACTED")
+            assert "/hls/" not in base_url
+            assert ".m4a" not in base_url
+        assert auto_base_url == sorted_reps[-1][1]
+
     def test_portrait_single_representation(self, monkeypatch, load_mock_response):
         """세로 영상(720x1280) 단일 항목: 해상도는 min(width, height)=720으로 계산된다."""
         self._patch_get(monkeypatch, load_mock_response("dash_manifest_portrait.xml"))
