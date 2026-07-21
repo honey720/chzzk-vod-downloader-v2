@@ -10,6 +10,7 @@ permissions:
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: windows-latest
@@ -69,6 +70,10 @@ jobs:
             --output-filename="${{ matrix.artifact }}" \
             --output-dir=build \
             main.py
+
+      - name: Install macOS build deps
+        if: runner.os == 'macOS'
+        run: brew install ccache
 
       - name: Build (macOS)
         if: runner.os == 'macOS'
