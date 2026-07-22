@@ -150,6 +150,7 @@ class TestGetVideoInfo:
             vodStatus,
             liveRewindPlaybackJson,
             membershipBenefitType,
+            encryptionType,
             metadata,
         ) = NetworkManager.get_video_info("13714380", cookies)
 
@@ -167,6 +168,7 @@ class TestGetVideoInfo:
         assert vodStatus == "ABR_HLS"
         assert liveRewindPlaybackJson is None
         assert membershipBenefitType == "MEMBER_ONLY"
+        assert encryptionType == "AES"
         assert metadata["duration"] == 10925
 
 

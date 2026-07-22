@@ -20,8 +20,11 @@ from pathlib import Path
 
 import requests
 
-import config.config as config
-from core.api.url_parser import extract_content_no
+# scripts/ 하위에서 실행해도 저장소 루트의 config·core를 import할 수 있게 한다
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import config.config as config  # noqa: E402
+from core.api.url_parser import extract_content_no  # noqa: E402
 
 CHZZK_API = "https://api.chzzk.naver.com"
 NAVER_API = "https://apis.naver.com"
@@ -33,14 +36,19 @@ _SECRET_KEY_PARTS = ("inkey", "adparameter", "cookie", "token", "auth")
 # URL 쿼리 파라미터 중 서명·키 성격의 이름 패턴 (값을 REDACTED로 치환)
 _URL_TOKEN_RE = re.compile(
     r"(?i)([?&;])"
-    r"([a-z0-9_\-]*(?:key|token|sig|auth|policy|credential|gda|hdnts|hdnea|expire|session)[a-z0-9_\-]*)"
+    r"([a-z0-9_\-]*(?:key|token|sig|auth|policy|credential|gda|hdnts|hdnea|expire|session|lsu)[a-z0-9_\-]*)"
     r"=([^&\"'<>\s\\]+)"
 )
+
+# 이름 패턴에 안 걸려도 값이 48자 이상 hex면 서명으로 간주해 치환한다
+# (예: 초기 버전에서 _lsu_sa_= 서명을 놓친 사례의 재발 방지)
+_LONG_HEX_VALUE_RE = re.compile(r"(?i)([?&;])([a-z0-9_\-]+)=([A-Fa-f0-9~_%.-]{48,})")
 
 
 def _redact_url_tokens(text: str) -> str:
     """문자열 안 URL의 서명·키 성격 쿼리 파라미터 값을 REDACTED로 치환한다."""
-    return _URL_TOKEN_RE.sub(r"\1\2=REDACTED", text)
+    text = _URL_TOKEN_RE.sub(r"\1\2=REDACTED", text)
+    return _LONG_HEX_VALUE_RE.sub(r"\1\2=REDACTED", text)
 
 
 def _redact_json(obj: object) -> object:

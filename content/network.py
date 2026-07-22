@@ -69,9 +69,11 @@ class NetworkManager:
         """
         API를 통해 video_no에 대응하는 video_id, in_key, 메타데이터를 가져온다.
 
-        membershipBenefitType도 함께 반환한다 (#55).
-        멤버십(구독자) 전용 VOD는 권한이 없으면 inKey가 null로 내려오므로,
-        호출부에서 이 값으로 "멤버십 필요" 안내를 구분할 수 있다.
+        membershipBenefitType·encryptionType도 함께 반환한다 (#55).
+        - 멤버십(구독자) 전용 VOD는 권한이 없으면 inKey가 null로 내려오므로,
+          호출부에서 membershipBenefitType으로 "멤버십 필요" 안내를 구분할 수 있다.
+        - encryptionType이 null이 아니면(AES 등) 세그먼트가 암호화되어 있어
+          현재 다운로더로는 조립할 수 없으므로 호출부에서 조기에 안내한다.
         """
         api_url = f"{CHZZK_API}/service/v2/videos/{video_no}"
         headers = {"User-Agent": "Mozilla/5.0"}
@@ -85,6 +87,7 @@ class NetworkManager:
         vodStatus = content.get('vodStatus')
         liveRewindPlaybackJson = content.get('liveRewindPlaybackJson')
         membershipBenefitType = content.get('membershipBenefitType')
+        encryptionType = content.get('encryptionType')
 
         metadata = {
             'title': re.sub(r'[\\/:\*\?"<>|\n]', '', content.get('videoTitle', 'Unknown Title')), # 정규식으로 특수문자 제거
@@ -95,7 +98,7 @@ class NetworkManager:
             'createdDate': content.get('liveOpenDate', 'Unknown Date'),
             'duration': content.get('duration', 0),
         }
-        return video_id, in_key, adult, vodStatus, liveRewindPlaybackJson, membershipBenefitType, metadata
+        return video_id, in_key, adult, vodStatus, liveRewindPlaybackJson, membershipBenefitType, encryptionType, metadata
 
     @staticmethod
     def get_video_dash_manifest(video_id: str, in_key: str, cookies: dict | None = None):

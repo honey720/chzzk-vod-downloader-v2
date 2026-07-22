@@ -39,7 +39,7 @@ class DownloadM3U8Thread(QThread):
                 'NID_SES': data.get("NID_SES", "")
             }
             content_type, content_no = NetworkManager.extract_content_no(self.s.vod_url)
-            video_id, in_key, adult, vodStatus, liveRewindPlaybackJson, membershipBenefitType, metadata = NetworkManager.get_video_info(content_no, cookies)
+            video_id, in_key, adult, vodStatus, liveRewindPlaybackJson, membershipBenefitType, encryptionType, metadata = NetworkManager.get_video_info(content_no, cookies)
             self.s.base_url = NetworkManager.get_video_m3u8_base_url(liveRewindPlaybackJson, self.s.resolution, cookies)
             threading.current_thread().name = "DownloadM3U8Thread"  # 스레드 시작 시 이름 재설정
             self.s.start_time = tm.time()

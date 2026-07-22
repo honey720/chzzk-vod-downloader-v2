@@ -41,9 +41,14 @@ class ContentWorker(QObject):
             self.error.emit(str(e))
 
     def fetchVideo(self, video_no: str):
-        video_id, in_key, adult, vodStatus, liveRewindPlaybackJson, membershipBenefitType, metadata = NetworkManager.get_video_info(video_no, self.cookies)
+        video_id, in_key, adult, vodStatus, liveRewindPlaybackJson, membershipBenefitType, encryptionType, metadata = NetworkManager.get_video_info(video_no, self.cookies)
         if adult and not video_id:
             errorMessage = self.tr("Invalid cookies value")
+            raise ValueError(f"{self.vod_url}\n{errorMessage}")
+        elif encryptionType:
+            # 암호화(AES/SEA) VOD는 세그먼트를 복호화할 수 없어 다운로드 불가.
+            # 권한(멤버십) 유무와 무관하므로 매니페스트 요청 전에 조기 안내한다 (#55)
+            errorMessage = self.tr("Encrypted content is not supported")
             raise ValueError(f"{self.vod_url}\n{errorMessage}")
         elif liveRewindPlaybackJson:
             unique_reps, resolution, base_url = NetworkManager.get_video_m3u8_manifest(liveRewindPlaybackJson)
