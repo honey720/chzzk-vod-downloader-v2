@@ -18,8 +18,9 @@ def parse_dash_manifest(xml_text: str) -> tuple[list[list], int, str]:
         xml_text (str): DASH 매니페스트 XML 문자열
 
     Returns:
-        tuple[list[list], int, str]: ([해상도, base_url] 목록(오름차순),
-            auto 해상도(최고), auto base_url) 형식의 튜플
+        tuple[list[list], int | None, str | None]: ([해상도, base_url] 목록(오름차순),
+            auto 해상도(최고), auto base_url) 형식의 튜플.
+            사용 가능한 Representation이 하나도 없으면 ([], None, None)
     """
     root = ET.fromstring(xml_text)
     ns = {"mpd": "urn:mpeg:dash:schema:mpd:2011"}
@@ -32,10 +33,19 @@ def parse_dash_manifest(xml_text: str) -> tuple[list[list], int, str]:
         if width is None or height is None:
             continue
         resolution = min(int(width), int(height))
-        base_url = rep.find(".//mpd:BaseURL", namespaces=ns).text
+        # AES(SEA) 암호화 매니페스트의 비디오 Representation은 BaseURL 없이
+        # ContentProtection만 갖는다. 직접 URL이 없어 다운로드할 수 없으므로
+        # 크래시 대신 목록에서 제외한다 (#55) — 1차 방어는 worker의 encryptionType 검사
+        base_url_el = rep.find(".//mpd:BaseURL", namespaces=ns)
+        if base_url_el is None or not base_url_el.text:
+            continue
+        base_url = base_url_el.text
         if base_url.endswith('/hls/'):
             continue
         reps.append([resolution, base_url])
+
+    if not reps:
+        return [], None, None
 
     sorted_reps = sorted(reps, key=lambda x: x[0])
     auto_resolution = sorted_reps[-1][0]

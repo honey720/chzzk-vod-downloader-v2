@@ -20,6 +20,7 @@ CVDv2.onefile-build/
 # 런타임 산출물 (시크릿·로컬 데이터)
 config.json
 logs/
+debug_captures/
 *.db
 *.sqlite
 *.sqlite3

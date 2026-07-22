@@ -54,6 +54,8 @@ uv sync                  # 의존성 설치
 uv run python main.py    # 앱 실행
 ```
 
+- 다운로드 문제 제보 시: `uv run python scripts/capture_playback_debug.py <VOD URL>` 로 응답을 캡처해 첨부해 주세요 (쿠키·토큰은 자동 제거됩니다).
+
 ---
 
 ## 📚 참고 자료
