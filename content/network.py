@@ -4,8 +4,8 @@ import json
 import threading
 from http.cookiejar import DefaultCookiePolicy
 from urllib.parse import urljoin
-import xml.etree.ElementTree as ET
 
+from core.api.dash import parse_dash_manifest
 from core.api.url_parser import extract_content_no
 
 NAVER_API = "https://apis.naver.com"
@@ -96,36 +96,16 @@ class NetworkManager:
     def get_video_dash_manifest(video_id: str, in_key: str):
         """
         DASH 매니페스트를 요청하여 Representation 목록을 파싱한다.
+
+        HTTP 요청만 담당하고, XML 파싱은 core/api/dash.py의 순수 함수에 위임한다 (#51).
+        시그니처·반환 형식은 기존과 동일하다.
         """
         manifest_url = f"{NAVER_API}/neonplayer/vodplay/v2/playback/{video_id}?key={in_key}"
         headers = {"Accept": "application/dash+xml"}
         response = _session.get(manifest_url, headers=headers)
         response.raise_for_status()
 
-        root = ET.fromstring(response.text)
-        ns = {"mpd": "urn:mpeg:dash:schema:mpd:2011"}
-        reps = []
-        for rep in root.findall(".//mpd:Representation", namespaces=ns):
-            width = rep.get('width')
-            height = rep.get('height')
-            # 오디오 전용 Representation(audio/mp4)은 width/height 속성이 없다.
-            # 해상도를 계산할 수 없으므로 목록에서 제외한다 (#38)
-            if width is None or height is None:
-                continue
-            resolution = min(int(width), int(height))
-            # print(width, height) # Debugging
-            # print(f"Resolution: {resolution}") # Debugging
-            base_url = rep.find(".//mpd:BaseURL", namespaces=ns).text
-            if base_url.endswith('/hls/'):
-                continue
-            reps.append([resolution, base_url])
-        
-        sorted_reps = sorted(reps, key=lambda x: x[0])
-        auto_resolution = sorted_reps[-1][0]
-        auto_base_url = sorted_reps[-1][1]
-
-        # 중복 제거한 뒤, 리스트로 변환
-        return sorted_reps, auto_resolution, auto_base_url
+        return parse_dash_manifest(response.text)
     
     @staticmethod
     def get_video_m3u8_manifest(json_str: str):

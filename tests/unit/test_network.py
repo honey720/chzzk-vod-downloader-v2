@@ -1,13 +1,15 @@
 """content.network의 URL 파싱·DASH 매니페스트 파싱 테스트.
 
 - URL 파싱(TestExtractContentNo): #33에서 허용 범위를 넓힌 **요구 동작 검증** 테스트다.
-- DASH 매니페스트 파싱(TestGetVideoDashManifest): #27의 현재 동작 보존(박제) 테스트다.
+- DASH 매니페스트(TestGetVideoDashManifest): HTTP 요청 구성·core 파서 위임 검증이다.
+  파싱 자체의 박제 테스트는 tests/unit/core/test_dash.py로 이전했다 (#51).
 """
 
 import pytest
 
 import content.network as network
 from content.network import NetworkManager
+from core.api.dash import parse_dash_manifest
 from core.api.url_parser import extract_content_no
 from tests.mocks.mock_http import MockResponse
 
@@ -68,35 +70,28 @@ class TestExtractContentNo:
 
 
 class TestGetVideoDashManifest:
-    """NetworkManager.get_video_dash_manifest의 XML 파싱 결과 박제 (HTTP는 mock)."""
+    """NetworkManager.get_video_dash_manifest의 HTTP 경로(요청 구성·위임) 검증.
 
-    def _patch_get(self, monkeypatch: pytest.MonkeyPatch, xml_text: str) -> list:
-        """공유 세션(network._session)의 get을 목으로 바꾸고 호출 기록 리스트를 반환한다."""
+    XML 파싱 자체는 core/api/dash.py로 이동해 tests/unit/core/test_dash.py에서
+    픽스처로 검증한다 (#51). 여기서는 요청 URL·헤더와 core 파서 위임만 확인한다.
+    """
+
+    def test_requests_manifest_and_delegates_to_core_parser(
+        self, monkeypatch, load_mock_response
+    ):
+        """요청 URL·헤더 구성을 고정하고, 응답 본문이 core 파서 결과로 반환되는지 확인한다."""
         calls = []
+        xml_text = load_mock_response("dash_manifest.xml")
 
         def fake_get(url, **kwargs):
             calls.append((url, kwargs))
             return MockResponse(text=xml_text)
 
         monkeypatch.setattr(network._session, "get", fake_get)
-        return calls
-
-    def test_parses_sorts_and_skips_hls(self, monkeypatch, load_mock_response):
-        """해상도 오름차순 정렬, min(width, height) 계산, '/hls/' 항목 스킵을 고정한다."""
-        calls = self._patch_get(monkeypatch, load_mock_response("dash_manifest.xml"))
 
         sorted_reps, auto_resolution, auto_base_url = NetworkManager.get_video_dash_manifest(
             "test-video-id", "test-in-key"
         )
-
-        assert sorted_reps == [
-            [480, "https://vod-example.invalid/chzzk/video_480p.mp4"],
-            [720, "https://vod-example.invalid/chzzk/video_720p.mp4"],
-            [1080, "https://vod-example.invalid/chzzk/video_1080p.mp4"],
-        ]
-        # auto는 목록 중 가장 높은 해상도
-        assert auto_resolution == 1080
-        assert auto_base_url == "https://vod-example.invalid/chzzk/video_1080p.mp4"
 
         # 요청 URL·헤더 구성도 현재 동작 그대로 고정 (실호출 없음)
         assert calls == [
@@ -106,39 +101,5 @@ class TestGetVideoDashManifest:
                 {"headers": {"Accept": "application/dash+xml"}},
             )
         ]
-
-    def test_skips_audio_only_representation(self, monkeypatch, load_mock_response):
-        """width/height 없는 오디오 전용 Representation은 건너뛰어야 한다 (#38).
-
-        픽스처는 videoNo 14158884의 실제 매니페스트 박제본이다: video/mp4 3종(1080/720/144)
-        + video/mp2t 3종(BaseURL이 '/hls/'로 끝나 기존 로직이 스킵) + audio/mp4 1종
-        (width/height 없음 — 기존에는 여기서 TypeError로 전체 파싱이 실패했다).
-        """
-        self._patch_get(
-            monkeypatch, load_mock_response("dash_manifest_audio_only_14158884.xml")
-        )
-
-        sorted_reps, auto_resolution, auto_base_url = NetworkManager.get_video_dash_manifest(
-            "test-video-id", "test-in-key"
-        )
-
-        # 영상 3종만 남는다: 오디오 전용(m4a)·hls 항목은 제외, 해상도 오름차순
-        assert [rep[0] for rep in sorted_reps] == [144, 720, 1080]
-        assert auto_resolution == 1080
-        for _, base_url in sorted_reps:
-            assert base_url.endswith(".mp4?_lsu_sa_=REDACTED")
-            assert "/hls/" not in base_url
-            assert ".m4a" not in base_url
-        assert auto_base_url == sorted_reps[-1][1]
-
-    def test_portrait_single_representation(self, monkeypatch, load_mock_response):
-        """세로 영상(720x1280) 단일 항목: 해상도는 min(width, height)=720으로 계산된다."""
-        self._patch_get(monkeypatch, load_mock_response("dash_manifest_portrait.xml"))
-
-        sorted_reps, auto_resolution, auto_base_url = NetworkManager.get_video_dash_manifest(
-            "portrait-video-id", "portrait-in-key"
-        )
-
-        assert sorted_reps == [[720, "https://vod-example.invalid/chzzk/portrait_720.mp4"]]
-        assert auto_resolution == 720
-        assert auto_base_url == "https://vod-example.invalid/chzzk/portrait_720.mp4"
+        # 반환값은 core 파서에 응답 본문을 그대로 넘긴 결과와 일치해야 한다
+        assert (sorted_reps, auto_resolution, auto_base_url) == parse_dash_manifest(xml_text)
