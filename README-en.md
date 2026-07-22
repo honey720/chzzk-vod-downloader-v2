@@ -52,6 +52,7 @@ uv run python main.py    # run the app
 ```
 
 - When reporting a download issue: run `uv run python scripts/capture_playback_debug.py <VOD URL>` and attach the captured responses (cookies/tokens are removed automatically).
+- Download without the GUI: `uv run python scripts/headless_download.py <VOD/clip URL> [--resolution N] [--output PATH] [--timeout SEC]`
 
 ---
 
