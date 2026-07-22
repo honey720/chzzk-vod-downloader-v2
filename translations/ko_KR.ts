@@ -97,6 +97,10 @@
         <translation>쿠키가 올바르지 않습니다</translation>
     </message>
     <message>
+        <source>Channel membership required</source>
+        <translation>채널 멤버십 가입이 필요한 영상입니다</translation>
+    </message>
+    <message>
         <source>Unencoded Video(.m3u8)</source>
         <translation>비디오가 인코딩되지 않았습니다(.m3u8)</translation>
     </message>

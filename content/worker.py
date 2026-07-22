@@ -33,14 +33,19 @@ class ContentWorker(QObject):
             self.error.emit(str(e))
 
     def fetchVideo(self, video_no: str):
-        video_id, in_key, adult, vodStatus, liveRewindPlaybackJson, metadata = NetworkManager.get_video_info(video_no, self.cookies)
+        video_id, in_key, adult, vodStatus, liveRewindPlaybackJson, membershipBenefitType, metadata = NetworkManager.get_video_info(video_no, self.cookies)
         if adult and not video_id:
             errorMessage = self.tr("Invalid cookies value")
             raise ValueError(f"{self.vod_url}\n{errorMessage}")
         elif liveRewindPlaybackJson:
             unique_reps, resolution, base_url = NetworkManager.get_video_m3u8_manifest(liveRewindPlaybackJson)
         else:
-            unique_reps, resolution, base_url = NetworkManager.get_video_dash_manifest(video_id, in_key)
+            # 멤버십 전용 VOD는 권한이 없으면 inKey가 null로 내려온다.
+            # 이대로 매니페스트를 요청하면 원인을 알 수 없는 401이 노출되므로 먼저 안내한다 (#55)
+            if not in_key and membershipBenefitType == "MEMBER_ONLY":
+                errorMessage = self.tr("Channel membership required")
+                raise ValueError(f"{self.vod_url}\n{errorMessage}")
+            unique_reps, resolution, base_url = NetworkManager.get_video_dash_manifest(video_id, in_key, self.cookies)
         if not unique_reps:
             errorMessage = self.tr("Failed to get DASH manifest")
             raise ValueError(f"{self.vod_url}\n{errorMessage}")

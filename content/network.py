@@ -68,6 +68,10 @@ class NetworkManager:
     def get_video_info(video_no: str, cookies: dict):
         """
         API를 통해 video_no에 대응하는 video_id, in_key, 메타데이터를 가져온다.
+
+        membershipBenefitType도 함께 반환한다 (#55).
+        멤버십(구독자) 전용 VOD는 권한이 없으면 inKey가 null로 내려오므로,
+        호출부에서 이 값으로 "멤버십 필요" 안내를 구분할 수 있다.
         """
         api_url = f"{CHZZK_API}/service/v2/videos/{video_no}"
         headers = {"User-Agent": "Mozilla/5.0"}
@@ -80,6 +84,7 @@ class NetworkManager:
         adult = content.get('adult')
         vodStatus = content.get('vodStatus')
         liveRewindPlaybackJson = content.get('liveRewindPlaybackJson')
+        membershipBenefitType = content.get('membershipBenefitType')
 
         metadata = {
             'title': re.sub(r'[\\/:\*\?"<>|\n]', '', content.get('videoTitle', 'Unknown Title')), # 정규식으로 특수문자 제거
@@ -90,19 +95,19 @@ class NetworkManager:
             'createdDate': content.get('liveOpenDate', 'Unknown Date'),
             'duration': content.get('duration', 0),
         }
-        return video_id, in_key, adult, vodStatus, liveRewindPlaybackJson, metadata
-    
+        return video_id, in_key, adult, vodStatus, liveRewindPlaybackJson, membershipBenefitType, metadata
+
     @staticmethod
-    def get_video_dash_manifest(video_id: str, in_key: str):
+    def get_video_dash_manifest(video_id: str, in_key: str, cookies: dict | None = None):
         """
         DASH 매니페스트를 요청하여 Representation 목록을 파싱한다.
 
         HTTP 요청만 담당하고, XML 파싱은 core/api/dash.py의 순수 함수에 위임한다 (#51).
-        시그니처·반환 형식은 기존과 동일하다.
+        멤버십 전용 VOD 재생 검증을 위해 메타데이터 요청과 동일하게 쿠키를 실어 보낸다 (#55).
         """
         manifest_url = f"{NAVER_API}/neonplayer/vodplay/v2/playback/{video_id}?key={in_key}"
         headers = {"Accept": "application/dash+xml"}
-        response = _session.get(manifest_url, headers=headers)
+        response = _session.get(manifest_url, cookies=cookies, headers=headers)
         response.raise_for_status()
 
         return parse_dash_manifest(response.text)
@@ -129,14 +134,16 @@ class NetworkManager:
         return sorted_reps, auto_resolution, auto_base_url
     
     @staticmethod
-    def get_video_m3u8_base_url(json_str: str, resolution: int) -> str:
+    def get_video_m3u8_base_url(json_str: str, resolution: int, cookies: dict | None = None) -> str:
         """
         m3u8 정보가 포함된 json형식의 문자열을 받아서 base_url을 파싱한다.
+
+        권한이 필요한 VOD의 플레이리스트 접근을 위해 쿠키를 실어 보낸다 (#55).
         """
         data = json.loads(json_str)
         media = data.get("media", [])
         path = media[0].get("path")
-        response = _session.get(path)
+        response = _session.get(path, cookies=cookies)
         response.raise_for_status()
         content = response.text.splitlines()
 

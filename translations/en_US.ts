@@ -97,6 +97,10 @@
         <translation>Invalid cookies value</translation>
     </message>
     <message>
+        <source>Channel membership required</source>
+        <translation>Channel membership required</translation>
+    </message>
+    <message>
         <source>Unencoded Video(.m3u8)</source>
         <translation>Unencoded Video(.m3u8)</translation>
     </message>
