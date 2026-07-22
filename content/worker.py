@@ -1,6 +1,11 @@
+import logging
+
 from content.network import NetworkManager
 
 from PySide6.QtCore import QObject, Signal
+
+logger = logging.getLogger(__name__)
+
 
 class ContentWorker(QObject):
     # 작업이 완료되면 결과를 tuple로 전달 (혹은 필요한 데이터 구조로 전달)
@@ -30,6 +35,9 @@ class ContentWorker(QObject):
                 
             self.finished.emit(result, content_type)
         except Exception as e:
+            # 크래시 지점 추적을 위해 traceback을 로그에 남긴다 (#55 디버깅).
+            # str(e)만으로는 AttributeError 등의 발생 위치를 알 수 없다
+            logger.exception("컨텐츠 요청 실패: %s", self.vod_url)
             self.error.emit(str(e))
 
     def fetchVideo(self, video_no: str):
