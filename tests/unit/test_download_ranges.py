@@ -1,11 +1,12 @@
-"""download.download의 파트 크기 결정·구간 분할 박제 테스트.
+"""core.downloaders.ranges의 파트 크기 결정·구간 분할 박제 테스트.
 
 목적은 "올바른 동작" 검증이 아니라 현재 동작의 보존이다 (#27).
+구현이 download/download.py에서 core/downloaders/ranges.py로 이동해 import 경로만 갱신 (#50).
 """
 
 import pytest
 
-from download.download import decide_part_size, split_ranges
+from core.downloaders.ranges import decide_part_size, split_ranges
 
 MB = 1024 * 1024
 
