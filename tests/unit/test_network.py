@@ -8,11 +8,14 @@ import pytest
 
 import content.network as network
 from content.network import NetworkManager
+from core.api.url_parser import extract_content_no
 from tests.mocks.mock_http import MockResponse
 
 
 class TestExtractContentNo:
-    """NetworkManager.extract_content_no의 요구 동작 검증 (#33).
+    """extract_content_no의 요구 동작 검증 (#33).
+
+    구현이 core/api/url_parser.py로 이동해 import 경로만 갱신 (#50).
 
     브라우저 주소창을 그대로 복사한 URL 변형(쿼리스트링·후행 슬래시·www)은 허용하고,
     live URL·다른 도메인·형식이 깨진 URL은 거부해야 한다.
@@ -55,7 +58,13 @@ class TestExtractContentNo:
     )
     def test_extract_content_no(self, vod_url: str, expected: tuple):
         """URL별 (type, content_no) 추출 결과가 요구 동작과 일치해야 한다."""
-        assert NetworkManager.extract_content_no(vod_url) == expected
+        assert extract_content_no(vod_url) == expected
+
+    def test_network_manager_delegates_to_core(self):
+        """NetworkManager.extract_content_no 시그니처가 유지되고 core 함수에 위임한다 (#50)."""
+        assert NetworkManager.extract_content_no(
+            "https://chzzk.naver.com/video/1510760"
+        ) == ("video", "1510760")
 
 
 class TestGetVideoDashManifest:
