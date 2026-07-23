@@ -1,21 +1,25 @@
-"""content.network의 Session 도입(연결 재사용) 단위 테스트 (#31)."""
+"""core.api.session의 Session 관리(연결 재사용·쿠키 차단) 단위 테스트 (#62, 원본 #31).
+
+tests/unit/test_network_session.py에서 이주했다. 검증 내용·기대 동작 무변경.
+"""
 
 import threading
 
 import requests
 
 import content.network as network
+import core.api.session as session
 
 
 def test_module_session_is_a_requests_session():
     """API 호출용 모듈 수준 공유 세션이 requests.Session이어야 한다."""
-    assert isinstance(network._session, requests.Session)
+    assert isinstance(session._session, requests.Session)
 
 
 def test_thread_session_is_reused_within_same_thread():
     """같은 스레드에서 get_thread_session은 항상 같은 Session을 돌려준다."""
-    first = network.get_thread_session()
-    second = network.get_thread_session()
+    first = session.get_thread_session()
+    second = session.get_thread_session()
 
     assert isinstance(first, requests.Session)
     assert first is second
@@ -23,11 +27,11 @@ def test_thread_session_is_reused_within_same_thread():
 
 def test_thread_session_is_distinct_across_threads():
     """다른 스레드에서는 별도의 Session이 생성된다 (스레드 안전성 확보 방식)."""
-    main_session = network.get_thread_session()
+    main_session = session.get_thread_session()
     other_sessions = []
 
     def worker():
-        other_sessions.append(network.get_thread_session())
+        other_sessions.append(session.get_thread_session())
 
     thread = threading.Thread(target=worker)
     thread.start()
@@ -46,7 +50,7 @@ def test_session_does_not_store_response_cookies():
     from http.cookiejar import Cookie
     from urllib.request import Request
 
-    policy = network._make_session().cookies.get_policy()
+    policy = session._make_session().cookies.get_policy()
 
     cookie = Cookie(
         version=0,
@@ -69,3 +73,14 @@ def test_session_does_not_store_response_cookies():
     request = Request("https://api.chzzk.naver.com/service")
 
     assert policy.set_ok(cookie, request) is False
+
+
+def test_content_network_reexports_core_session():
+    """content.network의 하위 호환 re-export가 core 구현과 동일 객체여야 한다 (#62).
+
+    기존 테스트·호출부는 network._session 객체의 get을 monkeypatch하므로,
+    두 모듈이 같은 세션 객체를 공유해야 목킹·동작이 기존과 동일하게 유지된다.
+    """
+    assert network._session is session._session
+    assert network.get_thread_session is session.get_thread_session
+    assert network._make_session is session._make_session

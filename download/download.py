@@ -7,7 +7,7 @@ from PySide6.QtCore import QThread, Signal
 from concurrent.futures import ThreadPoolExecutor
 from download.task import DownloadTask
 from download.state import DownloadState
-from content.network import get_thread_session
+from core.api.session import get_thread_session
 
 # 구현은 core/downloaders/ranges.py로 이동했다 (#50). 기존 호출부 호환용 re-export.
 from core.downloaders.ranges import decide_part_size, split_ranges
