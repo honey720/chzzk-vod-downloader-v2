@@ -204,7 +204,7 @@ jobs:
 
       # 스크린샷은 릴리즈 자산이 아니므로 제외
       - name: Exclude non-release files
-        rm -f dist/*.png
+        run: rm -f dist/*.png
 
       # 릴리즈 생성 전에 스캔 → 링크를 본문에 직접 주입 (태그 이벤트에서도 확실히 동작)
       - name: VirusTotal scan
