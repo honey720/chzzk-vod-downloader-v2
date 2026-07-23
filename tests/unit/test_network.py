@@ -143,16 +143,7 @@ class TestGetVideoInfo:
 
         monkeypatch.setattr(network._session, "get", fake_get)
 
-        (
-            video_id,
-            in_key,
-            adult,
-            vodStatus,
-            liveRewindPlaybackJson,
-            membershipBenefitType,
-            encryptionType,
-            metadata,
-        ) = NetworkManager.get_video_info("13714380", cookies)
+        info = NetworkManager.get_video_info("13714380", cookies)
 
         # 요청 구성: URL과 쿠키가 그대로 실려야 한다
         assert calls == [
@@ -161,15 +152,16 @@ class TestGetVideoInfo:
                 {"cookies": cookies, "headers": {"User-Agent": "Mozilla/5.0"}},
             )
         ]
+        # 반환은 tuple이 아닌 VideoInfo 필드 접근 (#61). 기대값 자체는 무변경.
         # 멤버십 전용 VOD: videoId는 있으나 권한이 없으면 inKey가 null이다
-        assert video_id == "54D1729900196FDCEC43D70891951FE9FA3C"
-        assert in_key is None
-        assert adult is False
-        assert vodStatus == "ABR_HLS"
-        assert liveRewindPlaybackJson is None
-        assert membershipBenefitType == "MEMBER_ONLY"
-        assert encryptionType == "AES"
-        assert metadata["duration"] == 10925
+        assert info.video_id == "54D1729900196FDCEC43D70891951FE9FA3C"
+        assert info.in_key is None
+        assert info.adult is False
+        assert info.vod_status == "ABR_HLS"
+        assert info.live_rewind_playback_json is None
+        assert info.membership_benefit_type == "MEMBER_ONLY"
+        assert info.encryption_type == "AES"
+        assert info.metadata["duration"] == 10925
 
 
 class TestGetVideoM3u8BaseUrl:

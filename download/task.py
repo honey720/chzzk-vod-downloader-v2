@@ -10,7 +10,7 @@ import threading
 
 from content.data import ContentItem
 from core.models.download_state import DownloadState
-from core.models.download_task import DownloadTaskModel, InvalidStateTransitionError
+from core.models.download_task import InvalidStateTransitionError
 from download.data import DownloadData
 from download.logger import DownloadLogger
 
@@ -25,11 +25,10 @@ class DownloadTask:
         # 엔진(worker/monitor)이 future_count 등 공유 변수 동기화에 쓰는 락.
         # 모델 내부의 상태 전이 락과는 별개다 (엔진 무변경 유지 — Phase 3에서 정리).
         self.lock = threading.Lock()
-        # 엔진이 data._pause_event로 일시정지를 대기하므로 모델과 같은 Event를 공유한다
-        self.model = DownloadTaskModel(
-            pause_event=data._pause_event,
-            on_state_change=item.setDownloadState,
-        )
+        # 상태·진행률의 소유처는 DownloadData가 가진 core 모델 하나다 (#61).
+        # 별도 모델을 만들지 않고 같은 모델에 UI 반영 콜백만 연결한다
+        self.model = data.model
+        self.model.set_on_state_change(item.setDownloadState)
 
     @property
     def state(self) -> DownloadState:

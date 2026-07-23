@@ -12,6 +12,7 @@ import pytest
 import content.network as network
 from content.network import NetworkManager
 from content.worker import ContentWorker
+from core.models.content import VideoInfo
 from tests.mocks.mock_http import MockResponse
 
 COOKIES = {"NID_AUT": "REDACTED", "NID_SES": "REDACTED"}
@@ -60,7 +61,16 @@ def test_member_only_without_in_key_raises_membership_error(monkeypatch):
     """비암호화 멤버십 전용 VOD(inKey null)이면 멤버십 안내 에러가 발생해야 한다."""
 
     def fake_get_video_info(video_no, cookies):
-        return "video-id", None, False, "ABR_HLS", None, "MEMBER_ONLY", None, {}
+        return VideoInfo(
+            video_id="video-id",
+            in_key=None,
+            adult=False,
+            vod_status="ABR_HLS",
+            live_rewind_playback_json=None,
+            membership_benefit_type="MEMBER_ONLY",
+            encryption_type=None,
+            metadata={},
+        )
 
     monkeypatch.setattr(NetworkManager, "get_video_info", fake_get_video_info)
 
@@ -74,7 +84,16 @@ def test_adult_without_video_id_keeps_invalid_cookies_error(monkeypatch):
     """성인 VOD(adult=True, videoId 없음)의 기존 에러 동작이 유지돼야 한다 (회귀 방지)."""
 
     def fake_get_video_info(video_no, cookies):
-        return None, None, True, "ABR_HLS", None, None, None, {}
+        return VideoInfo(
+            video_id=None,
+            in_key=None,
+            adult=True,
+            vod_status="ABR_HLS",
+            live_rewind_playback_json=None,
+            membership_benefit_type=None,
+            encryption_type=None,
+            metadata={},
+        )
 
     monkeypatch.setattr(NetworkManager, "get_video_info", fake_get_video_info)
 
@@ -89,8 +108,16 @@ def test_dash_path_passes_cookies_to_manifest_request(monkeypatch):
     manifest_calls = []
 
     def fake_get_video_info(video_no, cookies):
-        metadata = {"title": "t", "duration": 1}
-        return "video-id", "in-key", False, "ABR_HLS", None, "MEMBER_ONLY", None, metadata
+        return VideoInfo(
+            video_id="video-id",
+            in_key="in-key",
+            adult=False,
+            vod_status="ABR_HLS",
+            live_rewind_playback_json=None,
+            membership_benefit_type="MEMBER_ONLY",
+            encryption_type=None,
+            metadata={"title": "t", "duration": 1},
+        )
 
     def fake_get_dash_manifest(video_id, in_key, cookies=None):
         manifest_calls.append((video_id, in_key, cookies))

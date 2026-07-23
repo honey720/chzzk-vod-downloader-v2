@@ -7,6 +7,7 @@ from urllib.parse import urljoin
 
 from core.api.dash import parse_dash_manifest
 from core.api.url_parser import extract_content_no
+from core.models.content import VideoInfo
 
 NAVER_API = "https://apis.naver.com"
 CHZZK_API = "https://api.chzzk.naver.com"
@@ -65,14 +66,16 @@ class NetworkManager:
         return extract_content_no(vod_url)
 
     @staticmethod
-    def get_video_info(video_no: str, cookies: dict):
+    def get_video_info(video_no: str, cookies: dict) -> VideoInfo:
         """
         API를 통해 video_no에 대응하는 video_id, in_key, 메타데이터를 가져온다.
 
-        membershipBenefitType·encryptionType도 함께 반환한다 (#55).
+        기존 8-tuple 대신 VideoInfo 데이터 객체를 반환한다 (#61). 값·의미는 무변경.
+
+        membership_benefit_type·encryption_type도 함께 반환한다 (#55).
         - 멤버십(구독자) 전용 VOD는 권한이 없으면 inKey가 null로 내려오므로,
-          호출부에서 membershipBenefitType으로 "멤버십 필요" 안내를 구분할 수 있다.
-        - encryptionType이 null이 아니면(AES 등) 세그먼트가 암호화되어 있어
+          호출부에서 membership_benefit_type으로 "멤버십 필요" 안내를 구분할 수 있다.
+        - encryption_type이 null이 아니면(AES 등) 세그먼트가 암호화되어 있어
           현재 다운로더로는 조립할 수 없으므로 호출부에서 조기에 안내한다.
         """
         api_url = f"{CHZZK_API}/service/v2/videos/{video_no}"
@@ -81,14 +84,6 @@ class NetworkManager:
         response.raise_for_status()
 
         content = response.json().get('content', {})
-        video_id = content.get('videoId')
-        in_key = content.get('inKey')
-        adult = content.get('adult')
-        vodStatus = content.get('vodStatus')
-        liveRewindPlaybackJson = content.get('liveRewindPlaybackJson')
-        membershipBenefitType = content.get('membershipBenefitType')
-        encryptionType = content.get('encryptionType')
-
         metadata = {
             'title': re.sub(r'[\\/:\*\?"<>|\n]', '', content.get('videoTitle', 'Unknown Title')), # 정규식으로 특수문자 제거
             'thumbnailImageUrl': content.get('thumbnailImageUrl', ''),
@@ -98,7 +93,16 @@ class NetworkManager:
             'createdDate': content.get('liveOpenDate', 'Unknown Date'),
             'duration': content.get('duration', 0),
         }
-        return video_id, in_key, adult, vodStatus, liveRewindPlaybackJson, membershipBenefitType, encryptionType, metadata
+        return VideoInfo(
+            video_id=content.get('videoId'),
+            in_key=content.get('inKey'),
+            adult=content.get('adult'),
+            vod_status=content.get('vodStatus'),
+            live_rewind_playback_json=content.get('liveRewindPlaybackJson'),
+            membership_benefit_type=content.get('membershipBenefitType'),
+            encryption_type=content.get('encryptionType'),
+            metadata=metadata,
+        )
 
     @staticmethod
     def get_video_dash_manifest(video_id: str, in_key: str, cookies: dict | None = None):
