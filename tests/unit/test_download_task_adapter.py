@@ -38,7 +38,7 @@ class _FakeItem:
 
 
 def _make_task() -> tuple[DownloadTask, DownloadData, _FakeItem, _FakeLogger]:
-    data = DownloadData("base", "vod", "out.mp4", "1080p", "zip")
+    data = DownloadData("base", "vod", "out.mp4", 1080, "video")
     item = _FakeItem()
     logger = _FakeLogger()
     return DownloadTask(data, item, logger), data, item, logger

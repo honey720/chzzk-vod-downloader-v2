@@ -70,6 +70,14 @@ class DownloadTaskModel:
         """현재 다운로드 상태."""
         return self._state
 
+    def set_on_state_change(self, callback: Callable[[DownloadState], None] | None) -> None:
+        """상태 변경 콜백을 등록한다.
+
+        모델을 먼저 만들고(예: DownloadData 소유) 나중에 UI 연결이 결정되는
+        경우를 위해 생성자 주입과 별도로 제공한다 (#61).
+        """
+        self._on_state_change = callback
+
     def _transition(self, method: str, new_state: DownloadState) -> bool:
         """전이 공통 처리. 이미 목표 상태면 no-op(False), 전이 성공 시 True.
 
