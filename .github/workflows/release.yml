@@ -43,9 +43,15 @@ jobs:
             exit 1
           fi
 
+      # patchelf: Nuitka onefile 필수 / 나머지: 기동 스모크(xvfb)에서 Qt 런타임에 필요
       - name: Install Linux build deps
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y patchelf
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            patchelf xvfb libegl1 libgl1 libxkbcommon-x11-0 libxcb-icccm4 \
+            libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 \
+            libxcb-shape0 libxcb-xinerama0 libxcb-cursor0 libdbus-1-3 imagemagick
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
@@ -95,7 +101,7 @@ jobs:
           cd build
           ls -la
           mv main.app CVDv2.app
-          zip -r "${{ matrix.artifact }}.zip" CVDv2.app
+          zip -qr "${{ matrix.artifact }}.zip" CVDv2.app
 
       - name: Build (Linux)
         if: runner.os == 'Linux'
@@ -109,6 +115,73 @@ jobs:
           --output-filename=${{ matrix.artifact }}
           --output-dir=build
           main.py
+
+      # ── 기동 스모크: 산출물을 실제로 실행해 30초 생존 확인 ──
+      - name: Boot smoke (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $p = Start-Process -FilePath "build\${{ matrix.artifact }}" -PassThru
+          Start-Sleep -Seconds 30
+          if ($p.HasExited) {
+            Write-Host "::error::기동 스모크 실패 — 프로세스가 조기 종료됨 (exit $($p.ExitCode))"
+            exit 1
+          }
+          try {
+            Add-Type -AssemblyName System.Windows.Forms,System.Drawing
+            $b = New-Object Drawing.Bitmap 1280,800
+            $g = [Drawing.Graphics]::FromImage($b)
+            $g.CopyFromScreen(0,0,0,0,$b.Size)
+            $b.Save("win-smoke.png")
+          } catch { Write-Host "스크린샷 생략: $_" }
+          Stop-Process -Id $p.Id -Force
+          Write-Host "기동 스모크 통과 (30초 생존)"
+
+      - name: Boot smoke (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          chmod +x "build/${{ matrix.artifact }}"
+          Xvfb :99 -screen 0 1280x800x24 &
+          export DISPLAY=:99
+          sleep 3
+          "build/${{ matrix.artifact }}" &
+          PID=$!
+          sleep 30
+          if ! kill -0 $PID 2>/dev/null; then
+            echo "::error::기동 스모크 실패 — 프로세스가 조기 종료됨"
+            exit 1
+          fi
+          import -window root linux-smoke.png || true
+          kill $PID || true
+          echo "기동 스모크 통과 (30초 생존)"
+
+      - name: Boot smoke + screenshot (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          BIN=$(find build/CVDv2.app/Contents/MacOS -type f -perm +111 | head -1)
+          echo "실행 대상: $BIN"
+          "$BIN" &
+          PID=$!
+          sleep 30
+          if ! kill -0 $PID 2>/dev/null; then
+            echo "::error::기동 스모크 실패 — 프로세스가 조기 종료됨"
+            exit 1
+          fi
+          # 스크린샷은 best-effort (러너 세션 상태에 따라 검은 화면일 수 있음)
+          screencapture -x mac-smoke.png || true
+          kill $PID || true
+          echo "기동 스모크 통과 (30초 생존)"
+
+      - name: Upload smoke screenshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-screenshot-${{ matrix.os }}
+          path: |
+            mac-smoke.png
+            linux-smoke.png
+            win-smoke.png
+          if-no-files-found: ignore
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -128,6 +201,10 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+
+      # 스크린샷은 릴리즈 자산이 아니므로 제외
+      - name: Exclude non-release files
+        rm -f dist/*.png
 
       # 릴리즈 생성 전에 스캔 → 링크를 본문에 직접 주입 (태그 이벤트에서도 확실히 동작)
       - name: VirusTotal scan
