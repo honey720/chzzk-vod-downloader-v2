@@ -50,7 +50,7 @@ class DownloadLogger:
         file_handler.setFormatter(formatter)
 
         # 핸들러 추가 — 콘솔 출력은 자체 핸들러 대신 공통 로깅 설정(루트 로거,
-        # config/log_setup.py)으로 전파되어 처리된다 (#30)
+        # core/utils/logging_setup.py)으로 전파되어 처리된다 (#30, #62)
         self.logger.addHandler(file_handler)
 
     def save_and_close(self):

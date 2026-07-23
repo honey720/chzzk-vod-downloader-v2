@@ -1,50 +1,19 @@
 import re
-import requests
 import json
-import threading
-from http.cookiejar import DefaultCookiePolicy
 from urllib.parse import urljoin
 
 from core.api.dash import parse_dash_manifest
 from core.api.url_parser import extract_content_no
 from core.models.content import VideoInfo
 
+# Session 관리는 core/api/session.py로 이주했다 (#62, 원본 #31).
+# _session은 아래 NetworkManager가 계속 사용하고, 나머지는 기존 호출부 호환용 re-export다.
+from core.api.session import _session
+from core.api.session import _make_session, get_thread_session  # noqa: F401
+
 NAVER_API = "https://apis.naver.com"
 CHZZK_API = "https://api.chzzk.naver.com"
 VIDEOHUB_API = "https://api-videohub.naver.com"
-
-
-def _make_session() -> requests.Session:
-    """연결 재사용용 Session을 만든다 (#31).
-
-    기존에는 매 호출 requests.get()이 독립적이라 응답의 Set-Cookie가 다음 요청으로
-    이어지지 않았다. 이 이슈는 연결 재사용만 도입하므로, 응답 쿠키 저장을 차단해
-    쿠키 동작을 기존과 동일하게 유지한다. 요청별 cookies= 인자는 그대로 전송된다.
-    """
-    session = requests.Session()
-    session.cookies.set_policy(DefaultCookiePolicy(allowed_domains=[]))
-    return session
-
-
-# NetworkManager API 호출용 모듈 수준 공유 세션.
-# 응답 쿠키를 저장하지 않으므로 여러 스레드에서 호출해도 상태 공유 문제가 없다.
-_session = _make_session()
-
-# 다운로드 워커용 스레드로컬 세션 저장소
-_thread_local = threading.local()
-
-
-def get_thread_session() -> requests.Session:
-    """호출한 스레드 전용 Session을 반환한다 (없으면 생성).
-
-    requests.Session은 스레드 간 완전한 안전이 보장되지 않으므로, 다운로드 워커처럼
-    동시 요청이 많은 경로는 스레드마다 별도 Session을 사용해 연결 재사용만 취한다.
-    """
-    session = getattr(_thread_local, "session", None)
-    if session is None:
-        session = _make_session()
-        _thread_local.session = session
-    return session
 
 
 class NetworkManager:

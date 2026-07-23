@@ -10,7 +10,8 @@ from PySide6.QtCore import QThread, Signal
 from concurrent.futures import ThreadPoolExecutor
 from download.task import DownloadTask
 from download.state import DownloadState
-from content.network import NetworkManager, get_thread_session
+from content.network import NetworkManager
+from core.api.session import get_thread_session
 
 class DownloadM3U8Thread(QThread):
     """
