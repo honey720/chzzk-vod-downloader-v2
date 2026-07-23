@@ -1,45 +1,74 @@
-from download.data import DownloadData
-from content.data import ContentItem
-from download.logger import DownloadLogger
-from download.state import DownloadState
+"""DownloadTask 어댑터 — 순수 상태 머신은 core/models/download_task.py로 이주 (#60).
+
+기존 호출부(download manager·worker·monitor)의 인터페이스(state 속성, lock,
+start/pause/resume/stop/finish/isRunning)를 그대로 유지하면서, 상태 보유·전이는
+core의 DownloadTaskModel에 위임한다. Qt 계층과의 연결(ContentItem 상태 반영,
+다운로드 로깅)은 이 어댑터에 남는다.
+"""
+
 import threading
 
+from content.data import ContentItem
+from core.models.download_state import DownloadState
+from core.models.download_task import DownloadTaskModel, InvalidStateTransitionError
+from download.data import DownloadData
+from download.logger import DownloadLogger
+
+
 class DownloadTask:
+    """core 상태 머신을 감싸 기존 다운로드 엔진과 UI 계층을 연결하는 어댑터."""
+
     def __init__(self, data: DownloadData, item: ContentItem, logger: DownloadLogger):
         self.data = data
         self.item = item
-        self.state = DownloadState.WAITING  # 초기 상태로 설정
         self.logger = logger
-        self.lock = threading.Lock()  # 상태 변경 시 동기화용 락
+        # 엔진(worker/monitor)이 future_count 등 공유 변수 동기화에 쓰는 락.
+        # 모델 내부의 상태 전이 락과는 별개다 (엔진 무변경 유지 — Phase 3에서 정리).
+        self.lock = threading.Lock()
+        # 엔진이 data._pause_event로 일시정지를 대기하므로 모델과 같은 Event를 공유한다
+        self.model = DownloadTaskModel(
+            pause_event=data._pause_event,
+            on_state_change=item.setDownloadState,
+        )
+
+    @property
+    def state(self) -> DownloadState:
+        """현재 다운로드 상태 (core 모델에 위임)."""
+        return self.model.state
+
+    def _try_transition(self, transition_name: str) -> bool:
+        """모델의 전이 메서드를 호출하되, 허용되지 않는 전이는 크래시 대신 경고 로그로 남긴다.
+
+        기존 코드는 어떤 상태에서든 전이를 허용했으므로, UI 이벤트 타이밍 문제로
+        어긋난 호출이 와도 앱이 죽지 않도록 어댑터에서 흡수한다.
+        """
+        try:
+            return getattr(self.model, transition_name)()
+        except InvalidStateTransitionError as e:
+            self.logger.warning(f"상태 전이 무시: {e}")
+            return False
 
     def start(self):
-        self.state = DownloadState.RUNNING
-        self.item.setDownloadState(self.state)
-        self.logger.log_download_info(self.item)
-        # 필요 시, ContentItem에 상태를 전달하여 업데이트
+        """다운로드 시작. 성공 시 다운로드 정보를 로그로 남긴다."""
+        if self._try_transition("start"):
+            self.logger.log_download_info(self.item)
 
     def pause(self):
-        self.state = DownloadState.PAUSED
-        self.data._pause_event.clear() # 대기 상태로 들어감
-        self.item.setDownloadState(self.state)
-        # ContentItem에 상태 전달
+        """다운로드 일시정지."""
+        self._try_transition("pause")
 
     def resume(self):
-        self.state = DownloadState.RUNNING
-        self.data._pause_event.set()
-        self.item.setDownloadState(self.state)
-        # 상태 업데이트 전달
+        """다운로드 재개."""
+        self._try_transition("resume")
 
     def stop(self):
-        self.state = DownloadState.WAITING
-        self.data._pause_event.set()
-        self.item.setDownloadState(self.state)
-        # 상태 업데이트 전달
+        """다운로드 취소(대기 상태로 복귀)."""
+        self._try_transition("stop")
 
     def finish(self):
-        self.state = DownloadState.FINISHED
-        self.item.setDownloadState(self.state)
-        # 상태 업데이트 전달
+        """다운로드 완료 처리."""
+        self._try_transition("finish")
 
-    def isRunning(self):
-        return self.state == DownloadState.RUNNING
+    def isRunning(self) -> bool:
+        """현재 다운로드가 실행 중인지 여부 (기존 메서드명 유지)."""
+        return self.model.is_running()
