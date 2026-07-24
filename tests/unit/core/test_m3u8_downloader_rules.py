@@ -1,0 +1,425 @@
+"""m3u8 스레드 스케일링·느린 세그먼트 판정·속도 계산 규칙 박제 (#74 착수 조건 1).
+
+이 테스트는 m3u8 다운로드 엔진 이주(QThread → threading) 전후 모두 통과해야 한다.
+규칙 자체를 고정하는 것이 목적이므로, 시나리오와 단언은 이주 후에도 바꾸지 않는다.
+이주 시에는 아래 팩토리(_make_scaler/_make_engine)의 대상 클래스만 교체한다.
+
+박제하는 규칙 (현행 동작 그대로 — 파일 경로(#73)와의 차이는 ★ 표시):
+- ★ 기준 속도는 해상도별 테이블을 따른다: 144→0.2, 360·480→0.5, 720→1.2, 그 외→3 (MB/s)
+- 스레드 증가: 활성 스레드당 평균 속도 > 기준 속도 틱마다 adjust_count += 1,
+  adjust_count > 1이면 adjust_threads를 +4 (max_threads 상한), 카운터 리셋
+- 스레드 감소: 평균 속도 < 기준 속도/2 틱마다 adjust_count -= 1,
+  adjust_count < -4이면 adjust_threads를 절반으로 (하한 1), 카운터 리셋
+- 중간 대역(기준/2 ~ 기준)에서는 adjust_count가 0을 향해 1씩 감쇠
+- 속도 계산: 직전 틱 대비 바이트 증가량을 MB/s로 환산, prev_size 갱신
+- 느린 세그먼트: 청크 속도 < 100 KB/s가 연속 6회(slow_count > 5) 누적되면
+  해당 세그먼트를 중단하고 (index, segment)를 재큐잉(restart_threads += 1)
+- 세그먼트 실패: 요청 예외 시 (index, segment) 재큐잉(failed_threads += 1)
+- ★ 세그먼트 임시 파일명은 (index+1)을 width 자리로 0채움한 .m4v — 병합 순서의 전제
+"""
+
+import threading
+from types import SimpleNamespace
+
+import pytest
+import requests
+
+from download.data import DownloadData
+
+MB = 1024 * 1024
+
+
+class RecordingLogger:
+    """DownloadLogger 호환 가짜 로거 — 실제 파일을 만들지 않고 호출만 기록한다."""
+
+    def __init__(self):
+        self.adjust_calls: list[tuple] = []
+        self.debug_calls: list[tuple] = []
+        self.warnings: list[str] = []
+        self.errors: list[str] = []
+        self.thread_completes: list[tuple] = []
+
+    def log_thread_adjust(self, active_threads, avg_speed):
+        self.adjust_calls.append((active_threads, avg_speed))
+
+    def log_thread_debug(self, active_threads, download_speed, avg_speed):
+        self.debug_calls.append((active_threads, download_speed, avg_speed))
+
+    def log_m3u8_thread_start(self, thread_id, segment_url):
+        pass
+
+    def log_thread_complete(self, thread_id, downloaded_size):
+        self.thread_completes.append((thread_id, downloaded_size))
+
+    def log_error(self, message, exception=None):
+        self.errors.append(message)
+
+    def warning(self, message):
+        self.warnings.append(message)
+
+
+class FakeTask:
+    """DownloadTask 호환 최소 객체 — 상태는 core 모델에 위임한다.
+
+    이주 전 클래스(QThread)들이 쓰는 인터페이스(data·lock·logger·item·state)만 제공한다.
+    이주 후에는 팩토리가 태스크를 요구하지 않으므로 자연히 쓰이지 않는다.
+    """
+
+    def __init__(self, data: DownloadData, logger: RecordingLogger):
+        self.data = data
+        self.logger = logger
+        self.lock = threading.Lock()
+        self.item = SimpleNamespace(post_process=False)
+
+    @property
+    def state(self):
+        return self.data.model.state
+
+
+def _make_data(resolution: int = 1080, output_path: str = "unused.mp4") -> DownloadData:
+    """테스트용 DownloadData를 만든다 (네트워크 정보는 더미)."""
+    return DownloadData(
+        base_url="https://example.invalid/hls/video.m3u8",
+        vod_url="https://chzzk.naver.com/video/1",
+        output_path=output_path,
+        resolution=resolution,
+        content_type="m3u8",
+    )
+
+
+def _make_scaler(data: DownloadData, logger: RecordingLogger):
+    """스케일링 규칙(_adjust_threads/measure_speed/_get_standard_speed) 보유 객체를 만든다.
+
+    이주 전: download.monitor_m3u8.MonitorM3U8Thread / 이주 후: core M3U8Downloader.
+    반환 객체는 adjust_count 속성과 세 메서드를 노출해야 한다.
+    """
+    from download.monitor_m3u8 import MonitorM3U8Thread
+
+    return MonitorM3U8Thread(FakeTask(data, logger))
+
+
+def _make_engine(data: DownloadData, logger: RecordingLogger):
+    """세그먼트 다운로드 로직(_download_segment) 보유 객체를 만든다.
+
+    이주 전: download.download_m3u8.DownloadM3U8Thread / 이주 후: core M3U8Downloader.
+    """
+    from download.download_m3u8 import DownloadM3U8Thread
+
+    return DownloadM3U8Thread(FakeTask(data, logger))
+
+
+def _engine_module():
+    """_download_segment가 사는 모듈 — 시간·세션 몽키패치 대상."""
+    import download.download_m3u8 as mod
+
+    return mod
+
+
+# ================================================================ 해상도별 기준 속도
+
+
+@pytest.mark.parametrize(
+    ("resolution", "standard"),
+    [(144, 0.2), (360, 0.5), (480, 0.5), (720, 1.2), (1080, 3), (1440, 3)],
+)
+def test_standard_speed_table(resolution, standard):
+    """기준 속도는 해상도별 고정 테이블을 따른다 (그 외 해상도는 3 MB/s)."""
+    data, logger = _make_data(resolution=resolution), RecordingLogger()
+    scaler = _make_scaler(data, logger)
+
+    assert scaler._get_standard_speed() == pytest.approx(standard)
+
+
+def test_same_speed_judged_by_resolution_band():
+    """같은 평균 속도라도 해상도 기준에 따라 증가/감소 방향이 갈린다."""
+    # 평균 1.3 MB/s: 720p(기준 1.2)에서는 증가 방향
+    data, logger = _make_data(resolution=720), RecordingLogger()
+    scaler = _make_scaler(data, logger)
+    data.future_count = 2
+    data.speed_mb = 2.6
+    scaler._adjust_threads()
+    assert scaler.adjust_count == 1
+
+    # 1080p(기준 3, 하한 1.5)에서는 같은 1.3 MB/s가 감소 방향
+    data, logger = _make_data(resolution=1080), RecordingLogger()
+    scaler = _make_scaler(data, logger)
+    data.future_count = 2
+    data.speed_mb = 2.6
+    scaler._adjust_threads()
+    assert scaler.adjust_count == -1
+
+
+# ================================================================ 스레드 증가/감소
+
+
+def test_fast_two_ticks_increase_threads_by_4():
+    """평균 > 기준(1080p: 3 MB/s) 틱 2회 → adjust_count 2(>1) → 스레드 +4, 카운터 리셋."""
+    data, logger = _make_data(), RecordingLogger()
+    data.max_threads = 6996
+    scaler = _make_scaler(data, logger)
+
+    data.future_count = 4
+    data.speed_mb = 20.0  # 평균 5 MB/s
+    scaler._adjust_threads()
+    assert (scaler.adjust_count, data.adjust_threads) == (1, 4)  # 1틱으로는 불변
+
+    scaler._adjust_threads()
+    assert data.adjust_threads == 8
+    assert scaler.adjust_count == 0
+    assert logger.adjust_calls == [(8, 20.0)]
+
+
+def test_increase_is_capped_at_max_threads():
+    """증가 시 상한은 max_threads(세그먼트 수)다."""
+    data, logger = _make_data(), RecordingLogger()
+    data.max_threads = 10
+    data.adjust_threads = 8
+    scaler = _make_scaler(data, logger)
+
+    data.future_count = 8
+    data.speed_mb = 40.0  # 평균 5 MB/s
+    scaler._adjust_threads()
+    scaler._adjust_threads()
+
+    assert data.adjust_threads == 10  # 8+4=12가 아니라 상한 10
+
+
+def test_slow_five_ticks_halve_threads():
+    """평균 < 기준/2(1080p: 1.5 MB/s) 틱 5회 → adjust_count -5(<-4) → 스레드 절반, 카운터 리셋."""
+    data, logger = _make_data(), RecordingLogger()
+    data.max_threads = 6996
+    data.adjust_threads = 8
+    scaler = _make_scaler(data, logger)
+
+    data.future_count = 8
+    data.speed_mb = 8.0  # 평균 1 MB/s
+    for _ in range(4):
+        scaler._adjust_threads()
+    assert data.adjust_threads == 8  # 4틱까지는 불변 (-4는 경계 미달)
+
+    scaler._adjust_threads()
+    assert data.adjust_threads == 4
+    assert scaler.adjust_count == 0
+    assert logger.adjust_calls == [(4, 8.0)]
+
+
+def test_halving_floor_is_one_thread():
+    """감소 시 하한은 1스레드다."""
+    data, logger = _make_data(), RecordingLogger()
+    data.adjust_threads = 1
+    scaler = _make_scaler(data, logger)
+
+    data.future_count = 1
+    data.speed_mb = 0.5
+    for _ in range(5):
+        scaler._adjust_threads()
+
+    assert data.adjust_threads == 1
+
+
+def test_middle_band_decays_adjust_count_toward_zero():
+    """중간 대역(1080p: 1.5~3 MB/s)은 누적 카운터를 0으로 1씩 되돌린다 (히스테리시스)."""
+    data, logger = _make_data(), RecordingLogger()
+    data.max_threads = 6996
+    scaler = _make_scaler(data, logger)
+
+    data.future_count = 4
+    data.speed_mb = 20.0  # 평균 5 → +1
+    scaler._adjust_threads()
+    assert scaler.adjust_count == 1
+
+    data.speed_mb = 8.0  # 평균 2 → 감쇠 -1
+    scaler._adjust_threads()
+    assert scaler.adjust_count == 0
+    assert data.adjust_threads == 4  # 임계 미달로 불변
+
+    data.speed_mb = 4.0  # 평균 1 → -1
+    scaler._adjust_threads()
+    assert scaler.adjust_count == -1
+    data.speed_mb = 8.0  # 평균 2 → 감쇠 +1
+    scaler._adjust_threads()
+    assert scaler.adjust_count == 0
+
+
+def test_band_boundaries_are_exclusive():
+    """경계값(기준·기준/2)은 중간 대역이다 (초과/미만 판정)."""
+    data, logger = _make_data(), RecordingLogger()
+    scaler = _make_scaler(data, logger)
+
+    data.future_count = 2
+    data.speed_mb = 6.0  # 평균 정확히 3 → 증가 아님
+    scaler._adjust_threads()
+    assert scaler.adjust_count == 0
+
+    data.speed_mb = 3.0  # 평균 정확히 1.5 → 감소 아님
+    scaler._adjust_threads()
+    assert scaler.adjust_count == 0
+
+
+def test_zero_active_threads_counts_as_slow_tick():
+    """활성 스레드 0이면 평균 0으로 간주되어 감소 방향 틱이다 (병합 꼬리 구간의 동력)."""
+    data, logger = _make_data(), RecordingLogger()
+    scaler = _make_scaler(data, logger)
+
+    data.future_count = 0
+    data.speed_mb = 10.0
+    scaler._adjust_threads()
+
+    assert scaler.adjust_count == -1
+
+
+# ================================================================ 속도 계산
+
+
+def test_measure_speed_uses_delta_from_previous_tick():
+    """속도 = (현재 누적 - 직전 누적) 바이트를 MB/s로 환산, prev_size 갱신."""
+    data, logger = _make_data(), RecordingLogger()
+    scaler = _make_scaler(data, logger)
+
+    data.total_downloaded_size = 5 * MB
+    data.prev_size = 2 * MB
+    data.future_count = 3
+
+    scaler.measure_speed()
+
+    assert data.speed_mb == pytest.approx(3.0)
+    assert data.prev_size == 5 * MB
+    assert logger.debug_calls == [(3, pytest.approx(3.0), pytest.approx(1.0))]
+
+
+def test_measure_speed_with_no_active_threads_reports_zero_average():
+    """활성 스레드 0이면 평균 속도는 0으로 기록한다 (0 나눗셈 금지)."""
+    data, logger = _make_data(), RecordingLogger()
+    scaler = _make_scaler(data, logger)
+
+    data.total_downloaded_size = 1 * MB
+    data.prev_size = 0
+    data.future_count = 0
+
+    scaler.measure_speed()
+
+    assert logger.debug_calls == [(0, pytest.approx(1.0), 0)]
+
+
+# ================================================================ 느린 세그먼트·실패 처리
+
+
+class FakeResponse:
+    """스트리밍 응답 흉내 — 지정한 청크 목록을 그대로 흘린다."""
+
+    def __init__(self, chunks):
+        self._chunks = chunks
+
+    def raise_for_status(self):
+        pass
+
+    def iter_content(self, chunk_size=8192):
+        yield from self._chunks
+
+
+class FakeSession:
+    """get_thread_session() 대체 — 준비된 응답을 반환하거나 예외를 던진다."""
+
+    def __init__(self, response=None, exception=None):
+        self._response = response
+        self._exception = exception
+
+    def get(self, url, **kwargs):
+        if self._exception is not None:
+            raise self._exception
+        return self._response
+
+
+class TickingClock:
+    """time.time 대체 — 호출마다 지정 간격으로 흐르는 가짜 시계."""
+
+    def __init__(self, step: float):
+        self.now = 1_000_000.0
+        self.step = step
+
+    def __call__(self) -> float:
+        self.now += self.step
+        return self.now
+
+
+def _prepare_running_engine(tmp_path, monkeypatch, chunks=None, exception=None, clock_step=1.0):
+    """RUNNING 상태의 엔진과 부속(데이터·로거)을 준비한다.
+
+    clock_step=1.0이면 청크당 1초가 흘러 항상 저속(<100 KB/s) 판정,
+    아주 작은 값이면 항상 고속 판정이 난다.
+    """
+    data = _make_data(output_path=str(tmp_path / "out.mp4"))
+    logger = RecordingLogger()
+    engine = _make_engine(data, logger)
+
+    data.model.start()  # RUNNING 상태로 진입
+    data.threads_progress = [0] * 4
+    data.remaining_ranges = []
+    # run()이 채우는 실행 컨텍스트를 직접 주입한다 (세그먼트 로직만 단위 검증)
+    engine.temp_dir = str(tmp_path)
+    engine.width = 4
+
+    mod = _engine_module()
+    monkeypatch.setattr(
+        mod, "get_thread_session", lambda: FakeSession(FakeResponse(chunks or []), exception)
+    )
+    monkeypatch.setattr(mod.tm, "time", TickingClock(clock_step))
+    return engine, data, logger
+
+
+def test_slow_segment_restarts_after_six_slow_chunks(tmp_path, monkeypatch):
+    """청크 속도 < 100 KB/s 연속 6회(slow_count > 5)면 세그먼트를 중단·재큐잉한다."""
+    chunks = [b"x" * 8192] * 10  # 1초/청크 → 8 KB/s로 항상 저속
+    engine, data, logger = _prepare_running_engine(
+        tmp_path, monkeypatch, chunks=chunks, clock_step=1.0
+    )
+
+    returned = engine._download_segment(
+        index=7, segment="segment_007.m4v", part_num=0, total_ranges=4
+    )
+
+    assert returned == 0
+    assert data.restart_threads == 1
+    assert data.remaining_ranges == [(7, "segment_007.m4v")]  # 같은 세그먼트 재큐잉
+    assert data.threads_progress[0] == 0  # 진행 바이트 롤백
+    assert data.completed_threads == 0
+    assert any("slow" in w for w in logger.warnings)
+
+
+def test_fast_segment_completes_and_accumulates_progress(tmp_path, monkeypatch):
+    """정상 속도면 세그먼트를 완주하고 완료 카운터·누적 진행에 반영한다."""
+    segment_size = 3 * 8192
+    chunks = [b"x" * 8192] * 3
+    engine, data, logger = _prepare_running_engine(
+        tmp_path, monkeypatch, chunks=chunks, clock_step=1e-6
+    )
+
+    returned = engine._download_segment(
+        index=7, segment="segment_007.m4v", part_num=0, total_ranges=4
+    )
+
+    assert returned == 0
+    assert data.completed_threads == 1
+    assert data.completed_progress == segment_size
+    assert data.restart_threads == 0
+    assert data.remaining_ranges == []
+    assert logger.thread_completes == [(0, segment_size)]
+    # 임시 파일명은 (index+1)을 width 자리로 0채움 — sorted() 병합 순서의 전제
+    assert (tmp_path / "0008.m4v").read_bytes() == b"x" * segment_size
+
+
+def test_request_exception_requeues_segment_as_failed(tmp_path, monkeypatch):
+    """요청 예외 시 실패 카운터를 올리고 같은 세그먼트를 재큐잉한다."""
+    engine, data, logger = _prepare_running_engine(
+        tmp_path, monkeypatch, exception=requests.ConnectionError("boom")
+    )
+
+    returned = engine._download_segment(
+        index=3, segment="segment_003.m4v", part_num=0, total_ranges=4
+    )
+
+    assert returned == 0
+    assert data.failed_threads == 1
+    assert data.remaining_ranges == [(3, "segment_003.m4v")]
+    assert data.threads_progress[0] == 0
+    assert len(logger.errors) == 1
