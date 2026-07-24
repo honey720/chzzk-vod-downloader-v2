@@ -4,6 +4,10 @@
 [![release](https://img.shields.io/github/v/release/honey720/chzzk-vod-downloader-v2?style=flat-square)](https://github.com/honey720/chzzk-vod-downloader-v2/releases)
 
 
+<p align="center">
+  <img src="resources/icon.png" alt="logo" width="128">
+</p>
+
 # 치지직 VOD 다운로더 v2
 
 > 치지직 다시보기 동영상, 클립을 다운로드하는 프로그램입니다.

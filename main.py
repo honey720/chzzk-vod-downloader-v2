@@ -71,7 +71,7 @@ if __name__ == '__main__':
     set_language(app_config, translator)
 
     # 아이콘도 번역과 같은 기준(__file__)으로 해석한다 (#43)
-    icon_path = resource_path('resources/chzzk.ico')
+    icon_path = resource_path('resources/icon.png')
     app.setWindowIcon(QIcon(icon_path))
     # 메인 UI 실행
     ex = VodDownloader()
