@@ -16,12 +16,9 @@
 - 파트 실패: 요청 예외 시 구간 재큐잉(failed_threads += 1)
 """
 
-import threading
-
 import pytest
 import requests
 
-from core.models.download_state import DownloadState
 from download.data import DownloadData
 
 MB = 1024 * 1024
@@ -56,19 +53,6 @@ class RecordingLogger:
         self.warnings.append(message)
 
 
-class FakeTask:
-    """DownloadTask 호환 가짜 태스크 — 엔진이 쓰는 인터페이스(state/lock/data/logger)만 제공."""
-
-    def __init__(self, data: DownloadData, logger: RecordingLogger):
-        self.data = data
-        self.logger = logger
-        self.lock = threading.Lock()
-
-    @property
-    def state(self) -> DownloadState:
-        return self.data.model.state
-
-
 def _make_data(output_path: str = "unused.part") -> DownloadData:
     """테스트용 DownloadData를 만든다 (네트워크 정보는 더미)."""
     return DownloadData(
@@ -86,25 +70,25 @@ def _make_scaler(data: DownloadData, logger: RecordingLogger):
     이주 전: download.monitor.MonitorThread / 이주 후: core FileDownloader.
     반환 객체는 adjust_count 속성과 두 메서드를 노출해야 한다.
     """
-    from download.monitor import MonitorThread
+    from core.downloaders.file_downloader import FileDownloader
 
-    return MonitorThread(FakeTask(data, logger))
+    return FileDownloader(data, logger)
 
 
 def _make_engine(data: DownloadData, logger: RecordingLogger):
     """파트 다운로드 로직(_download_part) 보유 객체와 (엔진, 태스크)를 만든다.
 
-    이주 전: download.download.DownloadThread / 이주 후: core FileDownloader.
+    이주 전: download.download.DownloadThread / 이주 후: core FileDownloader
+    (태스크 어댑터가 더 이상 필요 없어 None을 돌려준다).
     """
-    from download.download import DownloadThread
+    from core.downloaders.file_downloader import FileDownloader
 
-    task = FakeTask(data, logger)
-    return DownloadThread(task), task
+    return FileDownloader(data, logger), None
 
 
 def _engine_module():
     """_download_part가 사는 모듈 — 시간·세션 몽키패치 대상."""
-    import download.download as mod
+    import core.downloaders.file_downloader as mod
 
     return mod
 
