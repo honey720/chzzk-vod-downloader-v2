@@ -4,6 +4,10 @@
 [![release](https://img.shields.io/github/v/release/honey720/chzzk-vod-downloader-v2?style=flat-square)](https://github.com/honey720/chzzk-vod-downloader-v2/releases)
 
 
+<p align="center">
+  <img src="resources/icon.png" alt="logo" width="128">
+</p>
+
 # Chzzk VOD Downloader v2
 
 > A program for downloading Chzzk videos and clips.

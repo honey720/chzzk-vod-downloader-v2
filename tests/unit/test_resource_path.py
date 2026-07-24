@@ -24,4 +24,7 @@ def test_resource_path_is_anchored_to_main_file(monkeypatch, tmp_path):
 def test_resource_path_finds_existing_resources():
     """저장소의 실제 번역 파일·아이콘이 존재하는 경로로 해석된다."""
     assert os.path.exists(main.resource_path("translations/en_US.qm"))
-    assert os.path.exists(main.resource_path("resources/chzzk.ico"))
+    assert os.path.exists(main.resource_path("resources/icon.png"))
+    # 배포 빌드가 참조하는 아이콘 바이너리도 저장소에 존재해야 한다
+    assert os.path.exists(main.resource_path("resources/icon.ico"))
+    assert os.path.exists(main.resource_path("resources/icon.icns"))
