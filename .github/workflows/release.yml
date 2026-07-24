@@ -64,7 +64,7 @@ jobs:
             --assume-yes-for-downloads \
             --enable-plugin=pyside6 \
             --windows-console-mode=disable \
-            --windows-icon-from-ico=resources/chzzk.ico \
+            --windows-icon-from-ico=resources/icon.ico \
             --company-name=honey720 \
             --product-name="Chzzk VOD Downloader" \
             --file-description="Chzzk VOD Downloader v2" \
@@ -89,6 +89,7 @@ jobs:
           --assume-yes-for-downloads
           --enable-plugin=pyside6
           --macos-create-app-bundle
+          --macos-app-icon=resources/icon.icns
           --macos-app-name=CVDv2
           --include-data-dir=resources=resources
           --include-data-dir=translations=translations
