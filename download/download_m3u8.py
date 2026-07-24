@@ -1,289 +1,86 @@
-import requests
+"""m3u8 다운로드 워커 — core M3U8Downloader를 실행하고 Signal로 중계하는 얇은 어댑터 (#74).
+
+다운로드·병합 실행 로직은 core/downloaders/m3u8_downloader.py로 이동했다.
+이 클래스는 다음만 담당한다:
+- base_url 해석: 쿠키 로드·치지직 API 조회(NetworkManager)는 네트워크 계층이
+  아직 앱 영역이므로 어댑터가 run() 시작 시 수행한다 (#72와 같은 이유)
+- QThread에서 엔진 run()을 실행 (DownloadManager 호출부 무변경)
+- 엔진의 완료·실패·병합 시작 콜백을 기존 completed/stopped Signal과
+  item.post_process 플래그로 변환
+- 실패 메시지 번역(tr) — i18n 키 "Download failed"는 여기서 유지한다
+"""
+
 import threading
-import time as tm
-import os
-import shutil
-import config.config as config
-from urllib.parse import urljoin
 
 from PySide6.QtCore import QThread, Signal
-from concurrent.futures import ThreadPoolExecutor
-from download.task import DownloadTask
-from download.state import DownloadState
+
+import config.config as config
 from content.network import NetworkManager
-from core.api.session import get_thread_session
+from core.downloaders.m3u8_downloader import M3U8Downloader
+from core.models.download_state import DownloadState
+from download.task import DownloadTask
+
 
 class DownloadM3U8Thread(QThread):
     """
-    m3u8 파일을 multi-thread로 다운로드하는 작업 스레드 클래스
+    m3u8 파일을 multi-thread로 다운로드하는 작업 스레드 클래스 (core 엔진 어댑터)
     """
+
     completed = Signal()
     stopped = Signal(str)
 
     def __init__(self, task: DownloadTask):
         super().__init__()
         self.task = task
-        self.s = self.task.data
-        self.future_dict = {}
-        self.lock = self.task.lock
-        self.logger = self.task.logger
+        self.engine = M3U8Downloader(
+            data=task.data,
+            logger=task.logger,
+            on_finished=self._relay_finished,
+            on_failed=self._relay_failed,
+            on_merge_start=self._relay_merge_start,
+        )
+        # MonitorM3U8Thread 어댑터가 진행 콜백을 연결할 수 있도록 태스크에 공유한다 (#73)
+        task.engine = self.engine
 
     def run(self):
-        """
-        스레드가 시작될 때 자동으로 호출되는 메서드.
-        실제 다운로드 파이프라인이 여기서 진행된다.
-        """
+        """QThread 진입점 — base_url을 해석한 뒤 core 엔진의 파이프라인을 실행한다."""
+        threading.current_thread().name = "DownloadM3U8Thread"  # 스레드 시작 시 이름 재설정
         try:
-            data = config.load_config().get("cookies", {})
-            cookies = {
-                'NID_AUT': data.get("NID_AUT", ""),
-                'NID_SES': data.get("NID_SES", "")
-            }
-            content_type, content_no = NetworkManager.extract_content_no(self.s.vod_url)
-            info = NetworkManager.get_video_info(content_no, cookies)
-            self.s.base_url = NetworkManager.get_video_m3u8_base_url(info.live_rewind_playback_json, self.s.resolution, cookies)
-            threading.current_thread().name = "DownloadM3U8Thread"  # 스레드 시작 시 이름 재설정
-            self.s.start_time = tm.time()
-
-            response = get_thread_session().get(self.s.base_url)
-            response.raise_for_status()
-            lines = response.text.splitlines()
-            segments = [line for line in lines if line and not line.startswith("#")]
-            init_segment = None
-            self.s.merged_segments = 0
-            
-            self.s.max_threads = self.s.total_ranges = len(segments)
-            self.width = len(str(self.s.total_ranges))
-            self.s.adjust_threads = min(self.s.adjust_threads, self.s.max_threads)
-            self.s.threads_progress = [0] * self.s.total_ranges
-            self.logger.log_download_start(0, 0, self.s.total_ranges, self.s.adjust_threads)
-
-
-            # 세그먼트 저장용 임시 폴더 경로 설정
-            self.temp_dir = os.path.join(os.path.dirname(self.s.output_path), "CVDv2_temp")
-            # 세그먼트 저장용 임시 폴더가 있다면 내용 포함 삭제
-            if os.path.exists(self.temp_dir):
-                shutil.rmtree(self.temp_dir)
-            # 세그먼트 저장용 임시 폴더 생성
-            os.makedirs(self.temp_dir)
-
-            for line in lines:
-                if line.startswith("#EXT-X-MAP:"):
-                    init_segment = line.split("URI=")[1].strip('"')
-            init_url = urljoin(self.s.base_url, init_segment)
-            init_segment_path = os.path.join(self.temp_dir, f"{0:0{self.width}d}.m4s")
-            # 초기화 세그먼트 다운로드
-            with open(init_segment_path, 'wb') as f:
-                f.write(get_thread_session().get(init_url).content)
-
-            with ThreadPoolExecutor(max_workers=self.s.max_threads, thread_name_prefix="DownloadM3U8Worker") as executor:
-                self.s.remaining_ranges = list(enumerate(segments))
-                # 재사용 시 초기화 필수
-                with self.lock:
-                    self.s.future_count = 0
-                    self.future_dict = {}
-
-                while not self.task.state == DownloadState.WAITING:
-                    while self.s.future_count < self.s.adjust_threads and self.s.remaining_ranges:
-                        for part_num in range(self.s.adjust_threads):
-                            if not self.s.remaining_ranges:
-                                break
-                            with self.lock:
-                                if part_num not in self.future_dict:
-                                    segment_index, segment = self.s.remaining_ranges.pop(0)
-                                    self.s.future_count += 1
-                                    self.logger.log_m3u8_thread_start(part_num, segment)
-                                    future = executor.submit(
-                                        self._download_segment,
-                                        index=segment_index,
-                                        segment=segment,
-                                        part_num=part_num,
-                                        total_ranges=self.s.total_ranges
-                                    )
-                                    future.add_done_callback(self._download_completed_callback)
-                                    self.future_dict[part_num] = (segment, future)
-
-                    # (2) 주기적으로 상태 확인 (non-blocking)
-                    tm.sleep(0.1)
-
-                    # (3) 남은 작업이 없고 스레드도 없으면 종료
-                    if not self.s.remaining_ranges and not self.future_dict:
-                        break
-                    
-                if self.task.state == DownloadState.RUNNING:
-                    # (4) 다운로드 완료 후 파일 합치기
-                    self.task.item.post_process = True
-                    with open(self.s.output_path, 'wb') as final_f:
-                        segment_files = sorted(os.listdir(self.temp_dir))
-                        for seg_file in segment_files:
-                            # 다운로드 중지 상태라면 중단
-                            if self.task.state == DownloadState.RUNNING:
-                                seg_path = os.path.join(self.temp_dir, seg_file)
-                                with open(seg_path, 'rb') as seg_f:
-                                    while True:
-                                        chunk = seg_f.read(8192)
-                                        if not chunk:
-                                            break
-                                        final_f.write(chunk)
-                                        # 일시정지 상태라면 대기
-                                        if self.task.state == DownloadState.PAUSED:
-                                            self.s._pause_event.wait()
-                                # 세그먼트 파일 합친 후 삭제
-                                self.safe_remove(seg_path)
-                                self.s.merged_segments += 1
-                                
-                    self.s.end_time = tm.time()
-                    total_time = self.s.end_time - self.s.start_time
-                    self.logger.log_download_complete(total_time)
-                    self.logger.save_and_close()
-                    self.completed.emit()
-                
-            # (5) 임시 폴더 삭제
-            shutil.rmtree(self.temp_dir)
-
+            self._resolve_base_url()
         except Exception as e:
-            # 오류 발생 시 임시 파일과 다운로드 파일 삭제
-            if os.path.exists(self.temp_dir):
-                shutil.rmtree(self.temp_dir)
-            if os.path.exists(self.s.output_path):
-                os.remove(self.s.output_path)
-                self.task.item.post_process = False
-            self.stopped.emit(self.tr("Download failed"))
-            self.logger.log_exception("Download failed", e)
-            self.logger.save_and_close()
-
-        # 사용자가 강제로 중단한 경우 임시 파일과 다운로드 파일 삭제
-        if self.task.state == DownloadState.WAITING:
-            if os.path.exists(self.temp_dir):
-                shutil.rmtree(self.temp_dir)
-            if os.path.exists(self.s.output_path):
-                os.remove(self.s.output_path)
-            self.task.item.post_process = False
-                
-    # ============ 다운로드 동작 관련 메서드들 ============
-
-    def _download_segment(self, index, segment, part_num, total_ranges):
-        """
-        개별 세그먼트 다운로드(재시도 포함)
-        """
-        slow_count = 0
-        downloaded_size = 0
-        segment_url = urljoin(self.s.base_url, segment)
-        while not self.task.state == DownloadState.WAITING:
-            try:
-                # 스레드로컬 세션으로 같은 워커의 세그먼트 요청 간 연결을 재사용한다 (#31)
-                response = get_thread_session().get(segment_url, stream=True, timeout=30)
-                response.raise_for_status()
-                part_start_time = tm.time()
-
-                temp_file = os.path.join(self.temp_dir, f"{index+1:0{self.width}d}.m4v")
-                with open(temp_file, 'wb') as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        if self.task.state == DownloadState.WAITING:
-                            return part_num
-                        if self.task.state == DownloadState.PAUSED:
-                            self.s._pause_event.wait()
-
-                        if chunk:
-                            f.write(chunk)
-                            downloaded_size += len(chunk)
-                            elapsed = tm.time() - part_start_time
-
-                            if elapsed > 0:
-                                speed_kb_s = downloaded_size / elapsed / 1024
-                                self._check_speed_and_update_progress(
-                                    part_num, downloaded_size, total_ranges, speed_kb_s
-                                )
-                                if speed_kb_s < 100:
-                                    slow_count += 1
-                                    if slow_count > 5:
-                                        # 속도가 너무 느리면 스레드 재시작
-                                        with self.lock:
-                                            self._download_stop_callback(index, segment, part_num)
-                                        return part_num
-                                else:
-                                    slow_count = 0
-
-                # 성공적으로 마무리된 경우
-                with self.lock:
-                    self.s.completed_threads += 1
-                    self.s.completed_progress += downloaded_size
-                    self.s.threads_progress[part_num] = 0
-                self.logger.log_thread_complete(part_num, downloaded_size)
-                return part_num
-
-            except (requests.RequestException, requests.Timeout) as e:
-                with self.lock:
-                    self._download_failed_callback(index, segment, part_num)
-                self.logger.log_error(f"Part {part_num} download failed", e)
-                return part_num
-                
-
-    def _check_speed_and_update_progress(self, part_num, downloaded_size, total_size, speed_kb_s):
-        """
-        스레드가 다운로드 중일 때 속도 체크 및 진행 상황 업데이트.
-        """
-        with self.lock:
-            self.s.threads_progress[part_num] = downloaded_size
-            self.update_progress()
-
-    # ============ 다운로드 조정 및 콜백 메서드 ============
-
-    def _download_completed_callback(self, future):
-        """
-        특정 future(스레드)가 끝났을 때 호출되는 콜백.
-        """
-        try:
-            part_num = future.result()
-            # part_num 식별 후 future_dict에서 제거
-            with self.lock:
-                if part_num in self.future_dict:
-                    del self.future_dict[part_num]
-                    self.s.future_count -= 1
-            self.update_progress()  # 즉각적 진행도 반영
-
-        except Exception as e:
-            # 일부 스레드가 오류로 중단된 경우
-            self.stopped.emit(self.tr("Download failed"))
-            self.logger.log_error("Thread failed", e)
-
-    def _download_failed_callback(self, index, segment, part_num):
-        """
-        예외 발생 시 파일 구간을 다시 다운로드할 수 있도록 remaining_ranges에 등록.
-        """
-        self.s.failed_threads += 1
-        self.s.threads_progress[part_num] = 0
-        self.s.remaining_ranges.append((index, segment))
-
-    def _download_stop_callback(self, index, segment, part_num):
-        """
-        특정 스레드를 중도 중단하고, 해당 구간을 재시작하도록 설정.
-        """
-        self.s.restart_threads += 1
-        self.s.threads_progress[part_num] = 0
-        self.s.remaining_ranges.append((index, segment))
-        self.logger.warning(f"Part {part_num} stopped due to slow speed, will retry")
-
-    # ============ 진행 상황 업데이트 / 제어 메서드 ============
-
-    def update_progress(self):
-        """
-        다운로드된 총량을 저장한다.
-        """
-        if self.task.state in [DownloadState.PAUSED, DownloadState.WAITING]:    # 중단 플래그 확인
+            # 조회 실패는 엔진 실패와 같은 형식으로 보고한다 (구 코드의 단일 except와 동일)
+            self._relay_failed(e)
+            self.task.logger.log_exception("Download failed", e)
+            self.task.logger.save_and_close()
             return
-        
-        active_downloaded_size = sum(self.s.threads_progress)
-        self.s.total_downloaded_size = self.s.completed_progress + active_downloaded_size
+        self.engine.run()
+        # 사용자가 강제로 중단한 경우 병합 표시 해제 (구 코드의 WAITING 정리와 동일)
+        if self.task.state == DownloadState.WAITING:
+            self.task.item.post_process = False
 
-    def safe_remove(self, path, retries=5, delay=0.2):
-        """
-        파일 삭제 시도 (PermissionError 방지용 재시도 포함)
-        """
-        for i in range(int(retries)):
-            try:
-                os.remove(path)
-                return
-            except PermissionError:  # [WinError 32]
-                tm.sleep(delay)
-        raise PermissionError(f"Failed to remove {path} after {retries} attempts")
+    def _resolve_base_url(self):
+        """쿠키를 읽고 치지직 API로 선택 해상도의 m3u8 플레이리스트 URL을 해석한다."""
+        data = config.load_config().get("cookies", {})
+        cookies = {
+            "NID_AUT": data.get("NID_AUT", ""),
+            "NID_SES": data.get("NID_SES", ""),
+        }
+        s = self.task.data
+        content_type, content_no = NetworkManager.extract_content_no(s.vod_url)
+        info = NetworkManager.get_video_info(content_no, cookies)
+        s.base_url = NetworkManager.get_video_m3u8_base_url(
+            info.live_rewind_playback_json, s.resolution, cookies
+        )
+
+    def _relay_finished(self):
+        """엔진 완료 콜백 → completed Signal (emit은 스레드 세이프)."""
+        self.completed.emit()
+
+    def _relay_failed(self, exc: BaseException):
+        """엔진 실패 콜백 → stopped Signal. 병합 표시 해제와 메시지 번역은 여기서 한다."""
+        self.task.item.post_process = False
+        self.stopped.emit(self.tr("Download failed"))
+
+    def _relay_merge_start(self):
+        """엔진 병합 시작 콜백 → UI 병합 단계 플래그 (구 코드의 post_process = True)."""
+        self.task.item.post_process = True
