@@ -330,7 +330,9 @@ def _prepare_running_engine(tmp_path, monkeypatch, chunks=None, exception=None, 
 def test_slow_part_restarts_after_six_slow_chunks(tmp_path, monkeypatch):
     """청크 속도 < 100 KB/s 연속 6회(slow_count > 5)면 파트를 중단·재큐잉한다."""
     chunks = [b"x" * 8192] * 10  # 1초/청크 → 8 KB/s로 항상 저속
-    engine, data, logger = _prepare_running_engine(tmp_path, monkeypatch, chunks=chunks, clock_step=1.0)
+    engine, data, logger = _prepare_running_engine(
+        tmp_path, monkeypatch, chunks=chunks, clock_step=1.0
+    )
 
     returned = engine._download_part(0, 40 * MB - 1, 0, 40 * MB)
 

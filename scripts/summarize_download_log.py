@@ -32,7 +32,9 @@ _PATTERNS = {
     # 붙는 주기 측정 디버그 메시지와 구분하기 위해 문장 끝을 고정한다.
     "adjust": re.compile(r"Active threads: (\d+) - Download speed: [\d.]+ MB/s$"),
     # 주기 측정 디버그 메시지 — 활성 스레드 수 관측용
-    "tick": re.compile(r"Active threads: (\d+) - Download speed: [\d.]+ MB/s - Avg speed: [\d.]+ MB/s"),
+    "tick": re.compile(
+        r"Active threads: (\d+) - Download speed: [\d.]+ MB/s - Avg speed: [\d.]+ MB/s"
+    ),
     "part_start": re.compile(r"Thread (\d+) started - Range: (\d+)-(\d+)"),
     "part_complete": re.compile(r"Thread (\d+) completed - Downloaded: (\d+) bytes"),
     "slow_retry": re.compile(r"Part (\d+) stopped due to slow speed, will retry"),
@@ -125,7 +127,9 @@ def print_summary(summary: dict) -> None:
     print(f"  파트 실패        : {summary['part_failures']}")
     print(f"  재큐잉 합계      : {summary['requeued_parts']}")
     completed = summary["completed_in_seconds"]
-    print(f"  완료 시간        : {f'{completed:.2f}s' if completed is not None else '(완료 기록 없음)'}")
+    print(
+        f"  완료 시간        : {f'{completed:.2f}s' if completed is not None else '(완료 기록 없음)'}"
+    )
     print(f"  완주(복구 포함)  : {'예' if summary['recovered'] else '아니오'}")
 
 
