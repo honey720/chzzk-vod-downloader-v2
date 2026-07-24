@@ -1,4 +1,8 @@
-"""ContentWorker.fetchVideo의 권한·암호화 분기 검증 (#55).
+"""ContentWorker.fetchVideo의 권한·암호화 분기 검증 (#55) + 어댑터 계약 검증 (#72).
+
+조회 로직은 core/services/metadata_service.py로 이동했다(#72). 이 테스트는
+어댑터를 통과한 끝단 동작(기존 ValueError 메시지·시그널 형식)이 유지되는지 본다.
+분기 자체의 단위 테스트는 tests/unit/core/test_metadata_service.py에 있다.
 
 - 암호화(encryptionType != null) VOD는 권한 유무와 무관하게 매니페스트 요청 전에
   "Encrypted content is not supported" 안내로 조기 실패해야 한다 (1차 방어).
@@ -134,3 +138,19 @@ def test_dash_path_passes_cookies_to_manifest_request(monkeypatch):
     assert result[0] == VOD_URL
     assert result[3] == 1080
     assert result[6] is None
+
+
+def test_run_emits_error_signal_in_legacy_format():
+    """run() 실패 시 error 시그널이 기존 "<url>\\n<메시지>" 형식을 유지해야 한다 (#72).
+
+    번역기가 로드되지 않은 테스트 환경에서 tr()은 원문 키를 그대로 돌려주므로,
+    i18n 키 원문이 메시지에 그대로 실려야 한다.
+    """
+    bad_url = "https://example.com/video/1"
+    worker = ContentWorker(bad_url, COOKIES, "downloads")
+    captured: list[str] = []
+    worker.error.connect(captured.append)
+
+    worker.run()
+
+    assert captured == [f"{bad_url}\nInvalid VOD URL"]
