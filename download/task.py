@@ -29,6 +29,10 @@ class DownloadTask:
         # 별도 모델을 만들지 않고 같은 모델에 UI 반영 콜백만 연결한다
         self.model = data.model
         self.model.set_on_state_change(item.setDownloadState)
+        # core 다운로드 엔진(FileDownloader) 공유 슬롯 (#73).
+        # DownloadThread 어댑터가 생성 시 채우고, MonitorThread 어댑터가
+        # 진행 콜백을 연결할 때 읽는다 (manager의 생성 순서가 이를 보장한다)
+        self.engine = None
 
     @property
     def state(self) -> DownloadState:
