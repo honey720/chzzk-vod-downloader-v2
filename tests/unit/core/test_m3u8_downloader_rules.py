@@ -18,9 +18,6 @@
 - ★ 세그먼트 임시 파일명은 (index+1)을 width 자리로 0채움한 .m4v — 병합 순서의 전제
 """
 
-import threading
-from types import SimpleNamespace
-
 import pytest
 import requests
 
@@ -58,24 +55,6 @@ class RecordingLogger:
         self.warnings.append(message)
 
 
-class FakeTask:
-    """DownloadTask 호환 최소 객체 — 상태는 core 모델에 위임한다.
-
-    이주 전 클래스(QThread)들이 쓰는 인터페이스(data·lock·logger·item·state)만 제공한다.
-    이주 후에는 팩토리가 태스크를 요구하지 않으므로 자연히 쓰이지 않는다.
-    """
-
-    def __init__(self, data: DownloadData, logger: RecordingLogger):
-        self.data = data
-        self.logger = logger
-        self.lock = threading.Lock()
-        self.item = SimpleNamespace(post_process=False)
-
-    @property
-    def state(self):
-        return self.data.model.state
-
-
 def _make_data(resolution: int = 1080, output_path: str = "unused.mp4") -> DownloadData:
     """테스트용 DownloadData를 만든다 (네트워크 정보는 더미)."""
     return DownloadData(
@@ -93,9 +72,9 @@ def _make_scaler(data: DownloadData, logger: RecordingLogger):
     이주 전: download.monitor_m3u8.MonitorM3U8Thread / 이주 후: core M3U8Downloader.
     반환 객체는 adjust_count 속성과 세 메서드를 노출해야 한다.
     """
-    from download.monitor_m3u8 import MonitorM3U8Thread
+    from core.downloaders.m3u8_downloader import M3U8Downloader
 
-    return MonitorM3U8Thread(FakeTask(data, logger))
+    return M3U8Downloader(data, logger)
 
 
 def _make_engine(data: DownloadData, logger: RecordingLogger):
@@ -103,14 +82,14 @@ def _make_engine(data: DownloadData, logger: RecordingLogger):
 
     이주 전: download.download_m3u8.DownloadM3U8Thread / 이주 후: core M3U8Downloader.
     """
-    from download.download_m3u8 import DownloadM3U8Thread
+    from core.downloaders.m3u8_downloader import M3U8Downloader
 
-    return DownloadM3U8Thread(FakeTask(data, logger))
+    return M3U8Downloader(data, logger)
 
 
 def _engine_module():
     """_download_segment가 사는 모듈 — 시간·세션 몽키패치 대상."""
-    import download.download_m3u8 as mod
+    import core.downloaders.m3u8_downloader as mod
 
     return mod
 
