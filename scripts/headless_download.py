@@ -1,9 +1,9 @@
-"""GUI 없이 VOD/클립을 다운로드하는 헤드리스 스크립트 (#52).
+"""GUI 없이 VOD/클립을 다운로드하는 헤드리스 스크립트 (#52, #75).
 
 "core는 CLI·다른 UI로 교체 가능해야 한다"(SPEC §3.1)를 실물로 검증하고,
 향후 E2E 자동 테스트의 진입점을 제공한다. 새 다운로드 로직을 작성하지 않고
-기존 파이프라인(ContentWorker → NetworkManager → DownloadManager → DownloadThread)을
-그대로 재사용한다.
+core 파이프라인(metadata_service → DownloadService → 다운로더 엔진)을 그대로
+재사용한다.
 
 사용법:
     uv run python scripts/headless_download.py <VOD/클립 URL> [옵션]
@@ -24,11 +24,11 @@
     2  잘못된 인자·URL, 또는 조회 실패(권한/암호화 등)
 
 Qt 의존에 대하여:
-    DownloadThread·MonitorThread는 QThread이고, 완료·진행 상황을 큐 연결(queued
-    connection) 시그널로 메인 스레드에 전달한다. 이 시그널이 배달되려면 Qt 이벤트
-    루프가 필요하므로 QCoreApplication을 사용한다. GUI 위젯(QApplication)은 쓰지 않으며
-    창은 뜨지 않는다 — 이슈 #52가 허용한 "QApplication 없이, 필요 시 QCoreApplication까지"의
-    최소 범위다.
+    #75에서 DownloadService(콜백 계약) 기준으로 갱신하면서 Qt 의존이 완전히
+    사라졌다 — 구 버전이 쓰던 QCoreApplication·QTimer·Signal 큐 연결이 필요
+    없다. 완료·실패는 워커 스레드 콜백으로 받고, 메인 스레드는 핸들 대기
+    (handle.wait)로 동기화한다. 조회도 ContentWorker(Qt) 대신
+    core/services/metadata_service.py를 직접 호출한다.
 """
 
 import argparse
@@ -36,17 +36,23 @@ import logging
 import os
 import sys
 from pathlib import Path
+from time import gmtime, strftime
 
 # scripts/ 하위에서 실행해도 저장소 루트 모듈을 import할 수 있게 한다
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from PySide6.QtCore import QCoreApplication, QTimer  # noqa: E402
-
 import config.config as config  # noqa: E402
 from config.log_setup import setup_logging  # noqa: E402
 from content.data import ContentItem  # noqa: E402
-from content.worker import ContentWorker  # noqa: E402
-from download.manager import DownloadManager  # noqa: E402
+from content.network import NetworkManager  # noqa: E402
+from core.models.events import ProgressEvent  # noqa: E402
+from core.services import metadata_service  # noqa: E402
+from core.services.download_service import DownloadService  # noqa: E402
+from core.services.metadata_service import MetadataError  # noqa: E402
+from download.data import DownloadData  # noqa: E402
+from download.logger import DownloadLogger  # noqa: E402
+from download.resolvers import resolve_m3u8_base_url  # noqa: E402
+from download.task import DownloadTask  # noqa: E402
 
 logger = logging.getLogger("headless")
 
@@ -64,32 +70,29 @@ def _load_cookies() -> dict:
 
 
 def _fetch(vod_url: str, cookies: dict, download_path: str):
-    """ContentWorker를 동기 실행해 (result, content_type)을 반환한다.
+    """core 메타데이터 서비스를 직접 호출해 (result, content_type)을 반환한다.
 
-    ContentWorker.run은 finished/error 시그널로 결과를 알린다. 같은 스레드에서
-    직접 호출하면 시그널이 즉시(direct connection) 배달되므로 이벤트 루프 없이 캡처한다.
+    에러 메시지 형식은 구 ContentWorker 경유("<url> | <메시지>")와 동일하다 —
+    번역기 없는 환경이므로 i18n 키 원문(영문)이 그대로 출력된다.
 
     Returns:
         tuple[tuple, str] | None: 성공 시 (result, content_type), 실패 시 None
     """
-    captured: dict = {}
-
-    worker = ContentWorker(vod_url, cookies, download_path)
-    worker.finished.connect(lambda result, ct: captured.update(result=result, content_type=ct))
-    worker.error.connect(lambda msg: captured.update(error=msg))
-    worker.run()
-
-    if "error" in captured:
-        logger.error("조회 실패: %s", captured["error"].replace("\n", " | "))
+    try:
+        return metadata_service.fetch_content(vod_url, cookies, download_path, api=NetworkManager)
+    except MetadataError as e:
+        logger.error("조회 실패: %s", str(e).replace("\n", " | "))
         return None
-    return captured["result"], captured["content_type"]
+    except Exception:
+        logger.exception("조회 실패: %s", vod_url)
+        return None
 
 
 def _select_resolution(unique_reps: list, resolution: int | None):
     """unique_reps에서 원하는 해상도의 (resolution, base_url)을 고른다.
 
     resolution이 None이면 최고 화질(목록의 마지막)을 쓴다. m3u8은 base_url이 None이며
-    실제 URL은 다운로드 스레드가 해상도로 뒤늦게 해석한다.
+    실제 URL은 다운로드 시작 시점에 resolver가 해상도로 해석한다.
 
     Returns:
         tuple[int, str | None] | None: (해상도, base_url). 매칭 실패 시 None
@@ -131,27 +134,28 @@ def _build_item(result: tuple, content_type: str, resolution: int | None) -> Con
 
 
 class _HeadlessRunner:
-    """DownloadManager를 구동하고 완료/실패/타임아웃을 종료 코드로 환원한다."""
+    """DownloadService를 구동하고 완료/실패/타임아웃을 종료 코드로 환원한다."""
 
     def __init__(self, item: ContentItem, timeout: int) -> None:
         self.item = item
         self.timeout = timeout
         self.exit_code = 1  # 완료 신호를 받기 전까지는 실패로 간주
-        self.manager = DownloadManager()
+        self.service = DownloadService(base_url_resolver=resolve_m3u8_base_url)
+        self.task: DownloadTask | None = None
 
     def run(self) -> int:
-        """이벤트 루프를 돌려 다운로드가 끝날 때까지 대기한 뒤 종료 코드를 반환한다."""
-        app = QCoreApplication(sys.argv)
-
-        self.manager.progress.connect(self._on_progress)
-        self.manager.finished.connect(self._on_finished)
-        self.manager.stopped.connect(self._on_stopped)
-
-        # 타임아웃: 상한을 넘으면 실패로 종료 (스레드 중지 후 루프 탈출)
-        timer = QTimer()
-        timer.setSingleShot(True)
-        timer.timeout.connect(self._on_timeout)
-        timer.start(self.timeout * 1000)
+        """다운로드를 제출하고 끝날 때까지 대기한 뒤 종료 코드를 반환한다."""
+        data = DownloadData(
+            self.item.base_url,
+            self.item.vod_url,
+            self.item.output_path,
+            self.item.resolution,
+            self.item.content_type,
+        )
+        task_logger = DownloadLogger()
+        # GUI 브리지와 동일하게 상태 전이 흡수·다운로드 정보 로깅은 태스크 어댑터가 담당
+        self.task = DownloadTask(data, self.item, task_logger)
+        self.task.start()
 
         logger.info(
             "다운로드 시작: %s (%sp) -> %s",
@@ -159,38 +163,88 @@ class _HeadlessRunner:
             self.item.resolution,
             self.item.output_path,
         )
-        self.manager.start(self.item)
-        app.exec()
+        handle = self.service.submit(
+            data.content,
+            data=data,
+            task_logger=task_logger,
+            on_progress=lambda event: self._on_progress(event, data),
+            on_finished=self._on_finished,
+            on_failed=self._on_failed,
+            on_merge_start=self._on_merge_start,
+        )
+
+        # 타임아웃: 상한을 넘으면 중지 후 실패로 종료 (구 QTimer 역할)
+        if not handle.wait(self.timeout):
+            logger.error("제한 시간(%d초) 초과 — 다운로드를 중단합니다.", self.timeout)
+            self.exit_code = 1
+            self.task.stop()
+            handle.wait()  # 워커 정리 대기
         return self.exit_code
 
-    def _on_progress(self, rem, size, spd, prog, item) -> None:
-        """모니터 스레드의 진행 상황을 stdout 로그로 남긴다."""
+    def _on_progress(self, event: ProgressEvent, data: DownloadData) -> None:
+        """진행 상황을 stdout 로그로 남긴다 (워커 스레드에서 호출)."""
+        rem, size, spd, prog = _format_progress(event, data, self.item)
         logger.info("진행률 %3s%% | 속도 %s | 남은시간 %s | 누적 %s bytes", prog, spd, rem, size)
 
-    def _on_finished(self, item, download_time) -> None:
-        """정상 완료: 결과 파일 크기를 로그로 남기고 성공 코드로 종료한다."""
-        size = os.path.getsize(item.output_path) if os.path.exists(item.output_path) else 0
-        logger.info(
-            "다운로드 완료: %s (%s bytes, 소요 %s)",
-            item.output_path,
-            f"{size:,}",
-            download_time,
+    def _on_finished(self) -> None:
+        """정상 완료: 결과 파일 크기를 로그로 남기고 성공 코드를 기록한다."""
+        path = self.item.output_path
+        size = os.path.getsize(path) if os.path.exists(path) else 0
+        download_time = strftime(
+            "%H:%M:%S", gmtime(self.task.data.end_time - self.task.data.start_time)
         )
+        logger.info("다운로드 완료: %s (%s bytes, 소요 %s)", path, f"{size:,}", download_time)
         self.exit_code = 0 if size > 0 else 1
-        QCoreApplication.quit()
 
-    def _on_stopped(self, item) -> None:
-        """다운로드 실패(스레드 중단): 실패 코드로 종료한다."""
-        logger.error("다운로드 실패: %s", item.vod_url)
+    def _on_failed(self, exc: BaseException) -> None:
+        """다운로드 실패: 실패 코드를 기록한다 (상세 로그는 엔진·서비스가 남긴다)."""
+        self.item.post_process = False
+        logger.error("다운로드 실패: %s (%s)", self.item.vod_url, exc)
         self.exit_code = 1
-        QCoreApplication.quit()
 
-    def _on_timeout(self) -> None:
-        """제한 시간 초과: 스레드를 중지하고 실패 코드로 종료한다."""
-        logger.error("제한 시간(%d초) 초과 — 다운로드를 중단합니다.", self.timeout)
-        self.exit_code = 1
-        self.manager.stop()
-        QCoreApplication.quit()
+    def _on_merge_start(self) -> None:
+        """m3u8 병합 단계 진입 — 진행률 계산 방식 전환 플래그."""
+        self.item.post_process = True
+
+
+def _format_progress(
+    event: ProgressEvent, data: DownloadData, item: ContentItem
+) -> tuple[str, str, str, int]:
+    """ProgressEvent를 (남은 시간, 크기, 속도, %)로 변환한다.
+
+    계산식은 GUI 어댑터(download/qt_bridge.py)의 변환식과 동일하다 — 파일 경로는
+    바이트 기반, m3u8은 세그먼트 수 기반. Qt 모듈 import를 피하기 위해(이 스크립트의
+    Qt 무의존 유지) 여기서 별도로 구현한다.
+    """
+    speed_mb = event.speed or 0.0
+    remaining_time_str = "N/A"
+
+    if item.content_type == "m3u8":
+        if item.post_process:
+            progress = (
+                int((data.merged_segments / (data.max_threads + 1)) * 100)
+                if data.max_threads > 0
+                else 0
+            )
+        else:
+            progress = (
+                int((data.completed_threads / data.max_threads) * 100)
+                if data.max_threads > 0
+                else 0
+            )
+        if speed_mb > 0 and data.completed_threads > 0:
+            avg_segment_size = event.downloaded_size / data.completed_threads
+            remaining_segments = data.max_threads - data.completed_threads
+            remaining_time = (avg_segment_size * remaining_segments) / (speed_mb * 1024 * 1024)
+            remaining_time_str = strftime("%H:%M:%S", gmtime(remaining_time))
+    else:
+        total_size = event.total_size or 0
+        progress = int((event.downloaded_size / total_size) * 100) if total_size > 0 else 0
+        if speed_mb > 0:
+            remaining_time = (total_size - event.downloaded_size) / (speed_mb * 1024 * 1024)
+            remaining_time_str = strftime("%H:%M:%S", gmtime(remaining_time))
+
+    return remaining_time_str, str(event.downloaded_size), f"{speed_mb:.1f} MB/s", progress
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
