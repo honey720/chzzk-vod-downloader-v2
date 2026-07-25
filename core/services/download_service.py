@@ -4,6 +4,10 @@ download/manager.py(DownloadManager)에 있던 오케스트레이션 —
 Content 타입에 맞는 다운로더 선택, 실행, 큐잉·동시 실행 수 제한, 완료 처리 —
 을 Qt 없이 수행한다. GUI 없이(CLI·헤드리스·테스트) 재사용할 수 있다.
 
+다운로더 선택은 각 다운로더의 supports() 판정을 따른다(#82) — 서비스는
+구체 클래스의 타입 분기를 갖지 않으며, 워커 스레드 이름과 base_url 해석
+필요 여부도 BaseDownloader 계약의 클래스 속성에서 읽는다.
+
 - 통지는 core/models/events.py의 콜백 계약만 사용한다(진행/완료/실패).
   콜백은 다운로드 워커 스레드에서 호출된다 — Qt 어댑터는 콜백 안에서
   Signal emit까지만 수행해야 한다(스레드 규칙은 events.py docstring이 정본).
@@ -30,7 +34,7 @@ from collections.abc import Callable
 
 from core.downloaders.file_downloader import FileDownloader
 from core.downloaders.m3u8_downloader import M3U8Downloader
-from core.models.content import Content, ContentType
+from core.models.content import Content
 from core.models.download_data import DownloadData
 from core.models.download_state import DownloadState
 from core.models.download_task import InvalidStateTransitionError
@@ -40,11 +44,6 @@ logger = logging.getLogger(__name__)
 
 # Content를 받아 m3u8 플레이리스트 URL을 반환한다. 실패는 예외로 던진다.
 BaseUrlResolver = Callable[[Content], str]
-
-# 서비스가 다운로드를 수행할 수 있는 컨텐츠 타입 (라이브 녹화는 Phase 5 소관)
-_SUPPORTED_TYPES = frozenset(
-    {ContentType.CHZZK_VIDEO, ContentType.CHZZK_VIDEO_M3U8, ContentType.CHZZK_CLIP}
-)
 
 
 class _NullDownloadLogger:
@@ -83,6 +82,7 @@ class DownloadHandle:
         self.data = data
         self.logger = task_logger
         self.engine = None
+        self.engine_cls = None  # 서비스가 supports() 판정으로 채운다 (#82)
         self.thread: threading.Thread | None = None
         self.on_progress = on_progress
         self.on_finished = on_finished
@@ -200,10 +200,9 @@ class DownloadService:
             on_merge_start: m3u8 병합 시작 콜백
 
         Raises:
-            ValueError: 지원하지 않는 컨텐츠 타입이거나 data가 content와 불일치
+            ValueError: 지원하는 다운로더가 없는 컨텐츠이거나 data가 content와 불일치
         """
-        if content.content_type not in _SUPPORTED_TYPES:
-            raise ValueError(f"지원하지 않는 컨텐츠 타입: {content.content_type}")
+        engine_cls = self._select_downloader(content)
         if data is None:
             data = DownloadData.from_content(content)
         elif data.content is not content:
@@ -222,10 +221,27 @@ class DownloadService:
             on_failed=on_failed,
             on_merge_start=on_merge_start,
         )
+        handle.engine_cls = engine_cls
         with self._lock:
             self._pending.append(handle)
             self._dispatch_locked()
         return handle
+
+    def _select_downloader(self, content: Content):
+        """supports()로 컨텐츠를 처리할 다운로더 클래스를 고른다 (#82).
+
+        서비스는 구체 클래스의 타입 분기를 알지 않는다 — 각 다운로더가
+        supports()로 답하고, 워커 스레드 이름·base_url 해석 필요 여부도
+        클래스 속성(run_thread_name·requires_base_url_resolution)에서 읽는다.
+
+        Raises:
+            ValueError: 어떤 다운로더도 지원하지 않는 컨텐츠 (예: 라이브)
+        """
+        # 모듈 전역을 호출 시점에 참조한다 (테스트에서 대역으로 교체 가능)
+        for downloader_cls in (FileDownloader, M3U8Downloader):
+            if downloader_cls.supports(content):
+                return downloader_cls
+        raise ValueError(f"지원하지 않는 컨텐츠 타입: {content.content_type}")
 
     @property
     def active_count(self) -> int:
@@ -247,13 +263,11 @@ class DownloadService:
             handle = self._pending.popleft()
             self._active.add(handle)
             # 스레드 이름은 구 QThread 어댑터와 동일하게 유지한다 (다운로드 로그 형식 보존)
-            name = (
-                "DownloadM3U8Thread"
-                if handle.content.content_type is ContentType.CHZZK_VIDEO_M3U8
-                else "DownloadThread"
-            )
             handle.thread = threading.Thread(
-                target=self._run_handle, args=(handle,), name=name, daemon=True
+                target=self._run_handle,
+                args=(handle,),
+                name=handle.engine_cls.run_thread_name,
+                daemon=True,
             )
             handle.thread.start()
 
@@ -279,8 +293,8 @@ class DownloadService:
             engine = self._create_engine(handle)
             handle.engine = engine
 
-            if handle.content.content_type is ContentType.CHZZK_VIDEO_M3U8:
-                # m3u8은 시작 시점에 플레이리스트 URL을 해석한다 (구 어댑터와 동일).
+            if handle.engine_cls.requires_base_url_resolution:
+                # m3u8 등은 시작 시점에 플레이리스트 URL을 해석한다 (구 어댑터와 동일).
                 # 실패는 엔진 실패와 같은 형식으로 콜백 통지·로깅한다
                 try:
                     handle.data.base_url = self._resolve_base_url(handle.content)
@@ -298,22 +312,19 @@ class DownloadService:
                 self._dispatch_locked()
 
     def _create_engine(self, handle: DownloadHandle):
-        """컨텐츠 타입에 맞는 다운로더 엔진을 만들고 콜백을 배선한다."""
-        if handle.content.content_type is ContentType.CHZZK_VIDEO_M3U8:
-            return M3U8Downloader(
-                data=handle.data,
-                logger=handle.logger,
-                on_progress=handle._relay_progress,
-                on_finished=lambda: self._handle_finished(handle),
-                on_failed=handle._relay_failed,
-                on_merge_start=handle._relay_merge_start,
-            )
-        return FileDownloader(
+        """선택된 다운로더 클래스로 엔진을 만들고 콜백을 배선한다.
+
+        생성자 시그니처는 BaseDownloader가 통일한다(#82) — 서비스는 구체
+        클래스를 구분하지 않는다. 후처리(병합) 콜백은 후처리가 없는
+        다운로더에서는 호출되지 않을 뿐 배선은 동일하다.
+        """
+        return handle.engine_cls(
             data=handle.data,
             logger=handle.logger,
             on_progress=handle._relay_progress,
             on_finished=lambda: self._handle_finished(handle),
             on_failed=handle._relay_failed,
+            on_merge_start=handle._relay_merge_start,
         )
 
     def _resolve_base_url(self, content: Content) -> str:

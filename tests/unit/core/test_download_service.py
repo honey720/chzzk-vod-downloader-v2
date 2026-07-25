@@ -48,11 +48,26 @@ class FakeEngine:
 
 
 class FakeEngineFactory:
-    """서비스 모듈의 엔진 심볼을 대체해 생성된 페이크 엔진을 수집한다."""
+    """서비스 모듈의 엔진 심볼을 대체해 생성된 페이크 엔진을 수집한다.
 
-    def __init__(self):
+    #82 이후 서비스는 BaseDownloader 계약(supports/run_thread_name/
+    requires_base_url_resolution)만 참조하므로 그 계약을 함께 흉내 낸다.
+    """
+
+    def __init__(
+        self,
+        supported: set[ContentType],
+        requires_base_url_resolution: bool = False,
+        run_thread_name: str = "DownloadThread",
+    ):
+        self.supported = supported
+        self.requires_base_url_resolution = requires_base_url_resolution
+        self.run_thread_name = run_thread_name
         self.instances: list[FakeEngine] = []
         self.created = threading.Event()
+
+    def supports(self, content: Content) -> bool:
+        return content.content_type in self.supported
 
     def __call__(self, **kwargs):
         engine = FakeEngine(**kwargs)
@@ -86,14 +101,18 @@ def _make_content(content_type: ContentType = ContentType.CHZZK_VIDEO) -> Conten
 
 @pytest.fixture
 def file_factory(monkeypatch):
-    factory = FakeEngineFactory()
+    factory = FakeEngineFactory({ContentType.CHZZK_VIDEO, ContentType.CHZZK_CLIP})
     monkeypatch.setattr(download_service_module, "FileDownloader", factory)
     return factory
 
 
 @pytest.fixture
 def m3u8_factory(monkeypatch):
-    factory = FakeEngineFactory()
+    factory = FakeEngineFactory(
+        {ContentType.CHZZK_VIDEO_M3U8},
+        requires_base_url_resolution=True,
+        run_thread_name="DownloadM3U8Thread",
+    )
     monkeypatch.setattr(download_service_module, "M3U8Downloader", factory)
     return factory
 
@@ -169,6 +188,24 @@ class TestDownloaderSelection:
     def test_unsupported_type_raises(self, file_factory):
         with pytest.raises(ValueError):
             DownloadService().submit(_make_content(ContentType.CHZZK_LIVE))
+
+    @pytest.mark.parametrize(
+        ("content_type", "file_ok", "m3u8_ok"),
+        [
+            (ContentType.CHZZK_VIDEO, True, False),
+            (ContentType.CHZZK_CLIP, True, False),
+            (ContentType.CHZZK_VIDEO_M3U8, False, True),
+            (ContentType.CHZZK_LIVE, False, False),
+        ],
+    )
+    def test_real_downloader_supports_matrix(self, content_type, file_ok, m3u8_ok):
+        """실제 다운로더의 supports() 판정 매트릭스 (#82) — 서비스 선택 규칙의 근거."""
+        from core.downloaders.file_downloader import FileDownloader
+        from core.downloaders.m3u8_downloader import M3U8Downloader
+
+        content = _make_content(content_type)
+        assert FileDownloader.supports(content) is file_ok
+        assert M3U8Downloader.supports(content) is m3u8_ok
 
     def test_mismatched_data_raises(self, file_factory):
         from core.models.download_data import DownloadData
