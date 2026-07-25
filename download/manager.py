@@ -1,89 +1,64 @@
-from PySide6.QtCore import QObject, Signal
-from .download import DownloadThread
-from .download_m3u8 import DownloadM3U8Thread
-from .monitor import MonitorThread
-from .monitor_m3u8 import MonitorM3U8Thread
-from download.data import DownloadData
+"""다운로드 매니저 파사드 — 실행은 core DownloadService, 배선은 QtDownloadBridge (#75).
+
+태스크 큐·동시 실행 수 제한·다운로더 선택·완료 처리는
+core/services/download_service.py로 이주했고, 콜백→Signal 변환은
+download/qt_bridge.py가 단독으로 담당한다. 이 클래스는 기존 UI 호출부
+(application/mainWindow.py)의 인터페이스를 유지하는 얇은 파사드다:
+
+- Signal(progress/paused/resumed/stopped/finished)은 브리지의 것을 그대로
+  노출한다 — emit은 qt_bridge 모듈만 수행하며 이 파일에는 Signal이 없다.
+- d_thread/m_thread/task는 활성 다운로드 존재 여부 판정(truthiness)에 쓰이는
+  기존 속성명이다. 스레드 소유가 서비스로 넘어갔으므로 현재 핸들/태스크를
+  돌려준다 (호출부 무변경).
+"""
+
 from content.data import ContentItem
-from download.task import DownloadTask
-from download.logger import DownloadLogger
+from download.qt_bridge import QtDownloadBridge
 
-class DownloadManager(QObject):
-    """
-    다운로드 스레드와 속도 모니터링 스레드를 관리하는 클래스.
-    """
-    progress = Signal(str, str, str, int, object)
 
-    paused = Signal(object)
-    resumed = Signal(object)
-    stopped = Signal(object)
-    finished = Signal(object, str)
+class DownloadManager:
+    """다운로드 시작·제어를 UI에 제공하는 파사드 (구 인터페이스 유지)."""
 
     def __init__(self):
-        super().__init__()
-        self.d_thread = None
-        self.m_thread = None
-        self.task = None
-        self.data = None
-        self.item = None
-        self.logger = None
+        self._bridge = QtDownloadBridge()
+        # 기존 시그널 인터페이스 노출 — 바운드 시그널이므로 connect는 그대로 동작한다
+        self.progress = self._bridge.progress
+        self.paused = self._bridge.paused
+        self.resumed = self._bridge.resumed
+        self.stopped = self._bridge.stopped
+        self.finished = self._bridge.finished
 
-    # ============ 일시정지/중지 메서드 ============
+    @property
+    def d_thread(self):
+        """활성 다운로드 핸들 (기존 QThread 속성명 호환 — 존재 여부 판정용)."""
+        return self._bridge.handle
 
-    def start(self, item:ContentItem):
-        self.item = item
-        self.data = DownloadData(item.base_url, item.vod_url, item.output_path, item.resolution, item.content_type)
-        self.logger = DownloadLogger()
-        self.task = DownloadTask(self.data, self.item, self.logger)
-        
-        if self.item.content_type == "m3u8":
-            self.d_thread = DownloadM3U8Thread(self.task)
-            self.m_thread = MonitorM3U8Thread(self.task)
-        else:
-            self.d_thread = DownloadThread(self.task)
-            self.m_thread = MonitorThread(self.task)
-        
-        self.connectSignal()
-        self.task.start()
-        self.d_thread.start()
-        self.m_thread.start()
+    @property
+    def m_thread(self):
+        """활성 다운로드 핸들 (기존 QThread 속성명 호환 — 존재 여부 판정용)."""
+        return self._bridge.handle
 
-    def removeThreads(self):
-        if self.d_thread.isRunning():
-            self.d_thread.wait()
-        self.d_thread = None
-        
-        if self.m_thread.isRunning():
-            self.m_thread.wait()
-        self.m_thread = None
-        self.task = None
-        self.logger = None
+    @property
+    def task(self):
+        """현재 다운로드 태스크 어댑터 (없으면 None)."""
+        return self._bridge.task
 
-    def connectSignal(self):
-        self.d_thread.completed.connect(self.finish)
-        self.d_thread.stopped.connect(self.stop)
-        self.m_thread.progress.connect(self.onProgressFromThread)
+    def start(self, item: ContentItem) -> None:
+        """다운로드를 시작한다."""
+        self._bridge.start(item)
 
-    def onProgressFromThread(self, rem, size, spd, prog):
-        self.progress.emit(rem, size, spd, prog, self.item)
+    def pause(self) -> None:
+        """다운로드를 일시정지한다."""
+        self._bridge.pause()
 
-    def pause(self):
-        self.task.pause()
-        self.paused.emit(self.item)
+    def resume(self) -> None:
+        """다운로드를 재개한다."""
+        self._bridge.resume()
 
-    def resume(self):
-        self.task.resume()
-        self.resumed.emit(self.item)
+    def stop(self) -> None:
+        """다운로드를 중지한다."""
+        self._bridge.stop()
 
-    def stop(self):
-        if self.task is not None:
-            self.task.stop()
-        self.stopped.emit(self.item)
-
-    def finish(self):
-        if self.task is not None:
-            self.task.finish()
-            self.m_thread.update_progress()
-            download_time = self.m_thread.get_download_time()
-            self.removeThreads()
-            self.finished.emit(self.item, download_time)
+    def removeThreads(self) -> None:
+        """실행 중인 워커가 끝나기를 기다린 뒤 참조를 정리한다."""
+        self._bridge.removeThreads()
