@@ -23,19 +23,26 @@ Nuitka가 표준 패키지 설정으로 번들링)이며, 커스텀 빌드 등�
 처리하지 못한다 — 4.2.2(2019)·7.0.2·git master 전 세대 공통, 같은 환경의
 distro·BtbN 빌드는 정상임을 CI 교차 실측으로 확인했다. pip 방식은 기반으로
 유지하고, 리눅스에서만 시스템 설치본이 있으면 그것을 쓴다.
+
+**동봉본을 리눅스에서 쓸 때는 GCONV_PATH 가드를 얹는다 (#97).** 크래시의
+근본 원인이 "정적 glibc가 호스트 gconv 모듈을 dlopen → 세대 비호환"으로
+규명되어(#94 4차 진단), 그 로드를 차단하면 동봉본만으로도 TS remux가
+동작한다. 상세는 _subprocess_env 참조.
 """
 
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 from collections.abc import Iterable, Iterator
 
 # GUI 앱의 서브프로세스가 콘솔 창을 띄우지 않게 한다 (Windows 전용 플래그)
 _CREATE_NO_WINDOW = 0x08000000
 
-# 리눅스 여부 — 시스템 ffmpeg 우선 탐색(#94)의 스위치. 테스트가 대체한다
+# 리눅스 여부 — 시스템 ffmpeg 우선 탐색(#94)·GCONV_PATH 가드(#97)의 스위치.
+# 테스트가 대체한다
 _IS_LINUX = sys.platform.startswith("linux")
 
 
@@ -96,6 +103,52 @@ def _not_found_message(reason: str) -> str:
     return f"ffmpeg 실행 파일을 찾지 못했다 ({reason}) — {guide}"
 
 
+def _is_bundled_exe(exe: str) -> bool:
+    """exe가 imageio-ffmpeg 동봉 바이너리인지 판정한다 (#97 가드 적용 조건)."""
+    try:
+        import imageio_ffmpeg
+    except ImportError:
+        return False
+    binaries_dir = os.path.realpath(
+        os.path.join(os.path.dirname(imageio_ffmpeg.__file__), "binaries")
+    )
+    return os.path.realpath(exe).startswith(binaries_dir + os.sep)
+
+
+def _subprocess_env(exe: str) -> dict[str, str] | None:
+    """ffmpeg 서브프로세스에 줄 환경을 반환한다. None이면 부모 환경 상속.
+
+    **GCONV_PATH 가드 (#94·#97)**: 리눅스 동봉본(johnvansickle 정적 빌드)은
+    정적 링크된 구세대 glibc가 mpegts SDT 서비스명의 문자셋 변환(iconv)
+    시점에 **호스트의 gconv 공유 모듈을 dlopen**한다. 신형 glibc(우분투
+    24.04/2.39대) 호스트에서는 모듈 세대가 맞지 않아 SIGSEGV — GCONV_PATH를
+    빈 디렉토리로 돌려 그 로드를 차단하면 크래시가 사라진다(#94 4차 실측).
+    부작용은 SDT 서비스명 문자셋 변환 생략뿐이며(A/V 무관), 산출물 바이트
+    동일성은 테스트로 입증한다.
+
+    시스템 ffmpeg(동적 glibc — 자기 배포판의 gconv와 호환)와 Windows·macOS
+    에는 적용하지 않는다. 프로세스 전역(os.environ)은 건드리지 않는다.
+    imageio-ffmpeg가 동봉 빌드 계열을 교체(musl 등)하면 이 가드는 무해한
+    잉여가 되므로 그때 제거해도 된다.
+    """
+    if not _IS_LINUX or not _is_bundled_exe(exe):
+        return None
+    env = os.environ.copy()
+    env["GCONV_PATH"] = _empty_gconv_dir()
+    return env
+
+
+def _empty_gconv_dir() -> str:
+    """GCONV_PATH용 빈 디렉토리를 보장하고 경로를 반환한다.
+
+    존재하지 않는 경로 대신 빈 디렉토리를 쓴다 — "유효한 경로에 모듈이
+    없음"으로 귀결되어 glibc 버전별 경로 오류 처리 차이를 타지 않는다.
+    """
+    path = os.path.join(tempfile.gettempdir(), "cvdv2-empty-gconv")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
 def remux_stream(chunks: Iterable[bytes], dst_path: str) -> None:
     """바이트 스트림을 stdin으로 받아 재인코딩 없이(스트림 복사) mp4로 재포장한다.
 
@@ -141,6 +194,7 @@ def remux_stream(chunks: Iterable[bytes], dst_path: str) -> None:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             creationflags=creationflags,
+            env=_subprocess_env(exe),
         )
     except OSError as e:
         raise RemuxError(f"ffmpeg 실행 실패: {e}") from e
