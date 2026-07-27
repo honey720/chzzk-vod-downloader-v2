@@ -104,6 +104,16 @@ uv run python main.py    # 앱 실행
 
 ---
 
+## 📄 라이선스
+
+- 본 프로그램은 [GPL-3.0](LICENSE) 라이선스로 배포됩니다.
+- 배포본에는 세그먼트 병합 산출물의 재포장(remux)에 사용하는 [FFmpeg](https://ffmpeg.org) 실행 파일이 포함됩니다
+  — pip 패키지 [imageio-ffmpeg](https://github.com/imageio/imageio-ffmpeg)(BSD-2-Clause)가 동봉하는 GPL 빌드 바이너리입니다.
+  FFmpeg는 FFmpeg 프로젝트의 저작물이며, 소스 코드는 [FFmpeg 공식 저장소](https://github.com/FFmpeg/FFmpeg)와
+  각 빌드 제공처에서 구할 수 있습니다.
+
+---
+
 ## 📚 참고 자료
 - 본 프로그램은 [chzzk-vod-downloader](https://github.com/24802/chzzk-vod-downloader)를 참고하여 개발되었습니다.
 
