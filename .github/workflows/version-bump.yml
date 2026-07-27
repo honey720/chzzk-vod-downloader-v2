@@ -1,0 +1,103 @@
+name: Version Bump
+
+# Actions 탭 → Version Bump → Run workflow → 버전 입력
+# pyproject.toml 수정 + uv lock + 커밋 + PR 생성까지 자동.
+# 오너는 생성된 PR을 확인·머지만 하면 되고, 머지되면 Auto Tag가 태그를 만든다.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '새 버전 (v 없이. 예: 2.8.4)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0   # 기존 태그 확인용
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Validate input
+        run: |
+          VERSION="${{ inputs.version }}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+            echo "::error::버전 형식이 올바르지 않습니다: $VERSION (예: 2.8.4 또는 2.9.0-rc1)"
+            exit 1
+          fi
+          if git rev-parse "v$VERSION" >/dev/null 2>&1; then
+            echo "::error::태그 v$VERSION 가 이미 존재합니다."
+            exit 1
+          fi
+          if git ls-remote --exit-code --heads origin "chore/version-$VERSION" >/dev/null 2>&1; then
+            echo "::error::브랜치 chore/version-$VERSION 가 이미 존재합니다."
+            exit 1
+          fi
+
+      - name: Bump pyproject.toml + uv lock
+        run: |
+          python - <<'PYEOF'
+          import os, pathlib, re
+          version = os.environ["NEW_VERSION"]
+          p = pathlib.Path("pyproject.toml")
+          text = p.read_text(encoding="utf-8")
+          new_text, n = re.subn(
+              r'(?m)^(version\s*=\s*")[^"]*(")',
+              lambda m: m.group(1) + version + m.group(2),
+              text,
+              count=1,
+          )
+          if n != 1:
+              raise SystemExit("pyproject.toml에서 version 줄을 찾지 못했습니다.")
+          p.write_text(new_text, encoding="utf-8")
+          print(f"version -> {version}")
+          PYEOF
+          uv lock
+        env:
+          NEW_VERSION: ${{ inputs.version }}
+
+      - name: Verify bump applied
+        run: |
+          ACTUAL=$(uv run python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          if [ "$ACTUAL" != "${{ inputs.version }}" ]; then
+            echo "::error::버전 반영 실패 (pyproject=$ACTUAL)"
+            exit 1
+          fi
+
+      - name: Create pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ inputs.version }}"
+          BRANCH="chore/version-$VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add pyproject.toml uv.lock
+          git commit -m "chore: 버전 $VERSION"
+          git push origin "$BRANCH"
+          gh pr create --base main --head "$BRANCH" \
+            --title "chore: v$VERSION" \
+            --body "$(cat <<EOF
+          ## 요약
+
+          버전을 \`$VERSION\`으로 올립니다. 코드 변경은 없습니다.
+
+          - \`pyproject.toml\` version + \`uv.lock\` 동반 갱신
+          - **이 PR을 머지하면 태그 \`v$VERSION\`이 자동 생성되고 릴리즈 빌드가 시작됩니다.**
+
+          Version Bump 워크플로우가 자동 생성했습니다.
+          EOF
+          )"

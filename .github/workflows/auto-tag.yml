@@ -1,0 +1,39 @@
+name: Auto Tag
+
+# main의 pyproject.toml 버전이 바뀌면 v<버전> 태그를 만들어 푸시한다.
+# 태그 푸시가 release.yml을 깨우려면 기본 GITHUB_TOKEN이 아닌 PAT가 필요하다
+# (기본 토큰으로 만든 이벤트는 다른 워크플로우를 트리거하지 않음 — 재귀 방지 정책).
+# → 저장소 Secrets에 RELEASE_PAT 등록 필요. 아래 안내 참조.
+
+on:
+  push:
+    branches: [main]
+    paths: ['pyproject.toml']
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PAT }}
+
+      - name: Create tag if version is new
+        run: |
+          VERSION=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "pyproject version: $VERSION"
+
+          if git rev-parse "v$VERSION" >/dev/null 2>&1; then
+            echo "태그 v$VERSION 이미 존재 — 건너뜁니다."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v$VERSION" -m "Release v$VERSION"
+          git push origin "v$VERSION"
+          echo "태그 v$VERSION 생성·푸시 완료 → 릴리즈 빌드가 시작됩니다."
