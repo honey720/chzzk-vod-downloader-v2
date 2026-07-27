@@ -165,7 +165,8 @@ jobs:
       - name: Boot smoke + screenshot (macOS)
         if: runner.os == 'macOS'
         run: |
-          BIN=$(find build/CVDv2.app/Contents/MacOS -type f -perm +111 | head -1)
+          EXEC=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" build/CVDv2.app/Contents/Info.plist)
+          BIN="build/CVDv2.app/Contents/MacOS/$EXEC"
           echo "실행 대상: $BIN"
           "$BIN" &
           PID=$!
