@@ -1,54 +1,53 @@
-"""임시 진단 (#92 CI 전용, 머지 전 삭제) — 리눅스 동봉 ffmpeg의 exit -11 원인 분리.
+"""임시 진단 2차 (#92 CI 전용, 머지 전 삭제) — TS→MP4 SIGSEGV 조건 좁히기.
 
-파일/파이프 입력 × TS/fMP4 컨테이너 × faststart 유무 매트릭스를 실행해
-어떤 조합이 죽는지 한 번에 보고한다. 항상 실패로 끝나 결과를 CI 로그에 남긴다.
+1차 결과: linux 7.0.2-static에서 (lavfi h264 영상 단독) TS→MP4 -c copy가
+파일/파이프·faststart 유무 불문 전부 rc=-11. fMP4→MP4는 정상.
+2차: 실제 치지직 TS와 유사한 h264+AAC 먹싱 TS, 입력 포맷 명시, 출력 변형을 시험한다.
 """
 
 import subprocess
 
 from core.utils.ffmpeg import get_ffmpeg_exe
 
-
-def _gen(exe, path, container_args):
-    return subprocess.run(
-        [exe, "-hide_banner", "-loglevel", "error", "-y",
-         "-f", "lavfi", "-i", "testsrc2=duration=1:size=64x64:rate=10",
-         "-c:v", "libx264", "-preset", "ultrafast", *container_args, str(path)],
-        capture_output=True, text=True,
-    )
+GEN_BASE = [
+    "-f", "lavfi", "-i", "testsrc2=duration=1:size=64x64:rate=10",
+    "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+]
 
 
-def test_diagnose_linux_sigsegv(tmp_path):
+def test_diagnose_ts_sigsegv_round2(tmp_path):
     exe = get_ffmpeg_exe()
     lines = [subprocess.run([exe, "-version"], capture_output=True, text=True).stdout.splitlines()[0]]
 
-    ts = tmp_path / "in.ts"
-    fmp4 = tmp_path / "in.mp4"
-    g1 = _gen(exe, ts, ["-f", "mpegts"])
-    g2 = _gen(exe, fmp4, ["-movflags", "frag_keyframe+empty_moov", "-f", "mp4"])
-    lines.append(f"gen ts rc={g1.returncode} {g1.stderr[-120:]!r} / gen fmp4 rc={g2.returncode} {g2.stderr[-120:]!r}")
+    def run(tag, args):
+        r = subprocess.run([exe, "-hide_banner", "-loglevel", "error", "-y", *args],
+                           capture_output=True, text=True, timeout=60)
+        lines.append(f"{tag}: rc={r.returncode} {r.stderr[-100:]!r}")
+        return r.returncode
 
-    cases = []
-    for src, name in [(ts, "ts"), (fmp4, "fmp4")]:
-        for fast in (True, False):
-            flags = ["-movflags", "+faststart"] if fast else []
-            # 파일 입력
-            out = tmp_path / f"f_{name}_{fast}.mp4"
-            r = subprocess.run(
-                [exe, "-hide_banner", "-loglevel", "error", "-y", "-i", str(src),
-                 "-c", "copy", *flags, "-f", "mp4", str(out)],
-                capture_output=True, text=True,
-            )
-            cases.append(f"file  {name:<5} fast={fast}: rc={r.returncode} {r.stderr[-100:]!r}")
-            # 파이프 입력
-            out2 = tmp_path / f"p_{name}_{fast}.mp4"
-            p = subprocess.Popen(
-                [exe, "-hide_banner", "-loglevel", "error", "-y", "-i", "pipe:0",
-                 "-c", "copy", *flags, "-f", "mp4", str(out2)],
-                stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-            )
-            _, err = p.communicate(src.read_bytes(), timeout=60)
-            cases.append(f"pipe  {name:<5} fast={fast}: rc={p.returncode} {err[-100:]!r}")
+    av_ts = str(tmp_path / "av.ts")
+    v_ts = str(tmp_path / "v.ts")
+    run("gen h264+aac ts", [*GEN_BASE, "-c:v", "libx264", "-preset", "ultrafast",
+                            "-c:a", "aac", "-shortest", "-f", "mpegts", av_ts])
+    run("gen h264-only ts", [*GEN_BASE[:4], "-c:v", "libx264", "-preset", "ultrafast",
+                             "-f", "mpegts", v_ts])
 
-    lines.extend(cases)
-    raise AssertionError("DIAG RESULT\n" + "\n".join(lines))
+    run("av_ts -> mp4 (file)", ["-i", av_ts, "-c", "copy", "-movflags", "+faststart",
+                                "-f", "mp4", str(tmp_path / "o1.mp4")])
+    run("av_ts -> mp4 (explicit -f mpegts in)", ["-f", "mpegts", "-i", av_ts, "-c", "copy",
+                                                 "-f", "mp4", str(tmp_path / "o2.mp4")])
+    run("v_ts -> mp4 (explicit -f mpegts in)", ["-f", "mpegts", "-i", v_ts, "-c", "copy",
+                                                "-f", "mp4", str(tmp_path / "o3.mp4")])
+    run("v_ts -> mkv (file)", ["-i", v_ts, "-c", "copy", str(tmp_path / "o4.mkv")])
+    run("v_ts -> null demux only", ["-i", v_ts, "-c", "copy", "-f", "null", "-"])
+    run("av_ts -> mp4 (pipe)", ["-i", "pipe:0", "-c", "copy", "-movflags", "+faststart",
+                                "-f", "mp4", str(tmp_path / "o5.mp4")]) if False else None
+    # 파이프 케이스는 별도 (stdin 공급)
+    p = subprocess.Popen([exe, "-hide_banner", "-loglevel", "error", "-y", "-i", "pipe:0",
+                          "-c", "copy", "-movflags", "+faststart", "-f", "mp4",
+                          str(tmp_path / "o5.mp4")],
+                         stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    _, err = p.communicate(open(av_ts, "rb").read(), timeout=60)
+    lines.append(f"av_ts -> mp4 (pipe): rc={p.returncode} {err[-100:]!r}")
+
+    raise AssertionError("DIAG2 RESULT\n" + "\n".join(lines))
