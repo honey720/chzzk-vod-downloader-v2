@@ -86,7 +86,7 @@ Executables compiled with Nuitka have no code signature or reputation data, so s
 
 ## ⚠ Known Limitations
 
-- **VODs protected with encryption (AES) are currently not supported for download.** This applies to some membership-only broadcasts and replays; the app handles such VODs with a "not supported" notice.
+- **VODs protected with encryption (AES) can be downloaded only when the cookies of an account with viewing access are registered in the settings.** This applies to some membership-only broadcasts and replays; the app does not grant access on its own — without permission, the server rejects the decryption key request and the download fails.
 
 ---
 
