@@ -23,9 +23,16 @@ from types import SimpleNamespace
 import pytest
 
 import core.downloaders.base as base_module
+import core.utils.ffmpeg as ffmpeg_module
 from core.downloaders.base import BaseDownloader, PostprocessError
 from core.models.download_state import DownloadState
-from core.utils.ffmpeg import RemuxError, get_ffmpeg_exe, read_in_chunks, remux_stream
+from core.utils.ffmpeg import (
+    FFmpegNotFoundError,
+    RemuxError,
+    get_ffmpeg_exe,
+    read_in_chunks,
+    remux_stream,
+)
 
 
 def _top_level_boxes(path) -> list[str]:
@@ -84,11 +91,12 @@ def _make_tiny_ts(path) -> None:
 
 
 @functools.lru_cache(maxsize=1)
-def _bundled_ffmpeg_demuxes_ts() -> bool:
-    """동봉 ffmpeg가 mpegts 입력을 읽을 수 있는지 1회 검사한다.
+def _resolved_ffmpeg_demuxes_ts() -> bool:
+    """선택된 ffmpeg가 mpegts 입력을 읽을 수 있는지 1회 검사한다.
 
-    리눅스 동봉 7.0.2-static은 mpegts demux 전반이 SIGSEGV다(#94) —
-    해당 플랫폼에서는 TS 입력 검증을 스킵하고, 빌드가 고쳐지면 자동 복귀한다.
+    리눅스 동봉본(jvs 정적 빌드 계열)은 mpegts demux 전반이 SIGSEGV다(#94) —
+    시스템 ffmpeg가 없어 동봉본으로 폴백한 환경(CI 포함)에서는 TS 입력
+    검증을 스킵하고, 건강한 ffmpeg가 잡히면 자동 복귀한다.
     """
     with tempfile.TemporaryDirectory() as d:
         ts = os.path.join(d, "probe.ts")
@@ -108,6 +116,69 @@ def test_get_ffmpeg_exe_returns_existing_executable():
     exe = get_ffmpeg_exe()
     assert os.path.isfile(exe)
     assert os.access(exe, os.X_OK)
+
+
+# ================================================================ 탐색 순서 (#94)
+
+
+def test_explicit_env_var_wins_over_everything(monkeypatch):
+    """IMAGEIO_FFMPEG_EXE 명시 지정은 플랫폼·시스템 탐색보다 항상 우선한다."""
+    monkeypatch.setenv("IMAGEIO_FFMPEG_EXE", "/explicit/ffmpeg")
+    monkeypatch.setattr(ffmpeg_module, "_IS_LINUX", True)
+    monkeypatch.setattr(ffmpeg_module.shutil, "which", lambda name: "/usr/bin/ffmpeg")
+
+    assert get_ffmpeg_exe() == "/explicit/ffmpeg"
+
+
+def test_linux_prefers_system_ffmpeg(monkeypatch):
+    """리눅스는 시스템 ffmpeg를 동봉본보다 우선한다 (#94 — 동봉본 TS demux SIGSEGV 회피)."""
+    monkeypatch.delenv("IMAGEIO_FFMPEG_EXE", raising=False)
+    monkeypatch.setattr(ffmpeg_module, "_IS_LINUX", True)
+    monkeypatch.setattr(ffmpeg_module.shutil, "which", lambda name: "/usr/bin/ffmpeg")
+
+    assert get_ffmpeg_exe() == "/usr/bin/ffmpeg"
+
+
+def test_linux_without_system_falls_back_to_bundled(monkeypatch):
+    """리눅스에 시스템 ffmpeg가 없으면 동봉본으로 폴백한다 (m3u8 경로는 동봉본도 정상)."""
+    import imageio_ffmpeg
+
+    monkeypatch.delenv("IMAGEIO_FFMPEG_EXE", raising=False)
+    monkeypatch.setattr(ffmpeg_module, "_IS_LINUX", True)
+    monkeypatch.setattr(ffmpeg_module.shutil, "which", lambda name: None)
+
+    assert get_ffmpeg_exe() == imageio_ffmpeg.get_ffmpeg_exe()
+
+
+def test_non_linux_does_not_probe_system(monkeypatch):
+    """리눅스가 아니면 시스템 탐색을 하지 않는다 — 동봉본이 기본이다."""
+    monkeypatch.delenv("IMAGEIO_FFMPEG_EXE", raising=False)
+    monkeypatch.setattr(ffmpeg_module, "_IS_LINUX", False)
+
+    def must_not_be_called(name):
+        raise AssertionError("리눅스가 아니면 shutil.which를 호출하지 않아야 한다")
+
+    monkeypatch.setattr(ffmpeg_module.shutil, "which", must_not_be_called)
+    assert os.path.isfile(get_ffmpeg_exe())
+
+
+def test_not_found_error_guides_installation(monkeypatch):
+    """어느 경로로도 못 찾으면 설치 유도 안내를 담아 명확히 실패한다 (#94)."""
+    import imageio_ffmpeg
+
+    monkeypatch.delenv("IMAGEIO_FFMPEG_EXE", raising=False)
+    monkeypatch.setattr(ffmpeg_module, "_IS_LINUX", True)
+    monkeypatch.setattr(ffmpeg_module.shutil, "which", lambda name: None)
+
+    def broken():
+        raise RuntimeError("no exe")
+
+    monkeypatch.setattr(imageio_ffmpeg, "get_ffmpeg_exe", broken)
+
+    with pytest.raises(FFmpegNotFoundError) as exc_info:
+        get_ffmpeg_exe()
+    message = str(exc_info.value)
+    assert "설치" in message and "apt" in message and "IMAGEIO_FFMPEG_EXE" in message
 
 
 # ================================================================ 스트림 remux
@@ -133,8 +204,8 @@ def test_remux_stream_ts_input_produces_mp4(tmp_path):
     리눅스 동봉 빌드는 mpegts demux가 SIGSEGV라 스킵된다(#94) — 실제 치지직
     TS의 remux 정합성은 #92 실측(AES 완주, #91 산출물과 해시 일치)이 담보한다.
     """
-    if not _bundled_ffmpeg_demuxes_ts():
-        pytest.skip("동봉 ffmpeg 빌드가 mpegts 입력에서 SIGSEGV (#94)")
+    if not _resolved_ffmpeg_demuxes_ts():
+        pytest.skip("선택된 ffmpeg 빌드가 mpegts 입력에서 SIGSEGV (#94)")
     src = tmp_path / "src.ts"
     dst = tmp_path / "dst.mp4"
     _make_tiny_ts(src)

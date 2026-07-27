@@ -17,9 +17,16 @@ Nuitka가 표준 패키지 설정으로 번들링)이며, 커스텀 빌드 등�
 ``get_ffmpeg_exe()``만 고치면 된다. 못 찾으면 명확한 예외를 던진다 —
 무음 실패 금지. remux 실패 처리 방침(명시적 실패, #92에서 폴백 제거)은
 호출자(다운로더 postprocess)의 책임이다.
+
+**리눅스는 시스템 ffmpeg를 우선 탐색한다 (#94).** 동봉본(johnvansickle
+정적 빌드 계열)은 mpegts demux(SDT 파싱)에서 SIGSEGV라 AES(TS) 경로를
+처리하지 못한다 — 4.2.2(2019)·7.0.2·git master 전 세대 공통, 같은 환경의
+distro·BtbN 빌드는 정상임을 CI 교차 실측으로 확인했다. pip 방식은 기반으로
+유지하고, 리눅스에서만 시스템 설치본이 있으면 그것을 쓴다.
 """
 
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -27,6 +34,9 @@ from collections.abc import Iterable, Iterator
 
 # GUI 앱의 서브프로세스가 콘솔 창을 띄우지 않게 한다 (Windows 전용 플래그)
 _CREATE_NO_WINDOW = 0x08000000
+
+# 리눅스 여부 — 시스템 ffmpeg 우선 탐색(#94)의 스위치. 테스트가 대체한다
+_IS_LINUX = sys.platform.startswith("linux")
 
 
 class FFmpegError(Exception):
@@ -44,20 +54,46 @@ class RemuxError(FFmpegError):
 def get_ffmpeg_exe() -> str:
     """ffmpeg 실행 파일 경로를 반환한다.
 
+    탐색 순서:
+    1. ``IMAGEIO_FFMPEG_EXE`` 환경 변수 — 명시적 지정은 항상 최우선
+       (imageio-ffmpeg 자체 규약과 동일하게 존중한다)
+    2. (리눅스) 시스템 ffmpeg — 동봉본의 mpegts demux SIGSEGV 회피 (#94)
+    3. imageio-ffmpeg 동봉본 — 그 외 플랫폼의 기본이자 리눅스의 폴백
+       (리눅스 동봉본도 fMP4(m3u8) 경로는 정상이다)
+
     Raises:
-        FFmpegNotFoundError: 패키지 미설치·바이너리 미동봉 등으로 찾지 못한 경우
+        FFmpegNotFoundError: 어느 경로로도 찾지 못한 경우 — 메시지에 설치
+            안내를 담는다 (무음 실패 금지)
     """
+    explicit = os.getenv("IMAGEIO_FFMPEG_EXE")
+    if explicit:
+        return explicit
+
+    if _IS_LINUX:
+        system_exe = shutil.which("ffmpeg")
+        if system_exe:
+            return system_exe
+
     try:
         import imageio_ffmpeg
     except ImportError as e:
-        raise FFmpegNotFoundError(
-            "imageio-ffmpeg 패키지가 설치되어 있지 않다 — 의존성 설치(uv sync)를 확인하라"
-        ) from e
+        raise FFmpegNotFoundError(_not_found_message("imageio-ffmpeg 패키지 미설치")) from e
     try:
         # imageio_ffmpeg은 휠에 동봉된 바이너리를 찾지 못하면 RuntimeError를 던진다
         return imageio_ffmpeg.get_ffmpeg_exe()
     except Exception as e:
-        raise FFmpegNotFoundError(f"ffmpeg 실행 파일을 찾지 못했다: {e}") from e
+        raise FFmpegNotFoundError(_not_found_message(str(e))) from e
+
+
+def _not_found_message(reason: str) -> str:
+    """ffmpeg 미발견 예외 메시지 — 원인과 설치 유도 안내를 함께 담는다."""
+    guide = "의존성 설치(uv sync)를 확인하라"
+    if _IS_LINUX:
+        guide += (
+            ". 시스템 ffmpeg 설치(예: sudo apt install ffmpeg) 또는 "
+            "IMAGEIO_FFMPEG_EXE 환경 변수로 실행 파일을 지정할 수도 있다"
+        )
+    return f"ffmpeg 실행 파일을 찾지 못했다 ({reason}) — {guide}"
 
 
 def remux_stream(chunks: Iterable[bytes], dst_path: str) -> None:
