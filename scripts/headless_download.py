@@ -51,7 +51,7 @@ from core.services.download_service import DownloadService  # noqa: E402
 from core.services.metadata_service import MetadataError  # noqa: E402
 from download.data import DownloadData  # noqa: E402
 from download.logger import DownloadLogger  # noqa: E402
-from download.resolvers import resolve_m3u8_base_url  # noqa: E402
+from download.resolvers import resolve_aes_key, resolve_m3u8_base_url  # noqa: E402
 from download.task import DownloadTask  # noqa: E402
 
 logger = logging.getLogger("headless")
@@ -140,7 +140,9 @@ class _HeadlessRunner:
         self.item = item
         self.timeout = timeout
         self.exit_code = 1  # 완료 신호를 받기 전까지는 실패로 간주
-        self.service = DownloadService(base_url_resolver=resolve_m3u8_base_url)
+        self.service = DownloadService(
+            base_url_resolver=resolve_m3u8_base_url, key_resolver=resolve_aes_key
+        )
         self.task: DownloadTask | None = None
 
     def run(self) -> int:
@@ -219,13 +221,11 @@ def _format_progress(
     speed_mb = event.speed or 0.0
     remaining_time_str = "N/A"
 
-    if item.content_type == "m3u8":
+    if item.is_segment_based:
+        # 병합 분모: m3u8은 초기화 세그먼트(EXT-X-MAP) 1개를 더 병합한다 (hls_aes는 없음)
+        merge_total = data.max_threads + (1 if item.content_type == "m3u8" else 0)
         if item.post_process:
-            progress = (
-                int((data.merged_segments / (data.max_threads + 1)) * 100)
-                if data.max_threads > 0
-                else 0
-            )
+            progress = int((data.merged_segments / merge_total) * 100) if merge_total > 0 else 0
         else:
             progress = (
                 int((data.completed_threads / data.max_threads) * 100)

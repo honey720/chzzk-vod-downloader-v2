@@ -33,6 +33,7 @@ from collections import deque
 from collections.abc import Callable
 
 from core.downloaders.file_downloader import FileDownloader
+from core.downloaders.hls_aes_downloader import HlsAesDownloader
 from core.downloaders.m3u8_downloader import M3U8Downloader
 from core.models.content import Content
 from core.models.download_data import DownloadData
@@ -44,6 +45,9 @@ logger = logging.getLogger(__name__)
 
 # Content를 받아 m3u8 플레이리스트 URL을 반환한다. 실패는 예외로 던진다.
 BaseUrlResolver = Callable[[Content], str]
+# (Content, 키 URI)를 받아 세그먼트 복호화 키(bytes)를 반환한다 (#57).
+# 인증 쿠키가 필요해 앱 계층이 구현한다 — 권한이 없으면 서버가 거절해 예외가 된다.
+KeyResolver = Callable[[Content, str], bytes]
 
 
 class _NullDownloadLogger:
@@ -159,17 +163,20 @@ class DownloadService:
         *,
         max_concurrent: int = DEFAULT_MAX_CONCURRENT,
         base_url_resolver: BaseUrlResolver | None = None,
+        key_resolver: KeyResolver | None = None,
     ):
         """서비스를 생성한다.
 
         Args:
             max_concurrent: 동시 실행 수 상한 (1 이상)
             base_url_resolver: m3u8 플레이리스트 URL 해석 콜러블 (m3u8 다운로드 시 필수)
+            key_resolver: 세그먼트 복호화 키 취득 콜러블 (암호화 VOD 다운로드 시 필수, #57)
         """
         if max_concurrent < 1:
             raise ValueError("max_concurrent는 1 이상이어야 한다")
         self._max_concurrent = max_concurrent
         self._base_url_resolver = base_url_resolver
+        self._key_resolver = key_resolver
         self._lock = threading.Lock()
         self._pending: deque[DownloadHandle] = deque()
         self._active: set[DownloadHandle] = set()
@@ -238,7 +245,7 @@ class DownloadService:
             ValueError: 어떤 다운로더도 지원하지 않는 컨텐츠 (예: 라이브)
         """
         # 모듈 전역을 호출 시점에 참조한다 (테스트에서 대역으로 교체 가능)
-        for downloader_cls in (FileDownloader, M3U8Downloader):
+        for downloader_cls in (FileDownloader, M3U8Downloader, HlsAesDownloader):
             if downloader_cls.supports(content):
                 return downloader_cls
         raise ValueError(f"지원하지 않는 컨텐츠 타입: {content.content_type}")
@@ -292,6 +299,11 @@ class DownloadService:
 
             engine = self._create_engine(handle)
             handle.engine = engine
+
+            if handle.engine_cls.requires_key_resolution:
+                # 복호화 키 취득은 유저 쿠키가 필요해 앱 계층 리졸버가 수행한다 (#57).
+                # 실제 호출은 엔진의 prepare() 안에서 일어난다 — 여기서는 주입만 한다
+                engine.set_key_resolver(self._key_resolver)
 
             if handle.engine_cls.requires_base_url_resolution:
                 # m3u8 등은 시작 시점에 플레이리스트 URL을 해석한다 (구 어댑터와 동일).

@@ -46,12 +46,21 @@ def _video_info(**overrides) -> VideoInfo:
 class FakeApi:
     """MetadataApi 프로토콜을 구현하는 가짜 api. 필요한 메서드만 주입해 쓴다."""
 
-    def __init__(self, video_info=None, clip_info=None, clip_manifest=None, dash_manifest=None):
+    def __init__(
+        self,
+        video_info=None,
+        clip_info=None,
+        clip_manifest=None,
+        dash_manifest=None,
+        sea_manifest=None,
+    ):
         self._video_info = video_info
         self._clip_info = clip_info
         self._clip_manifest = clip_manifest
         self._dash_manifest = dash_manifest
+        self._sea_manifest = sea_manifest
         self.dash_calls: list[tuple] = []
+        self.sea_calls: list[tuple] = []
 
     def get_video_info(self, video_no, cookies):
         return self._video_info
@@ -59,6 +68,10 @@ class FakeApi:
     def get_video_dash_manifest(self, video_id, in_key, cookies=None):
         self.dash_calls.append((video_id, in_key, cookies))
         return self._dash_manifest
+
+    def get_video_sea_manifest(self, video_id, in_key, cookies=None):
+        self.sea_calls.append((video_id, in_key, cookies))
+        return self._sea_manifest
 
     def get_video_m3u8_manifest(self, json_str):
         return [[720, None]], 720, None
@@ -128,32 +141,85 @@ def test_fetch_content_maps_clips_to_clip():
 @pytest.mark.parametrize(
     "fixture_name",
     [
-        # 멤버십 권한 있는 상태(inKey 발급됨)의 실응답 박제 — 그래도 암호화라 다운로드 불가
+        # 멤버십 권한 있는 상태(inKey 발급됨)의 실응답 박제
         "video_encrypted_member_13714380.json",
         "video_encrypted_member_14283698.json",
-        # 권한 없는 상태(inKey null)의 실응답 박제 — 암호화 안내가 멤버십 안내보다 우선
-        "video_member_only_13714380.json",
     ],
 )
-def test_encrypted_vod_raises_early_encryption_error(monkeypatch, load_mock_response, fixture_name):
-    """encryptionType이 AES인 실응답이면 권한 유무와 무관하게 조기 안내해야 한다.
+def test_encrypted_vod_with_entitlement_takes_sea_path(
+    monkeypatch, load_mock_response, fixture_name
+):
+    """AES(SEA) 암호화 VOD는 권한이 있으면 SEA 경로로 조회된다 (#57).
 
-    실제 응답 픽스처를 NetworkManager 파싱까지 그대로 통과시켜 전체 경로를 검증한다.
-    매니페스트 요청 없이 실패해야 하므로 get_video_dash_manifest 호출도 감시한다.
+    #55에서는 여기서 조기 거부했지만, SEA는 유저 본인 쿠키로 키를 받아
+    복호화할 수 있는 표준 세그먼트 암호화이므로 지원 대상이 됐다.
+    실제 응답 픽스처를 NetworkManager 파싱까지 통과시켜 전체 경로를 검증한다.
     """
     body = load_mock_response(fixture_name)
     monkeypatch.setattr(network._session, "get", lambda url, **kwargs: MockResponse(text=body))
-    manifest_calls = []
+    sea_calls = []
     monkeypatch.setattr(
         NetworkManager,
-        "get_video_dash_manifest",
-        lambda *args, **kwargs: manifest_calls.append(args),
+        "get_video_sea_manifest",
+        lambda *args, **kwargs: (
+            sea_calls.append(args) or ([[144, "https://example.invalid/media.m3u8"]], 144, "https://example.invalid/media.m3u8")
+        ),
+    )
+
+    result, encrypted = fetch_video(VOD_URL, "13714380", COOKIES, DOWNLOAD_PATH, api=NetworkManager)
+
+    assert encrypted is True
+    assert len(sea_calls) == 1  # 평문 경로가 아니라 SEA 매니페스트를 조회한다
+    assert result[4] == "https://example.invalid/media.m3u8"
+
+
+def test_encrypted_vod_without_entitlement_raises_membership_error(
+    monkeypatch, load_mock_response
+):
+    """암호화 VOD라도 권한이 없으면(inKey null) 멤버십 안내가 나와야 한다 (#57).
+
+    #55에서는 암호화 안내가 우선이었으나, 이제 암호화 자체는 지원되므로
+    실제 막고 있는 원인(권한 없음)을 안내하는 편이 정확하다.
+    """
+    body = load_mock_response("video_member_only_13714380.json")
+    monkeypatch.setattr(network._session, "get", lambda url, **kwargs: MockResponse(text=body))
+
+    with pytest.raises(MetadataError, match="Channel membership required"):
+        fetch_video(VOD_URL, "13714380", COOKIES, DOWNLOAD_PATH, api=NetworkManager)
+
+
+def test_unsupported_encryption_still_raises_encryption_error():
+    """지원 대상이 아닌 암호화(라이선스 서버형 DRM 등)는 기존 안내로 실패해야 한다 (#57).
+
+    NetworkManager.get_video_sea_manifest가 지원 판정에 실패하면 빈 결과를
+    돌려주고, 그것이 "Encrypted content is not supported"로 이어진다 —
+    DRM 우회는 구현하지 않는다.
+    """
+    api = FakeApi(
+        video_info=_video_info(encryption_type="AES"),
+        sea_manifest=([], None, None),
     )
 
     with pytest.raises(MetadataError, match="Encrypted content is not supported"):
-        fetch_video(VOD_URL, "13714380", COOKIES, DOWNLOAD_PATH, api=NetworkManager)
-    # 조기 감지: 매니페스트 요청까지 가지 않아야 한다
-    assert manifest_calls == []
+        fetch_video(VOD_URL, "13714380", COOKIES, DOWNLOAD_PATH, api=api)
+
+
+def test_fetch_content_maps_encrypted_video_to_hls_aes():
+    """암호화 VOD는 content_type이 hls_aes로 매핑돼야 한다 (#57)."""
+    api = FakeApi(
+        video_info=_video_info(encryption_type="AES"),
+        sea_manifest=(
+            [[144, "https://example.invalid/media.m3u8"]],
+            144,
+            "https://example.invalid/media.m3u8",
+        ),
+    )
+
+    result, content_type = fetch_content(VOD_URL, COOKIES, DOWNLOAD_PATH, api=api)
+
+    assert content_type == "hls_aes"
+    assert result[4] == "https://example.invalid/media.m3u8"
+    assert result[6] is None  # 라이브 다시보기가 아니다
 
 
 def test_member_only_without_in_key_raises_membership_error():
@@ -193,8 +259,9 @@ def test_dash_path_passes_cookies_to_manifest_request():
         ),
     )
 
-    result = fetch_video(VOD_URL, "13714380", COOKIES, DOWNLOAD_PATH, api=api)
+    result, encrypted = fetch_video(VOD_URL, "13714380", COOKIES, DOWNLOAD_PATH, api=api)
 
+    assert encrypted is False
     assert api.dash_calls == [("video-id", "in-key", COOKIES)]
     # 반환 tuple 형식 유지: (vod_url, metadata, reps, resolution, base_url, path, liveRewindPlaybackJson)
     assert result[0] == VOD_URL

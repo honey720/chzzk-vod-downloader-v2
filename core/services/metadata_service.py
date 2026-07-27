@@ -29,6 +29,10 @@ class MetadataApi(Protocol):
         self, video_id: str, in_key: str, cookies: dict | None = None
     ) -> tuple: ...
 
+    def get_video_sea_manifest(
+        self, video_id: str, in_key: str, cookies: dict | None = None
+    ) -> tuple: ...
+
     def get_clip_info(self, clip_no: str, cookies: dict) -> tuple: ...
 
     def get_clip_manifest(self, clip_id: str, cookies: dict) -> tuple: ...
@@ -54,7 +58,8 @@ def fetch_content(
 
     result는 기존 ContentWorker.finished 시그널 페이로드와 동일한 tuple이다:
     (vod_url, metadata, unique_reps, resolution, base_url, download_path,
-    live_rewind_playback_json). content_type은 "video" / "m3u8" / "clip".
+    live_rewind_playback_json). content_type은 "video" / "m3u8" / "hls_aes" /
+    "clip"이며, "hls_aes"는 AES(SEA) 암호화 VOD다 (#57).
 
     Raises:
         MetadataError: URL 형식 오류·권한 부족·암호화·매니페스트 실패 등 조회 실패
@@ -64,9 +69,12 @@ def fetch_content(
         raise MetadataError("Invalid VOD URL", vod_url)
 
     if content_type == "video":
-        result = fetch_video(vod_url, content_no, cookies, download_path, api)
+        result, encrypted = fetch_video(vod_url, content_no, cookies, download_path, api)
         if result[6]:
             content_type = "m3u8"
+        elif encrypted:
+            # AES(SEA) 암호화 VOD — HLS(TS) 세그먼트 + 복호화 경로 (#57)
+            content_type = "hls_aes"
     elif content_type == "clips":
         content_type = "clip"
         result = fetch_clip(vod_url, content_no, cookies, download_path, api)
@@ -76,19 +84,33 @@ def fetch_content(
 
 def fetch_video(
     vod_url: str, video_no: str, cookies: dict, download_path: str, api: MetadataApi
-) -> tuple:
+) -> tuple[tuple, bool]:
     """VOD 메타데이터·매니페스트를 조회한다 (구 ContentWorker.fetchVideo와 동일 로직).
 
+    Returns:
+        tuple[tuple, bool]: (result 7-tuple, AES(SEA) 암호화 VOD 여부).
+            result의 형식·항목은 기존과 동일하다 — 암호화 여부만 따로 알린다(#57).
+
     Raises:
-        MetadataError: 쿠키 무효(성인)·암호화·멤버십 필요·매니페스트 실패
+        MetadataError: 쿠키 무효(성인)·미지원 암호화·멤버십 필요·매니페스트 실패
     """
     info = api.get_video_info(video_no, cookies)
+    encrypted = False
     if info.adult and not info.video_id:
         raise MetadataError("Invalid cookies value", vod_url)
     elif info.encryption_type:
-        # 암호화(AES/SEA) VOD는 세그먼트를 복호화할 수 없어 다운로드 불가.
-        # 권한(멤버십) 유무와 무관하므로 매니페스트 요청 전에 조기 안내한다 (#55)
-        raise MetadataError("Encrypted content is not supported", vod_url)
+        # AES(SEA) 암호화 VOD (#57). 세그먼트 암호화는 유저 본인 쿠키로 키를
+        # 받아 복호화할 수 있으므로 지원한다 — 지원 대상 판정(AES-128-CBC +
+        # HTTP 키 시스템)은 매니페스트를 보고 하며, 라이선스 서버형 DRM은
+        # 빈 결과로 떨어져 아래 "지원하지 않음" 안내로 간다.
+        if not info.in_key and info.membership_benefit_type == "MEMBER_ONLY":
+            raise MetadataError("Channel membership required", vod_url)
+        encrypted = True
+        unique_reps, resolution, base_url = api.get_video_sea_manifest(
+            info.video_id, info.in_key, cookies
+        )
+        if not unique_reps:
+            raise MetadataError("Encrypted content is not supported", vod_url)
     elif info.live_rewind_playback_json:
         unique_reps, resolution, base_url = api.get_video_m3u8_manifest(
             info.live_rewind_playback_json
@@ -105,7 +127,7 @@ def fetch_video(
         raise MetadataError("Failed to get DASH manifest", vod_url)
 
     # 네트워크 작업 결과를 tuple 형태로 묶어서 전달
-    return (
+    result = (
         vod_url,
         info.metadata,
         unique_reps,
@@ -114,6 +136,7 @@ def fetch_video(
         download_path,
         info.live_rewind_playback_json,
     )
+    return result, encrypted
 
 
 def fetch_clip(
