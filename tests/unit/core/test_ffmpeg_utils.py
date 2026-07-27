@@ -15,6 +15,7 @@ import functools
 import os
 import struct
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -94,16 +95,18 @@ def _make_tiny_ts(path) -> None:
 def _resolved_ffmpeg_demuxes_ts() -> bool:
     """선택된 ffmpeg가 mpegts 입력을 읽을 수 있는지 1회 검사한다.
 
-    리눅스 동봉본(jvs 정적 빌드 계열)은 mpegts demux 전반이 SIGSEGV다(#94) —
-    시스템 ffmpeg가 없어 동봉본으로 폴백한 환경(CI 포함)에서는 TS 입력
-    검증을 스킵하고, 건강한 ffmpeg가 잡히면 자동 복귀한다.
+    프로덕션(remux_stream)과 같은 조건으로 검사한다 — 리눅스 동봉본에는
+    GCONV_PATH 가드(#97)가 적용되므로 여기서도 적용한다. 가드로도 못 읽는
+    환경이 있으면 TS 입력 검증을 스킵하고, 건강해지면 자동 복귀한다.
     """
     with tempfile.TemporaryDirectory() as d:
         ts = os.path.join(d, "probe.ts")
         _make_tiny_ts(ts)
+        exe = get_ffmpeg_exe()
         proc = subprocess.run(
-            [get_ffmpeg_exe(), "-v", "error", "-i", ts, "-c", "copy", "-f", "null", "-"],
+            [exe, "-v", "error", "-i", ts, "-c", "copy", "-f", "null", "-"],
             capture_output=True,
+            env=ffmpeg_module._subprocess_env(exe),
         )
         return proc.returncode == 0
 
@@ -406,3 +409,139 @@ def test_stop_while_paused_kills_ffmpeg_and_leaves_no_output(tmp_path):
     assert raised == []  # 중단은 예외·실패가 아니다
     assert not (tmp_path / "out.mp4").exists()  # 불완전 산출물 미잔류
     assert all(os.path.exists(p) for p in paths)  # 세그먼트는 건드리지 않는다
+
+
+# ================================================================ GCONV_PATH 가드 (#97)
+
+
+def _explicit_bundled_exe() -> str:
+    """imageio-ffmpeg 동봉 바이너리 경로를 탐색 순서를 거치지 않고 직접 얻는다.
+
+    CI에 시스템 ffmpeg가 있으면 정상 탐색(get_ffmpeg_exe)은 동봉본을 타지
+    않으므로(#95), 가드 검증은 동봉본을 명시 지정해야 한다 (#97 요건).
+    """
+    import imageio_ffmpeg
+
+    binaries = os.path.join(os.path.dirname(imageio_ffmpeg.__file__), "binaries")
+    for name in os.listdir(binaries):
+        if name.startswith("ffmpeg-"):
+            return os.path.join(binaries, name)
+    raise AssertionError("동봉 바이너리를 찾지 못했다")
+
+
+def _strip_sdt(src_path, dst_path) -> None:
+    """TS에서 SDT(PID 0x11) 패킷만 제거한다 — 가드 유무 양쪽이 성공하는 입력용."""
+    data = open(src_path, "rb").read()
+    kept = bytearray()
+    for i in range(0, len(data) - 187, 188):
+        pkt = data[i : i + 188]
+        if pkt[0] == 0x47 and ((pkt[1] & 0x1F) << 8) | pkt[2] == 0x11:
+            continue
+        kept.extend(pkt)
+    open(dst_path, "wb").write(bytes(kept))
+
+
+def test_gconv_guard_applied_for_bundled_on_linux(monkeypatch):
+    """리눅스+동봉본 조합에서만 GCONV_PATH 가드가 적용된다 — 빈 디렉토리·전역 불변."""
+    monkeypatch.setattr(ffmpeg_module, "_IS_LINUX", True)
+    env = ffmpeg_module._subprocess_env(_explicit_bundled_exe())
+
+    assert env is not None and "GCONV_PATH" in env
+    assert os.path.isdir(env["GCONV_PATH"])
+    assert os.listdir(env["GCONV_PATH"]) == []  # 빈 디렉토리 — 모듈 로드 차단
+    assert "GCONV_PATH" not in os.environ  # 프로세스 전역은 건드리지 않는다
+
+
+def test_gconv_guard_not_applied_for_system_exe(monkeypatch):
+    """시스템 ffmpeg(동적 glibc — 자기 배포판과 호환)에는 가드를 적용하지 않는다."""
+    monkeypatch.setattr(ffmpeg_module, "_IS_LINUX", True)
+    assert ffmpeg_module._subprocess_env("/usr/bin/ffmpeg") is None
+
+
+def test_gconv_guard_not_applied_off_linux(monkeypatch):
+    """리눅스가 아니면 동봉본이어도 가드를 적용하지 않는다 (Windows·macOS 무영향)."""
+    monkeypatch.setattr(ffmpeg_module, "_IS_LINUX", False)
+    assert ffmpeg_module._subprocess_env(_explicit_bundled_exe()) is None
+
+
+def test_remux_stream_passes_guard_env_to_subprocess(tmp_path, monkeypatch):
+    """remux_stream은 _subprocess_env가 준 환경을 그대로 서브프로세스에 전달한다."""
+    import io
+
+    sentinel_env = dict(os.environ, CVDV2_GUARD_MARKER="1")
+    captured = {}
+
+    class _FakePopen:
+        def __init__(self, cmd, **kwargs):
+            captured.update(kwargs)
+            self.stdin = io.BytesIO()
+            self.stderr = io.BytesIO(b"")
+
+        def wait(self):
+            return 0
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr(ffmpeg_module, "_subprocess_env", lambda exe: sentinel_env)
+    monkeypatch.setattr(ffmpeg_module.subprocess, "Popen", _FakePopen)
+
+    remux_stream(iter([b"x"]), str(tmp_path / "out.mp4"))
+
+    assert captured["env"] is sentinel_env
+
+
+# ================ CI(리눅스) 전용 — 동봉본 명시 지정 실검증 (#97 완료 조건)
+
+
+def test_bundled_ts_remux_succeeds_with_guard(tmp_path, monkeypatch):
+    """최신 배포판(CI)에서 동봉본만으로 TS remux가 성공한다 — #97의 목적 그 자체.
+
+    가드 도입 전에는 이 remux가 SIGSEGV였다(#94). 동봉본을 명시 지정해
+    탐색 순서(시스템 우선)에 좌우되지 않게 한다.
+    """
+    if not sys.platform.startswith("linux"):
+        pytest.skip("리눅스 동봉본 전용 검증")
+    bundled = _explicit_bundled_exe()
+    monkeypatch.setattr(ffmpeg_module, "get_ffmpeg_exe", lambda: bundled)
+    monkeypatch.setitem(globals(), "get_ffmpeg_exe", lambda: bundled)
+
+    src = tmp_path / "src.ts"
+    dst = tmp_path / "dst.mp4"
+    _make_tiny_ts(src)  # SDT 포함 — 가드 없이는 크래시하는 입력
+
+    remux_stream(read_in_chunks(str(src)), str(dst))
+
+    boxes = _top_level_boxes(dst)
+    assert boxes.index("moov") < boxes.index("mdat")
+
+
+def test_guard_output_is_byte_identical(tmp_path, monkeypatch):
+    """가드 적용 전후 산출물이 바이트 단위로 동일하다 — A/V 무영향 입증 (#97).
+
+    양쪽 다 성공하는 입력(fMP4, SDT 제거 TS)으로 비교한다 — SDT 포함 TS는
+    가드 없이는 크래시라 '전' 산출물 자체가 존재하지 않는다.
+    """
+    if not sys.platform.startswith("linux"):
+        pytest.skip("리눅스 동봉본 전용 검증")
+    bundled = _explicit_bundled_exe()
+    monkeypatch.setattr(ffmpeg_module, "get_ffmpeg_exe", lambda: bundled)
+    monkeypatch.setitem(globals(), "get_ffmpeg_exe", lambda: bundled)
+
+    fmp4 = tmp_path / "src.mp4"
+    _make_tiny_fmp4(fmp4)
+    ts_full = tmp_path / "full.ts"
+    _make_tiny_ts(ts_full)
+    ts_nosdt = tmp_path / "nosdt.ts"
+    _strip_sdt(ts_full, ts_nosdt)
+
+    for src in (fmp4, ts_nosdt):
+        guarded = tmp_path / f"{src.stem}_guarded.mp4"
+        remux_stream(read_in_chunks(str(src)), str(guarded))  # 가드 자동 적용
+
+        unguarded = tmp_path / f"{src.stem}_unguarded.mp4"
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(ffmpeg_module, "_subprocess_env", lambda exe: None)
+            remux_stream(read_in_chunks(str(src)), str(unguarded))
+
+        assert guarded.read_bytes() == unguarded.read_bytes(), f"{src.name} 산출물 상이"
