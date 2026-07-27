@@ -12,9 +12,10 @@ file(#73)·m3u8(#74) 엔진이 평행 중복으로 갖고 있던 실행 엔진�
 필수 (추상):
 - ``supports(content)``: 이 다운로더가 처리할 컨텐츠 타입 판정 — 서비스의
   선택 로직이 구체 클래스 분기 없이 이 답을 따른다
-- ``prepare(content)``: "무엇을 받을지" 작업 목록 생성 (file: 바이트 범위,
-  m3u8: (index, 세그먼트) 목록). 총 크기 조회·매니페스트 파싱 등 타입 고유
-  사전 조회는 여기서 한다
+- ``prepare(content)``: "무엇을 받을지"를 DownloadPlan으로 만든다 (#83 —
+  items는 file: 바이트 범위, m3u8: (index, 세그먼트) 튜플). 총 크기 조회·
+  매니페스트 파싱 등 타입 고유 사전 조회는 여기서 한다. 계획의 총 크기·
+  후처리 필요 여부는 run()이 계획에서 읽는다 — 실행 중 추측하지 않는다
 - ``_download_item(item, part_num)``: 작업 1건의 다운로드 (재시도 판정 포함)
 - ``_log_item_start(part_num, item)`` / ``_download_start_log_args()``:
   타입별 로그 형식 유지용
@@ -22,7 +23,8 @@ file(#73)·m3u8(#74) 엔진이 평행 중복으로 갖고 있던 실행 엔진�
 - ``_cleanup_partial()``: 실패·중단 시 부분 산출물 정리
 
 선택 (기본 구현 있음):
-- ``postprocess()``: 다운로드 완료 후 마무리 (기본 no-op, m3u8: 병합)
+- ``postprocess()``: 다운로드 완료 후 마무리 (m3u8: 병합). 계획의
+  requires_postprocess가 참일 때만 run()이 호출한다 (#83)
 - ``_initial_queue(items)``: 시작 시 작업 큐 구성 (기본: 목록 그대로)
 - ``_cleanup_after_run()``: 정상 경로 종료 후 정리 (기본 no-op)
 - ``_get_standard_speed()``: 스레드 스케일링 기준 속도 (기본 4 MB/s — 구 파일
@@ -60,6 +62,7 @@ from core.models.events import (
     ProgressCallback,
     ProgressEvent,
 )
+from core.models.plan import DownloadPlan
 
 
 class BaseDownloader(ABC):
@@ -122,10 +125,11 @@ class BaseDownloader(ABC):
         """이 다운로더가 해당 컨텐츠를 처리할 수 있는지 판정한다."""
 
     @abstractmethod
-    def prepare(self, content: Content) -> list:
-        """다운로드할 작업 목록을 만든다 (타입 고유 사전 조회 포함).
+    def prepare(self, content: Content) -> DownloadPlan:
+        """다운로드 계획(DownloadPlan)을 만든다 (타입 고유 사전 조회 포함).
 
-        반환한 목록의 길이가 max_threads·total_ranges·진행 배열의 기준이 된다.
+        계획의 part_count가 max_threads·total_ranges·진행 배열의 기준이 되고,
+        total_size·requires_postprocess도 run()이 계획에서 읽는다 (#83).
         """
 
     @abstractmethod
@@ -154,10 +158,13 @@ class BaseDownloader(ABC):
     # ============ 하위 다운로더가 선택적으로 오버라이드 ============
 
     def postprocess(self) -> None:
-        """다운로드 완료 후 마무리 (기본 no-op). m3u8은 여기서 병합한다."""
+        """다운로드 완료 후 마무리. m3u8은 여기서 병합한다.
+
+        계획(DownloadPlan)의 requires_postprocess가 참일 때만 run()이 호출한다.
+        """
 
     def _initial_queue(self, items: list) -> list:
-        """시작 시 작업 큐를 구성한다 (기본: prepare 결과 그대로)."""
+        """시작 시 작업 큐를 구성한다 (기본: 계획의 items 그대로)."""
         return list(items)
 
     def _cleanup_after_run(self) -> None:
@@ -178,9 +185,16 @@ class BaseDownloader(ABC):
         monitor = threading.Thread(target=self._monitor_loop, name="DownloadMonitor", daemon=True)
         try:
             self.s.start_time = tm.time()
-            items = self.prepare(self.s.content)
+            plan = self.prepare(self.s.content)
+            if plan.selections:
+                # 구간 해석은 #83 범위 밖 — 모양만 정의하고 명시적으로 거부한다
+                raise NotImplementedError("구간 선택 다운로드(selections)는 아직 지원하지 않는다")
+            if plan.total_size is not None:
+                # 총 크기는 계획에서 읽는다 — 진행 통지·파트 로그가 참조한다
+                self.s.total_size = plan.total_size
+            items = list(plan.items)
 
-            self.s.max_threads = self.s.total_ranges = len(items)
+            self.s.max_threads = self.s.total_ranges = plan.part_count
             self.s.adjust_threads = min(self.s.adjust_threads, self.s.max_threads)
             self.s.threads_progress = [0] * self.s.total_ranges
             self.logger.log_download_start(*self._download_start_log_args())
@@ -222,8 +236,10 @@ class BaseDownloader(ABC):
                         break
 
             if self.state == DownloadState.RUNNING:
-                # (4) 다운로드 완료 후 타입별 마무리(병합 등) 후 완료 통지
-                self.postprocess()
+                # (4) 다운로드 완료 후 타입별 마무리(병합 등) 후 완료 통지 —
+                # 후처리 필요 여부는 실행 중 추측하지 않고 계획이 답한다 (#83)
+                if plan.requires_postprocess:
+                    self.postprocess()
                 self.s.end_time = tm.time()
                 total_time = self.s.end_time - self.s.start_time
                 self.logger.log_download_complete(total_time)
