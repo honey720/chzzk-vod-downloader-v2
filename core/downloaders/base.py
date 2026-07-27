@@ -48,7 +48,6 @@ file(#73)·m3u8(#74) 엔진이 평행 중복으로 갖고 있던 실행 엔진�
 data·logger는 DownloadData/DownloadLogger 호환 객체를 주입받는다.
 """
 
-import os
 import threading
 import time as tm
 from abc import ABC, abstractmethod
@@ -64,7 +63,21 @@ from core.models.events import (
     ProgressEvent,
 )
 from core.models.plan import DownloadPlan
-from core.utils.ffmpeg import FFmpegError, remux
+from core.utils.ffmpeg import FFmpegError, read_in_chunks, remux_stream
+
+
+class PostprocessError(Exception):
+    """후처리(remux) 실패 (#92).
+
+    다운로드 자체는 완결된 상태라, 이 실패로 세그먼트(임시 폴더)를 지우지
+    않는다 — 수십 분짜리 재다운로드를 강요하지 않기 위함이다. 불완전한
+    산출물은 후처리 단계가 이미 삭제했다. run()이 이 예외를 일반 실패와
+    구분해 처리한다.
+    """
+
+
+class _PostprocessAborted(Exception):
+    """후처리 공급 루프의 사용자 중단 신호 — 실패가 아니라 중단 경로로 보낸다."""
 
 
 class BaseDownloader(ABC):
@@ -178,26 +191,39 @@ class BaseDownloader(ABC):
         계획(DownloadPlan)의 requires_postprocess가 참일 때만 run()이 호출한다.
         """
 
-    def _remux_with_fallback(self, merged_path: str) -> None:
-        """병합본을 ffmpeg remux(스트림 복사)로 산출물에 재포장한다 (#88).
+    def _remux_streamed(self, segment_paths: list[str]) -> None:
+        """세그먼트 파일들을 순서대로 ffmpeg stdin에 흘려 산출물을 만든다 (#92).
 
-        바이트 연결 병합본은 라이브 원본 타임라인을 그대로 보유하고 전역
-        인덱스가 없어 편집 프로그램이 읽지 못한다. remux가 실패하면 병합본을
-        그대로 산출물로 옮겨 최악의 경우에도 현행(바이트 연결) 수준을
-        보장한다 — 폴백 시 경고를 남기고, 무음으로 실패하지 않는다.
+        중간 병합 파일을 만들지 않는 단일 패스다 — fMP4·TS는 바이트 연결이
+        곧 유효한 스트림이라 파이프 공급이 병합 의미를 정확히 보존한다.
+        세그먼트 파일은 여기서 지우지 않는다(#92 — 후처리 실패로 재다운로드를
+        강요하지 않기 위함). 성공 후 정리는 run()의 _cleanup_after_run이 한다.
 
-        세그먼트 기반 postprocess()에서 병합 직후에 호출한다.
+        remux가 실패하면 폴백 없이 PostprocessError로 명확히 실패한다 —
+        바이트 연결본은 #88이 고치려던 결함품이라 조용히 대체하지 않는다.
+        일시정지·중단은 공급 루프가 세그먼트 병합과 같은 규칙으로 처리한다.
         """
-        # 일시정지 중이면 재개를 기다린 뒤 remux를 시작한다 (세그먼트 병합과
-        # 같은 규칙). 시작된 remux는 원자적으로 끝까지 수행된다
-        if self.state == DownloadState.PAUSED:
-            self.s._pause_event.wait()
+
+        def feed():
+            for path in segment_paths:
+                for chunk in read_in_chunks(path):
+                    # 다운로드 중지 상태라면 중단 — 공급을 끊고 산출물을 지운다
+                    if self.state == DownloadState.WAITING:
+                        raise _PostprocessAborted
+                    # 일시정지 상태라면 대기 (ffmpeg는 stdin을 기다리며 멈춘다)
+                    if self.state == DownloadState.PAUSED:
+                        self.s._pause_event.wait()
+                    yield chunk
+                self.s.merged_segments += 1
+
         try:
-            remux(merged_path, self.s.output_path)
-            os.remove(merged_path)
+            remux_stream(feed(), self.s.output_path)
+        except _PostprocessAborted:
+            # 중단 정리(임시 폴더·산출물 삭제)는 run()의 중단 경로가 수행한다
+            return
         except FFmpegError as e:
-            self.logger.warning(f"ffmpeg remux failed, falling back to byte concat: {e}")
-            os.replace(merged_path, self.s.output_path)
+            self.logger.log_error("Remux failed — segments preserved for retry", e)
+            raise PostprocessError(f"후처리(remux) 실패: {e}") from e
 
     def _initial_queue(self, items: list) -> list:
         """시작 시 작업 큐를 구성한다 (기본: 계획의 items 그대로)."""
@@ -276,14 +302,27 @@ class BaseDownloader(ABC):
                 # 후처리 필요 여부는 실행 중 추측하지 않고 계획이 답한다 (#83)
                 if plan.requires_postprocess:
                     self.postprocess()
-                self.s.end_time = tm.time()
-                total_time = self.s.end_time - self.s.start_time
-                self.logger.log_download_complete(total_time)
-                self.logger.save_and_close()
-                self._on_finished()
+                # 후처리 중 중단(stop)됐다면 완료 통지를 생략한다 (#92) —
+                # WAITING → FINISHED는 허용되지 않는 전이라, 무조건 완료
+                # 처리하면 전이 예외가 실패 콜백으로 둔갑한다 (구 병합 코드의
+                # 잠재 결함이 중단 테스트로 드러난 것)
+                if self.state != DownloadState.WAITING:
+                    self.s.end_time = tm.time()
+                    total_time = self.s.end_time - self.s.start_time
+                    self.logger.log_download_complete(total_time)
+                    self.logger.save_and_close()
+                    self._on_finished()
 
             # (5) 정상 경로 종료 후 정리 (중단으로 빠져나온 경우 포함)
             self._cleanup_after_run()
+
+        except PostprocessError as e:
+            # 후처리 실패 (#92) — 다운로드는 완결됐으므로 세그먼트(임시 폴더)를
+            # 보존한다. 불완전한 산출물은 후처리 단계가 이미 삭제했다.
+            # _cleanup_partial()을 부르지 않는 것이 이 분기의 존재 이유다
+            self._on_failed(e)
+            self.logger.log_exception("Postprocess failed", e)
+            self.logger.save_and_close()
 
         except self._failure_exceptions as e:
             # 오류 발생 시 부분 산출물 삭제

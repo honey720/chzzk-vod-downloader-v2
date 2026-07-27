@@ -10,7 +10,6 @@
 - 중단(stop): 결과 파일·임시 폴더 삭제, 완료 콜백 없음
 """
 
-import shutil
 import threading
 import time
 
@@ -93,6 +92,13 @@ def _expected_output(chunks_per_segment: int) -> bytes:
     )
 
 
+def _passthrough_remux_stream(chunks, dst_path):
+    """받은 스트림을 그대로 파일에 쓰는 remux_stream 스텁 (공급 순서·바이트 검증용)."""
+    with open(dst_path, "wb") as f:
+        for chunk in chunks:
+            f.write(chunk)
+
+
 class RunLogger:
     """run() 경로 전체가 쓰는 로거 인터페이스를 기록만 하며 흉내 낸다."""
 
@@ -146,10 +152,11 @@ def _make_engine(tmp_path, monkeypatch, chunks_per_segment: int = 3, throttle: f
     logger = RunLogger()
     session = M3U8Session(chunks_per_segment, throttle)
     monkeypatch.setattr(m3u8_module, "get_thread_session", lambda: session)
-    # remux(#88)는 성공 시 스트림 복사 재포장이다 — 이 파일의 검증 대상은
-    # 병합(순서·바이트)이므로 파일 복사 스텁으로 대체해 가짜 세션과 같은 수준으로
-    # 히메틱하게 유지한다. 실제 ffmpeg 실행은 test_ffmpeg_utils.py가 검증한다
-    monkeypatch.setattr(base_module, "remux", shutil.copyfile)
+    # remux(#88·#92)는 성공 시 스트림 복사 재포장이다 — 이 파일의 검증 대상은
+    # 공급 순서·바이트이므로 받은 스트림을 그대로 쓰는 스텁으로 대체해 가짜
+    # 세션과 같은 수준으로 히메틱하게 유지한다. 실제 ffmpeg 실행은
+    # test_ffmpeg_utils.py가 검증한다
+    monkeypatch.setattr(base_module, "remux_stream", _passthrough_remux_stream)
 
     finished = threading.Event()
     failures: list[BaseException] = []
@@ -199,29 +206,66 @@ def test_run_merges_segments_in_index_order_byte_exact(tmp_path, monkeypatch):
     assert not (tmp_path / "CVDv2_temp").exists()  # 임시 폴더 삭제
 
 
-def test_remux_failure_falls_back_to_byte_concat(tmp_path, monkeypatch):
-    """remux가 실패하면 경고를 남기고 바이트 연결 병합본을 그대로 산출물로 쓴다 (#88)."""
+def test_remux_failure_fails_explicitly_and_preserves_segments(tmp_path, monkeypatch):
+    """remux 실패는 폴백 없이 명시적 실패다 — 산출물 없음·세그먼트 보존 (#92).
+
+    바이트 연결본은 #88이 고치려던 결함품이므로 대신 내주지 않는다.
+    세그먼트는 재다운로드를 강요하지 않기 위해 보존한다.
+    """
     engine, data, logger, output, finished, failures, merge_starts = _make_engine(
         tmp_path, monkeypatch
     )
 
-    def broken_remux(src, dst):
+    def broken_remux_stream(chunks, dst_path):
+        # 실제 remux_stream처럼 불완전 산출물을 지우고 실패를 알린다
         raise base_module.FFmpegError("가짜 remux 실패")
 
-    monkeypatch.setattr(base_module, "remux", broken_remux)
+    monkeypatch.setattr(base_module, "remux_stream", broken_remux_stream)
 
     data.model.start()
     thread = _run_in_thread(engine)
-    assert finished.wait(timeout=30), "완료 콜백이 호출되지 않았다"
-    thread.join(timeout=10)
+    thread.join(timeout=30)
+    assert not thread.is_alive()
 
-    # 폴백 산출물은 초기화+세그먼트 바이트 연결과 동일하다 (현행 수준 보장)
-    assert output.read_bytes() == _expected_output(chunks_per_segment=3)
-    assert len(logger.warnings) == 1  # 무음 실패 금지 — 폴백 경고 1건
-    assert "remux" in logger.warnings[0]
-    assert failures == []  # 폴백은 실패가 아니다
+    assert not finished.is_set()  # 완료가 아니다
+    assert not output.exists()  # 결함품 산출물을 내주지 않는다
+    assert any(isinstance(e, base_module.PostprocessError) for e in failures)  # 명시적 실패
+    assert logger.errors  # 원인 로그 존재
+    # 세그먼트(임시 폴더)는 보존된다 — 후처리 실패로 재다운로드를 강요하지 않는다
+    temp_dir = tmp_path / "CVDv2_temp"
+    assert temp_dir.exists()
+    assert len(list(temp_dir.iterdir())) == SEGMENT_COUNT + 1  # 초기화 세그먼트 포함
     assert merge_starts == [True]
-    assert not (tmp_path / "CVDv2_temp").exists()  # 임시 폴더(병합본 포함) 삭제
+
+
+def test_stop_during_postprocess_cleans_up_without_failure(tmp_path, monkeypatch):
+    """후처리 공급 중 중단하면 실패 없이 중단 정리(산출물·임시 폴더 삭제)로 끝난다 (#92)."""
+    engine, data, logger, output, finished, failures, merge_starts = _make_engine(
+        tmp_path, monkeypatch
+    )
+
+    fed_once = threading.Event()
+
+    def slow_remux_stream(chunks, dst_path):
+        # 천천히 소비한다 — 그 사이 stop이 들어오면 공급측(feed)이 중단
+        # 신호를 던지고, 그 예외는 실제 remux_stream처럼 그대로 전파된다
+        for _ in chunks:
+            fed_once.set()
+            time.sleep(0.05)
+
+    monkeypatch.setattr(base_module, "remux_stream", slow_remux_stream)
+
+    data.model.start()
+    thread = _run_in_thread(engine)
+    assert fed_once.wait(timeout=30), "후처리 공급이 시작되지 않았다"
+    data.model.stop()  # RUNNING → WAITING (취소)
+    thread.join(timeout=30)
+    assert not thread.is_alive()
+
+    assert not finished.is_set()
+    assert failures == []  # 중단은 실패가 아니다
+    assert not output.exists()
+    assert not (tmp_path / "CVDv2_temp").exists()  # 중단은 현행대로 전체 정리
 
 
 def test_pause_resume_then_complete(tmp_path, monkeypatch):
