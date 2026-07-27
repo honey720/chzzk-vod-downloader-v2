@@ -98,6 +98,18 @@ def test_diag94_followup(tmp_path):
     else:
         lines.append("[ASLR] sysctl 변경 불가")
 
+    # 3차 결과 후속: 호스트에서만 죽고 컨테이너(동일 커널)에선 정상 →
+    # 정적 glibc가 런타임 dlopen하는 호스트 구성요소(gconv/iconv) 비호환 가설 검증
+    rc, err = _run(["env", "-i", exe, "-hide_banner", "-loglevel", "error", "-y",
+                    "-i", ts, "-c", "copy", str(tmp_path / "e.mp4")])
+    lines.append(f"[gconv] env -i(환경변수 배제): rc={rc} {err!r}")
+    env2 = dict(os.environ, GCONV_PATH="/nonexistent")
+    rc, err = _run([exe, "-hide_banner", "-loglevel", "error", "-y",
+                    "-i", ts, "-c", "copy", str(tmp_path / "g.mp4")], env=env2)
+    lines.append(f"[gconv] GCONV_PATH=/nonexistent: rc={rc} {err!r}")
+    rc, out = _run(["ls", "/usr/lib/x86_64-linux-gnu/gconv"])
+    lines.append(f"[gconv] 호스트 gconv 디렉토리: {'있음' if rc == 0 else '없음/확인불가'}")
+
     # 1-b. docker ubuntu:22.04 / 20.04 (userland 판정 — 호스트 커널 공유 주의)
     exe_dir = os.path.dirname(exe)
     exe_name = os.path.basename(exe)
