@@ -39,11 +39,12 @@ def _top_level_boxes(path) -> list[str]:
 
 
 def _make_tiny_ts(path) -> None:
-    """ffmpeg 내장 lavfi·네이티브 mpeg4 인코더로 1초짜리 MPEG-TS 입력을 만든다.
+    """ffmpeg 내장 lavfi·libx264로 1초짜리 h264 MPEG-TS 입력을 만든다.
 
-    TS는 스트리밍 컨테이너라 파이프 공급 검증에 적합하다(실제 hls_aes 경로의
-    입력과 동일 형식). 외부 코덱 라이브러리(libx264 등) 유무에 좌우되지
-    않도록 네이티브 인코더만 쓴다 — 검증 대상은 인코딩이 아니라 remux다.
+    h264-in-TS는 실제 hls_aes 경로의 입력과 동일한 조합이다. libx264는
+    imageio-ffmpeg 동봉 빌드(GPL)에 3-OS 모두 포함되어 있다. mpeg4-in-TS는
+    리눅스 동봉 빌드에서 파이프 입력 remux 시 segfault(exit -11)를 일으켜
+    쓰지 않는다 — 검증 대상은 인코딩이 아니라 remux다.
     """
     subprocess.run(
         [
@@ -57,7 +58,9 @@ def _make_tiny_ts(path) -> None:
             "-i",
             "testsrc2=duration=1:size=64x64:rate=10",
             "-c:v",
-            "mpeg4",
+            "libx264",
+            "-preset",
+            "ultrafast",
             "-f",
             "mpegts",
             str(path),
