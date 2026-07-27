@@ -1,17 +1,22 @@
-"""core/utils/ffmpeg.py 검증 (#88) — 경로 탐색·remux 실행.
+"""core/utils/ffmpeg.py 검증 (#88) — 경로 탐색·remux 실행·폴백 정책.
 
 remux 성공 검증은 실제 ffmpeg 바이너리(imageio-ffmpeg 동봉)를 실행한다 —
 입력은 ffmpeg 내장 lavfi 소스로 즉석 생성한 초소형 파일이라 네트워크·외부
-픽스처가 없다.
+픽스처가 없다. 다운로더의 폴백 정책(_remux_with_fallback)은 remux를 스텁으로
+바꿔 단위 수준에서 검증한다.
 """
 
 import os
 import struct
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 
-from core.utils.ffmpeg import RemuxError, get_ffmpeg_exe, remux
+import core.downloaders.base as base_module
+from core.downloaders.base import BaseDownloader
+from core.models.download_state import DownloadState
+from core.utils.ffmpeg import FFmpegError, RemuxError, get_ffmpeg_exe, remux
 
 
 def _top_level_boxes(path) -> list[str]:
@@ -92,3 +97,52 @@ def test_remux_invalid_input_raises_and_leaves_no_output(tmp_path):
     with pytest.raises(RemuxError):
         remux(str(src), str(dst))
     assert not dst.exists()  # 무음 실패 금지·쓰레기 산출물 금지
+
+
+# ================================================================ 폴백 정책
+
+
+def _fake_downloader(tmp_path, state=DownloadState.RUNNING):
+    """_remux_with_fallback이 참조하는 최소 속성만 가진 가짜 다운로더."""
+    warnings: list[str] = []
+    fake = SimpleNamespace(
+        state=state,
+        s=SimpleNamespace(output_path=str(tmp_path / "out.mp4")),
+        logger=SimpleNamespace(warning=warnings.append),
+    )
+    return fake, warnings
+
+
+def test_fallback_moves_merged_file_when_remux_fails(tmp_path, monkeypatch):
+    """remux 실패 시 병합본이 그대로 산출물이 되고 경고 1건을 남긴다."""
+    fake, warnings = _fake_downloader(tmp_path)
+    merged = tmp_path / "_merged.part"
+    merged.write_bytes(b"concat-bytes")
+
+    def broken_remux(src, dst):
+        raise FFmpegError("가짜 실패")
+
+    monkeypatch.setattr(base_module, "remux", broken_remux)
+    BaseDownloader._remux_with_fallback(fake, str(merged))
+
+    assert (tmp_path / "out.mp4").read_bytes() == b"concat-bytes"
+    assert not merged.exists()
+    assert len(warnings) == 1 and "remux" in warnings[0]
+
+
+def test_remux_success_removes_merged_file(tmp_path, monkeypatch):
+    """remux 성공 시 병합본은 지우고 산출물만 남긴다."""
+    fake, warnings = _fake_downloader(tmp_path)
+    merged = tmp_path / "_merged.part"
+    merged.write_bytes(b"concat-bytes")
+
+    def fake_remux(src, dst):
+        with open(dst, "wb") as f:
+            f.write(b"remuxed")
+
+    monkeypatch.setattr(base_module, "remux", fake_remux)
+    BaseDownloader._remux_with_fallback(fake, str(merged))
+
+    assert (tmp_path / "out.mp4").read_bytes() == b"remuxed"
+    assert not merged.exists()
+    assert warnings == []
