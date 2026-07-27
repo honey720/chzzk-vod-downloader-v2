@@ -3,12 +3,15 @@
 from core.models.content import Content, ContentType, VideoInfo
 from core.models.download_state import DownloadState
 from core.models.download_task import DownloadTaskModel, InvalidStateTransitionError
+from core.models.plan import DownloadPlan, TimeRange
 
 __all__ = [
     "Content",
     "ContentType",
     "VideoInfo",
+    "DownloadPlan",
     "DownloadState",
     "DownloadTaskModel",
     "InvalidStateTransitionError",
+    "TimeRange",
 ]

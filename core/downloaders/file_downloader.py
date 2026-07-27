@@ -5,7 +5,8 @@ core/downloaders/base.py의 BaseDownloader로 이주했다(#82). 이 클래스�
 파일 경로 고유 부분만 남는다:
 
 - prepare: HEAD로 총 크기 조회 → 해상도별 part_size 결정 → 바이트 범위 분할
-  (ranges.py 사용). 총 크기를 미리 알므로 ProgressEvent.total_size를 채운다
+  (ranges.py 사용)을 DownloadPlan으로 반환한다 (#83). 총 크기를 미리 알므로
+  계획의 total_size를 채우고, ProgressEvent.total_size로 이어진다
 - _download_part: 파트(바이트 구간) 단위 다운로드 — 저속 재시도·일시정지·
   중단 핸들링 포함. 규칙은 tests/unit/core/test_file_downloader_rules.py가 박제한다
 - postprocess 없음 (베이스 기본 no-op)
@@ -24,6 +25,7 @@ from core.downloaders.base import BaseDownloader
 from core.downloaders.ranges import decide_part_size, split_ranges
 from core.models.content import Content, ContentType
 from core.models.download_state import DownloadState
+from core.models.plan import DownloadPlan
 
 
 class FileDownloader(BaseDownloader):
@@ -45,15 +47,18 @@ class FileDownloader(BaseDownloader):
 
     # ============ 작업 목록·수신 준비 (구 run의 파일 고유 부분) ============
 
-    def prepare(self, content: Content) -> list[tuple[int, int]]:
-        """총 크기를 조회하고 해상도별 part_size로 바이트 범위 목록을 만든다."""
-        total_size = self.s.total_size = self._get_total_size()
+    def prepare(self, content: Content) -> DownloadPlan:
+        """총 크기를 조회하고 해상도별 part_size의 바이트 범위 계획을 만든다."""
+        total_size = self._get_total_size()
 
         # part_size 결정(해상도별 가중 적용)
         self._part_size = decide_part_size(self.s.content_type, self.s.resolution)
 
-        # 다운로드할 구간 분할
-        return split_ranges(total_size, self._part_size)
+        # 다운로드할 구간 분할 — 총 크기를 미리 아는 경로이므로 계획에 싣는다
+        return DownloadPlan(
+            items=tuple(split_ranges(total_size, self._part_size)),
+            total_size=total_size,
+        )
 
     def _download_start_log_args(self) -> tuple:
         return (self.s.total_size, self._part_size, self.s.total_ranges, self.s.adjust_threads)

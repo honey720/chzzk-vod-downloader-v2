@@ -4,7 +4,9 @@
 core/downloaders/base.py의 BaseDownloader로 이주했다(#82). 이 클래스에는
 m3u8 고유 부분만 남는다:
 
-- prepare: 플레이리스트를 받아 세그먼트 목록 생성. base_url은 m3u8
+- prepare: 플레이리스트를 받아 세그먼트 목록의 DownloadPlan 생성 (#83 —
+  총 크기 미상이라 total_size=None, 병합이 필요해 requires_postprocess=True).
+  base_url은 m3u8
   플레이리스트 URL이며 **호출 전에 해석이 끝나 있어야 한다** —
   requires_base_url_resolution=True로 서비스가 주입된 resolver를 시작
   시점에 실행한다 (쿠키·치지직 API 조회는 아직 앱 영역)
@@ -28,6 +30,7 @@ from core.api.session import get_thread_session
 from core.downloaders.base import BaseDownloader
 from core.models.content import Content, ContentType
 from core.models.download_state import DownloadState
+from core.models.plan import DownloadPlan
 
 
 class M3U8Downloader(BaseDownloader):
@@ -56,8 +59,8 @@ class M3U8Downloader(BaseDownloader):
 
     # ============ 작업 목록·수신 준비 (구 run의 m3u8 고유 부분) ============
 
-    def prepare(self, content: Content) -> list[tuple[int, str]]:
-        """플레이리스트를 받아 (index, 세그먼트) 목록을 만든다."""
+    def prepare(self, content: Content) -> DownloadPlan:
+        """플레이리스트를 받아 (index, 세그먼트) 목록의 계획을 만든다."""
         response = get_thread_session().get(self.s.base_url)
         response.raise_for_status()
         lines = response.text.splitlines()
@@ -67,7 +70,12 @@ class M3U8Downloader(BaseDownloader):
         self.s.merged_segments = 0
         # 세그먼트 임시 파일명 0채움 자릿수 — sorted() 병합 순서의 전제
         self.width = len(str(len(segments)))
-        return list(enumerate(segments))
+        # 총 바이트 크기는 미리 알 수 없고(total_size=None), 병합 후처리가 필요하다
+        return DownloadPlan(
+            items=tuple(enumerate(segments)),
+            total_size=None,
+            requires_postprocess=True,
+        )
 
     def _download_start_log_args(self) -> tuple:
         # m3u8은 전체 크기·파트 크기를 미리 알 수 없다 (구 코드와 동일하게 0)
