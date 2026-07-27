@@ -30,6 +30,7 @@ class FakeEngine:
         self.on_progress = on_progress
         self.on_finished = on_finished
         self.on_failed = on_failed
+        self.key_resolver = None
         self.started = threading.Event()
         self.release = threading.Event()
         self.fail_with: BaseException | None = None
@@ -46,6 +47,10 @@ class FakeEngine:
     def emit_progress(self):
         self.final_progress_calls += 1
 
+    def set_key_resolver(self, resolver):
+        """BaseDownloader의 키 리졸버 주입 계약을 흉내 낸다 (#57)."""
+        self.key_resolver = resolver
+
 
 class FakeEngineFactory:
     """서비스 모듈의 엔진 심볼을 대체해 생성된 페이크 엔진을 수집한다.
@@ -58,10 +63,12 @@ class FakeEngineFactory:
         self,
         supported: set[ContentType],
         requires_base_url_resolution: bool = False,
+        requires_key_resolution: bool = False,
         run_thread_name: str = "DownloadThread",
     ):
         self.supported = supported
         self.requires_base_url_resolution = requires_base_url_resolution
+        self.requires_key_resolution = requires_key_resolution
         self.run_thread_name = run_thread_name
         self.instances: list[FakeEngine] = []
         self.created = threading.Event()
@@ -184,6 +191,36 @@ class TestDownloaderSelection:
         )
         assert handle.wait(WAIT)
         assert failures == [boom]
+
+    def test_hls_aes_uses_aes_downloader_and_injects_key_resolver(self, monkeypatch):
+        """암호화 VOD는 AES 다운로더가 선택되고 키 리졸버가 주입돼야 한다 (#57)."""
+        factory = FakeEngineFactory(
+            {ContentType.CHZZK_VIDEO_HLS_AES},
+            requires_key_resolution=True,
+            run_thread_name="DownloadHlsAesThread",
+        )
+        monkeypatch.setattr(download_service_module, "HlsAesDownloader", factory)
+
+        def key_resolver(content, key_uri):
+            return bytes(16)
+
+        service = DownloadService(key_resolver=key_resolver)
+        handle = service.submit(_make_content(ContentType.CHZZK_VIDEO_HLS_AES))
+
+        assert factory.created.wait(WAIT)
+        engine = factory.instances[0]
+        assert engine.started.wait(WAIT)
+        # 키 취득은 엔진의 prepare()가 수행하므로 여기서는 주입만 확인한다
+        assert engine.key_resolver is key_resolver
+        _finish(engine)
+        assert handle.wait(WAIT)
+
+    def test_real_hls_aes_downloader_declares_key_resolution(self):
+        """실제 다운로더가 키 리졸버 주입 계약을 선언한다 — 서비스 배선의 근거."""
+        from core.downloaders.hls_aes_downloader import HlsAesDownloader
+
+        assert HlsAesDownloader.supports(_make_content(ContentType.CHZZK_VIDEO_HLS_AES)) is True
+        assert HlsAesDownloader.requires_key_resolution is True
 
     def test_unsupported_type_raises(self, file_factory):
         with pytest.raises(ValueError):

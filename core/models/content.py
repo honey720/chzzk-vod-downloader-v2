@@ -16,6 +16,9 @@ class ContentType(Enum):
 
     CHZZK_VIDEO = "video"
     CHZZK_VIDEO_M3U8 = "m3u8"
+    # AES(SEA) 암호화 VOD — HLS(MPEG-TS) 세그먼트 + AES-128-CBC 복호화 (#57).
+    # m3u8(라이브 다시보기)과는 컨테이너·초기화 세그먼트 유무가 달라 별도 타입이다
+    CHZZK_VIDEO_HLS_AES = "hls_aes"
     CHZZK_CLIP = "clip"
     CHZZK_LIVE = "live"
 

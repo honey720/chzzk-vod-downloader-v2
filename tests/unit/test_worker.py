@@ -31,34 +31,50 @@ def _make_worker() -> ContentWorker:
 @pytest.mark.parametrize(
     "fixture_name",
     [
-        # 멤버십 권한 있는 상태(inKey 발급됨)의 실응답 박제 — 그래도 암호화라 다운로드 불가
+        # 멤버십 권한 있는 상태(inKey 발급됨)의 실응답 박제
         "video_encrypted_member_13714380.json",
         "video_encrypted_member_14283698.json",
-        # 권한 없는 상태(inKey null)의 실응답 박제 — 암호화 안내가 멤버십 안내보다 우선
-        "video_member_only_13714380.json",
     ],
 )
-def test_encrypted_vod_raises_early_encryption_error(monkeypatch, load_mock_response, fixture_name):
-    """encryptionType이 AES인 실응답이면 권한 유무와 무관하게 조기 안내해야 한다 (#55).
+def test_encrypted_vod_with_entitlement_takes_sea_path(
+    monkeypatch, load_mock_response, fixture_name
+):
+    """AES(SEA) 암호화 VOD는 권한이 있으면 SEA 경로로 조회된다 (#57).
 
-    실제 응답 픽스처를 network 파싱까지 그대로 통과시켜 전체 경로를 검증한다.
-    매니페스트 요청 없이 실패해야 하므로 get_video_dash_manifest 호출도 감시한다.
+    #55에서는 조기 거부했지만 SEA는 유저 본인 쿠키로 키를 받아 복호화할 수
+    있는 표준 세그먼트 암호화라 지원 대상이 됐다. 어댑터의 반환 계약(result
+    tuple)은 그대로여야 한다.
     """
     body = load_mock_response(fixture_name)
     monkeypatch.setattr(network._session, "get", lambda url, **kwargs: MockResponse(text=body))
-    manifest_calls = []
     monkeypatch.setattr(
         NetworkManager,
-        "get_video_dash_manifest",
-        lambda *args, **kwargs: manifest_calls.append(args),
+        "get_video_sea_manifest",
+        lambda *args, **kwargs: (
+            [[144, "https://example.invalid/media.m3u8"]],
+            144,
+            "https://example.invalid/media.m3u8",
+        ),
     )
 
     worker = _make_worker()
+    result = worker.fetchVideo("13714380")
 
-    with pytest.raises(ValueError, match="Encrypted content is not supported"):
+    assert result[0] == VOD_URL
+    assert result[4] == "https://example.invalid/media.m3u8"
+
+
+def test_encrypted_vod_without_entitlement_raises_membership_error(
+    monkeypatch, load_mock_response
+):
+    """암호화 VOD라도 권한이 없으면(inKey null) 멤버십 안내가 나와야 한다 (#57)."""
+    body = load_mock_response("video_member_only_13714380.json")
+    monkeypatch.setattr(network._session, "get", lambda url, **kwargs: MockResponse(text=body))
+
+    worker = _make_worker()
+
+    with pytest.raises(ValueError, match="Channel membership required"):
         worker.fetchVideo("13714380")
-    # 조기 감지: 매니페스트 요청까지 가지 않아야 한다
-    assert manifest_calls == []
 
 
 def test_member_only_without_in_key_raises_membership_error(monkeypatch):

@@ -1,5 +1,10 @@
 from download.state import DownloadState
 
+# 세그먼트 단위로 받는 타입 — 전체 크기를 미리 알 수 없어 진행률·표시가
+# 세그먼트 수 기반이다 (m3u8: 라이브 다시보기, hls_aes: AES 암호화 VOD #57)
+SEGMENT_BASED_TYPES = ("m3u8", "hls_aes")
+
+
 class ContentItem:
     # 메타데이터 카드 리스트 아이템 데이터(DTO)
 
@@ -35,6 +40,11 @@ class ContentItem:
         self.download_time = ""
 
         self.downloadState = DownloadState.WAITING  # 초기 상태
+
+    @property
+    def is_segment_based(self) -> bool:
+        """세그먼트 단위 다운로드 타입인지 (전체 크기 미상 → 표시 방식이 다르다)."""
+        return self.content_type in SEGMENT_BASED_TYPES
 
     def setDownloadState(self, state: DownloadState):
         if self.downloadState != state:

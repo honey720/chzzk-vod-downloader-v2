@@ -79,7 +79,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
 
         def update_button_text():
             try:
-                if self.item.content_type != "m3u8":
+                if not self.item.is_segment_based:
                     resp = get_thread_session().head(base_url)
                     resp.raise_for_status()
                     size = int(resp.headers.get('content-length', 0))
@@ -109,8 +109,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
                 button.setDisabled(True)
             self.item.resolution = resolution
             self.item.base_url = base_url
-            # m3u8인 경우, base_url과 total_size가 None이므로 처리하지 않음
-            if self.item.content_type != "m3u8" and index is not None:
+            # 세그먼트 기반(m3u8·hls_aes)은 total_size를 미리 알 수 없어 처리하지 않음
+            if not self.item.is_segment_based and index is not None:
                 self.item.total_size = self.item.unique_reps[index][-1]
                 self.fileSizeLabel.setText(f" {self.item.unique_reps[index][-1]}")
 
@@ -167,7 +167,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
 
         if self.item.downloadState == DownloadState.WAITING:
             self.statusLabel.setText(self.tr("Download waiting"))
-            if self.item.content_type == "m3u8":
+            if self.item.is_segment_based:
                 self.fileSizeLabel.setText(f" {strftime('%H:%M:%S', gmtime(item.duration))}")
             else:
                 self.fileSizeLabel.setText(f" {item.total_size}")
@@ -175,7 +175,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
 
         elif self.item.downloadState == DownloadState.RUNNING:
             self.statusLabel.setText(f"{item.download_remain_time}  {item.download_speed}")
-            if self.item.content_type == "m3u8":
+            if self.item.is_segment_based:
                 if self.item.post_process:
                     self.statusLabel.setText("Post-processing")
                 self.fileSizeLabel.setText(f"  {self.setSize(item.download_size)}")
@@ -185,7 +185,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
 
         elif self.item.downloadState == DownloadState.PAUSED:
             self.statusLabel.setText(self.tr("Download paused"))
-            if self.item.content_type == "m3u8":
+            if self.item.is_segment_based:
                 self.fileSizeLabel.setText(f"  {self.setSize(item.download_size)}")
             else:
                 self.fileSizeLabel.setText(f"  {self.setSize(item.download_size)} / {item.total_size}")

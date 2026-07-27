@@ -1,4 +1,4 @@
-"""m3u8 플레이리스트 URL 해석 — DownloadService 주입용 (#75, Qt 무의존).
+"""다운로드 시작 시점의 해석 콜러블 — DownloadService 주입용 (#75·#57, Qt 무의존).
 
 구 download/download_m3u8.py의 DownloadM3U8Thread._resolve_base_url을 함수로
 옮겼다. 쿠키 로드(config)·치지직 API 조회(NetworkManager)는 네트워크 계층이
@@ -14,6 +14,31 @@ from content.network import NetworkManager
 from core.models.content import Content
 
 
+def _load_cookies() -> dict:
+    """설정에 저장된 유저 본인의 쿠키를 읽는다 (미설정이면 빈 값)."""
+    data = config.load_config().get("cookies", {})
+    return {
+        "NID_AUT": data.get("NID_AUT", ""),
+        "NID_SES": data.get("NID_SES", ""),
+    }
+
+
+def resolve_aes_key(content: Content, key_uri: str) -> bytes:
+    """AES(SEA) 세그먼트 복호화 키를 취득한다 (#57).
+
+    다운로드 시작 시점(워커 스레드)에 호출된다 — 최신 쿠키를 반영한다.
+    유저 본인의 쿠키로 인증된 요청이며, 쿠키가 없거나 해당 컨텐츠 권한이
+    없으면 서버가 403으로 거절해 예외가 되고 다운로드는 실패한다.
+    앱은 권한을 만들어내지 않는다.
+
+    **키 값은 로그·예외 메시지에 싣지 않는다.**
+
+    Raises:
+        Exception: 키 취득 실패 (권한 없음·네트워크 등. 서비스가 실패 콜백으로 환원한다)
+    """
+    return NetworkManager.get_aes_key(key_uri, _load_cookies())
+
+
 def resolve_m3u8_base_url(content: Content) -> str:
     """쿠키를 읽고 치지직 API로 선택 해상도의 m3u8 플레이리스트 URL을 해석한다.
 
@@ -22,11 +47,7 @@ def resolve_m3u8_base_url(content: Content) -> str:
     Raises:
         Exception: 조회 실패 (네트워크·권한 등. 서비스가 실패 콜백으로 환원한다)
     """
-    data = config.load_config().get("cookies", {})
-    cookies = {
-        "NID_AUT": data.get("NID_AUT", ""),
-        "NID_SES": data.get("NID_SES", ""),
-    }
+    cookies = _load_cookies()
     content_type, content_no = NetworkManager.extract_content_no(content.url)
     info = NetworkManager.get_video_info(content_no, cookies)
     return NetworkManager.get_video_m3u8_base_url(

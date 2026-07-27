@@ -28,7 +28,7 @@ from core.models.events import ProgressEvent
 from core.services.download_service import DownloadService
 from download.data import DownloadData
 from download.logger import DownloadLogger
-from download.resolvers import resolve_m3u8_base_url
+from download.resolvers import resolve_aes_key, resolve_m3u8_base_url
 from download.task import DownloadTask
 
 
@@ -50,7 +50,9 @@ class QtDownloadBridge(QObject):
 
     def __init__(self, service: DownloadService | None = None, parent=None):
         super().__init__(parent)
-        self._service = service or DownloadService(base_url_resolver=resolve_m3u8_base_url)
+        self._service = service or DownloadService(
+            base_url_resolver=resolve_m3u8_base_url, key_resolver=resolve_aes_key
+        )
         self.handle = None
         self.task: DownloadTask | None = None
         self.item: ContentItem | None = None
@@ -118,11 +120,11 @@ class QtDownloadBridge(QObject):
         데이터·아이템을 클로저로 캡처해 제출 직후 첫 콜백과의 레이스를 없앤다.
         엔진 관측 스레드에서 호출되므로 계산과 Signal emit까지만 수행한다.
         """
-        is_m3u8 = item.content_type == "m3u8"
+        is_segment_based = item.is_segment_based
 
         def relay(event: ProgressEvent) -> None:
-            if is_m3u8:
-                args = _m3u8_progress_args(event, data, item)
+            if is_segment_based:
+                args = _segment_progress_args(event, data, item)
             else:
                 args = _file_progress_args(event)
             self.progress.emit(*args, item)
@@ -182,23 +184,23 @@ def _file_progress_args(event: ProgressEvent) -> tuple[str, str, str, int]:
     return remaining_time_str, str(event.downloaded_size), f"{speed_mb:.1f} MB/s", progress
 
 
-def _m3u8_progress_args(
+def _segment_progress_args(
     event: ProgressEvent, data: DownloadData, item: ContentItem
 ) -> tuple[str, str, str, int]:
-    """m3u8 진행 변환 — 계산식은 구 MonitorM3U8Thread.update_progress와 동일.
+    """세그먼트 기반(m3u8·hls_aes) 진행 변환 — 구 MonitorM3U8Thread.update_progress와 동일.
 
     전체 크기를 미리 알 수 없어 진행률은 세그먼트 수 기반이다. 병합 단계
     (item.post_process)에서는 병합된 세그먼트 수, 그 전에는 완료된 세그먼트 수를
     쓰고, 남은 시간은 평균 세그먼트 크기로 추정한다.
+
+    병합 분모는 m3u8이 초기화 세그먼트(EXT-X-MAP) 1개를 더 병합하므로 +1이고,
+    hls_aes(TS)는 초기화 세그먼트가 없어 세그먼트 수 그대로다 (#57).
     """
     speed_mb = event.speed or 0.0
+    merge_total = data.max_threads + (1 if item.content_type == "m3u8" else 0)
 
     if item.post_process:
-        progress = (
-            int((data.merged_segments / (data.max_threads + 1)) * 100)
-            if data.max_threads > 0
-            else 0
-        )
+        progress = int((data.merged_segments / merge_total) * 100) if merge_total > 0 else 0
     else:
         progress = (
             int((data.completed_threads / data.max_threads) * 100) if data.max_threads > 0 else 0

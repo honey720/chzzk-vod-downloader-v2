@@ -74,6 +74,9 @@ class BaseDownloader(ABC):
     worker_pool_prefix: str = "DownloadWorker"
     # 다운로드 시작 전 base_url 해석(resolver 주입·실행)이 필요한지 — 서비스가 참조
     requires_base_url_resolution: bool = False
+    # 복호화 키 리졸버 주입이 필요한지 — 서비스가 참조해 set_key_resolver를 호출한다 (#57).
+    # 키 취득은 유저 쿠키가 필요해 core가 직접 할 수 없다(core→app 의존 금지)
+    requires_key_resolution: bool = False
     # run()이 실패 콜백으로 환원할 예외 타입 — 그 외 예외는 전파한다
     _failure_exceptions: tuple[type[BaseException], ...] = (Exception,)
 
@@ -107,6 +110,8 @@ class BaseDownloader(ABC):
         self._on_finished: FinishedCallback = on_finished or (lambda: None)
         self._on_failed: FailedCallback = on_failed or (lambda exc: None)
         self._on_merge_start: Callable[[], None] = on_merge_start or (lambda: None)
+        # requires_key_resolution인 다운로더에 서비스가 주입한다 (#57)
+        self._key_resolver = None
 
     @property
     def state(self) -> DownloadState:
@@ -116,6 +121,14 @@ class BaseDownloader(ABC):
     def set_on_progress(self, callback: ProgressCallback) -> None:
         """진행 이벤트 콜백을 등록한다 (어댑터가 생성 후 연결하는 경우용)."""
         self._on_progress = callback
+
+    def set_key_resolver(self, resolver) -> None:
+        """복호화 키 리졸버를 등록한다 (requires_key_resolution인 다운로더용, #57).
+
+        리졸버는 ``(content, key_uri) -> bytes``다. 쿠키 로드·인증 요청은 앱
+        계층이 수행하며 core는 호출만 한다.
+        """
+        self._key_resolver = resolver
 
     # ============ 하위 다운로더의 책임 (추상) ============
 

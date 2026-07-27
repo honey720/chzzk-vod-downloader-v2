@@ -2,7 +2,7 @@ import re
 import json
 from urllib.parse import urljoin
 
-from core.api.dash import parse_dash_manifest
+from core.api.dash import is_supported_sea, parse_dash_manifest, parse_sea_manifest
 from core.api.url_parser import extract_content_no
 from core.models.content import VideoInfo
 
@@ -87,7 +87,40 @@ class NetworkManager:
         response.raise_for_status()
 
         return parse_dash_manifest(response.text)
-    
+
+    @staticmethod
+    def get_video_sea_manifest(video_id: str, in_key: str, cookies: dict | None = None):
+        """AES(SEA) 암호화 VOD의 매니페스트를 요청해 비디오 Representation을 파싱한다 (#57).
+
+        암호화 비디오 Representation은 BaseURL 없이 nvod:m3u(HLS 미디어
+        플레이리스트)만 가지므로 전용 파서를 쓴다. 지원 대상(AES-128-CBC +
+        HTTP 키 시스템)이 아니면 빈 결과를 돌려줘 호출부가 기존 "지원하지
+        않음" 안내로 떨어지게 한다 — 라이선스 서버형 DRM은 여기서 걸러진다.
+        """
+        manifest_url = f"{NAVER_API}/neonplayer/vodplay/v2/playback/{video_id}?key={in_key}"
+        headers = {"Accept": "application/dash+xml"}
+        response = _session.get(manifest_url, cookies=cookies, headers=headers)
+        response.raise_for_status()
+
+        if not is_supported_sea(response.text):
+            return [], None, None
+        return parse_sea_manifest(response.text)
+
+    @staticmethod
+    def get_aes_key(key_uri: str, cookies: dict) -> bytes:
+        """세그먼트 복호화 키를 취득한다 (#57).
+
+        유저 본인의 쿠키로 인증된 요청이며, 쿠키가 없거나 권한이 없으면
+        서버가 403으로 거절해 아무것도 받아지지 않는다(실측). 앱은 권한을
+        만들어내지 않는다.
+
+        **키 값은 로그·예외 메시지에 싣지 않는다.**
+        """
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = _session.get(key_uri, cookies=cookies, headers=headers, timeout=30)
+        response.raise_for_status()
+        return response.content
+
     @staticmethod
     def get_video_m3u8_manifest(json_str: str):
         """
