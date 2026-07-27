@@ -32,6 +32,9 @@ jobs:
       - name: Sync dependencies
         run: uv sync
 
+      - name: Verify ffmpeg (3-OS)
+        run: uv run pytest -q -k ffmpeg
+        
       - name: Verify version matches tag
         shell: bash
         run: |
