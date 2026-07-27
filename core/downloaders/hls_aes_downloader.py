@@ -191,38 +191,18 @@ class HlsAesDownloader(BaseDownloader):
     # ============ 후처리: 순서 보장 병합 ============
 
     def postprocess(self) -> None:
-        """복호화 세그먼트들을 순서대로 병합한 뒤 ffmpeg remux로 재포장한다 (#88).
+        """복호화 세그먼트들을 순서 그대로 ffmpeg stdin에 흘려 mp4로 재포장한다 (#88·#92).
 
         바이트 연결만으로는 MPEG-TS 스트림이 .mp4 이름으로 저장되는 컨테이너
         불일치에 더해, 라이브 원본 타임라인(시작 오프셋≠0)과 전역 인덱스
         부재가 그대로다 — m3u8(fMP4) 경로와 같은 제약이라 같은 처리를 한다.
-        remux가 실패하면 병합본(TS 바이트 연결)을 그대로 산출물로 옮긴다.
+        #92부터 중간 병합 파일 없이 단일 패스로 재포장하며, 실패 시 폴백
+        없이 명확히 실패하고 세그먼트를 보존한다 (규칙은 base의
+        _remux_streamed 참조).
         """
         self._on_merge_start()
-        # 병합본은 임시 폴더 안에 만든다 — 목록 스냅샷 이후에 생성하므로
-        # 병합 대상에 섞이지 않고, 실패·중단 정리 경로(temp_dir 삭제)에 덮인다
         segment_files = sorted(os.listdir(self.temp_dir))
-        merged_path = os.path.join(self.temp_dir, "_merged.part")
-        with open(merged_path, "wb") as final_f:
-            for seg_file in segment_files:
-                # 다운로드 중지 상태라면 중단
-                if self.state == DownloadState.RUNNING:
-                    seg_path = os.path.join(self.temp_dir, seg_file)
-                    with open(seg_path, "rb") as seg_f:
-                        while True:
-                            chunk = seg_f.read(8192)
-                            if not chunk:
-                                break
-                            final_f.write(chunk)
-                            # 일시정지 상태라면 대기
-                            if self.state == DownloadState.PAUSED:
-                                self.s._pause_event.wait()
-                    self.safe_remove(seg_path)
-                    self.s.merged_segments += 1
-        if self.state == DownloadState.WAITING:
-            # 중단 — 부분 산출물 정리는 run()의 중단 경로가 수행한다
-            return
-        self._remux_with_fallback(merged_path)
+        self._remux_streamed([os.path.join(self.temp_dir, f) for f in segment_files])
 
     # ============ 다운로드 동작 ============
 
@@ -307,14 +287,3 @@ class HlsAesDownloader(BaseDownloader):
         self._on_failed(exc)
         self.model.stop()
 
-    # ============ 유틸 ============
-
-    def safe_remove(self, path: str, retries: int = 5, delay: float = 0.2) -> None:
-        """파일 삭제 시도 (PermissionError 방지용 재시도 포함)."""
-        for _ in range(int(retries)):
-            try:
-                os.remove(path)
-                return
-            except PermissionError:  # [WinError 32]
-                tm.sleep(delay)
-        raise PermissionError(f"Failed to remove {path} after {retries} attempts")

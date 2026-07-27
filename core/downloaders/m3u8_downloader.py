@@ -13,8 +13,9 @@ m3u8 고유 부분만 남는다:
 - _prepare_output: 임시 폴더 재생성 + EXT-X-MAP 초기화 세그먼트 다운로드
 - _download_segment: 세그먼트 단위 다운로드 — 저속 재시도·일시정지·중단
   핸들링 포함. 규칙은 tests/unit/core/test_m3u8_downloader_rules.py가 박제한다
-- postprocess: 순서 보장 병합 + ffmpeg remux 재포장 (#88) — 시작은
-  on_merge_start 콜백으로 알리고, remux 실패 시 바이트 연결로 폴백한다
+- postprocess: 세그먼트를 인덱스 순서로 ffmpeg stdin에 흘리는 단일 패스
+  재포장 (#88·#92) — 시작은 on_merge_start 콜백으로 알리고, 실패 시 폴백
+  없이 명확히 실패한다 (세그먼트 보존)
 - 스레드 스케일링 기준 속도는 해상도별 테이블(_get_standard_speed)
 - 전체 크기를 미리 알 수 없어 ProgressEvent.total_size는 None이다.
   진행률 계산(세그먼트 수 기반)은 어댑터의 몫이다.
@@ -127,38 +128,16 @@ class M3U8Downloader(BaseDownloader):
     # ============ 후처리: 순서 보장 병합 (구 run의 (4)) ============
 
     def postprocess(self) -> None:
-        """세그먼트들을 인덱스 순서로 병합한 뒤 ffmpeg remux로 재포장한다 (#88).
+        """세그먼트들을 인덱스 순서 그대로 ffmpeg stdin에 흘려 mp4로 재포장한다 (#88·#92).
 
         바이트 연결만으로는 fMP4 조각 구조(전역 인덱스 없음·라이브 타임라인
-        보유)가 그대로라 편집 프로그램이 읽지 못한다. 병합본을 스트림 복사로
-        재포장하고, remux가 실패하면 병합본을 그대로 산출물로 옮긴다.
+        보유)가 그대로라 편집 프로그램이 읽지 못한다. #92부터 중간 병합 파일
+        없이 단일 패스로 재포장하며, 실패 시 폴백 없이 명확히 실패하고
+        세그먼트를 보존한다 (규칙은 base의 _remux_streamed 참조).
         """
         self._on_merge_start()
-        # 병합본은 임시 폴더 안에 만든다 — 목록 스냅샷 이후에 생성하므로
-        # 병합 대상에 섞이지 않고, 실패·중단 정리 경로(temp_dir 삭제)에 덮인다
         segment_files = sorted(os.listdir(self.temp_dir))
-        merged_path = os.path.join(self.temp_dir, "_merged.part")
-        with open(merged_path, "wb") as final_f:
-            for seg_file in segment_files:
-                # 다운로드 중지 상태라면 중단
-                if self.state == DownloadState.RUNNING:
-                    seg_path = os.path.join(self.temp_dir, seg_file)
-                    with open(seg_path, "rb") as seg_f:
-                        while True:
-                            chunk = seg_f.read(8192)
-                            if not chunk:
-                                break
-                            final_f.write(chunk)
-                            # 일시정지 상태라면 대기
-                            if self.state == DownloadState.PAUSED:
-                                self.s._pause_event.wait()
-                    # 세그먼트 파일 합친 후 삭제
-                    self.safe_remove(seg_path)
-                    self.s.merged_segments += 1
-        if self.state == DownloadState.WAITING:
-            # 중단 — 부분 산출물 정리는 run()의 중단 경로가 수행한다
-            return
-        self._remux_with_fallback(merged_path)
+        self._remux_streamed([os.path.join(self.temp_dir, f) for f in segment_files])
 
     # ============ 다운로드 동작 관련 메서드들 ============
 
@@ -233,16 +212,3 @@ class M3U8Downloader(BaseDownloader):
         else:
             return 3
 
-    # ============ 유틸 메서드 ============
-
-    def safe_remove(self, path: str, retries: int = 5, delay: float = 0.2) -> None:
-        """
-        파일 삭제 시도 (PermissionError 방지용 재시도 포함)
-        """
-        for _ in range(int(retries)):
-            try:
-                os.remove(path)
-                return
-            except PermissionError:  # [WinError 32]
-                tm.sleep(delay)
-        raise PermissionError(f"Failed to remove {path} after {retries} attempts")

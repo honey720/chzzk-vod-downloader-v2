@@ -8,7 +8,6 @@
 키 값은 테스트에서도 의미 없는 더미를 쓴다 — 실제 키는 어디에도 두지 않는다.
 """
 
-import shutil
 import threading
 
 import pytest
@@ -205,10 +204,15 @@ def _make_engine(tmp_path, monkeypatch, playlist=None, key_resolver=None):
     monkeypatch.setattr(
         aes_module, "get_thread_session", lambda: FakeSession(playlist or _playlist_text())
     )
-    # remux(#88)는 성공 시 스트림 복사 재포장이다 — 이 파일의 검증 대상은
-    # 복호화·병합(순서·바이트)이므로 파일 복사 스텁으로 대체한다.
+    # remux(#88·#92)는 성공 시 스트림 복사 재포장이다 — 이 파일의 검증 대상은
+    # 복호화·공급 순서·바이트이므로 받은 스트림을 그대로 쓰는 스텁으로 대체한다.
     # 실제 ffmpeg 실행은 test_ffmpeg_utils.py가 검증한다
-    monkeypatch.setattr(base_module, "remux", shutil.copyfile)
+    def _passthrough_remux_stream(chunks, dst_path):
+        with open(dst_path, "wb") as f:
+            for chunk in chunks:
+                f.write(chunk)
+
+    monkeypatch.setattr(base_module, "remux_stream", _passthrough_remux_stream)
 
     finished = threading.Event()
     failures: list[BaseException] = []
