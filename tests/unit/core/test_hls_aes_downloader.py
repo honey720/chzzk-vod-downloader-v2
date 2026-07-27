@@ -8,11 +8,13 @@
 키 값은 테스트에서도 의미 없는 더미를 쓴다 — 실제 키는 어디에도 두지 않는다.
 """
 
+import shutil
 import threading
 
 import pytest
 from Crypto.Cipher import AES
 
+import core.downloaders.base as base_module
 import core.downloaders.hls_aes_downloader as aes_module
 from core.api.dash import is_supported_sea, parse_sea_manifest
 from core.downloaders.decrypt import AES_BLOCK_SIZE, TS_PACKET_SIZE, sequence_iv
@@ -203,6 +205,10 @@ def _make_engine(tmp_path, monkeypatch, playlist=None, key_resolver=None):
     monkeypatch.setattr(
         aes_module, "get_thread_session", lambda: FakeSession(playlist or _playlist_text())
     )
+    # remux(#88)는 성공 시 스트림 복사 재포장이다 — 이 파일의 검증 대상은
+    # 복호화·병합(순서·바이트)이므로 파일 복사 스텁으로 대체한다.
+    # 실제 ffmpeg 실행은 test_ffmpeg_utils.py가 검증한다
+    monkeypatch.setattr(base_module, "remux", shutil.copyfile)
 
     finished = threading.Event()
     failures: list[BaseException] = []

@@ -10,9 +10,11 @@
 - 중단(stop): 결과 파일·임시 폴더 삭제, 완료 콜백 없음
 """
 
+import shutil
 import threading
 import time
 
+import core.downloaders.base as base_module
 import core.downloaders.m3u8_downloader as m3u8_module
 from core.downloaders.m3u8_downloader import M3U8Downloader
 from core.models.download_state import DownloadState
@@ -144,6 +146,10 @@ def _make_engine(tmp_path, monkeypatch, chunks_per_segment: int = 3, throttle: f
     logger = RunLogger()
     session = M3U8Session(chunks_per_segment, throttle)
     monkeypatch.setattr(m3u8_module, "get_thread_session", lambda: session)
+    # remux(#88)는 성공 시 스트림 복사 재포장이다 — 이 파일의 검증 대상은
+    # 병합(순서·바이트)이므로 파일 복사 스텁으로 대체해 가짜 세션과 같은 수준으로
+    # 히메틱하게 유지한다. 실제 ffmpeg 실행은 test_ffmpeg_utils.py가 검증한다
+    monkeypatch.setattr(base_module, "remux", shutil.copyfile)
 
     finished = threading.Event()
     failures: list[BaseException] = []
@@ -191,6 +197,31 @@ def test_run_merges_segments_in_index_order_byte_exact(tmp_path, monkeypatch):
     assert data.completed_threads == SEGMENT_COUNT  # 세그먼트 전부 정상 완료
     assert data.merged_segments == SEGMENT_COUNT + 1  # 초기화 세그먼트 포함 병합
     assert not (tmp_path / "CVDv2_temp").exists()  # 임시 폴더 삭제
+
+
+def test_remux_failure_falls_back_to_byte_concat(tmp_path, monkeypatch):
+    """remux가 실패하면 경고를 남기고 바이트 연결 병합본을 그대로 산출물로 쓴다 (#88)."""
+    engine, data, logger, output, finished, failures, merge_starts = _make_engine(
+        tmp_path, monkeypatch
+    )
+
+    def broken_remux(src, dst):
+        raise base_module.FFmpegError("가짜 remux 실패")
+
+    monkeypatch.setattr(base_module, "remux", broken_remux)
+
+    data.model.start()
+    thread = _run_in_thread(engine)
+    assert finished.wait(timeout=30), "완료 콜백이 호출되지 않았다"
+    thread.join(timeout=10)
+
+    # 폴백 산출물은 초기화+세그먼트 바이트 연결과 동일하다 (현행 수준 보장)
+    assert output.read_bytes() == _expected_output(chunks_per_segment=3)
+    assert len(logger.warnings) == 1  # 무음 실패 금지 — 폴백 경고 1건
+    assert "remux" in logger.warnings[0]
+    assert failures == []  # 폴백은 실패가 아니다
+    assert merge_starts == [True]
+    assert not (tmp_path / "CVDv2_temp").exists()  # 임시 폴더(병합본 포함) 삭제
 
 
 def test_pause_resume_then_complete(tmp_path, monkeypatch):

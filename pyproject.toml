@@ -4,6 +4,7 @@ version = "2.8.3"
 description = "Chzzk VOD Downloader v2"
 requires-python = ">=3.13"
 dependencies = [
+    "imageio-ffmpeg>=0.6.0",
     "pycryptodome>=3.20",
     "PySide6>=6.8.1.1",
     "requests>=2.32.5",

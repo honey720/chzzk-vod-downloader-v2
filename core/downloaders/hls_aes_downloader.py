@@ -191,10 +191,20 @@ class HlsAesDownloader(BaseDownloader):
     # ============ 후처리: 순서 보장 병합 ============
 
     def postprocess(self) -> None:
-        """복호화된 세그먼트 파일들을 인덱스 순서대로 결과 파일에 병합한다."""
+        """복호화 세그먼트들을 순서대로 병합한 뒤 ffmpeg remux로 재포장한다 (#88).
+
+        바이트 연결만으로는 MPEG-TS 스트림이 .mp4 이름으로 저장되는 컨테이너
+        불일치에 더해, 라이브 원본 타임라인(시작 오프셋≠0)과 전역 인덱스
+        부재가 그대로다 — m3u8(fMP4) 경로와 같은 제약이라 같은 처리를 한다.
+        remux가 실패하면 병합본(TS 바이트 연결)을 그대로 산출물로 옮긴다.
+        """
         self._on_merge_start()
-        with open(self.s.output_path, "wb") as final_f:
-            for seg_file in sorted(os.listdir(self.temp_dir)):
+        # 병합본은 임시 폴더 안에 만든다 — 목록 스냅샷 이후에 생성하므로
+        # 병합 대상에 섞이지 않고, 실패·중단 정리 경로(temp_dir 삭제)에 덮인다
+        segment_files = sorted(os.listdir(self.temp_dir))
+        merged_path = os.path.join(self.temp_dir, "_merged.part")
+        with open(merged_path, "wb") as final_f:
+            for seg_file in segment_files:
                 # 다운로드 중지 상태라면 중단
                 if self.state == DownloadState.RUNNING:
                     seg_path = os.path.join(self.temp_dir, seg_file)
@@ -209,6 +219,10 @@ class HlsAesDownloader(BaseDownloader):
                                 self.s._pause_event.wait()
                     self.safe_remove(seg_path)
                     self.s.merged_segments += 1
+        if self.state == DownloadState.WAITING:
+            # 중단 — 부분 산출물 정리는 run()의 중단 경로가 수행한다
+            return
+        self._remux_with_fallback(merged_path)
 
     # ============ 다운로드 동작 ============
 

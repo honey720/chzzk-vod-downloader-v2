@@ -104,6 +104,16 @@ uv run python main.py    # run the app
 
 ---
 
+## 📄 License
+
+- This program is distributed under the [GPL-3.0](LICENSE) license.
+- Distributions include an [FFmpeg](https://ffmpeg.org) executable used to remux merged segment outputs
+  — a GPL-build binary bundled by the pip package [imageio-ffmpeg](https://github.com/imageio/imageio-ffmpeg) (BSD-2-Clause).
+  FFmpeg is a product of the FFmpeg project; its source code is available from the
+  [official FFmpeg repository](https://github.com/FFmpeg/FFmpeg) and the respective build providers.
+
+---
+
 ## 📚 References
 - This project was developed with reference to [chzzk-vod-downloader](https://github.com/24802/chzzk-vod-downloader).
 

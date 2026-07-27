@@ -48,6 +48,7 @@ file(#73)·m3u8(#74) 엔진이 평행 중복으로 갖고 있던 실행 엔진�
 data·logger는 DownloadData/DownloadLogger 호환 객체를 주입받는다.
 """
 
+import os
 import threading
 import time as tm
 from abc import ABC, abstractmethod
@@ -63,6 +64,7 @@ from core.models.events import (
     ProgressEvent,
 )
 from core.models.plan import DownloadPlan
+from core.utils.ffmpeg import FFmpegError, remux
 
 
 class BaseDownloader(ABC):
@@ -175,6 +177,27 @@ class BaseDownloader(ABC):
 
         계획(DownloadPlan)의 requires_postprocess가 참일 때만 run()이 호출한다.
         """
+
+    def _remux_with_fallback(self, merged_path: str) -> None:
+        """병합본을 ffmpeg remux(스트림 복사)로 산출물에 재포장한다 (#88).
+
+        바이트 연결 병합본은 라이브 원본 타임라인을 그대로 보유하고 전역
+        인덱스가 없어 편집 프로그램이 읽지 못한다. remux가 실패하면 병합본을
+        그대로 산출물로 옮겨 최악의 경우에도 현행(바이트 연결) 수준을
+        보장한다 — 폴백 시 경고를 남기고, 무음으로 실패하지 않는다.
+
+        세그먼트 기반 postprocess()에서 병합 직후에 호출한다.
+        """
+        # 일시정지 중이면 재개를 기다린 뒤 remux를 시작한다 (세그먼트 병합과
+        # 같은 규칙). 시작된 remux는 원자적으로 끝까지 수행된다
+        if self.state == DownloadState.PAUSED:
+            self.s._pause_event.wait()
+        try:
+            remux(merged_path, self.s.output_path)
+            os.remove(merged_path)
+        except FFmpegError as e:
+            self.logger.warning(f"ffmpeg remux failed, falling back to byte concat: {e}")
+            os.replace(merged_path, self.s.output_path)
 
     def _initial_queue(self, items: list) -> list:
         """시작 시 작업 큐를 구성한다 (기본: 계획의 items 그대로)."""
