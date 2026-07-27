@@ -128,15 +128,14 @@ def remux_stream(chunks: Iterable[bytes], dst_path: str) -> None:
         proc.kill()
         proc.wait()
         reader.join(timeout=5)
+        _close_quietly(proc.stdin, proc.stderr)
         _remove_quietly(dst_path)
         raise
 
-    try:
-        proc.stdin.close()
-    except OSError:
-        pass
+    _close_quietly(proc.stdin)
     returncode = proc.wait()
     reader.join(timeout=5)
+    _close_quietly(proc.stderr)
 
     if returncode != 0:
         # 실패한 부분 산출물을 남기지 않는다 (#92 — 정상 파일로 오인 방지)
@@ -159,3 +158,12 @@ def _remove_quietly(path: str) -> None:
     """존재하면 삭제한다 (실패 정리 경로 전용 — 없어도 오류가 아니다)."""
     if os.path.exists(path):
         os.remove(path)
+
+
+def _close_quietly(*streams) -> None:
+    """프로세스 파이프를 닫는다 (이미 닫혔거나 깨진 파이프여도 오류가 아니다)."""
+    for stream in streams:
+        try:
+            stream.close()
+        except OSError:
+            pass

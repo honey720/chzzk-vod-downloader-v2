@@ -1,15 +1,21 @@
 """core/utils/ffmpeg.py·후처리 정책 검증 (#88·#92) — 경로 탐색·스트림 remux·실패 정책.
 
 remux 검증은 실제 ffmpeg 바이너리(imageio-ffmpeg 동봉)를 실행한다 — 입력은
-ffmpeg 내장 lavfi 소스로 즉석 생성한 초소형 MPEG-TS(스트리밍 컨테이너)라
-네트워크·외부 픽스처가 없다. 일시정지·중단은 ffmpeg가 stdin을 기다리며 멈춘
-실제 상태에서 검증한다(#92 완료 조건). 다운로더의 실패 정책(_remux_streamed:
-폴백 없음·세그먼트 보존)은 remux_stream을 스텁으로 바꿔 단위 수준에서 검증한다.
+ffmpeg 내장 lavfi 소스로 즉석 생성한 초소형 파일이라 네트워크·외부 픽스처가
+없다. 기본 입력은 fMP4(m3u8 경로와 동일 형식)다 — 리눅스 동봉 빌드
+(7.0.2-static)는 mpegts 입력 demux 전반이 SIGSEGV라(#94) TS 입력 검증은
+동봉 빌드 헬스체크를 통과하는 플랫폼에서만 수행한다.
+
+일시정지·중단은 ffmpeg가 stdin을 기다리며 멈춘 실제 상태에서 검증한다
+(#92 완료 조건). 다운로더의 실패 정책(_remux_streamed: 폴백 없음·세그먼트
+보존)은 remux_stream을 스텁으로 바꿔 단위 수준에서 검증한다.
 """
 
+import functools
 import os
 import struct
 import subprocess
+import tempfile
 import threading
 import time
 from types import SimpleNamespace
@@ -38,13 +44,11 @@ def _top_level_boxes(path) -> list[str]:
     return boxes
 
 
-def _make_tiny_ts(path) -> None:
-    """ffmpeg 내장 lavfi·libx264로 1초짜리 h264 MPEG-TS 입력을 만든다.
+def _generate(path, *container_args) -> None:
+    """lavfi 테스트 소스를 libx264로 인코딩해 초소형 검증 입력을 만든다.
 
-    h264-in-TS는 실제 hls_aes 경로의 입력과 동일한 조합이다. libx264는
-    imageio-ffmpeg 동봉 빌드(GPL)에 3-OS 모두 포함되어 있다. mpeg4-in-TS는
-    리눅스 동봉 빌드에서 파이프 입력 remux 시 segfault(exit -11)를 일으켜
-    쓰지 않는다 — 검증 대상은 인코딩이 아니라 remux다.
+    libx264는 imageio-ffmpeg 동봉 GPL 빌드 3-OS 모두에 포함되어 있고,
+    실제 치지직 스트림과 같은 코덱이다 — 검증 대상은 인코딩이 아니라 remux다.
     """
     subprocess.run(
         [
@@ -61,8 +65,7 @@ def _make_tiny_ts(path) -> None:
             "libx264",
             "-preset",
             "ultrafast",
-            "-f",
-            "mpegts",
+            *container_args,
             str(path),
         ],
         check=True,
@@ -70,20 +73,31 @@ def _make_tiny_ts(path) -> None:
     )
 
 
-def _split_segments(src, outdir, parts: int) -> list[str]:
-    """파일을 임의 바이트 경계로 잘라 세그먼트 파일 목록을 만든다.
+def _make_tiny_fmp4(path) -> None:
+    """1초짜리 h264 fMP4(조각 mp4) 입력 — m3u8 경로의 스트림과 동일 형식."""
+    _generate(path, "-movflags", "frag_keyframe+empty_moov", "-f", "mp4")
 
-    fMP4·TS는 바이트 연결이 곧 유효한 스트림이므로, 임의 분할 조각을
-    순서대로 공급하면 원본과 같은 스트림이 된다.
+
+def _make_tiny_ts(path) -> None:
+    """1초짜리 h264 MPEG-TS 입력 — hls_aes 경로의 스트림과 동일 형식."""
+    _generate(path, "-f", "mpegts")
+
+
+@functools.lru_cache(maxsize=1)
+def _bundled_ffmpeg_demuxes_ts() -> bool:
+    """동봉 ffmpeg가 mpegts 입력을 읽을 수 있는지 1회 검사한다.
+
+    리눅스 동봉 7.0.2-static은 mpegts demux 전반이 SIGSEGV다(#94) —
+    해당 플랫폼에서는 TS 입력 검증을 스킵하고, 빌드가 고쳐지면 자동 복귀한다.
     """
-    data = src.read_bytes()
-    step = len(data) // parts + 1
-    paths = []
-    for i in range(parts):
-        p = outdir / f"{i:04d}.ts"
-        p.write_bytes(data[i * step : (i + 1) * step])
-        paths.append(str(p))
-    return [p for p in paths if os.path.getsize(p)]
+    with tempfile.TemporaryDirectory() as d:
+        ts = os.path.join(d, "probe.ts")
+        _make_tiny_ts(ts)
+        proc = subprocess.run(
+            [get_ffmpeg_exe(), "-v", "error", "-i", ts, "-c", "copy", "-f", "null", "-"],
+            capture_output=True,
+        )
+        return proc.returncode == 0
 
 
 # ================================================================ 경로 탐색
@@ -101,9 +115,9 @@ def test_get_ffmpeg_exe_returns_existing_executable():
 
 def test_remux_stream_produces_mp4_with_leading_moov(tmp_path):
     """파이프 공급 산출물은 mp4이고 전역 인덱스(moov)가 mdat보다 앞에 있어야 한다."""
-    src = tmp_path / "src.ts"
+    src = tmp_path / "src.mp4"
     dst = tmp_path / "dst.mp4"
-    _make_tiny_ts(src)
+    _make_tiny_fmp4(src)
 
     remux_stream(read_in_chunks(str(src)), str(dst))
 
@@ -113,11 +127,29 @@ def test_remux_stream_produces_mp4_with_leading_moov(tmp_path):
     assert boxes.index("moov") < boxes.index("mdat")
 
 
+def test_remux_stream_ts_input_produces_mp4(tmp_path):
+    """TS 스트림(hls_aes 경로 형식)도 파이프 공급으로 mp4가 된다.
+
+    리눅스 동봉 빌드는 mpegts demux가 SIGSEGV라 스킵된다(#94) — 실제 치지직
+    TS의 remux 정합성은 #92 실측(AES 완주, #91 산출물과 해시 일치)이 담보한다.
+    """
+    if not _bundled_ffmpeg_demuxes_ts():
+        pytest.skip("동봉 ffmpeg 빌드가 mpegts 입력에서 SIGSEGV (#94)")
+    src = tmp_path / "src.ts"
+    dst = tmp_path / "dst.mp4"
+    _make_tiny_ts(src)
+
+    remux_stream(read_in_chunks(str(src)), str(dst))
+
+    boxes = _top_level_boxes(dst)
+    assert boxes.index("moov") < boxes.index("mdat")
+
+
 def test_remux_stream_writes_mp4_regardless_of_extension(tmp_path):
     """출력 컨테이너는 -f mp4로 명시된다 — 확장자가 .mp4가 아니어도 mp4다 (#92)."""
-    src = tmp_path / "src.ts"
+    src = tmp_path / "src.mp4"
     dst = tmp_path / "이름을 바꾼 산출물.mkv"
-    _make_tiny_ts(src)
+    _make_tiny_fmp4(src)
 
     remux_stream(read_in_chunks(str(src)), str(dst))
 
@@ -135,9 +167,9 @@ def test_remux_stream_invalid_input_raises_and_leaves_no_output(tmp_path):
 
 def test_remux_stream_feed_exception_propagates_and_cleans_output(tmp_path):
     """공급측 예외(중단 신호 등)는 그대로 전파되고 산출물은 남지 않는다."""
-    src = tmp_path / "src.ts"
+    src = tmp_path / "src.mp4"
     dst = tmp_path / "dst.mp4"
-    _make_tiny_ts(src)
+    _make_tiny_fmp4(src)
 
     class FeedAborted(Exception):
         pass
@@ -215,6 +247,22 @@ def test_streamed_success_feeds_in_order_and_counts_segments(tmp_path, monkeypat
 # ================================================================ 일시정지·중단 (실제 ffmpeg)
 
 
+def _split_segments(src, outdir, parts: int) -> list[str]:
+    """파일을 임의 바이트 경계로 잘라 세그먼트 파일 목록을 만든다.
+
+    fMP4·TS는 바이트 연결이 곧 유효한 스트림이므로, 임의 분할 조각을
+    순서대로 공급하면 원본과 같은 스트림이 된다.
+    """
+    data = src.read_bytes()
+    step = len(data) // parts + 1
+    paths = []
+    for i in range(parts):
+        p = outdir / f"{i:04d}.m4v"
+        p.write_bytes(data[i * step : (i + 1) * step])
+        paths.append(str(p))
+    return [p for p in paths if os.path.getsize(p)]
+
+
 def _run_streamed_in_thread(fake, paths):
     """_remux_streamed를 스레드로 실행하고 (스레드, 예외 수집 리스트)를 반환한다."""
     raised: list[BaseException] = []
@@ -232,8 +280,8 @@ def _run_streamed_in_thread(fake, paths):
 
 def test_pause_blocks_feed_then_resume_completes(tmp_path):
     """일시정지면 ffmpeg가 stdin을 기다리며 멈추고, 재개하면 완주한다 (#92)."""
-    src = tmp_path / "src.ts"
-    _make_tiny_ts(src)
+    src = tmp_path / "src.mp4"
+    _make_tiny_fmp4(src)
     segdir = tmp_path / "segs"
     segdir.mkdir()
     paths = _split_segments(src, segdir, parts=3)
@@ -266,8 +314,8 @@ def test_stop_while_paused_kills_ffmpeg_and_leaves_no_output(tmp_path):
     중단 시 세그먼트·임시 폴더 삭제는 엔진(run)의 중단 정리 몫이므로
     _remux_streamed 자신은 아무것도 지우지 않아야 한다.
     """
-    src = tmp_path / "src.ts"
-    _make_tiny_ts(src)
+    src = tmp_path / "src.mp4"
+    _make_tiny_fmp4(src)
     segdir = tmp_path / "segs"
     segdir.mkdir()
     paths = _split_segments(src, segdir, parts=3)
