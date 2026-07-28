@@ -5,6 +5,8 @@
   파싱 자체의 박제 테스트는 tests/unit/core/test_dash.py로 이전했다 (#51).
 """
 
+import json
+
 import pytest
 
 import content.network as network
@@ -162,6 +164,22 @@ class TestGetVideoInfo:
         assert info.membership_benefit_type == "MEMBER_ONLY"
         assert info.encryption_type == "AES"
         assert info.metadata["duration"] == 10925
+
+    def test_title_is_sanitized_for_filenames(self, monkeypatch):
+        """제목의 금지 문자·ASCII 제어 문자는 조회 단계에서 제거된다 (#105).
+
+        정제는 core/utils/paths.py의 sanitize_filename에 위임한다 — 산출물
+        경로 조립(build_output_path)의 방어 정제와 항상 같은 집합을 쓴다.
+        """
+        body = json.dumps({"content": {"videoTitle": "탭\t금지:문자*제어\r문자?"}})
+
+        monkeypatch.setattr(
+            network._session, "get", lambda url, **kwargs: MockResponse(text=body)
+        )
+
+        info = NetworkManager.get_video_info("1", {})
+
+        assert info.metadata["title"] == "탭금지문자제어문자"
 
 
 class TestGetVideoM3u8BaseUrl:

@@ -18,10 +18,11 @@ import hashlib
 import os
 import re
 
-# Windows에서 파일명에 쓸 수 없는 문자 + 개행 (content/network.py의 제목 정제와 동일 집합).
-# 제목은 조회 단계에서 이미 정제되지만, core를 직접 쓰는 경로(헤드리스·다른 UI)가
-# 정제를 빠뜨려도 안전하도록 여기서도 방어한다.
-_INVALID_FILENAME_CHARS = re.compile(r'[\\/:\*\?"<>|\n]')
+# Windows에서 파일명에 쓸 수 없는 문자 + ASCII 제어 문자 전체(0x00–0x1F, 개행 포함).
+# Windows는 제어 문자가 든 파일명 생성을 거부한다(EINVAL). 조회 단계
+# (content/network.py)의 제목 정제도 이 함수를 쓰지만, core를 직접 쓰는 경로
+# (헤드리스·다른 UI)가 정제를 빠뜨려도 안전하도록 여기서도 방어한다.
+_INVALID_FILENAME_CHARS = re.compile(r'[\\/:\*\?"<>|\x00-\x1f]')
 
 # Windows 예약 장치명 — 이름 시작이 예약어이고 바로 뒤가 끝·점·공백이면 방어한다.
 # 이 앱의 파일명은 항상 " {해상도}p.mp4"가 뒤에 붙어 이름 전체가 예약어와 일치할 수는
@@ -33,6 +34,12 @@ _RESERVED_DEVICE_NAMES = re.compile(r"(?i)^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])
 # 산출물 전체 경로 길이 상한 — Windows 기본 MAX_PATH(260)에서 중복 회피
 # 접미사 " (n)"과 임시 폴더 접두사("CVDv2_temp_") 여유분을 뺀 값
 _MAX_FULLPATH = 240
+
+# 파일명(구성요소 하나)의 UTF-8 바이트 길이 상한 — POSIX 파일시스템(ext4 등)의
+# 구성요소 제한 255바이트에서 " (n)"·임시 폴더 접두사(11바이트) 여유분을 뺀 값.
+# 한글은 UTF-8로 3바이트라 문자 수 상한(_MAX_FULLPATH)만으로는 리눅스에서
+# ENAMETOOLONG이 날 수 있다 (헤드리스 스크립트·CI가 리눅스에서 돈다)
+_MAX_FILENAME_BYTES = 240
 
 
 def sanitize_filename(name: str) -> str:
@@ -61,26 +68,36 @@ def build_output_path(directory: str, title: str, resolution: int) -> str:
     """산출물 전체 경로를 조립한다 — 정제·길이 제한·중복 회피 포함.
 
     파일명 형식은 기존과 동일한 `{제목} {해상도}p.mp4`이고, 같은 이름이
-    이미 있을 때만 " (n)"이 붙는다. 전체 경로가 상한을 넘으면 제목 부분만
-    잘라 맞추되(해상도 접미사·확장자 보존), 원제목의 해시 6자리를 함께
-    붙인다 — 앞부분이 같은 긴 제목들이 절단 후 동일해져 " (n)"만으로
-    구분되는(식별성 저하) 사태를 막기 위함이다. 끝 점·공백 문제는 이름
-    끝에 항상 접미사가 붙는 구조라 발생하지 않는다(제목의 점은 이름
-    중간에 놓인다).
+    이미 있을 때만 " (n)"이 붙는다. 전체 경로 문자 수 또는 파일명 바이트
+    수가 상한을 넘으면 제목 부분만 잘라 맞추되(해상도 접미사·확장자 보존),
+    원제목의 해시 6자리를 함께 붙인다 — 앞부분이 같은 긴 제목들이 절단 후
+    동일해져 " (n)"만으로 구분되는(식별성 저하) 사태를 막기 위함이다.
+    끝 점·공백 문제는 이름 끝에 항상 접미사가 붙는 구조라 발생하지
+    않는다(제목의 점은 이름 중간에 놓인다).
     """
     safe_title = sanitize_filename(str(title)) or "video"
     if _RESERVED_DEVICE_NAMES.match(safe_title):
         safe_title = "_" + safe_title
     suffix = f" {resolution}p.mp4"
     candidate = os.path.join(directory, safe_title + suffix)
-    overflow = len(candidate) - _MAX_FULLPATH
-    if overflow > 0:
+    # 상한 둘을 함께 지킨다: 전체 경로 문자 수(Windows MAX_PATH 대비)와
+    # 파일명 구성요소의 UTF-8 바이트 수(POSIX 255바이트 대비)
+    over_chars = len(candidate) - _MAX_FULLPATH
+    over_bytes = len((safe_title + suffix).encode("utf-8")) - _MAX_FILENAME_BYTES
+    if over_chars > 0 or over_bytes > 0:
         # 절단 표식 " ~{해시6}" — 같은 원제목이면 같은 이름(결정적),
-        # 다른 원제목이면 절단 후에도 서로 다른 이름이 된다
+        # 다른 원제목이면 절단 후에도 서로 다른 이름이 된다.
+        # 문자·바이트 어느 쪽 절단이든 동일하게 붙는다
         digest = hashlib.sha1(safe_title.encode("utf-8")).hexdigest()[:6]
         marker = f" ~{digest}"
-        keep = max(1, len(safe_title) - overflow - len(marker))
-        candidate = os.path.join(directory, safe_title[:keep].rstrip() + marker + suffix)
+        keep = max(1, len(safe_title) - over_chars - len(marker))
+        clipped = safe_title[:keep]
+        # 바이트 예산으로 한 번 더 자른다 — UTF-8 바이트열을 자른 뒤 디코드에서
+        # 깨진 꼬리 시퀀스를 버리는 방식이라 문자 경계(한글 3바이트·이모지
+        # 4바이트)가 깨지지 않는다. 문자 절단만 일어난 경우엔 no-op이다
+        byte_budget = _MAX_FILENAME_BYTES - len((marker + suffix).encode("utf-8"))
+        clipped = clipped.encode("utf-8")[:byte_budget].decode("utf-8", "ignore")
+        candidate = os.path.join(directory, clipped.rstrip() + marker + suffix)
     return ensure_unique_path(candidate)
 
 

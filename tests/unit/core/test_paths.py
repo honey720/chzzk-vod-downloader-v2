@@ -71,8 +71,23 @@ def test_sequential_same_title_downloads_keep_both_files(tmp_path):
 
 
 def test_sanitize_filename_strips_windows_invalid_chars():
-    """Windows 금지 문자와 개행이 제거된다 — content/network.py 정제와 동일 집합."""
+    """Windows 금지 문자와 개행이 제거된다 — content/network.py 정제가 이 함수를 쓴다."""
     assert sanitize_filename('a\\b/c:d*e?f"g<h>i|j\nk') == "abcdefghijk"
+
+
+def test_sanitize_filename_strips_all_ascii_control_chars():
+    """감사 보강 1: 0x00–0x1F 제어 문자 전체가 제거된다 (Windows는 생성 자체를 거부)."""
+    assert sanitize_filename("a\rb\tc\x00d\x1fe") == "abcde"
+    assert sanitize_filename("".join(chr(c) for c in range(0x20)) + "제목") == "제목"
+
+
+def test_build_output_path_with_control_chars_creates_real_file(tmp_path):
+    """제어 문자가 든 제목도 실제 파일 생성까지 통과한다."""
+    result = build_output_path(str(tmp_path), "탭\t과 캐리지\r리턴", 1080)
+    assert os.path.basename(result) == "탭과 캐리지리턴 1080p.mp4"
+    with open(result, "wb") as f:
+        f.write(b"x")
+    assert os.path.exists(result)
 
 
 def test_build_output_path_sanitizes_title(tmp_path):
@@ -114,6 +129,47 @@ def test_truncated_title_is_deterministic(tmp_path):
     assert build_output_path(str(tmp_path), title, 1080) == build_output_path(
         str(tmp_path), title, 1080
     )
+
+
+def test_filename_respects_posix_byte_limit(tmp_path):
+    """감사 보강 2: 문자 수 상한 안쪽이어도 파일명 UTF-8 바이트가 240을 넘지 않는다.
+
+    한글 150자 제목은 문자 수로는 짧지만 UTF-8로 450바이트라, ext4 등
+    POSIX 파일시스템의 구성요소 255바이트 제한에 걸린다 (ENAMETOOLONG).
+    """
+    result = build_output_path(str(tmp_path), "한" * 150, 1080)
+    basename = os.path.basename(result)
+    assert len(basename.encode("utf-8")) <= 240
+    assert " ~" in basename  # 바이트 절단에도 해시 표식이 동일하게 붙는다
+    assert basename.endswith(" 1080p.mp4")
+    with open(result, "wb") as f:  # 실제 파일 생성까지 통과 (리눅스 CI에서 실검증)
+        f.write(b"x")
+    assert os.path.exists(result)
+
+
+def test_byte_truncation_keeps_character_boundary(tmp_path):
+    """바이트 절단은 문자 경계를 깨지 않는다 — 한글 3바이트·이모지 4바이트."""
+    for title in ("한" * 150, "🎮" * 100, "한🎮" * 70):
+        result = build_output_path(str(tmp_path), title, 1080)
+        basename = os.path.basename(result)
+        assert len(basename.encode("utf-8")) <= 240
+        # 절단된 제목 부분이 원제목의 온전한 접두어다 — 깨진 문자가 있으면 실패한다
+        clipped = basename.rsplit(" ~", 1)[0]
+        assert title.startswith(clipped)
+
+
+def test_byte_truncated_titles_with_same_prefix_stay_distinct(tmp_path):
+    """바이트 절단으로 앞부분이 같아진 제목들도 해시 표식으로 갈라진다."""
+    a = build_output_path(str(tmp_path), "한" * 150 + "일회차", 1080)
+    b = build_output_path(str(tmp_path), "한" * 150 + "이회차", 1080)
+    assert a != b  # 파일을 만들지 않아도 서로 다른 경로
+
+
+def test_byte_limit_covers_temp_dir_name(tmp_path):
+    """임시 폴더 이름(stem + 접두사 11바이트)도 255바이트 안에 들어온다."""
+    result = build_output_path(str(tmp_path), "한" * 150, 1080)
+    temp_name = os.path.basename(temp_dir_for(result))
+    assert len(temp_name.encode("utf-8")) <= 255
 
 
 # ================================================================ Windows 예약어·끝 점
