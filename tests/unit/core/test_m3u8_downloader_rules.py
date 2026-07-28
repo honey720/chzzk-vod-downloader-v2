@@ -67,7 +67,7 @@ def _make_data(resolution: int = 1080, output_path: str = "unused.mp4") -> Downl
 
 
 def _make_scaler(data: DownloadData, logger: RecordingLogger):
-    """스케일링 규칙(_adjust_threads/measure_speed/_get_standard_speed) 보유 객체를 만든다.
+    """스케일링 규칙(_adjust_threads/measure_speed) 보유 객체를 만든다.
 
     이주 전: download.monitor_m3u8.MonitorM3U8Thread / 이주 후: core M3U8Downloader.
     반환 객체는 adjust_count 속성과 세 메서드를 노출해야 한다.
@@ -94,157 +94,262 @@ def _engine_module():
     return mod
 
 
-# ================================================================ 해상도별 기준 속도
+# ================================================================ 스레드 조정 (#112 — 총 처리량 등반)
+#
+# 구 규칙(스레드당 평균 속도 vs 해상도별 기준 테이블)의 박제는 #112로 폐기했다.
+# 근거: (1) 치지직은 연결당 처리량을 제한해(144p 연결당 ~0.95 MB/s, 총량은
+# 스레드 수에 선형) 스레드당 속도는 줄일 신호가 아니고, (2) 평균의 분모였던
+# 순간 활성 수는 세그먼트가 잘게 쪼개진 저해상도에서 빈 슬롯을 '저속'으로
+# 오판해 4→2→1 붕괴를 일으켰다. 새 신호는 총 처리량의 실제 증감이다.
 
 
-@pytest.mark.parametrize(
-    ("resolution", "standard"),
-    [(144, 0.2), (360, 0.5), (480, 0.5), (720, 1.2), (1080, 3), (1440, 3)],
-)
-def test_standard_speed_table(resolution, standard):
-    """기준 속도는 해상도별 고정 테이블을 따른다 (그 외 해상도는 3 MB/s)."""
-    data, logger = _make_data(resolution=resolution), RecordingLogger()
-    scaler = _make_scaler(data, logger)
-
-    assert scaler._get_standard_speed() == pytest.approx(standard)
-
-
-def test_same_speed_judged_by_resolution_band():
-    """같은 평균 속도라도 해상도 기준에 따라 증가/감소 방향이 갈린다."""
-    # 평균 1.3 MB/s: 720p(기준 1.2)에서는 증가 방향
-    data, logger = _make_data(resolution=720), RecordingLogger()
-    scaler = _make_scaler(data, logger)
-    data.future_count = 2
-    data.speed_mb = 2.6
+def _tick(scaler, data, speed: float) -> None:
+    """1초 관측 틱을 흉내 낸다 — 측정된 총 처리량 반영 후 조정 1회."""
+    data.speed_mb = speed
     scaler._adjust_threads()
-    assert scaler.adjust_count == 1
 
-    # 1080p(기준 3, 하한 1.5)에서는 같은 1.3 MB/s가 감소 방향
-    data, logger = _make_data(resolution=1080), RecordingLogger()
+
+def test_warmup_without_measurement_does_nothing():
+    """첫 유효 측정 전(속도 0)에는 조정하지 않는다 — 시작 직후 오판 방지."""
+    data, logger = _make_data(), RecordingLogger()
     scaler = _make_scaler(data, logger)
-    data.future_count = 2
-    data.speed_mb = 2.6
-    scaler._adjust_threads()
-    assert scaler.adjust_count == -1
+
+    _tick(scaler, data, 0.0)
+
+    assert data.adjust_threads == 4
+    assert logger.adjust_calls == []
 
 
-# ================================================================ 스레드 증가/감소
-
-
-def test_fast_two_ticks_increase_threads_by_4():
-    """평균 > 기준(1080p: 3 MB/s) 틱 2회 → adjust_count 2(>1) → 스레드 +4, 카운터 리셋."""
+def test_first_valid_tick_probes_up_by_4():
+    """첫 유효 측정에서 +4 탐침을 시작한다 (구 규칙의 +4 보폭 유지)."""
     data, logger = _make_data(), RecordingLogger()
     data.max_threads = 6996
     scaler = _make_scaler(data, logger)
 
-    data.future_count = 4
-    data.speed_mb = 20.0  # 평균 5 MB/s
-    scaler._adjust_threads()
-    assert (scaler.adjust_count, data.adjust_threads) == (1, 4)  # 1틱으로는 불변
+    _tick(scaler, data, 3.9)
 
-    scaler._adjust_threads()
     assert data.adjust_threads == 8
-    assert scaler.adjust_count == 0
-    assert logger.adjust_calls == [(8, 20.0)]
+    assert logger.adjust_calls == [(8, 3.9)]
 
 
-def test_increase_is_capped_at_max_threads():
-    """증가 시 상한은 max_threads(세그먼트 수)다."""
+def test_settle_ticks_after_change_skip_decision():
+    """조정 직후 2틱은 판단을 쉰다 — 새 연결 램프업이 섞인 측정으로 판단하지 않는다."""
     data, logger = _make_data(), RecordingLogger()
-    data.max_threads = 10
-    data.adjust_threads = 8
+    data.max_threads = 6996
     scaler = _make_scaler(data, logger)
 
-    data.future_count = 8
-    data.speed_mb = 40.0  # 평균 5 MB/s
-    scaler._adjust_threads()
-    scaler._adjust_threads()
+    _tick(scaler, data, 3.9)  # 4→8
+    _tick(scaler, data, 100.0)  # settle 1 — 무시된다
+    _tick(scaler, data, 100.0)  # settle 2 — 무시된다
+
+    assert data.adjust_threads == 8
+    assert logger.adjust_calls == [(8, 3.9)]
+
+
+def test_climbs_to_cap_while_throughput_scales_linearly():
+    """총 처리량이 선형으로 느는 동안 +4 계단으로 상한(48)까지 등반한다.
+
+    #112 실측 재현: 144p 연결당 ~0.95 MB/s 선형 구간. 계단 모양(+4)은
+    구 규칙의 1080p 정상 궤적(4→8→…→48)과 동일해야 한다 (회귀 금지 조건).
+    """
+    data, logger = _make_data(), RecordingLogger()
+    data.max_threads = 6996
+    scaler = _make_scaler(data, logger)
+
+    for _ in range(40):  # settle 틱 포함 여유 있는 반복
+        _tick(scaler, data, data.adjust_threads * 0.95)
+
+    assert data.adjust_threads == 48
+    targets = [call[0] for call in logger.adjust_calls]
+    assert targets == [8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48]  # +4 계단
+
+
+def test_cap_respects_max_threads():
+    """상한은 min(max_threads, 48)이다 — 세그먼트가 적으면 그 수가 상한."""
+    data, logger = _make_data(), RecordingLogger()
+    data.max_threads = 10
+    scaler = _make_scaler(data, logger)
+
+    for _ in range(10):
+        _tick(scaler, data, data.adjust_threads * 0.95)
 
     assert data.adjust_threads == 10  # 8+4=12가 아니라 상한 10
 
 
-def test_slow_five_ticks_halve_threads():
-    """평균 < 기준/2(1080p: 1.5 MB/s) 틱 5회 → adjust_count -5(<-4) → 스레드 절반, 카운터 리셋."""
+def test_reverts_and_holds_when_raise_does_not_increase_throughput():
+    """인상해도 총 처리량이 늘지 않으면 되물리고 그 지점을 상한으로 정체한다.
+
+    서버가 총량 기준으로 제한하는 구간에서는 스레드를 늘려도 이득이 없다 —
+    이때 연결 수를 아끼는 것이 (d) 규명 결과에 맞는 동작이다.
+    """
     data, logger = _make_data(), RecordingLogger()
     data.max_threads = 6996
-    data.adjust_threads = 8
     scaler = _make_scaler(data, logger)
 
-    data.future_count = 8
-    data.speed_mb = 8.0  # 평균 1 MB/s
-    for _ in range(4):
-        scaler._adjust_threads()
-    assert data.adjust_threads == 8  # 4틱까지는 불변 (-4는 경계 미달)
+    _tick(scaler, data, 5.0)  # 4→8 (기준 5.0)
+    _tick(scaler, data, 5.0)  # settle 1
+    _tick(scaler, data, 5.0)  # settle 2
+    _tick(scaler, data, 5.2)  # 요구치(5.0×1.125=5.625) 미달 → 8→4 되물림 + 정체
 
-    scaler._adjust_threads()
     assert data.adjust_threads == 4
-    assert scaler.adjust_count == 0
-    assert logger.adjust_calls == [(4, 8.0)]
+    assert logger.adjust_calls == [(8, 5.0), (4, 5.2)]
+
+    for _ in range(5):  # 정체 중 같은 속도로는 더 조정하지 않는다
+        _tick(scaler, data, 5.0)
+    assert data.adjust_threads == 4
+
+
+def test_growth_requirement_scales_with_target():
+    """유효 판정 요구 증가폭은 인상 전 목표에 비례한다.
+
+    고정 비율(+10% 등)은 목표가 커질수록 선형 이득(+4/n)보다 커져 정상
+    등반을 막는다 — 목표 40→44 인상의 선형 이득(+9.5%, 38.0→41.8)은
+    고정 +10%로는 기각되지만 비례 요구치(38×1.0125=38.475)로는 유효다.
+    등반 중간 상태는 시나리오로 만들기 길어 직접 세팅한다.
+    """
+    data, logger = _make_data(), RecordingLogger()
+    data.max_threads = 6996
+    data.adjust_threads = 44
+    scaler = _make_scaler(data, logger)
+    scaler._reference_speed = 38.0  # 목표 40이 내던 총 처리량 (40×0.95)
+    scaler._reference_target = 40
+
+    _tick(scaler, data, 41.8)  # 44×0.95 — 선형 이득. 요구치 38.475 초과
+
+    assert data.adjust_threads == 48  # 인상 유효 → 계속 등반
+
+
+def test_sustained_collapse_halves_after_five_ticks():
+    """정체 기준의 절반 미만이 5틱 지속되면 절반으로 줄인다 (관성은 구 규칙과 동일)."""
+    data, logger = _make_data(), RecordingLogger()
+    data.max_threads = 6996
+    scaler = _make_scaler(data, logger)
+
+    _tick(scaler, data, 5.0)  # 4→8
+    _tick(scaler, data, 9.0)  # settle 1
+    _tick(scaler, data, 9.0)  # settle 2
+    _tick(scaler, data, 9.0)  # 요구치(5.0×1.125) 초과 → 8→12 (기준 9.0)
+    _tick(scaler, data, 9.2)  # settle 1
+    _tick(scaler, data, 9.2)  # settle 2
+    _tick(scaler, data, 9.2)  # 요구치(9.0×1.0417=9.375) 미달 → 12→8 되물림 + 정체 (기준 9.2)
+    assert data.adjust_threads == 8
+
+    for _ in range(4):  # 기준의 절반(4.6) 미만 4틱 — 아직 불변
+        _tick(scaler, data, 4.0)
+    assert data.adjust_threads == 8
+
+    _tick(scaler, data, 4.0)  # 5틱째 — 절반으로
+    assert data.adjust_threads == 4
+    assert logger.adjust_calls[-1] == (4, 4.0)
 
 
 def test_halving_floor_is_one_thread():
-    """감소 시 하한은 1스레드다."""
-    data, logger = _make_data(), RecordingLogger()
-    data.adjust_threads = 1
-    scaler = _make_scaler(data, logger)
+    """처리량 하락이 이어지면 절반씩 1까지 내려가고, 그 밑으로는 내려가지 않는다.
 
-    data.future_count = 1
-    data.speed_mb = 0.5
-    for _ in range(5):
-        scaler._adjust_threads()
-
-    assert data.adjust_threads == 1
-
-
-def test_middle_band_decays_adjust_count_toward_zero():
-    """중간 대역(1080p: 1.5~3 MB/s)은 누적 카운터를 0으로 1씩 되돌린다 (히스테리시스)."""
+    절반 감소 후에는 그 시점 처리량이 새 기준이 된다 — 추가 감소는 기준
+    대비 또다시 절반 미만으로 떨어졌을 때만 일어난다(연쇄 자동 붕괴 방지).
+    """
     data, logger = _make_data(), RecordingLogger()
     data.max_threads = 6996
     scaler = _make_scaler(data, logger)
 
-    data.future_count = 4
-    data.speed_mb = 20.0  # 평균 5 → +1
-    scaler._adjust_threads()
-    assert scaler.adjust_count == 1
+    _tick(scaler, data, 5.0)  # 4→8
+    _tick(scaler, data, 5.0)  # settle 1
+    _tick(scaler, data, 5.0)  # settle 2
+    _tick(scaler, data, 5.0)  # 요구치 미달 → 되물림 → 4 정체 (기준 5.0)
+    assert data.adjust_threads == 4
 
-    data.speed_mb = 8.0  # 평균 2 → 감쇠 -1
-    scaler._adjust_threads()
-    assert scaler.adjust_count == 0
+    for _ in range(7):  # 기준(5.0)의 절반 미만 지속 → 4→2 (새 기준 2.0)
+        _tick(scaler, data, 2.0)
+    assert data.adjust_threads == 2
+
+    for _ in range(7):  # 또 절반 미만으로 하락 → 2→1
+        _tick(scaler, data, 0.9)
+    assert data.adjust_threads == 1
+
+    for _ in range(10):  # 더 하락해도 1 밑으로는 내려가지 않는다
+        _tick(scaler, data, 0.1)
+    assert data.adjust_threads == 1
+
+
+def test_collapse_counter_decays_on_stable_tick():
+    """붕괴 카운터는 안정 틱에서 0으로 1씩 되돌아간다 (히스테리시스 유지)."""
+    data, logger = _make_data(), RecordingLogger()
+    data.max_threads = 6996
+    scaler = _make_scaler(data, logger)
+
+    _tick(scaler, data, 5.0)  # 4→8
+    _tick(scaler, data, 5.0)  # settle 1
+    _tick(scaler, data, 5.0)  # settle 2
+    _tick(scaler, data, 5.0)  # 되물림 → 4 정체 (기준 5.0)
+
+    for _ in range(3):  # 붕괴 방향 3틱
+        _tick(scaler, data, 2.0)
+    assert scaler.adjust_count == -3
+
+    _tick(scaler, data, 5.0)  # 안정 틱 — 감쇠
+    assert scaler.adjust_count == -2
     assert data.adjust_threads == 4  # 임계 미달로 불변
 
-    data.speed_mb = 4.0  # 평균 1 → -1
-    scaler._adjust_threads()
-    assert scaler.adjust_count == -1
-    data.speed_mb = 8.0  # 평균 2 → 감쇠 +1
-    scaler._adjust_threads()
-    assert scaler.adjust_count == 0
 
+def test_hold_resumes_climbing_on_recovery():
+    """정체 기준보다 +30% 넘게 빨라지면 등반을 재개한다 (경합 해소 등 상황 변화).
 
-def test_band_boundaries_are_exclusive():
-    """경계값(기준·기준/2)은 중간 대역이다 (초과/미만 판정)."""
+    임계 30%는 링크 포화 구간의 처리량 노이즈(±15% 실측)로 인한 정체↔등반
+    진동을 막기 위한 값이다 — 노이즈 범위 안의 출렁임으로는 재개하지 않는다.
+    """
     data, logger = _make_data(), RecordingLogger()
+    data.max_threads = 6996
     scaler = _make_scaler(data, logger)
 
-    data.future_count = 2
-    data.speed_mb = 6.0  # 평균 정확히 3 → 증가 아님
-    scaler._adjust_threads()
-    assert scaler.adjust_count == 0
+    _tick(scaler, data, 5.0)  # 4→8
+    _tick(scaler, data, 5.0)  # settle 1
+    _tick(scaler, data, 5.0)  # settle 2
+    _tick(scaler, data, 5.0)  # 되물림 → 4 정체 (기준 5.0)
+    assert data.adjust_threads == 4
 
-    data.speed_mb = 3.0  # 평균 정확히 1.5 → 감소 아님
-    scaler._adjust_threads()
-    assert scaler.adjust_count == 0
+    _tick(scaler, data, 5.6)  # +12% — 노이즈 범위, 재개하지 않는다
+    assert data.adjust_threads == 4
+
+    _tick(scaler, data, 7.0)  # 기준×1.3(6.5+) 초과 — 재개 신호
+    _tick(scaler, data, 7.0)  # 등반 재개: +4 탐침
+
+    assert data.adjust_threads == 8
 
 
-def test_zero_active_threads_counts_as_slow_tick():
-    """활성 스레드 0이면 평균 0으로 간주되어 감소 방향 틱이다 (병합 꼬리 구간의 동력)."""
+def test_reprobe_after_fifteen_stall_ticks():
+    """정체가 15틱 이어지면 +4 재탐침한다 — 서버 상황 변화를 놓치지 않기 위함."""
     data, logger = _make_data(), RecordingLogger()
+    data.max_threads = 6996
     scaler = _make_scaler(data, logger)
 
-    data.future_count = 0
-    data.speed_mb = 10.0
-    scaler._adjust_threads()
+    _tick(scaler, data, 5.0)  # 4→8
+    _tick(scaler, data, 5.0)  # settle 1
+    _tick(scaler, data, 5.0)  # settle 2
+    _tick(scaler, data, 5.0)  # 되물림 → 4 정체
+    assert data.adjust_threads == 4
 
-    assert scaler.adjust_count == -1
+    for _ in range(15):  # 안정 정체 15틱
+        _tick(scaler, data, 5.0)
+    _tick(scaler, data, 5.0)  # 재탐침 틱
+
+    assert data.adjust_threads == 8
+
+
+def test_zero_active_sample_is_not_a_slow_signal():
+    """관측 순간 활성 0이어도 총 처리량이 신호다 — 구 규칙 붕괴 원인의 반전 박제 (#112).
+
+    구 규칙은 활성 0 표본을 평균 0(저속)으로 간주해, 세그먼트가 잘게 쪼개진
+    저해상도에서 실제 4.7 MB/s로 받는 중에도 4→2→1로 붕괴시켰다.
+    """
+    data, logger = _make_data(), RecordingLogger()
+    data.max_threads = 6996
+    scaler = _make_scaler(data, logger)
+
+    data.future_count = 0  # 빈 슬롯 순간에 관측됐다
+    _tick(scaler, data, 3.9)
+
+    assert data.adjust_threads == 8  # 감소가 아니라 정상 탐침
 
 
 # ================================================================ 속도 계산

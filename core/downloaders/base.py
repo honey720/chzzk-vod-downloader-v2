@@ -27,8 +27,6 @@ file(#73)·m3u8(#74) 엔진이 평행 중복으로 갖고 있던 실행 엔진�
   requires_postprocess가 참일 때만 run()이 호출한다 (#83)
 - ``_initial_queue(items)``: 시작 시 작업 큐 구성 (기본: 목록 그대로)
 - ``_cleanup_after_run()``: 정상 경로 종료 후 정리 (기본 no-op)
-- ``_get_standard_speed()``: 스레드 스케일링 기준 속도 (기본 4 MB/s — 구 파일
-  엔진의 고정 임계 4/2와 동일. m3u8은 해상도별 테이블로 오버라이드)
 - ``_progress_total_size()``: ProgressEvent.total_size (기본: 전체 크기,
   m3u8은 미리 알 수 없어 None)
 - 클래스 속성: ``run_thread_name``(서비스 워커 스레드 이름),
@@ -68,6 +66,27 @@ from core.models.events import (
 )
 from core.models.plan import DownloadPlan
 from core.utils.ffmpeg import FFmpegError, read_in_chunks, remux_stream
+
+
+# ============ 스레드 조정 상수 (#112 — 총 처리량 등반 규칙) ============
+# 판단 신호는 "목표를 올렸을 때 총 처리량이 실제로 늘었는가"다.
+# 근거·실측은 _adjust_threads docstring 참조.
+_CLIMB_STEP = 4  # 한 번에 올리는 목표 스레드 수 (구 규칙의 +4 보폭 유지)
+_TARGET_CAP = 48  # 목표 스레드 상한 — 구 규칙에서 실측된 정점 수준 (서버 부하 상한)
+# 인상 유효 판정: 선형 기대 이득(step/target)의 최소 이 비율이 실측돼야 한다.
+# 낮게 잡는 이유 — 1080p 실측에서 4→8이 +32%, 8→12가 +7%처럼 선형 미만이어도
+# 실질 이득인 준선형 구간이 있다. 과등반은 상한(_TARGET_CAP)이 막고,
+# 미달 등반(최적 이하에서 멈춤)은 곧바로 처리량 손실이라 이쪽을 더 경계한다
+_GROWTH_EFFICIENCY = 0.125
+_SETTLE_TICKS = 2  # 조정 직후 판단을 쉬는 틱 수 — 새 연결 램프업이 측정을 오염시킨다
+_COLLAPSE_RATIO = 0.50  # 붕괴 판정: 정체 기준 총 처리량의 절반 미만
+# 자연 회복 판정 임계 — 실측상 링크 포화 구간의 처리량 노이즈가 ±15% 수준이라
+# (1080p 실측 80~113 MB/s), 10%로 두면 정체↔등반 진동이 생긴다. 기준 자체도
+# 단일 표본이 아니라 지수이동평균으로 평활한다 (_HOLD_EMA_ALPHA)
+_RECOVERY_RATIO = 1.30
+_HOLD_EMA_ALPHA = 0.2  # 정체 기준의 지수이동평균 가중치 (안정 틱에서만 갱신)
+_COLLAPSE_TICKS = 5  # 감소 확정에 필요한 연속 틱 수 (구 규칙과 동일한 관성)
+_REPROBE_TICKS = 15  # 정체 상태에서 재탐침까지의 틱 수
 
 
 class PostprocessError(Exception):
@@ -131,6 +150,14 @@ class BaseDownloader(ABC):
         self._monitor_stop = threading.Event()
         # 전송 중 관측된 정점 동시 스레드 수 — 전송 종료 요약 로그용 (#110)
         self._peak_threads = 0
+        # 총 처리량 등반 상태 (#112) — 판단 규칙은 _adjust_threads 참조
+        self._reference_speed: float | None = None  # 직전 인상 직전의 총 처리량
+        self._reference_target = 0  # 직전 인상 직전의 목표 스레드 수
+        self._reference_step = _CLIMB_STEP  # 직전 인상의 실제 폭 (상한 직전엔 +4 미만)
+        self._hold_reference: float | None = None  # 정체 구간의 기준 총 처리량
+        self._at_ceiling = False  # 상한 도달(정체) 여부
+        self._settle_ticks = 0  # 조정 직후 판단을 쉬는 틱 수
+        self._stall_ticks = 0  # 정체 지속 틱 수 (재탐침 타이머)
         self._on_progress: ProgressCallback = on_progress or (lambda event: None)
         self._on_finished: FinishedCallback = on_finished or (lambda: None)
         self._on_failed: FailedCallback = on_failed or (lambda exc: None)
@@ -263,10 +290,6 @@ class BaseDownloader(ABC):
 
     def _cleanup_after_run(self) -> None:
         """정상 경로(비예외) 종료 후 정리 (기본 no-op). m3u8은 임시 폴더를 지운다."""
-
-    def _get_standard_speed(self) -> float:
-        """스레드 스케일링 기준 속도(MB/s). 기본 4 — 구 파일 엔진의 고정 임계와 동일."""
-        return 4.0
 
     def _progress_total_size(self) -> int | None:
         """ProgressEvent에 실을 전체 크기. 미리 알 수 없는 다운로더는 None."""
@@ -491,41 +514,118 @@ class BaseDownloader(ABC):
                 elapsed += interval
 
     def _adjust_threads(self):
+        """총 처리량 등반으로 목표 스레드 수를 조정한다 (#112).
+
+        판단 신호는 "목표를 올렸을 때 총 처리량(speed_mb)이 실제로
+        늘었는가"다. 늘면 계속 올리고(+4), 늘지 않으면 직전 인상을 되물리고
+        그 지점을 상한으로 정체한다. 정체 중 처리량이 절반 미만으로 지속
+        하락하면 절반으로 줄이고, 주기적으로 재탐침한다.
+
+        구 규칙(스레드당 평균 속도 vs 해상도별 기준)을 버린 이유 (#112 실측):
+        - 치지직은 연결당 처리량을 제한한다(144p 연결당 ~0.95 MB/s). 총량은
+          스레드 수에 선형(4→3.85, 8→7.64, 16→15.06, 32→29.57 MB/s)이라
+          "스레드당 속도가 낮으면 줄인다"는 총 처리량만 떨어뜨린다 — 방향이
+          반대다
+        - 평균의 분모가 관측 순간의 활성 수(future_count)였다. 세그먼트가
+          잘게 쪼개진 저해상도에서는 빈 슬롯 순간(활성 0)이 '저속'으로
+          오판돼 실제 4.7 MB/s로 받는 중에도 4→2→1로 붕괴했다(로그 실측).
+          총 처리량은 활성 수와 무관해 이 오판이 구조적으로 사라진다
         """
-        다운로드 진행 중, 속도 등에 따라 스레드 수를 동적으로 조정한다.
+        total_speed = self.s.speed_mb
 
-        기준 속도(_get_standard_speed) 초과 틱이 쌓이면 +4, 기준/2 미만 틱이
-        쌓이면 절반으로. 중간 대역은 카운터를 0으로 감쇠한다 (히스테리시스).
-        """
-        with self.lock:
-            future_count = self.s.future_count
+        if self._settle_ticks > 0:
+            # 조정 직후의 측정은 이전 목표 구간과 섞여 있다 — 한 틱 쉰다
+            self._settle_ticks -= 1
+            return
+        if self._reference_speed is None and self._hold_reference is None and total_speed <= 0:
+            return  # 시작 직후 첫 유효 측정 전 — 판단 근거가 없다
 
-        avg_active_speed = self.s.speed_mb / future_count if future_count > 0 else 0
-
-        standard_speed = self._get_standard_speed()
-
-        if avg_active_speed > standard_speed:
-            self.adjust_count += 1
-        elif avg_active_speed < standard_speed / 2:
-            self.adjust_count -= 1
+        if self._at_ceiling:
+            self._hold(total_speed)
         else:
-            if self.adjust_count > 0:
-                self.adjust_count -= 1
-            elif self.adjust_count < 0:
-                self.adjust_count += 1
+            self._climb(total_speed)
 
-        if self.adjust_count > 1:
-            self.s.adjust_threads = min(self.s.max_threads, self.s.adjust_threads + 4)
-            self.logger.log_thread_adjust(
-                self.s.adjust_threads, self.s.speed_mb
-            )  # 스레드 조정 로그
-            self.adjust_count = 0
-        elif self.adjust_count < -4:
-            self.s.adjust_threads = max(1, self.s.adjust_threads // 2)
-            self.logger.log_thread_adjust(
-                self.s.adjust_threads, self.s.speed_mb
-            )  # 스레드 조정 로그
-            self.adjust_count = 0
+    def _climb(self, total_speed: float) -> None:
+        """등반 단계: 직전 인상이 유효했으면 +4 계속, 아니면 되물리고 정체 전환.
+
+        유효 판정은 "인상분이 선형 기대 이득의 최소 일부(_GROWTH_EFFICIENCY)로
+        총 처리량에 반영됐는가"다 — 고정 비율(예: +10%)은 목표가 커질수록
+        선형 이득(+4/n)보다 커져 정상 등반을 막기 때문에, 요구 증가폭을
+        인상 전 목표에 비례시킨다.
+        """
+        if self._reference_speed is not None:
+            # 상한 직전의 부분 인상(+4 미만)도 실제 인상 폭 기준으로 판정한다
+            required = self._reference_speed * (
+                1 + _GROWTH_EFFICIENCY * self._reference_step / self._reference_target
+            )
+            if total_speed <= required:
+                # 직전 인상이 총 처리량을 늘리지 못했다 — 여기가 상한이다.
+                # 효과 없던 인상분은 정확히 되물려 연결 수를 아낀다.
+                # 정체 기준은 두 표본 중 큰 쪽 — 인상 직전의 낮은 표본을
+                # 기준으로 삼으면 노이즈 상단이 '회복'으로 오판돼 진동한다
+                self.s.adjust_threads = self._reference_target
+                self._enter_hold(max(self._reference_speed, total_speed))
+                self.logger.log_thread_adjust(self.s.adjust_threads, total_speed)
+                return
+
+        cap = min(self.s.max_threads, _TARGET_CAP)
+        if self.s.adjust_threads >= cap:
+            self._enter_hold(total_speed)
+            return
+
+        self._reference_speed = total_speed
+        self._reference_target = self.s.adjust_threads
+        new_target = min(cap, self.s.adjust_threads + _CLIMB_STEP)
+        self._reference_step = new_target - self.s.adjust_threads
+        self.s.adjust_threads = new_target
+        self._settle_ticks = _SETTLE_TICKS
+        self.logger.log_thread_adjust(self.s.adjust_threads, total_speed)
+
+    def _hold(self, total_speed: float) -> None:
+        """정체 단계: 붕괴 감시(지속 하락 시 절반)·자연 회복 감지·주기 재탐침."""
+        self._stall_ticks += 1
+
+        if total_speed < self._hold_reference * _COLLAPSE_RATIO:
+            self.adjust_count -= 1
+            if self.adjust_count <= -_COLLAPSE_TICKS:
+                # 처리량이 기준의 절반 미만으로 지속 하락(네트워크·서버 악화).
+                # 하락한 처리량이 새 기준이 된다 — 추가 감소는 또다시 절반
+                # 미만으로 떨어졌을 때만 일어난다 (연쇄 자동 붕괴 방지)
+                halved = max(1, self.s.adjust_threads // 2)
+                if halved != self.s.adjust_threads:
+                    self.s.adjust_threads = halved
+                    self._settle_ticks = _SETTLE_TICKS
+                    self.logger.log_thread_adjust(halved, total_speed)
+                self._hold_reference = total_speed
+                self.adjust_count = 0
+                self._stall_ticks = 0
+            return
+
+        if total_speed > self._hold_reference * _RECOVERY_RATIO:
+            # 정체 기준보다 뚜렷이 빨라졌다(경합 해소 등) — 등반 재개
+            self._resume_climb()
+            return
+
+        # 안정 대역 — 기준을 평활 갱신하고(노이즈 내성), 감소 카운터 감쇠,
+        # 주기 재탐침
+        self._hold_reference += _HOLD_EMA_ALPHA * (total_speed - self._hold_reference)
+        if self.adjust_count < 0:
+            self.adjust_count += 1
+        if self._stall_ticks >= _REPROBE_TICKS:
+            self._resume_climb()
+
+    def _enter_hold(self, reference_speed: float) -> None:
+        """정체 상태로 전환한다 — reference_speed가 붕괴·회복 판단 기준이 된다."""
+        self._at_ceiling = True
+        self._hold_reference = reference_speed
+        self._stall_ticks = 0
+        self.adjust_count = 0
+
+    def _resume_climb(self) -> None:
+        """등반을 재개한다 — 다음 틱에 한 칸 탐침부터 다시 시작한다."""
+        self._at_ceiling = False
+        self._reference_speed = None
+        self.adjust_count = 0
 
     def measure_speed(self):
         """직전 틱 대비 다운로드 바이트 증가량으로 속도(MB/s)를 계산한다."""

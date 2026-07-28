@@ -16,7 +16,6 @@ m3u8 고유 부분만 남는다:
 - postprocess: 세그먼트를 인덱스 순서로 ffmpeg stdin에 흘리는 단일 패스
   재포장 (#88·#92) — 시작은 on_merge_start 콜백으로 알리고, 실패 시 폴백
   없이 명확히 실패한다 (세그먼트 보존)
-- 스레드 스케일링 기준 속도는 해상도별 테이블(_get_standard_speed)
 - 전체 크기를 미리 알 수 없어 ProgressEvent.total_size는 None이다.
   진행률 계산(세그먼트 수 기반)은 어댑터의 몫이다.
 """
@@ -199,18 +198,4 @@ class M3U8Downloader(BaseDownloader):
                 self.logger.log_error(f"Part {part_num} download failed", e)
                 return part_num
 
-    # ============ 스레드 스케일링 기준 (해상도별) ============
-
-    def _get_standard_speed(self) -> float:
-        """
-        해상도에 따른 표준 속도 값을 반환합니다.
-        """
-        if self.s.resolution == 144:
-            return 0.2
-        elif self.s.resolution in [360, 480]:
-            return 0.5
-        elif self.s.resolution == 720:
-            return 1.2
-        else:
-            return 3
 
