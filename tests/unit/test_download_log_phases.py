@@ -5,7 +5,6 @@
 새 줄의 메시지 형식과 요약 스크립트 패턴이 어긋나면 여기서 잡힌다.
 """
 
-import re
 import tomllib
 from pathlib import Path
 from types import SimpleNamespace
@@ -36,20 +35,31 @@ def _stub_item() -> SimpleNamespace:
     )
 
 
-def test_get_app_version_is_available():
-    """소스 실행에서 앱 버전이 해석된다 — pyproject 정본과 같은 버전 계열이어야 한다.
-
-    importlib.metadata는 버전을 정규화하므로(예: 2.9.0-rc1 → 2.9.0rc1)
-    문자열 완전 일치가 아니라 "기본 버전(major.minor.patch) 일치"로 비교한다.
-    """
+def _pyproject_version() -> str:
+    """정본(pyproject.toml)의 버전 문자열."""
     root = Path(config_module.__file__).resolve().parent.parent
     with open(root / "pyproject.toml", "rb") as f:
-        expected = tomllib.load(f)["project"]["version"]
+        return tomllib.load(f)["project"]["version"]
 
-    version = config_module.get_app_version()
-    assert version != "unknown"
-    base = re.match(r"\d+\.\d+\.\d+", version)
-    assert base and expected.startswith(base.group(0))
+
+def test_get_app_version_matches_pyproject_exactly():
+    """소스 실행의 앱 버전은 정본(pyproject) 문자열과 정확히 일치한다 (#116).
+
+    구 구현의 importlib.metadata는 버전을 정규화해(2.9.0-rc1 → 2.9.0rc1)
+    정본과 어긋났다 — 이제 pyproject 직접 읽기라 완전 일치를 요구한다.
+    """
+    config_module.get_app_version.cache_clear()
+    assert config_module.get_app_version() == _pyproject_version()
+
+
+def test_version_mirror_constant_matches_pyproject():
+    """미러 상수(APP_VERSION)는 정본(pyproject)과 정확히 일치해야 한다 (#116).
+
+    Nuitka 빌드 실행 파일에는 pyproject.toml이 없어 이 상수가 쓰인다.
+    이 테스트가 실패하면 버전 인상 시 config/config.py의 APP_VERSION을
+    함께 갱신하지 않은 것이다 — 배포 빌드가 다시 틀린 버전을 기록하게 된다.
+    """
+    assert config_module.APP_VERSION == _pyproject_version()
 
 
 def test_phase_lines_parse_and_old_lines_still_parse(tmp_path, monkeypatch):
