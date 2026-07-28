@@ -323,4 +323,4 @@ def test_run_downloads_decrypts_and_merges_in_order(tmp_path, monkeypatch):
     assert data.completed_threads == SEGMENT_COUNT
     # TS 경로에는 초기화 세그먼트가 없어 병합 수 = 세그먼트 수다
     assert data.merged_segments == SEGMENT_COUNT
-    assert not (tmp_path / "CVDv2_temp").exists()  # 임시 폴더 삭제
+    assert not (tmp_path / "CVDv2_temp_out").exists()  # 임시 폴더 삭제 (#105 산출물 파생 이름)

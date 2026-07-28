@@ -7,6 +7,7 @@ from content.delegate import ContentListDelegate
 from content.data import ContentItem
 from download.state import DownloadState
 from content.worker import ContentWorker
+from core.utils.paths import build_output_path, ensure_unique_path
 
 class ContentManager(QObject):
     # 메타데이터 매니저 UI
@@ -96,13 +97,11 @@ class ContentManager(QObject):
         해상도 버튼 클릭 시 다운로드 진행.
         """
         if item:
-            title = item.title
-            resolution = item.resolution
-            default_filename = f"{title} {resolution}p.mp4"
+            # 조립·중복 회피는 core가 단일 지점으로 담당한다 — 같은 제목이
+            # 이미 있으면 " (n)"이 붙은 새 경로를 받는다 (#105)
+            item.output_path = build_output_path(item.download_path, item.title, item.resolution)
         else:
-            default_filename = "video.mp4"
-
-        item.output_path = os.path.join(item.download_path, default_filename)
+            item.output_path = ensure_unique_path(os.path.join(item.download_path, "video.mp4"))
 
         if item.output_path:
             # 다운로드 요청 시그널 발행
