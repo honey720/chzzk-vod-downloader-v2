@@ -8,7 +8,9 @@ core/downloaders/base.py의 BaseDownloader로 이주했다(#82). 이 클래스�
   (ranges.py 사용)을 DownloadPlan으로 반환한다 (#83). 총 크기를 미리 알므로
   계획의 total_size를 채우고, ProgressEvent.total_size로 이어진다
 - _download_part: 파트(바이트 구간) 단위 다운로드 — 저속 재시도·일시정지·
-  중단 핸들링 포함. 규칙은 tests/unit/core/test_file_downloader_rules.py가 박제한다
+  중단 핸들링 포함. 재큐잉된 파트는 이미 받은 바이트 뒤에서 Range로
+  이어받는다(#78 — 206이 아니면 처음부터 폴백). 규칙은
+  tests/unit/core/test_file_downloader_rules.py가 박제한다
 - postprocess 없음 (베이스 기본 no-op)
 
 스레드 스케일링 기준 속도는 베이스 기본값(4 MB/s — 구 고정 임계 4/2와 동일)을
@@ -39,6 +41,12 @@ class FileDownloader(BaseDownloader):
     worker_pool_prefix = "DownloadWorker"
     # 구 코드와 동일하게 요청 예외만 실패로 처리한다 — 그 외 예외는 전파
     _failure_exceptions = (requests.RequestException,)
+
+    def __init__(self, data, logger, **callbacks):
+        super().__init__(data, logger, **callbacks)
+        # 재큐잉된 파트가 이미 받아 쓴 바이트 수 — 재시도가 이어받는다 (#78).
+        # (start, end) → 산출물에 쓰인 바이트 수. 완료·폴백 시 지운다
+        self._part_progress: dict[tuple[int, int], int] = {}
 
     @classmethod
     def supports(cls, content: Content) -> bool:
@@ -91,21 +99,38 @@ class FileDownloader(BaseDownloader):
         """
         파일의 특정 구간(start~end)을 다운로드하는 함수.
         속도가 느릴 경우 재시도 로직, 일시정지/중지 핸들링을 포함한다.
+
+        재큐잉된 파트는 이미 받아 쓴 바이트 뒤에서 Range로 이어받는다 (#78).
+        서버가 이어받기 Range를 존중하지 않으면(206이 아니면) 파트 처음부터
+        다시 받는 폴백을 탄다. 판정 규칙(저속·실패 재큐잉)은 무변경이다.
         """
         slow_count = 0
+        resume_offset = self._resume_offset(start, end)
         downloaded_size = 0
         while not self.state == DownloadState.WAITING:
             try:
-                headers = {"Range": f"bytes={start}-{end}"}
+                range_start = start + resume_offset
+                headers = {"Range": f"bytes={range_start}-{end}"}
                 # 스레드로컬 세션으로 같은 워커의 반복 요청 간 연결을 재사용한다 (#31)
                 response = get_thread_session().get(
                     self.s.base_url, headers=headers, stream=True, timeout=30
                 )
                 response.raise_for_status()
+                if resume_offset > 0 and response.status_code != 206:
+                    # 이어받기 Range가 거부됐다(200 전체 응답 등) — 기록을 버리고
+                    # 파트 처음부터 받는다 (#78 폴백)
+                    self.logger.warning(
+                        f"Part {part_num} resume rejected "
+                        f"(status {response.status_code}), retrying from start"
+                    )
+                    response.close()
+                    self._part_progress.pop((start, end), None)
+                    resume_offset = 0
+                    continue
                 part_start_time = tm.time()
 
                 with open(self.s.output_path, "r+b") as f:
-                    f.seek(start)
+                    f.seek(range_start)
                     for chunk in response.iter_content(chunk_size=8192):
                         if self.state == DownloadState.WAITING:
                             return part_num
@@ -118,36 +143,71 @@ class FileDownloader(BaseDownloader):
                             elapsed = tm.time() - part_start_time
 
                             if elapsed > 0:
+                                # 속도 판정은 이번 시도가 받은 바이트 기준,
+                                # 진행 표시는 이어받은 바이트를 포함한다 (#78)
                                 speed_kb_s = downloaded_size / elapsed / 1024
                                 self._check_speed_and_update_progress(
-                                    part_num, downloaded_size, total_size, speed_kb_s
+                                    part_num,
+                                    resume_offset + downloaded_size,
+                                    total_size,
+                                    speed_kb_s,
                                 )
                                 if speed_kb_s < 100:
                                     slow_count += 1
                                     if slow_count > 5:
                                         # 속도가 너무 느리면 스레드 재시작
                                         with self.lock:
+                                            self._record_partial(
+                                                start, end, resume_offset + downloaded_size
+                                            )
                                             self._requeue_slow((start, end), part_num)
                                         return part_num
                                 else:
                                     slow_count = 0
 
-                            if downloaded_size >= (end - start + 1):
+                            if downloaded_size >= (end - range_start + 1):
                                 break
 
                 # 성공적으로 마무리된 경우
                 with self.lock:
                     self.s.completed_threads += 1
-                    self.s.completed_progress += downloaded_size
+                    self.s.completed_progress += resume_offset + downloaded_size
                     self.s.threads_progress[part_num] = 0
-                self.logger.log_thread_complete(part_num, downloaded_size)
+                self._part_progress.pop((start, end), None)
+                self.logger.log_thread_complete(part_num, resume_offset + downloaded_size)
                 return part_num
 
             except (requests.RequestException, requests.Timeout) as e:
                 with self.lock:
+                    self._record_partial(start, end, resume_offset + downloaded_size)
                     self._requeue_failed((start, end), part_num)
                 self.logger.log_error(f"Part {part_num} download failed", e)
                 return part_num
+
+    def _record_partial(self, start: int, end: int, downloaded: int) -> None:
+        """재큐잉 직전까지 산출물에 받아 쓴 바이트 수를 기록한다 (#78)."""
+        if downloaded > 0:
+            self._part_progress[(start, end)] = downloaded
+        else:
+            self._part_progress.pop((start, end), None)
+
+    def _resume_offset(self, start: int, end: int) -> int:
+        """파트의 이어받기 오프셋을 반환한다. 확신이 없으면 0(처음부터)이다 (#78).
+
+        무결성 확인: 산출물 파일이 기록된 오프셋(start+기록)까지는 실제로
+        자라 있어야 한다 — 못 미치면 쓰기가 유실된 것이므로 기록을 버린다.
+        """
+        recorded = self._part_progress.get((start, end), 0)
+        if recorded <= 0:
+            return 0
+        try:
+            file_size = os.path.getsize(self.s.output_path)
+        except OSError:
+            file_size = -1
+        if file_size < start + recorded:
+            self._part_progress.pop((start, end), None)
+            return 0
+        return recorded
 
     # ============ 유틸 메서드 ============
 
