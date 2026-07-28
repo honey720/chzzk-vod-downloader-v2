@@ -101,6 +101,8 @@ class DownloadLogger:
             self.logger.critical(message)
     
     def log_download_info(self, item: ContentItem):
+        # 앱 버전을 시작 정보 블록 첫 줄에 남긴다 (#110 — 제보 분석·버전 간 비교용)
+        self.info(f"app_version: {config.get_app_version()}")
         self.info(f"content_type: {item.content_type}")
         self.info(f"title: {item.title}")
         self.info(f"channel_name: {item.channel_name}")
@@ -136,8 +138,47 @@ class DownloadLogger:
         self.debug(f"Progress: {progress:.2f}% - {total_downloaded}/{total_size} bytes - Speed: {speed:.2f} MB/s")
 
     def log_download_complete(self, total_time: float):
-        """다운로드 완료 정보를 로깅합니다."""
+        """다운로드 완료 정보를 로깅합니다.
+
+        주의: total_time은 전송+후처리를 합친 전체 시간이다. 줄 형식은
+        요약 스크립트(scripts/summarize_download_log.py)의 파싱 계약이라
+        바꾸지 않는다 — 구간 구분은 #110의 새 줄들이 담당한다.
+        """
         self.info(f"Download completed in {total_time:.2f} seconds")
+
+    # ============ 단계 경계 로그 (#110) — 새 줄만 추가, 기존 줄 형식 불변 ============
+
+    def log_transfer_complete(
+        self, elapsed: float, downloaded_bytes: int, retries: int, peak_threads: int
+    ):
+        """전송 단계 종료를 한 줄로 로깅합니다 — 소요·총 바이트·재시도·정점 스레드."""
+        self.info(
+            f"Transfer completed in {elapsed:.2f} seconds - Bytes: {downloaded_bytes}"
+            f" - Retries: {retries} - Peak threads: {peak_threads}"
+        )
+
+    def log_postprocess_start(self, kind: str):
+        """후처리 시작을 로깅합니다 (kind: remux 등)."""
+        self.info(f"Postprocess started - {kind}")
+
+    def log_postprocess_complete(self, elapsed: float, output_size: int):
+        """후처리 종료를 로깅합니다 — 소요 시간과 최종 산출물 크기."""
+        self.info(f"Postprocess completed in {elapsed:.2f} seconds - Output size: {output_size} bytes")
+
+    def log_total_breakdown(self, transfer_elapsed: float, postprocess_elapsed: Optional[float]):
+        """전체 시간의 전송/후처리 구분을 로깅합니다.
+
+        후처리가 없는 경로(file)는 "(no postprocess)"로 표기해 세 다운로더의
+        로그가 같은 위치에서 같은 형태로 끝나게 한다 (#110).
+        """
+        if postprocess_elapsed is None:
+            self.info(f"Total time breakdown - Transfer: {transfer_elapsed:.2f}s (no postprocess)")
+        else:
+            total = transfer_elapsed + postprocess_elapsed
+            self.info(
+                f"Total time breakdown - Transfer: {transfer_elapsed:.2f}s"
+                f" + Postprocess: {postprocess_elapsed:.2f}s = {total:.2f}s"
+            )
 
     def log_error(self, error_message: str, exception: Optional[Exception] = None):
         """에러 정보를 로깅합니다."""

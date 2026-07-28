@@ -40,6 +40,16 @@ _PATTERNS = {
     "slow_retry": re.compile(r"Part (\d+) stopped due to slow speed, will retry"),
     "part_failed": re.compile(r"Part (\d+) download failed"),
     "completed": re.compile(r"Download completed in ([\d.]+) seconds"),
+    # ---- 단계 경계·요약 줄 (#110) — 없던 로그(구버전)에서는 그냥 비어 있다 ----
+    "app_version": re.compile(r"app_version: (.+)$"),
+    "transfer": re.compile(
+        r"Transfer completed in ([\d.]+) seconds - Bytes: (\d+)"
+        r" - Retries: (\d+) - Peak threads: (\d+)"
+    ),
+    "postprocess_start": re.compile(r"Postprocess started - (\w+)"),
+    "postprocess_complete": re.compile(
+        r"Postprocess completed in ([\d.]+) seconds - Output size: (\d+) bytes"
+    ),
 }
 
 
@@ -60,6 +70,15 @@ def summarize(log_path: Path) -> dict:
         "slow_retries": 0,
         "part_failures": 0,
         "completed_in_seconds": None,
+        # 단계 경계 지표 (#110) — 구버전 로그에는 없으므로 None이 기본
+        "app_version": None,
+        "transfer_seconds": None,
+        "transfer_bytes": None,
+        "transfer_retries": None,
+        "transfer_peak_threads": None,
+        "postprocess_kind": None,
+        "postprocess_seconds": None,
+        "postprocess_output_bytes": None,
     }
 
     for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -87,6 +106,18 @@ def summarize(log_path: Path) -> dict:
             summary["initial_threads"] = int(m.group(1))
         elif m := _PATTERNS["completed"].search(line):
             summary["completed_in_seconds"] = float(m.group(1))
+        elif m := _PATTERNS["transfer"].search(line):
+            summary["transfer_seconds"] = float(m.group(1))
+            summary["transfer_bytes"] = int(m.group(2))
+            summary["transfer_retries"] = int(m.group(3))
+            summary["transfer_peak_threads"] = int(m.group(4))
+        elif m := _PATTERNS["postprocess_complete"].search(line):
+            summary["postprocess_seconds"] = float(m.group(1))
+            summary["postprocess_output_bytes"] = int(m.group(2))
+        elif m := _PATTERNS["postprocess_start"].search(line):
+            summary["postprocess_kind"] = m.group(1)
+        elif m := _PATTERNS["app_version"].search(line):
+            summary["app_version"] = m.group(1)
 
     # 파생 지표: 재시도·실패로 인한 재큐잉 합계, 재큐잉이 있었어도 완주했는지 여부.
     # 파트 시작/완료는 DEBUG 로그라 기본 레벨(INFO)에서는 0으로 남는다 — 완주 판정은
@@ -111,6 +142,8 @@ def _format_bytes(size: int | None) -> str:
 def print_summary(summary: dict) -> None:
     """지표 요약을 사람이 읽는 형식으로 출력한다."""
     print(f"=== {summary['file']}")
+    if summary["app_version"]:
+        print(f"  앱 버전          : {summary['app_version']}")
     print(f"  전체 크기        : {_format_bytes(summary['total_size'])}")
     print(f"  파트 크기        : {_format_bytes(summary['part_size'])}")
     print(f"  세그먼트 수      : {summary['segments']}")
@@ -130,6 +163,22 @@ def print_summary(summary: dict) -> None:
     print(
         f"  완료 시간        : {f'{completed:.2f}s' if completed is not None else '(완료 기록 없음)'}"
     )
+    # 단계 경계 지표 (#110) — 구버전 로그에는 줄 자체가 없으므로 표기 생략
+    if summary["transfer_seconds"] is not None:
+        print(
+            f"  전송 구간        : {summary['transfer_seconds']:.2f}s"
+            f" / {_format_bytes(summary['transfer_bytes'])}"
+            f" / 재시도 {summary['transfer_retries']}"
+            f" / 정점 스레드 {summary['transfer_peak_threads']}"
+        )
+    if summary["postprocess_seconds"] is not None:
+        print(
+            f"  후처리 구간      : {summary['postprocess_seconds']:.2f}s"
+            f" ({summary['postprocess_kind']})"
+            f" / 산출물 {_format_bytes(summary['postprocess_output_bytes'])}"
+        )
+    elif summary["transfer_seconds"] is not None:
+        print("  후처리 구간      : (없음)")
     print(f"  완주(복구 포함)  : {'예' if summary['recovered'] else '아니오'}")
 
 
