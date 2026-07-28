@@ -95,6 +95,72 @@ def test_build_output_path_truncates_long_title(tmp_path):
     assert os.path.dirname(result) == str(tmp_path)
 
 
+def test_truncated_titles_with_same_prefix_stay_distinct(tmp_path):
+    """추가 확인 3: 앞부분이 같은 긴 제목들은 절단 후에도 해시 표식으로 갈라진다.
+
+    표식 없이는 절단본이 동일해져 " (n)"만으로 구분되고(식별성 저하),
+    파일이 없는 시점엔 아예 같은 경로가 나온다.
+    """
+    prefix = "공통 앞부분 " * 30  # 절단 지점 너머까지 동일한 앞부분
+    a = build_output_path(str(tmp_path), prefix + "1회차", 1080)
+    b = build_output_path(str(tmp_path), prefix + "2회차", 1080)
+    assert a != b  # 파일을 만들지 않아도 서로 다른 경로
+    assert len(a) <= 240 and len(b) <= 240
+
+
+def test_truncated_title_is_deterministic(tmp_path):
+    """절단 표식은 원제목의 해시라 같은 제목이면 항상 같은 이름이다 (충돌 시에만 (n))."""
+    title = "가" * 300
+    assert build_output_path(str(tmp_path), title, 1080) == build_output_path(
+        str(tmp_path), title, 1080
+    )
+
+
+# ================================================================ Windows 예약어·끝 점
+
+
+def test_reserved_device_title_gets_prefixed(tmp_path):
+    """추가 확인 1: 제목이 예약 장치명(그대로/점·공백 후속)이면 '_'를 앞에 붙인다.
+
+    Windows 11 실측으로는 CON.mp4도 생성되지만 지원 대상인 Windows 10이
+    여전히 예약하므로 보수적으로 막는다 (대소문자 무시).
+    """
+    assert os.path.basename(build_output_path(str(tmp_path), "CON", 1080)) == "_CON 1080p.mp4"
+    assert os.path.basename(build_output_path(str(tmp_path), "con.", 720)) == "_con. 720p.mp4"
+    assert os.path.basename(build_output_path(str(tmp_path), "lpt1", 480)) == "_lpt1 480p.mp4"
+
+
+def test_reserved_lookalike_titles_are_untouched(tmp_path):
+    """예약어로 시작하는 일반 단어(CONCERT 등)는 오탐하지 않는다."""
+    assert (
+        os.path.basename(build_output_path(str(tmp_path), "CONCERT 실황", 1080))
+        == "CONCERT 실황 1080p.mp4"
+    )
+    assert (
+        os.path.basename(build_output_path(str(tmp_path), "COM10 리뷰", 1080))
+        == "COM10 리뷰 1080p.mp4"
+    )
+
+
+def test_trailing_dots_in_title_land_mid_filename(tmp_path):
+    """추가 확인 2: 마침표로 끝나는 제목도 접미사가 항상 뒤에 붙어 이름 중간에 놓인다.
+
+    Windows는 이름 '끝'의 점·공백만 조용히 잘라낸다(실측) — 생성된 이름은
+    항상 .mp4로 끝나므로 잘리거나 변형되지 않는다.
+    """
+    result = build_output_path(str(tmp_path), "오늘도 방송합니다...", 1080)
+    assert os.path.basename(result) == "오늘도 방송합니다... 1080p.mp4"
+    with open(result, "wb") as f:
+        f.write(b"x")
+    assert os.path.basename(result) in os.listdir(tmp_path)  # 이름 그대로 저장된다
+
+
+def test_trailing_spaces_in_title_are_stripped(tmp_path):
+    """제목 양끝 공백은 정제 단계에서 제거된다 — ' 제목  ' 같은 입력도 안전."""
+    result = build_output_path(str(tmp_path), "  공백 제목   ", 1080)
+    assert os.path.basename(result) == "공백 제목 1080p.mp4"
+
+
 # ================================================================ 임시 폴더 명명
 
 
@@ -109,3 +175,18 @@ def test_temp_dir_for_distinct_across_uniquified_outputs(tmp_path):
     a = temp_dir_for(str(tmp_path / "방송 1080p.mp4"))
     b = temp_dir_for(str(tmp_path / "방송 1080p (1).mp4"))
     assert a != b
+
+
+def test_same_video_queued_twice_gets_distinct_temp_dirs(tmp_path):
+    """추가 확인 4: 같은 영상을 두 번 큐에 넣어도 임시 폴더가 갈라진다.
+
+    앱은 다운로드를 순차 실행하고 경로는 각 건의 시작 직전에 배정되므로,
+    두 번째 건은 첫 건의 산출물을 보고 " (1)"로 갈라지고 임시 폴더도
+    산출물 이름에서 파생돼 함께 갈라진다. (동일 videoId 여부와 무관 —
+    산출물 경로 기준이라 같은 영상끼리도 충돌하지 않는다)
+    """
+    first = build_output_path(str(tmp_path), "같은 영상", 1080)
+    with open(first, "wb") as f:
+        f.write(b"x")  # 첫 건 완료를 흉내 낸다
+    second = build_output_path(str(tmp_path), "같은 영상", 1080)
+    assert temp_dir_for(first) != temp_dir_for(second)
