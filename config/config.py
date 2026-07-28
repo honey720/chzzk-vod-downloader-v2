@@ -1,5 +1,4 @@
 import functools
-import importlib.metadata
 import json
 import logging
 import os
@@ -9,28 +8,34 @@ from collections import OrderedDict
 
 logger = logging.getLogger(__name__)
 
+# pyproject.toml [project].version의 미러 상수 (#116). **정본은 pyproject.toml이다.**
+# Nuitka 번들에는 pyproject.toml도 배포 메타데이터(dist-info)도 포함되지 않아
+# 빌드 실행 파일은 이 상수를 쓴다. 정본과의 불일치는 단위 테스트
+# (tests/unit/test_download_log_phases.py)가 잡는다 — 버전을 올릴 때는
+# pyproject.toml과 이 상수를 함께 갱신할 것.
+APP_VERSION = "2.9.0-rc2"
+
 
 @functools.lru_cache(maxsize=1)
 def get_app_version() -> str:
     """앱 버전 문자열을 반환한다 (#110 — 다운로드 로그 시작 정보용).
 
     정본은 릴리즈 검증(CI)과 동일하게 pyproject.toml의 [project].version이다.
-    다만 CI의 tomllib 원라이너는 소스 트리 전제라 Nuitka 빌드 실행 파일에는
-    pyproject.toml이 없어 그대로 재사용할 수 없다 — 설치 메타데이터
-    (importlib.metadata, 소스·빌드 양쪽에서 동작)를 우선하고, 소스 실행
-    폴백으로 pyproject.toml을 직접 읽는다. 둘 다 실패하면 "unknown"으로
-    로깅을 막지 않는다.
+    소스 실행은 pyproject를 직접 읽어 정본 문자열 그대로 돌려주고, 파일이
+    없는 빌드 실행(Nuitka onefile)은 미러 상수(APP_VERSION)를 쓴다 (#116).
+
+    구 구현이 우선하던 importlib.metadata는 쓰지 않는다 — Nuitka 번들에
+    dist-info가 없어 빌드에서 실패했고(#116의 원인 절반), 소스에서도 버전을
+    정규화(2.9.0-rc1 → 2.9.0rc1)해 정본 문자열과 어긋났다.
     """
-    try:
-        return importlib.metadata.version("cvdv2")
-    except importlib.metadata.PackageNotFoundError:
-        pass
-    pyproject = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pyproject.toml")
+    pyproject = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pyproject.toml"
+    )
     try:
         with open(pyproject, "rb") as f:
             return tomllib.load(f)["project"]["version"]
     except (OSError, KeyError, tomllib.TOMLDecodeError):
-        return "unknown"
+        return APP_VERSION
 
 # 설정 파일 경로 (AppData 디렉토리에 저장)
 APP_NAME = "chzzk-vod-downloader-v2"
