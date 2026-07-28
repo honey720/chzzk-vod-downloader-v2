@@ -63,6 +63,12 @@ jobs:
               raise SystemExit("pyproject.toml에서 version 줄을 찾지 못했습니다.")
           p.write_text(new_text, encoding="utf-8")
           print(f"version -> {version}")
+          c = pathlib.Path("config/config.py")
+          ctext = c.read_text(encoding="utf-8")
+          cnew, cn = re.subn(r'(?m)^(APP_VERSION\s*=\s*")[^"]*(")', lambda m: m.group(1) + version + m.group(2), ctext, count=1)
+          if cn != 1:
+              raise SystemExit("config/config.py에서 APP_VERSION 줄을 찾지 못했습니다.")
+          c.write_text(cnew, encoding="utf-8")
           PYEOF
           uv lock
         env:
@@ -85,7 +91,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -b "$BRANCH"
-          git add pyproject.toml uv.lock
+          git add pyproject.toml uv.lock config/config.py
           git commit -m "chore: 버전 $VERSION"
           git push origin "$BRANCH"
           gh pr create --base main --head "$BRANCH" \
