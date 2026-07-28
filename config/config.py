@@ -1,10 +1,36 @@
+import functools
+import importlib.metadata
 import json
 import logging
 import os
 import platform
+import tomllib
 from collections import OrderedDict
 
 logger = logging.getLogger(__name__)
+
+
+@functools.lru_cache(maxsize=1)
+def get_app_version() -> str:
+    """앱 버전 문자열을 반환한다 (#110 — 다운로드 로그 시작 정보용).
+
+    정본은 릴리즈 검증(CI)과 동일하게 pyproject.toml의 [project].version이다.
+    다만 CI의 tomllib 원라이너는 소스 트리 전제라 Nuitka 빌드 실행 파일에는
+    pyproject.toml이 없어 그대로 재사용할 수 없다 — 설치 메타데이터
+    (importlib.metadata, 소스·빌드 양쪽에서 동작)를 우선하고, 소스 실행
+    폴백으로 pyproject.toml을 직접 읽는다. 둘 다 실패하면 "unknown"으로
+    로깅을 막지 않는다.
+    """
+    try:
+        return importlib.metadata.version("cvdv2")
+    except importlib.metadata.PackageNotFoundError:
+        pass
+    pyproject = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pyproject.toml")
+    try:
+        with open(pyproject, "rb") as f:
+            return tomllib.load(f)["project"]["version"]
+    except (OSError, KeyError, tomllib.TOMLDecodeError):
+        return "unknown"
 
 # 설정 파일 경로 (AppData 디렉토리에 저장)
 APP_NAME = "chzzk-vod-downloader-v2"

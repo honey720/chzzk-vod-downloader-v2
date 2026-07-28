@@ -107,12 +107,29 @@ class RunLogger:
         self.errors: list[str] = []
         self.completed_times: list[float] = []
         self.closed = 0
+        # 단계 경계 로그 (#110)
+        self.transfer_completes: list[tuple] = []
+        self.postprocess_starts: list[str] = []
+        self.postprocess_completes: list[tuple] = []
+        self.breakdowns: list[tuple] = []
 
     def log_download_start(self, total_size, part_size, segments, initial_threads):
         pass
 
     def log_m3u8_thread_start(self, thread_id, segment_url):
         pass
+
+    def log_transfer_complete(self, elapsed, downloaded_bytes, retries, peak_threads):
+        self.transfer_completes.append((elapsed, downloaded_bytes, retries, peak_threads))
+
+    def log_postprocess_start(self, kind):
+        self.postprocess_starts.append(kind)
+
+    def log_postprocess_complete(self, elapsed, output_size):
+        self.postprocess_completes.append((elapsed, output_size))
+
+    def log_total_breakdown(self, transfer_elapsed, postprocess_elapsed):
+        self.breakdowns.append((transfer_elapsed, postprocess_elapsed))
 
     def log_thread_complete(self, thread_id, downloaded_size):
         pass
@@ -298,6 +315,30 @@ def test_pause_resume_then_complete(tmp_path, monkeypatch):
     assert failures == []
     assert logger.warnings == []  # 상태 전이 warning 0건 (완료 조건)
     assert data.model.state is DownloadState.FINISHED
+
+
+def test_phase_boundary_logs_for_m3u8_path(tmp_path, monkeypatch):
+    """m3u8 경로의 단계 경계 로그 (#110) — 전송 요약 → remux 시작·종료 → 전체 구분."""
+    engine, data, logger, output, finished, failures, merge_starts = _make_engine(
+        tmp_path, monkeypatch
+    )
+
+    data.model.start()
+    thread = _run_in_thread(engine)
+    assert finished.wait(timeout=30), "완료 콜백이 호출되지 않았다"
+    thread.join(timeout=10)
+
+    assert len(logger.transfer_completes) == 1
+    _elapsed, downloaded, retries, peak = logger.transfer_completes[0]
+    assert downloaded > 0 and retries == 0 and peak >= 1
+    assert logger.postprocess_starts == ["remux"]  # 무엇을 하는지
+    assert len(logger.postprocess_completes) == 1
+    _pp_elapsed, output_size = logger.postprocess_completes[0]
+    assert output_size == output.stat().st_size  # 최종 산출물 크기
+    assert len(logger.breakdowns) == 1
+    _transfer, postprocess = logger.breakdowns[0]
+    assert postprocess is not None  # 전체 = 전송 + 후처리 구분
+    assert logger.completed_times  # 기존 완료 줄(형식 불변)도 그대로
 
 
 def test_monitor_thread_is_stopped_before_postprocess(tmp_path, monkeypatch):

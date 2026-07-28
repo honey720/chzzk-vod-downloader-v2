@@ -28,9 +28,26 @@ class RunLogger:
         self.errors: list[str] = []
         self.completed_times: list[float] = []
         self.closed = 0
+        # 단계 경계 로그 (#110)
+        self.transfer_completes: list[tuple] = []
+        self.postprocess_starts: list[str] = []
+        self.postprocess_completes: list[tuple] = []
+        self.breakdowns: list[tuple] = []
 
     def log_download_start(self, total_size, part_size, segments, initial_threads):
         pass
+
+    def log_transfer_complete(self, elapsed, downloaded_bytes, retries, peak_threads):
+        self.transfer_completes.append((elapsed, downloaded_bytes, retries, peak_threads))
+
+    def log_postprocess_start(self, kind):
+        self.postprocess_starts.append(kind)
+
+    def log_postprocess_complete(self, elapsed, output_size):
+        self.postprocess_completes.append((elapsed, output_size))
+
+    def log_total_breakdown(self, transfer_elapsed, postprocess_elapsed):
+        self.breakdowns.append((transfer_elapsed, postprocess_elapsed))
 
     def log_thread_start(self, thread_id, start, end):
         pass
@@ -162,6 +179,31 @@ def test_run_downloads_file_byte_exact(tmp_path, monkeypatch):
     assert logger.warnings == []  # 느린 파트 오탐·전이 warning 없음
     assert logger.completed_times and logger.closed == 1
     assert data.completed_threads == 4  # 파트 4개 전부 정상 완료
+
+
+def test_phase_boundary_logs_for_file_path(tmp_path, monkeypatch):
+    """파일 경로의 단계 경계 로그 (#110) — 전송 요약 1줄, 후처리 줄 없음.
+
+    후처리가 없는 경로는 구분 줄이 "(no postprocess)"(postprocess_elapsed
+    None)로 남아 세 다운로더의 로그가 같은 형태로 끝난다.
+    """
+    engine, data, logger, output, finished, failures = _make_engine(tmp_path, monkeypatch)
+
+    data.model.start()
+    thread = _run_in_thread(engine)
+    assert finished.wait(timeout=30), "완료 콜백이 호출되지 않았다"
+    thread.join(timeout=10)
+
+    assert len(logger.transfer_completes) == 1
+    _elapsed, downloaded, retries, peak = logger.transfer_completes[0]
+    assert downloaded == len(CONTENT)  # 받은 총 바이트
+    assert retries == 0  # 가짜 세션은 실패·저속이 없다
+    assert 1 <= peak <= 4  # 파트 4개 경로의 정점 동시 스레드
+    assert logger.postprocess_starts == [] and logger.postprocess_completes == []
+    assert len(logger.breakdowns) == 1
+    _transfer, postprocess = logger.breakdowns[0]
+    assert postprocess is None  # 후처리 없음 표기
+    assert logger.completed_times  # 기존 완료 줄(형식 불변)도 그대로
 
 
 def test_pause_resume_then_complete(tmp_path, monkeypatch):

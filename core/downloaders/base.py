@@ -51,6 +51,7 @@ file(#73)·m3u8(#74) 엔진이 평행 중복으로 갖고 있던 실행 엔진�
 data·logger는 DownloadData/DownloadLogger 호환 객체를 주입받는다.
 """
 
+import os
 import threading
 import time as tm
 from abc import ABC, abstractmethod
@@ -95,6 +96,8 @@ class BaseDownloader(ABC):
     # 복호화 키 리졸버 주입이 필요한지 — 서비스가 참조해 set_key_resolver를 호출한다 (#57).
     # 키 취득은 유저 쿠키가 필요해 core가 직접 할 수 없다(core→app 의존 금지)
     requires_key_resolution: bool = False
+    # 후처리 시작 로그(#110)에 남길 작업 이름 — 현행 세그먼트 경로는 모두 remux다
+    postprocess_kind: str = "remux"
     # run()이 실패 콜백으로 환원할 예외 타입 — 그 외 예외는 전파한다
     _failure_exceptions: tuple[type[BaseException], ...] = (Exception,)
 
@@ -126,6 +129,8 @@ class BaseDownloader(ABC):
         self.adjust_count = 0
         # 전송 종료 시 관측 스레드를 깨워 끝내는 신호 — 후처리는 관측 대상이 아니다 (#89)
         self._monitor_stop = threading.Event()
+        # 전송 중 관측된 정점 동시 스레드 수 — 전송 종료 요약 로그용 (#110)
+        self._peak_threads = 0
         self._on_progress: ProgressCallback = on_progress or (lambda event: None)
         self._on_finished: FinishedCallback = on_finished or (lambda: None)
         self._on_failed: FailedCallback = on_failed or (lambda exc: None)
@@ -312,6 +317,10 @@ class BaseDownloader(ABC):
                                 if part_num not in self.future_dict:
                                     item = self.s.remaining_ranges.pop(0)
                                     self.s.future_count += 1
+                                    # 전송 종료 요약(#110)용 정점 동시 스레드 수
+                                    self._peak_threads = max(
+                                        self._peak_threads, self.s.future_count
+                                    )
                                     self._log_item_start(part_num, item)
                                     future = executor.submit(self._download_item, item, part_num)
                                     future.add_done_callback(self._download_completed_callback)
@@ -329,12 +338,30 @@ class BaseDownloader(ABC):
             # 무의미한 speed 0.00 관측이 사라진다. 후처리 진행 통지는
             # _remux_streamed의 공급 루프가 담당한다
             self._stop_monitor(monitor)
+            # 전송 구간 소요는 관측 정지까지 포함해 여기서 확정한다 (#110) —
+            # 이후 구간(후처리)과 합이 전체와 어긋나지 않게 하기 위함이다
+            transfer_elapsed = tm.time() - self.s.start_time
 
             if self.state == DownloadState.RUNNING:
+                # 전송 단계 종료 요약 한 줄 (#110)
+                self.logger.log_transfer_complete(
+                    transfer_elapsed,
+                    self.s.total_downloaded_size,
+                    self.s.failed_threads + self.s.restart_threads,
+                    self._peak_threads,
+                )
                 # (4) 다운로드 완료 후 타입별 마무리(병합 등) 후 완료 통지 —
                 # 후처리 필요 여부는 실행 중 추측하지 않고 계획이 답한다 (#83)
+                postprocess_elapsed = None
                 if plan.requires_postprocess:
+                    self.logger.log_postprocess_start(self.postprocess_kind)
+                    postprocess_started = tm.time()
                     self.postprocess()
+                    if self.state != DownloadState.WAITING:
+                        postprocess_elapsed = tm.time() - postprocess_started
+                        self.logger.log_postprocess_complete(
+                            postprocess_elapsed, os.path.getsize(self.s.output_path)
+                        )
                 # 후처리 중 중단(stop)됐다면 완료 통지를 생략한다 (#92) —
                 # WAITING → FINISHED는 허용되지 않는 전이라, 무조건 완료
                 # 처리하면 전이 예외가 실패 콜백으로 둔갑한다 (구 병합 코드의
@@ -343,6 +370,9 @@ class BaseDownloader(ABC):
                     self.s.end_time = tm.time()
                     total_time = self.s.end_time - self.s.start_time
                     self.logger.log_download_complete(total_time)
+                    # 전체 = 전송 + 후처리 구분 (#110) — 위 완료 줄(형식 불변)이
+                    # 전체 시간임을 새 줄이 드러낸다
+                    self.logger.log_total_breakdown(transfer_elapsed, postprocess_elapsed)
                     self.logger.save_and_close()
                     self._on_finished()
 
