@@ -49,6 +49,7 @@ from core.models.events import ProgressEvent  # noqa: E402
 from core.services import metadata_service  # noqa: E402
 from core.services.download_service import DownloadService  # noqa: E402
 from core.services.metadata_service import MetadataError  # noqa: E402
+from core.utils.paths import build_output_path  # noqa: E402
 from download.data import DownloadData  # noqa: E402
 from download.logger import DownloadLogger  # noqa: E402
 from download.resolvers import resolve_aes_key, resolve_m3u8_base_url  # noqa: E402
@@ -128,8 +129,8 @@ def _build_item(result: tuple, content_type: str, resolution: int | None) -> Con
         return None
     item.resolution, item.base_url = selected
 
-    filename = f"{item.title} {item.resolution}p.mp4"
-    item.output_path = os.path.join(item.download_path, filename)
+    # 조립·중복 회피는 core가 단일 지점으로 담당한다 — GUI(manager)와 동일 (#105)
+    item.output_path = build_output_path(item.download_path, item.title, item.resolution)
     return item
 
 

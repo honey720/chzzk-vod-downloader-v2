@@ -203,7 +203,7 @@ def test_run_merges_segments_in_index_order_byte_exact(tmp_path, monkeypatch):
     assert logger.completed_times and logger.closed == 1
     assert data.completed_threads == SEGMENT_COUNT  # 세그먼트 전부 정상 완료
     assert data.merged_segments == SEGMENT_COUNT + 1  # 초기화 세그먼트 포함 병합
-    assert not (tmp_path / "CVDv2_temp").exists()  # 임시 폴더 삭제
+    assert not (tmp_path / "CVDv2_temp_out").exists()  # 임시 폴더 삭제 (#105 산출물 파생 이름)
 
 
 def test_remux_failure_fails_explicitly_and_preserves_segments(tmp_path, monkeypatch):
@@ -232,7 +232,7 @@ def test_remux_failure_fails_explicitly_and_preserves_segments(tmp_path, monkeyp
     assert any(isinstance(e, base_module.PostprocessError) for e in failures)  # 명시적 실패
     assert logger.errors  # 원인 로그 존재
     # 세그먼트(임시 폴더)는 보존된다 — 후처리 실패로 재다운로드를 강요하지 않는다
-    temp_dir = tmp_path / "CVDv2_temp"
+    temp_dir = tmp_path / "CVDv2_temp_out"
     assert temp_dir.exists()
     assert len(list(temp_dir.iterdir())) == SEGMENT_COUNT + 1  # 초기화 세그먼트 포함
     assert merge_starts == [True]
@@ -265,7 +265,7 @@ def test_stop_during_postprocess_cleans_up_without_failure(tmp_path, monkeypatch
     assert not finished.is_set()
     assert failures == []  # 중단은 실패가 아니다
     assert not output.exists()
-    assert not (tmp_path / "CVDv2_temp").exists()  # 중단은 현행대로 전체 정리
+    assert not (tmp_path / "CVDv2_temp_out").exists()  # 중단은 현행대로 전체 정리
 
 
 def test_pause_resume_then_complete(tmp_path, monkeypatch):
@@ -315,6 +315,6 @@ def test_stop_removes_partial_file_and_temp_dir(tmp_path, monkeypatch):
     assert not thread.is_alive()
 
     assert not output.exists()  # 부분 파일 없음
-    assert not (tmp_path / "CVDv2_temp").exists()  # 임시 폴더 삭제
+    assert not (tmp_path / "CVDv2_temp_out").exists()  # 임시 폴더 삭제
     assert not finished.is_set()
     assert failures == []

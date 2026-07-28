@@ -33,6 +33,7 @@ from core.downloaders.decrypt import decrypt_segment, looks_like_ts, sequence_iv
 from core.models.content import Content, ContentType
 from core.models.download_state import DownloadState
 from core.models.plan import DownloadPlan
+from core.utils.paths import temp_dir_for
 
 
 class DecryptionError(Exception):
@@ -58,8 +59,9 @@ class HlsAesDownloader(BaseDownloader):
 
     def __init__(self, data, logger, **callbacks):
         super().__init__(data, logger, **callbacks)
-        # 세그먼트 저장용 임시 폴더 (실패 정리 경로가 참조하므로 실행 전에 확정)
-        self.temp_dir = os.path.join(os.path.dirname(self.s.output_path), "CVDv2_temp")
+        # 세그먼트 저장용 임시 폴더 (실패 정리 경로가 참조하므로 실행 전에 확정).
+        # 산출물 파일명에서 파생해 다운로드 간 폴더 공유·상호 삭제를 막는다 (#105)
+        self.temp_dir = temp_dir_for(self.s.output_path)
         self._key: bytes | None = None
         self._playlist = None
 

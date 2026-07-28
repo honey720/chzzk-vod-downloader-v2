@@ -5,6 +5,7 @@ from urllib.parse import urljoin
 from core.api.dash import is_supported_sea, parse_dash_manifest, parse_sea_manifest
 from core.api.url_parser import extract_content_no
 from core.models.content import VideoInfo
+from core.utils.paths import sanitize_filename
 
 # Session 관리는 core/api/session.py로 이주했다 (#62, 원본 #31).
 # _session은 아래 NetworkManager가 계속 사용하고, 나머지는 기존 호출부 호환용 re-export다.
@@ -54,7 +55,7 @@ class NetworkManager:
 
         content = response.json().get('content', {})
         metadata = {
-            'title': re.sub(r'[\\/:\*\?"<>|\n]', '', content.get('videoTitle', 'Unknown Title')), # 정규식으로 특수문자 제거
+            'title': sanitize_filename(content.get('videoTitle', 'Unknown Title')), # 금지 문자·제어 문자 제거 (#105)
             'thumbnailImageUrl': content.get('thumbnailImageUrl', ''),
             'category': content.get('videoCategoryValue', 'Unknown Category'),
             'channelName': content.get('channel', {}).get('channelName', 'Unknown Channel'),
@@ -183,7 +184,7 @@ class NetworkManager:
         vodStatus = content.get('vodStatus')
 
         metadata = {
-            'title': re.sub(r'[\\/:\*\?"<>|\n]', '', content.get('clipTitle', 'Unknown Title')), # 정규식으로 특수문자 제거
+            'title': sanitize_filename(content.get('clipTitle', 'Unknown Title')), # 금지 문자·제어 문자 제거 (#105)
             'thumbnailImageUrl': content.get('thumbnailImageUrl', ''),
             'category': content.get('clipCategory', 'Unknown Category'),
             'channelName': content.get('optionalProperty', {}).get('ownerChannel', {}).get('channelName', 'Unknown Channel'),
