@@ -148,6 +148,14 @@ class DownloadLogger:
 
     # ============ 단계 경계 로그 (#110) — 새 줄만 추가, 기존 줄 형식 불변 ============
 
+    def log_part_resume(self, part_num: int, offset: int, part_size: int):
+        """파트 이어받기 시작을 로깅합니다 (#78) — 재시도가 어느 오프셋부터 받는지.
+
+        이 줄이 없는 재시도는 파트 처음부터 받은 것이다. 이어받기가 거부되어
+        처음부터 폴백한 경우는 "resume rejected" warning으로 구분된다.
+        """
+        self.info(f"Part {part_num} resuming from byte {offset}/{part_size}")
+
     def log_transfer_complete(
         self, elapsed: float, downloaded_bytes: int, retries: int, peak_threads: int
     ):

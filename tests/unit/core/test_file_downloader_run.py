@@ -37,6 +37,9 @@ class RunLogger:
     def log_download_start(self, total_size, part_size, segments, initial_threads):
         pass
 
+    def log_part_resume(self, part_num, offset, part_size):
+        pass
+
     def log_transfer_complete(self, elapsed, downloaded_bytes, retries, peak_threads):
         self.transfer_completes.append((elapsed, downloaded_bytes, retries, peak_threads))
 

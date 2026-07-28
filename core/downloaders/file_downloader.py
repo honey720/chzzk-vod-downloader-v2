@@ -107,6 +107,10 @@ class FileDownloader(BaseDownloader):
         slow_count = 0
         resume_offset = self._resume_offset(start, end)
         downloaded_size = 0
+        if resume_offset > 0:
+            # 이어받기 발생 사실과 오프셋을 남긴다 (#78 스모크 확인 수단) —
+            # 이 줄 없는 재시도는 파트 처음부터 받은 것이다
+            self.logger.log_part_resume(part_num, resume_offset, end - start + 1)
         while not self.state == DownloadState.WAITING:
             try:
                 range_start = start + resume_offset

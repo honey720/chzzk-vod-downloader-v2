@@ -33,6 +33,7 @@ class RecordingLogger:
         self.warnings: list[str] = []
         self.errors: list[str] = []
         self.thread_completes: list[tuple] = []
+        self.part_resumes: list[tuple] = []  # 이어받기 로그 (#78)
 
     def log_thread_adjust(self, active_threads, avg_speed):
         self.adjust_calls.append((active_threads, avg_speed))
@@ -45,6 +46,9 @@ class RecordingLogger:
 
     def log_thread_complete(self, thread_id, downloaded_size):
         self.thread_completes.append((thread_id, downloaded_size))
+
+    def log_part_resume(self, part_num, offset, part_size):
+        self.part_resumes.append((part_num, offset, part_size))
 
     def log_error(self, message, exception=None):
         self.errors.append(message)
@@ -432,6 +436,7 @@ def test_requeued_part_resumes_with_range(tmp_path, monkeypatch):
 
     assert returned == 0
     assert session.range_headers == [f"bytes={2 * CHUNK}-{PART_END}"]  # 이어받기 요청
+    assert logger.part_resumes == [(0, 2 * CHUNK, 3 * CHUNK)]  # 발생 사실·오프셋 로그 (#78)
     assert data.completed_threads == 1
     assert data.completed_progress == 3 * CHUNK  # 이어받은 바이트 포함 전체
     assert logger.thread_completes == [(0, 3 * CHUNK)]
@@ -478,6 +483,7 @@ def test_resume_integrity_mismatch_restarts_from_start(tmp_path, monkeypatch):
 
     assert returned == 0
     assert session.range_headers == [f"bytes=0-{PART_END}"]  # 이어받기 시도 없음
+    assert logger.part_resumes == []  # 이어받기 로그도 없다 — 처음부터 받았다는 뜻
     assert (0, PART_END) not in engine._part_progress  # 무결성 실패 기록은 폐기된다
     assert data.completed_progress == 3 * CHUNK
     assert output.read_bytes() == b"z" * (3 * CHUNK)

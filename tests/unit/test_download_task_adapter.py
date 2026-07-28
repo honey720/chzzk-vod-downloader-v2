@@ -18,10 +18,14 @@ class _FakeLogger:
 
     def __init__(self):
         self.warnings: list[str] = []
+        self.infos: list[str] = []
         self.logged_items: list[object] = []
 
     def warning(self, message: str):
         self.warnings.append(message)
+
+    def info(self, message: str):
+        self.infos.append(message)
 
     def log_download_info(self, item):
         self.logged_items.append(item)
@@ -86,6 +90,27 @@ def test_pause_event_is_shared_with_download_data():
 
     task.resume()
     assert data._pause_event.is_set()
+
+
+def test_pause_and_resume_are_logged():
+    """일시정지·재개 성공이 로그에 남는다 (#78) — UI→엔진 도달 여부를 로그로 확인하기 위함."""
+    task, _, _, logger = _make_task()
+    task.start()
+
+    task.pause()
+    assert "Download paused" in logger.infos
+
+    task.resume()
+    assert "Download resumed" in logger.infos
+
+
+def test_failed_pause_is_not_logged_as_success():
+    """전이가 무시된 경우(허용되지 않는 상태) 성공 로그를 남기지 않는다."""
+    task, _, _, logger = _make_task()
+
+    task.pause()  # WAITING에서 pause는 허용되지 않는 전이
+    assert "Download paused" not in logger.infos
+    assert logger.warnings  # 무시 경고만 남는다
 
 
 def test_invalid_transition_is_absorbed_not_raised():
