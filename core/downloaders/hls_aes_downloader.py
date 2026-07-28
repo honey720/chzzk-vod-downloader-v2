@@ -140,17 +140,6 @@ class HlsAesDownloader(BaseDownloader):
         # 전체 바이트 크기를 미리 알 수 없다 — 세그먼트 수 기반 계산은 어댑터가 한다
         return None
 
-    def _get_standard_speed(self) -> float:
-        """해상도별 기준 속도 — m3u8 경로와 동일 테이블(같은 세그먼트 전송 특성)."""
-        if self.s.resolution == 144:
-            return 0.2
-        elif self.s.resolution in [360, 480]:
-            return 0.5
-        elif self.s.resolution == 720:
-            return 1.2
-        else:
-            return 3
-
     # ============ 키 취득 ============
 
     def _resolve_key(self, content: Content, key_uri: str) -> bytes:

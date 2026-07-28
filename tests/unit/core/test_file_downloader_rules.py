@@ -93,123 +93,127 @@ def _engine_module():
     return mod
 
 
-# ================================================================ 스레드 증가/감소
+# ================================================================ 스레드 조정 (#112 — 총 처리량 등반)
+#
+# 구 규칙(스레드당 평균 속도 vs 고정 임계 4/2 MB/s)의 박제는 #112로 폐기했다.
+# 판단 신호를 총 처리량의 실제 증감으로 바꾼 근거는 base._adjust_threads
+# docstring과 m3u8 규칙 테스트의 섹션 주석 참조 (파일 경로도 같은 base 규칙을 쓴다).
 
 
-def test_fast_two_ticks_increase_threads_by_4():
-    """평균 > 4 MB/s 틱 2회 → adjust_count 2(>1) → 스레드 +4, 카운터 리셋."""
+def _tick(scaler, data, speed: float) -> None:
+    """1초 관측 틱을 흉내 낸다 — 측정된 총 처리량 반영 후 조정 1회."""
+    data.speed_mb = speed
+    scaler._adjust_threads()
+
+
+def test_warmup_without_measurement_does_nothing():
+    """첫 유효 측정 전(속도 0)에는 조정하지 않는다 — 시작 직후 오판 방지."""
+    data, logger = _make_data(), RecordingLogger()
+    scaler = _make_scaler(data, logger)
+
+    _tick(scaler, data, 0.0)
+
+    assert data.adjust_threads == 4
+    assert logger.adjust_calls == []
+
+
+def test_first_valid_tick_probes_up_by_4():
+    """첫 유효 측정에서 +4 탐침을 시작한다 (구 규칙의 +4 보폭 유지)."""
     data, logger = _make_data(), RecordingLogger()
     data.max_threads = 32
     scaler = _make_scaler(data, logger)
 
-    data.future_count = 4
-    data.speed_mb = 20.0  # 평균 5 MB/s
-    scaler._adjust_threads()
-    assert (scaler.adjust_count, data.adjust_threads) == (1, 4)  # 1틱으로는 불변
+    _tick(scaler, data, 3.9)
 
-    scaler._adjust_threads()
     assert data.adjust_threads == 8
-    assert scaler.adjust_count == 0
-    assert logger.adjust_calls == [(8, 20.0)]
+    assert logger.adjust_calls == [(8, 3.9)]
 
 
-def test_increase_is_capped_at_max_threads():
-    """증가 시 상한은 max_threads다."""
+def test_climbs_while_throughput_grows_and_caps_at_max_threads():
+    """총 처리량이 느는 동안 +4 계단으로 오르되 상한은 min(max_threads, 48)이다."""
     data, logger = _make_data(), RecordingLogger()
     data.max_threads = 10
-    data.adjust_threads = 8
     scaler = _make_scaler(data, logger)
 
-    data.future_count = 8
-    data.speed_mb = 40.0  # 평균 5 MB/s
-    scaler._adjust_threads()
-    scaler._adjust_threads()
+    for _ in range(10):
+        _tick(scaler, data, data.adjust_threads * 0.95)
 
     assert data.adjust_threads == 10  # 8+4=12가 아니라 상한 10
 
 
-def test_slow_five_ticks_halve_threads():
-    """평균 < 2 MB/s 틱 5회 → adjust_count -5(<-4) → 스레드 절반, 카운터 리셋."""
+def test_reverts_and_holds_when_raise_does_not_increase_throughput():
+    """인상해도 총 처리량이 늘지 않으면 되물리고 그 지점을 상한으로 정체한다."""
     data, logger = _make_data(), RecordingLogger()
     data.max_threads = 32
-    data.adjust_threads = 8
     scaler = _make_scaler(data, logger)
 
-    data.future_count = 8
-    data.speed_mb = 8.0  # 평균 1 MB/s
-    for _ in range(4):
-        scaler._adjust_threads()
-    assert data.adjust_threads == 8  # 4틱까지는 불변 (-4는 경계 미달)
+    _tick(scaler, data, 5.0)  # 4→8 (기준 5.0)
+    _tick(scaler, data, 5.0)  # settle 1
+    _tick(scaler, data, 5.0)  # settle 2
+    _tick(scaler, data, 5.2)  # 요구치(5.0×1.125=5.625) 미달 → 8→4 되물림 + 정체
 
-    scaler._adjust_threads()
     assert data.adjust_threads == 4
-    assert scaler.adjust_count == 0
-    assert logger.adjust_calls == [(4, 8.0)]
+    assert logger.adjust_calls == [(8, 5.0), (4, 5.2)]
+
+
+def test_sustained_collapse_halves_after_five_ticks():
+    """정체 기준의 절반 미만이 5틱 지속되면 절반으로 줄인다 (관성은 구 규칙과 동일)."""
+    data, logger = _make_data(), RecordingLogger()
+    data.max_threads = 32
+    scaler = _make_scaler(data, logger)
+
+    _tick(scaler, data, 5.0)  # 4→8
+    _tick(scaler, data, 9.0)  # settle 1
+    _tick(scaler, data, 9.0)  # settle 2
+    _tick(scaler, data, 9.0)  # 요구치(5.0×1.125) 초과 → 8→12 (기준 9.0)
+    _tick(scaler, data, 9.2)  # settle 1
+    _tick(scaler, data, 9.2)  # settle 2
+    _tick(scaler, data, 9.2)  # 요구치(9.0×1.0417=9.375) 미달 → 12→8 되물림 + 정체 (기준 9.2)
+    assert data.adjust_threads == 8
+
+    for _ in range(4):  # 기준의 절반(4.6) 미만 4틱 — 아직 불변
+        _tick(scaler, data, 4.0)
+    assert data.adjust_threads == 8
+
+    _tick(scaler, data, 4.0)  # 5틱째 — 절반으로
+    assert data.adjust_threads == 4
 
 
 def test_halving_floor_is_one_thread():
-    """감소 시 하한은 1스레드다."""
-    data, logger = _make_data(), RecordingLogger()
-    data.adjust_threads = 1
-    scaler = _make_scaler(data, logger)
-
-    data.future_count = 1
-    data.speed_mb = 0.5
-    for _ in range(5):
-        scaler._adjust_threads()
-
-    assert data.adjust_threads == 1
-
-
-def test_middle_band_decays_adjust_count_toward_zero():
-    """중간 대역(2~4 MB/s)은 누적 카운터를 0으로 1씩 되돌린다 (히스테리시스)."""
+    """처리량 하락이 이어지면 절반씩 1까지 내려가고, 그 밑으로는 내려가지 않는다."""
     data, logger = _make_data(), RecordingLogger()
     data.max_threads = 32
     scaler = _make_scaler(data, logger)
 
-    data.future_count = 4
-    data.speed_mb = 20.0  # 평균 5 → +1
-    scaler._adjust_threads()
-    assert scaler.adjust_count == 1
+    _tick(scaler, data, 5.0)  # 4→8
+    _tick(scaler, data, 5.0)  # settle 1
+    _tick(scaler, data, 5.0)  # settle 2
+    _tick(scaler, data, 5.0)  # 요구치 미달 → 되물림 → 4 정체 (기준 5.0)
+    assert data.adjust_threads == 4
 
-    data.speed_mb = 12.0  # 평균 3 → 감쇠 -1
-    scaler._adjust_threads()
-    assert scaler.adjust_count == 0
-    assert data.adjust_threads == 4  # 임계 미달로 불변
+    for _ in range(7):  # 기준(5.0)의 절반 미만 지속 → 4→2 (새 기준 2.0)
+        _tick(scaler, data, 2.0)
+    assert data.adjust_threads == 2
 
-    data.speed_mb = 4.0  # 평균 1 → -1
-    scaler._adjust_threads()
-    assert scaler.adjust_count == -1
-    data.speed_mb = 12.0  # 평균 3 → 감쇠 +1
-    scaler._adjust_threads()
-    assert scaler.adjust_count == 0
+    for _ in range(7):  # 또 절반 미만으로 하락 → 2→1
+        _tick(scaler, data, 0.9)
+    assert data.adjust_threads == 1
+
+    for _ in range(10):  # 더 하락해도 1 밑으로는 내려가지 않는다
+        _tick(scaler, data, 0.1)
+    assert data.adjust_threads == 1
 
 
-def test_band_boundaries_are_exclusive():
-    """경계값 4 MB/s·2 MB/s는 중간 대역이다 (초과/미만 판정)."""
+def test_zero_active_sample_is_not_a_slow_signal():
+    """관측 순간 활성 0이어도 총 처리량이 신호다 — 구 규칙 붕괴 원인의 반전 박제 (#112)."""
     data, logger = _make_data(), RecordingLogger()
+    data.max_threads = 32
     scaler = _make_scaler(data, logger)
 
-    data.future_count = 2
-    data.speed_mb = 8.0  # 평균 정확히 4 → 증가 아님
-    scaler._adjust_threads()
-    assert scaler.adjust_count == 0
+    data.future_count = 0  # 빈 슬롯 순간에 관측됐다
+    _tick(scaler, data, 3.9)
 
-    data.speed_mb = 4.0  # 평균 정확히 2 → 감소 아님
-    scaler._adjust_threads()
-    assert scaler.adjust_count == 0
-
-
-def test_zero_active_threads_counts_as_slow_tick():
-    """활성 스레드 0이면 평균 0으로 간주되어 감소 방향 틱이다."""
-    data, logger = _make_data(), RecordingLogger()
-    scaler = _make_scaler(data, logger)
-
-    data.future_count = 0
-    data.speed_mb = 10.0
-    scaler._adjust_threads()
-
-    assert scaler.adjust_count == -1
+    assert data.adjust_threads == 8  # 감소가 아니라 정상 탐침
 
 
 # ================================================================ 속도 계산
