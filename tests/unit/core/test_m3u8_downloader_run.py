@@ -300,6 +300,86 @@ def test_pause_resume_then_complete(tmp_path, monkeypatch):
     assert data.model.state is DownloadState.FINISHED
 
 
+def test_monitor_thread_is_stopped_before_postprocess(tmp_path, monkeypatch):
+    """후처리 중에는 관측 스레드가 살아 있지 않다 — 병합 꼬리 로그의 원천 제거 (#89).
+
+    관측 정지가 remux 시작보다 먼저임을 remux 스텁 안에서 직접 확인한다.
+    """
+    engine, data, logger, output, finished, failures, merge_starts = _make_engine(
+        tmp_path, monkeypatch
+    )
+
+    monitor_alive_during_remux = []
+
+    def checking_remux_stream(chunks, dst_path):
+        monitor_alive_during_remux.append(
+            any(t.name == "DownloadMonitor" and t.is_alive() for t in threading.enumerate())
+        )
+        _passthrough_remux_stream(chunks, dst_path)
+
+    monkeypatch.setattr(base_module, "remux_stream", checking_remux_stream)
+
+    data.model.start()
+    thread = _run_in_thread(engine)
+    assert finished.wait(timeout=30), "완료 콜백이 호출되지 않았다"
+    thread.join(timeout=10)
+
+    assert monitor_alive_during_remux == [False]
+    assert output.read_bytes() == _expected_output(chunks_per_segment=3)  # 완주 무영향
+
+
+def test_postprocess_progress_is_emitted_by_feed_loop(tmp_path, monkeypatch):
+    """후처리 진행 통지는 공급 루프가 담당한다 (#89) — 병합 % 변화마다 1회.
+
+    병합 구간 이벤트는 구 관측 스레드의 병합 관측과 동일하게 속도 0·활성
+    스레드 0이어야 한다 (어댑터 변환식 무변경 → UI 표시 결과 무변경).
+    """
+    engine, data, logger, output, finished, failures, merge_starts = _make_engine(
+        tmp_path, monkeypatch
+    )
+
+    events = []  # (이벤트, 통지 시점의 병합 세그먼트 수)
+    engine.set_on_progress(lambda event: events.append((event, data.merged_segments)))
+
+    data.model.start()
+    thread = _run_in_thread(engine)
+    assert finished.wait(timeout=30), "완료 콜백이 호출되지 않았다"
+    thread.join(timeout=10)
+
+    merge_events = [(e, merged) for e, merged in events if merged > 0]
+    # 초기화 세그먼트 포함 7개 병합 → int(k/7*100)이 매 세그먼트마다 변해 7회 통지
+    assert len(merge_events) == SEGMENT_COUNT + 1
+    assert merge_events[-1][1] == SEGMENT_COUNT + 1  # 마지막 통지가 100% 시점
+    for event, _merged in merge_events:
+        assert event.speed == 0.0
+        assert event.active_threads == 0
+
+
+def test_postprocess_progress_throttled_to_percent_changes(tmp_path, monkeypatch):
+    """세그먼트가 %당 여러 개면 % 변화 시에만 통지한다 — 최대 ~101회로 묶인다 (#89)."""
+    engine, data, logger, output, finished, failures, merge_starts = _make_engine(
+        tmp_path, monkeypatch
+    )
+
+    seg_dir = tmp_path / "segs"
+    seg_dir.mkdir()
+    paths = []
+    for i in range(300):
+        p = seg_dir / f"{i:04d}.m4s"
+        p.write_bytes(b"x")
+        paths.append(str(p))
+
+    events = []
+    engine.set_on_progress(lambda event: events.append(event))
+    data.model.start()
+
+    engine._remux_streamed(paths)
+
+    assert data.merged_segments == 300
+    # int(k/300*100), k=1..300은 0~100의 정수를 모두 한 번씩 지난다 → 정확히 101회
+    assert len(events) == 101
+
+
 def test_stop_removes_partial_file_and_temp_dir(tmp_path, monkeypatch):
     """중단(stop)하면 임시 폴더·부분 파일을 삭제하고 완료 콜백을 호출하지 않는다."""
     engine, data, logger, output, finished, failures, merge_starts = _make_engine(

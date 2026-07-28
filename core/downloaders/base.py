@@ -40,6 +40,9 @@ file(#73)·m3u8(#74) 엔진이 평행 중복으로 갖고 있던 실행 엔진�
 - 관측(속도 측정·스레드 조정·진행 통지)은 엔진이 소유하는 일반 스레드
   (_monitor_loop)가 수행하고, core/models/events.py의 ProgressEvent 콜백으로
   보고한다. 완료·실패도 같은 계약의 콜백으로 알린다.
+- 관측 스레드는 **전송 단계 동안만** 산다 (#89) — 전송이 끝나면 run()이
+  정지시키고, 후처리(병합·remux) 진행 통지는 _remux_streamed의 공급 루프가
+  같은 ProgressEvent 콜백으로 보고한다.
 - 일시정지·중단은 DownloadTaskModel의 상태와 pause_event를 그대로 사용한다.
 - 콜백은 작업 스레드에서 호출된다 — 어댑터는 Signal emit까지만 해야 한다.
 
@@ -121,6 +124,8 @@ class BaseDownloader(ABC):
         self.lock = threading.Lock()
         self.future_dict: dict = {}
         self.adjust_count = 0
+        # 전송 종료 시 관측 스레드를 깨워 끝내는 신호 — 후처리는 관측 대상이 아니다 (#89)
+        self._monitor_stop = threading.Event()
         self._on_progress: ProgressCallback = on_progress or (lambda event: None)
         self._on_finished: FinishedCallback = on_finished or (lambda: None)
         self._on_failed: FailedCallback = on_failed or (lambda exc: None)
@@ -202,9 +207,16 @@ class BaseDownloader(ABC):
         remux가 실패하면 폴백 없이 PostprocessError로 명확히 실패한다 —
         바이트 연결본은 #88이 고치려던 결함품이라 조용히 대체하지 않는다.
         일시정지·중단은 공급 루프가 세그먼트 병합과 같은 규칙으로 처리한다.
+
+        후처리 구간의 진행 통지도 이 공급 루프가 담당한다 (#89) — 관측
+        스레드는 전송 종료 시점에 정지되므로, 파이프 공급 진행(병합된
+        세그먼트 수)이 곧 진행 신호다.
         """
+        total_segments = len(segment_paths)
+        last_percent = -1
 
         def feed():
+            nonlocal last_percent
             for path in segment_paths:
                 for chunk in read_in_chunks(path):
                     # 다운로드 중지 상태라면 중단 — 공급을 끊고 산출물을 지운다
@@ -215,6 +227,21 @@ class BaseDownloader(ABC):
                         self.s._pause_event.wait()
                     yield chunk
                 self.s.merged_segments += 1
+                # 어댑터가 표시하는 정수 %(분모 = 병합 대상 수 = 이 목록 길이)가
+                # 바뀔 때만 통지한다 — 세그먼트 수천 개짜리 VOD에서도 통지가
+                # 최대 ~101회로 묶인다. 속도 0·활성 0은 구 관측 스레드가 병합
+                # 구간에서 내보내던 값과 동일해 UI 표시 결과가 변하지 않는다
+                percent = int(self.s.merged_segments / total_segments * 100)
+                if percent != last_percent:
+                    last_percent = percent
+                    self._on_progress(
+                        ProgressEvent(
+                            downloaded_size=self.s.total_downloaded_size,
+                            total_size=self._progress_total_size(),
+                            speed=0.0,
+                            active_threads=0,
+                        )
+                    )
 
         try:
             remux_stream(feed(), self.s.output_path)
@@ -297,6 +324,12 @@ class BaseDownloader(ABC):
                     if not self.s.remaining_ranges and not self.future_dict:
                         break
 
+            # 전송이 끝났다 — 후처리는 관측 대상이 아니므로 관측 스레드를 먼저
+            # 정지한다 (#89). 병합 중 스레드 수가 절반씩 줄어드는 로그 꼬리와
+            # 무의미한 speed 0.00 관측이 사라진다. 후처리 진행 통지는
+            # _remux_streamed의 공급 루프가 담당한다
+            self._stop_monitor(monitor)
+
             if self.state == DownloadState.RUNNING:
                 # (4) 다운로드 완료 후 타입별 마무리(병합 등) 후 완료 통지 —
                 # 후처리 필요 여부는 실행 중 추측하지 않고 계획이 답한다 (#83)
@@ -330,6 +363,12 @@ class BaseDownloader(ABC):
             self._on_failed(e)
             self.logger.log_exception("Download failed", e)
             self.logger.save_and_close()
+
+        finally:
+            # 실패·전파 예외 경로에서도 관측 스레드를 남기지 않는다 (#89).
+            # 실패 후 상태가 RUNNING인 채 남는 경로(헤드리스 등)에서는 기존
+            # 관측 루프가 상태 변화만 기다리며 영원히 돌았다
+            self._stop_monitor(monitor)
 
         # 사용자가 강제로 중단한 경우 부분 산출물 삭제
         if self.state == DownloadState.WAITING:
@@ -380,10 +419,29 @@ class BaseDownloader(ABC):
 
     # ============ 관측 루프 (구 Monitor 스레드 — 엔진이 흡수) ============
 
+    def _stop_monitor(self, monitor: threading.Thread) -> None:
+        """관측 스레드를 정지시키고 종료를 기다린다 (#89). 여러 번 불려도 무해하다.
+
+        전송 종료 직후 run()이 호출한다 — 후처리(병합·remux)가 관측 스레드
+        정지 이후에 시작됨을 보장한다. join 타임아웃은 일시정지 대기
+        (_pause_event.wait)에 막혀 있는 극단 경로 대비다(데몬 스레드라
+        프로세스를 붙잡지는 않는다).
+        """
+        self._monitor_stop.set()
+        if monitor.is_alive():
+            monitor.join(timeout=2)
+
     def _monitor_loop(self):
-        """주기(1초)마다 스레드 수 조정·속도 측정·진행 통지를 수행하는 관측 루프."""
-        tm.sleep(1)
-        while self.state in [DownloadState.RUNNING, DownloadState.PAUSED]:
+        """주기(1초)마다 스레드 수 조정·속도 측정·진행 통지를 수행하는 관측 루프.
+
+        전송 단계 동안만 산다 — 전송이 끝나면 run()이 _monitor_stop으로
+        정지시킨다. 후처리(병합·remux)는 관측 대상이 아니다 (#89).
+        """
+        self._monitor_stop.wait(1)
+        while not self._monitor_stop.is_set() and self.state in [
+            DownloadState.RUNNING,
+            DownloadState.PAUSED,
+        ]:
             if not self.s._pause_event.is_set():
                 self.s._pause_event.wait()
                 self.measure_speed()
@@ -394,11 +452,12 @@ class BaseDownloader(ABC):
             total_sleep = 1.0  # 총 1초 대기
             interval = 0.1  # 0.1초씩 대기
             elapsed = 0.0
-            while elapsed < total_sleep and self.state in [
-                DownloadState.RUNNING,
-                DownloadState.PAUSED,
-            ]:
-                tm.sleep(interval)
+            while (
+                elapsed < total_sleep
+                and not self._monitor_stop.is_set()
+                and self.state in [DownloadState.RUNNING, DownloadState.PAUSED]
+            ):
+                self._monitor_stop.wait(interval)
                 elapsed += interval
 
     def _adjust_threads(self):
