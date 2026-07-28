@@ -187,8 +187,24 @@ def test_not_found_error_guides_installation(monkeypatch):
 # ================================================================ 스트림 remux
 
 
-def test_remux_stream_produces_mp4_with_leading_moov(tmp_path):
-    """파이프 공급 산출물은 mp4이고 전역 인덱스(moov)가 mdat보다 앞에 있어야 한다."""
+def _assert_fully_decodes(path) -> None:
+    """산출물이 오류 없이 끝까지 디코드되는지 확인한다 (#108 — moov 후행 유효성)."""
+    result = subprocess.run(
+        [get_ffmpeg_exe(), "-hide_banner", "-v", "error", "-i", str(path), "-f", "null", "-"],
+        capture_output=True,
+    )
+    assert result.returncode == 0 and not result.stderr.strip()
+
+
+def test_remux_stream_produces_mp4_with_moov_and_no_second_pass(tmp_path):
+    """산출물은 전역 인덱스(moov)를 가진 mp4이고, moov는 파일 끝이다 (#108).
+
+    편집 프로그램 인식에 필요한 것은 moov의 **존재**(#88)이지 위치가 아니다.
+    moov가 mdat 뒤(ffmpeg 기본)임을 단언해 +faststart의 전체 재기록 2차
+    패스가 되살아나지 않게 박제한다 — 선두 이동이 다시 필요해지면 이
+    단언을 근거와 함께 뒤집어야 한다. 후행 moov 산출물의 유효성은 전체
+    디코드로 확인한다.
+    """
     src = tmp_path / "src.mp4"
     dst = tmp_path / "dst.mp4"
     _make_tiny_fmp4(src)
@@ -196,9 +212,9 @@ def test_remux_stream_produces_mp4_with_leading_moov(tmp_path):
     remux_stream(read_in_chunks(str(src)), str(dst))
 
     boxes = _top_level_boxes(dst)
-    assert "moov" in boxes and "mdat" in boxes
-    # -movflags +faststart의 목적 그 자체 — moov가 mdat보다 앞이다
-    assert boxes.index("moov") < boxes.index("mdat")
+    assert "moov" in boxes and "mdat" in boxes  # 전역 인덱스 존재 (#88의 본질)
+    assert boxes.index("mdat") < boxes.index("moov")  # 2차 패스 없음 (#108)
+    _assert_fully_decodes(dst)
 
 
 def test_remux_stream_ts_input_produces_mp4(tmp_path):
@@ -216,7 +232,9 @@ def test_remux_stream_ts_input_produces_mp4(tmp_path):
     remux_stream(read_in_chunks(str(src)), str(dst))
 
     boxes = _top_level_boxes(dst)
-    assert boxes.index("moov") < boxes.index("mdat")
+    assert "moov" in boxes and "mdat" in boxes
+    assert boxes.index("mdat") < boxes.index("moov")  # 2차 패스 없음 (#108)
+    _assert_fully_decodes(dst)
 
 
 def test_remux_stream_writes_mp4_regardless_of_extension(tmp_path):
@@ -383,7 +401,7 @@ def test_pause_blocks_feed_then_resume_completes(tmp_path):
 
     out = tmp_path / "out.mp4"
     boxes = _top_level_boxes(out)
-    assert boxes.index("moov") < boxes.index("mdat")  # 재개 후 정상 완주
+    assert "moov" in boxes and "mdat" in boxes  # 재개 후 정상 완주 (moov 위치는 #108)
     assert fake.s.merged_segments == len(paths)
 
 
@@ -518,7 +536,7 @@ def test_bundled_ts_remux_succeeds_with_guard(tmp_path, monkeypatch):
     remux_stream(read_in_chunks(str(src)), str(dst))
 
     boxes = _top_level_boxes(dst)
-    assert boxes.index("moov") < boxes.index("mdat")
+    assert "moov" in boxes and "mdat" in boxes  # 정상 remux 완주 (moov 위치는 #108)
 
 
 def test_guard_output_is_byte_identical(tmp_path, monkeypatch):

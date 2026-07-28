@@ -157,7 +157,11 @@ def remux_stream(chunks: Iterable[bytes], dst_path: str) -> None:
       없음). fMP4·TS는 스트리밍 컨테이너라 파이프 입력으로 정상 판별된다
     - ``-c copy``: 재인코딩 금지. 화질 무손실
     - 타임스탬프 0 정규화는 ffmpeg 기본 동작(-copyts 미지정) — 별도 옵션 불필요
-    - ``-movflags +faststart``: 전역 인덱스(moov)를 파일 선두로 이동
+    - ``+faststart``는 쓰지 않는다(#108) — moov를 선두로 옮기는 2차 패스가
+      산출물 전체를 다시 읽고 다시 쓴다(제거로 후처리 I/O 5N→3N). 편집
+      프로그램 인식에 필요한 것은 moov의 **존재**(#88)이지 위치가 아니며,
+      로컬 재생·편집은 랜덤 액세스라 moov가 파일 끝(ffmpeg 기본)이어도
+      duration·시작 0·탐색·디코드가 동일함을 실측으로 확인했다(#108 비교표)
     - ``-f mp4``: 출력 컨테이너를 명시한다(#92) — 산출물 확장자가 .mp4가
       아니어도(유저가 저장 파일명을 바꾼 경우) 확장자 추론에 기대지 않는다
 
@@ -180,8 +184,6 @@ def remux_stream(chunks: Iterable[bytes], dst_path: str) -> None:
         "pipe:0",
         "-c",
         "copy",
-        "-movflags",
-        "+faststart",
         "-f",
         "mp4",
         dst_path,
