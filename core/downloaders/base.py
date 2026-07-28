@@ -498,6 +498,12 @@ class BaseDownloader(ABC):
             if not self.s._pause_event.is_set():
                 self.s._pause_event.wait()
                 self.measure_speed()
+                # 재개 직후 궤적 앵커 (#78) — 관측 로그가 스레드 수 변화 시에만
+                # 남으면 재개 후 재상승 여부를 로그로 확인할 수 없다. 기존
+                # 조정 로그와 같은 형식으로 현재 목표·속도를 한 줄 남긴다.
+                # 일시정지 구간이 섞인 이 측정으로는 조정 판단을 하지 않는다
+                self.logger.log_thread_adjust(self.s.adjust_threads, self.s.speed_mb)
+                self._settle_ticks = max(self._settle_ticks, 1)
             else:
                 self._adjust_threads()
                 self.measure_speed()

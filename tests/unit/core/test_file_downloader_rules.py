@@ -33,6 +33,7 @@ class RecordingLogger:
         self.warnings: list[str] = []
         self.errors: list[str] = []
         self.thread_completes: list[tuple] = []
+        self.part_resumes: list[tuple] = []  # 이어받기 로그 (#78)
 
     def log_thread_adjust(self, active_threads, avg_speed):
         self.adjust_calls.append((active_threads, avg_speed))
@@ -45,6 +46,9 @@ class RecordingLogger:
 
     def log_thread_complete(self, thread_id, downloaded_size):
         self.thread_completes.append((thread_id, downloaded_size))
+
+    def log_part_resume(self, part_num, offset, part_size):
+        self.part_resumes.append((part_num, offset, part_size))
 
     def log_error(self, message, exception=None):
         self.errors.append(message)
@@ -363,3 +367,140 @@ def test_request_exception_requeues_range_as_failed(tmp_path, monkeypatch):
     assert data.remaining_ranges == [(0, MB - 1)]
     assert data.threads_progress[0] == 0
     assert len(logger.errors) == 1
+
+
+# ================================================================ 파트 이어받기 (#78)
+
+
+class ResumeResponse(FakeResponse):
+    """status_code를 가진 스트리밍 응답 — 이어받기(206) 검증용."""
+
+    def __init__(self, chunks, status_code=206):
+        super().__init__(chunks)
+        self.status_code = status_code
+
+    def close(self):
+        pass
+
+
+class RecordingSession:
+    """요청별 Range 헤더를 기록하고 준비된 응답을 순서대로 돌려준다 (#78)."""
+
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.range_headers: list[str] = []
+
+    def get(self, url, headers=None, **kwargs):
+        self.range_headers.append(headers["Range"])
+        return self._responses.pop(0)
+
+
+CHUNK = 8192
+PART_END = 3 * CHUNK - 1  # 3청크짜리 파트 (0 ~ 24575)
+
+
+def _prepare_resume_engine(tmp_path, monkeypatch, responses, prewritten: bytes = b""):
+    """이어받기 시나리오용 엔진 — 산출물 선기록과 응답 시퀀스를 주입한다."""
+    output = tmp_path / "part.bin"
+    output.write_bytes(prewritten)
+
+    data = _make_data(str(output))
+    logger = RecordingLogger()
+    engine, _task = _make_engine(data, logger)
+
+    data.model.start()
+    data.threads_progress = [0] * 4
+    data.remaining_ranges = []
+
+    mod = _engine_module()
+    session = RecordingSession(responses)
+    monkeypatch.setattr(mod, "get_thread_session", lambda: session)
+    monkeypatch.setattr(mod.tm, "time", TickingClock(1e-6))  # 항상 고속 판정
+    return engine, data, logger, session, output
+
+
+def test_requeued_part_resumes_with_range(tmp_path, monkeypatch):
+    """재큐잉된 파트는 이미 받은 바이트 뒤에서 Range로 이어받는다 (#78).
+
+    완료 시 누적 진행은 이어받은 바이트를 포함한 파트 전체여야 한다.
+    """
+    engine, data, logger, session, output = _prepare_resume_engine(
+        tmp_path,
+        monkeypatch,
+        responses=[ResumeResponse([b"y" * CHUNK], status_code=206)],
+        prewritten=b"x" * (2 * CHUNK),  # 앞선 시도가 2청크를 받아 둔 상태
+    )
+    engine._record_partial(0, PART_END, 2 * CHUNK)
+
+    returned = engine._download_part(0, PART_END, 0, 3 * CHUNK)
+
+    assert returned == 0
+    assert session.range_headers == [f"bytes={2 * CHUNK}-{PART_END}"]  # 이어받기 요청
+    assert logger.part_resumes == [(0, 2 * CHUNK, 3 * CHUNK)]  # 발생 사실·오프셋 로그 (#78)
+    assert data.completed_threads == 1
+    assert data.completed_progress == 3 * CHUNK  # 이어받은 바이트 포함 전체
+    assert logger.thread_completes == [(0, 3 * CHUNK)]
+    assert output.read_bytes() == b"x" * (2 * CHUNK) + b"y" * CHUNK  # 기존 바이트 보존
+    assert (0, PART_END) not in engine._part_progress  # 완료 후 기록 정리
+
+
+def test_resume_rejected_falls_back_to_full_retry(tmp_path, monkeypatch):
+    """완료 조건: 서버가 이어받기 Range를 존중하지 않으면(200) 전체 재시도로 폴백한다."""
+    engine, data, logger, session, output = _prepare_resume_engine(
+        tmp_path,
+        monkeypatch,
+        responses=[
+            ResumeResponse([], status_code=200),  # 이어받기 거부 — 전체 응답
+            ResumeResponse([b"z" * CHUNK] * 3, status_code=200),  # 처음부터 전체 파트
+        ],
+        prewritten=b"x" * (2 * CHUNK),
+    )
+    engine._record_partial(0, PART_END, 2 * CHUNK)
+
+    returned = engine._download_part(0, PART_END, 0, 3 * CHUNK)
+
+    assert returned == 0
+    assert session.range_headers == [
+        f"bytes={2 * CHUNK}-{PART_END}",  # 이어받기 시도
+        f"bytes=0-{PART_END}",  # 거부 후 파트 처음부터
+    ]
+    assert any("resume rejected" in w for w in logger.warnings)
+    assert data.completed_progress == 3 * CHUNK
+    assert output.read_bytes() == b"z" * (3 * CHUNK)  # 전체를 새로 받았다
+
+
+def test_resume_integrity_mismatch_restarts_from_start(tmp_path, monkeypatch):
+    """완료 조건: 기록된 오프셋만큼 파일이 자라 있지 않으면 처음부터 받는다."""
+    engine, data, logger, session, output = _prepare_resume_engine(
+        tmp_path,
+        monkeypatch,
+        responses=[ResumeResponse([b"z" * CHUNK] * 3, status_code=206)],
+        prewritten=b"",  # 기록(2청크)과 달리 파일이 비어 있다 — 쓰기 유실 상황
+    )
+    engine._record_partial(0, PART_END, 2 * CHUNK)
+
+    returned = engine._download_part(0, PART_END, 0, 3 * CHUNK)
+
+    assert returned == 0
+    assert session.range_headers == [f"bytes=0-{PART_END}"]  # 이어받기 시도 없음
+    assert logger.part_resumes == []  # 이어받기 로그도 없다 — 처음부터 받았다는 뜻
+    assert (0, PART_END) not in engine._part_progress  # 무결성 실패 기록은 폐기된다
+    assert data.completed_progress == 3 * CHUNK
+    assert output.read_bytes() == b"z" * (3 * CHUNK)
+
+
+def test_slow_requeue_records_partial_progress(tmp_path, monkeypatch):
+    """저속 재큐잉 시 받아 쓴 바이트가 기록된다 — 다음 시도의 이어받기 근거 (#78).
+
+    저속 판정 규칙(연속 6회 < 100 KB/s) 자체는 무변경이다 — 박제는
+    test_slow_part_restarts_after_six_slow_chunks가 그대로 유지한다.
+    """
+    chunks = [b"x" * CHUNK] * 10  # 1초/청크 → 항상 저속
+    engine, data, logger = _prepare_running_engine(
+        tmp_path, monkeypatch, chunks=chunks, clock_step=1.0
+    )
+
+    engine._download_part(0, 40 * MB - 1, 0, 40 * MB)
+
+    # 저속 판정은 6청크째에 나므로 그때까지 받은 바이트가 기록된다
+    assert engine._part_progress[(0, 40 * MB - 1)] == 6 * CHUNK
