@@ -268,6 +268,7 @@ class _FakeEngine:
         self.s = SimpleNamespace(
             output_path=str(tmp_path / "out.mp4"),
             merged_segments=0,
+            total_downloaded_size=0,
             _pause_event=threading.Event(),
         )
         self.s._pause_event.set()
@@ -275,6 +276,10 @@ class _FakeEngine:
         self.logger = SimpleNamespace(
             log_error=lambda message, exc=None: self.errors.append(message)
         )
+        # 후처리 진행 통지 경로 (#89) — 이 파일의 검증 대상이 아니므로 무시한다
+        self.progress_events: list = []
+        self._on_progress = self.progress_events.append
+        self._progress_total_size = lambda: None
 
 
 def test_streamed_failure_raises_postprocess_error_and_preserves_segments(tmp_path, monkeypatch):
