@@ -12,6 +12,10 @@
         <translation>Loading information...</translation>
     </message>
     <message>
+        <source>Checking...</source>
+        <translation>Checking...</translation>
+    </message>
+    <message>
         <source>Download paused</source>
         <translation>Download paused</translation>
     </message>

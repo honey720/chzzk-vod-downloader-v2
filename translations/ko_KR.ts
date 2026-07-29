@@ -12,6 +12,10 @@
         <translation>정보를 불러오는 중...</translation>
     </message>
     <message>
+        <source>Checking...</source>
+        <translation>확인 중...</translation>
+    </message>
+    <message>
         <source>Download paused</source>
         <translation>다운로드 정지</translation>
     </message>

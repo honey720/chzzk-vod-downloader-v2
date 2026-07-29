@@ -62,7 +62,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         if not self.item.unique_reps:
             return
         for unique_rep in self.item.unique_reps:
-            unique_rep.append("Unknown")  # 초기 값 설정
+            # 크기 조회가 끝나기 전 표시 — "Unknown"은 실패로 읽혀 "확인 중"으로 표기 (#124)
+            unique_rep.append(self.tr("Checking..."))  # 초기 값 설정
 
         self.setresolutionUrlSize(self.item.unique_reps[-1][0], self.item.unique_reps[-1][1], -1)
 
