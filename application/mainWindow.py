@@ -147,7 +147,11 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
                 self.downloadButton.setText(self.tr('Pause'))
         else:
             if not self.contentManager.findItem()[0]:
-                QMessageBox.warning(self, self.tr("Warning"), self.tr("No VODs added."))
+                # 조회 중인 아이템만 있는 경우와 아무것도 없는 경우를 구분해 안내 (#124)
+                if self.contentManager.hasLoadingItems():
+                    QMessageBox.warning(self, self.tr("Warning"), self.tr("Still loading video information. Please try again in a moment."))
+                else:
+                    QMessageBox.warning(self, self.tr("Warning"), self.tr("No VODs added."))
                 return
             self.downloadButton.setText(self.tr('Pause'))
             self.contentManager.downloadItem()

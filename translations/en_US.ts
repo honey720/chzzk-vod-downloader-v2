@@ -8,6 +8,10 @@
         <translation>Download waiting</translation>
     </message>
     <message>
+        <source>Loading information...</source>
+        <translation>Loading information...</translation>
+    </message>
+    <message>
         <source>Download paused</source>
         <translation>Download paused</translation>
     </message>
@@ -228,6 +232,10 @@
     <message>
         <source>No VODs added.</source>
         <translation>No VODs added.</translation>
+    </message>
+    <message>
+        <source>Still loading video information. Please try again in a moment.</source>
+        <translation>Still loading video information. Please try again in a moment.</translation>
     </message>
     <message>
         <source>Downloading</source>

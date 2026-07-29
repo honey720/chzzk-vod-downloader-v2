@@ -1,4 +1,5 @@
 import os
+from functools import partial
 
 from PySide6.QtCore import Qt, Signal, QThreadPool, QObject
 from content.model import ContentListModel
@@ -37,29 +38,46 @@ class ContentManager(QObject):
         self.fetchRequested.emit(urls)
 
     def fetchContent(self, vod_url: str, cookies: dict, downloadPath: str) -> None:
+        # 조회가 끝나기 전에도 카드가 보이도록 LOADING 상태의 자리표시 아이템을
+        # 즉시 추가한다. LOADING 아이템은 findItem이 건너뛰므로 다운로드되지 않는다 (#124)
+        placeholder = ContentItem(
+            vod_url,
+            {'title': vod_url, 'category': '', 'channelName': '', 'createdDate': '', 'duration': 0},
+            [], None, '', downloadPath, '', None,
+        )
+        placeholder.downloadState = DownloadState.LOADING
+        self.model.addItem(placeholder)
+        self.insertItemRequested.emit(self.model.rowCount())
+
         worker = ContentWorker(vod_url, cookies, downloadPath)
 
-        # 시그널/슬롯 연결
-        worker.finished.connect(self.onWorkerFinished)  # 결과 처리 슬롯
-        worker.error.connect(self.onWorkerError)           # 에러 처리 슬롯
+        # 시그널/슬롯 연결 — 결과를 자리표시 아이템과 짝지어 처리
+        worker.finished.connect(partial(self.onWorkerFinished, placeholder))  # 결과 처리 슬롯
+        worker.error.connect(partial(self.onWorkerError, placeholder))           # 에러 처리 슬롯
         worker.finished.connect(worker.deleteLater)
 
         self.threadpool.start(lambda: worker.run())
 
-    def onWorkerFinished(self, result, content_type):
+    def onWorkerFinished(self, placeholder, result, content_type):
         # result는 (vod_url, metadata, unique_reps, resolution, base_url, downloadPath, liveRewindPlaybackJson) 형식
         vod_url, metadata, unique_reps, resolution, base_url, downloadPath, liveRewindPlaybackJson = result
         self.downloadPath = downloadPath
-        self.addItem(vod_url, metadata, unique_reps, resolution, base_url, downloadPath, content_type, liveRewindPlaybackJson)
-
-    def onWorkerError(self, error_message):
-        self.contentError.emit(error_message)
-
-    def addItem(self, vod_url, metadata, unique_reps, resolution, base_url, downloadPath, content_type, liveRewindPlaybackJson):
+        row = self.model.getRow(placeholder)
+        if row is None:
+            # 조회 중 유저가 카드를 삭제한 경우 — 결과를 버린다
+            return
+        # 완성된 아이템으로 같은 자리에서 교체한다. 행 삭제→삽입을 거쳐야
+        # 해상도 버튼·썸네일이 붙은 위젯이 새로 만들어진다
         item = ContentItem(vod_url, metadata, unique_reps, resolution, base_url, downloadPath, content_type, liveRewindPlaybackJson)
-        self.model.addItem(item)
-        row = self.model.rowCount()
-        self.insertItemRequested.emit(row)
+        self.model.removeRows(row, 1)
+        self.model.addItem(item, row)
+
+    def onWorkerError(self, placeholder, error_message):
+        row = self.model.getRow(placeholder)
+        if row is not None:
+            self.model.removeRows(row, 1)
+            self.deleteItemRequested.emit(placeholder, self.model.rowCount())
+        self.contentError.emit(error_message)
 
     def clrearFinishedItems(self):
         if not self.model.isEmpty():
@@ -151,6 +169,16 @@ class ContentManager(QObject):
         for row in range(row_count):
             index = self.model.index(row, 0)
             item: ContentItem = self.model.data(index, Qt.ItemDataRole.UserRole)
-            if item.downloadState not in [DownloadState.FINISHED, DownloadState.FAILED]:
+            # LOADING은 메타데이터가 아직 없어 다운로드 대상이 아니다 (#124)
+            if item.downloadState not in [DownloadState.FINISHED, DownloadState.FAILED, DownloadState.LOADING]:
                 return True, item, index
         return False, None, None
+
+    def hasLoadingItems(self):
+        """메타데이터 조회가 끝나지 않은 아이템이 있는지 여부."""
+        for row in range(self.model.rowCount()):
+            index = self.model.index(row, 0)
+            item: ContentItem = self.model.data(index, Qt.ItemDataRole.UserRole)
+            if item.downloadState == DownloadState.LOADING:
+                return True
+        return False

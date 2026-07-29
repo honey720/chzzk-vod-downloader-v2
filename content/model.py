@@ -37,9 +37,10 @@ class ContentListModel(QAbstractListModel):
         
         return False
     
-    def addItem(self, item: ContentItem):
+    def addItem(self, item: ContentItem, row=None):
         """실제 ContentItem을 바로 모델에 삽입"""
-        row = self.rowCount()  # 항상 맨 끝에 삽입하거나, 필요한 위치를 row로 지정
+        if row is None:
+            row = self.rowCount()  # 항상 맨 끝에 삽입하거나, 필요한 위치를 row로 지정
         self.beginInsertRows(QModelIndex(), row, row)
         self.items.insert(row, item)  # ✅ None이 아닌 실제 아이템을 삽입
         self.endInsertRows()

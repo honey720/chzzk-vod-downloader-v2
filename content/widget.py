@@ -58,6 +58,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """
 
         self.buttons = []
+        # LOADING 자리표시 아이템은 해상도 목록이 아직 없다 (#124)
+        if not self.item.unique_reps:
+            return
         for unique_rep in self.item.unique_reps:
             unique_rep.append("Unknown")  # 초기 값 설정
 
@@ -165,7 +168,12 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.titleLabel.setText(item.title)
         self.directoryLabel.setText(item.download_path)
 
-        if self.item.downloadState == DownloadState.WAITING:
+        if self.item.downloadState == DownloadState.LOADING:
+            self.statusLabel.setText(self.tr("Loading information..."))
+            self.fileSizeLabel.setText("")
+            self.progressLabel.setText(" ")
+
+        elif self.item.downloadState == DownloadState.WAITING:
             self.statusLabel.setText(self.tr("Download waiting"))
             if self.item.is_segment_based:
                 self.fileSizeLabel.setText(f" {strftime('%H:%M:%S', gmtime(item.duration))}")
