@@ -1,5 +1,4 @@
 import os
-from functools import partial
 
 from PySide6.QtCore import Qt, Signal, QThreadPool, QObject
 from content.model import ContentListModel
@@ -33,6 +32,10 @@ class ContentManager(QObject):
 
         self.downloadPath = ""
         self.threadpool = QThreadPool()
+        # 조회 중인 워커 → 자리표시 아이템. 결과가 도착할 때까지 워커의 파이썬
+        # 참조를 잡아 두는 역할도 한다 — 참조가 없으면 run() 종료 직후 워커가
+        # 파괴되어 큐에 남은 finished/error 전달이 유실된다 (#124)
+        self._pendingPlaceholders = {}
 
     def fetchReuest(self, urls):
         self.fetchRequested.emit(urls)
@@ -50,16 +53,21 @@ class ContentManager(QObject):
         self.insertItemRequested.emit(self.model.rowCount())
 
         worker = ContentWorker(vod_url, cookies, downloadPath)
+        self._pendingPlaceholders[worker] = placeholder
 
-        # 시그널/슬롯 연결 — 결과를 자리표시 아이템과 짝지어 처리
-        worker.finished.connect(partial(self.onWorkerFinished, placeholder))  # 결과 처리 슬롯
-        worker.error.connect(partial(self.onWorkerError, placeholder))           # 에러 처리 슬롯
-        worker.finished.connect(worker.deleteLater)
+        # 시그널/슬롯 연결 — 반드시 바운드 메서드로 연결한다. partial/lambda로
+        # 연결하면 연결의 소유가 워커(발신자) 쪽이 되어, 워커가 파괴되는 순간
+        # 큐에 남은 전달이 함께 사라진다 (#124 스모크 실패의 원인)
+        worker.finished.connect(self.onWorkerFinished)  # 결과 처리 슬롯
+        worker.error.connect(self.onWorkerError)           # 에러 처리 슬롯
 
         self.threadpool.start(lambda: worker.run())
 
-    def onWorkerFinished(self, placeholder, result, content_type):
+    def onWorkerFinished(self, result, content_type):
         # result는 (vod_url, metadata, unique_reps, resolution, base_url, downloadPath, liveRewindPlaybackJson) 형식
+        placeholder = self._pendingPlaceholders.pop(self.sender(), None)
+        if placeholder is None:
+            return
         vod_url, metadata, unique_reps, resolution, base_url, downloadPath, liveRewindPlaybackJson = result
         self.downloadPath = downloadPath
         row = self.model.getRow(placeholder)
@@ -72,11 +80,13 @@ class ContentManager(QObject):
         self.model.removeRows(row, 1)
         self.model.addItem(item, row)
 
-    def onWorkerError(self, placeholder, error_message):
-        row = self.model.getRow(placeholder)
-        if row is not None:
-            self.model.removeRows(row, 1)
-            self.deleteItemRequested.emit(placeholder, self.model.rowCount())
+    def onWorkerError(self, error_message):
+        placeholder = self._pendingPlaceholders.pop(self.sender(), None)
+        if placeholder is not None:
+            row = self.model.getRow(placeholder)
+            if row is not None:
+                self.model.removeRows(row, 1)
+                self.deleteItemRequested.emit(placeholder, self.model.rowCount())
         self.contentError.emit(error_message)
 
     def clrearFinishedItems(self):
