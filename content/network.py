@@ -16,6 +16,13 @@ NAVER_API = "https://apis.naver.com"
 CHZZK_API = "https://api.chzzk.naver.com"
 VIDEOHUB_API = "https://api-videohub.naver.com"
 
+# 조회(메타데이터·매니페스트) 요청 공통 타임아웃 (#129).
+# 타임아웃이 없으면 네트워크 단절 시 OS TCP 타임아웃(관측 ~47초, 환경 따라 더 김)까지
+# 조회가 갇힌다. connect 5초: 정상 연결은 1초 미만이라 여유가 충분하고 OS SYN
+# 재시도보다 먼저 끊는다. read 15초: 응답이 작은 JSON/XML이라 평시 1초 미만 —
+# 느린 회선·서버 지연에 여유를 두되 OS 타임아웃보다 훨씬 먼저 포기한다.
+REQUEST_TIMEOUT = (5, 15)
+
 
 class NetworkManager:
 
@@ -50,7 +57,7 @@ class NetworkManager:
         """
         api_url = f"{CHZZK_API}/service/v2/videos/{video_no}"
         headers = {"User-Agent": "Mozilla/5.0"}
-        response = _session.get(api_url, cookies=cookies, headers=headers)
+        response = _session.get(api_url, cookies=cookies, headers=headers, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
 
         content = response.json().get('content', {})
@@ -84,7 +91,7 @@ class NetworkManager:
         """
         manifest_url = f"{NAVER_API}/neonplayer/vodplay/v2/playback/{video_id}?key={in_key}"
         headers = {"Accept": "application/dash+xml"}
-        response = _session.get(manifest_url, cookies=cookies, headers=headers)
+        response = _session.get(manifest_url, cookies=cookies, headers=headers, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
 
         return parse_dash_manifest(response.text)
@@ -100,7 +107,7 @@ class NetworkManager:
         """
         manifest_url = f"{NAVER_API}/neonplayer/vodplay/v2/playback/{video_id}?key={in_key}"
         headers = {"Accept": "application/dash+xml"}
-        response = _session.get(manifest_url, cookies=cookies, headers=headers)
+        response = _session.get(manifest_url, cookies=cookies, headers=headers, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
 
         if not is_supported_sea(response.text):
@@ -153,7 +160,7 @@ class NetworkManager:
         data = json.loads(json_str)
         media = data.get("media", [])
         path = media[0].get("path")
-        response = _session.get(path, cookies=cookies)
+        response = _session.get(path, cookies=cookies, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
         content = response.text.splitlines()
 
@@ -176,7 +183,7 @@ class NetworkManager:
         """
         api_url = f"{CHZZK_API}/service/v1/clips/{clip_no}/detail?optionalProperties=OWNER_CHANNEL"
         headers = {"User-Agent": "Mozilla/5.0"}
-        response = _session.get(api_url, cookies=cookies, headers=headers)
+        response = _session.get(api_url, cookies=cookies, headers=headers, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
 
         content = response.json().get('content', {})
@@ -201,7 +208,7 @@ class NetworkManager:
         """
         manifest_url = f"{VIDEOHUB_API}/shortformhub/feeds/v3/card?serviceType=CHZZK&seedMediaId={clip_id}&mediaType=VOD"
         headers = {"User-Agent": "Mozilla/5.0"}
-        response = _session.get(manifest_url, cookies=cookies, headers=headers)
+        response = _session.get(manifest_url, cookies=cookies, headers=headers, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
 
         data = response.json()

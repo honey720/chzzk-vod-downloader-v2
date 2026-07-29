@@ -10,7 +10,7 @@ import json
 import pytest
 
 import content.network as network
-from content.network import NetworkManager
+from content.network import REQUEST_TIMEOUT, NetworkManager
 from core.api.dash import parse_dash_manifest
 from core.api.url_parser import extract_content_no
 from tests.mocks.mock_http import MockResponse
@@ -102,7 +102,11 @@ class TestGetVideoDashManifest:
             (
                 "https://apis.naver.com/neonplayer/vodplay/v2/playback/test-video-id"
                 "?key=test-in-key",
-                {"cookies": cookies, "headers": {"Accept": "application/dash+xml"}},
+                {
+                    "cookies": cookies,
+                    "headers": {"Accept": "application/dash+xml"},
+                    "timeout": REQUEST_TIMEOUT,  # 조회 갇힘 방지 (#129)
+                },
             )
         ]
         # 반환값은 core 파서에 응답 본문을 그대로 넘긴 결과와 일치해야 한다
@@ -151,7 +155,11 @@ class TestGetVideoInfo:
         assert calls == [
             (
                 "https://api.chzzk.naver.com/service/v2/videos/13714380",
-                {"cookies": cookies, "headers": {"User-Agent": "Mozilla/5.0"}},
+                {
+                    "cookies": cookies,
+                    "headers": {"User-Agent": "Mozilla/5.0"},
+                    "timeout": REQUEST_TIMEOUT,  # 조회 갇힘 방지 (#129)
+                },
             )
         ]
         # 반환은 tuple이 아닌 VideoInfo 필드 접근 (#61). 기대값 자체는 무변경.
@@ -205,6 +213,9 @@ class TestGetVideoM3u8BaseUrl:
         base_url = NetworkManager.get_video_m3u8_base_url(json_str, 1080, cookies)
 
         assert calls == [
-            ("https://example.invalid/master.m3u8", {"cookies": cookies})
+            (
+                "https://example.invalid/master.m3u8",
+                {"cookies": cookies, "timeout": REQUEST_TIMEOUT},  # 조회 갇힘 방지 (#129)
+            )
         ]
         assert base_url == "https://example.invalid/1080/playlist.m3u8"

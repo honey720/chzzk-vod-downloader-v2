@@ -4,7 +4,7 @@ from PySide6.QtWidgets import QWidget, QPushButton, QMessageBox
 from PySide6.QtGui import QPixmap, QDesktopServices
 from PySide6.QtCore import Qt, QSize, Signal, QUrl, QDir, QProcess
 from content.data import ContentItem
-from content.network import get_thread_session
+from content.network import REQUEST_TIMEOUT, get_thread_session
 from download.state import DownloadState
 from ui.contentItemWidget import Ui_ContentItemWidget
 from time import strftime, gmtime
@@ -84,11 +84,11 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         def update_button_text():
             try:
                 if not self.item.is_segment_based:
-                    resp = get_thread_session().head(base_url)
+                    resp = get_thread_session().head(base_url, timeout=REQUEST_TIMEOUT)
                     resp.raise_for_status()
                     size = int(resp.headers.get('content-length', 0))
                     if size == 0:
-                        resp = get_thread_session().get(base_url, stream=True)
+                        resp = get_thread_session().get(base_url, stream=True, timeout=REQUEST_TIMEOUT)
                         resp.raise_for_status()
                         size = int(resp.headers.get('content-length', 0))
                         resp.close()
@@ -133,7 +133,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
 
     def fetchImage(self, label, url, maxHeight, type):
         try:
-            response = get_thread_session().get(url)
+            response = get_thread_session().get(url, timeout=REQUEST_TIMEOUT)
             response.raise_for_status()
             image = QPixmap()
             image.loadFromData(response.content)
