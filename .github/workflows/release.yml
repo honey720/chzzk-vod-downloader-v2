@@ -238,10 +238,31 @@ jobs:
             echo 'VTEOF'
           } >> "$GITHUB_OUTPUT"
 
+      - name: Generate release notes
+        id: notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NOTES=$(gh api "repos/${{ github.repository }}/releases/generate-notes" \
+            -f tag_name="${{ github.ref_name }}" --jq '.body')
+          {
+            echo 'body<<NOTESEOF'
+            echo '<details>'
+            echo '<summary>전체 변경 목록</summary>'
+            echo ''
+            echo "$NOTES"
+            echo ''
+            echo '</details>'
+            echo 'NOTESEOF'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
-          body: ${{ steps.vtmd.outputs.body }}
-          generate_release_notes: true
+          body: |
+            ${{ steps.vtmd.outputs.body }}
+
+            ${{ steps.notes.outputs.body }}
+          generate_release_notes: false
           prerelease: ${{ contains(github.ref_name, '-') }}
