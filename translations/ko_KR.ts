@@ -120,6 +120,22 @@
         <source>Failed to get DASH manifest</source>
         <translation>DASH 매니페스트를 가져오는데 실패했습니다</translation>
     </message>
+    <message>
+        <source>Video not found</source>
+        <translation>영상을 찾을 수 없습니다. 주소를 확인해 주세요.</translation>
+    </message>
+    <message>
+        <source>Viewing permission required</source>
+        <translation>시청 권한이 필요한 영상입니다. 시청 가능한 계정의 쿠키를 설정에 등록해 주세요.</translation>
+    </message>
+    <message>
+        <source>Network connection error</source>
+        <translation>네트워크 연결을 확인해 주세요.</translation>
+    </message>
+    <message>
+        <source>Failed to fetch video information</source>
+        <translation>영상 정보를 가져오지 못했습니다.</translation>
+    </message>
 </context>
 <context>
     <name>DownloadThread</name>

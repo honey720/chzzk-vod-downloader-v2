@@ -14,8 +14,19 @@ import할 수 없기 때문이다(core→app 의존 금지). 네트워크 계층
 
 from typing import Protocol
 
+import requests
+
 from core.api.url_parser import extract_content_no
 from core.models.content import VideoInfo
+
+# HTTP 상태 코드 → 안내 키. 404는 삭제·비공개·오타를 구분할 수 없으므로
+# 단정하지 않는 중립 문구를 쓴다 (#126). 멤버십 전용의 401은 매니페스트 요청
+# 전에 inKey 검사(#55)가 먼저 걸러 "Channel membership required"로 안내된다.
+_TRANSPORT_STATUS_KEYS = {
+    404: "Video not found",
+    401: "Viewing permission required",
+    403: "Viewing permission required",
+}
 
 
 class MetadataApi(Protocol):
@@ -68,16 +79,29 @@ def fetch_content(
     if not content_type or not content_no:
         raise MetadataError("Invalid VOD URL", vod_url)
 
-    if content_type == "video":
-        result, encrypted = fetch_video(vod_url, content_no, cookies, download_path, api)
-        if result[6]:
-            content_type = "m3u8"
-        elif encrypted:
-            # AES(SEA) 암호화 VOD — HLS(TS) 세그먼트 + 복호화 경로 (#57)
-            content_type = "hls_aes"
-    elif content_type == "clips":
-        content_type = "clip"
-        result = fetch_clip(vod_url, content_no, cookies, download_path, api)
+    # 전송 계층 예외(HTTP 상태·연결 실패)를 MetadataError로 감싼다.
+    # NetworkManager가 raise_for_status()로 던지는 원시 requests 예외에는
+    # 내부 API URL이 포함되어 있어 그대로 유저에게 노출되면 안 된다 (#126).
+    # 원인 예외는 `from e`로 연결해 어댑터의 logger.exception이 상세를 남긴다.
+    try:
+        if content_type == "video":
+            result, encrypted = fetch_video(vod_url, content_no, cookies, download_path, api)
+            if result[6]:
+                content_type = "m3u8"
+            elif encrypted:
+                # AES(SEA) 암호화 VOD — HLS(TS) 세그먼트 + 복호화 경로 (#57)
+                content_type = "hls_aes"
+        elif content_type == "clips":
+            content_type = "clip"
+            result = fetch_clip(vod_url, content_no, cookies, download_path, api)
+    except requests.HTTPError as e:
+        status = e.response.status_code if e.response is not None else None
+        key = _TRANSPORT_STATUS_KEYS.get(status, "Failed to fetch video information")
+        raise MetadataError(key, vod_url) from e
+    except (requests.ConnectionError, requests.Timeout) as e:
+        raise MetadataError("Network connection error", vod_url) from e
+    except requests.RequestException as e:
+        raise MetadataError("Failed to fetch video information", vod_url) from e
 
     return result, content_type
 

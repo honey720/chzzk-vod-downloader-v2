@@ -120,6 +120,22 @@
         <source>Failed to get DASH manifest</source>
         <translation>Failed to get DASH manifest</translation>
     </message>
+    <message>
+        <source>Video not found</source>
+        <translation>The video could not be found. Please check the address.</translation>
+    </message>
+    <message>
+        <source>Viewing permission required</source>
+        <translation>This video requires viewing permission. Add the cookies of an account that can watch it in Settings.</translation>
+    </message>
+    <message>
+        <source>Network connection error</source>
+        <translation>Please check your network connection.</translation>
+    </message>
+    <message>
+        <source>Failed to fetch video information</source>
+        <translation>Could not fetch the video information.</translation>
+    </message>
 </context>
 <context>
     <name>DownloadThread</name>
