@@ -15,18 +15,15 @@
 ![main](https://github.com/user-attachments/assets/ae01a231-e3d0-425c-a76f-0042d49a2a8b)  
 ---
 
-## 📌 Features
+## 💾 Download
 
-- Supports **dynamic threading** to utilize your internet connection's full download speed.
-- Allows **multiple VOD downloads** — add several VODs to the queue and download them simultaneously.
-- **Resolution selection** lets you choose from various quality levels before downloading.
-- **Cookie storage** allows access to age-restricted VODs.
+Get the latest builds from the [Releases](https://github.com/honey720/chzzk-vod-downloader-v2/releases) page. Download the asset that matches your OS (`<version>` is the release tag, e.g. `v2.8.0`).
 
-![usage](https://github.com/user-attachments/assets/857b3cfc-dbb1-4e5b-a6f8-027eb48f2e35)
+> Per-OS file names and support ranges, first-launch steps on macOS, and antivirus false-positive notes are collapsed under [Details](#-details) below.
 
 ---
 
-## 🚀 How to Use
+## 🚀 Basic Usage
 
 1. **Add VOD**
    - Enter the VOD URL and press the **Add VOD** button or hit Enter to add it to the download queue.
@@ -40,15 +37,28 @@
    - Use the **Download/Pause** toggle button to start or pause downloads.
    - Click the **Stop** button to cancel the download.
 
-4. **Change Settings**
+4. **Change Settings (Cookie Setup)**
    - Click the **Settings** button to save your cookies and access age-restricted content.
    - To use your selected **Language**, please restart the application after applying the setting.
 
+![usage](https://github.com/user-attachments/assets/857b3cfc-dbb1-4e5b-a6f8-027eb48f2e35)
+
 ---
 
-## 💾 Download · Supported OS
+## 📚 Details
 
-Get the latest builds from the [Releases](https://github.com/honey720/chzzk-vod-downloader-v2/releases) page. Download the asset that matches your OS (`<version>` is the release tag, e.g. `v2.8.0`).
+<details>
+<summary><b>📌 Features</b></summary>
+
+- Supports **dynamic threading** to utilize your internet connection's full download speed.
+- Allows **multiple VOD downloads** — add several VODs to the queue and download them simultaneously.
+- **Resolution selection** lets you choose from various quality levels before downloading.
+- **Cookie storage** allows access to age-restricted VODs.
+
+</details>
+
+<details>
+<summary><b>💾 Supported OS</b></summary>
 
 | OS | Support | File to download |
 |---|---|---|
@@ -56,11 +66,12 @@ Get the latest builds from the [Releases](https://github.com/honey720/chzzk-vod-
 | macOS | **Apple Silicon (M1 or later) only — Intel Macs are not supported** | `CVDv2-<version>-macos-arm64.zip` |
 | Linux | Ubuntu 22.04 or equivalent, newer (x64) | `CVDv2-<version>-linux` |
 
-> If none of the above fits, or you can't use the prebuilt binaries, you can run the app directly from source — see [Running from Source](#-running-from-source-development) below.
+> If none of the above fits, or you can't use the prebuilt binaries, you can run the app directly from source — expand **Running from Source (Development)** below.
 
----
+</details>
 
-## 🍎 Running on macOS
+<details>
+<summary><b>🍎 Running on macOS (Gatekeeper)</b></summary>
 
 The distributed app is not code-signed, so on first launch Gatekeeper shows an "unidentified developer" warning and blocks it. Use one of the following to bypass it.
 
@@ -73,24 +84,27 @@ Alternatively, remove the quarantine attribute from the terminal:
 xattr -dr com.apple.quarantine /Applications/CVDv2.app
 ```
 
----
+</details>
 
-## 🛡 Antivirus False Positives
+<details>
+<summary><b>🛡 Antivirus False Positives</b></summary>
 
 Executables compiled with Nuitka have no code signature or reputation data, so some antivirus engines (Windows Defender in particular) often **flag them via machine-learning heuristics**. This is a false positive caused by the compilation method, not actual malware.
 
 - Every release attaches a **VirusTotal full-engine scan link** in the release notes, so you can review the results yourself.
 - These builds have been **cleared as safe (harmless) by BitDefender Labs**.
 
----
+</details>
 
-## ⚠ Known Limitations
+<details>
+<summary><b>⚠ Known Limitations — Encrypted (AES) VODs</b></summary>
 
 - **VODs protected with encryption (AES) can be downloaded only when the cookies of an account with viewing access are registered in the settings.** This applies to some membership-only broadcasts and replays; the app does not grant access on its own — without permission, the server rejects the decryption key request and the download fails.
 
----
+</details>
 
-## 🛠 Running from Source (Development)
+<details>
+<summary><b>🛠 Running from Source (Development)</b></summary>
 
 Dependencies are managed with [uv](https://docs.astral.sh/uv/). Python 3.13+ is required.
 
@@ -99,12 +113,18 @@ uv sync                  # install dependencies
 uv run python main.py    # run the app
 ```
 
+</details>
+
+<details>
+<summary><b>🧰 Development Scripts</b></summary>
+
 - When reporting a download issue: run `uv run python scripts/capture_playback_debug.py <VOD URL>` and attach the captured responses (cookies/tokens are removed automatically).
 - Download without the GUI: `uv run python scripts/headless_download.py <VOD/clip URL> [--resolution N] [--output PATH] [--timeout SEC]`
 
----
+</details>
 
-## 📄 License
+<details>
+<summary><b>📄 License</b></summary>
 
 - This program is distributed under the [GPL-3.0](LICENSE) license.
 - Distributions include an [FFmpeg](https://ffmpeg.org) executable used to remux merged segment outputs
@@ -112,18 +132,19 @@ uv run python main.py    # run the app
   FFmpeg is a product of the FFmpeg project; its source code is available from the
   [official FFmpeg repository](https://github.com/FFmpeg/FFmpeg) and the respective build providers.
 
----
+</details>
 
-## 📚 References
+<details>
+<summary><b>📚 References · Disclaimer · Contact</b></summary>
+
+**References**
 - This project was developed with reference to [chzzk-vod-downloader](https://github.com/24802/chzzk-vod-downloader).
 
----
-
-## ⚠ Disclaimer
+**Disclaimer**
 - **This is not a stable release.**
 - The developer is not responsible for any damages or issues that may arise from using this program.
 
----
+**Contact**
+- If you have suggestions or encounter any issues, please submit them via [Issues](https://github.com/honey720/chzzk-vod-downloader-v2/issues).
 
-## 💡 Contact
-If you have suggestions or encounter any issues, please submit them via [Issues](https://github.com/honey720/chzzk-vod-downloader-v2/issues).
+</details>

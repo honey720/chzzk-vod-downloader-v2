@@ -15,18 +15,15 @@
 ![main](https://github.com/user-attachments/assets/ae01a231-e3d0-425c-a76f-0042d49a2a8b)
 ---
 
-## 📌 특징
+## 💾 다운로드
 
-- **동적 스레드** 기술을 활용하여 사용자 인터넷 회선의 최대 속도로 다운로드할 수 있습니다.
-- **다중 VOD 다운로드**를 지원하여 여러 VOD를 추가하고 다운로드합니다.
-- **해상도 선택**버튼으로 다양한 해상도를 선택하여 다운로드합니다.
-- **쿠키 저장** 기능으로 연령 제한이 있는 VOD에 접근 가능합니다.
+최신 실행 파일은 [Releases](https://github.com/honey720/chzzk-vod-downloader-v2/releases) 페이지에서 받을 수 있습니다. OS에 맞는 자산을 내려받으세요 (`<버전>`은 릴리즈 태그, 예: `v2.8.0`).
 
-![usage](https://github.com/user-attachments/assets/857b3cfc-dbb1-4e5b-a6f8-027eb48f2e35)
+> OS별 파일 이름·지원 범위, macOS 첫 실행 방법, 백신 오탐 안내는 아래 [자세한 안내](#-자세한-안내)에 접혀 있습니다.
 
 ---
 
-## 🚀 사용법
+## 🚀 기본 사용법
 
 1. **VOD 추가**
    - VOD URL을 입력하고 **VOD 추가** 버튼을 클릭 or 엔터 입력 시 대기열에 메타데이터 카드가 추가됩니다.
@@ -40,15 +37,28 @@
    - **다운로드/정지** 토글 버튼을 클릭하여 다운로드를 시작하거나 정지합니다.
    - **중지** 버튼을 클릭하여 다운로드를 중단합니다.
 
-4. **설정 변경**
+4. **설정 변경 (쿠키 설정)**
    - **설정** 버튼을 클릭하여 쿠키를 저장하고 연령 제한 콘텐츠에 접근할 수 있습니다.
    - 원하는 **언어**를 사용하기 위해서 적용 후 재시작하세요.
 
+![usage](https://github.com/user-attachments/assets/857b3cfc-dbb1-4e5b-a6f8-027eb48f2e35)
+
 ---
 
-## 💾 다운로드 · 지원 OS
+## 📚 자세한 안내
 
-최신 실행 파일은 [Releases](https://github.com/honey720/chzzk-vod-downloader-v2/releases) 페이지에서 받을 수 있습니다. OS에 맞는 자산을 내려받으세요 (`<버전>`은 릴리즈 태그, 예: `v2.8.0`).
+<details>
+<summary><b>📌 특징</b></summary>
+
+- **동적 스레드** 기술을 활용하여 사용자 인터넷 회선의 최대 속도로 다운로드할 수 있습니다.
+- **다중 VOD 다운로드**를 지원하여 여러 VOD를 추가하고 다운로드합니다.
+- **해상도 선택**버튼으로 다양한 해상도를 선택하여 다운로드합니다.
+- **쿠키 저장** 기능으로 연령 제한이 있는 VOD에 접근 가능합니다.
+
+</details>
+
+<details>
+<summary><b>💾 지원 OS 상세</b></summary>
 
 | OS | 지원 범위 | 받을 파일 |
 |---|---|---|
@@ -56,11 +66,12 @@
 | macOS | **Apple Silicon(M1 이상) 전용 — 인텔 맥 미지원** | `CVDv2-<버전>-macos-arm64.zip` |
 | Linux | Ubuntu 22.04 이상 상당 (x64) | `CVDv2-<버전>-linux` |
 
-> 위 환경에 해당하지 않거나 실행 파일을 쓸 수 없다면, 아래 [소스에서 실행](#-소스에서-실행-개발) 방법으로 직접 구동할 수 있습니다.
+> 위 환경에 해당하지 않거나 실행 파일을 쓸 수 없다면, 아래 **소스에서 실행 (개발)** 항목을 펼쳐 직접 구동할 수 있습니다.
 
----
+</details>
 
-## 🍎 macOS 실행 안내
+<details>
+<summary><b>🍎 macOS 실행 안내 (Gatekeeper)</b></summary>
 
 배포 앱은 코드 서명이 되어 있지 않아, 처음 실행할 때 Gatekeeper가 "확인되지 않은 개발자" 경고를 띄우고 실행을 막습니다. 다음 중 한 방법으로 우회하세요.
 
@@ -73,24 +84,27 @@
 xattr -dr com.apple.quarantine /Applications/CVDv2.app
 ```
 
----
+</details>
 
-## 🛡 백신 오탐 안내
+<details>
+<summary><b>🛡 백신 오탐 안내</b></summary>
 
 Nuitka로 컴파일된 실행 파일은 코드 서명·평판 정보가 없어, 일부 백신(특히 Windows Defender)이 **머신러닝 휴리스틱으로 오탐**하는 경우가 흔합니다. 실제 악성 코드가 아니라 컴파일 방식에서 비롯된 오진입니다.
 
 - 릴리즈마다 릴리즈 본문에 **VirusTotal 전체 엔진 검사 링크**를 첨부하니, 직접 검사 결과를 확인할 수 있습니다.
 - 본 실행 파일은 **BitDefender Labs로부터 안전(무해) 판정**을 받았습니다.
 
----
+</details>
 
-## ⚠ 알려진 제한
+<details>
+<summary><b>⚠ 알려진 제한 — 암호화(AES) VOD</b></summary>
 
 - **암호화(AES) 보호가 적용된 VOD는 시청 권한이 있는 계정의 쿠키를 설정에 등록한 경우에만 다운로드할 수 있습니다.** 일부 멤버십 전용·중계 다시보기 등에 적용되어 있으며, 앱이 접근 권한을 만들어내지는 않습니다 — 권한이 없으면 서버가 복호화 키 요청을 거부해 다운로드가 실패합니다.
 
----
+</details>
 
-## 🛠 소스에서 실행 (개발)
+<details>
+<summary><b>🛠 소스에서 실행 (개발)</b></summary>
 
 의존성은 [uv](https://docs.astral.sh/uv/)로 관리합니다. Python 3.13 이상이 필요합니다.
 
@@ -99,12 +113,18 @@ uv sync                  # 의존성 설치
 uv run python main.py    # 앱 실행
 ```
 
+</details>
+
+<details>
+<summary><b>🧰 개발용 스크립트</b></summary>
+
 - 다운로드 문제 제보 시: `uv run python scripts/capture_playback_debug.py <VOD URL>` 로 응답을 캡처해 첨부해 주세요 (쿠키·토큰은 자동 제거됩니다).
 - GUI 없이 다운로드: `uv run python scripts/headless_download.py <VOD/클립 URL> [--resolution N] [--output PATH] [--timeout SEC]`
 
----
+</details>
 
-## 📄 라이선스
+<details>
+<summary><b>📄 라이선스</b></summary>
 
 - 본 프로그램은 [GPL-3.0](LICENSE) 라이선스로 배포됩니다.
 - 배포본에는 세그먼트 병합 산출물의 재포장(remux)에 사용하는 [FFmpeg](https://ffmpeg.org) 실행 파일이 포함됩니다
@@ -112,18 +132,19 @@ uv run python main.py    # 앱 실행
   FFmpeg는 FFmpeg 프로젝트의 저작물이며, 소스 코드는 [FFmpeg 공식 저장소](https://github.com/FFmpeg/FFmpeg)와
   각 빌드 제공처에서 구할 수 있습니다.
 
----
+</details>
 
-## 📚 참고 자료
+<details>
+<summary><b>📚 참고 자료 · 주의사항 · 문의</b></summary>
+
+**참고 자료**
 - 본 프로그램은 [chzzk-vod-downloader](https://github.com/24802/chzzk-vod-downloader)를 참고하여 개발되었습니다.
 
----
-
-## ⚠ 주의사항
+**주의사항**
 - **안정적인 버전이 아닙니다.**
 - 본 프로그램을 사용하는 과정에서 발생할 수 있는 피해에 대해 개발자는 책임을 지지 않습니다.
 
----
+**문의**
+- 이 프로젝트에 대한 제안 사항이 있거나 문제를 발견하셨다면 [Issue](https://github.com/honey720/chzzk-vod-downloader-v2/issues)에 등록해 주세요.
 
-## 💡 문의
-이 프로젝트에 대한 제안 사항이 있거나 문제를 발견하셨다면 [Issue](https://github.com/honey720/chzzk-vod-downloader-v2/issues)에 등록해 주세요.
+</details>
