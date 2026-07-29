@@ -23,6 +23,8 @@ jobs:
           token: ${{ secrets.RELEASE_PAT }}
 
       - name: Create tag if version is new
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
         run: |
           VERSION=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
           echo "pyproject version: $VERSION"
@@ -31,6 +33,22 @@ jobs:
             echo "태그 v$VERSION 이미 존재 — 건너뜁니다."
             exit 0
           fi
+
+          # ── 추가: 정식 버전이면 같은 버전의 프리릴리즈를 먼저 정리 ──
+          case "$VERSION" in
+            *-*)
+              echo "프리릴리즈($VERSION) — 정리 건너뜀"
+              ;;
+            *)
+              for tag in $(git tag -l "v${VERSION}-*"); do
+                echo "프리릴리즈 정리: $tag"
+                gh release delete "$tag" --yes --cleanup-tag 2>/dev/null \
+                  || git push origin ":refs/tags/$tag"
+                git tag -d "$tag" >/dev/null 2>&1 || true
+              done
+              ;;
+          esac
+          # ────────────────────────────────────────────────
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

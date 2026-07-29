@@ -1,0 +1,17 @@
+changelog:
+  exclude:
+    authors:
+      - github-actions[bot]
+    labels:
+      - chore
+      - documentation
+  categories:
+    - title: 버그 수정
+      labels:
+        - bug
+    - title: 개선
+      labels:
+        - improvement
+    - title: 그 밖
+      labels:
+        - "*"
