@@ -9,6 +9,7 @@ ContentWorker에 있던 권한·암호화 분기 검증(#55)을 core 경로로 �
 """
 
 import pytest
+import requests
 
 import content.network as network
 from content.network import NetworkManager
@@ -301,3 +302,60 @@ def test_clip_empty_manifest_raises_dash_error():
 
     with pytest.raises(MetadataError, match="Failed to get DASH manifest"):
         fetch_clip(CLIP_URL, "clipUID", COOKIES, DOWNLOAD_PATH, api=api)
+
+
+# ---------------------------------------------------------------- 전송 오류 매핑 (#126)
+
+
+class RaisingApi(FakeApi):
+    """get_video_info에서 지정한 예외를 던지는 가짜 api."""
+
+    def __init__(self, exc: Exception):
+        super().__init__()
+        self._exc = exc
+
+    def get_video_info(self, video_no, cookies):
+        raise self._exc
+
+
+def _http_error(status: int) -> requests.HTTPError:
+    """raise_for_status()가 만드는 형태의 HTTPError (내부 API URL 포함)."""
+    response = requests.Response()
+    response.status_code = status
+    response.url = "https://api.chzzk.naver.com/service/v2/videos/1"
+    return requests.HTTPError(
+        f"{status} Client Error: Not Found for url: {response.url}", response=response
+    )
+
+
+@pytest.mark.parametrize(
+    ("exc", "expected_key"),
+    [
+        (_http_error(404), "Video not found"),
+        (_http_error(401), "Viewing permission required"),
+        (_http_error(403), "Viewing permission required"),
+        (_http_error(500), "Failed to fetch video information"),
+        (requests.ConnectionError("dns fail"), "Network connection error"),
+        (requests.Timeout("timed out"), "Network connection error"),
+        (requests.TooManyRedirects("redirect loop"), "Failed to fetch video information"),
+    ],
+)
+def test_fetch_content_wraps_transport_errors(exc, expected_key):
+    """원시 requests 예외는 유형별 MetadataError 키로 감싸져야 한다 (#126)."""
+    with pytest.raises(MetadataError) as info:
+        fetch_content(VOD_URL, COOKIES, DOWNLOAD_PATH, api=RaisingApi(exc))
+
+    assert info.value.message_key == expected_key
+    assert info.value.url == VOD_URL
+    # 유저에게 갈 메시지에 내부 API 주소가 없어야 한다
+    assert "api.chzzk.naver.com" not in str(info.value)
+    # 진단용 원인 예외는 체인으로 보존된다 (어댑터 logger.exception의 traceback용)
+    assert info.value.__cause__ is exc
+
+
+def test_fetch_content_passes_domain_errors_through():
+    """서비스가 스스로 판정한 MetadataError(#55 멤버십 등)는 전송 매핑을 거치지 않아야 한다."""
+    api = FakeApi(video_info=_video_info(in_key=None, membership_benefit_type="MEMBER_ONLY"))
+
+    with pytest.raises(MetadataError, match="Channel membership required"):
+        fetch_content(VOD_URL, COOKIES, DOWNLOAD_PATH, api=api)

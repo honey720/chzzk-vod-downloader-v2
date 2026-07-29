@@ -170,3 +170,25 @@ def test_run_emits_error_signal_in_legacy_format():
     worker.run()
 
     assert captured == [f"{bad_url}\nInvalid VOD URL"]
+
+
+def test_run_error_hides_raw_exception_details(monkeypatch):
+    """MetadataError가 아닌 예외의 원시 문자열은 노출되지 않아야 한다 (#126).
+
+    내부 API URL 등이 섞인 str(e) 대신 일반 안내 키가 실려야 하고,
+    형식은 기존 "<url>\n<메시지>"를 유지한다.
+    """
+    from core.services import metadata_service
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("secret detail https://api.chzzk.naver.com/internal")
+
+    monkeypatch.setattr(metadata_service, "fetch_content", boom)
+    worker = _make_worker()
+    captured: list[str] = []
+    worker.error.connect(captured.append)
+
+    worker.run()
+
+    assert captured == [f"{VOD_URL}\nFailed to fetch video information"]
+    assert "secret detail" not in captured[0]

@@ -65,10 +65,14 @@ class ContentWorker(QObject):
             raise ValueError(self._user_message(e)) from e
 
     def _user_message(self, e: Exception) -> str:
-        """예외를 사용자 표시용 메시지로 바꾼다. MetadataError는 i18n 키를 번역한다."""
+        """예외를 사용자 표시용 메시지로 바꾼다. MetadataError는 i18n 키를 번역한다.
+
+        MetadataError가 아닌 예외의 원시 문자열은 내부 API URL 등이 섞여 있어
+        유저에게 보여주지 않는다 — 상세는 run()의 logger.exception이 남긴다 (#126).
+        """
         if isinstance(e, MetadataError):
             return f"{e.url}\n{self._translate_key(e.message_key)}"
-        return str(e)
+        return f"{self.vod_url}\n{self._translate_key('Failed to fetch video information')}"
 
     def _translate_key(self, message_key: str) -> str:
         """i18n 키를 현재 언어로 번역한다.
@@ -85,5 +89,9 @@ class ContentWorker(QObject):
             "Channel membership required": self.tr("Channel membership required"),
             "Unencoded Video(.m3u8)": self.tr("Unencoded Video(.m3u8)"),
             "Failed to get DASH manifest": self.tr("Failed to get DASH manifest"),
+            "Video not found": self.tr("Video not found"),
+            "Viewing permission required": self.tr("Viewing permission required"),
+            "Network connection error": self.tr("Network connection error"),
+            "Failed to fetch video information": self.tr("Failed to fetch video information"),
         }
         return translated.get(message_key, message_key)
