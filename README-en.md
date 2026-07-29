@@ -63,7 +63,7 @@ Grab the latest build from the [Releases](https://github.com/honey720/chzzk-vod-
 
 #### 🍎 First launch on macOS
 
-The app isn't code-signed, so macOS blocks it with an "unidentified developer" warning the first time you open it. You only need to allow it once:
+The app isn't code-signed, so macOS blocks it with an "unidentified developer" warning the first time you open it. You only need to allow it once. The exact steps vary between macOS versions, so follow Apple's official guide, **[Open a Mac app from an unknown developer](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unidentified-developer-mh40616/mac)**. In short:
 
 1. Open `CVDv2.app` and dismiss the warning.
 2. Go to **System Settings → Privacy & Security** and click **Open Anyway** next to the CVDv2 entry.
