@@ -8,6 +8,14 @@
         <translation>다운로드 대기</translation>
     </message>
     <message>
+        <source>Loading information...</source>
+        <translation>정보를 불러오는 중...</translation>
+    </message>
+    <message>
+        <source>Checking...</source>
+        <translation>확인 중...</translation>
+    </message>
+    <message>
         <source>Download paused</source>
         <translation>다운로드 정지</translation>
     </message>
@@ -228,6 +236,10 @@
     <message>
         <source>No VODs added.</source>
         <translation>추가된 VOD가 없습니다.</translation>
+    </message>
+    <message>
+        <source>Still loading video information. Please try again in a moment.</source>
+        <translation>영상 정보를 불러오는 중입니다. 잠시 후 다시 시도해 주세요.</translation>
     </message>
     <message>
         <source>Downloading</source>
