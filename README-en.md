@@ -63,10 +63,10 @@ Grab the latest build from the [Releases](https://github.com/honey720/chzzk-vod-
 
 #### 🍎 First launch on macOS
 
-The app isn't code-signed, so Gatekeeper shows an "unidentified developer" warning the first time you open it. Do this once and it opens normally from then on:
+The app isn't code-signed, so macOS blocks it with an "unidentified developer" warning the first time you open it. You only need to allow it once:
 
-1. Unzip the download and move `CVDv2.app` to `Applications` (or anywhere you like).
-2. **Right-click (or Control-click) → Open → Open.**
+1. Open `CVDv2.app` and dismiss the warning.
+2. Go to **System Settings → Privacy & Security** and click **Open Anyway** next to the CVDv2 entry.
 
 If you prefer the terminal, clearing the quarantine flag also works:
 
