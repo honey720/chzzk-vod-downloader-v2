@@ -74,6 +74,10 @@ class DownloadTask:
         """다운로드 완료 처리."""
         self._try_transition("finish")
 
+    def fail(self):
+        """다운로드 실패 처리 (#134). 카드 상태는 모델 콜백으로 FAILED가 반영된다."""
+        self._try_transition("fail")
+
     def isRunning(self) -> bool:
         """현재 다운로드가 실행 중인지 여부 (기존 메서드명 유지)."""
         return self.model.is_running()

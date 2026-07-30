@@ -205,6 +205,17 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             self.fileSizeLabel.setText(f"  {self.setSize(item.download_size)}")
             self.progressLabel.setText(f"  {item.download_progress}% ")
 
+        elif self.item.downloadState == DownloadState.FAILED:
+            # 실패는 대기("Download waiting")와 구분되는 상태로 표시한다 (#134).
+            # 사유(stateMessage)는 키 기반 매핑을 거친 번역 문자열만 온다
+            text = self.tr("Download failed")
+            reason = getattr(item, "stateMessage", "")
+            if reason:
+                text = f"{text} — {reason}"
+            self.statusLabel.setText(text)
+            self.statusLabel.setToolTip(reason)
+            self.progressLabel.setText(" ")
+
     def getData(self) -> ContentItem:
         """✅ 위젯에서 입력된 데이터를 가져와서 ContentItem으로 반환"""
         return ContentItem(

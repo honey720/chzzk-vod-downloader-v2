@@ -20,6 +20,10 @@
         <translation>다운로드 정지</translation>
     </message>
     <message>
+        <source>Download failed</source>
+        <translation>다운로드 실패</translation>
+    </message>
+    <message>
         <source>ContentItemWidget</source>
         <translation>컨텐츠위젯</translation>
     </message>
@@ -90,8 +94,8 @@
         <translation>유효하지 않은 파일 경로</translation>
     </message>
     <message>
-        <source>Error occurred: {e}</source>
-        <translation>오류 발생: {e}</translation>
+        <source>Failed to save file</source>
+        <translation>파일 저장에 실패했습니다. 저장 경로와 디스크 공간을 확인해 주세요.</translation>
     </message>
 </context>
 <context>
@@ -138,10 +142,30 @@
     </message>
 </context>
 <context>
-    <name>DownloadThread</name>
+    <name>QtDownloadBridge</name>
     <message>
-        <source>Download failed</source>
-        <translation>다운로드 실패</translation>
+        <source>Postprocessing failed</source>
+        <translation>영상 변환(후처리)에 실패했습니다. ffmpeg 설치 상태를 확인해 주세요.</translation>
+    </message>
+    <message>
+        <source>Decryption failed</source>
+        <translation>영상 복호화에 실패했습니다. 쿠키를 확인한 뒤 다시 시도해 주세요.</translation>
+    </message>
+    <message>
+        <source>Viewing permission required</source>
+        <translation>시청 권한이 필요한 영상입니다. 시청 가능한 계정의 쿠키를 설정에 등록해 주세요.</translation>
+    </message>
+    <message>
+        <source>Video not found</source>
+        <translation>영상을 찾을 수 없습니다. 주소를 확인해 주세요.</translation>
+    </message>
+    <message>
+        <source>Network connection error</source>
+        <translation>네트워크 연결을 확인해 주세요.</translation>
+    </message>
+    <message>
+        <source>Failed to save file</source>
+        <translation>파일 저장에 실패했습니다. 저장 경로와 디스크 공간을 확인해 주세요.</translation>
     </message>
 </context>
 <context>

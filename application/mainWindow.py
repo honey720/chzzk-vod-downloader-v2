@@ -57,6 +57,7 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         self.downloadManager.resumed.connect(self._onResumed)
         self.downloadManager.stopped.connect(self._onStopped)
         self.downloadManager.finished.connect(self._onFinished)
+        self.downloadManager.failed.connect(self._onFailed)
         # TODO 동시 다운로드 기능 추가시 로직 수정 필요
 
         self.contentManager.contentError.connect(self.showErrorDialog)
@@ -276,6 +277,10 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
 
     def _onFinished(self, item, download_time):
         self.contentManager.finish(item, download_time)
+
+    def _onFailed(self, item, message):
+        """다운로드 실패 콜백 — 카드에 실패 상태·사유를 표시하고 배치를 계속 진행한다 (#134)."""
+        self.contentManager.fail(item, message)
 
     def updateDownloadCountLabel(self):
         """

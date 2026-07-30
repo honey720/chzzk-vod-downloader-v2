@@ -8,11 +8,14 @@
 """
 
 import pytest
+import requests
 
 from content.data import ContentItem
+from core.downloaders.base import PostprocessError
+from core.downloaders.hls_aes_downloader import DecryptionError
 from core.models.download_state import DownloadState
 from core.models.events import ProgressEvent
-from download.qt_bridge import QtDownloadBridge
+from download.qt_bridge import QtDownloadBridge, _failure_message_key
 
 
 class FakeHandle:
@@ -143,19 +146,61 @@ class TestCompletion:
         assert bridge.handle is None
         assert bridge.task is None
 
-    def test_failed_emits_stopped_and_resets_state(self, bridge):
-        """실패: post_process 해제·상태 정리(stop) 후 stopped를 emit한다 (구 흐름과 동일)."""
+    def test_failed_marks_item_failed_and_emits_reason(self, bridge):
+        """실패 (#134): FAILED 전이·참조 정리 후 failed(item, 사유)를 emit한다.
+
+        구 테스트(test_failed_emits_stopped_and_resets_state)는 "예외를 버리고
+        WAITING으로 되돌리는" 고장난 동작을 박제하고 있었다 — 실패가 유저의
+        정지와 구분되지 않는 결함 그 자체라, 실패 표시 계약으로 반전했다
+        (#128 조사 ①, 근거는 PR 본문).
+        """
         item = _make_item("m3u8")
         bridge.start(item)
         item.post_process = True
-        received = []
-        bridge.stopped.connect(lambda *args: received.append(args))
+        received, stopped = [], []
+        bridge.failed.connect(lambda *args: received.append(args))
+        bridge.stopped.connect(lambda *args: stopped.append(args))
 
-        _submission(bridge)["on_failed"](RuntimeError("boom"))
+        raw = "후처리(remux) 실패: ffmpeg stderr tail... [C:\\tools\\ffmpeg.exe]"
+        _submission(bridge)["on_failed"](PostprocessError(raw))
 
-        assert received == [(item,)]
+        assert item.downloadState is DownloadState.FAILED  # 대기가 아니라 실패로 보인다
+        assert stopped == []  # 실패는 더 이상 정지로 위장하지 않는다
+        [(failed_item, message)] = received
+        assert failed_item is item
+        # 번역기 미설치 환경 — tr()은 키 원문을 돌려준다. 원시 문자열은 미노출
+        assert message == "Postprocessing failed"
+        assert "ffmpeg" not in message
         assert item.post_process is False
-        assert bridge.task.state is DownloadState.WAITING
+        # 완료 경로와 동일한 참조 정리 — 실패 후 다음 다운로드 시작이 가능해야 한다
+        assert bridge.handle is None
+        assert bridge.task is None
+
+    def test_unmapped_failure_emits_empty_reason(self, bridge):
+        """매핑에 없는 예외는 사유 없이 실패만 알린다 — 원시 str(e) 노출 금지."""
+        item = _make_item()
+        bridge.start(item)
+        received = []
+        bridge.failed.connect(lambda *args: received.append(args))
+
+        _submission(bridge)["on_failed"](RuntimeError("raw internal detail"))
+
+        assert received == [(item, "")]
+        assert item.downloadState is DownloadState.FAILED
+
+    def test_failure_after_user_cleanup_is_ignored(self, bridge):
+        """중지·정리 후 늦게 도착한 실패는 무시한다 (완료 경로의 가드와 동일)."""
+        item = _make_item()
+        bridge.start(item)
+        bridge.stop()
+        bridge.removeThreads()
+        received = []
+        bridge.failed.connect(lambda *args: received.append(args))
+
+        bridge._engineFailed.emit(RuntimeError("late"))
+
+        assert received == []
+        assert item.downloadState is DownloadState.WAITING
 
     def test_user_stop_emits_stopped(self, bridge):
         item = _make_item()
@@ -179,3 +224,42 @@ class TestCompletion:
         bridge.resume()
 
         assert events == [("paused", item), ("resumed", item)]
+
+
+class _FakeHttpResponse:
+    """HTTPError에 실을 상태 코드만 가진 응답 흉내."""
+
+    def __init__(self, status_code: int):
+        self.status_code = status_code
+
+
+def _http_error(status: int) -> requests.HTTPError:
+    return requests.HTTPError(f"HTTP {status}", response=_FakeHttpResponse(status))
+
+
+class TestFailureMessageKey:
+    """실패 예외 → 안내 키 매핑 (#134, #127의 조회 경로 방식)."""
+
+    def test_postprocess_and_decryption_map_to_keys(self):
+        assert _failure_message_key(PostprocessError("ffmpeg stderr...")) == (
+            "Postprocessing failed"
+        )
+        assert _failure_message_key(DecryptionError("키·IV 불일치")) == "Decryption failed"
+
+    def test_http_statuses_map_like_metadata_path(self):
+        assert _failure_message_key(_http_error(403)) == "Viewing permission required"
+        assert _failure_message_key(_http_error(401)) == "Viewing permission required"
+        assert _failure_message_key(_http_error(404)) == "Video not found"
+        assert _failure_message_key(_http_error(500)) == "Network connection error"
+
+    def test_transport_and_os_errors(self):
+        assert _failure_message_key(requests.ConnectionError("boom")) == (
+            "Network connection error"
+        )
+        assert _failure_message_key(requests.Timeout("slow")) == "Network connection error"
+        assert _failure_message_key(OSError(28, "No space left", "C:\\full\\path.mp4")) == (
+            "Failed to save file"
+        )
+
+    def test_unknown_exception_has_no_key(self):
+        assert _failure_message_key(RuntimeError("anything")) is None

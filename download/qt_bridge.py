@@ -21,15 +21,43 @@ MonitorM3U8Thread의 계산과 동일하다.
 
 from time import gmtime, strftime
 
+import requests
 from PySide6.QtCore import QObject, Signal
 
 from content.data import ContentItem
+from core.downloaders.base import PostprocessError
+from core.downloaders.hls_aes_downloader import DecryptionError
 from core.models.events import ProgressEvent
 from core.services.download_service import DownloadService
 from download.data import DownloadData
 from download.logger import DownloadLogger
 from download.resolvers import resolve_aes_key, resolve_m3u8_base_url
 from download.task import DownloadTask
+
+
+def _failure_message_key(exc: BaseException) -> str | None:
+    """다운로드 실패 예외를 안내 키로 매핑한다 (#134, #127의 조회 경로 방식).
+
+    원시 예외 문자열은 유저에게 보내지 않는다 — PostprocessError는 ffmpeg
+    stderr·실행 경로를, OSError는 전체 파일 경로를 품는다. 상세는 다운로드
+    로그가 이미 담당한다. 매핑에 없는 예외는 None(사유 생략)으로 둔다.
+    """
+    if isinstance(exc, PostprocessError):
+        return "Postprocessing failed"
+    if isinstance(exc, DecryptionError):
+        return "Decryption failed"
+    if isinstance(exc, requests.HTTPError):
+        status = exc.response.status_code if exc.response is not None else None
+        if status in (401, 403):
+            return "Viewing permission required"
+        if status == 404:
+            return "Video not found"
+        return "Network connection error"
+    if isinstance(exc, requests.RequestException):
+        return "Network connection error"
+    if isinstance(exc, OSError):
+        return "Failed to save file"
+    return None
 
 
 class QtDownloadBridge(QObject):
@@ -43,6 +71,8 @@ class QtDownloadBridge(QObject):
     resumed = Signal(object)
     stopped = Signal(object)
     finished = Signal(object, str)
+    # 실패 통지 (#134): (item, 번역된 사유 메시지). 사유가 없으면 빈 문자열
+    failed = Signal(object, str)
 
     # 내부 전용: 워커 스레드 콜백 → 메인 스레드 후처리 슬롯 전환용
     _engineFinished = Signal()
@@ -159,10 +189,41 @@ class QtDownloadBridge(QObject):
         self.finished.emit(item, download_time)
 
     def _onEngineFailed(self, exc: BaseException) -> None:
-        """실패 후처리 — 구 흐름(stopped Signal → manager.stop)과 동일하게 정리한다."""
+        """실패 후처리 (#134) — FAILED 전이·참조 정리 후 failed Signal로 사유를 알린다.
+
+        이전에는 exc를 읽지 않고 task.stop()으로 WAITING에 되돌려, 실패가
+        유저의 정지와 구분되지 않았다 (#128 조사 ①). 이제 완료 경로
+        (_onEngineFinished)와 같은 순서로 전이 → 참조 정리 → Signal emit을
+        수행하고, 사유는 키 기반 매핑을 거친 번역 문자열만 내보낸다.
+        """
+        if self.handle is None:
+            # 실패 도착 전에 사용자가 중지·정리를 마친 경우 (완료 경로의 가드와 동일)
+            return
+        item = self.item
         if self.task is not None:
-            self.task.stop()
-        self.stopped.emit(self.item)
+            # WAITING(엔진이 이미 stop한 경우)·RUNNING 어느 쪽에서도 FAILED 전이가
+            # 허용된다. 실행 루프는 이 시점에 이미 종료됐다 — WAITING만 종료
+            # 신호로 보는 루프 구조(#131)에 새 감시 대상을 만들지 않는다
+            self.task.fail()
+        self.removeThreads()
+        self.failed.emit(item, self._failure_message(exc))
+
+    def _failure_message(self, exc: BaseException) -> str:
+        """실패 사유를 유저 표시용 번역 문자열로 바꾼다. 매핑에 없으면 빈 문자열.
+
+        lupdate가 `-no-obsolete`로 .ts를 재생성하므로 반드시 리터럴로 tr()을
+        호출해 추출 대상을 유지한다 (content/worker.py의 _translate_key와 동일).
+        """
+        translated = {
+            "Postprocessing failed": self.tr("Postprocessing failed"),
+            "Decryption failed": self.tr("Decryption failed"),
+            "Viewing permission required": self.tr("Viewing permission required"),
+            "Video not found": self.tr("Video not found"),
+            "Network connection error": self.tr("Network connection error"),
+            "Failed to save file": self.tr("Failed to save file"),
+        }
+        key = _failure_message_key(exc)
+        return translated.get(key, "") if key is not None else ""
 
 
 # ============ 진행 이벤트 변환식 (구 MonitorThread / MonitorM3U8Thread) ============

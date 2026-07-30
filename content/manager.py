@@ -1,3 +1,4 @@
+import logging
 import os
 
 from PySide6.QtCore import Qt, Signal, QThreadPool, QObject
@@ -8,6 +9,8 @@ from content.data import ContentItem
 from download.state import DownloadState
 from content.worker import ContentWorker
 from core.utils.paths import build_output_path, ensure_unique_path
+
+logger = logging.getLogger(__name__)
 
 class ContentManager(QObject):
     # 메타데이터 매니저 UI
@@ -113,10 +116,14 @@ class ContentManager(QObject):
                 if not os.path.exists(item.download_path):
                     raise ValueError(self.tr("Invalid file path"))
                 self.onDownload(item)
-            except Exception as e:
-                item.stateMessage = self.tr("Error occurred: {e}").format(e=e)
-                self.model.dataChanged.emit(index, index)
-                self.fail(item)
+            except ValueError as e:
+                # 위에서 직접 던진 번역된 안내 — 그대로 카드에 표시한다
+                self.fail(item, str(e))
+            except Exception:
+                # 경로 조립(OSError 등)의 원시 문자열에는 전체 경로가 섞여 있어
+                # 유저에게 보내지 않는다 (#134) — 상세는 로그로만 남긴다
+                logger.exception("다운로드 준비 실패: %s", item.title)
+                self.fail(item, self.tr("Failed to save file"))
         else:
             self.finishedAllRequested.emit()
 
@@ -162,7 +169,14 @@ class ContentManager(QObject):
         self.view.onDownloadFinished(item, True)
         self.emitFinishedRequest(item)
     
-    def fail(self, item: ContentItem):
+    def fail(self, item: ContentItem, message: str = ""):
+        """아이템을 실패 상태로 표시하고 배치 체인을 계속 진행한다 (#134).
+
+        message는 카드의 실패 사유로 렌더된다 — 키 기반 매핑을 거친 번역
+        문자열만 넣는다 (원시 예외 문자열 금지). emitFinishedRequest가 완료
+        경로와 동일하게 다음 항목의 다운로드를 이어 간다.
+        """
+        item.stateMessage = message
         item.downloadState = DownloadState.FAILED
         self.view.onDownloadFinished(item, False)
         self.emitFinishedRequest(item)

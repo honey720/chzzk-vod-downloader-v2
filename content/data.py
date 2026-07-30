@@ -40,6 +40,9 @@ class ContentItem:
         self.download_time = ""
 
         self.downloadState = DownloadState.WAITING  # 초기 상태
+        # 실패 사유 등 카드에 표시할 상태 메시지 (#134). 키 기반 매핑을 거친
+        # 번역 문자열만 넣는다 — 원시 예외 문자열 금지
+        self.stateMessage = ""
 
     @property
     def is_segment_based(self) -> bool:
