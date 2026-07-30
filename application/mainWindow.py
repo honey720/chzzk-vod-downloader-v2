@@ -57,6 +57,7 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         self.downloadManager.resumed.connect(self._onResumed)
         self.downloadManager.stopped.connect(self._onStopped)
         self.downloadManager.finished.connect(self._onFinished)
+        self.downloadManager.failed.connect(self._onFailed)
         # TODO 동시 다운로드 기능 추가시 로직 수정 필요
 
         self.contentManager.contentError.connect(self.showErrorDialog)
@@ -244,7 +245,23 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
             else:
                 logger.warning(f"시스템 종료는 {os_type}에서 지원되지 않습니다.")
 
-        QMessageBox.information(self, self.tr("Completed"), self.tr("Download completed."))
+        # 배치 종료 안내는 화면의 결과와 모순되지 않아야 한다 (#134 — #128 후속 ⑤).
+        # 실패 카드가 보이는데 "완료했습니다"만 뜨던 문구를 결과별로 나눈다
+        finished, failed = self.contentManager.downloadResultCounts()
+        if failed and not finished:
+            QMessageBox.warning(
+                self,
+                self.tr("Completed"),
+                self.tr("All downloads failed. Check the failed cards for the reason."),
+            )
+        elif failed:
+            QMessageBox.warning(
+                self,
+                self.tr("Completed"),
+                self.tr("Download finished, but some items failed. Check the failed cards for the reason."),
+            )
+        else:
+            QMessageBox.information(self, self.tr("Completed"), self.tr("Download completed."))
 
     def setStopButtonEnable(self, bool):
         self.stopButton.setEnabled(bool)
@@ -276,6 +293,10 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
 
     def _onFinished(self, item, download_time):
         self.contentManager.finish(item, download_time)
+
+    def _onFailed(self, item, message):
+        """다운로드 실패 콜백 — 카드에 실패 상태·사유를 표시하고 배치를 계속 진행한다 (#134)."""
+        self.contentManager.fail(item, message)
 
     def updateDownloadCountLabel(self):
         """

@@ -27,6 +27,7 @@ class DownloadManager:
         self.resumed = self._bridge.resumed
         self.stopped = self._bridge.stopped
         self.finished = self._bridge.finished
+        self.failed = self._bridge.failed
 
     @property
     def d_thread(self):

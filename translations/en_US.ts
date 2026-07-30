@@ -20,6 +20,10 @@
         <translation>Download paused</translation>
     </message>
     <message>
+        <source>Download failed</source>
+        <translation>Download failed</translation>
+    </message>
+    <message>
         <source>ContentItemWidget</source>
         <translation>ContentItemWidget</translation>
     </message>
@@ -90,8 +94,8 @@
         <translation>Invalid file path</translation>
     </message>
     <message>
-        <source>Error occurred: {e}</source>
-        <translation>Error occurred: {e}</translation>
+        <source>Failed to save file</source>
+        <translation>Failed to save the file. Check the save path and free disk space.</translation>
     </message>
 </context>
 <context>
@@ -138,10 +142,30 @@
     </message>
 </context>
 <context>
-    <name>DownloadThread</name>
+    <name>QtDownloadBridge</name>
     <message>
-        <source>Download failed</source>
-        <translation>Download failed</translation>
+        <source>Postprocessing failed</source>
+        <translation>Video conversion (postprocessing) failed. Check your ffmpeg installation.</translation>
+    </message>
+    <message>
+        <source>Decryption failed</source>
+        <translation>Failed to decrypt the video. Check your cookies and try again.</translation>
+    </message>
+    <message>
+        <source>Viewing permission required</source>
+        <translation>This video requires viewing permission. Add the cookies of an account that can watch it in Settings.</translation>
+    </message>
+    <message>
+        <source>Video not found</source>
+        <translation>The video could not be found. Please check the address.</translation>
+    </message>
+    <message>
+        <source>Network connection error</source>
+        <translation>Please check your network connection.</translation>
+    </message>
+    <message>
+        <source>Failed to save file</source>
+        <translation>Failed to save the file. Check the save path and free disk space.</translation>
     </message>
 </context>
 <context>
@@ -268,6 +292,14 @@
     <message>
         <source>Completed</source>
         <translation>Completed</translation>
+    </message>
+    <message>
+        <source>All downloads failed. Check the failed cards for the reason.</source>
+        <translation>All downloads failed. Check the failed cards for the reason.</translation>
+    </message>
+    <message>
+        <source>Download finished, but some items failed. Check the failed cards for the reason.</source>
+        <translation>Download finished, but some items failed. Check the failed cards for the reason.</translation>
     </message>
     <message>
         <source>Download completed.</source>

@@ -21,15 +21,43 @@ MonitorM3U8Thread의 계산과 동일하다.
 
 from time import gmtime, strftime
 
+import requests
 from PySide6.QtCore import QObject, Signal
 
 from content.data import ContentItem
+from core.downloaders.base import PostprocessError
+from core.downloaders.hls_aes_downloader import DecryptionError
 from core.models.events import ProgressEvent
 from core.services.download_service import DownloadService
 from download.data import DownloadData
 from download.logger import DownloadLogger
 from download.resolvers import resolve_aes_key, resolve_m3u8_base_url
 from download.task import DownloadTask
+
+
+def _failure_message_key(exc: BaseException) -> str | None:
+    """다운로드 실패 예외를 안내 키로 매핑한다 (#134, #127의 조회 경로 방식).
+
+    원시 예외 문자열은 유저에게 보내지 않는다 — PostprocessError는 ffmpeg
+    stderr·실행 경로를, OSError는 전체 파일 경로를 품는다. 상세는 다운로드
+    로그가 이미 담당한다. 매핑에 없는 예외는 None(사유 생략)으로 둔다.
+    """
+    if isinstance(exc, PostprocessError):
+        return "Postprocessing failed"
+    if isinstance(exc, DecryptionError):
+        return "Decryption failed"
+    if isinstance(exc, requests.HTTPError):
+        status = exc.response.status_code if exc.response is not None else None
+        if status in (401, 403):
+            return "Viewing permission required"
+        if status == 404:
+            return "Video not found"
+        return "Network connection error"
+    if isinstance(exc, requests.RequestException):
+        return "Network connection error"
+    if isinstance(exc, OSError):
+        return "Failed to save file"
+    return None
 
 
 class QtDownloadBridge(QObject):
@@ -43,6 +71,8 @@ class QtDownloadBridge(QObject):
     resumed = Signal(object)
     stopped = Signal(object)
     finished = Signal(object, str)
+    # 실패 통지 (#134): (item, 번역된 사유 메시지). 사유가 없으면 빈 문자열
+    failed = Signal(object, str)
 
     # 내부 전용: 워커 스레드 콜백 → 메인 스레드 후처리 슬롯 전환용
     _engineFinished = Signal()
@@ -159,10 +189,50 @@ class QtDownloadBridge(QObject):
         self.finished.emit(item, download_time)
 
     def _onEngineFailed(self, exc: BaseException) -> None:
-        """실패 후처리 — 구 흐름(stopped Signal → manager.stop)과 동일하게 정리한다."""
+        """실패 후처리 (#134) — 엔진 종료 신호 후 참조를 정리하고 failed Signal로 사유를 알린다.
+
+        이전에는 exc를 읽지 않고 버려서 실패가 유저의 정지와 구분되지 않았다
+        (#128 조사 ①). 사유는 키 기반 매핑을 거친 번역 문자열만 내보낸다.
+
+        엔진 종료는 반드시 stop(WAITING)으로 한다 (죽은 네트워크 드라이브
+        프리즈 회귀 — PR #135 코멘트). 워커 예외 경로(_download_completed_callback)의
+        실패는 실행 루프가 살아 있는 중에 통지되는데, 루프는 WAITING만 종료
+        신호로 보므로 여기서 모델을 FAILED로 전이하면 루프가 영원히 돌고,
+        FAILED→WAITING은 불허 전이라 되돌릴 수도 없다. FAILED 표시는 모델이
+        아니라 아이템 레벨(ContentManager.fail)에서 한다 — 사전 경로 검사
+        실패와 같은 방식이다.
+
+        참조 정리는 완료 경로와 달리 handle.wait() 없이 한다: run()의 꼬리
+        정리(_cleanup_partial)가 죽은 마운트 I/O에 갇힐 수 있어, 메인 스레드가
+        기다리면 UI가 얼어붙는다. 엔진 스레드는 stop 신호로 스스로 끝난다
+        (v2.9.0·main도 실패 시 기다리지 않았다).
+        """
+        if self.handle is None:
+            # 실패 도착 전에 사용자가 중지·정리를 마친 경우 (완료 경로의 가드와 동일)
+            return
+        item = self.item
         if self.task is not None:
             self.task.stop()
-        self.stopped.emit(self.item)
+        self.handle = None
+        self.task = None
+        self.failed.emit(item, self._failure_message(exc))
+
+    def _failure_message(self, exc: BaseException) -> str:
+        """실패 사유를 유저 표시용 번역 문자열로 바꾼다. 매핑에 없으면 빈 문자열.
+
+        lupdate가 `-no-obsolete`로 .ts를 재생성하므로 반드시 리터럴로 tr()을
+        호출해 추출 대상을 유지한다 (content/worker.py의 _translate_key와 동일).
+        """
+        translated = {
+            "Postprocessing failed": self.tr("Postprocessing failed"),
+            "Decryption failed": self.tr("Decryption failed"),
+            "Viewing permission required": self.tr("Viewing permission required"),
+            "Video not found": self.tr("Video not found"),
+            "Network connection error": self.tr("Network connection error"),
+            "Failed to save file": self.tr("Failed to save file"),
+        }
+        key = _failure_message_key(exc)
+        return translated.get(key, "") if key is not None else ""
 
 
 # ============ 진행 이벤트 변환식 (구 MonitorThread / MonitorM3U8Thread) ============
