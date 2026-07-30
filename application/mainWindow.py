@@ -245,7 +245,23 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
             else:
                 logger.warning(f"시스템 종료는 {os_type}에서 지원되지 않습니다.")
 
-        QMessageBox.information(self, self.tr("Completed"), self.tr("Download completed."))
+        # 배치 종료 안내는 화면의 결과와 모순되지 않아야 한다 (#134 — #128 후속 ⑤).
+        # 실패 카드가 보이는데 "완료했습니다"만 뜨던 문구를 결과별로 나눈다
+        finished, failed = self.contentManager.downloadResultCounts()
+        if failed and not finished:
+            QMessageBox.warning(
+                self,
+                self.tr("Completed"),
+                self.tr("All downloads failed. Check the failed cards for the reason."),
+            )
+        elif failed:
+            QMessageBox.warning(
+                self,
+                self.tr("Completed"),
+                self.tr("Download finished, but some items failed. Check the failed cards for the reason."),
+            )
+        else:
+            QMessageBox.information(self, self.tr("Completed"), self.tr("Download completed."))
 
     def setStopButtonEnable(self, bool):
         self.stopButton.setEnabled(bool)

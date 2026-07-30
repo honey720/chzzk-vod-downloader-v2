@@ -206,6 +206,30 @@ def test_all_failed_batch_reaches_end(wired, qapp, tmp_path):
 
     assert item.downloadState is DownloadState.FAILED
     assert finished_all == [True]  # 다음 항목이 없으면 배치 종료로 이어진다
+    # 배치 종료 안내 분기(#128 후속 ⑤)의 근거 — 전 항목 실패로 집계된다
+    assert manager.downloadResultCounts() == (0, 1)
+
+
+def test_download_result_counts_reflect_screen_state(wired, qapp, tmp_path):
+    """배치 종료 안내 분기용 집계 (#128 후속 ⑤): 화면(모델)의 완료·실패 수를 센다.
+
+    별도 배치 장부가 아니라 화면 상태를 세는 이유: 안내의 역할은 지금 화면에
+    보이는 결과와 모순되지 않는 것이고, 배치의 경계는 진행 중 추가·삭제가
+    가능해 정확한 장부가 존재하지 않는다 (근거는 PR 본문).
+    """
+    manager, _bridge, _harness, _finished_all, _view = wired
+
+    finished = _make_item(str(tmp_path), "완료 항목")
+    finished.downloadState = DownloadState.FINISHED
+    failed = _make_item(str(tmp_path), "실패 항목")
+    failed.downloadState = DownloadState.FAILED
+    waiting = _make_item(str(tmp_path), "대기 항목")
+    for it in (finished, failed, waiting):
+        manager.model.addItem(it)
+    qapp.processEvents()
+
+    # 대기·로딩은 세지 않는다 — 완료/실패만 안내 분기의 근거다
+    assert manager.downloadResultCounts() == (1, 1)
 
 
 class _HeadResponse:

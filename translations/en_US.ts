@@ -294,6 +294,14 @@
         <translation>Completed</translation>
     </message>
     <message>
+        <source>All downloads failed. Check the failed cards for the reason.</source>
+        <translation>All downloads failed. Check the failed cards for the reason.</translation>
+    </message>
+    <message>
+        <source>Download finished, but some items failed. Check the failed cards for the reason.</source>
+        <translation>Download finished, but some items failed. Check the failed cards for the reason.</translation>
+    </message>
+    <message>
         <source>Download completed.</source>
         <translation>Download completed.</translation>
     </message>

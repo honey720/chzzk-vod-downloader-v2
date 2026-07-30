@@ -206,3 +206,20 @@ class ContentManager(QObject):
             if item.downloadState == DownloadState.LOADING:
                 return True
         return False
+
+    def downloadResultCounts(self) -> tuple[int, int]:
+        """화면(모델)의 (완료, 실패) 항목 수를 센다 — 배치 종료 안내 분기용 (#134).
+
+        별도 배치 장부를 두지 않고 화면 상태를 그대로 센다: 안내의 역할은
+        "지금 화면에 보이는 결과"와 모순되지 않는 것이고, 배치의 경계는
+        항목 추가·삭제가 진행 중에도 가능해 정확한 장부가 존재하지 않는다.
+        """
+        finished = failed = 0
+        for row in range(self.model.rowCount()):
+            index = self.model.index(row, 0)
+            item: ContentItem = self.model.data(index, Qt.ItemDataRole.UserRole)
+            if item.downloadState == DownloadState.FINISHED:
+                finished += 1
+            elif item.downloadState == DownloadState.FAILED:
+                failed += 1
+        return finished, failed
