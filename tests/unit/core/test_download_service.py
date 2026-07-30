@@ -7,6 +7,7 @@ test_file_downloader_*·test_m3u8_downloader_*가 박제한다.
 """
 
 import threading
+import time
 
 import pytest
 
@@ -127,6 +128,63 @@ def m3u8_factory(monkeypatch):
 def _finish(engine: FakeEngine):
     """페이크 엔진을 정상 완료 경로로 종료시킨다."""
     engine.release.set()
+
+
+def _wait_until(predicate, timeout: float = WAIT) -> bool:
+    """조건이 참이 될 때까지 폴링한다 (상한 초과 시 False)."""
+    deadline = time.time() + timeout
+    while not predicate():
+        if time.time() > deadline:
+            return False
+        time.sleep(0.01)
+    return True
+
+
+class TestAbandon:
+    """갇힌 핸들의 슬롯 방출 (#137 — #136 부수 발견 ②).
+
+    파일 I/O에 갇힌 엔진 스레드는 중단시킬 수 없으므로(#136 조사), abandon은
+    스레드를 남긴 채 동시 실행 슬롯만 되돌린다. 갇힌 워커는 release를 늦게
+    set하는 페이크 엔진으로 흉내 낸다.
+    """
+
+    def test_abandon_active_handle_releases_slot_for_next(self, file_factory):
+        """활성 핸들을 방출하면 대기 중이던 다음 건이 시작된다 (max_concurrent=1)."""
+        service = DownloadService()
+        first = service.submit(_make_content())
+        assert file_factory.created.wait(WAIT)
+        assert file_factory.instances[0].started.wait(WAIT)  # 첫 건이 슬롯 점유 (갇힘 흉내)
+        second = service.submit(_make_content())
+        assert service.pending_count == 1  # 슬롯이 없어 대기
+
+        service.abandon(first)
+
+        # 두 번째 엔진이 생성·시작된다 — 갇힌 첫 건이 더는 시작을 막지 않는다
+        assert _wait_until(lambda: len(file_factory.instances) == 2)
+        assert file_factory.instances[1].started.wait(WAIT)
+
+        # 갇혔던 첫 워커가 나중에 깨어나는 상황 — finally의 discard는 멱등이라 무해
+        _finish(file_factory.instances[0])
+        _finish(file_factory.instances[1])
+        assert first.wait(WAIT)
+        assert second.wait(WAIT)
+        assert _wait_until(lambda: service.active_count == 0)
+
+    def test_abandon_pending_handle_removes_from_queue(self, file_factory):
+        """대기 중 핸들의 방출은 큐에서 제거한다 — 시작되지 않는다."""
+        service = DownloadService()
+        first = service.submit(_make_content())
+        assert file_factory.created.wait(WAIT)
+        assert file_factory.instances[0].started.wait(WAIT)
+        second = service.submit(_make_content())
+        assert service.pending_count == 1
+
+        service.abandon(second)
+
+        assert service.pending_count == 0
+        _finish(file_factory.instances[0])
+        assert first.wait(WAIT)
+        assert len(file_factory.instances) == 1  # 두 번째 엔진은 생성되지 않았다
 
 
 class TestDownloaderSelection:
