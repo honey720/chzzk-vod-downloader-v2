@@ -16,6 +16,7 @@ dev = [
     "pytest-qt",
     "ruff",
     "nuitka[onefile]",
+    "pytest-cov>=7.1.0",
 ]
 
 [tool.ruff]
