@@ -184,7 +184,7 @@ class FileDownloader(BaseDownloader):
             except (requests.RequestException, requests.Timeout) as e:
                 with self.lock:
                     self._record_partial(start, end, resume_offset + downloaded_size)
-                    self._requeue_failed((start, end), part_num)
+                    self._requeue_failed((start, end), part_num, e)
                 self.logger.log_error(f"Part {part_num} download failed", e)
                 return part_num
 

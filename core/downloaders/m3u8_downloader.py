@@ -194,7 +194,7 @@ class M3U8Downloader(BaseDownloader):
 
             except (requests.RequestException, requests.Timeout) as e:
                 with self.lock:
-                    self._requeue_failed((index, segment), part_num)
+                    self._requeue_failed((index, segment), part_num, e)
                 self.logger.log_error(f"Part {part_num} download failed", e)
                 return part_num
 

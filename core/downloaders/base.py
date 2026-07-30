@@ -56,6 +56,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 
+import requests
+
 from core.models.content import Content
 from core.models.download_state import DownloadState
 from core.models.events import (
@@ -87,6 +89,30 @@ _RECOVERY_RATIO = 1.30
 _HOLD_EMA_ALPHA = 0.2  # 정체 기준의 지수이동평균 가중치 (안정 틱에서만 갱신)
 _COLLAPSE_TICKS = 5  # 감소 확정에 필요한 연속 틱 수 (구 규칙과 동일한 관성)
 _REPROBE_TICKS = 15  # 정체 상태에서 재탐침까지의 틱 수
+
+
+# ============ 오류 재큐 상한 (#131) ============
+# 상한이 없으면 영구 오류(404·403)가 무한 재큐돼 다운로드가 끝나지도,
+# 실패하지도 않는다. 상한은 예외로 인한 재큐(_requeue_failed)에만 건다 —
+# 저속 재큐(_requeue_slow)는 잘 동작하는 회선에서도 정상적으로 여러 번
+# 발동하는 규칙이라, 함께 세면 느린 회선의 정상 다운로드가 실패한다.
+_PERMANENT_ERROR_REQUEUE_LIMIT = 2  # 항목별 최대 재큐 횟수 — 총 3회 시도
+_TRANSIENT_ERROR_REQUEUE_LIMIT = 10  # 항목별 최대 재큐 횟수 — 총 11회 시도
+# 4xx 중 일시적일 수 있는 상태 — 요청 타임아웃(408)·과요청(429)은 재시도가 유효하다
+_TRANSIENT_HTTP_STATUSES = frozenset({408, 429})
+
+
+def _is_permanent_error(exc: BaseException) -> bool:
+    """재시도해도 결과가 같은 오류인지 판정한다 (#131).
+
+    4xx 응답(408·429 제외)은 같은 요청에 같은 답이 돌아온다 — 세그먼트
+    소실(404)·권한/만료(403)가 대표다. 그 외(5xx·타임아웃·연결 끊김)는
+    일시적일 수 있어 재시도 여지를 더 준다.
+    """
+    if isinstance(exc, requests.HTTPError) and exc.response is not None:
+        status = exc.response.status_code
+        return 400 <= status < 500 and status not in _TRANSIENT_HTTP_STATUSES
+    return False
 
 
 class PostprocessError(Exception):
@@ -146,6 +172,8 @@ class BaseDownloader(ABC):
         self.lock = threading.Lock()
         self.future_dict: dict = {}
         self.adjust_count = 0
+        # 항목별 오류 재큐 횟수 (#131) — 상한 판정용. 저속 재큐는 세지 않는다
+        self._error_requeues: dict = {}
         # 전송 종료 시 관측 스레드를 깨워 끝내는 신호 — 후처리는 관측 대상이 아니다 (#89)
         self._monitor_stop = threading.Event()
         # 전송 중 관측된 정점 동시 스레드 수 — 전송 종료 요약 로그용 (#110)
@@ -329,6 +357,7 @@ class BaseDownloader(ABC):
                 with self.lock:
                     self.s.future_count = 0
                     self.future_dict = {}
+                    self._error_requeues = {}
 
                 while not self.state == DownloadState.WAITING:
                     # (1) 현재 활성 스레드 수보다 적으면 -> 추가 스레드 할당
@@ -447,11 +476,40 @@ class BaseDownloader(ABC):
             self._on_failed(e)
             self.logger.log_error("Thread failed", e)
 
-    def _requeue_failed(self, item, part_num: int) -> None:
-        """예외 발생 시 작업을 다시 다운로드할 수 있도록 remaining_ranges에 등록."""
+    def _requeue_failed(self, item, part_num: int, exc: BaseException) -> None:
+        """예외 발생 시 작업을 다시 다운로드할 수 있도록 remaining_ranges에 등록.
+
+        항목별 재큐 횟수에 상한을 둔다 (#131) — 영구 오류(4xx)는 짧게,
+        일시 오류(5xx·타임아웃·연결 끊김)는 길게 허용한다. 상한 도달 시
+        재큐 대신 원인을 로그에 남기고 다운로드 전체를 실패로 끝낸다.
+        저속 재큐(_requeue_slow)는 이 상한에 세지 않는다.
+        """
+        count = self._error_requeues.get(item, 0)
+        permanent = _is_permanent_error(exc)
+        limit = _PERMANENT_ERROR_REQUEUE_LIMIT if permanent else _TRANSIENT_ERROR_REQUEUE_LIMIT
+        if count >= limit:
+            kind = "permanent" if permanent else "transient"
+            self._fail_fatally(
+                exc,
+                f"Part {part_num} requeue limit reached "
+                f"({count} requeues, {kind} error) — giving up",
+            )
+            return
+        self._error_requeues[item] = count + 1
         self.s.failed_threads += 1
         self.s.threads_progress[part_num] = 0
         self.s.remaining_ranges.append(item)
+
+    def _fail_fatally(self, exc: BaseException, log_message: str) -> None:
+        """워커에서 회복 불가능한 오류가 났을 때 다운로드 전체를 중단시킨다.
+
+        상태를 중단으로 돌려 실행 루프·관측 루프가 빠져나오게 하고, 실패를
+        통지한다. 부분 산출물 정리는 run()의 중단 경로가 수행한다.
+        (hls_aes 복호화 실패 경로에서 승격 — #131부터 재큐 상한 도달도 쓴다)
+        """
+        self.logger.log_error(log_message, exc)
+        self._on_failed(exc)
+        self.model.stop()
 
     def _requeue_slow(self, item, part_num: int) -> None:
         """저속으로 중도 중단한 작업을 재시작하도록 등록."""
