@@ -19,6 +19,7 @@ monitor_m3u8.py·manager.py에 분산돼 있던 Qt 어댑터(콜백→Signal 변
 MonitorM3U8Thread의 계산과 동일하다.
 """
 
+import logging
 from time import gmtime, strftime
 
 import requests
@@ -33,6 +34,15 @@ from download.data import DownloadData
 from download.logger import DownloadLogger
 from download.resolvers import resolve_aes_key, resolve_m3u8_base_url
 from download.task import DownloadTask
+
+logger = logging.getLogger(__name__)
+
+# 중지·완료 정리 시 워커 종료를 기다리는 상한(초) (#137 — #136 제안 ①).
+# 정상 종료는 대부분 즉시(워커가 청크 단위로 상태를 확인)지만, 파일 I/O에
+# 갇힌 워커는 영원히 안 끝난다 — 여기는 메인 스레드라 무한 대기가 곧 앱
+# 프리즈였다. 네트워크 read에 막힌 워커(최대 30초)도 UI를 잡아둘 가치가
+# 없어 짧게 둔다
+_HANDLE_WAIT_TIMEOUT_S = 2.0
 
 
 def _failure_message_key(exc: BaseException) -> str | None:
@@ -136,9 +146,20 @@ class QtDownloadBridge(QObject):
         self.stopped.emit(self.item)
 
     def removeThreads(self) -> None:
-        """실행 중인 워커가 끝나기를 기다린 뒤 참조를 정리한다 (구 removeThreads)."""
-        if self.handle is not None:
-            self.handle.wait()
+        """실행 중인 워커의 종료를 상한을 두고 기다린 뒤 참조를 정리한다 (구 removeThreads).
+
+        상한 초과 시(파일 I/O에 갇힌 워커 — #136) 서비스 슬롯을 방출하고
+        참조만 정리한다 (#137). 부분 산출물 정리가 생략되는 것은 아니다 —
+        정리는 wait가 아니라 엔진 스레드(run 꼬리의 _cleanup_partial)가
+        수행하므로, 포기해도 정리는 늦어질 뿐이며 갇힌 스레드가 깨어나면
+        그때 수행된다. 재시작 충돌은 산출물 경로 유일화(#105)가 막는다.
+        """
+        if self.handle is not None and not self.handle.wait(_HANDLE_WAIT_TIMEOUT_S):
+            logger.warning(
+                "워커가 %.0f초 안에 끝나지 않아 대기를 포기한다 — 슬롯 방출 (#137)",
+                _HANDLE_WAIT_TIMEOUT_S,
+            )
+            self._service.abandon(self.handle)
         self.handle = None
         self.task = None
 

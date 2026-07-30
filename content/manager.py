@@ -1,5 +1,7 @@
 import logging
 import os
+import tempfile
+import threading
 
 from PySide6.QtCore import Qt, Signal, QThreadPool, QObject
 from content.model import ContentListModel
@@ -11,6 +13,48 @@ from content.worker import ContentWorker
 from core.utils.paths import build_output_path, ensure_unique_path
 
 logger = logging.getLogger(__name__)
+
+# 쓰기 프로브 대기 상한(초) (#137). 정상 디스크에서 프로브는 밀리초 수준이라
+# 이 값은 병리 상황(무응답 마운트 — #136)에서만 발동한다. 발동 시 메인 스레드가
+# 이 시간만큼 기다리는 대가가 있지만, 무한 정지(0B 침묵) 대신 유한 대기 후
+# 명확한 실패가 목적이다
+_WRITE_PROBE_TIMEOUT_S = 5.0
+
+
+def probe_writable(directory: str, timeout_s: float = _WRITE_PROBE_TIMEOUT_S) -> tuple[bool, str]:
+    """저장 경로의 존재·쓰기 가능 여부를 제물 스레드로 검사한다 (#137 — #136 제안 ②).
+
+    존재 검사(os.path.isdir)조차 무응답 마운트에서는 매달릴 수 있어, 검사
+    전체를 별도 스레드에서 수행하고 join(timeout)으로 포기한다 — 파이썬에
+    파일 I/O 시간 제한 수단이 없다는 조사(#136)의 상한 적용이다. 갇힌
+    스레드는 회수할 수 없지만(데몬), 프로브는 다운로드 시작 시점 1회뿐인
+    작고 드문 지점이라 누수 비용이 유계다.
+
+    Returns:
+        (쓰기 가능 여부, 사유): 사유는 "" | "missing" | "denied" | "timeout"
+    """
+    outcome: dict[str, str] = {}
+
+    def probe() -> None:
+        try:
+            if not os.path.isdir(directory):
+                outcome["reason"] = "missing"
+                return
+            # 실제 파일 생성·삭제로 확인한다 — os.access는 네트워크 파일시스템의
+            # 권한(예: SFTP 상 ZFS 풀 루트)을 신뢰할 수 없다
+            fd, probe_path = tempfile.mkstemp(prefix=".cvdv2_probe_", dir=directory)
+            os.close(fd)
+            os.remove(probe_path)
+            outcome["reason"] = ""
+        except OSError:
+            outcome["reason"] = "denied"
+
+    worker = threading.Thread(target=probe, daemon=True, name="WriteProbe")
+    worker.start()
+    worker.join(timeout_s)
+    reason = outcome.get("reason", "timeout")
+    return reason == "", reason
+
 
 class ContentManager(QObject):
     # 메타데이터 매니저 UI
@@ -113,8 +157,19 @@ class ContentManager(QObject):
         found, item, index = self.findItem()
         if found:
             try:
-                if not os.path.exists(item.download_path):
+                # 사전 검사 (#137): 존재만 보던 구 검사(os.path.exists)를 존재+쓰기
+                # 프로브로 확장한다. 존재 검사도 프로브 스레드 안에서 수행한다 —
+                # 무응답 마운트에서는 exists조차 메인 스레드를 매달 수 있다 (#136)
+                writable, reason = probe_writable(item.download_path)
+                if reason == "missing":
                     raise ValueError(self.tr("Invalid file path"))
+                if not writable:
+                    # 권한 없음(denied — 예: SFTP 상 ZFS 풀 루트) 또는 무응답
+                    # 마운트(timeout — 권한 오류가 오류로 전파되지 않는 경우).
+                    # 유저에게는 같은 사실이다: 이 경로에는 저장할 수 없다
+                    logger.warning("쓰기 프로브 실패(%s): %s", reason, item.download_path)
+                    self.fail(item, self.tr("Failed to save file"))
+                    return
                 self.onDownload(item)
             except ValueError as e:
                 # 위에서 직접 던진 번역된 안내 — 그대로 카드에 표시한다

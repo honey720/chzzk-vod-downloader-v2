@@ -250,6 +250,23 @@ class DownloadService:
                 return downloader_cls
         raise ValueError(f"지원하지 않는 컨텐츠 타입: {content.content_type}")
 
+    def abandon(self, handle: DownloadHandle) -> None:
+        """응답 없는 핸들을 큐·활성 집합에서 방출해 슬롯을 회수한다 (#137).
+
+        파일 I/O에 갇힌 엔진 스레드는 중단시킬 수 없다 (#136 조사 — 파이썬
+        스레드는 외부 중단 불가, Windows 파일 I/O에 타임아웃 개념 없음).
+        스레드는 남겨 두되 동시 실행 슬롯만 되돌려, 갇힌 다운로드 하나가
+        이후 다운로드의 시작을 영구히 막지 않게 한다. 갇혔던 스레드가 나중에
+        깨어나 run()이 끝나면 _run_handle finally의 discard는 멱등이라 무해하다.
+        """
+        with self._lock:
+            self._active.discard(handle)
+            try:
+                self._pending.remove(handle)
+            except ValueError:
+                pass
+            self._dispatch_locked()
+
     @property
     def active_count(self) -> int:
         """현재 실행 중인 다운로드 수."""

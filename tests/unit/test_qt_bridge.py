@@ -43,10 +43,14 @@ class FakeService:
 
     def __init__(self):
         self.submissions: list[dict] = []
+        self.abandoned: list = []
 
     def submit(self, content, **kwargs):
         self.submissions.append({"content": content, **kwargs})
         return FakeHandle(kwargs["data"])
+
+    def abandon(self, handle):
+        self.abandoned.append(handle)
 
 
 class FakeLogger:
@@ -244,6 +248,55 @@ class TestCompletion:
         bridge.resume()
 
         assert events == [("paused", item), ("resumed", item)]
+
+
+class StuckHandle(FakeHandle):
+    """파일 I/O에 갇힌 워커 흉내 — wait가 절대 끝나지 않는다 (#136·#137)."""
+
+    def __init__(self, data):
+        super().__init__(data)
+        self.wait_timeouts: list = []
+
+    def wait(self, timeout=None) -> bool:
+        self.wait_timeouts.append(timeout)
+        return False
+
+
+class TestRemoveThreads:
+    """중지·정리 경로의 대기 상한 (#137 — #136 제안 ①).
+
+    구 removeThreads는 타임아웃 없는 wait로, 갇힌 워커 상태에서 유저의
+    유일한 행동(중지·종료)이 앱을 얼렸다. 이제 상한 초과 시 슬롯을
+    방출(service.abandon)하고 참조만 정리한다.
+    """
+
+    def test_stuck_worker_gives_up_and_abandons_slot(self, bridge):
+        item = _make_item()
+        bridge.start(item)
+        stuck = StuckHandle(_submission(bridge)["data"])
+        bridge.handle = stuck
+
+        bridge.removeThreads()  # 갇힌 워커 — 여기서 영원히 기다리면 앱 프리즈다
+
+        assert stuck.wait_timeouts and all(
+            t is not None and t > 0 for t in stuck.wait_timeouts
+        )  # 무한 대기(None) 금지
+        assert bridge._service.abandoned == [stuck]  # 슬롯 방출 — 다음 다운로드가 시작될 수 있다
+        assert bridge.handle is None
+        assert bridge.task is None
+
+    def test_normal_exit_is_not_abandoned(self, bridge):
+        """정상 종료 워커는 방출하지 않는다 — 기존 정리 경로 무변경."""
+        item = _make_item()
+        bridge.start(item)
+        handle = bridge.handle
+
+        bridge.removeThreads()
+
+        assert handle.wait_calls == 1
+        assert bridge._service.abandoned == []
+        assert bridge.handle is None
+        assert bridge.task is None
 
 
 class _FakeHttpResponse:
