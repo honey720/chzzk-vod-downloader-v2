@@ -7,6 +7,8 @@ ContentManager.fail → 뷰/위젯 갱신 → 배치 계속까지를 실제 시�
 지나간다. 다운로드 실행은 페이크 서비스로 대체한다 (실네트워크 없음).
 """
 
+import time
+
 import pytest
 from PySide6.QtCore import QObject
 
@@ -204,3 +206,78 @@ def test_all_failed_batch_reaches_end(wired, qapp, tmp_path):
 
     assert item.downloadState is DownloadState.FAILED
     assert finished_all == [True]  # 다음 항목이 없으면 배치 종료로 이어진다
+
+
+class _HeadResponse:
+    """총 크기 조회(HEAD)용 응답 흉내 — prepare()가 파트 분할에 쓴다."""
+
+    headers = {"content-length": str(4 * 1024 * 1024)}
+
+    def raise_for_status(self):
+        pass
+
+
+class _DeadMountSession:
+    """마운트가 끊긴 네트워크 드라이브 흉내 — 조회는 성공했지만 전송이 죽는다.
+
+    get()의 OSError(9)는 requests 예외가 아니라 FileDownloader의
+    _failure_exceptions에 잡히지 않고 워커에서 전파된다 — 실측 로그
+    ([Errno 9] Bad file descriptor)와 동일한 실패 경로
+    (_download_completed_callback → on_failed)다.
+    """
+
+    def head(self, url, **kwargs):
+        return _HeadResponse()
+
+    def get(self, url, **kwargs):
+        raise OSError(9, "Bad file descriptor")
+
+
+def test_dead_mount_worker_failure_does_not_freeze_app(qapp, tmp_path, monkeypatch):
+    """프리즈 회귀 재현 (PR #135 코멘트): 워커가 OSError로 죽는 실패는 run 루프가
+    살아 있는 중에 통지된다. 종점이 모델을 FAILED로 전이하면 루프가 끝나지 않고
+    (WAITING만 종료 신호, FAILED→WAITING 불허), handle.wait()가 메인 스레드를
+    영원히 붙잡아 앱이 얼어붙는다.
+
+    실제 네트워크 드라이브 없이 재현하는 근거: 얼림의 원인은 파일 I/O의 OS 수준
+    대기가 아니라 "루프 미종료 + 메인 스레드 무한 대기"라는 결정론적 데드락으로
+    특정됐다 (진단 스크립트 실측 — model.fail() 후 run() 미종료, model.stop() 후
+    3초 내 종료). 따라서 OSError를 던지는 세션만으로 같은 실패 경로가 재현되며,
+    OS 수준 무기한 I/O 대기 자체는 흉내 낼 수단이 없어 재현 대상에서 제외한다.
+
+    이 테스트는 실제 DownloadService·FileDownloader·실행 루프를 그대로 쓴다 —
+    고장난 종점에서는 processEvents가 handle.wait()에 갇혀 테스트가 매달린다.
+    """
+    monkeypatch.setattr("download.qt_bridge.DownloadLogger", FakeLogger)
+    import core.downloaders.file_downloader as fmod
+
+    monkeypatch.setattr(fmod, "get_thread_session", lambda: _DeadMountSession())
+
+    view = ContentListView()
+    manager = ContentManager(view)
+    bridge = QtDownloadBridge()  # 실제 서비스 — 페이크 아님
+    harness = WindowHarness(manager, bridge)
+
+    item = _make_item(str(tmp_path), "죽은 마운트 항목")
+    manager.model.addItem(item)
+    qapp.processEvents()
+
+    manager.downloadItem()
+    assert harness.started == [item]
+    handle = bridge.handle  # 참조 정리 전에 붙잡는다 — 엔진 종료 검증용
+    assert handle is not None
+
+    # 워커 실패 → 큐 전달 → 메인 스레드 종점 → 카드 FAILED까지 (상한 10초)
+    deadline = time.time() + 10
+    while item.downloadState is not DownloadState.FAILED and time.time() < deadline:
+        qapp.processEvents()
+        time.sleep(0.02)
+
+    assert item.downloadState is DownloadState.FAILED  # 앱이 살아서 실패로 끝났다
+    # 실행 루프가 실제로 종료됐다 — 루프 미종료(스핀) 회귀 방지.
+    # 이 대기는 테스트(메인) 스레드지만 상한이 있고, 위에서 FAILED 도달로
+    # 종점 처리가 끝났음이 확인된 뒤다
+    assert handle.wait(5), "엔진 run()이 종료되지 않았다 — 실행 루프 미종료 회귀"
+
+    view.deleteLater()
+    qapp.processEvents()

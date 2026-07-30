@@ -19,16 +19,22 @@ from download.qt_bridge import QtDownloadBridge, _failure_message_key
 
 
 class FakeHandle:
-    """DownloadHandle 대역 — 브리지가 쓰는 인터페이스만 제공한다."""
+    """DownloadHandle 대역 — 브리지가 쓰는 인터페이스만 제공한다.
+
+    wait 호출 횟수를 기록한다 — 실패 경로에서 메인 스레드가 엔진을 기다리면
+    죽은 마운트 I/O에 갇혀 UI가 얼어붙는 회귀가 있었다 (PR #135 코멘트).
+    """
 
     def __init__(self, data):
         self.data = data
         self.stopped = False
+        self.wait_calls = 0
 
     def elapsed_seconds(self) -> float:
         return 61.0
 
     def wait(self, timeout=None) -> bool:
+        self.wait_calls += 1
         return True
 
 
@@ -146,17 +152,27 @@ class TestCompletion:
         assert bridge.handle is None
         assert bridge.task is None
 
-    def test_failed_marks_item_failed_and_emits_reason(self, bridge):
-        """실패 (#134): FAILED 전이·참조 정리 후 failed(item, 사유)를 emit한다.
+    def test_failed_stops_engine_and_emits_reason_without_waiting(self, bridge):
+        """실패 (#134): 엔진 종료 신호(stop→WAITING) 후 failed(item, 사유)를 emit한다.
 
         구 테스트(test_failed_emits_stopped_and_resets_state)는 "예외를 버리고
         WAITING으로 되돌리는" 고장난 동작을 박제하고 있었다 — 실패가 유저의
         정지와 구분되지 않는 결함 그 자체라, 실패 표시 계약으로 반전했다
         (#128 조사 ①, 근거는 PR 본문).
+
+        종점이 모델을 FAILED로 전이하거나 handle.wait()로 기다리면 안 되는
+        이유 (죽은 네트워크 드라이브 프리즈 회귀 — PR #135 코멘트): 워커 예외
+        경로의 실패는 run 루프가 살아 있는 중에 통지되는데, 루프는 WAITING만
+        종료 신호로 보고 FAILED→WAITING은 불허 전이라 되돌릴 수도 없다. 또
+        run()의 꼬리 정리는 죽은 마운트 I/O에 갇힐 수 있어 메인 스레드가
+        기다리면 UI가 얼어붙는다. FAILED 표시는 아이템 레벨
+        (ContentManager.fail)의 몫이다.
         """
         item = _make_item("m3u8")
         bridge.start(item)
         item.post_process = True
+        handle = bridge.handle
+        model = _submission(bridge)["data"].model
         received, stopped = [], []
         bridge.failed.connect(lambda *args: received.append(args))
         bridge.stopped.connect(lambda *args: stopped.append(args))
@@ -164,7 +180,10 @@ class TestCompletion:
         raw = "후처리(remux) 실패: ffmpeg stderr tail... [C:\\tools\\ffmpeg.exe]"
         _submission(bridge)["on_failed"](PostprocessError(raw))
 
-        assert item.downloadState is DownloadState.FAILED  # 대기가 아니라 실패로 보인다
+        # 엔진 종료 신호 — 실행 루프는 WAITING만 종료 신호로 본다 (v2.9.0·main과 동일)
+        assert model.state is DownloadState.WAITING
+        # 프리즈 회귀 방지 — 메인 스레드는 실패 경로에서 엔진을 기다리지 않는다
+        assert handle.wait_calls == 0
         assert stopped == []  # 실패는 더 이상 정지로 위장하지 않는다
         [(failed_item, message)] = received
         assert failed_item is item
@@ -172,7 +191,7 @@ class TestCompletion:
         assert message == "Postprocessing failed"
         assert "ffmpeg" not in message
         assert item.post_process is False
-        # 완료 경로와 동일한 참조 정리 — 실패 후 다음 다운로드 시작이 가능해야 한다
+        # 참조 정리 — 실패 후 다음 다운로드 시작이 가능해야 한다
         assert bridge.handle is None
         assert bridge.task is None
 
@@ -180,13 +199,14 @@ class TestCompletion:
         """매핑에 없는 예외는 사유 없이 실패만 알린다 — 원시 str(e) 노출 금지."""
         item = _make_item()
         bridge.start(item)
+        model = _submission(bridge)["data"].model
         received = []
         bridge.failed.connect(lambda *args: received.append(args))
 
         _submission(bridge)["on_failed"](RuntimeError("raw internal detail"))
 
         assert received == [(item, "")]
-        assert item.downloadState is DownloadState.FAILED
+        assert model.state is DownloadState.WAITING  # 엔진 종료 신호 (FAILED 표시는 매니저 몫)
 
     def test_failure_after_user_cleanup_is_ignored(self, bridge):
         """중지·정리 후 늦게 도착한 실패는 무시한다 (완료 경로의 가드와 동일)."""

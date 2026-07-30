@@ -189,23 +189,32 @@ class QtDownloadBridge(QObject):
         self.finished.emit(item, download_time)
 
     def _onEngineFailed(self, exc: BaseException) -> None:
-        """실패 후처리 (#134) — FAILED 전이·참조 정리 후 failed Signal로 사유를 알린다.
+        """실패 후처리 (#134) — 엔진 종료 신호 후 참조를 정리하고 failed Signal로 사유를 알린다.
 
-        이전에는 exc를 읽지 않고 task.stop()으로 WAITING에 되돌려, 실패가
-        유저의 정지와 구분되지 않았다 (#128 조사 ①). 이제 완료 경로
-        (_onEngineFinished)와 같은 순서로 전이 → 참조 정리 → Signal emit을
-        수행하고, 사유는 키 기반 매핑을 거친 번역 문자열만 내보낸다.
+        이전에는 exc를 읽지 않고 버려서 실패가 유저의 정지와 구분되지 않았다
+        (#128 조사 ①). 사유는 키 기반 매핑을 거친 번역 문자열만 내보낸다.
+
+        엔진 종료는 반드시 stop(WAITING)으로 한다 (죽은 네트워크 드라이브
+        프리즈 회귀 — PR #135 코멘트). 워커 예외 경로(_download_completed_callback)의
+        실패는 실행 루프가 살아 있는 중에 통지되는데, 루프는 WAITING만 종료
+        신호로 보므로 여기서 모델을 FAILED로 전이하면 루프가 영원히 돌고,
+        FAILED→WAITING은 불허 전이라 되돌릴 수도 없다. FAILED 표시는 모델이
+        아니라 아이템 레벨(ContentManager.fail)에서 한다 — 사전 경로 검사
+        실패와 같은 방식이다.
+
+        참조 정리는 완료 경로와 달리 handle.wait() 없이 한다: run()의 꼬리
+        정리(_cleanup_partial)가 죽은 마운트 I/O에 갇힐 수 있어, 메인 스레드가
+        기다리면 UI가 얼어붙는다. 엔진 스레드는 stop 신호로 스스로 끝난다
+        (v2.9.0·main도 실패 시 기다리지 않았다).
         """
         if self.handle is None:
             # 실패 도착 전에 사용자가 중지·정리를 마친 경우 (완료 경로의 가드와 동일)
             return
         item = self.item
         if self.task is not None:
-            # WAITING(엔진이 이미 stop한 경우)·RUNNING 어느 쪽에서도 FAILED 전이가
-            # 허용된다. 실행 루프는 이 시점에 이미 종료됐다 — WAITING만 종료
-            # 신호로 보는 루프 구조(#131)에 새 감시 대상을 만들지 않는다
-            self.task.fail()
-        self.removeThreads()
+            self.task.stop()
+        self.handle = None
+        self.task = None
         self.failed.emit(item, self._failure_message(exc))
 
     def _failure_message(self, exc: BaseException) -> str:
