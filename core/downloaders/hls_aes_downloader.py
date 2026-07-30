@@ -247,7 +247,7 @@ class HlsAesDownloader(BaseDownloader):
                     # 복호화 실패는 재시도해도 낫지 않는다(키·정렬 문제). 재큐잉하면
                     # 무한 루프가 되고, 그대로 전파하면 future_dict가 정리되지 않아
                     # 실행 루프가 끝나지 않는다 — 다운로드 전체를 중단시킨다
-                    self._fail_fatally(e)
+                    self._fail_fatally(e, "Segment decryption failed")
                     return part_num
 
                 temp_file = os.path.join(self.temp_dir, f"{index:0{self.width}d}.ts")
@@ -264,17 +264,7 @@ class HlsAesDownloader(BaseDownloader):
 
             except (requests.RequestException, requests.Timeout) as e:
                 with self.lock:
-                    self._requeue_failed((index, segment), part_num)
+                    self._requeue_failed((index, segment), part_num, e)
                 self.logger.log_error(f"Part {part_num} download failed", e)
                 return part_num
-
-    def _fail_fatally(self, exc: BaseException) -> None:
-        """워커에서 회복 불가능한 오류가 났을 때 다운로드 전체를 중단시킨다.
-
-        상태를 중단으로 돌려 실행 루프·관측 루프가 빠져나오게 하고, 실패를
-        통지한다. 부분 산출물 정리는 run()의 중단 경로가 수행한다.
-        """
-        self.logger.log_error("Segment decryption failed", exc)
-        self._on_failed(exc)
-        self.model.stop()
 
