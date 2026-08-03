@@ -22,9 +22,13 @@ jobs:
             exit 1
           fi
 
-  lint-test:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -33,19 +37,61 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Install Qt system deps
+      - name: Install Qt system deps (Linux)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             xvfb libegl1 libgl1 libxkbcommon-x11-0 libxcb-icccm4 \
             libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 \
-            libxcb-shape0 libxcb-xinerama0 libxcb-cursor0 libdbus-1-3
+            libxcb-shape0 libxcb-xinerama0 libxcb-cursor0 libdbus-1-3 \
+            fonts-noto-cjk
 
       - name: Sync dependencies
         run: uv sync
 
       - name: Lint
+        if: runner.os == 'Linux'
         run: uv run ruff check .
 
-      - name: Test
+      # 리눅스: 기존 검증 구성(xvfb) 유지 — 실플랫폼(xcb)에 가장 근접
+      - name: Test (Linux, xvfb)
+        if: runner.os == 'Linux'
+        env:
+          CVDV2_SHOT_DIR: test-screenshots
         run: xvfb-run -a uv run pytest --maxfail=5 -q
+
+      # Windows·macOS: offscreen — release.yml 기동 스모크와 같은 방식.
+      # QT_QPA_FONTDIR 지정 필수: offscreen은 시스템 폰트를 자동으로 쓰지
+      # 않아 미지정 시 한글이 전부 □로 렌더된다 (#154 실측)
+      - name: Test (Windows/macOS, offscreen)
+        if: runner.os != 'Linux'
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_QPA_FONTDIR: ${{ runner.os == 'Windows' && 'C:\Windows\Fonts' || '/System/Library/Fonts' }}
+          CVDV2_SHOT_DIR: test-screenshots
+        run: uv run pytest --maxfail=5 -q
+
+      # 실패한 GUI 테스트의 위젯 캡처(conftest 훅)를 OS별 아티팩트로.
+      # 실패가 없으면 업로드 자체가 생략된다
+      - name: Upload GUI screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-screenshots-${{ matrix.os }}
+          path: test-screenshots/
+          if-no-files-found: ignore
+          retention-days: 14
+  # 룰셋(protect main branch)의 필수 체크 'lint-test'로 보고하는 집계 관문.
+  # 매트릭스 OS가 하나라도 실패·취소되면 실패한다
+  lint-test:
+    needs: test
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: All OS jobs passed
+        run: |
+          if [ "${{ needs.test.result }}" != "success" ]; then
+            echo "::error::매트릭스 결과: ${{ needs.test.result }}"
+            exit 1
+          fi
