@@ -60,7 +60,10 @@ DEFAULT_CONFIG = {
         "NID_SES": ""
     },
     "afterDownload": "none",
-    "language": "en_US"
+    "language": "en_US",
+    # 유저가 마지막으로 쓴 저장 경로 (#159). 빈 값 = 미설정 → 시스템 다운로드
+    # 폴더 폴백. reorder_config가 여기 없는 키를 삭제하므로 등재가 보존의 전제다
+    "downloadPath": ""
 }
 
 # 설정 로드 함수
