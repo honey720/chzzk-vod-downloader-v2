@@ -293,6 +293,11 @@ def test_pause_resume_then_complete(tmp_path, monkeypatch):
     engine, data, logger, output, finished, failures, merge_starts = _make_engine(
         tmp_path, monkeypatch, chunks_per_segment=120, throttle=0.005
     )
+    # 저속 재큐 판정 비활성 (#160) — 느린 CI 러너에서는 위 오탐 회피
+    # (누적 바이트 키우기)로도 부족해 정상적인 저속 재큐 warning이 남아
+    # "전이 warning 0건" 단언이 깨졌다(macOS 실측). 검증 대상은 일시정지·
+    # 재개이지 저속 규칙이 아니다 — 저속 규칙은 rules 테스트가 박제한다
+    engine._slow_speed_threshold_kb_s = 0
 
     data.model.start()
     thread = _run_in_thread(engine)
