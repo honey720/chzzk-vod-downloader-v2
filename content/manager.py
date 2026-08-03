@@ -167,12 +167,18 @@ class ContentManager(QObject):
                     # 권한 없음(denied — 예: SFTP 상 ZFS 풀 루트) 또는 무응답
                     # 마운트(timeout — 권한 오류가 오류로 전파되지 않는 경우).
                     # 유저에게는 같은 사실이다: 이 경로에는 저장할 수 없다
-                    logger.warning("쓰기 프로브 실패(%s): %s", reason, item.download_path)
+                    # 경로는 repr로 남긴다 (#148) — 공백 유사 문자(U+00A0 등)를
+                    # 육안 구분할 수 있는 유일한 표기다 (#144 실측)
+                    logger.warning("쓰기 프로브 실패(%s): %r", reason, item.download_path)
                     self.fail(item, self.tr("Failed to save file"))
                     return
                 self.onDownload(item)
             except ValueError as e:
-                # 위에서 직접 던진 번역된 안내 — 그대로 카드에 표시한다
+                # 위에서 직접 던진 번역된 안내 — 그대로 카드에 표시한다.
+                # 이 거부는 지금까지 로그가 전혀 없어 제보 진단이 불가능했다 (#148)
+                logger.warning(
+                    "다운로드 시작 거부 — 존재하지 않는 저장 경로: %r", item.download_path
+                )
                 self.fail(item, str(e))
             except Exception:
                 # 경로 조립(OSError 등)의 원시 문자열에는 전체 경로가 섞여 있어
