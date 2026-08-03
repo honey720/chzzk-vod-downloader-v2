@@ -333,7 +333,17 @@ class DownloadService:
                     handle.logger.save_and_close()
                     return
 
-            engine.run()
+            try:
+                engine.run()
+            except Exception as e:
+                # 엔진이 스스로 실패 처리하지 못한 예외의 최후 방어선 (#147 E1).
+                # 여기서 잡지 않으면 이 워커 스레드만 죽고 통지·로그가 모두
+                # 사라져, 카드가 영원히 '다운로드 중'으로 남는다(#146 감사에서
+                # ENOSPC 주입으로 실측). 다운로더별 _failure_exceptions 설정과
+                # 무관하게 "실행 스레드의 침묵 사망" 부류 전체를 막는다.
+                handle._relay_failed(e)
+                handle.logger.log_exception("Download failed", e)
+                handle.logger.save_and_close()
         finally:
             handle._done.set()
             with self._lock:

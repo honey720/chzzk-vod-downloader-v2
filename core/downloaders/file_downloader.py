@@ -39,8 +39,15 @@ class FileDownloader(BaseDownloader):
 
     run_thread_name = "DownloadThread"
     worker_pool_prefix = "DownloadWorker"
-    # 구 코드와 동일하게 요청 예외만 실패로 처리한다 — 그 외 예외는 전파
-    _failure_exceptions = (requests.RequestException,)
+    # OSError를 실패 처리에 추가한다 (#147 E1). 구 코드(요청 예외만)는 run
+    # 스레드의 출력 파일 I/O 오류(이어받기 스캔·수신 준비 — 디스크 부족·
+    # 마운트 해제)를 실패 처리 밖으로 흘려보냈다: 통지·로그·부분 산출물
+    # 정리가 전부 생략된 채 스레드만 죽었다(#146 감사 실측). 엔진에서 잡는
+    # 쪽이 _cleanup_partial까지 수행해 정리 품질이 높다. Exception 전체로
+    # 넓히지 않는 것은 selections 명시 거부(NotImplementedError)의 전파를
+    # 박제 계약대로 보존하기 위함이다 — 그 밖의 예상 밖 예외는 서비스의
+    # 최후 방어선(_run_handle)이 실패로 환원한다.
+    _failure_exceptions = (requests.RequestException, OSError)
 
     def __init__(self, data, logger, **callbacks):
         super().__init__(data, logger, **callbacks)
