@@ -4,6 +4,8 @@
 어느 위치에서 pytest를 실행하든 import할 수 있게 한다.
 """
 
+import os
+import re
 import sys
 from pathlib import Path
 
@@ -25,3 +27,44 @@ def load_mock_response():
         return (MOCK_RESPONSES_DIR / name).read_text(encoding="utf-8")
 
     return _load
+
+
+# ============ 실패 GUI 테스트 스크린샷 (#154) ============
+# 실패한 테스트의 최상위 위젯을 grab해 PNG로 남긴다. 기본은 실패 시에만,
+# CVDV2_SHOT_ALL=1이면 성공 테스트도 찍는다(전체 갤러리용).
+# offscreen에서도 실픽셀이 렌더됨은 실측 확인 — 단 폰트는 QT_QPA_FONTDIR 필요.
+SHOT_DIR = Path(os.environ.get("CVDV2_SHOT_DIR", "test-screenshots"))
+SHOT_ALL = os.environ.get("CVDV2_SHOT_ALL") == "1"
+
+
+def _screenshot_slug(nodeid: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", nodeid)[:120]
+
+
+def _capture_screenshots(nodeid: str, outcome: str) -> list[str]:
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is None:
+        return []
+    SHOT_DIR.mkdir(parents=True, exist_ok=True)
+    saved = []
+    for n, w in enumerate(app.topLevelWidgets()):
+        if not w.isVisible() or w.width() == 0 or w.height() == 0:
+            continue
+        name = f"{sys.platform}-{outcome}-{_screenshot_slug(nodeid)}-{n}.png"
+        if w.grab().save(str(SHOT_DIR / name), "PNG"):
+            saved.append(name)
+    return saved
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    rep = outcome.get_result()
+    if rep.when != "call":
+        return
+    if rep.failed or SHOT_ALL:
+        saved = _capture_screenshots(item.nodeid, "FAIL" if rep.failed else "PASS")
+        if saved:
+            rep.sections.append(("screenshots", "\n".join(saved)))
