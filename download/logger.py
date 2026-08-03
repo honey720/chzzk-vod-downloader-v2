@@ -110,8 +110,10 @@ class DownloadLogger:
         self.info(f"duration: {item.duration}")
         self.info(f"resolution: {item.resolution}")
         self.info(f"total_size: {item.total_size}")
-        self.info(f"output_path: {item.output_path}")
-        self.info(f"download_path: {item.download_path}")
+        # 경로는 repr로 남긴다 (#148) — U+00A0 같은 공백 유사 문자가 그냥
+        # 찍으면 U+0020과 육안 구분되지 않아 제보 진단이 불가능하다(#144 실측)
+        self.info(f"output_path: {item.output_path!r}")
+        self.info(f"download_path: {item.download_path!r}")
 
     def log_download_start(self, total_size: int, part_size: int, segments: int, initial_threads: int):
         """다운로드 시작 정보를 로깅합니다."""

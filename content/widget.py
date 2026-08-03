@@ -263,7 +263,15 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
                 self.directoryEdit.setFocus()  # ✅ 포커스 이동
 
     def finishPathEditing(self):
-        """✅ QLineEdit에서 Enter 또는 포커스 해제 시 QLabel로 복귀"""
+        """✅ QLineEdit에서 Enter 또는 포커스 해제 시 QLabel로 복귀
+
+        존재하지 않는 경로는 기존처럼 반영하지 않되, 아무 표시 없이 무시하던
+        것을 안내·로그로 남긴다 (#148 — #146 감사의 무피드백 지점).
+        """
+        if not self.isEditing:
+            # returnPressed와 포커스 이탈이 editingFinished를 연달아 낼 수 있다 —
+            # 첫 종료만 처리해 거부 안내가 중복되지 않게 한다
+            return
         self.isEditing = False
         self.directoryEdit.setVisible(False)
         self.directoryLabel.setVisible(True)
@@ -272,6 +280,12 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             self.directoryLabel.setText(new_path)  # ✅ UI 업데이트
             self.item.download_path = new_path  # ✅ 데이터 업데이트
             self.textChanged.emit(new_path)  # ✅ 모델에도 반영하도록 시그널 전송
+            logger.info("카드 저장 경로 변경: %r", new_path)
+        elif new_path and new_path != self.item.download_path:
+            # 경로는 repr로 남긴다 — 공백 유사 문자(U+00A0 등)·오염(따옴표 등)을
+            # 육안 구분할 수 있는 유일한 표기다 (#144 실측)
+            logger.warning("카드 저장 경로 거부 — 존재하지 않음: %r", new_path)
+            QMessageBox.warning(self, self.tr("Warning"), self.tr("Path does not exist."))
 
     def requestDelete(self):
         """✅ 삭제 요청"""

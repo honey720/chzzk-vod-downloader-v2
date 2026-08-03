@@ -60,5 +60,7 @@ def setup_logging(log_dir: str, log_level: int = logging.DEBUG) -> None:
     # 서드파티 라이브러리의 과도한 DEBUG 출력은 억제한다
     # (다운로드 시 요청 1건마다 urllib3 로그가 쌓여 로그가 불어나는 것 방지)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
+    # charset_normalizer도 응답 본문 인코딩 추정 때마다 DEBUG를 쏟는다 (#148)
+    logging.getLogger("charset_normalizer").setLevel(logging.WARNING)
 
     _configured = True

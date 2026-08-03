@@ -4,6 +4,14 @@
 <context>
     <name>ContentItemWidget</name>
     <message>
+        <source>Warning</source>
+        <translation>Warning</translation>
+    </message>
+    <message>
+        <source>Path does not exist.</source>
+        <translation>Path does not exist.</translation>
+    </message>
+    <message>
         <source>Download waiting</source>
         <translation>Download waiting</translation>
     </message>

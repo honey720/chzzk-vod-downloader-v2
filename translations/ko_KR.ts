@@ -4,6 +4,14 @@
 <context>
     <name>ContentItemWidget</name>
     <message>
+        <source>Warning</source>
+        <translation>경고</translation>
+    </message>
+    <message>
+        <source>Path does not exist.</source>
+        <translation>경로가 존재하지 않습니다.</translation>
+    </message>
+    <message>
         <source>Download waiting</source>
         <translation>다운로드 대기</translation>
     </message>

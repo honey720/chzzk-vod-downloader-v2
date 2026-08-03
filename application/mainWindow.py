@@ -120,6 +120,9 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         downloadPath = self.downloadPathInput.text().strip() or os.getcwd()
 
         if not os.path.exists(downloadPath):
+            # 유일한 안내가 팝업뿐이라 제보 진단이 불가능했다 (#146 감사) —
+            # 입력값을 repr로 남겨 공백 유사 문자·오염(따옴표 등)을 식별한다 (#148)
+            logger.warning("조회 거부 — 존재하지 않는 저장 경로: %r", downloadPath)
             QMessageBox.warning(self, self.tr("Warning"), self.tr("Path does not exist."))
             return
         # TODO:  코드 수정 및 테스트 예정
@@ -170,6 +173,9 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         """
         downloadPath = QFileDialog.getExistingDirectory()
         if downloadPath != '':
+            # 유저의 경로 지정 행위를 남긴다 (#148) — 제보 시 "무엇이 입력창에
+            # 들어갔는가"를 로그로 재구성할 수 있게 한다
+            logger.info("저장 경로 선택(경로 찾기): %r", downloadPath)
             self.downloadPathInput.setText(downloadPath)
 
     def onStop(self):
