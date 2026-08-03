@@ -365,6 +365,7 @@ class BaseDownloader(ABC):
                         for part_num in range(self.s.adjust_threads):
                             if not self.s.remaining_ranges:
                                 break
+                            submitted = None
                             with self.lock:
                                 if part_num not in self.future_dict:
                                     item = self.s.remaining_ranges.pop(0)
@@ -374,9 +375,14 @@ class BaseDownloader(ABC):
                                         self._peak_threads, self.s.future_count
                                     )
                                     self._log_item_start(part_num, item)
-                                    future = executor.submit(self._download_item, item, part_num)
-                                    future.add_done_callback(self._download_completed_callback)
-                                    self.future_dict[part_num] = (item, future)
+                                    submitted = executor.submit(self._download_item, item, part_num)
+                                    self.future_dict[part_num] = (item, submitted)
+                            if submitted is not None:
+                                # 콜백 등록은 락 밖에서 한다 (#147) — 이미 끝난 future의
+                                # 콜백은 등록 시점에 이 스레드에서 동기 실행되는데,
+                                # 콜백의 슬롯 정리가 같은 락을 잡으므로(비재진입 락)
+                                # 락 안에서 등록하면 즉시 실패하는 작업에서 교착한다
+                                submitted.add_done_callback(self._download_completed_callback)
 
                     # (2) 주기적으로 상태 확인 (non-blocking)
                     tm.sleep(0.1)
@@ -459,22 +465,34 @@ class BaseDownloader(ABC):
     # ============ 다운로드 조정 및 콜백 메서드 ============
 
     def _download_completed_callback(self, future):
+        """future 종료 콜백 — 성공·실패 모든 경로에서 슬롯을 반드시 정리한다 (#147 E2).
+
+        정리를 finally로 보장하는 이유: 실패 경로에서 future_dict 항목이
+        남으면 실행 루프의 종료 조건(잔여 작업·활성 future 없음)이 영원히
+        성립하지 않아, 실패를 통지하고도 루프가 무한 회전했다(#146 감사에서
+        워커 OSError 주입으로 실측). 실패 시 part_num을 얻을 수 없으므로
+        future 동일성으로 등록 항목을 찾는다.
         """
-        특정 future(스레드)가 끝났을 때 호출되는 콜백.
-        """
+        part_num = None
         try:
             part_num = future.result()
-            # part_num 식별 후 future_dict에서 제거
-            with self.lock:
-                if part_num in self.future_dict:
-                    del self.future_dict[part_num]
-                    self.s.future_count -= 1
-            self.update_progress()  # 즉각적 진행도 반영
-
         except Exception as e:
-            # 일부 스레드가 오류로 중단된 경우
-            self._on_failed(e)
-            self.logger.log_error("Thread failed", e)
+            # 여기까지 오는 예외는 워커가 잡지 않은 것 — 네트워크 오류는
+            # 워커가 이미 잡아 재큐 규칙(#131)을 태우므로, 남는 것은 출력
+            # 파일 OSError(디스크 부족·마운트 해제·잠금) 등 파일시스템류다.
+            # 재시도해도 같은 결과라 재큐 상한(#131)에 태우지 않고 즉시
+            # 전체 실패로 보낸다 — 상한(10회)까지 도는 것은 유저가 보는
+            # 멈춤 시간일 뿐이다.
+            self._fail_fatally(e, "Thread failed — failing download")
+        finally:
+            with self.lock:
+                for pn, (_item, fut) in list(self.future_dict.items()):
+                    if fut is future:
+                        del self.future_dict[pn]
+                        self.s.future_count -= 1
+                        break
+        if part_num is not None:
+            self.update_progress()  # 즉각적 진행도 반영
 
     def _requeue_failed(self, item, part_num: int, exc: BaseException) -> None:
         """예외 발생 시 작업을 다시 다운로드할 수 있도록 remaining_ranges에 등록.
