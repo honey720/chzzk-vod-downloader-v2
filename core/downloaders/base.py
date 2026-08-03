@@ -145,6 +145,11 @@ class BaseDownloader(ABC):
     postprocess_kind: str = "remux"
     # run()이 실패 콜백으로 환원할 예외 타입 — 그 외 예외는 전파한다
     _failure_exceptions: tuple[type[BaseException], ...] = (Exception,)
+    # 저속 재큐 판정 임계(KB/s) — 기본값 100은 구 규칙 그대로 불변.
+    # 속성으로 둔 이유(#160): pause/resume 통합 테스트가 느린 CI 러너에서
+    # 정상적인 저속 재큐를 유발해 간헐 실패했다(3회 중 2회). 테스트가 0으로
+    # 두면 판정이 비활성화되어 러너 속도와 무관해진다. 제품 동작 무변경
+    _slow_speed_threshold_kb_s: float = 100.0
 
     def __init__(
         self,

@@ -215,6 +215,12 @@ def test_pause_resume_then_complete(tmp_path, monkeypatch):
     engine, data, logger, output, finished, failures = _make_engine(
         tmp_path, monkeypatch, throttle=0.005
     )
+    # 저속 재큐 판정 비활성 (#160) — 느린 CI 러너에서는 스로틀된 가짜
+    # 다운로드의 측정 속도가 임계(100KB/s) 아래로 떨어져 정상적인 저속
+    # 재큐가 발동, 재큐 순환으로 완료 상한(60초)을 넘겼다(macOS 실측).
+    # 이 테스트의 검증 대상은 일시정지·재개이지 저속 규칙이 아니다 —
+    # 저속 규칙은 test_file_downloader_rules.py가 가짜 시계로 박제한다
+    engine._slow_speed_threshold_kb_s = 0
 
     data.model.start()
     thread = _run_in_thread(engine)

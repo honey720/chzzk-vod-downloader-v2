@@ -174,7 +174,7 @@ class M3U8Downloader(BaseDownloader):
                                 self._check_speed_and_update_progress(
                                     part_num, downloaded_size, total_ranges, speed_kb_s
                                 )
-                                if speed_kb_s < 100:
+                                if speed_kb_s < self._slow_speed_threshold_kb_s:
                                     slow_count += 1
                                     if slow_count > 5:
                                         # 속도가 너무 느리면 스레드 재시작
