@@ -4,7 +4,7 @@ import platform
 import config.config as config
 
 from PySide6.QtWidgets import QMainWindow, QMessageBox, QFileDialog, QApplication
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QStandardPaths, QTimer
 
 from config.dialog import SettingDialog
 from content.data import ContentItem
@@ -14,6 +14,26 @@ from download.state import DownloadState
 from ui.mainWindow import Ui_VodDownloader
 
 logger = logging.getLogger(__name__)
+
+
+def _default_download_path() -> str:
+    """시작 시 저장 경로 입력창의 초기값을 정한다 (#159 — #157 실측 근거).
+
+    cwd는 실행 방식에 따라 임의다 — macOS .app을 Finder/Dock으로 실행하면
+    cwd가 '/'(쓰기 불가)임을 CI에서 실측했고(#157), Windows도 바로가기의
+    '시작 위치' 설정에 좌우된다. 우선순위:
+    ① 유저가 마지막으로 쓴 경로(설정, 실존할 때만 — 외장 드라이브 분리 대비)
+    ② 시스템 다운로드 폴더(실존할 때만)
+    ③ cwd — 소스 실행(개발) 관례를 유지하는 최후 폴백
+    """
+    saved = config.load_config().get("downloadPath", "")
+    if saved and os.path.isdir(saved):
+        return saved
+    downloads = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation)
+    if downloads and os.path.isdir(downloads):
+        return downloads
+    return os.getcwd()
+
 
 
 class VodDownloader(QMainWindow, Ui_VodDownloader):
@@ -45,7 +65,7 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         """
         self.total_downloads = 0
         self.completed_downloads = 0
-        self.downloadPathInput.setText(os.getcwd())  # 초기 경로 설정
+        self.downloadPathInput.setText(_default_download_path())  # 초기 경로 (#159)
         self.downloadCountLabel.setText(self.downloadCountLabel.text().format(self.completed_downloads, self.total_downloads))  # 초기값 설정
 
     def setupThreadSignals(self):
@@ -126,6 +146,8 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
             QMessageBox.warning(self, self.tr("Warning"), self.tr("Path does not exist."))
             return
         # TODO:  코드 수정 및 테스트 예정
+        # 검증을 통과해 실사용되는 경로만 보존한다 — 다음 실행의 초기값 ① (#159)
+        self._rememberDownloadPath(downloadPath)
 
         self.contentManager.fetchContent(vod_url, cookies, downloadPath)
 
@@ -177,6 +199,13 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
             # 들어갔는가"를 로그로 재구성할 수 있게 한다
             logger.info("저장 경로 선택(경로 찾기): %r", downloadPath)
             self.downloadPathInput.setText(downloadPath)
+
+    def _rememberDownloadPath(self, path: str) -> None:
+        """실사용된 저장 경로를 설정에 보존한다 (#159) — _default_download_path의 ①."""
+        cfg = config.load_config()
+        if cfg.get("downloadPath") != path:
+            cfg["downloadPath"] = path
+            config.save_config(cfg)
 
     def onStop(self):
         """
