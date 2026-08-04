@@ -38,6 +38,10 @@ plugins/*/
 htmlcov/
 .coverage
 
+# 테스트 GUI 스크린샷 (#154 conftest 훅) — CI에서는 아티팩트로 업로드되고,
+# 로컬 실행 잔재는 커밋 대상이 아니다
+test-screenshots/
+
 # IDE / OS
 .idea/
 .vscode/

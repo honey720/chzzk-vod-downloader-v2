@@ -90,6 +90,19 @@ def save_config(config):
         json.dump(config, file, indent=4)
 
 
+def load_cookies() -> dict:
+    """등록된 치지직 인증 쿠키를 {NID_AUT, NID_SES} 형태로 읽는다 (#170).
+
+    조립의 단일 지점 — 구 mainWindow.onFetch와 download/resolvers.py에
+    같은 조립이 중복돼 있던 것을 수렴했다. 미설정 키는 빈 문자열이다.
+    """
+    data = load_config().get("cookies", {})
+    return {
+        "NID_AUT": data.get("NID_AUT", ""),
+        "NID_SES": data.get("NID_SES", ""),
+    }
+
+
 def update_config():
     """
     config.json을 최신 상태로 유지하며,
