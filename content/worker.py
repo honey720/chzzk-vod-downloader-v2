@@ -41,29 +41,6 @@ class ContentWorker(QObject):
             logger.exception("컨텐츠 요청 실패: %s", self.vod_url)
             self.error.emit(self._user_message(e))
 
-    def fetchVideo(self, video_no: str) -> tuple:
-        """VOD 조회를 core 서비스에 위임한다 (기존 시그니처·예외 형식 유지).
-
-        core의 fetch_video는 (result, 암호화 여부)를 돌려주지만(#57), 이 어댑터의
-        반환 계약은 result tuple 그대로다 — 암호화 타입 분기는 fetch_content가 한다.
-        """
-        try:
-            result, _encrypted = metadata_service.fetch_video(
-                self.vod_url, video_no, self.cookies, self.downloadPath, api=NetworkManager
-            )
-            return result
-        except MetadataError as e:
-            raise ValueError(self._user_message(e)) from e
-
-    def fetchClip(self, clip_no: str) -> tuple:
-        """클립 조회를 core 서비스에 위임한다 (기존 시그니처·예외 형식 유지)."""
-        try:
-            return metadata_service.fetch_clip(
-                self.vod_url, clip_no, self.cookies, self.downloadPath, api=NetworkManager
-            )
-        except MetadataError as e:
-            raise ValueError(self._user_message(e)) from e
-
     def _user_message(self, e: Exception) -> str:
         """예외를 사용자 표시용 메시지로 바꾼다. MetadataError는 i18n 키를 번역한다.
 

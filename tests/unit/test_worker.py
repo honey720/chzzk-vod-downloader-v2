@@ -1,12 +1,15 @@
-"""ContentWorker.fetchVideo의 권한·암호화 분기 검증 (#55) + 어댑터 계약 검증 (#72).
+"""ContentWorker의 권한·암호화 분기 검증 (#55) + 어댑터 계약 검증 (#72).
 
 조회 로직은 core/services/metadata_service.py로 이동했다(#72). 이 테스트는
-어댑터를 통과한 끝단 동작(기존 ValueError 메시지·시그널 형식)이 유지되는지 본다.
+어댑터를 통과한 끝단 동작(시그널 페이로드·에러 메시지 형식)이 유지되는지 본다.
 분기 자체의 단위 테스트는 tests/unit/core/test_metadata_service.py에 있다.
 
-- 암호화(encryptionType != null) VOD는 권한 유무와 무관하게 매니페스트 요청 전에
-  "Encrypted content is not supported" 안내로 조기 실패해야 한다 (1차 방어).
-- 멤버십 전용(MEMBER_ONLY) + inKey null이면 raw 401 대신 멤버십 안내 에러를 던져야 한다.
+죽은 동기 API(fetchVideo/fetchClip)가 제거되어(#168) 모든 경로가 프로덕션과
+동일한 run() → finished/error Signal로 검증된다 — 단언하는 메시지 키·result
+tuple 형식은 종전 그대로다.
+
+- 암호화(encryptionType != null) VOD는 권한이 있으면 SEA 경로로 조회된다 (#57).
+- 멤버십 전용(MEMBER_ONLY) + inKey null이면 raw 401 대신 멤버십 안내 에러가 나와야 한다.
 - 성인 VOD(adult=True, videoId 없음)의 기존 "Invalid cookies value" 동작은 유지돼야 한다.
 - 정상 경로에서는 등록된 쿠키가 매니페스트 요청까지 전달돼야 한다.
 """
@@ -26,6 +29,19 @@ VOD_URL = "https://chzzk.naver.com/video/13714380"
 def _make_worker() -> ContentWorker:
     """테스트용 ContentWorker를 생성한다 (QApplication 불필요)."""
     return ContentWorker(VOD_URL, COOKIES, "downloads")
+
+
+def _run_and_capture(worker: ContentWorker) -> tuple[list, list]:
+    """run()을 실행해 finished/error Signal 페이로드를 수집한다.
+
+    같은 스레드 emit은 direct 배달이라 QApplication 없이 동작한다.
+    """
+    results: list[tuple] = []
+    errors: list[str] = []
+    worker.finished.connect(lambda result, content_type: results.append((result, content_type)))
+    worker.error.connect(errors.append)
+    worker.run()
+    return results, errors
 
 
 @pytest.mark.parametrize(
@@ -57,11 +73,13 @@ def test_encrypted_vod_with_entitlement_takes_sea_path(
         ),
     )
 
-    worker = _make_worker()
-    result = worker.fetchVideo("13714380")
+    results, errors = _run_and_capture(_make_worker())
 
+    assert errors == []
+    ((result, content_type),) = results
     assert result[0] == VOD_URL
     assert result[4] == "https://example.invalid/media.m3u8"
+    assert content_type == "hls_aes"  # AES(SEA) 경로로 분기됐다 (#57)
 
 
 def test_encrypted_vod_without_entitlement_raises_membership_error(
@@ -71,10 +89,10 @@ def test_encrypted_vod_without_entitlement_raises_membership_error(
     body = load_mock_response("video_member_only_13714380.json")
     monkeypatch.setattr(network._session, "get", lambda url, **kwargs: MockResponse(text=body))
 
-    worker = _make_worker()
+    results, errors = _run_and_capture(_make_worker())
 
-    with pytest.raises(ValueError, match="Channel membership required"):
-        worker.fetchVideo("13714380")
+    assert results == []
+    assert errors == [f"{VOD_URL}\nChannel membership required"]
 
 
 def test_member_only_without_in_key_raises_membership_error(monkeypatch):
@@ -94,10 +112,10 @@ def test_member_only_without_in_key_raises_membership_error(monkeypatch):
 
     monkeypatch.setattr(NetworkManager, "get_video_info", fake_get_video_info)
 
-    worker = _make_worker()
+    results, errors = _run_and_capture(_make_worker())
 
-    with pytest.raises(ValueError, match="Channel membership required"):
-        worker.fetchVideo("13714380")
+    assert results == []
+    assert errors == [f"{VOD_URL}\nChannel membership required"]
 
 
 def test_adult_without_video_id_keeps_invalid_cookies_error(monkeypatch):
@@ -117,10 +135,10 @@ def test_adult_without_video_id_keeps_invalid_cookies_error(monkeypatch):
 
     monkeypatch.setattr(NetworkManager, "get_video_info", fake_get_video_info)
 
-    worker = _make_worker()
+    results, errors = _run_and_capture(_make_worker())
 
-    with pytest.raises(ValueError, match="Invalid cookies value"):
-        worker.fetchVideo("13714380")
+    assert results == []
+    assert errors == [f"{VOD_URL}\nInvalid cookies value"]
 
 
 def test_dash_path_passes_cookies_to_manifest_request(monkeypatch):
@@ -146,14 +164,16 @@ def test_dash_path_passes_cookies_to_manifest_request(monkeypatch):
     monkeypatch.setattr(NetworkManager, "get_video_info", fake_get_video_info)
     monkeypatch.setattr(NetworkManager, "get_video_dash_manifest", fake_get_dash_manifest)
 
-    worker = _make_worker()
-    result = worker.fetchVideo("13714380")
+    results, errors = _run_and_capture(_make_worker())
 
+    assert errors == []
+    ((result, content_type),) = results
     assert manifest_calls == [("video-id", "in-key", COOKIES)]
     # 반환 tuple 형식 유지: (vod_url, metadata, reps, resolution, base_url, path, liveRewindPlaybackJson)
     assert result[0] == VOD_URL
     assert result[3] == 1080
     assert result[6] is None
+    assert content_type == "video"
 
 
 def test_run_emits_error_signal_in_legacy_format():

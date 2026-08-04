@@ -20,14 +20,25 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     textChanged = Signal(str)
     deleteRequest = Signal()
 
+    # 워커 스레드 → 메인 스레드 중계 (#168). 위젯·아이템 조작은 반드시 메인
+    # 스레드 슬롯에서 한다 — download 경로가 qt_bridge로 세운 스레드 경계
+    # 규칙을 content 경로에도 적용한다
+    _repSizeFetched = Signal(int, str)  # (해상도 index, 크기 텍스트 — 세그먼트 기반이면 "")
+    _imageFetched = Signal(object, object, str, int, str)  # (label, bytes, url, maxHeight, type)
+
     def __init__(self, item: ContentItem, index=0, parent=None):
         super().__init__(parent)
         self.item = item  # ContentItem 저장
         self.index = index  # 인덱스 저장
         self.isEditing = False
         self.setupUi(self)  # TODO: 테마별 스타일시트 설정하기
+        self._setupThreadRelays()  # setupDynamicUi가 스레드를 띄우기 전에 연결돼야 한다 (#168)
         self.setupDynamicUi()  # TODO: 테마별 스타일시트 설정하기
         self.setupSignals()  # 시그널 연결
+
+    def _setupThreadRelays(self):
+        self._repSizeFetched.connect(self._onRepSizeFetched)
+        self._imageFetched.connect(self._onImageFetched)
 
     def setupDynamicUi(self):
         self.loadImageFromUrl(self.channelImageLabel, self.item.channel_image_url, 30, "channel")
@@ -83,8 +94,10 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.buttons.append(button)
 
         def update_button_text():
-            try:
-                if not self.item.is_segment_based:
+            # 네트워크만 담당한다 — 위젯·아이템 반영은 _onRepSizeFetched(메인 스레드)로 (#168)
+            size_text = ""
+            if not self.item.is_segment_based:
+                try:
                     resp = get_thread_session().head(base_url, timeout=REQUEST_TIMEOUT)
                     resp.raise_for_status()
                     size = int(resp.headers.get('content-length', 0))
@@ -93,18 +106,28 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
                         resp.raise_for_status()
                         size = int(resp.headers.get('content-length', 0))
                         resp.close()
-                
                     size_text = self.setSize(size)
-                    self.item.unique_reps[index][-1] = size_text
-                    button.setToolTip(size_text)
-                if len(self.item.unique_reps) - 1 == index:
-                    self.setresolutionUrlSize(resolution, base_url, index, button)
-
-            except Exception:
-                pass
+                except Exception:
+                    # 기존 동작 유지: 조회 실패는 조용히 "Checking..."으로 남는다
+                    return
+            try:
+                self._repSizeFetched.emit(index, size_text)
+            except RuntimeError:
+                pass  # 위젯이 이미 파괴된 뒤의 늦은 완료
 
         thread = threading.Thread(target=update_button_text, daemon=True)
         thread.start()
+
+    def _onRepSizeFetched(self, index, size_text):
+        """해상도 크기 조회 결과를 위젯·아이템에 반영한다 — 메인 스레드 (#168)."""
+        if index >= len(self.buttons) or index >= len(self.item.unique_reps):
+            return  # setData로 아이템이 교체된 뒤의 늦은 완료
+        if size_text:
+            self.item.unique_reps[index][-1] = size_text
+            self.buttons[index].setToolTip(size_text)
+        if len(self.item.unique_reps) - 1 == index:
+            resolution, base_url = self.item.unique_reps[index][0], self.item.unique_reps[index][1]
+            self.setresolutionUrlSize(resolution, base_url, index, self.buttons[index])
 
     def setresolutionUrlSize(self, resolution, base_url, index=None, button:QPushButton = None):
         if self.item.downloadState == DownloadState.WAITING:
@@ -133,27 +156,41 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         thread.start()
 
     def fetchImage(self, label, url, maxHeight, type):
+        """이미지 바이트를 받아 메인 스레드로 중계한다 — 워커 스레드 (#168).
+
+        QPixmap 생성·스케일·setPixmap은 GUI 스레드 전용이라 여기서 하지
+        않는다. 디코드 이후는 _onImageFetched(메인 스레드)가 담당한다.
+        """
         try:
             response = get_thread_session().get(url, timeout=REQUEST_TIMEOUT)
             response.raise_for_status()
+            self._imageFetched.emit(label, response.content, url, maxHeight, type)
+        except RuntimeError:
+            pass  # 위젯이 이미 파괴된 뒤의 늦은 완료
+        except Exception as e:
+            logger.error(f"Error loading image from {url}: {e}")
+
+    def _onImageFetched(self, label, data, url, maxHeight, type):
+        """이미지 디코드·스케일·표시 — 메인 스레드 (#168)."""
+        try:
             image = QPixmap()
-            image.loadFromData(response.content)
-            
+            image.loadFromData(data)
+
             # 원본 이미지의 비율 계산
             original_width = image.width()
             original_height = image.height()
-            
+
             if type == "channel" and original_height > original_width:
                 # 가로 높이를 고정하고 세로 크기를 비율에 맞게 계산
                 aspect_ratio = original_height / original_width
                 new_width = maxHeight
                 new_height = int(maxHeight * aspect_ratio)
-            else:      
-                # 세로 높이를 고정하고 가로 크기를 비율에 맞게 계산      
+            else:
+                # 세로 높이를 고정하고 가로 크기를 비율에 맞게 계산
                 aspect_ratio = original_width / original_height
                 new_height = maxHeight
                 new_width = int(new_height * aspect_ratio)
-            
+
             scaled_image = image.scaled(
                 new_width, new_height, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
             )
