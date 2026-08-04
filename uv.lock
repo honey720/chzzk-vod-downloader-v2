@@ -124,7 +124,7 @@ wheels = [
 
 [[package]]
 name = "cvdv2"
-version = "2.9.3rc1"
+version = "2.9.3"
 source = { virtual = "." }
 dependencies = [
     { name = "imageio-ffmpeg" },
