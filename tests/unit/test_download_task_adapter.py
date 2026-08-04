@@ -1,15 +1,18 @@
-"""download/task.py 어댑터·download/state.py re-export 검증 (#60).
+"""download/task.py 어댑터 검증 (#60).
 
 상태 머신을 core/models로 이주한 뒤에도 기존 호출부 인터페이스
 (state 속성, lock, start/pause/resume/stop/finish/isRunning)가 유지되고,
 ContentItem 상태 반영과 pause_event 공유가 동작하는지 확인한다.
+
+download/state.py·data.py re-export가 제거되어(#171) 동일성 단언
+(test_state_reexport_is_same_class)은 계약 소멸로 함께 삭제됐다 —
+이제 core.models가 유일한 import 경로다.
 """
 
 import threading
 
-from core.models.download_state import DownloadState as CoreDownloadState
-from download.data import DownloadData
-from download.state import DownloadState
+from core.models.download_data import DownloadData
+from core.models.download_state import DownloadState
 from download.task import DownloadTask
 
 
@@ -46,11 +49,6 @@ def _make_task() -> tuple[DownloadTask, DownloadData, _FakeItem, _FakeLogger]:
     item = _FakeItem()
     logger = _FakeLogger()
     return DownloadTask(data, item, logger), data, item, logger
-
-
-def test_state_reexport_is_same_class():
-    """download.state의 DownloadState는 core 정의와 동일 객체여야 한다."""
-    assert DownloadState is CoreDownloadState
 
 
 def test_adapter_keeps_engine_interface():

@@ -21,7 +21,7 @@
 import pytest
 import requests
 
-from download.data import DownloadData
+from core.models.download_data import DownloadData
 
 MB = 1024 * 1024
 

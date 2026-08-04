@@ -17,7 +17,7 @@ import core.downloaders.base as base_module
 import core.downloaders.m3u8_downloader as m3u8_module
 from core.downloaders.m3u8_downloader import M3U8Downloader
 from core.models.download_state import DownloadState
-from download.data import DownloadData
+from core.models.download_data import DownloadData
 
 CHUNK = 8192
 SEGMENT_COUNT = 6

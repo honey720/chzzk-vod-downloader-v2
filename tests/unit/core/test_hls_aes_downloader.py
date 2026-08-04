@@ -19,7 +19,7 @@ from core.api.dash import is_supported_sea, parse_sea_manifest
 from core.downloaders.decrypt import AES_BLOCK_SIZE, TS_PACKET_SIZE, sequence_iv
 from core.downloaders.hls_aes_downloader import DecryptionError, HlsAesDownloader
 from core.models.content import Content, ContentType
-from download.data import DownloadData
+from core.models.download_data import DownloadData
 
 KEY = bytes(range(16))  # 테스트용 더미 키
 KEY_URI = "https://api.chzzk.naver.com/service/v1/encryption/videos/VID/aes_key"

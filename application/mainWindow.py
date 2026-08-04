@@ -11,7 +11,7 @@ from app.viewmodels.path_gates import check_fetch_path, check_remember_path
 from config.dialog import SettingDialog
 from content.data import ContentItem
 from content.manager import ContentManager
-from download.state import DownloadState
+from core.models.download_state import DownloadState
 from ui.mainWindow import Ui_VodDownloader
 
 logger = logging.getLogger(__name__)

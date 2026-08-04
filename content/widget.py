@@ -5,7 +5,7 @@ from PySide6.QtGui import QPixmap, QDesktopServices
 from PySide6.QtCore import Qt, QSize, Signal, QUrl, QDir, QProcess
 from content.data import ContentItem
 from content.network import REQUEST_TIMEOUT, get_thread_session
-from download.state import DownloadState
+from core.models.download_state import DownloadState
 from app.viewmodels.item_state import ItemState
 from app.viewmodels.path_gates import check_card_edit_path
 from ui.contentItemWidget import Ui_ContentItemWidget

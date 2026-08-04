@@ -22,7 +22,7 @@ from core.downloaders.file_downloader import FileDownloader
 from core.downloaders.m3u8_downloader import M3U8Downloader
 from core.downloaders.ranges import split_ranges
 from core.models.plan import DownloadPlan, TimeRange
-from download.data import DownloadData
+from core.models.download_data import DownloadData
 
 MB = 1024 * 1024
 

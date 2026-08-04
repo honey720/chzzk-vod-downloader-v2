@@ -6,7 +6,7 @@ DownloadData가 컨텐츠 필드는 Content로, 상태·진행률 필드는 Down
 
 import pytest
 
-from download.data import DownloadData
+from core.models.download_data import DownloadData
 
 
 def _make_data() -> DownloadData:

@@ -1,4 +1,4 @@
-from download.state import DownloadState
+from core.models.download_state import DownloadState
 
 # 세그먼트 단위로 받는 타입 — 전체 크기를 미리 알 수 없어 진행률·표시가
 # 세그먼트 수 기반이다 (m3u8: 라이브 다시보기, hls_aes: AES 암호화 VOD #57)

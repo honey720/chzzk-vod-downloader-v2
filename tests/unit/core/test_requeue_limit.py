@@ -17,7 +17,7 @@ import requests
 
 from core.downloaders.base import _is_permanent_error
 from core.models.download_state import DownloadState
-from download.data import DownloadData
+from core.models.download_data import DownloadData
 
 MB = 1024 * 1024
 CHUNK = 8192

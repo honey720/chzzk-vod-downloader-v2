@@ -30,7 +30,7 @@ from core.downloaders.base import PostprocessError
 from core.downloaders.hls_aes_downloader import DecryptionError
 from core.models.events import ProgressEvent
 from core.services.download_service import DownloadService
-from download.data import DownloadData
+from core.models.download_data import DownloadData
 from download.logger import DownloadLogger
 from download.resolvers import resolve_aes_key, resolve_m3u8_base_url
 from download.task import DownloadTask
