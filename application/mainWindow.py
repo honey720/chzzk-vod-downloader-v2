@@ -6,11 +6,11 @@ import config.config as config
 from PySide6.QtWidgets import QMainWindow, QMessageBox, QFileDialog, QApplication
 from PySide6.QtCore import QStandardPaths, QTimer
 
+from app.viewmodels.download_viewmodel import DownloadViewModel
 from app.viewmodels.path_gates import check_fetch_path, check_remember_path
 from config.dialog import SettingDialog
 from content.data import ContentItem
 from content.manager import ContentManager
-from download.manager import DownloadManager
 from download.state import DownloadState
 from ui.mainWindow import Ui_VodDownloader
 
@@ -54,7 +54,9 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         self.resize(min_width, min_height)
 
         self.contentManager = ContentManager(self.listView)
-        self.downloadManager = DownloadManager()
+        # 다운로드 이벤트(진행·완료·실패)는 viewmodel이 content에 직결한다 (#170)
+        # — 구 릴레이 슬롯 6개(_onProgress~_onFailed)는 함께 제거됐다
+        self.downloadViewModel = DownloadViewModel(self.contentManager, parent=self)
         self.setupThreadSignals()
         self.setupSignals()
         
@@ -71,16 +73,11 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
 
     def setupThreadSignals(self):
         """
-        다운로드 스레드와 UI를 연결하는 시그널 슬롯 설정.
-        """
-        self.downloadManager.progress.connect(self._onProgress)
-        self.downloadManager.paused.connect(self._onPaused)
-        self.downloadManager.resumed.connect(self._onResumed)
-        self.downloadManager.stopped.connect(self._onStopped)
-        self.downloadManager.finished.connect(self._onFinished)
-        self.downloadManager.failed.connect(self._onFailed)
-        # TODO 동시 다운로드 기능 추가시 로직 수정 필요
+        content 매니저와 UI를 연결하는 시그널 슬롯 설정.
 
+        다운로드 이벤트 배선은 DownloadViewModel 내부로 이동했다 (#170).
+        """
+        # TODO 동시 다운로드 기능 추가시 로직 수정 필요
         self.contentManager.contentError.connect(self.showErrorDialog)
         self.contentManager.fetchRequested.connect(self.fetchContents)
         self.contentManager.deleteItemRequested.connect(self.onDeleteItem)
@@ -131,11 +128,7 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
             QMessageBox.warning(self, self.tr("Warning"), self.tr("Please enter VOD URL."))
             return
         
-        data = config.load_config().get("cookies", {})
-        cookies = {
-            'NID_AUT': data.get("NID_AUT", ""),
-            'NID_SES': data.get("NID_SES", "")
-        }
+        cookies = config.load_cookies()  # 쿠키 조립의 단일 지점 (#170)
         self.linkStatusLabel.setText(self.tr('Fetching resolutions...'))
 
         # 결과 처리
@@ -167,12 +160,12 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         """
         추가한 동영상에 대한 다운로드 버튼.
         """
-        if self.downloadManager.d_thread:
+        if self.downloadViewModel.isDownloading():
             if self.downloadButton.text() == self.tr('Pause'):
-                self.downloadManager.pause()
+                self.downloadViewModel.pause()
                 self.downloadButton.setText(self.tr('Download'))
             else:
-                self.downloadManager.resume()
+                self.downloadViewModel.resume()
                 self.downloadButton.setText(self.tr('Pause'))
         else:
             if not self.contentManager.findItem()[0]:
@@ -228,7 +221,7 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         """
         중지 버튼 콜백.
         """
-        if self.downloadManager.task:
+        if self.downloadViewModel.task:
             reply = QMessageBox.warning(
                 self,
                 self.tr("Downloading"),
@@ -241,10 +234,10 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
                 self.stopDownload()
 
     def stopDownload(self):
-        self.downloadManager.stop()
+        self.downloadViewModel.stop()
         self.downloadButton.setText(self.tr('Download'))
         self.setStopButtonEnable(False)
-        self.downloadManager.removeThreads()
+        self.downloadViewModel.removeThreads()
 
     def onInsertItem(self, row):
         self.total_downloads = row
@@ -325,30 +318,8 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         특정 해상도에 대한 다운로드 스레드를 생성 및 시작하기 전 UI 상태 업데이트를 수행한다.
         """
         self.contentManager.start(item)
-        self.downloadManager.start(item)
+        self.downloadViewModel.start(item)
         self.setStopButtonEnable(True)
-
-    def _onProgress(self, rem, size, spd, prog, item):
-        """
-        progress 시그널이 발생할 때마다, 지금 다운로드 중인 item 업데이트.
-        """
-        self.contentManager.update_progress(rem, size, spd, prog, item)
-
-    def _onPaused(self, item):
-        self.contentManager.pause(item)
-
-    def _onResumed(self, item):
-        self.contentManager.resume(item)
-
-    def _onStopped(self, item):
-        self.contentManager.stop(item)
-
-    def _onFinished(self, item, download_time):
-        self.contentManager.finish(item, download_time)
-
-    def _onFailed(self, item, message):
-        """다운로드 실패 콜백 — 카드에 실패 상태·사유를 표시하고 배치를 계속 진행한다 (#134)."""
-        self.contentManager.fail(item, message)
 
     def updateDownloadCountLabel(self):
         """
@@ -360,7 +331,7 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         """
         창을 닫을 때 실행되는 이벤트
         """
-        if self.downloadManager.d_thread or self.downloadManager.m_thread:
+        if self.downloadViewModel.isDownloading():
             reply = QMessageBox.warning(
                 self,
                 self.tr("Downloading"),

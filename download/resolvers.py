@@ -15,12 +15,11 @@ from core.models.content import Content
 
 
 def _load_cookies() -> dict:
-    """설정에 저장된 유저 본인의 쿠키를 읽는다 (미설정이면 빈 값)."""
-    data = config.load_config().get("cookies", {})
-    return {
-        "NID_AUT": data.get("NID_AUT", ""),
-        "NID_SES": data.get("NID_SES", ""),
-    }
+    """설정에 저장된 유저 본인의 쿠키를 읽는다 (미설정이면 빈 값).
+
+    조립은 config.load_cookies가 단일 지점으로 담당한다 (#170).
+    """
+    return config.load_cookies()
 
 
 def resolve_aes_key(content: Content, key_uri: str) -> bytes:
