@@ -14,7 +14,7 @@ import time
 import core.downloaders.file_downloader as fd_module
 from core.downloaders.file_downloader import FileDownloader
 from core.models.download_state import DownloadState
-from download.data import DownloadData
+from core.models.download_data import DownloadData
 
 MB = 1024 * 1024
 TOTAL_SIZE = 4 * MB  # 해상도 144 → 파트 1MB → 4파트

@@ -11,7 +11,7 @@ import threading
 from content.data import ContentItem
 from core.models.download_state import DownloadState
 from core.models.download_task import InvalidStateTransitionError
-from download.data import DownloadData
+from core.models.download_data import DownloadData
 from download.logger import DownloadLogger
 
 

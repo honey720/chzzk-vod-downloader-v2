@@ -50,7 +50,7 @@ from core.services import metadata_service  # noqa: E402
 from core.services.download_service import DownloadService  # noqa: E402
 from core.services.metadata_service import MetadataError  # noqa: E402
 from core.utils.paths import build_output_path  # noqa: E402
-from download.data import DownloadData  # noqa: E402
+from core.models.download_data import DownloadData  # noqa: E402
 from download.logger import DownloadLogger  # noqa: E402
 from download.resolvers import resolve_aes_key, resolve_m3u8_base_url  # noqa: E402
 from download.task import DownloadTask  # noqa: E402

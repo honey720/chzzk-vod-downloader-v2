@@ -13,8 +13,8 @@
 
 #75에서 download/data.py에서 core로 이주했다 — DownloadService가 Content만 받아
 엔진 공유 데이터를 core 안에서 만들 수 있어야 하기 때문이다("core만으로 다운로드").
-이 모듈은 원래부터 core 모델만 참조하는 순수 코드였고, 기존 앱 계층 import 경로
-(download.data)는 re-export로 유지된다.
+이 모듈은 원래부터 core 모델만 참조하는 순수 코드였다. 구 앱 계층 import 경로
+(download.data)의 re-export는 #171에서 제거됐다 — 이곳이 유일한 정의처다.
 """
 
 from core.models.content import Content, ContentType

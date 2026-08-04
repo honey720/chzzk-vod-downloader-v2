@@ -17,7 +17,7 @@ from content.manager import ContentManager
 from content.view import ContentListView
 from core.downloaders.base import PostprocessError
 from download.qt_bridge import QtDownloadBridge
-from download.state import DownloadState
+from core.models.download_state import DownloadState
 
 
 @pytest.fixture(autouse=True)

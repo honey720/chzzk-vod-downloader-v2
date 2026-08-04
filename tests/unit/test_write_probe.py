@@ -17,7 +17,7 @@ import content.manager as manager_mod
 from content.data import ContentItem
 from content.manager import ContentManager, probe_writable
 from content.view import ContentListView
-from download.state import DownloadState
+from core.models.download_state import DownloadState
 
 
 @pytest.fixture(autouse=True)

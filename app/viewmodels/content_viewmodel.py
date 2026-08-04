@@ -23,7 +23,7 @@ from app.viewmodels.path_gates import check_download_path
 from content.data import ContentItem
 from content.model import ContentListModel
 from core.utils.paths import build_output_path, ensure_unique_path
-from download.state import DownloadState
+from core.models.download_state import DownloadState
 
 # 유저 행위·관문 로그의 로거 이름은 "content.manager"를 유지한다 — 제보
 # 진단 절차와 기존 테스트(caplog)가 이 이름을 알고 있고, 로직의 거처가

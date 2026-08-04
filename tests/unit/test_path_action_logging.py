@@ -17,7 +17,7 @@ import content.widget as widget_mod
 from content.data import ContentItem
 from content.manager import ContentManager
 from content.view import ContentListView
-from download.state import DownloadState
+from core.models.download_state import DownloadState
 
 NBSP_SUFFIX = "없는\u00a0폴더"  # 존재하지 않는 + 공백 유사 문자 포함
 
