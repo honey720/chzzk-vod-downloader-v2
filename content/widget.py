@@ -6,6 +6,7 @@ from PySide6.QtCore import Qt, QSize, Signal, QUrl, QDir, QProcess
 from content.data import ContentItem
 from content.network import REQUEST_TIMEOUT, get_thread_session
 from download.state import DownloadState
+from app.viewmodels.item_state import ItemState
 from ui.contentItemWidget import Ui_ContentItemWidget
 from time import strftime, gmtime
 import platform
@@ -169,7 +170,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.titleLabel.setText(item.title)
         self.directoryLabel.setText(item.download_path)
 
-        if self.item.downloadState == DownloadState.LOADING:
+        if self.item.downloadState == ItemState.LOADING:
             self.statusLabel.setText(self.tr("Loading information..."))
             self.fileSizeLabel.setText("")
             self.progressLabel.setText(" ")

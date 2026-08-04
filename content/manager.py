@@ -9,6 +9,7 @@ from content.view import ContentListView
 from content.delegate import ContentListDelegate
 from content.data import ContentItem
 from download.state import DownloadState
+from app.viewmodels.item_state import ItemState
 from content.worker import ContentWorker
 from core.utils.paths import build_output_path, ensure_unique_path
 
@@ -95,7 +96,7 @@ class ContentManager(QObject):
             {'title': vod_url, 'category': '', 'channelName': '', 'createdDate': '', 'duration': 0},
             [], None, '', downloadPath, '', None,
         )
-        placeholder.downloadState = DownloadState.LOADING
+        placeholder.downloadState = ItemState.LOADING
         self.model.addItem(placeholder)
         self.insertItemRequested.emit(self.model.rowCount())
 
@@ -255,7 +256,7 @@ class ContentManager(QObject):
             index = self.model.index(row, 0)
             item: ContentItem = self.model.data(index, Qt.ItemDataRole.UserRole)
             # LOADING은 메타데이터가 아직 없어 다운로드 대상이 아니다 (#124)
-            if item.downloadState not in [DownloadState.FINISHED, DownloadState.FAILED, DownloadState.LOADING]:
+            if item.downloadState not in [DownloadState.FINISHED, DownloadState.FAILED, ItemState.LOADING]:
                 return True, item, index
         return False, None, None
 
@@ -264,7 +265,7 @@ class ContentManager(QObject):
         for row in range(self.model.rowCount()):
             index = self.model.index(row, 0)
             item: ContentItem = self.model.data(index, Qt.ItemDataRole.UserRole)
-            if item.downloadState == DownloadState.LOADING:
+            if item.downloadState == ItemState.LOADING:
                 return True
         return False
 
