@@ -96,6 +96,7 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         self.urlInput.returnPressed.connect(self.onFetch)
         self.fetchButton.clicked.connect(self.onFetch)
         self.downloadPathButton.clicked.connect(self.onFindPath)
+        self.downloadPathInput.editingFinished.connect(self._rememberPathIfValid)
         self.settingButton.clicked.connect(self.onSetting)
         self.clearFinishedButton.clicked.connect(self.contentManager.clrearFinishedItems)
         self.downloadButton.clicked.connect(self.onDownloadPause)
@@ -199,6 +200,20 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
             # 들어갔는가"를 로그로 재구성할 수 있게 한다
             logger.info("저장 경로 선택(경로 찾기): %r", downloadPath)
             self.downloadPathInput.setText(downloadPath)
+            self._rememberPathIfValid()
+
+    def _rememberPathIfValid(self) -> None:
+        """입력창의 경로가 실존 폴더면 보존한다 (#165).
+
+        보존 시점은 유저의 의사표시 세 곳 — 경로 찾기 선택, 입력 확정
+        (editingFinished), 창 닫기 — 이라 조회 없이 경로만 바꿔도 다음
+        실행의 초기값 ①이 된다. isdir 관문은 커밋된 미완성·오타 경로가
+        초기값을 오염시키지 않게 한다. 조회(exists)·다운로드(probe) 관문과의
+        기준 통합은 Phase 5 관문 통합(#146 ⓑ1)에서 viewmodel로 옮길 때 함께.
+        """
+        path = self.downloadPathInput.text().strip()
+        if path and os.path.isdir(path):
+            self._rememberDownloadPath(path)
 
     def _rememberDownloadPath(self, path: str) -> None:
         """실사용된 저장 경로를 설정에 보존한다 (#159) — _default_download_path의 ①."""
@@ -206,6 +221,7 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         if cfg.get("downloadPath") != path:
             cfg["downloadPath"] = path
             config.save_config(cfg)
+            logger.info("저장 경로 보존: %r", path)
 
     def onStop(self):
         """
@@ -356,4 +372,6 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
                 return
             else:
                 self.stopDownload()
+        # 확정(포커스 이탈) 없이 바로 닫는 경우의 보존 (#165)
+        self._rememberPathIfValid()
         event.accept()  # 창 닫기 진행
