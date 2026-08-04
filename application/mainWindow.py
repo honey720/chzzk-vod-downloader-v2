@@ -6,6 +6,7 @@ import config.config as config
 from PySide6.QtWidgets import QMainWindow, QMessageBox, QFileDialog, QApplication
 from PySide6.QtCore import QStandardPaths, QTimer
 
+from app.viewmodels.path_gates import check_fetch_path, check_remember_path
 from config.dialog import SettingDialog
 from content.data import ContentItem
 from content.manager import ContentManager
@@ -140,7 +141,8 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         # 결과 처리
         downloadPath = self.downloadPathInput.text().strip() or os.getcwd()
 
-        if not os.path.exists(downloadPath):
+        # 판정은 path_gates가 단일 지점으로 담당한다 (#169 — #146 ⓑ1)
+        if not check_fetch_path(downloadPath):
             # 유일한 안내가 팝업뿐이라 제보 진단이 불가능했다 (#146 감사) —
             # 입력값을 repr로 남겨 공백 유사 문자·오염(따옴표 등)을 식별한다 (#148)
             logger.warning("조회 거부 — 존재하지 않는 저장 경로: %r", downloadPath)
@@ -207,12 +209,11 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
 
         보존 시점은 유저의 의사표시 세 곳 — 경로 찾기 선택, 입력 확정
         (editingFinished), 창 닫기 — 이라 조회 없이 경로만 바꿔도 다음
-        실행의 초기값 ①이 된다. isdir 관문은 커밋된 미완성·오타 경로가
-        초기값을 오염시키지 않게 한다. 조회(exists)·다운로드(probe) 관문과의
-        기준 통합은 Phase 5 관문 통합(#146 ⓑ1)에서 viewmodel로 옮길 때 함께.
+        실행의 초기값 ①이 된다. isdir 관문(판정은 path_gates 단일 지점,
+        #169)은 커밋된 미완성·오타 경로가 초기값을 오염시키지 않게 한다.
         """
         path = self.downloadPathInput.text().strip()
-        if path and os.path.isdir(path):
+        if check_remember_path(path):
             self._rememberDownloadPath(path)
 
     def _rememberDownloadPath(self, path: str) -> None:
