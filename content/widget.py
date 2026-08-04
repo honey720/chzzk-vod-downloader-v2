@@ -7,6 +7,7 @@ from content.data import ContentItem
 from content.network import REQUEST_TIMEOUT, get_thread_session
 from download.state import DownloadState
 from app.viewmodels.item_state import ItemState
+from app.viewmodels.path_gates import check_card_edit_path
 from ui.contentItemWidget import Ui_ContentItemWidget
 from time import strftime, gmtime
 import platform
@@ -314,7 +315,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.directoryEdit.setVisible(False)
         self.directoryLabel.setVisible(True)
         new_path = self.directoryEdit.text().strip()
-        if new_path and os.path.exists(new_path):
+        # 판정은 path_gates가 단일 지점으로 담당한다 (#169 — #146 ⓑ1)
+        if check_card_edit_path(new_path):
             self.directoryLabel.setText(new_path)  # ✅ UI 업데이트
             self.item.download_path = new_path  # ✅ 데이터 업데이트
             self.textChanged.emit(new_path)  # ✅ 모델에도 반영하도록 시그널 전송
