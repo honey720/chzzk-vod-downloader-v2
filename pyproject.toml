@@ -1,6 +1,6 @@
 [project]
 name = "cvdv2"
-version = "2.9.3"
+version = "2.9.4-rc1"
 description = "Chzzk VOD Downloader v2"
 requires-python = ">=3.13"
 dependencies = [
