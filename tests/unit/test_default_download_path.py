@@ -163,3 +163,73 @@ def test_rejected_path_is_not_persisted(window_factory, config_store, tmp_path, 
 
     assert "Path does not exist." in warnings
     assert all("downloadPath" not in s or s["downloadPath"] == "" for s in saves)
+
+
+def test_find_path_selection_is_persisted_without_fetch(
+    window_factory, config_store, tmp_path, monkeypatch
+):
+    """경로 찾기로 폴더를 고르면 조회 없이도 저장된다 (#165).
+
+    다이얼로그 선택은 그 자체가 의사표시고 실존 폴더만 반환되므로,
+    조회 관문을 기다릴 이유가 없다 — "마지막으로 사용한 위치가
+    기억됩니다"(v2.9.3 릴리즈 노트)의 실체화.
+    """
+    _store, saves = config_store
+    make, _warnings = window_factory
+    win = make()
+    chosen = tmp_path / "고른 폴더"
+    chosen.mkdir()
+    monkeypatch.setattr(
+        mw_mod.QFileDialog,
+        "getExistingDirectory",
+        staticmethod(lambda *a, **k: str(chosen)),
+    )
+
+    win.downloadPathButton.click()
+
+    assert saves and saves[-1]["downloadPath"] == str(chosen)
+
+
+def test_committed_valid_path_is_persisted(window_factory, config_store, tmp_path):
+    """입력 확정(editingFinished)된 실존 폴더는 조회 없이 저장된다 (#165)."""
+    _store, saves = config_store
+    make, _warnings = window_factory
+    win = make()
+    typed = tmp_path / "타이핑 폴더"
+    typed.mkdir()
+    win.downloadPathInput.setText(str(typed))
+
+    win.downloadPathInput.editingFinished.emit()
+
+    assert saves and saves[-1]["downloadPath"] == str(typed)
+
+
+def test_committed_missing_path_is_not_persisted(window_factory, config_store, tmp_path):
+    """미실존(입력 중·오타) 경로는 확정돼도 저장되지 않는다 — 초기값 오염 방지 (#165)."""
+    _store, saves = config_store
+    make, _warnings = window_factory
+    win = make()
+    win.downloadPathInput.setText(str(tmp_path / "입력 중"))
+
+    win.downloadPathInput.editingFinished.emit()
+
+    assert all("downloadPath" not in s or s["downloadPath"] == "" for s in saves)
+
+
+def test_valid_path_is_persisted_on_close(window_factory, config_store, tmp_path):
+    """확정(포커스 이탈) 없이 창을 닫아도 실존 폴더면 저장된다 (#165).
+
+    "경로를 바꾸고 다운로드 없이 앱을 껐다 켠다"는 제보 시나리오 그대로 —
+    setText는 editingFinished를 발생시키지 않으므로 closeEvent 보존이
+    마지막 그물이다.
+    """
+    _store, saves = config_store
+    make, _warnings = window_factory
+    win = make()
+    typed = tmp_path / "닫기 전 폴더"
+    typed.mkdir()
+    win.downloadPathInput.setText(str(typed))
+
+    win.close()
+
+    assert saves and saves[-1]["downloadPath"] == str(typed)
