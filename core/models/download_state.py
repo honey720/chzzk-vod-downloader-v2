@@ -15,7 +15,6 @@ class DownloadState(Enum):
     PAUSED = 2  # 다운로드 중지(일시정지)
     FINISHED = 3  # 다운로드 완료
     FAILED = 4  # 다운로드 실패
-    # 메타데이터 조회 중 — 다운로드 대상이 아닌 선행 상태 (#124).
-    # 태스크 전이 규칙(download_task)에는 등장하지 않는다: 조회가 끝나
-    # WAITING이 된 뒤에야 태스크가 만들어질 수 있다.
-    LOADING = 5
+    # 값 5는 재사용 금지 — 조회 중 표시 상태(구 LOADING)가 쓰던 자리다.
+    # 전이 규칙에 없는 표시 전용 상태라 app/viewmodels/item_state.py의
+    # ItemState.LOADING으로 분리됐다 (#167)
