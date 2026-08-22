@@ -519,3 +519,54 @@ def test_stray_dotfile_in_temp_dir_is_excluded_from_merge(tmp_path, monkeypatch)
     assert "._0000000.m4s" in logger.warnings[0]
     assert ".DS_Store" in logger.warnings[0]
     assert "notes.txt" in logger.warnings[0]
+
+
+def test_downstream_stop_after_postprocess_failure_preserves_segments(tmp_path, monkeypatch):
+    """실패 콜백이 비동기로 상태를 WAITING으로 돌려도 세그먼트는 보존된다 (#185).
+
+    base.py의 PostprocessError 분기는 _cleanup_partial()을 부르지 않아 세그먼트를
+    보존하도록 설계됐다(#92 — 재다운로드 강요 방지). 그런데 실제 프로덕션 배선
+    (download/qt_bridge.py)에서는 on_failed 콜백(_relay_failed)이 Qt 큐드 시그널을
+    거쳐 메인 스레드의 _onEngineFailed에서 task.stop()을 호출한다 — 상태를
+    WAITING으로 되돌린다. 고장난 버전에서는 run()의 try/except/finally 전체
+    바깥에 있던 "if WAITING: cleanup_partial()"이 이 비동기 전이를 "유저가
+    중단한 경우"로 오인해 방금 보존하려던 세그먼트를 도로 지웠다(오너 실기
+    관찰과 일치 — #180 조사 중 이 테스트로 고장난 커밋에서 먼저 실패를
+    재현한 뒤 수정함).
+
+    수정: 그 체크를 try 블록 안(예외 없이 끝난 경로에서만 닿는 지점)으로
+    옮겨, except 분기가 이미 내린 정리 결정을 이후의 비동기 상태 변화가
+    다시 뒤집지 못하게 한다 — 엔진 종료 신호(WAITING)와 실패 처리를 같은
+    체크 하나로 뭉뚱그리지 않는다(#135와 같은 자리).
+
+    on_failed 안에서 model.stop()을 호출해 프로덕션의 결과를 직접 재현한다.
+    """
+    engine, data, logger, output, finished, failures, merge_starts = _make_engine(
+        tmp_path, monkeypatch
+    )
+
+    def broken_remux_stream(chunks, dst_path):
+        raise base_module.FFmpegError("가짜 remux 실패")
+
+    monkeypatch.setattr(base_module, "remux_stream", broken_remux_stream)
+
+    # 실제 qt_bridge._onEngineFailed가 (큐드 커넥션을 거쳐) 하는 일 — task.stop()
+    original_on_failed = engine._on_failed
+
+    def on_failed_then_stop(exc):
+        original_on_failed(exc)
+        data.model.stop()
+
+    engine._on_failed = on_failed_then_stop
+
+    data.model.start()
+    thread = _run_in_thread(engine)
+    thread.join(timeout=30)
+    assert not thread.is_alive()
+
+    assert any(isinstance(e, base_module.PostprocessError) for e in failures)
+    temp_dir = tmp_path / "CVDv2_temp_out"
+    # #92 정책: 후처리 실패는 세그먼트를 보존해야 한다 — 실패 콜백이 상태를
+    # WAITING으로 돌리더라도(비동기 stop()) 이 정책은 지켜져야 한다.
+    assert temp_dir.exists(), "후처리 실패 시 세그먼트가 보존돼야 하는데 지워졌다"
+    assert len(list(temp_dir.iterdir())) == SEGMENT_COUNT + 1  # 초기화 세그먼트 포함

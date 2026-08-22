@@ -473,6 +473,19 @@ class BaseDownloader(ABC):
             # (5) 정상 경로 종료 후 정리 (중단으로 빠져나온 경우 포함)
             self._cleanup_after_run()
 
+            # 사용자가 강제로 중단한 경우 부분 산출물 삭제 (#185 — try 안으로 이동).
+            # 여기 있어야 하는 이유: 이 블록은 예외 없이 끝난 경로에서만 닿는다.
+            # 예전엔 이 체크가 try/except/finally 전체 바깥에 있어, PostprocessError
+            # 등 except 분기가 이미 각자 정리 여부를 결정한 뒤에도 다시 실행됐다.
+            # 실패 콜백(_on_failed)이 비동기로(Qt 큐드 시그널 등) task.stop()을
+            # 불러 상태가 WAITING으로 바뀌면, 그 바깥 체크가 "유저가 중단한
+            # 경우"로 오인해 PostprocessError가 보존하려던 세그먼트를 도로
+            # 지웠다(#92 정책 위반, #185 실측 확인) — 실패로 인한 stop()과 유저
+            # 중단을 같은 신호(WAITING)로 뭉뚱그려 구분하지 못한 게 뿌리였다
+            # (#135와 같은 자리: 엔진 종료 신호와 실패 처리를 분리해야 한다).
+            if self.state == DownloadState.WAITING:
+                self._cleanup_partial()
+
         except PostprocessError as e:
             # 후처리 실패 (#92) — 다운로드는 완결됐으므로 세그먼트(임시 폴더)를
             # 보존한다. 불완전한 산출물은 후처리 단계가 이미 삭제했다.
@@ -493,10 +506,6 @@ class BaseDownloader(ABC):
             # 실패 후 상태가 RUNNING인 채 남는 경로(헤드리스 등)에서는 기존
             # 관측 루프가 상태 변화만 기다리며 영원히 돌았다
             self._stop_monitor(monitor)
-
-        # 사용자가 강제로 중단한 경우 부분 산출물 삭제
-        if self.state == DownloadState.WAITING:
-            self._cleanup_partial()
 
     # ============ 다운로드 조정 및 콜백 메서드 ============
 
