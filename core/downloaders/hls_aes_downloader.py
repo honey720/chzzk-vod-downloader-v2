@@ -192,7 +192,7 @@ class HlsAesDownloader(BaseDownloader):
         _remux_streamed 참조).
         """
         self._on_merge_start()
-        segment_files = sorted(os.listdir(self.temp_dir))
+        segment_files = self._list_segment_files((".ts",))
         self._remux_streamed([os.path.join(self.temp_dir, f) for f in segment_files])
 
     # ============ 다운로드 동작 ============
