@@ -1,6 +1,8 @@
 import os
 import config.config as config
 from PySide6.QtWidgets import QDialog, QMessageBox
+from PySide6.QtGui import QDesktopServices
+from PySide6.QtCore import QUrl
 
 from ui.settingDialog import Ui_SettingDialog
 
@@ -69,7 +71,11 @@ class SettingDialog(QDialog, Ui_SettingDialog):
         QMessageBox.information(self, self.tr("Helper"), msg)
 
     def openLogsFolder(self):
-        os.startfile(os.path.join(config.CONFIG_DIR, "logs"))
+        # os.startfile은 Windows 전용이라 macOS·Linux에서 무조건 AttributeError였다
+        # (#181). QDesktopServices.openUrl은 3-OS 공통으로 폴더를 연다.
+        path = os.path.join(config.CONFIG_DIR, "logs")
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(path)):
+            QMessageBox.warning(self, self.tr("Warning"), f"'{path}'을(를) 열 수 없습니다.")
 
     def getCookies(self):
         """
