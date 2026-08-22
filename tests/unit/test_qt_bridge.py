@@ -15,6 +15,7 @@ from core.downloaders.base import PostprocessError
 from core.downloaders.hls_aes_downloader import DecryptionError
 from core.models.download_state import DownloadState
 from core.models.events import ProgressEvent
+from core.utils.ffmpeg import FFmpegNotFoundError, RemuxError
 from download.qt_bridge import QtDownloadBridge, _failure_message_key
 
 
@@ -182,7 +183,11 @@ class TestCompletion:
         bridge.stopped.connect(lambda *args: stopped.append(args))
 
         raw = "후처리(remux) 실패: ffmpeg stderr tail... [C:\\tools\\ffmpeg.exe]"
-        _submission(bridge)["on_failed"](PostprocessError(raw))
+        # 실제 base.py와 동일하게 원인을 체인한다 — RemuxError는 ffmpeg가
+        # 돌긴 했으나 입력이 무효했던 경우다 (#180 조사, 손상된 입력≠미설치)
+        pp_error = PostprocessError(raw)
+        pp_error.__cause__ = RemuxError("ffmpeg remux 실패 (exit 183): Invalid data found")
+        _submission(bridge)["on_failed"](pp_error)
 
         # 엔진 종료 신호 — 실행 루프는 WAITING만 종료 신호로 본다 (v2.9.0·main과 동일)
         assert model.state is DownloadState.WAITING
@@ -192,7 +197,7 @@ class TestCompletion:
         [(failed_item, message)] = received
         assert failed_item is item
         # 번역기 미설치 환경 — tr()은 키 원문을 돌려준다. 원시 문자열은 미노출
-        assert message == "Postprocessing failed"
+        assert message == "Postprocessing failed - invalid segments"
         assert "ffmpeg" not in message
         assert item.post_process is False
         # 참조 정리 — 실패 후 다음 다운로드 시작이 가능해야 한다
@@ -313,10 +318,27 @@ def _http_error(status: int) -> requests.HTTPError:
 class TestFailureMessageKey:
     """실패 예외 → 안내 키 매핑 (#134, #127의 조회 경로 방식)."""
 
-    def test_postprocess_and_decryption_map_to_keys(self):
-        assert _failure_message_key(PostprocessError("ffmpeg stderr...")) == (
-            "Postprocessing failed"
-        )
+    def test_postprocess_maps_by_cause_type(self):
+        """PostprocessError는 원인(FFmpegError 하위 타입)에 따라 다른 키로 갈린다 (#180).
+
+        FFmpegNotFoundError(실행 파일 자체를 못 찾음)와 RemuxError(ffmpeg는
+        돌았으나 입력이 무효함)는 유저가 할 수 있는 조치가 다르다 — 하나로
+        뭉뚱그린 "ffmpeg 설치 상태를 확인해 주세요"가 #180 초기 진단을
+        엉뚱한 방향(Gatekeeper·서명)으로 세 단계나 끌고 간 원인이었다.
+        """
+        not_found = PostprocessError("ffmpeg 실행 파일을 찾지 못했다")
+        not_found.__cause__ = FFmpegNotFoundError("imageio-ffmpeg 패키지 미설치")
+        assert _failure_message_key(not_found) == "Postprocessing failed - ffmpeg not found"
+
+        invalid_input = PostprocessError("ffmpeg stderr...")
+        invalid_input.__cause__ = RemuxError("exit 183: Invalid data found")
+        assert _failure_message_key(invalid_input) == "Postprocessing failed - invalid segments"
+
+        # 원인 체인이 없는 경우(예외적)도 "설치 안내"로 오도하지 않는다 —
+        # 안전한 기본값은 손상 쪽이다(설치 안내는 확신 있을 때만 보여준다)
+        no_cause = PostprocessError("cause 없음")
+        assert _failure_message_key(no_cause) == "Postprocessing failed - invalid segments"
+
         assert _failure_message_key(DecryptionError("키·IV 불일치")) == "Decryption failed"
 
     def test_http_statuses_map_like_metadata_path(self):
