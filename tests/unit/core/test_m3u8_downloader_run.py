@@ -444,3 +444,40 @@ def test_stop_removes_partial_file_and_temp_dir(tmp_path, monkeypatch):
     assert not (tmp_path / "CVDv2_temp_out").exists()  # 임시 폴더 삭제
     assert not finished.is_set()
     assert failures == []
+
+
+def test_forced_slow_requeue_does_not_corrupt_output(tmp_path, monkeypatch):
+    """저속 재큐가 여러 번 발동해도 최종 산출물은 손상되지 않는다 (#180 조사).
+
+    #180 초기 진단은 macOS 실기 로그의 "Retries: 14" + remux 실패(exit 183,
+    Invalid data)를 근거로 "재큐된 세그먼트가 기존 파일에 이어쓰기돼 컨테이너가
+    깨진다"는 가설을 세웠다. 코드 확인 결과 세그먼트 파일은 매 시도(재큐 포함)
+    마다 ``open(temp_file, "wb")``로 새로 열린다 — "wb"는 매번 트렁케이트라
+    이어쓰기가 될 수 없다. 이 테스트는 그 반증을 실측으로 고정한다: 저속
+    임계를 극단적으로 높여 강제로 재큐를 유발한 뒤, 최종 산출물이 정상
+    세그먼트를 이어붙인 것과 바이트 단위로 같은지 확인한다.
+    """
+    engine, data, logger, output, finished, failures, merge_starts = _make_engine(
+        tmp_path, monkeypatch, chunks_per_segment=20
+    )
+    # 극단적으로 높은 임계로 모든 청크를 "저속"으로 오판시켜 강제 재큐를 유발한다
+    engine._slow_speed_threshold_kb_s = 1e15
+
+    def _disable_after_first_requeue():
+        while data.restart_threads == 0:
+            time.sleep(0.01)
+        # 재큐가 최소 1회 발동한 뒤에는 정상 임계로 되돌려 완주시킨다
+        engine._slow_speed_threshold_kb_s = 0
+
+    watcher = threading.Thread(target=_disable_after_first_requeue, daemon=True)
+    watcher.start()
+
+    data.model.start()
+    thread = _run_in_thread(engine)
+    assert finished.wait(timeout=30), "완료 콜백이 호출되지 않았다"
+    thread.join(timeout=10)
+    watcher.join(timeout=5)
+
+    assert data.restart_threads > 0, "저속 재큐가 실제로 발동해야 이 테스트가 유효하다"
+    assert output.read_bytes() == _expected_output(chunks_per_segment=20)
+    assert failures == []

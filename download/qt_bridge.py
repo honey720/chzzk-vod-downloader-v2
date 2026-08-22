@@ -31,6 +31,7 @@ from core.downloaders.hls_aes_downloader import DecryptionError
 from core.models.events import ProgressEvent
 from core.services.download_service import DownloadService
 from core.models.download_data import DownloadData
+from core.utils.ffmpeg import FFmpegNotFoundError
 from download.logger import DownloadLogger
 from download.resolvers import resolve_aes_key, resolve_m3u8_base_url
 from download.task import DownloadTask
@@ -53,7 +54,15 @@ def _failure_message_key(exc: BaseException) -> str | None:
     로그가 이미 담당한다. 매핑에 없는 예외는 None(사유 생략)으로 둔다.
     """
     if isinstance(exc, PostprocessError):
-        return "Postprocessing failed"
+        # PostprocessError는 항상 FFmpegError를 원인으로 체인한다(base.py의
+        # 유일한 raise 지점, `raise PostprocessError(...) from e`). 원인
+        # 유형으로 안내를 가른다 — "ffmpeg 실행 파일을 못 찾음"과 "ffmpeg는
+        # 돌았지만 입력이 무효함"은 유저가 할 수 있는 조치가 다르다(#180
+        # 조사 — 이 둘을 하나의 문구로 뭉뚱그린 탓에 macOS 실기 진단이
+        # ffmpeg 설치 문제로 잘못 쏠렸다)
+        if isinstance(exc.__cause__, FFmpegNotFoundError):
+            return "Postprocessing failed - ffmpeg not found"
+        return "Postprocessing failed - invalid segments"
     if isinstance(exc, DecryptionError):
         return "Decryption failed"
     if isinstance(exc, requests.HTTPError):
@@ -245,7 +254,12 @@ class QtDownloadBridge(QObject):
         호출해 추출 대상을 유지한다 (content/worker.py의 _translate_key와 동일).
         """
         translated = {
-            "Postprocessing failed": self.tr("Postprocessing failed"),
+            "Postprocessing failed - ffmpeg not found": self.tr(
+                "Postprocessing failed - ffmpeg not found"
+            ),
+            "Postprocessing failed - invalid segments": self.tr(
+                "Postprocessing failed - invalid segments"
+            ),
             "Decryption failed": self.tr("Decryption failed"),
             "Viewing permission required": self.tr("Viewing permission required"),
             "Video not found": self.tr("Video not found"),
