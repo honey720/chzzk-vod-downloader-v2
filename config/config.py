@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 # 빌드 실행 파일은 이 상수를 쓴다. 정본과의 불일치는 단위 테스트
 # (tests/unit/test_download_log_phases.py)가 잡는다 — 버전을 올릴 때는
 # pyproject.toml과 이 상수를 함께 갱신할 것.
-APP_VERSION = "2.9.5-rc1"
+APP_VERSION = "2.9.5"
 
 
 @functools.lru_cache(maxsize=1)
