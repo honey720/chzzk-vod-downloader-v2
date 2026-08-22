@@ -137,7 +137,7 @@ class M3U8Downloader(BaseDownloader):
         세그먼트를 보존한다 (규칙은 base의 _remux_streamed 참조).
         """
         self._on_merge_start()
-        segment_files = sorted(os.listdir(self.temp_dir))
+        segment_files = self._list_segment_files((".m4s", ".m4v"))
         self._remux_streamed([os.path.join(self.temp_dir, f) for f in segment_files])
 
     # ============ 다운로드 동작 관련 메서드들 ============

@@ -10,6 +10,7 @@
 - 중단(stop): 결과 파일·임시 폴더 삭제, 완료 콜백 없음
 """
 
+import os
 import threading
 import time
 
@@ -481,3 +482,40 @@ def test_forced_slow_requeue_does_not_corrupt_output(tmp_path, monkeypatch):
     assert data.restart_threads > 0, "저속 재큐가 실제로 발동해야 이 테스트가 유효하다"
     assert output.read_bytes() == _expected_output(chunks_per_segment=20)
     assert failures == []
+
+
+def test_stray_dotfile_in_temp_dir_is_excluded_from_merge(tmp_path, monkeypatch):
+    """세그먼트가 아닌 파일이 임시 폴더에 있어도 병합에서 제외되고 경고가 남는다 (#180).
+
+    exFAT 등 xattr 미지원 파일시스템에 macOS가 쓰는 AppleDouble 사이드카
+    (``._세그먼트명``)나 Finder의 ``.DS_Store``처럼 '.'으로 시작하는 이름은
+    사전순 정렬에서 항상 맨 앞에 온다 — 오너 실기(exFAT 외장 SD 카드)에서
+    세그먼트 수만큼 실물로 확인된 오염이다. ``_list_segment_files``가
+    화이트리스트(숫자+확장자)로 걸러 이 오염을 막는지 검증한다.
+    """
+    engine, data, logger, output, finished, failures, merge_starts = _make_engine(
+        tmp_path, monkeypatch
+    )
+
+    def _pollute_then_start_merge():
+        # AppleDouble류 사이드카뿐 아니라 확장자 없는 잡파일까지 함께 심는다
+        for name in ("._0000000.m4s", ".DS_Store", "notes.txt"):
+            with open(os.path.join(engine.temp_dir, name), "wb") as f:
+                f.write(b"not-a-segment")
+        merge_starts.append(True)
+
+    engine._on_merge_start = _pollute_then_start_merge
+
+    data.model.start()
+    thread = _run_in_thread(engine)
+    assert finished.wait(timeout=30), "완료 콜백이 호출되지 않았다"
+    thread.join(timeout=10)
+
+    # 오염 파일이 있었는데도 산출물은 오염 없이 정상 그대로다
+    assert output.read_bytes() == _expected_output(chunks_per_segment=3)
+    assert failures == []
+    # 조용히 건너뛰지 않는다 — 무엇을 걸렀는지 경고로 남긴다
+    assert len(logger.warnings) == 1
+    assert "._0000000.m4s" in logger.warnings[0]
+    assert ".DS_Store" in logger.warnings[0]
+    assert "notes.txt" in logger.warnings[0]

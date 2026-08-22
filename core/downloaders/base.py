@@ -50,6 +50,7 @@ data·logger는 DownloadData/DownloadLogger 호환 객체를 주입받는다.
 """
 
 import os
+import re
 import threading
 import time as tm
 from abc import ABC, abstractmethod
@@ -260,6 +261,36 @@ class BaseDownloader(ABC):
 
         계획(DownloadPlan)의 requires_postprocess가 참일 때만 run()이 호출한다.
         """
+
+    def _list_segment_files(self, extensions: tuple[str, ...]) -> list[str]:
+        """임시 폴더에서 우리가 만든 세그먼트 파일만 화이트리스트로 골라 정렬해 반환한다.
+
+        os.listdir()은 임시 폴더의 모든 항목을 무차별로 반환한다 — macOS가
+        xattr을 지원하지 않는 파일시스템(exFAT 등)에 쓸 때 만드는 AppleDouble
+        사이드카(``._세그먼트명``)나 Finder의 ``.DS_Store`` 같은 잡파일이 하나만
+        섞여도 이름이 '.'로 시작해 사전순 정렬에서 항상 맨 앞으로 온다 — 그게
+        진짜 세그먼트보다 먼저 ffmpeg stdin에 들어가 파이프 첫 바이트를
+        오염시킨다(#180 — 오너 실기에서 세그먼트 수만큼 실물 확인, 임시
+        폴더가 exFAT 외장 SD 카드 위였다).
+
+        블랙리스트(예: '.'로 시작하는 것만 제외)는 다른 잡파일 유형(동기화
+        도구의 충돌 사본, 백신 격리 사본 등)에 또 뚫린다 — 우리가 직접 만든
+        세그먼트 이름 패턴(숫자 + 다운로더별 확장자)에 맞는 것만 받는다.
+        걸러진 항목은 조용히 넘기지 않고 경고 로그로 남긴다 — 다음에 다른
+        종류의 오염이 왔을 때 또 못 보는 사태를 막기 위함이다.
+        """
+        pattern = re.compile(
+            r"^\d+(?:" + "|".join(re.escape(ext) for ext in extensions) + r")$"
+        )
+        entries = os.listdir(self.temp_dir)
+        matched = sorted(e for e in entries if pattern.match(e))
+        skipped = sorted(set(entries) - set(matched))
+        if skipped:
+            self.logger.warning(
+                f"임시 폴더에서 세그먼트가 아닌 항목 {len(skipped)}개를 건너뜀"
+                f"(병합에서 제외): {skipped!r}"
+            )
+        return matched
 
     def _remux_streamed(self, segment_paths: list[str]) -> None:
         """세그먼트 파일들을 순서대로 ffmpeg stdin에 흘려 산출물을 만든다 (#92).

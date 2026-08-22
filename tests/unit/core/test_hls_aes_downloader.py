@@ -8,6 +8,7 @@
 키 값은 테스트에서도 의미 없는 더미를 쓴다 — 실제 키는 어디에도 두지 않는다.
 """
 
+import os
 import threading
 
 import pytest
@@ -324,3 +325,36 @@ def test_run_downloads_decrypts_and_merges_in_order(tmp_path, monkeypatch):
     # TS 경로에는 초기화 세그먼트가 없어 병합 수 = 세그먼트 수다
     assert data.merged_segments == SEGMENT_COUNT
     assert not (tmp_path / "CVDv2_temp_out").exists()  # 임시 폴더 삭제 (#105 산출물 파생 이름)
+
+
+def test_stray_dotfile_in_temp_dir_is_excluded_from_merge(tmp_path, monkeypatch):
+    """세그먼트가 아닌 파일이 임시 폴더에 있어도 병합에서 제외되고 경고가 남는다 (#180).
+
+    m3u8(fMP4) 경로와 같은 오염 경로 — TS 경로는 확장자가 달라(``.ts``)
+    화이트리스트를 경로별로 따로 확인해야 한다는 지시에 따른 검증이다.
+    """
+    engine, data, logger, finished, failures, merge_starts = _make_engine(
+        tmp_path, monkeypatch, key_resolver=lambda c, u: KEY
+    )
+
+    def _pollute_then_start_merge():
+        for name in ("._0.ts", ".DS_Store", "notes.txt"):
+            with open(os.path.join(engine.temp_dir, name), "wb") as f:
+                f.write(b"not-a-segment")
+        merge_starts.append(True)
+
+    engine._on_merge_start = _pollute_then_start_merge
+
+    data.model.start()
+    thread = threading.Thread(target=engine.run, daemon=True)
+    thread.start()
+    assert finished.wait(timeout=30), "완료 콜백이 호출되지 않았다"
+    thread.join(timeout=10)
+
+    expected = b"".join(_segment_body(i) for i in range(SEGMENT_COUNT))
+    assert (tmp_path / "out.mp4").read_bytes() == expected  # 오염 없이 정상
+    assert failures == [] and logger.errors == []
+    assert len(logger.warnings) == 1
+    assert "._0.ts" in logger.warnings[0]
+    assert ".DS_Store" in logger.warnings[0]
+    assert "notes.txt" in logger.warnings[0]
