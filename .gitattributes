@@ -1,0 +1,6 @@
+# git archive(GitHub의 "Download ZIP" 등)로 받은 소스에도 커밋 해시를
+# 남기기 위한 export-subst (#195). .git이 없는 소스 zip에서 앱 버전
+# 표시(층 2 — 어느 커밋인가)의 최선 노력 폴백으로 쓰인다.
+# 참고: 일반 clone에서는 치환되지 않고 플레이스홀더($Format:%H$)가
+# 그대로 남는다 — 그 경로는 git이 있으므로 git describe가 우선 쓰인다.
+core/utils/_git_archive_commit.txt export-subst
