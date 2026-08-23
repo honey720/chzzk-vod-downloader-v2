@@ -16,6 +16,9 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 import config.config as config_module  # noqa: E402 — sys.path 삽입 후에 와야 한다
+import core.downloaders.hls_aes_downloader as hls_aes_module  # noqa: E402
+import core.downloaders.m3u8_downloader as m3u8_module  # noqa: E402
+from core.utils.paths import temp_dir_for  # noqa: E402
 
 # 외부 API 응답을 흉내 내는 픽스처 파일 저장 위치
 MOCK_RESPONSES_DIR = Path(__file__).resolve().parent / "fixtures" / "mock_responses"
@@ -49,6 +52,26 @@ def _isolate_real_config(tmp_path, monkeypatch):
     isolated_dir = tmp_path / "_isolated_config"
     monkeypatch.setattr(config_module, "CONFIG_DIR", str(isolated_dir))
     monkeypatch.setattr(config_module, "CONFIG_FILE", str(isolated_dir / "config.json"))
+
+
+# ============ 전역 choose_temp_dir 격리 (#192) ============
+# choose_temp_dir(core/utils/paths.py)은 실제로 파일을 써서(fsync 포함)
+# 속도를 재는 실 디스크 I/O다 — 격리하지 않으면 M3U8Downloader·
+# HlsAesDownloader를 생성하는 기존 테스트 수십 건이 매번 이 프로브를
+# 타 스위트가 느려지고, tmp_path와 시스템 임시 폴더가 우연히 같은
+# 볼륨이 아닌 CI 환경에서는 판정이 흔들려 임시 폴더 위치가 테스트마다
+# 달라질 수 있다(재현성 상실). #192 기능 자체를 검증하는 테스트
+# (tests/unit/core/test_choose_temp_dir.py)만 이 픽스처를 지역적으로
+# 되돌려(monkeypatch로 실제 choose_temp_dir를 복원) 실 프로브를 태운다.
+@pytest.fixture(autouse=True)
+def _isolate_choose_temp_dir(monkeypatch):
+    """기본은 임시 폴더를 산출물 폴더에 그대로 두는 기존 동작으로 고정한다."""
+
+    def _default_temp_dir(output_path: str) -> str:
+        return temp_dir_for(output_path)
+
+    monkeypatch.setattr(m3u8_module, "choose_temp_dir", _default_temp_dir)
+    monkeypatch.setattr(hls_aes_module, "choose_temp_dir", _default_temp_dir)
 
 
 # ============ 실패 GUI 테스트 스크린샷 (#154) ============

@@ -32,7 +32,7 @@ from core.downloaders.base import BaseDownloader
 from core.models.content import Content, ContentType
 from core.models.download_state import DownloadState
 from core.models.plan import DownloadPlan
-from core.utils.paths import temp_dir_for
+from core.utils.paths import choose_temp_dir
 
 
 class M3U8Downloader(BaseDownloader):
@@ -52,8 +52,11 @@ class M3U8Downloader(BaseDownloader):
     def __init__(self, data, logger, **callbacks):
         super().__init__(data, logger, **callbacks)
         # 세그먼트 저장용 임시 폴더 경로 (실패 정리 경로가 참조하므로 실행 전에 확정).
-        # 산출물 파일명에서 파생해 다운로드 간 폴더 공유·상호 삭제를 막는다 (#105)
-        self.temp_dir = temp_dir_for(self.s.output_path)
+        # 산출물 파일명에서 파생해 다운로드 간 폴더 공유·상호 삭제를 막는다 (#105).
+        # 조건이 맞으면 시스템 임시 폴더(로컬 매체)로 보낸다 — 산출물 폴더가
+        # 느린 매체(exFAT SD 카드 등)일 때 읽기·쓰기 경쟁과 AppleDouble
+        # 오버헤드를 우회한다(#192). 산출물 위치 자체는 그대로다
+        self.temp_dir = choose_temp_dir(self.s.output_path)
 
     @classmethod
     def supports(cls, content: Content) -> bool:
