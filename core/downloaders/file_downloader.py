@@ -139,6 +139,14 @@ class FileDownloader(BaseDownloader):
                     resume_offset = 0
                     continue
                 part_start_time = tm.time()
+                # 디스크 쓰기 누적 시간 — 저속 판정에는 더 이상 반영하지 않는다(#191).
+                # f.write()는 OS 페이지 캐시에 즉시 반환되는 버퍼드 쓰기라 실기
+                # 로그(write=0.000s/0.494s=0%)로 기여도가 정확히 0%임을 확인했다 —
+                # 뺄 게 없어 판정에 실질적 영향이 없었다. 그래도 계측·진단
+                # 목적으로는 남긴다(느린 재큐가 실제로 디스크 탓인지 한눈에
+                # 보려는 목적, #191 이슈 기록 참조) — 판정에는 관여하지 않으므로
+                # tm.perf_counter() 측정 자체가 결과를 바꾸지 않는다
+                write_elapsed = 0.0
 
                 with open(self.s.output_path, "r+b") as f:
                     f.seek(range_start)
@@ -149,7 +157,9 @@ class FileDownloader(BaseDownloader):
                             self.s._pause_event.wait()
 
                         if chunk:
+                            write_start = tm.perf_counter()
                             f.write(chunk)
+                            write_elapsed += tm.perf_counter() - write_start
                             downloaded_size += len(chunk)
                             elapsed = tm.time() - part_start_time
 
@@ -167,11 +177,17 @@ class FileDownloader(BaseDownloader):
                                     slow_count += 1
                                     if slow_count > 5:
                                         # 속도가 너무 느리면 스레드 재시작
+                                        ratio = write_elapsed / elapsed * 100 if elapsed > 0 else 0.0
+                                        diagnostic = (
+                                            f"write={write_elapsed:.3f}s/{elapsed:.3f}s={ratio:.0f}%"
+                                        )
                                         with self.lock:
                                             self._record_partial(
                                                 start, end, resume_offset + downloaded_size
                                             )
-                                            self._requeue_slow((start, end), part_num)
+                                            self._requeue_slow(
+                                                (start, end), part_num, diagnostic=diagnostic
+                                            )
                                         return part_num
                                 else:
                                     slow_count = 0
