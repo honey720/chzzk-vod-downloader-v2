@@ -286,9 +286,15 @@ class BaseDownloader(ABC):
         matched = sorted(e for e in entries if pattern.match(e))
         skipped = sorted(set(entries) - set(matched))
         if skipped:
+            # 오염 항목이 세그먼트 수만큼(수천 개) 쏟아지면(#180류) 파일명을
+            # 전부 한 줄에 찍는 게 로그를 수십 KB로 부풀려 읽기 어렵게 만든다
+            # (#191 실기에서 AppleDouble 1011개로 실측) — 개수 + 샘플 몇 개만 남긴다
+            sample_size = 10
+            sample = skipped[:sample_size]
+            more = f" 외 {len(skipped) - sample_size}개 더" if len(skipped) > sample_size else ""
             self.logger.warning(
                 f"임시 폴더에서 세그먼트가 아닌 항목 {len(skipped)}개를 건너뜀"
-                f"(병합에서 제외): {skipped!r}"
+                f"(병합에서 제외): {sample!r}{more}"
             )
         return matched
 

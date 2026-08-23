@@ -155,7 +155,12 @@ class M3U8Downloader(BaseDownloader):
                 response = get_thread_session().get(segment_url, stream=True, timeout=30)
                 response.raise_for_status()
                 part_start_time = tm.time()
-                write_elapsed = 0.0  # 디스크 쓰기에 쓴 누적 시간 — 저속 판정에서 뺀다 (#191)
+                # 디스크 쓰기 누적 시간 — 저속 판정에는 더 이상 반영하지 않는다(#191).
+                # f.write()는 OS 페이지 캐시에 즉시 반환되는 버퍼드 쓰기라 실기
+                # 로그(write=0.000s/0.494s=0%)로 기여도가 정확히 0%임을 확인했다 —
+                # 뺄 게 없어 판정에 실질적 영향이 없었다. 계측·진단 목적으로만
+                # 남긴다(#191 이슈 기록 참조) — 판정에는 관여하지 않는다
+                write_elapsed = 0.0
 
                 temp_file = os.path.join(self.temp_dir, f"{index + 1:0{self.width}d}.m4v")
                 with open(temp_file, "wb") as f:
@@ -170,11 +175,7 @@ class M3U8Downloader(BaseDownloader):
                             f.write(chunk)
                             write_elapsed += tm.perf_counter() - write_start
                             downloaded_size += len(chunk)
-                            # 디스크 쓰기 시간을 빼 순수 수신 시간만 저속 판정에 쓴다
-                            # (#191). tm.perf_counter()는 tm.time()과 별개 시계라
-                            # 박제 테스트(TickingClock이 tm.time만 대체)에는 영향이 없다
-                            total_elapsed = tm.time() - part_start_time
-                            elapsed = total_elapsed - write_elapsed
+                            elapsed = tm.time() - part_start_time
 
                             if elapsed > 0:
                                 speed_kb_s = downloaded_size / elapsed / 1024
@@ -185,14 +186,9 @@ class M3U8Downloader(BaseDownloader):
                                     slow_count += 1
                                     if slow_count > 5:
                                         # 속도가 너무 느리면 스레드 재시작
-                                        ratio = (
-                                            write_elapsed / total_elapsed * 100
-                                            if total_elapsed > 0
-                                            else 0.0
-                                        )
+                                        ratio = write_elapsed / elapsed * 100 if elapsed > 0 else 0.0
                                         diagnostic = (
-                                            f"write={write_elapsed:.3f}s/"
-                                            f"{total_elapsed:.3f}s={ratio:.0f}%"
+                                            f"write={write_elapsed:.3f}s/{elapsed:.3f}s={ratio:.0f}%"
                                         )
                                         with self.lock:
                                             self._requeue_slow(

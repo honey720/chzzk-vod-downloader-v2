@@ -1,17 +1,25 @@
-"""저속 재큐 판정이 디스크 쓰기 지연과 네트워크 수신 지연을 구분하는지 검증 (#191).
+"""저속 재큐의 write_elapsed 진단 로그 검증 (#191).
 
-오너 실측: 같은 VOD·같은 바이트 수인데 exFAT SD 카드에서 재큐 70회,
-맥 내장 SSD에서 0회였다 — 저속 판정의 elapsed가 디스크 쓰기 시간을
-포함해 느린 저장매체를 느린 회선으로 오판했다. 이 파일은 그 파일
-파트(#78)·m3u8 세그먼트 두 경로를 실제 파일 I/O(느린 쓰기를 흉내 내는
-래퍼)로 재현한다 — 저속 재큐 자체의 규칙(임계·연속 6회)은 건드리지
-않는다. 박제된 rules 테스트(test_file_downloader_rules.py·
-test_m3u8_downloader_rules.py, 34건)는 이 파일과 별개로 무수정이다.
+**경위**: 처음엔 write_elapsed를 저속 판정 elapsed에서 빼는 수정을 했으나
+(디스크 쓰기 시간을 네트워크 저속과 구분), 실기 로그가 이 가설을 반증했다
+— ``write=0.000s/0.494s=0%``, 디스크 쓰기가 판정 시간의 정확히 0%였다.
+``f.write()``는 OS 페이지 캐시에 즉시 반환되는 버퍼드 쓰기라(로컬 SSD
+실측: 8192B write 2000회 평균 3.7μs) 뺄 게 애초에 거의 없었다 — 판정을
+바꾸는 건 원리적으로 옳지만 이 경로에서는 사실상 아무 효과가 없었다.
+
+그래서 **판정 자체(elapsed 계산)는 원래대로 되돌렸다** — 디스크 지연도
+여전히 저속 판정에 반영된다(수정 전과 동일). 대신 **write_elapsed 계측과
+진단 로그만 남긴다** — 다음에 비슷한 증상이 실기에서 재현되면, 이 값이
+높게 찍히는지(디스크가 진짜 원인) 낮게 찍히는지(다른 원인 — 예: 시스템
+전체 I/O 경합이 네트워크 수신 자체를 늦추는 경우, 코드만으로는 못 잡는
+경로)로 원인을 빠르게 가릴 수 있다.
+
+박제된 rules 테스트(test_file_downloader_rules.py·
+test_m3u8_downloader_rules.py, 34건)는 이 파일과 별개로 무수정이다 —
+elapsed 계산 자체가 원래 식으로 돌아왔으므로 애초에 영향이 없다.
 
 시계는 실제 `time.time()`/`time.perf_counter()`를 그대로 쓴다(가짜
-시계 미사용) — 네트워크 자체는 인위적 지연 없이 즉시 응답하고, 디스크
-쓰기만 `time.sleep()`으로 실제로 늦춘다. 이렇게 하면 "실제로 걸린
-시간"을 코드가 올바르게 구분하는지를 가짜 시계 없이 실행으로 증명한다.
+시계 미사용) — 디스크 지연은 `time.sleep()`으로 실제로 준다.
 """
 
 import time as real_time
@@ -24,8 +32,7 @@ from core.models.download_data import DownloadData
 
 CHUNK = 8192
 # 청크당 이 지연이면 디스크 쓰기 시간만으로 8192/0.15/1024 ≈ 53 KB/s —
-# 저속 임계(100 KB/s) 아래로 확실히 떨어진다. 네트워크는 지연이 없으므로
-# 순수 수신 시간만 잰다면 이 지연과 무관하게 항상 고속으로 판정돼야 한다.
+# 저속 임계(100 KB/s) 아래로 확실히 떨어져 재큐를 유발한다.
 SLOW_WRITE_DELAY_S = 0.15
 CHUNK_COUNT = 8  # slow_count > 5(6회 연속)를 확실히 넘기는 여유
 
@@ -112,11 +119,18 @@ def _make_data(output_path: str) -> DownloadData:
     return data
 
 
+def _diag_ratio(logger: _RecordingLogger) -> float:
+    diag = next(w for w in logger.warnings if "write=" in w)
+    return float(diag.split("=")[-1].rstrip("%)"))
+
+
 # ================================================================ file 파트 (#78)
 
 
-def test_slow_disk_write_alone_does_not_trigger_requeue(tmp_path, monkeypatch):
-    """네트워크는 즉시 응답하는데 디스크 쓰기만 느리면(수정 후) 저속 재큐가 발동하지 않는다."""
+def test_disk_write_delay_still_triggers_requeue_but_diagnostic_shows_high_ratio(
+    tmp_path, monkeypatch
+):
+    """판정은 되돌렸으므로 디스크 지연도 여전히 재큐를 유발한다 — 그 대신 진단이 원인을 밝힌다."""
     body = b"x" * (CHUNK * CHUNK_COUNT)
     output = tmp_path / "part.bin"
     output.write_bytes(b"\x00" * len(body))
@@ -130,8 +144,8 @@ def test_slow_disk_write_alone_does_not_trigger_requeue(tmp_path, monkeypatch):
 
     engine._download_part(0, len(body) - 1, 0, len(body))
 
-    assert data.restart_threads == 0, "디스크 지연이 저속 재큐를 유발했다 — 회귀"
-    assert data.completed_threads == 1
+    assert data.restart_threads == 1, "판정을 되돌렸으므로 디스크 지연도 재큐를 유발해야 한다"
+    assert _diag_ratio(logger) >= 90.0, "디스크가 원인인데 write 비율이 낮게 찍힘"
 
 
 def test_slow_network_still_triggers_requeue_for_file_part(tmp_path, monkeypatch):
@@ -161,48 +175,15 @@ def test_slow_network_still_triggers_requeue_for_file_part(tmp_path, monkeypatch
     engine._download_part(0, CHUNK * CHUNK_COUNT - 1, 0, CHUNK * CHUNK_COUNT)
 
     assert data.restart_threads == 1, "저속 재큐 기능 자체가 없어지면 안 된다 (#132)"
-    # 진단 로그(#191 임시 진단): 네트워크가 느린 경우이므로 write 비율이
-    # 낮게(0%에 가깝게) 찍혀야 한다 — 실기에서 이 값으로 디스크 기여도를 잰다
-    assert any("write=" in w for w in logger.warnings)
-    diag = next(w for w in logger.warnings if "write=" in w)
-    assert "=0%" in diag or "=1%" in diag, f"디스크가 원인이 아닌데 write 비율이 높게 찍힘: {diag}"
-
-
-def test_diagnostic_shows_high_write_ratio_when_disk_is_the_cause(tmp_path, monkeypatch):
-    """진단 로그(#191): 디스크가 원인이면 write 비율이 높게(대부분) 찍혀야 한다.
-
-    이 테스트는 수정 전 동작을 흉내 내려는 게 아니라 — 저속 임계를 인위적으로
-    낮춰(즉시 트리거) 진단 문자열 자체가 write_elapsed/total_elapsed를
-    올바르게 반영하는지만 확인한다.
-    """
-    body = b"x" * (CHUNK * CHUNK_COUNT)
-    output = tmp_path / "part.bin"
-    output.write_bytes(b"\x00" * len(body))
-
-    data = _make_data(str(output))
-    logger = _RecordingLogger()
-    engine = FileDownloader(data, logger)
-    # 저속 임계를 극단적으로 높여 순수 수신 시간 기준으로도 항상 "저속"으로
-    # 잡히게 한다 — 그래도 write 비율 자체는 실제 측정값을 그대로 반영해야 한다
-    engine._slow_speed_threshold_kb_s = 1e15
-
-    monkeypatch.setattr(fd_module, "get_thread_session", lambda: _InstantSession(body))
-    monkeypatch.setattr(fd_module, "open", _make_slow_open(SLOW_WRITE_DELAY_S), raising=False)
-
-    engine._download_part(0, len(body) - 1, 0, len(body))
-
-    assert data.restart_threads == 1
-    diag = next(w for w in logger.warnings if "write=" in w)
-    # 디스크 지연만 있고 네트워크는 즉시이므로 write가 total의 거의 전부다
-    ratio_str = diag.split("=")[-1].rstrip("%)")
-    assert float(ratio_str) >= 90.0, f"디스크가 원인인데 write 비율이 낮게 찍힘: {diag}"
+    # 진단 로그: 네트워크가 느린 경우이므로 write 비율이 낮게(0%에 가깝게) 찍혀야 한다
+    assert _diag_ratio(logger) <= 5.0, "디스크가 원인이 아닌데 write 비율이 높게 찍힘"
 
 
 # ================================================================ m3u8 세그먼트
 
 
-def test_slow_disk_write_alone_does_not_trigger_requeue_for_segment(tmp_path, monkeypatch):
-    """m3u8 경로도 동일 — 디스크 쓰기만 느리면(수정 후) 저속 재큐가 발동하지 않는다."""
+def test_disk_write_delay_still_triggers_requeue_for_segment(tmp_path, monkeypatch):
+    """m3u8 경로도 동일 — 판정은 원래대로이므로 디스크 지연이 재큐를 유발하고, 진단이 원인을 밝힌다."""
     body = b"x" * (CHUNK * CHUNK_COUNT)
     data = _make_data(str(tmp_path / "out.mp4"))
     data.content_type = "m3u8"
@@ -216,5 +197,5 @@ def test_slow_disk_write_alone_does_not_trigger_requeue_for_segment(tmp_path, mo
 
     engine._download_segment(index=0, segment="seg_0.m4v", part_num=0, total_ranges=len(body))
 
-    assert data.restart_threads == 0, "디스크 지연이 저속 재큐를 유발했다 — 회귀"
-    assert data.completed_threads == 1
+    assert data.restart_threads == 1
+    assert _diag_ratio(logger) >= 90.0, "디스크가 원인인데 write 비율이 낮게 찍힘"
