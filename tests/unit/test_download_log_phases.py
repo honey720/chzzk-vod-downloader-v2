@@ -47,9 +47,14 @@ def test_get_app_version_matches_pyproject_exactly():
 
     구 구현의 importlib.metadata는 버전을 정규화해(2.9.0-rc1 → 2.9.0rc1)
     정본과 어긋났다 — 이제 pyproject 직접 읽기라 완전 일치를 요구한다.
+
+    #195부터 소스 실행은 ``+dev.<커밋>`` 접미사가 붙는다(개발 빌드 구분) —
+    이 가드가 보는 것은 버전 숫자 부분의 일치이지 커밋 접미사가 아니므로,
+    ``+`` 앞부분만 잘라 비교한다.
     """
     config_module.get_app_version.cache_clear()
-    assert config_module.get_app_version() == _pyproject_version()
+    base_version = config_module.get_app_version().split("+", 1)[0]
+    assert base_version == _pyproject_version()
 
 
 def test_version_mirror_constant_matches_pyproject():

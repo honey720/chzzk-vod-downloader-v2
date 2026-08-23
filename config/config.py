@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import platform
+import subprocess
 import tomllib
 from collections import OrderedDict
 
@@ -14,6 +15,66 @@ logger = logging.getLogger(__name__)
 # (tests/unit/test_download_log_phases.py)가 잡는다 — 버전을 올릴 때는
 # pyproject.toml과 이 상수를 함께 갱신할 것.
 APP_VERSION = "2.9.5"
+
+# 빌드 시점의 커밋 스냅샷 (#195, 층 2 — 최선 노력). 정본이 없다 — 소스에
+# 박아 둔 값을 scripts/inject_build_info.py가 Nuitka 빌드 직전에 실제
+# 값으로 고쳐 쓴다. 모든 Nuitka 빌드(로컬·CI 무관)가 이 상수를 채운다 —
+# 릴리즈 마커(IS_RELEASE_BUILD)와 분리된 것이 핵심이다.
+BUILD_COMMIT = "unknown"
+
+# 정식 릴리즈 빌드 여부 (#195, 층 1 — 필수·100% 판별). release.yml만
+# scripts/inject_build_info.py --release로 이 값을 True로 주입한다.
+# 로컬 Nuitka 빌드·소스 실행은 이 상수를 절대 건드리지 않으므로 기본값
+# False가 이미 "주입이 없으면 비정식으로 본다"는 원칙 그 자체다.
+IS_RELEASE_BUILD = False
+
+# git archive(GitHub "Download ZIP" 등)가 export-subst로 커밋 해시를
+# 심어 주는 파일 — .git이 없는 소스 zip에서도 층 2를 살리는 보조 수단.
+_EXPORT_SUBST_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "core",
+    "utils",
+    "_git_archive_commit.txt",
+)
+
+
+def _git_describe(repo_root: str) -> str | None:
+    """소스 실행에서 커밋 정보를 최선 노력으로 얻는다. 실패하면 None."""
+    try:
+        result = subprocess.run(
+            ["git", "describe", "--tags", "--always", "--dirty"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    commit = result.stdout.strip()
+    return commit or None
+
+
+def _exported_commit() -> str | None:
+    """export-subst가 실제로 치환한 경우에만 값을 돌려준다 (git 없는 소스 zip용).
+
+    일반 clone에서는 플레이스홀더(``$Format:%H$``)가 치환되지 않은 채
+    그대로 남는다 — 그 경우는 git이 있을 가능성이 높아 _git_describe가
+    먼저 시도되고, 이 함수는 git이 없을 때만 의미를 갖는다.
+    """
+    try:
+        with open(_EXPORT_SUBST_FILE, encoding="utf-8") as f:
+            content = f.read().strip()
+    except OSError:
+        return None
+    if not content or content.startswith("$Format:"):
+        return None
+    return content[:9]
+
+
+def _source_commit(repo_root: str) -> str:
+    """소스 실행의 커밋 정보 — git describe 우선, 안 되면 export-subst, 둘 다 없으면 unknown."""
+    return _git_describe(repo_root) or _exported_commit() or "unknown"
 
 
 @functools.lru_cache(maxsize=1)
@@ -27,15 +88,24 @@ def get_app_version() -> str:
     구 구현이 우선하던 importlib.metadata는 쓰지 않는다 — Nuitka 번들에
     dist-info가 없어 빌드에서 실패했고(#116의 원인 절반), 소스에서도 버전을
     정규화(2.9.0-rc1 → 2.9.0rc1)해 정본 문자열과 어긋났다.
+
+    **개발 빌드와 정식 릴리즈 구분 (#195)**: 정식 릴리즈(IS_RELEASE_BUILD가
+    release.yml에 의해 True로 주입된 빌드)만 깨끗한 버전 문자열을 돌려준다.
+    그 외(소스 실행·로컬 빌드)는 전부 ``+dev.<커밋>`` 접미사가 붙는다 —
+    소스 실행은 pyproject.toml이 발견된다는 사실 자체가 이미 "빌드 산출물이
+    아니다"를 뜻하므로 무조건 dev 취급한다. 마커 주입이 없으면 곧 비정식으로
+    보는 것이 원칙이라, 이 판정은 git 유무와 무관하게 항상 성립한다.
     """
-    pyproject = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pyproject.toml"
-    )
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    pyproject = os.path.join(repo_root, "pyproject.toml")
     try:
         with open(pyproject, "rb") as f:
-            return tomllib.load(f)["project"]["version"]
+            base = tomllib.load(f)["project"]["version"]
+        return f"{base}+dev.{_source_commit(repo_root)}"
     except (OSError, KeyError, tomllib.TOMLDecodeError):
-        return APP_VERSION
+        if IS_RELEASE_BUILD:
+            return APP_VERSION
+        return f"{APP_VERSION}+dev.{BUILD_COMMIT}"
 
 # 설정 파일 경로 (AppData 디렉토리에 저장)
 APP_NAME = "chzzk-vod-downloader-v2"
