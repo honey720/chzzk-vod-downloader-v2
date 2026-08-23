@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 # 빌드 실행 파일은 이 상수를 쓴다. 정본과의 불일치는 단위 테스트
 # (tests/unit/test_download_log_phases.py)가 잡는다 — 버전을 올릴 때는
 # pyproject.toml과 이 상수를 함께 갱신할 것.
-APP_VERSION = "2.9.5"
+APP_VERSION = "2.9.6-rc1"
 
 # 빌드 시점의 커밋 스냅샷 (#195, 층 2 — 최선 노력). 정본이 없다 — 소스에
 # 박아 둔 값을 scripts/inject_build_info.py가 Nuitka 빌드 직전에 실제
