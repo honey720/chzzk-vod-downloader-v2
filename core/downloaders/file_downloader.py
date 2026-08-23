@@ -139,6 +139,7 @@ class FileDownloader(BaseDownloader):
                     resume_offset = 0
                     continue
                 part_start_time = tm.time()
+                write_elapsed = 0.0  # 디스크 쓰기에 쓴 누적 시간 — 저속 판정에서 뺀다 (#191)
 
                 with open(self.s.output_path, "r+b") as f:
                     f.seek(range_start)
@@ -149,9 +150,16 @@ class FileDownloader(BaseDownloader):
                             self.s._pause_event.wait()
 
                         if chunk:
+                            write_start = tm.perf_counter()
                             f.write(chunk)
+                            write_elapsed += tm.perf_counter() - write_start
                             downloaded_size += len(chunk)
-                            elapsed = tm.time() - part_start_time
+                            # 디스크 쓰기 시간을 빼 순수 수신 시간만 저속 판정에 쓴다
+                            # (#191 — 느린 저장매체를 느린 회선으로 오판해 재큐가
+                            # 재큐를 부르는 악순환 방지). tm.perf_counter()는 tm.time()과
+                            # 별개 시계라 저속 판정 규칙을 박제한 테스트(TickingClock이
+                            # tm.time만 대체)에는 영향이 없다
+                            elapsed = tm.time() - part_start_time - write_elapsed
 
                             if elapsed > 0:
                                 # 속도 판정은 이번 시도가 받은 바이트 기준,

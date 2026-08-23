@@ -155,6 +155,7 @@ class M3U8Downloader(BaseDownloader):
                 response = get_thread_session().get(segment_url, stream=True, timeout=30)
                 response.raise_for_status()
                 part_start_time = tm.time()
+                write_elapsed = 0.0  # 디스크 쓰기에 쓴 누적 시간 — 저속 판정에서 뺀다 (#191)
 
                 temp_file = os.path.join(self.temp_dir, f"{index + 1:0{self.width}d}.m4v")
                 with open(temp_file, "wb") as f:
@@ -165,9 +166,14 @@ class M3U8Downloader(BaseDownloader):
                             self.s._pause_event.wait()
 
                         if chunk:
+                            write_start = tm.perf_counter()
                             f.write(chunk)
+                            write_elapsed += tm.perf_counter() - write_start
                             downloaded_size += len(chunk)
-                            elapsed = tm.time() - part_start_time
+                            # 디스크 쓰기 시간을 빼 순수 수신 시간만 저속 판정에 쓴다
+                            # (#191). tm.perf_counter()는 tm.time()과 별개 시계라
+                            # 박제 테스트(TickingClock이 tm.time만 대체)에는 영향이 없다
+                            elapsed = tm.time() - part_start_time - write_elapsed
 
                             if elapsed > 0:
                                 speed_kb_s = downloaded_size / elapsed / 1024
