@@ -139,3 +139,52 @@ def test_source_commit_falls_back_through_all_layers(monkeypatch, tmp_path):
     monkeypatch.setattr(config_module, "_exported_commit", lambda: None)
 
     assert config_module._source_commit(str(tmp_path)) == "unknown"
+
+
+# ================================================================ 중복 제거 (#195 후속)
+#
+# git describe는 기본적으로 "가장 가까운 태그-거리-g해시"를 낸다. 그 태그가
+# 현재 버전과 같으면 "2.9.5+dev.v2.9.5-6-g55d5f5b"처럼 버전이 두 번
+# 찍힌다 — 아래는 그 중복을 떼는 로직을 사용자가 준 네 가지 예시 그대로
+# 박제한다.
+
+
+def test_dev_version_strips_matching_tag_with_v_prefix():
+    """태그로부터 N커밋: "v2.9.5-6-g55d5f5b" -> "2.9.5+dev.6-g55d5f5b"."""
+    assert config_module._dev_version("2.9.5", "v2.9.5-6-g55d5f5b") == "2.9.5+dev.6-g55d5f5b"
+
+
+def test_dev_version_strips_matching_tag_and_keeps_dirty_suffix():
+    """로컬 수정: "-dirty"는 거리·해시 뒤에 그대로 남는다."""
+    assert (
+        config_module._dev_version("2.9.5", "v2.9.5-6-g55d5f5b-dirty")
+        == "2.9.5+dev.6-g55d5f5b-dirty"
+    )
+
+
+def test_dev_version_keeps_bare_hash_when_tag_not_found():
+    """태그를 못 찾음(--always가 맨해시만 반환) — 겹치는 접두사가 없어 그대로 둔다."""
+    assert config_module._dev_version("2.9.5", "55d5f5b") == "2.9.5+dev.55d5f5b"
+
+
+def test_dev_version_keeps_unknown_as_is():
+    """git 자체가 없음 — "unknown"도 접두사가 없으니 그대로 둔다."""
+    assert config_module._dev_version("2.9.5", "unknown") == "2.9.5+dev.unknown"
+
+
+def test_dev_version_exact_tag_commit_has_no_trailing_dot():
+    """거리 0(정확히 태그 커밋)이면 describe가 태그명만 반환한다 — 빈 상세를 남기지 않는다."""
+    assert config_module._dev_version("2.9.5", "v2.9.5") == "2.9.5+dev"
+    assert "+dev." not in config_module._dev_version("2.9.5", "v2.9.5")
+
+
+def test_dev_version_base_prefix_is_never_dropped():
+    """앞의 버전 부분은 항상 기준선으로 남는다 — 해시만/unknown이어도 버전대는 알 수 있어야 한다."""
+    for commit in ("55d5f5b", "unknown", "v2.9.5-6-g55d5f5b"):
+        result = config_module._dev_version("2.9.5", commit)
+        assert result.startswith("2.9.5+dev")
+
+
+def test_strip_redundant_tag_prefix_without_v_prefix_also_matches():
+    """v 접두사가 없는 태그(그냥 "2.9.5")도 중복으로 인식해 떼어낸다."""
+    assert config_module._strip_redundant_tag_prefix("2.9.5", "2.9.5-6-g55d5f5b") == "6-g55d5f5b"

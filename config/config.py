@@ -77,6 +77,38 @@ def _source_commit(repo_root: str) -> str:
     return _git_describe(repo_root) or _exported_commit() or "unknown"
 
 
+def _strip_redundant_tag_prefix(base: str, commit: str) -> str:
+    """git describe 결과에서 base 버전과 중복되는 태그 부분을 제거한다 (#195 후속).
+
+    describe 기본 형태는 "가장 가까운 태그(v 접두 가능)-거리-g해시"라, 그
+    태그가 base 버전과 같으면 표시에서 버전이 두 번 찍힌다
+    (``2.9.5+dev.v2.9.5-6-g55d5f5b``). 접두사가 겹치면 떼고 나머지(거리
+    -g해시, 더티면 -dirty까지)만 남긴다.
+
+    태그를 못 찾아 ``--always``가 대신 내놓은 맨해시(``55d5f5b``)나 git
+    자체가 없어 ``"unknown"``인 경우는 애초에 겹치는 접두사가 없으므로
+    그대로 통과한다 — 이 경우 해시/unknown만 있으면 어느 버전대인지 알 수
+    없으므로, 호출부(_dev_version)가 base를 앞에 붙여 기준선을 보존한다.
+    """
+    for prefix in (f"v{base}", base):
+        if commit == prefix:
+            return ""
+        if commit.startswith(prefix + "-"):
+            return commit[len(prefix) + 1 :]
+    return commit
+
+
+def _dev_version(base: str, commit: str) -> str:
+    """base 버전에 커밋 상세를 붙여 표시 문자열을 만든다 (#195).
+
+    정확히 태그 커밋이라 거리 0으로 상세가 빈 문자열이 되면(describe가
+    태그명만 반환) ``+dev.``로 끝나는 빈 세그먼트를 남기지 않고 ``+dev``만
+    붙인다.
+    """
+    detail = _strip_redundant_tag_prefix(base, commit)
+    return f"{base}+dev.{detail}" if detail else f"{base}+dev"
+
+
 @functools.lru_cache(maxsize=1)
 def get_app_version() -> str:
     """앱 버전 문자열을 반환한다 (#110 — 다운로드 로그 시작 정보용).
@@ -101,11 +133,11 @@ def get_app_version() -> str:
     try:
         with open(pyproject, "rb") as f:
             base = tomllib.load(f)["project"]["version"]
-        return f"{base}+dev.{_source_commit(repo_root)}"
+        return _dev_version(base, _source_commit(repo_root))
     except (OSError, KeyError, tomllib.TOMLDecodeError):
         if IS_RELEASE_BUILD:
             return APP_VERSION
-        return f"{APP_VERSION}+dev.{BUILD_COMMIT}"
+        return _dev_version(APP_VERSION, BUILD_COMMIT)
 
 # 설정 파일 경로 (AppData 디렉토리에 저장)
 APP_NAME = "chzzk-vod-downloader-v2"
