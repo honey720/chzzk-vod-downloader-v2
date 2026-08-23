@@ -58,6 +58,10 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
 
+      - name: Inject build info (release marker)
+        shell: bash
+        run: uv run python scripts/inject_build_info.py --release
+
       - name: Build (Windows)
         if: runner.os == 'Windows'
         shell: bash
