@@ -212,3 +212,65 @@ def test_run_error_hides_raw_exception_details(monkeypatch):
 
     assert captured == [f"{VOD_URL}\nFailed to fetch video information"]
     assert "secret detail" not in captured[0]
+
+
+def test_run_failure_does_not_leak_cookie_values_to_log_or_error_signal(monkeypatch, caplog):
+    """실패 경로에서도 쿠키 값은 error 시그널·로그(traceback 포함) 어디에도 남지 않는다 (SPEC §7.2).
+
+    run()의 실패 분기는 유저 시그널은 일반 안내로 가리지만(#126) 디버깅을 위해
+    logger.exception으로 원시 예외·traceback은 그대로 남긴다(주석 참조). 그
+    traceback 안에 쿠키 값이 실리지 않는다는 것은 지금까지 검증된 적이 없다 —
+    이 값이 흘러 들어가는 경로(예: 예외 메시지에 cookies를 실수로 포함)가
+    생기면 이 테스트가 잡아야 한다.
+    """
+    secret_cookies = {"NID_AUT": "SECRET-AUT-9f8e7d6c", "NID_SES": "SECRET-SES-1a2b3c4d"}
+
+    from core.services import metadata_service
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(metadata_service, "fetch_content", boom)
+    worker = ContentWorker(VOD_URL, secret_cookies, "downloads")
+    captured: list[str] = []
+    worker.error.connect(captured.append)
+
+    with caplog.at_level("DEBUG"):
+        worker.run()
+
+    log_text = "\n".join(record.getMessage() for record in caplog.records)
+    for value in secret_cookies.values():
+        assert value not in captured[0]
+        assert value not in log_text
+
+
+def test_run_success_does_not_leak_cookie_values_to_log(monkeypatch, caplog):
+    """정상 경로(쿠키가 실제로 매니페스트 요청까지 전달됨)에서도 로그에 쿠키 값이 남지 않는다."""
+    secret_cookies = {"NID_AUT": "SECRET-AUT-9f8e7d6c", "NID_SES": "SECRET-SES-1a2b3c4d"}
+
+    def fake_get_video_info(video_no, cookies):
+        return VideoInfo(
+            video_id="video-id",
+            in_key="in-key",
+            adult=False,
+            vod_status="ABR_HLS",
+            live_rewind_playback_json=None,
+            membership_benefit_type="MEMBER_ONLY",
+            encryption_type=None,
+            metadata={"title": "t", "duration": 1},
+        )
+
+    def fake_get_dash_manifest(video_id, in_key, cookies=None):
+        return [[1080, "https://example.invalid/1080"]], 1080, "https://example.invalid/1080"
+
+    monkeypatch.setattr(NetworkManager, "get_video_info", fake_get_video_info)
+    monkeypatch.setattr(NetworkManager, "get_video_dash_manifest", fake_get_dash_manifest)
+
+    worker = ContentWorker(VOD_URL, secret_cookies, "downloads")
+    with caplog.at_level("DEBUG"):
+        results, errors = _run_and_capture(worker)
+
+    assert errors == []
+    log_text = "\n".join(record.getMessage() for record in caplog.records)
+    for value in secret_cookies.values():
+        assert value not in log_text

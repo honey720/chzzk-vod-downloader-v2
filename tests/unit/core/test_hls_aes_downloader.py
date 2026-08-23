@@ -302,6 +302,46 @@ def test_wrong_key_fails_fast_instead_of_writing_garbage(tmp_path, monkeypatch):
     assert not (tmp_path / "out.mp4").exists()
 
 
+def test_wrong_key_failure_does_not_leak_key_value(tmp_path, monkeypatch):
+    """키가 틀려 실패해도 실제 키 바이트가 실패 예외·로그 어디에도 남지 않는다 (SPEC §8.1).
+
+    decrypt.py의 예외 메시지는 길이만 담아 이미 안전하지만(코드 확인), 그
+    사실을 지금까지 겨냥해 검증한 테스트는 없었다 — 향후 누군가 디버깅
+    편의로 키 값을 메시지에 실으면(예: f"key={key}") 이 테스트가 잡아야 한다.
+    올바른 키·틀린 키 둘 다(하나라도 새면 실패)를 검사한다.
+    """
+    wrong_key = bytes([0xFF]) * 16
+    engine, data, logger, finished, failures, _ = _make_engine(
+        tmp_path, monkeypatch, key_resolver=lambda c, u: wrong_key
+    )
+
+    data.model.start()
+    engine.run()
+
+    assert not finished.is_set()
+    failure_text = "\n".join(str(e) for e in failures)
+    log_text = "\n".join(logger.errors) + "\n".join(logger.warnings)
+    for secret in (wrong_key, KEY):
+        assert secret.hex() not in failure_text
+        assert secret.hex() not in log_text
+        assert repr(secret) not in failure_text
+        assert repr(secret) not in log_text
+
+
+def test_short_key_failure_does_not_leak_key_value(tmp_path, monkeypatch):
+    """리졸버가 길이가 틀린 키를 주면 값이 아니라 길이만 실패 메시지에 남는다 (SPEC §8.1)."""
+    short_key = b"\xab\xcd\xef"  # 16바이트가 아닌 더미
+    engine, data, *_ = _make_engine(tmp_path, monkeypatch, key_resolver=lambda c, u: short_key)
+
+    with pytest.raises(DecryptionError) as exc_info:
+        engine.prepare(data.content)
+
+    message = str(exc_info.value)
+    assert short_key.hex() not in message
+    assert str(short_key) not in message
+    assert "길이" in message or "3" in message  # 값 대신 길이 정보만 담겼는지 정황 확인
+
+
 # ================================================================ 전체 파이프라인
 
 

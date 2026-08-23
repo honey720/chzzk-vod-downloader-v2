@@ -85,6 +85,12 @@ def test_fail_transition():
         (["start", "fail"], "start"),
         (["start", "fail"], "resume"),
         (["start", "fail"], "finish"),
+        # FAILED → WAITING은 되돌릴 수 없다(SPEC §4.2) — stop()으로도 불가.
+        # 엔진 종료(stop)와 실패 표시(fail)를 같은 신호로 되돌리면 #185류
+        # 사고(보존해야 할 세그먼트가 도로 삭제됨)가 재발한다 (#193 감사에서
+        # 이 케이스만 빠져 있음을 실측 — 몽키패치로 허용해봐도 기존 24개
+        # 테스트가 전부 통과했다)
+        (["start", "fail"], "stop"),
     ],
 )
 def test_invalid_transitions_raise(setup: list[str], invalid: str):
