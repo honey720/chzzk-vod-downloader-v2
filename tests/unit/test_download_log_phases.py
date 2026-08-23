@@ -67,6 +67,21 @@ def test_version_mirror_constant_matches_pyproject():
     assert config_module.APP_VERSION == _pyproject_version()
 
 
+def test_build_marker_constants_stay_at_source_defaults():
+    """저장소 소스의 BUILD_COMMIT·IS_RELEASE_BUILD는 항상 기본값이어야 한다 (#195).
+
+    이 두 상수는 scripts/inject_build_info.py가 빌드 직전에만 실제 값으로
+    고쳐 쓴다 — 그 결과가 커밋에 섞여 들어오면 안 된다. 특히
+    ``IS_RELEASE_BUILD = True``가 실수로 커밋되면, 그 순간부터 소스 실행
+    포함 모든 실행이 정식 릴리즈로 위장하고 로그에 깨끗한 버전이 찍혀
+    아무도 눈치채지 못한다 — 이 기능(#195)의 목적 자체가 조용히
+    무효화되는 자리다. #116의 APP_VERSION 일치 가드와 같은 성격·같은
+    자리이며, 매 CI 실행마다 잡는다.
+    """
+    assert config_module.IS_RELEASE_BUILD is False
+    assert config_module.BUILD_COMMIT == "unknown"
+
+
 def test_phase_lines_parse_and_old_lines_still_parse(tmp_path, monkeypatch):
     """완료 조건: 새 줄이 파싱되고, 기존 요약 스크립트 지표도 계속 동작한다."""
     logger = _make_logger(tmp_path, monkeypatch)
