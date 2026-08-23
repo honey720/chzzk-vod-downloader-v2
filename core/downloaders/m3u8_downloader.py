@@ -173,7 +173,8 @@ class M3U8Downloader(BaseDownloader):
                             # 디스크 쓰기 시간을 빼 순수 수신 시간만 저속 판정에 쓴다
                             # (#191). tm.perf_counter()는 tm.time()과 별개 시계라
                             # 박제 테스트(TickingClock이 tm.time만 대체)에는 영향이 없다
-                            elapsed = tm.time() - part_start_time - write_elapsed
+                            total_elapsed = tm.time() - part_start_time
+                            elapsed = total_elapsed - write_elapsed
 
                             if elapsed > 0:
                                 speed_kb_s = downloaded_size / elapsed / 1024
@@ -184,8 +185,19 @@ class M3U8Downloader(BaseDownloader):
                                     slow_count += 1
                                     if slow_count > 5:
                                         # 속도가 너무 느리면 스레드 재시작
+                                        ratio = (
+                                            write_elapsed / total_elapsed * 100
+                                            if total_elapsed > 0
+                                            else 0.0
+                                        )
+                                        diagnostic = (
+                                            f"write={write_elapsed:.3f}s/"
+                                            f"{total_elapsed:.3f}s={ratio:.0f}%"
+                                        )
                                         with self.lock:
-                                            self._requeue_slow((index, segment), part_num)
+                                            self._requeue_slow(
+                                                (index, segment), part_num, diagnostic=diagnostic
+                                            )
                                         return part_num
                                 else:
                                     slow_count = 0

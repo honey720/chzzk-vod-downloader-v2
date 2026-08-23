@@ -574,12 +574,21 @@ class BaseDownloader(ABC):
         self._on_failed(exc)
         self.model.stop()
 
-    def _requeue_slow(self, item, part_num: int) -> None:
-        """저속으로 중도 중단한 작업을 재시작하도록 등록."""
+    def _requeue_slow(self, item, part_num: int, diagnostic: str = "") -> None:
+        """저속으로 중도 중단한 작업을 재시작하도록 등록.
+
+        diagnostic — 임시 진단용(#191 실기 확인). write_elapsed/total_elapsed
+        비율을 문자열로 받아 경고 로그에 덧붙인다. 디스크 쓰기 시간을 뺀
+        수정(#191)이 실기에서 재큐를 얼마나 줄이는지 애매했던 재현 결과
+        (70→62회, 11% 감소)의 원인이 "write()가 OS 페이지 캐시에 즉시
+        반환돼 write_elapsed가 애초에 작다"인지, 다른 요인인지 실측으로
+        가리기 위함 — 최종 커밋에 남길지는 실기 결과를 보고 판단한다.
+        """
         self.s.restart_threads += 1
         self.s.threads_progress[part_num] = 0
         self.s.remaining_ranges.append(item)
-        self.logger.warning(f"Part {part_num} stopped due to slow speed, will retry")
+        suffix = f" ({diagnostic})" if diagnostic else ""
+        self.logger.warning(f"Part {part_num} stopped due to slow speed, will retry{suffix}")
 
     def _check_speed_and_update_progress(
         self, part_num: int, downloaded_size: int, total_size: int, speed_kb_s: float

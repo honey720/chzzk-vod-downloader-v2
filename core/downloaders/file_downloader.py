@@ -159,7 +159,8 @@ class FileDownloader(BaseDownloader):
                             # 재큐를 부르는 악순환 방지). tm.perf_counter()는 tm.time()과
                             # 별개 시계라 저속 판정 규칙을 박제한 테스트(TickingClock이
                             # tm.time만 대체)에는 영향이 없다
-                            elapsed = tm.time() - part_start_time - write_elapsed
+                            total_elapsed = tm.time() - part_start_time
+                            elapsed = total_elapsed - write_elapsed
 
                             if elapsed > 0:
                                 # 속도 판정은 이번 시도가 받은 바이트 기준,
@@ -175,11 +176,22 @@ class FileDownloader(BaseDownloader):
                                     slow_count += 1
                                     if slow_count > 5:
                                         # 속도가 너무 느리면 스레드 재시작
+                                        ratio = (
+                                            write_elapsed / total_elapsed * 100
+                                            if total_elapsed > 0
+                                            else 0.0
+                                        )
+                                        diagnostic = (
+                                            f"write={write_elapsed:.3f}s/"
+                                            f"{total_elapsed:.3f}s={ratio:.0f}%"
+                                        )
                                         with self.lock:
                                             self._record_partial(
                                                 start, end, resume_offset + downloaded_size
                                             )
-                                            self._requeue_slow((start, end), part_num)
+                                            self._requeue_slow(
+                                                (start, end), part_num, diagnostic=diagnostic
+                                            )
                                         return part_num
                                 else:
                                     slow_count = 0

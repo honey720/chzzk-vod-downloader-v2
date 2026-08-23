@@ -89,6 +89,12 @@ class _InstantSession:
 
 
 class _RecordingLogger:
+    def __init__(self):
+        self.warnings: list[str] = []
+
+    def warning(self, message: str):
+        self.warnings.append(message)
+
     def __getattr__(self, name):
         return lambda *args, **kwargs: None
 
@@ -155,6 +161,41 @@ def test_slow_network_still_triggers_requeue_for_file_part(tmp_path, monkeypatch
     engine._download_part(0, CHUNK * CHUNK_COUNT - 1, 0, CHUNK * CHUNK_COUNT)
 
     assert data.restart_threads == 1, "저속 재큐 기능 자체가 없어지면 안 된다 (#132)"
+    # 진단 로그(#191 임시 진단): 네트워크가 느린 경우이므로 write 비율이
+    # 낮게(0%에 가깝게) 찍혀야 한다 — 실기에서 이 값으로 디스크 기여도를 잰다
+    assert any("write=" in w for w in logger.warnings)
+    diag = next(w for w in logger.warnings if "write=" in w)
+    assert "=0%" in diag or "=1%" in diag, f"디스크가 원인이 아닌데 write 비율이 높게 찍힘: {diag}"
+
+
+def test_diagnostic_shows_high_write_ratio_when_disk_is_the_cause(tmp_path, monkeypatch):
+    """진단 로그(#191): 디스크가 원인이면 write 비율이 높게(대부분) 찍혀야 한다.
+
+    이 테스트는 수정 전 동작을 흉내 내려는 게 아니라 — 저속 임계를 인위적으로
+    낮춰(즉시 트리거) 진단 문자열 자체가 write_elapsed/total_elapsed를
+    올바르게 반영하는지만 확인한다.
+    """
+    body = b"x" * (CHUNK * CHUNK_COUNT)
+    output = tmp_path / "part.bin"
+    output.write_bytes(b"\x00" * len(body))
+
+    data = _make_data(str(output))
+    logger = _RecordingLogger()
+    engine = FileDownloader(data, logger)
+    # 저속 임계를 극단적으로 높여 순수 수신 시간 기준으로도 항상 "저속"으로
+    # 잡히게 한다 — 그래도 write 비율 자체는 실제 측정값을 그대로 반영해야 한다
+    engine._slow_speed_threshold_kb_s = 1e15
+
+    monkeypatch.setattr(fd_module, "get_thread_session", lambda: _InstantSession(body))
+    monkeypatch.setattr(fd_module, "open", _make_slow_open(SLOW_WRITE_DELAY_S), raising=False)
+
+    engine._download_part(0, len(body) - 1, 0, len(body))
+
+    assert data.restart_threads == 1
+    diag = next(w for w in logger.warnings if "write=" in w)
+    # 디스크 지연만 있고 네트워크는 즉시이므로 write가 total의 거의 전부다
+    ratio_str = diag.split("=")[-1].rstrip("%)")
+    assert float(ratio_str) >= 90.0, f"디스크가 원인인데 write 비율이 낮게 찍힘: {diag}"
 
 
 # ================================================================ m3u8 세그먼트
