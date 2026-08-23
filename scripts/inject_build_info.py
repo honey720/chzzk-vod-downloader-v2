@@ -20,7 +20,14 @@ IS_RELEASE_BUILD 두 상수를 실제 값으로 고쳐 쓴다.
 import argparse
 import re
 import subprocess
+import sys
 from pathlib import Path
+
+# Windows 러너의 stdout은 파이프로 리다이렉트되면 로케일 기반 인코딩(cp1252 등)
+# 으로 열려 한글 출력이 UnicodeEncodeError로 죽는다 — macOS·Linux는 stdout이
+# 기본 UTF-8이라 안 보이는 문제였다. Python 3.13은 아직 Windows UTF-8 모드가
+# 기본이 아니므로(PEP 686은 3.15부터) 여기서 명시적으로 고정한다 (#204).
+sys.stdout.reconfigure(encoding="utf-8")
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "config.py"
 
