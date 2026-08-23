@@ -20,6 +20,11 @@ from pathlib import Path
 
 import requests
 
+# Windows 콘솔의 기본 로케일 인코딩(cp1252 등)은 한글을 표현하지 못해 이 스크립트의
+# 한글 print()가 UnicodeEncodeError로 죽을 수 있다 — inject_build_info.py가 CI에서
+# 실제로 겪은 문제와 같은 부류다 (#204).
+sys.stdout.reconfigure(encoding="utf-8")
+
 # scripts/ 하위에서 실행해도 저장소 루트의 config·core를 import할 수 있게 한다
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 

@@ -21,6 +21,12 @@ import re
 import sys
 from pathlib import Path
 
+# Windows 콘솔의 기본 로케일 인코딩(cp1252 등)은 한글을 표현하지 못해 이 스크립트의
+# 한글 print()가 UnicodeEncodeError로 죽을 수 있다 — inject_build_info.py가 CI에서
+# 실제로 겪은 문제와 같은 부류다 (#204).
+sys.stdout.reconfigure(encoding="utf-8")
+sys.stderr.reconfigure(encoding="utf-8")
+
 # 메시지 본문 패턴 (download/logger.py의 메시지 형식과 1:1).
 # 줄 프리픽스(시각·레벨·스레드 이름)는 의도적으로 매칭하지 않는다.
 _PATTERNS = {
