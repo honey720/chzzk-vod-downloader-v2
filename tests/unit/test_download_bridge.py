@@ -336,6 +336,77 @@ class TestTranslateInjection:
         ]
 
 
+class TestFinishedFailedCallbackHooks:
+    """on_finished/on_failed 훅 (#221) — 미주입 시 하위 호환, 주입 시 JS 통지보다 먼저 호출된다."""
+
+    def test_not_injected_is_backward_compatible(self, bridge, spy):
+        """기본값(None)이면 지금처럼 JS 통지만 하고 끝난다 — #210 계약 무변화."""
+        item = _make_item()
+        bridge.start("item-1", item)
+
+        _submission(bridge)["on_finished"]()
+        _drain(bridge._dispatcher)
+
+        assert spy.calls == ['window.__cvdv2_onFinished(...["item-1", "00:01:01"])']
+
+    def test_on_finished_receives_item_and_download_time_before_js_dispatch(
+        self, dispatcher, spy, monkeypatch
+    ):
+        monkeypatch.setattr("app.download_bridge.DownloadLogger", FakeLogger)
+        calls = []
+
+        def on_finished(item, download_time):
+            calls.append((item, download_time))
+            # 콜백 시점엔 아직 JS 통지 전이어야 한다(순서 계약)
+            assert spy.calls == []
+
+        bridge = WebDownloadBridge(dispatcher, service=FakeService(), on_finished=on_finished)
+        item = _make_item()
+        bridge.start("item-1", item)
+
+        _submission(bridge)["on_finished"]()
+        _drain(dispatcher)
+
+        assert calls == [(item, "00:01:01")]
+        assert spy.calls == ['window.__cvdv2_onFinished(...["item-1", "00:01:01"])']
+
+    def test_on_failed_receives_item_and_translated_message_before_js_dispatch(
+        self, dispatcher, spy, monkeypatch
+    ):
+        monkeypatch.setattr("app.download_bridge.DownloadLogger", FakeLogger)
+        calls = []
+
+        def on_failed(item, message):
+            calls.append((item, message))
+            assert spy.calls == []
+
+        bridge = WebDownloadBridge(dispatcher, service=FakeService(), on_failed=on_failed)
+        item = _make_item()
+        bridge.start("item-1", item)
+
+        _submission(bridge)["on_failed"](OSError(28, "No space left"))
+        _drain(dispatcher)
+
+        assert calls == [(item, "Failed to save file")]
+        assert spy.calls == ['window.__cvdv2_onFailed(...["item-1", "Failed to save file"])']
+
+    def test_on_finished_not_called_after_user_cleanup(self, dispatcher, spy, monkeypatch):
+        """handle이 None(유저가 먼저 정리)이면 훅도 호출되지 않는다 — 기존 가드 무변화."""
+        monkeypatch.setattr("app.download_bridge.DownloadLogger", FakeLogger)
+        calls = []
+        bridge = WebDownloadBridge(dispatcher, service=FakeService(), on_finished=calls.append)
+        item = _make_item()
+        bridge.start("item-1", item)
+        on_finished_cb = _submission(bridge)["on_finished"]
+        bridge.handle = None  # 완료 직후 사용자가 중지·정리를 마친 경우 흉내
+
+        on_finished_cb()
+        _drain(dispatcher)
+
+        assert calls == []
+        assert spy.calls == []
+
+
 class _FakeHttpResponse:
     def __init__(self, status_code: int):
         self.status_code = status_code
