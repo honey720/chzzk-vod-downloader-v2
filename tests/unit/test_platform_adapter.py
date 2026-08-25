@@ -46,7 +46,11 @@ class TestOpenFolder:
     def test_windows_uses_os_startfile(self, monkeypatch):
         calls = []
         monkeypatch.setattr(adapter.platform, "system", lambda: "Windows")
-        monkeypatch.setattr(adapter.os, "startfile", lambda path: calls.append(path))
+        # os.startfile은 Windows에만 존재하는 속성이다 — CI의 Linux/macOS 러너에서는
+        # 애초에 os 모듈에 이 이름이 없어 monkeypatch.setattr이 기본값(raising=True)으로
+        # AttributeError를 던진다 (#181과 같은 함정이 이번엔 테스트 코드 쪽에서 재현됨).
+        # raising=False로 "없는 속성도 만들어서 패치"하도록 허용해야 3-OS 전부에서 돈다.
+        monkeypatch.setattr(adapter.os, "startfile", lambda path: calls.append(path), raising=False)
 
         assert adapter.open_folder("C:/logs") is True
         assert calls == ["C:/logs"]
@@ -59,7 +63,7 @@ class TestOpenFolder:
         def boom(path):
             raise OSError("연결된 프로그램 없음")
 
-        monkeypatch.setattr(adapter.os, "startfile", boom)
+        monkeypatch.setattr(adapter.os, "startfile", boom, raising=False)
 
         assert adapter.open_folder("C:/missing") is False
 
