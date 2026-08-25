@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QMainWindow, QMessageBox, QFileDialog, QApplicatio
 from PySide6.QtCore import QStandardPaths, QTimer
 
 from app.viewmodels.download_viewmodel import DownloadViewModel
-from app.viewmodels.path_gates import check_fetch_path, check_remember_path
+from app.viewmodels.path_gates import check_fetch_path, check_remember_path, normalize_path
 from config.dialog import SettingDialog
 from content.data import ContentItem
 from content.manager import ContentManager
@@ -131,8 +131,12 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         cookies = config.load_cookies()  # 쿠키 조립의 단일 지점 (#170)
         self.linkStatusLabel.setText(self.tr('Fetching resolutions...'))
 
-        # 결과 처리
-        downloadPath = self.downloadPathInput.text().strip() or os.getcwd()
+        # 결과 처리 — 상대 경로 입력은 cwd 기준으로 조용히 저장되던 문제를
+        # 판정 전에 정규화해 막는다 (#146 ⓑ-4, #219). 화면 표시도 실제
+        # 사용값과 맞춘다 — onFindPath가 다이얼로그 결과를 setText하는 것과
+        # 같은 관례
+        downloadPath = normalize_path(self.downloadPathInput.text().strip() or os.getcwd())
+        self.downloadPathInput.setText(downloadPath)
 
         # 판정은 path_gates가 단일 지점으로 담당한다 (#169 — #146 ⓑ1)
         if not check_fetch_path(downloadPath):
@@ -205,8 +209,9 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         실행의 초기값 ①이 된다. isdir 관문(판정은 path_gates 단일 지점,
         #169)은 커밋된 미완성·오타 경로가 초기값을 오염시키지 않게 한다.
         """
-        path = self.downloadPathInput.text().strip()
+        path = normalize_path(self.downloadPathInput.text().strip())
         if check_remember_path(path):
+            self.downloadPathInput.setText(path)
             self._rememberDownloadPath(path)
 
     def _rememberDownloadPath(self, path: str) -> None:

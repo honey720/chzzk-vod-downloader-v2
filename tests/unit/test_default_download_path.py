@@ -216,6 +216,45 @@ def test_committed_missing_path_is_not_persisted(window_factory, config_store, t
     assert all("downloadPath" not in s or s["downloadPath"] == "" for s in saves)
 
 
+def test_relative_path_is_normalized_before_fetch(
+    window_factory, config_store, tmp_path, monkeypatch, qapp
+):
+    """상대 경로 입력은 cwd 기준 절대 경로로 정규화된 뒤 판정·저장·표시된다 (#146 ⓑ-4, #219)."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "relative dir").mkdir()
+    expected = os.path.abspath("relative dir")
+    _store, saves = config_store
+    make, _warnings = window_factory
+    win = make()
+    win.downloadPathInput.setText("relative dir")
+    win.urlInput.setText("https://chzzk.naver.com/video/1")
+
+    win.fetchButton.click()
+    win.contentManager.threadpool.waitForDone(8000)
+    qapp.processEvents()
+
+    assert win.downloadPathInput.text() == expected
+    assert saves and saves[-1]["downloadPath"] == expected
+
+
+def test_relative_path_is_normalized_on_editing_finished(
+    window_factory, config_store, tmp_path, monkeypatch
+):
+    """입력 확정(editingFinished)에서도 상대 경로가 절대화된 뒤 저장된다 (#146 ⓑ-4, #219)."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "typed rel").mkdir()
+    expected = os.path.abspath("typed rel")
+    _store, saves = config_store
+    make, _warnings = window_factory
+    win = make()
+    win.downloadPathInput.setText("typed rel")
+
+    win.downloadPathInput.editingFinished.emit()
+
+    assert win.downloadPathInput.text() == expected
+    assert saves and saves[-1]["downloadPath"] == expected
+
+
 def test_valid_path_is_persisted_on_close(window_factory, config_store, tmp_path):
     """확정(포커스 이탈) 없이 창을 닫아도 실존 폴더면 저장된다 (#165).
 
