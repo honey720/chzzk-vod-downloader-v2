@@ -24,6 +24,15 @@
 주입받는다(기본값은 항등 함수 — 키를 그대로 반환). `#212`(i18n JSON
 카탈로그)가 아직 없으므로 지금은 영문 키가 그대로 나갈 수 있다 — A4 완료
 후 실제 조회 함수를 주입하면 된다.
+
+**완료·실패 콜백 훅 (#221, Phase B2)**: `on_finished`/`on_failed`는 이 PR이
+의도적으로 열어둔 인터페이스였다 — 기존 Qt 경로에서 `QtDownloadBridge`의
+`finished`/`failed` Signal이 `DownloadViewModel`을 거쳐
+`ContentViewModel.finish`/`.fail`(`downloadState` 전이 + 배치 체인)에
+연결되던 자리다. 주입하지 않으면(기본값 `None`) 지금처럼 JS 통지만
+하고 끝난다 — 하위 호환. 주입하면 **JS 통지보다 먼저** 백엔드 스레드에서
+호출된다(`content.finish`가 하던 순서와 동일하게, 상태가 반영된 뒤 JS가
+통지받도록).
 """
 
 import logging
@@ -83,12 +92,16 @@ class WebDownloadBridge:
         dispatcher: Dispatcher,
         service: DownloadService | None = None,
         translate: Callable[[str], str] | None = None,
+        on_finished: Callable[[ContentItem, str], None] | None = None,
+        on_failed: Callable[[ContentItem, str], None] | None = None,
     ):
         self._dispatcher = dispatcher
         self._service = service or DownloadService(
             base_url_resolver=resolve_m3u8_base_url, key_resolver=resolve_aes_key
         )
         self._translate = translate or (lambda key: key)
+        self._on_finished = on_finished
+        self._on_failed = on_failed
         self.handle = None
         self.task: DownloadTask | None = None
         self.item: ContentItem | None = None
@@ -188,8 +201,11 @@ class WebDownloadBridge:
             # 완료 직후 사용자가 중지·정리를 마친 경우
             return
         item_id = self.item_id
+        item = self.item
         download_time = strftime("%H:%M:%S", gmtime(self.handle.elapsed_seconds()))
         self.removeThreads()
+        if self._on_finished is not None:
+            self._on_finished(item, download_time)
         self._dispatcher.dispatch_js("window.__cvdv2_onFinished", item_id, download_time)
 
     def _on_engine_failed(self, exc: BaseException) -> None:
@@ -200,11 +216,15 @@ class WebDownloadBridge:
         if self.handle is None:
             return
         item_id = self.item_id
+        item = self.item
         if self.task is not None:
             self.task.stop()
         self.handle = None
         self.task = None
-        self._dispatcher.dispatch_js("window.__cvdv2_onFailed", item_id, self._failure_message(exc))
+        message = self._failure_message(exc)
+        if self._on_failed is not None:
+            self._on_failed(item, message)
+        self._dispatcher.dispatch_js("window.__cvdv2_onFailed", item_id, message)
 
     def _failure_message(self, exc: BaseException) -> str:
         """실패 사유를 유저 표시용 문자열로 바꾼다. 매핑에 없으면 빈 문자열."""

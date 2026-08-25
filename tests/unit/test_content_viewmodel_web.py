@@ -257,7 +257,7 @@ class TestDownloadItemWriteGate:
             },
         )
         requested = []
-        vm._on_download_requested = requested.append
+        vm.on_download_requested = requested.append
         item = _make_item(DownloadState.WAITING, "쓰기 불가 항목", str(tmp_path))
         vm.items.append(item)
 
@@ -282,7 +282,7 @@ class TestDownloadItemWriteGate:
 
     def test_writable_path_proceeds_to_download(self, vm, tmp_path):
         requested = []
-        vm._on_download_requested = requested.append
+        vm.on_download_requested = requested.append
         item = _make_item(DownloadState.WAITING, "정상 항목", str(tmp_path))
 
         vm.items.append(item)
@@ -298,7 +298,7 @@ class TestBatchChain:
         item2 = _make_item(DownloadState.WAITING, "둘째 항목", str(tmp_path))
         vm.items.extend([item1, item2])
         requested = []
-        vm._on_download_requested = requested.append
+        vm.on_download_requested = requested.append
 
         vm.downloadItem()
         assert requested == [item1]
@@ -317,7 +317,7 @@ class TestBatchChain:
         item2 = _make_item(DownloadState.WAITING, "둘째 항목", str(tmp_path))
         vm.items.extend([item1, item2])
         requested = []
-        vm._on_download_requested = requested.append
+        vm.on_download_requested = requested.append
 
         vm.downloadItem()
         vm.fail(item1, "Postprocessing failed")

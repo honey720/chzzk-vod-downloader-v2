@@ -86,7 +86,7 @@ class ContentViewModelWeb:
         self._worker_factory = worker_factory
         self._probe = probe
         self._messages = messages
-        self._on_download_requested = on_download_requested or (lambda item: None)
+        self.on_download_requested = on_download_requested or (lambda item: None)
 
         self.items: list[ContentItem] = []
         self.downloadPath = ""
@@ -186,7 +186,7 @@ class ContentViewModelWeb:
             item.output_path = ensure_unique_path(os.path.join(item.download_path, "video.mp4"))
 
         if item.output_path:
-            self._on_download_requested(item)
+            self.on_download_requested(item)
 
     def start(self, item: ContentItem) -> None:
         self._dispatcher.dispatch_js("window.__cvdv2_onItemStarted", item.id)
