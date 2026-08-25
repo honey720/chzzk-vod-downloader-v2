@@ -1,10 +1,18 @@
-"""DownloadViewModelWeb 배선 검증 (#221, Phase B2).
+"""DownloadViewModelWeb 배선 검증 (#221, Phase B2 — #224 순환 의존 리팩터 포함).
 
-tests/unit/test_failure_display.py(배치 체인 실배선)와 같은 의도를 웹
-경로로 재현한다 — 완료/실패가 content 쪽 상태 전이·배치 체인까지 이어지는지,
-i18n이 실제로 배선되는지를 본다. 진행률 계산·실패 사유 매핑 자체는
-tests/unit/test_download_bridge.py가 이미 검증했으므로 여기서는 다시
-안 본다.
+두 그룹으로 나뉜다:
+- `TestConstructsWithoutContentViewModel`/`TestDelegation`: `DownloadViewModelWeb`
+  **자체의** 계약만 본다 — 콜러블 주입(#224)이 실제로 `ContentViewModelWeb`
+  없이 성립하는지가 이 리팩터의 성립 증거다. `ContentViewModelWeb`을 아예
+  import·구성하지 않는다.
+- `TestFinishedFailedWiring`/`TestI18nWiring`: 실제 `ContentViewModelWeb`을
+  꽂았을 때 배선이 맞물리는지 보는 **통합** 테스트 — 바인더(Phase C)가 할
+  일(`on_started=content.start` 등)을 테스트가 대신 한다. 완료/실패가 content
+  쪽 상태 전이·배치 체인까지 이어지는지, i18n이 실제로 배선되는지를 본다.
+  tests/unit/test_failure_display.py(Qt 배치 체인 실배선)와 같은 의도다.
+
+진행률 계산·실패 사유 매핑 자체는 tests/unit/test_download_bridge.py가
+이미 검증했으므로 여기서는 다시 안 본다.
 """
 
 import itertools
@@ -120,27 +128,66 @@ def content(dispatcher):
     )
 
 
-class TestStartWiresContentAndBridge:
-    def test_start_notifies_content_and_submits_to_service(self, dispatcher, spy, content, tmp_path):
-        vm = DownloadViewModelWeb(dispatcher, content, service=FakeService())
+class TestConstructsWithoutContentViewModel:
+    """#224 리팩터의 성립 증거 — ContentViewModelWeb을 전혀 만들지 않고도
+    DownloadViewModelWeb의 콜백 계약을 완전히 검증할 수 있다."""
+
+    def test_start_calls_on_started_and_submits_to_service(self, dispatcher, spy, tmp_path):
+        started = []
+        vm = DownloadViewModelWeb(dispatcher, service=FakeService(), on_started=started.append)
         item = _make_item(str(tmp_path))
-        content.items.append(item)
 
         vm.start(item)
         _drain(dispatcher)
 
-        assert f'window.__cvdv2_onItemStarted(...["{item.id}"])' in spy.calls
+        assert started == [item]
         assert vm._bridge._service.submissions[0]["content"].url == item.vod_url
         assert vm.isDownloading()
 
+    def test_no_callbacks_injected_is_safe_noop(self, dispatcher, tmp_path):
+        """콜백을 하나도 안 넘겨도(전부 기본값) 예외 없이 동작한다."""
+        vm = DownloadViewModelWeb(dispatcher, service=FakeService())
+        item = _make_item(str(tmp_path))
+
+        vm.start(item)
+        vm._bridge._service.submissions[0]["on_finished"]()
+        _drain(dispatcher)  # 예외가 안 나면 통과
+
+    def test_on_finished_and_on_failed_receive_item_and_message(self, dispatcher, tmp_path):
+        finished_calls = []
+        failed_calls = []
+        vm = DownloadViewModelWeb(
+            dispatcher,
+            service=FakeService(),
+            on_finished=lambda item, t: finished_calls.append((item, t)),
+            on_failed=lambda item, m: failed_calls.append((item, m)),
+        )
+        item = _make_item(str(tmp_path))
+
+        vm.start(item)
+        vm._bridge._service.submissions[0]["on_finished"]()
+        _drain(dispatcher)
+
+        assert finished_calls == [(item, "00:01:01")]
+        assert failed_calls == []
+
 
 class TestFinishedFailedWiring:
-    """WebDownloadBridge의 on_finished/on_failed가 content.finish/.fail로 이어져
+    """실제 ContentViewModelWeb을 꽂았을 때(=바인더가 할 일) 배선이 맞물리는지 —
     downloadState 전이와 배치 체인(다음 항목 자동 시작)까지 간다."""
+
+    def _wire(self, dispatcher, content, service):
+        return DownloadViewModelWeb(
+            dispatcher,
+            service=service,
+            on_started=content.start,
+            on_finished=content.finish,
+            on_failed=content.fail,
+        )
 
     def test_finish_advances_batch(self, dispatcher, spy, content, tmp_path):
         service = FakeService()
-        vm = DownloadViewModelWeb(dispatcher, content, service=service)
+        vm = self._wire(dispatcher, content, service)
         item1 = _make_item(str(tmp_path), "첫 항목")
         item2 = _make_item(str(tmp_path), "둘째 항목")
         content.items.extend([item1, item2])
@@ -161,7 +208,7 @@ class TestFinishedFailedWiring:
 
     def test_fail_marks_failed_and_advances_batch(self, dispatcher, spy, content, tmp_path):
         service = FakeService()
-        vm = DownloadViewModelWeb(dispatcher, content, service=service)
+        vm = self._wire(dispatcher, content, service)
         item1 = _make_item(str(tmp_path), "첫 항목")
         item2 = _make_item(str(tmp_path), "둘째 항목")
         content.items.extend([item1, item2])
@@ -183,7 +230,7 @@ class TestI18nWiring:
     def test_translate_uses_configured_language_catalog(self, dispatcher, content, tmp_path, monkeypatch):
         monkeypatch.setattr(config_mod, "load_config", lambda: {"language": "ko_KR"})
         service = FakeService()
-        vm = DownloadViewModelWeb(dispatcher, content, service=service)
+        vm = DownloadViewModelWeb(dispatcher, service=service, on_failed=content.fail)
         item = _make_item(str(tmp_path))
         content.items.append(item)
 
@@ -197,13 +244,11 @@ class TestI18nWiring:
 
 
 class TestDelegation:
-    def test_pause_resume_stop_remove_threads_delegate_to_bridge(
-        self, dispatcher, content, tmp_path
-    ):
+    def test_pause_resume_stop_remove_threads_delegate_to_bridge(self, dispatcher, tmp_path):
+        """DownloadViewModelWeb 자체의 위임 계약 — ContentViewModelWeb 불필요."""
         service = FakeService()
-        vm = DownloadViewModelWeb(dispatcher, content, service=service)
+        vm = DownloadViewModelWeb(dispatcher, service=service)
         item = _make_item(str(tmp_path))
-        content.items.append(item)
         vm.start(item)
 
         vm.pause()

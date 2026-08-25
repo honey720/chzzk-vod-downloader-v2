@@ -16,12 +16,26 @@
 2. **i18n 실배선** — `translate`에 `app.i18n.translate`를 언어 고정한
    partial로 주입한다(`#212`가 이미 만든 함수, 지금까지는 항등 함수였다).
 
-**`downloadRequested`(Python 콜백) 쪽 배선도 여기서 맡는다**: `#220`의
-`ContentViewModelWeb.on_download_requested`는 기본값이 no-op이다. 이
-클래스를 만들면(바인더가) `content.on_download_requested = self.start`로
-연결해야 한다 — 원본 mainWindow의 `startDownload`가 `contentManager.start(item)`
-(카드 통지)과 `downloadViewModel.start(item)`(실제 엔진 제출) 둘 다 하던 것과
-같은 자리이므로, 이 클래스의 `start(item)`도 둘 다 한다.
+**`content` 객체를 직접 들지 않는다 — 콜러블만 주입받는다 (#224 순환 의존 조사).**
+처음에는 생성자가 `ContentViewModelWeb` 인스턴스를 통째로 받아
+`on_finished=content.finish` 식으로 내부에서 꺼내 썼다. 그런데
+`ContentViewModelWeb.on_download_requested`(이 콜백의 반대 방향)는 이미
+콜러블 주입이라, 한쪽만 객체를 직접 들면 두 클래스가 서로의 타입을
+알아야 하는 비대칭 순환이 생겼다 — PR #224 코멘트에 조사 기록. 그래서
+이 클래스도 같은 모양(콜러블 주입, 기본값 no-op)으로 맞췄다:
+`on_started`/`on_finished`/`on_failed` 셋 다 `ContentItem`을 받는 콜러블이고,
+`ContentViewModelWeb`이라는 타입 자체를 몰라도 된다(`TYPE_CHECKING` import도
+없앴다). 원본 mainWindow의 `startDownload`가 `contentManager.start(item)`
+(카드 통지)과 `downloadViewModel.start(item)`(실제 엔진 제출) 둘 다 하던
+자리는 `start(item)`이 `on_started(item)` 호출 + `bridge.start()`로 그대로
+재현한다. 바인더(Phase C, 아직 없음)가 양쪽을 다 알고 연결한다:
+
+```python
+download_vm = DownloadViewModelWeb(
+    dispatcher, on_started=content.start, on_finished=content.finish, on_failed=content.fail
+)
+content.on_download_requested = download_vm.start
+```
 
 **진행률(`progress`/`paused`/`resumed`/`stopped`)은 content 쪽으로 다시
 연결하지 않았다** — grep으로 확인한 결과 `item.download_progress` 등
@@ -39,7 +53,7 @@ Qt `content_viewmodel.update_progress`가 갱신하던 필드를 읽는 소비�
 """
 
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import Callable
 
 import config.config as config
 
@@ -49,25 +63,24 @@ from app.i18n import resolve_language, translate
 from content.data import ContentItem
 from core.services.download_service import DownloadService
 
-if TYPE_CHECKING:
-    from app.viewmodels.content_viewmodel_web import ContentViewModelWeb
-
 
 class DownloadViewModelWeb:
     def __init__(
         self,
         dispatcher: Dispatcher,
-        content: "ContentViewModelWeb",
         service: DownloadService | None = None,
+        on_started: Callable[[ContentItem], None] | None = None,
+        on_finished: Callable[[ContentItem, str], None] | None = None,
+        on_failed: Callable[[ContentItem, str], None] | None = None,
     ):
-        self._content = content
+        self.on_started = on_started or (lambda item: None)
         language = resolve_language(config.load_config().get("language"))
         self._bridge = WebDownloadBridge(
             dispatcher,
             service=service,
             translate=partial(translate, language=language),
-            on_finished=content.finish,
-            on_failed=content.fail,
+            on_finished=on_finished or (lambda item, download_time: None),
+            on_failed=on_failed or (lambda item, message: None),
         )
 
     def isDownloading(self) -> bool:
@@ -81,7 +94,7 @@ class DownloadViewModelWeb:
     def start(self, item: ContentItem) -> None:
         """다운로드를 시작한다. mainWindow.startDownload와 같은 두 가지 일을 한다:
         카드 통지(itemStarted) + 실제 엔진 제출."""
-        self._content.start(item)
+        self.on_started(item)
         self._bridge.start(item.id, item)
 
     def pause(self) -> None:
