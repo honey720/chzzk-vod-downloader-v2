@@ -43,6 +43,9 @@ class ContentListView(QScrollArea):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWidgetResizable(True)
+        # 카드는 창 폭에 맞춰야 한다 — 넘치는 제목·경로·상태 문구는 ElidingLabel이
+        # 알아서 잘라 보여준다(PR #229 후속). 가로 스크롤은 그 자체가 버그였다.
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
         self._container = QWidget()
         self._layout = QVBoxLayout(self._container)

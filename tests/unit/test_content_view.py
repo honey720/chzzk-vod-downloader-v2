@@ -7,6 +7,7 @@
 """
 
 import pytest
+from PySide6.QtCore import Qt
 
 from content.data import ContentItem
 from content.model import ContentListModel
@@ -25,11 +26,11 @@ def no_network(monkeypatch):
     monkeypatch.setattr("content.widget.get_thread_session", lambda: _FailingSession())
 
 
-def _make_item(title="제목"):
+def _make_item(title="제목", download_path="."):
     return ContentItem(
         "https://chzzk.naver.com/video/1",
         {"title": title, "category": "", "channelName": "채널", "createdDate": "", "duration": 0},
-        [], None, "", ".", "video", None,
+        [], None, "", download_path, "video", None,
     )
 
 
@@ -173,3 +174,60 @@ class TestProgressUpdate:
 
         assert v.widgetFor(a).titleLabel.text() == "A(갱신됨)"
         assert v.widgetFor(b).titleLabel.text() == "B"
+
+
+class TestNoHorizontalOverflow:
+    """가로 스크롤 버그 회귀 테스트 (PR #229 후속) — 카드는 창 폭에 맞아야 한다.
+
+    `QLabel`이 내용 폭만큼 넓어지려 해 긴 제목·경로·상태 문구가 카드를
+    밀고 카드가 뷰포트를 밀던 문제. `setWidgetResizable(True)`만으로는
+    부족했다 — 실측 결과 컨테이너가 실제로 수렴하기까지 이벤트 루프를
+    여러 번 돌아야 했다(한 번만 돌리면 아직 완전히 반영되지 않은 중간
+    상태를 보게 된다).
+    """
+
+    def test_horizontal_scrollbar_is_always_off(self, view):
+        v, _ = view
+        assert v.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+
+    def test_long_title_and_path_do_not_widen_the_container_past_the_viewport(self, view, qapp):
+        v, model = view
+        v.resize(500, 400)
+        v.show()
+        qapp.processEvents()
+
+        long_item = _make_item(
+            title="VeryLongTitleWithNoSpacesAtAllThatCannotWrapOrBreakAnywhereSoItForcesWidth1234567890",
+            download_path="C:/Users/LeeDH/Desktop/VeryLongFolderNameNoSpaces/AnotherLongSubfolder/FileNameHere.mp4",
+        )
+        model.addItem(long_item)
+        for _ in range(8):  # 실측으로 확인한 수렴에 필요한 최소 횟수보다 넉넉히
+            qapp.processEvents()
+
+        # 인덱스·채널 아이콘 같은 고정폭 요소까지 0으로 만들 순 없어 약간의 여유를 둔다
+        assert v._container.width() <= v.width() + 10, (
+            f"container({v._container.width()})가 viewport({v.width()})보다 훨씬 넓다 "
+            "— 가로 스크롤 버그 회귀"
+        )
+
+    def test_title_is_elided_right_and_path_is_elided_middle(self, view, qapp):
+        v, model = view
+        v.resize(300, 400)
+        v.show()
+        qapp.processEvents()
+
+        item = _make_item(
+            title="StartOfTitleThatMattersMostAndShouldStayVisibleAAAAAAAAAAAAAAAAAAAAAAAAA",
+            download_path="C:/StartOfPathThatMatters/junk/junk/junk/junk/EndFileNameThatMatters.mp4",
+        )
+        model.addItem(item)
+        for _ in range(8):
+            qapp.processEvents()
+
+        widget = v.widgetFor(item)
+        rendered_title = type(widget.titleLabel).__mro__[1].text(widget.titleLabel)
+        rendered_path = type(widget.directoryLabel).__mro__[1].text(widget.directoryLabel)
+
+        assert rendered_title.startswith("StartOfTitle")
+        assert rendered_path.startswith("C:")
+        assert rendered_path.endswith(".mp4")
