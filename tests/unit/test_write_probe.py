@@ -127,7 +127,7 @@ class TestDownloadItemWriteGate:
         assert item.downloadState is DownloadState.FAILED
         assert item.stateMessage == "Failed to save file"  # 번역기 미설치 — 키 원문
         assert finished_all == [True]  # 배치는 종료 신호까지 간다
-        widget = view.indexWidget(m.model.index(0, 0))
+        widget = view.widgetFor(item)
         assert widget.statusLabel.text().startswith("Download failed")  # 카드에 명확히 표시
 
     def test_timeout_probe_fails_the_same_way(self, manager, qapp, tmp_path, monkeypatch):

@@ -157,7 +157,7 @@ def test_failed_card_shows_failure_and_batch_continues(wired, qapp, tmp_path):
 
     # ① 실패가 실패로 보인다 — WAITING(정지·대기)이 아니라 FAILED
     assert item1.downloadState is DownloadState.FAILED
-    widget = view.indexWidget(manager.model.index(0, 0))
+    widget = view.widgetFor(manager.model.items[0])
     label = widget.statusLabel.text()
     assert label.startswith("Download failed")  # 번역기 미설치 — 키 원문
     assert "Postprocessing failed" in label  # 사유가 함께 보인다
@@ -187,7 +187,7 @@ def test_stop_still_shows_waiting_not_failed(wired, qapp, tmp_path):
     qapp.processEvents()
 
     assert item.downloadState is DownloadState.WAITING
-    widget = view.indexWidget(manager.model.index(0, 0))
+    widget = view.widgetFor(manager.model.items[0])
     # 정지 카드에는 실패 표시가 없다
     assert "Download failed" not in widget.statusLabel.text()
 

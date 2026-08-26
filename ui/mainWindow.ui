@@ -90,12 +90,6 @@
       <property name="acceptDrops">
        <bool>true</bool>
       </property>
-      <property name="dragEnabled">
-       <bool>true</bool>
-      </property>
-      <property name="dragDropMode">
-       <enum>QAbstractItemView::DragDropMode::DragDrop</enum>
-      </property>
      </widget>
     </item>
     <item>
@@ -160,7 +154,7 @@
  <customwidgets>
   <customwidget>
    <class>ContentListView</class>
-   <extends>QListView</extends>
+   <extends>QScrollArea</extends>
    <header>content/view.h</header>
   </customwidget>
  </customwidgets>

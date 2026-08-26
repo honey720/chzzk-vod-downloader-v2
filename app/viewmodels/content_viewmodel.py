@@ -16,7 +16,7 @@ content/manager.py의 ContentManager가 맡는다.
 import logging
 import os
 
-from PySide6.QtCore import QObject, Qt, QThreadPool, Signal
+from PySide6.QtCore import QObject, QThreadPool, Signal
 
 from app.viewmodels.item_state import ItemState
 from app.viewmodels.path_gates import check_download_path
@@ -138,8 +138,7 @@ class ContentViewModel(QObject):
     def clrearFinishedItems(self):
         if not self.model.isEmpty():
             for row in reversed(range(self.model.rowCount())):
-                index = self.model.index(row, 0)
-                item: ContentItem = self.model.data(index, Qt.ItemDataRole.UserRole)
+                item = self.model.itemAt(row)
                 # 아이템이 완료 상태이면 삭제
                 if item.downloadState == DownloadState.FINISHED:
                     self.removeItem(item)
@@ -206,9 +205,7 @@ class ContentViewModel(QObject):
         item.download_speed = spd
         item.download_progress = prog
 
-        row = self.model.getRow(item)
-        index = self.model.index(row, 0)
-        self.model.dataChanged.emit(index, index)
+        self.model.notifyChanged(item)
 
     def start(self, item):
         self.itemStarted.emit(item)
@@ -249,18 +246,16 @@ class ContentViewModel(QObject):
     def findItem(self):
         row_count = self.model.rowCount()
         for row in range(row_count):
-            index = self.model.index(row, 0)
-            item: ContentItem = self.model.data(index, Qt.ItemDataRole.UserRole)
+            item = self.model.itemAt(row)
             # LOADING은 메타데이터가 아직 없어 다운로드 대상이 아니다 (#124)
             if item.downloadState not in [DownloadState.FINISHED, DownloadState.FAILED, ItemState.LOADING]:
-                return True, item, index
+                return True, item, row
         return False, None, None
 
     def hasLoadingItems(self):
         """메타데이터 조회가 끝나지 않은 아이템이 있는지 여부."""
         for row in range(self.model.rowCount()):
-            index = self.model.index(row, 0)
-            item: ContentItem = self.model.data(index, Qt.ItemDataRole.UserRole)
+            item = self.model.itemAt(row)
             if item.downloadState == ItemState.LOADING:
                 return True
         return False
@@ -274,8 +269,7 @@ class ContentViewModel(QObject):
         """
         finished = failed = 0
         for row in range(self.model.rowCount()):
-            index = self.model.index(row, 0)
-            item: ContentItem = self.model.data(index, Qt.ItemDataRole.UserRole)
+            item = self.model.itemAt(row)
             if item.downloadState == DownloadState.FINISHED:
                 finished += 1
             elif item.downloadState == DownloadState.FAILED:

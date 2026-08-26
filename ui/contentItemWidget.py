@@ -18,6 +18,7 @@ from PySide6.QtGui import (QBrush, QColor, QConicalGradient, QCursor,
 from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel,
     QLineEdit, QPushButton, QSizePolicy, QSpacerItem,
     QVBoxLayout, QWidget)
+from content.eliding_label import ElidingLabel
 
 class Ui_ContentItemWidget(object):
     def setupUi(self, ContentItemWidget):
@@ -77,7 +78,7 @@ class Ui_ContentItemWidget(object):
 
         self.topLayout.addItem(self.topSpacer)
 
-        self.statusLabel = QLabel(self.contentFrame)
+        self.statusLabel = ElidingLabel(self.contentFrame)
         self.statusLabel.setObjectName(u"statusLabel")
         self.statusLabel.setStyleSheet(u"font-size: 14px;")
 
@@ -89,7 +90,7 @@ class Ui_ContentItemWidget(object):
 
         self.topLayout.addWidget(self.progressLabel)
 
-        self.fileSizeLabel = QLabel(self.contentFrame)
+        self.fileSizeLabel = ElidingLabel(self.contentFrame)
         self.fileSizeLabel.setObjectName(u"fileSizeLabel")
         self.fileSizeLabel.setStyleSheet(u"font-size: 14px;")
 
@@ -123,7 +124,7 @@ class Ui_ContentItemWidget(object):
         self.contentLayout.setObjectName(u"contentLayout")
         self.titleLayout = QHBoxLayout()
         self.titleLayout.setObjectName(u"titleLayout")
-        self.titleLabel = QLabel(self.contentFrame)
+        self.titleLabel = ElidingLabel(self.contentFrame)
         self.titleLabel.setObjectName(u"titleLabel")
         self.titleLabel.setStyleSheet(u"font-size: 14px;")
 
@@ -142,7 +143,7 @@ class Ui_ContentItemWidget(object):
         self.directoryLayout = QHBoxLayout()
         self.directoryLayout.setSpacing(0)
         self.directoryLayout.setObjectName(u"directoryLayout")
-        self.directoryLabel = QLabel(self.contentFrame)
+        self.directoryLabel = ElidingLabel(self.contentFrame, elide_mode=Qt.TextElideMode.ElideMiddle)
         self.directoryLabel.setObjectName(u"directoryLabel")
         self.directoryLabel.setStyleSheet(u"font-size: 14px;")
 
