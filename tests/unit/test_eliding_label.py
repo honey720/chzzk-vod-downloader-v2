@@ -88,17 +88,25 @@ class TestElision:
         assert not rendered.endswith("Z")
 
     def test_elide_middle_keeps_both_ends(self, qapp):
-        """경로는 드라이브(앞)·파일명(뒤)이 둘 다 정보라 가운데를 잘라야 한다."""
+        """경로는 드라이브(앞)·파일명(뒤)이 둘 다 정보라 가운데를 잘라야 한다.
+
+        폭은 넉넉히 둔다 — 너무 좁으면 정확히 어디서 잘리는지가 플랫폼별
+        폰트 메트릭에 좌우된다(3-OS CI에서 실제로 겪음, 다른 테스트 참고).
+        """
         label = ElidingLabel(elide_mode=Qt.TextElideMode.ElideMiddle)
-        label.resize(80, 20)
+        label.resize(150, 20)
         label.setText("C:/StartOfPathThatMatters/Middle/Junk/Here/EndFileName.mp4")
         rendered = ElidingLabel.__mro__[1].text(label)
         assert rendered.startswith("C:")
         assert rendered.endswith(".mp4")
 
     def test_set_elide_mode_reapplies_immediately(self, qapp):
+        # 폭을 넉넉히 둔다 — 너무 좁으면 정확히 몇 글자가 남는지가 플랫폼별
+        # 폰트 메트릭에 좌우돼("mp4"는 남고 그 앞의 "."만 잘리는 등) CI
+        # 3-OS에서 결과가 갈릴 수 있다(실제로 Windows 로컬에선 통과, CI
+        # 3-OS에서 전부 이 이유로 실패해 이번에 폭을 넓혀 고쳤다).
         label = ElidingLabel(elide_mode=Qt.TextElideMode.ElideRight)
-        label.resize(60, 20)
+        label.resize(150, 20)
         label.setText("StartMiddlePartThatIsLong-EndFileName.mp4")
         right = ElidingLabel.__mro__[1].text(label)
 
