@@ -179,3 +179,63 @@ class TestChannelNameYieldsBeforeStatusAndFileSize:
         # 실제 내용("짧은채널")이 필요로 하는 폭보다 과하게 넓어지지 않아야 한다
         # — setMaximumWidth(150) 상한 이내여야 한다
         assert widget.channelNameLabel.width() <= 150
+
+
+class TestRecoversFullTextAfterWidthIncreases:
+    """한 번 좁은 폭에서 "..."까지 줄었다가 창을 다시 넓히면 전체 텍스트로
+    돌아와야 한다 — 여백이 충분한데도 파일 크기가 항상 "..."으로만 보이던
+    회귀(오너 실기 확인). `TestStatusAndFileSizeAreVisible`은 위젯을 처음부터
+    넉넉한 폭으로만 만들어 검증하기 때문에 이 시나리오(좁았다가 넓어짐)를
+    전혀 못 본다 — 이게 바로 신규 6개 테스트를 추가하고도 이 회귀를 못 잡은
+    이유다.
+
+    원인: `ElidingLabel.sizeHint()`를 override하지 않으면 `QLabel` 기본
+    구현이 "지금 화면에 그려진(이미 elide된) 텍스트" 기준으로 계산한다.
+    한 번이라도 좁은 폭에서 "..."까지 줄어들면, 그 뒤로 레이아웃이 다시
+    물어봐도 sizeHint가 계속 "..." 하나 폭만 요구해 — 창을 아무리 넓혀도
+    다시는 더 넓은 폭을 받지 못하는 되먹임 루프에 갇힌다.
+    """
+
+    def test_file_size_label_recovers_when_widened_after_being_narrow(self, qapp):
+        item = _make_item(content_type="video")
+        item.total_size = "1.24 GB"
+        widget = _build_widget(item, qapp, width=300)
+
+        # sanity check: 이 폭에서 실제로 잘렸는지 확인 — 안 잘렸으면 이
+        # 테스트가 애초에 무엇을 검증하는지 의미가 없어진다.
+        assert _rendered(widget.fileSizeLabel) != widget.fileSizeLabel.text(), (
+            "폭 300에서 파일 크기가 안 잘렸다 — 이 테스트의 전제(좁았다가 넓어짐)가 성립하지 않는다"
+        )
+
+        widget.resize(1200, 134)
+        qapp.processEvents()
+        qapp.processEvents()
+
+        assert "1.24 GB" in _rendered(widget.fileSizeLabel), (
+            "창을 넓혔는데도 파일 크기가 회복되지 않았다 — "
+            "sizeHint()가 표시 중인(이미 elide된) 텍스트 기준으로 계산되고 있을 가능성"
+        )
+
+    def test_status_label_recovers_when_widened_after_being_narrow(self, qapp):
+        # channelNameLabel은 stretch=100이 커서 sizeHint와 무관하게 레이아웃이
+        # 넓혀줄 때 같이 딸려 늘어난다 — 그래서 sizeHint() 버그가 있어도
+        # 우연히 회복되어 이 회귀를 검증하지 못한다(mutation으로 확인:
+        # sizeHint() override를 지워도 채널명은 회복됨). stretch가 0인
+        # statusLabel·fileSizeLabel만 이 버그에 실제로 걸린다.
+        item = _make_item(content_type="video")
+        item.downloadState = DownloadState.FINISHED
+        item.download_time = "00:05:12"
+        item.download_size = 800 * 1024 * 1024
+        widget = _build_widget(item, qapp, width=300)
+
+        assert _rendered(widget.statusLabel) != widget.statusLabel.text(), (
+            "폭 300에서 상태 문구가 안 잘렸다 — 이 테스트의 전제가 성립하지 않는다"
+        )
+
+        widget.resize(1200, 134)
+        qapp.processEvents()
+        qapp.processEvents()
+
+        assert "00:05:12" in _rendered(widget.statusLabel), (
+            "창을 넓혔는데도 상태 문구가 회복되지 않았다"
+        )

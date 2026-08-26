@@ -3,8 +3,10 @@
 `QLabel`은 기본적으로 전체 텍스트를 한 줄로 보여줄 수 있는 폭을 요구한다
 (`minimumSizeHint()`가 내용 폭 그대로) — 긴 제목·다운로드 경로가 카드를
 밀고 카드가 `QScrollArea` 뷰포트를 밀어 가로 스크롤이 생기던 원인이었다.
-이 라벨은 (a) 가로 사이즈 정책을 `Ignored`로 둬 레이아웃이 내용 폭보다
-좁게 줄 수 있게 하고 (b) 실제 폭보다 넘치면 `elidedText()`로 잘라 보여주고
+이 라벨은 (a) `minimumSizeHint()`를 말줄임표 하나 폭의 작은 고정값으로
+override해 레이아웃이 내용 폭보다 좁게 줄 수 있게 하고, `sizeHint()`는
+원문(`_full_text`) 기준으로 override해 여유가 있으면 레이아웃이 실제로
+넓게 줄 수 있게 하고 (b) 실제 폭보다 넘치면 `elidedText()`로 잘라 보여주고
 (c) 잘린 전체 값은 툴팁으로 노출한다.
 
 `ui/contentItemWidget.py`(Designer 생성)가 `titleLabel`/`directoryLabel`
@@ -44,11 +46,23 @@ class ElidingLabel(QLabel):
         # 계산하면 극단적으로 좁아져 elidedText()가 ""를 반환할 때
         # minimumSizeHint도 0이 되어 레이아웃이 "필요 없다"로 읽고 다음
         # 패스에서도 0을 주는 되먹임 루프가 생긴다(PR #229 오너 실기 확인 후속 실측).
-        # `sizeHint()`는 일부러 안 건드린다 — QLabel 기본 구현이 지금
-        # 표시 중인(이미 elide된) 텍스트 기준으로 돌려주므로, 한 줄에 여유가
-        # 있으면 그만큼 더 받고 빠듯하면 이 최소치까지만 내려간다.
+        # `sizeHint()`도 아래에서 override한다 — QLabel 기본 구현에 맡기면
+        # "지금 표시 중인(이미 elide된) 텍스트" 기준으로 계산되어 또 다른
+        # 되먹임 루프(여유가 생겨도 영원히 "..."에 갇힘)가 생긴다.
         metrics = QFontMetrics(self.font())
         return QSize(metrics.horizontalAdvance("…") + 4, metrics.height())
+
+    def sizeHint(self) -> QSize:
+        # override 안 하면 QLabel 기본 구현이 "지금 화면에 그려진(이미
+        # elide된) 텍스트" 기준으로 계산한다 — 한 번이라도 좁은 폭에서
+        # "..."까지 줄어들고 나면, 그 뒤로 창을 아무리 넓혀도 sizeHint가
+        # 계속 "..." 하나 폭만 요구하니 레이아웃이 다시는 더 넓게 주지
+        # 않는 게 되먹임 루프에 갇힌다(오너 실기 확인 — 여백이 충분해도
+        # 파일 크기가 항상 "..."으로만 보이던 회귀). 항상 원문(`_full_text`)
+        # 기준 폭을 요구해야, 레이아웃이 여유가 있을 때 그만큼 실제로
+        # 돌려준다.
+        metrics = QFontMetrics(self.font())
+        return QSize(metrics.horizontalAdvance(self._full_text) + 4, metrics.height())
 
     def setElideMode(self, mode: Qt.TextElideMode) -> None:
         self._elide_mode = mode
