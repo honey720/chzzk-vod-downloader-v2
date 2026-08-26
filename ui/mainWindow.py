@@ -15,7 +15,7 @@ from PySide6.QtGui import (QBrush, QColor, QConicalGradient, QCursor,
     QFont, QFontDatabase, QGradient, QIcon,
     QImage, QKeySequence, QLinearGradient, QPainter,
     QPalette, QPixmap, QRadialGradient, QTransform)
-from PySide6.QtWidgets import (QAbstractItemView, QApplication, QFrame, QGridLayout,
+from PySide6.QtWidgets import (QApplication, QFrame, QGridLayout,
     QHBoxLayout, QLabel, QLineEdit, QMainWindow,
     QPushButton, QSizePolicy, QSpacerItem, QVBoxLayout,
     QWidget)
@@ -85,8 +85,6 @@ class Ui_VodDownloader(object):
         self.listView = ContentListView(self.centralwidget)
         self.listView.setObjectName(u"listView")
         self.listView.setAcceptDrops(True)
-        self.listView.setDragEnabled(True)
-        self.listView.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
 
         self.centralWidgetLayout.addWidget(self.listView)
 

@@ -23,7 +23,6 @@ from PySide6.QtCore import QObject
 
 from app.viewmodels.content_viewmodel import ContentViewModel
 from content.data import ContentItem
-from content.delegate import ContentListDelegate
 from content.view import ContentListView
 from content.worker import ContentWorker
 
@@ -101,7 +100,6 @@ class ContentManager(QObject):
 
         self.view = view
         self.view.setModel(self.model)
-        self.view.setItemDelegate(ContentListDelegate())
         self.view.deleteRequest.connect(self.removeItem)
         self.view.fetchRequested.connect(self.fetchReuest)
 

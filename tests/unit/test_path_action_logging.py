@@ -111,7 +111,7 @@ class TestCardPathEditFeedback:
         item = _make_item(path)
         m.model.addItem(item)
         qapp.processEvents()
-        return item, view.indexWidget(m.model.index(0, 0))
+        return item, view.widgetFor(item)
 
     def test_reject_notifies_and_logs(self, manager, qapp, tmp_path, caplog, monkeypatch):
         """존재하지 않는 경로는 반영하지 않고, 이제 안내 팝업과 WARNING 로그를 남긴다.
