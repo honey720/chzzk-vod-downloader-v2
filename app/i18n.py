@@ -1,10 +1,14 @@
 """i18n JSON 카탈로그 조회 — QTranslator/.ts/.qm 대체 (#212, Phase A4).
 
+**현재 미사용**: `#208`이 웹 전환을 철회하고 Qt 유지로 확정되면서(`#230`),
+`main.py`는 지금도 `QTranslator`+`.ts`/`.qm`을 그대로 쓴다 — 이 모듈을
+참조하던 웹 경로(`download_viewmodel_web.py` 등)와 그 JS 대응
+(`app/resources/i18n.js`)은 `#230`에서 걷어냈다. 이 모듈·`translations/*.json`·
+`scripts/extract_ts_to_json.py`를 마저 걷어낼지는 별도 판단 대상으로 남아
+있다(`#230`).
+
 `translations/<lang>.json`(`scripts/extract_ts_to_json.py`가 `.ts`에서 생성)을
-읽어 원문 문자열을 조회한다. Python 쪽 진실의 원천이며, JS 쪽
-(`app/resources/i18n.js`)은 같은 JSON 파일을 읽어 동일한 조회 계약을
-따른다 — 두 조회기가 서로 다른 카탈로그를 참조하면 화면과 로그의 언어가
-어긋난다.
+읽어 원문 문자열을 조회한다.
 
 `download/qt_bridge.py`의 `self.tr(key)` 자리를 대체한다 — 다만 그 파일의
 `_failure_message`는 "매핑에 없으면 빈 문자열"이라는 별개의 업무 규칙이고,

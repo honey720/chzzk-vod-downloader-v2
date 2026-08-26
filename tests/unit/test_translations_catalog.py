@@ -106,24 +106,3 @@ class TestCatalogParity:
                 f"{lang}에만 있음: {sorted(keys - first_keys)[:5]}, "
                 f"{first_lang}에만 있음: {sorted(first_keys - keys)[:5]}"
             )
-
-
-class TestJsCatalogContract:
-    """app/resources/i18n.js가 Python 쪽(app/i18n.py)과 같은 계약을 따르는지.
-
-    이 저장소에는 JS 실행기(Node 등)가 없다 — 실제로 JS를 실행해 검증하지는
-    않는다. 여기서 확인하는 건 (a) 파일이 존재하고 (b) 계약에 필요한 함수명
-    (setCatalog/translate)이 소스에 실제로 정의돼 있다는 것뿐이다 — 로직
-    정확성은 코드 리뷰와 Phase C 통합 시점의 실기 확인에 의존한다는 걸
-    명시적으로 남긴다(과신 금지).
-    """
-
-    def test_i18n_js_file_exists(self):
-        path = REPO_ROOT / "app" / "resources" / "i18n.js"
-        assert path.exists()
-
-    def test_i18n_js_defines_expected_function_names(self):
-        path = REPO_ROOT / "app" / "resources" / "i18n.js"
-        text = path.read_text(encoding="utf-8")
-        assert "function setCatalog(" in text
-        assert "function translate(" in text
