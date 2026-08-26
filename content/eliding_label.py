@@ -26,7 +26,7 @@ class ElidingLabel(QLabel):
         self._elide_mode = elide_mode
         self._full_text = ""
         self._last_elide_width = -1
-        # Ignored였던 첫 시도는 실제로 폭 0에 눌렸다(#232 실측 — 아래 참고).
+        # Ignored였던 첫 시도는 실제로 폭 0에 눌렸다(PR #229 오너 실기 확인 후속 실측 — 아래 참고).
         # Preferred(QLabel 기본값)를 유지하되 sizeHint를 작고 고정된 값으로
         # 바꿔치기하는 쪽이 맞다 — Ignored는 "sizeHint를 아예 안 본다"는
         # 뜻이라 레이아웃이 존중할 대상 자체가 없어져, 같은 줄(topLayout)의
@@ -43,7 +43,7 @@ class ElidingLabel(QLabel):
         # 카드가 넘치거나, (b) 지금 표시 중인(이미 elide된) 텍스트 기준으로
         # 계산하면 극단적으로 좁아져 elidedText()가 ""를 반환할 때
         # minimumSizeHint도 0이 되어 레이아웃이 "필요 없다"로 읽고 다음
-        # 패스에서도 0을 주는 되먹임 루프가 생긴다(#232에서 실측 확인).
+        # 패스에서도 0을 주는 되먹임 루프가 생긴다(PR #229 오너 실기 확인 후속 실측).
         # `sizeHint()`는 일부러 안 건드린다 — QLabel 기본 구현이 지금
         # 표시 중인(이미 elide된) 텍스트 기준으로 돌려주므로, 한 줄에 여유가
         # 있으면 그만큼 더 받고 빠듯하면 이 최소치까지만 내려간다.

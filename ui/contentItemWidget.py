@@ -71,7 +71,7 @@ class Ui_ContentItemWidget(object):
         self.channelNameLabel = ElidingLabel(self.contentFrame)
         self.channelNameLabel.setObjectName(u"channelNameLabel")
         self.channelNameLabel.setStyleSheet(u"font-size: 14px;")
-        # 채널명은 길이가 임의라 폭이 빠듯할 때 가장 먼저 줄어야 한다(#232
+        # 채널명은 길이가 임의라 폭이 빠듯할 때 가장 먼저 줄어야 한다(PR #229
         # 후속 — 오너 지시: "파일 크기는 안 줄고 채널명이 줄어야"). stretch를
         # 높여 압박받을 때 이 라벨이 우선 줄게 하되, 그대로 두면 여유가
         # 있을 때도 stretch가 커서 스페이서 몫까지 욕심내 폭이 과하게

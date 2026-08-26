@@ -1,5 +1,5 @@
-"""`ContentItemWidget` 렌더 회귀 테스트 (#232 — statusLabel·fileSizeLabel이
-폭 0으로 눌려 빈 문자열만 그려지던 회귀).
+"""`ContentItemWidget` 렌더 회귀 테스트 (PR #229 오너 실기 확인 — statusLabel·
+fileSizeLabel이 폭 0으로 눌려 빈 문자열만 그려지던 회귀).
 
 `#229`(가로 스크롤 수정)가 `statusLabel`·`fileSizeLabel`을 `ElidingLabel`로
 바꾸면서 `topLayout`(index·type·channelImage·channelName·스페이서·status·
@@ -75,7 +75,7 @@ def _build_widget(item, qapp, width: int = 600) -> ContentItemWidget:
 
 class TestStatusAndFileSizeAreVisible:
     """카드 폭이 넉넉한(창을 좁히지 않은) 정상 상태에서 이 라벨들이 실제로
-    보여야 한다 — #232에서 폭 0으로 눌려 전부 빈 문자열이 되던 회귀."""
+    보여야 한다 — PR #229 이후 폭 0으로 눌려 전부 빈 문자열이 되던 회귀."""
 
     def test_waiting_file_type_shows_status_and_total_size(self, qapp):
         item = _make_item(content_type="video")
@@ -112,7 +112,7 @@ class TestStatusAndFileSizeAreVisible:
 
         # 카드 폭 600px에 라벨이 여럿 몰려 있어 정확히 어디까지 잘리는지는
         # 폰트 메트릭에 좌우된다(#229 후속 CI 실패로 이미 겪은 함정) — 정확한
-        # 절단 지점 대신 "빈 문자열이 아니다(#232 회귀)"와 "숫자 부분(123)은
+        # 절단 지점 대신 "빈 문자열이 아니다(폭 0 회귀)"와 "숫자 부분(123)은
         # 살아있다"만 고정한다.
         assert _rendered(widget.statusLabel) != ""
         assert _rendered(widget.fileSizeLabel) != ""
@@ -156,7 +156,12 @@ class TestChannelNameYieldsBeforeStatusAndFileSize:
         # 이미 겪은 함정, test_eliding_label.py 참고). 좁혀도 채널명만
         # 줄고 상태·크기는 안 줄어야 한다는 "우선순위"가 검증 대상이지,
         # 정확한 절단 위치가 아니다.
-        item = _make_item(content_type="video", channel="우왁굳의 게임방송")
+        # 채널명은 넉넉히 길게 잡는다 — 짧은 채널명은 플랫폼 폴백 폰트에서
+        # 글리프 폭이 좁아 150px 상한 안에 통째로 들어가 버려(실측: 이
+        # 환경에서 채널명 라벨이 99px을 받는데 "우왁굳의 게임방송"이 안
+        # 잘리고 그대로 표시됨) 애초에 잘림이 안 생기는 환경이 있다 —
+        # 길이를 넉넉히 둬 어떤 폰트 메트릭에서도 반드시 잘리게 한다.
+        item = _make_item(content_type="video", channel="우왁굳의 게임방송 다시보기 풀버전 모음집 전체")
         item.total_size = "1.24 GB"
         widget = _build_widget(item, qapp, width=460)
 
