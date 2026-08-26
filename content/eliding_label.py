@@ -15,7 +15,7 @@ import하므로, 거꾸로 `ui/`가 `content/widget.py`를 import하면 순환
 독립 모듈에 두는 것과 같은 이유).
 """
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import QLabel, QSizePolicy
 
@@ -26,9 +26,29 @@ class ElidingLabel(QLabel):
         self._elide_mode = elide_mode
         self._full_text = ""
         self._last_elide_width = -1
+        # Ignored였던 첫 시도는 실제로 폭 0에 눌렸다(#232 실측 — 아래 참고).
+        # Preferred(QLabel 기본값)를 유지하되 sizeHint를 작고 고정된 값으로
+        # 바꿔치기하는 쪽이 맞다 — Ignored는 "sizeHint를 아예 안 본다"는
+        # 뜻이라 레이아웃이 존중할 대상 자체가 없어져, 같은 줄(topLayout)의
+        # Expanding 스페이서가 공간을 먼저 채가면 Ignored 라벨은 진짜로
+        # 0을 받았다(모든 다운로드 상태에서 실측 확인). Preferred는 내가
+        # 돌려주는(고정·작은) sizeHint를 레이아웃이 실제로 존중해준다.
         policy = self.sizePolicy()
-        policy.setHorizontalPolicy(QSizePolicy.Policy.Ignored)
+        policy.setHorizontalPolicy(QSizePolicy.Policy.Preferred)
         self.setSizePolicy(policy)
+
+    def minimumSizeHint(self) -> QSize:
+        # 원문 길이와 무관하게 항상 이 작은 고정값을 돌려준다 — 이게 없으면
+        # (a) 기본 QLabel처럼 원문 전체 폭이 최소치가 돼 #226/#229 이전처럼
+        # 카드가 넘치거나, (b) 지금 표시 중인(이미 elide된) 텍스트 기준으로
+        # 계산하면 극단적으로 좁아져 elidedText()가 ""를 반환할 때
+        # minimumSizeHint도 0이 되어 레이아웃이 "필요 없다"로 읽고 다음
+        # 패스에서도 0을 주는 되먹임 루프가 생긴다(#232에서 실측 확인).
+        # `sizeHint()`는 일부러 안 건드린다 — QLabel 기본 구현이 지금
+        # 표시 중인(이미 elide된) 텍스트 기준으로 돌려주므로, 한 줄에 여유가
+        # 있으면 그만큼 더 받고 빠듯하면 이 최소치까지만 내려간다.
+        metrics = QFontMetrics(self.font())
+        return QSize(metrics.horizontalAdvance("…") + 4, metrics.height())
 
     def setElideMode(self, mode: Qt.TextElideMode) -> None:
         self._elide_mode = mode

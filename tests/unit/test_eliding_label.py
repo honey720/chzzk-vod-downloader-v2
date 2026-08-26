@@ -7,15 +7,28 @@
 """
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QSizePolicy
 
 from content.eliding_label import ElidingLabel
 
 
 class TestSizePolicy:
-    def test_horizontal_policy_is_ignored_so_layouts_can_shrink_it(self, qapp):
-        label = ElidingLabel()
-        assert label.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Ignored
+    def test_minimum_size_hint_is_small_regardless_of_text_length(self, qapp):
+        """실제로 중요한 계약: `minimumSizeHint()`가 원문 길이와 무관하게 작아야
+        레이아웃이 이 라벨을 content 폭 밑으로 줄일 수 있다(#226/#229 이전
+        버그의 원인 — 기본 QLabel은 minimumSizeHint가 곧 content 폭이라
+        절대 안 줄었다). `QSizePolicy.Ignored`로 처음 고쳤다가 `#232`에서
+        같은 줄의 다른 Ignored 라벨·Expanding 스페이서와 경쟁해 폭 0으로
+        눌리는 걸 실측으로 확인하고 `Preferred`+작은 `minimumSizeHint`로
+        바꿨다 — 그래서 정책 enum 값이 아니라 이 계약 자체를 고정한다.
+        """
+        short = ElidingLabel()
+        short.setText("짧음")
+
+        long = ElidingLabel()
+        long.setText("This is a very long piece of text " * 5)
+
+        assert long.minimumSizeHint().width() == short.minimumSizeHint().width()
+        assert long.minimumSizeHint().width() < 50
 
 
 class TestTextContract:
