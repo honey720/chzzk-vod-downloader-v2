@@ -49,8 +49,11 @@ class ContentListView(QScrollArea):
 
         self._container = QWidget()
         self._layout = QVBoxLayout(self._container)
-        self._layout.setContentsMargins(10, 10, 10, 0)
-        self._layout.setSpacing(0)
+        self._layout.setContentsMargins(10, 10, 10, 10)
+        # 카드끼리 붙어 있으면 목록이 답답해 보인다 (#227). 카드 자체가 가진
+        # 위쪽 여백(contentItemLayout 10px)에 이만큼을 더해 간격을 낸다 —
+        # 카드 폭에는 영향을 주지 않는 값이라 ElidingLabel 폭 계산과 무관하다
+        self._layout.setSpacing(6)
         self._layout.addStretch(1)  # 카드는 항상 이 스트레치 앞에 insertWidget된다
         self.setWidget(self._container)
 
@@ -195,24 +198,11 @@ class ContentListView(QScrollArea):
         widget = self._widgets.get(item)
         if widget:
             widget.deleteButton.setEnabled(True)
-            if isFinish:
-                widget.contentFrame.setStyleSheet("""
-                #contentFrame {
-                    background-color: #55B5FF;  /* ✅ 불투명한 배경 */
-                    border-radius: 8px;
-                    padding: 0px;
-                    color: #ffffff;
-                }
-                """)
-            else:
-                widget.contentFrame.setStyleSheet("""
-                #contentFrame {
-                    background-color: #FF6969;  /* ✅ 불투명한 배경 */
-                    border-radius: 8px;
-                    padding: 0px;
-                    color: #ffffff;
-                }
-                """)
+            # 완료·실패 색은 여기서 직접 칠하지 않는다 (#227) — setData가
+            # 아이템 상태(FINISHED/FAILED)를 보고 theme.card_style()로
+            # 카드 테두리·진행바를 함께 맞춘다. 색을 이 자리에 박아두면
+            # 대기·진행 두 상태만 색이 없는 반쪽짜리가 되고, 값도 theme.py와
+            # 갈라진다
             widget.setData(item, self._model.getRow(item))
 
     #TODO: 중복되는 부분 통합

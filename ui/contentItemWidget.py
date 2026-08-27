@@ -17,7 +17,7 @@ from PySide6.QtGui import (QBrush, QColor, QConicalGradient, QCursor,
     QPalette, QPixmap, QRadialGradient, QTransform)
 from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel,
     QLineEdit, QPushButton, QSizePolicy, QSpacerItem,
-    QVBoxLayout, QWidget)
+    QProgressBar, QVBoxLayout, QWidget)
 from content.eliding_label import ElidingLabel
 
 class Ui_ContentItemWidget(object):
@@ -30,15 +30,6 @@ class Ui_ContentItemWidget(object):
         self.contentItemLayout.setContentsMargins(10, 10, 10, 0)
         self.contentFrame = QFrame(ContentItemWidget)
         self.contentFrame.setObjectName(u"contentFrame")
-        self.contentFrame.setStyleSheet(u"            #contentFrame {\n"
-"                background-color: #424242;\n"
-"                border-radius: 8px;\n"
-"                padding: 0px;\n"
-"            }\n"
-"\n"
-"            QFrame {\n"
-"                color: #ffffff;\n"
-"            }")
         self.contentFrame.setFrameShape(QFrame.Shape.StyledPanel)
         self.contentFrame.setFrameShadow(QFrame.Shadow.Raised)
         self.contentFrameLayout = QVBoxLayout(self.contentFrame)
@@ -106,6 +97,7 @@ class Ui_ContentItemWidget(object):
         self.deleteButton.setObjectName(u"deleteButton")
         self.deleteButton.setMinimumSize(QSize(30, 30))
         self.deleteButton.setMaximumSize(QSize(30, 30))
+        self.deleteButton.setProperty("role", u"icon")
 
         self.topLayout.addWidget(self.deleteButton)
 
@@ -118,9 +110,6 @@ class Ui_ContentItemWidget(object):
         self.thumbnailLabel.setObjectName(u"thumbnailLabel")
         self.thumbnailLabel.setMinimumSize(QSize(116, 66))
         self.thumbnailLabel.setMaximumSize(QSize(105, 60))
-        self.thumbnailLabel.setStyleSheet(u"            #thumbnailLabel {\n"
-"                background-color: #333333;\n"
-"            }")
         self.thumbnailLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.centerLayout.addWidget(self.thumbnailLabel)
@@ -166,6 +155,7 @@ class Ui_ContentItemWidget(object):
         self.openDirectoryButton.setObjectName(u"openDirectoryButton")
         self.openDirectoryButton.setMinimumSize(QSize(30, 30))
         self.openDirectoryButton.setMaximumSize(QSize(30, 30))
+        self.openDirectoryButton.setProperty("role", u"icon")
 
         self.directoryLayout.addWidget(self.openDirectoryButton)
 
@@ -177,6 +167,17 @@ class Ui_ContentItemWidget(object):
 
 
         self.contentFrameLayout.addLayout(self.centerLayout)
+
+        self.progressBar = QProgressBar(self.contentFrame)
+        self.progressBar.setObjectName(u"progressBar")
+        self.progressBar.setMinimumSize(QSize(0, 6))
+        self.progressBar.setMaximumSize(QSize(16777215, 6))
+        self.progressBar.setMaximum(100)
+        self.progressBar.setValue(0)
+        self.progressBar.setTextVisible(False)
+        self.progressBar.setProperty("state", u"waiting")
+
+        self.contentFrameLayout.addWidget(self.progressBar)
 
 
         self.contentItemLayout.addWidget(self.contentFrame)

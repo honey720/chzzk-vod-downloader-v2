@@ -7,6 +7,7 @@ from PySide6.QtCore import QTranslator, QLocale
 
 from application.mainWindow import VodDownloader
 import config.config as config
+import theme
 from config.log_setup import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -19,6 +20,29 @@ def resource_path(relative_path: str) -> str:
     """
     base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
+
+def apply_theme(app):
+    """앱 전역 스타일시트를 읽어 적용한다 (#227).
+
+    실패해도 앱은 뜬다 — 스타일이 없으면 Qt 기본 외형으로 보일 뿐이고,
+    번들에서 리소스가 빠진 채로 나가는 사고(#216)가 다운로드 기능까지
+    막을 이유는 없다. 대신 조용히 넘어가지 않고 로그로 남긴다.
+    """
+    # Fusion으로 고정한다 — 네이티브 스타일(Windows Vista·macOS)은 팔레트를
+    # 상당 부분 무시해 같은 QSS가 OS마다 다르게 그려지고, macOS는 시스템
+    # 다크모드 여부까지 끼어든다. Fusion은 3-OS에서 우리가 준 팔레트·QSS를
+    # 그대로 따른다
+    app.setStyle("Fusion")
+    # 팔레트 먼저 — QSS가 안 덮는 부분(스크롤 영역 뷰포트·컨텍스트 메뉴 등)을 담당한다
+    app.setPalette(theme.build_palette())
+
+    qss_path = resource_path(theme.QSS_RELATIVE_PATH)
+    try:
+        app.setStyleSheet(theme.load_stylesheet(qss_path))
+        logger.info("stylesheet applied: %s", qss_path)
+    except (OSError, KeyError) as e:
+        logger.warning("stylesheet load failed (%s): %s", qss_path, e)
+
 
 def set_language(app_config, translator):
     
@@ -61,6 +85,9 @@ if __name__ == '__main__':
     setup_logging()
 
     app = QApplication(sys.argv)
+
+    # 전역 스타일시트 — 위젯이 만들어지기 전에 적용해야 첫 렌더부터 반영된다 (#227)
+    apply_theme(app)
 
     # 설정 파일 로드
     app_config = config.update_config()
