@@ -63,7 +63,9 @@ DARK = {
     # ---- 카드 ----
     "cardBg": "#2b2d33",
     "cardRadius": "14px",
-    "cardPadding": "10px",
+    # 카드 안쪽 여백은 **세로만** 준다 — 가로는 0이어야 한다.
+    # 이유는 아래 _CARD_TEMPLATE 주석에 있다(3-OS 폰트 메트릭 회귀의 원인이었다).
+    "cardPaddingV": "6px",
     # ---- 상태색 (카드 테두리·진행바 공용) ----
     # running/failed는 기존 값을 그대로 승계한다 — 실패 빨강(#FF6969)은
     # tests/unit/test_failure_display.py가 카드 스타일시트에서 직접 확인한다.
@@ -94,12 +96,26 @@ CARD_STATES = ("waiting", "running", "finished", "failed")
 # 카드 프레임 규칙. 전역 .qss가 아니라 여기 있는 이유: 상태에 따라 값이
 # 달라져 파이썬이 런타임에 위젯별로 적용해야 한다(`setStyleSheet`).
 # 규칙 전체를 한 번에 내보내 전역 규칙과의 병합 순서에 기대지 않는다.
+#
+# **가로 여백(padding)은 0이어야 한다.** 카드 안쪽 가용 폭이 조금이라도
+# 줄면 제목·경로·상태 라벨이 그만큼 일찍 잘리고, 그 잘림 위치를 고정한
+# 회귀 테스트들이 3-OS 폰트 메트릭 차이에 걸려 깨진다 — PR #234의 첫 CI가
+# 정확히 이렇게 실패했다(가로 padding 10px + 테두리 1px = 폭 22px 손실.
+# 실측: 카드 460px에서 채널명 92→70px, 뷰 300px에서 제목 118→96px·경로
+# 88→66px. 로컬 Windows만 통과하고 3-OS 전부 실패). 세로 여백은 폭과
+# 무관하므로 자유롭게 준다.
+#
+# 테두리 1px이 좌우로 먹는 2px은 `ui/contentItemWidget.ui`의
+# `contentItemLayout` 가로 여백을 10 → 9로 줄여 정확히 되돌려준다. 둘 다
+# 명시 상수라 플랫폼 기본값에 좌우되지 않는다 — 카드 안쪽 가로 가용 폭은
+# 어느 OS에서든 "카드 폭 − 20px"로 기준선과 동일하다
+# (tests/unit/test_widget_theme.py::TestCardInnerWidthIsUnchanged가 고정한다).
 _CARD_TEMPLATE = """\
 #contentFrame {
     background-color: @cardBg;
     border: 1px solid %(stateColor)s;
     border-radius: @cardRadius;
-    padding: @cardPadding;
+    padding: @cardPaddingV 0px;
 }
 """
 

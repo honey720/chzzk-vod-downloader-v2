@@ -27,7 +27,7 @@ class Ui_ContentItemWidget(object):
         ContentItemWidget.resize(600, 134)
         self.contentItemLayout = QVBoxLayout(ContentItemWidget)
         self.contentItemLayout.setObjectName(u"contentItemLayout")
-        self.contentItemLayout.setContentsMargins(10, 10, 10, 0)
+        self.contentItemLayout.setContentsMargins(9, 10, 9, 0)
         self.contentFrame = QFrame(ContentItemWidget)
         self.contentFrame.setObjectName(u"contentFrame")
         self.contentFrame.setFrameShape(QFrame.Shape.StyledPanel)
