@@ -225,8 +225,11 @@ QGroupBox::title {
     left: 10px;
     padding: 0px 4px;
     color: @textMuted;
-    /* 제목 뒤로 테두리 선이 지나가지 않게 바탕색으로 가린다 */
-    background-color: @surface;
+    /* 제목 뒤로 테두리 선이 지나가지 않게 가린다. `subcontrol-origin: margin`이라
+     * 제목은 그룹박스 **바깥**(창 바탕 위)에 놓인다 — 여기에 그룹박스 바탕색
+     * (@surface)을 깔면 창 바탕(@windowBg)보다 밝아 회색 탭처럼 도드라진다
+     * (실측 확인). 가리는 색은 제목이 실제로 얹히는 면의 색이어야 한다. */
+    background-color: @windowBg;
 }
 
 /* ---------- 진행바 ---------- */
