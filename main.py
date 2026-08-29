@@ -47,22 +47,6 @@ def apply_theme(app):
         logger.warning("stylesheet load failed (%s): %s", qss_path, e)
 
 
-def _on_os_color_scheme_changed(app):
-    """실행 중 OS 라이트/다크 설정이 바뀌면 팔레트·전역 QSS를 다시 적용한다.
-
-    v2.9.6까지는 네이티브 스타일이 이걸 공짜로 해줬다(OS가 다시 그려줬다).
-    Fusion 고정 이후로는 우리가 직접 다시 칠해야 한다. 단, 이미 화면에 떠
-    있는 카드의 `#contentFrame` 배경(`theme.card_style()`로 위젯별
-    `setStyleSheet`을 건 것)은 여기서 갱신되지 않는다 — 그 카드가 다음에
-    상태를 바꿔 `card_style()`을 다시 호출할 때 새 스킴을 받는다. 전역
-    크롬(창 바탕·버튼·입력창·스크롤 영역)은 즉시 갱신된다. 이미 떠 있는
-    카드까지 즉시 다시 칠하는 건 이번 회귀 수정의 범위 밖으로 판단했다 —
-    필요하면 별도로 다뤄야 한다.
-    """
-    apply_theme(app)
-    logger.info("OS color scheme changed at runtime — palette/stylesheet reapplied")
-
-
 def set_language(app_config, translator):
     
     # 1. 설정 파일에서 언어 가져오기
@@ -106,11 +90,16 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
 
     # 전역 스타일시트 — 위젯이 만들어지기 전에 적용해야 첫 렌더부터 반영된다 (#227)
+    #
+    # 실행 중 OS 테마 전환 추종은 일부러 배선하지 않는다 — 시도했다가 뺐다.
+    # colorSchemeChanged로 다시 칠하면 전역 팔레트·QSS(창 바탕·버튼·입력창)만
+    # 즉시 바뀌고, 카드 배경(`content/widget.py`가 `theme.card_style()`로
+    # 위젯별 setStyleSheet을 거는 값)은 그 카드가 다음에 상태를 바꿀 때까지
+    # 그대로 남는다 — 실기로 확인: 화면이 반쪽만 갈아입어 카드만 안 바뀐
+    # 채로 튀어 보인다. 동작하지 않는 코드를 남기지 않는다는 방침대로 뺀다.
+    # 카드 스타일을 전역 .qss로 옮기고 나면(지금은 상태별 값이라 위젯별
+    # setStyleSheet이 유일한 경로다) 다시 볼 것.
     apply_theme(app)
-    # 실행 중 OS 테마가 바뀌면 다시 칠한다 — v2.9.6이 네이티브 스타일로
-    # 공짜로 얻던 동작 중 전역 크롬 부분을 복원한다 (자세한 범위는
-    # _on_os_color_scheme_changed 참고)
-    app.styleHints().colorSchemeChanged.connect(lambda _scheme: _on_os_color_scheme_changed(app))
 
     # 설정 파일 로드
     app_config = config.update_config()
