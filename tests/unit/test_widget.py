@@ -73,6 +73,15 @@ def _build_widget(item, qapp, width: int = 600) -> ContentItemWidget:
     return widget
 
 
+#: 라벨이 완전히 안 잘리는 걸 구조적으로 보장하려는 폭 (#237).
+#: `_build_widget()` 기본값(600)에서는 로컬 Windows 오프스크린 대체 폰트가
+#: CI 고정 폰트보다 넓어 "1.2 GB"·"00:05:12" 같은 짧은 값조차 elide 문턱을
+#: 넘었다(실측: 650px부터 로컬에서도 안 잘림, 900은 그 위에 넉넉한 여유를
+#: 더한 값 — 이 폭에서는 특정 문자가 아니라 "잘리지 않는다"는 폭 자체의
+#: 성질을 확인하는 것이라 어느 폰트에서도 다시 안 깨진다).
+_UNCONSTRAINED_WIDTH = 900
+
+
 class TestStatusAndFileSizeAreVisible:
     """카드 폭이 넉넉한(창을 좁히지 않은) 정상 상태에서 이 라벨들이 실제로
     보여야 한다 — PR #229 이후 폭 0으로 눌려 전부 빈 문자열이 되던 회귀."""
@@ -80,7 +89,7 @@ class TestStatusAndFileSizeAreVisible:
     def test_waiting_file_type_shows_status_and_total_size(self, qapp):
         item = _make_item(content_type="video")
         item.total_size = "1.2 GB"
-        widget = _build_widget(item, qapp)
+        widget = _build_widget(item, qapp, width=_UNCONSTRAINED_WIDTH)
 
         assert _rendered(widget.statusLabel) != ""
         assert _rendered(widget.fileSizeLabel) != ""
@@ -123,7 +132,7 @@ class TestStatusAndFileSizeAreVisible:
         item.download_size = 800 * 1024 * 1024
         item.downloadState = DownloadState.FINISHED
         item.download_time = "00:05:12"
-        widget = _build_widget(item, qapp)
+        widget = _build_widget(item, qapp, width=_UNCONSTRAINED_WIDTH)
 
         assert _rendered(widget.statusLabel) != ""
         assert "00:05:12" in _rendered(widget.statusLabel)
@@ -143,33 +152,51 @@ class TestChannelNameYieldsBeforeStatusAndFileSize:
     버텨야 한다(오너 지시 — 채널명은 길이가 임의라 잘려도 손해가 작지만,
     파일 크기·상태는 다운로드를 지켜보는 유저에게 더 중요한 정보다).
 
-    `channelNameLabel`에 준 큰 stretch(100)가 이 우선순위를 만든다 — 실측으로
-    폭 420px(카드 기준)에서 채널명은 완전히 "…"까지 줄어도 "Download waiting"·
-    "1.24 GB"는 전혀 안 줄어드는 걸 확인했다. `setMaximumWidth(150)`도 같이
+    `channelNameLabel`에 준 큰 stretch(100)가 이 우선순위를 만든다 — 채널명이
+    `setMaximumWidth(150)` 상한에 걸려도 "Download waiting"·"1.24 GB" 같은
+    상태·크기 라벨은 안 줄어드는 걸 확인했다. `setMaximumWidth(150)`도 같이
     거는데, 이게 없으면 stretch가 커서 여유가 있을 때도 채널명이 스페이서
     몫까지 욕심내 폭이 과하게 넓어진다(실측 확인 — 249px까지 늘어났었음).
     """
 
     def test_narrow_width_elides_channel_name_but_not_status_or_size(self, qapp):
-        # 폭은 넉넉히 여유를 둔다 — 정확히 딱 맞는 폭이면 플랫폼별 폰트
-        # 메트릭 차이로 마지막 한 글자가 걸릴 수 있다(#229 후속 CI 실패로
-        # 이미 겪은 함정, test_eliding_label.py 참고). 좁혀도 채널명만
-        # 줄고 상태·크기는 안 줄어야 한다는 "우선순위"가 검증 대상이지,
-        # 정확한 절단 위치가 아니다.
         # 채널명은 넉넉히 길게 잡는다 — 짧은 채널명은 플랫폼 폴백 폰트에서
         # 글리프 폭이 좁아 150px 상한 안에 통째로 들어가 버려(실측: 이
         # 환경에서 채널명 라벨이 99px을 받는데 "우왁굳의 게임방송"이 안
         # 잘리고 그대로 표시됨) 애초에 잘림이 안 생기는 환경이 있다 —
         # 길이를 넉넉히 둬 어떤 폰트 메트릭에서도 반드시 잘리게 한다.
+        # `setMaximumWidth(150)`이 폰트와 무관하게 상한을 강제하므로 이
+        # 채널명은 카드 폭을 얼마나 늘려도 반드시 잘린다 — 그래서 카드
+        # 폭 자체는 `_UNCONSTRAINED_WIDTH`로 넉넉히 줘도 "채널명만 줄고
+        # 나머지는 안 준다"는 우선순위 검증은 그대로 유지된다.
+        #
+        # #237: 원래 460px을 썼는데, 로컬 Windows 오프스크린 대체 폰트가
+        # CI 고정 폰트보다 넓어 이 폭에서는 채널명이 다 죽고도 상태·크기
+        # 라벨까지 밀려 잘렸다(우선순위 메커니즘 자체는 살아 있었지만
+        # 여유가 부족했다) — 로컬에서도 안 잘리는 최소치가 650px이라 700을
+        # 썼다. `_UNCONSTRAINED_WIDTH`(900)까지 안 올린 이유: 고장 주입으로
+        # 확인해 보니 900에서는 `channelNameLabel`의 stretch를 0으로 빼도
+        # (우선순위 메커니즘 자체를 없애도) 이 테스트가 통과했다 — 그만큼
+        # 넓으면 아예 경쟁이 안 생겨 무엇이 이 결과를 만드는지 더는 검증하지
+        # 못한다. 700은 "로컬에서 안 잘림(650+)"과 "stretch=0이면 여전히
+        # 잘림(760까지)"의 교집합이라, 우선순위 메커니즘이 실제로 결과를
+        # 만든다는 것 자체를 계속 검증한다.
         item = _make_item(content_type="video", channel="우왁굳의 게임방송 다시보기 풀버전 모음집 전체")
         item.total_size = "1.24 GB"
-        widget = _build_widget(item, qapp, width=460)
+        widget = _build_widget(item, qapp, width=700)
 
         assert _rendered(widget.channelNameLabel) != widget.channelNameLabel.text(), (
             "채널명이 안 잘렸다 — 이 폭에서는 채널명이 먼저 줄어야 한다"
         )
-        assert _rendered(widget.statusLabel).startswith("Download wait")
-        assert "1.24 GB" in _rendered(widget.fileSizeLabel)
+        # "정확히 어디까지 잘리는가"가 아니라 "안 잘려야 한다"는 우선순위
+        # 자체가 검증 대상이라, 원문과의 완전 일치로 잰다 — 부분 문자열
+        # 검사(`"..." in ...`)는 잘림 문턱이 폰트마다 달라 흔들린다.
+        assert _rendered(widget.statusLabel) == widget.statusLabel.text(), (
+            "상태 문구가 잘렸다 — 채널명보다 먼저 줄면 안 된다"
+        )
+        assert _rendered(widget.fileSizeLabel) == widget.fileSizeLabel.text(), (
+            "파일 크기가 잘렸다 — 채널명보다 먼저 줄면 안 된다"
+        )
 
     def test_wide_width_does_not_over_grow_channel_name(self, qapp):
         """여유가 있을 때 stretch 때문에 채널명이 스페이서 몫까지 삼키면 안 된다."""

@@ -364,6 +364,20 @@ class TestNoHorizontalOverflow:
         )
 
     def test_title_is_elided_right_and_path_is_elided_middle(self, view, qapp):
+        """제목은 오른쪽, 경로는 가운데 말줄임인지 — **폰트 무의존 재표현** (#237).
+
+        원래는 `rendered_title.startswith("StartOfTitle")`처럼 정확한 글자
+        수를 직접 단언했다 — 로컬 Windows(오프스크린, `QT_QPA_FONTDIR`
+        미설정)의 대체 폰트가 CI가 고정한 폰트보다 넓어 같은 300px에서
+        살아남는 글자 수가 달라 로컬에서만 깨졌다(도입 커밋 `0e062fa`부터
+        계속 그랬다 — 회귀가 아니라 애초에 로컬을 못 통과하던 게이트).
+
+        검증하려는 것은 "정확히 몇 글자가 남는가"가 아니라 "어느 쪽이
+        잘리는가"다 — 그래서 정확한 문자 수 대신 **구조**를 잰다: (1) 잘림
+        모드 설정 자체(`_elide_mode`, 폰트와 무관한 정적 값), (2) 잘린
+        결과가 원문의 접두사(오른쪽 잘림)인지 접두사+접미사(가운데 잘림)
+        인지 — 살아남는 글자 수가 얼마든 이 관계는 폰트와 무관하게 성립한다.
+        """
         v, model = view
         v.resize(300, 400)
         v.show()
@@ -380,7 +394,22 @@ class TestNoHorizontalOverflow:
         widget = v.widgetFor(item)
         rendered_title = type(widget.titleLabel).__mro__[1].text(widget.titleLabel)
         rendered_path = type(widget.directoryLabel).__mro__[1].text(widget.directoryLabel)
+        full_title = widget.titleLabel.text()
+        full_path = widget.directoryLabel.text()
 
-        assert rendered_title.startswith("StartOfTitle")
-        assert rendered_path.startswith("C:")
-        assert rendered_path.endswith(".mp4")
+        assert widget.titleLabel._elide_mode == Qt.TextElideMode.ElideRight
+        assert widget.directoryLabel._elide_mode == Qt.TextElideMode.ElideMiddle
+
+        # 오른쪽 말줄임: "…" 앞부분이 원문의 접두사와 일치해야 한다(뒷부분만 잘림)
+        assert rendered_title != full_title, "제목이 이 폭에서 안 잘렸다 — 게이트 전제가 깨졌다"
+        assert rendered_title.endswith("…")
+        assert full_title.startswith(rendered_title[:-1]), (
+            f"오른쪽 말줄임이 아니다 — 접두사가 원문과 안 맞는다: {rendered_title[:-1]!r}"
+        )
+
+        # 가운데 말줄임: "…" 앞뒤 둘 다 원문의 접두사·접미사와 일치해야 한다
+        assert rendered_path != full_path, "경로가 이 폭에서 안 잘렸다 — 게이트 전제가 깨졌다"
+        assert "…" in rendered_path
+        before, _, after = rendered_path.partition("…")
+        assert full_path.startswith(before), f"가운데 말줄임이 아니다 — 앞부분 불일치: {before!r}"
+        assert full_path.endswith(after), f"가운데 말줄임이 아니다 — 뒷부분 불일치: {after!r}"

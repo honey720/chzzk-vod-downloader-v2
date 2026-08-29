@@ -132,6 +132,14 @@ class TestCardInnerWidthIsUnchanged:
     테스트는 어느 OS에서든 같은 답을 낸다 — 그래서 위 회귀들보다 먼저,
     로컬에서 원인을 짚어준다. 카드에 여백이 더 필요하면 세로로 주고,
     가로를 꼭 늘려야 한다면 이 상수와 위 회귀 테스트들을 함께 다시 볼 것.
+
+    **#237 추가 — "순수 기하값"이되 요청 폭이 아니라 실제 폭을 써야
+    한다.** `resize(300, ...)`을 줘도 `ElidingLabel.minimumSizeHint()`가
+    폰트 메트릭 기반이라 위젯이 요청보다 넓게 클램프될 수 있다(로컬
+    Windows 오프스크린 대체 폰트에서 300px 요청 → 실제 308px). 값 자체는
+    폰트가 정하지만 "위젯 폭 − 20px = 안쪽 폭"이라는 **관계**는 폰트와
+    무관해서, `widget.width()`(실제 폭) 기준으로 재면 어느 폰트에서든
+    깨지지 않는다.
     """
 
     #: `contentItemLayout`의 좌우 여백(9) + 카드 테두리(1), 양쪽 합계.
@@ -144,11 +152,21 @@ class TestCardInnerWidthIsUnchanged:
         widget.show()
         qapp.processEvents()
 
+        # `resize(width, ...)`가 요청한 폭 그대로 받는다는 보장은 없다 —
+        # `ElidingLabel.minimumSizeHint()`가 폰트 메트릭으로 최소 폭을
+        # 요구해서, 요청 폭이 그 합보다 좁으면 Qt가 위젯을 더 넓게
+        # 클램프한다(로컬 Windows 오프스크린 대체 폰트에서 300px 요청 시
+        # 실측 308px — #237에서 확인). 그래서 요청값(`width`)이 아니라
+        # 실제로 받은 폭(`widget.width()`)을 기준으로 잰다 — 클램프가
+        # 얼마가 됐든 "위젯 폭 − 20px = 카드 안쪽 폭"이라는 진짜 불변식은
+        # 폰트와 무관하게 그대로 성립한다(테두리 1px + 레이아웃 여백 9px,
+        # 양쪽 합 20px은 명시 상수라 플랫폼·폰트에 안 흔들린다).
+        actual_width = widget.width()
         inner = widget.contentFrame.contentsRect().width()
-        assert inner == width - self.EXPECTED_HORIZONTAL_INSET, (
-            f"카드 안쪽 가용 폭이 {width - inner}px 줄었다(기대 "
-            f"{self.EXPECTED_HORIZONTAL_INSET}px) — 라벨 잘림 위치가 밀려 "
-            "3-OS 폰트 메트릭 회귀 테스트가 깨진다"
+        assert inner == actual_width - self.EXPECTED_HORIZONTAL_INSET, (
+            f"카드 안쪽 가용 폭이 {actual_width - inner}px 줄었다(기대 "
+            f"{self.EXPECTED_HORIZONTAL_INSET}px, 실제 위젯 폭 {actual_width}px) — "
+            "라벨 잘림 위치가 밀려 3-OS 폰트 메트릭 회귀 테스트가 깨진다"
         )
 
     @pytest.mark.parametrize("state", ["waiting", "running", "finished", "failed"])
