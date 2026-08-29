@@ -9,6 +9,7 @@ from core.models.download_state import DownloadState
 from app.viewmodels.item_state import ItemState
 from app.viewmodels.path_gates import check_card_edit_path
 from ui.contentItemWidget import Ui_ContentItemWidget
+import theme
 from time import strftime, gmtime
 import platform
 import logging
@@ -32,9 +33,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.item = item  # ContentItem 저장
         self.index = index  # 인덱스 저장
         self.isEditing = False
-        self.setupUi(self)  # TODO: 테마별 스타일시트 설정하기
+        self.setupUi(self)
         self._setupThreadRelays()  # setupDynamicUi가 스레드를 띄우기 전에 연결돼야 한다 (#168)
-        self.setupDynamicUi()  # TODO: 테마별 스타일시트 설정하기
+        self.setupDynamicUi()
         self.setupSignals()  # 시그널 연결
 
     def _setupThreadRelays(self):
@@ -56,6 +57,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.directoryEdit.setText(self.item.download_path) # 다운로드 경로 업데이트
         self.directoryEdit.setVisible(False) # 다운로드 경로 수정용 QLineEdit 숨김
         self.openDirectoryButton.setText("📁")
+        self.applyStateStyle()  # setData 전에도 카드가 무스타일로 보이지 않게 (#227)
 
     def setupSignals(self):
         self.deleteButton.clicked.connect(self.requestDelete)
@@ -89,6 +91,10 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """
         button = QPushButton(f'{resolution}p', self)
         button.clicked.connect(lambda: self.setresolutionUrlSize(resolution, base_url, index, button))
+        # pill 모양·선택 표시는 전역 QSS의 [role="resolution"] 규칙이 그린다 (#227).
+        # QSS는 `.className` 선택자를 지원하지 않아 조용히 무시하므로, 동적
+        # 속성을 심어 속성 선택자로 잡는 게 유일한 방법이다
+        button.setProperty("role", "resolution")
         self.titleLayout.addWidget(button)
         button.setFixedSize(60, 30)
         button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -254,6 +260,49 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             self.statusLabel.setText(text)
             self.statusLabel.setToolTip(reason)
             self.progressLabel.setText(" ")
+
+        self.applyStateStyle()
+
+    def applyStateStyle(self):
+        """카드 테두리·진행바를 현재 다운로드 상태의 색으로 맞춘다 (#227).
+
+        색은 theme.py 한 곳에서만 정의된다. 카드 프레임은 상태마다 값이
+        달라 전역 `.qss`에 못 쓰고 위젯별 `setStyleSheet`으로 붙이지만,
+        진행바는 동적 속성(`state`)만 바꾸고 색은 전역 QSS의
+        `[state="..."]` 규칙이 고른다 — 속성만 바꾸면 이미 계산된 스타일이
+        갱신되지 않으므로 theme.repolish()가 함께 필요하다.
+        """
+        state = self._cardState()
+        self.contentFrame.setStyleSheet(theme.card_style(state))
+        self.progressBar.setValue(self._progressValue())
+        if self.progressBar.property("state") != state:
+            self.progressBar.setProperty("state", state)
+            theme.repolish(self.progressBar)
+
+    def _cardState(self) -> str:
+        """현재 아이템 상태를 카드 상태 어휘(theme.CARD_STATES)로 옮긴다.
+
+        PAUSED(정지)는 대기와 같은 회색으로 둔다 — 유저가 멈춘 것이지
+        진행 중도 실패도 아니다(기존 표시 문구도 "Download paused"로
+        대기 계열이다). LOADING(조회 중)도 마찬가지다.
+        """
+        state = self.item.downloadState
+        if state == DownloadState.RUNNING:
+            return "running"
+        if state == DownloadState.FINISHED:
+            return "finished"
+        if state == DownloadState.FAILED:
+            return "failed"
+        return "waiting"
+
+    def _progressValue(self) -> int:
+        """진행바에 넣을 0~100 값. 아직 시작 전(대기·조회 중)이면 0이다."""
+        if self.item.downloadState in (DownloadState.WAITING, ItemState.LOADING):
+            return 0
+        try:
+            return max(0, min(100, int(self.item.download_progress)))
+        except (TypeError, ValueError):
+            return 0
 
     def getData(self) -> ContentItem:
         """✅ 위젯에서 입력된 데이터를 가져와서 ContentItem으로 반환"""

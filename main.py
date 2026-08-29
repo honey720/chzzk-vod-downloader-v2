@@ -7,6 +7,7 @@ from PySide6.QtCore import QTranslator, QLocale
 
 from application.mainWindow import VodDownloader
 import config.config as config
+import theme
 from config.log_setup import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -19,6 +20,32 @@ def resource_path(relative_path: str) -> str:
     """
     base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
+
+def apply_theme(app):
+    """OS 라이트/다크 설정을 감지해 앱 전역 팔레트·스타일시트를 적용한다 (#227).
+
+    실패해도 앱은 뜬다 — 스타일이 없으면 Qt 기본 외형으로 보일 뿐이고,
+    번들에서 리소스가 빠진 채로 나가는 사고(#216)가 다운로드 기능까지
+    막을 이유는 없다. 대신 조용히 넘어가지 않고 로그로 남긴다.
+
+    Fusion 고정은 유지한다 — 이 함수가 감지 결과로 채운 팔레트를 그대로
+    따르게 하려는 것이 목적인데, 네이티브 스타일(Windows Vista·macOS)은
+    팔레트를 상당 부분 무시해 카드 목록 뷰포트 배경만 시스템 기본 밝은
+    회색으로 남는 문제가 있었다(#227 실측). Fusion + 감지된 팔레트 조합은
+    그 문제를 피하면서도 OS 테마를 따라간다 — 다크로 고정하지만 않으면 된다.
+    """
+    app.setStyle("Fusion")
+    theme.set_color_scheme(theme.detect_color_scheme(app))
+    # 팔레트 먼저 — QSS가 안 덮는 부분(스크롤 영역 뷰포트·컨텍스트 메뉴 등)을 담당한다
+    app.setPalette(theme.build_palette())
+
+    qss_path = resource_path(theme.QSS_RELATIVE_PATH)
+    try:
+        app.setStyleSheet(theme.load_stylesheet(qss_path))
+        logger.info("stylesheet applied: %s", qss_path)
+    except (OSError, KeyError) as e:
+        logger.warning("stylesheet load failed (%s): %s", qss_path, e)
+
 
 def set_language(app_config, translator):
     
@@ -61,6 +88,18 @@ if __name__ == '__main__':
     setup_logging()
 
     app = QApplication(sys.argv)
+
+    # 전역 스타일시트 — 위젯이 만들어지기 전에 적용해야 첫 렌더부터 반영된다 (#227)
+    #
+    # 실행 중 OS 테마 전환 추종은 일부러 배선하지 않는다 — 시도했다가 뺐다.
+    # colorSchemeChanged로 다시 칠하면 전역 팔레트·QSS(창 바탕·버튼·입력창)만
+    # 즉시 바뀌고, 카드 배경(`content/widget.py`가 `theme.card_style()`로
+    # 위젯별 setStyleSheet을 거는 값)은 그 카드가 다음에 상태를 바꿀 때까지
+    # 그대로 남는다 — 실기로 확인: 화면이 반쪽만 갈아입어 카드만 안 바뀐
+    # 채로 튀어 보인다. 동작하지 않는 코드를 남기지 않는다는 방침대로 뺀다.
+    # 카드 스타일을 전역 .qss로 옮기고 나면(지금은 상태별 값이라 위젯별
+    # setStyleSheet이 유일한 경로다) 다시 볼 것.
+    apply_theme(app)
 
     # 설정 파일 로드
     app_config = config.update_config()

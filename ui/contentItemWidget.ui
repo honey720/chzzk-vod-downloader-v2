@@ -15,30 +15,19 @@
   </property>
   <layout class="QVBoxLayout" name="contentItemLayout">
    <property name="leftMargin">
-    <number>10</number>
+    <number>9</number>
    </property>
    <property name="topMargin">
     <number>10</number>
    </property>
    <property name="rightMargin">
-    <number>10</number>
+    <number>9</number>
    </property>
    <property name="bottomMargin">
     <number>0</number>
    </property>
    <item>
     <widget class="QFrame" name="contentFrame">
-     <property name="styleSheet">
-      <string notr="true">            #contentFrame {
-                background-color: #424242;
-                border-radius: 8px;
-                padding: 0px;
-            }
-
-            QFrame {
-                color: #ffffff;
-            }</string>
-     </property>
      <property name="frameShape">
       <enum>QFrame::Shape::StyledPanel</enum>
      </property>
@@ -202,6 +191,9 @@
           <property name="toolTip">
            <string>Delete</string>
           </property>
+          <property name="role" stdset="0">
+           <string notr="true">icon</string>
+          </property>
          </widget>
         </item>
        </layout>
@@ -224,11 +216,6 @@
           </property>
           <property name="toolTip">
            <string>Thumbnail</string>
-          </property>
-          <property name="styleSheet">
-           <string notr="true">            #thumbnailLabel {
-                background-color: #333333;
-            }</string>
           </property>
           <property name="text">
            <string>Thumbnail</string>
@@ -315,6 +302,9 @@
               <property name="toolTip">
                <string>Open directory</string>
               </property>
+              <property name="role" stdset="0">
+               <string notr="true">icon</string>
+              </property>
              </widget>
             </item>
            </layout>
@@ -322,6 +312,34 @@
          </layout>
         </item>
        </layout>
+      </item>
+      <item>
+       <widget class="QProgressBar" name="progressBar">
+        <property name="minimumSize">
+         <size>
+          <width>0</width>
+          <height>6</height>
+         </size>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>16777215</width>
+          <height>6</height>
+         </size>
+        </property>
+        <property name="maximum">
+         <number>100</number>
+        </property>
+        <property name="value">
+         <number>0</number>
+        </property>
+        <property name="textVisible">
+         <bool>false</bool>
+        </property>
+        <property name="state" stdset="0">
+         <string notr="true">waiting</string>
+        </property>
+       </widget>
       </item>
      </layout>
     </widget>

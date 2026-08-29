@@ -1,0 +1,318 @@
+/* 앱 전역 스타일시트 (#227).
+ *
+ * `@토큰`은 theme.py가 로드 시점에 치환한다 — **색·모서리·간격 값을 여기에
+ * 직접 쓰지 말 것.** 값의 정의 지점은 theme.py 하나이고, 이 파일은 "무엇을
+ * 어디에 바르는가"만 담는다(나중에 라이트 테마가 붙어도 이 파일은 그대로다).
+ *
+ * 순정 QSS가 지원하지 않아 여기서 쓰지 않는 것:
+ *   - `box-shadow`      → 조용히 무시된다. 카드 분리는 테두리+바탕 대비로 낸다
+ *                          (그림자는 QGraphicsDropShadowEffect라는 파이썬 객체가
+ *                           필요한데, 카드 수천 개에 하나씩 붙는 건 #208에서
+ *                           손본 삽입·리페인트 비용을 되돌리는 일이다)
+ *   - `.className`      → 조용히 무시된다. 동적 속성 선택자(`[role="..."]`)를 쓴다
+ *   - `transition`      → 조용히 무시된다. 상태 전환은 :hover/:pressed 규칙으로만
+ *
+ * 카드 프레임(`#contentFrame`)은 여기 없다 — 상태에 따라 색이 달라져
+ * theme.card_style()이 위젯별로 붙인다.
+ */
+
+/* ---------- 바탕과 글자 ---------- */
+
+QWidget {
+    font-size: @fontSize;
+    color: @text;
+}
+
+QMainWindow,
+QDialog {
+    background-color: @windowBg;
+}
+
+QMainWindow > QWidget#centralwidget {
+    background-color: @windowBg;
+}
+
+QToolTip {
+    background-color: @surface;
+    color: @text;
+    border: 1px solid @border;
+    border-radius: @radius;
+    padding: 4px 8px;
+}
+
+/* ---------- 상·하단 패널 ---------- */
+
+QFrame#headerFrame,
+QFrame#infoFrame {
+    background-color: @surface;
+    border: 1px solid @border;
+    border-radius: @radius;
+    padding: 4px;
+}
+
+QLabel#linkStatusLabel,
+QLabel#downloadCountLabel {
+    color: @textMuted;
+}
+
+/* ---------- 카드 목록 ---------- */
+
+QScrollArea#listView {
+    background-color: @windowBg;
+    border: none;
+}
+
+/* 뷰포트는 QSS의 `QScrollArea` 규칙이 안 칠한다 — 팔레트(theme.build_palette)와
+ * 이 규칙 둘 다 없으면 카드 목록 배경만 시스템 기본 밝은 회색으로 남는다 */
+QScrollArea#listView > QWidget#qt_scrollarea_viewport {
+    background-color: @windowBg;
+}
+
+/* 뷰포트 안의 카드 컨테이너는 그 배경을 그대로 비춘다 */
+QScrollArea#listView > QWidget > QWidget {
+    background-color: transparent;
+}
+
+QLabel#thumbnailLabel {
+    background-color: @thumbBg;
+    border-radius: @radius;
+    color: @textMuted;
+}
+
+/* ---------- 버튼 ---------- */
+
+QPushButton {
+    background-color: @surfaceAlt;
+    color: @text;
+    border: 1px solid @border;
+    border-radius: @radius;
+    padding: 6px 14px;
+}
+
+QPushButton:hover {
+    background-color: @surfaceHover;
+    border-color: @borderStrong;
+}
+
+QPushButton:pressed {
+    background-color: @surfacePressed;
+    border-color: @borderStrong;
+}
+
+QPushButton:disabled {
+    background-color: @surface;
+    color: @textDisabled;
+    border-color: @border;
+}
+
+/* 주 동작 — 다운로드 */
+QPushButton#downloadButton {
+    background-color: @accent;
+    color: @onAccent;
+    border-color: @accent;
+}
+
+QPushButton#downloadButton:hover {
+    background-color: @accentHover;
+    border-color: @accentHover;
+}
+
+QPushButton#downloadButton:pressed {
+    background-color: @accentPressed;
+    border-color: @accentPressed;
+}
+
+QPushButton#downloadButton:disabled {
+    background-color: @surface;
+    color: @textDisabled;
+    border-color: @border;
+}
+
+/* 아이콘 버튼(❌·📁) — 30x30 고정이라 여백을 0으로 되돌려야 글리프가 안 잘린다.
+ * `role`은 ui/contentItemWidget.ui가 동적 속성으로 심는다. */
+QPushButton[role="icon"] {
+    padding: 0px;
+    background-color: transparent;
+    border-color: transparent;
+}
+
+QPushButton[role="icon"]:hover {
+    background-color: @surfaceHover;
+    border-color: @borderStrong;
+}
+
+QPushButton[role="icon"]:pressed {
+    background-color: @surfacePressed;
+}
+
+/* 해상도 버튼 — 60x30 고정 pill. `role`은 content/widget.py가 심는다. */
+QPushButton[role="resolution"] {
+    padding: 0px;
+    border-radius: @pillRadius;
+    color: @textMuted;
+}
+
+QPushButton[role="resolution"]:hover {
+    color: @text;
+}
+
+/* 선택된 해상도 = 비활성 버튼(기존 동작). 눌린 pill처럼 보이게 한다 */
+QPushButton[role="resolution"]:disabled {
+    background-color: @accent;
+    color: @onAccent;
+    border-color: @accent;
+}
+
+/* ---------- 입력창 ---------- */
+
+QLineEdit {
+    background-color: @surfaceAlt;
+    color: @text;
+    border: 1px solid @border;
+    border-radius: @radius;
+    padding: 5px 8px;
+    selection-background-color: @accent;
+    selection-color: @onAccent;
+}
+
+QLineEdit:focus {
+    border-color: @accent;
+}
+
+QLineEdit:disabled {
+    color: @textDisabled;
+}
+
+QComboBox {
+    background-color: @surfaceAlt;
+    color: @text;
+    border: 1px solid @border;
+    border-radius: @radius;
+    padding: 5px 8px;
+}
+
+/* `::drop-down`/`::down-arrow`는 일부러 손대지 않는다 — 서브컨트롤을 QSS로
+ * 재정의하는 순간 Fusion이 그리던 화살표가 사라져 콤보박스로 안 보인다
+ * (실측). 이미지 리소스를 새로 들이지 않는 한 되살릴 방법이 없다 */
+
+QComboBox:hover {
+    border-color: @borderStrong;
+}
+
+QComboBox QAbstractItemView {
+    background-color: @surface;
+    color: @text;
+    border: 1px solid @border;
+    border-radius: @radius;
+    selection-background-color: @accent;
+    selection-color: @onAccent;
+    outline: none;
+}
+
+/* ---------- 설정 창 ---------- */
+
+QGroupBox {
+    background-color: @surface;
+    border: 1px solid @border;
+    border-radius: @radius;
+    margin-top: 10px;
+    padding: 12px 10px 10px 10px;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 10px;
+    padding: 0px 4px;
+    color: @textMuted;
+    /* 제목 뒤로 테두리 선이 지나가지 않게 가린다. `subcontrol-origin: margin`이라
+     * 제목은 그룹박스 **바깥**(창 바탕 위)에 놓인다 — 여기에 그룹박스 바탕색
+     * (@surface)을 깔면 창 바탕(@windowBg)보다 밝아 회색 탭처럼 도드라진다
+     * (실측 확인). 가리는 색은 제목이 실제로 얹히는 면의 색이어야 한다. */
+    background-color: @windowBg;
+}
+
+/* ---------- 진행바 ---------- */
+
+QProgressBar {
+    background-color: @barTrack;
+    border: none;
+    border-radius: @barRadius;
+    text-align: center;
+}
+
+QProgressBar::chunk {
+    background-color: @stateRunning;
+    border-radius: @barRadius;
+}
+
+QProgressBar[state="waiting"]::chunk {
+    background-color: @stateWaiting;
+}
+
+QProgressBar[state="running"]::chunk {
+    background-color: @stateRunning;
+}
+
+QProgressBar[state="finished"]::chunk {
+    background-color: @stateFinished;
+}
+
+QProgressBar[state="failed"]::chunk {
+    background-color: @stateFailed;
+}
+
+/* ---------- 스크롤바 ---------- */
+
+QScrollBar:vertical {
+    background: transparent;
+    width: 10px;
+    margin: 0px;
+}
+
+QScrollBar::handle:vertical {
+    background: @scrollHandle;
+    border-radius: 5px;
+    min-height: 28px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: @scrollHandleHover;
+}
+
+QScrollBar:horizontal {
+    background: transparent;
+    height: 10px;
+    margin: 0px;
+}
+
+QScrollBar::handle:horizontal {
+    background: @scrollHandle;
+    border-radius: 5px;
+    min-width: 28px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background: @scrollHandleHover;
+}
+
+QScrollBar::add-line,
+QScrollBar::sub-line {
+    width: 0px;
+    height: 0px;
+}
+
+QScrollBar::add-page,
+QScrollBar::sub-page {
+    background: transparent;
+}
+
+/* ---------- 메시지 상자 ---------- */
+
+QMessageBox {
+    background-color: @windowBg;
+}
+
+QMessageBox QLabel {
+    color: @text;
+}
