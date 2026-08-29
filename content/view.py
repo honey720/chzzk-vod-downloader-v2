@@ -127,10 +127,16 @@ class ContentListView(QScrollArea):
         새 카드는 항상 끝에 붙어 앞 카드들의 번호에 영향이 없고, 삽입 단가를
         O(1)로 지키는 게 #226의 핵심이었다(전체 재번호매김을 얹으면 도로
         O(n)이 된다).
+
+        `self`를 컨텍스트 객체로 넘긴다 — 콜백이 돌기 전에 `self`(이 뷰)가
+        파괴되면 Qt가 알아서 호출을 취소한다. 뷰는 앱 생명주기 내내 살아
+        있어 실사용에선 거의 안 걸리는 경로지만, 테스트마다 새 뷰를 만들고
+        버리는 상황에서 이전 테스트가 예약해 둔 콜백이 다음 테스트로 새어
+        들어가는 걸 막는다.
         """
         if not self._renumberPending:
             self._renumberPending = True
-            QTimer.singleShot(0, self._renumberAll)
+            QTimer.singleShot(0, self, self._renumberAll)
 
     def _renumberAll(self):
         self._renumberPending = False
