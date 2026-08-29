@@ -112,3 +112,181 @@ class TestPalette:
         assert palette.color(QPalette.ColorRole.Window) == QColor(theme.DARK["windowBg"])
         assert palette.color(QPalette.ColorRole.WindowText) == QColor(theme.DARK["text"])
         assert palette.color(QPalette.ColorRole.Highlight) == QColor(theme.DARK["accent"])
+
+
+class TestLightTokenTable:
+    """LIGHT이 DARK와 나란히 존재하되 실제로 다른 값을 낸다는 것을 고정한다 (#227 회귀 수정).
+
+    v2.9.6까지 네이티브 스타일이 공짜로 해 주던 OS 라이트/다크 추종이,
+    #227의 Fusion 고정 + 항상-DARK 팔레트로 조용히 사라졌었다(PR #234 리뷰에서
+    오너 실기로 발견). 이 클래스는 "토큰 표 자체가 스킴에 따라 갈린다"는
+    전제를, 아래 TestColorSchemeSelection은 "감지 결과가 실제로 그 표를
+    고른다"는 배선을 고정한다 — 둘 다 있어야 회귀가 다시 나면 여기서 잡힌다.
+    """
+
+    def test_light_and_dark_share_the_same_keys(self):
+        """`.qss`와 `card_style()`은 두 표를 구분 없이 조회한다 — 키가 어긋나면 KeyError."""
+        assert set(theme.LIGHT.keys()) == set(theme.DARK.keys())
+
+    def test_light_backgrounds_are_not_just_dark_reused(self):
+        for key in ("windowBg", "surface", "surfaceAlt", "cardBg"):
+            assert theme.LIGHT[key] != theme.DARK[key], f"LIGHT[{key}]가 DARK와 같다"
+
+    @pytest.mark.parametrize("state", theme.CARD_STATES)
+    def test_light_state_colours_paint_light_cards(self, state):
+        """`current_tokens()`가 LIGHT를 고른 동안 `card_style()`이 LIGHT 상태색을 쓰는지."""
+        theme.set_color_scheme("light")
+        try:
+            css = theme.card_style(state)
+            assert theme.LIGHT["state" + state.capitalize()] in css
+        finally:
+            theme.set_color_scheme("dark")
+
+    @pytest.mark.parametrize("state", ("running", "finished", "failed"))
+    def test_light_state_colours_differ_from_dark_where_contrast_needed(self, state):
+        """대기색은 원래도 흰 배경에서 대비가 충분해 재사용하지만, 나머지 셋은 대비 때문에 갈아 끼웠다."""
+        theme.set_color_scheme("light")
+        try:
+            css = theme.card_style(state)
+            assert theme.DARK["state" + state.capitalize()] not in css
+        finally:
+            theme.set_color_scheme("dark")
+
+    def test_light_state_colours_are_still_mutually_distinct(self):
+        """상태색은 장식이 아니라 정보를 나른다 — 라이트 배경에서도 4종이 서로 달라야 한다."""
+        colours = [theme.LIGHT["state" + s.capitalize()] for s in theme.CARD_STATES]
+        assert len(set(colours)) == len(colours)
+
+
+class TestColorSchemeSelection:
+    """`set_color_scheme()`으로 넣은 값이 `current_tokens()`가 돌려주는 표를 바꾸는지.
+
+    실제 OS 감지(`detect_color_scheme()`)는 실 OS 설정에 기대므로 3-OS CI에서
+    안정적으로 못 돈다 — 그래서 여기서는 감지값을 흉내 낸 문자열을
+    `set_color_scheme()`으로 직접 주입해 그 뒤의 배선만 고정한다. 실제 감지
+    로직 자체는 아래 TestDetectColorScheme가 가짜 `styleHints()`로 고정한다.
+    """
+
+    def teardown_method(self):
+        # 다른 테스트 파일이 기본값(dark)을 전제하므로 항상 되돌린다
+        theme.set_color_scheme("dark")
+
+    def test_default_scheme_is_dark(self):
+        """아무도 set_color_scheme()을 안 부르면 예전처럼 항상 DARK — 기존 테스트 전제."""
+        assert theme.current_tokens() is theme.DARK
+
+    def test_set_color_scheme_light_switches_current_tokens(self):
+        theme.set_color_scheme("light")
+        assert theme.current_tokens() is theme.LIGHT
+
+    def test_set_color_scheme_back_to_dark_switches_back(self):
+        theme.set_color_scheme("light")
+        theme.set_color_scheme("dark")
+        assert theme.current_tokens() is theme.DARK
+
+    def test_unknown_scheme_raises_and_does_not_change_current(self):
+        theme.set_color_scheme("light")
+        with pytest.raises(ValueError):
+            theme.set_color_scheme("sepia")
+        assert theme.current_tokens() is theme.LIGHT  # 실패한 호출이 상태를 안 건드렸는지
+
+
+class _FakeStyleHints:
+    def __init__(self, scheme):
+        self._scheme = scheme
+
+    def colorScheme(self):
+        return self._scheme
+
+
+class _FakeApp:
+    """`detect_color_scheme()`이 보는 건 `styleHints()`와 `palette()`뿐이라 이걸로 충분하다."""
+
+    def __init__(self, scheme, palette=None):
+        self._hints = _FakeStyleHints(scheme)
+        self._palette = palette
+
+    def styleHints(self):
+        return self._hints
+
+    def palette(self):
+        return self._palette
+
+
+class TestDetectColorScheme:
+    """`detect_color_scheme()`의 두 경로(Qt API·팔레트 폴백)를 가짜 앱으로 고정한다.
+
+    실제 QGuiApplication 대신 최소 가짜(`_FakeApp`)를 주입한다 — 진짜 OS
+    다크모드를 이 프로세스에서 흉내 낼 방법이 없고(오프스크린 QPA에는 OS
+    테마 개념이 없다), 그렇다고 이 함수를 통째로 안 재는 것도 안 된다.
+    """
+
+    def test_qt_api_reports_dark(self):
+        from PySide6.QtCore import Qt
+
+        assert theme.detect_color_scheme(_FakeApp(Qt.ColorScheme.Dark)) == "dark"
+
+    def test_qt_api_reports_light(self):
+        from PySide6.QtCore import Qt
+
+        assert theme.detect_color_scheme(_FakeApp(Qt.ColorScheme.Light)) == "light"
+
+    def test_unknown_falls_back_to_dark_palette_lightness(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QColor, QPalette
+
+        palette = QPalette()
+        palette.setColor(QPalette.ColorRole.Window, QColor("#101010"))
+        fake = _FakeApp(Qt.ColorScheme.Unknown, palette=palette)
+        assert theme.detect_color_scheme(fake) == "dark"
+
+    def test_unknown_falls_back_to_light_palette_lightness(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QColor, QPalette
+
+        palette = QPalette()
+        palette.setColor(QPalette.ColorRole.Window, QColor("#f5f5f5"))
+        fake = _FakeApp(Qt.ColorScheme.Unknown, palette=palette)
+        assert theme.detect_color_scheme(fake) == "light"
+
+    def test_offscreen_qpa_has_no_os_theme_and_uses_palette_fallback(self, qapp):
+        """오프스크린 QPA(테스트 환경)는 `colorScheme()`이 Unknown을 준다 — 실측 확인.
+
+        그래서 여기서 나오는 값은 "OS가 라이트/다크다"가 아니라 "오프스크린
+        기본 팔레트가 밝다/어둡다"일 뿐이다 — 실기 OS 라이트/다크 각각에서의
+        실제 추종 여부는 이 테스트가 아니라 오너의 실렌더 스크린샷 확인
+        대상이다.
+        """
+        from PySide6.QtCore import Qt
+
+        assert qapp.styleHints().colorScheme() == Qt.ColorScheme.Unknown
+        # 오프스크린 기본 팔레트 밝기로 결정된 값 — 어느 쪽이든 예외 없이 문자열로 나와야 한다
+        assert theme.detect_color_scheme(qapp) in ("light", "dark")
+
+
+class TestApplyThemeWiring:
+    """`main.apply_theme()`이 감지 결과를 실제로 팔레트에 반영하는지.
+
+    #227 회귀의 정확한 모양이 이거였다 — Fusion 고정 자체가 문제가 아니라,
+    감지와 무관하게 `theme.build_palette()`가 항상 DARK를 굳혀 썼던 게
+    문제였다. `theme.py` 안의 배선(위 TestColorSchemeSelection)만으로는
+    `main.py`가 그 배선을 실제로 호출하는지까지는 못 잡는다 — 여기서 그
+    간극을 닫는다.
+    """
+
+    def teardown_method(self):
+        theme.set_color_scheme("dark")
+
+    def test_apply_theme_builds_a_light_palette_when_light_is_detected(self, qapp, monkeypatch):
+        from PySide6.QtGui import QColor, QPalette
+
+        monkeypatch.setattr(theme, "detect_color_scheme", lambda app: "light")
+        main.apply_theme(qapp)
+        assert qapp.palette().color(QPalette.ColorRole.Window) == QColor(theme.LIGHT["windowBg"])
+
+    def test_apply_theme_builds_a_dark_palette_when_dark_is_detected(self, qapp, monkeypatch):
+        from PySide6.QtGui import QColor, QPalette
+
+        monkeypatch.setattr(theme, "detect_color_scheme", lambda app: "dark")
+        main.apply_theme(qapp)
+        assert qapp.palette().color(QPalette.ColorRole.Window) == QColor(theme.DARK["windowBg"])

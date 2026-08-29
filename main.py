@@ -22,17 +22,20 @@ def resource_path(relative_path: str) -> str:
     return os.path.join(base_path, relative_path)
 
 def apply_theme(app):
-    """앱 전역 스타일시트를 읽어 적용한다 (#227).
+    """OS 라이트/다크 설정을 감지해 앱 전역 팔레트·스타일시트를 적용한다 (#227).
 
     실패해도 앱은 뜬다 — 스타일이 없으면 Qt 기본 외형으로 보일 뿐이고,
     번들에서 리소스가 빠진 채로 나가는 사고(#216)가 다운로드 기능까지
     막을 이유는 없다. 대신 조용히 넘어가지 않고 로그로 남긴다.
+
+    Fusion 고정은 유지한다 — 이 함수가 감지 결과로 채운 팔레트를 그대로
+    따르게 하려는 것이 목적인데, 네이티브 스타일(Windows Vista·macOS)은
+    팔레트를 상당 부분 무시해 카드 목록 뷰포트 배경만 시스템 기본 밝은
+    회색으로 남는 문제가 있었다(#227 실측). Fusion + 감지된 팔레트 조합은
+    그 문제를 피하면서도 OS 테마를 따라간다 — 다크로 고정하지만 않으면 된다.
     """
-    # Fusion으로 고정한다 — 네이티브 스타일(Windows Vista·macOS)은 팔레트를
-    # 상당 부분 무시해 같은 QSS가 OS마다 다르게 그려지고, macOS는 시스템
-    # 다크모드 여부까지 끼어든다. Fusion은 3-OS에서 우리가 준 팔레트·QSS를
-    # 그대로 따른다
     app.setStyle("Fusion")
+    theme.set_color_scheme(theme.detect_color_scheme(app))
     # 팔레트 먼저 — QSS가 안 덮는 부분(스크롤 영역 뷰포트·컨텍스트 메뉴 등)을 담당한다
     app.setPalette(theme.build_palette())
 
@@ -42,6 +45,22 @@ def apply_theme(app):
         logger.info("stylesheet applied: %s", qss_path)
     except (OSError, KeyError) as e:
         logger.warning("stylesheet load failed (%s): %s", qss_path, e)
+
+
+def _on_os_color_scheme_changed(app):
+    """실행 중 OS 라이트/다크 설정이 바뀌면 팔레트·전역 QSS를 다시 적용한다.
+
+    v2.9.6까지는 네이티브 스타일이 이걸 공짜로 해줬다(OS가 다시 그려줬다).
+    Fusion 고정 이후로는 우리가 직접 다시 칠해야 한다. 단, 이미 화면에 떠
+    있는 카드의 `#contentFrame` 배경(`theme.card_style()`로 위젯별
+    `setStyleSheet`을 건 것)은 여기서 갱신되지 않는다 — 그 카드가 다음에
+    상태를 바꿔 `card_style()`을 다시 호출할 때 새 스킴을 받는다. 전역
+    크롬(창 바탕·버튼·입력창·스크롤 영역)은 즉시 갱신된다. 이미 떠 있는
+    카드까지 즉시 다시 칠하는 건 이번 회귀 수정의 범위 밖으로 판단했다 —
+    필요하면 별도로 다뤄야 한다.
+    """
+    apply_theme(app)
+    logger.info("OS color scheme changed at runtime — palette/stylesheet reapplied")
 
 
 def set_language(app_config, translator):
@@ -88,6 +107,10 @@ if __name__ == '__main__':
 
     # 전역 스타일시트 — 위젯이 만들어지기 전에 적용해야 첫 렌더부터 반영된다 (#227)
     apply_theme(app)
+    # 실행 중 OS 테마가 바뀌면 다시 칠한다 — v2.9.6이 네이티브 스타일로
+    # 공짜로 얻던 동작 중 전역 크롬 부분을 복원한다 (자세한 범위는
+    # _on_os_color_scheme_changed 참고)
+    app.styleHints().colorSchemeChanged.connect(lambda _scheme: _on_os_color_scheme_changed(app))
 
     # 설정 파일 로드
     app_config = config.update_config()
