@@ -290,3 +290,83 @@ class TestApplyThemeWiring:
         monkeypatch.setattr(theme, "detect_color_scheme", lambda app: "dark")
         main.apply_theme(qapp)
         assert qapp.palette().color(QPalette.ColorRole.Window) == QColor(theme.DARK["windowBg"])
+
+
+def _raw_qss() -> str:
+    return Path(main.resource_path(theme.QSS_RELATIVE_PATH)).read_text(encoding="utf-8")
+
+
+def _rule_block(text: str, selector: str) -> str:
+    """선택자와 정확히 일치하는(바로 뒤에 공백만 두고 `{`가 오는) 규칙 블록 하나를 뽑는다.
+
+    `re.escape(selector) + r"\\s*\\{"`로 앵커를 걸어 `QComboBox`가 `QComboBox::drop-down`·
+    `QComboBox QAbstractItemView`처럼 더 긴 선택자의 접두사로 걸리는 걸 막는다 —
+    셋 다 문자열로는 "QComboBox"를 포함하지만 그 뒤에 바로 `{`가 오는 건 순정
+    `QComboBox { ... }` 블록 하나뿐이다.
+    """
+    m = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", text)
+    assert m, f"{selector!r} 규칙을 QSS에서 못 찾았다"
+    return m.group(1)
+
+
+class TestComboBoxSubcontrols:
+    """#240 감사 항목 1·2 — QComboBox 서브컨트롤(닫힌 화살표·팝업 선택 강조).
+
+    QComboBox 자체를 QSS로 스타일하는 순간 Fusion 기본 서브컨트롤 렌더링이
+    전부 꺼진다(주석·실측 확인) — `::drop-down`/`::down-arrow`를 명시적으로
+    채우지 않으면 화살표 버튼만 네이티브로 남는다.
+    """
+
+    def test_drop_down_subcontrol_is_styled(self):
+        _rule_block(_raw_qss(), "QComboBox::drop-down")  # 못 찾으면 자체 assert로 실패
+
+    def test_down_arrow_subcontrol_is_styled(self):
+        _rule_block(_raw_qss(), "QComboBox::down-arrow")  # 못 찾으면 자체 assert로 실패
+
+    def test_down_arrow_does_not_use_the_transparent_keyword(self):
+        """실측 확인: Qt QSS는 `border-color: transparent`로 삼각형 모서리를 안
+        마이터링한다 — 사각형이 그대로 찍힌다. 배경과 같은 실색을 써야 삼각형이
+        나온다(육안으로는 똑같이 안 보이면서 도형은 제대로 그려진다)."""
+        block = _rule_block(_raw_qss(), "QComboBox::down-arrow")
+        assert "transparent" not in block
+
+    def test_down_arrow_border_colours_track_the_drop_down_background(self):
+        """정지 상태 화살표의 좌우 border 색이 `::drop-down`의 배경 토큰과
+        같아야 이음매가 안 보인다."""
+        raw = _raw_qss()
+        arrow_block = _rule_block(raw, "QComboBox::down-arrow")
+        drop_down_block = _rule_block(raw, "QComboBox::drop-down")
+        assert "@surfaceAlt" in arrow_block
+        assert "background-color: @surfaceAlt" in drop_down_block
+
+    def test_selection_colours_are_declared_on_combobox_itself(self):
+        """`selection-background-color`/`selection-color`는 QComboBox 자신에 둬야
+        팝업에 실제로 먹는다 — `QAbstractItemView`·`::item:selected`에 두면 안
+        먹는 걸 실측으로 확인했다(고장 주입으로도 재확인, 아래 완료 보고 참고)."""
+        block = _rule_block(_raw_qss(), "QComboBox")
+        assert "selection-background-color: @accent" in block
+        assert "selection-color: @onAccent" in block
+
+    def test_selection_colours_resolve_to_accent_tokens(self):
+        loaded = theme.load_stylesheet(main.resource_path(theme.QSS_RELATIVE_PATH))
+        block = _rule_block(loaded, "QComboBox")
+        assert theme.DARK["accent"] in block
+        assert theme.DARK["onAccent"] in block
+
+
+class TestPopupWindowsAreSquareCornered:
+    """#240 감사 항목 3 — 최상위 윈도우(툴팁·콤보 팝업)는 `border-radius`를 빼야 한다.
+
+    위젯 페인팅만 둥글고 윈도우 합성 경계 자체는 사각형이라 `border-radius`를
+    주면 귀퉁이가 어긋난다(오너 실기 확인). `WA_TranslucentBackground` 우회는
+    쓰지 않는다 — `QToolTip`의 실제 위젯(`QTipLabel`)은 공개 API로 못 잡고,
+    투명 배경은 플랫폼마다 동작이 달라 SPEC §8.4의 플랫폼 전제 코드가 된다.
+    """
+
+    def test_tooltip_has_no_border_radius(self):
+        block = _rule_block(_raw_qss(), "QToolTip")
+        assert "border-radius" not in block
+
+    def test_combobox_popup_has_no_border_radius(self):
+        block = _rule_block(_raw_qss(), "QComboBox QAbstractItemView")
+        assert "border-radius" not in block

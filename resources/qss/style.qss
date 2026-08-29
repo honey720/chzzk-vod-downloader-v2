@@ -32,11 +32,16 @@ QMainWindow > QWidget#centralwidget {
     background-color: @windowBg;
 }
 
+/* 툴팁은 별도 최상위 윈도우(Qt 내부 QTipLabel)다 — border-radius를 주면
+ * 위젯 페인팅만 둥글고 창 자체 모양은 사각형이라 귀퉁이가 어긋난다(#240
+ * 감사 항목 3, 실측: 오너 실기 확인). WA_TranslucentBackground로 창을
+ * 투명하게 만들어 우회하는 방법도 있지만 QTipLabel은 공개 API로 못 잡고
+ * 투명 배경은 플랫폼마다 동작이 달라 SPEC §8.4의 플랫폼 전제 코드가 된다
+ * — 그래서 각진 모양으로 통일한다. */
 QToolTip {
     background-color: @surface;
     color: @text;
     border: 1px solid @border;
-    border-radius: @radius;
     padding: 4px 8px;
 }
 
@@ -183,30 +188,75 @@ QLineEdit:disabled {
     color: @textDisabled;
 }
 
+/* `selection-background-color`/`selection-color`를 여기(QComboBox 자신)에
+ * 둔다 — 아래 팝업(`QAbstractItemView`)에 놓으면 안 먹는다. `::item:selected`
+ * 서브컨트롤도 시도했지만 안 먹었다(둘 다 실측 확인). QComboBox 자체가 QSS로
+ * 스타일되는 순간 그 내부 팝업 델리게이트가 QPalette::Highlight를 더는 안
+ * 쓰게 바뀌는데(고장 주입으로 확정 — QComboBox 규칙만 빼면 파레트 강조가
+ * 다시 산다), 그 대체 경로가 정확히 이 프로퍼티들이다. Qt 공식 스타일시트
+ * 레퍼런스가 QComboBox 프로퍼티로 문서화해 둔 경로와 일치한다. */
 QComboBox {
     background-color: @surfaceAlt;
     color: @text;
     border: 1px solid @border;
     border-radius: @radius;
     padding: 5px 8px;
+    selection-background-color: @accent;
+    selection-color: @onAccent;
 }
-
-/* `::drop-down`/`::down-arrow`는 일부러 손대지 않는다 — 서브컨트롤을 QSS로
- * 재정의하는 순간 Fusion이 그리던 화살표가 사라져 콤보박스로 안 보인다
- * (실측). 이미지 리소스를 새로 들이지 않는 한 되살릴 방법이 없다 */
 
 QComboBox:hover {
     border-color: @borderStrong;
 }
 
+/* 닫힌 화살표 버튼(#240 감사 항목 1) — 여기를 비워두면 Fusion 기본 버튼
+ * 렌더링(팔레트 Button 색)이 그대로 남아 다크에서는 옅은 회색, 라이트에서는
+ * 흰 사각형으로 도드라진다(실측 확인). 이미지 리소스 없이 border만으로
+ * 화살표를 그린다 — 동봉물이 안 늘어난다. */
+QComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 20px;
+    border-left: 1px solid @border;
+    background-color: @surfaceAlt;
+}
+
+QComboBox::drop-down:hover {
+    background-color: @surfaceHover;
+}
+
+/* border-triangle 트릭 — width/height를 0으로 두고 위쪽 변만 색을 주면
+ * 삼각형이 된다. ⚠️ 실측: 좌우 변에 CSS처럼 `transparent` 키워드를 쓰면
+ * Qt가 모서리를 안 마이터링해 그냥 사각형이 찍힌다(빨간 네모로 실측
+ * 확인) — `transparent` 대신 드롭다운 배경과 같은 실제 색을 줘야 삼각형이
+ * 제대로 나온다(배경과 같은 색이라 시각적으로는 안 보이면서 도형만
+ * 만든다). 그래서 `:hover`에서 배경이 바뀌면 좌우 변 색도 같이 바꿔야
+ * 이음매가 안 보인다. 이미지·새 리소스 없이 순수 QSS만으로 화살표를 낸다. */
+QComboBox::down-arrow {
+    width: 0px;
+    height: 0px;
+    border-left: 4px solid @surfaceAlt;
+    border-right: 4px solid @surfaceAlt;
+    border-top: 5px solid @textMuted;
+}
+
+QComboBox::down-arrow:hover {
+    border-left-color: @surfaceHover;
+    border-right-color: @surfaceHover;
+}
+
+/* 팝업은 별도 최상위 윈도우다 — border-radius를 주면 위젯 페인팅만 둥글고
+ * 창 자체는 사각형이라 귀퉁이가 어긋난다(#240 감사 항목 3과 같은 원인).
+ * 그래서 각지게 둔다 — QToolTip과 같은 이유. */
 QComboBox QAbstractItemView {
     background-color: @surface;
     color: @text;
     border: 1px solid @border;
-    border-radius: @radius;
-    selection-background-color: @accent;
-    selection-color: @onAccent;
     outline: none;
+}
+
+QComboBox QAbstractItemView::item {
+    padding: 4px 8px;
 }
 
 /* ---------- 설정 창 ---------- */
