@@ -42,6 +42,18 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self._repSizeFetched.connect(self._onRepSizeFetched)
         self._imageFetched.connect(self._onImageFetched)
 
+    def setIndex(self, index: int) -> None:
+        """카드 번호 라벨만 갱신한다 (#235).
+
+        `setData()`는 채널명·제목·경로·상태 문구까지 전부 다시 채운다 —
+        삭제 후 뒤쪽 카드들의 번호만 당길 때 그 카드들 전부에 `setData()`를
+        돌리면 매번 무관한 필드까지 다시 쓰고 `applyStateStyle()`까지
+        불필요하게 재실행된다(카드 수만큼 쌓이면 그 자체가 비용이다).
+        번호만 바뀐 카드는 이 메서드로 라벨 하나만 건드린다.
+        """
+        self.index = index
+        self.indexLabel.setText(f"#{index}")
+
     def setupDynamicUi(self):
         self.loadImageFromUrl(self.channelImageLabel, self.item.channel_image_url, 30, "channel")
         self.loadImageFromUrl(self.thumbnailLabel, self.item.thumbnail_url, 66, "thumbnail")
@@ -49,7 +61,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.channelNameLabel.setText(self.item.channel_name) # 채널 이름 업데이트
         self.progressLabel.setText("") # 진행률 업데이트
         self.deleteButton.setText("❌")
-        self.indexLabel.setText(f"#{self.index}") # 인덱스 업데이트
+        self.setIndex(self.index)  # 인덱스 업데이트
         self.titleLabel.setText(self.item.title) # 제목 업데이트
         self.titleEdit.setText(self.item.title) # 제목 업데이트
         self.titleEdit.setVisible(False) # 제목 수정용 QLineEdit 숨김
@@ -208,8 +220,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     def setData(self, item: ContentItem, index: int):
         """✅ 모델 데이터를 위젯에 반영"""
         self.item = item
-        self.index = index
-        self.indexLabel.setText(f"#{index}")  # ✅ 인덱스 업데이트
+        self.setIndex(index)
         self.channelNameLabel.setText(item.channel_name)
         self.titleLabel.setText(item.title)
         self.directoryLabel.setText(item.download_path)
