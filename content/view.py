@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import QScrollArea, QWidget, QVBoxLayout
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDragLeaveEvent, QDropEvent, QPainter, QColor
 from content.widget import ContentItemWidget
 from content.data import ContentItem
@@ -62,6 +62,7 @@ class ContentListView(QScrollArea):
         self._model = None
         self._widgets: dict[ContentItem, ContentItemWidget] = {}
         self._dragActive = False    # 드래그 상태 플래그 TODO: 대체 가능한 메서드 사용
+        self._renumberPending = False  # 삭제 뒤 번호 재계산 배치 대기 플래그 (#235)
 
         self._overlay = _Overlay(self)
         self._overlay.setGeometry(self.rect())
@@ -111,6 +112,35 @@ class ContentListView(QScrollArea):
             self._layout.removeWidget(widget)
             widget.deleteLater()  # 생명주기 직접 관리 — 빠뜨리면 누수 (#226)
         self._overlay.update()  # 마지막 카드가 지워졌으면 빈 리스트 안내를 다시 띄운다
+        self._scheduleRenumber()  # 뒤쪽 카드 번호를 당긴다 (#235)
+
+    def _scheduleRenumber(self):
+        """삭제 뒤 남은 카드들의 번호(표시용, `ContentItemWidget.setIndex`)를 다시 매긴다.
+
+        `QTimer.singleShot(0, ...)`으로 다음 이벤트 루프 턴까지 미룬다 —
+        `clrearFinishedItems()`처럼 한 번의 호출에서 `removeRows`가 여러 번
+        연달아 일어나는 일괄 삭제가 있다(`app/viewmodels/content_viewmodel.py`).
+        매번 즉시 전체를 다시 매기면 일괄 삭제 한 번이 O(n) 재번호매김을
+        n번 반복해 O(n²)가 된다 — `_renumberPending` 플래그로 그 반복 호출을
+        하나로 눌러, 배치가 끝난 뒤(다음 이벤트 루프 턴) 딱 한 번만 돈다.
+        새 카드 삽입(`_insertWidget`)에서는 이 메서드를 부르지 않는다 —
+        새 카드는 항상 끝에 붙어 앞 카드들의 번호에 영향이 없고, 삽입 단가를
+        O(1)로 지키는 게 #226의 핵심이었다(전체 재번호매김을 얹으면 도로
+        O(n)이 된다).
+        """
+        if not self._renumberPending:
+            self._renumberPending = True
+            QTimer.singleShot(0, self._renumberAll)
+
+    def _renumberAll(self):
+        self._renumberPending = False
+        if self._model is None:
+            return
+        for row in range(self._model.rowCount()):
+            item = self._model.itemAt(row)
+            widget = self._widgets.get(item)
+            if widget is not None and widget.index != row:
+                widget.setIndex(row)
 
     def _onItemChanged(self, item: ContentItem):
         widget = self._widgets.get(item)

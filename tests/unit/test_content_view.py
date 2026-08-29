@@ -176,6 +176,156 @@ class TestProgressUpdate:
         assert v.widgetFor(b).titleLabel.text() == "B"
 
 
+class TestCardNumberingFollowsPosition:
+    """카드 번호(`#N`)가 위치를 따라가는지 (#235 — #226 회귀 수정).
+
+    `#226` 이전엔 `QAbstractListModel`의 프레임워크 시그널(`rowsRemoved` 등)에
+    물린 전체 재스캔이 매번 모든 카드의 번호를 다시 매겨줬다. `#226`이 그
+    재스캔을 없애면서(전체 재스캔 자체가 옳게 없앤 것 — 카드 1000개 삽입이
+    34.5초였다) 번호 재계산도 같이 사라졌다: 삭제 후 남은 카드는 삭제 전
+    번호를 그대로 들고 있었고, 새 카드가 `rowCount()`(현재 개수)를 받으면서
+    기존 카드와 번호가 겹치는 경우까지 생겼다.
+    """
+
+    def _labels(self, v, model):
+        return [v.widgetFor(model.itemAt(row)).indexLabel.text() for row in range(model.rowCount())]
+
+    def test_middle_delete_renumbers_trailing_cards(self, view, qapp):
+        v, model = view
+        a, b, c = _make_item("A"), _make_item("B"), _make_item("C")
+        for it in (a, b, c):
+            model.addItem(it)
+        qapp.processEvents()
+        assert self._labels(v, model) == ["#0", "#1", "#2"]
+
+        model.removeRows(model.getRow(b), 1)
+        qapp.processEvents()
+
+        assert self._labels(v, model) == ["#0", "#1"]
+
+    def test_new_card_after_middle_delete_does_not_collide(self, view, qapp):
+        """⚠️ 회귀의 핵심 — 재부여가 없으면 새 카드와 기존 카드의 번호가 겹친다."""
+        v, model = view
+        a, b, c = _make_item("A"), _make_item("B"), _make_item("C")
+        for it in (a, b, c):
+            model.addItem(it)
+        qapp.processEvents()
+
+        model.removeRows(model.getRow(b), 1)
+        qapp.processEvents()
+
+        d = _make_item("D")
+        model.addItem(d)
+        qapp.processEvents()
+
+        labels = self._labels(v, model)
+        assert labels == ["#0", "#1", "#2"]
+        assert len(labels) == len(set(labels)), f"번호가 겹쳤다: {labels}"
+
+    def test_first_delete_renumbers(self, view, qapp):
+        v, model = view
+        a, b, c = _make_item("A"), _make_item("B"), _make_item("C")
+        for it in (a, b, c):
+            model.addItem(it)
+        qapp.processEvents()
+
+        model.removeRows(model.getRow(a), 1)
+        qapp.processEvents()
+
+        assert self._labels(v, model) == ["#0", "#1"]
+
+    def test_last_delete_leaves_leading_numbers_untouched(self, view, qapp):
+        v, model = view
+        a, b, c = _make_item("A"), _make_item("B"), _make_item("C")
+        for it in (a, b, c):
+            model.addItem(it)
+        qapp.processEvents()
+
+        model.removeRows(model.getRow(c), 1)
+        qapp.processEvents()
+
+        assert self._labels(v, model) == ["#0", "#1"]
+
+    def test_bulk_delete_ends_with_contiguous_numbering(self, view, qapp):
+        """일괄 삭제(비연속 위치) 뒤에도 번호가 연속이어야 한다."""
+        v, model = view
+        items = [_make_item(str(i)) for i in range(5)]
+        for it in items:
+            model.addItem(it)
+        qapp.processEvents()
+
+        # 0, 2, 4번을 지운다(비연속 위치) — clrearFinishedItems()가 하듯
+        # 뒤에서부터 지워 인덱스가 삭제 중간에 밀리지 않게 한다
+        for it in (items[4], items[2], items[0]):
+            model.removeRows(model.getRow(it), 1)
+        qapp.processEvents()
+
+        assert self._labels(v, model) == ["#0", "#1"]
+
+    def test_bulk_delete_renumbers_only_once(self, view, qapp, monkeypatch):
+        """일괄 삭제 한 번에 재번호매김이 여러 번(O(n²)) 돌면 안 된다 — 끝에 한 번만."""
+        v, model = view
+        items = [_make_item(str(i)) for i in range(6)]
+        for it in items:
+            model.addItem(it)
+        qapp.processEvents()
+
+        calls = []
+        original = v._renumberAll
+
+        def _spy():
+            calls.append(True)
+            original()
+
+        monkeypatch.setattr(v, "_renumberAll", _spy)
+
+        # 세 번 연달아 지운다 — 이벤트 루프를 안 돌리는 한 번의 "일괄" 처리로 흉내
+        for it in (items[5], items[3], items[1]):
+            model.removeRows(model.getRow(it), 1)
+        qapp.processEvents()  # 이 시점에 딱 한 번만 돌아야 한다
+
+        assert calls == [True], f"재번호매김이 {len(calls)}번 돌았다 — 배치가 안 눌렸다"
+
+    def test_insertion_does_not_trigger_a_renumber_pass(self, view, qapp, monkeypatch):
+        """삽입은 O(1)이어야 한다 — 재번호매김(전체 순회)이 삽입 경로로 새면 안 된다 (#226 유지)."""
+        v, model = view
+        for i in range(5):
+            model.addItem(_make_item(str(i)))
+        qapp.processEvents()
+
+        calls = []
+        monkeypatch.setattr(v, "_renumberAll", lambda: calls.append(True))
+
+        model.addItem(_make_item("new"))
+        qapp.processEvents()
+
+        assert calls == [], "삽입만 했는데 재번호매김이 돌았다 — O(1) 삽입 위반"
+
+    def test_insertion_only_touches_the_new_widgets_setData(self, view, qapp, monkeypatch):
+        """기존 카드가 삽입 때문에 다시 그려지면 안 된다 — 새 카드 자기 몫만."""
+        from content.widget import ContentItemWidget
+
+        v, model = view
+        for i in range(20):
+            model.addItem(_make_item(str(i)))
+        qapp.processEvents()
+
+        calls = []
+        original_set_data = ContentItemWidget.setData
+
+        def _spy(self, item, index):
+            calls.append(item)
+            return original_set_data(self, item, index)
+
+        monkeypatch.setattr(ContentItemWidget, "setData", _spy)
+
+        new_item = _make_item("new")
+        model.addItem(new_item)
+        qapp.processEvents()
+
+        assert calls == [new_item], f"삽입 하나에 setData가 {len(calls)}번 불렸다 — O(1) 삽입 위반"
+
+
 class TestNoHorizontalOverflow:
     """가로 스크롤 버그 회귀 테스트 (PR #229 후속) — 카드는 창 폭에 맞아야 한다.
 
