@@ -33,8 +33,13 @@ def apply_theme(app):
     팔레트를 상당 부분 무시해 카드 목록 뷰포트 배경만 시스템 기본 밝은
     회색으로 남는 문제가 있었다(#227 실측). Fusion + 감지된 팔레트 조합은
     그 문제를 피하면서도 OS 테마를 따라간다 — 다크로 고정하지만 않으면 된다.
+
+    `theme.build_style()`로 감싸는 이유(#241 후속): Fusion은 콤보 팝업을
+    선택 항목이 콤보 라벨과 겹치도록 띄우는데, v2.9.6(네이티브 스타일)은
+    항상 아래로 떨어졌다 — 순정 `"Fusion"` 문자열 대신 이 래퍼를 써야
+    그 배치 회귀가 같이 안 딸려온다.
     """
-    app.setStyle("Fusion")
+    app.setStyle(theme.build_style())
     theme.set_color_scheme(theme.detect_color_scheme(app))
     # 팔레트 먼저 — QSS가 안 덮는 부분(스크롤 영역 뷰포트·컨텍스트 메뉴 등)을 담당한다
     app.setPalette(theme.build_palette())
