@@ -13,6 +13,7 @@ import pytest
 from PySide6.QtCore import QObject
 from PySide6.QtGui import QColor
 
+import main as main_module
 import theme
 from content.data import ContentItem
 from content.manager import ContentManager
@@ -20,6 +21,19 @@ from content.view import ContentListView
 from core.downloaders.base import PostprocessError
 from download.qt_bridge import QtDownloadBridge
 from core.models.download_state import DownloadState
+
+
+@pytest.fixture(autouse=True)
+def _apply_dark_card_qss(qapp):
+    """카드 테두리 색 검증(아래 `#FF6969` 자리 참고)이 실제 프로덕션
+    스타일시트를 필요로 해서 이 파일에만 국소 적용한다 —
+    tests/unit/test_widget_theme.py의 같은 이름 픽스처와 같은 이유
+    (세션 스코프로 스위트 전체에 걸면 macOS CI에서만 재현되는 프로세스
+    종료 시점 크래시가 났다)."""
+    theme.set_color_scheme("dark")
+    qapp.setStyle(theme.build_style())
+    qapp.setPalette(theme.build_palette())
+    qapp.setStyleSheet(theme.load_stylesheet(main_module.resource_path(theme.QSS_RELATIVE_PATH)))
 
 
 @pytest.fixture(autouse=True)

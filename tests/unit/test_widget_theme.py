@@ -17,11 +17,34 @@
 import pytest
 from PySide6.QtGui import QColor
 
+import main as main_module
 import theme
 from app.viewmodels.item_state import ItemState
 from content.data import ContentItem
 from content.widget import ContentItemWidget
 from core.models.download_state import DownloadState
+
+
+@pytest.fixture(autouse=True)
+def _apply_dark_card_qss(qapp):
+    """이 파일의 테스트에만 실제 프로덕션 스타일시트를 적용한다.
+
+    카드 프레임 지오메트리·색 검증은 전역 QSS가 실제로 태워진 상태를
+    재야 의미가 있다(모듈 docstring 참고) — 이 요구가 있는 파일에만
+    국소적으로 적용한다. 스위트 전체에 세션 스코프 autouse로 걸었더니
+    macOS CI에서만 재현되는 프로세스 종료 시점 크래시(exit code 139,
+    테스트 자체는 전부 통과 — 원인 미상, Qt/오프스크린 백엔드의 종료
+    시점 정리 문제로 추정)가 났다 — 적용 범위를 이 파일로 좁혀 회피한다.
+
+    `main.apply_theme()`을 그대로 안 쓰는 이유: 그 함수의
+    `theme.detect_color_scheme(app)`이 오프스크린 QPA 팔레트 폴백에서
+    "light"로 나온다(실측 확인) — 그대로 쓰면 이 파일의 `theme.DARK[...]`
+    기대값이 전부 깨진다. 스킴 감지는 건너뛰고 "dark"만 명시 고정한다.
+    """
+    theme.set_color_scheme("dark")
+    qapp.setStyle(theme.build_style())
+    qapp.setPalette(theme.build_palette())
+    qapp.setStyleSheet(theme.load_stylesheet(main_module.resource_path(theme.QSS_RELATIVE_PATH)))
 
 
 def _card_border_colour(frame) -> QColor:
