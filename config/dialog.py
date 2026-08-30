@@ -23,6 +23,25 @@ class _ComboBoxPopupHighlightResync(QObject):
     호버가 지나가는 순간 진짜 선택값 쪽 `:selected` 상태 자체가 사라지므로
     구분해서 칠할 대상이 없다.
 
+    **`SH_ComboBox_ListMouseTracking`을 아예 꺼서 오염 자체를 없애는 방향도
+    검토했지만 기각했다(`#241` 후속, `theme.build_style()`의 `SH_ComboBox_Popup`과
+    같은 구조를 시도해본 것).** `QProxyStyle`로 이 힌트까지 0으로 강제해
+    실측한 결과: (1) 오염은 실제로 멈춘다(`currentIndex`가 호버에 안 움직임)
+    (2) 하지만 그 대가로 **호버 시각 피드백 자체가 통째로 사라진다** —
+    `view.viewport().hasMouseTracking()`이 `False`로 떨어지고, 호버한 행과
+    안 한 행의 렌더 픽셀이 완전히 같아진다(`::item:hover`가 반응할 상태
+    자체가 안 생김). `viewport().setMouseTracking(True)`를 수동으로 다시
+    켜봐도 복구되지 않는다 — Fusion은 이 힌트 하나에 "마우스 추적 켜짐"과
+    "호버 시 selection 이동" 둘 다를 함께 묶어놨다(둘을 분리해 호버 페인트만
+    남기는 하위 훅이 없다). 참고로 native Windows 스타일은 이 힌트가 항상
+    0인데도 호버한 행만 다른 색으로 뚜렷이 바뀐다(실측 확인, 행마다 색이
+    바뀜) — 즉 native는 이 힌트와 **무관한 별도 경로**로 호버를 그린다.
+    Fusion에는 그 별도 경로가 없어서, 이 힌트를 끄면 Fusion만 호버 자체를
+    잃는다. 결론: 이 힌트는 그대로 두고(`theme.build_style()`이 안 건드림,
+    `TestComboBoxDropDownStyle`에 이 사실을 고정해 둠), 지금처럼 오염이 생긴
+    *뒤에* 사후 복원하는 이 이벤트 필터를 유지한다 — 오염 자체를 막을 수
+    없다면 되돌리는 것 말고는 방법이 없다.
+
     **왜 Hide 시점에 되돌리는가(Show가 아니라) — 깜빡임 회귀 후속.** 팝업
     컨테이너는 열고 닫을 때마다 새로 안 만들어지고 재사용된다(실측 확인,
     `view()`/`view().window()`의 파이썬 id가 여러 open/close 사이클에서 동일).

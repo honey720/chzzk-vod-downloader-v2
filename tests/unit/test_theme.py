@@ -169,6 +169,30 @@ class TestComboBoxDropDownStyle:
         hint = QStyle.StyleHint.SH_EtchDisabledText
         assert style.styleHint(hint) == fusion.styleHint(hint)
 
+    def test_list_mouse_tracking_hint_is_intentionally_left_untouched(self, qapp):
+        """`SH_ComboBox_ListMouseTracking`을 같이 끄면 호버 오염(선택이 마우스를
+        따라가는 것)도 같이 사라질 것 같지만, 실측해보니 Fusion은 이 힌트
+        하나에 "마우스 추적 켜짐"과 "호버 페인트"를 함께 묶어놔서 끄면 호버
+        시각 피드백 자체가 통째로 사라지고 `viewport().setMouseTracking(True)`로
+        되살릴 수도 없다(native Windows는 이 힌트와 무관한 별도 경로로 호버를
+        그려서 안 겪는 문제) — 그래서 이 힌트는 일부러 안 건드린다.
+        `config.dialog._ComboBoxPopupHighlightResync`가 오염을 막는 대신
+        사후 복원하는 이유가 이것이다. 여기서는 우리 스타일이 실제로 이
+        힌트를 안 건드린다는 것만 고정한다(Fusion 원래 값 그대로 나와야 함)."""
+        from PySide6.QtWidgets import QComboBox, QStyle, QStyleFactory
+
+        style = theme.build_style()
+        fusion = QStyleFactory.create("Fusion")
+        combo = QComboBox()
+        combo.setStyle(style)
+        combo_fusion_ref = QComboBox()
+        combo_fusion_ref.setStyle(fusion)
+
+        hint = QStyle.StyleHint.SH_ComboBox_ListMouseTracking
+        ours = _style_hint_for_real_combo(style, combo, hint)
+        plain = _style_hint_for_real_combo(fusion, combo_fusion_ref, hint)
+        assert ours == plain == 1
+
     def test_popup_drops_below_the_combo_regardless_of_current_index(self, qapp):
         """실제 QComboBox로 배치 자체를 확인 — 겹침 배치였다면 팝업 top이
         콤보 bottom보다 위(작은 y)에 온다. 드롭다운이면 정확히 콤보 bottom."""
