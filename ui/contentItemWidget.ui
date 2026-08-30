@@ -1,4 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!-- ⚠️ #244: 이 .ui는 설치된 pyside6-uic로 재생성이 안 된다(`<item stretch="100">`이
+     이 uic 버전에서 "Unexpected attribute stretch"로 거부됨 — Designer의 정식
+     문법은 박스 레이아웃 항목이 아니라 레이아웃 자신의 stretch 프로퍼티다).
+     ui/contentItemWidget.py는 이미 그 이전부터 손으로 유지되고 있었다(채널명
+     stretch=100 튜닝 주석 참고) — 이 파일을 uic로 재생성하면 그 튜닝이
+     사라진다. 이 .ui는 실제 레이아웃 구조의 설계 기록으로만 쓰고, 구조를
+     바꿀 때는 ui/contentItemWidget.py를 손으로 같이 고칠 것. -->
 <ui version="4.0">
  <class>ContentItemWidget</class>
  <widget class="QWidget" name="ContentItemWidget">
@@ -7,7 +14,7 @@
     <x>0</x>
     <y>0</y>
     <width>600</width>
-    <height>134</height>
+    <height>130</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -18,7 +25,7 @@
     <number>9</number>
    </property>
    <property name="topMargin">
-    <number>10</number>
+    <number>6</number>
    </property>
    <property name="rightMargin">
     <number>9</number>
@@ -35,20 +42,35 @@
       <enum>QFrame::Shadow::Raised</enum>
      </property>
      <layout class="QVBoxLayout" name="contentFrameLayout">
+      <property name="leftMargin">
+       <number>0</number>
+      </property>
+      <property name="topMargin">
+       <number>0</number>
+      </property>
+      <property name="rightMargin">
+       <number>0</number>
+      </property>
+      <property name="bottomMargin">
+       <number>0</number>
+      </property>
+      <property name="spacing">
+       <number>4</number>
+      </property>
       <item>
        <layout class="QHBoxLayout" name="topLayout">
         <item>
          <widget class="QLabel" name="indexLabel">
           <property name="minimumSize">
            <size>
-            <width>30</width>
-            <height>30</height>
+            <width>26</width>
+            <height>26</height>
            </size>
           </property>
           <property name="maximumSize">
            <size>
-            <width>30</width>
-            <height>30</height>
+            <width>26</width>
+            <height>26</height>
            </size>
           </property>
           <property name="toolTip">
@@ -79,14 +101,14 @@
          <widget class="QLabel" name="channelImageLabel">
           <property name="minimumSize">
            <size>
-            <width>30</width>
-            <height>30</height>
+            <width>26</width>
+            <height>26</height>
            </size>
           </property>
           <property name="maximumSize">
            <size>
-            <width>30</width>
-            <height>30</height>
+            <width>26</width>
+            <height>26</height>
            </size>
           </property>
           <property name="toolTip">
@@ -105,6 +127,12 @@
         </item>
         <item stretch="100">
          <widget class="ElidingLabel" name="channelNameLabel">
+          <property name="minimumSize">
+           <size>
+            <width>64</width>
+            <height>0</height>
+           </size>
+          </property>
           <property name="maximumSize">
            <size>
             <width>150</width>
@@ -175,17 +203,45 @@
          </widget>
         </item>
         <item>
-         <widget class="QPushButton" name="deleteButton">
+         <widget class="QLabel" name="stateIconLabel">
           <property name="minimumSize">
            <size>
-            <width>30</width>
-            <height>30</height>
+            <width>20</width>
+            <height>20</height>
            </size>
           </property>
           <property name="maximumSize">
            <size>
-            <width>30</width>
-            <height>30</height>
+            <width>20</width>
+            <height>20</height>
+           </size>
+          </property>
+          <property name="toolTip">
+           <string>Status</string>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">font-size: 14px;</string>
+          </property>
+          <property name="text">
+           <string/>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignmentFlag::AlignCenter</set>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="deleteButton">
+          <property name="minimumSize">
+           <size>
+            <width>26</width>
+            <height>26</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>26</width>
+            <height>26</height>
            </size>
           </property>
           <property name="toolTip">
@@ -204,14 +260,14 @@
          <widget class="QLabel" name="thumbnailLabel">
           <property name="minimumSize">
            <size>
-            <width>116</width>
-            <height>66</height>
+            <width>64</width>
+            <height>64</height>
            </size>
           </property>
           <property name="maximumSize">
            <size>
-            <width>105</width>
-            <height>60</height>
+            <width>64</width>
+            <height>64</height>
            </size>
           </property>
           <property name="toolTip">
@@ -228,7 +284,7 @@
         <item>
          <layout class="QVBoxLayout" name="contentLayout">
           <property name="spacing">
-           <number>0</number>
+           <number>2</number>
           </property>
           <item>
            <layout class="QHBoxLayout" name="titleLayout">
@@ -255,6 +311,13 @@
               </property>
              </widget>
             </item>
+           </layout>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="resolutionLayout">
+            <property name="spacing">
+             <number>4</number>
+            </property>
            </layout>
           </item>
           <item>
@@ -289,14 +352,14 @@
              <widget class="QPushButton" name="openDirectoryButton">
               <property name="minimumSize">
                <size>
-                <width>30</width>
-                <height>30</height>
+                <width>26</width>
+                <height>26</height>
                </size>
               </property>
               <property name="maximumSize">
                <size>
-                <width>30</width>
-                <height>30</height>
+                <width>26</width>
+                <height>26</height>
                </size>
               </property>
               <property name="toolTip">

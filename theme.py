@@ -77,7 +77,7 @@ DARK = {
     "cardRadius": "14px",
     # 카드 안쪽 여백은 **세로만** 준다 — 가로는 0이어야 한다.
     # 이유는 아래 _CARD_TEMPLATE 주석에 있다(3-OS 폰트 메트릭 회귀의 원인이었다).
-    "cardPaddingV": "6px",
+    "cardPaddingV": "4px",
     # ---- 상태색 (카드 테두리·진행바 공용) ----
     # running/failed는 기존 값을 그대로 승계한다 — 실패 빨강(#FF6969)은
     # tests/unit/test_failure_display.py가 카드 스타일시트에서 직접 확인한다.
@@ -132,7 +132,7 @@ LIGHT = {
     # ---- 카드 ----
     "cardBg": "#ffffff",
     "cardRadius": "14px",
-    "cardPaddingV": "6px",
+    "cardPaddingV": "4px",
     # ---- 상태색 (카드 테두리·진행바 공용) — 흰 배경 대비용으로 짙게 눌렀다 ----
     "stateWaiting": "#6b7078",
     "stateRunning": "#1f6fd6",
@@ -152,10 +152,10 @@ LIGHT = {
 }
 
 #: 카드 상태 이름 — 파이썬(`setProperty`)과 QSS(`[state="..."]`)가 공유하는 어휘.
-#: 카드 프레임·진행바 둘 다 이 값을 그대로 `state` 동적 속성에 써서
-#: `resources/qss/style.qss`의 `#contentFrame[state="..."]`/
-#: `QProgressBar[state="..."]` 규칙과 맞춘다 (#227, #240 후속 — 카드
-#: 프레임도 위젯별 `setStyleSheet` 대신 전역 QSS로 옮겼다).
+#: 상태 아이콘·진행바 둘 다 이 값을 그대로 `state` 동적 속성에 써서
+#: `resources/qss/style.qss`의 `#stateIconLabel[state="..."]`/
+#: `QProgressBar[state="..."]` 규칙과 맞춘다 (#227, #240, #244 후속 —
+#: 카드 테두리는 상태 신호에서 빠지고 상태 아이콘이 그 역할을 이어받았다).
 CARD_STATES = ("waiting", "running", "finished", "failed")
 
 

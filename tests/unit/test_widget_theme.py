@@ -1,17 +1,18 @@
-"""카드가 다운로드 상태에 맞는 색을 실제로 입는지 검증한다 (#227, #240 2단계).
+"""카드가 다운로드 상태에 맞는 색을 실제로 입는지 검증한다 (#227, #240, #244).
 
-전역 `.qss`의 `#contentFrame[state="..."]` 규칙이 옳은 토큰을 쓰는지는
+전역 `.qss`의 `#stateIconLabel[state="..."]` 규칙이 옳은 토큰을 쓰는지는
 `test_theme.py`가 실제 파일 소스로 본다. 여기서는 **위젯이 그걸 실제로
-렌더링하는지** — 상태가 바뀔 때마다 `setData()`가 카드 테두리와 진행바를
+렌더링하는지** — 상태가 바뀔 때마다 `setData()`가 상태 아이콘과 진행바를
 같이 갱신하는지를, `widget.grab()`으로 실제 렌더된 픽셀을 읽어 확인한다.
 
-카드 테두리·진행바 색 둘 다 위젯 스타일시트가 아니라 동적 속성(`state`) +
-전역 QSS의 `[state="..."]` 규칙으로 정해진다(#240 2단계 — 카드 프레임도
-위젯별 `setStyleSheet`에서 전역 QSS로 옮겼다). QSS는 `.className` 선택자를
-지원하지 않고 조용히 무시하므로 이 배선이 유일한 경로다 — 속성이 상태를
-따라가지 않으면 색이 안 변하는데 **아무 에러도 안 난다**. `styleSheet()`
-문자열을 파싱해 검증하던 이전 버전은 전역 QSS로 옮기며 전부 빈 문자열만
-돌려주게 됐다 — 텍스트가 아니라 실제 렌더 픽셀을 보는 쪽으로 바꿨다.
+**#244로 상태 신호가 바뀌었다**: 카드 테두리색·진행바색·상태 텍스트로
+상태를 세 번 반복해 알리던 것을, "상태 아이콘·진행바색" 두 가지로
+줄였다(오너 확정 결정) — 카드 테두리(`#contentFrame`)는 이제 항상 중립색
+`@border`이고 더는 `state` 동적 속성을 안 본다. 상태 아이콘·진행바 색
+둘 다 위젯 스타일시트가 아니라 동적 속성(`state`) + 전역 QSS의
+`[state="..."]` 규칙으로 정해진다. QSS는 `.className` 선택자를 지원하지
+않고 조용히 무시하므로 이 배선이 유일한 경로다 — 속성이 상태를 따라가지
+않으면 색이 안 변하는데 **아무 에러도 안 난다**.
 """
 
 import pytest
@@ -87,6 +88,24 @@ def _card_border_colour(frame) -> QColor:
     return img.pixelColor(0, img.height() // 2)
 
 
+def _label_shows_colour(label, colour: QColor) -> bool:
+    """라벨의 실제 렌더 픽셀 중 `colour`가 정확히 존재하는지 — 아이콘 글리프용.
+
+    단일 고정 지점 샘플(`_card_border_colour`처럼)은 못 쓴다 — 글리프
+    (⏸▶✓✕)는 굵은 직선 테두리가 아니라 폰트가 그리는 도형이라 어느
+    픽셀이 배경이고 어느 픽셀이 글리프 내부인지 좌표로 못 못박는다.
+    대신 라벨 전체를 스캔해 기대색이 "어딘가에" 정확히 칠해졌는지만
+    본다 — 네 상태 글리프 전부 실측으로 내부 픽셀이 안티앨리어싱 없이
+    순수 색으로 나오는 지점이 있음을 확인했다(가장자리만 배경과 섞임).
+    """
+    img = label.grab().toImage()
+    for y in range(img.height()):
+        for x in range(img.width()):
+            if img.pixelColor(x, y) == colour:
+                return True
+    return False
+
+
 @pytest.fixture(autouse=True)
 def no_network(monkeypatch):
     class _FailingSession:
@@ -130,10 +149,11 @@ STATE_MAP = [
 
 
 @pytest.mark.parametrize("download_state,card_state", STATE_MAP)
-def test_card_frame_gets_the_state_colour(qapp, download_state, card_state):
+def test_state_icon_gets_the_state_colour(qapp, download_state, card_state):
     widget = _widget(qapp, download_state, progress=50)
     expected = QColor(theme.DARK["state" + card_state.capitalize()])
-    assert _card_border_colour(widget.contentFrame) == expected
+    assert _label_shows_colour(widget.stateIconLabel, expected)
+    assert widget.stateIconLabel.property("state") == card_state
 
 
 @pytest.mark.parametrize("download_state,card_state", STATE_MAP)
@@ -142,21 +162,34 @@ def test_progress_bar_property_follows_the_state(qapp, download_state, card_stat
     assert widget.progressBar.property("state") == card_state
 
 
+def test_card_border_stays_neutral_regardless_of_state(qapp):
+    """카드 테두리는 상태와 무관하게 항상 중립색이어야 한다(#244).
+
+    상태 신호를 "테두리·진행바·텍스트" 3중에서 "아이콘·진행바" 2가지로
+    줄인 결정의 핵심 불변식 — 테두리가 다시 상태색을 따라가면 그 결정이
+    조용히 되돌아간 것이다.
+    """
+    neutral = QColor(theme.DARK["border"])
+    for download_state, _ in STATE_MAP:
+        widget = _widget(qapp, download_state, progress=50)
+        assert _card_border_colour(widget.contentFrame) == neutral
+
+
 def test_state_change_repaints_an_existing_card(qapp):
     """같은 위젯이 상태를 갈아탈 때도 따라와야 한다 — 카드는 재사용된다."""
     widget = _widget(qapp, DownloadState.WAITING)
-    assert _card_border_colour(widget.contentFrame) == QColor(theme.DARK["stateWaiting"])
+    assert _label_shows_colour(widget.stateIconLabel, QColor(theme.DARK["stateWaiting"]))
 
     widget.item.downloadState = DownloadState.RUNNING
     widget.item.download_progress = 30
     widget.setData(widget.item, 0)
-    assert _card_border_colour(widget.contentFrame) == QColor(theme.DARK["stateRunning"])
+    assert _label_shows_colour(widget.stateIconLabel, QColor(theme.DARK["stateRunning"]))
     assert widget.progressBar.property("state") == "running"
     assert widget.progressBar.value() == 30
 
     widget.item.downloadState = DownloadState.FAILED
     widget.setData(widget.item, 0)
-    assert _card_border_colour(widget.contentFrame) == QColor(theme.DARK["stateFailed"])
+    assert _label_shows_colour(widget.stateIconLabel, QColor(theme.DARK["stateFailed"]))
     assert widget.progressBar.property("state") == "failed"
 
 
@@ -176,6 +209,25 @@ def test_resolution_buttons_are_marked_for_the_pill_rule(qapp):
 
     assert widget.buttons, "해상도 버튼이 만들어지지 않았다"
     assert all(b.property("role") == "resolution" for b in widget.buttons)
+
+
+def test_resolution_buttons_get_their_own_row_not_the_title_row(qapp):
+    """해상도 버튼은 제목과 같은 줄을 공유하지 않는다(#244 — 무관 정보 분리).
+
+    이전엔 `titleLayout`에 얹혀 "제목과 해상도라는 서로 무관한 정보가
+    같은 줄에 섞인다"는 문제였다.
+    """
+    item = _make_item()
+    item.unique_reps = [["1080", "https://x/1080"], ["720", "https://x/720"]]
+    widget = ContentItemWidget(item, 0)
+    widget.setData(item, 0)
+    widget.addRepresentationButtons()
+    qapp.processEvents()
+
+    assert widget.titleLayout.count() == 2, "titleLayout에는 제목 라벨·편집창만 있어야 한다"
+    assert widget.resolutionLayout.count() == len(widget.buttons)
+    for button in widget.buttons:
+        assert widget.resolutionLayout.indexOf(button) != -1
 
 
 def test_icon_buttons_are_marked(qapp):
@@ -217,7 +269,7 @@ class TestCardInnerWidthIsUnchanged:
     @pytest.mark.parametrize("width", [300, 460, 600])
     def test_content_width_matches_the_baseline_budget(self, qapp, width):
         widget = _widget(qapp, DownloadState.WAITING)
-        widget.resize(width, 134)
+        widget.resize(width, 130)
         widget.show()
         qapp.processEvents()
 
@@ -252,7 +304,7 @@ class TestCardInnerWidthIsUnchanged:
         되는 게 진짜 불변식이다).
         """
         widget = _widget(qapp, download_state)
-        widget.resize(460, 134)
+        widget.resize(460, 130)
         widget.show()
         qapp.processEvents()
         inner = widget.contentFrame.contentsRect().width()

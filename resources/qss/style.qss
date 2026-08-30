@@ -81,11 +81,11 @@ QLabel#thumbnailLabel {
     color: @textMuted;
 }
 
-/* 카드 테두리 — 다운로드 상태(theme.CARD_STATES)에 따라 색이 바뀐다.
- * 진행바(아래 "진행바" 절)와 똑같은 패턴이다: 파이썬은 동적 속성
- * `state`만 바꾸고(`content/widget.py::applyStateStyle`) 색은 여기
- * `[state="..."]` 규칙이 고른다 — 속성만 바꾸면 이미 계산된 스타일이
- * 안 갱신되므로 `theme.repolish()`가 항상 같이 필요하다.
+/* 카드 테두리 — 항상 중립색이다(#244). 이전엔 다운로드 상태(theme.CARD_STATES)에
+ * 따라 색이 바뀌었지만, "테두리색·진행바색·상태 텍스트"로 상태를 세 번
+ * 반복해 알리는 게 정보 중복이라는 오너 판단으로 "상태 아이콘(아래
+ * #stateIconLabel)·진행바색" 두 가지로 줄였다 — 카드 프레임 자체는 더는
+ * state 동적 속성을 안 본다.
  *
  * 가로 padding은 반드시 0이어야 한다 — 카드 안쪽 가용 폭이 줄면 제목·
  * 경로·상태 라벨의 잘림 위치가 밀려 3-OS 폰트 메트릭에 민감한 회귀
@@ -96,25 +96,29 @@ QLabel#thumbnailLabel {
  * (tests/unit/test_widget_theme.py::TestCardInnerWidthIsUnchanged가 고정). */
 #contentFrame {
     background-color: @cardBg;
-    border: 1px solid @stateWaiting;
+    border: 1px solid @border;
     border-radius: @cardRadius;
     padding: @cardPaddingV 0px;
 }
 
-#contentFrame[state="waiting"] {
-    border-color: @stateWaiting;
+/* 상태 아이콘(#244) — 카드 테두리색이 하던 상태 신호 역할을 옮겨 받았다.
+ * 진행바(아래 "진행바" 절)와 같은 패턴: 파이썬은 동적 속성 `state`만
+ * 바꾸고(`content/widget.py::applyStateStyle`) 색은 여기 `[state="..."]`
+ * 규칙이 고른다. */
+#stateIconLabel[state="waiting"] {
+    color: @stateWaiting;
 }
 
-#contentFrame[state="running"] {
-    border-color: @stateRunning;
+#stateIconLabel[state="running"] {
+    color: @stateRunning;
 }
 
-#contentFrame[state="finished"] {
-    border-color: @stateFinished;
+#stateIconLabel[state="finished"] {
+    color: @stateFinished;
 }
 
-#contentFrame[state="failed"] {
-    border-color: @stateFailed;
+#stateIconLabel[state="failed"] {
+    color: @stateFailed;
 }
 
 /* ---------- 버튼 ---------- */

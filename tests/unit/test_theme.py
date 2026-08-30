@@ -59,12 +59,15 @@ class TestTokenSubstitution:
 
 
 class TestCardStateStyles:
-    """카드 테두리 상태색 (#240 2단계 — `theme.card_style()` 폐지 후속).
+    """카드 상태 신호 (#240 2단계 → #244 — 신호를 테두리에서 상태 아이콘으로 이관).
 
-    카드 프레임은 더 이상 파이썬이 문자열을 만들어 붙이지 않는다 — 진행바와
-    같은 패턴으로 `#contentFrame[state="..."]`가 전역 `.qss`에 실제로
-    있는지, 그 값이 서로 다른 토큰으로 갈리는지를 **실제 QSS 파일 소스**를
-    읽어 확인한다(만든 문자열이 아니라 프로덕션이 읽는 바로 그 파일).
+    카드 테두리(`#contentFrame`)는 #244부터 항상 중립색이고 더는 `state`를
+    안 본다 — 상태 신호는 이제 `#stateIconLabel[state="..."]`(아이콘 색)과
+    `QProgressBar[state="..."]`(진행바 색) 둘로 줄었다(오너 확정: "테두리·
+    진행바·텍스트" 3중 반복 → "아이콘·진행바" 2가지). 진행바와 같은
+    패턴으로 그 규칙이 전역 `.qss`에 실제로 있는지, 서로 다른 토큰으로
+    갈리는지를 **실제 QSS 파일 소스**를 읽어 확인한다(만든 문자열이 아니라
+    프로덕션이 읽는 바로 그 파일).
 
     "알 수 없는 state를 주면 ValueError"라는 옛 검증은 대응하는 게 없다 —
     `card_style()`이라는 함수 자체가 사라져 임의 문자열을 검증할 진입점이
@@ -75,13 +78,13 @@ class TestCardStateStyles:
 
     @pytest.mark.parametrize("state", theme.CARD_STATES)
     def test_each_state_rule_exists_and_resolves_to_its_token(self, state):
-        block = _rule_block(_raw_qss(), f'#contentFrame[state="{state}"]')
+        block = _rule_block(_raw_qss(), f'#stateIconLabel[state="{state}"]')
         assert f"@state{state.capitalize()}" in block
 
     def test_states_resolve_to_distinct_colours(self):
         loaded = theme.load_stylesheet(main.resource_path(theme.QSS_RELATIVE_PATH))
         colours = {
-            _rule_block(loaded, f'#contentFrame[state="{state}"]').strip()
+            _rule_block(loaded, f'#stateIconLabel[state="{state}"]').strip()
             for state in theme.CARD_STATES
         }
         assert len(colours) == len(theme.CARD_STATES)
@@ -93,6 +96,14 @@ class TestCardStateStyles:
         padding = [ln for ln in block.splitlines() if "padding" in ln]
         assert padding, "카드 규칙에 padding 선언이 사라졌다 — 이 테스트의 전제를 확인할 것"
         assert padding[0].strip().rstrip(";").split(":")[1].split()[-1] == "0px"
+
+    def test_card_frame_border_is_always_neutral(self):
+        """카드 테두리는 상태 선택자를 전혀 안 쓴다 — #244의 핵심 불변식."""
+        block = _rule_block(_raw_qss(), "#contentFrame")
+        assert "@border" in block
+        assert "@state" not in block
+        for state in theme.CARD_STATES:
+            assert f'#contentFrame[state="{state}"]' not in _raw_qss()
 
 
 class TestColoursAreDefinedOnlyOnce:
@@ -291,14 +302,14 @@ class TestLightTokenTable:
         `main.apply_theme()`이 쓰는 것과 같은 `load_stylesheet()` 경로)에
         LIGHT 상태색이 들어가는지."""
         loaded = theme.load_stylesheet(main.resource_path(theme.QSS_RELATIVE_PATH), theme.LIGHT)
-        block = _rule_block(loaded, f'#contentFrame[state="{state}"]')
+        block = _rule_block(loaded, f'#stateIconLabel[state="{state}"]')
         assert theme.LIGHT["state" + state.capitalize()] in block
 
     @pytest.mark.parametrize("state", ("running", "finished", "failed"))
     def test_light_state_colours_differ_from_dark_where_contrast_needed(self, state):
         """대기색은 원래도 흰 배경에서 대비가 충분해 재사용하지만, 나머지 셋은 대비 때문에 갈아 끼웠다."""
         loaded = theme.load_stylesheet(main.resource_path(theme.QSS_RELATIVE_PATH), theme.LIGHT)
-        block = _rule_block(loaded, f'#contentFrame[state="{state}"]')
+        block = _rule_block(loaded, f'#stateIconLabel[state="{state}"]')
         assert theme.DARK["state" + state.capitalize()] not in block
 
     def test_light_state_colours_are_still_mutually_distinct(self):

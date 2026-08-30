@@ -16,6 +16,16 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+#: 상태별 아이콘 글리프(#244) — 카드 테두리색이 하던 상태 신호 역할을 이
+#: 아이콘으로 옮긴다. 색은 파이썬이 아니라 전역 QSS
+#: `#stateIconLabel[state="..."]`가 theme.py 토큰으로 정한다.
+STATE_ICON = {
+    "waiting": "⏸",   # ⏸
+    "running": "▶",   # ▶
+    "finished": "✓",  # ✓
+    "failed": "✕",    # ✕
+}
+
 class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     """컨텐츠 정보를 표시하는 커스텀 위젯"""
 
@@ -55,8 +65,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.indexLabel.setText(f"#{index}")
 
     def setupDynamicUi(self):
-        self.loadImageFromUrl(self.channelImageLabel, self.item.channel_image_url, 30, "channel")
-        self.loadImageFromUrl(self.thumbnailLabel, self.item.thumbnail_url, 66, "thumbnail")
+        self.loadImageFromUrl(self.channelImageLabel, self.item.channel_image_url, 26, "channel")
+        self.loadImageFromUrl(self.thumbnailLabel, self.item.thumbnail_url, 64, "thumbnail")
         self.contentTypeLabel.setText(self.item.content_type) # 콘텐츠 타입 업데이트
         self.channelNameLabel.setText(self.item.channel_name) # 채널 이름 업데이트
         self.progressLabel.setText("") # 진행률 업데이트
@@ -107,7 +117,10 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         # QSS는 `.className` 선택자를 지원하지 않아 조용히 무시하므로, 동적
         # 속성을 심어 속성 선택자로 잡는 게 유일한 방법이다
         button.setProperty("role", "resolution")
-        self.titleLayout.addWidget(button)
+        # 제목과 한 줄을 공유하지 않는다(#244) — 제목·해상도는 서로 무관한
+        # 정보라 titleLayout에 얹으면 "무관한 정보가 한 줄에 섞인다"는
+        # 문제였다. 전용 줄(resolutionLayout)에 넣는다.
+        self.resolutionLayout.addWidget(button)
         button.setFixedSize(60, 30)
         button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.buttons.append(button)
@@ -275,22 +288,27 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.applyStateStyle()
 
     def applyStateStyle(self):
-        """카드 테두리·진행바를 현재 다운로드 상태의 색으로 맞춘다 (#227, #240 후속).
+        """상태 아이콘·진행바를 현재 다운로드 상태의 색으로 맞춘다 (#227, #240, #244 후속).
 
-        색은 theme.py 한 곳에서만 정의된다. 카드 프레임·진행바 둘 다
+        색은 theme.py 한 곳에서만 정의된다. 상태 아이콘·진행바 둘 다
         위젯별 `setStyleSheet` 없이 동적 속성(`state`)만 바꾸고, 색은
-        전역 QSS의 `#contentFrame[state="..."]`/`QProgressBar[state="..."]`
+        전역 QSS의 `#stateIconLabel[state="..."]`/`QProgressBar[state="..."]`
         규칙이 고른다 — 속성만 바꾸면 이미 계산된 스타일이 갱신되지
         않으므로 theme.repolish()가 항상 함께 필요하다.
+
+        카드 테두리(#contentFrame)는 더는 상태색을 안 쓴다 — "테두리색·
+        진행바색·상태 텍스트"로 상태를 세 번 반복해 알리던 것을 "상태
+        아이콘·진행바색" 두 가지로 줄이는 오너 확정 결정(#244)이다.
         """
         state = self._cardState()
-        if self.contentFrame.property("state") != state:
-            self.contentFrame.setProperty("state", state)
-            theme.repolish(self.contentFrame)
         self.progressBar.setValue(self._progressValue())
         if self.progressBar.property("state") != state:
             self.progressBar.setProperty("state", state)
             theme.repolish(self.progressBar)
+        if self.stateIconLabel.property("state") != state:
+            self.stateIconLabel.setText(STATE_ICON[state])
+            self.stateIconLabel.setProperty("state", state)
+            theme.repolish(self.stateIconLabel)
 
     def _cardState(self) -> str:
         """현재 아이템 상태를 카드 상태 어휘(theme.CARD_STATES)로 옮긴다.
@@ -423,7 +441,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
 
     def sizeHint(self):
         """✅ 위젯 크기 설정"""
-        return QSize(450, 130)  # ✅ 너비 450px, 높이 120px
+        return QSize(450, 130)  # ✅ 너비 450px, 높이 130px(#244 카드 압축 실측치)
     
     def setSize(self, size):
         try:
