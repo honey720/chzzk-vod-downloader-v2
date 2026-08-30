@@ -22,7 +22,7 @@ import main as main_module
 import theme
 from app.viewmodels.item_state import ItemState
 from content.data import ContentItem
-from content.widget import ContentItemWidget
+from content.widget import STATE_ICON, ContentItemWidget
 from core.models.download_state import DownloadState
 
 
@@ -88,24 +88,6 @@ def _card_border_colour(frame) -> QColor:
     return img.pixelColor(0, img.height() // 2)
 
 
-def _label_shows_colour(label, colour: QColor) -> bool:
-    """라벨의 실제 렌더 픽셀 중 `colour`가 정확히 존재하는지 — 아이콘 글리프용.
-
-    단일 고정 지점 샘플(`_card_border_colour`처럼)은 못 쓴다 — 글리프
-    (⏸▶✓✕)는 굵은 직선 테두리가 아니라 폰트가 그리는 도형이라 어느
-    픽셀이 배경이고 어느 픽셀이 글리프 내부인지 좌표로 못 못박는다.
-    대신 라벨 전체를 스캔해 기대색이 "어딘가에" 정확히 칠해졌는지만
-    본다 — 네 상태 글리프 전부 실측으로 내부 픽셀이 안티앨리어싱 없이
-    순수 색으로 나오는 지점이 있음을 확인했다(가장자리만 배경과 섞임).
-    """
-    img = label.grab().toImage()
-    for y in range(img.height()):
-        for x in range(img.width()):
-            if img.pixelColor(x, y) == colour:
-                return True
-    return False
-
-
 @pytest.fixture(autouse=True)
 def no_network(monkeypatch):
     class _FailingSession:
@@ -150,10 +132,21 @@ STATE_MAP = [
 
 @pytest.mark.parametrize("download_state,card_state", STATE_MAP)
 def test_state_icon_gets_the_state_colour(qapp, download_state, card_state):
+    """상태 아이콘이 옳은 색 규칙(`state` 동적 속성)과 옳은 글리프를 받는지.
+
+    ⚠️ 색을 `stateIconLabel.grab()`으로 직접 픽셀 샘플링하지 않는다 —
+    글리프(⏸▶✓✕) 렌더는 폰트 가용성에 좌우돼 CI 3-OS 중 일부(Windows·
+    Linux 헤드리스 이미지)에서 글리프 자체가 안 그려져 색 픽셀이 하나도
+    안 나오는 걸 실측했다(macOS는 통과, Windows·Ubuntu는 실패 — #245
+    첫 CI에서 실제로 겪음). 카드 테두리(`_card_border_colour`)는 QSS가
+    그리는 단색 사각형이라 폰트와 무관하지만, 글리프는 그 전제가 깨진다
+    — `[state="..."]` 규칙이 옳은 토큰을 쓰는지는 `test_theme.py`가 실제
+    QSS 소스로(폰트 무관) 확인하고, 여기서는 위젯이 그 규칙을 타는 동적
+    속성을 실제로 세팅했는지(폰트 무관, 진행바와 같은 패턴)만 본다.
+    """
     widget = _widget(qapp, download_state, progress=50)
-    expected = QColor(theme.DARK["state" + card_state.capitalize()])
-    assert _label_shows_colour(widget.stateIconLabel, expected)
     assert widget.stateIconLabel.property("state") == card_state
+    assert widget.stateIconLabel.text() == STATE_ICON[card_state]
 
 
 @pytest.mark.parametrize("download_state,card_state", STATE_MAP)
@@ -178,18 +171,21 @@ def test_card_border_stays_neutral_regardless_of_state(qapp):
 def test_state_change_repaints_an_existing_card(qapp):
     """같은 위젯이 상태를 갈아탈 때도 따라와야 한다 — 카드는 재사용된다."""
     widget = _widget(qapp, DownloadState.WAITING)
-    assert _label_shows_colour(widget.stateIconLabel, QColor(theme.DARK["stateWaiting"]))
+    assert widget.stateIconLabel.property("state") == "waiting"
+    assert widget.stateIconLabel.text() == STATE_ICON["waiting"]
 
     widget.item.downloadState = DownloadState.RUNNING
     widget.item.download_progress = 30
     widget.setData(widget.item, 0)
-    assert _label_shows_colour(widget.stateIconLabel, QColor(theme.DARK["stateRunning"]))
+    assert widget.stateIconLabel.property("state") == "running"
+    assert widget.stateIconLabel.text() == STATE_ICON["running"]
     assert widget.progressBar.property("state") == "running"
     assert widget.progressBar.value() == 30
 
     widget.item.downloadState = DownloadState.FAILED
     widget.setData(widget.item, 0)
-    assert _label_shows_colour(widget.stateIconLabel, QColor(theme.DARK["stateFailed"]))
+    assert widget.stateIconLabel.property("state") == "failed"
+    assert widget.stateIconLabel.text() == STATE_ICON["failed"]
     assert widget.progressBar.property("state") == "failed"
 
 

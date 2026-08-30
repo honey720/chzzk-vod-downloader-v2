@@ -11,7 +11,6 @@ import time
 
 import pytest
 from PySide6.QtCore import QObject
-from PySide6.QtGui import QColor
 
 import main as main_module
 import theme
@@ -189,15 +188,12 @@ def test_failed_card_shows_failure_and_batch_continues(wired, qapp, tmp_path):
     # 빨간 상태 아이콘 — 완료(파란)와도 구분된다.
     # 상태 신호는 카드 테두리가 아니라 상태 아이콘·진행바가 낸다(#244 —
     # "테두리·진행바·텍스트" 3중 반복을 "아이콘·진행바" 2가지로 줄였다).
-    # 위젯별 setStyleSheet이 아니라 전역 QSS로 칠해지므로 styleSheet()는
-    # 항상 빈 문자열이라 실제 렌더 픽셀을 스캔해서 확인한다.
-    icon_img = widget.stateIconLabel.grab().toImage()
-    failed_colour = QColor(theme.DARK["stateFailed"])
-    assert any(
-        icon_img.pixelColor(x, y) == failed_colour
-        for x in range(icon_img.width())
-        for y in range(icon_img.height())
-    )
+    # ⚠️ 글리프 렌더 픽셀은 직접 스캔하지 않는다 — 폰트 가용성에 좌우돼
+    # CI 일부 OS(Windows·Linux 헤드리스)에서 글리프가 안 그려지는 걸
+    # 실측했다(#245 첫 CI, macOS만 통과). `[state="..."]` 규칙이 옳은
+    # 토큰을 쓰는지는 test_theme.py가 QSS 소스로(폰트 무관) 보고, 여기서는
+    # 위젯이 그 규칙을 타는 동적 속성을 실제로 세팅했는지만 확인한다.
+    assert widget.stateIconLabel.property("state") == "failed"
 
     # ③ 배치는 실패 항목에서 멈추지 않고 다음 항목으로 계속된다
     assert harness.started == [item1, item2]
