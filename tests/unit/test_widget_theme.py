@@ -31,10 +31,39 @@ def _apply_dark_card_qss(qapp):
 
     카드 프레임 지오메트리·색 검증은 전역 QSS가 실제로 태워진 상태를
     재야 의미가 있다(모듈 docstring 참고) — 이 요구가 있는 파일에만
-    국소적으로 적용한다. 스위트 전체에 세션 스코프 autouse로 걸었더니
-    macOS CI에서만 재현되는 프로세스 종료 시점 크래시(exit code 139,
-    테스트 자체는 전부 통과 — 원인 미상, Qt/오프스크린 백엔드의 종료
-    시점 정리 문제로 추정)가 났다 — 적용 범위를 이 파일로 좁혀 회피한다.
+    국소적으로 적용한다.
+
+    ⚠️⚠️⚠️ **반드시 `scope="function"`(기본값)으로 유지할 것 — 범위를
+    넓히면(session/module 스코프로 바꾸거나 이 파일 밖으로 확대) macOS
+    CI에서 프로세스 종료 시점에 SIGSEGV가 재발한다.** 매 테스트 함수마다
+    새로 지어 다시 건다는 게 핵심이다 — "몇 개 파일/몇 개 테스트에 적용
+    되는가"(범위)가 아니라 "만든 `theme.build_style()` 객체를 테스트
+    하나가 끝난 뒤에도 `qapp`에 계속 걸어 둔 채로 살려두는가"(수명)가
+    실제 경계선이다(아래 실측 참고). 다음에 "국소 픽스처를 매번 다시
+    만드는 게 낭비 같으니 파일/세션 스코프로 캐싱하자"는 생각이 들면
+    바로 이 경고를 볼 것 — 그 리팩터링이 정확히 크래시를 재현한다.
+
+    **경계 실측(2026-08-30, #242)**: 스위트 586개 전체에 세션 스코프로
+    걸었을 때도, 이 두 파일에만 좁히고 스코프만 `module`로 바꿨을 때도
+    (약 28개 테스트, 파일당 인스턴스 1개) 둘 다 macOS에서 크래시가
+    재현됐다 — 즉 **몇 개 테스트에 적용하는지(범위)는 무관했고, 인스턴스가
+    테스트 하나를 넘어 살아있는지(수명)가 경계였다.** `scope="function"`
+    (지금 이 상태, 테스트마다 새 인스턴스를 짓고 버림)만 두 차례 연속
+    macOS 통과를 재현했다.
+
+    **크래시 스택(`faulthandler` 도입 후 처음 확보, module 스코프 실험에서
+    수집)**: `Fatal Python error: Segmentation fault`가 pytest 자체의
+    `_pytest/unraisableexception.py::gc_collect_harder`(세션 종료 시
+    `pytest_unconfigure`가 미처리 unraisable exception을 잡으려고 강제로
+    `gc.collect()`를 여러 번 도는 지점, 우리 테스트 코드가 아니라 pytest
+    내부) 안에서 죽는다. **추정(확정 아님)**: `theme.build_style()`이
+    만드는 `_DropDownComboBoxStyle(QProxyStyle)`(Fusion을 감싼 것)가
+    `qapp.setStyle()`로 소유권이 Qt C++ 쪽으로 넘어간 뒤, 그 파이썬
+    래퍼가 한 테스트를 넘어 오래 살아있으면 강제 GC 사이클 수집 시점에
+    shiboken/Qt 쪽 소유권과 충돌해(정확한 메커니즘 미확인 — lldb 등 더
+    깊은 도구 없이는 이 이상 못 판다) 크래시하는 것으로 보인다. Windows·
+    Linux에서는 재현 안 됨 — macOS의 Qt/shiboken 오브젝트 수명 처리가
+    더 엄격하거나 다른 것으로 추정.
 
     `main.apply_theme()`을 그대로 안 쓰는 이유: 그 함수의
     `theme.detect_color_scheme(app)`이 오프스크린 QPA 팔레트 폴백에서

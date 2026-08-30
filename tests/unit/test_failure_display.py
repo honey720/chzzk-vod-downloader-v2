@@ -25,11 +25,17 @@ from core.models.download_state import DownloadState
 
 @pytest.fixture(autouse=True)
 def _apply_dark_card_qss(qapp):
-    """카드 테두리 색 검증(아래 `#FF6969` 자리 참고)이 실제 프로덕션
-    스타일시트를 필요로 해서 이 파일에만 국소 적용한다 —
-    tests/unit/test_widget_theme.py의 같은 이름 픽스처와 같은 이유
-    (세션 스코프로 스위트 전체에 걸면 macOS CI에서만 재현되는 프로세스
-    종료 시점 크래시가 났다)."""
+    """카드 테두리 색 검증(아래 실패 카드 border_pixel 확인)이 실제
+    프로덕션 스타일시트를 필요로 해서 이 파일에만 국소 적용한다.
+
+    ⚠️⚠️⚠️ **반드시 `scope="function"`(기본값)으로 유지할 것 — 넓히면
+    macOS CI에서 프로세스 종료 시점 SIGSEGV가 재발한다.** 상세 근거·
+    실측 경계·크래시 스택은 `tests/unit/test_widget_theme.py`의 같은
+    이름 픽스처 docstring 참고 — 요약: 범위(몇 개 테스트)가 아니라
+    수명(만든 `theme.build_style()` 객체가 테스트 하나를 넘어 `qapp`에
+    계속 걸려 있는가)이 경계다. `scope="function"`만 macOS 통과를
+    재현했다(session·module 스코프는 좁혀도 둘 다 크래시 재현됨).
+    """
     theme.set_color_scheme("dark")
     qapp.setStyle(theme.build_style())
     qapp.setPalette(theme.build_palette())
