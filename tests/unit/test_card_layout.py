@@ -5,13 +5,15 @@
 그대로 통과해 실기에서야 잡혔다(1600px에서 해상도 버튼 간격 335px 실측).
 이 파일이 그 구멍을 막는다.
 
-**고정하는 불변식(#244 확정 설계)**:
+**고정하는 불변식(#245 상태별 슬롯 확정 설계)**:
 - 좌측 기준선은 둘뿐 — 썸네일 왼쪽(=cardPadding)과 컨텐츠 열 왼쪽.
-  4개 행(1행 채널·2행 제목·3행 해상도·4행 경로) 전부 컨텐츠 열의 같은
-  x에서 시작한다. 예외 없다.
+  3개 행(1행 채널·조작, 2행 제목, 3행 상태 슬롯·크기) 전부 컨텐츠 열의
+  같은 x에서 시작한다. 예외 없다.
 - 우측 끝도 하나 — 삭제(1행)와 파일 크기(3행)의 오른쪽 끝이 같은 x.
-- 남는 공간은 각 행에서 딱 한 곳(가운데 스트레치/경로 라벨)만 흡수한다.
-  요소 사이 간격은 고정값이라 창이 넓어져도 벌어지지 않는다.
+  #178로 조작이 3개로 늘어도 유지(강제 3-조작 가시화 게이트).
+- 남는 공간은 각 행에서 딱 한 곳(가운데 스트레치)만 흡수한다.
+- 상태가 바뀌면 3행 내용·조작이 바뀌지만 행 높이·카드 높이는 불변
+  (목록이 들썩이면 안 된다).
 
 **방법론**: 폰트에 의존하지 않는 순수 기하 *관계*만 잰다 — 라벨 폭 자체는
 폰트가 정하지만, "이웃 간격 == 고정 spacing"·"기준선 일치"·"남는 공간이
@@ -59,6 +61,10 @@ def no_network(monkeypatch):
             raise RuntimeError("network disabled in tests")
 
     monkeypatch.setattr("content.widget.get_thread_session", lambda: _FailingSession())
+    # 테스트 아이템의 기본 경로를 전역 설정 경로로 등록한다(#245) — 실제
+    # 앱은 시작 시 mainWindow가 밀어 넣는 값이라, 안 넣으면 모든 카드가
+    # "전역과 다른 경로"로 판정돼 경로 라벨이 떠서 3행 슬롯을 밀어낸다.
+    monkeypatch.setattr("content.widget._global_download_path", "C:/dl")
 
 
 def _make_widget(qapp) -> ContentItemWidget:
@@ -96,7 +102,8 @@ class TestTwoLeftBaselines:
     """좌측 기준선은 둘뿐 — 썸네일 왼쪽과 컨텐츠 열 왼쪽 (#244 확정)."""
 
     #: 각 행의 첫 요소 — 전부 컨텐츠 열의 같은 x에서 시작해야 한다.
-    ROW_HEADS = ("channelImageLabel", "titleLabel", "openDirectoryButton")
+    #: (3행의 첫 요소는 대기 카드에선 pill이라 아래에서 buttons[0]로 더한다)
+    ROW_HEADS = ("channelImageLabel", "titleLabel")
 
     @pytest.mark.parametrize("width", WIDTHS)
     def test_all_rows_start_at_the_content_baseline(self, qapp, width):
@@ -139,8 +146,9 @@ class TestTwoLeftBaselines:
 
         "카드 높이가 썸네일을 결정하는 게 아니라, 원하는 카드 높이에서
         16:9로 폭이 나온다" — 썸네일 높이가 우측 4행의 실제 높이와 같고
-        폭이 그 16/9배인지를 직접 잰다. 글자·간격 토큰이 바뀌어도 이
-        관계는 유지돼야 한다(고정 크기를 박으면 여기서 잡힌다).
+        폭이 그 16/9배인지를 직접 잰다(#245: 3행으로 줄어 높이·폭이 함께
+        작아진다). 글자·간격 토큰이 바뀌어도 이 관계는 유지돼야 한다
+        (고정 크기를 박으면 여기서 잡힌다).
         """
         widget = _make_widget(qapp)
         _at_width(widget, 900)
@@ -168,33 +176,68 @@ class TestOneRightEdge:
 
 
 class TestRowOneClusters:
-    """1행 — 좌측(채널이미지·채널명·종류)·우측(상태아이콘·상태·진행률·삭제)
-    군집이 각자 붙고, 남는 공간은 그 사이 스트레치 한 곳만 흡수한다."""
+    """1행 — 좌측(채널이미지·채널명)과 우측(상태별 조작·삭제) 군집이 각자
+    붙고, 남는 공간은 그 사이 스트레치 한 곳만 흡수한다(#245). 삭제 앞은
+    파괴적 조작 분리를 위한 추가 고정 간격(4+8=12px)이다."""
 
-    LEFT_CLUSTER = ("channelImageLabel", "channelNameLabel", "contentTypeLabel")
-    RIGHT_CLUSTER = ("stateIconLabel", "statusLabel", "progressLabel", "deleteButton")
+    #: 삭제(✕) 앞 간격 — spacing 4 + addSpacing 8. 실수 방지용 분리다.
+    DELETE_EXTRA_GAP = FIXED_SPACING + 8
 
     @pytest.mark.parametrize("width", WIDTHS)
-    def test_intra_cluster_gaps_are_fixed(self, qapp, width):
+    def test_left_cluster_gap_is_fixed(self, qapp, width):
         widget = _make_widget(qapp)
         _at_width(widget, width)
-        for cluster in (self.LEFT_CLUSTER, self.RIGHT_CLUSTER):
-            for left_name, right_name in zip(cluster, cluster[1:]):
-                gap = _gap(getattr(widget, left_name), getattr(widget, right_name))
-                assert gap == FIXED_SPACING, (
-                    f"폭 {width}px에서 {left_name}→{right_name} 간격이 {gap}px "
-                    f"(고정값 {FIXED_SPACING}px 기대) — 군집 내부가 흩어졌다"
-                )
+        gap = _gap(widget.channelImageLabel, widget.channelNameLabel)
+        assert gap == FIXED_SPACING, (
+            f"폭 {width}px에서 채널이미지→채널명 간격이 {gap}px — 군집이 흩어졌다"
+        )
 
     def test_free_space_lives_only_between_the_clusters(self, qapp):
+        """폭이 커질수록 채널명→우측 조작 사이 한 곳만 벌어져야 한다 —
+        실패 카드(↻ 조작 가시)로 재서 우측 군집의 첫 요소를 고정한다."""
         widget = _make_widget(qapp)
+        widget.item.downloadState = DownloadState.FAILED
+        widget.setData(widget.item, 0)
         middle_gaps = []
         for width in WIDTHS:
             _at_width(widget, width)
-            middle_gaps.append(_gap(widget.contentTypeLabel, widget.stateIconLabel))
+            middle_gaps.append(_gap(widget.channelNameLabel, widget.retryButton))
         assert middle_gaps[0] < middle_gaps[1] < middle_gaps[2], (
             f"군집 사이 가운데 간격이 폭을 따라 늘지 않는다: {middle_gaps} — "
             "남는 공간이 다른 곳으로 새고 있다"
+        )
+
+    @pytest.mark.parametrize("width", WIDTHS)
+    def test_delete_is_separated_by_the_extra_gap(self, qapp, width):
+        """삭제(✕)는 앞 조작과 추가 간격으로 떨어져 있다 — 파괴적 조작이
+        같은 무게로 붙어 있으면 실수로 누른다(#245)."""
+        widget = _make_widget(qapp)
+        widget.item.downloadState = DownloadState.FAILED
+        widget.setData(widget.item, 0)
+        _at_width(widget, width)
+        gap = _gap(widget.retryButton, widget.deleteButton)
+        assert gap == self.DELETE_EXTRA_GAP, (
+            f"폭 {width}px에서 조작→삭제 간격이 {gap}px "
+            f"(기대 {self.DELETE_EXTRA_GAP}px)"
+        )
+
+    @pytest.mark.parametrize("width", WIDTHS)
+    def test_right_edge_holds_with_three_actions(self, qapp, width):
+        """#178 구간 버튼 자리 확보 게이트 — 조작이 3개로 늘어도 우측
+        끝선(삭제==파일크기)과 카드 높이가 안 깨진다. 버튼을 새로 만들지
+        않고(눌러도 아무 일 없는 버튼은 노이즈) 기존 3개(⏸·📁·↻)를 강제로
+        동시 가시화해 그 폭 조건을 재현한다."""
+        widget = _make_widget(qapp)
+        _at_width(widget, width)
+        height_before = widget.height()
+        for button in (widget.pauseButton, widget.openDirectoryButton, widget.retryButton):
+            button.setVisible(True)
+        _at_width(widget, width)
+        assert _right(widget.deleteButton) == _right(widget.fileSizeLabel), (
+            "조작 3개에서 우측 끝선이 깨졌다 — #178 확장 시 재발할 결함"
+        )
+        assert widget.height() == height_before, (
+            "조작 3개에서 카드 높이가 변했다 — #178 확장 시 목록이 들썩인다"
         )
 
 
@@ -235,17 +278,55 @@ class TestResolutionRow:
         )
 
 
-class TestDirectoryRow:
-    """4행 — 폴더 버튼이 경로 왼쪽에 한 덩어리로 붙는다(#244 — 우측 끝에
-    혼자 떠 있지 않게). 남는 공간은 경로 라벨이 흡수한다."""
+class TestPathShownOnlyWhenDifferent:
+    """경로는 전역 설정 경로와 다를 때만 3행에 보인다(#245) — 같은 값을
+    카드마다 반복하는 것이 정보 과다의 큰 몫이었다. 다르다는 것 자체가
+    정보다."""
 
-    @pytest.mark.parametrize("width", WIDTHS)
-    def test_folder_button_is_glued_to_the_path(self, qapp, width):
+    def test_path_hidden_when_it_matches_the_global_default(self, qapp):
+        widget = _make_widget(qapp)  # 아이템 경로 == 전역("C:/dl", 픽스처 주입)
+        _at_width(widget, 900)
+        assert not widget.directoryLabel.isVisible()
+
+    def test_path_shown_when_it_differs(self, qapp):
         widget = _make_widget(qapp)
-        _at_width(widget, width)
-        gap = _gap(widget.openDirectoryButton, widget.directoryLabel)
-        assert gap == FIXED_SPACING, (
-            f"폭 {width}px에서 폴더 버튼→경로 간격이 {gap}px — 한 덩어리가 아니다"
+        widget.item.download_path = "D:/다른/폴더"
+        widget.setData(widget.item, 0)
+        _at_width(widget, 900)
+        assert widget.directoryLabel.isVisible()
+        # 경로는 파일 크기 왼쪽에 고정 간격으로 붙는다(우측 끝선 유지)
+        assert _gap(widget.directoryLabel, widget.fileSizeLabel) == FIXED_SPACING
+
+
+class TestStateSwapKeepsCardHeight:
+    """상태가 바뀌면 3행 내용·조작이 바뀌지만 **카드 높이는 안 변한다**
+    (#245 확정 — 목록이 들썩이면 안 된다). 슬롯 교체(pill↔텍스트)·조작
+    교체(⏸/📁/↻)·크기 숨김(실패)이 전부 일어나는 4상태를 순회한다."""
+
+    def test_card_height_is_identical_across_all_states(self, qapp):
+        widget = _make_widget(qapp)
+        heights = {}
+        for state in (DownloadState.WAITING, DownloadState.RUNNING,
+                      DownloadState.FINISHED, DownloadState.FAILED):
+            widget.item.downloadState = state
+            widget.item.download_progress = 42
+            widget.setData(widget.item, 0)
+            _at_width(widget, 900)
+            heights[state] = widget.height()
+        assert len(set(heights.values())) == 1, (
+            f"상태에 따라 카드 높이가 변한다: {heights} — 목록이 들썩인다"
+        )
+
+    def test_row3_stays_at_the_same_y_across_states(self, qapp):
+        """슬롯이 pill↔텍스트로 바뀌어도 3행의 세로 위치가 같아야 한다."""
+        widget = _make_widget(qapp)
+        _at_width(widget, 900)
+        pill_y = widget.buttons[0].y()
+        widget.item.downloadState = DownloadState.RUNNING
+        widget.setData(widget.item, 0)
+        _at_width(widget, 900)
+        assert abs(widget.statusLabel.y() - pill_y) <= 4, (
+            f"슬롯 교체로 3행 세로 위치가 흔들린다: pill y={pill_y}, 텍스트 y={widget.statusLabel.y()}"
         )
 
 
@@ -258,10 +339,14 @@ class TestLabelsDoNotGrow:
     여유가 생긴 900px의 폭(자연 텍스트 폭)과 1600px의 폭이 같아야 한다.
     """
 
-    LABELS = ("contentTypeLabel", "statusLabel", "progressLabel", "fileSizeLabel")
+    LABELS = ("statusLabel", "fileSizeLabel")
 
     def test_labels_do_not_grow_when_the_window_widens(self, qapp):
+        # 상태 텍스트가 실제로 보이는 진행 상태로 잰다(#245 슬롯)
         widget = _make_widget(qapp)
+        widget.item.downloadState = DownloadState.RUNNING
+        widget.item.download_progress = 42
+        widget.setData(widget.item, 0)
         _at_width(widget, 900)
         at_900 = {name: getattr(widget, name).width() for name in self.LABELS}
         _at_width(widget, 1600)

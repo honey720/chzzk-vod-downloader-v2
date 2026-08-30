@@ -180,20 +180,18 @@ def test_failed_card_shows_failure_and_batch_continues(wired, qapp, tmp_path):
     assert item1.downloadState is DownloadState.FAILED
     widget = view.widgetFor(manager.model.items[0])
     label = widget.statusLabel.text()
-    assert label.startswith("Download failed")  # 번역기 미설치 — 키 원문
-    assert "Postprocessing failed" in label  # 사유가 함께 보인다
+    # #245 상태별 슬롯: 실패 사유가 있으면 "✕ 사유"만 보인다(오너 확정 —
+    # "Download failed —" 접두는 사유 없는 경우의 폴백으로만 쓰인다)
+    assert label.startswith("✕ ")
+    assert "Postprocessing failed" in label
     # ② 원시 문자열(ffmpeg stderr·실행 경로) 미노출
     assert "ffmpeg" not in label
     assert "remux" not in label
-    # 빨간 상태 아이콘 — 완료(파란)와도 구분된다.
-    # 상태 신호는 카드 테두리가 아니라 상태 아이콘·진행바가 낸다(#244 —
-    # "테두리·진행바·텍스트" 3중 반복을 "아이콘·진행바" 2가지로 줄였다).
-    # ⚠️ 글리프 렌더 픽셀은 직접 스캔하지 않는다 — 폰트 가용성에 좌우돼
-    # CI 일부 OS(Windows·Linux 헤드리스)에서 글리프가 안 그려지는 걸
-    # 실측했다(#245 첫 CI, macOS만 통과). `[state="..."]` 규칙이 옳은
+    # 빨간 실패 표시 — 완료(초록)와도 구분된다. `[state="..."]` 규칙이 옳은
     # 토큰을 쓰는지는 test_theme.py가 QSS 소스로(폰트 무관) 보고, 여기서는
-    # 위젯이 그 규칙을 타는 동적 속성을 실제로 세팅했는지만 확인한다.
-    assert widget.stateIconLabel.property("state") == "failed"
+    # 슬롯 라벨이 그 규칙을 타는 동적 속성을 실제로 세팅했는지 확인한다.
+    assert widget.statusLabel.property("state") == "failed"
+    assert widget.statusLabel.isVisible() or not widget.isVisible()  # 실패 슬롯은 숨겨지지 않는다
 
     # ③ 배치는 실패 항목에서 멈추지 않고 다음 항목으로 계속된다
     assert harness.started == [item1, item2]

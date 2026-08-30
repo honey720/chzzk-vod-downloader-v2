@@ -59,6 +59,10 @@ def no_network(monkeypatch):
             raise RuntimeError("network disabled in tests")
 
     monkeypatch.setattr("content.widget.get_thread_session", lambda: _FailingSession())
+    # 테스트 아이템의 기본 경로를 전역 설정 경로로 등록한다(#245) — 실제
+    # 앱은 시작 시 mainWindow가 밀어 넣는 값이라, 안 넣으면 모든 카드가
+    # "전역과 다른 경로"로 판정돼 경로 라벨이 떠서 3행 슬롯을 밀어낸다.
+    monkeypatch.setattr("content.widget._global_download_path", "C:/Users/LeeDH/Downloads")
 
 
 def _make_item(content_type="video", title="제목", channel="채널"):
@@ -135,20 +139,24 @@ class TestStatusAndFileSizeAreVisible:
         item.total_size = "500 MB"
         item.downloadState = DownloadState.RUNNING
         item.download_remain_time = "00:01:23"
-        item.download_size = 123 * 1024 * 1024  # setSize()가 바이트 숫자를 "123.00 MB"로 포맷한다
+        item.download_size = 123 * 1024 * 1024
         item.download_speed = "3.2 MB/s"
         item.download_progress = 42
         widget = _build_widget(item, qapp)
 
-        # 카드 폭 600px에 라벨이 여럿 몰려 있어 정확히 어디까지 잘리는지는
-        # 폰트 메트릭에 좌우된다(#229 후속 CI 실패로 이미 겪은 함정) — 정확한
-        # 절단 지점 대신 "빈 문자열이 아니다(폭 0 회귀)"와 "숫자 부분(123)은
-        # 살아있다"만 고정한다.
-        assert _rendered(widget.statusLabel) != ""
+        # #245 상태별 슬롯: 진행 슬롯은 "%·속도·남은시간"이고 남은 시간은
+        # 짧은 표기(1:23)로 줄어든다. 파일형은 3행 우측에 총 크기를 보인다.
+        rendered = _rendered(widget.statusLabel)
+        assert "42%" in rendered
+        assert "3.2 MB/s" in rendered
+        assert "1:23" in rendered
         assert _rendered(widget.fileSizeLabel) != ""
-        assert "123" in _rendered(widget.fileSizeLabel)
+        assert "500 MB" in _rendered(widget.fileSizeLabel)
 
-    def test_finished_shows_download_time_and_size(self, qapp):
+    def test_finished_shows_completion_and_size(self, qapp):
+        # #245 상태별 슬롯: 완료 슬롯은 "✓ 완료 표시"다 — 소요 시간(download_time)
+        # 표시는 오너 확정 설계에서 빠졌다(완료 카드가 답할 질문은 "어디에?"이고
+        # 그건 📁 버튼이 답한다).
         item = _make_item()
         item.download_size = 800 * 1024 * 1024
         item.downloadState = DownloadState.FINISHED
@@ -156,8 +164,9 @@ class TestStatusAndFileSizeAreVisible:
         widget = _build_widget(item, qapp, width=_UNCONSTRAINED_WIDTH)
 
         assert _rendered(widget.statusLabel) != ""
-        assert "00:05:12" in _rendered(widget.statusLabel)
+        assert "Completed" in widget.statusLabel.text()
         assert _rendered(widget.fileSizeLabel) != ""
+        assert "800" in _rendered(widget.fileSizeLabel)
 
     def test_failed_shows_failure_reason(self, qapp):
         item = _make_item()
@@ -208,8 +217,17 @@ class TestChannelNameYieldsBeforeStatusAndFileSize:
         # 우선순위(채널명은 maxWidth 150 상한으로 어느 폭에서든 반드시
         # 잘리고, 상태·크기는 온전)는 폭과 무관하므로 썸네일 폭만큼 상향한
         # 900으로 재도출했다 — 이 폭에서도 채널명 잘림은 상한이 강제한다.
+        # #245 상태별 슬롯 후속: 상태 텍스트는 이제 1행이 아니라 3행 슬롯에
+        # 있어 대기 상태에선 아예 숨겨진다(pill 몫). 우선순위 검증은 상태
+        # 텍스트가 실제로 보이는 진행 상태로 잰다 — 채널명(1행, max 150
+        # 상한으로 반드시 잘림)은 줄고, 상태·크기(3행)는 온전해야 한다.
         item = _make_item(content_type="video", channel="우왁굳의 게임방송 다시보기 풀버전 모음집 전체")
         item.total_size = "1.24 GB"
+        item.downloadState = DownloadState.RUNNING
+        item.download_remain_time = "00:01:23"
+        item.download_speed = "3.2 MB/s"
+        item.download_progress = 42
+        item.download_size = 500 * 1024 * 1024
         widget = _build_widget(item, qapp, width=900)
 
         assert _rendered(widget.channelNameLabel) != widget.channelNameLabel.text(), (

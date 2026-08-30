@@ -39,6 +39,11 @@ class ContentListView(QScrollArea):
 
     deleteRequest = Signal(object)
     fetchRequested = Signal(str)
+    # 상태별 조작(#245) — 카드의 ⏸/↻ 를 아이템과 함께 상위로 중계한다.
+    # deleteRequest와 같은 패턴: 위젯은 자기 아이템을 모르는 무인자 시그널만
+    # 내고, 뷰가 아이템을 붙여 앱 계층(mainWindow)으로 올린다.
+    pauseRequested = Signal(object)
+    retryRequested = Signal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -104,6 +109,8 @@ class ContentListView(QScrollArea):
         widget = ContentItemWidget(item, row, self._container)
         widget.setData(item, row)
         widget.deleteRequest.connect(lambda it=item: self.onDeleteItem(it))
+        widget.pauseRequest.connect(lambda it=item: self.pauseRequested.emit(it))
+        widget.retryRequest.connect(lambda it=item: self.retryRequested.emit(it))
         widget.addRepresentationButtons()
         self._layout.insertWidget(row, widget)
         self._widgets[item] = widget

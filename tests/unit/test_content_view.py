@@ -12,6 +12,7 @@ from PySide6.QtCore import Qt
 from content.data import ContentItem
 from content.model import ContentListModel
 from content.view import ContentListView
+from core.models.download_state import DownloadState
 
 
 @pytest.fixture(autouse=True)
@@ -174,6 +175,44 @@ class TestProgressUpdate:
 
         assert v.widgetFor(a).titleLabel.text() == "A(갱신됨)"
         assert v.widgetFor(b).titleLabel.text() == "B"
+
+
+class TestStateActionSignalsAreWired:
+    """카드 상태별 조작(#245 — ⏸ 일시정지·↻ 재시도)이 실배선으로 뷰까지
+    올라오는지. 핸들러 직접 호출이 아니라 실제 버튼 클릭 → 위젯 시그널 →
+    뷰 릴레이(아이템 부착)의 전체 체인을 탄다 — deleteRequest와 같은 패턴.
+    mainWindow 쪽 처리(onCardPause/onCardRetry)는 전역 다운로드 상태에
+    묶여 있어 여기서는 뷰 경계까지를 고정한다.
+    """
+
+    def test_retry_click_reaches_the_view_with_its_item(self, view, qapp):
+        v, model = view
+        item = _make_item()
+        item.downloadState = DownloadState.FAILED
+        model.addItem(item)
+        qapp.processEvents()
+
+        received = []
+        v.retryRequested.connect(received.append)
+        widget = v.widgetFor(item)
+        widget.retryButton.click()
+        qapp.processEvents()
+        assert received == [item]
+
+    def test_pause_click_reaches_the_view_with_its_item(self, view, qapp):
+        v, model = view
+        item = _make_item()
+        item.downloadState = DownloadState.RUNNING
+        item.download_progress = 42
+        model.addItem(item)
+        qapp.processEvents()
+
+        received = []
+        v.pauseRequested.connect(received.append)
+        widget = v.widgetFor(item)
+        widget.pauseButton.click()
+        qapp.processEvents()
+        assert received == [item]
 
 
 class TestCardNumberingFollowsPosition:

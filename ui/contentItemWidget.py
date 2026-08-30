@@ -1,25 +1,27 @@
 # -*- coding: utf-8 -*-
 
 ################################################################################
-## contentItemWidget.ui의 수동 유지 구현 (#244 카드 재설계)
+## contentItemWidget.ui의 수동 유지 구현 (#244·#245 — 상태별 슬롯 카드)
 ##
 ## ⚠️ 이 파일은 pyside6-uic 재생성 대상이 아니다 — 설치된 uic가 .ui의
 ## `<item stretch>` 문법을 거부하고, stretch·theme.METRICS 연동 같은 수동
 ## 튜닝이 재생성 시 사라진다. 구조 변경 시 .ui(설계 기록)와 이 파일을
 ## 함께 손으로 고칠 것.
 ##
-## 구조(#244 오너 확정 설계): 썸네일(16:9, 카드 안쪽 높이를 가득) | 4행 컬럼
-##   1행 topLayout:        채널이미지·채널명(굵게)·종류(muted) [간격] 상태아이콘·상태텍스트·진행률·삭제
-##   2행 titleLayout:      제목(가장 크고 밝다) — 한 줄 ElideRight
-##   3행 resolutionLayout: 해상도 pill들 [간격] 파일 크기
-##   4행 directoryLayout:  폴더 열기 + 저장 경로(ElideMiddle, 인라인 편집)
-##   하단 progressBar:     카드 아래 가장자리에 딱 붙는 전체 폭 — 진행 중일 때만 보임
+## 구조(#245 오너 확정 — 상태별 슬롯): 썸네일(16:9 고정 상자) | 3행 컬럼
+##   1행 topLayout:        채널이미지(원형)·채널명(굵게)
+##                         [간격] 상태별 조작(⏸/📁/↻ 중 하나) · [추가 간격] 삭제(✕)
+##   2행 titleLayout:      제목(가장 크고 밝다, ElideRight, 클릭 편집)
+##   3행 resolutionLayout: 상태별 슬롯 [간격] (경로: 전역과 다를 때만) · 파일 크기
+##     대기: 해상도 pill들 / 진행: %·속도·남은시간 / 완료: ✓ 완료 / 실패: ✕ 사유
+##   하단 progressBar:     카드 바닥 전체 폭 — 진행 중일 때만
 ##
-## 좌측 기준선은 둘뿐이다: 썸네일 왼쪽(=cardPadding)과 컨텐츠 열 왼쪽.
-## 4행 전부 컨텐츠 열의 같은 x에서 시작한다(tests/unit/test_card_layout.py가
-## 폭 3종으로 게이트). 크기·간격은 전부 theme.METRICS에서 온다 — 오너가
-## theme.py 숫자만 바꾸면 카드가 따라온다. 글자 크기·색은 전역 QSS(위계
-## 토큰 theme.FONTS)가 입힌다 — 위젯별 인라인 styleSheet은 전부 걷어냈다.
+## 상태가 바뀌면 3행 내용·조작 버튼이 바뀌지만 행 높이·카드 높이는 불변이다
+## (목록이 들썩이면 안 된다 — tests/unit/test_card_layout.py 게이트).
+## 좌측 기준선은 둘: 썸네일 왼쪽(=cardPadding), 컨텐츠 열 왼쪽(3행 공통).
+## 우측 끝은 하나: 삭제(1행)·파일 크기(3행) — 조작이 3개로 늘어도 유지
+## (#178 구간 버튼 자리, 게이트로 고정). 크기·간격은 theme.METRICS, 글자
+## 위계·색은 전역 QSS(theme.FONTS 토큰)가 정한다.
 ################################################################################
 
 from PySide6.QtCore import (QCoreApplication, QMetaObject, QSize, Qt)
@@ -34,12 +36,13 @@ class Ui_ContentItemWidget(object):
     def setupUi(self, ContentItemWidget):
         if not ContentItemWidget.objectName():
             ContentItemWidget.setObjectName(u"ContentItemWidget")
-        ContentItemWidget.resize(600, 120)
+        ContentItemWidget.resize(600, 110)
 
         pad = theme.METRICS["cardPadding"]
         icon = theme.METRICS["iconSize"]
         row_gap = theme.METRICS["cardRowSpacing"]
         bar_h = theme.METRICS["barHeight"]
+        pill_h = theme.METRICS["pillHeight"]
 
         self.contentItemLayout = QVBoxLayout(ContentItemWidget)
         self.contentItemLayout.setObjectName(u"contentItemLayout")
@@ -65,9 +68,11 @@ class Ui_ContentItemWidget(object):
         self.bodyLayout.setContentsMargins(pad, pad, pad, pad)
         self.bodyLayout.setSpacing(pad)
 
-        # 썸네일 — 크기는 여기서 정하지 않는다. 우측 컨텐츠 열의 실제
-        # 높이에 맞춰 ContentItemWidget이 런타임에 16:9로 계산한다
-        # ("원하는 카드 높이에서 16:9로 폭이 나온다" — #244 확정 설계).
+        # 썸네일 — 상자는 16:9 고정(카드마다 폭이 달라지면 컨텐츠 열
+        # 기준선이 무너진다). 크기는 우측 컨텐츠 열의 실제 높이에 맞춰
+        # ContentItemWidget이 런타임에 계산한다. 세로 이미지(클립)는 상자
+        # 안에서 비율 유지 + letterbox를 이미지 평균색으로 채운다
+        # (content/widget.py::_composeThumbnail).
         self.thumbnailLabel = QLabel(self.contentFrame)
         self.thumbnailLabel.setObjectName(u"thumbnailLabel")
         self.thumbnailLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -78,9 +83,11 @@ class Ui_ContentItemWidget(object):
         self.contentLayout.setObjectName(u"contentLayout")
         self.contentLayout.setSpacing(row_gap)
 
-        # ---- 1행: 채널 식별 ··· 상태 · 삭제 ----
-        # 남는 공간은 가운데 스트레치 하나만 흡수한다 — 좌우 군집 내부
-        # 간격은 setSpacing 고정값(4px)이라 창이 넓어져도 안 벌어진다.
+        # ---- 1행: 채널 식별 ··· 상태별 조작 · 삭제 ----
+        # 남는 공간은 가운데 스트레치 하나만 흡수한다. 우측은 조작만 —
+        # 상태 아이콘·텍스트는 3행 슬롯으로 갔다(#245). 조작 버튼 셋
+        # (⏸/📁/↻)은 항상 존재하고 상태에 맞는 것만 보인다 — 버튼이 있고
+        # 없고가 행 높이를 흔들지 않게 한다.
         self.topLayout = QHBoxLayout()
         self.topLayout.setObjectName(u"topLayout")
         self.topLayout.setSpacing(4)
@@ -95,43 +102,49 @@ class Ui_ContentItemWidget(object):
 
         self.channelNameLabel = ElidingLabel(self.contentFrame)
         self.channelNameLabel.setObjectName(u"channelNameLabel")
-        # 채널명은 길이가 임의라 폭이 빠듯할 때 가장 먼저 줄어야 한다(PR #229
-        # 후속 오너 지시). 최소폭은 좁은 창에서 "..." 하나로 붕괴하는 것을
-        # 막고(#239 흡수), 최대폭은 아주 긴 채널명이 상태 표시를 밀어내는
-        # 것을 막는다.
+        # 최소폭은 content/widget.py::_clampChannelMinWidth가 이름 길이에
+        # 맞춰 조인다(짧은 이름이 빈 폭을 예약하지 않게). 최대폭은 아주
+        # 긴 채널명이 우측 조작을 밀어내는 것을 막는다.
         self.channelNameLabel.setMinimumWidth(64)
         self.channelNameLabel.setMaximumWidth(150)
 
         self.topLayout.addWidget(self.channelNameLabel)
 
-        # 컨텐츠 종류 — 채널명 옆 가운뎃점 구분("LCK · video"), muted.
-        # 표시 텍스트("· video")는 content/widget.py::setupDynamicUi가 채운다.
-        self.contentTypeLabel = QLabel(self.contentFrame)
-        self.contentTypeLabel.setObjectName(u"contentTypeLabel")
-
-        self.topLayout.addWidget(self.contentTypeLabel)
-
         self.topLayout.addStretch(1)
 
-        # 상태 아이콘+텍스트 묶음 — 색은 전역 QSS의 [state="..."] 규칙이
-        # 상태별로 입힌다(content/widget.py::applyStateStyle이 속성을 건다).
-        self.stateIconLabel = QLabel(self.contentFrame)
-        self.stateIconLabel.setObjectName(u"stateIconLabel")
-        self.stateIconLabel.setMinimumSize(QSize(16, icon))
-        self.stateIconLabel.setMaximumSize(QSize(16, icon))
-        self.stateIconLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # 상태별 조작 — 진행: 일시정지 / 완료: 폴더 열기 / 실패: 재시도.
+        # 한 아이콘은 한 가지 일만 한다. 글리프는 content/widget.py가 채운다.
+        self.pauseButton = QPushButton(self.contentFrame)
+        self.pauseButton.setObjectName(u"pauseButton")
+        self.pauseButton.setMinimumSize(QSize(icon, icon))
+        self.pauseButton.setMaximumSize(QSize(icon, icon))
+        self.pauseButton.setProperty("role", u"icon")
+        self.pauseButton.setVisible(False)
 
-        self.topLayout.addWidget(self.stateIconLabel)
+        self.topLayout.addWidget(self.pauseButton)
 
-        self.statusLabel = ElidingLabel(self.contentFrame)
-        self.statusLabel.setObjectName(u"statusLabel")
+        self.openDirectoryButton = QPushButton(self.contentFrame)
+        self.openDirectoryButton.setObjectName(u"openDirectoryButton")
+        self.openDirectoryButton.setMinimumSize(QSize(icon, icon))
+        self.openDirectoryButton.setMaximumSize(QSize(icon, icon))
+        self.openDirectoryButton.setProperty("role", u"icon")
+        self.openDirectoryButton.setVisible(False)
 
-        self.topLayout.addWidget(self.statusLabel)
+        self.topLayout.addWidget(self.openDirectoryButton)
 
-        self.progressLabel = QLabel(self.contentFrame)
-        self.progressLabel.setObjectName(u"progressLabel")
+        self.retryButton = QPushButton(self.contentFrame)
+        self.retryButton.setObjectName(u"retryButton")
+        self.retryButton.setMinimumSize(QSize(icon, icon))
+        self.retryButton.setMaximumSize(QSize(icon, icon))
+        self.retryButton.setProperty("role", u"icon")
+        self.retryButton.setVisible(False)
 
-        self.topLayout.addWidget(self.progressLabel)
+        self.topLayout.addWidget(self.retryButton)
+
+        # 삭제는 파괴적 조작 — 나머지 조작과 같은 무게로 붙어 있으면 실수로
+        # 누른다. 고정 간격을 더 줘 떨어뜨린다(스트레치가 아니라 고정값 —
+        # 남는 공간 흡수처는 행마다 한 곳뿐이어야 한다).
+        self.topLayout.addSpacing(8)
 
         self.deleteButton = QPushButton(self.contentFrame)
         self.deleteButton.setObjectName(u"deleteButton")
@@ -143,12 +156,13 @@ class Ui_ContentItemWidget(object):
 
         self.contentLayout.addLayout(self.topLayout)
 
-        # ---- 2행: 제목 ----
+        # ---- 2행: 제목 (클릭하면 편집 — 호버 힌트는 전역 QSS) ----
         self.titleLayout = QHBoxLayout()
         self.titleLayout.setObjectName(u"titleLayout")
         self.titleLabel = ElidingLabel(self.contentFrame)
         self.titleLabel.setObjectName(u"titleLabel")
         self.titleLabel.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.titleLabel.setCursor(Qt.CursorShape.IBeamCursor)
 
         self.titleLayout.addWidget(self.titleLabel, 1)
 
@@ -160,14 +174,39 @@ class Ui_ContentItemWidget(object):
 
         self.contentLayout.addLayout(self.titleLayout)
 
-        # ---- 3행: 해상도 ··· 파일 크기 ----
-        # 버튼은 content/widget.py가 왼쪽부터 순서대로 꽂고(스트레치 앞),
-        # 남는 공간은 가운데 스트레치 하나가 흡수, 파일 크기는 우측 끝
-        # (삭제 버튼과 같은 오른쪽 기준선)에 붙는다.
+        # ---- 3행: 상태별 슬롯 ··· (경로) · 파일 크기 ----
+        # 대기: 해상도 pill들(content/widget.py가 왼쪽부터 삽입).
+        # 그 외: statusLabel 하나가 슬롯 텍스트(진행 %·속도·남은시간 /
+        # ✓ 완료 / ✕ 사유)를 상태색으로 보여준다. 어느 쪽이 보이든 행
+        # 높이가 같도록 statusLabel 최소 높이를 pill 높이에 맞춘다.
+        # 경로는 전역 설정 경로와 다를 때만 보인다 — 같은 값을 카드마다
+        # 반복하는 것이 정보 과다의 큰 몫이었다(#245).
         self.resolutionLayout = QHBoxLayout()
         self.resolutionLayout.setObjectName(u"resolutionLayout")
         self.resolutionLayout.setSpacing(4)
+
+        self.statusLabel = ElidingLabel(self.contentFrame)
+        self.statusLabel.setObjectName(u"statusLabel")
+        self.statusLabel.setMinimumHeight(pill_h)
+        self.statusLabel.setVisible(False)
+
+        self.resolutionLayout.addWidget(self.statusLabel)
+
         self.resolutionLayout.addStretch(1)
+
+        self.directoryLabel = ElidingLabel(self.contentFrame, elide_mode=Qt.TextElideMode.ElideMiddle)
+        self.directoryLabel.setObjectName(u"directoryLabel")
+        self.directoryLabel.setCursor(Qt.CursorShape.IBeamCursor)
+        self.directoryLabel.setVisible(False)
+
+        self.resolutionLayout.addWidget(self.directoryLabel)
+
+        self.directoryEdit = QLineEdit(self.contentFrame)
+        self.directoryEdit.setObjectName(u"directoryEdit")
+        self.directoryEdit.setClearButtonEnabled(True)
+        self.directoryEdit.setVisible(False)
+
+        self.resolutionLayout.addWidget(self.directoryEdit)
 
         self.fileSizeLabel = ElidingLabel(self.contentFrame)
         self.fileSizeLabel.setObjectName(u"fileSizeLabel")
@@ -176,46 +215,18 @@ class Ui_ContentItemWidget(object):
 
         self.contentLayout.addLayout(self.resolutionLayout)
 
-        # ---- 4행: 폴더 열기 + 저장 경로 ----
-        # 폴더 버튼이 경로 왼쪽에 붙어 한 덩어리다(#244 — 우측 끝에 혼자
-        # 떠 있던 것을 경로와 묶음). 남는 공간은 경로 라벨이 흡수한다.
-        self.directoryLayout = QHBoxLayout()
-        self.directoryLayout.setObjectName(u"directoryLayout")
-        self.directoryLayout.setSpacing(4)
-
-        self.openDirectoryButton = QPushButton(self.contentFrame)
-        self.openDirectoryButton.setObjectName(u"openDirectoryButton")
-        self.openDirectoryButton.setMinimumSize(QSize(icon, icon))
-        self.openDirectoryButton.setMaximumSize(QSize(icon, icon))
-        self.openDirectoryButton.setProperty("role", u"icon")
-
-        self.directoryLayout.addWidget(self.openDirectoryButton)
-
-        self.directoryLabel = ElidingLabel(self.contentFrame, elide_mode=Qt.TextElideMode.ElideMiddle)
-        self.directoryLabel.setObjectName(u"directoryLabel")
-
-        self.directoryLayout.addWidget(self.directoryLabel, 1)
-
-        self.directoryEdit = QLineEdit(self.contentFrame)
-        self.directoryEdit.setObjectName(u"directoryEdit")
-        self.directoryEdit.setClearButtonEnabled(True)
-
-        self.directoryLayout.addWidget(self.directoryEdit, 1)
-
-        self.contentLayout.addLayout(self.directoryLayout)
-
         self.bodyLayout.addLayout(self.contentLayout)
 
         self.contentFrameLayout.addLayout(self.bodyLayout)
 
         # ---- 하단 진행바 — 카드 아래 가장자리에 딱 붙는 전체 폭 ----
         # 진행 중일 때만 보인다(applyStateStyle) — 빈 막대는 정보가 없다.
-        # 좌우·아래 1px은 카드 테두리 안쪽에 들어오게 하는 최소 여백이다.
-        self.barLayout = QHBoxLayout()
-        self.barLayout.setObjectName(u"barLayout")
-        self.barLayout.setContentsMargins(1, 0, 1, 1)
-        self.barLayout.setSpacing(0)
-
+        # ⚠️ 레이아웃 행이 아니라 **오버레이**다(부모만 지정, 지오메트리는
+        # ContentItemWidget.resizeEvent→_placeProgressBar가 수동 배치) —
+        # 레이아웃 행으로 넣으면 보일 때만 카드가 barHeight만큼 자라
+        # "상태가 바뀌어도 카드 높이는 불변" 규칙(#245, 목록 들썩임 금지)이
+        # 깨진다(실측 95→99px). 바닥 여백(cardPadding 8px)이 바(4px)보다
+        # 커서 겹쳐도 글과 안 부딪힌다.
         self.progressBar = QProgressBar(self.contentFrame)
         self.progressBar.setObjectName(u"progressBar")
         self.progressBar.setMinimumSize(QSize(0, bar_h))
@@ -225,10 +236,6 @@ class Ui_ContentItemWidget(object):
         self.progressBar.setTextVisible(False)
         self.progressBar.setProperty("state", u"waiting")
         self.progressBar.setVisible(False)
-
-        self.barLayout.addWidget(self.progressBar)
-
-        self.contentFrameLayout.addLayout(self.barLayout)
 
         self.contentItemLayout.addWidget(self.contentFrame)
 
@@ -248,20 +255,14 @@ class Ui_ContentItemWidget(object):
 #endif // QT_CONFIG(tooltip)
         self.channelNameLabel.setText(QCoreApplication.translate("ContentItemWidget", u"Channel name", None))
 #if QT_CONFIG(tooltip)
-        self.contentTypeLabel.setToolTip(QCoreApplication.translate("ContentItemWidget", u"Content type", None))
-#endif // QT_CONFIG(tooltip)
-        self.contentTypeLabel.setText(QCoreApplication.translate("ContentItemWidget", u"Content type", None))
-#if QT_CONFIG(tooltip)
-        self.stateIconLabel.setToolTip(QCoreApplication.translate("ContentItemWidget", u"Status", None))
+        self.pauseButton.setToolTip(QCoreApplication.translate("ContentItemWidget", u"Pause", None))
 #endif // QT_CONFIG(tooltip)
 #if QT_CONFIG(tooltip)
-        self.statusLabel.setToolTip(QCoreApplication.translate("ContentItemWidget", u"Status", None))
+        self.openDirectoryButton.setToolTip(QCoreApplication.translate("ContentItemWidget", u"Open directory", None))
 #endif // QT_CONFIG(tooltip)
-        self.statusLabel.setText(QCoreApplication.translate("ContentItemWidget", u"Status", None))
 #if QT_CONFIG(tooltip)
-        self.progressLabel.setToolTip(QCoreApplication.translate("ContentItemWidget", u"Progress", None))
+        self.retryButton.setToolTip(QCoreApplication.translate("ContentItemWidget", u"Retry", None))
 #endif // QT_CONFIG(tooltip)
-        self.progressLabel.setText(QCoreApplication.translate("ContentItemWidget", u"Progress", None))
 #if QT_CONFIG(tooltip)
         self.deleteButton.setToolTip(QCoreApplication.translate("ContentItemWidget", u"Delete", None))
 #endif // QT_CONFIG(tooltip)
@@ -274,14 +275,15 @@ class Ui_ContentItemWidget(object):
 #endif // QT_CONFIG(tooltip)
         self.titleLabel.setText(QCoreApplication.translate("ContentItemWidget", u"Title", None))
 #if QT_CONFIG(tooltip)
-        self.fileSizeLabel.setToolTip(QCoreApplication.translate("ContentItemWidget", u"File size", None))
+        self.statusLabel.setToolTip(QCoreApplication.translate("ContentItemWidget", u"Status", None))
 #endif // QT_CONFIG(tooltip)
-        self.fileSizeLabel.setText(QCoreApplication.translate("ContentItemWidget", u"File size", None))
+        self.statusLabel.setText(QCoreApplication.translate("ContentItemWidget", u"Status", None))
 #if QT_CONFIG(tooltip)
         self.directoryLabel.setToolTip(QCoreApplication.translate("ContentItemWidget", u"Directory", None))
 #endif // QT_CONFIG(tooltip)
         self.directoryLabel.setText(QCoreApplication.translate("ContentItemWidget", u"Directory", None))
 #if QT_CONFIG(tooltip)
-        self.openDirectoryButton.setToolTip(QCoreApplication.translate("ContentItemWidget", u"Open directory", None))
+        self.fileSizeLabel.setToolTip(QCoreApplication.translate("ContentItemWidget", u"File size", None))
 #endif // QT_CONFIG(tooltip)
+        self.fileSizeLabel.setText(QCoreApplication.translate("ContentItemWidget", u"File size", None))
     # retranslateUi

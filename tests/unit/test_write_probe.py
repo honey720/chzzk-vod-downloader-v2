@@ -128,7 +128,9 @@ class TestDownloadItemWriteGate:
         assert item.stateMessage == "Failed to save file"  # 번역기 미설치 — 키 원문
         assert finished_all == [True]  # 배치는 종료 신호까지 간다
         widget = view.widgetFor(item)
-        assert widget.statusLabel.text().startswith("Download failed")  # 카드에 명확히 표시
+        # #245 상태별 슬롯: 실패 카드의 3행은 "✕ 사유"다 — 사유가 있으면
+        # "Download failed" 접두 없이 사유만 보인다(오너 확정 표시 사양)
+        assert widget.statusLabel.text() == "✕ Failed to save file"
 
     def test_timeout_probe_fails_the_same_way(self, manager, qapp, tmp_path, monkeypatch):
         """무응답(timeout)도 같은 안내다 — 유저에게는 '저장할 수 없는 경로'라는 같은 사실."""

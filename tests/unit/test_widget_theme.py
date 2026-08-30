@@ -1,18 +1,15 @@
-"""카드가 다운로드 상태에 맞는 색을 실제로 입는지 검증한다 (#227, #240, #244).
+"""카드가 다운로드 상태에 맞는 색·슬롯을 실제로 입는지 검증한다 (#227→#245).
 
-전역 `.qss`의 `#stateIconLabel[state="..."]` 규칙이 옳은 토큰을 쓰는지는
-`test_theme.py`가 실제 파일 소스로 본다. 여기서는 **위젯이 그걸 실제로
-렌더링하는지** — 상태가 바뀔 때마다 `setData()`가 상태 아이콘과 진행바를
-같이 갱신하는지를, `widget.grab()`으로 실제 렌더된 픽셀을 읽어 확인한다.
+전역 `.qss`의 `#statusLabel[state="..."]` 규칙이 옳은 토큰을 쓰는지는
+`test_theme.py`가 실제 파일 소스로 본다. 여기서는 **위젯이 그 규칙을 타는
+동적 속성·가시성을 실제로 세팅하는지**를 본다.
 
-**#244로 상태 신호가 바뀌었다**: 카드 테두리색·진행바색·상태 텍스트로
-상태를 세 번 반복해 알리던 것을, "상태 아이콘·진행바색" 두 가지로
-줄였다(오너 확정 결정) — 카드 테두리(`#contentFrame`)는 이제 항상 중립색
-`@border`이고 더는 `state` 동적 속성을 안 본다. 상태 아이콘·진행바 색
-둘 다 위젯 스타일시트가 아니라 동적 속성(`state`) + 전역 QSS의
-`[state="..."]` 규칙으로 정해진다. QSS는 `.className` 선택자를 지원하지
-않고 조용히 무시하므로 이 배선이 유일한 경로다 — 속성이 상태를 따라가지
-않으면 색이 안 변하는데 **아무 에러도 안 난다**.
+**#245 상태별 슬롯**: 3행은 상태마다 다른 것을 보여준다 — 대기=해상도
+pill, 진행=%·속도·남은시간, 완료=✓ 완료, 실패=✕ 사유. 슬롯 텍스트
+(statusLabel)의 색은 동적 속성(`state`) + 전역 QSS `[state="..."]` 규칙,
+1행 우측 조작(⏸/📁/↻)은 상태별 가시성으로 정해진다. QSS는 `.className`
+선택자를 지원하지 않고 조용히 무시하므로 이 배선이 유일한 경로다 —
+속성이 상태를 따라가지 않으면 색이 안 변하는데 **아무 에러도 안 난다**.
 """
 
 import pytest
@@ -98,6 +95,10 @@ def no_network(monkeypatch):
             raise RuntimeError("network disabled in tests")
 
     monkeypatch.setattr("content.widget.get_thread_session", lambda: _FailingSession())
+    # 테스트 아이템의 기본 경로를 전역 설정 경로로 등록한다(#245) — 실제
+    # 앱은 시작 시 mainWindow가 밀어 넣는 값이라, 안 넣으면 모든 카드가
+    # "전역과 다른 경로"로 판정돼 경로 라벨이 떠서 3행 슬롯을 밀어낸다.
+    monkeypatch.setattr("content.widget._global_download_path", "C:/Users/LeeDH/Downloads")
 
 
 def _make_item():
@@ -131,22 +132,60 @@ STATE_MAP = [
 
 
 @pytest.mark.parametrize("download_state,card_state", STATE_MAP)
-def test_state_icon_gets_the_state_colour(qapp, download_state, card_state):
-    """상태 아이콘이 옳은 색 규칙(`state` 동적 속성)과 옳은 글리프를 받는지.
+def test_slot_label_gets_the_state_colour_property(qapp, download_state, card_state):
+    """3행 슬롯 라벨이 옳은 색 규칙(`state` 동적 속성)을 받는지 (#245).
 
-    ⚠️ 색을 `stateIconLabel.grab()`으로 직접 픽셀 샘플링하지 않는다 —
-    글리프(⏸▶✓✕) 렌더는 폰트 가용성에 좌우돼 CI 3-OS 중 일부(Windows·
-    Linux 헤드리스 이미지)에서 글리프 자체가 안 그려져 색 픽셀이 하나도
-    안 나오는 걸 실측했다(macOS는 통과, Windows·Ubuntu는 실패 — #245
-    첫 CI에서 실제로 겪음). 카드 테두리(`_card_border_colour`)는 QSS가
-    그리는 단색 사각형이라 폰트와 무관하지만, 글리프는 그 전제가 깨진다
-    — `[state="..."]` 규칙이 옳은 토큰을 쓰는지는 `test_theme.py`가 실제
+    ⚠️ 글리프 렌더 픽셀은 직접 샘플링하지 않는다 — 폰트 가용성에 좌우돼
+    CI 헤드리스 이미지에서 글리프가 안 그려지는 걸 실측했다(#245 첫 CI).
+    `[state="..."]` 규칙이 옳은 토큰을 쓰는지는 `test_theme.py`가 실제
     QSS 소스로(폰트 무관) 확인하고, 여기서는 위젯이 그 규칙을 타는 동적
     속성을 실제로 세팅했는지(폰트 무관, 진행바와 같은 패턴)만 본다.
     """
     widget = _widget(qapp, download_state, progress=50)
-    assert widget.stateIconLabel.property("state") == card_state
-    assert widget.stateIconLabel.text() == STATE_ICON[card_state]
+    assert widget.statusLabel.property("state") == card_state
+
+
+@pytest.mark.parametrize("download_state,card_state", STATE_MAP)
+def test_slot_swaps_between_pills_and_status_text(qapp, download_state, card_state):
+    """3행 슬롯 — 대기에만 pill, 그 외에는 상태 텍스트가 보인다 (#245).
+
+    isVisible()은 조상이 안 보이면 항상 False라 위젯을 show()한 뒤 잰다.
+    """
+    widget = _widget(qapp, download_state, progress=50)
+    widget.show()
+    pills_expected = download_state == DownloadState.WAITING
+    assert widget.statusLabel.isVisible() == (not pills_expected)
+
+
+@pytest.mark.parametrize(
+    "download_state,pause,folder,retry",
+    [
+        (DownloadState.WAITING, False, False, False),
+        (DownloadState.RUNNING, True, False, False),
+        (DownloadState.PAUSED, True, False, False),
+        (DownloadState.FINISHED, False, True, False),
+        (DownloadState.FAILED, False, False, True),
+    ],
+)
+def test_state_actions_visibility(qapp, download_state, pause, folder, retry):
+    """1행 우측 조작 — 진행=⏸(일시정지·재개 토글), 완료=📁, 실패=↻,
+    삭제는 항상 (#245 확정 매트릭스)."""
+    widget = _widget(qapp, download_state, progress=50)
+    widget.show()
+    assert widget.pauseButton.isVisible() == pause
+    assert widget.openDirectoryButton.isVisible() == folder
+    assert widget.retryButton.isVisible() == retry
+    assert widget.deleteButton.isVisible()
+
+
+def test_failed_hides_file_size_for_the_reason(qapp):
+    """실패 카드의 3행 우측은 파일 크기 대신 사유가 자리를 쓴다 (#245)."""
+    widget = _widget(qapp, DownloadState.FAILED, progress=0)
+    widget.show()
+    assert not widget.fileSizeLabel.isVisible()
+    widget2 = _widget(qapp, DownloadState.WAITING)
+    widget2.show()
+    assert widget2.fileSizeLabel.isVisible()
 
 
 @pytest.mark.parametrize("download_state,card_state", STATE_MAP)
@@ -171,21 +210,22 @@ def test_card_border_stays_neutral_regardless_of_state(qapp):
 def test_state_change_repaints_an_existing_card(qapp):
     """같은 위젯이 상태를 갈아탈 때도 따라와야 한다 — 카드는 재사용된다."""
     widget = _widget(qapp, DownloadState.WAITING)
-    assert widget.stateIconLabel.property("state") == "waiting"
-    assert widget.stateIconLabel.text() == STATE_ICON["waiting"]
+    widget.show()
+    assert widget.statusLabel.property("state") == "waiting"
+    assert not widget.statusLabel.isVisible()  # 대기 슬롯은 pill 몫
 
     widget.item.downloadState = DownloadState.RUNNING
     widget.item.download_progress = 30
     widget.setData(widget.item, 0)
-    assert widget.stateIconLabel.property("state") == "running"
-    assert widget.stateIconLabel.text() == STATE_ICON["running"]
+    assert widget.statusLabel.property("state") == "running"
+    assert widget.statusLabel.isVisible()
     assert widget.progressBar.property("state") == "running"
     assert widget.progressBar.value() == 30
 
     widget.item.downloadState = DownloadState.FAILED
     widget.setData(widget.item, 0)
-    assert widget.stateIconLabel.property("state") == "failed"
-    assert widget.stateIconLabel.text() == STATE_ICON["failed"]
+    assert widget.statusLabel.property("state") == "failed"
+    assert widget.statusLabel.text().startswith(STATE_ICON["failed"])
     assert widget.progressBar.property("state") == "failed"
 
 
@@ -221,19 +261,20 @@ def test_resolution_buttons_get_their_own_row_not_the_title_row(qapp):
     qapp.processEvents()
 
     assert widget.titleLayout.count() == 2, "titleLayout에는 제목 라벨·편집창만 있어야 한다"
-    # 3행 구조(#244 재설계): [버튼들..., 가운데 스트레치, 파일 크기 라벨].
-    # 스트레치가 없으면 넓은 창에서 버튼 사이가 균등 분배로 벌어지고
-    # (오너 실기 확인), 파일 크기는 우측 끝(삭제 버튼과 같은 오른쪽
-    # 기준선)에 붙어야 한다 — 간격·기준선은 tests/unit/test_card_layout.py가
+    # 3행 구조(#245 상태별 슬롯): [pill들..., statusLabel(슬롯 텍스트),
+    # 가운데 스트레치, 경로 라벨·편집, 파일 크기]. pill은 왼쪽부터
+    # 순서대로, 스트레치가 없으면 넓은 창에서 흩어지고(오너 실기 확인),
+    # 파일 크기는 우측 끝 — 간격·기준선은 tests/unit/test_card_layout.py가
     # 폭 3종으로 게이트한다.
-    assert widget.resolutionLayout.count() == len(widget.buttons) + 2
+    assert widget.resolutionLayout.count() == len(widget.buttons) + 5
     for position, button in enumerate(widget.buttons):
         assert widget.resolutionLayout.indexOf(button) == position, (
             "해상도 버튼이 왼쪽부터 순서대로 놓이지 않았다"
         )
-    stretch_item = widget.resolutionLayout.itemAt(len(widget.buttons))
+    stretch_index = widget.resolutionLayout.indexOf(widget.statusLabel) + 1
+    stretch_item = widget.resolutionLayout.itemAt(stretch_index)
     assert stretch_item.widget() is None and stretch_item.spacerItem() is not None, (
-        "버튼과 파일 크기 사이의 가운데 스트레치가 없다 — 넓은 창에서 버튼이 흩어진다"
+        "슬롯과 파일 크기 사이의 가운데 스트레치가 없다 — 넓은 창에서 흩어진다"
     )
     last = widget.resolutionLayout.itemAt(widget.resolutionLayout.count() - 1)
     assert last.widget() is widget.fileSizeLabel, "파일 크기가 3행 우측 끝이 아니다"

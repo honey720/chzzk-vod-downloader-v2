@@ -16,32 +16,50 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-#: 상태별 아이콘 글리프(#244) — 카드 테두리색이 하던 상태 신호 역할을 이
-#: 아이콘으로 옮긴다. 색은 파이썬이 아니라 전역 QSS
-#: `#stateIconLabel[state="..."]`가 theme.py 토큰으로 정한다.
-#:
-#: waiting은 ⏸(U+23F8, 일시정지)가 아니라 ○(빈 원)를 쓴다 — 오너 실기
-#: 지적: 대기 카드에 일시정지 기호가 붙으면 유저가 "내가 멈춘 건가"로
-#: 읽는다. 빈 원 = 아직 시작 안 됨(줄 서 있음)이 의미에 맞는다.
-#:
-#: 전부 폰트 문자(유니코드)다 — 이미지 리소스를 안 늘리는 기존 관례.
-#: ○(U+25CB)·▶(U+25B6)는 Geometric Shapes 블록으로 기본 시스템 폰트
-#: (Windows Malgun Gothic/Segoe UI Symbol, macOS 시스템 폰트, Linux
-#: DejaVu Sans)가 전부 커버하고, ✓(U+2713)·✕(U+2715)는 Dingbats 블록으로
-#: Segoe UI Symbol·Apple Symbols·DejaVu Sans가 커버한다(Windows 실기는
-#: QFontMetrics.inFontUcs4로 실측 확인 — PR #245 보고 참조).
+#: 상태·조작 글리프(#244→#245 상태별 슬롯 재설계). 전부 폰트 문자(유니코드)다
+#: — 이미지 리소스를 안 늘리는 기존 관례. Windows 실기 커버리지는
+#: QFontMetrics.inFontUcs4로 실측 확인(PR #245 보고 참조), macOS/Linux는
+#: Apple Symbols·DejaVu Sans 커버 문서 기준.
+#: ✓·✕는 3행 슬롯 텍스트의 접두(완료/실패 표시), ⏸·↻·📁·✕는 1행 우측의
+#: 상태별 조작·삭제 버튼 글리프다. 색은 파이썬이 아니라 전역 QSS가
+#: theme.py 토큰으로 정한다.
 STATE_ICON = {
-    "waiting": "○",   # 빈 원 — 줄 서 있음(아직 시작 안 됨)
-    "running": "▶",   # 재생 — 진행 중
-    "finished": "✓",  # 체크 — 완료
-    "failed": "✕",    # 엑스 — 실패
+    "finished": "✓",  # 체크 — 완료 (U+2713)
+    "failed": "✕",    # 엑스 — 실패 (U+2715)
 }
+
+ACTION_ICON = {
+    # 컬러 이모지 글리프(⏸📁)는 QSS 색(muted/호버)이 안 먹는다(실기 렌더
+    # 확인 — ⏸는 VS15를 붙여도 이 폰트 스택에서 이모지로 그려짐). 그래서
+    # 전부 모노크롬 문자 글리프를 쓴다: 일시정지 ‖(U+2016), 폴더
+    # 🗀(U+1F5C0). 전부 Windows 실기 inFontUcs4 실측 통과 — macOS/Linux
+    # 글리프 모양은 오너/CI 실기 확인 필요.
+    "pause": "‖",         # 일시정지 (U+2016 DOUBLE VERTICAL LINE)
+    "retry": "↻",         # 재시도 (U+21BB)
+    "folder": "🗀",    # 폴더 열기 (U+1F5C0, 모노크롬)
+    "delete": "✕",        # 삭제 (U+2715)
+}
+
+#: 전역 설정의 다운로드 경로 — 카드는 자기 경로가 이 값과 **다를 때만**
+#: 3행에 경로를 표시한다(#245 — 같은 값을 카드마다 반복 표시하는 것이
+#: 정보 과다의 큰 몫이었다. 다르다는 것 자체가 정보다).
+#: application/mainWindow.py가 시작 시·경로 변경 시 밀어 넣는다.
+#: 모듈 전역을 호출 시점에 조회하므로 테스트에서 monkeypatch 가능하다.
+_global_download_path = ""
+
+
+def set_global_download_path(path: str) -> None:
+    """전역 다운로드 경로를 갱신한다 — 카드의 경로 표시 여부 판단 기준."""
+    global _global_download_path
+    _global_download_path = path
 
 class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     """컨텐츠 정보를 표시하는 커스텀 위젯"""
 
     textChanged = Signal(str)
     deleteRequest = Signal()
+    pauseRequest = Signal()   # 진행 카드의 ⏸ (#245 상태별 조작)
+    retryRequest = Signal()   # 실패 카드의 ↻ (#245 상태별 조작)
 
     # 워커 스레드 → 메인 스레드 중계 (#168). 위젯·아이템 조작은 반드시 메인
     # 스레드 슬롯에서 한다 — download 경로가 qt_bridge로 세운 스레드 경계
@@ -68,7 +86,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """썸네일을 우측 컨텐츠 열의 실제 높이에 맞춰 16:9로 고정한다.
 
         "원하는 카드 높이에서 16:9로 폭이 나온다"(#244 확정 설계) — 카드
-        높이는 우측 4행(글자 크기·행 간격 토큰)이 정하고, 썸네일은 그
+        높이는 우측 3행(글자 크기·행 간격 토큰)이 정하고, 썸네일은 그
         높이를 가득 채우도록 따라간다. theme.py 토큰을 바꾸면 썸네일도
         자동으로 맞춰진다.
 
@@ -77,10 +95,26 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         읽으면 기본 폰트 기준의 틀린 높이가 나온다(실측 확인).
         """
         for label in (self.channelNameLabel, self.titleLabel, self.statusLabel,
-                      self.fileSizeLabel, self.directoryLabel, self.contentTypeLabel):
+                      self.fileSizeLabel, self.directoryLabel):
             label.ensurePolished()
         height = self.contentLayout.sizeHint().height()
         self.thumbnailLabel.setFixedSize(round(height * 16 / 9), height)
+
+    def _placeProgressBar(self) -> None:
+        """하단 진행바를 카드 바닥에 오버레이로 배치한다 (#245).
+
+        레이아웃 행으로 넣으면 보일 때만 카드가 barHeight만큼 자라
+        "상태가 바뀌어도 카드 높이 불변"(목록 들썩임 금지)이 깨진다 —
+        그래서 지오메트리를 직접 잡는다. 테두리(1px) 안쪽 전체 폭.
+        """
+        bar_h = theme.METRICS["barHeight"]
+        frame = self.contentFrame
+        self.progressBar.setGeometry(1, frame.height() - bar_h - 1, frame.width() - 2, bar_h)
+        self.progressBar.raise_()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._placeProgressBar()
 
     def _clampChannelMinWidth(self) -> None:
         """채널명 최소폭을 "자연 폭과 64px 중 작은 쪽"으로 맞춘다.
@@ -108,14 +142,14 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         icon = theme.METRICS["iconSize"]
         self.loadImageFromUrl(self.channelImageLabel, self.item.channel_image_url, icon, "channel")
         self.loadImageFromUrl(self.thumbnailLabel, self.item.thumbnail_url, self.thumbnailLabel.height(), "thumbnail")
-        # 종류는 채널명 옆 가운뎃점 구분의 보조 정보다("LCK · video") — #244
-        self.contentTypeLabel.setText(f"· {self.item.content_type}")
         self.channelNameLabel.setText(self.item.channel_name) # 채널 이름 업데이트
         self._clampChannelMinWidth()
-        self.progressLabel.setText("") # 진행률 업데이트
-        # ✕ — 색은 전역 QSS(#deleteButton)가 muted/호버 강조로 입힌다.
-        # 이모지 ❌는 폰트가 항상 빨갛게 그려 카드에서 삭제만 튀었다(#244).
-        self.deleteButton.setText("✕")
+        # 조작 글리프 — 색은 전역 QSS가 입힌다(삭제는 muted/호버 강조 —
+        # 이모지 ❌는 폰트가 항상 빨갛게 그려 카드에서 삭제만 튀었다 #244).
+        self.deleteButton.setText(ACTION_ICON["delete"])
+        self.pauseButton.setText(ACTION_ICON["pause"])
+        self.retryButton.setText(ACTION_ICON["retry"])
+        self.openDirectoryButton.setText(ACTION_ICON["folder"])
         self.setIndex(self.index)  # 인덱스 업데이트
         self.titleLabel.setText(self.item.title) # 제목 업데이트
         self.titleEdit.setText(self.item.title) # 제목 업데이트
@@ -123,7 +157,6 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.directoryLabel.setText(self.item.download_path) # 다운로드 경로 업데이트
         self.directoryEdit.setText(self.item.download_path) # 다운로드 경로 업데이트
         self.directoryEdit.setVisible(False) # 다운로드 경로 수정용 QLineEdit 숨김
-        self.openDirectoryButton.setText("📁")
         self.applyStateStyle()  # setData 전에도 카드가 무스타일로 보이지 않게 (#227)
 
     def setupSignals(self):
@@ -133,6 +166,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.directoryLabel.mousePressEvent = self.startPathEditing
         self.directoryEdit.editingFinished.connect(self.finishPathEditing)
         self.openDirectoryButton.clicked.connect(self.requestOpenDir)
+        self.pauseButton.clicked.connect(self.pauseRequest.emit)
+        self.retryButton.clicked.connect(self.retryRequest.emit)
 
     def addRepresentationButtons(self):
         """
@@ -176,6 +211,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         # 여백은 전역 QSS [role="resolution"]의 padding이 준다).
         button.setFixedHeight(theme.METRICS["pillHeight"])
         button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        # 슬롯 규칙(#245): pill은 대기 상태에서만 보인다 — 생성 시점의
+        # 상태에 맞춰 시작 가시성을 정한다(이후는 applyStateStyle이 맞춤)
+        button.setVisible(self._slotShowsPills())
         self.buttons.append(button)
 
         def update_button_text():
@@ -265,19 +303,17 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             original_width = image.width()
             original_height = image.height()
 
+            if type == "thumbnail":
+                # 도착 시점의 라벨 실제 크기(16:9 상자)에 맞춰 합성한다 —
+                # 라벨 크기는 pill 추가 등으로 요청 이후에도 재계산되므로
+                # (_sizeThumbnail) 요청 시점 값(maxHeight)을 쓰지 않는다.
+                label.setPixmap(self._composeThumbnail(image, label.size()))
+                return
             if type == "channel" and original_height > original_width:
                 # 가로 높이를 고정하고 세로 크기를 비율에 맞게 계산
                 aspect_ratio = original_height / original_width
                 new_width = maxHeight
                 new_height = int(maxHeight * aspect_ratio)
-            elif type == "thumbnail":
-                # 썸네일 높이는 요청 시점 값(maxHeight)이 아니라 도착 시점의
-                # 라벨 실제 높이를 쓴다 — 라벨 크기는 pill 추가 등으로 요청
-                # 이후에도 재계산된다(_sizeThumbnail). 비동기 도착이 라벨보다
-                # 늦으므로 이 시점 값이 항상 최신이다.
-                aspect_ratio = original_width / original_height
-                new_height = label.height()
-                new_width = int(new_height * aspect_ratio)
             else:
                 # 세로 높이를 고정하고 가로 크기를 비율에 맞게 계산
                 aspect_ratio = original_width / original_height
@@ -298,6 +334,38 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             logger.error(f"Error loading image from {url}: {e}")
 
     @staticmethod
+    def _composeThumbnail(pixmap: QPixmap, box) -> QPixmap:
+        """16:9 고정 상자에 맞춘 썸네일 합성본을 돌려준다 (#245).
+
+        - 원본 비율 유지로 상자 안에 맞추고, 남는 letterbox 여백은 **이미지
+          평균색**으로 채운다(1x1 스케일다운 한 번) — 검정은 도드라지고 카드
+          배경색은 붕 떠서, 평균색이어야 이미지와 이어져 보인다(오너 확정).
+          가로 16:9 원본은 상자를 정확히 채워 여백 자체가 안 생기고, 세로
+          썸네일(클립)에서만 좌우 여백이 나타난다.
+        - 모서리는 thumbRadius(카드보다 작게)로 합성 시점에 잘라낸다 — QSS
+          border-radius는 pixmap을 못 자른다.
+        - 로드 시점 일회성 변환이다 — 카드에 상주하는 파이썬 객체가 아니라
+          O(1) 삽입과 무관하다.
+        """
+        average = pixmap.scaled(1, 1, Qt.AspectRatioMode.IgnoreAspectRatio,
+                                Qt.TransformationMode.SmoothTransformation).toImage().pixelColor(0, 0)
+        fitted = pixmap.scaled(box, Qt.AspectRatioMode.KeepAspectRatio,
+                               Qt.TransformationMode.SmoothTransformation)
+        result = QPixmap(box)
+        result.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(result)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        path = QPainterPath()
+        radius = theme.METRICS["thumbRadius"]
+        path.addRoundedRect(0, 0, box.width(), box.height(), radius, radius)
+        painter.setClipPath(path)
+        painter.fillRect(0, 0, box.width(), box.height(), average)
+        painter.drawPixmap((box.width() - fitted.width()) // 2,
+                           (box.height() - fitted.height()) // 2, fitted)
+        painter.end()
+        return result
+
+    @staticmethod
     def _circled(pixmap: QPixmap) -> QPixmap:
         """정사각 기준 원형으로 마스킹한 사본을 돌려준다 — 채널 아바타용."""
         side = min(pixmap.width(), pixmap.height())
@@ -312,8 +380,29 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         painter.end()
         return result
 
+    def _shortRemain(self, remain: str) -> str:
+        """"HH:MM:SS" 남은 시간을 짧은 표시("3:12")로 줄인다 — 표시 정책.
+
+        계산 자체는 어댑터(download/qt_bridge.py)가 ProgressEvent 값으로
+        이미 해 둔 것을 받는다(core 무관) — 여기서는 표기만 줄인다.
+        형식이 예상 밖이면("N/A" 등) 받은 그대로 보여준다.
+        """
+        parts = remain.split(":")
+        if len(parts) != 3 or not all(p.isdigit() for p in parts):
+            return remain
+        hours, minutes, seconds = (int(p) for p in parts)
+        if hours:
+            return f"{hours}:{minutes:02d}:{seconds:02d}"
+        return f"{minutes}:{seconds:02d}"
+
     def setData(self, item: ContentItem, index: int):
-        """✅ 모델 데이터를 위젯에 반영"""
+        """✅ 모델 데이터를 위젯에 반영 — 3행 슬롯 텍스트는 상태별로 다르다 (#245).
+
+        유저가 알고 싶은 것은 상태마다 다르다 — 대기 "어느 화질로?"(pill),
+        진행 "얼마나?"(%·속도·남은시간), 완료 "어디에?"(✓ 완료 + 폴더 버튼),
+        실패 "왜?"(✕ 사유). 합집합을 늘 보여주던 정보 과다를 슬롯 교체로
+        줄인다. 슬롯·조작의 가시성은 applyStateStyle이 맞춘다.
+        """
         self.item = item
         self.setIndex(index)
         self.channelNameLabel.setText(item.channel_name)
@@ -324,79 +413,108 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         if self.item.downloadState == ItemState.LOADING:
             self.statusLabel.setText(self.tr("Loading information..."))
             self.fileSizeLabel.setText("")
-            self.progressLabel.setText(" ")
 
         elif self.item.downloadState == DownloadState.WAITING:
+            # 슬롯은 해상도 pill이 차지한다 — statusLabel은 숨겨지지만
+            # 값은 유지한다(테스트·툴팁 등 텍스트 조회 경로 보존)
             self.statusLabel.setText(self.tr("Download waiting"))
             if self.item.is_segment_based:
-                self.fileSizeLabel.setText(f" {strftime('%H:%M:%S', gmtime(item.duration))}")
+                self.fileSizeLabel.setText(strftime('%H:%M:%S', gmtime(item.duration)))
             else:
-                self.fileSizeLabel.setText(f" {item.total_size}")
-            self.progressLabel.setText(" ")
+                self.fileSizeLabel.setText(f"{item.total_size}")
 
         elif self.item.downloadState == DownloadState.RUNNING:
-            self.statusLabel.setText(f"{item.download_remain_time}  {item.download_speed}")
-            if self.item.is_segment_based:
-                if self.item.post_process:
-                    self.statusLabel.setText("Post-processing")
-                self.fileSizeLabel.setText(f"  {self.setSize(item.download_size)}")
+            if self.item.is_segment_based and self.item.post_process:
+                self.statusLabel.setText(self.tr("Post-processing"))
             else:
-                self.fileSizeLabel.setText(f"  {self.setSize(item.download_size)} / {item.total_size}")
-            self.progressLabel.setText(f"  {item.download_progress}% ")
+                remain = self._shortRemain(item.download_remain_time)
+                self.statusLabel.setText(
+                    f"{item.download_progress}% · {item.download_speed} · "
+                    + self.tr("{0} left").format(remain)
+                )
+            if self.item.is_segment_based:
+                self.fileSizeLabel.setText(f"{self.setSize(item.download_size)}")
+            else:
+                self.fileSizeLabel.setText(f"{item.total_size}")
 
         elif self.item.downloadState == DownloadState.PAUSED:
-            self.statusLabel.setText(self.tr("Download paused"))
+            self.statusLabel.setText(
+                f"{self.tr('Download paused')} · {item.download_progress}%"
+            )
             if self.item.is_segment_based:
-                self.fileSizeLabel.setText(f"  {self.setSize(item.download_size)}")
+                self.fileSizeLabel.setText(f"{self.setSize(item.download_size)}")
             else:
-                self.fileSizeLabel.setText(f"  {self.setSize(item.download_size)} / {item.total_size}")
-            self.progressLabel.setText(f"  {item.download_progress}% ")
+                self.fileSizeLabel.setText(f"{item.total_size}")
 
         elif self.item.downloadState == DownloadState.FINISHED:
-            self.statusLabel.setText(f"{item.download_time}")
-            self.fileSizeLabel.setText(f"  {self.setSize(item.download_size)}")
-            self.progressLabel.setText(f"  {item.download_progress}% ")
+            self.statusLabel.setText(f"{STATE_ICON['finished']} " + self.tr("Completed"))
+            self.fileSizeLabel.setText(f"{self.setSize(item.download_size)}")
 
         elif self.item.downloadState == DownloadState.FAILED:
-            # 실패는 대기("Download waiting")와 구분되는 상태로 표시한다 (#134).
-            # 사유(stateMessage)는 키 기반 매핑을 거친 번역 문자열만 온다
-            text = self.tr("Download failed")
+            # 사유(stateMessage)는 키 기반 매핑을 거친 번역 문자열만 온다.
+            # 매핑 밖 예외는 사유가 없다(SPEC §5 — str(e) 폴백을 안 둔 것이
+            # 의도) — 그때는 "실패"만 표시하고 억지로 채우지 않는다(#245).
             reason = getattr(item, "stateMessage", "")
-            if reason:
-                text = f"{text} — {reason}"
-            self.statusLabel.setText(text)
+            text = reason if reason else self.tr("Download failed")
+            self.statusLabel.setText(f"{STATE_ICON['failed']} {text}")
             self.statusLabel.setToolTip(reason)
-            self.progressLabel.setText(" ")
 
         self.applyStateStyle()
 
+    def _slotShowsPills(self) -> bool:
+        """3행 슬롯에 해상도 pill이 보이는 상태인가 — 대기(선택의 시간)만이다."""
+        return self.item.downloadState == DownloadState.WAITING
+
     def applyStateStyle(self):
-        """상태 아이콘·진행바를 현재 다운로드 상태의 색으로 맞춘다 (#227, #240, #244 후속).
+        """상태에 따라 슬롯·조작·색·진행바를 맞춘다 (#227→#245 상태별 슬롯).
 
-        색은 theme.py 한 곳에서만 정의된다. 상태 아이콘·진행바 둘 다
-        위젯별 `setStyleSheet` 없이 동적 속성(`state`)만 바꾸고, 색은
-        전역 QSS의 `#stateIconLabel[state="..."]`/`QProgressBar[state="..."]`
-        규칙이 고른다 — 속성만 바꾸면 이미 계산된 스타일이 갱신되지
-        않으므로 theme.repolish()가 항상 함께 필요하다.
+        색은 theme.py 한 곳에서만 정의된다. 슬롯 텍스트·진행바는 위젯별
+        `setStyleSheet` 없이 동적 속성(`state`)만 바꾸고, 색은 전역 QSS의
+        `[state="..."]` 규칙이 고른다 — 속성만 바꾸면 이미 계산된 스타일이
+        갱신되지 않으므로 theme.repolish()가 항상 함께 필요하다.
 
-        카드 테두리(#contentFrame)는 항상 중립색이다. 상태는 1행 우측의
-        "아이콘+텍스트" 묶음(둘 다 상태색)과, **진행 중일 때만 보이는**
-        하단 진행바가 알린다(#244 재설계 확정 — 빈 막대는 정보가 없고
-        자리만 먹는다. 진행 중에만 나타나 카드가 차오르는 인상을 준다).
+        가시성 매트릭스(#245 확정 — 행 수·행 높이·카드 높이는 상태와
+        무관하게 불변, 목록이 들썩이면 안 된다):
+        - 3행 슬롯: 대기=해상도 pill / 그 외=statusLabel(상태색 텍스트)
+        - 1행 조작: 진행·일시정지=⏸ / 완료=📁 / 실패=↻ / 삭제=항상
+        - 파일 크기: 실패에서만 숨김(사유가 그 자리를 쓴다)
+        - 경로: 전역 설정 경로와 다를 때만 표시
+        - 진행바: 진행 중일 때만 카드 바닥 전체 폭
         """
         state = self._cardState()
+        raw = self.item.downloadState
         self.progressBar.setValue(self._progressValue())
-        self.progressBar.setVisible(state == "running")
+        self.progressBar.setVisible(raw == DownloadState.RUNNING)
         if self.progressBar.property("state") != state:
             self.progressBar.setProperty("state", state)
             theme.repolish(self.progressBar)
-        if self.stateIconLabel.property("state") != state:
-            self.stateIconLabel.setText(STATE_ICON[state])
-            self.stateIconLabel.setProperty("state", state)
-            theme.repolish(self.stateIconLabel)
         if self.statusLabel.property("state") != state:
             self.statusLabel.setProperty("state", state)
             theme.repolish(self.statusLabel)
+
+        pills = self._slotShowsPills()
+        self.statusLabel.setVisible(not pills)
+        for button in getattr(self, "buttons", []):
+            button.setVisible(pills)
+
+        self.pauseButton.setVisible(raw in (DownloadState.RUNNING, DownloadState.PAUSED))
+        self.openDirectoryButton.setVisible(raw == DownloadState.FINISHED)
+        self.retryButton.setVisible(raw == DownloadState.FAILED)
+        self.fileSizeLabel.setVisible(raw != DownloadState.FAILED)
+        self._updatePathVisibility()
+
+    def _updatePathVisibility(self) -> None:
+        """경로는 전역 설정 경로와 다를 때만 보인다 (#245).
+
+        같은 값을 카드마다 반복 표시하는 것이 정보 과다의 큰 몫이었다 —
+        다르다는 것 자체가 정보다. 편집 중(directoryEdit 표시)에는 라벨
+        가시성을 건드리지 않는다.
+        """
+        if self.isEditing and self.directoryEdit.isVisible():
+            return
+        path = self.item.download_path
+        differs = bool(path) and path != _global_download_path
+        self.directoryLabel.setVisible(differs)
 
     def _cardState(self) -> str:
         """현재 아이템 상태를 카드 상태 어휘(theme.CARD_STATES)로 옮긴다.
@@ -431,7 +549,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             title=self.titleEdit.text(),
             directory=self.directoryLabel.text(),
             #status=self.statusLabel.text(),
-            progress=self.progressLabel.text(),
+            progress=self.item.download_progress,
             #remaining_time=self.remainingTimeLabel.text(),
             #size_info=self.sizeInfoLabel.text(),
         )
@@ -481,7 +599,6 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             return
         self.isEditing = False
         self.directoryEdit.setVisible(False)
-        self.directoryLabel.setVisible(True)
         new_path = self.directoryEdit.text().strip()
         # 판정은 path_gates가 단일 지점으로 담당한다 (#169 — #146 ⓑ1)
         if check_card_edit_path(new_path):

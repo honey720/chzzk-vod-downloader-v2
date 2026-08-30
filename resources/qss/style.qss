@@ -109,22 +109,22 @@ QLabel#thumbnailLabel {
     color: @text;
 }
 
+/* 제목은 클릭하면 편집된다(파일명이 된다) — 호버에서 편집 가능하다는
+ * 힌트를 준다(#245). 커서(IBeam)는 ui/contentItemWidget.py가 건다. */
+#titleLabel:hover {
+    color: @accent;
+}
+
 #channelNameLabel {
     font-size: @fontSizeChannel;
     font-weight: @channelWeight;
     color: @text;
 }
 
-/* 컨텐츠 종류("· video") — 채널명 옆 muted 보조 정보 */
-#contentTypeLabel {
-    font-size: @fontSizeMeta;
-    color: @textMuted;
-}
-
-/* 상태 텍스트 — 상태 아이콘과 같은 상태색을 입는다. `state` 동적 속성은
- * content/widget.py::applyStateStyle이 건다(아이콘·진행바와 같은 패턴). */
-#statusLabel,
-#progressLabel {
+/* 3행 상태 슬롯 텍스트(#245) — 진행 %·속도·남은시간 / ✓ 완료 / ✕ 사유.
+ * `state` 동적 속성은 content/widget.py::applyStateStyle이 건다
+ * (진행바와 같은 패턴). */
+#statusLabel {
     font-size: @fontSizeMeta;
     color: @textMuted;
 }
@@ -159,30 +159,6 @@ QLabel#thumbnailLabel {
     border: 1px solid @border;
     border-radius: @cardRadius;
     padding: 0px;
-}
-
-/* 상태 아이콘(#244) — 카드 테두리색이 하던 상태 신호 역할을 옮겨 받았다.
- * 진행바(아래 "진행바" 절)와 같은 패턴: 파이썬은 동적 속성 `state`만
- * 바꾸고(`content/widget.py::applyStateStyle`) 색은 여기 `[state="..."]`
- * 규칙이 고른다. */
-#stateIconLabel {
-    font-size: @fontSizeMeta;
-}
-
-#stateIconLabel[state="waiting"] {
-    color: @stateWaiting;
-}
-
-#stateIconLabel[state="running"] {
-    color: @stateRunning;
-}
-
-#stateIconLabel[state="finished"] {
-    color: @stateFinished;
-}
-
-#stateIconLabel[state="failed"] {
-    color: @stateFailed;
 }
 
 /* 삭제(✕) — 평소엔 muted로 가라앉아 있다가 호버에서만 강조된다(#244
