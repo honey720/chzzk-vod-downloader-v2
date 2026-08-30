@@ -2,24 +2,56 @@ import os
 import config.config as config
 from PySide6.QtWidgets import QComboBox, QDialog, QMessageBox
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtCore import QEvent, QItemSelectionModel, QObject, QUrl
+from PySide6.QtCore import QEvent, QItemSelectionModel, QObject, QTimer, QUrl
 
 from ui.settingDialog import Ui_SettingDialog
 
 
 class _ComboBoxPopupHighlightResync(QObject):
-    """콤보 팝업이 열릴 때 강조를 콤보의 실제 현재값으로 되돌린다 (#241 후속).
+    """콤보 팝업의 강조를 콤보의 실제 현재값으로 되돌린다 (#241 후속).
 
-    Qt의 콤보 팝업은 마우스가 지나간 항목으로 `QItemSelectionModel`의 selection
-    자체를 옮겨버린다 — 진짜 선택값이 `:selected` 상태를 잃는다(실측 확인:
-    스타일시트를 아예 안 입힌 순정 `QComboBox`에서도 재현되는 Qt 자체 동작이다).
-    그리고 팝업을 닫았다 다시 열어도 이 selection을 되돌리지 않는다 — 그래서
-    "마지막으로 호버한 항목이 다음에 열어도 강조돼 있다"는 증상이 난다.
+    Fusion의 콤보 팝업은 `SH_ComboBox_ListMouseTracking` 힌트 때문에 마우스가
+    지나간 항목으로 `QItemSelectionModel`의 selection 자체를 옮겨버린다 —
+    진짜 선택값이 `:selected` 상태를 잃는다(실측 확인 — `#240` 감사 후속으로
+    native Windows 스타일과 대조해보니 이 힌트가 꺼져 있어 호버해도 selection이
+    전혀 안 움직인다. `#227`의 Fusion 고정이 만든 동작이지 Qt 보편 동작이
+    아니다). 그리고 팝업을 닫았다 다시 열어도 이 selection을 되돌리지 않는다
+    — 그래서 "마지막으로 호버한 항목이 다음에 열어도 강조돼 있다"는 증상이
+    난다.
 
     QSS로는 못 고친다: `::item:hover`와 `::item:selected`를 다른 색으로 나눠도,
     호버가 지나가는 순간 진짜 선택값 쪽 `:selected` 상태 자체가 사라지므로
-    구분해서 칠할 대상이 없다. 팝업이 뜨는 시점(`Show` 이벤트)마다 selection을
-    코드로 직접 되돌리는 것 외에 방법이 없다.
+    구분해서 칠할 대상이 없다.
+
+    **왜 Hide 시점에 되돌리는가(Show가 아니라) — 깜빡임 회귀 후속.** 팝업
+    컨테이너는 열고 닫을 때마다 새로 안 만들어지고 재사용된다(실측 확인,
+    `view()`/`view().window()`의 파이썬 id가 여러 open/close 사이클에서 동일).
+    그런데 `Show` 이벤트로 되돌리면 이미 늦다 — 실제 이벤트 순서를 로깅해
+    확인한 결과 `view`/`viewport` 자신의 `Show`가 컨테이너(`window()`)의
+    `Show`보다 먼저 온다. 그 사이에 재사용된 위젯이 이전 세션의(오염된)
+    백킹스토어 내용으로 먼저 화면에 다시 노출됐다가, 우리 복원이 끝난
+    뒤에야 새로 칠해진다 — 그리기 → 복원 → 다시 그리기가 되어 오너 실기에서
+    한 프레임 깜빡였다. `Hide` 시점에 미리 되돌려 두면 팝업이 다음에 뜰 때는
+    이미 깨끗한 상태라 이 이중 그리기 자체가 없다.
+
+    **`Hide` 시점에 `combo.currentIndex()`를 바로 읽으면 안 된다.** 항목을
+    클릭해 고르는 경우 `Hide` 이벤트가 먼저 오고 `combo.currentIndex()`는
+    그 다음에야 갱신된다(실측 확인 — `Hide` 시점엔 아직 옛 값, 반면
+    `view.currentIndex()`는 이미 방금 클릭한 값으로 정확하다). 그 순간
+    `view`를 `combo.currentIndex()`(옛 값)로 되돌리면 방금 고른 값을
+    도로 뭉갠다. `QTimer.singleShot(0, ...)`로 다음 이벤트 루프 턴까지
+    미루면 그때는 `combo.currentIndex()`가 정착돼 있어 클릭 선택이든
+    Escape·바깥 클릭으로 그냥 닫은 경우든 항상 맞는 값을 읽는다
+    (`content/view.py::_scheduleRenumber`와 같은 컨텍스트 객체 패턴 —
+    `self`가 콜백 전에 파괴되면 Qt가 알아서 취소한다).
+
+    **`Show` 시점 복원도 남겨 둔다(보험, 근거).** 팝업을 한 번도 연 적 없는
+    상태에서 `combo.setCurrentIndex()`(설정 로드 등)를 불러도 `view`는
+    Qt가 알아서 따라간다(실측 확인) — 그래서 오늘 아는 모든 경로에서는
+    `Hide` 쪽만으로 충분하다. 그래도 `Show` 쪽을 지우지 않는 이유는 (1)
+    같은 값을 다시 써도 아무 부작용이 없고(멱등) (2) 앞으로 어떤 코드가
+    팝업이 열려 있는 동안 `view()`를 직접 건드리는 경로가 생겨도 열릴 때
+    한 번 더 방어선이 있는 편이 안전하기 때문 — 비용 없는 이중 방어다.
     """
 
     def __init__(self, combo: QComboBox) -> None:
@@ -28,17 +60,22 @@ class _ComboBoxPopupHighlightResync(QObject):
 
     def eventFilter(self, watched, event) -> bool:
         if event.type() == QEvent.Type.Show:
-            combo = self._combo
-            view = combo.view()
-            index = combo.model().index(combo.currentIndex(), combo.modelColumn(), combo.rootModelIndex())
-            view.setCurrentIndex(index)
-            selection_model = view.selectionModel()
-            if selection_model is not None:
-                selection_model.select(index, QItemSelectionModel.SelectionFlag.ClearAndSelect)
+            self._resync()
+        elif event.type() == QEvent.Type.Hide:
+            QTimer.singleShot(0, self, self._resync)
         return False
 
+    def _resync(self) -> None:
+        combo = self._combo
+        view = combo.view()
+        index = combo.model().index(combo.currentIndex(), combo.modelColumn(), combo.rootModelIndex())
+        view.setCurrentIndex(index)
+        selection_model = view.selectionModel()
+        if selection_model is not None:
+            selection_model.select(index, QItemSelectionModel.SelectionFlag.ClearAndSelect)
 
-def _resync_popup_highlight_on_show(combo: QComboBox) -> None:
+
+def _wire_popup_highlight_resync(combo: QComboBox) -> None:
     combo.view().window().installEventFilter(_ComboBoxPopupHighlightResync(combo))
 
 
@@ -71,7 +108,7 @@ class SettingDialog(QDialog, Ui_SettingDialog):
         index = self.afterDownload.findData(currentAfterDownload)
         if index != -1:
             self.afterDownload.setCurrentIndex(index)
-        _resync_popup_highlight_on_show(self.afterDownload)
+        _wire_popup_highlight_resync(self.afterDownload)
 
         self.language.addItem("English", "en_US") # 언어 선택을 위한 QComboBox 생성 TODO: 언어 리스트는 project.pro에서 관리
         self.language.addItem("한국어", "ko_KR")
@@ -80,7 +117,7 @@ class SettingDialog(QDialog, Ui_SettingDialog):
         index = self.language.findData(currentLang)
         if index != -1:
             self.language.setCurrentIndex(index)
-        _resync_popup_highlight_on_show(self.language)
+        _wire_popup_highlight_resync(self.language)
 
         self.logsFolder.clicked.connect(self.openLogsFolder) # 로그 폴더 열기 버튼 클릭 시 openLogsFolder 메소드 호출
 
