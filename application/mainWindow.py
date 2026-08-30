@@ -13,6 +13,7 @@ from content.data import ContentItem
 from content.manager import ContentManager
 from core.models.download_state import DownloadState
 from ui.mainWindow import Ui_VodDownloader
+import theme
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,36 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         self.completed_downloads = 0
         self.downloadPathInput.setText(_default_download_path())  # 초기 경로 (#159)
         self.downloadCountLabel.setText(self.downloadCountLabel.text().format(self.completed_downloads, self.total_downloads))  # 초기값 설정
+        self._applyLayoutMetrics()
+
+    def _applyLayoutMetrics(self) -> None:
+        """상단·카드·하단의 좌우 정렬선을 theme.METRICS 토큰 하나로 관통시킨다 (#244).
+
+        `.ui`(uic 재생성 대상)에는 theme를 연결할 수 없어 여백을 여기서
+        런타임에 건다 — 오너가 theme.py의 outerMargin/framePadding 숫자만
+        바꾸고 `uv run python main.py`로 바로 확인할 수 있게 하기 위해서다.
+        상단바·카드 목록·하단바가 같은 outerMargin에서 시작하고, 바 안쪽
+        여백(framePadding)이 카드 안쪽 여백(cardPadding)과 같으면 입력창·
+        썸네일·하단 요약의 왼쪽 끝이 한 선에 놓인다.
+        """
+        outer = theme.METRICS["outerMargin"]
+        frame_pad = theme.METRICS["framePadding"]
+        self.centralWidgetLayout.setContentsMargins(outer, outer, outer, outer)
+        self.centralWidgetLayout.setSpacing(8)
+        self.headerFrameLayout.setContentsMargins(frame_pad, frame_pad, frame_pad, frame_pad)
+        self.infoLayout.setContentsMargins(frame_pad, frame_pad, frame_pad, frame_pad)
+
+    def _setLinkStatus(self, text: str, kind: str = "info") -> None:
+        """조회 상태 메시지를 갱신한다 — 색은 전역 QSS가 `status` 속성으로 입힌다 (#244).
+
+        kind: "info"(중립 회색) / "ok"(성공 초록) / "error"(실패 빨강).
+        속성만 바꾸면 이미 계산된 스타일이 안 갱신되므로 repolish가 함께
+        필요하다(카드 상태 표시와 같은 패턴).
+        """
+        self.linkStatusLabel.setText(text)
+        if self.linkStatusLabel.property("status") != kind:
+            self.linkStatusLabel.setProperty("status", kind)
+            theme.repolish(self.linkStatusLabel)
 
     def setupThreadSignals(self):
         """
@@ -129,7 +160,7 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
             return
         
         cookies = config.load_cookies()  # 쿠키 조립의 단일 지점 (#170)
-        self.linkStatusLabel.setText(self.tr('Fetching resolutions...'))
+        self._setLinkStatus(self.tr('Fetching resolutions...'), "info")
 
         # 결과 처리 — 상대 경로 입력은 cwd 기준으로 조용히 저장되던 문제를
         # 판정 전에 정규화해 막는다 (#146 ⓑ-4, #219). 화면 표시도 실제
@@ -153,11 +184,14 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
 
         self.urlInput.clear()
 
-        self.linkStatusLabel.setText(self.tr('Resolutions fetched successfully.'))
+        self._setLinkStatus(self.tr('Resolutions fetched successfully.'), "ok")
     
     def showErrorDialog(self, errorMessage):
         errorTitle = self.tr("Error")
         errorBody = self.tr("Error occurred during content request:") + "\n" + errorMessage
+        # 팝업을 닫은 뒤에도 실패했다는 사실이 남게 상태 줄도 빨갛게 바꾼다
+        # (#244 — 성공 메시지만 남아 "성공했는데 카드가 없다"로 읽히던 문제).
+        self._setLinkStatus(self.tr('Failed to fetch resolutions.'), "error")
         QMessageBox.critical(self, errorTitle, errorBody)
 
     def onDownloadPause(self):

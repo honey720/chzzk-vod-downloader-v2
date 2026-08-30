@@ -198,7 +198,11 @@ class TestCardNumberingFollowsPosition:
     """
 
     def _labels(self, v, model):
-        return [v.widgetFor(model.itemAt(row)).indexLabel.text() for row in range(model.rowCount())]
+        # #244 재설계로 "#0" 번호 라벨은 화면에서 사라졌다(오너 확정) —
+        # 순번 자체는 setIndex가 widget.index로 계속 유지하며, 재번호매김
+        # 불변식(#235)은 이 값으로 검증한다. 검증 시나리오(중간·첫·끝·일괄
+        # 삭제 후 연속 번호)는 그대로다.
+        return [v.widgetFor(model.itemAt(row)).index for row in range(model.rowCount())]
 
     def test_middle_delete_renumbers_trailing_cards(self, view, qapp, qtbot):
         v, model = view
@@ -206,11 +210,11 @@ class TestCardNumberingFollowsPosition:
         for it in (a, b, c):
             model.addItem(it)
         qapp.processEvents()
-        assert self._labels(v, model) == ["#0", "#1", "#2"]
+        assert self._labels(v, model) == [0, 1, 2]
 
         model.removeRows(model.getRow(b), 1)
 
-        qtbot.waitUntil(lambda: self._labels(v, model) == ["#0", "#1"], timeout=2000)
+        qtbot.waitUntil(lambda: self._labels(v, model) == [0, 1], timeout=2000)
 
     def test_new_card_after_middle_delete_does_not_collide(self, view, qapp, qtbot):
         """⚠️ 회귀의 핵심 — 재부여가 없으면 새 카드와 기존 카드의 번호가 겹친다."""
@@ -224,7 +228,7 @@ class TestCardNumberingFollowsPosition:
         d = _make_item("D")
         model.addItem(d)
 
-        qtbot.waitUntil(lambda: self._labels(v, model) == ["#0", "#1", "#2"], timeout=2000)
+        qtbot.waitUntil(lambda: self._labels(v, model) == [0, 1, 2], timeout=2000)
         labels = self._labels(v, model)
         assert len(labels) == len(set(labels)), f"번호가 겹쳤다: {labels}"
 
@@ -237,7 +241,7 @@ class TestCardNumberingFollowsPosition:
 
         model.removeRows(model.getRow(a), 1)
 
-        qtbot.waitUntil(lambda: self._labels(v, model) == ["#0", "#1"], timeout=2000)
+        qtbot.waitUntil(lambda: self._labels(v, model) == [0, 1], timeout=2000)
 
     def test_last_delete_leaves_leading_numbers_untouched(self, view, qapp, qtbot):
         v, model = view
@@ -248,7 +252,7 @@ class TestCardNumberingFollowsPosition:
 
         model.removeRows(model.getRow(c), 1)
 
-        qtbot.waitUntil(lambda: self._labels(v, model) == ["#0", "#1"], timeout=2000)
+        qtbot.waitUntil(lambda: self._labels(v, model) == [0, 1], timeout=2000)
 
     def test_bulk_delete_ends_with_contiguous_numbering(self, view, qapp, qtbot):
         """일괄 삭제(비연속 위치) 뒤에도 번호가 연속이어야 한다."""
@@ -263,7 +267,7 @@ class TestCardNumberingFollowsPosition:
         for it in (items[4], items[2], items[0]):
             model.removeRows(model.getRow(it), 1)
 
-        qtbot.waitUntil(lambda: self._labels(v, model) == ["#0", "#1"], timeout=2000)
+        qtbot.waitUntil(lambda: self._labels(v, model) == [0, 1], timeout=2000)
 
     def test_bulk_delete_renumbers_only_once(self, view, qapp, qtbot, monkeypatch):
         """일괄 삭제 한 번에 재번호매김이 여러 번(O(n²)) 돌면 안 된다 — 끝에 한 번만."""

@@ -49,7 +49,10 @@ class ContentListView(QScrollArea):
 
         self._container = QWidget()
         self._layout = QVBoxLayout(self._container)
-        self._layout.setContentsMargins(10, 10, 10, 10)
+        # 좌우 0(#244) — 카드 프레임이 상단·하단 바와 같은 좌측 정렬선
+        # (theme.METRICS["outerMargin"])에 놓이게 한다. 여기 좌우 여백이
+        # 있으면 카드만 안쪽으로 밀려 세로 정렬선이 끊긴다(실측 10px 어긋남).
+        self._layout.setContentsMargins(0, 4, 0, 8)
         # 카드끼리 붙어 있으면 목록이 답답해 보인다 (#227). 카드 자체가 가진
         # 위쪽 여백(contentItemLayout 10px)에 이만큼을 더해 간격을 낸다 —
         # 카드 폭에는 영향을 주지 않는 값이라 ElidingLabel 폭 계산과 무관하다

@@ -1,8 +1,8 @@
 import os
 import threading
 from PySide6.QtWidgets import QWidget, QPushButton, QMessageBox
-from PySide6.QtGui import QPixmap, QDesktopServices
-from PySide6.QtCore import Qt, QSize, Signal, QUrl, QDir, QProcess
+from PySide6.QtGui import QPainter, QPainterPath, QPixmap, QDesktopServices
+from PySide6.QtCore import Qt, Signal, QUrl, QDir, QProcess
 from content.data import ContentItem
 from content.network import REQUEST_TIMEOUT, get_thread_session
 from core.models.download_state import DownloadState
@@ -19,11 +19,22 @@ logger = logging.getLogger(__name__)
 #: 상태별 아이콘 글리프(#244) — 카드 테두리색이 하던 상태 신호 역할을 이
 #: 아이콘으로 옮긴다. 색은 파이썬이 아니라 전역 QSS
 #: `#stateIconLabel[state="..."]`가 theme.py 토큰으로 정한다.
+#:
+#: waiting은 ⏸(U+23F8, 일시정지)가 아니라 ○(빈 원)를 쓴다 — 오너 실기
+#: 지적: 대기 카드에 일시정지 기호가 붙으면 유저가 "내가 멈춘 건가"로
+#: 읽는다. 빈 원 = 아직 시작 안 됨(줄 서 있음)이 의미에 맞는다.
+#:
+#: 전부 폰트 문자(유니코드)다 — 이미지 리소스를 안 늘리는 기존 관례.
+#: ○(U+25CB)·▶(U+25B6)는 Geometric Shapes 블록으로 기본 시스템 폰트
+#: (Windows Malgun Gothic/Segoe UI Symbol, macOS 시스템 폰트, Linux
+#: DejaVu Sans)가 전부 커버하고, ✓(U+2713)·✕(U+2715)는 Dingbats 블록으로
+#: Segoe UI Symbol·Apple Symbols·DejaVu Sans가 커버한다(Windows 실기는
+#: QFontMetrics.inFontUcs4로 실측 확인 — PR #245 보고 참조).
 STATE_ICON = {
-    "waiting": "⏸",   # ⏸
-    "running": "▶",   # ▶
-    "finished": "✓",  # ✓
-    "failed": "✕",    # ✕
+    "waiting": "○",   # 빈 원 — 줄 서 있음(아직 시작 안 됨)
+    "running": "▶",   # 재생 — 진행 중
+    "finished": "✓",  # 체크 — 완료
+    "failed": "✕",    # 엑스 — 실패
 }
 
 class ContentItemWidget(QWidget, Ui_ContentItemWidget):
@@ -44,6 +55,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.index = index  # 인덱스 저장
         self.isEditing = False
         self.setupUi(self)
+        self._sizeThumbnail()  # 컨텐츠 열 높이가 정해진 뒤, 이미지 로드 전에
         self._setupThreadRelays()  # setupDynamicUi가 스레드를 띄우기 전에 연결돼야 한다 (#168)
         self.setupDynamicUi()
         self.setupSignals()  # 시그널 연결
@@ -52,25 +64,58 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self._repSizeFetched.connect(self._onRepSizeFetched)
         self._imageFetched.connect(self._onImageFetched)
 
-    def setIndex(self, index: int) -> None:
-        """카드 번호 라벨만 갱신한다 (#235).
+    def _sizeThumbnail(self) -> None:
+        """썸네일을 우측 컨텐츠 열의 실제 높이에 맞춰 16:9로 고정한다.
 
-        `setData()`는 채널명·제목·경로·상태 문구까지 전부 다시 채운다 —
-        삭제 후 뒤쪽 카드들의 번호만 당길 때 그 카드들 전부에 `setData()`를
-        돌리면 매번 무관한 필드까지 다시 쓰고 `applyStateStyle()`까지
-        불필요하게 재실행된다(카드 수만큼 쌓이면 그 자체가 비용이다).
-        번호만 바뀐 카드는 이 메서드로 라벨 하나만 건드린다.
+        "원하는 카드 높이에서 16:9로 폭이 나온다"(#244 확정 설계) — 카드
+        높이는 우측 4행(글자 크기·행 간격 토큰)이 정하고, 썸네일은 그
+        높이를 가득 채우도록 따라간다. theme.py 토큰을 바꾸면 썸네일도
+        자동으로 맞춰진다.
+
+        `ensurePolished()`가 먼저다 — 전역 QSS의 위계 폰트(@fontSizeTitle
+        등)는 polish 시점에 위젯 폰트로 병합되는데, 그 전에 sizeHint를
+        읽으면 기본 폰트 기준의 틀린 높이가 나온다(실측 확인).
+        """
+        for label in (self.channelNameLabel, self.titleLabel, self.statusLabel,
+                      self.fileSizeLabel, self.directoryLabel, self.contentTypeLabel):
+            label.ensurePolished()
+        height = self.contentLayout.sizeHint().height()
+        self.thumbnailLabel.setFixedSize(round(height * 16 / 9), height)
+
+    def _clampChannelMinWidth(self) -> None:
+        """채널명 최소폭을 "자연 폭과 64px 중 작은 쪽"으로 맞춘다.
+
+        고정 최소폭 64는 좁은 창에서 채널명이 "..." 하나로 붕괴하는 것을
+        막는 장치(#239 흡수)인데, "LCK"처럼 자연 폭이 64보다 좁은 이름에는
+        쓰지도 않는 폭을 예약해 이름과 종류("· video") 사이가 벌어진다
+        (1600px 실기 렌더에서 확인). 이름이 정해진 뒤 최소폭을 자연 폭
+        이하로 눌러 짧은 이름은 딱 붙고, 긴 이름은 64px 바닥을 유지한다.
+        """
+        natural = self.channelNameLabel.sizeHint().width()
+        self.channelNameLabel.setMinimumWidth(min(64, natural))
+
+    def setIndex(self, index: int) -> None:
+        """카드의 정렬 순번을 갱신한다 (#235 → #244 재설계로 표시는 제거).
+
+        "#0" 번호 라벨은 #244 카드 재설계에서 없어졌다(오너 확정 — 유저에게
+        의미 있는 정보가 아니었다). 순번 자체는 삭제 후 재번호매김(#235,
+        `content/view.py::_renumberAll`)이 이 메서드로 계속 유지한다 —
+        표시가 없어도 위젯·모델 행의 대응이 어긋나지 않게 하는 값이다.
         """
         self.index = index
-        self.indexLabel.setText(f"#{index}")
 
     def setupDynamicUi(self):
-        self.loadImageFromUrl(self.channelImageLabel, self.item.channel_image_url, 26, "channel")
-        self.loadImageFromUrl(self.thumbnailLabel, self.item.thumbnail_url, 64, "thumbnail")
-        self.contentTypeLabel.setText(self.item.content_type) # 콘텐츠 타입 업데이트
+        icon = theme.METRICS["iconSize"]
+        self.loadImageFromUrl(self.channelImageLabel, self.item.channel_image_url, icon, "channel")
+        self.loadImageFromUrl(self.thumbnailLabel, self.item.thumbnail_url, self.thumbnailLabel.height(), "thumbnail")
+        # 종류는 채널명 옆 가운뎃점 구분의 보조 정보다("LCK · video") — #244
+        self.contentTypeLabel.setText(f"· {self.item.content_type}")
         self.channelNameLabel.setText(self.item.channel_name) # 채널 이름 업데이트
+        self._clampChannelMinWidth()
         self.progressLabel.setText("") # 진행률 업데이트
-        self.deleteButton.setText("❌")
+        # ✕ — 색은 전역 QSS(#deleteButton)가 muted/호버 강조로 입힌다.
+        # 이모지 ❌는 폰트가 항상 빨갛게 그려 카드에서 삭제만 튀었다(#244).
+        self.deleteButton.setText("✕")
         self.setIndex(self.index)  # 인덱스 업데이트
         self.titleLabel.setText(self.item.title) # 제목 업데이트
         self.titleEdit.setText(self.item.title) # 제목 업데이트
@@ -107,6 +152,10 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         for index, (resolution, base_url, _) in enumerate(self.item.unique_reps):
             self.addRepresentationButton(resolution, base_url, index)
 
+        # pill(높이 pillHeight)이 3행에 꽂히면 컨텐츠 열이 몇 px 자랄 수
+        # 있다 — 썸네일이 그 높이를 계속 가득 채우도록 다시 맞춘다(#244).
+        self._sizeThumbnail()
+
     def addRepresentationButton(self, resolution, base_url, index):
         """
         해상도 버튼을 추가하고, 비동기로 파일 사이즈를 헤더에서 가져와 버튼 텍스트를 업데이트한다.
@@ -117,11 +166,15 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         # QSS는 `.className` 선택자를 지원하지 않아 조용히 무시하므로, 동적
         # 속성을 심어 속성 선택자로 잡는 게 유일한 방법이다
         button.setProperty("role", "resolution")
-        # 제목과 한 줄을 공유하지 않는다(#244) — 제목·해상도는 서로 무관한
-        # 정보라 titleLayout에 얹으면 "무관한 정보가 한 줄에 섞인다"는
-        # 문제였다. 전용 줄(resolutionLayout)에 넣는다.
-        self.resolutionLayout.addWidget(button)
-        button.setFixedSize(60, 30)
+        # 3행 왼쪽부터 순서대로 꽂는다 — 이미 붙은 버튼 수가 곧 다음 자리다
+        # (그 뒤로 [가운데 스트레치, 파일 크기 라벨]이 이어진다). 스트레치
+        # 뒤에 addWidget하면 버튼이 오른쪽으로 밀리고, 스트레치가 없으면
+        # 넓은 창에서 버튼 사이가 균등 분배로 벌어진다(오너 실기 확인,
+        # 1600px에서 간격 335px 실측 — tests/unit/test_card_layout.py 게이트).
+        self.resolutionLayout.insertWidget(len(self.buttons), button)
+        # 소형 pill — 높이만 토큰으로 고정하고 폭은 텍스트에 맞긴다(가로
+        # 여백은 전역 QSS [role="resolution"]의 padding이 준다).
+        button.setFixedHeight(theme.METRICS["pillHeight"])
         button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.buttons.append(button)
 
@@ -217,6 +270,14 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
                 aspect_ratio = original_height / original_width
                 new_width = maxHeight
                 new_height = int(maxHeight * aspect_ratio)
+            elif type == "thumbnail":
+                # 썸네일 높이는 요청 시점 값(maxHeight)이 아니라 도착 시점의
+                # 라벨 실제 높이를 쓴다 — 라벨 크기는 pill 추가 등으로 요청
+                # 이후에도 재계산된다(_sizeThumbnail). 비동기 도착이 라벨보다
+                # 늦으므로 이 시점 값이 항상 최신이다.
+                aspect_ratio = original_width / original_height
+                new_height = label.height()
+                new_width = int(new_height * aspect_ratio)
             else:
                 # 세로 높이를 고정하고 가로 크기를 비율에 맞게 계산
                 aspect_ratio = original_width / original_height
@@ -226,15 +287,37 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             scaled_image = image.scaled(
                 new_width, new_height, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
             )
+            if type == "channel":
+                # 채널 이미지는 원형으로 자른다(#244 재설계 — 1행의 ⬤ 아바타).
+                # QSS border-radius는 배경만 둥글게 하고 pixmap은 못 자르므로
+                # 로드 시점에 한 번 마스킹한다 — 카드에 상주하는 파이썬
+                # 객체가 아니라 일회성 변환이라 O(1) 삽입과 무관하다.
+                scaled_image = self._circled(scaled_image)
             label.setPixmap(scaled_image)
         except Exception as e:
             logger.error(f"Error loading image from {url}: {e}")
+
+    @staticmethod
+    def _circled(pixmap: QPixmap) -> QPixmap:
+        """정사각 기준 원형으로 마스킹한 사본을 돌려준다 — 채널 아바타용."""
+        side = min(pixmap.width(), pixmap.height())
+        result = QPixmap(side, side)
+        result.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(result)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        path = QPainterPath()
+        path.addEllipse(0, 0, side, side)
+        painter.setClipPath(path)
+        painter.drawPixmap(0, 0, pixmap)
+        painter.end()
+        return result
 
     def setData(self, item: ContentItem, index: int):
         """✅ 모델 데이터를 위젯에 반영"""
         self.item = item
         self.setIndex(index)
         self.channelNameLabel.setText(item.channel_name)
+        self._clampChannelMinWidth()
         self.titleLabel.setText(item.title)
         self.directoryLabel.setText(item.download_path)
 
@@ -296,12 +379,14 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         규칙이 고른다 — 속성만 바꾸면 이미 계산된 스타일이 갱신되지
         않으므로 theme.repolish()가 항상 함께 필요하다.
 
-        카드 테두리(#contentFrame)는 더는 상태색을 안 쓴다 — "테두리색·
-        진행바색·상태 텍스트"로 상태를 세 번 반복해 알리던 것을 "상태
-        아이콘·진행바색" 두 가지로 줄이는 오너 확정 결정(#244)이다.
+        카드 테두리(#contentFrame)는 항상 중립색이다. 상태는 1행 우측의
+        "아이콘+텍스트" 묶음(둘 다 상태색)과, **진행 중일 때만 보이는**
+        하단 진행바가 알린다(#244 재설계 확정 — 빈 막대는 정보가 없고
+        자리만 먹는다. 진행 중에만 나타나 카드가 차오르는 인상을 준다).
         """
         state = self._cardState()
         self.progressBar.setValue(self._progressValue())
+        self.progressBar.setVisible(state == "running")
         if self.progressBar.property("state") != state:
             self.progressBar.setProperty("state", state)
             theme.repolish(self.progressBar)
@@ -309,6 +394,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             self.stateIconLabel.setText(STATE_ICON[state])
             self.stateIconLabel.setProperty("state", state)
             theme.repolish(self.stateIconLabel)
+        if self.statusLabel.property("state") != state:
+            self.statusLabel.setProperty("state", state)
+            theme.repolish(self.statusLabel)
 
     def _cardState(self) -> str:
         """현재 아이템 상태를 카드 상태 어휘(theme.CARD_STATES)로 옮긴다.
@@ -439,10 +527,6 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             return
             
 
-    def sizeHint(self):
-        """✅ 위젯 크기 설정"""
-        return QSize(450, 130)  # ✅ 너비 450px, 높이 130px(#244 카드 압축 실측치)
-    
     def setSize(self, size):
         try:
             size = float(size)

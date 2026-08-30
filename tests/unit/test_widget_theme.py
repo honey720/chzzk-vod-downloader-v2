@@ -221,9 +221,22 @@ def test_resolution_buttons_get_their_own_row_not_the_title_row(qapp):
     qapp.processEvents()
 
     assert widget.titleLayout.count() == 2, "titleLayout에는 제목 라벨·편집창만 있어야 한다"
-    assert widget.resolutionLayout.count() == len(widget.buttons)
-    for button in widget.buttons:
-        assert widget.resolutionLayout.indexOf(button) != -1
+    # 3행 구조(#244 재설계): [버튼들..., 가운데 스트레치, 파일 크기 라벨].
+    # 스트레치가 없으면 넓은 창에서 버튼 사이가 균등 분배로 벌어지고
+    # (오너 실기 확인), 파일 크기는 우측 끝(삭제 버튼과 같은 오른쪽
+    # 기준선)에 붙어야 한다 — 간격·기준선은 tests/unit/test_card_layout.py가
+    # 폭 3종으로 게이트한다.
+    assert widget.resolutionLayout.count() == len(widget.buttons) + 2
+    for position, button in enumerate(widget.buttons):
+        assert widget.resolutionLayout.indexOf(button) == position, (
+            "해상도 버튼이 왼쪽부터 순서대로 놓이지 않았다"
+        )
+    stretch_item = widget.resolutionLayout.itemAt(len(widget.buttons))
+    assert stretch_item.widget() is None and stretch_item.spacerItem() is not None, (
+        "버튼과 파일 크기 사이의 가운데 스트레치가 없다 — 넓은 창에서 버튼이 흩어진다"
+    )
+    last = widget.resolutionLayout.itemAt(widget.resolutionLayout.count() - 1)
+    assert last.widget() is widget.fileSizeLabel, "파일 크기가 3행 우측 끝이 아니다"
 
 
 def test_icon_buttons_are_marked(qapp):
@@ -233,7 +246,7 @@ def test_icon_buttons_are_marked(qapp):
 
 
 class TestCardInnerWidthIsUnchanged:
-    """카드 안쪽 가로 가용 폭은 "카드 폭 − 20px"로 고정이다.
+    """카드 안쪽 가로 가용 폭은 "카드 폭 − (테두리 2 + cardPadding×2)"로 고정이다.
 
     **이 파일에서 가장 중요한 테스트다.** 스타일을 입히면서 테두리나 가로
     여백을 늘리면 제목·경로·상태 라벨이 받는 폭이 그만큼 줄고, 라벨이
@@ -241,48 +254,41 @@ class TestCardInnerWidthIsUnchanged:
     `test_content_view.py::TestNoHorizontalOverflow`)이 3-OS 폰트 메트릭
     차이에 걸려 깨진다. 그 테스트들은 잘림 위치를 직접 보기 때문에
     **로컬 한 OS에서는 통과하고 CI 3-OS에서 실패**할 수 있다 — PR #234의
-    첫 CI가 정확히 그랬다(가로 padding 10px + 테두리 1px = 22px 손실:
-    카드 460px에서 채널명 92→70px, 뷰 300px에서 제목 118→96px·경로
-    88→66px. Windows 로컬 528 passed, CI는 3-OS 전부 실패).
+    첫 CI가 정확히 그랬다.
 
-    폰트에 의존하는 잘림 위치가 아니라 **순수 기하값**을 재기 때문에 이
-    테스트는 어느 OS에서든 같은 답을 낸다 — 그래서 위 회귀들보다 먼저,
-    로컬에서 원인을 짚어준다. 카드에 여백이 더 필요하면 세로로 주고,
-    가로를 꼭 늘려야 한다면 이 상수와 위 회귀 테스트들을 함께 다시 볼 것.
+    **#244 재설계로 기준이 바뀌었다(재베이스라인)**: 이전 불변식은
+    "위젯 폭 − 20px"(카드 외부 여백 9×2 + 테두리 1×2)이었다. 재설계 후
+    카드 외부 좌우 여백은 0(정렬선을 상·하단 바와 공유), 안쪽 여백은
+    QSS padding이 아니라 bodyLayout 마진(theme.METRICS["cardPadding"])이
+    준다 — 하단 진행바가 카드 가장자리에 딱 붙어야 해서다. 그래서 이제
+    "프레임 contentsRect == 위젯 폭 − 2(테두리)"와 "본문 가용 폭 ==
+    위젯 폭 − 2 − cardPadding×2"를 함께 고정한다. 상수가 아니라 토큰을
+    직접 읽으므로 오너가 cardPadding을 바꿔도 게이트는 옳게 따라간다.
 
     **#237 추가 — "순수 기하값"이되 요청 폭이 아니라 실제 폭을 써야
-    한다.** `resize(300, ...)`을 줘도 `ElidingLabel.minimumSizeHint()`가
-    폰트 메트릭 기반이라 위젯이 요청보다 넓게 클램프될 수 있다(로컬
-    Windows 오프스크린 대체 폰트에서 300px 요청 → 실제 308px). 값 자체는
-    폰트가 정하지만 "위젯 폭 − 20px = 안쪽 폭"이라는 **관계**는 폰트와
-    무관해서, `widget.width()`(실제 폭) 기준으로 재면 어느 폰트에서든
-    깨지지 않는다.
+    한다.** `resize(...)`가 요청한 폭 그대로 받는다는 보장은 없다 —
+    최소폭 클램프가 있어도 "관계"는 폰트와 무관하게 성립한다.
     """
 
-    #: `contentItemLayout`의 좌우 여백(9) + 카드 테두리(1), 양쪽 합계.
-    EXPECTED_HORIZONTAL_INSET = 20
+    @staticmethod
+    def _expected_inset():
+        return 2 + 2 * theme.METRICS["cardPadding"]  # 테두리 1×2 + 안쪽 여백×2
 
-    @pytest.mark.parametrize("width", [300, 460, 600])
+    @pytest.mark.parametrize("width", [460, 600, 900])
     def test_content_width_matches_the_baseline_budget(self, qapp, width):
         widget = _widget(qapp, DownloadState.WAITING)
         widget.resize(width, 130)
         widget.show()
         qapp.processEvents()
 
-        # `resize(width, ...)`가 요청한 폭 그대로 받는다는 보장은 없다 —
-        # `ElidingLabel.minimumSizeHint()`가 폰트 메트릭으로 최소 폭을
-        # 요구해서, 요청 폭이 그 합보다 좁으면 Qt가 위젯을 더 넓게
-        # 클램프한다(로컬 Windows 오프스크린 대체 폰트에서 300px 요청 시
-        # 실측 308px — #237에서 확인). 그래서 요청값(`width`)이 아니라
-        # 실제로 받은 폭(`widget.width()`)을 기준으로 잰다 — 클램프가
-        # 얼마가 됐든 "위젯 폭 − 20px = 카드 안쪽 폭"이라는 진짜 불변식은
-        # 폰트와 무관하게 그대로 성립한다(테두리 1px + 레이아웃 여백 9px,
-        # 양쪽 합 20px은 명시 상수라 플랫폼·폰트에 안 흔들린다).
         actual_width = widget.width()
-        inner = widget.contentFrame.contentsRect().width()
-        assert inner == actual_width - self.EXPECTED_HORIZONTAL_INSET, (
-            f"카드 안쪽 가용 폭이 {actual_width - inner}px 줄었다(기대 "
-            f"{self.EXPECTED_HORIZONTAL_INSET}px, 실제 위젯 폭 {actual_width}px) — "
+        frame_inner = widget.contentFrame.contentsRect().width()
+        assert frame_inner == actual_width - 2, (
+            "카드 프레임에 테두리 외 가로 여백이 생겼다 — QSS padding이 다시 붙었는지 확인"
+        )
+        body = widget.bodyLayout.contentsRect().width()
+        assert body == actual_width - self._expected_inset(), (
+            f"본문 가용 폭이 기대에서 벗어났다(위젯 {actual_width}px, 본문 {body}px) — "
             "라벨 잘림 위치가 밀려 3-OS 폰트 메트릭 회귀 테스트가 깨진다"
         )
 
@@ -290,18 +296,11 @@ class TestCardInnerWidthIsUnchanged:
         "download_state",
         [DownloadState.WAITING, DownloadState.RUNNING, DownloadState.FINISHED, DownloadState.FAILED],
     )
-    def test_no_horizontal_padding_in_any_state(self, qapp, download_state):
-        """상태가 달라져도 가로 여백은 0이어야 한다 — 폭이 상태에 따라 흔들리면 안 된다.
-
-        (#240 2단계) padding은 이제 상태와 무관한 공통 규칙 하나뿐이라
-        `theme.card_style()`처럼 상태별 문자열을 만드는 함수 자체가 없다 —
-        텍스트를 읽는 대신 상태별로 실제 위젯을 만들어 지오메트리가
-        흔들리지 않는지 직접 잰다(테두리 색만 다르고 폭에 영향을 주면 안
-        되는 게 진짜 불변식이다).
-        """
+    def test_no_extra_horizontal_inset_in_any_state(self, qapp, download_state):
+        """상태가 달라져도 가로 가용 폭은 같아야 한다 — 폭이 상태에 따라 흔들리면 안 된다."""
         widget = _widget(qapp, download_state)
-        widget.resize(460, 130)
+        widget.resize(600, 130)
         widget.show()
         qapp.processEvents()
-        inner = widget.contentFrame.contentsRect().width()
-        assert inner == widget.width() - self.EXPECTED_HORIZONTAL_INSET
+        body = widget.bodyLayout.contentsRect().width()
+        assert body == widget.width() - self._expected_inset()
