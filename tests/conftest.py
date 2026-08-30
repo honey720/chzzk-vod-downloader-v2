@@ -4,12 +4,24 @@
 어느 위치에서 pytest를 실행하든 import할 수 있게 한다.
 """
 
+import faulthandler
 import os
 import re
 import sys
 from pathlib import Path
 
 import pytest
+
+# 전역 QSS 픽스처(app.setStyle(theme.build_style()) 등)를 테스트 하나를
+# 넘어 살려두면 macOS CI에서만 프로세스 종료 시점에 SIGSEGV(exit code
+# 139)가 난다(#242) — Python 예외가 아니라 네이티브 크래시라 기본적으로는
+# 스택이 안 남는다. faulthandler를 세션 시작부터 켜 두니 실제로 크래시
+# 스택을 한 번 잡았다 — pytest 자체의 세션 종료 강제 GC
+# (_pytest/unraisableexception.py::gc_collect_harder) 도중에 죽는다.
+# 상시 켜 둬서 다음에 재발해도 CI 로그만으로 실마리를 잡을 수 있게 한다.
+# 상세 경계·가설은 tests/unit/test_widget_theme.py의
+# `_apply_dark_card_qss` 픽스처 docstring 참고.
+faulthandler.enable()
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:

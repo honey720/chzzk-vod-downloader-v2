@@ -11,9 +11,6 @@
  *                           손본 삽입·리페인트 비용을 되돌리는 일이다)
  *   - `.className`      → 조용히 무시된다. 동적 속성 선택자(`[role="..."]`)를 쓴다
  *   - `transition`      → 조용히 무시된다. 상태 전환은 :hover/:pressed 규칙으로만
- *
- * 카드 프레임(`#contentFrame`)은 여기 없다 — 상태에 따라 색이 달라져
- * theme.card_style()이 위젯별로 붙인다.
  */
 
 /* ---------- 바탕과 글자 ---------- */
@@ -82,6 +79,42 @@ QLabel#thumbnailLabel {
     background-color: @thumbBg;
     border-radius: @radius;
     color: @textMuted;
+}
+
+/* 카드 테두리 — 다운로드 상태(theme.CARD_STATES)에 따라 색이 바뀐다.
+ * 진행바(아래 "진행바" 절)와 똑같은 패턴이다: 파이썬은 동적 속성
+ * `state`만 바꾸고(`content/widget.py::applyStateStyle`) 색은 여기
+ * `[state="..."]` 규칙이 고른다 — 속성만 바꾸면 이미 계산된 스타일이
+ * 안 갱신되므로 `theme.repolish()`가 항상 같이 필요하다.
+ *
+ * 가로 padding은 반드시 0이어야 한다 — 카드 안쪽 가용 폭이 줄면 제목·
+ * 경로·상태 라벨의 잘림 위치가 밀려 3-OS 폰트 메트릭에 민감한 회귀
+ * 테스트들이 깨진다(#227 PR #234에서 실제로 겪음). 세로 여백은 폭과
+ * 무관하니 자유롭다. 테두리 1px이 좌우로 먹는 2px은
+ * `ui/contentItemWidget.ui`의 레이아웃 여백을 10→9로 줄여 되돌려준다 —
+ * 카드 안쪽 가로 가용 폭은 "카드 폭 − 20px"로 어느 OS에서든 동일하다
+ * (tests/unit/test_widget_theme.py::TestCardInnerWidthIsUnchanged가 고정). */
+#contentFrame {
+    background-color: @cardBg;
+    border: 1px solid @stateWaiting;
+    border-radius: @cardRadius;
+    padding: @cardPaddingV 0px;
+}
+
+#contentFrame[state="waiting"] {
+    border-color: @stateWaiting;
+}
+
+#contentFrame[state="running"] {
+    border-color: @stateRunning;
+}
+
+#contentFrame[state="finished"] {
+    border-color: @stateFinished;
+}
+
+#contentFrame[state="failed"] {
+    border-color: @stateFailed;
 }
 
 /* ---------- 버튼 ---------- */

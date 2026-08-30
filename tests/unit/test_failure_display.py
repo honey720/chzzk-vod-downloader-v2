@@ -11,13 +11,35 @@ import time
 
 import pytest
 from PySide6.QtCore import QObject
+from PySide6.QtGui import QColor
 
+import main as main_module
+import theme
 from content.data import ContentItem
 from content.manager import ContentManager
 from content.view import ContentListView
 from core.downloaders.base import PostprocessError
 from download.qt_bridge import QtDownloadBridge
 from core.models.download_state import DownloadState
+
+
+@pytest.fixture(autouse=True)
+def _apply_dark_card_qss(qapp):
+    """카드 테두리 색 검증(아래 실패 카드 border_pixel 확인)이 실제
+    프로덕션 스타일시트를 필요로 해서 이 파일에만 국소 적용한다.
+
+    ⚠️⚠️⚠️ **반드시 `scope="function"`(기본값)으로 유지할 것 — 넓히면
+    macOS CI에서 프로세스 종료 시점 SIGSEGV가 재발한다.** 상세 근거·
+    실측 경계·크래시 스택은 `tests/unit/test_widget_theme.py`의 같은
+    이름 픽스처 docstring 참고 — 요약: 범위(몇 개 테스트)가 아니라
+    수명(만든 `theme.build_style()` 객체가 테스트 하나를 넘어 `qapp`에
+    계속 걸려 있는가)이 경계다. `scope="function"`만 macOS 통과를
+    재현했다(session·module 스코프는 좁혀도 둘 다 크래시 재현됨).
+    """
+    theme.set_color_scheme("dark")
+    qapp.setStyle(theme.build_style())
+    qapp.setPalette(theme.build_palette())
+    qapp.setStyleSheet(theme.load_stylesheet(main_module.resource_path(theme.QSS_RELATIVE_PATH)))
 
 
 @pytest.fixture(autouse=True)
@@ -164,8 +186,12 @@ def test_failed_card_shows_failure_and_batch_continues(wired, qapp, tmp_path):
     # ② 원시 문자열(ffmpeg stderr·실행 경로) 미노출
     assert "ffmpeg" not in label
     assert "remux" not in label
-    # 빨간 프레임 — 완료(파란)와도 구분된다
-    assert "#FF6969" in widget.contentFrame.styleSheet()
+    # 빨간 프레임 — 완료(파란)와도 구분된다.
+    # 카드 프레임은 위젯별 setStyleSheet이 아니라 전역 QSS로 칠해진다
+    # (#240 2단계) — styleSheet()는 항상 빈 문자열이라 실제 렌더 픽셀을
+    # 읽는다. 색 리터럴을 여기 다시 박지 않도록 theme.py 토큰을 그대로 쓴다.
+    border_pixel = widget.contentFrame.grab().toImage().pixelColor(0, widget.contentFrame.height() // 2)
+    assert border_pixel == QColor(theme.DARK["stateFailed"])
 
     # ③ 배치는 실패 항목에서 멈추지 않고 다음 항목으로 계속된다
     assert harness.started == [item1, item2]
