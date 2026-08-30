@@ -38,6 +38,7 @@ import logging
 import re
 
 from PySide6.QtGui import QColor, QPalette
+from PySide6.QtWidgets import QProxyStyle, QStyle, QStyleFactory
 
 logger = logging.getLogger(__name__)
 
@@ -319,6 +320,40 @@ def build_palette(tokens: dict | None = None) -> QPalette:
     p.setColor(disabled, QPalette.ColorRole.Base, c("surface"))
     p.setColor(disabled, QPalette.ColorRole.Button, c("surface"))
     return p
+
+
+class _DropDownComboBoxStyle(QProxyStyle):
+    """Fusion의 콤보 팝업 겹침 배치를 끄고 v2.9.6(네이티브 스타일)의 드롭다운
+    배치를 되살린다 (#241 후속 — 오너 실기 확인).
+
+    `QStyle.SH_ComboBox_Popup` 힌트가 켜져 있으면 팝업이 열릴 때 콤보의
+    현재 선택 항목이 콤보 라벨 위치에 오도록 콤보 위로 겹쳐 뜬다 — Fusion은
+    이 힌트가 켜져 있고, 네이티브 Windows 스타일(windowsvista·windows11)은
+    꺼져 있어 항상 콤보 아래로 떨어진다(실측 대조로 확인). v2.9.6은
+    `app.setStyle()`을 아예 안 불러 네이티브 스타일을 썼으므로 드롭다운
+    배치가 원래 동작이었다 — `#227`이 Fusion을 고정하며 조용히 바뀐
+    회귀다. 판단이 갈리는 지점이라 기존(v2.9.6) 동작에 맞춘다.
+
+    이 힌트를 끄면 팝업 위치 계산 자체가 currentIndex를 안 본다 — 그래서
+    "마지막 호버로 옮겨간 currentIndex가 배치 기준으로 쓰인다"는 문제도
+    같이 없어진다. `config.dialog._ComboBoxPopupHighlightResync`(팝업 안에서
+    어떤 항목이 강조되는지)와는 역할이 겹치지 않는다 — 저건 팝업이 뜬
+    *다음* 내용을, 이건 팝업 창 자체가 뜨는 *위치*를 다룬다.
+    """
+
+    def styleHint(self, hint, option=None, widget=None, returnData=None):
+        if hint == QStyle.StyleHint.SH_ComboBox_Popup:
+            return 0
+        return super().styleHint(hint, option, widget, returnData)
+
+
+def build_style() -> QProxyStyle:
+    """Fusion을 감싸 콤보 팝업 배치만 v2.9.6(드롭다운)으로 되돌린 스타일 객체.
+
+    나머지 그리기는 전부 Fusion 그대로다 — `QProxyStyle`은 오버라이드
+    안 한 모든 호출을 감싼 베이스 스타일로 넘긴다.
+    """
+    return _DropDownComboBoxStyle(QStyleFactory.create("Fusion"))
 
 
 def repolish(widget) -> None:
