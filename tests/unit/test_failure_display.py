@@ -11,7 +11,9 @@ import time
 
 import pytest
 from PySide6.QtCore import QObject
+from PySide6.QtGui import QColor
 
+import theme
 from content.data import ContentItem
 from content.manager import ContentManager
 from content.view import ContentListView
@@ -164,8 +166,12 @@ def test_failed_card_shows_failure_and_batch_continues(wired, qapp, tmp_path):
     # ② 원시 문자열(ffmpeg stderr·실행 경로) 미노출
     assert "ffmpeg" not in label
     assert "remux" not in label
-    # 빨간 프레임 — 완료(파란)와도 구분된다
-    assert "#FF6969" in widget.contentFrame.styleSheet()
+    # 빨간 프레임 — 완료(파란)와도 구분된다.
+    # 카드 프레임은 위젯별 setStyleSheet이 아니라 전역 QSS로 칠해진다
+    # (#240 2단계) — styleSheet()는 항상 빈 문자열이라 실제 렌더 픽셀을
+    # 읽는다. 색 리터럴을 여기 다시 박지 않도록 theme.py 토큰을 그대로 쓴다.
+    border_pixel = widget.contentFrame.grab().toImage().pixelColor(0, widget.contentFrame.height() // 2)
+    assert border_pixel == QColor(theme.DARK["stateFailed"])
 
     # ③ 배치는 실패 항목에서 멈추지 않고 다음 항목으로 계속된다
     assert harness.started == [item1, item2]

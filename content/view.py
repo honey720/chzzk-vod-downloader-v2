@@ -235,7 +235,7 @@ class ContentListView(QScrollArea):
         if widget:
             widget.deleteButton.setEnabled(True)
             # 완료·실패 색은 여기서 직접 칠하지 않는다 (#227) — setData가
-            # 아이템 상태(FINISHED/FAILED)를 보고 theme.card_style()로
+            # 아이템 상태(FINISHED/FAILED)를 보고 applyStateStyle()로
             # 카드 테두리·진행바를 함께 맞춘다. 색을 이 자리에 박아두면
             # 대기·진행 두 상태만 색이 없는 반쪽짜리가 되고, 값도 theme.py와
             # 갈라진다

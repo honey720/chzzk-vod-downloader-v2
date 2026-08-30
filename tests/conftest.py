@@ -18,10 +18,43 @@ if str(ROOT_DIR) not in sys.path:
 import config.config as config_module  # noqa: E402 — sys.path 삽입 후에 와야 한다
 import core.downloaders.hls_aes_downloader as hls_aes_module  # noqa: E402
 import core.downloaders.m3u8_downloader as m3u8_module  # noqa: E402
+import main as main_module  # noqa: E402
+import theme  # noqa: E402
 from core.utils.paths import temp_dir_for  # noqa: E402
 
 # 외부 API 응답을 흉내 내는 픽스처 파일 저장 위치
 MOCK_RESPONSES_DIR = Path(__file__).resolve().parent / "fixtures" / "mock_responses"
+
+
+# ============ 전역 카드 QSS 적용 (#240 2단계) ============
+# 카드 테두리(#contentFrame)가 위젯별 setStyleSheet에서 전역 .qss로
+# 옮겨가면서, 테스트가 스타일시트를 안 태우면 `contentFrame`의 지오메트리
+# 게이트(TestCardInnerWidthIsUnchanged)가 실제로는 아무것도 안 보게 된다
+# — 실측 확인: Fusion의 스타일 기본 프레임 두께(PM_DefaultFrameWidth)가
+# 우리가 QSS에 명시한 1px 테두리와 우연히 같아서, 카드 QSS 규칙을 통째로
+# 지워도 이 게이트가 계속 통과해버렸다(고장 주입으로 재현). 그래서
+# 전역 .qss를 세션 시작에 한 번 실제로 적용해 게이트가 진짜 실물(프로덕션이
+# 쓰는 것과 같은 스타일시트)을 재게 한다 — "테스트가 검증하는 것이 실물과
+# 다르다"는 대안(스타일 없는 값으로 게이트를 다시 잡는 것)은 게이트를
+# 무력화하는 셈이라 기각했다.
+#
+# `main.apply_theme()`을 그대로 쓰지 않는 이유: 그 함수는
+# `theme.detect_color_scheme(app)`으로 OS 테마를 감지해 스킴을 정하는데,
+# 오프스크린 QPA의 기본 팔레트 밝기 폴백이 이 환경에서 "light"로 나온다
+# (실측 확인) — 그대로 쓰면 테스트 스위트 전체의 암묵적 전제("아무도
+# set_color_scheme()을 안 부르면 DARK", theme.py 모듈 docstring이 명시)가
+# 깨져 `theme.DARK[...]`를 기대하는 수십 개 어서션이 전부 LIGHT 값과
+# 비교하게 된다. 그래서 스킴 감지는 건너뛰고 명시적으로 "dark"로 고정한
+# 뒤 팔레트·스타일·스타일시트만 프로덕션과 같은 방식으로 적용한다.
+@pytest.fixture(scope="session", autouse=True)
+def _apply_global_card_qss(qapp):
+    """전역 스타일시트를 세션에 한 번 적용해 카드 QSS 지오메트리 게이트가
+    실제 프로덕션 스타일시트를 재게 한다."""
+    theme.set_color_scheme("dark")
+    qapp.setStyle(theme.build_style())
+    qapp.setPalette(theme.build_palette())
+    qss_path = main_module.resource_path(theme.QSS_RELATIVE_PATH)
+    qapp.setStyleSheet(theme.load_stylesheet(qss_path))
 
 
 @pytest.fixture

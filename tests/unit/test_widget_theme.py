@@ -1,22 +1,38 @@
-"""카드가 다운로드 상태에 맞는 색을 실제로 입는지 검증한다 (#227).
+"""카드가 다운로드 상태에 맞는 색을 실제로 입는지 검증한다 (#227, #240 2단계).
 
-`theme.card_style()`이 옳은 문자열을 만드는지는 test_theme.py가 본다.
-여기서는 **위젯이 그걸 실제로 붙이는지** — 상태가 바뀔 때마다 `setData()`가
-카드 테두리와 진행바를 같이 갱신하는지를 본다.
+전역 `.qss`의 `#contentFrame[state="..."]` 규칙이 옳은 토큰을 쓰는지는
+`test_theme.py`가 실제 파일 소스로 본다. 여기서는 **위젯이 그걸 실제로
+렌더링하는지** — 상태가 바뀔 때마다 `setData()`가 카드 테두리와 진행바를
+같이 갱신하는지를, `widget.grab()`으로 실제 렌더된 픽셀을 읽어 확인한다.
 
-진행바 색은 위젯 스타일시트가 아니라 동적 속성(`state`) + 전역 QSS의
-`[state="..."]` 규칙으로 정해진다. QSS는 `.className` 선택자를 지원하지
-않고 조용히 무시하므로 이 배선이 유일한 경로다 — 속성이 상태를 따라가지
-않으면 진행바 색이 안 변하는데 **아무 에러도 안 난다**.
+카드 테두리·진행바 색 둘 다 위젯 스타일시트가 아니라 동적 속성(`state`) +
+전역 QSS의 `[state="..."]` 규칙으로 정해진다(#240 2단계 — 카드 프레임도
+위젯별 `setStyleSheet`에서 전역 QSS로 옮겼다). QSS는 `.className` 선택자를
+지원하지 않고 조용히 무시하므로 이 배선이 유일한 경로다 — 속성이 상태를
+따라가지 않으면 색이 안 변하는데 **아무 에러도 안 난다**. `styleSheet()`
+문자열을 파싱해 검증하던 이전 버전은 전역 QSS로 옮기며 전부 빈 문자열만
+돌려주게 됐다 — 텍스트가 아니라 실제 렌더 픽셀을 보는 쪽으로 바꿨다.
 """
 
 import pytest
+from PySide6.QtGui import QColor
 
 import theme
 from app.viewmodels.item_state import ItemState
 from content.data import ContentItem
 from content.widget import ContentItemWidget
 from core.models.download_state import DownloadState
+
+
+def _card_border_colour(frame) -> QColor:
+    """카드 프레임의 실제 렌더 테두리 색 — 좌측 변, 세로 중앙 지점.
+
+    모서리(border-radius)를 피해야 한다 — 둥근 모서리 부근은 배경색과
+    안티앨리어싱이 섞여 순수 테두리 색이 안 나온다(실측 확인). 좌측 변
+    중앙은 카드 높이 전체에서 곡률이 없는 안전한 지점이다.
+    """
+    img = frame.grab().toImage()
+    return img.pixelColor(0, img.height() // 2)
 
 
 @pytest.fixture(autouse=True)
@@ -64,7 +80,8 @@ STATE_MAP = [
 @pytest.mark.parametrize("download_state,card_state", STATE_MAP)
 def test_card_frame_gets_the_state_colour(qapp, download_state, card_state):
     widget = _widget(qapp, download_state, progress=50)
-    assert theme.DARK["state" + card_state.capitalize()] in widget.contentFrame.styleSheet()
+    expected = QColor(theme.DARK["state" + card_state.capitalize()])
+    assert _card_border_colour(widget.contentFrame) == expected
 
 
 @pytest.mark.parametrize("download_state,card_state", STATE_MAP)
@@ -76,18 +93,18 @@ def test_progress_bar_property_follows_the_state(qapp, download_state, card_stat
 def test_state_change_repaints_an_existing_card(qapp):
     """같은 위젯이 상태를 갈아탈 때도 따라와야 한다 — 카드는 재사용된다."""
     widget = _widget(qapp, DownloadState.WAITING)
-    assert theme.DARK["stateWaiting"] in widget.contentFrame.styleSheet()
+    assert _card_border_colour(widget.contentFrame) == QColor(theme.DARK["stateWaiting"])
 
     widget.item.downloadState = DownloadState.RUNNING
     widget.item.download_progress = 30
     widget.setData(widget.item, 0)
-    assert theme.DARK["stateRunning"] in widget.contentFrame.styleSheet()
+    assert _card_border_colour(widget.contentFrame) == QColor(theme.DARK["stateRunning"])
     assert widget.progressBar.property("state") == "running"
     assert widget.progressBar.value() == 30
 
     widget.item.downloadState = DownloadState.FAILED
     widget.setData(widget.item, 0)
-    assert theme.DARK["stateFailed"] in widget.contentFrame.styleSheet()
+    assert _card_border_colour(widget.contentFrame) == QColor(theme.DARK["stateFailed"])
     assert widget.progressBar.property("state") == "failed"
 
 
@@ -169,12 +186,22 @@ class TestCardInnerWidthIsUnchanged:
             "라벨 잘림 위치가 밀려 3-OS 폰트 메트릭 회귀 테스트가 깨진다"
         )
 
-    @pytest.mark.parametrize("state", ["waiting", "running", "finished", "failed"])
-    def test_no_horizontal_padding_in_any_state(self, state):
-        """상태가 달라져도 가로 여백은 0이어야 한다 — 폭이 상태에 따라 흔들리면 안 된다."""
-        css = theme.card_style(state)
-        padding = [ln for ln in css.splitlines() if "padding" in ln]
-        assert padding, "카드 규칙에 padding 선언이 사라졌다 — 이 테스트의 전제를 확인할 것"
-        assert padding[0].strip().rstrip(";").split(":")[1].split()[-1] == "0px", (
-            f"가로 여백이 0이 아니다: {padding[0].strip()!r}"
-        )
+    @pytest.mark.parametrize(
+        "download_state",
+        [DownloadState.WAITING, DownloadState.RUNNING, DownloadState.FINISHED, DownloadState.FAILED],
+    )
+    def test_no_horizontal_padding_in_any_state(self, qapp, download_state):
+        """상태가 달라져도 가로 여백은 0이어야 한다 — 폭이 상태에 따라 흔들리면 안 된다.
+
+        (#240 2단계) padding은 이제 상태와 무관한 공통 규칙 하나뿐이라
+        `theme.card_style()`처럼 상태별 문자열을 만드는 함수 자체가 없다 —
+        텍스트를 읽는 대신 상태별로 실제 위젯을 만들어 지오메트리가
+        흔들리지 않는지 직접 잰다(테두리 색만 다르고 폭에 영향을 주면 안
+        되는 게 진짜 불변식이다).
+        """
+        widget = _widget(qapp, download_state)
+        widget.resize(460, 134)
+        widget.show()
+        qapp.processEvents()
+        inner = widget.contentFrame.contentsRect().width()
+        assert inner == widget.width() - self.EXPECTED_HORIZONTAL_INSET

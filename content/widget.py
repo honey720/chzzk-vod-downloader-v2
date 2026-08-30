@@ -275,16 +275,18 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.applyStateStyle()
 
     def applyStateStyle(self):
-        """카드 테두리·진행바를 현재 다운로드 상태의 색으로 맞춘다 (#227).
+        """카드 테두리·진행바를 현재 다운로드 상태의 색으로 맞춘다 (#227, #240 후속).
 
-        색은 theme.py 한 곳에서만 정의된다. 카드 프레임은 상태마다 값이
-        달라 전역 `.qss`에 못 쓰고 위젯별 `setStyleSheet`으로 붙이지만,
-        진행바는 동적 속성(`state`)만 바꾸고 색은 전역 QSS의
-        `[state="..."]` 규칙이 고른다 — 속성만 바꾸면 이미 계산된 스타일이
-        갱신되지 않으므로 theme.repolish()가 함께 필요하다.
+        색은 theme.py 한 곳에서만 정의된다. 카드 프레임·진행바 둘 다
+        위젯별 `setStyleSheet` 없이 동적 속성(`state`)만 바꾸고, 색은
+        전역 QSS의 `#contentFrame[state="..."]`/`QProgressBar[state="..."]`
+        규칙이 고른다 — 속성만 바꾸면 이미 계산된 스타일이 갱신되지
+        않으므로 theme.repolish()가 항상 함께 필요하다.
         """
         state = self._cardState()
-        self.contentFrame.setStyleSheet(theme.card_style(state))
+        if self.contentFrame.property("state") != state:
+            self.contentFrame.setProperty("state", state)
+            theme.repolish(self.contentFrame)
         self.progressBar.setValue(self._progressValue())
         if self.progressBar.property("state") != state:
             self.progressBar.setProperty("state", state)
