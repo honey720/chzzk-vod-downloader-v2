@@ -441,7 +441,6 @@ class TestNoHorizontalOverflow:
 
         widget = v.widgetFor(item)
         rendered_title = type(widget.titleLabel).__mro__[1].text(widget.titleLabel)
-        rendered_path = type(widget.directoryLabel).__mro__[1].text(widget.directoryLabel)
         full_title = widget.titleLabel.text()
         full_path = widget.directoryLabel.text()  # 축약형 표시 문자열 — 말줄임의 원문
         assert "…" not in full_path, "축약이 '…'를 넣었다 — 이 테스트의 경로는 뿌리 뒤 2단계여야 한다"
@@ -456,9 +455,28 @@ class TestNoHorizontalOverflow:
             f"오른쪽 말줄임이 아니다 — 접두사가 원문과 안 맞는다: {rendered_title[:-1]!r}"
         )
 
-        # 가운데 말줄임: "…" 앞뒤 둘 다 원문의 접두사·접미사와 일치해야 한다
+        # 가운데 말줄임(경로) — #245 [B] 이후의 규칙으로 잰다. 300px에서는 3행
+        # 우선순위로 경로가 **아이콘으로 접혀 라벨이 숨는다**(이전엔 숨은 라벨의
+        # 낡은 표시 문자열을 읽어 우연히 통과했다 — PathLabel 도입으로 드러남).
+        # 그래서 경로 텍스트가 처음 다시 보이는 폭까지 넓혀 잰다(px를 박지 않아
+        # 폰트 무의존). 그 폭에서 라벨은 최소 텍스트 폭 근처라 반드시 ③단계다:
+        # 접두 `C:/…/`(중간 폴더 접기)는 고정이고, 가운데 말줄임은 **마지막
+        # 폴더 안에서만** 일어난다 — "…" 앞뒤가 마지막 폴더의 접두사·접미사다.
+        from PySide6.QtWidgets import QLabel
+
+        width = 300
+        while not widget.directoryLabel.isVisible():
+            width += 8
+            assert width <= 2000, "경로 라벨이 어떤 폭에서도 보이지 않는다"
+            v.resize(width, 400)
+            for _ in range(4):
+                qapp.processEvents()
+        rendered_path = QLabel.text(widget.directoryLabel)
+        last_folder = full_path.rsplit("/", 1)[-1]
         assert rendered_path != full_path, "경로가 이 폭에서 안 잘렸다 — 게이트 전제가 깨졌다"
-        assert "…" in rendered_path
-        before, _, after = rendered_path.partition("…")
-        assert full_path.startswith(before), f"가운데 말줄임이 아니다 — 앞부분 불일치: {before!r}"
-        assert full_path.endswith(after), f"가운데 말줄임이 아니다 — 뒷부분 불일치: {after!r}"
+        assert rendered_path.startswith("C:/…/"), f"중간 폴더 접기 접두가 고정되지 않았다: {rendered_path!r}"
+        tail = rendered_path[len("C:/…/"):]
+        assert "…" in tail, f"마지막 폴더 안의 가운데 말줄임이 없다 — 전제(첫 가시 폭) 확인: {rendered_path!r}"
+        before, _, after = tail.partition("…")
+        assert last_folder.startswith(before), f"가운데 말줄임이 아니다 — 앞부분 불일치: {before!r}"
+        assert last_folder.endswith(after), f"가운데 말줄임이 아니다 — 뒷부분 불일치: {after!r}"
