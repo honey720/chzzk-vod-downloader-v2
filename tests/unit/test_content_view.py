@@ -13,6 +13,7 @@ from content.data import ContentItem
 from content.model import ContentListModel
 from content.view import ContentListView
 from core.models.download_state import DownloadState
+from tests.unit.card_helpers import shown
 
 
 @pytest.fixture(autouse=True)
@@ -440,7 +441,7 @@ class TestNoHorizontalOverflow:
             qapp.processEvents()
 
         widget = v.widgetFor(item)
-        rendered_title = type(widget.titleLabel).__mro__[1].text(widget.titleLabel)
+        rendered_title = shown(widget.titleLabel)  # 가시성 단언 후의 표시 문자열(QLabel.text)
         full_title = widget.titleLabel.text()
         full_path = widget.directoryLabel.text()  # 축약형 표시 문자열 — 말줄임의 원문
         assert "…" not in full_path, "축약이 '…'를 넣었다 — 이 테스트의 경로는 뿌리 뒤 2단계여야 한다"
@@ -462,8 +463,6 @@ class TestNoHorizontalOverflow:
         # 폰트 무의존). 그 폭에서 라벨은 최소 텍스트 폭 근처라 반드시 ③단계다:
         # 접두 `C:/…/`(중간 폴더 접기)는 고정이고, 가운데 말줄임은 **마지막
         # 폴더 안에서만** 일어난다 — "…" 앞뒤가 마지막 폴더의 접두사·접미사다.
-        from PySide6.QtWidgets import QLabel
-
         width = 300
         while not widget.directoryLabel.isVisible():
             width += 8
@@ -471,7 +470,7 @@ class TestNoHorizontalOverflow:
             v.resize(width, 400)
             for _ in range(4):
                 qapp.processEvents()
-        rendered_path = QLabel.text(widget.directoryLabel)
+        rendered_path = shown(widget.directoryLabel)
         last_folder = full_path.rsplit("/", 1)[-1]
         assert rendered_path != full_path, "경로가 이 폭에서 안 잘렸다 — 게이트 전제가 깨졌다"
         assert rendered_path.startswith("C:/…/"), f"중간 폴더 접기 접두가 고정되지 않았다: {rendered_path!r}"
