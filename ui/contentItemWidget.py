@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel,
     QLineEdit, QProgressBar, QPushButton, QVBoxLayout)
 
 import theme
-from content.eliding_label import ElidingLabel
+from content.eliding_label import ElidingLabel, PathLabel
 from content.icons import IconButton
 
 
@@ -205,7 +205,9 @@ class Ui_ContentItemWidget(object):
         # 인라인 QLineEdit 편집은 #245에서 폴더 선택으로 교체됐다(존재하는
         # 폴더만 고르므로 검증·거부 안내가 필요 없다). 대기에서는 항상 보이고
         # 그 외에는 전역 경로와 다를 때만 보인다.
-        self.directoryLabel = ElidingLabel(self.contentFrame, elide_mode=Qt.TextElideMode.ElideMiddle)
+        # 경로는 줄어드는 순서가 정해진 PathLabel(#245): 전체 → 중간 폴더 접기 →
+        # 마지막 폴더만 ElideMiddle. 파일이 들어가는 마지막 폴더가 가장 늦게 잘린다.
+        self.directoryLabel = PathLabel(self.contentFrame)
         self.directoryLabel.setObjectName(u"directoryLabel")
         self.directoryLabel.setCursor(Qt.CursorShape.PointingHandCursor)
         self.directoryLabel.setVisible(False)

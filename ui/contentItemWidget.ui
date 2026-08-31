@@ -159,7 +159,7 @@
              </spacer>
             </item>
             <item>
-             <widget class="ElidingLabel" name="directoryLabel">
+             <widget class="PathLabel" name="directoryLabel">
               <property name="toolTip"><string>Directory</string></property>
               <property name="text"><string>Directory</string></property>
               <property name="visible"><bool>false</bool></property>
@@ -203,6 +203,11 @@
  <customwidgets>
   <customwidget>
    <class>ElidingLabel</class>
+   <extends>QLabel</extends>
+   <header>content/eliding_label.h</header>
+  </customwidget>
+  <customwidget>
+   <class>PathLabel</class>
    <extends>QLabel</extends>
    <header>content/eliding_label.h</header>
   </customwidget>

@@ -44,25 +44,18 @@ def set_global_download_path(path: str) -> None:
     _global_download_path = path
 
 
-def abbreviate_path(path: str, home: str | None = None) -> str:
-    """카드 3행용 경로 축약 — "~/…/마지막폴더" / "D:/…/마지막폴더" (#245).
+def _split_path(path: str, home: str | None = None) -> tuple[str, list[str], bool]:
+    """경로를 (뿌리, 뿌리 뒤 단계들, 절대경로 여부)로 나눈다 — 축약·단계 표시의 공통 분해.
 
-    규칙: **뿌리 + 마지막 폴더**만 남긴다. 뿌리는 홈 아래면 `~`, 아니면 드라이브
-    (`D:`) 또는 POSIX 루트(`/`)다. 뿌리 뒤 단계가 2개 이하면 전부 보인다
-    (`~/Downloads`, `D:/vod/lck`) — 한 단계를 숨기고 `…`를 넣으면 글자가
-    오히려 늘어 축약이 아니다. 3개 이상이면 가운데를 `…` 하나로 접는다.
-    근거: 유저가 고르거나 이름 붙인 것은 **마지막 폴더**이고, 어느 디스크/홈
-    인지는 뿌리가 말한다. 가운데 단계는 카드마다 반복되는 소음이다. 전체
-    경로는 툴팁이 준다. 구분자는 표시용으로 `/`로 통일한다(OS 무관 렌더).
+    뿌리는 홈 아래면 `~`, 아니면 드라이브(`D:`), POSIX 루트면 빈 문자열(절대
+    경로 플래그로 구분). 구분자는 표시용으로 `/`로 통일한다(OS 무관 렌더).
     """
-    if not path:
-        return ""
     norm = os.path.normpath(path).replace("\\", "/")
     home_norm = os.path.normpath(home if home is not None else os.path.expanduser("~")).replace("\\", "/")
     def _same(a: str, b: str) -> bool:
         return os.path.normcase(a) == os.path.normcase(b)
     if _same(norm, home_norm):
-        return "~"
+        return "~", [], True
     if _same(norm[: len(home_norm) + 1], home_norm + "/"):
         root, rest = "~", norm[len(home_norm) + 1:]
     else:
@@ -73,12 +66,45 @@ def abbreviate_path(path: str, home: str | None = None) -> str:
             root, rest = "", norm.lstrip("/")
         else:
             root, rest = "", norm
-    segments = [s for s in rest.split("/") if s]
-    if len(segments) <= 2:
-        shown = segments
-    else:
-        shown = ["…", segments[-1]]
-    return "/".join([root, *shown]) if root or norm.startswith("/") else "/".join(shown)
+    return root, [s for s in rest.split("/") if s], bool(root) or norm.startswith("/")
+
+
+def abbreviate_path(path: str, home: str | None = None) -> str:
+    """카드 3행용 경로 축약(①단계 문자열) — "~/…/마지막폴더" / "D:/…/마지막폴더" (#245).
+
+    규칙: **뿌리 + 마지막 폴더**만 남긴다. 뿌리는 홈 아래면 `~`, 아니면 드라이브
+    (`D:`) 또는 POSIX 루트(`/`)다. 뿌리 뒤 단계가 2개 이하면 전부 보인다
+    (`~/Downloads`, `D:/vod/lck`) — 한 단계를 숨기고 `…`를 넣으면 글자가
+    오히려 늘어 축약이 아니다. 3개 이상이면 가운데를 `…` 하나로 접는다.
+    근거: 유저가 고르거나 이름 붙인 것은 **마지막 폴더**이고, 어느 디스크/홈
+    인지는 뿌리가 말한다. 가운데 단계는 카드마다 반복되는 소음이다. 전체
+    경로는 툴팁이 준다. 폭이 모자랄 때 더 줄이는 순서(② 중간 접기 → ③ 마지막
+    폴더만 말줄임)는 `path_display_parts` + `PathLabel`이 맡는다.
+    """
+    if not path:
+        return ""
+    root, segments, absolute = _split_path(path, home)
+    shown = segments if len(segments) <= 2 else ["…", segments[-1]]
+    return "/".join([root, *shown]) if absolute else "/".join(shown)
+
+
+def path_display_parts(path: str, home: str | None = None) -> tuple[str, str, str]:
+    """경로를 줄이는 단계에 필요한 세 조각 — (①전체 축약형, ②③의 고정 접두, 마지막 폴더) (#245).
+
+    접두는 중간 폴더가 하나라도 있으면 `뿌리/…/`(중간 폴더가 하나뿐이어도 접는다
+    — 마지막 폴더가 중간 폴더보다 먼저 잘리면 안 된다), 없으면 `뿌리/`다.
+    ② = 접두 + 마지막 폴더, ③ = 접두 + ElideMiddle(마지막 폴더). 뿌리만 있는
+    경로(`~`)는 접두 없이 뿌리 자체가 마지막이다.
+    """
+    full = abbreviate_path(path, home)
+    if not path:
+        return "", "", ""
+    root, segments, absolute = _split_path(path, home)
+    if not segments:
+        return full, "", full
+    parts = ([root] if (root or absolute) else []) + (["…"] if len(segments) >= 2 else [])
+    prefix = "/".join(parts) + "/" if parts else ""
+    return full, prefix, segments[-1]
 
 
 def _resolution_key(resolution) -> int:
@@ -224,8 +250,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.applyStateStyle()  # setData 전에도 카드가 무스타일로 보이지 않게 (#227)
 
     def _refreshPathLabel(self) -> None:
-        """경로 라벨 — 표시는 축약형, 전문은 툴팁 (#245)."""
-        self.directoryLabel.setText(abbreviate_path(self.item.download_path))
+        """경로 라벨 — 표시는 축약형(폭이 모자라면 PathLabel이 단계별로 더 줄임), 전문은 툴팁 (#245)."""
+        self.directoryLabel.setPathParts(*path_display_parts(self.item.download_path))
         self.directoryLabel.setToolTip(self.item.download_path)
         self.pathIconButton.setToolTip(self.item.download_path)
 

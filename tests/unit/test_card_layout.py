@@ -624,6 +624,82 @@ class TestPathAbbreviationAndTooltip:
         assert _right(widget.directoryLabel) < widget.fileSizeLabel.x()
 
 
+class TestPathShrinkOrder:
+    """경로가 줄어드는 **순서**(#245 확정): ①전체 → ②중간 폴더 접기(`뿌리/…/마지막`,
+    마지막 폴더 온전) → ③마지막 폴더에만 ElideMiddle(접두 고정) → ④아이콘.
+    파일이 실제로 들어가는 곳은 마지막 폴더라 **가장 늦게** 잘린다. 중간 폴더가
+    하나뿐(깊이 2)이어도 ②를 거친다 — 이전엔 깊이 ≤2를 전부 표시한 채 문자열
+    전체에 ElideMiddle을 걸어 `~/scratch/c…wnloader-v2`처럼 중간 폴더가 살고
+    마지막 폴더가 잘렸다. 폰트 무의존 — 문자열 관계만 잰다."""
+
+    LAST = "chzzk-vod-downloader-v2"
+
+    def _rendered_while_narrowing(self, qapp, path):
+        """1400px에서 카드 최소폭까지 4px씩 좁히며 경로 라벨의 실제 표시 문자열을
+        순서대로 모은다(연속 중복 제거). 아이콘 모드로 접히면 멈춘다."""
+        from PySide6.QtWidgets import QLabel
+
+        widget = _make_widget(qapp)
+        widget.item.download_path = path
+        widget.setData(widget.item, 0)
+        seen = []
+        for width in range(1400, widget.minimumSizeHint().width() - 1, -4):
+            _at_width(widget, width)
+            if not widget.directoryLabel.isVisible():
+                break
+            shown = QLabel.text(widget.directoryLabel)
+            if not seen or seen[-1] != shown:
+                seen.append(shown)
+        return widget, seen
+
+    def test_depth_two_folds_the_middle_folder_before_touching_the_last(self, qapp):
+        widget, seen = self._rendered_while_narrowing(qapp, f"D:/archive-2026/{self.LAST}")
+        assert seen[0] == f"D:/archive-2026/{self.LAST}", "넓을 때는 전체가 보여야 한다(①)"
+        folded = f"D:/…/{self.LAST}"
+        assert folded in seen, f"②(중간 폴더 접기) 단계가 없다 — 표시 순서: {seen}"
+        fold_at = seen.index(folded)
+        assert fold_at == 1, f"①에서 ②로 바로 가야 한다 — 중간에 다른 표시가 끼었다: {seen[:fold_at + 1]}"
+        for shown in seen[fold_at + 1:]:
+            assert shown.startswith("D:/…/"), f"③에서 접두 `D:/…/`가 고정되지 않았다: {shown!r}"
+            assert "…" in shown[len("D:/…/"):], f"③은 마지막 폴더 안에서만 말줄임한다: {shown!r}"
+        cut_at = next((i for i, t in enumerate(seen) if self.LAST not in t), None)
+        assert cut_at is not None and cut_at > fold_at, "마지막 폴더는 중간 폴더가 접힌 **뒤에** 잘려야 한다"
+
+    def test_depth_one_keeps_the_root_and_elides_inside_the_folder(self, qapp):
+        widget, seen = self._rendered_while_narrowing(qapp, f"D:/{self.LAST}")
+        assert seen[0] == f"D:/{self.LAST}"
+        assert all(t.startswith("D:/") and "…" in t[len("D:/"):] for t in seen[1:]), seen
+
+    def test_depth_five_starts_folded_and_then_elides_the_last_folder_only(self, qapp):
+        widget, seen = self._rendered_while_narrowing(qapp, f"D:/a/b/c/d/{self.LAST}")
+        assert seen[0] == f"D:/…/{self.LAST}", "깊이 3 이상은 ①이 곧 ②(뿌리/…/마지막)"
+        assert all(t.startswith("D:/…/") and "…" in t[len("D:/…/"):] for t in seen[1:]), seen
+        assert len(seen) >= 2, "좁혀도 ③으로 내려가지 않았다 — 전제 확인"
+
+    def test_widening_recovers_the_full_text(self, qapp):
+        widget, seen = self._rendered_while_narrowing(qapp, f"D:/archive-2026/{self.LAST}")
+        assert len(seen) >= 3, "전제: ①→②→③까지 내려갔다"
+        _at_width(widget, 1400)
+        from PySide6.QtWidgets import QLabel
+
+        assert QLabel.text(widget.directoryLabel) == f"D:/archive-2026/{self.LAST}", "넓혀도 ①로 돌아오지 않는다"
+
+    @pytest.mark.parametrize("path,expected", [
+        ("D:/archive-2026/x", ("D:/archive-2026/x", "D:/…/", "x")),
+        ("D:/x", ("D:/x", "D:/", "x")),
+        ("D:/a/b/c/x", ("D:/…/x", "D:/…/", "x")),
+        ("C:/Users/me/x", ("~/x", "~/", "x")),
+        ("C:/Users/me", ("~", "", "~")),
+        ("/x", ("/x", "/", "x")),
+        ("/srv/x", ("/srv/x", "/…/", "x")),
+        ("/srv/media/x", ("/…/x", "/…/", "x")),
+    ])
+    def test_display_parts(self, path, expected):
+        from content.widget import path_display_parts
+
+        assert path_display_parts(path, home="C:/Users/me") == expected
+
+
 class TestPathClickOpensFolderPicker:
     """경로를 클릭하면 폴더 선택 대화상자 → 고른 값이 그 카드에 적용된다(#245).
     인라인 편집의 교체 — 대화상자는 monkeypatch로 막고 반환값을 주입한다
