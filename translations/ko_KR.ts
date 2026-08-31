@@ -161,11 +161,13 @@
     <name>QtDownloadBridge</name>
     <message>
         <source>Postprocessing failed - ffmpeg not found</source>
-        <translation>영상 변환(후처리)에 실패했습니다. ffmpeg 설치 상태를 확인해 주세요.</translation>
+        <translation>ffmpeg를 찾을 수 없습니다 · 설치 상태를 확인해 주세요
+영상 변환(후처리)에 실패했습니다. ffmpeg 설치 상태를 확인해 주세요.</translation>
     </message>
     <message>
         <source>Postprocessing failed - invalid segments</source>
-        <translation>영상 변환(후처리)에 실패했습니다. 받은 영상 조각이 손상됐을 수 있습니다. 다시 다운로드해 주세요.</translation>
+        <translation>영상 조각이 손상됐습니다 · 다시 받아 주세요
+영상 변환(후처리)에 실패했습니다. 받은 영상 조각이 손상됐을 수 있습니다. 다시 다운로드해 주세요.</translation>
     </message>
     <message>
         <source>Decryption failed</source>
@@ -173,7 +175,8 @@
     </message>
     <message>
         <source>Viewing permission required</source>
-        <translation>시청 권한이 필요한 영상입니다. 시청 가능한 계정의 쿠키를 설정에 등록해 주세요.</translation>
+        <translation>시청 권한이 필요합니다 · 설정에 쿠키를 등록해 주세요
+시청 권한이 필요한 영상입니다. 시청 가능한 계정의 쿠키를 설정에 등록해 주세요.</translation>
     </message>
     <message>
         <source>Video not found</source>

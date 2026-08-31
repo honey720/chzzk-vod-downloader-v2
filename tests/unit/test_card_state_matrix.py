@@ -190,6 +190,35 @@ class TestSlotColumn:
         assert widget.statusLabel.text() == "✕ Unknown error - check the log"
         assert "Download failed" not in widget.statusLabel.text()
 
+    def test_failure_reason_shows_only_the_headline_and_keeps_detail_in_the_tooltip(self, qapp):
+        """사유 문구는 "첫 줄=핵심(할 일 포함) / 둘째 줄부터=상세"다 — 3행에는 첫
+        줄만, 전문은 툴팁. 실패 사유는 마우스를 올려야 보이면 안 된다(#245)."""
+        widget = _make_widget(qapp, DownloadState.FAILED)
+        widget.item.stateMessage = "Segments look corrupted · download again\nPostprocessing failed because segments were corrupted."
+        widget.setData(widget.item, 0)
+        assert widget.statusLabel.text() == "✕ Segments look corrupted · download again"
+        assert widget.statusLabel.toolTip() == widget.item.stateMessage
+
+    @pytest.mark.parametrize("context", ("QtDownloadBridge", "ContentManager", "ContentItemWidget"))
+    def test_every_korean_failure_headline_fits_the_card_row(self, context):
+        """모든 사유의 **첫 줄**이 640px 카드 3행에 들어간다 — 폰트 무의존 대리
+        지표로 글자 수 상한을 건다. 실측(Windows 실기, 기본 폰트, 640px): 44자
+        문구까지 온전, 47자·58자는 잘렸다 → 상한 40자(여유 포함). 원문 전체가
+        아니라 첫 줄만 재는 것이 규칙이다 — 상세는 툴팁이 맡는다."""
+        import io
+        import re
+
+        source = io.open(main_module.resource_path("translations/ko_KR.ts"), encoding="utf-8").read()
+        block = re.search(rf"<name>{context}</name>(.*?)</context>", source, re.S).group(1)
+        failures = [
+            (src, tr)
+            for src, tr in re.findall(r"<source>([^<]*)</source>\s*<translation>([^<]*)</translation>", block)
+            if any(k in src for k in ("fail", "Fail", "required", "not found", "Decryption", "Invalid", "Network", "Unknown"))
+        ]
+        assert failures, f"{context}: 실패 문구를 하나도 못 찾았다 — 필터를 확인할 것"
+        too_long = {src: tr.splitlines()[0] for src, tr in failures if len(tr.splitlines()[0]) > 40}
+        assert not too_long, f"640px에서 잘릴 첫 줄(40자 초과): {too_long}"
+
     def test_long_failure_reason_is_elided_but_the_tooltip_keeps_the_whole_text(self, qapp):
         """긴 사유는 3행에서 ElideRight로 잘릴 수 있다 — 전문은 툴팁이 준다.
         (ko 실측: 640px에서 9종 중 2종이 잘린다 — 후처리 손상·시청 권한 안내)"""

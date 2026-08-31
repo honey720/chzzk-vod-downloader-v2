@@ -593,8 +593,13 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             # 않으면서 다음 행동(로그 폴더 열기 #181)을 주는 안내를 띄운다(#245).
             reason = getattr(item, "stateMessage", "")
             text = reason if reason else self.tr("Unknown error - check the log")
-            self.statusLabel.setText(f"{STATE_ICON['failed']} {text}")
-            self.statusLabel.setToolTip(text)  # 사유가 길어 잘리면 전문은 툴팁으로
+            # 사유 문구는 **첫 줄이 핵심 한 줄**(무엇을 해야 하는지 포함), 둘째
+            # 줄부터는 상세다 — 번역 문자열이 줄바꿈으로 나눈다. 3행에는 첫 줄만
+            # 올리고 전문은 툴팁으로(#245). 실패 사유는 마우스를 올려야 보이면 안
+            # 된다 — 640px에서 잘리던 두 문구를 이렇게 갈랐다(ko 실측).
+            headline = text.splitlines()[0] if text else text
+            self.statusLabel.setText(f"{STATE_ICON['failed']} {headline}")
+            self.statusLabel.setToolTip(text)
 
         self.applyStateStyle()
 
