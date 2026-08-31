@@ -19,6 +19,7 @@ import pytest
 
 import main
 import theme
+from tests.unit.card_helpers import hold_style
 
 ROOT_DIR = Path(main.__file__).resolve().parent
 HEX_COLOR = re.compile(r"#[0-9a-fA-F]{6}\b")
@@ -231,7 +232,7 @@ class TestComboBoxDropDownStyle:
         from PySide6.QtWidgets import QComboBox
         from PySide6.QtTest import QTest
 
-        qapp.setStyle(theme.build_style())
+        qapp.setStyle(hold_style(theme.build_style()))  # 참조 보관 — 이중 해제 우회 (#243, card_helpers.hold_style)
         combo = QComboBox()
         combo.addItems(["Alpha", "Beta", "Gamma", "Delta", "Epsilon"])
         combo.setCurrentIndex(3)  # 콤보 라벨과 안 겹치면 티가 나는 임의의 값
@@ -254,7 +255,7 @@ class TestComboBoxDropDownStyle:
         from PySide6.QtWidgets import QComboBox
         from PySide6.QtTest import QTest
 
-        qapp.setStyle(theme.build_style())
+        qapp.setStyle(hold_style(theme.build_style()))  # 참조 보관 — 이중 해제 우회 (#243, card_helpers.hold_style)
         combo = QComboBox()
         combo.addItems(["Alpha", "Beta", "Gamma", "Delta", "Epsilon"])
         combo.setCurrentIndex(3)
