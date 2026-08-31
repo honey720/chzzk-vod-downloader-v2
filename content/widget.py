@@ -1,4 +1,5 @@
 import os
+import re
 import threading
 from PySide6.QtWidgets import QWidget, QPushButton, QMessageBox, QFileDialog
 from PySide6.QtGui import QPainter, QPainterPath, QPixmap, QDesktopServices, QRegion
@@ -59,9 +60,13 @@ def _split_path(path: str, home: str | None = None) -> tuple[str, list[str], boo
     if _same(norm[: len(home_norm) + 1], home_norm + "/"):
         root, rest = "~", norm[len(home_norm) + 1:]
     else:
-        drive, tail = os.path.splitdrive(norm)
-        if drive:
-            root, rest = drive, tail.lstrip("/")
+        # 드라이브 판정은 os.path.splitdrive가 아니라 직접 한다 — POSIX 파이썬은
+        # "D:"를 드라이브로 보지 않아(splitdrive가 빈 문자열 반환) 같은 경로
+        # 문자열이 OS마다 다르게 축약된다(CI 3-OS에서 실측). 이 함수는 표시
+        # 전용이고 "OS 무관 렌더"가 계약이므로 판정도 OS 무관이어야 한다.
+        drive_match = re.match(r"[A-Za-z]:(?=/|$)", norm)
+        if drive_match:
+            root, rest = drive_match.group(0), norm[drive_match.end():].lstrip("/")
         elif norm.startswith("/"):
             root, rest = "", norm.lstrip("/")
         else:
