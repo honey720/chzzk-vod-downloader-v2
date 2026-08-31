@@ -278,6 +278,105 @@ class TestResolutionRow:
         )
 
 
+def _make_widget_with_reps(qapp, reps, width=900) -> ContentItemWidget:
+    """해상도 목록을 지정해 대기 카드를 만든다 — 개수가 다른 카드를 섞어 재기 위함."""
+    item = ContentItem(
+        "https://chzzk.naver.com/video/1",
+        {"title": "제목", "category": "", "channelName": "채널", "createdDate": "", "duration": 3600},
+        [[r, f"u{r}"] for r in reps], None, "", "C:/dl", "video", None,
+    )
+    item.downloadState = DownloadState.WAITING
+    item.total_size = "711.02 MB"
+    widget = ContentItemWidget(item, 0)
+    widget.addRepresentationButtons()
+    widget.setData(item, 0)
+    _at_width(widget, width)
+    return widget
+
+
+def _visible_pills(widget) -> list[str]:
+    return [b.text() for b in widget.buttons if b.isVisible()]
+
+
+class TestResolutionPillsDescending:
+    """해상도 pill은 **내림차순**(높은 해상도가 왼쪽) — #245 오너 확정.
+
+    기본 선택이 최고 해상도라, 오름차순이면 선택 pill이 맨 오른쓸에 놓여
+    해상도 개수가 다른 카드(VOD 3개 / 클립 2개) 사이에서 선택 표시의 x가
+    지그재그로 흩어졸다. 내림차순이면 기본 상태에서 항상 맨 앞 한 줄이다.
+    ⚠️ 순서는 고정 — 클릭해도 pill이 움직이지 않는다(연속으로 눌러볼 수
+    있어야 한다). 선택만 바뀐다.
+    """
+
+    def test_pills_are_ordered_high_to_low(self, qapp):
+        widget = _make_widget_with_reps(qapp, (480, 1080, 720))  # API 입력 순서와 무관
+        assert [b.text() for b in widget.buttons] == ["1080p", "720p", "480p"]
+
+    def test_default_selection_is_the_first_pill(self, qapp):
+        widget = _make_widget_with_reps(qapp, (480, 1080, 720))
+        selected = [b for b in widget.buttons if not b.isEnabled()]
+        assert selected == [widget.buttons[0]], "기본 선택(최고 해상도)이 첫 pill이 아니다"
+        assert str(widget.item.resolution) == "1080"
+
+    @pytest.mark.parametrize("width", WIDTHS)
+    def test_selected_pill_x_is_identical_across_cards_with_different_counts(self, qapp, width):
+        """3개짜리(VOD)와 2개짜리(클립)를 섞어도 기본 선택 pill의 x가 같다 —
+        목록에서 선택 표시가 한 줄로 선다."""
+        three = _make_widget_with_reps(qapp, (1080, 720, 480), width)
+        two = _make_widget_with_reps(qapp, (1080, 720), width)
+        sel3 = next(b for b in three.buttons if not b.isEnabled())
+        sel2 = next(b for b in two.buttons if not b.isEnabled())
+        assert sel3.x() == sel2.x(), (
+            f"폭 {width}px에서 선택 pill x가 3개 카드 {sel3.x()} / 2개 카드 {sel2.x()} — "
+            "지그재그다(오름차순이면 선택이 맨 오른쓸이라 개수에 따라 움직인다)"
+        )
+        assert sel3.x() == three.titleLabel.x(), "선택 pill이 컨텐츠 열 기준선에 있지 않다"
+
+    def test_clicking_another_pill_does_not_reorder(self, qapp):
+        widget = _make_widget_with_reps(qapp, (1080, 720, 480))
+        order_before = [b.text() for b in widget.buttons]
+        xs_before = [b.x() for b in widget.buttons]
+        widget.buttons[2].click()  # 480p 선택
+        QApplication.processEvents()
+        assert [b.text() for b in widget.buttons] == order_before
+        assert [b.x() for b in widget.buttons] == xs_before, "선택했다고 pill이 움직였다 — 순서는 고정이다"
+        assert not widget.buttons[2].isEnabled() and widget.buttons[0].isEnabled()
+
+
+class TestPillsFoldLowResolutionFirst:
+    """폭이 모자라면 **오른쪽(저화질)부터** 접는다 — "좁으면 덜 중요한 것부터".
+
+    실제 앱은 창 최소폭(640) 덕에 pill 3개가 접힐 일이 없다 — 접힘은
+    해상도 개수가 늘거나(상한 미상, SPEC §9) 경로 라벨이 함께 뜨는 좁은
+    카드에서 생긴다. 그래서 pill을 많이 넣은 카드를 좁은 폭에서 잰다.
+    """
+
+    MANY = (2160, 1440, 1080, 720, 480, 360, 240, 144)
+
+    def test_all_pills_visible_when_there_is_room(self, qapp):
+        widget = _make_widget_with_reps(qapp, self.MANY, 1600)
+        assert _visible_pills(widget) == [f"{r}p" for r in self.MANY]
+
+    def test_narrow_card_hides_the_lowest_resolutions_first(self, qapp):
+        widget = _make_widget_with_reps(qapp, self.MANY, 560)
+        visible = _visible_pills(widget)
+        assert 0 < len(visible) < len(self.MANY), f"좁은 카드에서 접힘이 일어나지 않는다: {visible}"
+        # 보이는 것은 항상 앞쪽(고화질) 연속 구간이다 — 1080p가 먼저 사라지면 회귀
+        assert visible == [f"{r}p" for r in self.MANY[: len(visible)]], visible
+        assert "1080p" in visible and f"{self.MANY[-1]}p" not in visible
+
+    def test_visible_pills_stay_inside_the_row(self, qapp):
+        widget = _make_widget_with_reps(qapp, self.MANY, 560)
+        shown = [b for b in widget.buttons if b.isVisible()]
+        assert _right(shown[-1]) <= widget.fileSizeLabel.x(), "보이는 pill이 파일 크기 라벨을 침범한다"
+
+    def test_pills_come_back_when_the_card_widens(self, qapp):
+        widget = _make_widget_with_reps(qapp, self.MANY, 560)
+        assert len(_visible_pills(widget)) < len(self.MANY)
+        _at_width(widget, 1600)
+        assert _visible_pills(widget) == [f"{r}p" for r in self.MANY], "넓혀도 접힌 pill이 돌아오지 않는다"
+
+
 class TestPathShownOnlyWhenDifferent:
     """경로는 전역 설정 경로와 다를 때만 3행에 보인다(#245) — 같은 값을
     카드마다 반복하는 것이 정보 과다의 큰 몫이었다. 다르다는 것 자체가

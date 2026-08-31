@@ -56,6 +56,30 @@
            </property>
           </widget>
          </item>
+        </layout>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="pathRowLayout">
+         <property name="spacing">
+          <number>8</number>
+         </property>
+         <item>
+          <widget class="QLineEdit" name="downloadPathInput">
+           <property name="placeholderText">
+            <string>Enter download path</string>
+           </property>
+           <property name="clearButtonEnabled">
+            <bool>true</bool>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="downloadPathButton">
+           <property name="text">
+            <string>Find path</string>
+           </property>
+          </widget>
+         </item>
          <item>
           <widget class="QPushButton" name="settingButton">
            <property name="minimumSize">
@@ -78,30 +102,6 @@
            </property>
            <property name="role" stdset="0">
             <string notr="true">icon</string>
-           </property>
-          </widget>
-         </item>
-        </layout>
-       </item>
-       <item>
-        <layout class="QHBoxLayout" name="pathRowLayout">
-         <property name="spacing">
-          <number>8</number>
-         </property>
-         <item>
-          <widget class="QLineEdit" name="downloadPathInput">
-           <property name="placeholderText">
-            <string>Enter download path</string>
-           </property>
-           <property name="clearButtonEnabled">
-            <bool>true</bool>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <widget class="QPushButton" name="downloadPathButton">
-           <property name="text">
-            <string>Find path</string>
            </property>
           </widget>
          </item>
@@ -195,9 +195,9 @@
  <tabstops>
   <tabstop>urlInput</tabstop>
   <tabstop>fetchButton</tabstop>
-  <tabstop>settingButton</tabstop>
   <tabstop>downloadPathInput</tabstop>
   <tabstop>downloadPathButton</tabstop>
+  <tabstop>settingButton</tabstop>
   <tabstop>listView</tabstop>
   <tabstop>clearFinishedButton</tabstop>
   <tabstop>downloadButton</tabstop>

@@ -16,23 +16,23 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-#: 3행 슬롯 텍스트의 상태 접두(완료/실패 표시). 텍스트 안에 들어가는 글자라
-#: 폰트 문자를 쓴다 — 둘 다 기본 문장부호 블록(Dingbats)의 흔한 글리프다.
-#: 색은 파이썬이 아니라 전역 QSS `#statusLabel[state=...]`가 theme.py
-#: 토큰으로 정한다.
-#: 1행 우측의 조작·삭제 아이콘은 문자가 아니라 content/icons.py가 그리는
-#: 도형이다(#245 — ‖(U+2016)은 문장부호라 일시정지로 안 읽히고, 글리프
-#: 모양은 macOS·Linux 실기 없이는 확인할 길이 없었다).
+# 3행 슬롯 텍스트의 상태 접두(완료/실패 표시). 텍스트 안에 들어가는 글자라
+# 폰트 문자를 쓴다 — 둘 다 기본 문장부호 블록(Dingbats)의 흔한 글리프다.
+# 색은 파이썬이 아니라 전역 QSS `#statusLabel[state=...]`가 theme.py
+# 토큰으로 정한다.
+# 1행 우측의 조작·삭제 아이콘은 문자가 아니라 content/icons.py가 그리는
+# 도형이다(#245 — ‖(U+2016)은 문장부호라 일시정지로 안 읽히고, 글리프
+# 모양은 macOS·Linux 실기 없이는 확인할 길이 없었다).
 STATE_ICON = {
     "finished": "✓",  # 체크 — 완료 (U+2713)
     "failed": "✕",    # 엑스 — 실패 (U+2715)
 }
 
-#: 전역 설정의 다운로드 경로 — 카드는 자기 경로가 이 값과 **다를 때만**
-#: 3행에 경로를 표시한다(#245 — 같은 값을 카드마다 반복 표시하는 것이
-#: 정보 과다의 큰 몫이었다. 다르다는 것 자체가 정보다).
-#: application/mainWindow.py가 시작 시·경로 변경 시 밀어 넣는다.
-#: 모듈 전역을 호출 시점에 조회하므로 테스트에서 monkeypatch 가능하다.
+# 전역 설정의 다운로드 경로 — 카드는 자기 경로가 이 값과 **다를 때만**
+# 3행에 경로를 표시한다(#245 — 같은 값을 카드마다 반복 표시하는 것이
+# 정보 과다의 큰 몫이었다. 다르다는 것 자체가 정보다).
+# application/mainWindow.py가 시작 시·경로 변경 시 밀어 넣는다.
+# 모듈 전역을 호출 시점에 조회하므로 테스트에서 monkeypatch 가능하다.
 _global_download_path = ""
 
 
@@ -40,6 +40,31 @@ def set_global_download_path(path: str) -> None:
     """전역 다운로드 경로를 갱신한다 — 카드의 경로 표시 여부 판단 기준."""
     global _global_download_path
     _global_download_path = path
+
+
+def _resolution_key(resolution) -> int:
+    """해상도 값을 정렬용 정수로 — API는 int(min(w,h))를 주지만 문자열("1080")도 받는다."""
+    try:
+        return int(resolution)
+    except (TypeError, ValueError):
+        return 0
+
+
+class _PillButton(QPushButton):
+    """해상도 pill — 최소폭을 0으로 신고해 카드 최소폭을 부풀리지 않는다 (#245).
+
+    pill 폭이 카드 최소폭에 들어가면 pill이 많을 때 카드가 뷰포트보다
+    넓어져 **오른쪽이 잘리기만 하고 접히지 않는다**(QScrollArea는 최소폭
+    이하로 못 줄인다 — 실측). 최소폭을 빼면 레이아웃이 카드를 뷰포트 폭에
+    맞추고, 어떤 pill을 접을지는 ContentItemWidget._foldPills가 정한다.
+    sizeHint(자연 폭)는 그대로라 자리가 있을 때는 텍스트 폭으로 놓인다.
+    """
+
+    def minimumSizeHint(self):
+        hint = self.sizeHint()
+        hint.setWidth(0)
+        return hint
+
 
 class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     """컨텐츠 정보를 표시하는 커스텀 위젯"""
@@ -114,6 +139,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._placeProgressBar()
+        self._foldPills()
 
     def _clampChannelMinWidth(self) -> None:
         """채널명 최소폭을 "자연 폭과 64px 중 작은 쪽"으로 맞춘다.
@@ -180,24 +206,71 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         # LOADING 자리표시 아이템은 해상도 목록이 아직 없다 (#124)
         if not self.item.unique_reps:
             return
+        # 표시 순서는 **내림차순**(높은 해상도가 왼쓸) — #245 오너 확정.
+        # ①기본 선택이 최고 해상도라, 오름차순이면 선택 pill이 맨 오른쪽에
+        # 놓여 해상도 개수가 다른 카드(VOD 3개/클립 2개) 사이에서 선택
+        # 표시의 x가 지그재그로 흩어진다. 내림차순이면 항상 맨 앞 한 줄이다.
+        # ②폭이 모자라 접힐 때 저화질부터 사라진다(_foldPills) — "좁으면 덜
+        # 중요한 것부터 접는다". core/api·content/network의 내부 정렬(오름차순,
+        # 마지막이 자동 선택)은 건드리지 않고 표시 계층에서만 뒤집는다.
+        # ⚠️ 순서는 고정이다 — 클릭해도 pill을 앞으로 옮기지 않는다(옮기면
+        # 연속으로 눌러볼 수 없다). 선택만 바뀐다.
+        self.item.unique_reps.sort(key=lambda rep: _resolution_key(rep[0]), reverse=True)
         for unique_rep in self.item.unique_reps:
             # 크기 조회가 끝나기 전 표시 — "Unknown"은 실패로 읽혀 "확인 중"으로 표기 (#124)
             unique_rep.append(self.tr("Checking..."))  # 초기 값 설정
 
-        self.setresolutionUrlSize(self.item.unique_reps[-1][0], self.item.unique_reps[-1][1], -1)
-
         for index, (resolution, base_url, _) in enumerate(self.item.unique_reps):
             self.addRepresentationButton(resolution, base_url, index)
+
+        # 기본 선택 = 최고 해상도 = 내림차순의 첫 pill. 버튼을 넘겨 선택
+        # 표시(비활성=채움)까지 바로 건다 — 크기 조회가 끝나기 전에도 무엇이
+        # 골라져 있는지 보여야 하고, 그래야 카드마다 선택 x가 한 줄로 선다.
+        self.setresolutionUrlSize(self.item.unique_reps[0][0], self.item.unique_reps[0][1], 0, self.buttons[0])
 
         # pill(높이 pillHeight)이 3행에 꽂히면 컨텐츠 열이 몇 px 자랄 수
         # 있다 — 썸네일이 그 높이를 계속 가득 채우도록 다시 맞춘다(#244).
         self._sizeThumbnail()
+        self._foldPills()
+
+    def _foldPills(self) -> None:
+        """3행에 pill이 다 안 들어가면 **오른쪽(저화질)부터** 숨긴다 (#245).
+
+        pill은 폭이 고정이라 줄일 수 없다 — 대신 "좁으면 덜 중요한 것부터
+        접는다". 내림차순 정렬이라 오른쓸 끝이 가장 낮은 해상도다. 남은
+        자리는 3행 폭에서 우측 군집(경로·파일 크기)과 간격을 뺀 값이고,
+        pill을 왼쪽부터 누적해 들어가는 만큼만 보인다. 대기가 아닐 때는
+        슬롯이 pill을 안 쓰므로 applyStateStyle의 가시성 규칙에 맡긴다.
+        """
+        if not getattr(self, "buttons", None) or not self._slotShowsPills():
+            return
+        layout = self.resolutionLayout
+        spacing = layout.spacing()
+        row_width = layout.geometry().width()
+        if row_width <= 0:
+            return  # 아직 배치 전 — resizeEvent에서 다시 온다
+        # 우측 군집 — 파일 크기는 자연 폭을 지킨다(pill이 그 자리를 먹으면 안
+        # 된다), 경로는 원래 말줄임되는 라벨이라 최소폭만 남긴다.
+        right_cluster = 0
+        if self.fileSizeLabel.isVisibleTo(self):
+            right_cluster += self.fileSizeLabel.sizeHint().width() + spacing
+        if self.directoryLabel.isVisibleTo(self):
+            right_cluster += self.directoryLabel.minimumSizeHint().width() + spacing
+        available = row_width - right_cluster
+        used = 0
+        for button in self.buttons:
+            width = button.sizeHint().width()
+            fits = used + width <= available
+            button.setVisible(fits)
+            used += width + spacing if fits else 0
+            if not fits:
+                available = -1  # 하나가 안 들어가면 그 뒤(더 낮은 화질)도 전부 접는다
 
     def addRepresentationButton(self, resolution, base_url, index):
         """
         해상도 버튼을 추가하고, 비동기로 파일 사이즈를 헤더에서 가져와 버튼 텍스트를 업데이트한다.
         """
-        button = QPushButton(f'{resolution}p', self)
+        button = _PillButton(f'{resolution}p', self)
         button.clicked.connect(lambda: self.setresolutionUrlSize(resolution, base_url, index, button))
         # pill 모양·선택 표시는 전역 QSS의 [role="resolution"] 규칙이 그린다 (#227).
         # QSS는 `.className` 선택자를 지원하지 않아 조용히 무시하므로, 동적
@@ -250,7 +323,11 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         if size_text:
             self.item.unique_reps[index][-1] = size_text
             self.buttons[index].setToolTip(size_text)
-        if len(self.item.unique_reps) - 1 == index:
+        if index == 0:
+            # 기본 선택(최고 해상도 = 내림차순 첫 항목)의 크기가 도착하면 그
+            # 값으로 파일 크기 표시를 채운다 — 유저가 이미 다른 pill을 골랐으면
+            # setresolutionUrlSize가 대기 상태에서만 동작하므로 그 선택을 덮는다는
+            # 뜻은 아니다(기존 동작 그대로, 항목 위치만 [-1]→[0]).
             resolution, base_url = self.item.unique_reps[index][0], self.item.unique_reps[index][1]
             self.setresolutionUrlSize(resolution, base_url, index, self.buttons[index])
 
@@ -444,7 +521,10 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         elif self.item.downloadState == DownloadState.PAUSED:
             # 진행분이 먼저, 상태가 뒤 — "54% · 일시정지됨". 진행 슬롯과 같은
             # 자리에서 숫자가 그대로 이어지고, 뒤 문구만 바뀐다.
-            self.statusLabel.setText(f"{item.download_progress}% · {self.tr('Paused')}")
+            # ⚠️ tr()은 f-string 밖에 둔다 — pyside6-lupdate는 f-string 중괄호
+            # 안의 tr()을 못 읽어 -no-obsolete 재생성에서 항목이 지워진다(실측).
+            paused_text = self.tr("Paused")
+            self.statusLabel.setText(f"{item.download_progress}% · {paused_text}")
             self.fileSizeLabel.setText(self._withResolution(self._sizeText(item)))
 
         elif self.item.downloadState == DownloadState.FINISHED:
@@ -545,6 +625,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.retryButton.setVisible(raw == DownloadState.FAILED)
         self.fileSizeLabel.setVisible(raw != DownloadState.FAILED)
         self._updatePathVisibility()
+        self._foldPills()  # pill 전부 켠 뒤 폭에 안 맞는 저화질부터 다시 접는다
 
     def _updatePathVisibility(self) -> None:
         """경로는 전역 설정 경로와 다를 때만 보인다 (#245).

@@ -51,15 +51,6 @@ class Ui_VodDownloader(object):
 
         self.urlRowLayout.addWidget(self.fetchButton)
 
-        self.settingButton = QPushButton(self.headerFrame)
-        self.settingButton.setObjectName(u"settingButton")
-        self.settingButton.setMinimumSize(QSize(32, 32))
-        self.settingButton.setMaximumSize(QSize(32, 32))
-        self.settingButton.setText(u"\u2699")
-        self.settingButton.setProperty(u"role", u"icon")
-
-        self.urlRowLayout.addWidget(self.settingButton)
-
 
         self.headerFrameLayout.addLayout(self.urlRowLayout)
 
@@ -76,6 +67,23 @@ class Ui_VodDownloader(object):
         self.downloadPathButton.setObjectName(u"downloadPathButton")
 
         self.pathRowLayout.addWidget(self.downloadPathButton)
+
+        # 설정(⚙)은 2행(경로 줄) 버튼 오른쪽 — #245 오너 확정. 1행(URL 줄)에
+        # 있으면 [VOD 추가]보다 오른쪽으로 튀어나와 상단 두 행의 우측 끝선이
+        # 어긋나고, "VOD를 추가하는 곳"에 전역 설정이 섞인다. 경로 찾기 옆이라
+        # "환경 설정"끼리 인접한다. 하단으로 내리는 안은 채택하지 않는다 —
+        # 설정 안의 쿠키는 성인·멤버십 VOD를 받으려면 반드시 한 번은 찾아야
+        # 해서 하단 muted 묶음에 두면 못 찾는다(설정 화면 .ui 재작성 때 재검토).
+        # 남는 공간은 각 행에서 입력창 하나만 흡수한다(버튼들은 고정 폭) —
+        # tests/unit/test_header_layout.py 게이트.
+        self.settingButton = QPushButton(self.headerFrame)
+        self.settingButton.setObjectName(u"settingButton")
+        self.settingButton.setMinimumSize(QSize(32, 32))
+        self.settingButton.setMaximumSize(QSize(32, 32))
+        self.settingButton.setText(u"⚙")
+        self.settingButton.setProperty(u"role", u"icon")
+
+        self.pathRowLayout.addWidget(self.settingButton)
 
 
         self.headerFrameLayout.addLayout(self.pathRowLayout)
@@ -132,10 +140,10 @@ class Ui_VodDownloader(object):
 
         VodDownloader.setCentralWidget(self.centralwidget)
         QWidget.setTabOrder(self.urlInput, self.fetchButton)
-        QWidget.setTabOrder(self.fetchButton, self.settingButton)
-        QWidget.setTabOrder(self.settingButton, self.downloadPathInput)
+        QWidget.setTabOrder(self.fetchButton, self.downloadPathInput)
         QWidget.setTabOrder(self.downloadPathInput, self.downloadPathButton)
-        QWidget.setTabOrder(self.downloadPathButton, self.listView)
+        QWidget.setTabOrder(self.downloadPathButton, self.settingButton)
+        QWidget.setTabOrder(self.settingButton, self.listView)
         QWidget.setTabOrder(self.listView, self.clearFinishedButton)
         QWidget.setTabOrder(self.clearFinishedButton, self.downloadButton)
         QWidget.setTabOrder(self.downloadButton, self.stopButton)
