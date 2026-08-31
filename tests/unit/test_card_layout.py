@@ -343,38 +343,205 @@ class TestResolutionPillsDescending:
         assert not widget.buttons[2].isEnabled() and widget.buttons[0].isEnabled()
 
 
-class TestPillsFoldLowResolutionFirst:
-    """폭이 모자라면 **오른쪽(저화질)부터** 접는다 — "좁으면 덜 중요한 것부터".
+class TestPillsNeverFold:
+    """해상도 pill은 **어떤 폭에서도 전부 보인다**(#245 확정 — "접지 않는다").
 
-    실제 앱은 창 최소폭(640) 덕에 pill 3개가 접힐 일이 없다 — 접힘은
-    해상도 개수가 늘거나(상한 미상, SPEC §9) 경로 라벨이 함께 뜨는 좁은
-    카드에서 생긴다. 그래서 pill을 많이 넣은 카드를 좁은 폭에서 잰다.
+    앞선 접힘 구현(저화질부터 숨김)은 이 결정으로 제거됐다. 3행에서 줄어드는
+    것은 다운로드 경로 하나뿐이다(TestRowThreePriority). pill이 많아 카드
+    최소폭을 넘기면 카드가 줄지 않을 뿐, pill을 숨기지 않는다.
     """
 
     MANY = (2160, 1440, 1080, 720, 480, 360, 240, 144)
 
-    def test_all_pills_visible_when_there_is_room(self, qapp):
+    @pytest.mark.parametrize("width", (560, 900, 1600))
+    def test_all_pills_stay_visible_at_every_width(self, qapp, width):
+        widget = _make_widget_with_reps(qapp, self.MANY, width)
+        assert _visible_pills(widget) == [f"{r}p" for r in self.MANY], (
+            f"폭 {width}px에서 pill이 접혔다: {_visible_pills(widget)}"
+        )
+
+    def test_pill_widths_do_not_shrink_when_the_card_narrows(self, qapp):
         widget = _make_widget_with_reps(qapp, self.MANY, 1600)
-        assert _visible_pills(widget) == [f"{r}p" for r in self.MANY]
+        wide = [b.width() for b in widget.buttons]
+        _at_width(widget, 560)
+        assert [b.width() for b in widget.buttons] == wide, "좁아지자 pill이 쥐어짜였다 — 줄어드는 것은 경로만이어야 한다"
 
-    def test_narrow_card_hides_the_lowest_resolutions_first(self, qapp):
-        widget = _make_widget_with_reps(qapp, self.MANY, 560)
-        visible = _visible_pills(widget)
-        assert 0 < len(visible) < len(self.MANY), f"좁은 카드에서 접힘이 일어나지 않는다: {visible}"
-        # 보이는 것은 항상 앞쪽(고화질) 연속 구간이다 — 1080p가 먼저 사라지면 회귀
-        assert visible == [f"{r}p" for r in self.MANY[: len(visible)]], visible
-        assert "1080p" in visible and f"{self.MANY[-1]}p" not in visible
 
-    def test_visible_pills_stay_inside_the_row(self, qapp):
-        widget = _make_widget_with_reps(qapp, self.MANY, 560)
-        shown = [b for b in widget.buttons if b.isVisible()]
-        assert _right(shown[-1]) <= widget.fileSizeLabel.x(), "보이는 pill이 파일 크기 라벨을 침범한다"
+class TestRowThreePriority:
+    """3행 우선순위(#245 확정): ①우측 군집(파일 크기/재생 시간) 확보 → ②해상도
+    pill 전부 → ③남는 폭은 전부 경로(ElideMiddle) → ④최소치 아래면 경로는
+    아이콘만(클릭 대상 유지). **줄어드는 것은 다운로드 경로 하나뿐이다.**"""
 
-    def test_pills_come_back_when_the_card_widens(self, qapp):
-        widget = _make_widget_with_reps(qapp, self.MANY, 560)
-        assert len(_visible_pills(widget)) < len(self.MANY)
+    FIVE = (2160, 1440, 1080, 720, 480)
+    LONG_PATH = "D:/vod/archive/2026/summer/finals/T1-vs-GEN-full-set-highlights-and-interviews"
+
+    def _tight(self, qapp, width, *, segment=False, path=LONG_PATH):
+        """`width=None`이면 카드의 **최소폭**까지 줄인다 — 그때 경로는 최소
+        힌트(말줄임표 하나 폭)만 받으므로 아이콘 모드가 폰트와 무관하게 보장된다."""
+        widget = _make_widget_with_reps(qapp, self.FIVE, width or 900)
+        if segment:
+            widget.item.content_type = "m3u8"  # 크기 조회 전 → 그 자리에 재생 시간
+        widget.item.download_path = path
+        widget.setData(widget.item, 0)
+        _at_width(widget, width or widget.minimumSizeHint().width())
+        return widget
+
+    def _rendered(self, label) -> str:
+        from PySide6.QtWidgets import QLabel
+
+        return QLabel.text(label)
+
+    @pytest.mark.parametrize("width", (900, 700, 640, 560))
+    def test_file_size_is_never_elided_with_five_pills(self, qapp, width):
+        """지금 실패하던 조건 — 해상도 5개에서 파일 크기가 잘리면 안 된다."""
+        widget = self._tight(qapp, width)
+        assert self._rendered(widget.fileSizeLabel) == widget.fileSizeLabel.text(), (
+            f"폭 {width}px에서 파일 크기가 잘렸다: {self._rendered(widget.fileSizeLabel)!r}"
+        )
+
+    @pytest.mark.parametrize("width", (900, 700, 640, 560))
+    def test_duration_is_never_elided_either(self, qapp, width):
+        """크기 조회 전에는 같은 자리에 재생 시간이 들어온다 — 그것도 온전해야 한다."""
+        widget = self._tight(qapp, width, segment=True)
+        assert widget.fileSizeLabel.text().count(":") == 2, "세그먼트 기반 대기 카드는 재생 시간을 보여야 한다(전제)"
+        assert self._rendered(widget.fileSizeLabel) == widget.fileSizeLabel.text(), (
+            f"폭 {width}px에서 재생 시간이 잘렸다: {self._rendered(widget.fileSizeLabel)!r}"
+        )
+
+    def test_reserved_width_covers_the_longest_case(self, qapp):
+        """확보 폭은 "가장 긴 경우"(재생 시간 vs 크기) 기준이다 — 텍스트가 크기에서
+        시간으로 바뀌어도 라벨 폭이 늘 필요가 없다."""
+        widget = self._tight(qapp, 900)
+        metrics = widget.fileSizeLabel.fontMetrics()
+        duration = metrics.horizontalAdvance("00:00:00")
+        assert widget.fileSizeLabel.minimumWidth() >= duration, "재생 시간 폭을 확보하지 않았다"
+        assert widget.fileSizeLabel.width() >= widget.fileSizeLabel.minimumWidth()
+
+    def test_only_the_path_shrinks_as_the_card_narrows(self, qapp):
+        """폭을 계속 줄일 때 경로만 짧아지고 크기·pill은 불변이다."""
+        widget = self._tight(qapp, 1600)
+        size_w = widget.fileSizeLabel.width()
+        pills = [(b.x() - widget.buttons[0].x(), b.width()) for b in widget.buttons]
+        path_widths = []
+        for width in (1600, 900, 700, 640, 560, widget.minimumSizeHint().width()):
+            _at_width(widget, width)
+            assert widget.fileSizeLabel.width() == size_w, f"폭 {width}px에서 파일 크기 폭이 변했다"
+            assert self._rendered(widget.fileSizeLabel) == widget.fileSizeLabel.text()
+            assert [(b.x() - widget.buttons[0].x(), b.width()) for b in widget.buttons] == pills, (
+                f"폭 {width}px에서 pill 배치가 변했다"
+            )
+            path_widths.append(widget.directoryLabel.width() if widget.directoryLabel.isVisible() else 0)
+        assert all(a >= b for a, b in zip(path_widths, path_widths[1:])), (
+            f"경로 폭이 단조 감소하지 않는다: {path_widths}"
+        )
+        assert path_widths[0] > path_widths[-1], "좁혀도 경로가 줄지 않았다 — 전제 확인"
+
+    def test_path_collapses_to_an_icon_but_stays_clickable(self, qapp, monkeypatch):
+        """남는 폭이 최소치 아래면 경로는 아이콘만 남는다 — 텍스트가 사라져도
+        폴더 선택 진입점은 산다. 전역과 다르면 점 표시(folder_dot)."""
+        widget = self._tight(qapp, None)  # 최소폭 — 행 폭 − pill − 확보 폭 < 최소 텍스트 폭
+        assert widget.pathIconButton.isVisible(), "경로가 아이콘으로 접히지 않았다 — 전제(최소폭, 5 pill) 확인"
+        assert not widget.directoryLabel.isVisible()
+        assert widget.pathIconButton.iconName() == "folder_dot", "전역과 다른 경로인데 점 표시가 없다"
+        assert widget.pathIconButton.toolTip() == self.LONG_PATH
+        from content import widget as widget_mod
+
+        calls = []
+        monkeypatch.setattr(
+            widget_mod.QFileDialog, "getExistingDirectory",
+            staticmethod(lambda parent, caption, start, *a, **k: calls.append(start) or "E:/picked"),
+        )
+        widget.pathIconButton.click()
+        assert calls == [self.LONG_PATH], "아이콘 모드에서 클릭이 폴더 선택으로 이어지지 않는다"
+        assert widget.item.download_path == "E:/picked"
+
+    def test_icon_mode_is_decided_on_the_very_first_show(self, qapp):
+        """**이미 보이는 목록에 카드가 들어올 때**(실제 앱의 삽입 경로) 좁으면 첫
+        화면부터 아이콘이어야 한다.
+
+        첫 표시에서 카드의 resizeEvent는 자식 프레임 레이아웃이 활성화되기
+        **전에** 도착해 3행 폭이 0이다(Qt show_helper가 대기 중 Resize를 자식
+        표시 전에, showEvent를 자식 표시 후에 보낸다). 거기서 "배치 전"으로
+        끝내면 폭이 다시 안 바뀌는 한 판정이 영영 안 돈다 — 실기 갤러리 560px
+        에서 경로가 43px 텍스트로 남은 채 발견됐다. 창을 살짝 흔들면 고쳐지는
+        것이 증상이다(windows·offscreen 둘 다 재현)."""
+        from PySide6.QtWidgets import QVBoxLayout, QWidget
+
+        box = QWidget()
+        column = QVBoxLayout(box)
+        column.setContentsMargins(0, 0, 0, 0)
+        probe = _make_widget_with_reps(qapp, self.FIVE, 900)  # 최소폭을 알아내기 위한 견본
+        box.resize(probe.minimumSizeHint().width(), probe.sizeHint().height())
+        box.show()
+        QApplication.processEvents()
+        item = ContentItem(
+            "https://chzzk.naver.com/video/1",
+            {"title": "제목", "category": "", "channelName": "채널", "createdDate": "", "duration": 3600},
+            [[r, f"u{r}"] for r in self.FIVE], None, "", self.LONG_PATH, "video", None,
+        )
+        item.downloadState = DownloadState.WAITING
+        item.total_size = "711.02 MB"
+        widget = ContentItemWidget(item, 0)
+        widget.addRepresentationButtons()
+        widget.setData(item, 0)
+        column.addWidget(widget)  # 보이는 컨테이너가 카드를 (큐로) 처음 보인다
+        for _ in range(3):
+            QApplication.processEvents()
+        assert widget.isVisible() and widget.width() == box.width(), "전제: 카드가 컨테이너 폭으로 보인다"
+        assert widget.pathIconButton.isVisible() and not widget.directoryLabel.isVisible(), (
+            "첫 표시에서 경로가 아이콘으로 접히지 않았다 — 창을 흔들어야 고쳐지는 결함"
+        )
+
+    @pytest.mark.parametrize("width", (900, 640, 560))
+    def test_progress_slot_keeps_its_text_and_the_path_yields(self, qapp, width):
+        """대기 밖 상태에서도 같은 규칙 — 진행 슬롯("42% · 속도 · 남은 시간")은
+        잘리지 않고 **경로가 먼저 양보**한다(560px 실기에서 슬롯이 잘리고 경로가
+        남던 결함). 경로 라벨의 최대폭을 "행 폭 − 다른 항목"으로 씌워 보장한다."""
+        widget = _make_widget_with_reps(qapp, self.FIVE, 900)
+        item = widget.item
+        item.download_path = self.LONG_PATH  # 전역과 다름 → 진행 중에도 경로가 보인다
+        item.downloadState = DownloadState.RUNNING
+        item.resolution = "1080"
+        item.download_progress, item.download_speed, item.download_remain_time = 42, "12.3 MB/s", "00:03:21"
+        widget.setData(item, 0)
+        _at_width(widget, width)
+        assert self._rendered(widget.fileSizeLabel) == widget.fileSizeLabel.text()
+        assert widget.directoryLabel.isVisible() or widget.pathIconButton.isVisible(), "경로 진입점이 사라졌다"
+        # 전제: 경로를 아이콘까지 접었을 때 슬롯이 들어갈 자리가 있는가 — 폰트에
+        # 따라(offscreen은 크기 라벨이 실기의 3배) 슬롯 자체가 행보다 길 수 있다.
+        layout = widget.resolutionLayout
+        room = (
+            layout.geometry().width()
+            - widget.fileSizeLabel.minimumWidth()
+            - widget.pathIconButton.width()
+            - 3 * layout.spacing()
+        )
+        if widget.statusLabel.sizeHint().width() <= room:
+            assert self._rendered(widget.statusLabel) == widget.statusLabel.text(), (
+                f"폭 {width}px에서 진행 슬롯이 잘렸다: {self._rendered(widget.statusLabel)!r} — 줄어드는 것은 경로뿐이어야 한다"
+            )
+        else:
+            assert widget.pathIconButton.isVisible() and not widget.directoryLabel.isVisible(), (
+                f"폭 {width}px에서 슬롯이 행보다 긴데 경로가 텍스트를 붙들고 있다 — 경로가 먼저 양보해야 한다"
+            )
+
+    def test_icon_has_no_dot_when_the_path_matches_global(self, qapp):
+        widget = self._tight(qapp, None, path="C:/dl")  # 전역과 같음
+        widget.pathIconButton.setVisible(True)  # 판정과 무관하게 도형만 확인
+        assert widget.pathIconButton.iconName() == "folder"
+
+    def test_path_text_recovers_when_the_card_widens_again(self, qapp):
+        """되먹임 루프 회귀 게이트 — 한 번 아이콘/말줄임까지 줄었다가 넓히면
+        경로가 원래 길이(축약형 전문)로 돌아온다."""
+        widget = self._tight(qapp, None)
+        assert widget.pathIconButton.isVisible()
         _at_width(widget, 1600)
-        assert _visible_pills(widget) == [f"{r}p" for r in self.MANY], "넓혀도 접힌 pill이 돌아오지 않는다"
+        QApplication.processEvents()
+        assert widget.directoryLabel.isVisible() and not widget.pathIconButton.isVisible()
+        assert self._rendered(widget.directoryLabel) == widget.directoryLabel.text(), (
+            f"넓혔는데 경로가 회복되지 않았다: {self._rendered(widget.directoryLabel)!r}"
+        )
+        assert widget.directoryLabel.text() == "D:/…/T1-vs-GEN-full-set-highlights-and-interviews"
 
 
 class TestPathVisibilityRule:

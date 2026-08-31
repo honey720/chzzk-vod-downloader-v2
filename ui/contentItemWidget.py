@@ -212,8 +212,25 @@ class Ui_ContentItemWidget(object):
 
         self.resolutionLayout.addWidget(self.directoryLabel)
 
+        # 경로 아이콘 — 3행 폭이 모자라 경로 텍스트가 최소치 아래로 내려가면
+        # 라벨 대신 이 버튼만 남는다(#245). 텍스트가 사라져도 **클릭 대상(폴더
+        # 선택 진입점)은 남아야 한다.** 전역 경로와 다르면 folder_dot(점 표시).
+        self.pathIconButton = IconButton(self.contentFrame)
+        self.pathIconButton.setObjectName(u"pathIconButton")
+        self.pathIconButton.setMinimumSize(QSize(icon, icon))
+        self.pathIconButton.setMaximumSize(QSize(icon, icon))
+        self.pathIconButton.setProperty("role", u"icon")
+        self.pathIconButton.setVisible(False)
+
+        self.resolutionLayout.addWidget(self.pathIconButton)
+
+        # 파일 크기·재생 시간 — **어떤 폭에서도 말줄임하지 않는다**(#245). 폭은
+        # content/widget.py::_reserveFileSizeWidth가 "가장 긴 경우"(재생 시간
+        # 또는 해상도 접두 + 크기)로 먼저 확보하고, 3행에서 줄어드는 것은 경로
+        # 하나뿐이다. 오른쪽 정렬이라 확보 폭이 남아도 우측 끝선이 유지된다.
         self.fileSizeLabel = ElidingLabel(self.contentFrame)
         self.fileSizeLabel.setObjectName(u"fileSizeLabel")
+        self.fileSizeLabel.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         self.resolutionLayout.addWidget(self.fileSizeLabel)
 

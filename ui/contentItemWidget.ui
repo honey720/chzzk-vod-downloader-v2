@@ -166,7 +166,17 @@
              </widget>
             </item>
             <item>
+             <!-- #245: 경로 텍스트가 최소치 아래로 접히면 라벨 대신 남는 클릭 대상(폴더 선택) -->
+             <widget class="IconButton" name="pathIconButton">
+              <property name="minimumSize"><size><width>20</width><height>20</height></size></property>
+              <property name="maximumSize"><size><width>20</width><height>20</height></size></property>
+              <property name="visible"><bool>false</bool></property>
+              <property name="role" stdset="0"><string notr="true">icon</string></property>
+             </widget>
+            </item>
+            <item>
              <widget class="ElidingLabel" name="fileSizeLabel">
+             <property name="alignment"><set>Qt::AlignRight|Qt::AlignVCenter</set></property>
               <property name="toolTip"><string>File size</string></property>
               <property name="text"><string>File size</string></property>
              </widget>

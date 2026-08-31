@@ -34,6 +34,9 @@ STATE_ICON = {
 # 모듈 전역을 호출 시점에 조회하므로 테스트에서 monkeypatch 가능하다.
 _global_download_path = ""
 
+#: Qt의 QWIDGETSIZE_MAX(PySide6가 노출하지 않음) — 최대폭 제한을 푸는 값.
+_NO_MAX_WIDTH = (1 << 24) - 1
+
 
 def set_global_download_path(path: str) -> None:
     """전역 다운로드 경로를 갱신한다 — 카드의 경로 표시 여부 판단 기준."""
@@ -85,21 +88,6 @@ def _resolution_key(resolution) -> int:
     except (TypeError, ValueError):
         return 0
 
-
-class _PillButton(QPushButton):
-    """해상도 pill — 최소폭을 0으로 신고해 카드 최소폭을 부풀리지 않는다 (#245).
-
-    pill 폭이 카드 최소폭에 들어가면 pill이 많을 때 카드가 뷰포트보다
-    넓어져 **오른쪽이 잘리기만 하고 접히지 않는다**(QScrollArea는 최소폭
-    이하로 못 줄인다 — 실측). 최소폭을 빼면 레이아웃이 카드를 뷰포트 폭에
-    맞추고, 어떤 pill을 접을지는 ContentItemWidget._foldPills가 정한다.
-    sizeHint(자연 폭)는 그대로라 자리가 있을 때는 텍스트 폭으로 놓인다.
-    """
-
-    def minimumSizeHint(self):
-        hint = self.sizeHint()
-        hint.setWidth(0)
-        return hint
 
 
 class ContentItemWidget(QWidget, Ui_ContentItemWidget):
@@ -175,7 +163,21 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._placeProgressBar()
-        self._foldPills()
+        self._layoutPathLabel()
+
+    def showEvent(self, event):
+        """첫 표시 직후 3행 판정을 한 번 더 돌린다 (#245).
+
+        첫 표시에서 resizeEvent는 자식 contentFrame의 레이아웃이 활성화되기
+        **전에** 도착한다 — Qt의 show_helper가 대기 중이던 Resize를 자식 표시
+        전에 보내고, showEvent는 자식 표시 **후에** 보낸다. 그때 3행 폭이 0이라
+        _layoutPathLabel이 "배치 전"으로 끝나면, 이후 크기가 안 바뀌는 한 판정이
+        영영 안 돈다(보이는 목록에 카드를 추가하는 실제 경로에서 좁은 창인데
+        경로가 아이콘으로 접히지 않고, 창을 흔들어야 고쳐지는 결함 — 실기·
+        offscreen 둘 다 재현). showEvent 시점엔 자식 레이아웃이 잡혀 있다.
+        """
+        super().showEvent(event)
+        self._layoutPathLabel()
 
     def _clampChannelMinWidth(self) -> None:
         """채널명 최소폭을 "자연 폭과 64px 중 작은 쪽"으로 맞춘다.
@@ -225,12 +227,14 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """경로 라벨 — 표시는 축약형, 전문은 툴팁 (#245)."""
         self.directoryLabel.setText(abbreviate_path(self.item.download_path))
         self.directoryLabel.setToolTip(self.item.download_path)
+        self.pathIconButton.setToolTip(self.item.download_path)
 
     def setupSignals(self):
         self.deleteButton.clicked.connect(self.requestDelete)
         self.titleLabel.mousePressEvent = self.startTitleEditing
         self.titleEdit.editingFinished.connect(self.finishTitleEditing)
         self.directoryLabel.mousePressEvent = self.choosePath
+        self.pathIconButton.clicked.connect(self.choosePath)  # 아이콘만 남아도 같은 진입점
         self.openDirectoryButton.clicked.connect(self.requestOpenDir)
         self.pauseButton.clicked.connect(self.pauseRequest.emit)
         self.retryButton.clicked.connect(self.retryRequest.emit)
@@ -248,9 +252,10 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         # ①기본 선택이 최고 해상도라, 오름차순이면 선택 pill이 맨 오른쪽에
         # 놓여 해상도 개수가 다른 카드(VOD 3개/클립 2개) 사이에서 선택
         # 표시의 x가 지그재그로 흩어진다. 내림차순이면 항상 맨 앞 한 줄이다.
-        # ②폭이 모자라 접힐 때 저화질부터 사라진다(_foldPills) — "좁으면 덜
-        # 중요한 것부터 접는다". core/api·content/network의 내부 정렬(오름차순,
-        # 마지막이 자동 선택)은 건드리지 않고 표시 계층에서만 뒤집는다.
+        # ②pill은 어떤 폭에서도 전부 보인다(접지 않는다 — #245 확정). 3행에서
+        # 줄어드는 것은 다운로드 경로 하나뿐이다(_layoutPathLabel).
+        # core/api·content/network의 내부 정렬(오름차순, 마지막이 자동 선택)은
+        # 건드리지 않고 표시 계층에서만 뒤집는다.
         # ⚠️ 순서는 고정이다 — 클릭해도 pill을 앞으로 옮기지 않는다(옮기면
         # 연속으로 눌러볼 수 없다). 선택만 바뀐다.
         self.item.unique_reps.sort(key=lambda rep: _resolution_key(rep[0]), reverse=True)
@@ -269,46 +274,77 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         # pill(높이 pillHeight)이 3행에 꽂히면 컨텐츠 열이 몇 px 자랄 수
         # 있다 — 썸네일이 그 높이를 계속 가득 채우도록 다시 맞춘다(#244).
         self._sizeThumbnail()
-        self._foldPills()
+        self._layoutPathLabel()
 
-    def _foldPills(self) -> None:
-        """3행에 pill이 다 안 들어가면 **오른쪽(저화질)부터** 숨긴다 (#245).
+    def _reserveFileSizeWidth(self) -> None:
+        """3행 우측 군집(파일 크기 또는 재생 시간)의 폭을 **먼저** 확보한다 (#245).
 
-        pill은 폭이 고정이라 줄일 수 없다 — 대신 "좁으면 덜 중요한 것부터
-        접는다". 내림차순 정렬이라 오른쓸 끝이 가장 낮은 해상도다. 남은
-        자리는 3행 폭에서 우측 군집(경로·파일 크기)과 간격을 뺀 값이고,
-        pill을 왼쪽부터 누적해 들어가는 만큼만 보인다. 대기가 아닐 때는
-        슬롯이 pill을 안 쓰므로 applyStateStyle의 가시성 규칙에 맡긴다.
+        파일 크기·재생 시간은 어떤 폭에서도 말줄임하지 않는다 — 3행에서
+        줄어드는 것은 경로 하나뿐이다. 확보 폭은 **가장 긴 경우** 기준이다:
+        크기 조회 전에는 그 자리에 재생 시간("HH:MM:SS")이 들어오고 그것이
+        크기보다 길 수 있다(실기에서 잘리던 원인 중 하나). 대기 이후에는
+        확정 해상도 접두("1080p · ")가 붙으므로 그 틀도 후보에 넣는다.
+        ElidingLabel의 minimumSizeHint는 작게 고정돼 있어 setMinimumWidth로
+        바닥을 올려야 레이아웃이 이 라벨을 쥐어짜지 않는다.
         """
-        if not getattr(self, "buttons", None) or not self._slotShowsPills():
+        label = self.fileSizeLabel
+        metrics = label.fontMetrics()
+        item = self.item
+        candidates = [label.text(), strftime("%H:%M:%S", gmtime(item.duration or 0)), "0000.00 MB"]
+        if item.downloadState != DownloadState.WAITING and item.resolution:
+            candidates.append(f"{item.resolution}p · 0000.00 MB")
+        label.setMinimumWidth(max(metrics.horizontalAdvance(text) for text in candidates) + 4)
+
+    def _pathMinTextWidth(self) -> int:
+        """경로 텍스트가 의미 있게 남는 최소 폭 — 뿌리 + `…` + 마지막 폴더 여섯 자쯤."""
+        return self.directoryLabel.fontMetrics().horizontalAdvance("~/…/abcdef")
+
+    def _layoutPathLabel(self) -> None:
+        """3행 남는 폭을 경로에 주고, 최소치 아래면 경로를 아이콘만 남긴다 (#245).
+
+        우선순위: ①우측 군집(파일 크기/재생 시간) 확보 폭 ②해상도 pill 전부
+        (개수만큼) ③남는 폭 전부 = 경로(ElideMiddle). 남는 폭이 최소치
+        (_pathMinTextWidth) 아래면 텍스트 라벨을 숨기고 pathIconButton만 남긴다 —
+        **텍스트가 사라져도 클릭 대상(폴더 선택)은 남는다.** 판정은 라벨 자신의
+        폭이 아니라 "행 폭 − 다른 항목"으로만 하므로 표시 모드가 바뀌어도
+        되먹임이 없다. 창을 넓히면 텍스트로 돌아온다(ElidingLabel.sizeHint가
+        원문 기준이라 회복된다 — SPEC의 되먹임 함정).
+        """
+        if not getattr(self, "_pathShown", False):
+            self.directoryLabel.setVisible(False)
+            self.pathIconButton.setVisible(False)
             return
         layout = self.resolutionLayout
         spacing = layout.spacing()
         row_width = layout.geometry().width()
-        if row_width <= 0:
-            return  # 아직 배치 전 — resizeEvent에서 다시 온다
-        # 우측 군집 — 파일 크기는 자연 폭을 지킨다(pill이 그 자리를 먹으면 안
-        # 된다), 경로는 원래 말줄임되는 라벨이라 최소폭만 남긴다.
-        right_cluster = 0
-        if self.fileSizeLabel.isVisibleTo(self):
-            right_cluster += self.fileSizeLabel.sizeHint().width() + spacing
-        if self.directoryLabel.isVisibleTo(self):
-            right_cluster += self.directoryLabel.minimumSizeHint().width() + spacing
-        available = row_width - right_cluster
+        if row_width <= 0:  # 아직 배치 전 — resizeEvent에서 다시 온다
+            self.directoryLabel.setVisible(True)
+            self.pathIconButton.setVisible(False)
+            return
         used = 0
-        for button in self.buttons:
-            width = button.sizeHint().width()
-            fits = used + width <= available
-            button.setVisible(fits)
-            used += width + spacing if fits else 0
-            if not fits:
-                available = -1  # 하나가 안 들어가면 그 뒤(더 낮은 화질)도 전부 접는다
+        for button in getattr(self, "buttons", []):
+            if button.isVisibleTo(self):
+                used += button.sizeHint().width() + spacing
+        if self.statusLabel.isVisibleTo(self):
+            used += self.statusLabel.sizeHint().width() + spacing
+        if self.fileSizeLabel.isVisibleTo(self):
+            used += max(self.fileSizeLabel.minimumWidth(), self.fileSizeLabel.sizeHint().width()) + spacing
+        available = row_width - used
+        icon_only = available < self._pathMinTextWidth()
+        # 경로가 **먼저** 양보하도록 최대폭을 "행 폭 − 다른 항목"으로 씌운다 —
+        # 안 씌우면 Qt가 같은 Preferred 정책의 슬롯 텍스트(진행 %·속도·남은
+        # 시간)와 경로를 나눠 줄여 상태 슬롯이 잘리고 경로가 남는다(560px 실기).
+        # 값은 라벨 자신의 폭과 무관하게 계산되므로 되먹임이 없고, 넓히면
+        # 그만큼 다시 커진다.
+        self.directoryLabel.setMaximumWidth(max(available, 0) if not icon_only else _NO_MAX_WIDTH)
+        self.directoryLabel.setVisible(not icon_only)
+        self.pathIconButton.setVisible(icon_only)
 
     def addRepresentationButton(self, resolution, base_url, index):
         """
         해상도 버튼을 추가하고, 비동기로 파일 사이즈를 헤더에서 가져와 버튼 텍스트를 업데이트한다.
         """
-        button = _PillButton(f'{resolution}p', self)
+        button = QPushButton(f'{resolution}p', self)
         button.clicked.connect(lambda: self.setresolutionUrlSize(resolution, base_url, index, button))
         # pill 모양·선택 표시는 전역 QSS의 [role="resolution"] 규칙이 그린다 (#227).
         # QSS는 `.className` 선택자를 지원하지 않아 조용히 무시하므로, 동적
@@ -685,8 +721,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.openDirectoryButton.setVisible(raw == DownloadState.FINISHED)
         self.retryButton.setVisible(raw == DownloadState.FAILED)
         self.fileSizeLabel.setVisible(raw != DownloadState.FAILED)
+        self._reserveFileSizeWidth()  # 우측 군집 폭을 먼저 확보 — 크기·시간은 잘리지 않는다
         self._updatePathVisibility()
-        self._foldPills()  # pill 전부 켠 뒤 폭에 안 맞는 저화질부터 다시 접는다
 
     def _updatePathVisibility(self) -> None:
         """경로는 **대기면 항상, 그 외엔 전역 설정 경로와 다를 때만** 보인다 (#245).
@@ -698,11 +734,16 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         다를 때만 남긴다 — 다르다는 것 자체가 정보다.
         """
         path = self.item.download_path
-        if self.item.downloadState == DownloadState.WAITING:
-            self.directoryLabel.setVisible(bool(path))
-            return
         differs = bool(path) and path != _global_download_path
-        self.directoryLabel.setVisible(differs)
+        if self.item.downloadState == DownloadState.WAITING:
+            self._pathShown = bool(path)
+        else:
+            self._pathShown = differs
+        # 아이콘 모드의 도형 — 전역과 다르면 점 표시 + 밝은 본체색(다르다는 것이 정보)
+        self.pathIconButton.setIconName("folder_dot" if differs else "folder")
+        self.pathIconButton.setIdleToken("text" if differs else "textMuted")
+        self.pathIconButton.setAccentToken("accent" if differs else "")
+        self._layoutPathLabel()
 
     def _cardState(self) -> str:
         """현재 아이템 상태를 카드 상태 어휘(theme.CARD_STATES)로 옮긴다.
