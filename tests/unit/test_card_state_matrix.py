@@ -54,7 +54,9 @@ def no_network(monkeypatch):
     monkeypatch.setattr("content.widget._global_download_path", "C:/dl")
 
 
-def _make_widget(qapp, state, progress=0) -> ContentItemWidget:
+def _make_widget(qapp, state, progress=0, *, post_process=False) -> ContentItemWidget:
+    """상태별 카드. `post_process=True`면 세그먼트 기반(m3u8) 진행 카드의 후처리
+    국면 — 전송 100% 뒤 후처리 진행률이 0부터 다시 차오르는 상태다."""
     item = ContentItem(
         "https://chzzk.naver.com/video/1",
         {
@@ -68,9 +70,10 @@ def _make_widget(qapp, state, progress=0) -> ContentItemWidget:
         None,
         "",
         "C:/dl",
-        "video",
+        "m3u8" if post_process else "video",
         None,
     )
+    item.post_process = post_process
     item.downloadState = DownloadState.WAITING
     item.total_size = "595.34 MB"
     widget = ContentItemWidget(item, 0)
@@ -121,6 +124,24 @@ class TestSlotColumn:
         assert text.startswith("42%"), text
         assert "8.2 MB/s" in text and "12:34" in text
 
+    def test_postprocessing_shows_percent_first_then_label(self, qapp):
+        """"13% · 후처리 중" — 후처리 진행률은 이미 있던 값(실기에서 일시정지로
+        확인)인데 슬롯이 "후처리 중" 텍스트로 대체되며 퍼센트만 빠졌던 것.
+        퍼센트는 **앞** — 전송·일시정지와 자리를 맞춘다(#245 정정)."""
+        widget = _make_widget(qapp, DownloadState.RUNNING, 13, post_process=True)
+        text = widget.statusLabel.text()
+        assert text.startswith("13%"), f"후처리 퍼센트가 앞에 없다: {text!r}"
+        assert text.endswith("Post-processing"), text
+        assert "MB/s" not in text and "left" not in text, "후처리 국면에 전송 속도·남은 시간이 붙어 있다"
+
+    def test_postprocessing_keeps_pause_action_and_bar(self, qapp):
+        """후처리 중 일시정지는 가능하다 — 조작을 숨기거나 비활성화하지 않는다.
+        진행바는 후처리에서 0부터 다시 차오르는 값을 그대로 보인다(오너 확정)."""
+        widget = _make_widget(qapp, DownloadState.RUNNING, 13, post_process=True)
+        assert widget.pauseButton.isVisible() and widget.pauseButton.isEnabled()
+        assert widget.pauseButton.iconName() == "pause"
+        assert widget.progressBar.isVisible() and widget.progressBar.value() == 13
+
     def test_paused_shows_percent_first_then_paused(self, qapp):
         widget = _make_widget(qapp, DownloadState.PAUSED, 54)
         text = widget.statusLabel.text()
@@ -157,6 +178,45 @@ class TestSlotColumn:
     def test_failed_shows_cross_and_reason(self, qapp):
         widget = _make_widget(qapp, DownloadState.FAILED)
         assert widget.statusLabel.text() == "✕ Failed to save file"
+
+
+class TestPercentStartsAtTheSameX:
+    """★ 퍼센트가 있는 국면(전송·후처리·일시정지) 전부에서 퍼센트가 **같은 x**에서
+    시작한다 — 슬롯 텍스트의 첫 토큰이 퍼센트이고 슬롯 라벨은 컨텐츠 열
+    기준선에 있다. 어느 한 국면만 퍼센트를 뒤로 보내면 상태가 바뀔 때마다
+    숫자 위치가 흔들려 눈이 움직인다(#245)."""
+
+    PERCENT_PHASES = (
+        ("transfer", DownloadState.RUNNING, 42, False),
+        ("postprocess", DownloadState.RUNNING, 13, True),
+        ("paused", DownloadState.PAUSED, 54, False),
+    )
+
+    def test_percent_is_the_first_token_in_every_phase(self, qapp):
+        for name, state, progress, post in self.PERCENT_PHASES:
+            widget = _make_widget(qapp, state, progress, post_process=post)
+            assert widget.statusLabel.text().split(" ")[0] == f"{progress}%", (
+                f"{name}: 첫 토큰이 퍼센트가 아니다 — {widget.statusLabel.text()!r}"
+            )
+
+    def test_percent_column_x_is_identical_across_phases(self, qapp):
+        xs = {}
+        for name, state, progress, post in self.PERCENT_PHASES:
+            widget = _make_widget(qapp, state, progress, post_process=post)
+            xs[name] = widget.statusLabel.x()
+            assert widget.statusLabel.x() == widget.titleLabel.x(), f"{name}: 슬롯이 컨텐츠 열 기준선에 없다"
+        assert len(set(xs.values())) == 1, f"국면에 따라 퍼센트 시작 x가 다르다: {xs}"
+
+    def test_all_five_states_and_postprocess_keep_the_slot_baseline(self, qapp):
+        """다섯 상태 + 후처리 — 3행 슬롯(pill 또는 텍스트)의 시작 x가 전부 같다."""
+        xs = {}
+        for state in MATRIX:
+            widget = _make_widget(qapp, state, PROGRESS.get(state, 0))
+            head = widget.buttons[0] if state == DownloadState.WAITING else widget.statusLabel
+            xs[state.name] = head.x()
+        widget = _make_widget(qapp, DownloadState.RUNNING, 13, post_process=True)
+        xs["POSTPROCESS"] = widget.statusLabel.x()
+        assert len(set(xs.values())) == 1, f"슬롯 시작 x가 상태마다 다르다: {xs}"
 
 
 class TestActionColumn:

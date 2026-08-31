@@ -141,6 +141,54 @@ class TestSettingsIsVerticallyCentredOnTheTwoRows:
         )
 
 
+class TestButtonsStayEqualInEveryLanguage:
+    """번역 로드 상태(ko / en)마다 두 텍스트 버튼의 폭·좌우 끝이 같아야 한다.
+
+    폭은 런타임 sizeHint로 맞추므로 텍스트 길이가 다른 언어에서도 같은 폭이
+    나와야 한다. 언어 설정은 `config['language']`로 저장되고 번역기는
+    `main.set_language`가 **시작 시 한 번** 로드한다(런타임 전환 경로 없음,
+    #245 확인) — 그래서 각 언어를 새 창으로 만들어 잰다(재시작과 같은 조건).
+    """
+
+    @pytest.fixture
+    def korean(self, qapp):
+        from PySide6.QtCore import QTranslator
+
+        translator = QTranslator()
+        assert translator.load(main_module.resource_path("translations/ko_KR.qm")), "ko_KR.qm 로드 실패"
+        qapp.installTranslator(translator)
+        yield translator
+        qapp.removeTranslator(translator)
+
+    def _assert_equal_columns(self, win, width):
+        _at_width(win, width)
+        a, b = win.fetchButton, win.downloadPathButton
+        assert (a.x(), _right(a), a.width()) == (b.x(), _right(b), b.width()), (
+            f"폭 {width}px: [{a.text()}] (x={a.x()}, right={_right(a)}, w={a.width()}) ≠ "
+            f"[{b.text()}] (x={b.x()}, right={_right(b)}, w={b.width()})"
+        )
+
+    @pytest.mark.parametrize("width", WIDTHS)
+    def test_korean(self, qapp, korean, width):
+        win = VodDownloader()
+        try:
+            assert win.fetchButton.text() == "VOD 추가", "ko 번역이 적용되지 않았다 — 전제 확인"
+            self._assert_equal_columns(win, width)
+        finally:
+            win.deleteLater()
+            QApplication.processEvents()
+
+    @pytest.mark.parametrize("width", WIDTHS)
+    def test_english(self, qapp, width):
+        win = VodDownloader()
+        try:
+            assert win.fetchButton.text() == "Add VOD", "en 원문이 아니다 — 다른 번역기가 남아 있다"
+            self._assert_equal_columns(win, width)
+        finally:
+            win.deleteLater()
+            QApplication.processEvents()
+
+
 class TestFreeSpaceGoesToTheInputsOnly:
     BUTTONS = ("fetchButton", "downloadPathButton", "settingButton")
 

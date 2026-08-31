@@ -511,7 +511,12 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
 
         elif self.item.downloadState == DownloadState.RUNNING:
             if self.item.is_segment_based and self.item.post_process:
-                self.statusLabel.setText(self.tr("Post-processing"))
+                # "13% · 후처리 중" — 후처리 진행률(download_progress는 후처리에서
+                # 0부터 다시 차오른다)을 **앞에** 둔다. 전송 "42% · …"·일시정지
+                # "13% · 일시정지됨"과 자리를 맞춰 상태가 바뀌어도 퍼센트 위치가
+                # 흔들리지 않게(#245). tr()은 f-string 밖(lupdate가 못 읽음).
+                postprocess_text = self.tr("Post-processing")
+                self.statusLabel.setText(f"{item.download_progress}% · {postprocess_text}")
             else:
                 remain = self._shortRemain(item.download_remain_time)
                 self.statusLabel.setText(
