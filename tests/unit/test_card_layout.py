@@ -492,11 +492,8 @@ class TestRowThreePriority:
             "첫 표시에서 경로가 아이콘으로 접히지 않았다 — 창을 흔들어야 고쳐지는 결함"
         )
 
-    @pytest.mark.parametrize("width", (900, 640, 560))
-    def test_progress_slot_keeps_its_text_and_the_path_yields(self, qapp, width):
-        """대기 밖 상태에서도 같은 규칙 — 진행 슬롯("42% · 속도 · 남은 시간")은
-        잘리지 않고 **경로가 먼저 양보**한다(560px 실기에서 슬롯이 잘리고 경로가
-        남던 결함). 경로 라벨의 최대폭을 "행 폭 − 다른 항목"으로 씌워 보장한다."""
+    def _running_widget(self, qapp):
+        """진행 중 + 전역과 다른 긴 경로 — 3행에 슬롯·경로·크기가 함께 있는 카드."""
         widget = _make_widget_with_reps(qapp, self.FIVE, 900)
         item = widget.item
         item.download_path = self.LONG_PATH  # 전역과 다름 → 진행 중에도 경로가 보인다
@@ -504,26 +501,62 @@ class TestRowThreePriority:
         item.resolution = "1080"
         item.download_progress, item.download_speed, item.download_remain_time = 42, "12.3 MB/s", "00:03:21"
         widget.setData(item, 0)
-        _at_width(widget, width)
+        _at_width(widget, 900)
+        return widget
+
+    def _threshold(self, widget) -> int:
+        """임계 폭 T — 3행에 슬롯·아이콘·크기가 **딱** 들어가는 카드 폭.
+
+        ⚠️ 제품의 계산 함수(_layoutPathLabel·_pathMinTextWidth)를 부르지 않고
+        테스트가 구성 요소를 **독립적으로 합산**한다 — 제품이 틀리면 테스트도
+        같이 틀리는 동어반복을 피하기 위함. 요소: 슬롯 자연 폭 · 크기 라벨
+        확보 폭 · 아이콘 폭 · 간격 3개, 그리고 카드 폭↔3행 폭의 차(썸네일·
+        패딩, 순수 기하로 실측). 폰트가 달라도 T가 따라 움직이므로 T±에서는
+        어떤 QPA에서도 전제("접으면 슬롯 자리 있음")가 항상 참이다.
+        """
+        layout = widget.resolutionLayout
+        offset = widget.width() - layout.geometry().width()
+        slot = widget.statusLabel.sizeHint().width()
+        size = max(widget.fileSizeLabel.minimumWidth(), widget.fileSizeLabel.sizeHint().width())
+        icon = widget.pathIconButton.minimumWidth()
+        return offset + slot + size + icon + 3 * FIXED_SPACING
+
+    @pytest.mark.parametrize("point", ("T", "T+path/2", "T+200"))
+    def test_progress_slot_keeps_its_text_and_the_path_yields(self, qapp, point):
+        """대기 밖 상태에서도 같은 규칙 — 진행 슬롯("42% · 속도 · 남은 시간")은
+        잘리지 않고 **경로가 먼저 양보**한다(560px 실기에서 슬롯이 잘리고 경로가
+        남던 결함). 측정점은 절대 px가 아니라 임계 폭 T 기준 — 폭을 px로 박으면
+        폰트에 따라(offscreen은 크기 라벨이 실기의 2배) 카드가 최소폭 미만이 되어
+        게이트가 CI에서 안 돈다(A-1 실측). 가운데 점은 T+40 같은 고정 여유가
+        아니라 **경로 자연 폭의 절반**이다 — 고정 여유는 폰트에 따라 경로가
+        아이콘 모드(캡이 관여하지 않는 구간)에 떨어져 캡 제거 주입이 한쪽 QPA에서만
+        잡혔다. 경로가 텍스트이되 다 못 들어가는 구간이 캡이 실제로 작동하는
+        유일한 구간이고, 자연 폭의 절반은 어떤 폰트에서도 그 안에 있다."""
+        widget = self._running_widget(qapp)
+        threshold = self._threshold(widget)
+        extra = {"T": 0, "T+path/2": widget.directoryLabel.sizeHint().width() // 2, "T+200": 200}[point]
+        assert threshold > widget.minimumSizeHint().width(), "전제: T가 카드 최소폭보다 커야 T±에서 실제로 잰다"
+        _at_width(widget, threshold + extra)
+        assert widget.width() == threshold + extra, "전제: 카드가 요청 폭을 받았다"
+        assert self._rendered(widget.statusLabel) == widget.statusLabel.text(), (
+            f"{point}(+{extra}px)에서 진행 슬롯이 잘렸다: {self._rendered(widget.statusLabel)!r} — 줄어드는 것은 경로뿐이어야 한다"
+        )
         assert self._rendered(widget.fileSizeLabel) == widget.fileSizeLabel.text()
         assert widget.directoryLabel.isVisible() or widget.pathIconButton.isVisible(), "경로 진입점이 사라졌다"
-        # 전제: 경로를 아이콘까지 접었을 때 슬롯이 들어갈 자리가 있는가 — 폰트에
-        # 따라(offscreen은 크기 라벨이 실기의 3배) 슬롯 자체가 행보다 길 수 있다.
-        layout = widget.resolutionLayout
-        room = (
-            layout.geometry().width()
-            - widget.fileSizeLabel.minimumWidth()
-            - widget.pathIconButton.width()
-            - 3 * layout.spacing()
+
+    def test_slot_longer_than_the_row_still_keeps_size_and_folds_the_path_to_an_icon(self, qapp):
+        """T−1 — 슬롯·아이콘·크기가 1px 모자라는 "슬롯이 행보다 긴 상황"의 별도
+        게이트(완화 조건에 섞지 않는다). 그때도 크기는 온전하고 경로는 아이콘까지
+        완전히 양보한다(텍스트를 붙들고 있으면 안 된다)."""
+        widget = self._running_widget(qapp)
+        threshold = self._threshold(widget)
+        assert threshold - 1 >= widget.minimumSizeHint().width(), "전제: T−1이 카드 최소폭 이상"
+        _at_width(widget, threshold - 1)
+        assert widget.width() == threshold - 1
+        assert self._rendered(widget.fileSizeLabel) == widget.fileSizeLabel.text(), "크기가 잘렸다"
+        assert widget.pathIconButton.isVisible() and not widget.directoryLabel.isVisible(), (
+            "슬롯이 행보다 긴데 경로가 텍스트를 붙들고 있다 — 경로가 먼저 양보해야 한다"
         )
-        if widget.statusLabel.sizeHint().width() <= room:
-            assert self._rendered(widget.statusLabel) == widget.statusLabel.text(), (
-                f"폭 {width}px에서 진행 슬롯이 잘렸다: {self._rendered(widget.statusLabel)!r} — 줄어드는 것은 경로뿐이어야 한다"
-            )
-        else:
-            assert widget.pathIconButton.isVisible() and not widget.directoryLabel.isVisible(), (
-                f"폭 {width}px에서 슬롯이 행보다 긴데 경로가 텍스트를 붙들고 있다 — 경로가 먼저 양보해야 한다"
-            )
 
     def test_icon_has_no_dot_when_the_path_matches_global(self, qapp):
         widget = self._tight(qapp, None, path="C:/dl")  # 전역과 같음
