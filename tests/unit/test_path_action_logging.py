@@ -105,7 +105,17 @@ class TestDownloadGateLogging:
 # ================================================================ 카드 경로 편집
 
 
-class TestCardPathEditFeedback:
+class TestCardPathPickerFeedback:
+    """카드 경로 변경은 인라인 편집에서 **폴더 선택 대화상자**로 교체됐다(#245).
+
+    #146 이관 ④("카드 경로 편집 거부 안내")는 이 교체로 해소됐다 — 손 입력에
+    존재 검증이 필요해 생긴 문제였고, 팝업이 editingFinished(포커스 이탈
+    포함)에 걸려 입력을 포기한 유저에게도 떴다. 폴더 선택은 존재하는 폴더만
+    고르므로 검증·거부 안내·중복 팝업 가드가 전부 필요 없다. 그래서 거부·
+    중복 시나리오 테스트(reject / twice)는 대응하는 코드 경로와 함께 제거했고,
+    "변경이 INFO로 남는다"(#148의 살아있는 절반)만 폴더 선택 배선으로 잰다.
+    """
+
     def _widget(self, manager, qapp, path):
         m, view = manager
         item = _make_item(path)
@@ -113,61 +123,37 @@ class TestCardPathEditFeedback:
         qapp.processEvents()
         return item, view.widgetFor(item)
 
-    def test_reject_notifies_and_logs(self, manager, qapp, tmp_path, caplog, monkeypatch):
-        """존재하지 않는 경로는 반영하지 않고, 이제 안내 팝업과 WARNING 로그를 남긴다.
-
-        무피드백 조용한 거부(#146 감사)의 해소 — 배선은 editingFinished
-        시그널 실연결을 태운다.
-        """
-        item, widget = self._widget(manager, qapp, str(tmp_path))
-        warnings = []
-        monkeypatch.setattr(
-            widget_mod.QMessageBox,
-            "warning",
-            lambda parent, title, text, *a, **k: warnings.append(text),
-        )
-        widget.startPathEditing(None)  # 실제 편집 진입(WAITING 상태 가드 포함)
-        widget.directoryEdit.setText(str(tmp_path / NBSP_SUFFIX))
-
-        with caplog.at_level("WARNING", logger="content.widget"):
-            widget.directoryEdit.editingFinished.emit()
-
-        assert item.download_path == str(tmp_path)  # 기존 경로 유지 (동작 불변)
-        assert warnings == ["Path does not exist."]  # 안내 1회 (중복 없음)
-        assert "카드 저장 경로 거부" in caplog.text
-        assert "\\xa0" in caplog.text
-
-    def test_accept_updates_and_logs(self, manager, qapp, tmp_path, caplog):
-        """유효한 경로(공백 포함)는 기존대로 반영되고 INFO로 남는다."""
+    def test_pick_updates_and_logs(self, manager, qapp, tmp_path, caplog, monkeypatch):
+        """고른 폴더(공백 포함)는 반영되고 INFO로 남는다 — 대화상자는 막고 반환값 주입."""
         item, widget = self._widget(manager, qapp, str(tmp_path))
         new_dir = tmp_path / "space dir"
         new_dir.mkdir()
-        widget.startPathEditing(None)
-        widget.directoryEdit.setText(str(new_dir))
+        monkeypatch.setattr(
+            widget_mod.QFileDialog, "getExistingDirectory",
+            staticmethod(lambda parent, caption, start, *a, **k: str(new_dir)),
+        )
 
         with caplog.at_level("INFO", logger="content.widget"):
-            widget.directoryEdit.editingFinished.emit()
+            widget.choosePath(None)
 
         assert item.download_path == str(new_dir)
         assert "카드 저장 경로 변경" in caplog.text
 
-    def test_editing_finished_twice_notifies_once(self, manager, qapp, tmp_path, monkeypatch):
-        """returnPressed+포커스 이탈로 시그널이 연달아 와도 안내는 한 번이다."""
+    def test_cancel_changes_nothing_and_shows_no_popup(self, manager, qapp, tmp_path, caplog, monkeypatch):
+        """취소(빈 반환)는 무변경·무안내 — 입력을 포기한 유저에게 팝업이 뜨던 결함의 반대 증명."""
         item, widget = self._widget(manager, qapp, str(tmp_path))
         warnings = []
-        monkeypatch.setattr(
-            widget_mod.QMessageBox,
-            "warning",
-            lambda parent, title, text, *a, **k: warnings.append(text),
-        )
-        widget.startPathEditing(None)
-        widget.directoryEdit.setText(str(tmp_path / "없는 폴더"))
+        monkeypatch.setattr(widget_mod.QMessageBox, "warning",
+                            lambda parent, title, text, *a, **k: warnings.append(text))
+        monkeypatch.setattr(widget_mod.QFileDialog, "getExistingDirectory",
+                            staticmethod(lambda *a, **k: ""))
 
-        widget.directoryEdit.editingFinished.emit()
-        widget.directoryEdit.editingFinished.emit()  # 두 번째는 isEditing 가드가 무시
+        with caplog.at_level("INFO", logger="content.widget"):
+            widget.choosePath(None)
 
-        assert warnings == ["Path does not exist."]
         assert item.download_path == str(tmp_path)
+        assert warnings == []
+        assert "카드 저장 경로" not in caplog.text
 
 
 # ================================================================ 조회 관문(메인 윈도우)

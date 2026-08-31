@@ -377,24 +377,140 @@ class TestPillsFoldLowResolutionFirst:
         assert _visible_pills(widget) == [f"{r}p" for r in self.MANY], "넓혀도 접힌 pill이 돌아오지 않는다"
 
 
-class TestPathShownOnlyWhenDifferent:
-    """경로는 전역 설정 경로와 다를 때만 3행에 보인다(#245) — 같은 값을
-    카드마다 반복하는 것이 정보 과다의 큰 몫이었다. 다르다는 것 자체가
-    정보다."""
+class TestPathVisibilityRule:
+    """경로는 **대기면 항상, 그 외엔 전역 설정 경로와 다를 때만** 보인다(#245 정정).
 
-    def test_path_hidden_when_it_matches_the_global_default(self, qapp):
-        widget = _make_widget(qapp)  # 아이템 경로 == 전역("C:/dl", 픽스처 주입)
+    첫 규칙 "다를 때만"은 대기에서 라벨을 숨겨 클릭 대상이 없어졌다 — 카드별
+    경로 변경 진입점이 사라진 회귀. 받기 전에는 "어디에 받을지"가 유효한
+    정보이고 바꾸는 시점이 바로 대기다. 받기 시작한 뒤에는 같은 값을
+    카드마다 반복하는 것이 정보 과다라 다를 때만 남긴다.
+    """
+
+    def test_waiting_always_shows_the_path_even_when_it_matches_global(self, qapp):
+        widget = _make_widget(qapp)  # 아이템 경로 == 전역("C:/dl", 픽스처 주입), WAITING
         _at_width(widget, 900)
-        assert not widget.directoryLabel.isVisible()
+        assert widget.directoryLabel.isVisible(), "대기 카드에서 경로가 숨었다 — 클릭할 대상이 없다"
+        # 경로는 파일 크기 왼쪽에 고정 간격으로 붙는다(우측 끝선 유지)
+        assert _gap(widget.directoryLabel, widget.fileSizeLabel) == FIXED_SPACING
 
-    def test_path_shown_when_it_differs(self, qapp):
+    @pytest.mark.parametrize("state", (DownloadState.RUNNING, DownloadState.PAUSED,
+                                       DownloadState.FINISHED, DownloadState.FAILED))
+    def test_other_states_hide_the_path_when_it_matches_global(self, qapp, state):
         widget = _make_widget(qapp)
+        widget.item.downloadState = state
+        widget.item.download_progress = 42
+        widget.setData(widget.item, 0)
+        _at_width(widget, 900)
+        assert not widget.directoryLabel.isVisible(), f"{state.name}: 전역과 같은 경로가 반복 표시된다"
+
+    @pytest.mark.parametrize("state", (DownloadState.WAITING, DownloadState.RUNNING, DownloadState.FINISHED))
+    def test_path_shown_when_it_differs(self, qapp, state):
+        widget = _make_widget(qapp)
+        widget.item.downloadState = state
         widget.item.download_path = "D:/다른/폴더"
         widget.setData(widget.item, 0)
         _at_width(widget, 900)
         assert widget.directoryLabel.isVisible()
-        # 경로는 파일 크기 왼쪽에 고정 간격으로 붙는다(우측 끝선 유지)
-        assert _gap(widget.directoryLabel, widget.fileSizeLabel) == FIXED_SPACING
+
+
+class TestPathAbbreviationAndTooltip:
+    """표시는 "뿌리/…/마지막폴더"로 축약, 전문은 툴팁(#245). 규칙과 근거는
+    content/widget.py::abbreviate_path 참고."""
+
+    HOME = "C:/Users/me"
+
+    @staticmethod
+    def _abbr(path, home):
+        from content.widget import abbreviate_path
+
+        return abbreviate_path(path, home=home)
+
+    @pytest.mark.parametrize("path,expected", [
+        ("C:/Users/me/Downloads/vod/lck/2026", "~/…/2026"),        # 홈 아래, 3단계 이상 → 접음
+        ("C:/Users/me/Downloads/vod", "~/Downloads/vod"),           # 홈 아래, 2단계 → 전부
+        ("C:/Users/me/Downloads", "~/Downloads"),
+        ("C:/Users/me", "~"),
+        ("D:/vod/lck/2026/finals", "D:/…/finals"),                   # 홈 밖(드라이브), 접음
+        ("D:/vod/lck", "D:/vod/lck"),                                # 홈 밖, 2단계 → 전부
+        ("C:\\Users\\me\\Videos\\a\\b", "~/…/b"),                    # 역슬래시 입력도 /로 통일
+        ("/srv/media/vod/2026", "/…/2026"),                          # POSIX 루트
+        ("", ""),
+    ])
+    def test_abbreviation_rule(self, path, expected):
+        assert self._abbr(path, home=self.HOME) == expected
+
+    def test_label_shows_abbreviation_and_tooltip_carries_the_full_path(self, qapp):
+        widget = _make_widget(qapp)
+        widget.item.download_path = "D:/vod/lck/2026/finals"
+        widget.setData(widget.item, 0)
+        _at_width(widget, 900)
+        assert widget.directoryLabel.text() == "D:/…/finals"
+        assert widget.directoryLabel.toolTip() == "D:/vod/lck/2026/finals"
+
+    def test_abbreviated_label_does_not_break_the_row(self, qapp):
+        """긴 경로도 3행이 터지지 않는다 — 카드 폭 안에서 우측 끝선 유지."""
+        widget = _make_widget(qapp)
+        widget.item.download_path = "D:/아주/긴/경로/구조/를/가진/폴더/이름/마지막"
+        widget.setData(widget.item, 0)
+        _at_width(widget, 640)
+        assert _right(widget.fileSizeLabel) == _right(widget.deleteButton)
+        assert _right(widget.directoryLabel) < widget.fileSizeLabel.x()
+
+
+class TestPathClickOpensFolderPicker:
+    """경로를 클릭하면 폴더 선택 대화상자 → 고른 값이 그 카드에 적용된다(#245).
+    인라인 편집의 교체 — 대화상자는 monkeypatch로 막고 반환값을 주입한다
+    (상단 [경로 찾기] 테스트와 같은 방식)."""
+
+    def _patch_dialog(self, monkeypatch, result):
+        calls = []
+        from content import widget as widget_mod
+
+        def fake(parent, caption, start_dir, *a, **k):
+            calls.append((caption, start_dir))
+            return result
+
+        monkeypatch.setattr(widget_mod.QFileDialog, "getExistingDirectory", staticmethod(fake))
+        return calls
+
+    def test_click_on_waiting_card_applies_the_chosen_folder(self, qapp, monkeypatch):
+        widget = _make_widget(qapp)
+        _at_width(widget, 900)
+        calls = self._patch_dialog(monkeypatch, "D:/new/folder")
+        emitted = []
+        widget.textChanged.connect(emitted.append)
+        widget.choosePath(None)  # 실배선: directoryLabel.mousePressEvent → choosePath (아래에서 확인)
+        assert calls and calls[0][1] == "C:/dl", "대화상자가 현재 경로에서 열리지 않는다"
+        assert widget.item.download_path == "D:/new/folder"
+        assert widget.directoryLabel.text() == "D:/new/folder"
+        assert widget.directoryLabel.toolTip() == "D:/new/folder"
+        assert emitted == ["D:/new/folder"], "모델 반영 시그널(textChanged)이 안 나갔다"
+
+    def test_label_click_is_wired_to_the_picker(self, qapp, monkeypatch):
+        """핸들러 직접 호출이 아니라 라벨 클릭 배선 자체를 확인한다."""
+        widget = _make_widget(qapp)
+        _at_width(widget, 900)
+        calls = self._patch_dialog(monkeypatch, "")
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+
+        QTest.mouseClick(widget.directoryLabel, Qt.MouseButton.LeftButton)
+        assert calls, "경로 라벨 클릭이 폴더 선택으로 이어지지 않는다"
+
+    def test_cancel_keeps_the_path(self, qapp, monkeypatch):
+        widget = _make_widget(qapp)
+        self._patch_dialog(monkeypatch, "")
+        widget.choosePath(None)
+        assert widget.item.download_path == "C:/dl"
+
+    def test_no_picker_once_the_download_has_started(self, qapp, monkeypatch):
+        widget = _make_widget(qapp)
+        widget.item.downloadState = DownloadState.RUNNING
+        widget.item.download_path = "D:/다른"  # 진행 중이라도 다르면 라벨은 보인다
+        widget.setData(widget.item, 0)
+        calls = self._patch_dialog(monkeypatch, "E:/x")
+        widget.choosePath(None)
+        assert not calls and widget.item.download_path == "D:/다른"
 
 
 class TestStateSwapKeepsCardHeight:

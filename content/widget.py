@@ -1,13 +1,12 @@
 import os
 import threading
-from PySide6.QtWidgets import QWidget, QPushButton, QMessageBox
+from PySide6.QtWidgets import QWidget, QPushButton, QMessageBox, QFileDialog
 from PySide6.QtGui import QPainter, QPainterPath, QPixmap, QDesktopServices, QRegion
 from PySide6.QtCore import Qt, Signal, QUrl, QDir, QProcess, QRectF
 from content.data import ContentItem
 from content.network import REQUEST_TIMEOUT, get_thread_session
 from core.models.download_state import DownloadState
 from app.viewmodels.item_state import ItemState
-from app.viewmodels.path_gates import check_card_edit_path
 from ui.contentItemWidget import Ui_ContentItemWidget
 import theme
 from time import strftime, gmtime
@@ -40,6 +39,43 @@ def set_global_download_path(path: str) -> None:
     """전역 다운로드 경로를 갱신한다 — 카드의 경로 표시 여부 판단 기준."""
     global _global_download_path
     _global_download_path = path
+
+
+def abbreviate_path(path: str, home: str | None = None) -> str:
+    """카드 3행용 경로 축약 — "~/…/마지막폴더" / "D:/…/마지막폴더" (#245).
+
+    규칙: **뿌리 + 마지막 폴더**만 남긴다. 뿌리는 홈 아래면 `~`, 아니면 드라이브
+    (`D:`) 또는 POSIX 루트(`/`)다. 뿌리 뒤 단계가 2개 이하면 전부 보인다
+    (`~/Downloads`, `D:/vod/lck`) — 한 단계를 숨기고 `…`를 넣으면 글자가
+    오히려 늘어 축약이 아니다. 3개 이상이면 가운데를 `…` 하나로 접는다.
+    근거: 유저가 고르거나 이름 붙인 것은 **마지막 폴더**이고, 어느 디스크/홈
+    인지는 뿌리가 말한다. 가운데 단계는 카드마다 반복되는 소음이다. 전체
+    경로는 툴팁이 준다. 구분자는 표시용으로 `/`로 통일한다(OS 무관 렌더).
+    """
+    if not path:
+        return ""
+    norm = os.path.normpath(path).replace("\\", "/")
+    home_norm = os.path.normpath(home if home is not None else os.path.expanduser("~")).replace("\\", "/")
+    def _same(a: str, b: str) -> bool:
+        return os.path.normcase(a) == os.path.normcase(b)
+    if _same(norm, home_norm):
+        return "~"
+    if _same(norm[: len(home_norm) + 1], home_norm + "/"):
+        root, rest = "~", norm[len(home_norm) + 1:]
+    else:
+        drive, tail = os.path.splitdrive(norm)
+        if drive:
+            root, rest = drive, tail.lstrip("/")
+        elif norm.startswith("/"):
+            root, rest = "", norm.lstrip("/")
+        else:
+            root, rest = "", norm
+    segments = [s for s in rest.split("/") if s]
+    if len(segments) <= 2:
+        shown = segments
+    else:
+        shown = ["…", segments[-1]]
+    return "/".join([root, *shown]) if root or norm.startswith("/") else "/".join(shown)
 
 
 def _resolution_key(resolution) -> int:
@@ -182,17 +218,19 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.titleLabel.setText(self.item.title) # 제목 업데이트
         self.titleEdit.setText(self.item.title) # 제목 업데이트
         self.titleEdit.setVisible(False) # 제목 수정용 QLineEdit 숨김
-        self.directoryLabel.setText(self.item.download_path) # 다운로드 경로 업데이트
-        self.directoryEdit.setText(self.item.download_path) # 다운로드 경로 업데이트
-        self.directoryEdit.setVisible(False) # 다운로드 경로 수정용 QLineEdit 숨김
+        self._refreshPathLabel()
         self.applyStateStyle()  # setData 전에도 카드가 무스타일로 보이지 않게 (#227)
+
+    def _refreshPathLabel(self) -> None:
+        """경로 라벨 — 표시는 축약형, 전문은 툴팁 (#245)."""
+        self.directoryLabel.setText(abbreviate_path(self.item.download_path))
+        self.directoryLabel.setToolTip(self.item.download_path)
 
     def setupSignals(self):
         self.deleteButton.clicked.connect(self.requestDelete)
         self.titleLabel.mousePressEvent = self.startTitleEditing
         self.titleEdit.editingFinished.connect(self.finishTitleEditing)
-        self.directoryLabel.mousePressEvent = self.startPathEditing
-        self.directoryEdit.editingFinished.connect(self.finishPathEditing)
+        self.directoryLabel.mousePressEvent = self.choosePath
         self.openDirectoryButton.clicked.connect(self.requestOpenDir)
         self.pauseButton.clicked.connect(self.pauseRequest.emit)
         self.retryButton.clicked.connect(self.retryRequest.emit)
@@ -494,7 +532,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.channelNameLabel.setText(item.channel_name)
         self._clampChannelMinWidth()
         self.titleLabel.setText(item.title)
-        self.directoryLabel.setText(item.download_path)
+        self._refreshPathLabel()
 
         if self.item.downloadState == ItemState.LOADING:
             self.statusLabel.setText(self.tr("Loading information..."))
@@ -549,10 +587,14 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             # 사유(stateMessage)는 키 기반 매핑을 거친 번역 문자열만 온다.
             # 매핑 밖 예외는 사유가 없다(SPEC §5 — str(e) 폴백을 안 둔 것이
             # 의도) — 그때는 "실패"만 표시하고 억지로 채우지 않는다(#245).
+            # 매핑 밖 예외는 사유가 비어 온다. SPEC §5의 "str(e) 폴백 없음"은
+            # 내부 정보(원시 HTTP 오류·경로) 노출을 막기 위한 것이지 침묵이
+            # 아니다 — 틀린 문구도 없는 문구도 진단을 막는다(#183 교훈). 틀리지
+            # 않으면서 다음 행동(로그 폴더 열기 #181)을 주는 안내를 띄운다(#245).
             reason = getattr(item, "stateMessage", "")
-            text = reason if reason else self.tr("Download failed")
+            text = reason if reason else self.tr("Unknown error - check the log")
             self.statusLabel.setText(f"{STATE_ICON['failed']} {text}")
-            self.statusLabel.setToolTip(reason)
+            self.statusLabel.setToolTip(text)  # 사유가 길어 잘리면 전문은 툴팁으로
 
         self.applyStateStyle()
 
@@ -642,15 +684,18 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self._foldPills()  # pill 전부 켠 뒤 폭에 안 맞는 저화질부터 다시 접는다
 
     def _updatePathVisibility(self) -> None:
-        """경로는 전역 설정 경로와 다를 때만 보인다 (#245).
+        """경로는 **대기면 항상, 그 외엔 전역 설정 경로와 다를 때만** 보인다 (#245).
 
-        같은 값을 카드마다 반복 표시하는 것이 정보 과다의 큰 몫이었다 —
-        다르다는 것 자체가 정보다. 편집 중(directoryEdit 표시)에는 라벨
-        가시성을 건드리지 않는다.
+        받기 전에는 "어디에 받을지"가 유효한 정보이고 확인·변경하는 시점이
+        바로 대기다 — 여기서 라벨을 숨기면 클릭할 대상이 없어 카드별 경로
+        변경(choosePath) 진입점이 사라진다(첫 "다를 때만" 규칙의 회귀).
+        받기 시작한 뒤에는 같은 값을 카드마다 반복하는 것이 정보 과다라
+        다를 때만 남긴다 — 다르다는 것 자체가 정보다.
         """
-        if self.isEditing and self.directoryEdit.isVisible():
-            return
         path = self.item.download_path
+        if self.item.downloadState == DownloadState.WAITING:
+            self.directoryLabel.setVisible(bool(path))
+            return
         differs = bool(path) and path != _global_download_path
         self.directoryLabel.setVisible(differs)
 
@@ -717,40 +762,28 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         else:
             self.titleLabel.setText(self.item.default_title)
             
-    def startPathEditing(self, event):
-        """✅ QLabel을 더블클릭하면 QLineEdit로 변경"""
-        if self.item.downloadState == DownloadState.WAITING:
-            if not self.isEditing:
-                self.isEditing = True
-                self.directoryEdit.setText(self.directoryLabel.text())  # ✅ 현재 값 적용
-                self.directoryLabel.setVisible(False)
-                self.directoryEdit.setVisible(True)
-                self.directoryEdit.setFocus()  # ✅ 포커스 이동
+    def choosePath(self, event=None):
+        """경로를 클릭하면 폴더 선택 대화상자로 이 카드의 저장 경로를 바꾼다 (#245).
 
-    def finishPathEditing(self):
-        """✅ QLineEdit에서 Enter 또는 포커스 해제 시 QLabel로 복귀
-
-        존재하지 않는 경로는 기존처럼 반영하지 않되, 아무 표시 없이 무시하던
-        것을 안내·로그로 남긴다 (#148 — #146 감사의 무피드백 지점).
+        인라인 편집(QLineEdit)의 **교체**다 — 기능(카드별 경로 변경)은 그대로,
+        수단만 상단 [경로 찾기]와 같은 폴더 선택으로 바뀐다. 폴더 선택은
+        존재하는 폴더만 고르므로 존재 검증·거부 안내(#148, #146 이관 ④)가
+        필요 없어졌다 — 그 코드 경로(check_card_edit_path·"Path does not
+        exist." 팝업)는 이 교체로 제거됐다. 대기 상태에서만 동작한다(받기
+        시작한 뒤의 경로 변경은 의미가 없다). 취소(빈 반환)는 무변경.
         """
-        if not self.isEditing:
-            # returnPressed와 포커스 이탈이 editingFinished를 연달아 낼 수 있다 —
-            # 첫 종료만 처리해 거부 안내가 중복되지 않게 한다
+        if self.item.downloadState != DownloadState.WAITING:
             return
-        self.isEditing = False
-        self.directoryEdit.setVisible(False)
-        new_path = self.directoryEdit.text().strip()
-        # 판정은 path_gates가 단일 지점으로 담당한다 (#169 — #146 ⓑ1)
-        if check_card_edit_path(new_path):
-            self.directoryLabel.setText(new_path)  # ✅ UI 업데이트
-            self.item.download_path = new_path  # ✅ 데이터 업데이트
-            self.textChanged.emit(new_path)  # ✅ 모델에도 반영하도록 시그널 전송
-            logger.info("카드 저장 경로 변경: %r", new_path)
-        elif new_path and new_path != self.item.download_path:
-            # 경로는 repr로 남긴다 — 공백 유사 문자(U+00A0 등)·오염(따옴표 등)을
-            # 육안 구분할 수 있는 유일한 표기다 (#144 실측)
-            logger.warning("카드 저장 경로 거부 — 존재하지 않음: %r", new_path)
-            QMessageBox.warning(self, self.tr("Warning"), self.tr("Path does not exist."))
+        chosen = QFileDialog.getExistingDirectory(
+            self, self.tr("Select download folder"), self.item.download_path or ""
+        )
+        if not chosen:
+            return
+        self.item.download_path = chosen
+        self._refreshPathLabel()
+        self._updatePathVisibility()
+        self.textChanged.emit(chosen)  # 모델에도 반영
+        logger.info("카드 저장 경로 변경: %r", chosen)
 
     def requestDelete(self):
         """✅ 삭제 요청"""
@@ -759,7 +792,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
 
     def requestOpenDir(self):
         try:
-            path = self.directoryLabel.text()
+            # 라벨 텍스트는 축약형이다 — 실제 경로는 아이템에서 읽는다(#245)
+            path = self.item.download_path
             if self.item.downloadState != DownloadState.WAITING:
                 path = self.item.output_path
             if os.path.isfile(path):

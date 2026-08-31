@@ -426,9 +426,14 @@ class TestNoHorizontalOverflow:
         v.show()
         qapp.processEvents()
 
+        # 경로 라벨의 표시 문자열은 축약형이다(#245 — 뿌리+마지막 폴더, 3단계
+        # 이상이면 가운데를 "…"로 접음). 여기서 재는 것은 **라벨의 말줄임**이므로
+        # 축약이 "…"를 만들지 않는 형태(뿌리 뒤 2단계)에 긴 마지막 세그먼트를 둬
+        # 표시 문자열이 300px에서 실제로 잘리게 한다 — 축약의 "…"와 말줄임의
+        # "…"가 섞이면 접두·접미 판정이 흐려진다.
         item = _make_item(
             title="StartOfTitleThatMattersMostAndShouldStayVisibleAAAAAAAAAAAAAAAAAAAAAAAAA",
-            download_path="C:/StartOfPathThatMatters/junk/junk/junk/junk/EndFileNameThatMatters.mp4",
+            download_path="C:/StartOfPathThatMatters/EndFileNameThatMattersAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         )
         model.addItem(item)
         for _ in range(8):
@@ -438,7 +443,8 @@ class TestNoHorizontalOverflow:
         rendered_title = type(widget.titleLabel).__mro__[1].text(widget.titleLabel)
         rendered_path = type(widget.directoryLabel).__mro__[1].text(widget.directoryLabel)
         full_title = widget.titleLabel.text()
-        full_path = widget.directoryLabel.text()
+        full_path = widget.directoryLabel.text()  # 축약형 표시 문자열 — 말줄임의 원문
+        assert "…" not in full_path, "축약이 '…'를 넣었다 — 이 테스트의 경로는 뿌리 뒤 2단계여야 한다"
 
         assert widget.titleLabel._elide_mode == Qt.TextElideMode.ElideRight
         assert widget.directoryLabel._elide_mode == Qt.TextElideMode.ElideMiddle

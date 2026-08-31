@@ -200,19 +200,17 @@ class Ui_ContentItemWidget(object):
 
         self.resolutionLayout.addStretch(1)
 
+        # 경로 — 표시는 축약형("~/…/폴더"), 전문은 툴팁. 클릭하면 폴더 선택
+        # 대화상자(content/widget.py::choosePath)가 이 카드의 경로를 바꾼다 —
+        # 인라인 QLineEdit 편집은 #245에서 폴더 선택으로 교체됐다(존재하는
+        # 폴더만 고르므로 검증·거부 안내가 필요 없다). 대기에서는 항상 보이고
+        # 그 외에는 전역 경로와 다를 때만 보인다.
         self.directoryLabel = ElidingLabel(self.contentFrame, elide_mode=Qt.TextElideMode.ElideMiddle)
         self.directoryLabel.setObjectName(u"directoryLabel")
-        self.directoryLabel.setCursor(Qt.CursorShape.IBeamCursor)
+        self.directoryLabel.setCursor(Qt.CursorShape.PointingHandCursor)
         self.directoryLabel.setVisible(False)
 
         self.resolutionLayout.addWidget(self.directoryLabel)
-
-        self.directoryEdit = QLineEdit(self.contentFrame)
-        self.directoryEdit.setObjectName(u"directoryEdit")
-        self.directoryEdit.setClearButtonEnabled(True)
-        self.directoryEdit.setVisible(False)
-
-        self.resolutionLayout.addWidget(self.directoryEdit)
 
         self.fileSizeLabel = ElidingLabel(self.contentFrame)
         self.fileSizeLabel.setObjectName(u"fileSizeLabel")

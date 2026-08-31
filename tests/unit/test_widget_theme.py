@@ -265,11 +265,11 @@ def test_resolution_buttons_get_their_own_row_not_the_title_row(qapp):
 
     assert widget.titleLayout.count() == 2, "titleLayout에는 제목 라벨·편집창만 있어야 한다"
     # 3행 구조(#245 상태별 슬롯): [pill들..., statusLabel(슬롯 텍스트),
-    # 가운데 스트레치, 경로 라벨·편집, 파일 크기]. pill은 왼쪽부터
-    # 순서대로, 스트레치가 없으면 넓은 창에서 흩어지고(오너 실기 확인),
-    # 파일 크기는 우측 끝 — 간격·기준선은 tests/unit/test_card_layout.py가
-    # 폭 3종으로 게이트한다.
-    assert widget.resolutionLayout.count() == len(widget.buttons) + 5
+    # 가운데 스트레치, 경로 라벨, 파일 크기]. pill은 왼쪽부터 순서대로,
+    # 스트레치가 없으면 넓은 창에서 흩어지고(오너 실기 확인), 파일 크기는
+    # 우측 끝 — 간격·기준선은 tests/unit/test_card_layout.py가 폭 3종으로
+    # 게이트한다. (경로 편집 QLineEdit은 폴더 선택으로 교체돼 항목에서 빠졌다)
+    assert widget.resolutionLayout.count() == len(widget.buttons) + 4
     for position, button in enumerate(widget.buttons):
         assert widget.resolutionLayout.indexOf(button) == position, (
             "해상도 버튼이 왼쪽부터 순서대로 놓이지 않았다"

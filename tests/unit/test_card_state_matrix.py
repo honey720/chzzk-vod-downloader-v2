@@ -179,6 +179,31 @@ class TestSlotColumn:
         widget = _make_widget(qapp, DownloadState.FAILED)
         assert widget.statusLabel.text() == "✕ Failed to save file"
 
+    def test_failed_without_mapped_reason_says_unknown_error_not_silence(self, qapp):
+        """매핑 밖 예외(사유 빈 문자열) — 침묵 대신 "알 수 없는 오류 · 로그를
+        확인해 주세요". str(e)는 노출하지 않는다(SPEC §5). 틀린 문구도 없는
+        문구도 진단을 막는다(#183) — 틀리지 않으면서 다음 행동(로그 폴더
+        열기 #181)을 준다(#245)."""
+        widget = _make_widget(qapp, DownloadState.FAILED)
+        widget.item.stateMessage = ""
+        widget.setData(widget.item, 0)
+        assert widget.statusLabel.text() == "✕ Unknown error - check the log"
+        assert "Download failed" not in widget.statusLabel.text()
+
+    def test_long_failure_reason_is_elided_but_the_tooltip_keeps_the_whole_text(self, qapp):
+        """긴 사유는 3행에서 ElideRight로 잘릴 수 있다 — 전문은 툴팁이 준다.
+        (ko 실측: 640px에서 9종 중 2종이 잘린다 — 후처리 손상·시청 권한 안내)"""
+        from PySide6.QtWidgets import QLabel
+
+        widget = _make_widget(qapp, DownloadState.FAILED)
+        reason = "Postprocessing failed because the received segments look corrupted, please download again " * 2
+        widget.item.stateMessage = reason
+        widget.setData(widget.item, 0)
+        widget.resize(640, widget.sizeHint().height())
+        QApplication.processEvents()
+        assert QLabel.text(widget.statusLabel) != widget.statusLabel.text(), "이 폭에서 안 잘렸다 — 전제 확인"
+        assert reason in widget.statusLabel.toolTip(), "잘린 사유의 전문이 툴팁에 없다"
+
 
 class TestPercentStartsAtTheSameX:
     """★ 퍼센트가 있는 국면(전송·후처리·일시정지) 전부에서 퍼센트가 **같은 x**에서

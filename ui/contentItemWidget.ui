@@ -166,12 +166,6 @@
              </widget>
             </item>
             <item>
-             <widget class="QLineEdit" name="directoryEdit">
-              <property name="clearButtonEnabled"><bool>true</bool></property>
-              <property name="visible"><bool>false</bool></property>
-             </widget>
-            </item>
-            <item>
              <widget class="ElidingLabel" name="fileSizeLabel">
               <property name="toolTip"><string>File size</string></property>
               <property name="text"><string>File size</string></property>

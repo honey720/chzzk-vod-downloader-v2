@@ -20,12 +20,12 @@
         <translation>Completed</translation>
     </message>
     <message>
-        <source>Warning</source>
-        <translation>Warning</translation>
+        <source>Unknown error - check the log</source>
+        <translation>Unknown error · check the log</translation>
     </message>
     <message>
-        <source>Path does not exist.</source>
-        <translation>Path does not exist.</translation>
+        <source>Select download folder</source>
+        <translation>Select download folder</translation>
     </message>
     <message>
         <source>Download waiting</source>
@@ -38,10 +38,6 @@
     <message>
         <source>Checking...</source>
         <translation>Checking...</translation>
-    </message>
-    <message>
-        <source>Download failed</source>
-        <translation>Download failed</translation>
     </message>
     <message>
         <source>ContentItemWidget</source>

@@ -20,12 +20,12 @@
         <translation>완료</translation>
     </message>
     <message>
-        <source>Warning</source>
-        <translation>경고</translation>
+        <source>Unknown error - check the log</source>
+        <translation>알 수 없는 오류 · 로그를 확인해 주세요</translation>
     </message>
     <message>
-        <source>Path does not exist.</source>
-        <translation>경로가 존재하지 않습니다.</translation>
+        <source>Select download folder</source>
+        <translation>저장 폴더 선택</translation>
     </message>
     <message>
         <source>Download waiting</source>
@@ -38,10 +38,6 @@
     <message>
         <source>Checking...</source>
         <translation>확인 중...</translation>
-    </message>
-    <message>
-        <source>Download failed</source>
-        <translation>다운로드 실패</translation>
     </message>
     <message>
         <source>ContentItemWidget</source>

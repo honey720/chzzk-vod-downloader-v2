@@ -40,11 +40,6 @@ def check_remember_path(path: str) -> bool:
     return bool(path) and os.path.isdir(path)
 
 
-def check_card_edit_path(path: str) -> bool:
-    """카드 편집 관문 (#148): 존재만 본다."""
-    return bool(path) and os.path.exists(path)
-
-
 def check_download_path(path: str, probe) -> tuple[bool, str]:
     """다운로드 게이트 (#137): 존재+쓰기 프로브.
 
