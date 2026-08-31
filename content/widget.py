@@ -460,7 +460,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         return result
 
     def _shortRemain(self, remain: str) -> str:
-        """"HH:MM:SS" 남은 시간을 짧은 표시("3:12")로 줄인다 — 표시 정책.
+        """"HH:MM:SS" 시간을 짧은 표시("3:12")로 줄인다 — 표시 정책.
+
+        진행 중의 남은 시간과 완료의 소요 시간이 같은 포맷을 쓴다(#245).
 
         계산 자체는 어댑터(download/qt_bridge.py)가 ProgressEvent 값으로
         이미 해 둔 것을 받는다(core 무관) — 여기서는 표기만 줄인다.
@@ -528,7 +530,14 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             self.fileSizeLabel.setText(self._withResolution(self._sizeText(item)))
 
         elif self.item.downloadState == DownloadState.FINISHED:
-            self.statusLabel.setText(f"{STATE_ICON['finished']} " + self.tr("Completed"))
+            # "✓ 완료 · 2:12" — 소요 시간은 진행 중의 남은 시간과 같은 짧은
+            # 포맷(#245). 값은 어댑터(download/qt_bridge.py)가 엔진의
+            # start_time~end_time으로 만든 "HH:MM:SS"이고, end_time은 후처리가
+            # 끝난 뒤 찍히므로 유저가 체감하는 전체(로그의 "Download completed")다.
+            # 값이 없으면(앱 재시작 복원 등) 시간 없이 "✓ 완료"만.
+            completed = f"{STATE_ICON['finished']} " + self.tr("Completed")
+            elapsed = self._shortRemain(item.download_time) if item.download_time else ""
+            self.statusLabel.setText(f"{completed} · {elapsed}" if elapsed else completed)
             self.fileSizeLabel.setText(self._withResolution(self.setSize(item.download_size)))
 
         elif self.item.downloadState == DownloadState.FAILED:

@@ -1,23 +1,31 @@
-"""상단(헤더) 두 행의 가로 배치 게이트 (#245 — 설정 버튼 위치 확정).
+"""상단(헤더) 가로·세로 배치 게이트 (#245 — 설정 버튼 위치 확정).
 
 오너 확정 구조:
 
-    [치지직 URL 입력                  ][VOD 추가 ]
-    [C:\\Users\\...\\cvdv2            ✕][경로 찾기][⚙]
+    ┌ [치지직 URL 입력          ][VOD 추가 ] ┐
+    │                                        │  ⚙
+    └ [C:\\...\\cvdv2          ✕][경로 찾기 ] ┘
     해상도 가져오기 성공.
 
-- 1행 [VOD 추가]의 오른쓸 끝 == 2행 [⚙]의 오른쓸 끝 — 우측 끝선은 하나다.
-  ⚙가 1행에 붙어 있던 동안은 [VOD 추가]가 안쪽으로 밀려 두 행의 끝선이
-  어긋났다.
-- 남는 공간은 각 행에서 **입력창 하나만** 흡수한다. 버튼들은 창 폭이
-  바뀌어도 자기 폭을 지킨다.
-- ⚙는 하단으로 내리지 않는다(설정 안의 쿠키 발견성) — 2행에 있어야 한다.
+- 입력 블록(두 행)은 완결된 사각형이다 — **텍스트 버튼 둘([VOD 추가]·
+  [경로 찾기])은 폭이 같고 좌우 끝이 맞는다**, 두 입력창의 오른쪽 끝도 같다.
+- ⚙는 그 블록 **밖** 오른쪽, 두 행 높이의 세로 중앙에 하나다. 설정은 입력과
+  성격이 달라 시각적으로도 갈린다. 하단으로 내리지 않는다(쿠키 발견성).
+- 남는 공간은 각 행에서 **입력창 하나만** 흡수한다. 버튼들은 고정 폭.
 
-폰트에 의존하지 않는 기하 관계만 잰다(끝선 일치·폭 불변·증가 방향).
+⚠️ 폐기한 게이트 — "1행 [VOD 추가] 끝 == 2행 [⚙] 끝". 텍스트 버튼과
+아이콘 버튼, 즉 **다른 종류끼리** 끝을 맞춘 것이라 숫자는 통과했지만 눈에
+걸리는 것([VOD 추가]와 [경로 찾기]의 끝이 어긋남)은 전혀 재지 못했다 —
+⚙가 2행 끝에 붙으면서 [경로 찾기]를 왼쓸으로 밀었는데 게이트는 통과했다.
+**정렬 게이트는 같은 종류끼리 재야 한다.** 텍스트 버튼↔아이콘 버튼, 라벨↔
+입력창처럼 성격이 다른 것의 끝을 맞추면 숫자는 통과해도 눈에는 어긋나 보인다.
+
+폰트에 의존하지 않는 기하 관계만 잰다(끝선 일치·폭 동일·중앙·증가 방향).
 ⚠️ 창 폭 여러 값으로 잰다 — 이 부류 결함은 넓은 폭에서만 드러난다.
 """
 
 import pytest
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 import main as main_module
@@ -56,26 +64,28 @@ def _right(w) -> int:
     return w.x() + w.width()
 
 
-class TestSettingsButtonLivesOnThePathRow:
-    def test_settings_button_is_on_the_path_row_after_find_path(self, window):
-        row = window.pathRowLayout
-        widgets = [row.itemAt(i).widget() for i in range(row.count())]
-        assert widgets == [window.downloadPathInput, window.downloadPathButton, window.settingButton], (
-            f"2행 구성이 [경로 입력][경로 찾기][⚙]이 아니다: {[w.objectName() for w in widgets]}"
-        )
+def _in_header(win, w):
+    """헤더 프레임 좌표계의 (top, bottom) — 서로 다른 부모에 있는 위젯을 한 좌표계로."""
+    top = w.mapTo(win.headerFrame, w.rect().topLeft()).y()
+    return top, top + w.height()
 
-    def test_url_row_ends_with_add_vod(self, window):
-        row = window.urlRowLayout
-        widgets = [row.itemAt(i).widget() for i in range(row.count())]
-        assert widgets == [window.urlInput, window.fetchButton], (
-            f"1행 구성이 [URL 입력][VOD 추가]가 아니다: {[w.objectName() for w in widgets]}"
-        )
+
+class TestStructure:
+    def test_input_block_has_two_rows_and_settings_sits_outside(self, window):
+        rows = window.headerRowsLayout
+        assert rows.count() == 2
+        assert rows.itemAt(0).layout() is window.inputBlockLayout, "첫 항목은 입력 블록(두 행)이어야 한다"
+        assert rows.itemAt(1).widget() is window.settingButton, "⚙는 입력 블록 밖 오른쓸이어야 한다"
+        assert rows.itemAt(1).alignment() & Qt.AlignmentFlag.AlignVCenter, "⚙는 세로 중앙 정렬이어야 한다"
+        url = [window.urlRowLayout.itemAt(i).widget() for i in range(window.urlRowLayout.count())]
+        path = [window.pathRowLayout.itemAt(i).widget() for i in range(window.pathRowLayout.count())]
+        assert url == [window.urlInput, window.fetchButton]
+        assert path == [window.downloadPathInput, window.downloadPathButton], "2행에 ⚙가 끼어 있으면 [경로 찾기]가 밀린다"
 
     def test_tab_order_visits_settings_after_find_path(self, window):
         """탭 순서: 경로 찾기 → ⚙ → 목록. 포커스 체인에는 포커스를 안 받는
         위젯(입력창의 지우기 버튼 등)도 끼어 있어, 포커스를 받는 다음
         위젯까지 건너 뛰어 잰다."""
-        from PySide6.QtCore import Qt
 
         def next_focusable(widget):
             cursor = widget.nextInFocusChain()
@@ -91,19 +101,44 @@ class TestSettingsButtonLivesOnThePathRow:
         assert next_focusable(window.settingButton) is window.listView
 
 
-class TestOneRightEdge:
+class TestTextButtonsAlignAsOneColumn:
+    """★ [VOD 추가]와 [경로 찾기] — 같은 종류(텍스트 버튼)끼리 왼쓸 끝·오른쪽
+    끝·폭이 전부 같다. 하나라도 다르면 입력 블록이 사각형으로 읽히지 않는다."""
+
     @pytest.mark.parametrize("width", WIDTHS)
-    def test_add_vod_and_settings_share_the_right_edge(self, window, width):
+    def test_left_right_and_width_are_identical(self, window, width):
         _at_width(window, width)
-        assert _right(window.fetchButton) == _right(window.settingButton), (
-            f"폭 {width}px에서 [VOD 추가] 오른쓸 끝({_right(window.fetchButton)})과 "
-            f"[⚙] 오른쓸 끝({_right(window.settingButton)})이 다르다 — 우측 끝선은 하나여야 한다"
+        a, b = window.fetchButton, window.downloadPathButton
+        assert (a.x(), _right(a), a.width()) == (b.x(), _right(b), b.width()), (
+            f"폭 {width}px에서 [VOD 추가] (x={a.x()}, right={_right(a)}, w={a.width()}) ≠ "
+            f"[경로 찾기] (x={b.x()}, right={_right(b)}, w={b.width()})"
         )
 
     @pytest.mark.parametrize("width", WIDTHS)
-    def test_both_inputs_start_at_the_same_left_edge(self, window, width):
+    def test_inputs_share_left_and_right_edges(self, window, width):
         _at_width(window, width)
         assert window.urlInput.x() == window.downloadPathInput.x()
+        assert _right(window.urlInput) == _right(window.downloadPathInput)
+
+    @pytest.mark.parametrize("width", WIDTHS)
+    def test_settings_is_to_the_right_of_the_block(self, window, width):
+        _at_width(window, width)
+        assert window.settingButton.x() > _right(window.fetchButton)
+        assert window.settingButton.x() > _right(window.downloadPathButton)
+
+
+class TestSettingsIsVerticallyCentredOnTheTwoRows:
+    @pytest.mark.parametrize("width", WIDTHS)
+    def test_settings_centre_matches_the_block_centre(self, window, width):
+        _at_width(window, width)
+        top, _ = _in_header(window, window.urlInput)
+        _, bottom = _in_header(window, window.downloadPathInput)
+        block_centre = (top + bottom) / 2
+        s_top, s_bottom = _in_header(window, window.settingButton)
+        settings_centre = (s_top + s_bottom) / 2
+        assert abs(settings_centre - block_centre) <= 1, (
+            f"폭 {width}px에서 ⚙ 중심 {settings_centre} ≠ 두 행 중심 {block_centre}"
+        )
 
 
 class TestFreeSpaceGoesToTheInputsOnly:

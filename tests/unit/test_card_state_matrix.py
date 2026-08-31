@@ -84,6 +84,7 @@ def _make_widget(qapp, state, progress=0) -> ContentItemWidget:
     item.download_speed = "8.2 MB/s"
     item.download_remain_time = "00:12:34"
     item.download_size = 624_000_000
+    item.download_time = "00:05:12"  # 어댑터가 주는 전체 소요(전송+후처리) "HH:MM:SS"
     item.stateMessage = "Failed to save file" if state == DownloadState.FAILED else ""
     widget.setData(item, 0)
     widget.resize(900, widget.sizeHint().height())
@@ -131,10 +132,27 @@ class TestSlotColumn:
         )
         assert "left" not in text, "일시정지에 남은 시간이 붙어 있다 — 멈춘 상태에 남은 시간은 없다"
 
-    def test_finished_shows_check_and_completed(self, qapp):
+    def test_finished_shows_check_completed_and_elapsed(self, qapp):
+        """"✓ 완료 · 5:12" — 소요 시간은 진행 중의 남은 시간과 같은 짧은 포맷.
+        전송 성능에 들인 공이 유저에게 보이는 유일한 자리다(#245)."""
         widget = _make_widget(qapp, DownloadState.FINISHED, 100)
-        assert widget.statusLabel.text().startswith("✓")
-        assert "Completed" in widget.statusLabel.text()
+        assert widget.statusLabel.text() == "✓ Completed · 5:12", widget.statusLabel.text()
+
+    def test_finished_elapsed_uses_the_same_short_format_as_remaining(self, qapp):
+        widget = _make_widget(qapp, DownloadState.FINISHED, 100)
+        widget.item.download_time = "01:02:03"
+        widget.setData(widget.item, 0)
+        assert widget.statusLabel.text().endswith("· 1:02:03")
+        widget.item.download_time = "00:00:07"
+        widget.setData(widget.item, 0)
+        assert widget.statusLabel.text().endswith("· 0:07")
+
+    def test_finished_without_elapsed_shows_completed_only(self, qapp):
+        """값이 없으면 억지로 채우지 않는다 — "✓ 완료"만."""
+        widget = _make_widget(qapp, DownloadState.FINISHED, 100)
+        widget.item.download_time = ""
+        widget.setData(widget.item, 0)
+        assert widget.statusLabel.text() == "✓ Completed"
 
     def test_failed_shows_cross_and_reason(self, qapp):
         widget = _make_widget(qapp, DownloadState.FAILED)

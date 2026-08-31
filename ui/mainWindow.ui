@@ -35,75 +35,94 @@
         <number>8</number>
        </property>
        <item>
-        <layout class="QHBoxLayout" name="urlRowLayout">
+        <!-- #245: 입력 블록(두 행)은 완결된 사각형, ⚙는 그 밖 세로 중앙 -->
+        <layout class="QHBoxLayout" name="headerRowsLayout">
          <property name="spacing">
           <number>8</number>
          </property>
          <item>
-          <widget class="QLineEdit" name="urlInput">
-           <property name="placeholderText">
-            <string>Enter Chzzk URL</string>
+          <layout class="QVBoxLayout" name="inputBlockLayout" stretch="0,0">
+           <property name="spacing">
+            <number>8</number>
            </property>
-           <property name="clearButtonEnabled">
-            <bool>true</bool>
-           </property>
-          </widget>
+           <item>
+            <layout class="QHBoxLayout" name="urlRowLayout">
+             <property name="spacing">
+              <number>8</number>
+             </property>
+             <item>
+              <widget class="QLineEdit" name="urlInput">
+               <property name="placeholderText">
+                <string>Enter Chzzk URL</string>
+               </property>
+               <property name="clearButtonEnabled">
+                <bool>true</bool>
+               </property>
+              </widget>
+             </item>
+    
+             <item>
+              <widget class="QPushButton" name="fetchButton">
+               <property name="text">
+                <string>Add VOD</string>
+               </property>
+              </widget>
+             </item>
+    
+            </layout>
+           </item>
+           <item>
+            <layout class="QHBoxLayout" name="pathRowLayout">
+             <property name="spacing">
+              <number>8</number>
+             </property>
+             <item>
+              <widget class="QLineEdit" name="downloadPathInput">
+               <property name="placeholderText">
+                <string>Enter download path</string>
+               </property>
+               <property name="clearButtonEnabled">
+                <bool>true</bool>
+               </property>
+              </widget>
+             </item>
+    
+             <item>
+              <widget class="QPushButton" name="downloadPathButton">
+               <property name="text">
+                <string>Find path</string>
+               </property>
+              </widget>
+             </item>
+    
+            </layout>
+           </item>
+          </layout>
          </item>
-         <item>
-          <widget class="QPushButton" name="fetchButton">
-           <property name="text">
-            <string>Add VOD</string>
-           </property>
-          </widget>
-         </item>
-        </layout>
-       </item>
-       <item>
-        <layout class="QHBoxLayout" name="pathRowLayout">
-         <property name="spacing">
-          <number>8</number>
-         </property>
-         <item>
-          <widget class="QLineEdit" name="downloadPathInput">
-           <property name="placeholderText">
-            <string>Enter download path</string>
-           </property>
-           <property name="clearButtonEnabled">
-            <bool>true</bool>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <widget class="QPushButton" name="downloadPathButton">
-           <property name="text">
-            <string>Find path</string>
-           </property>
-          </widget>
-         </item>
-         <item>
+         <item alignment="Qt::AlignVCenter">
           <widget class="QPushButton" name="settingButton">
-           <property name="minimumSize">
-            <size>
-             <width>32</width>
-             <height>32</height>
-            </size>
-           </property>
-           <property name="maximumSize">
-            <size>
-             <width>32</width>
-             <height>32</height>
-            </size>
-           </property>
-           <property name="toolTip">
-            <string>Settings</string>
-           </property>
-           <property name="text">
-            <string notr="true">⚙</string>
-           </property>
-           <property name="role" stdset="0">
-            <string notr="true">icon</string>
-           </property>
-          </widget>
+               <property name="minimumSize">
+                <size>
+                 <width>32</width>
+                 <height>32</height>
+                </size>
+               </property>
+               <property name="maximumSize">
+                <size>
+                 <width>32</width>
+                 <height>32</height>
+                </size>
+               </property>
+               <property name="toolTip">
+                <string>Settings</string>
+               </property>
+               <property name="text">
+                <string notr="true">⚙</string>
+               </property>
+               <property name="role" stdset="0">
+                <string notr="true">icon</string>
+               </property>
+              </widget>
          </item>
         </layout>
        </item>

@@ -37,6 +37,25 @@ class Ui_VodDownloader(object):
         self.headerFrameLayout = QVBoxLayout(self.headerFrame)
         self.headerFrameLayout.setSpacing(8)
         self.headerFrameLayout.setObjectName(u"headerFrameLayout")
+
+        # 상단 구조(#245 오너 확정):
+        #   ┌ [URL 입력            ][VOD 추가 ] ┐
+        #   │                                   │  ⚙
+        #   └ [경로 입력          ✕][경로 찾기 ] ┘
+        #   조회 상태 메시지 한 줄
+        # 입력 블록(두 행)은 완결된 사각형이고 ⚙는 그 **밖**, 두 행 높이의
+        # 세로 중앙에 하나다 — 설정은 입력과 성격이 달라 시각적으로도 갈린다.
+        # 두 텍스트 버튼([VOD 추가]·[경로 찾기])은 같은 폭으로 좌우 끝을 맞춘다
+        # (application/mainWindow.py::_equalizeHeaderButtons — 번역·폰트에 따라
+        # 폭이 달라 런타임에 더 넓은 쪽으로 고정). ⚙를 어느 행에 붙이든 그 행의
+        # 텍스트 버튼이 밀려 두 텍스트 버튼의 끝선이 어긋났다(실기 확인).
+        self.headerRowsLayout = QHBoxLayout()
+        self.headerRowsLayout.setSpacing(8)
+        self.headerRowsLayout.setObjectName(u"headerRowsLayout")
+        self.inputBlockLayout = QVBoxLayout()
+        self.inputBlockLayout.setSpacing(8)
+        self.inputBlockLayout.setObjectName(u"inputBlockLayout")
+
         self.urlRowLayout = QHBoxLayout()
         self.urlRowLayout.setSpacing(8)
         self.urlRowLayout.setObjectName(u"urlRowLayout")
@@ -52,7 +71,7 @@ class Ui_VodDownloader(object):
         self.urlRowLayout.addWidget(self.fetchButton)
 
 
-        self.headerFrameLayout.addLayout(self.urlRowLayout)
+        self.inputBlockLayout.addLayout(self.urlRowLayout)
 
         self.pathRowLayout = QHBoxLayout()
         self.pathRowLayout.setSpacing(8)
@@ -68,14 +87,16 @@ class Ui_VodDownloader(object):
 
         self.pathRowLayout.addWidget(self.downloadPathButton)
 
-        # 설정(⚙)은 2행(경로 줄) 버튼 오른쪽 — #245 오너 확정. 1행(URL 줄)에
-        # 있으면 [VOD 추가]보다 오른쪽으로 튀어나와 상단 두 행의 우측 끝선이
-        # 어긋나고, "VOD를 추가하는 곳"에 전역 설정이 섞인다. 경로 찾기 옆이라
-        # "환경 설정"끼리 인접한다. 하단으로 내리는 안은 채택하지 않는다 —
-        # 설정 안의 쿠키는 성인·멤버십 VOD를 받으려면 반드시 한 번은 찾아야
-        # 해서 하단 muted 묶음에 두면 못 찾는다(설정 화면 .ui 재작성 때 재검토).
-        # 남는 공간은 각 행에서 입력창 하나만 흡수한다(버튼들은 고정 폭) —
-        # tests/unit/test_header_layout.py 게이트.
+
+        self.inputBlockLayout.addLayout(self.pathRowLayout)
+
+        self.headerRowsLayout.addLayout(self.inputBlockLayout, 1)
+
+        # 설정(⚙) — 입력 블록 밖, 두 행 높이의 세로 중앙(#245 오너 확정).
+        # 하단으로 내리는 안은 채택하지 않는다 — 설정 안의 쿠키는 성인·멤버십
+        # VOD를 받으려면 반드시 한 번은 찾아야 해서 하단 muted 묶음에 두면 못
+        # 찾는다(설정 화면 .ui 재작성 때 재검토). 남는 공간은 각 행에서 입력창
+        # 하나만 흡수한다(버튼들은 고정 폭) — tests/unit/test_header_layout.py.
         self.settingButton = QPushButton(self.headerFrame)
         self.settingButton.setObjectName(u"settingButton")
         self.settingButton.setMinimumSize(QSize(32, 32))
@@ -83,10 +104,9 @@ class Ui_VodDownloader(object):
         self.settingButton.setText(u"⚙")
         self.settingButton.setProperty(u"role", u"icon")
 
-        self.pathRowLayout.addWidget(self.settingButton)
+        self.headerRowsLayout.addWidget(self.settingButton, 0, Qt.AlignmentFlag.AlignVCenter)
 
-
-        self.headerFrameLayout.addLayout(self.pathRowLayout)
+        self.headerFrameLayout.addLayout(self.headerRowsLayout)
 
         self.linkStatusLabel = QLabel(self.headerFrame)
         self.linkStatusLabel.setObjectName(u"linkStatusLabel")

@@ -279,34 +279,46 @@ class TestRecoversFullTextAfterWidthIncreases:
         직접 좁은 컨테이너에 넣어 같은 시나리오를 만든다 — 검증 대상
         (한 번 "..."까지 줄면 영원히 못 돌아오는 되먹임)은 동일하다.
         고장 주입: `ElidingLabel.sizeHint` override를 지우면 두 테스트가
-        실패하는 것을 재확인했다(#244 재설계 커밋 보고 참조).
+        실패하는 것을 재확인했다(#244 재설계 커밋 보고 참조, #245에서 재확인).
+
+        ⚠️ 컨테이너는 **최상위 창이 아니라 다른 위젯의 자식**이어야 한다(#245).
+        최상위 창을 40px로 resize하면 실기 QPA(Windows)가 창 최소폭(프레임·
+        제목 표시줄)으로 되돌려 40px 컨테이너가 성립하지 않는다 — offscreen
+        CI만 통과하고 실기에서는 아무것도 검증하지 않는 테스트였다(#237이
+        폰트 축에서 정리한 "로컬에서만 실패하는 테스트"의 창 최소폭 축).
+        자식 위젯의 geometry는 OS 창 정책과 무관하게 그대로 적용된다.
         """
         from PySide6.QtWidgets import QHBoxLayout, QWidget
 
         from content.eliding_label import ElidingLabel
 
-        container = QWidget()
+        host = QWidget()
+        host.resize(1300, 100)
+        container = QWidget(host)
         layout = QHBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         label = ElidingLabel(container)
         label.setText(text)
         layout.addWidget(label)
         layout.addStretch(1)  # 라벨은 stretch 0 — sizeHint가 그대로 폭이 된다
-        container.resize(40, 30)
-        container.show()
+        container.setGeometry(0, 0, 40, 30)
+        host.show()
         qapp.processEvents()
 
+        assert container.width() == 40, (
+            f"컨테이너 폭이 {container.width()}px — 40px 전제가 환경에 밀렸다"
+        )
         assert _rendered(label) != label.text(), (
             "폭 40에서 안 잘렸다 — 이 테스트의 전제(좁았다가 넓어짐)가 성립하지 않는다"
         )
 
-        container.resize(1200, 30)
+        container.setGeometry(0, 0, 1200, 30)
         qapp.processEvents()
         qapp.processEvents()
-        # 컨테이너를 함께 돌려준다 — 라벨만 반환하면 부모 QWidget이 파이썬
-        # 참조를 잃고 GC로 파괴되면서 자식 라벨의 C++ 객체도 같이 죽는다
-        # (libshiboken RuntimeError로 실측).
-        return container, label
+        # 호스트(최상위)를 함께 돌려준다 — 라벨만 반환하면 부모 QWidget이
+        # 파이썬 참조를 잃고 GC로 파괴되면서 자식 라벨의 C++ 객체도 같이
+        # 죽는다(libshiboken RuntimeError로 실측).
+        return host, label
 
     def test_file_size_text_recovers_when_widened_after_being_narrow(self, qapp):
         container, label = self._narrow_then_wide(qapp, "1.24 GB")

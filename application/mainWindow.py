@@ -93,6 +93,23 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         self.centralWidgetLayout.setSpacing(8)
         self.headerFrameLayout.setContentsMargins(frame_pad, frame_pad, frame_pad, frame_pad)
         self.infoLayout.setContentsMargins(frame_pad, frame_pad, frame_pad, frame_pad)
+        self._equalizeHeaderButtons()
+
+    def _equalizeHeaderButtons(self) -> None:
+        """상단 두 텍스트 버튼([VOD 추가]·[경로 찾기])을 같은 폭으로 고정한다 (#245).
+
+        사람 눈은 **같은 종류끼리**(텍스트 버튼 둘) 끝이 맞는 것을 본다 —
+        폭이 다르면 오른쪽 끝을 맞춰도 왼쪽 끝이 어긋나 입력 블록이 사각형으로
+        읽히지 않는다. 폭은 번역·폰트에 따라 달라지므로 .ui 상수가 아니라
+        런타임에 더 넓은 쪽으로 맞춘다. `ensurePolished()`가 먼저다 — QSS
+        padding이 sizeHint에 들어오는 시점이 polish다.
+        """
+        buttons = (self.fetchButton, self.downloadPathButton)
+        for button in buttons:
+            button.ensurePolished()
+        width = max(button.sizeHint().width() for button in buttons)
+        for button in buttons:
+            button.setFixedWidth(width)
 
     def _setLinkStatus(self, text: str, kind: str = "info") -> None:
         """조회 상태 메시지를 갱신한다 — 색은 전역 QSS가 `status` 속성으로 입힌다 (#244).
