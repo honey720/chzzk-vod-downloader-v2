@@ -19,6 +19,7 @@ import pytest
 
 import main
 import theme
+from tests.unit.card_helpers import hold_style
 
 ROOT_DIR = Path(main.__file__).resolve().parent
 HEX_COLOR = re.compile(r"#[0-9a-fA-F]{6}\b")
@@ -59,12 +60,15 @@ class TestTokenSubstitution:
 
 
 class TestCardStateStyles:
-    """카드 테두리 상태색 (#240 2단계 — `theme.card_style()` 폐지 후속).
+    """카드 상태 신호 (#240 2단계 → #244 — 신호를 테두리에서 상태 아이콘으로 이관).
 
-    카드 프레임은 더 이상 파이썬이 문자열을 만들어 붙이지 않는다 — 진행바와
-    같은 패턴으로 `#contentFrame[state="..."]`가 전역 `.qss`에 실제로
-    있는지, 그 값이 서로 다른 토큰으로 갈리는지를 **실제 QSS 파일 소스**를
-    읽어 확인한다(만든 문자열이 아니라 프로덕션이 읽는 바로 그 파일).
+    카드 테두리(`#contentFrame`)는 #244부터 항상 중립색이고 더는 `state`를
+    안 본다 — 상태 신호는 이제 3행 슬롯 텍스트 `#statusLabel[state="..."]`와
+    `QProgressBar[state="..."]`(진행 중일 때만 보이는 하단 바) 둘이다
+    (#245 상태별 슬롯 재설계). 진행바와 같은
+    패턴으로 그 규칙이 전역 `.qss`에 실제로 있는지, 서로 다른 토큰으로
+    갈리는지를 **실제 QSS 파일 소스**를 읽어 확인한다(만든 문자열이 아니라
+    프로덕션이 읽는 바로 그 파일).
 
     "알 수 없는 state를 주면 ValueError"라는 옛 검증은 대응하는 게 없다 —
     `card_style()`이라는 함수 자체가 사라져 임의 문자열을 검증할 진입점이
@@ -75,13 +79,13 @@ class TestCardStateStyles:
 
     @pytest.mark.parametrize("state", theme.CARD_STATES)
     def test_each_state_rule_exists_and_resolves_to_its_token(self, state):
-        block = _rule_block(_raw_qss(), f'#contentFrame[state="{state}"]')
+        block = _rule_block(_raw_qss(), f'#statusLabel[state="{state}"]')
         assert f"@state{state.capitalize()}" in block
 
     def test_states_resolve_to_distinct_colours(self):
         loaded = theme.load_stylesheet(main.resource_path(theme.QSS_RELATIVE_PATH))
         colours = {
-            _rule_block(loaded, f'#contentFrame[state="{state}"]').strip()
+            _rule_block(loaded, f'#statusLabel[state="{state}"]').strip()
             for state in theme.CARD_STATES
         }
         assert len(colours) == len(theme.CARD_STATES)
@@ -93,6 +97,14 @@ class TestCardStateStyles:
         padding = [ln for ln in block.splitlines() if "padding" in ln]
         assert padding, "카드 규칙에 padding 선언이 사라졌다 — 이 테스트의 전제를 확인할 것"
         assert padding[0].strip().rstrip(";").split(":")[1].split()[-1] == "0px"
+
+    def test_card_frame_border_is_always_neutral(self):
+        """카드 테두리는 상태 선택자를 전혀 안 쓴다 — #244의 핵심 불변식."""
+        block = _rule_block(_raw_qss(), "#contentFrame")
+        assert "@border" in block
+        assert "@state" not in block
+        for state in theme.CARD_STATES:
+            assert f'#contentFrame[state="{state}"]' not in _raw_qss()
 
 
 class TestColoursAreDefinedOnlyOnce:
@@ -220,7 +232,7 @@ class TestComboBoxDropDownStyle:
         from PySide6.QtWidgets import QComboBox
         from PySide6.QtTest import QTest
 
-        qapp.setStyle(theme.build_style())
+        qapp.setStyle(hold_style(theme.build_style()))  # 참조 보관 — 이중 해제 우회 (#243, card_helpers.hold_style)
         combo = QComboBox()
         combo.addItems(["Alpha", "Beta", "Gamma", "Delta", "Epsilon"])
         combo.setCurrentIndex(3)  # 콤보 라벨과 안 겹치면 티가 나는 임의의 값
@@ -243,7 +255,7 @@ class TestComboBoxDropDownStyle:
         from PySide6.QtWidgets import QComboBox
         from PySide6.QtTest import QTest
 
-        qapp.setStyle(theme.build_style())
+        qapp.setStyle(hold_style(theme.build_style()))  # 참조 보관 — 이중 해제 우회 (#243, card_helpers.hold_style)
         combo = QComboBox()
         combo.addItems(["Alpha", "Beta", "Gamma", "Delta", "Epsilon"])
         combo.setCurrentIndex(3)
@@ -291,14 +303,14 @@ class TestLightTokenTable:
         `main.apply_theme()`이 쓰는 것과 같은 `load_stylesheet()` 경로)에
         LIGHT 상태색이 들어가는지."""
         loaded = theme.load_stylesheet(main.resource_path(theme.QSS_RELATIVE_PATH), theme.LIGHT)
-        block = _rule_block(loaded, f'#contentFrame[state="{state}"]')
+        block = _rule_block(loaded, f'#statusLabel[state="{state}"]')
         assert theme.LIGHT["state" + state.capitalize()] in block
 
     @pytest.mark.parametrize("state", ("running", "finished", "failed"))
     def test_light_state_colours_differ_from_dark_where_contrast_needed(self, state):
         """대기색은 원래도 흰 배경에서 대비가 충분해 재사용하지만, 나머지 셋은 대비 때문에 갈아 끼웠다."""
         loaded = theme.load_stylesheet(main.resource_path(theme.QSS_RELATIVE_PATH), theme.LIGHT)
-        block = _rule_block(loaded, f'#contentFrame[state="{state}"]')
+        block = _rule_block(loaded, f'#statusLabel[state="{state}"]')
         assert theme.DARK["state" + state.capitalize()] not in block
 
     def test_light_state_colours_are_still_mutually_distinct(self):

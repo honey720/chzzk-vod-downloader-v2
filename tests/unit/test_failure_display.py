@@ -11,7 +11,6 @@ import time
 
 import pytest
 from PySide6.QtCore import QObject
-from PySide6.QtGui import QColor
 
 import main as main_module
 import theme
@@ -21,6 +20,7 @@ from content.view import ContentListView
 from core.downloaders.base import PostprocessError
 from download.qt_bridge import QtDownloadBridge
 from core.models.download_state import DownloadState
+from tests.unit.card_helpers import hold_style
 
 
 @pytest.fixture(autouse=True)
@@ -37,7 +37,7 @@ def _apply_dark_card_qss(qapp):
     재현했다(session·module 스코프는 좁혀도 둘 다 크래시 재현됨).
     """
     theme.set_color_scheme("dark")
-    qapp.setStyle(theme.build_style())
+    qapp.setStyle(hold_style(theme.build_style()))  # 참조 보관 — 이중 해제 우회 (#243, card_helpers.hold_style)
     qapp.setPalette(theme.build_palette())
     qapp.setStyleSheet(theme.load_stylesheet(main_module.resource_path(theme.QSS_RELATIVE_PATH)))
 
@@ -181,17 +181,20 @@ def test_failed_card_shows_failure_and_batch_continues(wired, qapp, tmp_path):
     assert item1.downloadState is DownloadState.FAILED
     widget = view.widgetFor(manager.model.items[0])
     label = widget.statusLabel.text()
-    assert label.startswith("Download failed")  # 번역기 미설치 — 키 원문
-    assert "Postprocessing failed" in label  # 사유가 함께 보인다
+    # #245 상태별 슬롯: 실패 사유가 있으면 "✕ 사유"만 보인다(오너 확정 —
+    # "Download failed —" 접두는 사유 없는 경우의 폴백으로만 쓰인다)
+    assert label.startswith("✕ ")
+    # 첫 줄=핵심(할 일 포함)만 3행에 보인다(#245) — 상세는 툴팁
+    assert "corrupted" in label and "download the video again" in label
+    assert "\n" not in label, "둘째 줄(상세)이 3행에 새어 나왔다"
     # ② 원시 문자열(ffmpeg stderr·실행 경로) 미노출
     assert "ffmpeg" not in label
     assert "remux" not in label
-    # 빨간 프레임 — 완료(파란)와도 구분된다.
-    # 카드 프레임은 위젯별 setStyleSheet이 아니라 전역 QSS로 칠해진다
-    # (#240 2단계) — styleSheet()는 항상 빈 문자열이라 실제 렌더 픽셀을
-    # 읽는다. 색 리터럴을 여기 다시 박지 않도록 theme.py 토큰을 그대로 쓴다.
-    border_pixel = widget.contentFrame.grab().toImage().pixelColor(0, widget.contentFrame.height() // 2)
-    assert border_pixel == QColor(theme.DARK["stateFailed"])
+    # 빨간 실패 표시 — 완료(초록)와도 구분된다. `[state="..."]` 규칙이 옳은
+    # 토큰을 쓰는지는 test_theme.py가 QSS 소스로(폰트 무관) 보고, 여기서는
+    # 슬롯 라벨이 그 규칙을 타는 동적 속성을 실제로 세팅했는지 확인한다.
+    assert widget.statusLabel.property("state") == "failed"
+    assert widget.statusLabel.isVisible() or not widget.isVisible()  # 실패 슬롯은 숨겨지지 않는다
 
     # ③ 배치는 실패 항목에서 멈추지 않고 다음 항목으로 계속된다
     assert harness.started == [item1, item2]

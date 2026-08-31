@@ -125,10 +125,14 @@ class TestDownloadItemWriteGate:
 
         assert requested == []  # 다운로드가 시작되지 않는다
         assert item.downloadState is DownloadState.FAILED
-        assert item.stateMessage == "Failed to save file"  # 번역기 미설치 — 키 원문
+        # 번역기 미설치 — 원문(첫 줄=핵심 / 둘째 줄=상세, #245)
+        assert item.stateMessage.startswith("Failed to save file · check the path and disk space\n")
         assert finished_all == [True]  # 배치는 종료 신호까지 간다
         widget = view.widgetFor(item)
-        assert widget.statusLabel.text().startswith("Download failed")  # 카드에 명확히 표시
+        # #245 상태별 슬롯: 실패 카드의 3행은 "✕ 사유 첫 줄"이다 — 사유가 있으면
+        # "Download failed" 접두 없이 사유만, 상세(둘째 줄)는 툴팁으로
+        assert widget.statusLabel.text() == "✕ Failed to save file · check the path and disk space"
+        assert widget.statusLabel.toolTip() == item.stateMessage
 
     def test_timeout_probe_fails_the_same_way(self, manager, qapp, tmp_path, monkeypatch):
         """무응답(timeout)도 같은 안내다 — 유저에게는 '저장할 수 없는 경로'라는 같은 사실."""
@@ -141,7 +145,7 @@ class TestDownloadItemWriteGate:
         m.downloadItem()
 
         assert item.downloadState is DownloadState.FAILED
-        assert item.stateMessage == "Failed to save file"
+        assert item.stateMessage.startswith("Failed to save file · check the path and disk space\n")
 
     def test_missing_path_keeps_invalid_path_message(self, manager, qapp, tmp_path):
         """존재하지 않는 경로는 기존 안내(Invalid file path)를 유지한다 — 실프로브 경유."""

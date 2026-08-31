@@ -12,6 +12,8 @@ from PySide6.QtCore import Qt
 from content.data import ContentItem
 from content.model import ContentListModel
 from content.view import ContentListView
+from core.models.download_state import DownloadState
+from tests.unit.card_helpers import shown
 
 
 @pytest.fixture(autouse=True)
@@ -176,6 +178,44 @@ class TestProgressUpdate:
         assert v.widgetFor(b).titleLabel.text() == "B"
 
 
+class TestStateActionSignalsAreWired:
+    """카드 상태별 조작(#245 — ⏸ 일시정지·↻ 재시도)이 실배선으로 뷰까지
+    올라오는지. 핸들러 직접 호출이 아니라 실제 버튼 클릭 → 위젯 시그널 →
+    뷰 릴레이(아이템 부착)의 전체 체인을 탄다 — deleteRequest와 같은 패턴.
+    mainWindow 쪽 처리(onCardPause/onCardRetry)는 전역 다운로드 상태에
+    묶여 있어 여기서는 뷰 경계까지를 고정한다.
+    """
+
+    def test_retry_click_reaches_the_view_with_its_item(self, view, qapp):
+        v, model = view
+        item = _make_item()
+        item.downloadState = DownloadState.FAILED
+        model.addItem(item)
+        qapp.processEvents()
+
+        received = []
+        v.retryRequested.connect(received.append)
+        widget = v.widgetFor(item)
+        widget.retryButton.click()
+        qapp.processEvents()
+        assert received == [item]
+
+    def test_pause_click_reaches_the_view_with_its_item(self, view, qapp):
+        v, model = view
+        item = _make_item()
+        item.downloadState = DownloadState.RUNNING
+        item.download_progress = 42
+        model.addItem(item)
+        qapp.processEvents()
+
+        received = []
+        v.pauseRequested.connect(received.append)
+        widget = v.widgetFor(item)
+        widget.pauseButton.click()
+        qapp.processEvents()
+        assert received == [item]
+
+
 class TestCardNumberingFollowsPosition:
     """카드 번호(`#N`)가 위치를 따라가는지 (#235 — #226 회귀 수정).
 
@@ -198,7 +238,11 @@ class TestCardNumberingFollowsPosition:
     """
 
     def _labels(self, v, model):
-        return [v.widgetFor(model.itemAt(row)).indexLabel.text() for row in range(model.rowCount())]
+        # #244 재설계로 "#0" 번호 라벨은 화면에서 사라졌다(오너 확정) —
+        # 순번 자체는 setIndex가 widget.index로 계속 유지하며, 재번호매김
+        # 불변식(#235)은 이 값으로 검증한다. 검증 시나리오(중간·첫·끝·일괄
+        # 삭제 후 연속 번호)는 그대로다.
+        return [v.widgetFor(model.itemAt(row)).index for row in range(model.rowCount())]
 
     def test_middle_delete_renumbers_trailing_cards(self, view, qapp, qtbot):
         v, model = view
@@ -206,11 +250,11 @@ class TestCardNumberingFollowsPosition:
         for it in (a, b, c):
             model.addItem(it)
         qapp.processEvents()
-        assert self._labels(v, model) == ["#0", "#1", "#2"]
+        assert self._labels(v, model) == [0, 1, 2]
 
         model.removeRows(model.getRow(b), 1)
 
-        qtbot.waitUntil(lambda: self._labels(v, model) == ["#0", "#1"], timeout=2000)
+        qtbot.waitUntil(lambda: self._labels(v, model) == [0, 1], timeout=2000)
 
     def test_new_card_after_middle_delete_does_not_collide(self, view, qapp, qtbot):
         """⚠️ 회귀의 핵심 — 재부여가 없으면 새 카드와 기존 카드의 번호가 겹친다."""
@@ -224,7 +268,7 @@ class TestCardNumberingFollowsPosition:
         d = _make_item("D")
         model.addItem(d)
 
-        qtbot.waitUntil(lambda: self._labels(v, model) == ["#0", "#1", "#2"], timeout=2000)
+        qtbot.waitUntil(lambda: self._labels(v, model) == [0, 1, 2], timeout=2000)
         labels = self._labels(v, model)
         assert len(labels) == len(set(labels)), f"번호가 겹쳤다: {labels}"
 
@@ -237,7 +281,7 @@ class TestCardNumberingFollowsPosition:
 
         model.removeRows(model.getRow(a), 1)
 
-        qtbot.waitUntil(lambda: self._labels(v, model) == ["#0", "#1"], timeout=2000)
+        qtbot.waitUntil(lambda: self._labels(v, model) == [0, 1], timeout=2000)
 
     def test_last_delete_leaves_leading_numbers_untouched(self, view, qapp, qtbot):
         v, model = view
@@ -248,7 +292,7 @@ class TestCardNumberingFollowsPosition:
 
         model.removeRows(model.getRow(c), 1)
 
-        qtbot.waitUntil(lambda: self._labels(v, model) == ["#0", "#1"], timeout=2000)
+        qtbot.waitUntil(lambda: self._labels(v, model) == [0, 1], timeout=2000)
 
     def test_bulk_delete_ends_with_contiguous_numbering(self, view, qapp, qtbot):
         """일괄 삭제(비연속 위치) 뒤에도 번호가 연속이어야 한다."""
@@ -263,7 +307,7 @@ class TestCardNumberingFollowsPosition:
         for it in (items[4], items[2], items[0]):
             model.removeRows(model.getRow(it), 1)
 
-        qtbot.waitUntil(lambda: self._labels(v, model) == ["#0", "#1"], timeout=2000)
+        qtbot.waitUntil(lambda: self._labels(v, model) == [0, 1], timeout=2000)
 
     def test_bulk_delete_renumbers_only_once(self, view, qapp, qtbot, monkeypatch):
         """일괄 삭제 한 번에 재번호매김이 여러 번(O(n²)) 돌면 안 된다 — 끝에 한 번만."""
@@ -383,19 +427,24 @@ class TestNoHorizontalOverflow:
         v.show()
         qapp.processEvents()
 
+        # 경로 라벨의 표시 문자열은 축약형이다(#245 — 뿌리+마지막 폴더, 3단계
+        # 이상이면 가운데를 "…"로 접음). 여기서 재는 것은 **라벨의 말줄임**이므로
+        # 축약이 "…"를 만들지 않는 형태(뿌리 뒤 2단계)에 긴 마지막 세그먼트를 둬
+        # 표시 문자열이 300px에서 실제로 잘리게 한다 — 축약의 "…"와 말줄임의
+        # "…"가 섞이면 접두·접미 판정이 흐려진다.
         item = _make_item(
             title="StartOfTitleThatMattersMostAndShouldStayVisibleAAAAAAAAAAAAAAAAAAAAAAAAA",
-            download_path="C:/StartOfPathThatMatters/junk/junk/junk/junk/EndFileNameThatMatters.mp4",
+            download_path="C:/StartOfPathThatMatters/EndFileNameThatMattersAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         )
         model.addItem(item)
         for _ in range(8):
             qapp.processEvents()
 
         widget = v.widgetFor(item)
-        rendered_title = type(widget.titleLabel).__mro__[1].text(widget.titleLabel)
-        rendered_path = type(widget.directoryLabel).__mro__[1].text(widget.directoryLabel)
+        rendered_title = shown(widget.titleLabel)  # 가시성 단언 후의 표시 문자열(QLabel.text)
         full_title = widget.titleLabel.text()
-        full_path = widget.directoryLabel.text()
+        full_path = widget.directoryLabel.text()  # 축약형 표시 문자열 — 말줄임의 원문
+        assert "…" not in full_path, "축약이 '…'를 넣었다 — 이 테스트의 경로는 뿌리 뒤 2단계여야 한다"
 
         assert widget.titleLabel._elide_mode == Qt.TextElideMode.ElideRight
         assert widget.directoryLabel._elide_mode == Qt.TextElideMode.ElideMiddle
@@ -407,9 +456,26 @@ class TestNoHorizontalOverflow:
             f"오른쪽 말줄임이 아니다 — 접두사가 원문과 안 맞는다: {rendered_title[:-1]!r}"
         )
 
-        # 가운데 말줄임: "…" 앞뒤 둘 다 원문의 접두사·접미사와 일치해야 한다
+        # 가운데 말줄임(경로) — #245 [B] 이후의 규칙으로 잰다. 300px에서는 3행
+        # 우선순위로 경로가 **아이콘으로 접혀 라벨이 숨는다**(이전엔 숨은 라벨의
+        # 낡은 표시 문자열을 읽어 우연히 통과했다 — PathLabel 도입으로 드러남).
+        # 그래서 경로 텍스트가 처음 다시 보이는 폭까지 넓혀 잰다(px를 박지 않아
+        # 폰트 무의존). 그 폭에서 라벨은 최소 텍스트 폭 근처라 반드시 ③단계다:
+        # 접두 `C:/…/`(중간 폴더 접기)는 고정이고, 가운데 말줄임은 **마지막
+        # 폴더 안에서만** 일어난다 — "…" 앞뒤가 마지막 폴더의 접두사·접미사다.
+        width = 300
+        while not widget.directoryLabel.isVisible():
+            width += 8
+            assert width <= 2000, "경로 라벨이 어떤 폭에서도 보이지 않는다"
+            v.resize(width, 400)
+            for _ in range(4):
+                qapp.processEvents()
+        rendered_path = shown(widget.directoryLabel)
+        last_folder = full_path.rsplit("/", 1)[-1]
         assert rendered_path != full_path, "경로가 이 폭에서 안 잘렸다 — 게이트 전제가 깨졌다"
-        assert "…" in rendered_path
-        before, _, after = rendered_path.partition("…")
-        assert full_path.startswith(before), f"가운데 말줄임이 아니다 — 앞부분 불일치: {before!r}"
-        assert full_path.endswith(after), f"가운데 말줄임이 아니다 — 뒷부분 불일치: {after!r}"
+        assert rendered_path.startswith("C:/…/"), f"중간 폴더 접기 접두가 고정되지 않았다: {rendered_path!r}"
+        tail = rendered_path[len("C:/…/"):]
+        assert "…" in tail, f"마지막 폴더 안의 가운데 말줄임이 없다 — 전제(첫 가시 폭) 확인: {rendered_path!r}"
+        before, _, after = tail.partition("…")
+        assert last_folder.startswith(before), f"가운데 말줄임이 아니다 — 앞부분 불일치: {before!r}"
+        assert last_folder.endswith(after), f"가운데 말줄임이 아니다 — 뒷부분 불일치: {after!r}"

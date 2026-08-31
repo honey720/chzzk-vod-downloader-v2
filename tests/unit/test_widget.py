@@ -22,10 +22,32 @@ progress·fileSize·delete)에 `Ignored` 정책 라벨이 둘 이상 + `Expandin
 import pytest
 from PySide6.QtWidgets import QLabel
 
+import main as main_module
+import theme
 from content.data import ContentItem
 from content.widget import ContentItemWidget
 from core.models.download_state import DownloadState
 from app.viewmodels.item_state import ItemState
+from tests.unit.card_helpers import hold_style
+
+
+@pytest.fixture(autouse=True)
+def _apply_production_qss(qapp):
+    """실제 전역 QSS(글자 위계 토큰 포함)를 태운 상태에서 잰다 (#244).
+
+    카드 라벨의 폰트가 위젯별 인라인 스타일에서 전역 QSS 위계 토큰
+    (@fontSizeTitle 등)으로 옮겨가면서, QSS 유무가 라벨 폭 계산을 바꾸게
+    됐다 — 안 태우면 "다른 테스트 파일이 남긴 QSS가 새어드는 순서"에
+    따라 결과가 흔들린다(실측: 단독 실행 통과, 전체 실행 실패). 실제
+    앱은 항상 QSS가 걸린 상태이므로 이쪽이 프로덕션 조건이기도 하다.
+
+    ⚠️ `scope="function"` 유지 — 넓히면 macOS 종료 크래시 재발
+    (`test_widget_theme.py`의 `_apply_dark_card_qss` 문서 참고).
+    """
+    theme.set_color_scheme("dark")
+    qapp.setStyle(hold_style(theme.build_style()))  # 참조 보관 — 이중 해제 우회 (#243, card_helpers.hold_style)
+    qapp.setPalette(theme.build_palette())
+    qapp.setStyleSheet(theme.load_stylesheet(main_module.resource_path(theme.QSS_RELATIVE_PATH)))
 
 
 @pytest.fixture(autouse=True)
@@ -38,6 +60,10 @@ def no_network(monkeypatch):
             raise RuntimeError("network disabled in tests")
 
     monkeypatch.setattr("content.widget.get_thread_session", lambda: _FailingSession())
+    # 테스트 아이템의 기본 경로를 전역 설정 경로로 등록한다(#245) — 실제
+    # 앱은 시작 시 mainWindow가 밀어 넣는 값이라, 안 넣으면 모든 카드가
+    # "전역과 다른 경로"로 판정돼 경로 라벨이 떠서 3행 슬롯을 밀어낸다.
+    monkeypatch.setattr("content.widget._global_download_path", "C:/Users/LeeDH/Downloads")
 
 
 def _make_item(content_type="video", title="제목", channel="채널"):
@@ -114,20 +140,24 @@ class TestStatusAndFileSizeAreVisible:
         item.total_size = "500 MB"
         item.downloadState = DownloadState.RUNNING
         item.download_remain_time = "00:01:23"
-        item.download_size = 123 * 1024 * 1024  # setSize()가 바이트 숫자를 "123.00 MB"로 포맷한다
+        item.download_size = 123 * 1024 * 1024
         item.download_speed = "3.2 MB/s"
         item.download_progress = 42
         widget = _build_widget(item, qapp)
 
-        # 카드 폭 600px에 라벨이 여럿 몰려 있어 정확히 어디까지 잘리는지는
-        # 폰트 메트릭에 좌우된다(#229 후속 CI 실패로 이미 겪은 함정) — 정확한
-        # 절단 지점 대신 "빈 문자열이 아니다(폭 0 회귀)"와 "숫자 부분(123)은
-        # 살아있다"만 고정한다.
-        assert _rendered(widget.statusLabel) != ""
+        # #245 상태별 슬롯: 진행 슬롯은 "%·속도·남은시간"이고 남은 시간은
+        # 짧은 표기(1:23)로 줄어든다. 파일형은 3행 우측에 총 크기를 보인다.
+        rendered = _rendered(widget.statusLabel)
+        assert "42%" in rendered
+        assert "3.2 MB/s" in rendered
+        assert "1:23" in rendered
         assert _rendered(widget.fileSizeLabel) != ""
-        assert "123" in _rendered(widget.fileSizeLabel)
+        assert "500 MB" in _rendered(widget.fileSizeLabel)
 
-    def test_finished_shows_download_time_and_size(self, qapp):
+    def test_finished_shows_completion_and_size(self, qapp):
+        # #245 상태별 슬롯: 완료 슬롯은 "✓ 완료 표시"다 — 소요 시간(download_time)
+        # 표시는 오너 확정 설계에서 빠졌다(완료 카드가 답할 질문은 "어디에?"이고
+        # 그건 📁 버튼이 답한다).
         item = _make_item()
         item.download_size = 800 * 1024 * 1024
         item.downloadState = DownloadState.FINISHED
@@ -135,8 +165,9 @@ class TestStatusAndFileSizeAreVisible:
         widget = _build_widget(item, qapp, width=_UNCONSTRAINED_WIDTH)
 
         assert _rendered(widget.statusLabel) != ""
-        assert "00:05:12" in _rendered(widget.statusLabel)
+        assert "Completed" in widget.statusLabel.text()
         assert _rendered(widget.fileSizeLabel) != ""
+        assert "800" in _rendered(widget.fileSizeLabel)
 
     def test_failed_shows_failure_reason(self, qapp):
         item = _make_item()
@@ -181,9 +212,24 @@ class TestChannelNameYieldsBeforeStatusAndFileSize:
         # 못한다. 700은 "로컬에서 안 잘림(650+)"과 "stretch=0이면 여전히
         # 잘림(760까지)"의 교집합이라, 우선순위 메커니즘이 실제로 결과를
         # 만든다는 것 자체를 계속 검증한다.
+        # #244 재설계 후 재도출: 카드 왼쪽에 썸네일(16:9, 폭 ~190px)이 상주해
+        # 같은 카드 폭에서 1행이 받는 폭이 그만큼 줄었다 — 700px에서는 상태
+        # 문구까지 한 글자 밀려 잘렸다(실측 "Download waitin…"). 검증하려는
+        # 우선순위(채널명은 maxWidth 150 상한으로 어느 폭에서든 반드시
+        # 잘리고, 상태·크기는 온전)는 폭과 무관하므로 썸네일 폭만큼 상향한
+        # 900으로 재도출했다 — 이 폭에서도 채널명 잘림은 상한이 강제한다.
+        # #245 상태별 슬롯 후속: 상태 텍스트는 이제 1행이 아니라 3행 슬롯에
+        # 있어 대기 상태에선 아예 숨겨진다(pill 몫). 우선순위 검증은 상태
+        # 텍스트가 실제로 보이는 진행 상태로 잰다 — 채널명(1행, max 150
+        # 상한으로 반드시 잘림)은 줄고, 상태·크기(3행)는 온전해야 한다.
         item = _make_item(content_type="video", channel="우왁굳의 게임방송 다시보기 풀버전 모음집 전체")
         item.total_size = "1.24 GB"
-        widget = _build_widget(item, qapp, width=700)
+        item.downloadState = DownloadState.RUNNING
+        item.download_remain_time = "00:01:23"
+        item.download_speed = "3.2 MB/s"
+        item.download_progress = 42
+        item.download_size = 500 * 1024 * 1024
+        widget = _build_widget(item, qapp, width=900)
 
         assert _rendered(widget.channelNameLabel) != widget.channelNameLabel.text(), (
             "채널명이 안 잘렸다 — 이 폭에서는 채널명이 먼저 줄어야 한다"
@@ -223,46 +269,67 @@ class TestRecoversFullTextAfterWidthIncreases:
     다시는 더 넓은 폭을 받지 못하는 되먹임 루프에 갇힌다.
     """
 
-    def test_file_size_label_recovers_when_widened_after_being_narrow(self, qapp):
-        item = _make_item(content_type="video")
-        item.total_size = "1.24 GB"
-        widget = _build_widget(item, qapp, width=300)
+    def _narrow_then_wide(self, qapp, text: str):
+        """ElidingLabel을 좁은 컨테이너에서 잘리게 만든 뒤 넓힌다.
 
-        # sanity check: 이 폭에서 실제로 잘렸는지 확인 — 안 잘렸으면 이
-        # 테스트가 애초에 무엇을 검증하는지 의미가 없어진다.
-        assert _rendered(widget.fileSizeLabel) != widget.fileSizeLabel.text(), (
-            "폭 300에서 파일 크기가 안 잘렸다 — 이 테스트의 전제(좁았다가 넓어짐)가 성립하지 않는다"
+        (#244 카드 재설계 후속) 카드 안에서는 이 전제를 더는 만들 수 없다 —
+        썸네일(16:9 고정폭)과 각 행의 최소폭 때문에 카드 최소 폭 자체가
+        커져, 파일 크기·상태 라벨이 잘릴 만큼 좁은 카드가 생성 불가능해졌다
+        (resize(300)을 요청해도 최소폭으로 클램프됨, 실측). 이 회귀의
+        본체는 카드가 아니라 `ElidingLabel.sizeHint()` 자체이므로, 라벨을
+        직접 좁은 컨테이너에 넣어 같은 시나리오를 만든다 — 검증 대상
+        (한 번 "..."까지 줄면 영원히 못 돌아오는 되먹임)은 동일하다.
+        고장 주입: `ElidingLabel.sizeHint` override를 지우면 두 테스트가
+        실패하는 것을 재확인했다(#244 재설계 커밋 보고 참조, #245에서 재확인).
+
+        ⚠️ 컨테이너는 **최상위 창이 아니라 다른 위젯의 자식**이어야 한다(#245).
+        최상위 창을 40px로 resize하면 실기 QPA(Windows)가 창 최소폭(프레임·
+        제목 표시줄)으로 되돌려 40px 컨테이너가 성립하지 않는다 — offscreen
+        CI만 통과하고 실기에서는 아무것도 검증하지 않는 테스트였다(#237이
+        폰트 축에서 정리한 "로컬에서만 실패하는 테스트"의 창 최소폭 축).
+        자식 위젯의 geometry는 OS 창 정책과 무관하게 그대로 적용된다.
+        """
+        from PySide6.QtWidgets import QHBoxLayout, QWidget
+
+        from content.eliding_label import ElidingLabel
+
+        host = QWidget()
+        host.resize(1300, 100)
+        container = QWidget(host)
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        label = ElidingLabel(container)
+        label.setText(text)
+        layout.addWidget(label)
+        layout.addStretch(1)  # 라벨은 stretch 0 — sizeHint가 그대로 폭이 된다
+        container.setGeometry(0, 0, 40, 30)
+        host.show()
+        qapp.processEvents()
+
+        assert container.width() == 40, (
+            f"컨테이너 폭이 {container.width()}px — 40px 전제가 환경에 밀렸다"
+        )
+        assert _rendered(label) != label.text(), (
+            "폭 40에서 안 잘렸다 — 이 테스트의 전제(좁았다가 넓어짐)가 성립하지 않는다"
         )
 
-        widget.resize(1200, 134)
+        container.setGeometry(0, 0, 1200, 30)
         qapp.processEvents()
         qapp.processEvents()
+        # 호스트(최상위)를 함께 돌려준다 — 라벨만 반환하면 부모 QWidget이
+        # 파이썬 참조를 잃고 GC로 파괴되면서 자식 라벨의 C++ 객체도 같이
+        # 죽는다(libshiboken RuntimeError로 실측).
+        return host, label
 
-        assert "1.24 GB" in _rendered(widget.fileSizeLabel), (
-            "창을 넓혔는데도 파일 크기가 회복되지 않았다 — "
+    def test_file_size_text_recovers_when_widened_after_being_narrow(self, qapp):
+        container, label = self._narrow_then_wide(qapp, "1.24 GB")
+        assert "1.24 GB" in _rendered(label), (
+            "컨테이너를 넓혔는데도 파일 크기가 회복되지 않았다 — "
             "sizeHint()가 표시 중인(이미 elide된) 텍스트 기준으로 계산되고 있을 가능성"
         )
 
-    def test_status_label_recovers_when_widened_after_being_narrow(self, qapp):
-        # channelNameLabel은 stretch=100이 커서 sizeHint와 무관하게 레이아웃이
-        # 넓혀줄 때 같이 딸려 늘어난다 — 그래서 sizeHint() 버그가 있어도
-        # 우연히 회복되어 이 회귀를 검증하지 못한다(mutation으로 확인:
-        # sizeHint() override를 지워도 채널명은 회복됨). stretch가 0인
-        # statusLabel·fileSizeLabel만 이 버그에 실제로 걸린다.
-        item = _make_item(content_type="video")
-        item.downloadState = DownloadState.FINISHED
-        item.download_time = "00:05:12"
-        item.download_size = 800 * 1024 * 1024
-        widget = _build_widget(item, qapp, width=300)
-
-        assert _rendered(widget.statusLabel) != widget.statusLabel.text(), (
-            "폭 300에서 상태 문구가 안 잘렸다 — 이 테스트의 전제가 성립하지 않는다"
-        )
-
-        widget.resize(1200, 134)
-        qapp.processEvents()
-        qapp.processEvents()
-
-        assert "00:05:12" in _rendered(widget.statusLabel), (
-            "창을 넓혔는데도 상태 문구가 회복되지 않았다"
+    def test_status_text_recovers_when_widened_after_being_narrow(self, qapp):
+        container, label = self._narrow_then_wide(qapp, "00:05:12")
+        assert "00:05:12" in _rendered(label), (
+            "컨테이너를 넓혔는데도 상태 문구가 회복되지 않았다"
         )

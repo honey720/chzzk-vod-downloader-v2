@@ -3,7 +3,7 @@
 ################################################################################
 ## Form generated from reading UI file 'mainWindow.ui'
 ##
-## Created by: Qt User Interface Compiler version 6.8.1
+## Created by: Qt User Interface Compiler version 6.11.1
 ##
 ## WARNING! All changes made in this file will be lost when recompiling UI file!
 ################################################################################
@@ -15,10 +15,9 @@ from PySide6.QtGui import (QBrush, QColor, QConicalGradient, QCursor,
     QFont, QFontDatabase, QGradient, QIcon,
     QImage, QKeySequence, QLinearGradient, QPainter,
     QPalette, QPixmap, QRadialGradient, QTransform)
-from PySide6.QtWidgets import (QApplication, QFrame, QGridLayout,
-    QHBoxLayout, QLabel, QLineEdit, QMainWindow,
-    QPushButton, QSizePolicy, QSpacerItem, QVBoxLayout,
-    QWidget)
+from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel,
+    QLineEdit, QMainWindow, QPushButton, QSizePolicy,
+    QSpacerItem, QVBoxLayout, QWidget)
 
 from content.view import ContentListView
 
@@ -35,49 +34,84 @@ class Ui_VodDownloader(object):
         self.headerFrame.setObjectName(u"headerFrame")
         self.headerFrame.setFrameShape(QFrame.Shape.Box)
         self.headerFrame.setFrameShadow(QFrame.Shadow.Sunken)
-        self.headerFrameLayout = QGridLayout(self.headerFrame)
+        self.headerFrameLayout = QVBoxLayout(self.headerFrame)
+        self.headerFrameLayout.setSpacing(8)
         self.headerFrameLayout.setObjectName(u"headerFrameLayout")
-        self.settingButton = QPushButton(self.headerFrame)
-        self.settingButton.setObjectName(u"settingButton")
 
-        self.headerFrameLayout.addWidget(self.settingButton, 4, 2, 1, 1)
+        # 상단 구조(#245 오너 확정):
+        #   ┌ [URL 입력            ][VOD 추가 ] ┐
+        #   │                                   │  ⚙
+        #   └ [경로 입력          ✕][경로 찾기 ] ┘
+        #   조회 상태 메시지 한 줄
+        # 입력 블록(두 행)은 완결된 사각형이고 ⚙는 그 **밖**, 두 행 높이의
+        # 세로 중앙에 하나다 — 설정은 입력과 성격이 달라 시각적으로도 갈린다.
+        # 두 텍스트 버튼([VOD 추가]·[경로 찾기])은 같은 폭으로 좌우 끝을 맞춘다
+        # (application/mainWindow.py::_equalizeHeaderButtons — 번역·폰트에 따라
+        # 폭이 달라 런타임에 더 넓은 쪽으로 고정). ⚙를 어느 행에 붙이든 그 행의
+        # 텍스트 버튼이 밀려 두 텍스트 버튼의 끝선이 어긋났다(실기 확인).
+        self.headerRowsLayout = QHBoxLayout()
+        self.headerRowsLayout.setSpacing(8)
+        self.headerRowsLayout.setObjectName(u"headerRowsLayout")
+        self.inputBlockLayout = QVBoxLayout()
+        self.inputBlockLayout.setSpacing(8)
+        self.inputBlockLayout.setObjectName(u"inputBlockLayout")
 
+        self.urlRowLayout = QHBoxLayout()
+        self.urlRowLayout.setSpacing(8)
+        self.urlRowLayout.setObjectName(u"urlRowLayout")
         self.urlInput = QLineEdit(self.headerFrame)
         self.urlInput.setObjectName(u"urlInput")
         self.urlInput.setClearButtonEnabled(True)
 
-        self.headerFrameLayout.addWidget(self.urlInput, 0, 1, 1, 1)
-
-        self.urlInputLabel = QLabel(self.headerFrame)
-        self.urlInputLabel.setObjectName(u"urlInputLabel")
-
-        self.headerFrameLayout.addWidget(self.urlInputLabel, 0, 0, 1, 1)
-
-        self.linkStatusLabel = QLabel(self.headerFrame)
-        self.linkStatusLabel.setObjectName(u"linkStatusLabel")
-
-        self.headerFrameLayout.addWidget(self.linkStatusLabel, 4, 0, 1, 2)
-
-        self.downloadPathLabel = QLabel(self.headerFrame)
-        self.downloadPathLabel.setObjectName(u"downloadPathLabel")
-
-        self.headerFrameLayout.addWidget(self.downloadPathLabel, 1, 0, 1, 1)
-
-        self.downloadPathInput = QLineEdit(self.headerFrame)
-        self.downloadPathInput.setObjectName(u"downloadPathInput")
-        self.downloadPathInput.setClearButtonEnabled(True)
-
-        self.headerFrameLayout.addWidget(self.downloadPathInput, 1, 1, 1, 1)
+        self.urlRowLayout.addWidget(self.urlInput)
 
         self.fetchButton = QPushButton(self.headerFrame)
         self.fetchButton.setObjectName(u"fetchButton")
 
-        self.headerFrameLayout.addWidget(self.fetchButton, 0, 2, 1, 1)
+        self.urlRowLayout.addWidget(self.fetchButton)
+
+
+        self.inputBlockLayout.addLayout(self.urlRowLayout)
+
+        self.pathRowLayout = QHBoxLayout()
+        self.pathRowLayout.setSpacing(8)
+        self.pathRowLayout.setObjectName(u"pathRowLayout")
+        self.downloadPathInput = QLineEdit(self.headerFrame)
+        self.downloadPathInput.setObjectName(u"downloadPathInput")
+        self.downloadPathInput.setClearButtonEnabled(True)
+
+        self.pathRowLayout.addWidget(self.downloadPathInput)
 
         self.downloadPathButton = QPushButton(self.headerFrame)
         self.downloadPathButton.setObjectName(u"downloadPathButton")
 
-        self.headerFrameLayout.addWidget(self.downloadPathButton, 1, 2, 1, 1)
+        self.pathRowLayout.addWidget(self.downloadPathButton)
+
+
+        self.inputBlockLayout.addLayout(self.pathRowLayout)
+
+        self.headerRowsLayout.addLayout(self.inputBlockLayout, 1)
+
+        # 설정(⚙) — 입력 블록 밖, 두 행 높이의 세로 중앙(#245 오너 확정).
+        # 하단으로 내리는 안은 채택하지 않는다 — 설정 안의 쿠키는 성인·멤버십
+        # VOD를 받으려면 반드시 한 번은 찾아야 해서 하단 muted 묶음에 두면 못
+        # 찾는다(설정 화면 .ui 재작성 때 재검토). 남는 공간은 각 행에서 입력창
+        # 하나만 흡수한다(버튼들은 고정 폭) — tests/unit/test_header_layout.py.
+        self.settingButton = QPushButton(self.headerFrame)
+        self.settingButton.setObjectName(u"settingButton")
+        self.settingButton.setMinimumSize(QSize(32, 32))
+        self.settingButton.setMaximumSize(QSize(32, 32))
+        self.settingButton.setText(u"⚙")
+        self.settingButton.setProperty(u"role", u"icon")
+
+        self.headerRowsLayout.addWidget(self.settingButton, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self.headerFrameLayout.addLayout(self.headerRowsLayout)
+
+        self.linkStatusLabel = QLabel(self.headerFrame)
+        self.linkStatusLabel.setObjectName(u"linkStatusLabel")
+
+        self.headerFrameLayout.addWidget(self.linkStatusLabel)
 
 
         self.centralWidgetLayout.addWidget(self.headerFrame)
@@ -93,6 +127,7 @@ class Ui_VodDownloader(object):
         self.infoFrame.setFrameShape(QFrame.Shape.Box)
         self.infoFrame.setFrameShadow(QFrame.Shadow.Sunken)
         self.infoLayout = QHBoxLayout(self.infoFrame)
+        self.infoLayout.setSpacing(8)
         self.infoLayout.setObjectName(u"infoLayout")
         self.downloadCountLabel = QLabel(self.infoFrame)
         self.downloadCountLabel.setObjectName(u"downloadCountLabel")
@@ -101,6 +136,7 @@ class Ui_VodDownloader(object):
 
         self.clearFinishedButton = QPushButton(self.infoFrame)
         self.clearFinishedButton.setObjectName(u"clearFinishedButton")
+        self.clearFinishedButton.setProperty(u"role", u"subtle")
 
         self.infoLayout.addWidget(self.clearFinishedButton)
 
@@ -139,12 +175,12 @@ class Ui_VodDownloader(object):
 
     def retranslateUi(self, VodDownloader):
         VodDownloader.setWindowTitle(QCoreApplication.translate("VodDownloader", u"Chzzk VOD Downloader", None))
-        self.settingButton.setText(QCoreApplication.translate("VodDownloader", u"Settings", None))
         self.urlInput.setPlaceholderText(QCoreApplication.translate("VodDownloader", u"Enter Chzzk URL", None))
-        self.urlInputLabel.setText(QCoreApplication.translate("VodDownloader", u"Chzzk VOD URL:", None))
-        self.downloadPathLabel.setText(QCoreApplication.translate("VodDownloader", u"Download Path:", None))
-        self.downloadPathInput.setPlaceholderText(QCoreApplication.translate("VodDownloader", u"Enter download path", None))
         self.fetchButton.setText(QCoreApplication.translate("VodDownloader", u"Add VOD", None))
+#if QT_CONFIG(tooltip)
+        self.settingButton.setToolTip(QCoreApplication.translate("VodDownloader", u"Settings", None))
+#endif // QT_CONFIG(tooltip)
+        self.downloadPathInput.setPlaceholderText(QCoreApplication.translate("VodDownloader", u"Enter download path", None))
         self.downloadPathButton.setText(QCoreApplication.translate("VodDownloader", u"Find path", None))
         self.downloadCountLabel.setText(QCoreApplication.translate("VodDownloader", u"Downloads: {}/{}", None))
         self.clearFinishedButton.setText(QCoreApplication.translate("VodDownloader", u"Clear Finished", None))

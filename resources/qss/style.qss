@@ -16,7 +16,7 @@
 /* ---------- 바탕과 글자 ---------- */
 
 QWidget {
-    font-size: @fontSize;
+    font-size: @fontSizeBase;
     color: @text;
 }
 
@@ -44,15 +44,31 @@ QToolTip {
 
 /* ---------- 상·하단 패널 ---------- */
 
+/* 안쪽 여백은 QSS padding이 아니라 레이아웃 마진(theme.METRICS["framePadding"],
+ * application/mainWindow.py::setupDynamicUi가 런타임에 건다)이 준다 —
+ * 상단·카드·하단의 좌측 정렬선이 같은 토큰 하나로 관통하게 하기 위해서다. */
 QFrame#headerFrame,
 QFrame#infoFrame {
     background-color: @surface;
     border: 1px solid @border;
-    border-radius: @radius;
-    padding: 4px;
+    border-radius: @frameRadius;
 }
 
-QLabel#linkStatusLabel,
+/* 조회 상태 메시지 — 성공·실패를 색으로 구분한다(#244 상단 재설계).
+ * `status` 동적 속성은 application/mainWindow.py::_setLinkStatus가 건다. */
+QLabel#linkStatusLabel {
+    font-size: @fontSizeMeta;
+    color: @textMuted;
+}
+
+QLabel#linkStatusLabel[status="ok"] {
+    color: @stateFinished;
+}
+
+QLabel#linkStatusLabel[status="error"] {
+    color: @stateFailed;
+}
+
 QLabel#downloadCountLabel {
     color: @textMuted;
 }
@@ -79,43 +95,78 @@ QLabel#thumbnailLabel {
     background-color: @thumbBg;
     border-radius: @radius;
     color: @textMuted;
+    font-size: @fontSizeMeta;
 }
 
-/* 카드 테두리 — 다운로드 상태(theme.CARD_STATES)에 따라 색이 바뀐다.
- * 진행바(아래 "진행바" 절)와 똑같은 패턴이다: 파이썬은 동적 속성
- * `state`만 바꾸고(`content/widget.py::applyStateStyle`) 색은 여기
- * `[state="..."]` 규칙이 고른다 — 속성만 바꾸면 이미 계산된 스타일이
- * 안 갱신되므로 `theme.repolish()`가 항상 같이 필요하다.
+/* ---- 카드 글자 위계(#244 재설계) — 위에서 아래로 무게가 내려간다 ----
+ * 제목(크고 밝음) > 채널명(작고 굵음) > 상태(작음·상태색) >
+ * 종류·크기(작음·muted) > 경로(가장 작음·muted).
+ * 값은 전부 theme.py FONTS 토큰 — 숫자만 바꾸면 앱 전체가 따라온다. */
+
+#titleLabel,
+#titleEdit {
+    font-size: @fontSizeTitle;
+    color: @text;
+}
+
+/* 제목은 클릭하면 편집된다(파일명이 된다) — 호버에서 편집 가능하다는
+ * 힌트를 준다(#245). 커서(IBeam)는 ui/contentItemWidget.py가 건다. */
+#titleLabel:hover {
+    color: @accent;
+}
+
+#channelNameLabel {
+    font-size: @fontSizeChannel;
+    font-weight: @channelWeight;
+    color: @text;
+}
+
+/* 3행 상태 슬롯 텍스트(#245) — 진행 %·속도·남은시간 / ✓ 완료 / ✕ 사유.
+ * `state` 동적 속성은 content/widget.py::applyStateStyle이 건다
+ * (진행바와 같은 패턴). */
+#statusLabel {
+    font-size: @fontSizeMeta;
+    color: @textMuted;
+}
+
+#statusLabel[state="waiting"] { color: @stateWaiting; }
+#statusLabel[state="running"] { color: @stateRunning; }
+#statusLabel[state="paused"] { color: @statePaused; }
+#statusLabel[state="finished"] { color: @stateFinished; }
+#statusLabel[state="failed"] { color: @stateFailed; }
+
+#fileSizeLabel {
+    font-size: @fontSizeMeta;
+    color: @textMuted;
+}
+
+#directoryLabel,
+#directoryEdit {
+    font-size: @fontSizePath;
+    color: @textMuted;
+}
+
+/* 카드 테두리 — 항상 중립색이다(#244). 상태는 상태 아이콘·상태 텍스트·
+ * (진행분이 있을 때 — 진행·일시정지 — 보이는) 하단 진행바가 알린다 — 카드 프레임 자체는
+ * state 동적 속성을 안 본다.
  *
- * 가로 padding은 반드시 0이어야 한다 — 카드 안쪽 가용 폭이 줄면 제목·
- * 경로·상태 라벨의 잘림 위치가 밀려 3-OS 폰트 메트릭에 민감한 회귀
- * 테스트들이 깨진다(#227 PR #234에서 실제로 겪음). 세로 여백은 폭과
- * 무관하니 자유롭다. 테두리 1px이 좌우로 먹는 2px은
- * `ui/contentItemWidget.ui`의 레이아웃 여백을 10→9로 줄여 되돌려준다 —
- * 카드 안쪽 가로 가용 폭은 "카드 폭 − 20px"로 어느 OS에서든 동일하다
- * (tests/unit/test_widget_theme.py::TestCardInnerWidthIsUnchanged가 고정). */
+ * padding은 QSS가 아니라 카드 내부 레이아웃 마진(theme.METRICS["cardPadding"])
+ * 이 준다 — 하단 진행바가 카드 가장자리에 딱 붙어야 해서(padding이 있으면
+ * 바가 테두리에서 떨어진다) 프레임 자체는 0으로 둔다. 가로 0 규칙(#227
+ * PR #234의 3-OS 폭 회귀)은 tests/unit/test_widget_theme.py::
+ * TestCardInnerWidthIsUnchanged가 새 기준으로 계속 고정한다. */
 #contentFrame {
     background-color: @cardBg;
-    border: 1px solid @stateWaiting;
+    border: 1px solid @border;
     border-radius: @cardRadius;
-    padding: @cardPaddingV 0px;
+    padding: 0px;
 }
 
-#contentFrame[state="waiting"] {
-    border-color: @stateWaiting;
-}
-
-#contentFrame[state="running"] {
-    border-color: @stateRunning;
-}
-
-#contentFrame[state="finished"] {
-    border-color: @stateFinished;
-}
-
-#contentFrame[state="failed"] {
-    border-color: @stateFailed;
-}
+/* 카드 조작 아이콘(일시정지·재개·재시도·폴더·삭제)의 도형 색은 QSS가 아니라
+ * content/icons.py::IconButton이 theme.py 토큰(textMuted / 호버 text·
+ * stateFailed / textDisabled)으로 그린다(#245 — 폰트 글리프를 버리고 직접
+ * 그린 도형이라 QSS `color`가 닿지 않는다). 버튼의 배경·테두리(호버 표면)는
+ * 아래 [role="icon"] 규칙이 그대로 담당한다. */
 
 /* ---------- 버튼 ---------- */
 
@@ -166,8 +217,8 @@ QPushButton#downloadButton:disabled {
     border-color: @border;
 }
 
-/* 아이콘 버튼(❌·📁) — 30x30 고정이라 여백을 0으로 되돌려야 글리프가 안 잘린다.
- * `role`은 ui/contentItemWidget.ui가 동적 속성으로 심는다. */
+/* 아이콘 버튼(조작·삭제) — iconSize 정사각 고정이라 여백을 0으로 되돌려야
+ * 도형이 안 잘린다. `role`은 ui/contentItemWidget.py가 동적 속성으로 심는다. */
 QPushButton[role="icon"] {
     padding: 0px;
     background-color: transparent;
@@ -183,22 +234,48 @@ QPushButton[role="icon"]:pressed {
     background-color: @surfacePressed;
 }
 
-/* 해상도 버튼 — 60x30 고정 pill. `role`은 content/widget.py가 심는다. */
+/* 해상도(#244 재설계) — 선택된 것만 채워진 pill, 나머지는 배경·테두리
+ * 없는 muted 텍스트다(전부 외곽선 pill이던 이전 모습은 줄 전체가
+ * 버튼 무더기로 보였다). `role`은 content/widget.py가 심는다.
+ * 선택 = 비활성 버튼(기존 동작 유지). */
 QPushButton[role="resolution"] {
-    padding: 0px;
+    padding: 0px 8px;
+    border: none;
+    background-color: transparent;
     border-radius: @pillRadius;
     color: @textMuted;
+    font-size: @fontSizeMeta;
 }
 
 QPushButton[role="resolution"]:hover {
     color: @text;
+    background-color: @surfaceHover;
 }
 
-/* 선택된 해상도 = 비활성 버튼(기존 동작). 눌린 pill처럼 보이게 한다 */
 QPushButton[role="resolution"]:disabled {
     background-color: @accent;
     color: @onAccent;
-    border-color: @accent;
+}
+
+/* 부차 조작(완료된 VOD 삭제 등) — 주요 버튼과 같은 무게로 두지 않는다
+ * (#244 하단 재설계). 평소엔 테두리 없는 muted 텍스트, 호버에서만 살아난다. */
+QPushButton[role="subtle"] {
+    background-color: transparent;
+    border: none;
+    color: @textMuted;
+    font-size: @fontSizeMeta;
+    padding: 4px 8px;
+}
+
+QPushButton[role="subtle"]:hover {
+    color: @text;
+    background-color: @surfaceHover;
+    border-radius: @radius;
+}
+
+QPushButton[role="subtle"]:disabled {
+    background-color: transparent;
+    color: @textDisabled;
 }
 
 /* ---------- 입력창 ---------- */
@@ -329,12 +406,35 @@ QProgressBar::chunk {
     border-radius: @barRadius;
 }
 
+/* 카드 하단 진행바(#244 재설계) — 카드 아래 가장자리에 딱 붙는 전체 폭
+ * 막대(진행분이 있을 때 — 진행·일시정지 — 보임; 가시성은
+ * content/widget.py::applyStateStyle). 일시정지에서는 [state="paused"]의
+ * muted 색으로 "돌고 있지 않다"를 알린다.
+ * ⚠️ 여기 border-radius는 카드 곡률을 못 따라간다 — 높이(@barHeight)가 작아
+ * Qt가 반지름을 높이 절반으로 눌러 그리고, 그 결과 막대 양끝이 카드의 둥근
+ * 모서리 바깥으로 튀어나온다(실기 렌더 실측). 카드 곡률로 잘라내는 것은
+ * content/widget.py::_placeProgressBar의 마스크가 한다. */
+#contentFrame QProgressBar {
+    border-radius: 0px;
+    border-bottom-left-radius: @cardRadius;
+    border-bottom-right-radius: @cardRadius;
+}
+
+#contentFrame QProgressBar::chunk {
+    border-radius: 0px;
+    border-bottom-left-radius: @cardRadius;
+}
+
 QProgressBar[state="waiting"]::chunk {
     background-color: @stateWaiting;
 }
 
 QProgressBar[state="running"]::chunk {
     background-color: @stateRunning;
+}
+
+QProgressBar[state="paused"]::chunk {
+    background-color: @statePaused;
 }
 
 QProgressBar[state="finished"]::chunk {

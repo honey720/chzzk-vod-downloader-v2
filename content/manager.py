@@ -117,7 +117,12 @@ class ContentManager(QObject):
         return self.tr("Invalid file path")
 
     def _saveFailedMessage(self) -> str:
-        return self.tr("Failed to save file")
+        # 첫 줄=핵심 / 둘째 줄=상세 규약(#245, download/qt_bridge.py 참고) —
+        # 다운로드 브리지의 같은 사유와 문구를 맞춘다
+        return self.tr(
+            "Failed to save file · check the path and disk space\n"
+            "The file could not be saved. Check the download path and free disk space."
+        )
 
     # ---- viewmodel 상태 재노출 ----
 

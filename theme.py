@@ -52,6 +52,44 @@ _TOKEN_RE = re.compile(r"@([A-Za-z][A-Za-z0-9_]*)")
 # (#216의 `.js` 누락은 `resources/` 밖의 별도 폴더였던 게 원인이다).
 QSS_RELATIVE_PATH = "resources/qss/style.qss"
 
+# ═══════════════ 오너 튜닝 구역 — 크기·간격·글자 위계 ═══════════════
+# 여기 숫자를 바꾸고 `uv run python main.py`로 바로 확인할 수 있다.
+# 색은 아래 DARK/LIGHT 표에서 바꾼다(다크/라이트가 서로 달라야 해서 분리).
+# METRICS의 정수는 파이썬 코드가 직접 쓰고, 동시에 "이름+px" 문자열로
+# DARK/LIGHT 표에 자동 주입되어 .qss의 @토큰으로도 쓰인다(아래 주입 루프).
+
+#: 크기·간격(px 정수). 다크/라이트 공통.
+METRICS = {
+    # ---- 카드 ----
+    "cardPadding": 8,     # 카드 안쪽 여백 — 썸네일·글이 테두리에서 떨어지는 거리
+    "cardRowSpacing": 4,  # 카드 안 행 간격(4의 배수 권장) — 줄이면 카드가 낮아져 밀도↑
+    "cardRadius": 12,     # 카드 모서리 둥글기
+    "thumbRadius": 8,     # 썸네일 모서리 — 카드보다 작아야 안쪽이 자연스럽다
+    "iconSize": 20,       # 채널 이미지·삭제(✕)·폴더(📁) 아이콘 한 변 — 1·4행 높이를 정한다(키우면 밀도↓)
+    "pillHeight": 20,     # 해상도 pill 높이(모서리는 자동으로 절반)
+    "barHeight": 4,       # 하단 진행바 두께(진행분이 있을 때 — 진행·일시정지 — 보임)
+    "actionGlyph": 12,    # 조작 아이콘(일시정지·재개·재시도·폴더·삭제) 도형 한 변 — iconSize 버튼 안에 그려진다
+    # 썸네일 높이는 토큰이 아니다 — 우측 4행의 실제 높이에 맞춰 런타임에
+    # 계산되고(16:9로 폭 결정, content/widget.py), 행 간격·글자 크기를
+    # 바꾸면 썸네일도 따라간다.
+    # ---- 상단·하단 바 & 창 ----
+    "framePadding": 8,    # 상단·하단 바 안쪽 여백 — cardPadding과 같으면 정렬선이 관통
+    "frameRadius": 8,     # 상단·하단 바 모서리
+    "outerMargin": 12,    # 창 가장자리 ↔ 상단바·카드 목록·하단바 좌우 여백
+    # ---- 공통 형태 ----
+    "radius": 8,          # 버튼·입력창 등 일반 모서리
+}
+
+#: 글자 위계 — 위(제목)에서 아래(경로)로 무게가 내려간다. 값은 QSS 문자열.
+FONTS = {
+    "fontSizeTitle": "15px",    # 카드 제목 — 카드에서 가장 크다
+    "fontSizeBase": "14px",     # 앱 기본(입력창·버튼 등)
+    "fontSizeChannel": "13px",  # 채널명 — 제목보다 작지만 굵다
+    "fontSizeMeta": "12px",     # 상태·종류·파일 크기·진행률
+    "fontSizePath": "11px",     # 저장 경로 — 가장 작다
+    "channelWeight": "600",     # 채널명 굵기(400=보통, 600=semibold, 700=bold)
+}
+
 #: 다크 테마 토큰 — 이 저장소의 모든 색·모서리·간격 값의 유일한 정의 지점.
 DARK = {
     # ---- 바탕 ----
@@ -74,32 +112,21 @@ DARK = {
     "onAccent": "#ffffff",
     # ---- 카드 ----
     "cardBg": "#2b2d33",
-    "cardRadius": "14px",
-    # 카드 안쪽 여백은 **세로만** 준다 — 가로는 0이어야 한다.
-    # 이유는 아래 _CARD_TEMPLATE 주석에 있다(3-OS 폰트 메트릭 회귀의 원인이었다).
-    "cardPaddingV": "6px",
-    # ---- 상태색 (카드 테두리·진행바 공용) ----
+    # ---- 상태색 (상태 아이콘·상태 텍스트·진행바 공용) ----
     # running/failed는 기존 값을 그대로 승계한다 — 실패 빨강(#FF6969)은
-    # tests/unit/test_failure_display.py가 카드 스타일시트에서 직접 확인한다.
+    # tests/unit/test_failure_display.py가 상태 표시에서 직접 확인한다.
     "stateWaiting": "#6b7078",   # 대기 — 회색
     "stateRunning": "#55B5FF",   # 진행 — 파랑
+    # 일시정지 — 진행 파랑의 채도를 뺀 강철빛 회색. 진행바가 그대로 남되
+    # "돌고 있지 않다"가 색으로 읽혀야 한다(#245). 대기 회색과는 달라야
+    # 한다(상태색은 정보를 나른다 — tests/unit/test_theme.py 상호 구별 게이트).
+    "statePaused": "#7f8ea3",
     "stateFinished": "#4CC38A",  # 완료 — 초록
     "stateFailed": "#FF6969",    # 실패 — 빨강
     # ---- 진행바 ----
     "barTrack": "#3a3d45",
-    "barHeight": "6px",
-    "barRadius": "3px",
-    # ---- 공통 형태 ----
-    "radius": "8px",
-    "pillRadius": "15px",        # 해상도 버튼(고정 높이 30px)의 절반
     "scrollHandle": "#4c515b",
     "scrollHandleHover": "#5e646f",
-    # ---- 글자 크기 ----
-    # 카드 라벨들은 ui/contentItemWidget.ui에 인라인 `font-size: 14px`가
-    # 그대로 남아 있다(일부러 건드리지 않았다 — 그 값이 폭 계산에 직접
-    # 들어가고, 3-OS 폰트 메트릭에 민감한 회귀 테스트가 그 위에 서 있다).
-    # 전역 값을 같은 14px로 맞춰 앱 전체가 한 크기로 보이게 한다.
-    "fontSize": "14px",
 }
 
 #: 라이트 테마 토큰 — 키 집합은 DARK와 반드시 같아야 한다(.qss와 카드 규칙이
@@ -131,32 +158,35 @@ LIGHT = {
     "onAccent": "#ffffff",
     # ---- 카드 ----
     "cardBg": "#ffffff",
-    "cardRadius": "14px",
-    "cardPaddingV": "6px",
-    # ---- 상태색 (카드 테두리·진행바 공용) — 흰 배경 대비용으로 짙게 눌렀다 ----
+    # ---- 상태색 (상태 아이콘·상태 텍스트·진행바 공용) — 흰 배경 대비용으로 짙게 눌렀다 ----
     "stateWaiting": "#6b7078",
     "stateRunning": "#1f6fd6",
+    "statePaused": "#6f7d91",    # 일시정지 — 흰 배경에서 진행 파랑과 구별되는 무채색 강철빛
     "stateFinished": "#2f9e63",
     "stateFailed": "#d93636",
     # ---- 진행바 ----
     "barTrack": "#e3e5e9",
-    "barHeight": "6px",
-    "barRadius": "3px",
-    # ---- 공통 형태 ----
-    "radius": "8px",
-    "pillRadius": "15px",
     "scrollHandle": "#c3c7cd",
     "scrollHandleHover": "#aeb3bb",
-    # ---- 글자 크기 ----
-    "fontSize": "14px",
 }
 
+# METRICS(정수)와 FONTS(문자열)를 두 색 표에 자동 주입한다 — .qss는
+# @cardPadding·@fontSizeTitle 같은 이름으로 참조하고, 파이썬 코드는
+# theme.METRICS["cardPadding"] 정수를 직접 쓴다. 정의 지점은 위 한 곳이다.
+# 파생 토큰: pillRadius(=pillHeight/2, pill이 항상 완전한 반원이 되게)·
+# barRadius(=barHeight/2).
+for _table in (DARK, LIGHT):
+    _table.update({_name: f"{_value}px" for _name, _value in METRICS.items()})
+    _table.update(FONTS)
+    _table["pillRadius"] = f"{METRICS['pillHeight'] // 2}px"
+    _table["barRadius"] = f"{METRICS['barHeight'] // 2}px"
+
 #: 카드 상태 이름 — 파이썬(`setProperty`)과 QSS(`[state="..."]`)가 공유하는 어휘.
-#: 카드 프레임·진행바 둘 다 이 값을 그대로 `state` 동적 속성에 써서
-#: `resources/qss/style.qss`의 `#contentFrame[state="..."]`/
-#: `QProgressBar[state="..."]` 규칙과 맞춘다 (#227, #240 후속 — 카드
-#: 프레임도 위젯별 `setStyleSheet` 대신 전역 QSS로 옮겼다).
-CARD_STATES = ("waiting", "running", "finished", "failed")
+#: 상태 아이콘·진행바 둘 다 이 값을 그대로 `state` 동적 속성에 써서
+#: `resources/qss/style.qss`의 `#stateIconLabel[state="..."]`/
+#: `QProgressBar[state="..."]` 규칙과 맞춘다 (#227, #240, #244 후속 —
+#: 카드 테두리는 상태 신호에서 빠지고 상태 아이콘이 그 역할을 이어받았다).
+CARD_STATES = ("waiting", "running", "paused", "finished", "failed")
 
 
 #: 지금 활성 스킴("dark"/"light"). 기본값 "dark"는 의도적이다 — 아무도

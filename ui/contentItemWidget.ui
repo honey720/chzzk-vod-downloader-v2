@@ -1,4 +1,33 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!-- ⚠️ #244·#245: 이 .ui는 설계 기록(문서)이다 — pyside6-uic 재생성 대상이
+     아니다. 실제 구현은 ui/contentItemWidget.py(수동 유지)이며, 크기·간격은
+     theme.METRICS, 글자 위계·색은 전역 QSS(theme.FONTS 토큰)가 정한다.
+     구조를 바꿀 때는 이 파일과 .py를 함께 손으로 고칠 것.
+
+     구조(#245 상태별 슬롯 카드): contentFrame(테두리 중립, QSS padding 0)
+       bodyLayout(HBox, 마진=cardPadding): 썸네일(16:9 고정 상자, 컨텐츠 열
+         높이 가득 — 세로 이미지는 평균색 letterbox, thumbRadius 라운딩)
+         | contentLayout(VBox, spacing=cardRowSpacing):
+           1행 topLayout: 채널이미지(원형)·채널명(굵게)
+                [스트레치] 상태별 조작(⏸ pauseButton / 📁 openDirectoryButton
+                / ↻ retryButton 중 상태에 맞는 하나) · [고정 간격 8]
+                삭제(✕ deleteButton — 파괴적 조작 분리)
+           2행 titleLayout: 제목(가장 크고 밝다, ElideRight, 클릭 편집 —
+                호버 힌트는 QSS #titleLabel:hover) + 편집용 QLineEdit
+           3행 resolutionLayout(상태별 슬롯):
+                [해상도 pill들(대기에만, content/widget.py가 왼쪽부터 삽입)]
+                [statusLabel(그 외 상태의 슬롯 텍스트 — %·속도·남은시간 /
+                 ✓ 완료 / ✕ 사유, 상태색)] [스트레치]
+                [directoryLabel/Edit(전역 설정 경로와 다를 때만)]
+                [fileSizeLabel(실패에선 숨김 — 사유가 자리를 쓴다)]
+       progressBar: 레이아웃 행이 아니라 오버레이(수동 지오메트리,
+                ContentItemWidget._placeProgressBar) — 진행 중일 때만
+                카드 바닥 전체 폭. 행으로 넣으면 카드 높이가 상태에 따라
+                변해 목록이 들썩인다.
+
+     불변식(tests/unit/test_card_layout.py 게이트): 좌측 기준선 2개(썸네일·
+     컨텐츠 열, 3행 공통) / 우측 끝 1개(삭제==파일크기, 조작 3개(#178)로
+     늘어도 유지) / 행별 남는 공간 흡수처 1곳 / 상태 교체에도 카드 높이 불변. -->
 <ui version="4.0">
  <class>ContentItemWidget</class>
  <widget class="QWidget" name="ContentItemWidget">
@@ -7,304 +36,149 @@
     <x>0</x>
     <y>0</y>
     <width>600</width>
-    <height>134</height>
+    <height>100</height>
    </rect>
   </property>
   <property name="windowTitle">
    <string>ContentItemWidget</string>
   </property>
   <layout class="QVBoxLayout" name="contentItemLayout">
-   <property name="leftMargin">
-    <number>9</number>
-   </property>
-   <property name="topMargin">
-    <number>10</number>
-   </property>
-   <property name="rightMargin">
-    <number>9</number>
-   </property>
-   <property name="bottomMargin">
-    <number>0</number>
-   </property>
+   <property name="leftMargin"><number>0</number></property>
+   <property name="topMargin"><number>6</number></property>
+   <property name="rightMargin"><number>0</number></property>
+   <property name="bottomMargin"><number>0</number></property>
    <item>
     <widget class="QFrame" name="contentFrame">
-     <property name="frameShape">
-      <enum>QFrame::Shape::StyledPanel</enum>
-     </property>
-     <property name="frameShadow">
-      <enum>QFrame::Shadow::Raised</enum>
-     </property>
      <layout class="QVBoxLayout" name="contentFrameLayout">
+      <property name="leftMargin"><number>0</number></property>
+      <property name="topMargin"><number>0</number></property>
+      <property name="rightMargin"><number>0</number></property>
+      <property name="bottomMargin"><number>0</number></property>
+      <property name="spacing"><number>0</number></property>
       <item>
-       <layout class="QHBoxLayout" name="topLayout">
-        <item>
-         <widget class="QLabel" name="indexLabel">
-          <property name="minimumSize">
-           <size>
-            <width>30</width>
-            <height>30</height>
-           </size>
-          </property>
-          <property name="maximumSize">
-           <size>
-            <width>30</width>
-            <height>30</height>
-           </size>
-          </property>
-          <property name="toolTip">
-           <string>Queue number</string>
-          </property>
-          <property name="styleSheet">
-           <string notr="true">font-size: 14px;</string>
-          </property>
-          <property name="text">
-           <string>Queue number</string>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <widget class="QLabel" name="contentTypeLabel">
-          <property name="toolTip">
-           <string>Content type</string>
-          </property>
-          <property name="styleSheet">
-           <string notr="true">font-size: 14px;</string>
-          </property>
-          <property name="text">
-           <string>Content type</string>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <widget class="QLabel" name="channelImageLabel">
-          <property name="minimumSize">
-           <size>
-            <width>30</width>
-            <height>30</height>
-           </size>
-          </property>
-          <property name="maximumSize">
-           <size>
-            <width>30</width>
-            <height>30</height>
-           </size>
-          </property>
-          <property name="toolTip">
-           <string>Channel image</string>
-          </property>
-          <property name="styleSheet">
-           <string notr="true">font-size: 14px;</string>
-          </property>
-          <property name="text">
-           <string>Channel image</string>
-          </property>
-          <property name="alignment">
-           <set>Qt::AlignmentFlag::AlignCenter</set>
-          </property>
-         </widget>
-        </item>
-        <item stretch="100">
-         <widget class="ElidingLabel" name="channelNameLabel">
-          <property name="maximumSize">
-           <size>
-            <width>150</width>
-            <height>16777215</height>
-           </size>
-          </property>
-          <property name="toolTip">
-           <string>Channel name</string>
-          </property>
-          <property name="styleSheet">
-           <string notr="true">font-size: 14px;</string>
-          </property>
-          <property name="text">
-           <string>Channel name</string>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <spacer name="topSpacer">
-          <property name="orientation">
-           <enum>Qt::Orientation::Horizontal</enum>
-          </property>
-          <property name="sizeHint" stdset="0">
-           <size>
-            <width>40</width>
-            <height>20</height>
-           </size>
-          </property>
-         </spacer>
-        </item>
-        <item>
-         <widget class="ElidingLabel" name="statusLabel">
-          <property name="toolTip">
-           <string>Status</string>
-          </property>
-          <property name="styleSheet">
-           <string notr="true">font-size: 14px;</string>
-          </property>
-          <property name="text">
-           <string>Status</string>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <widget class="QLabel" name="progressLabel">
-          <property name="toolTip">
-           <string>Progress</string>
-          </property>
-          <property name="styleSheet">
-           <string notr="true">font-size: 14px;</string>
-          </property>
-          <property name="text">
-           <string>Progress</string>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <widget class="ElidingLabel" name="fileSizeLabel">
-          <property name="toolTip">
-           <string>File size</string>
-          </property>
-          <property name="styleSheet">
-           <string notr="true">font-size: 14px;</string>
-          </property>
-          <property name="text">
-           <string>File size</string>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <widget class="QPushButton" name="deleteButton">
-          <property name="minimumSize">
-           <size>
-            <width>30</width>
-            <height>30</height>
-           </size>
-          </property>
-          <property name="maximumSize">
-           <size>
-            <width>30</width>
-            <height>30</height>
-           </size>
-          </property>
-          <property name="toolTip">
-           <string>Delete</string>
-          </property>
-          <property name="role" stdset="0">
-           <string notr="true">icon</string>
-          </property>
-         </widget>
-        </item>
-       </layout>
-      </item>
-      <item>
-       <layout class="QHBoxLayout" name="centerLayout">
+       <layout class="QHBoxLayout" name="bodyLayout">
         <item>
          <widget class="QLabel" name="thumbnailLabel">
-          <property name="minimumSize">
-           <size>
-            <width>116</width>
-            <height>66</height>
-           </size>
-          </property>
-          <property name="maximumSize">
-           <size>
-            <width>105</width>
-            <height>60</height>
-           </size>
-          </property>
-          <property name="toolTip">
-           <string>Thumbnail</string>
-          </property>
-          <property name="text">
-           <string>Thumbnail</string>
-          </property>
-          <property name="alignment">
-           <set>Qt::AlignmentFlag::AlignCenter</set>
-          </property>
+          <property name="toolTip"><string>Thumbnail</string></property>
+          <property name="text"><string>Thumbnail</string></property>
+          <property name="alignment"><set>Qt::AlignmentFlag::AlignCenter</set></property>
          </widget>
         </item>
         <item>
          <layout class="QVBoxLayout" name="contentLayout">
-          <property name="spacing">
-           <number>0</number>
-          </property>
           <item>
-           <layout class="QHBoxLayout" name="titleLayout">
+           <layout class="QHBoxLayout" name="topLayout">
+            <property name="spacing"><number>4</number></property>
             <item>
-             <widget class="ElidingLabel" name="titleLabel">
-              <property name="toolTip">
-               <string>Title</string>
-              </property>
-              <property name="styleSheet">
-               <string notr="true">font-size: 14px;</string>
-              </property>
-              <property name="text">
-               <string>Title</string>
-              </property>
+             <widget class="QLabel" name="channelImageLabel">
+              <property name="toolTip"><string>Channel image</string></property>
+              <property name="text"><string>Channel image</string></property>
+              <property name="alignment"><set>Qt::AlignmentFlag::AlignCenter</set></property>
              </widget>
             </item>
             <item>
-             <widget class="QLineEdit" name="titleEdit">
-              <property name="styleSheet">
-               <string notr="true">font-size: 14px;</string>
-              </property>
-              <property name="clearButtonEnabled">
-               <bool>true</bool>
-              </property>
+             <widget class="ElidingLabel" name="channelNameLabel">
+              <property name="maximumSize"><size><width>150</width><height>16777215</height></size></property>
+              <property name="toolTip"><string>Channel name</string></property>
+              <property name="text"><string>Channel name</string></property>
+             </widget>
+            </item>
+            <item>
+             <spacer name="topSpacer">
+              <property name="orientation"><enum>Qt::Orientation::Horizontal</enum></property>
+              <property name="sizeHint" stdset="0"><size><width>0</width><height>0</height></size></property>
+             </spacer>
+            </item>
+            <item>
+             <widget class="QPushButton" name="pauseButton">
+              <property name="toolTip"><string>Pause</string></property>
+              <property name="visible"><bool>false</bool></property>
+              <property name="role" stdset="0"><string notr="true">icon</string></property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="openDirectoryButton">
+              <property name="toolTip"><string>Open directory</string></property>
+              <property name="visible"><bool>false</bool></property>
+              <property name="role" stdset="0"><string notr="true">icon</string></property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="retryButton">
+              <property name="toolTip"><string>Retry</string></property>
+              <property name="visible"><bool>false</bool></property>
+              <property name="role" stdset="0"><string notr="true">icon</string></property>
+             </widget>
+            </item>
+            <item>
+             <spacer name="deleteGapSpacer">
+              <property name="orientation"><enum>Qt::Orientation::Horizontal</enum></property>
+              <property name="sizeType"><enum>QSizePolicy::Policy::Fixed</enum></property>
+              <property name="sizeHint" stdset="0"><size><width>8</width><height>0</height></size></property>
+             </spacer>
+            </item>
+            <item>
+             <widget class="QPushButton" name="deleteButton">
+              <property name="toolTip"><string>Delete</string></property>
+              <property name="role" stdset="0"><string notr="true">icon</string></property>
              </widget>
             </item>
            </layout>
           </item>
           <item>
-           <layout class="QHBoxLayout" name="directoryLayout">
-            <property name="spacing">
-             <number>0</number>
-            </property>
+           <layout class="QHBoxLayout" name="titleLayout">
+            <item stretch="1">
+             <widget class="ElidingLabel" name="titleLabel">
+              <property name="toolTip"><string>Title</string></property>
+              <property name="text"><string>Title</string></property>
+              <property name="alignment"><set>Qt::AlignmentFlag::AlignLeft|Qt::AlignmentFlag::AlignVCenter</set></property>
+             </widget>
+            </item>
+            <item stretch="1">
+             <widget class="QLineEdit" name="titleEdit">
+              <property name="clearButtonEnabled"><bool>true</bool></property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="resolutionLayout">
+            <property name="spacing"><number>4</number></property>
+            <!-- pill들은 content/widget.py가 statusLabel 앞(왼쪽부터)에 삽입 -->
             <item>
-             <widget class="ElidingLabel" name="directoryLabel">
-              <property name="toolTip">
-               <string>Directory</string>
-              </property>
-              <property name="styleSheet">
-               <string notr="true">font-size: 14px;</string>
-              </property>
-              <property name="text">
-               <string>Directory</string>
-              </property>
+             <widget class="ElidingLabel" name="statusLabel">
+              <property name="toolTip"><string>Status</string></property>
+              <property name="text"><string>Status</string></property>
+              <property name="visible"><bool>false</bool></property>
              </widget>
             </item>
             <item>
-             <widget class="QLineEdit" name="directoryEdit">
-              <property name="styleSheet">
-               <string notr="true">font-size: 14px;</string>
-              </property>
-              <property name="clearButtonEnabled">
-               <bool>true</bool>
-              </property>
+             <spacer name="resolutionSpacer">
+              <property name="orientation"><enum>Qt::Orientation::Horizontal</enum></property>
+              <property name="sizeHint" stdset="0"><size><width>0</width><height>0</height></size></property>
+             </spacer>
+            </item>
+            <item>
+             <widget class="PathLabel" name="directoryLabel">
+              <property name="toolTip"><string>Directory</string></property>
+              <property name="text"><string>Directory</string></property>
+              <property name="visible"><bool>false</bool></property>
              </widget>
             </item>
             <item>
-             <widget class="QPushButton" name="openDirectoryButton">
-              <property name="minimumSize">
-               <size>
-                <width>30</width>
-                <height>30</height>
-               </size>
-              </property>
-              <property name="maximumSize">
-               <size>
-                <width>30</width>
-                <height>30</height>
-               </size>
-              </property>
-              <property name="toolTip">
-               <string>Open directory</string>
-              </property>
-              <property name="role" stdset="0">
-               <string notr="true">icon</string>
-              </property>
+             <!-- #245: 경로 텍스트가 최소치 아래로 접히면 라벨 대신 남는 클릭 대상(폴더 선택) -->
+             <widget class="IconButton" name="pathIconButton">
+              <property name="minimumSize"><size><width>20</width><height>20</height></size></property>
+              <property name="maximumSize"><size><width>20</width><height>20</height></size></property>
+              <property name="visible"><bool>false</bool></property>
+              <property name="role" stdset="0"><string notr="true">icon</string></property>
+             </widget>
+            </item>
+            <item>
+             <widget class="ElidingLabel" name="fileSizeLabel">
+             <property name="alignment"><set>Qt::AlignRight|Qt::AlignVCenter</set></property>
+              <property name="toolTip"><string>File size</string></property>
+              <property name="text"><string>File size</string></property>
              </widget>
             </item>
            </layout>
@@ -313,35 +187,15 @@
         </item>
        </layout>
       </item>
-      <item>
-       <widget class="QProgressBar" name="progressBar">
-        <property name="minimumSize">
-         <size>
-          <width>0</width>
-          <height>6</height>
-         </size>
-        </property>
-        <property name="maximumSize">
-         <size>
-          <width>16777215</width>
-          <height>6</height>
-         </size>
-        </property>
-        <property name="maximum">
-         <number>100</number>
-        </property>
-        <property name="value">
-         <number>0</number>
-        </property>
-        <property name="textVisible">
-         <bool>false</bool>
-        </property>
-        <property name="state" stdset="0">
-         <string notr="true">waiting</string>
-        </property>
-       </widget>
-      </item>
      </layout>
+     <widget class="QProgressBar" name="progressBar">
+      <!-- 오버레이 — 지오메트리는 content/widget.py::_placeProgressBar -->
+      <property name="maximum"><number>100</number></property>
+      <property name="value"><number>0</number></property>
+      <property name="textVisible"><bool>false</bool></property>
+      <property name="visible"><bool>false</bool></property>
+      <property name="state" stdset="0"><string notr="true">waiting</string></property>
+     </widget>
     </widget>
    </item>
   </layout>
@@ -349,6 +203,11 @@
  <customwidgets>
   <customwidget>
    <class>ElidingLabel</class>
+   <extends>QLabel</extends>
+   <header>content/eliding_label.h</header>
+  </customwidget>
+  <customwidget>
+   <class>PathLabel</class>
    <extends>QLabel</extends>
    <header>content/eliding_label.h</header>
   </customwidget>

@@ -93,3 +93,58 @@ class ElidingLabel(QLabel):
         elided = metrics.elidedText(self._full_text, self._elide_mode, width)
         if elided != super().text():
             super().setText(elided)
+
+
+class PathLabel(ElidingLabel):
+    """카드 3행 경로 라벨 — **줄어드는 순서가 정해져 있다** (#245).
+
+    ① 전체(축약형 원문) → ② 중간 폴더 접기(`뿌리/…/마지막폴더`, 마지막 폴더는
+    온전) → ③ 마지막 폴더에만 ElideMiddle(접두 `뿌리/…/`는 고정) → ④ 아이콘만
+    (이 단계는 ContentItemWidget._layoutPathLabel이 정한다). 파일이 실제로
+    들어가는 곳은 **마지막 폴더**이므로 정보 가치가 낮은 중간 폴더부터 접고,
+    마지막 폴더는 가장 늦게 잘린다 — 3행의 "정체를 살리고 맥락을 접는다"를
+    경로 문자열 안에서도 지킨다. 중간 폴더가 하나뿐이어도 ②를 거친다.
+
+    단계 정보는 `setPathParts()`로 받는다(문자열 분해는 content/widget.py의
+    `path_display_parts` — 이 모듈은 위젯을 import할 수 없다). `text()`·
+    `sizeHint()`는 항상 ① 기준이라 창을 넓히면 ①로 회복된다(되먹임 없음).
+    `setText()`만 부르면(Designer 초기 문구 등) 단계 없이 기본 말줄임이다.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent, elide_mode=Qt.TextElideMode.ElideMiddle)
+        self._prefix = ""
+        self._last = ""
+
+    def setPathParts(self, full: str, prefix: str, last: str) -> None:
+        """①의 문자열 `full`, ②③의 고정 접두 `prefix`(`뿌리/…/`), 마지막 폴더 `last`."""
+        super().setText(full)
+        self._prefix = prefix
+        self._last = last
+        self._applyElide(force=True)
+
+    def setText(self, text: str) -> None:
+        """단계 정보 없이 텍스트만 바꾸면 기본 ElidingLabel로 동작한다."""
+        self._prefix = ""
+        self._last = ""
+        super().setText(text)
+
+    def _applyElide(self, force: bool = False) -> None:
+        if not self._last:
+            super()._applyElide(force)
+            return
+        width = self.width()
+        if not force and width == self._last_elide_width:
+            return
+        self._last_elide_width = width
+        metrics = QFontMetrics(self.font())
+        folded = self._prefix + self._last
+        if metrics.horizontalAdvance(self._full_text) <= width:
+            shown = self._full_text  # ① 전체
+        elif metrics.horizontalAdvance(folded) <= width:
+            shown = folded  # ② 중간 폴더 접기 — 마지막 폴더 온전
+        else:
+            room = max(width - metrics.horizontalAdvance(self._prefix), 0)
+            shown = self._prefix + metrics.elidedText(self._last, Qt.TextElideMode.ElideMiddle, room)  # ③
+        if shown != QLabel.text(self):
+            QLabel.setText(self, shown)

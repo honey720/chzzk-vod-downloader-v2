@@ -11,8 +11,10 @@ from app.viewmodels.path_gates import check_fetch_path, check_remember_path, nor
 from config.dialog import SettingDialog
 from content.data import ContentItem
 from content.manager import ContentManager
+from content import widget as content_widget
 from core.models.download_state import DownloadState
 from ui.mainWindow import Ui_VodDownloader
+import theme
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +71,57 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         self.total_downloads = 0
         self.completed_downloads = 0
         self.downloadPathInput.setText(_default_download_path())  # 초기 경로 (#159)
+        # 카드의 "경로는 전역 설정과 다를 때만 표시" 판단 기준(#245) —
+        # 시작 시와 경로 변경 시(_rememberPathIfValid)마다 밀어 넣는다
+        content_widget.set_global_download_path(self.downloadPathInput.text())
         self.downloadCountLabel.setText(self.downloadCountLabel.text().format(self.completed_downloads, self.total_downloads))  # 초기값 설정
+        self._applyLayoutMetrics()
+
+    def _applyLayoutMetrics(self) -> None:
+        """상단·카드·하단의 좌우 정렬선을 theme.METRICS 토큰 하나로 관통시킨다 (#244).
+
+        `.ui`(uic 재생성 대상)에는 theme를 연결할 수 없어 여백을 여기서
+        런타임에 건다 — 오너가 theme.py의 outerMargin/framePadding 숫자만
+        바꾸고 `uv run python main.py`로 바로 확인할 수 있게 하기 위해서다.
+        상단바·카드 목록·하단바가 같은 outerMargin에서 시작하고, 바 안쪽
+        여백(framePadding)이 카드 안쪽 여백(cardPadding)과 같으면 입력창·
+        썸네일·하단 요약의 왼쪽 끝이 한 선에 놓인다.
+        """
+        outer = theme.METRICS["outerMargin"]
+        frame_pad = theme.METRICS["framePadding"]
+        self.centralWidgetLayout.setContentsMargins(outer, outer, outer, outer)
+        self.centralWidgetLayout.setSpacing(8)
+        self.headerFrameLayout.setContentsMargins(frame_pad, frame_pad, frame_pad, frame_pad)
+        self.infoLayout.setContentsMargins(frame_pad, frame_pad, frame_pad, frame_pad)
+        self._equalizeHeaderButtons()
+
+    def _equalizeHeaderButtons(self) -> None:
+        """상단 두 텍스트 버튼([VOD 추가]·[경로 찾기])을 같은 폭으로 고정한다 (#245).
+
+        사람 눈은 **같은 종류끼리**(텍스트 버튼 둘) 끝이 맞는 것을 본다 —
+        폭이 다르면 오른쪽 끝을 맞춰도 왼쪽 끝이 어긋나 입력 블록이 사각형으로
+        읽히지 않는다. 폭은 번역·폰트에 따라 달라지므로 .ui 상수가 아니라
+        런타임에 더 넓은 쪽으로 맞춘다. `ensurePolished()`가 먼저다 — QSS
+        padding이 sizeHint에 들어오는 시점이 polish다.
+        """
+        buttons = (self.fetchButton, self.downloadPathButton)
+        for button in buttons:
+            button.ensurePolished()
+        width = max(button.sizeHint().width() for button in buttons)
+        for button in buttons:
+            button.setFixedWidth(width)
+
+    def _setLinkStatus(self, text: str, kind: str = "info") -> None:
+        """조회 상태 메시지를 갱신한다 — 색은 전역 QSS가 `status` 속성으로 입힌다 (#244).
+
+        kind: "info"(중립 회색) / "ok"(성공 초록) / "error"(실패 빨강).
+        속성만 바꾸면 이미 계산된 스타일이 안 갱신되므로 repolish가 함께
+        필요하다(카드 상태 표시와 같은 패턴).
+        """
+        self.linkStatusLabel.setText(text)
+        if self.linkStatusLabel.property("status") != kind:
+            self.linkStatusLabel.setProperty("status", kind)
+            theme.repolish(self.linkStatusLabel)
 
     def setupThreadSignals(self):
         """
@@ -99,6 +151,36 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         self.clearFinishedButton.clicked.connect(self.contentManager.clrearFinishedItems)
         self.downloadButton.clicked.connect(self.onDownloadPause)
         self.stopButton.clicked.connect(self.onStop)
+        # 카드 상태별 조작(#245) — ⏸/↻ 는 뷰가 아이템을 붙여 올려준다
+        self.listView.pauseRequested.connect(self.onCardPause)
+        self.listView.retryRequested.connect(self.onCardRetry)
+
+    def onCardPause(self, item: ContentItem) -> None:
+        """진행 카드의 ⏸ — 전역 일시정지/재개 토글과 같은 경로를 탄다 (#245).
+
+        엔진은 동시 다운로드가 하나뿐이라(주석 TODO — 동시 다운로드
+        미지원) 카드의 일시정지는 곧 전역 일시정지다. 다운로드 중이
+        아닐 때는 아무 일도 하지 않는다 — onDownloadPause의 시작 분기
+        (새 배치 시작)로 새면 안 된다.
+        """
+        if self.downloadViewModel.isDownloading():
+            self.onDownloadPause()
+
+    def onCardRetry(self, item: ContentItem) -> None:
+        """실패 카드의 ↻ — 아이템을 대기로 되돌리고 배치를 잇는다 (#245).
+
+        실패 상태·사유·진행률을 초기화해 다시 다운로드 대상(findItem이
+        잡는 WAITING)으로 만든다. 이미 배치가 돌고 있으면 현재 항목이
+        끝난 뒤 체인(emitFinishedRequest → downloadItem)이 이 아이템을
+        집어 가고, 놀고 있으면 다운로드 버튼과 같은 경로로 즉시 배치를
+        시작한다 — 재시도 전용 실행 경로를 새로 만들지 않는다.
+        """
+        item.stateMessage = ""
+        item.downloadState = DownloadState.WAITING
+        item.download_progress = 0
+        self.contentManager.model.notifyChanged(item)
+        if not self.downloadViewModel.isDownloading():
+            self.onDownloadPause()
 
     def fetchContents(self, urls: str):
         # URL 목록을 미리 준비합니다.
@@ -129,7 +211,7 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
             return
         
         cookies = config.load_cookies()  # 쿠키 조립의 단일 지점 (#170)
-        self.linkStatusLabel.setText(self.tr('Fetching resolutions...'))
+        self._setLinkStatus(self.tr('Fetching resolutions...'), "info")
 
         # 결과 처리 — 상대 경로 입력은 cwd 기준으로 조용히 저장되던 문제를
         # 판정 전에 정규화해 막는다 (#146 ⓑ-4, #219). 화면 표시도 실제
@@ -153,11 +235,14 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
 
         self.urlInput.clear()
 
-        self.linkStatusLabel.setText(self.tr('Resolutions fetched successfully.'))
+        self._setLinkStatus(self.tr('Resolutions fetched successfully.'), "ok")
     
     def showErrorDialog(self, errorMessage):
         errorTitle = self.tr("Error")
         errorBody = self.tr("Error occurred during content request:") + "\n" + errorMessage
+        # 팝업을 닫은 뒤에도 실패했다는 사실이 남게 상태 줄도 빨갛게 바꾼다
+        # (#244 — 성공 메시지만 남아 "성공했는데 카드가 없다"로 읽히던 문제).
+        self._setLinkStatus(self.tr('Failed to fetch resolutions.'), "error")
         QMessageBox.critical(self, errorTitle, errorBody)
 
     def onDownloadPause(self):
@@ -213,6 +298,7 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         if check_remember_path(path):
             self.downloadPathInput.setText(path)
             self._rememberDownloadPath(path)
+            content_widget.set_global_download_path(path)  # 카드 경로 표시 기준 갱신 (#245)
 
     def _rememberDownloadPath(self, path: str) -> None:
         """실사용된 저장 경로를 설정에 보존한다 (#159) — _default_download_path의 ①."""

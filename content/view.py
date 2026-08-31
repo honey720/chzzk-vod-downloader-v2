@@ -39,6 +39,11 @@ class ContentListView(QScrollArea):
 
     deleteRequest = Signal(object)
     fetchRequested = Signal(str)
+    # 상태별 조작(#245) — 카드의 ⏸/↻ 를 아이템과 함께 상위로 중계한다.
+    # deleteRequest와 같은 패턴: 위젯은 자기 아이템을 모르는 무인자 시그널만
+    # 내고, 뷰가 아이템을 붙여 앱 계층(mainWindow)으로 올린다.
+    pauseRequested = Signal(object)
+    retryRequested = Signal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -49,7 +54,10 @@ class ContentListView(QScrollArea):
 
         self._container = QWidget()
         self._layout = QVBoxLayout(self._container)
-        self._layout.setContentsMargins(10, 10, 10, 10)
+        # 좌우 0(#244) — 카드 프레임이 상단·하단 바와 같은 좌측 정렬선
+        # (theme.METRICS["outerMargin"])에 놓이게 한다. 여기 좌우 여백이
+        # 있으면 카드만 안쪽으로 밀려 세로 정렬선이 끊긴다(실측 10px 어긋남).
+        self._layout.setContentsMargins(0, 4, 0, 8)
         # 카드끼리 붙어 있으면 목록이 답답해 보인다 (#227). 카드 자체가 가진
         # 위쪽 여백(contentItemLayout 10px)에 이만큼을 더해 간격을 낸다 —
         # 카드 폭에는 영향을 주지 않는 값이라 ElidingLabel 폭 계산과 무관하다
@@ -101,6 +109,8 @@ class ContentListView(QScrollArea):
         widget = ContentItemWidget(item, row, self._container)
         widget.setData(item, row)
         widget.deleteRequest.connect(lambda it=item: self.onDeleteItem(it))
+        widget.pauseRequest.connect(lambda it=item: self.pauseRequested.emit(it))
+        widget.retryRequest.connect(lambda it=item: self.retryRequested.emit(it))
         widget.addRepresentationButtons()
         self._layout.insertWidget(row, widget)
         self._widgets[item] = widget
