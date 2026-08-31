@@ -31,6 +31,7 @@ from PySide6.QtWidgets import QApplication
 import main as main_module
 import theme
 from application.mainWindow import VodDownloader
+from tests.unit.card_helpers import hold_style
 
 #: 창 최소폭(ui/mainWindow.py 기준 640 근처)·기본·아주 넓게.
 WIDTHS = (640, 900, 1600)
@@ -41,7 +42,7 @@ def _apply_production_qss(qapp):
     """실제 전역 QSS를 태운다. ⚠️ `scope="function"` 유지(macOS 종료 크래시 —
     `test_widget_theme.py`의 `_apply_dark_card_qss` 문서 참고)."""
     theme.set_color_scheme("dark")
-    qapp.setStyle(theme.build_style())
+    qapp.setStyle(hold_style(theme.build_style()))  # 참조 보관 — 이중 해제 우회 (#243, card_helpers.hold_style)
     qapp.setPalette(theme.build_palette())
     qapp.setStyleSheet(theme.load_stylesheet(main_module.resource_path(theme.QSS_RELATIVE_PATH)))
 

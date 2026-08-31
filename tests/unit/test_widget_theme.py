@@ -21,6 +21,7 @@ from app.viewmodels.item_state import ItemState
 from content.data import ContentItem
 from content.widget import STATE_ICON, ContentItemWidget
 from core.models.download_state import DownloadState
+from tests.unit.card_helpers import hold_style
 
 
 @pytest.fixture(autouse=True)
@@ -69,7 +70,7 @@ def _apply_dark_card_qss(qapp):
     기대값이 전부 깨진다. 스킴 감지는 건너뛰고 "dark"만 명시 고정한다.
     """
     theme.set_color_scheme("dark")
-    qapp.setStyle(theme.build_style())
+    qapp.setStyle(hold_style(theme.build_style()))  # 참조 보관 — 이중 해제 우회 (#243, card_helpers.hold_style)
     qapp.setPalette(theme.build_palette())
     qapp.setStyleSheet(theme.load_stylesheet(main_module.resource_path(theme.QSS_RELATIVE_PATH)))
 

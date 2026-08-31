@@ -36,7 +36,7 @@ def _apply_dark_card_qss(qapp):
     재현했다(session·module 스코프는 좁혀도 둘 다 크래시 재현됨).
     """
     theme.set_color_scheme("dark")
-    qapp.setStyle(theme.build_style())
+    qapp.setStyle(theme.build_style())  # 검증 ②: 이 파일만 우회 제외 — 크래시가 여기서 나는지, 다른 지점으로 옮겨 가는지
     qapp.setPalette(theme.build_palette())
     qapp.setStyleSheet(theme.load_stylesheet(main_module.resource_path(theme.QSS_RELATIVE_PATH)))
 

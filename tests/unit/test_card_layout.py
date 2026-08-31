@@ -31,7 +31,7 @@ import theme
 from content.data import ContentItem
 from content.widget import ContentItemWidget
 from core.models.download_state import DownloadState
-from tests.unit.card_helpers import resize_to, shown
+from tests.unit.card_helpers import resize_to, shown, hold_style
 
 #: 좁게(요소가 꽉 참)·기본·아주 넓게(실기 와이드 모니터 — 결함이 실제로
 #: 발견된 조건). 카드 최소폭이 썸네일(16:9) 때문에 커져 하한을 520→560으로.
@@ -47,7 +47,7 @@ def _apply_production_qss(qapp):
     `scope="function"` 유지 — 넓히면 macOS 종료 크래시 재발
     (`test_widget_theme.py`의 `_apply_dark_card_qss` 문서 참고)."""
     theme.set_color_scheme("dark")
-    qapp.setStyle(theme.build_style())
+    qapp.setStyle(hold_style(theme.build_style()))  # 참조 보관 — 이중 해제 우회 (#243, card_helpers.hold_style)
     qapp.setPalette(theme.build_palette())
     qapp.setStyleSheet(theme.load_stylesheet(main_module.resource_path(theme.QSS_RELATIVE_PATH)))
 
