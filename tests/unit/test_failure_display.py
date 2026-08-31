@@ -183,7 +183,9 @@ def test_failed_card_shows_failure_and_batch_continues(wired, qapp, tmp_path):
     # #245 상태별 슬롯: 실패 사유가 있으면 "✕ 사유"만 보인다(오너 확정 —
     # "Download failed —" 접두는 사유 없는 경우의 폴백으로만 쓰인다)
     assert label.startswith("✕ ")
-    assert "Postprocessing failed" in label
+    # 첫 줄=핵심(할 일 포함)만 3행에 보인다(#245) — 상세는 툴팁
+    assert "corrupted" in label and "download the video again" in label
+    assert "\n" not in label, "둘째 줄(상세)이 3행에 새어 나왔다"
     # ② 원시 문자열(ffmpeg stderr·실행 경로) 미노출
     assert "ffmpeg" not in label
     assert "remux" not in label

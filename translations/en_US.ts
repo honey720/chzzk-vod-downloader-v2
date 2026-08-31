@@ -110,8 +110,10 @@
         <translation>Invalid file path</translation>
     </message>
     <message>
-        <source>Failed to save file</source>
-        <translation>Failed to save the file. Check the save path and free disk space.</translation>
+        <source>Failed to save file · check the path and disk space
+The file could not be saved. Check the download path and free disk space.</source>
+        <translation>Failed to save file · check the path and disk space
+The file could not be saved. Check the download path and free disk space.</translation>
     </message>
 </context>
 <context>
@@ -160,32 +162,46 @@
 <context>
     <name>QtDownloadBridge</name>
     <message>
-        <source>Postprocessing failed - ffmpeg not found</source>
-        <translation>Video processing failed — ffmpeg could not be found. Please check your ffmpeg installation.</translation>
+        <source>ffmpeg not found · check the installation
+Postprocessing failed: the ffmpeg executable could not be found.</source>
+        <translation>ffmpeg not found · check the installation
+Postprocessing failed: the ffmpeg executable could not be found.</translation>
     </message>
     <message>
-        <source>Postprocessing failed - invalid segments</source>
-        <translation>Video processing failed — the downloaded segments may be corrupted. Please try downloading again.</translation>
+        <source>Segments are corrupted · download the video again
+Postprocessing failed: the downloaded segments look corrupted. Please download the video again.</source>
+        <translation>Segments are corrupted · download the video again
+Postprocessing failed: the downloaded segments look corrupted. Please download the video again.</translation>
     </message>
     <message>
-        <source>Decryption failed</source>
-        <translation>Failed to decrypt the video. Check your cookies and try again.</translation>
+        <source>Decryption failed · check your cookies
+The video could not be decrypted. Check the cookies in Settings and try again.</source>
+        <translation>Decryption failed · check your cookies
+The video could not be decrypted. Check the cookies in Settings and try again.</translation>
     </message>
     <message>
-        <source>Viewing permission required</source>
-        <translation>This video requires viewing permission. Add the cookies of an account that can watch it in Settings.</translation>
+        <source>Viewing permission required · add cookies in Settings
+This video requires viewing permission. Register the cookies of an account that can watch it in Settings.</source>
+        <translation>Viewing permission required · add cookies in Settings
+This video requires viewing permission. Register the cookies of an account that can watch it in Settings.</translation>
     </message>
     <message>
-        <source>Video not found</source>
-        <translation>The video could not be found. Please check the address.</translation>
+        <source>Video not found · check the URL
+The video could not be found. Check the address.</source>
+        <translation>Video not found · check the URL
+The video could not be found. Check the address.</translation>
     </message>
     <message>
-        <source>Network connection error</source>
-        <translation>Please check your network connection.</translation>
+        <source>Network connection error · check your connection
+A network error occurred while downloading. Check your connection and try again.</source>
+        <translation>Network connection error · check your connection
+A network error occurred while downloading. Check your connection and try again.</translation>
     </message>
     <message>
-        <source>Failed to save file</source>
-        <translation>Failed to save the file. Check the save path and free disk space.</translation>
+        <source>Failed to save file · check the path and disk space
+The file could not be saved. Check the download path and free disk space.</source>
+        <translation>Failed to save file · check the path and disk space
+The file could not be saved. Check the download path and free disk space.</translation>
     </message>
 </context>
 <context>

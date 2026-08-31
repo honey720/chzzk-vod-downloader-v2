@@ -199,25 +199,50 @@ class TestSlotColumn:
         assert widget.statusLabel.text() == "✕ Segments look corrupted · download again"
         assert widget.statusLabel.toolTip() == widget.item.stateMessage
 
+    #: 첫 줄 글자 수 상한 — 언어별. 640px 카드 3행 실측(Windows 실기, 기본 폰트):
+    #: ko 44자 온전·47자 잘림 → 40 / en 65자 온전·76자 잘림 → 60. 한글은 전각,
+    #: 영문은 반각·비례폭이라 같은 글자 수의 폭이 다르다(실측 비 약 1.5배) —
+    #: 한 상한을 두 언어에 같이 쓰면 한쪽은 헐겁고 한쪽은 잘린다.
+    HEADLINE_LIMIT = {"ko_KR": 40, "en_US": 60}
+
+    @pytest.mark.parametrize("language", ("ko_KR", "en_US"))
     @pytest.mark.parametrize("context", ("QtDownloadBridge", "ContentManager", "ContentItemWidget"))
-    def test_every_korean_failure_headline_fits_the_card_row(self, context):
+    def test_every_failure_headline_fits_the_card_row(self, language, context):
         """모든 사유의 **첫 줄**이 640px 카드 3행에 들어간다 — 폰트 무의존 대리
-        지표로 글자 수 상한을 건다. 실측(Windows 실기, 기본 폰트, 640px): 44자
-        문구까지 온전, 47자·58자는 잘렸다 → 상한 40자(여유 포함). 원문 전체가
-        아니라 첫 줄만 재는 것이 규칙이다 — 상세는 툴팁이 맡는다."""
+        지표로 언어별 글자 수 상한을 건다(HEADLINE_LIMIT). 원문 전체가 아니라
+        첫 줄만 재는 것이 규칙이다 — 상세(둘째 줄)는 툴팁이 맡는다. en은
+        en_US.ts의 translation(=표시 문자열)을 본다 — 소스가 아니라 실제로
+        뜨는 쪽이다."""
         import io
         import re
 
-        source = io.open(main_module.resource_path("translations/ko_KR.ts"), encoding="utf-8").read()
+        source = io.open(main_module.resource_path(f"translations/{language}.ts"), encoding="utf-8").read()
         block = re.search(rf"<name>{context}</name>(.*?)</context>", source, re.S).group(1)
         failures = [
             (src, tr)
             for src, tr in re.findall(r"<source>([^<]*)</source>\s*<translation>([^<]*)</translation>", block)
-            if any(k in src for k in ("fail", "Fail", "required", "not found", "Decryption", "Invalid", "Network", "Unknown"))
+            if any(k in src for k in ("fail", "Fail", "required", "not found", "Decryption", "Invalid", "Network", "Unknown", "corrupted", "ffmpeg"))
         ]
-        assert failures, f"{context}: 실패 문구를 하나도 못 찾았다 — 필터를 확인할 것"
-        too_long = {src: tr.splitlines()[0] for src, tr in failures if len(tr.splitlines()[0]) > 40}
-        assert not too_long, f"640px에서 잘릴 첫 줄(40자 초과): {too_long}"
+        assert failures, f"{language}/{context}: 실패 문구를 하나도 못 찾았다 — 필터를 확인할 것"
+        limit = self.HEADLINE_LIMIT[language]
+        too_long = {src: tr.splitlines()[0] for src, tr in failures if len(tr.splitlines()[0]) > limit}
+        assert not too_long, f"{language}: 640px에서 잘릴 첫 줄({limit}자 초과): {too_long}"
+
+    def test_english_source_strings_follow_the_headline_detail_convention(self):
+        """영문 원문(tr() 소스)도 첫 줄=핵심 / 둘째 줄=상세다 — ko 번역만 갈라
+        두면 영어로 띄울 때 긴 한 줄이 그대로 잘린다(#245 정정)."""
+        import io
+        import re
+
+        source = io.open(main_module.resource_path("translations/en_US.ts"), encoding="utf-8").read()
+        block = re.search(r"<name>QtDownloadBridge</name>(.*?)</context>", source, re.S).group(1)
+        sources = re.findall(r"<source>([^<]*)</source>", block)
+        multi = [s for s in sources if "\n" in s]
+        assert len(multi) >= 7, f"두 줄 규약을 따르는 브리지 사유가 {len(multi)}개뿐이다: {sources}"
+        for s in multi:
+            headline, detail = s.split("\n", 1)
+            assert "·" in headline, f"첫 줄에 '할 일'(· 뒤)이 없다: {headline!r}"
+            assert detail.strip(), f"둘째 줄(상세)이 비었다: {s!r}"
 
     def test_long_failure_reason_is_elided_but_the_tooltip_keeps_the_whole_text(self, qapp):
         """긴 사유는 3행에서 ElideRight로 잘릴 수 있다 — 전문은 툴팁이 준다.

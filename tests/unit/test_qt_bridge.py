@@ -196,8 +196,9 @@ class TestCompletion:
         assert stopped == []  # 실패는 더 이상 정지로 위장하지 않는다
         [(failed_item, message)] = received
         assert failed_item is item
-        # 번역기 미설치 환경 — tr()은 키 원문을 돌려준다. 원시 문자열은 미노출
-        assert message == "Postprocessing failed - invalid segments"
+        # 번역기 미설치 환경 — tr()은 원문(첫 줄=핵심 / 둘째 줄=상세, #245)을
+        # 돌려준다. 원시 문자열은 미노출
+        assert message.startswith("Segments are corrupted · download the video again\n")
         assert "ffmpeg" not in message
         assert item.post_process is False
         # 참조 정리 — 실패 후 다음 다운로드 시작이 가능해야 한다

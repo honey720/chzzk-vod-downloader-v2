@@ -253,18 +253,41 @@ class QtDownloadBridge(QObject):
         lupdate가 `-no-obsolete`로 .ts를 재생성하므로 반드시 리터럴로 tr()을
         호출해 추출 대상을 유지한다 (content/worker.py의 _translate_key와 동일).
         """
+        # 문구 규약(#245): **첫 줄 = 핵심 한 줄(무엇을 해야 하는지 포함) /
+        # 둘째 줄 = 상세.** 카드는 첫 줄만 3행에 올리고 전문을 툴팁으로 준다 —
+        # 실패 사유는 마우스를 올려야 보이면 안 된다. 첫 줄 길이 상한은 언어별
+        # (en ≤ 60자, ko ≤ 40자 — 640px 실측, tests/unit/test_card_state_matrix.py).
+        # 왼쪽 키(매핑 키)는 내부 식별자라 그대로 두고 표시 문자열만 바꿨다.
         translated = {
             "Postprocessing failed - ffmpeg not found": self.tr(
-                "Postprocessing failed - ffmpeg not found"
+                "ffmpeg not found · check the installation\n"
+                "Postprocessing failed: the ffmpeg executable could not be found."
             ),
             "Postprocessing failed - invalid segments": self.tr(
-                "Postprocessing failed - invalid segments"
+                "Segments are corrupted · download the video again\n"
+                "Postprocessing failed: the downloaded segments look corrupted. "
+                "Please download the video again."
             ),
-            "Decryption failed": self.tr("Decryption failed"),
-            "Viewing permission required": self.tr("Viewing permission required"),
-            "Video not found": self.tr("Video not found"),
-            "Network connection error": self.tr("Network connection error"),
-            "Failed to save file": self.tr("Failed to save file"),
+            "Decryption failed": self.tr(
+                "Decryption failed · check your cookies\n"
+                "The video could not be decrypted. Check the cookies in Settings and try again."
+            ),
+            "Viewing permission required": self.tr(
+                "Viewing permission required · add cookies in Settings\n"
+                "This video requires viewing permission. Register the cookies of an account "
+                "that can watch it in Settings."
+            ),
+            "Video not found": self.tr(
+                "Video not found · check the URL\nThe video could not be found. Check the address."
+            ),
+            "Network connection error": self.tr(
+                "Network connection error · check your connection\n"
+                "A network error occurred while downloading. Check your connection and try again."
+            ),
+            "Failed to save file": self.tr(
+                "Failed to save file · check the path and disk space\n"
+                "The file could not be saved. Check the download path and free disk space."
+            ),
         }
         key = _failure_message_key(exc)
         return translated.get(key, "") if key is not None else ""

@@ -110,7 +110,8 @@
         <translation>유효하지 않은 파일 경로</translation>
     </message>
     <message>
-        <source>Failed to save file</source>
+        <source>Failed to save file · check the path and disk space
+The file could not be saved. Check the download path and free disk space.</source>
         <translation>파일 저장에 실패했습니다. 저장 경로와 디스크 공간을 확인해 주세요.</translation>
     </message>
 </context>
@@ -160,34 +161,41 @@
 <context>
     <name>QtDownloadBridge</name>
     <message>
-        <source>Postprocessing failed - ffmpeg not found</source>
+        <source>ffmpeg not found · check the installation
+Postprocessing failed: the ffmpeg executable could not be found.</source>
         <translation>ffmpeg를 찾을 수 없습니다 · 설치 상태를 확인해 주세요
 영상 변환(후처리)에 실패했습니다. ffmpeg 설치 상태를 확인해 주세요.</translation>
     </message>
     <message>
-        <source>Postprocessing failed - invalid segments</source>
+        <source>Segments are corrupted · download the video again
+Postprocessing failed: the downloaded segments look corrupted. Please download the video again.</source>
         <translation>영상 조각이 손상됐습니다 · 다시 받아 주세요
 영상 변환(후처리)에 실패했습니다. 받은 영상 조각이 손상됐을 수 있습니다. 다시 다운로드해 주세요.</translation>
     </message>
     <message>
-        <source>Decryption failed</source>
+        <source>Decryption failed · check your cookies
+The video could not be decrypted. Check the cookies in Settings and try again.</source>
         <translation>영상 복호화에 실패했습니다. 쿠키를 확인한 뒤 다시 시도해 주세요.</translation>
     </message>
     <message>
-        <source>Viewing permission required</source>
+        <source>Viewing permission required · add cookies in Settings
+This video requires viewing permission. Register the cookies of an account that can watch it in Settings.</source>
         <translation>시청 권한이 필요합니다 · 설정에 쿠키를 등록해 주세요
 시청 권한이 필요한 영상입니다. 시청 가능한 계정의 쿠키를 설정에 등록해 주세요.</translation>
     </message>
     <message>
-        <source>Video not found</source>
+        <source>Video not found · check the URL
+The video could not be found. Check the address.</source>
         <translation>영상을 찾을 수 없습니다. 주소를 확인해 주세요.</translation>
     </message>
     <message>
-        <source>Network connection error</source>
+        <source>Network connection error · check your connection
+A network error occurred while downloading. Check your connection and try again.</source>
         <translation>네트워크 연결을 확인해 주세요.</translation>
     </message>
     <message>
-        <source>Failed to save file</source>
+        <source>Failed to save file · check the path and disk space
+The file could not be saved. Check the download path and free disk space.</source>
         <translation>파일 저장에 실패했습니다. 저장 경로와 디스크 공간을 확인해 주세요.</translation>
     </message>
 </context>
