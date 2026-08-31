@@ -29,9 +29,8 @@
         <translation>Checking...</translation>
     </message>
     <message>
-        <location filename="content/widget.py" line="235"/>
-        <source>Download paused</source>
-        <translation>Download paused</translation>
+        <source>Paused</source>
+        <translation>Paused</translation>
     </message>
     <message>
         <location filename="content/widget.py" line="250"/>
@@ -112,6 +111,18 @@
         <location filename="ui/contentItemWidget.ui" line="310"/>
         <source>Open directory</source>
         <translation>Open directory</translation>
+    </message>
+    <message>
+        <source>Pause</source>
+        <translation>Pause</translation>
+    </message>
+    <message>
+        <source>Resume</source>
+        <translation>Resume</translation>
+    </message>
+    <message>
+        <source>Retry</source>
+        <translation>Retry</translation>
     </message>
 </context>
 <context>

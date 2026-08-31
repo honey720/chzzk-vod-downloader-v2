@@ -1,8 +1,8 @@
 import os
 import threading
 from PySide6.QtWidgets import QWidget, QPushButton, QMessageBox
-from PySide6.QtGui import QPainter, QPainterPath, QPixmap, QDesktopServices
-from PySide6.QtCore import Qt, Signal, QUrl, QDir, QProcess
+from PySide6.QtGui import QPainter, QPainterPath, QPixmap, QDesktopServices, QRegion
+from PySide6.QtCore import Qt, Signal, QUrl, QDir, QProcess, QRectF
 from content.data import ContentItem
 from content.network import REQUEST_TIMEOUT, get_thread_session
 from core.models.download_state import DownloadState
@@ -16,28 +16,16 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-#: 상태·조작 글리프(#244→#245 상태별 슬롯 재설계). 전부 폰트 문자(유니코드)다
-#: — 이미지 리소스를 안 늘리는 기존 관례. Windows 실기 커버리지는
-#: QFontMetrics.inFontUcs4로 실측 확인(PR #245 보고 참조), macOS/Linux는
-#: Apple Symbols·DejaVu Sans 커버 문서 기준.
-#: ✓·✕는 3행 슬롯 텍스트의 접두(완료/실패 표시), ⏸·↻·📁·✕는 1행 우측의
-#: 상태별 조작·삭제 버튼 글리프다. 색은 파이썬이 아니라 전역 QSS가
-#: theme.py 토큰으로 정한다.
+#: 3행 슬롯 텍스트의 상태 접두(완료/실패 표시). 텍스트 안에 들어가는 글자라
+#: 폰트 문자를 쓴다 — 둘 다 기본 문장부호 블록(Dingbats)의 흔한 글리프다.
+#: 색은 파이썬이 아니라 전역 QSS `#statusLabel[state=...]`가 theme.py
+#: 토큰으로 정한다.
+#: 1행 우측의 조작·삭제 아이콘은 문자가 아니라 content/icons.py가 그리는
+#: 도형이다(#245 — ‖(U+2016)은 문장부호라 일시정지로 안 읽히고, 글리프
+#: 모양은 macOS·Linux 실기 없이는 확인할 길이 없었다).
 STATE_ICON = {
     "finished": "✓",  # 체크 — 완료 (U+2713)
     "failed": "✕",    # 엑스 — 실패 (U+2715)
-}
-
-ACTION_ICON = {
-    # 컬러 이모지 글리프(⏸📁)는 QSS 색(muted/호버)이 안 먹는다(실기 렌더
-    # 확인 — ⏸는 VS15를 붙여도 이 폰트 스택에서 이모지로 그려짐). 그래서
-    # 전부 모노크롬 문자 글리프를 쓴다: 일시정지 ‖(U+2016), 폴더
-    # 🗀(U+1F5C0). 전부 Windows 실기 inFontUcs4 실측 통과 — macOS/Linux
-    # 글리프 모양은 오너/CI 실기 확인 필요.
-    "pause": "‖",         # 일시정지 (U+2016 DOUBLE VERTICAL LINE)
-    "retry": "↻",         # 재시도 (U+21BB)
-    "folder": "🗀",    # 폴더 열기 (U+1F5C0, 모노크롬)
-    "delete": "✕",        # 삭제 (U+2715)
 }
 
 #: 전역 설정의 다운로드 경로 — 카드는 자기 경로가 이 값과 **다를 때만**
@@ -109,7 +97,18 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """
         bar_h = theme.METRICS["barHeight"]
         frame = self.contentFrame
-        self.progressBar.setGeometry(1, frame.height() - bar_h - 1, frame.width() - 2, bar_h)
+        bar_y = frame.height() - bar_h - 1
+        self.progressBar.setGeometry(1, bar_y, frame.width() - 2, bar_h)
+        # 카드 곡률로 잘라낸다 — 바 자체의 QSS border-radius는 높이(4px)에
+        # 눌려 카드 반지름(12px)을 못 따라가고, 그 결과 막대 양끝이 카드의
+        # 둥근 모서리 바깥으로 튀어나온다(실기 렌더 실측 — 바닥 모서리에
+        # 트랙·진행색 조각이 카드 몸통 밖에 남는다). 프레임 테두리 안쪽의
+        # 둥근 사각형을 바 좌표계로 옮겨 마스크로 건다. 값(QRegion)이라
+        # 카드에 상주하는 파이썬 객체가 아니다.
+        radius = theme.METRICS["cardRadius"] - 1
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(0, 1 - bar_y, frame.width() - 2, frame.height() - 2), radius, radius)
+        self.progressBar.setMask(QRegion(path.toFillPolygon().toPolygon(), Qt.FillRule.WindingFill))
         self.progressBar.raise_()
 
     def resizeEvent(self, event):
@@ -144,12 +143,15 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.loadImageFromUrl(self.thumbnailLabel, self.item.thumbnail_url, self.thumbnailLabel.height(), "thumbnail")
         self.channelNameLabel.setText(self.item.channel_name) # 채널 이름 업데이트
         self._clampChannelMinWidth()
-        # 조작 글리프 — 색은 전역 QSS가 입힌다(삭제는 muted/호버 강조 —
-        # 이모지 ❌는 폰트가 항상 빨갛게 그려 카드에서 삭제만 튀었다 #244).
-        self.deleteButton.setText(ACTION_ICON["delete"])
-        self.pauseButton.setText(ACTION_ICON["pause"])
-        self.retryButton.setText(ACTION_ICON["retry"])
-        self.openDirectoryButton.setText(ACTION_ICON["folder"])
+        # 조작 도형(content/icons.py) — 평소 muted, 호버에서 강조. 삭제는
+        # 호버에서만 실패색(빨강)이 된다(항상 빨간 ❌는 카드에서 삭제만 튀는
+        # 위계 역전이었다 #244). pauseButton의 도형(pause↔resume)은 상태에
+        # 따라 applyStateStyle이 바꾼다.
+        self.deleteButton.setIconName("delete")
+        self.deleteButton.setHoverToken("stateFailed")
+        self.pauseButton.setIconName("pause")
+        self.retryButton.setIconName("retry")
+        self.openDirectoryButton.setIconName("folder")
         self.setIndex(self.index)  # 인덱스 업데이트
         self.titleLabel.setText(self.item.title) # 제목 업데이트
         self.titleEdit.setText(self.item.title) # 제목 업데이트
@@ -399,9 +401,14 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """✅ 모델 데이터를 위젯에 반영 — 3행 슬롯 텍스트는 상태별로 다르다 (#245).
 
         유저가 알고 싶은 것은 상태마다 다르다 — 대기 "어느 화질로?"(pill),
-        진행 "얼마나?"(%·속도·남은시간), 완료 "어디에?"(✓ 완료 + 폴더 버튼),
-        실패 "왜?"(✕ 사유). 합집합을 늘 보여주던 정보 과다를 슬롯 교체로
-        줄인다. 슬롯·조작의 가시성은 applyStateStyle이 맞춘다.
+        진행 "얼마나?"(%·속도·남은시간), 일시정지 "어디까지 받고 멈췄나?"
+        (%·일시정지됨), 완료 "어디에?"(✓ 완료 + 폴더 버튼), 실패 "왜?"(✕ 사유).
+        합집합을 늘 보여주던 정보 과다를 슬롯 교체로 줄인다. 슬롯·조작의
+        가시성은 applyStateStyle이 맞춘다.
+
+        3행 우측(파일 크기)에는 pill이 사라진 뒤(대기 이후)부터 **확정된
+        해상도**를 함께 적는다 — "1080p · 595.34 MB". 같은 자리에 붙이므로
+        행이 늘지 않는다.
         """
         self.item = item
         self.setIndex(index)
@@ -432,23 +439,17 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
                     f"{item.download_progress}% · {item.download_speed} · "
                     + self.tr("{0} left").format(remain)
                 )
-            if self.item.is_segment_based:
-                self.fileSizeLabel.setText(f"{self.setSize(item.download_size)}")
-            else:
-                self.fileSizeLabel.setText(f"{item.total_size}")
+            self.fileSizeLabel.setText(self._withResolution(self._sizeText(item)))
 
         elif self.item.downloadState == DownloadState.PAUSED:
-            self.statusLabel.setText(
-                f"{self.tr('Download paused')} · {item.download_progress}%"
-            )
-            if self.item.is_segment_based:
-                self.fileSizeLabel.setText(f"{self.setSize(item.download_size)}")
-            else:
-                self.fileSizeLabel.setText(f"{item.total_size}")
+            # 진행분이 먼저, 상태가 뒤 — "54% · 일시정지됨". 진행 슬롯과 같은
+            # 자리에서 숫자가 그대로 이어지고, 뒤 문구만 바뀐다.
+            self.statusLabel.setText(f"{item.download_progress}% · {self.tr('Paused')}")
+            self.fileSizeLabel.setText(self._withResolution(self._sizeText(item)))
 
         elif self.item.downloadState == DownloadState.FINISHED:
             self.statusLabel.setText(f"{STATE_ICON['finished']} " + self.tr("Completed"))
-            self.fileSizeLabel.setText(f"{self.setSize(item.download_size)}")
+            self.fileSizeLabel.setText(self._withResolution(self.setSize(item.download_size)))
 
         elif self.item.downloadState == DownloadState.FAILED:
             # 사유(stateMessage)는 키 기반 매핑을 거친 번역 문자열만 온다.
@@ -461,9 +462,36 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
 
         self.applyStateStyle()
 
+    def _sizeText(self, item: ContentItem) -> str:
+        """진행·일시정지 카드의 크기 표기 — 세그먼트 기반은 받은 양, 그 외는 총량."""
+        if item.is_segment_based:
+            return self.setSize(item.download_size)
+        return f"{item.total_size}"
+
+    def _withResolution(self, size_text: str) -> str:
+        """확정 해상도를 크기 앞에 붙인다 — "1080p · 595.34 MB" (#245).
+
+        대기에서는 pill이 선택을 보여주므로 붙이지 않는다(중복). 해상도가
+        아직 없으면(조회 중 자리표시 등) 크기만 돌려준다.
+        """
+        resolution = self.item.resolution
+        if not resolution or self.item.downloadState == DownloadState.WAITING:
+            return size_text
+        return f"{resolution}p · {size_text}" if size_text else f"{resolution}p"
+
     def _slotShowsPills(self) -> bool:
         """3행 슬롯에 해상도 pill이 보이는 상태인가 — 대기(선택의 시간)만이다."""
         return self.item.downloadState == DownloadState.WAITING
+
+    def _hasProgress(self) -> bool:
+        """진행분이 있는 상태인가 — 진행·일시정지. 진행바는 이때만 보인다.
+
+        "진행 중일 때만"이 아니다(#245 정정) — 일시정지는 멈췄을 뿐 받은
+        양이 있고, 그 양을 바가 계속 보여줘야 한다(색만 muted로 바꿔
+        "돌고 있지 않다"를 알린다). 완료(100%)·실패는 바가 정보를 더하지
+        않으므로 숨긴다.
+        """
+        return self.item.downloadState in (DownloadState.RUNNING, DownloadState.PAUSED)
 
     def applyStateStyle(self):
         """상태에 따라 슬롯·조작·색·진행바를 맞춘다 (#227→#245 상태별 슬롯).
@@ -473,18 +501,27 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         `[state="..."]` 규칙이 고른다 — 속성만 바꾸면 이미 계산된 스타일이
         갱신되지 않으므로 theme.repolish()가 항상 함께 필요하다.
 
-        가시성 매트릭스(#245 확정 — 행 수·행 높이·카드 높이는 상태와
-        무관하게 불변, 목록이 들썩이면 안 된다):
-        - 3행 슬롯: 대기=해상도 pill / 그 외=statusLabel(상태색 텍스트)
-        - 1행 조작: 진행·일시정지=⏸ / 완료=📁 / 실패=↻ / 삭제=항상
-        - 파일 크기: 실패에서만 숨김(사유가 그 자리를 쓴다)
-        - 경로: 전역 설정 경로와 다를 때만 표시
-        - 진행바: 진행 중일 때만 카드 바닥 전체 폭
+        가시성 매트릭스(#245 확정 — 상태는 다섯, 행 수·행 높이·카드 높이는
+        상태와 무관하게 불변, 목록이 들썩이면 안 된다):
+
+        | 상태     | 3행 슬롯              | 조작        | 진행바        |
+        |----------|-----------------------|-------------|---------------|
+        | 대기     | 해상도 pill           | —           | 없음          |
+        | 진행     | % · 속도 · 남은 시간  | 일시정지    | 있음          |
+        | 일시정지 | % · 일시정지됨        | 재개        | 있음(muted)   |
+        | 완료     | ✓ 완료                | 폴더 열기   | 없음          |
+        | 실패     | ✕ 사유                | 재시도      | 없음          |
+
+        - 삭제는 항상 / 파일 크기(+확정 해상도)는 실패에서만 숨김(사유가 그
+          자리를 쓴다) / 경로는 전역 설정 경로와 다를 때만 표시
+        - 일시정지의 조작은 **재개**다 — 멈춰 있는데 일시정지를 또 권하면
+          이미 한 일을 다시 시키는 것이다. 버튼 하나(pauseButton)가 도형·
+          툴팁만 pause↔resume으로 바꾼다(시그널 경로는 같은 토글).
         """
         state = self._cardState()
         raw = self.item.downloadState
         self.progressBar.setValue(self._progressValue())
-        self.progressBar.setVisible(raw == DownloadState.RUNNING)
+        self.progressBar.setVisible(self._hasProgress())
         if self.progressBar.property("state") != state:
             self.progressBar.setProperty("state", state)
             theme.repolish(self.progressBar)
@@ -498,6 +535,12 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             button.setVisible(pills)
 
         self.pauseButton.setVisible(raw in (DownloadState.RUNNING, DownloadState.PAUSED))
+        if raw == DownloadState.PAUSED:
+            self.pauseButton.setIconName("resume")
+            self.pauseButton.setToolTip(self.tr("Resume"))
+        else:
+            self.pauseButton.setIconName("pause")
+            self.pauseButton.setToolTip(self.tr("Pause"))
         self.openDirectoryButton.setVisible(raw == DownloadState.FINISHED)
         self.retryButton.setVisible(raw == DownloadState.FAILED)
         self.fileSizeLabel.setVisible(raw != DownloadState.FAILED)
@@ -519,13 +562,15 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     def _cardState(self) -> str:
         """현재 아이템 상태를 카드 상태 어휘(theme.CARD_STATES)로 옮긴다.
 
-        PAUSED(정지)는 대기와 같은 회색으로 둔다 — 유저가 멈춘 것이지
-        진행 중도 실패도 아니다(기존 표시 문구도 "Download paused"로
-        대기 계열이다). LOADING(조회 중)도 마찬가지다.
+        PAUSED는 자기 색("paused" — 진행 파랑의 채도를 뺀 muted)을 가진다 —
+        진행바가 남아 있어야 하는 상태라 "돌고 있지 않다"가 색으로 읽혀야
+        한다(#245). LOADING(조회 중)은 대기 회색이다.
         """
         state = self.item.downloadState
         if state == DownloadState.RUNNING:
             return "running"
+        if state == DownloadState.PAUSED:
+            return "paused"
         if state == DownloadState.FINISHED:
             return "finished"
         if state == DownloadState.FAILED:

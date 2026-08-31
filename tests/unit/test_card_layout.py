@@ -301,12 +301,13 @@ class TestPathShownOnlyWhenDifferent:
 class TestStateSwapKeepsCardHeight:
     """상태가 바뀌면 3행 내용·조작이 바뀌지만 **카드 높이는 안 변한다**
     (#245 확정 — 목록이 들썩이면 안 된다). 슬롯 교체(pill↔텍스트)·조작
-    교체(⏸/📁/↻)·크기 숨김(실패)이 전부 일어나는 4상태를 순회한다."""
+    교체(일시정지/재개/폴더/재시도)·크기 숨김(실패)·진행바 표시(진행·
+    일시정지)가 전부 일어나는 **다섯 상태**(PAUSED 포함)를 순회한다."""
 
     def test_card_height_is_identical_across_all_states(self, qapp):
         widget = _make_widget(qapp)
         heights = {}
-        for state in (DownloadState.WAITING, DownloadState.RUNNING,
+        for state in (DownloadState.WAITING, DownloadState.RUNNING, DownloadState.PAUSED,
                       DownloadState.FINISHED, DownloadState.FAILED):
             widget.item.downloadState = state
             widget.item.download_progress = 42
@@ -358,27 +359,40 @@ class TestLabelsDoNotGrow:
             )
 
 
-class TestProgressBarOnlyWhenRunning:
-    """하단 진행바는 진행 중일 때만 보인다(#244 확정 — 빈 막대는 정보가
-    없고 자리만 먹는다). 보일 때는 카드 아래 가장자리 근처 전체 폭이다."""
+class TestProgressBarOnlyWithProgress:
+    """하단 진행바는 **진행분이 있을 때**(진행·일시정지) 보인다(#245 정정 —
+    "진행 중일 때만"이 아니다. 일시정지는 멈췄을 뿐 받은 양이 있고 그
+    양을 바가 계속 보여줘야 한다; 색만 muted로 바뀐다). 대기·완료·실패의
+    빈 막대는 정보가 없고 자리만 먹는다. 보일 때는 카드 아래 가장자리
+    근처 전체 폭이고, 양끝은 카드 곡률로 잘려 있다."""
 
-    def test_bar_hidden_for_idle_states(self, qapp):
+    def test_bar_hidden_for_states_without_progress(self, qapp):
         for state in (DownloadState.WAITING, DownloadState.FINISHED, DownloadState.FAILED):
             widget = _make_widget(qapp)
             widget.item.downloadState = state
+            widget.item.download_progress = 100 if state == DownloadState.FINISHED else 0
             widget.setData(widget.item, 0)
             _at_width(widget, 900)
             assert not widget.progressBar.isVisible(), (
-                f"{state}에서 진행바가 보인다 — 진행 중일 때만 보여야 한다"
+                f"{state}에서 진행바가 보인다 — 진행분이 있는 상태(진행·일시정지)만 보여야 한다"
             )
 
-    def test_bar_visible_and_full_width_when_running(self, qapp):
+    @pytest.mark.parametrize("state,bar_state", [
+        (DownloadState.RUNNING, "running"),
+        (DownloadState.PAUSED, "paused"),
+    ])
+    def test_bar_visible_and_full_width_with_progress(self, qapp, state, bar_state):
         widget = _make_widget(qapp)
-        widget.item.downloadState = DownloadState.RUNNING
+        widget.item.downloadState = state
         widget.item.download_progress = 42
         widget.setData(widget.item, 0)
         _at_width(widget, 900)
-        assert widget.progressBar.isVisible()
+        assert widget.progressBar.isVisible(), f"{state}에서 진행바가 안 보인다"
+        assert widget.progressBar.property("state") == bar_state, (
+            f"{state}의 진행바 색 규칙이 {widget.progressBar.property('state')!r} — "
+            f"{bar_state!r}이어야 한다(일시정지는 muted로 '돌고 있지 않다'를 알린다)"
+        )
+        assert widget.progressBar.value() == 42
         # 전체 폭(테두리 안쪽 1px 여백 허용) + 카드 바닥에 붙어 있다
         frame = widget.contentFrame
         assert widget.progressBar.width() >= frame.width() - 4
@@ -386,3 +400,31 @@ class TestProgressBarOnlyWhenRunning:
         assert frame.height() - bar_bottom <= 3, (
             f"진행바가 카드 바닥에서 {frame.height() - bar_bottom}px 떠 있다"
         )
+
+    @pytest.mark.parametrize("width", WIDTHS)
+    def test_bar_is_clipped_to_the_card_corners(self, qapp, width):
+        """막대 양끝이 카드의 둥근 모서리 바깥으로 튀어나오지 않는다.
+
+        바 자체의 QSS border-radius는 높이(4px)에 눌려 카드 반지름(12px)을
+        못 따라가 실기 렌더에서 바닥 모서리 밖에 트랙·진행색 조각이 남았다
+        (#245 오너 실기 제보 — 카드 왼쪽 바깥의 짧은 선). 그래서 카드
+        곡률 마스크를 건다. 마스크 안/밖을 순수 기하로 잰다(폰트 무관).
+        """
+        widget = _make_widget(qapp)
+        widget.item.downloadState = DownloadState.RUNNING
+        widget.item.download_progress = 42
+        widget.setData(widget.item, 0)
+        _at_width(widget, width)
+        bar = widget.progressBar
+        mask = bar.mask()
+        assert not mask.isEmpty(), "진행바에 카드 곡률 마스크가 없다"
+        w, h = bar.width(), bar.height()
+        from PySide6.QtCore import QPoint
+        # 바닥 모서리 픽셀은 잘려 있고(카드 몸통 밖), 가운데는 살아 있다
+        assert not mask.contains(QPoint(0, h - 1)), f"폭 {width}px: 바 왼쪽 아래 모서리가 카드 곡률 밖에 남는다"
+        assert not mask.contains(QPoint(w - 1, h - 1)), f"폭 {width}px: 바 오른쪽 아래 모서리가 카드 곡률 밖에 남는다"
+        assert mask.contains(QPoint(w // 2, h - 1))
+        assert mask.contains(QPoint(w // 2, 0))
+        # 마스크가 바 안쪽 대부분은 살려 둔다 — 잘려 나가는 것은 모서리뿐
+        radius = theme.METRICS["cardRadius"]
+        assert mask.contains(QPoint(radius, h - 1)) and mask.contains(QPoint(w - 1 - radius, h - 1))

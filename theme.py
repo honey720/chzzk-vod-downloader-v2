@@ -67,7 +67,8 @@ METRICS = {
     "thumbRadius": 8,     # 썸네일 모서리 — 카드보다 작아야 안쪽이 자연스럽다
     "iconSize": 20,       # 채널 이미지·삭제(✕)·폴더(📁) 아이콘 한 변 — 1·4행 높이를 정한다(키우면 밀도↓)
     "pillHeight": 20,     # 해상도 pill 높이(모서리는 자동으로 절반)
-    "barHeight": 4,       # 하단 진행바 두께(진행 중일 때만 보임)
+    "barHeight": 4,       # 하단 진행바 두께(진행분이 있을 때 — 진행·일시정지 — 보임)
+    "actionGlyph": 12,    # 조작 아이콘(일시정지·재개·재시도·폴더·삭제) 도형 한 변 — iconSize 버튼 안에 그려진다
     # 썸네일 높이는 토큰이 아니다 — 우측 4행의 실제 높이에 맞춰 런타임에
     # 계산되고(16:9로 폭 결정, content/widget.py), 행 간격·글자 크기를
     # 바꾸면 썸네일도 따라간다.
@@ -116,6 +117,10 @@ DARK = {
     # tests/unit/test_failure_display.py가 상태 표시에서 직접 확인한다.
     "stateWaiting": "#6b7078",   # 대기 — 회색
     "stateRunning": "#55B5FF",   # 진행 — 파랑
+    # 일시정지 — 진행 파랑의 채도를 뺀 강철빛 회색. 진행바가 그대로 남되
+    # "돌고 있지 않다"가 색으로 읽혀야 한다(#245). 대기 회색과는 달라야
+    # 한다(상태색은 정보를 나른다 — tests/unit/test_theme.py 상호 구별 게이트).
+    "statePaused": "#7f8ea3",
     "stateFinished": "#4CC38A",  # 완료 — 초록
     "stateFailed": "#FF6969",    # 실패 — 빨강
     # ---- 진행바 ----
@@ -156,6 +161,7 @@ LIGHT = {
     # ---- 상태색 (상태 아이콘·상태 텍스트·진행바 공용) — 흰 배경 대비용으로 짙게 눌렀다 ----
     "stateWaiting": "#6b7078",
     "stateRunning": "#1f6fd6",
+    "statePaused": "#6f7d91",    # 일시정지 — 흰 배경에서 진행 파랑과 구별되는 무채색 강철빛
     "stateFinished": "#2f9e63",
     "stateFailed": "#d93636",
     # ---- 진행바 ----
@@ -180,7 +186,7 @@ for _table in (DARK, LIGHT):
 #: `resources/qss/style.qss`의 `#stateIconLabel[state="..."]`/
 #: `QProgressBar[state="..."]` 규칙과 맞춘다 (#227, #240, #244 후속 —
 #: 카드 테두리는 상태 신호에서 빠지고 상태 아이콘이 그 역할을 이어받았다).
-CARD_STATES = ("waiting", "running", "finished", "failed")
+CARD_STATES = ("waiting", "running", "paused", "finished", "failed")
 
 
 #: 지금 활성 스킴("dark"/"light"). 기본값 "dark"는 의도적이다 — 아무도

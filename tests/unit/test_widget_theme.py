@@ -123,7 +123,9 @@ def _widget(qapp, state, progress=0):
 
 STATE_MAP = [
     (DownloadState.WAITING, "waiting"),
-    (DownloadState.PAUSED, "waiting"),
+    # 일시정지는 자기 색이다(#245 정정 — 진행바가 남아 있는 상태라 muted
+    # 색으로 "돌고 있지 않다"를 알려야 한다. 대기 회색 재사용은 옛 매핑)
+    (DownloadState.PAUSED, "paused"),
     (ItemState.LOADING, "waiting"),
     (DownloadState.RUNNING, "running"),
     (DownloadState.FINISHED, "finished"),
@@ -168,8 +170,9 @@ def test_slot_swaps_between_pills_and_status_text(qapp, download_state, card_sta
     ],
 )
 def test_state_actions_visibility(qapp, download_state, pause, folder, retry):
-    """1행 우측 조작 — 진행=⏸(일시정지·재개 토글), 완료=📁, 실패=↻,
-    삭제는 항상 (#245 확정 매트릭스)."""
+    """1행 우측 조작 — 진행·일시정지=pauseButton(도형은 pause↔resume,
+    `test_card_state_matrix.py`가 본다), 완료=폴더, 실패=재시도, 삭제는
+    항상 (#245 확정 매트릭스)."""
     widget = _widget(qapp, download_state, progress=50)
     widget.show()
     assert widget.pauseButton.isVisible() == pause

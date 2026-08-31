@@ -131,6 +131,7 @@ QLabel#thumbnailLabel {
 
 #statusLabel[state="waiting"] { color: @stateWaiting; }
 #statusLabel[state="running"] { color: @stateRunning; }
+#statusLabel[state="paused"] { color: @statePaused; }
 #statusLabel[state="finished"] { color: @stateFinished; }
 #statusLabel[state="failed"] { color: @stateFailed; }
 
@@ -146,7 +147,7 @@ QLabel#thumbnailLabel {
 }
 
 /* 카드 테두리 — 항상 중립색이다(#244). 상태는 상태 아이콘·상태 텍스트·
- * (진행 중일 때만 보이는) 하단 진행바가 알린다 — 카드 프레임 자체는
+ * (진행분이 있을 때 — 진행·일시정지 — 보이는) 하단 진행바가 알린다 — 카드 프레임 자체는
  * state 동적 속성을 안 본다.
  *
  * padding은 QSS가 아니라 카드 내부 레이아웃 마진(theme.METRICS["cardPadding"])
@@ -161,16 +162,11 @@ QLabel#thumbnailLabel {
     padding: 0px;
 }
 
-/* 삭제(✕) — 평소엔 muted로 가라앉아 있다가 호버에서만 강조된다(#244
- * 재설계 — 항상 빨간 ❌는 카드에서 삭제만 튀는 위계 역전이었다). */
-QPushButton#deleteButton {
-    color: @textMuted;
-    font-size: @fontSizeMeta;
-}
-
-QPushButton#deleteButton:hover {
-    color: @stateFailed;
-}
+/* 카드 조작 아이콘(일시정지·재개·재시도·폴더·삭제)의 도형 색은 QSS가 아니라
+ * content/icons.py::IconButton이 theme.py 토큰(textMuted / 호버 text·
+ * stateFailed / textDisabled)으로 그린다(#245 — 폰트 글리프를 버리고 직접
+ * 그린 도형이라 QSS `color`가 닿지 않는다). 버튼의 배경·테두리(호버 표면)는
+ * 아래 [role="icon"] 규칙이 그대로 담당한다. */
 
 /* ---------- 버튼 ---------- */
 
@@ -221,8 +217,8 @@ QPushButton#downloadButton:disabled {
     border-color: @border;
 }
 
-/* 아이콘 버튼(❌·📁) — 30x30 고정이라 여백을 0으로 되돌려야 글리프가 안 잘린다.
- * `role`은 ui/contentItemWidget.ui가 동적 속성으로 심는다. */
+/* 아이콘 버튼(조작·삭제) — iconSize 정사각 고정이라 여백을 0으로 되돌려야
+ * 도형이 안 잘린다. `role`은 ui/contentItemWidget.py가 동적 속성으로 심는다. */
 QPushButton[role="icon"] {
     padding: 0px;
     background-color: transparent;
@@ -411,10 +407,13 @@ QProgressBar::chunk {
 }
 
 /* 카드 하단 진행바(#244 재설계) — 카드 아래 가장자리에 딱 붙는 전체 폭
- * 막대(진행 중일 때만 보임 — 가시성은 content/widget.py::applyStateStyle).
- * 아래쪽 모서리만 카드 곡률을 따라간다(위쪽은 각지게 — 카드 몸통과 이어짐).
- * 높이(@barHeight)가 작아 Qt가 반지름을 높이 절반으로 눌러 그리므로
- * 카드 모서리와의 어긋남은 실기에서 확인할 것. */
+ * 막대(진행분이 있을 때 — 진행·일시정지 — 보임; 가시성은
+ * content/widget.py::applyStateStyle). 일시정지에서는 [state="paused"]의
+ * muted 색으로 "돌고 있지 않다"를 알린다.
+ * ⚠️ 여기 border-radius는 카드 곡률을 못 따라간다 — 높이(@barHeight)가 작아
+ * Qt가 반지름을 높이 절반으로 눌러 그리고, 그 결과 막대 양끝이 카드의 둥근
+ * 모서리 바깥으로 튀어나온다(실기 렌더 실측). 카드 곡률로 잘라내는 것은
+ * content/widget.py::_placeProgressBar의 마스크가 한다. */
 #contentFrame QProgressBar {
     border-radius: 0px;
     border-bottom-left-radius: @cardRadius;
@@ -432,6 +431,10 @@ QProgressBar[state="waiting"]::chunk {
 
 QProgressBar[state="running"]::chunk {
     background-color: @stateRunning;
+}
+
+QProgressBar[state="paused"]::chunk {
+    background-color: @statePaused;
 }
 
 QProgressBar[state="finished"]::chunk {

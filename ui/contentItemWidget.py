@@ -10,14 +10,18 @@
 ##
 ## 구조(#245 오너 확정 — 상태별 슬롯): 썸네일(16:9 고정 상자) | 3행 컬럼
 ##   1행 topLayout:        채널이미지(원형)·채널명(굵게)
-##                         [간격] 상태별 조작(⏸/📁/↻ 중 하나) · [추가 간격] 삭제(✕)
+##                         [간격] 상태별 조작(일시정지/재개/폴더/재시도 중 하나) · [추가 간격] 삭제
 ##   2행 titleLayout:      제목(가장 크고 밝다, ElideRight, 클릭 편집)
-##   3행 resolutionLayout: 상태별 슬롯 [간격] (경로: 전역과 다를 때만) · 파일 크기
-##     대기: 해상도 pill들 / 진행: %·속도·남은시간 / 완료: ✓ 완료 / 실패: ✕ 사유
-##   하단 progressBar:     카드 바닥 전체 폭 — 진행 중일 때만
+##   3행 resolutionLayout: 상태별 슬롯 [간격] (경로: 전역과 다를 때만) · 확정 해상도 · 파일 크기
+##     대기: 해상도 pill들 / 진행: %·속도·남은시간 / 일시정지: %·일시정지됨
+##     / 완료: ✓ 완료 / 실패: ✕ 사유
+##   하단 progressBar:     카드 바닥 전체 폭 — 진행분이 있을 때(진행·일시정지)
 ##
-## 상태가 바뀌면 3행 내용·조작 버튼이 바뀌지만 행 높이·카드 높이는 불변이다
-## (목록이 들썩이면 안 된다 — tests/unit/test_card_layout.py 게이트).
+## 상태는 넷이 아니라 다섯이다(DownloadState.PAUSED 포함). 상태가 바뀌면
+## 3행 내용·조작 버튼이 바뀌지만 행 높이·카드 높이는 불변이다
+## (목록이 들썩이면 안 된다 — tests/unit/test_card_layout.py·
+## tests/unit/test_card_state_matrix.py 게이트).
+## 조작·삭제 아이콘은 폰트 글리프가 아니라 content/icons.py가 그리는 도형이다.
 ## 좌측 기준선은 둘: 썸네일 왼쪽(=cardPadding), 컨텐츠 열 왼쪽(3행 공통).
 ## 우측 끝은 하나: 삭제(1행)·파일 크기(3행) — 조작이 3개로 늘어도 유지
 ## (#178 구간 버튼 자리, 게이트로 고정). 크기·간격은 theme.METRICS, 글자
@@ -30,6 +34,7 @@ from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel,
 
 import theme
 from content.eliding_label import ElidingLabel
+from content.icons import IconButton
 
 
 class Ui_ContentItemWidget(object):
@@ -112,9 +117,10 @@ class Ui_ContentItemWidget(object):
 
         self.topLayout.addStretch(1)
 
-        # 상태별 조작 — 진행: 일시정지 / 완료: 폴더 열기 / 실패: 재시도.
-        # 한 아이콘은 한 가지 일만 한다. 글리프는 content/widget.py가 채운다.
-        self.pauseButton = QPushButton(self.contentFrame)
+        # 상태별 조작 — 진행: 일시정지 / 일시정지: 재개 / 완료: 폴더 열기 /
+        # 실패: 재시도. 한 아이콘은 한 가지 일만 한다. 도형 이름은
+        # content/widget.py가 상태에 맞춰 넣는다(pauseButton은 pause↔resume).
+        self.pauseButton = IconButton(self.contentFrame)
         self.pauseButton.setObjectName(u"pauseButton")
         self.pauseButton.setMinimumSize(QSize(icon, icon))
         self.pauseButton.setMaximumSize(QSize(icon, icon))
@@ -123,7 +129,7 @@ class Ui_ContentItemWidget(object):
 
         self.topLayout.addWidget(self.pauseButton)
 
-        self.openDirectoryButton = QPushButton(self.contentFrame)
+        self.openDirectoryButton = IconButton(self.contentFrame)
         self.openDirectoryButton.setObjectName(u"openDirectoryButton")
         self.openDirectoryButton.setMinimumSize(QSize(icon, icon))
         self.openDirectoryButton.setMaximumSize(QSize(icon, icon))
@@ -132,7 +138,7 @@ class Ui_ContentItemWidget(object):
 
         self.topLayout.addWidget(self.openDirectoryButton)
 
-        self.retryButton = QPushButton(self.contentFrame)
+        self.retryButton = IconButton(self.contentFrame)
         self.retryButton.setObjectName(u"retryButton")
         self.retryButton.setMinimumSize(QSize(icon, icon))
         self.retryButton.setMaximumSize(QSize(icon, icon))
@@ -146,7 +152,7 @@ class Ui_ContentItemWidget(object):
         # 남는 공간 흡수처는 행마다 한 곳뿐이어야 한다).
         self.topLayout.addSpacing(8)
 
-        self.deleteButton = QPushButton(self.contentFrame)
+        self.deleteButton = IconButton(self.contentFrame)
         self.deleteButton.setObjectName(u"deleteButton")
         self.deleteButton.setMinimumSize(QSize(icon, icon))
         self.deleteButton.setMaximumSize(QSize(icon, icon))
@@ -220,7 +226,8 @@ class Ui_ContentItemWidget(object):
         self.contentFrameLayout.addLayout(self.bodyLayout)
 
         # ---- 하단 진행바 — 카드 아래 가장자리에 딱 붙는 전체 폭 ----
-        # 진행 중일 때만 보인다(applyStateStyle) — 빈 막대는 정보가 없다.
+        # 진행분이 있을 때(진행·일시정지)만 보인다(applyStateStyle) — 빈 막대는
+        # 정보가 없다. 일시정지에서는 [state="paused"] muted 색이다.
         # ⚠️ 레이아웃 행이 아니라 **오버레이**다(부모만 지정, 지오메트리는
         # ContentItemWidget.resizeEvent→_placeProgressBar가 수동 배치) —
         # 레이아웃 행으로 넣으면 보일 때만 카드가 barHeight만큼 자라

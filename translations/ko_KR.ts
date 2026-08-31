@@ -29,9 +29,8 @@
         <translation>확인 중...</translation>
     </message>
     <message>
-        <location filename="content/widget.py" line="235"/>
-        <source>Download paused</source>
-        <translation>다운로드 정지</translation>
+        <source>Paused</source>
+        <translation>일시정지됨</translation>
     </message>
     <message>
         <location filename="content/widget.py" line="250"/>
@@ -112,6 +111,18 @@
         <location filename="ui/contentItemWidget.ui" line="310"/>
         <source>Open directory</source>
         <translation>다운로드 위치 열기</translation>
+    </message>
+    <message>
+        <source>Pause</source>
+        <translation>일시정지</translation>
+    </message>
+    <message>
+        <source>Resume</source>
+        <translation>재개</translation>
+    </message>
+    <message>
+        <source>Retry</source>
+        <translation>재시도</translation>
     </message>
 </context>
 <context>
