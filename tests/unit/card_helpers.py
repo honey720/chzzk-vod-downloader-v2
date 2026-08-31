@@ -50,25 +50,3 @@ def shown(widget: QWidget) -> str:
         "숨은 위젯의 표시 문자열·기하는 낡은 값이라 단언 대상이 아니다"
     )
     return QLabel.text(widget) if isinstance(widget, QLabel) else widget.text()
-
-
-#: hold_style()이 보관하는 스타일 객체들 — 프로세스가 끝날 때까지 절대 비우지 않는다.
-_STYLE_REFS: list = []
-
-
-def hold_style(style):
-    """`qapp.setStyle()`에 넘길 스타일 객체의 파이썬 참조를 **앱 수명 동안** 붙든다 (#243 우회).
-
-    `setStyle()`로 소유권이 Qt C++ 쪽으로 넘어간 스타일의 파이썬 래퍼가 먼저
-    죽으면, 다음 `setStyle()`이 이전 스타일을 지우는 시점에 이중 해제로
-    SIGSEGV가 난다(macOS offscreen CI에서 2/2 결정적 재현 — `_apply_dark_card_qss`
-    setup의 `setStyle`에서 exit 139). 파이썬 참조를 여기 리스트에 살려두면
-    지우는 쪽이 Qt 하나뿐이라 이중 해제가 성립하지 않는다.
-
-    ⚠️ 폭탄이 심기는 곳은 "래퍼가 죽는 모든 setStyle 지점"이고 터지는 곳은
-    "그다음 setStyle"이다 — 그래서 지명 픽스처 하나가 아니라 **앱 수준
-    `setStyle(theme.build_style())` 지점 전부**가 이 헬퍼를 거쳐야 한다.
-    근본 원인(#243)의 수정이 아니라 테스트 쪽 우회다. 제품 코드는 불변.
-    """
-    _STYLE_REFS.append(style)
-    return style

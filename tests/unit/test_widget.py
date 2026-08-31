@@ -28,7 +28,6 @@ from content.data import ContentItem
 from content.widget import ContentItemWidget
 from core.models.download_state import DownloadState
 from app.viewmodels.item_state import ItemState
-from tests.unit.card_helpers import hold_style
 
 
 @pytest.fixture(autouse=True)
@@ -45,7 +44,7 @@ def _apply_production_qss(qapp):
     (`test_widget_theme.py`의 `_apply_dark_card_qss` 문서 참고).
     """
     theme.set_color_scheme("dark")
-    qapp.setStyle(hold_style(theme.build_style()))  # 참조 보관 — 이중 해제 우회 (#243, card_helpers.hold_style)
+    qapp.setStyle(theme.build_style())
     qapp.setPalette(theme.build_palette())
     qapp.setStyleSheet(theme.load_stylesheet(main_module.resource_path(theme.QSS_RELATIVE_PATH)))
 
