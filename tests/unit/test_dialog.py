@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import pytest
 from PySide6.QtCore import QEvent, QObject, Qt
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog
 
@@ -38,15 +39,47 @@ def test_open_logs_folder_warns_on_failure(qapp):
     assert warn.called
 
 
+def _popup_window():
+    """지금 떠 있는 콤보 팝업(컨테이너)의 `QWindow`.
+
+    `view.window().windowHandle()`로 잡으면 PySide에서 그 래퍼가 먼저 죽어
+    "Internal C++ object already deleted"가 난다(실측) — `allWindows()`에서
+    보이는 Popup 타입 창을 찾는 쪽이 안전하다.
+    """
+    return next(
+        w
+        for w in QGuiApplication.allWindows()
+        if w.type() == Qt.WindowType.Popup and w.isVisible()
+    )
+
+
 def _hover_row(view, row):
-    # 이전 테스트가 남긴 전역 커서 위치가 우연히 이번 대상 좌표와 같으면
-    # QTest.mouseMove가 이동량 0으로 보고 entered() 신호 자체를 안 낸다
-    # (offscreen 플랫폼에서 팝업이 항상 같은 화면 위치에 뜨기 때문에 실제로
-    # 재현되는 실측 함정) — 매번 다른 지점을 거쳐 반드시 실이동을 만든다.
+    """팝업 뷰의 `row` 위로 마우스를 지나가게 한다 — **합성 이벤트로만**.
+
+    `QTest.mouseMove(QWidget)`는 버튼이 눌려 있지 않으면 `QCursor::setPos()`로
+    **실제 커서를 옮기고** OS가 이벤트를 만들어 주길 기다린다(Qt 6.11
+    `qtestmouse.h`, "Qt 7에서 바꿀 것" 주석이 달린 호환 경로). offscreen은
+    커서 이동을 합성 이벤트로 바꿔 줘서 통과했지만, Windows 실기에서는 팝업에
+    닿지 않아 이 클래스가 실기에서만 실패했다. 더 나쁜 것은 테스트가 오너의
+    마우스를 뺏는다는 점이다 — `QScreen.grabWindow`가 오너의 다른 창을 찍던
+    것과 같은 계열이라 실제 커서는 건드리지 않는다. 팝업 `QWindow`에 보내는
+    `QTest.mouseMove(QWindow)`는 `QWindowSystemInterface`를 타는 합성 이벤트라
+    어느 플랫폼에서든 같은 경로로 뷰포트에 도달한다.
+
+    첫 이동을 뷰포트 좌상단으로 두는 이유: 이전 테스트가 남긴 좌표와 이번
+    대상이 같으면 이동량 0으로 `entered()` 신호가 안 나는 함정(실측)을 피해
+    반드시 실이동을 만든다.
+
+    ⚠️ 남는 조건: **실제 커서가 팝업이 뜨는 자리에 놓여 있으면** Fusion의
+    마우스 추적이 그 실제 이동을 받아 강조를 오염시킬 수 있다(미표시
+    다이얼로그의 팝업은 화면 좌상단에 뜬다). CI는 커서가 고정이라 해당 없고,
+    로컬 실기에서 그 자리에 커서를 두고 돌리면 이 클래스가 흔들릴 수 있다 —
+    커서를 치워 두는 코드는 위와 같은 이유로 넣지 않는다.
+    """
+    window = _popup_window()
     viewport = view.viewport()
-    QTest.mouseMove(viewport, viewport.rect().topLeft())
-    rect = view.visualRect(view.model().index(row, 0))
-    QTest.mouseMove(viewport, rect.center())
+    for point in (viewport.rect().topLeft(), view.visualRect(view.model().index(row, 0)).center()):
+        QTest.mouseMove(window, window.mapFromGlobal(viewport.mapToGlobal(point)))
 
 
 def _capture_current_index_before_resync_runs(window, view):
@@ -85,6 +118,15 @@ class TestComboBoxPopupHighlightResync:
     실제 선택값으로 되돌리지 않는다. `config.dialog._wire_popup_highlight_resync()`가
     이걸 되돌린다.
     """
+
+    @pytest.fixture(autouse=True)
+    def _production_style(self, qapp):
+        """이 클래스는 **Fusion 전용 동작**(호버가 selection을 옮김)을 단언하므로
+        스타일을 명시한다 — SPEC §2.0 "스타일 의존 동작을 대조할 때는 명시적으로
+        `setStyle()`". 그동안은 offscreen QPA의 기본 스타일이 Fusion이라 명시 없이
+        통과했고, Windows 실기(기본 windows11, 마우스 추적 힌트 꺼짐)에서
+        드러났다. `scope="function"` + `hold_style`은 #243 우회 조건이다."""
+        qapp.setStyle(hold_style(theme.build_style()))
 
     def _combo(self, dialog):
         combo = dialog.afterDownload
