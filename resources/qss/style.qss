@@ -110,8 +110,12 @@ QLabel#thumbnailLabel {
 }
 
 /* 제목은 클릭하면 편집된다(파일명이 된다) — 호버에서 편집 가능하다는
- * 힌트를 준다(#245). 커서(IBeam)는 ui/contentItemWidget.py가 건다. */
-#titleLabel:hover {
+ * 힌트를 준다(#245). 편집은 **대기 상태에서만** 성립하므로(받기 시작하면
+ * 이미 그 이름으로 쓰고 있다) 힌트도 대기에서만 — `editable`은
+ * content/widget.py::applyStateStyle이 상태에 맞춰 심는다. 대기가 아닌데
+ * 강조가 뜨면 클릭이 안 되는 것을 된다고 말하는 셈이다(#244 3행 정리).
+ * 커서(IBeam↔화살표)도 같은 곳이 건다. */
+#titleLabel[editable="true"]:hover {
     color: @accent;
 }
 

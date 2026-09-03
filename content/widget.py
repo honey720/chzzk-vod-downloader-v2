@@ -741,6 +741,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.statusLabel.setVisible(not pills)
         for button in getattr(self, "buttons", []):
             button.setVisible(pills)
+        self._applyTitleEditability()
 
         self.pauseButton.setVisible(raw in (DownloadState.RUNNING, DownloadState.PAUSED))
         if raw == DownloadState.PAUSED:
@@ -754,6 +755,23 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.fileSizeLabel.setVisible(raw != DownloadState.FAILED)
         self._reserveFileSizeWidth()  # 우측 군집 폭을 먼저 확보 — 크기·시간은 잘리지 않는다
         self._updatePathVisibility()
+
+    def _applyTitleEditability(self) -> None:
+        """제목의 편집 가능 표시(호버 강조·IBeam 커서)를 클릭 가능 여부와 일치시킨다.
+
+        제목 클릭(파일명 편집, startTitleEditing)은 **대기에서만** 성립한다 —
+        진행 중이면 이미 그 이름으로 쓰고 있고 완료됐으면 이미 저장됐다.
+        그런데 호버 강조는 상태와 무관하게 떠서 "클릭하면 뭔가 된다"고
+        거짓말을 했다(실기 확인). 강조 색은 전역 QSS
+        `#titleLabel[editable="true"]:hover`가 이 속성을 보고 고른다.
+        """
+        editable = self.item.downloadState == DownloadState.WAITING
+        if self.titleLabel.property("editable") != editable:
+            self.titleLabel.setProperty("editable", editable)
+            theme.repolish(self.titleLabel)
+        self.titleLabel.setCursor(
+            Qt.CursorShape.IBeamCursor if editable else Qt.CursorShape.ArrowCursor
+        )
 
     def _updatePathVisibility(self) -> None:
         """경로는 **대기면 항상, 그 외엔 전역 설정 경로와 다를 때만** 보인다 (#245).
