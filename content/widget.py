@@ -1,11 +1,12 @@
 import os
 import re
 import threading
-from PySide6.QtWidgets import QWidget, QPushButton, QMessageBox, QFileDialog
+from PySide6.QtWidgets import QWidget, QPushButton, QMessageBox, QFileDialog, QHBoxLayout, QSizePolicy
 from PySide6.QtGui import QPainter, QPainterPath, QPixmap, QDesktopServices, QRegion
 from PySide6.QtCore import Qt, Signal, QUrl, QDir, QProcess, QRectF
 from content.data import ContentItem
 from content.network import REQUEST_TIMEOUT, get_thread_session
+from content.pill import ResolutionPill
 from core.models.download_state import DownloadState
 from app.viewmodels.item_state import ItemState
 from ui.contentItemWidget import Ui_ContentItemWidget
@@ -128,6 +129,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     deleteRequest = Signal()
     pauseRequest = Signal()   # 진행 카드의 ⏸ (#245 상태별 조작)
     retryRequest = Signal()   # 실패 카드의 ↻ (#245 상태별 조작)
+    expandedChanged = Signal(bool)  # 해상도 펼침/접힘 — 목록이 "한 번에 하나"를 맞춘다
 
     # 워커 스레드 → 메인 스레드 중계 (#168). 위젯·아이템 조작은 반드시 메인
     # 스레드 슬롯에서 한다 — download 경로가 qt_bridge로 세운 스레드 경계
@@ -140,6 +142,19 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.item = item  # ContentItem 저장
         self.index = index  # 인덱스 저장
         self.isEditing = False
+        # 해상도 pill 모드(#244 3행 정리) — setupUi 전에 있어야 applyStateStyle이 읽는다.
+        # 모드는 _layoutRowThree가 폭을 보고 정한다: "all"(전부, 들어갈 때) /
+        # "collapsed"(선택 하나 [▾], 안 들어갈 때) / "expanded"(접힌 것을 유저가 펼침) /
+        # "hidden"(대기 아님). _expanded는 유저 조작 기억이고 모드는 폭이 정한다.
+        self._expanded = False
+        self._pillMode = "all"
+        self._layingOutRowThree = False
+        self._userPicked = False  # 유저가 pill을 직접 고른 적이 있는가 — 늦게 온 크기 조회가 이를 덮지 않는다
+        self._selectedButton: ResolutionPill | None = None
+        self._pillRows: list[QHBoxLayout] = []  # 펼쳐서 넘친 pill을 받는 추가 행(0개가 기본)
+        self._pillRowOf: dict[int, int] = {}    # id(pill) → 지금 놓인 행 번호(0 = 3행)
+        self._rowStrut: QWidget | None = None       # 펼친 동안 3행 세로 정책을 지키는 0폭 버팀목
+        self.buttons: list[ResolutionPill] = []
         self.setupUi(self)
         self._sizeThumbnail()  # 컨텐츠 열 높이가 정해진 뒤, 이미지 로드 전에
         self._setupThreadRelays()  # setupDynamicUi가 스레드를 띄우기 전에 연결돼야 한다 (#168)
@@ -162,6 +177,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         등)는 polish 시점에 위젯 폰트로 병합되는데, 그 전에 sizeHint를
         읽으면 기본 폰트 기준의 틀린 높이가 나온다(실측 확인).
         """
+        if self._expanded:
+            # 펼쳐서 늘어난 높이는 잠깐이다 — 썸네일은 접힌 높이를 유지한다
+            return
         for label in (self.channelNameLabel, self.titleLabel, self.statusLabel,
                       self.fileSizeLabel, self.directoryLabel):
             label.ensurePolished()
@@ -194,7 +212,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._placeProgressBar()
-        self._layoutPathLabel()
+        self._layoutRowThree()  # 폭이 바뀌면 pill 모드·줄바꿈·경로 모양이 바뀐다
 
     def showEvent(self, event):
         """첫 표시 직후 3행 판정을 한 번 더 돌린다 (#245).
@@ -202,13 +220,13 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         첫 표시에서 resizeEvent는 자식 contentFrame의 레이아웃이 활성화되기
         **전에** 도착한다 — Qt의 show_helper가 대기 중이던 Resize를 자식 표시
         전에 보내고, showEvent는 자식 표시 **후에** 보낸다. 그때 3행 폭이 0이라
-        _layoutPathLabel이 "배치 전"으로 끝나면, 이후 크기가 안 바뀌는 한 판정이
+        _layoutRowThree가 "배치 전"으로 끝나면, 이후 크기가 안 바뀌는 한 판정이
         영영 안 돈다(보이는 목록에 카드를 추가하는 실제 경로에서 좁은 창인데
         경로가 아이콘으로 접히지 않고, 창을 흔들어야 고쳐지는 결함 — 실기·
         offscreen 둘 다 재현). showEvent 시점엔 자식 레이아웃이 잡혀 있다.
         """
         super().showEvent(event)
-        self._layoutPathLabel()
+        self._layoutRowThree()
 
     def _clampChannelMinWidth(self) -> None:
         """채널명 최소폭을 "자연 폭과 64px 중 작은 쪽"으로 맞춘다.
@@ -276,6 +294,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """
 
         self.buttons = []
+        self._userPicked = False  # pill을 새로 만들면 선택 기억도 새로 시작한다
         # LOADING 자리표시 아이템은 해상도 목록이 아직 없다 (#124)
         if not self.item.unique_reps:
             return
@@ -284,7 +303,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         # 놓여 해상도 개수가 다른 카드(VOD 3개/클립 2개) 사이에서 선택
         # 표시의 x가 지그재그로 흩어진다. 내림차순이면 항상 맨 앞 한 줄이다.
         # ②pill은 어떤 폭에서도 전부 보인다(접지 않는다 — #245 확정). 3행에서
-        # 줄어드는 것은 다운로드 경로 하나뿐이다(_layoutPathLabel).
+        # 줄어드는 것은 다운로드 경로 하나뿐이다(_layoutRowThree) — 단 pill 전부가
+        # 경로 아이콘·크기와 함께 안 들어가는 폭에서는 pill이 선택 하나로 접힌다.
         # core/api·content/network의 내부 정렬(오름차순, 마지막이 자동 선택)은
         # 건드리지 않고 표시 계층에서만 뒤집는다.
         # ⚠️ 순서는 고정이다 — 클릭해도 pill을 앞으로 옮기지 않는다(옮기면
@@ -305,7 +325,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         # pill(높이 pillHeight)이 3행에 꽂히면 컨텐츠 열이 몇 px 자랄 수
         # 있다 — 썸네일이 그 높이를 계속 가득 채우도록 다시 맞춘다(#244).
         self._sizeThumbnail()
-        self._layoutPathLabel()
+        self._layoutRowThree()
 
     def _reserveFileSizeWidth(self) -> None:
         """3행 우측 군집(파일 크기 또는 재생 시간)의 폭을 **먼저** 확보한다 (#245).
@@ -330,57 +350,116 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """경로 텍스트가 의미 있게 남는 최소 폭 — 뿌리 + `…` + 마지막 폴더 여섯 자쯤."""
         return self.directoryLabel.fontMetrics().horizontalAdvance("~/…/abcdef")
 
-    def _layoutPathLabel(self) -> None:
-        """3행 남는 폭을 경로에 주고, 최소치 아래면 경로를 아이콘만 남긴다 (#245).
+    def _sizeShown(self) -> bool:
+        """파일 크기(또는 재생 시간)가 3행에 보이는 상태인가 — 실패만 사유가 그 자리를 쓴다."""
+        return self.item.downloadState != DownloadState.FAILED
 
-        우선순위: ①우측 군집(파일 크기/재생 시간) 확보 폭 ②해상도 pill 전부
-        (개수만큼) ③남는 폭 전부 = 경로(ElideMiddle). 남는 폭이 최소치
-        (_pathMinTextWidth) 아래면 텍스트 라벨을 숨기고 pathIconButton만 남긴다 —
-        **텍스트가 사라져도 클릭 대상(폴더 선택)은 남는다.** 판정은 라벨 자신의
-        폭이 아니라 "행 폭 − 다른 항목"으로만 하므로 표시 모드가 바뀌어도
-        되먹임이 없다. 창을 넓히면 텍스트로 돌아온다(ElidingLabel.sizeHint가
-        원문 기준이라 회복된다 — SPEC의 되먹임 함정).
+    def _pillsFit(self, row_width: int, spacing: int) -> bool:
+        """pill 전부가 경로 아이콘·크기와 함께 3행 한 줄에 들어가는가 — 접힘 여부의 유일한 판정.
+
+        절대 px가 아니라 지금 pill들의 자연 폭(naturalWidth — ▾ 몫 제외)으로 묻는다.
+        손익분기는 OS 폰트·유저 폰트 크기·DPI·pill 개수마다 다르다(실측 Win 408 /
+        macOS 416 / Ubuntu 413, 4자리 세트면 +14). 경로는 아이콘 한 칸만 요구한다 —
+        #245의 우선순위대로 텍스트는 접힘보다 먼저 양보하기 때문이다.
         """
-        if not getattr(self, "_pathShown", False):
-            self.directoryLabel.setVisible(False)
-            self.pathIconButton.setVisible(False)
+        need = sum(b.naturalWidth() for b in self.buttons) + (len(self.buttons) - 1) * spacing
+        if self._sizeShown():
+            need += spacing + max(self.fileSizeLabel.minimumWidth(), self.fileSizeLabel.sizeHint().width())
+        if getattr(self, "_pathShown", False):
+            need += spacing + self.pathIconButton.minimumWidth()
+        return need <= row_width
+
+    def pillMode(self) -> str:
+        """지금 3행의 pill 모드 — "all" / "collapsed" / "expanded" / "hidden" (테스트·상태 확인용)."""
+        return self._pillMode
+
+    def _layoutRowThree(self) -> None:
+        """3행이 폭을 보고 모양을 정하는 **유일한 지점** (#245 경로 → #244 3행 정리 pill).
+
+        무엇이 먼저 양보하나 — 폭이 줄수록 이 순서로만 바뀐다(오너 확정, 역방향 없음):
+        ① 경로 ElideMiddle(PathLabel 단계) → ② 경로 아이콘만 → ③ 해상도 접힘([1080p ▾]).
+        ③ 뒤에 자리가 남아도 ①·②로 돌아가지 않는다. 파일 크기·재생 시간은 어떤 폭에서도
+        접지 않는다(확보 폭 고정).
+        - pill: 전부 + 경로 아이콘 + 크기가 들어가면 **전부**(클릭 한 번에 고른다).
+          안 들어가면 접힘 — 누르면 그 자리에서 펼쳐지고 그동안 경로·크기는 숨는다
+          (펼침 = 유저 조작, 폭이 넓어져 전부 들어가면 풀린다)
+        - 경로: 남는 폭 전부(ElideMiddle). 최소치(_pathMinTextWidth) 아래거나 pill이
+          접혔으면 텍스트를 숨기고 pathIconButton만 — **클릭 대상은 남는다**
+
+        판정은 라벨·pill 자신의 현재 폭이 아니라 "행 폭 − 자연 폭들"로만 하므로 표시
+        모드가 바뀌어도 되먹임이 없다. 배치 전(행 폭 0)이면 전부 보이는 모습으로 두고
+        resizeEvent/showEvent에서 다시 온다. 경로가 먼저 양보하도록 라벨 최대폭을
+        "행 폭 − 다른 항목"으로 씌운다(안 씌우면 Qt가 같은 Preferred 정책의 슬롯 텍스트와
+        경로를 나눠 줄여 상태 슬롯이 잘린다 — 560px 실기).
+        """
+        if self._layingOutRowThree:
             return
-        layout = self.resolutionLayout
-        spacing = layout.spacing()
-        row_width = layout.geometry().width()
-        if row_width <= 0:  # 아직 배치 전 — resizeEvent에서 다시 온다
-            self.directoryLabel.setVisible(True)
-            self.pathIconButton.setVisible(False)
-            return
-        used = 0
-        for button in getattr(self, "buttons", []):
-            if button.isVisibleTo(self):
-                used += button.sizeHint().width() + spacing
-        if self.statusLabel.isVisibleTo(self):
-            used += self.statusLabel.sizeHint().width() + spacing
-        if self.fileSizeLabel.isVisibleTo(self):
-            used += max(self.fileSizeLabel.minimumWidth(), self.fileSizeLabel.sizeHint().width()) + spacing
-        available = row_width - used
-        icon_only = available < self._pathMinTextWidth()
-        # 경로가 **먼저** 양보하도록 최대폭을 "행 폭 − 다른 항목"으로 씌운다 —
-        # 안 씌우면 Qt가 같은 Preferred 정책의 슬롯 텍스트(진행 %·속도·남은
-        # 시간)와 경로를 나눠 줄여 상태 슬롯이 잘리고 경로가 남는다(560px 실기).
-        # 값은 라벨 자신의 폭과 무관하게 계산되므로 되먹임이 없고, 넓히면
-        # 그만큼 다시 커진다.
-        self.directoryLabel.setMaximumWidth(max(available, 0) if not icon_only else _NO_MAX_WIDTH)
-        self.directoryLabel.setVisible(not icon_only)
-        self.pathIconButton.setVisible(icon_only)
+        self._layingOutRowThree = True
+        try:
+            layout = self.resolutionLayout
+            spacing = layout.spacing()
+            row_width = layout.geometry().width()
+            known = row_width > 0
+            # ② pill 모드
+            if not self._slotShowsPills():
+                mode = "hidden"
+            elif not known or self._pillsFit(row_width, spacing):
+                mode = "all"
+            elif self._expanded:
+                mode = "expanded"
+            else:
+                mode = "collapsed"
+            if mode != "expanded" and self._expanded:
+                self._expanded = False  # 전부 들어가거나 대기가 아니면 펼침은 의미가 없다
+                self.expandedChanged.emit(False)
+            self._pillMode = mode
+            for button in self.buttons:
+                button.setCaret(mode == "collapsed")
+                button.setVisible(
+                    mode in ("all", "expanded") or (mode == "collapsed" and button is self._selectedButton)
+                )
+            self.fileSizeLabel.setVisible(self._sizeShown() and mode != "expanded")
+            self._packPills()
+            # ③ 경로
+            if not getattr(self, "_pathShown", False) or mode == "expanded":
+                self.directoryLabel.setVisible(False)
+                self.pathIconButton.setVisible(False)
+                return
+            if not known:
+                self.directoryLabel.setVisible(True)
+                self.pathIconButton.setVisible(False)
+                return
+            used = 0
+            for button in self.buttons:
+                if button.isVisibleTo(self):
+                    used += button.sizeHint().width() + spacing
+            if self.statusLabel.isVisibleTo(self):
+                used += self.statusLabel.sizeHint().width() + spacing
+            if self.fileSizeLabel.isVisibleTo(self):
+                used += max(self.fileSizeLabel.minimumWidth(), self.fileSizeLabel.sizeHint().width()) + spacing
+            available = row_width - used
+            # 접힘(③)이면 자리가 남아도 경로는 아이콘(②)에 머문다 — 순서는 한 방향이다:
+            # ① 경로 ElideMiddle → ② 경로 아이콘 → ③ 해상도 접힘. pill을 접어 생긴 자리로
+            # 경로를 다시 펴면 "폭이 모자라면 해상도를 펴야 하나 접은 채 두나"가 정해지지
+            # 않아 카드마다 우선순위가 반대로 보였다(실기: 5-pill 카드는 접힘+텍스트,
+            # 3-pill 카드는 전부+아이콘). 단조 판정이어야 같은 폭에서 같은 모양이다.
+            icon_only = mode == "collapsed" or available < self._pathMinTextWidth()
+            self.directoryLabel.setMaximumWidth(max(available, 0) if not icon_only else _NO_MAX_WIDTH)
+            self.directoryLabel.setVisible(not icon_only)
+            self.pathIconButton.setVisible(icon_only)
+        finally:
+            self._layingOutRowThree = False
 
     def addRepresentationButton(self, resolution, base_url, index):
         """
         해상도 버튼을 추가하고, 비동기로 파일 사이즈를 헤더에서 가져와 버튼 텍스트를 업데이트한다.
         """
-        button = QPushButton(f'{resolution}p', self)
-        button.clicked.connect(lambda: self.setresolutionUrlSize(resolution, base_url, index, button))
         # pill 모양·선택 표시는 전역 QSS의 [role="resolution"] 규칙이 그린다 (#227).
         # QSS는 `.className` 선택자를 지원하지 않아 조용히 무시하므로, 동적
-        # 속성을 심어 속성 선택자로 잡는 게 유일한 방법이다
-        button.setProperty("role", "resolution")
+        # 속성(role·selected·caret — content/pill.py가 심는다)을 속성 선택자로 잡는다
+        button = ResolutionPill(f'{resolution}p', self)
+        # 접혀 있으면 누르는 것은 "펼치기", 펼쳐져 있으면 "고르고 접기"(#244 3행 정리)
+        button.clicked.connect(lambda: self._onPillClicked(index))
         # 3행 왼쪽부터 순서대로 꽂는다 — 이미 붙은 버튼 수가 곧 다음 자리다
         # (그 뒤로 [가운데 스트레치, 파일 크기 라벨]이 이어진다). 스트레치
         # 뒤에 addWidget하면 버튼이 오른쪽으로 밀리고, 스트레치가 없으면
@@ -391,10 +470,11 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         # 여백은 전역 QSS [role="resolution"]의 padding이 준다).
         button.setFixedHeight(theme.METRICS["pillHeight"])
         button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        # 슬롯 규칙(#245): pill은 대기 상태에서만 보인다 — 생성 시점의
-        # 상태에 맞춰 시작 가시성을 정한다(이후는 applyStateStyle이 맞춤)
-        button.setVisible(self._slotShowsPills())
+        # 가시성은 _layoutRowThree가 정한다(대기에서만, 안 들어가면 선택 pill만) —
+        # 생성 직후엔 숨겨 두고 addRepresentationButtons 끝에서 한 번에 맞춘다
+        button.setVisible(False)
         self.buttons.append(button)
+        self._pillRowOf[id(button)] = 0
 
         def update_button_text():
             # 네트워크만 담당한다 — 위젯·아이템 반영은 _onRepSizeFetched(메인 스레드)로 (#168)
@@ -428,20 +508,30 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         if size_text:
             self.item.unique_reps[index][-1] = size_text
             self.buttons[index].setToolTip(size_text)
+        resolution, base_url = self.item.unique_reps[index][0], self.item.unique_reps[index][1]
+        if self._userPicked:
+            # 유저가 이미 골랐다 — 자동 선택은 건너뛴다(#244 3행 정리 P-4). 늦게 온
+            # 조회가 선택을 1080p로 되돌리던 결함: 접힘 모드에선 pill이 하나만 보여
+            # 뒤집혀도 알아챌 표면이 없다. 고른 해상도의 크기가 도착한 것이면 그
+            # 값으로 크기 표시만 채운다(선택은 그대로).
+            if self.buttons[index] is self._selectedButton:
+                self.setresolutionUrlSize(resolution, base_url, index, self.buttons[index])
+            return
         if index == 0:
-            # 기본 선택(최고 해상도 = 내림차순 첫 항목)의 크기가 도착하면 그
-            # 값으로 파일 크기 표시를 채운다 — 유저가 이미 다른 pill을 골랐으면
-            # setresolutionUrlSize가 대기 상태에서만 동작하므로 그 선택을 덮는다는
-            # 뜻은 아니다(기존 동작 그대로, 항목 위치만 [-1]→[0]).
-            resolution, base_url = self.item.unique_reps[index][0], self.item.unique_reps[index][1]
+            # 기본 선택(최고 해상도 = 내림차순 첫 항목)의 크기가 도착하면 그 값으로
+            # 파일 크기 표시를 채운다 — 아무것도 안 골랐을 때 최고화질이 잡히는 것은 의도다
             self.setresolutionUrlSize(resolution, base_url, index, self.buttons[index])
 
     def setresolutionUrlSize(self, resolution, base_url, index=None, button:QPushButton = None):
         if self.item.downloadState == DownloadState.WAITING:
             if button is not None:
+                # 선택 = 채움 표시(content/pill.py) — 버튼은 전부 활성으로 둔다.
+                # 접힌 pill을 눌러 펼쳐야 하므로 선택 pill도 눌려야 한다.
                 for btn in self.buttons:
-                    btn.setEnabled(True)
-                button.setDisabled(True)
+                    btn.setSelected(btn is button)
+                if button is not self._selectedButton:
+                    self._selectedButton = button
+                    self._layoutRowThree()  # 접힘이면 보이는 pill이 바뀐다
             self.item.resolution = resolution
             self.item.base_url = base_url
             # 세그먼트 기반(m3u8·hls_aes)은 total_size를 미리 알 수 없어 처리하지 않음
@@ -737,10 +827,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             self.statusLabel.setProperty("state", state)
             theme.repolish(self.statusLabel)
 
-        pills = self._slotShowsPills()
-        self.statusLabel.setVisible(not pills)
-        for button in getattr(self, "buttons", []):
-            button.setVisible(pills)
+        self.statusLabel.setVisible(not self._slotShowsPills())
+        self._applyEditability()
 
         self.pauseButton.setVisible(raw in (DownloadState.RUNNING, DownloadState.PAUSED))
         if raw == DownloadState.PAUSED:
@@ -753,7 +841,172 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.retryButton.setVisible(raw == DownloadState.FAILED)
         self.fileSizeLabel.setVisible(raw != DownloadState.FAILED)
         self._reserveFileSizeWidth()  # 우측 군집 폭을 먼저 확보 — 크기·시간은 잘리지 않는다
-        self._updatePathVisibility()
+        self._updatePathVisibility()  # → _layoutRowThree: pill 모드·경로 모양을 한 곳에서
+
+    # ---- 해상도 펼침 (#244 3행 정리) ----
+
+    def isExpanded(self) -> bool:
+        """접힌 pill을 유저가 펼쳐 둔 상태인가(모드 "expanded")."""
+        return self._expanded
+
+    def setExpanded(self, expanded: bool) -> None:
+        """접힌 해상도 pill을 그 자리에서 펼치거나 접는다 — 팝업이 아니다.
+
+        들어갈 때:   1080p  720p  480p  360p  144p ····· 경로 ····· 크기   (클릭 한 번)
+        안 들어갈 때: [1080p ▾] ····· 경로 ····· 크기
+        펼침:        1080p  720p  480p  360p  144p        ← 경로·크기는 잠깐 숨는다
+        고른 뒤:     [720p ▾] ····· 경로 ····· 크기
+
+        펼침은 **접힌 상태에서만** 성립한다 — 전부 보이고 있으면 펼칠 것이 없다.
+        펼치는 동안 3행을 통째로 pill에 내주고, 그래도 안 들어가면 줄을 바꾼다
+        (_packPills). 카드 높이가 잠깐 변하는 것은 허용한다(§3.4의 "높이 고정"은
+        **상태 변화**로 목록이 들썩이지 말라는 뜻이고, 이것은 유저가 눌러서 일으킨
+        예상된 변화다) — 접히면 원래 높이로 정확히 돌아온다. 펼친 채 창을 넓혀
+        전부 들어가게 되면 펼침은 풀리고 전부 보이는 모습이 된다(경로·크기 복귀) —
+        펼침은 기억되지 않는다.
+        """
+        if expanded and self._pillMode != "collapsed":
+            return
+        if expanded == self._expanded:
+            return
+        self._expanded = expanded
+        self._layoutRowThree()
+        if self._expanded == expanded:  # _layoutRowThree가 되돌리지 않았을 때만 알린다
+            self.expandedChanged.emit(expanded)
+
+    def _onPillClicked(self, index: int) -> None:
+        """전부 보이면 그 자리에서 고르고, 접혀 있으면 펼치고, 펼쳐져 있으면 고르고 접는다.
+
+        펼친 상태에서 이미 선택된 pill을 누르면 선택은 그대로 두고 접기만 한다.
+        """
+        if not self._slotShowsPills() or index >= len(self.buttons):
+            return
+        if self._pillMode == "collapsed":
+            self.setExpanded(True)
+            return
+        resolution, base_url = self.item.unique_reps[index][0], self.item.unique_reps[index][1]
+        self._userPicked = True  # 명시적 선택 — 이후 도착하는 크기 조회는 이를 덮지 않는다
+        self.setresolutionUrlSize(resolution, base_url, index, self.buttons[index])
+        if self._pillMode == "expanded":
+            self.setExpanded(False)
+
+    def _packPills(self) -> None:
+        """펼친 pill을 3행에, 넘치면 그 아래 추가 행에 왼쪽부터 채운다 — 줄바꿈.
+
+        줄바꿈이 여전히 필요한 이유: 접힘의 판정은 "pill + 경로 아이콘 + 크기"이고
+        펼침은 경로·크기를 숨겨 pill만 두므로, 그 사이 폭(pill만 들어가는 폭 ~
+        전부 들어가는 폭)에서는 펼쳐도 한 줄이지만 **그보다 좁으면**(창 콘텐츠
+        최소폭 근처 — 실측 뷰포트 372~382 vs 5-pill 243+165) 펼친 pill이 한 줄에
+        안 들어간다. 가로 오버플로는 금지라 줄을 바꾸는 것이 유일한 답이다.
+
+        판정은 3행 레이아웃의 실제 폭으로 한다(배치 전이라 0이면 전부 3행에 두고
+        resizeEvent/showEvent에서 다시 온다). 펼침이 아니면 항상 3행 한 줄이고
+        추가 행은 전부 제거된다 — 이것이 "접히면 원래 높이로 정확히 돌아온다"의
+        구현이다(추가 행이 남으면 카드가 늘어난 채 굳는다).
+
+        가로 오버플로는 만들지 않는다(§3.4) — pill 하나가 행보다 넓으면 혼자 한 줄.
+        """
+        visible = [b for b in self.buttons if not b.isHidden()]
+        row_width = self.resolutionLayout.geometry().width()
+        spacing = self.resolutionLayout.spacing()
+        pill_h = theme.METRICS["pillHeight"]
+        # 3행 세로 버팀목 — 경로·크기 라벨(세로 Preferred)이 숨으면 3행에는 고정
+        # 높이 pill만 남아 행의 최대 높이가 pill 높이로 잠기고, 컨텐츠 열의 남는
+        # 세로 공간이 2행에만 가서 3행이 3px 내려앉는다(실측). QBoxLayout은 빈
+        # 항목(스페이서·숨은 위젯)을 최대 높이 계산에서 빼므로 스페이서로는 안
+        # 되고, **보이는 0폭 위젯**(세로 Preferred)이어야 라벨과 같은 세로 정책이
+        # 된다. 펼친 동안만 행 끝에 두고 접히면 뺀다(항목 수 원복). 위젯이라
+        # 앞 항목과의 간격(spacing) 하나를 먹는다 — 줄바꿈 판정에서 뺀다.
+        if self._expanded and self._rowStrut is None:
+            self._rowStrut = QWidget(self.contentFrame)
+            self._rowStrut.setObjectName("pillRowStrut")
+            self._rowStrut.setFixedWidth(0)
+            self._rowStrut.setMinimumHeight(pill_h)
+            self._rowStrut.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+            self.resolutionLayout.addWidget(self._rowStrut)
+            self._rowStrut.show()
+        elif not self._expanded and self._rowStrut is not None:
+            self.resolutionLayout.removeWidget(self._rowStrut)
+            self._rowStrut.hide()
+            self._rowStrut.deleteLater()
+            self._rowStrut = None
+        rows: list[list[ResolutionPill]] = [[]]
+        if self._expanded and row_width > 0:
+            available = row_width - spacing  # 버팀목 앞 간격
+            used = 0
+            for button in visible:
+                width = button.sizeHint().width()
+                if rows[-1] and used + spacing + width > available:
+                    rows.append([button])
+                    used = width
+                else:
+                    used = width if not rows[-1] else used + spacing + width
+                    rows[-1].append(button)
+        else:
+            rows = [visible]
+        target = {id(b): k for k, row in enumerate(rows) for b in row}
+        # 필요한 추가 행을 만든다 — 3행 바로 아래, 같은 간격·왼쪽 정렬(스트레치가 끝에)
+        while len(self._pillRows) < len(rows) - 1:
+            extra = QHBoxLayout()
+            extra.setSpacing(spacing)
+            extra.addStretch(1)
+            anchor = self.contentLayout.indexOf(self.resolutionLayout) + 1 + len(self._pillRows)
+            self.contentLayout.insertLayout(anchor, extra)
+            self._pillRows.append(extra)
+        # 각 pill을 목표 행의 제자리(버튼 순서)로 옮긴다 — 숨은 pill은 3행에 남긴다
+        for position, button in enumerate(self.buttons):
+            row_index = target.get(id(button), 0)
+            dest = self.resolutionLayout if row_index == 0 else self._pillRows[row_index - 1]
+            slot = sum(1 for other in self.buttons[:position] if target.get(id(other), 0) == row_index)
+            current_index = dest.indexOf(button)
+            if self._pillRowOf.get(id(button), 0) != row_index or current_index != slot:
+                if current_index == -1:
+                    source_row = self._pillRowOf.get(id(button), 0)
+                    source = self.resolutionLayout if source_row == 0 else self._pillRows[source_row - 1]
+                    source.removeWidget(button)
+                else:
+                    dest.removeWidget(button)
+                dest.insertWidget(slot, button)
+                self._pillRowOf[id(button)] = row_index
+        # 비게 된 추가 행은 없앤다 — 접힌 카드의 높이가 원래대로 돌아오는 지점
+        while len(self._pillRows) > len(rows) - 1:
+            extra = self._pillRows.pop()
+            self.contentLayout.removeItem(extra)
+            extra.setParent(None)
+            extra.deleteLater()
+        self.updateGeometry()
+
+    def _applyEditability(self) -> None:
+        """카드의 편집 표면(제목·경로)이 "지금 눌러서 되는가"와 일치하게 맞춘다 (#244 P-4·P-5).
+
+        제목 편집(startTitleEditing)과 경로 변경(choosePath)은 **대기에서만** 성립한다 —
+        진행·일시정지는 이미 그 이름·그 경로에 쓰고 있고(부분 파일도 거기 있다), 완료는
+        저장됐고, 실패의 복구 수단은 재시도다(§7.1 시작 전 쓰기 검사가 경로 문제를 걸러
+        실패 카드까지 온 것은 대개 네트워크·서버 쪽 — 예외 없는 규칙이 낫다, 오너 확정).
+        그런데 호버 강조·커서는 상태와 무관해 "누르면 뭔가 된다"고 거짓말을 했다(실기에서
+        하나씩 발견 — 전수 감사 표는 tests/unit/test_card_surfaces.py).
+
+        - 제목: `editable` 동적 속성(QSS `#titleLabel[editable="true"]:hover`) + IBeam↔화살표
+        - 경로 라벨: 손가락↔화살표 커서(호버 강조는 원래 없다)
+        - 경로 아이콘: IconButton.setInteractive — 호버 배경·도형 밝아짐을 끈다. 툴팁(전문)은
+          정보 표면이라 상태와 무관하게 남긴다
+        """
+        editable = self.item.downloadState == DownloadState.WAITING
+        if not editable and self.isEditing:
+            # 편집 중에 상태가 바뀌었다 — 입력창을 닫고 기존 값으로 되돌린다(#244 P-5 결함 3).
+            # 시작 순간에 편집값을 확정하는 안은 쓰지 않는다: 파일명은 시작 시점에 이미
+            # 결정됐고(옛 이름으로 저장 중), 엔터를 안 눌렀으니 의도도 확정이 아니다
+            self.cancelTitleEditing()
+        if self.titleLabel.property("editable") != editable:
+            self.titleLabel.setProperty("editable", editable)
+            theme.repolish(self.titleLabel)
+        self.titleLabel.setCursor(
+            Qt.CursorShape.IBeamCursor if editable else Qt.CursorShape.ArrowCursor
+        )
+        self.directoryLabel.setCursor(
+            Qt.CursorShape.PointingHandCursor if editable else Qt.CursorShape.ArrowCursor
+        )
+        self.pathIconButton.setInteractive(editable)
 
     def _updatePathVisibility(self) -> None:
         """경로는 **대기면 항상, 그 외엔 전역 설정 경로와 다를 때만** 보인다 (#245).
@@ -774,7 +1027,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.pathIconButton.setIconName("folder_dot" if differs else "folder")
         self.pathIconButton.setIdleToken("text" if differs else "textMuted")
         self.pathIconButton.setAccentToken("accent" if differs else "")
-        self._layoutPathLabel()
+        self._layoutRowThree()
 
     def _cardState(self) -> str:
         """현재 아이템 상태를 카드 상태 어휘(theme.CARD_STATES)로 옮긴다.
@@ -826,8 +1079,31 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
                 self.titleEdit.setVisible(True)
                 self.titleEdit.setFocus()  # ✅ 포커스 이동
 
+    def cancelTitleEditing(self) -> None:
+        """편집을 확정하지 않고 닫는다 — 입력창을 숨기고 라벨(기존 값)로 돌아온다.
+
+        입력창의 editingFinished(포커스 이탈로도 난다)가 finishTitleEditing을 불러 뒤늦게
+        확정하지 않도록 먼저 isEditing을 내리고 값도 라벨로 되돌린다.
+        """
+        if not self.isEditing:
+            return
+        self.isEditing = False
+        self.titleEdit.blockSignals(True)
+        self.titleEdit.setText(self.titleLabel.text())
+        self.titleEdit.setVisible(False)
+        self.titleEdit.blockSignals(False)
+        self.titleLabel.setVisible(True)
+
     def finishTitleEditing(self):
-        """✅ QLineEdit에서 Enter 또는 포커스 해제 시 QLabel로 복귀"""
+        """✅ QLineEdit에서 Enter 또는 포커스 해제 시 QLabel로 복귀
+
+        편집 중이 아니면(상태 전이로 이미 취소됐거나 편집이 없었으면) 아무것도 확정하지
+        않는다 — 포커스 이탈로 늦게 오는 editingFinished나 직접 호출이 입력창의 값을 제목으로
+        굳히지 않게(#244 P-5). 대기 밖에서 편집 중인 상태는 _applyEditability의 취소 때문에
+        생기지 않으므로 별도 검사는 두지 않는다.
+        """
+        if not self.isEditing:
+            return
         self.isEditing = False
         self.titleEdit.setVisible(False)
         self.titleLabel.setVisible(True)
@@ -855,6 +1131,11 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             self, self.tr("Select download folder"), self.item.download_path or ""
         )
         if not chosen:
+            return
+        if self.item.downloadState != DownloadState.WAITING:
+            # 대화상자가 열린 사이 다운로드가 시작됐다 — 이미 옛 경로에 쓰고 있으므로
+            # 고른 폴더는 버린다(#244 P-5 감사 칸). 시작 시점에 확정된 경로가 정답이다
+            logger.info("카드 저장 경로 변경 무시 — 대화상자 중 상태가 %s로 바뀜", self.item.downloadState)
             return
         self.item.download_path = chosen
         self._refreshPathLabel()

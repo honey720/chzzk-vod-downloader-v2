@@ -219,3 +219,39 @@ class TestGetVideoM3u8BaseUrl:
             )
         ]
         assert base_url == "https://example.invalid/1080/playlist.m3u8"
+
+
+class TestSameHeightTracksAreMerged:
+    """같은 높이 트랙이 여럿인 응답에서 Representation이 높이당 하나만 남는다 (#244 3행 정리).
+
+    규칙과 근거는 core/api/representations.py — 비트레이트 높은 쪽, 모르면 먼저 온 쪽.
+    """
+
+    def test_m3u8_encoding_tracks_with_the_same_height_become_one(self):
+        json_str = json.dumps({"media": [{"encodingTrack": [
+            {"videoWidth": 1920, "videoHeight": 1080, "videoBitRate": 6000000},
+            {"videoWidth": 1920, "videoHeight": 1080, "videoBitRate": 4000000},  # 저비트레이트 변형
+            {"videoWidth": 1280, "videoHeight": 720},  # 비트레이트 미상도 허용
+            {"videoWidth": 1280, "videoHeight": 720},
+        ]}]})
+        sorted_reps, auto_resolution, auto_base_url = NetworkManager.get_video_m3u8_manifest(json_str)
+        assert sorted_reps == [[720, None], [1080, None]], "같은 높이가 pill 둘로 나타나던 결함"
+        assert (auto_resolution, auto_base_url) == (1080, None)
+
+    def test_clip_keeps_the_first_track_per_height(self, monkeypatch):
+        payload = {"card": {"content": {"vod": {"playback": {"videos": {"list": [
+            {"encodingOption": {"width": 1920, "height": 1080}, "source": "https://c.invalid/1080_first.mp4"},
+            {"encodingOption": {"width": 1920, "height": 1080}, "source": "https://c.invalid/1080_second.mp4"},
+            {"encodingOption": {"width": 1280, "height": 720}, "source": "https://c.invalid/720.mp4"},
+        ]}}}}}}
+
+        class _JsonResponse(MockResponse):
+            def json(self):
+                return payload
+
+        monkeypatch.setattr(network._session, "get", lambda url, **kwargs: _JsonResponse(text=""))
+        sorted_reps, auto_resolution, auto_base_url, error = NetworkManager.get_clip_manifest("clip-id", {})
+        assert error is None
+        # 클립 응답에는 비트레이트가 없다 — 먼저 나온 트랙이 남는다(결정적)
+        assert sorted_reps == [[720, "https://c.invalid/720.mp4"], [1080, "https://c.invalid/1080_first.mp4"]]
+        assert (auto_resolution, auto_base_url) == (1080, "https://c.invalid/1080_first.mp4")

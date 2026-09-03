@@ -3,6 +3,7 @@ import json
 from urllib.parse import urljoin
 
 from core.api.dash import is_supported_sea, parse_dash_manifest, parse_sea_manifest
+from core.api.representations import dedupe_by_resolution
 from core.api.url_parser import extract_content_no
 from core.models.content import VideoInfo
 from core.utils.paths import sanitize_filename
@@ -22,6 +23,14 @@ VIDEOHUB_API = "https://api-videohub.naver.com"
 # 재시도보다 먼저 끊는다. read 15초: 응답이 작은 JSON/XML이라 평시 1초 미만 —
 # 느린 회선·서버 지연에 여유를 두되 OS 타임아웃보다 훨씬 먼저 포기한다.
 REQUEST_TIMEOUT = (5, 15)
+
+
+def _int_or_zero(value) -> int:
+    """비트레이트 같은 선택 필드를 정수로 — 없거나 숫자가 아니면 0(미상)."""
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 class NetworkManager:
@@ -143,9 +152,13 @@ class NetworkManager:
             height = encoding.get("videoHeight")
             resolution = min(int(width), int(height))
             base_url = None
-            reps.append([resolution, base_url])
+            # 같은 높이 트랙(비트레이트·프레임레이트 변형)은 하나로 합친다 —
+            # 이 경로는 트랙별 URL이 없어 어느 것을 남겨도 다운로드 대상은
+            # get_video_m3u8_base_url이 마스터 플레이리스트에서 고른다.
+            # 규칙·근거는 core/api/representations.py.
+            reps.append((resolution, base_url, _int_or_zero(encoding.get("videoBitRate"))))
 
-        sorted_reps = sorted(reps, key=lambda x: x[0])
+        sorted_reps = dedupe_by_resolution(reps)
         auto_resolution = sorted_reps[-1][0]
         auto_base_url = sorted_reps[-1][1]
         return sorted_reps, auto_resolution, auto_base_url
@@ -232,9 +245,10 @@ class NetworkManager:
 
             if width and height and source_url:
                 resolution = min(int(width), int(height))
-                resolutions.append([resolution, source_url])
+                # 비트레이트 정보가 없어 같은 높이는 먼저 나온 트랙이 남는다
+                resolutions.append((resolution, source_url, 0))
 
-        sorted_resolutions = sorted(resolutions, key=lambda x: x[0])
+        sorted_resolutions = dedupe_by_resolution(resolutions)
         auto_resolution = sorted_resolutions[-1][0]
         auto_base_url = sorted_resolutions[-1][1]
 

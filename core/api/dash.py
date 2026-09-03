@@ -10,6 +10,8 @@ AES(SEA) 암호화 매니페스트는 parse_sea_manifest가 따로 다룬다 (#5
 
 import xml.etree.ElementTree as ET
 
+from core.api.representations import dedupe_by_resolution
+
 NS = {
     "mpd": "urn:mpeg:dash:schema:mpd:2011",
     "nvod": "urn:naver:vod:2020",
@@ -29,7 +31,8 @@ def parse_dash_manifest(xml_text: str) -> tuple[list[list], int, str]:
     DASH 매니페스트 XML 문자열에서 Representation 목록을 파싱한다.
 
     해상도는 min(width, height)로 계산하고 오름차순으로 정렬한다.
-    BaseURL이 '/hls/'로 끝나는 항목은 스킵한다.
+    BaseURL이 '/hls/'로 끝나는 항목은 스킵한다. 같은 해상도 트랙이 여럿이면
+    비트레이트(bandwidth)가 높은 것 하나만 남긴다(core/api/representations.py).
 
     Args:
         xml_text (str): DASH 매니페스트 XML 문자열
@@ -59,16 +62,25 @@ def parse_dash_manifest(xml_text: str) -> tuple[list[list], int, str]:
         base_url = base_url_el.text
         if base_url.endswith('/hls/'):
             continue
-        reps.append([resolution, base_url])
+        reps.append((resolution, base_url, _bandwidth(rep)))
 
     if not reps:
         return [], None, None
 
-    sorted_reps = sorted(reps, key=lambda x: x[0])
+    # 같은 높이 트랙은 하나로(비트레이트 높은 쪽) — core/api/representations.py
+    sorted_reps = dedupe_by_resolution(reps)
     auto_resolution = sorted_reps[-1][0]
     auto_base_url = sorted_reps[-1][1]
 
     return sorted_reps, auto_resolution, auto_base_url
+
+
+def _bandwidth(rep: ET.Element) -> int:
+    """Representation의 bandwidth 속성(bps) — 없거나 숫자가 아니면 0."""
+    try:
+        return int(rep.get("bandwidth") or 0)
+    except ValueError:
+        return 0
 
 
 def is_supported_sea(xml_text: str) -> bool:
@@ -121,10 +133,10 @@ def parse_sea_manifest(xml_text: str) -> tuple[list[list], int | None, str | Non
         m3u = rep.get(f"{{{NS['nvod']}}}m3u")
         if not m3u:
             continue
-        reps.append([min(int(width), int(height)), m3u])
+        reps.append((min(int(width), int(height)), m3u, _bandwidth(rep)))
 
     if not reps:
         return [], None, None
 
-    sorted_reps = sorted(reps, key=lambda x: x[0])
+    sorted_reps = dedupe_by_resolution(reps)  # 같은 높이는 하나로 — 평문 경로와 같은 규칙
     return sorted_reps, sorted_reps[-1][0], sorted_reps[-1][1]

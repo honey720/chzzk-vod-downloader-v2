@@ -114,8 +114,11 @@ class TestSlotColumn:
     """3행 슬롯 — 상태마다 다른 질문에 답한다."""
 
     def test_waiting_shows_resolution_pills_only(self, qapp):
+        """대기 슬롯은 pill — 900px에는 둘 다 들어가므로 전부 보인다(안 들어갈 때의 접힘은
+        tests/unit/test_resolution_pills.py, #244 3행 정리)."""
         widget = _make_widget(qapp, DownloadState.WAITING)
         assert widget.buttons and all(b.isVisible() for b in widget.buttons)
+        assert widget.pillMode() == "all"
         assert not widget.statusLabel.isVisible()
 
     def test_running_shows_percent_speed_and_remaining(self, qapp):
