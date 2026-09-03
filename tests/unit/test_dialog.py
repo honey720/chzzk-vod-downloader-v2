@@ -125,8 +125,17 @@ class TestComboBoxPopupHighlightResync:
         스타일을 명시한다 — SPEC §2.0 "스타일 의존 동작을 대조할 때는 명시적으로
         `setStyle()`". 그동안은 offscreen QPA의 기본 스타일이 Fusion이라 명시 없이
         통과했고, Windows 실기(기본 windows11, 마우스 추적 힌트 꺼짐)에서
-        드러났다. `scope="function"` + `hold_style`은 #243 우회 조건이다."""
+        드러났다. `scope="function"` + `hold_style`은 #243 우회 조건이다.
+
+        전역 QSS도 명시한다(없음). 이 클래스는 다이얼로그를 띄우지 않은 채 팝업만
+        여는데, 앞 파일이 남긴 전역 QSS(`::item` padding)가 걸려 있으면 미표시
+        다이얼로그의 팝업 높이가 3행을 못 담아(실기 실측: viewport 72px < 26px×3)
+        `scrollTo(currentIndex)`가 row 0을 위로 밀어 숨기고, 그 행을 겨냥한
+        호버·클릭이 허공에 떨어진다 — 전체 스위트를 실기로 돌릴 때만 4건이
+        실패했던 원인. 제품(다이얼로그 표시 상태)에서는 78px로 3행이 다 보인다
+        (실측). 전역 상태를 남기는 픽스처 자체는 감사 3단계 대상이다."""
         qapp.setStyle(hold_style(theme.build_style()))
+        qapp.setStyleSheet("")
 
     def _combo(self, dialog):
         combo = dialog.afterDownload
