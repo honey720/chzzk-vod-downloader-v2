@@ -1,8 +1,9 @@
 import os
 import config.config as config
-from PySide6.QtWidgets import QComboBox, QDialog, QMessageBox
+import theme
+from PySide6.QtWidgets import QAbstractItemView, QComboBox, QDialog, QMessageBox
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtCore import QEvent, QItemSelectionModel, QObject, QTimer, QUrl
+from PySide6.QtCore import QEvent, QItemSelectionModel, QObject, Qt, QTimer, QUrl
 
 from ui.settingDialog import Ui_SettingDialog
 
@@ -98,6 +99,69 @@ def _wire_popup_highlight_resync(combo: QComboBox) -> None:
     combo.view().window().installEventFilter(_ComboBoxPopupHighlightResync(combo))
 
 
+class _ComboBoxPopupCloseKeyGuard(QObject):
+    """[J-2 후보 B] 팝업을 닫은 키의 `KeyPress`가 콤보까지 새어 들어오면 삼킨다.
+
+    macOS에서 드롭다운을 열고 Enter로 고르면 설정 창까지 닫히는 회귀의
+    경로는 `theme._DropDownComboBoxStyle` docstring에 있다 — 요지는 Qt가
+    팝업을 `ShortcutOverride` 단계에서 즉시 닫은 뒤, 같은 키의 `KeyPress`를
+    macOS에서는(키보드 grab이 없어) 다이얼로그 창으로 배달하고, 그것이
+    콤보 → 다이얼로그로 올라가 기본 버튼(OK)을 누른다는 것이다.
+
+    이 필터는 두 곳에 걸린다. (1) 팝업 뷰: 팝업이 떠 있는 동안 팝업을 닫는
+    키(Enter/Return/F4/Alt+Down — `QComboBoxPrivateContainer::eventFilter`가
+    `ShortcutOverride`에서 처리하는 키 집합)의 `ShortcutOverride`가 오면
+    그 키를 "무장"한다. Qt의 컨테이너 필터는 뷰에 먼저 설치돼 있어 이
+    필터 *다음*에 불리므로(나중에 설치한 필터가 먼저 불린다, 실측) 여기서
+    False를 돌려주면 Qt가 평소처럼 팝업을 닫고 항목을 고른다. (2) 콤보
+    자신: 무장된 키의 `KeyPress`가 같은 이벤트 루프 턴 안에 콤보에 도착하면
+    삼킨다 — 다이얼로그까지 올라가지 않는다. 무장은
+    `QTimer.singleShot(0, ...)`으로 다음 턴에 풀린다 — 새는 `KeyPress`는
+    OS 키 이벤트 하나를 처리하는 동안 동기적으로 도착하므로 그 안에 반드시
+    들어오고, 사람이 다음에 누르는 Enter는 새 턴이라 절대 삼키지 않는다.
+
+    Windows에서는 그 `KeyPress`가 팝업 창으로 가서 콤보에 도착하지 않으므로
+    무장만 됐다가 그냥 풀린다 — 동작 차이가 없다.
+    """
+
+    def __init__(self, combo: QComboBox) -> None:
+        super().__init__(combo)
+        self._combo = combo
+        self._armed_key: int | None = None
+
+    def eventFilter(self, watched, event) -> bool:
+        event_type = event.type()
+        if event_type == QEvent.Type.ShortcutOverride and isinstance(watched, QAbstractItemView):
+            if watched.isVisible() and self._closes_popup(event):
+                self._armed_key = event.key()
+                QTimer.singleShot(0, self, self._disarm)
+        elif event_type == QEvent.Type.KeyPress and isinstance(watched, QComboBox):
+            if self._armed_key is not None and event.key() == self._armed_key:
+                self._armed_key = None
+                event.accept()
+                return True
+        return False
+
+    @staticmethod
+    def _closes_popup(event) -> bool:
+        key = event.key()
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_F4):
+            return True
+        return key == Qt.Key.Key_Down and bool(event.modifiers() & Qt.KeyboardModifier.AltModifier)
+
+    def _disarm(self) -> None:
+        self._armed_key = None
+
+
+def _wire_popup_close_key_guard(combo: QComboBox) -> None:
+    """[J-2 후보 B] 환경변수 `CVD_J2_CANDIDATE=swallow`일 때만 배선한다 (실험 토글)."""
+    if theme.J2_CANDIDATE != "swallow":
+        return
+    guard = _ComboBoxPopupCloseKeyGuard(combo)
+    combo.view().installEventFilter(guard)
+    combo.installEventFilter(guard)
+
+
 class SettingDialog(QDialog, Ui_SettingDialog):
     """
     쿠키 설정을 위한 팝업창 예시.
@@ -128,6 +192,7 @@ class SettingDialog(QDialog, Ui_SettingDialog):
         if index != -1:
             self.afterDownload.setCurrentIndex(index)
         _wire_popup_highlight_resync(self.afterDownload)
+        _wire_popup_close_key_guard(self.afterDownload)
 
         self.language.addItem("English", "en_US") # 언어 선택을 위한 QComboBox 생성 TODO: 언어 리스트는 project.pro에서 관리
         self.language.addItem("한국어", "ko_KR")
@@ -137,6 +202,7 @@ class SettingDialog(QDialog, Ui_SettingDialog):
         if index != -1:
             self.language.setCurrentIndex(index)
         _wire_popup_highlight_resync(self.language)
+        _wire_popup_close_key_guard(self.language)
 
         self.logsFolder.clicked.connect(self.openLogsFolder) # 로그 폴더 열기 버튼 클릭 시 openLogsFolder 메소드 호출
 

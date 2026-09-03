@@ -7,10 +7,14 @@ AttributeError였다. QDesktopServices.openUrl로 바꿔 3-OS 공통 동작을
 
 from unittest.mock import patch
 
+import pytest
 from PySide6.QtCore import QEvent, QObject, Qt
 from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QDialog
 
 import config.dialog as dialog_module
+import theme
+from tests.unit.card_helpers import hold_style
 from config.dialog import SettingDialog
 
 
@@ -226,3 +230,133 @@ class TestComboBoxPopupHighlightResync:
         combo.showPopup()
         assert seen == [0]  # Show 콜백 전엔 아직 오염된 값 그대로 — 깜빡임 재현
         combo.hidePopup()
+
+
+def _press_enter_the_way_macos_delivers_it(window):
+    """macOS QPA의 Enter 배달 순서를 어느 플랫폼에서든 재현한다.
+
+    실제 macOS에서는 팝업(NSPanel)이 key window가 될 수 없고 키보드 grab도
+    없어서(QTBUG-106597) 키 이벤트가 **다이얼로그 창**으로 온다 — 순서는
+    `ShortcutOverride`(→ 활성 팝업의 뷰로 전달) 다음 같은 키의 `KeyPress`
+    (→ 그 시점의 활성 팝업 또는 다이얼로그 포커스 위젯). Windows QPA는 팝업이
+    키보드를 grab해서 둘 다 팝업 창으로 가므로 실기로는 이 순서가 안 나온다
+    — 그래서 창을 직접 지정해 보낸다(`QTest.keyClick(QWindow)`는
+    `QWindowSystemInterface`를 타므로 QPA가 창을 고른 뒤의 경로와 같다).
+
+    `ShortcutOverride`를 명시적으로 먼저 보내는 이유: macOS의
+    `QGuiApplicationPrivate::processKeyEvent`는 shortcut 단계를 QPA(QNSView)에
+    맡기고 건너뛰므로, macOS CI에서 `keyPress(QWindow)`만 보내면 컨테이너의
+    Enter 처리(`ShortcutOverride`에서 팝업을 닫고 항목 선택)가 아예 안 돈다.
+    다른 플랫폼에서는 `keyPress`가 override를 한 번 더 내지만, 그때는 팝업이
+    이미 닫혀 콤보에 닿고 accept되지 않으므로 결과가 같다(offscreen 실측).
+    """
+    QTest.keyEvent(QTest.KeyAction.Shortcut, window, Qt.Key.Key_Return)
+    QTest.keyPress(window, Qt.Key.Key_Return)
+    QTest.keyRelease(window, Qt.Key.Key_Return)
+
+
+class TestComboBoxPopupEnterStaysInsideThePopup:
+    """[J-2] macOS 실기 회귀 — 드롭다운을 열고 Enter로 항목을 고르면 설정 창까지
+    닫힌다(v2.9.6은 항목만 선택). 원인 경로와 두 후보는
+    `theme._DropDownComboBoxStyle`·`config.dialog._ComboBoxPopupCloseKeyGuard`
+    docstring 참고.
+
+    게이트는 Enter 뒤에 (1) 콤보가 강조돼 있던 항목으로 바뀌고 (2) 다이얼로그가
+    그대로 열려 있는 것. 후보별로 파라미터화한다 — 오너가 macOS에서 하나를
+    고르면 진 쪽과 토글을 걷어내고 이 파라미터도 하나로 줄인다.
+    """
+
+    def _show(self, qapp, qtbot):
+        dialog = SettingDialog()
+        qtbot.addWidget(dialog)
+        dialog.show()
+        qtbot.waitExposed(dialog)
+        dialog.activateWindow()
+        qtbot.waitUntil(lambda: qapp.activeWindow() is dialog)
+        combo = dialog.afterDownload
+        combo.setCurrentIndex(2)  # "shutdown"
+        combo.setFocus()
+        return dialog, combo
+
+    def _open_popup_and_move_highlight(self, qtbot, combo, row):
+        combo.showPopup()
+        view = combo.view()
+        # Windows 실기 QPA는 `SH_ComboBox_Popup`이 꺼진 드롭다운을 롤 효과
+        # (`Qt::UI_AnimateCombo`, QRollEffect 150ms)로 띄우므로 뜰 때까지 기다린다
+        # — offscreen은 효과가 없어 즉시 보인다.
+        qtbot.waitUntil(view.isVisible)
+        view.setCurrentIndex(view.model().index(row, 0))  # 키보드 탐색으로 강조를 옮긴 상태
+        return view
+
+    @pytest.mark.parametrize("candidate", ["flash", "swallow"])
+    def test_enter_picks_the_highlighted_item_and_leaves_the_dialog_open(
+        self, qapp, qtbot, monkeypatch, candidate
+    ):
+        monkeypatch.setattr(theme, "J2_CANDIDATE", candidate)
+        qapp.setStyle(hold_style(theme.build_style(deferred_popup_hide=candidate == "flash")))
+        dialog, combo = self._show(qapp, qtbot)
+        finished = []
+        dialog.finished.connect(finished.append)
+        view = self._open_popup_and_move_highlight(qtbot, combo, 0)
+
+        _press_enter_the_way_macos_delivers_it(dialog.windowHandle())
+
+        qtbot.waitUntil(lambda: not view.isVisible())  # 후보 A는 ~80ms 뒤에 닫힌다
+        assert combo.currentIndex() == 0  # Enter가 강조돼 있던 "none"을 골랐다
+        assert dialog.isVisible()
+        assert finished == []  # 설정 창은 그대로 열려 있어야 한다
+
+    def test_fault_injection_without_a_candidate_the_dialog_closes(self, qapp, qtbot, monkeypatch):
+        """두 후보를 모두 끄면(현재 프로덕션 = `none`) 위 게이트가 실제로
+        실패하는지 — 이 테스트가 회귀를 보고 있다는 증거이자, macOS 증상의
+        플랫폼 무관 재현이다(고장 주입 관례)."""
+        monkeypatch.setattr(theme, "J2_CANDIDATE", "none")
+        qapp.setStyle(hold_style(theme.build_style(deferred_popup_hide=False)))
+        dialog, combo = self._show(qapp, qtbot)
+        finished = []
+        dialog.finished.connect(finished.append)
+        view = self._open_popup_and_move_highlight(qtbot, combo, 0)
+
+        _press_enter_the_way_macos_delivers_it(dialog.windowHandle())
+
+        qtbot.waitUntil(lambda: not view.isVisible())
+        assert combo.currentIndex() == 0  # 항목 선택 자체는 된다 — v2.9.6과 같은 부분
+        assert finished == [int(QDialog.DialogCode.Accepted)]  # 새어 나간 Enter가 OK를 눌렀다
+        assert not dialog.isVisible()
+
+    def test_fault_injection_swallow_candidate_without_wiring_closes_the_dialog(
+        self, qapp, qtbot, monkeypatch
+    ):
+        """후보 B 게이트가 배선(`_wire_popup_close_key_guard`)을 실제로 보고
+        있는지 — 배선을 빼면 같은 시나리오가 다시 실패해야 한다."""
+        monkeypatch.setattr(theme, "J2_CANDIDATE", "swallow")
+        monkeypatch.setattr(dialog_module, "_wire_popup_close_key_guard", lambda combo: None)
+        qapp.setStyle(hold_style(theme.build_style(deferred_popup_hide=False)))
+        dialog, combo = self._show(qapp, qtbot)
+        finished = []
+        dialog.finished.connect(finished.append)
+        view = self._open_popup_and_move_highlight(qtbot, combo, 0)
+
+        _press_enter_the_way_macos_delivers_it(dialog.windowHandle())
+
+        qtbot.waitUntil(lambda: not view.isVisible())
+        assert finished == [int(QDialog.DialogCode.Accepted)]
+
+    def test_swallow_guard_never_eats_a_later_enter(self, qapp, qtbot, monkeypatch):
+        """후보 B의 무장은 같은 턴 안에서만 유효해야 한다 — 팝업을 닫은 뒤 다음
+        턴에 누른 Enter는 평소처럼 다이얼로그의 기본 버튼(OK)까지 가야 한다."""
+        monkeypatch.setattr(theme, "J2_CANDIDATE", "swallow")
+        qapp.setStyle(hold_style(theme.build_style(deferred_popup_hide=False)))
+        dialog, combo = self._show(qapp, qtbot)
+        finished = []
+        dialog.finished.connect(finished.append)
+        view = self._open_popup_and_move_highlight(qtbot, combo, 0)
+
+        _press_enter_the_way_macos_delivers_it(dialog.windowHandle())
+        qtbot.waitUntil(lambda: not view.isVisible())
+        assert finished == []
+        QTest.qWait(20)  # 무장을 푸는 singleShot(0)이 돌 시간
+
+        _press_enter_the_way_macos_delivers_it(dialog.windowHandle())  # 팝업 없이 누른 Enter
+
+        qtbot.waitUntil(lambda: finished == [int(QDialog.DialogCode.Accepted)])
