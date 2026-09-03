@@ -48,7 +48,7 @@ from content.data import ContentItem
 from content.widget import ContentItemWidget
 from core.models.download_state import DownloadState
 from core.utils.paths import build_output_path
-from tests.unit.card_helpers import hold_style, shown
+from tests.unit.card_helpers import drop_new_top_levels, hold_style, shown, snapshot_top_levels
 
 STATES = (DownloadState.WAITING, DownloadState.RUNNING, DownloadState.PAUSED,
           DownloadState.FINISHED, DownloadState.FAILED)
@@ -64,6 +64,14 @@ def _apply_production_qss(qapp):
     qapp.setStyle(hold_style(theme.build_style()))
     qapp.setPalette(theme.build_palette())
     qapp.setStyleSheet(theme.load_stylesheet(main_module.resource_path(theme.QSS_RELATIVE_PATH)))
+
+
+@pytest.fixture(autouse=True)
+def _drop_windows(qapp):
+    """이 파일의 테스트가 띄운 창을 테스트 끝에 확실히 파괴한다(card_helpers.drop_new_top_levels)."""
+    before = snapshot_top_levels()
+    yield
+    drop_new_top_levels(before)
 
 
 @pytest.fixture(autouse=True)

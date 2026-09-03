@@ -94,8 +94,8 @@ _DUP_DASH = """<?xml version="1.0" encoding="UTF-8"?>
 _DUP_SEA = """<?xml version="1.0" encoding="UTF-8"?>
 <MPD xmlns="urn:mpeg:dash:schema:mpd:2011" xmlns:nvod="urn:naver:vod:2020">
   <Period><AdaptationSet mimeType="video/mp4">
-    <Representation id="a" width="1920" height="1080" bandwidth="6000000" nvod:m3u="https://v.invalid/1080_high.m3u8"><ContentProtection schemeIdUri="urn:mpeg:dash:sea:2012"/></Representation>
-    <Representation id="b" width="1920" height="1080" bandwidth="5000000" nvod:m3u="https://v.invalid/1080_low.m3u8"><ContentProtection schemeIdUri="urn:mpeg:dash:sea:2012"/></Representation>
+    <Representation id="a" width="1920" height="1080" bandwidth="5000000" nvod:m3u="https://v.invalid/1080_low.m3u8"><ContentProtection schemeIdUri="urn:mpeg:dash:sea:2012"/></Representation>
+    <Representation id="b" width="1920" height="1080" bandwidth="6000000" nvod:m3u="https://v.invalid/1080_high.m3u8"><ContentProtection schemeIdUri="urn:mpeg:dash:sea:2012"/></Representation>
   </AdaptationSet></Period>
 </MPD>"""
 

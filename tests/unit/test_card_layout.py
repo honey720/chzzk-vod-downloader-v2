@@ -252,8 +252,8 @@ class TestResolutionRow:
     @pytest.mark.parametrize("width", WIDTHS)
     def test_pill_gaps_are_fixed(self, qapp, width):
         widget = _make_widget(qapp)
-        assert widget.pillMode() == "all", "전제: 이 폭에서는 pill 전부가 보인다"
         _at_width(widget, width)
+        assert widget.pillMode() == "all", "전제: 이 폭에서는 pill 전부가 보인다"
         for left, right in zip(widget.buttons, widget.buttons[1:]):
             gap = _gap(left, right)
             assert gap == FIXED_SPACING, (

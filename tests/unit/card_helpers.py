@@ -72,3 +72,28 @@ def hold_style(style):
     """
     _STYLE_REFS.append(style)
     return style
+
+
+def snapshot_top_levels() -> set:
+    """지금 살아 있는 최상위 위젯 집합 — `drop_new_top_levels`의 기준점."""
+    return {id(w) for w in QApplication.topLevelWidgets()}
+
+
+def drop_new_top_levels(before: set) -> None:
+    """테스트가 만든 최상위 창을 닫고 **실제로 파괴**한다 — 숨은 채 남기지 않는다.
+
+    close()만 하면 창은 숨은 채 살아 있고, 다음 테스트의 `qapp.setStyle()`이 그 창들까지
+    다시 폴리시한다 — 파이썬 참조가 끊긴 자식 위젯을 건드리면 xvfb(리눅스 CI)에서
+    SIGSEGV로 죽었다(PR #248 CI, test_failure_display의 setStyle에서 터짐). 창을 만든
+    테스트가 끝날 때 deleteLater + 이벤트 처리 + gc로 확실히 없앤다.
+    """
+    import gc
+
+    for widget in QApplication.topLevelWidgets():
+        if id(widget) not in before:
+            widget.close()
+            widget.deleteLater()
+    for _ in range(3):
+        QApplication.processEvents()
+    gc.collect()
+    QApplication.processEvents()
