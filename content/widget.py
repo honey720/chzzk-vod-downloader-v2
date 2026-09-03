@@ -992,6 +992,11 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
           정보 표면이라 상태와 무관하게 남긴다
         """
         editable = self.item.downloadState == DownloadState.WAITING
+        if not editable and self.isEditing:
+            # 편집 중에 상태가 바뀌었다 — 입력창을 닫고 기존 값으로 되돌린다(#244 P-5 결함 3).
+            # 시작 순간에 편집값을 확정하는 안은 쓰지 않는다: 파일명은 시작 시점에 이미
+            # 결정됐고(옛 이름으로 저장 중), 엔터를 안 눌렀으니 의도도 확정이 아니다
+            self.cancelTitleEditing()
         if self.titleLabel.property("editable") != editable:
             self.titleLabel.setProperty("editable", editable)
             theme.repolish(self.titleLabel)
@@ -1074,8 +1079,31 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
                 self.titleEdit.setVisible(True)
                 self.titleEdit.setFocus()  # ✅ 포커스 이동
 
+    def cancelTitleEditing(self) -> None:
+        """편집을 확정하지 않고 닫는다 — 입력창을 숨기고 라벨(기존 값)로 돌아온다.
+
+        입력창의 editingFinished(포커스 이탈로도 난다)가 finishTitleEditing을 불러 뒤늦게
+        확정하지 않도록 먼저 isEditing을 내리고 값도 라벨로 되돌린다.
+        """
+        if not self.isEditing:
+            return
+        self.isEditing = False
+        self.titleEdit.blockSignals(True)
+        self.titleEdit.setText(self.titleLabel.text())
+        self.titleEdit.setVisible(False)
+        self.titleEdit.blockSignals(False)
+        self.titleLabel.setVisible(True)
+
     def finishTitleEditing(self):
-        """✅ QLineEdit에서 Enter 또는 포커스 해제 시 QLabel로 복귀"""
+        """✅ QLineEdit에서 Enter 또는 포커스 해제 시 QLabel로 복귀
+
+        편집 중이 아니면(상태 전이로 이미 취소됐거나 편집이 없었으면) 아무것도 확정하지
+        않는다 — 포커스 이탈로 늦게 오는 editingFinished나 직접 호출이 입력창의 값을 제목으로
+        굳히지 않게(#244 P-5). 대기 밖에서 편집 중인 상태는 _applyEditability의 취소 때문에
+        생기지 않으므로 별도 검사는 두지 않는다.
+        """
+        if not self.isEditing:
+            return
         self.isEditing = False
         self.titleEdit.setVisible(False)
         self.titleLabel.setVisible(True)

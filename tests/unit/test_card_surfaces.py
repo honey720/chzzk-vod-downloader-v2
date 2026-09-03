@@ -54,10 +54,6 @@ STATES = (DownloadState.WAITING, DownloadState.RUNNING, DownloadState.PAUSED,
           DownloadState.FINISHED, DownloadState.FAILED)
 IDS = [s.name for s in STATES]
 
-# 감사에서 드러난 미수정 칸 — 강한 xfail로 박아 둔다(strict: 고쳐지면 즉시 XPASS로 실패해
-# 표시를 떼게 한다). [3] 편집 취소 커밋이 떼어 낸다.
-PENDING_EDIT = pytest.mark.xfail(strict=True, reason="[3] 편집 중 상태 전이 시 취소·되돌림 미수정")
-OTHER_STATES_PENDING_EDIT = [pytest.param(s, id=s.name, marks=PENDING_EDIT) for s in STATES[1:]]
 OTHER_PATH = "D:/vod/archive/2026/summer/finals/T1-vs-GEN-full-set-highlights-and-interviews"
 
 
@@ -325,7 +321,7 @@ class TestEditingIsCancelledOnStateChange:
         widget.setData(item, 0)
         _pump()
 
-    @pytest.mark.parametrize("state", OTHER_STATES_PENDING_EDIT)
+    @pytest.mark.parametrize("state", STATES[1:], ids=IDS[1:])
     def test_editor_closes_and_the_title_reverts(self, qapp, qtbot, state):
         window, widget, emitted = self._editing_card(qtbot)
         widget.item.downloadState = state
@@ -335,7 +331,6 @@ class TestEditingIsCancelledOnStateChange:
         assert shown(widget.titleLabel) == "제목" and widget.item.title == "제목", "편집 중이던 값이 확정됐다"
         assert emitted == [], "확정하지 않은 편집이 모델로 나갔다"
 
-    @PENDING_EDIT
     def test_saved_filename_matches_the_label_after_the_revert(self, qapp, qtbot, tmp_path):
         """결함 3의 핵심 — 라벨만 보는 게이트는 못 잡는다. 시작 시점에 확정된 파일명과 라벨이 같아야 한다."""
         window, widget, emitted = self._editing_card(qtbot)
@@ -350,7 +345,6 @@ class TestEditingIsCancelledOnStateChange:
         )
         assert "NewName" not in stem and emitted == []
 
-    @PENDING_EDIT
     def test_finishing_the_edit_after_the_start_does_not_rename(self, qapp, qtbot, tmp_path):
         """시작된 뒤 어떤 경로로든 finishTitleEditing이 불려도 제목은 바뀌지 않는다."""
         window, widget, emitted = self._editing_card(qtbot)
