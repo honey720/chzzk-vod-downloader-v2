@@ -149,6 +149,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self._expanded = False
         self._pillMode = "all"
         self._layingOutRowThree = False
+        self._userPicked = False  # 유저가 pill을 직접 고른 적이 있는가 — 늦게 온 크기 조회가 이를 덮지 않는다
         self._selectedButton: ResolutionPill | None = None
         self._pillRows: list[QHBoxLayout] = []  # 펼쳐서 넘친 pill을 받는 추가 행(0개가 기본)
         self._pillRowOf: dict[int, int] = {}    # id(pill) → 지금 놓인 행 번호(0 = 3행)
@@ -293,6 +294,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """
 
         self.buttons = []
+        self._userPicked = False  # pill을 새로 만들면 선택 기억도 새로 시작한다
         # LOADING 자리표시 아이템은 해상도 목록이 아직 없다 (#124)
         if not self.item.unique_reps:
             return
@@ -506,12 +508,18 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         if size_text:
             self.item.unique_reps[index][-1] = size_text
             self.buttons[index].setToolTip(size_text)
+        resolution, base_url = self.item.unique_reps[index][0], self.item.unique_reps[index][1]
+        if self._userPicked:
+            # 유저가 이미 골랐다 — 자동 선택은 건너뛴다(#244 3행 정리 P-4). 늦게 온
+            # 조회가 선택을 1080p로 되돌리던 결함: 접힘 모드에선 pill이 하나만 보여
+            # 뒤집혀도 알아챌 표면이 없다. 고른 해상도의 크기가 도착한 것이면 그
+            # 값으로 크기 표시만 채운다(선택은 그대로).
+            if self.buttons[index] is self._selectedButton:
+                self.setresolutionUrlSize(resolution, base_url, index, self.buttons[index])
+            return
         if index == 0:
-            # 기본 선택(최고 해상도 = 내림차순 첫 항목)의 크기가 도착하면 그
-            # 값으로 파일 크기 표시를 채운다 — 유저가 이미 다른 pill을 골랐으면
-            # setresolutionUrlSize가 대기 상태에서만 동작하므로 그 선택을 덮는다는
-            # 뜻은 아니다(기존 동작 그대로, 항목 위치만 [-1]→[0]).
-            resolution, base_url = self.item.unique_reps[index][0], self.item.unique_reps[index][1]
+            # 기본 선택(최고 해상도 = 내림차순 첫 항목)의 크기가 도착하면 그 값으로
+            # 파일 크기 표시를 채운다 — 아무것도 안 골랐을 때 최고화질이 잡히는 것은 의도다
             self.setresolutionUrlSize(resolution, base_url, index, self.buttons[index])
 
     def setresolutionUrlSize(self, resolution, base_url, index=None, button:QPushButton = None):
@@ -877,6 +885,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             self.setExpanded(True)
             return
         resolution, base_url = self.item.unique_reps[index][0], self.item.unique_reps[index][1]
+        self._userPicked = True  # 명시적 선택 — 이후 도착하는 크기 조회는 이를 덮지 않는다
         self.setresolutionUrlSize(resolution, base_url, index, self.buttons[index])
         if self._pillMode == "expanded":
             self.setExpanded(False)

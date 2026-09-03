@@ -3,7 +3,10 @@
 - 같은 높이 트랙이 둘인 매니페스트 → pill은 높이당 하나 (core/api/representations.py)
 - 해상도 인라인 확장 — 접힘/펼침, 고르면 접힘, 기하 복원, 줄바꿈 임계 T, 한 번에 하나
 - 3행 접힘 순서 한 방향(① 경로 줄임 → ② 아이콘 → ③ 해상도 접힘, 역방향 없음)
+- 늦게 온 크기 조회가 유저 선택을 덮지 않는다(자동 선택은 안 골랐을 때만)
 """
+
+import time
 
 import pytest
 from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
@@ -578,3 +581,87 @@ class TestShrinkOrderIsMonotonic:
                 assert stage != -1
                 assert expected.setdefault(width, stage) == stage, f"폭 {width}px에서 모양이 진동한다: {expected[width]} → {stage}"
         assert expected[fit + 1] <= 2 and expected[fit - 1] == 3
+
+
+# ======================= [P-4·2] 늦게 온 크기 조회가 유저 선택을 덮지 않는다 =======================
+#
+# 카드가 만들어질 때 pill마다 크기 조회 스레드가 뜨고, 첫 pill(최고 해상도)의 결과가
+# 도착하면 그것을 기본 선택으로 확정한다(_onRepSizeFetched). 유저가 그 사이에 720p를
+# 골랐으면 늦게 온 결과가 선택을 1080p로 되돌렸다 — 접힘 모드에서는 pill이 하나만 보여
+# 뒤집혀도 알아챌 표면이 없다. 카드가 "유저가 직접 고른 적이 있는가"를 기억하고 있으면
+# 자동 선택을 건너뛴다. 자동 선택 자체는 남는다(안 골랐으면 최고화질).
+#
+# 응답이 늦는 조건은 time.sleep()으로 실제로 만든다 — GIL에 가려 우연히 안 깨지는 것을
+# 안 깨진다고 읽지 않기 위해서다.
+#
+# 고장 주입(확인됨): _onRepSizeFetched의 `if self._userPicked:` 분기를 지우면
+# TestLateSizeFetchKeepsTheUsersPick가 잡는다.
+
+
+
+class _SlowResponse:
+    def __init__(self, size: int) -> None:
+        self.headers = {"content-length": str(size)}
+
+    def raise_for_status(self) -> None:
+        pass
+
+
+class _SlowSession:
+    """head()가 delay초 자고 나서 크기를 준다 — 조회가 유저 조작보다 늦게 끝나는 창을 벌린다."""
+
+    def __init__(self, delay: float) -> None:
+        self.delay = delay
+        self.sizes = {"u1080": 700_000_000, "u720": 400_000_000, "u480": 200_000_000, "u360": 100_000_000, "u144": 50_000_000}
+
+    def head(self, url, timeout=None):
+        time.sleep(self.delay)
+        return _SlowResponse(self.sizes[url])
+
+    def get(self, *a, **k):
+        raise RuntimeError("get은 쓰이지 않아야 한다 — content-length가 있다")
+
+
+class TestLateSizeFetchKeepsTheUsersPick:
+    DELAY = 0.3
+
+    def _slow(self, monkeypatch):
+        session = _SlowSession(self.DELAY)
+        monkeypatch.setattr("content.widget.get_thread_session", lambda: session)
+
+    def _all_sizes_arrived(self, widget) -> bool:
+        return all(b.toolTip() != "" for b in widget.buttons)
+
+    def test_a_pick_made_before_the_size_arrives_survives(self, qapp, qtbot, monkeypatch):
+        self._slow(monkeypatch)
+        box, widget = make_boxed()  # 조회 스레드 5개가 자는 동안
+        assert widget.buttons[0].toolTip() == "", "전제: 아직 아무 크기도 도착하지 않았다"
+        widget.buttons[1].click()  # 720p — 전부 보이는 모드, 클릭 한 번
+        _pump()
+        assert str(widget.item.resolution) == "720"
+        qtbot.waitUntil(lambda: self._all_sizes_arrived(widget), timeout=5000)
+        _pump()
+        assert str(widget.item.resolution) == "720" and widget.item.base_url == "u720", "늦게 온 조회가 선택을 덮었다"
+        assert [b.isSelected() for b in widget.buttons] == [False, True, False, False, False]
+        assert "381.47 MB" in widget.fileSizeLabel.text(), "고른 해상도(720p)의 크기로 표시가 채워져야 한다"
+
+    def test_without_a_pick_the_default_selection_still_runs(self, qapp, qtbot, monkeypatch):
+        self._slow(monkeypatch)
+        box, widget = make_boxed()
+        assert "Checking" in widget.fileSizeLabel.text() or widget.fileSizeLabel.text().strip() in ("", "711.02 MB")
+        qtbot.waitUntil(lambda: self._all_sizes_arrived(widget), timeout=5000)
+        _pump()
+        assert str(widget.item.resolution) == "1080" and widget.buttons[0].isSelected(), "안 골랐으면 최고화질이 잡혀야 한다"
+        assert "667.57 MB" in widget.fileSizeLabel.text(), "자동 선택의 크기가 표시에 채워져야 한다"
+        assert widget.item.total_size == widget.item.unique_reps[0][-1]
+
+    def test_pick_survives_collapsing_before_the_size_arrives(self, qapp, qtbot, monkeypatch):
+        self._slow(monkeypatch)
+        box, widget = make_boxed()
+        widget.buttons[1].click()  # 전부 보이는 모드에서 720p
+        _pump()
+        resize_box(box, widget, fit_threshold(widget) - 1)  # 접힘 — pill은 [720p ▾] 하나
+        assert widget.pillMode() == "collapsed" and _visible_pills(widget) == ["720p"]
+        qtbot.waitUntil(lambda: self._all_sizes_arrived(widget), timeout=5000)
+        _pump()
+        assert _visible_pills(widget) == ["720p"] and str(widget.item.resolution) == "720", "접힌 채로 선택이 뒤집혔다"
