@@ -223,15 +223,26 @@ class TestComboBoxDropDownStyle:
         plain = theme.build_style(deferred_popup_hide=False)
         assert plain.styleHint(hint, None, combo) == 0
 
-    def test_deferred_popup_hide_defaults_follow_the_j2_toggle(self, qapp, monkeypatch):
+    @pytest.mark.parametrize("platform", ["darwin", "win32", "linux"])
+    @pytest.mark.parametrize("candidate", ["flash", "swallow", "none"])
+    def test_flash_candidate_default_is_macos_only(self, qapp, monkeypatch, platform, candidate):
+        """[J-2 후보 A] 플랫폼 분기를 명시적으로 잰다 — `CVD_J2_CANDIDATE=flash`
+        **이고** macOS일 때만 힌트가 켜진다. Windows 실기 계측에서 이 힌트가
+        v2.9.6 Windows에 없던 깜빡임을 만들었으므로(선택 행 픽셀
+        강조색→바탕색→강조색, 팝업 ~80ms 잔류), 다른 플랫폼에서는 토글이
+        `flash`여도 꺼져 있어야 한다. `build_style()`이 호출 시점의
+        `sys.platform`을 읽기 때문에 여기서 바꿔 가며 잴 수 있다."""
+        import sys
+
         from PySide6.QtWidgets import QComboBox, QStyle
 
         hint = QStyle.StyleHint.SH_Menu_FlashTriggeredItem
         combo = QComboBox()
-        monkeypatch.setattr(theme, "J2_CANDIDATE", "flash")
-        assert theme.build_style().styleHint(hint, None, combo) == 1
-        monkeypatch.setattr(theme, "J2_CANDIDATE", "none")
-        assert theme.build_style().styleHint(hint, None, combo) == 0
+        monkeypatch.setattr(theme, "J2_CANDIDATE", candidate)
+        monkeypatch.setattr(sys, "platform", platform)
+
+        expected = 1 if (candidate == "flash" and platform == "darwin") else 0
+        assert theme.build_style().styleHint(hint, None, combo) == expected
 
     def test_list_mouse_tracking_hint_is_intentionally_left_untouched(self, qapp):
         """`SH_ComboBox_ListMouseTracking`을 같이 끄면 호버 오염(선택이 마우스를
