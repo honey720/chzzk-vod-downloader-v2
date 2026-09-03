@@ -186,8 +186,27 @@ class IconButton(QPushButton):
         self._idle_token = "textMuted"
         self._hover_token = "text"
         self._accent_token = ""
+        self._interactive = True
+        self.setProperty("interactive", True)
         # 호버 진입·이탈에 다시 그리게 한다(QSS :hover 규칙이 없어도)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+
+    def setInteractive(self, interactive: bool) -> None:
+        """조작 표면(호버 강조)을 켜고 끈다 — 눌러도 아무 일도 없는 상태에서는 끈다 (#244 P-5).
+
+        도형 색은 그대로(정보는 남는다) 두고 호버 반응만 없앤다: 도형은 colorToken이
+        호버 토큰을 건너뛰고, 배경·테두리는 전역 QSS `[role="icon"][interactive="false"]:hover`가
+        이 속성을 보고 지운다. 경로 아이콘이 대기 밖에서 "누르면 뭔가 된다"고 말하던 칸.
+        """
+        if interactive == self._interactive:
+            return
+        self._interactive = interactive
+        self.setProperty("interactive", interactive)
+        theme.repolish(self)
+
+    def isInteractive(self) -> bool:
+        """호버 강조가 켜져 있는가(눌러서 되는 상태인가)."""
+        return self._interactive
 
     def setIconName(self, name: str) -> None:
         """그릴 도형을 바꾼다 — 상태별 조작 전환(일시정지↔재개)에 쓴다."""
@@ -233,7 +252,7 @@ class IconButton(QPushButton):
         """지금 도형에 쓸 색 토큰 — 비활성 > 호버 > 평소 순으로 정한다."""
         if not self.isEnabled():
             return "textDisabled"
-        if self.underMouse():
+        if self.underMouse() and self._interactive:
             return self._hover_token
         return self._idle_token
 

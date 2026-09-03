@@ -55,12 +55,8 @@ STATES = (DownloadState.WAITING, DownloadState.RUNNING, DownloadState.PAUSED,
 IDS = [s.name for s in STATES]
 
 # 감사에서 드러난 미수정 칸 — 강한 xfail로 박아 둔다(strict: 고쳐지면 즉시 XPASS로 실패해
-# 표시를 떼게 한다). [2] 경로 커밋·[3] 편집 취소 커밋이 각각 떼어 낸다.
-PENDING_PATH = pytest.mark.xfail(strict=True, reason="[2] 경로 변경은 대기에서만 — 커서·아이콘 호버·대화상자 뒤 검사 미수정")
+# 표시를 떼게 한다). [3] 편집 취소 커밋이 떼어 낸다.
 PENDING_EDIT = pytest.mark.xfail(strict=True, reason="[3] 편집 중 상태 전이 시 취소·되돌림 미수정")
-OTHER_STATES_PENDING_PATH = [pytest.param(STATES[0], id=IDS[0])] + [
-    pytest.param(s, id=s.name, marks=PENDING_PATH) for s in STATES[1:]
-]
 OTHER_STATES_PENDING_EDIT = [pytest.param(s, id=s.name, marks=PENDING_EDIT) for s in STATES[1:]]
 OTHER_PATH = "D:/vod/archive/2026/summer/finals/T1-vs-GEN-full-set-highlights-and-interviews"
 
@@ -219,7 +215,7 @@ class TestTitleSurface:
 
 
 class TestPathLabelSurface:
-    @pytest.mark.parametrize("state", OTHER_STATES_PENDING_PATH)
+    @pytest.mark.parametrize("state", STATES, ids=IDS)
     def test_cursor_matches_clickability(self, qapp, qtbot, state):
         window, widget = make_card(state)
         qtbot.addWidget(window)
@@ -254,7 +250,7 @@ class TestPathIconSurface:
         narrow_until_path_is_an_icon(window, widget)
         return window, widget
 
-    @pytest.mark.parametrize("state", OTHER_STATES_PENDING_PATH)
+    @pytest.mark.parametrize("state", STATES, ids=IDS)
     def test_hover_highlight_matches_clickability(self, qapp, qtbot, state):
         window, widget = self._icon_card(qtbot, state)
         assert highlights_on_hover(qtbot, window, widget.pathIconButton) == _clickable(state), (
@@ -283,7 +279,6 @@ class TestPathIconSurface:
 
 
 class TestPathDialogDuringTransition:
-    @PENDING_PATH
     def test_a_folder_picked_after_the_download_started_is_discarded(self, qapp, qtbot, monkeypatch):
         """대화상자가 열린 사이 다운로드가 시작되면 고른 폴더는 버린다 — 이미 그 경로에 쓰고 있다."""
         window, widget = make_card(DownloadState.WAITING)

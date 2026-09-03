@@ -828,7 +828,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             theme.repolish(self.statusLabel)
 
         self.statusLabel.setVisible(not self._slotShowsPills())
-        self._applyTitleEditability()
+        self._applyEditability()
 
         self.pauseButton.setVisible(raw in (DownloadState.RUNNING, DownloadState.PAUSED))
         if raw == DownloadState.PAUSED:
@@ -976,14 +976,20 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             extra.deleteLater()
         self.updateGeometry()
 
-    def _applyTitleEditability(self) -> None:
-        """제목의 편집 가능 표시(호버 강조·IBeam 커서)를 클릭 가능 여부와 일치시킨다.
+    def _applyEditability(self) -> None:
+        """카드의 편집 표면(제목·경로)이 "지금 눌러서 되는가"와 일치하게 맞춘다 (#244 P-4·P-5).
 
-        제목 클릭(파일명 편집, startTitleEditing)은 **대기에서만** 성립한다 —
-        진행 중이면 이미 그 이름으로 쓰고 있고 완료됐으면 이미 저장됐다.
-        그런데 호버 강조는 상태와 무관하게 떠서 "클릭하면 뭔가 된다"고
-        거짓말을 했다(실기 확인). 강조 색은 전역 QSS
-        `#titleLabel[editable="true"]:hover`가 이 속성을 보고 고른다.
+        제목 편집(startTitleEditing)과 경로 변경(choosePath)은 **대기에서만** 성립한다 —
+        진행·일시정지는 이미 그 이름·그 경로에 쓰고 있고(부분 파일도 거기 있다), 완료는
+        저장됐고, 실패의 복구 수단은 재시도다(§7.1 시작 전 쓰기 검사가 경로 문제를 걸러
+        실패 카드까지 온 것은 대개 네트워크·서버 쪽 — 예외 없는 규칙이 낫다, 오너 확정).
+        그런데 호버 강조·커서는 상태와 무관해 "누르면 뭔가 된다"고 거짓말을 했다(실기에서
+        하나씩 발견 — 전수 감사 표는 tests/unit/test_card_surfaces.py).
+
+        - 제목: `editable` 동적 속성(QSS `#titleLabel[editable="true"]:hover`) + IBeam↔화살표
+        - 경로 라벨: 손가락↔화살표 커서(호버 강조는 원래 없다)
+        - 경로 아이콘: IconButton.setInteractive — 호버 배경·도형 밝아짐을 끈다. 툴팁(전문)은
+          정보 표면이라 상태와 무관하게 남긴다
         """
         editable = self.item.downloadState == DownloadState.WAITING
         if self.titleLabel.property("editable") != editable:
@@ -992,6 +998,10 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.titleLabel.setCursor(
             Qt.CursorShape.IBeamCursor if editable else Qt.CursorShape.ArrowCursor
         )
+        self.directoryLabel.setCursor(
+            Qt.CursorShape.PointingHandCursor if editable else Qt.CursorShape.ArrowCursor
+        )
+        self.pathIconButton.setInteractive(editable)
 
     def _updatePathVisibility(self) -> None:
         """경로는 **대기면 항상, 그 외엔 전역 설정 경로와 다를 때만** 보인다 (#245).
@@ -1093,6 +1103,11 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             self, self.tr("Select download folder"), self.item.download_path or ""
         )
         if not chosen:
+            return
+        if self.item.downloadState != DownloadState.WAITING:
+            # 대화상자가 열린 사이 다운로드가 시작됐다 — 이미 옛 경로에 쓰고 있으므로
+            # 고른 폴더는 버린다(#244 P-5 감사 칸). 시작 시점에 확정된 경로가 정답이다
+            logger.info("카드 저장 경로 변경 무시 — 대화상자 중 상태가 %s로 바뀜", self.item.downloadState)
             return
         self.item.download_path = chosen
         self._refreshPathLabel()

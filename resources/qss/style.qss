@@ -238,6 +238,14 @@ QPushButton[role="icon"]:pressed {
     background-color: @surfacePressed;
 }
 
+/* 눌러도 아무 일 없는 상태의 아이콘(경로 아이콘, 대기 밖 — #244 P-5)은 호버 표면을
+ * 지운다. `interactive`는 content/icons.py::IconButton.setInteractive가 심는다. */
+QPushButton[role="icon"][interactive="false"]:hover,
+QPushButton[role="icon"][interactive="false"]:pressed {
+    background-color: transparent;
+    border-color: transparent;
+}
+
 /* 해상도(#244 재설계) — 선택된 것만 채워진 pill, 나머지는 배경·테두리
  * 없는 muted 텍스트다(전부 외곽선 pill이던 이전 모습은 줄 전체가
  * 버튼 무더기로 보였다). `role`·`selected`·`caret`는 content/pill.py가 심는다.
