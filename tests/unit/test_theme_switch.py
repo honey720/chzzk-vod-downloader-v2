@@ -375,6 +375,95 @@ class TestFaultInjection:
 
 
 @pytest.mark.usefixtures("_theme_sandbox")
+class TestSwitchIsAtomic:
+    """전환은 원자적이다 — QSS 로드가 실패하면 **아무것도 바뀌지 않는다**.
+
+    팔레트·토큰은 새 테마인데 QSS만 옛 테마로 남는 "반쪽"은 SPEC §9가 금지한
+    바로 그 상태다(일관되게 안 따라가는 것보다 나쁘다). 새 스타일시트를 먼저
+    준비·검증하고 성공했을 때만 색을 커밋하는지, 실패 뒤 정상 전환이 되는지,
+    그리고 원자성을 깨면(색 먼저 커밋) 이 게이트가 잡는지를 잰다.
+    """
+
+    def test_missing_qss_changes_nothing(self, qapp, tmp_path):
+        theme.apply_color_scheme(qapp, "dark", QSS_PATH)
+        before = _snapshot_global_state(qapp)
+
+        with pytest.raises(OSError):
+            theme.apply_color_scheme(qapp, "light", str(tmp_path / "missing.qss"))
+
+        assert _snapshot_global_state(qapp) == before  # 팔레트·QSS·스킴 전부 옛 테마 그대로
+        assert theme.current_tokens() is theme.DARK
+
+    def test_broken_token_changes_nothing(self, qapp, tmp_path):
+        broken = tmp_path / "broken.qss"
+        broken.write_text("QWidget { color: @noSuchToken; }", encoding="utf-8")
+        theme.apply_color_scheme(qapp, "dark", QSS_PATH)
+        before = _snapshot_global_state(qapp)
+
+        with pytest.raises(KeyError):
+            theme.apply_color_scheme(qapp, "light", str(broken))
+
+        assert _snapshot_global_state(qapp) == before
+
+    def test_unknown_scheme_changes_nothing(self, qapp):
+        theme.apply_color_scheme(qapp, "dark", QSS_PATH)
+        before = _snapshot_global_state(qapp)
+
+        with pytest.raises(ValueError):
+            theme.apply_color_scheme(qapp, "sepia", QSS_PATH)
+
+        assert _snapshot_global_state(qapp) == before
+
+    def test_switch_recovers_after_a_failed_switch(self, qapp, qtbot, tmp_path):
+        """실패한 전환이 상태를 망가뜨린 채 남기지 않는지 — 실패 뒤 정상 전환한
+        화면이 처음부터 그 테마로 띄운 화면과 픽셀까지 같아야 한다."""
+        missing = str(tmp_path / "missing.qss")
+
+        def fail_then_switch(scheme):
+            with pytest.raises(OSError):
+                theme.apply_color_scheme(qapp, scheme, missing)
+            theme.apply_color_scheme(qapp, scheme, QSS_PATH)
+
+        fresh = _fresh(qapp, qtbot, "light")
+        switched = _switched(qapp, qtbot, "dark", "light", apply=fail_then_switch)
+
+        assert _differences(fresh, switched) == []
+
+    def test_follower_keeps_the_old_theme_when_reload_fails(self, qapp, tmp_path):
+        """OS 신호 경로에서 실패하면 예외 없이 옛 테마를 지킨다(로그만)."""
+        theme.apply_color_scheme(qapp, "dark", QSS_PATH)
+        before = _snapshot_global_state(qapp)
+        slot = theme.follow_os_color_scheme(qapp, str(tmp_path / "missing.qss"))
+        try:
+            qapp.styleHints().colorSchemeChanged.emit(Qt.ColorScheme.Light)
+            QApplication.processEvents()
+            assert _snapshot_global_state(qapp) == before
+        finally:
+            theme.unfollow_os_color_scheme(qapp, slot)
+
+    def test_fault_injection_committing_colors_first_is_caught(self, qapp, monkeypatch, tmp_path):
+        """원자성을 깨서(스킴·팔레트를 먼저 커밋) 위 게이트가 잡는지 — 반쪽 상태가
+        실제로 만들어지는 것을 보인다."""
+
+        def non_atomic(app, scheme, qss_path):
+            theme.set_color_scheme(scheme)
+            app.setPalette(theme.build_palette())
+            app.setStyleSheet(theme.load_stylesheet(qss_path))
+
+        theme.apply_color_scheme(qapp, "dark", QSS_PATH)
+        before = _snapshot_global_state(qapp)
+        monkeypatch.setattr(theme, "apply_color_scheme", non_atomic)
+
+        with pytest.raises(OSError):
+            theme.apply_color_scheme(qapp, "light", str(tmp_path / "missing.qss"))
+
+        after = _snapshot_global_state(qapp)
+        assert after != before  # 팔레트·스킴은 라이트, QSS는 다크 — 게이트가 잡아야 하는 반쪽
+        assert after["stylesheet"] == before["stylesheet"]
+        assert theme.current_tokens() is theme.LIGHT
+
+
+@pytest.mark.usefixtures("_theme_sandbox")
 class TestOsSignalWiring:
     def test_color_scheme_changed_signal_reapplies_the_theme(self, qapp):
         """`follow_os_color_scheme()`이 건 배선이 실제 신호에 반응하는지.

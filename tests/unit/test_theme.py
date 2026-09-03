@@ -494,6 +494,24 @@ class TestApplyThemeWiring:
         main.apply_theme(qapp)
         assert qapp.palette().color(QPalette.ColorRole.Window) == QColor(theme.DARK["windowBg"])
 
+    def test_apply_theme_falls_back_to_palette_only_when_qss_is_missing(self, qapp, monkeypatch):
+        """시작 시점에 QSS 로드가 실패하면 예전과 같이 감지된 스킴의 팔레트만 건다
+        (#216 정책 — 스타일이 없어도 앱은 뜬다). `apply_color_scheme()`이
+        원자적이라 실패 시 아무것도 안 바뀌므로, 이 폴백은 `main.apply_theme()`
+        의 except 가지가 담당한다. 시작 시점의 동작은 원자화 전과 같다 —
+        스킴 확정 + 팔레트, QSS는 그대로."""
+        from PySide6.QtGui import QColor, QPalette
+
+        monkeypatch.setattr(theme, "detect_color_scheme", lambda app: "light")
+        monkeypatch.setattr(theme, "QSS_RELATIVE_PATH", "resources/qss/does-not-exist.qss")
+        stylesheet_before = qapp.styleSheet()
+
+        main.apply_theme(qapp)  # 예외가 새어 나오면 안 된다
+
+        assert theme.current_tokens() is theme.LIGHT
+        assert qapp.palette().color(QPalette.ColorRole.Window) == QColor(theme.LIGHT["windowBg"])
+        assert qapp.styleSheet() == stylesheet_before
+
     def test_apply_theme_disables_the_combobox_overlay_popup(self, qapp, monkeypatch):
         """#241 후속 — 순정 `"Fusion"` 문자열이 아니라 `theme.build_style()`로
         감싼 스타일을 실제로 앱에 건다는 것까지 확인한다(간극을 닫는다,

@@ -429,10 +429,26 @@ def scheme_name(scheme) -> str | None:
     return None
 
 
+def tokens_for(scheme: str) -> dict:
+    """스킴 이름 → 토큰 표. 알 수 없는 이름은 ValueError — 아무것도 바꾸기 전에 걸러낸다."""
+    if scheme == "dark":
+        return DARK
+    if scheme == "light":
+        return LIGHT
+    raise ValueError(f"알 수 없는 색 스킴: {scheme!r} (가능한 값: 'dark', 'light')")
+
+
 def apply_color_scheme(app, scheme: str, qss_path: str) -> None:
     """스킴 하나를 앱 전역에 (재)적용한다 — **시작 시점과 실행 중 전환이 같은 경로**.
 
-    순서는 시작 시점 순서 그대로다: 스킴 확정 → 팔레트 재구성 → QSS 재로드.
+    **원자적이다.** 새 스타일시트와 팔레트를 먼저 만들어 두고, 둘 다 준비된
+    뒤에야 색을 커밋한다(스킴 확정 → 팔레트 → QSS). 스타일시트 로드가
+    `OSError`/`KeyError`로 실패하면 **아무것도 바뀌지 않는다** — 옛 테마가
+    팔레트·QSS·토큰 전부에서 그대로 일관되게 남는다. 팔레트만 새 테마로 가고
+    QSS가 옛 테마로 남는 "반쪽" 상태(SPEC §9 — 일관되게 안 따라가는 것보다
+    나쁘다)는 이 함수가 만들 수 없다. 실패 시 `setStyleSheet("")`로 비우지도
+    않는다 — 스타일을 벗기면 반쪽보다 나쁘다.
+
     `app.setStyleSheet()`은 Qt가 모든 위젯을 다시 polish하게 만들므로(실측 —
     `tests/unit/test_theme_switch.py`가 "시작부터 라이트"와 "다크에서 라이트로
     전환" 두 화면의 렌더 픽셀이 같은지로 잰다) 동적 속성 선택자
@@ -441,12 +457,15 @@ def apply_color_scheme(app, scheme: str, qss_path: str) -> None:
     — 있으면 좋아 보여도 효과가 없는 코드는 두지 않는다(같은 게이트에서
     빼 보고 확인).
 
-    QSS 파일이 없거나 토큰이 깨졌으면 `OSError`/`KeyError`가 그대로 올라온다
-    — 호출부(`main.apply_theme`)가 로그를 남기고 앱은 팔레트만으로 뜬다.
+    예외는 그대로 올라온다 — 호출부(`main.apply_theme`)가 시작 시점의 폴백을
+    정하고, 실행 중 전환(`follow_os_color_scheme`)은 로그만 남기고 옛 테마를 지킨다.
     """
+    tokens = tokens_for(scheme)
+    stylesheet = load_stylesheet(qss_path, tokens)  # 실패하면 여기서 끝 — 아직 아무것도 안 바뀜
+    palette = build_palette(tokens)
     set_color_scheme(scheme)
-    app.setPalette(build_palette())
-    app.setStyleSheet(load_stylesheet(qss_path))
+    app.setPalette(palette)
+    app.setStyleSheet(stylesheet)
     logger.info("color scheme applied: %s (%s)", scheme, qss_path)
 
 

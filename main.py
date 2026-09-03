@@ -44,10 +44,17 @@ def apply_theme(app):
     # 시작 시점 적용과 실행 중 전환이 같은 함수를 탄다 — 경로가 둘이면 하나만 낡는다.
     # 팔레트 먼저 — QSS가 안 덮는 부분(스크롤 영역 뷰포트·컨텍스트 메뉴 등)을 담당한다
     qss_path = resource_path(theme.QSS_RELATIVE_PATH)
+    scheme = theme.detect_color_scheme(app)
     try:
-        theme.apply_color_scheme(app, theme.detect_color_scheme(app), qss_path)
+        theme.apply_color_scheme(app, scheme, qss_path)
     except (OSError, KeyError) as e:
-        logger.warning("stylesheet load failed (%s): %s", qss_path, e)
+        # 시작 시점 폴백 — apply_color_scheme()은 원자적이라 여기 오면 아무것도 안 바뀐
+        # 상태다. 시작 때는 지킬 "옛 테마"가 없으므로 예전과 같이 감지된 스킴의
+        # 팔레트만 건다(QSS 없이 Qt 기본 외형, #216 정책). 실행 중 전환은 이 폴백을
+        # 타지 않는다 — 실패하면 옛 테마가 그대로 남는다.
+        logger.warning("stylesheet load failed (%s): %s — palette only", qss_path, e)
+        theme.set_color_scheme(scheme)
+        app.setPalette(theme.build_palette())
     theme.follow_os_color_scheme(app, qss_path)
 
 
