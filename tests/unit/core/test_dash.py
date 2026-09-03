@@ -80,3 +80,44 @@ class TestParseDashManifest:
         assert sorted_reps == [[720, "https://vod-example.invalid/chzzk/portrait_720.mp4"]]
         assert auto_resolution == 720
         assert auto_base_url == "https://vod-example.invalid/chzzk/portrait_720.mp4"
+
+
+_DUP_DASH = """<?xml version="1.0" encoding="UTF-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011">
+  <Period><AdaptationSet mimeType="video/mp4">
+    <Representation id="a" width="1920" height="1080" bandwidth="5000000"><BaseURL>https://v.invalid/1080_low.mp4</BaseURL></Representation>
+    <Representation id="b" width="1280" height="720" bandwidth="3000000"><BaseURL>https://v.invalid/720.mp4</BaseURL></Representation>
+    <Representation id="c" width="1920" height="1080" bandwidth="6000000"><BaseURL>https://v.invalid/1080_high.mp4</BaseURL></Representation>
+  </AdaptationSet></Period>
+</MPD>"""
+
+_DUP_SEA = """<?xml version="1.0" encoding="UTF-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" xmlns:nvod="urn:naver:vod:2020">
+  <Period><AdaptationSet mimeType="video/mp4">
+    <Representation id="a" width="1920" height="1080" bandwidth="6000000" nvod:m3u="https://v.invalid/1080_high.m3u8"><ContentProtection schemeIdUri="urn:mpeg:dash:sea:2012"/></Representation>
+    <Representation id="b" width="1920" height="1080" bandwidth="5000000" nvod:m3u="https://v.invalid/1080_low.m3u8"><ContentProtection schemeIdUri="urn:mpeg:dash:sea:2012"/></Representation>
+  </AdaptationSet></Period>
+</MPD>"""
+
+
+class TestSameHeightTracks:
+    """같은 높이 트랙이 여럿이면 하나만 남긴다 (#244 3행 정리 — core/api/representations.py).
+
+    `unique_reps`라는 이름이 약속하던 동작이다 — 이전에는 중복을 제거하지 않아
+    같은 높이 트랙 둘이 카드에 "1080p" pill 둘로 나타났다.
+    """
+
+    def test_dash_keeps_the_higher_bandwidth_track_per_height(self):
+        sorted_reps, auto_resolution, auto_base_url = parse_dash_manifest(_DUP_DASH)
+        assert sorted_reps == [
+            [720, "https://v.invalid/720.mp4"],
+            [1080, "https://v.invalid/1080_high.mp4"],
+        ], "같은 높이는 비트레이트가 높은 트랙 하나만 남아야 한다"
+        assert (auto_resolution, auto_base_url) == (1080, "https://v.invalid/1080_high.mp4")
+
+    def test_sea_applies_the_same_rule(self):
+        from core.api.dash import parse_sea_manifest
+
+        sorted_reps, auto_resolution, auto_base_url = parse_sea_manifest(_DUP_SEA)
+        assert sorted_reps == [[1080, "https://v.invalid/1080_high.m3u8"]]
+        assert (auto_resolution, auto_base_url) == (1080, "https://v.invalid/1080_high.m3u8")
