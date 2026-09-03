@@ -157,6 +157,20 @@ class TestComboBoxPopupHighlightResync:
         combo.showPopup()
         qtbot.waitUntil(combo.view().isVisible)
 
+    @staticmethod
+    def _close_popup(qtbot, combo):
+        """`hidePopup()` 뒤 팝업이 실제로 사라질 때까지 기다린다.
+
+        프로덕션 스타일은 macOS에서 팝업 닫기를 한 턴 뒤로 미룬다
+        (`theme._DropDownComboBoxStyle`, ~80ms). 그 사이에 `showPopup()`을 다시
+        부르면 컨테이너가 아직 보이는 상태라 Hide/Show 이벤트가 아예 안 나고,
+        뒤늦은 숨김이 재오픈한 팝업을 닫아 버린다 — macOS CI에서 이 클래스
+        4건이 그렇게 실패했다(offscreen에서 지연 닫기를 강제해 재현). 사용자도
+        닫힌 뒤에야 다시 여므로 그 순서를 그대로 따른다.
+        """
+        combo.hidePopup()
+        qtbot.waitUntil(lambda: not combo.view().isVisible())
+
     def test_popup_opens_with_highlight_on_the_real_current_value(self, qapp, qtbot):
         dialog = SettingDialog()
         qtbot.addWidget(dialog)
@@ -167,7 +181,7 @@ class TestComboBoxPopupHighlightResync:
 
         assert view.currentIndex().row() == 2
         assert view.selectionModel().isSelected(view.model().index(2, 0))
-        combo.hidePopup()
+        self._close_popup(qtbot, combo)
 
     def test_stray_hover_does_not_survive_a_reopen(self, qapp, qtbot):
         dialog = SettingDialog()
@@ -179,14 +193,14 @@ class TestComboBoxPopupHighlightResync:
         _hover_row(view, 0)  # "none" 위로 마우스만 지나간다, 클릭은 안 함
         assert view.currentIndex().row() == 0  # Qt가 강조를 실제로 옮긴 것부터 확인
 
-        combo.hidePopup()
+        self._close_popup(qtbot, combo)
         self._open_popup(qtbot, combo)
 
         assert combo.currentIndex() == 2  # 콤보 자신의 선택값은 애초에 안 바뀌었다
         assert view.currentIndex().row() == 2  # 재오픈 시 강조가 실제 값으로 돌아와야 한다
         assert view.selectionModel().isSelected(view.model().index(2, 0))
         assert not view.selectionModel().isSelected(view.model().index(0, 0))
-        combo.hidePopup()
+        self._close_popup(qtbot, combo)
 
     def test_repeated_reopen_without_hover_stays_on_the_real_value(self, qapp, qtbot):
         """호버가 전혀 없었으면 애초에 흐트러질 게 없다 — 되돌리는 로직이
@@ -199,7 +213,7 @@ class TestComboBoxPopupHighlightResync:
         for _ in range(3):
             self._open_popup(qtbot, combo)
             assert view.currentIndex().row() == 2
-            combo.hidePopup()
+            self._close_popup(qtbot, combo)
 
     def test_fault_injection_without_resync_the_bug_reproduces(self, qapp, qtbot, monkeypatch):
         """새 테스트가 실제로 고장을 잡는지 확인 — resync 배선을 빼면 위
@@ -213,11 +227,11 @@ class TestComboBoxPopupHighlightResync:
 
         self._open_popup(qtbot, combo)
         _hover_row(view, 0)
-        combo.hidePopup()
+        self._close_popup(qtbot, combo)
         self._open_popup(qtbot, combo)
 
         assert view.currentIndex().row() == 0  # 배선을 빼면 #241 증상 그대로 재현된다
-        combo.hidePopup()
+        self._close_popup(qtbot, combo)
 
     def test_click_selecting_a_new_value_survives_the_hide_time_restore(self, qapp, qtbot):
         """클릭으로 항목을 골라 닫는 경우의 함정 확인 — `Hide` 이벤트가 오는
@@ -232,6 +246,7 @@ class TestComboBoxPopupHighlightResync:
         self._open_popup(qtbot, combo)
         rect0 = view.visualRect(view.model().index(0, 0))  # "none" 클릭
         QTest.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=rect0.center())
+        qtbot.waitUntil(lambda: not view.isVisible())  # macOS는 클릭 뒤 닫기가 ~80ms 미뤄진다
         QTest.qWait(20)  # Hide 시점에 예약된 singleShot(0)이 돌 시간을 준다
 
         assert combo.currentIndex() == 0  # 클릭한 값으로 실제 선택이 바뀌었다
@@ -239,7 +254,7 @@ class TestComboBoxPopupHighlightResync:
         self._open_popup(qtbot, combo)
         assert view.currentIndex().row() == 0  # 방금 고른 값이 강조돼야 한다(0으로 뭉개지면 안 됨)
         assert view.selectionModel().isSelected(view.model().index(0, 0))
-        combo.hidePopup()
+        self._close_popup(qtbot, combo)
 
     def test_highlight_is_already_correct_before_show_time_resync_runs(self, qapp, qtbot):
         """복원이 "일어난 시점"이 아니라 "열렸을 때 이미 올바른가"를 본다 —
@@ -257,14 +272,14 @@ class TestComboBoxPopupHighlightResync:
 
         self._open_popup(qtbot, combo)
         _hover_row(view, 0)  # 오염시킨다
-        combo.hidePopup()
+        self._close_popup(qtbot, combo)
         QTest.qWait(20)  # Hide 시점 singleShot(0) 복원이 돌 시간을 준다
 
         seen, _probe = _capture_current_index_before_resync_runs(window, view)
 
         self._open_popup(qtbot, combo)
         assert seen == [2]  # Show 콜백이 돌기 *전*부터 이미 올바른 값이어야 한다
-        combo.hidePopup()
+        self._close_popup(qtbot, combo)
 
     def test_fault_injection_show_only_resync_still_flickers(self, qapp, qtbot, monkeypatch):
         """고장 주입 — Hide 시점 복원을 지우고 Show 시점만 남기면(이전 구현),
@@ -288,14 +303,14 @@ class TestComboBoxPopupHighlightResync:
 
         self._open_popup(qtbot, combo)
         _hover_row(view, 0)
-        combo.hidePopup()
+        self._close_popup(qtbot, combo)
         QTest.qWait(20)  # Hide 쪽이 있었다면 여기서 이미 고쳤을 시간 — 지금은 없음
 
         seen, _probe = _capture_current_index_before_resync_runs(window, view)
 
         self._open_popup(qtbot, combo)
         assert seen == [0]  # Show 콜백 전엔 아직 오염된 값 그대로 — 깜빡임 재현
-        combo.hidePopup()
+        self._close_popup(qtbot, combo)
 
 
 def _press_enter_the_way_macos_delivers_it(window):
