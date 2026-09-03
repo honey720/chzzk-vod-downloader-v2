@@ -240,8 +240,11 @@ QPushButton[role="icon"]:pressed {
 
 /* 해상도(#244 재설계) — 선택된 것만 채워진 pill, 나머지는 배경·테두리
  * 없는 muted 텍스트다(전부 외곽선 pill이던 이전 모습은 줄 전체가
- * 버튼 무더기로 보였다). `role`은 content/widget.py가 심는다.
- * 선택 = 비활성 버튼(기존 동작 유지). */
+ * 버튼 무더기로 보였다). `role`·`selected`·`caret`는 content/pill.py가 심는다.
+ * 평소엔 선택 pill 하나만 `[1080p ▾]`로 접혀 있고 누르면 그 자리에서
+ * 펼쳐진다(#244 3행 정리 — content/widget.py::setExpanded).
+ * 선택 = `[selected="true"]` (이전의 `:disabled`는 접힌 pill을 누를 수
+ * 없게 하므로 폐기 — 선택 pill도 활성이다). */
 QPushButton[role="resolution"] {
     padding: 0px 8px;
     border: none;
@@ -251,12 +254,18 @@ QPushButton[role="resolution"] {
     font-size: @fontSizeMeta;
 }
 
+/* 접힘 표시(▾) 자리 — 8(가장자리) + 8(도형) + 4(글자와의 간격). 도형은
+ * content/pill.py::paintEvent가 이 padding 안에 그린다. */
+QPushButton[role="resolution"][caret="true"] {
+    padding-right: 20px;
+}
+
 QPushButton[role="resolution"]:hover {
     color: @text;
     background-color: @surfaceHover;
 }
 
-QPushButton[role="resolution"]:disabled {
+QPushButton[role="resolution"][selected="true"] {
     background-color: @accent;
     color: @onAccent;
 }

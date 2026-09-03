@@ -111,10 +111,25 @@ class ContentListView(QScrollArea):
         widget.deleteRequest.connect(lambda it=item: self.onDeleteItem(it))
         widget.pauseRequest.connect(lambda it=item: self.pauseRequested.emit(it))
         widget.retryRequest.connect(lambda it=item: self.retryRequested.emit(it))
+        # 해상도 펼침은 한 번에 하나 — 다른 카드가 펼쳐지면 앞의 것을 접는다 (#244 3행 정리)
+        widget.expandedChanged.connect(lambda expanded, w=widget: self._onCardExpanded(w, expanded))
         widget.addRepresentationButtons()
         self._layout.insertWidget(row, widget)
         self._widgets[item] = widget
         self._overlay.update()  # 빈 리스트 안내를 즉시 감춘다
+
+    def _onCardExpanded(self, widget: ContentItemWidget, expanded: bool) -> None:
+        """한 카드가 해상도를 펼치면 펼쳐져 있던 다른 카드를 접는다 (#244 3행 정리).
+
+        펼침은 "지금 이 카드의 화질을 고르는 중"이라는 뜻이라 동시에 둘일 이유가
+        없고, 둘이 펼쳐져 있으면 높이가 늘어난 카드가 둘이라 목록이 어수선하다.
+        유저 조작에만 도는 경로라 O(n) 순회여도 삽입 단가(O(1))와 무관하다.
+        """
+        if not expanded:
+            return
+        for other in self._widgets.values():
+            if other is not widget and other.isExpanded():
+                other.setExpanded(False)
 
     def _onItemRemoved(self, item: ContentItem):
         widget = self._widgets.pop(item, None)

@@ -114,8 +114,13 @@ class TestSlotColumn:
     """3행 슬롯 — 상태마다 다른 질문에 답한다."""
 
     def test_waiting_shows_resolution_pills_only(self, qapp):
+        """대기 슬롯은 pill — 평소엔 선택 pill 하나만 접혀 있고, 펼쳐야 전부 보인다(#244 3행 정리)."""
         widget = _make_widget(qapp, DownloadState.WAITING)
-        assert widget.buttons and all(b.isVisible() for b in widget.buttons)
+        assert widget.buttons and [b.isVisible() for b in widget.buttons] == [True, False]
+        assert not widget.statusLabel.isVisible()
+        widget.setExpanded(True)
+        QApplication.processEvents()
+        assert all(b.isVisible() for b in widget.buttons)
         assert not widget.statusLabel.isVisible()
 
     def test_running_shows_percent_speed_and_remaining(self, qapp):

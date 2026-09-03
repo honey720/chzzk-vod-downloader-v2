@@ -242,13 +242,24 @@ class TestRowOneClusters:
         )
 
 
+def _expanded(widget):
+    """pill을 펼친 상태로 만든다 — 간격·순서 게이트는 펼친 줄에서 잰다(#244 3행 정리).
+
+    평소에는 선택 pill 하나만 접혀 보이므로(`[1080p ▾]`) pill 사이 간격은
+    펼쳤을 때만 존재한다. 펼침 자체의 게이트는 tests/unit/test_resolution_pills.py.
+    """
+    widget.setExpanded(True)
+    QApplication.processEvents()
+    return widget
+
+
 class TestResolutionRow:
-    """3행 — 해상도 pill 좌측 고정 간격, 남는 공간은 가운데 한 곳,
-    파일 크기는 우측 끝."""
+    """3행 — 해상도 pill 좌측 고정 간격(펼친 줄), 남는 공간은 가운데 한 곳,
+    파일 크기는 우측 끝(접힌 줄)."""
 
     @pytest.mark.parametrize("width", WIDTHS)
     def test_pill_gaps_are_fixed(self, qapp, width):
-        widget = _make_widget(qapp)
+        widget = _expanded(_make_widget(qapp))
         _at_width(widget, width)
         for left, right in zip(widget.buttons, widget.buttons[1:]):
             gap = _gap(left, right)
@@ -259,7 +270,7 @@ class TestResolutionRow:
             )
 
     def test_pill_positions_do_not_move_as_the_window_widens(self, qapp):
-        widget = _make_widget(qapp)
+        widget = _expanded(_make_widget(qapp))
         positions = []
         for width in WIDTHS:
             _at_width(widget, width)
@@ -269,11 +280,13 @@ class TestResolutionRow:
         )
 
     def test_free_space_lives_between_pills_and_file_size(self, qapp):
+        """접힌 줄 — 선택 pill(보이는 유일한 pill)과 파일 크기 사이 한 곳만 벌어진다."""
         widget = _make_widget(qapp)
         middle_gaps = []
         for width in WIDTHS:
             _at_width(widget, width)
-            middle_gaps.append(_gap(widget.buttons[-1], widget.fileSizeLabel))
+            selected = next(b for b in widget.buttons if b.isVisible())
+            middle_gaps.append(_gap(selected, widget.fileSizeLabel))
         assert middle_gaps[0] < middle_gaps[1] < middle_gaps[2], (
             f"3행 가운데 간격이 폭을 따라 늘지 않는다: {middle_gaps}"
         )
@@ -299,6 +312,10 @@ def _visible_pills(widget) -> list[str]:
     return [b.text() for b in widget.buttons if b.isVisible()]
 
 
+def _selected(widget):
+    return [b for b in widget.buttons if b.isSelected()]
+
+
 class TestResolutionPillsDescending:
     """해상도 pill은 **내림차순**(높은 해상도가 왼쪽) — #245 오너 확정.
 
@@ -315,8 +332,9 @@ class TestResolutionPillsDescending:
 
     def test_default_selection_is_the_first_pill(self, qapp):
         widget = _make_widget_with_reps(qapp, (480, 1080, 720))
-        selected = [b for b in widget.buttons if not b.isEnabled()]
-        assert selected == [widget.buttons[0]], "기본 선택(최고 해상도)이 첫 pill이 아니다"
+        # 선택 표시는 `isSelected()`(content/pill.py) — 이전의 "선택 = 비활성"은
+        # 접힌 pill을 눌러 펼쳐야 하므로 폐기됐다(#244 3행 정리)
+        assert _selected(widget) == [widget.buttons[0]], "기본 선택(최고 해상도)이 첫 pill이 아니다"
         assert str(widget.item.resolution) == "1080"
 
     @pytest.mark.parametrize("width", WIDTHS)
@@ -325,8 +343,8 @@ class TestResolutionPillsDescending:
         목록에서 선택 표시가 한 줄로 선다."""
         three = _make_widget_with_reps(qapp, (1080, 720, 480), width)
         two = _make_widget_with_reps(qapp, (1080, 720), width)
-        sel3 = next(b for b in three.buttons if not b.isEnabled())
-        sel2 = next(b for b in two.buttons if not b.isEnabled())
+        sel3 = _selected(three)[0]
+        sel2 = _selected(two)[0]
         assert sel3.x() == sel2.x(), (
             f"폭 {width}px에서 선택 pill x가 3개 카드 {sel3.x()} / 2개 카드 {sel2.x()} — "
             "지그재그다(오름차순이면 선택이 맨 오른쓸이라 개수에 따라 움직인다)"
@@ -334,38 +352,51 @@ class TestResolutionPillsDescending:
         assert sel3.x() == three.titleLabel.x(), "선택 pill이 컨텐츠 열 기준선에 있지 않다"
 
     def test_clicking_another_pill_does_not_reorder(self, qapp):
-        widget = _make_widget_with_reps(qapp, (1080, 720, 480))
+        """펼쳐서 480p를 고르면 접히고, 다시 펼쳤을 때 순서·x가 그대로다."""
+        widget = _expanded(_make_widget_with_reps(qapp, (1080, 720, 480)))
         order_before = [b.text() for b in widget.buttons]
         xs_before = [b.x() for b in widget.buttons]
-        widget.buttons[2].click()  # 480p 선택
+        widget.buttons[2].click()  # 480p 선택 → 접힘
         QApplication.processEvents()
+        assert not widget.isExpanded() and _visible_pills(widget) == ["480p"]
+        _expanded(widget)
         assert [b.text() for b in widget.buttons] == order_before
         assert [b.x() for b in widget.buttons] == xs_before, "선택했다고 pill이 움직였다 — 순서는 고정이다"
-        assert not widget.buttons[2].isEnabled() and widget.buttons[0].isEnabled()
+        assert _selected(widget) == [widget.buttons[2]]
 
 
-class TestPillsNeverFold:
-    """해상도 pill은 **어떤 폭에서도 전부 보인다**(#245 확정 — "접지 않는다").
+class TestPillsCollapseToTheSelection:
+    """해상도 pill은 평소 **선택 하나만** 접혀 보이고, 눌러야 전부 펼쳐진다 (#244 3행 정리).
 
-    앞선 접힘 구현(저화질부터 숨김)은 이 결정으로 제거됐다. 3행에서 줄어드는
-    것은 다운로드 경로 하나뿐이다(TestRowThreePriority). pill이 많아 카드
-    최소폭을 넘기면 카드가 줄지 않을 뿐, pill을 숨기지 않는다.
+    #245의 "어떤 폭에서도 전부 보인다(접지 않는다)"는 오너가 2026-08-31에
+    뒤집었다(SPEC §9 — 최종형은 버튼 하나 + 펼침. 5개 카드가 3행을 넘쳤고
+    개수 상한이 없다). 폭에 따라 저화질부터 숨기던 옛 접힘과 달리 **폭과 무관
+    하게** 선택 pill 하나이고, 펼치면 폭과 무관하게 전부(모자라면 줄바꿈)다 —
+    pill을 폭 때문에 잃는 일은 없다. 펼침·줄바꿈 게이트는
+    tests/unit/test_resolution_pills.py.
     """
 
     MANY = (2160, 1440, 1080, 720, 480, 360, 240, 144)
 
     @pytest.mark.parametrize("width", (560, 900, 1600))
-    def test_all_pills_stay_visible_at_every_width(self, qapp, width):
+    def test_only_the_selected_pill_shows_at_every_width(self, qapp, width):
         widget = _make_widget_with_reps(qapp, self.MANY, width)
+        assert _visible_pills(widget) == ["2160p"], f"폭 {width}px: {_visible_pills(widget)}"
+        assert widget.buttons[0].hasCaret(), "접힌 pill에 펼침 표시(▾)가 없다"
+
+    @pytest.mark.parametrize("width", (560, 900, 1600))
+    def test_expanding_shows_every_pill_at_every_width(self, qapp, width):
+        widget = _expanded(_make_widget_with_reps(qapp, self.MANY, width))
         assert _visible_pills(widget) == [f"{r}p" for r in self.MANY], (
-            f"폭 {width}px에서 pill이 접혔다: {_visible_pills(widget)}"
+            f"폭 {width}px에서 펼쳤는데 pill이 빠졌다: {_visible_pills(widget)}"
         )
+        assert not any(b.hasCaret() for b in widget.buttons), "펼친 pill에 ▾가 남아 있다"
 
     def test_pill_widths_do_not_shrink_when_the_card_narrows(self, qapp):
-        widget = _make_widget_with_reps(qapp, self.MANY, 1600)
+        widget = _expanded(_make_widget_with_reps(qapp, self.MANY, 1600))
         wide = [b.width() for b in widget.buttons]
         _at_width(widget, 560)
-        assert [b.width() for b in widget.buttons] == wide, "좁아지자 pill이 쥐어짜였다 — 줄어드는 것은 경로만이어야 한다"
+        assert [b.width() for b in widget.buttons] == wide, "좁아지자 pill이 쥐어짜였다 — 모자라면 줄을 바꿔야 한다"
 
 
 class TestRowThreePriority:
@@ -398,20 +429,22 @@ class TestRowThreePriority:
         """대기 카드의 임계 폭 T — 3행에 pill 전부·아이콘·크기가 **딱** 들어가는 카드 폭.
 
         [D]와 같은 방식으로 테스트가 구성 요소를 **독립 합산**한다(제품 계산 함수
-        미사용): pill 자연 폭 합 + 크기 확보 폭 + 아이콘 폭 + 간격(pill 개수+2) +
+        미사용): **보이는** pill 자연 폭 합(접힘 = 선택 pill 하나, ▾ 포함 — #244
+        3행 정리) + 크기 확보 폭 + 아이콘 폭 + 간격(보이는 pill 개수+2) +
         카드 폭↔3행 폭 차(실측). 절대 px(560/640)는 offscreen 폰트에서 카드 최소폭
         (681)에 클램프돼 세 폭이 한 점으로 붕괴했었다(E-3) — T 기준이면 어떤
         폰트에서도 같은 상대 위치에서 잰다.
         """
         layout = widget.resolutionLayout
         offset = widget.width() - layout.geometry().width()
-        pills = sum(b.sizeHint().width() for b in widget.buttons)
+        visible = [b for b in widget.buttons if b.isVisible()]
+        pills = sum(b.sizeHint().width() for b in visible)
         size = max(widget.fileSizeLabel.minimumWidth(), widget.fileSizeLabel.sizeHint().width())
         # 경로 자리: 아이콘(20px)과 텍스트 라벨의 최소 힌트("…"+4 — offscreen 폰트에선
         # 아이콘보다 넓다) 중 큰 쪽. 작은 쪽을 쓰면 텍스트 모드에서 T가 카드 최소폭보다
         # 작아져 resize_to가 클램프를 잡는다(실측 offscreen 3px).
         slot = max(widget.pathIconButton.minimumWidth(), widget.directoryLabel.minimumSizeHint().width())
-        return offset + pills + size + slot + (len(widget.buttons) + 2) * FIXED_SPACING
+        return offset + pills + size + slot + (len(visible) + 2) * FIXED_SPACING
 
     def _points(self, widget) -> dict:
         """측정점 — T(경로 아이콘) / T+경로 자연 폭÷2(경로 텍스트이되 부분) / T+200."""
@@ -461,14 +494,15 @@ class TestRowThreePriority:
         widths = (threshold + 600, threshold + 300, threshold + half_path, threshold + 40, threshold)
         resize_to(widget, widths[0])
         size_w = widget.fileSizeLabel.width()
-        pills = [(b.x() - widget.buttons[0].x(), b.width()) for b in widget.buttons]
+        visible = [b for b in widget.buttons if b.isVisible()]  # 접힘: 선택 pill 하나
+        pills = [(b.x() - widget.buttons[0].x(), b.width()) for b in visible]
         path_widths = []
         for width in widths:
             resize_to(widget, width)
             assert widget.fileSizeLabel.width() == size_w, f"폭 {width}px에서 파일 크기 폭이 변했다"
             assert self._rendered(widget.fileSizeLabel) == widget.fileSizeLabel.text()
-            assert all(shown(b) for b in widget.buttons), "pill이 숨었다 — 전부 보여야 한다"
-            assert [(b.x() - widget.buttons[0].x(), b.width()) for b in widget.buttons] == pills, (
+            assert [shown(b) for b in visible] == ["2160p"], "접힌 선택 pill이 숨었다"
+            assert [(b.x() - widget.buttons[0].x(), b.width()) for b in visible] == pills, (
                 f"폭 {width}px에서 pill 배치가 변했다"
             )
             path_widths.append(widget.directoryLabel.width() if widget.directoryLabel.isVisible() else 0)
@@ -482,7 +516,7 @@ class TestRowThreePriority:
         """남는 폭이 최소치 아래면 경로는 아이콘만 남는다 — 텍스트가 사라져도
         폴더 선택 진입점은 산다. 전역과 다르면 점 표시(folder_dot)."""
         widget = self._tight(qapp, None)  # T — 경로 자리가 아이콘 하나 폭 < 최소 텍스트 폭
-        assert [shown(b) for b in widget.buttons] == [f"{r}p" for r in self.FIVE], "전제: pill 5개가 전부 보인다(압력의 근원)"
+        assert [shown(b) for b in widget.buttons if b.isVisible()] == ["2160p"], "전제: 접힌 선택 pill이 보인다"
         assert widget.pathIconButton.isVisible(), "경로가 아이콘으로 접히지 않았다 — 전제(최소폭, 5 pill) 확인"
         assert not widget.directoryLabel.isVisible()
         assert widget.pathIconButton.iconName() == "folder_dot", "전역과 다른 경로인데 점 표시가 없다"
