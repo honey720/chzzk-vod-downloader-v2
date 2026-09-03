@@ -202,6 +202,37 @@ class TestComboBoxDropDownStyle:
         hint = QStyle.StyleHint.SH_EtchDisabledText
         assert style.styleHint(hint) == fusion.styleHint(hint)
 
+    def test_deferred_popup_hide_turns_on_flash_hint_for_comboboxes_only(self, qapp):
+        """[J-2 후보 A] `SH_Menu_FlashTriggeredItem`을 QComboBox에 한해 켠다 —
+        v2.9.6의 QMacStyle이 이 힌트로 `hidePopup()`을 한 턴 뒤로 미뤘고,
+        그것이 Enter의 `KeyPress`가 다이얼로그로 새는 것을 막고 있었다
+        (`_DropDownComboBoxStyle` docstring). QMenu(컨텍스트 메뉴)까지
+        깜빡이게 만들지는 않는다."""
+        from PySide6.QtWidgets import QComboBox, QMenu, QStyle
+
+        hint = QStyle.StyleHint.SH_Menu_FlashTriggeredItem
+        combo = QComboBox()
+        menu = QMenu()
+
+        style = theme.build_style(deferred_popup_hide=True)
+        assert style.styleHint(hint, None, combo) == 1
+        assert style.styleHint(hint, None, menu) == 0
+        combo.setStyle(style)
+        assert _style_hint_for_real_combo(style, combo, QStyle.StyleHint.SH_ComboBox_Popup) == 0
+
+        plain = theme.build_style(deferred_popup_hide=False)
+        assert plain.styleHint(hint, None, combo) == 0
+
+    def test_deferred_popup_hide_defaults_follow_the_j2_toggle(self, qapp, monkeypatch):
+        from PySide6.QtWidgets import QComboBox, QStyle
+
+        hint = QStyle.StyleHint.SH_Menu_FlashTriggeredItem
+        combo = QComboBox()
+        monkeypatch.setattr(theme, "J2_CANDIDATE", "flash")
+        assert theme.build_style().styleHint(hint, None, combo) == 1
+        monkeypatch.setattr(theme, "J2_CANDIDATE", "none")
+        assert theme.build_style().styleHint(hint, None, combo) == 0
+
     def test_list_mouse_tracking_hint_is_intentionally_left_untouched(self, qapp):
         """`SH_ComboBox_ListMouseTracking`을 같이 끄면 호버 오염(선택이 마우스를
         따라가는 것)도 같이 사라질 것 같지만, 실측해보니 Fusion은 이 힌트
