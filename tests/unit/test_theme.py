@@ -203,7 +203,7 @@ class TestComboBoxDropDownStyle:
         assert style.styleHint(hint) == fusion.styleHint(hint)
 
     def test_deferred_popup_hide_turns_on_flash_hint_for_comboboxes_only(self, qapp):
-        """[J-2 후보 A] `SH_Menu_FlashTriggeredItem`을 QComboBox에 한해 켠다 —
+        """`SH_Menu_FlashTriggeredItem`을 QComboBox에 한해 켠다 —
         v2.9.6의 QMacStyle이 이 힌트로 `hidePopup()`을 한 턴 뒤로 미뤘고,
         그것이 Enter의 `KeyPress`가 다이얼로그로 새는 것을 막고 있었다
         (`_DropDownComboBoxStyle` docstring). QMenu(컨텍스트 메뉴)까지
@@ -224,13 +224,13 @@ class TestComboBoxDropDownStyle:
         assert plain.styleHint(hint, None, combo) == 0
 
     @pytest.mark.parametrize("platform", ["darwin", "win32", "linux"])
-    @pytest.mark.parametrize("candidate", ["flash", "swallow", "none"])
-    def test_flash_candidate_default_is_macos_only(self, qapp, monkeypatch, platform, candidate):
-        """[J-2 후보 A] 플랫폼 분기를 명시적으로 잰다 — `CVD_J2_CANDIDATE=flash`
-        **이고** macOS일 때만 힌트가 켜진다. Windows 실기 계측에서 이 힌트가
-        v2.9.6 Windows에 없던 깜빡임을 만들었으므로(선택 행 픽셀
-        강조색→바탕색→강조색, 팝업 ~80ms 잔류), 다른 플랫폼에서는 토글이
-        `flash`여도 꺼져 있어야 한다. `build_style()`이 호출 시점의
+    @pytest.mark.parametrize("override", [None, True, False])
+    def test_deferred_popup_hide_default_is_macos_only(self, qapp, monkeypatch, platform, override):
+        """플랫폼 분기를 명시적으로 잰다 — 이것이 이 수정의 계약이다. 생략(None)이면
+        macOS에서만 힌트가 켜지고, 명시(True/False)는 플랫폼과 무관하게 그대로다.
+        Windows 실기 계측에서 이 힌트가 v2.9.6 Windows에 없던 깜빡임을
+        만들었으므로(선택 행 픽셀 강조색→바탕색→강조색, 팝업 ~80ms 잔류) 다른
+        플랫폼에서는 기본으로 꺼져 있어야 한다. `build_style()`이 호출 시점의
         `sys.platform`을 읽기 때문에 여기서 바꿔 가며 잴 수 있다."""
         import sys
 
@@ -238,11 +238,11 @@ class TestComboBoxDropDownStyle:
 
         hint = QStyle.StyleHint.SH_Menu_FlashTriggeredItem
         combo = QComboBox()
-        monkeypatch.setattr(theme, "J2_CANDIDATE", candidate)
         monkeypatch.setattr(sys, "platform", platform)
 
-        expected = 1 if (candidate == "flash" and platform == "darwin") else 0
-        assert theme.build_style().styleHint(hint, None, combo) == expected
+        style = theme.build_style(deferred_popup_hide=override)
+        expected = 1 if (override is True or (override is None and platform == "darwin")) else 0
+        assert style.styleHint(hint, None, combo) == expected
 
     def test_list_mouse_tracking_hint_is_intentionally_left_untouched(self, qapp):
         """`SH_ComboBox_ListMouseTracking`을 같이 끄면 호버 오염(선택이 마우스를

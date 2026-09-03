@@ -35,7 +35,6 @@ QSS 양쪽을 같이 손봐야 동작한다(파이썬에서 속성만 바꾸면 
 """
 
 import logging
-import os
 import re
 import sys
 
@@ -53,28 +52,6 @@ _TOKEN_RE = re.compile(r"@([A-Za-z][A-Za-z0-9_]*)")
 # 번들되므로 이 하위 경로는 배포 워크플로 수정 없이 그대로 따라 들어간다
 # (#216의 `.js` 누락은 `resources/` 밖의 별도 폴더였던 게 원인이다).
 QSS_RELATIVE_PATH = "resources/qss/style.qss"
-
-# ---------------------------------------------------------------------------
-# [J-2 실험 스캐폴딩 — 오너 macOS 실기 비교 뒤 하나만 남기고 이 토글은 제거한다]
-#
-# macOS에서 콤보 드롭다운을 열고 Enter로 항목을 고르면 설정 창까지 닫히는
-# 회귀(v2.9.6은 항목만 선택). 원인은 `#227`/`#241`이 QMacStyle 대신 Fusion을
-# 고정한 것 — 경로는 `_DropDownComboBoxStyle` docstring 참고. 후보 둘을 한
-# 빌드에 넣고 환경변수로 켜서 비교한다:
-#   CVD_J2_CANDIDATE=none     현재 동작(회귀 재현 기준선)
-#   CVD_J2_CANDIDATE=flash    후보 A — 콤보 팝업 닫기를 v2.9.6의 QMacStyle처럼
-#                             한 턴 뒤로 미룬다(`SH_Menu_FlashTriggeredItem`).
-#                             **macOS에서만** 켜진다 — Windows 실기 계측에서 이
-#                             힌트가 없던 깜빡임(선택 행 강조가 ~60ms 사라졌다
-#                             돌아옴, 팝업 ~80ms 잔류)을 만들었다. Windows는 팝업이
-#                             키보드를 grab해 회귀 자체가 없으므로 켤 이유도 없다
-#   CVD_J2_CANDIDATE=swallow  후보 B — 팝업을 닫은 키의 KeyPress가 콤보까지
-#                             새어 들어오면 삼킨다(`config.dialog`)
-# ---------------------------------------------------------------------------
-J2_CANDIDATES = ("none", "flash", "swallow")
-J2_CANDIDATE = os.environ.get("CVD_J2_CANDIDATE", "none").strip().lower()
-if J2_CANDIDATE not in J2_CANDIDATES:
-    J2_CANDIDATE = "none"
 
 # ═══════════════ 오너 튜닝 구역 — 크기·간격·글자 위계 ═══════════════
 # 여기 숫자를 바꾸고 `uv run python main.py`로 바로 확인할 수 있다.
@@ -363,9 +340,10 @@ class _DropDownComboBoxStyle(QProxyStyle):
     어떤 항목이 강조되는지)와는 역할이 겹치지 않는다 — 저건 팝업이 뜬
     *다음* 내용을, 이건 팝업 창 자체가 뜨는 *위치*를 다룬다.
 
-    **[J-2 후보 A] `deferred_popup_hide` — 콤보 팝업 닫기를 한 턴 뒤로 미룬다.**
-    macOS에서 팝업을 열고 Enter로 고르면 설정 창까지 닫히는 회귀의 경로
-    (Qt 6.11.1 소스 추적 + Windows에서 같은 배달 순서를 재현해 확인):
+    **`deferred_popup_hide` — 콤보 팝업 닫기를 한 턴 뒤로 미룬다 (macOS 전용,
+    #240 실기 후속).** macOS에서 팝업을 열고 Enter로 고르면 설정 창까지 닫히던
+    회귀의 경로(Qt 6.11.1 소스 추적 + Windows에서 같은 배달 순서를 재현해 확인,
+    오너 macOS 실기로 수정 확인):
 
     1. Enter의 `ShortcutOverride`가 팝업 뷰에 닿으면 Qt의
        `QComboBoxPrivateContainer::eventFilter`가 `hidePopup()`을 부르고
@@ -386,15 +364,16 @@ class _DropDownComboBoxStyle(QProxyStyle):
        Fusion은 이 힌트가 꺼져 있어(`QCommonStyle` 기본값) 숨김이 즉시
        일어난다 — 이것이 v2.9.6과 유일하게 다른 지점이다.
 
-    후보 A는 3의 힌트를 QComboBox에 한해(QMenu는 건드리지 않음) 되살려
-    v2.9.6 macOS와 같은 지연 숨김을 만든다. 부작용도 v2.9.6 macOS와 같다 —
-    닫힐 때 선택 항목이 약 80ms 깜빡이고(deselect→reselect), 그동안 팝업이
-    떠 있다. **그래서 macOS에서만 켠다**(`_flash_candidate_applies_here()`):
-    Windows 실기에서 켜 보니 v2.9.6 Windows(네이티브 스타일, 이 힌트 0)에는
-    없던 깜빡임이 그대로 생겼다(선택 행 픽셀이 강조색→바탕색→강조색으로
-    바뀌는 것을 시간축으로 계측). Windows는 2의 키보드 grab 덕에 회귀 자체가
-    없으므로 켤 이유도 없다. 후보 B(`config.dialog._ComboBoxPopupCloseKeyGuard`)는
-    2의 새어 들어온 `KeyPress`를 콤보에서 삼키는 쪽이라 플랫폼 분기가 없다.
+    수정은 3의 힌트를 QComboBox에 한해(QMenu는 건드리지 않음) 되살려
+    v2.9.6 macOS와 같은 지연 숨김을 만드는 것이다. 대가도 v2.9.6 macOS와 같다 —
+    닫힐 때 선택 항목이 약 80ms 깜빡이고(deselect→reselect) 그동안 팝업이 떠
+    있는데, 오너 macOS 실기에서 지각되지 않았다. **macOS에서만 켠다**
+    (`_deferred_popup_hide_default()`): Windows 실기에서 켜 보니 v2.9.6
+    Windows(네이티브 스타일, 이 힌트 0)에는 없던 깜빡임이 그대로 생겼다(선택 행
+    픽셀이 강조색→바탕색→강조색으로 바뀌는 것을 시간축으로 계측). Windows는
+    2의 키보드 grab 덕에 회귀 자체가 없으므로 켤 이유도 없다. 새어 들어온
+    `KeyPress`를 위젯 쪽에서 삼키는 방식은 쓸 수 없다 — macOS에서 그 `KeyPress`는
+    콤보를 거치지 않고 다이얼로그 창에 직행한다(오너 macOS 실기로 확인).
     """
 
     def __init__(self, base_style, *, deferred_popup_hide: bool = False) -> None:
@@ -413,14 +392,14 @@ class _DropDownComboBoxStyle(QProxyStyle):
         return super().styleHint(hint, option, widget, returnData)
 
 
-def _flash_candidate_applies_here() -> bool:
-    """[J-2 후보 A]가 이 플랫폼·이 토글 값에서 켜져야 하는지 — macOS에서만.
+def _deferred_popup_hide_default() -> bool:
+    """콤보 팝업의 지연 닫기(`_DropDownComboBoxStyle`)를 기본으로 켤 플랫폼인지 — macOS만.
 
     플랫폼 분기는 "어느 플랫폼에서도 같은 코드가 돈다"는 성질을 잃게 하므로
     조건을 한 곳에 모으고, `tests/unit/test_theme.py`가 플랫폼 값을 바꿔 가며
     이 분기를 명시적으로 잰다(호출 시점의 `sys.platform`을 읽는 이유).
     """
-    return J2_CANDIDATE == "flash" and sys.platform == "darwin"
+    return sys.platform == "darwin"
 
 
 def build_style(*, deferred_popup_hide: bool | None = None) -> QProxyStyle:
@@ -429,12 +408,11 @@ def build_style(*, deferred_popup_hide: bool | None = None) -> QProxyStyle:
     나머지 그리기는 전부 Fusion 그대로다 — `QProxyStyle`은 오버라이드
     안 한 모든 호출을 감싼 베이스 스타일로 넘긴다.
 
-    `deferred_popup_hide`는 [J-2 후보 A] 토글이다 — 생략하면
-    `_flash_candidate_applies_here()`(환경변수 `CVD_J2_CANDIDATE=flash` **이고**
-    macOS)를 따르고, 메커니즘 테스트는 플랫폼과 무관하게 명시해서 넘긴다.
+    `deferred_popup_hide`를 생략하면 `_deferred_popup_hide_default()`(macOS에서만
+    켬)를 따른다. 메커니즘 테스트는 플랫폼과 무관하게 명시해서 넘긴다.
     """
     if deferred_popup_hide is None:
-        deferred_popup_hide = _flash_candidate_applies_here()
+        deferred_popup_hide = _deferred_popup_hide_default()
     return _DropDownComboBoxStyle(
         QStyleFactory.create("Fusion"), deferred_popup_hide=deferred_popup_hide
     )

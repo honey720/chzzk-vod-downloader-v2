@@ -40,8 +40,6 @@ def apply_theme(app):
     그 배치 회귀가 같이 안 딸려온다.
     """
     app.setStyle(theme.build_style())
-    # [J-2 실험] 어느 후보가 켜졌는지 로그로 남긴다 — 오너 macOS 비교 시 확인용
-    logger.info("J-2 candidate: %s (CVD_J2_CANDIDATE)", theme.J2_CANDIDATE)
     theme.set_color_scheme(theme.detect_color_scheme(app))
     # 팔레트 먼저 — QSS가 안 덮는 부분(스크롤 영역 뷰포트·컨텍스트 메뉴 등)을 담당한다
     app.setPalette(theme.build_palette())

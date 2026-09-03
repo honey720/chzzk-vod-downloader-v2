@@ -313,14 +313,13 @@ def _press_enter_the_way_macos_delivers_it(window):
 
 
 class TestComboBoxPopupEnterStaysInsideThePopup:
-    """[J-2] macOS 실기 회귀 — 드롭다운을 열고 Enter로 항목을 고르면 설정 창까지
-    닫힌다(v2.9.6은 항목만 선택). 원인 경로와 두 후보는
-    `theme._DropDownComboBoxStyle`·`config.dialog._ComboBoxPopupCloseKeyGuard`
-    docstring 참고.
+    """#240 macOS 실기 회귀 — 드롭다운을 열고 Enter로 항목을 고르면 설정 창까지
+    닫혔다(v2.9.6은 항목만 선택). 원인 경로와 수정은 `theme._DropDownComboBoxStyle`
+    docstring 참고 — 지연 닫기 힌트를 QComboBox에 한해 macOS에서만 켠다.
 
     게이트는 Enter 뒤에 (1) 콤보가 강조돼 있던 항목으로 바뀌고 (2) 다이얼로그가
-    그대로 열려 있는 것. 후보별로 파라미터화한다 — 오너가 macOS에서 하나를
-    고르면 진 쪽과 토글을 걷어내고 이 파라미터도 하나로 줄인다.
+    그대로 열려 있는 것. 메커니즘을 재므로 `deferred_popup_hide`를 명시해 넘긴다
+    (플랫폼 기본값 분기는 `test_theme.py`가 따로 잰다).
     """
 
     def _show(self, qapp, qtbot):
@@ -345,12 +344,8 @@ class TestComboBoxPopupEnterStaysInsideThePopup:
         view.setCurrentIndex(view.model().index(row, 0))  # 키보드 탐색으로 강조를 옮긴 상태
         return view
 
-    @pytest.mark.parametrize("candidate", ["flash", "swallow"])
-    def test_enter_picks_the_highlighted_item_and_leaves_the_dialog_open(
-        self, qapp, qtbot, monkeypatch, candidate
-    ):
-        monkeypatch.setattr(theme, "J2_CANDIDATE", candidate)
-        qapp.setStyle(hold_style(theme.build_style(deferred_popup_hide=candidate == "flash")))
+    def test_enter_picks_the_highlighted_item_and_leaves_the_dialog_open(self, qapp, qtbot):
+        qapp.setStyle(hold_style(theme.build_style(deferred_popup_hide=True)))
         dialog, combo = self._show(qapp, qtbot)
         finished = []
         dialog.finished.connect(finished.append)
@@ -358,16 +353,15 @@ class TestComboBoxPopupEnterStaysInsideThePopup:
 
         _press_enter_the_way_macos_delivers_it(dialog.windowHandle())
 
-        qtbot.waitUntil(lambda: not view.isVisible())  # 후보 A는 ~80ms 뒤에 닫힌다
+        qtbot.waitUntil(lambda: not view.isVisible())  # 지연 닫기라 ~80ms 뒤에 닫힌다
         assert combo.currentIndex() == 0  # Enter가 강조돼 있던 "none"을 골랐다
         assert dialog.isVisible()
         assert finished == []  # 설정 창은 그대로 열려 있어야 한다
 
-    def test_fault_injection_without_a_candidate_the_dialog_closes(self, qapp, qtbot, monkeypatch):
-        """두 후보를 모두 끄면(현재 프로덕션 = `none`) 위 게이트가 실제로
-        실패하는지 — 이 테스트가 회귀를 보고 있다는 증거이자, macOS 증상의
-        플랫폼 무관 재현이다(고장 주입 관례)."""
-        monkeypatch.setattr(theme, "J2_CANDIDATE", "none")
+    def test_fault_injection_without_deferred_hide_the_dialog_closes(self, qapp, qtbot):
+        """지연 닫기를 끄면(수정 전 동작) 위 게이트가 실제로 실패하는지 — 이
+        테스트가 회귀를 보고 있다는 증거이자, macOS 증상의 플랫폼 무관
+        재현이다(고장 주입 관례)."""
         qapp.setStyle(hold_style(theme.build_style(deferred_popup_hide=False)))
         dialog, combo = self._show(qapp, qtbot)
         finished = []
@@ -380,40 +374,3 @@ class TestComboBoxPopupEnterStaysInsideThePopup:
         assert combo.currentIndex() == 0  # 항목 선택 자체는 된다 — v2.9.6과 같은 부분
         assert finished == [int(QDialog.DialogCode.Accepted)]  # 새어 나간 Enter가 OK를 눌렀다
         assert not dialog.isVisible()
-
-    def test_fault_injection_swallow_candidate_without_wiring_closes_the_dialog(
-        self, qapp, qtbot, monkeypatch
-    ):
-        """후보 B 게이트가 배선(`_wire_popup_close_key_guard`)을 실제로 보고
-        있는지 — 배선을 빼면 같은 시나리오가 다시 실패해야 한다."""
-        monkeypatch.setattr(theme, "J2_CANDIDATE", "swallow")
-        monkeypatch.setattr(dialog_module, "_wire_popup_close_key_guard", lambda combo: None)
-        qapp.setStyle(hold_style(theme.build_style(deferred_popup_hide=False)))
-        dialog, combo = self._show(qapp, qtbot)
-        finished = []
-        dialog.finished.connect(finished.append)
-        view = self._open_popup_and_move_highlight(qtbot, combo, 0)
-
-        _press_enter_the_way_macos_delivers_it(dialog.windowHandle())
-
-        qtbot.waitUntil(lambda: not view.isVisible())
-        assert finished == [int(QDialog.DialogCode.Accepted)]
-
-    def test_swallow_guard_never_eats_a_later_enter(self, qapp, qtbot, monkeypatch):
-        """후보 B의 무장은 같은 턴 안에서만 유효해야 한다 — 팝업을 닫은 뒤 다음
-        턴에 누른 Enter는 평소처럼 다이얼로그의 기본 버튼(OK)까지 가야 한다."""
-        monkeypatch.setattr(theme, "J2_CANDIDATE", "swallow")
-        qapp.setStyle(hold_style(theme.build_style(deferred_popup_hide=False)))
-        dialog, combo = self._show(qapp, qtbot)
-        finished = []
-        dialog.finished.connect(finished.append)
-        view = self._open_popup_and_move_highlight(qtbot, combo, 0)
-
-        _press_enter_the_way_macos_delivers_it(dialog.windowHandle())
-        qtbot.waitUntil(lambda: not view.isVisible())
-        assert finished == []
-        QTest.qWait(20)  # 무장을 푸는 singleShot(0)이 돌 시간
-
-        _press_enter_the_way_macos_delivers_it(dialog.windowHandle())  # 팝업 없이 누른 Enter
-
-        qtbot.waitUntil(lambda: finished == [int(QDialog.DialogCode.Accepted)])
