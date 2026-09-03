@@ -91,12 +91,27 @@ class TestComboBoxPopupHighlightResync:
         combo.setCurrentIndex(2)  # "shutdown" — 임의의 눈에 띄는 값
         return combo
 
+    @staticmethod
+    def _open_popup(qtbot, combo):
+        """`showPopup()` 뒤 팝업 뷰가 실제로 보일 때까지 기다린다.
+
+        Windows 실기 QPA는 `SH_ComboBox_Popup`이 꺼진 드롭다운을 롤 효과
+        (`Qt::UI_AnimateCombo`, `QRollEffect` 150ms)로 띄우므로 `showPopup()`
+        직후에는 뷰가 아직 안 보인다 — 그 상태에서 호버·클릭을 넣거나 `Show`
+        이벤트를 기다리면 아무 일도 안 일어나 이 클래스 5건이 실기에서만
+        실패했다(offscreen은 효과가 없어 즉시 보이므로 CI에서는 늘 통과했고,
+        `#245` 감사가 offscreen 기준이라 못 잡은 부류). 고정 대기가 아니라
+        `waitUntil`이라 offscreen에서는 첫 검사에서 바로 빠져나간다.
+        """
+        combo.showPopup()
+        qtbot.waitUntil(combo.view().isVisible)
+
     def test_popup_opens_with_highlight_on_the_real_current_value(self, qapp, qtbot):
         dialog = SettingDialog()
         qtbot.addWidget(dialog)
         combo = self._combo(dialog)
 
-        combo.showPopup()
+        self._open_popup(qtbot, combo)
         view = combo.view()
 
         assert view.currentIndex().row() == 2
@@ -108,13 +123,13 @@ class TestComboBoxPopupHighlightResync:
         qtbot.addWidget(dialog)
         combo = self._combo(dialog)
 
-        combo.showPopup()
+        self._open_popup(qtbot, combo)
         view = combo.view()
         _hover_row(view, 0)  # "none" 위로 마우스만 지나간다, 클릭은 안 함
         assert view.currentIndex().row() == 0  # Qt가 강조를 실제로 옮긴 것부터 확인
 
         combo.hidePopup()
-        combo.showPopup()
+        self._open_popup(qtbot, combo)
 
         assert combo.currentIndex() == 2  # 콤보 자신의 선택값은 애초에 안 바뀌었다
         assert view.currentIndex().row() == 2  # 재오픈 시 강조가 실제 값으로 돌아와야 한다
@@ -131,7 +146,7 @@ class TestComboBoxPopupHighlightResync:
         view = combo.view()
 
         for _ in range(3):
-            combo.showPopup()
+            self._open_popup(qtbot, combo)
             assert view.currentIndex().row() == 2
             combo.hidePopup()
 
@@ -145,10 +160,10 @@ class TestComboBoxPopupHighlightResync:
         combo = self._combo(dialog)
         view = combo.view()
 
-        combo.showPopup()
+        self._open_popup(qtbot, combo)
         _hover_row(view, 0)
         combo.hidePopup()
-        combo.showPopup()
+        self._open_popup(qtbot, combo)
 
         assert view.currentIndex().row() == 0  # 배선을 빼면 #241 증상 그대로 재현된다
         combo.hidePopup()
@@ -163,14 +178,14 @@ class TestComboBoxPopupHighlightResync:
         combo = self._combo(dialog)  # currentIndex=2("shutdown")
         view = combo.view()
 
-        combo.showPopup()
+        self._open_popup(qtbot, combo)
         rect0 = view.visualRect(view.model().index(0, 0))  # "none" 클릭
         QTest.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=rect0.center())
         QTest.qWait(20)  # Hide 시점에 예약된 singleShot(0)이 돌 시간을 준다
 
         assert combo.currentIndex() == 0  # 클릭한 값으로 실제 선택이 바뀌었다
 
-        combo.showPopup()
+        self._open_popup(qtbot, combo)
         assert view.currentIndex().row() == 0  # 방금 고른 값이 강조돼야 한다(0으로 뭉개지면 안 됨)
         assert view.selectionModel().isSelected(view.model().index(0, 0))
         combo.hidePopup()
@@ -189,14 +204,14 @@ class TestComboBoxPopupHighlightResync:
         view = combo.view()
         window = view.window()
 
-        combo.showPopup()
+        self._open_popup(qtbot, combo)
         _hover_row(view, 0)  # 오염시킨다
         combo.hidePopup()
         QTest.qWait(20)  # Hide 시점 singleShot(0) 복원이 돌 시간을 준다
 
         seen, _probe = _capture_current_index_before_resync_runs(window, view)
 
-        combo.showPopup()
+        self._open_popup(qtbot, combo)
         assert seen == [2]  # Show 콜백이 돌기 *전*부터 이미 올바른 값이어야 한다
         combo.hidePopup()
 
@@ -220,14 +235,14 @@ class TestComboBoxPopupHighlightResync:
         view = combo.view()
         window = view.window()
 
-        combo.showPopup()
+        self._open_popup(qtbot, combo)
         _hover_row(view, 0)
         combo.hidePopup()
         QTest.qWait(20)  # Hide 쪽이 있었다면 여기서 이미 고쳤을 시간 — 지금은 없음
 
         seen, _probe = _capture_current_index_before_resync_runs(window, view)
 
-        combo.showPopup()
+        self._open_popup(qtbot, combo)
         assert seen == [0]  # Show 콜백 전엔 아직 오염된 값 그대로 — 깜빡임 재현
         combo.hidePopup()
 
