@@ -14,9 +14,9 @@
   평소 textMuted) — 이 파일에 색 리터럴은 없다.
 """
 
-from PySide6.QtCore import QPointF, Qt
+from PySide6.QtCore import QPointF, QSize, Qt
 from PySide6.QtGui import QColor, QPainter, QPolygonF
-from PySide6.QtWidgets import QPushButton
+from PySide6.QtWidgets import QPushButton, QSizePolicy
 
 import theme
 
@@ -38,6 +38,27 @@ class ResolutionPill(QPushButton):
         self.setProperty("caret", False)
         # 호버 진입·이탈에 다시 그리게 한다 — ▾ 색이 호버 토큰을 따른다
         self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        # 가로: 자연 폭 이상으로 늘지 않고(Maximum), 최소 폭은 레이아웃을 묶지 않는다
+        # (minimumSizeHint 1px). QPushButton 기본(Minimum)은 최소 폭 = 자연 폭이라
+        # "pill 전부가 한 줄에" 있는 동안 카드 최소폭이 거기에 묶여, 창을 그 아래로
+        # 줄일 수 없고 "안 들어가면 접는다" 판정(content/widget.py::_layoutRowThree)이
+        # 영영 안 온다. 판정은 실제 폭이 아니라 naturalWidth()로 하므로, pill이
+        # 실제로 쥐어짜이는 것은 판정이 도는 리사이즈 한 틱 안에서만이다.
+        self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+
+    def minimumSizeHint(self) -> QSize:
+        """가로 최소는 레이아웃을 묶지 않는다(1px) — 자연 폭은 naturalWidth()가 준다."""
+        return QSize(1, super().minimumSizeHint().height())
+
+    def naturalWidth(self) -> int:
+        """▾ 없이 텍스트+padding만의 자연 폭 — "들어가는가" 판정은 이 값으로 한다.
+
+        `sizeHint()`는 지금 `caret` 속성에 따라 padding-right가 달라 판정에 쓰면
+        모드에 따라 답이 흔들린다(되먹임). ▾ 몫(CARET_WIDTH + CARET_GAP)은 QSS의
+        padding-right 차(20 − 8)와 같은 값이다.
+        """
+        width = self.sizeHint().width()
+        return width - (CARET_WIDTH + CARET_GAP) if self._caret else width
 
     def setSelected(self, selected: bool) -> None:
         """선택 표시(채움)를 켜고 끈다 — 속성 변경 뒤 repolish로 QSS를 다시 계산시킨다."""
