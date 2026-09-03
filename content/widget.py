@@ -374,13 +374,15 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     def _layoutRowThree(self) -> None:
         """3행이 폭을 보고 모양을 정하는 **유일한 지점** (#245 경로 → #244 3행 정리 pill).
 
-        순서(우선순위 — 3행에서 무엇이 먼저 양보하나):
-        ① 우측 군집(파일 크기/재생 시간) 확보 폭은 고정 — 잘리지 않는다
-        ② pill: 전부 + 경로 아이콘 + 크기가 들어가면 **전부**(클릭 한 번에 고른다).
-           안 들어가면 **선택 하나로 접힘**(`[1080p ▾]`) — 누르면 그 자리에서 펼쳐지고
-           그동안 경로·크기는 숨는다(펼침 = 유저 조작, 폭이 넓어져 전부 들어가면 풀린다)
-        ③ 남는 폭 전부 = 경로(ElideMiddle). 최소치(_pathMinTextWidth) 아래면 텍스트를
-           숨기고 pathIconButton만 남긴다 — **텍스트가 사라져도 클릭 대상은 남는다**
+        무엇이 먼저 양보하나 — 폭이 줄수록 이 순서로만 바뀐다(오너 확정, 역방향 없음):
+        ① 경로 ElideMiddle(PathLabel 단계) → ② 경로 아이콘만 → ③ 해상도 접힘([1080p ▾]).
+        ③ 뒤에 자리가 남아도 ①·②로 돌아가지 않는다. 파일 크기·재생 시간은 어떤 폭에서도
+        접지 않는다(확보 폭 고정).
+        - pill: 전부 + 경로 아이콘 + 크기가 들어가면 **전부**(클릭 한 번에 고른다).
+          안 들어가면 접힘 — 누르면 그 자리에서 펼쳐지고 그동안 경로·크기는 숨는다
+          (펼침 = 유저 조작, 폭이 넓어져 전부 들어가면 풀린다)
+        - 경로: 남는 폭 전부(ElideMiddle). 최소치(_pathMinTextWidth) 아래거나 pill이
+          접혔으면 텍스트를 숨기고 pathIconButton만 — **클릭 대상은 남는다**
 
         판정은 라벨·pill 자신의 현재 폭이 아니라 "행 폭 − 자연 폭들"로만 하므로 표시
         모드가 바뀌어도 되먹임이 없다. 배치 전(행 폭 0)이면 전부 보이는 모습으로 두고
@@ -434,7 +436,12 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             if self.fileSizeLabel.isVisibleTo(self):
                 used += max(self.fileSizeLabel.minimumWidth(), self.fileSizeLabel.sizeHint().width()) + spacing
             available = row_width - used
-            icon_only = available < self._pathMinTextWidth()
+            # 접힘(③)이면 자리가 남아도 경로는 아이콘(②)에 머문다 — 순서는 한 방향이다:
+            # ① 경로 ElideMiddle → ② 경로 아이콘 → ③ 해상도 접힘. pill을 접어 생긴 자리로
+            # 경로를 다시 펴면 "폭이 모자라면 해상도를 펴야 하나 접은 채 두나"가 정해지지
+            # 않아 카드마다 우선순위가 반대로 보였다(실기: 5-pill 카드는 접힘+텍스트,
+            # 3-pill 카드는 전부+아이콘). 단조 판정이어야 같은 폭에서 같은 모양이다.
+            icon_only = mode == "collapsed" or available < self._pathMinTextWidth()
             self.directoryLabel.setMaximumWidth(max(available, 0) if not icon_only else _NO_MAX_WIDTH)
             self.directoryLabel.setVisible(not icon_only)
             self.pathIconButton.setVisible(icon_only)

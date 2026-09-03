@@ -2,10 +2,11 @@
 
 - 같은 높이 트랙이 둘인 매니페스트 → pill은 높이당 하나 (core/api/representations.py)
 - 해상도 인라인 확장 — 접힘/펼침, 고르면 접힘, 기하 복원, 줄바꿈 임계 T, 한 번에 하나
+- 3행 접힘 순서 한 방향(① 경로 줄임 → ② 아이콘 → ③ 해상도 접힘, 역방향 없음)
 """
 
 import pytest
-from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 
 import main as main_module
 import theme
@@ -15,7 +16,7 @@ from content.view import ContentListView
 from content.widget import ContentItemWidget
 from core.api.dash import parse_dash_manifest
 from core.models.download_state import DownloadState
-from tests.unit.card_helpers import hold_style
+from tests.unit.card_helpers import hold_style, shown
 
 
 @pytest.fixture(autouse=True)
@@ -484,3 +485,96 @@ class TestOneExpandedAtATime:
         assert second.isExpanded() and not first.isExpanded(), "한 번에 하나만 펼쳐져야 한다"
         assert _visible_pills(first) == ["1080p"]
         view.deleteLater()
+
+
+# ======================= [P-4·1] 접힘 순서는 한 방향 =======================
+#
+# 폭이 줄수록: ① 경로 ElideMiddle → ② 경로 아이콘만 → ③ 해상도 접힘([▾]).
+# ③ 뒤에 자리가 남아도 ①·②로 돌아가지 않는다(오너 확정). 파일 크기·재생 시간은 어떤
+# 폭에서도 접지 않는다. 실기에서 5-pill 카드는 "접힘+경로 텍스트", 3-pill 카드는
+# "전부+아이콘"으로 우선순위가 반대로 보였다 — pill을 접어 생긴 자리로 경로가 다시
+# 펴진 것. 단조 판정이어야 같은 폭에서 항상 같은 모양이다.
+#
+# 고장 주입(확인됨): _layoutRowThree의 `icon_only = mode == "collapsed" or ...`에서
+# 접힘 조건을 빼면 TestShrinkOrderIsMonotonic이 잡는다(③에서 경로 텍스트가 살아난다).
+
+
+
+def _stage(widget) -> int:
+    """3행 모양을 단계 번호로 — 0 전부+경로 전문 / 1 전부+경로 줄임 / 2 전부+아이콘 / 3 접힘+아이콘.
+
+    정의 밖의 조합(접힘+경로 텍스트, 크기 숨김 등)은 -1 — 있으면 안 되는 모양이다.
+    """
+    mode = widget.pillMode()
+    text = widget.directoryLabel.isVisible()
+    icon = widget.pathIconButton.isVisible()
+    if not widget.fileSizeLabel.isVisible() or text == icon:
+        return -1
+    if mode == "all" and text:
+        return 0 if QLabel.text(widget.directoryLabel) == widget.directoryLabel.text() else 1
+    if mode == "all" and icon:
+        return 2
+    if mode == "collapsed" and icon:
+        return 3
+    return -1
+
+
+class TestShrinkOrderIsMonotonic:
+    def _sweep(self, box, widget, widths) -> dict:
+        seen = {}
+        for width in widths:
+            resize_box(box, widget, width)
+            seen[width] = _stage(widget)
+            assert seen[width] != -1, f"폭 {width}px: 정의 밖의 3행 모양(접힘+경로 텍스트 등)"
+            assert shown(widget.fileSizeLabel) == widget.fileSizeLabel.text(), f"폭 {width}px: 파일 크기가 잘렸다"
+        return seen
+
+    def _widths(self, widget):
+        """T(전부 들어가는 임계)를 사이에 두고 넓은 폭에서 접힘 폭까지 4px씩 — 절대 px 없음."""
+        fit = fit_threshold(widget)
+        one = expanded_threshold(widget)
+        return list(range(fit + 400, one - 40, -4))
+
+    def test_narrowing_only_moves_forward_through_the_stages(self, qapp):
+        box, widget = make_boxed(width=1400)
+        seen = self._sweep(box, widget, self._widths(widget))
+        stages = list(seen.values())
+        assert stages[0] == 0 and stages[-1] == 3, f"전제: 넓게 ①전문 → 좁게 ③접힘까지 내려간다: {stages[0]}…{stages[-1]}"
+        assert all(a <= b for a, b in zip(stages, stages[1:])), f"역방향 전이가 있다: {stages}"
+        assert {1, 2} <= set(stages), f"①줄임·②아이콘 단계를 거치지 않았다: {sorted(set(stages))}"
+
+    def test_collapsed_keeps_the_path_icon_even_with_room_to_spare(self, qapp):
+        box, widget = make_boxed(width=900)
+        fit = fit_threshold(widget)
+        resize_box(box, widget, fit - 1)
+        assert widget.pillMode() == "collapsed"
+        # 접힘으로 생긴 자리: 경로 텍스트 최소치보다 훨씬 넓다 — 그래도 아이콘이다
+        used = widget.buttons[0].sizeHint().width() + widget.fileSizeLabel.width() + 3 * FIXED_SPACING
+        room = widget.resolutionLayout.geometry().width() - used
+        assert room > widget.fontMetrics().horizontalAdvance("~/…/abcdef"), "전제: 텍스트를 다시 펼 자리가 남아 있다"
+        assert _stage(widget) == 3 and widget.pathIconButton.isVisible() and not widget.directoryLabel.isVisible(), (
+            "③ 접힘 뒤 자리가 남는다고 경로가 다시 펴졌다 — 순서는 한 방향이다"
+        )
+        assert widget.pathIconButton.toolTip() == LONG_PATH, "아이콘이어도 전문은 툴팁으로 남는다"
+
+    def test_widening_recovers_in_reverse_and_the_same_width_always_looks_the_same(self, qapp):
+        """회복은 되돌아감이 아니다 — 같은 판정을 다시 하는 것. 같은 폭이면 같은 모양이어야 한다."""
+        box, widget = make_boxed(width=1400)
+        widths = self._widths(widget)
+        narrowing = self._sweep(box, widget, widths)
+        widening = self._sweep(box, widget, list(reversed(widths)))
+        assert widening == narrowing, "같은 폭에서 좁힐 때와 넓힐 때 모양이 다르다"
+        stages_up = [widening[w] for w in reversed(widths)]
+        assert all(a >= b for a, b in zip(stages_up, stages_up[1:])), f"넓힐 때 역순 회복이 아니다: {stages_up}"
+
+    def test_bouncing_around_the_threshold_never_oscillates(self, qapp):
+        box, widget = make_boxed(width=900)
+        fit = fit_threshold(widget)
+        expected = {}
+        for _ in range(4):
+            for width in (fit + 1, fit, fit - 1, fit - 30):
+                resize_box(box, widget, width)
+                stage = _stage(widget)
+                assert stage != -1
+                assert expected.setdefault(width, stage) == stage, f"폭 {width}px에서 모양이 진동한다: {expected[width]} → {stage}"
+        assert expected[fit + 1] <= 2 and expected[fit - 1] == 3
