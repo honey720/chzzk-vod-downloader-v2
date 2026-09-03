@@ -418,6 +418,99 @@ def build_style(*, deferred_popup_hide: bool | None = None) -> QProxyStyle:
     )
 
 
+def scheme_name(scheme) -> str | None:
+    """`Qt.ColorScheme` 값을 `"dark"`/`"light"`로 바꾼다. `Unknown`이면 None."""
+    from PySide6.QtCore import Qt
+
+    if scheme == Qt.ColorScheme.Dark:
+        return "dark"
+    if scheme == Qt.ColorScheme.Light:
+        return "light"
+    return None
+
+
+def tokens_for(scheme: str) -> dict:
+    """스킴 이름 → 토큰 표. 알 수 없는 이름은 ValueError — 아무것도 바꾸기 전에 걸러낸다."""
+    if scheme == "dark":
+        return DARK
+    if scheme == "light":
+        return LIGHT
+    raise ValueError(f"알 수 없는 색 스킴: {scheme!r} (가능한 값: 'dark', 'light')")
+
+
+def apply_color_scheme(app, scheme: str, qss_path: str) -> None:
+    """스킴 하나를 앱 전역에 (재)적용한다 — **시작 시점과 실행 중 전환이 같은 경로**.
+
+    **원자적이다.** 새 스타일시트와 팔레트를 먼저 만들어 두고, 둘 다 준비된
+    뒤에야 색을 커밋한다(스킴 확정 → 팔레트 → QSS). 스타일시트 로드가
+    `OSError`/`KeyError`로 실패하면 **아무것도 바뀌지 않는다** — 옛 테마가
+    팔레트·QSS·토큰 전부에서 그대로 일관되게 남는다. 팔레트만 새 테마로 가고
+    QSS가 옛 테마로 남는 "반쪽" 상태(SPEC §9 — 일관되게 안 따라가는 것보다
+    나쁘다)는 이 함수가 만들 수 없다. 실패 시 `setStyleSheet("")`로 비우지도
+    않는다 — 스타일을 벗기면 반쪽보다 나쁘다.
+
+    `app.setStyleSheet()`은 Qt가 모든 위젯을 다시 polish하게 만들므로(실측 —
+    `tests/unit/test_theme_switch.py`가 "시작부터 라이트"와 "다크에서 라이트로
+    전환" 두 화면의 렌더 픽셀이 같은지로 잰다) 동적 속성 선택자
+    (`[state="..."]`)도, 파이썬이 paint 시점에 토큰을 읽는 `IconButton`도 이
+    한 번의 재로드로 함께 갈아입는다. 별도의 `repolish()` 순회는 필요 없었다
+    — 있으면 좋아 보여도 효과가 없는 코드는 두지 않는다(같은 게이트에서
+    빼 보고 확인).
+
+    예외는 그대로 올라온다 — 호출부(`main.apply_theme`)가 시작 시점의 폴백을
+    정하고, 실행 중 전환(`follow_os_color_scheme`)은 로그만 남기고 옛 테마를 지킨다.
+    """
+    tokens = tokens_for(scheme)
+    stylesheet = load_stylesheet(qss_path, tokens)  # 실패하면 여기서 끝 — 아직 아무것도 안 바뀜
+    palette = build_palette(tokens)
+    set_color_scheme(scheme)
+    app.setPalette(palette)
+    app.setStyleSheet(stylesheet)
+    logger.info("color scheme applied: %s (%s)", scheme, qss_path)
+
+
+#: `follow_os_color_scheme()`가 건 슬롯 — 앱당 하나. 파이썬 참조가 죽으면 연결도
+#: 사라지므로 붙들고, 다시 부르면 이전 것을 떼고 교체한다(테스트가 `main.apply_theme()`를
+#: 여러 번 불러도 팔로워가 누적되지 않게 — 누적되면 후행 테스트의 신호 하나에 여러 번 반응한다).
+_SCHEME_FOLLOWERS: dict = {}
+
+
+def follow_os_color_scheme(app, qss_path: str):
+    """OS 라이트/다크 설정이 바뀌면 `apply_color_scheme()`을 다시 태운다.
+
+    `QStyleHints.colorSchemeChanged`는 OS가 보내는 신호다 — offscreen QPA와
+    CI에서는 오지 않으므로 테스트는 `QStyleHints.setColorScheme()`(Qt 6.8+,
+    같은 신호를 낸다)으로 주입한다. 실제로 따라가는지는 오너가 실기에서
+    시스템 테마를 바꿔 확인한다.
+
+    #227 때 넣었다가 뺐던 기능이다(SPEC §8.5) — 카드가 위젯별 `setStyleSheet`이라
+    전역 재적용으로는 안 바뀌어 화면이 반쪽만 갈아입었다. #242로 카드가 전역
+    `.qss`로 옮겨 그 원인이 사라졌고, 이번에 "반쪽 없음"을 게이트로 재서 재도입한다.
+    """
+    hints = app.styleHints()
+    previous = _SCHEME_FOLLOWERS.pop(id(app), None)
+    if previous is not None:
+        hints.colorSchemeChanged.disconnect(previous)
+
+    def _on_changed(scheme) -> None:
+        name = scheme_name(scheme) or detect_color_scheme(app)
+        try:
+            apply_color_scheme(app, name, qss_path)
+        except (OSError, KeyError) as e:
+            logger.warning("color scheme switch failed (%s): %s", qss_path, e)
+
+    hints.colorSchemeChanged.connect(_on_changed)
+    _SCHEME_FOLLOWERS[id(app)] = _on_changed
+    return _on_changed
+
+
+def unfollow_os_color_scheme(app, slot) -> None:
+    """`follow_os_color_scheme()`이 돌려준 슬롯을 뗀다 — 테스트가 전역 배선을 남기지 않기 위한 짝."""
+    if _SCHEME_FOLLOWERS.get(id(app)) is slot:
+        del _SCHEME_FOLLOWERS[id(app)]
+        app.styleHints().colorSchemeChanged.disconnect(slot)
+
+
 def repolish(widget) -> None:
     """동적 속성을 바꾼 뒤 스타일을 다시 계산시킨다.
 

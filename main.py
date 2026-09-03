@@ -40,16 +40,22 @@ def apply_theme(app):
     그 배치 회귀가 같이 안 딸려온다.
     """
     app.setStyle(theme.build_style())
-    theme.set_color_scheme(theme.detect_color_scheme(app))
-    # 팔레트 먼저 — QSS가 안 덮는 부분(스크롤 영역 뷰포트·컨텍스트 메뉴 등)을 담당한다
-    app.setPalette(theme.build_palette())
 
+    # 시작 시점 적용과 실행 중 전환이 같은 함수를 탄다 — 경로가 둘이면 하나만 낡는다.
+    # 팔레트 먼저 — QSS가 안 덮는 부분(스크롤 영역 뷰포트·컨텍스트 메뉴 등)을 담당한다
     qss_path = resource_path(theme.QSS_RELATIVE_PATH)
+    scheme = theme.detect_color_scheme(app)
     try:
-        app.setStyleSheet(theme.load_stylesheet(qss_path))
-        logger.info("stylesheet applied: %s", qss_path)
+        theme.apply_color_scheme(app, scheme, qss_path)
     except (OSError, KeyError) as e:
-        logger.warning("stylesheet load failed (%s): %s", qss_path, e)
+        # 시작 시점 폴백 — apply_color_scheme()은 원자적이라 여기 오면 아무것도 안 바뀐
+        # 상태다. 시작 때는 지킬 "옛 테마"가 없으므로 예전과 같이 감지된 스킴의
+        # 팔레트만 건다(QSS 없이 Qt 기본 외형, #216 정책). 실행 중 전환은 이 폴백을
+        # 타지 않는다 — 실패하면 옛 테마가 그대로 남는다.
+        logger.warning("stylesheet load failed (%s): %s — palette only", qss_path, e)
+        theme.set_color_scheme(scheme)
+        app.setPalette(theme.build_palette())
+    theme.follow_os_color_scheme(app, qss_path)
 
 
 def set_language(app_config, translator):
@@ -95,18 +101,10 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
 
     # 전역 스타일시트 — 위젯이 만들어지기 전에 적용해야 첫 렌더부터 반영된다 (#227)
-    #
-    # 실행 중 OS 테마 전환 추종은 아직 배선하지 않는다 — 예전엔 시도했다가
-    # 뺐다(카드가 위젯별 setStyleSheet을 썼을 때는 카드가 다음에 상태를
-    # 바꿀 때까지 안 바뀌어 화면이 반쪽만 갈아입은 채로 튀어 보였다).
-    # **#240 2단계로 카드 프레임도 전역 .qss(`#contentFrame[state="..."]`)로
-    # 옮기면서 이 블로커는 없어졌다** — 재실측 확인: `apply_theme()`를
-    # 다시 불러 팔레트·스타일시트를 라이트로 바꾸면, 이미 떠 있는 카드도
-    # 위젯을 하나도 안 건드리고 배경·테두리 색이 즉시 같이 바뀐다(진행바가
-    # 이미 그랬던 것과 같은 이유 — 동적 속성 `state`는 그대로 두고 QSS
-    # 토큰만 바뀌므로). 그래도 실행 중 전환 배선 자체는 이 커밋에서 넣지
-    # 않는다 — 별도 PR 소관(OS `colorSchemeChanged` 구독·해제 타이밍,
-    # 다른 위젯들도 전부 무결하게 따라가는지 등은 그 PR에서 다룬다).
+    # 실행 중 OS 테마 전환 추종은 apply_theme() 안에서 함께 건다 — #227 때는
+    # 카드가 위젯별 setStyleSheet이라 반쪽만 갈아입어 뺐고(SPEC §8.5), #242로
+    # 카드가 전역 .qss로 옮겨 온 뒤 "시작부터 라이트"와 "다크→라이트 전환"의
+    # 렌더가 같은지를 게이트(tests/unit/test_theme_switch.py)로 재고 재도입했다.
     apply_theme(app)
 
     # 설정 파일 로드
