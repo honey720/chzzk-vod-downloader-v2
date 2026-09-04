@@ -77,7 +77,6 @@ METRICS = {
     "framePadding": 8,    # 상단·하단 바 안쪽 여백 — cardPadding과 같으면 정렬선이 관통
     "frameRadius": 8,     # 상단·하단 바 모서리
     "outerMargin": 12,    # 창 가장자리 ↔ 상단바·카드 목록·하단바 좌우 여백
-    "contentMaxWidth": 760,  # 콘텐츠 열(상단바·카드·하단바) 최대폭 — 넘는 창 폭은 좌우 여백이 된다
     # ---- 공통 형태 ----
     "radius": 8,          # 버튼·입력창 등 일반 모서리
 }

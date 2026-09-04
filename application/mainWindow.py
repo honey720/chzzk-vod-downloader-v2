@@ -102,13 +102,6 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         self.centralWidgetLayout.setSpacing(8)
         self.headerFrameLayout.setContentsMargins(frame_pad, frame_pad, frame_pad, frame_pad)
         self.infoLayout.setContentsMargins(frame_pad, frame_pad, frame_pad, frame_pad)
-        # 콘텐츠 열 최대폭(#244 목록/헤더) — 넓은 창에서 카드가 창 폭 전체로 늘어나
-        # 3행이 과도하게 벌어지고 가운데가 비는 것을 막는다. 상단바·카드·하단바가
-        # 한 열에 있어 세 개가 같은 기준선으로 함께 멈춘다. 열의 최대폭은
-        # 콘텐츠 최대폭에 좌우 outerMargin을 더한 값 — 열 안 여백까지 포함해야
-        # 콘텐츠 폭이 정확히 contentMaxWidth에서 멈춘다. 남는 폭을 좌우로 나누는
-        # 것은 windowScrollArea의 alignment(AlignHCenter)다.
-        self.contentColumn.setMaximumWidth(theme.METRICS["contentMaxWidth"] + 2 * outer)
         self._equalizeHeaderButtons()
 
     def _screenLogicalSize(self) -> QSize:

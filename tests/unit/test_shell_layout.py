@@ -1,31 +1,32 @@
-"""창 셸(콘텐츠 열·창 최소폭 바닥·좌우 스크롤 안전망·오버레이 좌표) 게이트 (#244 목록/헤더).
+"""창 셸(창 최소폭 바닥·창 전체 좌우 스크롤 안전망·오버레이 좌표) 게이트 (#249).
 
 구조(ui/mainWindow.py):
 
     VodDownloader
     └ windowScrollArea   창 폭이 콘텐츠 최소폭보다 좁을 때만 좌우 스크롤 — 평소엔 안 보인다
-      └ contentColumn    상단바·카드 목록·하단바를 담는 열, 최대폭 = contentMaxWidth + 좌우 outerMargin
-        ├ headerFrame
+      └ contentColumn    상단바·카드 목록·하단바를 담는 컨테이너 — QScrollArea가 자식을 하나만
+        ├ headerFrame    받으므로 셋을 스크롤 영역에 넣으려면 필요하다. 폭 제한·정렬은 없다
         ├ listView       (_Overlay는 이 안에 있다 — 드래그 반투명·빈 목록 안내)
         └ infoFrame
 
 세 가지를 잰다.
-① 콘텐츠 열 최대폭 — 넓은 창에서 상단바·카드·하단바가 같은 폭에서 함께 멈추고 중앙에 놓인다.
 ② 창 최소폭 바닥 — `max(콘텐츠 최소폭, 화면 논리폭 × 0.25)`. 화면을 흉내 내서 두 가지를
    따로 본다(작은 화면이면 콘텐츠 최소가, 큰 화면이면 비율이 이긴다).
 ③ 좌우 스크롤 — 평소 폭 어디서도 안 보이고, 창이 콘텐츠보다 좁게 강제됐을 때만 뜬다.
+   그 안전망이 서려면 셋을 담는 컨테이너(contentColumn)가 스크롤 영역의 유일한 자식이어야
+   한다 — 컨테이너의 존재 이유를 재는 게이트가 함께 있다.
 ④ 오버레이 — 콘텐츠 영역(listView) 좌표계에 있다. 창 기준이 아니다.
 
 폭은 절대 px가 아니라 유도한다: 창 최소폭은 창에서 읽고(콘텐츠 최소는 폰트·OS마다
-다르다 — offscreen 674 / Windows 실기 406), 열 최대폭은 theme 토큰을 테스트가 직접
-더한다. 콘텐츠 최소폭도 제품의 계산(`_contentMinimumWidth`)을 부르지 않고 leaf
-위젯의 힌트를 테스트가 독립 합산한다 — 제품이 틀리면 테스트도 같이 틀리기 때문이다.
+다르다 — offscreen 674 / Windows 실기 406), 넓은 폭은 거기에 더한다. 콘텐츠 최소폭도
+제품의 계산(`_contentMinimumWidth`)을 부르지 않고 leaf 위젯의 힌트를 테스트가 독립
+합산한다 — 제품이 틀리면 테스트도 같이 틀리기 때문이다.
 """
 
 import pytest
 from PySide6.QtCore import QMimeData, QPoint, QRect, QSize, Qt
 from PySide6.QtGui import QDragEnterEvent
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QScrollArea
 
 import main as main_module
 import theme
@@ -34,8 +35,8 @@ from content.data import ContentItem
 from core.models.download_state import DownloadState
 from tests.unit.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
 
-#: 열 최대폭(창 기준) = 콘텐츠 최대폭 + 좌우 outerMargin — 테스트가 토큰을 직접 더한다.
-COLUMN_CAP = theme.METRICS["contentMaxWidth"] + 2 * theme.METRICS["outerMargin"]
+#: "넓은 창" = 창 최소폭 + 이만큼 — 절대 px 대신 창 최소폭에서 유도한다.
+WIDE_EXTRA = 800
 
 
 @pytest.fixture(autouse=True)
@@ -151,73 +152,6 @@ def _independent_content_minimum(win: VodDownloader) -> int:
 
 
 # ---------------------------------------------------------------------------
-# ① 콘텐츠 열 최대폭 + 중앙 정렬
-# ---------------------------------------------------------------------------
-
-
-class TestContentColumnStopsAtTheCapAndSitsInTheMiddle:
-    """넓은 창에서 상단바·카드·하단바는 콘텐츠 최대폭에서 함께 멈추고, 남는 폭은 좌우로 반씩."""
-
-    @pytest.mark.parametrize("extra", (1, 200, 800))
-    def test_header_cards_and_footer_share_the_content_width(self, extra):
-        win = _window(cards=3)
-        _at_width(win, COLUMN_CAP + extra)
-        cap = theme.METRICS["contentMaxWidth"]
-        widths = {
-            "header": win.headerFrame.width(),
-            "list": win.listView.width(),
-            "info": win.infoFrame.width(),
-        }
-        assert set(widths.values()) == {cap}, (
-            f"창 {win.width()}px에서 콘텐츠 폭이 최대폭 {cap}에서 멈추지 않는다: {widths}"
-        )
-        card = next(iter(win.listView._widgets.values()))
-        assert card.width() <= cap, f"카드({card.width()})가 콘텐츠 최대폭({cap})을 넘는다"
-        assert card.width() < win.width() - 2 * theme.METRICS["outerMargin"], (
-            "카드가 창 폭 전체로 늘어났다"
-        )
-
-    @pytest.mark.parametrize("extra", (1, 200, 800))
-    def test_the_column_is_centred_and_the_three_share_one_left_edge(self, extra):
-        win = _window(cards=3)
-        _at_width(win, COLUMN_CAP + extra)
-        header, lst, info = (
-            _in_window(win, w) for w in (win.headerFrame, win.listView, win.infoFrame)
-        )
-        assert header.left() == lst.left() == info.left(), (
-            "상단바·목록·하단바의 왼쪽 정렬선이 어긋난다"
-        )
-        assert header.right() == lst.right() == info.right(), (
-            "상단바·목록·하단바의 오른쪽 끝이 어긋난다"
-        )
-        left_margin = header.left()
-        right_margin = win.width() - 1 - header.right()
-        assert abs(left_margin - right_margin) <= 1, (
-            f"열이 중앙에 있지 않다: 왼쪽 여백 {left_margin} / 오른쪽 여백 {right_margin}"
-        )
-        assert left_margin >= theme.METRICS["outerMargin"] + extra // 2, (
-            "넘는 폭이 여백이 되지 않았다"
-        )
-
-    def test_below_the_cap_the_column_fills_the_window(self):
-        """캡 아래에서는 예전과 같다 — 열이 창을 가득 채우고 여백은 outerMargin뿐."""
-        win = _window(cards=3)
-        low = max(win.minimumWidth(), COLUMN_CAP - 100)
-        _at_width(win, low)
-        outer = theme.METRICS["outerMargin"]
-        header = _in_window(win, win.headerFrame)
-        assert header.left() == outer and header.width() == low - 2 * outer
-
-    def test_inputs_stop_growing_past_the_cap(self):
-        """헤더 입력창은 캡까지만 는다 — test_header_layout의 '창을 따라 는다'의 상한."""
-        win = _window()
-        _at_width(win, COLUMN_CAP)
-        at_cap = win.urlInput.width()
-        _at_width(win, COLUMN_CAP + 600)
-        assert win.urlInput.width() == at_cap, "열 최대폭 너머에서도 입력창이 계속 늘어난다"
-
-
-# ---------------------------------------------------------------------------
 # ② 창 최소폭 바닥
 # ---------------------------------------------------------------------------
 
@@ -308,11 +242,11 @@ class TestWindowMinimumWidthHasAContentFloor:
 
 
 class TestHorizontalScrollIsOnlyASafetyNet:
-    @pytest.mark.parametrize("which", ("min", "cap", "wide"))
+    @pytest.mark.parametrize("which", ("min", "mid", "wide"))
     def test_no_scrollbar_at_any_ordinary_width(self, which):
         win = _window(cards=30)  # 세로 스크롤바가 떠 있는 상태여도 가로는 없어야 한다
-        width = {"min": win.minimumWidth(), "cap": COLUMN_CAP, "wide": COLUMN_CAP + 800}[which]
-        width = max(width, win.minimumWidth())
+        minimum = win.minimumWidth()
+        width = {"min": minimum, "mid": minimum + 300, "wide": minimum + WIDE_EXTRA}[which]
         _at_width(win, width)
         hbar = win.windowScrollArea.horizontalScrollBar()
         assert not hbar.isVisible(), (
@@ -341,13 +275,44 @@ class TestHorizontalScrollIsOnlyASafetyNet:
         )
         assert hbar.maximum() == content_min - win.windowScrollArea.viewport().width()
 
-    def test_the_list_scrollbar_stays_inside_the_column(self):
-        """목록 세로 스크롤바는 열 안에 있다 — 창 오른쪽 끝이 아니라 카드 옆."""
-        win = _window(cards=30)
-        _at_width(win, COLUMN_CAP + 800)
-        vbar = win.listView.verticalScrollBar()
-        assert vbar.isVisible()
-        assert _in_window(win, win.contentColumn).contains(_in_window(win, vbar))
+    def test_the_container_is_the_scroll_areas_only_child_and_holds_all_three(self):
+        """contentColumn의 존재 이유 — QScrollArea는 자식 위젯을 하나만 받는다.
+
+        상단바·목록·하단바가 그 하나(컨테이너) 안에 있어야 셋이 함께 스크롤 영역 안에서
+        움직인다. 컨테이너를 걷어내고 셋을 중앙 위젯에 직접 넣으면 창 전체 좌우 스크롤이
+        성립하지 않는다.
+        """
+        win = _window(cards=3)
+        win.show()
+        QApplication.processEvents()
+        area = win.centralWidget()
+        assert isinstance(area, QScrollArea), (
+            "중앙 위젯이 스크롤 영역이 아니면 창 전체 좌우 스크롤이 없다"
+        )
+        container = area.widget()
+        assert container is win.contentColumn
+        for w in (win.headerFrame, win.listView, win.infoFrame):
+            assert w.parentWidget() is container, f"{w.objectName()}이(가) 컨테이너 밖에 있다"
+        assert container.width() == area.viewport().width(), (
+            "컨테이너는 창 폭을 그대로 채운다(폭 제한 없음)"
+        )
+
+    def test_the_container_fills_the_window_at_every_width(self):
+        """폭 제한이 없다 — 어느 폭에서도 컨테이너와 상단바·목록·하단바가 창을 가득 채운다."""
+        win = _window(cards=3)
+        outer = theme.METRICS["outerMargin"]
+        for width in (
+            win.minimumWidth(),
+            win.minimumWidth() + 300,
+            win.minimumWidth() + WIDE_EXTRA,
+        ):
+            _at_width(win, width)
+            assert win.contentColumn.width() == width
+            for w in (win.headerFrame, win.listView, win.infoFrame):
+                rect = _in_window(win, w)
+                assert (rect.left(), rect.width()) == (outer, width - 2 * outer), (
+                    f"{w.objectName()} {rect} — 창 {width}px"
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -380,36 +345,36 @@ class TestOverlaysLiveInTheContentArea:
     @pytest.mark.parametrize("cards", (0, 3))
     def test_overlay_rect_equals_the_list_rect_not_the_window(self, cards):
         win = _window(cards=cards)
-        _at_width(win, COLUMN_CAP + 800)
+        _at_width(win, win.minimumWidth() + WIDE_EXTRA)
         overlay = _in_window(win, win.listView._overlay)
         lst = _in_window(win, win.listView)
         assert overlay == lst, f"오버레이 {overlay} ≠ 목록 {lst}"
-        assert lst.width() < win.width() and lst.left() > theme.METRICS["outerMargin"], (
-            "전제: 넓은 창이라 목록이 창보다 좁고 중앙에 있어야 한다"
+        assert lst != win.rect() and lst.top() > 0 and lst.width() < win.width(), (
+            "전제: 목록은 창 전체가 아니다(상단바 아래, 좌우 여백 안)"
         )
 
     def test_drag_overlay_dims_the_list_but_not_the_margins(self):
-        """실제 렌더로 확인 — 드래그 중 어두워지는 픽셀은 목록 안에만 있고 열 바깥 여백은 그대로다."""
+        """실제 렌더로 확인 — 드래그 중 어두워지는 픽셀은 목록 안에만 있고 목록 바깥 여백은 그대로다."""
         win = _window(cards=3)
-        _at_width(win, COLUMN_CAP + 800)
+        _at_width(win, win.minimumWidth() + WIDE_EXTRA)
         before = win.grab().toImage()
         _drag_enter(win.listView)
         assert win.listView._dragActive
         after = win.grab().toImage()
         lst = _in_window(win, win.listView)
         inside = QPoint(lst.center().x(), lst.top() + 3)  # 카드 사이 여백이 아닌 목록 위쪽 배경
-        margin = QPoint(lst.left() // 2, lst.center().y())  # 열 바깥 여백
+        margin = QPoint(lst.left() // 2, lst.center().y())  # 목록 왼쪽 바깥 여백(outerMargin)
         assert before.pixel(inside) != after.pixel(inside), (
             "드래그 중인데 목록 안 픽셀이 어두워지지 않았다"
         )
         assert before.pixel(margin) == after.pixel(margin), (
-            "열 바깥 여백까지 어두워졌다 — 오버레이가 창 기준으로 그려졌다"
+            "목록 바깥 여백까지 어두워졌다 — 오버레이가 창 기준으로 그려졌다"
         )
 
     def test_empty_hint_pixels_stay_within_the_list_rect(self):
         """빈 목록 안내 글자는 목록 사각형 안에만 찍힌다(글꼴 무관 — 위치만 본다)."""
         win = _window(cards=0)
-        _at_width(win, COLUMN_CAP + 800)
+        _at_width(win, win.minimumWidth() + WIDE_EXTRA)
         image = win.grab().toImage()
         lst = _in_window(win, win.listView)
         background = image.pixel(QPoint(lst.left() // 2, lst.center().y()))

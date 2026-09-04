@@ -6,11 +6,10 @@
      하단 — 좌측: 진행 요약(muted)+완료 삭제(부차, role=subtle) / 우측: 다운로드·중지
      여백(framePadding·outerMargin)은 application/mainWindow.py::setupDynamicUi가
      theme.METRICS로 런타임에 건다 — 상단·카드·하단 정렬선이 토큰 하나로 관통.
-     #244 목록/헤더 셸: 중앙 위젯은 windowScrollArea(창 폭이 콘텐츠 최소폭보다
-     좁을 때만 좌우 스크롤이 뜨는 안전망, 세로는 항상 끔)이고 그 안의 contentColumn이
-     상단바·목록·하단바를 담는다. 열 최대폭(theme.METRICS["contentMaxWidth"]+좌우
-     outerMargin)은 _applyLayoutMetrics가 런타임에 걸고, 넘는 폭은 alignment가
-     좌우 여백으로 나눈다. -->
+     #249 셸: 중앙 위젯은 windowScrollArea(창 폭이 콘텐츠 최소폭보다 좁을 때만
+     좌우 스크롤이 뜨는 안전망, 세로는 항상 끔)이고 그 안의 contentColumn이
+     상단바·목록·하단바를 담는다 — QScrollArea는 자식 위젯을 하나만 받으므로 셋을
+     넣으려면 컨테이너가 필요하다. 폭 제한·정렬은 없고 창 폭을 그대로 채운다. -->
 <ui version="4.0">
  <class>VodDownloader</class>
  <widget class="QMainWindow" name="VodDownloader">
@@ -40,9 +39,6 @@
    </property>
    <property name="widgetResizable">
     <bool>true</bool>
-   </property>
-   <property name="alignment">
-    <set>Qt::AlignmentFlag::AlignHCenter|Qt::AlignmentFlag::AlignTop</set>
    </property>
    <widget class="QWidget" name="contentColumn">
    <layout class="QVBoxLayout" name="centralWidgetLayout">

@@ -26,15 +26,16 @@ class Ui_VodDownloader(object):
         if not VodDownloader.objectName():
             VodDownloader.setObjectName(u"VodDownloader")
         VodDownloader.resize(600, 800)
-        # 창 전체 셸(#244 목록/헤더):
+        # 창 전체 셸(#249):
         #   VodDownloader
         #   └ windowScrollArea  — 창 폭이 콘텐츠 최소폭보다 좁아졌을 때만 좌우 스크롤이
         #     │                   뜨는 안전망(접근성 배율). 세로 스크롤은 카드 목록 것
         #     │                   하나뿐이라 여기서는 항상 끈다.
-        #     └ contentColumn   — 상단바·카드 목록·하단바를 담는 콘텐츠 열. 최대폭
-        #                         (theme.METRICS["contentMaxWidth"] + 좌우 outerMargin)을
-        #                         넘는 창 폭은 스크롤 영역의 alignment가 좌우 여백으로 나눈다.
-        #     최대폭·여백 수치는 application/mainWindow.py::_applyLayoutMetrics가
+        #     └ contentColumn   — 상단바·카드 목록·하단바를 담는 컨테이너. QScrollArea는
+        #                         자식 위젯을 하나만 받으므로 셋을 스크롤 영역에 넣으려면
+        #                         이 컨테이너가 필요하다. 그 밖의 역할(폭 제한·정렬)은 없다
+        #                         — 창 폭을 그대로 채운다(오너 확정, #249).
+        #     여백 수치는 application/mainWindow.py::_applyLayoutMetrics가
         #     theme.METRICS로 런타임에 건다.
         self.windowScrollArea = QScrollArea(VodDownloader)
         self.windowScrollArea.setObjectName(u"windowScrollArea")
@@ -43,7 +44,6 @@ class Ui_VodDownloader(object):
         self.windowScrollArea.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.windowScrollArea.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.windowScrollArea.setWidgetResizable(True)
-        self.windowScrollArea.setAlignment(Qt.AlignmentFlag.AlignHCenter|Qt.AlignmentFlag.AlignTop)
         self.contentColumn = QWidget()
         self.contentColumn.setObjectName(u"contentColumn")
         self.centralWidgetLayout = QVBoxLayout(self.contentColumn)
