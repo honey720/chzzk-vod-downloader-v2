@@ -26,7 +26,7 @@ from PySide6.QtWidgets import QApplication
 import config.config as config_module
 import main as main_module
 import theme
-from application.mainWindow import VodDownloader, clamp_to_available
+from application.mainWindow import VodDownloader, clamp_to_available, parse_saved_window
 from tests.unit.card_helpers import drop_new_top_levels, hold_style, resize_to, snapshot_top_levels
 
 #: 테스트가 주입하는 작업 영역 — 주 화면.
@@ -83,6 +83,7 @@ def _write_window(state) -> None:
 
 
 def _open() -> VodDownloader:
+    """실제 메인 창을 만들고 대기 중인 이벤트를 소화한다(복원은 생성 시점에 일어난다)."""
     win = VodDownloader()
     QApplication.processEvents()
     QApplication.processEvents()
@@ -90,6 +91,7 @@ def _open() -> VodDownloader:
 
 
 def _in_available(win: VodDownloader) -> bool:
+    """창(프레임 위치 + 클라이언트 크기)이 주입한 작업 영역 안에 완전히 들어가는가."""
     rect = QRect(win.pos(), win.size())
     return AVAILABLE.contains(rect)
 
@@ -165,11 +167,13 @@ class TestRestoreIsClampedToTheCurrentScreen:
         assert _in_available(win)
 
     def test_a_negative_position_is_pushed_to_the_edge(self):
+        """왼쪽·위로 나간 기록은 작업 영역 가장자리(0, 0)로 민다."""
         _write_window({"x": -400, "y": -50, "width": 700, "height": 600, "maximized": False})
         win = _open()
         assert win.pos().toTuple() == (0, 0)
 
     def test_a_saved_rect_that_fits_is_left_alone(self):
+        """작업 영역 안에 있는 기록은 그대로 되살린다."""
         _write_window({"x": 200, "y": 150, "width": 700, "height": 600, "maximized": False})
         win = _open()
         assert (win.pos().toTuple(), win.size().toTuple()) == ((200, 150), (700, 600))
@@ -179,16 +183,19 @@ class TestClampFunction:
     """순수 함수 `clamp_to_available` — 창 없이 사각형만으로 잰다."""
 
     def test_fits_unchanged(self):
+        """안에 들어가는 사각형은 바뀌지 않는다."""
         assert clamp_to_available(QRect(10, 20, 300, 200), QRect(0, 0, 800, 600)) == QRect(
             10, 20, 300, 200
         )
 
     def test_too_big_becomes_the_available_rect(self):
+        """작업 영역보다 큰 사각형은 작업 영역 그 자체가 된다."""
         assert clamp_to_available(QRect(50, 50, 900, 700), QRect(0, 0, 800, 600)) == QRect(
             0, 0, 800, 600
         )
 
     def test_overhang_is_pushed_in_and_negative_origin_is_pushed_to_the_edge(self):
+        """오른쪽·아래로 걸치면 안으로 밀고, 음수 원점은 가장자리로 민다."""
         assert clamp_to_available(QRect(700, 500, 300, 200), QRect(0, 0, 800, 600)) == QRect(
             500, 400, 300, 200
         )
@@ -230,14 +237,123 @@ class TestFirstRunAndOldConfigs:
             {"width": 700},
             "not a dict",
             None,
+            {"x": 1e1000, "y": 0, "width": 700, "height": 600},  # JSON 1e1000 → 무한대
+            {"x": 0, "y": 0, "width": 1e1000, "height": 600},
+            {"x": 10**30, "y": 0, "width": 700, "height": 600},  # C++ int 범위 밖의 거대 정수
+            {"x": 0, "y": 0, "width": 2**31, "height": 600},
+            {"x": float("nan"), "y": 0, "width": 700, "height": 600},
+            {"x": 0, "y": 0, "width": float("nan"), "height": 600},
+            {
+                "x": True,
+                "y": 0,
+                "width": 700,
+                "height": 600,
+            },  # bool은 int의 하위 타입이지만 좌표가 아니다
+            {"x": 0.5, "y": 0, "width": 700, "height": 600},  # 정수값이 아닌 float
+            {"x": 0, "y": 0, "width": 700, "height": 600, "maximized": "yes"},
         ),
     )
     def test_a_broken_record_falls_back_to_the_initial_rule(self, broken):
+        """깨진 기록(문자열·0/음수·필드 누락·비-dict·null·무한대·거대 정수·NaN·bool·비정수 float·비-bool 최대화)은 첫 실행으로 뜬다."""
         _write_window(broken)
         win = _open()
         assert win.width() == _initial_width(), (
             f"깨진 기록 {broken!r}에서 초기 규칙으로 뜨지 않았다: {win.width()}"
         )
+
+
+class TestWhitelist:
+    """`parse_saved_window` — 원하는 형태만 통과한다. config.json은 손으로 고칠 수 있는 파일이라 깨진 값은 정상 시나리오다."""
+
+    def test_a_proper_record_parses(self):
+        """형태가 맞는 기록은 (사각형, 최대화)로 나온다."""
+        assert parse_saved_window(
+            {"x": 1, "y": 2, "width": 700, "height": 600, "maximized": True}
+        ) == (
+            QRect(1, 2, 700, 600),
+            True,
+        )
+
+    def test_integral_floats_are_accepted_and_maximized_defaults_to_false(self):
+        """JSON을 거치며 700.0처럼 실수가 된 정수는 받는다 — 정수값이면 형태가 같다."""
+        assert parse_saved_window({"x": 1.0, "y": 2.0, "width": 700.0, "height": 600.0}) == (
+            QRect(1, 2, 700, 600),
+            False,
+        )
+
+    @pytest.mark.parametrize(
+        "bad",
+        (
+            {"x": 1e1000, "y": 0, "width": 700, "height": 600},
+            {"x": 0, "y": 0, "width": 700, "height": -1e1000},
+            {"x": 10**30, "y": 0, "width": 700, "height": 600},
+            {"x": -(2**31) - 1, "y": 0, "width": 700, "height": 600},
+            {"x": 0, "y": 0, "width": 2**31, "height": 600},
+            {"x": float("nan"), "y": 0, "width": 700, "height": 600},
+            {"x": True, "y": 0, "width": 700, "height": 600},
+            {"x": 0.5, "y": 0, "width": 700, "height": 600},
+            {"x": "1", "y": 0, "width": 700, "height": 600},
+            {"x": 0, "y": 0, "width": 0, "height": 600},
+            {"x": 0, "y": 0, "width": 700},
+            {"x": 0, "y": 0, "width": 700, "height": 600, "maximized": 1},
+            [],
+            "x",
+            None,
+            {},
+        ),
+    )
+    def test_anything_else_is_rejected(self, bad):
+        """화이트리스트 밖의 값은 전부 None — 예외가 아니라 정상 반환이다."""
+        assert parse_saved_window(bad) is None, f"화이트리스트가 {bad!r}를 통과시켰다"
+
+    def test_the_boundary_of_the_qt_int_range_is_inclusive(self):
+        """C++ int의 양 끝값은 범위 안이다."""
+        assert (
+            parse_saved_window({"x": 2**31 - 1, "y": -(2**31), "width": 1, "height": 1}) is not None
+        )
+
+
+class TestRestoreClampsAfterTheMinimumSizeIsApplied:
+    """기록 크기가 최소 크기보다 작으면 Qt가 resize()에서 키운다 — 위치는 그 **뒤**의 실제 크기로 정해야 한다.
+
+    최소 크기는 이음새(`_contentMinimumWidth`, 작업 영역 높이 × 0.5)로 키운다 — DPI·글꼴·번역이
+    바뀌어 최소가 기록보다 커진 상황. 절대 px 대신 작업 영역에서 유도한다.
+    """
+
+    def test_a_small_record_at_the_bottom_right_ends_inside_after_growing(self, monkeypatch):
+        """오른쪽·아래 끝에 붙은 작은 기록이 최소 크기로 커져도 작업 영역 안에 남는다."""
+        grown = AVAILABLE.width() // 2  # 기록 폭보다 훨씬 큰 최소폭
+        monkeypatch.setattr(VodDownloader, "_contentMinimumWidth", lambda self: grown)
+        small = (120, 100)
+        _write_window(
+            {
+                "x": AVAILABLE.width() - small[0],
+                "y": AVAILABLE.height() - small[1],
+                "width": small[0],
+                "height": small[1],
+                "maximized": False,
+            }
+        )
+        win = _open()
+        assert win.width() == grown and win.height() == AVAILABLE.height() // 2, (
+            "전제: 최소 크기가 기록을 키웠어야 한다"
+        )
+        assert win.pos().toTuple() == (
+            AVAILABLE.width() - grown,
+            AVAILABLE.height() - AVAILABLE.height() // 2,
+        ), (
+            f"커진 크기로 위치를 다시 잡지 않아 창이 걸친다: {win.pos().toTuple()} {win.size().toTuple()}"
+        )
+        assert _in_available(win)
+
+    def test_a_small_record_that_fits_after_growing_keeps_its_position(self, monkeypatch):
+        """커진 뒤에도 자리가 있으면 기록 위치를 옮기지 않는다."""
+        grown = AVAILABLE.width() // 2
+        monkeypatch.setattr(VodDownloader, "_contentMinimumWidth", lambda self: grown)
+        _write_window({"x": 100, "y": 80, "width": 120, "height": 100, "maximized": False})
+        win = _open()
+        assert win.size().toTuple() == (grown, AVAILABLE.height() // 2)
+        assert win.pos().toTuple() == (100, 80), "자리가 있으면 위치는 그대로다"
 
 
 class TestMaximized:

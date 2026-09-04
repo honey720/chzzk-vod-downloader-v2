@@ -287,18 +287,22 @@ class TestInitialSizeRule:
 
         class _Screen:
             def size(self):
+                """전체 화면 크기 — 작업 영역과 다르게 둔다."""
                 return QSize(2400, 1000)
 
             def availableGeometry(self):
+                """작업 영역 — 전체 화면보다 작다."""
                 return QRect(0, 0, 1600, 900)
 
         class _App:
             @staticmethod
             def primaryScreen():
+                """주 화면은 위의 가짜 화면 하나."""
                 return _Screen()
 
             @staticmethod
             def screenAt(point):
+                """어느 점에도 화면이 없다고 답한다 — 주 화면 경로로 떨어진다."""
                 return None
 
         import application.mainWindow as module
