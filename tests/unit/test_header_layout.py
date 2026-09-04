@@ -22,6 +22,14 @@
 
 폰트에 의존하지 않는 기하 관계만 잰다(끝선 일치·폭 동일·중앙·증가 방향).
 ⚠️ 창 폭 여러 값으로 잰다 — 이 부류 결함은 넓은 폭에서만 드러난다.
+
+폭 3점은 절대 px가 아니라 유도한다(#244 목록/헤더 셸 이후): "min"은 창의 실제
+최소폭(콘텐츠 최소와 화면 비율의 max — offscreen과 실기에서 다르다), "wide"는
+콘텐츠 열 최대폭(contentMaxWidth + 좌우 outerMargin)을 훌쩍 넘는 폭, "mid"는 그
+사이다. 예전 (640, 900, 1600)은 offscreen에서 640이 콘텐츠 최소폭(674) 아래라
+**눌린 채** 재고 있었고, 900·1600은 열 최대폭 너머라 헤더가 같은 폭이 된다 —
+"입력창이 창 폭을 따라 는다"는 열 최대폭까지만 성립한다(그 너머는
+tests/unit/test_shell_layout.py가 "더 늘지 않는다"를 잰다).
 """
 
 import pytest
@@ -33,8 +41,19 @@ import theme
 from application.mainWindow import VodDownloader
 from tests.unit.card_helpers import hold_style
 
-#: 창 최소폭(ui/mainWindow.py 기준 640 근처)·기본·아주 넓게.
-WIDTHS = (640, 900, 1600)
+#: 창 최소폭 / 최소폭과 열 최대폭 사이 / 열 최대폭 너머 — `_at_width`가 창에서 유도한다.
+WIDTHS = ("min", "mid", "wide")
+
+
+def _resolve_width(win, which: str) -> int:
+    """폭 이름을 실제 px로 — 창 최소폭과 theme 토큰(열 최대폭)에서 유도한다."""
+    column_cap = theme.METRICS["contentMaxWidth"] + 2 * theme.METRICS["outerMargin"]
+    minimum = win.minimumWidth()
+    return {
+        "min": minimum,
+        "mid": (minimum + column_cap) // 2,
+        "wide": column_cap + 800,
+    }[which]
 
 
 @pytest.fixture(autouse=True)
@@ -56,9 +75,17 @@ def window(qapp):
 
 
 def _at_width(win, width):
+    """창을 `width`("min"/"mid"/"wide" 또는 px)로 놓고, 실제 폭이 요청과 같은지 단언한다.
+
+    resize()는 요청이지 결과가 아니다 — 최소폭 미만은 조용히 클램프되어 여러
+    폭이 한 폭으로 붕괴한다(card_helpers.resize_to와 같은 이유).
+    """
+    if isinstance(width, str):
+        width = _resolve_width(win, width)
     win.resize(width, 700)
     win.show()
     QApplication.processEvents()
+    assert win.width() == width, f"요청 폭 {width}px인데 실제 {win.width()}px — 최소폭({win.minimumWidth()})에 클램프됐다"
 
 
 def _right(w) -> int:

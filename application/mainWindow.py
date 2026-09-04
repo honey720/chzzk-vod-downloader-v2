@@ -3,8 +3,8 @@ import os
 import platform
 import config.config as config
 
-from PySide6.QtWidgets import QMainWindow, QMessageBox, QFileDialog, QApplication
-from PySide6.QtCore import QStandardPaths, QTimer
+from PySide6.QtWidgets import QMainWindow, QMessageBox, QFileDialog, QApplication, QWidget
+from PySide6.QtCore import QSize, QStandardPaths, QTimer
 
 from app.viewmodels.download_viewmodel import DownloadViewModel
 from app.viewmodels.path_gates import check_fetch_path, check_remember_path, normalize_path
@@ -50,8 +50,17 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
 
         width_ratio = 0.25
         height_ratio = 0.5
-        min_width = int(QApplication.primaryScreen().size().width() * width_ratio)
-        min_height = int(QApplication.primaryScreen().size().height() * height_ratio)
+        # 창 최소폭 = max(콘텐츠 최소폭, 화면 논리폭 × 비율) (#244 목록/헤더).
+        # 비율 고정은 오너 의도("화면에 비해 너무 큰 창을 강요하지 않는다")라
+        # 그대로 두고, 콘텐츠가 실제로 요구하는 최소를 바닥으로 깐다 — 바닥이
+        # 없으면 작은 화면에서 비율값이 콘텐츠 최소보다 작아져 상단 버튼이
+        # 프레임 밖으로 넘치고 카드 3행이 무너진다(800×600 실기). 콘텐츠 최소는
+        # 상수가 아니라 레이아웃에 묻는다 — 폰트·DPI·번역에 따라 달라지는 값이다.
+        # 창의 중앙 위젯이 스크롤 영역이라 이 최소가 창에 자동으로 전파되지
+        # 않으므로(그래야 접근성 배율에서 좌우 스크롤 안전망이 서므로) 명시한다.
+        screen = self._screenLogicalSize()
+        min_width = max(self._contentMinimumWidth(), int(screen.width() * width_ratio))
+        min_height = int(screen.height() * height_ratio)
         self.setMinimumSize(min_width, min_height)
         self.resize(min_width, min_height)
 
@@ -93,7 +102,36 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         self.centralWidgetLayout.setSpacing(8)
         self.headerFrameLayout.setContentsMargins(frame_pad, frame_pad, frame_pad, frame_pad)
         self.infoLayout.setContentsMargins(frame_pad, frame_pad, frame_pad, frame_pad)
+        # 콘텐츠 열 최대폭(#244 목록/헤더) — 넓은 창에서 카드가 창 폭 전체로 늘어나
+        # 3행이 과도하게 벌어지고 가운데가 비는 것을 막는다. 상단바·카드·하단바가
+        # 한 열에 있어 세 개가 같은 기준선으로 함께 멈춘다. 열의 최대폭은
+        # 콘텐츠 최대폭에 좌우 outerMargin을 더한 값 — 열 안 여백까지 포함해야
+        # 콘텐츠 폭이 정확히 contentMaxWidth에서 멈춘다. 남는 폭을 좌우로 나누는
+        # 것은 windowScrollArea의 alignment(AlignHCenter)다.
+        self.contentColumn.setMaximumWidth(theme.METRICS["contentMaxWidth"] + 2 * outer)
         self._equalizeHeaderButtons()
+
+    def _screenLogicalSize(self) -> QSize:
+        """주 화면의 논리 크기 — 창 최소 크기의 비율 기준. 테스트가 작은 화면을 흉내 내는 이음새."""
+        return QApplication.primaryScreen().size()
+
+    def _contentMinimumWidth(self) -> int:
+        """콘텐츠 열이 실제로 요구하는 최소폭 — 레이아웃에 묻는다 (#244 목록/헤더).
+
+        QSS padding·폰트는 polish 시점에 sizeHint에 들어오므로 먼저 polish한다
+        (`_equalizeHeaderButtons`와 같은 이유). 상수를 박으면 폰트·DPI·OS·번역에서
+        조용히 틀려진다 — offscreen 폰트와 Windows 실기가 이미 다르다(674 vs 406).
+
+        ⚠️ polish만으로는 부족하다. Qt 6는 레이아웃 항목마다 크기 힌트를 캐시하고
+        그 위젯의 `updateGeometry()`에서만 비우는데, 첫 표시 전에는 QSS polish가
+        글꼴을 바꿔도 상단·하단 바(프레임)의 캐시가 polish 전 값으로 남아
+        레이아웃 최소폭이 실제보다 작게 나온다(offscreen 실측 318 — 표시 후 674).
+        자식 전부에 `updateGeometry()`를 걸어 캐시를 비우면 표시 후와 같은 값이 된다.
+        """
+        self.contentColumn.ensurePolished()
+        for child in self.contentColumn.findChildren(QWidget):
+            child.updateGeometry()
+        return self.contentColumn.minimumSizeHint().width()
 
     def _equalizeHeaderButtons(self) -> None:
         """상단 두 텍스트 버튼([VOD 추가]·[경로 찾기])을 같은 폭으로 고정한다 (#245).
