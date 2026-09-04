@@ -9,6 +9,12 @@
 
 config는 conftest의 autouse 픽스처가 테스트마다 임시 폴더로 격리한다. 화면은 이음새로
 주입한다(절대 px는 주입한 화면과 그 파생값뿐).
+
+⚠️ 파일 이름이 `test_shell_`로 시작하는 이유 — 실행 순서다. Windows offscreen에서
+`test_theme.py`·`test_title_hover.py`·`test_widget.py`·`test_widget_theme.py`가 먼저 돈 뒤에
+메인 창(`VodDownloader`)을 만들고 파괴하면 teardown의 `gc.collect()`에서 힙 손상
+(0xc0000374, #243 계열)이 결정적으로 난다 — main의 `test_shell_layout.py`를 그 뒤로 옮겨도
+같다(실측). 이 파일이 `test_t*`보다 앞에 놓이면 나지 않는다. 원인 수정은 #243 몫이다.
 """
 
 import json
