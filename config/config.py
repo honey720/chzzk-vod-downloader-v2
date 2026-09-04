@@ -165,7 +165,11 @@ DEFAULT_CONFIG = {
     "language": "en_US",
     # 유저가 마지막으로 쓴 저장 경로 (#159). 빈 값 = 미설정 → 시스템 다운로드
     # 폴더 폴백. reorder_config가 여기 없는 키를 삭제하므로 등재가 보존의 전제다
-    "downloadPath": ""
+    "downloadPath": "",
+    # 마지막 창 크기·위치·최대화 상태 (#253). 빈 값 = 기록 없음(첫 실행) → 초기 크기
+    # 규칙(application/mainWindow.py)으로 뜬다. 여기 등재돼야 reorder_config가 안 지운다.
+    # 채워지면 {"x","y","width","height","maximized"} — 복원 시 현재 화면으로 클램프한다.
+    "window": {}
 }
 
 # 설정 로드 함수

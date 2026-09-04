@@ -11,8 +11,9 @@
 
 세 가지를 잰다.
 ② 창 최소폭 = 콘텐츠 최소폭만(#251) — 화면 크기를 작게(800)·크게(3440) 주입해도 변하지
-   않는다. 초기 크기는 별개의 관심사라 화면 논리 크기 × 비율을 따르고, 초기 폭이 최소보다
-   작게 나오는 작은 화면에서는 Qt가 최소로 클램프한다 — 둘을 각각 잰다.
+   않는다. 초기 크기는 별개의 관심사(#253): 폭 = min(작업 영역 폭 × 0.45, 상한 토큰), 높이 =
+   작업 영역 높이 × 0.5. 초기 폭이 최소보다 작게 나오는 작은 화면에서는 Qt가 최소로
+   클램프한다. 화면 기준은 전체 화면이 아니라 availableGeometry다 — 둘을 각각 잰다.
 ③ 좌우 스크롤 — 평소 폭 어디서도 안 보이고, 창이 콘텐츠보다 좁게 강제됐을 때만 뜬다.
    그 안전망이 서려면 셋을 담는 컨테이너(contentColumn)가 스크롤 영역의 유일한 자식이어야
    한다 — 컨테이너의 존재 이유를 재는 게이트가 함께 있다.
@@ -78,8 +79,10 @@ SCREENS = (800, 3440)
 
 
 def _fake_screen(monkeypatch, width: int, height: int = 600) -> None:
-    """창이 보는 주 화면 크기를 흉내 낸다 — 초기 크기에는 반영되고 최소폭에는 반영되지 않아야 한다."""
-    monkeypatch.setattr(VodDownloader, "_screenLogicalSize", lambda self: QSize(width, height))
+    """창이 보는 작업 영역(availableGeometry)을 흉내 낸다 — 초기 크기에는 반영되고 최소폭에는 반영되지 않아야 한다."""
+    monkeypatch.setattr(
+        VodDownloader, "_availableGeometry", lambda self, near=None: QRect(0, 0, width, height)
+    )
 
 
 def _make_item(i: int) -> ContentItem:
@@ -202,28 +205,62 @@ class TestMinimumWidthIsTheContentMinimumRegardlessOfScreen:
         assert len(set(widths.values())) == 1, f"화면 크기에 따라 최소폭이 움직인다: {widths}"
 
 
-class TestInitialSizeFollowsTheScreenRatio:
-    """초기 크기는 화면 논리 크기 × 비율(폭 0.25, 높이 0.5)이다 — 최소폭과 별개의 관심사."""
+class TestInitialSizeRule:
+    """초기 크기(#253): 폭 = min(작업 영역 폭 × 0.45, `theme.METRICS["initialWidthMax"]`), 높이 = 작업 영역 × 0.5.
 
-    def test_large_screen_opens_at_the_ratio(self, monkeypatch):
-        """3440×1440 주입: 초기 폭 860·높이 720 — 최소폭(콘텐츠)보다 크므로 그대로 뜬다."""
-        _fake_screen(monkeypatch, 3440, 1440)
+    기대값은 테스트가 토큰과 주입 화면에서 직접 계산한다(제품 함수 미사용). 콘텐츠 최소폭
+    아래로 내려가는 작은 화면에서는 Qt 클램프가 개입하므로 그 경우만 max()를 씌운다.
+    """
+
+    @pytest.mark.parametrize("screen_w", (1366, 1536, 1707, 1920, 2560, 3440))
+    def test_width_is_the_ratio_capped_by_the_token(self, monkeypatch, screen_w):
+        """작업 영역 폭을 주입하면 초기 폭 = min(폭 × 0.45, 상한) (콘텐츠 최소 아래면 최소)."""
+        _fake_screen(monkeypatch, screen_w, 800)
         win = _window()
         win.show()
         QApplication.processEvents()
-        assert (win.width(), win.height()) == (860, 720), (
-            f"초기 크기가 비율을 따르지 않는다: {win.size().toTuple()}"
+        expected = max(
+            win.minimumWidth(), min(int(screen_w * 0.45), theme.METRICS["initialWidthMax"])
         )
-        assert win.minimumWidth() < 860, "전제: 초기 폭이 최소폭보다 커야 비율이 그대로 드러난다"
+        assert (win.width(), win.height()) == (expected, 400), (
+            f"작업 영역 {screen_w}px: 초기 크기 {win.size().toTuple()} ≠ ({expected}, 400)"
+        )
 
-    def test_small_screen_is_clamped_up_to_the_minimum_width(self, monkeypatch):
-        """800×600 주입: 초기 폭 요청 200은 최소폭 아래 → Qt가 최소폭으로 클램프한다(높이는 300 그대로)."""
+    def test_the_cap_wins_on_a_large_screen(self, monkeypatch):
+        """3440 주입: 0.45면 1548인데 상한 토큰에서 멈춘다 — 비율은 선형이지만 적당한 첫 크기는 선형이 아니다."""
+        _fake_screen(monkeypatch, 3440, 1440)
+        cap = theme.METRICS["initialWidthMax"]
+        assert int(3440 * 0.45) > cap, "전제: 비율값이 상한보다 커야 상한이 드러난다"
+        win = _window()
+        win.show()
+        QApplication.processEvents()
+        assert win.width() == cap, (
+            f"큰 화면에서 초기 폭이 상한({cap})에 멈추지 않았다: {win.width()}"
+        )
+        assert win.maximumWidth() > cap, "상한은 첫 크기에만 걸린다 — 창 최대폭 제한이 아니다"
+
+    def test_the_ratio_wins_on_a_small_screen(self, monkeypatch):
+        """1366 주입: 0.45 → 614, 상한 아래이므로 비율값 그대로(콘텐츠 최소보다 크면)."""
+        _fake_screen(monkeypatch, 1366, 768)
+        win = _window()
+        win.show()
+        QApplication.processEvents()
+        expected = max(win.minimumWidth(), int(1366 * 0.45))
+        assert expected < theme.METRICS["initialWidthMax"], (
+            "전제: 작은 화면에서는 비율값이 상한 아래여야 한다"
+        )
+        assert win.width() == expected, (
+            f"작은 화면에서 비율이 반영되지 않았다: {win.width()} ≠ {expected}"
+        )
+
+    def test_tiny_screen_is_clamped_up_to_the_minimum_width(self, monkeypatch):
+        """800×600 주입: 초기 폭 요청 360은 콘텐츠 최소 아래 → Qt가 최소폭으로 클램프한다(높이는 300 그대로)."""
         _fake_screen(monkeypatch, 800, 600)
         win = _window()
         win.show()
         QApplication.processEvents()
-        assert win.minimumWidth() > 200, (
-            "전제: 콘텐츠 최소폭이 비율값(200)보다 커야 클램프가 일어난다"
+        assert win.minimumWidth() > int(800 * 0.45), (
+            "전제: 콘텐츠 최소폭이 비율값(360)보다 커야 클램프가 일어난다"
         )
         assert win.width() == win.minimumWidth(), (
             f"초기 폭이 최소폭으로 클램프되지 않았다: {win.width()} vs {win.minimumWidth()}"
@@ -231,7 +268,7 @@ class TestInitialSizeFollowsTheScreenRatio:
         assert win.height() == 300, f"초기 높이는 비율(600×0.5) 그대로여야 한다: {win.height()}"
 
     def test_minimum_height_still_follows_the_screen_ratio(self, monkeypatch):
-        """최소 높이는 이번에 바꾸지 않았다 — 화면 논리높이 × 0.5 그대로(가로만 바꾼 비대칭이 의도)."""
+        """최소 높이는 바꾸지 않았다 — 작업 영역 높이 × 0.5 그대로(가로만 바꾼 비대칭이 의도, #251)."""
         heights = {}
         for screen_h in (600, 1440):
             _fake_screen(monkeypatch, 3440, screen_h)
@@ -240,6 +277,49 @@ class TestInitialSizeFollowsTheScreenRatio:
             QApplication.processEvents()
             heights[screen_h] = win.minimumHeight()
         assert heights == {600: 300, 1440: 720}, f"최소 높이가 화면 비율을 따르지 않는다: {heights}"
+
+    def test_screen_basis_is_the_available_geometry_not_the_full_screen(self, monkeypatch):
+        """화면 기준은 availableGeometry(작업표시줄·독 제외)다 — 전체 화면(size())이면 창이 화면 밖으로 나간다.
+
+        이음새(`_availableGeometry`)를 흉내 내지 않고 그 **안**의 화면 객체를 흉내 낸다 — 전체
+        화면과 작업 영역이 다른 화면을 주면 어느 쪽을 읽는지 창 크기에 드러난다.
+        """
+
+        class _Screen:
+            def size(self):
+                """전체 화면 크기 — 작업 영역과 다르게 둔다."""
+                return QSize(2400, 1000)
+
+            def availableGeometry(self):
+                """작업 영역 — 전체 화면보다 작다."""
+                return QRect(0, 0, 1600, 900)
+
+        class _App:
+            @staticmethod
+            def primaryScreen():
+                """주 화면은 위의 가짜 화면 하나."""
+                return _Screen()
+
+            @staticmethod
+            def screenAt(point):
+                """어느 점에도 화면이 없다고 답한다 — 주 화면 경로로 떨어진다."""
+                return None
+
+        import application.mainWindow as module
+
+        monkeypatch.setattr(module, "QApplication", _App)
+        win = _window()
+        win.show()
+        QApplication.processEvents()
+        from_available = (min(int(1600 * 0.45), theme.METRICS["initialWidthMax"]), 450)
+        from_full = (min(int(2400 * 0.45), theme.METRICS["initialWidthMax"]), 500)
+        assert from_available != from_full, "전제: 두 기준이 다른 크기를 내야 가를 수 있다"
+        assert win.minimumWidth() < from_available[0], (
+            "전제: 작업 영역 기준 폭이 콘텐츠 최소보다 커야 클램프에 가려지지 않는다"
+        )
+        assert (win.width(), win.height()) == from_available, (
+            f"초기 크기 {win.size().toTuple()} — 작업 영역 {from_available}이 아니라 전체 화면 {from_full} 기준으로 계산됐다"
+        )
 
 
 class TestWindowMinimumWidthHasAContentFloor:

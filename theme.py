@@ -77,6 +77,7 @@ METRICS = {
     "framePadding": 8,    # 상단·하단 바 안쪽 여백 — cardPadding과 같으면 정렬선이 관통
     "frameRadius": 8,     # 상단·하단 바 모서리
     "outerMargin": 12,    # 창 가장자리 ↔ 상단바·카드 목록·하단바 좌우 여백
+    "initialWidthMax": 800,  # 첫 실행 초기 창 폭의 상한 — 콘텐츠 최대폭이 아니다(#253, 유저는 얼마든지 넓힐 수 있다)
     # ---- 공통 형태 ----
     "radius": 8,          # 버튼·입력창 등 일반 모서리
 }

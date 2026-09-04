@@ -4,7 +4,7 @@ import platform
 import config.config as config
 
 from PySide6.QtWidgets import QMainWindow, QMessageBox, QFileDialog, QApplication, QWidget
-from PySide6.QtCore import QSize, QStandardPaths, QTimer
+from PySide6.QtCore import QPoint, QRect, QStandardPaths, QTimer
 
 from app.viewmodels.download_viewmodel import DownloadViewModel
 from app.viewmodels.path_gates import check_fetch_path, check_remember_path, normalize_path
@@ -39,6 +39,55 @@ def _default_download_path() -> str:
 
 
 
+#: Qt 기하는 C++ int다 — 이 범위 밖의 기록값은 QRect를 만들다 OverflowError가 난다.
+_QT_INT_MIN, _QT_INT_MAX = -(2**31), 2**31 - 1
+
+
+def parse_saved_window(saved: object) -> tuple[QRect, bool] | None:
+    """config의 `window` 기록을 **화이트리스트**로 검증해 (사각형, 최대화)로 돌려준다 (#253).
+
+    config.json은 유저가 손으로 고칠 수 있는 파일이라 잘못된 값은 예외가 아니라 정상
+    시나리오다 — 원하는 형태가 아니면 `None`(= 기록 없음, 첫 실행)이다. 통과 조건:
+    dict · x/y/width/height가 bool 아닌 정수(또는 정수값 float) · 유한(NaN·무한 아님) ·
+    C++ int 범위 안 · width/height 양수 · maximized는 없거나 bool.
+    블랙리스트(예외 목록 늘리기)로 막지 않는다 — 다음 종류의 깨진 값에 또 샌다(#180 전례).
+    """
+    if not isinstance(saved, dict):
+        return None
+    values: list[int] = []
+    for key in ("x", "y", "width", "height"):
+        value = saved.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        if isinstance(value, float) and (value != value or value in (float("inf"), float("-inf")) or not value.is_integer()):
+            return None
+        number = int(value)
+        if not _QT_INT_MIN <= number <= _QT_INT_MAX:
+            return None
+        values.append(number)
+    x, y, width, height = values
+    if width <= 0 or height <= 0:
+        return None
+    maximized = saved.get("maximized", False)
+    if not isinstance(maximized, bool):
+        return None
+    return QRect(x, y, width, height), maximized
+
+
+def clamp_to_available(rect: QRect, available: QRect) -> QRect:
+    """창 사각형을 현재 작업 영역 안으로 맞춘다 (#253) — 순수 함수, 테스트가 직접 잰다.
+
+    크기는 작업 영역을 넘지 않게 줄이고, 위치는 오른쪽·아래로 넘치면 안으로 밀되
+    왼쪽·위 가장자리보다 앞서지 않게 한다. 호출부는 `resize()` **뒤**의 실제 크기로
+    부른다 — Qt가 최소 크기로 올린 뒤의 크기여야 위치가 맞는다.
+    """
+    width = min(rect.width(), available.width())
+    height = min(rect.height(), available.height())
+    x = max(available.left(), min(rect.x(), available.left() + available.width() - width))
+    y = max(available.top(), min(rect.y(), available.top() + available.height() - height))
+    return QRect(x, y, width, height)
+
+
 class VodDownloader(QMainWindow, Ui_VodDownloader):
     """
     치지직 VOD 다운로더 메인 UI 클래스.
@@ -48,11 +97,26 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         self.setupUi(self)
         self.setupDynamicUi()
 
-        width_ratio = 0.25
+        width_ratio = 0.45
         height_ratio = 0.5
         # 초기 크기와 최소 크기는 다른 관심사다 (#251, 오너 확정).
         #
-        # 초기 폭  = 화면 논리폭 × 비율 — "화면에 비해 너무 큰 창을 강요하지 않는다".
+        # 초기 폭  = min(작업 영역 폭 × 비율, theme.METRICS["initialWidthMax"]) (#253).
+        #            0.25는 최소폭을 겸하던 시절의 값이라 작았다 — 1536 화면에서 384로
+        #            계산돼 콘텐츠 최소로 클램프되고, 첫 화면부터 경로가 아이콘이고
+        #            해상도가 접힌 채 떴다. 0.45면 1366 이상 화면에서 대기 카드 3행이
+        #            pill 5개까지 펴진다(실측 임계 569, Windows). 그 임계를 여기 상수로
+        #            박지 않는다 — 창을 띄우는 시점엔 카드가 0장이라 제품이 알 수 없고
+        #            폰트·OS·pill 개수마다 달라 상수는 조용히 틀린다.
+        #            상한(토큰)의 근거: 비율은 선형인데 적당한 창 크기는 선형이 아니다 —
+        #            화면이 두 배가 됐다고 창도 두 배로 좋아지지 않고, 작은 화면에 맞춘
+        #            비율은 큰 화면에서 과하다. ⚠️ 이것은 콘텐츠 최대폭 캡이 아니다(그
+        #            설계는 철회됐다) — 유저는 창을 얼마든지 넓힐 수 있고 카드는 창 폭을
+        #            그대로 쓴다. 상한은 "앱이 스스로 정하는 첫 크기"에만 걸린다.
+        #            창 크기를 기억하므로(_restoreWindowState) 이 규칙은 기록이 없는
+        #            첫 실행(또는 기록이 깨졌을 때)에만 쓰인다.
+        # 화면 기준 = availableGeometry(작업표시줄·독 제외). 전체 화면(size())을 쓰면
+        #            세로 작업표시줄·독 환경에서 폭이 어긋나 창이 화면 밖으로 나간다.
         # 최소 폭  = 콘텐츠 최소폭만. "최소"는 더 줄이면 UI가 깨지는 지점이지 화면
         #            크기에 비례할 이유가 없다 — 비율 항을 max()로 섞어 두면 큰 화면에서
         #            최소폭이 콘텐츠 요구보다 올라가 유저가 창을 줄이지 못한다.
@@ -68,10 +132,12 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         #
         # 초기 폭이 콘텐츠 최소보다 작은 화면에서는 Qt가 resize() 요청을 최소 크기로
         # 클램프한다(offscreen·Windows 실기 확인).
-        screen = self._screenLogicalSize()
-        min_height = int(screen.height() * height_ratio)
+        available = self._availableGeometry()
+        min_height = int(available.height() * height_ratio)
         self.setMinimumSize(self._contentMinimumWidth(), min_height)
-        self.resize(int(screen.width() * width_ratio), min_height)
+        initial_width = min(int(available.width() * width_ratio), theme.METRICS["initialWidthMax"])
+        self.resize(initial_width, min_height)
+        self._startMaximized = self._restoreWindowState()
 
         self.contentManager = ContentManager(self.listView)
         # 다운로드 이벤트(진행·완료·실패)는 viewmodel이 content에 직결한다 (#170)
@@ -80,8 +146,11 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         self.setupThreadSignals()
         self.setupSignals()
         
-        self.show()
-        
+        if self._startMaximized:
+            self.showMaximized()
+        else:
+            self.show()
+
     def setupDynamicUi(self):
         """
         UI 동적 설정을 수행한다.
@@ -113,9 +182,65 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         self.infoLayout.setContentsMargins(frame_pad, frame_pad, frame_pad, frame_pad)
         self._equalizeHeaderButtons()
 
-    def _screenLogicalSize(self) -> QSize:
-        """주 화면의 논리 크기 — 초기 폭·최소 높이의 비율 기준. 테스트가 화면 크기를 주입하는 이음새."""
-        return QApplication.primaryScreen().size()
+    def _availableGeometry(self, near: QPoint | None = None) -> QRect:
+        """작업 영역(작업표시줄·독 제외) — 초기 크기·최소 높이·복원 클램프의 화면 기준 (#253).
+
+        `near`가 있으면 그 점이 놓인 화면(기록된 창 위치가 있던 모니터), 없으면 주 화면.
+        테스트가 화면을 주입하는 이음새다.
+        """
+        screen = QApplication.screenAt(near) if near is not None else None
+        if screen is None:
+            screen = QApplication.primaryScreen()
+        return screen.availableGeometry()
+
+    def _restoreWindowState(self) -> bool:
+        """설정에 기록된 창 크기·위치를 되살린다 (#253). 반환값 = 최대화 상태로 띄울지.
+
+        기록이 없거나(첫 실행·구 config) 화이트리스트(`parse_saved_window`)를 못 넘으면 초기
+        크기 규칙(__init__)을 그대로 둔다. 기록값은 그대로 쓰지 않는다 — 모니터를 바꾸거나
+        노트북을 분리하면 저장된 크기·위치가 현재 화면 밖이라 창이 안 보이거나 화면을
+        넘는다. 기록 위치가 놓인 화면의 작업 영역으로 크기를 줄이고 위치를 안으로 민다.
+
+        순서가 중요하다: **resize() 먼저, 그 뒤 실제 size()로 위치를 클램프**한다. 기록
+        크기가 최소 크기보다 작으면 Qt가 resize()에서 최소로 올리는데, 그 전 크기로 위치를
+        정하면 커진 만큼 작업 영역 밖에 걸친다. 최소 크기를 미리 읽어 계산에 넣지 않는다 —
+        첫 표시 전에는 Qt 6 레이아웃 캐시가 polish 전 값을 들고 있어 시점에 따라 틀린다
+        (#249). 최대화였다면 보통 크기를 먼저 복원해 두고(해제 시 돌아갈 크기) 최대화로 띄운다.
+        """
+        parsed = parse_saved_window(config.load_config().get("window"))
+        if parsed is None:
+            return False
+        rect, maximized = parsed
+        try:
+            available = self._availableGeometry(rect.topLeft())
+            self.resize(min(rect.width(), available.width()), min(rect.height(), available.height()))
+            placed = clamp_to_available(QRect(rect.topLeft(), self.size()), available)
+            self.move(placed.topLeft())
+        except (TypeError, ValueError, OverflowError):
+            # 최후 방어선 — 화이트리스트가 이미 거른 뒤라 정상 경로에선 오지 않는다
+            return False
+        return maximized
+
+    def _rememberWindowState(self) -> None:
+        """창 크기·위치·최대화 상태를 설정에 기록한다 (#253) — 창을 닫을 때 한 번.
+
+        저장 시점을 닫기로 둔 이유: 크기·이동마다 쓰면 드래그 한 번에 파일 쓰기가
+        수십 번 일어난다(경로 보존 #165와 같은 "닫을 때 보존" 관례). 최대화 중이면
+        `normalGeometry()`(해제 시 돌아갈 크기)를 기록하고 최대화 플래그를 함께 남긴다.
+        위치는 프레임 기준(`pos()`), 크기는 클라이언트 기준(`size()`) — `move()`/`resize()`와
+        같은 기준이라 왕복이 같은 값을 낸다.
+        """
+        maximized = self.isMaximized()
+        if maximized:
+            geometry = self.normalGeometry()
+            x, y, width, height = geometry.x(), geometry.y(), geometry.width(), geometry.height()
+        else:
+            x, y, width, height = self.pos().x(), self.pos().y(), self.width(), self.height()
+        state = {"x": x, "y": y, "width": width, "height": height, "maximized": maximized}
+        cfg = config.load_config()
+        if cfg.get("window") != state:
+            cfg["window"] = state
+            config.save_config(cfg)
 
     def _contentMinimumWidth(self) -> int:
         """콘텐츠 열이 실제로 요구하는 최소폭 — 레이아웃에 묻는다 (#244 목록/헤더).
@@ -477,4 +602,5 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
                 self.stopDownload()
         # 확정(포커스 이탈) 없이 바로 닫는 경우의 보존 (#165)
         self._rememberPathIfValid()
+        self._rememberWindowState()  # 다음 실행의 창 크기·위치 (#253)
         event.accept()  # 창 닫기 진행
