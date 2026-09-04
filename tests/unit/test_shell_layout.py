@@ -10,8 +10,9 @@
         └ infoFrame
 
 세 가지를 잰다.
-② 창 최소폭 바닥 — `max(콘텐츠 최소폭, 화면 논리폭 × 0.25)`. 화면을 흉내 내서 두 가지를
-   따로 본다(작은 화면이면 콘텐츠 최소가, 큰 화면이면 비율이 이긴다).
+② 창 최소폭 = 콘텐츠 최소폭만(#251) — 화면 크기를 작게(800)·크게(3440) 주입해도 변하지
+   않는다. 초기 크기는 별개의 관심사라 화면 논리 크기 × 비율을 따르고, 초기 폭이 최소보다
+   작게 나오는 작은 화면에서는 Qt가 최소로 클램프한다 — 둘을 각각 잰다.
 ③ 좌우 스크롤 — 평소 폭 어디서도 안 보이고, 창이 콘텐츠보다 좁게 강제됐을 때만 뜬다.
    그 안전망이 서려면 셋을 담는 컨테이너(contentColumn)가 스크롤 영역의 유일한 자식이어야
    한다 — 컨테이너의 존재 이유를 재는 게이트가 함께 있다.
@@ -72,8 +73,12 @@ def no_network(monkeypatch):
     monkeypatch.setattr("content.widget.get_thread_session", lambda: _FailingSession())
 
 
+#: 테스트가 주입하는 화면 논리폭 — 초기 폭(× 0.25)이 콘텐츠 최소보다 작은 쪽과 큰 쪽.
+SCREENS = (800, 3440)
+
+
 def _fake_screen(monkeypatch, width: int, height: int = 600) -> None:
-    """창이 보는 주 화면 크기를 흉내 낸다 — 작은 화면(비율 < 콘텐츠)과 큰 화면(비율 > 콘텐츠)을 따로 본다."""
+    """창이 보는 주 화면 크기를 흉내 낸다 — 초기 크기에는 반영되고 최소폭에는 반영되지 않아야 한다."""
     monkeypatch.setattr(VodDownloader, "_screenLogicalSize", lambda self: QSize(width, height))
 
 
@@ -158,34 +163,87 @@ def _independent_content_minimum(win: VodDownloader) -> int:
 
 
 # ---------------------------------------------------------------------------
-# ② 창 최소폭 바닥
+# ② 창 최소폭 = 콘텐츠 최소폭 (화면과 무관) / 초기 크기 = 화면 비율
 # ---------------------------------------------------------------------------
 
 
-class TestWindowMinimumWidthHasAContentFloor:
-    """창 최소폭 = max(콘텐츠 최소폭, 화면 논리폭 × 0.25). 비율은 유지하고 바닥만 깐다."""
+class TestMinimumWidthIsTheContentMinimumRegardlessOfScreen:
+    """창 최소폭은 콘텐츠 최소폭 하나로 정해진다 — 화면 크기 항이 없다 (#251).
 
-    def test_small_screen_floors_at_the_content_minimum(self, monkeypatch):
-        """800px 화면: 비율(200)이 콘텐츠 최소보다 작다 → 콘텐츠 최소가 바닥이다."""
-        _fake_screen(monkeypatch, 800)
+    ★ 핵심 단언: 화면을 작게(800)·크게(3440) 주입해도 최소폭이 같고, 그 값이 leaf 위젯
+    힌트로 독립 합산한 콘텐츠 최소폭과 일치한다. 비율 항이 max()로 섞이면 큰 화면 쪽이
+    콘텐츠 최소보다 올라가 실패한다.
+    """
+
+    @pytest.mark.parametrize("screen", SCREENS)
+    def test_minimum_width_equals_the_content_minimum(self, monkeypatch, screen):
+        """주입한 화면 크기가 무엇이든 최소폭 == 콘텐츠 최소폭(독립 합산)."""
+        _fake_screen(monkeypatch, screen)
         win = _window()
         win.show()
         QApplication.processEvents()
         content_min = _independent_content_minimum(win)
-        assert content_min > 200, "전제: 콘텐츠 최소폭이 비율값(200)보다 커야 바닥이 의미 있다"
+        assert content_min != int(screen * 0.25), (
+            "전제: 주입한 화면의 비율값이 콘텐츠 최소와 우연히 같으면 못 가른다"
+        )
         assert win.minimumWidth() == content_min, (
-            f"창 최소폭 {win.minimumWidth()} ≠ 콘텐츠 최소폭 {content_min} — 작은 화면에서 바닥이 안 깔렸다"
+            f"화면 {screen}px 주입: 창 최소폭 {win.minimumWidth()} ≠ 콘텐츠 최소폭 {content_min}"
         )
 
-    def test_large_screen_keeps_the_owner_ratio(self, monkeypatch):
-        """4000px 화면: 비율(1000)이 콘텐츠 최소보다 크다 → 비율이 그대로 최소폭이다(바닥은 max일 뿐)."""
-        _fake_screen(monkeypatch, 4000)
+    def test_minimum_width_does_not_move_between_a_small_and_a_large_screen(self, monkeypatch):
+        """같은 콘텐츠면 화면이 800이든 3440이든 최소폭은 같은 숫자다."""
+        widths = {}
+        for screen in SCREENS:
+            _fake_screen(monkeypatch, screen)
+            win = _window()
+            win.show()
+            QApplication.processEvents()
+            widths[screen] = win.minimumWidth()
+        assert len(set(widths.values())) == 1, f"화면 크기에 따라 최소폭이 움직인다: {widths}"
+
+
+class TestInitialSizeFollowsTheScreenRatio:
+    """초기 크기는 화면 논리 크기 × 비율(폭 0.25, 높이 0.5)이다 — 최소폭과 별개의 관심사."""
+
+    def test_large_screen_opens_at_the_ratio(self, monkeypatch):
+        """3440×1440 주입: 초기 폭 860·높이 720 — 최소폭(콘텐츠)보다 크므로 그대로 뜬다."""
+        _fake_screen(monkeypatch, 3440, 1440)
         win = _window()
         win.show()
         QApplication.processEvents()
-        assert win.minimumWidth() == 1000, (
-            f"큰 화면에서 비율 고정(4000×0.25)이 깨졌다: {win.minimumWidth()}"
+        assert (win.width(), win.height()) == (860, 720), (
+            f"초기 크기가 비율을 따르지 않는다: {win.size().toTuple()}"
         )
+        assert win.minimumWidth() < 860, "전제: 초기 폭이 최소폭보다 커야 비율이 그대로 드러난다"
+
+    def test_small_screen_is_clamped_up_to_the_minimum_width(self, monkeypatch):
+        """800×600 주입: 초기 폭 요청 200은 최소폭 아래 → Qt가 최소폭으로 클램프한다(높이는 300 그대로)."""
+        _fake_screen(monkeypatch, 800, 600)
+        win = _window()
+        win.show()
+        QApplication.processEvents()
+        assert win.minimumWidth() > 200, (
+            "전제: 콘텐츠 최소폭이 비율값(200)보다 커야 클램프가 일어난다"
+        )
+        assert win.width() == win.minimumWidth(), (
+            f"초기 폭이 최소폭으로 클램프되지 않았다: {win.width()} vs {win.minimumWidth()}"
+        )
+        assert win.height() == 300, f"초기 높이는 비율(600×0.5) 그대로여야 한다: {win.height()}"
+
+    def test_minimum_height_still_follows_the_screen_ratio(self, monkeypatch):
+        """최소 높이는 이번에 바꾸지 않았다 — 화면 논리높이 × 0.5 그대로(가로만 바꾼 비대칭이 의도)."""
+        heights = {}
+        for screen_h in (600, 1440):
+            _fake_screen(monkeypatch, 3440, screen_h)
+            win = _window()
+            win.show()
+            QApplication.processEvents()
+            heights[screen_h] = win.minimumHeight()
+        assert heights == {600: 300, 1440: 720}, f"최소 높이가 화면 비율을 따르지 않는다: {heights}"
+
+
+class TestWindowMinimumWidthHasAContentFloor:
+    """바닥 폭에서 레이아웃이 깨지지 않고, 바닥은 상수가 아니라 레이아웃에서 온다."""
 
     def test_at_the_floor_nothing_overflows_its_frame(self, monkeypatch):
         """바닥 폭에서 상단 버튼이 프레임 밖으로 나가지 않는다 — 800×600 실기에서 무너지던 그 증상."""

@@ -50,19 +50,28 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
 
         width_ratio = 0.25
         height_ratio = 0.5
-        # 창 최소폭 = max(콘텐츠 최소폭, 화면 논리폭 × 비율) (#244 목록/헤더).
-        # 비율 고정은 오너 의도("화면에 비해 너무 큰 창을 강요하지 않는다")라
-        # 그대로 두고, 콘텐츠가 실제로 요구하는 최소를 바닥으로 깐다 — 바닥이
-        # 없으면 작은 화면에서 비율값이 콘텐츠 최소보다 작아져 상단 버튼이
-        # 프레임 밖으로 넘치고 카드 3행이 무너진다(800×600 실기). 콘텐츠 최소는
-        # 상수가 아니라 레이아웃에 묻는다 — 폰트·DPI·번역에 따라 달라지는 값이다.
-        # 창의 중앙 위젯이 스크롤 영역이라 이 최소가 창에 자동으로 전파되지
-        # 않으므로(그래야 접근성 배율에서 좌우 스크롤 안전망이 서므로) 명시한다.
+        # 초기 크기와 최소 크기는 다른 관심사다 (#251, 오너 확정).
+        #
+        # 초기 폭  = 화면 논리폭 × 비율 — "화면에 비해 너무 큰 창을 강요하지 않는다".
+        # 최소 폭  = 콘텐츠 최소폭만. "최소"는 더 줄이면 UI가 깨지는 지점이지 화면
+        #            크기에 비례할 이유가 없다 — 비율 항을 max()로 섞어 두면 큰 화면에서
+        #            최소폭이 콘텐츠 요구보다 올라가 유저가 창을 줄이지 못한다.
+        #            콘텐츠 최소는 상수가 아니라 레이아웃에 묻는다(폰트·DPI·번역에 따라
+        #            다르다). 창의 중앙 위젯이 스크롤 영역이라 이 최소가 창에 자동으로
+        #            전파되지 않으므로(그래야 접근성 배율에서 좌우 스크롤 안전망이
+        #            서므로) 명시한다. 작은 화면(800×600)에서 상단 버튼이 프레임 밖으로
+        #            넘치던 #249의 결함은 이 바닥으로 그대로 막힌다.
+        # 최소 높이 = 화면 논리높이 × 비율 (그대로). ⚠️ 가로와 맞추지 말 것 — 가로가
+        #            모자라면 콘텐츠가 잘리지만 세로가 모자라면 카드 개수만 준다. 세로의
+        #            레이아웃 최소는 "카드 0장"이라 쓸모의 최소와 크게 달라 별도 판단이
+        #            필요하고, 그 판단은 하단바를 걷어낸 뒤로 미룬다(#251).
+        #
+        # 초기 폭이 콘텐츠 최소보다 작은 화면에서는 Qt가 resize() 요청을 최소 크기로
+        # 클램프한다(offscreen·Windows 실기 확인).
         screen = self._screenLogicalSize()
-        min_width = max(self._contentMinimumWidth(), int(screen.width() * width_ratio))
         min_height = int(screen.height() * height_ratio)
-        self.setMinimumSize(min_width, min_height)
-        self.resize(min_width, min_height)
+        self.setMinimumSize(self._contentMinimumWidth(), min_height)
+        self.resize(int(screen.width() * width_ratio), min_height)
 
         self.contentManager = ContentManager(self.listView)
         # 다운로드 이벤트(진행·완료·실패)는 viewmodel이 content에 직결한다 (#170)
@@ -105,7 +114,7 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         self._equalizeHeaderButtons()
 
     def _screenLogicalSize(self) -> QSize:
-        """주 화면의 논리 크기 — 창 최소 크기의 비율 기준. 테스트가 작은 화면을 흉내 내는 이음새."""
+        """주 화면의 논리 크기 — 초기 폭·최소 높이의 비율 기준. 테스트가 화면 크기를 주입하는 이음새."""
         return QApplication.primaryScreen().size()
 
     def _contentMinimumWidth(self) -> int:
