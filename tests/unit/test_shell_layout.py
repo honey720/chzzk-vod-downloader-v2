@@ -58,11 +58,15 @@ def _destroy_windows():
 
 @pytest.fixture(autouse=True)
 def no_network(monkeypatch):
+    """카드의 썸네일·크기 조회가 실호출로 새지 않게 세션을 막는다 — 호출되면 즉시 실패한다."""
+
     class _FailingSession:
         def head(self, *a, **k):
+            """HEAD 요청은 금지 — 호출 자체가 테스트 실패다."""
             raise RuntimeError("network disabled in tests")
 
         def get(self, *a, **k):
+            """GET 요청은 금지 — 호출 자체가 테스트 실패다."""
             raise RuntimeError("network disabled in tests")
 
     monkeypatch.setattr("content.widget.get_thread_session", lambda: _FailingSession())
@@ -74,6 +78,7 @@ def _fake_screen(monkeypatch, width: int, height: int = 600) -> None:
 
 
 def _make_item(i: int) -> ContentItem:
+    """대기 카드용 최소 아이템 — 제목·채널만 다르고 해상도 목록은 비어 있다."""
     return ContentItem(
         f"https://chzzk.naver.com/video/{i}",
         {
@@ -93,6 +98,7 @@ def _make_item(i: int) -> ContentItem:
 
 
 def _window(cards: int = 0) -> VodDownloader:
+    """실제 메인 창을 만들고 대기 카드 `cards`장을 모델 경로로 넣는다(실배선)."""
     win = VodDownloader()
     for i in range(cards):
         item = _make_item(i)
@@ -244,6 +250,7 @@ class TestWindowMinimumWidthHasAContentFloor:
 class TestHorizontalScrollIsOnlyASafetyNet:
     @pytest.mark.parametrize("which", ("min", "mid", "wide"))
     def test_no_scrollbar_at_any_ordinary_width(self, which):
+        """평소 폭(최소·중간·넓게) 어디서도 창 전체 스크롤바는 가로·세로 모두 보이지 않는다."""
         win = _window(cards=30)  # 세로 스크롤바가 떠 있는 상태여도 가로는 없어야 한다
         minimum = win.minimumWidth()
         width = {"min": minimum, "mid": minimum + 300, "wide": minimum + WIDE_EXTRA}[which]
@@ -344,6 +351,7 @@ class TestOverlaysLiveInTheContentArea:
 
     @pytest.mark.parametrize("cards", (0, 3))
     def test_overlay_rect_equals_the_list_rect_not_the_window(self, cards):
+        """오버레이 사각형은 목록 사각형과 같다 — 창 사각형이 아니다(카드 유무 무관)."""
         win = _window(cards=cards)
         _at_width(win, win.minimumWidth() + WIDE_EXTRA)
         overlay = _in_window(win, win.listView._overlay)
