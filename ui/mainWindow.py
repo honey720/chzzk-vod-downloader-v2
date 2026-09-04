@@ -16,7 +16,7 @@ from PySide6.QtGui import (QBrush, QColor, QConicalGradient, QCursor,
     QImage, QKeySequence, QLinearGradient, QPainter,
     QPalette, QPixmap, QRadialGradient, QTransform)
 from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel,
-    QLineEdit, QMainWindow, QPushButton, QSizePolicy,
+    QLineEdit, QMainWindow, QPushButton, QScrollArea, QSizePolicy,
     QSpacerItem, QVBoxLayout, QWidget)
 
 from content.view import ContentListView
@@ -26,11 +26,29 @@ class Ui_VodDownloader(object):
         if not VodDownloader.objectName():
             VodDownloader.setObjectName(u"VodDownloader")
         VodDownloader.resize(600, 800)
-        self.centralwidget = QWidget(VodDownloader)
-        self.centralwidget.setObjectName(u"centralwidget")
-        self.centralWidgetLayout = QVBoxLayout(self.centralwidget)
+        # 창 전체 셸(#249):
+        #   VodDownloader
+        #   └ windowScrollArea  — 창 폭이 콘텐츠 최소폭보다 좁아졌을 때만 좌우 스크롤이
+        #     │                   뜨는 안전망(접근성 배율). 세로 스크롤은 카드 목록 것
+        #     │                   하나뿐이라 여기서는 항상 끈다.
+        #     └ contentColumn   — 상단바·카드 목록·하단바를 담는 컨테이너. QScrollArea는
+        #                         자식 위젯을 하나만 받으므로 셋을 스크롤 영역에 넣으려면
+        #                         이 컨테이너가 필요하다. 그 밖의 역할(폭 제한·정렬)은 없다
+        #                         — 창 폭을 그대로 채운다(오너 확정, #249).
+        #     여백 수치는 application/mainWindow.py::_applyLayoutMetrics가
+        #     theme.METRICS로 런타임에 건다.
+        self.windowScrollArea = QScrollArea(VodDownloader)
+        self.windowScrollArea.setObjectName(u"windowScrollArea")
+        self.windowScrollArea.setFrameShape(QFrame.Shape.NoFrame)
+        self.windowScrollArea.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.windowScrollArea.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.windowScrollArea.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.windowScrollArea.setWidgetResizable(True)
+        self.contentColumn = QWidget()
+        self.contentColumn.setObjectName(u"contentColumn")
+        self.centralWidgetLayout = QVBoxLayout(self.contentColumn)
         self.centralWidgetLayout.setObjectName(u"centralWidgetLayout")
-        self.headerFrame = QFrame(self.centralwidget)
+        self.headerFrame = QFrame(self.contentColumn)
         self.headerFrame.setObjectName(u"headerFrame")
         self.headerFrame.setFrameShape(QFrame.Shape.Box)
         self.headerFrame.setFrameShadow(QFrame.Shadow.Sunken)
@@ -116,13 +134,13 @@ class Ui_VodDownloader(object):
 
         self.centralWidgetLayout.addWidget(self.headerFrame)
 
-        self.listView = ContentListView(self.centralwidget)
+        self.listView = ContentListView(self.contentColumn)
         self.listView.setObjectName(u"listView")
         self.listView.setAcceptDrops(True)
 
         self.centralWidgetLayout.addWidget(self.listView)
 
-        self.infoFrame = QFrame(self.centralwidget)
+        self.infoFrame = QFrame(self.contentColumn)
         self.infoFrame.setObjectName(u"infoFrame")
         self.infoFrame.setFrameShape(QFrame.Shape.Box)
         self.infoFrame.setFrameShadow(QFrame.Shadow.Sunken)
@@ -158,7 +176,8 @@ class Ui_VodDownloader(object):
 
         self.centralWidgetLayout.addWidget(self.infoFrame)
 
-        VodDownloader.setCentralWidget(self.centralwidget)
+        self.windowScrollArea.setWidget(self.contentColumn)
+        VodDownloader.setCentralWidget(self.windowScrollArea)
         QWidget.setTabOrder(self.urlInput, self.fetchButton)
         QWidget.setTabOrder(self.fetchButton, self.downloadPathInput)
         QWidget.setTabOrder(self.downloadPathInput, self.downloadPathButton)

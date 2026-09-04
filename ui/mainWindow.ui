@@ -5,7 +5,11 @@
                                           상태 메시지 한 줄(색으로 성공·실패 구분)
      하단 — 좌측: 진행 요약(muted)+완료 삭제(부차, role=subtle) / 우측: 다운로드·중지
      여백(framePadding·outerMargin)은 application/mainWindow.py::setupDynamicUi가
-     theme.METRICS로 런타임에 건다 — 상단·카드·하단 정렬선이 토큰 하나로 관통. -->
+     theme.METRICS로 런타임에 건다 — 상단·카드·하단 정렬선이 토큰 하나로 관통.
+     #249 셸: 중앙 위젯은 windowScrollArea(창 폭이 콘텐츠 최소폭보다 좁을 때만
+     좌우 스크롤이 뜨는 안전망, 세로는 항상 끔)이고 그 안의 contentColumn이
+     상단바·목록·하단바를 담는다 — QScrollArea는 자식 위젯을 하나만 받으므로 셋을
+     넣으려면 컨테이너가 필요하다. 폭 제한·정렬은 없고 창 폭을 그대로 채운다. -->
 <ui version="4.0">
  <class>VodDownloader</class>
  <widget class="QMainWindow" name="VodDownloader">
@@ -20,7 +24,23 @@
   <property name="windowTitle">
    <string>Chzzk VOD Downloader</string>
   </property>
-  <widget class="QWidget" name="centralwidget">
+  <widget class="QScrollArea" name="windowScrollArea">
+   <property name="frameShape">
+    <enum>QFrame::Shape::NoFrame</enum>
+   </property>
+   <property name="focusPolicy">
+    <enum>Qt::FocusPolicy::NoFocus</enum>
+   </property>
+   <property name="verticalScrollBarPolicy">
+    <enum>Qt::ScrollBarPolicy::ScrollBarAlwaysOff</enum>
+   </property>
+   <property name="horizontalScrollBarPolicy">
+    <enum>Qt::ScrollBarPolicy::ScrollBarAsNeeded</enum>
+   </property>
+   <property name="widgetResizable">
+    <bool>true</bool>
+   </property>
+   <widget class="QWidget" name="contentColumn">
    <layout class="QVBoxLayout" name="centralWidgetLayout">
     <item>
      <widget class="QFrame" name="headerFrame">
@@ -202,6 +222,7 @@
      </widget>
     </item>
    </layout>
+   </widget>
   </widget>
  </widget>
  <customwidgets>

@@ -25,7 +25,21 @@ QDialog {
     background-color: @windowBg;
 }
 
-QMainWindow > QWidget#centralwidget {
+/* 창 전체 셸 — 좌우 스크롤 안전망(windowScrollArea)과 그 안의 컨테이너
+ * (contentColumn). 스크롤 영역의 뷰포트는 `QScrollArea` 규칙이 안 칠하므로
+ * (아래 카드 목록과 같은 이유) 셋 다 창 배경색으로 맞춘다 — 하나라도 빠지면
+ * 컨테이너가 뷰포트를 못 채우는 순간(콘텐츠보다 좁은 창) 그 자리만 시스템
+ * 기본색으로 남는다. */
+QScrollArea#windowScrollArea {
+    background-color: @windowBg;
+    border: none;
+}
+
+QScrollArea#windowScrollArea > QWidget#qt_scrollarea_viewport {
+    background-color: @windowBg;
+}
+
+QWidget#contentColumn {
     background-color: @windowBg;
 }
 
