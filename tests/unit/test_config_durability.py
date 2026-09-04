@@ -206,15 +206,27 @@ class TestDirectoryFsyncWiring:
 
     @pytest.fixture
     def dir_fs(self, monkeypatch):
-        """디렉토리 열기·fsync·닫기를 가로채는 스파이. 디렉토리 fd는 가짜 번호, 파일은 진짜 그대로."""
-        real_open, real_fsync, real_close = os.open, os.fsync, os.close
-        record = {"opened": [], "fsynced": [], "closed": [], "fail": False}
+        """디렉토리 열기·fsync·닫기와 `os.replace`를 가로채는 스파이 — **순서**를 `events`에 기록한다.
+
+        디렉토리 fd는 가짜 번호, 파일은 진짜 그대로. `events`는 ("replace", 대상) /
+        ("dir_open", 경로) / ("dir_fsync",) / ("dir_close",)가 일어난 순서다 — 순서 단언이 없으면
+        `_fsync_directory`가 rename **앞**에서 불리는 회귀(엔트리 변경이 지속되지 않는다)도
+        호출 여부 단언을 통과한다.
+        """
+        real_open, real_fsync, real_close, real_replace = os.open, os.fsync, os.close, os.replace
+        record = {"opened": [], "fsynced": [], "closed": [], "fail": False, "events": []}
         FAKE_FD = 987654321
+
+        def spy_replace(src, dst):
+            """진짜 os.replace를 부르고 순서를 기록한다."""
+            real_replace(src, dst)
+            record["events"].append(("replace", os.path.abspath(dst)))
 
         def spy_open(path, flags, *a, **k):
             """디렉토리면 가짜 fd를 돌려주고 기록, 파일이면 진짜 open."""
             if os.path.isdir(path):
                 record["opened"].append(os.path.abspath(path))
+                record["events"].append(("dir_open", os.path.abspath(path)))
                 return FAKE_FD
             return real_open(path, flags, *a, **k)
 
@@ -222,6 +234,7 @@ class TestDirectoryFsyncWiring:
             """디렉토리 fd면 기록(옵션으로 실패), 파일 fd면 진짜 fsync."""
             if fd == FAKE_FD:
                 record["fsynced"].append(fd)
+                record["events"].append(("dir_fsync",))
                 if record["fail"]:
                     raise OSError("fsync not supported on this filesystem")
                 return None
@@ -231,6 +244,7 @@ class TestDirectoryFsyncWiring:
             """디렉토리 가짜 fd는 기록만, 파일 fd는 진짜 close."""
             if fd == FAKE_FD:
                 record["closed"].append(fd)
+                record["events"].append(("dir_close",))
                 return None
             return real_close(fd)
 
@@ -238,22 +252,40 @@ class TestDirectoryFsyncWiring:
         monkeypatch.setattr(config_module.os, "open", spy_open)
         monkeypatch.setattr(config_module.os, "fsync", spy_fsync)
         monkeypatch.setattr(config_module.os, "close", spy_close)
+        monkeypatch.setattr(config_module.os, "replace", spy_replace)
         return record
 
+    @staticmethod
+    def _assert_replace_then_fsync(events, target: str) -> None:
+        """`target`으로의 replace가 먼저, 그 뒤에 디렉토리 fsync·close가 온다 — 순서 단언."""
+        kinds = [e[0] for e in events]
+        key = ("replace", os.path.abspath(target))
+        assert key in events, f"{target}로의 os.replace가 없다: {events}"
+        assert "dir_fsync" in kinds, f"디렉토리 fsync가 없다: {events}"
+        i_replace, i_fsync = events.index(key), kinds.index("dir_fsync")
+        assert i_replace < i_fsync, (
+            f"디렉토리 fsync가 os.replace보다 먼저다(엔트리 변경이 지속되지 않는다): {events}"
+        )
+        assert "dir_close" in kinds and kinds.index("dir_close") > i_fsync, (
+            f"fsync 뒤에 close가 없다: {events}"
+        )
+
     def test_save_fsyncs_the_directory_after_the_replace(self, dir_fs):
-        """저장: 갈아끼운 뒤 config 디렉토리를 열어 fsync하고 닫는다(배선)."""
+        """저장: 임시 파일 → os.replace → 디렉토리 fsync → close **이 순서**(배선)."""
         config_module.save_config(SAVED)
         assert dir_fs["opened"] == [os.path.abspath(config_module.CONFIG_DIR)], (
             "디렉토리를 열지 않았다"
         )
         assert dir_fs["fsynced"] and dir_fs["closed"], "디렉토리 fd를 fsync·close하지 않았다"
+        self._assert_replace_then_fsync(dir_fs["events"], config_module.CONFIG_FILE)
 
     def test_moving_a_broken_file_aside_fsyncs_the_directory(self, dir_fs):
-        """깨진 파일 이동: `.broken`으로 옮긴 뒤에도 디렉토리를 fsync한다(배선)."""
+        """깨진 파일 이동: `.broken`으로 os.replace → 디렉토리 fsync → close **이 순서**(배선)."""
         _write_raw("{broken")
         config_module.load_config()
         assert os.path.abspath(config_module.CONFIG_DIR) in dir_fs["opened"]
         assert dir_fs["fsynced"], "깨진 파일을 옮긴 뒤 디렉토리 fsync가 없다"
+        self._assert_replace_then_fsync(dir_fs["events"], config_module.broken_config_path())
 
     def test_directory_fsync_failure_does_not_fail_the_save(self, dir_fs, caplog):
         """★ 디렉토리 fsync가 OSError로 실패해도 save_config는 성공한다 — 파일은 이미 갈아끼워졌다."""
