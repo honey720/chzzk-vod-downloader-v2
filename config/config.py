@@ -178,6 +178,37 @@ DEFAULT_CONFIG = {
 #: 깨진 config.json을 비켜 둘 이름 — 같은 디렉토리, 하나만 유지(#255).
 BROKEN_SUFFIX = ".broken"
 
+#: 디렉토리 fsync 가능 여부 — POSIX만. Windows는 디렉토리를 `os.open`할 수 없다(§8.4 분기).
+#: 모듈 상수로 둔 이유: 테스트가 어느 러너에서든 두 갈래를 다 태우기 위해서다.
+_DIRECTORY_FSYNC_SUPPORTED = os.name != "nt"
+
+
+def _fsync_directory(path: str) -> None:
+    """디렉토리 엔트리 변경(`os.replace`)을 디스크에 밀어 넣는다 — POSIX 전용, 실패는 로그만 (#255).
+
+    파일 `fsync`는 파일 내용만 지속시킨다. rename으로 바뀐 디렉토리 엔트리는 디렉토리
+    자체를 `fsync`해야 정전 뒤에도 남는다(POSIX). Windows는 디렉토리를 열 수 없으므로
+    아무것도 하지 않는다. ⚠️ 여기서 실패해도 **저장은 이미 성공한 뒤**다 — 네트워크
+    드라이브 등 일부 파일시스템은 디렉토리 fsync를 거부하므로 `OSError`는 로그만 남기고
+    넘어간다. 저장의 성패를 좌우하지 않는다(`Exception` 전체로 넓히지 않는다).
+    """
+    if not _DIRECTORY_FSYNC_SUPPORTED:
+        return
+    try:
+        fd = os.open(path, os.O_RDONLY)
+    except OSError as e:
+        logger.warning("Directory fsync skipped — cannot open %s: %s", path, e)
+        return
+    try:
+        os.fsync(fd)
+    except OSError as e:
+        logger.warning("Directory fsync failed for %s: %s — the file itself is already in place", path, e)
+    finally:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
 
 def broken_config_path() -> str:
     """깨진 `config.json`을 옮겨 둘 경로 — `CONFIG_FILE` 옆의 `config.json.broken`."""
@@ -210,6 +241,7 @@ def load_config() -> dict:  # TODO: config.json에서 추출한 값들을 ENUM�
     except json.JSONDecodeError as e:
         broken = broken_config_path()
         os.replace(CONFIG_FILE, broken)
+        _fsync_directory(os.path.dirname(CONFIG_FILE) or ".")
         logger.error("Config file is corrupt (%s) — moved to %s and starting with defaults", e, broken)
         return copy.deepcopy(DEFAULT_CONFIG)
 
@@ -242,6 +274,8 @@ def save_config(config) -> None:
     Windows에서는 대상 파일을 다른 핸들이 열어 둔 동안 `os.replace`가 `PermissionError`를
     낸다(실측 — 읽기 핸들도 막는다). 바이러스 검사처럼 순간적인 잠금은 짧게 재시도하고,
     그래도 실패하면 임시 파일을 치우고 예외를 그대로 올린다 — 대상 파일은 옛 내용 그대로다.
+    갈아끼운 뒤 디렉토리도 `fsync`한다(POSIX — rename의 엔트리 변경 지속). 그 실패는
+    로그만 남긴다(`_fsync_directory`).
     """
     directory = os.path.dirname(CONFIG_FILE) or "."
     os.makedirs(directory, exist_ok=True)
@@ -258,6 +292,7 @@ def save_config(config) -> None:
         except OSError:
             pass
         raise
+    _fsync_directory(directory)
 
 
 def load_cookies() -> dict:

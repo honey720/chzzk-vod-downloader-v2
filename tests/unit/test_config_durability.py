@@ -37,6 +37,7 @@ def _write_raw(text: str) -> None:
 
 
 def _read_raw() -> str:
+    """config.json의 현재 바이트를 문자열로 읽는다."""
     with open(config_module.CONFIG_FILE, encoding="utf-8") as f:
         return f.read()
 
@@ -76,6 +77,7 @@ class TestBrokenFileIsKeptNotOverwritten:
         assert json.loads(_read_raw())["cookies"] == {"NID_AUT": "", "NID_SES": ""}
 
     def test_the_broken_path_is_logged(self, broken, caplog):
+        """비켜 둔 파일의 경로가 ERROR 로그에 남는다(유저 알림은 범위 밖 — 로그까지)."""
         with caplog.at_level("ERROR", logger="config.config"):
             config_module.load_config()
         assert any(config_module.broken_config_path() in r.getMessage() for r in caplog.records), (
@@ -111,6 +113,7 @@ class TestSaveIsAtomic:
         real_replace = os.replace
 
         def spy(src, dst):
+            """갈아끼우기 직전에 대상·임시 파일을 들여다보는 os.replace 대역."""
             if dst == config_module.CONFIG_FILE:
                 seen["target_during_write"] = _read_raw()
                 with open(src, encoding="utf-8") as f:
@@ -137,6 +140,7 @@ class TestSaveIsAtomic:
         before = _read_raw()
 
         def bad_dump(obj, fp, **kw):
+            """절반만 쓰고 실패하는 json.dump 대역(디스크 가득 참 흉내)."""
             fp.write('{"half": ')
             raise OSError("disk full")
 
@@ -153,6 +157,7 @@ class TestSaveIsAtomic:
         monkeypatch.setattr(config_module, "_REPLACE_INTERVAL", 0)
 
         def locked(src, dst):
+            """항상 잠겨 있는 os.replace 대역."""
             raise PermissionError("locked")
 
         monkeypatch.setattr(config_module.os, "replace", locked)
@@ -169,6 +174,7 @@ class TestSaveIsAtomic:
         calls = {"n": 0}
 
         def flaky(src, dst):
+            """두 번 잠겼다가 세 번째에 풀리는 os.replace 대역."""
             calls["n"] += 1
             if calls["n"] < 3:
                 raise PermissionError("locked")
@@ -186,10 +192,126 @@ class TestSaveIsAtomic:
             assert json.load(f)["downloadPath"] == "D:/영상/보관"
 
 
+class TestDirectoryFsyncWiring:
+    """디렉토리 fsync **배선** 게이트 — 내구성 자체를 재지 않는다.
+
+    ⚠️ 정전은 재현할 수 없다. 이 클래스가 재는 것은 "rename 뒤에 디렉토리를 열어 `fsync`를
+    부르는가"와 "그 fsync가 실패해도 저장이 성공하는가"뿐이다. 디스크에 실제로 남는지는
+    파일시스템의 몫이고 여기서 보장되지 않는다.
+
+    러너별 동작: POSIX 갈래는 모듈 상수 `_DIRECTORY_FSYNC_SUPPORTED`를 True로 놓고
+    `os.open`/`os.fsync`/`os.close`를 가짜로 바꿔 **어느 러너에서든**(Windows 포함) 배선을
+    잰다. Windows 갈래(상수 False)는 디렉토리를 열지 않는 것을 잰다 — 스킵이 아니다.
+    """
+
+    @pytest.fixture
+    def dir_fs(self, monkeypatch):
+        """디렉토리 열기·fsync·닫기를 가로채는 스파이. 디렉토리 fd는 가짜 번호, 파일은 진짜 그대로."""
+        real_open, real_fsync, real_close = os.open, os.fsync, os.close
+        record = {"opened": [], "fsynced": [], "closed": [], "fail": False}
+        FAKE_FD = 987654321
+
+        def spy_open(path, flags, *a, **k):
+            """디렉토리면 가짜 fd를 돌려주고 기록, 파일이면 진짜 open."""
+            if os.path.isdir(path):
+                record["opened"].append(os.path.abspath(path))
+                return FAKE_FD
+            return real_open(path, flags, *a, **k)
+
+        def spy_fsync(fd):
+            """디렉토리 fd면 기록(옵션으로 실패), 파일 fd면 진짜 fsync."""
+            if fd == FAKE_FD:
+                record["fsynced"].append(fd)
+                if record["fail"]:
+                    raise OSError("fsync not supported on this filesystem")
+                return None
+            return real_fsync(fd)
+
+        def spy_close(fd):
+            """디렉토리 가짜 fd는 기록만, 파일 fd는 진짜 close."""
+            if fd == FAKE_FD:
+                record["closed"].append(fd)
+                return None
+            return real_close(fd)
+
+        monkeypatch.setattr(config_module, "_DIRECTORY_FSYNC_SUPPORTED", True)
+        monkeypatch.setattr(config_module.os, "open", spy_open)
+        monkeypatch.setattr(config_module.os, "fsync", spy_fsync)
+        monkeypatch.setattr(config_module.os, "close", spy_close)
+        return record
+
+    def test_save_fsyncs_the_directory_after_the_replace(self, dir_fs):
+        """저장: 갈아끼운 뒤 config 디렉토리를 열어 fsync하고 닫는다(배선)."""
+        config_module.save_config(SAVED)
+        assert dir_fs["opened"] == [os.path.abspath(config_module.CONFIG_DIR)], (
+            "디렉토리를 열지 않았다"
+        )
+        assert dir_fs["fsynced"] and dir_fs["closed"], "디렉토리 fd를 fsync·close하지 않았다"
+
+    def test_moving_a_broken_file_aside_fsyncs_the_directory(self, dir_fs):
+        """깨진 파일 이동: `.broken`으로 옮긴 뒤에도 디렉토리를 fsync한다(배선)."""
+        _write_raw("{broken")
+        config_module.load_config()
+        assert os.path.abspath(config_module.CONFIG_DIR) in dir_fs["opened"]
+        assert dir_fs["fsynced"], "깨진 파일을 옮긴 뒤 디렉토리 fsync가 없다"
+
+    def test_directory_fsync_failure_does_not_fail_the_save(self, dir_fs, caplog):
+        """★ 디렉토리 fsync가 OSError로 실패해도 save_config는 성공한다 — 파일은 이미 갈아끼워졌다."""
+        dir_fs["fail"] = True
+        with caplog.at_level("WARNING", logger="config.config"):
+            config_module.save_config({**SAVED, "language": "en_US"})  # 예외가 올라오면 실패
+        assert json.loads(_read_raw())["language"] == "en_US", "저장 자체는 끝나 있어야 한다"
+        assert dir_fs["fsynced"], "전제: fsync가 시도됐어야 한다"
+        assert any("Directory fsync failed" in r.getMessage() for r in caplog.records), (
+            "실패가 로그에 남지 않았다"
+        )
+        assert dir_fs["closed"], "실패해도 디렉토리 fd는 닫는다"
+
+    def test_directory_that_cannot_be_opened_is_logged_and_skipped(self, monkeypatch, caplog):
+        """디렉토리를 열 수 없으면(권한·특수 파일시스템) 경고만 남기고 저장은 성공한다."""
+        monkeypatch.setattr(config_module, "_DIRECTORY_FSYNC_SUPPORTED", True)
+        real_open = os.open
+
+        def refuse_dirs(path, flags, *a, **k):
+            """디렉토리 열기만 거부하는 os.open 대역."""
+            if os.path.isdir(path):
+                raise PermissionError("cannot open directory")
+            return real_open(path, flags, *a, **k)
+
+        monkeypatch.setattr(config_module.os, "open", refuse_dirs)
+        with caplog.at_level("WARNING", logger="config.config"):
+            config_module.save_config(SAVED)
+        assert json.loads(_read_raw()) == SAVED
+        assert any("Directory fsync skipped" in r.getMessage() for r in caplog.records)
+
+    def test_windows_branch_does_not_open_the_directory(self, monkeypatch):
+        """Windows 갈래: 디렉토리를 열지 않는다(`os.open`이 디렉토리에 실패하는 플랫폼) — 분기 확인."""
+        monkeypatch.setattr(config_module, "_DIRECTORY_FSYNC_SUPPORTED", False)
+        real_open = os.open
+        opened_dirs = []
+
+        def spy_open(path, flags, *a, **k):
+            """디렉토리를 열려는 시도만 기록하는 os.open 대역."""
+            if os.path.isdir(path):
+                opened_dirs.append(path)
+            return real_open(path, flags, *a, **k)
+
+        monkeypatch.setattr(config_module.os, "open", spy_open)
+        config_module.save_config(SAVED)
+        _write_raw("{broken")
+        config_module.load_config()
+        assert opened_dirs == [], f"Windows 갈래에서 디렉토리를 열었다: {opened_dirs}"
+
+    def test_the_branch_constant_follows_the_platform(self):
+        """상수는 플랫폼에서 유도된다 — Windows(nt)에서만 False."""
+        assert config_module._DIRECTORY_FSYNC_SUPPORTED == (os.name != "nt")
+
+
 class TestDefaultsAreNeverShared:
     """`load_config` 결과를 고쳐도 `DEFAULT_CONFIG`는 바뀌지 않는다 — 중첩 dict(cookies)까지."""
 
     def test_mutating_a_default_result_does_not_pollute_the_module_table(self):
+        """기본값 경로의 반환 dict를 최상위·중첩(cookies·window)까지 고쳐도 모듈 표는 그대로다."""
         _write_raw("{broken")  # 기본값 경로
         pristine = json.loads(json.dumps(config_module.DEFAULT_CONFIG))
         cfg = config_module.load_config()
@@ -203,6 +325,7 @@ class TestDefaultsAreNeverShared:
         )
 
     def test_two_default_results_are_independent(self):
+        """기본값 경로를 두 번 타도 두 반환값이 중첩 dict를 공유하지 않는다."""
         _write_raw("{broken")
         first = config_module.load_config()
         _write_raw("{broken")
