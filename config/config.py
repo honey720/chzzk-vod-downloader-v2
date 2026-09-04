@@ -1,9 +1,12 @@
+import copy
 import functools
 import json
 import logging
 import os
 import platform
 import subprocess
+import tempfile
+import time
 import tomllib
 from collections import OrderedDict
 
@@ -172,28 +175,89 @@ DEFAULT_CONFIG = {
     "window": {}
 }
 
-# 설정 로드 함수
-def load_config(): # TODO: config.json에서 추출한 값들을 ENUM으로 변환하여 반환
+#: 깨진 config.json을 비켜 둘 이름 — 같은 디렉토리, 하나만 유지(#255).
+BROKEN_SUFFIX = ".broken"
 
+
+def broken_config_path() -> str:
+    """깨진 `config.json`을 옮겨 둘 경로 — `CONFIG_FILE` 옆의 `config.json.broken`."""
+    return CONFIG_FILE + BROKEN_SUFFIX
+
+
+def load_config() -> dict:  # TODO: config.json에서 추출한 값들을 ENUM으로 변환하여 반환
+    """`config.json`을 읽어 dict로 돌려준다. 없으면 기본값으로 만들고, 깨져 있으면 비켜 둔다 (#255).
+
+    파싱에 실패하면 **깨진 파일을 지우지도 덮어쓰지도 않는다** — 저장된 인증 정보(쿠키)를
+    유저가 복구할 유일한 원본이다. 같은 디렉토리의 `config.json.broken`으로 옮겨 두고
+    경로를 로그에 남긴 뒤 기본값을 돌려준다. 이전 `.broken`이 있으면 덮어쓴다(하나만
+    유지 — 쌓이면 디스크에 남고, 두 번째 손상 시점의 파일은 첫 번째보다 최신이라
+    복구 가치가 더 크다). 깨진 JSON에서 값을 건져내는 복구는 하지 않는다.
+
+    반환값은 항상 **새 객체**다 — 기본값이 필요할 때도 `DEFAULT_CONFIG`의 깊은 복사본을
+    준다. 호출부가 반환 dict를 고쳐 저장하는 관례(`cfg["window"] = …`)라 원본을 주면
+    모듈의 기본값 표가 프로세스 수명 내내 오염되고, `cookies`가 중첩 dict라 얕은 복사로는
+    그 안이 공유된다.
+    """
     os.makedirs(CONFIG_DIR, exist_ok=True)  # 디렉토리 생성
     os.makedirs(os.path.join(CONFIG_DIR, "logs"), exist_ok=True)  # logs 디렉토리 생성
 
     if not os.path.exists(CONFIG_FILE):
         save_config(DEFAULT_CONFIG)  # 파일 생성
-        
+
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             config = json.load(f)
     except json.JSONDecodeError as e:
-        logger.error(f"Error reading config file: {e}")
-        return DEFAULT_CONFIG  # 기본값을 반환하거나 예외 처리
-        
+        broken = broken_config_path()
+        os.replace(CONFIG_FILE, broken)
+        logger.error("Config file is corrupt (%s) — moved to %s and starting with defaults", e, broken)
+        return copy.deepcopy(DEFAULT_CONFIG)
+
     return config
 
-# 설정 저장 함수
-def save_config(config):
-    with open(CONFIG_FILE, "w") as file:
-        json.dump(config, file, indent=4)
+
+#: `os.replace` 재시도 — 순간 잠금(바이러스 검사 등)을 넘기는 정도. 횟수 × 간격 = 최대 0.5초.
+_REPLACE_ATTEMPTS, _REPLACE_INTERVAL = 10, 0.05
+
+
+def _replace_with_retry(src: str, dst: str) -> None:
+    """`os.replace(src, dst)` — `PermissionError`만 짧게 재시도한다(Windows 잠금 대비, #255)."""
+    for attempt in range(_REPLACE_ATTEMPTS):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if attempt == _REPLACE_ATTEMPTS - 1:
+                raise
+            time.sleep(_REPLACE_INTERVAL)
+
+
+def save_config(config) -> None:
+    """`config.json`을 **원자적으로** 저장한다 (#255).
+
+    같은 디렉토리의 임시 파일에 전부 쓴 뒤 `os.replace()`로 갈아끼운다 — 쓰기 도중
+    종료·정전이 나도 대상 파일은 옛 내용 전체 아니면 새 내용 전체다. 임시 파일은
+    반드시 같은 디렉토리에 만든다(다른 볼륨이면 `os.replace`가 복사+삭제가 되어 원자성이
+    성립하지 않는다). 인코딩은 명시한다(§8.4 — OS 기본 로케일에 의존하지 않는다).
+    Windows에서는 대상 파일을 다른 핸들이 열어 둔 동안 `os.replace`가 `PermissionError`를
+    낸다(실측 — 읽기 핸들도 막는다). 바이러스 검사처럼 순간적인 잠금은 짧게 재시도하고,
+    그래도 실패하면 임시 파일을 치우고 예외를 그대로 올린다 — 대상 파일은 옛 내용 그대로다.
+    """
+    directory = os.path.dirname(CONFIG_FILE) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(prefix=".config-", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as file:
+            json.dump(config, file, indent=4)
+            file.flush()
+            os.fsync(file.fileno())
+        _replace_with_retry(tmp_path, CONFIG_FILE)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def load_cookies() -> dict:
