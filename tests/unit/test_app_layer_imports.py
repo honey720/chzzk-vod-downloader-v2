@@ -34,8 +34,8 @@ QT_VIEW_MODULES = {"PySide6.QtWidgets", "PySide6.QtGui"}
 #: 뷰 계층 디렉토리(SPEC §3.3 목표 구조) — 존재하지 않아도 규칙은 선다.
 VIEW_LAYER_DIRS = (APP_DIR / "views", APP_DIR / "widgets")
 
-#: 프로젝트 모듈 색인에서 빼는 것 — 테스트·숨김·바이트코드·빌드 산출물(test_theme의 스캔과 같은 이유).
-_INDEX_EXCLUDED_TOP_LEVEL = {"tests"}
+#: 프로젝트 모듈 색인에서 빼는 디렉토리(어느 깊이든) — 테스트·숨김·바이트코드·빌드 산출물(test_theme의 스캔과 같은 이유).
+_INDEX_EXCLUDED_DIRS = {"tests"}
 _BUILD_ARTIFACT_SUFFIXES = (".build", ".dist", ".onefile-build")
 
 #: 프로젝트 모듈 색인의 바닥 수 — 색인이 비면 "뷰에 닿는 모듈"이 없어 규칙이 헛돈다.
@@ -75,35 +75,57 @@ def project_modules() -> dict[str, Path]:
         """하위를 재귀로 걷는다."""
         for entry in sorted(directory.iterdir()):
             if entry.is_dir():
-                if not _is_skipped_dir(entry.name):
+                if entry.name not in _INDEX_EXCLUDED_DIRS and not _is_skipped_dir(entry.name):
                     walk(entry)
             elif entry.suffix == ".py":
                 index[_module_name(entry)] = entry
 
-    for entry in sorted(ROOT_DIR.iterdir()):
-        if entry.is_dir():
-            if entry.name not in _INDEX_EXCLUDED_TOP_LEVEL and not _is_skipped_dir(entry.name):
-                walk(entry)
-        elif entry.suffix == ".py":
-            index[_module_name(entry)] = entry
+    walk(ROOT_DIR)
     return index
 
 
+def _absolute_base(py_file: Path, level: int, module: str | None) -> str | None:
+    """상대 import(`from ..x import y`, level ≥ 1)의 기준을 절대 모듈 이름으로 푼다.
+
+    `a/b/c.py`의 패키지는 `a.b`, `a/b/__init__.py`의 패키지는 `a.b`다. `level`만큼 위로 올라가
+    `module`을 붙인다. 루트 위로 올라가면(잘못된 상대 import) None — 프로젝트 모듈이 아니다.
+    상대 import를 건너뛰면 `from ..views import x`가 게이트를 조용히 지나간다(CodeRabbit #260).
+    """
+    package = _module_name(py_file).split(".")
+    if py_file.name != "__init__.py":
+        package = package[:-1]
+    if level - 1 > len(package):
+        return None
+    base = package[: len(package) - (level - 1)]
+    if module:
+        base = base + module.split(".")
+    return ".".join(base)
+
+
 def _imported_names(py_file: Path) -> list[tuple[int, str]]:
-    """파일 하나의 import 대상(줄 번호, 점 구분 이름) — `from a import b`는 `a.b`가 프로젝트 모듈이면 그것으로."""
+    """파일 하나의 import 대상(줄 번호, 절대 점 구분 이름).
+
+    `from a import b`는 `a.b`가 프로젝트 모듈(또는 Qt 위젯 모듈)이면 그것으로, 아니면 `a`로.
+    상대 import는 파일의 패키지 경로를 기준으로 절대 이름으로 푼다.
+    """
     tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
     names: list[tuple[int, str]] = []
     index = project_modules()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             names.extend((node.lineno, alias.name) for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+        elif isinstance(node, ast.ImportFrom):
+            base = (
+                node.module if node.level == 0 else _absolute_base(py_file, node.level, node.module)
+            )
+            if not base:
+                continue
             for alias in node.names:
-                candidate = f"{node.module}.{alias.name}"  # `from PySide6 import QtWidgets` · `from content import view`
+                candidate = f"{base}.{alias.name}"  # `from PySide6 import QtWidgets` · `from content import view` · `from . import x`
                 if candidate in index or candidate in QT_VIEW_MODULES:
                     names.append((node.lineno, candidate))
                 else:
-                    names.append((node.lineno, node.module))
+                    names.append((node.lineno, base))
     return names
 
 
@@ -219,3 +241,19 @@ def test_view_layer_directories_are_exempt_by_position_not_by_name():
         assert view_dir.parent == APP_DIR
         assert _is_under_view_dir(view_dir / "anything.py")
     assert not _is_under_view_dir(APP_DIR / "viewmodels" / "anything.py")
+
+
+def test_relative_imports_are_resolved_against_the_package_path():
+    """상대 import도 절대 이름으로 풀려 규칙에 걸린다 — 건너뛰면 `from ..views import x`가 조용히 통과한다."""
+    vm = APP_DIR / "viewmodels" / "some_viewmodel.py"
+    assert _absolute_base(vm, 1, None) == "app.viewmodels"  # from . import x
+    assert (
+        _absolute_base(vm, 1, "item_state") == "app.viewmodels.item_state"
+    )  # from .item_state import x
+    assert _absolute_base(vm, 2, "views") == "app.views"  # from ..views import x
+    assert _absolute_base(vm, 3, "content.view") == "content.view"  # from ...content.view import x
+    assert (
+        _absolute_base(APP_DIR / "viewmodels" / "__init__.py", 1, "item_state")
+        == "app.viewmodels.item_state"
+    )
+    assert _absolute_base(vm, 4, "x") is None  # 루트 위 — 프로젝트 모듈이 아니다

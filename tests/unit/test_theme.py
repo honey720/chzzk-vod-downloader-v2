@@ -113,8 +113,8 @@ class TestCardStateStyles:
 #: 포함 목록은 새 디렉토리를 빠뜨리면 조용히 안 봤고, 디렉토리를 옮기면 `rglob`이 빈
 #: 목록을 돌려줘 게이트가 아무것도 재지 않으면서 초록불을 냈다(#259 C0 — 이 비대칭이
 #: 목록의 방향을 뒤집은 이유다).
-SCAN_EXCLUDED_TOP_LEVEL = {
-    "tests",  # 테스트 자신이 색 리터럴을 기대값으로 든다(이 파일 포함)
+SCAN_EXCLUDED_DIRS = {
+    "tests",  # 테스트 자신이 색 리터럴을 기대값으로 든다(이 파일 포함) — 어느 깊이의 tests/든
 }
 SCAN_EXCLUDED_FILES = {
     "theme.py",  # 색의 유일한 정의처 — 여기 있는 리터럴이 규칙이다
@@ -143,25 +143,22 @@ def scan_sources() -> list[Path]:
     found: list[Path] = []
 
     def walk(directory: Path) -> None:
-        """하위 디렉토리를 재귀로 걷는다 — 제외 규칙은 디렉토리 이름과 최상위 파일에만 건다."""
+        """하위 디렉토리를 재귀로 걷는다 — 디렉토리 제외는 어느 깊이든, 파일 제외는 루트에서만."""
         for entry in sorted(directory.iterdir()):
             if entry.is_dir():
-                if not _is_skipped_dir(entry.name):
+                if entry.name not in SCAN_EXCLUDED_DIRS and not _is_skipped_dir(entry.name):
                     walk(entry)
-            elif entry.suffix in (".py", ".ui"):
+            elif entry.suffix in (".py", ".ui") and not (
+                directory == ROOT_DIR and entry.name in SCAN_EXCLUDED_FILES
+            ):
                 found.append(entry)
 
-    for entry in sorted(ROOT_DIR.iterdir()):
-        if entry.is_dir():
-            if entry.name not in SCAN_EXCLUDED_TOP_LEVEL and not _is_skipped_dir(entry.name):
-                walk(entry)
-        elif entry.suffix in (".py", ".ui") and entry.name not in SCAN_EXCLUDED_FILES:
-            found.append(entry)
+    walk(ROOT_DIR)
     return found
 
 
 def _git_tracked_sources() -> list[Path] | None:
-    """git이 아는 `.py`·`.ui`에서 tests/와 theme.py만 뺀 것 — git이 없으면 None.
+    """git이 아는 `.py`·`.ui`에서 (어느 깊이든) tests/와 루트 theme.py만 뺀 것 — git이 없으면 None.
 
     ⚠️ 일부러 `SCAN_EXCLUDED_*`를 쓰지 않는다 — 같은 집합으로 거르면 제외 목록이 넓어질 때
     대조도 같이 좁아져 동어반복이 된다(고장 주입 ①b에서 실측). 여기의 기준은 "왜 제외하는가"의
@@ -183,7 +180,7 @@ def _git_tracked_sources() -> list[Path] | None:
     tracked = []
     for line in result.stdout.splitlines():
         path = Path(line.strip())
-        if not line.strip() or path.parts[0] == "tests" or path == Path("theme.py"):
+        if not line.strip() or "tests" in path.parts or path == Path("theme.py"):
             continue
         tracked.append(ROOT_DIR / path)
     return tracked
@@ -213,8 +210,12 @@ class TestColoursAreDefinedOnlyOnce:
             f"색 스캔 대상이 {len(files)}개뿐이다(바닥 {self.MIN_SCANNED_SOURCES}) — 제외 목록이 잘못 넓어졌거나 소스가 사라졌다"
         )
         assert "main.py" in names, "진입점이 스캔에 없다"
-        assert any(p.suffix == ".ui" for p in files), ".ui 파일이 하나도 스캔되지 않았다 — 카드 배경이 새던 곳이다"
-        assert not any(p.parts[-2] == "tests" or "tests" in p.relative_to(ROOT_DIR).parts for p in files)
+        assert any(p.suffix == ".ui" for p in files), (
+            ".ui 파일이 하나도 스캔되지 않았다 — 카드 배경이 새던 곳이다"
+        )
+        assert not any(
+            p.parts[-2] == "tests" or "tests" in p.relative_to(ROOT_DIR).parts for p in files
+        )
 
     def test_scan_covers_every_git_tracked_source(self):
         """메타 게이트 — git이 아는 소스(tests·theme.py 제외)는 전부 스캔에 들어 있다.
@@ -228,8 +229,8 @@ class TestColoursAreDefinedOnlyOnce:
         assert tracked, "git이 소스를 하나도 돌려주지 않았다 — 대조 전제가 깨졌다"
         scanned = set(scan_sources())
         missing = sorted(p.relative_to(ROOT_DIR).as_posix() for p in tracked if p not in scanned)
-        assert not missing, "git이 아는 소스가 색 스캔에서 빠졌다(제외 규칙이 너무 넓다):\n" + "\n".join(
-            missing
+        assert not missing, (
+            "git이 아는 소스가 색 스캔에서 빠졌다(제외 규칙이 너무 넓다):\n" + "\n".join(missing)
         )
 
     def test_no_hex_colour_outside_theme(self):
