@@ -9,8 +9,8 @@
 import pytest
 from PySide6.QtCore import Qt
 
-from content.data import ContentItem
-from content.model import ContentListModel
+from app.viewmodels.data import ContentItem
+from app.viewmodels.model import ContentListModel
 from app.widgets.view import ContentListView
 from core.models.download_state import DownloadState
 from tests.unit.card_helpers import shown

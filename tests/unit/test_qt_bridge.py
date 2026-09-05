@@ -10,7 +10,7 @@
 import pytest
 import requests
 
-from content.data import ContentItem
+from app.viewmodels.data import ContentItem
 from core.downloaders.base import PostprocessError
 from core.downloaders.hls_aes_downloader import DecryptionError
 from core.models.download_state import DownloadState

@@ -11,7 +11,7 @@ mainWindow의 순수 릴레이 슬롯 6개(_onProgress~_onFailed)를 흡수했�
 
 from PySide6.QtCore import QObject
 
-from content.data import ContentItem
+from app.viewmodels.data import ContentItem
 from download.qt_bridge import QtDownloadBridge
 
 

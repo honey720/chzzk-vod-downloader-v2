@@ -18,7 +18,7 @@ from PySide6.QtGui import QColor
 import main as main_module
 import theme
 from app.viewmodels.item_state import ItemState
-from content.data import ContentItem
+from app.viewmodels.data import ContentItem
 from app.widgets.widget import STATE_ICON, ContentItemWidget
 from core.models.download_state import DownloadState
 from tests.unit.card_helpers import hold_style

@@ -36,7 +36,7 @@ from PySide6.QtWidgets import QApplication
 import main as main_module
 import theme
 from app.views.mainWindow import VodDownloader
-from content.data import ContentItem
+from app.viewmodels.data import ContentItem
 from core.models.download_state import DownloadState
 from tests.unit.card_helpers import hold_style, shown
 

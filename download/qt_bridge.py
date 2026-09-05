@@ -25,7 +25,7 @@ from time import gmtime, strftime
 import requests
 from PySide6.QtCore import QObject, Signal
 
-from content.data import ContentItem
+from app.viewmodels.data import ContentItem
 from core.downloaders.base import PostprocessError
 from core.downloaders.hls_aes_downloader import DecryptionError
 from core.models.events import ProgressEvent

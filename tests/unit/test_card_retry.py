@@ -33,7 +33,7 @@ import main as main_module
 import theme
 from app.views import mainWindow as mw_mod
 from app.views.mainWindow import VodDownloader
-from content.data import ContentItem
+from app.viewmodels.data import ContentItem
 from core.models.download_state import DownloadState
 from core.utils.paths import build_output_path, temp_dir_for
 from tests.unit.card_helpers import (

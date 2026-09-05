@@ -3,7 +3,7 @@ import logging
 from datetime import datetime
 from typing import Optional
 import config.config as config
-from content.data import ContentItem
+from app.viewmodels.data import ContentItem
 
 class DownloadLogger:
     """
