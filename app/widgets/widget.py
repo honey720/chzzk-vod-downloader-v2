@@ -6,16 +6,16 @@ from PySide6.QtGui import QPainter, QPainterPath, QPixmap, QDesktopServices, QRe
 from PySide6.QtCore import Qt, Signal, QUrl, QDir, QProcess, QRectF
 from content.data import ContentItem
 from content.network import REQUEST_TIMEOUT, get_thread_session
-from content.pill import ResolutionPill
+from app.widgets.pill import ResolutionPill
 from core.models.download_state import DownloadState
 from app.viewmodels.item_state import ItemState
-from ui.contentItemWidget import Ui_ContentItemWidget
+from app.widgets.contentItemWidget import Ui_ContentItemWidget
 import theme
 from time import strftime, gmtime
 import platform
 import logging
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("content.widget")  # 이동 전 이름 고정 — caplog가 이 이름을 본다(#259 A1, 부채: 이동 완료 후 일괄 정리)
 
 # 3행 슬롯 텍스트의 상태 접두(완료/실패 표시). 텍스트 안에 들어가는 글자라
 # 폰트 문자를 쓴다 — 둘 다 기본 문장부호 블록(Dingbats)의 흔한 글리프다.

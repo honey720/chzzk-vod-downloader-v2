@@ -16,7 +16,7 @@ import theme
 from content.data import ContentItem
 from content.model import ContentListModel
 from content.view import ContentListView
-from content.widget import ContentItemWidget
+from app.widgets.widget import ContentItemWidget
 from core.api.dash import parse_dash_manifest
 from core.models.download_state import DownloadState
 from tests.unit.card_helpers import drop_new_top_levels, hold_style, shown, snapshot_top_levels
@@ -48,8 +48,8 @@ def no_network(monkeypatch):
         def get(self, *a, **k):
             raise RuntimeError("network disabled in tests")
 
-    monkeypatch.setattr("content.widget.get_thread_session", lambda: _FailingSession())
-    monkeypatch.setattr("content.widget._global_download_path", "C:/dl")
+    monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
+    monkeypatch.setattr("app.widgets.widget._global_download_path", "C:/dl")
 
 
 def make_waiting_widget(reps, width=900, path="C:/dl") -> ContentItemWidget:
@@ -635,7 +635,7 @@ class TestLateSizeFetchKeepsTheUsersPick:
 
     def _slow(self, monkeypatch):
         session = _SlowSession(self.DELAY)
-        monkeypatch.setattr("content.widget.get_thread_session", lambda: session)
+        monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: session)
 
     def _all_sizes_arrived(self, widget) -> bool:
         return all(b.toolTip() != "" for b in widget.buttons)

@@ -25,7 +25,7 @@ from PySide6.QtWidgets import QLabel
 import main as main_module
 import theme
 from content.data import ContentItem
-from content.widget import ContentItemWidget
+from app.widgets.widget import ContentItemWidget
 from core.models.download_state import DownloadState
 from app.viewmodels.item_state import ItemState
 from tests.unit.card_helpers import hold_style
@@ -59,11 +59,11 @@ def no_network(monkeypatch):
         def get(self, *a, **k):
             raise RuntimeError("network disabled in tests")
 
-    monkeypatch.setattr("content.widget.get_thread_session", lambda: _FailingSession())
+    monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
     # 테스트 아이템의 기본 경로를 전역 설정 경로로 등록한다(#245) — 실제
     # 앱은 시작 시 mainWindow가 밀어 넣는 값이라, 안 넣으면 모든 카드가
     # "전역과 다른 경로"로 판정돼 경로 라벨이 떠서 3행 슬롯을 밀어낸다.
-    monkeypatch.setattr("content.widget._global_download_path", "C:/Users/LeeDH/Downloads")
+    monkeypatch.setattr("app.widgets.widget._global_download_path", "C:/Users/LeeDH/Downloads")
 
 
 def _make_item(content_type="video", title="제목", channel="채널"):
@@ -291,7 +291,7 @@ class TestRecoversFullTextAfterWidthIncreases:
         """
         from PySide6.QtWidgets import QHBoxLayout, QWidget
 
-        from content.eliding_label import ElidingLabel
+        from app.widgets.eliding_label import ElidingLabel
 
         host = QWidget()
         host.resize(1300, 100)

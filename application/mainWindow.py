@@ -11,7 +11,7 @@ from app.viewmodels.path_gates import check_fetch_path, check_remember_path, nor
 from config.dialog import SettingDialog
 from content.data import ContentItem
 from content.manager import ContentManager
-from content import widget as content_widget
+from app.widgets import widget as content_widget
 from core.models.download_state import DownloadState
 from ui.mainWindow import Ui_VodDownloader
 import theme

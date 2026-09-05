@@ -2,7 +2,7 @@
     "projectFile": "project.json",
     "sources": [
         "application/mainWindow.py",
-        "content/widget.py",
+        "app/widgets/widget.py",
         "content/view.py",
         "content/manager.py",
         "content/worker.py",
@@ -10,7 +10,7 @@
         "config/dialog.py",
         "ui/settingDialog.ui",
         "ui/mainWindow.ui",
-        "ui/contentItemWidget.ui"
+        "app/widgets/contentItemWidget.ui"
     ],
     "translations": [
         "translations/ko_KR.ts",

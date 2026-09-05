@@ -71,7 +71,7 @@ def no_network(monkeypatch):
             """GET 요청은 금지 — 호출 자체가 테스트 실패다."""
             raise RuntimeError("network disabled in tests")
 
-    monkeypatch.setattr("content.widget.get_thread_session", lambda: _FailingSession())
+    monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
 
 
 #: 테스트가 주입하는 화면 논리폭 — 초기 폭(× 0.25)이 콘텐츠 최소보다 작은 쪽과 큰 쪽.

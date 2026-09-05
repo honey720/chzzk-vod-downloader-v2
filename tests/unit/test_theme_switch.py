@@ -89,7 +89,7 @@ def _theme_sandbox(qapp, monkeypatch):
         def get(self, *a, **k):
             raise RuntimeError("network disabled in tests")
 
-    monkeypatch.setattr("content.widget.get_thread_session", lambda: _FailingSession())
+    monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
     with theme_sandbox(qapp):
         yield
 
@@ -351,7 +351,7 @@ class TestFaultInjection:
         """파이썬 색 계산 갱신을 한 곳 빼기 — `IconButton`이 토큰을 paint마다 새로
         읽지 않고 전환 전 표를 붙들고 있다면(캐시), 조작 아이콘이 낡은 색으로
         남는다. 그 상황을 만들어 게이트가 아이콘에서 잡는지 본다."""
-        from content import icons
+        from app.widgets import icons
 
         frozen = dict(theme.DARK)
         original_paint = icons.IconButton.paintEvent

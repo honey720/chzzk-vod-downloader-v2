@@ -8,7 +8,7 @@
 
 from PySide6.QtCore import Qt
 
-from content.eliding_label import ElidingLabel
+from app.widgets.eliding_label import ElidingLabel
 
 
 class TestSizePolicy:

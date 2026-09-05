@@ -30,11 +30,11 @@
 
 from PySide6.QtCore import (QCoreApplication, QMetaObject, QSize, Qt)
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel,
-    QLineEdit, QProgressBar, QPushButton, QVBoxLayout)
+    QLineEdit, QProgressBar, QVBoxLayout)
 
 import theme
-from content.eliding_label import ElidingLabel, PathLabel
-from content.icons import IconButton
+from app.widgets.eliding_label import ElidingLabel, PathLabel
+from app.widgets.icons import IconButton
 
 
 class Ui_ContentItemWidget(object):

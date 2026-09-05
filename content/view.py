@@ -1,7 +1,7 @@
 from PySide6.QtWidgets import QScrollArea, QWidget, QVBoxLayout
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDragLeaveEvent, QDropEvent, QPainter, QColor
-from content.widget import ContentItemWidget
+from app.widgets.widget import ContentItemWidget
 from content.data import ContentItem
 
 
