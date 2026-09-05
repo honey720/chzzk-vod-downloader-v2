@@ -8,7 +8,7 @@ from PySide6.QtCore import QPoint, QRect, QStandardPaths, QTimer
 
 from app.viewmodels.download_viewmodel import DownloadViewModel
 from app.viewmodels.path_gates import check_fetch_path, check_remember_path, normalize_path
-from config.dialog import SettingDialog
+from app.views.dialog import SettingDialog
 from content.data import ContentItem
 from content.manager import ContentManager
 from app.widgets import widget as content_widget
@@ -16,7 +16,7 @@ from core.models.download_state import DownloadState
 from ui.mainWindow import Ui_VodDownloader
 import theme
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("application.mainWindow")  # 이동 전 이름 고정 — caplog가 이 이름을 본다(#259 A2, 부채: 이동 완료 후 일괄 정리)
 
 
 def _default_download_path() -> str:

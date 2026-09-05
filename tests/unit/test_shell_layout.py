@@ -32,7 +32,7 @@ from PySide6.QtWidgets import QApplication, QScrollArea
 
 import main as main_module
 import theme
-from application.mainWindow import VodDownloader
+from app.views.mainWindow import VodDownloader
 from content.data import ContentItem
 from core.models.download_state import DownloadState
 from tests.unit.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
@@ -305,7 +305,7 @@ class TestInitialSizeRule:
                 """어느 점에도 화면이 없다고 답한다 — 주 화면 경로로 떨어진다."""
                 return None
 
-        import application.mainWindow as module
+        import app.views.mainWindow as module
 
         monkeypatch.setattr(module, "QApplication", _App)
         win = _window()

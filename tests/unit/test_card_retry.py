@@ -31,8 +31,8 @@ from PySide6.QtWidgets import QApplication
 
 import main as main_module
 import theme
-from application import mainWindow as mw_mod
-from application.mainWindow import VodDownloader
+from app.views import mainWindow as mw_mod
+from app.views.mainWindow import VodDownloader
 from content.data import ContentItem
 from core.models.download_state import DownloadState
 from core.utils.paths import build_output_path, temp_dir_for

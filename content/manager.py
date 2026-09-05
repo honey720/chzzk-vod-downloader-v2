@@ -23,7 +23,7 @@ from PySide6.QtCore import QObject
 
 from app.viewmodels.content_viewmodel import ContentViewModel
 from content.data import ContentItem
-from content.view import ContentListView
+from app.widgets.view import ContentListView
 from content.worker import ContentWorker
 
 logger = logging.getLogger(__name__)

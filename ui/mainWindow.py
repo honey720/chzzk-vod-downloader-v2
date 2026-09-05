@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel,
     QLineEdit, QMainWindow, QPushButton, QScrollArea, QSizePolicy,
     QSpacerItem, QVBoxLayout, QWidget)
 
-from content.view import ContentListView
+from app.widgets.view import ContentListView
 
 class Ui_VodDownloader(object):
     def setupUi(self, VodDownloader):

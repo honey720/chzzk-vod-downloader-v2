@@ -229,7 +229,7 @@
   <customwidget>
    <class>ContentListView</class>
    <extends>QScrollArea</extends>
-   <header>content/view.h</header>
+   <header>app/widgets/view.h</header>
   </customwidget>
  </customwidgets>
  <tabstops>

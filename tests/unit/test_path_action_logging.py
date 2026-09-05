@@ -16,7 +16,7 @@ import content.manager as manager_mod
 import app.widgets.widget as widget_mod
 from content.data import ContentItem
 from content.manager import ContentManager
-from content.view import ContentListView
+from app.widgets.view import ContentListView
 from core.models.download_state import DownloadState
 
 NBSP_SUFFIX = "없는\u00a0폴더"  # 존재하지 않는 + 공백 유사 문자 포함
@@ -162,7 +162,7 @@ class TestCardPathPickerFeedback:
 class TestFetchGateLogging:
     @pytest.fixture
     def window(self, qapp, monkeypatch):
-        import application.mainWindow as mw_mod
+        import app.views.mainWindow as mw_mod
 
         # 팝업은 기록으로 대체한다 — offscreen에서 모달은 테스트를 멈춘다
         warnings = []
@@ -192,7 +192,7 @@ class TestFetchGateLogging:
 
     def test_find_path_selection_is_logged(self, window, qapp, tmp_path, caplog, monkeypatch):
         """'경로 찾기' 선택값이 INFO로 남는다 — 버튼 클릭 실배선(다이얼로그만 대체)."""
-        import application.mainWindow as mw_mod
+        import app.views.mainWindow as mw_mod
 
         win, _warnings = window
         chosen = tmp_path / "선택한 폴더"

@@ -16,7 +16,7 @@ import main as main_module
 import theme
 from content.data import ContentItem
 from content.manager import ContentManager
-from content.view import ContentListView
+from app.widgets.view import ContentListView
 from core.downloaders.base import PostprocessError
 from download.qt_bridge import QtDownloadBridge
 from core.models.download_state import DownloadState
