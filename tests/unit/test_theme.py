@@ -107,26 +107,135 @@ class TestCardStateStyles:
             assert f'#contentFrame[state="{state}"]' not in _raw_qss()
 
 
+#: 색 스캔에서 **제외**하는 것 — 이름이 아니라 "왜 제외하는가"로 읽을 것.
+#: 제외 목록도 하드코딩이지만 포함 목록(구 `SCAN_DIRS`)과 방향이 반대라 안전하다:
+#: 여기서 무언가를 **빠뜨리면 더 많이 스캔해서 시끄럽게 실패**하지, 조용히 통과하지 않는다.
+#: 포함 목록은 새 디렉토리를 빠뜨리면 조용히 안 봤고, 디렉토리를 옮기면 `rglob`이 빈
+#: 목록을 돌려줘 게이트가 아무것도 재지 않으면서 초록불을 냈다(#259 C0 — 이 비대칭이
+#: 목록의 방향을 뒤집은 이유다).
+SCAN_EXCLUDED_DIRS = {
+    "tests",  # 테스트 자신이 색 리터럴을 기대값으로 든다(이 파일 포함) — 어느 깊이의 tests/든
+}
+SCAN_EXCLUDED_FILES = {
+    "theme.py",  # 색의 유일한 정의처 — 여기 있는 리터럴이 규칙이다
+}
+#: 디렉토리 이름으로 거르는 것 — 숨김(.venv·.git·.ruff_cache) · 바이트코드 · Nuitka/빌드 산출물.
+#: 소스 트리의 일부가 아니라 스캔하면 안 되는 것들이다. 빌드 산출물 이름은 .gitignore와 같다.
+_BUILD_ARTIFACT_SUFFIXES = (".build", ".dist", ".onefile-build")
+
+
+def _is_skipped_dir(name: str) -> bool:
+    """걷지 않는 디렉토리 — 숨김 · `__pycache__` · 빌드 산출물."""
+    return (
+        name.startswith(".")
+        or name == "__pycache__"
+        or name in ("build", "dist", "venv")
+        or name.endswith(_BUILD_ARTIFACT_SUFFIXES)
+    )
+
+
+def scan_sources() -> list[Path]:
+    """색 리터럴 스캔 대상 — 루트 아래 **모든** `.py`·`.ui`에서 제외 목록만 뺀다.
+
+    디렉토리 이름을 모른다. 새 디렉토리(`app/views/` 등)는 생기는 순간 포함되고, 옮겨진
+    파일은 옮겨진 자리에서 스캔된다. 파일 수는 `TestColoursAreDefinedOnlyOnce`가 단언한다.
+    """
+    found: list[Path] = []
+
+    def walk(directory: Path) -> None:
+        """하위 디렉토리를 재귀로 걷는다 — 디렉토리 제외는 어느 깊이든, 파일 제외는 루트에서만."""
+        for entry in sorted(directory.iterdir()):
+            if entry.is_dir():
+                if entry.name not in SCAN_EXCLUDED_DIRS and not _is_skipped_dir(entry.name):
+                    walk(entry)
+            elif entry.suffix in (".py", ".ui") and not (
+                directory == ROOT_DIR and entry.name in SCAN_EXCLUDED_FILES
+            ):
+                found.append(entry)
+
+    walk(ROOT_DIR)
+    return found
+
+
+def _git_tracked_sources() -> list[Path] | None:
+    """git이 아는 `.py`·`.ui`에서 (어느 깊이든) tests/와 루트 theme.py만 뺀 것 — git이 없으면 None.
+
+    ⚠️ 일부러 `SCAN_EXCLUDED_*`를 쓰지 않는다 — 같은 집합으로 거르면 제외 목록이 넓어질 때
+    대조도 같이 좁아져 동어반복이 된다(고장 주입 ①b에서 실측). 여기의 기준은 "왜 제외하는가"의
+    최소 집합이고, 제외 목록에 그 밖의 것을 넣으면 이 대조가 시끄럽게 실패해야 맞다.
+    """
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--", "*.py", "*.ui"],
+            cwd=ROOT_DIR,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    tracked = []
+    for line in result.stdout.splitlines():
+        path = Path(line.strip())
+        if not line.strip() or "tests" in path.parts or path == Path("theme.py"):
+            continue
+        tracked.append(ROOT_DIR / path)
+    return tracked
+
+
 class TestColoursAreDefinedOnlyOnce:
     """색 리터럴은 theme.py에만 있어야 한다.
 
     카드 완료·실패 색이 `content/view.py`에, 카드 배경이
     `ui/contentItemWidget.ui`에 직접 박혀 있던 게 #227 착수 전 모습이다.
     그 상태로 테마가 하나 더 붙으면 값이 여러 곳에서 갈린다.
+
+    스캔 대상은 `scan_sources()` — 디렉토리 이름을 박지 않는다(#259 C0). 대신 **스캔한
+    파일 수를 단언**한다: 제외 목록이 잘못 넓어져 대상이 비면 통과가 아니라 실패다.
     """
 
-    SCAN_DIRS = ("application", "config", "content", "download", "ui")
+    #: 스캔 파일 수의 바닥. 이동은 이 수를 바꾸지 않는다(파일은 옮겨질 뿐 사라지지 않는다).
+    #: 흡수·삭제로 이 아래로 내려가면 게이트가 실패한다 — 그때는 **제외 목록이 잘못 넓어진
+    #: 것이 아닌지 먼저 확인**하고 나서 이 값을 내린다. 등록 시점(2026-09-05) 실측 66.
+    MIN_SCANNED_SOURCES = 60
 
-    def _sources(self):
-        files = [ROOT_DIR / "main.py"]
-        for name in self.SCAN_DIRS:
-            files.extend(sorted((ROOT_DIR / name).rglob("*.py")))
-            files.extend(sorted((ROOT_DIR / name).rglob("*.ui")))
-        return files
+    def test_scan_is_not_empty_and_covers_the_tree(self):
+        """메타 게이트 — 스캔이 실제로 무언가를 재고 있다: 바닥 수 이상 · 진입점 · `.ui` 포함."""
+        files = scan_sources()
+        names = {p.relative_to(ROOT_DIR).as_posix() for p in files}
+        assert len(files) >= self.MIN_SCANNED_SOURCES, (
+            f"색 스캔 대상이 {len(files)}개뿐이다(바닥 {self.MIN_SCANNED_SOURCES}) — 제외 목록이 잘못 넓어졌거나 소스가 사라졌다"
+        )
+        assert "main.py" in names, "진입점이 스캔에 없다"
+        assert any(p.suffix == ".ui" for p in files), (
+            ".ui 파일이 하나도 스캔되지 않았다 — 카드 배경이 새던 곳이다"
+        )
+        assert not any(
+            p.parts[-2] == "tests" or "tests" in p.relative_to(ROOT_DIR).parts for p in files
+        )
+
+    def test_scan_covers_every_git_tracked_source(self):
+        """메타 게이트 — git이 아는 소스(tests·theme.py 제외)는 전부 스캔에 들어 있다.
+
+        제외 규칙이 소스 디렉토리를 삼키면 여기서 이름이 찍혀 드러난다. git이 없는
+        환경(소스 zip)에서는 잴 수 없어 건너뛴다 — 바닥 수 단언은 그래도 돈다.
+        """
+        tracked = _git_tracked_sources()
+        if tracked is None:
+            pytest.skip("git을 쓸 수 없어 추적 파일 대조를 건너뛴다")
+        assert tracked, "git이 소스를 하나도 돌려주지 않았다 — 대조 전제가 깨졌다"
+        scanned = set(scan_sources())
+        missing = sorted(p.relative_to(ROOT_DIR).as_posix() for p in tracked if p not in scanned)
+        assert not missing, (
+            "git이 아는 소스가 색 스캔에서 빠졌다(제외 규칙이 너무 넓다):\n" + "\n".join(missing)
+        )
 
     def test_no_hex_colour_outside_theme(self):
         offenders = []
-        for path in self._sources():
+        for path in scan_sources():
             for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
                 if HEX_COLOR.search(line):
                     offenders.append(f"{path.relative_to(ROOT_DIR)}:{n}: {line.strip()}")
