@@ -12,7 +12,7 @@ import os
 
 import pytest
 
-import application.mainWindow as mw_mod
+import app.views.mainWindow as mw_mod
 import config.config as config_mod
 
 

@@ -5,7 +5,7 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QIcon
 from PySide6.QtCore import QTranslator, QLocale
 
-from application.mainWindow import VodDownloader
+from app.views.mainWindow import VodDownloader
 import config.config as config
 import theme
 from config.log_setup import setup_logging

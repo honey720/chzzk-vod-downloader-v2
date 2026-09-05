@@ -11,7 +11,7 @@ from PySide6.QtCore import Qt
 
 from content.data import ContentItem
 from content.model import ContentListModel
-from content.view import ContentListView
+from app.widgets.view import ContentListView
 from core.models.download_state import DownloadState
 from tests.unit.card_helpers import shown
 

@@ -13,15 +13,15 @@ from PySide6.QtGui import QGuiApplication
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog
 
-import config.dialog as dialog_module
+import app.views.dialog as dialog_module
 import theme
 from tests.unit.card_helpers import hold_style
-from config.dialog import SettingDialog
+from app.views.dialog import SettingDialog
 
 
 def test_open_logs_folder_uses_desktop_services(qapp):
     dialog = SettingDialog()
-    with patch("config.dialog.QDesktopServices.openUrl", return_value=True) as m:
+    with patch("app.views.dialog.QDesktopServices.openUrl", return_value=True) as m:
         dialog.openLogsFolder()
 
     assert m.call_count == 1
@@ -32,8 +32,8 @@ def test_open_logs_folder_uses_desktop_services(qapp):
 
 def test_open_logs_folder_warns_on_failure(qapp):
     dialog = SettingDialog()
-    with patch("config.dialog.QDesktopServices.openUrl", return_value=False):
-        with patch("config.dialog.QMessageBox.warning") as warn:
+    with patch("app.views.dialog.QDesktopServices.openUrl", return_value=False):
+        with patch("app.views.dialog.QMessageBox.warning") as warn:
             dialog.openLogsFolder()
 
     assert warn.called

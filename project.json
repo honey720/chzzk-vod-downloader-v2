@@ -1,13 +1,13 @@
 {
     "projectFile": "project.json",
     "sources": [
-        "application/mainWindow.py",
+        "app/views/mainWindow.py",
         "app/widgets/widget.py",
-        "content/view.py",
+        "app/widgets/view.py",
         "content/manager.py",
         "content/worker.py",
         "download/qt_bridge.py",
-        "config/dialog.py",
+        "app/views/dialog.py",
         "ui/settingDialog.ui",
         "ui/mainWindow.ui",
         "app/widgets/contentItemWidget.ui"

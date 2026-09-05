@@ -15,7 +15,7 @@ import main as main_module
 import theme
 from content.data import ContentItem
 from content.model import ContentListModel
-from content.view import ContentListView
+from app.widgets.view import ContentListView
 from app.widgets.widget import ContentItemWidget
 from core.api.dash import parse_dash_manifest
 from core.models.download_state import DownloadState

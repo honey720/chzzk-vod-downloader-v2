@@ -251,7 +251,7 @@ def test_relative_imports_are_resolved_against_the_package_path():
         _absolute_base(vm, 1, "item_state") == "app.viewmodels.item_state"
     )  # from .item_state import x
     assert _absolute_base(vm, 2, "views") == "app.views"  # from ..views import x
-    assert _absolute_base(vm, 3, "content.view") == "content.view"  # from ...content.view import x
+    assert _absolute_base(vm, 3, "app.widgets.view") == "app.widgets.view"  # from ...app.widgets.view import x
     assert (
         _absolute_base(APP_DIR / "viewmodels" / "__init__.py", 1, "item_state")
         == "app.viewmodels.item_state"
