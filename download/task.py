@@ -8,7 +8,7 @@ core의 DownloadTaskModel에 위임한다. Qt 계층과의 연결(ContentItem �
 
 import threading
 
-from content.data import ContentItem
+from app.viewmodels.data import ContentItem
 from core.models.download_state import DownloadState
 from core.models.download_task import InvalidStateTransitionError
 from core.models.download_data import DownloadData

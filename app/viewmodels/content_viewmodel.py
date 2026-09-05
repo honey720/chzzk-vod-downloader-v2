@@ -20,8 +20,8 @@ from PySide6.QtCore import QObject, QThreadPool, Signal
 
 from app.viewmodels.item_state import ItemState
 from app.viewmodels.path_gates import check_download_path
-from content.data import ContentItem
-from content.model import ContentListModel
+from app.viewmodels.data import ContentItem
+from app.viewmodels.model import ContentListModel
 from core.utils.paths import build_output_path, ensure_unique_path
 from core.models.download_state import DownloadState
 

@@ -24,7 +24,7 @@ from PySide6.QtWidgets import QLabel
 
 import main as main_module
 import theme
-from content.data import ContentItem
+from app.viewmodels.data import ContentItem
 from app.widgets.widget import ContentItemWidget
 from core.models.download_state import DownloadState
 from app.viewmodels.item_state import ItemState

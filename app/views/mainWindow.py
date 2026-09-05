@@ -9,7 +9,7 @@ from PySide6.QtCore import QPoint, QRect, QStandardPaths, QTimer
 from app.viewmodels.download_viewmodel import DownloadViewModel
 from app.viewmodels.path_gates import check_fetch_path, check_remember_path, normalize_path
 from app.views.dialog import SettingDialog
-from content.data import ContentItem
+from app.viewmodels.data import ContentItem
 from content.manager import ContentManager
 from app.widgets import widget as content_widget
 from core.models.download_state import DownloadState

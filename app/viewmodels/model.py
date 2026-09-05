@@ -15,7 +15,7 @@
 
 from PySide6.QtCore import QObject, Signal
 
-from content.data import ContentItem
+from app.viewmodels.data import ContentItem
 
 
 class ContentListModel(QObject):

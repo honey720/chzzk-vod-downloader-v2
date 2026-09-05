@@ -44,7 +44,7 @@ from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
 
 import main as main_module
 import theme
-from content.data import ContentItem
+from app.viewmodels.data import ContentItem
 from app.widgets.widget import ContentItemWidget
 from core.models.download_state import DownloadState
 from core.utils.paths import build_output_path

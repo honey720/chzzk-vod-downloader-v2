@@ -22,7 +22,7 @@ import threading
 from PySide6.QtCore import QObject
 
 from app.viewmodels.content_viewmodel import ContentViewModel
-from content.data import ContentItem
+from app.viewmodels.data import ContentItem
 from app.widgets.view import ContentListView
 from content.worker import ContentWorker
 

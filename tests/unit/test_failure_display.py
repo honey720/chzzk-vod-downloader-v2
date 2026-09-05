@@ -14,7 +14,7 @@ from PySide6.QtCore import QObject
 
 import main as main_module
 import theme
-from content.data import ContentItem
+from app.viewmodels.data import ContentItem
 from content.manager import ContentManager
 from app.widgets.view import ContentListView
 from core.downloaders.base import PostprocessError

@@ -43,7 +43,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config.config as config  # noqa: E402
 from config.log_setup import setup_logging  # noqa: E402
-from content.data import ContentItem  # noqa: E402
+from app.viewmodels.data import ContentItem  # noqa: E402
 from content.network import NetworkManager  # noqa: E402
 from core.models.events import ProgressEvent  # noqa: E402
 from core.services import metadata_service  # noqa: E402

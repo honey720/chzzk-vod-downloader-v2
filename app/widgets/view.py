@@ -2,7 +2,7 @@ from PySide6.QtWidgets import QScrollArea, QWidget, QVBoxLayout
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDragLeaveEvent, QDropEvent, QPainter, QColor
 from app.widgets.widget import ContentItemWidget
-from content.data import ContentItem
+from app.viewmodels.data import ContentItem
 
 
 class _Overlay(QWidget):

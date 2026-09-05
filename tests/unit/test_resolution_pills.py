@@ -13,8 +13,8 @@ from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 
 import main as main_module
 import theme
-from content.data import ContentItem
-from content.model import ContentListModel
+from app.viewmodels.data import ContentItem
+from app.viewmodels.model import ContentListModel
 from app.widgets.view import ContentListView
 from app.widgets.widget import ContentItemWidget
 from core.api.dash import parse_dash_manifest
