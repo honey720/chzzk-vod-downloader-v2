@@ -14,7 +14,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog
 
 import app.views.dialog as dialog_module
-import theme
+import app.theme as theme
 from tests.unit.card_helpers import hold_style
 from app.views.dialog import SettingDialog
 

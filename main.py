@@ -7,7 +7,7 @@ from PySide6.QtCore import QTranslator, QLocale
 
 from app.views.mainWindow import VodDownloader
 import config.config as config
-import theme
+import app.theme as theme
 from config.log_setup import setup_logging
 
 logger = logging.getLogger(__name__)

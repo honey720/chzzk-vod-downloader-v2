@@ -24,7 +24,7 @@ import pytest
 from PySide6.QtWidgets import QApplication
 
 import main as main_module
-import theme
+import app.theme as theme
 from app.widgets import icons
 from app.viewmodels.data import ContentItem
 from app.widgets.widget import ContentItemWidget

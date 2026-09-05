@@ -18,8 +18,9 @@ from pathlib import Path
 import pytest
 
 import main
-import theme
+import app.theme as theme
 from tests.unit.card_helpers import hold_style
+from tests.unit.layers import is_theme
 
 ROOT_DIR = Path(main.__file__).resolve().parent
 HEX_COLOR = re.compile(r"#[0-9a-fA-F]{6}\b")
@@ -116,9 +117,9 @@ class TestCardStateStyles:
 SCAN_EXCLUDED_DIRS = {
     "tests",  # 테스트 자신이 색 리터럴을 기대값으로 든다(이 파일 포함) — 어느 깊이의 tests/든
 }
-SCAN_EXCLUDED_FILES = {
-    "theme.py",  # 색의 유일한 정의처 — 여기 있는 리터럴이 규칙이다
-}
+#: 색의 유일한 정의처(`app/theme`)는 계층 정의(tests/unit/layers.py — `is_theme`)에서 읽는다.
+#: 여기 파일명을 따로 적지 않는다 — 파일이 옮겨지면 한쪽만 따라가고 다른 쪽은 아무것도 안 재는
+#: 규칙으로 남는다(#259 A4: 루트 `theme.py`용 파일명 규칙이 그랬다).
 #: 디렉토리 이름으로 거르는 것 — 숨김(.venv·.git·.ruff_cache) · 바이트코드 · Nuitka/빌드 산출물.
 #: 소스 트리의 일부가 아니라 스캔하면 안 되는 것들이다. 빌드 산출물 이름은 .gitignore와 같다.
 _BUILD_ARTIFACT_SUFFIXES = (".build", ".dist", ".onefile-build")
@@ -138,19 +139,18 @@ def scan_sources() -> list[Path]:
     """색 리터럴 스캔 대상 — 루트 아래 **모든** `.py`·`.ui`에서 제외 목록만 뺀다.
 
     디렉토리 이름을 모른다. 새 디렉토리(`app/views/` 등)는 생기는 순간 포함되고, 옮겨진
-    파일은 옮겨진 자리에서 스캔된다. 파일 수는 `TestColoursAreDefinedOnlyOnce`가 단언한다.
+    파일은 옮겨진 자리에서 스캔된다. 색의 정의처(`is_theme`)만 뺀다. 파일 수는
+    `TestColoursAreDefinedOnlyOnce`가 단언한다.
     """
     found: list[Path] = []
 
     def walk(directory: Path) -> None:
-        """하위 디렉토리를 재귀로 걷는다 — 디렉토리 제외는 어느 깊이든, 파일 제외는 루트에서만."""
+        """하위 디렉토리를 재귀로 걷는다 — 디렉토리 제외는 어느 깊이든, 파일 제외는 theme 정의처뿐."""
         for entry in sorted(directory.iterdir()):
             if entry.is_dir():
                 if entry.name not in SCAN_EXCLUDED_DIRS and not _is_skipped_dir(entry.name):
                     walk(entry)
-            elif entry.suffix in (".py", ".ui") and not (
-                directory == ROOT_DIR and entry.name in SCAN_EXCLUDED_FILES
-            ):
+            elif entry.suffix in (".py", ".ui") and not is_theme(entry):
                 found.append(entry)
 
     walk(ROOT_DIR)
@@ -158,11 +158,12 @@ def scan_sources() -> list[Path]:
 
 
 def _git_tracked_sources() -> list[Path] | None:
-    """git이 아는 `.py`·`.ui`에서 (어느 깊이든) tests/와 루트 theme.py만 뺀 것 — git이 없으면 None.
+    """git이 아는 `.py`·`.ui`에서 (어느 깊이든) tests/와 theme 정의처만 뺀 것 — git이 없으면 None.
 
-    ⚠️ 일부러 `SCAN_EXCLUDED_*`를 쓰지 않는다 — 같은 집합으로 거르면 제외 목록이 넓어질 때
+    ⚠️ 일부러 `SCAN_EXCLUDED_DIRS`를 쓰지 않는다 — 같은 집합으로 거르면 제외 목록이 넓어질 때
     대조도 같이 좁아져 동어반복이 된다(고장 주입 ①b에서 실측). 여기의 기준은 "왜 제외하는가"의
-    최소 집합이고, 제외 목록에 그 밖의 것을 넣으면 이 대조가 시끄럽게 실패해야 맞다.
+    최소 집합(tests · theme 정의처)이고, 제외 목록에 그 밖의 것을 넣으면 이 대조가 시끄럽게
+    실패해야 맞다. theme 정의처는 계층 정의(`is_theme`) 하나를 양쪽이 같이 읽는다.
     """
     import subprocess
 
@@ -180,7 +181,7 @@ def _git_tracked_sources() -> list[Path] | None:
     tracked = []
     for line in result.stdout.splitlines():
         path = Path(line.strip())
-        if not line.strip() or "tests" in path.parts or path == Path("theme.py"):
+        if not line.strip() or "tests" in path.parts or is_theme(ROOT_DIR / path):
             continue
         tracked.append(ROOT_DIR / path)
     return tracked

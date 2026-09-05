@@ -2,8 +2,9 @@
 
 규칙은 **계층 관계**로 판정한다 — 모듈 이름을 문자열로 들지 않는다(#259 C0).
 
-- **뷰 계층**은 두 가지로 정한다. ① `app/views/`·`app/widgets/` 아래 있는 모듈(위치 —
-  아직 없어도 규칙은 서 있고 생기는 순간 적용된다). ② 프로젝트 import 그래프에서
+- **뷰 계층**은 두 가지로 정한다. ① `app/views/`·`app/widgets/`·`app/theme`(위치 —
+  tests/unit/layers.py의 단일 정의. 아직 없어도 규칙은 서 있고 생기는 순간 적용된다.
+  theme은 Qt를 아는 색·토큰 정의처라 뷰 계층이다). ② 프로젝트 import 그래프에서
   `PySide6.QtWidgets`·`PySide6.QtGui`에 **닿는** 모듈(내용 — 직접이든 다른 프로젝트 모듈을
   거쳐서든). `content.view`·`app.widgets.widget`·`ui/*`·`theme`는 이름이 아니라 ②로 잡히므로
   파일을 옮기거나 이름을 바꿔도 계속 잡힌다.
@@ -23,16 +24,10 @@ import ast
 from functools import lru_cache
 from pathlib import Path
 
-import app
-
-APP_DIR = Path(app.__file__).resolve().parent
-ROOT_DIR = APP_DIR.parent
+from tests.unit.layers import APP_DIR, ROOT_DIR, VIEW_LAYER_PREFIXES, is_view_layer
 
 #: Qt 위젯 모듈 — 여기에 닿는 프로젝트 모듈이 곧 뷰 계층이다.
 QT_VIEW_MODULES = {"PySide6.QtWidgets", "PySide6.QtGui"}
-
-#: 뷰 계층 디렉토리(SPEC §3.3 목표 구조) — 존재하지 않아도 규칙은 선다.
-VIEW_LAYER_DIRS = (APP_DIR / "views", APP_DIR / "widgets")
 
 #: 프로젝트 모듈 색인에서 빼는 디렉토리(어느 깊이든) — 테스트·숨김·바이트코드·빌드 산출물(test_theme의 스캔과 같은 이유).
 _INDEX_EXCLUDED_DIRS = {"tests"}
@@ -141,11 +136,6 @@ def _resolve_project_module(name: str) -> str | None:
     return None
 
 
-def _is_under_view_dir(py_file: Path) -> bool:
-    """`app/views/`·`app/widgets/` 아래인가(위치로 정한 뷰 계층)."""
-    return any(py_file.resolve().is_relative_to(view_dir) for view_dir in VIEW_LAYER_DIRS)
-
-
 @lru_cache(maxsize=None)
 def qt_widget_chain(module: str) -> tuple[str, ...] | None:
     """모듈이 Qt 위젯 모듈에 닿는 경로 — 닿지 않으면 None. 순환은 방문 표시로 끊는다."""
@@ -173,7 +163,7 @@ def _chain(module: str, visiting: frozenset) -> tuple[str, ...] | None:
 def is_view_module(module: str) -> bool:
     """뷰 계층인가 — 위치(`app/views`·`app/widgets`) 또는 내용(Qt 위젯에 닿음)."""
     path = project_modules().get(module)
-    if path is not None and _is_under_view_dir(path):
+    if path is not None and is_view_layer(path):
         return True
     return qt_widget_chain(module) is not None
 
@@ -181,9 +171,7 @@ def is_view_module(module: str) -> bool:
 def viewmodel_layer_files() -> list[Path]:
     """검사 대상 — `app/` 아래에서 뷰 계층 디렉토리 밖의 모든 `.py`."""
     return sorted(
-        p
-        for p in APP_DIR.rglob("*.py")
-        if not _is_under_view_dir(p) and "__pycache__" not in p.parts
+        p for p in APP_DIR.rglob("*.py") if not is_view_layer(p) and "__pycache__" not in p.parts
     )
 
 
@@ -200,7 +188,7 @@ def _violations(py_file: Path) -> list[str]:
             continue
         if is_view_module(target):
             chain = qt_widget_chain(target)
-            via = " -> ".join(chain) if chain else f"{target} (app/views·widgets 아래)"
+            via = " -> ".join(chain) if chain else f"{target} (뷰 계층 위치 — views·widgets·theme)"
             found.append(f"{where}:{lineno}: {name}  [{via}]")
     return found
 
@@ -236,11 +224,19 @@ def test_viewmodel_layer_does_not_reach_qt_widgets_or_view_modules():
 
 
 def test_view_layer_directories_are_exempt_by_position_not_by_name():
-    """`app/views/`·`app/widgets/`는 아직 없어도 규칙에 들어 있다 — 존재 여부와 무관하게 위치로 판정한다."""
-    for view_dir in VIEW_LAYER_DIRS:
-        assert view_dir.parent == APP_DIR
-        assert _is_under_view_dir(view_dir / "anything.py")
-    assert not _is_under_view_dir(APP_DIR / "viewmodels" / "anything.py")
+    """뷰 계층(views·widgets·theme)은 존재 여부와 무관하게 위치로 판정한다 — 그 밖의 `app/`는 뷰모델 계층.
+
+    theme은 파일(`app/theme.py`)이든 패키지(`app/theme/…`)든 같은 접두사로 잡힌다. 이름이 비슷한
+    다른 파일(`app/themes.py`)이나 `app/` 직속의 다른 파일(`platform_adapter.py`)은 열리지 않는다.
+    """
+    for prefix in VIEW_LAYER_PREFIXES:
+        assert prefix.parent == APP_DIR
+        assert is_view_layer(prefix / "anything.py")
+    assert is_view_layer(APP_DIR / "theme.py")
+    assert is_view_layer(APP_DIR / "theme" / "tokens.py")
+    assert not is_view_layer(APP_DIR / "themes.py")
+    assert not is_view_layer(APP_DIR / "platform_adapter.py")
+    assert not is_view_layer(APP_DIR / "viewmodels" / "anything.py")
 
 
 def test_relative_imports_are_resolved_against_the_package_path():
@@ -251,7 +247,9 @@ def test_relative_imports_are_resolved_against_the_package_path():
         _absolute_base(vm, 1, "item_state") == "app.viewmodels.item_state"
     )  # from .item_state import x
     assert _absolute_base(vm, 2, "views") == "app.views"  # from ..views import x
-    assert _absolute_base(vm, 3, "app.widgets.view") == "app.widgets.view"  # from ...app.widgets.view import x
+    assert (
+        _absolute_base(vm, 3, "app.widgets.view") == "app.widgets.view"
+    )  # from ...app.widgets.view import x
     assert (
         _absolute_base(APP_DIR / "viewmodels" / "__init__.py", 1, "item_state")
         == "app.viewmodels.item_state"

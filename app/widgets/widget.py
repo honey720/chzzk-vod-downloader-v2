@@ -10,7 +10,7 @@ from app.widgets.pill import ResolutionPill
 from core.models.download_state import DownloadState
 from app.viewmodels.item_state import ItemState
 from app.widgets.contentItemWidget import Ui_ContentItemWidget
-import theme
+import app.theme as theme
 from time import strftime, gmtime
 import platform
 import logging

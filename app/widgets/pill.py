@@ -18,7 +18,7 @@ from PySide6.QtCore import QPointF, QSize, Qt
 from PySide6.QtGui import QColor, QPainter, QPolygonF
 from PySide6.QtWidgets import QPushButton, QSizePolicy
 
-import theme
+import app.theme as theme
 
 #: ▾ 도형의 폭(px). 높이는 절반 — pill 높이(20px) 안에서 글자와 무게가 맞는 크기.
 CARET_WIDTH = 8
