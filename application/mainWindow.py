@@ -298,20 +298,32 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
             self.onDownloadPause()
 
     def onCardRetry(self, item: ContentItem) -> None:
-        """실패 카드의 ↻ — 아이템을 대기로 되돌리고 배치를 잇는다 (#245).
+        """실패 카드의 ↻ — 아이템을 **대기로 되돌리기만** 한다 (#245 → #261). 시작은 유저 몫.
 
-        실패 상태·사유·진행률을 초기화해 다시 다운로드 대상(findItem이
-        잡는 WAITING)으로 만든다. 이미 배치가 돌고 있으면 현재 항목이
-        끝난 뒤 체인(emitFinishedRequest → downloadItem)이 이 아이템을
-        집어 가고, 놀고 있으면 다운로드 버튼과 같은 경로로 즉시 배치를
-        시작한다 — 재시도 전용 실행 경로를 새로 만들지 않는다.
+        실패 상태·사유·진행률을 초기화해 다시 다운로드 대상(findItem이 잡는
+        WAITING)으로 만든다. **여기서 다운로드를 시작하지 않는다** — 즉시 시작하면
+        실패 원인을 고칠 틈이 없다(쿠키 만료: 같은 쿠키로 바로 또 실패한다, #261).
+        유저가 원인을 고친 뒤 전역 다운로드 버튼으로 시작하고, 그때 기존 시작 경로
+        (onDownloadPause → downloadItem → downloadRequested → startDownload)가 새
+        core 태스크를 WAITING부터 만든다 — 재시도 전용 실행 경로를 새로 만들지 않는다.
+
+        층 구분(#135·#167): 여기서 바꾸는 것은 app 계층 `ContentItem.downloadState`
+        (카드 표시 상태)다. 실패한 core `DownloadTaskModel`은 그대로 FAILED로 끝나고
+        폐기된다 — core의 `FAILED → WAITING` 불허 전이는 건드리지 않는다.
+
+        ⚠️ 정본의 *"전역 다운로드 버튼이 실패 카드를 자동 포함하는 것은 반대"*와
+        충돌하지 않는다. 반대한 것은 **자동 포함**(실패인 채인 카드는 findItem이
+        지금도 건너뛴다)이고, 재시도를 눌러 대기가 된 카드는 **유저가 명시적으로
+        되돌린 것**이라 전역 버튼이 집어 가는 것이 맞다. 배치가 돌고 있는 중이면
+        현재 항목이 끝난 뒤 체인(emitFinishedRequest → downloadItem)이 대기 카드를
+        차례로 집어 가는 기존 동작 그대로다.
+
+        파일시스템은 건드리지 않는다 — 후처리 실패로 보존된 세그먼트(#185)는 남는다.
         """
         item.stateMessage = ""
         item.downloadState = DownloadState.WAITING
         item.download_progress = 0
         self.contentManager.model.notifyChanged(item)
-        if not self.downloadViewModel.isDownloading():
-            self.onDownloadPause()
 
     def fetchContents(self, urls: str):
         # URL 목록을 미리 준비합니다.
