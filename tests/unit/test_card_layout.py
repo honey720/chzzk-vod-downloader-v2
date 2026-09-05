@@ -29,7 +29,7 @@ from PySide6.QtWidgets import QApplication
 import main as main_module
 import theme
 from content.data import ContentItem
-from content.widget import ContentItemWidget
+from app.widgets.widget import ContentItemWidget
 from core.models.download_state import DownloadState
 from tests.unit.card_helpers import resize_to, shown, hold_style
 
@@ -61,11 +61,11 @@ def no_network(monkeypatch):
         def get(self, *a, **k):
             raise RuntimeError("network disabled in tests")
 
-    monkeypatch.setattr("content.widget.get_thread_session", lambda: _FailingSession())
+    monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
     # 테스트 아이템의 기본 경로를 전역 설정 경로로 등록한다(#245) — 실제
     # 앱은 시작 시 mainWindow가 밀어 넣는 값이라, 안 넣으면 모든 카드가
     # "전역과 다른 경로"로 판정돼 경로 라벨이 떠서 3행 슬롯을 밀어낸다.
-    monkeypatch.setattr("content.widget._global_download_path", "C:/dl")
+    monkeypatch.setattr("app.widgets.widget._global_download_path", "C:/dl")
 
 
 def _make_widget(qapp) -> ContentItemWidget:
@@ -502,7 +502,7 @@ class TestRowThreePriority:
         assert not widget.directoryLabel.isVisible()
         assert widget.pathIconButton.iconName() == "folder_dot", "전역과 다른 경로인데 점 표시가 없다"
         assert widget.pathIconButton.toolTip() == self.LONG_PATH
-        from content import widget as widget_mod
+        from app.widgets import widget as widget_mod
 
         calls = []
         monkeypatch.setattr(
@@ -679,7 +679,7 @@ class TestPathAbbreviationAndTooltip:
 
     @staticmethod
     def _abbr(path, home):
-        from content.widget import abbreviate_path
+        from app.widgets.widget import abbreviate_path
 
         return abbreviate_path(path, home=home)
 
@@ -788,7 +788,7 @@ class TestPathShrinkOrder:
         ("/srv/media/x", ("/…/x", "/…/", "x")),
     ])
     def test_display_parts(self, path, expected):
-        from content.widget import path_display_parts
+        from app.widgets.widget import path_display_parts
 
         assert path_display_parts(path, home="C:/Users/me") == expected
 
@@ -800,7 +800,7 @@ class TestPathClickOpensFolderPicker:
 
     def _patch_dialog(self, monkeypatch, result):
         calls = []
-        from content import widget as widget_mod
+        from app.widgets import widget as widget_mod
 
         def fake(parent, caption, start_dir, *a, **k):
             calls.append((caption, start_dir))

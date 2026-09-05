@@ -17,7 +17,7 @@ from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
 import main as main_module
 import theme
 from content.data import ContentItem
-from content.widget import ContentItemWidget
+from app.widgets.widget import ContentItemWidget
 from core.models.download_state import DownloadState
 from tests.unit.card_helpers import drop_new_top_levels, hold_style, shown, snapshot_top_levels
 
@@ -51,8 +51,8 @@ def no_network(monkeypatch):
         def get(self, *a, **k):
             raise RuntimeError("network disabled in tests")
 
-    monkeypatch.setattr("content.widget.get_thread_session", lambda: _FailingSession())
-    monkeypatch.setattr("content.widget._global_download_path", "C:/dl")
+    monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
+    monkeypatch.setattr("app.widgets.widget._global_download_path", "C:/dl")
 
 
 def _card_in_window(state: DownloadState) -> tuple[QWidget, ContentItemWidget]:

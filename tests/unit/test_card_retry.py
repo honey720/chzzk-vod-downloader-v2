@@ -73,7 +73,7 @@ def _no_network(monkeypatch):
         def get(self, *a, **k):
             raise RuntimeError("network disabled in tests")
 
-    monkeypatch.setattr("content.widget.get_thread_session", lambda: _FailingSession())
+    monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
 
 
 @pytest.fixture

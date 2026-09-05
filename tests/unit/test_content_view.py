@@ -25,7 +25,7 @@ def no_network(monkeypatch):
         def get(self, *a, **k):
             raise RuntimeError("network disabled in tests")
 
-    monkeypatch.setattr("content.widget.get_thread_session", lambda: _FailingSession())
+    monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
 
 
 def _make_item(title="제목", download_path="."):
@@ -350,7 +350,7 @@ class TestCardNumberingFollowsPosition:
 
     def test_insertion_only_touches_the_new_widgets_setData(self, view, qapp, monkeypatch):
         """기존 카드가 삽입 때문에 다시 그려지면 안 된다 — 새 카드 자기 몫만."""
-        from content.widget import ContentItemWidget
+        from app.widgets.widget import ContentItemWidget
 
         v, model = view
         for i in range(20):

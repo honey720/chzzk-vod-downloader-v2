@@ -13,7 +13,7 @@ repr로 남긴다 — U+00A0(NBSP) 같은 공백 유사 문자는 그냥 찍으�
 import pytest
 
 import content.manager as manager_mod
-import content.widget as widget_mod
+import app.widgets.widget as widget_mod
 from content.data import ContentItem
 from content.manager import ContentManager
 from content.view import ContentListView
@@ -33,7 +33,7 @@ def no_network(monkeypatch):
         def get(self, *args, **kwargs):
             raise RuntimeError("network disabled in tests")
 
-    monkeypatch.setattr("content.widget.get_thread_session", lambda: _FailingSession())
+    monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
     monkeypatch.setattr("content.network.get_thread_session", lambda: _FailingSession())
 
 
