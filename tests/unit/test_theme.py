@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 import main
-import theme
+import app.theme as theme
 from tests.unit.card_helpers import hold_style
 from tests.unit.layers import is_theme
 

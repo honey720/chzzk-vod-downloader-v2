@@ -30,7 +30,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 import main as main_module
-import theme
+import app.theme as theme
 from app.views import mainWindow as mw_mod
 from app.views.mainWindow import VodDownloader
 from app.viewmodels.data import ContentItem

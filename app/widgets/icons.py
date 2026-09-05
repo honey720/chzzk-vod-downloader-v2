@@ -21,7 +21,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import QPushButton
 
-import theme
+import app.theme as theme
 
 #: 그릴 수 있는 아이콘 이름 — `IconButton.setIconName()`이 받는 어휘.
 #: folder_dot = 폴더 + 우상단 점(강조색) — 카드 경로가 전역 설정과 다를 때

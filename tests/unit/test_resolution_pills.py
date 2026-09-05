@@ -12,7 +12,7 @@ import pytest
 from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 
 import main as main_module
-import theme
+import app.theme as theme
 from app.viewmodels.data import ContentItem
 from app.viewmodels.model import ContentListModel
 from app.widgets.view import ContentListView

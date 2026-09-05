@@ -16,7 +16,7 @@ import pytest
 from PySide6.QtGui import QColor
 
 import main as main_module
-import theme
+import app.theme as theme
 from app.viewmodels.item_state import ItemState
 from app.viewmodels.data import ContentItem
 from app.widgets.widget import STATE_ICON, ContentItemWidget

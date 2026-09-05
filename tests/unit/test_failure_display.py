@@ -13,7 +13,7 @@ import pytest
 from PySide6.QtCore import QObject
 
 import main as main_module
-import theme
+import app.theme as theme
 from app.viewmodels.data import ContentItem
 from content.manager import ContentManager
 from app.widgets.view import ContentListView

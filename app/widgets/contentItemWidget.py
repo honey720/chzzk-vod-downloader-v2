@@ -32,7 +32,7 @@ from PySide6.QtCore import (QCoreApplication, QMetaObject, QSize, Qt)
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel,
     QLineEdit, QProgressBar, QVBoxLayout)
 
-import theme
+import app.theme as theme
 from app.widgets.eliding_label import ElidingLabel, PathLabel
 from app.widgets.icons import IconButton
 
