@@ -39,41 +39,6 @@ def _default_download_path() -> str:
 
 
 
-#: Qt 기하는 C++ int다 — 이 범위 밖의 기록값은 QRect를 만들다 OverflowError가 난다.
-_QT_INT_MIN, _QT_INT_MAX = -(2**31), 2**31 - 1
-
-
-def parse_saved_window(saved: object) -> tuple[QRect, bool] | None:
-    """config의 `window` 기록을 **화이트리스트**로 검증해 (사각형, 최대화)로 돌려준다 (#253).
-
-    config.json은 유저가 손으로 고칠 수 있는 파일이라 잘못된 값은 예외가 아니라 정상
-    시나리오다 — 원하는 형태가 아니면 `None`(= 기록 없음, 첫 실행)이다. 통과 조건:
-    dict · x/y/width/height가 bool 아닌 정수(또는 정수값 float) · 유한(NaN·무한 아님) ·
-    C++ int 범위 안 · width/height 양수 · maximized는 없거나 bool.
-    블랙리스트(예외 목록 늘리기)로 막지 않는다 — 다음 종류의 깨진 값에 또 샌다(#180 전례).
-    """
-    if not isinstance(saved, dict):
-        return None
-    values: list[int] = []
-    for key in ("x", "y", "width", "height"):
-        value = saved.get(key)
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            return None
-        if isinstance(value, float) and (value != value or value in (float("inf"), float("-inf")) or not value.is_integer()):
-            return None
-        number = int(value)
-        if not _QT_INT_MIN <= number <= _QT_INT_MAX:
-            return None
-        values.append(number)
-    x, y, width, height = values
-    if width <= 0 or height <= 0:
-        return None
-    maximized = saved.get("maximized", False)
-    if not isinstance(maximized, bool):
-        return None
-    return QRect(x, y, width, height), maximized
-
-
 def clamp_to_available(rect: QRect, available: QRect) -> QRect:
     """창 사각형을 현재 작업 영역 안으로 맞춘다 (#253) — 순수 함수, 테스트가 직접 잰다.
 
@@ -196,7 +161,7 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
     def _restoreWindowState(self) -> bool:
         """설정에 기록된 창 크기·위치를 되살린다 (#253). 반환값 = 최대화 상태로 띄울지.
 
-        기록이 없거나(첫 실행·구 config) 화이트리스트(`parse_saved_window`)를 못 넘으면 초기
+        기록이 없거나(첫 실행·구 config) 화이트리스트(`config.parse_saved_window`)를 못 넘으면 초기
         크기 규칙(__init__)을 그대로 둔다. 기록값은 그대로 쓰지 않는다 — 모니터를 바꾸거나
         노트북을 분리하면 저장된 크기·위치가 현재 화면 밖이라 창이 안 보이거나 화면을
         넘는다. 기록 위치가 놓인 화면의 작업 영역으로 크기를 줄이고 위치를 안으로 민다.
@@ -207,11 +172,12 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         첫 표시 전에는 Qt 6 레이아웃 캐시가 polish 전 값을 들고 있어 시점에 따라 틀린다
         (#249). 최대화였다면 보통 크기를 먼저 복원해 두고(해제 시 돌아갈 크기) 최대화로 띄운다.
         """
-        parsed = parse_saved_window(config.load_config().get("window"))
+        parsed = config.parse_saved_window(config.load_config().get("window"))
         if parsed is None:
             return False
-        rect, maximized = parsed
+        (x, y, width, height), maximized = parsed
         try:
+            rect = QRect(x, y, width, height)  # Qt 변환은 여기서 — config/는 Qt를 모른다 (#257)
             available = self._availableGeometry(rect.topLeft())
             self.resize(min(rect.width(), available.width()), min(rect.height(), available.height()))
             placed = clamp_to_available(QRect(rect.topLeft(), self.size()), available)

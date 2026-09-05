@@ -81,9 +81,9 @@ def window_factory(qapp, monkeypatch, config_store):
 
 
 def test_downloadpath_key_registered_in_default_config():
-    """reorder_config가 DEFAULT_CONFIG 미등재 키를 삭제하므로 등재가 보존의 전제다."""
-    assert "downloadPath" in config_mod.DEFAULT_CONFIG
-    assert config_mod.DEFAULT_CONFIG["downloadPath"] == ""  # 빈 값 = 미설정
+    """정규화(normalize_config)가 스키마 표 미등재 키를 삭제하므로 등재가 보존의 전제다."""
+    assert "downloadPath" in config_mod.default_config()
+    assert config_mod.default_config()["downloadPath"] == ""  # 빈 값 = 미설정
 
 
 def test_saved_path_wins(window_factory, config_store, tmp_path):
