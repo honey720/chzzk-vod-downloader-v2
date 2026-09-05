@@ -5,7 +5,8 @@
 - 복원값은 그대로 쓰지 않는다: 기록된 위치가 놓인 화면의 작업 영역(`_availableGeometry`)으로
   크기를 줄이고 위치를 안으로 민다. 모니터가 바뀌어 창이 화면 밖으로 나가는 결함 방지.
 - 키가 없는 config(업데이트 전 유저)·깨진 값은 첫 실행으로 취급해 초기 크기 규칙으로 뜬다.
-- `DEFAULT_CONFIG` 등재 — `reorder_config`가 미등재 키를 지우는 함정(#159 전례).
+- 스키마 표 등재 — 정규화가 미등재 키를 지우는 함정(#159 전례). 화이트리스트(`parse_saved_window`)
+  게이트는 #257에서 config 계층으로 옮겨져 tests/unit/test_config_schema.py에 있다.
 
 config는 conftest의 autouse 픽스처가 테스트마다 임시 폴더로 격리한다. 화면은 이음새로
 주입한다(절대 px는 주입한 화면과 그 파생값뿐).
@@ -26,7 +27,7 @@ from PySide6.QtWidgets import QApplication
 import config.config as config_module
 import main as main_module
 import theme
-from application.mainWindow import VodDownloader, clamp_to_available, parse_saved_window
+from application.mainWindow import VodDownloader, clamp_to_available
 from tests.unit.card_helpers import drop_new_top_levels, hold_style, resize_to, snapshot_top_levels
 
 #: 테스트가 주입하는 작업 영역 — 주 화면.
@@ -123,16 +124,16 @@ class TestRoundTrip:
         )
 
     def test_the_key_survives_update_config(self):
-        """기록된 키는 시작 시 `update_config()`(reorder_config)를 거쳐도 남는다 — DEFAULT_CONFIG 등재의 이유."""
+        """기록된 키는 시작 시 `update_config()`(정규화)를 거쳐도 남는다 — 스키마 표 등재의 이유."""
         first = _open()
         first.close()
         QApplication.processEvents()
         assert _saved_window() is not None
         config_module.update_config()
         assert _saved_window() is not None, (
-            "reorder_config가 window 키를 지웠다 — DEFAULT_CONFIG에 등재되지 않았다"
+            "정규화가 window 키를 지웠다 — 스키마 표에 등재되지 않았다"
         )
-        assert "window" in config_module.DEFAULT_CONFIG
+        assert "window" in config_module.default_config()
 
     def test_unchanged_state_does_not_rewrite_the_file(self):
         """같은 값이면 다시 쓰지 않는다 — 닫을 때마다 파일이 바뀌는 일이 없다."""
@@ -223,7 +224,7 @@ class TestFirstRunAndOldConfigs:
         assert win.height() == AVAILABLE.height() // 2
 
     def test_an_empty_record_opens_at_the_initial_rule(self):
-        """DEFAULT_CONFIG의 기본값({}) — 파일이 새로 만들어진 첫 실행."""
+        """표의 기본값({}) — 파일이 새로 만들어진 첫 실행."""
         _write_window({})
         win = _open()
         assert win.width() == _initial_width()
@@ -259,57 +260,6 @@ class TestFirstRunAndOldConfigs:
         win = _open()
         assert win.width() == _initial_width(), (
             f"깨진 기록 {broken!r}에서 초기 규칙으로 뜨지 않았다: {win.width()}"
-        )
-
-
-class TestWhitelist:
-    """`parse_saved_window` — 원하는 형태만 통과한다. config.json은 손으로 고칠 수 있는 파일이라 깨진 값은 정상 시나리오다."""
-
-    def test_a_proper_record_parses(self):
-        """형태가 맞는 기록은 (사각형, 최대화)로 나온다."""
-        assert parse_saved_window(
-            {"x": 1, "y": 2, "width": 700, "height": 600, "maximized": True}
-        ) == (
-            QRect(1, 2, 700, 600),
-            True,
-        )
-
-    def test_integral_floats_are_accepted_and_maximized_defaults_to_false(self):
-        """JSON을 거치며 700.0처럼 실수가 된 정수는 받는다 — 정수값이면 형태가 같다."""
-        assert parse_saved_window({"x": 1.0, "y": 2.0, "width": 700.0, "height": 600.0}) == (
-            QRect(1, 2, 700, 600),
-            False,
-        )
-
-    @pytest.mark.parametrize(
-        "bad",
-        (
-            {"x": 1e1000, "y": 0, "width": 700, "height": 600},
-            {"x": 0, "y": 0, "width": 700, "height": -1e1000},
-            {"x": 10**30, "y": 0, "width": 700, "height": 600},
-            {"x": -(2**31) - 1, "y": 0, "width": 700, "height": 600},
-            {"x": 0, "y": 0, "width": 2**31, "height": 600},
-            {"x": float("nan"), "y": 0, "width": 700, "height": 600},
-            {"x": True, "y": 0, "width": 700, "height": 600},
-            {"x": 0.5, "y": 0, "width": 700, "height": 600},
-            {"x": "1", "y": 0, "width": 700, "height": 600},
-            {"x": 0, "y": 0, "width": 0, "height": 600},
-            {"x": 0, "y": 0, "width": 700},
-            {"x": 0, "y": 0, "width": 700, "height": 600, "maximized": 1},
-            [],
-            "x",
-            None,
-            {},
-        ),
-    )
-    def test_anything_else_is_rejected(self, bad):
-        """화이트리스트 밖의 값은 전부 None — 예외가 아니라 정상 반환이다."""
-        assert parse_saved_window(bad) is None, f"화이트리스트가 {bad!r}를 통과시켰다"
-
-    def test_the_boundary_of_the_qt_int_range_is_inclusive(self):
-        """C++ int의 양 끝값은 범위 안이다."""
-        assert (
-            parse_saved_window({"x": 2**31 - 1, "y": -(2**31), "width": 1, "height": 1}) is not None
         )
 
 

@@ -3,7 +3,7 @@
 세 결함이 합쳐져 저장된 인증 정보가 사라졌다: ①`save_config`가 대상에 직접 써서 쓰기 도중
 종료되면 파일이 깨지고 ②`load_config`가 깨진 파일에 기본값을 돌려주면 시작 시
 `update_config`가 그것을 저장해 원본을 덮어썼다 ③그 기본값이 모듈 전역 객체 자체라
-호출부의 수정이 기본값 표를 오염시켰다. 세 게이트는 서로 다른 결함을 하나씩 잰다 —
+호출부의 수정이 기본값 표를 오염시켰다(#257부터 기본값 표는 스키마 표에서 `default_config()`로 도출된다). 세 게이트는 서로 다른 결함을 하나씩 잰다 —
 ①만 되돌리면 원자성 게이트만, ②만 되돌리면 보존 게이트만, ③만 되돌리면 오염 게이트만
 실패해야 한다(고장 주입으로 확인).
 
@@ -73,7 +73,7 @@ class TestBrokenFileIsKeptNotOverwritten:
     def test_app_starts_with_defaults_and_a_fresh_file(self, broken):
         """앱은 기본값으로 뜬다 — 새 config.json은 기본값이고, 인증 값은 비어 있다(원본은 .broken에)."""
         cfg = config_module.update_config()
-        assert cfg["cookies"] == config_module.DEFAULT_CONFIG["cookies"]
+        assert cfg["cookies"] == config_module.default_config()["cookies"]
         assert json.loads(_read_raw())["cookies"] == {"NID_AUT": "", "NID_SES": ""}
 
     def test_the_broken_path_is_logged(self, broken, caplog):
@@ -340,20 +340,20 @@ class TestDirectoryFsyncWiring:
 
 
 class TestDefaultsAreNeverShared:
-    """`load_config` 결과를 고쳐도 `DEFAULT_CONFIG`는 바뀌지 않는다 — 중첩 dict(cookies)까지."""
+    """`load_config` 결과를 고쳐도 기본값 표(`default_config`, #257부터 스키마 표에서 도출)는 바뀌지 않는다 — 중첩 dict(cookies)까지."""
 
     def test_mutating_a_default_result_does_not_pollute_the_module_table(self):
         """기본값 경로의 반환 dict를 최상위·중첩(cookies·window)까지 고쳐도 모듈 표는 그대로다."""
         _write_raw("{broken")  # 기본값 경로
-        pristine = json.loads(json.dumps(config_module.DEFAULT_CONFIG))
+        pristine = json.loads(json.dumps(config_module.default_config()))
         cfg = config_module.load_config()
-        assert cfg is not config_module.DEFAULT_CONFIG
+        assert cfg is not config_module.default_config()
         cfg["cookies"]["NID_AUT"] = "polluted"  # 중첩 dict — 얕은 복사면 여기서 새어 들어간다
         cfg["window"]["x"] = 1
         cfg["language"] = "xx"
         cfg["extra"] = True
-        assert config_module.DEFAULT_CONFIG == pristine, (
-            f"기본값 표가 오염됐다: {config_module.DEFAULT_CONFIG}"
+        assert config_module.default_config() == pristine, (
+            f"기본값 표가 오염됐다: {config_module.default_config()}"
         )
 
     def test_two_default_results_are_independent(self):
