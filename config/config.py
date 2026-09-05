@@ -504,8 +504,9 @@ def update_config() -> dict:
 
     순서가 불변식이다(#257):
     ① `version`만 마이그레이션 **앞**에서 정수로 강제한다 — 문자열·1.5 같은 값은 `<` 판정이나
-       MIGRATIONS 조회에서 크래시했다. 표의 `version` 줄(같은 검증기·같은 기본값)을 쓴다.
-       키가 없으면 1로 본다(버전 키가 생기기 전 파일 — 마이그레이션이 전부 돈다).
+       MIGRATIONS 조회에서 크래시했다. 표의 `version` 줄(같은 검증기)을 쓴다. 키가 없거나
+       검증에 걸리면 1로 본다(버전 키가 생기기 전 파일과 같은 취급 — 마이그레이션이 전부
+       돌아 구 키를 살린다). 최종 버전은 마이그레이션이 CONFIG_VERSION으로 올린다.
     ② 마이그레이션(MIGRATIONS)을 현재 버전까지 돌린다.
     ③ 그 **뒤**에 표로 검증·정규화한다 — 구 스키마 키(`afterDownloadComplete` 등)는 ②가
        옮긴 뒤에야 버려야 한다. 앞에서 정규화하면 옮기기 전에 지워진다.
@@ -522,7 +523,11 @@ def update_config() -> dict:
         try:
             current_version = version_setting.normalize(raw["version"])
         except InvalidSetting as reason:
-            current_version = version_setting.fallback()
+            # 값을 믿을 수 없으면 가장 오래된 버전으로 본다 — 마이그레이션을 전부 돌려 구 스키마
+            # 키가 정규화에서 버려지기 전에 이관되게 한다. 이미 v2인 파일에 v1→v2가 다시 돌아도
+            # 구 키가 없어 값은 바뀌지 않는다(CodeRabbit #258). 최신 버전(표 기본값)으로 보면
+            # `{"version": "1", "afterDownloadComplete": …}`의 설정이 이관 없이 사라진다.
+            current_version = 1
             logger.warning(
                 "Config key 'version' has an invalid value (%s) — assuming %s", reason, current_version
             )

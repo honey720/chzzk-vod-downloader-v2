@@ -280,13 +280,23 @@ class TestVersionIsCoercedBeforeMigration:
 
     @pytest.mark.parametrize("broken", ("1", "two", 1.5, True, None, [], 0, -1))
     def test_a_non_integer_version_is_replaced_before_the_comparison(self, broken, caplog):
-        """정수가 아닌 버전은 비교(`<`)에 닿기 전에 기본값(현재 버전)이 되고 경고가 남는다."""
+        """정수가 아닌 버전은 비교(`<`)에 닿기 전에 잡혀 경고가 남고, 최종 버전은 현재 버전이다."""
         _write({**VALID, "version": broken})
         with caplog.at_level("WARNING", logger="config.config"):
             cfg = config_module.update_config()
         assert cfg["version"] == config_module.CONFIG_VERSION
         assert any("'version'" in m for m in _warnings(caplog))
         assert cfg["cookies"] == COOKIES
+
+    @pytest.mark.parametrize("broken", ("1", "two", 1.5, None))
+    def test_an_untrusted_version_still_runs_the_migrations(self, broken):
+        """믿을 수 없는 버전은 가장 오래된 버전으로 봐서 구 스키마 키가 이관된다 — 최신으로 가정하면 사라진다."""
+        _write({**TestValidationRunsAfterMigration.OLD_V1, "version": broken})
+        cfg = config_module.update_config()
+        assert cfg["afterDownload"] == "shutdown", (
+            "무효 version을 최신으로 가정해 마이그레이션이 건너뛰어졌다 — 구 키가 이관 없이 버려졌다"
+        )
+        assert cfg["version"] == config_module.CONFIG_VERSION
 
     def test_a_newer_version_passes_through(self):
         """현재보다 큰 버전(미래 앱의 파일)은 그대로 둔다 — 기존 동작(up to date 취급)."""
