@@ -16,8 +16,8 @@ tuple 형식은 종전 그대로다.
 
 import pytest
 
-import content.network as network
-from content.network import NetworkManager
+import app.network as network
+from app.network import NetworkManager
 from app.viewmodels.content_viewmodel import FetchJob
 from core.models.content import VideoInfo
 from tests.mocks.mock_http import MockResponse

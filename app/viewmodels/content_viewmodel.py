@@ -37,7 +37,7 @@ from app.viewmodels.item_state import ItemState
 from app.viewmodels.path_gates import check_download_path
 from app.viewmodels.data import ContentItem
 from app.viewmodels.model import ContentListModel
-from content.network import NetworkManager
+from app.network import NetworkManager
 from core.services import metadata_service
 from core.services.metadata_service import MetadataError
 from core.utils.paths import build_output_path, ensure_unique_path

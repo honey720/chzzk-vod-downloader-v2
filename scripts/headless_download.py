@@ -42,18 +42,18 @@ from time import gmtime, strftime
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config.config as config  # noqa: E402
-from config.log_setup import setup_logging  # noqa: E402
+from app.log_setup import setup_logging  # noqa: E402
 from app.viewmodels.data import ContentItem  # noqa: E402
-from content.network import NetworkManager  # noqa: E402
+from app.network import NetworkManager  # noqa: E402
 from core.models.events import ProgressEvent  # noqa: E402
 from core.services import metadata_service  # noqa: E402
 from core.services.download_service import DownloadService  # noqa: E402
 from core.services.metadata_service import MetadataError  # noqa: E402
 from core.utils.paths import build_output_path  # noqa: E402
 from core.models.download_data import DownloadData  # noqa: E402
-from download.logger import DownloadLogger  # noqa: E402
-from download.resolvers import resolve_aes_key, resolve_m3u8_base_url  # noqa: E402
-from download.task import DownloadTask  # noqa: E402
+from app.logger import DownloadLogger  # noqa: E402
+from app.resolvers import resolve_aes_key, resolve_m3u8_base_url  # noqa: E402
+from app.task import DownloadTask  # noqa: E402
 
 logger = logging.getLogger("headless")
 

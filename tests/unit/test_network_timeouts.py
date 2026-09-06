@@ -9,8 +9,8 @@ import json
 
 import pytest
 
-import content.network as network
-from content.network import NetworkManager, REQUEST_TIMEOUT
+import app.network as network
+from app.network import NetworkManager, REQUEST_TIMEOUT
 from tests.mocks.mock_http import MockResponse
 
 COOKIES = {"NID_AUT": "REDACTED", "NID_SES": "REDACTED"}

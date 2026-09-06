@@ -11,8 +11,8 @@ ContentWorker에 있던 권한·암호화 분기 검증(#55)을 core 경로로 �
 import pytest
 import requests
 
-import content.network as network
-from content.network import NetworkManager
+import app.network as network
+from app.network import NetworkManager
 from core.models.content import VideoInfo
 from core.services.metadata_service import (
     MetadataError,
