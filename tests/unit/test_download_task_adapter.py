@@ -1,4 +1,4 @@
-"""download/task.py 어댑터 검증 (#60).
+"""app/download_task.py 어댑터 검증 (#60).
 
 상태 머신을 core/models로 이주한 뒤에도 기존 호출부 인터페이스
 (state 속성, lock, start/pause/resume/stop/finish/isRunning)가 유지되고,

@@ -61,7 +61,7 @@ class _ComboBoxPopupHighlightResync(QObject):
     도로 뭉갠다. `QTimer.singleShot(0, ...)`로 다음 이벤트 루프 턴까지
     미루면 그때는 `combo.currentIndex()`가 정착돼 있어 클릭 선택이든
     Escape·바깥 클릭으로 그냥 닫은 경우든 항상 맞는 값을 읽는다
-    (`content/view.py::_scheduleRenumber`와 같은 컨텍스트 객체 패턴 —
+    (`app/widgets/view.py::_scheduleRenumber`와 같은 컨텍스트 객체 패턴 —
     `self`가 콜백 전에 파괴되면 Qt가 알아서 취소한다).
 
     **`Show` 시점 복원도 남겨 둔다(보험, 근거).** 팝업을 한 번도 연 적 없는

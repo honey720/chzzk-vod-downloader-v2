@@ -24,7 +24,7 @@ from core.utils.disk_speed import measure_write_speed
 
 # Windows에서 파일명에 쓸 수 없는 문자 + ASCII 제어 문자 전체(0x00–0x1F, 개행 포함).
 # Windows는 제어 문자가 든 파일명 생성을 거부한다(EINVAL). 조회 단계
-# (content/network.py)의 제목 정제도 이 함수를 쓰지만, core를 직접 쓰는 경로
+# (app/network.py)의 제목 정제도 이 함수를 쓰지만, core를 직접 쓰는 경로
 # (헤드리스·다른 UI)가 정제를 빠뜨려도 안전하도록 여기서도 방어한다.
 _INVALID_FILENAME_CHARS = re.compile(r'[\\/:\*\?"<>|\x00-\x1f]')
 

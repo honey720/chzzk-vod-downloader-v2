@@ -7,7 +7,7 @@
 (#208 실측: 카드 1000개 삽입 34.5초, `updateWidgets()`를 신규 행만 갱신하도록
 패치해도 15%만 개선 — 진짜 원인은 `QListView`+`setIndexWidget()` 자체였다).
 
-클래스 이름은 유지한다 — `QListView`를 더 상속하지 않지만, `content/view.py`가
+클래스 이름은 유지한다 — `QListView`를 더 상속하지 않지만, `app/widgets/view.py`가
 여전히 카드의 순서 있는 컬렉션+변경 통지라는 같은 역할로 이 클래스를 쓰고,
 이름을 바꾸면 번역 컨텍스트(`tr()`)·`project.json` lupdate 스캔 대상까지
 갈아엎어야 한다(이 프로젝트에 기록된 함정) — 이번 변경 범위 밖이다.

@@ -101,7 +101,7 @@ class TestSameHeightTracksMakeOnePill:
 # 펼침:       1080p  720p  480p  360p  144p        ← 경로·크기는 잠깐 숨는다, 모자라면 줄바꿈
 # 고른 뒤:    [720p ▾] ····· 경로 ····· 크기
 #
-# 판정은 content/widget.py::_layoutRowThree 한 곳 — 경로가 텍스트→아이콘으로 바뀌는
+# 판정은 app/widgets/widget.py::_layoutRowThree 한 곳 — 경로가 텍스트→아이콘으로 바뀌는
 # 것과 같은 방식(3행 폭 − 자연 폭들). 절대 px 임계값은 없다 — 아래 T는 테스트가
 # 구성 요소를 독립 합산해 유도한다([D]의 T 유도 그대로).
 #

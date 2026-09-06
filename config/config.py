@@ -275,7 +275,7 @@ def parse_saved_window(saved: object) -> tuple[tuple[int, int, int, int], bool] 
     dict · x/y/width/height가 bool 아닌 정수(또는 정수값 float) · 유한(NaN·무한 아님) ·
     32비트 int 범위 안 · width/height 양수 · maximized는 없거나 bool.
     순수 파이썬 값만 돌려준다 — `config/`는 Qt를 보지 않는다. `QRect` 변환은 호출부
-    (application/mainWindow.py)가 한다(#257).
+    (app/views/mainWindow.py)가 한다(#257).
     """
     if not isinstance(saved, dict):
         return None
@@ -318,7 +318,7 @@ SCHEMA: tuple[Setting, ...] = (
     # 실존 여부는 사용처(_default_download_path)가 본다 — 외장 드라이브 분리 대비.
     Setting("downloadPath", "", _string),
     # 마지막 창 크기·위치·최대화 상태 (#253). 빈 값 = 기록 없음(첫 실행) → 초기 크기 규칙
-    # (application/mainWindow.py). 채워지면 {"x","y","width","height","maximized"}.
+    # (app/views/mainWindow.py). 채워지면 {"x","y","width","height","maximized"}.
     Setting("window", {}, _window),
 )
 

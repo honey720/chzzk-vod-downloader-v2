@@ -21,7 +21,7 @@
 ## 3행 내용·조작 버튼이 바뀌지만 행 높이·카드 높이는 불변이다
 ## (목록이 들썩이면 안 된다 — tests/unit/test_card_layout.py·
 ## tests/unit/test_card_state_matrix.py 게이트).
-## 조작·삭제 아이콘은 폰트 글리프가 아니라 content/icons.py가 그리는 도형이다.
+## 조작·삭제 아이콘은 폰트 글리프가 아니라 app/widgets/icons.py가 그리는 도형이다.
 ## 좌측 기준선은 둘: 썸네일 왼쪽(=cardPadding), 컨텐츠 열 왼쪽(3행 공통).
 ## 우측 끝은 하나: 삭제(1행)·파일 크기(3행) — 조작이 3개로 늘어도 유지
 ## (#178 구간 버튼 자리, 게이트로 고정). 크기·간격은 theme.METRICS, 글자
@@ -77,7 +77,7 @@ class Ui_ContentItemWidget(object):
         # 기준선이 무너진다). 크기는 우측 컨텐츠 열의 실제 높이에 맞춰
         # ContentItemWidget이 런타임에 계산한다. 세로 이미지(클립)는 상자
         # 안에서 비율 유지 + letterbox를 이미지 평균색으로 채운다
-        # (content/widget.py::_composeThumbnail).
+        # (app/widgets/widget.py::_composeThumbnail).
         self.thumbnailLabel = QLabel(self.contentFrame)
         self.thumbnailLabel.setObjectName(u"thumbnailLabel")
         self.thumbnailLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -107,7 +107,7 @@ class Ui_ContentItemWidget(object):
 
         self.channelNameLabel = ElidingLabel(self.contentFrame)
         self.channelNameLabel.setObjectName(u"channelNameLabel")
-        # 최소폭은 content/widget.py::_clampChannelMinWidth가 이름 길이에
+        # 최소폭은 app/widgets/widget.py::_clampChannelMinWidth가 이름 길이에
         # 맞춰 조인다(짧은 이름이 빈 폭을 예약하지 않게). 최대폭은 아주
         # 긴 채널명이 우측 조작을 밀어내는 것을 막는다.
         self.channelNameLabel.setMinimumWidth(64)
@@ -119,7 +119,7 @@ class Ui_ContentItemWidget(object):
 
         # 상태별 조작 — 진행: 일시정지 / 일시정지: 재개 / 완료: 폴더 열기 /
         # 실패: 재시도. 한 아이콘은 한 가지 일만 한다. 도형 이름은
-        # content/widget.py가 상태에 맞춰 넣는다(pauseButton은 pause↔resume).
+        # app/widgets/widget.py가 상태에 맞춰 넣는다(pauseButton은 pause↔resume).
         self.pauseButton = IconButton(self.contentFrame)
         self.pauseButton.setObjectName(u"pauseButton")
         self.pauseButton.setMinimumSize(QSize(icon, icon))
@@ -181,7 +181,7 @@ class Ui_ContentItemWidget(object):
         self.contentLayout.addLayout(self.titleLayout)
 
         # ---- 3행: 상태별 슬롯 ··· (경로) · 파일 크기 ----
-        # 대기: 해상도 pill들(content/widget.py가 왼쪽부터 삽입).
+        # 대기: 해상도 pill들(app/widgets/widget.py가 왼쪽부터 삽입).
         # 그 외: statusLabel 하나가 슬롯 텍스트(진행 %·속도·남은시간 /
         # ✓ 완료 / ✕ 사유)를 상태색으로 보여준다. 어느 쪽이 보이든 행
         # 높이가 같도록 statusLabel 최소 높이를 pill 높이에 맞춘다.
@@ -201,7 +201,7 @@ class Ui_ContentItemWidget(object):
         self.resolutionLayout.addStretch(1)
 
         # 경로 — 표시는 축약형("~/…/폴더"), 전문은 툴팁. 클릭하면 폴더 선택
-        # 대화상자(content/widget.py::choosePath)가 이 카드의 경로를 바꾼다 —
+        # 대화상자(app/widgets/widget.py::choosePath)가 이 카드의 경로를 바꾼다 —
         # 인라인 QLineEdit 편집은 #245에서 폴더 선택으로 교체됐다(존재하는
         # 폴더만 고르므로 검증·거부 안내가 필요 없다). 대기에서는 항상 보이고
         # 그 외에는 전역 경로와 다를 때만 보인다.
@@ -227,7 +227,7 @@ class Ui_ContentItemWidget(object):
         self.resolutionLayout.addWidget(self.pathIconButton)
 
         # 파일 크기·재생 시간 — **어떤 폭에서도 말줄임하지 않는다**(#245). 폭은
-        # content/widget.py::_reserveFileSizeWidth가 "가장 긴 경우"(재생 시간
+        # app/widgets/widget.py::_reserveFileSizeWidth가 "가장 긴 경우"(재생 시간
         # 또는 해상도 접두 + 크기)로 먼저 확보하고, 3행에서 줄어드는 것은 경로
         # 하나뿐이다. 오른쪽 정렬이라 확보 폭이 남아도 우측 끝선이 유지된다.
         self.fileSizeLabel = ElidingLabel(self.contentFrame)

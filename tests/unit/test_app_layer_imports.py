@@ -6,7 +6,7 @@
   tests/unit/layers.py의 단일 정의. 아직 없어도 규칙은 서 있고 생기는 순간 적용된다.
   theme은 Qt를 아는 색·토큰 정의처라 뷰 계층이다). ② 프로젝트 import 그래프에서
   `PySide6.QtWidgets`·`PySide6.QtGui`에 **닿는** 모듈(내용 — 직접이든 다른 프로젝트 모듈을
-  거쳐서든). `content.view`·`app.widgets.widget`·`ui/*`·`theme`는 이름이 아니라 ②로 잡히므로
+  거쳐서든). `app.widgets.view`·`app.widgets.widget`·`ui/*`·`theme`는 이름이 아니라 ②로 잡히므로
   파일을 옮기거나 이름을 바꿔도 계속 잡힌다.
 - **뷰모델 계층**은 `app/` 아래에서 뷰 계층 디렉토리 밖에 있는 모든 `.py`다
   (`app/viewmodels/`·`app/platform_adapter.py` 등). 이 계층은 Qt 위젯 모듈을 직접 import해도,

@@ -9,11 +9,11 @@ override해 레이아웃이 내용 폭보다 좁게 줄 수 있게 하고, `size
 넓게 줄 수 있게 하고 (b) 실제 폭보다 넘치면 `elidedText()`로 잘라 보여주고
 (c) 잘린 전체 값은 툴팁으로 노출한다.
 
-`ui/contentItemWidget.py`(Designer 생성)가 `titleLabel`/`directoryLabel`
-생성 시 `QLabel` 대신 이 클래스를 쓴다 — `content/widget.py`가 아니라 이
-파일에 둔 이유는 `content/widget.py`가 `ui/contentItemWidget.py`를
-import하므로, 거꾸로 `ui/`가 `content/widget.py`를 import하면 순환
-임포트가 나기 때문이다(`content/view.py`가 `ContentListView`를 이렇게
+`app/widgets/contentItemWidget.py`(Designer 생성)가 `titleLabel`/`directoryLabel`
+생성 시 `QLabel` 대신 이 클래스를 쓴다 — `app/widgets/widget.py`가 아니라 이
+파일에 둔 이유는 `app/widgets/widget.py`가 `app/widgets/contentItemWidget.py`를
+import하므로, 거꾸로 `contentItemWidget.py`가 `app/widgets/widget.py`를 import하면 순환
+임포트가 나기 때문이다(`app/widgets/view.py`가 `ContentListView`를 이렇게
 독립 모듈에 두는 것과 같은 이유).
 """
 
@@ -105,7 +105,7 @@ class PathLabel(ElidingLabel):
     마지막 폴더는 가장 늦게 잘린다 — 3행의 "정체를 살리고 맥락을 접는다"를
     경로 문자열 안에서도 지킨다. 중간 폴더가 하나뿐이어도 ②를 거친다.
 
-    단계 정보는 `setPathParts()`로 받는다(문자열 분해는 content/widget.py의
+    단계 정보는 `setPathParts()`로 받는다(문자열 분해는 app/widgets/widget.py의
     `path_display_parts` — 이 모듈은 위젯을 import할 수 없다). `text()`·
     `sizeHint()`는 항상 ① 기준이라 창을 넓히면 ①로 회복된다(되먹임 없음).
     `setText()`만 부르면(Designer 초기 문구 등) 단계 없이 기본 말줄임이다.

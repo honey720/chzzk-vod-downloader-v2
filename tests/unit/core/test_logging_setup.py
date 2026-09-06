@@ -1,7 +1,7 @@
 """core.utils.logging_setup 공통 로깅 설정 단위 테스트 (#62, 원본 #30).
 
 tests/unit/test_log_setup.py에서 이주했다. 핸들러 구성·기대 동작 무변경.
-로그 위치 주입(CONFIG_DIR/logs)은 config/log_setup.py 진입점 테스트에서 검증한다.
+로그 위치 주입(CONFIG_DIR/logs)은 app/log_setup.py 진입점 테스트에서 검증한다.
 """
 
 import logging

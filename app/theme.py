@@ -4,7 +4,7 @@
 #227의 요구는 "색상값을 한 곳에서만 정의"다. 그런데 색이 필요한 곳이
 두 군데로 갈린다 — (a) 앱 전역 스타일시트(`resources/qss/style.qss`),
 (b) 카드 상태별 테두리처럼 파이썬이 런타임에 골라 적용해야 하는 값
-(`content/widget.py`). QSS 파일에 색을 직접 박으면 (b)가 파이썬 상수로
+(`app/widgets/widget.py`). QSS 파일에 색을 직접 박으면 (b)가 파이썬 상수로
 복제되고, 파이썬에만 두면 QSS가 못 읽는다. 그래서 **정의는 여기 한 곳**
 (`DARK`)에 두고, `.qss`는 `@토큰` 자리표시자만 쓰는 "규칙 파일"로
 남긴다 — 로드 시점에 `load_stylesheet()`가 치환한다.
@@ -17,7 +17,7 @@
 
 그래서 이제 `LIGHT = {...}` 딕셔너리가 `DARK` 옆에 있고, `current_tokens()`가
 `set_color_scheme()`으로 설정된 값을 보고 고른다. `resources/qss/style.qss`와
-호출부(`main.py`, `content/widget.py`)는 토큰 *이름*만 알기 때문에 이 변경에
+호출부(`main.py`, `app/widgets/widget.py`)는 토큰 *이름*만 알기 때문에 이 변경에
 손대지 않아도 됐다 — 설계했던 대로다. 실제 OS 감지는 `detect_color_scheme()`이
 한다(`main.py`가 시작 시점에 호출해 `set_color_scheme()`에 넘긴다). `current_tokens()`
 자체는 감지를 하지 않고 마지막으로 설정된 값만 본다 — 그래야 테스트가 실제
@@ -71,7 +71,7 @@ METRICS = {
     "barHeight": 4,       # 하단 진행바 두께(진행분이 있을 때 — 진행·일시정지 — 보임)
     "actionGlyph": 12,    # 조작 아이콘(일시정지·재개·재시도·폴더·삭제) 도형 한 변 — iconSize 버튼 안에 그려진다
     # 썸네일 높이는 토큰이 아니다 — 우측 4행의 실제 높이에 맞춰 런타임에
-    # 계산되고(16:9로 폭 결정, content/widget.py), 행 간격·글자 크기를
+    # 계산되고(16:9로 폭 결정, app/widgets/widget.py), 행 간격·글자 크기를
     # 바꾸면 썸네일도 따라간다.
     # ---- 상단·하단 바 & 창 ----
     "framePadding": 8,    # 상단·하단 바 안쪽 여백 — cardPadding과 같으면 정렬선이 관통
