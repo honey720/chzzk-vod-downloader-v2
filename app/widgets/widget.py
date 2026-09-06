@@ -132,7 +132,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     expandedChanged = Signal(bool)  # 해상도 펼침/접힘 — 목록이 "한 번에 하나"를 맞춘다
 
     # 워커 스레드 → 메인 스레드 중계 (#168). 위젯·아이템 조작은 반드시 메인
-    # 스레드 슬롯에서 한다 — download 경로가 qt_bridge로 세운 스레드 경계
+    # 스레드 슬롯에서 한다 — download 경로가 DownloadViewModel로 세운 스레드 경계
     # 규칙을 content 경로에도 적용한다
     _repSizeFetched = Signal(int, str)  # (해상도 index, 크기 텍스트 — 세그먼트 기반이면 "")
     _imageFetched = Signal(object, object, str, int, str)  # (label, bytes, url, maxHeight, type)
@@ -659,7 +659,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
 
         진행 중의 남은 시간과 완료의 소요 시간이 같은 포맷을 쓴다(#245).
 
-        계산 자체는 어댑터(download/qt_bridge.py)가 ProgressEvent 값으로
+        계산 자체는 viewmodel(app/viewmodels/download_viewmodel.py)이 ProgressEvent 값으로
         이미 해 둔 것을 받는다(core 무관) — 여기서는 표기만 줄인다.
         형식이 예상 밖이면("N/A" 등) 받은 그대로 보여준다.
         """
@@ -731,7 +731,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
 
         elif self.item.downloadState == DownloadState.FINISHED:
             # "✓ 완료 · 2:12" — 소요 시간은 진행 중의 남은 시간과 같은 짧은
-            # 포맷(#245). 값은 어댑터(download/qt_bridge.py)가 엔진의
+            # 포맷(#245). 값은 viewmodel(app/viewmodels/download_viewmodel.py)이 엔진의
             # start_time~end_time으로 만든 "HH:MM:SS"이고, end_time은 후처리가
             # 끝난 뒤 찍히므로 유저가 체감하는 전체(로그의 "Download completed")다.
             # 값이 없으면(앱 재시작 복원 등) 시간 없이 "✓ 완료"만.

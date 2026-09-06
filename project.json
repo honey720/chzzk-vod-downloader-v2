@@ -6,7 +6,7 @@
         "app/widgets/view.py",
         "content/manager.py",
         "content/worker.py",
-        "download/qt_bridge.py",
+        "app/viewmodels/download_viewmodel.py",
         "app/views/dialog.py",
         "ui/settingDialog.ui",
         "ui/mainWindow.ui",

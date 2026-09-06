@@ -215,7 +215,7 @@ def _format_progress(
 ) -> tuple[str, str, str, int]:
     """ProgressEvent를 (남은 시간, 크기, 속도, %)로 변환한다.
 
-    계산식은 GUI 어댑터(download/qt_bridge.py)의 변환식과 동일하다 — 파일 경로는
+    계산식은 GUI viewmodel(app/viewmodels/download_viewmodel.py)의 변환식과 동일하다 — 파일 경로는
     바이트 기반, m3u8은 세그먼트 수 기반. Qt 모듈 import를 피하기 위해(이 스크립트의
     Qt 무의존 유지) 여기서 별도로 구현한다.
     """

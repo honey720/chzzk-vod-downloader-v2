@@ -210,7 +210,7 @@ class TestSlotColumn:
     HEADLINE_LIMIT = {"ko_KR": 40, "en_US": 60}
 
     @pytest.mark.parametrize("language", ("ko_KR", "en_US"))
-    @pytest.mark.parametrize("context", ("QtDownloadBridge", "ContentManager", "ContentItemWidget"))
+    @pytest.mark.parametrize("context", ("DownloadViewModel", "ContentManager", "ContentItemWidget"))
     def test_every_failure_headline_fits_the_card_row(self, language, context):
         """모든 사유의 **첫 줄**이 640px 카드 3행에 들어간다 — 폰트 무의존 대리
         지표로 언어별 글자 수 상한을 건다(HEADLINE_LIMIT). 원문 전체가 아니라
@@ -239,10 +239,10 @@ class TestSlotColumn:
         import re
 
         source = io.open(main_module.resource_path("translations/en_US.ts"), encoding="utf-8").read()
-        block = re.search(r"<name>QtDownloadBridge</name>(.*?)</context>", source, re.S).group(1)
+        block = re.search(r"<name>DownloadViewModel</name>(.*?)</context>", source, re.S).group(1)
         sources = re.findall(r"<source>([^<]*)</source>", block)
         multi = [s for s in sources if "\n" in s]
-        assert len(multi) >= 7, f"두 줄 규약을 따르는 브리지 사유가 {len(multi)}개뿐이다: {sources}"
+        assert len(multi) >= 7, f"두 줄 규약을 따르는 다운로드 실패 사유가 {len(multi)}개뿐이다: {sources}"
         for s in multi:
             headline, detail = s.split("\n", 1)
             assert "·" in headline, f"첫 줄에 '할 일'(· 뒤)이 없다: {headline!r}"
