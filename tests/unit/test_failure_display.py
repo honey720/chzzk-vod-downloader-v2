@@ -1,10 +1,15 @@
 """다운로드 실패의 카드 표시·배치 계속 검증 (#134) — 실배선 통과.
 
 핸들러 직접 호출 테스트는 시그널 연결·객체 수명을 검증하지 못한 전례가
-있다 (#125). 여기서는 mainWindow.setupThreadSignals와 동일한 배선을 최소
-하네스로 재현해, 엔진 실패 콜백 → 브리지 내부 Signal → failed Signal →
+있다 (#125). 여기서는 mainWindow와 동일한 배선을 최소 하네스로 재현해, 엔진
+실패 콜백 → DownloadViewModel(다운로드 이벤트를 content에 직결, #170) →
 ContentManager.fail → 뷰/위젯 갱신 → 배치 계속까지를 실제 시그널 체인으로
 지나간다. 다운로드 실행은 페이크 서비스로 대체한다 (실네트워크 없음).
+
+배선 경유는 제품과 같아야 한다 (#259 B0): 구 하네스는 #170 이전 mainWindow
+처럼 failed/finished Signal을 손으로 ContentManager에 이었는데, 제품은 그
+연결을 DownloadViewModel이 맡는다. 하네스가 viewmodel을 건너뛰면 그 층의
+회귀는 여기서 안 잡힌다.
 """
 
 import time
@@ -15,11 +20,13 @@ from PySide6.QtCore import QObject
 import main as main_module
 import app.theme as theme
 from app.viewmodels.data import ContentItem
+from app.viewmodels.download_viewmodel import DownloadViewModel
 from content.manager import ContentManager
 from app.widgets.view import ContentListView
 from core.downloaders.base import PostprocessError
-from download.qt_bridge import QtDownloadBridge
 from core.models.download_state import DownloadState
+from core.services.download_service import DownloadService
+from download.logger import DownloadLogger
 from tests.unit.card_helpers import hold_style
 
 
@@ -58,7 +65,7 @@ def no_network(monkeypatch):
 
 
 class FakeHandle:
-    """DownloadHandle 대역 — 브리지가 쓰는 인터페이스만 제공한다."""
+    """DownloadHandle 대역 — 다운로드 쪽이 쓰는 인터페이스만 제공한다."""
 
     def __init__(self, data):
         self.data = data
@@ -81,43 +88,59 @@ class FakeService:
         return FakeHandle(kwargs["data"])
 
 
-class FakeLogger:
-    """DownloadLogger 대역 — 파일 생성 없이 무동작으로 받는다."""
+class RecordingService:
+    """실제 DownloadService를 감싸 돌려준 핸들만 기록한다 — 엔진 종료 검증용.
 
-    def __init__(self, *args, **kwargs):
-        pass
+    viewmodel의 공개 API에는 핸들이 없으므로(isDownloading만) 서비스 쪽에서 잡는다.
+    """
 
-    def __getattr__(self, name):
-        return lambda *args, **kwargs: None
+    def __init__(self):
+        self._real = DownloadService()
+        self.handles: list = []
+
+    def submit(self, content, **kwargs):
+        """실제 제출을 그대로 통과시키고 핸들만 붙잡는다 — 뒤에서 `handle.wait()`로 엔진 종료를 잰다."""
+        handle = self._real.submit(content, **kwargs)
+        self.handles.append(handle)
+        return handle
+
+    def abandon(self, handle):
+        """실제 서비스에 위임 — 이 테스트에서는 불리지 않아야 하지만 계약은 갖춘다."""
+        self._real.abandon(handle)
+
+
+@pytest.fixture(autouse=True)
+def quiet_download_logger(monkeypatch):
+    """DownloadLogger의 파일 생성을 막는다 — 클래스 메서드 교체(모듈 경로 무의존).
+
+    logger가 None이면 모든 기록 메서드가 무동작이다. 모듈 경로 문자열
+    monkeypatch(`download.qt_bridge.DownloadLogger`)는 흡수(#259 B1)와 함께
+    죽는 지점이라 쓰지 않는다.
+    """
+    monkeypatch.setattr(DownloadLogger, "_setup_logging", lambda self: None)
 
 
 class WindowHarness(QObject):
     """mainWindow의 다운로드 배선만 재현한 최소 하네스.
 
-    연결은 mainWindow.setupThreadSignals·startDownload와 동일한 방향이며,
-    바운드 메서드로 연결한다 (순수 콜러블 연결의 수명 함정 — CLAUDE 규칙).
+    다운로드 이벤트(진행·완료·실패)의 content 연결은 제품처럼 DownloadViewModel이
+    맡는다(#170). 하네스는 mainWindow.startDownload(카드 상태 갱신 → 시작)와
+    downloadRequested 연결만 재현하며, 바운드 메서드로 연결한다 (순수 콜러블
+    연결의 수명 함정 — CLAUDE 규칙).
     """
 
-    def __init__(self, manager: ContentManager, bridge: QtDownloadBridge):
+    def __init__(self, manager: ContentManager, viewmodel: DownloadViewModel):
         super().__init__()
         self.manager = manager
-        self.bridge = bridge
+        self.viewmodel = viewmodel
         self.started: list[ContentItem] = []
         manager.downloadRequested.connect(self.startDownload)
-        bridge.failed.connect(self._onFailed)
-        bridge.finished.connect(self._onFinished)
 
     def startDownload(self, item: ContentItem) -> None:
         # mainWindow.startDownload와 동일: 카드 상태 갱신 → 다운로드 시작
         self.started.append(item)
         self.manager.start(item)
-        self.bridge.start(item)
-
-    def _onFailed(self, item: ContentItem, message: str) -> None:
-        self.manager.fail(item, message)
-
-    def _onFinished(self, item: ContentItem, download_time: str) -> None:
-        self.manager.finish(item, download_time)
+        self.viewmodel.start(item)
 
 
 def _metadata(title: str) -> dict:
@@ -144,16 +167,16 @@ def _make_item(download_path: str, title: str) -> ContentItem:
 
 
 @pytest.fixture
-def wired(qapp, monkeypatch, tmp_path):
-    """실배선된 (manager, bridge, harness, finished_all 스파이)를 준비한다."""
-    monkeypatch.setattr("download.qt_bridge.DownloadLogger", FakeLogger)
+def wired(qapp, tmp_path):
+    """실배선된 (manager, service, viewmodel, harness, finished_all 스파이, view)를 준비한다."""
     view = ContentListView()
     manager = ContentManager(view)
-    bridge = QtDownloadBridge(service=FakeService())
-    harness = WindowHarness(manager, bridge)
+    service = FakeService()
+    viewmodel = DownloadViewModel(manager, service=service)
+    harness = WindowHarness(manager, viewmodel)
     finished_all = []
     manager.finishedAllRequested.connect(lambda: finished_all.append(True))
-    yield manager, bridge, harness, finished_all, view
+    yield manager, service, viewmodel, harness, finished_all, view
     view.deleteLater()
     qapp.processEvents()
 
@@ -161,7 +184,7 @@ def wired(qapp, monkeypatch, tmp_path):
 def test_failed_card_shows_failure_and_batch_continues(wired, qapp, tmp_path):
     """완료 조건 ①②③: 실패가 카드에 사유와 함께 표시되고(정지와 구분),
     원시 문자열이 노출되지 않으며, 배치가 다음 항목으로 계속된다."""
-    manager, bridge, harness, finished_all, view = wired
+    manager, service, _viewmodel, harness, finished_all, view = wired
 
     item1 = _make_item(str(tmp_path), "첫 항목")
     item2 = _make_item(str(tmp_path), "둘째 항목")
@@ -174,7 +197,7 @@ def test_failed_card_shows_failure_and_batch_continues(wired, qapp, tmp_path):
 
     # 엔진 실패 주입 — 서비스에 등록된 실제 실패 콜백을 통해 시그널 체인을 탄다
     raw = "후처리(remux) 실패: ffmpeg stderr tail... [C:\\tools\\ffmpeg.exe]"
-    bridge._service.submissions[0]["on_failed"](PostprocessError(raw))
+    service.submissions[0]["on_failed"](PostprocessError(raw))
     qapp.processEvents()
 
     # ① 실패가 실패로 보인다 — WAITING(정지·대기)이 아니라 FAILED
@@ -203,7 +226,7 @@ def test_failed_card_shows_failure_and_batch_continues(wired, qapp, tmp_path):
 
 def test_stop_still_shows_waiting_not_failed(wired, qapp, tmp_path):
     """유저의 정지는 여전히 대기로 표시된다 — 실패와 시각적으로 구분 (#134)."""
-    manager, bridge, harness, _finished_all, view = wired
+    manager, _service, viewmodel, harness, _finished_all, view = wired
 
     item = _make_item(str(tmp_path), "정지 항목")
     manager.model.addItem(item)
@@ -212,7 +235,7 @@ def test_stop_still_shows_waiting_not_failed(wired, qapp, tmp_path):
     manager.downloadItem()
     assert harness.started == [item]
 
-    bridge.stop()
+    viewmodel.stop()
     qapp.processEvents()
 
     assert item.downloadState is DownloadState.WAITING
@@ -223,14 +246,14 @@ def test_stop_still_shows_waiting_not_failed(wired, qapp, tmp_path):
 
 def test_all_failed_batch_reaches_end(wired, qapp, tmp_path):
     """마지막 항목이 실패해도 배치 종료 신호가 발화한다 — 조용한 멈춤 없음."""
-    manager, bridge, harness, finished_all, _view = wired
+    manager, service, _viewmodel, harness, finished_all, _view = wired
 
     item = _make_item(str(tmp_path), "단독 항목")
     manager.model.addItem(item)
     qapp.processEvents()
 
     manager.downloadItem()
-    bridge._service.submissions[0]["on_failed"](RuntimeError("boom"))
+    service.submissions[0]["on_failed"](RuntimeError("boom"))
     qapp.processEvents()
 
     assert item.downloadState is DownloadState.FAILED
@@ -246,7 +269,7 @@ def test_download_result_counts_reflect_screen_state(wired, qapp, tmp_path):
     보이는 결과와 모순되지 않는 것이고, 배치의 경계는 진행 중 추가·삭제가
     가능해 정확한 장부가 존재하지 않는다 (근거는 PR 본문).
     """
-    manager, _bridge, _harness, _finished_all, _view = wired
+    manager, _service, _viewmodel, _harness, _finished_all, _view = wired
 
     finished = _make_item(str(tmp_path), "완료 항목")
     finished.downloadState = DownloadState.FINISHED
@@ -301,15 +324,15 @@ def test_dead_mount_worker_failure_does_not_freeze_app(qapp, tmp_path, monkeypat
     이 테스트는 실제 DownloadService·FileDownloader·실행 루프를 그대로 쓴다 —
     고장난 종점에서는 processEvents가 handle.wait()에 갇혀 테스트가 매달린다.
     """
-    monkeypatch.setattr("download.qt_bridge.DownloadLogger", FakeLogger)
     import core.downloaders.file_downloader as fmod
 
     monkeypatch.setattr(fmod, "get_thread_session", lambda: _DeadMountSession())
 
     view = ContentListView()
     manager = ContentManager(view)
-    bridge = QtDownloadBridge()  # 실제 서비스 — 페이크 아님
-    harness = WindowHarness(manager, bridge)
+    service = RecordingService()  # 실제 서비스 — 페이크 아님 (핸들만 기록)
+    viewmodel = DownloadViewModel(manager, service=service)
+    harness = WindowHarness(manager, viewmodel)
 
     item = _make_item(str(tmp_path), "죽은 마운트 항목")
     manager.model.addItem(item)
@@ -317,8 +340,8 @@ def test_dead_mount_worker_failure_does_not_freeze_app(qapp, tmp_path, monkeypat
 
     manager.downloadItem()
     assert harness.started == [item]
-    handle = bridge.handle  # 참조 정리 전에 붙잡는다 — 엔진 종료 검증용
-    assert handle is not None
+    assert viewmodel.isDownloading()
+    [handle] = service.handles  # 참조 정리 전에 붙잡는다 — 엔진 종료 검증용
 
     # 워커 실패 → 큐 전달 → 메인 스레드 종점 → 카드 FAILED까지 (상한 10초)
     deadline = time.time() + 10
