@@ -5,7 +5,7 @@
 아직 앱 영역이라 core로 들어갈 수 없다 — core/services/download_service.py의
 base_url_resolver 매개변수로 주입한다.
 
-Qt 어댑터(download/qt_bridge.py)와 헤드리스 스크립트가 공용으로 쓰므로
+Qt viewmodel(app/viewmodels/download_viewmodel.py)과 헤드리스 스크립트가 공용으로 쓰므로
 이 모듈은 PySide6를 import하지 않는다.
 """
 

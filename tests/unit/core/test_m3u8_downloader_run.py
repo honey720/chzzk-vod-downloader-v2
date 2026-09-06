@@ -526,7 +526,7 @@ def test_downstream_stop_after_postprocess_failure_preserves_segments(tmp_path, 
 
     base.py의 PostprocessError 분기는 _cleanup_partial()을 부르지 않아 세그먼트를
     보존하도록 설계됐다(#92 — 재다운로드 강요 방지). 그런데 실제 프로덕션 배선
-    (download/qt_bridge.py)에서는 on_failed 콜백(_relay_failed)이 Qt 큐드 시그널을
+    (app/viewmodels/download_viewmodel.py)에서는 on_failed 콜백(_relay_failed)이 Qt 큐드 시그널을
     거쳐 메인 스레드의 _onEngineFailed에서 task.stop()을 호출한다 — 상태를
     WAITING으로 되돌린다. 고장난 버전에서는 run()의 try/except/finally 전체
     바깥에 있던 "if WAITING: cleanup_partial()"이 이 비동기 전이를 "유저가
@@ -550,7 +550,7 @@ def test_downstream_stop_after_postprocess_failure_preserves_segments(tmp_path, 
 
     monkeypatch.setattr(base_module, "remux_stream", broken_remux_stream)
 
-    # 실제 qt_bridge._onEngineFailed가 (큐드 커넥션을 거쳐) 하는 일 — task.stop()
+    # 실제 DownloadViewModel._onEngineFailed가 (큐드 커넥션을 거쳐) 하는 일 — task.stop()
     original_on_failed = engine._on_failed
 
     def on_failed_then_stop(exc):

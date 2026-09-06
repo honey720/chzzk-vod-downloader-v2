@@ -159,7 +159,7 @@ The file could not be saved. Check the download path and free disk space.</sourc
     </message>
 </context>
 <context>
-    <name>QtDownloadBridge</name>
+    <name>DownloadViewModel</name>
     <message>
         <source>ffmpeg not found · check the installation
 Postprocessing failed: the ffmpeg executable could not be found.</source>
