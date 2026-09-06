@@ -149,10 +149,12 @@ class TestCardPathPickerFeedback:
                             staticmethod(lambda *a, **k: ""))
 
         with caplog.at_level("INFO", logger="content.widget"):
+            widget_mod.logger.info("표식: 캡처 채널 생존")  # 제품 로거로 흘려야 이름이 틀리면 같이 죽는다
             widget.choosePath(None)
 
         assert item.download_path == str(tmp_path)
         assert warnings == []
+        assert "표식: 캡처 채널 생존" in caplog.text  # 채널이 살아 있다 — 이게 없으면 아래 음성 단언은 아무것도 안 잰다(#263)
         assert "카드 저장 경로" not in caplog.text
 
 

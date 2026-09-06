@@ -22,7 +22,7 @@ logger = logging.getLogger("content.widget")  # 이동 전 이름 고정 — cap
 # 폰트 문자를 쓴다 — 둘 다 기본 문장부호 블록(Dingbats)의 흔한 글리프다.
 # 색은 파이썬이 아니라 전역 QSS `#statusLabel[state=...]`가 theme.py
 # 토큰으로 정한다.
-# 1행 우측의 조작·삭제 아이콘은 문자가 아니라 content/icons.py가 그리는
+# 1행 우측의 조작·삭제 아이콘은 문자가 아니라 app/widgets/icons.py가 그리는
 # 도형이다(#245 — ‖(U+2016)은 문장부호라 일시정지로 안 읽히고, 글리프
 # 모양은 macOS·Linux 실기 없이는 확인할 길이 없었다).
 STATE_ICON = {
@@ -33,11 +33,11 @@ STATE_ICON = {
 # 전역 설정의 다운로드 경로 — 카드는 자기 경로가 이 값과 **다를 때만**
 # 3행에 경로를 표시한다(#245 — 같은 값을 카드마다 반복 표시하는 것이
 # 정보 과다의 큰 몫이었다. 다르다는 것 자체가 정보다).
-# application/mainWindow.py가 시작 시·경로 변경 시 밀어 넣는다.
+# app/views/mainWindow.py가 시작 시·경로 변경 시 밀어 넣는다.
 # 모듈 전역을 호출 시점에 조회하므로 테스트에서 monkeypatch 가능하다.
 _global_download_path = ""
 
-#: Qt의 QWIDGETSIZE_MAX(PySide6가 노출하지 않음) — 최대폭 제한을 푸는 값.
+# Qt의 QWIDGETSIZE_MAX(PySide6가 노출하지 않음) — 최대폭 제한을 푸는 값.
 _NO_MAX_WIDTH = (1 << 24) - 1
 
 
@@ -246,7 +246,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
 
         "#0" 번호 라벨은 #244 카드 재설계에서 없어졌다(오너 확정 — 유저에게
         의미 있는 정보가 아니었다). 순번 자체는 삭제 후 재번호매김(#235,
-        `content/view.py::_renumberAll`)이 이 메서드로 계속 유지한다 —
+        `app/widgets/view.py::_renumberAll`)이 이 메서드로 계속 유지한다 —
         표시가 없어도 위젯·모델 행의 대응이 어긋나지 않게 하는 값이다.
         """
         self.index = index
@@ -257,7 +257,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.loadImageFromUrl(self.thumbnailLabel, self.item.thumbnail_url, self.thumbnailLabel.height(), "thumbnail")
         self.channelNameLabel.setText(self.item.channel_name) # 채널 이름 업데이트
         self._clampChannelMinWidth()
-        # 조작 도형(content/icons.py) — 평소 muted, 호버에서 강조. 삭제는
+        # 조작 도형(app/widgets/icons.py) — 평소 muted, 호버에서 강조. 삭제는
         # 호버에서만 실패색(빨강)이 된다(항상 빨간 ❌는 카드에서 삭제만 튀는
         # 위계 역전이었다 #244). pauseButton의 도형(pause↔resume)은 상태에
         # 따라 applyStateStyle이 바꾼다.
@@ -306,7 +306,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         # ②pill은 어떤 폭에서도 전부 보인다(접지 않는다 — #245 확정). 3행에서
         # 줄어드는 것은 다운로드 경로 하나뿐이다(_layoutRowThree) — 단 pill 전부가
         # 경로 아이콘·크기와 함께 안 들어가는 폭에서는 pill이 선택 하나로 접힌다.
-        # core/api·content/network의 내부 정렬(오름차순, 마지막이 자동 선택)은
+        # core/api·app/network의 내부 정렬(오름차순, 마지막이 자동 선택)은
         # 건드리지 않고 표시 계층에서만 뒤집는다.
         # ⚠️ 순서는 고정이다 — 클릭해도 pill을 앞으로 옮기지 않는다(옮기면
         # 연속으로 눌러볼 수 없다). 선택만 바뀐다.
@@ -457,7 +457,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """
         # pill 모양·선택 표시는 전역 QSS의 [role="resolution"] 규칙이 그린다 (#227).
         # QSS는 `.className` 선택자를 지원하지 않아 조용히 무시하므로, 동적
-        # 속성(role·selected·caret — content/pill.py가 심는다)을 속성 선택자로 잡는다
+        # 속성(role·selected·caret — app/widgets/pill.py가 심는다)을 속성 선택자로 잡는다
         button = ResolutionPill(f'{resolution}p', self)
         # 접혀 있으면 누르는 것은 "펼치기", 펼쳐져 있으면 "고르고 접기"(#244 3행 정리)
         button.clicked.connect(lambda: self._onPillClicked(index))
@@ -526,7 +526,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     def setresolutionUrlSize(self, resolution, base_url, index=None, button:QPushButton = None):
         if self.item.downloadState == DownloadState.WAITING:
             if button is not None:
-                # 선택 = 채움 표시(content/pill.py) — 버튼은 전부 활성으로 둔다.
+                # 선택 = 채움 표시(app/widgets/pill.py) — 버튼은 전부 활성으로 둔다.
                 # 접힌 pill을 눌러 펼쳐야 하므로 선택 pill도 눌려야 한다.
                 for btn in self.buttons:
                     btn.setSelected(btn is button)

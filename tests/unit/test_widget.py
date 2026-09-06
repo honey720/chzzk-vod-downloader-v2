@@ -8,7 +8,7 @@ progress·fileSize·delete)에 `Ignored` 정책 라벨이 둘 이상 + `Expandin
 빈 문자열만 그려지는 회귀가 났다(오너 실기 확인).
 
 **왜 기존 테스트(583개)가 못 잡았는가 — 이게 이 파일의 존재 이유다.**
-`content/widget.py`(`ContentItemWidget`)를 직접 겨냥한 테스트가 지금까지
+`app/widgets/widget.py`(`ContentItemWidget`)를 직접 겨냥한 테스트가 지금까지
 하나도 없었다 — `test_failure_display.py`·`test_content_manager.py` 등은
 전부 `widget.statusLabel.text()`로 검증하는데, `ElidingLabel.text()`는
 *의도적으로* 화면에 그려지는 값이 아니라 논리적 원문 전체를 돌려주도록

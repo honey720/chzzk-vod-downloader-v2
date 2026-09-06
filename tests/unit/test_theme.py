@@ -73,7 +73,7 @@ class TestCardStateStyles:
 
     "알 수 없는 state를 주면 ValueError"라는 옛 검증은 대응하는 게 없다 —
     `card_style()`이라는 함수 자체가 사라져 임의 문자열을 검증할 진입점이
-    없다(`content/widget.py::_cardState()`가 항상 `theme.CARD_STATES` 안의
+    없다(`app/widgets/widget.py::_cardState()`가 항상 `theme.CARD_STATES` 안의
     값만 반환하므로 검증이 필요한 지점 자체가 없어졌다). 위젯이 실제로
     옳은 색을 입는지는 `test_widget_theme.py`(실렌더 픽셀 확인)가 본다.
     """
@@ -190,7 +190,7 @@ def _git_tracked_sources() -> list[Path] | None:
 class TestColoursAreDefinedOnlyOnce:
     """색 리터럴은 theme.py에만 있어야 한다.
 
-    카드 완료·실패 색이 `content/view.py`에, 카드 배경이
+    카드 완료·실패 색이 `app/widgets/view.py`에, 카드 배경이
     `ui/contentItemWidget.ui`에 직접 박혀 있던 게 #227 착수 전 모습이다.
     그 상태로 테마가 하나 더 붙으면 값이 여러 곳에서 갈린다.
 

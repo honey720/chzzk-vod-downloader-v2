@@ -71,7 +71,7 @@ def test_sequential_same_title_downloads_keep_both_files(tmp_path):
 
 
 def test_sanitize_filename_strips_windows_invalid_chars():
-    """Windows 금지 문자와 개행이 제거된다 — content/network.py 정제가 이 함수를 쓴다."""
+    """Windows 금지 문자와 개행이 제거된다 — app/network.py 정제가 이 함수를 쓴다."""
     assert sanitize_filename('a\\b/c:d*e?f"g<h>i|j\nk') == "abcdefghijk"
 
 

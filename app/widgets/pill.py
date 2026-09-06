@@ -1,7 +1,7 @@
 """카드 3행 해상도 pill — 선택 표시·접힘 표시(▾)를 가진 QPushButton (#244 3행 정리).
 
 평소(접힘)에는 **선택된 해상도 하나**만 `[1080p ▾]`로 보이고, 누르면 그 자리에서
-전부 펼쳐진다(팝업이 아니다 — content/widget.py::setExpanded). 이 클래스가
+전부 펼쳐진다(팝업이 아니다 — app/widgets/widget.py::setExpanded). 이 클래스가
 드는 것은 불리언 둘뿐이다(선택·접힘 표시) — 카드마다 페인트 객체가 붙지 않는다.
 
 - 선택 = 동적 속성 `selected` → 전역 QSS `[selected="true"]`가 채움(accent)을
@@ -9,7 +9,7 @@
   펼쳐야 하므로 선택 pill도 활성이어야 한다.
 - 접힘 표시(▾) = 동적 속성 `caret` → QSS가 오른쪽 padding을 넓히고, 그 자리에
   paintEvent가 작은 삼각형을 **직접 그린다**. 글리프(U+25BE)는 폰트 스택이
-  모양을 정해 macOS·Linux 실기 없이는 확인할 길이 없다(content/icons.py와 같은
+  모양을 정해 macOS·Linux 실기 없이는 확인할 길이 없다(app/widgets/icons.py와 같은
   이유). 색은 theme.py 토큰 이름으로만 고른다(선택 onAccent / 호버 text /
   평소 textMuted) — 이 파일에 색 리터럴은 없다.
 """
@@ -41,7 +41,7 @@ class ResolutionPill(QPushButton):
         # 가로: 자연 폭 이상으로 늘지 않고(Maximum), 최소 폭은 레이아웃을 묶지 않는다
         # (minimumSizeHint 1px). QPushButton 기본(Minimum)은 최소 폭 = 자연 폭이라
         # "pill 전부가 한 줄에" 있는 동안 카드 최소폭이 거기에 묶여, 창을 그 아래로
-        # 줄일 수 없고 "안 들어가면 접는다" 판정(content/widget.py::_layoutRowThree)이
+        # 줄일 수 없고 "안 들어가면 접는다" 판정(app/widgets/widget.py::_layoutRowThree)이
         # 영영 안 온다. 판정은 실제 폭이 아니라 naturalWidth()로 하므로, pill이
         # 실제로 쥐어짜이는 것은 판정이 도는 리사이즈 한 틱 안에서만이다.
         self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)

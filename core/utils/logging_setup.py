@@ -5,7 +5,7 @@
 핸들러·포맷 구성은 이 모듈에서만 관리한다.
 
 로그 저장 위치(CONFIG_DIR/logs)는 app 영역 지식이므로 core는 경로를 정하지 않고
-log_dir 인자로 주입받는다 — 기존 진입점인 config/log_setup.py가 주입한다.
+log_dir 인자로 주입받는다 — 기존 진입점인 app/log_setup.py가 주입한다.
 """
 
 import logging

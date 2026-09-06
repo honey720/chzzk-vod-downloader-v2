@@ -7,7 +7,7 @@ ContentWorker(Qt 워커)에 있던 URL 파싱 → API 조회 → 에러 분기 �
 번역(tr)은 앱 계층 어댑터(ContentWorker)가 담당한다 — core는 Qt 번역기를 모른다.
 
 api 매개변수: HTTP 호출 묶음(NetworkManager 호환 객체)을 주입받는다.
-네트워크 계층이 아직 앱 영역(content/network.py)에 있어 core에서 직접
+네트워크 계층이 아직 앱 영역(app/network.py)에 있어 core에서 직접
 import할 수 없기 때문이다(core→app 의존 금지). 네트워크 계층이 core로
 이주하면 기본 구현을 붙일 수 있다.
 """
@@ -30,7 +30,7 @@ _TRANSPORT_STATUS_KEYS = {
 
 
 class MetadataApi(Protocol):
-    """메타데이터 조회에 필요한 HTTP 호출 묶음 (content.network.NetworkManager 호환)."""
+    """메타데이터 조회에 필요한 HTTP 호출 묶음 (app.network.NetworkManager 호환)."""
 
     def get_video_info(self, video_no: str, cookies: dict) -> VideoInfo: ...
 

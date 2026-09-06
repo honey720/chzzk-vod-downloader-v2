@@ -1,6 +1,6 @@
 """`ContentListView`(#226) 단위 테스트 — QScrollArea+QVBoxLayout 직접 삽입.
 
-`content/model.py`+`content/view.py`를 직접 겨냥한 전용 테스트가 지금까지
+`app/viewmodels/model.py`+`app/widgets/view.py`를 직접 겨냥한 전용 테스트가 지금까지
 없었다(기존엔 `ContentManager`를 통해서만 간접 검증됐다). `setIndexWidget()`을
 버리면서 새로 생긴 계약(삽입 위치, 삭제 시 생명주기, 오버레이 상태 전이)을
 여기서 고정한다.
@@ -228,7 +228,7 @@ class TestCardNumberingFollowsPosition:
 
     **대기 방식 — 왜 `processEvents()` 한 번으로 안 끝내는가.** 재번호매김은
     `QTimer.singleShot(0, ...)`으로 다음 이벤트 루프 턴에 돈다(일괄 삭제를
-    한 번으로 누르는 배치 장치, `content/view.py::_scheduleRenumber` 참고).
+    한 번으로 누르는 배치 장치, `app/widgets/view.py::_scheduleRenumber` 참고).
     `processEvents()` 한 번으로 그 0ms 타이머가 항상 잡히는지는 이 프로세스
     안에서 2000회 스트레스로는 한 번도 놓치지 않았지만 — 그건 이 머신의
     이벤트 디스패처가 그렇다는 증거일 뿐, 다른 OS·부하가 걸린 CI 러너에서도

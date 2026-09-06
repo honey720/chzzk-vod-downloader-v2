@@ -1,4 +1,4 @@
-"""content.network의 URL 파싱·DASH 매니페스트 파싱 테스트.
+"""app.network의 URL 파싱·DASH 매니페스트 파싱 테스트.
 
 - URL 파싱(TestExtractContentNo): #33에서 허용 범위를 넓힌 **요구 동작 검증** 테스트다.
 - DASH 매니페스트(TestGetVideoDashManifest): HTTP 요청 구성·core 파서 위임 검증이다.

@@ -149,7 +149,7 @@ def _no_network_attempts(network_guard, request):
 
 # ============ 전역 config.json 격리 (#199) ============
 # 개별 테스트가 CONFIG_DIR/CONFIG_FILE을 각자 격리하지 않으면
-# application.mainWindow.VodDownloader 등 앱 계층을 실배선으로 태우는
+# app.views.mainWindow.VodDownloader 등 앱 계층을 실배선으로 태우는
 # 테스트가 실유저 config.json을 조용히 덮어쓴다 — #150이 만든 경로 찾기
 # 로깅 테스트가 그 배선을 탔는데, #166이 같은 지점("입력 확정"·"창 닫기")에
 # 실제 저장까지 발동하는 보존 로직을 얹으면서 오염이 시작됐다. #166은

@@ -27,7 +27,7 @@ from pathlib import Path
 sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
 
-# 메시지 본문 패턴 (download/logger.py의 메시지 형식과 1:1).
+# 메시지 본문 패턴 (app/download_logger.py의 메시지 형식과 1:1).
 # 줄 프리픽스(시각·레벨·스레드 이름)는 의도적으로 매칭하지 않는다.
 _PATTERNS = {
     "total_size": re.compile(r"Download started - Total size: (\d+) bytes"),

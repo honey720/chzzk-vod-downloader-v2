@@ -69,7 +69,7 @@ class DownloadHandle:
 
     상태 전이 메서드(pause/resume/stop)는 core 규칙대로 엄격하다 — 허용되지
     않는 전이는 InvalidStateTransitionError를 던진다. UI 타이밍 레이스 흡수는
-    앱 계층 어댑터(download/task.py의 DownloadTask)의 몫이다.
+    앱 계층 어댑터(app/download_task.py의 DownloadTask)의 몫이다.
     """
 
     def __init__(

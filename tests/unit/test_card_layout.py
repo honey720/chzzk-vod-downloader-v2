@@ -323,7 +323,7 @@ class TestResolutionPillsDescending:
 
     def test_default_selection_is_the_first_pill(self, qapp):
         widget = _make_widget_with_reps(qapp, (480, 1080, 720))
-        # 선택 표시는 `isSelected()`(content/pill.py) — 이전의 "선택 = 비활성"은
+        # 선택 표시는 `isSelected()`(app/widgets/pill.py) — 이전의 "선택 = 비활성"은
         # 접힌 pill을 눌러 펼쳐야 하므로 폐기됐다(#244 3행 정리)
         assert _selected(widget) == [widget.buttons[0]], "기본 선택(최고 해상도)이 첫 pill이 아니다"
         assert str(widget.item.resolution) == "1080"
@@ -673,7 +673,7 @@ class TestPathVisibilityRule:
 
 class TestPathAbbreviationAndTooltip:
     """표시는 "뿌리/…/마지막폴더"로 축약, 전문은 툴팁(#245). 규칙과 근거는
-    content/widget.py::abbreviate_path 참고."""
+    app/widgets/widget.py::abbreviate_path 참고."""
 
     HOME = "C:/Users/me"
 
