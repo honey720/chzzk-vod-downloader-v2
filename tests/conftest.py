@@ -7,10 +7,13 @@
 import faulthandler
 import os
 import re
+import socket
 import sys
+import threading
 from pathlib import Path
 
 import pytest
+import requests.adapters
 
 # 전역 QSS 픽스처(app.setStyle(theme.build_style()) 등)를 테스트 하나를
 # 넘어 살려두면 macOS CI에서만 프로세스 종료 시점에 SIGSEGV(exit code
@@ -44,6 +47,104 @@ def load_mock_response():
         return (MOCK_RESPONSES_DIR / name).read_text(encoding="utf-8")
 
     return _load
+
+
+# ============ 테스트 네트워크 가드 (#275) ============
+# 규칙 "외부 API 실호출 금지"는 글로만 있었다 — 차단은 파일마다 세션 함수를
+# 문자열로 monkeypatch하는 방식이고, 그것이 실제로 막는지는 아무도 재지 않았다.
+# 실측: 유효한 차단 한 줄만 빠져도 카드의 썸네일·크기 조회 스레드가 예외를
+# 삼켜 요청이 나가려 하는데도 테스트는 초록이었다. 그래서 경계 하나에서 막고
+# (예외), 시도가 있었다는 사실을 남기고(기록), 테스트 끝에 0건을 단언한다.
+#
+# ⚠️ 예외만으로는 부족하다. 예외는 요청이 실제로 외부에 나가는 것을 막을 뿐이고,
+# 기록과 단언이 "시도가 있었다"를 드러내는 장치다. 둘이 없으면 이 가드는
+# 아무것도 안 잰다.
+#
+# 기록은 워커 스레드에서도 일어나므로 락으로 보호한다. 옵트아웃(마커·허용
+# 목록)은 두지 않는다 — 지금 시도가 0건이라 예외가 필요한 자리가 없다.
+
+
+class NetworkAttemptBlocked(RuntimeError):
+    """테스트 네트워크 가드가 나가는 연결을 막았다 — 요청은 외부로 나가지 않았다."""
+
+
+class _NetworkGuard:
+    """나가는 연결의 시도를 막고 (어느 테스트가, 어디로) 기록한다. 스레드 안전."""
+
+    def __init__(self):
+        """기록 리스트와 그것을 지키는 락, 그리고 시도를 귀속시킬 현재 테스트 이름을 준비한다."""
+        self._lock = threading.Lock()
+        self._attempts: list[tuple[str, str]] = []
+        self.current_test = "<세션 setup>"
+
+    def record(self, target: str) -> None:
+        """시도 하나를 남기고 예외로 막는다. 워커 스레드에서도 불린다."""
+        with self._lock:
+            self._attempts.append((self.current_test, target))
+        raise NetworkAttemptBlocked(f"테스트 네트워크 가드: 외부 연결 차단 — {target}")
+
+    def take(self) -> list[tuple[str, str]]:
+        """지금까지의 시도를 꺼내고 비운다 — 테스트 끝 단언과 가드 자체 테스트가 쓴다."""
+        with self._lock:
+            taken, self._attempts = self._attempts, []
+        return taken
+
+
+def _describe_socket_target(address) -> str:
+    """socket 주소 튜플을 `socket host:port`로 — 기록·실패 메시지용. 쿠키·헤더는 없다."""
+    try:
+        host, port = address[0], address[1]
+        return f"socket {host}:{port}"
+    except (TypeError, IndexError):
+        return f"socket {address!r}"
+
+
+@pytest.fixture(scope="session", autouse=True)
+def network_guard():
+    """세션 내내 socket 연결과 requests 어댑터 전송을 막는다 — 요청은 외부로 나가지 않는다.
+
+    차단은 **되돌리지 않는다.** 세션이 끝나면 프로세스도 끝나므로 복원할 이유가
+    없고, 복원하는 그 순간이 아직 살아 있는 워커가 실제로 나갈 수 있는 유일한
+    틈이다. 세션 끝에는 마지막 테스트의 끝 단언 뒤에 일어난 시도를 받아내기
+    위해 잔여 기록을 한 번 더 단언한다.
+    """
+    guard = _NetworkGuard()
+
+    def blocked_connect(self, address, *args, **kwargs):
+        """socket.socket.connect / connect_ex 자리 — 주소를 기록하고 연결 없이 예외."""
+        guard.record(_describe_socket_target(address))
+
+    def blocked_create_connection(address, *args, **kwargs):
+        """socket.create_connection 자리 — urllib3 등 고수준 경로가 여기로 온다."""
+        guard.record(_describe_socket_target(address))
+
+    def blocked_send(self, request, *args, **kwargs):
+        """requests HTTPAdapter.send 자리 — 소켓에 닿기 전, 메서드와 URL만 기록하고 예외."""
+        guard.record(f"{request.method} {request.url}")
+
+    socket.socket.connect = blocked_connect
+    socket.socket.connect_ex = blocked_connect
+    socket.create_connection = blocked_create_connection
+    requests.adapters.HTTPAdapter.send = blocked_send
+    yield guard
+    # 마지막 테스트의 끝 단언 뒤에 일어난 시도는 여기서만 받아낼 수 있다
+    leftover = guard.take()
+    assert not leftover, "세션 종료 시점의 외부 연결 시도 %d건 (차단됨): %s" % (
+        len(leftover),
+        "; ".join(f"{test} → {target}" for test, target in leftover),
+    )
+
+
+@pytest.fixture(autouse=True)
+def _no_network_attempts(network_guard, request):
+    """테스트가 끝나면 그 사이의 연결 시도가 0건임을 단언한다 — 예외를 삼킨 스레드가 있어도 드러난다."""
+    network_guard.current_test = request.node.nodeid
+    yield
+    attempts = network_guard.take()
+    assert not attempts, "테스트 중 외부 연결 시도 %d건 (차단됨): %s" % (
+        len(attempts),
+        "; ".join(f"{test} → {target}" for test, target in attempts),
+    )
 
 
 # ============ 전역 config.json 격리 (#199) ============
