@@ -43,9 +43,13 @@ class RedirectingSession:
         self.location = location
         self.final = final
         self.calls: list[tuple[str, dict | None]] = []
+        #: 홉별 timeout — 시간 제한은 **kwargs로 흘러가므로 한 홉에서 빠져도 아무것도
+        #: 실패하지 않고 앱이 멈춘다. 그래서 따로 기록해 "모든 홉이 받았다"를 단언한다
+        self.timeouts: list = []
 
     def get(self, url, **kwargs):
         self.calls.append((url, kwargs.get("cookies")))
+        self.timeouts.append(kwargs.get("timeout"))
         if url == self.first_url:
             resp = MockResponse(status_code=302)
             resp.headers = {"Location": self.location}
@@ -161,3 +165,5 @@ class TestRedirectHopsAreCheckedBeforeCookiesAreSent:
 
         assert key == b"0123456789abcdef"
         assert session.calls == [(KEY_URI, COOKIES), (hop, COOKIES)]
+        # 모든 홉이 시간 제한을 받았다 — 어느 홉에서든 빠지면 앱이 조용히 멈춘다
+        assert session.timeouts == [30, 30]
