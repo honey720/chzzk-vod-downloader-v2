@@ -99,11 +99,13 @@ class RecordingService:
         self.handles: list = []
 
     def submit(self, content, **kwargs):
+        """실제 제출을 그대로 통과시키고 핸들만 붙잡는다 — 뒤에서 `handle.wait()`로 엔진 종료를 잰다."""
         handle = self._real.submit(content, **kwargs)
         self.handles.append(handle)
         return handle
 
     def abandon(self, handle):
+        """실제 서비스에 위임 — 이 테스트에서는 불리지 않아야 하지만 계약은 갖춘다."""
         self._real.abandon(handle)
 
 

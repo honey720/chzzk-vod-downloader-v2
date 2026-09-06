@@ -43,7 +43,15 @@ from download.logger import DownloadLogger
 
 
 class FakeHandle:
-    """DownloadHandle 대역 — wait 호출 횟수·timeout 인자를 기록한다."""
+    """DownloadHandle(서비스가 돌려주는 실행 핸들) 대역 — 정리 규칙의 증거를 모은다.
+
+    기록하는 것은 `wait` 호출 횟수와 그때의 timeout 인자다. 정리 규칙은 셋이고
+    전부 이 두 값으로 판정한다: 정상 종료·중지는 wait **1회**, 실패 경로는
+    wait **0회**(죽은 마운트 I/O에 갇힌 엔진을 메인 스레드가 기다리면 UI가
+    얼어붙는다 — PR #135), 그리고 어느 경우든 timeout은 **유한**(None이면 무한
+    대기 = 앱 프리즈, #137). 실제 핸들은 스레드 이벤트를 기다리지만 여기서는
+    즉시 True를 돌려준다 — 엔진이 없으므로 기다릴 대상이 없다.
+    """
 
     def __init__(self, data):
         self.data = data
@@ -51,9 +59,11 @@ class FakeHandle:
         self.wait_timeouts: list = []
 
     def elapsed_seconds(self) -> float:
+        """완료 통지에 실리는 소요 시간 — 61초로 고정해 "00:01:01" 서식 변환까지 잰다."""
         return 61.0
 
     def wait(self, timeout=None) -> bool:
+        """엔진 종료 대기의 대역 — 호출 사실과 timeout만 남기고 즉시 끝난 것으로 답한다."""
         self.wait_calls += 1
         self.wait_timeouts.append(timeout)
         return True
@@ -63,18 +73,31 @@ class StuckHandle(FakeHandle):
     """파일 I/O에 갇힌 워커 흉내 — wait가 절대 끝나지 않는다 (#136·#137)."""
 
     def wait(self, timeout=None) -> bool:
+        """기록은 남기되 "끝나지 않았다"(False)로 답한다 — 호출자가 포기하고 슬롯을 방출해야 한다."""
         super().wait(timeout)
         return False
 
 
 class FakeService:
-    """DownloadService 대역 — submit 인자와 **제출 시점의 상태**를 기록한다.
+    """DownloadService(core 오케스트레이터) 대역 — 위쪽 경계의 관찰 지점.
 
-    "제출 전에 RUNNING 전이와 다운로드 정보 로깅이 끝나 있다"는 순서 계약은
-    제출 시점에 스냅샷을 떠야 잴 수 있다 — 사후 검사로는 순서가 안 보인다.
+    실제 서비스는 다운로더를 골라 워커 스레드에서 돌리지만, 여기서는 아무것도
+    실행하지 않고 두 가지만 남긴다:
+
+    - `submit` 인자 전부(`submissions`) — 콜백 4개는 테스트가 꺼내 **엔진 대신**
+      직접(또는 별도 스레드에서) 호출한다. 그래서 이 기록이 곧 "엔진이 통지하는
+      입구"다.
+    - **제출 시점의 스냅샷**(`state_at_submit`·`log_calls_at_submit`) — "제출 전에
+      RUNNING 전이와 다운로드 정보 로깅이 끝나 있다"는 순서 계약은 제출이 끝난
+      뒤에 검사하면 안 보인다(그때는 어느 순서였든 둘 다 참이다).
+
+    `abandon`은 호출된 핸들만 모은다 — 정상 종료에서는 비어 있어야 하고, 갇힌
+    워커에서는 정확히 그 핸들 하나여야 한다(#137의 슬롯 방출).
     """
 
     def __init__(self, log_calls: list, handle_factory=FakeHandle):
+        """log_calls: `log_calls` 픽스처의 기록 리스트(제출 시점 길이를 잰다).
+        handle_factory: 돌려줄 핸들 대역 — 갇힌 워커 시나리오만 StuckHandle을 준다."""
         self._log_calls = log_calls
         self._handle_factory = handle_factory
         self.submissions: list[dict] = []
@@ -84,6 +107,7 @@ class FakeService:
         self.log_calls_at_submit: int | None = None
 
     def submit(self, content, **kwargs):
+        """제출 시점 스냅샷을 먼저 뜨고, 인자를 보관한 뒤, 핸들 대역을 돌려준다."""
         self.state_at_submit = kwargs["data"].model.state
         self.log_calls_at_submit = len(self._log_calls)
         self.submissions.append({"content": content, **kwargs})
@@ -92,17 +116,31 @@ class FakeService:
         return handle
 
     def abandon(self, handle):
+        """갇힌 워커의 슬롯 방출 — 호출된 핸들을 남긴다."""
         self.abandoned.append(handle)
 
 
 class RecordingContent(QObject):
-    """content 자리의 기록 대역 — (호출 이름, 인자, 호출 스레드 id, 호출 시점 아이템 상태).
+    """content 자리(제품에서는 ContentManager)의 기록 대역 — 아래쪽 경계의 관찰 지점.
+
+    viewmodel이 부르는 6개 메서드를 같은 시그니처로 받되 카드를 그리는 대신
+    `(호출 이름, 인자, 호출 스레드 id, 호출 시점 아이템 상태)` 한 줄을 남긴다.
+    네 항목이 각각 다른 계약을 증명한다:
+
+    - **이름·인자**: 어느 시나리오에 어떤 통지가 몇 번 오는가(실패는 fail 1회이고
+      stop은 없다, 완료는 "HH:MM:SS"를 싣는다 등). 리스트 전체를 통째로 단언해
+      빠진 것·덧붙은 것을 함께 잡는다.
+    - **스레드 id**: 이 호출 뒤에는 위젯 갱신이 있으므로 메인 스레드여야 한다.
+      기록해 두면 어느 스레드에서 왔는지가 사실로 남고, 단언은 그 사실을 메인
+      스레드 id와 비교하기만 한다(스레드 축 테스트 참조).
+    - **호출 시점의 `item.downloadState`**: 카드는 이 호출을 받는 순간의 상태로
+      그린다. 모델 전이보다 통지가 먼저 오면 카드가 이전 상태로 그려지므로
+      "전이 → 통지" 순서는 content 쪽에서 관찰 가능한 계약이다.
 
     QObject인 이유: 제품의 ContentManager가 QObject라 Signal 연결의 스레드
-    친화성이 같아야 한다(큐 연결의 도착 스레드가 수신자의 스레드로 정해진다).
-    호출 시점의 `item.downloadState`를 함께 적는 이유: 카드는 이 호출을 받는
-    순간의 상태로 그린다 — 모델 전이보다 호출이 먼저 오면 카드가 이전 상태로
-    그려지므로, "전이 → 통지" 순서는 content 쪽에서 관찰 가능한 계약이다.
+    친화성이 같아야 한다 — 큐 연결의 도착 스레드는 수신자가 사는 스레드로
+    정해지므로, 수신자가 메인 스레드의 QObject여야 "메인 스레드 도착"이 제품과
+    같은 조건에서 검증된다.
     """
 
     def __init__(self):
@@ -110,32 +148,44 @@ class RecordingContent(QObject):
         self.calls: list[tuple[str, tuple, int, DownloadState]] = []
 
     def _record(self, name: str, item: ContentItem, *args) -> None:
+        """한 호출을 네 항목으로 남긴다 — 스레드 id와 아이템 상태는 **지금 이 순간**의 값이다."""
         self.calls.append((name, (item, *args), threading.get_ident(), item.downloadState))
 
     def update_progress(self, rem, size, spd, prog, item: ContentItem):
+        """진행 통지 자리 — 인자 순서(남은 시간·크기·속도·%·item)는 ContentManager와 같다."""
         self._record("update_progress", item, rem, size, spd, prog)
 
     def pause(self, item: ContentItem):
+        """일시정지 통지 자리."""
         self._record("pause", item)
 
     def resume(self, item: ContentItem):
+        """재개 통지 자리."""
         self._record("resume", item)
 
     def stop(self, item: ContentItem):
+        """중지 통지 자리 — 실패 경로에서는 오지 않아야 한다."""
         self._record("stop", item)
 
     def finish(self, item: ContentItem, download_time: str):
+        """완료 통지 자리 — download_time은 "HH:MM:SS" 문자열이다."""
         self._record("finish", item, download_time)
 
     def fail(self, item: ContentItem, message: str = ""):
+        """실패 통지 자리 — message는 매핑을 거친 사유 문구(매핑 밖이면 "")다."""
         self._record("fail", item, message)
 
     @property
     def names(self) -> list[str]:
+        """호출 이름만 순서대로 — 인자·스레드까지 볼 필요 없는 단언용."""
         return [c[0] for c in self.calls]
 
 
 def _make_item(content_type: str = "video") -> ContentItem:
+    """카드 한 장의 최소 아이템 — content_type이 파일("video")/세그먼트("m3u8") 변환 분기를 가른다.
+
+    output_path는 제품에서 다운로드 직전에 채워지는 값이라 여기서 직접 넣는다 — submit 인자 대조에 쓴다.
+    """
     item = ContentItem(
         "https://chzzk.naver.com/video/1",
         {"title": "t"},
@@ -151,9 +201,18 @@ def _make_item(content_type: str = "video") -> ContentItem:
 
 
 class Wired:
-    """한 건의 배선: viewmodel · content 대역 · 서비스 대역 · 제출 기록."""
+    """다운로드 한 건의 배선 묶음 — 제품 배선(DownloadViewModel ↔ ContentManager ↔ DownloadService)에서
+    양 끝만 대역으로 바꾼 것.
+
+    viewmodel은 실물이고 그 위·아래가 기록 대역이다. 테스트는 viewmodel의 공개
+    API로 조작하고, 두 대역의 기록으로만 판정한다 — 브리지의 이름·속성에는
+    손대지 않는다. 그래서 흡수(B1)로 내부가 통째로 바뀌어도 이 클래스와 그 위의
+    테스트는 그대로다.
+    """
 
     def __init__(self, qapp, log_calls: list, handle_factory=FakeHandle):
+        """qapp: 큐 연결을 배달할 이벤트 루프. log_calls: `log_calls` 픽스처의 기록.
+        handle_factory: 서비스 대역이 돌려줄 핸들 종류(갇힌 워커 시나리오용)."""
         self.qapp = qapp
         self.content = RecordingContent()
         self.service = FakeService(log_calls, handle_factory)
@@ -162,6 +221,7 @@ class Wired:
 
     @property
     def submission(self) -> dict:
+        """첫 제출의 인자 — 여기서 꺼낸 콜백 4개가 "엔진이 통지하는 입구"다."""
         return self.service.submissions[0]
 
     @property
@@ -170,9 +230,11 @@ class Wired:
         return self.service.handles[0]
 
     def start(self, item: ContentItem) -> None:
+        """viewmodel 공개 API로 시작 — 제출·핸들 기록은 서비스 대역이 남긴다."""
         self.vm.start(item)
 
     def pump(self) -> None:
+        """큐에 쌓인 Signal을 배달한다 — 워커 스레드에서 emit된 통지는 이 호출 전에는 content에 닿지 않는다."""
         self.qapp.processEvents()
 
 
@@ -194,6 +256,7 @@ def log_calls(monkeypatch) -> list:
 
 @pytest.fixture
 def wired(qapp, log_calls) -> Wired:
+    """정상 핸들(FakeHandle)로 배선한 기본 묶음 — 갇힌 워커 시나리오만 직접 Wired를 만든다."""
     return Wired(qapp, log_calls)
 
 
@@ -204,6 +267,8 @@ MAIN_THREAD = threading.main_thread().ident
 
 
 class TestStart:
+    """시작 계약 — 서비스에 무엇이 어떤 상태로 제출되는가, 그리고 content는 아직 조용한가."""
+
     def test_submit_carries_shared_data_and_running_precedes_submit(self, wired):
         """submit의 content는 공유 데이터의 것이고, 제출 시점에 이미 RUNNING·정보 로깅 완료다."""
         item = _make_item()
@@ -238,6 +303,8 @@ class TestStart:
 
 
 class TestControls:
+    """유저 조작(일시정지·재개·중지)의 통지 — 횟수와 "전이 → 통지" 순서, 중지 뒤 정리 규칙."""
+
     def test_pause_then_resume_notify_after_transition(self, wired):
         """pause → resume 각 1회, 통지 시점에 모델은 이미 전이돼 있다 (카드가 새 상태로 그린다)."""
         item = _make_item()
@@ -288,6 +355,8 @@ class TestControls:
 
 
 class TestCompletion:
+    """완료 통지와, 정리가 끝난 뒤 늦게 도착한 통지의 무시."""
+
     def test_finish_carries_elapsed_time_after_refs_are_cleared(self, wired):
         """완료: finish(item, "HH:MM:SS") 1회. 서비스 계약대로 모델 FINISHED 뒤에 콜백이 온다."""
         item = _make_item()
@@ -338,21 +407,30 @@ class TestCompletion:
 
 
 class _FakeHttpResponse:
+    """HTTPError에 실을 상태 코드만 가진 응답 흉내 — 사유 매핑이 보는 것은 status_code뿐이다."""
+
     def __init__(self, status_code: int):
         self.status_code = status_code
 
 
 def _http_error(status: int) -> requests.HTTPError:
+    """상태 코드가 붙은 HTTPError — 401/403/404/그 밖이 서로 다른 사유로 갈리는지 재는 재료."""
     return requests.HTTPError(f"HTTP {status}", response=_FakeHttpResponse(status))
 
 
 def _postprocess_error(cause: BaseException | None) -> PostprocessError:
+    """원인을 체인한 PostprocessError — 사유는 예외 자체가 아니라 `__cause__`의 종류로 갈린다 (#180).
+
+    메시지에 ffmpeg 경로·stderr를 일부러 넣는다: 그것이 유저 문구에 새지 않는 것도 단언한다.
+    """
     exc = PostprocessError("후처리(remux) 실패: ffmpeg stderr tail... [C:\\tools\\ffmpeg.exe]")
     exc.__cause__ = cause
     return exc
 
 
 class TestFailure:
+    """실패 통지 — fail 하나만 오고(stop 없음), 사유는 매핑 문구이며 원시 예외 문자열은 새지 않는다."""
+
     def test_mapped_failure_calls_fail_only_without_stop_or_wait(self, wired):
         """실패: fail 1회(stop 없음), 사유는 매핑 문구, 엔진은 WAITING 신호, 메인 스레드는 기다리지 않는다."""
         item = _make_item("m3u8")
@@ -431,6 +509,8 @@ class TestFailure:
 
 
 class TestStuckWorker:
+    """정리 규칙 중 병리 경로 — 끝나지 않는 워커를 유한하게 기다리고 포기한다 (#136·#137)."""
+
     def test_stuck_worker_is_abandoned_after_finite_wait(self, qapp, log_calls):
         """갇힌 워커: 유한 timeout으로 기다린 뒤 슬롯을 방출하고 참조만 정리한다 (#137)."""
         wired = Wired(qapp, log_calls, handle_factory=StuckHandle)
@@ -450,6 +530,8 @@ class TestStuckWorker:
 
 
 class TestProgress:
+    """ProgressEvent → (남은 시간, 크기, 속도, %) 변환값 — 파일은 바이트 기준, 세그먼트는 개수 기준(병합 단계 전환 포함)."""
+
     def test_file_progress_is_converted_to_the_four_tuple(self, wired):
         item = _make_item()
         wired.start(item)
@@ -493,10 +575,20 @@ class TestProgress:
 
 
 def _call_on_worker(fn, *args) -> int:
-    """fn을 별도 스레드에서 실행하고 끝날 때까지 기다린 뒤 그 스레드의 id를 돌려준다."""
+    """엔진 워커 스레드를 흉내 낸다 — fn을 별도 스레드에서 실행하고 **끝날 때까지 기다린 뒤** 그 스레드 id를 돌려준다.
+
+    join()이 판정의 전제다: 워커가 이미 끝났으므로 그 뒤에 content에 아무것도
+    없다면 그것은 "아직 안 왔다"가 아니라 "큐에 있다"이고, 그 뒤 processEvents로
+    배달된 호출의 스레드 id는 메인일 수밖에 없다. 워커가 살아 있으면 판정이
+    타이밍에 기대게 되므로 살아 있을 때는 실패시킨다.
+
+    돌려주는 id는 "정말 다른 스레드였다"는 대조군이다 — 이것이 메인과 같으면
+    테스트 자체가 아무것도 안 잰 것이다.
+    """
     ident: list[int] = []
 
     def run():
+        """스레드 본체 — 자기 id를 남기고 콜백을 부른다."""
         ident.append(threading.get_ident())
         fn(*args)
 
@@ -508,11 +600,33 @@ def _call_on_worker(fn, *args) -> int:
 
 
 class TestThreadBoundary:
-    """판정은 스레드 식별자 비교다. join() 뒤 processEvents() 전에는 도착이 없어야 하고
-    (큐에 있을 뿐), 도착한 호출의 스레드는 메인이어야 한다. 콜백을 직접 호출로
-    바꾸면 join() 시점에 이미 워커 id로 도착해 있어 두 단언 모두 실패한다."""
+    """스레드 축 — 워커 스레드의 콜백이 content에는 **메인 스레드에서** 닿는가. 이 파일의 핵심이다.
+
+    왜 재는가: content 뒤에는 위젯 갱신이 있다. 콜백을 Signal emit 없이 직접
+    호출로 바꾸면(흡수 중 떠오르는 단순화) 위젯이 워커 스레드에서 갱신되고,
+    그 고장은 조용하고 산발적이라 다른 어떤 테스트도 잡지 못한다. 지금은
+    큐 연결이 지키는데, 그 장치가 흡수 뒤에도 남았는지를 여기서만 잰다.
+
+    단언이 두 단계인 이유(각 테스트가 같은 모양이다):
+    1. `_call_on_worker`로 콜백을 돌리고 join한 직후 — content 호출이 **0건**.
+       워커는 이미 끝났으므로 통지는 큐에 있거나(정상) 이미 워커에서 배달됐거나
+       (고장) 둘 중 하나다. 0건이면 전자다.
+    2. `pump()`(processEvents) 뒤 — 도착한 호출의 **스레드 id가 메인**과 같다.
+       1이 통과해도 2가 필요하다: 큐에 있다가 배달된 것이 메인 스레드에서 불렸다는
+       사실을 기록으로 확인해야 "큐 연결"이 증명된다.
+
+    타이밍이 아니라 식별자로 판정하는 이유: "잠깐 기다렸는데 안 왔다"는 느린
+    CI에서 거짓 통과(아직 안 왔을 뿐)나 거짓 실패(이미 왔다)를 낳는다. join으로
+    워커를 끝내 두면 시간 축이 사라지고, 남는 것은 "어느 스레드에서 불렸는가"라는
+    사실뿐이다. 그 사실은 RecordingContent가 호출 순간의 id로 남긴다.
+    """
 
     def test_progress_from_worker_arrives_on_main_thread(self, wired):
+        """진행 통지 — viewmodel의 바깥 연결(progress → content)이 큐 연결인가.
+
+        ④a 고장(연결을 DirectConnection으로)을 잡는 유일한 케이스다: 완료·실패와
+        달리 진행은 후처리 없이 한 번의 연결로 content에 닿는다.
+        """
         item = _make_item()
         wired.start(item)
         event = ProgressEvent(downloaded_size=50, total_size=100, speed=1.0)
@@ -530,6 +644,11 @@ class TestThreadBoundary:
         assert ident == MAIN_THREAD
 
     def test_finished_from_worker_arrives_on_main_thread(self, wired):
+        """완료 통지 — 참조 정리(후처리)까지 메인 스레드 몫이라 pump 전에는 `isDownloading()`도 그대로다.
+
+        진행과 달리 완료는 후처리 슬롯을 거쳐 content에 닿는다. 콜백이 그 슬롯을
+        직접 부르면(④b 고장) 정리와 통지가 워커에서 일어나 두 단언 모두 실패한다.
+        """
         item = _make_item()
         wired.start(item)
         wired.submission["data"].model.finish()
@@ -546,6 +665,12 @@ class TestThreadBoundary:
         assert wired.vm.isDownloading() is False
 
     def test_failed_from_worker_arrives_on_main_thread(self, wired):
+        """실패 통지 — 완료와 같은 후처리 경로. 단 병합 표시 해제만은 콜백에서 즉시 한다.
+
+        `post_process`는 위젯이 아니라 진행 변환용 데이터 플래그라 워커에서 바로
+        내려도 된다고 문서화돼 있다. 그래서 join 직후 이미 False이고, content
+        호출(fail)은 여전히 pump 뒤 메인 스레드다 — 둘을 같은 테스트에서 갈라 둔다.
+        """
         item = _make_item("m3u8")
         wired.start(item)
         item.post_process = True
