@@ -37,7 +37,7 @@ STATE_ICON = {
 # 모듈 전역을 호출 시점에 조회하므로 테스트에서 monkeypatch 가능하다.
 _global_download_path = ""
 
-#: Qt의 QWIDGETSIZE_MAX(PySide6가 노출하지 않음) — 최대폭 제한을 푸는 값.
+# Qt의 QWIDGETSIZE_MAX(PySide6가 노출하지 않음) — 최대폭 제한을 푸는 값.
 _NO_MAX_WIDTH = (1 << 24) - 1
 
 
