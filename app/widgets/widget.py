@@ -5,7 +5,7 @@ from PySide6.QtWidgets import QWidget, QPushButton, QMessageBox, QFileDialog, QH
 from PySide6.QtGui import QPainter, QPainterPath, QPixmap, QDesktopServices, QRegion
 from PySide6.QtCore import Qt, Signal, QUrl, QDir, QProcess, QRectF
 from app.viewmodels.data import ContentItem
-from content.network import REQUEST_TIMEOUT
+from app.network import REQUEST_TIMEOUT
 from core.api.session import get_thread_session
 from app.widgets.pill import ResolutionPill
 from core.models.download_state import DownloadState

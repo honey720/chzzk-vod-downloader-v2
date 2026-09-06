@@ -10,7 +10,7 @@ Qt viewmodel(app/viewmodels/download_viewmodel.py)과 헤드리스 스크립트�
 """
 
 import config.config as config
-from content.network import NetworkManager
+from app.network import NetworkManager
 from core.models.content import Content
 
 

@@ -13,7 +13,7 @@ import threading
 
 from core.models.download_data import DownloadData
 from core.models.download_state import DownloadState
-from download.task import DownloadTask
+from app.task import DownloadTask
 
 
 class _FakeLogger:

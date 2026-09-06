@@ -7,7 +7,7 @@ import threading
 
 import requests
 
-import content.network as network
+import app.network as network
 import core.api.session as session
 
 

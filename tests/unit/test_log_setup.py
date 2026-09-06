@@ -9,7 +9,7 @@ import logging
 import pytest
 
 import config.config
-import config.log_setup as log_setup
+import app.log_setup as log_setup
 import core.utils.logging_setup as core_logging_setup
 
 

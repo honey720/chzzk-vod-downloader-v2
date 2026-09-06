@@ -9,8 +9,8 @@ import json
 
 import pytest
 
-import content.network as network
-from content.network import REQUEST_TIMEOUT, NetworkManager
+import app.network as network
+from app.network import REQUEST_TIMEOUT, NetworkManager
 from core.api.dash import parse_dash_manifest
 from core.api.url_parser import extract_content_no
 from tests.mocks.mock_http import MockResponse
