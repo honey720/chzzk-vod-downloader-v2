@@ -1,6 +1,6 @@
 """쓰기 속도 샘플링 — 임시 폴더를 다른 매체로 보낼지 판단하는 재료 (#192).
 
-app 계층의 `content/manager.py::probe_writable`(#138)과 같은 원리(제물
+app 계층의 `app/viewmodels/content_viewmodel.py::probe_writable`(#138)과 같은 원리(제물
 스레드 + `join(timeout)`, 실제 파일을 만들어 썼다 지움)를 core에
 독립적으로 둔다 — core는 app을 import할 수 없으므로(SPEC §3.1) 그
 함수를 그대로 재사용하지 못하고, 같은 패턴만 복제했다.

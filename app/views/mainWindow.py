@@ -10,7 +10,7 @@ from app.viewmodels.download_viewmodel import DownloadViewModel
 from app.viewmodels.path_gates import check_fetch_path, check_remember_path, normalize_path
 from app.views.dialog import SettingDialog
 from app.viewmodels.data import ContentItem
-from content.manager import ContentManager
+from app.viewmodels.content_viewmodel import ContentViewModel
 from app.widgets import widget as content_widget
 from core.models.download_state import DownloadState
 from ui.mainWindow import Ui_VodDownloader
@@ -104,7 +104,8 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         self.resize(initial_width, min_height)
         self._startMaximized = self._restoreWindowState()
 
-        self.contentManager = ContentManager(self.listView)
+        self.contentManager = ContentViewModel(parent=self)
+        self.listView.bind(self.contentManager)
         # 다운로드 이벤트(진행·완료·실패)는 viewmodel이 content에 직결한다 (#170)
         # — 구 릴레이 슬롯 6개(_onProgress~_onFailed)는 함께 제거됐다
         self.downloadViewModel = DownloadViewModel(self.contentManager, parent=self)

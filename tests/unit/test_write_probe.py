@@ -13,9 +13,9 @@ import threading
 
 import pytest
 
-import content.manager as manager_mod
+import app.viewmodels.content_viewmodel as cvm_mod
 from app.viewmodels.data import ContentItem
-from content.manager import ContentManager, probe_writable
+from app.viewmodels.content_viewmodel import ContentViewModel, probe_writable
 from app.widgets.view import ContentListView
 from core.models.download_state import DownloadState
 
@@ -49,7 +49,7 @@ class TestProbeWritable:
         def deny(*args, **kwargs):
             raise PermissionError(13, "Permission denied")
 
-        monkeypatch.setattr(manager_mod.tempfile, "mkstemp", deny)
+        monkeypatch.setattr(cvm_mod.tempfile, "mkstemp", deny)
         assert probe_writable(str(tmp_path)) == (False, "denied")
 
     def test_hanging_io_times_out(self, tmp_path, monkeypatch):
@@ -65,7 +65,7 @@ class TestProbeWritable:
             release.wait(5)  # 반환하지 않는 I/O 흉내
             raise PermissionError(13, "belated")
 
-        monkeypatch.setattr(manager_mod.tempfile, "mkstemp", hang)
+        monkeypatch.setattr(cvm_mod.tempfile, "mkstemp", hang)
         writable, reason = probe_writable(str(tmp_path), timeout_s=0.2)
         release.set()
 
@@ -101,7 +101,8 @@ def _make_item(download_path: str, title: str) -> ContentItem:
 @pytest.fixture
 def manager(qapp):
     view = ContentListView()
-    m = ContentManager(view)
+    m = ContentViewModel()
+    view.bind(m)
     yield m, view
     view.deleteLater()
     qapp.processEvents()
@@ -112,7 +113,7 @@ class TestDownloadItemWriteGate:
         """완료 조건: 쓰기 불가 경로는 다운로드 시작 전에 카드 실패로 끝난다."""
         m, view = manager
         # 프로브 판정 자체는 위 단위 테스트가 고정한다 — 여기서는 배선만 본다
-        monkeypatch.setattr(manager_mod, "probe_writable", lambda d: (False, "denied"))
+        monkeypatch.setattr(cvm_mod, "probe_writable", lambda d: (False, "denied"))
 
         item = _make_item(str(tmp_path), "쓰기 불가 항목")
         m.model.addItem(item)
@@ -137,7 +138,7 @@ class TestDownloadItemWriteGate:
     def test_timeout_probe_fails_the_same_way(self, manager, qapp, tmp_path, monkeypatch):
         """무응답(timeout)도 같은 안내다 — 유저에게는 '저장할 수 없는 경로'라는 같은 사실."""
         m, _view = manager
-        monkeypatch.setattr(manager_mod, "probe_writable", lambda d: (False, "timeout"))
+        monkeypatch.setattr(cvm_mod, "probe_writable", lambda d: (False, "timeout"))
         item = _make_item(str(tmp_path), "무응답 항목")
         m.model.addItem(item)
         qapp.processEvents()

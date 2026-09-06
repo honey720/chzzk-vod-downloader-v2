@@ -104,7 +104,7 @@
     </message>
 </context>
 <context>
-    <name>ContentManager</name>
+    <name>ContentViewModel</name>
     <message>
         <source>Invalid file path</source>
         <translation>유효하지 않은 파일 경로</translation>
@@ -113,49 +113,6 @@
         <source>Failed to save file · check the path and disk space
 The file could not be saved. Check the download path and free disk space.</source>
         <translation>파일 저장에 실패했습니다. 저장 경로와 디스크 공간을 확인해 주세요.</translation>
-    </message>
-</context>
-<context>
-    <name>ContentWorker</name>
-    <message>
-        <source>Invalid VOD URL</source>
-        <translation>VOD URL이 올바르지 않습니다</translation>
-    </message>
-    <message>
-        <source>Invalid cookies value</source>
-        <translation>쿠키가 올바르지 않습니다</translation>
-    </message>
-    <message>
-        <source>Channel membership required</source>
-        <translation>채널 멤버십 가입이 필요한 영상입니다</translation>
-    </message>
-    <message>
-        <source>Encrypted content is not supported</source>
-        <translation>암호화 보호된 컨텐츠는 지원하지 않습니다</translation>
-    </message>
-    <message>
-        <source>Unencoded Video(.m3u8)</source>
-        <translation>비디오가 인코딩되지 않았습니다(.m3u8)</translation>
-    </message>
-    <message>
-        <source>Failed to get DASH manifest</source>
-        <translation>DASH 매니페스트를 가져오는데 실패했습니다</translation>
-    </message>
-    <message>
-        <source>Video not found</source>
-        <translation>영상을 찾을 수 없습니다. 주소를 확인해 주세요.</translation>
-    </message>
-    <message>
-        <source>Viewing permission required</source>
-        <translation>시청 권한이 필요한 영상입니다. 시청 가능한 계정의 쿠키를 설정에 등록해 주세요.</translation>
-    </message>
-    <message>
-        <source>Network connection error</source>
-        <translation>네트워크 연결을 확인해 주세요.</translation>
-    </message>
-    <message>
-        <source>Failed to fetch video information</source>
-        <translation>영상 정보를 가져오지 못했습니다.</translation>
     </message>
 </context>
 <context>
@@ -197,6 +154,49 @@ A network error occurred while downloading. Check your connection and try again.
         <source>Failed to save file · check the path and disk space
 The file could not be saved. Check the download path and free disk space.</source>
         <translation>파일 저장에 실패했습니다. 저장 경로와 디스크 공간을 확인해 주세요.</translation>
+    </message>
+</context>
+<context>
+    <name>FetchJob</name>
+    <message>
+        <source>Invalid VOD URL</source>
+        <translation>VOD URL이 올바르지 않습니다</translation>
+    </message>
+    <message>
+        <source>Invalid cookies value</source>
+        <translation>쿠키가 올바르지 않습니다</translation>
+    </message>
+    <message>
+        <source>Channel membership required</source>
+        <translation>채널 멤버십 가입이 필요한 영상입니다</translation>
+    </message>
+    <message>
+        <source>Encrypted content is not supported</source>
+        <translation>암호화 보호된 컨텐츠는 지원하지 않습니다</translation>
+    </message>
+    <message>
+        <source>Unencoded Video(.m3u8)</source>
+        <translation>비디오가 인코딩되지 않았습니다(.m3u8)</translation>
+    </message>
+    <message>
+        <source>Failed to get DASH manifest</source>
+        <translation>DASH 매니페스트를 가져오는데 실패했습니다</translation>
+    </message>
+    <message>
+        <source>Video not found</source>
+        <translation>영상을 찾을 수 없습니다. 주소를 확인해 주세요.</translation>
+    </message>
+    <message>
+        <source>Viewing permission required</source>
+        <translation>시청 권한이 필요한 영상입니다. 시청 가능한 계정의 쿠키를 설정에 등록해 주세요.</translation>
+    </message>
+    <message>
+        <source>Network connection error</source>
+        <translation>네트워크 연결을 확인해 주세요.</translation>
+    </message>
+    <message>
+        <source>Failed to fetch video information</source>
+        <translation>영상 정보를 가져오지 못했습니다.</translation>
     </message>
 </context>
 <context>

@@ -1,6 +1,6 @@
 """산출물 경로 유틸 — 파일명 조립·중복 회피·임시 폴더 명명 (#105).
 
-산출물 파일명(`{제목} {해상도}p.mp4`) 조립이 GUI(content/manager.py)와
+산출물 파일명(`{제목} {해상도}p.mp4`) 조립이 GUI(app/viewmodels/content_viewmodel.py)와
 헤드리스 스크립트(scripts/headless_download.py)에 같은 식으로 중복돼
 있었고, 어느 쪽도 기존 파일 존재를 확인하지 않아 같은 제목의 VOD를
 받으면 이전 파일이 경고 없이 덮어써졌다. 이 모듈이 조립·중복 회피의

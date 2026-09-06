@@ -1,4 +1,4 @@
-"""ContentManager의 메타데이터 조회 상태(LOADING) 게이트 검증 (#124).
+"""ContentViewModel의 메타데이터 조회 상태(LOADING) 게이트 검증 (#124).
 
 조회 중 아이템은 다운로드 대상에서 제외되고, 조회 완료 시 같은 자리에서
 완성된 아이템으로 교체되며, 조회 실패·조회 중 삭제가 안전해야 한다.
@@ -13,9 +13,9 @@
 import pytest
 from PySide6.QtCore import QObject, Signal
 
-import content.manager as manager_mod
+import app.viewmodels.content_viewmodel as cvm_mod
 from app.viewmodels.data import ContentItem
-from content.manager import ContentManager
+from app.viewmodels.content_viewmodel import ContentViewModel
 from app.widgets.view import ContentListView
 from core.models.download_state import DownloadState
 
@@ -36,7 +36,7 @@ def no_network(monkeypatch):
 
 
 class FakeWorker(QObject):
-    """ContentWorker와 같은 시그널 계약의 가짜 워커. 풀 스레드에서 emit한다."""
+    """FetchJob과 같은 시그널 계약의 가짜 조회 작업. 풀 스레드에서 emit한다."""
 
     finished = Signal(object, str)
     error = Signal(str)
@@ -67,10 +67,11 @@ class FakeWorker(QObject):
 
 @pytest.fixture
 def manager(qapp, monkeypatch):
-    monkeypatch.setattr(manager_mod, "ContentWorker", FakeWorker)
+    monkeypatch.setattr(cvm_mod, "FetchJob", FakeWorker)
     monkeypatch.setattr(FakeWorker, "fail_message", None)
     view = ContentListView()
-    manager = ContentManager(view)
+    manager = ContentViewModel()
+    view.bind(manager)
     yield manager
     manager.threadpool.waitForDone(3000)
     qapp.processEvents()

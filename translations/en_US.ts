@@ -104,7 +104,7 @@
     </message>
 </context>
 <context>
-    <name>ContentManager</name>
+    <name>ContentViewModel</name>
     <message>
         <source>Invalid file path</source>
         <translation>Invalid file path</translation>
@@ -114,49 +114,6 @@
 The file could not be saved. Check the download path and free disk space.</source>
         <translation>Failed to save file · check the path and disk space
 The file could not be saved. Check the download path and free disk space.</translation>
-    </message>
-</context>
-<context>
-    <name>ContentWorker</name>
-    <message>
-        <source>Invalid VOD URL</source>
-        <translation>Invalid VOD URL</translation>
-    </message>
-    <message>
-        <source>Invalid cookies value</source>
-        <translation>Invalid cookies value</translation>
-    </message>
-    <message>
-        <source>Channel membership required</source>
-        <translation>Channel membership required</translation>
-    </message>
-    <message>
-        <source>Encrypted content is not supported</source>
-        <translation>Encrypted content is not supported</translation>
-    </message>
-    <message>
-        <source>Unencoded Video(.m3u8)</source>
-        <translation>Unencoded Video(.m3u8)</translation>
-    </message>
-    <message>
-        <source>Failed to get DASH manifest</source>
-        <translation>Failed to get DASH manifest</translation>
-    </message>
-    <message>
-        <source>Video not found</source>
-        <translation>The video could not be found. Please check the address.</translation>
-    </message>
-    <message>
-        <source>Viewing permission required</source>
-        <translation>This video requires viewing permission. Add the cookies of an account that can watch it in Settings.</translation>
-    </message>
-    <message>
-        <source>Network connection error</source>
-        <translation>Please check your network connection.</translation>
-    </message>
-    <message>
-        <source>Failed to fetch video information</source>
-        <translation>Could not fetch the video information.</translation>
     </message>
 </context>
 <context>
@@ -202,6 +159,49 @@ A network error occurred while downloading. Check your connection and try again.
 The file could not be saved. Check the download path and free disk space.</source>
         <translation>Failed to save file · check the path and disk space
 The file could not be saved. Check the download path and free disk space.</translation>
+    </message>
+</context>
+<context>
+    <name>FetchJob</name>
+    <message>
+        <source>Invalid VOD URL</source>
+        <translation>Invalid VOD URL</translation>
+    </message>
+    <message>
+        <source>Invalid cookies value</source>
+        <translation>Invalid cookies value</translation>
+    </message>
+    <message>
+        <source>Channel membership required</source>
+        <translation>Channel membership required</translation>
+    </message>
+    <message>
+        <source>Encrypted content is not supported</source>
+        <translation>Encrypted content is not supported</translation>
+    </message>
+    <message>
+        <source>Unencoded Video(.m3u8)</source>
+        <translation>Unencoded Video(.m3u8)</translation>
+    </message>
+    <message>
+        <source>Failed to get DASH manifest</source>
+        <translation>Failed to get DASH manifest</translation>
+    </message>
+    <message>
+        <source>Video not found</source>
+        <translation>The video could not be found. Please check the address.</translation>
+    </message>
+    <message>
+        <source>Viewing permission required</source>
+        <translation>This video requires viewing permission. Add the cookies of an account that can watch it in Settings.</translation>
+    </message>
+    <message>
+        <source>Network connection error</source>
+        <translation>Please check your network connection.</translation>
+    </message>
+    <message>
+        <source>Failed to fetch video information</source>
+        <translation>Could not fetch the video information.</translation>
     </message>
 </context>
 <context>

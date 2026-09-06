@@ -210,7 +210,7 @@ class TestSlotColumn:
     HEADLINE_LIMIT = {"ko_KR": 40, "en_US": 60}
 
     @pytest.mark.parametrize("language", ("ko_KR", "en_US"))
-    @pytest.mark.parametrize("context", ("DownloadViewModel", "ContentManager", "ContentItemWidget"))
+    @pytest.mark.parametrize("context", ("DownloadViewModel", "ContentViewModel", "ContentItemWidget"))
     def test_every_failure_headline_fits_the_card_row(self, language, context):
         """모든 사유의 **첫 줄**이 640px 카드 3행에 들어간다 — 폰트 무의존 대리
         지표로 언어별 글자 수 상한을 건다(HEADLINE_LIMIT). 원문 전체가 아니라
