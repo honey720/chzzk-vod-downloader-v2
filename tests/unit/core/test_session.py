@@ -82,5 +82,7 @@ def test_content_network_reexports_core_session():
     두 모듈이 같은 세션 객체를 공유해야 목킹·동작이 기존과 동일하게 유지된다.
     """
     assert network._session is session._session
-    assert network.get_thread_session is session.get_thread_session
-    assert network._make_session is session._make_session
+    # get_thread_session·_make_session의 re-export는 #259 B3에서 제거됐다 —
+    # 쓰는 쪽(app/widgets/widget.py)이 core.api.session에서 직접 가져온다
+    assert not hasattr(network, "get_thread_session")
+    assert not hasattr(network, "_make_session")

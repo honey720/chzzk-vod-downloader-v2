@@ -9,9 +9,9 @@ from core.models.content import VideoInfo
 from core.utils.paths import sanitize_filename
 
 # Session 관리는 core/api/session.py로 이주했다 (#62, 원본 #31).
-# _session은 아래 NetworkManager가 계속 사용하고, 나머지는 기존 호출부 호환용 re-export다.
+# _session은 아래 NetworkManager가 사용한다. 호환용 re-export(get_thread_session·
+# _make_session)는 #259 B3에서 제거했다 — 쓰는 쪽은 core.api.session에서 직접 import한다.
 from core.api.session import _session
-from core.api.session import _make_session, get_thread_session  # noqa: F401
 
 NAVER_API = "https://apis.naver.com"
 CHZZK_API = "https://api.chzzk.naver.com"
