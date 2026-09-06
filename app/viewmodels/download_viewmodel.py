@@ -36,9 +36,9 @@ from core.models.events import ProgressEvent
 from core.services.download_service import DownloadService
 from core.models.download_data import DownloadData
 from core.utils.ffmpeg import FFmpegNotFoundError
-from app.logger import DownloadLogger
-from app.resolvers import resolve_aes_key, resolve_m3u8_base_url
-from app.task import DownloadTask
+from app.download_logger import DownloadLogger
+from app.download_resolvers import resolve_aes_key, resolve_m3u8_base_url
+from app.download_task import DownloadTask
 
 logger = logging.getLogger(__name__)
 

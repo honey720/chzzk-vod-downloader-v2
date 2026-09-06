@@ -37,7 +37,7 @@ from core.downloaders.hls_aes_downloader import DecryptionError
 from core.models.download_state import DownloadState
 from core.models.events import ProgressEvent
 from core.utils.ffmpeg import FFmpegNotFoundError, RemuxError
-from app.logger import DownloadLogger
+from app.download_logger import DownloadLogger
 
 # ============ 대역 ============
 

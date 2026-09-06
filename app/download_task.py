@@ -12,7 +12,7 @@ from app.viewmodels.data import ContentItem
 from core.models.download_state import DownloadState
 from core.models.download_task import InvalidStateTransitionError
 from core.models.download_data import DownloadData
-from app.logger import DownloadLogger
+from app.download_logger import DownloadLogger
 
 
 class DownloadTask:

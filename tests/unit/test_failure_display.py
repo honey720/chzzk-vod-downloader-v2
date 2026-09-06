@@ -26,7 +26,7 @@ from app.widgets.view import ContentListView
 from core.downloaders.base import PostprocessError
 from core.models.download_state import DownloadState
 from core.services.download_service import DownloadService
-from app.logger import DownloadLogger
+from app.download_logger import DownloadLogger
 from tests.unit.card_helpers import hold_style
 
 

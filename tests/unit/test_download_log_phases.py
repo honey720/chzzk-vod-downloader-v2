@@ -10,7 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import config.config as config_module
-from app.logger import DownloadLogger
+from app.download_logger import DownloadLogger
 from scripts.summarize_download_log import summarize
 
 
