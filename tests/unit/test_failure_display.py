@@ -61,7 +61,6 @@ def no_network(monkeypatch):
             raise RuntimeError("network disabled in tests")
 
     monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
-    monkeypatch.setattr("content.network.get_thread_session", lambda: _FailingSession())
 
 
 class FakeHandle:
