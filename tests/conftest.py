@@ -86,6 +86,45 @@ def _isolate_choose_temp_dir(monkeypatch):
     monkeypatch.setattr(hls_aes_module, "choose_temp_dir", _default_temp_dir)
 
 
+# ============ 테스트가 만든 최상위 위젯 파괴 (#270) ============
+# 테스트가 띄운 창·카드를 아무도 파괴하지 않으면 세션 내내 누적되고(파일 몇 개
+# 지나면 최상위 창 140개), GUI 파일마다 있는 autouse 전역 스타일 픽스처
+# (setStyle·setPalette·setStyleSheet)가 살아 있는 위젯 전부를 다시 폴리시한다 —
+# 뒤로 갈수록 건당 setup이 길어져 스위트 시간의 85%가 setup이었다. 같은 누적이
+# 종료 크래시(#243)의 확인된 경로이기도 하다(#248: close()만 한 창을 다음
+# setStyle이 폴리시하다 죽는다).
+#
+# ⚠️ close()로는 부족하다 — 창은 숨은 채 살아 있다. deleteLater()도 부족하다 —
+# 같은 이벤트 루프 층에서 부른 processEvents()는 DeferredDelete를 배달하지
+# 않는다. sendPostedEvents(None, DeferredDelete)가 실제 파괴 지점이다.
+#
+# ⚠️ 이 정리는 깨져도 아무도 모른다 — 그냥 다시 느려질 뿐이고 느린 것은 결함으로
+# 읽히지 않는다. 그래서 정리한 뒤 "최상위 위젯 0"을 스스로 단언한다. 남으면 어느
+# 테스트가 무엇을 남겼는지 그 자리에서 드러난다. 조건을 느슨하게 만들지 말 것 —
+# 그러면 아무것도 안 재는 게이트가 된다.
+#
+# 대상은 최상위 QWidget뿐이다. QApplication 자신과 pytest-qt가 관리하는 것은
+# 건드리지 않는다. autouse 픽스처는 가장 먼저 세워져 가장 나중에 걷히므로,
+# 테스트 자신의 정리(qtbot·파일별 픽스처)가 끝난 뒤의 잔여만 여기로 온다.
+@pytest.fixture(autouse=True)
+def _destroy_top_level_widgets():
+    """테스트가 끝나면 살아 있는 최상위 위젯을 닫고 실제로 파괴한 뒤, 하나도 안 남았음을 단언한다."""
+    yield
+    from PySide6.QtCore import QCoreApplication, QEvent
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is None:
+        return  # Qt를 쓰지 않은 테스트(core 등)
+    for widget in QApplication.topLevelWidgets():
+        widget.close()
+        widget.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
+    leftover = [f"{type(w).__name__}({w.objectName() or '-'})" for w in QApplication.topLevelWidgets()]
+    assert not leftover, f"테스트 뒤 파괴되지 않은 최상위 위젯 {len(leftover)}개: {leftover}"
+
+
 # ============ 실패 GUI 테스트 스크린샷 (#154) ============
 # 실패한 테스트의 최상위 위젯을 grab해 PNG로 남긴다. 기본은 실패 시에만,
 # CVDV2_SHOT_ALL=1이면 성공 테스트도 찍는다(전체 갤러리용).
