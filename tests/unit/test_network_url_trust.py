@@ -88,6 +88,14 @@ class TestKeyRequestRejectsUntrustedAddress:
             NetworkManager.get_aes_key("https://keys.example.invalid/aes_key?token=SECRET", COOKIES)
         assert "SECRET" not in str(info.value) and "/aes_key" not in str(info.value)
 
+    def test_malformed_uri_is_rejected_as_invalid_url_without_echoing_it(self):
+        """쪼갤 수 없는 주소(urlsplit의 ValueError)도 InvalidURL — 기존 실패 사유 매핑을
+        타야 한다. 어디까지가 호스트인지 알 수 없으므로 메시지에 주소를 아예 싣지 않는다."""
+        malformed = "https://[bad/aes_key?token=SECRET"
+        with pytest.raises(requests.exceptions.InvalidURL) as info:
+            NetworkManager.get_aes_key(malformed, COOKIES)
+        assert "SECRET" not in str(info.value) and "[bad" not in str(info.value)
+
 
 class TestMasterPlaylistRequestRejectsHttp:
     """m3u8 마스터: https만 강제한다(호스트는 잠그지 않는다)."""

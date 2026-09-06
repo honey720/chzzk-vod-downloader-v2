@@ -46,8 +46,13 @@ def _require_trusted_url(url: str, allowed_hosts: frozenset[str] | None) -> None
 
     검사는 둘: ① https ② allowed_hosts가 주어지면 호스트가 그 안에 있을 것.
     예외 메시지에는 스킴과 호스트만 싣는다(주소의 경로·질의에는 토큰이 섞여 있다).
+    쪼갤 수 없는 주소(urlsplit의 ValueError)는 메시지에 아예 싣지 않는다 — 어디까지가
+    호스트인지 알 수 없으므로.
     """
-    parts = urlsplit(url)
+    try:
+        parts = urlsplit(url)
+    except ValueError as e:
+        raise requests.exceptions.InvalidURL("쿠키를 실어 보낼 수 없는 주소다(형식 오류)") from e
     host = (parts.hostname or "").lower()
     if parts.scheme != _TRUSTED_SCHEME:
         raise requests.exceptions.InvalidURL(
