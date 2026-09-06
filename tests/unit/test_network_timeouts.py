@@ -74,7 +74,7 @@ M3U8_PLAYLIST = "\n".join(
         (
             "get_video_m3u8_base_url",
             lambda: NetworkManager.get_video_m3u8_base_url(
-                json.dumps({"media": [{"path": "http://example.invalid/master.m3u8"}]}),
+                json.dumps({"media": [{"path": "https://example.invalid/master.m3u8"}]}),
                 1080,
                 COOKIES,
             ),
@@ -110,7 +110,7 @@ def test_aes_key_keeps_dedicated_timeout(monkeypatch):
     """복호화 키 요청의 기존 timeout=30은 유지된다 (#57 경로, 이 이슈 범위 밖)."""
     session = _install(monkeypatch, BytesResponse())
 
-    NetworkManager.get_aes_key("http://example.invalid/key", COOKIES)
+    NetworkManager.get_aes_key("https://api.chzzk.naver.com/service/v1/encryption/videos/VID/aes_key", COOKIES)
 
     assert session.calls
     _url, kwargs = session.calls[0]

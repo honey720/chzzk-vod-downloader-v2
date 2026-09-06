@@ -1,6 +1,8 @@
 import re
 import json
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
+
+import requests
 
 from core.api.dash import is_supported_sea, parse_dash_manifest, parse_sea_manifest
 from core.api.representations import dedupe_by_resolution
@@ -23,6 +25,64 @@ VIDEOHUB_API = "https://api-videohub.naver.com"
 # 재시도보다 먼저 끊는다. read 15초: 응답이 작은 JSON/XML이라 평시 1초 미만 —
 # 느린 회선·서버 지연에 여유를 두되 OS 타임아웃보다 훨씬 먼저 포기한다.
 REQUEST_TIMEOUT = (5, 15)
+
+
+# 서버 응답이 알려준 주소로 쿠키를 보내는 요청의 신뢰 검사.
+# 인증 쿠키는 요청별 cookies= 인자로만 실리고(core/api/session.py — 응답 쿠키 저장
+# 없음), 그것을 서버가 준 주소에 붙이는 지점은 둘뿐이다: 복호화 키(#EXT-X-KEY URI)와
+# m3u8 마스터 플레이리스트(playback JSON의 path). 주소는 스트림 응답에서 오므로
+# HTTP나 다른 호스트로 쿠키가 새어 나갈 수 있어, 요청 직전에 검사한다.
+#
+# 리다이렉트: requests는 리다이렉트 홉에도 요청별 쿠키를 다시 붙이므로 첫 주소만
+# 검사하면 소용없다. 자동 추적을 끄고(allow_redirects=False) 홉마다 Location을
+# 같은 검사에 통과시킨 뒤에만 다음 요청을 보낸다 — 검사에 걸린 홉에는 쿠키가 가지
+# 않는다(요청 자체가 없다).
+_TRUSTED_SCHEME = "https"
+_MAX_REDIRECTS = 5
+
+
+def _require_trusted_url(url: str, allowed_hosts: frozenset[str] | None) -> None:
+    """쿠키를 실어 보내도 되는 주소인지 검사한다 — 아니면 InvalidURL.
+
+    검사는 둘: ① https ② allowed_hosts가 주어지면 호스트가 그 안에 있을 것.
+    예외 메시지에는 스킴과 호스트만 싣는다(주소의 경로·질의에는 토큰이 섞여 있다).
+    쪼갤 수 없는 주소(urlsplit의 ValueError)는 메시지에 아예 싣지 않는다 — 어디까지가
+    호스트인지 알 수 없으므로.
+    """
+    try:
+        parts = urlsplit(url)
+    except ValueError as e:
+        raise requests.exceptions.InvalidURL("쿠키를 실어 보낼 수 없는 주소다(형식 오류)") from e
+    host = (parts.hostname or "").lower()
+    if parts.scheme != _TRUSTED_SCHEME:
+        raise requests.exceptions.InvalidURL(
+            f"쿠키를 실어 보낼 수 없는 주소다(https 아님): {parts.scheme}://{host}"
+        )
+    if allowed_hosts is not None and host not in allowed_hosts:
+        raise requests.exceptions.InvalidURL(f"쿠키를 실어 보낼 수 없는 호스트다: {host}")
+
+
+def _get_with_cookies_trusted(
+    url: str, cookies: dict | None, allowed_hosts: frozenset[str] | None, **kwargs
+) -> requests.Response:
+    """주소를 검사한 뒤 쿠키를 실어 GET한다. 리다이렉트는 홉마다 다시 검사한 뒤 따라간다.
+
+    허용 홉 수를 넘기면 requests와 같은 TooManyRedirects를 낸다.
+    """
+    for _ in range(_MAX_REDIRECTS + 1):
+        _require_trusted_url(url, allowed_hosts)
+        response = _session.get(url, cookies=cookies, allow_redirects=False, **kwargs)
+        location = getattr(response, "headers", {}).get("Location")
+        if 300 <= getattr(response, "status_code", 200) < 400 and location:
+            url = urljoin(url, location)
+            continue
+        return response
+    raise requests.exceptions.TooManyRedirects(f"리다이렉트가 {_MAX_REDIRECTS}회를 넘었다")
+
+
+#: 복호화 키를 받아도 되는 호스트 — 코드 상수의 API 호스트뿐이다(실측 SEA 매니페스트의
+#: keyUriTemplate이 이 호스트다). 새 목록을 두지 않는다.
+_KEY_HOSTS = frozenset({urlsplit(CHZZK_API).hostname})
 
 
 def _int_or_zero(value) -> int:
@@ -132,9 +192,14 @@ class NetworkManager:
         만들어내지 않는다.
 
         **키 값은 로그·예외 메시지에 싣지 않는다.**
+
+        key_uri는 플레이리스트가 알려준 주소다 — https와 API 호스트(_KEY_HOSTS)를
+        검사한 뒤에만 쿠키를 싣는다. 리다이렉트 홉도 같은 검사를 거친다.
         """
         headers = {"User-Agent": "Mozilla/5.0"}
-        response = _session.get(key_uri, cookies=cookies, headers=headers, timeout=30)
+        response = _get_with_cookies_trusted(
+            key_uri, cookies, _KEY_HOSTS, headers=headers, timeout=30
+        )
         response.raise_for_status()
         return response.content
 
@@ -169,11 +234,13 @@ class NetworkManager:
         m3u8 정보가 포함된 json형식의 문자열을 받아서 base_url을 파싱한다.
 
         권한이 필요한 VOD의 플레이리스트 접근을 위해 쿠키를 실어 보낸다 (#55).
+        path는 playback JSON이 알려준 주소다 — https만 검사한다(호스트는 잠그지
+        않는다). 리다이렉트 홉도 같은 검사를 거친다.
         """
         data = json.loads(json_str)
         media = data.get("media", [])
         path = media[0].get("path")
-        response = _session.get(path, cookies=cookies, timeout=REQUEST_TIMEOUT)
+        response = _get_with_cookies_trusted(path, cookies, None, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
         content = response.text.splitlines()
 
