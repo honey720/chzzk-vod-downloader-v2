@@ -21,7 +21,7 @@ import main as main_module
 import app.theme as theme
 from app.viewmodels.data import ContentItem
 from app.viewmodels.download_viewmodel import DownloadViewModel
-from content.manager import ContentManager
+from app.viewmodels.content_viewmodel import ContentViewModel
 from app.widgets.view import ContentListView
 from core.downloaders.base import PostprocessError
 from core.models.download_state import DownloadState
@@ -129,7 +129,7 @@ class WindowHarness(QObject):
     연결의 수명 함정 — CLAUDE 규칙).
     """
 
-    def __init__(self, manager: ContentManager, viewmodel: DownloadViewModel):
+    def __init__(self, manager: ContentViewModel, viewmodel: DownloadViewModel):
         super().__init__()
         self.manager = manager
         self.viewmodel = viewmodel
@@ -170,7 +170,8 @@ def _make_item(download_path: str, title: str) -> ContentItem:
 def wired(qapp, tmp_path):
     """실배선된 (manager, service, viewmodel, harness, finished_all 스파이, view)를 준비한다."""
     view = ContentListView()
-    manager = ContentManager(view)
+    manager = ContentViewModel()
+    view.bind(manager)
     service = FakeService()
     viewmodel = DownloadViewModel(manager, service=service)
     harness = WindowHarness(manager, viewmodel)
@@ -329,7 +330,8 @@ def test_dead_mount_worker_failure_does_not_freeze_app(qapp, tmp_path, monkeypat
     monkeypatch.setattr(fmod, "get_thread_session", lambda: _DeadMountSession())
 
     view = ContentListView()
-    manager = ContentManager(view)
+    manager = ContentViewModel()
+    view.bind(manager)
     service = RecordingService()  # 실제 서비스 — 페이크 아님 (핸들만 기록)
     viewmodel = DownloadViewModel(manager, service=service)
     harness = WindowHarness(manager, viewmodel)

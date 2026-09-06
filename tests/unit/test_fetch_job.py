@@ -1,4 +1,4 @@
-"""ContentWorker의 권한·암호화 분기 검증 (#55) + 어댑터 계약 검증 (#72).
+"""FetchJob(구 ContentWorker)의 권한·암호화 분기 검증 (#55) + 어댑터 계약 검증 (#72).
 
 조회 로직은 core/services/metadata_service.py로 이동했다(#72). 이 테스트는
 어댑터를 통과한 끝단 동작(시그널 페이로드·에러 메시지 형식)이 유지되는지 본다.
@@ -18,7 +18,7 @@ import pytest
 
 import content.network as network
 from content.network import NetworkManager
-from content.worker import ContentWorker
+from app.viewmodels.content_viewmodel import FetchJob
 from core.models.content import VideoInfo
 from tests.mocks.mock_http import MockResponse
 
@@ -26,12 +26,12 @@ COOKIES = {"NID_AUT": "REDACTED", "NID_SES": "REDACTED"}
 VOD_URL = "https://chzzk.naver.com/video/13714380"
 
 
-def _make_worker() -> ContentWorker:
-    """테스트용 ContentWorker를 생성한다 (QApplication 불필요)."""
-    return ContentWorker(VOD_URL, COOKIES, "downloads")
+def _make_worker() -> FetchJob:
+    """테스트용 FetchJob을 생성한다 (QApplication 불필요)."""
+    return FetchJob(VOD_URL, COOKIES, "downloads")
 
 
-def _run_and_capture(worker: ContentWorker) -> tuple[list, list]:
+def _run_and_capture(worker: FetchJob) -> tuple[list, list]:
     """run()을 실행해 finished/error Signal 페이로드를 수집한다.
 
     같은 스레드 emit은 direct 배달이라 QApplication 없이 동작한다.
@@ -183,7 +183,7 @@ def test_run_emits_error_signal_in_legacy_format():
     i18n 키 원문이 메시지에 그대로 실려야 한다.
     """
     bad_url = "https://example.com/video/1"
-    worker = ContentWorker(bad_url, COOKIES, "downloads")
+    worker = FetchJob(bad_url, COOKIES, "downloads")
     captured: list[str] = []
     worker.error.connect(captured.append)
 
@@ -231,7 +231,7 @@ def test_run_failure_does_not_leak_cookie_values_to_log_or_error_signal(monkeypa
         raise RuntimeError("boom")
 
     monkeypatch.setattr(metadata_service, "fetch_content", boom)
-    worker = ContentWorker(VOD_URL, secret_cookies, "downloads")
+    worker = FetchJob(VOD_URL, secret_cookies, "downloads")
     captured: list[str] = []
     worker.error.connect(captured.append)
 
@@ -266,7 +266,7 @@ def test_run_success_does_not_leak_cookie_values_to_log(monkeypatch, caplog):
     monkeypatch.setattr(NetworkManager, "get_video_info", fake_get_video_info)
     monkeypatch.setattr(NetworkManager, "get_video_dash_manifest", fake_get_dash_manifest)
 
-    worker = ContentWorker(VOD_URL, secret_cookies, "downloads")
+    worker = FetchJob(VOD_URL, secret_cookies, "downloads")
     with caplog.at_level("DEBUG"):
         results, errors = _run_and_capture(worker)
 

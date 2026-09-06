@@ -233,6 +233,24 @@ class ContentListView(QScrollArea):
             painter.drawText(viewport_widget.rect(), Qt.AlignmentFlag.AlignCenter, self.tr("Add VOD or Drag the URL here."))
             painter.end()
 
+    def bind(self, viewmodel) -> None:
+        """뷰모델과 배선한다 (#259 B2 — 구 ContentManager 바인더의 8줄).
+
+        구체 클래스를 알지 않는다 — `model`, 시그널 5개(itemStarted/itemStopped/
+        itemPaused/itemResumed/itemFinished)와 `fetchRequested`, `removeItem`만
+        있으면 된다(테스트가 대역을 넣을 수 있게). 목록 뷰는 부품이라 자기 배선을
+        스스로 안다 — 탭이 늘어도 배선을 복사하지 않는다.
+        """
+        self.setModel(viewmodel.model)
+        self.deleteRequest.connect(viewmodel.removeItem)
+        self.fetchRequested.connect(viewmodel.fetchRequested)
+        # 구 view 직접 호출 6곳의 반전 (#169): 뷰모델은 시그널로 말하고 뷰가 자기를 건다
+        viewmodel.itemStarted.connect(self.onDownloadStarted)
+        viewmodel.itemStopped.connect(self.onDownloadStoped)
+        viewmodel.itemPaused.connect(self.onDownloadPaused)
+        viewmodel.itemResumed.connect(self.onDownloadResumed)
+        viewmodel.itemFinished.connect(self.onDownloadFinished)
+
     def onDownloadStarted(self, item: ContentItem):
         widget = self._widgets.get(item)
         if widget:

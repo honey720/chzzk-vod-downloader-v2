@@ -275,7 +275,7 @@ class DownloadViewModel(QObject):
         """실패 사유를 유저 표시용 번역 문자열로 바꾼다. 매핑에 없으면 빈 문자열.
 
         lupdate가 `-no-obsolete`로 .ts를 재생성하므로 반드시 리터럴로 tr()을
-        호출해 추출 대상을 유지한다 (content/worker.py의 _translate_key와 동일).
+        호출해 추출 대상을 유지한다 (content_viewmodel.py의 _translate_key와 동일).
         번역 컨텍스트는 이 클래스 이름(DownloadViewModel)이다 — B1(#259)에서
         QtDownloadBridge 컨텍스트의 번역문 7건을 그대로 옮겨 왔다.
         """

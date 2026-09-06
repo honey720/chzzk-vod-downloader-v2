@@ -12,10 +12,10 @@ repr로 남긴다 — U+00A0(NBSP) 같은 공백 유사 문자는 그냥 찍으�
 
 import pytest
 
-import content.manager as manager_mod
+import app.viewmodels.content_viewmodel as cvm_mod
 import app.widgets.widget as widget_mod
 from app.viewmodels.data import ContentItem
-from content.manager import ContentManager
+from app.viewmodels.content_viewmodel import ContentViewModel
 from app.widgets.view import ContentListView
 from core.models.download_state import DownloadState
 
@@ -63,7 +63,8 @@ def _make_item(download_path: str, title: str = "경로 로깅 검증") -> Conte
 @pytest.fixture
 def manager(qapp):
     view = ContentListView()
-    m = ContentManager(view)
+    m = ContentViewModel()
+    view.bind(m)
     yield m, view
     view.deleteLater()
     qapp.processEvents()
@@ -90,7 +91,7 @@ class TestDownloadGateLogging:
     def test_probe_denied_warning_uses_repr(self, manager, qapp, tmp_path, caplog, monkeypatch):
         """쓰기 프로브 실패 경고도 경로를 repr로 남긴다 (기존 %s → %r 전환)."""
         m, _view = manager
-        monkeypatch.setattr(manager_mod, "probe_writable", lambda d: (False, "denied"))
+        monkeypatch.setattr(cvm_mod, "probe_writable", lambda d: (False, "denied"))
         item = _make_item(str(tmp_path / NBSP_SUFFIX))
         m.model.addItem(item)
         qapp.processEvents()

@@ -43,7 +43,7 @@ def check_remember_path(path: str) -> bool:
 def check_download_path(path: str, probe) -> tuple[bool, str]:
     """다운로드 게이트 (#137): 존재+쓰기 프로브.
 
-    probe는 content.manager.probe_writable을 주입받는다 — 무응답 마운트
+    probe는 app.viewmodels.content_viewmodel.probe_writable을 주입받는다 — 무응답 마운트
     대비 제물 스레드 방식(#136)은 그쪽이 정본이고, 여기는 판정 배치만
     담당한다. 반환은 (쓰기 가능 여부, "" | "missing" | "denied" | "timeout").
     """
