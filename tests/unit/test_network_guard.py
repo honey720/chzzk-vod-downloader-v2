@@ -38,6 +38,7 @@ def test_attempt_swallowed_in_a_worker_thread_is_still_recorded(network_guard, r
     """예외를 삼키는 스레드 — 실측에서 테스트를 초록으로 남긴 바로 그 형태 — 도 기록에 남는다."""
 
     def swallow():
+        """카드의 썸네일·크기 조회 스레드가 하는 일 — 시도하고, 실패를 삼키고, 조용히 끝난다."""
         try:
             requests.get("http://example.invalid/thumbnail.png", timeout=1)
         except Exception:

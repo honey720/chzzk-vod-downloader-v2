@@ -72,6 +72,7 @@ class _NetworkGuard:
     """나가는 연결의 시도를 막고 (어느 테스트가, 어디로) 기록한다. 스레드 안전."""
 
     def __init__(self):
+        """기록 리스트와 그것을 지키는 락, 그리고 시도를 귀속시킬 현재 테스트 이름을 준비한다."""
         self._lock = threading.Lock()
         self._attempts: list[tuple[str, str]] = []
         self.current_test = "<세션 setup>"
@@ -90,6 +91,7 @@ class _NetworkGuard:
 
 
 def _describe_socket_target(address) -> str:
+    """socket 주소 튜플을 `socket host:port`로 — 기록·실패 메시지용. 쿠키·헤더는 없다."""
     try:
         host, port = address[0], address[1]
         return f"socket {host}:{port}"
@@ -99,24 +101,38 @@ def _describe_socket_target(address) -> str:
 
 @pytest.fixture(scope="session", autouse=True)
 def network_guard():
-    """세션 내내 socket 연결과 requests 어댑터 전송을 막는다 — 요청은 외부로 나가지 않는다."""
+    """세션 내내 socket 연결과 requests 어댑터 전송을 막는다 — 요청은 외부로 나가지 않는다.
+
+    차단은 **되돌리지 않는다.** 세션이 끝나면 프로세스도 끝나므로 복원할 이유가
+    없고, 복원하는 그 순간이 아직 살아 있는 워커가 실제로 나갈 수 있는 유일한
+    틈이다. 세션 끝에는 마지막 테스트의 끝 단언 뒤에 일어난 시도를 받아내기
+    위해 잔여 기록을 한 번 더 단언한다.
+    """
     guard = _NetworkGuard()
 
     def blocked_connect(self, address, *args, **kwargs):
+        """socket.socket.connect / connect_ex 자리 — 주소를 기록하고 연결 없이 예외."""
         guard.record(_describe_socket_target(address))
 
     def blocked_create_connection(address, *args, **kwargs):
+        """socket.create_connection 자리 — urllib3 등 고수준 경로가 여기로 온다."""
         guard.record(_describe_socket_target(address))
 
     def blocked_send(self, request, *args, **kwargs):
+        """requests HTTPAdapter.send 자리 — 소켓에 닿기 전, 메서드와 URL만 기록하고 예외."""
         guard.record(f"{request.method} {request.url}")
 
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(socket.socket, "connect", blocked_connect)
-        mp.setattr(socket.socket, "connect_ex", blocked_connect)
-        mp.setattr(socket, "create_connection", blocked_create_connection)
-        mp.setattr(requests.adapters.HTTPAdapter, "send", blocked_send)
-        yield guard
+    socket.socket.connect = blocked_connect
+    socket.socket.connect_ex = blocked_connect
+    socket.create_connection = blocked_create_connection
+    requests.adapters.HTTPAdapter.send = blocked_send
+    yield guard
+    # 마지막 테스트의 끝 단언 뒤에 일어난 시도는 여기서만 받아낼 수 있다
+    leftover = guard.take()
+    assert not leftover, "세션 종료 시점의 외부 연결 시도 %d건 (차단됨): %s" % (
+        len(leftover),
+        "; ".join(f"{test} → {target}" for test, target in leftover),
+    )
 
 
 @pytest.fixture(autouse=True)
