@@ -16,11 +16,13 @@ from download.qt_bridge import QtDownloadBridge
 
 
 class DownloadViewModel(QObject):
-    def __init__(self, content, parent=None):
+    def __init__(self, content, service=None, parent=None):
         """content: 다운로드 이벤트를 반영할 상대 — update_progress/pause/resume/
-        stop/finish/fail을 가진 객체(ContentManager 바인더)를 받는다."""
+        stop/finish/fail을 가진 객체(ContentManager 바인더)를 받는다.
+        service: DownloadService 대역 주입 이음새 (#259 B0 계약 게이트용).
+        None이면 제품과 같이 실제 서비스를 만든다."""
         super().__init__(parent)
-        self._bridge = QtDownloadBridge()
+        self._bridge = QtDownloadBridge(service=service)
         # 구 mainWindow.setupThreadSignals의 다운로드 릴레이 6개 — 위임 없이 직결
         self._bridge.progress.connect(content.update_progress)
         self._bridge.paused.connect(content.pause)
