@@ -42,10 +42,14 @@ def no_network(monkeypatch):
     """위젯·조회의 HTTP 세션을 차단한다 — 조회 함수는 별도로 패치하므로 여기까지 오면 결함이다."""
 
     class _FailingSession:
+        """requests 세션 대역 — 어떤 요청이든 즉시 예외. 카드의 썸네일·크기 조회 스레드까지 막는다."""
+
         def head(self, *a, **k):
+            """HEAD 요청(파일 크기 조회) 차단."""
             raise RuntimeError("network disabled in tests")
 
         def get(self, *a, **k):
+            """GET 요청(썸네일·API) 차단."""
             raise RuntimeError("network disabled in tests")
 
     monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
@@ -76,21 +80,33 @@ def window(qapp, monkeypatch):
 
 
 class Recorder:
-    """관찰 지점마다 (이름, 호출 스레드 id)를 남긴다 — 슬롯은 DirectConnection이라 발신 스레드에서 돈다."""
+    """관찰 지점마다 (이름, 발신 스레드 id)를 순서대로 남기는 기록기.
+
+    반영 지점(모델 삽입·제거, 뷰모델 통지)이 **어느 스레드에서** 일어났는지가
+    이 파일의 유일한 판정 재료다. 슬롯을 DirectConnection으로 붙이면 큐를 거치지
+    않고 발신한 스레드에서 즉시 돌므로, 슬롯 안의 `get_ident()`가 곧 발신
+    스레드다. 순서도 함께 남겨 "배달 전 0건 → 배달 뒤 N건"을 리스트 등식으로
+    잰다.
+    """
 
     def __init__(self):
         self.events: list[tuple[str, int]] = []
 
     def hook(self, name: str):
+        """`name` 지점에 붙일 슬롯을 만든다 — Signal 인자는 버리고 이름과 스레드 id만 남긴다."""
+
         def slot(*args):
+            """DirectConnection으로 붙는 슬롯 — 발신 스레드에서 돈다."""
             self.events.append((name, threading.get_ident()))
 
         return slot
 
     def names(self) -> list[str]:
+        """기록된 지점 이름을 순서대로 — 배달 전/후의 리스트 등식 단언용."""
         return [n for n, _ in self.events]
 
     def threads_of(self, name: str) -> set[int]:
+        """`name` 지점이 발신된 스레드 id 집합 — {메인}과 같아야 한다."""
         return {t for n, t in self.events if n == name}
 
 
@@ -134,6 +150,7 @@ def fetch_spy(monkeypatch):
     outcome = {"raise": None, "download_path": ""}
 
     def fake_fetch(vod_url, cookies, download_path, api):
+        """core 조회 함수 자리 — 풀 스레드에서 불리므로 여기서 잡은 id가 "조회 스레드"다."""
         calls.append(
             {
                 "thread": threading.get_ident(),
@@ -156,6 +173,8 @@ def _pool_done(win) -> None:
 
 
 class TestFetchRunsOffTheMainThread:
+    """출발 쪽 — 조회는 메인 스레드를 떠나 풀에서 돈다(도착 테스트의 전제)."""
+
     def test_the_core_fetch_is_called_on_a_pool_thread_with_the_given_arguments(
         self, window, fetch_spy, tmp_path
     ):
@@ -171,7 +190,12 @@ class TestFetchRunsOffTheMainThread:
 
 
 class TestArrivalOnTheMainThread:
-    """반영(모델 삽입·제거·뷰모델 Signal)은 전부 메인 스레드에서 일어난다."""
+    """도착 쪽 — 반영(모델 삽입·제거·뷰모델 통지)은 큐를 거쳐 전부 메인 스레드에서 일어난다.
+
+    각 테스트가 같은 두 단계로 잰다: 풀이 끝난 직후(`_pool_done`)에는 반영이
+    자리표시 삽입 2건뿐이어야 하고(통지는 큐에 있을 뿐), `processEvents` 뒤
+    도착한 반영의 발신 스레드가 메인이어야 한다.
+    """
 
     def test_success_replaces_the_placeholder_on_the_main_thread(
         self, window, fetch_spy, qapp, tmp_path
@@ -249,11 +273,31 @@ class TestArrivalOnTheMainThread:
         errors: list[str] = []
         window.contentManager.contentError.connect(errors.append)
 
-        window.contentManager.fetchContent(URL, DUMMY_COOKIES, str(tmp_path))
+        cm = window.contentManager
+        cm.fetchContent(URL, DUMMY_COOKIES, str(tmp_path))
         _pool_done(window)
-        qapp.processEvents()
+        assert rec.names() == ["itemInserted", "insertItemRequested"], (
+            "processEvents 전에 반영이 일어났다 — 풀 스레드 직접 호출"
+        )
 
-        assert rec.threads_of("contentError") == {MAIN_THREAD}
+        qapp.processEvents()
+        # 자리표시 제거와 통지는 MetadataError 경로와 같은 순서·같은 스레드다
+        assert rec.names() == [
+            "itemInserted",
+            "insertItemRequested",
+            "itemRemoved",
+            "deleteItemRequested",
+            "contentError",
+        ]
+        assert cm.model.rowCount() == 0
+        assert not cm.hasLoadingItems()
+        for name in ("itemRemoved", "deleteItemRequested", "contentError"):
+            assert rec.threads_of(name) == {MAIN_THREAD}, f"{name}이 메인 스레드 밖에서 발신됐다"
+        # 유저 표시(Signal 페이로드·팝업)에는 원시 예외 문자열도 쿠키 값도 없다.
+        # 로그는 검사하지 않는다 — 상세를 로그에 남기는 것이 설계다(#126)
         [message] = errors
         assert message.startswith(f"{URL}\n")
         assert "raw internal detail" not in message and "dummy-ses" not in message
+        assert window.popups, "오류 팝업(기록 대역)이 뜨지 않았다"
+        assert "raw internal detail" not in window.popups[-1]
+        assert "dummy-aut" not in window.popups[-1] and "dummy-ses" not in window.popups[-1]
