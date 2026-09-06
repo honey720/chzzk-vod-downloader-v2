@@ -1,20 +1,35 @@
-"""content 조회·다운로드 오케스트레이션 viewmodel — 뷰 무의존 (#169).
+"""content 조회·다운로드 오케스트레이션 viewmodel — 뷰 무의존 (#169 → #259 B2).
 
-구 ContentManager의 로직 절반이다: 모델 소유·워커 오케스트레이션·다운로드
-게이트·배치 체인·항목 상태 전이. 뷰에는 시그널(itemStarted 등)로만 말하고
-위젯 타입을 import하지 않는다 — 뷰 바인딩(시그널↔뷰 메서드 연결)은
-content/manager.py의 ContentManager가 맡는다.
+모델 소유·조회 오케스트레이션(풀 스레드 + Signal 큐)·다운로드 게이트·배치
+체인·항목 상태 전이. 뷰에는 시그널(itemStarted 등)로만 말하고 위젯 타입을
+import하지 않는다 — 뷰 배선은 뷰 쪽(`ContentListView.bind`)이 이 뷰모델의
+시그널·메서드에 자기를 건다.
 
-의존성 주입 3종은 바인더가 넘긴다:
-- worker_factory: content.manager 모듈 전역 ContentWorker를 조회하는 함수
-  (테스트의 monkeypatch 지점 보존)
-- probe: content.manager.probe_writable (동상)
-- messages: 실패 문구 콜러블 — tr() 리터럴은 번역 컨텍스트("ContentManager")와
-  lupdate 스캔 대상(project.json sources)이 걸려 있어 바인더에 남는다
+B2(#259)에서 content/manager.py(뷰 바인더·쓰기 프로브·실패 문구 tr())와
+content/worker.py(조회 콜백 본체·풀→메인 Signal)를 여기로 흡수했다:
+- `probe_writable` — OS 수준 쓰기 프로브(#137). 모듈 수준 함수이며
+  `downloadItem`이 호출 시점에 모듈 전역을 조회한다(테스트 monkeypatch 지점).
+- `FetchJob` — 조회 한 건. 풀 스레드에서 `run()`하고 결과를 finished/error
+  Signal로 emit한다(스레드 경계). 모듈 전역 이름을 호출 시점에 조회한다.
+  조회 오류 문구 tr() 10건은 **FetchJob이 소유**한다(컨텍스트 `FetchJob`).
+- 다운로드 관문 문구 tr() 2건은 이 클래스가 소유한다(컨텍스트 `ContentViewModel`).
+
+번역 컨텍스트가 둘인 것은 사실에 맞다 — 조회 오류는 대화상자에, 관문 문구는
+카드 3행에 뜬다. tests/unit/test_card_state_matrix.py가 컨텍스트를 "카드에 뜨는
+문구"의 경계로 쓰므로, 둘을 한 컨텍스트에 두면 대화상자 문구에 카드 길이
+규약이 적용된다. 제외 목록으로 푸는 것은 새 문구가 생길 때마다 누군가 추가해야
+하고 잊으면 조용히 잘못 재므로 쓰지 않는다.
+
+스레드 경계: 조회는 QThreadPool 워커에서 돌고, 반영(자리표시 교체·통지)은
+`_WorkerRelay`(메인 스레드 QObject)가 큐 연결로 받아 메인 스레드에서 한다.
+tests/unit/test_fetch_thread_boundary.py가 이 경계를 잰다 — 풀에서 끝났다고
+슬롯을 직접 부르면 모델·위젯이 풀 스레드에서 갱신된다.
 """
 
 import logging
 import os
+import tempfile
+import threading
 
 from PySide6.QtCore import QObject, QThreadPool, Signal
 
@@ -22,13 +37,127 @@ from app.viewmodels.item_state import ItemState
 from app.viewmodels.path_gates import check_download_path
 from app.viewmodels.data import ContentItem
 from app.viewmodels.model import ContentListModel
+from content.network import NetworkManager
+from core.services import metadata_service
+from core.services.metadata_service import MetadataError
 from core.utils.paths import build_output_path, ensure_unique_path
 from core.models.download_state import DownloadState
 
 # 유저 행위·관문 로그의 로거 이름은 "content.manager"를 유지한다 — 제보
 # 진단 절차와 기존 테스트(caplog)가 이 이름을 알고 있고, 로직의 거처가
-# 바뀌었다고 로그 소비자의 주소까지 바꾸지 않는다. 로거 재편은 셸 단계에서
+# 바뀌었다고 로그 소비자의 주소까지 바꾸지 않는다. 로거 재편은 C1에서
 logger = logging.getLogger("content.manager")
+# 조회 실패 트레이스백(구 content.worker) — 이름을 박은 테스트가 없어 모듈 경로 유도
+_fetch_logger = logging.getLogger(__name__)
+
+# 쓰기 프로브 대기 상한(초) (#137). 정상 디스크에서 프로브는 밀리초 수준이라
+# 이 값은 병리 상황(무응답 마운트 — #136)에서만 발동한다. 발동 시 메인 스레드가
+# 이 시간만큼 기다리는 대가가 있지만, 무한 정지(0B 침묵) 대신 유한 대기 후
+# 명확한 실패가 목적이다
+_WRITE_PROBE_TIMEOUT_S = 5.0
+
+
+def probe_writable(directory: str, timeout_s: float = _WRITE_PROBE_TIMEOUT_S) -> tuple[bool, str]:
+    """저장 경로의 존재·쓰기 가능 여부를 제물 스레드로 검사한다 (#137 — #136 제안 ②).
+
+    존재 검사(os.path.isdir)조차 무응답 마운트에서는 매달릴 수 있어, 검사
+    전체를 별도 스레드에서 수행하고 join(timeout)으로 포기한다 — 파이썬에
+    파일 I/O 시간 제한 수단이 없다는 조사(#136)의 상한 적용이다. 갇힌
+    스레드는 회수할 수 없지만(데몬), 프로브는 다운로드 시작 시점 1회뿐인
+    작고 드문 지점이라 누수 비용이 유계다.
+
+    Returns:
+        (쓰기 가능 여부, 사유): 사유는 "" | "missing" | "denied" | "timeout"
+    """
+    outcome: dict[str, str] = {}
+
+    def probe() -> None:
+        try:
+            if not os.path.isdir(directory):
+                outcome["reason"] = "missing"
+                return
+            # 실제 파일 생성·삭제로 확인한다 — os.access는 네트워크 파일시스템의
+            # 권한(예: SFTP 상 ZFS 풀 루트)을 신뢰할 수 없다
+            fd, probe_path = tempfile.mkstemp(prefix=".cvdv2_probe_", dir=directory)
+            os.close(fd)
+            os.remove(probe_path)
+            outcome["reason"] = ""
+        except OSError:
+            outcome["reason"] = "denied"
+
+    worker = threading.Thread(target=probe, daemon=True, name="WriteProbe")
+    worker.start()
+    worker.join(timeout_s)
+    reason = outcome.get("reason", "timeout")
+    return reason == "", reason
+
+
+class FetchJob(QObject):
+    """메타데이터 조회 한 건 — 풀 스레드에서 `run()`하고 결과를 Signal로 메인에 넘긴다 (구 ContentWorker, #72).
+
+    조회 로직(URL 파싱 → API 조회 → 에러 분기)은 core/services/metadata_service.py에
+    있다. 이 클래스는 다음만 담당한다:
+    - core 호출 결과를 finished/error Signal로 emit (시그니처·페이로드 무변경).
+      emit은 풀 스레드에서 일어나고, 수신자(`_WorkerRelay`)가 메인 스레드에 살아
+      큐로 배달된다.
+    - MetadataError의 i18n 키를 tr()로 번역해 기존 에러 메시지 형식("<url>\n<메시지>")
+      유지. 조회 오류 문구는 대화상자에 뜨는 것이라 이 클래스가 소유한다
+      (번역 컨텍스트 `FetchJob`).
+    """
+
+    finished = Signal(object, str)
+    error = Signal(str)
+
+    def __init__(self, vod_url: str, cookies: dict, downloadPath: str):
+        super().__init__()
+        self.vod_url = vod_url
+        self.cookies = cookies
+        self.downloadPath = downloadPath
+
+    def run(self):
+        """메타데이터를 조회해 finished(성공) 또는 error(실패) Signal을 emit한다."""
+        try:
+            result, content_type = metadata_service.fetch_content(
+                self.vod_url, self.cookies, self.downloadPath, api=NetworkManager
+            )
+            self.finished.emit(result, content_type)
+        except Exception as e:
+            # 크래시 지점 추적을 위해 traceback을 로그에 남긴다 (#55 디버깅).
+            # str(e)만으로는 AttributeError 등의 발생 위치를 알 수 없다
+            _fetch_logger.exception("컨텐츠 요청 실패: %s", self.vod_url)
+            self.error.emit(self._user_message(e))
+
+    def _user_message(self, e: Exception) -> str:
+        """예외를 사용자 표시용 메시지로 바꾼다. MetadataError는 i18n 키를 번역한다.
+
+        MetadataError가 아닌 예외의 원시 문자열은 내부 API URL 등이 섞여 있어
+        유저에게 보여주지 않는다 — 상세는 run()의 logger.exception이 남긴다 (#126).
+        """
+        if isinstance(e, MetadataError):
+            return f"{e.url}\n{self._translate_key(e.message_key)}"
+        return f"{self.vod_url}\n{self._translate_key('Failed to fetch video information')}"
+
+    def _translate_key(self, message_key: str) -> str:
+        """i18n 키를 현재 언어로 번역한다.
+
+        lupdate가 `-no-obsolete`로 .ts를 재생성하므로(compile_translations.py 참고)
+        키가 소스에서 사라지면 번역 항목도 삭제된다 — 반드시 리터럴로 tr()을 호출해
+        추출 대상을 유지한다. 키 목록은 core/services/metadata_service.py가 던지는
+        message_key 전체와 1:1이다.
+        """
+        translated = {
+            "Invalid VOD URL": self.tr("Invalid VOD URL"),
+            "Invalid cookies value": self.tr("Invalid cookies value"),
+            "Encrypted content is not supported": self.tr("Encrypted content is not supported"),
+            "Channel membership required": self.tr("Channel membership required"),
+            "Unencoded Video(.m3u8)": self.tr("Unencoded Video(.m3u8)"),
+            "Failed to get DASH manifest": self.tr("Failed to get DASH manifest"),
+            "Video not found": self.tr("Video not found"),
+            "Viewing permission required": self.tr("Viewing permission required"),
+            "Network connection error": self.tr("Network connection error"),
+            "Failed to fetch video information": self.tr("Failed to fetch video information"),
+        }
+        return translated.get(message_key, message_key)
 
 
 class _WorkerRelay(QObject):
@@ -70,12 +199,8 @@ class ContentViewModel(QObject):
     itemResumed = Signal(object)
     itemFinished = Signal(object, bool)
 
-    def __init__(self, worker_factory, probe, messages: dict, parent=None):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self._worker_factory = worker_factory
-        self._probe = probe
-        self._messages = messages
-
         self.model = ContentListModel()
         self.downloadPath = ""
         self.threadpool = QThreadPool()
@@ -97,7 +222,8 @@ class ContentViewModel(QObject):
         self.model.addItem(placeholder)
         self.insertItemRequested.emit(self.model.rowCount())
 
-        worker = self._worker_factory(vod_url, cookies, downloadPath)
+        # 모듈 전역 FetchJob을 호출 시점에 조회한다 — 테스트의 monkeypatch 지점
+        worker = FetchJob(vod_url, cookies, downloadPath)
         relay = _WorkerRelay(self, worker)
         self._pendingPlaceholders[worker] = placeholder
         self._relays[worker] = relay
@@ -135,6 +261,21 @@ class ContentViewModel(QObject):
                 self.deleteItemRequested.emit(placeholder, self.model.rowCount())
         self.contentError.emit(error_message)
 
+    # ---- 다운로드 관문 문구 — 카드 3행에 뜨는 tr() 2건 (컨텍스트 ContentViewModel) ----
+
+    def _invalidPathMessage(self) -> str:
+        """다운로드 관문: 저장 경로가 존재하지 않을 때의 카드 문구."""
+        return self.tr("Invalid file path")
+
+    def _saveFailedMessage(self) -> str:
+        """다운로드 관문: 쓰기 프로브 실패(denied·timeout)의 카드 문구."""
+        # 첫 줄=핵심 / 둘째 줄=상세 규약(#245, app/viewmodels/download_viewmodel.py 참고) —
+        # 다운로드 쪽의 같은 사유와 문구를 맞춘다
+        return self.tr(
+            "Failed to save file · check the path and disk space\n"
+            "The file could not be saved. Check the download path and free disk space."
+        )
+
     def clrearFinishedItems(self):
         if not self.model.isEmpty():
             for row in reversed(range(self.model.rowCount())):
@@ -158,9 +299,11 @@ class ContentViewModel(QObject):
                 # 지점으로 담당하고(#169 — #146 ⓑ1), 프로브 수단은 주입받는다.
                 # 존재 검사도 프로브 스레드 안에서 수행한다 — 무응답 마운트에서는
                 # exists조차 메인 스레드를 매달 수 있다 (#136)
-                writable, reason = check_download_path(item.download_path, self._probe)
+                writable, reason = check_download_path(
+                    item.download_path, lambda directory: probe_writable(directory)
+                )
                 if reason == "missing":
-                    raise ValueError(self._messages["invalid_path"]())
+                    raise ValueError(self._invalidPathMessage())
                 if not writable:
                     # 권한 없음(denied — 예: SFTP 상 ZFS 풀 루트) 또는 무응답
                     # 마운트(timeout — 권한 오류가 오류로 전파되지 않는 경우).
@@ -168,7 +311,7 @@ class ContentViewModel(QObject):
                     # 경로는 repr로 남긴다 (#148) — 공백 유사 문자(U+00A0 등)를
                     # 육안 구분할 수 있는 유일한 표기다 (#144 실측)
                     logger.warning("쓰기 프로브 실패(%s): %r", reason, item.download_path)
-                    self.fail(item, self._messages["save_failed"]())
+                    self.fail(item, self._saveFailedMessage())
                     return
                 self.onDownload(item)
             except ValueError as e:
@@ -182,7 +325,7 @@ class ContentViewModel(QObject):
                 # 경로 조립(OSError 등)의 원시 문자열에는 전체 경로가 섞여 있어
                 # 유저에게 보내지 않는다 (#134) — 상세는 로그로만 남긴다
                 logger.exception("다운로드 준비 실패: %s", item.title)
-                self.fail(item, self._messages["save_failed"]())
+                self.fail(item, self._saveFailedMessage())
         else:
             self.finishedAllRequested.emit()
 
