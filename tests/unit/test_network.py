@@ -215,7 +215,9 @@ class TestGetVideoM3u8BaseUrl:
         assert calls == [
             (
                 "https://example.invalid/master.m3u8",
-                {"cookies": cookies, "timeout": REQUEST_TIMEOUT},  # 조회 갇힘 방지 (#129)
+                # 조회 갇힘 방지 (#129). 리다이렉트는 자동으로 따라가지 않는다 —
+                # 홉마다 주소를 검사한 뒤 쿠키를 싣는다(서버가 준 주소로 쿠키 전송 검사)
+                {"cookies": cookies, "allow_redirects": False, "timeout": REQUEST_TIMEOUT},
             )
         ]
         assert base_url == "https://example.invalid/1080/playlist.m3u8"
