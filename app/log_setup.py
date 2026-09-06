@@ -9,12 +9,6 @@ import os
 
 import config.config as config
 from core.utils import logging_setup as _logging_setup
-from core.utils.logging_setup import (  # noqa: F401 — 하위 호환 re-export
-    BACKUP_COUNT,
-    LOG_FILE_NAME,
-    LOG_FORMAT,
-    MAX_BYTES,
-)
 
 
 def setup_logging(log_level: int = logging.DEBUG) -> None:

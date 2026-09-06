@@ -29,7 +29,6 @@ def no_network(monkeypatch):
 
     monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
     monkeypatch.setattr("app.network._session", _FailingSession())
-    monkeypatch.setattr("core.api.session._session", _FailingSession())
 
 
 @pytest.fixture
