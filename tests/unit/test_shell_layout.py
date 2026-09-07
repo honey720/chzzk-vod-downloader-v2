@@ -254,13 +254,30 @@ class TestInitialSizeRule:
         )
 
     def test_tiny_screen_is_clamped_up_to_the_minimum_width(self, monkeypatch):
-        """800×600 주입: 초기 폭 요청 360은 콘텐츠 최소 아래 → Qt가 최소폭으로 클램프한다(높이는 300 그대로)."""
-        _fake_screen(monkeypatch, 800, 600)
+        """비율값이 콘텐츠 최소 아래인 화면 주입: Qt가 최소폭으로 클램프한다(높이는 300 그대로).
+
+        "작은 화면"을 절대 px(종전 800)로 박지 않는다 (#280) — 콘텐츠 최소폭은 글꼴에 따라
+        달라져 좁은 글꼴에서는 800×0.45가 최소폭보다 커서 "클램프" 전제가 서지 않았다.
+        먼저 창을 하나 띄워 최소폭을 읽고(전제 검사용 읽기), 그 최소폭 아래로 떨어지는
+        화면 폭을 비율에서 거꾸로 구한다. 판정은 실제 창 폭 == 최소폭으로 독립이다.
+        """
+        _fake_screen(monkeypatch, 3440, 600)
+        probe = _window()
+        probe.show()
+        QApplication.processEvents()
+        content_min_w = probe.minimumWidth()
+        # close()는 부르지 않는다 — closeEvent가 창 크기를 기억(#253)해 두 번째 창이 그것을
+        # 복원해 버린다. 최상위 창 정리는 픽스처(_destroy_windows)가 파괴로 한다.
+        probe.hide()
+        QApplication.processEvents()
+        tiny_w = int(content_min_w / 0.45) - 1  # int(tiny_w × 0.45) < content_min_w
+
+        _fake_screen(monkeypatch, tiny_w, 600)
         win = _window()
         win.show()
         QApplication.processEvents()
-        assert win.minimumWidth() > int(800 * 0.45), (
-            "전제: 콘텐츠 최소폭이 비율값(360)보다 커야 클램프가 일어난다"
+        assert win.minimumWidth() > int(tiny_w * 0.45), (
+            f"전제: 콘텐츠 최소폭({win.minimumWidth()})이 비율값({int(tiny_w * 0.45)})보다 커야 클램프가 일어난다"
         )
         assert win.width() == win.minimumWidth(), (
             f"초기 폭이 최소폭으로 클램프되지 않았다: {win.width()} vs {win.minimumWidth()}"
