@@ -21,7 +21,7 @@ jobs:
           - os: ubuntu-22.04
             artifact: CVDv2-${{ github.ref_name }}-linux
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -219,6 +219,85 @@ jobs:
             build/${{ matrix.artifact }}
             build/${{ matrix.artifact }}.zip
           if-no-files-found: error
+
+      # ── 실험용: 오탐 원인 규명. ⚠️ main에 머지하지 않는다 ──
+      # ⚠️ 대조군(A)을 확보한 뒤에 돈다. 여기서 실패해도 A는 이미 올라갔다.
+      - name: "EXP B — Windows 런타임 DLL 제외"
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: bash
+        run: |
+          VERSION_NUM="${GITHUB_REF_NAME#v}"
+          VERSION_NUM="${VERSION_NUM%%-*}"
+          VERSION_NUM="${MANUAL_BUILD_VERSION:-$VERSION_NUM}"
+          uv run python -m nuitka \
+            --onefile \
+            --include-windows-runtime-dlls=no \
+            --assume-yes-for-downloads \
+            --enable-plugin=pyside6 \
+            --windows-console-mode=disable \
+            --windows-icon-from-ico=resources/icon.ico \
+            --company-name=honey720 \
+            --product-name="Chzzk VOD Downloader" \
+            --file-description="Chzzk VOD Downloader v2" \
+            --file-version="$VERSION_NUM" \
+            --product-version="$VERSION_NUM" \
+            --copyright="honey720" \
+            --include-data-dir=resources=resources \
+            --include-data-dir=translations=translations \
+            --output-filename="CVDv2-EXP-B-nortdll.exe" \
+            --output-dir=build-exp-b \
+            main.py
+
+      - name: "EXP C — standalone"
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: bash
+        run: |
+      - name: "EXP C — standalone"
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: bash
+        run: |
+          VERSION_NUM="${GITHUB_REF_NAME#v}"
+          VERSION_NUM="${VERSION_NUM%%-*}"
+          VERSION_NUM="${MANUAL_BUILD_VERSION:-$VERSION_NUM}"
+          uv run python -m nuitka \
+            --standalone \
+            --assume-yes-for-downloads \
+            --enable-plugin=pyside6 \
+            --windows-console-mode=disable \
+            --windows-icon-from-ico=resources/icon.ico \
+            --company-name=honey720 \
+            --product-name="Chzzk VOD Downloader" \
+            --file-description="Chzzk VOD Downloader v2" \
+            --file-version="$VERSION_NUM" \
+            --product-version="$VERSION_NUM" \
+            --copyright="honey720" \
+            --include-data-dir=resources=resources \
+            --include-data-dir=translations=translations \
+            --output-filename="CVDv2-EXP-C-standalone.exe" \
+            --output-dir=build-exp-c \
+            main.py
+
+      - name: "EXP 산출물 확인"
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: bash
+        run: |
+          echo "=== EXP 산출물 ==="
+          ls -la build-exp-b/ || echo "⚠️ EXP B 실패 — 산출물 없음"
+          ls -la build-exp-c/main.dist/ | head -5 || echo "⚠️ EXP C 실패 — 산출물 없음"
+
+      - name: "EXP 산출물 업로드"
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: exp-builds
+          path: |
+            build-exp-b/CVDv2-EXP-B-nortdll.exe
+            build-exp-c/main.dist/
+          if-no-files-found: warn
 
   release:
     needs: build
