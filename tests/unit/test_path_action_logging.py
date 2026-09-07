@@ -80,7 +80,7 @@ class TestDownloadGateLogging:
         m.model.addItem(item)
         qapp.processEvents()
 
-        with caplog.at_level("WARNING", logger="content.manager"):
+        with caplog.at_level("WARNING", logger="app.viewmodels.content_viewmodel"):
             m.downloadItem()
 
         assert item.downloadState is DownloadState.FAILED  # 기존 동작 회귀 없음
@@ -95,7 +95,7 @@ class TestDownloadGateLogging:
         m.model.addItem(item)
         qapp.processEvents()
 
-        with caplog.at_level("WARNING", logger="content.manager"):
+        with caplog.at_level("WARNING", logger="app.viewmodels.content_viewmodel"):
             m.downloadItem()
 
         assert "쓰기 프로브 실패(denied)" in caplog.text
@@ -133,7 +133,7 @@ class TestCardPathPickerFeedback:
             staticmethod(lambda parent, caption, start, *a, **k: str(new_dir)),
         )
 
-        with caplog.at_level("INFO", logger="content.widget"):
+        with caplog.at_level("INFO", logger="app.widgets.widget"):
             widget.choosePath(None)
 
         assert item.download_path == str(new_dir)
@@ -148,7 +148,7 @@ class TestCardPathPickerFeedback:
         monkeypatch.setattr(widget_mod.QFileDialog, "getExistingDirectory",
                             staticmethod(lambda *a, **k: ""))
 
-        with caplog.at_level("INFO", logger="content.widget"):
+        with caplog.at_level("INFO", logger="app.widgets.widget"):
             widget_mod.logger.info("표식: 캡처 채널 생존")  # 제품 로거로 흘려야 이름이 틀리면 같이 죽는다
             widget.choosePath(None)
 
@@ -185,7 +185,7 @@ class TestFetchGateLogging:
         win.downloadPathInput.setText(str(tmp_path / NBSP_SUFFIX))
         win.urlInput.setText("https://chzzk.naver.com/video/1")
 
-        with caplog.at_level("WARNING", logger="application.mainWindow"):
+        with caplog.at_level("WARNING", logger="app.views.mainWindow"):
             win.fetchButton.click()
 
         assert "Path does not exist." in warnings  # 기존 안내 유지
@@ -203,7 +203,7 @@ class TestFetchGateLogging:
             mw_mod.QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: str(chosen))
         )
 
-        with caplog.at_level("INFO", logger="application.mainWindow"):
+        with caplog.at_level("INFO", logger="app.views.mainWindow"):
             win.downloadPathButton.click()
 
         assert win.downloadPathInput.text() == str(chosen)
