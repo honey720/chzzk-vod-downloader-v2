@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- ⚠️ #244·#245: 이 .ui는 설계 기록(문서)이다 — pyside6-uic 재생성 대상이
-     아니다. 실제 구현은 ui/contentItemWidget.py(수동 유지)이며, 크기·간격은
+     아니다. 실제 구현은 app/widgets/contentItemWidget.py(수동 유지)이며, 크기·간격은
      theme.METRICS, 글자 위계·색은 전역 QSS(theme.FONTS 토큰)가 정한다.
      구조를 바꿀 때는 이 파일과 .py를 함께 손으로 고칠 것.
 
@@ -15,7 +15,7 @@
            2행 titleLayout: 제목(가장 크고 밝다, ElideRight, 클릭 편집 —
                 호버 힌트는 QSS #titleLabel:hover) + 편집용 QLineEdit
            3행 resolutionLayout(상태별 슬롯):
-                [해상도 pill들(대기에만, content/widget.py가 왼쪽부터 삽입)]
+                [해상도 pill들(대기에만, app/widgets/widget.py가 왼쪽부터 삽입)]
                 [statusLabel(그 외 상태의 슬롯 텍스트 — %·속도·남은시간 /
                  ✓ 완료 / ✕ 사유, 상태색)] [스트레치]
                 [directoryLabel/Edit(전역 설정 경로와 다를 때만)]
@@ -144,7 +144,7 @@
           <item>
            <layout class="QHBoxLayout" name="resolutionLayout">
             <property name="spacing"><number>4</number></property>
-            <!-- pill들은 content/widget.py가 statusLabel 앞(왼쪽부터)에 삽입 -->
+            <!-- pill들은 app/widgets/widget.py가 statusLabel 앞(왼쪽부터)에 삽입 -->
             <item>
              <widget class="ElidingLabel" name="statusLabel">
               <property name="toolTip"><string>Status</string></property>
@@ -189,7 +189,7 @@
       </item>
      </layout>
      <widget class="QProgressBar" name="progressBar">
-      <!-- 오버레이 — 지오메트리는 content/widget.py::_placeProgressBar -->
+      <!-- 오버레이 — 지오메트리는 app/widgets/widget.py::_placeProgressBar -->
       <property name="maximum"><number>100</number></property>
       <property name="value"><number>0</number></property>
       <property name="textVisible"><bool>false</bool></property>
@@ -204,12 +204,12 @@
   <customwidget>
    <class>ElidingLabel</class>
    <extends>QLabel</extends>
-   <header>content/eliding_label.h</header>
+   <header>app/widgets/eliding_label.h</header>
   </customwidget>
   <customwidget>
    <class>PathLabel</class>
    <extends>QLabel</extends>
-   <header>content/eliding_label.h</header>
+   <header>app/widgets/eliding_label.h</header>
   </customwidget>
  </customwidgets>
  <resources/>
