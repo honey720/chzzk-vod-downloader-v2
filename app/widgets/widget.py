@@ -538,7 +538,10 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             # 세그먼트 기반(m3u8·hls_aes)은 total_size를 미리 알 수 없어 처리하지 않음
             if not self.item.is_segment_based and index is not None:
                 self.item.total_size = self.item.unique_reps[index][-1]
-                self.fileSizeLabel.setText(f" {self.item.unique_reps[index][-1]}")
+                # 앞 공백 없이 — 이 라벨의 다른 쓰기(setData)와 같은 형태다. v2.5.0의 일괄
+                # 패딩 관례가 #245에서 걷힐 때 이 한 줄만 남아, 글꼴에 따라 확보 폭
+                # (_reserveFileSizeWidth 후보에 없는 형태)을 넘어 아이콘을 밀었다 (#280).
+                self.fileSizeLabel.setText(f"{self.item.unique_reps[index][-1]}")
 
     def loadImageFromUrl(self, label, url, maxHeight, type):
         """
