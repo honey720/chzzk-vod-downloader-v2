@@ -34,9 +34,18 @@ LANGUAGE_CHOICES = {"en_US", "ko_KR"}
 
 
 def _seed_config() -> Path:
-    """설정 파일을 기본값으로 미리 만든다 — 창 생성이 파일을 만드는 동작에 기대지 않는다."""
-    config.save_config(config.default_config())
-    return Path(config.CONFIG_FILE)
+    """설정 파일을 기본값으로 미리 만든다 — 창 생성이 파일을 만드는 동작에 기대지 않는다.
+
+    제품의 save_config가 아니라 **직접** 쓰고, 제품이 내지 않을 모양(들여쓰기 8·키 정렬·
+    빈 줄 꼬리)으로 쓴다. 그래야 "내용은 같지만 다시 썼다"(예: Cancel이 읽어 둔 값을
+    그대로 저장)도 (c)의 바이트 비교에 걸린다 — 고장 주입으로 확인한 구멍이다.
+    """
+    path = Path(config.CONFIG_FILE)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(config.default_config(), indent=8, sort_keys=True) + "
+
+", encoding="utf-8")
+    return path
 
 
 def _read_raw(path: Path) -> dict:
