@@ -42,9 +42,10 @@ def _seed_config() -> Path:
     """
     path = Path(config.CONFIG_FILE)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(config.default_config(), indent=8, sort_keys=True) + "
+    text = json.dumps(config.default_config(), indent=8, sort_keys=True) + "
 
-", encoding="utf-8")
+"
+    path.write_text(text, encoding="utf-8")
     return path
 
 
