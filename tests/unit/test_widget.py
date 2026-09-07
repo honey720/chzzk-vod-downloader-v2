@@ -289,12 +289,12 @@ class TestRecoversFullTextAfterWidthIncreases:
         폰트 축에서 정리한 "로컬에서만 실패하는 테스트"의 창 최소폭 축).
         자식 위젯의 geometry는 OS 창 정책과 무관하게 그대로 적용된다.
         """
+        from PySide6.QtGui import QFontMetrics
         from PySide6.QtWidgets import QHBoxLayout, QWidget
 
         from app.widgets.eliding_label import ElidingLabel
 
         host = QWidget()
-        host.resize(1300, 100)
         container = QWidget(host)
         layout = QHBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -302,18 +302,30 @@ class TestRecoversFullTextAfterWidthIncreases:
         label.setText(text)
         layout.addWidget(label)
         layout.addStretch(1)  # 라벨은 stretch 0 — sizeHint가 그대로 폭이 된다
-        container.setGeometry(0, 0, 40, 30)
+
+        # "좁다"·"넓다"를 그 문자열의 글꼴 지표에서 유도한다 (#280) — 종전의 40px·1200px은
+        # 절대값이라 좁은 글꼴에서는 40px에 원문이 다 들어가 "잘렸다" 전제가 서지 않았다.
+        # 좁은 폭: 원문 폭의 절반(반드시 잘린다). 단, 라벨의 최소 힌트 아래로는 레이아웃이
+        # 줄여 주지 않으므로 그 바닥은 지킨다(전제 검사용 읽기 — 판정은 아래 렌더 비교).
+        # 넓은 폭: 원문 폭의 네 배(반드시 다 들어간다). 높이는 글꼴 높이의 두 배.
+        metrics = QFontMetrics(label.font())
+        full_width = metrics.horizontalAdvance(text)
+        narrow = max(label.minimumSizeHint().width(), full_width // 2)
+        wide = full_width * 4
+        line_h = metrics.height() * 2
+        host.resize(wide, line_h)
+        container.setGeometry(0, 0, narrow, line_h)
         host.show()
         qapp.processEvents()
 
-        assert container.width() == 40, (
-            f"컨테이너 폭이 {container.width()}px — 40px 전제가 환경에 밀렸다"
+        assert container.width() == narrow, (
+            f"컨테이너 폭이 {container.width()}px — 좁은 폭 {narrow}px 전제가 환경에 밀렸다"
         )
         assert _rendered(label) != label.text(), (
-            "폭 40에서 안 잘렸다 — 이 테스트의 전제(좁았다가 넓어짐)가 성립하지 않는다"
+            f"폭 {narrow}에서 안 잘렸다 — 이 테스트의 전제(좁았다가 넓어짐)가 성립하지 않는다"
         )
 
-        container.setGeometry(0, 0, 1200, 30)
+        container.setGeometry(0, 0, wide, line_h)
         qapp.processEvents()
         qapp.processEvents()
         # 호스트(최상위)를 함께 돌려준다 — 라벨만 반환하면 부모 QWidget이
