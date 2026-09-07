@@ -286,4 +286,3 @@ class SettingDialog(QDialog):
         path = os.path.join(config.CONFIG_DIR, "logs")
         if not QDesktopServices.openUrl(QUrl.fromLocalFile(path)):
             QMessageBox.warning(self, self.tr("Warning"), f"'{path}'을(를) 열 수 없습니다.")
-        """
