@@ -7,7 +7,6 @@
         "app/viewmodels/content_viewmodel.py",
         "app/viewmodels/download_viewmodel.py",
         "app/views/dialog.py",
-        "ui/settingDialog.ui",
         "ui/mainWindow.ui",
         "app/widgets/contentItemWidget.ui"
     ],
