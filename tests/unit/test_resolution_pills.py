@@ -551,15 +551,17 @@ class TestShrinkOrderIsMonotonic:
         _stage가 ①의 기준으로 쓰는 바로 그 문자열)이고, 폭은 그 라벨의 글꼴 지표로 잰다 —
         제품의 판정 함수는 부르지 않는다. 종전의 `fit + 400`은 절대 px라 넓은 글꼴에서는
         그 폭이 이미 ②(줄임)였다.
-        끝: 접힘 임계(T) 아래의 한 줄 펼침 임계(`one`)보다 간격 하나 아래 — T 아래면 이미
-        접힘(③)이므로 어디서 끝나든 마지막 단계는 같다. 남은 숫자는 간격(FIXED_SPACING)뿐이며
+        끝: 한 줄 펼침 임계(`one`)보다 간격 하나 아래, 그리고 range의 stop이 미포함이라 한 걸음
+        더 — 시작 폭과 `one`이 간격에 맞아떨어져도 마지막 값이 `one` 위에서 멈추지 않는다.
+        지금은 `one < fit`(접힘 임계)이라 `one`에서도 이미 접힘(③)이지만 그 부등호는 아이콘·
+        간격이 바뀌면 흔들리므로 경계에 기대지 않는다. 남은 숫자는 간격(FIXED_SPACING)뿐이며
         레이아웃 상수라 글꼴과 무관하다.
         """
         fit = fit_threshold(widget)
         one = expanded_threshold(widget)
         label = widget.directoryLabel
         full_path_width = QFontMetrics(label.font()).horizontalAdvance(label.text())
-        return list(range(fit + full_path_width, one - FIXED_SPACING, -FIXED_SPACING))
+        return list(range(fit + full_path_width, one - FIXED_SPACING - 1, -FIXED_SPACING))
 
     def test_narrowing_only_moves_forward_through_the_stages(self, qapp):
         box, widget = make_boxed()
