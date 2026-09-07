@@ -1,10 +1,21 @@
 import os
 import config.config as config
-from PySide6.QtWidgets import QComboBox, QDialog, QMessageBox
+from PySide6.QtWidgets import (
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
+    QGroupBox,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QSizePolicy,
+    QSpacerItem,
+    QVBoxLayout,
+)
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtCore import QEvent, QItemSelectionModel, QObject, QTimer, QUrl
-
-from ui.settingDialog import Ui_SettingDialog
+from PySide6.QtCore import QEvent, QItemSelectionModel, QMetaObject, QObject, QTimer, QUrl
 
 
 class _ComboBoxPopupHighlightResync(QObject):
@@ -98,10 +109,16 @@ def _wire_popup_highlight_resync(combo: QComboBox) -> None:
     combo.view().window().installEventFilter(_ComboBoxPopupHighlightResync(combo))
 
 
-class SettingDialog(QDialog, Ui_SettingDialog):
-    """
-    쿠키 설정을 위한 팝업창 예시.
-    이전에 저장된 쿠키값을 인자로 받아, QLineEdit에 미리 세팅한다.
+class SettingDialog(QDialog):
+    """설정 창 — 쿠키 · 다운로드 후 동작 · 언어 · 로그 폴더.
+
+    위젯·레이아웃은 `.ui` 생성물 없이 이 파일이 직접 짠다(#244 ③). 소유자가 Qt
+    Designer를 쓰지 않으므로 `.ui`를 정본으로 둘 이유가 없었다. 구 `ui/settingDialog.py`
+    (uic 생성물)의 `setupUi`·`retranslateUi`를 그대로 옮긴 것이며 구조·objectName·
+    번역 원문은 바꾸지 않았다 — ⚠️ objectName 넷(`nidaut`·`nidses`·`afterDownload`·
+    `language`)은 계약 게이트(tests/unit/test_setting_dialog_contract.py)의 일부이고,
+    번역 컨텍스트는 클래스 이름(`SettingDialog`)이라 원문 11개를 글자 하나 바꾸면
+    `.ts`에 항목이 새로 생기고 옛 항목이 지워진다(`.qm` 재컴파일 = rc 대상).
     """
 
     def __init__(self, parent=None):
@@ -112,6 +129,105 @@ class SettingDialog(QDialog, Ui_SettingDialog):
 
         self.setupUi(self)
         self.setupDynamicUi()
+
+    def setupUi(self, dialog: QDialog) -> None:
+        """위젯·레이아웃 조립 — 구 uic 생성물의 setupUi와 같은 구조·순서·objectName."""
+        if not dialog.objectName():
+            dialog.setObjectName("SettingDialog")
+        dialog.resize(400, 350)
+        self.settingLayout = QVBoxLayout(dialog)
+        self.settingLayout.setObjectName("settingLayout")
+        self.dialogLayout = QVBoxLayout()
+        self.dialogLayout.setObjectName("dialogLayout")
+
+        # ---- 쿠키 ----
+        self.cookiesBox = QGroupBox(dialog)
+        self.cookiesBox.setObjectName("cookiesBox")
+        self.cookiesFormLayout = QFormLayout(self.cookiesBox)
+        self.cookiesFormLayout.setObjectName("cookiesFormLayout")
+        self.nidautLabel = QLabel(self.cookiesBox)
+        self.nidautLabel.setObjectName("nidautLabel")
+        self.cookiesFormLayout.setWidget(0, QFormLayout.ItemRole.LabelRole, self.nidautLabel)
+        self.nidaut = QLineEdit(self.cookiesBox)
+        self.nidaut.setObjectName("nidaut")
+        self.nidaut.setClearButtonEnabled(True)
+        self.cookiesFormLayout.setWidget(0, QFormLayout.ItemRole.FieldRole, self.nidaut)
+        self.nidsesLabel = QLabel(self.cookiesBox)
+        self.nidsesLabel.setObjectName("nidsesLabel")
+        self.cookiesFormLayout.setWidget(1, QFormLayout.ItemRole.LabelRole, self.nidsesLabel)
+        self.nidses = QLineEdit(self.cookiesBox)
+        self.nidses.setObjectName("nidses")
+        self.nidses.setClearButtonEnabled(True)
+        self.cookiesFormLayout.setWidget(1, QFormLayout.ItemRole.FieldRole, self.nidses)
+        self.helpButton = QPushButton(self.cookiesBox)
+        self.helpButton.setObjectName("helpButton")
+        self.cookiesFormLayout.setWidget(2, QFormLayout.ItemRole.LabelRole, self.helpButton)
+        self.cookieSpacer = QSpacerItem(
+            0, 0, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
+        )
+        self.cookiesFormLayout.setItem(2, QFormLayout.ItemRole.FieldRole, self.cookieSpacer)
+        self.dialogLayout.addWidget(self.cookiesBox)
+
+        # ---- 다운로드 ----
+        self.downloadBox = QGroupBox(dialog)
+        self.downloadBox.setObjectName("downloadBox")
+        self.formLayout = QFormLayout(self.downloadBox)
+        self.formLayout.setObjectName("formLayout")
+        self.afterDownloadLabel = QLabel(self.downloadBox)
+        self.afterDownloadLabel.setObjectName("afterDownloadLabel")
+        self.formLayout.setWidget(0, QFormLayout.ItemRole.LabelRole, self.afterDownloadLabel)
+        self.afterDownload = QComboBox(self.downloadBox)
+        self.afterDownload.setObjectName("afterDownload")
+        self.formLayout.setWidget(0, QFormLayout.ItemRole.FieldRole, self.afterDownload)
+        self.dialogLayout.addWidget(self.downloadBox)
+
+        # ---- 일반 ----
+        self.commonBox = QGroupBox(dialog)
+        self.commonBox.setObjectName("commonBox")
+        self.commonFormLayout = QFormLayout(self.commonBox)
+        self.commonFormLayout.setObjectName("commonFormLayout")
+        self.languageLabel = QLabel(self.commonBox)
+        self.languageLabel.setObjectName("languageLabel")
+        self.commonFormLayout.setWidget(0, QFormLayout.ItemRole.LabelRole, self.languageLabel)
+        self.language = QComboBox(self.commonBox)
+        self.language.setObjectName("language")
+        self.commonFormLayout.setWidget(0, QFormLayout.ItemRole.FieldRole, self.language)
+        self.logsFolderLabel = QLabel(self.commonBox)
+        self.logsFolderLabel.setObjectName("logsFolderLabel")
+        self.commonFormLayout.setWidget(1, QFormLayout.ItemRole.LabelRole, self.logsFolderLabel)
+        self.logsFolder = QPushButton(self.commonBox)
+        self.logsFolder.setObjectName("logsFolder")
+        self.commonFormLayout.setWidget(1, QFormLayout.ItemRole.FieldRole, self.logsFolder)
+        self.dialogLayout.addWidget(self.commonBox)
+
+        self.settingLayout.addLayout(self.dialogLayout)
+
+        # ---- OK / Cancel ----
+        self.dialogButtonBox = QDialogButtonBox(dialog)
+        self.dialogButtonBox.setObjectName("dialogButtonBox")
+        self.dialogButtonBox.setStandardButtons(
+            QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Ok
+        )
+        self.settingLayout.addWidget(self.dialogButtonBox)
+
+        self.retranslateUi(dialog)
+        self.dialogButtonBox.accepted.connect(dialog.accept)
+        self.dialogButtonBox.rejected.connect(dialog.reject)
+        QMetaObject.connectSlotsByName(dialog)
+
+    def retranslateUi(self, dialog: QDialog) -> None:
+        """표시 문자열 — 원문 11개는 구 `.ui`와 글자 하나 다르지 않다(번역 컨텍스트 SettingDialog)."""
+        dialog.setWindowTitle(self.tr("Settings"))
+        self.cookiesBox.setTitle(self.tr("Cookies"))
+        self.nidautLabel.setText(self.tr("NID_AUT"))
+        self.nidsesLabel.setText(self.tr("NID_SES"))
+        self.helpButton.setText(self.tr("Help"))
+        self.downloadBox.setTitle(self.tr("Download"))
+        self.afterDownloadLabel.setText(self.tr("After Download"))
+        self.commonBox.setTitle(self.tr("Common"))
+        self.languageLabel.setText(self.tr("Language"))
+        self.logsFolderLabel.setText(self.tr("Logs Folder"))
+        self.logsFolder.setText(self.tr("Open"))
 
     def setupDynamicUi(self):
         self.nidaut.setText(self.config.get("cookies", {}).get("NID_AUT", "")) # 쿠키값을 불러와서 QLineEdit에 세팅
