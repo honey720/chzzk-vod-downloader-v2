@@ -16,7 +16,7 @@ from time import strftime, gmtime
 import platform
 import logging
 
-logger = logging.getLogger("content.widget")  # 이동 전 이름 고정 — caplog가 이 이름을 본다(#259 A1, 부채: 이동 완료 후 일괄 정리)
+logger = logging.getLogger(__name__)
 
 # 3행 슬롯 텍스트의 상태 접두(완료/실패 표시). 텍스트 안에 들어가는 글자라
 # 폰트 문자를 쓴다 — 둘 다 기본 문장부호 블록(Dingbats)의 흔한 글리프다.
