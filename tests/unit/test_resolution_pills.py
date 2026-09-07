@@ -9,6 +9,7 @@
 import time
 
 import pytest
+from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 
 import main as main_module
@@ -541,13 +542,29 @@ class TestShrinkOrderIsMonotonic:
         return seen
 
     def _widths(self, widget):
-        """T(전부 들어가는 임계)를 사이에 두고 넓은 폭에서 접힘 폭까지 4px씩 — 절대 px 없음."""
+        """경로 전문이 들어가는 폭에서 접힘 아래까지 FIXED_SPACING씩 — 절대 px 없음 (#280).
+
+        시작: T(pill 전부 + 아이콘 + 크기가 딱 들어가는 카드 폭) + 경로 ① 문자열의 표시 폭.
+        경로 라벨은 텍스트 모드에서 아이콘 자리를 대신 쓰므로, T에 그 문자열 폭을 더하면
+        라벨이 받는 폭이 문자열 폭보다 아이콘 폭 + 간격만큼 남아 ①(전문)이 성립한다.
+        ⚠️ 문자열은 원문(LONG_PATH)이 아니라 **제품이 만든 축약형**(`directoryLabel.text()`,
+        _stage가 ①의 기준으로 쓰는 바로 그 문자열)이고, 폭은 그 라벨의 글꼴 지표로 잰다 —
+        제품의 판정 함수는 부르지 않는다. 종전의 `fit + 400`은 절대 px라 넓은 글꼴에서는
+        그 폭이 이미 ②(줄임)였다.
+        끝: 한 줄 펼침 임계(`one`)보다 간격 하나 아래, 그리고 range의 stop이 미포함이라 한 걸음
+        더 — 시작 폭과 `one`이 간격에 맞아떨어져도 마지막 값이 `one` 위에서 멈추지 않는다.
+        지금은 `one < fit`(접힘 임계)이라 `one`에서도 이미 접힘(③)이지만 그 부등호는 아이콘·
+        간격이 바뀌면 흔들리므로 경계에 기대지 않는다. 남은 숫자는 간격(FIXED_SPACING)뿐이며
+        레이아웃 상수라 글꼴과 무관하다.
+        """
         fit = fit_threshold(widget)
         one = expanded_threshold(widget)
-        return list(range(fit + 400, one - 40, -4))
+        label = widget.directoryLabel
+        full_path_width = QFontMetrics(label.font()).horizontalAdvance(label.text())
+        return list(range(fit + full_path_width, one - FIXED_SPACING - 1, -FIXED_SPACING))
 
     def test_narrowing_only_moves_forward_through_the_stages(self, qapp):
-        box, widget = make_boxed(width=1400)
+        box, widget = make_boxed()
         seen = self._sweep(box, widget, self._widths(widget))
         stages = list(seen.values())
         assert stages[0] == 0 and stages[-1] == 3, f"전제: 넓게 ①전문 → 좁게 ③접힘까지 내려간다: {stages[0]}…{stages[-1]}"
