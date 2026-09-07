@@ -34,7 +34,7 @@ jobs:
         run: uv sync
         
       - name: Verify version matches tag
-        if: startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         shell: bash
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
@@ -46,7 +46,7 @@ jobs:
           fi
 
       - name: Resolve build version (manual run only)
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        if: github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
           PY_VERSION=$(uv run python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
@@ -69,12 +69,12 @@ jobs:
           QT_QPA_PLATFORM: offscreen
 
       - name: Inject build info (release marker)
-        if: startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         shell: bash
         run: uv run python scripts/inject_build_info.py --release
 
       - name: Inject build info (manual run — no release marker)
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        if: github.event_name == 'workflow_dispatch'
         shell: bash
         run: uv run python scripts/inject_build_info.py
 
@@ -222,7 +222,7 @@ jobs:
 
   release:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
