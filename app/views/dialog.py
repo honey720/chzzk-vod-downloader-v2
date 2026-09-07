@@ -286,14 +286,4 @@ class SettingDialog(QDialog):
         path = os.path.join(config.CONFIG_DIR, "logs")
         if not QDesktopServices.openUrl(QUrl.fromLocalFile(path)):
             QMessageBox.warning(self, self.tr("Warning"), f"'{path}'을(를) 열 수 없습니다.")
-
-    def getCookies(self):
-        """
-        호출 측에서 다이얼로그가 닫힌 후, 입력한 쿠키값을 받아갈 수 있도록 하는 헬퍼 함수.
-        """
-        return self.nidaut.text(), self.nidses.text()
-    
-    def onApply(self):
-        """
-        '적용' 버튼을 클릭하면 설정 값을 저장하고 다이얼로그를 닫는다.
         """
