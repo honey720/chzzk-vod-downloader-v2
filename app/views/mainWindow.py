@@ -16,7 +16,7 @@ from core.models.download_state import DownloadState
 from ui.mainWindow import Ui_VodDownloader
 import app.theme as theme
 
-logger = logging.getLogger("application.mainWindow")  # 이동 전 이름 고정 — caplog가 이 이름을 본다(#259 A2, 부채: 이동 완료 후 일괄 정리)
+logger = logging.getLogger(__name__)
 
 
 def _default_download_path() -> str:

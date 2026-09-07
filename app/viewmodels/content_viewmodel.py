@@ -43,10 +43,7 @@ from core.services.metadata_service import MetadataError
 from core.utils.paths import build_output_path, ensure_unique_path
 from core.models.download_state import DownloadState
 
-# 유저 행위·관문 로그의 로거 이름은 "content.manager"를 유지한다 — 제보
-# 진단 절차와 기존 테스트(caplog)가 이 이름을 알고 있고, 로직의 거처가
-# 바뀌었다고 로그 소비자의 주소까지 바꾸지 않는다. 로거 재편은 C1에서
-logger = logging.getLogger("content.manager")
+logger = logging.getLogger(__name__)
 # 조회 실패 트레이스백(구 content.worker) — 이름을 박은 테스트가 없어 모듈 경로 유도
 _fetch_logger = logging.getLogger(__name__)
 
