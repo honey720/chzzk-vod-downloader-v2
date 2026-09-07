@@ -42,9 +42,8 @@ def _seed_config() -> Path:
     """
     path = Path(config.CONFIG_FILE)
     path.parent.mkdir(parents=True, exist_ok=True)
-    text = json.dumps(config.default_config(), indent=8, sort_keys=True) + "
-
-"
+    trailer = chr(10) * 2  # 빈 줄 꼬리 — 제품의 save_config는 이렇게 쓰지 않는다
+    text = json.dumps(config.default_config(), indent=8, sort_keys=True) + trailer
     path.write_text(text, encoding="utf-8")
     return path
 
