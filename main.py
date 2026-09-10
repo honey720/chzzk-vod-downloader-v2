@@ -58,8 +58,51 @@ def apply_theme(app):
     theme.follow_os_color_scheme(app, qss_path)
 
 
+# Qt 표준 문구(QDialogButtonBox·QMessageBox의 OK/Cancel/Yes/No 등)는 우리 .ts가 아니라
+# Qt 자체 카탈로그(qtbase_<언어>.qm)가 번역한다(#240 2단계). 그 카탈로그는 PySide6
+# 동봉본에 있지만 Nuitka PySide6 플러그인은 QtWebEngine을 쓸 때만 그 폴더를 복사하므로
+# 배포본에는 없었다. 필요한 언어 파일만 translations/에 복사해 두고(폴더째 동봉됨) 앱
+# 언어에 맞춰 로드한다. 영어는 원문이라 파일이 없고, **파일이 없으면 영어로 남는 것이
+# 정상 동작이다** — 앱이 죽어선 안 된다.
+#: 설치한 Qt 카탈로그 QTranslator의 파이썬 참조 — 참조가 끊기면 번역기가 파괴돼 번역이 사라진다
+_qt_translators: list[QTranslator] = []
+
+
+def qt_catalog_path(language: str) -> str:
+    """언어(`ko_KR` 등)에 맞는 Qt 표준 문구 카탈로그 경로 — `translations/qtbase_<언어코드>.qm`."""
+    return resource_path(f"translations/qtbase_{QLocale(language).bcp47Name()}.qm")
+
+
+def install_qt_catalog(app, language: str):
+    """Qt 자체 카탈로그(qtbase_<언어코드>.qm)를 설치한다. 파일이 없거나 못 읽으면 None.
+
+    설치 순서가 중요하다 — Qt는 **나중에 설치한 번역기를 먼저** 검색한다(실측: 같은
+    키를 가진 번역기 둘을 순서를 바꿔 설치하면 항상 나중 것이 이긴다). 우리 번역이
+    Qt 카탈로그보다 우선해야 하므로 이 함수는 우리 번역기를 설치하기 **전에** 부른다.
+    창을 만들기 전이어야 한다 — 이미 만들어진 버튼 상자는 LanguageChange를 받아야
+    다시 번역된다.
+    """
+    path = qt_catalog_path(language)
+    if not os.path.exists(path):
+        logger.info("qt catalog not bundled for %s — standard buttons stay in English", language)
+        return None
+    translator = QTranslator()
+    if not translator.load(path):
+        logger.warning("qt catalog load failed: %s", path)
+        return None
+    app.installTranslator(translator)
+    _qt_translators.append(translator)
+    return translator
+
+
 def set_language(app_config, translator):
-    
+    """앱 언어를 정하고 번역기를 설치한다 — 설치 순서: Qt 카탈로그 → 우리 번역(마지막이 우선).
+
+    Returns:
+        list: 설치한 번역기를 설치 순서대로. 게이트가 순서를 확인한다.
+    """
+    installed = []
+
     # 1. 설정 파일에서 언어 가져오기
     language = app_config.get('language')
     is_language_in_config = language is not None
@@ -78,9 +121,14 @@ def set_language(app_config, translator):
 
     if os.path.exists(translation_file) and translator.load(translation_file):
         logger.info("translation file load success")
-        # 번역 파일 로드 성공   
+        # Qt 표준 문구 카탈로그를 **먼저** — 나중에 설치한 우리 번역이 먼저 검색된다
+        qt_translator = install_qt_catalog(app, language)
+        if qt_translator is not None:
+            installed.append(qt_translator)
+        # 번역 파일 로드 성공
         app.installTranslator(translator)
-        
+        installed.append(translator)
+
         # 설정 파일에 언어가 없었던 경우에만 저장
         if not is_language_in_config:
             app_config['language'] = language
@@ -88,10 +136,13 @@ def set_language(app_config, translator):
     else:
         logger.warning("translation file load failed")
         # 번역 파일 로드 실패 -> 이번 실행에 한해 기본 언어(en_US) 사용.
-        # 실패는 일시적일 수 있으므로 유저가 저장한 language 설정은 덮어쓰지 않는다
+        # 실패는 일시적일 수 있으므로 유저가 저장한 language 설정은 덮어쓰지 않는다.
+        # 영어는 원문이라 Qt 카탈로그도 없다
         language = "en_US"
         if translator.load(resource_path(f"translations/{language}.qm")):
             app.installTranslator(translator)
+            installed.append(translator)
+    return installed
 
 
 if __name__ == '__main__':
