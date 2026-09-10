@@ -5,8 +5,10 @@ QFormLayout이 암묵적으로 해주던 것 가운데 이 화면이 실제로 �
 레이아웃과 무관하다):
 
   ① 필드 성장 — 남는 가로 공간은 필드 열이 전부 흡수하고 라벨 열은 넓어지지 않는다
-  ② 라벨 정렬 — 라벨은 셀을 채우지 않고 자기 sizeHint 폭으로 왼쪽에 붙는다
-     (라벨 열에 놓인 도움말 버튼도 같은 규칙)
+  ② 라벨 정렬 — 라벨은 셀을 채우지 않고 자기 sizeHint 폭으로 왼쪽에 붙고,
+     세로 위치·높이는 **같은 라벨을 QFormLayout에 넣었을 때와 같다**(행 상단, 높이는
+     sizeHint × 7/4 — 가운데 정렬이면 2px 내려앉는다, 오너 실기 확인). 라벨 열의
+     도움말 버튼도 가로 규칙은 같다
 
 여기에 레이아웃 교체가 건드리기 쉬운 것 둘을 더 잰다:
 
@@ -14,8 +16,9 @@ QFormLayout이 암묵적으로 해주던 것 가운데 이 화면이 실제로 �
   ④ 창 최소 크기 — 상수가 아니라 레이아웃에서 유도된다(그룹 상자 셋 중 가장 넓은 것)
 
 전부 **폰트에 의존하지 않는 기하 관계**로 잰다(sizeHint·상대 위치·폭 차이만 본다).
-고장 주입으로 확인한 것: 열 stretch를 빼면 ①이, 라벨 정렬을 빼면 ②가, 생성 순서를
-바꾸면 ③이, QFormLayout으로 되돌리면 첫 게이트가 실패한다.
+고장 주입으로 확인한 것: 열 stretch를 빼면 ①이, 라벨 정렬을 빼면 ②(가로)가, 세로 정렬을
+AlignVCenter로 되돌리거나 라벨을 평범한 QLabel(×7/4 없음)로 되돌리면 ②(세로 대조군)가,
+생성 순서를 바꾸면 ③이, QFormLayout으로 되돌리면 첫 게이트가 실패한다.
 """
 
 import json
@@ -23,7 +26,7 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QDialogButtonBox, QFormLayout, QGroupBox, QLayout
+from PySide6.QtWidgets import QApplication, QDialogButtonBox, QFormLayout, QGroupBox, QLabel, QLayout, QWidget
 
 import config.config as config
 from app.views.dialog import SettingDialog
@@ -142,6 +145,47 @@ def test_labels_hug_their_size_hint_on_the_left(dialog):
             assert label.geometry().x() == left, f"{label_name}: 왼쪽 끝이 상자 안쪽 끝과 다르다"
             assert label.geometry().width() == label.sizeHint().width(), (
                 f"{label_name}: 폭 {label.geometry().width()} ≠ sizeHint {label.sizeHint().width()} — 셀 폭으로 늘어났다"
+            )
+
+
+def _form_reference(label_font, label_text: str, field_height: int) -> tuple[int, int]:
+    """같은 라벨을 같은 높이의 필드와 QFormLayout에 넣었을 때의 (행 상단 대비 y, 높이) — 대조군.
+
+    구 폼의 규칙(qformlayout.cpp: 라벨 높이 = min(행 높이, sizeHint 높이 × 7/4), 행 상단
+    배치)을 테스트가 직접 적지 않고 **QFormLayout 자체에게 묻는다** — 제품(_FormLabel)이
+    규칙을 틀리게 옮겨도 대조군은 틀리지 않는다. 폰트 무의존.
+    """
+    host = QWidget()
+    form = QFormLayout(host)
+    label = QLabel(label_text)
+    label.setFont(label_font)
+    field = QWidget()
+    field.setFixedHeight(field_height)
+    form.addRow(label, field)
+    host.resize(300, field_height + 40)
+    host.show()
+    QApplication.processEvents()
+    result = (label.geometry().y() - field.geometry().y(), label.geometry().height())
+    host.close()
+    host.deleteLater()
+    return result
+
+
+def test_labels_sit_where_a_form_layout_would_put_them(dialog):
+    """라벨의 세로 위치·높이가 구 QFormLayout과 같다 — 위쪽 끝은 필드와 같고 높이는 폼 규칙.
+
+    구 폼은 라벨을 행 상단에 놓되 높이를 sizeHint × 7/4까지 늘려 글자가 그 안에서
+    가운데 온다. sizeHint 그대로 상단에 붙이면 글자가 위로, 가운데 정렬이면 아래로
+    어긋난다(2px, 오너 실기 확인). 대조군은 QFormLayout에게 직접 묻는다.
+    """
+    _at_width(dialog, 120)
+    for rows in ROWS.values():
+        for label_name, field_name in rows:
+            label, field = _widget(dialog, label_name), _widget(dialog, field_name)
+            expected_dy, expected_h = _form_reference(label.font(), label.text(), field.geometry().height())
+            actual = (label.geometry().y() - field.geometry().y(), label.geometry().height())
+            assert actual == (expected_dy, expected_h), (
+                f"{label_name}: (필드 대비 y, 높이) {actual} ≠ QFormLayout 대조군 {(expected_dy, expected_h)}"
             )
 
 
