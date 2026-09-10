@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QFormLayout,
+    QGridLayout,
     QGroupBox,
     QLabel,
     QLineEdit,
@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtCore import QEvent, QItemSelectionModel, QMetaObject, QObject, QTimer, QUrl
+from PySide6.QtCore import QEvent, QItemSelectionModel, QMetaObject, QObject, QSize, Qt, QTimer, QUrl
 
 
 class _ComboBoxPopupHighlightResync(QObject):
@@ -109,6 +109,58 @@ def _wire_popup_highlight_resync(combo: QComboBox) -> None:
     combo.view().window().installEventFilter(_ComboBoxPopupHighlightResync(combo))
 
 
+# 라벨 열 / 필드 열 — 구 QFormLayout의 LabelRole / FieldRole 자리
+_LABEL_COLUMN = 0
+_FIELD_COLUMN = 1
+# 구 QFormLayout이 라벨에 적용하던 정렬 — 가로는 왼쪽(Fusion의 SH_FormLayoutLabelAlignment),
+# 세로는 **행 상단**. 정렬을 주면 라벨 위젯은 셀을 채우지 않고 자기 sizeHint 크기로 줄어
+# 왼쪽 위에 붙는다. 세로 위치가 구 폼과 같아지려면 sizeHint **높이**도 구 폼 규칙이어야
+# 한다 — 그것은 `_FormLabel`이 낸다.
+_LABEL_ALIGNMENT = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+
+
+class _FormLabel(QLabel):
+    """구 QFormLayout이 라벨에 주던 높이를 sizeHint로 내는 라벨 (v2.9.7 S2 후속).
+
+    QFormLayout은 라벨을 행 상단에 놓되 높이를 `min(행 높이, 라벨 sizeHint 높이 × 7/4)`로
+    준다(qformlayout.cpp `arrangeWidgets` — 세로로 안 늘어나는 라벨의 `qMin(height,
+    qMin(label->sizeHint.height() * 7 / 4, label->maxSize.height()))`). 글자는 그 높이
+    안에서 가운데 그려지므로, 격자에서 라벨을 sizeHint 그대로(15px) 상단에 붙이면
+    글자가 5px 위로, AlignVCenter로 두면 2px 아래로 어긋난다(실측·오너 실기 확인).
+    sizeHint 높이를 같은 규칙(×7/4)으로 내면 `_LABEL_ALIGNMENT`(왼쪽·상단)와 합쳐
+    구 폼과 같은 자리에 같은 높이로 놓인다. 행 높이 상한은 두지 않는다 — 이 화면의
+    필드(29px)는 전부 그보다 높아 상한이 걸리지 않고, 폰트가 바뀌어도 비율이라 같이 간다.
+    """
+
+    def sizeHint(self) -> QSize:
+        hint = super().sizeHint()
+        return QSize(hint.width(), hint.height() * 7 // 4)
+
+
+def _label_field_grid(box: QGroupBox, object_name: str) -> QGridLayout:
+    """그룹 상자 안의 「라벨 열 + 필드 열」 격자를 만든다 (v2.9.7 S2 — QFormLayout 대체).
+
+    QFormLayout이 암묵적으로 해주던 것 가운데 이 화면이 실제로 쓰고 있던 둘을
+    명시적으로 재현한다(1단계 실측 — 그 밖의 buddy·니모닉·행 줄바꿈은 쓰이지
+    않았다):
+
+    - **필드 성장**(FieldGrowthPolicy.AllNonFixedFieldsGrow): 남는 가로 공간은
+      필드 열이 전부 흡수하고 라벨 열은 가장 넓은 라벨의 sizeHint 폭에 머문다
+      → 열 stretch 0/1.
+    - **라벨 정렬**(가로 왼쪽 + 세로 상단): 각 addWidget에 `_LABEL_ALIGNMENT`를
+      준다 — 격자는 정렬을 주지 않으면 라벨을 셀 폭으로 늘리고, 세로 정렬을
+      가운데로 주면 구 폼보다 라벨이 내려앉는다.
+
+    간격·여백은 주지 않는다 — QFormLayout과 QGridLayout 모두 스타일의
+    PM_Layout* 기본값을 쓰므로 그대로 두어야 같은 값(Fusion 6/9)이 나온다.
+    """
+    grid = QGridLayout(box)
+    grid.setObjectName(object_name)
+    grid.setColumnStretch(_LABEL_COLUMN, 0)
+    grid.setColumnStretch(_FIELD_COLUMN, 1)
+    return grid
+
+
 class SettingDialog(QDialog):
     """설정 창 — 쿠키 · 다운로드 후 동작 · 언어 · 로그 폴더.
 
@@ -143,61 +195,59 @@ class SettingDialog(QDialog):
         # ---- 쿠키 ----
         self.cookiesBox = QGroupBox(dialog)
         self.cookiesBox.setObjectName("cookiesBox")
-        self.cookiesFormLayout = QFormLayout(self.cookiesBox)
-        self.cookiesFormLayout.setObjectName("cookiesFormLayout")
-        self.nidautLabel = QLabel(self.cookiesBox)
+        self.cookiesGridLayout = _label_field_grid(self.cookiesBox, "cookiesGridLayout")
+        self.nidautLabel = _FormLabel(self.cookiesBox)
         self.nidautLabel.setObjectName("nidautLabel")
-        self.cookiesFormLayout.setWidget(0, QFormLayout.ItemRole.LabelRole, self.nidautLabel)
+        self.cookiesGridLayout.addWidget(self.nidautLabel, 0, _LABEL_COLUMN, _LABEL_ALIGNMENT)
         self.nidaut = QLineEdit(self.cookiesBox)
         self.nidaut.setObjectName("nidaut")
         self.nidaut.setClearButtonEnabled(True)
-        self.cookiesFormLayout.setWidget(0, QFormLayout.ItemRole.FieldRole, self.nidaut)
-        self.nidsesLabel = QLabel(self.cookiesBox)
+        self.cookiesGridLayout.addWidget(self.nidaut, 0, _FIELD_COLUMN)
+        self.nidsesLabel = _FormLabel(self.cookiesBox)
         self.nidsesLabel.setObjectName("nidsesLabel")
-        self.cookiesFormLayout.setWidget(1, QFormLayout.ItemRole.LabelRole, self.nidsesLabel)
+        self.cookiesGridLayout.addWidget(self.nidsesLabel, 1, _LABEL_COLUMN, _LABEL_ALIGNMENT)
         self.nidses = QLineEdit(self.cookiesBox)
         self.nidses.setObjectName("nidses")
         self.nidses.setClearButtonEnabled(True)
-        self.cookiesFormLayout.setWidget(1, QFormLayout.ItemRole.FieldRole, self.nidses)
+        self.cookiesGridLayout.addWidget(self.nidses, 1, _FIELD_COLUMN)
         self.helpButton = QPushButton(self.cookiesBox)
         self.helpButton.setObjectName("helpButton")
-        self.cookiesFormLayout.setWidget(2, QFormLayout.ItemRole.LabelRole, self.helpButton)
+        # 도움말 버튼은 구 폼의 라벨 자리(라벨 열)에 있었다 — 자리와 정렬을 그대로 둔다
+        self.cookiesGridLayout.addWidget(self.helpButton, 2, _LABEL_COLUMN, _LABEL_ALIGNMENT)
         self.cookieSpacer = QSpacerItem(
             0, 0, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
         )
-        self.cookiesFormLayout.setItem(2, QFormLayout.ItemRole.FieldRole, self.cookieSpacer)
+        self.cookiesGridLayout.addItem(self.cookieSpacer, 2, _FIELD_COLUMN)
         self.dialogLayout.addWidget(self.cookiesBox)
 
         # ---- 다운로드 ----
         self.downloadBox = QGroupBox(dialog)
         self.downloadBox.setObjectName("downloadBox")
-        self.formLayout = QFormLayout(self.downloadBox)
-        self.formLayout.setObjectName("formLayout")
-        self.afterDownloadLabel = QLabel(self.downloadBox)
+        self.downloadGridLayout = _label_field_grid(self.downloadBox, "downloadGridLayout")
+        self.afterDownloadLabel = _FormLabel(self.downloadBox)
         self.afterDownloadLabel.setObjectName("afterDownloadLabel")
-        self.formLayout.setWidget(0, QFormLayout.ItemRole.LabelRole, self.afterDownloadLabel)
+        self.downloadGridLayout.addWidget(self.afterDownloadLabel, 0, _LABEL_COLUMN, _LABEL_ALIGNMENT)
         self.afterDownload = QComboBox(self.downloadBox)
         self.afterDownload.setObjectName("afterDownload")
-        self.formLayout.setWidget(0, QFormLayout.ItemRole.FieldRole, self.afterDownload)
+        self.downloadGridLayout.addWidget(self.afterDownload, 0, _FIELD_COLUMN)
         self.dialogLayout.addWidget(self.downloadBox)
 
         # ---- 일반 ----
         self.commonBox = QGroupBox(dialog)
         self.commonBox.setObjectName("commonBox")
-        self.commonFormLayout = QFormLayout(self.commonBox)
-        self.commonFormLayout.setObjectName("commonFormLayout")
-        self.languageLabel = QLabel(self.commonBox)
+        self.commonGridLayout = _label_field_grid(self.commonBox, "commonGridLayout")
+        self.languageLabel = _FormLabel(self.commonBox)
         self.languageLabel.setObjectName("languageLabel")
-        self.commonFormLayout.setWidget(0, QFormLayout.ItemRole.LabelRole, self.languageLabel)
+        self.commonGridLayout.addWidget(self.languageLabel, 0, _LABEL_COLUMN, _LABEL_ALIGNMENT)
         self.language = QComboBox(self.commonBox)
         self.language.setObjectName("language")
-        self.commonFormLayout.setWidget(0, QFormLayout.ItemRole.FieldRole, self.language)
-        self.logsFolderLabel = QLabel(self.commonBox)
+        self.commonGridLayout.addWidget(self.language, 0, _FIELD_COLUMN)
+        self.logsFolderLabel = _FormLabel(self.commonBox)
         self.logsFolderLabel.setObjectName("logsFolderLabel")
-        self.commonFormLayout.setWidget(1, QFormLayout.ItemRole.LabelRole, self.logsFolderLabel)
+        self.commonGridLayout.addWidget(self.logsFolderLabel, 1, _LABEL_COLUMN, _LABEL_ALIGNMENT)
         self.logsFolder = QPushButton(self.commonBox)
         self.logsFolder.setObjectName("logsFolder")
-        self.commonFormLayout.setWidget(1, QFormLayout.ItemRole.FieldRole, self.logsFolder)
+        self.commonGridLayout.addWidget(self.logsFolder, 1, _FIELD_COLUMN)
         self.dialogLayout.addWidget(self.commonBox)
 
         self.settingLayout.addLayout(self.dialogLayout)
