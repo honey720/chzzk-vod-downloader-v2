@@ -12,7 +12,7 @@
 
 > Download Chzzk VODs and clips.
 
-![main](https://github.com/user-attachments/assets/ae01a231-e3d0-425c-a76f-0042d49a2a8b)  
+![main](https://github.com/user-attachments/assets/e7873c01-8ecf-46ab-a7ea-5e8be27dd042)  
 ---
 
 ## ✨ Features
@@ -54,7 +54,7 @@ Grab the latest build from the [Releases](https://github.com/honey720/chzzk-vod-
    - Age-restricted and members-only videos can only be downloaded with the cookies of an account that can watch them. Register your cookies in **Settings**.
    - If you change the language, restart the app after applying.
 
-![usage](https://github.com/user-attachments/assets/857b3cfc-dbb1-4e5b-a6f8-027eb48f2e35)
+https://github.com/user-attachments/assets/60114a53-3f3e-4ca1-9236-efff05d78d81
 
 ---
 

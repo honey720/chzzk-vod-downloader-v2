@@ -12,7 +12,7 @@
 
 > 치지직 다시보기와 클립을 다운로드하는 프로그램입니다.
 
-![main](https://github.com/user-attachments/assets/ae01a231-e3d0-425c-a76f-0042d49a2a8b)
+![main](https://github.com/user-attachments/assets/e7873c01-8ecf-46ab-a7ea-5e8be27dd042)
 ---
 
 ## ✨ 특징
@@ -54,7 +54,7 @@
    - 연령 제한 영상과 멤버십 전용 영상은 해당 계정의 쿠키를 등록해야 받을 수 있습니다. **설정**에서 쿠키를 등록하세요.
    - 언어를 바꿨다면 적용 후 프로그램을 재시작해야 합니다.
 
-![usage](https://github.com/user-attachments/assets/857b3cfc-dbb1-4e5b-a6f8-027eb48f2e35)
+https://github.com/user-attachments/assets/60114a53-3f3e-4ca1-9236-efff05d78d81
 
 ---
 
