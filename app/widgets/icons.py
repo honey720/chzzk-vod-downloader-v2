@@ -18,7 +18,17 @@
 """
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontDatabase,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+    QPolygonF,
+    QTransform,
+)
 from PySide6.QtWidgets import QPushButton
 
 import app.theme as theme
@@ -26,7 +36,10 @@ import app.theme as theme
 #: 그릴 수 있는 아이콘 이름 — `IconButton.setIconName()`이 받는 어휘.
 #: folder_dot = 폴더 + 우상단 점(강조색) — 카드 경로가 전역 설정과 다를 때
 #: 아이콘만 남은 경로 자리에 "다르다"를 표시한다(#245).
-ICON_NAMES = ("pause", "resume", "retry", "folder", "folder_dot", "delete")
+#: settings = 상단 바 설정 버튼의 톱니 — Windows에서는 설정 앱과 같은 글리프(Segoe Fluent
+#: Icons U+E713), 그 폰트가 없는 OS에서는 같은 자세의 외곽선 톱니를 그린다. 이전의
+#: `⚙`(U+2699)는 어느 폰트가 받든 그 폰트 모양이라 플랫폼마다 달랐다.
+ICON_NAMES = ("pause", "resume", "retry", "folder", "folder_dot", "delete", "settings")
 
 _CACHE: dict[tuple[str, str, int, float, str], QPixmap] = {}
 
@@ -161,6 +174,74 @@ def _paint_delete(painter: QPainter, s: float, color: QColor, accent: QColor) ->
     painter.drawLine(QPointF(s * 0.78, s * 0.22), QPointF(s * 0.22, s * 0.78))
 
 
+#: Windows가 설정 앱에 쓰는 톱니 글리프 — Segoe Fluent Icons(Windows 11) / Segoe MDL2
+#: Assets(Windows 10)의 U+E713 "Settings". 두 폰트는 Windows에만 있다.
+_SETTINGS_GLYPH = ""
+_SETTINGS_GLYPH_FAMILIES = ("Segoe Fluent Icons", "Segoe MDL2 Assets")
+_settings_family: str | None = None  # None = 아직 안 찾음, "" = 없음(그린 도형으로)
+
+
+def settings_glyph_family() -> str:
+    """설정 톱니에 쓸 시스템 아이콘 폰트 가족 — 없으면 빈 문자열(그린 도형으로 대체).
+
+    Windows 11의 설정 앱과 같은 톱니를 쓰기 위해 Segoe Fluent Icons(없으면 Segoe MDL2
+    Assets)를 찾는다. 다른 OS에는 없으므로 빈 문자열이 돌아오고 `_paint_settings_drawn`이
+    비슷한 외곽선 톱니를 그린다. 폰트 목록 조회는 한 번만 한다.
+    """
+    global _settings_family
+    if _settings_family is None:
+        families = set(QFontDatabase.families())
+        _settings_family = next((f for f in _SETTINGS_GLYPH_FAMILIES if f in families), "")
+    return _settings_family
+
+
+def _paint_settings(painter: QPainter, s: float, color: QColor, accent: QColor) -> None:
+    """설정 — Windows의 설정 앱 톱니(Segoe Fluent Icons U+E713)를 그대로 쓰고, 그 폰트가
+    없는 OS에서는 같은 자세의 외곽선 톱니를 직접 그린다.
+
+    카드 조작 아이콘이 글리프를 버린 이유(#245 — 폰트 스택이 모양을 정한다)는 여기도
+    같지만, 이 글리프는 **OS 자체의 설정 아이콘**이라 그 OS에서는 그 모양이 곧 정답이다.
+    폰트가 없는 곳은 그린 도형이므로 여전히 폰트 스택에 기대지 않는다.
+    """
+    family = settings_glyph_family()
+    if not family:
+        _paint_settings_drawn(painter, s, color, accent)
+        return
+    font = QFont(family)
+    font.setPixelSize(round(s))
+    painter.setFont(font)
+    painter.setPen(color)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.drawText(QRectF(0, 0, s, s), Qt.AlignmentFlag.AlignCenter, _SETTINGS_GLYPH)
+
+
+def _paint_settings_drawn(painter: QPainter, s: float, color: QColor, accent: QColor) -> None:
+    """설정(대체) — Fluent Settings 식 외곽선 톱니: 둥근 이 8개 + 가운데 구멍.
+
+    채운 톱니가 아니라 **선**으로 그린다 — Fluent 아이콘은 균일한 가는 외곽선이다.
+    몸통 원과 이 8개를 합집합(`simplified`)으로 한 경로를 만들어 한 번에 스트로크하고,
+    가운데 구멍은 따로 원으로 긋는다. 이는 12시 방향부터 45° 간격 — U+E713과 같은 자세다.
+    """
+    _stroke(painter, color, s * 0.09)
+    cx = cy = s * 0.50
+    body = s * 0.30          # 몸통 반지름
+    tip = s * 0.46           # 이 끝까지 반지름 (선 두께 절반이 밖으로 더 나간다)
+    tooth_w = s * 0.24       # 이 폭
+    gear = QPainterPath()
+    gear.addEllipse(QPointF(cx, cy), body, body)
+    for i in range(8):
+        tooth = QPainterPath()
+        # 몸통 안쪽(body*0.7)에서 시작해 tip까지 뻗는 둥근 사각형 — 안쪽은 몸통에 묻힌다
+        tooth.addRoundedRect(
+            QRectF(-tooth_w / 2, -tip, tooth_w, tip - body * 0.7), tooth_w * 0.30, tooth_w * 0.30
+        )
+        t = QTransform().translate(cx, cy).rotate(i * 45)
+        gear = gear.united(t.map(tooth))
+    painter.drawPath(gear.simplified())
+    hole = s * 0.14
+    painter.drawEllipse(QPointF(cx, cy), hole, hole)
+
+
 _PAINTERS = {
     "pause": _paint_pause,
     "resume": _paint_resume,
@@ -168,6 +249,7 @@ _PAINTERS = {
     "folder": _paint_folder,
     "folder_dot": _paint_folder_dot,
     "delete": _paint_delete,
+    "settings": _paint_settings,
 }
 
 
@@ -186,6 +268,7 @@ class IconButton(QPushButton):
         self._idle_token = "textMuted"
         self._hover_token = "text"
         self._accent_token = ""
+        self._glyph_size = 0  # 0 = theme.METRICS["actionGlyph"]
         self._interactive = True
         self.setProperty("interactive", True)
         # 호버 진입·이탈에 다시 그리게 한다(QSS :hover 규칙이 없어도)
@@ -248,6 +331,21 @@ class IconButton(QPushButton):
         """강조색 토큰 이름(없으면 빈 문자열)."""
         return self._accent_token
 
+    def setGlyphSize(self, size: int) -> None:
+        """도형 한 변(px). 0이면 `theme.METRICS["actionGlyph"]`(카드 조작 아이콘 기본).
+
+        상단 바 설정 버튼(32px)처럼 카드 버튼(20px)보다 큰 버튼은 도형도 키워야
+        비율이 맞는다 — 버튼 크기에서 유도하지 않고 명시하는 것은 카드 쪽 기본을
+        건드리지 않기 위해서다.
+        """
+        if size != self._glyph_size:
+            self._glyph_size = size
+            self.update()
+
+    def glyphSize(self) -> int:
+        """지금 그리는 도형 한 변(px) — 0이 아니면 명시값, 0이면 테마 기본."""
+        return self._glyph_size or theme.METRICS["actionGlyph"]
+
     def colorToken(self) -> str:
         """지금 도형에 쓸 색 토큰 — 비활성 > 호버 > 평소 순으로 정한다."""
         if not self.isEnabled():
@@ -260,7 +358,7 @@ class IconButton(QPushButton):
         super().paintEvent(event)
         if not self._icon_name:
             return
-        size = theme.METRICS["actionGlyph"]
+        size = self.glyphSize()
         tokens = theme.current_tokens()
         color = tokens[self.colorToken()]
         accent = tokens[self._accent_token] if self._accent_token else ""

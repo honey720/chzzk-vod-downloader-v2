@@ -60,6 +60,8 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setupUi(self)
+        # 설정 톱니(그린 도형) — 32px 버튼에 맞는 크기. 카드 조작 아이콘(12px)과 다르다.
+        self.settingButton.setGlyphSize(theme.METRICS["headerGlyph"])
         self.setupDynamicUi()
 
         width_ratio = 0.45
