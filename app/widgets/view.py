@@ -1,6 +1,7 @@
 from PySide6.QtWidgets import QScrollArea, QWidget, QVBoxLayout
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDragLeaveEvent, QDropEvent, QPainter, QColor
+import app.theme as theme
 from app.widgets.widget import ContentItemWidget
 from app.viewmodels.data import ContentItem
 
@@ -51,13 +52,23 @@ class ContentListView(QScrollArea):
         # 카드는 창 폭에 맞춰야 한다 — 넘치는 제목·경로·상태 문구는 ElidingLabel이
         # 알아서 잘라 보여준다(PR #229 후속). 가로 스크롤은 그 자체가 버그였다.
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # 세로 스크롤바는 필요할 때만(AsNeeded). 다만 스크롤바가 보이는 동안은 카드 컨테이너의
+        # 오른쪽 패딩에서 스크롤바 폭을 빼서(`_fitPaddingAroundScrollBar`) 스크롤바가 카드
+        # 오른쪽 여백(outerMargin) 안에 들어가게 한다 — 카드 폭·위치가 스크롤바 유무와
+        # 무관해진다(v2.10.1). 항상 켜 두는 안(AlwaysOn)은 빈 목록에도 바가 보여 기각(오너).
+        # transient(오버레이) 힌트는 QSS로 스타일된 스크롤바에 Qt가 적용하지 않는다(실측 —
+        # 위젯 기준 styleHint가 0). 카드 높이는 폭과 무관하므로 되먹임 진동은 없다(실측).
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
         self._container = QWidget()
         self._layout = QVBoxLayout(self._container)
-        # 좌우 0(#244) — 카드 프레임이 상단·하단 바와 같은 좌측 정렬선
-        # (theme.METRICS["outerMargin"])에 놓이게 한다. 여기 좌우 여백이
-        # 있으면 카드만 안쪽으로 밀려 세로 정렬선이 끊긴다(실측 10px 어긋남).
-        self._layout.setContentsMargins(0, 4, 0, 8)
+        # 좌우 여백은 창(contentColumn)이 아니라 여기 카드 컨테이너가 진다(v2.10.1).
+        # 목록 자체는 창 좌우 끝까지 가서 스크롤바가 창 끝에 붙고, 카드 프레임은
+        # 이 패딩만큼 안쪽에 놓여 상단·하단 바와 같은 좌측 정렬선(outerMargin)을
+        # 지킨다 — 값이 바뀐 게 아니라 자리가 옮겨진 것이다(#244 정렬선 유지).
+        outer = theme.METRICS["outerMargin"]
+        self._layout.setContentsMargins(outer, 4, outer, 8)
+        self.verticalScrollBar().installEventFilter(self)  # Show/Hide → 오른쪽 패딩 조정
         # 카드끼리 붙어 있으면 목록이 답답해 보인다 (#227). 카드 자체가 가진
         # 위쪽 여백(contentItemLayout 10px)에 이만큼을 더해 간격을 낸다 —
         # 카드 폭에는 영향을 주지 않는 값이라 ElidingLabel 폭 계산과 무관하다
@@ -80,6 +91,23 @@ class ContentListView(QScrollArea):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._overlay.setGeometry(self.rect())
+
+    def eventFilter(self, watched, event):
+        if watched is self.verticalScrollBar() and event.type() in (QEvent.Type.Show, QEvent.Type.Hide):
+            self._fitPaddingAroundScrollBar()
+        return super().eventFilter(watched, event)
+
+    def _fitPaddingAroundScrollBar(self) -> None:
+        """스크롤바가 보이면 컨테이너 오른쪽 패딩에서 그 폭을 빼고, 숨으면 되돌린다 (v2.10.1).
+
+        카드 오른쪽 끝은 스크롤바 유무와 무관하게 항상 목록 오른쪽 끝 − outerMargin이다 —
+        스크롤바는 그 여백 안에 들어간다. 스크롤바가 여백보다 넓으면 패딩은 0에서 멈춘다.
+        """
+        bar = self.verticalScrollBar()
+        outer = theme.METRICS["outerMargin"]
+        taken = bar.width() if bar.isVisible() else 0
+        margins = self._layout.contentsMargins()
+        self._layout.setContentsMargins(outer, margins.top(), max(0, outer - taken), margins.bottom())
 
     def setModel(self, model):
         """✅ 모델을 설정하고 위젯을 자동으로 연결"""
