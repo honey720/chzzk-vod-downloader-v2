@@ -136,6 +136,9 @@
                <property name="toolTip">
                 <string>Settings</string>
                </property>
+               <property name="accessibleName">
+                <string>Settings</string>
+               </property>
                <property name="role" stdset="0">
                 <string notr="true">icon</string>
                </property>

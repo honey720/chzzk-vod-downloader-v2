@@ -60,7 +60,10 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setupUi(self)
-        # 설정 톱니(그린 도형) — 32px 버튼에 맞는 크기. 카드 조작 아이콘(12px)과 다르다.
+        # 설정 톱니 — 아이콘 이름과 크기는 .ui가 아니라 여기서 준다. IconButton은 .ui의
+        # 동적 프로퍼티를 받지 않으므로 ui/mainWindow.py를 재생성해도 여기서 다시 붙는다.
+        # 크기는 32px 버튼에 맞춘 값이며 카드 조작 아이콘(12px)과 다르다.
+        self.settingButton.setIconName("settings")
         self.settingButton.setGlyphSize(theme.METRICS["headerGlyph"])
         self.setupDynamicUi()
 

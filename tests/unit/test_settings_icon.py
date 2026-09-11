@@ -59,6 +59,18 @@ class TestButton:
         assert button.iconName() == "settings"
         assert button.property("role") == "icon", "호버 표면 QSS 규칙이 안 붙는다"
 
+    def test_icon_name_is_set_by_the_view_not_the_generated_ui(self, window):
+        """아이콘 이름은 뷰(app/views/mainWindow.py)가 준다 — ui/mainWindow.py를 재생성해도 남는다."""
+        with open("ui/mainWindow.py", encoding="utf-8") as f:
+            assert "setIconName" not in f.read(), "생성물 ui/mainWindow.py가 아이콘 이름을 쥐고 있다"
+        assert window.settingButton.iconName() == "settings"
+
+    def test_accessible_name_follows_the_tooltip_translation(self, window):
+        """텍스트 없는 버튼이라 접근성 이름이 있어야 하고, 툴팁과 같은 원문(Settings)을 번역해 쓴다."""
+        button = window.settingButton
+        assert button.accessibleName() != "", "접근성 이름이 비어 있다 — 스크린 리더에 안 잡힌다"
+        assert button.accessibleName() == button.toolTip()
+
     def test_glyph_size_matches_the_header_metric(self, window):
         """32px 버튼에 카드용 12px 도형을 그리면 작아서 안 읽힌다 — 상단 바 크기를 쓴다."""
         assert window.settingButton.glyphSize() == theme.METRICS["headerGlyph"]

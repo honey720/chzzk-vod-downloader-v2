@@ -121,9 +121,6 @@ class Ui_VodDownloader(object):
         self.settingButton.setMinimumSize(QSize(32, 32))
         self.settingButton.setMaximumSize(QSize(32, 32))
         self.settingButton.setProperty(u"role", u"icon")
-        # 톱니는 글리프가 아니라 그린 도형(app/widgets/icons.py "settings") — 크기는
-        # 뷰가 theme.METRICS["headerGlyph"]로 준다(app/views/mainWindow.py).
-        self.settingButton.setIconName(u"settings")
 
         self.headerRowsLayout.addWidget(self.settingButton, 0, Qt.AlignmentFlag.AlignVCenter)
 
@@ -202,6 +199,9 @@ class Ui_VodDownloader(object):
 #if QT_CONFIG(tooltip)
         self.settingButton.setToolTip(QCoreApplication.translate("VodDownloader", u"Settings", None))
 #endif // QT_CONFIG(tooltip)
+#if QT_CONFIG(accessibility)
+        self.settingButton.setAccessibleName(QCoreApplication.translate("VodDownloader", u"Settings", None))
+#endif // QT_CONFIG(accessibility)
         self.downloadPathInput.setPlaceholderText(QCoreApplication.translate("VodDownloader", u"Enter download path", None))
         self.downloadPathButton.setText(QCoreApplication.translate("VodDownloader", u"Find path", None))
         self.downloadCountLabel.setText(QCoreApplication.translate("VodDownloader", u"Downloads: {}/{}", None))
