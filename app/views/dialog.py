@@ -153,12 +153,34 @@ def _label_field_grid(box: QGroupBox, object_name: str) -> QGridLayout:
 
     간격·여백은 주지 않는다 — QFormLayout과 QGridLayout 모두 스타일의
     PM_Layout* 기본값을 쓰므로 그대로 두어야 같은 값(Fusion 6/9)이 나온다.
+
+    행을 다 넣은 뒤 `_pin_rows_to_top()`을 불러야 한다 — 세 번째로 살려야 했던
+    암묵 동작(남는 세로 공간의 행선지)은 그쪽이 맡는다.
     """
     grid = QGridLayout(box)
     grid.setObjectName(object_name)
     grid.setColumnStretch(_LABEL_COLUMN, 0)
     grid.setColumnStretch(_FIELD_COLUMN, 1)
     return grid
+
+
+def _pin_rows_to_top(grid: QGridLayout) -> None:
+    """남는 세로 공간을 행 아래 빈 행 하나에 몰아, 행들이 구 QFormLayout처럼 상단에 붙게 한다.
+
+    창을 최소 높이보다 키우면 그룹 상자 셋이 세로로 같이 늘어나는데, QGridLayout은
+    늘어날 수 있는 행이 없으면 남는 공간을 **행 앞·사이·뒤에 나눠 뿌린다**
+    (qlayoutengine.cpp `qGeomCalc` — 모든 항목이 최대 크기에 닿으면 남는 공간을
+    `count + 2` 등분해 첫 행 앞에 한 몫, 행 사이마다 한 몫, 끝에 두 몫). 행 하나짜리
+    상자는 행이 가운데로 내려오고, 행 둘은 벌어진다. 구 QFormLayout은 남는 공간을
+    전부 마지막 행 뒤에 두어 행들이 상단에 머물렀다(실측·오너 실기 확인 — 쿠키 상자만
+    3행째의 가로 스페이서(세로 Minimum)가 그 공간을 흡수해 홀로 상단에 남아 있었다).
+
+    빈 꼬리 행에 stretch 1을 주면 남는 공간은 그 행이 전부 가져가고 실제 행들은
+    자기 sizeHint 높이로 위에서부터 쌓인다. 빈 행은 sizeHint·최소 크기에 아무것도
+    보태지 않으므로(빈 행에는 행 간격도 붙지 않는다) 창 최소 크기와 최소 높이에서의
+    배치는 이 호출 전과 같다.
+    """
+    grid.setRowStretch(grid.rowCount(), 1)
 
 
 class SettingDialog(QDialog):
@@ -218,6 +240,7 @@ class SettingDialog(QDialog):
             0, 0, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
         )
         self.cookiesGridLayout.addItem(self.cookieSpacer, 2, _FIELD_COLUMN)
+        _pin_rows_to_top(self.cookiesGridLayout)
         self.dialogLayout.addWidget(self.cookiesBox)
 
         # ---- 다운로드 ----
@@ -230,6 +253,7 @@ class SettingDialog(QDialog):
         self.afterDownload = QComboBox(self.downloadBox)
         self.afterDownload.setObjectName("afterDownload")
         self.downloadGridLayout.addWidget(self.afterDownload, 0, _FIELD_COLUMN)
+        _pin_rows_to_top(self.downloadGridLayout)
         self.dialogLayout.addWidget(self.downloadBox)
 
         # ---- 일반 ----
@@ -248,6 +272,7 @@ class SettingDialog(QDialog):
         self.logsFolder = QPushButton(self.commonBox)
         self.logsFolder.setObjectName("logsFolder")
         self.commonGridLayout.addWidget(self.logsFolder, 1, _FIELD_COLUMN)
+        _pin_rows_to_top(self.commonGridLayout)
         self.dialogLayout.addWidget(self.commonBox)
 
         self.settingLayout.addLayout(self.dialogLayout)

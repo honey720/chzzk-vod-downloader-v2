@@ -244,3 +244,46 @@ def test_minimum_width_is_derived_from_the_widest_group_box(dialog):
     assert dialog.minimumSize().width() == dialog.minimumSizeHint().width(), (
         "표시 직후 창은 최소 크기에서 시작한다"
     )
+
+
+# ================================================================ ⑤ 남는 세로 공간
+
+
+def _rows_top_left(dlg: SettingDialog) -> dict[str, int]:
+    """상자마다 행에 놓인 위젯(라벨·필드·도움말)의 상자 기준 y — 행이 어디 붙어 있는지."""
+    result = {}
+    for box_name, rows in ROWS.items():
+        box = _widget(dlg, box_name)
+        names = [name for pair in rows for name in pair]
+        if box_name == "cookiesBox":
+            names.append("helpButton")
+        for name in names:
+            result[name] = _widget(dlg, name).mapTo(box, _widget(dlg, name).rect().topLeft()).y()
+    return result
+
+
+def test_extra_height_stays_below_the_rows(dialog):
+    """창을 세로로 키우면 남는 공간은 각 상자의 행 **아래**에 남고 행은 움직이지 않는다.
+
+    구 QFormLayout의 동작이다. 격자는 늘어날 수 있는 행이 없으면 남는 공간을 행 앞·사이·
+    뒤에 나눠 뿌려서(qGeomCalc) 행 하나짜리 상자는 행이 가운데로 내려오고 행 둘은
+    벌어진다 — 쿠키 상자만 3행째 스페이서가 공간을 흡수해 홀로 상단에 남아, 상자마다
+    정렬이 달라 보였다(오너 실기 확인). 폰트 무의존 — sizeHint 높이 때의 y와 같은지만 본다.
+
+    기준은 **최소 높이가 아니라 sizeHint 높이**다. 라벨 sizeHint(×7/4)가 필드보다 높은
+    글꼴에서는 행의 sizeHint가 최소 높이보다 커서, 최소 높이에서는 행이 눌려 있다가
+    창이 커지면 먼저 제 sizeHint까지 펴진다(구 폼의 `min(행 높이, ×7/4)` 규칙 그대로).
+    그 몇 px은 이 게이트가 재려는 것이 아니다 — sizeHint에서 시작하면 그 단계가 없다.
+    """
+    dialog.resize(dialog.sizeHint())
+    QApplication.processEvents()
+    at_hint = _rows_top_left(dialog)
+    box_heights = {name: _widget(dialog, name).height() for name in ROWS}
+
+    dialog.resize(dialog.sizeHint().width(), dialog.sizeHint().height() + 240)
+    QApplication.processEvents()
+    for name in ROWS:
+        assert _widget(dialog, name).height() > box_heights[name], f"{name}: 상자가 같이 안 늘어났다 — 전제"
+    after = _rows_top_left(dialog)
+    moved = {name: (y, after[name]) for name, y in at_hint.items() if after[name] != y}
+    assert moved == {}, f"창을 키웠더니 행이 움직였다 (이름: sizeHint 높이 y → 키운 뒤 y): {moved}"
