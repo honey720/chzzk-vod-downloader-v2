@@ -120,7 +120,7 @@
           </layout>
          </item>
          <item alignment="Qt::AlignVCenter">
-          <widget class="QPushButton" name="settingButton">
+          <widget class="IconButton" name="settingButton">
                <property name="minimumSize">
                 <size>
                  <width>32</width>
@@ -136,8 +136,8 @@
                <property name="toolTip">
                 <string>Settings</string>
                </property>
-               <property name="text">
-                <string notr="true">⚙</string>
+               <property name="accessibleName">
+                <string>Settings</string>
                </property>
                <property name="role" stdset="0">
                 <string notr="true">icon</string>
@@ -226,6 +226,11 @@
   </widget>
  </widget>
  <customwidgets>
+  <customwidget>
+   <class>IconButton</class>
+   <extends>QPushButton</extends>
+   <header>app/widgets/icons.h</header>
+  </customwidget>
   <customwidget>
    <class>ContentListView</class>
    <extends>QScrollArea</extends>

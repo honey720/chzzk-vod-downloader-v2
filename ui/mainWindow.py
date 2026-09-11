@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel,
     QLineEdit, QMainWindow, QPushButton, QScrollArea, QSizePolicy,
     QSpacerItem, QVBoxLayout, QWidget)
 
+from app.widgets.icons import IconButton
 from app.widgets.view import ContentListView
 
 class Ui_VodDownloader(object):
@@ -110,16 +111,15 @@ class Ui_VodDownloader(object):
 
         self.headerRowsLayout.addLayout(self.inputBlockLayout, 1)
 
-        # 설정(⚙) — 입력 블록 밖, 두 행 높이의 세로 중앙(#245 오너 확정).
+        # 설정(톱니) — 입력 블록 밖, 두 행 높이의 세로 중앙(#245 오너 확정).
         # 하단으로 내리는 안은 채택하지 않는다 — 설정 안의 쿠키는 성인·멤버십
         # VOD를 받으려면 반드시 한 번은 찾아야 해서 하단 muted 묶음에 두면 못
         # 찾는다(설정 화면 .ui 재작성 때 재검토). 남는 공간은 각 행에서 입력창
         # 하나만 흡수한다(버튼들은 고정 폭) — tests/unit/test_header_layout.py.
-        self.settingButton = QPushButton(self.headerFrame)
+        self.settingButton = IconButton(self.headerFrame)
         self.settingButton.setObjectName(u"settingButton")
         self.settingButton.setMinimumSize(QSize(32, 32))
         self.settingButton.setMaximumSize(QSize(32, 32))
-        self.settingButton.setText(u"⚙")
         self.settingButton.setProperty(u"role", u"icon")
 
         self.headerRowsLayout.addWidget(self.settingButton, 0, Qt.AlignmentFlag.AlignVCenter)
@@ -199,6 +199,9 @@ class Ui_VodDownloader(object):
 #if QT_CONFIG(tooltip)
         self.settingButton.setToolTip(QCoreApplication.translate("VodDownloader", u"Settings", None))
 #endif // QT_CONFIG(tooltip)
+#if QT_CONFIG(accessibility)
+        self.settingButton.setAccessibleName(QCoreApplication.translate("VodDownloader", u"Settings", None))
+#endif // QT_CONFIG(accessibility)
         self.downloadPathInput.setPlaceholderText(QCoreApplication.translate("VodDownloader", u"Enter download path", None))
         self.downloadPathButton.setText(QCoreApplication.translate("VodDownloader", u"Find path", None))
         self.downloadCountLabel.setText(QCoreApplication.translate("VodDownloader", u"Downloads: {}/{}", None))
