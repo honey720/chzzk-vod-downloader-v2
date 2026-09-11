@@ -142,9 +142,17 @@ def _independent_content_minimum(win: VodDownloader) -> int:
 
     상단바: 두 행 중 넓은 쪽(입력창 최소 + 간격 + 텍스트 버튼) + 간격 + ⚙ + 프레임 안쪽 여백·테두리.
     하단바: 라벨 + 완료 삭제 + 다운로드 + 중지 + 간격 3개 + 프레임 안쪽 여백·테두리.
-    열 = max(상단바, 하단바, 목록 최소) + 좌우 outerMargin.
+    열 = max(상단바 + 좌우 outerMargin, 하단바 + 좌우 outerMargin, 목록 최소).
+    좌우 outerMargin은 상단·하단 바의 행에만 붙고 목록은 창 끝까지 간다(v2.10.1).
+    하단 라벨 항은 지금 글자가 아니라 예약 기준(`999/999`)의 폭이다 — 자릿수가 늘어도
+    하단 바 최소폭이 안 변하는 것이 규칙이므로, 라벨에 그 문자열을 직접 넣어 잰다.
     """
     pad, outer = theme.METRICS["framePadding"], theme.METRICS["outerMargin"]
+    label = win.downloadCountLabel
+    shown = label.text()
+    label.setText(win.tr("Downloads: {}/{}").format(999, 999))
+    label_reserve = label.minimumSizeHint().width()
+    label.setText(shown)
     border = win.headerFrame.frameWidth()
     row_gap = win.urlRowLayout.spacing()
     url_row = _leaf_min(win.urlInput) + row_gap + _leaf_min(win.fetchButton)
@@ -152,17 +160,16 @@ def _independent_content_minimum(win: VodDownloader) -> int:
     header = max(url_row, path_row) + win.headerRowsLayout.spacing() + _leaf_min(win.settingButton)
     header += 2 * (pad + border)
     info_gap = win.infoLayout.spacing()
-    info = sum(
+    info = label_reserve + sum(
         _leaf_min(w)
         for w in (
-            win.downloadCountLabel,
             win.clearFinishedButton,
             win.downloadButton,
             win.stopButton,
         )
     )
     info += 3 * info_gap + 2 * (pad + border)
-    return max(header, info, win.listView.minimumSizeHint().width()) + 2 * outer
+    return max(header + 2 * outer, info + 2 * outer, win.listView.minimumSizeHint().width())
 
 
 # ---------------------------------------------------------------------------
@@ -308,8 +315,9 @@ class TestInitialSizeRule:
                 return QSize(2400, 1000)
 
             def availableGeometry(self):
-                """작업 영역 — 전체 화면보다 작다."""
-                return QRect(0, 0, 1600, 900)
+                """작업 영역 — 전체 화면보다 작다. 폭 × 0.45가 offscreen 글꼴의 콘텐츠 최소폭
+                (하단 바 999/999 예약 뒤 730 안팎, v2.10.1)보다 커야 클램프에 안 가려진다."""
+                return QRect(0, 0, 1750, 900)
 
         class _App:
             @staticmethod
@@ -328,7 +336,7 @@ class TestInitialSizeRule:
         win = _window()
         win.show()
         QApplication.processEvents()
-        from_available = (min(int(1600 * 0.45), theme.METRICS["initialWidthMax"]), 450)
+        from_available = (min(int(1750 * 0.45), theme.METRICS["initialWidthMax"]), 450)
         from_full = (min(int(2400 * 0.45), theme.METRICS["initialWidthMax"]), 500)
         assert from_available != from_full, "전제: 두 기준이 다른 크기를 내야 가를 수 있다"
         assert win.minimumWidth() < from_available[0], (
@@ -470,11 +478,15 @@ class TestHorizontalScrollIsOnlyASafetyNet:
         ):
             _at_width(win, width)
             assert win.contentColumn.width() == width
-            for w in (win.headerFrame, win.listView, win.infoFrame):
+            for w in (win.headerFrame, win.infoFrame):
                 rect = _in_window(win, w)
                 assert (rect.left(), rect.width()) == (outer, width - 2 * outer), (
                     f"{w.objectName()} {rect} — 창 {width}px"
                 )
+            # 목록은 창 좌우 끝까지 간다(v2.10.1) — 세로 스크롤바가 창 끝에 붙기 위해서다.
+            # 카드 쪽 여백은 목록 안 컨테이너 패딩이 진다(tests/unit/test_list_scrollbar_layout.py).
+            rect = _in_window(win, win.listView)
+            assert (rect.left(), rect.width()) == (0, width), f"listView {rect} — 창 {width}px"
 
 
 # ---------------------------------------------------------------------------
@@ -512,8 +524,9 @@ class TestOverlaysLiveInTheContentArea:
         overlay = _in_window(win, win.listView._overlay)
         lst = _in_window(win, win.listView)
         assert overlay == lst, f"오버레이 {overlay} ≠ 목록 {lst}"
-        assert lst != win.rect() and lst.top() > 0 and lst.width() < win.width(), (
-            "전제: 목록은 창 전체가 아니다(상단바 아래, 좌우 여백 안)"
+        # 목록은 창 좌우 끝까지 가므로(v2.10.1) 세로 방향으로만 창과 다르다(상단바 아래, 하단바 위)
+        assert lst != win.rect() and lst.top() > 0 and lst.height() < win.height(), (
+            "전제: 목록은 창 전체가 아니다(상단바 아래, 하단바 위)"
         )
 
     def test_drag_overlay_dims_the_list_but_not_the_margins(self):
@@ -526,7 +539,8 @@ class TestOverlaysLiveInTheContentArea:
         after = win.grab().toImage()
         lst = _in_window(win, win.listView)
         inside = QPoint(lst.center().x(), lst.top() + 3)  # 카드 사이 여백이 아닌 목록 위쪽 배경
-        margin = QPoint(lst.left() // 2, lst.center().y())  # 목록 왼쪽 바깥 여백(outerMargin)
+        # 목록 바깥 = 상단바와 목록 사이의 열 배경(목록은 창 좌우 끝까지 가므로 옆에는 바깥이 없다, v2.10.1)
+        margin = QPoint(lst.center().x(), lst.top() - 2)
         assert before.pixel(inside) != after.pixel(inside), (
             "드래그 중인데 목록 안 픽셀이 어두워지지 않았다"
         )

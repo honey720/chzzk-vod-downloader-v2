@@ -3,7 +3,7 @@ import os
 import platform
 import config.config as config
 
-from PySide6.QtWidgets import QMainWindow, QMessageBox, QFileDialog, QApplication, QWidget
+from PySide6.QtWidgets import QMainWindow, QMessageBox, QFileDialog, QApplication, QSizePolicy, QWidget
 from PySide6.QtCore import QPoint, QRect, QStandardPaths, QTimer
 
 from app.viewmodels.download_viewmodel import DownloadViewModel
@@ -147,11 +147,57 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         """
         outer = theme.METRICS["outerMargin"]
         frame_pad = theme.METRICS["framePadding"]
-        self.centralWidgetLayout.setContentsMargins(outer, outer, outer, outer)
+        # 좌우 여백은 열(contentColumn)이 아니라 상단·하단 바의 행(headerRow·infoRow)이
+        # 진다(v2.10.1) — 카드 목록은 창 좌우 끝까지 가서 세로 스크롤바가 창 끝에 붙고,
+        # 카드 쪽 여백은 목록의 컨테이너 패딩이 같은 값으로 진다(app/widgets/view.py).
+        self.centralWidgetLayout.setContentsMargins(0, outer, 0, outer)
         self.centralWidgetLayout.setSpacing(8)
+        self.headerRow.setContentsMargins(outer, 0, outer, 0)
+        self.infoRow.setContentsMargins(outer, 0, outer, 0)
         self.headerFrameLayout.setContentsMargins(frame_pad, frame_pad, frame_pad, frame_pad)
         self.infoLayout.setContentsMargins(frame_pad, frame_pad, frame_pad, frame_pad)
         self._equalizeHeaderButtons()
+        self._reserveCountLabelWidth()
+
+    def _reserveCountLabelWidth(self) -> None:
+        """하단 바 최소폭을 카운트 라벨 세 자리/세 자리(`999/999`) 기준으로 예약한다 (v2.10.1).
+
+        창 최소폭은 시작 때 `_contentMinimumWidth()`로 한 번 고정되는데, 라벨이
+        `0/0`에서 `0/10`이 되면 한 자리만큼(실측 8px) 넓어져 콘텐츠 열이 그 최소폭을
+        넘고 창 전체 좌우 스크롤 안전망이 뜬다(오너 실기 확인, 100에서 또 8px).
+        내용에 따라 창 최소폭을 다시 재지 않는다 — 유저가 줄여 둔 창이 멋대로
+        넓어진다. 대신 하단 바가 요구하는 폭을 `999/999` 기준으로 일정하게 유지한다:
+        라벨은 자연 폭 그대로 두고(고정폭이면 `0/0`일 때 뒤 버튼이 밀려 빈 틈이 보인다),
+        모자라는 몫(예약폭 − 지금 라벨 폭)을 하단 바의 스페이서 최소폭으로 넘긴다 —
+        라벨이 한 자리 커지면 스페이서가 그만큼 줄어 합은 그대로다
+        (`_balanceCountLabelReserve`, 라벨 갱신 때마다). 하단 바 자체에 최소폭을 박지
+        않는 이유: 위젯의 명시 최소폭은 레이아웃이 내용 최소 대신 그 값만 보게 만들어,
+        버튼이 넓어지거나 번역이 길어져도 바닥이 따라가지 못한다. 그 이상(1000+)은
+        라벨 최대폭에 걸려 라벨 안에서 잘려 그려지므로 창은 깨지지 않는다. 폭은 상수가
+        아니라 이 라벨의 실제 글꼴·QSS 여백으로 잰다(같은 원문을 번역한 문자열로) —
+        글꼴·DPI·번역을 따라간다.
+        """
+        label = self.downloadCountLabel
+        shown = label.text()
+        label.setText(self.tr('Downloads: {}/{}').format(999, 999))
+        label.ensurePolished()
+        self._countLabelReserve = label.sizeHint().width()
+        label.setText(shown)
+        label.setMaximumWidth(self._countLabelReserve)
+        self._balanceCountLabelReserve()
+
+    def _balanceCountLabelReserve(self) -> None:
+        """하단 바 스페이서에 (예약폭 − 지금 라벨 폭)을 최소폭으로 주어 라벨+스페이서 합을 예약폭에 고정한다."""
+        reserve = getattr(self, "_countLabelReserve", 0)
+        if not reserve:
+            return
+        balance = max(0, reserve - self.downloadCountLabel.sizeHint().width())
+        # MinimumExpanding — Expanding(Shrink 플래그 있음)이면 스페이서 최소가 0으로 읽혀
+        # 예약이 레이아웃 최소에 안 들어간다. 최소는 balance, 남는 공간은 여전히 흡수한다.
+        self.horizontalSpacer.changeSize(
+            balance, 0, QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Minimum
+        )
+        self.infoLayout.invalidate()
 
     def _availableGeometry(self, near: QPoint | None = None) -> QRect:
         """작업 영역(작업표시줄·독 제외) — 초기 크기·최소 높이·복원 클램프의 화면 기준 (#253).
@@ -566,6 +612,7 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         다운로드 갯수 라벨을 업데이트한다.
         """
         self.downloadCountLabel.setText(self.tr('Downloads: {}/{}').format(self.completed_downloads, self.total_downloads))
+        self._balanceCountLabelReserve()  # 자릿수가 바뀌어도 하단 바 요구 폭은 그대로(v2.10.1)
 
     def closeEvent(self, event):
         """

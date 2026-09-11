@@ -43,6 +43,8 @@
    <widget class="QWidget" name="contentColumn">
    <layout class="QVBoxLayout" name="centralWidgetLayout">
     <item>
+     <layout class="QHBoxLayout" name="headerRow">
+      <item>
      <widget class="QFrame" name="headerFrame">
       <property name="frameShape">
        <enum>QFrame::Shape::Box</enum>
@@ -151,6 +153,8 @@
        </item>
       </layout>
      </widget>
+      </item>
+     </layout>
     </item>
     <item>
      <widget class="ContentListView" name="listView">
@@ -160,6 +164,8 @@
      </widget>
     </item>
     <item>
+     <layout class="QHBoxLayout" name="infoRow">
+      <item>
      <widget class="QFrame" name="infoFrame">
       <property name="frameShape">
        <enum>QFrame::Shape::Box</enum>
@@ -220,6 +226,8 @@
        </item>
       </layout>
      </widget>
+      </item>
+     </layout>
     </item>
    </layout>
    </widget>

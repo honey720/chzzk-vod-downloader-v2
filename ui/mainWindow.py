@@ -132,7 +132,14 @@ class Ui_VodDownloader(object):
         self.headerFrameLayout.addWidget(self.linkStatusLabel)
 
 
-        self.centralWidgetLayout.addWidget(self.headerFrame)
+        # 상단·하단 바는 각자 행(headerRow·infoRow)에 담아 좌우 outerMargin을 그 행이
+        # 지게 한다 — 열(centralWidgetLayout)은 좌우 여백이 0이라 사이의 카드 목록이
+        # 창 끝까지 간다(v2.10.1). 여백 값은 app/views/mainWindow.py가 런타임에 건다.
+        self.headerRow = QHBoxLayout()
+        self.headerRow.setObjectName(u"headerRow")
+        self.headerRow.addWidget(self.headerFrame)
+
+        self.centralWidgetLayout.addLayout(self.headerRow)
 
         self.listView = ContentListView(self.contentColumn)
         self.listView.setObjectName(u"listView")
@@ -174,7 +181,11 @@ class Ui_VodDownloader(object):
         self.infoLayout.addWidget(self.stopButton)
 
 
-        self.centralWidgetLayout.addWidget(self.infoFrame)
+        self.infoRow = QHBoxLayout()
+        self.infoRow.setObjectName(u"infoRow")
+        self.infoRow.addWidget(self.infoFrame)
+
+        self.centralWidgetLayout.addLayout(self.infoRow)
 
         self.windowScrollArea.setWidget(self.contentColumn)
         VodDownloader.setCentralWidget(self.windowScrollArea)
