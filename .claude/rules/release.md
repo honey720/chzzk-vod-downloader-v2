@@ -41,8 +41,14 @@ rc는 `dev-*`의 한 시점을 태그로 고정해 **릴리즈 워크플로우�
 
 `dev-*` 머지 때 소유자 외의 사람이 올린 이슈는 닫히지 않고 "v<버전> 릴리즈 때 닫습니다" 코멘트만 받는다(`close-issues-on-dev-merge.yml`). 올린 사람에게는 릴리즈된 시점이 완료다.
 
-1. 목록: `gh issue list --state open --limit 500 --json number,title,comments --jq '.[] | select(.comments | any(.body | contains("v<버전> 릴리즈 때 닫습니다"))) | "#\(.number) \(.title)"'`
-   검색 색인이 아니라 열린 이슈의 코멘트를 직접 읽는다
+1. 목록 — 저장소의 코멘트 전체를 페이지 단위로 읽고 열린 이슈만 남긴다. 이슈 수·코멘트 수 상한이 없다
+   ```bash
+   gh api --paginate 'repos/{owner}/{repo}/issues/comments?per_page=100' \
+     --jq '.[] | select(.body | contains("v<버전> 릴리즈 때 닫습니다")) | .issue_url | split("/") | last' \
+     | sort -un | while read -r n; do
+       gh issue view "$n" --json number,title,state --jq 'select(.state == "OPEN") | "#\(.number) \(.title)"'
+     done
+   ```
 2. 목록을 소유자에게 보고하고 **확인을 받은 뒤** 닫는다
 3. `gh issue close <번호> --reason completed --comment "v<버전>에 포함되어 릴리즈됨 — <릴리즈 URL>"`
 
