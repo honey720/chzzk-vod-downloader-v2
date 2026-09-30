@@ -1,6 +1,6 @@
 # CLAUDE.md — Chzzk VOD Downloader v2
 
-이 저장소에서 작업하는 모든 AI 에이전트가 따르는 프로젝트 지침이다.
+이 저장소에서 작업하는 Claude Code 에이전트가 따르는 프로젝트 지침이다.
 **행동 규칙은 `.claude/rules/` 여섯 편**에 있고 이 문서와 함께 자동 로드된다.
 설계 판단의 **근거·수치·사례**는 `docs/SPEC.md`에 있다. 충돌하면 이 문서와 rules가 우선한다.
 

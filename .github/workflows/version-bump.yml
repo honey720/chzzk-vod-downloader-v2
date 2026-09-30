@@ -32,9 +32,10 @@ jobs:
           enable-cache: true
 
       - name: Validate input
+        env:
+          VERSION: ${{ inputs.version }}
+          BASE: ${{ github.ref_name }}
         run: |
-          VERSION="${{ inputs.version }}"
-          BASE="${{ github.ref_name }}"
           case "$BASE" in
             dev-*) ;;
             *) echo "::error::dev-<버전> 브랜치에서만 실행합니다 (선택한 브랜치: $BASE)"; exit 1 ;;
@@ -85,9 +86,11 @@ jobs:
           NEW_VERSION: ${{ inputs.version }}
 
       - name: Verify bump applied
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
           ACTUAL=$(uv run python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-          if [ "$ACTUAL" != "${{ inputs.version }}" ]; then
+          if [ "$ACTUAL" != "$VERSION" ]; then
             echo "::error::버전 반영 실패 (pyproject=$ACTUAL)"
             exit 1
           fi
@@ -95,9 +98,9 @@ jobs:
       - name: Create pull request
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          BASE: ${{ github.ref_name }}
         run: |
-          VERSION="${{ inputs.version }}"
-          BASE="${{ github.ref_name }}"
           BRANCH="chore/version-$VERSION"
           case "$VERSION" in
             *-*) NEXT="**이 PR을 머지하면 \`$BASE\` 커밋에 태그 \`v$VERSION\`이 자동 생성되고 프리릴리즈 빌드가 시작됩니다.**" ;;
