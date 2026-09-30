@@ -1,13 +1,15 @@
 name: Auto Tag
 
-# main의 pyproject.toml 버전이 바뀌면 v<버전> 태그를 만들어 푸시한다.
+# main·dev-* 의 pyproject.toml 버전이 바뀌면 v<버전> 태그를 만들어 푸시한다.
+#   dev-<버전> : rc 태그만 만든다. 버전의 X.Y.Z 가 브랜치 이름과 같아야 한다
+#   main       : 정식 태그만 만든다 (dev-* → main 머지 커밋에 붙는다)
 # 태그 푸시가 release.yml을 깨우려면 기본 GITHUB_TOKEN이 아닌 PAT가 필요하다
 # (기본 토큰으로 만든 이벤트는 다른 워크플로우를 트리거하지 않음 — 재귀 방지 정책).
 # → 저장소 Secrets에 RELEASE_PAT 등록 필요. 아래 안내 참조.
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'dev-*']
     paths: ['pyproject.toml']
 
 permissions:
@@ -27,7 +29,25 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
         run: |
           VERSION=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-          echo "pyproject version: $VERSION"
+          echo "pyproject version: $VERSION (branch: $GITHUB_REF_NAME)"
+
+          # 브랜치별로 만들 수 있는 태그를 제한한다
+          case "$GITHUB_REF_NAME:$VERSION" in
+            main:*-*)
+              echo "main 에서는 프리릴리즈 태그를 만들지 않음 — 건너뜁니다."
+              exit 0
+              ;;
+            dev-*:*-*)
+              if [ "${GITHUB_REF_NAME#dev-}" != "${VERSION%%-*}" ]; then
+                echo "::error::브랜치($GITHUB_REF_NAME)와 버전($VERSION)이 맞지 않습니다."
+                exit 1
+              fi
+              ;;
+            dev-*:*)
+              echo "dev-* 에서는 정식 태그를 만들지 않음 — 건너뜁니다."
+              exit 0
+              ;;
+          esac
 
           if git rev-parse "v$VERSION" >/dev/null 2>&1; then
             echo "태그 v$VERSION 이미 존재 — 건너뜁니다."

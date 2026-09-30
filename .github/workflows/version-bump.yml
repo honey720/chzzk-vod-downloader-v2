@@ -1,8 +1,9 @@
 name: Version Bump
 
-# Actions 탭 → Version Bump → Run workflow → 버전 입력
-# pyproject.toml 수정 + uv lock + 커밋 + PR 생성까지 자동.
-# 오너는 생성된 PR을 확인·머지만 하면 되고, 머지되면 Auto Tag가 태그를 만든다.
+# Actions 탭 → Version Bump → Run workflow → "Use workflow from"에서 dev-<버전> 선택 → 버전 입력
+# pyproject.toml 수정 + uv lock + 커밋 + 그 dev-* 로 PR 생성까지 자동.
+# rc 는 머지되면 Auto Tag 가 dev-* 커밋에 rc 태그를 만든다.
+# 정식은 dev-* 에 머지한 뒤 dev-* → main 을 머지하면 main 에서 정식 태그가 만들어진다.
 
 on:
   workflow_dispatch:
@@ -22,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.ref_name }}
           fetch-depth: 0   # 기존 태그 확인용
 
       - name: Install uv
@@ -31,8 +32,18 @@ jobs:
           enable-cache: true
 
       - name: Validate input
+        env:
+          VERSION: ${{ inputs.version }}
+          BASE: ${{ github.ref_name }}
         run: |
-          VERSION="${{ inputs.version }}"
+          case "$BASE" in
+            dev-*) ;;
+            *) echo "::error::dev-<버전> 브랜치에서만 실행합니다 (선택한 브랜치: $BASE)"; exit 1 ;;
+          esac
+          if [ "${BASE#dev-}" != "${VERSION%%-*}" ]; then
+            echo "::error::브랜치($BASE)와 버전($VERSION)이 맞지 않습니다."
+            exit 1
+          fi
           if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
             echo "::error::버전 형식이 올바르지 않습니다: $VERSION (예: 2.8.4 또는 2.9.0-rc1)"
             exit 1
@@ -75,9 +86,11 @@ jobs:
           NEW_VERSION: ${{ inputs.version }}
 
       - name: Verify bump applied
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
           ACTUAL=$(uv run python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-          if [ "$ACTUAL" != "${{ inputs.version }}" ]; then
+          if [ "$ACTUAL" != "$VERSION" ]; then
             echo "::error::버전 반영 실패 (pyproject=$ACTUAL)"
             exit 1
           fi
@@ -85,16 +98,21 @@ jobs:
       - name: Create pull request
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          BASE: ${{ github.ref_name }}
         run: |
-          VERSION="${{ inputs.version }}"
           BRANCH="chore/version-$VERSION"
+          case "$VERSION" in
+            *-*) NEXT="**이 PR을 머지하면 \`$BASE\` 커밋에 태그 \`v$VERSION\`이 자동 생성되고 프리릴리즈 빌드가 시작됩니다.**" ;;
+            *)   NEXT="**정식 버전입니다. 이 PR을 머지한 뒤 \`$BASE\` → \`main\` 을 merge commit으로 머지하면 \`main\`에서 태그 \`v$VERSION\`이 생성됩니다.**" ;;
+          esac
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -b "$BRANCH"
           git add pyproject.toml uv.lock config/config.py
           git commit -m "chore: 버전 $VERSION"
           git push origin "$BRANCH"
-          gh pr create --base main --head "$BRANCH" \
+          gh pr create --base "$BASE" --head "$BRANCH" \
             --title "chore: v$VERSION" \
             --body "$(cat <<EOF
           ## 요약
@@ -102,7 +120,7 @@ jobs:
           버전을 \`$VERSION\`으로 올립니다. 코드 변경은 없습니다.
 
           - \`pyproject.toml\` version + \`uv.lock\` 동반 갱신
-          - **이 PR을 머지하면 태그 \`v$VERSION\`이 자동 생성되고 릴리즈 빌드가 시작됩니다.**
+          - $NEXT
 
           Version Bump 워크플로우가 자동 생성했습니다.
           EOF
