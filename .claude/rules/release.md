@@ -24,6 +24,7 @@ rc는 `dev-*`의 한 시점을 태그로 고정해 **릴리즈 워크플로우�
 3. 정식 bump를 `dev-*`에 머지한다. `dev-*`에서는 정식 태그가 생기지 않는다
 4. **`dev-*` → `main` 머지.** 그 머지 커밋에 정식 태그가 붙고, 정식 빌드와 rc 태그·릴리즈 정리가 따라온다. `main`이 바뀌는 것은 릴리즈당 이 한 번이다
 5. `dev-*`는 머지와 함께 지워진다
+6. **외부 이슈를 닫는다.** 소유자가 요청하면 에이전트가 목록을 보고하고, 소유자 확인 뒤 닫는다 — 아래 절
 
 - ⚠️ **4의 PR은 merge commit으로 머지한다. squash를 쓰지 않는다.** squash는 커밋을 새로 만들어 rc 태그가 가리키는 커밋이 `main` 이력에서 끊긴다 — 정식이 rc와 같은 것인지 git으로 확인할 수 없게 된다.
 
@@ -31,8 +32,19 @@ rc는 `dev-*`의 한 시점을 태그로 고정해 **릴리즈 워크플로우�
 
 | 언제 | 무엇 | 통과 조건 |
 |---|---|---|
-| 4 전 | `git merge-base --is-ancestor origin/main dev-<버전>` | 참. 거짓이면 동기화(`branch.md`)부터 |
-| 4 뒤 | `git diff v<버전>-rc<N> v<버전>` | 버전 파일 셋(`pyproject.toml` · `uv.lock` · `APP_VERSION`)만 바뀜 |
+| 4 전 | `git merge-base --is-ancestor origin/main origin/dev-<버전>` | 참. 거짓이면 동기화(`branch.md`)부터 |
+| 4 전 (3 뒤) | `git diff v<버전>-rc<N> origin/dev-<버전>` — `<N>`은 마지막 rc | 버전 파일 셋(`pyproject.toml` · `uv.lock` · `APP_VERSION`)만 바뀜 |
+
+- ⚠️ 두 확인 모두 **4 전에** 한다. 4의 머지와 함께 Auto Tag가 rc 태그를 지운다.
+
+## 외부 이슈 닫기
+
+`dev-*` 머지 때 소유자 외의 사람이 올린 이슈는 닫히지 않고 "v<버전> 릴리즈 때 닫습니다" 코멘트만 받는다(`close-issues-on-dev-merge.yml`). 올린 사람에게는 릴리즈된 시점이 완료다.
+
+1. 목록: `gh issue list --state open --limit 500 --json number,title,comments --jq '.[] | select(.comments | any(.body | contains("v<버전> 릴리즈 때 닫습니다"))) | "#\(.number) \(.title)"'`
+   검색 색인이 아니라 열린 이슈의 코멘트를 직접 읽는다
+2. 목록을 소유자에게 보고하고 **확인을 받은 뒤** 닫는다
+3. `gh issue close <번호> --reason completed --comment "v<버전>에 포함되어 릴리즈됨 — <릴리즈 URL>"`
 
 ## 릴리즈 노트
 
