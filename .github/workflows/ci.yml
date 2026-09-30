@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, 'dev-*']
 
 jobs:
   # .github/ 을 소유자 외의 주체(에이전트 포함)가 수정하면 실패
