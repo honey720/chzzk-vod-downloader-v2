@@ -379,6 +379,21 @@ def test_parse_moov_rejects_table_cut_short():
     assert info.value.message_key == MP4_INVALID
 
 
+def test_parse_moov_rejects_entry_count_that_runs_past_its_box():
+    """parse_moov는 표의 항목 수가 그 상자에 들어가는 수보다 많으면 뒤 상자를 읽지 않고 거부해야 한다.
+
+    stss의 항목 수를 3에서 4로 바꾼 moov (상자에는 3개만 들어 있고 바로 뒤에 다음 상자가 온다)
+    -> message_key == MP4_INVALID
+    """
+    moov = bytearray(build_mp4([video_spec()]).moov)
+    struct.pack_into(">I", moov, moov.find(b"stss") + 8, 4)
+
+    with pytest.raises(Mp4Error) as info:
+        parse_moov(bytes(moov))
+
+    assert info.value.message_key == MP4_INVALID
+
+
 def test_parse_moov_rejects_sample_count_mismatch():
     """parse_moov는 stts와 stsz의 샘플 수가 다르면 손상 키로 Mp4Error를 내야 한다.
 
@@ -690,7 +705,7 @@ def test_fetch_mp4_index_rejects_body_shorter_than_granted_range(monkeypatch):
 @pytest.mark.parametrize(
     "content_range",
     [
-        lambda first, last, total: f"bytes {first + 1}-{last + 1}/{total}",  # 시작이 다르다
+        lambda first, last, total: f"bytes {first + 1}-{last}/{total}",  # 시작만 다르다
         lambda first, last, total: f"bytes {first}-{last + 5}/{total}",  # 끝이 요청보다 뒤다
         lambda first, last, total: (
             f"bytes {first}-{last - 5}/{total}"
