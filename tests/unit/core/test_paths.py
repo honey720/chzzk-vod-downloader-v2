@@ -388,3 +388,35 @@ def test_partial_source_path_derives_from_section_output(tmp_path):
     output = str(tmp_path / "방송 1080p_1 (1).mp4")
 
     assert partial_source_path_for(output) == str(tmp_path / "CVDv2_part_방송 1080p_1 (1).mp4")
+
+
+def test_partial_source_name_stays_within_component_limit(tmp_path):
+    """partial_source_path_for는 접두사를 붙인 이름이 255바이트를 넘으면 잘라서 255바이트 안에 맞춰야 한다.
+
+    240바이트짜리 산출물 이름에 " (10)"이 붙은 경로 (접두사 11바이트를 더하면 256바이트)
+    -> 파일명 255바이트 이하, "CVDv2_part_"로 시작하고 ".mp4"로 끝나며 UTF-8로 온전히 읽힌다
+    """
+    stem = "가" * 78 + "ab"  # 236바이트 — ".mp4"를 붙이면 240바이트
+    output = str(tmp_path / f"{stem} (10).mp4")
+
+    name = os.path.basename(partial_source_path_for(output))
+
+    assert len(f"CVDv2_part_{stem} (10).mp4".encode("utf-8")) == 256  # 자르지 않았을 때의 길이
+    assert len(name.encode("utf-8")) <= 255
+    assert name.startswith("CVDv2_part_가")
+    assert name.endswith(".mp4")
+    assert "�" not in name  # 문자 중간에서 잘리지 않았다
+
+
+def test_truncated_partial_source_names_stay_distinct(tmp_path):
+    """partial_source_path_for는 잘린 뒤 같아지는 두 산출물 이름에 서로 다른 임시 원본 이름을 줘야 한다.
+
+    끝의 중복 번호만 다른 긴 산출물 이름 " (10)"과 " (11)"
+    -> 두 임시 원본 경로가 다르다
+    """
+    stem = "가" * 78 + "ab"
+
+    first = partial_source_path_for(str(tmp_path / f"{stem} (10).mp4"))
+    second = partial_source_path_for(str(tmp_path / f"{stem} (11).mp4"))
+
+    assert first != second

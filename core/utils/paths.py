@@ -52,6 +52,11 @@ _MAX_FULLPATH = 240
 # ENAMETOOLONG이 날 수 있다 (헤드리스 스크립트·CI가 리눅스에서 돈다)
 _MAX_FILENAME_BYTES = 240
 
+# POSIX 파일시스템이 파일명 구성요소 하나에 허용하는 UTF-8 바이트 수.
+# _MAX_FILENAME_BYTES의 여유는 " (9)"까지만 덮는다 — 그보다 긴 중복 접미사가 붙은
+# 이름에서 파생하는 임시 원본 이름은 이 값으로 다시 맞춘다
+_MAX_COMPONENT_BYTES = 255
+
 # 배정했지만 아직 디스크에 없을 수 있는 구간 파일 경로 — 프로세스 안의 예약 (#309).
 # 값은 비교용으로 정규화한 절대 경로다
 _reserved_paths: set[str] = set()
@@ -131,9 +136,19 @@ def partial_source_path_for(output_path: str) -> str:
     산출물과 같은 디렉토리에 둔다 — 크기가 구간들의 합만큼이라 유저가 고른 저장 위치의
     공간을 쓴다. 첫 구간의 산출물 경로를 넘긴다 — 그 이름은 배정할 때 다른 다운로드와
     겹치지 않게 정해졌으므로 임시 원본도 겹치지 않는다.
+
+    접두사를 붙인 이름이 파일명 상한(255바이트)을 넘으면 산출물 이름을 잘라 맞추고
+    자르기 전 이름의 해시 6자리를 붙인다 — 잘린 뒤 같아지는 이름끼리도 구분된다.
     """
     stem = os.path.splitext(os.path.basename(output_path))[0]
-    return os.path.join(os.path.dirname(output_path), f"CVDv2_part_{stem}.mp4")
+    prefix, extension = "CVDv2_part_", ".mp4"
+    budget = _MAX_COMPONENT_BYTES - len((prefix + extension).encode("utf-8"))
+    if len(stem.encode("utf-8")) > budget:
+        marker = f" ~{hashlib.sha1(stem.encode('utf-8')).hexdigest()[:6]}"
+        # 바이트열을 자른 뒤 깨진 꼬리 시퀀스를 버려 문자 경계를 지킨다
+        kept = stem.encode("utf-8")[: budget - len(marker)].decode("utf-8", "ignore")
+        stem = kept.rstrip() + marker
+    return os.path.join(os.path.dirname(output_path), f"{prefix}{stem}{extension}")
 
 
 def _path_key(path: str) -> str:
