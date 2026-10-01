@@ -6,12 +6,13 @@
 """
 
 import json
+from fractions import Fraction
 
 import pytest
 
 import app.network as network
 from app.network import REQUEST_TIMEOUT, NetworkManager
-from core.api.dash import parse_dash_manifest
+from core.api.dash import parse_dash_manifest, parse_frame_rates
 from core.api.url_parser import extract_content_no
 from tests.mocks.mock_http import MockResponse
 
@@ -69,6 +70,42 @@ class TestExtractContentNo:
         assert NetworkManager.extract_content_no(
             "https://chzzk.naver.com/video/1510760"
         ) == ("video", "1510760")
+
+
+class TestGetVideoFrameRates:
+    """NetworkManager.get_video_frame_rates의 HTTP 경로(요청 구성·위임) 검증 (#309)."""
+
+    def test_requests_manifest_and_delegates_to_core_parser(self, monkeypatch, load_mock_response):
+        """get_video_frame_rates는 매니페스트를 조회 요청과 같은 모양으로 받아 core 파서의 결과를 돌려줘야 한다.
+
+        픽스처 dash_manifest_audio_only_14158884.xml
+        -> 요청 URL·쿠키·헤더·타임아웃이 get_video_dash_manifest와 같고, 반환값 == parse_frame_rates(본문)
+        """
+        calls = []
+        xml_text = load_mock_response("dash_manifest_audio_only_14158884.xml")
+        cookies = {"NID_AUT": "REDACTED", "NID_SES": "REDACTED"}
+
+        def fake_get(url, **kwargs):
+            calls.append((url, kwargs))
+            return MockResponse(text=xml_text)
+
+        monkeypatch.setattr(network._session, "get", fake_get)
+
+        rates = NetworkManager.get_video_frame_rates("test-video-id", "test-in-key", cookies)
+
+        assert calls == [
+            (
+                "https://apis.naver.com/neonplayer/vodplay/v2/playback/test-video-id"
+                "?key=test-in-key",
+                {
+                    "cookies": cookies,
+                    "headers": {"Accept": "application/dash+xml"},
+                    "timeout": REQUEST_TIMEOUT,
+                },
+            )
+        ]
+        assert rates == parse_frame_rates(xml_text)
+        assert set(rates.values()) == {Fraction(30), Fraction(60)}  # 픽스처가 선언한 값
 
 
 class TestGetVideoDashManifest:

@@ -119,3 +119,45 @@ def test_invalid_transition_is_absorbed_not_raised():
     assert task.state is DownloadState.WAITING
     assert item.downloadState is DownloadState.WAITING
     assert logger.warnings
+
+
+class _SectionLogger(_FakeLogger):
+    """log_download_info가 받은 인자를 그대로 기록하는 대역."""
+
+    def __init__(self):
+        super().__init__()
+        self.info_calls: list[tuple] = []
+
+    def log_download_info(self, *args):
+        self.info_calls.append(args)
+
+
+def test_start_passes_section_paths_to_the_logger():
+    """구간이 있는 다운로드를 시작하면 로거에 아이템과 함께 구간 파일 경로를 넘겨야 한다 (#309).
+
+    content.selection_paths = ("a_1.mp4", "a_2.mp4")
+    -> log_download_info(item, ("a_1.mp4", "a_2.mp4")) 1회
+    """
+    data = DownloadData("base", "vod", "out.mp4", 1080, "video")
+    data.content.selection_paths = ("a_1.mp4", "a_2.mp4")
+    item = _FakeItem()
+    logger = _SectionLogger()
+
+    DownloadTask(data, item, logger).start()
+
+    assert logger.info_calls == [(item, ("a_1.mp4", "a_2.mp4"))]
+
+
+def test_start_passes_only_the_item_without_sections():
+    """구간이 없는 다운로드를 시작하면 로거에 아이템만 넘겨야 한다.
+
+    content.selection_paths = ()
+    -> log_download_info(item) 1회
+    """
+    data = DownloadData("base", "vod", "out.mp4", 1080, "video")
+    item = _FakeItem()
+    logger = _SectionLogger()
+
+    DownloadTask(data, item, logger).start()
+
+    assert logger.info_calls == [(item,)]

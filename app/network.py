@@ -1,10 +1,16 @@
 import re
 import json
+from fractions import Fraction
 from urllib.parse import urljoin, urlsplit
 
 import requests
 
-from core.api.dash import is_supported_sea, parse_dash_manifest, parse_sea_manifest
+from core.api.dash import (
+    is_supported_sea,
+    parse_dash_manifest,
+    parse_frame_rates,
+    parse_sea_manifest,
+)
 from core.api.representations import dedupe_by_resolution
 from core.api.url_parser import extract_content_no
 from core.models.content import VideoInfo
@@ -164,6 +170,29 @@ class NetworkManager:
         response.raise_for_status()
 
         return parse_dash_manifest(response.text)
+
+    @staticmethod
+    def get_video_frame_rates(
+        video_id: str, in_key: str, cookies: dict | None = None
+    ) -> dict[str, Fraction]:
+        """DASH 매니페스트를 요청해 Representation마다 선언된 프레임률을 읽는다 (#309).
+
+        요청은 ``get_video_dash_manifest``와 같다. 파싱은 core/api/dash.py의
+        ``parse_frame_rates``에 위임한다.
+
+        Returns:
+            ``{base_url: 프레임률}`` — ``get_video_dash_manifest`` ·
+            ``get_video_sea_manifest``가 돌려주는 base_url로 찾는다. 프레임률을 선언하지
+            않은 Representation은 들어 있지 않다
+        """
+        manifest_url = f"{NAVER_API}/neonplayer/vodplay/v2/playback/{video_id}?key={in_key}"
+        headers = {"Accept": "application/dash+xml"}
+        response = _session.get(
+            manifest_url, cookies=cookies, headers=headers, timeout=REQUEST_TIMEOUT
+        )
+        response.raise_for_status()
+
+        return parse_frame_rates(response.text)
 
     @staticmethod
     def get_video_sea_manifest(video_id: str, in_key: str, cookies: dict | None = None):

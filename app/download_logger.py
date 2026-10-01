@@ -100,7 +100,15 @@ class DownloadLogger:
         if self.logger:
             self.logger.critical(message)
     
-    def log_download_info(self, item: ContentItem):
+    def log_download_info(self, item: ContentItem, section_paths: tuple[str, ...] = ()):
+        """다운로드 시작 정보 블록을 로깅합니다.
+
+        Args:
+            item: 다운로드할 컨텐츠
+            section_paths: 구간 다운로드의 구간 파일 경로(구간 목록 순서). 비어 있으면
+                전체 다운로드다. 구간 다운로드는 output_path에 파일을 만들지 않으므로
+                output_path 대신 이 경로들을 적는다 (#309)
+        """
         # 앱 버전을 시작 정보 블록 첫 줄에 남긴다 (#110 — 제보 분석·버전 간 비교용)
         self.info(f"app_version: {config.get_app_version()}")
         self.info(f"content_type: {item.content_type}")
@@ -112,7 +120,11 @@ class DownloadLogger:
         self.info(f"total_size: {item.total_size}")
         # 경로는 repr로 남긴다 (#148) — U+00A0 같은 공백 유사 문자가 그냥
         # 찍으면 U+0020과 육안 구분되지 않아 제보 진단이 불가능하다(#144 실측)
-        self.info(f"output_path: {item.output_path!r}")
+        if section_paths:
+            for number, path in enumerate(section_paths, start=1):
+                self.info(f"output_path_{number}: {path!r}")
+        else:
+            self.info(f"output_path: {item.output_path!r}")
         self.info(f"download_path: {item.download_path!r}")
 
     def log_download_start(self, total_size: int, part_size: int, segments: int, initial_threads: int):

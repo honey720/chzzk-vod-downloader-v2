@@ -143,3 +143,37 @@ def test_breakdown_line_shows_transfer_plus_postprocess_sum(tmp_path, monkeypatc
 
     text = log_file.read_text(encoding="utf-8")
     assert "Total time breakdown - Transfer: 10.00s + Postprocess: 2.50s = 12.50s" in text
+
+
+def test_download_info_logs_section_paths_instead_of_output_path(tmp_path, monkeypatch):
+    """구간 경로를 넘기면 시작 정보 블록은 output_path 줄 대신 구간 파일마다 한 줄씩 적어야 한다 (#309).
+
+    output_path "out.mp4"인 아이템, 구간 경로 ("a 1080p_1.mp4", "a 1080p_2.mp4")
+    -> "output_path_1: 'a 1080p_1.mp4'" · "output_path_2: 'a 1080p_2.mp4'" 줄이 있고 "output_path: " 줄은 없다
+    """
+    logger = _make_logger(tmp_path, monkeypatch)
+    logger.log_download_info(_stub_item(), ("a 1080p_1.mp4", "a 1080p_2.mp4"))
+    log_file = Path(logger.log_file)
+    logger.save_and_close()
+
+    text = log_file.read_text(encoding="utf-8")
+    assert "output_path_1: 'a 1080p_1.mp4'" in text
+    assert "output_path_2: 'a 1080p_2.mp4'" in text
+    assert "output_path: " not in text
+    assert "download_path: 'downloads'" in text  # 같은 블록의 다른 줄은 그대로 찍힌다
+
+
+def test_download_info_logs_output_path_without_sections(tmp_path, monkeypatch):
+    """구간 경로를 넘기지 않으면 시작 정보 블록은 지금처럼 output_path 줄을 적어야 한다.
+
+    output_path "out.mp4"인 아이템, 구간 경로 없음
+    -> "output_path: 'out.mp4'" 줄이 있고 "output_path_1" 줄은 없다
+    """
+    logger = _make_logger(tmp_path, monkeypatch)
+    logger.log_download_info(_stub_item())
+    log_file = Path(logger.log_file)
+    logger.save_and_close()
+
+    text = log_file.read_text(encoding="utf-8")
+    assert "output_path: 'out.mp4'" in text
+    assert "output_path_1" not in text
