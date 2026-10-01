@@ -12,6 +12,7 @@ IV 규칙 (RFC 8216 §5.2): ``#EXT-X-KEY``에 ``IV`` 속성이 있으면 그 값
 치지직 실측(videoId 54D17299…)은 IV 속성이 없어 후자에 해당한다.
 """
 
+import math
 import re
 from dataclasses import dataclass
 
@@ -53,10 +54,22 @@ class HlsPlaylist:
     key: HlsKey | None = None
     # 초기화 세그먼트(#EXT-X-MAP URI). TS 플레이리스트에는 없다
     init_uri: str | None = None
+    # 세그먼트별 길이(초, #EXTINF). segments와 같은 순서·같은 개수다 —
+    # #EXTINF가 없는 세그먼트는 0.0이다. 직접 만든 객체는 기본값(빈 튜플)일 수 있다 (#309)
+    durations: tuple[float, ...] = ()
 
     def sequence_of(self, index: int) -> int:
         """index번째 세그먼트의 미디어 시퀀스 번호 (IV 유도에 쓰인다)."""
         return self.media_sequence + index
+
+    @property
+    def duration(self) -> float:
+        """플레이리스트가 말하는 영상 길이(초)를 반환한다 — #EXTINF의 합이다 (#309).
+
+        세그먼트 길이는 고르지 않다(마지막 세그먼트는 보통 짧다). 세그먼트 수에
+        목표 길이를 곱한 값이 아니다.
+        """
+        return math.fsum(self.durations)
 
 
 def parse_media_playlist(text: str) -> HlsPlaylist:
@@ -73,6 +86,8 @@ def parse_media_playlist(text: str) -> HlsPlaylist:
         HlsPlaylist: 세그먼트 목록과 암호화 정보
     """
     segments: list[str] = []
+    durations: list[float] = []
+    pending_duration = 0.0  # 다음 세그먼트에 붙을 #EXTINF 길이
     media_sequence = 0
     key: HlsKey | None = None
     init_uri: str | None = None
@@ -83,6 +98,10 @@ def parse_media_playlist(text: str) -> HlsPlaylist:
             continue
         if not line.startswith("#"):
             segments.append(line)
+            durations.append(pending_duration)
+            pending_duration = 0.0
+        elif line.startswith("#EXTINF:"):
+            pending_duration = _parse_extinf(line)
         elif line.startswith("#EXT-X-MEDIA-SEQUENCE:"):
             media_sequence = int(line.split(":", 1)[1].strip())
         elif line.startswith("#EXT-X-KEY:"):
@@ -105,4 +124,15 @@ def parse_media_playlist(text: str) -> HlsPlaylist:
         media_sequence=media_sequence,
         key=key,
         init_uri=init_uri,
+        durations=tuple(durations),
     )
+
+
+def _parse_extinf(line: str) -> float:
+    """``#EXTINF:<길이>,<제목>``에서 길이(초)를 읽는다. 읽을 수 없거나 음수면 0.0이다."""
+    value = line.split(":", 1)[1].split(",", 1)[0].strip()
+    try:
+        seconds = float(value)
+    except ValueError:
+        return 0.0
+    return seconds if math.isfinite(seconds) and seconds > 0 else 0.0

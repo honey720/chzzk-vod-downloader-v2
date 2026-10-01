@@ -9,6 +9,7 @@ AES(SEA) 암호화 매니페스트는 parse_sea_manifest가 따로 다룬다 (#5
 """
 
 import xml.etree.ElementTree as ET
+from fractions import Fraction
 
 from core.api.representations import dedupe_by_resolution
 
@@ -73,6 +74,51 @@ def parse_dash_manifest(xml_text: str) -> tuple[list[list], int, str]:
     auto_base_url = sorted_reps[-1][1]
 
     return sorted_reps, auto_resolution, auto_base_url
+
+
+def parse_frame_rates(xml_text: str) -> dict[str, Fraction]:
+    """매니페스트의 비디오 Representation마다 선언된 프레임률을 정확한 비로 읽는다 (#309).
+
+    ``frameRate`` 속성은 정수("60")나 분수("30000/1001")다. 소수로 바꾸지 않고
+    ``Fraction``으로 돌려준다 — 분수 표기를 float로 읽으면 100만 분의 1 단위의
+    차이가 사라지고, 몇 시간 뒤의 프레임 번호가 어긋난다
+    (``core.utils.timecode.frame_rate``).
+
+    Representation에 속성이 없으면 그것을 감싼 AdaptationSet의 값을 쓴다.
+
+    Returns:
+        ``{주소: 프레임률}``. 주소는 그 Representation의 BaseURL과 ``nvod:m3u``다 —
+        ``parse_dash_manifest`` · ``parse_sea_manifest``가 base_url로 돌려주는 값과
+        같아서, 고른 해상도의 base_url로 바로 찾는다. 프레임률이 없거나 읽을 수
+        없는 Representation은 들어 있지 않다.
+    """
+    root = ET.fromstring(xml_text)
+    rates: dict[str, Fraction] = {}
+    for adaptation in root.findall(".//mpd:AdaptationSet", namespaces=NS):
+        for rep in adaptation.findall("mpd:Representation", namespaces=NS):
+            rate = _frame_rate(rep.get("frameRate") or adaptation.get("frameRate"))
+            if rate is None:
+                continue
+            base_url_el = rep.find(".//mpd:BaseURL", namespaces=NS)
+            addresses = (
+                base_url_el.text if base_url_el is not None else None,
+                rep.get(f"{{{NS['nvod']}}}m3u"),
+            )
+            for address in addresses:
+                if address:
+                    rates.setdefault(address, rate)
+    return rates
+
+
+def _frame_rate(text: str | None) -> Fraction | None:
+    """frameRate 속성값을 Fraction으로 — 없거나 0 이하이거나 수가 아니면 None."""
+    if not text:
+        return None
+    try:
+        rate = Fraction(text.strip())
+    except (ValueError, ZeroDivisionError):
+        return None
+    return rate if rate > 0 else None
 
 
 def _bandwidth(rep: ET.Element) -> int:

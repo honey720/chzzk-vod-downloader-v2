@@ -33,9 +33,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+          prune-cache: false
+          save-cache: false   # PR은 복원만 한다. 저장은 uv-cache.yml
 
       - name: Install Qt system deps (Linux)
         if: runner.os == 'Linux'
@@ -48,7 +50,9 @@ jobs:
             fonts-noto-cjk
 
       - name: Sync dependencies
-        run: uv sync
+        timeout-minutes: 5
+        shell: bash
+        run: uv sync || uv sync
 
       - name: Lint
         if: runner.os == 'Linux'
