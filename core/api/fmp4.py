@@ -68,7 +68,8 @@ def parse_init_segment(data: bytes) -> Fmp4Init:
     구간 하나"만 받는다(``core.api.mp4``와 같은 규칙).
 
     Raises:
-        Mp4Error: moov가 없거나 상자가 잘린 경우(``MP4_INVALID``), mvex가 없거나(조각난
+        Mp4Error: moov가 없거나 상자가 잘렸거나 영상과 오디오의 트랙 번호가 같은
+            경우(``MP4_INVALID``), mvex가 없거나(조각난
             mp4의 초기화 세그먼트가 아니다) 영상 트랙이 없는 경우(``MP4_UNSUPPORTED``)
     """
     try:
@@ -126,11 +127,12 @@ def scan_moof(data: bytes) -> MoofScan:
                 break
             size = struct.unpack_from(">Q", data, position + 8)[0]
             header = 16
-        if box_type == b"mdat":
-            # 크기 0은 "끝까지"라 mdat 뒤에는 아무것도 없다
-            return MoofScan(seen_moof, position, position + size if size else None)
-        if size < header:
+        # 크기 0은 "끝까지"다. mdat에만 허용한다 — 그 뒤에는 아무것도 없다.
+        # 머리보다 작은 크기는 mdat여도 거부한다. 그대로 두면 next_offset이 mdat 머리 안쪽을 가리킨다
+        if size < header and not (size == 0 and box_type == b"mdat"):
             raise Mp4Error(MP4_INVALID, f"상자 {box_type!r}의 크기 {size}")
+        if box_type == b"mdat":
+            return MoofScan(seen_moof, position, position + size if size else None)
         seen_moof = seen_moof or box_type == b"moof"
         position += size
     # mdat 머리를 아직 못 봤다 — position은 다음에 읽어야 할 상자의 위치다
@@ -274,7 +276,19 @@ def _parse_init_segment(data: bytes) -> Fmp4Init:
         )
     if "vide" not in tracks:
         raise Mp4Error(MP4_UNSUPPORTED, "영상 트랙이 없다")
-    return Fmp4Init(video=tracks["vide"], audio=tracks.get("soun"))
+    init = Fmp4Init(video=tracks["vide"], audio=tracks.get("soun"))
+    _require_distinct_tracks(init)
+    return init
+
+
+def _require_distinct_tracks(init: Fmp4Init) -> None:
+    """영상과 오디오의 트랙 번호가 같으면 거부한다.
+
+    미디어 세그먼트의 traf는 트랙 번호로 샘플의 주인을 가린다. 번호가 같으면 두
+    트랙의 샘플이 한 그릇에 섞이고, 영상과 오디오가 같은 샘플을 돌려주게 된다.
+    """
+    if init.audio is not None and init.audio.track_id == init.video.track_id:
+        raise Mp4Error(MP4_INVALID, f"영상과 오디오의 트랙 번호가 같다: {init.video.track_id}")
 
 
 def _top_level(data: bytes):
@@ -326,6 +340,7 @@ class _Run:
 
 
 def _parse_media_segment(data: bytes, init: Fmp4Init) -> Fmp4Segment:
+    _require_distinct_tracks(init)  # 직접 만든 Fmp4Init도 여기서 걸린다
     runs = {init.video.track_id: _Run(init.video)}
     if init.audio is not None:
         runs[init.audio.track_id] = _Run(init.audio)

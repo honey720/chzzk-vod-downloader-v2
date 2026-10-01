@@ -10,6 +10,7 @@
 입력은 tests/unit/core/fmp4_builder.py가 상자를 직접 조립한 합성 fMP4다.
 """
 
+import dataclasses
 import struct
 import tracemalloc
 from fractions import Fraction
@@ -25,6 +26,7 @@ from core.api.fmp4 import (
     scan_moof,
 )
 from core.api.mp4 import MP4_INVALID, MP4_TOO_LONG, MP4_UNSUPPORTED, Mp4Error
+from core.models.fmp4_index import Fmp4Init
 from core.utils.timecode import snap_to_frame
 from tests.unit.core.fmp4_builder import (
     KEY,
@@ -703,3 +705,68 @@ def test_build_fmp4_index_result_feeds_snap_to_frame():
     index = build_fmp4_index(init, [parse_media_segment(_video_segment(), init)], Fraction(0))
 
     assert snap_to_frame(0.22, index.frame_pts, 10, "start") == 2
+
+
+# ================================================================ 리뷰 반영
+
+
+@pytest.mark.parametrize("size", [2, 5, 7])
+def test_scan_moof_rejects_mdat_smaller_than_its_header(size):
+    """scan_moof는 mdat의 크기 칸이 머리(8바이트)보다 작으면 next_offset을 돌려주지 않고 손상 키로 거부해야 한다.
+
+    mdat의 크기 칸을 2 · 5 · 7로 바꾼 세그먼트
+    -> message_key == MP4_INVALID
+    """
+    data = bytearray(_video_segment())
+    struct.pack_into(">I", data, data.find(b"mdat") - 4, size)
+
+    with pytest.raises(Mp4Error) as info:
+        scan_moof(bytes(data))
+
+    assert info.value.message_key == MP4_INVALID
+
+
+def test_scan_moof_accepts_mdat_that_runs_to_end_of_file():
+    """scan_moof는 mdat의 크기 칸이 0(끝까지)이면 받고 next_offset을 None으로 돌려줘야 한다.
+
+    mdat의 크기 칸을 0으로 바꾼 세그먼트
+    -> complete, moof_end == mdat 상자의 위치, next_offset is None
+    """
+    data = bytearray(_video_segment())
+    mdat = data.find(b"mdat") - 4
+    struct.pack_into(">I", data, mdat, 0)
+
+    scan = scan_moof(bytes(data))
+
+    assert (scan.complete, scan.moof_end, scan.next_offset) == (True, mdat, None)
+
+
+def test_parse_init_segment_rejects_video_and_audio_sharing_a_track_id():
+    """parse_init_segment는 영상과 오디오의 트랙 번호가 같으면 손상 키로 Mp4Error를 내야 한다.
+
+    영상 트랙 1, 오디오 트랙 1
+    -> message_key == MP4_INVALID
+    """
+    tracks = [InitTrack(1, b"vide", 1000), InitTrack(1, b"soun", 8000, codec=b"mp4a")]
+
+    with pytest.raises(Mp4Error) as info:
+        parse_init_segment(init_segment(tracks))
+
+    assert info.value.message_key == MP4_INVALID
+
+
+def test_parse_media_segment_rejects_init_whose_tracks_share_an_id():
+    """parse_media_segment는 직접 만든 Fmp4Init의 영상·오디오 트랙 번호가 같으면 손상 키로 Mp4Error를 내야 한다.
+
+    정상 초기화 세그먼트의 오디오 track_id를 영상과 같은 1로 바꾼 Fmp4Init
+    -> message_key == MP4_INVALID
+    """
+    init = _init()
+    clashing = Fmp4Init(
+        video=init.video, audio=dataclasses.replace(init.audio, track_id=init.video.track_id)
+    )
+
+    with pytest.raises(Mp4Error) as info:
+        parse_media_segment(_video_segment(), clashing)
+
+    assert info.value.message_key == MP4_INVALID
