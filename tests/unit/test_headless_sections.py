@@ -193,11 +193,11 @@ def test_list_option_logs_frame_rate_next_to_each_resolution(monkeypatch, tmp_pa
 
 
 def test_runner_hands_sections_paths_and_moov_to_the_engine(monkeypatch, tmp_path):
-    """러너는 구간, 배정한 구간 파일 경로, 구간을 해석하며 받은 moov를 제출하는 Content에 실어야 한다.
+    """러너는 구간, 배정한 구간 파일 경로, 구간을 해석하며 받은 것을 제출하는 Content에 실어야 한다.
 
-    구간 둘과 moov 대역을 받은 러너, DownloadService · 로거 · 태스크는 대역
+    구간 둘과 moov 대역 · fMP4 대역을 받은 러너, DownloadService · 로거 · 태스크는 대역
     -> 제출된 content의 selections == 구간 둘, selection_paths == "제목 1080p_1.mp4" · "_2.mp4",
-       mp4_head is 넘긴 moov
+       mp4_head is 넘긴 moov, fmp4_head is 넘긴 fMP4 대역
     """
     submitted = []
 
@@ -225,8 +225,9 @@ def test_runner_hands_sections_paths_and_moov_to_the_engine(monkeypatch, tmp_pat
     )
     selections = (TimeRange(1.0, 2.0), TimeRange(5.0, 6.0))
     moov = SimpleNamespace(index=None, data=b"")
+    fmp4 = SimpleNamespace(playlist=None)
 
-    runner = headless._HeadlessRunner(item, 60, selections, moov)
+    runner = headless._HeadlessRunner(item, 60, selections, moov, fmp4)
     runner.run()
     release_output_paths(runner.section_paths)
 
@@ -237,3 +238,94 @@ def test_runner_hands_sections_paths_and_moov_to_the_engine(monkeypatch, tmp_pat
         "제목 1080p_2.mp4",
     ]
     assert submitted[0].mp4_head is moov
+    assert submitted[0].fmp4_head is fmp4
+
+
+# ================================================================ 구간 옵션을 받는 타입
+
+
+def _main_with(monkeypatch, tmp_path, content_type: str, calls: list):
+    """main을 대역으로 감싼다 — 조회 결과는 content_type이고, 해석·러너 호출을 calls에 남긴다."""
+    result = (
+        "https://chzzk.naver.com/video/123",
+        {"title": "제목"},
+        [[1080, "u1080"]],
+        1080,
+        "u1080",
+    )
+    result += (str(tmp_path), None)
+    monkeypatch.setattr(headless, "setup_logging", lambda level: None)
+    monkeypatch.setattr(headless, "_load_cookies", lambda: {})
+    monkeypatch.setattr(headless, "_fetch", lambda url, cookies, path: (result, content_type))
+    selections = (TimeRange(1.0, 2.0),)
+
+    def mp4(item, texts):
+        calls.append(("mp4", tuple(texts)))
+        return selections, "moov"
+
+    def fmp4(item, texts):
+        calls.append(("fmp4", tuple(texts)))
+        return selections, "fmp4"
+
+    class FakeRunner:
+        def __init__(self, item, timeout, given=(), mp4_head=None, fmp4_head=None):
+            calls.append(("run", given, mp4_head, fmp4_head))
+
+        def run(self) -> int:
+            return 0
+
+    monkeypatch.setattr(headless, "_resolve_sections", mp4)
+    monkeypatch.setattr(headless, "_resolve_fmp4_sections", fmp4)
+    monkeypatch.setattr(headless, "_HeadlessRunner", FakeRunner)
+    return headless.main(
+        ["https://chzzk.naver.com/video/123", "--output", str(tmp_path)]
+        + ["--section", "00:00:01:00-00:00:02:00"]
+    ), selections
+
+
+def test_section_option_on_unencoded_replay_resolves_fmp4_and_hands_it_to_the_runner(
+    monkeypatch, tmp_path
+):
+    """인코딩 전 다시보기(m3u8)에 --section을 주면 fMP4로 구간을 해석하고 받은 것을 러너에 넘겨야 한다.
+
+    조회 결과의 content_type "m3u8", --section 하나
+    -> 종료 코드 0, fMP4 해석 1회(mp4 해석 0회), 러너에 (구간, mp4_head None, fmp4_head "fmp4")
+    """
+    calls: list = []
+
+    code, selections = _main_with(monkeypatch, tmp_path, "m3u8", calls)
+
+    assert code == 0
+    assert calls == [
+        ("fmp4", ("00:00:01:00-00:00:02:00",)),
+        ("run", selections, None, "fmp4"),
+    ]
+
+
+def test_section_option_on_encoded_vod_resolves_mp4(monkeypatch, tmp_path):
+    """인코딩이 끝난 VOD(video)에 --section을 주면 mp4로 구간을 해석하고 받은 moov를 러너에 넘겨야 한다.
+
+    조회 결과의 content_type "video", --section 하나
+    -> 종료 코드 0, mp4 해석 1회, 러너에 (구간, mp4_head "moov", fmp4_head None)
+    """
+    calls: list = []
+
+    code, selections = _main_with(monkeypatch, tmp_path, "video", calls)
+
+    assert code == 0
+    assert calls == [("mp4", ("00:00:01:00-00:00:02:00",)), ("run", selections, "moov", None)]
+
+
+@pytest.mark.parametrize("content_type", ["hls_aes", "clip"])
+def test_section_option_is_refused_for_encrypted_vod_and_clip(monkeypatch, tmp_path, content_type):
+    """암호화 VOD와 클립에 --section을 주면 해석도 다운로드도 하지 않고 2로 끝나야 한다.
+
+    조회 결과의 content_type "hls_aes" · "clip", --section 하나
+    -> 종료 코드 2, 해석·러너 호출 0건
+    """
+    calls: list = []
+
+    code, _selections = _main_with(monkeypatch, tmp_path, content_type, calls)
+
+    assert code == 2
+    assert calls == []

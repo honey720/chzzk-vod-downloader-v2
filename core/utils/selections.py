@@ -28,6 +28,9 @@ SELECTION_OUT_OF_RANGE = "Selection is outside the video"  # 시작 < 0 또는 �
 SELECTION_TOO_SHORT = "Selection is shorter than one frame"  # 시작과 끝이 같은 프레임이다
 SELECTION_DUPLICATE = "Duplicate selection"  # 시작·끝이 둘 다 같은 구간이 또 있다
 SELECTION_TOO_MANY = "Too many selections"  # MAX_SELECTIONS 번째를 넘은 구간이다
+# 구간이 녹화가 끊긴 자리(#EXT-X-DISCONTINUITY)를 넘는다 — validate_selections가 아니라
+# 세그먼트로 받는 다운로더가 플레이리스트를 보고 낸다 (#309)
+SELECTION_CROSSES_BREAK = "Selection crosses a break in the recording"
 
 
 class SelectionError(Exception):

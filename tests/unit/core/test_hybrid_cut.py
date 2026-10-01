@@ -97,6 +97,21 @@ def uneven_source(tmp_path_factory) -> tuple[str, CutFrames]:
     return path, _mp4_frames(path)
 
 
+@pytest.fixture(scope="module")
+def gappy_source(tmp_path_factory) -> tuple[str, CutFrames]:
+    """프레임 20~22가 빠진 mp4 입력과 그 프레임 정보 — 프레임 19 뒤에 3프레임만큼 빈 자리가 있다."""
+    path = str(tmp_path_factory.mktemp("cut_gappy") / "source.mp4")
+    _ffmpeg(
+        *_lavfi("320x240", 4),
+        "-vf", "settb=1/15360,setpts=N*512,select='not(between(n,20,22))'",
+        "-fps_mode", "passthrough", "-enc_time_base:v", "1:15360", "-video_track_timescale", "15360",
+        "-bf", "2", "-force_key_frames", "0,1,1.4,2.4,3",
+        "-x264-params", "b-pyramid=none:keyint=300:min-keyint=1:scenecut=0",
+        path,
+    )  # fmt: skip
+    return path, _mp4_frames(path)
+
+
 def _mp4_frames(path: str) -> CutFrames:
     def read(offset: int, size: int) -> bytes:
         with open(path, "rb") as f:
@@ -298,6 +313,23 @@ def test_cut_keeps_uneven_frame_intervals(uneven_source, tmp_path):
     result, check = _cut(uneven_source, 33, 80, tmp_path)
 
     assert _kinds(result) == ("head", "mid", "tail")
+    assert check.ok, check.notes
+
+
+def test_cut_ending_before_a_missing_frame_passes_every_check(gappy_source, tmp_path):
+    """끝 프레임 바로 뒤에 프레임이 빠진 자리가 있는 구간도 판정 다섯 항목을 통과해야 한다.
+
+    프레임 20~22가 빠진 mp4, 구간 프레임 5~19 (끝 프레임 19의 다음 프레임은 4프레임 뒤에 있다)
+    -> 다음 프레임의 PTS − 끝 프레임의 PTS == 4프레임, check.ok
+       (오디오는 다음 프레임의 PTS까지 들고, 영상은 끝 프레임 + 한 프레임에서 끝난다)
+    """
+    _path, frames = gappy_source
+
+    result, check = _cut(gappy_source, 5, 19, tmp_path)
+
+    gap = frames.frame_pts[20] - frames.frame_pts[19]
+    assert round(gap / frames.frame_duration) == 4
+    assert result.plan.last == 19
     assert check.ok, check.notes
 
 
@@ -604,6 +636,19 @@ def test_encode_command_passes_timestamps_through(fmp4_source, tmp_path):
     assert _option(args, "-fps_mode") == "passthrough"
     assert _option(args, "-enc_time_base") == f"1:{frames.timescale}"
     assert _option(args, "-video_track_timescale") == str(frames.timescale)
+
+
+@pytest.mark.parametrize(
+    ("measured", "expected"),
+    [(192, 192), (191, 192), (193, 192), (127, 128), (128, 128), (121, 128), (137, 144), (3, 16)],
+)
+def test_nominal_bitrate_snaps_to_the_nearest_step(measured, expected):
+    """_nominal_bitrate는 ffmpeg가 보여 준 오디오 비트레이트를 가장 가까운 16kb/s의 배수로 맞춰야 한다.
+
+    주석의 경우마다 표시된 값(kb/s) — 191 · 193은 같은 영상의 다른 부분에서 본 192다
+    -> 16의 배수, 0이 되지 않는다
+    """
+    assert cut_module._nominal_bitrate(measured) == expected
 
 
 def test_encode_command_restores_reorder_delay_the_encoder_left_out():

@@ -42,6 +42,7 @@ class TestContent:
         assert content.selections == ()
         assert content.selection_paths == ()
         assert content.mp4_head is None  # 넘기지 않으면 엔진이 moov를 받는다
+        assert content.fmp4_head is None  # 넘기지 않으면 엔진이 플레이리스트·초기화 세그먼트·moof를 받는다
         assert content.encryption_type is None
 
     def test_id_is_unique_per_instance(self):

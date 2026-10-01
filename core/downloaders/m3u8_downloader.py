@@ -18,21 +18,47 @@ m3u8 고유 부분만 남는다:
   없이 명확히 실패한다 (세그먼트 보존)
 - 전체 크기를 미리 알 수 없어 ProgressEvent.total_size는 None이다.
   진행률 계산(세그먼트 수 기반)은 어댑터의 몫이다.
+
+구간 다운로드 (#309) — ``Content.selections``가 비어 있지 않을 때:
+
+- prepare: 플레이리스트와 초기화 세그먼트, 그리고 구간의 양 끝이 든 세그먼트의 moof만
+  받아(core/api/hls_fmp4.py) 구간마다 받을 세그먼트와 첫·끝 프레임을 정한다
+  (core/utils/fmp4_sections.py). 받을 항목은 구간들의 세그먼트를 합친 것이다 — 두
+  구간이 같은 세그먼트를 쓰면 한 번만 받는다. ``Content.fmp4_head``로 이미 받은 것이
+  오면 그것을 쓰고, 초기화 세그먼트는 다시 받지 않는다
+- postprocess: 구간마다 초기화 세그먼트 + 그 구간의 세그먼트를 순서대로 이은 임시
+  fMP4를 만들고 hybrid_cut으로 자른다. 하나라도 실패하면 다운로드 전체가 실패다
+- 임시 폴더(받은 세그먼트 · 이은 파일)는 구간을 모두 만들면 지운다. 컷이 실패하면
+  남긴다 — 후처리 실패가 세그먼트를 남기는 것(#92)과 같은 규칙이다
+- 전체 다운로드(구간 없음)의 경로는 그대로다
 """
 
 import os
 import shutil
 import time as tm
+from bisect import bisect_left
 from urllib.parse import urljoin
 
 import requests
 
+from core.api.fmp4 import build_fmp4_index, fmp4_origin, parse_media_segment
+from core.api.hls_fmp4 import fetch_fmp4_head, segment_frames
+from core.api.mp4 import Mp4Error
 from core.api.session import get_thread_session
-from core.downloaders.base import BaseDownloader
+from core.downloaders.base import BaseDownloader, PostprocessError
 from core.models.content import Content, ContentType
+from core.models.cut import CutFrames, CutResult
 from core.models.download_state import DownloadState
+from core.models.events import ProgressEvent
+from core.models.fmp4_index import Fmp4Head
 from core.models.plan import DownloadPlan
-from core.utils.paths import choose_temp_dir
+from core.utils.fmp4_sections import Fmp4Section, plan_fmp4_sections
+from core.utils.hybrid_cut import CUT_FAILED, CutError, cut_frames_from_fmp4, hybrid_cut
+from core.utils.paths import choose_temp_dir, release_output_paths
+
+# 받은 세그먼트의 프레임 PTS를 prepare가 정한 PTS와 견줄 때 허용하는 차이(초) — 같은
+# 계산을 두 번 한 값이라 같아야 하고, float 오차만 흡수한다
+_PTS_TOLERANCE = 1e-6
 
 
 class M3U8Downloader(BaseDownloader):
@@ -46,8 +72,12 @@ class M3U8Downloader(BaseDownloader):
     run_thread_name = "DownloadM3U8Thread"
     worker_pool_prefix = "DownloadM3U8Worker"
     requires_base_url_resolution = True
+    supports_selections = True  # fMP4는 세그먼트의 moof로 구간의 프레임을 정할 수 있다 (#309)
     # 구 코드와 동일하게 모든 예외를 실패로 처리한다 (플레이리스트 파싱 실패 포함)
     _failure_exceptions = (Exception,)
+    # 구간을 자를 때 조각마다 파라미터·패킷 수를 읽어 둘지 — 기본은 읽지 않는다.
+    # 테스트가 True로 두고 cut_results를 정합 판정(check_cut)에 넘긴다
+    _inspect_cuts: bool = False
 
     def __init__(self, data, logger, **callbacks):
         super().__init__(data, logger, **callbacks)
@@ -55,8 +85,22 @@ class M3U8Downloader(BaseDownloader):
         # 산출물 파일명에서 파생해 다운로드 간 폴더 공유·상호 삭제를 막는다 (#105).
         # 조건이 맞으면 시스템 임시 폴더(로컬 매체)로 보낸다 — 산출물 폴더가
         # 느린 매체(exFAT SD 카드 등)일 때 읽기·쓰기 경쟁과 AppleDouble
-        # 오버헤드를 우회한다(#192). 산출물 위치 자체는 그대로다
-        self.temp_dir = choose_temp_dir(self.s.output_path)
+        # 오버헤드를 우회한다(#192). 산출물 위치 자체는 그대로다.
+        # 구간 다운로드는 첫 구간 파일의 이름에서 파생한다 — output_path는 쓰지 않는 이름이라
+        # 같은 영상의 구간 다운로드 둘이 겹칠 수 있다. 구간 파일 이름은 배정할 때 갈라져 있다
+        section_paths = self.s.content.selection_paths
+        self.temp_dir = choose_temp_dir(section_paths[0] if section_paths else self.s.output_path)
+        # 구간 다운로드의 상태 (#309) — prepare가 채운다. 전체 다운로드면 비어 있다
+        self._sections: tuple[Fmp4Section, ...] = ()
+        self._head: Fmp4Head | None = None  # 구간을 정할 때 받은 플레이리스트·초기화 세그먼트·moof
+        self._made_sections: list[str] = []  # 이번 실행이 만든 구간 파일
+        self.cut_results: list[CutResult] = []  # 구간마다의 컷 결과 — sections와 같은 순서
+        self.cut_frames: list[CutFrames] = []  # 구간마다 컷에 쓴 프레임 정보 — 판정이 쓴다
+
+    @property
+    def sections(self) -> tuple[Fmp4Section, ...]:
+        """구간 다운로드의 구간 목록 — 받을 세그먼트와 첫·끝 프레임의 시각. prepare 뒤에 채워진다."""
+        return self._sections
 
     @classmethod
     def supports(cls, content: Content) -> bool:
@@ -65,8 +109,20 @@ class M3U8Downloader(BaseDownloader):
 
     # ============ 작업 목록·수신 준비 (구 run의 m3u8 고유 부분) ============
 
+    def run(self) -> None:
+        """다운로드를 실행하고, 끝나면 구간 파일명의 예약을 푼다 (#309)."""
+        try:
+            super().run()
+        finally:
+            release_output_paths(self.s.content.selection_paths)
+
     def prepare(self, content: Content) -> DownloadPlan:
-        """플레이리스트를 받아 (index, 세그먼트) 목록의 계획을 만든다."""
+        """플레이리스트를 받아 (index, 세그먼트) 목록의 계획을 만든다.
+
+        구간이 있으면 구간에 필요한 세그먼트만 담은 계획을 만든다 (#309).
+        """
+        if content.selections:
+            return self._prepare_sections(content)
         response = get_thread_session().get(self.s.base_url)
         response.raise_for_status()
         lines = response.text.splitlines()
@@ -81,7 +137,43 @@ class M3U8Downloader(BaseDownloader):
             items=tuple(enumerate(segments)),
             total_size=None,
             requires_postprocess=True,
-            # 구간은 계획에 그대로 싣는다 — 이 다운로더는 아직 해석하지 못해 run()이 거부한다 (#309)
+        )
+
+    def _prepare_sections(self, content: Content) -> DownloadPlan:
+        """구간 다운로드의 계획 — 구간들의 세그먼트를 합친 것을 받는다 (#309).
+
+        플레이리스트·초기화 세그먼트·moof는 ``content.fmp4_head``가 있으면 그것을 쓰고,
+        없는 것만 여기서 받는다.
+
+        Raises:
+            ValueError: 구간과 산출물 경로의 수가 다른 경우
+            Mp4Error: fMP4가 아니거나 초기화 세그먼트·moof를 해석하지 못한 경우
+            SelectionError: 구간이 검증을 통과하지 못했거나 녹화가 끊긴 자리를 넘는 경우
+        """
+        if len(content.selection_paths) != len(content.selections):
+            raise ValueError(
+                f"구간 {len(content.selections)}개에 산출물 경로 {len(content.selection_paths)}개"
+            )
+        head = content.fmp4_head or fetch_fmp4_head(self.s.base_url)
+        sections = plan_fmp4_sections(
+            head.playlist,
+            head.init,
+            content.selections,
+            lambda index: segment_frames(head, self.s.base_url, index),
+        )
+        # 두 구간이 같은 세그먼트를 쓰면 한 번만 받는다
+        wanted = sorted(
+            {index for s in sections for index in range(s.first_segment, s.last_segment + 1)}
+        )
+        self._head = head
+        self._sections = sections
+        self.postprocess_kind = "cut"  # 구간마다 자른다 — 전체 다운로드의 remux와 구분한다
+        self.s.merged_segments = 0
+        self.width = len(str(len(head.playlist.segments)))
+        return DownloadPlan(
+            items=tuple((index, head.playlist.segments[index]) for index in wanted),
+            total_size=None,
+            requires_postprocess=True,
             selections=tuple(content.selections),
         )
 
@@ -95,6 +187,12 @@ class M3U8Downloader(BaseDownloader):
         if os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir)
         os.makedirs(self.temp_dir)
+
+        if self._head is not None:
+            # 구간 다운로드 — 초기화 세그먼트는 구간을 정할 때 이미 받았다
+            with open(self._init_path(), "wb") as f:
+                f.write(self._head.init_data)
+            return
 
         init_segment = None
         for line in self._playlist_lines:
@@ -117,11 +215,13 @@ class M3U8Downloader(BaseDownloader):
         )
 
     def _cleanup_partial(self) -> None:
-        """실패·중단 시 임시 폴더와 다운로드 파일 삭제."""
+        """실패·중단 시 임시 폴더와 다운로드 파일 삭제. 구간 다운로드는 이번에 만든 구간 파일도 지운다."""
         if os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir)
-        if os.path.exists(self.s.output_path):
-            os.remove(self.s.output_path)
+        for path in (self.s.output_path, *self._made_sections):
+            if os.path.exists(path):
+                os.remove(path)
+        self._made_sections.clear()
 
     def _cleanup_after_run(self) -> None:
         """임시 폴더 삭제 (구 run의 (5) — 병합 후에는 빈 폴더만 남는다)."""
@@ -140,10 +240,86 @@ class M3U8Downloader(BaseDownloader):
         보유)가 그대로라 편집 프로그램이 읽지 못한다. #92부터 중간 병합 파일
         없이 단일 패스로 재포장하며, 실패 시 폴백 없이 명확히 실패하고
         세그먼트를 보존한다 (규칙은 base의 _remux_streamed 참조).
+
+        구간 다운로드는 재포장하지 않고 구간마다 잘라 파일로 만든다 (#309).
         """
         self._on_merge_start()
+        if self._sections:
+            self._cut_sections()
+            return
         segment_files = self._list_segment_files((".m4s", ".m4v"))
         self._remux_streamed([os.path.join(self.temp_dir, f) for f in segment_files])
+
+    # ============ 구간 다운로드의 후처리 (#309) ============
+
+    def _init_path(self) -> str:
+        """임시 폴더 안 초기화 세그먼트의 경로."""
+        return os.path.join(self.temp_dir, f"{0:0{self.width}d}.m4s")
+
+    def _segment_path(self, index: int) -> str:
+        """임시 폴더 안 index번째 세그먼트의 경로 — _download_segment가 쓰는 이름과 같다."""
+        return os.path.join(self.temp_dir, f"{index + 1:0{self.width}d}.m4v")
+
+    def _cut_sections(self) -> None:
+        """구간마다 초기화 세그먼트 + 그 구간의 세그먼트를 이은 임시 fMP4를 만들고 자른다.
+
+        구간 목록 순서대로 자른다. 하나라도 실패하면 PostprocessError로 끝낸다 — 임시
+        폴더와 먼저 만든 구간 파일은 남는다. 이은 파일은 그 구간을 자르면 바로 지운다.
+        구간 사이에서 중단·일시정지를 확인한다(컷 하나는 중간에 멈추지 않는다).
+        """
+        head = self._head
+        paths = self.s.content.selection_paths
+        try:
+            for number, (section, output_path) in enumerate(zip(self._sections, paths), start=1):
+                if self.state == DownloadState.PAUSED:
+                    self.s._pause_event.wait()
+                if self.state == DownloadState.WAITING:
+                    return  # 정리(임시 폴더·만든 구간 파일 삭제)는 run()의 중단 경로가 한다
+                joined = os.path.join(self.temp_dir, f"section_{number}.mp4")
+                parsed = []
+                with open(joined, "wb") as out:
+                    out.write(head.init_data)
+                    for index in range(section.first_segment, section.last_segment + 1):
+                        with open(self._segment_path(index), "rb") as f:
+                            data = f.read()
+                        parsed.append(parse_media_segment(data, head.init))
+                        out.write(data)
+                index = build_fmp4_index(head.init, parsed, section.origin)
+                # 이은 파일은 VOD의 중간에서 시작한다 — ffmpeg의 -ss는 파일의 시작부터 센다
+                input_start = float(fmp4_origin(head.init, parsed[0]) - section.origin)
+                frames = cut_frames_from_fmp4(head.init, parsed, index, input_start)
+                result = hybrid_cut(
+                    joined,
+                    frames,
+                    _frame_at(frames, section.first_pts),
+                    _frame_at(frames, section.last_pts),
+                    output_path,
+                    inspect=self._inspect_cuts,
+                )
+                os.remove(joined)
+                self.cut_results.append(result)
+                self.cut_frames.append(frames)
+                self._made_sections.append(output_path)
+                # 병합 진행(세그먼트 수 기반)을 구간 수에 비례해 올린다 — 어댑터의 분모는
+                # 받은 세그먼트 수 + 초기화 세그먼트다
+                self.s.merged_segments = (self.s.max_threads + 1) * number // len(self._sections)
+                self._on_progress(
+                    ProgressEvent(
+                        downloaded_size=self.s.total_downloaded_size,
+                        total_size=self._progress_total_size(),
+                        speed=0.0,
+                        active_threads=0,
+                    )
+                )
+        except (CutError, Mp4Error) as e:
+            self.logger.log_error("Cut failed — segments preserved for retry", e)
+            raise PostprocessError(f"후처리(cut) 실패: {e}") from e
+
+    def _postprocess_output_size(self) -> int:
+        """후처리 종료 로그에 남길 크기 — 구간 다운로드는 구간 파일 크기의 합."""
+        if self._sections:
+            return sum(os.path.getsize(path) for path in self._made_sections)
+        return super()._postprocess_output_size()
 
     # ============ 다운로드 동작 관련 메서드들 ============
 
@@ -218,3 +394,9 @@ class M3U8Downloader(BaseDownloader):
                 return part_num
 
 
+def _frame_at(frames: CutFrames, pts: float) -> int:
+    """PTS가 pts인 프레임의 번호. 받은 세그먼트에 그 프레임이 없으면 CutError다."""
+    position = bisect_left(frames.frame_pts, pts - _PTS_TOLERANCE)
+    if position < len(frames.frame_pts) and abs(frames.frame_pts[position] - pts) <= _PTS_TOLERANCE:
+        return position
+    raise CutError(CUT_FAILED, f"받은 세그먼트에 PTS {pts:.6f}초인 프레임이 없다")

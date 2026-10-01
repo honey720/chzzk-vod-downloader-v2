@@ -57,6 +57,12 @@ class HlsPlaylist:
     # 세그먼트별 길이(초, #EXTINF). segments와 같은 순서·같은 개수다 —
     # #EXTINF가 없는 세그먼트는 0.0이다. 직접 만든 객체는 기본값(빈 튜플)일 수 있다 (#309)
     durations: tuple[float, ...] = ()
+    # 바로 앞에 #EXT-X-DISCONTINUITY가 놓인 세그먼트의 인덱스(오름차순). 그 세그먼트부터
+    # 타임스탬프가 앞과 이어지지 않는다 (#309)
+    discontinuities: tuple[int, ...] = ()
+    # 플레이리스트에 나온 #EXT-X-MAP URI를 나온 순서대로, 겹치지 않게. 둘 이상이면 초기화
+    # 세그먼트가 중간에 바뀌는 플레이리스트다 (#309)
+    init_uris: tuple[str, ...] = ()
 
     def sequence_of(self, index: int) -> int:
         """index번째 세그먼트의 미디어 시퀀스 번호 (IV 유도에 쓰인다)."""
@@ -91,6 +97,8 @@ def parse_media_playlist(text: str) -> HlsPlaylist:
     media_sequence = 0
     key: HlsKey | None = None
     init_uri: str | None = None
+    init_uris: list[str] = []
+    discontinuities: list[int] = []
 
     for raw in text.splitlines():
         line = raw.strip()
@@ -118,6 +126,12 @@ def parse_media_playlist(text: str) -> HlsPlaylist:
                 )
         elif line.startswith("#EXT-X-MAP:"):
             init_uri = _parse_attributes(line.split(":", 1)[1]).get("URI")
+            if init_uri and init_uri not in init_uris:
+                init_uris.append(init_uri)
+        elif line == "#EXT-X-DISCONTINUITY":
+            # 다음에 나올 세그먼트의 인덱스다. 첫 세그먼트 앞의 것은 끊길 앞이 없어 적지 않는다
+            if segments and len(segments) not in discontinuities:
+                discontinuities.append(len(segments))
 
     return HlsPlaylist(
         segments=tuple(segments),
@@ -125,6 +139,8 @@ def parse_media_playlist(text: str) -> HlsPlaylist:
         key=key,
         init_uri=init_uri,
         durations=tuple(durations),
+        discontinuities=tuple(discontinuities),
+        init_uris=tuple(init_uris),
     )
 
 

@@ -11,8 +11,10 @@
 해석은 ``core.api.fmp4``가 한다.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fractions import Fraction
+
+from core.api.hls import HlsPlaylist
 
 
 @dataclass(frozen=True)
@@ -69,6 +71,22 @@ class MoofScan:
     complete: bool  # 받은 bytes에 첫 mdat 앞의 moof가 끝까지 들어 있다
     moof_end: int  # 첫 mdat 앞의 moof가 끝나는 위치(바이트). 아직 모르면 지금까지 확인한 위치
     next_offset: int | None  # 첫 mdat 다음 상자의 위치 — moof가 더 있을 수 있는 자리. 모르면 None
+
+
+@dataclass
+class Fmp4Head:
+    """구간을 정하려고 받은 것을 담는다 — 플레이리스트, 초기화 세그먼트, 세그먼트의 moof (#309).
+
+    구간 다운로드는 받기 전에 프레임 시각을 알아야 한다. 그때 받은 것을 들고 있다가
+    엔진이 그대로 쓴다 — 같은 것을 두 번 받지 않는다. ``segments``는 받는 대로 채워지는
+    보관함이라 이 객체는 불변이 아니다.
+    """
+
+    playlist: HlsPlaylist  # 미디어 플레이리스트
+    init_data: bytes  # 초기화 세그먼트(EXT-X-MAP)의 bytes — 구간마다의 임시 파일 맨 앞에 쓴다
+    init: Fmp4Init  # init_data를 해석한 결과
+    # 세그먼트 인덱스 → 그 세그먼트의 moof만 읽어 해석한 결과. 읽은 것만 들어 있다
+    segments: dict[int, Fmp4Segment] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

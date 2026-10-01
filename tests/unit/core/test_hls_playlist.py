@@ -142,3 +142,56 @@ def test_looks_like_ts_detects_sync_bytes():
     # 키가 틀리면 난수가 되어 통과할 수 없다
     assert looks_like_ts(bytes(TS_PACKET_SIZE * 2)) is False
     assert looks_like_ts(b"\x47" * 10) is False  # 너무 짧다
+
+
+# ================================================================ 끊긴 자리 · 초기화 세그먼트 (#309)
+
+
+def test_discontinuity_marks_the_segment_that_follows_it():
+    """parse_media_playlist는 #EXT-X-DISCONTINUITY 바로 뒤 세그먼트의 인덱스를 discontinuities에 실어야 한다.
+
+    세그먼트 a · b, DISCONTINUITY, c, DISCONTINUITY, d
+    -> discontinuities == (2, 3)
+    """
+    text = "\n".join(
+        ["#EXTM3U", "#EXTINF:1,", "a", "#EXTINF:1,", "b", "#EXT-X-DISCONTINUITY", "#EXTINF:1,", "c"]
+        + ["#EXT-X-DISCONTINUITY", "#EXTINF:1,", "d"]
+    )
+
+    assert parse_media_playlist(text).discontinuities == (2, 3)
+
+
+def test_discontinuity_before_the_first_segment_is_not_a_break():
+    """parse_media_playlist는 첫 세그먼트 앞의 #EXT-X-DISCONTINUITY를 끊긴 자리로 세지 않아야 한다.
+
+    DISCONTINUITY, 세그먼트 a · b
+    -> discontinuities == ()
+    """
+    text = "\n".join(["#EXTM3U", "#EXT-X-DISCONTINUITY", "#EXTINF:1,", "a", "#EXTINF:1,", "b"])
+
+    assert parse_media_playlist(text).discontinuities == ()
+
+
+def test_init_uris_lists_each_distinct_map_in_order():
+    """parse_media_playlist는 #EXT-X-MAP의 URI를 나온 순서대로 겹치지 않게 init_uris에 실어야 한다.
+
+    MAP "one" · 세그먼트 · MAP "one" · 세그먼트 · MAP "two" · 세그먼트
+    -> init_uris == ("one", "two"), init_uri == "two"(마지막 것)
+    """
+    text = "\n".join(
+        [
+            "#EXTM3U",
+            '#EXT-X-MAP:URI="one"',
+            "#EXTINF:1,",
+            "a",
+            '#EXT-X-MAP:URI="one"',
+            "#EXTINF:1,",
+            "b",
+        ]
+        + ['#EXT-X-MAP:URI="two"', "#EXTINF:1,", "c"]
+    )
+
+    playlist = parse_media_playlist(text)
+
+    assert playlist.init_uris == ("one", "two")
+    assert playlist.init_uri == "two"

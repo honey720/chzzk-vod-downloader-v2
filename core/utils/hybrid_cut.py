@@ -76,6 +76,12 @@ SOURCE_LEAD_SECONDS = _AUDIO_PREROLL_SECONDS + 0.001
 # 재인코딩 화질 — libx264 CRF. 18은 눈으로 구분하기 어려운 수준이다
 _CRF = "18"
 
+# 오디오 비트레이트를 맞추는 단위(kb/s). ffmpeg가 보여 주는 입력의 비트레이트는 받은
+# 패킷으로 추정한 값이라 입력의 어느 부분인지에 따라 조금 다르다 — 같은 다시보기에서
+# 세그먼트 전부를 이은 파일은 192, 일부만 이은 파일은 191이었다. 그대로 쓰면 같은 구간을
+# 잘라도 입력의 범위에 따라 오디오가 달라진다. AAC가 흔히 쓰는 값은 이 단위의 배수다
+_AUDIO_BITRATE_STEP = 16
+
 # 서브프로세스 제한 시간(초)
 _PROBE_TIMEOUT = 60  # 머리만 읽는다
 _ENCODE_TIMEOUT = 600  # 머리·꼬리·구간 전체 재인코딩 — 길어야 GOP 하나(수 초 분량)
@@ -546,7 +552,12 @@ def _read_params(path: str, reorder_delay: int) -> tuple[VideoParams, int | None
         reorder_delay=reorder_delay,
     )
     bitrate = re.search(r"Audio: .*?, (\d+) kb/s", text)
-    return video, int(bitrate.group(1)) if bitrate else None
+    return video, _nominal_bitrate(int(bitrate.group(1))) if bitrate else None
+
+
+def _nominal_bitrate(measured: int) -> int:
+    """ffmpeg가 보여 준 오디오 비트레이트(kb/s)를 가장 가까운 _AUDIO_BITRATE_STEP의 배수로 맞춘다."""
+    return max(round(measured / _AUDIO_BITRATE_STEP), 1) * _AUDIO_BITRATE_STEP
 
 
 def read_packets(

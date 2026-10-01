@@ -37,7 +37,7 @@ class _RangeAdapter(BaseAdapter):
         if data is None:
             status = 404
         else:
-            match = _RANGE.fullmatch(range_header or "")
+            match = None if self._host.ignore_range else _RANGE.fullmatch(range_header or "")
             if match is None:
                 status, body = 200, data
             elif int(match.group(1)) >= len(data):
@@ -77,6 +77,7 @@ class RangeHost:
 
     def __init__(self, files: dict[str, bytes]):
         self.files = dict(files)
+        self.ignore_range = False  # True면 범위 요청을 무시하고 200으로 전체를 내준다
         self.requests: list[tuple[str, str, str | None]] = []  # (메서드, 이름, Range 머리)
         self._lock = threading.Lock()
 
