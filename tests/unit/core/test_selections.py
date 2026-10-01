@@ -7,6 +7,8 @@
 - 시각 비교는 프레임 단위다
 """
 
+from fractions import Fraction
+
 import pytest
 
 from core.models.plan import TimeRange
@@ -152,22 +154,35 @@ def test_validate_selections_flags_start_one_frame_before_zero():
     assert validate_selections([(-FRAME, 1.0)], DURATION, FPS) == {0: (SELECTION_OUT_OF_RANGE,)}
 
 
+@pytest.mark.parametrize("rate", [Fraction(30000, 1001), Fraction(2997, 100), 29.97])
 @pytest.mark.parametrize(
     ("end_frame", "expected"),
     [
-        (299, {}),  # 299×1001/30000 = 9.977초 ≤ 10초
-        (300, {0: (SELECTION_OUT_OF_RANGE,)}),  # 300×1001/30000 = 10.01초 > 10초
+        (299, {}),  # 299번째 프레임 경계는 9.98초 — 10초 안이다
+        (300, {0: (SELECTION_OUT_OF_RANGE,)}),  # 300번째 프레임 경계는 10.01초 — 10초 밖이다
     ],
 )
-def test_validate_selections_bounds_end_by_last_whole_ntsc_frame(end_frame, expected):
-    """validate_selections는 29.97fps에서 영상 길이 안에 들어오는 마지막 프레임 경계까지만 끝으로 받아야 한다.
+def test_validate_selections_bounds_end_by_last_whole_frame_at_2997(end_frame, expected, rate):
+    """validate_selections는 29.97 계열 프레임률에서 영상 길이 안의 마지막 프레임 경계까지만 끝으로 받아야 한다.
 
-    duration=10.0, fps=29.97, 끝 = 299프레임 · 300프레임
+    duration=10.0, fps = 30000/1001 · 2997/100 · 29.97, 끝 = 299프레임 · 300프레임 (끝 시각 = 프레임 ÷ fps)
     -> 299: {}, 300: {0: (범위,)}
     """
-    end = end_frame * 1001 / 30000
+    end = float(end_frame / Fraction(str(rate)))
 
-    assert validate_selections([(0.0, end)], 10.0, 29.97) == expected
+    assert validate_selections([(0.0, end)], 10.0, rate) == expected
+
+
+@pytest.mark.parametrize("fps", [Fraction(2997, 100), 29.97])
+def test_validate_selections_accepts_end_at_duration_after_five_hours_of_decimal_2997(fps):
+    """validate_selections는 간격이 400/11988초인 5시간 반짜리 영상에서 끝이 영상 길이인 구간을 통과시켜야 한다.
+
+    영상 600,000프레임, duration = 600,000 × 400/11988 (약 20,020초), 구간 (0.0, duration), fps = 2997/100 · 29.97
+    -> {}
+    """
+    duration = float(Fraction(600_000 * 400, 11988))
+
+    assert validate_selections([(0.0, duration)], duration, fps) == {}
 
 
 def test_validate_selections_flags_non_finite_time_as_out_of_range():
