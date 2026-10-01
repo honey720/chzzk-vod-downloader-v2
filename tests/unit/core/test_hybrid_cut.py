@@ -17,7 +17,9 @@
 """
 
 import os
+import struct
 import subprocess
+from dataclasses import replace
 from fractions import Fraction
 
 import pytest
@@ -643,12 +645,97 @@ def test_encode_command_passes_timestamps_through(fmp4_source, tmp_path):
     [(192, 192), (191, 192), (193, 192), (127, 128), (128, 128), (121, 128), (137, 144), (3, 16)],
 )
 def test_nominal_bitrate_snaps_to_the_nearest_step(measured, expected):
-    """_nominal_bitrate는 ffmpeg가 보여 준 오디오 비트레이트를 가장 가까운 16kb/s의 배수로 맞춰야 한다.
+    """_nominal_bitrate는 오디오 비트레이트를 가장 가까운 16kb/s의 배수로 맞춰야 한다.
 
-    주석의 경우마다 표시된 값(kb/s) — 191 · 193은 같은 영상의 다른 부분에서 본 192다
+    주석의 경우마다 값(kb/s)
     -> 16의 배수, 0이 되지 않는다
     """
     assert cut_module._nominal_bitrate(measured) == expected
+
+
+@pytest.mark.parametrize(
+    ("stream_bitrate", "expected"),
+    [(192, 192), (191, 192), (128, 128), (None, 192), (0, 192), (7, 192), (513, 192), (512, 512)],
+)
+def test_audio_bitrate_uses_the_stream_value_or_the_default(stream_bitrate, expected):
+    """_audio_bitrate는 CutFrames에 실린 원본 스트림의 값을 16kb/s 단위로 맞춰 쓰고, 값이 없거나 8~512 밖이면 192를 써야 한다.
+
+    오디오가 있는 프레임 정보, audio_bitrate는 주석의 값(kb/s)
+    -> 기대값
+    """
+    frames = replace(_synthetic_frames(), audio_bitrate=stream_bitrate)
+
+    assert cut_module._audio_bitrate(frames) == expected
+
+
+def test_audio_bitrate_is_none_without_audio():
+    """_audio_bitrate는 오디오가 없는 입력에 None을 돌려줘야 한다.
+
+    audio_start = None, audio_bitrate = 192
+    -> None
+    """
+    frames = replace(_synthetic_frames(), audio_start=None, audio_end=None, audio_bitrate=192)
+
+    assert cut_module._audio_bitrate(frames) is None
+
+
+def test_generated_inputs_carry_the_declared_audio_bitrate(mp4_source, fmp4_source):
+    """만든 mp4와 fMP4의 프레임 정보에는 컨테이너에 적힌 오디오 비트레이트가 실려야 한다.
+
+    ffmpeg aac 기본값(스테레오 128kb/s)으로 만든 입력
+    -> 둘 다 audio_bitrate == 128
+    """
+    assert (mp4_source[1].audio_bitrate, fmp4_source[1].audio_bitrate) == (128, 128)
+
+
+def test_cut_frames_from_mp4_measures_the_whole_audio_track_when_nothing_is_declared():
+    """cut_frames_from_mp4는 샘플 엔트리에 비트레이트가 없으면 오디오 트랙 전체의 샘플 크기 합 ÷ 길이를 실어야 한다.
+
+    합성 mp4: 샘플 엔트리 없음, 오디오 16샘플 × 2048바이트, 샘플 길이 1024틱(timescale 8000)
+    -> 2048 × 8 ÷ 0.128초 = 128,000bit/s -> audio_bitrate == 128
+    """
+    built = build_mp4([video_spec(), audio_spec(sizes=[2048] * 16)])
+
+    frames = cut_frames_from_mp4(parse_moov(built.moov))
+
+    assert frames.audio_bitrate == 128
+
+
+def _audio_bits_per_second(path: str) -> float:
+    """파일의 오디오 패킷 크기 합 × 8 ÷ 패킷 길이 합 — framecrc의 길이·크기 칸으로 잰다."""
+    done = run_ffmpeg(
+        ["-v", "error", "-i", path, "-map", "0:a:0", "-c", "copy", "-f", "framecrc", "-"],
+        timeout=60,
+    )
+    assert done.returncode == 0, done.stderr
+    rows = [line.split(",") for line in done.stdout.splitlines() if not line.startswith("#")]
+    samples = sum(int(row[3]) for row in rows)
+    assert samples  # 오디오가 없는 파일을 0으로 재고 통과하지 않게
+    return sum(int(row[4]) for row in rows) * 8 * 48000 / samples
+
+
+def test_cut_encodes_audio_at_the_declared_bitrate_not_the_one_ffmpeg_shows(fmp4_parts, tmp_path):
+    """컷은 입력 파일에서 ffmpeg가 보여 주는 값이 아니라 초기화 세그먼트에 적힌 비트레이트로 오디오를 인코딩해야 한다.
+
+    fMP4 입력(오디오 실제 약 128kb/s — ffmpeg가 보여 주는 값도 그렇다)의 초기화 세그먼트에서
+    esds · btrt의 128000을 64000으로 고쳐 씀, 프레임 10~100
+    -> 고친 입력: source.audio_bitrate == 64, 결과 오디오 < 96kb/s
+       그대로 둔 입력: source.audio_bitrate == 128, 결과 오디오 > 96kb/s
+    """
+    folder, init_bytes, media = fmp4_parts
+    declared = struct.pack(">II", 128_000, 128_000)
+    assert init_bytes.count(declared) >= 1  # 고칠 자리가 있다
+    lowered = init_bytes.replace(declared, struct.pack(">II", 64_000, 64_000))
+    results = {}
+    for name, head in (("kept", init_bytes), ("lowered", lowered)):
+        path, frames = _fmp4_input(folder, f"declared_{name}.mp4", head, media, skip=0)
+        output = str(tmp_path / f"{name}.mp4")
+        result = hybrid_cut(path, frames, 10, 100, output)
+        results[name] = (result.source.audio_bitrate, _audio_bits_per_second(output))
+
+    assert results["kept"][0] == 128
+    assert results["lowered"][0] == 64
+    assert results["kept"][1] > 96_000 > results["lowered"][1]
 
 
 def test_encode_command_restores_reorder_delay_the_encoder_left_out():

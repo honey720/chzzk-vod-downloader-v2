@@ -451,6 +451,38 @@ def test_transfer_failure_removes_partial_source(server, tmp_path, monkeypatch):
     assert run.listing() == []
 
 
+@pytest.mark.parametrize("how", ["failure", "stop"])
+def test_section_run_that_fails_or_stops_leaves_the_file_at_output_path_alone(
+    server, tmp_path, monkeypatch, how
+):
+    """구간 다운로드가 실패하거나 중단돼도 output_path 자리에 있던 파일은 그대로 남아야 한다.
+
+    기본 입력, 구간 프레임 35~80, output_path 자리에 내용이 b"keep"인 파일을 미리 둠.
+    failure: 컷이 OSError를 냄 / stop: 컷 도중 model.stop()
+    -> 저장 폴더에 그 파일 하나뿐이고 내용이 b"keep"
+    """
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))])
+    with open(run.data.output_path, "wb") as f:
+        f.write(b"keep")
+    real = fd_module.hybrid_cut
+
+    def interrupted(*args, **kwargs):
+        if how == "failure":
+            raise OSError("시험")
+        run.data.model.stop()
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(fd_module, "hybrid_cut", interrupted)
+
+    run.start()
+
+    assert run.finished == 0
+    assert len(run.failures) == (1 if how == "failure" else 0)
+    assert run.listing() == ["unused.mp4"]
+    with open(run.data.output_path, "rb") as f:
+        assert f.read() == b"keep"
+
+
 def test_finished_run_releases_reserved_names(server, tmp_path, monkeypatch):
     """다운로드가 끝나면(실패 포함) 배정받은 구간 파일명의 예약이 풀려야 한다.
 

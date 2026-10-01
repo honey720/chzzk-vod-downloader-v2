@@ -472,6 +472,72 @@ def test_parse_media_segment_rejects_huge_default_only_run_before_allocating(mon
     assert peak < 1024 * 1024
 
 
+def _default_only_segment(counts: list[int]) -> bytes:
+    """샘플마다의 칸이 없는 영상 trun이 counts개 든 세그먼트 — 샘플 수 칸을 counts로 고쳐 쓴다."""
+    data = bytearray(media_segment([Fragment([Traf(VIDEO, [Run([]) for _ in counts])])]))
+    at = -1
+    for count in counts:
+        at = data.find(b"trun", at + 1)
+        struct.pack_into(">I", data, at + 8, count)
+    return bytes(data)
+
+
+@pytest.mark.parametrize(
+    ("counts", "passes"),
+    [([1200], True), ([1201], False), ([700, 500], True), ([700, 501], False)],
+    ids=["at-limit", "over", "two-runs-at-limit", "two-runs-over"],
+)
+def test_parse_media_segment_limits_default_only_runs_to_one_segment_worth(counts, passes):
+    """parse_media_segment는 샘플마다의 칸이 없는 trun들의 샘플 수 합이 세그먼트 하나의 분량(120초)을 넘으면 길이 초과 키로 거부해야 한다.
+
+    영상 timescale 1000, 기본 샘플 길이 100틱 -> 120초 = 1200샘플. trun의 샘플 수는 주석의 값
+    -> 1200개까지 통과 · 넘으면 MP4_TOO_LONG (트랙 전체 상한 5,184,000보다 한참 아래다)
+    """
+    data = _default_only_segment(counts)
+
+    if passes:
+        assert len(parse_media_segment(data, _init()).video.decode_times) == sum(counts)
+    else:
+        with pytest.raises(Mp4Error) as info:
+            parse_media_segment(data, _init())
+        assert info.value.message_key == MP4_TOO_LONG
+
+
+def test_parse_media_segment_rejects_small_moof_declaring_millions_before_allocating():
+    """parse_media_segment는 작은 moof가 샘플마다의 칸 없이 수백만 샘플을 선언하면 펼치지 않고 거부해야 한다.
+
+    샘플별 칸 없는 trun의 sample_count = 2,000,000 — 트랙 전체 상한(5,184,000) 안이다
+    -> message_key == MP4_TOO_LONG, 최대 메모리 사용량 < 1MiB
+    """
+    data = _default_only_segment([2_000_000])
+    init = _init()
+
+    tracemalloc.start()
+    try:
+        with pytest.raises(Mp4Error) as info:
+            parse_media_segment(data, init)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+
+    assert info.value.message_key == MP4_TOO_LONG
+    assert peak < 1024 * 1024
+
+
+def test_parse_media_segment_rejects_default_only_run_without_a_sample_duration():
+    """parse_media_segment는 샘플마다의 칸이 없는 trun에 기본 샘플 길이도 없으면 손상 키로 거부해야 한다.
+
+    trex 기본 길이 0, tfhd 기본값 없음, 샘플별 칸 없는 trun의 sample_count = 5
+    -> message_key == MP4_INVALID
+    """
+    data = _default_only_segment([5])
+
+    with pytest.raises(Mp4Error) as info:
+        parse_media_segment(data, _init(video_trex=(0, 50, NON_KEY)))
+
+    assert info.value.message_key == MP4_INVALID
+
+
 # ================================================================ 앞부분만으로 읽기
 
 

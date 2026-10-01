@@ -80,7 +80,7 @@ def validate_selections(
         위반이 있는 구간만 담은 ``{구간 인덱스(0부터): 위반 키들}``. 비어 있으면 통과다.
         키의 순서는 위 규칙 순서다.
     """
-    duration_frames = math.floor(Fraction(duration) * frame_rate(fps) + _DURATION_SLACK_FRAMES)
+    duration_frames = _duration_frames(duration, fps)
     violations: dict[int, list[str]] = {}
     seen: dict[tuple[int, int], list[int]] = {}
 
@@ -109,3 +109,23 @@ def validate_selections(
         violations.setdefault(index, []).append(SELECTION_TOO_MANY)
 
     return {index: tuple(keys) for index, keys in sorted(violations.items())}
+
+
+def reaches_end(end: float, duration: float, fps: FrameRate) -> bool:
+    """구간의 끝이 영상 길이와 같은지 본다 — 프레임 단위로 견준다 (#309).
+
+    참이면 그 끝은 ``validate_selections``가 받아들이는 가장 뒤의 끝이다. 이런 구간의 끝
+    프레임은 시각으로 고르지 않고 영상의 마지막 프레임으로 정한다 — 검증에 쓰는 길이가
+    마지막 프레임의 PTS보다 짧은 영상에서는 시각으로 골라서는 마지막 프레임에 닿지 못한다.
+
+    Args:
+        end: 구간의 끝(초)
+        duration: 영상 길이(초) — ``validate_selections``에 준 것과 같은 값
+        fps: 프레임률 — ``validate_selections``에 준 것과 같은 값
+    """
+    return frame_index(end, fps) >= _duration_frames(duration, fps)
+
+
+def _duration_frames(duration: float, fps: FrameRate) -> int:
+    """영상 길이를 프레임 수로 내린 값 — 구간의 끝이 가질 수 있는 가장 큰 프레임 번호."""
+    return math.floor(Fraction(duration) * frame_rate(fps) + _DURATION_SLACK_FRAMES)

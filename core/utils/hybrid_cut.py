@@ -47,7 +47,7 @@ from core.models.cut import (
     VideoParams,
 )
 from core.models.fmp4_index import Fmp4Index, Fmp4Init, Fmp4Segment
-from core.models.mp4_index import Mp4Index
+from core.models.mp4_index import Mp4Index, Mp4Track
 from core.utils.ffmpeg import FFmpegError, FFmpegTimeoutError, run_ffmpeg
 from core.utils.paths import cut_temp_dir_for
 
@@ -76,11 +76,17 @@ SOURCE_LEAD_SECONDS = _AUDIO_PREROLL_SECONDS + 0.001
 # 재인코딩 화질 — libx264 CRF. 18은 눈으로 구분하기 어려운 수준이다
 _CRF = "18"
 
-# 오디오 비트레이트를 맞추는 단위(kb/s). ffmpeg가 보여 주는 입력의 비트레이트는 받은
-# 패킷으로 추정한 값이라 입력의 어느 부분인지에 따라 조금 다르다 — 같은 다시보기에서
-# 세그먼트 전부를 이은 파일은 192, 일부만 이은 파일은 191이었다. 그대로 쓰면 같은 구간을
-# 잘라도 입력의 범위에 따라 오디오가 달라진다. AAC가 흔히 쓰는 값은 이 단위의 배수다
+# 오디오 비트레이트를 맞추는 단위(kb/s). 컨테이너에 적힌 값은 인코더의 설정값이 아니라
+# 잰 평균일 수 있다(표본에 191,999bit/s가 있었다). AAC가 흔히 쓰는 값은 이 단위의 배수다
 _AUDIO_BITRATE_STEP = 16
+
+# 원본의 오디오 비트레이트를 알 수 없을 때 쓰는 값(kb/s). 표본(인코딩 완료 VOD · 다시보기)의
+# 오디오가 모두 192kb/s였다 — 그보다 낮게 잡으면 다시 인코딩하면서 음질이 떨어진다.
+# ffmpeg의 기본값에 맡기지 않고 적는다 — 결과가 ffmpeg 버전에 따라 달라지지 않게 한다
+_DEFAULT_AUDIO_BITRATE = 192
+
+# 컨테이너에 적힌 값으로 받아들이는 범위(kb/s). 벗어나면 손상된 값으로 보고 위 기본값을 쓴다
+_AUDIO_BITRATE_RANGE = (8, 512)
 
 # 서브프로세스 제한 시간(초)
 _PROBE_TIMEOUT = 60  # 머리만 읽는다
@@ -131,7 +137,19 @@ def cut_frames_from_mp4(index: Mp4Index) -> CutFrames:
         frame_duration=float(1 / index.fps),
         audio_start=min(audio.times[n] for n in shown) if shown else None,
         audio_end=max(audio.times[n] + audio.durations[n] for n in shown) if shown else None,
+        audio_bitrate=_mp4_audio_bitrate(audio) if audio else None,
     )
+
+
+def _mp4_audio_bitrate(audio: Mp4Track) -> int | None:
+    """오디오 트랙 전체의 비트레이트(kb/s) — 샘플 엔트리에 적힌 값, 없으면 샘플 크기의 합 ÷ 길이.
+
+    둘 다 moov만으로 정해진다. 받은 범위가 어디든 같은 값이다.
+    """
+    if audio.declared_bitrate:
+        return round(audio.declared_bitrate / 1000)
+    length = sum(audio.durations)
+    return round(sum(audio.sizes) * 8 / length / 1000) if length > 0 else None
 
 
 def cut_frames_from_fmp4(
@@ -160,6 +178,13 @@ def cut_frames_from_fmp4(
         audio_start=min(index.audio_pts) if index.audio_pts else None,
         audio_end=audio_end,
         input_start=input_start,
+        # 초기화 세그먼트에 적힌 값만 쓴다. 받은 세그먼트의 샘플 크기로 재면 어느 세그먼트를
+        # 받았는지에 따라 달라진다
+        audio_bitrate=(
+            round(init.audio.declared_bitrate / 1000)
+            if init.audio is not None and init.audio.declared_bitrate
+            else None
+        ),
     )
 
 
@@ -470,10 +495,10 @@ def _reject_transport_stream(path: str) -> None:
 
 
 def _probe_source(path: str, frames: CutFrames, plan: CutPlan) -> SourceInfo:
-    """입력의 SPS와 오디오 비트레이트를 읽고, 재인코딩으로 맞출 수 있는 모양인지 확인한다."""
+    """입력의 SPS를 읽고, 재인코딩으로 맞출 수 있는 모양인지 확인한다. 오디오 비트레이트도 정한다."""
     key = frames.keyframes[bisect_right(frames.keyframes, plan.first) - 1]
     delay = round((frames.frame_pts[key] - frames.frame_dts[key]) / frames.frame_duration)
-    video, audio_bitrate = _read_params(path, delay)
+    video = _read_params(path, delay)
     problems = []
     if video.profile_idc not in _X264_PROFILES:
         problems.append(f"프로파일 {video.profile_idc}")
@@ -485,10 +510,10 @@ def _probe_source(path: str, frames: CutFrames, plan: CutPlan) -> SourceInfo:
         problems.append(f"재정렬 지연 {delay}프레임")
     if problems:
         raise CutError(CUT_UNSUPPORTED, "맞출 수 없는 영상: " + ", ".join(problems))
-    return SourceInfo(video=video, audio_bitrate=audio_bitrate)
+    return SourceInfo(video=video, audio_bitrate=_audio_bitrate(frames))
 
 
-def _read_params(path: str, reorder_delay: int) -> tuple[VideoParams, int | None]:
+def _read_params(path: str, reorder_delay: int) -> VideoParams:
     """ffmpeg의 trace_headers 출력에서 첫 SPS를 읽는다. 동봉 ffmpeg에는 ffprobe가 없다.
 
     받은 범위만 든 부분 mp4(core.utils.mp4_partial)도 읽는다 — 첫 SPS는 moov에 든
@@ -536,7 +561,7 @@ def _read_params(path: str, reorder_delay: int) -> tuple[VideoParams, int | None
         if ratio == _EXTENDED_SAR
         else _SAR_BY_IDC.get(ratio, (0, 0))
     )
-    video = VideoParams(
+    return VideoParams(
         profile_idc=fields["profile_idc"],
         level_idc=fields["level_idc"],
         chroma_format_idc=fields.get("chroma_format_idc", 1),
@@ -551,13 +576,29 @@ def _read_params(path: str, reorder_delay: int) -> tuple[VideoParams, int | None
         sar=sar,
         reorder_delay=reorder_delay,
     )
-    bitrate = re.search(r"Audio: .*?, (\d+) kb/s", text)
-    return video, _nominal_bitrate(int(bitrate.group(1))) if bitrate else None
 
 
-def _nominal_bitrate(measured: int) -> int:
-    """ffmpeg가 보여 준 오디오 비트레이트(kb/s)를 가장 가까운 _AUDIO_BITRATE_STEP의 배수로 맞춘다."""
-    return max(round(measured / _AUDIO_BITRATE_STEP), 1) * _AUDIO_BITRATE_STEP
+def _audio_bitrate(frames: CutFrames) -> int | None:
+    """오디오를 다시 인코딩할 비트레이트(kb/s)를 정한다. 오디오가 없으면 None이다.
+
+    원본 스트림 전체에 대해 하나로 정해지는 값(``CutFrames.audio_bitrate``)만 쓴다. 입력
+    파일에서 ffmpeg가 보여 주는 값은 쓰지 않는다 — 받은 패킷으로 추정한 값이라 원본의
+    일부만 든 입력에서는 원본과 다르고, 다른 정도가 ffmpeg 버전마다 다르다(7.0.2는
+    중간에서 시작하는 fMP4에서 128을 51 · 65로 보여 줬다).
+
+    값을 알 수 없거나 받아들이는 범위를 벗어나면 ``_DEFAULT_AUDIO_BITRATE``를 쓴다.
+    """
+    if frames.audio_start is None:
+        return None
+    low, high = _AUDIO_BITRATE_RANGE
+    if frames.audio_bitrate is None or not low <= frames.audio_bitrate <= high:
+        return _DEFAULT_AUDIO_BITRATE
+    return _nominal_bitrate(frames.audio_bitrate)
+
+
+def _nominal_bitrate(declared: int) -> int:
+    """오디오 비트레이트(kb/s)를 가장 가까운 _AUDIO_BITRATE_STEP의 배수로 맞춘다."""
+    return max(round(declared / _AUDIO_BITRATE_STEP), 1) * _AUDIO_BITRATE_STEP
 
 
 def read_packets(
@@ -600,7 +641,7 @@ def _inspect_piece(path: str, piece: CutPiece, frames: CutFrames) -> PieceInfo:
     shown = [p for p in packets if not p[3] & _HIDDEN_PACKET]
     first_key = next((p for p in shown if p[3] & 1), shown[0] if shown else packets[0])
     frame_ticks = frames.frame_duration * timescale
-    video, _bitrate = _read_params(path, round((first_key[1] - first_key[0]) / frame_ticks))
+    video = _read_params(path, round((first_key[1] - first_key[0]) / frame_ticks))
     return PieceInfo(
         piece=piece,
         video=video,

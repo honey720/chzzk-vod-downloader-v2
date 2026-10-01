@@ -215,10 +215,16 @@ class M3U8Downloader(BaseDownloader):
         )
 
     def _cleanup_partial(self) -> None:
-        """실패·중단 시 임시 폴더와 다운로드 파일 삭제. 구간 다운로드는 이번에 만든 구간 파일도 지운다."""
+        """실패·중단 시 임시 폴더와 이번 실행이 만든 파일을 지운다.
+
+        구간 다운로드는 output_path에 쓰지 않는다 — 그 자리의 파일은 이 실행이 만든 것이
+        아니므로(같은 영상의 전체 다운로드일 수 있다) 지우지 않고, 이번에 만든 구간 파일만
+        지운다 (#309).
+        """
         if os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir)
-        for path in (self.s.output_path, *self._made_sections):
+        made = self._made_sections if self.s.content.selections else [self.s.output_path]
+        for path in made:
             if os.path.exists(path):
                 os.remove(path)
         self._made_sections.clear()
@@ -367,10 +373,10 @@ class M3U8Downloader(BaseDownloader):
                                     slow_count += 1
                                     if slow_count > 5:
                                         # 속도가 너무 느리면 스레드 재시작
-                                        ratio = write_elapsed / elapsed * 100 if elapsed > 0 else 0.0
-                                        diagnostic = (
-                                            f"write={write_elapsed:.3f}s/{elapsed:.3f}s={ratio:.0f}%"
+                                        ratio = (
+                                            write_elapsed / elapsed * 100 if elapsed > 0 else 0.0
                                         )
+                                        diagnostic = f"write={write_elapsed:.3f}s/{elapsed:.3f}s={ratio:.0f}%"
                                         with self.lock:
                                             self._requeue_slow(
                                                 (index, segment), part_num, diagnostic=diagnostic

@@ -30,6 +30,9 @@ class Fmp4Track:
     default_duration: int  # trex의 기본 샘플 길이(틱)
     default_size: int  # trex의 기본 샘플 크기(바이트)
     default_flags: int  # trex의 기본 샘플 플래그
+    # 오디오 샘플 엔트리가 선언한 비트레이트(bit/s) — esds·btrt. 영상 트랙이거나 적혀 있지
+    # 않으면 None이다. 어느 세그먼트를 받았는지와 무관하게 스트림에 하나다
+    declared_bitrate: int | None = None
 
 
 @dataclass(frozen=True)

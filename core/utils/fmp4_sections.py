@@ -19,6 +19,10 @@
   오디오도 그만큼 앞에서 시작해야 한다(컷이 구간 시작보다 앞에서 읽기 시작한다)
 - 끝 쪽: 끝 프레임이 있어야 하고, 오디오가 끝 프레임이 끝나는 시각까지 있어야 한다
 
+구간의 끝이 영상 길이와 같으면(``reaches_end``) 끝 프레임은 시각으로 고르지 않고 마지막
+세그먼트의 마지막 프레임이다. 플레이리스트의 길이가 마지막 프레임의 PTS보다 짧은 영상이
+있어, 시각으로 고르면 그 프레임에 닿지 못한다.
+
 세그먼트의 프레임 정보는 주입받은 함수로 읽는다 — 이 모듈은 네트워크를 모른다.
 """
 
@@ -35,7 +39,12 @@ from core.models.fmp4_index import Fmp4Init, Fmp4Segment
 from core.models.plan import TimeRange
 from core.utils.hls_ranges import selection_segments
 from core.utils.hybrid_cut import SOURCE_LEAD_SECONDS, cut_frames_from_fmp4
-from core.utils.selections import SELECTION_CROSSES_BREAK, SelectionError, validate_selections
+from core.utils.selections import (
+    SELECTION_CROSSES_BREAK,
+    SelectionError,
+    reaches_end,
+    validate_selections,
+)
 from core.utils.timecode import snap_to_frame
 
 # 양 끝에서 세그먼트를 더 넣어 보는 최대 횟수 — 플레이리스트의 시각과 실제 PTS의 차이는
@@ -126,18 +135,28 @@ def plan_fmp4_sections(
             lead = frames_of(first_segment, cover)
         first_frame = snap_to_frame(selection.start, lead.frame_pts, fps, "start")
 
-        low = high = span.cover_last
-        tail = frames_of(low, high)
-        for _ in range(_MAX_WIDEN_STEPS):
-            last_frame = snap_to_frame(selection.end, tail.frame_pts, fps, "end")
-            if selection.end < tail.frame_pts[0] - tail.frame_duration / 2 and low > first_segment:
-                low -= 1  # 끝 프레임이 앞 세그먼트에 있다
-            elif not _has_tail(tail, last_frame, selection.end) and high < group_end:
-                high += 1  # 끝 프레임이나 그 프레임의 오디오가 다음 세그먼트에 있다
-            else:
-                break
+        if reaches_end(selection.end, playlist.duration, fps):
+            # 끝이 영상 길이와 같다 — 시각으로 고르지 않고 마지막 세그먼트의 마지막 프레임을
+            # 쓴다. 플레이리스트의 길이(EXTINF의 합)가 마지막 프레임의 PTS보다 짧은 영상에서는
+            # 길이까지만 줄 수 있는 구간으로 그 프레임을 고를 수 없다
+            high = len(playlist.segments) - 1
+            low = _last_segment_with_video(segment_at, first_segment, high)
             tail = frames_of(low, high)
-        last_frame = snap_to_frame(selection.end, tail.frame_pts, fps, "end")
+            last_frame = len(tail.frame_pts) - 1
+        else:
+            low = high = span.cover_last
+            tail = frames_of(low, high)
+            for _ in range(_MAX_WIDEN_STEPS):
+                last_frame = snap_to_frame(selection.end, tail.frame_pts, fps, "end")
+                starts_later = selection.end < tail.frame_pts[0] - tail.frame_duration / 2
+                if starts_later and low > first_segment:
+                    low -= 1  # 끝 프레임이 앞 세그먼트에 있다
+                elif not _has_tail(tail, last_frame, selection.end) and high < group_end:
+                    high += 1  # 끝 프레임이나 그 프레임의 오디오가 다음 세그먼트에 있다
+                else:
+                    break
+                tail = frames_of(low, high)
+            last_frame = snap_to_frame(selection.end, tail.frame_pts, fps, "end")
 
         last_segment = max(high, cover)
         if span.last > group_end or last_segment > group_end or first_segment < group:
@@ -153,6 +172,19 @@ def plan_fmp4_sections(
             )
         )
     return tuple(sections)
+
+
+def _last_segment_with_video(
+    segment_at: Callable[[int], Fmp4Segment], lowest: int, last: int
+) -> int:
+    """last에서 앞으로 가며 영상 샘플이 든 첫 세그먼트를 찾는다. lowest보다 앞으로는 가지 않는다.
+
+    마지막 세그먼트에 오디오만 든 영상이 있다 — 그러면 마지막 프레임은 그 앞 세그먼트에 있다.
+    """
+    index = last
+    while index > lowest and not segment_at(index).video.presentation_times:
+        index -= 1
+    return index
 
 
 def _group_start(playlist: HlsPlaylist, segment: int) -> int:

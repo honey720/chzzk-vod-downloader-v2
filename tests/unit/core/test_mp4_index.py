@@ -826,3 +826,107 @@ def test_parse_moov_reports_first_sample_of_every_chunk():
 
     assert index.video.chunk_starts == (0, 3, 6, 8)
     assert index.audio.chunk_starts == (0, 4, 8, 12)
+
+
+# ================================================================ 선언된 오디오 비트레이트 (#309)
+
+
+def _descriptor(tag: int, body: bytes, long_length: bool) -> bytes:
+    """esds 안의 서술자 하나 — 꼬리표 + 길이 + 본문. long_length면 길이를 4바이트로 쓴다."""
+    length = bytes([0x80, 0x80, 0x80, len(body)]) if long_length else bytes([len(body)])
+    return bytes([tag]) + length + body
+
+
+def _esds(
+    max_rate: int,
+    avg_rate: int,
+    *,
+    long_length: bool = False,
+    es_flags: int = 0,
+    optional: bytes = b"",
+) -> bytes:
+    """esds 상자 — ES 서술자(0x03) 안에 디코더 설정 서술자(0x04)가 든다."""
+    config = bytes([0x40, 0x15]) + bytes(3) + struct.pack(">II", max_rate, avg_rate)
+    es = struct.pack(">HB", 1, es_flags) + optional + _descriptor(0x04, config, long_length)
+    return box(b"esds", bytes(4) + _descriptor(0x03, es, long_length))
+
+
+def _btrt(max_rate: int, avg_rate: int) -> bytes:
+    """btrt 상자 — 버퍼 크기(0) · maxBitrate · avgBitrate."""
+    return box(b"btrt", struct.pack(">III", 0, max_rate, avg_rate))
+
+
+def _audio_stsd(*children: bytes, entries: int = 1, version: int = 0) -> bytes:
+    """mp4a 샘플 엔트리 하나가 든 stsd의 본문(버전·플래그부터)."""
+    # 예약(6) · 데이터 참조 번호(2) · 버전(2) · 개정(2) · 제작자(4) · 채널(2) · 샘플 크기(2) ·
+    # 압축 번호(2) · 패킷 크기(2) · 샘플률(4)
+    fixed = bytes(6) + struct.pack(">HHHIHHHHI", 1, version, 0, 0, 2, 16, 0, 0, 48000 << 16)
+    payload = fixed + b"".join(children)
+    return (
+        bytes(4)
+        + struct.pack(">I", entries)
+        + struct.pack(">I4s", 8 + len(payload), b"mp4a")
+        + payload
+    )
+
+
+@pytest.mark.parametrize(
+    ("stsd", "expected"),
+    [
+        (_audio_stsd(_esds(192_000, 128_000)), 128_000),
+        (
+            _audio_stsd(_esds(192_000, 128_000, long_length=True)),
+            128_000,
+        ),  # ffmpeg가 쓰는 길이 모양
+        # ES 서술자의 선택 칸(dependsOn_ES_ID 2바이트)이 앞에 있다
+        (_audio_stsd(_esds(192_000, 128_000, es_flags=0x80, optional=bytes(2))), 128_000),
+        (_audio_stsd(_esds(192_000, 128_000), _btrt(0, 96_000)), 128_000),  # esds가 앞선다
+        (_audio_stsd(_esds(160_000, 0), _btrt(170_000, 96_000)), 96_000),  # esds avg 0 → btrt avg
+        (_audio_stsd(_btrt(170_000, 96_000)), 96_000),
+        (_audio_stsd(_esds(160_000, 0)), 160_000),  # avg가 어디에도 없다 → max
+        (_audio_stsd(_esds(0, 0), _btrt(170_000, 0)), 170_000),
+        (_audio_stsd(), None),  # esds도 btrt도 없다
+        (_audio_stsd(_esds(0, 0)), None),
+        (_audio_stsd(_esds(192_000, 128_000), entries=0), None),
+        (_audio_stsd(_esds(192_000, 128_000), version=3), None),  # 모르는 엔트리 버전
+        (
+            _audio_stsd(box(b"esds", bytes(4) + bytes([0x03, 5, 0, 1, 0, 0x04, 20]))),
+            None,
+        ),  # 잘린 esds
+        (_audio_stsd(box(b"esds", bytes(4) + bytes([0x05, 2, 0, 0]))), None),  # 다른 서술자로 시작
+    ],
+    ids=[
+        "esds-avg",
+        "esds-long-length",
+        "esds-optional-field",
+        "esds-before-btrt",
+        "btrt-avg-when-esds-avg-is-zero",
+        "btrt-only",
+        "esds-max",
+        "btrt-max",
+        "nothing",
+        "all-zero",
+        "no-entry",
+        "unknown-version",
+        "truncated-esds",
+        "wrong-descriptor",
+    ],
+)
+def test_declared_bitrate_reads_the_sample_entry(stsd, expected):
+    """_declared_bitrate는 오디오 샘플 엔트리의 esds avg · btrt avg · esds max · btrt max 순서로 0이 아닌 첫 값을 돌려주고, 없거나 읽지 못하면 None을 돌려줘야 한다.
+
+    주석의 경우마다 손으로 조립한 stsd 본문 (값은 bit/s)
+    -> 기대값
+    """
+    assert mp4_module._declared_bitrate(stsd, (0, len(stsd))) == expected
+
+
+def test_parse_moov_leaves_declared_bitrate_empty_without_a_sample_entry():
+    """parse_moov는 샘플 엔트리가 없는 트랙의 declared_bitrate를 None으로 두고 해석에 실패하지 않아야 한다.
+
+    합성 mp4 — stsd의 항목 수 0
+    -> 오디오·영상 declared_bitrate is None
+    """
+    index = parse_moov(build_mp4([video_spec(), audio_spec()]).moov)
+
+    assert (index.video.declared_bitrate, index.audio.declared_bitrate) == (None, None)

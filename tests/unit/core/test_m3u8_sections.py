@@ -14,11 +14,19 @@
 - broken.m3u8: 넷째 세그먼트 앞에 #EXT-X-DISCONTINUITY
 - twice.m3u8: 세그먼트 여섯을 한 번 더 잇고 그 사이에 #EXT-X-DISCONTINUITY — 뒤쪽의
   타임스탬프가 0으로 돌아간다
+- late.m3u8: 뒤쪽 세그먼트 셋(넷째 ~ 여섯째) · #EXT-X-DISCONTINUITY · 세그먼트 여섯 — 첫
+  세그먼트의 타임스탬프가 3초이고 끊긴 자리 뒤가 0이다
+- short.m3u8: 마지막 세그먼트의 #EXTINF를 줄여 플레이리스트 길이를 5.9초로 만든 것 — 마지막
+  프레임의 PTS가 길이보다 뒤다
 
 핵심 계약:
 - 받는 세그먼트는 구간들의 세그먼트를 합친 것이고(앞 세그먼트 하나 포함) 한 번씩만 받는다
 - 플레이리스트·초기화 세그먼트·moof는 한 번씩만 받는다. 넘겨받으면 받지 않는다
 - 구간 파일의 영상·오디오 패킷은 세그먼트 전부를 이은 파일에서 자른 것과 모두 같다
+
+- 오디오를 다시 인코딩하는 비트레이트는 초기화 세그먼트에 적힌 값이다 — 어느 세그먼트를
+  받았는지와 무관하다
+- 끝이 영상 길이와 같은 구간의 끝 프레임은 마지막 프레임이다
 
 대조는 파일 바이트가 아니라 패킷(시각 + 내용의 CRC)으로 한다. 결과 파일의 메타데이터에는
 ffmpeg가 입력에서 추정한 비트레이트가 들어가는데, 그 값은 입력이 세그먼트 전부인지
@@ -53,6 +61,7 @@ from tests.unit.core.range_host import RangeHost
 
 KEYFRAMES = (0, 30, 36, 60, 90, 120, 150)  # -force_key_frames 0,1,1.2,2,3,4,5 (30fps)
 SEGMENTS = 6  # 1초 세그먼트 — 키프레임 0·30·60·90·120·150에서 갈린다
+SHORT_DURATION = 5.9  # short.m3u8의 플레이리스트 길이(초) — 30fps에서 정확히 177프레임
 
 
 def _make_hls(folder, *extra: str, b_frames: str, pyramid: str) -> None:
@@ -101,6 +110,7 @@ class _Source:
         return self.frames.frame_pts[frame]
 
     def selection(self, first: int, last: int) -> TimeRange:
+        """프레임 first의 PTS부터 프레임 last의 PTS까지의 구간."""
         return TimeRange(self.time_of(first), self.time_of(last))
 
 
@@ -136,6 +146,17 @@ def host(sources) -> RangeHost:
     body = lines[entries[0] : entries[-1] + 2]  # 첫 #EXTINF부터 마지막 세그먼트 줄까지
     twice = lines[: entries[-1] + 2] + ["#EXT-X-DISCONTINUITY", *body, "#EXT-X-ENDLIST"]
     files["plain/twice.m3u8"] = "\n".join(twice).encode("utf-8")
+
+    pairs = [lines[n : n + 2] for n in entries]  # (#EXTINF 줄, 세그먼트 줄)
+    late = lines[: entries[0]]
+    late += [line for pair in pairs[3:] for line in pair]
+    late += ["#EXT-X-DISCONTINUITY", *body, "#EXT-X-ENDLIST"]
+    files["plain/late.m3u8"] = "\n".join(late).encode("utf-8")
+
+    short = list(lines)
+    kept = sum(sources["plain"].playlist.durations[:-1])
+    short[entries[-1]] = f"#EXTINF:{SHORT_DURATION - kept:.6f},"
+    files["plain/short.m3u8"] = "\n".join(short).encode("utf-8")
     return RangeHost(files)
 
 
@@ -192,14 +213,17 @@ class _Run:
         self.finished += 1
 
     def start(self) -> "_Run":
+        """RUNNING으로 옮기고 엔진을 끝까지 돌린다."""
         self.data.model.start()
         self.engine.run()
         return self
 
     def listing(self) -> list[str]:
+        """저장 폴더에 있는 이름들(오름차순)."""
         return sorted(os.listdir(self.folder))
 
     def checks(self) -> list:
+        """구간마다의 정합 판정(check_cut) 결과."""
         return [
             check_cut(frames, result)
             for frames, result in zip(self.engine.cut_frames, self.engine.cut_results)
@@ -267,6 +291,31 @@ def test_generated_hls_has_the_wanted_reorder_delay(sources, name, delay):
     assert round(lead / frames.frame_duration) == delay
 
 
+def test_generated_hls_declares_its_audio_bitrate_in_the_init_segment(sources):
+    """만든 HLS의 초기화 세그먼트에는 오디오 비트레이트가 적혀 있고 영상 트랙에는 없어야 한다.
+
+    ffmpeg aac 기본값(스테레오 128kb/s)
+    -> 오디오 declared_bitrate == 128000, 영상 is None
+    """
+    init = sources["plain"].init
+
+    assert (init.audio.declared_bitrate, init.video.declared_bitrate) == (128_000, None)
+
+
+def test_short_playlist_ends_before_the_last_frame(host, sources):
+    """short.m3u8의 길이는 5.9초이고 마지막 프레임의 PTS는 그보다 뒤여야 한다.
+
+    마지막 #EXTINF를 줄인 플레이리스트, plain의 프레임 179
+    -> duration == 5.9, time_of(179) > 5.9 + 한 프레임
+    """
+    source = sources["plain"]
+    short = parse_media_playlist(host.files["plain/short.m3u8"].decode("utf-8"))
+
+    assert short.duration == pytest.approx(SHORT_DURATION)
+    assert len(short.segments) == SEGMENTS
+    assert source.time_of(179) > SHORT_DURATION + source.frames.frame_duration
+
+
 # ================================================================ 끝까지 경로
 
 
@@ -322,6 +371,62 @@ def test_section_file_equals_the_cut_from_all_segments(
     assert _packets(run.paths[0]) == _reference(source, first, last, tmp_path)
     check = run.checks()[0]
     assert check.ok, check.notes
+
+
+@pytest.mark.parametrize(
+    ("first", "last", "segments"),
+    [(40, 100, (0, 3)), (150, 179, (3, 5)), (60, 80, (1, 2))],
+    ids=["from-first-segment", "last-segments", "middle-segments"],
+)
+def test_section_audio_is_encoded_at_the_declared_bitrate_whatever_was_received(
+    host, sources, tmp_path, first, last, segments
+):
+    """구간의 오디오를 다시 인코딩하는 비트레이트는 어느 세그먼트를 받았든 초기화 세그먼트에 적힌 값이어야 한다.
+
+    plain(초기화 세그먼트에 128000), 주석의 경우마다 구간 프레임 first~last
+    -> 받은 세그먼트 범위 == segments, 컷이 쓴 오디오 비트레이트 == 128
+    """
+    run = _Run(host, tmp_path, [sources["plain"].selection(first, last)]).start()
+
+    assert run.failures == []
+    section = run.engine.sections[0]
+    assert (section.first_segment, section.last_segment) == segments
+    assert run.engine.cut_results[0].source.audio_bitrate == 128
+
+
+def test_section_ending_at_the_video_length_ends_on_the_last_frame(host, sources, tmp_path):
+    """끝이 영상 길이와 같은 구간은 끝 프레임을 시각으로 고르지 않고 마지막 프레임으로 정해야 한다.
+
+    short.m3u8(길이 5.9초 — 마지막 프레임 179의 PTS보다 앞), 구간 = 프레임 150의 시각 ~ 5.9초
+    -> 끝 프레임의 PTS == 프레임 179의 PTS, 받은 세그먼트 3~5,
+       영상·오디오 패킷이 전부 이은 파일에서 프레임 150~179를 자른 것과 같다
+    """
+    source = sources["plain"]
+    selection = TimeRange(source.time_of(150), SHORT_DURATION)
+
+    run = _Run(host, tmp_path, [selection], "plain/short.m3u8").start()
+
+    assert run.failures == []
+    section = run.engine.sections[0]
+    assert section.last_pts == source.time_of(179)
+    assert (section.first_segment, section.last_segment) == (3, 5)
+    assert _packets(run.paths[0]) == _reference(source, 150, 179, tmp_path)
+
+
+def test_section_ending_before_the_video_length_still_snaps_to_the_nearest_frame(
+    host, sources, tmp_path
+):
+    """끝이 영상 길이보다 앞인 구간은 지금처럼 끝 시각에 가장 가까운 프레임에서 끝나야 한다.
+
+    short.m3u8(길이 5.9초), 구간 = 프레임 150의 시각 ~ 프레임 170의 시각
+    -> 끝 프레임의 PTS == 프레임 170의 PTS
+    """
+    source = sources["plain"]
+
+    run = _Run(host, tmp_path, [source.selection(150, 170)], "plain/short.m3u8").start()
+
+    assert run.failures == []
+    assert run.engine.sections[0].last_pts == source.time_of(170)
 
 
 def test_section_of_uneven_input_passes_every_check(host, sources, tmp_path):
@@ -488,6 +593,26 @@ def test_section_after_a_discontinuity_counts_time_from_the_break(host, sources,
     assert _packets(run.paths[0]) == _reference(source, 40, 100, tmp_path)
 
 
+def test_section_after_a_discontinuity_ignores_timestamps_before_the_break(host, sources, tmp_path):
+    """끊긴 자리 뒤의 구간은 플레이리스트 첫 세그먼트의 타임스탬프가 아니라 끊긴 자리의 첫 세그먼트를 기준으로 프레임을 골라야 한다.
+
+    late.m3u8(세그먼트 넷째 ~ 여섯째 · 끊김 · 세그먼트 여섯 — 앞쪽 타임스탬프는 3초부터, 뒤쪽은 0부터),
+    구간 = 앞쪽 세 세그먼트의 길이 + 프레임 40~100의 시각
+    -> 받은 세그먼트 3~6, 영상·오디오 패킷이 plain에서 프레임 40~100을 자른 것과 같다
+    """
+    source = sources["plain"]
+    before = sum(source.playlist.durations[3:])  # 끊긴 자리가 놓인 플레이리스트 시각
+    selection = TimeRange(before + source.time_of(40), before + source.time_of(100))
+
+    run = _Run(host, tmp_path, [selection], "plain/late.m3u8").start()
+
+    assert run.failures == []
+    section = run.engine.sections[0]
+    assert (section.first_segment, section.last_segment) == (3, 6)
+    assert section.first_pts == pytest.approx(before + source.time_of(40))
+    assert _packets(run.paths[0]) == _reference(source, 40, 100, tmp_path)
+
+
 # ================================================================ 임시 파일 · 실패
 
 
@@ -560,6 +685,38 @@ def test_section_log_reports_cut_and_total_size_of_section_files(host, sources, 
     calls = dict(run.logger.calls)
     assert calls["log_postprocess_start"] == ("cut",)
     assert calls["log_postprocess_complete"][1] == sum(os.path.getsize(p) for p in run.paths)
+
+
+@pytest.mark.parametrize("how", ["failure", "stop"])
+def test_section_run_that_fails_or_stops_leaves_the_file_at_output_path_alone(
+    host, sources, tmp_path, monkeypatch, how
+):
+    """구간 다운로드가 실패하거나 중단돼도 output_path 자리에 있던 파일은 그대로 남아야 한다.
+
+    plain, 구간 프레임 40~100, output_path 자리에 내용이 b"keep"인 파일을 미리 둠.
+    failure: 컷이 RuntimeError를 냄 / stop: 컷 도중 model.stop()
+    -> 저장 폴더에 그 파일 하나뿐이고 내용이 b"keep"
+    """
+    run = _Run(host, tmp_path, [sources["plain"].selection(40, 100)])
+    with open(run.data.output_path, "wb") as f:
+        f.write(b"keep")
+    real = m3u8_module.hybrid_cut
+
+    def interrupted(*args, **kwargs):
+        if how == "failure":
+            raise RuntimeError("시험")
+        run.data.model.stop()
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(m3u8_module, "hybrid_cut", interrupted)
+
+    run.start()
+
+    assert run.finished == 0
+    assert len(run.failures) == (1 if how == "failure" else 0)
+    assert run.listing() == ["unused.mp4"]
+    with open(run.data.output_path, "rb") as f:
+        assert f.read() == b"keep"
 
 
 # ================================================================ 전체 다운로드 (보존)

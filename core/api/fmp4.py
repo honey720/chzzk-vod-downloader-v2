@@ -29,6 +29,7 @@ from core.api.mp4 import (
     MP4_UNSUPPORTED,
     Mp4Error,
     _boxes,
+    _declared_bitrate,
     _edit_list,
     _leaf_boxes,
     _timescale,
@@ -59,6 +60,11 @@ _TRUN_SAMPLE_COMPOSITION = 0x000800
 
 # 샘플 플래그의 sample_is_non_sync_sample 비트 — 꺼져 있으면 단독 디코드 가능(키프레임)
 _SAMPLE_IS_NON_SYNC = 0x00010000
+
+# 샘플마다의 칸이 없는 trun이 한 세그먼트에서 선언할 수 있는 분량의 상한(초). 그런 trun은
+# 상자 크기로 샘플 수를 묶을 수 없어, 기본 샘플 길이로 센 분량을 이 값으로 막는다.
+# HLS 세그먼트는 수 초다(표본은 4초) — 그 30배다
+_MAX_IMPLIED_SECONDS = 120
 
 
 def parse_init_segment(data: bytes) -> Fmp4Init:
@@ -94,7 +100,8 @@ def parse_media_segment(data: bytes, init: Fmp4Init) -> Fmp4Segment:
 
     Raises:
         Mp4Error: moof가 잘렸거나 trun의 샘플 수가 상자 크기를 넘는 경우(``MP4_INVALID``),
-            tfdt가 없는 경우(``MP4_UNSUPPORTED``), 트랙의 샘플 수가 상한을 넘는
+            tfdt가 없는 경우(``MP4_UNSUPPORTED``), 트랙의 샘플 수가 상한을 넘거나
+            샘플마다의 칸이 없는 trun이 세그먼트 하나의 분량을 넘는 샘플 수를 선언한
             경우(``MP4_TOO_LONG``)
     """
     try:
@@ -272,6 +279,9 @@ def _parse_init_segment(data: bytes) -> Fmp4Init:
                 default_duration=duration,
                 default_size=size,
                 default_flags=flags,
+                declared_bitrate=(
+                    _declared_bitrate(data, boxes[b"stsd"]) if handler == b"soun" else None
+                ),
             ),
         )
     if "vide" not in tracks:
@@ -323,6 +333,7 @@ class _Run:
     def __init__(self, track: Fmp4Track):
         self.track = track
         self.limit = _MAX_SAMPLES[track.handler.encode("ascii")]
+        self.implied = 0  # 샘플마다의 칸이 없는 trun이 선언한 샘플 수의 합
         self.decode_times: list[int] = []
         self.presentation_times: list[int] = []
         self.durations: list[int] = []
@@ -330,6 +341,7 @@ class _Run:
         self.sync_samples: list[int] = []
 
     def freeze(self) -> Fmp4Samples:
+        """모은 샘플을 불변 모델로 돌려준다."""
         return Fmp4Samples(
             decode_times=tuple(self.decode_times),
             presentation_times=tuple(self.presentation_times),
@@ -430,9 +442,21 @@ def _read_run(
     has_composition = bool(flags & _TRUN_SAMPLE_COMPOSITION)
     fields = has_duration + has_size + has_flags + has_composition
 
-    # 펼치기 전에 개수를 묶는다 — 샘플마다 칸이 있으면 상자 크기가, 없으면 상한만이 막는다
+    # 펼치기 전에 개수를 묶는다 — 샘플마다 칸이 있으면 상자 크기가, 없으면 기본 샘플 길이로
+    # 센 분량(세그먼트 길이 × 프레임률)이 막는다
     if count * fields * 4 > body_end - position:
         raise Mp4Error(MP4_INVALID, f"trun의 샘플 {count}개가 상자 크기를 넘는다")
+    if not fields and count:
+        if default_duration <= 0:
+            raise Mp4Error(MP4_INVALID, "샘플마다의 칸이 없는 trun에 기본 샘플 길이가 없다")
+        allowed = _MAX_IMPLIED_SECONDS * run.track.timescale // default_duration
+        if run.implied + count > allowed:
+            raise Mp4Error(
+                MP4_TOO_LONG,
+                f"{run.track.handler} 샘플 {run.implied + count}개 · "
+                f"세그먼트 하나의 상한 {allowed}개({_MAX_IMPLIED_SECONDS}초)",
+            )
+        run.implied += count
     if len(run.decode_times) + count > run.limit:
         raise Mp4Error(
             MP4_TOO_LONG,
