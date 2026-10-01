@@ -23,7 +23,7 @@ import re
 import struct
 from collections import Counter
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from fractions import Fraction
 from itertools import accumulate
 
@@ -133,7 +133,8 @@ def read_mp4_index(read: Callable[[int, int], bytes]) -> Mp4Index:
     """읽기 함수로 파일에서 moov를 찾아 색인을 만든다.
 
     파일 앞부분부터 읽고, moov가 없으면 상자 크기를 따라 뒤로 건너뛴다(mdat 뒤의
-    moov). 건너뛴 상자의 본문은 읽지 않는다.
+    moov). 건너뛴 상자의 본문은 읽지 않는다. 결과의 ``moov_range``에 moov를 찾은
+    위치를 싣는다.
 
     Args:
         read: ``read(offset, size)`` — 파일의 offset부터 최대 size바이트를 돌려준다.
@@ -159,7 +160,7 @@ def read_mp4_index(read: Callable[[int, int], bytes]) -> Mp4Index:
                 moov += read(moov_offset + len(moov), moov_size - len(moov))
             if len(moov) < moov_size:
                 raise Mp4Error(MP4_INVALID, "moov가 파일 끝에서 잘렸다")
-            return parse_moov(moov)
+            return replace(parse_moov(moov), moov_range=(moov_offset, moov_offset + moov_size - 1))
         if scan.reached_end or scan.next_offset <= offset:
             break
         offset, request = scan.next_offset, _HEADER_READ_BYTES
@@ -321,6 +322,7 @@ class _RawTrack:
     deltas: list[int]  # 샘플별 길이, 틱
     offsets: list[int]
     sizes: list[int]
+    chunk_starts: list[int]  # 청크마다의 첫 샘플 인덱스
     sync_samples: tuple[int, ...]
 
     def start(self) -> Fraction | None:
@@ -392,6 +394,7 @@ def _to_track(raw: _RawTrack, origin: Fraction) -> Mp4Track:
         durations=tuple(delta / raw.timescale for delta in raw.deltas),
         offsets=tuple(raw.offsets),
         sizes=tuple(raw.sizes),
+        chunk_starts=tuple(raw.chunk_starts),
         sync_samples=raw.sync_samples,
     )
 
@@ -431,6 +434,7 @@ def _parse_track(data: bytes, start: int, end: int, movie_timescale: int) -> _Ra
     else:
         sync_samples = tuple(range(count))  # stss가 없으면 모든 샘플이 단독 디코드 가능하다
 
+    offsets, chunk_starts = _sample_offsets(data, boxes, sizes)
     return _RawTrack(
         handler=handler,
         timescale=timescale,
@@ -438,8 +442,9 @@ def _parse_track(data: bytes, start: int, end: int, movie_timescale: int) -> _Ra
         presented=[dts + cts - media_time for dts, cts in zip(decode_times, composition)],
         decoded=[dts - media_time for dts in decode_times],
         deltas=deltas,
-        offsets=_sample_offsets(data, boxes, sizes),
+        offsets=offsets,
         sizes=sizes,
+        chunk_starts=chunk_starts,
         sync_samples=sync_samples,
     )
 
@@ -497,8 +502,8 @@ def _edit_list(
 
 def _sample_offsets(
     data: bytes, boxes: dict[bytes, tuple[int, int]], sizes: list[int]
-) -> list[int]:
-    """stsc + stco/co64 + stsz — 샘플별 파일 안 시작 위치.
+) -> tuple[list[int], list[int]]:
+    """stsc + stco/co64 + stsz — (샘플별 파일 안 시작 위치, 청크마다의 첫 샘플 인덱스).
 
     청크 하나에 샘플이 이어 붙어 있다. stsc는 "이 청크부터는 청크당 샘플이 몇 개"를
     구간으로 적고, stco/co64는 청크의 시작 위치를 적는다.
@@ -513,12 +518,14 @@ def _sample_offsets(
         raise Mp4Error(MP4_INVALID, "stsc가 비어 있다")
 
     offsets: list[int] = []
+    chunk_starts: list[int] = []
     sample = 0
     for run_index, (first_chunk, samples_per_chunk, _description) in enumerate(runs):
         # first_chunk는 1부터다. 구간은 다음 구간의 first_chunk 직전 청크까지다
         last_chunk = runs[run_index + 1][0] - 1 if run_index + 1 < len(runs) else len(chunk_offsets)
         for chunk in range(first_chunk - 1, last_chunk):
             position = chunk_offsets[chunk]
+            chunk_starts.append(sample)
             for _ in range(samples_per_chunk):
                 if sample >= len(sizes):
                     raise Mp4Error(MP4_INVALID, "stsc의 샘플 수가 stsz보다 많다")
@@ -527,4 +534,4 @@ def _sample_offsets(
                 sample += 1
     if sample != len(sizes):
         raise Mp4Error(MP4_INVALID, f"stsc {sample}개 · stsz {len(sizes)}개")
-    return offsets
+    return offsets, chunk_starts

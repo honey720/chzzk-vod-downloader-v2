@@ -38,6 +38,9 @@ class TestContent:
         assert content.url == "https://chzzk.naver.com/video/1"
         assert content.title is None
         assert content.resolution is None
+        # 구간이 없는 것이 기본이다 = 전체 다운로드 (#309)
+        assert content.selections == ()
+        assert content.selection_paths == ()
         assert content.encryption_type is None
 
     def test_id_is_unique_per_instance(self):

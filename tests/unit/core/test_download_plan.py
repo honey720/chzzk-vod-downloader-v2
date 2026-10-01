@@ -4,8 +4,10 @@
 - DownloadPlan 모델: 불변(frozen), 기본값(빈 selections = 전체 다운로드), part_count
 - 두 다운로더의 prepare()가 DownloadPlan을 반환하고, 계획 필드가 현행
   실행에 필요한 정보(items·total_size·requires_postprocess)를 담는다
-- selections가 비어 있지 않으면 베이스 run()이 명시적 미지원 예외를 낸다
-  (#83은 모양만 정의 — 구간 해석 미구현)
+- prepare()는 Content.selections를 계획에 싣는다 (#309)
+- 구간을 해석하지 못하는 다운로더(m3u8 · hls_aes)가 낸 계획에 selections가 있으면
+  베이스 run()이 명시적 미지원 예외를 낸다. file(mp4)은 구간을 받는다 — 그 경로는
+  tests/unit/core/test_file_sections.py가 본다
 
 selections가 빈 값일 때 현행과 동일 동작인 것은 기존 실행 테스트
 (test_file_downloader_run / test_m3u8_downloader_run)와 규칙 박제 테스트가
@@ -18,7 +20,9 @@ import pytest
 
 import core.downloaders.file_downloader as fd_module
 import core.downloaders.m3u8_downloader as m3u8_module
+from core.downloaders.base import BaseDownloader
 from core.downloaders.file_downloader import FileDownloader
+from core.downloaders.hls_aes_downloader import HlsAesDownloader
 from core.downloaders.m3u8_downloader import M3U8Downloader
 from core.downloaders.ranges import split_ranges
 from core.models.plan import DownloadPlan, TimeRange
@@ -162,18 +166,60 @@ def _selection_plan() -> DownloadPlan:
     return DownloadPlan(items=((0, MB - 1),), total_size=MB, selections=(TimeRange(0.0, 10.0),))
 
 
-def test_file_run_rejects_selections_with_explicit_error(tmp_path, monkeypatch):
-    """selections가 비어 있지 않으면 run()은 미지원 예외를 낸다 (file: 전파)."""
-    data = _make_file_data()
-    data.output_path = str(tmp_path / "out.mp4")
-    engine = FileDownloader(data, RecordingLogger())
+def test_only_file_downloader_accepts_selections():
+    """구간을 받는 다운로더는 file뿐이어야 한다 (#309).
+
+    BaseDownloader · FileDownloader · M3U8Downloader · HlsAesDownloader의 supports_selections
+    -> 기본 False, file만 True
+    """
+    assert BaseDownloader.supports_selections is False
+    assert FileDownloader.supports_selections is True
+    assert M3U8Downloader.supports_selections is False
+    assert HlsAesDownloader.supports_selections is False
+
+
+def test_m3u8_prepare_carries_content_selections_into_the_plan(monkeypatch):
+    """m3u8의 prepare는 Content.selections를 계획의 selections에 그대로 실어야 한다 (#309).
+
+    selections = (TimeRange(0, 10),)인 m3u8 컨텐츠
+    -> plan.selections == (TimeRange(0, 10),) — 거부는 run()이 한다
+    """
+    playlist = "\n".join(
+        ["#EXTM3U", '#EXT-X-MAP:URI="init.m4s"', "#EXTINF:2.000,", "seg_0.m4v", "#EXT-X-ENDLIST"]
+    )
+    data = _make_m3u8_data()
+    data.content.selections = (TimeRange(0.0, 10.0),)
+    engine = M3U8Downloader(data, RecordingLogger())
+    monkeypatch.setattr(m3u8_module, "get_thread_session", lambda: PlaylistSession(playlist))
+
+    plan = engine.prepare(data.content)
+
+    assert plan.selections == (TimeRange(0.0, 10.0),)
+
+
+def test_hls_aes_run_rejects_selections_via_failure_callback(tmp_path, monkeypatch):
+    """hls_aes는 계획에 selections가 있으면 미지원 예외를 실패 콜백으로 통지해야 한다 (#309).
+
+    prepare가 selections 있는 계획을 내도록 바꿈
+    -> 실패 1건(NotImplementedError), 산출물 없음
+    """
+    failures: list[BaseException] = []
+    data = DownloadData(
+        base_url="https://example.invalid/hls/video.m3u8",
+        vod_url="https://chzzk.naver.com/video/1",
+        output_path=str(tmp_path / "out.mp4"),
+        resolution=1080,
+        content_type="hls_aes",
+    )
+    engine = HlsAesDownloader(data, RecordingLogger(), on_failed=failures.append)
     monkeypatch.setattr(engine, "prepare", lambda content: _selection_plan())
 
     data.model.start()
-    with pytest.raises(NotImplementedError):
-        engine.run()
+    engine.run()
 
-    assert not (tmp_path / "out.mp4").exists()  # 수신 준비 전에 거부된다
+    assert len(failures) == 1
+    assert isinstance(failures[0], NotImplementedError)
+    assert not (tmp_path / "out.mp4").exists()
 
 
 def test_m3u8_run_rejects_selections_via_failure_callback(tmp_path, monkeypatch):

@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from uuid import uuid4
 
+from core.models.plan import TimeRange
+
 
 class ContentType(Enum):
     """컨텐츠 타입 (SPEC §4.1). 값은 현행 코드가 쓰는 문자열과 동일하다."""
@@ -45,6 +47,12 @@ class Content:
     in_key: str | None = None
     encryption_type: str | None = None
     live_rewind_playback_json: str | None = None
+    # 받을 구간 목록 (#309). 빈 튜플 = 전체 다운로드(기존 동작). 순서가 구간 번호다
+    selections: tuple[TimeRange, ...] = ()
+    # 구간마다의 산출물 경로 — selections와 같은 순서·같은 길이. 다운로드를 시작하는 쪽이
+    # core.utils.paths.build_section_output_paths로 배정한다. 구간이 있으면 output_path는
+    # 쓰지 않는다
+    selection_paths: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

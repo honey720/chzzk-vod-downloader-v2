@@ -18,8 +18,10 @@ _download_item에 되돌려줄 뿐 내용을 해석하지 않는다. 아이템 �
 selections는 처음부터 튜플(리스트 형태)로 모델링한다 — 단일 구간으로
 두면 다중 구간 지원 시 데이터 모델부터 소비자까지 다시 뜯어야 하지만,
 튜플이면 다중 구간이 자연히 따라온다. 빈 튜플 = 전체 다운로드가 기본
-케이스다. 구간 해석(비어 있지 않은 selections)은 아직 구현하지 않으며,
-베이스 엔진이 명시적 미지원 예외(NotImplementedError)로 거부한다 (#83).
+케이스다. 구간은 ``Content.selections``에서 오고 prepare()가 계획에 싣는다.
+구간을 해석하는 것은 file 다운로더(mp4)뿐이다 — 그 밖의 다운로더가 낸 계획에
+구간이 있으면 베이스 엔진이 명시적 미지원 예외(NotImplementedError)로
+거부한다 (#83, #309).
 """
 
 from dataclasses import dataclass
@@ -62,7 +64,7 @@ class DownloadPlan:
     total_size: int | None = None
     # 다운로드 완료 후 후처리(postprocess — m3u8 병합)가 필요한지
     requires_postprocess: bool = False
-    # 선택 다운로드 구간 목록. 빈 튜플 = 전체 다운로드 (#83에서는 빈 값만 지원)
+    # 선택 다운로드 구간 목록. 빈 튜플 = 전체 다운로드
     selections: tuple[TimeRange, ...] = ()
 
     @property

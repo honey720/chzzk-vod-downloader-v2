@@ -65,6 +65,13 @@ _MARGIN_SECONDS = 0.004
 # 44.1kHz에서 23ms다 — 두 프레임이 들어가는 50ms로 잡는다
 _AUDIO_PREROLL_SECONDS = 0.05
 
+# 컷이 구간의 첫 프레임보다 앞에서 읽기 시작할 수 있는 최대 시간(초). 입력측 -ss는 그
+# 시각의 앞 키프레임으로 가므로, 입력에는 (첫 프레임 − 이 값)을 덮는 키프레임부터 들어
+# 있어야 한다 — 받을 범위를 정하는 쪽(core.utils.mp4_ranges)이 이 값을 쓴다.
+# 오디오 앞 여유가 가장 크고(재인코딩 조각의 탐색 여유 _MARGIN_SECONDS는 그 안에 든다),
+# ffmpeg에 시각을 마이크로초로 넘길 때의 반올림 몫으로 1ms를 더한다
+SOURCE_LEAD_SECONDS = _AUDIO_PREROLL_SECONDS + 0.001
+
 # 재인코딩 화질 — libx264 CRF. 18은 눈으로 구분하기 어려운 수준이다
 _CRF = "18"
 
@@ -451,7 +458,11 @@ def _probe_source(path: str, frames: CutFrames, plan: CutPlan) -> SourceInfo:
 
 
 def _read_params(path: str, reorder_delay: int) -> tuple[VideoParams, int | None]:
-    """ffmpeg의 trace_headers 출력에서 첫 SPS를 읽는다. 동봉 ffmpeg에는 ffprobe가 없다."""
+    """ffmpeg의 trace_headers 출력에서 첫 SPS를 읽는다. 동봉 ffmpeg에는 ffprobe가 없다.
+
+    받은 범위만 든 부분 mp4(core.utils.mp4_partial)도 읽는다 — 첫 SPS는 moov에 든
+    것(avcC)이라 파일의 첫 샘플이 없어도 나온다.
+    """
     try:
         done = run_ffmpeg(
             ["-v", "info", "-i", path, "-map", "0:v:0", "-c", "copy", "-frames:v", "1",

@@ -29,8 +29,11 @@ file(#73)·m3u8(#74) 엔진이 평행 중복으로 갖고 있던 실행 엔진�
 - ``_cleanup_after_run()``: 정상 경로 종료 후 정리 (기본 no-op)
 - ``_progress_total_size()``: ProgressEvent.total_size (기본: 전체 크기,
   m3u8은 미리 알 수 없어 None)
+- ``_postprocess_output_size()``: 후처리 종료 로그에 남길 산출물 크기 (기본:
+  output_path의 크기. 산출물이 여럿인 구간 다운로드는 합을 돌려준다)
 - 클래스 속성: ``run_thread_name``(서비스 워커 스레드 이름),
-  ``worker_pool_prefix``(풀 스레드 이름), ``requires_base_url_resolution``
+  ``worker_pool_prefix``(풀 스레드 이름), ``supports_selections``(구간 다운로드를
+  받는지 — 기본은 거부), ``requires_base_url_resolution``
   (다운로드 시작 전 base_url 해석 필요 여부 — 서비스가 resolver를 주입·실행),
   ``_failure_exceptions``(run이 실패로 처리할 예외 — 그 외는 전파)
 
@@ -142,6 +145,9 @@ class BaseDownloader(ABC):
     # 복호화 키 리졸버 주입이 필요한지 — 서비스가 참조해 set_key_resolver를 호출한다 (#57).
     # 키 취득은 유저 쿠키가 필요해 core가 직접 할 수 없다(core→app 의존 금지)
     requires_key_resolution: bool = False
+    # 구간 다운로드(비어 있지 않은 selections)를 받는지 (#309). 받지 않는 다운로더는
+    # run()이 NotImplementedError로 거부한다 — 조용히 전체를 받지 않는다
+    supports_selections: bool = False
     # 후처리 시작 로그(#110)에 남길 작업 이름 — 현행 세그먼트 경로는 모두 remux다
     postprocess_kind: str = "remux"
     # run()이 실패 콜백으로 환원할 예외 타입 — 그 외 예외는 전파한다
@@ -365,6 +371,10 @@ class BaseDownloader(ABC):
         """ProgressEvent에 실을 전체 크기. 미리 알 수 없는 다운로더는 None."""
         return self.s.total_size
 
+    def _postprocess_output_size(self) -> int:
+        """후처리 종료 로그에 남길 산출물 크기(바이트) (기본: output_path의 크기)."""
+        return os.path.getsize(self.s.output_path)
+
     # ============ 실행 파이프라인 (구 file/m3u8 run의 공통 골격) ============
 
     def run(self) -> None:
@@ -373,9 +383,11 @@ class BaseDownloader(ABC):
         try:
             self.s.start_time = tm.time()
             plan = self.prepare(self.s.content)
-            if plan.selections:
-                # 구간 해석은 #83 범위 밖 — 모양만 정의하고 명시적으로 거부한다
-                raise NotImplementedError("구간 선택 다운로드(selections)는 아직 지원하지 않는다")
+            if plan.selections and not self.supports_selections:
+                # 구간을 해석하지 못하는 다운로더는 명시적으로 거부한다 (#83, #309)
+                raise NotImplementedError(
+                    "이 다운로더는 구간 선택 다운로드(selections)를 아직 지원하지 않는다"
+                )
             if plan.total_size is not None:
                 # 총 크기는 계획에서 읽는다 — 진행 통지·파트 로그가 참조한다
                 self.s.total_size = plan.total_size
@@ -460,7 +472,7 @@ class BaseDownloader(ABC):
                     if self.state != DownloadState.WAITING:
                         postprocess_elapsed = tm.time() - postprocess_started
                         self.logger.log_postprocess_complete(
-                            postprocess_elapsed, os.path.getsize(self.s.output_path)
+                            postprocess_elapsed, self._postprocess_output_size()
                         )
                 # 후처리 중 중단(stop)됐다면 완료 통지를 생략한다 (#92) —
                 # WAITING → FINISHED는 허용되지 않는 전이라, 무조건 완료

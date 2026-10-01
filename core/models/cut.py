@@ -10,6 +10,8 @@
 from dataclasses import dataclass, field
 from typing import Literal
 
+from core.models.plan import TimeRange
+
 
 @dataclass(frozen=True)
 class CutFrames:
@@ -53,6 +55,16 @@ class CutPlan:
     first: int  # 구간의 첫 프레임 번호
     last: int  # 구간의 끝 프레임 번호 (포함)
     pieces: tuple[CutPiece, ...]  # 재생 순서대로의 조각
+
+
+@dataclass(frozen=True)
+class CutSection:
+    """구간 다운로드의 구간 하나 — 요청한 시각과, 그것을 맞춘 실제 프레임과, 산출물을 담는다."""
+
+    selection: TimeRange  # 요청한 구간(초)
+    first_frame: int  # 구간의 첫 프레임 번호
+    last_frame: int  # 구간의 끝 프레임 번호 (포함)
+    output_path: str  # 이 구간을 잘라 쓸 파일
 
 
 @dataclass(frozen=True)

@@ -11,7 +11,23 @@ core/downloaders/base.py의 BaseDownloader로 이주했다(#82). 이 클래스�
   중단 핸들링 포함. 재큐잉된 파트는 이미 받은 바이트 뒤에서 Range로
   이어받는다(#78 — 206이 아니면 처음부터 폴백). 규칙은
   tests/unit/core/test_file_downloader_rules.py가 박제한다
-- postprocess 없음 (베이스 기본 no-op)
+- postprocess: 전체 다운로드에는 없다 (베이스 기본 no-op). 구간 다운로드에서는
+  받은 부분 파일을 구간마다 잘라 파일로 만든다
+
+구간 다운로드 (#309) — ``Content.selections``가 비어 있지 않을 때:
+
+- prepare: moov를 받아(fetch_mp4_index) 구간을 검증하고, 구간마다 실제 프레임과
+  받을 바이트 범위를 정한다(selection_byte_ranges). 받을 항목은 파일의 머리(moov가
+  든 앞부분)와 구간 범위들이고 겹치는 범위는 합친다
+- 받은 바이트는 원래 위치가 아니라 **빈틈없이 이어서** 임시 원본 파일에 쓴다
+  (core/utils/mp4_partial.py). 원래 위치에 쓰면 사이의 빈 자리를 실제로 채우는 파일
+  시스템(NTFS의 일반 파일, exFAT)에서 파일이 원본만큼 커진다
+- postprocess: 임시 원본의 moov를 이어 쓴 위치에 맞게 고친 뒤 구간마다
+  hybrid_cut으로 자른다. 하나라도 실패하면 다운로드 전체가 실패다
+- 임시 원본은 구간을 모두 만들면 지운다. 컷이 실패하면 남긴다(다시 받지 않게) —
+  세그먼트 경로의 후처리 실패(#92)와 같은 규칙이다. 전송 실패·중단이면 전체
+  다운로드의 산출물처럼 지운다
+- m3u8·hls_aes는 구간을 받지 않는다(베이스가 거부한다). clip도 받지 않는다
 
 스레드 스케일링 기준 속도는 베이스 기본값(4 MB/s — 구 고정 임계 4/2와 동일)을
 그대로 쓴다.
@@ -22,12 +38,21 @@ import time as tm
 
 import requests
 
+from core.api.mp4 import Mp4Error, fetch_mp4_index
 from core.api.session import get_thread_session
-from core.downloaders.base import BaseDownloader
-from core.downloaders.ranges import decide_part_size, split_ranges
+from core.downloaders.base import BaseDownloader, PostprocessError
+from core.downloaders.ranges import decide_part_size, split_ranges, split_span
 from core.models.content import Content, ContentType
+from core.models.cut import CutResult, CutSection
 from core.models.download_state import DownloadState
+from core.models.events import ProgressEvent
+from core.models.mp4_index import Mp4Index
 from core.models.plan import DownloadPlan
+from core.utils.hybrid_cut import CutError, cut_frames_from_mp4, hybrid_cut
+from core.utils.mp4_partial import PartialLayout, patch_head, plan_partial
+from core.utils.mp4_ranges import selection_byte_ranges
+from core.utils.paths import partial_source_path_for, release_output_paths
+from core.utils.selections import SelectionError, validate_selections
 
 
 class FileDownloader(BaseDownloader):
@@ -39,6 +64,8 @@ class FileDownloader(BaseDownloader):
 
     run_thread_name = "DownloadThread"
     worker_pool_prefix = "DownloadWorker"
+    supports_selections = True  # mp4는 moov로 구간의 바이트 범위를 정할 수 있다 (#309)
+    postprocess_kind = "cut"  # 후처리는 구간 다운로드에만 있다 — 구간마다 자른다
     # OSError를 실패 처리에 추가한다 (#147 E1). 구 코드(요청 예외만)는 run
     # 스레드의 출력 파일 I/O 오류(이어받기 스캔·수신 준비 — 디스크 부족·
     # 마운트 해제)를 실패 처리 밖으로 흘려보냈다: 통지·로그·부분 산출물
@@ -47,13 +74,41 @@ class FileDownloader(BaseDownloader):
     # 넓히지 않는 것은 selections 명시 거부(NotImplementedError)의 전파를
     # 박제 계약대로 보존하기 위함이다 — 그 밖의 예상 밖 예외는 서비스의
     # 최후 방어선(_run_handle)이 실패로 환원한다.
-    _failure_exceptions = (requests.RequestException, OSError)
+    # Mp4Error·SelectionError는 구간 다운로드의 prepare가 내는 키 기반 예외다 (#309)
+    _failure_exceptions = (requests.RequestException, OSError, Mp4Error, SelectionError)
+    # 구간을 자를 때 조각마다 파라미터·패킷 수를 읽어 둘지 — 기본은 읽지 않는다.
+    # 테스트가 True로 두고 cut_results를 정합 판정(check_cut)에 넘긴다. 조각을 한 번씩
+    # 더 읽으므로 제품 경로에서는 켜지 않는다
+    _inspect_cuts: bool = False
 
     def __init__(self, data, logger, **callbacks):
         super().__init__(data, logger, **callbacks)
         # 재큐잉된 파트가 이미 받아 쓴 바이트 수 — 재시도가 이어받는다 (#78).
         # (start, end) → 산출물에 쓰인 바이트 수. 완료·폴백 시 지운다
         self._part_progress: dict[tuple[int, int], int] = {}
+        # 구간 다운로드의 상태 (#309) — prepare가 채운다. 전체 다운로드면 비어 있다
+        self._sections: tuple[CutSection, ...] = ()
+        self._index: Mp4Index | None = None  # 구간을 정할 때 받은 색인 — 컷이 프레임 정보로 쓴다
+        self._layout: PartialLayout | None = None  # 받을 범위와 임시 원본 안의 위치
+        self._source_path: str | None = None  # 임시 원본(받은 범위만 이어 쓴 mp4)
+        self._made_sections: list[str] = []  # 이번 실행이 만든 구간 파일
+        self.cut_results: list[CutResult] = []  # 구간마다의 컷 결과 — sections와 같은 순서
+
+    @property
+    def sections(self) -> tuple[CutSection, ...]:
+        """구간 다운로드의 구간 목록 — 요청한 시각과 그것을 맞춘 프레임. prepare 뒤에 채워진다."""
+        return self._sections
+
+    @property
+    def _target_path(self) -> str:
+        """받은 바이트를 쓰는 파일 — 전체 다운로드는 산출물, 구간 다운로드는 임시 원본."""
+        return self._source_path or self.s.output_path
+
+    def _file_position(self, offset: int) -> int:
+        """원본의 바이트 위치가 받는 파일에서 놓이는 위치 — 전체 다운로드는 그대로다."""
+        if self._layout is None:
+            return offset
+        return self._layout.position(offset)
 
     @classmethod
     def supports(cls, content: Content) -> bool:
@@ -62,8 +117,20 @@ class FileDownloader(BaseDownloader):
 
     # ============ 작업 목록·수신 준비 (구 run의 파일 고유 부분) ============
 
+    def run(self) -> None:
+        """다운로드를 실행하고, 끝나면 구간 파일명의 예약을 푼다 (#309)."""
+        try:
+            super().run()
+        finally:
+            release_output_paths(self.s.content.selection_paths)
+
     def prepare(self, content: Content) -> DownloadPlan:
-        """총 크기를 조회하고 해상도별 part_size의 바이트 범위 계획을 만든다."""
+        """총 크기를 조회하고 해상도별 part_size의 바이트 범위 계획을 만든다.
+
+        구간이 있으면 moov를 받아 구간에 필요한 범위만 담은 계획을 만든다 (#309).
+        """
+        if content.selections:
+            return self._prepare_sections(content)
         total_size = self._get_total_size()
 
         # part_size 결정(해상도별 가중 적용)
@@ -75,16 +142,60 @@ class FileDownloader(BaseDownloader):
             total_size=total_size,
         )
 
+    def _prepare_sections(self, content: Content) -> DownloadPlan:
+        """구간 다운로드의 계획 — 파일의 머리와 구간마다의 바이트 범위를 받는다 (#309).
+
+        Raises:
+            NotImplementedError: clip인 경우 — clip에는 구간 다운로드가 없다
+            ValueError: 구간과 산출물 경로의 수가 다른 경우
+            Mp4Error: moov를 읽지 못했거나 다룰 수 없는 배치인 경우
+            SelectionError: 구간이 검증을 통과하지 못한 경우
+        """
+        if content.content_type is ContentType.CHZZK_CLIP:
+            raise NotImplementedError("clip은 구간 선택 다운로드(selections)를 지원하지 않는다")
+        if len(content.selection_paths) != len(content.selections):
+            raise ValueError(
+                f"구간 {len(content.selections)}개에 산출물 경로 {len(content.selection_paths)}개"
+            )
+        index = fetch_mp4_index(self.s.base_url)
+        violations = validate_selections(content.selections, index.duration, index.fps)
+        if violations:
+            raise SelectionError(violations)
+
+        picked = [selection_byte_ranges(index, selection) for selection in content.selections]
+        layout = plan_partial(index, [span for item in picked for span in item.ranges])
+        self._part_size = decide_part_size(self.s.content_type, self.s.resolution)
+        self._index = index
+        self._layout = layout
+        self._sections = tuple(
+            CutSection(selection, item.first_frame, item.last_frame, path)
+            for selection, item, path in zip(content.selections, picked, content.selection_paths)
+        )
+        self._source_path = partial_source_path_for(content.selection_paths[0])
+        return DownloadPlan(
+            items=tuple(
+                part
+                for first, last in layout.ranges
+                for part in split_span(first, last, self._part_size)
+            ),
+            total_size=layout.size,
+            requires_postprocess=True,
+            selections=tuple(content.selections),
+        )
+
     def _download_start_log_args(self) -> tuple:
         return (self.s.total_size, self._part_size, self.s.total_ranges, self.s.adjust_threads)
 
     def _prepare_output(self) -> None:
         """빈 파일 생성(사이즈: 0)."""
-        with open(self.s.output_path, "wb"):
+        with open(self._target_path, "wb"):
             pass
 
     def _initial_queue(self, items: list) -> list:
         """중단 이후 재시작 같은 상황을 고려해 미수신 구간만 큐에 넣는다."""
+        if self._layout is not None:
+            # 임시 원본은 위치가 원본과 달라 파일 크기로 미수신 구간을 가릴 수 없다 — 전부 받는다
+            return list(items)
         return self._get_remaining_ranges(items)
 
     def _log_item_start(self, part_num: int, item) -> None:
@@ -96,9 +207,63 @@ class FileDownloader(BaseDownloader):
         return self._download_part(start, end, part_num, self.s.total_size)
 
     def _cleanup_partial(self) -> None:
-        """실패·중단 시 다운로드 파일 삭제."""
-        if os.path.exists(self.s.output_path):
-            os.remove(self.s.output_path)
+        """실패·중단 시 다운로드 파일 삭제. 구간 다운로드는 임시 원본과 이번에 만든 구간 파일을 지운다."""
+        for path in (self._target_path, *self._made_sections):
+            if os.path.exists(path):
+                os.remove(path)
+        self._made_sections.clear()
+
+    # ============ 구간 다운로드의 후처리 (#309) ============
+
+    def postprocess(self) -> None:
+        """임시 원본을 ffmpeg가 읽을 수 있게 고친 뒤 구간마다 잘라 파일로 만든다.
+
+        구간 목록 순서대로 자른다. 하나라도 실패하면 PostprocessError로 끝낸다 — 임시
+        원본과 먼저 만든 구간 파일은 남는다. 모두 만들면 임시 원본을 지운다. 구간 사이에서
+        중단·일시정지를 확인한다(컷 하나는 중간에 멈추지 않는다).
+        """
+        try:
+            self._patch_source()
+            frames = cut_frames_from_mp4(self._index)
+            for section in self._sections:
+                if self.state == DownloadState.PAUSED:
+                    self.s._pause_event.wait()
+                if self.state == DownloadState.WAITING:
+                    return  # 정리(임시 원본·만든 구간 파일 삭제)는 run()의 중단 경로가 한다
+                result = hybrid_cut(
+                    self._source_path,
+                    frames,
+                    section.first_frame,
+                    section.last_frame,
+                    section.output_path,
+                    inspect=self._inspect_cuts,
+                )
+                self.cut_results.append(result)
+                self._made_sections.append(section.output_path)
+                self._on_progress(
+                    ProgressEvent(
+                        downloaded_size=self.s.total_downloaded_size,
+                        total_size=self._progress_total_size(),
+                        speed=0.0,
+                        active_threads=0,
+                    )
+                )
+        except (CutError, Mp4Error) as e:
+            self.logger.log_error("Cut failed — partial source preserved for retry", e)
+            raise PostprocessError(f"후처리(cut) 실패: {e}") from e
+        os.remove(self._source_path)
+
+    def _patch_source(self) -> None:
+        """임시 원본의 머리(moov의 청크 위치 표·mdat 크기)를 이어 쓴 위치에 맞게 고쳐 쓴다."""
+        first, last = self._layout.ranges[0]
+        with open(self._source_path, "r+b") as f:
+            head = f.read(last - first + 1)
+            f.seek(0)
+            f.write(patch_head(head, self._layout, self._index.moov_range))
+
+    def _postprocess_output_size(self) -> int:
+        """후처리 종료 로그에 남길 크기 — 구간 파일 크기의 합."""
+        return sum(os.path.getsize(path) for path in self._made_sections)
 
     # ============ 다운로드 동작 관련 메서드들 ============
 
@@ -148,8 +313,8 @@ class FileDownloader(BaseDownloader):
                 # tm.perf_counter() 측정 자체가 결과를 바꾸지 않는다
                 write_elapsed = 0.0
 
-                with open(self.s.output_path, "r+b") as f:
-                    f.seek(range_start)
+                with open(self._target_path, "r+b") as f:
+                    f.seek(self._file_position(range_start))
                     for chunk in response.iter_content(chunk_size=8192):
                         if self.state == DownloadState.WAITING:
                             return part_num
@@ -228,10 +393,10 @@ class FileDownloader(BaseDownloader):
         if recorded <= 0:
             return 0
         try:
-            file_size = os.path.getsize(self.s.output_path)
+            file_size = os.path.getsize(self._target_path)
         except OSError:
             file_size = -1
-        if file_size < start + recorded:
+        if file_size < self._file_position(start) + recorded:
             self._part_progress.pop((start, end), None)
             return 0
         return recorded
@@ -259,7 +424,7 @@ class FileDownloader(BaseDownloader):
         중단 이후 재시작 같은 상황 고려(현재 파일크기 등을 바탕으로),
         아직 다운로드되지 않은 구간만 남겨 반환한다.
         """
-        with open(self.s.output_path, "r+b") as f:
+        with open(self._target_path, "r+b") as f:
             f.seek(0, 2)
             file_size = f.tell()
 

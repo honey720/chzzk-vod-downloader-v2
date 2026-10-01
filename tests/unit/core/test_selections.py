@@ -19,6 +19,7 @@ from core.utils.selections import (
     SELECTION_OUT_OF_RANGE,
     SELECTION_TOO_MANY,
     SELECTION_TOO_SHORT,
+    SelectionError,
     validate_selections,
 )
 
@@ -280,3 +281,24 @@ def test_validate_selections_flags_ranges_beyond_max_selections():
     result = validate_selections(ranges, float(MAX_SELECTIONS + 1), FPS)
 
     assert result == {MAX_SELECTIONS: (SELECTION_TOO_MANY,)}
+
+
+# ================================================================ SelectionError (#309)
+
+
+def test_selection_error_carries_first_violation_key_and_all_violations():
+    """SelectionError의 message_key는 번호가 가장 앞선 구간의 첫 위반 키이고 violations는 전부를 담아야 한다.
+
+    violations = {2: (DUPLICATE,), 1: (ORDER, OUT_OF_RANGE)}
+    -> message_key == ORDER, violations 그대로, 문자열에 구간 번호 2(1부터 셈)
+    """
+    violations = {
+        2: (SELECTION_DUPLICATE,),
+        1: (SELECTION_ORDER, SELECTION_OUT_OF_RANGE),
+    }
+
+    error = SelectionError(violations)
+
+    assert error.message_key == SELECTION_ORDER
+    assert error.violations == violations
+    assert str(error) == f"{SELECTION_ORDER}: 구간 2"
