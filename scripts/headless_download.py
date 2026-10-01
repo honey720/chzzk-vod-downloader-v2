@@ -13,10 +13,15 @@ core 파이프라인(metadata_service → DownloadService → 다운로더 엔�
     --output PATH    저장 폴더 (생략 시 현재 작업 디렉토리)
     --timeout SEC    다운로드 제한 시간(초). 초과 시 실패로 종료 (기본 600, 최대 7200)
     --list           다운로드하지 않고 사용 가능한 해상도만 출력
+    --section A-B    받을 구간. 타임코드 HH:MM:SS:FF-HH:MM:SS:FF, 여러 번 줄 수 있다 (#309).
+                     구간마다 `{제목} {해상도}p_N.mp4` 파일이 하나씩 생긴다(N은 준 순서).
+                     인코딩이 끝난 VOD(mp4)만 받는다
 
 예)
     uv run python scripts/headless_download.py https://chzzk.naver.com/clips/xxxx
     uv run python scripts/headless_download.py https://chzzk.naver.com/video/123 --resolution 720
+    uv run python scripts/headless_download.py https://chzzk.naver.com/video/123 \
+        --section 00:10:05:00-00:10:16:00 --section 00:42:00:12-00:42:31:00
 
 종료 코드:
     0  다운로드 성공
@@ -45,11 +50,21 @@ import config.config as config  # noqa: E402
 from app.log_setup import setup_logging  # noqa: E402
 from app.viewmodels.data import ContentItem  # noqa: E402
 from app.network import NetworkManager  # noqa: E402
+from core.api.mp4 import Mp4Error, fetch_mp4_index  # noqa: E402
 from core.models.events import ProgressEvent  # noqa: E402
+from core.models.plan import TimeRange  # noqa: E402
 from core.services import metadata_service  # noqa: E402
 from core.services.download_service import DownloadService  # noqa: E402
 from core.services.metadata_service import MetadataError  # noqa: E402
-from core.utils.paths import build_output_path  # noqa: E402
+from core.utils.mp4_ranges import selection_byte_ranges  # noqa: E402
+from core.utils.paths import build_output_path, build_section_output_paths  # noqa: E402
+from core.utils.selections import validate_selections  # noqa: E402
+from core.utils.timecode import (  # noqa: E402
+    TIMECODE_INVALID_FORMAT,
+    TimecodeError,
+    format_milliseconds,
+    parse_timecode,
+)
 from core.models.download_data import DownloadData  # noqa: E402
 from app.download_logger import DownloadLogger  # noqa: E402
 from app.download_resolvers import resolve_aes_key, resolve_m3u8_base_url  # noqa: E402
@@ -134,12 +149,75 @@ def _build_item(result: tuple, content_type: str, resolution: int | None) -> Con
     return item
 
 
+def _parse_sections(texts: list[str], fps) -> list[tuple[float, float]]:
+    """`시작-끝` 타임코드 목록을 (시작, 끝) 초 쌍으로 바꾼다.
+
+    Raises:
+        TimecodeError: `-`로 나뉘지 않았거나 타임코드가 형식에 맞지 않는 경우
+    """
+    pairs = []
+    for text in texts:
+        start, separator, end = text.partition("-")
+        if not separator:
+            raise TimecodeError(TIMECODE_INVALID_FORMAT, text)
+        pairs.append((parse_timecode(start, fps), parse_timecode(end, fps)))
+    return pairs
+
+
+def _resolve_sections(item: ContentItem, texts: list[str]) -> tuple[TimeRange, ...] | None:
+    """구간 옵션을 검증해 TimeRange 목록으로 바꾼다. 받을 프레임과 크기를 로그로 남긴다.
+
+    타임코드의 프레임 칸은 그 영상의 프레임률로 읽어야 하므로 moov를 먼저 받는다
+    (엔진도 받을 범위를 정하려고 한 번 더 받는다).
+
+    Returns:
+        구간 목록. 형식·검증 오류나 moov를 읽지 못한 경우 None
+    """
+    try:
+        index = fetch_mp4_index(item.base_url)
+        pairs = _parse_sections(texts, index.fps)
+    except TimecodeError as e:
+        logger.error("구간 형식 오류: %s", e)
+        return None
+    except Mp4Error as e:
+        logger.error("영상 색인을 읽지 못했습니다: %s", e)
+        return None
+    except Exception:
+        logger.exception("영상 색인을 받지 못했습니다")
+        return None
+
+    violations = validate_selections(pairs, index.duration, index.fps)
+    if violations:
+        for number, keys in violations.items():
+            logger.error("구간 %d (%s): %s", number + 1, texts[number], ", ".join(keys))
+        return None
+
+    selections = tuple(TimeRange(start, end) for start, end in pairs)
+    for number, (text, selection) in enumerate(zip(texts, selections), start=1):
+        picked = selection_byte_ranges(index, selection)
+        logger.info(
+            "구간 %d: %s -> 프레임 %d~%d (첫 프레임 %s · 끝 프레임 %s), 받을 범위 %s bytes",
+            number,
+            text,
+            picked.first_frame,
+            picked.last_frame,
+            format_milliseconds(index.frame_pts[picked.first_frame]),
+            format_milliseconds(index.frame_pts[picked.last_frame]),
+            f"{picked.total_size:,}",
+        )
+    return selections
+
+
 class _HeadlessRunner:
     """DownloadService를 구동하고 완료/실패/타임아웃을 종료 코드로 환원한다."""
 
-    def __init__(self, item: ContentItem, timeout: int) -> None:
+    def __init__(
+        self, item: ContentItem, timeout: int, selections: tuple[TimeRange, ...] = ()
+    ) -> None:
         self.item = item
         self.timeout = timeout
+        self.selections = selections
+        self.section_paths: tuple[str, ...] = ()
         self.exit_code = 1  # 완료 신호를 받기 전까지는 실패로 간주
         self.service = DownloadService(
             base_url_resolver=resolve_m3u8_base_url, key_resolver=resolve_aes_key
@@ -155,6 +233,13 @@ class _HeadlessRunner:
             self.item.resolution,
             self.item.content_type,
         )
+        if self.selections:
+            # 구간 파일명은 시작할 때 한꺼번에 배정한다 — 예약은 엔진이 끝날 때 푼다 (#309)
+            self.section_paths = build_section_output_paths(
+                self.item.download_path, self.item.title, self.item.resolution, len(self.selections)
+            )
+            data.content.selections = self.selections
+            data.content.selection_paths = self.section_paths
         task_logger = DownloadLogger()
         # GUI 브리지와 동일하게 상태 전이 흡수·다운로드 정보 로깅은 태스크 어댑터가 담당
         self.task = DownloadTask(data, self.item, task_logger)
@@ -164,7 +249,7 @@ class _HeadlessRunner:
             "다운로드 시작: %s (%sp) -> %s",
             self.item.title,
             self.item.resolution,
-            self.item.output_path,
+            " · ".join(self.section_paths) if self.section_paths else self.item.output_path,
         )
         handle = self.service.submit(
             data.content,
@@ -190,14 +275,19 @@ class _HeadlessRunner:
         logger.info("진행률 %3s%% | 속도 %s | 남은시간 %s | 누적 %s bytes", prog, spd, rem, size)
 
     def _on_finished(self) -> None:
-        """정상 완료: 결과 파일 크기를 로그로 남기고 성공 코드를 기록한다."""
-        path = self.item.output_path
-        size = os.path.getsize(path) if os.path.exists(path) else 0
+        """정상 완료: 결과 파일 크기를 로그로 남기고 성공 코드를 기록한다.
+
+        구간 다운로드는 구간 파일마다 한 줄씩 남기고, 모두 있어야 성공이다.
+        """
         download_time = strftime(
             "%H:%M:%S", gmtime(self.task.data.end_time - self.task.data.start_time)
         )
-        logger.info("다운로드 완료: %s (%s bytes, 소요 %s)", path, f"{size:,}", download_time)
-        self.exit_code = 0 if size > 0 else 1
+        sizes = []
+        for path in self.section_paths or (self.item.output_path,):
+            size = os.path.getsize(path) if os.path.exists(path) else 0
+            sizes.append(size)
+            logger.info("다운로드 완료: %s (%s bytes, 소요 %s)", path, f"{size:,}", download_time)
+        self.exit_code = 0 if all(size > 0 for size in sizes) else 1
 
     def _on_failed(self, exc: BaseException) -> None:
         """다운로드 실패: 실패 코드를 기록한다 (상세 로그는 엔진·서비스가 남긴다)."""
@@ -267,6 +357,13 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--list", action="store_true", help="다운로드하지 않고 사용 가능한 해상도만 출력"
     )
+    parser.add_argument(
+        "--section",
+        action="append",
+        default=[],
+        metavar="시작-끝",
+        help="받을 구간(타임코드 HH:MM:SS:FF-HH:MM:SS:FF). 여러 번 줄 수 있다",
+    )
     return parser.parse_args(argv)
 
 
@@ -298,7 +395,17 @@ def main(argv: list[str] | None = None) -> int:
     if item is None:
         return 2
 
-    return _HeadlessRunner(item, args.timeout).run()
+    selections: tuple[TimeRange, ...] = ()
+    if args.section:
+        if content_type != "video":
+            logger.error("구간 다운로드는 인코딩이 끝난 VOD(mp4)만 지원합니다: %s", content_type)
+            return 2
+        resolved = _resolve_sections(item, args.section)
+        if resolved is None:
+            return 2
+        selections = resolved
+
+    return _HeadlessRunner(item, args.timeout, selections).run()
 
 
 if __name__ == "__main__":

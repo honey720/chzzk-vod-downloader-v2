@@ -12,6 +12,11 @@
 받는 별도 프로세스(GUI+헤드리스 병행 등)까지는 보장하지 않는다 —
 존재 확인과 파일 생성 사이의 원자성이 없기 때문이며, 알려진 한계로
 문서화한다.
+
+구간 다운로드(#309)는 카드 하나가 파일을 여럿 만든다. 구간 파일명은 다운로드가
+시작할 때 한꺼번에 배정하고(build_section_output_paths), 배정한 이름은 다운로드가
+끝날 때까지 프로세스 안에서 예약해 둔다 — 파일은 후처리 끝에야 생기므로, 디스크만
+보면 동시에 도는 다른 다운로드가 같은 이름을 배정받는다.
 """
 
 import hashlib
@@ -19,6 +24,8 @@ import os
 import re
 import shutil
 import tempfile
+import threading
+from collections.abc import Iterable
 
 from core.utils.disk_speed import measure_write_speed
 
@@ -45,6 +52,11 @@ _MAX_FULLPATH = 240
 # ENAMETOOLONG이 날 수 있다 (헤드리스 스크립트·CI가 리눅스에서 돈다)
 _MAX_FILENAME_BYTES = 240
 
+# 배정했지만 아직 디스크에 없을 수 있는 구간 파일 경로 — 프로세스 안의 예약 (#309).
+# 값은 비교용으로 정규화한 절대 경로다
+_reserved_paths: set[str] = set()
+_reserved_lock = threading.Lock()
+
 
 def sanitize_filename(name: str) -> str:
     """파일명에 쓸 수 없는 문자를 제거하고 양끝 공백을 정리한다."""
@@ -69,7 +81,7 @@ def ensure_unique_path(path: str) -> str:
 
 
 def build_output_path(directory: str, title: str, resolution: int) -> str:
-    """산출물 전체 경로를 조립한다 — 정제·길이 제한·중복 회피 포함.
+    """전체 다운로드의 산출물 경로를 조립한다 — 정제·길이 제한·중복 회피 포함.
 
     파일명 형식은 기존과 동일한 `{제목} {해상도}p.mp4`이고, 같은 이름이
     이미 있을 때만 " (n)"이 붙는다. 전체 경로 문자 수 또는 파일명 바이트
@@ -79,10 +91,73 @@ def build_output_path(directory: str, title: str, resolution: int) -> str:
     끝 점·공백 문제는 이름 끝에 항상 접미사가 붙는 구조라 발생하지
     않는다(제목의 점은 이름 중간에 놓인다).
     """
+    return ensure_unique_path(_candidate_path(directory, title, resolution))
+
+
+def build_section_output_paths(
+    directory: str, title: str, resolution: int, count: int
+) -> tuple[str, ...]:
+    """구간 다운로드의 산출물 경로 count개를 한꺼번에 배정하고 예약한다 (#309).
+
+    파일명은 `{제목} {해상도}p_N.mp4`다. N은 구간 목록의 순서이고 1부터 시작한다.
+    구간이 하나여도 `_1`을 붙인다 — 접미사가 없으면 전체, `_N`이면 구간이다. 정제·길이
+    제한은 ``build_output_path``와 같다.
+
+    같은 이름이 디스크에 있거나 이 프로세스의 다른 다운로드가 예약해 두었으면 그
+    구간에만 " (n)"을 붙인다 — `{제목} 1080p_1 (1).mp4`. 다운로드를 시작할 때 부르고,
+    그 다운로드가 끝나면(성공·실패·중단) ``release_output_paths``로 예약을 푼다 —
+    file 다운로더는 run()이 끝날 때 스스로 푼다.
+    """
+    paths = []
+    with _reserved_lock:
+        for number in range(1, count + 1):
+            candidate = _candidate_path(directory, title, resolution, f"_{number}")
+            path = _first_free(candidate, lambda p: _path_key(p) in _reserved_paths)
+            _reserved_paths.add(_path_key(path))
+            paths.append(path)
+    return tuple(paths)
+
+
+def release_output_paths(paths: Iterable[str]) -> None:
+    """``build_section_output_paths``가 예약한 경로를 푼다. 예약에 없는 경로는 무시한다."""
+    with _reserved_lock:
+        for path in paths:
+            _reserved_paths.discard(_path_key(path))
+
+
+def partial_source_path_for(output_path: str) -> str:
+    """구간 다운로드가 받은 바이트를 모아 둘 임시 원본 파일의 경로를 산출물 파일명에서 파생한다 (#309).
+
+    산출물과 같은 디렉토리에 둔다 — 크기가 구간들의 합만큼이라 유저가 고른 저장 위치의
+    공간을 쓴다. 첫 구간의 산출물 경로를 넘긴다 — 그 이름은 배정할 때 다른 다운로드와
+    겹치지 않게 정해졌으므로 임시 원본도 겹치지 않는다.
+    """
+    stem = os.path.splitext(os.path.basename(output_path))[0]
+    return os.path.join(os.path.dirname(output_path), f"CVDv2_part_{stem}.mp4")
+
+
+def _path_key(path: str) -> str:
+    """예약 집합에서 비교할 모양 — 대소문자를 가리지 않는 OS에서는 접어서 본다."""
+    return os.path.normcase(os.path.abspath(path))
+
+
+def _first_free(path: str, taken) -> str:
+    """디스크에도 없고 taken(path)도 거짓인 첫 경로 — 있으면 확장자 앞에 " (n)"을 붙여 찾는다."""
+    stem, ext = os.path.splitext(path)
+    candidate = path
+    n = 0
+    while os.path.exists(candidate) or taken(candidate):
+        n += 1
+        candidate = f"{stem} ({n}){ext}"
+    return candidate
+
+
+def _candidate_path(directory: str, title: str, resolution: int, tail: str = "") -> str:
+    """중복 회피 전의 산출물 경로 — `{제목} {해상도}p{tail}.mp4`. 정제하고 길이를 맞춘다."""
     safe_title = sanitize_filename(str(title)) or "video"
     if _RESERVED_DEVICE_NAMES.match(safe_title):
         safe_title = "_" + safe_title
-    suffix = f" {resolution}p.mp4"
+    suffix = f" {resolution}p{tail}.mp4"
     candidate = os.path.join(directory, safe_title + suffix)
     # 상한 둘을 함께 지킨다: 전체 경로 문자 수(Windows MAX_PATH 대비)와
     # 파일명 구성요소의 UTF-8 바이트 수(POSIX 255바이트 대비)
@@ -102,7 +177,7 @@ def build_output_path(directory: str, title: str, resolution: int) -> str:
         byte_budget = _MAX_FILENAME_BYTES - len((marker + suffix).encode("utf-8"))
         clipped = clipped.encode("utf-8")[:byte_budget].decode("utf-8", "ignore")
         candidate = os.path.join(directory, clipped.rstrip() + marker + suffix)
-    return ensure_unique_path(candidate)
+    return candidate
 
 
 def temp_dir_for(output_path: str, base_dir: str | None = None) -> str:

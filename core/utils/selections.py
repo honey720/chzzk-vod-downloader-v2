@@ -29,6 +29,21 @@ SELECTION_TOO_SHORT = "Selection is shorter than one frame"  # 시작과 끝이 
 SELECTION_DUPLICATE = "Duplicate selection"  # 시작·끝이 둘 다 같은 구간이 또 있다
 SELECTION_TOO_MANY = "Too many selections"  # MAX_SELECTIONS 번째를 넘은 구간이다
 
+
+class SelectionError(Exception):
+    """구간 목록이 검증을 통과하지 못했다.
+
+    message_key는 번역하지 않은 i18n 키 원문이다 — 번호가 가장 앞선 구간의 첫 위반
+    키다. 구간마다의 위반 키 전부는 ``violations``에 있다(``validate_selections``의 결과).
+    """
+
+    def __init__(self, violations: dict[int, tuple[str, ...]]):
+        first = min(violations)
+        self.violations = violations
+        self.message_key = violations[first][0]
+        super().__init__(f"{self.message_key}: 구간 {first + 1}")
+
+
 # 영상 길이를 프레임 수로 내릴 때의 여유(프레임) — 길이가 프레임 경계에 정확히
 # 놓였는데 float 오차로 경계 바로 아래 값이 되어 마지막 프레임이 잘리는 것을 막는다
 _DURATION_SLACK_FRAMES = Fraction(1, 1000)

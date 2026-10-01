@@ -81,6 +81,8 @@ class M3U8Downloader(BaseDownloader):
             items=tuple(enumerate(segments)),
             total_size=None,
             requires_postprocess=True,
+            # 구간은 계획에 그대로 싣는다 — 이 다운로더는 아직 해석하지 못해 run()이 거부한다 (#309)
+            selections=tuple(content.selections),
         )
 
     def _download_start_log_args(self) -> tuple:

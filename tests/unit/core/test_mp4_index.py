@@ -784,3 +784,45 @@ def test_fetch_mp4_index_propagates_http_error(monkeypatch):
 
     with pytest.raises(requests.HTTPError):
         fetch_mp4_index("https://example.invalid/video.mp4")
+
+
+# ================================================================ moov의 위치 · 청크 (#309)
+
+
+@pytest.mark.parametrize("moov_first", [True, False], ids=["front", "back"])
+def test_read_mp4_index_reports_where_the_moov_is(moov_first):
+    """read_mp4_index는 파일에서 moov를 찾은 (시작, 끝) 바이트를 moov_range에 실어야 한다.
+
+    ftyp · moov · mdat 와 ftyp · mdat · moov
+    -> moov_range == (조립기가 놓은 moov의 위치, 그 위치 + moov 길이 − 1)
+    """
+    built = build_mp4([video_spec(), audio_spec()], moov_first=moov_first)
+
+    index = read_mp4_index(_reader(built.data))
+
+    assert index.moov_range == (built.moov_offset, built.moov_offset + len(built.moov) - 1)
+
+
+def test_parse_moov_leaves_moov_range_empty():
+    """parse_moov는 moov bytes만 받았으므로 moov_range를 채우지 않아야 한다.
+
+    합성 mp4의 moov bytes
+    -> moov_range is None
+    """
+    built = build_mp4([video_spec(), audio_spec()])
+
+    assert parse_moov(built.moov).moov_range is None
+
+
+def test_parse_moov_reports_first_sample_of_every_chunk():
+    """parse_moov는 트랙마다 청크의 첫 샘플 인덱스를 chunk_starts에 실어야 한다.
+
+    영상 청크별 샘플 수 [3, 3, 2, 4], 오디오 [4, 4, 4, 4]
+    -> 영상 chunk_starts == (0, 3, 6, 8), 오디오 == (0, 4, 8, 12)
+    """
+    built = build_mp4([video_spec(), audio_spec()])
+
+    index = parse_moov(built.moov)
+
+    assert index.video.chunk_starts == (0, 3, 6, 8)
+    assert index.audio.chunk_starts == (0, 4, 8, 12)

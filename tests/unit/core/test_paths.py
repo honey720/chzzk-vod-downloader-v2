@@ -4,13 +4,20 @@
 - 같은 경로가 이미 있으면 절대 덮어쓰지 않고 " (n)"을 붙인 새 경로를 준다
 - 제목의 Windows 금지 문자는 제거되고, 전체 경로 길이는 상한을 넘지 않는다
 - 세그먼트 임시 폴더 이름은 산출물 파일명에서 파생돼 다운로드 간 구분된다
+- 구간 파일은 `{제목} {해상도}p_N.mp4`이고, 배정한 이름은 풀 때까지 다시 배정되지 않는다 (#309)
 """
 
 import os
+import threading
+
+import pytest
 
 from core.utils.paths import (
     build_output_path,
+    build_section_output_paths,
     ensure_unique_path,
+    partial_source_path_for,
+    release_output_paths,
     sanitize_filename,
     temp_dir_for,
 )
@@ -246,3 +253,138 @@ def test_same_video_queued_twice_gets_distinct_temp_dirs(tmp_path):
         f.write(b"x")  # 첫 건 완료를 흉내 낸다
     second = build_output_path(str(tmp_path), "같은 영상", 1080)
     assert temp_dir_for(first) != temp_dir_for(second)
+
+
+# ================================================================ 구간 파일명 (#309)
+
+
+@pytest.fixture
+def reserved():
+    """테스트가 배정한 구간 경로를 모아 두었다가 끝나면 예약을 푼다."""
+    held: list[str] = []
+    yield held
+    release_output_paths(held)
+
+
+def _sections(reserved, directory, title, resolution, count) -> tuple[str, ...]:
+    paths = build_section_output_paths(str(directory), title, resolution, count)
+    reserved.extend(paths)
+    return paths
+
+
+def test_section_paths_are_numbered_in_list_order(tmp_path, reserved):
+    """build_section_output_paths는 구간 수만큼 `_1`부터 순서대로 번호를 붙인 경로를 돌려줘야 한다.
+
+    제목 "방송", 해상도 1080, 구간 3개
+    -> ("방송 1080p_1.mp4", "방송 1080p_2.mp4", "방송 1080p_3.mp4")
+    """
+    paths = _sections(reserved, tmp_path, "방송", 1080, 3)
+
+    assert paths == tuple(str(tmp_path / f"방송 1080p_{n}.mp4") for n in (1, 2, 3))
+
+
+def test_single_section_still_gets_number_one(tmp_path, reserved):
+    """build_section_output_paths는 구간이 하나여도 `_1`을 붙여야 한다.
+
+    제목 "방송", 해상도 1080, 구간 1개
+    -> ("방송 1080p_1.mp4",) — 전체 다운로드의 "방송 1080p.mp4"와 다르다
+    """
+    paths = _sections(reserved, tmp_path, "방송", 1080, 1)
+
+    assert paths == (str(tmp_path / "방송 1080p_1.mp4"),)
+    assert paths[0] != build_output_path(str(tmp_path), "방송", 1080)
+
+
+def test_section_path_gets_counter_only_where_a_file_exists(tmp_path, reserved):
+    """build_section_output_paths는 같은 이름의 파일이 있는 구간에만 " (n)"을 붙여야 한다.
+
+    "방송 1080p_1.mp4"가 디스크에 있음, 구간 2개
+    -> ("방송 1080p_1 (1).mp4", "방송 1080p_2.mp4")
+    """
+    (tmp_path / "방송 1080p_1.mp4").write_bytes(b"existing")
+
+    paths = _sections(reserved, tmp_path, "방송", 1080, 2)
+
+    assert paths == (str(tmp_path / "방송 1080p_1 (1).mp4"), str(tmp_path / "방송 1080p_2.mp4"))
+
+
+def test_section_paths_avoid_names_reserved_by_another_download(tmp_path, reserved):
+    """build_section_output_paths는 디스크에 없어도 다른 다운로드가 배정받은 이름을 피해야 한다.
+
+    같은 제목으로 두 번 배정(파일은 만들지 않음), 구간 2개씩
+    -> 둘째 배정 == ("방송 1080p_1 (1).mp4", "방송 1080p_2 (1).mp4")
+    """
+    first = _sections(reserved, tmp_path, "방송", 1080, 2)
+
+    second = _sections(reserved, tmp_path, "방송", 1080, 2)
+
+    assert not any(os.path.exists(path) for path in first)
+    assert second == tuple(str(tmp_path / f"방송 1080p_{n} (1).mp4") for n in (1, 2))
+
+
+def test_released_section_paths_can_be_assigned_again(tmp_path):
+    """release_output_paths로 푼 이름은 다시 배정되어야 한다.
+
+    배정 → 풀기 → 같은 제목으로 다시 배정
+    -> 두 배정이 같은 경로
+    """
+    first = build_section_output_paths(str(tmp_path), "방송", 1080, 2)
+    release_output_paths(first)
+
+    second = build_section_output_paths(str(tmp_path), "방송", 1080, 2)
+    release_output_paths(second)
+
+    assert second == first
+
+
+def test_concurrent_assignments_never_share_a_name(tmp_path, reserved):
+    """여러 스레드가 같은 제목으로 동시에 배정해도 같은 경로가 두 번 나오지 않아야 한다.
+
+    스레드 8개가 Barrier로 동시에 구간 3개씩 배정
+    -> 경로 24개가 모두 다르다
+    """
+    barrier = threading.Barrier(8)
+    results: list[tuple[str, ...]] = []
+    lock = threading.Lock()
+
+    def assign():
+        barrier.wait()
+        paths = build_section_output_paths(str(tmp_path), "방송", 1080, 3)
+        with lock:
+            results.append(paths)
+
+    threads = [threading.Thread(target=assign) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    reserved.extend(path for paths in results for path in paths)
+
+    every = [path for paths in results for path in paths]
+    assert len(every) == 24
+    assert len(set(every)) == 24
+
+
+def test_section_path_sanitizes_and_truncates_like_whole_download(tmp_path, reserved):
+    """build_section_output_paths는 전체 다운로드와 같은 정제·길이 제한을 적용하고 번호는 남겨야 한다.
+
+    제목 "a" 400자에 금지 문자 ':' 포함, 구간 1개
+    -> 파일명이 " 1080p_1.mp4"로 끝나고, UTF-8 240바이트 이하이며 ':'가 없다
+    """
+    paths = _sections(reserved, tmp_path, "a:" + "a" * 400, 1080, 1)
+
+    name = os.path.basename(paths[0])
+    assert name.endswith(" 1080p_1.mp4")
+    assert len(name.encode("utf-8")) <= 240
+    assert ":" not in name
+
+
+def test_partial_source_path_derives_from_section_output(tmp_path):
+    """partial_source_path_for는 산출물과 같은 폴더에 산출물 이름에서 파생한 mp4 경로를 돌려줘야 한다.
+
+    산출물 "<폴더>/방송 1080p_1 (1).mp4"
+    -> "<폴더>/CVDv2_part_방송 1080p_1 (1).mp4"
+    """
+    output = str(tmp_path / "방송 1080p_1 (1).mp4")
+
+    assert partial_source_path_for(output) == str(tmp_path / "CVDv2_part_방송 1080p_1 (1).mp4")

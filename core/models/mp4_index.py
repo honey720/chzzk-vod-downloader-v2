@@ -26,6 +26,9 @@ class Mp4Track:
     durations: tuple[float, ...]  # 샘플별 길이(초)
     offsets: tuple[int, ...]  # 샘플별 파일 안 시작 위치(바이트)
     sizes: tuple[int, ...]  # 샘플별 크기(바이트)
+    # 청크마다의 첫 샘플 인덱스(오름차순). 청크는 파일 안에 이어 붙어 놓인 샘플 묶음이고
+    # stco/co64는 청크의 위치만 적는다 — 받을 범위를 청크 단위로 맞출 때 쓴다
+    chunk_starts: tuple[int, ...]
     sync_samples: tuple[int, ...]  # 단독으로 디코드를 시작할 수 있는 샘플의 인덱스(오름차순)
 
 
@@ -43,6 +46,9 @@ class Mp4Index:
     fps: Fraction  # 샘플 표가 선언한 프레임률 — timescale ÷ 가장 많은 샘플 길이
     video: Mp4Track  # 영상 트랙
     audio: Mp4Track | None  # 오디오 트랙. 없으면 None
+    # 파일 안에서 moov가 놓인 (시작, 끝) 바이트 — 양 끝 포함. 파일에서 찾아 읽었을 때만
+    # 채운다(read_mp4_index · fetch_mp4_index). moov bytes만 해석했으면 None이다
+    moov_range: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True)
