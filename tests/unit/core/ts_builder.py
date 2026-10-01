@@ -62,6 +62,11 @@ def pat_packet(pmt_pid: int = PMT_PID) -> bytes:
     return _packet(0, _psi(0x00, body), unit_start=True, counter=0)
 
 
+def short_pmt_packet() -> bytes:
+    """섹션 본문이 3바이트뿐인 PMT — 스트림 목록 앞의 고정 칸(PCR PID · 길이)이 없다."""
+    return _packet(PMT_PID, _psi(0x02, bytes([0x00, 0x01, 0xC1])), unit_start=True, counter=0)
+
+
 def pmt_packet(
     video_pid: int | None = VIDEO_PID, audio_pid: int | None = AUDIO_PID, video_type: int = 0x1B
 ) -> bytes:

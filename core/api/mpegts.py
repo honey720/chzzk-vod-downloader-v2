@@ -259,6 +259,9 @@ def _program_map_pid(payload: bytes) -> int:
 def _elementary_pids(payload: bytes) -> tuple[int, int, str]:
     """PMT에서 (영상 PID, 오디오 PID, 영상 코덱)을 읽는다. 없는 쪽은 −1이다."""
     start, end = _section(payload, 0x02)
+    if end < start + 12:
+        # 스트림 목록 앞의 고정 칸(12바이트)도 다 없다 — 그대로 읽으면 IndexError가 난다
+        raise TsError(TS_INVALID, "PMT 섹션이 너무 짧다")
     position = start + 12 + (((payload[start + 10] & 0x0F) << 8) | payload[start + 11])
     video_pid = audio_pid = -1
     codec = ""

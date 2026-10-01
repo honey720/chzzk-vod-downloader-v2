@@ -29,6 +29,7 @@ from tests.unit.core.ts_builder import (
     pat_packet,
     pes,
     pmt_packet,
+    short_pmt_packet,
     video_frame,
 )
 
@@ -179,6 +180,18 @@ def test_parse_ts_rejects_broken_packets(damage):
     """
     with pytest.raises(TsError) as info:
         parse_ts(damage(build_ts(_reordered_frames())))
+
+    assert info.value.message_key == TS_INVALID
+
+
+def test_parse_ts_rejects_pmt_section_cut_short():
+    """parse_ts는 PMT 섹션이 스트림 목록 앞의 고정 칸보다 짧으면 IndexError가 아니라 손상 키로 TsError를 내야 한다.
+
+    섹션 본문이 3바이트뿐인 PMT
+    -> message_key == TS_INVALID
+    """
+    with pytest.raises(TsError) as info:
+        parse_ts(pat_packet() + short_pmt_packet())
 
     assert info.value.message_key == TS_INVALID
 

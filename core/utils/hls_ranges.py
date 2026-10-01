@@ -19,12 +19,19 @@ HLS 플레이리스트의 세그먼트 길이(``#EXTINF``)를 누적해, 구간�
 구간이 첫 세그먼트에 놓이면 더 앞이 없으므로 첫 세그먼트부터 받는다.
 """
 
+import math
 from bisect import bisect_right
 from itertools import accumulate
 
 from core.api.hls import HlsPlaylist
 from core.models.plan import TimeRange
 from core.models.ts_index import SegmentSpan
+
+# 구간의 끝 시각을 세그먼트 시작 시각과 견줄 때의 여유(초) — 1마이크로초.
+# 시작 시각은 float 길이를 누적한 값이라 0.1 + 0.1 + 0.1이 0.30000000000000004가 된다.
+# 여유가 없으면 끝 시각 0.3이 그 세그먼트보다 앞이라고 판정되어 끝 프레임이 든
+# 세그먼트가 빠진다. 여유가 과해서 생기는 일은 세그먼트 하나를 더 받는 것뿐이다
+_BOUNDARY_SLACK = 1e-6
 
 
 def selection_segments(playlist: HlsPlaylist, selection: TimeRange) -> SegmentSpan:
@@ -36,19 +43,25 @@ def selection_segments(playlist: HlsPlaylist, selection: TimeRange) -> SegmentSp
 
     구간의 끝이 플레이리스트 길이를 넘으면 마지막 세그먼트까지로 한다.
 
+    길이를 모르는 세그먼트가 하나라도 있으면 거부한다. 파서는 ``#EXTINF``가 없거나
+    읽을 수 없는 세그먼트를 0.0으로 두는데, 그대로 누적하면 그 뒤 세그먼트의 시작
+    시각이 전부 앞당겨져 엉뚱한 세그먼트를 고른다.
+
     Raises:
-        ValueError: 플레이리스트에 세그먼트 길이가 없거나, 구간의 시작이 플레이리스트
-            길이와 같거나 뒤인 경우
+        ValueError: 플레이리스트에 세그먼트 길이가 없거나, 길이가 0 이하이거나 유한하지
+            않은 세그먼트가 있거나, 구간의 시작이 플레이리스트 길이와 같거나 뒤인 경우
     """
     if not playlist.durations or len(playlist.durations) != len(playlist.segments):
         raise ValueError("플레이리스트에 세그먼트 길이(#EXTINF)가 없다")
+    if not all(math.isfinite(duration) and duration > 0 for duration in playlist.durations):
+        raise ValueError("길이를 알 수 없는 세그먼트가 있다 — #EXTINF가 없거나 0 이하다")
     starts = [0.0, *accumulate(playlist.durations)]  # starts[i] = 세그먼트 i의 시작 시각
     total = starts.pop()
     if selection.start >= total:
         raise ValueError(f"구간의 시작({selection.start})이 플레이리스트 길이({total}) 밖이다")
     last_index = len(playlist.segments) - 1
     cover_first = max(bisect_right(starts, selection.start) - 1, 0)
-    cover_last = min(bisect_right(starts, selection.end) - 1, last_index)
+    cover_last = min(bisect_right(starts, selection.end + _BOUNDARY_SLACK) - 1, last_index)
     return SegmentSpan(
         first=max(cover_first - 1, 0),
         last=cover_last,

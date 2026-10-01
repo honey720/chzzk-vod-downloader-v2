@@ -171,3 +171,43 @@ def test_selection_segments_rejects_playlist_without_durations():
     """
     with pytest.raises(ValueError):
         selection_segments(HlsPlaylist(segments=("a.ts", "b.ts")), TimeRange(0.0, 1.0))
+
+
+@pytest.mark.parametrize(
+    "durations",
+    [(4.0, 0.0, 2.0), (4.0, -1.0, 2.0), (4.0, float("nan"), 2.0), (4.0, float("inf"), 2.0)],
+    ids=["zero", "negative", "nan", "inf"],
+)
+def test_selection_segments_rejects_segment_of_unknown_duration(durations):
+    """selection_segments는 길이가 0 이하이거나 유한하지 않은 세그먼트가 있으면 ValueError를 내야 한다.
+
+    durations = (4.0, 0.0, 2.0) · (4.0, −1.0, 2.0) · (4.0, nan, 2.0) · (4.0, inf, 2.0), 구간 4.5~5.0초
+    -> ValueError
+    """
+    playlist = HlsPlaylist(segments=("a.ts", "b.ts", "c.ts"), durations=durations)
+
+    with pytest.raises(ValueError):
+        selection_segments(playlist, TimeRange(4.5, 5.0))
+
+
+def test_selection_segments_rejects_playlist_parsed_with_missing_extinf():
+    """selection_segments는 #EXTINF가 빠진 세그먼트가 있는 플레이리스트를 ValueError로 거부해야 한다.
+
+    a.ts(#EXTINF 4.0) · b.ts(#EXTINF 없음) · c.ts(#EXTINF 2.0), 구간 4.5~5.0초
+    -> ValueError
+    """
+    text = "\n".join(["#EXTM3U", "#EXTINF:4.0,", "a.ts", "b.ts", "#EXTINF:2.0,", "c.ts"])
+
+    with pytest.raises(ValueError):
+        selection_segments(parse_media_playlist(text), TimeRange(4.5, 5.0))
+
+
+def test_selection_segments_keeps_boundary_segment_despite_float_accumulation():
+    """selection_segments는 세그먼트 길이를 누적한 값에 float 오차가 있어도 끝 시각에 시작하는 세그먼트를 받아야 한다.
+
+    #EXTINF = 0.1 × 4 (넷째 세그먼트의 누적 시작 시각 = 0.30000000000000004), 구간 0.25~0.3초
+    -> cover_last == 3
+    """
+    playlist = parse_media_playlist(_playlist(["0.1", "0.1", "0.1", "0.1"]))
+
+    assert selection_segments(playlist, TimeRange(0.25, 0.3)).cover_last == 3
