@@ -39,9 +39,10 @@ import time as tm
 
 import requests
 
+from core.api.hls_fmp4 import declared_length
 from core.api.mp4 import MP4_UNSUPPORTED, Mp4Error, fetch_mp4_head
 from core.api.session import get_thread_session
-from core.downloaders.base import BaseDownloader, PostprocessError
+from core.downloaders.base import BaseDownloader, PostprocessError, TruncatedBodyError
 from core.downloaders.ranges import decide_part_size, split_ranges, split_span
 from core.models.content import Content, ContentType
 from core.models.cut import CutResult, CutSection
@@ -261,6 +262,32 @@ class FileDownloader(BaseDownloader):
             raise PostprocessError(f"후처리(cut) 실패: {e}") from e
         os.remove(self._source_path)
 
+    @staticmethod
+    def _require_whole_file_on_200(response, file_size: int | None) -> None:
+        """범위 요청에 200이 왔을 때 본문이 파일 전체인지 확인한다 (#309).
+
+        200은 "범위를 무시하고 전체를 보낸다"는 뜻이다. 그런데 요청한 범위만큼만 잘라
+        200으로 보내는 서버가 있다 — 그 본문을 그대로 쓰면 파트의 뒤가 빈 채로 완료
+        처리된다. 서버가 말한 길이(Content-Length)가 파일 전체 크기와 다르면 실패로 처리한다.
+        길이를 말하지 않은 응답은 가릴 수 없어 지금처럼 둔다.
+
+        Args:
+            response: 범위 요청의 응답
+            file_size: 파일 전체 크기(바이트). 모르면 None — 그때는 길이를 말한 200을
+                모두 실패로 처리한다(구간 다운로드: 받는 범위가 파일 전체일 수 없다)
+
+        Raises:
+            TruncatedBodyError: 200인데 본문의 길이가 파일 전체 크기와 다른 경우
+        """
+        if getattr(response, "status_code", None) != 200:
+            return
+        declared = declared_length(getattr(response, "headers", {}))
+        if declared is not None and declared != file_size:
+            response.close()
+            raise TruncatedBodyError(
+                f"범위 요청에 200 · 본문 {declared}바이트 · 파일 전체 {file_size}바이트"
+            )
+
     def _postprocess_output_size(self) -> int:
         """후처리 종료 로그에 남길 크기 — 구간 파일 크기의 합."""
         return sum(os.path.getsize(path) for path in self._made_sections)
@@ -303,6 +330,10 @@ class FileDownloader(BaseDownloader):
                     self._part_progress.pop((start, end), None)
                     resume_offset = 0
                     continue
+                # 구간 다운로드의 total_size는 받을 바이트의 합이지 파일 크기가 아니다
+                self._require_whole_file_on_200(
+                    response, total_size if self._layout is None else None
+                )
                 part_start_time = tm.time()
                 # 디스크 쓰기 누적 시간 — 저속 판정에는 더 이상 반영하지 않는다(#191).
                 # f.write()는 OS 페이지 캐시에 즉시 반환되는 버퍼드 쓰기라 실기
@@ -342,10 +373,10 @@ class FileDownloader(BaseDownloader):
                                     slow_count += 1
                                     if slow_count > 5:
                                         # 속도가 너무 느리면 스레드 재시작
-                                        ratio = write_elapsed / elapsed * 100 if elapsed > 0 else 0.0
-                                        diagnostic = (
-                                            f"write={write_elapsed:.3f}s/{elapsed:.3f}s={ratio:.0f}%"
+                                        ratio = (
+                                            write_elapsed / elapsed * 100 if elapsed > 0 else 0.0
                                         )
+                                        diagnostic = f"write={write_elapsed:.3f}s/{elapsed:.3f}s={ratio:.0f}%"
                                         with self.lock:
                                             self._record_partial(
                                                 start, end, resume_offset + downloaded_size

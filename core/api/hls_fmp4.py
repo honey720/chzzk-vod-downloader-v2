@@ -1,56 +1,50 @@
-"""HLS fMP4에서 구간을 정하는 데 필요한 것만 받기 — 플레이리스트 · 초기화 세그먼트 · moof (#309).
+"""HLS fMP4에서 구간을 정하는 데 필요한 것 받기 — 플레이리스트 · 초기화 세그먼트 · 세그먼트 (#309).
 
 인코딩 전 다시보기는 HLS fMP4로 내려온다. 구간을 받으려면 세그먼트를 받기 전에 프레임
-시각을 알아야 하는데, 그 정보는 세그먼트 앞부분의 moof에 있다. 세그먼트 전체가 아니라
-moof까지만 범위 요청으로 받는다.
+시각을 알아야 하는데, 그 정보는 세그먼트 안의 moof에 있다. 구간의 양 끝이 든 세그먼트를
+받아 그 moof를 읽는다.
 
-받은 것은 ``Fmp4Head``에 모은다. 구간을 해석한 쪽(헤드리스 스크립트 등)이 이것을
-``Content.fmp4_head``로 넘기면 엔진은 같은 것을 다시 받지 않는다.
+**세그먼트는 언제나 전체 요청으로 받는다. 범위 요청을 보내지 않는다.** 다시보기를 내주는
+CDN은 캐시에 없는 세그먼트에 범위 요청이 오면 200과 잘린 본문으로 답하고, 그 잘린 본문을
+세그먼트 전체로 캐시한다 — 그 뒤의 전체 요청은 누구의 것이든 잘린 본문을 받는다. moof만
+골라 받는 길이 없으므로 세그먼트를 통째로 받고, 받은 것을 버리지 않는다.
+
+받은 것은 ``Fmp4Head``에 모은다. 세그먼트의 본문은 ``Fmp4Head.segment_dir``(엔진의 세그먼트
+임시 폴더)에 엔진과 같은 이름의 파일로 두고, 프레임 정보만 메모리에 둔다. 구간을 해석한
+쪽(헤드리스 스크립트 등)이 이것을 ``Content.fmp4_head``로 넘기면 엔진은 같은 것을 다시
+받지 않는다.
 
 요청에는 쿠키를 싣지 않는다 — m3u8 다운로더가 같은 주소를 받는 방식과 같다.
-
-서버가 범위 요청을 받지 않고 200으로 전체를 보내면 그 본문을 그대로 쓴다 — 세그먼트
-하나는 수 MB라 받아도 되고, 다시 요청해도 같은 답이 온다.
 """
 
+import os
+from collections.abc import Callable
+from typing import BinaryIO
 from urllib.parse import urljoin
 
-from core.api.fmp4 import parse_init_segment, parse_media_segment, scan_moof
+from core.api.fmp4 import parse_init_segment, read_media_segment
 from core.api.hls import parse_media_playlist
-from core.api.mp4 import (
-    MP4_INVALID,
-    MP4_RANGE_MISMATCH,
-    MP4_UNSUPPORTED,
-    Mp4Error,
-    _granted_length,
-)
+from core.api.mp4 import MP4_TRUNCATED, MP4_UNSUPPORTED, Mp4Error
 from core.api.session import get_thread_session
 from core.models.fmp4_index import Fmp4Head, Fmp4Init, Fmp4Segment
 
 # 실패 키 — 번역하지 않은 i18n 키 원문
 HLS_NOT_FMP4 = "This recording cannot be downloaded in sections"  # EXT-X-MAP 없음 · MAP이 여럿
 
-# moof를 읽는 첫 요청의 크기(바이트). 4초짜리 60fps 세그먼트의 moof가 수 KB였다 —
-# 한 번에 들어오도록 넉넉히 잡는다
-_MOOF_READ_BYTES = 64 * 1024
-
-# moof 하나를 읽으려고 요청을 키우는 최대 크기(바이트). 손상된 크기 칸을 믿고 끝없이
-# 받지 않게 한다
-_MAX_MOOF_BYTES = 16 * 1024 * 1024
-
-# 세그먼트 하나에서 따라가는 moof의 최대 수 — 손상된 세그먼트에서 요청이 끝없이 이어지지
-# 않게 한다
-_MAX_FRAGMENTS = 256
-
-# 범위 요청에 200으로 답한 본문(세그먼트 전체)을 받아들이는 최대 크기(바이트)
+# 세그먼트 하나로 받아들이는 최대 크기(바이트) — 256MB. 손상된 응답을 끝없이 받지 않게 한다
 _MAX_SEGMENT_BYTES = 256 * 1024 * 1024
 
 _REQUEST_TIMEOUT = 30  # 요청 타임아웃(초) — m3u8 다운로더의 세그먼트 요청과 같은 값
 _READ_CHUNK_BYTES = 64 * 1024  # 응답 본문을 나눠 읽는 단위(바이트)
 
 
-def fetch_fmp4_head(playlist_url: str) -> Fmp4Head:
-    """플레이리스트와 초기화 세그먼트를 받아 ``Fmp4Head``를 만든다. 세그먼트의 moof는 아직 받지 않는다.
+def fetch_fmp4_head(playlist_url: str, segment_dir: str | None = None) -> Fmp4Head:
+    """플레이리스트와 초기화 세그먼트를 받아 ``Fmp4Head``를 만든다. 세그먼트는 아직 받지 않는다.
+
+    Args:
+        playlist_url: 미디어 플레이리스트의 주소
+        segment_dir: 프레임 정보를 읽으려고 받는 세그먼트를 둘 폴더(엔진의 세그먼트 임시
+            폴더). 없으면 만든다. None이면 받은 본문을 버린다 — 엔진이 다시 받는다
 
     Raises:
         Mp4Error: 플레이리스트에 EXT-X-MAP이 없거나 둘 이상인 경우(``HLS_NOT_FMP4``),
@@ -68,102 +62,127 @@ def fetch_fmp4_head(playlist_url: str) -> Fmp4Head:
     init_response = session.get(urljoin(playlist_url, playlist.init_uri), timeout=_REQUEST_TIMEOUT)
     init_response.raise_for_status()
     init_data = init_response.content
-    return Fmp4Head(playlist=playlist, init_data=init_data, init=parse_init_segment(init_data))
+    return Fmp4Head(
+        playlist=playlist,
+        init_data=init_data,
+        init=parse_init_segment(init_data),
+        segment_dir=segment_dir,
+    )
+
+
+def segment_file_name(segment_count: int, index: int) -> str:
+    """index번째 세그먼트를 임시 폴더에 둘 때의 파일 이름 — m3u8 다운로더가 쓰는 이름과 같다.
+
+    번호는 1부터이고(0은 초기화 세그먼트) 세그먼트 수의 자릿수만큼 0으로 채운다.
+    """
+    return f"{index + 1:0{len(str(segment_count))}d}.m4v"
 
 
 def segment_frames(head: Fmp4Head, playlist_url: str, index: int) -> Fmp4Segment:
-    """index번째 세그먼트의 프레임 정보를 돌려준다 — 이미 받았으면 그것을, 아니면 moof만 받아 해석한다.
+    """index번째 세그먼트의 프레임 정보를 돌려준다 — 이미 읽었으면 그것을, 아니면 세그먼트를 받아 읽는다.
 
-    받은 결과는 ``head.segments``에 넣어 둔다. 같은 세그먼트를 두 번 요청하지 않는다.
+    세그먼트를 전체 요청으로 받아 그 안의 moof를 모두 읽는다. ``head.segment_dir``이 있으면
+    받은 본문을 그 폴더에 두고 ``head.stored``에 적는다 — 엔진이 다시 받지 않는다. 결과는
+    ``head.segments``에 넣어 둔다. 같은 세그먼트를 두 번 요청하지 않는다.
 
     Raises:
-        Mp4Error: moof를 읽지 못했거나 해석하지 못한 경우
+        Mp4Error: 받은 본문이 잘렸거나(``MP4_TRUNCATED``) moof를 해석하지 못한 경우
         requests.RequestException: 연결 실패·타임아웃·HTTP 오류 상태
+        OSError: 세그먼트 파일을 쓰지 못한 경우
     """
     found = head.segments.get(index)
     if found is None:
         url = urljoin(playlist_url, head.playlist.segments[index])
-        found = fetch_segment_moofs(url, head.init)
+        if head.segment_dir is None:
+            found = _fetch_frames(url, head.init)
+        else:
+            os.makedirs(head.segment_dir, exist_ok=True)
+            name = segment_file_name(len(head.playlist.segments), index)
+            path = os.path.join(head.segment_dir, name)
+            download_segment(url, path)
+            try:
+                found = read_segment_file(path, head.init)
+            except Mp4Error:
+                os.remove(path)  # 잘렸거나 해석할 수 없는 세그먼트를 엔진이 쓰게 두지 않는다
+                raise
+            head.stored.add(index)
         head.segments[index] = found
     return found
 
 
-def fetch_segment_moofs(url: str, init: Fmp4Init) -> Fmp4Segment:
-    """세그먼트에서 moof만 범위 요청으로 받아 프레임 정보를 읽는다.
+def download_segment(url: str, path: str) -> int:
+    """세그먼트를 전체 요청으로 받아 path에 쓴다. 받은 바이트 수를 돌려준다.
 
-    앞부분을 받아 첫 mdat 앞의 moof를 읽고, mdat 뒤에 상자가 더 있으면 그 위치부터 같은
-    방식으로 이어 읽는다. mdat 본문은 받지 않는다.
-
-    서버가 206이 아니라 200으로 답하면 본문이 세그먼트 전체다 — 그대로 해석한다.
+    받는 동안은 ``path + ".part"``에 쓰고 다 받으면 이름을 바꾼다 — path에는 다 받은
+    파일만 놓인다. 서버가 말한 길이(Content-Length)와 받은 길이가 다르면 실패다.
 
     Raises:
-        Mp4Error: 요청과 다른 범위의 응답(``MP4_RANGE_MISMATCH``), moof가 없거나 너무
-            큰 경우(``MP4_INVALID``), 해석 실패
+        Mp4Error: 받은 길이가 서버가 말한 길이와 다른 경우(``MP4_TRUNCATED``), 세그먼트가
+            너무 큰 경우(``MP4_UNSUPPORTED``)
         requests.RequestException: 연결 실패·타임아웃·HTTP 오류 상태
     """
-    heads = []  # moof가 든 앞부분들 — 이어 붙이면 mdat 없는 세그먼트가 된다
-    offset = 0
-    for _ in range(_MAX_FRAGMENTS):
-        size = _MOOF_READ_BYTES
-        while True:
-            data, total, whole = _read_range(url, offset, size)
-            if whole:
-                return parse_media_segment(data, init)
-            scan = scan_moof(data)
-            reached_end = len(data) < size or (total is not None and offset + len(data) >= total)
-            if scan.complete or scan.next_offset is not None or reached_end:
-                break
-            # mdat의 머리가 아직 안 보인다 — moof가 받은 것보다 길다. 필요한 만큼 키워 다시 받는다
-            size = max(size * 4, scan.moof_end + _MOOF_READ_BYTES)
-            if size > _MAX_MOOF_BYTES:
-                raise Mp4Error(MP4_INVALID, f"moof가 {_MAX_MOOF_BYTES}바이트를 넘는다")
-        if scan.complete:
-            heads.append(data[: scan.moof_end])
-        if scan.next_offset is None:
-            break
-        offset += scan.next_offset
-        if total is not None and offset >= total:
-            break
-    if not heads:
-        raise Mp4Error(MP4_INVALID, "세그먼트에 moof가 없다")
-    return parse_media_segment(b"".join(heads), init)
+    partial = path + ".part"
+    try:
+        with open(partial, "wb") as out:
+            received = _stream(url, out.write)
+        os.replace(partial, path)
+    except BaseException:
+        if os.path.exists(partial):
+            os.remove(partial)
+        raise
+    return received
 
 
-def _read_range(url: str, offset: int, size: int) -> tuple[bytes, int | None, bool]:
-    """url의 offset부터 size바이트를 범위 요청으로 받는다 — (본문, 전체 크기, 전체를 받았는지).
+def read_segment_file(path: str, init: Fmp4Init) -> Fmp4Segment:
+    """받아 둔 세그먼트 파일에서 moof를 모두 읽어 프레임 정보를 돌려준다. 파일이 온전한지도 본다.
 
-    - 206: 본문은 요청한 범위다. 전체 크기는 Content-Range가 말한 값(모르면 None)
-    - 200: 서버가 범위를 무시했다. 본문은 파일 전체이고 셋째 값이 True다
-    - 416: 파일 끝을 넘은 요청 — 빈 본문
+    mdat의 본문은 읽지 않는다. 상자들이 말하는 끝이 파일 크기와 다르면 잘린 파일이다.
 
     Raises:
-        Mp4Error: Content-Range가 요청과 다르거나 본문 길이가 맞지 않는 경우
-            (``MP4_RANGE_MISMATCH``), 200 본문이 너무 큰 경우(``MP4_UNSUPPORTED``)
+        Mp4Error: 파일이 잘린 경우(``MP4_TRUNCATED``), moof를 해석하지 못한 경우
+        OSError: 파일을 읽지 못한 경우
     """
-    last = offset + size - 1
-    headers = {"Range": f"bytes={offset}-{last}"}
-    with get_thread_session().get(
-        url, headers=headers, stream=True, timeout=_REQUEST_TIMEOUT
-    ) as response:
-        if response.status_code == 416:
-            return b"", None, False
+    with open(path, "rb") as f:
+        return read_media_segment(_reader(f), init, os.path.getsize(path))
+
+
+def _fetch_frames(url: str, init: Fmp4Init) -> Fmp4Segment:
+    """세그먼트를 받아 프레임 정보만 읽고 본문은 버린다 — 둘 곳(segment_dir)이 없을 때."""
+    body = bytearray()
+    _stream(url, body.extend)
+    data = bytes(body)
+    return read_media_segment(lambda offset, size: data[offset : offset + size], init, len(data))
+
+
+def _stream(url: str, write: Callable[[bytes], object]) -> int:
+    """url을 전체 요청으로 받아 조각마다 write에 넘긴다. 받은 바이트 수를 돌려준다."""
+    with get_thread_session().get(url, stream=True, timeout=_REQUEST_TIMEOUT) as response:
         response.raise_for_status()
-        whole = response.status_code != 206
-        if whole:
-            limit = _MAX_SEGMENT_BYTES
-            total = None
-        else:
-            content_range = response.headers.get("Content-Range")
-            limit = _granted_length(content_range, offset, last)
-            total_text = (content_range or "").rsplit("/", 1)[-1].strip()
-            total = int(total_text) if total_text.isdigit() else None
-        body = bytearray()
+        received = 0
         for chunk in response.iter_content(chunk_size=_READ_CHUNK_BYTES):
-            body += chunk
-            if len(body) > limit:
-                if whole:
-                    raise Mp4Error(MP4_UNSUPPORTED, f"세그먼트가 {limit}바이트를 넘는다")
-                raise Mp4Error(MP4_RANGE_MISMATCH, f"본문이 {limit}바이트를 넘는다")
-        if not whole and len(body) != limit:
-            raise Mp4Error(MP4_RANGE_MISMATCH, f"본문 {len(body)}바이트 · 기대 {limit}")
-        return bytes(body), (len(body) if whole else total), whole
+            received += len(chunk)
+            if received > _MAX_SEGMENT_BYTES:
+                raise Mp4Error(MP4_UNSUPPORTED, f"세그먼트가 {_MAX_SEGMENT_BYTES}바이트를 넘는다")
+            write(chunk)
+        declared = declared_length(response.headers)
+        if declared is not None and declared != received:
+            raise Mp4Error(MP4_TRUNCATED, f"받은 {received}바이트 · 서버가 말한 {declared}바이트")
+        return received
+
+
+def declared_length(headers) -> int | None:
+    """응답 머리의 Content-Length — 본문 그대로의 길이일 때만. 압축 전송이거나 없으면 None이다."""
+    if headers.get("Content-Encoding", "identity").lower() != "identity":
+        return None  # 압축된 본문의 길이다 — 받은 바이트 수와 견줄 수 없다
+    text = headers.get("Content-Length")
+    return int(text) if text is not None and text.strip().isdigit() else None
+
+
+def _reader(file: BinaryIO) -> Callable[[int, int], bytes]:
+    """열린 파일을 ``read(offset, size)`` 읽기 함수로 감싼다."""
+
+    def read(offset: int, size: int) -> bytes:
+        file.seek(offset)
+        return file.read(size)
+
+    return read

@@ -5,6 +5,7 @@
 
 import logging
 import os
+from dataclasses import replace
 from fractions import Fraction
 from types import SimpleNamespace
 
@@ -16,7 +17,7 @@ from core.api.hls import parse_media_playlist
 from core.models.fmp4_index import Fmp4Head
 from core.models.content import VideoInfo
 from core.models.plan import TimeRange
-from core.utils.paths import release_output_paths
+from core.utils.paths import build_section_output_paths, release_output_paths
 from core.utils.timecode import TIMECODE_FRAME_OUT_OF_RANGE, TIMECODE_INVALID_FORMAT, TimecodeError
 from tests.unit.core.fmp4_builder import (
     KEY,
@@ -161,20 +162,52 @@ def test_fetch_frame_rates_reads_the_manifest_of_an_encoded_vod(monkeypatch):
     assert calls == [("vid", "key", cookies)]
 
 
-@pytest.mark.parametrize("content_type", ["m3u8", "clip"])
-def test_fetch_frame_rates_does_not_query_types_without_a_dash_manifest(monkeypatch, content_type):
-    """_fetch_frame_rates는 다시보기·클립이면 조회하지 않고 빈 결과를 돌려줘야 한다.
+def test_fetch_frame_rates_does_not_query_clips(monkeypatch):
+    """_fetch_frame_rates는 클립이면 조회하지 않고 빈 결과를 돌려줘야 한다.
 
-    content_type "m3u8" · "clip"
-    -> {} (get_video_info를 부르지 않는다)
+    content_type "clip"
+    -> {}, get_video_info 호출 0회
     """
+    calls = []
+    monkeypatch.setattr(headless.NetworkManager, "get_video_info", lambda *a: calls.append(a))
 
-    def unexpected(*args):
-        raise AssertionError("조회하면 안 된다")
+    assert _fetch_frame_rates("https://chzzk.naver.com/video/123", {}, "clip") == {}
+    assert calls == []
 
-    monkeypatch.setattr(headless.NetworkManager, "get_video_info", unexpected)
 
-    assert _fetch_frame_rates("https://chzzk.naver.com/video/123", {}, content_type) == {}
+def test_fetch_frame_rates_reads_the_master_playlist_of_an_unencoded_replay(monkeypatch):
+    """_fetch_frame_rates는 인코딩 전 다시보기면 마스터 플레이리스트가 선언한 해상도별 프레임률을 읽어야 한다.
+
+    content_type "m3u8", 영상 정보의 liveRewindPlaybackJson이 "playback"
+    -> get_video_m3u8_frame_rates("playback", 쿠키)의 결과(키는 해상도)
+    """
+    calls = []
+    cookies = {"NID_AUT": "", "NID_SES": ""}
+    info = replace(_video_info(), live_rewind_playback_json="playback")
+    monkeypatch.setattr(headless.NetworkManager, "get_video_info", lambda no, c: info)
+
+    def frame_rates(json_str, given):
+        calls.append((json_str, given))
+        return {1080: Fraction(60), 480: Fraction(30)}
+
+    monkeypatch.setattr(headless.NetworkManager, "get_video_m3u8_frame_rates", frame_rates)
+
+    rates = _fetch_frame_rates("https://chzzk.naver.com/video/123", cookies, "m3u8")
+
+    assert rates == {1080: Fraction(60), 480: Fraction(30)}
+    assert calls == [("playback", cookies)]
+
+
+def test_format_resolutions_finds_the_frame_rate_by_resolution_without_a_base_url():
+    """_format_resolutions는 base_url이 없는 해상도(다시보기)의 프레임률을 해상도로 찾아 붙여야 한다.
+
+    해상도 480 · 720 · 1080 (base_url 없음), 프레임률은 480(30) · 1080(60)만 있음
+    -> "480p · 30fps, 720p · fps 모름, 1080p · 60fps"
+    """
+    reps = [[480, None], [720, None], [1080, None]]
+    rates = {480: Fraction(30), 1080: Fraction(60)}
+
+    assert _format_resolutions(reps, rates) == "480p · 30fps, 720p · fps 모름, 1080p · 60fps"
 
 
 def test_list_option_logs_frame_rate_next_to_each_resolution(monkeypatch, tmp_path, caplog):
@@ -277,15 +310,19 @@ def _main_with(monkeypatch, tmp_path, content_type: str, calls: list):
         calls.append(("mp4", tuple(texts)))
         return selections, "moov"
 
-    def fmp4(item, texts):
+    def fmp4(item, texts, segment_dir=None):
         calls.append(("fmp4", tuple(texts)))
         return selections, "fmp4"
 
     class FakeRunner:
-        def __init__(self, item, timeout, given=(), mp4_head=None, fmp4_head=None):
+        def __init__(
+            self, item, timeout, given=(), mp4_head=None, fmp4_head=None, section_paths=()
+        ):
             calls.append(("run", given, mp4_head, fmp4_head))
+            self.section_paths = section_paths
 
         def run(self) -> int:
+            release_output_paths(self.section_paths)  # 엔진이 끝날 때 푸는 예약 — 대역이 대신 푼다
             return 0
 
     monkeypatch.setattr(headless, "_resolve_sections", mp4)
@@ -392,7 +429,7 @@ def test_fmp4_sections_log_the_frame_rate_and_hand_it_to_the_engine(
     monkeypatch.setattr(
         headless, "resolve_m3u8_variant", lambda content: ("https://x.invalid/p.m3u8", declared)
     )
-    monkeypatch.setattr(headless, "fetch_fmp4_head", lambda url: head)
+    monkeypatch.setattr(headless, "fetch_fmp4_head", lambda url, segment_dir=None: head)
     item = SimpleNamespace(vod_url="https://chzzk.naver.com/video/1", resolution=1080)
 
     with caplog.at_level(logging.INFO, logger="headless"):
@@ -407,3 +444,39 @@ def test_fmp4_sections_log_the_frame_rate_and_hand_it_to_the_engine(
     line = next(message for message in messages if message.startswith("프레임률:"))
     assert str(rate) in line
     assert source in line
+
+
+def test_failed_fmp4_resolution_releases_names_and_removes_the_segment_folder(
+    monkeypatch, tmp_path
+):
+    """인코딩 전 다시보기의 구간 해석이 실패하면 배정한 구간 파일명을 풀고, 세그먼트를 받아 둔 폴더를 지우고, 2로 끝나야 한다.
+
+    구간 해석 대역이 넘겨받은 폴더에 파일 하나를 쓰고 None을 돌려줌(해석 실패)
+    -> 종료 코드 2, 그 폴더가 없다, 같은 이름을 다시 배정받을 수 있다(`_1`)
+    """
+    result = ("https://chzzk.naver.com/video/123", {"title": "제목"}, [[1080, "u"]], 1080, "u")
+    result += (str(tmp_path), None)
+    monkeypatch.setattr(headless, "setup_logging", lambda level: None)
+    monkeypatch.setattr(headless, "_load_cookies", lambda: {})
+    monkeypatch.setattr(headless, "_fetch", lambda url, cookies, path: (result, "m3u8"))
+    folders = []
+
+    def failing(item, texts, segment_dir=None):
+        os.makedirs(segment_dir)
+        with open(os.path.join(segment_dir, "1.m4v"), "wb") as f:
+            f.write(b"segment")
+        folders.append(segment_dir)
+        return None
+
+    monkeypatch.setattr(headless, "_resolve_fmp4_sections", failing)
+
+    code = headless.main(
+        ["https://chzzk.naver.com/video/123", "--output", str(tmp_path)]
+        + ["--section", "00:00:01:00-00:00:02:00"]
+    )
+
+    assert code == 2
+    assert len(folders) == 1 and not os.path.exists(folders[0])
+    again = build_section_output_paths(str(tmp_path), "제목", 1080, 1)
+    release_output_paths(again)
+    assert os.path.basename(again[0]) == "제목 1080p_1.mp4"

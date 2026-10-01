@@ -21,11 +21,18 @@ m3u8 고유 부분만 남는다:
 
 구간 다운로드 (#309) — ``Content.selections``가 비어 있지 않을 때:
 
-- prepare: 플레이리스트와 초기화 세그먼트, 그리고 구간의 양 끝이 든 세그먼트의 moof만
-  받아(core/api/hls_fmp4.py) 구간마다 받을 세그먼트와 첫·끝 프레임을 정한다
+- prepare: 플레이리스트와 초기화 세그먼트, 그리고 구간의 양 끝이 든 세그먼트를 받아
+  (core/api/hls_fmp4.py) 구간마다 받을 세그먼트와 첫·끝 프레임을 정한다
   (core/utils/fmp4_sections.py). 받을 항목은 구간들의 세그먼트를 합친 것이다 — 두
   구간이 같은 세그먼트를 쓰면 한 번만 받는다. ``Content.fmp4_head``로 이미 받은 것이
   오면 그것을 쓰고, 초기화 세그먼트는 다시 받지 않는다
+- **세그먼트에 범위 요청을 보내지 않는다.** 프레임 정보를 읽을 세그먼트도 통째로 받아
+  임시 폴더에 두고(``Fmp4Head.segment_dir`` · ``stored``), 전송 단계는 그 파일이 온전하면
+  다시 받지 않는다. 구간을 해석한 쪽이 넘긴 ``Fmp4Head``에 폴더가 적혀 있으면 그 폴더가
+  이 다운로드의 임시 폴더다
+- 받은 세그먼트는 온전한지 확인한다 — 서버가 말한 길이와 받은 길이, 상자들이 말하는
+  끝과 파일 크기. 다르면 그 세그먼트를 실패로 처리해 다시 받는다. 잘린 세그먼트로 컷을
+  하지 않는다
 - postprocess: 구간마다 초기화 세그먼트 + 그 구간의 세그먼트를 순서대로 이은 임시
   fMP4를 만들고 hybrid_cut으로 자른다. 하나라도 실패하면 다운로드 전체가 실패다.
   세그먼트는 통째로 읽지 않는다 — moof만 골라 읽고 본문은 고정 크기 버퍼로 옮긴다
@@ -38,17 +45,21 @@ import os
 import shutil
 import time as tm
 from bisect import bisect_left
-from collections.abc import Callable
-from typing import BinaryIO
 from urllib.parse import urljoin
 
 import requests
 
-from core.api.fmp4 import build_fmp4_index, fmp4_origin, read_media_segment
-from core.api.hls_fmp4 import fetch_fmp4_head, segment_frames
+from core.api.fmp4 import build_fmp4_index, fmp4_origin
+from core.api.hls_fmp4 import (
+    declared_length,
+    fetch_fmp4_head,
+    read_segment_file,
+    segment_file_name,
+    segment_frames,
+)
 from core.api.mp4 import Mp4Error
 from core.api.session import get_thread_session
-from core.downloaders.base import BaseDownloader, PostprocessError
+from core.downloaders.base import BaseDownloader, PostprocessError, TruncatedBodyError
 from core.models.content import Content, ContentType
 from core.models.cut import CutFrames, CutResult
 from core.models.download_state import DownloadState
@@ -96,10 +107,20 @@ class M3U8Downloader(BaseDownloader):
         # 구간 다운로드는 첫 구간 파일의 이름에서 파생한다 — output_path는 쓰지 않는 이름이라
         # 같은 영상의 구간 다운로드 둘이 겹칠 수 있다. 구간 파일 이름은 배정할 때 갈라져 있다
         section_paths = self.s.content.selection_paths
-        self.temp_dir = choose_temp_dir(section_paths[0] if section_paths else self.s.output_path)
+        handed = self.s.content.fmp4_head
+        if handed is not None and handed.segment_dir is not None:
+            # 구간을 해석한 쪽이 세그먼트를 받아 둔 폴더 — 그 폴더를 그대로 쓴다
+            self.temp_dir = handed.segment_dir
+        else:
+            self.temp_dir = choose_temp_dir(
+                section_paths[0] if section_paths else self.s.output_path
+            )
         # 구간 다운로드의 상태 (#309) — prepare가 채운다. 전체 다운로드면 비어 있다
         self._sections: tuple[Fmp4Section, ...] = ()
-        self._head: Fmp4Head | None = None  # 구간을 정할 때 받은 플레이리스트·초기화 세그먼트·moof
+        # 구간을 정할 때 받은 플레이리스트·초기화 세그먼트·세그먼트의 프레임 정보
+        self._head: Fmp4Head | None = None
+        # 구간을 정하면서 이미 온전하게 받아 둔 세그먼트 — 인덱스 → 파일 크기. 다시 받지 않는다
+        self._prefetched: dict[int, int] = {}
         self._made_sections: list[str] = []  # 이번 실행이 만든 구간 파일
         self.cut_results: list[CutResult] = []  # 구간마다의 컷 결과 — sections와 같은 순서
         self.cut_frames: list[CutFrames] = []  # 구간마다 컷에 쓴 프레임 정보 — 판정이 쓴다
@@ -149,19 +170,32 @@ class M3U8Downloader(BaseDownloader):
     def _prepare_sections(self, content: Content) -> DownloadPlan:
         """구간 다운로드의 계획 — 구간들의 세그먼트를 합친 것을 받는다 (#309).
 
-        플레이리스트·초기화 세그먼트·moof는 ``content.fmp4_head``가 있으면 그것을 쓰고,
-        없는 것만 여기서 받는다.
+        플레이리스트·초기화 세그먼트·세그먼트의 프레임 정보는 ``content.fmp4_head``가 있으면
+        그것을 쓰고, 없는 것만 여기서 받는다. 프레임 정보를 읽으려고 받는 세그먼트는 임시
+        폴더에 둔다 — 전송 단계가 다시 받지 않는다.
 
         Raises:
             ValueError: 구간과 산출물 경로의 수가 다른 경우
-            Mp4Error: fMP4가 아니거나 초기화 세그먼트·moof를 해석하지 못한 경우
-            SelectionError: 구간이 검증을 통과하지 못했거나 녹화가 끊긴 자리를 넘는 경우
+            Mp4Error: fMP4가 아니거나 초기화 세그먼트·세그먼트를 해석하지 못한 경우
+            SelectionError: 구간이 검증을 통과하지 못했거나, 녹화가 끊긴 자리를 넘거나,
+                구간의 시각이 놓인 세그먼트를 찾지 못한 경우
         """
         if len(content.selection_paths) != len(content.selections):
             raise ValueError(
                 f"구간 {len(content.selections)}개에 산출물 경로 {len(content.selection_paths)}개"
             )
-        head = content.fmp4_head or fetch_fmp4_head(self.s.base_url)
+        head = content.fmp4_head
+        if head is not None and head.segment_dir is not None:
+            # 구간을 해석한 쪽이 세그먼트를 받아 둔 폴더 — 엔진을 만든 뒤에 넘겨받았을 수 있다
+            self.temp_dir = head.segment_dir
+        else:
+            # 받아 둔 세그먼트가 없다 — 임시 폴더를 비우고 여기서 받는 것을 그 폴더에 둔다
+            if os.path.exists(self.temp_dir):
+                shutil.rmtree(self.temp_dir)
+            if head is None:
+                head = fetch_fmp4_head(self.s.base_url, self.temp_dir)
+            else:
+                head.segment_dir = self.temp_dir
         sections = plan_fmp4_sections(
             head.playlist,
             head.init,
@@ -175,6 +209,7 @@ class M3U8Downloader(BaseDownloader):
         )
         self._head = head
         self._sections = sections
+        self._prefetched = self._whole_stored_segments(head, wanted)
         self.postprocess_kind = "cut"  # 구간마다 자른다 — 전체 다운로드의 remux와 구분한다
         self.s.merged_segments = 0
         self.width = len(str(len(head.playlist.segments)))
@@ -185,22 +220,53 @@ class M3U8Downloader(BaseDownloader):
             selections=tuple(content.selections),
         )
 
+    def _whole_stored_segments(self, head: Fmp4Head, wanted: list[int]) -> dict[int, int]:
+        """wanted 가운데 임시 폴더에 온전하게 받아 둔 세그먼트 — 인덱스 → 파일 크기.
+
+        ``head.stored``에 적혀 있고, 파일이 있고, 상자들이 말하는 끝이 파일 크기와 같은
+        것만이다. 하나라도 아니면 그 세그먼트는 전송 단계가 다시 받는다.
+        """
+        found = {}
+        for index in wanted:
+            if index not in head.stored:
+                continue
+            path = os.path.join(
+                self.temp_dir, segment_file_name(len(head.playlist.segments), index)
+            )
+            try:
+                read_segment_file(path, head.init)
+                found[index] = os.path.getsize(path)
+            except (Mp4Error, OSError):
+                continue
+        return found
+
     def _download_start_log_args(self) -> tuple:
         # m3u8은 전체 크기·파트 크기를 미리 알 수 없다 (구 코드와 동일하게 0)
         return (0, 0, self.s.total_ranges, self.s.adjust_threads)
 
     def _prepare_output(self) -> None:
-        """임시 폴더를 재생성하고 초기화 세그먼트(EXT-X-MAP)를 받는다."""
+        """임시 폴더를 재생성하고 초기화 세그먼트(EXT-X-MAP)를 받는다.
+
+        구간 다운로드는 폴더를 통째로 지우지 않는다 — 구간을 정하면서 받아 둔 세그먼트가
+        들어 있다. 그 세그먼트 말고 남아 있는 것(이전 실행의 것)만 지운다.
+        """
+        if self._head is not None:
+            os.makedirs(self.temp_dir, exist_ok=True)
+            count = len(self._head.playlist.segments)
+            kept = {segment_file_name(count, index) for index in self._prefetched}
+            for name in os.listdir(self.temp_dir):
+                if name not in kept:
+                    stale = os.path.join(self.temp_dir, name)
+                    shutil.rmtree(stale) if os.path.isdir(stale) else os.remove(stale)
+            # 초기화 세그먼트는 구간을 정할 때 이미 받았다
+            with open(self._init_path(), "wb") as f:
+                f.write(self._head.init_data)
+            return
+
         # 세그먼트 저장용 임시 폴더가 있다면 내용 포함 삭제 후 재생성
         if os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir)
         os.makedirs(self.temp_dir)
-
-        if self._head is not None:
-            # 구간 다운로드 — 초기화 세그먼트는 구간을 정할 때 이미 받았다
-            with open(self._init_path(), "wb") as f:
-                f.write(self._head.init_data)
-            return
 
         init_segment = None
         for line in self._playlist_lines:
@@ -294,10 +360,10 @@ class M3U8Downloader(BaseDownloader):
                 with open(joined, "wb") as out:
                     out.write(head.init_data)
                     for index in range(section.first_segment, section.last_segment + 1):
+                        # 프레임 정보는 moof만 골라 읽고(파일이 온전한지도 본다),
+                        # 본문은 버퍼 크기만큼씩 옮긴다
+                        parsed.append(read_segment_file(self._segment_path(index), head.init))
                         with open(self._segment_path(index), "rb") as f:
-                            # 프레임 정보는 moof만 골라 읽고, 본문은 버퍼 크기만큼씩 옮긴다
-                            parsed.append(read_media_segment(_reader(f), head.init))
-                            f.seek(0)
                             shutil.copyfileobj(f, out, _JOIN_CHUNK_BYTES)
                 index = build_fmp4_index(head.init, parsed, section.origin)
                 # 이은 파일은 VOD의 중간에서 시작한다 — ffmpeg의 -ss는 파일의 시작부터 센다
@@ -330,6 +396,28 @@ class M3U8Downloader(BaseDownloader):
             self.logger.log_error("Cut failed — segments preserved for retry", e)
             raise PostprocessError(f"후처리(cut) 실패: {e}") from e
 
+    def _require_whole_segment(self, path: str, received: int, response) -> None:
+        """받은 세그먼트가 온전한지 확인한다. 아니면 파일을 지우고 TruncatedBodyError를 낸다.
+
+        서버가 말한 길이(Content-Length)와 받은 길이, 상자들이 말하는 끝과 파일 크기를 본다.
+        다시보기를 내주는 CDN은 잘린 본문을 세그먼트 전체로 캐시해 두고 그 길이를
+        Content-Length로 말할 수 있어, 머리만으로는 가려지지 않는다 — 상자까지 본다.
+
+        Raises:
+            TruncatedBodyError: 길이가 다르거나 상자가 파일 끝을 넘는 경우
+        """
+        declared = declared_length(getattr(response, "headers", {}))
+        try:
+            if declared is not None and declared != received:
+                raise TruncatedBodyError(f"받은 {received}바이트 · 서버가 말한 {declared}바이트")
+            read_segment_file(path, self._head.init)
+        except (TruncatedBodyError, Mp4Error) as e:
+            if os.path.exists(path):
+                os.remove(path)
+            if isinstance(e, TruncatedBodyError):
+                raise
+            raise TruncatedBodyError(str(e)) from e
+
     def _postprocess_output_size(self) -> int:
         """후처리 종료 로그에 남길 크기 — 구간 다운로드는 구간 파일 크기의 합."""
         if self._sections:
@@ -342,6 +430,16 @@ class M3U8Downloader(BaseDownloader):
         """
         개별 세그먼트 다운로드(재시도 포함)
         """
+        if index in self._prefetched:
+            # 구간을 정하면서 이미 온전하게 받아 둔 세그먼트 — 다시 받지 않는다 (#309)
+            size = self._prefetched[index]
+            with self.lock:
+                self.s.completed_threads += 1
+                self.s.completed_progress += size
+                self.s.threads_progress[part_num] = 0
+            self.logger.log_thread_complete(part_num, size)
+            return part_num
+
         slow_count = 0
         downloaded_size = 0
         segment_url = urljoin(self.s.base_url, segment)
@@ -394,6 +492,10 @@ class M3U8Downloader(BaseDownloader):
                                 else:
                                     slow_count = 0
 
+                if self._head is not None:
+                    # 구간 다운로드 — 잘린 세그먼트로 컷을 하지 않는다. 다르면 다시 받는다
+                    self._require_whole_segment(temp_file, downloaded_size, response)
+
                 # 성공적으로 마무리된 경우
                 with self.lock:
                     self.s.completed_threads += 1
@@ -407,16 +509,6 @@ class M3U8Downloader(BaseDownloader):
                     self._requeue_failed((index, segment), part_num, e)
                 self.logger.log_error(f"Part {part_num} download failed", e)
                 return part_num
-
-
-def _reader(file: BinaryIO) -> Callable[[int, int], bytes]:
-    """열린 파일을 ``read(offset, size)`` 읽기 함수로 감싼다."""
-
-    def read(offset: int, size: int) -> bytes:
-        file.seek(offset)
-        return file.read(size)
-
-    return read
 
 
 def _frame_at(frames: CutFrames, pts: float) -> int:

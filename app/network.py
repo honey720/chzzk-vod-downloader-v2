@@ -11,7 +11,7 @@ from core.api.dash import (
     parse_frame_rates,
     parse_sea_manifest,
 )
-from core.api.hls import stream_frame_rate
+from core.api.hls import master_frame_rates, stream_frame_rate
 from core.api.representations import dedupe_by_resolution
 from core.api.url_parser import extract_content_no
 from core.models.content import VideoInfo
@@ -298,6 +298,23 @@ class NetworkManager:
 
         raise ValueError(f"{resolution} 해상도 스트림을 찾을 수 없습니다.")
     
+    @staticmethod
+    def get_video_m3u8_frame_rates(
+        json_str: str, cookies: dict | None = None
+    ) -> dict[int, Fraction]:
+        """마스터 플레이리스트가 해상도마다 선언한 프레임률을 읽는다 (#309).
+
+        요청은 ``get_video_m3u8_variant``와 같다(같은 주소 검사 · 쿠키). 파싱은
+        core/api/hls.py의 ``master_frame_rates``에 위임한다.
+
+        Returns:
+            ``{세로 해상도: 프레임률}`` — FRAME-RATE를 선언하지 않은 변형은 들어 있지 않다
+        """
+        path = json.loads(json_str).get("media", [])[0].get("path")
+        response = _get_with_cookies_trusted(path, cookies, None, timeout=REQUEST_TIMEOUT)
+        response.raise_for_status()
+        return master_frame_rates(response.text)
+
     @staticmethod
     def get_clip_info(clip_no: str, cookies: dict):
         """

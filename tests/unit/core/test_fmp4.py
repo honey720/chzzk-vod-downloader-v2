@@ -26,7 +26,13 @@ from core.api.fmp4 import (
     read_media_segment,
     scan_moof,
 )
-from core.api.mp4 import MP4_INVALID, MP4_TOO_LONG, MP4_UNSUPPORTED, Mp4Error
+from core.api.mp4 import (
+    MP4_INVALID,
+    MP4_TOO_LONG,
+    MP4_TRUNCATED,
+    MP4_UNSUPPORTED,
+    Mp4Error,
+)
 from core.models.fmp4_index import Fmp4Init
 from core.utils.timecode import snap_to_frame
 from tests.unit.core.fmp4_builder import (
@@ -910,3 +916,37 @@ def test_read_media_segment_rejects_a_damaged_box(monkeypatch, damage):
         read_media_segment(_logged_reader(bytes(data), []), _init())
 
     assert info.value.message_key == MP4_INVALID
+
+
+@pytest.mark.parametrize(
+    ("cut", "truncated"),
+    [(0, False), (1, True), (30, True), (70, True)],
+    ids=["whole", "one-byte-short", "inside-mdat", "inside-mdat-header"],
+)
+def test_read_media_segment_tells_a_truncated_segment_when_given_its_size(cut, truncated):
+    """read_media_segment는 세그먼트의 크기를 받으면 상자들이 말하는 끝이 그 크기와 다른 세그먼트를 잘림 키로 거부해야 한다.
+
+    moof 하나 · mdat 본문 64바이트인 세그먼트에서 끝 cut바이트를 뺀 것, total = 남은 길이
+    -> 0이면 영상 4샘플, 그 밖은 Mp4Error(MP4_TRUNCATED)
+    """
+    data = _video_segment()
+    data = data[: len(data) - cut]
+    reader = _logged_reader(data, [])
+
+    if truncated:
+        with pytest.raises(Mp4Error) as info:
+            read_media_segment(reader, _init(), len(data))
+        assert info.value.message_key == MP4_TRUNCATED
+    else:
+        assert len(read_media_segment(reader, _init(), len(data)).video.decode_times) == 4
+
+
+def test_read_media_segment_accepts_a_truncated_mdat_without_a_size():
+    """read_media_segment는 크기를 받지 않으면 mdat가 잘린 세그먼트에서도 그 앞의 moof를 읽어야 한다.
+
+    mdat 본문 도중에서 잘린 세그먼트, total 없음(앞부분만 받은 경우)
+    -> 영상 4샘플
+    """
+    data = _video_segment()[:-30]
+
+    assert len(read_media_segment(_logged_reader(data, []), _init()).video.decode_times) == 4

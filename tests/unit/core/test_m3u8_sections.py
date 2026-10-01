@@ -16,12 +16,21 @@
   타임스탬프가 0으로 돌아간다
 - late.m3u8: 뒤쪽 세그먼트 셋(넷째 ~ 여섯째) · #EXT-X-DISCONTINUITY · 세그먼트 여섯 — 첫
   세그먼트의 타임스탬프가 3초이고 끊긴 자리 뒤가 0이다
-- short.m3u8: 마지막 세그먼트의 #EXTINF를 줄여 플레이리스트 길이를 5.9초로 만든 것 — 마지막
-  프레임의 PTS가 길이보다 뒤다
+
+실제 다시보기의 모양을 흉내 낸 입력 "real" (plain의 세그먼트를 둘씩 묶은 것):
+- 세그먼트 하나에 moof가 둘이고 그 사이에 emsg 상자가 있다 (세그먼트 셋, 2초씩)
+- #EXTINF는 2.001333으로 실제 간격(2.000초)보다 길고, 세그먼트마다 #EXT-X-PROGRAM-DATE-TIME이 있다
+- 초기화 세그먼트의 esds · btrt에 비트레이트가 0으로 적혀 있다
+- nopdt.m3u8: 같은 것에서 #EXT-X-PROGRAM-DATE-TIME을 뺀 것
+- padded.m3u8: nopdt의 #EXTINF를 2.5로 늘린 것 — 플레이리스트가 말하는 길이가 실제보다 길다
 
 핵심 계약:
 - 받는 세그먼트는 구간들의 세그먼트를 합친 것이고(앞 세그먼트 하나 포함) 한 번씩만 받는다
-- 플레이리스트·초기화 세그먼트·moof는 한 번씩만 받는다. 넘겨받으면 받지 않는다
+- 세그먼트에 범위 요청을 보내지 않는다 — 범위 요청에 잘린 본문을 주고 그것을 캐시하는
+  서버에서도 온전한 파일이 나온다
+- 플레이리스트·초기화 세그먼트·세그먼트는 한 번씩만 받는다. 구간을 해석하며 받아 둔
+  세그먼트는 엔진이 다시 받지 않는다
+- 잘린 세그먼트로 컷을 하지 않는다
 - 구간 파일의 영상·오디오 패킷은 세그먼트 전부를 이은 파일에서 자른 것과 모두 같다
 
 - 오디오를 다시 인코딩하는 비트레이트는 초기화 세그먼트에 적힌 값이다 — 어느 세그먼트를
@@ -34,7 +43,9 @@ ffmpeg가 입력에서 추정한 비트레이트가 들어가는데, 그 값은 
 """
 
 import os
+import struct
 import subprocess
+from types import SimpleNamespace
 from fractions import Fraction
 
 import pytest
@@ -43,8 +54,8 @@ import core.api.hls_fmp4 as hls_fmp4_module
 import core.downloaders.m3u8_downloader as m3u8_module
 from core.api.fmp4 import build_fmp4_index, fmp4_origin, parse_init_segment, parse_media_segment
 from core.api.hls import parse_media_playlist
-from core.api.hls_fmp4 import fetch_fmp4_head, segment_frames
-from core.downloaders.base import PostprocessError
+from core.api.hls_fmp4 import fetch_fmp4_head, segment_file_name, segment_frames
+from core.downloaders.base import PostprocessError, TruncatedBodyError
 from core.downloaders.m3u8_downloader import M3U8Downloader
 from core.models.download_data import DownloadData
 from core.models.plan import TimeRange
@@ -63,7 +74,8 @@ from tests.unit.core.range_host import RangeHost
 
 KEYFRAMES = (0, 30, 36, 60, 90, 120, 150)  # -force_key_frames 0,1,1.2,2,3,4,5 (30fps)
 SEGMENTS = 6  # 1초 세그먼트 — 키프레임 0·30·60·90·120·150에서 갈린다
-SHORT_DURATION = 5.9  # short.m3u8의 플레이리스트 길이(초) — 30fps에서 정확히 177프레임
+REAL_EXTINF = 2.001333  # real의 #EXTINF — 실제 세그먼트 간격은 2.000초다
+PADDED_EXTINF = 2.5  # padded.m3u8의 #EXTINF — 합(7.5초)이 실제 길이(약 6초)보다 훨씬 길다
 
 
 def _make_hls(folder, *extra: str, b_frames: str, pyramid: str) -> None:
@@ -128,7 +140,33 @@ def sources(tmp_path_factory) -> dict[str, _Source]:
         "-fps_mode", "passthrough", "-enc_time_base:v", "1:15360",
         b_frames="2", pyramid="none",
     )  # fmt: skip
-    return {"plain": _Source(plain), "uneven": _Source(uneven)}
+    return {
+        "plain": _Source(plain),
+        "uneven": _Source(uneven),
+        "real": _Source(_make_real(plain, tmp_path_factory.mktemp("hls_real"))),
+    }
+
+
+def _make_real(plain, folder):
+    """plain의 세그먼트를 둘씩 묶어 실제 다시보기의 모양으로 만든 HLS를 folder에 쓴다."""
+    names = sorted(path.name for path in plain.glob("seg-*.m4s"))
+    init = (plain / "init.mp4").read_bytes()
+    declared = struct.pack(">II", 128_000, 128_000)
+    assert init.count(declared) >= 1  # esds(· btrt)에 적힌 max · avg 비트레이트
+    (folder / "init.mp4").write_bytes(init.replace(declared, struct.pack(">II", 0, 0)))
+    emsg = struct.pack(">I4s", 48, b"emsg") + bytes(40)
+    lines = ["#EXTM3U", "#EXT-X-VERSION:7", "#EXT-X-TARGETDURATION:2", '#EXT-X-MAP:URI="init.mp4"']
+    for number in range(len(names) // 2):
+        first, second = names[2 * number], names[2 * number + 1]
+        paired = (plain / first).read_bytes() + emsg + (plain / second).read_bytes()
+        (folder / f"seg-00{number}.m4s").write_bytes(paired)
+        lines += [
+            f"#EXT-X-PROGRAM-DATE-TIME:2026-01-01T00:00:{2 * number + 2:02d}.000Z",
+            f"#EXTINF:{REAL_EXTINF},",
+            f"seg-00{number}.m4s",
+        ]
+    (folder / "media.m3u8").write_text("\n".join([*lines, "#EXT-X-ENDLIST"]), encoding="utf-8")
+    return folder
 
 
 @pytest.fixture(scope="module")
@@ -155,10 +193,11 @@ def host(sources) -> RangeHost:
     late += ["#EXT-X-DISCONTINUITY", *body, "#EXT-X-ENDLIST"]
     files["plain/late.m3u8"] = "\n".join(late).encode("utf-8")
 
-    short = list(lines)
-    kept = sum(sources["plain"].playlist.durations[:-1])
-    short[entries[-1]] = f"#EXTINF:{SHORT_DURATION - kept:.6f},"
-    files["plain/short.m3u8"] = "\n".join(short).encode("utf-8")
+    real = sources["real"].files["media.m3u8"].decode("utf-8").splitlines()
+    nopdt = [line for line in real if not line.startswith("#EXT-X-PROGRAM-DATE-TIME")]
+    files["real/nopdt.m3u8"] = "\n".join(nopdt).encode("utf-8")
+    padded = [f"#EXTINF:{PADDED_EXTINF}," if line.startswith("#EXTINF") else line for line in nopdt]
+    files["real/padded.m3u8"] = "\n".join(padded).encode("utf-8")
     return RangeHost(files)
 
 
@@ -168,6 +207,7 @@ def _requests_go_to_host(host, monkeypatch):
     monkeypatch.setattr(m3u8_module, "get_thread_session", host.session)
     monkeypatch.setattr(hls_fmp4_module, "get_thread_session", host.session)
     host.ignore_range = False
+    host.reset_cache()
     host.forget()
 
 
@@ -304,18 +344,22 @@ def test_generated_hls_declares_its_audio_bitrate_in_the_init_segment(sources):
     assert (init.audio.declared_bitrate, init.video.declared_bitrate) == (128_000, None)
 
 
-def test_short_playlist_ends_before_the_last_frame(host, sources):
-    """short.m3u8의 길이는 5.9초이고 마지막 프레임의 PTS는 그보다 뒤여야 한다.
+def test_real_shaped_hls_has_two_moofs_per_segment_and_no_declared_bitrate(sources):
+    """real의 세그먼트에는 moof가 둘씩 있고, 초기화 세그먼트에는 오디오 비트레이트가 적혀 있지 않아야 한다.
 
-    마지막 #EXTINF를 줄인 플레이리스트, plain의 프레임 179
-    -> duration == 5.9, time_of(179) > 5.9 + 한 프레임
+    plain의 세그먼트를 둘씩 묶고 esds의 비트레이트를 0으로 고친 입력
+    -> 세그먼트 셋, 세그먼트마다 moof 2개 · 영상 60프레임, declared_bitrate is None,
+       #EXTINF가 모두 2.001333이고 세그먼트마다 PROGRAM-DATE-TIME이 있다
     """
-    source = sources["plain"]
-    short = parse_media_playlist(host.files["plain/short.m3u8"].decode("utf-8"))
+    source = sources["real"]
+    parsed = [
+        parse_media_segment(source.files[name], source.init) for name in source.playlist.segments
+    ]
 
-    assert short.duration == pytest.approx(SHORT_DURATION)
-    assert len(short.segments) == SEGMENTS
-    assert source.time_of(179) > SHORT_DURATION + source.frames.frame_duration
+    assert [(s.fragments, len(s.video.decode_times)) for s in parsed] == [(2, 60)] * 3
+    assert source.init.audio.declared_bitrate is None
+    assert source.playlist.durations == (REAL_EXTINF,) * 3
+    assert all(time is not None for time in source.playlist.program_times)
 
 
 # ================================================================ 끝까지 경로
@@ -397,16 +441,17 @@ def test_section_audio_is_encoded_at_the_declared_bitrate_whatever_was_received(
 
 
 def test_section_ending_at_the_video_length_ends_on_the_last_frame(host, sources, tmp_path):
-    """끝이 영상 길이와 같은 구간은 끝 프레임을 시각으로 고르지 않고 마지막 프레임으로 정해야 한다.
+    """끝이 영상 길이와 같은 구간은 마지막 프레임에서 끝나야 한다.
 
-    short.m3u8(길이 5.9초 — 마지막 프레임 179의 PTS보다 앞), 구간 = 프레임 150의 시각 ~ 5.9초
+    plain, 구간 = 프레임 150의 시각 ~ 영상 길이(마지막 프레임 179가 끝나는 시각)
     -> 끝 프레임의 PTS == 프레임 179의 PTS, 받은 세그먼트 3~5,
        영상·오디오 패킷이 전부 이은 파일에서 프레임 150~179를 자른 것과 같다
     """
     source = sources["plain"]
-    selection = TimeRange(source.time_of(150), SHORT_DURATION)
+    length = source.time_of(179) + source.frames.frame_duration
+    selection = TimeRange(source.time_of(150), length)
 
-    run = _Run(host, tmp_path, [selection], "plain/short.m3u8").start()
+    run = _Run(host, tmp_path, [selection]).start()
 
     assert run.failures == []
     section = run.engine.sections[0]
@@ -415,20 +460,48 @@ def test_section_ending_at_the_video_length_ends_on_the_last_frame(host, sources
     assert _packets(run.paths[0]) == _reference(source, 150, 179, tmp_path)
 
 
-def test_section_ending_before_the_video_length_still_snaps_to_the_nearest_frame(
-    host, sources, tmp_path
-):
-    """끝이 영상 길이보다 앞인 구간은 지금처럼 끝 시각에 가장 가까운 프레임에서 끝나야 한다.
+def test_section_past_the_real_video_length_is_out_of_range(host, sources, tmp_path):
+    """구간의 끝이 실제 영상 길이를 넘으면 #EXTINF의 합 안이어도 범위 위반으로 실패해야 한다.
 
-    short.m3u8(길이 5.9초), 구간 = 프레임 150의 시각 ~ 프레임 170의 시각
-    -> 끝 프레임의 PTS == 프레임 170의 PTS
+    padded.m3u8(#EXTINF의 합 7.5초, 실제 길이는 프레임 179가 끝나는 시각 약 6.02초), 구간 = 프레임 150의 시각 ~ 7.0초
+    -> 실패 1건(SelectionError, SELECTION_OUT_OF_RANGE), 구간 파일 없음
     """
-    source = sources["plain"]
+    source = sources["real"]
+    selection = TimeRange(source.time_of(150), 7.0)
 
-    run = _Run(host, tmp_path, [source.selection(150, 170)], "plain/short.m3u8").start()
+    run = _Run(host, tmp_path, [selection], "real/padded.m3u8").start()
+
+    assert len(run.failures) == 1
+    assert isinstance(run.failures[0], SelectionError)
+    assert run.failures[0].message_key == SELECTION_OUT_OF_RANGE
+    assert run.listing() == []
+
+
+@pytest.mark.parametrize("playlist", ["real/media.m3u8", "real/nopdt.m3u8"], ids=["pdt", "no-pdt"])
+def test_real_shaped_replay_section_equals_the_cut_from_all_segments(
+    host, sources, tmp_path, playlist
+):
+    """실제 다시보기 모양의 입력(moof 둘 · emsg · 긴 #EXTINF · 비트레이트 0)에서도 구간 파일은 전부 이은 파일에서 자른 것과 같아야 한다.
+
+    real · nopdt, 범위 요청에 잘린 본문을 주고 캐시하는 호스트, 구간 프레임 100~170
+    (둘 다 세그먼트의 둘째 moof에 든 프레임이다)
+    -> 실패 0건, Range 머리가 든 요청 0건, 캐시에 잘린 본문 없음, 첫·끝 프레임의 PTS가 프레임 100 · 170의 것,
+       오디오 비트레이트 192(적힌 값이 없을 때의 고정값), 패킷이 대조 파일과 같다, check.ok
+    """
+    source = sources["real"]
+    host.truncating_cache = True
+
+    run = _Run(host, tmp_path, [source.selection(100, 170)], playlist).start()
 
     assert run.failures == []
-    assert run.engine.sections[0].last_pts == source.time_of(170)
+    assert [header for _m, _n, header in host.requests if header is not None] == []
+    assert host.truncated() == []
+    section = run.engine.sections[0]
+    assert (section.first_pts, section.last_pts) == (source.time_of(100), source.time_of(170))
+    assert run.engine.cut_results[0].source.audio_bitrate == 192
+    assert _packets(run.paths[0]) == _reference(source, 100, 170, tmp_path)
+    check = run.checks()[0]
+    assert check.ok, check.notes
 
 
 def test_section_of_uneven_input_passes_every_check(host, sources, tmp_path):
@@ -451,7 +524,7 @@ def test_sections_sharing_segments_download_each_segment_once(host, sources, tmp
     """두 구간이 같은 세그먼트를 쓰면 그 세그먼트는 한 번만 받고, 구간마다 파일이 하나씩 생겨야 한다.
 
     plain, 구간 프레임 40~70(세그먼트 0~2) · 65~100(세그먼트 1~3)
-    -> 파일 `_1` · `_2`, 세그먼트 전체 요청은 0~3번 하나씩 4건, 구간마다 check.ok
+    -> 파일 `_1` · `_2`, 세그먼트 요청은 0~3번과 길이를 재는 5번이 하나씩 5건, 구간마다 check.ok
     """
     source = sources["plain"]
 
@@ -460,7 +533,7 @@ def test_sections_sharing_segments_download_each_segment_once(host, sources, tmp
     assert (run.finished, run.failures) == (1, [])
     assert run.listing() == ["구간 시험 144p_1.mp4", "구간 시험 144p_2.mp4"]
     assert sorted(_requests_for(host, ".m4s", ranged=False)) == [
-        f"plain/seg-00{n}.m4s" for n in range(4)
+        f"plain/seg-00{n}.m4s" for n in (0, 1, 2, 3, 5)
     ]
     for check in run.checks():
         assert check.ok, check.notes
@@ -469,11 +542,12 @@ def test_sections_sharing_segments_download_each_segment_once(host, sources, tmp
 # ================================================================ 요청 수
 
 
-def test_engine_requests_playlist_init_and_each_moof_once(host, sources, tmp_path):
-    """넘겨받은 것이 없으면 엔진은 플레이리스트·초기화 세그먼트·필요한 moof를 한 번씩만 요청해야 한다.
+def test_engine_requests_playlist_init_and_each_segment_once(host, sources, tmp_path):
+    """넘겨받은 것이 없으면 엔진은 플레이리스트·초기화 세그먼트·세그먼트를 한 번씩만, 범위 머리 없이 요청해야 한다.
 
-    plain, 구간 프레임 40~100
-    -> 플레이리스트 1건, 초기화 세그먼트 1건, moof(범위 요청)는 세그먼트마다 1건 이하
+    plain, 구간 프레임 40~100 (세그먼트 0~3)
+    -> 플레이리스트 1건, 초기화 세그먼트 1건, 세그먼트 요청은 0~3번과 길이를 재는 5번이 하나씩,
+       Range 머리가 든 요청 0건
     """
     source = sources["plain"]
 
@@ -482,72 +556,151 @@ def test_engine_requests_playlist_init_and_each_moof_once(host, sources, tmp_pat
     assert run.failures == []
     assert _requests_for(host, "media.m3u8", ranged=False) == ["plain/media.m3u8"]
     assert _requests_for(host, "init.mp4", ranged=False) == ["plain/init.mp4"]
-    moofs = _requests_for(host, ".m4s", ranged=True)
-    assert moofs  # moof를 범위 요청으로 읽었다
-    assert len(moofs) == len(set(moofs))
+    assert sorted(_requests_for(host, ".m4s", ranged=False)) == [
+        f"plain/seg-00{n}.m4s" for n in (0, 1, 2, 3, 5)
+    ]
+    assert [header for _m, _n, header in host.requests if header is not None] == []
+
+
+def _resolve(host, tmp_path, selection, playlist: str = "plain/media.m3u8"):
+    """헤드리스처럼 구간을 먼저 해석한다 — 받은 세그먼트는 tmp_path/segments에 둔다. (head, 구간 계획)"""
+    url = host.url(playlist)
+    head = fetch_fmp4_head(url, str(tmp_path / "segments"))
+    sections = plan_fmp4_sections(
+        head.playlist, head.init, [selection], lambda i: segment_frames(head, url, i)
+    )
+    return head, sections
 
 
 def test_engine_requests_nothing_that_was_handed_in(host, sources, tmp_path):
-    """구간을 해석하며 받은 것(Content.fmp4_head)을 넘기면 엔진은 플레이리스트·초기화 세그먼트·moof를 요청하지 않아야 한다.
+    """구간을 해석하며 받은 것(Content.fmp4_head)을 넘기면 엔진은 플레이리스트·초기화 세그먼트와 이미 받아 둔 세그먼트를 요청하지 않아야 한다.
 
-    plain, 구간 프레임 40~100. 먼저 fetch_fmp4_head와 plan_fmp4_sections로 해석한 뒤 엔진에 넘김
-    -> 해석 단계: 플레이리스트 1 · 초기화 세그먼트 1 · moof 세그먼트마다 1건.
-       엔진 단계: 그 셋은 0건이고 세그먼트 전체 요청만 있다. 구간 파일의 패킷은 대조 파일과 같다
+    plain, 구간 프레임 40~100(세그먼트 0~3). 먼저 해석한 뒤(받은 세그먼트는 폴더에 둠) 엔진에 넘김
+    -> 해석 단계: 플레이리스트 1 · 초기화 세그먼트 1 · 세그먼트마다 1건 이하.
+       엔진 단계: 플레이리스트 · 초기화 세그먼트 0건, 세그먼트는 해석이 받아 두지 않은 것만.
+       해석과 엔진을 통틀어 같은 세그먼트 요청이 두 번 없다. 구간 파일의 패킷은 대조 파일과 같다
     """
     source = sources["plain"]
     selection = source.selection(40, 100)
-    url = host.url("plain/media.m3u8")
-    head = fetch_fmp4_head(url)
-    plan_fmp4_sections(
-        head.playlist, head.init, [selection], lambda i: segment_frames(head, url, i)
-    )
-    resolved = list(host.requests)
+    head, _sections = _resolve(host, tmp_path, selection)
+    resolved = [name for _m, name, _h in host.requests]
     run = _Run(host, tmp_path, [selection])
     run.data.content.fmp4_head = head
     host.forget()
 
     run.start()
 
-    resolve_moofs = [name for method, name, header in resolved if name.endswith(".m4s")]
-    assert [name for _m, name, _h in resolved if not name.endswith(".m4s")] == [
-        "plain/media.m3u8",
-        "plain/init.mp4",
-    ]
-    assert len(resolve_moofs) == len(set(resolve_moofs))
+    stored = {f"plain/seg-00{n}.m4s" for n in head.stored}
+    assert resolved[:2] == ["plain/media.m3u8", "plain/init.mp4"]
+    assert sorted(resolved[2:]) == sorted(stored)  # 세그먼트마다 한 번
+    assert {"plain/seg-000.m4s", "plain/seg-003.m4s"} <= stored  # 구간의 양 끝은 해석이 받았다
     assert run.failures == []
     assert _requests_for(host, "media.m3u8", ranged=False) == []
     assert _requests_for(host, "init.mp4", ranged=False) == []
-    assert _requests_for(host, ".m4s", ranged=True) == []
-    assert sorted(_requests_for(host, ".m4s", ranged=False)) == [
-        f"plain/seg-00{n}.m4s" for n in range(4)
-    ]
+    wanted = {f"plain/seg-00{n}.m4s" for n in range(4)}
+    assert sorted(_requests_for(host, ".m4s", ranged=False)) == sorted(wanted - stored)
+    assert _packets(run.paths[0]) == _reference(source, 40, 100, tmp_path)
+    assert not os.path.exists(head.segment_dir)  # 받아 둔 폴더가 엔진의 임시 폴더다 — 끝나면 지운다
+
+
+def test_engine_downloads_a_handed_in_segment_again_when_its_file_is_damaged(
+    host, sources, tmp_path
+):
+    """구간을 해석하며 받아 둔 세그먼트 파일이 온전하지 않으면 엔진은 그 세그먼트를 다시 받아야 한다.
+
+    plain, 구간 프레임 40~100. 해석 뒤 받아 둔 첫 세그먼트 파일의 끝 100바이트를 잘라 냄
+    -> 엔진 단계의 세그먼트 요청에 첫 세그먼트가 있다, 실패 0건, 패킷이 대조 파일과 같다
+    """
+    source = sources["plain"]
+    selection = source.selection(40, 100)
+    head, _sections = _resolve(host, tmp_path, selection)
+    kept = os.path.join(head.segment_dir, segment_file_name(SEGMENTS, 0))
+    with open(kept, "rb+") as f:
+        f.truncate(os.path.getsize(kept) - 100)
+    run = _Run(host, tmp_path, [selection])
+    run.data.content.fmp4_head = head
+    host.forget()
+
+    run.start()
+
+    assert run.failures == []
+    assert "plain/seg-000.m4s" in _requests_for(host, ".m4s", ranged=False)
     assert _packets(run.paths[0]) == _reference(source, 40, 100, tmp_path)
 
 
-def test_server_that_ignores_range_still_gives_the_same_section(host, sources, tmp_path):
-    """서버가 범위 요청에 200으로 전체를 보내도 구간 파일의 패킷은 대조 파일과 같아야 한다.
+def test_section_download_sends_no_range_request_to_a_truncating_cache(host, sources, tmp_path):
+    """범위 요청에 잘린 본문을 주고 그것을 캐시하는 서버에서 구간 다운로드는 범위 요청을 보내지 않고 온전한 구간 파일을 만들어야 한다.
 
-    plain, 호스트가 Range를 무시하도록 함, 구간 프레임 40~100
-    -> 실패 0건, 범위 요청은 있었고(200으로 답함), 영상·오디오 패킷이 전부 이은 파일에서 자른 것과 같다
+    plain, truncating_cache를 켠 호스트, 구간 프레임 40~100
+    -> 실패 0건, Range 머리가 든 요청 0건, 캐시에 잘린 본문 없음, 패킷이 대조 파일과 같다
     """
     source = sources["plain"]
-    host.ignore_range = True
+    host.truncating_cache = True
 
     run = _Run(host, tmp_path, [source.selection(40, 100)]).start()
 
     assert run.failures == []
-    assert _requests_for(host, ".m4s", ranged=True)  # moof를 범위 요청으로 물었고 200을 받았다
+    assert [header for _m, _n, header in host.requests if header is not None] == []
+    assert host.truncated() == []
     assert _packets(run.paths[0]) == _reference(source, 40, 100, tmp_path)
+
+
+def test_section_download_fails_instead_of_cutting_a_truncated_segment(host, sources, tmp_path):
+    """받은 세그먼트가 잘려 있으면 구간 다운로드는 컷을 하지 않고 잘림 오류로 실패해야 한다.
+
+    plain, truncating_cache를 켠 호스트에서 셋째 세그먼트를 누군가 범위 요청으로 먼저 받아 캐시에
+    잘린 본문이 들어 있다(전체 요청에도 잘린 본문이 온다). 구간 프레임 40~100(세그먼트 0~3)
+    -> 완료 0회, 실패 1건(TruncatedBodyError), 컷 0회, 저장 폴더가 비어 있다
+    """
+    source = sources["plain"]
+    host.truncating_cache = True
+    host.session().get(host.url("plain/seg-002.m4s"), headers={"Range": "bytes=0-999"})
+    assert host.truncated() == ["plain/seg-002.m4s"]
+
+    run = _Run(host, tmp_path, [source.selection(40, 100)]).start()
+
+    assert run.finished == 0
+    assert len(run.failures) == 1
+    assert isinstance(run.failures[0], TruncatedBodyError)
+    assert run.engine.cut_results == []
+    assert run.listing() == []
+
+
+def test_downloaded_segment_whose_length_differs_from_content_length_is_rejected(
+    host, sources, tmp_path
+):
+    """받은 세그먼트의 길이가 서버가 말한 Content-Length와 다르면 그 세그먼트를 지우고 잘림 오류를 내야 한다.
+
+    구간 다운로드를 마친 엔진, 온전한 세그먼트 파일(N바이트). 응답 머리의 Content-Length = N + 1 · N
+    -> N + 1: TruncatedBodyError, 파일이 지워진다 / N: 오류 없음, 파일이 남는다
+    """
+    source = sources["plain"]
+    run = _Run(host, tmp_path, [source.selection(5, 20)]).start()
+    data = source.files["seg-000.m4s"]
+    path = str(tmp_path / "segment.m4v")
+
+    with open(path, "wb") as f:
+        f.write(data)
+    run.engine._require_whole_segment(
+        path, len(data), SimpleNamespace(headers={"Content-Length": str(len(data))})
+    )
+    assert os.path.exists(path)
+
+    with pytest.raises(TruncatedBodyError):
+        run.engine._require_whole_segment(
+            path, len(data), SimpleNamespace(headers={"Content-Length": str(len(data) + 1)})
+        )
+    assert not os.path.exists(path)
 
 
 # ================================================================ 끊긴 녹화
 
 
 def test_section_crossing_a_discontinuity_is_rejected(host, sources, tmp_path):
-    """구간이 #EXT-X-DISCONTINUITY를 넘으면 받기 전에 구간 위반 키로 실패해야 한다.
+    """구간이 #EXT-X-DISCONTINUITY를 넘으면 구간 위반 키로 실패해야 한다.
 
     broken.m3u8(넷째 세그먼트 앞에서 끊김), 구간 프레임 70~100 (셋째 ~ 넷째 세그먼트)
-    -> 실패 1건(SelectionError, message_key == SELECTION_CROSSES_BREAK), 세그먼트 전체 요청 0건
+    -> 실패 1건(SelectionError, message_key == SELECTION_CROSSES_BREAK), 저장 폴더가 비어 있다
     """
     source = sources["plain"]
 
@@ -557,7 +710,6 @@ def test_section_crossing_a_discontinuity_is_rejected(host, sources, tmp_path):
     assert len(run.failures) == 1
     assert isinstance(run.failures[0], SelectionError)
     assert run.failures[0].message_key == SELECTION_CROSSES_BREAK
-    assert _requests_for(host, ".m4s", ranged=False) == []
     assert run.listing() == []
 
 
@@ -579,37 +731,40 @@ def test_section_beside_a_discontinuity_is_downloaded(host, sources, tmp_path):
 def test_section_crossing_a_discontinuity_is_rejected_before_reading_its_segments(
     host, sources, tmp_path, to_end
 ):
-    """끊긴 자리를 넘는 구간은 그 구간의 세그먼트에서 moof를 읽기 전에 거부해야 한다.
+    """끊긴 자리를 넘는 구간은 그 구간의 세그먼트를 받기 전에 거부해야 한다.
 
-    across-the-break: broken.m3u8, 구간 프레임 70~100
-    to-the-video-length: twice.m3u8, 구간 = 프레임 70의 시각 ~ 영상 길이(프레임 단위로 내린 값)
-    -> 실패 1건(SELECTION_CROSSES_BREAK), moof 범위 요청은 프레임률을 읽는 첫 세그먼트뿐
+    across-the-break: broken.m3u8(세그먼트 0~2 · 끊김 · 3~5), 구간 프레임 70~100
+    to-the-video-length: twice.m3u8(세그먼트 여섯 · 끊김 · 같은 여섯), 구간 = 프레임 70의 시각 ~ 영상 길이
+    -> 실패 1건(SELECTION_CROSSES_BREAK), 받은 세그먼트는 묶음마다의 첫 · 마지막 세그먼트뿐
+       (시각 축을 재는 데 쓴다)
     """
     source = sources["plain"]
+    length = source.time_of(179) + source.frames.frame_duration  # 묶음 하나(세그먼트 여섯)의 길이
     if to_end:
-        length = 2 * source.playlist.duration
-        selection = TimeRange(source.time_of(70), int(length * 30) / 30)
-        playlist = "plain/twice.m3u8"
+        selection = TimeRange(source.time_of(70), 2 * length)
+        playlist, read = "plain/twice.m3u8", [0, 0, 5, 5]
     else:
-        selection, playlist = source.selection(70, 100), "plain/broken.m3u8"
+        selection, playlist, read = source.selection(70, 100), "plain/broken.m3u8", [0, 2, 3, 5]
 
     run = _Run(host, tmp_path, [selection], playlist).start()
 
     assert len(run.failures) == 1
     assert isinstance(run.failures[0], SelectionError)
     assert run.failures[0].message_key == SELECTION_CROSSES_BREAK
-    assert _requests_for(host, ".m4s", ranged=True) == ["plain/seg-000.m4s"]
+    assert sorted(_requests_for(host, ".m4s", ranged=False)) == [
+        f"plain/seg-00{n}.m4s" for n in read
+    ]
 
 
 def test_section_after_a_discontinuity_counts_time_from_the_break(host, sources, tmp_path):
-    """끊긴 자리 뒤의 구간은 그 자리의 첫 세그먼트를 시각의 기준으로 삼아 프레임을 골라야 한다.
+    """끊긴 자리 뒤의 구간은 앞 묶음이 끝난 시각에서 이어 세어 프레임을 골라야 한다.
 
     twice.m3u8(세그먼트 여섯 · 끊김 · 같은 여섯 — 뒤쪽 타임스탬프가 0으로 돌아간다),
-    구간 = 플레이리스트 길이의 절반 + 프레임 40~100의 시각
+    구간 = 앞 묶음의 실제 길이(프레임 179가 끝나는 시각) + 프레임 40~100의 시각
     -> 받은 세그먼트 6~9, 영상·오디오 패킷이 앞쪽에서 프레임 40~100을 자른 것과 같다
     """
     source = sources["plain"]
-    half = source.playlist.duration  # 앞쪽 여섯 세그먼트의 길이 = 뒤쪽이 시작하는 플레이리스트 시각
+    half = source.time_of(179) + source.frames.frame_duration  # 앞 묶음이 끝나는 VOD 시각
     selection = TimeRange(half + source.time_of(40), half + source.time_of(100))
 
     run = _Run(host, tmp_path, [selection], "plain/twice.m3u8").start()
@@ -625,11 +780,15 @@ def test_section_after_a_discontinuity_ignores_timestamps_before_the_break(host,
     """끊긴 자리 뒤의 구간은 플레이리스트 첫 세그먼트의 타임스탬프가 아니라 끊긴 자리의 첫 세그먼트를 기준으로 프레임을 골라야 한다.
 
     late.m3u8(세그먼트 넷째 ~ 여섯째 · 끊김 · 세그먼트 여섯 — 앞쪽 타임스탬프는 3초부터, 뒤쪽은 0부터),
-    구간 = 앞쪽 세 세그먼트의 길이 + 프레임 40~100의 시각
+    구간 = 앞 묶음의 실제 길이 + 프레임 40~100의 시각
     -> 받은 세그먼트 3~6, 영상·오디오 패킷이 plain에서 프레임 40~100을 자른 것과 같다
     """
     source = sources["plain"]
-    before = sum(source.playlist.durations[3:])  # 끊긴 자리가 놓인 플레이리스트 시각
+    fourth = parse_media_segment(source.files[source.playlist.segments[3]], source.init)
+    first = parse_media_segment(source.files[source.playlist.segments[0]], source.init)
+    began = float(fmp4_origin(source.init, fourth) - fmp4_origin(source.init, first))
+    # 앞 묶음(넷째 ~ 여섯째 세그먼트)의 실제 길이 — 마지막 프레임이 끝나는 시각 − 가장 이른 PTS
+    before = source.time_of(179) + source.frames.frame_duration - began
     selection = TimeRange(before + source.time_of(40), before + source.time_of(100))
 
     run = _Run(host, tmp_path, [selection], "plain/late.m3u8").start()
@@ -687,17 +846,17 @@ def test_cut_failure_keeps_segments_and_finished_sections(host, sources, tmp_pat
 
 
 def test_section_outside_the_playlist_fails_with_selection_key(host, tmp_path):
-    """구간이 플레이리스트 길이를 넘으면 받기 전에 구간 위반 키로 실패해야 한다.
+    """구간이 영상 길이를 넘으면 구간 위반 키로 실패하고 아무것도 남기지 않아야 한다.
 
     plain(6초), 구간 5~7초
-    -> 실패 1건(SelectionError, message_key == SELECTION_OUT_OF_RANGE), 세그먼트 전체 요청 0건
+    -> 실패 1건(SelectionError, message_key == SELECTION_OUT_OF_RANGE), 저장 폴더가 비어 있다
     """
     run = _Run(host, tmp_path, [TimeRange(5.0, 7.0)]).start()
 
     assert len(run.failures) == 1
     assert isinstance(run.failures[0], SelectionError)
     assert run.failures[0].message_key == SELECTION_OUT_OF_RANGE
-    assert _requests_for(host, ".m4s", ranged=False) == []
+    assert run.listing() == []
 
 
 def test_section_log_reports_cut_and_total_size_of_section_files(host, sources, tmp_path):
@@ -813,6 +972,37 @@ def test_section_postprocess_copies_segments_in_fixed_size_chunks(
     assert max(largest) <= 1000
     assert min(len(source.files[name]) for name in source.playlist.segments[:4]) > 1000
     assert _packets(run.paths[0]) == _reference(source, 40, 100, tmp_path)
+
+
+def test_engine_keeps_handed_in_segments_and_removes_other_files_from_the_segment_folder(
+    host, sources, tmp_path, monkeypatch
+):
+    """엔진은 넘겨받은 세그먼트 폴더에서 받아 둔 세그먼트만 남기고, 이 다운로드의 것이 아닌 파일은 지워야 한다.
+
+    plain, 구간 프레임 40~100(세그먼트 0~3). 해석 뒤 폴더에 이전 실행의 것처럼 "9.m4v"와 "old.bin"을 넣음.
+    컷이 CutError를 내게 해 폴더가 남게 함
+    -> 폴더에 초기화 세그먼트 · 세그먼트 1~4(0~3번째) · 이은 파일만 있다 — "9.m4v" · "old.bin"과,
+       해석이 길이를 재려고 받았지만 이 구간에는 쓰지 않는 "6.m4v"는 없다
+    """
+    source = sources["plain"]
+    selection = source.selection(40, 100)
+    head, _sections = _resolve(host, tmp_path, selection)
+    for name in ("9.m4v", "old.bin"):
+        with open(os.path.join(head.segment_dir, name), "wb") as f:
+            f.write(b"stale")
+
+    def fails(*args, **kwargs):
+        raise CutError(CUT_FAILED, "시험")
+
+    monkeypatch.setattr(m3u8_module, "hybrid_cut", fails)
+    run = _Run(host, tmp_path, [selection])
+    run.data.content.fmp4_head = head
+
+    run.start()
+
+    assert isinstance(run.failures[0], PostprocessError)
+    kept = sorted(os.listdir(head.segment_dir))
+    assert kept == ["0.m4s", "1.m4v", "2.m4v", "3.m4v", "4.m4v", "section_1.mp4"]
 
 
 # ================================================================ 전체 다운로드 (보존)

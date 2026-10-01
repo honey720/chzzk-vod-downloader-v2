@@ -13,19 +13,24 @@ from core.api.fmp4 import parse_init_segment, parse_media_segment
 from core.api.hls import parse_media_playlist
 from core.models.plan import TimeRange
 from core.models.fmp4_index import Fmp4Init, Fmp4Segment
+import core.utils.fmp4_sections as sections_module
 from core.utils.fmp4_sections import (
     FPS_DECLARED,
     FPS_MEASURED,
     FPS_STANDARD,
     choose_frame_rate,
+    fmp4_timeline,
     plan_fmp4_sections,
 )
 from core.utils.selections import (
     SELECTION_CROSSES_BREAK,
+    SELECTION_NOT_LOCATED,
+    SELECTION_OUT_OF_RANGE,
     SELECTION_TOO_SHORT,
     SelectionError,
 )
 from core.utils.timecode import TimecodeError, parse_timecode
+from tests.unit.core.mp4_builder import box
 from tests.unit.core.fmp4_builder import (
     KEY,
     NON_KEY,
@@ -42,12 +47,19 @@ VIDEO = 1  # 영상 트랙 번호
 AUDIO = 2  # 오디오 트랙 번호
 
 
-def _segment(number: int, *, video: bool = True, audio_samples: int = 8) -> bytes:
-    """number번째 1초 세그먼트 — 영상 10프레임(첫 프레임이 키프레임)과 오디오."""
+def _segment(
+    number: int, *, video: bool = True, audio_samples: int = 8, frames: int = 10, last: int = 100
+) -> bytes:
+    """number번째 1초 세그먼트 — 영상 frames프레임(첫 프레임이 키프레임, 마지막 프레임의 길이 last틱)과 오디오."""
     trafs = []
     if video:
         frames = [
-            Sample(duration=100, size=10, flags=KEY if n == 0 else NON_KEY) for n in range(10)
+            Sample(
+                duration=last if n == frames - 1 else 100,
+                size=10,
+                flags=KEY if n == 0 else NON_KEY,
+            )
+            for n in range(frames)
         ]
         trafs.append(Traf(VIDEO, [Run(frames)], decode_time=number * 1000))
     sound = [Sample(duration=1024, size=7) for _ in range(audio_samples)]
@@ -65,67 +77,43 @@ def _playlist(durations: list[float]):
 def test_section_ending_at_the_video_length_skips_a_last_segment_without_video():
     """끝이 영상 길이와 같은 구간은 마지막 세그먼트에 영상이 없으면 그 앞 세그먼트의 마지막 프레임에서 끝나야 한다.
 
-    세그먼트 셋 — 0 · 1은 영상 10프레임씩과 오디오, 2는 오디오뿐. #EXTINF 1.0 · 1.0 · 0.5 (길이 2.5초),
-    구간 0.5 ~ 2.5초
+    세그먼트 셋 — 0 · 1은 영상 10프레임씩과 오디오, 2는 오디오뿐. 영상 길이 2.0초(프레임 19가 끝나는 시각),
+    구간 0.5 ~ 2.0초
     -> 끝 프레임의 PTS == 1.9초(둘째 세그먼트의 마지막 프레임), 받는 세그먼트 0~2
     """
-    init = parse_init_segment(
-        init_segment(
-            [
-                InitTrack(VIDEO, b"vide", 1000, trex=(100, 10, NON_KEY)),
-                InitTrack(AUDIO, b"soun", 8000, codec=b"mp4a", trex=(1024, 7, KEY)),
-            ]
-        )
-    )
+    init = _init()
     segments = [
         parse_media_segment(_segment(0), init),
         parse_media_segment(_segment(1), init),
         parse_media_segment(_segment(2, video=False, audio_samples=4), init),
     ]
+    playlist = _playlist([1.0, 1.0, 0.5])
 
-    sections = plan_fmp4_sections(
-        _playlist([1.0, 1.0, 0.5]), init, [TimeRange(0.5, 2.5)], segments.__getitem__
-    )
+    sections = plan_fmp4_sections(playlist, init, [TimeRange(0.5, 2.0)], segments.__getitem__)
 
+    assert fmp4_timeline(playlist, init, segments.__getitem__).duration == 2.0
     assert len(sections) == 1
     assert (sections[0].first_pts, sections[0].last_pts) == (0.5, 1.9)
     assert (sections[0].first_segment, sections[0].last_segment) == (0, 2)
 
 
-def test_section_to_the_video_length_is_rejected_when_a_break_follows_its_last_segment():
-    """끝이 영상 길이와 같은 구간은 그 뒤에 끊긴 자리와 세그먼트가 더 있으면 moof를 더 읽지 않고 거부해야 한다.
+def test_section_to_the_video_length_is_rejected_when_it_starts_before_a_break():
+    """끝이 영상 길이와 같은 구간은 끊긴 자리 앞에서 시작하면 끊긴 자리를 넘는 구간으로 거부해야 한다.
 
-    세그먼트 0 · 1(1초씩) · 끊김 · 세그먼트 2(#EXTINF 0.02 — 한 프레임보다 짧다, 오디오뿐).
-    길이 2.02초 = 10fps에서 20프레임, 구간 0.5 ~ 1.96초(끝이 프레임 20 — 둘째 세그먼트 안에서 끝난다)
-    -> SelectionError(SELECTION_CROSSES_BREAK), 프레임 정보를 읽은 세그먼트는 0뿐
+    세그먼트 0 · 1(영상 1초씩) · 끊김 · 세그먼트 2(영상 1초). 영상 길이 3.0초, 구간 0.5 ~ 3.0초
+    -> SelectionError(SELECTION_CROSSES_BREAK)
     """
-    init = parse_init_segment(
-        init_segment(
-            [
-                InitTrack(VIDEO, b"vide", 1000, trex=(100, 10, NON_KEY)),
-                InitTrack(AUDIO, b"soun", 8000, codec=b"mp4a", trex=(1024, 7, KEY)),
-            ]
-        )
-    )
-    segments = [
-        parse_media_segment(_segment(0), init),
-        parse_media_segment(_segment(1), init),
-        parse_media_segment(_segment(0, video=False, audio_samples=4), init),
-    ]
+    init = _init()
+    segments = [parse_media_segment(_segment(n % 2), init) for n in range(3)]
     lines = ["#EXTM3U", '#EXT-X-MAP:URI="init.mp4"', "#EXTINF:1.000000,", "seg-0.m4s"]
-    lines += ["#EXTINF:1.000000,", "seg-1.m4s", "#EXT-X-DISCONTINUITY", "#EXTINF:0.020000,"]
+    lines += ["#EXTINF:1.000000,", "seg-1.m4s", "#EXT-X-DISCONTINUITY", "#EXTINF:1.000000,"]
     playlist = parse_media_playlist("\n".join([*lines, "seg-2.m4s", "#EXT-X-ENDLIST"]))
-    asked = []
-
-    def segment_at(index: int):
-        asked.append(index)
-        return segments[index]
 
     with pytest.raises(SelectionError) as info:
-        plan_fmp4_sections(playlist, init, [TimeRange(0.5, 1.96)], segment_at)
+        plan_fmp4_sections(playlist, init, [TimeRange(0.5, 3.0)], segments.__getitem__)
 
+    assert fmp4_timeline(playlist, init, segments.__getitem__).duration == 3.0
     assert info.value.message_key == SELECTION_CROSSES_BREAK
-    assert asked == [0]
 
 
 # ================================================================ 프레임률
@@ -291,19 +279,255 @@ def test_plan_validates_selections_with_the_frame_rate_it_is_given():
 def test_section_ending_at_a_video_length_off_the_frame_grid_is_accepted():
     """끝이 영상 길이(초)와 같은 구간은 길이 × fps의 소수부가 .5 이상이어도 통과하고 마지막 프레임에서 끝나야 한다.
 
-    세그먼트 둘(영상 10프레임씩, 10fps), #EXTINF 1.0 · 1.06 — 길이 2.06초 = 20.6프레임. 구간 0.5 ~ 2.06초
+    세그먼트 둘(영상 10프레임씩, 10fps), 마지막 프레임의 길이만 160틱 — 영상 길이 2.06초 = 20.6프레임.
+    구간 0.5 ~ 2.06초
     -> 구간 하나, 끝 프레임의 PTS == 1.9초
     """
     init = _init()
-    segments = [parse_media_segment(_segment(n), init) for n in range(2)]
-    playlist = _playlist([1.0, 1.06])
+    segments = [
+        parse_media_segment(_segment(0), init),
+        parse_media_segment(_segment(1, last=160), init),
+    ]
+    playlist = _playlist([1.0, 1.0])
+    length = fmp4_timeline(playlist, init, segments.__getitem__).duration
 
-    sections = plan_fmp4_sections(
-        playlist, init, [TimeRange(0.5, playlist.duration)], segments.__getitem__
-    )
+    sections = plan_fmp4_sections(playlist, init, [TimeRange(0.5, length)], segments.__getitem__)
 
-    assert (
-        playlist.duration * 10 % 1 >= 0.5
-    )  # 전제 — 끝의 프레임 번호(21)가 길이의 프레임 수(20)보다 크다
+    assert length == pytest.approx(2.06)
+    assert length * 10 % 1 >= 0.5  # 전제 — 끝의 프레임 번호(21)가 길이의 프레임 수(20)보다 크다
     assert len(sections) == 1
     assert sections[0].last_pts == 1.9
+
+
+# ================================================================ 실제 다시보기의 모양
+
+
+class _Replay:
+    """실제 다시보기의 모양을 한 합성 VOD — 세그먼트를 달라는 대로 만들어 준다.
+
+    - 영상 timescale 6000, 세그먼트 하나에 120프레임 · moof 둘(60프레임씩, 사이에 emsg)
+    - 프레임 길이는 100틱이고 moof의 마지막 두 프레임만 102틱이다 — moof 하나의 길이의 합이
+      6004틱(1.000667초)인데 다음 moof는 6000틱(1초) 뒤에서 시작한다
+    - 그래서 #EXTINF는 2.001333이고 세그먼트의 실제 간격은 2.000초다
+    - 오디오 timescale 48000, 첫 PTS가 영상보다 앞이다 — VOD 0초는 오디오의 첫 PTS다
+    """
+
+    VIDEO_START = 17994  # 첫 세그먼트의 영상 tfdt(틱)
+    COMPOSITION = 198  # 영상의 PTS − DTS(틱)
+    AUDIO_START = 143599  # 첫 세그먼트의 오디오 tfdt(틱) = 2.991646초 — VOD 0초
+    DURATIONS = [100] * 58 + [102, 102]  # moof 하나의 영상 샘플 길이(틱)
+
+    def __init__(self, count: int, *, program_times: bool, extinf: float = 2.001333):
+        self.count = count
+        self.init = parse_init_segment(
+            init_segment(
+                [
+                    InitTrack(VIDEO, b"vide", 6000, trex=(0, 0, 0)),
+                    InitTrack(AUDIO, b"soun", 48000, codec=b"mp4a", trex=(0, 0, 0)),
+                ]
+            )
+        )
+        lines = ["#EXTM3U", "#EXT-X-VERSION:7", '#EXT-X-MAP:URI="init.mp4"']
+        for number in range(count):
+            if program_times:
+                seconds = 2 * number
+                stamp = f"{seconds // 3600:02d}:{seconds // 60 % 60:02d}:{seconds % 60:02d}"
+                lines.append(f"#EXT-X-PROGRAM-DATE-TIME:2026-01-01T{stamp}.062Z")
+            lines += [f"#EXTINF:{extinf},", f"seg-{number}.m4v"]
+        self.playlist = parse_media_playlist("\n".join([*lines, "#EXT-X-ENDLIST"]))
+        self.asked: list[int] = []  # segment_at에 온 인덱스 — 온 순서대로
+        self._parsed: dict[int, Fmp4Segment] = {}
+
+    def segment_at(self, index: int) -> Fmp4Segment:
+        self.asked.append(index)
+        if index not in self._parsed:
+            self._parsed[index] = parse_media_segment(self._segment(index), self.init)
+        return self._parsed[index]
+
+    def _segment(self, index: int) -> bytes:
+        data = b""
+        for half in range(2):
+            video = [
+                Sample(
+                    duration=d,
+                    size=10,
+                    flags=KEY if n == 0 else NON_KEY,
+                    composition=self.COMPOSITION,
+                )
+                for n, d in enumerate(self.DURATIONS)
+            ]
+            audio = [Sample(duration=1024, size=7) for _ in range(47)]
+            fragment = Fragment(
+                [
+                    Traf(
+                        VIDEO,
+                        [Run(video)],
+                        decode_time=self.VIDEO_START + 12000 * index + 6000 * half,
+                    ),
+                    Traf(
+                        AUDIO,
+                        [Run(audio)],
+                        decode_time=self.AUDIO_START + 96000 * index + 48000 * half,
+                    ),
+                ]
+            )
+            data += media_segment([fragment], styp=half == 0)
+            if half == 0:
+                data += box(b"emsg", bytes(40))
+        return data
+
+    def frame_time(self, segment: int, frame: int) -> float:
+        """세그먼트 segment의 frame번째(0~119) 프레임의 PTS — VOD 시각(초). 검사자가 따로 계산한다."""
+        half, n = divmod(frame, 60)
+        ticks = (
+            self.VIDEO_START
+            + 12000 * segment
+            + 6000 * half
+            + sum(self.DURATIONS[:n])
+            + self.COMPOSITION
+        )
+        return float(Fraction(ticks, 6000) - Fraction(self.AUDIO_START, 48000))
+
+    def nearest(self, seconds: float) -> float:
+        """seconds에 가장 가까운 프레임의 PTS — 앞뒤 세그먼트의 모든 프레임에서 고른다."""
+        around = int(seconds // 2)
+        times = [
+            self.frame_time(segment, frame)
+            for segment in range(max(around - 1, 0), min(around + 2, self.count))
+            for frame in range(120)
+        ]
+        return min(times, key=lambda time: abs(time - seconds))
+
+
+def test_timeline_measures_the_video_length_from_real_timestamps_not_extinf():
+    """fmp4_timeline은 영상 길이를 #EXTINF의 합이 아니라 마지막 영상 프레임이 끝나는 실제 시각으로 정해야 한다.
+
+    세그먼트 5,000개(#EXTINF 2.001333, 실제 간격 2.000초)
+    -> 길이 == 마지막 세그먼트의 마지막 프레임 PTS + 그 프레임의 길이(102틱),
+       #EXTINF의 합은 그보다 6초 넘게 길다. 읽은 세그먼트는 첫 · 마지막 둘뿐
+    """
+    replay = _Replay(5000, program_times=False)
+
+    timeline = fmp4_timeline(replay.playlist, replay.init, replay.segment_at)
+
+    assert timeline.duration == pytest.approx(replay.frame_time(4999, 119) + 102 / 6000)
+    assert replay.playlist.duration - timeline.duration > 6
+    assert sorted(set(replay.asked)) == [0, 4999]
+
+
+@pytest.mark.parametrize("program_times", [True, False], ids=["pdt", "extinf-only"])
+def test_section_near_the_end_of_a_long_replay_lands_on_the_right_frames(program_times):
+    """#EXTINF의 누적이 실제 시각과 세그먼트 여럿만큼 벌어진 위치에서도 구간의 첫·끝 프레임은 요청 시각에 가장 가까운 프레임이어야 한다.
+
+    세그먼트 5,000개(끝에서 #EXTINF 누적이 6.7초 = 세그먼트 셋 넘게 앞선다), 60fps,
+    구간 9990.0 ~ 9995.5초. PROGRAM-DATE-TIME 있음 · 없음
+    -> 첫·끝 프레임의 PTS == 검사자가 프레임 시각에서 직접 고른 가장 가까운 프레임,
+       받는 세그먼트 4993~4997 (시작이 든 4994의 앞 하나부터 끝이 든 4997까지)
+    """
+    replay = _Replay(5000, program_times=program_times)
+    selection = TimeRange(9990.0, 9995.5)
+
+    section = plan_fmp4_sections(
+        replay.playlist, replay.init, [selection], replay.segment_at, Fraction(60)
+    )[0]
+
+    assert section.first_pts == pytest.approx(replay.nearest(9990.0))
+    assert section.last_pts == pytest.approx(replay.nearest(9995.5))
+    assert abs(section.first_pts - 9990.0) < 1 / 60
+    assert abs(section.last_pts - 9995.5) < 1 / 60
+    assert (section.first_segment, section.last_segment) == (4993, 4997)
+
+
+def test_program_date_time_finds_the_segment_without_extra_reads():
+    """PROGRAM-DATE-TIME이 있으면 구간의 세그먼트를 추정 한 번에 찾고, 없으면 다시 추정하느라 더 읽어야 한다.
+
+    세그먼트 5,000개, 구간 9990.0 ~ 9995.5초 (받는 세그먼트 4993~4997)
+    -> PDT 있음: 읽은 세그먼트가 길이를 재는 0 · 4999와 구간의 4993~4997뿐.
+       PDT 없음: 처음 추정이 어긋나 그 밖의 세그먼트도 읽는다
+    """
+    selection = [TimeRange(9990.0, 9995.5)]
+    with_times = _Replay(5000, program_times=True)
+    without = _Replay(5000, program_times=False)
+
+    plan_fmp4_sections(with_times.playlist, with_times.init, selection, with_times.segment_at)
+    plan_fmp4_sections(without.playlist, without.init, selection, without.segment_at)
+
+    needed = {0, 4999, *range(4993, 4998)}
+    assert set(with_times.asked) <= needed
+    assert set(without.asked) - needed  # 어긋난 추정으로 읽은 세그먼트가 있다
+    assert len(set(without.asked)) <= len(needed) + 4
+
+
+def test_section_fails_when_the_segment_cannot_be_located_in_the_allowed_steps(monkeypatch):
+    """구간의 시각이 놓인 세그먼트를 정해진 횟수 안에 찾지 못하면 틀린 프레임을 고르지 않고 키 기반 오류로 실패해야 한다.
+
+    세그먼트 5,000개 · PROGRAM-DATE-TIME 없음(처음 추정이 세그먼트 셋 넘게 어긋난다), 찾는 걸음을 1로 제한,
+    구간 9990.0 ~ 9995.5초
+    -> SelectionError(SELECTION_NOT_LOCATED)
+    """
+    monkeypatch.setattr(sections_module, "_MAX_LOCATE_STEPS", 1)
+    replay = _Replay(5000, program_times=False)
+
+    with pytest.raises(SelectionError) as info:
+        plan_fmp4_sections(
+            replay.playlist, replay.init, [TimeRange(9990.0, 9995.5)], replay.segment_at
+        )
+
+    assert info.value.message_key == SELECTION_NOT_LOCATED
+    assert info.value.violations == {0: (SELECTION_NOT_LOCATED,)}
+
+
+def test_section_past_the_real_length_is_out_of_range_even_inside_the_extinf_total():
+    """구간의 끝이 실제 영상 길이를 넘으면 #EXTINF의 합 안이어도 범위 위반이어야 한다.
+
+    세그먼트 5,000개 — 실제 길이 약 10000.04초, #EXTINF의 합 약 10006.7초. 구간 9990 ~ 10003초
+    -> SelectionError(SELECTION_OUT_OF_RANGE)
+    """
+    replay = _Replay(5000, program_times=True)
+    assert replay.playlist.duration > 10003
+
+    with pytest.raises(SelectionError) as info:
+        plan_fmp4_sections(
+            replay.playlist, replay.init, [TimeRange(9990.0, 10003.0)], replay.segment_at
+        )
+
+    assert info.value.message_key == SELECTION_OUT_OF_RANGE
+
+
+def test_section_reads_frames_from_the_second_moof_of_a_segment():
+    """구간의 시각이 세그먼트의 둘째 moof에 놓이면 그 moof의 프레임을 골라야 한다.
+
+    세그먼트 40개, 구간 60.0 ~ 61.5초 — 60.0초는 세그먼트 29의 둘째 moof(59.04 ~ 60.04초)에 있다
+    -> 첫 프레임의 PTS가 요청과 한 프레임 안, 받는 세그먼트 28~30
+    """
+    replay = _Replay(40, program_times=True)
+
+    section = plan_fmp4_sections(
+        replay.playlist, replay.init, [TimeRange(60.0, 61.5)], replay.segment_at, Fraction(60)
+    )[0]
+
+    assert section.first_pts == pytest.approx(replay.nearest(60.0))
+    assert abs(section.first_pts - 60.0) < 1 / 60
+    assert replay.frame_time(29, 60) <= section.first_pts < replay.frame_time(30, 0)
+    assert (section.first_segment, section.last_segment) == (28, 30)
+
+
+def test_time_between_two_segments_starts_on_the_frame_before_the_gap():
+    """구간의 시작이 두 세그먼트 사이의 프레임 없는 자리에 놓이면 오류 없이 빈 자리 앞의 프레임에서 시작해야 한다.
+
+    10fps 세그먼트 셋 — 둘째 세그먼트에는 프레임이 5개뿐이다(1.0 ~ 1.4초, 1.5 ~ 1.9초가 비었다).
+    구간 1.7 ~ 2.5초
+    -> 첫 프레임의 PTS == 1.4초(빈 자리 앞의 마지막 프레임), 끝 프레임의 PTS == 2.5초
+    """
+    init = _init()
+    segments = [
+        parse_media_segment(_segment(0), init),
+        parse_media_segment(_segment(1, frames=5), init),
+        parse_media_segment(_segment(2), init),
+    ]
+
+    section = plan_fmp4_sections(
+        _playlist([1.0, 1.0, 1.0]), init, [TimeRange(1.7, 2.5)], segments.__getitem__
+    )[0]
+
+    assert (section.first_pts, section.last_pts) == (1.4, 2.5)

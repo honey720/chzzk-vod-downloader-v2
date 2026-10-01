@@ -11,7 +11,7 @@ from fractions import Fraction
 import pytest
 from Crypto.Cipher import AES
 
-from core.api.hls import HlsKey, parse_media_playlist, stream_frame_rate
+from core.api.hls import HlsKey, master_frame_rates, parse_media_playlist, stream_frame_rate
 from core.downloaders.decrypt import (
     AES_BLOCK_SIZE,
     TS_PACKET_SIZE,
@@ -223,3 +223,63 @@ def test_stream_frame_rate_reads_the_declared_value_as_written(line, expected):
     -> 기대값
     """
     assert stream_frame_rate(line) == expected
+
+
+def test_master_frame_rates_maps_each_resolution_to_its_declared_rate():
+    """master_frame_rates는 변형마다 세로 해상도와 FRAME-RATE를 짝지어 돌려주고, 선언이 없는 변형은 빼야 한다.
+
+    변형 넷 — 1280x720(60.00) · 852x480(30.00) · 256x144(속성 없음) · 1920x1080(59.940),
+    그리고 720p가 한 번 더(30.00)
+    -> {720: 60, 480: 30, 1080: 2997/50} — 같은 해상도는 먼저 나온 것
+    """
+    text = "\n".join(
+        [
+            "#EXTM3U",
+            "#EXT-X-STREAM-INF:BANDWIDTH=3192000,RESOLUTION=1280x720,FRAME-RATE=60.00",
+            "720p/chunklist.m3u8",
+            "#EXT-X-STREAM-INF:BANDWIDTH=1692000,RESOLUTION=852x480,FRAME-RATE=30.00",
+            "480p/chunklist.m3u8",
+            "#EXT-X-STREAM-INF:BANDWIDTH=192000,RESOLUTION=256x144",
+            "144p/chunklist.m3u8",
+            "#EXT-X-STREAM-INF:BANDWIDTH=6336000,RESOLUTION=1920x1080,FRAME-RATE=59.940",
+            "1080p/chunklist.m3u8",
+            "#EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION=1280x720,FRAME-RATE=30.00",
+            "720p-low/chunklist.m3u8",
+        ]
+    )
+
+    assert master_frame_rates(text) == {
+        720: Fraction(60),
+        480: Fraction(30),
+        1080: Fraction(2997, 50),
+    }
+
+
+def test_parse_media_playlist_reads_program_date_time_per_segment():
+    """parse_media_playlist는 세그먼트마다 바로 앞의 #EXT-X-PROGRAM-DATE-TIME을 유닉스 시각으로 돌려주고, 없거나 읽을 수 없으면 None을 돌려줘야 한다.
+
+    세그먼트 넷 — 태그 있음(…17.062Z) · 있음(2초 뒤) · 없음 · 읽을 수 없는 값
+    -> 둘째 − 첫째 == 2.0초, 셋째 · 넷째는 None, 길이는 세그먼트 수와 같다
+    """
+    text = "\n".join(
+        [
+            "#EXTM3U",
+            "#EXT-X-PROGRAM-DATE-TIME:2026-10-01T11:00:17.062Z",
+            "#EXTINF:2.001333,",
+            "a.m4v",
+            "#EXT-X-PROGRAM-DATE-TIME:2026-10-01T11:00:19.062Z",
+            "#EXTINF:2.001333,",
+            "b.m4v",
+            "#EXTINF:2.001333,",
+            "c.m4v",
+            "#EXT-X-PROGRAM-DATE-TIME:yesterday",
+            "#EXTINF:2.001333,",
+            "d.m4v",
+        ]
+    )
+
+    times = parse_media_playlist(text).program_times
+
+    assert len(times) == 4
+    assert times[1] - times[0] == pytest.approx(2.0)
+    assert times[2:] == (None, None)
