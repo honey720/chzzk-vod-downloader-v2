@@ -23,6 +23,7 @@ fps는 추정하지 않고 원본이 말한 값 그대로 쓴다(``FrameRate``).
 import math
 from bisect import bisect_left
 from collections.abc import Sequence
+from dataclasses import dataclass
 from fractions import Fraction
 from typing import Literal
 
@@ -200,6 +201,53 @@ def snap_to_frame(
     ):
         return before if edge == "start" else after
     return before if gap_before < gap_after else after
+
+
+@dataclass(frozen=True)
+class FrameRateCheck:
+    """선언된 프레임률과 실제 프레임 PTS를 대조한 결과를 담는다."""
+
+    declared: Fraction  # 대조한 프레임률
+    frames: int  # 본 프레임 수
+    average_fps: float  # 실제 평균 프레임률 — (프레임 수 − 1) ÷ (마지막 PTS − 첫 PTS)
+    missing_frames: int  # 선언 프레임률의 격자에서 프레임이 없는 자리 수
+    # 격자에서 가장 멀리 벗어난 프레임의 거리(프레임 길이 단위, 0 ~ 0.5).
+    # 프레임 간격이 고르지 않거나 선언 프레임률이 실제와 다르면 커진다
+    max_grid_offset: float
+
+
+def check_frame_rate(fps: FrameRate, frame_pts: Sequence[float]) -> FrameRateCheck:
+    """선언된 프레임률이 실제 프레임 PTS와 얼마나 맞는지 잰다. 판정은 하지 않는다 (#309).
+
+    첫 프레임에 맞춘 격자(첫 PTS + n ÷ fps)에 각 프레임을 가장 가까운 자리로 놓고,
+    비는 자리 수와 자리에서 가장 멀리 벗어난 거리를 센다.
+
+    Args:
+        fps: 대조할 프레임률(매니페스트의 선언값 등)
+        frame_pts: 프레임 PTS 목록(초). 오름차순이어야 한다 — 검사하지 않는다
+
+    Raises:
+        ValueError: 프레임이 2개 미만이거나 첫 PTS와 마지막 PTS가 같은 경우
+    """
+    if len(frame_pts) < 2 or frame_pts[-1] <= frame_pts[0]:
+        raise ValueError("프레임률을 대조하려면 시각이 다른 프레임이 2개 이상 필요하다")
+    rate = frame_rate(fps)
+    first = frame_pts[0]
+    scale = float(rate)
+    slots = set()
+    worst = 0.0
+    for pts in frame_pts:
+        position = (pts - first) * scale
+        slot = round(position)
+        slots.add(slot)
+        worst = max(worst, abs(position - slot))
+    return FrameRateCheck(
+        declared=rate,
+        frames=len(frame_pts),
+        average_fps=(len(frame_pts) - 1) / (frame_pts[-1] - first),
+        missing_frames=max(slots) + 1 - len(slots),
+        max_grid_offset=worst,
+    )
 
 
 def _split_seconds(seconds: float) -> tuple[int, Fraction]:
