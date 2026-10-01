@@ -22,6 +22,7 @@ class Mp4Track:
 
     timescale: int  # 이 트랙의 초당 틱 수 (mdhd)
     times: tuple[float, ...]  # 샘플별 표시 시각(초). 편집 목록이 가린 샘플은 음수다
+    decode_times: tuple[float, ...]  # 샘플별 DTS(초). times와 같은 기준(VOD 시작 = 0)이다
     durations: tuple[float, ...]  # 샘플별 길이(초)
     offsets: tuple[int, ...]  # 샘플별 파일 안 시작 위치(바이트)
     sizes: tuple[int, ...]  # 샘플별 크기(바이트)

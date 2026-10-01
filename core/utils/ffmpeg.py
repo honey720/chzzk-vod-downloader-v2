@@ -36,7 +36,7 @@ import subprocess
 import sys
 import tempfile
 import threading
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 
 # GUI 앱의 서브프로세스가 콘솔 창을 띄우지 않게 한다 (Windows 전용 플래그)
 _CREATE_NO_WINDOW = 0x08000000
@@ -56,6 +56,10 @@ class FFmpegNotFoundError(FFmpegError):
 
 class RemuxError(FFmpegError):
     """remux 실행이 실패했다 — 입력 손상·디스크 부족 등."""
+
+
+class FFmpegTimeoutError(FFmpegError):
+    """ffmpeg가 제한 시간 안에 끝나지 않아 종료시켰다."""
 
 
 def get_ffmpeg_exe() -> str:
@@ -234,6 +238,45 @@ def remux_stream(chunks: Iterable[bytes], dst_path: str) -> None:
         _remove_quietly(dst_path)
         stderr_tail = b"".join(stderr_parts).decode(errors="replace").strip()[-500:]
         raise RemuxError(f"ffmpeg remux 실패 (exit {returncode}): {stderr_tail}")
+
+
+def run_ffmpeg(
+    args: Sequence[str], *, timeout: float, cwd: str | None = None
+) -> subprocess.CompletedProcess[str]:
+    """ffmpeg를 끝날 때까지 실행하고 종료 코드와 출력을 돌려준다 (#309).
+
+    실행 파일 경로·콘솔 창 억제·리눅스 동봉본 가드(#97)를 한 곳에서 붙인다 —
+    ffmpeg를 직접 부르는 코드가 이것들을 빠뜨리지 않게 한다. 종료 코드가 0이
+    아니어도 예외를 내지 않는다. 판정은 호출자가 한다.
+
+    Args:
+        args: ffmpeg 인자(실행 파일 이름 제외). ``-hide_banner``는 붙여 준다
+        timeout: 제한 시간(초). 넘으면 프로세스를 종료한다
+        cwd: 작업 디렉토리. 상대 경로 인자의 기준이다
+
+    Raises:
+        FFmpegNotFoundError: ffmpeg 실행 파일을 찾지 못한 경우
+        FFmpegTimeoutError: 제한 시간을 넘긴 경우
+        FFmpegError: 프로세스를 시작하지 못한 경우
+    """
+    exe = get_ffmpeg_exe()
+    try:
+        return subprocess.run(
+            [exe, "-hide_banner", *args],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdin=subprocess.DEVNULL,
+            timeout=timeout,
+            cwd=cwd,
+            creationflags=_CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+            env=_subprocess_env(exe),
+        )
+    except subprocess.TimeoutExpired as e:
+        raise FFmpegTimeoutError(f"ffmpeg가 {timeout:g}초 안에 끝나지 않았다") from e
+    except OSError as e:
+        raise FFmpegError(f"ffmpeg 실행 실패: {e}") from e
 
 
 def read_in_chunks(path: str, chunk_size: int = 1024 * 1024) -> Iterator[bytes]:
