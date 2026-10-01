@@ -10,6 +10,7 @@
 """
 
 import struct
+import tracemalloc
 from fractions import Fraction
 
 import pytest
@@ -20,7 +21,9 @@ from core.api.mp4 import (
     MP4_FRAGMENTED,
     MP4_INVALID,
     MP4_MOOV_NOT_FOUND,
+    MP4_RANGE_MISMATCH,
     MP4_RANGE_NOT_SUPPORTED,
+    MP4_TOO_LONG,
     MP4_UNSUPPORTED,
     Mp4Error,
     fetch_mp4_index,
@@ -416,16 +419,120 @@ def test_parse_moov_rejects_edit_list_with_two_segments():
     assert info.value.message_key == MP4_UNSUPPORTED
 
 
+# ================================================================ 샘플 수 방어
+
+# 개수 칸에 써넣을 큰 값 — 펼치면 리스트만 16MB를 넘는다
+HUGE_RUN = 2_000_000
+# 펼치지 않고 거부했다면 넘지 않을 메모리 사용량(바이트)
+SMALL_PEAK = 1024 * 1024
+
+
+def _peak_memory_of_rejected_parse(moov: bytes) -> tuple[str, int]:
+    """parse_moov가 낸 Mp4Error의 키와, 그동안의 최대 메모리 사용량(바이트)."""
+    tracemalloc.start()
+    try:
+        with pytest.raises(Mp4Error) as info:
+            parse_moov(moov)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    return info.value.message_key, peak
+
+
+def test_parse_moov_rejects_stts_run_total_before_expanding_it():
+    """parse_moov는 stts의 개수 합이 샘플 수와 다르면 구간을 펼치지 않고 손상 키로 거부해야 한다.
+
+    stts 첫 구간의 개수를 12에서 2,000,000으로 바꾼 moov (stsz는 12샘플)
+    -> message_key == MP4_INVALID, 최대 메모리 사용량 < 1MiB
+    """
+    moov = bytearray(build_mp4([video_spec()]).moov)
+    struct.pack_into(">I", moov, moov.find(b"stts") + 12, HUGE_RUN)
+
+    key, peak = _peak_memory_of_rejected_parse(bytes(moov))
+
+    assert key == MP4_INVALID
+    assert peak < SMALL_PEAK
+
+
+def test_parse_moov_rejects_ctts_run_total_before_expanding_it():
+    """parse_moov는 ctts의 개수 합이 샘플 수와 다르면 구간을 펼치지 않고 손상 키로 거부해야 한다.
+
+    ctts 첫 구간의 개수를 1에서 2,000,000으로 바꾼 moov (stsz는 12샘플)
+    -> message_key == MP4_INVALID, 최대 메모리 사용량 < 1MiB
+    """
+    moov = bytearray(build_mp4([video_spec()]).moov)
+    struct.pack_into(">I", moov, moov.find(b"ctts") + 12, HUGE_RUN)
+
+    key, peak = _peak_memory_of_rejected_parse(bytes(moov))
+
+    assert key == MP4_INVALID
+    assert peak < SMALL_PEAK
+
+
+@pytest.mark.parametrize(
+    ("limits", "expected_key"),
+    [
+        ({b"vide": 12, b"soun": 16}, None),  # 두 트랙 모두 상한과 같다
+        ({b"vide": 11, b"soun": 16}, MP4_TOO_LONG),  # 영상이 상한 + 1
+        ({b"vide": 12, b"soun": 15}, MP4_TOO_LONG),  # 오디오가 상한 + 1
+    ],
+    ids=["at-limit", "video-over", "audio-over"],
+)
+def test_parse_moov_applies_sample_limit_per_track(monkeypatch, limits, expected_key):
+    """parse_moov는 트랙의 샘플 수가 그 트랙의 상한과 같으면 받고 하나라도 넘으면 길이 초과 키로 거부해야 한다.
+
+    영상 12샘플 · 오디오 16샘플, 상한 (12, 16) · (11, 16) · (12, 15)
+    -> 통과 · MP4_TOO_LONG · MP4_TOO_LONG
+    """
+    monkeypatch.setattr(mp4_module, "_MAX_SAMPLES", limits)
+    moov = build_mp4([video_spec(), audio_spec()]).moov
+
+    if expected_key is None:
+        assert len(parse_moov(moov).frame_pts) == 12
+    else:
+        with pytest.raises(Mp4Error) as info:
+            parse_moov(moov)
+        assert info.value.message_key == expected_key
+
+
+def test_parse_moov_rejects_uniform_stsz_count_over_limit_before_allocating(monkeypatch):
+    """parse_moov는 고정 크기 stsz의 샘플 수가 상한을 넘으면 크기 목록을 만들지 않고 거부해야 한다.
+
+    오디오 stsz(고정 크기 7)의 sample_count를 16에서 2,000,000으로 바꾼 moov, 오디오 상한 1,000,000
+    -> message_key == MP4_TOO_LONG, 최대 메모리 사용량 < 1MiB
+    """
+    monkeypatch.setattr(mp4_module, "_MAX_SAMPLES", {b"vide": 100, b"soun": 1_000_000})
+    built = build_mp4([video_spec(), audio_spec()])
+    moov = bytearray(built.moov)
+    audio_stsz = moov.rfind(b"stsz")  # 오디오 트랙이 뒤에 있다
+    struct.pack_into(">I", moov, audio_stsz + 12, HUGE_RUN)
+
+    key, peak = _peak_memory_of_rejected_parse(bytes(moov))
+
+    assert key == MP4_TOO_LONG
+    assert peak < SMALL_PEAK
+
+
+def test_sample_limits_cover_twenty_four_hours():
+    """샘플 수 상한은 24시간 분량의 60fps 영상과 48kHz AAC 오디오여야 한다.
+
+    60 × 86,400 / 48,000 ÷ 1,024 × 86,400
+    -> 영상 5,184,000, 오디오 4,050,000
+    """
+    assert mp4_module._MAX_SAMPLES == {b"vide": 5_184_000, b"soun": 4_050_000}
+
+
 # ================================================================ 받기 (가짜 응답)
 
 
 class FakeResponse:
-    """requests 응답 흉내 — 본문을 읽었는지 기록한다."""
+    """requests 응답 흉내 — 본문을 몇 바이트 내줬는지 기록한다."""
 
-    def __init__(self, status_code: int, body: bytes):
+    def __init__(self, status_code: int, body: bytes, headers: dict[str, str] | None = None):
         self.status_code = status_code
+        self.headers = headers or {}
         self._body = body
-        self.body_read = False
+        self.bytes_handed = 0
 
     def __enter__(self):
         return self
@@ -437,28 +544,49 @@ class FakeResponse:
         if self.status_code >= 400:
             raise requests.HTTPError(f"status {self.status_code}")
 
+    def iter_content(self, chunk_size: int):
+        for start in range(0, len(self._body), chunk_size):
+            chunk = self._body[start : start + chunk_size]
+            self.bytes_handed += len(chunk)
+            yield chunk
+
     @property
     def content(self) -> bytes:
-        self.body_read = True
+        self.bytes_handed = len(self._body)
         return self._body
 
 
 class RangeServer:
-    """범위 요청에 파일 조각으로 답하는 가짜 세션 — 받은 요청을 기록한다."""
+    """범위 요청에 파일 조각으로 답하는 가짜 세션 — 받은 요청을 기록한다.
 
-    def __init__(self, data: bytes, status_code: int = 206):
+    Args:
+        content_range: (요청 시작, 요청 끝, 파일 크기) → Content-Range 값. None을 돌려주면
+            머리를 싣지 않는다. 주지 않으면 실제로 보낸 범위를 정직하게 적는다
+        body: 보낼 조각 → 실제로 보낼 본문. 주지 않으면 조각 그대로 보낸다
+    """
+
+    def __init__(self, data: bytes, status_code: int = 206, content_range=None, body=None):
         self.data = data
         self.status_code = status_code
+        self.content_range = content_range
+        self.body = body
         self.calls: list[tuple[str, dict]] = []
         self.responses: list[FakeResponse] = []
 
     def get(self, url: str, **kwargs) -> FakeResponse:
         self.calls.append((url, kwargs))
         first, last = (int(x) for x in kwargs["headers"]["Range"].removeprefix("bytes=").split("-"))
-        if self.status_code == 206 and first >= len(self.data):
+        total = len(self.data)
+        if self.status_code == 206 and first >= total:
             response = FakeResponse(416, b"")
         elif self.status_code == 206:
-            response = FakeResponse(206, self.data[first : last + 1])
+            piece = self.data[first : last + 1]
+            if self.content_range is not None:
+                value = self.content_range(first, last, total)
+            else:
+                value = f"bytes {first}-{first + len(piece) - 1}/{total}"
+            headers = {} if value is None else {"Content-Range": value}
+            response = FakeResponse(206, self.body(piece) if self.body else piece, headers)
         else:
             response = FakeResponse(self.status_code, self.data)
         self.responses.append(response)
@@ -522,7 +650,111 @@ def test_fetch_mp4_index_rejects_full_response_without_reading_body(monkeypatch)
 
     assert info.value.message_key == MP4_RANGE_NOT_SUPPORTED
     assert len(server.responses) == 1
-    assert server.responses[0].body_read is False
+    assert server.responses[0].bytes_handed == 0
+
+
+def test_fetch_mp4_index_stops_reading_when_body_exceeds_granted_range(monkeypatch):
+    """fetch_mp4_index는 본문이 Content-Range가 말한 길이를 넘으면 끝까지 읽지 않고 거부해야 한다.
+
+    Content-Range는 정직하게 적고 본문 뒤에 4MiB를 덧붙여 보내는 가짜 서버
+    -> message_key == MP4_RANGE_MISMATCH, 내준 바이트 < 본문 전체
+    """
+    built = build_mp4([video_spec(), audio_spec()])
+    padding = bytes(4 * 1024 * 1024)
+    server = RangeServer(built.data, body=lambda piece: piece + padding)
+    monkeypatch.setattr(mp4_module, "get_thread_session", lambda: server)
+
+    with pytest.raises(Mp4Error) as info:
+        fetch_mp4_index("https://example.invalid/video.mp4")
+
+    assert info.value.message_key == MP4_RANGE_MISMATCH
+    assert 0 < server.responses[0].bytes_handed < len(built.data) + len(padding)
+
+
+def test_fetch_mp4_index_rejects_body_shorter_than_granted_range(monkeypatch):
+    """fetch_mp4_index는 본문이 Content-Range가 말한 길이보다 짧으면 거부해야 한다.
+
+    Content-Range는 정직하게 적고 본문의 마지막 3바이트를 빼고 보내는 가짜 서버
+    -> message_key == MP4_RANGE_MISMATCH
+    """
+    built = build_mp4([video_spec(), audio_spec()])
+    server = RangeServer(built.data, body=lambda piece: piece[:-3])
+    monkeypatch.setattr(mp4_module, "get_thread_session", lambda: server)
+
+    with pytest.raises(Mp4Error) as info:
+        fetch_mp4_index("https://example.invalid/video.mp4")
+
+    assert info.value.message_key == MP4_RANGE_MISMATCH
+
+
+@pytest.mark.parametrize(
+    "content_range",
+    [
+        lambda first, last, total: f"bytes {first + 1}-{last + 1}/{total}",  # 시작이 다르다
+        lambda first, last, total: f"bytes {first}-{last + 5}/{total}",  # 끝이 요청보다 뒤다
+        lambda first, last, total: (
+            f"bytes {first}-{last - 5}/{total}"
+        ),  # 끝이 앞인데 파일 끝도 아니다
+        lambda first, last, total: f"bytes {first}-{last - 5}/*",  # 끝이 앞인데 전체 크기를 모른다
+        lambda first, last, total: f"items {first}-{last}/{total}",  # 단위가 bytes가 아니다
+        lambda first, last, total: None,  # 머리가 없다
+    ],
+    ids=["start", "end-after", "end-before", "end-before-unknown-total", "unit", "missing"],
+)
+def test_fetch_mp4_index_rejects_content_range_that_differs_from_request(
+    monkeypatch, content_range
+):
+    """fetch_mp4_index는 206의 Content-Range가 요청한 범위와 다르면 본문을 읽지 않고 거부해야 한다.
+
+    요청 bytes=0-23 (파일은 그보다 길다), Content-Range를 6가지로 틀리게 적는 가짜 서버
+    -> message_key == MP4_RANGE_MISMATCH, 요청 1회, 내준 바이트 0
+    """
+    monkeypatch.setattr(mp4_module, "_FIRST_READ_BYTES", 24)
+    built = build_mp4([video_spec(), audio_spec()])
+    server = RangeServer(built.data, content_range=content_range)
+    monkeypatch.setattr(mp4_module, "get_thread_session", lambda: server)
+
+    with pytest.raises(Mp4Error) as info:
+        fetch_mp4_index("https://example.invalid/video.mp4")
+
+    assert info.value.message_key == MP4_RANGE_MISMATCH
+    assert len(server.responses) == 1
+    assert server.responses[0].bytes_handed == 0
+
+
+def test_fetch_mp4_index_accepts_exact_range_with_unknown_total(monkeypatch):
+    """fetch_mp4_index는 Content-Range의 전체 크기가 "*"여도 범위가 요청과 같으면 받아야 한다.
+
+    ftyp · mdat · moov, 한 번에 24바이트씩 읽어 모든 요청이 파일 안에 들어감, Content-Range = "bytes 시작-끝/*"
+    -> 프레임 12개
+    """
+    monkeypatch.setattr(mp4_module, "_FIRST_READ_BYTES", 24)
+    monkeypatch.setattr(mp4_module, "_HEADER_READ_BYTES", 24)
+    built = build_mp4([video_spec(), audio_spec()], moov_first=False)
+    server = RangeServer(
+        built.data, content_range=lambda first, last, total: f"bytes {first}-{last}/*"
+    )
+    monkeypatch.setattr(mp4_module, "get_thread_session", lambda: server)
+
+    index = fetch_mp4_index("https://example.invalid/video.mp4")
+
+    assert len(index.frame_pts) == 12
+
+
+def test_fetch_mp4_index_accepts_range_cut_at_end_of_file(monkeypatch):
+    """fetch_mp4_index는 파일이 요청보다 먼저 끝나 끝이 파일의 마지막 바이트인 응답을 받아야 한다.
+
+    파일 전체가 첫 요청(1MiB)보다 작음, Content-Range = "bytes 0-(파일 크기−1)/파일 크기"
+    -> 요청 1회, 프레임 12개
+    """
+    built = build_mp4([video_spec(), audio_spec()])
+    server = RangeServer(built.data)
+    monkeypatch.setattr(mp4_module, "get_thread_session", lambda: server)
+
+    index = fetch_mp4_index("https://example.invalid/video.mp4")
+
+    assert len(server.calls) == 1
+    assert len(index.frame_pts) == 12
 
 
 def test_fetch_mp4_index_propagates_http_error(monkeypatch):

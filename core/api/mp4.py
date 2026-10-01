@@ -19,6 +19,7 @@ moof에 흩어져 있어 이 방식으로 읽을 수 없다 — 조용히 틀린
 (``MetadataError``와 같은 방식).
 """
 
+import re
 import struct
 from collections import Counter
 from collections.abc import Callable, Iterator
@@ -35,6 +36,10 @@ MP4_MOOV_NOT_FOUND = "Video index not found"  # 파일 끝까지 moov가 없다
 MP4_INVALID = "Video index is damaged"  # 상자가 잘렸거나 표끼리 샘플 수가 맞지 않는다
 MP4_UNSUPPORTED = "Video index layout is not supported"  # 영상 트랙 없음·여러 구간 편집 목록 등
 MP4_RANGE_NOT_SUPPORTED = "Server does not support partial download"  # 범위 요청에 206이 아니다
+MP4_RANGE_MISMATCH = (
+    "Server returned a different range than requested"  # 206인데 범위·길이가 다르다
+)
+MP4_TOO_LONG = "Video is too long to read its index"  # 트랙의 샘플 수가 상한을 넘는다
 
 # 첫 범위 요청의 크기(바이트). moov가 파일 앞에 있고 이보다 작으면 요청 한 번으로 끝난다
 # — 10분짜리 표본의 moov가 약 340KB였다
@@ -52,6 +57,20 @@ _MAX_SCAN_STEPS = 16
 
 # 범위 요청의 타임아웃(초) — file 다운로더의 범위 요청과 같은 값
 _REQUEST_TIMEOUT = 30
+
+# 범위 응답 본문을 나눠 읽는 단위(바이트) — 요청한 크기를 넘는 본문은 이만큼만 더 읽고 버린다
+_READ_CHUNK_BYTES = 64 * 1024
+
+# 트랙 하나에서 받아들이는 최대 샘플 수 — 24시간 분량이다.
+#   영상: 60fps × 86,400초 = 5,184,000프레임
+#   오디오: 48,000Hz ÷ 1,024샘플(AAC 한 프레임) × 86,400초 = 4,050,000프레임
+# 12시간짜리 영상(영상 약 259만 · 오디오 약 203만 프레임)의 두 배다. 샘플 표는 샘플마다
+# 값을 펼쳐 들고 있어야 하므로, moov의 개수 칸을 그대로 믿으면 작은 파일이 수십억 개를
+# 선언해 메모리를 채울 수 있다 — 펼치기 전에 이 값으로 막는다
+_MAX_SAMPLES = {b"vide": 60 * 86_400, b"soun": 48_000 * 86_400 // 1_024}
+
+# Content-Range 머리의 모양 — "bytes 시작-끝/전체". 전체는 모르면 "*"다
+_CONTENT_RANGE = re.compile(r"\s*bytes\s+(\d+)-(\d+)/(\d+|\*)\s*")
 
 _CONTAINERS = (b"trak", b"edts", b"mdia", b"minf", b"stbl")
 
@@ -151,16 +170,24 @@ def fetch_mp4_index(url: str) -> Mp4Index:
     """mp4 주소에서 범위 요청으로 moov만 받아 색인을 만든다.
 
     요청에는 쿠키를 싣지 않는다 — file 다운로더가 같은 주소를 받는 방식과 같다.
-    서버가 범위 요청을 지키지 않으면(206이 아니면) 본문을 읽지 않고 거부한다.
-    그대로 읽으면 파일 전체를 받게 된다.
+
+    서버의 응답을 그대로 믿지 않는다. 받는 양이 요청한 만큼으로 묶여 있어야
+    서버가 무엇을 보내든 메모리에 올라가는 양이 정해진다.
+
+    - 206이 아니면 본문을 읽지 않고 거부한다. 그대로 읽으면 파일 전체를 받게 된다
+    - ``Content-Range``가 요청한 시작·끝과 같아야 한다. 끝은 파일이 요청보다 먼저
+      끝나는 경우에만 파일의 마지막 바이트여도 된다
+    - 본문은 나눠 읽고, ``Content-Range``가 말한 길이를 넘으면 그 자리에서 거부한다
 
     Raises:
-        Mp4Error: 범위 요청 미지원, moov 없음, 조각난 mp4, 손상된 색인
+        Mp4Error: 범위 요청 미지원, 요청과 다른 범위·길이의 응답, moov 없음, 조각난 mp4,
+            손상된 색인
         requests.RequestException: 연결 실패·타임아웃·HTTP 오류 상태
     """
 
     def read(offset: int, size: int) -> bytes:
-        headers = {"Range": f"bytes={offset}-{offset + size - 1}"}
+        last = offset + size - 1
+        headers = {"Range": f"bytes={offset}-{last}"}
         with get_thread_session().get(
             url, headers=headers, stream=True, timeout=_REQUEST_TIMEOUT
         ) as response:
@@ -169,9 +196,38 @@ def fetch_mp4_index(url: str) -> Mp4Index:
             response.raise_for_status()
             if response.status_code != 206:
                 raise Mp4Error(MP4_RANGE_NOT_SUPPORTED, f"status {response.status_code}")
-            return response.content
+            expected = _granted_length(response.headers.get("Content-Range"), offset, last)
+            body = bytearray()
+            for chunk in response.iter_content(chunk_size=_READ_CHUNK_BYTES):
+                body += chunk
+                if len(body) > expected:
+                    raise Mp4Error(MP4_RANGE_MISMATCH, f"본문이 {expected}바이트를 넘는다")
+            if len(body) != expected:
+                raise Mp4Error(MP4_RANGE_MISMATCH, f"본문 {len(body)}바이트 · 기대 {expected}")
+            return bytes(body)
 
     return read_mp4_index(read)
+
+
+def _granted_length(content_range: str | None, first: int, last: int) -> int:
+    """Content-Range가 요청(first~last)과 맞는지 확인하고 본문의 길이를 돌려준다.
+
+    시작은 요청과 같아야 한다. 끝은 요청과 같거나, 파일이 요청보다 먼저 끝나는
+    경우(전체 크기 − 1이 요청한 끝보다 앞)에 한해 파일의 마지막 바이트여야 한다.
+
+    Raises:
+        Mp4Error: 머리가 없거나 모양이 다르거나 범위가 요청과 다른 경우
+            (``MP4_RANGE_MISMATCH``)
+    """
+    match = _CONTENT_RANGE.fullmatch(content_range or "")
+    if match is None:
+        raise Mp4Error(MP4_RANGE_MISMATCH, f"Content-Range {content_range!r}")
+    got_first, got_last = int(match.group(1)), int(match.group(2))
+    file_last = None if match.group(3) == "*" else int(match.group(3)) - 1
+    ends_at_file_end = file_last is not None and got_last == file_last and file_last < last
+    if got_first != first or not (got_last == last or ends_at_file_end):
+        raise Mp4Error(MP4_RANGE_MISMATCH, f"요청 {first}-{last} · Content-Range {content_range!r}")
+    return got_last - first + 1
 
 
 def parse_moov(moov: bytes) -> Mp4Index:
@@ -186,7 +242,8 @@ def parse_moov(moov: bytes) -> Mp4Index:
     Raises:
         Mp4Error: mvex가 있는 경우(``MP4_FRAGMENTED``), 상자가 잘렸거나 표의 샘플 수가
             서로 다른 경우(``MP4_INVALID``), 영상 트랙이 없거나 편집 목록에 구간이
-            여럿인 경우(``MP4_UNSUPPORTED``)
+            여럿인 경우(``MP4_UNSUPPORTED``), 트랙의 샘플 수가 상한을 넘는
+            경우(``MP4_TOO_LONG``)
     """
     try:
         return _parse_moov(moov)
@@ -232,10 +289,23 @@ def _timescale(data: bytes, body: int) -> int:
     return struct.unpack_from(">I", data, position)[0]
 
 
-def _u32_table(data: bytes, body: int, columns: int) -> list[tuple[int, ...]]:
+def _entry_count(data: bytes, span: tuple[int, int], entry_bytes: int, at: int = 4) -> int:
+    """표의 항목 수 칸(본문의 at 위치)을 읽고, 그만큼의 항목이 상자 안에 들어가는지 확인한다.
+
+    개수 칸을 그대로 믿고 읽으면 상자 밖의 바이트를 표로 읽거나, 개수만큼의 형식
+    문자열·리스트를 먼저 만들다 메모리가 찬다.
+    """
+    body, body_end = span
+    count = struct.unpack_from(">I", data, body + at)[0]
+    if count * entry_bytes > body_end - (body + at + 4):
+        raise Mp4Error(MP4_INVALID, f"항목 {count}개가 상자 크기를 넘는다")
+    return count
+
+
+def _u32_table(data: bytes, span: tuple[int, int], columns: int) -> list[tuple[int, ...]]:
     """버전·플래그(4) + 항목 수(4) 뒤에 32비트 열이 columns개씩 놓인 표를 읽는다."""
-    count = struct.unpack_from(">I", data, body + 4)[0]
-    values = struct.unpack_from(f">{count * columns}I", data, body + 8)
+    count = _entry_count(data, span, columns * 4)
+    values = struct.unpack_from(f">{count * columns}I", data, span[0] + 8)
     return [values[i : i + columns] for i in range(0, len(values), columns)]
 
 
@@ -340,17 +410,22 @@ def _parse_track(data: bytes, start: int, end: int, movie_timescale: int) -> _Ra
     if timescale <= 0:
         raise Mp4Error(MP4_INVALID, "timescale이 0이다")
 
-    sizes = _sample_sizes(data, boxes[b"stsz"][0])
-    count = len(sizes)
-    deltas = [delta for run, delta in _u32_table(data, boxes[b"stts"][0], 2) for _ in range(run)]
-    if len(deltas) != count:
-        raise Mp4Error(MP4_INVALID, f"stts {len(deltas)}개 · stsz {count}개")
+    # 샘플 수는 stsz가 정한다. 다른 표는 펼치기 전에 개수 합이 이 값과 같은지부터 본다
+    count = struct.unpack_from(">I", data, boxes[b"stsz"][0] + 8)[0]
+    if count > _MAX_SAMPLES[handler]:
+        raise Mp4Error(MP4_TOO_LONG, f"{handler!r} 샘플 {count}개 · 상한 {_MAX_SAMPLES[handler]}")
+    sizes = _sample_sizes(data, boxes[b"stsz"], count)
+    time_runs = _u32_table(data, boxes[b"stts"], 2)
+    declared = sum(run for run, _delta in time_runs)
+    if declared != count:
+        raise Mp4Error(MP4_INVALID, f"stts {declared}개 · stsz {count}개")
+    deltas = [delta for run, delta in time_runs for _ in range(run)]
     decode_times = [0, *accumulate(deltas)][:count]
     composition = _composition_offsets(data, boxes.get(b"ctts"), count)
     empty_edit, media_time = _edit_list(data, boxes.get(b"elst"), movie_timescale)
     if b"stss" in boxes:
         # stss의 샘플 번호는 1부터다
-        sync_samples = tuple(row[0] - 1 for row in _u32_table(data, boxes[b"stss"][0], 1))
+        sync_samples = tuple(row[0] - 1 for row in _u32_table(data, boxes[b"stss"], 1))
     else:
         sync_samples = tuple(range(count))  # stss가 없으면 모든 샘플이 단독 디코드 가능하다
 
@@ -366,26 +441,30 @@ def _parse_track(data: bytes, start: int, end: int, movie_timescale: int) -> _Ra
     )
 
 
-def _sample_sizes(data: bytes, body: int) -> list[int]:
-    """stsz — 샘플별 크기. 고정 크기 칸이 0이 아니면 모든 샘플이 그 크기다."""
-    uniform, count = struct.unpack_from(">II", data, body + 4)
+def _sample_sizes(data: bytes, span: tuple[int, int], count: int) -> list[int]:
+    """stsz — 샘플별 크기. 고정 크기 칸이 0이 아니면 모든 샘플이 그 크기다.
+
+    count는 호출자가 상한을 확인한 샘플 수다. 고정 크기일 때는 표가 없어 상자 크기로
+    개수를 가늠할 수 없으므로, 상한 확인이 유일한 방어다.
+    """
+    uniform = struct.unpack_from(">I", data, span[0] + 4)[0]
     if uniform:
         return [uniform] * count
-    return list(struct.unpack_from(f">{count}I", data, body + 12))
+    _entry_count(data, span, 4, at=8)
+    return list(struct.unpack_from(f">{count}I", data, span[0] + 12))
 
 
 def _composition_offsets(data: bytes, span: tuple[int, int] | None, count: int) -> list[int]:
     """ctts — 샘플별 (PTS − DTS). 상자가 없으면 전부 0이다."""
     if span is None:
         return [0] * count
-    body = span[0]
-    runs = struct.unpack_from(">I", data, body + 4)[0]
+    runs = _entry_count(data, span, 8)
     # 버전 0은 부호 없는 값이지만 음수를 넣는 파일이 있어 버전과 무관하게 부호 있는 값으로 읽는다
-    values = struct.unpack_from(">" + "Ii" * runs, data, body + 8)
-    offsets = [values[i + 1] for i in range(0, len(values), 2) for _ in range(values[i])]
-    if len(offsets) != count:
-        raise Mp4Error(MP4_INVALID, f"ctts {len(offsets)}개 · stsz {count}개")
-    return offsets
+    values = struct.unpack_from(">" + "Ii" * runs, data, span[0] + 8)
+    declared = sum(values[0::2])
+    if declared != count:
+        raise Mp4Error(MP4_INVALID, f"ctts {declared}개 · stsz {count}개")
+    return [values[i + 1] for i in range(0, len(values), 2) for _ in range(values[i])]
 
 
 def _edit_list(
@@ -422,12 +501,11 @@ def _sample_offsets(
     구간으로 적고, stco/co64는 청크의 시작 위치를 적는다.
     """
     if b"co64" in boxes:
-        body = boxes[b"co64"][0]
-        chunk_count = struct.unpack_from(">I", data, body + 4)[0]
-        chunk_offsets = struct.unpack_from(f">{chunk_count}Q", data, body + 8)
+        chunk_count = _entry_count(data, boxes[b"co64"], 8)
+        chunk_offsets = struct.unpack_from(f">{chunk_count}Q", data, boxes[b"co64"][0] + 8)
     else:
-        chunk_offsets = tuple(row[0] for row in _u32_table(data, boxes[b"stco"][0], 1))
-    runs = _u32_table(data, boxes[b"stsc"][0], 3)
+        chunk_offsets = tuple(row[0] for row in _u32_table(data, boxes[b"stco"], 1))
+    runs = _u32_table(data, boxes[b"stsc"], 3)
     if not runs and sizes:
         raise Mp4Error(MP4_INVALID, "stsc가 비어 있다")
 
