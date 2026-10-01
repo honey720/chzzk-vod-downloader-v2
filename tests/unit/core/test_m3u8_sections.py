@@ -35,6 +35,7 @@ ffmpeg가 입력에서 추정한 비트레이트가 들어가는데, 그 값은 
 
 import os
 import subprocess
+from fractions import Fraction
 
 import pytest
 
@@ -55,6 +56,7 @@ from core.utils.paths import build_section_output_paths, temp_dir_for
 from core.utils.selections import (
     SELECTION_CROSSES_BREAK,
     SELECTION_OUT_OF_RANGE,
+    SELECTION_TOO_SHORT,
     SelectionError,
 )
 from tests.unit.core.range_host import RangeHost
@@ -743,6 +745,74 @@ def test_section_run_that_fails_or_stops_leaves_the_file_at_output_path_alone(
     assert run.listing() == ["unused.mp4"]
     with open(run.data.output_path, "rb") as f:
         assert f.read() == b"keep"
+
+
+def test_engine_validates_sections_with_the_frame_rate_handed_in(host, sources, tmp_path):
+    """구간을 해석한 쪽이 정한 프레임률(Fmp4Head.frame_rate)을 넘기면 엔진은 그 값으로 구간을 검증해야 한다.
+
+    plain(30fps), 구간 1.1 ~ 1.3초. 넘긴 프레임률 1(프레임 번호 1 ~ 1) · 넘기지 않음(프레임 번호 33 ~ 39)
+    -> 1을 넘기면 실패 1건(SELECTION_TOO_SHORT), 넘기지 않으면 실패 0건
+    """
+    selection = TimeRange(1.1, 1.3)
+    head = fetch_fmp4_head(host.url("plain/media.m3u8"))
+    head.frame_rate = Fraction(1)
+    handed = _Run(host, tmp_path, [selection])
+    handed.data.content.fmp4_head = head
+
+    handed.start()
+    plain = _Run(host, tmp_path, [selection]).start()
+
+    assert len(handed.failures) == 1
+    assert handed.failures[0].message_key == SELECTION_TOO_SHORT
+    assert plain.failures == []
+
+
+def test_section_postprocess_copies_segments_in_fixed_size_chunks(
+    host, sources, tmp_path, monkeypatch
+):
+    """구간 후처리는 받은 세그먼트를 통째로 읽지 않고 정해진 크기씩 옮겨 이어야 한다.
+
+    plain, 구간 프레임 40~100 (세그먼트 0~3), 옮기는 크기를 1,000바이트로 낮추고 세그먼트 파일의 read를 기록
+    -> 세그먼트 파일에서 한 번에 읽은 가장 큰 크기가 1,000바이트 이하, 패킷은 전부 이은 파일에서 자른 것과 같다
+    """
+    source = sources["plain"]
+    monkeypatch.setattr(m3u8_module, "_JOIN_CHUNK_BYTES", 1000)
+    largest = []
+    real_open = open
+
+    class Recording:
+        """세그먼트 파일의 read가 돌려준 길이를 적는 대역."""
+
+        def __init__(self, file):
+            self._file = file
+
+        def read(self, size=-1):
+            data = self._file.read(size)
+            largest.append(len(data))
+            return data
+
+        def seek(self, *args):
+            return self._file.seek(*args)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            self._file.close()
+
+    def recording_open(path, mode="r", *args, **kwargs):
+        file = real_open(path, mode, *args, **kwargs)
+        return Recording(file) if mode == "rb" and str(path).endswith(".m4v") else file
+
+    monkeypatch.setattr(m3u8_module, "open", recording_open, raising=False)
+
+    run = _Run(host, tmp_path, [source.selection(40, 100)]).start()
+
+    assert run.failures == []
+    assert largest  # 세그먼트 파일을 이 대역으로 읽었다
+    assert max(largest) <= 1000
+    assert min(len(source.files[name]) for name in source.playlist.segments[:4]) > 1000
+    assert _packets(run.paths[0]) == _reference(source, 40, 100, tmp_path)
 
 
 # ================================================================ 전체 다운로드 (보존)

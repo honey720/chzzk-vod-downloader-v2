@@ -294,3 +294,57 @@ class TestSameHeightTracksAreMerged:
         # 클립 응답에는 비트레이트가 없다 — 먼저 나온 트랙이 남는다(결정적)
         assert sorted_reps == [[720, "https://c.invalid/720.mp4"], [1080, "https://c.invalid/1080_first.mp4"]]
         assert (auto_resolution, auto_base_url) == (1080, "https://c.invalid/1080_first.mp4")
+
+
+class TestGetVideoM3u8Variant:
+    """NetworkManager.get_video_m3u8_variant — 고른 해상도의 주소와 선언된 프레임률 (#309)."""
+
+    MASTER = (
+        "#EXTM3U\n"
+        "#EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1280x720,FRAME-RATE=30.000\n"
+        "720/playlist.m3u8\n"
+        "#EXT-X-STREAM-INF:BANDWIDTH=8000000,RESOLUTION=1920x1080,FRAME-RATE=59.940\n"
+        "1080/playlist.m3u8\n"
+        "#EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION=852x480\n"
+        "480/playlist.m3u8\n"
+    )
+    JSON = '{"media": [{"path": "https://example.invalid/master.m3u8"}]}'
+
+    @pytest.mark.parametrize(
+        ("resolution", "path", "rate"),
+        [(1080, "1080", Fraction(2997, 50)), (720, "720", Fraction(30)), (480, "480", None)],
+    )
+    def test_returns_the_frame_rate_declared_for_the_chosen_resolution(
+        self, monkeypatch, resolution, path, rate
+    ):
+        """get_video_m3u8_variant는 고른 해상도의 주소와, 그 변형의 FRAME-RATE(없으면 None)를 돌려줘야 한다.
+
+        변형 셋(720p 30.000 · 1080p 59.940 · 480p 속성 없음), 주석의 해상도
+        -> (그 해상도의 플레이리스트 주소, 적힌 글자 그대로의 분수 또는 None)
+        """
+        monkeypatch.setattr(
+            network._session, "get", lambda url, **kw: MockResponse(text=self.MASTER)
+        )
+
+        variant = NetworkManager.get_video_m3u8_variant(self.JSON, resolution, {})
+
+        assert variant == (f"https://example.invalid/{path}/playlist.m3u8", rate)
+
+    def test_base_url_is_the_address_of_the_same_variant(self, monkeypatch):
+        """get_video_m3u8_base_url은 get_video_m3u8_variant가 고른 변형의 주소를 돌려주고 요청은 한 번이어야 한다.
+
+        같은 마스터 플레이리스트, 해상도 1080
+        -> 주소 == variant의 첫 값, 요청 1건
+        """
+        calls = []
+
+        def fake_get(url, **kwargs):
+            calls.append(url)
+            return MockResponse(text=self.MASTER)
+
+        monkeypatch.setattr(network._session, "get", fake_get)
+
+        base_url = NetworkManager.get_video_m3u8_base_url(self.JSON, 1080, {})
+
+        assert base_url == "https://example.invalid/1080/playlist.m3u8"
+        assert calls == ["https://example.invalid/master.m3u8"]

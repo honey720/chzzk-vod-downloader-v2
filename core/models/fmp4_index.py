@@ -90,6 +90,9 @@ class Fmp4Head:
     init: Fmp4Init  # init_data를 해석한 결과
     # 세그먼트 인덱스 → 그 세그먼트의 moof만 읽어 해석한 결과. 읽은 것만 들어 있다
     segments: dict[int, Fmp4Segment] = field(default_factory=dict)
+    # 구간을 해석한 쪽이 정한 프레임률(core.utils.fmp4_sections.choose_frame_rate). 구간의
+    # 시각을 이 값으로 만들었다 — 엔진이 같은 값으로 검증한다. None이면 엔진이 정한다
+    frame_rate: Fraction | None = None
 
 
 @dataclass(frozen=True)

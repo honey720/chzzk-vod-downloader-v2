@@ -23,6 +23,7 @@ from core.api.fmp4 import (
     fmp4_origin,
     parse_init_segment,
     parse_media_segment,
+    read_media_segment,
     scan_moof,
 )
 from core.api.mp4 import MP4_INVALID, MP4_TOO_LONG, MP4_UNSUPPORTED, Mp4Error
@@ -834,5 +835,78 @@ def test_parse_media_segment_rejects_init_whose_tracks_share_an_id():
 
     with pytest.raises(Mp4Error) as info:
         parse_media_segment(_video_segment(), clashing)
+
+    assert info.value.message_key == MP4_INVALID
+
+
+# ================================================================ 읽기 함수로 moof만 읽기 (#309)
+
+
+def _logged_reader(data: bytes, log: list[tuple[int, int]]):
+    """bytes를 파일처럼 읽어 주는 읽기 함수 — 실제로 돌려준 (위치, 길이)를 log에 남긴다."""
+
+    def read(offset: int, size: int) -> bytes:
+        found = data[offset : offset + size]
+        log.append((offset, len(found)))
+        return found
+
+    return read
+
+
+def test_read_media_segment_matches_parse_without_reading_mdat_bodies():
+    """read_media_segment는 mdat 본문을 읽지 않고 parse_media_segment와 같은 결과를 내야 한다.
+
+    moof 둘짜리 세그먼트(영상 4샘플씩), mdat 본문 100,000바이트씩
+    -> 결과 == parse_media_segment(전체), 읽은 바이트의 합 < 2,000 (세그먼트는 20만 바이트가 넘는다)
+    """
+    data = media_segment(
+        [
+            Fragment([Traf(VIDEO, [_reordered()], decode_time=n * 400)], mdat_size=100_000)
+            for n in range(2)
+        ]
+    )
+    init = _init()
+    log: list[tuple[int, int]] = []
+
+    segment = read_media_segment(_logged_reader(data, log), init)
+
+    assert segment == parse_media_segment(data, init)
+    assert segment.fragments == 2
+    assert len(data) > 200_000
+    assert sum(length for _offset, length in log) < 2_000
+
+
+def test_read_media_segment_stops_at_an_mdat_that_runs_to_the_end():
+    """read_media_segment는 크기 0(끝까지)인 mdat를 만나면 그 앞의 moof까지만 읽어야 한다.
+
+    moof 하나짜리 세그먼트의 mdat 크기 칸을 0으로 고쳐 씀
+    -> 영상 4샘플, moof 1개
+    """
+    data = bytearray(_video_segment())
+    struct.pack_into(">I", data, data.find(b"mdat") - 4, 0)
+
+    segment = read_media_segment(_logged_reader(bytes(data), []), _init())
+
+    assert (len(segment.video.decode_times), segment.fragments) == (4, 1)
+
+
+@pytest.mark.parametrize("damage", ["oversized", "truncated", "undersized"])
+def test_read_media_segment_rejects_a_damaged_box(monkeypatch, damage):
+    """read_media_segment는 mdat가 아닌 상자가 상한보다 크거나 잘렸거나 머리보다 작으면 손상 키로 거부해야 한다.
+
+    oversized: 상한을 16바이트로 낮춤 / truncated: moof 중간에서 자른 bytes / undersized: moof의 크기 칸을 4로 고침
+    -> message_key == MP4_INVALID
+    """
+    data = bytearray(_video_segment())
+    moof = data.find(b"moof") - 4
+    if damage == "oversized":
+        monkeypatch.setattr(fmp4_module, "_MAX_KEPT_BOX_BYTES", 16)
+    elif damage == "truncated":
+        del data[moof + 40 :]
+    else:
+        struct.pack_into(">I", data, moof, 4)
+
+    with pytest.raises(Mp4Error) as info:
+        read_media_segment(_logged_reader(bytes(data), []), _init())
 
     assert info.value.message_key == MP4_INVALID

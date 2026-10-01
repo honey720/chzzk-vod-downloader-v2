@@ -63,7 +63,12 @@ from core.models.plan import TimeRange  # noqa: E402
 from core.services import metadata_service  # noqa: E402
 from core.services.download_service import DownloadService  # noqa: E402
 from core.services.metadata_service import MetadataError  # noqa: E402
-from core.utils.fmp4_sections import frame_rate_of, plan_fmp4_sections  # noqa: E402
+from core.utils.fmp4_sections import (  # noqa: E402
+    FPS_DECLARED,
+    FPS_STANDARD,
+    choose_frame_rate,
+    plan_fmp4_sections,
+)
 from core.utils.mp4_ranges import selection_byte_ranges  # noqa: E402
 from core.utils.paths import build_output_path, build_section_output_paths  # noqa: E402
 from core.utils.selections import SelectionError, validate_selections  # noqa: E402
@@ -75,7 +80,11 @@ from core.utils.timecode import (  # noqa: E402
 )
 from core.models.download_data import DownloadData  # noqa: E402
 from app.download_logger import DownloadLogger  # noqa: E402
-from app.download_resolvers import resolve_aes_key, resolve_m3u8_base_url  # noqa: E402
+from app.download_resolvers import (  # noqa: E402
+    resolve_aes_key,
+    resolve_m3u8_base_url,
+    resolve_m3u8_variant,
+)
 from app.download_task import DownloadTask  # noqa: E402
 
 logger = logging.getLogger("headless")
@@ -219,10 +228,22 @@ def _resolve_sections(
     return selections, head
 
 
+def _fps_source_text(source: str) -> str:
+    """프레임률을 정한 경로를 로그에 찍을 글로 바꾼다."""
+    if source == FPS_DECLARED:
+        return "① 마스터 플레이리스트의 FRAME-RATE"
+    if source == FPS_STANDARD:
+        return "② 프레임 평균 간격 — 표준 비율"
+    return "③ 프레임 평균 간격 그대로"
+
+
 def _resolve_fmp4_sections(
     item: ContentItem, texts: list[str]
 ) -> tuple[tuple[TimeRange, ...], Fmp4Head] | None:
     """인코딩 전 다시보기의 구간 옵션을 검증해 TimeRange 목록으로 바꾼다. 받을 세그먼트와 프레임을 로그로 남긴다.
+
+    프레임률은 마스터 플레이리스트의 FRAME-RATE, 없으면 첫 세그먼트의 프레임 평균 간격으로
+    정하고(``choose_frame_rate``) 값과 경로를 로그로 남긴다 — 타임코드의 FF가 이 값으로 읽힌다.
 
     플레이리스트와 초기화 세그먼트, 그리고 구간의 양 끝이 든 세그먼트의 moof만 받는다.
     받은 것은 함께 돌려준다 — 엔진에 넘겨 다시 받지 않게 한다. 세그먼트의 크기는 받기
@@ -235,13 +256,17 @@ def _resolve_fmp4_sections(
         content = Content(
             content_type=ContentType.CHZZK_VIDEO_M3U8, url=item.vod_url, resolution=item.resolution
         )
-        base_url = resolve_m3u8_base_url(content)
+        base_url, declared = resolve_m3u8_variant(content)
         head = fetch_fmp4_head(base_url)
 
         def segment_at(index: int):
             return segment_frames(head, base_url, index)
 
-        fps = frame_rate_of(head.init, [segment_at(0)])
+        choice = choose_frame_rate(head.init, [segment_at(0)], declared)
+        fps = head.frame_rate = choice.rate  # 엔진이 같은 값으로 검증한다
+        logger.info(
+            "프레임률: %s = %s (%s)", fps, _format_fps(fps), _fps_source_text(choice.source)
+        )
         pairs = _parse_sections(texts, fps)
         violations = validate_selections(pairs, head.playlist.duration, fps)
         if violations:
@@ -249,7 +274,7 @@ def _resolve_fmp4_sections(
                 logger.error("구간 %d (%s): %s", number + 1, texts[number], ", ".join(keys))
             return None
         selections = tuple(TimeRange(start, end) for start, end in pairs)
-        sections = plan_fmp4_sections(head.playlist, head.init, selections, segment_at)
+        sections = plan_fmp4_sections(head.playlist, head.init, selections, segment_at, fps)
     except TimecodeError as e:
         logger.error("구간 형식 오류: %s", e)
         return None

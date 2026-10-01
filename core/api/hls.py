@@ -15,6 +15,7 @@ IV 규칙 (RFC 8216 §5.2): ``#EXT-X-KEY``에 ``IV`` 속성이 있으면 그 값
 import math
 import re
 from dataclasses import dataclass
+from fractions import Fraction
 
 # #EXT-X-KEY:METHOD=AES-128,URI="...",IV=0x... 의 속성 추출용
 _ATTR_RE = re.compile(r'([A-Z0-9-]+)=("[^"]*"|[^,]*)')
@@ -142,6 +143,27 @@ def parse_media_playlist(text: str) -> HlsPlaylist:
         discontinuities=tuple(discontinuities),
         init_uris=tuple(init_uris),
     )
+
+
+def stream_frame_rate(line: str) -> Fraction | None:
+    """마스터 플레이리스트의 ``#EXT-X-STREAM-INF`` 줄에서 FRAME-RATE를 정확한 비로 읽는다 (#309).
+
+    선언한 글자 그대로의 유리수다("60.000" → 60, "59.940" → 2997/50) — 다른 값으로
+    바꾸지 않는다(``core.utils.timecode.frame_rate``와 같은 원칙).
+
+    Returns:
+        프레임률. 그 줄에 속성이 없거나 0 이하이거나 수가 아니면 None
+    """
+    if not line.startswith("#EXT-X-STREAM-INF:"):
+        return None
+    text = _parse_attributes(line.split(":", 1)[1]).get("FRAME-RATE")
+    if not text:
+        return None
+    try:
+        rate = Fraction(text.strip())
+    except (ValueError, ZeroDivisionError):
+        return None
+    return rate if rate > 0 else None
 
 
 def _parse_extinf(line: str) -> float:

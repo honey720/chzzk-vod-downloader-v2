@@ -23,6 +23,11 @@
 세그먼트의 마지막 프레임이다. 플레이리스트의 길이가 마지막 프레임의 PTS보다 짧은 영상이
 있어, 시각으로 고르면 그 프레임에 닿지 못한다.
 
+프레임률(``choose_frame_rate``)은 타임코드의 FF 칸과 구간 검증의 프레임 단위를 정한다.
+마스터 플레이리스트가 선언한 값이 있으면 그것을, 없으면 읽은 프레임의 평균 간격을 쓴다.
+가장 많은 샘플 길이로 정하지 않는다 — timescale이 1000인 60fps 영상은 프레임 간격이
+17 · 17 · 16ms로 돌아, 그렇게 정하면 1000/17(58.8fps)이 되고 FF 59가 다음 초로 넘어간다.
+
 세그먼트의 프레임 정보는 주입받은 함수로 읽는다 — 이 모듈은 네트워크를 모른다.
 """
 
@@ -51,6 +56,27 @@ from core.utils.timecode import snap_to_frame
 # 세그먼트 하나를 넘지 않는 것이 정상이다. 넘으면 끝없이 넓히지 않고 있는 것으로 정한다
 _MAX_WIDEN_STEPS = 3
 
+# 프레임률을 정한 경로
+FPS_DECLARED = "declared"  # 마스터 플레이리스트의 FRAME-RATE
+FPS_STANDARD = "standard"  # 잰 평균 간격이 표준 비율과 맞았다
+FPS_MEASURED = "measured"  # 잰 평균 간격 그대로
+
+# 잰 프레임률을 견주는 표준 비율
+_STANDARD_FRAME_RATES = (
+    Fraction(24000, 1001),
+    Fraction(24),
+    Fraction(25),
+    Fraction(30000, 1001),
+    Fraction(30),
+    Fraction(50),
+    Fraction(60000, 1001),
+    Fraction(60),
+)
+
+# 잰 프레임률을 표준 비율로 보는 상대 오차의 상한 — 0.1%. 60과 60000/1001의 차이가 꼭
+# 이만큼이라, 둘 다 범위에 들면 더 가까운 쪽을 고른다
+_STANDARD_TOLERANCE = Fraction(1, 1000)
+
 # 오디오의 시작을 키프레임의 DTS와 견줄 때의 여유(초) — 오디오 샘플의 경계가 DTS와 같은
 # 시각에 놓였을 때 float 오차로 "뒤"라고 판정하지 않게 한다
 _AUDIO_SEEK_SLACK = 1e-6
@@ -75,10 +101,50 @@ class Fmp4Section:
         return self.last_segment - self.first_segment + 1
 
 
-def frame_rate_of(init: Fmp4Init, segments: Sequence[Fmp4Segment]) -> Fraction:
-    """세그먼트들의 영상 샘플 길이에서 프레임률을 구한다 — timescale ÷ 가장 많은 샘플 길이."""
-    durations = Counter(d for segment in segments for d in segment.video.durations)
-    return Fraction(init.video.timescale, durations.most_common(1)[0][0])
+@dataclass(frozen=True)
+class FrameRateChoice:
+    """정한 프레임률과, 그것을 어느 경로로 정했는지를 담는다."""
+
+    rate: Fraction  # 프레임률
+    source: str  # 정한 경로 — FPS_DECLARED · FPS_STANDARD · FPS_MEASURED
+
+
+def choose_frame_rate(
+    init: Fmp4Init, segments: Sequence[Fmp4Segment], declared: Fraction | None = None
+) -> FrameRateChoice:
+    """프레임률을 정한다 — 선언값, 없으면 읽은 프레임의 평균 간격.
+
+    1. ``declared``가 있으면 그 값 그대로다 (``FPS_DECLARED``)
+    2. 없으면 segments의 영상 프레임 전체에서 (마지막 PTS − 첫 PTS) ÷ (프레임 수 − 1)로
+       평균 간격을 재고, 그 프레임률이 표준 비율(24000/1001 · 24 · 25 · 30000/1001 · 30 ·
+       50 · 60000/1001 · 60) 가운데 가장 가까운 것과 상대 오차 0.1% 안이면 그 표준
+       비율이다 (``FPS_STANDARD``)
+    3. 어느 표준 비율과도 맞지 않으면 잰 값 그대로다 (``FPS_MEASURED``)
+
+    프레임이 하나뿐이면 간격을 잴 수 없어 그 프레임의 샘플 길이로 정한다(``FPS_MEASURED``).
+
+    Args:
+        init: 초기화 세그먼트
+        segments: 프레임 간격을 잴 세그먼트. 보통 첫 세그먼트 하나다
+        declared: 마스터 플레이리스트의 FRAME-RATE(선택한 해상도). 없으면 None
+
+    Raises:
+        ValueError: 선언값도 없고 segments에 영상 프레임도 없는 경우
+    """
+    if declared is not None and declared > 0:
+        return FrameRateChoice(declared, FPS_DECLARED)
+    timescale = init.video.timescale
+    times = [pts for segment in segments for pts in segment.video.presentation_times]
+    if len(times) >= 2 and max(times) > min(times):
+        measured = Fraction((len(times) - 1) * timescale, max(times) - min(times))
+        nearest = min(_STANDARD_FRAME_RATES, key=lambda rate: abs(measured - rate) / rate)
+        if abs(measured - nearest) / nearest <= _STANDARD_TOLERANCE:
+            return FrameRateChoice(nearest, FPS_STANDARD)
+        return FrameRateChoice(measured, FPS_MEASURED)
+    durations = Counter(d for segment in segments for d in segment.video.durations if d > 0)
+    if not durations:
+        raise ValueError("프레임률을 정할 수 없다 — 영상 프레임이 없다")
+    return FrameRateChoice(Fraction(timescale, durations.most_common(1)[0][0]), FPS_MEASURED)
 
 
 def plan_fmp4_sections(
@@ -86,6 +152,7 @@ def plan_fmp4_sections(
     init: Fmp4Init,
     selections: Sequence[TimeRange],
     segment_at: Callable[[int], Fmp4Segment],
+    fps: Fraction | None = None,
 ) -> tuple[Fmp4Section, ...]:
     """구간마다 받을 세그먼트 범위와 첫·끝 프레임을 정한다.
 
@@ -95,6 +162,9 @@ def plan_fmp4_sections(
         selections: 구간 목록. 순서가 구간 번호다
         segment_at: 세그먼트 인덱스를 받아 그 세그먼트의 프레임 정보(moof 해석)를
             돌려주는 함수. 같은 인덱스로 여러 번 불릴 수 있다 — 주는 쪽이 보관한다
+        fps: 구간을 해석한 쪽이 이미 정한 프레임률(``choose_frame_rate``). 구간의 시각을
+            만든 프레임률과 같아야 검증이 같은 프레임 단위로 된다. None이면 첫
+            세그먼트로 여기서 정한다
 
     Raises:
         SelectionError: 구간이 검증을 통과하지 못했거나(``validate_selections``의 키),
@@ -105,7 +175,8 @@ def plan_fmp4_sections(
         0.0,
         *accumulate(playlist.durations),
     ]  # starts[i] = 세그먼트 i의 플레이리스트 시작 시각
-    fps = frame_rate_of(init, [segment_at(0)])
+    if fps is None:
+        fps = choose_frame_rate(init, [segment_at(0)]).rate
     violations = validate_selections(selections, playlist.duration, fps)
     if violations:
         raise SelectionError(violations)

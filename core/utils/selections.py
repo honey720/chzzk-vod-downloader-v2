@@ -63,7 +63,8 @@ def validate_selections(
     규칙:
 
     - 순서 — 시작 < 끝 (``SELECTION_ORDER``)
-    - 범위 — 0 ≤ 시작, 끝 ≤ 영상 길이 (``SELECTION_OUT_OF_RANGE``)
+    - 범위 — 0 ≤ 시작, 끝 ≤ 영상 길이 (``SELECTION_OUT_OF_RANGE``). 끝이 길이(초)와
+      같으면 언제나 통과한다. 길이를 넘는 끝은 길이와 같은 프레임 번호일 때만 통과한다
     - 최소 길이 — 1프레임 (``SELECTION_TOO_SHORT``)
     - 중복 — 시작·끝 프레임이 둘 다 같은 구간이 있으면 그 구간 전부 (``SELECTION_DUPLICATE``)
     - 개수 — ``MAX_SELECTIONS``를 넘은 뒤쪽 구간 (``SELECTION_TOO_MANY``)
@@ -93,7 +94,10 @@ def validate_selections(
             start_frame, end_frame = frame_index(start, fps), frame_index(end, fps)
             if start >= end:
                 found.append(SELECTION_ORDER)
-            if start_frame < 0 or end_frame > duration_frames:
+            # 끝이 길이(초)를 넘지 않으면 프레임 번호가 커도 범위 안이다 — 끝은 반올림,
+            # 길이는 내림으로 프레임이 되어, 길이 × fps의 소수부가 .5 이상이면 끝 = 길이의
+            # 프레임 번호가 길이의 프레임 수보다 하나 크다
+            if start_frame < 0 or (end_frame > duration_frames and end > duration):
                 found.append(SELECTION_OUT_OF_RANGE)
             if start < end and end_frame - start_frame < 1:
                 found.append(SELECTION_TOO_SHORT)
@@ -114,7 +118,7 @@ def validate_selections(
 def reaches_end(end: float, duration: float, fps: FrameRate) -> bool:
     """구간의 끝이 영상 길이와 같은지 본다 — 프레임 단위로 견준다 (#309).
 
-    참이면 그 끝은 ``validate_selections``가 받아들이는 가장 뒤의 끝이다. 이런 구간의 끝
+    끝이 길이(초)와 같으면 언제나 참이다. 이런 구간의 끝
     프레임은 시각으로 고르지 않고 영상의 마지막 프레임으로 정한다 — 검증에 쓰는 길이가
     마지막 프레임의 PTS보다 짧은 영상에서는 시각으로 골라서는 마지막 프레임에 닿지 못한다.
 

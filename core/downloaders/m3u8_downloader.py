@@ -27,7 +27,8 @@ m3u8 고유 부분만 남는다:
   구간이 같은 세그먼트를 쓰면 한 번만 받는다. ``Content.fmp4_head``로 이미 받은 것이
   오면 그것을 쓰고, 초기화 세그먼트는 다시 받지 않는다
 - postprocess: 구간마다 초기화 세그먼트 + 그 구간의 세그먼트를 순서대로 이은 임시
-  fMP4를 만들고 hybrid_cut으로 자른다. 하나라도 실패하면 다운로드 전체가 실패다
+  fMP4를 만들고 hybrid_cut으로 자른다. 하나라도 실패하면 다운로드 전체가 실패다.
+  세그먼트는 통째로 읽지 않는다 — moof만 골라 읽고 본문은 고정 크기 버퍼로 옮긴다
 - 임시 폴더(받은 세그먼트 · 이은 파일)는 구간을 모두 만들면 지운다. 컷이 실패하면
   남긴다 — 후처리 실패가 세그먼트를 남기는 것(#92)과 같은 규칙이다
 - 전체 다운로드(구간 없음)의 경로는 그대로다
@@ -37,11 +38,13 @@ import os
 import shutil
 import time as tm
 from bisect import bisect_left
+from collections.abc import Callable
+from typing import BinaryIO
 from urllib.parse import urljoin
 
 import requests
 
-from core.api.fmp4 import build_fmp4_index, fmp4_origin, parse_media_segment
+from core.api.fmp4 import build_fmp4_index, fmp4_origin, read_media_segment
 from core.api.hls_fmp4 import fetch_fmp4_head, segment_frames
 from core.api.mp4 import Mp4Error
 from core.api.session import get_thread_session
@@ -59,6 +62,10 @@ from core.utils.paths import choose_temp_dir, release_output_paths
 # 받은 세그먼트의 프레임 PTS를 prepare가 정한 PTS와 견줄 때 허용하는 차이(초) — 같은
 # 계산을 두 번 한 값이라 같아야 하고, float 오차만 흡수한다
 _PTS_TOLERANCE = 1e-6
+
+# 받은 세그먼트를 구간의 임시 파일로 이어 쓸 때 한 번에 옮기는 크기(바이트) — 1MB.
+# 세그먼트를 통째로 메모리에 올리지 않는다
+_JOIN_CHUNK_BYTES = 1024 * 1024
 
 
 class M3U8Downloader(BaseDownloader):
@@ -160,6 +167,7 @@ class M3U8Downloader(BaseDownloader):
             head.init,
             content.selections,
             lambda index: segment_frames(head, self.s.base_url, index),
+            head.frame_rate,
         )
         # 두 구간이 같은 세그먼트를 쓰면 한 번만 받는다
         wanted = sorted(
@@ -287,9 +295,10 @@ class M3U8Downloader(BaseDownloader):
                     out.write(head.init_data)
                     for index in range(section.first_segment, section.last_segment + 1):
                         with open(self._segment_path(index), "rb") as f:
-                            data = f.read()
-                        parsed.append(parse_media_segment(data, head.init))
-                        out.write(data)
+                            # 프레임 정보는 moof만 골라 읽고, 본문은 버퍼 크기만큼씩 옮긴다
+                            parsed.append(read_media_segment(_reader(f), head.init))
+                            f.seek(0)
+                            shutil.copyfileobj(f, out, _JOIN_CHUNK_BYTES)
                 index = build_fmp4_index(head.init, parsed, section.origin)
                 # 이은 파일은 VOD의 중간에서 시작한다 — ffmpeg의 -ss는 파일의 시작부터 센다
                 input_start = float(fmp4_origin(head.init, parsed[0]) - section.origin)
@@ -398,6 +407,16 @@ class M3U8Downloader(BaseDownloader):
                     self._requeue_failed((index, segment), part_num, e)
                 self.logger.log_error(f"Part {part_num} download failed", e)
                 return part_num
+
+
+def _reader(file: BinaryIO) -> Callable[[int, int], bytes]:
+    """열린 파일을 ``read(offset, size)`` 읽기 함수로 감싼다."""
+
+    def read(offset: int, size: int) -> bytes:
+        file.seek(offset)
+        return file.read(size)
+
+    return read
 
 
 def _frame_at(frames: CutFrames, pts: float) -> int:

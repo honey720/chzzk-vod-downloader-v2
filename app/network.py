@@ -11,6 +11,7 @@ from core.api.dash import (
     parse_frame_rates,
     parse_sea_manifest,
 )
+from core.api.hls import stream_frame_rate
 from core.api.representations import dedupe_by_resolution
 from core.api.url_parser import extract_content_no
 from core.models.content import VideoInfo
@@ -266,6 +267,18 @@ class NetworkManager:
         path는 playback JSON이 알려준 주소다 — https만 검사한다(호스트는 잠그지
         않는다). 리다이렉트 홉도 같은 검사를 거친다.
         """
+        return NetworkManager.get_video_m3u8_variant(json_str, resolution, cookies)[0]
+
+    @staticmethod
+    def get_video_m3u8_variant(
+        json_str: str, resolution: int, cookies: dict | None = None
+    ) -> tuple[str, Fraction | None]:
+        """마스터 플레이리스트에서 그 해상도의 (base_url, 선언된 프레임률)을 읽는다 (#309).
+
+        요청과 변형을 고르는 규칙은 ``get_video_m3u8_base_url``과 같다(그 메서드가 이것을
+        부른다). 프레임률은 고른 변형의 ``#EXT-X-STREAM-INF``에 FRAME-RATE가 있을 때만
+        있고, 없으면 None이다.
+        """
         data = json.loads(json_str)
         media = data.get("media", [])
         path = media[0].get("path")
@@ -281,7 +294,7 @@ class NetworkManager:
                 # 다음 줄이 해당 해상도의 세부 플레이리스트 경로
                 relative_path = content[i + 1].strip()
                 base_url = urljoin(path, relative_path)
-                return base_url
+                return base_url, stream_frame_rate(line.strip())
 
         raise ValueError(f"{resolution} 해상도 스트림을 찾을 수 없습니다.")
     

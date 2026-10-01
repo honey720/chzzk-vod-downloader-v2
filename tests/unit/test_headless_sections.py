@@ -11,10 +11,24 @@ from types import SimpleNamespace
 import pytest
 
 import scripts.headless_download as headless
+from core.api.fmp4 import parse_init_segment, parse_media_segment
+from core.api.hls import parse_media_playlist
+from core.models.fmp4_index import Fmp4Head
 from core.models.content import VideoInfo
 from core.models.plan import TimeRange
 from core.utils.paths import release_output_paths
 from core.utils.timecode import TIMECODE_FRAME_OUT_OF_RANGE, TIMECODE_INVALID_FORMAT, TimecodeError
+from tests.unit.core.fmp4_builder import (
+    KEY,
+    NON_KEY,
+    Fragment,
+    InitTrack,
+    Run,
+    Sample,
+    Traf,
+    init_segment,
+    media_segment,
+)
 from scripts.headless_download import (
     _fetch_frame_rates,
     _format_fps,
@@ -329,3 +343,67 @@ def test_section_option_is_refused_for_encrypted_vod_and_clip(monkeypatch, tmp_p
 
     assert code == 2
     assert calls == []
+
+
+# ================================================================ 인코딩 전 다시보기의 프레임률
+
+
+def _fmp4_head(durations: list[int]):
+    """영상 샘플 길이가 durations(ms)인 세그먼트 하나짜리 다시보기 — (Fmp4Head, 그 세그먼트)."""
+    init_data = init_segment([InitTrack(1, b"vide", 1000, trex=(0, 10, NON_KEY))])
+    init = parse_init_segment(init_data)
+    frames = [
+        Sample(duration=d, size=10, flags=KEY if n == 0 else NON_KEY)
+        for n, d in enumerate(durations)
+    ]
+    segment = parse_media_segment(media_segment([Fragment([Traf(1, [Run(frames)])])]), init)
+    playlist = parse_media_playlist(
+        "\n".join(
+            [
+                "#EXTM3U",
+                '#EXT-X-MAP:URI="init.mp4"',
+                "#EXTINF:4.000000,",
+                "seg-0.m4s",
+                "#EXT-X-ENDLIST",
+            ]
+        )
+    )
+    return Fmp4Head(playlist=playlist, init_data=init_data, init=init, segments={0: segment})
+
+
+@pytest.mark.parametrize(
+    ("declared", "rate", "source"),
+    [
+        (Fraction(2997, 50), Fraction(2997, 50), "①"),
+        (None, Fraction(60), "②"),
+    ],
+    ids=["declared", "measured-standard"],
+)
+def test_fmp4_sections_log_the_frame_rate_and_hand_it_to_the_engine(
+    monkeypatch, caplog, declared, rate, source
+):
+    """인코딩 전 다시보기의 구간 해석은 정한 프레임률과 경로를 로그로 남기고, 받은 것에 실어 엔진으로 넘겨야 한다.
+
+    프레임 간격 17 · 17 · 16ms인 4초 세그먼트 하나, 마스터 플레이리스트의 FRAME-RATE는 주석의 값.
+    --section 00:00:01:00-00:00:01:59
+    -> head.frame_rate == 기대값, "프레임률:" 로그에 그 값과 경로 번호, 구간의 끝 == 1 + 59 ÷ 프레임률
+    """
+    head = _fmp4_head([17, 17, 16] * 80)
+    monkeypatch.setattr(
+        headless, "resolve_m3u8_variant", lambda content: ("https://x.invalid/p.m3u8", declared)
+    )
+    monkeypatch.setattr(headless, "fetch_fmp4_head", lambda url: head)
+    item = SimpleNamespace(vod_url="https://chzzk.naver.com/video/1", resolution=1080)
+
+    with caplog.at_level(logging.INFO, logger="headless"):
+        resolved = headless._resolve_fmp4_sections(item, ["00:00:01:00-00:00:01:59"])
+
+    assert resolved is not None
+    selections, handed = resolved
+    assert handed is head
+    assert head.frame_rate == rate
+    assert selections[0].end == pytest.approx(float(1 + Fraction(59) / rate))
+    messages = [r.getMessage() for r in caplog.records if r.name == "headless"]
+    line = next(message for message in messages if message.startswith("프레임률:"))
+    assert str(rate) in line
+    assert source in line

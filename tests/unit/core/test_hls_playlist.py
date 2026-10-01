@@ -6,10 +6,12 @@ core/api/hls.py(순수 파서)와 core/downloaders/decrypt.py(AES-128-CBC)의 �
 ``EXT-X-MEDIA-SEQUENCE`` 0, 세그먼트 확장자 .ts.
 """
 
+from fractions import Fraction
+
 import pytest
 from Crypto.Cipher import AES
 
-from core.api.hls import HlsKey, parse_media_playlist
+from core.api.hls import HlsKey, parse_media_playlist, stream_frame_rate
 from core.downloaders.decrypt import (
     AES_BLOCK_SIZE,
     TS_PACKET_SIZE,
@@ -195,3 +197,29 @@ def test_init_uris_lists_each_distinct_map_in_order():
 
     assert playlist.init_uris == ("one", "two")
     assert playlist.init_uri == "two"
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        (
+            "#EXT-X-STREAM-INF:BANDWIDTH=8000000,RESOLUTION=1920x1080,FRAME-RATE=60.000",
+            Fraction(60),
+        ),
+        ("#EXT-X-STREAM-INF:FRAME-RATE=59.940,RESOLUTION=1920x1080", Fraction(2997, 50)),
+        ('#EXT-X-STREAM-INF:CODECS="avc1.640028,mp4a.40.2",FRAME-RATE=30', Fraction(30)),
+        ("#EXT-X-STREAM-INF:BANDWIDTH=8000000,RESOLUTION=1920x1080", None),
+        ("#EXT-X-STREAM-INF:FRAME-RATE=0,RESOLUTION=1920x1080", None),
+        ("#EXT-X-STREAM-INF:FRAME-RATE=fast,RESOLUTION=1920x1080", None),
+        ("#EXT-X-MEDIA:TYPE=AUDIO,FRAME-RATE=60", None),  # 변형을 적는 줄이 아니다
+        ("1080/playlist.m3u8", None),
+    ],
+    ids=["60.000", "59.940", "after-quoted", "missing", "zero", "not-a-number", "other-tag", "uri"],
+)
+def test_stream_frame_rate_reads_the_declared_value_as_written(line, expected):
+    """stream_frame_rate는 #EXT-X-STREAM-INF 줄의 FRAME-RATE를 적힌 글자 그대로의 분수로 돌려주고, 없거나 읽을 수 없으면 None을 돌려줘야 한다.
+
+    주석의 경우마다 마스터 플레이리스트의 한 줄
+    -> 기대값
+    """
+    assert stream_frame_rate(line) == expected
