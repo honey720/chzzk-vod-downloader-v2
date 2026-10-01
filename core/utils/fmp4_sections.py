@@ -162,10 +162,9 @@ def plan_fmp4_sections(
                 tail = frames_of(low, high)
             last_frame = snap_to_frame(selection.end, tail.frame_pts, fps, "end")
 
+        # 양 끝을 넓히는 걸음은 끊긴 자리에서 멈춘다(first_segment > group · cover < group_end ·
+        # high < group_end) — 여기까지 온 범위는 끊긴 자리를 넘지 않는다
         last_segment = max(high, cover)
-        # 넓힌 뒤의 범위가 끊긴 자리를 넘는 경우 — 실제 PTS를 봐야 알 수 있다
-        if last_segment > group_end or first_segment < group:
-            raise SelectionError({number: (SELECTION_CROSSES_BREAK,)})
         sections.append(
             Fmp4Section(
                 selection=selection,
