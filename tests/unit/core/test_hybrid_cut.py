@@ -301,6 +301,22 @@ def test_cut_keeps_uneven_frame_intervals(uneven_source, tmp_path):
     assert check.ok, check.notes
 
 
+def test_cut_reads_and_keeps_non_square_pixel_ratio(tmp_path):
+    """화소 가로세로비가 1:1이 아닌 입력을 자르면 그 비율을 읽고 재인코딩 조각에도 같은 비율이 남아야 한다.
+
+    setsar=12/11로 만든 mp4(SPS의 aspect_ratio_idc 2), 프레임 10~40 (키프레임은 0뿐)
+    -> 원본 sar (12, 11), 조각 (whole,), check.ok
+    """
+    path = str(tmp_path / "source.mp4")
+    _ffmpeg(*_lavfi("320x240", 2), "-vf", "setsar=12/11", "-bf", "0", path)
+
+    result, check = _cut((path, _mp4_frames(path)), 10, 40, tmp_path)
+
+    assert result.source.video.sar == (12, 11)
+    assert _kinds(result) == ("whole",)
+    assert check.ok, check.notes
+
+
 # ================================================================ 컷 — fMP4
 
 

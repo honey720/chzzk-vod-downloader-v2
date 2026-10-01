@@ -79,6 +79,14 @@ _TS_SYNC_BYTE = 0x47
 _X264_PROFILES = {66: "baseline", 77: "main", 100: "high"}  # profile_idc → -profile:v 값
 _HIDDEN_PACKET = 0x4  # framecrc의 F= 값에서 편집 목록이 가린 패킷을 뜻하는 비트
 
+# aspect_ratio_idc → 화소 가로세로비 (H.264 표 E-1). 표에 없는 번호는 "명시 안 됨"으로 읽는다
+_SAR_BY_IDC = {
+    1: (1, 1), 2: (12, 11), 3: (10, 11), 4: (16, 11), 5: (40, 33), 6: (24, 11), 7: (20, 11),
+    8: (32, 11), 9: (80, 33), 10: (18, 11), 11: (15, 11), 12: (64, 33), 13: (160, 99),
+    14: (4, 3), 15: (3, 2), 16: (2, 1),
+}  # fmt: skip
+_EXTENDED_SAR = 255  # 비율을 sar_width · sar_height로 직접 적는 번호
+
 _SPS_FIELD = re.compile(r"\]\s+\d+\s+(\w+)\s+[01]+ = (-?\d+)")
 
 
@@ -483,8 +491,8 @@ def _read_params(path: str, reorder_delay: int) -> tuple[VideoParams, int | None
     ratio = fields.get("aspect_ratio_idc", 0)
     sar = (
         (fields.get("sar_width", 0), fields.get("sar_height", 0))
-        if ratio == 255
-        else (ratio, ratio)
+        if ratio == _EXTENDED_SAR
+        else _SAR_BY_IDC.get(ratio, (0, 0))
     )
     video = VideoParams(
         profile_idc=fields["profile_idc"],

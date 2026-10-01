@@ -69,7 +69,7 @@ class VideoParams:
     coded_width: int  # 부호화 가로(픽셀) — 매크로블록 수 × 16
     coded_height: int  # 부호화 세로(픽셀)
     crop: tuple[int, int, int, int]  # 잘라 낼 (왼쪽, 위, 오른쪽, 아래) 픽셀 수
-    sar: tuple[int, int]  # 화소 가로세로비 (1, 1)
+    sar: tuple[int, int]  # 화소 가로세로비 (가로, 세로). 스트림이 밝히지 않았으면 (0, 0)
     reorder_delay: int  # B프레임 재정렬 지연(프레임) — 키프레임의 (PTS − DTS)
 
 
