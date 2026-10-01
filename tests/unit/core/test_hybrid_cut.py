@@ -26,7 +26,7 @@ import core.utils.hybrid_cut as cut_module
 from core.api.fmp4 import build_fmp4_index, fmp4_origin, parse_init_segment, parse_media_segment
 from core.api.hls import parse_media_playlist
 from core.api.mp4 import parse_moov, read_mp4_index
-from core.models.cut import CutFrames
+from core.models.cut import CutFrames, CutPiece
 from core.utils.cut_check import check_cut
 from core.utils.ffmpeg import FFmpegTimeoutError, get_ffmpeg_exe, run_ffmpeg
 from core.utils.hybrid_cut import (
@@ -604,6 +604,30 @@ def test_encode_command_passes_timestamps_through(fmp4_source, tmp_path):
     assert _option(args, "-fps_mode") == "passthrough"
     assert _option(args, "-enc_time_base") == f"1:{frames.timescale}"
     assert _option(args, "-video_track_timescale") == str(frames.timescale)
+
+
+def test_encode_command_restores_reorder_delay_the_encoder_left_out():
+    """재인코딩 명령은 인코더가 지연을 주지 않은 조각의 DTS를 원본의 지연만큼 밀고 PTS는 그대로 둬야 한다.
+
+    10fps, timescale 1000, DTS = PTS − 0.1초(100틱), 조각 프레임 3 (키프레임 0의 GOP)
+    -> -bsf:v setts=pts=PTS:dts=DTS-not(STARTPTS-STARTDTS)*100
+    """
+    frames = _synthetic_frames()
+
+    args = cut_module._reorder_delay_args(frames, CutPiece("head", 3, 4))
+
+    assert args == ["-bsf:v", "setts=pts=PTS:dts=DTS-not(STARTPTS-STARTDTS)*100"]
+
+
+def test_encode_command_leaves_timestamps_alone_without_reorder_delay():
+    """재인코딩 명령은 원본에 재정렬 지연이 없으면 DTS를 고치는 옵션을 넣지 않아야 한다.
+
+    10fps, DTS == PTS (B프레임 없는 원본)
+    -> 옵션 없음
+    """
+    frames = _synthetic_frames(delay=0.0)
+
+    assert cut_module._reorder_delay_args(frames, CutPiece("head", 3, 4)) == []
 
 
 # ================================================================ 주변 함수

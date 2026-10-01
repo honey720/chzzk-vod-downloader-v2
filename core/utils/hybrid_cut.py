@@ -13,7 +13,8 @@
 
 - 프로파일·레벨·화소 형식·**부호화 크기와 크롭**을 원본 SPS에 맞춘다. 부호화
   크기가 다르면 조각이 바뀌는 곳에서 화면이 깜빡이는 플레이어가 있다
-- **B프레임 재정렬 지연**을 원본과 맞춘다. 다르면 이음매에서 DTS가 뒤로 간다
+- **B프레임 재정렬 지연**을 원본과 맞춘다. 다르면 이음매에서 DTS가 뒤로 간다.
+  프레임 수가 지연 이하인 짧은 조각은 인코더가 지연을 주지 않아 DTS를 따로 민다
 - 가운데 조각의 탐색은 **키프레임 시각에 정확히** 둔다. 조금이라도 앞에 두면
   앞 GOP가 통째로 딸려 오고 편집 목록이 그것을 가린다
 - 가운데 조각의 길이는 **DTS**로 준다. 복사에서는 -t가 DTS로 끊긴다
@@ -319,8 +320,32 @@ def _encode_command(
         "-t", _seconds(length),
         "-map", "0:v:0", "-an",
         *_x264_args(video, frames.timescale),
+        *_reorder_delay_args(frames, piece),
         "-f", "mp4", name,
     ]  # fmt: skip
+
+
+def _reorder_delay_args(frames: CutFrames, piece: CutPiece) -> list[str]:
+    """재인코딩 조각의 첫 패킷이 원본과 같은 재정렬 지연(PTS − DTS)을 갖게 하는 옵션.
+
+    libx264는 프레임 수가 재정렬 지연 이하인 조각에는 DTS에 지연을 주지 않는다
+    (DTS = PTS) — 지연이 1프레임이면 1프레임짜리 조각, 2프레임이면 1~2프레임짜리
+    조각이 그렇다. 그런 머리 조각 뒤에 복사 조각을 이으면 첫 패킷의 DTS가 같아져
+    DTS가 뒤로 가고, 꼬리 조각이면 원본과 지연이 다른 조각이 된다.
+
+    인코더가 지연을 주지 않은 조각(첫 패킷의 DTS == PTS)에 한해 모든 패킷의 DTS를
+    원본의 지연만큼 앞으로 민다. 프레임 수가 지연 이하인 조각에는 B프레임이 들어갈
+    수 없어 패킷이 표시 순서 그대로이므로, 같은 양만큼 밀어도 순서가 유지된다.
+    지연을 받은 조각은 건드리지 않는다.
+    """
+    key = frames.keyframes[bisect_right(frames.keyframes, piece.first) - 1]
+    ticks = round((frames.frame_pts[key] - frames.frame_dts[key]) * frames.timescale)
+    if ticks <= 0:
+        return []
+    # setts의 시각은 인코더의 timebase(-enc_time_base 1:<timescale>) 틱이다.
+    # not(x)는 x가 0일 때만 1 — 쉼표가 든 식은 필터 구분자와 겹쳐 쓰지 않는다.
+    # pts=PTS를 함께 적는다 — dts만 적으면 setts가 PTS도 같은 식으로 바꾼다
+    return ["-bsf:v", f"setts=pts=PTS:dts=DTS-not(STARTPTS-STARTDTS)*{ticks}"]
 
 
 def _copy_command(source_path: str, frames: CutFrames, piece: CutPiece, name: str) -> list[str]:
