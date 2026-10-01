@@ -3,9 +3,10 @@
 실제 ffmpeg(imageio-ffmpeg 동봉 — 기존 remux 테스트와 같은 바이너리)를 실행한다. 입력
 영상은 lavfi 소스로 테스트 안에서 몇 초짜리를 만든다. 저장소에 영상 파일을 두지 않는다.
 
-입력 두 가지:
+입력 세 가지:
 - mp4: 320x240 · 30fps · 4초(120프레임) · B프레임(재정렬 지연 1) · 키프레임 0·30·42·72·90
   (GOP 길이가 30 · 12 · 30 · 18 · 30프레임으로 고르지 않다)
+- 간격이 고르지 않은 mp4: 위와 같되 7프레임마다 한 프레임이 200틱(timescale 15360) 늦다
 - fMP4: 부호화 1280x736 + 아래 16줄 크롭 · 30fps · 4초(120프레임) · 재정렬 지연 2 ·
   키프레임 0·30·60·90 · 1초 세그먼트 넷을 초기화 세그먼트 뒤에 이어 붙인 파일
 
@@ -77,13 +78,32 @@ def mp4_source(tmp_path_factory) -> tuple[str, CutFrames]:
         "-x264-params", "b-pyramid=none:keyint=300:min-keyint=1:scenecut=0",
         path,
     )  # fmt: skip
+    return path, _mp4_frames(path)
 
+
+@pytest.fixture(scope="module")
+def uneven_source(tmp_path_factory) -> tuple[str, CutFrames]:
+    """프레임 간격이 고르지 않은 mp4 입력과 그 프레임 정보."""
+    path = str(tmp_path_factory.mktemp("cut_uneven") / "source.mp4")
+    _ffmpeg(
+        *_lavfi("320x240", 4),
+        # 30fps 격자(512틱)에서 7프레임마다 한 프레임(N % 7 == 3)을 200틱 늦춘다
+        "-vf", "settb=1/15360,setpts='N*512+if(eq(mod(N,7),3),200,0)'",
+        "-fps_mode", "passthrough", "-enc_time_base:v", "1:15360", "-video_track_timescale", "15360",
+        "-bf", "2", "-force_key_frames", "0,1,1.4,2.4,3",
+        "-x264-params", "b-pyramid=none:keyint=300:min-keyint=1:scenecut=0",
+        path,
+    )  # fmt: skip
+    return path, _mp4_frames(path)
+
+
+def _mp4_frames(path: str) -> CutFrames:
     def read(offset: int, size: int) -> bytes:
         with open(path, "rb") as f:
             f.seek(offset)
             return f.read(size)
 
-    return path, cut_frames_from_mp4(read_mp4_index(read))
+    return cut_frames_from_mp4(read_mp4_index(read))
 
 
 @pytest.fixture(scope="module")
@@ -178,6 +198,20 @@ def test_generated_fmp4_is_coded_larger_than_displayed(fmp4_source, tmp_path):
     assert frames.keyframes == FMP4_KEYFRAMES
 
 
+def test_generated_uneven_mp4_has_three_frame_intervals(uneven_source):
+    """만든 간격이 고르지 않은 mp4 입력은 프레임 간격이 세 가지여야 한다.
+
+    setpts로 7프레임마다 한 프레임을 200틱 늦춤 (timescale 15360, 한 프레임 512틱)
+    -> 간격 {312, 512, 712}틱, 키프레임 (0, 30, 42, 72, 90)
+    """
+    _path, frames = uneven_source
+
+    gaps = {round((b - a) * 15360) for a, b in zip(frames.frame_pts, frames.frame_pts[1:])}
+
+    assert gaps == {312, 512, 712}
+    assert frames.keyframes == MP4_KEYFRAMES
+
+
 # ================================================================ 컷 — mp4
 
 
@@ -252,6 +286,18 @@ def test_cut_from_first_frame_passes_every_check(mp4_source, tmp_path):
         ("mid", 0, 42),
         ("tail", 42, 51),
     ]
+    assert check.ok, check.notes
+
+
+def test_cut_keeps_uneven_frame_intervals(uneven_source, tmp_path):
+    """프레임 간격이 고르지 않은 입력을 자르면 재인코딩 조각의 프레임 시각도 원본과 같아야 한다.
+
+    간격 {312, 512, 712}틱인 mp4, 프레임 33~80 (머리 33~41과 꼬리 72~80에 늦춘 프레임이 든다)
+    -> 조각 (head, mid, tail), check.ok
+    """
+    result, check = _cut(uneven_source, 33, 80, tmp_path)
+
+    assert _kinds(result) == ("head", "mid", "tail")
     assert check.ok, check.notes
 
 
@@ -346,6 +392,34 @@ def test_cut_removes_temp_folder_and_output_after_failure(mp4_source, tmp_path, 
 
     assert info.value.message_key == CUT_FAILED
     assert not os.path.exists(cut_temp_dir_for(output))
+    assert not os.path.exists(output)
+
+
+def test_cut_removes_written_output_when_joining_fails(mp4_source, tmp_path, monkeypatch):
+    """조각을 합치는 실행이 산출물을 쓴 뒤 실패하면 그 산출물을 남기지 않아야 한다.
+
+    합치기(마지막 인자가 산출물 경로인 실행)를 실제로 돌린 뒤 종료 코드 1로 바꿈
+    -> 합치기가 산출물을 썼고, CutError 뒤에는 산출물 없음
+    """
+    path, frames = mp4_source
+    output = str(tmp_path / "out.mp4")
+    real = cut_module.run_ffmpeg
+    written = []
+
+    def fails_after_writing(args, **kwargs):
+        done = real(args, **kwargs)
+        if args[-1] == output:
+            written.append(os.path.isfile(output))
+            return subprocess.CompletedProcess(args, 1, "", "boom")
+        return done
+
+    monkeypatch.setattr(cut_module, "run_ffmpeg", fails_after_writing)
+
+    with pytest.raises(CutError) as info:
+        hybrid_cut(path, frames, 35, 80, output)
+
+    assert written == [True]
+    assert info.value.message_key == CUT_FAILED
     assert not os.path.exists(output)
 
 
@@ -498,6 +572,22 @@ def test_encode_command_pads_to_coded_size_and_writes_crop(fmp4_source, tmp_path
 
     assert _option(args, "-vf") == "pad=1280:736:0:0,fillborders=bottom=16:mode=smear"
     assert _option(args, "-x264-params") == "b-pyramid=normal:crop-rect=0,0,0,16"
+
+
+def test_encode_command_passes_timestamps_through(fmp4_source, tmp_path):
+    """재인코딩 명령은 타임스탬프를 원본 그대로 넘기고 원본의 timescale로 부호화해야 한다.
+
+    fMP4 입력의 영상 파라미터, timescale = 입력의 timescale
+    -> -fps_mode passthrough, -enc_time_base 1:<timescale>, -video_track_timescale <timescale>
+    """
+    path, frames = fmp4_source
+    video = hybrid_cut(path, frames, 0, 5, str(tmp_path / "probe.mp4")).source.video
+
+    args = cut_module._x264_args(video, frames.timescale)
+
+    assert _option(args, "-fps_mode") == "passthrough"
+    assert _option(args, "-enc_time_base") == f"1:{frames.timescale}"
+    assert _option(args, "-video_track_timescale") == str(frames.timescale)
 
 
 # ================================================================ 주변 함수

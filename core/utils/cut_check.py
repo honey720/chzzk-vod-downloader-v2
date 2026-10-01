@@ -64,9 +64,14 @@ def check_cut(frames: CutFrames, result: CutResult) -> CutCheck:
     notes["params"] = "; ".join(different) or "재인코딩 조각이 원본과 같다"
 
     # ── decode
+    # 디코드한 프레임의 시각을 파일의 timescale 그대로 둔다. 기본값(1/fps)이면 프레임
+    # 간격이 고르지 않은 영상에서 두 프레임이 같은 틱으로 반올림되어, 디코드와 무관한
+    # "non monotonically increasing dts"가 오류 출력에 섞인다(원본을 그대로 읽어도 나온다)
     try:
         done = run_ffmpeg(
-            ["-v", "error", "-i", result.output_path, "-f", "null", "-"], timeout=_DECODE_TIMEOUT
+            ["-v", "error", "-i", result.output_path]
+            + ["-enc_time_base:v", f"1:{frames.timescale}", "-f", "null", "-"],
+            timeout=_DECODE_TIMEOUT,
         )
     except FFmpegError as e:
         raise CutError(CUT_FAILED, str(e)) from e
