@@ -12,6 +12,7 @@
 """
 
 import os
+from types import SimpleNamespace
 
 import pytest
 
@@ -20,6 +21,7 @@ from core.api.fmp4 import parse_init_segment, parse_media_segment
 from core.api.hls_fmp4 import (
     HLS_NOT_FMP4,
     declared_length,
+    download_segment,
     fetch_fmp4_head,
     read_segment_file,
     segment_file_name,
@@ -337,3 +339,35 @@ def test_declared_length_reads_content_length_of_an_uncompressed_body(headers, e
     -> 기대값
     """
     assert declared_length(headers) == expected
+
+
+def test_download_segment_rejects_a_body_shorter_than_content_length(monkeypatch, tmp_path):
+    """download_segment는 받은 길이가 서버가 말한 Content-Length와 다르면 잘림 키로 실패하고 파일을 남기지 않아야 한다.
+
+    Content-Length 100인데 본문은 60바이트인 응답
+    -> Mp4Error(MP4_TRUNCATED), 폴더에 파일 없음(받는 중이던 .part도 없다)
+    """
+
+    class Short:
+        headers = {"Content-Length": "100"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def raise_for_status(self):
+            pass
+
+        def iter_content(self, chunk_size):
+            yield bytes(60)
+
+    session = SimpleNamespace(get=lambda url, **kwargs: Short())
+    monkeypatch.setattr(hls_fmp4_module, "get_thread_session", lambda: session)
+
+    with pytest.raises(Mp4Error) as info:
+        download_segment("https://range.test/a.m4s", str(tmp_path / "1.m4v"))
+
+    assert info.value.message_key == MP4_TRUNCATED
+    assert os.listdir(tmp_path) == []
