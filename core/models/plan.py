@@ -27,10 +27,25 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class TimeRange:
-    """영상 내 시간 구간(초). start ≤ end를 전제한다."""
+    """영상 내 시간 구간(초)을 담는다.
 
-    start: float
-    end: float
+    생성할 때 start < end를 검사한다 — 길이가 0이거나 뒤집힌 구간은 받을 것이
+    없으므로 계획에 들어오기 전에 막는다 (#178). 사용자 입력을 규칙별로
+    판정해 알려야 하는 쪽은 객체를 만들기 전에 (시작, 끝) 쌍으로
+    ``core.utils.selections.validate_selections``를 부른다.
+
+    Raises:
+        ValueError: start < end가 아닌 경우 (같은 값, 역순, NaN 포함)
+    """
+
+    start: float  # 구간 시작 시각(초)
+    end: float  # 구간 끝 시각(초)
+
+    def __post_init__(self) -> None:
+        if not self.start < self.end:
+            raise ValueError(
+                f"TimeRange는 start < end여야 한다: start={self.start}, end={self.end}"
+            )
 
 
 @dataclass(frozen=True)
