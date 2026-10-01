@@ -2,7 +2,7 @@
 
 핵심 계약:
 - 타임코드의 시각은 명목 시각이다 — HH×3600 + MM×60 + SS + FF ÷ fps
-- 29.97처럼 소수로 선언된 fps는 N×1000/1001 유리수로 계산한다
+- fps는 추정하지 않는다 — Fraction은 그대로, 선언값은 글자 그대로의 유리수로 쓴다
 - 해석과 표기는 서로 역이다(60 · 30 · 29.97fps)
 - 프레임 맞추기는 PTS가 가장 가까운 프레임을 고르고, 빠진 자리에서는 시작은 앞·끝은 뒤로 간다
 """
@@ -25,7 +25,9 @@ from core.utils.timecode import (
     snap_to_frame,
 )
 
-NTSC_30 = Fraction(30000, 1001)  # 29.97fps의 실제 프레임률
+NTSC_30 = Fraction(30000, 1001)  # 프레임 간격이 1001/30000초인 원본의 프레임률
+DECIMAL_2997 = Fraction(2997, 100)  # 프레임 간격이 400/11988초(= 100/2997초)인 원본의 프레임률
+SIX_HOURS = 6 * 3600  # 초
 
 
 # ================================================================ frame_rate
@@ -37,24 +39,40 @@ NTSC_30 = Fraction(30000, 1001)  # 29.97fps의 실제 프레임률
         (60, Fraction(60)),
         (60.0, Fraction(60)),
         (30, Fraction(30)),
-        (29.97, Fraction(30000, 1001)),
-        (59.94, Fraction(60000, 1001)),
-        (23.976, Fraction(24000, 1001)),
+        (29.97, Fraction(2997, 100)),
+        (59.94, Fraction(2997, 50)),
+        (23.976, Fraction(2997, 125)),
+        ("29.97", Fraction(2997, 100)),
+        ("60.00", Fraction(60)),
+        ("30000/1001", Fraction(30000, 1001)),
     ],
 )
-def test_frame_rate_maps_declared_fps_to_exact_rational(fps, expected):
-    """frame_rate는 선언 fps가 정수나 N×1000/1001에 가까우면 그 유리수를 돌려줘야 한다.
+def test_frame_rate_reads_declared_fps_literally(fps, expected):
+    """frame_rate는 선언값(정수·소수·문자열)을 글자 그대로의 유리수로 돌려줘야 한다.
 
-    60 -> 60/1, 29.97 -> 30000/1001, 59.94 -> 60000/1001, 23.976 -> 24000/1001
+    60 -> 60, 29.97 -> 2997/100, 59.94 -> 2997/50, 23.976 -> 2997/125,
+    "29.97" -> 2997/100, "60.00" -> 60, "30000/1001" -> 30000/1001
     """
     assert frame_rate(fps) == expected
 
 
-@pytest.mark.parametrize("fps", [0, -30, float("nan"), float("inf")])
-def test_frame_rate_rejects_non_positive_or_non_finite(fps):
-    """frame_rate는 fps가 0 이하이거나 유한하지 않으면 ValueError를 내야 한다.
+@pytest.mark.parametrize("fps", [Fraction(30000, 1001), Fraction(2997, 100), Fraction(60)])
+def test_frame_rate_returns_fraction_unchanged(fps):
+    """frame_rate는 Fraction을 받으면 같은 값을 그대로 돌려줘야 한다.
 
-    fps=0, -30, nan, inf
+    30000/1001, 2997/100, 60/1
+    -> 입력과 같은 값
+    """
+    assert frame_rate(fps) == fps
+
+
+@pytest.mark.parametrize(
+    "fps", [0, -30, float("nan"), float("inf"), Fraction(0), Fraction(-30), "0", "abc", "", "1/0"]
+)
+def test_frame_rate_rejects_non_positive_or_unreadable(fps):
+    """frame_rate는 fps가 0 이하이거나 유한하지 않거나 수로 읽을 수 없으면 ValueError를 내야 한다.
+
+    0, -30, nan, inf, Fraction(0), Fraction(-30), "0", "abc", "", "1/0"
     -> ValueError
     """
     with pytest.raises(ValueError):
@@ -70,16 +88,44 @@ def test_frames_per_second_is_ceiling_of_frame_rate(fps, expected):
     assert frames_per_second(fps) == expected
 
 
-def test_frame_index_keeps_ntsc_grid_after_six_hours():
-    """frame_index는 29.97fps에서 6시간 지점의 프레임 시각을 그 프레임 번호로 바꿔야 한다.
+def _mismatched_frames(interval: Fraction, fps) -> list[int]:
+    """프레임 간격이 interval초인 원본의 0초~6시간 프레임 가운데 frame_index가 제 번호를 못 낸 것.
 
-    n=647352, seconds=n×1001/30000 (약 21600.6초), fps=29.97
-    -> 647352
+    997프레임마다 하나와 마지막 프레임을 본다. 프레임 n의 PTS는 n × interval이다.
     """
-    n = 647352
-    seconds = float(Fraction(n * 1001, 30000))
+    last = int(SIX_HOURS / interval)
+    return [n for n in [*range(0, last, 997), last] if frame_index(float(n * interval), fps) != n]
 
-    assert frame_index(seconds, 29.97) == n
+
+@pytest.mark.parametrize("fps", [DECIMAL_2997, 29.97, "29.97"])
+def test_frame_index_matches_pts_of_decimal_2997_source_up_to_six_hours(fps):
+    """frame_index는 간격이 400/11988초인 원본의 PTS를 6시간 지점까지 제 프레임 번호로 바꿔야 한다.
+
+    PTS = n × 400/11988 (n = 0 … 647,352), fps = 2997/100 · 29.97 · "29.97"
+    -> 어긋난 프레임 없음
+    """
+    assert _mismatched_frames(Fraction(400, 11988), fps) == []
+
+
+def test_frame_index_matches_pts_of_ntsc_source_up_to_six_hours():
+    """frame_index는 간격이 1001/30000초인 원본의 PTS를 6시간 지점까지 제 프레임 번호로 바꿔야 한다.
+
+    PTS = n × 1001/30000 (n = 0 … 647,352), fps = 30000/1001
+    -> 어긋난 프레임 없음
+    """
+    assert _mismatched_frames(Fraction(1001, 30000), NTSC_30) == []
+
+
+def test_frame_index_drifts_when_the_other_2997_rate_is_used():
+    """frame_index는 원본과 다른 29.97 계열 프레임률을 받으면 6시간 안에 프레임 번호가 어긋나야 한다.
+
+    PTS = n × 400/11988, fps = 30000/1001
+    -> 어긋난 프레임이 있고, 가장 이른 것은 500,000번째 프레임 이후
+    """
+    mismatched = _mismatched_frames(Fraction(400, 11988), NTSC_30)
+
+    assert mismatched
+    assert mismatched[0] > 500_000  # 100만 분의 1씩 어긋나 50만 프레임에서 반 프레임이 된다
 
 
 # ================================================================ parse_timecode
@@ -103,13 +149,20 @@ def test_parse_timecode_reads_short_forms(text, expected):
     assert parse_timecode(text, 60) == pytest.approx(expected)
 
 
-def test_parse_timecode_divides_frames_by_ntsc_rate():
-    """parse_timecode는 29.97fps에서 FF를 30000/1001로 나눠야 한다.
+@pytest.mark.parametrize(
+    ("fps", "expected"),
+    [
+        (29.97, 1 + 15 * 100 / 2997),  # 1.5005005…
+        (NTSC_30, 1 + 15 * 1001 / 30000),  # 1.5005
+    ],
+)
+def test_parse_timecode_divides_frames_by_the_given_rate(fps, expected):
+    """parse_timecode는 FF를 받은 프레임률 그대로 나눠야 한다.
 
-    "00:00:01:15", fps=29.97
-    -> 1 + 15×1001/30000 = 1.5005
+    "00:00:01:15", fps = 29.97 · 30000/1001
+    -> 1 + 15×100/2997 · 1 + 15×1001/30000
     """
-    assert parse_timecode("00:00:01:15", 29.97) == pytest.approx(1.5005, abs=1e-9)
+    assert parse_timecode("00:00:01:15", fps) == pytest.approx(expected, abs=1e-9)
 
 
 def test_parse_timecode_ignores_surrounding_whitespace():
@@ -297,21 +350,22 @@ def test_snap_to_frame_end_falls_back_to_next_frame_when_frame_is_missing(missin
     assert snap_to_frame(missing_frame / 60, pts, 60, "end") == 4
 
 
+@pytest.mark.parametrize("rate", [NTSC_30, DECIMAL_2997], ids=["30000/1001", "2997/100"])
 @pytest.mark.parametrize("edge", ["start", "end"])
-def test_snap_to_frame_maps_nominal_time_to_nearest_ntsc_frame(edge):
-    """snap_to_frame은 29.97fps에서 명목 시각 SS + FF×1001/30000에 가장 가까운 프레임을 골라야 한다.
+def test_snap_to_frame_maps_nominal_time_to_nearest_frame_at_2997(edge, rate):
+    """snap_to_frame은 29.97 계열 프레임률에서 명목 시각 SS + FF ÷ fps에 가장 가까운 프레임을 골라야 한다.
 
-    PTS = n×1001/30000 (300개), SS = 0~8, FF = 0~29
-    -> round(명목 시각 × 30000/1001)
+    fps = 30000/1001 · 2997/100, PTS = n ÷ fps (300개), SS = 0~8, FF = 0~29
+    -> round(명목 시각 × fps)
     """
-    pts = _uniform_pts(300, NTSC_30)
+    pts = _uniform_pts(300, rate)
 
     for second in range(9):
         for frame in range(30):
-            nominal = Fraction(second) + Fraction(frame * 1001, 30000)
-            expected = round(nominal * NTSC_30)
+            nominal = Fraction(second) + Fraction(frame) / rate
+            expected = round(nominal * rate)
 
-            assert snap_to_frame(float(nominal), pts, 29.97, edge) == expected
+            assert snap_to_frame(float(nominal), pts, rate, edge) == expected
 
 
 def test_snap_to_frame_breaks_tie_by_edge():

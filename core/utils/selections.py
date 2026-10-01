@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from fractions import Fraction
 
 from core.models.plan import TimeRange
-from core.utils.timecode import frame_index, frame_rate
+from core.utils.timecode import FrameRate, frame_index, frame_rate
 
 # 한 번에 받을 수 있는 구간 수의 상한
 MAX_SELECTIONS = 20
@@ -35,7 +35,7 @@ _DURATION_SLACK_FRAMES = Fraction(1, 1000)
 
 
 def validate_selections(
-    ranges: Sequence[TimeRange | tuple[float, float]], duration: float, fps: float
+    ranges: Sequence[TimeRange | tuple[float, float]], duration: float, fps: FrameRate
 ) -> dict[int, tuple[str, ...]]:
     """구간 목록을 규칙별로 검사해 구간마다 위반 키를 돌려준다.
 
@@ -56,7 +56,7 @@ def validate_selections(
     Args:
         ranges: 검사할 구간 목록. 순서가 구간 번호다
         duration: 영상 길이(초)
-        fps: 선언 fps. 프레임 단위 비교의 기준이다
+        fps: 프레임률. 프레임 단위 비교의 기준이다. mp4는 ``Mp4Index.fps``를 넘긴다
 
     Returns:
         위반이 있는 구간만 담은 ``{구간 인덱스(0부터): 위반 키들}``. 비어 있으면 통과다.
