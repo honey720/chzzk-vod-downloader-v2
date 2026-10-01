@@ -4,12 +4,16 @@
 """
 
 import logging
+import os
 from fractions import Fraction
+from types import SimpleNamespace
 
 import pytest
 
 import scripts.headless_download as headless
 from core.models.content import VideoInfo
+from core.models.plan import TimeRange
+from core.utils.paths import release_output_paths
 from core.utils.timecode import TIMECODE_FRAME_OUT_OF_RANGE, TIMECODE_INVALID_FORMAT, TimecodeError
 from scripts.headless_download import (
     _fetch_frame_rates,
@@ -183,3 +187,53 @@ def test_list_option_logs_frame_rate_next_to_each_resolution(monkeypatch, tmp_pa
     assert code == 0
     messages = [record.getMessage() for record in caplog.records if record.name == "headless"]
     assert "사용 가능한 해상도: 720p · 60fps, 1080p · 29.97fps" in messages
+
+
+# ================================================================ 엔진에 넘기기
+
+
+def test_runner_hands_sections_paths_and_moov_to_the_engine(monkeypatch, tmp_path):
+    """러너는 구간, 배정한 구간 파일 경로, 구간을 해석하며 받은 moov를 제출하는 Content에 실어야 한다.
+
+    구간 둘과 moov 대역을 받은 러너, DownloadService · 로거 · 태스크는 대역
+    -> 제출된 content의 selections == 구간 둘, selection_paths == "제목 1080p_1.mp4" · "_2.mp4",
+       mp4_head is 넘긴 moov
+    """
+    submitted = []
+
+    class FakeService:
+        def __init__(self, **kwargs):
+            pass
+
+        def submit(self, content, **kwargs):
+            submitted.append(content)
+            return SimpleNamespace(wait=lambda timeout=None: True)
+
+    monkeypatch.setattr(headless, "DownloadService", FakeService)
+    monkeypatch.setattr(headless, "DownloadLogger", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        headless, "DownloadTask", lambda data, item, log: SimpleNamespace(start=lambda: None)
+    )
+    item = SimpleNamespace(
+        base_url="https://example.invalid/video.mp4",
+        vod_url="https://chzzk.naver.com/video/123",
+        output_path=str(tmp_path / "제목 1080p.mp4"),
+        resolution=1080,
+        content_type="video",
+        title="제목",
+        download_path=str(tmp_path),
+    )
+    selections = (TimeRange(1.0, 2.0), TimeRange(5.0, 6.0))
+    moov = SimpleNamespace(index=None, data=b"")
+
+    runner = headless._HeadlessRunner(item, 60, selections, moov)
+    runner.run()
+    release_output_paths(runner.section_paths)
+
+    assert len(submitted) == 1
+    assert submitted[0].selections == selections
+    assert [os.path.basename(path) for path in submitted[0].selection_paths] == [
+        "제목 1080p_1.mp4",
+        "제목 1080p_2.mp4",
+    ]
+    assert submitted[0].mp4_head is moov
