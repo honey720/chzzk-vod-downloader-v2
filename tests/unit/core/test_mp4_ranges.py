@@ -117,6 +117,23 @@ def test_selection_byte_ranges_covers_audio_of_the_same_time_span():
     assert result.total_size == end - begin
 
 
+def test_selection_byte_ranges_widens_to_audio_stored_before_the_video():
+    """selection_byte_ranges는 필요한 오디오 샘플이 영상 샘플보다 앞에 놓여 있으면 범위를 거기까지 넓혀야 한다.
+
+    구간 1.0~1.2초 → 영상 샘플 8~11(마지막 영상 청크), 시각 범위 0.8~1.2초 → 오디오 샘플 7~10
+    오디오 샘플 7은 영상 샘플 8보다 두 청크 앞에 놓인다
+    -> 범위 시작 == 오디오 샘플 7의 위치 (영상 샘플 8의 위치보다 앞)
+    """
+    built, index = _with_audio()
+    video = built.sample_offsets[b"vide"]
+    audio = built.sample_offsets[b"soun"]
+
+    result = selection_byte_ranges(index, TimeRange(1.0, 1.2))
+
+    assert audio[7] < video[8]  # 조립기 배치의 전제
+    assert result.ranges == ((audio[7], video[11] + VIDEO_SIZES[11] - 1),)
+
+
 def test_selection_byte_ranges_holds_every_needed_sample_inside_the_range():
     """selection_byte_ranges가 돌려준 범위만 읽어도 필요한 샘플의 바이트가 모두 들어 있어야 한다.
 
