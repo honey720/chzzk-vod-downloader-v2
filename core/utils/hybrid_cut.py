@@ -442,8 +442,7 @@ def _probe_source(path: str, frames: CutFrames, plan: CutPlan) -> SourceInfo:
     """입력의 SPS와 오디오 비트레이트를 읽고, 재인코딩으로 맞출 수 있는 모양인지 확인한다."""
     key = frames.keyframes[bisect_right(frames.keyframes, plan.first) - 1]
     delay = round((frames.frame_pts[key] - frames.frame_dts[key]) / frames.frame_duration)
-    # 구간이 시작하는 키프레임에서 읽는다 — 받은 범위만 든 부분 파일은 그 앞이 비어 있다
-    video, audio_bitrate = _read_params(path, delay, seek=_start_of(frames, key))
+    video, audio_bitrate = _read_params(path, delay)
     problems = []
     if video.profile_idc not in _X264_PROFILES:
         problems.append(f"프로파일 {video.profile_idc}")
@@ -458,18 +457,15 @@ def _probe_source(path: str, frames: CutFrames, plan: CutPlan) -> SourceInfo:
     return SourceInfo(video=video, audio_bitrate=audio_bitrate)
 
 
-def _read_params(
-    path: str, reorder_delay: int, seek: float = 0.0
-) -> tuple[VideoParams, int | None]:
+def _read_params(path: str, reorder_delay: int) -> tuple[VideoParams, int | None]:
     """ffmpeg의 trace_headers 출력에서 첫 SPS를 읽는다. 동봉 ffmpeg에는 ffprobe가 없다.
 
-    Args:
-        seek: 읽기 시작할 시각(입력 파일의 시작부터 센 초). 키프레임의 시각이어야 한다
+    받은 범위만 든 부분 mp4(core.utils.mp4_partial)도 읽는다 — 첫 SPS는 moov에 든
+    것(avcC)이라 파일의 첫 샘플이 없어도 나온다.
     """
     try:
         done = run_ffmpeg(
-            ["-v", "info", *(["-ss", _seconds(seek)] if seek > 0 else []), "-i", path,
-             "-map", "0:v:0", "-c", "copy", "-frames:v", "1",
+            ["-v", "info", "-i", path, "-map", "0:v:0", "-c", "copy", "-frames:v", "1",
              "-bsf:v", "trace_headers", "-f", "null", "-"],
             timeout=_PROBE_TIMEOUT,
         )  # fmt: skip
