@@ -14,19 +14,22 @@ requests 세션으로 요청하고 진짜 응답 객체를 받으며, 전송 어
 - moov가 파일 뒤에 있는 것
 
 핵심 계약:
-- 받는 것은 파일의 머리(moov)와 구간 범위뿐이고, 겹치는 범위는 한 번만 받는다
-- 임시 원본의 크기는 받은 바이트와 같다. 성공하면 지우고 컷이 실패하면 남긴다
+- 받는 것은 moov(한 번)와 구간 범위뿐이고, 겹치는 범위는 한 번만 받는다
+- 임시 원본의 크기는 머리(원본의 첫 샘플 앞까지) + 받은 바이트다. 성공하면 지우고 컷이
+  실패하면 남긴다
 - 구간 파일은 온전한 파일에서 자른 것과 바이트까지 같다
 """
 
 import os
+import re
 import subprocess
 
 import pytest
 
 import core.api.mp4 as mp4_module
 import core.downloaders.file_downloader as fd_module
-from core.api.mp4 import MP4_UNSUPPORTED, Mp4Error, read_mp4_index
+import core.utils.mp4_partial as partial_module
+from core.api.mp4 import MP4_UNSUPPORTED, Mp4Error, fetch_mp4_head, read_mp4_index
 from core.downloaders.base import PostprocessError
 from core.downloaders.file_downloader import FileDownloader
 from core.downloaders.ranges import split_span
@@ -176,6 +179,27 @@ def _frames(path: str):
     return cut_frames_from_mp4(_index(path))
 
 
+def _first_sample_offset(index) -> int:
+    """원본에서 첫 샘플이 놓인 위치 — 임시 원본의 머리 길이."""
+    return min(min(index.video.offsets), min(index.audio.offsets))
+
+
+def _moov_requests(server, name: str, index) -> list[str]:
+    """호스트에 온 요청 가운데 moov가 든 범위를 요청한 것의 Range 머리."""
+    first, last = index.moov_range
+    found = []
+    for _method, requested, header in server.requests:
+        match = re.fullmatch(r"bytes=(\d+)-(\d+)", header or "")
+        if (
+            requested == name
+            and match
+            and int(match.group(1)) <= last
+            and int(match.group(2)) >= first
+        ):
+            found.append(header)
+    return found
+
+
 # ================================================================ 끝까지 경로
 
 
@@ -236,11 +260,11 @@ def test_several_sections_make_one_file_each(server, sources, tmp_path):
         assert check.ok, check.notes
 
 
-def test_section_download_requests_only_head_and_section_ranges(server, sources, tmp_path):
-    """구간 다운로드는 파일의 머리와 구간 범위만 요청하고 같은 바이트를 두 번 받지 않아야 한다.
+def test_section_plan_holds_only_section_ranges(server, sources, tmp_path):
+    """구간 다운로드의 계획에는 구간 범위만 들고 같은 바이트가 두 번 들지 않아야 한다 — moov는 항목이 아니다.
 
     기본 입력, 구간 프레임 100~110 · 105~115 (서로 겹친다)
-    -> 계획의 항목은 0부터 시작해 moov를 덮고, 서로 겹치지 않고, 합이 total_size이며 원본보다 작다
+    -> 계획의 항목은 모두 첫 샘플 위치부터이고, 서로 겹치지 않고, 합이 total_size이며 원본보다 작다
     """
     selections = [TimeRange(_seconds(100), _seconds(110)), TimeRange(_seconds(105), _seconds(115))]
     run = _Run(server, "plain", tmp_path, selections)
@@ -249,8 +273,7 @@ def test_section_download_requests_only_head_and_section_ranges(server, sources,
     plan = run.engine.prepare(run.data.content)
 
     items = sorted(plan.items)
-    assert items[0][0] == 0
-    assert items[0][1] >= index.moov_range[1]  # 첫 항목이 moov를 다 담는다
+    assert items[0][0] >= _first_sample_offset(index) > index.moov_range[1]
     assert all(a[1] < b[0] for a, b in zip(items, items[1:]))  # 겹치지 않는다
     assert plan.total_size == sum(last - first + 1 for first, last in items)
     assert plan.total_size < os.path.getsize(sources["plain"])
@@ -308,11 +331,64 @@ def test_partial_source_is_removed_after_success(server, tmp_path):
     assert run.listing() == ["구간 시험 144p_1.mp4"]
 
 
-def test_partial_source_is_as_large_as_the_bytes_received(server, sources, tmp_path, monkeypatch):
-    """컷이 실패해 남은 임시 원본의 크기는 받은 바이트 수와 같아야 한다 — 원본 크기가 아니다.
+def test_moov_is_requested_once_per_download(server, sources, tmp_path):
+    """구간 다운로드 한 번에 moov가 든 범위는 한 번만 요청해야 한다.
+
+    기본 입력, 구간 둘
+    -> 완료 1회, moov와 겹치는 범위 요청 1건
+    """
+    selections = [TimeRange(_seconds(35), _seconds(80)), TimeRange(_seconds(100), _seconds(110))]
+    run = _Run(server, "plain", tmp_path, selections)
+    server.forget()
+
+    run.start()
+
+    assert (run.finished, run.failures) == (1, [])
+    assert len(_moov_requests(server, "plain", _index(sources["plain"]))) == 1
+
+
+def test_moov_handed_in_is_not_requested_again(server, sources, tmp_path):
+    """이미 받은 moov(Content.mp4_head)를 넘기면 엔진은 moov를 요청하지 않고 같은 구간 파일을 만들어야 한다.
+
+    기본 입력, 구간 프레임 35~80, fetch_mp4_head의 결과를 content.mp4_head에 넣음
+    -> moov와 겹치는 범위 요청 0건, 구간 파일의 bytes == 온전한 파일에서 자른 파일의 bytes
+    """
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))])
+    run.data.content.mp4_head = fetch_mp4_head(server.url("plain"))
+    server.forget()
+
+    run.start()
+
+    reference = str(tmp_path / "reference.mp4")
+    hybrid_cut(sources["plain"], _frames(sources["plain"]), 35, 80, reference)
+    assert (run.finished, run.failures) == (1, [])
+    assert _moov_requests(server, "plain", _index(sources["plain"])) == []
+    with open(run.paths[0], "rb") as made, open(reference, "rb") as wanted:
+        assert made.read() == wanted.read()
+
+
+def test_section_is_cut_from_a_source_whose_mdat_runs_to_end_of_file(
+    server, sources, tmp_path, monkeypatch
+):
+    """임시 원본의 mdat 크기를 0("파일 끝까지")으로 적어도 구간 파일은 판정을 통과해야 한다.
+
+    32비트 상한을 100바이트로 줄여 mdat 크기를 0으로 적게 함, 구간 프레임 35~80
+    -> 완료 1회, check.ok
+    """
+    monkeypatch.setattr(partial_module, "_MAX_BOX_SIZE_32", 100)
+
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))]).start()
+
+    assert (run.finished, run.failures) == (1, [])
+    check = check_cut(_frames(sources["plain"]), run.engine.cut_results[0])
+    assert check.ok, check.notes
+
+
+def test_partial_source_is_head_plus_the_bytes_received(server, sources, tmp_path, monkeypatch):
+    """컷이 실패해 남은 임시 원본의 크기는 머리 + 받은 바이트 수여야 한다 — 원본 크기가 아니다.
 
     기본 입력, 파일 뒤쪽의 구간 프레임 150~170, 컷이 CutError를 내도록 바꿈
-    -> 임시 원본의 크기 == 계획의 total_size < 원본 크기
+    -> 임시 원본의 크기 == 첫 샘플의 위치 + 계획의 total_size < 원본 크기
     """
 
     def broken(*args, **kwargs):
@@ -322,8 +398,9 @@ def test_partial_source_is_as_large_as_the_bytes_received(server, sources, tmp_p
 
     run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(150), _seconds(170))]).start()
 
-    assert os.path.getsize(run.source_path) == run.data.total_size
-    assert run.data.total_size < os.path.getsize(sources["plain"])
+    head_size = _first_sample_offset(_index(sources["plain"]))
+    assert os.path.getsize(run.source_path) == head_size + run.data.total_size
+    assert head_size + run.data.total_size < os.path.getsize(sources["plain"])
 
 
 def test_cut_failure_keeps_partial_source_and_finished_sections(server, tmp_path, monkeypatch):

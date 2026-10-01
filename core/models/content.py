@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from uuid import uuid4
 
+from core.models.mp4_index import Mp4Head
 from core.models.plan import TimeRange
 
 
@@ -53,6 +54,9 @@ class Content:
     # core.utils.paths.build_section_output_paths로 배정한다. 구간이 있으면 output_path는
     # 쓰지 않는다
     selection_paths: tuple[str, ...] = ()
+    # 구간을 정하면서 이미 받은 moov (core.api.mp4.fetch_mp4_head의 결과). 넘기면 엔진이
+    # moov를 다시 받지 않는다. base_url의 파일에서 읽은 것이어야 한다. None이면 엔진이 받는다
+    mp4_head: Mp4Head | None = None
 
 
 @dataclass(frozen=True)

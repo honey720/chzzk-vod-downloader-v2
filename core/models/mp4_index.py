@@ -52,6 +52,20 @@ class Mp4Index:
 
 
 @dataclass(frozen=True)
+class Mp4Head:
+    """파일에서 읽은 moov의 색인과, 그때 받은 파일 앞부분의 바이트를 담는다 (#309).
+
+    구간 다운로드는 받은 범위만 든 부분 mp4를 만들 때 moov가 다시 필요하다. 색인을
+    만들면서 받은 바이트를 들고 있다가 그대로 쓴다 — 같은 바이트를 두 번 받지 않는다.
+    """
+
+    index: Mp4Index  # moov를 해석한 색인
+    # 파일의 0부터 moov의 마지막 바이트까지. moov가 첫 읽기 안에서 시작하지 않았으면
+    # (mdat 뒤의 moov 등) 앞부분을 받지 않았으므로 None이다
+    data: bytes | None
+
+
+@dataclass(frozen=True)
 class SelectionBytes:
     """구간 하나를 받는 데 필요한 파일 바이트 범위를 담는다."""
 

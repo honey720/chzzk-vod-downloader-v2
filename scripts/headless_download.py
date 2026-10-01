@@ -12,7 +12,7 @@ core 파이프라인(metadata_service → DownloadService → 다운로더 엔�
     --resolution N   원하는 해상도(예: 720). 생략 시 최고 화질(auto)
     --output PATH    저장 폴더 (생략 시 현재 작업 디렉토리)
     --timeout SEC    다운로드 제한 시간(초). 초과 시 실패로 종료 (기본 600, 최대 7200)
-    --list           다운로드하지 않고 사용 가능한 해상도만 출력
+    --list           다운로드하지 않고 사용 가능한 해상도와 그 프레임률을 출력
     --section A-B    받을 구간. 타임코드 HH:MM:SS:FF-HH:MM:SS:FF, 여러 번 줄 수 있다 (#309).
                      구간마다 `{제목} {해상도}p_N.mp4` 파일이 하나씩 생긴다(N은 준 순서).
                      인코딩이 끝난 VOD(mp4)만 받는다
@@ -50,7 +50,10 @@ import config.config as config  # noqa: E402
 from app.log_setup import setup_logging  # noqa: E402
 from app.viewmodels.data import ContentItem  # noqa: E402
 from app.network import NetworkManager  # noqa: E402
-from core.api.mp4 import Mp4Error, fetch_mp4_index  # noqa: E402
+from fractions import Fraction  # noqa: E402
+
+from core.api.mp4 import Mp4Error, fetch_mp4_head  # noqa: E402
+from core.models.mp4_index import Mp4Head  # noqa: E402
 from core.models.events import ProgressEvent  # noqa: E402
 from core.models.plan import TimeRange  # noqa: E402
 from core.services import metadata_service  # noqa: E402
@@ -164,17 +167,20 @@ def _parse_sections(texts: list[str], fps) -> list[tuple[float, float]]:
     return pairs
 
 
-def _resolve_sections(item: ContentItem, texts: list[str]) -> tuple[TimeRange, ...] | None:
+def _resolve_sections(
+    item: ContentItem, texts: list[str]
+) -> tuple[tuple[TimeRange, ...], Mp4Head] | None:
     """구간 옵션을 검증해 TimeRange 목록으로 바꾼다. 받을 프레임과 크기를 로그로 남긴다.
 
-    타임코드의 프레임 칸은 그 영상의 프레임률로 읽어야 하므로 moov를 먼저 받는다
-    (엔진도 받을 범위를 정하려고 한 번 더 받는다).
+    타임코드의 프레임 칸은 그 영상의 프레임률로 읽어야 하므로 moov를 먼저 받는다.
+    받은 moov는 함께 돌려준다 — 엔진에 넘겨 다시 받지 않게 한다.
 
     Returns:
-        구간 목록. 형식·검증 오류나 moov를 읽지 못한 경우 None
+        (구간 목록, 받은 moov). 형식·검증 오류나 moov를 읽지 못한 경우 None
     """
     try:
-        index = fetch_mp4_index(item.base_url)
+        head = fetch_mp4_head(item.base_url)
+        index = head.index
         pairs = _parse_sections(texts, index.fps)
     except TimecodeError as e:
         logger.error("구간 형식 오류: %s", e)
@@ -205,18 +211,23 @@ def _resolve_sections(item: ContentItem, texts: list[str]) -> tuple[TimeRange, .
             format_milliseconds(index.frame_pts[picked.last_frame]),
             f"{picked.total_size:,}",
         )
-    return selections
+    return selections, head
 
 
 class _HeadlessRunner:
     """DownloadService를 구동하고 완료/실패/타임아웃을 종료 코드로 환원한다."""
 
     def __init__(
-        self, item: ContentItem, timeout: int, selections: tuple[TimeRange, ...] = ()
+        self,
+        item: ContentItem,
+        timeout: int,
+        selections: tuple[TimeRange, ...] = (),
+        mp4_head: Mp4Head | None = None,
     ) -> None:
         self.item = item
         self.timeout = timeout
         self.selections = selections
+        self.mp4_head = mp4_head  # 구간을 해석하며 받은 moov — 엔진이 다시 받지 않게 넘긴다
         self.section_paths: tuple[str, ...] = ()
         self.exit_code = 1  # 완료 신호를 받기 전까지는 실패로 간주
         self.service = DownloadService(
@@ -240,6 +251,7 @@ class _HeadlessRunner:
             )
             data.content.selections = self.selections
             data.content.selection_paths = self.section_paths
+            data.content.mp4_head = self.mp4_head
         task_logger = DownloadLogger()
         # GUI 브리지와 동일하게 상태 전이 흡수·다운로드 정보 로깅은 태스크 어댑터가 담당
         self.task = DownloadTask(data, self.item, task_logger)
@@ -338,6 +350,42 @@ def _format_progress(
     return remaining_time_str, str(event.downloaded_size), f"{speed_mb:.1f} MB/s", progress
 
 
+def _format_fps(rate: Fraction | None) -> str:
+    """프레임률을 표시 문자열로 — 정수면 `60fps`, 아니면 소수 둘째 자리까지(`29.97fps`), 없으면 `fps 모름`."""
+    if rate is None:
+        return "fps 모름"
+    if rate.denominator == 1:
+        return f"{rate.numerator}fps"
+    return f"{float(rate):.2f}".rstrip("0").rstrip(".") + "fps"
+
+
+def _format_resolutions(unique_reps: list, rates: dict[str, Fraction]) -> str:
+    """`--list`가 찍는 한 줄 — 해상도마다 매니페스트가 선언한 프레임률을 붙인다.
+
+    Args:
+        unique_reps: [해상도, base_url] 목록
+        rates: ``{base_url: 프레임률}`` — 없는 base_url은 `fps 모름`으로 찍는다
+    """
+    return ", ".join(f"{rep[0]}p · {_format_fps(rates.get(rep[1]))}" for rep in unique_reps)
+
+
+def _fetch_frame_rates(vod_url: str, cookies: dict, content_type: str) -> dict[str, Fraction]:
+    """매니페스트가 선언한 해상도별 프레임률을 조회한다. 읽지 못하면 빈 dict(전부 `fps 모름`).
+
+    DASH 매니페스트가 있는 타입(인코딩 완료 VOD · 암호화 VOD)만 읽는다. 다시보기와
+    클립은 매니페스트에서 프레임률을 읽는 길이 없어 조회하지 않는다.
+    """
+    if content_type not in ("video", "hls_aes"):
+        return {}
+    try:
+        _kind, content_no = NetworkManager.extract_content_no(vod_url)
+        info = NetworkManager.get_video_info(content_no, cookies)
+        return NetworkManager.get_video_frame_rates(info.video_id, info.in_key, cookies)
+    except Exception:
+        logger.exception("프레임률을 읽지 못했습니다: %s", vod_url)
+        return {}
+
+
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     """커맨드라인 인자를 파싱한다."""
     parser = argparse.ArgumentParser(
@@ -355,7 +403,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help=f"다운로드 제한 시간(초, 기본 {TIMEOUT_DEFAULT}, 최대 {TIMEOUT_MAX})",
     )
     parser.add_argument(
-        "--list", action="store_true", help="다운로드하지 않고 사용 가능한 해상도만 출력"
+        "--list",
+        action="store_true",
+        help="다운로드하지 않고 사용 가능한 해상도와 프레임률을 출력",
     )
     parser.add_argument(
         "--section",
@@ -381,14 +431,16 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("저장 폴더가 존재하지 않습니다: %s", download_path)
         return 2
 
-    fetched = _fetch(args.url, _load_cookies(), download_path)
+    cookies = _load_cookies()
+    fetched = _fetch(args.url, cookies, download_path)
     if fetched is None:
         return 2
     result, content_type = fetched
 
     unique_reps = result[2]
     if args.list:
-        logger.info("사용 가능한 해상도: %s", ", ".join(f"{rep[0]}p" for rep in unique_reps))
+        rates = _fetch_frame_rates(args.url, cookies, content_type)
+        logger.info("사용 가능한 해상도: %s", _format_resolutions(unique_reps, rates))
         return 0
 
     item = _build_item(result, content_type, args.resolution)
@@ -396,6 +448,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     selections: tuple[TimeRange, ...] = ()
+    mp4_head = None
     if args.section:
         if content_type != "video":
             logger.error("구간 다운로드는 인코딩이 끝난 VOD(mp4)만 지원합니다: %s", content_type)
@@ -403,9 +456,9 @@ def main(argv: list[str] | None = None) -> int:
         resolved = _resolve_sections(item, args.section)
         if resolved is None:
             return 2
-        selections = resolved
+        selections, mp4_head = resolved
 
-    return _HeadlessRunner(item, args.timeout, selections).run()
+    return _HeadlessRunner(item, args.timeout, selections, mp4_head).run()
 
 
 if __name__ == "__main__":

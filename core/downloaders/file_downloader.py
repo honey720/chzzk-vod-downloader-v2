@@ -16,14 +16,15 @@ core/downloaders/base.py의 BaseDownloader로 이주했다(#82). 이 클래스�
 
 구간 다운로드 (#309) — ``Content.selections``가 비어 있지 않을 때:
 
-- prepare: moov를 받아(fetch_mp4_index) 구간을 검증하고, 구간마다 실제 프레임과
-  받을 바이트 범위를 정한다(selection_byte_ranges). 받을 항목은 파일의 머리(moov가
-  든 앞부분)와 구간 범위들이고 겹치는 범위는 합친다
+- prepare: moov를 받아(fetch_mp4_head) 구간을 검증하고, 구간마다 실제 프레임과
+  받을 바이트 범위를 정한다(selection_byte_ranges). 받을 항목은 구간 범위들이고
+  겹치는 범위는 합친다. moov는 한 번만 받는다 — 해석에 쓴 바이트를 임시 원본의
+  머리로 그대로 쓰고, ``Content.mp4_head``로 이미 받은 것이 오면 받지 않는다
 - 받은 바이트는 원래 위치가 아니라 **빈틈없이 이어서** 임시 원본 파일에 쓴다
   (core/utils/mp4_partial.py). 원래 위치에 쓰면 사이의 빈 자리를 실제로 채우는 파일
   시스템(NTFS의 일반 파일, exFAT)에서 파일이 원본만큼 커진다
-- postprocess: 임시 원본의 moov를 이어 쓴 위치에 맞게 고친 뒤 구간마다
-  hybrid_cut으로 자른다. 하나라도 실패하면 다운로드 전체가 실패다
+- postprocess: 구간마다 hybrid_cut으로 자른다. 하나라도 실패하면 다운로드
+  전체가 실패다
 - 임시 원본은 구간을 모두 만들면 지운다. 컷이 실패하면 남긴다(다시 받지 않게) —
   세그먼트 경로의 후처리 실패(#92)와 같은 규칙이다. 전송 실패·중단이면 전체
   다운로드의 산출물처럼 지운다
@@ -38,7 +39,7 @@ import time as tm
 
 import requests
 
-from core.api.mp4 import Mp4Error, fetch_mp4_index
+from core.api.mp4 import MP4_UNSUPPORTED, Mp4Error, fetch_mp4_head
 from core.api.session import get_thread_session
 from core.downloaders.base import BaseDownloader, PostprocessError
 from core.downloaders.ranges import decide_part_size, split_ranges, split_span
@@ -49,7 +50,7 @@ from core.models.events import ProgressEvent
 from core.models.mp4_index import Mp4Index
 from core.models.plan import DownloadPlan
 from core.utils.hybrid_cut import CutError, cut_frames_from_mp4, hybrid_cut
-from core.utils.mp4_partial import PartialLayout, patch_head, plan_partial
+from core.utils.mp4_partial import PartialLayout, build_head, plan_partial
 from core.utils.mp4_ranges import selection_byte_ranges
 from core.utils.paths import partial_source_path_for, release_output_paths
 from core.utils.selections import SelectionError, validate_selections
@@ -90,6 +91,7 @@ class FileDownloader(BaseDownloader):
         self._sections: tuple[CutSection, ...] = ()
         self._index: Mp4Index | None = None  # 구간을 정할 때 받은 색인 — 컷이 프레임 정보로 쓴다
         self._layout: PartialLayout | None = None  # 받을 범위와 임시 원본 안의 위치
+        self._head: bytes = b""  # 임시 원본의 머리(ftyp · 위치를 고친 moov · mdat 머리)
         self._source_path: str | None = None  # 임시 원본(받은 범위만 이어 쓴 mp4)
         self._made_sections: list[str] = []  # 이번 실행이 만든 구간 파일
         self.cut_results: list[CutResult] = []  # 구간마다의 컷 결과 — sections와 같은 순서
@@ -143,7 +145,10 @@ class FileDownloader(BaseDownloader):
         )
 
     def _prepare_sections(self, content: Content) -> DownloadPlan:
-        """구간 다운로드의 계획 — 파일의 머리와 구간마다의 바이트 범위를 받는다 (#309).
+        """구간 다운로드의 계획 — 구간마다의 바이트 범위를 받는다 (#309).
+
+        moov는 ``content.mp4_head``가 있으면 그것을 쓰고 없으면 여기서 한 번 받는다.
+        받을 항목에는 넣지 않는다 — 해석에 쓴 바이트로 임시 원본의 머리를 만든다.
 
         Raises:
             NotImplementedError: clip인 경우 — clip에는 구간 다운로드가 없다
@@ -157,13 +162,17 @@ class FileDownloader(BaseDownloader):
             raise ValueError(
                 f"구간 {len(content.selections)}개에 산출물 경로 {len(content.selection_paths)}개"
             )
-        index = fetch_mp4_index(self.s.base_url)
+        head = content.mp4_head or fetch_mp4_head(self.s.base_url)
+        index = head.index
         violations = validate_selections(content.selections, index.duration, index.fps)
         if violations:
             raise SelectionError(violations)
 
         picked = [selection_byte_ranges(index, selection) for selection in content.selections]
         layout = plan_partial(index, [span for item in picked for span in item.ranges])
+        if head.data is None:
+            raise Mp4Error(MP4_UNSUPPORTED, "moov가 파일 앞부분에 없다")
+        self._head = build_head(head.data, layout, index.moov_range)
         self._part_size = decide_part_size(self.s.content_type, self.s.resolution)
         self._index = index
         self._layout = layout
@@ -178,7 +187,7 @@ class FileDownloader(BaseDownloader):
                 for first, last in layout.ranges
                 for part in split_span(first, last, self._part_size)
             ),
-            total_size=layout.size,
+            total_size=layout.download_size,
             requires_postprocess=True,
             selections=tuple(content.selections),
         )
@@ -187,9 +196,9 @@ class FileDownloader(BaseDownloader):
         return (self.s.total_size, self._part_size, self.s.total_ranges, self.s.adjust_threads)
 
     def _prepare_output(self) -> None:
-        """빈 파일 생성(사이즈: 0)."""
-        with open(self._target_path, "wb"):
-            pass
+        """빈 파일 생성(사이즈: 0). 구간 다운로드는 임시 원본에 머리를 먼저 써 둔다."""
+        with open(self._target_path, "wb") as f:
+            f.write(self._head)
 
     def _initial_queue(self, items: list) -> list:
         """중단 이후 재시작 같은 상황을 고려해 미수신 구간만 큐에 넣는다."""
@@ -216,14 +225,13 @@ class FileDownloader(BaseDownloader):
     # ============ 구간 다운로드의 후처리 (#309) ============
 
     def postprocess(self) -> None:
-        """임시 원본을 ffmpeg가 읽을 수 있게 고친 뒤 구간마다 잘라 파일로 만든다.
+        """임시 원본을 구간마다 잘라 파일로 만든다.
 
         구간 목록 순서대로 자른다. 하나라도 실패하면 PostprocessError로 끝낸다 — 임시
         원본과 먼저 만든 구간 파일은 남는다. 모두 만들면 임시 원본을 지운다. 구간 사이에서
         중단·일시정지를 확인한다(컷 하나는 중간에 멈추지 않는다).
         """
         try:
-            self._patch_source()
             frames = cut_frames_from_mp4(self._index)
             for section in self._sections:
                 if self.state == DownloadState.PAUSED:
@@ -252,14 +260,6 @@ class FileDownloader(BaseDownloader):
             self.logger.log_error("Cut failed — partial source preserved for retry", e)
             raise PostprocessError(f"후처리(cut) 실패: {e}") from e
         os.remove(self._source_path)
-
-    def _patch_source(self) -> None:
-        """임시 원본의 머리(moov의 청크 위치 표·mdat 크기)를 이어 쓴 위치에 맞게 고쳐 쓴다."""
-        first, last = self._layout.ranges[0]
-        with open(self._source_path, "r+b") as f:
-            head = f.read(last - first + 1)
-            f.seek(0)
-            f.write(patch_head(head, self._layout, self._index.moov_range))
 
     def _postprocess_output_size(self) -> int:
         """후처리 종료 로그에 남길 크기 — 구간 파일 크기의 합."""

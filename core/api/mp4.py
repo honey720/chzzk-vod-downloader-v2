@@ -6,10 +6,10 @@
 세 층으로 나뉜다.
 
 - ``scan_top_level`` · ``parse_moov`` — bytes만 받는 순수 함수. 네트워크를 모른다
-- ``read_mp4_index`` — "파일의 이 범위를 달라"는 읽기 함수를 주입받아 moov를 찾아
-  해석한다. 상자 머리의 크기를 따라 건너뛰므로 moov가 mdat 뒤에 있어도 mdat
-  본문은 읽지 않는다
-- ``fetch_mp4_index`` — 읽기 함수를 HTTP 범위 요청으로 채운 것
+- ``read_mp4_head`` · ``read_mp4_index`` — "파일의 이 범위를 달라"는 읽기 함수를
+  주입받아 moov를 찾아 해석한다. 상자 머리의 크기를 따라 건너뛰므로 moov가 mdat
+  뒤에 있어도 mdat 본문은 읽지 않는다. ``read_mp4_head``는 그때 받은 바이트도 돌려준다
+- ``fetch_mp4_head`` · ``fetch_mp4_index`` — 읽기 함수를 HTTP 범위 요청으로 채운 것
 
 조각난(fragmented) mp4는 지원하지 않는다. 샘플 표가 moov가 아니라 파일 곳곳의
 moof에 흩어져 있어 이 방식으로 읽을 수 없다 — 조용히 틀린 색인을 만들지 않고
@@ -28,7 +28,7 @@ from fractions import Fraction
 from itertools import accumulate
 
 from core.api.session import get_thread_session
-from core.models.mp4_index import Mp4Index, Mp4Track
+from core.models.mp4_index import Mp4Head, Mp4Index, Mp4Track
 
 # 실패 키 — 번역하지 않은 i18n 키 원문
 MP4_FRAGMENTED = "Fragmented MP4 is not supported"  # moof·mvex가 있다
@@ -143,6 +143,19 @@ def read_mp4_index(read: Callable[[int, int], bytes]) -> Mp4Index:
     Raises:
         Mp4Error: moov가 없거나, 조각난 mp4이거나, 색인이 손상된 경우
     """
+    return read_mp4_head(read).index
+
+
+def read_mp4_head(read: Callable[[int, int], bytes]) -> Mp4Head:
+    """읽기 함수로 파일에서 moov를 찾아 색인을 만들고, 그때 받은 앞부분의 바이트도 돌려준다 (#309).
+
+    ``read_mp4_index``와 같은 순서로 읽는다. moov가 첫 읽기 안에서 시작하면 파일의
+    0부터 moov 끝까지를 ``data``에 싣는다 — 부분 mp4를 만드는 쪽이 moov를 다시 받지
+    않아도 된다. 그렇지 않으면(mdat 뒤의 moov 등) ``data``는 None이다.
+
+    Raises:
+        Mp4Error: moov가 없거나, 조각난 mp4이거나, 색인이 손상된 경우
+    """
     offset = 0
     request = _FIRST_READ_BYTES
     for _ in range(_MAX_SCAN_STEPS):
@@ -160,7 +173,8 @@ def read_mp4_index(read: Callable[[int, int], bytes]) -> Mp4Index:
                 moov += read(moov_offset + len(moov), moov_size - len(moov))
             if len(moov) < moov_size:
                 raise Mp4Error(MP4_INVALID, "moov가 파일 끝에서 잘렸다")
-            return replace(parse_moov(moov), moov_range=(moov_offset, moov_offset + moov_size - 1))
+            index = replace(parse_moov(moov), moov_range=(moov_offset, moov_offset + moov_size - 1))
+            return Mp4Head(index=index, data=data[:start] + moov if offset == 0 else None)
         if scan.reached_end or scan.next_offset <= offset:
             break
         offset, request = scan.next_offset, _HEADER_READ_BYTES
@@ -185,6 +199,19 @@ def fetch_mp4_index(url: str) -> Mp4Index:
             손상된 색인
         requests.RequestException: 연결 실패·타임아웃·HTTP 오류 상태
     """
+    return fetch_mp4_head(url).index
+
+
+def fetch_mp4_head(url: str) -> Mp4Head:
+    """mp4 주소에서 범위 요청으로 moov를 받아 색인과 받은 바이트를 돌려준다 (#309).
+
+    요청·검사는 ``fetch_mp4_index``와 같다. 구간 다운로드처럼 moov의 바이트가 다시
+    필요한 쪽이 쓴다 — 결과를 넘겨 쓰면 moov를 한 번만 받는다.
+
+    Raises:
+        Mp4Error: ``fetch_mp4_index``와 같다
+        requests.RequestException: 연결 실패·타임아웃·HTTP 오류 상태
+    """
 
     def read(offset: int, size: int) -> bytes:
         last = offset + size - 1
@@ -207,7 +234,7 @@ def fetch_mp4_index(url: str) -> Mp4Index:
                 raise Mp4Error(MP4_RANGE_MISMATCH, f"본문 {len(body)}바이트 · 기대 {expected}")
             return bytes(body)
 
-    return read_mp4_index(read)
+    return read_mp4_head(read)
 
 
 def _granted_length(content_range: str | None, first: int, last: int) -> int:

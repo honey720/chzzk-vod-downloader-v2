@@ -54,7 +54,12 @@ class DownloadTask:
     def start(self):
         """다운로드 시작. 성공 시 다운로드 정보를 로그로 남긴다."""
         if self._try_transition("start"):
-            self.logger.log_download_info(self.item)
+            # 구간 다운로드는 실제로 생기는 구간 파일 경로를 함께 넘긴다 (#309)
+            section_paths = self.data.content.selection_paths
+            if section_paths:
+                self.logger.log_download_info(self.item, section_paths)
+            else:
+                self.logger.log_download_info(self.item)
 
     def pause(self):
         """다운로드 일시정지. 성공 시 로그를 남긴다 (#78 스모크 — UI→엔진 도달 확인용)."""
