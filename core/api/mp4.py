@@ -317,6 +317,7 @@ class _RawTrack:
     timescale: int
     empty_edit: Fraction  # 앞의 빈 편집 길이(초)
     presented: list[int]  # 샘플별 (PTS − 편집 목록의 media_time), 틱
+    decoded: list[int]  # 샘플별 (DTS − 편집 목록의 media_time), 틱
     deltas: list[int]  # 샘플별 길이, 틱
     offsets: list[int]
     sizes: list[int]
@@ -387,6 +388,7 @@ def _to_track(raw: _RawTrack, origin: Fraction) -> Mp4Track:
     return Mp4Track(
         timescale=raw.timescale,
         times=tuple(float(shift + Fraction(ticks, raw.timescale)) for ticks in raw.presented),
+        decode_times=tuple(float(shift + Fraction(ticks, raw.timescale)) for ticks in raw.decoded),
         durations=tuple(delta / raw.timescale for delta in raw.deltas),
         offsets=tuple(raw.offsets),
         sizes=tuple(raw.sizes),
@@ -434,6 +436,7 @@ def _parse_track(data: bytes, start: int, end: int, movie_timescale: int) -> _Ra
         timescale=timescale,
         empty_edit=empty_edit,
         presented=[dts + cts - media_time for dts, cts in zip(decode_times, composition)],
+        decoded=[dts - media_time for dts in decode_times],
         deltas=deltas,
         offsets=_sample_offsets(data, boxes, sizes),
         sizes=sizes,

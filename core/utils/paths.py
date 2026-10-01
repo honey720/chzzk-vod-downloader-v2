@@ -121,6 +121,17 @@ def temp_dir_for(output_path: str, base_dir: str | None = None) -> str:
     return os.path.join(directory, f"CVDv2_temp_{stem}")
 
 
+def cut_temp_dir_for(output_path: str) -> str:
+    """구간 컷의 중간 파일을 둘 임시 폴더 경로를 산출물 파일명에서 파생한다 (#309).
+
+    산출물과 같은 디렉토리에 둔다 — 가운데(복사) 조각은 구간 길이만큼 커질 수 있어
+    시스템 임시 폴더가 아니라 유저가 고른 저장 위치의 공간을 쓴다. 세그먼트 임시
+    폴더(``temp_dir_for``)와 이름이 겹치지 않는다.
+    """
+    stem = os.path.splitext(os.path.basename(output_path))[0]
+    return os.path.join(os.path.dirname(output_path), f"CVDv2_cut_{stem}")
+
+
 # 임시 폴더를 분리할 스크래치 볼륨에 요구하는 최소 여유 공간 (#192).
 # m3u8·hls_aes는 산출물 크기를 미리 모른다(DownloadPlan.total_size=None) —
 # 정확한 소요량을 계산할 방법이 없으므로, 대부분의 VOD보다 넉넉한 고정
