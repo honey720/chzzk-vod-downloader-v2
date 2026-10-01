@@ -114,9 +114,13 @@ def plan_fmp4_sections(
     for number, selection in enumerate(selections):
         span = selection_segments(playlist, selection)
         group = _group_start(playlist, span.cover_first)
+        group_end = _group_end(playlist, group)
+        to_end = reaches_end(selection.end, playlist.duration, fps)
+        # 플레이리스트만으로 끊긴 자리를 넘는 것이 드러나면 moof를 읽기 전에 거부한다
+        if span.last > group_end or (to_end and len(playlist.segments) - 1 > group_end):
+            raise SelectionError({number: (SELECTION_CROSSES_BREAK,)})
         # 끊긴 자리 뒤의 세그먼트는 그 자리의 첫 세그먼트를 기준으로 시각을 센다
         origin = fmp4_origin(init, segment_at(group)) - Fraction(starts[group])
-        group_end = _group_end(playlist, group)
 
         def frames_of(first: int, last: int, origin: Fraction = origin) -> CutFrames:
             segments = [segment_at(index) for index in range(first, last + 1)]
@@ -135,7 +139,7 @@ def plan_fmp4_sections(
             lead = frames_of(first_segment, cover)
         first_frame = snap_to_frame(selection.start, lead.frame_pts, fps, "start")
 
-        if reaches_end(selection.end, playlist.duration, fps):
+        if to_end:
             # 끝이 영상 길이와 같다 — 시각으로 고르지 않고 마지막 세그먼트의 마지막 프레임을
             # 쓴다. 플레이리스트의 길이(EXTINF의 합)가 마지막 프레임의 PTS보다 짧은 영상에서는
             # 길이까지만 줄 수 있는 구간으로 그 프레임을 고를 수 없다
@@ -159,7 +163,8 @@ def plan_fmp4_sections(
             last_frame = snap_to_frame(selection.end, tail.frame_pts, fps, "end")
 
         last_segment = max(high, cover)
-        if span.last > group_end or last_segment > group_end or first_segment < group:
+        # 넓힌 뒤의 범위가 끊긴 자리를 넘는 경우 — 실제 PTS를 봐야 알 수 있다
+        if last_segment > group_end or first_segment < group:
             raise SelectionError({number: (SELECTION_CROSSES_BREAK,)})
         sections.append(
             Fmp4Section(

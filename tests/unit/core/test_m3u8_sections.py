@@ -573,6 +573,32 @@ def test_section_beside_a_discontinuity_is_downloaded(host, sources, tmp_path):
     assert _packets(run.paths[0]) == _reference(source, 40, 80, tmp_path)
 
 
+@pytest.mark.parametrize("to_end", [False, True], ids=["across-the-break", "to-the-video-length"])
+def test_section_crossing_a_discontinuity_is_rejected_before_reading_its_segments(
+    host, sources, tmp_path, to_end
+):
+    """끊긴 자리를 넘는 구간은 그 구간의 세그먼트에서 moof를 읽기 전에 거부해야 한다.
+
+    across-the-break: broken.m3u8, 구간 프레임 70~100
+    to-the-video-length: twice.m3u8, 구간 = 프레임 70의 시각 ~ 영상 길이(프레임 단위로 내린 값)
+    -> 실패 1건(SELECTION_CROSSES_BREAK), moof 범위 요청은 프레임률을 읽는 첫 세그먼트뿐
+    """
+    source = sources["plain"]
+    if to_end:
+        length = 2 * source.playlist.duration
+        selection = TimeRange(source.time_of(70), int(length * 30) / 30)
+        playlist = "plain/twice.m3u8"
+    else:
+        selection, playlist = source.selection(70, 100), "plain/broken.m3u8"
+
+    run = _Run(host, tmp_path, [selection], playlist).start()
+
+    assert len(run.failures) == 1
+    assert isinstance(run.failures[0], SelectionError)
+    assert run.failures[0].message_key == SELECTION_CROSSES_BREAK
+    assert _requests_for(host, ".m4s", ranged=True) == ["plain/seg-000.m4s"]
+
+
 def test_section_after_a_discontinuity_counts_time_from_the_break(host, sources, tmp_path):
     """끊긴 자리 뒤의 구간은 그 자리의 첫 세그먼트를 시각의 기준으로 삼아 프레임을 골라야 한다.
 
