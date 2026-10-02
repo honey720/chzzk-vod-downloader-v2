@@ -1,10 +1,15 @@
-import re
 import json
 from urllib.parse import urljoin, urlsplit
 
 import requests
 
 from core.api.dash import is_supported_sea, parse_dash_manifest, parse_sea_manifest
+from core.api.playback_tracks import (
+    playback_tracks,
+    select_variant,
+    select_variant_by_height,
+    track_for_resolution,
+)
 from core.api.representations import dedupe_by_resolution
 from core.api.url_parser import extract_content_no
 from core.models.content import VideoInfo
@@ -83,14 +88,6 @@ def _get_with_cookies_trusted(
 #: 복호화 키를 받아도 되는 호스트 — 코드 상수의 API 호스트뿐이다(실측 SEA 매니페스트의
 #: keyUriTemplate이 이 호스트다). 새 목록을 두지 않는다.
 _KEY_HOSTS = frozenset({urlsplit(CHZZK_API).hostname})
-
-
-def _int_or_zero(value) -> int:
-    """비트레이트 같은 선택 필드를 정수로 — 없거나 숫자가 아니면 0(미상)."""
-    try:
-        return int(value or 0)
-    except (TypeError, ValueError):
-        return 0
 
 
 class NetworkManager:
@@ -207,21 +204,17 @@ class NetworkManager:
     def get_video_m3u8_manifest(json_str: str):
         """
         m3u8 정보가 포함된 json형식의 문자열을 받아서 Representation 목록을 파싱한다.
+
+        해상도는 트랙 이름(encodingTrackId, "1080p" → 1080)을 따르고, 이름이 그런 형식이
+        아니면 짧은 변이다(core/api/representations.py의 track_resolution, #318).
         """
-        data = json.loads(json_str)
-        media = data.get("media", [])
-        encoding_track = media[0].get("encodingTrack", [])
-        reps = []
-        for encoding in encoding_track:
-            width = encoding.get("videoWidth")
-            height = encoding.get("videoHeight")
-            resolution = min(int(width), int(height))
-            base_url = None
-            # 같은 높이 트랙(비트레이트·프레임레이트 변형)은 하나로 합친다 —
-            # 이 경로는 트랙별 URL이 없어 어느 것을 남겨도 다운로드 대상은
-            # get_video_m3u8_base_url이 마스터 플레이리스트에서 고른다.
-            # 규칙·근거는 core/api/representations.py.
-            reps.append((resolution, base_url, _int_or_zero(encoding.get("videoBitRate"))))
+        # 해상도가 같은 트랙(비트레이트·프레임레이트 변형)은 하나로 합친다 —
+        # 이 경로는 트랙별 URL이 없어 다운로드 대상은 get_video_m3u8_base_url이
+        # 같은 규칙으로 트랙을 골라 마스터 플레이리스트에서 찾는다.
+        # 규칙·근거는 core/api/representations.py.
+        reps = [
+            (track.resolution, None, track.video_bitrate) for track in playback_tracks(json_str)
+        ]
 
         sorted_reps = dedupe_by_resolution(reps)
         auto_resolution = sorted_reps[-1][0]
@@ -236,25 +229,28 @@ class NetworkManager:
         권한이 필요한 VOD의 플레이리스트 접근을 위해 쿠키를 실어 보낸다 (#55).
         path는 playback JSON이 알려준 주소다 — https만 검사한다(호스트는 잠그지
         않는다). 리다이렉트 홉도 같은 검사를 거친다.
+
+        해상도는 목록(get_video_m3u8_manifest)의 값이다. 그 값이 가리키는 트랙을 playback
+        정보에서 찾고, 마스터 플레이리스트에서는 그 트랙의 크기 · 프레임률 · 비트레이트로
+        변형을 고른다(core/api/playback_tracks.py, #318). 세로값으로 찾으면 세로 방송은
+        어느 해상도도 맞지 않는다.
+
+        Raises:
+            StreamSelectionError: 맞는 변형이 없거나 하나로 정해지지 않는 경우
         """
         data = json.loads(json_str)
         media = data.get("media", [])
         path = media[0].get("path")
         response = _get_with_cookies_trusted(path, cookies, None, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
-        content = response.text.splitlines()
 
-        # 정규식으로 해상도 매칭
-        resolution_pattern = re.compile(rf"RESOLUTION=\d+x{resolution}")
-        
-        for i, line in enumerate(content):
-            if resolution_pattern.search(line):
-                # 다음 줄이 해당 해상도의 세부 플레이리스트 경로
-                relative_path = content[i + 1].strip()
-                base_url = urljoin(path, relative_path)
-                return base_url
-
-        raise ValueError(f"{resolution} 해상도 스트림을 찾을 수 없습니다.")
+        track = track_for_resolution(playback_tracks(json_str), resolution)
+        if track is None:
+            # playback 정보에 그 해상도의 트랙이 없다 — 정체를 모르므로 전처럼 세로값으로 찾는다
+            relative_path = select_variant_by_height(response.text, resolution)
+        else:
+            relative_path = select_variant(response.text, track)
+        return urljoin(path, relative_path)
     
     @staticmethod
     def get_clip_info(clip_no: str, cookies: dict):

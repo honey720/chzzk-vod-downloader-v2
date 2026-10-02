@@ -30,6 +30,7 @@ import requests
 from PySide6.QtCore import QObject, Signal
 
 from app.viewmodels.data import ContentItem
+from core.api.playback_tracks import StreamSelectionError
 from core.downloaders.base import PostprocessError
 from core.downloaders.hls_aes_downloader import DecryptionError
 from core.models.events import ProgressEvent
@@ -69,6 +70,9 @@ def _failure_message_key(exc: BaseException) -> str | None:
         return "Postprocessing failed - invalid segments"
     if isinstance(exc, DecryptionError):
         return "Decryption failed"
+    if isinstance(exc, StreamSelectionError):
+        # 고른 해상도의 스트림을 마스터 플레이리스트에서 하나로 정하지 못했다 (#318)
+        return exc.message_key
     if isinstance(exc, requests.HTTPError):
         status = exc.response.status_code if exc.response is not None else None
         if status in (401, 403):
@@ -313,6 +317,11 @@ class DownloadViewModel(QObject):
             "Failed to save file": self.tr(
                 "Failed to save file · check the path and disk space\n"
                 "The file could not be saved. Check the download path and free disk space."
+            ),
+            "Stream for the selected resolution not found": self.tr(
+                "Stream not found · pick another resolution\n"
+                "The stream for the selected resolution could not be found. "
+                "Try another resolution."
             ),
         }
         key = _failure_message_key(exc)

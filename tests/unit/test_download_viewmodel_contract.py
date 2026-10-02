@@ -32,6 +32,7 @@ from PySide6.QtCore import QObject
 
 from app.viewmodels.data import ContentItem
 from app.viewmodels.download_viewmodel import DownloadViewModel
+from core.api.playback_tracks import StreamSelectionError
 from core.downloaders.base import PostprocessError
 from core.downloaders.hls_aes_downloader import DecryptionError
 from core.models.download_state import DownloadState
@@ -487,6 +488,10 @@ class TestFailure:
             (
                 OSError(28, "No space left", "C:\\full\\path.mp4"),
                 "Failed to save file · check the path and disk space",
+            ),
+            (
+                StreamSelectionError("720 해상도 스트림을 찾을 수 없습니다."),
+                "Stream not found · pick another resolution",
             ),
         ],
         ids=lambda v: v if isinstance(v, str) else type(v).__name__,

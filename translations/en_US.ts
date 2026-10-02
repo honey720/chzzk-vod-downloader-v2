@@ -160,6 +160,12 @@ The file could not be saved. Check the download path and free disk space.</sourc
         <translation>Failed to save file · check the path and disk space
 The file could not be saved. Check the download path and free disk space.</translation>
     </message>
+    <message>
+        <source>Stream not found · pick another resolution
+The stream for the selected resolution could not be found. Try another resolution.</source>
+        <translation>Stream not found · pick another resolution
+The stream for the selected resolution could not be found. Try another resolution.</translation>
+    </message>
 </context>
 <context>
     <name>FetchJob</name>
