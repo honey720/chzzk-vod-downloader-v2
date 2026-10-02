@@ -114,13 +114,13 @@ def test_portrait_file_names_carry_the_track_name(tmp_path):
     ]
 
 
-def test_selection_fails_with_a_key_when_no_variant_has_the_track_size(serve_master):
-    """고른 트랙과 크기가 같은 변형이 마스터 플레이리스트에 없으면 키 기반 오류로 실패해야 한다.
+def test_selection_fails_with_a_key_when_neither_the_track_size_nor_the_height_fits(serve_master):
+    """고른 트랙과 크기가 같은 변형도, 세로값이 그 해상도인 변형도 없으면 키 기반 오류로 실패해야 한다.
 
-    PORTRAIT의 playback 정보, LANDSCAPE의 마스터 플레이리스트(1280x720 등), 해상도 720
+    PORTRAIT의 playback 정보, 1920x1080 변형 하나뿐인 마스터 플레이리스트, 해상도 720
     -> StreamSelectionError, message_key == STREAM_NOT_FOUND
     """
-    serve_master(master_playlist(LANDSCAPE))
+    serve_master(master_playlist([LANDSCAPE[4]]))
 
     with pytest.raises(StreamSelectionError) as caught:
         NetworkManager.get_video_m3u8_base_url(playback_json(PORTRAIT), 720, {})

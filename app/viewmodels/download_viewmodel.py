@@ -148,6 +148,8 @@ class DownloadViewModel(QObject):
         data = DownloadData(
             item.base_url, item.vod_url, item.output_path, item.resolution, item.content_type
         )
+        # 해상도가 같은 두 스트림을 가르는 값 — 다운로드 시작 때 그 변형을 다시 찾는다 (#318)
+        data.content.stream = getattr(item, "stream", None)
         task_logger = DownloadLogger()
         # DownloadTask가 상태 전이 흡수와 모델↔카드(item) 상태 연결을 담당한다
         self.task = DownloadTask(data, item, task_logger)

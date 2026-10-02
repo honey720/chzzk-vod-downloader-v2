@@ -12,12 +12,15 @@ import할 수 없기 때문이다(core→app 의존 금지). 네트워크 계층
 이주하면 기본 구현을 붙일 수 있다.
 """
 
+import logging
 from typing import Protocol
 
 import requests
 
 from core.api.url_parser import extract_content_no
 from core.models.content import VideoInfo
+
+logger = logging.getLogger(__name__)
 
 # HTTP 상태 코드 → 안내 키. 404는 삭제·비공개·오타를 구분할 수 없으므로
 # 단정하지 않는 중립 문구를 쓴다 (#126). 멤버십 전용의 401은 매니페스트 요청
@@ -35,6 +38,9 @@ class MetadataApi(Protocol):
     def get_video_info(self, video_no: str, cookies: dict) -> VideoInfo: ...
 
     def get_video_m3u8_manifest(self, json_str: str) -> tuple: ...
+
+    # get_video_m3u8_streams(json_str, cookies) -> tuple 은 있으면 쓴다 (#318) —
+    # 마스터 플레이리스트를 받아 실제 변형으로 목록을 만든다. 없는 구현은 위 메서드로 간다.
 
     def get_video_dash_manifest(
         self, video_id: str, in_key: str, cookies: dict | None = None
@@ -136,8 +142,8 @@ def fetch_video(
         if not unique_reps:
             raise MetadataError("Encrypted content is not supported", vod_url)
     elif info.live_rewind_playback_json:
-        unique_reps, resolution, base_url = api.get_video_m3u8_manifest(
-            info.live_rewind_playback_json
+        unique_reps, resolution, base_url = _m3u8_streams(
+            api, info.live_rewind_playback_json, cookies
         )
     else:
         # 멤버십 전용 VOD는 권한이 없으면 inKey가 null로 내려온다.
@@ -161,6 +167,28 @@ def fetch_video(
         info.live_rewind_playback_json,
     )
     return result, encrypted
+
+
+def _m3u8_streams(api: MetadataApi, playback_json: str, cookies: dict) -> tuple:
+    """인코딩 전 다시보기의 해상도 목록 — 마스터 플레이리스트의 실제 변형으로 만든다 (#318).
+
+    마스터 플레이리스트를 받지 못하거나 변형이 없으면 playback 정보의 트랙으로 만든
+    목록으로 돌아가고 로그에 남긴다. 그 목록은 영상과 어긋날 수 있다.
+    """
+    list_streams = getattr(api, "get_video_m3u8_streams", None)
+    if list_streams is not None:
+        try:
+            unique_reps, resolution, base_url = list_streams(playback_json, cookies)
+        except (requests.RequestException, ValueError, LookupError) as e:
+            logger.warning(
+                "마스터 플레이리스트로 해상도 목록을 만들지 못해 playback 정보로 만든다: %s",
+                type(e).__name__,
+            )
+        else:
+            if unique_reps:
+                return unique_reps, resolution, base_url
+            logger.warning("마스터 플레이리스트에 변형이 없어 playback 정보로 목록을 만든다")
+    return api.get_video_m3u8_manifest(playback_json)
 
 
 def fetch_clip(

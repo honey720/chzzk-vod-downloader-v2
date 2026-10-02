@@ -310,7 +310,11 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         # 건드리지 않고 표시 계층에서만 뒤집는다.
         # ⚠️ 순서는 고정이다 — 클릭해도 pill을 앞으로 옮기지 않는다(옮기면
         # 연속으로 눌러볼 수 없다). 선택만 바뀐다.
-        self.item.unique_reps.sort(key=lambda rep: _resolution_key(rep[0]), reverse=True)
+        # 해상도가 같은 두 항목은 원본이 앞이다 — 기본 선택(첫 pill)이 원본이 된다 (#318)
+        self.item.unique_reps.sort(
+            key=lambda rep: (_resolution_key(rep[0]), ContentItem.rep_is_original(rep)),
+            reverse=True,
+        )
         for unique_rep in self.item.unique_reps:
             # 크기 조회가 끝나기 전 표시 — "Unknown"은 실패로 읽혀 "확인 중"으로 표기 (#124)
             unique_rep.append(self.tr("Checking..."))  # 초기 값 설정
@@ -451,6 +455,20 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         finally:
             self._layingOutRowThree = False
 
+    def _repLabel(self, rep) -> str:
+        """해상도 버튼의 글자 — "1080p", 원본이면 "(원본)", 50fps 이상이면 "60fps"를 붙인다 (#318).
+
+        ⚠️ 임시 연결이다. 원본·fps를 버튼 글자에 넣을지(A안), 보조 글자로 둘지(B안),
+        툴팁에 둘지(C안)는 아직 정해지지 않았다.
+        """
+        label = f"{rep[0]}p"
+        if ContentItem.rep_is_original(rep):
+            label += self.tr("(source)")
+        frame_rate = ContentItem.rep_frame_rate(rep)
+        if frame_rate is not None:
+            label += f" {frame_rate}fps"
+        return label
+
     def addRepresentationButton(self, resolution, base_url, index):
         """
         해상도 버튼을 추가하고, 비동기로 파일 사이즈를 헤더에서 가져와 버튼 텍스트를 업데이트한다.
@@ -458,7 +476,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         # pill 모양·선택 표시는 전역 QSS의 [role="resolution"] 규칙이 그린다 (#227).
         # QSS는 `.className` 선택자를 지원하지 않아 조용히 무시하므로, 동적
         # 속성(role·selected·caret — app/widgets/pill.py가 심는다)을 속성 선택자로 잡는다
-        button = ResolutionPill(f'{resolution}p', self)
+        button = ResolutionPill(self._repLabel(self.item.unique_reps[index]), self)
         # 접혀 있으면 누르는 것은 "펼치기", 펼쳐져 있으면 "고르고 접기"(#244 3행 정리)
         button.clicked.connect(lambda: self._onPillClicked(index))
         # 3행 왼쪽부터 순서대로 꽂는다 — 이미 붙은 버튼 수가 곧 다음 자리다
@@ -535,6 +553,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
                     self._layoutRowThree()  # 접힘이면 보이는 pill이 바뀐다
             self.item.resolution = resolution
             self.item.base_url = base_url
+            if index is not None:
+                # 해상도가 같은 항목이 둘일 수 있다 — 고른 항목의 스트림까지 기억한다 (#318)
+                self.item.select_rep(self.item.unique_reps[index])
             # 세그먼트 기반(m3u8·hls_aes)은 total_size를 미리 알 수 없어 처리하지 않음
             if not self.item.is_segment_based and index is not None:
                 self.item.total_size = self.item.unique_reps[index][-1]

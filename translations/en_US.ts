@@ -4,6 +4,10 @@
 <context>
     <name>ContentItemWidget</name>
     <message>
+        <source>(source)</source>
+        <translation>(source)</translation>
+    </message>
+    <message>
         <source>Post-processing</source>
         <translation>Post-processing</translation>
     </message>

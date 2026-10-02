@@ -4,6 +4,10 @@
 <context>
     <name>ContentItemWidget</name>
     <message>
+        <source>(source)</source>
+        <translation>(원본)</translation>
+    </message>
+    <message>
         <source>Post-processing</source>
         <translation>후처리 중</translation>
     </message>
