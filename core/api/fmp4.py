@@ -11,24 +11,27 @@
   timescale·코덱·편집 목록·기본값(trex)을 읽는다
 - ``parse_media_segment`` — 미디어 세그먼트의 moof에서 샘플별 DTS·PTS·크기·키프레임을
   읽는다. mdat 본문은 보지 않으므로 세그먼트의 앞부분만 줘도 된다
+- ``read_media_segment`` — 읽기 함수로 세그먼트의 moof만 골라 읽어 같은 해석을 한다
 - ``scan_moof`` — 세그먼트 앞부분만으로 위 해석이 되는지, moof가 어디서 끝나는지
 - ``fmp4_origin`` · ``build_fmp4_index`` — 여러 세그먼트를 VOD 시작 = 0 기준의
   초 단위 색인으로 잇는다
 
-모두 bytes만 받는 순수 함수다. 실패는 ``core.api.mp4.Mp4Error``로 던진다.
+bytes(또는 주입받은 읽기 함수)만 받는 순수 함수다. 실패는 ``core.api.mp4.Mp4Error``로 던진다.
 """
 
 import struct
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from fractions import Fraction
 
 from core.api.mp4 import (
     _MAX_SAMPLES,
     MP4_INVALID,
     MP4_TOO_LONG,
+    MP4_TRUNCATED,
     MP4_UNSUPPORTED,
     Mp4Error,
     _boxes,
+    _declared_bitrate,
     _edit_list,
     _leaf_boxes,
     _timescale,
@@ -59,6 +62,19 @@ _TRUN_SAMPLE_COMPOSITION = 0x000800
 
 # 샘플 플래그의 sample_is_non_sync_sample 비트 — 꺼져 있으면 단독 디코드 가능(키프레임)
 _SAMPLE_IS_NON_SYNC = 0x00010000
+
+# 세그먼트 파일에서 moof만 골라 읽을 때(read_media_segment) mdat가 아닌 상자 하나로
+# 받아들이는 최대 크기(바이트) — 16MB. 손상된 크기 칸을 믿고 통째로 읽지 않게 한다.
+# moof를 범위 요청으로 읽을 때의 상한(core.api.hls_fmp4)과 같은 값이다
+_MAX_KEPT_BOX_BYTES = 16 * 1024 * 1024
+
+# 세그먼트 하나에서 따라가는 최상위 상자의 최대 수 — 손상된 파일에서 끝없이 돌지 않게 한다
+_MAX_TOP_LEVEL_BOXES = 4096
+
+# 샘플마다의 칸이 없는 trun이 한 세그먼트에서 선언할 수 있는 분량의 상한(초). 그런 trun은
+# 상자 크기로 샘플 수를 묶을 수 없어, 기본 샘플 길이로 센 분량을 이 값으로 막는다.
+# HLS 세그먼트는 수 초다(표본은 4초) — 그 30배다
+_MAX_IMPLIED_SECONDS = 120
 
 
 def parse_init_segment(data: bytes) -> Fmp4Init:
@@ -94,13 +110,72 @@ def parse_media_segment(data: bytes, init: Fmp4Init) -> Fmp4Segment:
 
     Raises:
         Mp4Error: moof가 잘렸거나 trun의 샘플 수가 상자 크기를 넘는 경우(``MP4_INVALID``),
-            tfdt가 없는 경우(``MP4_UNSUPPORTED``), 트랙의 샘플 수가 상한을 넘는
+            tfdt가 없는 경우(``MP4_UNSUPPORTED``), 트랙의 샘플 수가 상한을 넘거나
+            샘플마다의 칸이 없는 trun이 세그먼트 하나의 분량을 넘는 샘플 수를 선언한
             경우(``MP4_TOO_LONG``)
     """
     try:
         return _parse_media_segment(data, init)
     except (struct.error, IndexError) as e:
         raise Mp4Error(MP4_INVALID, str(e)) from e
+
+
+def read_media_segment(
+    read: Callable[[int, int], bytes], init: Fmp4Init, total: int | None = None
+) -> Fmp4Segment:
+    """읽기 함수로 미디어 세그먼트의 moof만 읽어 ``parse_media_segment``와 같은 결과를 낸다.
+
+    최상위 상자의 머리를 차례로 읽고 mdat의 본문은 건너뛴다 — 세그먼트가 아무리 커도
+    메모리에 올라가는 것은 mdat가 아닌 상자들뿐이다. 받아 둔 세그먼트 파일에서 프레임
+    정보를 다시 읽을 때 쓴다.
+
+    Args:
+        read: ``read(offset, size)`` — 세그먼트의 offset부터 최대 size바이트를 돌려준다.
+            끝을 넘으면 있는 만큼만(없으면 빈 bytes) 돌려준다
+        init: 같은 스트림의 ``parse_init_segment`` 결과
+        total: 세그먼트의 전체 크기(바이트). 주면 세그먼트가 온전한지도 본다 — 상자들이
+            말하는 끝이 이 크기와 같아야 한다. 받은 본문이 잘렸는지 가릴 때 쓴다
+
+    Raises:
+        Mp4Error: 상자 크기가 머리보다 작거나, mdat가 아닌 상자가 너무 크거나 잘렸거나,
+            상자가 너무 많은 경우(``MP4_INVALID``), total을 줬는데 상자(mdat 포함)가 그
+            크기를 넘거나 끝에 상자가 되다 만 바이트가 남은 경우(``MP4_TRUNCATED``).
+            그 밖은 ``parse_media_segment``와 같다
+    """
+    kept = []
+    offset = 0
+    for _ in range(_MAX_TOP_LEVEL_BOXES):
+        head = read(offset, 16)
+        if len(head) < 8:
+            if total is not None and offset != total:
+                raise Mp4Error(MP4_TRUNCATED, f"상자들의 끝 {offset} · 세그먼트 크기 {total}")
+            return parse_media_segment(b"".join(kept), init)
+        size, box_type = struct.unpack_from(">I4s", head, 0)
+        header = 8
+        if size == 1:
+            if len(head) < 16:
+                raise Mp4Error(MP4_INVALID, f"상자 {box_type!r}의 머리가 잘렸다")
+            size = struct.unpack_from(">Q", head, 8)[0]
+            header = 16
+        if box_type == b"mdat":
+            if size == 0:  # "끝까지" — 그 뒤에는 아무것도 없다
+                return parse_media_segment(b"".join(kept), init)
+        elif size > _MAX_KEPT_BOX_BYTES:
+            raise Mp4Error(MP4_INVALID, f"상자 {box_type!r}의 크기 {size}")
+        if size < header:
+            raise Mp4Error(MP4_INVALID, f"상자 {box_type!r}의 크기 {size}")
+        if total is not None and offset + size > total:
+            raise Mp4Error(
+                MP4_TRUNCATED,
+                f"상자 {box_type!r}가 {offset + size}에서 끝나는데 세그먼트 크기는 {total}",
+            )
+        if box_type != b"mdat":
+            body = read(offset, size)
+            if len(body) != size:
+                raise Mp4Error(MP4_INVALID, f"상자 {box_type!r}가 잘렸다")
+            kept.append(body)
+        offset += size
+    raise Mp4Error(MP4_INVALID, f"최상위 상자가 {_MAX_TOP_LEVEL_BOXES}개를 넘는다")
 
 
 def scan_moof(data: bytes) -> MoofScan:
@@ -272,6 +347,9 @@ def _parse_init_segment(data: bytes) -> Fmp4Init:
                 default_duration=duration,
                 default_size=size,
                 default_flags=flags,
+                declared_bitrate=(
+                    _declared_bitrate(data, boxes[b"stsd"]) if handler == b"soun" else None
+                ),
             ),
         )
     if "vide" not in tracks:
@@ -323,6 +401,7 @@ class _Run:
     def __init__(self, track: Fmp4Track):
         self.track = track
         self.limit = _MAX_SAMPLES[track.handler.encode("ascii")]
+        self.implied = 0  # 샘플마다의 칸이 없는 trun이 선언한 샘플 수의 합
         self.decode_times: list[int] = []
         self.presentation_times: list[int] = []
         self.durations: list[int] = []
@@ -330,6 +409,7 @@ class _Run:
         self.sync_samples: list[int] = []
 
     def freeze(self) -> Fmp4Samples:
+        """모은 샘플을 불변 모델로 돌려준다."""
         return Fmp4Samples(
             decode_times=tuple(self.decode_times),
             presentation_times=tuple(self.presentation_times),
@@ -430,9 +510,21 @@ def _read_run(
     has_composition = bool(flags & _TRUN_SAMPLE_COMPOSITION)
     fields = has_duration + has_size + has_flags + has_composition
 
-    # 펼치기 전에 개수를 묶는다 — 샘플마다 칸이 있으면 상자 크기가, 없으면 상한만이 막는다
+    # 펼치기 전에 개수를 묶는다 — 샘플마다 칸이 있으면 상자 크기가, 없으면 기본 샘플 길이로
+    # 센 분량(세그먼트 길이 × 프레임률)이 막는다
     if count * fields * 4 > body_end - position:
         raise Mp4Error(MP4_INVALID, f"trun의 샘플 {count}개가 상자 크기를 넘는다")
+    if not fields and count:
+        if default_duration <= 0:
+            raise Mp4Error(MP4_INVALID, "샘플마다의 칸이 없는 trun에 기본 샘플 길이가 없다")
+        allowed = _MAX_IMPLIED_SECONDS * run.track.timescale // default_duration
+        if run.implied + count > allowed:
+            raise Mp4Error(
+                MP4_TOO_LONG,
+                f"{run.track.handler} 샘플 {run.implied + count}개 · "
+                f"세그먼트 하나의 상한 {allowed}개({_MAX_IMPLIED_SECONDS}초)",
+            )
+        run.implied += count
     if len(run.decode_times) + count > run.limit:
         raise Mp4Error(
             MP4_TOO_LONG,

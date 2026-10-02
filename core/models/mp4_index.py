@@ -30,6 +30,9 @@ class Mp4Track:
     # stco/co64는 청크의 위치만 적는다 — 받을 범위를 청크 단위로 맞출 때 쓴다
     chunk_starts: tuple[int, ...]
     sync_samples: tuple[int, ...]  # 단독으로 디코드를 시작할 수 있는 샘플의 인덱스(오름차순)
+    # 오디오 샘플 엔트리가 선언한 비트레이트(bit/s) — esds·btrt. 영상 트랙이거나 적혀 있지
+    # 않으면 None이다 (#309)
+    declared_bitrate: int | None = None
 
 
 @dataclass(frozen=True)

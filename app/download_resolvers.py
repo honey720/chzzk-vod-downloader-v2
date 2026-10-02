@@ -9,6 +9,8 @@ Qt viewmodel(app/viewmodels/download_viewmodel.py)과 헤드리스 스크립트�
 이 모듈은 PySide6를 import하지 않는다.
 """
 
+from fractions import Fraction
+
 import config.config as config
 from app.network import NetworkManager
 from core.models.content import Content
@@ -50,5 +52,22 @@ def resolve_m3u8_base_url(content: Content) -> str:
     content_type, content_no = NetworkManager.extract_content_no(content.url)
     info = NetworkManager.get_video_info(content_no, cookies)
     return NetworkManager.get_video_m3u8_base_url(
+        info.live_rewind_playback_json, content.resolution, cookies
+    )
+
+
+def resolve_m3u8_variant(content: Content) -> tuple[str, Fraction | None]:
+    """선택 해상도의 (m3u8 플레이리스트 URL, 마스터 플레이리스트가 선언한 프레임률)을 해석한다 (#309).
+
+    ``resolve_m3u8_base_url``과 같은 조회를 하고 프레임률을 함께 돌려준다. 구간을 해석하는
+    쪽이 타임코드의 프레임 단위를 정할 때 쓴다. 선언이 없으면 프레임률은 None이다.
+
+    Raises:
+        Exception: 조회 실패 (네트워크·권한 등)
+    """
+    cookies = _load_cookies()
+    _content_type, content_no = NetworkManager.extract_content_no(content.url)
+    info = NetworkManager.get_video_info(content_no, cookies)
+    return NetworkManager.get_video_m3u8_variant(
         info.live_rewind_playback_json, content.resolution, cookies
     )

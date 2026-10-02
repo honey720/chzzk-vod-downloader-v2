@@ -11,8 +11,10 @@
 해석은 ``core.api.fmp4``가 한다.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fractions import Fraction
+
+from core.api.hls import HlsPlaylist
 
 
 @dataclass(frozen=True)
@@ -28,6 +30,9 @@ class Fmp4Track:
     default_duration: int  # trex의 기본 샘플 길이(틱)
     default_size: int  # trex의 기본 샘플 크기(바이트)
     default_flags: int  # trex의 기본 샘플 플래그
+    # 오디오 샘플 엔트리가 선언한 비트레이트(bit/s) — esds·btrt. 영상 트랙이거나 적혀 있지
+    # 않으면 None이다. 어느 세그먼트를 받았는지와 무관하게 스트림에 하나다
+    declared_bitrate: int | None = None
 
 
 @dataclass(frozen=True)
@@ -69,6 +74,33 @@ class MoofScan:
     complete: bool  # 받은 bytes에 첫 mdat 앞의 moof가 끝까지 들어 있다
     moof_end: int  # 첫 mdat 앞의 moof가 끝나는 위치(바이트). 아직 모르면 지금까지 확인한 위치
     next_offset: int | None  # 첫 mdat 다음 상자의 위치 — moof가 더 있을 수 있는 자리. 모르면 None
+
+
+@dataclass
+class Fmp4Head:
+    """구간을 정하려고 받은 것을 담는다 — 플레이리스트, 초기화 세그먼트, 세그먼트의 프레임 정보 (#309).
+
+    구간 다운로드는 받기 전에 프레임 시각을 알아야 한다. 그때 받은 것을 들고 있다가
+    엔진이 그대로 쓴다 — 같은 것을 두 번 받지 않는다. ``segments``는 받는 대로 채워지는
+    보관함이라 이 객체는 불변이 아니다.
+
+    프레임 정보를 읽으려고 받은 세그먼트의 본문은 메모리에 두지 않고 ``segment_dir``에
+    파일로 둔다. 엔진은 그 폴더를 세그먼트 임시 폴더로 쓰고, ``stored``에 든 세그먼트는
+    다시 받지 않는다.
+    """
+
+    playlist: HlsPlaylist  # 미디어 플레이리스트
+    init_data: bytes  # 초기화 세그먼트(EXT-X-MAP)의 bytes — 구간마다의 임시 파일 맨 앞에 쓴다
+    init: Fmp4Init  # init_data를 해석한 결과
+    # 세그먼트 인덱스 → 그 세그먼트의 moof를 모두 읽어 해석한 결과. 읽은 것만 들어 있다
+    segments: dict[int, Fmp4Segment] = field(default_factory=dict)
+    # 구간을 해석한 쪽이 정한 프레임률(core.utils.fmp4_sections.choose_frame_rate). 구간의
+    # 시각을 이 값으로 만들었다 — 엔진이 같은 값으로 검증한다. None이면 엔진이 정한다
+    frame_rate: Fraction | None = None
+    # 받은 세그먼트를 두는 폴더 — 엔진의 세그먼트 임시 폴더다. None이면 받은 본문을 버린다
+    segment_dir: str | None = None
+    # 이 객체가 segment_dir에 온전하게 받아 둔 세그먼트의 인덱스
+    stored: set[int] = field(default_factory=set)
 
 
 @dataclass(frozen=True)

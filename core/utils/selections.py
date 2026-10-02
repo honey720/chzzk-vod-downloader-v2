@@ -28,6 +28,12 @@ SELECTION_OUT_OF_RANGE = "Selection is outside the video"  # 시작 < 0 또는 �
 SELECTION_TOO_SHORT = "Selection is shorter than one frame"  # 시작과 끝이 같은 프레임이다
 SELECTION_DUPLICATE = "Duplicate selection"  # 시작·끝이 둘 다 같은 구간이 또 있다
 SELECTION_TOO_MANY = "Too many selections"  # MAX_SELECTIONS 번째를 넘은 구간이다
+# 구간이 녹화가 끊긴 자리(#EXT-X-DISCONTINUITY)를 넘는다 — validate_selections가 아니라
+# 세그먼트로 받는 다운로더가 플레이리스트를 보고 낸다 (#309)
+SELECTION_CROSSES_BREAK = "Selection crosses a break in the recording"
+# 구간의 시각이 놓인 세그먼트를 정해진 횟수 안에 찾지 못했다 — 플레이리스트가 말하는
+# 시각과 세그먼트의 실제 시각이 너무 다르다. 세그먼트로 받는 다운로더가 낸다 (#309)
+SELECTION_NOT_LOCATED = "Could not locate the selection in the recording"
 
 
 class SelectionError(Exception):
@@ -60,7 +66,8 @@ def validate_selections(
     규칙:
 
     - 순서 — 시작 < 끝 (``SELECTION_ORDER``)
-    - 범위 — 0 ≤ 시작, 끝 ≤ 영상 길이 (``SELECTION_OUT_OF_RANGE``)
+    - 범위 — 0 ≤ 시작, 끝 ≤ 영상 길이 (``SELECTION_OUT_OF_RANGE``). 끝이 길이(초)와
+      같으면 언제나 통과한다. 길이를 넘는 끝은 길이와 같은 프레임 번호일 때만 통과한다
     - 최소 길이 — 1프레임 (``SELECTION_TOO_SHORT``)
     - 중복 — 시작·끝 프레임이 둘 다 같은 구간이 있으면 그 구간 전부 (``SELECTION_DUPLICATE``)
     - 개수 — ``MAX_SELECTIONS``를 넘은 뒤쪽 구간 (``SELECTION_TOO_MANY``)
@@ -77,7 +84,7 @@ def validate_selections(
         위반이 있는 구간만 담은 ``{구간 인덱스(0부터): 위반 키들}``. 비어 있으면 통과다.
         키의 순서는 위 규칙 순서다.
     """
-    duration_frames = math.floor(Fraction(duration) * frame_rate(fps) + _DURATION_SLACK_FRAMES)
+    duration_frames = _duration_frames(duration, fps)
     violations: dict[int, list[str]] = {}
     seen: dict[tuple[int, int], list[int]] = {}
 
@@ -90,7 +97,10 @@ def validate_selections(
             start_frame, end_frame = frame_index(start, fps), frame_index(end, fps)
             if start >= end:
                 found.append(SELECTION_ORDER)
-            if start_frame < 0 or end_frame > duration_frames:
+            # 끝이 길이(초)를 넘지 않으면 프레임 번호가 커도 범위 안이다 — 끝은 반올림,
+            # 길이는 내림으로 프레임이 되어, 길이 × fps의 소수부가 .5 이상이면 끝 = 길이의
+            # 프레임 번호가 길이의 프레임 수보다 하나 크다
+            if start_frame < 0 or (end_frame > duration_frames and end > duration):
                 found.append(SELECTION_OUT_OF_RANGE)
             if start < end and end_frame - start_frame < 1:
                 found.append(SELECTION_TOO_SHORT)
@@ -106,3 +116,23 @@ def validate_selections(
         violations.setdefault(index, []).append(SELECTION_TOO_MANY)
 
     return {index: tuple(keys) for index, keys in sorted(violations.items())}
+
+
+def reaches_end(end: float, duration: float, fps: FrameRate) -> bool:
+    """구간의 끝이 영상 길이와 같은지 본다 — 프레임 단위로 견준다 (#309).
+
+    끝이 길이(초)와 같으면 언제나 참이다. 이런 구간의 끝
+    프레임은 시각으로 고르지 않고 영상의 마지막 프레임으로 정한다 — 검증에 쓰는 길이가
+    마지막 프레임의 PTS보다 짧은 영상에서는 시각으로 골라서는 마지막 프레임에 닿지 못한다.
+
+    Args:
+        end: 구간의 끝(초)
+        duration: 영상 길이(초) — ``validate_selections``에 준 것과 같은 값
+        fps: 프레임률 — ``validate_selections``에 준 것과 같은 값
+    """
+    return frame_index(end, fps) >= _duration_frames(duration, fps)
+
+
+def _duration_frames(duration: float, fps: FrameRate) -> int:
+    """영상 길이를 프레임 수로 내린 값 — 구간의 끝이 가질 수 있는 가장 큰 프레임 번호."""
+    return math.floor(Fraction(duration) * frame_rate(fps) + _DURATION_SLACK_FRAMES)

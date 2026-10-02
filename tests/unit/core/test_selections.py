@@ -20,6 +20,7 @@ from core.utils.selections import (
     SELECTION_TOO_MANY,
     SELECTION_TOO_SHORT,
     SelectionError,
+    reaches_end,
     validate_selections,
 )
 
@@ -302,3 +303,60 @@ def test_selection_error_carries_first_violation_key_and_all_violations():
     assert error.message_key == SELECTION_ORDER
     assert error.violations == violations
     assert str(error) == f"{SELECTION_ORDER}: 구간 2"
+
+
+@pytest.mark.parametrize(
+    ("end", "duration", "fps", "expected"),
+    [
+        (10.0, 10.0, 30, True),
+        (10.0, 10.02, 30, True),  # 길이 300.6프레임 → 300프레임. 끝도 프레임 300이다
+        (9.99, 10.0, 30, True),  # 프레임 299.7 → 300. 프레임 단위로 같다
+        (9.9, 10.0, 30, False),  # 프레임 297
+        (5.0, 10.0, 30, False),
+        (4250.549333, 4250.549333, Fraction(1000, 17), True),
+    ],
+    ids=["equal", "duration-off-grid", "same-frame", "three-frames-short", "middle", "sample"],
+)
+def test_reaches_end_compares_end_and_duration_by_frame(end, duration, fps, expected):
+    """reaches_end는 구간의 끝과 영상 길이를 프레임 번호로 바꿔 같으면 참을 돌려줘야 한다.
+
+    주석의 경우마다 (끝, 길이, fps)
+    -> 끝의 프레임 번호 == 길이의 프레임 수일 때만 True
+    """
+    assert reaches_end(end, duration, fps) is expected
+
+
+def test_reaches_end_is_true_only_for_ends_that_validation_accepts_as_the_last():
+    """reaches_end가 참인 끝은 검증을 통과하고, 그보다 한 프레임 뒤의 끝은 범위 위반이어야 한다.
+
+    길이 10.02초, 30fps — 끝 10.0초(프레임 300) · 끝 10.0 + 1/30초(프레임 301)
+    -> 10.0: reaches_end True · 위반 없음 / 한 프레임 뒤: SELECTION_OUT_OF_RANGE
+    """
+    assert reaches_end(10.0, 10.02, 30)
+    assert validate_selections([(1.0, 10.0)], 10.02, 30) == {}
+    assert validate_selections([(1.0, 10.0 + 1 / 30)], 10.02, 30) == {0: (SELECTION_OUT_OF_RANGE,)}
+
+
+@pytest.mark.parametrize(
+    ("duration", "fps"),
+    [(10.02, 30), (10.0, 30), (4250.620667, Fraction(1000, 17)), (1.26, 10), (2.06, 10)],
+    ids=["frac-.6", "on-grid", "sample", "frac-.6-short", "frac-.6-playlist"],
+)
+def test_selection_ending_exactly_at_the_duration_always_passes(duration, fps):
+    """validate_selections는 끝이 영상 길이(초)와 같으면 길이 × fps의 소수부가 .5 이상이어도 통과시키고, reaches_end는 참이어야 한다.
+
+    주석의 경우마다 (길이, fps), 구간 (0.5, 길이)
+    -> 위반 없음, reaches_end(길이, 길이, fps) is True
+    """
+    assert validate_selections([(0.5, duration)], duration, fps) == {}
+    assert reaches_end(duration, duration, fps) is True
+
+
+def test_selection_ending_past_the_duration_is_still_out_of_range():
+    """validate_selections는 끝이 영상 길이를 넘고 프레임 번호도 길이의 프레임 수보다 크면 범위 위반으로 판정해야 한다.
+
+    길이 10.02초 · 30fps(300.6프레임 → 300프레임), 끝 10.03초(프레임 301) · 끝 10.021초(프레임 301)
+    -> 둘 다 SELECTION_OUT_OF_RANGE
+    """
+    assert validate_selections([(1.0, 10.03)], 10.02, 30) == {0: (SELECTION_OUT_OF_RANGE,)}
+    assert validate_selections([(1.0, 10.021)], 10.02, 30) == {0: (SELECTION_OUT_OF_RANGE,)}

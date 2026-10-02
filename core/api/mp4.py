@@ -40,6 +40,8 @@ MP4_RANGE_MISMATCH = (
     "Server returned a different range than requested"  # 206인데 범위·길이가 다르다
 )
 MP4_TOO_LONG = "Video is too long to read its index"  # 트랙의 샘플 수가 상한을 넘는다
+# 받은 본문이 잘렸다 — 상자들이 말하는 크기나 서버가 말한 길이보다 짧다 (#309)
+MP4_TRUNCATED = "Received an incomplete file"
 
 # 첫 범위 요청의 크기(바이트). moov가 파일 앞에 있고 이보다 작으면 요청 한 번으로 끝난다
 # — 10분짜리 표본의 moov가 약 340KB였다
@@ -73,6 +75,14 @@ _MAX_SAMPLES = {b"vide": 60 * 86_400, b"soun": 48_000 * 86_400 // 1_024}
 _CONTENT_RANGE = re.compile(r"\s*bytes\s+(\d+)-(\d+)/(\d+|\*)\s*")
 
 _CONTAINERS = (b"trak", b"edts", b"mdia", b"minf", b"stbl")
+
+# 오디오 샘플 엔트리(mp4a 등)에서 머리(8바이트) 뒤 자식 상자가 시작하기까지의 고정 칸
+# 길이(바이트), 엔트리 버전별. 버전 0이 28이고 QuickTime의 버전 1은 16, 버전 2는 36이 더 있다
+_AUDIO_ENTRY_FIXED_BYTES = {0: 28, 1: 44, 2: 64}
+
+# esds 안 서술자의 꼬리표 (ISO/IEC 14496-1)
+_ES_DESCRIPTOR = 0x03
+_DECODER_CONFIG_DESCRIPTOR = 0x04
 
 
 class Mp4Error(Exception):
@@ -351,6 +361,7 @@ class _RawTrack:
     sizes: list[int]
     chunk_starts: list[int]  # 청크마다의 첫 샘플 인덱스
     sync_samples: tuple[int, ...]
+    declared_bitrate: int | None = None  # 오디오 샘플 엔트리가 선언한 비트레이트(bit/s)
 
     def start(self) -> Fraction | None:
         """이 트랙에서 가장 먼저 표시되는 샘플의 시각(초). 표시되는 샘플이 없으면 None."""
@@ -423,6 +434,7 @@ def _to_track(raw: _RawTrack, origin: Fraction) -> Mp4Track:
         sizes=tuple(raw.sizes),
         chunk_starts=tuple(raw.chunk_starts),
         sync_samples=raw.sync_samples,
+        declared_bitrate=raw.declared_bitrate,
     )
 
 
@@ -473,7 +485,79 @@ def _parse_track(data: bytes, start: int, end: int, movie_timescale: int) -> _Ra
         sizes=sizes,
         chunk_starts=chunk_starts,
         sync_samples=sync_samples,
+        declared_bitrate=(
+            _declared_bitrate(data, boxes[b"stsd"])
+            if handler == b"soun" and b"stsd" in boxes
+            else None
+        ),
     )
+
+
+def _declared_bitrate(data: bytes, stsd: tuple[int, int]) -> int | None:
+    """오디오 트랙의 첫 샘플 엔트리가 선언한 비트레이트(bit/s)를 읽는다. 없으면 None (#309).
+
+    스트림 전체에 대해 하나로 적힌 값이다 — 파일의 어느 부분을 받았는지와 무관하다.
+    esds(DecoderConfigDescriptor)의 avgBitrate, btrt의 avgBitrate, esds의 maxBitrate,
+    btrt의 maxBitrate 순서로 0이 아닌 첫 값을 쓴다.
+
+    없어도 되는 정보다. 엔트리의 모양을 모르거나 상자가 손상돼 읽지 못하면 색인 해석을
+    실패시키지 않고 None을 돌려준다.
+    """
+    try:
+        body, body_end = stsd
+        entry = body + 8  # 버전·플래그(4) + 항목 수(4) 뒤가 첫 샘플 엔트리다
+        if struct.unpack_from(">I", data, body + 4)[0] < 1:
+            return None
+        size = struct.unpack_from(">I", data, entry)[0]
+        if entry + size > body_end:
+            return None
+        version = struct.unpack_from(">H", data, entry + 16)[0]
+        children = entry + 8 + _AUDIO_ENTRY_FIXED_BYTES[version]
+        esds = btrt = (0, 0)  # (max, avg)
+        for kind, child, child_end in _boxes(data, children, entry + size):
+            if kind == b"esds":
+                esds = _esds_bitrates(data, child, child_end)
+            elif kind == b"btrt":
+                # 버퍼 크기(4) 뒤가 maxBitrate · avgBitrate다
+                if child + 12 > child_end:
+                    raise Mp4Error(MP4_INVALID, "btrt가 잘렸다")
+                btrt = struct.unpack_from(">II", data, child + 4)
+    except (Mp4Error, struct.error, IndexError, KeyError):
+        return None
+    return next((value for value in (esds[1], btrt[1], esds[0], btrt[0]) if value), None)
+
+
+def _esds_bitrates(data: bytes, body: int, end: int) -> tuple[int, int]:
+    """esds 본문에서 DecoderConfigDescriptor의 (maxBitrate, avgBitrate)를 읽는다."""
+    position = _descriptor_body(data, body + 4, end, _ES_DESCRIPTOR)  # 버전·플래그(4) 뒤
+    flags = data[position + 2]  # ES_ID(2) 뒤의 플래그 — 선택 칸이 있는지
+    position += 3
+    if flags & 0x80:
+        position += 2  # dependsOn_ES_ID
+    if flags & 0x40:
+        position += 1 + data[position]  # URL — 길이(1) + 문자열
+    if flags & 0x20:
+        position += 2  # OCR_ES_ID
+    position = _descriptor_body(data, position, end, _DECODER_CONFIG_DESCRIPTOR)
+    # 객체 종류(1) · 스트림 종류(1) · 버퍼 크기(3) 뒤가 maxBitrate · avgBitrate다
+    if position + 13 > end:
+        raise Mp4Error(MP4_INVALID, "esds가 잘렸다")
+    return struct.unpack_from(">II", data, position + 5)
+
+
+def _descriptor_body(data: bytes, position: int, end: int, tag: int) -> int:
+    """position의 서술자가 tag인지 확인하고 본문이 시작하는 위치를 돌려준다.
+
+    길이 칸은 바이트마다 7비트씩 최대 4바이트다 — 맨 위 비트가 켜져 있으면 이어진다.
+    """
+    if position >= end or data[position] != tag:
+        raise Mp4Error(MP4_INVALID, f"esds에 서술자 {tag:#x}가 없다")
+    position += 1
+    for _ in range(4):
+        position += 1
+        if not data[position - 1] & 0x80:
+            break
+    return position
 
 
 def _sample_sizes(data: bytes, span: tuple[int, int], count: int) -> list[int]:

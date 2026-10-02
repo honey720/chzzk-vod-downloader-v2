@@ -11,6 +11,8 @@ download/state.py·data.py re-export가 제거되어(#171) 동일성 단언
 
 import threading
 
+import pytest
+
 from core.models.download_data import DownloadData
 from core.models.download_state import DownloadState
 from app.download_task import DownloadTask
@@ -132,13 +134,14 @@ class _SectionLogger(_FakeLogger):
         self.info_calls.append(args)
 
 
-def test_start_passes_section_paths_to_the_logger():
+@pytest.mark.parametrize("content_type", ["video", "m3u8"])
+def test_start_passes_section_paths_to_the_logger(content_type):
     """구간이 있는 다운로드를 시작하면 로거에 아이템과 함께 구간 파일 경로를 넘겨야 한다 (#309).
 
-    content.selection_paths = ("a_1.mp4", "a_2.mp4")
+    content_type "video" · "m3u8", content.selection_paths = ("a_1.mp4", "a_2.mp4")
     -> log_download_info(item, ("a_1.mp4", "a_2.mp4")) 1회
     """
-    data = DownloadData("base", "vod", "out.mp4", 1080, "video")
+    data = DownloadData("base", "vod", "out.mp4", 1080, content_type)
     data.content.selection_paths = ("a_1.mp4", "a_2.mp4")
     item = _FakeItem()
     logger = _SectionLogger()

@@ -30,6 +30,9 @@ class CutFrames:
     # 입력 파일이 시작하는 시각. 세그먼트 일부만 이어 붙인 입력은 0이 아니다 —
     # ffmpeg의 -ss는 파일의 시작부터 센다
     input_start: float = 0.0
+    # 원본 오디오 스트림 전체의 비트레이트(kb/s) — 컨테이너에 적힌 값이다. 입력 파일에
+    # 원본의 어느 부분이 들었는지와 무관하게 같다. 알 수 없으면 None
+    audio_bitrate: int | None = None
 
 
 @dataclass(frozen=True)
@@ -90,7 +93,7 @@ class SourceInfo:
     """컷 입력 파일에서 읽은 정보를 담는다."""
 
     video: VideoParams  # 영상 파라미터
-    audio_bitrate: int | None  # 오디오 비트레이트(kb/s). 오디오가 없거나 읽지 못하면 None
+    audio_bitrate: int | None  # 오디오를 다시 인코딩하는 비트레이트(kb/s). 오디오가 없으면 None
 
 
 @dataclass(frozen=True)

@@ -7,6 +7,11 @@
 404 · 416), 나눠 읽기(iter_content)가 실제 서버와 같은 모양이다.
 
 받은 요청을 기록해 두어, 테스트가 어떤 범위를 요청했는지 대조할 수 있다.
+
+``truncating_cache``를 켜면 범위 요청에 잘린 본문을 주고 그것을 캐시하는 CDN을 흉내 낸다.
+캐시에 없는 파일에 범위 요청이 오면 206이 아니라 **200과 요청한 범위만큼의 본문**으로
+답하고, 그 잘린 본문을 그 파일의 전체로 기억한다 — 그 뒤의 요청은 전체 요청이어도 잘린
+본문을 받는다. 전체 요청으로 먼저 받은 파일은 범위 요청에 206으로 답한다.
 """
 
 import io
@@ -31,14 +36,14 @@ class _RangeAdapter(BaseAdapter):
         name = request.url[len(RangeHost.BASE) :]
         range_header = request.headers.get("Range")
         self._host._record(request.method, name, range_header)
-        data = self._host.files.get(name)
+        data = self._host._cached_body(name, range_header)
         headers = {"Accept-Ranges": "bytes"}
         body = b""
         if data is None:
             status = 404
         else:
-            match = _RANGE.fullmatch(range_header or "")
-            if match is None:
+            match = None if self._host.ignore_range else _RANGE.fullmatch(range_header or "")
+            if match is None or self._host._answers_range_with_200(name):
                 status, body = 200, data
             elif int(match.group(1)) >= len(data):
                 status = 416
@@ -77,12 +82,52 @@ class RangeHost:
 
     def __init__(self, files: dict[str, bytes]):
         self.files = dict(files)
+        self.ignore_range = False  # True면 범위 요청을 무시하고 200으로 전체를 내준다
+        # True면 캐시에 없는 파일의 범위 요청에 200 + 잘린 본문으로 답하고 그것을 캐시한다
+        self.truncating_cache = False
+        self._cache: dict[str, bytes] = {}  # 이름 → 캐시에 든 본문(온전하거나 잘렸거나)
+        self._fresh_truncations: set[str] = set()  # 이번 요청이 잘린 본문을 캐시에 넣은 이름
         self.requests: list[tuple[str, str, str | None]] = []  # (메서드, 이름, Range 머리)
         self._lock = threading.Lock()
 
     def _record(self, method: str, name: str, range_header: str | None) -> None:
         with self._lock:
             self.requests.append((method, name, range_header))
+
+    def _cached_body(self, name: str, range_header: str | None) -> bytes | None:
+        """이 요청이 보게 될 파일의 본문 — truncating_cache가 꺼져 있으면 파일 그대로다."""
+        data = self.files.get(name)
+        if data is None or not self.truncating_cache:
+            return data
+        with self._lock:
+            self._fresh_truncations.discard(name)
+            if name not in self._cache:
+                match = _RANGE.fullmatch(range_header or "")
+                if match is None:
+                    self._cache[name] = data  # 전체 요청 — 온전한 본문이 캐시에 든다
+                else:
+                    first = int(match.group(1))
+                    last = int(match.group(2)) if match.group(2) else len(data) - 1
+                    self._cache[name] = data[first : last + 1]  # 잘린 본문이 전체로 캐시된다
+                    self._fresh_truncations.add(name)
+            return self._cache[name]
+
+    def _answers_range_with_200(self, name: str) -> bool:
+        """이 범위 요청에 206이 아니라 200으로 답하는지 — 방금 잘린 본문을 캐시에 넣은 요청이다."""
+        with self._lock:
+            return name in self._fresh_truncations
+
+    def truncated(self) -> list[str]:
+        """캐시에 잘린 본문이 든 파일의 이름(오름차순)."""
+        with self._lock:
+            return sorted(n for n, body in self._cache.items() if body != self.files[n])
+
+    def reset_cache(self) -> None:
+        """캐시를 비우고 truncating_cache를 끈다."""
+        with self._lock:
+            self.truncating_cache = False
+            self._cache.clear()
+            self._fresh_truncations.clear()
 
     def url(self, name: str) -> str:
         """그 이름의 파일을 받는 주소."""

@@ -12,6 +12,10 @@
 | start_end | 첫·끝 PTS가 요청과 1프레임 이내이고, 편집 목록을 무시하고 읽어도 프레임이 같다 |
 | av_sync | 구간 시작·끝의 (오디오 − 영상) 차이가 원본의 같은 위치 값과 1프레임 이내로 같다 |
 
+끝의 기대값: 컷은 오디오를 끝 프레임 **다음 프레임의 PTS**까지 넣고(원본의 오디오가 먼저
+끝나면 거기까지), 결과 파일에서 영상은 끝 프레임의 PTS + 한 프레임에서 끝난다. 끝 프레임
+바로 뒤에 프레임이 빠진 자리가 있으면 두 시각이 다르다 — 기대값도 그 둘의 차이로 잡는다.
+
 A/V는 컨테이너에 적힌 시각으로 잰다. 디코드한 샘플 수로 재면 AAC 마지막 프레임의
 채움(최대 1024샘플)이 섞인다.
 """
@@ -126,9 +130,12 @@ def check_cut(frames: CutFrames, result: CutResult) -> CutCheck:
         audio_last = (shown[-1][1] + shown[-1][2]) / audio_scale
         video_first = got[0] / timescale
         video_last = (got[-1] + frame) / timescale
-        # 원본의 같은 위치: 오디오가 구간 시작·끝을 덮으면 0, 덮지 못하면 모자란 만큼
+        # 원본의 같은 위치: 오디오가 구간 시작·끝을 덮으면 0, 덮지 못하면 모자란 만큼.
+        # 끝은 (오디오가 끝나야 할 시각) − (영상이 끝나는 시각)이다 — 끝 프레임 뒤에 프레임이
+        # 빠진 자리가 있으면 오디오는 다음 프레임의 PTS까지 가고 영상은 한 프레임 뒤에서 끝난다
         want_start = max(frames.audio_start, start) - start
-        want_end = min(frames.audio_end, end) - end
+        video_end = frames.frame_pts[plan.last] + frames.frame_duration
+        want_end = min(frames.audio_end, end) - video_end
         start_diff = (audio_first - video_first) - want_start
         end_diff = (audio_last - video_last) - want_end
         av_ok = abs(start_diff) <= frames.frame_duration and abs(end_diff) <= frames.frame_duration

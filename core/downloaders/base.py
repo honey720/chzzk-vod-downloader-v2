@@ -106,6 +106,14 @@ _TRANSIENT_ERROR_REQUEUE_LIMIT = 10  # 항목별 최대 재큐 횟수 — 총 11
 _TRANSIENT_HTTP_STATUSES = frozenset({408, 429})
 
 
+class TruncatedBodyError(requests.RequestException):
+    """받은 본문이 잘렸다 — 서버가 말한 길이나 파일이 스스로 말하는 크기보다 짧다 (#309).
+
+    요청 예외의 하위라 워커의 실패 처리(재큐)가 그대로 받는다. 4xx가 아니므로 일시 오류로
+    세어 여러 번 다시 받아 보고, 계속 잘려 오면 다운로드가 실패로 끝난다.
+    """
+
+
 def _is_permanent_error(exc: BaseException) -> bool:
     """재시도해도 결과가 같은 오류인지 판정한다 (#131).
 
@@ -285,9 +293,7 @@ class BaseDownloader(ABC):
         걸러진 항목은 조용히 넘기지 않고 경고 로그로 남긴다 — 다음에 다른
         종류의 오염이 왔을 때 또 못 보는 사태를 막기 위함이다.
         """
-        pattern = re.compile(
-            r"^\d+(?:" + "|".join(re.escape(ext) for ext in extensions) + r")$"
-        )
+        pattern = re.compile(r"^\d+(?:" + "|".join(re.escape(ext) for ext in extensions) + r")$")
         entries = os.listdir(self.temp_dir)
         matched = sorted(e for e in entries if pattern.match(e))
         skipped = sorted(set(entries) - set(matched))
