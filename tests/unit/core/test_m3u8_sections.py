@@ -523,17 +523,20 @@ def test_section_of_uneven_input_passes_every_check(host, sources, tmp_path):
 def test_sections_sharing_segments_download_each_segment_once(host, sources, tmp_path):
     """두 구간이 같은 세그먼트를 쓰면 그 세그먼트는 한 번만 받고, 구간마다 파일이 하나씩 생겨야 한다.
 
-    plain, 구간 프레임 40~70(세그먼트 0~2) · 65~100(세그먼트 1~3)
-    -> 파일 `_1` · `_2`, 세그먼트 요청은 0~3번과 길이를 재는 5번이 하나씩 5건, 구간마다 check.ok
+    plain, 구간 프레임 5~130(세그먼트 0~4) · 35~170(세그먼트 0~5) — 세그먼트 2 · 3은 두 구간이 함께 쓰고,
+    어느 구간의 끝에도 놓이지 않아 구간을 정할 때 미리 받지 않는다
+    -> 파일 `_1` · `_2`, 세그먼트 요청은 0~5번이 하나씩 6건, 구간마다 check.ok
     """
     source = sources["plain"]
 
-    run = _Run(host, tmp_path, [source.selection(40, 70), source.selection(65, 100)]).start()
+    run = _Run(host, tmp_path, [source.selection(5, 130), source.selection(35, 170)]).start()
 
     assert (run.finished, run.failures) == (1, [])
     assert run.listing() == ["구간 시험 144p_1.mp4", "구간 시험 144p_2.mp4"]
+    sections = run.engine.sections
+    assert [(s.first_segment, s.last_segment) for s in sections] == [(0, 4), (0, 5)]
     assert sorted(_requests_for(host, ".m4s", ranged=False)) == [
-        f"plain/seg-00{n}.m4s" for n in (0, 1, 2, 3, 5)
+        f"plain/seg-00{n}.m4s" for n in range(6)
     ]
     for check in run.checks():
         assert check.ok, check.notes
