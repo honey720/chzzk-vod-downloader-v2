@@ -18,6 +18,7 @@ import requests
 from core.downloaders.base import _is_permanent_error
 from core.models.download_state import DownloadState
 from core.models.download_data import DownloadData
+from tests.unit.fmp4_samples import media_segment, split
 
 MB = 1024 * 1024
 CHUNK = 8192
@@ -263,7 +264,7 @@ def test_slow_requeues_are_unlimited_and_download_still_completes(tmp_path, monk
     assert data.model.state is DownloadState.RUNNING
 
     # 속도가 회복되면 같은 세그먼트가 정상 완주한다
-    fast_chunks = [b"x" * CHUNK] * 3
+    fast_chunks = split(media_segment(3 * CHUNK), CHUNK)  # 유효한 fMP4 상자 (#321)
     monkeypatch.setattr(mod, "get_thread_session", lambda: FakeSession(FakeResponse(fast_chunks)))
     monkeypatch.setattr(mod.tm, "time", TickingClock(1e-6))
     engine._download_segment(index=7, segment="segment_007.m4v", part_num=0, total_ranges=4)

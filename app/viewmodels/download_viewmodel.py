@@ -33,6 +33,7 @@ from app.viewmodels.data import ContentItem
 from core.api.playback_tracks import StreamSelectionError
 from core.downloaders.base import PostprocessError
 from core.downloaders.hls_aes_downloader import DecryptionError
+from core.downloaders.integrity import TruncatedSegmentError
 from core.models.events import ProgressEvent
 from core.services.download_service import DownloadService
 from core.models.download_data import DownloadData
@@ -72,6 +73,9 @@ def _failure_message_key(exc: BaseException) -> str | None:
         return "Decryption failed"
     if isinstance(exc, StreamSelectionError):
         # 고른 해상도의 스트림을 마스터 플레이리스트에서 하나로 정하지 못했다 (#318)
+        return exc.message_key
+    if isinstance(exc, TruncatedSegmentError):
+        # 다시 받아도 세그먼트가 계속 잘려 왔다 (#321)
         return exc.message_key
     if isinstance(exc, requests.HTTPError):
         status = exc.response.status_code if exc.response is not None else None
@@ -324,6 +328,11 @@ class DownloadViewModel(QObject):
                 "Stream not found · pick another resolution\n"
                 "The stream for the selected resolution could not be found. "
                 "Try another resolution."
+            ),
+            "Segment was received truncated": self.tr(
+                "Video data arrived corrupted · try again later\n"
+                "Part of the video kept arriving incomplete from the server. "
+                "Try again later."
             ),
         }
         key = _failure_message_key(exc)

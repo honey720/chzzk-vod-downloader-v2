@@ -165,6 +165,12 @@ The stream for the selected resolution could not be found. Try another resolutio
         <translation>선택한 해상도를 받을 수 없습니다 · 다른 해상도를 골라 주세요
 선택한 해상도의 영상을 찾지 못했습니다. 다른 해상도로 다시 시도해 주세요.</translation>
     </message>
+    <message>
+        <source>Video data arrived corrupted · try again later
+Part of the video kept arriving incomplete from the server. Try again later.</source>
+        <translation>영상 일부가 잘려 받아졌습니다 · 잠시 뒤 다시 시도해 주세요
+서버에서 영상 일부가 계속 잘린 채로 왔습니다. 잠시 뒤 다시 받아 주세요.</translation>
+    </message>
 </context>
 <context>
     <name>FetchJob</name>

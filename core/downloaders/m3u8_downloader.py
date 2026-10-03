@@ -27,6 +27,8 @@ from urllib.parse import urljoin
 
 import requests
 
+import core.downloaders.base as base_module
+import core.downloaders.integrity as integrity
 from core.api.session import get_thread_session
 from core.downloaders.base import BaseDownloader
 from core.models.content import Content, ContentType
@@ -88,6 +90,29 @@ class M3U8Downloader(BaseDownloader):
         return (0, 0, self.s.total_ranges, self.s.adjust_threads)
 
     def _prepare_output(self) -> None:
+        """임시 폴더를 만들고 초기화 세그먼트(EXT-X-MAP)를 받아 온전한지 확인한다 (#321).
+
+        초기화 세그먼트가 잘려 받아졌으면 다시 받는다. 세그먼트의 일시 오류와 같은 횟수
+        (base의 _TRANSIENT_ERROR_REQUEUE_LIMIT)까지 다시 받고, 그래도 잘려 있으면 실패시킨다 —
+        잘린 초기화 세그먼트로는 영상 전체를 읽을 수 없다.
+
+        Raises:
+            TruncatedSegmentError: 다시 받아도 초기화 세그먼트가 계속 잘려 올 때
+        """
+        init_segment_path = os.path.join(self.temp_dir, f"{0:0{self.width}d}.m4s")
+        retries = base_module._TRANSIENT_ERROR_REQUEUE_LIMIT
+        for attempt in range(retries + 1):
+            self._receive_init_segment()
+            try:
+                with open(init_segment_path, "rb") as f:
+                    integrity.check_fmp4_init_segment(f.read())
+                return
+            except integrity.TruncatedSegmentError as e:
+                if attempt == retries:
+                    raise
+                self.logger.log_error("Init segment incomplete — retrying", e)
+
+    def _receive_init_segment(self) -> None:
         """임시 폴더를 재생성하고 초기화 세그먼트(EXT-X-MAP)를 받는다."""
         # 세그먼트 저장용 임시 폴더가 있다면 내용 포함 삭제 후 재생성
         if os.path.exists(self.temp_dir):
@@ -189,10 +214,10 @@ class M3U8Downloader(BaseDownloader):
                                     slow_count += 1
                                     if slow_count > 5:
                                         # 속도가 너무 느리면 스레드 재시작
-                                        ratio = write_elapsed / elapsed * 100 if elapsed > 0 else 0.0
-                                        diagnostic = (
-                                            f"write={write_elapsed:.3f}s/{elapsed:.3f}s={ratio:.0f}%"
+                                        ratio = (
+                                            write_elapsed / elapsed * 100 if elapsed > 0 else 0.0
                                         )
+                                        diagnostic = f"write={write_elapsed:.3f}s/{elapsed:.3f}s={ratio:.0f}%"
                                         with self.lock:
                                             self._requeue_slow(
                                                 (index, segment), part_num, diagnostic=diagnostic
@@ -200,6 +225,13 @@ class M3U8Downloader(BaseDownloader):
                                         return part_num
                                 else:
                                     slow_count = 0
+
+                # 받은 세그먼트가 온전한지 내용으로 확인한다 (#321) — 잘린 본문이
+                # 200과 맞는 Content-Length로 올 수 있어 상태 코드로는 알 수 없다.
+                # 온전하지 않으면 아래 except가 일시 오류로 다시 받게 한다
+                integrity.check_content_length(getattr(response, "headers", None), downloaded_size)
+                with open(temp_file, "rb") as f:
+                    integrity.check_fmp4_media_segment(f, downloaded_size)
 
                 # 성공적으로 마무리된 경우
                 with self.lock:
@@ -209,10 +241,12 @@ class M3U8Downloader(BaseDownloader):
                 self.logger.log_thread_complete(part_num, downloaded_size)
                 return part_num
 
-            except (requests.RequestException, requests.Timeout) as e:
+            except (
+                requests.RequestException,
+                requests.Timeout,
+                integrity.TruncatedSegmentError,
+            ) as e:
                 with self.lock:
                     self._requeue_failed((index, segment), part_num, e)
                 self.logger.log_error(f"Part {part_num} download failed", e)
                 return part_num
-
-

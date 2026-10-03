@@ -26,6 +26,7 @@ from urllib.parse import urljoin
 
 import requests
 
+import core.downloaders.integrity as integrity
 from core.api.hls import parse_media_playlist
 from core.api.session import get_thread_session
 from core.downloaders.base import BaseDownloader
@@ -171,9 +172,7 @@ class HlsAesDownloader(BaseDownloader):
         response.raise_for_status()
         plain = decrypt_segment(response.content, self._key, self._segment_iv(0))
         if not looks_like_ts(plain):
-            raise DecryptionError(
-                "복호화 결과가 MPEG-TS가 아니다 — 키 또는 IV 규칙이 맞지 않는다"
-            )
+            raise DecryptionError("복호화 결과가 MPEG-TS가 아니다 — 키 또는 IV 규칙이 맞지 않는다")
 
     def _segment_iv(self, index: int) -> bytes:
         """세그먼트의 IV — 명시 IV가 있으면 그 값, 없으면 미디어 시퀀스 번호."""
@@ -242,6 +241,13 @@ class HlsAesDownloader(BaseDownloader):
                             else:
                                 slow_count = 0
 
+                # 받은 세그먼트가 온전한지 확인한다 (#321) — 잘린 본문이 200과 맞는
+                # Content-Length로 올 수 있다. 블록 중간에서 잘린 암호문은 복호화가
+                # 키 문제로 보고 전체를 실패시키므로 복호화 전에 걸러 다시 받는다.
+                # 온전하지 않으면 아래 except가 일시 오류로 다시 받게 한다
+                integrity.check_content_length(getattr(response, "headers", None), downloaded_size)
+                integrity.check_cbc_ciphertext(bytes(buffer))
+
                 try:
                     plain = decrypt_segment(bytes(buffer), self._key, self._segment_iv(index))
                 except (ValueError, DecryptionError) as e:
@@ -250,6 +256,9 @@ class HlsAesDownloader(BaseDownloader):
                     # 실행 루프가 끝나지 않는다 — 다운로드 전체를 중단시킨다
                     self._fail_fatally(e, "Segment decryption failed")
                     return part_num
+
+                # 블록 경계에서 잘린 암호문은 복호화를 통과한다 — 복호화한 TS로 확인한다
+                integrity.check_ts_segment(plain)
 
                 temp_file = os.path.join(self.temp_dir, f"{index:0{self.width}d}.ts")
                 with open(temp_file, "wb") as f:
@@ -263,9 +272,12 @@ class HlsAesDownloader(BaseDownloader):
                 self.logger.log_thread_complete(part_num, downloaded_size)
                 return part_num
 
-            except (requests.RequestException, requests.Timeout) as e:
+            except (
+                requests.RequestException,
+                requests.Timeout,
+                integrity.TruncatedSegmentError,
+            ) as e:
                 with self.lock:
                     self._requeue_failed((index, segment), part_num, e)
                 self.logger.log_error(f"Part {part_num} download failed", e)
                 return part_num
-
