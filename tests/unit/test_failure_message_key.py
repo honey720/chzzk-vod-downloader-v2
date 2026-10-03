@@ -10,6 +10,7 @@
 import requests
 
 from app.viewmodels.download_viewmodel import _failure_message_key
+from core.api.playback_tracks import STREAM_NOT_FOUND, StreamSelectionError
 from core.downloaders.base import PostprocessError
 from core.downloaders.hls_aes_downloader import DecryptionError
 from core.utils.ffmpeg import FFmpegNotFoundError, RemuxError
@@ -66,6 +67,16 @@ class TestFailureMessageKey:
         assert _failure_message_key(OSError(28, "No space left", "C:\\full\\path.mp4")) == (
             "Failed to save file"
         )
+
+    def test_stream_selection_error_maps_to_its_own_key(self):
+        """StreamSelectionError는 그 예외가 든 키로 매핑돼야 한다 (#318).
+
+        StreamSelectionError("720 해상도 스트림을 찾을 수 없습니다.")
+        -> STREAM_NOT_FOUND
+        """
+        error = StreamSelectionError("720 해상도 스트림을 찾을 수 없습니다.")
+
+        assert _failure_message_key(error) == STREAM_NOT_FOUND
 
     def test_unknown_exception_has_no_key(self):
         assert _failure_message_key(RuntimeError("anything")) is None

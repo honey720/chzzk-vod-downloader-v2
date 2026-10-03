@@ -95,6 +95,12 @@ _COLLAPSE_TICKS = 5  # 감소 확정에 필요한 연속 틱 수 (구 규칙과 
 _REPROBE_TICKS = 15  # 정체 상태에서 재탐침까지의 틱 수
 
 
+# ============ 요청 타임아웃 (#320) ============
+# 다운로드 경로의 모든 요청(총 크기 조회 · 플레이리스트 · 초기화 세그먼트 · 범위 ·
+# 세그먼트)이 쓰는 값이다. 타임아웃 없는 요청은 서버가 응답하지 않으면 끝나지 않아
+# 다운로드가 실패하지도 못하고 멈춘다. 값은 범위 · 세그먼트 요청이 써 오던 그대로다.
+REQUEST_TIMEOUT = 30  # 초 — 연결과 응답 대기 각각의 한도
+
 # ============ 오류 재큐 상한 (#131) ============
 # 상한이 없으면 영구 오류(404·403)가 무한 재큐돼 다운로드가 끝나지도,
 # 실패하지도 않는다. 상한은 예외로 인한 재큐(_requeue_failed)에만 건다 —
@@ -285,9 +291,7 @@ class BaseDownloader(ABC):
         걸러진 항목은 조용히 넘기지 않고 경고 로그로 남긴다 — 다음에 다른
         종류의 오염이 왔을 때 또 못 보는 사태를 막기 위함이다.
         """
-        pattern = re.compile(
-            r"^\d+(?:" + "|".join(re.escape(ext) for ext in extensions) + r")$"
-        )
+        pattern = re.compile(r"^\d+(?:" + "|".join(re.escape(ext) for ext in extensions) + r")$")
         entries = os.listdir(self.temp_dir)
         matched = sorted(e for e in entries if pattern.match(e))
         skipped = sorted(set(entries) - set(matched))

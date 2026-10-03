@@ -32,8 +32,10 @@ from PySide6.QtCore import QObject
 
 from app.viewmodels.data import ContentItem
 from app.viewmodels.download_viewmodel import DownloadViewModel
+from core.api.playback_tracks import StreamSelectionError
 from core.downloaders.base import PostprocessError
 from core.downloaders.hls_aes_downloader import DecryptionError
+from core.models.content import StreamKey
 from core.models.download_state import DownloadState
 from core.models.events import ProgressEvent
 from core.utils.ffmpeg import FFmpegNotFoundError, RemuxError
@@ -286,6 +288,19 @@ class TestStart:
         assert wired.service.log_calls_at_submit == 1
         assert wired.log_calls == [("log_download_info", item)]
 
+    def test_start_hands_the_selected_stream_to_the_content(self, wired):
+        """아이템이 고른 스트림 값은 제출하는 content에 실려야 한다 (#318).
+
+        item.stream = StreamKey(720, 1280, 30.0, 2692000)
+        -> 제출된 content.stream이 같은 값
+        """
+        item = _make_item("m3u8")
+        item.stream = StreamKey(720, 1280, 30.0, 2692000)
+
+        wired.start(item)
+
+        assert wired.submission["content"].stream == StreamKey(720, 1280, 30.0, 2692000)
+
     def test_start_reflects_running_without_calling_content(self, wired):
         """시작은 content를 부르지 않는다 — 카드의 시작 반영은 mainWindow가 따로 한다."""
         item = _make_item()
@@ -487,6 +502,10 @@ class TestFailure:
             (
                 OSError(28, "No space left", "C:\\full\\path.mp4"),
                 "Failed to save file · check the path and disk space",
+            ),
+            (
+                StreamSelectionError("720 해상도 스트림을 찾을 수 없습니다."),
+                "Stream not found · pick another resolution",
             ),
         ],
         ids=lambda v: v if isinstance(v, str) else type(v).__name__,

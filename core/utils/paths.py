@@ -85,18 +85,19 @@ def ensure_unique_path(path: str) -> str:
         n += 1
 
 
-def build_output_path(directory: str, title: str, resolution: int) -> str:
+def build_output_path(directory: str, title: str, resolution: int, tag: str = "") -> str:
     """전체 다운로드의 산출물 경로를 조립한다 — 정제·길이 제한·중복 회피 포함.
 
     파일명 형식은 기존과 동일한 `{제목} {해상도}p.mp4`이고, 같은 이름이
-    이미 있을 때만 " (n)"이 붙는다. 전체 경로 문자 수 또는 파일명 바이트
+    이미 있을 때만 " (n)"이 붙는다. tag는 `{해상도}p` 바로 뒤에 붙는다 — 해상도가 같은
+    두 스트림을 가르는 표시(`720p(원본)`)이고, 대부분은 빈 문자열이다(#318). 전체 경로 문자 수 또는 파일명 바이트
     수가 상한을 넘으면 제목 부분만 잘라 맞추되(해상도 접미사·확장자 보존),
     원제목의 해시 6자리를 함께 붙인다 — 앞부분이 같은 긴 제목들이 절단 후
     동일해져 " (n)"만으로 구분되는(식별성 저하) 사태를 막기 위함이다.
     끝 점·공백 문제는 이름 끝에 항상 접미사가 붙는 구조라 발생하지
     않는다(제목의 점은 이름 중간에 놓인다).
     """
-    return ensure_unique_path(_candidate_path(directory, title, resolution))
+    return ensure_unique_path(_candidate_path(directory, title, resolution, sanitize_filename(tag)))
 
 
 def build_section_output_paths(

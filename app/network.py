@@ -1,4 +1,3 @@
-import re
 import json
 from fractions import Fraction
 from urllib.parse import urljoin, urlsplit
@@ -11,9 +10,18 @@ from core.api.dash import (
     parse_frame_rates,
     parse_sea_manifest,
 )
+from core.api.playback_tracks import (
+    StreamSelectionError,
+    list_streams,
+    playback_tracks,
+    select_stream,
+    select_variant,
+    select_variant_by_height,
+    track_for_resolution,
+)
 from core.api.representations import dedupe_by_resolution
 from core.api.url_parser import extract_content_no
-from core.models.content import VideoInfo
+from core.models.content import StreamKey, VideoInfo
 from core.utils.paths import sanitize_filename
 
 # Session 관리는 core/api/session.py로 이주했다 (#62, 원본 #31).
@@ -89,14 +97,6 @@ def _get_with_cookies_trusted(
 #: 복호화 키를 받아도 되는 호스트 — 코드 상수의 API 호스트뿐이다(실측 SEA 매니페스트의
 #: keyUriTemplate이 이 호스트다). 새 목록을 두지 않는다.
 _KEY_HOSTS = frozenset({urlsplit(CHZZK_API).hostname})
-
-
-def _int_or_zero(value) -> int:
-    """비트레이트 같은 선택 필드를 정수로 — 없거나 숫자가 아니면 0(미상)."""
-    try:
-        return int(value or 0)
-    except (TypeError, ValueError):
-        return 0
 
 
 class NetworkManager:
@@ -236,21 +236,17 @@ class NetworkManager:
     def get_video_m3u8_manifest(json_str: str):
         """
         m3u8 정보가 포함된 json형식의 문자열을 받아서 Representation 목록을 파싱한다.
+
+        해상도는 트랙 이름(encodingTrackId, "1080p" → 1080)을 따르고, 이름이 그런 형식이
+        아니면 짧은 변이다(core/api/representations.py의 track_resolution, #318).
         """
-        data = json.loads(json_str)
-        media = data.get("media", [])
-        encoding_track = media[0].get("encodingTrack", [])
-        reps = []
-        for encoding in encoding_track:
-            width = encoding.get("videoWidth")
-            height = encoding.get("videoHeight")
-            resolution = min(int(width), int(height))
-            base_url = None
-            # 같은 높이 트랙(비트레이트·프레임레이트 변형)은 하나로 합친다 —
-            # 이 경로는 트랙별 URL이 없어 어느 것을 남겨도 다운로드 대상은
-            # get_video_m3u8_base_url이 마스터 플레이리스트에서 고른다.
-            # 규칙·근거는 core/api/representations.py.
-            reps.append((resolution, base_url, _int_or_zero(encoding.get("videoBitRate"))))
+        # 해상도가 같은 트랙(비트레이트·프레임레이트 변형)은 하나로 합친다 —
+        # 이 경로는 트랙별 URL이 없어 다운로드 대상은 get_video_m3u8_base_url이
+        # 같은 규칙으로 트랙을 골라 마스터 플레이리스트에서 찾는다.
+        # 규칙·근거는 core/api/representations.py.
+        reps = [
+            (track.resolution, None, track.video_bitrate) for track in playback_tracks(json_str)
+        ]
 
         sorted_reps = dedupe_by_resolution(reps)
         auto_resolution = sorted_reps[-1][0]
@@ -258,32 +254,76 @@ class NetworkManager:
         return sorted_reps, auto_resolution, auto_base_url
     
     @staticmethod
-    def get_video_m3u8_base_url(json_str: str, resolution: int, cookies: dict | None = None) -> str:
+    def get_video_m3u8_streams(json_str: str, cookies: dict | None = None):
+        """마스터 플레이리스트를 받아 실제 변형으로 해상도 목록을 만든다 (#318).
+
+        playback 정보의 트랙은 영상과 어긋날 수 있다(원본 트랙의 값이 0이거나, 다른 방송의
+        트랙이 오는 경우가 있다). 받는 것은 마스터 플레이리스트의 변형이므로 목록도 거기서
+        만든다. playback 정보는 원본 여부를 아는 데만 쓴다(core/api/playback_tracks.py).
+
+        요청은 get_video_m3u8_base_url과 같다(같은 주소 검사 · 쿠키 · 타임아웃).
+
+        Returns:
+            ([해상도, None] 항목(StreamEntry) 목록(오름차순), auto 해상도, None).
+            해상도는 짧은 변이고, 짧은 변이 같은 변형은 둘 다 들어 있다.
+            변형이 하나도 없으면 ([], None, None)
+        """
+        path = json.loads(json_str).get("media", [])[0].get("path")
+        response = _get_with_cookies_trusted(path, cookies, None, timeout=REQUEST_TIMEOUT)
+        response.raise_for_status()
+        entries = list_streams(response.text, playback_tracks(json_str))
+        if not entries:
+            return [], None, None
+        return entries, entries[-1][0], None
+
+    @staticmethod
+    def get_video_m3u8_base_url(
+        json_str: str,
+        resolution: int,
+        cookies: dict | None = None,
+        stream: StreamKey | None = None,
+    ) -> str:
         """
         m3u8 정보가 포함된 json형식의 문자열을 받아서 base_url을 파싱한다.
 
         권한이 필요한 VOD의 플레이리스트 접근을 위해 쿠키를 실어 보낸다 (#55).
         path는 playback JSON이 알려준 주소다 — https만 검사한다(호스트는 잠그지
         않는다). 리다이렉트 홉도 같은 검사를 거친다.
+
+        stream이 있으면 목록(get_video_m3u8_streams)에서 고른 변형의 정체다 — 마스터
+        플레이리스트에서 같은 크기 · 프레임률 · BANDWIDTH의 변형을 다시 찾는다(#318).
+
+        stream이 없으면 해상도는 get_video_m3u8_manifest의 값이다. 그 값이 가리키는 트랙을
+        playback 정보에서 찾아 그 트랙의 크기 · 프레임률 · 비트레이트로 변형을 고르고,
+        트랙이 없거나 트랙과 맞는 변형이 없으면 전처럼 세로값으로 찾는다 — playback 정보의
+        트랙이 그 영상의 것이 아닐 수 있다.
+
+        Raises:
+            StreamSelectionError: 맞는 변형이 없거나 하나로 정해지지 않는 경우
         """
         data = json.loads(json_str)
         media = data.get("media", [])
         path = media[0].get("path")
         response = _get_with_cookies_trusted(path, cookies, None, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
-        content = response.text.splitlines()
 
-        # 정규식으로 해상도 매칭
-        resolution_pattern = re.compile(rf"RESOLUTION=\d+x{resolution}")
-        
-        for i, line in enumerate(content):
-            if resolution_pattern.search(line):
-                # 다음 줄이 해당 해상도의 세부 플레이리스트 경로
-                relative_path = content[i + 1].strip()
-                base_url = urljoin(path, relative_path)
-                return base_url
+        if stream is not None:
+            return urljoin(path, select_stream(response.text, stream))
 
-        raise ValueError(f"{resolution} 해상도 스트림을 찾을 수 없습니다.")
+        track = track_for_resolution(playback_tracks(json_str), resolution)
+        if track is None:
+            # playback 정보에 그 해상도의 트랙이 없다 — 정체를 모르므로 전처럼 세로값으로 찾는다
+            relative_path = select_variant_by_height(response.text, resolution)
+        else:
+            try:
+                relative_path = select_variant(response.text, track)
+            except StreamSelectionError as selection_error:
+                # 트랙과 맞는 변형이 없다 — 트랙이 이 영상의 것이 아닐 수 있다. 세로값으로 찾는다
+                try:
+                    relative_path = select_variant_by_height(response.text, resolution)
+                except StreamSelectionError:
+                    raise selection_error from None
+        return urljoin(path, relative_path)
     
     @staticmethod
     def get_clip_info(clip_no: str, cookies: dict):
