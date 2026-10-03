@@ -310,7 +310,11 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         # 건드리지 않고 표시 계층에서만 뒤집는다.
         # ⚠️ 순서는 고정이다 — 클릭해도 pill을 앞으로 옮기지 않는다(옮기면
         # 연속으로 눌러볼 수 없다). 선택만 바뀐다.
-        self.item.unique_reps.sort(key=lambda rep: _resolution_key(rep[0]), reverse=True)
+        # 해상도가 같은 두 항목은 원본이 앞이다 — 기본 선택(첫 pill)이 원본이 된다 (#318)
+        self.item.unique_reps.sort(
+            key=lambda rep: (_resolution_key(rep[0]), ContentItem.rep_is_original(rep)),
+            reverse=True,
+        )
         for unique_rep in self.item.unique_reps:
             # 크기 조회가 끝나기 전 표시 — "Unknown"은 실패로 읽혀 "확인 중"으로 표기 (#124)
             unique_rep.append(self.tr("Checking..."))  # 초기 값 설정
@@ -344,7 +348,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         item = self.item
         candidates = [label.text(), strftime("%H:%M:%S", gmtime(item.duration or 0)), "0000.00 MB"]
         if item.downloadState != DownloadState.WAITING and item.resolution:
-            candidates.append(f"{item.resolution}p · 0000.00 MB")
+            candidates.append(f"{self._resolutionText()} · 0000.00 MB")
         label.setMinimumWidth(max(metrics.horizontalAdvance(text) for text in candidates) + 4)
 
     def _pathMinTextWidth(self) -> int:
@@ -451,6 +455,33 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         finally:
             self._layingOutRowThree = False
 
+    def _repLabel(self, rep) -> str:
+        """해상도 버튼의 본 글자 — "1080p", 원본이면 "1080p(원본)" (#318).
+
+        치지직 재생기의 화질 메뉴와 같은 모양이다. 프레임률은 본 글자에 넣지 않는다 —
+        _repSecondary가 보조 글자로 준다.
+        """
+        label = f"{rep[0]}p"
+        if ContentItem.rep_is_original(rep):
+            label += self.tr("(source)")
+        return label
+
+    @staticmethod
+    def _repSecondary(rep) -> str:
+        """해상도 버튼의 보조 글자 — 50fps 이상이면 "60fps", 아니면 빈 문자열 (#318)."""
+        frame_rate = ContentItem.rep_frame_rate(rep)
+        return f"{frame_rate}fps" if frame_rate is not None else ""
+
+    def _resolutionText(self) -> str:
+        """확정된 해상도의 표시 — "720p", 짧은 변이 같은 항목이 둘이고 원본을 골랐으면 "720p(원본)" (#318).
+
+        원본 표시를 붙이는 조건은 파일명과 같다(ContentItem.resolution_tag). pill이 사라진
+        뒤에는 고른 것이 둘 중 어느 쪽인지 알 표면이 이 글자뿐이다. 해상도마다 항목이
+        하나인 영상은 숫자만으로 정해지므로 붙이지 않는다.
+        """
+        mark = self.tr("(source)") if self.item.resolution_tag else ""
+        return f"{self.item.resolution}p{mark}"
+
     def addRepresentationButton(self, resolution, base_url, index):
         """
         해상도 버튼을 추가하고, 비동기로 파일 사이즈를 헤더에서 가져와 버튼 텍스트를 업데이트한다.
@@ -458,7 +489,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         # pill 모양·선택 표시는 전역 QSS의 [role="resolution"] 규칙이 그린다 (#227).
         # QSS는 `.className` 선택자를 지원하지 않아 조용히 무시하므로, 동적
         # 속성(role·selected·caret — app/widgets/pill.py가 심는다)을 속성 선택자로 잡는다
-        button = ResolutionPill(f'{resolution}p', self)
+        button = ResolutionPill(self._repLabel(self.item.unique_reps[index]), self)
+        button.setSecondaryText(self._repSecondary(self.item.unique_reps[index]))
         # 접혀 있으면 누르는 것은 "펼치기", 펼쳐져 있으면 "고르고 접기"(#244 3행 정리)
         button.clicked.connect(lambda: self._onPillClicked(index))
         # 3행 왼쪽부터 순서대로 꽂는다 — 이미 붙은 버튼 수가 곧 다음 자리다
@@ -535,6 +567,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
                     self._layoutRowThree()  # 접힘이면 보이는 pill이 바뀐다
             self.item.resolution = resolution
             self.item.base_url = base_url
+            if index is not None:
+                # 해상도가 같은 항목이 둘일 수 있다 — 고른 항목의 스트림까지 기억한다 (#318)
+                self.item.select_rep(self.item.unique_reps[index])
             # 세그먼트 기반(m3u8·hls_aes)은 total_size를 미리 알 수 없어 처리하지 않음
             if not self.item.is_segment_based and index is not None:
                 self.item.total_size = self.item.unique_reps[index][-1]
@@ -779,7 +814,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         resolution = self.item.resolution
         if not resolution or self.item.downloadState == DownloadState.WAITING:
             return size_text
-        return f"{resolution}p · {size_text}" if size_text else f"{resolution}p"
+        shown_resolution = self._resolutionText()
+        return f"{shown_resolution} · {size_text}" if size_text else shown_resolution
 
     def _slotShowsPills(self) -> bool:
         """3행 슬롯에 해상도 pill이 보이는 상태인가 — 대기(선택의 시간)만이다."""

@@ -274,6 +274,10 @@ QPushButton[role="resolution"] {
     border-radius: @pillRadius;
     color: @textMuted;
     font-size: @fontSizeMeta;
+    /* 본 글자는 왼쪽에 붙인다 — 보조 글자("60fps")가 있으면 그 오른쪽에
+     * content/pill.py::paintEvent가 그린다(#318). 보조 글자가 없는 pill은 폭이
+     * 글자에 딱 맞아 가운데 정렬과 같은 자리다. */
+    text-align: left;
 }
 
 /* 접힘 표시(▾) 자리 — 8(가장자리) + 8(도형) + 4(글자와의 간격). 도형은

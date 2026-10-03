@@ -108,21 +108,40 @@ def _fetch(vod_url: str, cookies: dict, download_path: str):
 
 
 def _select_resolution(unique_reps: list, resolution: int | None):
-    """unique_reps에서 원하는 해상도의 (resolution, base_url)을 고른다.
+    """unique_reps에서 원하는 해상도의 항목을 고른다.
 
-    resolution이 None이면 최고 화질(목록의 마지막)을 쓴다. m3u8은 base_url이 None이며
-    실제 URL은 다운로드 시작 시점에 resolver가 해상도로 해석한다.
+    resolution이 None이면 최고 화질(목록의 마지막)을 쓴다. 해상도가 같은 항목이 둘이면
+    뒤의 것(원본)을 고른다 — 기본 선택과 같은 규칙이다(#318). m3u8은 base_url이 None이며
+    실제 URL은 다운로드 시작 시점에 resolver가 고른 항목의 스트림으로 해석한다.
 
     Returns:
-        tuple[int, str | None] | None: (해상도, base_url). 매칭 실패 시 None
+        고른 항목(``[해상도, base_url]``). 매칭 실패 시 None
     """
     if resolution is None:
-        rep = unique_reps[-1]
-        return rep[0], rep[1]
-    for rep in unique_reps:
-        if rep[0] == resolution:
-            return rep[0], rep[1]
-    return None
+        return unique_reps[-1]
+    matches = [rep for rep in unique_reps if rep[0] == resolution]
+    return matches[-1] if matches else None
+
+
+def _rep_name(rep: list) -> str:
+    """목록 항목의 이름 — `1080p`, 원본이면 `1080p(원본)`. 카드의 해상도 버튼의 본 글자와 같다 (#318)."""
+    name = f"{rep[0]}p"
+    if ContentItem.rep_is_original(rep):
+        name += "(원본)"
+    return name
+
+
+def _rep_label(rep: list) -> str:
+    """목록 항목을 카드의 해상도 버튼과 같은 표시로 — `1080p(원본) · 60fps`.
+
+    원본이면 `(원본)`을 붙이고, 50fps 이상이면 버튼의 보조 글자 자리에 오는 `60fps`를
+    ` · ` 뒤에 적는다.
+    """
+    label = _rep_name(rep)
+    frame_rate = ContentItem.rep_frame_rate(rep)
+    if frame_rate is not None:
+        label += f" · {frame_rate}fps"
+    return label
 
 
 def _build_item(result: tuple, content_type: str, resolution: int | None) -> ContentItem | None:
@@ -142,13 +161,15 @@ def _build_item(result: tuple, content_type: str, resolution: int | None) -> Con
 
     selected = _select_resolution(unique_reps, resolution)
     if selected is None:
-        available = ", ".join(f"{rep[0]}p" for rep in unique_reps)
+        available = ", ".join(_rep_label(rep) for rep in unique_reps)
         logger.error("해상도 %sp를 찾을 수 없습니다. 사용 가능: %s", resolution, available)
         return None
-    item.resolution, item.base_url = selected
+    item.select_rep(selected)
 
     # 조립·중복 회피는 core가 단일 지점으로 담당한다 — GUI(manager)와 동일 (#105)
-    item.output_path = build_output_path(item.download_path, item.title, item.resolution)
+    item.output_path = build_output_path(
+        item.download_path, item.title, item.resolution, item.resolution_tag
+    )
     return item
 
 
@@ -252,6 +273,8 @@ class _HeadlessRunner:
             data.content.selections = self.selections
             data.content.selection_paths = self.section_paths
             data.content.mp4_head = self.mp4_head
+        # 고른 변형을 다시 찾는 값 (#318) — 스트림 값이 없는 아이템은 해상도로 찾는다
+        data.content.stream = getattr(self.item, "stream", None)
         task_logger = DownloadLogger()
         # GUI 브리지와 동일하게 상태 전이 흡수·다운로드 정보 로깅은 태스크 어댑터가 담당
         self.task = DownloadTask(data, self.item, task_logger)
@@ -359,14 +382,35 @@ def _format_fps(rate: Fraction | None) -> str:
     return f"{float(rate):.2f}".rstrip("0").rstrip(".") + "fps"
 
 
+def _declared_rate(rep: list, rates: dict[str, Fraction]) -> Fraction | None:
+    """목록 항목의 프레임률 — 매니페스트의 정확한 비(rates)가 먼저고, 없으면 항목이 든 선언값이다.
+
+    항목이 든 값은 조회 때 응답에서 읽은 것이다(마스터 플레이리스트의 FRAME-RATE 등, #318).
+    소수로 들어 있어 분모 1001까지의 가까운 비로 옮긴다. 표시용 값이다 — 프레임 번호
+    계산에는 쓰지 않는다.
+    """
+    rate = rates.get(rep[1])
+    if rate is not None:
+        return rate
+    declared = getattr(rep, "frame_rate", None)
+    if not declared or declared <= 0:
+        return None
+    return Fraction(declared).limit_denominator(1001)
+
+
 def _format_resolutions(unique_reps: list, rates: dict[str, Fraction]) -> str:
-    """`--list`가 찍는 한 줄 — 해상도마다 매니페스트가 선언한 프레임률을 붙인다.
+    """`--list`가 찍는 한 줄 — 해상도마다 이름과 선언된 프레임률을 붙인다.
+
+    이름은 `<해상도>p`이고 원본이면 `(원본)`이 붙는다(#318). 프레임률은 구간을 프레임
+    번호로 정할 때 필요해 모든 항목에 적는다(#309).
 
     Args:
         unique_reps: [해상도, base_url] 목록
-        rates: ``{base_url: 프레임률}`` — 없는 base_url은 `fps 모름`으로 찍는다
+        rates: ``{base_url: 프레임률}`` — 여기에도 없고 항목에도 없으면 `fps 모름`으로 찍는다
     """
-    return ", ".join(f"{rep[0]}p · {_format_fps(rates.get(rep[1]))}" for rep in unique_reps)
+    return ", ".join(
+        f"{_rep_name(rep)} · {_format_fps(_declared_rate(rep, rates))}" for rep in unique_reps
+    )
 
 
 def _fetch_frame_rates(vod_url: str, cookies: dict, content_type: str) -> dict[str, Fraction]:

@@ -331,7 +331,9 @@ class ContentViewModel(QObject):
         if item:
             # 조립·중복 회피는 core가 단일 지점으로 담당한다 — 같은 제목이
             # 이미 있으면 " (n)"이 붙은 새 경로를 받는다 (#105)
-            item.output_path = build_output_path(item.download_path, item.title, item.resolution)
+            item.output_path = build_output_path(
+                item.download_path, item.title, item.resolution, item.resolution_tag
+            )
         else:
             item.output_path = ensure_unique_path(os.path.join(item.download_path, "video.mp4"))
 
