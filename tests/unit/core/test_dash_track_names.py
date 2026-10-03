@@ -44,7 +44,10 @@ def _rep(
 
 def _mpd(*reps: str, adaptation_frame_rate: str | None = None) -> str:
     rate = f' frameRate="{adaptation_frame_rate}"' if adaptation_frame_rate else ""
-    return f'{_HEAD}<Period><AdaptationSet mimeType="video/mp4"{rate}>\n{"".join(reps)}</AdaptationSet></Period>{_TAIL}'
+    return (
+        f'{_HEAD}<Period><AdaptationSet mimeType="video/mp4"{rate}>\n'
+        f"{''.join(reps)}</AdaptationSet></Period>{_TAIL}"
+    )
 
 
 def _listed(reps: list) -> list[tuple]:
