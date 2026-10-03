@@ -8,6 +8,7 @@
 """
 
 import pytest
+import requests
 from Crypto.Cipher import AES
 
 import core.downloaders.base as base_module
@@ -64,6 +65,27 @@ class _Declared:
         self.declared = declared
 
 
+class _BrokenRead:
+    """본문을 읽다가 예외가 나는 응답 — 응답은 왔지만 본문이 끝까지 오지 않았다."""
+
+    def __init__(self, error: Exception):
+        self.error = error
+
+    def raise_for_status(self):
+        pass
+
+    @property
+    def content(self) -> bytes:
+        raise self.error
+
+
+class _NoResponse:
+    """요청 자체가 예외로 끝나는 경우 — 연결 실패 · 타임아웃."""
+
+    def __init__(self, error: Exception):
+        self.error = error
+
+
 class _Response:
     """본문과 Content-Length를 가진 가짜 응답 — 따로 정하지 않으면 본문의 길이를 선언한다."""
 
@@ -93,7 +115,10 @@ class _Session:
         served = self.requests.get(name, 0)
         self.requests[name] = served + 1
         queue = self._bodies[name]
-        return _Response(queue[min(served, len(queue) - 1)])
+        body = queue[min(served, len(queue) - 1)]
+        if isinstance(body, _NoResponse):
+            raise body.error
+        return body if isinstance(body, _BrokenRead) else _Response(body)
 
 
 class _Logger:
@@ -280,6 +305,74 @@ def test_init_segment_that_stays_truncated_fails_the_download(cut, tmp_path, mon
     assert session.requests["init.m4s"] == ATTEMPTS
     assert not any(name.startswith("seg_") for name in session.requests)
     _assert_failed_as_truncated(failures, finished, data, tmp_path)
+
+
+# 본문이 선언된 Content-Length보다 짧을 때 requests가 본문을 읽으며 내는 예외들
+SHORT_READS = {
+    "chunked": requests.exceptions.ChunkedEncodingError("IncompleteRead"),
+    "decoding": requests.exceptions.ContentDecodingError("incomplete stream"),
+}
+
+
+@pytest.mark.parametrize("error", SHORT_READS)
+def test_init_segment_whose_body_ends_early_is_fetched_again_until_intact(
+    error, tmp_path, monkeypatch
+):
+    """초기화 세그먼트의 본문이 선언된 길이보다 먼저 끝나면 다시 받고, 온전하면 완료돼야 한다.
+
+    init.m4s의 본문 읽기가 두 번 주석의 예외로 끝나고 세 번째에 온전하게 온다
+    -> 완료 1회, 실패 없음, init.m4s 요청 3회, 산출물 == 초기화 + 세그먼트 3개
+    """
+    short = _BrokenRead(SHORT_READS[error])
+    session, _data, failures, finished = _run_m3u8(
+        tmp_path, monkeypatch, **{"init.m4s": [short, short, INIT]}
+    )
+
+    assert (failures, finished) == ([], [True])
+    assert session.requests["init.m4s"] == 3
+    assert (tmp_path / "out.mp4").read_bytes() == M3U8_OUTPUT
+
+
+@pytest.mark.parametrize("error", SHORT_READS)
+def test_init_segment_whose_body_keeps_ending_early_fails_as_truncated(
+    error, tmp_path, monkeypatch
+):
+    """초기화 세그먼트의 본문이 계속 먼저 끝나면 상한까지 다시 받은 뒤 잘림 실패 키로 실패해야 한다.
+
+    init.m4s의 본문 읽기가 항상 주석의 예외로 끝난다
+    -> init.m4s 요청 11회, 실패 콜백이 TruncatedSegmentError 하나를 받고 원인은 그 예외
+    """
+    session, data, failures, finished = _run_m3u8(
+        tmp_path, monkeypatch, **{"init.m4s": [_BrokenRead(SHORT_READS[error])]}
+    )
+
+    assert session.requests["init.m4s"] == ATTEMPTS
+    _assert_failed_as_truncated(failures, finished, data, tmp_path)
+    assert failures[0].__cause__ is SHORT_READS[error]
+
+
+NETWORK_ERRORS = {
+    "connection": requests.ConnectionError("연결 실패"),
+    "timeout": requests.ReadTimeout("응답 없음"),
+}
+
+
+@pytest.mark.parametrize("error", NETWORK_ERRORS)
+def test_network_error_on_the_init_segment_fails_without_fetching_again(
+    error, tmp_path, monkeypatch
+):
+    """초기화 세그먼트 요청이 연결 실패 · 타임아웃으로 끝나면 다시 받지 않고 그 예외로 실패해야 한다.
+
+    init.m4s 요청이 주석의 예외로 끝난다
+    -> init.m4s 요청 1회, 실패 콜백이 그 예외 하나를 받음, 완료 없음
+    """
+    session, _data, failures, finished = _run_m3u8(
+        tmp_path, monkeypatch, **{"init.m4s": [_NoResponse(NETWORK_ERRORS[error])]}
+    )
+
+    assert session.requests["init.m4s"] == 1
+    assert failures == [NETWORK_ERRORS[error]]
+    assert finished == []
 
 
 # ================================================================ hls_aes — 암호화된 TS
