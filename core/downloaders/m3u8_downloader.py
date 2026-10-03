@@ -30,7 +30,7 @@ import requests
 import core.downloaders.base as base_module
 import core.downloaders.integrity as integrity
 from core.api.session import get_thread_session
-from core.downloaders.base import BaseDownloader
+from core.downloaders.base import REQUEST_TIMEOUT, BaseDownloader
 from core.models.content import Content, ContentType
 from core.models.download_state import DownloadState
 from core.models.plan import DownloadPlan
@@ -79,7 +79,7 @@ class M3U8Downloader(BaseDownloader):
 
     def prepare(self, content: Content) -> DownloadPlan:
         """플레이리스트를 받아 (index, 세그먼트) 목록의 계획을 만든다."""
-        response = get_thread_session().get(self.s.base_url)
+        response = get_thread_session().get(self.s.base_url, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
         lines = response.text.splitlines()
         segments = [line for line in lines if line and not line.startswith("#")]
@@ -148,7 +148,7 @@ class M3U8Downloader(BaseDownloader):
         init_segment_path = os.path.join(self.temp_dir, f"{0:0{self.width}d}.m4s")
         # 초기화 세그먼트 다운로드
         with open(init_segment_path, "wb") as f:
-            f.write(get_thread_session().get(init_url).content)
+            f.write(get_thread_session().get(init_url, timeout=REQUEST_TIMEOUT).content)
 
     def _log_item_start(self, part_num: int, item) -> None:
         _index, segment = item
@@ -201,7 +201,9 @@ class M3U8Downloader(BaseDownloader):
         while not self.state == DownloadState.WAITING:
             try:
                 # 스레드로컬 세션으로 같은 워커의 세그먼트 요청 간 연결을 재사용한다 (#31)
-                response = get_thread_session().get(segment_url, stream=True, timeout=30)
+                response = get_thread_session().get(
+                    segment_url, stream=True, timeout=REQUEST_TIMEOUT
+                )
                 response.raise_for_status()
                 part_start_time = tm.time()
                 # 디스크 쓰기 누적 시간 — 저속 판정에는 더 이상 반영하지 않는다(#191).
