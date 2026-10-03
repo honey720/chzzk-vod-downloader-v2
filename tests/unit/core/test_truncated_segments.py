@@ -56,13 +56,22 @@ def _encrypted(index: int) -> bytes:
     return cipher.encrypt(plain + bytes([pad]) * pad)
 
 
-class _Response:
-    """본문과, 그 본문의 길이를 선언한 Content-Length를 가진 가짜 응답."""
+class _Declared:
+    """본문과 다른 길이를 Content-Length로 선언해서 줄 본문."""
 
-    def __init__(self, body: bytes):
-        self.content = body
-        self.text = body.decode("utf-8", "replace")
-        self.headers = {"Content-Length": str(len(body))}
+    def __init__(self, body: bytes, declared: int):
+        self.body = body
+        self.declared = declared
+
+
+class _Response:
+    """본문과 Content-Length를 가진 가짜 응답 — 따로 정하지 않으면 본문의 길이를 선언한다."""
+
+    def __init__(self, body: bytes | _Declared):
+        declared = body.declared if isinstance(body, _Declared) else len(body)
+        self.content = body.body if isinstance(body, _Declared) else body
+        self.text = self.content.decode("utf-8", "replace")
+        self.headers = {"Content-Length": str(declared)}
 
     def raise_for_status(self):
         pass
@@ -215,6 +224,23 @@ def test_media_segment_that_stays_truncated_fails_the_download(cut, tmp_path, mo
     _assert_failed_as_truncated(failures, finished, data, tmp_path)
 
 
+def test_media_segment_shorter_than_its_content_length_is_fetched_again(tmp_path, monkeypatch):
+    """받은 미디어 세그먼트가 선언된 Content-Length와 길이가 다르면 다시 받아야 한다.
+
+    seg_1이 처음에는 상자 구조가 온전한 본문에 100바이트 더 긴 Content-Length로 오고,
+    다음에는 맞는 Content-Length로 온다
+    -> 완료 1회, 실패 없음, seg_1 요청 2회
+    """
+    mismatched = _Declared(_media(1), len(_media(1)) + 100)
+    session, _data, failures, finished = _run_m3u8(
+        tmp_path, monkeypatch, **{"seg_1.m4v": [mismatched, _media(1)]}
+    )
+
+    assert (failures, finished) == ([], [True])
+    assert session.requests["seg_1.m4v"] == 2
+    assert (tmp_path / "out.mp4").read_bytes() == M3U8_OUTPUT
+
+
 # ================================================================ m3u8 — 초기화 세그먼트
 
 INIT_CUTS = {
@@ -327,6 +353,23 @@ def test_decrypted_segment_with_a_bad_sync_byte_is_fetched_again(tmp_path, monke
 
     session, _data, failures, finished = _run_aes(
         tmp_path, monkeypatch, **{"segment-1.ts": [broken_encrypted, _encrypted(1)]}
+    )
+
+    assert (failures, finished) == ([], [True])
+    assert session.requests["segment-1.ts"] == 2
+    assert (tmp_path / "out.mp4").read_bytes() == AES_OUTPUT
+
+
+def test_encrypted_segment_shorter_than_its_content_length_is_fetched_again(tmp_path, monkeypatch):
+    """받은 암호화 세그먼트가 선언된 Content-Length와 길이가 다르면 다시 받아야 한다.
+
+    segment-1이 처음에는 온전한 암호문에 16바이트 더 긴 Content-Length로 오고,
+    다음에는 맞는 Content-Length로 온다
+    -> 완료 1회, 실패 없음, segment-1 요청 2회
+    """
+    mismatched = _Declared(_encrypted(1), len(_encrypted(1)) + 16)
+    session, _data, failures, finished = _run_aes(
+        tmp_path, monkeypatch, **{"segment-1.ts": [mismatched, _encrypted(1)]}
     )
 
     assert (failures, finished) == ([], [True])
