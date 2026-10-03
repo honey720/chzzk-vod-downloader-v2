@@ -108,7 +108,9 @@ class DownloadLogger:
         self.info(f"channel_name: {item.channel_name}")
         self.info(f"created_date: {item.live_open_date}")
         self.info(f"duration: {item.duration}")
-        self.info(f"resolution: {item.resolution}")
+        # 짧은 변이 같은 항목이 둘인 영상에서 원본을 골랐으면 "720(원본)" — 파일명과 같은
+        # 조건이다(#318). 그 밖은 숫자만이다. 표시가 없는 아이템(스텁 등)도 숫자만
+        self.info(f"resolution: {item.resolution}{getattr(item, 'resolution_tag', '')}")
         self.info(f"total_size: {item.total_size}")
         # 경로는 repr로 남긴다 (#148) — U+00A0 같은 공백 유사 문자가 그냥
         # 찍으면 U+0020과 육안 구분되지 않아 제보 진단이 불가능하다(#144 실측)

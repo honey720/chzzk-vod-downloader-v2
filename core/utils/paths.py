@@ -68,11 +68,12 @@ def ensure_unique_path(path: str) -> str:
         n += 1
 
 
-def build_output_path(directory: str, title: str, resolution: int) -> str:
+def build_output_path(directory: str, title: str, resolution: int, tag: str = "") -> str:
     """산출물 전체 경로를 조립한다 — 정제·길이 제한·중복 회피 포함.
 
     파일명 형식은 기존과 동일한 `{제목} {해상도}p.mp4`이고, 같은 이름이
-    이미 있을 때만 " (n)"이 붙는다. 전체 경로 문자 수 또는 파일명 바이트
+    이미 있을 때만 " (n)"이 붙는다. tag는 `{해상도}p` 바로 뒤에 붙는다 — 해상도가 같은
+    두 스트림을 가르는 표시(`720p(원본)`)이고, 대부분은 빈 문자열이다(#318). 전체 경로 문자 수 또는 파일명 바이트
     수가 상한을 넘으면 제목 부분만 잘라 맞추되(해상도 접미사·확장자 보존),
     원제목의 해시 6자리를 함께 붙인다 — 앞부분이 같은 긴 제목들이 절단 후
     동일해져 " (n)"만으로 구분되는(식별성 저하) 사태를 막기 위함이다.
@@ -82,7 +83,7 @@ def build_output_path(directory: str, title: str, resolution: int) -> str:
     safe_title = sanitize_filename(str(title)) or "video"
     if _RESERVED_DEVICE_NAMES.match(safe_title):
         safe_title = "_" + safe_title
-    suffix = f" {resolution}p.mp4"
+    suffix = f" {resolution}p{sanitize_filename(tag)}.mp4"
     candidate = os.path.join(directory, safe_title + suffix)
     # 상한 둘을 함께 지킨다: 전체 경로 문자 수(Windows MAX_PATH 대비)와
     # 파일명 구성요소의 UTF-8 바이트 수(POSIX 255바이트 대비)
