@@ -28,7 +28,7 @@ import requests
 
 from core.api.hls import parse_media_playlist
 from core.api.session import get_thread_session
-from core.downloaders.base import BaseDownloader
+from core.downloaders.base import REQUEST_TIMEOUT, BaseDownloader
 from core.downloaders.decrypt import decrypt_segment, looks_like_ts, sequence_iv
 from core.models.content import Content, ContentType
 from core.models.download_state import DownloadState
@@ -75,7 +75,7 @@ class HlsAesDownloader(BaseDownloader):
 
     def prepare(self, content: Content) -> DownloadPlan:
         """플레이리스트를 받아 세그먼트 목록을 만들고 복호화 키를 취득한다."""
-        response = get_thread_session().get(self.s.base_url)
+        response = get_thread_session().get(self.s.base_url, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
         playlist = parse_media_playlist(response.text)
 
@@ -167,13 +167,11 @@ class HlsAesDownloader(BaseDownloader):
             DecryptionError: 복호화 결과가 유효한 미디어가 아닌 경우
         """
         url = urljoin(self.s.base_url, playlist.segments[0])
-        response = get_thread_session().get(url, timeout=30)
+        response = get_thread_session().get(url, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
         plain = decrypt_segment(response.content, self._key, self._segment_iv(0))
         if not looks_like_ts(plain):
-            raise DecryptionError(
-                "복호화 결과가 MPEG-TS가 아니다 — 키 또는 IV 규칙이 맞지 않는다"
-            )
+            raise DecryptionError("복호화 결과가 MPEG-TS가 아니다 — 키 또는 IV 규칙이 맞지 않는다")
 
     def _segment_iv(self, index: int) -> bytes:
         """세그먼트의 IV — 명시 IV가 있으면 그 값, 없으면 미디어 시퀀스 번호."""
@@ -211,7 +209,9 @@ class HlsAesDownloader(BaseDownloader):
         while not self.state == DownloadState.WAITING:
             try:
                 # 스레드로컬 세션으로 같은 워커의 세그먼트 요청 간 연결을 재사용한다 (#31)
-                response = get_thread_session().get(segment_url, stream=True, timeout=30)
+                response = get_thread_session().get(
+                    segment_url, stream=True, timeout=REQUEST_TIMEOUT
+                )
                 response.raise_for_status()
                 part_start_time = tm.time()
 
@@ -268,4 +268,3 @@ class HlsAesDownloader(BaseDownloader):
                     self._requeue_failed((index, segment), part_num, e)
                 self.logger.log_error(f"Part {part_num} download failed", e)
                 return part_num
-
