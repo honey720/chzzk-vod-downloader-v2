@@ -23,7 +23,7 @@ import time as tm
 import requests
 
 from core.api.session import get_thread_session
-from core.downloaders.base import BaseDownloader
+from core.downloaders.base import REQUEST_TIMEOUT, BaseDownloader
 from core.downloaders.ranges import decide_part_size, split_ranges
 from core.models.content import Content, ContentType
 from core.models.download_state import DownloadState
@@ -124,7 +124,7 @@ class FileDownloader(BaseDownloader):
                 headers = {"Range": f"bytes={range_start}-{end}"}
                 # 스레드로컬 세션으로 같은 워커의 반복 요청 간 연결을 재사용한다 (#31)
                 response = get_thread_session().get(
-                    self.s.base_url, headers=headers, stream=True, timeout=30
+                    self.s.base_url, headers=headers, stream=True, timeout=REQUEST_TIMEOUT
                 )
                 response.raise_for_status()
                 if resume_offset > 0 and response.status_code != 206:
@@ -177,10 +177,10 @@ class FileDownloader(BaseDownloader):
                                     slow_count += 1
                                     if slow_count > 5:
                                         # 속도가 너무 느리면 스레드 재시작
-                                        ratio = write_elapsed / elapsed * 100 if elapsed > 0 else 0.0
-                                        diagnostic = (
-                                            f"write={write_elapsed:.3f}s/{elapsed:.3f}s={ratio:.0f}%"
+                                        ratio = (
+                                            write_elapsed / elapsed * 100 if elapsed > 0 else 0.0
                                         )
+                                        diagnostic = f"write={write_elapsed:.3f}s/{elapsed:.3f}s={ratio:.0f}%"
                                         with self.lock:
                                             self._record_partial(
                                                 start, end, resume_offset + downloaded_size
@@ -244,11 +244,11 @@ class FileDownloader(BaseDownloader):
         """
         HEAD 요청으로 total_size를 구한다.
         """
-        response = get_thread_session().head(self.s.base_url)
+        response = get_thread_session().head(self.s.base_url, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
         size = int(response.headers.get("content-length", 0))
         if size == 0:
-            resp = get_thread_session().get(self.s.base_url, stream=True)
+            resp = get_thread_session().get(self.s.base_url, stream=True, timeout=REQUEST_TIMEOUT)
             resp.raise_for_status()
             size = int(resp.headers.get("content-length", 0))
             resp.close()

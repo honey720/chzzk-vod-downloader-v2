@@ -9,8 +9,9 @@ AES(SEA) 암호화 매니페스트는 parse_sea_manifest가 따로 다룬다 (#5
 """
 
 import xml.etree.ElementTree as ET
+from fractions import Fraction
 
-from core.api.representations import dedupe_by_resolution
+from core.api.representations import StreamEntry
 
 NS = {
     "mpd": "urn:mpeg:dash:schema:mpd:2011",
@@ -31,8 +32,10 @@ def parse_dash_manifest(xml_text: str) -> tuple[list[list], int, str]:
     DASH 매니페스트 XML 문자열에서 Representation 목록을 파싱한다.
 
     해상도는 min(width, height)로 계산하고 오름차순으로 정렬한다.
-    BaseURL이 '/hls/'로 끝나는 항목은 스킵한다. 같은 해상도 트랙이 여럿이면
-    비트레이트(bandwidth)가 높은 것 하나만 남긴다(core/api/representations.py).
+    BaseURL이 '/hls/'로 끝나는 항목은 스킵한다. 같은 화질(qualityId 라벨)이 전송 형식만
+    달라 두 번 나오면 하나로 본다 — bandwidth가 높은 쪽, 같으면 먼저 나온 쪽이 남는다.
+    qualityId가 없는 매니페스트는 전처럼 같은 해상도를 하나로 합친다. 항목에는 선언된
+    프레임률(frameRate)이 함께 실린다(``StreamEntry``, #318).
 
     Args:
         xml_text (str): DASH 매니페스트 XML 문자열
@@ -45,6 +48,7 @@ def parse_dash_manifest(xml_text: str) -> tuple[list[list], int, str]:
     root = ET.fromstring(xml_text)
     ns = {"mpd": "urn:mpeg:dash:schema:mpd:2011"}
     reps = []
+    adaptation_rates = _adaptation_frame_rates(root)
     for rep in root.findall(".//mpd:Representation", namespaces=ns):
         width = rep.get('width')
         height = rep.get('height')
@@ -62,13 +66,13 @@ def parse_dash_manifest(xml_text: str) -> tuple[list[list], int, str]:
         base_url = base_url_el.text
         if base_url.endswith('/hls/'):
             continue
-        reps.append((resolution, base_url, _bandwidth(rep)))
+        reps.append((resolution, base_url, rep, adaptation_rates.get(rep)))
 
     if not reps:
         return [], None, None
 
-    # 같은 높이 트랙은 하나로(비트레이트 높은 쪽) — core/api/representations.py
-    sorted_reps = dedupe_by_resolution(reps)
+    # 같은 화질은 하나로(비트레이트 높은 쪽) — _dedupe
+    sorted_reps = _dedupe(reps)
     auto_resolution = sorted_reps[-1][0]
     auto_base_url = sorted_reps[-1][1]
 
@@ -81,6 +85,52 @@ def _bandwidth(rep: ET.Element) -> int:
         return int(rep.get("bandwidth") or 0)
     except ValueError:
         return 0
+
+
+def _quality_id(rep: ET.Element) -> str | None:
+    """Representation의 화질 이름(``<nvod:Label kind="qualityId">``) — 없으면 None (#318)."""
+    for label in rep.iter(f"{{{NS['nvod']}}}Label"):
+        if label.get("kind") == "qualityId":
+            return label.text
+    return None
+
+
+def _frame_rate(text: str | None) -> float | None:
+    """``frameRate`` 속성("60" · "30000/1001")을 fps로 — 없거나 읽을 수 없으면 None."""
+    try:
+        rate = float(Fraction(text or ""))
+    except (ValueError, ZeroDivisionError):
+        return None
+    return rate if rate > 0 else None
+
+
+def _adaptation_frame_rates(root: ET.Element) -> dict[ET.Element, float | None]:
+    """Representation마다 선언된 프레임률 — 자기 속성이 없으면 감싼 AdaptationSet의 값이다."""
+    rates = {}
+    for adaptation in root.iter(f"{{{NS['mpd']}}}AdaptationSet"):
+        for rep in adaptation.iter(f"{{{NS['mpd']}}}Representation"):
+            rates[rep] = _frame_rate(rep.get("frameRate") or adaptation.get("frameRate"))
+    return rates
+
+
+def _dedupe(reps: list[tuple[int, str, ET.Element, float | None]]) -> list[StreamEntry]:
+    """(해상도, 주소, Representation, 프레임률)을 화질당 하나로 합쳐 오름차순 목록으로 돌려준다.
+
+    같은 화질은 qualityId가 같은 것이다 — 한 화질이 전송 형식만 달라 두 번 나온다.
+    qualityId가 없으면 해상도가 같은 것을 같은 화질로 본다(전과 같다). bandwidth가 높은 쪽,
+    같으면 먼저 나온 쪽이 남는다. 원본 여부는 이 매니페스트에 없다.
+    """
+    kept: dict[object, tuple[int, StreamEntry]] = {}
+    for resolution, address, rep, frame_rate in reps:
+        key = _quality_id(rep) or resolution
+        bandwidth = _bandwidth(rep)
+        current = kept.get(key)
+        # 엄격한 초과만 교체한다 — 동률이면 먼저 온 쪽이 남는다
+        if current is None or bandwidth > current[0]:
+            kept[key] = (bandwidth, StreamEntry(resolution, address, frame_rate=frame_rate))
+    return [
+        entry for _bandwidth_value, entry in sorted(kept.values(), key=lambda v: (v[1][0], v[0]))
+    ]
 
 
 def is_supported_sea(xml_text: str) -> bool:
@@ -123,6 +173,7 @@ def parse_sea_manifest(xml_text: str) -> tuple[list[list], int | None, str | Non
     """
     root = ET.fromstring(xml_text)
     reps = []
+    adaptation_rates = _adaptation_frame_rates(root)
     for rep in root.findall(".//mpd:Representation", namespaces=NS):
         if rep.find("mpd:ContentProtection", namespaces=NS) is None:
             # 오디오 등 비암호화 트랙은 이 경로의 대상이 아니다
@@ -133,10 +184,10 @@ def parse_sea_manifest(xml_text: str) -> tuple[list[list], int | None, str | Non
         m3u = rep.get(f"{{{NS['nvod']}}}m3u")
         if not m3u:
             continue
-        reps.append((min(int(width), int(height)), m3u, _bandwidth(rep)))
+        reps.append((min(int(width), int(height)), m3u, rep, adaptation_rates.get(rep)))
 
     if not reps:
         return [], None, None
 
-    sorted_reps = dedupe_by_resolution(reps)  # 같은 높이는 하나로 — 평문 경로와 같은 규칙
+    sorted_reps = _dedupe(reps)  # 같은 화질은 하나로 — 평문 경로와 같은 규칙
     return sorted_reps, sorted_reps[-1][0], sorted_reps[-1][1]

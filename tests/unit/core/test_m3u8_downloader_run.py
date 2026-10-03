@@ -19,17 +19,18 @@ import core.downloaders.m3u8_downloader as m3u8_module
 from core.downloaders.m3u8_downloader import M3U8Downloader
 from core.models.download_state import DownloadState
 from core.models.download_data import DownloadData
+from tests.unit.fmp4_samples import init_segment, media_segment
 
 CHUNK = 8192
 SEGMENT_COUNT = 6
 BASE_URL = "https://example.invalid/hls/video.m3u8"
 
-INIT_CONTENT = b"\xf0" * CHUNK
+INIT_CONTENT = init_segment(CHUNK, b"\xf0")  # 유효한 fMP4 상자 (#321)
 
 
 def _segment_content(index: int, chunks_per_segment: int) -> bytes:
     """세그먼트별로 구별되는 결정적 본문 — 병합 순서를 바이트로 검증하기 위함."""
-    return bytes([index + 1]) * (CHUNK * chunks_per_segment)
+    return media_segment(CHUNK * chunks_per_segment, bytes([index + 1]))
 
 
 def _playlist_text() -> str:

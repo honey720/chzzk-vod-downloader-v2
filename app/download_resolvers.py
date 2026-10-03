@@ -50,5 +50,5 @@ def resolve_m3u8_base_url(content: Content) -> str:
     content_type, content_no = NetworkManager.extract_content_no(content.url)
     info = NetworkManager.get_video_info(content_no, cookies)
     return NetworkManager.get_video_m3u8_base_url(
-        info.live_rewind_playback_json, content.resolution, cookies
+        info.live_rewind_playback_json, content.resolution, cookies, content.stream
     )

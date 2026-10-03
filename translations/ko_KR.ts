@@ -4,6 +4,10 @@
 <context>
     <name>ContentItemWidget</name>
     <message>
+        <source>(source)</source>
+        <translation>(원본)</translation>
+    </message>
+    <message>
         <source>Post-processing</source>
         <translation>후처리 중</translation>
     </message>
@@ -154,6 +158,18 @@ A network error occurred while downloading. Check your connection and try again.
         <source>Failed to save file · check the path and disk space
 The file could not be saved. Check the download path and free disk space.</source>
         <translation>파일 저장에 실패했습니다. 저장 경로와 디스크 공간을 확인해 주세요.</translation>
+    </message>
+    <message>
+        <source>Stream not found · pick another resolution
+The stream for the selected resolution could not be found. Try another resolution.</source>
+        <translation>선택한 해상도를 받을 수 없습니다 · 다른 해상도를 골라 주세요
+선택한 해상도의 영상을 찾지 못했습니다. 다른 해상도로 다시 시도해 주세요.</translation>
+    </message>
+    <message>
+        <source>Video data arrived corrupted · try again later
+Part of the video kept arriving incomplete from the server. Try again later.</source>
+        <translation>영상 일부가 잘려 받아졌습니다 · 잠시 뒤 다시 시도해 주세요
+서버에서 영상 일부가 계속 잘린 채로 왔습니다. 잠시 뒤 다시 받아 주세요.</translation>
     </message>
 </context>
 <context>
