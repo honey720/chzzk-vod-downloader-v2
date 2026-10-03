@@ -103,16 +103,21 @@ class M3U8Downloader(BaseDownloader):
         """임시 폴더를 만들고 초기화 세그먼트(EXT-X-MAP)를 받아 온전한지 확인한다 (#321).
 
         초기화 세그먼트가 잘려 받아졌으면 다시 받는다. 세그먼트의 일시 오류와 같은 횟수
-        (base의 _TRANSIENT_ERROR_REQUEUE_LIMIT)까지 다시 받고, 그래도 잘려 있으면 실패시킨다 —
-        잘린 초기화 세그먼트로는 영상 전체를 읽을 수 없다.
+        (base의 _TRANSIENT_ERROR_REQUEUE_LIMIT)까지 다시 받고, 그래도 안 되면 마지막 예외를
+        그대로 던져 실패시킨다 — 잘린 초기화 세그먼트로는 영상 전체를 읽을 수 없다.
 
         다시 받는 것은 잘림 계열의 예외뿐이다(_INIT_TRUNCATION_ERRORS). 본문이 선언된
         길이보다 짧으면 구조 검사에 닿기 전에 본문을 읽는 단계에서 요청 예외가 난다 —
         그것도 잘린 것이다. 연결 실패 · 타임아웃 같은 그 밖의 네트워크 오류는 준비 단계의
         다른 요청과 같이 다시 받지 않고 그대로 실패한다(#320).
 
+        예외의 종류는 바꾸지 않는다. 본문을 읽다 난 요청 예외는 연결이 끊겨도 나므로
+        잘린 것으로 단정할 수 없다 — 잘림 실패(TruncatedSegmentError)는 내용 검사로
+        확인된 경우에만 나간다. 미디어 세그먼트의 재큐와 같은 규칙이다.
+
         Raises:
-            TruncatedSegmentError: 다시 받아도 초기화 세그먼트가 계속 잘려 올 때
+            TruncatedSegmentError: 다시 받아도 초기화 세그먼트의 구조가 계속 온전하지 않을 때
+            requests.RequestException: 다시 받아도 본문을 끝까지 읽지 못할 때
         """
         init_segment_path = os.path.join(self.temp_dir, f"{0:0{self.width}d}.m4s")
         retries = base_module._TRANSIENT_ERROR_REQUEUE_LIMIT
@@ -123,15 +128,9 @@ class M3U8Downloader(BaseDownloader):
                     integrity.check_fmp4_init_segment(f.read())
                 return
             except _INIT_TRUNCATION_ERRORS as e:
-                if attempt < retries:
-                    self.logger.log_error("Init segment incomplete — retrying", e)
-                    continue
-                if isinstance(e, integrity.TruncatedSegmentError):
+                if attempt == retries:
                     raise
-                # 요청 예외로 끝나도 사유는 같다 — 카드에 잘림 실패로 나오게 한다
-                raise integrity.TruncatedSegmentError(
-                    f"초기화 세그먼트의 본문을 끝까지 받지 못했다: {e}"
-                ) from e
+                self.logger.log_error("Init segment incomplete — retrying", e)
 
     def _receive_init_segment(self) -> None:
         """임시 폴더를 재생성하고 초기화 세그먼트(EXT-X-MAP)를 받는다."""

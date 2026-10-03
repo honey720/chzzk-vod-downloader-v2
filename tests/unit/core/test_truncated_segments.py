@@ -334,21 +334,24 @@ def test_init_segment_whose_body_ends_early_is_fetched_again_until_intact(
 
 
 @pytest.mark.parametrize("error", SHORT_READS)
-def test_init_segment_whose_body_keeps_ending_early_fails_as_truncated(
+def test_init_segment_whose_body_keeps_ending_early_fails_with_that_error(
     error, tmp_path, monkeypatch
 ):
-    """초기화 세그먼트의 본문이 계속 먼저 끝나면 상한까지 다시 받은 뒤 잘림 실패 키로 실패해야 한다.
+    """초기화 세그먼트의 본문이 계속 먼저 끝나면 상한까지 다시 받은 뒤 그 예외 그대로 실패해야 한다.
 
     init.m4s의 본문 읽기가 항상 주석의 예외로 끝난다
-    -> init.m4s 요청 11회, 실패 콜백이 TruncatedSegmentError 하나를 받고 원인은 그 예외
+    -> init.m4s 요청 11회, 실패 콜백이 그 예외 하나를 받음(TruncatedSegmentError가 아님),
+       완료 없음, 산출물 없음
     """
-    session, data, failures, finished = _run_m3u8(
+    session, _data, failures, finished = _run_m3u8(
         tmp_path, monkeypatch, **{"init.m4s": [_BrokenRead(SHORT_READS[error])]}
     )
 
     assert session.requests["init.m4s"] == ATTEMPTS
-    _assert_failed_as_truncated(failures, finished, data, tmp_path)
-    assert failures[0].__cause__ is SHORT_READS[error]
+    assert failures == [SHORT_READS[error]]
+    assert not isinstance(failures[0], TruncatedSegmentError)
+    assert finished == []
+    assert not (tmp_path / "out.mp4").exists()
 
 
 NETWORK_ERRORS = {
