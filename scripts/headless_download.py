@@ -106,13 +106,17 @@ def _select_resolution(unique_reps: list, resolution: int | None):
 
 
 def _rep_label(rep: list) -> str:
-    """목록 항목을 `--list`에 찍을 글자로 — `720p`, 원본이면 `(원본)`, 50fps 이상이면 `60fps`."""
+    """목록 항목을 `--list`에 찍을 글자로 — `1080p(원본) · 60fps`.
+
+    카드의 해상도 버튼과 같은 표시다. 원본이면 `(원본)`을 붙이고, 50fps 이상이면
+    버튼의 보조 글자 자리에 오는 `60fps`를 ` · ` 뒤에 적는다.
+    """
     label = f"{rep[0]}p"
     if ContentItem.rep_is_original(rep):
         label += "(원본)"
     frame_rate = ContentItem.rep_frame_rate(rep)
     if frame_rate is not None:
-        label += f" {frame_rate}fps"
+        label += f" · {frame_rate}fps"
     return label
 
 

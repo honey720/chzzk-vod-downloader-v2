@@ -1,22 +1,28 @@
-"""해상도 버튼의 글자와 선택 — 원본 · 프레임률 표시, 짧은 변이 같은 두 항목 (#318).
+"""해상도의 표시와 선택 — 버튼 · 카드 · 로그 · 헤드리스 목록 (#318).
 
-버튼 글자는 임시 연결(A안 — 전부 버튼 글자에)이다. 표시 방식이 정해지면 글자를 재는
-단언은 그 방식에 맞게 바뀐다. 선택이 아이템에 싣는 값(스트림 · 파일명 표시)은 표시
-방식과 무관하다.
+버튼의 본 글자는 "<짧은 변>p"이고 원본이면 "(원본)"이 붙는다. 50fps 이상의 프레임률은
+본 글자가 아니라 같은 버튼의 보조 글자다. 카드(다운로드 시작 이후)와 로그는 짧은 변이
+같은 항목이 둘일 때 원본 쪽에만 "(원본)"을 붙인다 — 파일명과 같은 조건이다.
 """
+
+import logging
 
 import pytest
 from PySide6.QtCore import QTranslator
+from PySide6.QtGui import QFont, QFontMetrics
 from PySide6.QtWidgets import QApplication
 
+import config.config as config_module
 import main as main_module
 import app.theme as theme
+from app.download_logger import DownloadLogger
 from app.viewmodels.data import ContentItem
 from app.widgets.widget import ContentItemWidget
 from core.api.dash import parse_dash_manifest
 from core.api.playback_tracks import list_streams, playback_tracks
 from core.models.content import StreamKey
 from core.models.download_state import DownloadState
+from scripts.headless_download import _rep_label
 from tests.unit.card_helpers import drop_new_top_levels, hold_style, shown, snapshot_top_levels
 from tests.unit.stream_samples import S1, S2, S4, S11, Sample
 
@@ -89,6 +95,12 @@ def _texts(widget: ContentItemWidget) -> list[str]:
     return [shown(button) for button in widget.buttons]
 
 
+def _secondary_texts(widget: ContentItemWidget) -> list[str]:
+    for button in widget.buttons:
+        assert button.isVisible()
+    return [button.secondaryText() for button in widget.buttons]
+
+
 _ENCODED_VOD = """<?xml version="1.0" encoding="UTF-8"?>
 <MPD xmlns="urn:mpeg:dash:schema:mpd:2011" xmlns:nvod="urn:naver:vod:2020">
   <Period><AdaptationSet mimeType="video/mp4">
@@ -99,18 +111,22 @@ _ENCODED_VOD = """<?xml version="1.0" encoding="UTF-8"?>
 </MPD>"""
 
 
+def _encoded_vod() -> list:
+    return parse_dash_manifest(_ENCODED_VOD)[0]
+
+
 @pytest.mark.parametrize(
     ("sample", "texts"),
     [
-        (S1, ["1080p(source) 60fps", "720p 60fps", "480p", "360p", "144p"]),
-        (S2, ["1080p(source)", "720p 60fps", "480p", "360p", "144p"]),
-        (S4, ["720p(source)", "720p 60fps", "480p", "360p", "144p"]),
-        (S11, ["1080p 60fps", "720p 60fps", "480p", "360p", "144p"]),
+        (S1, ["1080p(source)", "720p", "480p", "360p", "144p"]),
+        (S2, ["1080p(source)", "720p", "480p", "360p", "144p"]),
+        (S4, ["720p(source)", "720p", "480p", "360p", "144p"]),
+        (S11, ["1080p", "720p", "480p", "360p", "144p"]),
     ],
     ids=["S1", "S2", "S4", "S11"],
 )
-def test_replay_buttons_show_the_source_mark_and_the_frame_rate(qapp, sample, texts):
-    """다시보기의 해상도 버튼은 높은 것부터이고, 원본이면 원본 표시가, 50fps 이상이면 fps가 붙어야 한다.
+def test_replay_button_text_is_the_short_side_with_the_source_mark(qapp, sample, texts):
+    """다시보기의 해상도 버튼의 본 글자는 높은 것부터 "<짧은 변>p"이고 원본에만 원본 표시가 붙어야 한다.
 
     주석의 표본마다 (번역기 없음 — 원본 표시는 원문 "(source)")
     -> 왼쪽부터의 버튼 글자. 짧은 변이 같으면 원본이 앞
@@ -120,24 +136,44 @@ def test_replay_buttons_show_the_source_mark_and_the_frame_rate(qapp, sample, te
     assert _texts(widget) == texts
 
 
+@pytest.mark.parametrize(
+    ("sample", "secondary"),
+    [
+        (S1, ["60fps", "60fps", "", "", ""]),
+        (S2, ["", "60fps", "", "", ""]),  # 원본이 30fps다
+        (S4, ["", "60fps", "", "", ""]),
+        (S11, ["60fps", "60fps", "", "", ""]),
+    ],
+    ids=["S1", "S2", "S4", "S11"],
+)
+def test_replay_button_secondary_text_is_the_frame_rate_from_50fps(qapp, sample, secondary):
+    """다시보기의 해상도 버튼의 보조 글자는 50fps 이상인 항목에만 "<fps>fps"여야 한다.
+
+    주석의 표본마다
+    -> 왼쪽부터의 보조 글자. 30fps 항목은 빈 문자열
+    """
+    widget = _card(_streams(sample))
+
+    assert _secondary_texts(widget) == secondary
+
+
 def test_encoded_vod_buttons_show_the_frame_rate_without_a_source_mark(qapp):
-    """인코딩 완료 VOD의 해상도 버튼은 fps만 붙고 원본 표시는 없어야 한다.
+    """인코딩 완료 VOD의 해상도 버튼은 보조 글자에 fps만 있고 원본 표시는 없어야 한다.
 
     1080(60fps) · 720(60fps) · 144(30fps) 매니페스트
-    -> ["1080p 60fps", "720p 60fps", "144p"]
+    -> 본 글자 ["1080p", "720p", "144p"], 보조 글자 ["60fps", "60fps", ""]
     """
-    reps, _auto_resolution, _auto_base_url = parse_dash_manifest(_ENCODED_VOD)
+    widget = _card(_encoded_vod(), content_type="video")
 
-    widget = _card(reps, content_type="video")
-
-    assert _texts(widget) == ["1080p 60fps", "720p 60fps", "144p"]
+    assert _texts(widget) == ["1080p", "720p", "144p"]
+    assert _secondary_texts(widget) == ["60fps", "60fps", ""]
 
 
 def test_clip_buttons_show_only_the_number(qapp):
-    """스트림 정보가 없는 목록(클립)의 해상도 버튼은 숫자만 보여야 한다.
+    """스트림 정보가 없는 목록(클립)의 해상도 버튼은 숫자만 보이고 보조 글자가 없어야 한다.
 
     [[480, 주소], [720, 주소]]
-    -> ["720p", "480p"]
+    -> 본 글자 ["720p", "480p"], 보조 글자 ["", ""]
     """
     widget = _card(
         [[480, "https://c.invalid/480.mp4"], [720, "https://c.invalid/720.mp4"]],
@@ -145,18 +181,53 @@ def test_clip_buttons_show_only_the_number(qapp):
     )
 
     assert _texts(widget) == ["720p", "480p"]
+    assert _secondary_texts(widget) == ["", ""]
 
 
-def test_source_mark_is_translated_in_the_bundled_korean_catalog(qapp):
-    """동봉된 한국어 카탈로그는 원본 표시를 "(원본)"으로 돌려줘야 한다.
+def test_button_with_secondary_text_is_wider_by_more_than_that_text(qapp):
+    """보조 글자가 있는 버튼의 자연 폭은 없을 때보다 그 글자의 폭 넘게 넓어야 한다.
 
-    translations/ko_KR.qm, 컨텍스트 ContentItemWidget, 원문 "(source)"
-    -> "(원본)"
+    S1의 둘째 버튼("720p" + "60fps"), 보조 글자를 지운 뒤의 자연 폭과 비교
+    -> 차이 > 보조 글자 글꼴(theme.METRICS["pillSubFontSize"]px)로 잰 "60fps"의 폭
+    """
+    button = _card(_streams(S1)).buttons[1]
+    assert button.isVisible()
+    with_secondary = button.sizeHint().width()
+    font = QFont(button.font())
+    font.setPixelSize(theme.METRICS["pillSubFontSize"])
+    text_width = QFontMetrics(font).horizontalAdvance("60fps")
+
+    button.setSecondaryText("")
+
+    assert with_secondary - button.sizeHint().width() > text_width
+
+
+def test_secondary_text_of_the_selected_button_uses_the_on_accent_color(qapp):
+    """보조 글자의 색 토큰은 선택된 버튼이면 onAccent, 선택되지 않은 버튼이면 textMuted여야 한다.
+
+    S1 (첫 버튼이 선택, 둘째 버튼은 선택 아님. 둘 다 보조 글자 "60fps")
+    -> ["onAccent", "textMuted"]
+    """
+    widget = _card(_streams(S1))
+
+    assert [button.isSelected() for button in widget.buttons[:2]] == [True, False]
+    assert [button.secondaryToken() for button in widget.buttons[:2]] == ["onAccent", "textMuted"]
+
+
+@pytest.mark.parametrize(
+    ("language", "translated"),
+    [("ko_KR", "(원본)"), ("en_US", "(source)")],
+)
+def test_source_mark_is_translated_in_the_bundled_catalogs(qapp, language, translated):
+    """동봉된 카탈로그는 언어마다 원본 표시의 번역을 갖고 있어야 한다.
+
+    translations/<언어>.qm, 컨텍스트 ContentItemWidget, 원문 "(source)"
+    -> ko_KR "(원본)", en_US "(source)". 항목이 없으면 빈 문자열이 온다
     """
     translator = QTranslator()
-    assert translator.load(main_module.resource_path("translations/ko_KR.qm"))
+    assert translator.load(main_module.resource_path(f"translations/{language}.qm"))
 
-    assert translator.translate("ContentItemWidget", "(source)") == "(원본)"
+    assert translator.translate("ContentItemWidget", "(source)") == translated
 
 
 def test_first_button_of_the_same_short_side_is_selected_and_is_the_original(qapp):
@@ -175,7 +246,7 @@ def test_first_button_of_the_same_short_side_is_selected_and_is_the_original(qap
 def test_clicking_the_other_button_of_the_same_short_side_selects_that_stream(qapp):
     """짧은 변이 같은 다른 버튼을 누르면 아이템의 스트림 값이 그 항목의 것으로 바뀌어야 한다.
 
-    S4, 둘째 버튼("720p 60fps")을 누름
+    S4, 둘째 버튼("720p", 보조 글자 "60fps")을 누름
     -> 둘째 버튼만 선택, 스트림 값은 60fps 변형, 해상도 720 그대로, 파일명 표시는 빈 문자열
     """
     widget = _card(_streams(S4))
@@ -186,3 +257,151 @@ def test_clicking_the_other_button_of_the_same_short_side_selects_that_stream(qa
     assert [button.isSelected() for button in widget.buttons] == [False, True, False, False, False]
     assert widget.item.stream == StreamKey(720, 1280, 60.0, 3192000)
     assert (widget.item.resolution, widget.item.resolution_tag) == (720, "")
+
+
+def _start(widget: ContentItemWidget) -> None:
+    """고른 그대로 다운로드 중 상태로 넘긴다 — 크기 1.20 GB."""
+    item = widget.item
+    item.downloadState = DownloadState.RUNNING
+    item.download_progress = 42
+    item.download_speed = "5.0 MB/s"
+    item.download_remain_time = "00:03:12"
+    item.download_size = 1288490189  # 세그먼트 기반의 받은 양 — 1.20 GB
+    item.total_size = "1.20 GB"  # 파일 기반의 총량
+    widget.setData(item, 0)
+    QApplication.processEvents()
+
+
+def test_running_card_marks_the_original_when_two_entries_share_the_short_side(qapp):
+    """짧은 변이 같은 항목이 둘이고 원본을 골랐으면 다운로드 중 카드의 해상도에 원본 표시가 붙어야 한다.
+
+    S4, 기본 선택(원본 720p), 받은 양 1.20 GB (번역기 없음)
+    -> "720p(source) · 1.20 GB"
+    """
+    widget = _card(_streams(S4))
+
+    _start(widget)
+
+    assert shown(widget.fileSizeLabel) == "720p(source) · 1.20 GB"
+
+
+def test_running_card_shows_the_translated_source_mark(qapp):
+    """한국어 카탈로그를 쓰면 다운로드 중 카드의 원본 표시는 "(원본)"이어야 한다.
+
+    S4, 기본 선택(원본 720p), 받은 양 1.20 GB, translations/ko_KR.qm 설치
+    -> "720p(원본) · 1.20 GB"
+    """
+    translator = QTranslator()
+    assert translator.load(main_module.resource_path("translations/ko_KR.qm"))
+    qapp.installTranslator(translator)
+    try:
+        widget = _card(_streams(S4))
+        _start(widget)
+
+        assert shown(widget.fileSizeLabel) == "720p(원본) · 1.20 GB"
+    finally:
+        qapp.removeTranslator(translator)
+
+
+def test_running_card_of_the_other_entry_of_the_same_short_side_shows_only_the_number(qapp):
+    """짧은 변이 같은 두 항목 중 원본이 아닌 쪽을 골랐으면 다운로드 중 카드의 해상도는 숫자만이어야 한다.
+
+    S4, 둘째 버튼(다시 인코딩한 720p)을 누름, 받은 양 1.20 GB
+    -> "720p · 1.20 GB"
+    """
+    widget = _card(_streams(S4))
+    widget.buttons[1].click()
+    QApplication.processEvents()
+
+    _start(widget)
+
+    assert shown(widget.fileSizeLabel) == "720p · 1.20 GB"
+
+
+@pytest.mark.parametrize(
+    ("reps", "content_type"),
+    [
+        (lambda: _streams(S1), "m3u8"),  # 원본 60fps
+        (lambda: _streams(S2), "m3u8"),  # 원본 30fps
+        (_encoded_vod, "video"),
+    ],
+    ids=["S1", "S2", "encoded"],
+)
+def test_running_card_of_a_landscape_video_shows_only_the_number(qapp, reps, content_type):
+    """해상도마다 항목이 하나인 영상의 다운로드 중 카드는 원본을 골라도 해상도가 숫자만이어야 한다.
+
+    주석의 표본마다 기본 선택(최고 해상도), 크기 1.20 GB
+    -> "1080p · 1.20 GB"
+    """
+    widget = _card(reps(), content_type=content_type)
+
+    _start(widget)
+
+    assert shown(widget.fileSizeLabel) == "1080p · 1.20 GB"
+
+
+def _logged_resolution(tmp_path, monkeypatch, item: ContentItem) -> list[str]:
+    """아이템의 다운로드 정보를 로그 파일에 쓰고 resolution 줄의 메시지를 돌려준다."""
+    monkeypatch.setattr(config_module, "CONFIG_DIR", str(tmp_path))
+    logger = DownloadLogger(logging.INFO)
+    logger.log_download_info(item)
+    log_file = logger.log_file
+    logger.save_and_close()
+    with open(log_file, encoding="utf-8") as f:
+        messages = [line.strip().rsplit(" - ", 1)[-1] for line in f]
+    assert any(message.startswith("content_type: ") for message in messages)  # 로그가 쓰였다
+    return [message for message in messages if message.startswith("resolution: ")]
+
+
+def test_log_marks_the_original_when_two_entries_share_the_short_side(qapp, tmp_path, monkeypatch):
+    """짧은 변이 같은 항목이 둘이고 원본을 골랐으면 로그의 resolution 줄에 "(원본)"이 붙어야 한다.
+
+    S4, 기본 선택(원본 720p)
+    -> ["resolution: 720(원본)"]
+    """
+    widget = _card(_streams(S4))
+
+    assert _logged_resolution(tmp_path, monkeypatch, widget.item) == ["resolution: 720(원본)"]
+
+
+def test_log_of_the_other_entry_of_the_same_short_side_is_only_the_number(
+    qapp, tmp_path, monkeypatch
+):
+    """짧은 변이 같은 두 항목 중 원본이 아닌 쪽을 골랐으면 로그의 resolution 줄은 숫자만이어야 한다.
+
+    S4, 둘째 버튼(다시 인코딩한 720p)을 누름
+    -> ["resolution: 720"]
+    """
+    widget = _card(_streams(S4))
+    widget.buttons[1].click()
+    QApplication.processEvents()
+
+    assert _logged_resolution(tmp_path, monkeypatch, widget.item) == ["resolution: 720"]
+
+
+def test_log_of_a_landscape_video_is_only_the_number(qapp, tmp_path, monkeypatch):
+    """해상도마다 항목이 하나인 영상은 원본을 골라도 로그의 resolution 줄이 숫자만이어야 한다.
+
+    S1, 기본 선택(원본 1080p)
+    -> ["resolution: 1080"]
+    """
+    widget = _card(_streams(S1))
+
+    assert _logged_resolution(tmp_path, monkeypatch, widget.item) == ["resolution: 1080"]
+
+
+@pytest.mark.parametrize(
+    ("sample", "labels"),
+    [
+        (S1, ["144p", "360p", "480p", "720p · 60fps", "1080p(원본) · 60fps"]),
+        (S4, ["144p", "360p", "480p", "720p · 60fps", "720p(원본)"]),
+    ],
+    ids=["S1", "S4"],
+)
+def test_headless_list_labels_match_the_button(sample, labels):
+    """헤드리스 --list의 항목 글자는 "<짧은 변>p"에 원본이면 "(원본)", 50fps 이상이면 " · <fps>fps"가 붙어야 한다.
+
+    주석의 표본마다 조회 결과의 목록 순서 그대로(낮은 것부터)
+    -> 항목 글자
+    """
+    assert [_rep_label(rep) for rep in _streams(sample)] == labels

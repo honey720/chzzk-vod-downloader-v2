@@ -1,8 +1,9 @@
-"""카드 3행 해상도 pill — 선택 표시·접힘 표시(▾)를 가진 QPushButton (#244 3행 정리).
+"""카드 3행 해상도 pill — 선택 표시·접힘 표시(▾)·보조 글자를 가진 QPushButton (#244 3행 정리).
 
 평소(접힘)에는 **선택된 해상도 하나**만 `[1080p ▾]`로 보이고, 누르면 그 자리에서
 전부 펼쳐진다(팝업이 아니다 — app/widgets/widget.py::setExpanded). 이 클래스가
-드는 것은 불리언 둘뿐이다(선택·접힘 표시) — 카드마다 페인트 객체가 붙지 않는다.
+드는 것은 불리언 둘(선택·접힘 표시)과 보조 글자 문자열 하나뿐이다 — 카드마다
+페인트 객체가 붙지 않는다.
 
 - 선택 = 동적 속성 `selected` → 전역 QSS `[selected="true"]`가 채움(accent)을
   그린다. 이전엔 "선택 = 비활성 버튼(`:disabled`)"이었는데, 접힌 pill은 눌러서
@@ -12,10 +13,15 @@
   모양을 정해 macOS·Linux 실기 없이는 확인할 길이 없다(app/widgets/icons.py와 같은
   이유). 색은 theme.py 토큰 이름으로만 고른다(선택 onAccent / 호버 text /
   평소 textMuted) — 이 파일에 색 리터럴은 없다.
+- 보조 글자("60fps") = 본 글자 오른쪽에 작고 흐리게 **직접 그린다** (#318). 버튼의
+  글자(`text()`)는 본 글자("1080p(원본)")뿐이고, QSS가 그것을 왼쪽에 붙여 그린다
+  (`text-align: left`). 보조 글자의 몫만큼 `sizeHint()`가 넓어지고 그 자리에 그린다.
+  한 버튼 안에서 크기·색이 다른 글자 둘은 QSS만으로 낼 수 없다. 색은 토큰 이름으로
+  고르고(선택 onAccent / 그 밖 textMuted), 크기는 theme.METRICS["pillSubFontSize"]다.
 """
 
 from PySide6.QtCore import QPointF, QSize, Qt
-from PySide6.QtGui import QColor, QPainter, QPolygonF
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPolygonF
 from PySide6.QtWidgets import QPushButton, QSizePolicy
 
 import app.theme as theme
@@ -24,6 +30,10 @@ import app.theme as theme
 CARET_WIDTH = 8
 #: 글자와 ▾ 사이 간격(px). QSS의 caret padding-right(= 8 + CARET_WIDTH + CARET_GAP)와 맞춘다.
 CARET_GAP = 4
+#: pill 좌우 가장자리 여백(px). QSS `[role="resolution"]`의 padding 좌우 값과 맞춘다.
+EDGE_PADDING = 8
+#: 본 글자와 보조 글자 사이 간격(px) — 글자 한 칸보다 좁아 한 덩어리로 읽힌다.
+SECONDARY_GAP = 4
 
 
 class ResolutionPill(QPushButton):
@@ -33,6 +43,7 @@ class ResolutionPill(QPushButton):
         super().__init__(text, parent)
         self._selected = False
         self._caret = False
+        self._secondary = ""
         self.setProperty("role", "resolution")
         self.setProperty("selected", False)
         self.setProperty("caret", False)
@@ -49,6 +60,41 @@ class ResolutionPill(QPushButton):
     def minimumSizeHint(self) -> QSize:
         """가로 최소는 레이아웃을 묶지 않는다(1px) — 자연 폭은 naturalWidth()가 준다."""
         return QSize(1, super().minimumSizeHint().height())
+
+    def sizeHint(self) -> QSize:
+        """본 글자의 자연 크기에 보조 글자의 몫(간격 + 글자 폭)을 더한다."""
+        hint = super().sizeHint()  # 폴리시가 여기서 끝난다 — 아래 글꼴 계산보다 먼저다
+        if self._secondary:
+            hint.setWidth(hint.width() + SECONDARY_GAP + self._secondaryWidth())
+        return hint
+
+    def setSecondaryText(self, text: str) -> None:
+        """본 글자 뒤에 작고 흐리게 붙는 보조 글자를 정한다 — 빈 문자열이면 없다."""
+        if text == self._secondary:
+            return
+        self._secondary = text
+        self.updateGeometry()
+        self.update()
+
+    def secondaryText(self) -> str:
+        """지금의 보조 글자. 없으면 빈 문자열."""
+        return self._secondary
+
+    def secondaryToken(self) -> str:
+        """보조 글자에 쓸 색 토큰 — 선택이면 채움 위의 글자색, 그 밖은 흐린 글자색.
+
+        선택된 pill에서는 흐리게 하지 않는다 — 파란 채움 위에서 작은 글자를 더 흐리면
+        읽히지 않는다. 크기 차이만으로 본 글자와 구별된다.
+        """
+        return "onAccent" if self._selected else "textMuted"
+
+    def _secondaryFont(self) -> QFont:
+        font = QFont(self.font())
+        font.setPixelSize(theme.METRICS["pillSubFontSize"])
+        return font
+
+    def _secondaryWidth(self) -> int:
+        return QFontMetrics(self._secondaryFont()).horizontalAdvance(self._secondary)
 
     def naturalWidth(self) -> int:
         """▾ 없이 텍스트+padding만의 자연 폭 — "들어가는가" 판정은 이 값으로 한다.
@@ -95,24 +141,36 @@ class ResolutionPill(QPushButton):
 
     def paintEvent(self, event) -> None:
         super().paintEvent(event)
-        if not self._caret:
+        if not self._caret and not self._secondary:
             return
-        color = QColor(theme.current_tokens()[self.caretToken()])
-        right = self.width() - 8  # 오른쪽 가장자리 padding 8 안쪽
-        left = right - CARET_WIDTH
-        mid_y = self.height() / 2
-        half_h = CARET_WIDTH / 4  # 높이 = 폭의 절반
+        tokens = theme.current_tokens()
+        right = self.width() - EDGE_PADDING  # 오른쪽 가장자리 여백 안쪽
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(color)
-        painter.drawPolygon(
-            QPolygonF(
-                [
-                    QPointF(left, mid_y - half_h),
-                    QPointF(right, mid_y - half_h),
-                    QPointF((left + right) / 2, mid_y + half_h),
-                ]
+        if self._caret:
+            left = right - CARET_WIDTH
+            mid_y = self.height() / 2
+            half_h = CARET_WIDTH / 4  # 높이 = 폭의 절반
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(tokens[self.caretToken()]))
+            painter.drawPolygon(
+                QPolygonF(
+                    [
+                        QPointF(left, mid_y - half_h),
+                        QPointF(right, mid_y - half_h),
+                        QPointF((left + right) / 2, mid_y + half_h),
+                    ]
+                )
             )
-        )
+            painter.restore()
+            right = left - CARET_GAP
+        if self._secondary:
+            # 본 글자와 **밑줄(baseline)을 맞춘다** — 작은 글자를 세로 가운데에 두면
+            # 본 글자보다 떠 보인다. 본 글자는 스타일이 세로 가운데로 그린다
+            metrics = QFontMetrics(self.font())
+            baseline = (self.height() - metrics.height()) // 2 + metrics.ascent()
+            painter.setFont(self._secondaryFont())
+            painter.setPen(QColor(tokens[self.secondaryToken()]))
+            painter.drawText(right - self._secondaryWidth(), baseline, self._secondary)
         painter.end()
