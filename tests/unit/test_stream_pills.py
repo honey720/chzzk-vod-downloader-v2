@@ -9,7 +9,7 @@ import logging
 
 import pytest
 from PySide6.QtCore import QTranslator
-from PySide6.QtGui import QFont, QFontMetrics
+from PySide6.QtGui import QColor, QFontMetrics
 from PySide6.QtWidgets import QApplication
 
 import config.config as config_module
@@ -188,30 +188,46 @@ def test_button_with_secondary_text_is_wider_by_more_than_that_text(qapp):
     """보조 글자가 있는 버튼의 자연 폭은 없을 때보다 그 글자의 폭 넘게 넓어야 한다.
 
     S1의 둘째 버튼("720p" + "60fps"), 보조 글자를 지운 뒤의 자연 폭과 비교
-    -> 차이 > 보조 글자 글꼴(theme.METRICS["pillSubFontSize"]px)로 잰 "60fps"의 폭
+    -> 차이 > 버튼의 글꼴(본 글자와 같은 크기)로 잰 "60fps"의 폭
     """
     button = _card(_streams(S1)).buttons[1]
     assert button.isVisible()
     with_secondary = button.sizeHint().width()
-    font = QFont(button.font())
-    font.setPixelSize(theme.METRICS["pillSubFontSize"])
-    text_width = QFontMetrics(font).horizontalAdvance("60fps")
+    text_width = QFontMetrics(button.font()).horizontalAdvance("60fps")
 
     button.setSecondaryText("")
 
     assert with_secondary - button.sizeHint().width() > text_width
 
 
-def test_secondary_text_of_the_selected_button_uses_the_on_accent_color(qapp):
-    """보조 글자의 색 토큰은 선택된 버튼이면 onAccent, 선택되지 않은 버튼이면 textMuted여야 한다.
+def test_secondary_text_of_an_unselected_button_is_dimmer_than_its_text(qapp):
+    """선택되지 않은 버튼의 보조 글자 색은 textDisabled 토큰의 색이고 본 글자 색과 달라야 한다.
 
-    S1 (첫 버튼이 선택, 둘째 버튼은 선택 아님. 둘 다 보조 글자 "60fps")
-    -> ["onAccent", "textMuted"]
+    S1의 둘째 버튼(선택 아님, 보조 글자 "60fps"), 다크 테마. 본 글자 색은 QSS의 textMuted
+    -> 보조 글자 색 == textDisabled, != textMuted
     """
-    widget = _card(_streams(S1))
+    button = _card(_streams(S1)).buttons[1]
+    tokens = theme.current_tokens()
+    assert button.isVisible() and not button.isSelected()
 
-    assert [button.isSelected() for button in widget.buttons[:2]] == [True, False]
-    assert [button.secondaryToken() for button in widget.buttons[:2]] == ["onAccent", "textMuted"]
+    assert button.secondaryColor() == QColor(tokens["textDisabled"])
+    assert button.secondaryColor() != QColor(tokens["textMuted"])
+
+
+def test_secondary_text_of_the_selected_button_is_translucent_on_accent(qapp):
+    """선택된 버튼의 보조 글자 색은 onAccent와 색이 같고 불투명하지 않되, 절반보다는 진해야 한다.
+
+    S1의 첫 버튼(선택, 보조 글자 "60fps"), 다크 테마. 본 글자 색은 QSS의 onAccent(불투명)
+    -> 보조 글자의 RGB == onAccent의 RGB, 0.5 < 불투명도 < 1
+    """
+    button = _card(_streams(S1)).buttons[0]
+    on_accent = QColor(theme.current_tokens()["onAccent"])
+    assert button.isVisible() and button.isSelected()
+
+    color = button.secondaryColor()
+
+    assert color.rgb() == on_accent.rgb()
+    assert 0.5 < color.alphaF() < 1
 
 
 @pytest.mark.parametrize(

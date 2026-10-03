@@ -68,7 +68,6 @@ METRICS = {
     "thumbRadius": 8,     # 썸네일 모서리 — 카드보다 작아야 안쪽이 자연스럽다
     "iconSize": 20,       # 채널 이미지·삭제(✕)·폴더(📁) 아이콘 한 변 — 1·4행 높이를 정한다(키우면 밀도↓)
     "pillHeight": 20,     # 해상도 pill 높이(모서리는 자동으로 절반)
-    "pillSubFontSize": 10,  # 해상도 pill의 보조 글자("60fps") 크기 — pill 글자(fontSizeMeta 12px)보다 작아야 보조로 읽힌다
     "barHeight": 4,      # 하단 진행바 두께(진행분이 있을 때 — 진행·일시정지 — 보임)
     "actionGlyph": 12,    # 조작 아이콘(일시정지·재개·재시도·폴더·삭제) 도형 한 변 — iconSize 버튼 안에 그려진다
     "headerGlyph": 16,    # 상단 바 설정 톱니 도형 한 변 — 32px 설정 버튼 안에 그려진다(Fluent 16px 아이콘 크기)
