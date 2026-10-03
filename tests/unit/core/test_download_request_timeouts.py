@@ -23,12 +23,14 @@ from core.downloaders.file_downloader import FileDownloader
 from core.downloaders.hls_aes_downloader import HlsAesDownloader
 from core.downloaders.m3u8_downloader import M3U8Downloader
 from core.models.download_data import DownloadData
+from tests.unit.fmp4_samples import box
 
 TIMEOUT = 30  # 초 — 범위 · 세그먼트 요청이 쓰는 값. 제품 상수를 읽지 않고 직접 적는다
 FILE_URL = "https://example.invalid/video.mp4"
 M3U8_URL = "https://example.invalid/hls/video.m3u8"
 AES_URL = "https://example.invalid/sea/media.m3u8"
 KEY = bytes(range(16))
+INIT = box(b"ftyp") + box(b"moov")  # 온전한 초기화 세그먼트 — 받은 뒤 구조를 확인한다 (#321)
 
 M3U8_PLAYLIST = "\n".join(
     ["#EXTM3U", '#EXT-X-MAP:URI="init.m4s"', "#EXTINF:2.000,", "seg_0.m4v", "#EXT-X-ENDLIST"]
@@ -90,7 +92,7 @@ class _Session:
         if kind == "m3u8-playlist":
             return _Response(text=M3U8_PLAYLIST)
         if kind == "m3u8-init":
-            return _Response(content=b"init")
+            return _Response(content=INIT)
         return _Response(text=AES_PLAYLIST)
 
     def head(self, url, **kwargs):

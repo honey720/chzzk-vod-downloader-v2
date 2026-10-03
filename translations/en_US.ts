@@ -170,6 +170,12 @@ The stream for the selected resolution could not be found. Try another resolutio
         <translation>Stream not found · pick another resolution
 The stream for the selected resolution could not be found. Try another resolution.</translation>
     </message>
+    <message>
+        <source>Video data arrived corrupted · try again later
+Part of the video kept arriving incomplete from the server. Try again later.</source>
+        <translation>Video data arrived corrupted · try again later
+Part of the video kept arriving incomplete from the server. Try again later.</translation>
+    </message>
 </context>
 <context>
     <name>FetchJob</name>

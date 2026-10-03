@@ -22,6 +22,7 @@ import pytest
 import requests
 
 from core.models.download_data import DownloadData
+from tests.unit.fmp4_samples import media_segment, split
 
 MB = 1024 * 1024
 
@@ -473,7 +474,7 @@ def test_slow_segment_restarts_after_six_slow_chunks(tmp_path, monkeypatch):
 def test_fast_segment_completes_and_accumulates_progress(tmp_path, monkeypatch):
     """정상 속도면 세그먼트를 완주하고 완료 카운터·누적 진행에 반영한다."""
     segment_size = 3 * 8192
-    chunks = [b"x" * 8192] * 3
+    chunks = split(media_segment(segment_size), 8192)  # 유효한 fMP4 상자 (#321)
     engine, data, logger = _prepare_running_engine(
         tmp_path, monkeypatch, chunks=chunks, clock_step=1e-6
     )
@@ -489,7 +490,7 @@ def test_fast_segment_completes_and_accumulates_progress(tmp_path, monkeypatch):
     assert data.remaining_ranges == []
     assert logger.thread_completes == [(0, segment_size)]
     # 임시 파일명은 (index+1)을 width 자리로 0채움 — sorted() 병합 순서의 전제
-    assert (tmp_path / "0008.m4v").read_bytes() == b"x" * segment_size
+    assert (tmp_path / "0008.m4v").read_bytes() == media_segment(segment_size)
 
 
 def test_request_exception_requeues_segment_as_failed(tmp_path, monkeypatch):
