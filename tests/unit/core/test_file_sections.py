@@ -23,6 +23,7 @@ requests 세션으로 요청하고 진짜 응답 객체를 받으며, 전송 어
 import os
 import re
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 
@@ -30,7 +31,7 @@ import core.api.mp4 as mp4_module
 import core.downloaders.file_downloader as fd_module
 import core.utils.mp4_partial as partial_module
 from core.api.mp4 import MP4_UNSUPPORTED, Mp4Error, fetch_mp4_head, read_mp4_index
-from core.downloaders.base import PostprocessError
+from core.downloaders.base import PostprocessError, TruncatedBodyError
 from core.downloaders.file_downloader import FileDownloader
 from core.downloaders.ranges import split_span
 from core.models.download_data import DownloadData
@@ -451,6 +452,38 @@ def test_transfer_failure_removes_partial_source(server, tmp_path, monkeypatch):
     assert run.listing() == []
 
 
+@pytest.mark.parametrize("how", ["failure", "stop"])
+def test_section_run_that_fails_or_stops_leaves_the_file_at_output_path_alone(
+    server, tmp_path, monkeypatch, how
+):
+    """구간 다운로드가 실패하거나 중단돼도 output_path 자리에 있던 파일은 그대로 남아야 한다.
+
+    기본 입력, 구간 프레임 35~80, output_path 자리에 내용이 b"keep"인 파일을 미리 둠.
+    failure: 컷이 OSError를 냄 / stop: 컷 도중 model.stop()
+    -> 저장 폴더에 그 파일 하나뿐이고 내용이 b"keep"
+    """
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))])
+    with open(run.data.output_path, "wb") as f:
+        f.write(b"keep")
+    real = fd_module.hybrid_cut
+
+    def interrupted(*args, **kwargs):
+        if how == "failure":
+            raise OSError("시험")
+        run.data.model.stop()
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(fd_module, "hybrid_cut", interrupted)
+
+    run.start()
+
+    assert run.finished == 0
+    assert len(run.failures) == (1 if how == "failure" else 0)
+    assert run.listing() == ["unused.mp4"]
+    with open(run.data.output_path, "rb") as f:
+        assert f.read() == b"keep"
+
+
 def test_finished_run_releases_reserved_names(server, tmp_path, monkeypatch):
     """다운로드가 끝나면(실패 포함) 배정받은 구간 파일명의 예약이 풀려야 한다.
 
@@ -587,3 +620,119 @@ def test_split_span_splits_a_range_in_the_middle_of_the_file(first, last, part_s
     -> (start, end) 목록 — 양 끝 포함, 빈틈·겹침 없음
     """
     assert split_span(first, last, part_size) == expected
+
+
+# ================================================================ 범위 요청에 200이 왔을 때 (#309)
+
+
+def _response(status: int, length: int | None, closed: list):
+    headers = {} if length is None else {"Content-Length": str(length)}
+    return SimpleNamespace(status_code=status, headers=headers, close=lambda: closed.append(True))
+
+
+@pytest.mark.parametrize(
+    ("status", "length", "file_size", "start", "rejected"),
+    [
+        (206, 1000, 5000, 1000, False),  # 범위 응답
+        (200, 5000, 5000, 0, False),  # 처음부터 시작하는 범위에 파일 전체를 보냈다
+        (200, 1000, 5000, 0, True),  # 200인데 요청한 범위만큼만 잘라 보냈다
+        (200, None, 5000, 0, False),  # 길이를 말하지 않은 200 — 가릴 수 없다
+        (200, 5000, None, 0, True),  # 구간 다운로드 — 받는 범위가 파일 전체일 수 없다
+        (206, 1000, None, 0, False),
+        (200, 5000, 5000, 1000, True),  # 처음이 아닌 범위에 파일 전체 — 앞부분이 그 자리에 쓰인다
+        (200, None, 5000, 1000, True),  # 처음이 아닌 범위의 200은 길이를 몰라도 거부한다
+    ],
+    ids=[
+        "206",
+        "200-whole",
+        "200-cut",
+        "200-unknown-length",
+        "200-in-sections",
+        "206-in-sections",
+        "200-whole-for-a-later-part",
+        "200-unknown-length-for-a-later-part",
+    ],
+)
+def test_part_response_of_200_must_be_usable_at_the_requested_position(
+    status, length, file_size, start, rejected
+):
+    """범위 요청에 200이 왔는데 범위가 파일의 처음이 아니거나, 서버가 말한 본문 길이가 파일 전체 크기와 다르면 잘림 오류로 처리해야 한다.
+
+    주석의 경우마다 (상태 코드, Content-Length, 파일 전체 크기 — 구간 다운로드면 None, 범위의 시작 위치)
+    -> 거부하는 경우에만 TruncatedBodyError를 내고 응답을 닫는다
+    """
+    closed: list = []
+    response = _response(status, length, closed)
+
+    if rejected:
+        with pytest.raises(TruncatedBodyError):
+            FileDownloader._require_whole_file_on_200(response, file_size, start)
+        assert closed == [True]
+    else:
+        FileDownloader._require_whole_file_on_200(response, file_size, start)
+        assert closed == []
+
+
+def test_section_download_fails_when_the_server_answers_a_range_with_a_cut_200(
+    server, tmp_path, monkeypatch
+):
+    """구간 다운로드에서 파트의 범위 요청에 200과 잘린 본문이 오면 그 본문으로 파일을 만들지 않고 실패해야 한다.
+
+    기본 입력, 구간 프레임 35~80. moov는 정상으로 받고, 파트 요청에는 200 · Content-Length 100 · 100바이트로 답하게 함
+    -> 완료 0회, 실패 1건 이상이고 첫 실패가 TruncatedBodyError, 저장 폴더가 비어 있다
+    """
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))])
+    run.data.content.mp4_head = fetch_mp4_head(server.url("plain"))
+
+    class CutSession:
+        """파트 요청에 200과 잘린 본문으로 답하는 세션."""
+
+        def get(self, url, **kwargs):
+            return SimpleNamespace(
+                status_code=200,
+                headers={"Content-Length": "100"},
+                raise_for_status=lambda: None,
+                iter_content=lambda chunk_size=8192: iter([bytes(100)]),
+                close=lambda: None,
+            )
+
+    monkeypatch.setattr(fd_module, "get_thread_session", CutSession)
+
+    run.start()
+
+    assert run.finished == 0
+    assert run.failures and isinstance(run.failures[0], TruncatedBodyError)
+    assert run.listing() == []
+
+
+@pytest.mark.parametrize(
+    ("parts", "finishes"),
+    [
+        (2, False),  # 둘째 파트는 파일의 처음이 아닌 자리다
+        (1, True),  # 범위가 파일의 처음부터 끝까지다
+    ],
+    ids=["two-parts", "one-part"],
+)
+def test_download_from_a_server_that_ignores_ranges_finishes_only_with_one_part(
+    server, sources, tmp_path, monkeypatch, parts, finishes
+):
+    """범위 요청마다 200과 파일 전체로 답하는 서버에서는 파트가 하나일 때만 완료하고, 여럿이면 실패해야 한다.
+
+    기본 입력, selections 빈 튜플, 호스트가 범위를 무시하게 함. 주석의 경우마다 파트 수
+    -> 파트 하나: 완료 1회, output_path의 bytes == 원본
+    -> 파트 둘: 완료 0회, 첫 실패가 TruncatedBodyError
+    """
+    part_size = -(-os.path.getsize(sources["plain"]) // parts)
+    monkeypatch.setattr(server, "ignore_range", True)
+    monkeypatch.setattr(fd_module, "decide_part_size", lambda *_args: part_size)
+    run = _Run(server, "plain", tmp_path, [])
+
+    run.start()
+
+    if finishes:
+        assert (run.finished, run.failures) == (1, [])
+        with open(run.data.output_path, "rb") as made, open(sources["plain"], "rb") as wanted:
+            assert made.read() == wanted.read()
+    else:
+        assert run.finished == 0
+        assert run.failures and isinstance(run.failures[0], TruncatedBodyError)

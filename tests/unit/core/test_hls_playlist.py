@@ -6,10 +6,12 @@ core/api/hls.py(순수 파서)와 core/downloaders/decrypt.py(AES-128-CBC)의 �
 ``EXT-X-MEDIA-SEQUENCE`` 0, 세그먼트 확장자 .ts.
 """
 
+from fractions import Fraction
+
 import pytest
 from Crypto.Cipher import AES
 
-from core.api.hls import HlsKey, parse_media_playlist
+from core.api.hls import HlsKey, parse_media_playlist, stream_frame_rate, variant_frame_rate
 from core.downloaders.decrypt import (
     AES_BLOCK_SIZE,
     TS_PACKET_SIZE,
@@ -142,3 +144,149 @@ def test_looks_like_ts_detects_sync_bytes():
     # 키가 틀리면 난수가 되어 통과할 수 없다
     assert looks_like_ts(bytes(TS_PACKET_SIZE * 2)) is False
     assert looks_like_ts(b"\x47" * 10) is False  # 너무 짧다
+
+
+# ================================================================ 끊긴 자리 · 초기화 세그먼트 (#309)
+
+
+def test_discontinuity_marks_the_segment_that_follows_it():
+    """parse_media_playlist는 #EXT-X-DISCONTINUITY 바로 뒤 세그먼트의 인덱스를 discontinuities에 실어야 한다.
+
+    세그먼트 a · b, DISCONTINUITY, c, DISCONTINUITY, d
+    -> discontinuities == (2, 3)
+    """
+    text = "\n".join(
+        ["#EXTM3U", "#EXTINF:1,", "a", "#EXTINF:1,", "b", "#EXT-X-DISCONTINUITY", "#EXTINF:1,", "c"]
+        + ["#EXT-X-DISCONTINUITY", "#EXTINF:1,", "d"]
+    )
+
+    assert parse_media_playlist(text).discontinuities == (2, 3)
+
+
+def test_discontinuity_before_the_first_segment_is_not_a_break():
+    """parse_media_playlist는 첫 세그먼트 앞의 #EXT-X-DISCONTINUITY를 끊긴 자리로 세지 않아야 한다.
+
+    DISCONTINUITY, 세그먼트 a · b
+    -> discontinuities == ()
+    """
+    text = "\n".join(["#EXTM3U", "#EXT-X-DISCONTINUITY", "#EXTINF:1,", "a", "#EXTINF:1,", "b"])
+
+    assert parse_media_playlist(text).discontinuities == ()
+
+
+def test_init_uris_lists_each_distinct_map_in_order():
+    """parse_media_playlist는 #EXT-X-MAP의 URI를 나온 순서대로 겹치지 않게 init_uris에 실어야 한다.
+
+    MAP "one" · 세그먼트 · MAP "one" · 세그먼트 · MAP "two" · 세그먼트
+    -> init_uris == ("one", "two"), init_uri == "two"(마지막 것)
+    """
+    text = "\n".join(
+        [
+            "#EXTM3U",
+            '#EXT-X-MAP:URI="one"',
+            "#EXTINF:1,",
+            "a",
+            '#EXT-X-MAP:URI="one"',
+            "#EXTINF:1,",
+            "b",
+        ]
+        + ['#EXT-X-MAP:URI="two"', "#EXTINF:1,", "c"]
+    )
+
+    playlist = parse_media_playlist(text)
+
+    assert playlist.init_uris == ("one", "two")
+    assert playlist.init_uri == "two"
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        (
+            "#EXT-X-STREAM-INF:BANDWIDTH=8000000,RESOLUTION=1920x1080,FRAME-RATE=60.000",
+            Fraction(60),
+        ),
+        ("#EXT-X-STREAM-INF:FRAME-RATE=59.940,RESOLUTION=1920x1080", Fraction(2997, 50)),
+        ('#EXT-X-STREAM-INF:CODECS="avc1.640028,mp4a.40.2",FRAME-RATE=30', Fraction(30)),
+        ("#EXT-X-STREAM-INF:BANDWIDTH=8000000,RESOLUTION=1920x1080", None),
+        ("#EXT-X-STREAM-INF:FRAME-RATE=0,RESOLUTION=1920x1080", None),
+        ("#EXT-X-STREAM-INF:FRAME-RATE=fast,RESOLUTION=1920x1080", None),
+        ("#EXT-X-MEDIA:TYPE=AUDIO,FRAME-RATE=60", None),  # 변형을 적는 줄이 아니다
+        ("1080/playlist.m3u8", None),
+    ],
+    ids=["60.000", "59.940", "after-quoted", "missing", "zero", "not-a-number", "other-tag", "uri"],
+)
+def test_stream_frame_rate_reads_the_declared_value_as_written(line, expected):
+    """stream_frame_rate는 #EXT-X-STREAM-INF 줄의 FRAME-RATE를 적힌 글자 그대로의 분수로 돌려주고, 없거나 읽을 수 없으면 None을 돌려줘야 한다.
+
+    주석의 경우마다 마스터 플레이리스트의 한 줄
+    -> 기대값
+    """
+    assert stream_frame_rate(line) == expected
+
+
+@pytest.mark.parametrize(
+    ("uri", "expected"),
+    [
+        ("720p/chunklist.m3u8", Fraction(60)),
+        ("144p/chunklist.m3u8", None),  # FRAME-RATE를 선언하지 않은 변형
+        ("1080p/chunklist.m3u8", Fraction(2997, 50)),
+        ("720p-low/chunklist.m3u8", Fraction(30)),  # 크기가 같은 둘째 변형 — 제 줄의 값이다
+        ("none/chunklist.m3u8", None),  # 그런 변형이 없다
+    ],
+    ids=["first-720", "undeclared", "59.940", "second-720", "absent"],
+)
+def test_variant_frame_rate_reads_the_rate_of_the_variant_with_that_address(uri, expected):
+    """variant_frame_rate는 주소가 같은 변형의 FRAME-RATE를 적힌 글자 그대로의 분수로 돌려줘야 한다.
+
+    변형 다섯 — 1280x720(60.00) · 852x480(30.00) · 256x144(속성 없음) · 1920x1080(59.940) ·
+    1280x720(30.00), 주석의 주소
+    -> 기대값
+    """
+    text = "\n".join(
+        [
+            "#EXTM3U",
+            "#EXT-X-STREAM-INF:BANDWIDTH=3192000,RESOLUTION=1280x720,FRAME-RATE=60.00",
+            "720p/chunklist.m3u8",
+            "#EXT-X-STREAM-INF:BANDWIDTH=1692000,RESOLUTION=852x480,FRAME-RATE=30.00",
+            "480p/chunklist.m3u8",
+            "#EXT-X-STREAM-INF:BANDWIDTH=192000,RESOLUTION=256x144",
+            "144p/chunklist.m3u8",
+            "#EXT-X-STREAM-INF:BANDWIDTH=6336000,RESOLUTION=1920x1080,FRAME-RATE=59.940",
+            "1080p/chunklist.m3u8",
+            "#EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION=1280x720,FRAME-RATE=30.00",
+            "720p-low/chunklist.m3u8",
+        ]
+    )
+
+    assert variant_frame_rate(text, uri) == expected
+
+
+def test_parse_media_playlist_reads_program_date_time_per_segment():
+    """parse_media_playlist는 세그먼트마다 바로 앞의 #EXT-X-PROGRAM-DATE-TIME을 유닉스 시각으로 돌려주고, 없거나 읽을 수 없으면 None을 돌려줘야 한다.
+
+    세그먼트 넷 — 태그 있음(…17.062Z) · 있음(2초 뒤) · 없음 · 읽을 수 없는 값
+    -> 둘째 − 첫째 == 2.0초, 셋째 · 넷째는 None, 길이는 세그먼트 수와 같다
+    """
+    text = "\n".join(
+        [
+            "#EXTM3U",
+            "#EXT-X-PROGRAM-DATE-TIME:2026-10-01T11:00:17.062Z",
+            "#EXTINF:2.001333,",
+            "a.m4v",
+            "#EXT-X-PROGRAM-DATE-TIME:2026-10-01T11:00:19.062Z",
+            "#EXTINF:2.001333,",
+            "b.m4v",
+            "#EXTINF:2.001333,",
+            "c.m4v",
+            "#EXT-X-PROGRAM-DATE-TIME:yesterday",
+            "#EXTINF:2.001333,",
+            "d.m4v",
+        ]
+    )
+
+    times = parse_media_playlist(text).program_times
+
+    assert len(times) == 4
+    assert times[1] - times[0] == pytest.approx(2.0)
+    assert times[2:] == (None, None)

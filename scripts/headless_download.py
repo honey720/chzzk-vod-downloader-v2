@@ -15,7 +15,8 @@ core 파이프라인(metadata_service → DownloadService → 다운로더 엔�
     --list           다운로드하지 않고 사용 가능한 해상도와 그 프레임률을 출력
     --section A-B    받을 구간. 타임코드 HH:MM:SS:FF-HH:MM:SS:FF, 여러 번 줄 수 있다 (#309).
                      구간마다 `{제목} {해상도}p_N.mp4` 파일이 하나씩 생긴다(N은 준 순서).
-                     인코딩이 끝난 VOD(mp4)만 받는다
+                     인코딩이 끝난 VOD(mp4)와 인코딩 전 다시보기(HLS fMP4)를 받는다.
+                     암호화 VOD와 클립은 받지 않는다
 
 예)
     uv run python scripts/headless_download.py https://chzzk.naver.com/clips/xxxx
@@ -39,6 +40,7 @@ Qt 의존에 대하여:
 import argparse
 import logging
 import os
+import shutil
 import sys
 from pathlib import Path
 from time import gmtime, strftime
@@ -52,16 +54,31 @@ from app.viewmodels.data import ContentItem  # noqa: E402
 from app.network import NetworkManager  # noqa: E402
 from fractions import Fraction  # noqa: E402
 
+from core.api.hls_fmp4 import fetch_fmp4_head, segment_frames  # noqa: E402
 from core.api.mp4 import Mp4Error, fetch_mp4_head  # noqa: E402
+from core.models.content import Content, ContentType  # noqa: E402
+from core.models.fmp4_index import Fmp4Head  # noqa: E402
 from core.models.mp4_index import Mp4Head  # noqa: E402
 from core.models.events import ProgressEvent  # noqa: E402
 from core.models.plan import TimeRange  # noqa: E402
 from core.services import metadata_service  # noqa: E402
 from core.services.download_service import DownloadService  # noqa: E402
 from core.services.metadata_service import MetadataError  # noqa: E402
+from core.utils.fmp4_sections import (  # noqa: E402
+    FPS_DECLARED,
+    FPS_STANDARD,
+    choose_frame_rate,
+    fmp4_timeline,
+    plan_fmp4_sections,
+)
 from core.utils.mp4_ranges import selection_byte_ranges  # noqa: E402
-from core.utils.paths import build_output_path, build_section_output_paths  # noqa: E402
-from core.utils.selections import validate_selections  # noqa: E402
+from core.utils.paths import (  # noqa: E402
+    build_output_path,
+    build_section_output_paths,
+    choose_temp_dir,
+    release_output_paths,
+)
+from core.utils.selections import SelectionError, validate_selections  # noqa: E402
 from core.utils.timecode import (  # noqa: E402
     TIMECODE_INVALID_FORMAT,
     TimecodeError,
@@ -70,7 +87,11 @@ from core.utils.timecode import (  # noqa: E402
 )
 from core.models.download_data import DownloadData  # noqa: E402
 from app.download_logger import DownloadLogger  # noqa: E402
-from app.download_resolvers import resolve_aes_key, resolve_m3u8_base_url  # noqa: E402
+from app.download_resolvers import (  # noqa: E402
+    resolve_aes_key,
+    resolve_m3u8_base_url,
+    resolve_m3u8_variant,
+)
 from app.download_task import DownloadTask  # noqa: E402
 
 logger = logging.getLogger("headless")
@@ -235,6 +256,95 @@ def _resolve_sections(
     return selections, head
 
 
+def _fps_source_text(source: str) -> str:
+    """프레임률을 정한 경로를 로그에 찍을 글로 바꾼다."""
+    if source == FPS_DECLARED:
+        return "① 마스터 플레이리스트의 FRAME-RATE"
+    if source == FPS_STANDARD:
+        return "② 프레임 평균 간격 — 표준 비율"
+    return "③ 프레임 평균 간격 그대로"
+
+
+def _resolve_fmp4_sections(
+    item: ContentItem, texts: list[str], segment_dir: str | None = None
+) -> tuple[tuple[TimeRange, ...], Fmp4Head] | None:
+    """인코딩 전 다시보기의 구간 옵션을 검증해 TimeRange 목록으로 바꾼다. 받을 세그먼트와 프레임을 로그로 남긴다.
+
+    프레임률은 마스터 플레이리스트의 FRAME-RATE, 없으면 첫 세그먼트의 프레임 평균 간격으로
+    정하고(``choose_frame_rate``) 값과 경로를 로그로 남긴다 — 타임코드의 FF가 이 값으로 읽힌다.
+
+    플레이리스트와 초기화 세그먼트, 그리고 시각 축을 재는 세그먼트(첫 · 마지막)와 구간의 양
+    끝이 든 세그먼트를 받는다. 세그먼트는 통째로 받아 segment_dir에 둔다 — 범위 요청을
+    보내지 않는다. 받은 것은 함께 돌려준다 — 엔진에 넘겨 다시 받지 않게 한다.
+
+    구간은 실제 영상 길이(마지막 영상 프레임이 끝나는 시각)로 검증한다. 플레이리스트의
+    #EXTINF 합은 실제 길이와 다를 수 있다.
+
+    Args:
+        item: 받을 영상
+        texts: `--section` 값들
+        segment_dir: 받은 세그먼트를 둘 폴더 — 엔진의 세그먼트 임시 폴더가 된다
+
+    Returns:
+        (구간 목록, 받은 것). 형식·검증 오류나 읽지 못한 경우 None
+    """
+    try:
+        content = Content(
+            content_type=ContentType.CHZZK_VIDEO_M3U8,
+            url=item.vod_url,
+            resolution=item.resolution,
+            # 목록에서 고른 변형 (#318) — 엔진이 받는 변형과 같은 변형에서 구간을 정한다
+            stream=getattr(item, "stream", None),
+        )
+        base_url, declared = resolve_m3u8_variant(content)
+        head = fetch_fmp4_head(base_url, segment_dir)
+
+        def segment_at(index: int):
+            return segment_frames(head, base_url, index)
+
+        choice = choose_frame_rate(head.init, [segment_at(0)], declared)
+        fps = head.frame_rate = choice.rate  # 엔진이 같은 값으로 검증한다
+        logger.info(
+            "프레임률: %s = %s (%s)", fps, _format_fps(fps), _fps_source_text(choice.source)
+        )
+        pairs = _parse_sections(texts, fps)
+        duration = fmp4_timeline(head.playlist, head.init, segment_at).duration
+        logger.info("영상 길이: %s", format_milliseconds(duration))
+        violations = validate_selections(pairs, duration, fps)
+        if violations:
+            for number, keys in violations.items():
+                logger.error("구간 %d (%s): %s", number + 1, texts[number], ", ".join(keys))
+            return None
+        selections = tuple(TimeRange(start, end) for start, end in pairs)
+        sections = plan_fmp4_sections(head.playlist, head.init, selections, segment_at, fps)
+    except TimecodeError as e:
+        logger.error("구간 형식 오류: %s", e)
+        return None
+    except SelectionError as e:
+        for number, keys in e.violations.items():
+            logger.error("구간 %d (%s): %s", number + 1, texts[number], ", ".join(keys))
+        return None
+    except Mp4Error as e:
+        logger.error("영상 정보를 읽지 못했습니다: %s", e)
+        return None
+    except Exception:
+        logger.exception("영상 정보를 받지 못했습니다")
+        return None
+
+    for number, (text, section) in enumerate(zip(texts, sections), start=1):
+        logger.info(
+            "구간 %d: %s -> 첫 프레임 %s · 끝 프레임 %s, 받을 세그먼트 %d개 (%d~%d번째)",
+            number,
+            text,
+            format_milliseconds(section.first_pts),
+            format_milliseconds(section.last_pts),
+            section.segment_count,
+            section.first_segment,
+            section.last_segment,
+        )
+    return selections, head
+
+
 class _HeadlessRunner:
     """DownloadService를 구동하고 완료/실패/타임아웃을 종료 코드로 환원한다."""
 
@@ -244,12 +354,18 @@ class _HeadlessRunner:
         timeout: int,
         selections: tuple[TimeRange, ...] = (),
         mp4_head: Mp4Head | None = None,
+        fmp4_head: Fmp4Head | None = None,
+        section_paths: tuple[str, ...] = (),
     ) -> None:
         self.item = item
         self.timeout = timeout
         self.selections = selections
         self.mp4_head = mp4_head  # 구간을 해석하며 받은 moov — 엔진이 다시 받지 않게 넘긴다
-        self.section_paths: tuple[str, ...] = ()
+        # 구간을 해석하며 받은 플레이리스트·초기화 세그먼트·moof (인코딩 전 다시보기)
+        self.fmp4_head = fmp4_head
+        # 구간 파일명 — 구간을 해석하기 전에 배정했으면 그것을 쓴다(다시보기: 받은 세그먼트를
+        # 둘 폴더가 첫 구간 파일의 이름에서 나온다). 없으면 run()이 배정한다
+        self.section_paths: tuple[str, ...] = section_paths
         self.exit_code = 1  # 완료 신호를 받기 전까지는 실패로 간주
         self.service = DownloadService(
             base_url_resolver=resolve_m3u8_base_url, key_resolver=resolve_aes_key
@@ -267,12 +383,13 @@ class _HeadlessRunner:
         )
         if self.selections:
             # 구간 파일명은 시작할 때 한꺼번에 배정한다 — 예약은 엔진이 끝날 때 푼다 (#309)
-            self.section_paths = build_section_output_paths(
+            self.section_paths = self.section_paths or build_section_output_paths(
                 self.item.download_path, self.item.title, self.item.resolution, len(self.selections)
             )
             data.content.selections = self.selections
             data.content.selection_paths = self.section_paths
             data.content.mp4_head = self.mp4_head
+            data.content.fmp4_head = self.fmp4_head
         # 고른 변형을 다시 찾는 값 (#318) — 스트림 값이 없는 아이템은 해상도로 찾는다
         data.content.stream = getattr(self.item, "stream", None)
         task_logger = DownloadLogger()
@@ -416,8 +533,9 @@ def _format_resolutions(unique_reps: list, rates: dict[str, Fraction]) -> str:
 def _fetch_frame_rates(vod_url: str, cookies: dict, content_type: str) -> dict[str, Fraction]:
     """매니페스트가 선언한 해상도별 프레임률을 조회한다. 읽지 못하면 빈 dict(전부 `fps 모름`).
 
-    DASH 매니페스트가 있는 타입(인코딩 완료 VOD · 암호화 VOD)만 읽는다. 다시보기와
-    클립은 매니페스트에서 프레임률을 읽는 길이 없어 조회하지 않는다.
+    DASH 매니페스트가 있는 타입(인코딩 완료 VOD · 암호화 VOD)만 읽는다. 인코딩 전
+    다시보기는 목록의 항목이 그 변형의 프레임률을 들고 있어(#318) 따로 조회하지 않는다.
+    클립은 읽는 길이 없어 조회하지 않는다.
     """
     if content_type not in ("video", "hls_aes"):
         return {}
@@ -492,17 +610,31 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     selections: tuple[TimeRange, ...] = ()
-    mp4_head = None
+    section_paths: tuple[str, ...] = ()
+    mp4_head = fmp4_head = None
     if args.section:
-        if content_type != "video":
-            logger.error("구간 다운로드는 인코딩이 끝난 VOD(mp4)만 지원합니다: %s", content_type)
+        if content_type == "video":
+            resolved = _resolve_sections(item, args.section)
+            if resolved is None:
+                return 2
+            selections, mp4_head = resolved
+        elif content_type == "m3u8":
+            # 구간 파일명을 먼저 배정한다 — 구간을 해석하며 받는 세그먼트를 둘 폴더가 거기서 나온다
+            section_paths = build_section_output_paths(
+                item.download_path, item.title, item.resolution, len(args.section)
+            )
+            segment_dir = choose_temp_dir(section_paths[0])
+            resolved = _resolve_fmp4_sections(item, args.section, segment_dir)
+            if resolved is None:
+                release_output_paths(section_paths)
+                shutil.rmtree(segment_dir, ignore_errors=True)
+                return 2
+            selections, fmp4_head = resolved
+        else:
+            logger.error("구간 다운로드는 암호화 VOD와 클립을 지원하지 않습니다: %s", content_type)
             return 2
-        resolved = _resolve_sections(item, args.section)
-        if resolved is None:
-            return 2
-        selections, mp4_head = resolved
 
-    return _HeadlessRunner(item, args.timeout, selections, mp4_head).run()
+    return _HeadlessRunner(item, args.timeout, selections, mp4_head, fmp4_head, section_paths).run()
 
 
 if __name__ == "__main__":

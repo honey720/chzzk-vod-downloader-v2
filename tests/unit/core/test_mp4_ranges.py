@@ -12,10 +12,13 @@ PTS보다 0.1초 앞선다), 영상 청크는 샘플 0~2 · 3~5 · 6~7 · 8~11. 
 샘플이며 샘플 n의 표시 시각은 (n − 1) × 0.128초, 청크는 샘플 4개씩이다.
 """
 
+import pytest
+
 from core.api.mp4 import parse_moov
 from core.models.plan import TimeRange
 from core.utils.hybrid_cut import SOURCE_LEAD_SECONDS
 from core.utils.mp4_ranges import selection_byte_ranges
+from core.utils.selections import reaches_end, validate_selections
 from tests.unit.core.mp4_builder import audio_spec, build_mp4, video_spec
 
 VIDEO_SIZES = [40 + 3 * n for n in range(12)]  # 조립기 video_spec의 샘플 크기
@@ -209,3 +212,20 @@ def test_selection_byte_ranges_holds_every_needed_sample_inside_the_range():
             size = track.sizes[sample]
             assert start >= 0
             assert piece[start : start + size] == built.sample_bytes(handler, sample, size)
+
+
+def test_selection_ending_at_a_duration_off_the_frame_grid_ends_on_the_last_frame():
+    """끝이 영상 길이(초)와 같은 mp4 구간은 길이 × fps의 소수부가 .5 이상이어도 검증을 통과하고 마지막 프레임에서 끝나야 한다.
+
+    영상만 · 재정렬 없음, 12샘플(길이 100틱, 마지막만 160틱 · timescale 1000) — 길이 1.26초 = 12.6프레임.
+    구간 0.5 ~ 길이
+    -> 위반 없음, reaches_end 참, last_frame == 11
+    """
+    built = build_mp4([video_spec(deltas=[100] * 11 + [160], composition=None, edits=None)])
+    index = parse_moov(built.moov)
+    selection = TimeRange(0.5, index.duration)
+
+    assert (index.duration, index.fps) == (pytest.approx(1.26), 10)
+    assert validate_selections([selection], index.duration, index.fps) == {}
+    assert reaches_end(selection.end, index.duration, index.fps)
+    assert selection_byte_ranges(index, selection).last_frame == 11

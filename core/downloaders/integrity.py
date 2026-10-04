@@ -39,11 +39,28 @@ class TruncatedSegmentError(Exception):
         self.message_key = SEGMENT_TRUNCATED
 
 
+def declared_content_length(headers: Mapping[str, str] | None) -> int | None:
+    """응답이 선언한 본문 길이(``Content-Length``)를 돌려준다 — 받은 바이트 수와 견줄 수 있을 때만.
+
+    선언이 없거나 숫자가 아니면 None이다. 본문이 압축돼 오면(``Content-Encoding``) 선언된
+    길이는 압축된 길이라 받은 길이와 견줄 수 없다 — 그때도 None이다. ``identity``는 압축하지
+    않았다는 선언이라 견줄 수 있다 (#309).
+    """
+    if not headers:
+        return None
+    encoding = headers.get("Content-Encoding")
+    if encoding and str(encoding).strip().lower() != "identity":
+        return None
+    declared = headers.get("Content-Length")
+    if declared is None or not str(declared).strip().isdigit():
+        return None
+    return int(declared)
+
+
 def check_content_length(headers: Mapping[str, str] | None, received: int) -> None:
     """응답이 ``Content-Length``를 선언했으면 받은 본문 길이와 견준다.
 
-    선언이 없거나 숫자가 아니면 견주지 않는다. 본문이 압축돼 오면(``Content-Encoding``)
-    선언된 길이는 압축된 길이라 받은 길이와 견줄 수 없다 — 그때도 견주지 않는다.
+    견줄 수 있는 선언이 없으면 견주지 않는다(``declared_content_length``).
 
     Args:
         headers: 응답 머리. 없으면 None
@@ -52,12 +69,8 @@ def check_content_length(headers: Mapping[str, str] | None, received: int) -> No
     Raises:
         TruncatedSegmentError: 선언된 길이와 받은 길이가 다를 때
     """
-    if not headers or headers.get("Content-Encoding"):
-        return
-    declared = headers.get("Content-Length")
-    if declared is None or not str(declared).strip().isdigit():
-        return
-    if int(declared) != received:
+    declared = declared_content_length(headers)
+    if declared is not None and declared != received:
         raise TruncatedSegmentError(f"Content-Length {declared}인데 받은 본문은 {received}바이트다")
 
 

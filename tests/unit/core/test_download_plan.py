@@ -4,10 +4,9 @@
 - DownloadPlan 모델: 불변(frozen), 기본값(빈 selections = 전체 다운로드), part_count
 - 두 다운로더의 prepare()가 DownloadPlan을 반환하고, 계획 필드가 현행
   실행에 필요한 정보(items·total_size·requires_postprocess)를 담는다
-- prepare()는 Content.selections를 계획에 싣는다 (#309)
-- 구간을 해석하지 못하는 다운로더(m3u8 · hls_aes)가 낸 계획에 selections가 있으면
-  베이스 run()이 명시적 미지원 예외를 낸다. file(mp4)은 구간을 받는다 — 그 경로는
-  tests/unit/core/test_file_sections.py가 본다
+- 구간을 해석하지 못하는 다운로더(hls_aes)가 낸 계획에 selections가 있으면 베이스
+  run()이 명시적 미지원 예외를 낸다. file(mp4)과 m3u8(HLS fMP4)은 구간을 받는다 —
+  그 경로는 tests/unit/core/test_file_sections.py · test_m3u8_sections.py가 본다 (#309)
 
 selections가 빈 값일 때 현행과 동일 동작인 것은 기존 실행 테스트
 (test_file_downloader_run / test_m3u8_downloader_run)와 규칙 박제 테스트가
@@ -166,35 +165,16 @@ def _selection_plan() -> DownloadPlan:
     return DownloadPlan(items=((0, MB - 1),), total_size=MB, selections=(TimeRange(0.0, 10.0),))
 
 
-def test_only_file_downloader_accepts_selections():
-    """구간을 받는 다운로더는 file뿐이어야 한다 (#309).
+def test_file_and_m3u8_accept_selections_and_hls_aes_does_not():
+    """구간을 받는 다운로더는 file과 m3u8이고, hls_aes와 기본값은 받지 않아야 한다 (#309).
 
     BaseDownloader · FileDownloader · M3U8Downloader · HlsAesDownloader의 supports_selections
-    -> 기본 False, file만 True
+    -> 기본 False, file · m3u8 True, hls_aes False
     """
     assert BaseDownloader.supports_selections is False
     assert FileDownloader.supports_selections is True
-    assert M3U8Downloader.supports_selections is False
+    assert M3U8Downloader.supports_selections is True
     assert HlsAesDownloader.supports_selections is False
-
-
-def test_m3u8_prepare_carries_content_selections_into_the_plan(monkeypatch):
-    """m3u8의 prepare는 Content.selections를 계획의 selections에 그대로 실어야 한다 (#309).
-
-    selections = (TimeRange(0, 10),)인 m3u8 컨텐츠
-    -> plan.selections == (TimeRange(0, 10),) — 거부는 run()이 한다
-    """
-    playlist = "\n".join(
-        ["#EXTM3U", '#EXT-X-MAP:URI="init.m4s"', "#EXTINF:2.000,", "seg_0.m4v", "#EXT-X-ENDLIST"]
-    )
-    data = _make_m3u8_data()
-    data.content.selections = (TimeRange(0.0, 10.0),)
-    engine = M3U8Downloader(data, RecordingLogger())
-    monkeypatch.setattr(m3u8_module, "get_thread_session", lambda: PlaylistSession(playlist))
-
-    plan = engine.prepare(data.content)
-
-    assert plan.selections == (TimeRange(0.0, 10.0),)
 
 
 def test_hls_aes_run_rejects_selections_via_failure_callback(tmp_path, monkeypatch):
@@ -222,12 +202,19 @@ def test_hls_aes_run_rejects_selections_via_failure_callback(tmp_path, monkeypat
     assert not (tmp_path / "out.mp4").exists()
 
 
-def test_m3u8_run_rejects_selections_via_failure_callback(tmp_path, monkeypatch):
-    """m3u8은 모든 예외를 실패로 환원하므로 미지원 예외가 실패 콜백으로 통지된다."""
+def test_base_run_rejects_selections_for_a_downloader_that_does_not_support_them(
+    tmp_path, monkeypatch
+):
+    """구간을 받지 않는 다운로더가 낸 계획에 selections가 있으면 run()은 미지원 예외를 실패로 통지해야 한다.
+
+    M3U8Downloader의 supports_selections를 False로 바꾸고 prepare가 selections 있는 계획을 내도록 함
+    -> 실패 1건(NotImplementedError), 산출물 없음
+    """
     failures: list[BaseException] = []
     data = _make_m3u8_data()
     data.output_path = str(tmp_path / "out.mp4")
     engine = M3U8Downloader(data, RecordingLogger(), on_failed=failures.append)
+    monkeypatch.setattr(engine, "supports_selections", False)
     monkeypatch.setattr(engine, "prepare", lambda content: _selection_plan())
 
     data.model.start()

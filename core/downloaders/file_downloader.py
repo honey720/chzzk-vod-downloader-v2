@@ -41,7 +41,13 @@ import requests
 
 from core.api.mp4 import MP4_UNSUPPORTED, Mp4Error, fetch_mp4_head
 from core.api.session import get_thread_session
-from core.downloaders.base import REQUEST_TIMEOUT, BaseDownloader, PostprocessError
+from core.downloaders.base import (
+    REQUEST_TIMEOUT,
+    BaseDownloader,
+    PostprocessError,
+    TruncatedBodyError,
+)
+from core.downloaders.integrity import declared_content_length
 from core.downloaders.ranges import decide_part_size, split_ranges, split_span
 from core.models.content import Content, ContentType
 from core.models.cut import CutResult, CutSection
@@ -261,6 +267,43 @@ class FileDownloader(BaseDownloader):
             raise PostprocessError(f"후처리(cut) 실패: {e}") from e
         os.remove(self._source_path)
 
+    @staticmethod
+    def _require_whole_file_on_200(response, file_size: int | None, range_start: int = 0) -> None:
+        """범위 요청에 200이 왔을 때 그 본문을 써도 되는지 확인한다 (#309).
+
+        200은 "범위를 무시하고 파일의 처음부터 보낸다"는 뜻이다. 본문은 파일의 0번째
+        바이트부터인데 받는 쪽은 그것을 요청한 범위의 시작 위치에 쓴다.
+
+        - 요청한 범위가 파일의 처음에서 시작하지 않으면 실패로 처리한다 — 그대로 쓰면 파일의
+          앞부분이 그 파트 자리에 들어간 채 완료 처리된다
+        - 요청한 범위만큼만 잘라 200으로 보내는 서버가 있다. 서버가 말한 길이
+          (Content-Length)가 파일 전체 크기와 다르면 실패로 처리한다. 길이를 말하지 않은
+          응답은 가릴 수 없어 지금처럼 둔다
+
+        Args:
+            response: 범위 요청의 응답
+            file_size: 파일 전체 크기(바이트). 모르면 None — 그때는 길이를 말한 200을
+                모두 실패로 처리한다(구간 다운로드: 받는 범위가 파일 전체일 수 없다)
+            range_start: 요청한 범위가 시작하는 파일 위치(바이트)
+
+        Raises:
+            TruncatedBodyError: 200인데 범위가 파일의 처음에서 시작하지 않거나, 본문의 길이가
+                파일 전체 크기와 다른 경우
+        """
+        if getattr(response, "status_code", None) != 200:
+            return
+        if range_start > 0:
+            response.close()
+            raise TruncatedBodyError(
+                f"범위 요청(시작 {range_start})에 200 — 본문이 파일의 처음부터다"
+            )
+        declared = declared_content_length(getattr(response, "headers", None))
+        if declared is not None and declared != file_size:
+            response.close()
+            raise TruncatedBodyError(
+                f"범위 요청에 200 · 본문 {declared}바이트 · 파일 전체 {file_size}바이트"
+            )
+
     def _postprocess_output_size(self) -> int:
         """후처리 종료 로그에 남길 크기 — 구간 파일 크기의 합."""
         return sum(os.path.getsize(path) for path in self._made_sections)
@@ -303,6 +346,10 @@ class FileDownloader(BaseDownloader):
                     self._part_progress.pop((start, end), None)
                     resume_offset = 0
                     continue
+                # 구간 다운로드의 total_size는 받을 바이트의 합이지 파일 크기가 아니다
+                self._require_whole_file_on_200(
+                    response, total_size if self._layout is None else None, range_start
+                )
                 part_start_time = tm.time()
                 # 디스크 쓰기 누적 시간 — 저속 판정에는 더 이상 반영하지 않는다(#191).
                 # f.write()는 OS 페이지 캐시에 즉시 반환되는 버퍼드 쓰기라 실기
