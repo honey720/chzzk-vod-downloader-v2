@@ -40,8 +40,6 @@ MP4_RANGE_MISMATCH = (
     "Server returned a different range than requested"  # 206인데 범위·길이가 다르다
 )
 MP4_TOO_LONG = "Video is too long to read its index"  # 트랙의 샘플 수가 상한을 넘는다
-# 받은 본문이 잘렸다 — 상자들이 말하는 크기나 서버가 말한 길이보다 짧다 (#309)
-MP4_TRUNCATED = "Received an incomplete file"
 
 # 첫 범위 요청의 크기(바이트). moov가 파일 앞에 있고 이보다 작으면 요청 한 번으로 끝난다
 # — 10분짜리 표본의 moov가 약 340KB였다
