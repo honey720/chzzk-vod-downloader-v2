@@ -4,6 +4,8 @@
 - 영상 PES의 PTS·DTS와 키프레임을 프레임별로 읽는다. PES가 여러 패킷에 걸쳐도 같다
 - 색인의 시각은 VOD 시작(origin) = 0이고, 프레임은 PTS 순서다
 - 33비트 랩어라운드를 풀어 시각이 이어진다
+- 프레임 길이는 PTS 간격에서, 오디오가 끝나는 시각은 마지막 오디오 PES에 든 프레임 수로 구한다
+- 이어지는 세그먼트의 영상 시각 범위는 틈도 겹침도 없이 맞닿는다
 
 입력은 tests/unit/core/ts_builder.py가 패킷을 직접 조립한 합성 TS다.
 """
@@ -17,12 +19,14 @@ from core.api.mpegts import (
     build_ts_index,
     parse_ts,
     ts_origin,
+    ts_video_span,
 )
-from core.models.ts_index import TsStreams
+from core.models.ts_index import TsIndex, TsStreams
 from core.utils.timecode import snap_to_frame
 from tests.unit.core.ts_builder import (
     VIDEO_PID,
     Frame,
+    adts_frame,
     audio_pes,
     build_ts,
     packetize,
@@ -410,3 +414,269 @@ def test_build_ts_index_result_feeds_snap_to_frame():
     index = build_ts_index(parse_ts(build_ts(_reordered_frames())), origin=3000)
 
     assert snap_to_frame(0.07, index.frame_pts, 30, "start") == 2
+
+
+# ================================================================ 프레임 길이 · 오디오의 끝 · 시각 범위
+#
+# 암호화 VOD의 세그먼트에서 본 구조를 옮긴 합성 세그먼트다(값은 실제 것이 아니다).
+# - 영상 60fps · 세그먼트 4초(240프레임) · GOP 2초 · B프레임(재정렬 지연 1프레임)
+# - 오디오 48kHz AAC(ADTS) · PES 하나에 24프레임(512ms) · 세그먼트의 마지막 PES만 더 적다
+# - VOD의 0초는 첫 오디오 PTS이고, 첫 세그먼트의 영상은 그보다 42.667ms 늦게 시작한다
+
+FRAME_60 = 1500  # 60fps 한 프레임의 틱 수 (90,000 ÷ 60)
+AAC_FRAME = 1920  # 48kHz AAC 한 프레임의 틱 수 (1024 × 90,000 ÷ 48,000)
+ORIGIN = 90_000  # 합성 VOD의 0초 — 첫 세그먼트의 첫 오디오 PTS(원시 틱)
+VIDEO_LEAD = 3840  # 첫 세그먼트에서 영상이 오디오보다 늦게 시작하는 틱 수 (42.667ms)
+SEGMENT_FRAMES = 240  # 4초
+SEGMENT_TICKS = SEGMENT_FRAMES * FRAME_60
+
+# 세그먼트마다 오디오 PES에 든 프레임 수 — 마지막 PES만 24보다 적다
+AUDIO_COUNTS = (
+    (24,) * 7 + (21,),  # 189프레임 = 4.032초
+    (24,) * 7 + (20,),  # 188프레임
+    (24,) * 7 + (19,),  # 187프레임
+)
+
+
+def _gop_frames(first_pts: int, count: int, frame_ticks: int = FRAME_60, gop: int = 120) -> list:
+    """디코드 순서의 영상 프레임 — GOP마다 I, 그 뒤로 (P, B) 쌍, 끝에 P. 재정렬 지연은 한 프레임이다.
+
+    표시 순서 n번째 프레임의 PTS는 first_pts + n × frame_ticks이고, DTS는 디코드 순서대로
+    (first_pts − frame_ticks)부터 한 프레임씩 는다.
+    """
+    order = []
+    for start in range(0, count, gop):
+        size = min(gop, count - start)
+        order.append(start)
+        for pair in range(1, size - 1, 2):
+            order += [start + pair + 1, start + pair]
+        if size > 1 and size % 2 == 0:
+            order.append(start + size - 1)
+    assert sorted(order) == list(range(count))
+    return [
+        Frame(
+            pts=first_pts + display * frame_ticks,
+            dts=first_pts - frame_ticks + position * frame_ticks,
+            idr=display % gop == 0,
+        )
+        for position, display in enumerate(order)
+    ]
+
+
+def _segment_audio(number: int) -> list[tuple[int, int]]:
+    """number번째 합성 세그먼트의 오디오 PES — (PTS, 든 프레임 수). 앞 세그먼트의 오디오에 이어진다."""
+    pts = ORIGIN + sum(sum(counts) for counts in AUDIO_COUNTS[:number]) * AAC_FRAME
+    found = []
+    for count in AUDIO_COUNTS[number]:
+        found.append((pts, count))
+        pts += count * AAC_FRAME
+    return found
+
+
+def _segment_video_start(number: int) -> int:
+    """number번째 합성 세그먼트의 첫 영상 PTS(원시 틱)."""
+    return ORIGIN + VIDEO_LEAD + number * SEGMENT_TICKS
+
+
+def _segment(number: int) -> bytes:
+    """number번째 합성 세그먼트(0 · 1 · 2)."""
+    frames = _gop_frames(_segment_video_start(number), SEGMENT_FRAMES)
+    return build_ts(frames, adts=_segment_audio(number))
+
+
+def _index_of(number: int) -> TsIndex:
+    return build_ts_index(parse_ts(_segment(number)), ORIGIN)
+
+
+def test_synthetic_segments_carry_the_observed_layout():
+    """합성 세그먼트는 옮기려던 구조여야 한다 — 영상이 오디오보다 늦게 시작하고, 키프레임이 2초마다 있고, 재정렬 지연이 한 프레임이다.
+
+    합성 세그먼트 0 · 1 · 2
+    -> (첫 영상 PTS − 첫 오디오 PTS) = 3840 · 960 · 0틱(42.667 · 10.667 · 0ms),
+       세그먼트마다 프레임 240개 · 키프레임 0 · 120번째 · 키프레임의 (PTS − DTS) = 1500틱
+    """
+    leads = []
+    for number in range(3):
+        streams = parse_ts(_segment(number))
+        leads.append(min(streams.video_pts) - streams.audio_pts[0])
+        index = build_ts_index(streams, ORIGIN)
+        assert len(index.frame_pts) == SEGMENT_FRAMES
+        assert index.keyframes == (0, 120)
+        assert streams.video_pts[0] - streams.video_dts[0] == FRAME_60
+
+    assert leads == [3840, 960, 0]
+
+
+def test_parse_ts_counts_adts_frames_in_each_audio_pes():
+    """parse_ts는 ADTS 오디오 PES마다 든 프레임 수와 표본화율을 읽어야 한다.
+
+    합성 세그먼트 0 — 오디오 PES 8개, 프레임 수 24 × 7 + 21, 48kHz. PES 하나가 여러 패킷에 걸친다
+    -> audio_frames == (24, 24, 24, 24, 24, 24, 24, 21), audio_sample_rate == 48000
+    """
+    streams = parse_ts(_segment(0))
+
+    assert streams.audio_frames == AUDIO_COUNTS[0]
+    assert len(streams.audio_frames) == len(streams.audio_pts)
+    assert streams.audio_sample_rate == 48000
+
+
+def test_parse_ts_counts_every_aac_frame_inside_one_adts_frame():
+    """parse_ts는 ADTS 프레임 하나에 AAC 프레임이 여럿 들었으면 머리에 적힌 수만큼 세야 한다.
+
+    오디오 PES 하나 — AAC 프레임 2개짜리 ADTS 프레임 3개
+    -> audio_frames == (6,)
+    """
+    data = build_ts([Frame(pts=3000, idr=True)])
+    data += audio_pes(0, payload=adts_frame(blocks=2) * 3)
+
+    assert parse_ts(data).audio_frames == (6,)
+
+
+@pytest.mark.parametrize(
+    ("audio_type", "payload"),
+    [
+        (0x0F, b"\xbb" * 30),  # ADTS 스트림인데 본문이 ADTS 머리로 시작하지 않는다
+        (0x0F, b"\x00" + adts_frame() * 4),  # 머리 앞에 다른 바이트가 있다
+        (0x11, adts_frame() * 4),  # LATM 스트림 — 본문이 ADTS처럼 보여도 세지 않는다
+    ],
+    ids=["not-adts-body", "offset-body", "latm-stream"],
+)
+def test_audio_end_is_unknown_when_frames_cannot_be_counted(audio_type, payload):
+    """오디오 PES의 프레임 수를 읽을 수 없으면 프레임 수는 0이고 오디오가 끝나는 시각은 None이어야 한다.
+
+    주석의 오디오 PES 하나(PTS 3000), 영상 프레임 하나
+    -> audio_frames == (0,), audio_end is None, audio_pts는 그대로 읽힌다
+    """
+    data = pat_packet() + pmt_packet(audio_type=audio_type)
+    data += video_frame(Frame(pts=3000, idr=True)) + audio_pes(3000, payload=payload)
+
+    streams = parse_ts(data)
+    index = build_ts_index(streams, origin=3000)
+
+    assert streams.audio_frames == (0,)
+    assert index.audio_pts == (0.0,)
+    assert index.audio_end is None
+
+
+def test_audio_end_is_none_without_audio():
+    """오디오 PES가 없으면 오디오가 끝나는 시각은 None이어야 한다.
+
+    영상 프레임만 든 TS
+    -> audio_end is None
+    """
+    index = build_ts_index(parse_ts(build_ts(_reordered_frames())), origin=3000)
+
+    assert index.audio_end is None
+
+
+@pytest.mark.parametrize("number", [0, 1])
+def test_audio_end_meets_the_first_audio_pts_of_the_next_segment(number):
+    """세그먼트의 오디오가 끝나는 시각은 다음 세그먼트의 첫 오디오 PTS와 같아야 한다.
+
+    합성 세그먼트 number와 number + 1 (마지막 오디오 PES의 프레임 수 21 · 20)
+    -> audio_end == 다음 세그먼트의 audio_pts[0] == (다음 세그먼트의 첫 오디오 PTS − ORIGIN) ÷ 90,000
+    """
+    index = _index_of(number)
+    following = _index_of(number + 1)
+    expected = (_segment_audio(number + 1)[0][0] - ORIGIN) / 90_000
+
+    assert index.audio_end == pytest.approx(expected, abs=1e-9)
+    assert following.audio_pts[0] == pytest.approx(expected, abs=1e-9)
+
+
+def test_audio_end_of_joined_segments_is_the_end_of_the_last_one():
+    """세그먼트를 이어 붙인 것의 오디오가 끝나는 시각은 마지막 세그먼트의 것이어야 한다.
+
+    합성 세그먼트 0 · 1을 이은 bytes
+    -> audio_frames == 두 세그먼트의 것을 이은 것, audio_end == 세그먼트 1의 audio_end
+    """
+    streams = parse_ts(_segment(0) + _segment(1))
+    index = build_ts_index(streams, ORIGIN)
+
+    assert streams.audio_frames == AUDIO_COUNTS[0] + AUDIO_COUNTS[1]
+    assert index.audio_end == pytest.approx(_index_of(1).audio_end, abs=1e-9)
+
+
+@pytest.mark.parametrize(
+    ("frame_ticks", "expected"),
+    [(1500, 1 / 60), (3000, 1 / 30), (3600, 1 / 25)],
+    ids=["60fps", "30fps", "25fps"],
+)
+def test_frame_duration_is_measured_from_pts_intervals(frame_ticks, expected):
+    """프레임 길이는 표시 순서로 이웃한 프레임의 PTS 간격에서 재야 한다.
+
+    B프레임이 든 24프레임(GOP 12), 프레임 간격은 주석의 틱
+    -> frame_duration == 주석의 값
+    """
+    frames = _gop_frames(ORIGIN, 24, frame_ticks=frame_ticks, gop=12)
+
+    index = build_ts_index(parse_ts(build_ts(frames)), ORIGIN)
+
+    assert index.frame_duration == pytest.approx(expected, abs=1e-12)
+
+
+def test_frame_duration_ignores_the_longer_interval_of_a_missing_frame():
+    """프레임이 빠진 자리의 긴 간격은 프레임 길이에 들어가지 않아야 한다.
+
+    60fps 프레임 6개에서 넷째를 뺀 것 — 간격 1500 · 1500 · 3000 · 1500틱
+    -> frame_duration == 1/60
+    """
+    frames = [Frame(pts=n * FRAME_60, idr=n == 0) for n in (0, 1, 2, 4, 5)]
+
+    index = build_ts_index(parse_ts(build_ts(frames)), origin=0)
+
+    assert index.frame_duration == pytest.approx(1 / 60, abs=1e-12)
+
+
+def test_frame_duration_is_none_for_a_single_frame():
+    """프레임이 하나뿐이면 프레임 길이는 None이어야 한다.
+
+    영상 프레임 하나
+    -> frame_duration is None
+    """
+    index = build_ts_index(parse_ts(build_ts([Frame(pts=3000, idr=True)])), origin=3000)
+
+    assert index.frame_duration is None
+
+
+def test_video_spans_of_consecutive_segments_meet_without_gap_or_overlap():
+    """이어지는 세그먼트의 영상 시각 범위는 앞의 끝과 뒤의 시작이 같아야 한다.
+
+    합성 세그먼트 0 · 1 · 2 (각 240프레임, 60fps)
+    -> 범위 == (세그먼트의 첫 영상 PTS − ORIGIN) ÷ 90,000 부터 4초, 앞의 끝 == 뒤의 시작
+    """
+    spans = [ts_video_span(_index_of(number)) for number in range(3)]
+
+    for number, (begin, end) in enumerate(spans):
+        expected = (_segment_video_start(number) - ORIGIN) / 90_000
+        assert begin == pytest.approx(expected, abs=1e-9)
+        assert end - begin == pytest.approx(4.0, abs=1e-9)
+    assert spans[0][1] == pytest.approx(spans[1][0], abs=1e-9)
+    assert spans[1][1] == pytest.approx(spans[2][0], abs=1e-9)
+
+
+def test_video_span_of_a_30fps_segment_ends_one_frame_after_the_last_pts():
+    """영상 시각 범위의 끝은 마지막 PTS에 그 영상의 프레임 길이를 더한 값이어야 한다.
+
+    30fps 프레임 30개(0초부터)
+    -> 범위 == (0.0, 1.0)
+    """
+    frames = _gop_frames(ORIGIN, 30, frame_ticks=3000, gop=30)
+
+    begin, end = ts_video_span(build_ts_index(parse_ts(build_ts(frames)), ORIGIN))
+
+    assert (begin, end) == (pytest.approx(0.0, abs=1e-9), pytest.approx(1.0, abs=1e-9))
+
+
+def test_video_span_of_a_single_frame_needs_a_frame_duration():
+    """프레임이 하나뿐인 색인의 시각 범위는 프레임 길이를 받아야 구할 수 있어야 한다.
+
+    영상 프레임 하나(0초)
+    -> 길이 없이: TsError(TS_UNSUPPORTED) / 길이 1/60: (0.0, 1/60)
+    """
+    index = build_ts_index(parse_ts(build_ts([Frame(pts=3000, idr=True)])), origin=3000)
+
+    with pytest.raises(TsError) as info:
+        ts_video_span(index)
+    assert info.value.message_key == TS_UNSUPPORTED
+    assert ts_video_span(index, 1 / 60) == (0.0, pytest.approx(1 / 60))
