@@ -68,7 +68,10 @@ def short_pmt_packet() -> bytes:
 
 
 def pmt_packet(
-    video_pid: int | None = VIDEO_PID, audio_pid: int | None = AUDIO_PID, video_type: int = 0x1B
+    video_pid: int | None = VIDEO_PID,
+    audio_pid: int | None = AUDIO_PID,
+    video_type: int = 0x1B,
+    audio_type: int = 0x0F,
 ) -> bytes:
     body = bytes(
         [0x00, 0x01, 0xC1, 0x00, 0x00, 0xE0 | (VIDEO_PID >> 8), VIDEO_PID & 0xFF, 0xF0, 0x00]
@@ -76,7 +79,7 @@ def pmt_packet(
     if video_pid is not None:
         body += bytes([video_type, 0xE0 | (video_pid >> 8), video_pid & 0xFF, 0xF0, 0x00])
     if audio_pid is not None:
-        body += bytes([0x0F, 0xE0 | (audio_pid >> 8), audio_pid & 0xFF, 0xF0, 0x00])
+        body += bytes([audio_type, 0xE0 | (audio_pid >> 8), audio_pid & 0xFF, 0xF0, 0x00])
     return _packet(PMT_PID, _psi(0x02, body), unit_start=True, counter=0)
 
 
@@ -134,16 +137,48 @@ def video_frame(frame: Frame, *, first_payload: int = 184) -> bytes:
                      random_access=frame.random_access, first_payload=first_payload)  # fmt: skip
 
 
-def audio_pes(pts: int, size: int = 30) -> bytes:
-    """오디오 PES 하나를 패킷으로 나눈다."""
-    return packetize(AUDIO_PID, pes(0xC0, pts, None, b"\xbb" * size))
+ADTS_SAMPLE_RATES = (96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000)  # 인덱스 순서
 
 
-def build_ts(frames: list[Frame], audio: list[int] | None = None, **pmt) -> bytes:
-    """PAT · PMT 뒤에 영상 프레임과 오디오 PES를 놓은 TS bytes."""
+def adts_frame(size: int = 16, sample_rate: int = 48000, blocks: int = 1) -> bytes:
+    """ADTS 프레임 하나 — 머리 7바이트(CRC 없음) + 본문. blocks는 든 AAC 프레임 수다."""
+    assert size >= 7 and 1 <= blocks <= 4
+    rate_index = ADTS_SAMPLE_RATES.index(sample_rate)
+    return bytes([
+        0xFF,
+        0xF1,  # 동기 워드 끝 + MPEG-4 + layer 0 + CRC 없음
+        0x40 | rate_index << 2,  # AAC LC + 표본화율 + 채널(2)의 윗비트 0
+        0x80 | (size >> 11) & 0x03,  # 채널(2)의 아랫비트 + 프레임 길이의 윗 2비트
+        (size >> 3) & 0xFF,
+        (size & 0x07) << 5 | 0x1F,
+        0xFC | (blocks - 1),
+    ]) + b"\x21" * (size - 7)  # fmt: skip
+
+
+def audio_pes(pts: int, size: int = 30, payload: bytes | None = None) -> bytes:
+    """오디오 PES 하나를 패킷으로 나눈다. payload를 주지 않으면 ADTS가 아닌 채움 바이트다."""
+    body = b"\xbb" * size if payload is None else payload
+    return packetize(AUDIO_PID, pes(0xC0, pts, None, body))
+
+
+def build_ts(
+    frames: list[Frame],
+    audio: list[int] | None = None,
+    adts: list[tuple[int, int]] | None = None,
+    **pmt,
+) -> bytes:
+    """PAT · PMT 뒤에 영상 프레임과 오디오 PES를 놓은 TS bytes.
+
+    Args:
+        frames: 영상 프레임 — 준 순서가 디코드 순서다
+        audio: ADTS가 아닌 오디오 PES의 PTS 목록
+        adts: ADTS 오디오 PES의 (PTS, 든 프레임 수) 목록 — 48kHz
+    """
     data = pat_packet() + pmt_packet(**pmt)
     for frame in frames:
         data += video_frame(frame)
     for pts in audio or []:
         data += audio_pes(pts)
+    for pts, count in adts or []:
+        data += audio_pes(pts, payload=adts_frame() * count)
     return data

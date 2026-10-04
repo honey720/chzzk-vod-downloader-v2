@@ -10,9 +10,15 @@ TS 세그먼트에는 mp4의 moov 같은 색인이 없다. 프레임 시각과 �
 두 단계로 나뉜다.
 
 - ``parse_ts`` — 188바이트 패킷을 따라가 PAT → PMT로 영상·오디오 PID를 찾고,
-  PES 머리의 PTS·DTS와 키프레임 여부를 읽는다. 값은 읽은 그대로의 33비트 틱이다
+  PES 머리의 PTS·DTS와 키프레임 여부를 읽는다. 값은 읽은 그대로의 33비트 틱이다.
+  오디오가 AAC(ADTS)면 PES마다 든 프레임 수도 센다
 - ``build_ts_index`` — VOD 시작을 0으로 맞추고 33비트 랩어라운드를 풀어
-  초 단위 색인(``TsIndex``)을 만든다
+  초 단위 색인(``TsIndex``)을 만든다. 프레임 길이와 오디오가 끝나는 시각도 구한다
+- ``ts_video_span`` — 색인의 영상이 차지하는 시각 범위를 돌려준다
+
+TS에는 mp4와 달리 프레임(샘플)의 길이가 적혀 있지 않다. 영상 프레임의 길이는 PTS
+간격에서 재고, 오디오가 끝나는 시각은 마지막 오디오 PES에 든 프레임 수로 구한다 —
+오디오 PES 하나에 프레임이 여럿 들고, 세그먼트의 마지막 PES는 프레임 수가 다르다.
 
 입력은 **복호화된** bytes다. 암호화된 세그먼트(AES-128)는 호출하는 쪽이 먼저
 복호화해서 넘긴다 — 암호화된 채로는 패킷의 동기 바이트부터 맞지 않는다.
@@ -27,6 +33,8 @@ TS 세그먼트에는 mp4의 moov 같은 색인이 없다. 프레임 시각과 �
 실패 키는 번역하지 않은 i18n 키 원문이며 번역은 앱 계층이 한다
 (``MetadataError``와 같은 방식).
 """
+
+from collections import Counter
 
 from core.models.ts_index import TsIndex, TsStreams
 
@@ -51,6 +59,14 @@ _AUDIO_STREAM_TYPES = (0x0F, 0x11, 0x03, 0x04, 0x81)  # AAC(ADTS) · AAC(LATM) �
 _START_CODE = b"\x00\x00\x01"  # PES와 NAL의 시작 코드
 _PES_TIMESTAMP_END = 19  # PES 머리에서 PTS·DTS까지 읽는 데 필요한 바이트 수
 
+_ADTS_STREAM_TYPE = 0x0F  # PMT stream_type — AAC(ADTS). 프레임 수를 셀 수 있는 유일한 형식이다
+_ADTS_HEADER_SIZE = 7  # 바이트 — CRC가 없는 ADTS 머리. 프레임 길이는 이 안에 있다
+_AAC_FRAME_SAMPLES = 1024  # AAC 프레임(raw data block) 하나의 표본 수
+# ADTS 머리의 sampling_frequency_index → 표본화율(Hz) (ISO/IEC 14496-3 표 1.18)
+_ADTS_SAMPLE_RATES = (
+    96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350,
+)  # fmt: skip
+
 
 class TsError(Exception):
     """TS 세그먼트를 해석하지 못했다.
@@ -72,6 +88,11 @@ def parse_ts(data: bytes) -> TsStreams:
     PES 하나가 여러 패킷에 걸치면 이어 붙여서 읽는다. PES 머리나 키프레임을 알리는
     NAL이 첫 패킷 밖에 있을 수 있다.
 
+    오디오가 AAC(ADTS)면 PES마다 든 프레임 수와 표본화율도 읽는다(``audio_frames`` ·
+    ``audio_sample_rate``). 다른 오디오 형식이면 프레임 수는 모두 0이다. 표본화율은
+    프레임을 센 마지막 PES의 값이다 — 도중에 바뀌는 스트림이면 오디오가 끝나는 시각을
+    구할 때 마지막 PES의 것이 필요하다.
+
     Raises:
         TsError: 길이가 188의 배수가 아니거나 동기 바이트가 틀린 경우(``TS_INVALID``),
             PAT·PMT가 없거나 영상 스트림이 없거나 PES에 PTS가 없는 경우(``TS_UNSUPPORTED``)
@@ -79,15 +100,17 @@ def parse_ts(data: bytes) -> TsStreams:
     if not data or len(data) % TS_PACKET_SIZE:
         raise TsError(TS_INVALID, f"길이 {len(data)}바이트는 {TS_PACKET_SIZE}의 배수가 아니다")
 
-    pmt_pid = video_pid = audio_pid = -1
+    pmt_pid = video_pid = audio_pid = audio_type = -1
     codec = ""
     video_pts: list[int] = []
     video_dts: list[int] = []
     keyframes: list[int] = []
     audio_pts: list[int] = []
+    audio_frames: list[int] = []
+    audio_rates: list[int] = []  # 프레임을 센 PES마다 ADTS 머리에서 읽은 표본화율
     video_chunks: list[bytes] = []  # 지금 모으는 영상 PES의 조각
     video_random_access = False
-    audio_head = b""  # 지금 모으는 오디오 PES의 앞부분(머리만 필요하다)
+    audio_chunks: list[bytes] = []  # 지금 모으는 오디오 PES의 조각
 
     def finish_video() -> None:
         if not video_chunks:
@@ -100,8 +123,17 @@ def parse_ts(data: bytes) -> TsStreams:
         video_dts.append(dts)
 
     def finish_audio() -> None:
-        if audio_head:
-            audio_pts.append(_pes_timestamps(audio_head)[0])
+        if not audio_chunks:
+            return
+        pes = b"".join(audio_chunks)
+        pts, _dts, payload_start = _pes_timestamps(pes)
+        audio_pts.append(pts)
+        frames, rate = (
+            _adts_frames(pes, payload_start) if audio_type == _ADTS_STREAM_TYPE else (0, None)
+        )
+        audio_frames.append(frames)
+        if rate is not None:
+            audio_rates.append(rate)
 
     for offset in range(0, len(data), TS_PACKET_SIZE):
         if data[offset] != _SYNC_BYTE:
@@ -129,7 +161,7 @@ def parse_ts(data: bytes) -> TsStreams:
                 pmt_pid = _program_map_pid(payload)
         elif pid == pmt_pid:
             if unit_start:
-                video_pid, audio_pid, codec = _elementary_pids(payload)
+                video_pid, audio_pid, codec, audio_type = _elementary_pids(payload)
         elif pid == video_pid:
             if unit_start:
                 finish_video()
@@ -139,9 +171,9 @@ def parse_ts(data: bytes) -> TsStreams:
                 video_chunks.append(payload)
         elif unit_start:
             finish_audio()
-            audio_head = payload
-        elif audio_head and len(audio_head) < _PES_TIMESTAMP_END:
-            audio_head += payload
+            audio_chunks = [payload]
+        elif audio_chunks:
+            audio_chunks.append(payload)
 
     finish_video()
     finish_audio()
@@ -152,6 +184,9 @@ def parse_ts(data: bytes) -> TsStreams:
         video_dts=tuple(video_dts),
         video_keyframes=tuple(keyframes),
         audio_pts=tuple(audio_pts),
+        audio_frames=tuple(audio_frames),
+        # 마지막 값이다 — 오디오가 끝나는 시각은 마지막 PES의 프레임 수에 이 값을 쓴다
+        audio_sample_rate=audio_rates[-1] if audio_rates else None,
     )
 
 
@@ -180,6 +215,12 @@ def build_ts_index(streams: TsStreams, origin: int, expected_start: float | None
     첫 타임스탬프는 origin과의 차이를 0 이상으로 읽는다(origin보다 최대 10초 앞선
     값만 음수로 본다). 그래서 VOD 시작에서 약 26.5시간 안쪽의 세그먼트는 그대로
     맞는다. 그보다 뒤의 세그먼트는 ``expected_start``를 줘야 한다.
+
+    프레임 길이(``frame_duration``)는 표시 순서로 이웃한 프레임의 PTS 간격 가운데 가장
+    많은 값이다 — 프레임이 빠진 자리의 긴 간격에 끌려가지 않는다. 오디오가 끝나는
+    시각(``audio_end``)은 마지막 오디오 PES의 PTS에 그 PES에 든 프레임의 길이(프레임 수 ×
+    1024 ÷ 표본화율)를 더한 값이다. PES의 수로는 구할 수 없다 — PES 하나에 프레임이
+    여럿 들고 마지막 PES는 프레임 수가 다르다.
 
     Args:
         streams: ``parse_ts``의 결과
@@ -214,18 +255,71 @@ def build_ts_index(streams: TsStreams, origin: int, expected_start: float | None
     ]
     order = sorted(range(len(present)), key=present.__getitem__)
     key_samples = set(streams.video_keyframes)
+    audio = unwrap(streams.audio_pts) if streams.audio_pts else []
+    frame_ticks = _frame_ticks([present[sample] for sample in order])
     return TsIndex(
         frame_pts=tuple(present[sample] / TS_CLOCK for sample in order),
         frame_samples=tuple(order),
         keyframes=tuple(number for number, sample in enumerate(order) if sample in key_samples),
         decode_times=tuple(ticks / TS_CLOCK for ticks in decode),
-        audio_pts=tuple(ticks / TS_CLOCK for ticks in unwrap(streams.audio_pts))
-        if streams.audio_pts
-        else (),
+        audio_pts=tuple(ticks / TS_CLOCK for ticks in audio),
+        frame_duration=frame_ticks / TS_CLOCK if frame_ticks else None,
+        audio_end=_audio_end(streams, audio),
     )
 
 
+def ts_video_span(index: TsIndex, frame_duration: float | None = None) -> tuple[float, float]:
+    """색인의 영상이 차지하는 시각 [가장 이른 PTS, 가장 늦은 PTS + 프레임 길이)를 돌려준다.
+
+    세그먼트 하나의 색인으로 부르면 그 세그먼트가 실제로 놓인 시각이다(VOD 시작 = 0 기준,
+    초). 이어지는 세그먼트의 범위는 틈도 겹침도 없이 맞닿는다 — 앞 세그먼트의 끝이 뒤
+    세그먼트의 시작이다.
+
+    Args:
+        index: ``build_ts_index``의 결과
+        frame_duration: 프레임 길이(초). 주지 않으면 색인이 잰 값을 쓴다. 프레임이 하나뿐인
+            세그먼트는 색인에 잰 값이 없으므로 다른 세그먼트에서 잰 값을 준다
+
+    Raises:
+        TsError: 프레임 길이를 주지도 않았고 색인에도 없는 경우(``TS_UNSUPPORTED``)
+    """
+    length = index.frame_duration if frame_duration is None else frame_duration
+    if length is None:
+        raise TsError(TS_UNSUPPORTED, "프레임이 하나뿐이라 프레임 길이를 잴 수 없다")
+    return index.frame_pts[0], index.frame_pts[-1] + length
+
+
 # ================================================================ 내부
+
+
+def _frame_ticks(present: list[int]) -> int | None:
+    """표시 순서의 PTS(틱)에서 가장 많은 간격을 고른다. 수가 같으면 짧은 쪽이다.
+
+    Returns:
+        프레임 하나의 길이(틱). 프레임이 하나뿐이거나 간격이 모두 0이면 None
+    """
+    gaps = Counter(b - a for a, b in zip(present, present[1:]) if b > a)
+    if not gaps:
+        return None
+    return min(gaps, key=lambda gap: (-gaps[gap], gap))
+
+
+def _audio_end(streams: TsStreams, audio: list[int]) -> float | None:
+    """오디오가 끝나는 시각(초)을 구한다 — 마지막 오디오 PES의 PTS + 그 PES에 든 프레임의 길이.
+
+    Args:
+        streams: ``parse_ts``의 결과
+        audio: 랩어라운드를 푼 오디오 PES의 PTS(틱), ``streams.audio_pts``와 같은 순서
+
+    Returns:
+        끝나는 시각. 오디오가 없거나, 프레임 수·표본화율을 읽지 못했으면 None
+    """
+    if not audio or len(streams.audio_frames) != len(audio) or not streams.audio_sample_rate:
+        return None
+    frames = streams.audio_frames[-1]
+    if frames <= 0:
+        return None
+    return audio[-1] / TS_CLOCK + frames * _AAC_FRAME_SAMPLES / streams.audio_sample_rate
 
 
 def _nearest(delta: int) -> int:
@@ -256,14 +350,14 @@ def _program_map_pid(payload: bytes) -> int:
     raise TsError(TS_UNSUPPORTED, "PAT에 프로그램이 없다")
 
 
-def _elementary_pids(payload: bytes) -> tuple[int, int, str]:
-    """PMT에서 (영상 PID, 오디오 PID, 영상 코덱)을 읽는다. 없는 쪽은 −1이다."""
+def _elementary_pids(payload: bytes) -> tuple[int, int, str, int]:
+    """PMT에서 (영상 PID, 오디오 PID, 영상 코덱, 오디오 stream_type)을 읽는다. 없는 쪽은 −1이다."""
     start, end = _section(payload, 0x02)
     if end < start + 12:
         # 스트림 목록 앞의 고정 칸(12바이트)도 다 없다 — 그대로 읽으면 IndexError가 난다
         raise TsError(TS_INVALID, "PMT 섹션이 너무 짧다")
     position = start + 12 + (((payload[start + 10] & 0x0F) << 8) | payload[start + 11])
-    video_pid = audio_pid = -1
+    video_pid = audio_pid = audio_type = -1
     codec = ""
     while position + 5 <= end:
         stream_type = payload[position]
@@ -271,9 +365,37 @@ def _elementary_pids(payload: bytes) -> tuple[int, int, str]:
         if video_pid < 0 and stream_type in _VIDEO_STREAM_TYPES:
             video_pid, codec = pid, _VIDEO_STREAM_TYPES[stream_type]
         elif audio_pid < 0 and stream_type in _AUDIO_STREAM_TYPES:
-            audio_pid = pid
+            audio_pid, audio_type = pid, stream_type
         position += 5 + (((payload[position + 3] & 0x0F) << 8) | payload[position + 4])
-    return video_pid, audio_pid, codec
+    return video_pid, audio_pid, codec, audio_type
+
+
+def _adts_frames(pes: bytes, start: int) -> tuple[int, int | None]:
+    """오디오 PES 본문의 ADTS 머리를 따라가 (AAC 프레임 수, 표본화율)을 센다.
+
+    머리의 프레임 길이만큼 건너뛰며 센다 — 본문을 훑어 동기 워드를 찾지 않는다. ADTS
+    프레임 하나에 AAC 프레임(raw data block)이 여럿 들 수 있어 머리에 적힌 수만큼 센다.
+    본문이 PES 끝에서 잘린 프레임도 이 PES에서 시작했으므로 센다.
+
+    Returns:
+        (프레임 수, 표본화율). 본문이 ADTS 머리로 시작하지 않으면 (0, None)
+    """
+    frames = 0
+    rate: int | None = None
+    position = start
+    while position + _ADTS_HEADER_SIZE <= len(pes):
+        # 동기 워드 12비트(0xFFF) + layer 2비트(00)
+        if pes[position] != 0xFF or pes[position + 1] & 0xF6 != 0xF0:
+            break
+        rate_index = (pes[position + 2] >> 2) & 0x0F
+        length = (pes[position + 3] & 0x03) << 11 | pes[position + 4] << 3 | pes[position + 5] >> 5
+        if rate_index >= len(_ADTS_SAMPLE_RATES) or length < _ADTS_HEADER_SIZE:
+            break
+        if rate is None:
+            rate = _ADTS_SAMPLE_RATES[rate_index]
+        frames += (pes[position + 6] & 0x03) + 1
+        position += length
+    return frames, rate
 
 
 def _pes_timestamps(pes: bytes) -> tuple[int, int, int]:
