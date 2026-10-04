@@ -351,6 +351,57 @@ def test_cut_reads_and_keeps_non_square_pixel_ratio(tmp_path):
     assert check.ok, check.notes
 
 
+@pytest.mark.parametrize(
+    ("setsar", "container_aspect", "sar"),
+    [
+        # SPS는 화소 가로세로비를 밝히지 않고 컨테이너(pasp)만 1:1을 적는다 —
+        # 세로 방송 다시보기의 원본 변형이 이 모양이다. 320x240에 4:3이면 화소는 1:1이다
+        ("0", "4:3", (0, 0)),
+        ("0", None, (0, 0)),
+        ("4/3", None, (4, 3)),
+        ("4/3", "4:3", (4, 3)),  # 컨테이너는 1:1을 적는다 — SPS의 4:3과 다르다
+        ("1", None, (1, 1)),
+    ],
+    ids=[
+        "unspecified-container-square",
+        "unspecified",
+        "4:3",
+        "4:3-container-square",
+        "square",
+    ],
+)
+def test_reencoded_head_and_tail_carry_the_pixel_ratio_of_the_source(
+    tmp_path, setsar, container_aspect, sar
+):
+    """머리·꼬리를 재인코딩한 조각의 화소 가로세로비는 원본 SPS가 적은 그대로여야 한다 — 밝히지 않았으면 밝히지 않은 채로.
+
+    setsar=<주석의 값>으로 만든 320x240 mp4(키프레임 0·30·42·72·90). container_aspect가
+    있으면 스트림을 그대로 둔 채 컨테이너에만 그 화면 비율을 적는다. 프레임 10~80
+    -> 원본 sar == 주석의 값, 조각 (head, mid, tail), 재인코딩한 두 조각의 sar == 원본 sar, check.ok
+    """
+    path = str(tmp_path / "source.mp4")
+    _ffmpeg(
+        *_lavfi("320x240", 4),
+        "-vf", f"setsar={setsar}",
+        "-bf", "2", "-force_key_frames", "0,1,1.4,2.4,3",
+        "-x264-params", "b-pyramid=none:keyint=300:min-keyint=1:scenecut=0",
+        path,
+    )  # fmt: skip
+    if container_aspect is not None:
+        encoded, path = path, str(tmp_path / "tagged.mp4")
+        _ffmpeg("-i", encoded, "-c", "copy", "-aspect", container_aspect, path)
+        with open(path, "rb") as f:
+            assert b"pasp" in f.read()  # 컨테이너가 화소 가로세로비를 적었다
+
+    result, check = _cut((path, _mp4_frames(path)), 10, 80, tmp_path)
+
+    assert result.source.video.sar == sar
+    assert _kinds(result) == ("head", "mid", "tail")
+    reencoded = {info.piece.kind: info.video.sar for info in result.pieces if info.piece.reencoded}
+    assert reencoded == {"head": sar, "tail": sar}
+    assert check.ok, check.notes
+
+
 # ================================================================ 컷 — fMP4
 
 
@@ -613,14 +664,15 @@ def test_encode_command_pads_to_coded_size_and_writes_crop(fmp4_source, tmp_path
     """재인코딩 명령은 원본의 부호화 크기까지 화면을 늘리고 늘린 만큼 크롭을 적어야 한다.
 
     원본 부호화 1280x736 · 크롭 아래 16 · 재정렬 지연 2
-    -> -vf pad=1280:736:0:0,fillborders=bottom=16:mode=smear · x264-params에 crop-rect=0,0,0,16과 b-pyramid=normal
+    -> -vf pad=1280:736:0:0,fillborders=bottom=16:mode=smear,setsar=1/1(원본 SPS의 비율) · x264-params에 crop-rect=0,0,0,16과 b-pyramid=normal
     """
     path, frames = fmp4_source
     video = hybrid_cut(path, frames, 0, 5, str(tmp_path / "probe.mp4")).source.video
 
     args = cut_module._x264_args(video, frames.timescale)
 
-    assert _option(args, "-vf") == "pad=1280:736:0:0,fillborders=bottom=16:mode=smear"
+    assert video.sar == (1, 1)
+    assert _option(args, "-vf") == "pad=1280:736:0:0,fillborders=bottom=16:mode=smear,setsar=1/1"
     assert _option(args, "-x264-params") == "b-pyramid=normal:crop-rect=0,0,0,16"
 
 

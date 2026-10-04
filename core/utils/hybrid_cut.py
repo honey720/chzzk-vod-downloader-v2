@@ -457,12 +457,13 @@ def _x264_args(video: VideoParams, timescale: int) -> list[str]:
             f"{side}={size}" for side, size in (("right", right), ("bottom", bottom)) if size
         )
         filters = [
-            "-vf",
-            f"pad={video.coded_width}:{video.coded_height}:0:0,fillborders={borders}:mode=smear",
+            f"pad={video.coded_width}:{video.coded_height}:0:0",
+            f"fillborders={borders}:mode=smear",
         ]
         params.append(f"crop-rect=0,0,{right},{bottom}")
+    filters.append(_sar_filter(video.sar))
     return [
-        *filters,
+        "-vf", ",".join(filters),
         "-c:v", "libx264",
         "-profile:v", _X264_PROFILES[video.profile_idc],
         "-level:v", f"{video.level_idc / 10:.1f}",
@@ -474,6 +475,22 @@ def _x264_args(video: VideoParams, timescale: int) -> list[str]:
         "-enc_time_base", f"1:{timescale}",
         "-video_track_timescale", str(timescale),
     ]  # fmt: skip
+
+
+def _sar_filter(sar: tuple[int, int]) -> str:
+    """재인코딩한 프레임의 화소 가로세로비를 원본 SPS가 적은 값으로 맞추는 필터.
+
+    지정하지 않으면 인코더는 ffmpeg가 입력 스트림에 매긴 비율을 SPS에 적는다. 그 값은
+    원본 SPS의 값이 아닐 수 있다 — SPS가 비율을 밝히지 않았는데 컨테이너(``pasp``)가
+    1:1을 적은 입력에서는 재인코딩한 조각만 1:1을 적어, 복사한 조각과 SPS가 달라진다
+    (세로 방송 다시보기의 원본 변형이 그랬다). 밝히지 않은 원본은 ``setsar=0``으로
+    밝히지 않은 채 둔다.
+
+    Args:
+        sar: 원본 SPS의 화소 가로세로비 (가로, 세로). 밝히지 않았으면 (0, 0)
+    """
+    width, height = sar
+    return f"setsar={width}/{height}" if width > 0 and height > 0 else "setsar=0"
 
 
 def _ceil16(value: int) -> int:
