@@ -39,10 +39,15 @@ import time as tm
 
 import requests
 
-from core.api.hls_fmp4 import declared_length
 from core.api.mp4 import MP4_UNSUPPORTED, Mp4Error, fetch_mp4_head
 from core.api.session import get_thread_session
-from core.downloaders.base import BaseDownloader, PostprocessError, TruncatedBodyError
+from core.downloaders.base import (
+    REQUEST_TIMEOUT,
+    BaseDownloader,
+    PostprocessError,
+    TruncatedBodyError,
+)
+from core.downloaders.integrity import declared_content_length
 from core.downloaders.ranges import decide_part_size, split_ranges, split_span
 from core.models.content import Content, ContentType
 from core.models.cut import CutResult, CutSection
@@ -292,7 +297,7 @@ class FileDownloader(BaseDownloader):
             raise TruncatedBodyError(
                 f"범위 요청(시작 {range_start})에 200 — 본문이 파일의 처음부터다"
             )
-        declared = declared_length(getattr(response, "headers", {}))
+        declared = declared_content_length(getattr(response, "headers", None))
         if declared is not None and declared != file_size:
             response.close()
             raise TruncatedBodyError(
@@ -327,7 +332,7 @@ class FileDownloader(BaseDownloader):
                 headers = {"Range": f"bytes={range_start}-{end}"}
                 # 스레드로컬 세션으로 같은 워커의 반복 요청 간 연결을 재사용한다 (#31)
                 response = get_thread_session().get(
-                    self.s.base_url, headers=headers, stream=True, timeout=30
+                    self.s.base_url, headers=headers, stream=True, timeout=REQUEST_TIMEOUT
                 )
                 response.raise_for_status()
                 if resume_offset > 0 and response.status_code != 206:
@@ -451,11 +456,11 @@ class FileDownloader(BaseDownloader):
         """
         HEAD 요청으로 total_size를 구한다.
         """
-        response = get_thread_session().head(self.s.base_url)
+        response = get_thread_session().head(self.s.base_url, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
         size = int(response.headers.get("content-length", 0))
         if size == 0:
-            resp = get_thread_session().get(self.s.base_url, stream=True)
+            resp = get_thread_session().get(self.s.base_url, stream=True, timeout=REQUEST_TIMEOUT)
             resp.raise_for_status()
             size = int(resp.headers.get("content-length", 0))
             resp.close()

@@ -4,6 +4,10 @@
 <context>
     <name>ContentItemWidget</name>
     <message>
+        <source>(source)</source>
+        <translation>(source)</translation>
+    </message>
+    <message>
         <source>Post-processing</source>
         <translation>Post-processing</translation>
     </message>
@@ -159,6 +163,18 @@ A network error occurred while downloading. Check your connection and try again.
 The file could not be saved. Check the download path and free disk space.</source>
         <translation>Failed to save file · check the path and disk space
 The file could not be saved. Check the download path and free disk space.</translation>
+    </message>
+    <message>
+        <source>Stream not found · pick another resolution
+The stream for the selected resolution could not be found. Try another resolution.</source>
+        <translation>Stream not found · pick another resolution
+The stream for the selected resolution could not be found. Try another resolution.</translation>
+    </message>
+    <message>
+        <source>Video data arrived corrupted · try again later
+Part of the video kept arriving incomplete from the server. Try again later.</source>
+        <translation>Video data arrived corrupted · try again later
+Part of the video kept arriving incomplete from the server. Try again later.</translation>
     </message>
 </context>
 <context>

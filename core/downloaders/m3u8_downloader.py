@@ -30,9 +30,9 @@ m3u8 고유 부분만 남는다:
   임시 폴더에 두고(``Fmp4Head.segment_dir`` · ``stored``), 전송 단계는 그 파일이 온전하면
   다시 받지 않는다. 구간을 해석한 쪽이 넘긴 ``Fmp4Head``에 폴더가 적혀 있으면 그 폴더가
   이 다운로드의 임시 폴더다
-- 받은 세그먼트는 온전한지 확인한다 — 서버가 말한 길이와 받은 길이, 상자들이 말하는
-  끝과 파일 크기. 다르면 그 세그먼트를 실패로 처리해 다시 받는다. 잘린 세그먼트로 컷을
-  하지 않는다
+- 받은 세그먼트가 온전한지는 전체 다운로드와 같은 검사(core/downloaders/integrity.py,
+  #321)로 확인한다. 구간을 정하면서 받아 둔 세그먼트도 같은 검사를 거치고, 온전하지
+  않으면 전송 단계가 다시 받는다. 잘린 세그먼트로 컷을 하지 않는다
 - postprocess: 구간마다 초기화 세그먼트 + 그 구간의 세그먼트를 순서대로 이은 임시
   fMP4를 만들고 hybrid_cut으로 자른다. 하나라도 실패하면 다운로드 전체가 실패다.
   세그먼트는 통째로 읽지 않는다 — moof만 골라 읽고 본문은 고정 크기 버퍼로 옮긴다
@@ -49,9 +49,10 @@ from urllib.parse import urljoin
 
 import requests
 
+import core.downloaders.base as base_module
+import core.downloaders.integrity as integrity
 from core.api.fmp4 import build_fmp4_index, fmp4_origin
 from core.api.hls_fmp4 import (
-    declared_length,
     fetch_fmp4_head,
     read_segment_file,
     segment_file_name,
@@ -59,7 +60,7 @@ from core.api.hls_fmp4 import (
 )
 from core.api.mp4 import Mp4Error
 from core.api.session import get_thread_session
-from core.downloaders.base import BaseDownloader, PostprocessError, TruncatedBodyError
+from core.downloaders.base import REQUEST_TIMEOUT, BaseDownloader, PostprocessError
 from core.models.content import Content, ContentType
 from core.models.cut import CutFrames, CutResult
 from core.models.download_state import DownloadState
@@ -77,6 +78,16 @@ _PTS_TOLERANCE = 1e-6
 # 받은 세그먼트를 구간의 임시 파일로 이어 쓸 때 한 번에 옮기는 크기(바이트) — 1MB.
 # 세그먼트를 통째로 메모리에 올리지 않는다
 _JOIN_CHUNK_BYTES = 1024 * 1024
+
+
+# 초기화 세그먼트를 다시 받게 하는 예외 — 본문이 잘려 왔다는 뜻인 것만 (#321).
+# ChunkedEncodingError는 본문이 선언된 길이보다 먼저 끝났을 때, ContentDecodingError는
+# 압축된 본문이 중간에 끊겨 풀리지 않을 때 난다
+_INIT_TRUNCATION_ERRORS = (
+    integrity.TruncatedSegmentError,
+    requests.exceptions.ChunkedEncodingError,
+    requests.exceptions.ContentDecodingError,
+)
 
 
 class M3U8Downloader(BaseDownloader):
@@ -151,7 +162,7 @@ class M3U8Downloader(BaseDownloader):
         """
         if content.selections:
             return self._prepare_sections(content)
-        response = get_thread_session().get(self.s.base_url)
+        response = get_thread_session().get(self.s.base_url, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
         lines = response.text.splitlines()
         segments = [line for line in lines if line and not line.startswith("#")]
@@ -223,8 +234,9 @@ class M3U8Downloader(BaseDownloader):
     def _whole_stored_segments(self, head: Fmp4Head, wanted: list[int]) -> dict[int, int]:
         """wanted 가운데 임시 폴더에 온전하게 받아 둔 세그먼트 — 인덱스 → 파일 크기.
 
-        ``head.stored``에 적혀 있고, 파일이 있고, 상자들이 말하는 끝이 파일 크기와 같은
-        것만이다. 하나라도 아니면 그 세그먼트는 전송 단계가 다시 받는다.
+        ``head.stored``에 적혀 있고, 파일이 있고, 전송 단계가 받은 세그먼트에 하는 것과 같은
+        검사(integrity.check_fmp4_media_segment)를 통과한 것만이다. 하나라도 아니면 그
+        세그먼트는 전송 단계가 다시 받는다 — 구간을 해석한 쪽이 받아 둔 파일을 믿지 않는다.
         """
         found = {}
         for index in wanted:
@@ -234,10 +246,12 @@ class M3U8Downloader(BaseDownloader):
                 self.temp_dir, segment_file_name(len(head.playlist.segments), index)
             )
             try:
-                read_segment_file(path, head.init)
-                found[index] = os.path.getsize(path)
-            except (Mp4Error, OSError):
+                size = os.path.getsize(path)
+                with open(path, "rb") as f:
+                    integrity.check_fmp4_media_segment(f, size)
+            except (integrity.TruncatedSegmentError, OSError):
                 continue
+            found[index] = size
         return found
 
     def _download_start_log_args(self) -> tuple:
@@ -245,24 +259,64 @@ class M3U8Downloader(BaseDownloader):
         return (0, 0, self.s.total_ranges, self.s.adjust_threads)
 
     def _prepare_output(self) -> None:
-        """임시 폴더를 재생성하고 초기화 세그먼트(EXT-X-MAP)를 받는다.
+        """임시 폴더를 만들고 초기화 세그먼트(EXT-X-MAP)를 받아 온전한지 확인한다 (#321).
 
-        구간 다운로드는 폴더를 통째로 지우지 않는다 — 구간을 정하면서 받아 둔 세그먼트가
-        들어 있다. 그 세그먼트 말고 남아 있는 것(이전 실행의 것)만 지운다.
+        구간 다운로드는 초기화 세그먼트를 다시 받지 않는다 — 구간을 정할 때 받아 확인한
+        것을 쓴다(_prepare_section_output, #309).
+
+        초기화 세그먼트가 잘려 받아졌으면 다시 받는다. 세그먼트의 일시 오류와 같은 횟수
+        (base의 _TRANSIENT_ERROR_REQUEUE_LIMIT)까지 다시 받고, 그래도 안 되면 마지막 예외를
+        그대로 던져 실패시킨다 — 잘린 초기화 세그먼트로는 영상 전체를 읽을 수 없다.
+
+        다시 받는 것은 잘림 계열의 예외뿐이다(_INIT_TRUNCATION_ERRORS). 본문이 선언된
+        길이보다 짧으면 구조 검사에 닿기 전에 본문을 읽는 단계에서 요청 예외가 난다 —
+        그것도 잘린 것이다. 연결 실패 · 타임아웃 같은 그 밖의 네트워크 오류는 준비 단계의
+        다른 요청과 같이 다시 받지 않고 그대로 실패한다(#320).
+
+        예외의 종류는 바꾸지 않는다. 본문을 읽다 난 요청 예외는 연결이 끊겨도 나므로
+        잘린 것으로 단정할 수 없다 — 잘림 실패(TruncatedSegmentError)는 내용 검사로
+        확인된 경우에만 나간다. 미디어 세그먼트의 재큐와 같은 규칙이다.
+
+        Raises:
+            TruncatedSegmentError: 다시 받아도 초기화 세그먼트의 구조가 계속 온전하지 않을 때
+            requests.RequestException: 다시 받아도 본문을 끝까지 읽지 못할 때
         """
         if self._head is not None:
-            os.makedirs(self.temp_dir, exist_ok=True)
-            count = len(self._head.playlist.segments)
-            kept = {segment_file_name(count, index) for index in self._prefetched}
-            for name in os.listdir(self.temp_dir):
-                if name not in kept:
-                    stale = os.path.join(self.temp_dir, name)
-                    shutil.rmtree(stale) if os.path.isdir(stale) else os.remove(stale)
-            # 초기화 세그먼트는 구간을 정할 때 이미 받았다
-            with open(self._init_path(), "wb") as f:
-                f.write(self._head.init_data)
+            self._prepare_section_output(self._head)
             return
+        init_segment_path = os.path.join(self.temp_dir, f"{0:0{self.width}d}.m4s")
+        retries = base_module._TRANSIENT_ERROR_REQUEUE_LIMIT
+        for attempt in range(retries + 1):
+            try:
+                self._receive_init_segment()
+                with open(init_segment_path, "rb") as f:
+                    integrity.check_fmp4_init_segment(f.read())
+                return
+            except _INIT_TRUNCATION_ERRORS as e:
+                if attempt == retries:
+                    raise
+                self.logger.log_error("Init segment incomplete — retrying", e)
 
+    def _prepare_section_output(self, head: Fmp4Head) -> None:
+        """구간 다운로드의 임시 폴더를 준비한다 — 받아 둔 세그먼트는 남기고 초기화 세그먼트를 쓴다.
+
+        폴더를 통째로 지우지 않는다 — 구간을 정하면서 받아 둔 세그먼트가 들어 있다. 온전한
+        것으로 확인된 세그먼트(_prefetched) 말고 남아 있는 것(이전 실행의 것, 온전하지 않은
+        것)만 지운다. 지운 세그먼트는 전송 단계가 다시 받는다.
+        """
+        os.makedirs(self.temp_dir, exist_ok=True)
+        count = len(head.playlist.segments)
+        kept = {segment_file_name(count, index) for index in self._prefetched}
+        for name in os.listdir(self.temp_dir):
+            if name not in kept:
+                stale = os.path.join(self.temp_dir, name)
+                shutil.rmtree(stale) if os.path.isdir(stale) else os.remove(stale)
+        # 초기화 세그먼트는 구간을 정할 때 이미 받았다
+        with open(self._init_path(), "wb") as f:
+            f.write(head.init_data)
+
+    def _receive_init_segment(self) -> None:
+        """임시 폴더를 재생성하고 초기화 세그먼트(EXT-X-MAP)를 받는다."""
         # 세그먼트 저장용 임시 폴더가 있다면 내용 포함 삭제 후 재생성
         if os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir)
@@ -276,7 +330,7 @@ class M3U8Downloader(BaseDownloader):
         init_segment_path = os.path.join(self.temp_dir, f"{0:0{self.width}d}.m4s")
         # 초기화 세그먼트 다운로드
         with open(init_segment_path, "wb") as f:
-            f.write(get_thread_session().get(init_url).content)
+            f.write(get_thread_session().get(init_url, timeout=REQUEST_TIMEOUT).content)
 
     def _log_item_start(self, part_num: int, item) -> None:
         _index, segment = item
@@ -360,8 +414,8 @@ class M3U8Downloader(BaseDownloader):
                 with open(joined, "wb") as out:
                     out.write(head.init_data)
                     for index in range(section.first_segment, section.last_segment + 1):
-                        # 프레임 정보는 moof만 골라 읽고(파일이 온전한지도 본다),
-                        # 본문은 버퍼 크기만큼씩 옮긴다
+                        # 프레임 정보는 moof만 골라 읽고, 본문은 버퍼 크기만큼씩 옮긴다.
+                        # 파일이 온전한지는 받을 때 확인했다
                         parsed.append(read_segment_file(self._segment_path(index), head.init))
                         with open(self._segment_path(index), "rb") as f:
                             shutil.copyfileobj(f, out, _JOIN_CHUNK_BYTES)
@@ -396,28 +450,6 @@ class M3U8Downloader(BaseDownloader):
             self.logger.log_error("Cut failed — segments preserved for retry", e)
             raise PostprocessError(f"후처리(cut) 실패: {e}") from e
 
-    def _require_whole_segment(self, path: str, received: int, response) -> None:
-        """받은 세그먼트가 온전한지 확인한다. 아니면 파일을 지우고 TruncatedBodyError를 낸다.
-
-        서버가 말한 길이(Content-Length)와 받은 길이, 상자들이 말하는 끝과 파일 크기를 본다.
-        다시보기를 내주는 CDN은 잘린 본문을 세그먼트 전체로 캐시해 두고 그 길이를
-        Content-Length로 말할 수 있어, 머리만으로는 가려지지 않는다 — 상자까지 본다.
-
-        Raises:
-            TruncatedBodyError: 길이가 다르거나 상자가 파일 끝을 넘는 경우
-        """
-        declared = declared_length(getattr(response, "headers", {}))
-        try:
-            if declared is not None and declared != received:
-                raise TruncatedBodyError(f"받은 {received}바이트 · 서버가 말한 {declared}바이트")
-            read_segment_file(path, self._head.init)
-        except (TruncatedBodyError, Mp4Error) as e:
-            if os.path.exists(path):
-                os.remove(path)
-            if isinstance(e, TruncatedBodyError):
-                raise
-            raise TruncatedBodyError(str(e)) from e
-
     def _postprocess_output_size(self) -> int:
         """후처리 종료 로그에 남길 크기 — 구간 다운로드는 구간 파일 크기의 합."""
         if self._sections:
@@ -446,7 +478,9 @@ class M3U8Downloader(BaseDownloader):
         while not self.state == DownloadState.WAITING:
             try:
                 # 스레드로컬 세션으로 같은 워커의 세그먼트 요청 간 연결을 재사용한다 (#31)
-                response = get_thread_session().get(segment_url, stream=True, timeout=30)
+                response = get_thread_session().get(
+                    segment_url, stream=True, timeout=REQUEST_TIMEOUT
+                )
                 response.raise_for_status()
                 part_start_time = tm.time()
                 # 디스크 쓰기 누적 시간 — 저속 판정에는 더 이상 반영하지 않는다(#191).
@@ -492,9 +526,12 @@ class M3U8Downloader(BaseDownloader):
                                 else:
                                     slow_count = 0
 
-                if self._head is not None:
-                    # 구간 다운로드 — 잘린 세그먼트로 컷을 하지 않는다. 다르면 다시 받는다
-                    self._require_whole_segment(temp_file, downloaded_size, response)
+                # 받은 세그먼트가 온전한지 내용으로 확인한다 (#321) — 잘린 본문이
+                # 200과 맞는 Content-Length로 올 수 있어 상태 코드로는 알 수 없다.
+                # 온전하지 않으면 아래 except가 일시 오류로 다시 받게 한다
+                integrity.check_content_length(getattr(response, "headers", None), downloaded_size)
+                with open(temp_file, "rb") as f:
+                    integrity.check_fmp4_media_segment(f, downloaded_size)
 
                 # 성공적으로 마무리된 경우
                 with self.lock:
@@ -504,7 +541,11 @@ class M3U8Downloader(BaseDownloader):
                 self.logger.log_thread_complete(part_num, downloaded_size)
                 return part_num
 
-            except (requests.RequestException, requests.Timeout) as e:
+            except (
+                requests.RequestException,
+                requests.Timeout,
+                integrity.TruncatedSegmentError,
+            ) as e:
                 with self.lock:
                     self._requeue_failed((index, segment), part_num, e)
                 self.logger.log_error(f"Part {part_num} download failed", e)

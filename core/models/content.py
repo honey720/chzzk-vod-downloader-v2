@@ -27,6 +27,20 @@ class ContentType(Enum):
     CHZZK_LIVE = "live"
 
 
+@dataclass(frozen=True)
+class StreamKey:
+    """마스터 플레이리스트의 변형 하나를 다시 찾는 값 (#318).
+
+    목록에서 고른 변형의 정체다. 변형의 주소는 만료될 수 있어 싣지 않는다 — 다운로드를
+    시작할 때 마스터 플레이리스트를 다시 받아 이 값으로 같은 변형을 찾는다.
+    """
+
+    width: int  # RESOLUTION의 가로 픽셀
+    height: int  # RESOLUTION의 세로 픽셀
+    frame_rate: float | None  # FRAME-RATE. 선언이 없으면 None
+    bandwidth: int | None  # BANDWIDTH(bps). 선언이 없으면 None
+
+
 @dataclass
 class Content:
     """컨텐츠 메타데이터 (SPEC §4.1). 서브클래스 없는 단일 데이터클래스.
@@ -62,6 +76,8 @@ class Content:
     # (core.api.hls_fmp4.fetch_fmp4_head의 결과). 넘기면 엔진이 다시 받지 않는다.
     # 인코딩 전 다시보기(m3u8)에 쓴다. None이면 엔진이 받는다
     fmp4_head: Fmp4Head | None = None
+    # 인코딩 전 다시보기에서 고른 변형의 정체 (#318). 없으면 해상도로 찾는다
+    stream: StreamKey | None = None
 
 
 @dataclass(frozen=True)

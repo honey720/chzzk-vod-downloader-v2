@@ -348,22 +348,3 @@ class TestGetVideoM3u8Variant:
 
         assert base_url == "https://example.invalid/1080/playlist.m3u8"
         assert calls == ["https://example.invalid/master.m3u8"]
-
-    def test_frame_rates_of_every_resolution_come_from_the_same_master_playlist(self, monkeypatch):
-        """get_video_m3u8_frame_rates는 마스터 플레이리스트를 한 번 받아 해상도마다 선언된 프레임률을 돌려줘야 한다.
-
-        변형 셋(720p 30.000 · 1080p 59.940 · 480p 속성 없음)
-        -> {720: 30, 1080: 2997/50}, 요청 1건
-        """
-        calls = []
-
-        def fake_get(url, **kwargs):
-            calls.append(url)
-            return MockResponse(text=self.MASTER)
-
-        monkeypatch.setattr(network._session, "get", fake_get)
-
-        rates = NetworkManager.get_video_m3u8_frame_rates(self.JSON, {})
-
-        assert rates == {720: Fraction(30), 1080: Fraction(2997, 50)}
-        assert calls == ["https://example.invalid/master.m3u8"]

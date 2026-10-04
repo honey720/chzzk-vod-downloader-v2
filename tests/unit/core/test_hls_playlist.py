@@ -11,7 +11,7 @@ from fractions import Fraction
 import pytest
 from Crypto.Cipher import AES
 
-from core.api.hls import HlsKey, master_frame_rates, parse_media_playlist, stream_frame_rate
+from core.api.hls import HlsKey, parse_media_playlist, stream_frame_rate, variant_frame_rate
 from core.downloaders.decrypt import (
     AES_BLOCK_SIZE,
     TS_PACKET_SIZE,
@@ -225,12 +225,23 @@ def test_stream_frame_rate_reads_the_declared_value_as_written(line, expected):
     assert stream_frame_rate(line) == expected
 
 
-def test_master_frame_rates_maps_each_resolution_to_its_declared_rate():
-    """master_frame_rates는 변형마다 세로 해상도와 FRAME-RATE를 짝지어 돌려주고, 선언이 없는 변형은 빼야 한다.
+@pytest.mark.parametrize(
+    ("uri", "expected"),
+    [
+        ("720p/chunklist.m3u8", Fraction(60)),
+        ("144p/chunklist.m3u8", None),  # FRAME-RATE를 선언하지 않은 변형
+        ("1080p/chunklist.m3u8", Fraction(2997, 50)),
+        ("720p-low/chunklist.m3u8", Fraction(30)),  # 크기가 같은 둘째 변형 — 제 줄의 값이다
+        ("none/chunklist.m3u8", None),  # 그런 변형이 없다
+    ],
+    ids=["first-720", "undeclared", "59.940", "second-720", "absent"],
+)
+def test_variant_frame_rate_reads_the_rate_of_the_variant_with_that_address(uri, expected):
+    """variant_frame_rate는 주소가 같은 변형의 FRAME-RATE를 적힌 글자 그대로의 분수로 돌려줘야 한다.
 
-    변형 넷 — 1280x720(60.00) · 852x480(30.00) · 256x144(속성 없음) · 1920x1080(59.940),
-    그리고 720p가 한 번 더(30.00)
-    -> {720: 60, 480: 30, 1080: 2997/50} — 같은 해상도는 먼저 나온 것
+    변형 다섯 — 1280x720(60.00) · 852x480(30.00) · 256x144(속성 없음) · 1920x1080(59.940) ·
+    1280x720(30.00), 주석의 주소
+    -> 기대값
     """
     text = "\n".join(
         [
@@ -248,11 +259,7 @@ def test_master_frame_rates_maps_each_resolution_to_its_declared_rate():
         ]
     )
 
-    assert master_frame_rates(text) == {
-        720: Fraction(60),
-        480: Fraction(30),
-        1080: Fraction(2997, 50),
-    }
+    assert variant_frame_rate(text, uri) == expected
 
 
 def test_parse_media_playlist_reads_program_date_time_per_segment():

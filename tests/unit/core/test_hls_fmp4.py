@@ -20,14 +20,14 @@ import core.api.hls_fmp4 as hls_fmp4_module
 from core.api.fmp4 import parse_init_segment, parse_media_segment
 from core.api.hls_fmp4 import (
     HLS_NOT_FMP4,
-    declared_length,
     download_segment,
     fetch_fmp4_head,
     read_segment_file,
     segment_file_name,
     segment_frames,
 )
-from core.api.mp4 import MP4_TRUNCATED, Mp4Error
+from core.api.mp4 import Mp4Error
+from core.downloaders.integrity import TruncatedSegmentError
 from tests.unit.core.fmp4_builder import (
     KEY,
     NON_KEY,
@@ -226,20 +226,19 @@ def test_segment_frames_requests_each_segment_only_once(monkeypatch, tmp_path):
 def test_segment_frames_rejects_a_truncated_segment_and_keeps_no_file(
     monkeypatch, tmp_path, folder
 ):
-    """segment_frames는 서버가 잘린 세그먼트를 주면 잘림 키로 실패하고 그 파일을 남기지 않아야 한다.
+    """segment_frames는 서버가 잘린 세그먼트를 주면 잘림 오류로 실패하고 그 파일을 남기지 않아야 한다.
 
     mdat 도중에서 잘린 세그먼트(상자가 말하는 끝 > 본문 길이)
-    -> Mp4Error(MP4_TRUNCATED), segment_dir에 파일 없음, head.stored · head.segments가 비어 있다
+    -> TruncatedSegmentError, segment_dir에 파일 없음, head.stored · head.segments가 비어 있다
     """
     whole = media_segment([_fragment(0, 4, mdat_size=4000)])
     host, url = _vod(monkeypatch, {"a.m4s": whole[:-1000]})
     target = tmp_path / "segments"
     head = fetch_fmp4_head(url, str(target) if folder else None)
 
-    with pytest.raises(Mp4Error) as info:
+    with pytest.raises(TruncatedSegmentError):
         segment_frames(head, url, 0)
 
-    assert info.value.message_key == MP4_TRUNCATED
     assert not target.exists() or os.listdir(target) == []
     assert (head.stored, head.segments) == (set(), {})
 
@@ -285,21 +284,17 @@ def test_truncating_cache_host_poisons_a_file_after_a_range_request(monkeypatch)
     assert host.truncated() == ["a"]
 
 
-def test_read_segment_file_reads_frames_and_rejects_a_truncated_file(tmp_path):
-    """read_segment_file은 온전한 파일의 프레임 정보를 돌려주고, 잘린 파일은 잘림 키로 거부해야 한다.
+def test_read_segment_file_reads_the_frames_of_a_stored_segment(tmp_path):
+    """read_segment_file은 받아 둔 세그먼트 파일의 프레임 정보를 돌려줘야 한다.
 
-    moof 둘짜리 세그먼트를 그대로 쓴 파일 · 끝 10바이트를 뺀 파일
-    -> 온전: parse_media_segment와 같은 결과 / 잘림: Mp4Error(MP4_TRUNCATED)
+    moof 둘짜리 세그먼트를 그대로 쓴 파일
+    -> parse_media_segment와 같은 결과
     """
     data = _two_moof_segment()
     init = parse_init_segment(INIT)
     (tmp_path / "whole.m4v").write_bytes(data)
-    (tmp_path / "cut.m4v").write_bytes(data[:-10])
 
     assert read_segment_file(str(tmp_path / "whole.m4v"), init) == parse_media_segment(data, init)
-    with pytest.raises(Mp4Error) as info:
-        read_segment_file(str(tmp_path / "cut.m4v"), init)
-    assert info.value.message_key == MP4_TRUNCATED
 
 
 @pytest.mark.parametrize(
@@ -321,31 +316,11 @@ def test_segment_file_name_matches_the_name_the_engine_writes(count, index, expe
     assert segment_file_name(count, index) == expected
 
 
-@pytest.mark.parametrize(
-    ("headers", "expected"),
-    [
-        ({"Content-Length": "65536"}, 65536),
-        ({}, None),
-        ({"Content-Length": "100", "Content-Encoding": "gzip"}, None),  # 압축된 본문의 길이다
-        ({"Content-Length": "100", "Content-Encoding": "identity"}, 100),
-        ({"Content-Length": "abc"}, None),
-    ],
-    ids=["plain", "missing", "compressed", "identity", "not-a-number"],
-)
-def test_declared_length_reads_content_length_of_an_uncompressed_body(headers, expected):
-    """declared_length는 압축되지 않은 본문의 Content-Length만 돌려주고, 없거나 압축 전송이면 None을 돌려줘야 한다.
-
-    주석의 경우마다 응답 머리
-    -> 기대값
-    """
-    assert declared_length(headers) == expected
-
-
 def test_download_segment_rejects_a_body_shorter_than_content_length(monkeypatch, tmp_path):
-    """download_segment는 받은 길이가 서버가 말한 Content-Length와 다르면 잘림 키로 실패하고 파일을 남기지 않아야 한다.
+    """download_segment는 받은 길이가 서버가 말한 Content-Length와 다르면 잘림 오류로 실패하고 파일을 남기지 않아야 한다.
 
     Content-Length 100인데 본문은 60바이트인 응답
-    -> Mp4Error(MP4_TRUNCATED), 폴더에 파일 없음(받는 중이던 .part도 없다)
+    -> TruncatedSegmentError, 폴더에 파일 없음(받는 중이던 .part도 없다)
     """
 
     class Short:
@@ -366,8 +341,23 @@ def test_download_segment_rejects_a_body_shorter_than_content_length(monkeypatch
     session = SimpleNamespace(get=lambda url, **kwargs: Short())
     monkeypatch.setattr(hls_fmp4_module, "get_thread_session", lambda: session)
 
-    with pytest.raises(Mp4Error) as info:
+    with pytest.raises(TruncatedSegmentError):
         download_segment("https://range.test/a.m4s", str(tmp_path / "1.m4v"))
 
-    assert info.value.message_key == MP4_TRUNCATED
+    assert os.listdir(tmp_path) == []
+
+
+def test_download_segment_rejects_a_body_that_ends_right_after_a_moof(monkeypatch, tmp_path):
+    """download_segment는 본문이 moof 바로 뒤에서 끝나면 잘림 오류로 실패하고 파일을 남기지 않아야 한다.
+
+    moof 하나 · mdat 하나인 세그먼트에서 mdat를 통째로 뺀 본문(상자 크기의 합 == 본문 길이)
+    -> TruncatedSegmentError, 폴더에 파일 없음
+    """
+    whole = media_segment([_fragment(0, 4, mdat_size=64)])
+    body = whole[: whole.rindex(b"mdat") - 4]  # mdat 머리(크기 4바이트 + 종류)가 시작하는 자리
+    host = _host(monkeypatch, {"a.m4s": body})
+
+    with pytest.raises(TruncatedSegmentError):
+        download_segment(host.url("a.m4s"), str(tmp_path / "1.m4v"))
+
     assert os.listdir(tmp_path) == []

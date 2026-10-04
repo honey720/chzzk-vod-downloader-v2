@@ -27,7 +27,6 @@ from core.api.mp4 import (
     _MAX_SAMPLES,
     MP4_INVALID,
     MP4_TOO_LONG,
-    MP4_TRUNCATED,
     MP4_UNSUPPORTED,
     Mp4Error,
     _boxes,
@@ -120,35 +119,29 @@ def parse_media_segment(data: bytes, init: Fmp4Init) -> Fmp4Segment:
         raise Mp4Error(MP4_INVALID, str(e)) from e
 
 
-def read_media_segment(
-    read: Callable[[int, int], bytes], init: Fmp4Init, total: int | None = None
-) -> Fmp4Segment:
+def read_media_segment(read: Callable[[int, int], bytes], init: Fmp4Init) -> Fmp4Segment:
     """읽기 함수로 미디어 세그먼트의 moof만 읽어 ``parse_media_segment``와 같은 결과를 낸다.
 
     최상위 상자의 머리를 차례로 읽고 mdat의 본문은 건너뛴다 — 세그먼트가 아무리 커도
     메모리에 올라가는 것은 mdat가 아닌 상자들뿐이다. 받아 둔 세그먼트 파일에서 프레임
     정보를 다시 읽을 때 쓴다.
 
+    세그먼트가 온전한지는 보지 않는다 — 그 검사는 core/downloaders/integrity.py가 한다.
+
     Args:
         read: ``read(offset, size)`` — 세그먼트의 offset부터 최대 size바이트를 돌려준다.
             끝을 넘으면 있는 만큼만(없으면 빈 bytes) 돌려준다
         init: 같은 스트림의 ``parse_init_segment`` 결과
-        total: 세그먼트의 전체 크기(바이트). 주면 세그먼트가 온전한지도 본다 — 상자들이
-            말하는 끝이 이 크기와 같아야 한다. 받은 본문이 잘렸는지 가릴 때 쓴다
 
     Raises:
         Mp4Error: 상자 크기가 머리보다 작거나, mdat가 아닌 상자가 너무 크거나 잘렸거나,
-            상자가 너무 많은 경우(``MP4_INVALID``), total을 줬는데 상자(mdat 포함)가 그
-            크기를 넘거나 끝에 상자가 되다 만 바이트가 남은 경우(``MP4_TRUNCATED``).
-            그 밖은 ``parse_media_segment``와 같다
+            상자가 너무 많은 경우(``MP4_INVALID``). 그 밖은 ``parse_media_segment``와 같다
     """
     kept = []
     offset = 0
     for _ in range(_MAX_TOP_LEVEL_BOXES):
         head = read(offset, 16)
         if len(head) < 8:
-            if total is not None and offset != total:
-                raise Mp4Error(MP4_TRUNCATED, f"상자들의 끝 {offset} · 세그먼트 크기 {total}")
             return parse_media_segment(b"".join(kept), init)
         size, box_type = struct.unpack_from(">I4s", head, 0)
         header = 8
@@ -164,11 +157,6 @@ def read_media_segment(
             raise Mp4Error(MP4_INVALID, f"상자 {box_type!r}의 크기 {size}")
         if size < header:
             raise Mp4Error(MP4_INVALID, f"상자 {box_type!r}의 크기 {size}")
-        if total is not None and offset + size > total:
-            raise Mp4Error(
-                MP4_TRUNCATED,
-                f"상자 {box_type!r}가 {offset + size}에서 끝나는데 세그먼트 크기는 {total}",
-            )
         if box_type != b"mdat":
             body = read(offset, size)
             if len(body) != size:

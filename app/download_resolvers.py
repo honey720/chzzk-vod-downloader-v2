@@ -52,7 +52,7 @@ def resolve_m3u8_base_url(content: Content) -> str:
     content_type, content_no = NetworkManager.extract_content_no(content.url)
     info = NetworkManager.get_video_info(content_no, cookies)
     return NetworkManager.get_video_m3u8_base_url(
-        info.live_rewind_playback_json, content.resolution, cookies
+        info.live_rewind_playback_json, content.resolution, cookies, content.stream
     )
 
 
@@ -61,6 +61,7 @@ def resolve_m3u8_variant(content: Content) -> tuple[str, Fraction | None]:
 
     ``resolve_m3u8_base_url``과 같은 조회를 하고 프레임률을 함께 돌려준다. 구간을 해석하는
     쪽이 타임코드의 프레임 단위를 정할 때 쓴다. 선언이 없으면 프레임률은 None이다.
+    ``content.stream``이 있으면 그 변형을 고른다 — 다운로드가 받는 변형과 같다(#318).
 
     Raises:
         Exception: 조회 실패 (네트워크·권한 등)
@@ -69,5 +70,5 @@ def resolve_m3u8_variant(content: Content) -> tuple[str, Fraction | None]:
     _content_type, content_no = NetworkManager.extract_content_no(content.url)
     info = NetworkManager.get_video_info(content_no, cookies)
     return NetworkManager.get_video_m3u8_variant(
-        info.live_rewind_playback_json, content.resolution, cookies
+        info.live_rewind_playback_json, content.resolution, cookies, content.stream
     )

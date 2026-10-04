@@ -5,7 +5,6 @@
 
 import logging
 import os
-from dataclasses import replace
 from fractions import Fraction
 from types import SimpleNamespace
 
@@ -162,52 +161,18 @@ def test_fetch_frame_rates_reads_the_manifest_of_an_encoded_vod(monkeypatch):
     assert calls == [("vid", "key", cookies)]
 
 
-def test_fetch_frame_rates_does_not_query_clips(monkeypatch):
-    """_fetch_frame_rates는 클립이면 조회하지 않고 빈 결과를 돌려줘야 한다.
+@pytest.mark.parametrize("content_type", ["clip", "m3u8"])
+def test_fetch_frame_rates_does_not_query_types_without_a_dash_manifest(monkeypatch, content_type):
+    """_fetch_frame_rates는 클립과 인코딩 전 다시보기면 조회하지 않고 빈 결과를 돌려줘야 한다.
 
-    content_type "clip"
+    content_type "clip" · "m3u8"
     -> {}, get_video_info 호출 0회
     """
     calls = []
     monkeypatch.setattr(headless.NetworkManager, "get_video_info", lambda *a: calls.append(a))
 
-    assert _fetch_frame_rates("https://chzzk.naver.com/video/123", {}, "clip") == {}
+    assert _fetch_frame_rates("https://chzzk.naver.com/video/123", {}, content_type) == {}
     assert calls == []
-
-
-def test_fetch_frame_rates_reads_the_master_playlist_of_an_unencoded_replay(monkeypatch):
-    """_fetch_frame_rates는 인코딩 전 다시보기면 마스터 플레이리스트가 선언한 해상도별 프레임률을 읽어야 한다.
-
-    content_type "m3u8", 영상 정보의 liveRewindPlaybackJson이 "playback"
-    -> get_video_m3u8_frame_rates("playback", 쿠키)의 결과(키는 해상도)
-    """
-    calls = []
-    cookies = {"NID_AUT": "", "NID_SES": ""}
-    info = replace(_video_info(), live_rewind_playback_json="playback")
-    monkeypatch.setattr(headless.NetworkManager, "get_video_info", lambda no, c: info)
-
-    def frame_rates(json_str, given):
-        calls.append((json_str, given))
-        return {1080: Fraction(60), 480: Fraction(30)}
-
-    monkeypatch.setattr(headless.NetworkManager, "get_video_m3u8_frame_rates", frame_rates)
-
-    rates = _fetch_frame_rates("https://chzzk.naver.com/video/123", cookies, "m3u8")
-
-    assert rates == {1080: Fraction(60), 480: Fraction(30)}
-    assert calls == [("playback", cookies)]
-
-
-def test_format_resolutions_finds_the_frame_rate_by_resolution_without_a_base_url():
-    """_format_resolutions는 base_url이 없는 해상도(다시보기)의 프레임률을 해상도로 찾아 붙여야 한다.
-
-    해상도 480 · 720 · 1080 (base_url 없음), 프레임률은 480(30) · 1080(60)만 있음
-    -> "480p · 30fps, 720p · fps 모름, 1080p · 60fps"
-    """
-    reps = [[480, None], [720, None], [1080, None]]
-    rates = {480: Fraction(30), 1080: Fraction(60)}
-
-    assert _format_resolutions(reps, rates) == "480p · 30fps, 720p · fps 모름, 1080p · 60fps"
 
 
 def test_list_option_logs_frame_rate_next_to_each_resolution(monkeypatch, tmp_path, caplog):

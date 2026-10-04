@@ -186,31 +186,25 @@ def stream_frame_rate(line: str) -> Fraction | None:
     return rate if rate > 0 else None
 
 
-def master_frame_rates(text: str) -> dict[int, Fraction]:
-    """마스터 플레이리스트에서 해상도(세로 픽셀)마다 선언된 프레임률을 읽는다 (#309).
+def variant_frame_rate(text: str, uri: str) -> Fraction | None:
+    """마스터 플레이리스트에서 주소가 uri인 변형의 FRAME-RATE를 정확한 비로 읽는다 (#309).
 
-    ``#EXT-X-STREAM-INF``의 ``RESOLUTION=가로x세로``와 FRAME-RATE를 본다. 같은 세로 해상도의
-    변형이 여럿이면 먼저 나온 것의 값이다 — 다운로드가 고르는 변형과 같다.
+    변형을 고르는 것은 core/api/playback_tracks.py다(#318). 여기서는 고른 변형의
+    ``#EXT-X-STREAM-INF`` 줄을 다시 찾아 읽기만 한다 — 같은 주소의 변형이 여럿이면 먼저
+    나온 것의 값이다.
+
+    Args:
+        text: 마스터 플레이리스트
+        uri: 고른 변형의 주소 — 태그 다음 줄에 적힌 그대로(상대일 수 있다)
 
     Returns:
-        ``{세로 해상도: 프레임률}``. FRAME-RATE가 없거나 읽을 수 없는 변형은 들어 있지 않다
+        프레임률. 그 변형이 없거나 FRAME-RATE를 선언하지 않았으면 None
     """
-    rates: dict[int, Fraction] = {}
-    seen: set[int] = set()
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line.startswith("#EXT-X-STREAM-INF:"):
-            continue
-        resolution = re.fullmatch(
-            r"\d+x(\d+)", _parse_attributes(line.split(":", 1)[1]).get("RESOLUTION", "")
-        )
-        if resolution is None or int(resolution.group(1)) in seen:
-            continue
-        seen.add(int(resolution.group(1)))
-        rate = stream_frame_rate(line)
-        if rate is not None:
-            rates[int(resolution.group(1))] = rate
-    return rates
+    lines = [line.strip() for line in text.splitlines()]
+    for number, line in enumerate(lines[:-1]):
+        if line.startswith("#EXT-X-STREAM-INF:") and lines[number + 1] == uri:
+            return stream_frame_rate(line)
+    return None
 
 
 def _parse_extinf(line: str) -> float:

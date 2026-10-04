@@ -45,7 +45,6 @@ ffmpeg가 입력에서 추정한 비트레이트가 들어가는데, 그 값은 
 import os
 import struct
 import subprocess
-from types import SimpleNamespace
 from fractions import Fraction
 
 import pytest
@@ -55,7 +54,8 @@ import core.downloaders.m3u8_downloader as m3u8_module
 from core.api.fmp4 import build_fmp4_index, fmp4_origin, parse_init_segment, parse_media_segment
 from core.api.hls import parse_media_playlist
 from core.api.hls_fmp4 import fetch_fmp4_head, segment_file_name, segment_frames
-from core.downloaders.base import PostprocessError, TruncatedBodyError
+from core.downloaders.base import PostprocessError
+from core.downloaders.integrity import TruncatedSegmentError
 from core.downloaders.m3u8_downloader import M3U8Downloader
 from core.models.download_data import DownloadData
 from core.models.plan import TimeRange
@@ -606,20 +606,37 @@ def test_engine_requests_nothing_that_was_handed_in(host, sources, tmp_path):
     assert not os.path.exists(head.segment_dir)  # 받아 둔 폴더가 엔진의 임시 폴더다 — 끝나면 지운다
 
 
+def _last_mdat_offset(data: bytes) -> int:
+    """세그먼트의 마지막 mdat 상자가 시작하는 위치(바이트) — 최상위 상자의 머리를 따라가 찾는다."""
+    offset = found = 0
+    while offset < len(data):
+        size = int.from_bytes(data[offset : offset + 4], "big")
+        if data[offset + 4 : offset + 8] == b"mdat":
+            found = offset
+        offset += size
+    return found
+
+
+@pytest.mark.parametrize("cut", ["inside-mdat", "after-moof"])
 def test_engine_downloads_a_handed_in_segment_again_when_its_file_is_damaged(
-    host, sources, tmp_path
+    host, sources, tmp_path, cut
 ):
     """구간을 해석하며 받아 둔 세그먼트 파일이 온전하지 않으면 엔진은 그 세그먼트를 다시 받아야 한다.
 
-    plain, 구간 프레임 40~100. 해석 뒤 받아 둔 첫 세그먼트 파일의 끝 100바이트를 잘라 냄
+    plain, 구간 프레임 40~100. 해석 뒤 받아 둔 첫 세그먼트 파일을 자름 —
+    inside-mdat: 끝 100바이트를 뺌 / after-moof: 마지막 mdat가 시작하는 자리에서 끊음(moof로 끝난다)
     -> 엔진 단계의 세그먼트 요청에 첫 세그먼트가 있다, 실패 0건, 패킷이 대조 파일과 같다
     """
     source = sources["plain"]
     selection = source.selection(40, 100)
     head, _sections = _resolve(host, tmp_path, selection)
     kept = os.path.join(head.segment_dir, segment_file_name(SEGMENTS, 0))
+    whole = source.files["seg-000.m4s"]
+    # after-moof는 상자 크기의 합이 파일 크기와 같다 — 크기만 견주는 검사로는 가려지지 않는다
+    length = len(whole) - 100 if cut == "inside-mdat" else _last_mdat_offset(whole)
+    assert 0 < length < len(whole)
     with open(kept, "rb+") as f:
-        f.truncate(os.path.getsize(kept) - 100)
+        f.truncate(length)
     run = _Run(host, tmp_path, [selection])
     run.data.content.fmp4_head = head
     host.forget()
@@ -653,7 +670,7 @@ def test_section_download_fails_instead_of_cutting_a_truncated_segment(host, sou
 
     plain, truncating_cache를 켠 호스트에서 셋째 세그먼트를 누군가 범위 요청으로 먼저 받아 캐시에
     잘린 본문이 들어 있다(전체 요청에도 잘린 본문이 온다). 구간 프레임 40~100(세그먼트 0~3)
-    -> 완료 0회, 실패 1건(TruncatedBodyError), 컷 0회, 저장 폴더가 비어 있다
+    -> 완료 0회, 실패 1건(TruncatedSegmentError), 컷 0회, 저장 폴더가 비어 있다
     """
     source = sources["plain"]
     host.truncating_cache = True
@@ -664,36 +681,9 @@ def test_section_download_fails_instead_of_cutting_a_truncated_segment(host, sou
 
     assert run.finished == 0
     assert len(run.failures) == 1
-    assert isinstance(run.failures[0], TruncatedBodyError)
+    assert isinstance(run.failures[0], TruncatedSegmentError)
     assert run.engine.cut_results == []
     assert run.listing() == []
-
-
-def test_downloaded_segment_whose_length_differs_from_content_length_is_rejected(
-    host, sources, tmp_path
-):
-    """받은 세그먼트의 길이가 서버가 말한 Content-Length와 다르면 그 세그먼트를 지우고 잘림 오류를 내야 한다.
-
-    구간 다운로드를 마친 엔진, 온전한 세그먼트 파일(N바이트). 응답 머리의 Content-Length = N + 1 · N
-    -> N + 1: TruncatedBodyError, 파일이 지워진다 / N: 오류 없음, 파일이 남는다
-    """
-    source = sources["plain"]
-    run = _Run(host, tmp_path, [source.selection(5, 20)]).start()
-    data = source.files["seg-000.m4s"]
-    path = str(tmp_path / "segment.m4v")
-
-    with open(path, "wb") as f:
-        f.write(data)
-    run.engine._require_whole_segment(
-        path, len(data), SimpleNamespace(headers={"Content-Length": str(len(data))})
-    )
-    assert os.path.exists(path)
-
-    with pytest.raises(TruncatedBodyError):
-        run.engine._require_whole_segment(
-            path, len(data), SimpleNamespace(headers={"Content-Length": str(len(data) + 1)})
-        )
-    assert not os.path.exists(path)
 
 
 # ================================================================ 끊긴 녹화
