@@ -29,16 +29,18 @@
 가장 많은 샘플 길이로 정하지 않는다 — timescale이 1000인 60fps 영상은 프레임 간격이
 17 · 17 · 16ms로 돌아, 그렇게 정하면 1000/17(58.8fps)이 되고 FF 59가 다음 초로 넘어간다.
 
+계획을 세우는 방법(추정 → 실제 시각 확인 → 넓히기)은 세그먼트의 형식과 무관해
+``core/utils/section_plan.py``에 있다. 이 모듈은 fMP4 세그먼트에서 시각과 프레임 정보를
+읽어 그 계획에 주는 공급자(``_Fmp4Source``)와, fMP4의 프레임률 정하기를 맡는다. 위의
+설명은 그 계획이 fMP4 입력에서 하는 일이다.
+
 세그먼트의 프레임 정보는 주입받은 함수로 읽는다 — 이 모듈은 네트워크를 모른다.
 """
 
-import math
-from bisect import bisect_right
 from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
-from itertools import accumulate
 
 from core.api.fmp4 import _seconds, build_fmp4_index, fmp4_origin
 from core.api.hls import HlsPlaylist
@@ -46,53 +48,35 @@ from core.api.mp4 import MP4_INVALID, Mp4Error
 from core.models.cut import CutFrames
 from core.models.fmp4_index import Fmp4Init, Fmp4Segment
 from core.models.plan import TimeRange
-from core.utils.hybrid_cut import SOURCE_LEAD_SECONDS, cut_frames_from_fmp4
-from core.utils.selections import (
-    SELECTION_CROSSES_BREAK,
-    SELECTION_NOT_LOCATED,
-    SelectionError,
-    reaches_end,
-    validate_selections,
+from core.utils.hybrid_cut import cut_frames_from_fmp4
+from core.utils.section_plan import (
+    FPS_DECLARED,
+    FPS_MEASURED,
+    FPS_STANDARD,
+    FrameRateChoice,
+    measured_frame_rate,
+    plan_sections,
+    timeline,
 )
-from core.utils.timecode import snap_to_frame
-
-# 양 끝에서 세그먼트를 더 넣어 보는 최대 횟수 — 플레이리스트의 시각과 실제 PTS의 차이는
-# 세그먼트 하나를 넘지 않는 것이 정상이다. 넘으면 끝없이 넓히지 않고 있는 것으로 정한다
-_MAX_WIDEN_STEPS = 3
 
 # 구간의 시각이 놓인 세그먼트를 찾아가는 최대 걸음 수. 걸음마다 세그먼트 하나를 통째로
 # 받는다. 추정이 세그먼트 여럿만큼 어긋나도 그 세그먼트의 실제 시작과 길이로 다시
 # 추정하면 한두 걸음에 닿는다 — 이 횟수로 못 찾으면 플레이리스트와 세그먼트가 맞지 않는
-# 것이라 실패로 끝낸다
+# 것이라 실패로 끝낸다. plan_fmp4_sections가 부를 때마다 이 값을 읽어 계획에 넘긴다
 _MAX_LOCATE_STEPS = 6
 
-# 세그먼트의 실제 길이로 나눌 때의 하한(초) — 프레임이 하나뿐인 세그먼트에서 0으로 나누지 않게 한다
-_MIN_SPAN_SECONDS = 0.001
-
-# 프레임률을 정한 경로
-FPS_DECLARED = "declared"  # 마스터 플레이리스트의 FRAME-RATE
-FPS_STANDARD = "standard"  # 잰 평균 간격이 표준 비율과 맞았다
-FPS_MEASURED = "measured"  # 잰 평균 간격 그대로
-
-# 잰 프레임률을 견주는 표준 비율
-_STANDARD_FRAME_RATES = (
-    Fraction(24000, 1001),
-    Fraction(24),
-    Fraction(25),
-    Fraction(30000, 1001),
-    Fraction(30),
-    Fraction(50),
-    Fraction(60000, 1001),
-    Fraction(60),
-)
-
-# 잰 프레임률을 표준 비율로 보는 상대 오차의 상한 — 0.1%. 60과 60000/1001의 차이가 꼭
-# 이만큼이라, 둘 다 범위에 들면 더 가까운 쪽을 고른다
-_STANDARD_TOLERANCE = Fraction(1, 1000)
-
-# 오디오의 시작을 키프레임의 DTS와 견줄 때의 여유(초) — 오디오 샘플의 경계가 DTS와 같은
-# 시각에 놓였을 때 float 오차로 "뒤"라고 판정하지 않게 한다
-_AUDIO_SEEK_SLACK = 1e-6
+__all__ = [
+    "FPS_DECLARED",
+    "FPS_MEASURED",
+    "FPS_STANDARD",
+    "Fmp4Group",
+    "Fmp4Section",
+    "Fmp4Timeline",
+    "FrameRateChoice",
+    "choose_frame_rate",
+    "fmp4_timeline",
+    "plan_fmp4_sections",
+]
 
 
 @dataclass(frozen=True)
@@ -112,14 +96,6 @@ class Fmp4Section:
     def segment_count(self) -> int:
         """받을 세그먼트 수."""
         return self.last_segment - self.first_segment + 1
-
-
-@dataclass(frozen=True)
-class FrameRateChoice:
-    """정한 프레임률과, 그것을 어느 경로로 정했는지를 담는다."""
-
-    rate: Fraction  # 프레임률
-    source: str  # 정한 경로 — FPS_DECLARED · FPS_STANDARD · FPS_MEASURED
 
 
 def choose_frame_rate(
@@ -148,12 +124,9 @@ def choose_frame_rate(
         return FrameRateChoice(declared, FPS_DECLARED)
     timescale = init.video.timescale
     times = [pts for segment in segments for pts in segment.video.presentation_times]
-    if len(times) >= 2 and max(times) > min(times):
-        measured = Fraction((len(times) - 1) * timescale, max(times) - min(times))
-        nearest = min(_STANDARD_FRAME_RATES, key=lambda rate: abs(measured - rate) / rate)
-        if abs(measured - nearest) / nearest <= _STANDARD_TOLERANCE:
-            return FrameRateChoice(nearest, FPS_STANDARD)
-        return FrameRateChoice(measured, FPS_MEASURED)
+    measured = measured_frame_rate(times, timescale)
+    if measured is not None:
+        return measured
     durations = Counter(d for segment in segments for d in segment.video.durations if d > 0)
     if not durations:
         raise ValueError("프레임률을 정할 수 없다 — 영상 프레임이 없다")
@@ -180,6 +153,41 @@ class Fmp4Timeline:
     duration: float  # 영상 길이(초) — 마지막 영상 프레임이 끝나는 VOD 시각
 
 
+class _Fmp4Source:
+    """fMP4 세그먼트에서 구간 계획에 줄 시각과 프레임 정보를 읽는 공급자.
+
+    원래 시각은 초기화 세그먼트의 timescale로 나눈 분수(초)다. 세그먼트는 주입받은 함수로
+    읽는다 — 부를 때마다 그 함수를 한 번씩 부른다(보관은 주는 쪽이 한다).
+    """
+
+    def __init__(self, init: Fmp4Init, segment_at: Callable[[int], Fmp4Segment]):
+        self._init = init
+        self._segment_at = segment_at
+
+    def frame_rate(self) -> Fraction:
+        """첫 세그먼트로 정한 프레임률."""
+        return choose_frame_rate(self._init, [self._segment_at(0)]).rate
+
+    def origin_of(self, index: int) -> Fraction:
+        """세그먼트에서 영상·오디오를 통틀어 가장 이른 표시 시각."""
+        return fmp4_origin(self._init, self._segment_at(index))
+
+    def span_of(self, index: int) -> tuple[Fraction, Fraction]:
+        """세그먼트의 영상(없으면 오디오)이 차지하는 원래 시각."""
+        return _original_span(self._init, self._segment_at(index))
+
+    def has_video(self, index: int) -> bool:
+        """세그먼트에 영상 샘플이 있는지."""
+        return bool(self._segment_at(index).video.presentation_times)
+
+    def frames_of(self, first: int, last: int, origin: Fraction) -> CutFrames:
+        """세그먼트 first~last의 프레임 정보 — 시각은 VOD 시각이다."""
+        segments = [self._segment_at(index) for index in range(first, last + 1)]
+        return cut_frames_from_fmp4(
+            self._init, segments, build_fmp4_index(self._init, segments, origin)
+        )
+
+
 def fmp4_timeline(
     playlist: HlsPlaylist, init: Fmp4Init, segment_at: Callable[[int], Fmp4Segment]
 ) -> Fmp4Timeline:
@@ -197,19 +205,12 @@ def fmp4_timeline(
         Mp4Error: 세그먼트를 해석하지 못했거나 표시되는 샘플이 없는 경우
         ValueError: 플레이리스트에 세그먼트가 없는 경우
     """
-    if not playlist.segments:
-        raise ValueError("플레이리스트에 세그먼트가 없다")
-    bounds = [0, *playlist.discontinuities, len(playlist.segments)]
-    groups = []
-    start = Fraction(0)
-    for first, after in zip(bounds, bounds[1:]):
-        last = after - 1
-        origin = fmp4_origin(init, segment_at(first)) - start
-        tail = segment_at(_last_segment_with_video(segment_at, first, last))
-        end = _original_span(init, tail)[1] - origin
-        groups.append(Fmp4Group(first=first, last=last, start=start, end=end, origin=origin))
-        start = end
-    return Fmp4Timeline(groups=tuple(groups), duration=float(groups[-1].end))
+    axis = timeline(playlist, _Fmp4Source(init, segment_at))
+    groups = tuple(
+        Fmp4Group(first=g.first, last=g.last, start=g.start, end=g.end, origin=g.origin)
+        for g in axis.groups
+    )
+    return Fmp4Timeline(groups=groups, duration=axis.duration)
 
 
 def plan_fmp4_sections(
@@ -237,149 +238,24 @@ def plan_fmp4_sections(
             세그먼트를 찾지 못한 경우(``SELECTION_NOT_LOCATED``)
         ValueError: 플레이리스트에 세그먼트 길이가 없는 경우
     """
-    if not playlist.durations or len(playlist.durations) != len(playlist.segments):
-        raise ValueError("플레이리스트에 세그먼트 길이(#EXTINF)가 없다")
-    if not all(math.isfinite(duration) and duration > 0 for duration in playlist.durations):
-        raise ValueError("길이를 알 수 없는 세그먼트가 있다 — #EXTINF가 없거나 0 이하다")
-    if fps is None:
-        fps = choose_frame_rate(init, [segment_at(0)]).rate
-    timeline = fmp4_timeline(playlist, init, segment_at)
-    violations = validate_selections(selections, timeline.duration, fps)
-    if violations:
-        raise SelectionError(violations)
-    half_frame = float(1 / fps) / 2
-
-    sections = []
-    for number, selection in enumerate(selections):
-        group = next(
-            (g for g in timeline.groups if selection.start < float(g.end)), timeline.groups[-1]
+    planned = plan_sections(
+        playlist,
+        _Fmp4Source(init, segment_at),
+        selections,
+        fps,
+        locate_steps=_MAX_LOCATE_STEPS,  # 부를 때 모듈 전역에서 읽는다
+    )
+    return tuple(
+        Fmp4Section(
+            selection=section.selection,
+            first_segment=section.first_segment,
+            last_segment=section.last_segment,
+            first_pts=section.first_pts,
+            last_pts=section.last_pts,
+            origin=section.origin,
         )
-        to_end = reaches_end(selection.end, timeline.duration, fps)
-        # 끊긴 자리를 넘는 구간은 그 구간의 세그먼트를 읽기 전에 거부한다
-        crosses = selection.end > float(group.end) + half_frame
-        if crosses or (to_end and group is not timeline.groups[-1]):
-            raise SelectionError({number: (SELECTION_CROSSES_BREAK,)})
-        origin = group.origin
-        locate = _Locator(number, playlist, init, group, segment_at)
-
-        def frames_of(first: int, last: int, origin: Fraction = origin) -> CutFrames:
-            segments = [segment_at(index) for index in range(first, last + 1)]
-            return cut_frames_from_fmp4(init, segments, build_fmp4_index(init, segments, origin))
-
-        cover = locate(selection.start)
-        first_segment = max(cover - 1, group.first)  # 앞 키프레임이 앞 세그먼트에 있을 수 있다
-        lead = frames_of(first_segment, cover)
-        for _ in range(_MAX_WIDEN_STEPS):
-            first_frame = snap_to_frame(selection.start, lead.frame_pts, fps, "start")
-            if (
-                selection.start > lead.frame_pts[-1] + lead.frame_duration / 2
-                and cover < group.last
-            ):
-                cover += 1  # 첫 프레임이 다음 세그먼트에 있다
-            elif not _has_lead(lead, first_frame) and first_segment > group.first:
-                first_segment -= 1  # 앞 키프레임이나 오디오가 더 앞 세그먼트에 있다
-            else:
-                break
-            lead = frames_of(first_segment, cover)
-        first_frame = snap_to_frame(selection.start, lead.frame_pts, fps, "start")
-
-        if to_end:
-            # 끝이 영상 길이와 같다 — 시각으로 고르지 않고 마지막 세그먼트의 마지막 프레임을 쓴다
-            high = group.last
-            low = _last_segment_with_video(segment_at, first_segment, high)
-            tail = frames_of(low, high)
-            last_frame = len(tail.frame_pts) - 1
-        else:
-            low = high = max(locate(selection.end), first_segment)
-            tail = frames_of(low, high)
-            for _ in range(_MAX_WIDEN_STEPS):
-                last_frame = snap_to_frame(selection.end, tail.frame_pts, fps, "end")
-                starts_later = selection.end < tail.frame_pts[0] - tail.frame_duration / 2
-                if starts_later and low > first_segment:
-                    low -= 1  # 끝 프레임이 앞 세그먼트에 있다
-                elif not _has_tail(tail, last_frame, selection.end) and high < group.last:
-                    high += 1  # 끝 프레임이나 그 프레임의 오디오가 다음 세그먼트에 있다
-                else:
-                    break
-                tail = frames_of(low, high)
-            last_frame = snap_to_frame(selection.end, tail.frame_pts, fps, "end")
-
-        # 양 끝을 넓히는 걸음은 끊긴 자리에서 멈춘다(first_segment > group.first ·
-        # cover < group.last · high < group.last) — 여기까지 온 범위는 끊긴 자리를 넘지 않는다
-        sections.append(
-            Fmp4Section(
-                selection=selection,
-                first_segment=first_segment,
-                last_segment=max(high, cover),
-                first_pts=lead.frame_pts[first_frame],
-                last_pts=max(tail.frame_pts[last_frame], lead.frame_pts[first_frame]),
-                origin=origin,
-            )
-        )
-    return tuple(sections)
-
-
-class _Locator:
-    """한 묶음 안에서 VOD 시각이 놓인 세그먼트를 찾는다 — 추정한 뒤 실제 시각으로 확인한다.
-
-    처음 추정은 플레이리스트로 한다: 묶음의 모든 세그먼트에 ``#EXT-X-PROGRAM-DATE-TIME``이
-    있으면 첫 세그먼트와의 차이, 아니면 ``#EXTINF``의 누적. 추정한 세그먼트를 읽어 그
-    세그먼트의 실제 시각 범위에 구하는 시각이 들어 있는지 본다. 없으면 그 세그먼트의 실제
-    시작과 길이로 몇 세그먼트 떨어져 있는지 다시 추정해 옮겨 간다.
-    """
-
-    def __init__(
-        self,
-        number: int,
-        playlist: HlsPlaylist,
-        init: Fmp4Init,
-        group: Fmp4Group,
-        segment_at: Callable[[int], Fmp4Segment],
-    ):
-        self._number = number  # 구간 번호 — 실패를 어느 구간의 것으로 알릴지
-        self._init = init
-        self._group = group
-        self._segment_at = segment_at
-        times = playlist.program_times[group.first : group.last + 1]
-        if len(times) == group.last - group.first + 1 and all(t is not None for t in times):
-            offsets = [t - times[0] for t in times]
-        else:
-            offsets = [0.0, *accumulate(playlist.durations[group.first : group.last])]
-        # 묶음 안 세그먼트마다 추정한 시작 VOD 시각 — 인덱스 0이 group.first다
-        self._estimates = [float(group.start) + offset for offset in offsets]
-
-    def __call__(self, seconds: float) -> int:
-        """seconds가 놓인 세그먼트의 인덱스. 세그먼트 사이의 빈 자리면 그 뒤의 세그먼트다.
-
-        Raises:
-            SelectionError: ``_MAX_LOCATE_STEPS``번 안에 찾지 못한 경우(``SELECTION_NOT_LOCATED``)
-        """
-        group = self._group
-        index = self._clamp(group.first + bisect_right(self._estimates, seconds) - 1)
-        visited: set[int] = set()
-        for _ in range(_MAX_LOCATE_STEPS):
-            visited.add(index)
-            begin, end = self._span(index)
-            if seconds < begin and index > group.first:
-                jump = min(int((seconds - begin) / max(end - begin, _MIN_SPAN_SECONDS)) - 1, -1)
-            elif seconds >= end and index < group.last:
-                jump = max(int((seconds - begin) / max(end - begin, _MIN_SPAN_SECONDS)), 1)
-            else:
-                return index
-            moved = self._clamp(index + jump)
-            if moved in visited:
-                # 이웃을 오가고 있다 — 두 세그먼트 사이의 빈 자리다. 뒤의 것을 고른다
-                return max(index, moved)
-            index = moved
-        raise SelectionError({self._number: (SELECTION_NOT_LOCATED,)})
-
-    def _clamp(self, index: int) -> int:
-        return min(max(index, self._group.first), self._group.last)
-
-    def _span(self, index: int) -> tuple[float, float]:
-        """세그먼트 index가 실제로 차지하는 VOD 시각 [시작, 끝)."""
-        begin, end = _original_span(self._init, self._segment_at(index))
-        return float(begin - self._group.origin), float(end - self._group.origin)
+        for section in planned
+    )
 
 
 def _original_span(init: Fmp4Init, segment: Fmp4Segment) -> tuple[Fraction, Fraction]:
@@ -398,41 +274,3 @@ def _original_span(init: Fmp4Init, segment: Fmp4Segment) -> tuple[Fraction, Frac
                 _seconds(track, max(ends)),
             )
     raise Mp4Error(MP4_INVALID, "세그먼트에 샘플이 없다")
-
-
-def _last_segment_with_video(
-    segment_at: Callable[[int], Fmp4Segment], lowest: int, last: int
-) -> int:
-    """last에서 앞으로 가며 영상 샘플이 든 첫 세그먼트를 찾는다. lowest보다 앞으로는 가지 않는다.
-
-    마지막 세그먼트에 오디오만 든 영상이 있다 — 그러면 마지막 프레임은 그 앞 세그먼트에 있다.
-    """
-    index = last
-    while index > lowest and not segment_at(index).video.presentation_times:
-        index -= 1
-    return index
-
-
-def _has_lead(frames: CutFrames, first_frame: int) -> bool:
-    """입력이 구간의 첫 프레임보다 충분히 앞에서 시작하는지 — 앞 키프레임과 오디오.
-
-    컷은 (첫 프레임 − SOURCE_LEAD_SECONDS)의 앞 키프레임으로 가고, ffmpeg는 오디오를 그
-    키프레임의 DTS에 맞춘다. 입력의 오디오가 그 DTS보다 뒤에서 시작하면 세그먼트 전부를
-    이은 입력과 디코드를 시작하는 패킷이 달라진다 — 디코드 결과가 시작 위치에 따라 달라지는
-    오디오가 있어(잡음 대체) 잘라 낸 오디오까지 달라진다.
-    """
-    wanted = frames.frame_pts[first_frame] - SOURCE_LEAD_SECONDS
-    before = [key for key in frames.keyframes if frames.frame_pts[key] <= wanted]
-    if not before:
-        return False
-    if frames.audio_start is None:
-        return True
-    return frames.audio_start <= frames.frame_dts[before[-1]] + _AUDIO_SEEK_SLACK
-
-
-def _has_tail(frames: CutFrames, last_frame: int, end: float) -> bool:
-    """입력에 구간의 끝 프레임과 그 프레임이 끝날 때까지의 오디오가 있는지."""
-    if end > frames.frame_pts[-1] + frames.frame_duration / 2:
-        return False  # 끝 프레임이 이 뒤에 있다
-    frame_end = frames.frame_pts[last_frame] + frames.frame_duration
-    return frames.audio_end is None or frames.audio_end >= frame_end

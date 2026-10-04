@@ -15,6 +15,9 @@ TS 세그먼트에는 mp4의 moov 같은 색인이 없다. 프레임 시각과 �
 - ``build_ts_index`` — VOD 시작을 0으로 맞추고 33비트 랩어라운드를 풀어
   초 단위 색인(``TsIndex``)을 만든다. 프레임 길이와 오디오가 끝나는 시각도 구한다
 - ``ts_video_span`` — 색인의 영상이 차지하는 시각 범위를 돌려준다
+- ``ts_audio_span`` — 오디오가 차지하는 시각 범위를 돌려준다. 영상 프레임이 없는
+  세그먼트를 잴 때 쓴다(``build_ts_index``는 그런 세그먼트를 받지 않는다)
+- ``join_ts_streams`` — 세그먼트마다 읽은 ``TsStreams``를 순서대로 하나로 잇는다
 
 TS에는 mp4와 달리 프레임(샘플)의 길이가 적혀 있지 않다. 영상 프레임의 길이는 PTS
 간격에서 재고, 오디오가 끝나는 시각은 마지막 오디오 PES에 든 프레임 수로 구한다 —
@@ -35,6 +38,7 @@ TS에는 mp4와 달리 프레임(샘플)의 길이가 적혀 있지 않다. 영�
 """
 
 from collections import Counter
+from collections.abc import Sequence
 
 from core.models.ts_index import TsIndex, TsStreams
 
@@ -234,19 +238,8 @@ def build_ts_index(streams: TsStreams, origin: int, expected_start: float | None
     if not streams.video_pts:
         raise TsError(TS_INVALID, "영상 프레임이 없다")
 
-    def first_ticks(stamp: int) -> int:
-        ticks = (stamp - origin) % _WRAP
-        if ticks > _WRAP - _MAX_LEAD_TICKS:
-            ticks -= _WRAP
-        if expected_start is not None:
-            ticks += round((expected_start * TS_CLOCK - ticks) / _WRAP) * _WRAP
-        return ticks
-
     def unwrap(stamps: tuple[int, ...]) -> list[int]:
-        ticks = [first_ticks(stamps[0])]
-        for previous, current in zip(stamps, stamps[1:]):
-            ticks.append(ticks[-1] + _nearest(current - previous))
-        return ticks
+        return _unwrap(stamps, origin, expected_start)
 
     decode = unwrap(streams.video_dts)
     present = [
@@ -289,7 +282,79 @@ def ts_video_span(index: TsIndex, frame_duration: float | None = None) -> tuple[
     return index.frame_pts[0], index.frame_pts[-1] + length
 
 
+def ts_audio_span(
+    streams: TsStreams, origin: int, expected_start: float | None = None
+) -> tuple[float, float | None] | None:
+    """오디오가 차지하는 시각 (첫 PES의 PTS, 끝나는 시각)을 돌려준다 — VOD 시작 = 0 기준 초.
+
+    영상 프레임이 없는 세그먼트(오디오만 든 마지막 세그먼트 등)가 놓인 시각을 잴 때 쓴다.
+    ``build_ts_index``는 그런 세그먼트를 거부한다. 시각을 맞추는 방법(origin ·
+    ``expected_start`` · 랩어라운드)은 ``build_ts_index``와 같다.
+
+    Returns:
+        (시작, 끝). 끝은 마지막 PES의 프레임 수를 읽지 못했으면 None이다. 오디오 PES가
+        하나도 없으면 None
+    """
+    if not streams.audio_pts:
+        return None
+    audio = _unwrap(streams.audio_pts, origin, expected_start)
+    return min(audio) / TS_CLOCK, _audio_end(streams, audio)
+
+
+def join_ts_streams(parts: Sequence[TsStreams]) -> TsStreams:
+    """세그먼트마다 읽은 ``TsStreams``를 준 순서대로 하나로 잇는다.
+
+    세그먼트의 bytes를 이어 붙여 ``parse_ts``에 넣은 것과 같은 결과다 — 세그먼트를 이미
+    읽어 둔 쪽이 다시 읽지 않고 여러 세그먼트의 색인을 만들 때 쓴다.
+
+    오디오 프레임 수(``audio_frames``)는 모든 조각이 PES마다의 값을 갖고 있을 때만 잇는다.
+    하나라도 없으면 빈 튜플이다. 표본화율은 값을 가진 마지막 조각의 것이다.
+    """
+    video_pts: list[int] = []
+    video_dts: list[int] = []
+    keyframes: list[int] = []
+    audio_pts: list[int] = []
+    audio_frames: list[int] = []
+    counted = all(len(part.audio_frames) == len(part.audio_pts) for part in parts)
+    rate: int | None = None
+    for part in parts:
+        keyframes += [len(video_pts) + key for key in part.video_keyframes]
+        video_pts += part.video_pts
+        video_dts += part.video_dts
+        audio_pts += part.audio_pts
+        if counted:
+            audio_frames += part.audio_frames
+        if part.audio_sample_rate is not None:
+            rate = part.audio_sample_rate
+    return TsStreams(
+        video_pts=tuple(video_pts),
+        video_dts=tuple(video_dts),
+        video_keyframes=tuple(keyframes),
+        audio_pts=tuple(audio_pts),
+        audio_frames=tuple(audio_frames),
+        audio_sample_rate=rate,
+    )
+
+
 # ================================================================ 내부
+
+
+def _unwrap(stamps: Sequence[int], origin: int, expected_start: float | None) -> list[int]:
+    """33비트 원시 타임스탬프를 origin = 0 기준의 이어지는 틱으로 푼다.
+
+    첫 값은 origin과의 차이를 0 이상으로 읽고(origin보다 최대 10초 앞선 값만 음수),
+    ``expected_start``가 있으면 랩어라운드 횟수를 그 시각에 가장 가깝게 맞춘다. 그 뒤의
+    값은 앞 값과의 차이로 잇는다.
+    """
+    first = (stamps[0] - origin) % _WRAP
+    if first > _WRAP - _MAX_LEAD_TICKS:
+        first -= _WRAP
+    if expected_start is not None:
+        first += round((expected_start * TS_CLOCK - first) / _WRAP) * _WRAP
+    ticks = [first]
+    for previous, current in zip(stamps, stamps[1:]):
+        ticks.append(ticks[-1] + _nearest(current - previous))
+    return ticks
 
 
 def _frame_ticks(present: list[int]) -> int | None:
