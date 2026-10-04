@@ -320,6 +320,25 @@ def test_span_of_a_segment_without_video_needs_the_audio_end():
     assert info.value.message_key == TS_UNSUPPORTED
 
 
+def test_plan_does_not_look_for_a_time_in_an_audio_only_segment_after_the_video():
+    """구간의 끝 시각을 찾을 때 영상이 끝난 뒤의 오디오만 든 세그먼트는 읽지 않아야 한다 — 추정이 그 세그먼트를 가리켜도.
+
+    1초 세그먼트 둘 뒤에 ADTS가 아닌 오디오만 든 세그먼트(시각 범위를 구할 수 없다).
+    플레이리스트의 #EXTINF가 0.8 · 0.8초로 실제보다 짧아 1.8초의 추정이 그 세그먼트를 가리킨다.
+    구간 1.2 ~ 1.8초 (끝 프레임 105번은 세그먼트 1에 있다)
+    -> 계획이 선다. 첫 프레임 69번 · 끝 프레임 105번, 세그먼트 0 ~ 2
+       (오디오의 끝을 몰라 끝 프레임이 든 세그먼트의 다음 세그먼트까지 넣는다)
+    """
+    segments = _recording([SEGMENT, SEGMENT, 0], audio="plain", extra_audio=12)
+    playlist = _playlist([0.8, 0.8, 0.256])
+
+    section = plan_ts_sections(playlist, [TimeRange(1.2, 1.8)], segments.__getitem__, FPS)[0]
+
+    assert section.first_pts == pytest.approx(_pts(69), abs=1e-9)
+    assert section.last_pts == pytest.approx(_pts(105), abs=1e-9)
+    assert (section.first_segment, section.last_segment) == (0, 2)
+
+
 def test_plan_follows_timestamps_through_the_33bit_wraparound():
     """33비트 타임스탬프가 영상 도중에 0으로 돌아가도 구간의 프레임과 세그먼트가 같아야 한다.
 

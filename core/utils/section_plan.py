@@ -169,6 +169,9 @@ class SegmentGroup:
     end: Seconds  # 이 묶음의 마지막 영상 프레임이 끝나는 VOD 시각(초)
     # 시각의 기준 — (세그먼트의 원래 시각 − origin)이 VOD 시각이다
     origin: Seconds
+    # 영상 프레임이 든 마지막 세그먼트의 인덱스 — 그 뒤에는 오디오만 든 세그먼트가 있을 수
+    # 있다. 구간의 시각은 영상 길이 안이므로 그 뒤의 세그먼트에서는 찾지 않는다
+    last_video: int
 
 
 @dataclass(frozen=True)
@@ -218,8 +221,13 @@ def timeline(playlist: HlsPlaylist, source: SectionSource) -> SectionTimeline:
     for first, after in zip(bounds, bounds[1:]):
         last = after - 1
         origin = source.origin_of(first) - start
-        end = source.span_of(_last_segment_with_video(source, first, last))[1] - origin
-        groups.append(SegmentGroup(first=first, last=last, start=start, end=end, origin=origin))
+        last_video = _last_segment_with_video(source, first, last)
+        end = source.span_of(last_video)[1] - origin
+        groups.append(
+            SegmentGroup(
+                first=first, last=last, start=start, end=end, origin=origin, last_video=last_video
+            )
+        )
         start = end
     return SectionTimeline(groups=tuple(groups), duration=float(groups[-1].end))
 
@@ -340,6 +348,10 @@ class _Locator:
     있으면 첫 세그먼트와의 차이, 아니면 ``#EXTINF``의 누적. 추정한 세그먼트를 읽어 그
     세그먼트의 실제 시각 범위에 구하는 시각이 들어 있는지 본다. 없으면 그 세그먼트의 실제
     시작과 길이로 몇 세그먼트 떨어져 있는지 다시 추정해 옮겨 간다.
+
+    영상 프레임이 든 마지막 세그먼트(``SegmentGroup.last_video``)까지만 본다. 그 뒤의
+    오디오만 든 세그먼트는 읽지 않는다 — 구간의 시각은 영상 길이 안이라 거기 놓일 수 없고,
+    그런 세그먼트는 시각 범위를 구하지 못할 수 있다(오디오가 끝나는 시각을 모르는 입력).
     """
 
     def __init__(
@@ -376,7 +388,7 @@ class _Locator:
             begin, end = self._span(index)
             if seconds < begin and index > group.first:
                 jump = min(int((seconds - begin) / max(end - begin, _MIN_SPAN_SECONDS)) - 1, -1)
-            elif seconds >= end and index < group.last:
+            elif seconds >= end and index < group.last_video:
                 jump = max(int((seconds - begin) / max(end - begin, _MIN_SPAN_SECONDS)), 1)
             else:
                 return index
@@ -388,7 +400,7 @@ class _Locator:
         raise SelectionError({self._number: (SELECTION_NOT_LOCATED,)})
 
     def _clamp(self, index: int) -> int:
-        return min(max(index, self._group.first), self._group.last)
+        return min(max(index, self._group.first), self._group.last_video)
 
     def _span(self, index: int) -> tuple[float, float]:
         """세그먼트 index가 실제로 차지하는 VOD 시각 [시작, 끝)."""
