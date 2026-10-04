@@ -588,13 +588,14 @@ def test_audio_end_of_joined_segments_is_the_end_of_the_last_one():
     """세그먼트를 이어 붙인 것의 오디오가 끝나는 시각은 마지막 세그먼트의 것이어야 한다.
 
     합성 세그먼트 0 · 1을 이은 bytes
-    -> audio_frames == 두 세그먼트의 것을 이은 것, audio_end == 세그먼트 1의 audio_end
+    -> audio_frames == 두 세그먼트의 것을 이은 것,
+       audio_end == (세그먼트 2의 첫 오디오 PTS − ORIGIN) ÷ 90,000
     """
     streams = parse_ts(_segment(0) + _segment(1))
     index = build_ts_index(streams, ORIGIN)
 
     assert streams.audio_frames == AUDIO_COUNTS[0] + AUDIO_COUNTS[1]
-    assert index.audio_end == pytest.approx(_index_of(1).audio_end, abs=1e-9)
+    assert index.audio_end == pytest.approx((_segment_audio(2)[0][0] - ORIGIN) / 90_000, abs=1e-9)
 
 
 @pytest.mark.parametrize(
