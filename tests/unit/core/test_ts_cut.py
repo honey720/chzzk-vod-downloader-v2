@@ -29,7 +29,7 @@ from core.api.hls_ts import fetch_ts_head, segment_streams, ts_segment_file_name
 from core.downloaders.decrypt import sequence_iv
 from core.models.plan import TimeRange
 from core.utils.cut_check import check_cut
-from core.utils.ffmpeg import get_ffmpeg_exe
+from core.utils.ffmpeg import get_ffmpeg_exe, run_ffmpeg
 from core.utils.hybrid_cut import CUT_FAILED, CutError
 from core.utils.ts_cut import cut_ts_section, ts_frame_number
 from core.utils.ts_sections import TsSectionSource, choose_ts_frame_rate, plan_ts_sections
@@ -121,10 +121,17 @@ class _Planned:
 
 
 def _decoded(path: str) -> list[str]:
-    """디코드한 영상 프레임마다의 해시 — 표시 순서."""
-    done = _ffmpeg(
-        "-i", path, "-map", "0:v:0", "-fps_mode", "passthrough", "-f", "framemd5", "-"
+    """디코드한 영상 프레임마다의 해시 — 표시 순서.
+
+    제품의 실행 함수(run_ffmpeg)로 돌린다 — 리눅스 동봉 ffmpeg는 가드(#97) 없이 TS를 읽으면
+    죽는다.
+    """
+    done = run_ffmpeg(
+        ["-v", "error", "-i", path, "-map", "0:v:0", "-fps_mode", "passthrough",
+         "-f", "framemd5", "-"],
+        timeout=120,
     )  # fmt: skip
+    assert done.returncode == 0, done.stderr
     return [line.rsplit(",", 1)[-1].strip() for line in done.stdout.splitlines() if line[0] != "#"]
 
 
