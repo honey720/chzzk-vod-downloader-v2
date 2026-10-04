@@ -26,7 +26,9 @@ class CutFrames:
     timescale: int  # 영상 트랙의 초당 틱 수 — 재인코딩 조각과 결과 파일이 이 값을 쓴다
     frame_duration: float  # 프레임 하나의 길이(초) — 가장 많은 샘플 길이
     audio_start: float | None  # 오디오가 시작하는 시각. 오디오가 없으면 None
-    audio_end: float | None  # 오디오가 끝나는 시각. 오디오가 없으면 None
+    # 오디오가 끝나는 시각. 오디오가 없으면 None이다. 오디오가 있는데(audio_start가 값)
+    # 끝나는 시각을 읽지 못한 입력도 None이다 — 오디오가 있는지는 audio_start로 가린다
+    audio_end: float | None
     # 입력 파일이 시작하는 시각. 세그먼트 일부만 이어 붙인 입력은 0이 아니다 —
     # ffmpeg의 -ss는 파일의 시작부터 센다
     input_start: float = 0.0

@@ -17,7 +17,9 @@ from core.api.mpegts import (
     TS_UNSUPPORTED,
     TsError,
     build_ts_index,
+    join_ts_streams,
     parse_ts,
+    ts_audio_span,
     ts_origin,
     ts_video_span,
 )
@@ -699,3 +701,91 @@ def test_video_span_of_a_single_frame_needs_a_frame_duration():
         ts_video_span(index)
     assert info.value.message_key == TS_UNSUPPORTED
     assert ts_video_span(index, 1 / 60) == (0.0, pytest.approx(1 / 60))
+
+
+# ================================================================ 오디오의 시각 범위 · 스트림 잇기
+
+
+def test_audio_span_measures_a_segment_that_has_no_video():
+    """ts_audio_span은 영상 프레임이 없는 세그먼트에서도 오디오가 놓인 시각을 돌려줘야 한다.
+
+    오디오 PES 둘만 든 TS — PTS 90,000 · 136,080(24프레임 뒤), 프레임 수 24 · 12. origin 0
+    -> (1.0, (136,080 + 12 × 1,920) ÷ 90,000). build_ts_index는 이 입력을 거부한다
+    """
+    data = pat_packet() + pmt_packet()
+    data += audio_pes(90_000, payload=adts_frame() * 24)
+    data += audio_pes(136_080, payload=adts_frame() * 12)
+    streams = parse_ts(data)
+
+    begin, end = ts_audio_span(streams, origin=0)
+
+    assert begin == pytest.approx(1.0, abs=1e-9)
+    assert end == pytest.approx((136_080 + 12 * AAC_FRAME) / 90_000, abs=1e-9)
+    with pytest.raises(TsError):
+        build_ts_index(streams, origin=0)
+
+
+def test_audio_span_has_no_end_when_frames_cannot_be_counted():
+    """ts_audio_span은 프레임 수를 읽지 못한 오디오의 끝을 None으로 돌려줘야 한다.
+
+    ADTS가 아닌 오디오 PES 하나(PTS 3000), origin 3000
+    -> (0.0, None)
+    """
+    streams = parse_ts(build_ts([Frame(pts=3000, idr=True)], audio=[3000]))
+
+    assert ts_audio_span(streams, origin=3000) == (0.0, None)
+
+
+def test_audio_span_is_none_without_audio():
+    """ts_audio_span은 오디오 PES가 없으면 None을 돌려줘야 한다.
+
+    영상 프레임만 든 TS
+    -> None
+    """
+    streams = parse_ts(build_ts(_reordered_frames()))
+
+    assert ts_audio_span(streams, origin=3000) is None
+
+
+def test_audio_span_follows_the_expected_start_through_the_wraparound():
+    """ts_audio_span은 expected_start를 받으면 랩어라운드 횟수를 그 시각에 맞춰야 한다.
+
+    오디오 PES 하나(PTS 90,000 · 24프레임), origin 0, expected_start = 한 바퀴(2³³틱) 뒤의 1초
+    -> 시작 == 2³³ ÷ 90,000 + 1
+    """
+    data = pat_packet() + pmt_packet() + audio_pes(90_000, payload=adts_frame() * 24)
+    lap = WRAP / 90_000
+
+    begin, end = ts_audio_span(parse_ts(data), origin=0, expected_start=lap + 1)
+
+    assert begin == pytest.approx(lap + 1, abs=1e-6)
+    assert end == pytest.approx(lap + 1 + 24 * AAC_FRAME / 90_000, abs=1e-6)
+
+
+def test_joined_streams_equal_the_streams_of_joined_bytes():
+    """join_ts_streams의 결과는 세그먼트의 bytes를 이어 parse_ts에 넣은 것과 같아야 한다.
+
+    합성 세그먼트 0 · 1 · 2를 따로 읽어 이은 것과, bytes를 이어 한 번에 읽은 것
+    -> 두 TsStreams가 같다(키프레임 번호는 앞 세그먼트의 프레임 수만큼 밀린다)
+    """
+    parts = [parse_ts(_segment(number)) for number in range(3)]
+
+    joined = join_ts_streams(parts)
+
+    assert joined == parse_ts(_segment(0) + _segment(1) + _segment(2))
+    assert joined.video_keyframes == (0, 120, 240, 360, 480, 600)
+
+
+def test_joined_streams_drop_frame_counts_when_a_part_has_none():
+    """join_ts_streams는 프레임 수가 없는 조각이 섞이면 프레임 수를 잇지 않아야 한다.
+
+    합성 세그먼트 0의 TsStreams와, 오디오 PTS만 있고 프레임 수가 없는 직접 만든 TsStreams
+    -> audio_pts는 이어지고 audio_frames == ()
+    """
+    counted = parse_ts(_segment(0))
+    bare = TsStreams(video_pts=(), video_dts=(), video_keyframes=(), audio_pts=(1, 2))
+
+    joined = join_ts_streams([counted, bare])
+
+    assert joined.audio_pts == counted.audio_pts + (1, 2)
+    assert joined.audio_frames == ()
