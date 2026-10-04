@@ -598,6 +598,24 @@ def test_audio_end_of_joined_segments_is_the_end_of_the_last_one():
     assert index.audio_end == pytest.approx((_segment_audio(2)[0][0] - ORIGIN) / 90_000, abs=1e-9)
 
 
+def test_audio_end_uses_the_sample_rate_of_the_last_audio_pes():
+    """표본화율이 도중에 바뀌면 오디오가 끝나는 시각은 마지막 오디오 PES의 표본화율로 구해야 한다.
+
+    오디오 PES 둘 — PTS 0에 44.1kHz 10프레임, PTS 90,000(1초)에 48kHz 5프레임. origin 0
+    -> audio_sample_rate == 48000, audio_end == 1 + 5 × 1024 ÷ 48000
+    """
+    data = build_ts([Frame(pts=0, idr=True)])
+    data += audio_pes(0, payload=adts_frame(sample_rate=44100) * 10)
+    data += audio_pes(90_000, payload=adts_frame(sample_rate=48000) * 5)
+
+    streams = parse_ts(data)
+    index = build_ts_index(streams, origin=0)
+
+    assert streams.audio_frames == (10, 5)
+    assert streams.audio_sample_rate == 48000
+    assert index.audio_end == pytest.approx(1 + 5 * 1024 / 48000, abs=1e-9)
+
+
 @pytest.mark.parametrize(
     ("frame_ticks", "expected"),
     [(1500, 1 / 60), (3000, 1 / 30), (3600, 1 / 25)],

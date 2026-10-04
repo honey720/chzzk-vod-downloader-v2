@@ -30,7 +30,8 @@ class TsStreams:
     # 오디오이거나 PES 본문이 ADTS 머리로 시작하지 않으면 그 PES는 0이다. 직접 만든 객체는
     # 빈 튜플일 수 있다
     audio_frames: tuple[int, ...] = ()
-    audio_sample_rate: int | None = None  # 오디오 표본화율(Hz) — ADTS 머리에서 읽는다. 모르면 None
+    # 오디오 표본화율(Hz) — 프레임을 센 마지막 오디오 PES의 ADTS 머리에서 읽은 값. 모르면 None
+    audio_sample_rate: int | None = None
 
 
 @dataclass(frozen=True)

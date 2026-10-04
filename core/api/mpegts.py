@@ -89,7 +89,9 @@ def parse_ts(data: bytes) -> TsStreams:
     NAL이 첫 패킷 밖에 있을 수 있다.
 
     오디오가 AAC(ADTS)면 PES마다 든 프레임 수와 표본화율도 읽는다(``audio_frames`` ·
-    ``audio_sample_rate``). 다른 오디오 형식이면 프레임 수는 모두 0이다.
+    ``audio_sample_rate``). 다른 오디오 형식이면 프레임 수는 모두 0이다. 표본화율은
+    프레임을 센 마지막 PES의 값이다 — 도중에 바뀌는 스트림이면 오디오가 끝나는 시각을
+    구할 때 마지막 PES의 것이 필요하다.
 
     Raises:
         TsError: 길이가 188의 배수가 아니거나 동기 바이트가 틀린 경우(``TS_INVALID``),
@@ -105,7 +107,7 @@ def parse_ts(data: bytes) -> TsStreams:
     keyframes: list[int] = []
     audio_pts: list[int] = []
     audio_frames: list[int] = []
-    audio_rates: list[int] = []  # ADTS 머리에서 읽은 표본화율 — 첫 값을 쓴다
+    audio_rates: list[int] = []  # 프레임을 센 PES마다 ADTS 머리에서 읽은 표본화율
     video_chunks: list[bytes] = []  # 지금 모으는 영상 PES의 조각
     video_random_access = False
     audio_chunks: list[bytes] = []  # 지금 모으는 오디오 PES의 조각
@@ -183,7 +185,8 @@ def parse_ts(data: bytes) -> TsStreams:
         video_keyframes=tuple(keyframes),
         audio_pts=tuple(audio_pts),
         audio_frames=tuple(audio_frames),
-        audio_sample_rate=audio_rates[0] if audio_rates else None,
+        # 마지막 값이다 — 오디오가 끝나는 시각은 마지막 PES의 프레임 수에 이 값을 쓴다
+        audio_sample_rate=audio_rates[-1] if audio_rates else None,
     )
 
 
