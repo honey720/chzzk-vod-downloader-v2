@@ -28,17 +28,17 @@ import requests
 
 import core.downloaders.integrity as integrity
 from core.api.hls import parse_media_playlist
+from core.api.hls_ts import open_ts_segment, segment_iv
 from core.api.session import get_thread_session
 from core.downloaders.base import REQUEST_TIMEOUT, BaseDownloader
-from core.downloaders.decrypt import decrypt_segment, looks_like_ts, sequence_iv
+from core.downloaders.decrypt import DecryptionError, decrypt_segment, looks_like_ts
 from core.models.content import Content, ContentType
 from core.models.download_state import DownloadState
 from core.models.plan import DownloadPlan
 from core.utils.paths import choose_temp_dir
 
 
-class DecryptionError(Exception):
-    """복호화 결과가 유효한 미디어가 아닐 때 — 키·IV 규칙 불일치 신호."""
+__all__ = ["DecryptionError", "HlsAesDownloader"]  # DecryptionError는 decrypt.py에 있다
 
 
 class HlsAesDownloader(BaseDownloader):
@@ -178,8 +178,7 @@ class HlsAesDownloader(BaseDownloader):
 
     def _segment_iv(self, index: int) -> bytes:
         """세그먼트의 IV — 명시 IV가 있으면 그 값, 없으면 미디어 시퀀스 번호."""
-        explicit = self._playlist.key.iv
-        return explicit if explicit is not None else sequence_iv(self._playlist.sequence_of(index))
+        return segment_iv(self._playlist, index)
 
     # ============ 후처리: 순서 보장 병합 ============
 
@@ -245,24 +244,25 @@ class HlsAesDownloader(BaseDownloader):
                             else:
                                 slow_count = 0
 
-                # 받은 세그먼트가 온전한지 확인한다 (#321) — 잘린 본문이 200과 맞는
-                # Content-Length로 올 수 있다. 블록 중간에서 잘린 암호문은 복호화가
-                # 키 문제로 보고 전체를 실패시키므로 복호화 전에 걸러 다시 받는다.
-                # 온전하지 않으면 아래 except가 일시 오류로 다시 받게 한다
-                integrity.check_content_length(getattr(response, "headers", None), downloaded_size)
-                integrity.check_cbc_ciphertext(bytes(buffer))
-
+                # 받은 세그먼트가 온전한지 확인하고 복호화한다 (#321) — 잘린 본문이 200과
+                # 맞는 Content-Length로 올 수 있다. 블록 중간에서 잘린 암호문은 복호화가
+                # 키 문제로 보고 전체를 실패시키므로 복호화 전에 걸러 다시 받고, 블록
+                # 경계에서 잘린 암호문은 복호화를 통과하므로 복호화한 TS로 확인한다.
+                # 확인하는 순서는 구간 해석과 같은 함수에 있다(open_ts_segment, #309).
+                # 온전하지 않으면(TruncatedSegmentError) 아래 except가 일시 오류로 다시 받게 한다
                 try:
-                    plain = decrypt_segment(bytes(buffer), self._key, self._segment_iv(index))
+                    plain = open_ts_segment(
+                        bytes(buffer),
+                        getattr(response, "headers", None),
+                        self._key,
+                        self._segment_iv(index),
+                    )
                 except (ValueError, DecryptionError) as e:
                     # 복호화 실패는 재시도해도 낫지 않는다(키·정렬 문제). 재큐잉하면
                     # 무한 루프가 되고, 그대로 전파하면 future_dict가 정리되지 않아
                     # 실행 루프가 끝나지 않는다 — 다운로드 전체를 중단시킨다
                     self._fail_fatally(e, "Segment decryption failed")
                     return part_num
-
-                # 블록 경계에서 잘린 암호문은 복호화를 통과한다 — 복호화한 TS로 확인한다
-                integrity.check_ts_segment(plain)
 
                 temp_file = os.path.join(self.temp_dir, f"{index:0{self.width}d}.ts")
                 with open(temp_file, "wb") as f:

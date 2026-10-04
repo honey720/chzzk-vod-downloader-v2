@@ -11,7 +11,10 @@ HLS로 내려오는 VOD는 세그먼트 파일의 목록이다. 구간만 받으
 해석은 ``core.api.mpegts``, 구간 → 세그먼트 계산은 ``core.utils.hls_ranges``가 한다.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from fractions import Fraction
+
+from core.api.hls import HlsPlaylist
 
 
 @dataclass(frozen=True)
@@ -63,3 +66,31 @@ class SegmentSpan:
     last: int  # 받을 마지막 세그먼트
     cover_first: int  # 구간의 시작 시각이 놓인 세그먼트
     cover_last: int  # 구간의 끝 시각이 놓인 세그먼트
+
+
+@dataclass
+class TsHead:
+    """구간을 정하려고 받은 것을 담는다 — 플레이리스트와 세그먼트의 프레임 정보 (#309).
+
+    암호화 VOD의 구간 다운로드는 받기 전에 프레임 시각을 알아야 한다. 그때 받은 것을 들고
+    있다가 엔진이 그대로 쓴다 — 같은 것을 두 번 받지 않는다(``Fmp4Head``와 같은 역할이다).
+    ``segments``는 받는 대로 채워지는 보관함이라 이 객체는 불변이 아니다.
+
+    프레임 정보를 읽으려고 받은 세그먼트의 **복호화한** 본문은 메모리에 두지 않고
+    ``segment_dir``에 파일로 둔다. 엔진은 그 폴더를 세그먼트 임시 폴더로 쓰고, ``stored``에 든
+    세그먼트는 다시 받지 않는다.
+
+    **복호화 키는 담지 않는다.** 엔진은 키를 다시 받는다 — 키 값이 이 객체를 따라
+    ``Content`` · repr · 로그로 나가지 않는다.
+    """
+
+    playlist: HlsPlaylist  # 미디어 플레이리스트
+    # 세그먼트 인덱스 → 복호화한 그 세그먼트를 parse_ts로 읽은 결과. 읽은 것만 들어 있다
+    segments: dict[int, TsStreams] = field(default_factory=dict)
+    # 구간을 해석한 쪽이 정한 프레임률(core.utils.ts_sections.choose_ts_frame_rate). 구간의
+    # 시각을 이 값으로 만들었다 — 엔진이 같은 값으로 계획한다. None이면 엔진이 정한다
+    frame_rate: Fraction | None = None
+    # 받은 세그먼트(복호화한 것)를 두는 폴더 — 엔진의 세그먼트 임시 폴더다. None이면 받은 본문을 버린다
+    segment_dir: str | None = None
+    # 이 객체가 segment_dir에 온전하게 받아 둔 세그먼트의 인덱스
+    stored: set[int] = field(default_factory=set)
