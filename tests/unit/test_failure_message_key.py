@@ -14,6 +14,7 @@ from core.api.playback_tracks import STREAM_NOT_FOUND, StreamSelectionError
 from core.downloaders.base import PostprocessError
 from core.downloaders.hls_aes_downloader import DecryptionError
 from core.utils.ffmpeg import FFmpegNotFoundError, RemuxError
+from core.utils.hybrid_cut import CUT_FAILED, CUT_TIMEOUT, CUT_UNSUPPORTED, CutError
 
 
 class _FakeHttpResponse:
@@ -80,3 +81,30 @@ class TestFailureMessageKey:
 
     def test_unknown_exception_has_no_key(self):
         assert _failure_message_key(RuntimeError("anything")) is None
+
+    def test_cut_failure_has_its_own_key(self):
+        """PostprocessError의 원인이 CutError면 컷 실패의 키여야 한다 (#309).
+
+        원인이 CutError(CUT_FAILED) · CutError(CUT_TIMEOUT) · CutError(CUT_UNSUPPORTED)
+        -> 셋 모두 "Section cut failed"
+        """
+        keys = []
+        for cut_key in (CUT_FAILED, CUT_TIMEOUT, CUT_UNSUPPORTED):
+            error = PostprocessError("후처리(cut) 실패")
+            error.__cause__ = CutError(cut_key, "시험")
+            keys.append(_failure_message_key(error))
+
+        assert keys == ["Section cut failed"] * 3
+
+    def test_cut_failure_caused_by_missing_ffmpeg_keeps_the_ffmpeg_key(self):
+        """컷이 ffmpeg 실행 파일을 찾지 못해 실패했으면 ffmpeg를 찾지 못했다는 키여야 한다 (#309).
+
+        PostprocessError ← CutError ← FFmpegNotFoundError
+        -> "Postprocessing failed - ffmpeg not found"
+        """
+        cut = CutError(CUT_FAILED, "ffmpeg 없음")
+        cut.__cause__ = FFmpegNotFoundError("imageio-ffmpeg 패키지 미설치")
+        error = PostprocessError("후처리(cut) 실패")
+        error.__cause__ = cut
+
+        assert _failure_message_key(error) == "Postprocessing failed - ffmpeg not found"

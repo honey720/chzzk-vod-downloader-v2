@@ -49,6 +49,7 @@ from core.utils.paths import build_section_output_paths
 from core.utils.ts_sections import choose_ts_frame_rate, plan_ts_sections
 from tests.unit.core.midway_cut_failure import MidwayCutFailure
 from tests.unit.core.range_host import RangeHost
+from tests.unit.core.section_retry import CutCalls, hand_over, snapshot
 
 KEY = bytes.fromhex("7c1d9e42a05b63f8817e2c4d6a9b0f35")  # 테스트용 키 — 실제 키가 아니다
 WRONG_KEY = bytes.fromhex("0f1e2d3c4b5a69788796a5b4c3d2e1f0")  # 테스트용 — 복호화가 틀어진다
@@ -890,3 +891,109 @@ def test_download_without_sections_keeps_the_remux_path(vod, host, tmp_path):
     assert run.key_requests == [KEY_URI]
     assert _segment_requests(host) == sorted([*_names(range(vod.last + 1)), *_names({0})])
     assert run.listing() == ["unused.mp4"]
+
+
+# ================================================================ 실패한 구간만 다시 처리 (#309)
+
+THREE = [FIRST, MIDDLE, SECOND]
+THREE_FILES = ["구간 시험 144p_1.mp4", "구간 시험 144p_2.mp4", "구간 시험 144p_3.mp4"]
+JOINED_ARG = 5  # cut_ts_section의 여섯째 위치 인자 — 다시 싼 mp4를 둘 경로
+
+
+def test_retry_cuts_only_the_failed_section_from_the_kept_segments_without_requests(
+    vod, host, tmp_path, monkeypatch
+):
+    """둘째 구간만 실패한 실행을 이어받은 실행은 둘째만 잘라야 하고 아무것도 요청하지 않아야 한다.
+
+    첫 실행: 구간 셋, 둘째 컷이 도중에 실패. 이어받은 실행: 새 엔진에 첫 실행이 남긴 것과 그때의 경로를 넘김
+    -> 컷 호출 1회(`_2`), 완료 1회 · 실패 0건, 이어받은 실행 동안의 호스트 요청 0건 · 키 요청 0회,
+       `_1` · `_3`의 수정 시각 · 내용이 그대로, 경로가 첫 실행과 같다,
+       저장 폴더에 `_1` · `_2` · `_3`뿐(임시 폴더 없음), `_2`가 판정 통과,
+       구간 상태 == (전체 3, 완료 3, 실패 0, 이어받음 2)
+    """
+    cuts = CutCalls(monkeypatch, aes_module, "cut_ts_section", source_arg=JOINED_ARG)
+    cuts.fail_on = (2,)
+    failed = _Run(host, tmp_path, THREE).start()
+    assert len(failed.failures) == 1
+    kept = snapshot([failed.paths[0], failed.paths[2]])
+    requests_before = len(host.requests)
+    cuts.restart()
+
+    again = hand_over(failed, _Run(host, tmp_path, THREE)).start()
+
+    assert (again.finished, again.failures) == (1, [])
+    assert cuts.outputs == [THREE_FILES[1]]
+    assert host.requests[requests_before:] == []
+    assert again.key_requests == []
+    assert snapshot(kept) == kept
+    assert again.paths == failed.paths
+    assert again.listing() == THREE_FILES
+    checks = again.checks()
+    assert len(checks) == 1
+    assert checks[0].ok, checks[0].notes
+    data = again.data
+    assert (
+        data.sections_total,
+        data.sections_done,
+        data.sections_failed,
+        data.sections_resumed,
+    ) == (3, 3, 0, 2)
+
+
+def test_stop_during_retry_removes_only_what_the_retry_made(vod, host, tmp_path, monkeypatch):
+    """이어받은 실행을 컷 사이에서 중단하면 그 실행이 만든 구간 파일만 지워야 한다.
+
+    같은 엔진. 첫 실행: 둘째 · 셋째 컷이 도중에 실패(`_1`만 만듦). 이어받은 실행: 둘째 컷이 끝난 뒤 중단
+    -> 중단한 순간 `_2`가 있었다, 컷 호출 1회(`_2`), 완료 0회, 실패는 첫 실행의 1건뿐,
+       `_1`의 수정 시각 · 내용이 그대로, 저장 폴더의 mp4는 `_1`뿐, 임시 폴더에 세그먼트가 남는다
+    """
+    cuts = CutCalls(monkeypatch, aes_module, "cut_ts_section", source_arg=JOINED_ARG)
+    cuts.fail_on = (2, 3)
+    run = _Run(host, tmp_path, THREE).start()
+    assert len(run.failures) == 1
+    kept = snapshot([run.paths[0]])
+    made_when_stopped = []
+
+    def stop(_number: int) -> None:
+        made_when_stopped.append(os.path.exists(run.paths[1]))
+        run.data.model.stop()
+
+    cuts.restart()
+    cuts.after = stop
+    run.data.content.section_resume = run.data.section_resume
+
+    run.engine.run()
+
+    assert made_when_stopped == [True]
+    assert cuts.outputs == [THREE_FILES[1]]
+    assert (run.finished, len(run.failures)) == (0, 1)
+    assert snapshot(kept) == kept
+    assert [name for name in run.listing() if name.endswith(".mp4")] == [THREE_FILES[0]]
+    assert [name for name in os.listdir(run.engine.temp_dir) if name.endswith(".ts")]
+
+
+def test_retry_receives_only_the_segment_that_is_gone(vod, host, tmp_path, monkeypatch):
+    """받아 둔 세그먼트 하나가 없어졌으면 이어받은 실행은 그 세그먼트만 다시 받아야 한다.
+
+    첫 실행: 구간 셋, 둘째 컷이 도중에 실패. 둘째 구간의 마지막 세그먼트 파일을 지움. 이어받은 실행
+    -> 완료 1회 · 실패 0건, 이어받은 실행의 호스트 요청 == 그 세그먼트 하나(범위 요청 아님),
+       키 요청 1회, 컷 호출 1회(`_2`), `_1` · `_3`의 수정 시각 · 내용이 그대로
+    """
+    cuts = CutCalls(monkeypatch, aes_module, "cut_ts_section", source_arg=JOINED_ARG)
+    cuts.fail_on = (2,)
+    failed = _Run(host, tmp_path, THREE).start()
+    assert len(failed.failures) == 1
+    kept = snapshot([failed.paths[0], failed.paths[2]])
+    gone = failed.engine.sections[1].last_segment
+    os.remove(failed.engine._segment_path(gone))
+    requests_before = len(host.requests)
+    cuts.restart()
+
+    again = hand_over(failed, _Run(host, tmp_path, THREE)).start()
+
+    assert (again.finished, again.failures) == (1, [])
+    assert host.requests[requests_before:] == [("GET", _names({gone})[0], None)]
+    assert again.key_requests == [KEY_URI]
+    assert cuts.outputs == [THREE_FILES[1]]
+    assert snapshot(kept) == kept
+    assert again.listing() == THREE_FILES

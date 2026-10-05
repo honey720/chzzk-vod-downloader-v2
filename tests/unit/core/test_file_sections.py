@@ -44,6 +44,7 @@ from core.utils.paths import build_section_output_paths, partial_source_path_for
 from core.utils.selections import SELECTION_OUT_OF_RANGE, SelectionError
 from tests.unit.core.midway_cut_failure import MidwayCutFailure
 from tests.unit.core.range_host import RangeHost
+from tests.unit.core.section_retry import CutCalls, hand_over, snapshot
 
 FPS = 30
 KEYFRAMES = (0, 30, 42, 72, 90, 120, 150)  # -force_key_frames 0,1,1.4,2.4,3,4,5 (30fps)
@@ -785,3 +786,120 @@ def test_download_from_a_server_that_ignores_ranges_finishes_only_with_one_part(
     else:
         assert run.finished == 0
         assert run.failures and isinstance(run.failures[0], TruncatedBodyError)
+
+
+# ================================================================ 실패한 구간만 다시 처리 (#309)
+
+THREE_FILES = ["구간 시험 144p_1.mp4", "구간 시험 144p_2.mp4", "구간 시험 144p_3.mp4"]
+
+
+def _three() -> list[TimeRange]:
+    """구간 셋 — 프레임 35~80 · 100~110 · 120~140."""
+    return [
+        TimeRange(_seconds(35), _seconds(80)),
+        TimeRange(_seconds(100), _seconds(110)),
+        TimeRange(_seconds(120), _seconds(140)),
+    ]
+
+
+def test_retry_cuts_only_the_failed_section_from_the_kept_source_without_requests(
+    server, sources, tmp_path, monkeypatch
+):
+    """둘째 구간만 실패한 실행을 이어받은 실행은 둘째만 잘라야 하고 아무것도 요청하지 않아야 한다.
+
+    첫 실행: 구간 셋, 둘째 컷이 도중에 실패. 이어받은 실행: 새 엔진에 첫 실행이 남긴 것과 그때의 경로를 넘김
+    -> 컷 호출 1회(`_2`), 완료 1회 · 실패 0건, 이어받은 실행 동안의 요청 0건,
+       `_1` · `_3`의 수정 시각 · 내용이 그대로, 경로가 첫 실행과 같다,
+       저장 폴더에 `_1` · `_2` · `_3`뿐(임시 원본 없음), `_2`가 판정 통과,
+       구간 상태 == (전체 3, 완료 3, 실패 0, 이어받음 2)
+    """
+    cuts = CutCalls(monkeypatch, fd_module, "hybrid_cut", source_arg=0)
+    cuts.fail_on = (2,)
+    failed = _Run(server, "plain", tmp_path, _three()).start()
+    assert len(failed.failures) == 1
+    kept = snapshot([failed.paths[0], failed.paths[2]])
+    requests_before = len(server.requests)
+    cuts.restart()
+
+    again = hand_over(failed, _Run(server, "plain", tmp_path, _three())).start()
+
+    assert (again.finished, again.failures) == (1, [])
+    assert cuts.outputs == [THREE_FILES[1]]
+    assert server.requests[requests_before:] == []
+    assert snapshot(kept) == kept
+    assert again.paths == failed.paths
+    assert again.listing() == THREE_FILES
+    check = check_cut(_frames(sources["plain"]), again.engine.cut_results[0])
+    assert check.ok, check.notes
+    data = again.data
+    assert (
+        data.sections_total,
+        data.sections_done,
+        data.sections_failed,
+        data.sections_resumed,
+    ) == (3, 3, 0, 2)
+
+
+def test_stop_during_retry_removes_only_what_the_retry_made(server, tmp_path, monkeypatch):
+    """이어받은 실행을 컷 사이에서 중단하면 그 실행이 만든 구간 파일만 지워야 한다.
+
+    같은 엔진. 첫 실행: 둘째 · 셋째 컷이 도중에 실패(`_1`만 만듦). 이어받은 실행: 둘째 컷이 끝난 뒤 중단
+    -> 중단한 순간 `_2`가 있었다, 컷 호출 1회(`_2`), 완료 0회, 실패는 첫 실행의 1건뿐,
+       `_1`의 수정 시각 · 내용이 그대로, 저장 폴더에 임시 원본과 `_1`뿐
+    """
+    cuts = CutCalls(monkeypatch, fd_module, "hybrid_cut", source_arg=0)
+    cuts.fail_on = (2, 3)
+    run = _Run(server, "plain", tmp_path, _three()).start()
+    assert len(run.failures) == 1
+    kept = snapshot([run.paths[0]])
+    made_when_stopped = []
+
+    def stop(_number: int) -> None:
+        made_when_stopped.append(os.path.exists(run.paths[1]))
+        run.data.model.stop()
+
+    cuts.restart()
+    cuts.after = stop
+    run.data.content.section_resume = run.data.section_resume
+
+    run.engine.run()
+
+    assert made_when_stopped == [True]
+    assert cuts.outputs == [THREE_FILES[1]]
+    assert (run.finished, len(run.failures)) == (0, 1)
+    assert snapshot(kept) == kept
+    assert run.listing() == ["CVDv2_part_구간 시험 144p_1.mp4", THREE_FILES[0]]
+
+
+def test_retry_receives_only_the_failed_sections_ranges_when_the_kept_source_is_gone(
+    server, tmp_path, monkeypatch
+):
+    """남겨 둔 임시 원본이 없으면 이어받은 실행은 끝나지 않은 구간의 범위만 다시 받아야 한다.
+
+    첫 실행: 구간 셋, 둘째 컷이 도중에 실패. 임시 원본을 지움. 이어받은 실행
+    -> 완료 1회 · 실패 0건, 이어받은 실행의 요청은 모두 범위 요청이고 그 바이트 합 ==
+       이어받은 실행의 받을 크기 < 첫 실행의 받을 크기, 컷 호출 1회(`_2`),
+       `_1` · `_3`의 수정 시각 · 내용이 그대로, 저장 폴더에 `_1` · `_2` · `_3`뿐
+    """
+    cuts = CutCalls(monkeypatch, fd_module, "hybrid_cut", source_arg=0)
+    cuts.fail_on = (2,)
+    failed = _Run(server, "plain", tmp_path, _three()).start()
+    assert len(failed.failures) == 1
+    kept = snapshot([failed.paths[0], failed.paths[2]])
+    os.remove(failed.source_path)
+    requests_before = len(server.requests)
+    cuts.restart()
+
+    again = hand_over(failed, _Run(server, "plain", tmp_path, _three())).start()
+
+    assert (again.finished, again.failures) == (1, [])
+    requested = server.requests[requests_before:]
+    assert requested
+    received = 0
+    for _method, _name, header in requested:
+        first, last = re.fullmatch(r"bytes=(\d+)-(\d+)", header).groups()
+        received += int(last) - int(first) + 1
+    assert received == again.data.total_size < failed.data.total_size
+    assert cuts.outputs == [THREE_FILES[1]]
+    assert snapshot(kept) == kept
+    assert again.listing() == THREE_FILES
