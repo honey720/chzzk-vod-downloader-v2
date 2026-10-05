@@ -109,6 +109,9 @@ class HlsAesDownloader(BaseDownloader):
     # True인 동안 받는 세그먼트는 복호화 결과가 TS로 보이지 않으면 키가 틀린 것으로 보고
     # 다운로드를 끝낸다(다시 받지 않는다). 전체 다운로드는 prepare가 키를 확인하므로 False다
     _key_unconfirmed: bool = False
+    # 복호화 실패를 이미 알렸는지 — 키가 틀리면 동시에 받던 작업자가 모두 같은 실패를 만난다.
+    # 처음 만난 작업자만 알리고(_fail_fatally) 나머지는 알리지 않고 끝난다. self.lock으로 지킨다
+    _decrypt_failed: bool = False
 
     def __init__(self, data, logger, **callbacks):
         super().__init__(data, logger, **callbacks)
@@ -170,6 +173,7 @@ class HlsAesDownloader(BaseDownloader):
         self._head = None
         self._prefetched = {}
         self._key_unconfirmed = False
+        self._decrypt_failed = False
         if content.selections:
             return self._prepare_sections(content)
         response = get_thread_session().get(self.s.base_url, timeout=REQUEST_TIMEOUT)
@@ -229,6 +233,8 @@ class HlsAesDownloader(BaseDownloader):
                 f"구간 {len(content.selections)}개에 산출물 경로 {len(content.selection_paths)}개"
             )
         self._key = None  # 이번 실행에서 받을 것이 있을 때만 받는다
+        # 이전 실행이 만든 구간 파일은 이번 실행의 것이 아니다 — 이번 실행이 실패해도 지우지 않는다
+        self._made_sections.clear()
         self.cut_results.clear()
         self.cut_frames.clear()
 
@@ -593,8 +599,13 @@ class HlsAesDownloader(BaseDownloader):
                 except (ValueError, DecryptionError) as e:
                     # 복호화 실패는 재시도해도 낫지 않는다(키·정렬 문제). 재큐잉하면
                     # 무한 루프가 되고, 그대로 전파하면 future_dict가 정리되지 않아
-                    # 실행 루프가 끝나지 않는다 — 다운로드 전체를 중단시킨다
-                    self._fail_fatally(e, "Segment decryption failed")
+                    # 실행 루프가 끝나지 않는다 — 다운로드 전체를 중단시킨다.
+                    # 알리는 것은 한 번이다 — 키가 틀리면 동시에 받던 작업자가 모두 여기로 온다
+                    with self.lock:
+                        first = not self._decrypt_failed
+                        self._decrypt_failed = True
+                    if first:
+                        self._fail_fatally(e, "Segment decryption failed")
                     return part_num
                 self._key_unconfirmed = False
 

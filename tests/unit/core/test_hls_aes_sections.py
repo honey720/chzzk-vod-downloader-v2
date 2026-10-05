@@ -593,6 +593,41 @@ def test_wrong_key_fails_at_the_first_segment_a_worker_fetches(vod, host, tmp_pa
     assert not os.path.exists(head.segment_dir)
 
 
+def test_wrong_key_met_by_several_workers_at_once_is_reported_once(
+    vod, host, tmp_path, monkeypatch
+):
+    """작업자 여럿이 동시에 틀린 키로 복호화에 실패해도 실패 통지는 한 번만 나가야 한다.
+
+    구간 둘을 맞는 키로 해석해 일부만 받아 둔 채 넘기고(받을 세그먼트가 둘 이상 넷 이하),
+    엔진의 키 리졸버는 다른 키를 줌. 받을 세그먼트 수만큼의 작업자가 복호화 자리에 모일 때까지
+    서로 기다리게 한 뒤 함께 복호화하게 함
+    -> 복호화 자리에 닿은 작업자 수 == 받을 세그먼트 수(둘 이상), 실패 1건(DecryptionError),
+       "Segment decryption failed" 로그 1건, 구간 파일 없음
+    """
+    head = _resolve(host, tmp_path, [FIRST, SECOND])
+    missing = {0, 1, 2, 3, 4, 5} - head.stored
+    assert 2 <= len(missing) <= 4  # 처음 띄우는 작업자 수(4) 안에서 모두 한꺼번에 받는다
+    together = threading.Barrier(len(missing))
+    reached: list[str] = []
+    real_open = aes_module.open_ts_segment
+
+    def decrypt_together(*args, **kwargs):
+        reached.append(threading.current_thread().name)
+        together.wait(timeout=30)
+        return real_open(*args, **kwargs)
+
+    monkeypatch.setattr(aes_module, "open_ts_segment", decrypt_together)
+
+    run = _Run(host, tmp_path, [FIRST, SECOND], head=head, key=WRONG_KEY).start()
+
+    assert len(set(reached)) == len(reached) == len(missing)
+    assert len(run.failures) == 1
+    assert isinstance(run.failures[0], DecryptionError)
+    logged = [args for name, args in run.logger.calls if name == "log_error"]
+    assert [args[0] for args in logged] == ["Segment decryption failed"]
+    assert run.listing() == []
+
+
 def _key_forms(key: bytes) -> list[str]:
     """키 값이 글에 섞여 나올 수 있는 모양들."""
     return [key.hex(), key.hex().upper(), repr(key), repr(key)[2:-1], str(list(key))]
@@ -760,6 +795,32 @@ def test_section_count_that_differs_from_the_path_count_fails(vod, host, tmp_pat
     assert isinstance(run.failures[0], ValueError)
     assert host.requests == []
     assert run.key_requests == []
+
+
+def test_second_run_of_the_same_engine_that_fails_leaves_the_first_runs_files(vod, host, tmp_path):
+    """같은 엔진을 다시 돌려 두 번째 실행이 실패해도 첫 실행이 만든 구간 파일은 남아야 한다.
+
+    첫 실행: 구간 0.8 ~ 2.3초를 맞는 키로 받아 `_1` 파일을 만듦.
+    두 번째 실행: 같은 엔진에 새 산출물 경로를 배정하고 키 리졸버가 다른 키를 주게 함
+    -> 두 번째 실행은 실패 1건(DecryptionError), 저장 폴더에 첫 실행의 `_1` 파일 하나뿐이고 내용이 그대로다
+    """
+    run = _Run(host, tmp_path, [FIRST]).start()
+    assert (run.finished, run.failures) == (1, [])
+    with open(run.paths[0], "rb") as f:
+        made = f.read()
+    run.data.content.selection_paths = build_section_output_paths(
+        str(run.folder), "구간 시험", 144, 1
+    )
+    assert run.data.content.selection_paths != run.paths  # 첫 실행의 파일을 덮어쓰지 않는 이름
+    run._key = WRONG_KEY
+
+    run.engine.run()
+
+    assert len(run.failures) == 1
+    assert isinstance(run.failures[0], DecryptionError)
+    assert run.listing() == [SECTION_FILES[0]]
+    with open(run.paths[0], "rb") as f:
+        assert f.read() == made
 
 
 def test_download_without_sections_keeps_the_remux_path(vod, host, tmp_path):
