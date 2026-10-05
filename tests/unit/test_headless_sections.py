@@ -257,7 +257,11 @@ def test_runner_hands_sections_paths_and_moov_to_the_engine(monkeypatch, tmp_pat
 
 
 def _main_with(monkeypatch, tmp_path, content_type: str, calls: list):
-    """main을 대역으로 감싼다 — 조회 결과는 content_type이고, 해석·러너 호출을 calls에 남긴다."""
+    """main을 대역으로 감싼다 — 조회 결과는 content_type이고, 해석·러너 호출을 calls에 남긴다.
+
+    암호화 VOD의 해석("ts")은 받은 선언 프레임률과 함께 남기고, 러너가 받은 ts_head는
+    ("ts_head", 값)으로 따로 남긴다(None이면 남기지 않는다).
+    """
     result = (
         "https://chzzk.naver.com/video/123",
         {"title": "제목"},
@@ -279,11 +283,24 @@ def _main_with(monkeypatch, tmp_path, content_type: str, calls: list):
         calls.append(("fmp4", tuple(texts)))
         return selections, "fmp4"
 
+    def ts(item, texts, segment_dir=None, declared=None):
+        calls.append(("ts", tuple(texts), declared))
+        return selections, "ts"
+
     class FakeRunner:
         def __init__(
-            self, item, timeout, given=(), mp4_head=None, fmp4_head=None, section_paths=()
+            self,
+            item,
+            timeout,
+            given=(),
+            mp4_head=None,
+            fmp4_head=None,
+            section_paths=(),
+            ts_head=None,
         ):
             calls.append(("run", given, mp4_head, fmp4_head))
+            if ts_head is not None:
+                calls.append(("ts_head", ts_head))
             self.section_paths = section_paths
 
         def run(self) -> int:
@@ -292,6 +309,13 @@ def _main_with(monkeypatch, tmp_path, content_type: str, calls: list):
 
     monkeypatch.setattr(headless, "_resolve_sections", mp4)
     monkeypatch.setattr(headless, "_resolve_fmp4_sections", fmp4)
+    monkeypatch.setattr(headless, "_resolve_ts_sections", ts)
+    # 고른 해상도(u1080)와 다른 해상도의 선언값을 함께 준다 — 고른 것의 값이 넘어가야 한다
+    monkeypatch.setattr(
+        headless,
+        "_fetch_frame_rates",
+        lambda url, cookies, kind: {"u720": Fraction(30), "u1080": Fraction(60000, 1001)},
+    )
     monkeypatch.setattr(headless, "_HeadlessRunner", FakeRunner)
     return headless.main(
         ["https://chzzk.naver.com/video/123", "--output", str(tmp_path)]
@@ -332,16 +356,36 @@ def test_section_option_on_encoded_vod_resolves_mp4(monkeypatch, tmp_path):
     assert calls == [("mp4", ("00:00:01:00-00:00:02:00",)), ("run", selections, "moov", None)]
 
 
-@pytest.mark.parametrize("content_type", ["hls_aes", "clip"])
-def test_section_option_is_refused_for_encrypted_vod_and_clip(monkeypatch, tmp_path, content_type):
-    """암호화 VOD와 클립에 --section을 주면 해석도 다운로드도 하지 않고 2로 끝나야 한다.
+def test_section_option_on_encrypted_vod_resolves_ts_with_the_declared_frame_rate(
+    monkeypatch, tmp_path
+):
+    """암호화 VOD(hls_aes)에 --section을 주면 고른 해상도의 선언 프레임률로 TS 구간을 해석하고 받은 것을 러너에 넘겨야 한다.
 
-    조회 결과의 content_type "hls_aes" · "clip", --section 하나
+    조회 결과의 content_type "hls_aes", 고른 해상도의 주소 "u1080",
+    매니페스트의 프레임률 {u720: 30, u1080: 60000/1001}, --section 하나
+    -> 종료 코드 0, TS 해석 1회(선언값 60000/1001), 러너에 (구간, mp4_head None, fmp4_head None)와 ts_head "ts"
+    """
+    calls: list = []
+
+    code, selections = _main_with(monkeypatch, tmp_path, "hls_aes", calls)
+
+    assert code == 0
+    assert calls == [
+        ("ts", ("00:00:01:00-00:00:02:00",), Fraction(60000, 1001)),
+        ("run", selections, None, None),
+        ("ts_head", "ts"),
+    ]
+
+
+def test_section_option_is_refused_for_clip(monkeypatch, tmp_path):
+    """클립에 --section을 주면 해석도 다운로드도 하지 않고 2로 끝나야 한다.
+
+    조회 결과의 content_type "clip", --section 하나
     -> 종료 코드 2, 해석·러너 호출 0건
     """
     calls: list = []
 
-    code, _selections = _main_with(monkeypatch, tmp_path, content_type, calls)
+    code, _selections = _main_with(monkeypatch, tmp_path, "clip", calls)
 
     assert code == 2
     assert calls == []
