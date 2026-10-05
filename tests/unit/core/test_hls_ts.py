@@ -70,6 +70,7 @@ def _files(count: int = 3) -> dict[str, bytes]:
 
 @pytest.fixture
 def host(monkeypatch) -> RangeHost:
+    """플레이리스트와 암호화한 세그먼트 3개를 내주는 호스트 — 모듈의 요청이 이 호스트로 간다."""
     served = RangeHost(_files())
     monkeypatch.setattr(hls_ts_module, "get_thread_session", served.session)
     return served

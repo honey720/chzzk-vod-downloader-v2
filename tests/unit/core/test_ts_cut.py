@@ -87,11 +87,13 @@ class _Vod:
 
 @pytest.fixture(scope="module")
 def vod(tmp_path_factory) -> _Vod:
+    """ffmpeg로 만든 6초짜리 HLS 하나 — 모듈의 테스트가 함께 쓴다."""
     return _Vod(tmp_path_factory.mktemp("hls_ts"))
 
 
 @pytest.fixture
 def host(vod, monkeypatch) -> RangeHost:
+    """vod의 플레이리스트와 암호화한 세그먼트를 내주는 호스트 — 모듈의 요청이 이 호스트로 간다."""
     served = RangeHost(vod.files)
     monkeypatch.setattr(hls_ts_module, "get_thread_session", served.session)
     return served
