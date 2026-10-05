@@ -8,6 +8,14 @@
         <translation>(원본)</translation>
     </message>
     <message>
+        <source>Sections {0} · {1}</source>
+        <translation>구간 {0}개 · {1}</translation>
+    </message>
+    <message>
+        <source>Cutting</source>
+        <translation>자르는 중</translation>
+    </message>
+    <message>
         <source>Post-processing</source>
         <translation>후처리 중</translation>
     </message>
@@ -26,6 +34,10 @@
     <message>
         <source>Unknown error - check the log</source>
         <translation>알 수 없는 오류 · 로그를 확인해 주세요</translation>
+    </message>
+    <message>
+        <source>{0} failed</source>
+        <translation>{0}개 실패</translation>
     </message>
     <message>
         <source>Select download folder</source>

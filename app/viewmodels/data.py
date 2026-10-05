@@ -1,3 +1,5 @@
+"""목록 카드 하나의 데이터(ContentItem)를 정의한다."""
+
 from core.api.representations import file_tag, is_original, shown_frame_rate
 from core.models.download_state import DownloadState
 
@@ -7,7 +9,11 @@ SEGMENT_BASED_TYPES = ("m3u8", "hls_aes")
 
 
 class ContentItem:
-    # 메타데이터 카드 리스트 아이템 데이터(DTO)
+    """목록 카드 하나가 보여 주는 영상의 메타데이터와 다운로드 표시 상태를 담는다.
+
+    조회 결과로 만들고, 다운로드가 도는 동안 뷰모델이 진행 값을 옮겨 적는다. 구간
+    다운로드의 구간 목록과 완료 · 실패 구간 수도 여기에 둔다 (#309).
+    """
 
     def __init__(self, vod_url, metadata, unique_reps, resolution, base_url, download_path, content_type, liveRewindPlaybackJson):
         self.vod_url = vod_url
@@ -24,6 +30,10 @@ class ContentItem:
         self.content_type = content_type
         self.liveRewindPlaybackJson = liveRewindPlaybackJson
         self.post_process = False
+        # 받을 구간 목록 (#309) — core.models.plan.TimeRange의 튜플. 비어 있으면 전체 다운로드다
+        self.selections = ()
+        self.sections_done = 0  # 잘라서 파일로 만든 구간 수 — 엔진의 구간 상태에서 옮긴 값
+        self.sections_failed = 0  # 자르지 못한 구간 수
 
         self.unique_reps = unique_reps
         

@@ -49,6 +49,12 @@ class DownloadData:
         self.speed_mb = 0
         self.merged_segments = 0
 
+        # 구간 다운로드의 구간 상태 (#309) — 엔진이 채우고 표시 계층이 읽는다. 구간이 없는
+        # 다운로드는 모두 0이다. 완료 · 실패한 구간 수는 통지 횟수가 아니라 이 값으로 센다
+        self.sections_total = 0  # 구간 수
+        self.sections_done = 0  # 잘라서 파일로 만든 구간 수
+        self.sections_failed = 0  # 자르지 못한 구간 수
+
         # 진행도/실패/재시작/스레드 관련 변수
         self.completed_threads = 0
         self.failed_threads = 0

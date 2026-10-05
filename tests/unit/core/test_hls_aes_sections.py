@@ -47,6 +47,7 @@ from core.utils.ffmpeg import get_ffmpeg_exe
 from core.utils.hybrid_cut import CUT_FAILED, CutError
 from core.utils.paths import build_section_output_paths
 from core.utils.ts_sections import choose_ts_frame_rate, plan_ts_sections
+from tests.unit.core.midway_cut_failure import MidwayCutFailure
 from tests.unit.core.range_host import RangeHost
 
 KEY = bytes.fromhex("7c1d9e42a05b63f8817e2c4d6a9b0f35")  # 테스트용 키 — 실제 키가 아니다
@@ -471,6 +472,57 @@ def test_received_segments_are_removed_unless_the_cut_failed(vod, host, tmp_path
         assert run.listing() == ["unused.mp4"]
     with open(run.data.output_path, "rb") as f:
         assert f.read() == b"keep"
+
+
+def test_cut_failure_of_one_section_still_cuts_the_sections_after_it(
+    vod, host, tmp_path, monkeypatch
+):
+    """구간 셋 가운데 둘째의 컷이 실패해도 셋째는 잘라야 하고, 다운로드는 그 뒤에 한 번 실패해야 한다.
+
+    구간 0.8 ~ 2.3초 · 2.2 ~ 3.6초 · 3.4 ~ 5.2초, 둘째 컷이 첫 ffmpeg 실행 자리에서 출력 파일을
+    반쯤 쓰고 CutError를 냄
+    -> 컷 호출 3회, 완료 0회, 실패 1건(PostprocessError, 원인 CutError),
+       저장 폴더의 mp4는 `_1` · `_3`뿐(`_2` 파일 없음), 컷 작업 폴더 없음,
+       임시 폴더는 남고 그 안에 다시 싼 mp4(section_*.mp4) 없음,
+       공유 데이터의 구간 상태 == (전체 3, 완료 2, 실패 1),
+       병합 진행 == 받은 세그먼트 수(끝까지 올랐다)
+    """
+    real_cut = aes_module.cut_ts_section
+    failure = MidwayCutFailure(monkeypatch)
+    cuts = []
+
+    def second_fails(*args, **kwargs):
+        cuts.append(args)
+        if len(cuts) == 2:
+            failure.arm(source_path=args[5], output_path=args[4])  # 다시 쌀 경로 · 출력 경로
+        return real_cut(*args, **kwargs)
+
+    monkeypatch.setattr(aes_module, "cut_ts_section", second_fails)
+
+    run = _Run(host, tmp_path, [FIRST, MIDDLE, SECOND]).start()
+
+    assert len(cuts) == 3
+    assert run.finished == 0
+    assert len(run.failures) == 1
+    assert isinstance(run.failures[0], PostprocessError)
+    assert isinstance(run.failures[0].__cause__, CutError)
+    # 실패시킨 순간에는 있었다 — 아래의 "없다"가 정리의 결과임을 먼저 확인한다
+    assert (failure.fired, failure.source_existed, failure.work_dir_existed) == (1, True, True)
+    assert os.path.basename(failure.source_path) == "section_2.mp4"
+    assert os.path.basename(failure.output_path) == "구간 시험 144p_2.mp4"
+    assert not os.path.exists(failure.source_path)
+    assert not os.path.exists(failure.output_path)
+    assert not os.path.exists(failure.work_dir)
+    made = [name for name in run.listing() if name.endswith(".mp4")]
+    assert made == ["구간 시험 144p_1.mp4", "구간 시험 144p_3.mp4"]
+    assert [name for name in run.listing() if name.startswith("CVDv2_cut_")] == []
+    assert os.path.isdir(run.engine.temp_dir)
+    temp_names = os.listdir(run.engine.temp_dir)
+    assert temp_names  # 받은 세그먼트는 남는다
+    assert [name for name in temp_names if name.startswith("section_")] == []
+    data = run.data
+    assert (data.sections_total, data.sections_done, data.sections_failed) == (3, 2, 1)
+    assert data.merged_segments == len(run.wanted())
 
 
 def test_remuxed_file_of_a_section_is_in_the_temp_folder_and_gone_before_the_next_cut(

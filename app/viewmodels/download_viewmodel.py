@@ -37,6 +37,7 @@ from core.downloaders.integrity import TruncatedSegmentError
 from core.models.events import ProgressEvent
 from core.services.download_service import DownloadService
 from core.models.download_data import DownloadData
+from core.utils.paths import build_section_output_paths
 from core.utils.ffmpeg import FFmpegNotFoundError
 from app.download_logger import DownloadLogger
 from app.download_resolvers import resolve_aes_key, resolve_m3u8_base_url
@@ -50,6 +51,12 @@ logger = logging.getLogger(__name__)
 # 프리즈였다. 네트워크 read에 막힌 워커(최대 30초)도 UI를 잡아둘 가치가
 # 없어 짧게 둔다
 _HANDLE_WAIT_TIMEOUT_S = 2.0
+
+# 구간 다운로드의 진행 막대에서 전송 단계가 차지하는 몫(%) — 나머지가 컷 단계다 (#309).
+# 컷 하나는 중간 진행을 알리지 않아 구간이 끝날 때마다만 오른다. 그래서 컷에 큰 몫을 주면
+# 막대가 오래 멈췄다가 크게 뛴다. 전송이 대부분을 차지하게 두고, 컷은 남은 몫을 구간 수로
+# 고르게 나눈다
+SECTION_TRANSFER_SHARE = 80
 
 
 def _failure_message_key(exc: BaseException) -> str | None:
@@ -125,6 +132,11 @@ class DownloadViewModel(QObject):
         self.handle = None
         self.task: DownloadTask | None = None
         self.item: ContentItem | None = None
+        # 실행 중인 다운로드의 엔진 공유 데이터 — 구간 상태(완료 · 실패 수)를 여기서 읽는다
+        self._data: DownloadData | None = None
+        # 진행 통지가 메인 스레드에 닿으면 구간 상태를 아이템에 먼저 옮긴다 — content보다
+        # 먼저 연결해, content가 카드를 다시 그릴 때 값이 이미 들어 있게 한다
+        self.progress.connect(self._syncSections)
         self._engineFinished.connect(self._onEngineFinished)
         self._engineFailed.connect(self._onEngineFailed)
         # 구 mainWindow.setupThreadSignals의 다운로드 릴레이 6개 — 위임 없이 직결.
@@ -154,6 +166,16 @@ class DownloadViewModel(QObject):
         )
         # 해상도가 같은 두 스트림을 가르는 값 — 다운로드 시작 때 그 변형을 다시 찾는다 (#318)
         data.content.stream = getattr(item, "stream", None)
+        selections = tuple(getattr(item, "selections", ()) or ())
+        if selections:
+            # 구간 다운로드 (#309) — 구간 파일명은 시작할 때 한꺼번에 배정한다. 예약은 엔진이
+            # 끝날 때 푼다
+            data.content.selections = selections
+            data.content.selection_paths = build_section_output_paths(
+                item.download_path, item.title, item.resolution, len(selections)
+            )
+            item.sections_done = item.sections_failed = 0
+        self._data = data
         task_logger = DownloadLogger()
         # DownloadTask가 상태 전이 흡수와 모델↔카드(item) 상태 연결을 담당한다
         self.task = DownloadTask(data, item, task_logger)
@@ -217,7 +239,9 @@ class DownloadViewModel(QObject):
         is_segment_based = item.is_segment_based
 
         def relay(event: ProgressEvent) -> None:
-            if is_segment_based:
+            if data.sections_total:
+                args = _section_progress_args(event, data, item)
+            elif is_segment_based:
                 args = _segment_progress_args(event, data, item)
             else:
                 args = _file_progress_args(event)
@@ -238,6 +262,17 @@ class DownloadViewModel(QObject):
 
     # ============ 메인 스레드 후처리 슬롯 ============
 
+    def _syncSections(self, *_args) -> None:
+        """엔진의 구간 상태(완료 · 실패한 구간 수)를 아이템에 옮긴다 (#309). 메인 스레드에서 돈다.
+
+        수는 통지가 몇 번 왔는지로 세지 않는다 — 같은 진행 통지가 두 번 올 수 있다(서비스는
+        완료 뒤에 진행을 한 번 더 알린다). 엔진이 공유 데이터에 적어 둔 값을 그대로 읽는다.
+        """
+        if self.item is None or self._data is None or not self._data.sections_total:
+            return
+        self.item.sections_done = self._data.sections_done
+        self.item.sections_failed = self._data.sections_failed
+
     def _onEngineFinished(self) -> None:
         """정상 완료 후처리 (구 DownloadManager.finish의 잔여분).
 
@@ -248,6 +283,7 @@ class DownloadViewModel(QObject):
             # 완료 직후 사용자가 중지·정리를 마친 경우 (구 finish의 task None 가드와 동일)
             return
         item = self.item
+        self._syncSections()
         download_time = strftime("%H:%M:%S", gmtime(self.handle.elapsed_seconds()))
         self.removeThreads()
         self.finished.emit(item, download_time)
@@ -275,6 +311,7 @@ class DownloadViewModel(QObject):
             # 실패 도착 전에 사용자가 중지·정리를 마친 경우 (완료 경로의 가드와 동일)
             return
         item = self.item
+        self._syncSections()  # 일부 구간만 실패했을 때 카드가 완료 · 실패 수를 보인다
         if self.task is not None:
             self.task.stop()
         self.handle = None
@@ -356,6 +393,35 @@ def _file_progress_args(event: ProgressEvent) -> tuple[str, str, str, int]:
         remaining_time_str = "N/A"
 
     return remaining_time_str, str(event.downloaded_size), f"{speed_mb:.1f} MB/s", progress
+
+
+def _section_progress_args(
+    event: ProgressEvent, data: DownloadData, item: ContentItem
+) -> tuple[str, str, str, int]:
+    """구간 다운로드의 진행 변환 — 전송과 컷을 하나의 막대로 합친다 (#309).
+
+    막대의 앞 ``SECTION_TRANSFER_SHARE``%는 전송이고 나머지는 컷이다. 전송의 진행은 전달
+    방식의 단위 그대로다(파일은 받은 바이트 ÷ 받을 바이트, 세그먼트 기반은 받은 세그먼트 수
+    ÷ 받을 세그먼트 수). 컷의 진행은 (끝난 구간 수 ÷ 구간 수)이고, 끝난 구간에는 자르지
+    못한 구간도 센다 — 그 구간의 일은 끝났다.
+
+    남은 시간 · 크기 · 속도는 전달 방식의 변환식 그대로다. 컷 단계에서는 카드가 그 값을
+    쓰지 않고 단계 문구를 보인다.
+    """
+    if item.is_segment_based:
+        remaining, size, speed, _percent = _segment_progress_args(event, data, item)
+        transfer = data.completed_threads / data.max_threads if data.max_threads > 0 else 0.0
+    else:
+        remaining, size, speed, _percent = _file_progress_args(event)
+        total_size = event.total_size or 0
+        transfer = event.downloaded_size / total_size if total_size > 0 else 0.0
+    cut = 0.0
+    if item.post_process:
+        transfer = 1.0  # 컷은 전송이 끝난 뒤에 시작한다
+        cut = (data.sections_done + data.sections_failed) / data.sections_total
+    transfer = min(max(transfer, 0.0), 1.0)
+    progress = int(SECTION_TRANSFER_SHARE * transfer + (100 - SECTION_TRANSFER_SHARE) * cut)
+    return remaining, size, speed, progress
 
 
 def _segment_progress_args(

@@ -8,6 +8,14 @@
         <translation>(source)</translation>
     </message>
     <message>
+        <source>Sections {0} · {1}</source>
+        <translation>Sections {0} · {1}</translation>
+    </message>
+    <message>
+        <source>Cutting</source>
+        <translation>Cutting</translation>
+    </message>
+    <message>
         <source>Post-processing</source>
         <translation>Post-processing</translation>
     </message>
@@ -26,6 +34,10 @@
     <message>
         <source>Unknown error - check the log</source>
         <translation>Unknown error · check the log</translation>
+    </message>
+    <message>
+        <source>{0} failed</source>
+        <translation>{0} failed</translation>
     </message>
     <message>
         <source>Select download folder</source>

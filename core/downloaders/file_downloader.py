@@ -187,6 +187,8 @@ class FileDownloader(BaseDownloader):
             for selection, item, path in zip(content.selections, picked, content.selection_paths)
         )
         self._source_path = partial_source_path_for(content.selection_paths[0])
+        self.s.sections_total = len(self._sections)
+        self.s.sections_done = self.s.sections_failed = 0
         return DownloadPlan(
             items=tuple(
                 part
@@ -233,17 +235,24 @@ class FileDownloader(BaseDownloader):
     def postprocess(self) -> None:
         """임시 원본을 구간마다 잘라 파일로 만든다.
 
-        구간 목록 순서대로 자른다. 하나라도 실패하면 PostprocessError로 끝낸다 — 임시
-        원본과 먼저 만든 구간 파일은 남는다. 모두 만들면 임시 원본을 지운다. 구간 사이에서
-        중단·일시정지를 확인한다(컷 하나는 중간에 멈추지 않는다).
+        구간 목록 순서대로 자른다. 자르지 못한 구간이 있어도 나머지 구간을 끝까지 자르고,
+        그 뒤에 PostprocessError로 끝낸다 — 임시 원본과 만든 구간 파일은 남는다. 모두 만들면
+        임시 원본을 지운다. 구간 사이에서 중단·일시정지를 확인한다(컷 하나는 중간에 멈추지
+        않는다). 구간마다의 결과는 공유 데이터의 sections_done · sections_failed에 센다.
         """
+        self._on_merge_start()
         try:
             frames = cut_frames_from_mp4(self._index)
-            for section in self._sections:
-                if self.state == DownloadState.PAUSED:
-                    self.s._pause_event.wait()
-                if self.state == DownloadState.WAITING:
-                    return  # 정리(임시 원본·만든 구간 파일 삭제)는 run()의 중단 경로가 한다
+        except (CutError, Mp4Error) as e:
+            self.logger.log_error("Cut failed — partial source preserved for retry", e)
+            raise PostprocessError(f"후처리(cut) 실패: {e}") from e
+        failures: list[CutError] = []
+        for section in self._sections:
+            if self.state == DownloadState.PAUSED:
+                self.s._pause_event.wait()
+            if self.state == DownloadState.WAITING:
+                return  # 정리(임시 원본·만든 구간 파일 삭제)는 run()의 중단 경로가 한다
+            try:
                 result = hybrid_cut(
                     self._source_path,
                     frames,
@@ -252,19 +261,26 @@ class FileDownloader(BaseDownloader):
                     section.output_path,
                     inspect=self._inspect_cuts,
                 )
+            except (CutError, Mp4Error) as e:
+                self.logger.log_error("Cut failed — partial source preserved for retry", e)
+                failures.append(e)
+                self.s.sections_failed += 1
+            else:
                 self.cut_results.append(result)
                 self._made_sections.append(section.output_path)
-                self._on_progress(
-                    ProgressEvent(
-                        downloaded_size=self.s.total_downloaded_size,
-                        total_size=self._progress_total_size(),
-                        speed=0.0,
-                        active_threads=0,
-                    )
+                self.s.sections_done += 1
+            self._on_progress(
+                ProgressEvent(
+                    downloaded_size=self.s.total_downloaded_size,
+                    total_size=self._progress_total_size(),
+                    speed=0.0,
+                    active_threads=0,
                 )
-        except (CutError, Mp4Error) as e:
-            self.logger.log_error("Cut failed — partial source preserved for retry", e)
-            raise PostprocessError(f"후처리(cut) 실패: {e}") from e
+            )
+        if failures:
+            raise PostprocessError(
+                f"후처리(cut) 실패: 구간 {len(failures)}개 — {failures[0]}"
+            ) from failures[0]
         os.remove(self._source_path)
 
     @staticmethod
