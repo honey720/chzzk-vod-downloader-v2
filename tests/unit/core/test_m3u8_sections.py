@@ -1077,8 +1077,11 @@ TEMP_FOLDER = "CVDv2_temp_구간 시험 144p_1"
 
 
 def _three(source) -> list[TimeRange]:
-    """구간 셋 — 프레임 5~20 · 40~70 · 100~130."""
-    return [source.selection(5, 20), source.selection(40, 70), source.selection(100, 130)]
+    """구간 셋 — 프레임 5~20 · 40~130 · 135~145.
+
+    둘째 구간은 세그먼트 넷에 걸친다 — 가운데 둘은 구간을 정할 때 받지 않고 전송 단계가 받는다.
+    """
+    return [source.selection(5, 20), source.selection(40, 130), source.selection(135, 145)]
 
 
 def test_retry_cuts_only_the_failed_section_from_the_kept_segments_without_requests(

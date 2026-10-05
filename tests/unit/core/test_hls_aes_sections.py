@@ -895,7 +895,8 @@ def test_download_without_sections_keeps_the_remux_path(vod, host, tmp_path):
 
 # ================================================================ 실패한 구간만 다시 처리 (#309)
 
-THREE = [FIRST, MIDDLE, SECOND]
+# 둘째 구간(SECOND)은 세그먼트 2 ~ 5에 걸친다 — 세그먼트 4는 구간을 정할 때 받지 않고 전송 단계가 받는다
+THREE = [FIRST, SECOND, MIDDLE]
 THREE_FILES = ["구간 시험 144p_1.mp4", "구간 시험 144p_2.mp4", "구간 시험 144p_3.mp4"]
 JOINED_ARG = 5  # cut_ts_section의 여섯째 위치 인자 — 다시 싼 mp4를 둘 경로
 
