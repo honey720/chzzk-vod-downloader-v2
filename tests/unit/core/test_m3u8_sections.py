@@ -838,6 +838,44 @@ def test_cut_failure_keeps_segments_and_finished_sections(host, sources, tmp_pat
     assert kept == ["0.m4s", "1.m4v", "2.m4v", "3.m4v", "section_2.mp4"]
 
 
+def test_cut_failure_of_one_section_still_cuts_the_sections_after_it(
+    host, sources, tmp_path, monkeypatch
+):
+    """구간 셋 가운데 둘째의 컷이 실패해도 셋째는 잘라야 하고, 다운로드는 그 뒤에 한 번 실패해야 한다.
+
+    plain, 구간 프레임 5~20 · 40~70 · 100~130, 둘째 컷이 CutError를 내도록 바꿈
+    -> 컷 호출 3회, 완료 0회, 실패 1건(PostprocessError, 원인 CutError),
+       저장 폴더에 `_1` · `_3` 파일과 임시 폴더, 공유 데이터의 구간 상태 == (전체 3, 완료 2, 실패 1)
+    """
+    source = sources["plain"]
+    real = m3u8_module.hybrid_cut
+    calls = []
+
+    def second_fails(*args, **kwargs):
+        calls.append(args)
+        if len(calls) == 2:
+            raise CutError(CUT_FAILED, "시험")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(m3u8_module, "hybrid_cut", second_fails)
+    selections = [source.selection(5, 20), source.selection(40, 70), source.selection(100, 130)]
+
+    run = _Run(host, tmp_path, selections).start()
+
+    assert len(calls) == 3
+    assert run.finished == 0
+    assert len(run.failures) == 1
+    assert isinstance(run.failures[0], PostprocessError)
+    assert isinstance(run.failures[0].__cause__, CutError)
+    assert run.listing() == [
+        "CVDv2_temp_구간 시험 144p_1",
+        "구간 시험 144p_1.mp4",
+        "구간 시험 144p_3.mp4",
+    ]
+    data = run.data
+    assert (data.sections_total, data.sections_done, data.sections_failed) == (3, 2, 1)
+
+
 def test_section_outside_the_playlist_fails_with_selection_key(host, tmp_path):
     """구간이 영상 길이를 넘으면 구간 위반 키로 실패하고 아무것도 남기지 않아야 한다.
 

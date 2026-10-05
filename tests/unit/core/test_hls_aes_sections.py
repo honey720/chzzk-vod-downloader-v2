@@ -473,6 +473,42 @@ def test_received_segments_are_removed_unless_the_cut_failed(vod, host, tmp_path
         assert f.read() == b"keep"
 
 
+def test_cut_failure_of_one_section_still_cuts_the_sections_after_it(
+    vod, host, tmp_path, monkeypatch
+):
+    """구간 셋 가운데 둘째의 컷이 실패해도 셋째는 잘라야 하고, 다운로드는 그 뒤에 한 번 실패해야 한다.
+
+    구간 0.8 ~ 2.3초 · 2.2 ~ 3.6초 · 3.4 ~ 5.2초, 둘째 컷이 CutError를 내도록 바꿈
+    -> 컷 호출 3회, 완료 0회, 실패 1건(PostprocessError, 원인 CutError),
+       저장 폴더에 `_1` · `_3` 파일과 임시 폴더, 공유 데이터의 구간 상태 == (전체 3, 완료 2, 실패 1),
+       병합 진행 == 받은 세그먼트 수(끝까지 올랐다)
+    """
+    real_cut = aes_module.cut_ts_section
+    cuts = []
+
+    def second_fails(*args, **kwargs):
+        cuts.append(args)
+        if len(cuts) == 2:
+            raise CutError(CUT_FAILED, "시험")
+        return real_cut(*args, **kwargs)
+
+    monkeypatch.setattr(aes_module, "cut_ts_section", second_fails)
+
+    run = _Run(host, tmp_path, [FIRST, MIDDLE, SECOND]).start()
+
+    assert len(cuts) == 3
+    assert run.finished == 0
+    assert len(run.failures) == 1
+    assert isinstance(run.failures[0], PostprocessError)
+    assert isinstance(run.failures[0].__cause__, CutError)
+    made = [name for name in run.listing() if name.endswith(".mp4")]
+    assert made == ["구간 시험 144p_1.mp4", "구간 시험 144p_3.mp4"]
+    assert os.path.isdir(run.engine.temp_dir)
+    data = run.data
+    assert (data.sections_total, data.sections_done, data.sections_failed) == (3, 2, 1)
+    assert data.merged_segments == len(run.wanted())
+
+
 def test_remuxed_file_of_a_section_is_in_the_temp_folder_and_gone_before_the_next_cut(
     vod, host, tmp_path, monkeypatch
 ):

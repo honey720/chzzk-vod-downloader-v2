@@ -431,6 +431,45 @@ def test_cut_failure_keeps_partial_source_and_finished_sections(server, tmp_path
     assert run.listing() == ["CVDv2_part_구간 시험 144p_1.mp4", "구간 시험 144p_1.mp4"]
 
 
+def test_cut_failure_of_one_section_still_cuts_the_sections_after_it(server, tmp_path, monkeypatch):
+    """구간 셋 가운데 둘째의 컷이 실패해도 셋째는 잘라야 하고, 다운로드는 그 뒤에 한 번 실패해야 한다.
+
+    기본 입력, 구간 셋, 둘째 컷이 CutError를 내도록 바꿈
+    -> 컷 호출 3회, 완료 콜백 0회, 실패 1건(PostprocessError, 원인 CutError),
+       `_1` · `_3` 파일과 임시 원본이 남는다, 공유 데이터의 구간 상태 == (전체 3, 완료 2, 실패 1)
+    """
+    real = fd_module.hybrid_cut
+    calls = []
+
+    def second_fails(*args, **kwargs):
+        calls.append(args)
+        if len(calls) == 2:
+            raise CutError(CUT_FAILED, "시험")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(fd_module, "hybrid_cut", second_fails)
+    selections = [
+        TimeRange(_seconds(35), _seconds(80)),
+        TimeRange(_seconds(100), _seconds(110)),
+        TimeRange(_seconds(120), _seconds(140)),
+    ]
+
+    run = _Run(server, "plain", tmp_path, selections).start()
+
+    assert len(calls) == 3
+    assert run.finished == 0
+    assert len(run.failures) == 1
+    assert isinstance(run.failures[0], PostprocessError)
+    assert isinstance(run.failures[0].__cause__, CutError)
+    assert run.listing() == [
+        "CVDv2_part_구간 시험 144p_1.mp4",
+        "구간 시험 144p_1.mp4",
+        "구간 시험 144p_3.mp4",
+    ]
+    data = run.data
+    assert (data.sections_total, data.sections_done, data.sections_failed) == (3, 2, 1)
+
+
 def test_transfer_failure_removes_partial_source(server, tmp_path, monkeypatch):
     """받는 도중 실패하면 임시 원본을 남기지 않아야 한다.
 
