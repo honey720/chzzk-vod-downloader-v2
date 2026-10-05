@@ -41,6 +41,7 @@ m3u8 고유 부분만 남는다:
 - 전체 다운로드(구간 없음)의 경로는 그대로다
 """
 
+import dataclasses
 import os
 import shutil
 import time as tm
@@ -67,6 +68,7 @@ from core.models.download_state import DownloadState
 from core.models.events import ProgressEvent
 from core.models.fmp4_index import Fmp4Head
 from core.models.plan import DownloadPlan
+from core.models.section_resume import SectionResume
 from core.utils.fmp4_sections import Fmp4Section, plan_fmp4_sections
 from core.utils.hybrid_cut import CUT_FAILED, CutError, cut_frames_from_fmp4, hybrid_cut
 from core.utils.paths import choose_temp_dir, release_output_paths
@@ -133,6 +135,11 @@ class M3U8Downloader(BaseDownloader):
         # 구간을 정하면서 이미 온전하게 받아 둔 세그먼트 — 인덱스 → 파일 크기. 다시 받지 않는다
         self._prefetched: dict[int, int] = {}
         self._made_sections: list[str] = []  # 이번 실행이 만든 구간 파일
+        # 이전 실행이 끝내 이번 실행이 건너뛰는 구간의 번호(0부터) — Content.section_resume에서 온다
+        self._done_before: frozenset[int] = frozenset()
+        # 이전 실행이 받아 둔 것을 이어받았는지 — 이어받았으면 실패 · 중단해도 임시 폴더를 남긴다
+        self._resumed: bool = False
+        self._wanted: list[int] = []  # 이번 실행이 구간을 자르는 데 쓰는 세그먼트의 인덱스
         self.cut_results: list[CutResult] = []  # 구간마다의 컷 결과 — sections와 같은 순서
         self.cut_frames: list[CutFrames] = []  # 구간마다 컷에 쓴 프레임 정보 — 판정이 쓴다
 
@@ -195,7 +202,20 @@ class M3U8Downloader(BaseDownloader):
             raise ValueError(
                 f"구간 {len(content.selections)}개에 산출물 경로 {len(content.selection_paths)}개"
             )
-        head = content.fmp4_head
+        # 이전 실행이 만든 구간 파일은 이번 실행의 것이 아니다 — 이번 실행이 실패해도 지우지 않는다
+        self._made_sections.clear()
+        self.cut_results.clear()
+        self.cut_frames.clear()
+        self.s.section_resume = None
+        resume = content.section_resume
+        if resume is not None and (
+            resume.fmp4_head is None or not resume.fits(content.selections, content.selection_paths)
+        ):
+            resume = None
+        self._done_before = resume.done if resume is not None else frozenset()
+        self._resumed = resume is not None
+        # 이전 실행이 받아 둔 것(플레이리스트 · 프레임 정보 · 세그먼트)이 있으면 그것을 쓴다
+        head = resume.fmp4_head if resume is not None else content.fmp4_head
         if head is not None and head.segment_dir is not None:
             # 구간을 해석한 쪽이 세그먼트를 받아 둔 폴더 — 엔진을 만든 뒤에 넘겨받았을 수 있다
             self.temp_dir = head.segment_dir
@@ -215,13 +235,21 @@ class M3U8Downloader(BaseDownloader):
             head.frame_rate,
         )
         # 두 구간이 같은 세그먼트를 쓰면 한 번만 받는다
+        # 이전 실행이 끝낸 구간의 세그먼트는 받지 않는다
         wanted = sorted(
-            {index for s in sections for index in range(s.first_segment, s.last_segment + 1)}
+            {
+                index
+                for number, s in enumerate(sections)
+                if number not in self._done_before
+                for index in range(s.first_segment, s.last_segment + 1)
+            }
         )
+        self._wanted = wanted
         self._head = head
         self._sections = sections
         self.s.sections_total = len(sections)
-        self.s.sections_done = self.s.sections_failed = 0
+        self.s.sections_done = self.s.sections_resumed = len(self._done_before)
+        self.s.sections_failed = 0
         self._prefetched = self._whole_stored_segments(head, wanted)
         self.postprocess_kind = "cut"  # 구간마다 자른다 — 전체 다운로드의 remux와 구분한다
         self.s.merged_segments = 0
@@ -349,9 +377,12 @@ class M3U8Downloader(BaseDownloader):
 
         구간 다운로드는 output_path에 쓰지 않는다 — 그 자리의 파일은 이 실행이 만든 것이
         아니므로(같은 영상의 전체 다운로드일 수 있다) 지우지 않고, 이번에 만든 구간 파일만
-        지운다 (#309).
+        지운다 (#309). 이전 실행을 이어받은 실행(Content.section_resume)은 임시
+        폴더도 지우지 않는다 — 이전 실행의 구간 파일과 받아 둔 세그먼트가 남는다.
         """
-        if os.path.exists(self.temp_dir):
+        if not self._resumed and os.path.exists(self.temp_dir):
+            # 이전 실행을 이어받은 실행은 임시 폴더를 남긴다 — 받아 둔 세그먼트는 이전 실행의
+            # 것이다. 이번 실행이 만든 구간 파일만 지운다
             shutil.rmtree(self.temp_dir)
         made = self._made_sections if self.s.content.selections else [self.s.output_path]
         for path in made:
@@ -360,7 +391,13 @@ class M3U8Downloader(BaseDownloader):
         self._made_sections.clear()
 
     def _cleanup_after_run(self) -> None:
-        """임시 폴더 삭제 (구 run의 (5) — 병합 후에는 빈 폴더만 남는다)."""
+        """임시 폴더 삭제 (구 run의 (5) — 병합 후에는 빈 폴더만 남는다).
+
+        이전 실행을 이어받은 실행이 중단됐으면 지우지 않는다 — 받아 둔 세그먼트는 이전 실행의
+        것이고, 다음 실행이 다시 쓴다 (#309).
+        """
+        if self._resumed and self.state == DownloadState.WAITING:
+            return
         shutil.rmtree(self.temp_dir)
 
     def _progress_total_size(self) -> int | None:
@@ -405,11 +442,17 @@ class M3U8Downloader(BaseDownloader):
         세그먼트에서 다시 만들 수 있고, 구간이 여럿 실패해도 쌓이지 않는다. 구간마다의
         결과는 공유 데이터의 sections_done · sections_failed에 센다.
         구간 사이에서 중단·일시정지를 확인한다(컷 하나는 중간에 멈추지 않는다).
+
+        이전 실행이 끝낸 구간(Content.section_resume)은 자르지 않는다. 자르지 못한 구간이
+        있으면 끝낸 구간과 받아 둔 세그먼트를 공유 데이터의 section_resume에 남긴다.
         """
         head = self._head
         paths = self.s.content.selection_paths
         failures: list[Exception] = []
+        done = set(self._done_before)
         for number, (section, output_path) in enumerate(zip(self._sections, paths), start=1):
+            if number - 1 in self._done_before:
+                continue  # 이전 실행이 만든 구간 — 다시 만들지 않는다
             if self.state == DownloadState.PAUSED:
                 self.s._pause_event.wait()
             if self.state == DownloadState.WAITING:
@@ -447,6 +490,7 @@ class M3U8Downloader(BaseDownloader):
                 self.cut_frames.append(frames)
                 self._made_sections.append(output_path)
                 self.s.sections_done += 1
+                done.add(number - 1)
             finally:
                 if os.path.exists(joined):
                     os.remove(joined)
@@ -462,6 +506,16 @@ class M3U8Downloader(BaseDownloader):
                 )
             )
         if failures:
+            self.s.section_resume = SectionResume(
+                selections=tuple(self.s.content.selections),
+                paths=tuple(paths),
+                done=frozenset(done),
+                # 넘겨받은 것에 적지 않고 새로 만든다 — 전송 단계가 받은 세그먼트를 더한다.
+                # 다음 실행은 쓰기 전에 파일마다 다시 확인한다
+                fmp4_head=dataclasses.replace(
+                    head, segment_dir=self.temp_dir, stored=set(head.stored) | set(self._wanted)
+                ),
+            )
             raise PostprocessError(
                 f"후처리(cut) 실패: 구간 {len(failures)}개 — {failures[0]}"
             ) from failures[0]

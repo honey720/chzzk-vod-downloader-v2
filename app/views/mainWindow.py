@@ -370,8 +370,14 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         현재 항목이 끝난 뒤 체인(emitFinishedRequest → downloadItem)이 대기 카드를
         차례로 집어 가는 기존 동작 그대로다.
 
-        파일시스템은 건드리지 않는다 — 후처리 실패로 보존된 세그먼트(#185)는 남는다.
+        파일시스템에 쓰지 않는다 — 후처리 실패로 보존된 세그먼트(#185)는 남는다.
+
+        일부 구간만 실패한 구간 다운로드(#309)는 다음 다운로드가 실패한 구간만 다시
+        처리한다. 끝낸 구간의 파일이 그대로 있는지는 **재시도를 누른 지금 한 번** 본다
+        (prepareRetry) — 전역 다운로드 버튼은 그 확인을 하지 않고, 실패인 채인 카드를
+        다시 돌리지도 않는다.
         """
+        self.downloadViewModel.prepareRetry(item)
         item.stateMessage = ""
         item.downloadState = DownloadState.WAITING
         item.download_progress = 0

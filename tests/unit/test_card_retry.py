@@ -35,6 +35,8 @@ from app.views import mainWindow as mw_mod
 from app.views.mainWindow import VodDownloader
 from app.viewmodels.data import ContentItem
 from core.models.download_state import DownloadState
+from core.models.plan import TimeRange
+from core.models.section_resume import SectionResume
 from core.utils.paths import build_output_path, temp_dir_for
 from tests.unit.card_helpers import (
     drop_new_top_levels,
@@ -276,3 +278,24 @@ class TestControlsFollowTheState:
         other.click()
         _pump()
         assert item.resolution == "720", "되돌린 카드에서 해상도를 다시 고를 수 없다"
+
+
+class TestRetryChecksTheFinishedSections:
+    def test_retry_press_drops_a_finished_section_whose_file_is_gone(self, tmp_path, started):
+        """실패 카드의 ↻를 누르면 끝낸 구간 가운데 파일이 없는 것을 끝나지 않은 것으로 돌려야 한다 (#309).
+
+        실패 카드에 남긴 것: 구간 셋, 끝낸 구간 {0, 2}. 0번 파일은 있고 2번 파일은 없다
+        -> ↻ 뒤 아이템에 남은 끝낸 구간 == {0}, 다운로드는 시작되지 않는다
+        """
+        win, item, widget = open_window_with_a_failed_card(tmp_path)
+        selections = (TimeRange(1.0, 2.0), TimeRange(3.0, 4.0), TimeRange(5.0, 6.0))
+        paths = tuple(str(tmp_path / f"제목 1080p_{number}.mp4") for number in (1, 2, 3))
+        with open(paths[0], "wb") as f:
+            f.write(b"made")
+        resume = SectionResume(selections=selections, paths=paths, done=frozenset({0, 2}))
+        item.section_retry = ("stream", resume)
+
+        click_retry(widget)
+
+        assert item.section_retry[1].done == frozenset({0})
+        assert started == []

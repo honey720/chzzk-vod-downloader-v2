@@ -46,6 +46,7 @@ base_url 해석(#75)과 같은 주입 방식이다.
 - 전체 다운로드(구간 없음)의 경로는 그대로다
 """
 
+import dataclasses
 import os
 import shutil
 import time as tm
@@ -74,6 +75,7 @@ from core.models.cut import CutFrames, CutResult
 from core.models.download_state import DownloadState
 from core.models.events import ProgressEvent
 from core.models.plan import DownloadPlan
+from core.models.section_resume import SectionResume
 from core.models.ts_index import TsHead, TsStreams
 from core.utils.hybrid_cut import CutError
 from core.utils.paths import choose_temp_dir, release_output_paths
@@ -140,6 +142,11 @@ class HlsAesDownloader(BaseDownloader):
         # 구간을 정하면서 이미 온전하게 받아 둔 세그먼트 — 인덱스 → 파일 크기. 다시 받지 않는다
         self._prefetched: dict[int, int] = {}
         self._made_sections: list[str] = []  # 이번 실행이 만든 구간 파일
+        # 이전 실행이 끝내 이번 실행이 건너뛰는 구간의 번호(0부터) — Content.section_resume에서 온다
+        self._done_before: frozenset[int] = frozenset()
+        # 이전 실행이 받아 둔 것을 이어받았는지 — 이어받았으면 실패 · 중단해도 임시 폴더를 남긴다
+        self._resumed: bool = False
+        self._wanted: list[int] = []  # 이번 실행이 구간을 자르는 데 쓰는 세그먼트의 인덱스
         self.cut_results: list[CutResult] = []  # 구간마다의 컷 결과 — sections와 같은 순서
         # 구간마다 컷이 원본으로 삼은(다시 싼 mp4의) 프레임 정보 — 판정이 쓴다
         self.cut_frames: list[CutFrames] = []
@@ -237,15 +244,25 @@ class HlsAesDownloader(BaseDownloader):
         self._made_sections.clear()
         self.cut_results.clear()
         self.cut_frames.clear()
+        self.s.section_resume = None
+        resume = content.section_resume
+        if resume is not None and (
+            resume.ts_head is None or not resume.fits(content.selections, content.selection_paths)
+        ):
+            resume = None
 
-        head = content.ts_head
+        # 이전 실행이 받아 둔 것(플레이리스트 · 프레임 정보 · 세그먼트)이 있으면 그것을 쓴다
+        head = resume.ts_head if resume is not None else content.ts_head
         if head is not None and head.playlist_ref != playlist_ref(self.s.base_url):
             # 다른 플레이리스트(해상도)에서 받아 둔 것이다 — 쓰지 않고 지운 뒤 처음부터 받는다.
             # 어느 플레이리스트의 것인지 모르는 것(None)도 쓰지 않는다
             if head.segment_dir is not None and os.path.exists(head.segment_dir):
                 shutil.rmtree(head.segment_dir)
             head = None
+            resume = None  # 다른 플레이리스트에서 끝낸 구간이다 — 이어받지 않는다
             self.temp_dir = choose_temp_dir(content.selection_paths[0])
+        self._done_before = resume.done if resume is not None else frozenset()
+        self._resumed = resume is not None
         if head is not None and head.segment_dir is not None:
             # 구간을 해석한 쪽이 세그먼트를 받아 둔 폴더 — 엔진을 만든 뒤에 넘겨받았을 수 있다
             self.temp_dir = head.segment_dir
@@ -280,15 +297,23 @@ class HlsAesDownloader(BaseDownloader):
             fps = choose_ts_frame_rate([segment_at(0)]).rate
         sections = plan_ts_sections(head.playlist, content.selections, segment_at, fps)
         # 두 구간이 같은 세그먼트를 쓰면 한 번만 받는다
+        # 이전 실행이 끝낸 구간의 세그먼트는 받지 않는다
         wanted = sorted(
-            {index for s in sections for index in range(s.first_segment, s.last_segment + 1)}
+            {
+                index
+                for number, s in enumerate(sections)
+                if number not in self._done_before
+                for index in range(s.first_segment, s.last_segment + 1)
+            }
         )
+        self._wanted = wanted
         self._head = head
         self._playlist = head.playlist
         self._frame_rate = fps
         self._sections = sections
         self.s.sections_total = len(sections)
-        self.s.sections_done = self.s.sections_failed = 0
+        self.s.sections_done = self.s.sections_resumed = len(self._done_before)
+        self.s.sections_failed = 0
         self.width = len(str(len(head.playlist.segments)))
         self._prefetched = self._whole_stored_segments(head, wanted)
         if any(index not in self._prefetched for index in wanted):
@@ -382,9 +407,12 @@ class HlsAesDownloader(BaseDownloader):
 
         구간 다운로드는 output_path에 쓰지 않는다 — 그 자리의 파일은 이 실행이 만든 것이
         아니므로(같은 영상의 전체 다운로드일 수 있다) 지우지 않고, 이번에 만든 구간 파일만
-        지운다 (#309).
+        지운다 (#309). 이전 실행을 이어받은 실행(Content.section_resume)은 임시
+        폴더도 지우지 않는다 — 이전 실행의 구간 파일과 받아 둔 세그먼트가 남는다.
         """
-        if os.path.exists(self.temp_dir):
+        if not self._resumed and os.path.exists(self.temp_dir):
+            # 이전 실행을 이어받은 실행은 임시 폴더를 남긴다 — 받아 둔 세그먼트는 이전 실행의
+            # 것이다. 이번 실행이 만든 구간 파일만 지운다
             shutil.rmtree(self.temp_dir)
         made = self._made_sections if self.s.content.selections else [self.s.output_path]
         for path in made:
@@ -393,7 +421,13 @@ class HlsAesDownloader(BaseDownloader):
         self._made_sections.clear()
 
     def _cleanup_after_run(self) -> None:
-        """임시 폴더 삭제 (병합 후에는 빈 폴더만 남는다)."""
+        """임시 폴더 삭제 (병합 후에는 빈 폴더만 남는다).
+
+        이전 실행을 이어받은 실행이 중단됐으면 지우지 않는다 — 받아 둔 세그먼트는 이전 실행의
+        것이고, 다음 실행이 다시 쓴다 (#309).
+        """
+        if self._resumed and self.state == DownloadState.WAITING:
+            return
         if os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir)
 
@@ -476,6 +510,9 @@ class HlsAesDownloader(BaseDownloader):
         그 구간의 컷이 끝나면(성공이든 실패든) 바로 지운다 — 구간이 여럿이어도 쌓이지 않는다.
         구간 사이에서 중단·일시정지를 확인한다(컷 하나는 중간에 멈추지 않는다).
 
+        이전 실행이 끝낸 구간(Content.section_resume)은 자르지 않는다. 자르지 못한 구간이
+        있으면 끝낸 구간과 받아 둔 세그먼트를 공유 데이터의 section_resume에 남긴다.
+
         프레임 정보는 구간을 정할 때 읽어 둔 것을 쓰고, 전송 단계가 받은 세그먼트는 그 파일을
         읽는다. 넘겨받은 ``TsHead``에는 적지 않는다 — 그 객체에 쓰는 일은 prepare에서 끝난다.
         """
@@ -494,7 +531,10 @@ class HlsAesDownloader(BaseDownloader):
 
         source = TsSectionSource(head.playlist, segment_at, self._frame_rate)
         failures: list[Exception] = []
+        done = set(self._done_before)
         for number, (section, output_path) in enumerate(zip(self._sections, paths), start=1):
+            if number - 1 in self._done_before:
+                continue  # 이전 실행이 만든 구간 — 다시 만들지 않는다
             if self.state == DownloadState.PAUSED:
                 self.s._pause_event.wait()
             if self.state == DownloadState.WAITING:
@@ -523,6 +563,7 @@ class HlsAesDownloader(BaseDownloader):
                 self.cut_frames.append(frames)
                 self._made_sections.append(output_path)
                 self.s.sections_done += 1
+                done.add(number - 1)
             # 병합 진행(세그먼트 수 기반)을 구간 수에 비례해 올린다 — 어댑터의 분모는
             # 받은 세그먼트 수다(TS 경로에는 초기화 세그먼트가 없다)
             self.s.merged_segments = self.s.max_threads * number // len(self._sections)
@@ -535,6 +576,16 @@ class HlsAesDownloader(BaseDownloader):
                 )
             )
         if failures:
+            self.s.section_resume = SectionResume(
+                selections=tuple(self.s.content.selections),
+                paths=tuple(paths),
+                done=frozenset(done),
+                # 넘겨받은 것에 적지 않고 새로 만든다 — 전송 단계가 받은 세그먼트를 더한다.
+                # 다음 실행은 쓰기 전에 파일마다 다시 확인한다. 키는 들어 있지 않다
+                ts_head=dataclasses.replace(
+                    head, segment_dir=self.temp_dir, stored=set(head.stored) | set(self._wanted)
+                ),
+            )
             raise PostprocessError(
                 f"후처리(cut) 실패: 구간 {len(failures)}개 — {failures[0]}"
             ) from failures[0]

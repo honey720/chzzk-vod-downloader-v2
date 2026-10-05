@@ -33,6 +33,8 @@ from core.downloaders.base import PostprocessError
 from core.models.download_state import DownloadState
 from core.models.events import ProgressEvent
 from core.models.plan import TimeRange
+from core.models.section_resume import SectionResume
+from core.utils.ffmpeg import RemuxError
 from core.utils.hybrid_cut import CUT_FAILED, CutError
 from core.utils.paths import release_output_paths
 from tests.unit.card_helpers import hold_style
@@ -112,6 +114,14 @@ class WindowHarness(QObject):
         self.manager.start(item)
         self.viewmodel.start(item)
 
+    def retryCard(self, item: ContentItem) -> None:
+        """mainWindow.onCardRetry와 같은 일을 한다 — 끝낸 구간을 확인하고 카드를 대기로 되돌린다."""
+        self.viewmodel.prepareRetry(item)
+        item.stateMessage = ""
+        item.downloadState = DownloadState.WAITING
+        item.download_progress = 0
+        self.manager.model.notifyChanged(item)
+
 
 class _Card:
     """카드 하나와 그 다운로드의 엔진 자리 — 테스트가 엔진처럼 구간 상태를 적고 콜백을 부른다."""
@@ -124,6 +134,7 @@ class _Card:
         self.service = FakeService()
         self.viewmodel = DownloadViewModel(self.manager, service=self.service)
         self.harness = WindowHarness(self.manager, self.viewmodel)
+        self.view.retryRequested.connect(self.harness.retryCard)
         self.item = ContentItem(
             "https://chzzk.naver.com/video/1",
             {"title": "구간 시험", "category": "게임", "channelName": "채널", "duration": 7200},
@@ -151,7 +162,7 @@ class _Card:
     def start(self, segments: int = 10) -> None:
         """다운로드를 시작하고, 엔진의 prepare가 한 것처럼 구간 수와 전송 단위 수를 적는다."""
         self.manager.downloadItem()
-        self.submission = self.service.submissions[0]
+        self.submission = self.service.submissions[-1]
         self.data = self.submission["data"]
         self.data.sections_total = len(self.item.selections)
         self.data.max_threads = segments
@@ -192,6 +203,17 @@ class _Card:
             )
         )
         self.qapp.processEvents()
+
+    def retry(self) -> None:
+        """실패 카드의 ↻를 누른다 — 위젯 시그널 → 뷰 릴레이 → 하네스."""
+        self.widget.retryButton.click()
+        self.qapp.processEvents()
+
+    def restart(self, segments: int = 10) -> None:
+        """대기로 되돌린 카드의 다운로드를 다시 시작한다 — 새 제출이 생겼음을 먼저 확인한다."""
+        before = len(self.service.submissions)
+        self.start(segments)
+        assert len(self.service.submissions) == before + 1
 
     def close(self) -> None:
         release_output_paths(self.submission["content"].selection_paths)
@@ -441,3 +463,193 @@ def test_viewmodel_hands_the_sections_and_their_file_names_to_the_engine(card):
     assert [os.path.basename(path) for path in content.selection_paths] == [
         f"구간 시험 1080p_{number}.mp4" for number in (1, 2, 3)
     ]
+
+
+# ================================================================ 실패한 구간만 다시 처리
+
+
+def _fail_second_section(card) -> tuple[str, ...]:
+    """엔진처럼 구간 1 · 3의 파일을 만들고, 둘째 컷만 실패한 채 끝났다고 알린다. 구간 파일 경로를 돌려준다."""
+    card.start()
+    card.begin_cut()
+    card.cut(1)
+    card.cut(1, failed=1)
+    card.cut(2, failed=1)
+    paths = card.submission["content"].selection_paths
+    for number in (0, 2):
+        with open(paths[number], "wb") as f:
+            f.write(b"made")
+    card.data.section_resume = SectionResume(
+        selections=SELECTIONS, paths=paths, done=frozenset({0, 2})
+    )
+    error = PostprocessError("후처리(cut) 실패: 구간 1개")
+    error.__cause__ = CutError(CUT_FAILED, "시험")
+    card.submission["on_failed"](error)
+    card.qapp.processEvents()
+    release_output_paths(paths)  # 엔진은 실행이 끝날 때 이름의 예약을 푼다
+    return paths
+
+
+def test_retry_keeps_the_file_names_and_hands_over_what_the_failed_run_left(card):
+    """일부 구간이 실패한 카드를 재시도해 시작하면 그때의 구간 파일 경로와 남긴 것을 그대로 넘겨야 한다.
+
+    구간 셋, 둘째만 실패(`_1` · `_3` 파일이 디스크에 있다) → ↻ → 다운로드 시작
+    -> 새로 제출된 content의 selection_paths == 첫 실행의 경로(" (1)" 없음),
+       section_resume의 끝낸 구간 == {0, 2}, 아이템의 완료 구간 수 == 2 · 실패 수 == 0
+    """
+    paths = _fail_second_section(card)
+
+    card.retry()
+    card.restart()
+
+    content = card.submission["content"]
+    assert len(card.service.submissions) == 2
+    assert content.selection_paths == paths
+    assert content.section_resume.done == frozenset({0, 2})
+    assert (card.item.sections_done, card.item.sections_failed) == (2, 0)
+
+
+def test_retry_bar_starts_from_zero_and_the_count_continues_from_the_finished_sections(card):
+    """재시도한 카드의 진행 막대는 0부터 다시 차고, 완료 구간 수는 끝낸 구간 수에서 이어져야 한다.
+
+    구간 셋, 둘째만 실패 → ↻ → 시작. 엔진처럼 구간 상태를 (전체 3, 완료 2, 이어받음 2)로 적고
+    전송 0% · 50% → 컷 단계 → 둘째 구간 끝남 → 완료 통지
+    -> 진행률 == [0, 40, 80, 100], 전송 중 문구에 구간 수 없음, 컷 단계 == "80% · Cutting · 2/3",
+       둘째가 끝난 뒤 == "100% · Cutting · 3/3", 완료 == "✓ Completed · 3/3 · 1:12", 남긴 것이 지워진다
+    """
+    _fail_second_section(card)
+    card.retry()
+    card.restart()
+    card.data.sections_done = card.data.sections_resumed = 2
+    seen = []
+
+    card.transfer(0.0)
+    seen.append((card.item.download_progress, card.status))
+    card.transfer(0.5)
+    seen.append((card.item.download_progress, card.status))
+    card.begin_cut()
+    card.notify_cut()
+    seen.append((card.item.download_progress, card.status))
+    card.cut(3)
+    seen.append((card.item.download_progress, card.status))
+    card.data.model.finish()
+    card.submission["on_finished"]()
+    card.qapp.processEvents()
+
+    assert [progress for progress, _text in seen] == [0, 40, 80, 100]
+    assert not re.search(r"\d+/\d+", seen[0][1] + seen[1][1])
+    assert [text for _progress, text in seen[2:]] == ["80% · Cutting · 2/3", "100% · Cutting · 3/3"]
+    assert card.status == "✓ Completed · 3/3 · 1:12"
+    assert card.item.section_retry is None
+
+
+def test_retry_press_is_the_only_moment_the_finished_files_are_checked(card):
+    """끝낸 구간의 파일이 있는지는 재시도를 누른 순간에만 보고, 그때 없는 구간만 다시 만들 것으로 돌려야 한다.
+
+    구간 셋, 둘째만 실패. `_3` 파일을 지움 → ↻ → `_1` 파일을 지움 → 다운로드 시작
+    -> 넘겨진 section_resume의 끝낸 구간 == {0}
+    """
+    paths = _fail_second_section(card)
+    os.remove(paths[2])
+
+    card.retry()
+    os.remove(paths[0])
+    card.restart()
+
+    assert card.submission["content"].section_resume.done == frozenset({0})
+
+
+def test_global_download_does_not_start_a_card_left_failed(card):
+    """재시도를 누르지 않은 실패 카드는 전역 다운로드가 다시 돌리지 않아야 한다.
+
+    구간 셋, 둘째만 실패. ↻ 없이 다운로드를 다시 요청
+    -> 제출은 첫 실행의 1건뿐, 카드는 FAILED 그대로
+    """
+    _fail_second_section(card)
+
+    card.manager.downloadItem()
+    card.qapp.processEvents()
+
+    assert len(card.service.submissions) == 1
+    assert card.item.downloadState is DownloadState.FAILED
+
+
+def test_retry_after_the_stream_changed_starts_over_with_new_file_names(card):
+    """실패한 뒤 받을 스트림이 바뀌었으면 이어받지 않고 새 이름으로 처음부터 받아야 한다.
+
+    구간 셋, 둘째만 실패(`_1` · `_3` 파일이 있다). 아이템의 base_url을 바꿈 → ↻ → 시작
+    -> 제출된 content의 section_resume is None, 파일 이름 == "_1 (1)" · "_2" · "_3 (1)",
+       아이템의 완료 구간 수 == 0
+    """
+    _fail_second_section(card)
+    card.item.base_url = "http://example.invalid/720"
+
+    card.retry()
+    card.restart()
+
+    content = card.submission["content"]
+    assert content.section_resume is None
+    assert [os.path.basename(path) for path in content.selection_paths] == [
+        "구간 시험 1080p_1 (1).mp4",
+        "구간 시험 1080p_2.mp4",
+        "구간 시험 1080p_3 (1).mp4",
+    ]
+    assert card.item.sections_done == 0
+
+
+@pytest.mark.parametrize(
+    ("cause", "headline"),
+    [
+        (CutError(CUT_FAILED, "시험"), "Could not cut the section · press retry"),
+        (RemuxError("exit 183"), "Segments are corrupted · download the video again"),
+    ],
+    ids=["cut", "remux"],
+)
+def test_cut_failure_card_shows_its_own_reason(card, cause, headline):
+    """컷이 실패한 카드는 컷 실패의 사유를, 그 밖의 후처리 실패는 지금의 사유를 보여야 한다.
+
+    구간 셋, 둘째 실패. 실패 통지의 원인이 CutError / RemuxError
+    -> 상태 문구 == "✕ 1 failed · 2/3 · " + 그 원인의 사유 첫 줄
+    """
+    card.start()
+    card.begin_cut()
+    card.cut(2, failed=1)
+    error = PostprocessError("후처리 실패")
+    error.__cause__ = cause
+
+    card.submission["on_failed"](error)
+    card.qapp.processEvents()
+
+    assert card.status == f"✕ 1 failed · 2/3 · {headline}"
+
+
+@pytest.mark.parametrize("changed", ["folder", "title"])
+def test_retry_after_the_folder_or_title_changed_starts_over_in_the_place_now_chosen(
+    card, tmp_path, changed
+):
+    """실패한 뒤 저장 폴더나 제목을 바꿨으면 이어받지 않고, 지금 고른 폴더 · 제목으로 처음부터 받아야 한다.
+
+    구간 셋, 둘째만 실패(옛 폴더에 `_1` · `_3` 파일이 있다).
+    folder: 저장 폴더를 새 폴더로 바꿈 / title: 제목을 "새 제목"으로 바꿈 → ↻ → 시작
+    -> 제출된 content의 section_resume is None, 구간 파일 셋의 폴더 == 아이템의 지금 저장 폴더,
+       파일 이름 == 지금 제목의 `_1` · `_2` · `_3`(" (1)" 없음), 아이템의 완료 구간 수 == 0
+    """
+    _fail_second_section(card)
+    if changed == "folder":
+        moved = tmp_path / "moved"
+        moved.mkdir()
+        card.item.download_path = str(moved)
+    else:
+        card.item.title = "새 제목"
+
+    card.retry()
+    card.restart()
+
+    content = card.submission["content"]
+    title = "새 제목" if changed == "title" else "구간 시험"
+    assert content.section_resume is None
+    assert {os.path.dirname(path) for path in content.selection_paths} == {card.item.download_path}
+    assert [os.path.basename(path) for path in content.selection_paths] == [
+        f"{title} 1080p_{number}.mp4" for number in (1, 2, 3)
+    ]
+    assert card.item.sections_done == 0

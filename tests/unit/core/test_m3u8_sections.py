@@ -72,6 +72,7 @@ from core.utils.selections import (
 )
 from tests.unit.core.midway_cut_failure import MidwayCutFailure
 from tests.unit.core.range_host import RangeHost
+from tests.unit.core.section_retry import CutCalls, hand_over, snapshot
 
 KEYFRAMES = (0, 30, 36, 60, 90, 120, 150)  # -force_key_frames 0,1,1.2,2,3,4,5 (30fps)
 SEGMENTS = 6  # 1초 세그먼트 — 키프레임 0·30·60·90·120·150에서 갈린다
@@ -1067,3 +1068,120 @@ def test_download_without_sections_keeps_the_remux_path(host, sources, tmp_path)
     assert len(_requests_for(host, ".m4s", ranged=False)) == SEGMENTS
     assert _requests_for(host, ".m4s", ranged=True) == []
     assert dict(run.logger.calls)["log_postprocess_start"] == ("remux",)
+
+
+# ================================================================ 실패한 구간만 다시 처리 (#309)
+
+THREE_FILES = ["구간 시험 144p_1.mp4", "구간 시험 144p_2.mp4", "구간 시험 144p_3.mp4"]
+TEMP_FOLDER = "CVDv2_temp_구간 시험 144p_1"
+
+
+def _three(source) -> list[TimeRange]:
+    """구간 셋 — 프레임 5~20 · 40~130 · 135~145.
+
+    둘째 구간은 세그먼트 넷에 걸친다 — 가운데 둘은 구간을 정할 때 받지 않고 전송 단계가 받는다.
+    """
+    return [source.selection(5, 20), source.selection(40, 130), source.selection(135, 145)]
+
+
+def test_retry_cuts_only_the_failed_section_from_the_kept_segments_without_requests(
+    host, sources, tmp_path, monkeypatch
+):
+    """둘째 구간만 실패한 실행을 이어받은 실행은 둘째만 잘라야 하고 아무것도 요청하지 않아야 한다.
+
+    첫 실행: plain, 구간 셋, 둘째 컷이 도중에 실패. 이어받은 실행: 새 엔진에 첫 실행이 남긴 것과 그때의 경로를 넘김
+    -> 컷 호출 1회(`_2`), 완료 1회 · 실패 0건, 이어받은 실행 동안의 요청 0건,
+       `_1` · `_3`의 수정 시각 · 내용이 그대로, 경로가 첫 실행과 같다,
+       저장 폴더에 `_1` · `_2` · `_3`뿐(임시 폴더 없음), `_2`가 판정 통과,
+       구간 상태 == (전체 3, 완료 3, 실패 0, 이어받음 2)
+    """
+    selections = _three(sources["plain"])
+    cuts = CutCalls(monkeypatch, m3u8_module, "hybrid_cut", source_arg=0)
+    cuts.fail_on = (2,)
+    failed = _Run(host, tmp_path, selections).start()
+    assert len(failed.failures) == 1
+    kept = snapshot([failed.paths[0], failed.paths[2]])
+    requests_before = len(host.requests)
+    cuts.restart()
+
+    again = hand_over(failed, _Run(host, tmp_path, selections)).start()
+
+    assert (again.finished, again.failures) == (1, [])
+    assert cuts.outputs == [THREE_FILES[1]]
+    assert host.requests[requests_before:] == []
+    assert snapshot(kept) == kept
+    assert again.paths == failed.paths
+    assert again.listing() == THREE_FILES
+    checks = again.checks()
+    assert len(checks) == 1
+    assert checks[0].ok, checks[0].notes
+    data = again.data
+    assert (
+        data.sections_total,
+        data.sections_done,
+        data.sections_failed,
+        data.sections_resumed,
+    ) == (3, 3, 0, 2)
+
+
+def test_stop_during_retry_removes_only_what_the_retry_made(host, sources, tmp_path, monkeypatch):
+    """이어받은 실행을 컷 사이에서 중단하면 그 실행이 만든 구간 파일만 지워야 한다.
+
+    같은 엔진. 첫 실행: 둘째 · 셋째 컷이 도중에 실패(`_1`만 만듦). 이어받은 실행: 둘째 컷이 끝난 뒤 중단
+    -> 중단한 순간 `_2`가 있었다, 컷 호출 1회(`_2`), 완료 0회, 실패는 첫 실행의 1건뿐,
+       `_1`의 수정 시각 · 내용이 그대로, 저장 폴더에 임시 폴더와 `_1`뿐, 임시 폴더에 세그먼트가 남는다
+    """
+    cuts = CutCalls(monkeypatch, m3u8_module, "hybrid_cut", source_arg=0)
+    cuts.fail_on = (2, 3)
+    run = _Run(host, tmp_path, _three(sources["plain"])).start()
+    assert len(run.failures) == 1
+    kept = snapshot([run.paths[0]])
+    made_when_stopped = []
+
+    def stop(_number: int) -> None:
+        made_when_stopped.append(os.path.exists(run.paths[1]))
+        run.data.model.stop()
+
+    cuts.restart()
+    cuts.after = stop
+    run.data.content.section_resume = run.data.section_resume
+
+    run.engine.run()
+
+    assert made_when_stopped == [True]
+    assert cuts.outputs == [THREE_FILES[1]]
+    assert (run.finished, len(run.failures)) == (0, 1)
+    assert snapshot(kept) == kept
+    assert run.listing() == [TEMP_FOLDER, THREE_FILES[0]]
+    assert [name for name in os.listdir(run.engine.temp_dir) if name.endswith(".m4v")]
+
+
+def test_retry_receives_only_the_segment_that_is_gone(host, sources, tmp_path, monkeypatch):
+    """받아 둔 세그먼트 하나가 없어졌으면 이어받은 실행은 그 세그먼트만 다시 받아야 한다.
+
+    첫 실행: plain, 구간 셋, 둘째 컷이 도중에 실패. 둘째 구간의 첫 세그먼트 파일을 지움. 이어받은 실행
+    -> 완료 1회 · 실패 0건, 이어받은 실행의 요청 == 그 세그먼트 하나(범위 요청 아님),
+       컷 호출 1회(`_2`), `_1` · `_3`의 수정 시각 · 내용이 그대로
+    """
+    source = sources["plain"]
+    selections = _three(source)
+    cuts = CutCalls(monkeypatch, m3u8_module, "hybrid_cut", source_arg=0)
+    cuts.fail_on = (2,)
+    failed = _Run(host, tmp_path, selections).start()
+    assert len(failed.failures) == 1
+    kept = snapshot([failed.paths[0], failed.paths[2]])
+    gone = failed.engine.sections[1].first_segment
+    count = len(source.playlist.segments)
+    os.remove(os.path.join(failed.engine.temp_dir, segment_file_name(count, gone)))
+    requests_before = len(host.requests)
+    cuts.restart()
+
+    again = hand_over(failed, _Run(host, tmp_path, selections)).start()
+
+    assert (again.finished, again.failures) == (1, [])
+    assert host.requests[requests_before:] == [
+        ("GET", f"plain/{source.playlist.segments[gone]}", None)
+    ]
+    assert cuts.outputs == [THREE_FILES[1]]
+    assert snapshot(kept) == kept
+    assert again.listing() == THREE_FILES

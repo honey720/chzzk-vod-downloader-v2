@@ -23,7 +23,9 @@ viewmodel(이 클래스)이 mainWindow의 릴레이 슬롯 6개를 흡수했다.
 MonitorM3U8Thread의 계산과 동일하며 모듈 수준 함수로 둔다.
 """
 
+import dataclasses
 import logging
+import os
 from time import gmtime, strftime
 
 import requests
@@ -37,7 +39,8 @@ from core.downloaders.integrity import TruncatedSegmentError
 from core.models.events import ProgressEvent
 from core.services.download_service import DownloadService
 from core.models.download_data import DownloadData
-from core.utils.paths import build_section_output_paths
+from core.utils.hybrid_cut import CutError
+from core.utils.paths import build_section_output_paths, reserve_section_output_paths
 from core.utils.ffmpeg import FFmpegNotFoundError
 from app.download_logger import DownloadLogger
 from app.download_resolvers import resolve_aes_key, resolve_m3u8_base_url
@@ -75,6 +78,12 @@ def _failure_message_key(exc: BaseException) -> str | None:
         # ffmpeg 설치 문제로 잘못 쏠렸다)
         if isinstance(exc.__cause__, FFmpegNotFoundError):
             return "Postprocessing failed - ffmpeg not found"
+        if isinstance(exc.__cause__, CutError):
+            # 구간을 자르다 실패했다 (#309) — 받은 데이터가 손상된 것이 아니다. 컷은 ffmpeg의
+            # 실패를 CutError로 바꿔 올리므로 그 원인이 "실행 파일 없음"이면 그 안내를 준다
+            if isinstance(exc.__cause__.__cause__, FFmpegNotFoundError):
+                return "Postprocessing failed - ffmpeg not found"
+            return "Section cut failed"
         return "Postprocessing failed - invalid segments"
     if isinstance(exc, DecryptionError):
         return "Decryption failed"
@@ -134,6 +143,9 @@ class DownloadViewModel(QObject):
         self.item: ContentItem | None = None
         # 실행 중인 다운로드의 엔진 공유 데이터 — 구간 상태(완료 · 실패 수)를 여기서 읽는다
         self._data: DownloadData | None = None
+        # 실행 중인 다운로드가 무엇을 받아 어디에 쓰는지를 가리키는 값 — 일부 구간 실패로 끝나면
+        # 남긴 것과 함께 아이템에 적어, 다음 다운로드가 같은 값일 때만 이어받게 한다
+        self._resume_key: tuple | None = None
         # 진행 통지가 메인 스레드에 닿으면 구간 상태를 아이템에 먼저 옮긴다 — content보다
         # 먼저 연결해, content가 카드를 다시 그릴 때 값이 이미 들어 있게 한다
         self.progress.connect(self._syncSections)
@@ -171,10 +183,24 @@ class DownloadViewModel(QObject):
             # 구간 다운로드 (#309) — 구간 파일명은 시작할 때 한꺼번에 배정한다. 예약은 엔진이
             # 끝날 때 푼다
             data.content.selections = selections
-            data.content.selection_paths = build_section_output_paths(
-                item.download_path, item.title, item.resolution, len(selections)
-            )
-            item.sections_done = item.sections_failed = 0
+            self._resume_key = _resume_key(item)
+            resume = _usable_resume(item, selections)
+            if resume is not None:
+                # 일부 구간만 실패한 다운로드를 이어서 처리한다 — 구간 파일 이름을 새로 배정하지
+                # 않고 그때의 경로를 그대로 쓴다. 새로 배정하면 남아 있는 구간 파일 때문에
+                # 모든 구간이 새 이름(" (n)")을 받는다
+                data.content.section_resume = resume
+                data.content.selection_paths = reserve_section_output_paths(
+                    resume.paths, resume.done
+                )
+                item.sections_done = len(resume.done)
+                item.sections_failed = 0
+            else:
+                item.section_retry = None
+                data.content.selection_paths = build_section_output_paths(
+                    item.download_path, item.title, item.resolution, len(selections)
+                )
+                item.sections_done = item.sections_failed = 0
         self._data = data
         task_logger = DownloadLogger()
         # DownloadTask가 상태 전이 흡수와 모델↔카드(item) 상태 연결을 담당한다
@@ -190,6 +216,20 @@ class DownloadViewModel(QObject):
             on_failed=self._relay_failed,
             on_merge_start=self._relay_merge_start,
         )
+
+    def prepareRetry(self, item: ContentItem) -> None:
+        """실패 카드의 재시도를 누른 순간에 한 번, 끝낸 구간의 파일이 그대로 있는지 확인한다 (#309).
+
+        일부 구간만 실패한 구간 다운로드에만 할 일이 있다. 끝낸 것으로 적힌 구간 가운데
+        파일이 없어진 것은 끝나지 않은 구간으로 돌린다 — 다음 다운로드가 그 구간도 다시
+        만든다. 확인은 여기서만 한다. 다운로드를 시작하지 않는다.
+        """
+        retry = getattr(item, "section_retry", None)
+        if retry is None:
+            return
+        resume_key, resume = retry
+        done = frozenset(number for number in resume.done if os.path.isfile(resume.paths[number]))
+        item.section_retry = (resume_key, dataclasses.replace(resume, done=done))
 
     def pause(self) -> None:
         """다운로드 일시정지 (구 DownloadManager.pause)."""
@@ -284,6 +324,7 @@ class DownloadViewModel(QObject):
             return
         item = self.item
         self._syncSections()
+        item.section_retry = None  # 모든 구간을 만들었다 — 이어받을 것이 없다
         download_time = strftime("%H:%M:%S", gmtime(self.handle.elapsed_seconds()))
         self.removeThreads()
         self.finished.emit(item, download_time)
@@ -312,6 +353,11 @@ class DownloadViewModel(QObject):
             return
         item = self.item
         self._syncSections()  # 일부 구간만 실패했을 때 카드가 완료 · 실패 수를 보인다
+        resume = self._data.section_resume if self._data is not None else None
+        if resume is not None:
+            # 엔진이 끝낸 구간과 받아 둔 데이터를 남겼다 — 다음 다운로드가 실패한 구간만 다시
+            # 처리한다. 남기지 않은 실패(전송 실패 등)는 아이템에 있던 것을 그대로 둔다
+            item.section_retry = (self._resume_key, resume)
         if self.task is not None:
             self.task.stop()
         self.handle = None
@@ -366,6 +412,10 @@ class DownloadViewModel(QObject):
                 "The stream for the selected resolution could not be found. "
                 "Try another resolution."
             ),
+            "Section cut failed": self.tr(
+                "Could not cut the section · press retry\n"
+                "Cutting the section failed. Retry processes only the failed sections."
+            ),
             "Segment was received truncated": self.tr(
                 "Video data arrived corrupted · try again later\n"
                 "Part of the video kept arriving incomplete from the server. "
@@ -374,6 +424,39 @@ class DownloadViewModel(QObject):
         }
         key = _failure_message_key(exc)
         return translated.get(key, "") if key is not None else ""
+
+
+def _resume_key(item: ContentItem) -> tuple:
+    """아이템이 지금 무엇을 받아 어디에 쓰려는지를 가리키는 값 (#309).
+
+    받을 스트림(종류 · 주소 · 해상도 · 변형)과, 구간 파일이 놓일 자리(저장 폴더 · 파일명의
+    바탕인 제목)다. 해상도 · 저장 폴더 · 제목 가운데 하나라도 바꾸면 달라진다.
+    """
+    return (
+        item.content_type,
+        item.base_url,
+        item.resolution,
+        getattr(item, "stream", None),
+        item.download_path,
+        item.title,
+    )
+
+
+def _usable_resume(item: ContentItem, selections: tuple):
+    """아이템에 남아 있는, 지금 시작하는 다운로드가 이어받을 수 있는 것을 돌려준다. 없으면 None.
+
+    그때와 같은 스트림 · 같은 저장 폴더 · 같은 제목 · 같은 구간 목록일 때만 이어받는다.
+    해상도를 바꿨으면 받아 둔 데이터와 만든 구간 파일이 다른 영상의 것이다. 저장 폴더나
+    제목을 바꿨으면 남겨 둔 경로는 지금 고른 자리가 아니다 — 이어받으면 시작 전 쓰기 검사를
+    거친 폴더가 아닌 곳에 쓰게 된다. 그때는 새 자리에 새 이름으로 처음부터 받는다.
+    """
+    retry = getattr(item, "section_retry", None)
+    if retry is None:
+        return None
+    resume_key, resume = retry
+    if resume_key != _resume_key(item) or resume.selections != selections:
+        return None
+    return resume
 
 
 # ============ 진행 이벤트 변환식 (구 MonitorThread / MonitorM3U8Thread) ============
@@ -405,6 +488,9 @@ def _section_progress_args(
     ÷ 받을 세그먼트 수). 컷의 진행은 (끝난 구간 수 ÷ 구간 수)이고, 끝난 구간에는 자르지
     못한 구간도 센다 — 그 구간의 일은 끝났다.
 
+    이전 실행이 끝낸 구간을 이어받은 다운로드는 이번에 처리할 구간만으로 센다 — 막대는 0에서
+    다시 찬다. 카드의 완료 구간 수는 전체 기준 그대로다(2/3에서 이어진다).
+
     남은 시간 · 크기 · 속도는 전달 방식의 변환식 그대로다. 컷 단계에서는 카드가 그 값을
     쓰지 않고 단계 문구를 보인다.
     """
@@ -418,7 +504,9 @@ def _section_progress_args(
     cut = 0.0
     if item.post_process:
         transfer = 1.0  # 컷은 전송이 끝난 뒤에 시작한다
-        cut = (data.sections_done + data.sections_failed) / data.sections_total
+        todo = data.sections_total - data.sections_resumed
+        handled = data.sections_done + data.sections_failed - data.sections_resumed
+        cut = handled / todo if todo > 0 else 1.0
     transfer = min(max(transfer, 0.0), 1.0)
     progress = int(SECTION_TRANSFER_SHARE * transfer + (100 - SECTION_TRANSFER_SHARE) * cut)
     return remaining, size, speed, progress

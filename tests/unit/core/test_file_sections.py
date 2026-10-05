@@ -39,11 +39,13 @@ from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
 from core.utils.cut_check import check_cut
 from core.utils.ffmpeg import get_ffmpeg_exe
+from core.utils.mp4_ranges import selection_byte_ranges
 from core.utils.hybrid_cut import CUT_FAILED, CutError, cut_frames_from_mp4, hybrid_cut
 from core.utils.paths import build_section_output_paths, partial_source_path_for
 from core.utils.selections import SELECTION_OUT_OF_RANGE, SelectionError
 from tests.unit.core.midway_cut_failure import MidwayCutFailure
 from tests.unit.core.range_host import RangeHost
+from tests.unit.core.section_retry import CutCalls, hand_over, snapshot
 
 FPS = 30
 KEYFRAMES = (0, 30, 42, 72, 90, 120, 150)  # -force_key_frames 0,1,1.4,2.4,3,4,5 (30fps)
@@ -785,3 +787,209 @@ def test_download_from_a_server_that_ignores_ranges_finishes_only_with_one_part(
     else:
         assert run.finished == 0
         assert run.failures and isinstance(run.failures[0], TruncatedBodyError)
+
+
+# ================================================================ 실패한 구간만 다시 처리 (#309)
+
+THREE_FILES = ["구간 시험 144p_1.mp4", "구간 시험 144p_2.mp4", "구간 시험 144p_3.mp4"]
+
+
+def _three() -> list[TimeRange]:
+    """구간 셋 — 프레임 35~80 · 100~110 · 120~140."""
+    return [
+        TimeRange(_seconds(35), _seconds(80)),
+        TimeRange(_seconds(100), _seconds(110)),
+        TimeRange(_seconds(120), _seconds(140)),
+    ]
+
+
+def _spans_after_moov(requests, moov_last: int) -> list[tuple[int, int]]:
+    """범위 요청 가운데 moov 뒤에서 시작하는 것의 (시작, 끝) — 구간의 바이트를 받은 요청이다."""
+    spans = []
+    for _method, _name, header in requests:
+        first, last = re.fullmatch(r"bytes=(\d+)-(\d+)", header).groups()
+        if int(first) > moov_last:
+            spans.append((int(first), int(last)))
+    return spans
+
+
+def test_retry_cuts_only_the_failed_section_from_the_kept_source_without_requests(
+    server, sources, tmp_path, monkeypatch
+):
+    """둘째 구간만 실패한 실행을 이어받은 실행은 둘째만 잘라야 하고 아무것도 요청하지 않아야 한다.
+
+    첫 실행: 구간 셋, 둘째 컷이 도중에 실패. 이어받은 실행: 새 엔진에 첫 실행이 남긴 것과 그때의 경로를 넘김
+    -> 컷 호출 1회(`_2`), 완료 1회 · 실패 0건, 이어받은 실행 동안의 요청 0건,
+       `_1` · `_3`의 수정 시각 · 내용이 그대로, 경로가 첫 실행과 같다,
+       저장 폴더에 `_1` · `_2` · `_3`뿐(임시 원본 없음), `_2`가 판정 통과,
+       구간 상태 == (전체 3, 완료 3, 실패 0, 이어받음 2)
+    """
+    cuts = CutCalls(monkeypatch, fd_module, "hybrid_cut", source_arg=0)
+    cuts.fail_on = (2,)
+    failed = _Run(server, "plain", tmp_path, _three()).start()
+    assert len(failed.failures) == 1
+    kept = snapshot([failed.paths[0], failed.paths[2]])
+    requests_before = len(server.requests)
+    cuts.restart()
+
+    again = hand_over(failed, _Run(server, "plain", tmp_path, _three())).start()
+
+    assert (again.finished, again.failures) == (1, [])
+    assert cuts.outputs == [THREE_FILES[1]]
+    assert server.requests[requests_before:] == []
+    assert snapshot(kept) == kept
+    assert again.paths == failed.paths
+    assert again.listing() == THREE_FILES
+    check = check_cut(_frames(sources["plain"]), again.engine.cut_results[0])
+    assert check.ok, check.notes
+    data = again.data
+    assert (
+        data.sections_total,
+        data.sections_done,
+        data.sections_failed,
+        data.sections_resumed,
+    ) == (3, 3, 0, 2)
+
+
+def test_stop_during_retry_removes_only_what_the_retry_made(server, tmp_path, monkeypatch):
+    """이어받은 실행을 컷 사이에서 중단하면 그 실행이 만든 구간 파일만 지워야 한다.
+
+    같은 엔진. 첫 실행: 둘째 · 셋째 컷이 도중에 실패(`_1`만 만듦). 이어받은 실행: 둘째 컷이 끝난 뒤 중단
+    -> 중단한 순간 `_2`가 있었다, 컷 호출 1회(`_2`), 완료 0회, 실패는 첫 실행의 1건뿐,
+       `_1`의 수정 시각 · 내용이 그대로, 저장 폴더에 임시 원본과 `_1`뿐
+    """
+    cuts = CutCalls(monkeypatch, fd_module, "hybrid_cut", source_arg=0)
+    cuts.fail_on = (2, 3)
+    run = _Run(server, "plain", tmp_path, _three()).start()
+    assert len(run.failures) == 1
+    kept = snapshot([run.paths[0]])
+    made_when_stopped = []
+
+    def stop(_number: int) -> None:
+        made_when_stopped.append(os.path.exists(run.paths[1]))
+        run.data.model.stop()
+
+    cuts.restart()
+    cuts.after = stop
+    run.data.content.section_resume = run.data.section_resume
+
+    run.engine.run()
+
+    assert made_when_stopped == [True]
+    assert cuts.outputs == [THREE_FILES[1]]
+    assert (run.finished, len(run.failures)) == (0, 1)
+    assert snapshot(kept) == kept
+    assert run.listing() == ["CVDv2_part_구간 시험 144p_1.mp4", THREE_FILES[0]]
+
+
+def test_retry_receives_only_the_failed_sections_ranges_when_the_kept_source_is_gone(
+    server, tmp_path, monkeypatch
+):
+    """남겨 둔 임시 원본이 없으면 이어받은 실행은 끝나지 않은 구간의 범위만 다시 받아야 한다.
+
+    첫 실행: 구간 셋, 둘째 컷이 도중에 실패. 임시 원본을 지움. 이어받은 실행
+    -> 완료 1회 · 실패 0건, 이어받은 실행의 요청은 모두 범위 요청이고, moov 뒤에서 시작하는
+       요청의 바이트 합 == 이어받은 실행의 받을 크기 < 첫 실행의 받을 크기, 컷 호출 1회(`_2`),
+       `_1` · `_3`의 수정 시각 · 내용이 그대로, 저장 폴더에 `_1` · `_2` · `_3`뿐
+    """
+    cuts = CutCalls(monkeypatch, fd_module, "hybrid_cut", source_arg=0)
+    cuts.fail_on = (2,)
+    failed = _Run(server, "plain", tmp_path, _three()).start()
+    assert len(failed.failures) == 1
+    kept = snapshot([failed.paths[0], failed.paths[2]])
+    os.remove(failed.source_path)
+    requests_before = len(server.requests)
+    cuts.restart()
+
+    again = hand_over(failed, _Run(server, "plain", tmp_path, _three())).start()
+
+    assert (again.finished, again.failures) == (1, [])
+    moov_last = failed.data.section_resume.mp4_head.index.moov_range[1]
+    spans = _spans_after_moov(server.requests[requests_before:], moov_last)
+    assert spans
+    received = sum(last - first + 1 for first, last in spans)
+    assert received == again.data.total_size < failed.data.total_size
+    assert cuts.outputs == [THREE_FILES[1]]
+    assert snapshot(kept) == kept
+    assert again.listing() == THREE_FILES
+
+
+def test_retry_does_not_trust_a_kept_source_of_the_same_size_with_another_head(
+    server, tmp_path, monkeypatch
+):
+    """남겨 둔 임시 원본이 크기는 같아도 머리가 다르면 이어받은 실행은 그것을 쓰지 않고 다시 받아야 한다.
+
+    첫 실행: 구간 셋, 둘째 컷이 도중에 실패. 임시 원본을 같은 크기의 0으로 채운 파일로 바꿈. 이어받은 실행
+    -> 완료 1회 · 실패 0건, 이어받은 실행의 요청이 있고 모두 범위 요청, 컷 호출 1회(`_2`),
+       `_1` · `_3`의 수정 시각 · 내용이 그대로, 저장 폴더에 `_1` · `_2` · `_3`뿐
+    """
+    cuts = CutCalls(monkeypatch, fd_module, "hybrid_cut", source_arg=0)
+    cuts.fail_on = (2,)
+    failed = _Run(server, "plain", tmp_path, _three()).start()
+    assert len(failed.failures) == 1
+    kept = snapshot([failed.paths[0], failed.paths[2]])
+    size = os.path.getsize(failed.source_path)
+    with open(failed.source_path, "wb") as f:
+        f.write(bytes(size))
+    assert os.path.getsize(failed.source_path) == failed.data.section_resume.source_size
+    requests_before = len(server.requests)
+    cuts.restart()
+
+    again = hand_over(failed, _Run(server, "plain", tmp_path, _three())).start()
+
+    assert (again.finished, again.failures) == (1, [])
+    requested = server.requests[requests_before:]
+    assert requested
+    assert all(header is not None for _method, _name, header in requested)
+    assert cuts.outputs == [THREE_FILES[1]]
+    assert snapshot(kept) == kept
+    assert again.listing() == THREE_FILES
+
+
+def test_retry_without_the_kept_source_plans_the_ranges_from_a_freshly_received_moov(
+    server, sources, tmp_path, monkeypatch
+):
+    """임시 원본을 다시 쓸 수 없으면 이어받은 실행은 moov를 새로 받아 그것으로 끝나지 않은 구간의 범위를 정해야 한다.
+
+    첫 실행: plain, 구간 셋, 둘째 컷이 도중에 실패. 임시 원본을 지우고, 같은 주소가 다른 파일(gappy)을 내주게 바꿈.
+    이어받은 실행
+    -> 완료 1회 · 실패 0건, 이어받은 실행이 새 파일의 moov가 든 범위를 요청했다,
+       moov 뒤에서 시작하는 요청들의 처음 · 끝 == 새 파일의 moov로 정한 둘째 구간의 범위
+       (남겨 둔 moov로 정한 범위와 다르다),
+       컷 호출 1회(`_2`)이고 `_2`가 새 파일의 프레임으로 판정 통과, `_1` · `_3`의 수정 시각 · 내용이 그대로
+    """
+    selections = _three()
+    cuts = CutCalls(monkeypatch, fd_module, "hybrid_cut", source_arg=0)
+    cuts.fail_on = (2,)
+    failed = _Run(server, "plain", tmp_path, selections).start()
+    assert len(failed.failures) == 1
+    kept = snapshot([failed.paths[0], failed.paths[2]])
+    os.remove(failed.source_path)
+    fresh = fetch_mp4_head(server.url("gappy")).index
+    stale = failed.data.section_resume.mp4_head.index
+    expected = selection_byte_ranges(fresh, selections[1]).ranges
+    assert len(expected) == 1  # 이어진 범위 하나
+    assert expected != selection_byte_ranges(stale, selections[1]).ranges
+    monkeypatch.setitem(server.files, "plain", server.files["gappy"])
+    requests_before = len(server.requests)
+    cuts.restart()
+
+    again = hand_over(failed, _Run(server, "plain", tmp_path, selections)).start()
+
+    assert (again.finished, again.failures) == (1, [])
+    first, last = fresh.moov_range
+    moov_requests = [
+        header
+        for _method, name, header in server.requests[requests_before:]
+        if name == "plain"
+        and (match := re.fullmatch(r"bytes=(\d+)-(\d+)", header or ""))
+        and int(match.group(1)) <= last
+        and int(match.group(2)) >= first
+    ]
+    assert moov_requests
+    spans = _spans_after_moov(server.requests[requests_before:], last)
+    assert (min(first for first, _ in spans), max(end for _, end in spans)) == expected[0]
+    assert cuts.outputs == [THREE_FILES[1]]
+    check = check_cut(_frames(sources["gappy"]), again.engine.cut_results[0])
+    assert check.ok, check.notes
+    assert snapshot(kept) == kept

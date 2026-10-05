@@ -178,6 +178,12 @@ The stream for the selected resolution could not be found. Try another resolutio
 선택한 해상도의 영상을 찾지 못했습니다. 다른 해상도로 다시 시도해 주세요.</translation>
     </message>
     <message>
+        <source>Could not cut the section · press retry
+Cutting the section failed. Retry processes only the failed sections.</source>
+        <translation>구간을 자르지 못했습니다 · 재시도해 주세요
+구간을 자르는 데 실패했습니다. 재시도하면 실패한 구간만 다시 처리합니다.</translation>
+    </message>
+    <message>
         <source>Video data arrived corrupted · try again later
 Part of the video kept arriving incomplete from the server. Try again later.</source>
         <translation>영상 일부가 잘려 받아졌습니다 · 잠시 뒤 다시 시도해 주세요

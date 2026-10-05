@@ -18,6 +18,7 @@ from core.utils.paths import (
     ensure_unique_path,
     partial_source_path_for,
     release_output_paths,
+    reserve_section_output_paths,
     sanitize_filename,
     temp_dir_for,
 )
@@ -420,3 +421,56 @@ def test_truncated_partial_source_names_stay_distinct(tmp_path):
     second = partial_source_path_for(str(tmp_path / f"{stem} (11).mp4"))
 
     assert first != second
+
+
+def test_reserved_section_paths_keep_the_names_of_the_finished_sections(tmp_path):
+    """reserve_section_output_paths는 끝낸 구간의 파일이 디스크에 있어도 그 이름을 그대로 돌려줘야 한다.
+
+    경로 셋. 0 · 2번의 파일이 있고 1번은 없다. kept == {0, 2}
+    -> 돌려준 경로 == 준 경로 그대로
+    """
+    paths = tuple(str(tmp_path / f"방송 1080p_{number}.mp4") for number in (1, 2, 3))
+    for number in (0, 2):
+        with open(paths[number], "wb") as f:
+            f.write(b"made")
+
+    reserved = reserve_section_output_paths(paths, {0, 2})
+    release_output_paths(reserved)
+
+    assert reserved == paths
+
+
+def test_reserved_section_paths_rename_only_an_unfinished_section_whose_name_was_taken(tmp_path):
+    """reserve_section_output_paths는 끝나지 않은 구간의 이름을 다른 것이 차지했을 때만 " (n)"을 붙여야 한다.
+
+    경로 셋 모두 파일이 있다. kept == {0, 2}
+    -> 1번만 "방송 1080p_2 (1).mp4", 나머지는 그대로
+    """
+    paths = tuple(str(tmp_path / f"방송 1080p_{number}.mp4") for number in (1, 2, 3))
+    for path in paths:
+        with open(path, "wb") as f:
+            f.write(b"taken")
+
+    reserved = reserve_section_output_paths(paths, {0, 2})
+    release_output_paths(reserved)
+
+    assert reserved == (paths[0], str(tmp_path / "방송 1080p_2 (1).mp4"), paths[2])
+
+
+def test_reserved_section_paths_are_avoided_by_other_downloads(tmp_path):
+    """reserve_section_output_paths로 예약한 이름은 디스크에 없어도 다른 다운로드가 배정받지 않아야 한다.
+
+    경로 둘(파일 없음)을 예약한 채 같은 제목 · 해상도의 구간 둘을 새로 배정
+    -> 새로 배정된 이름 == "방송 1080p_1 (1).mp4" · "방송 1080p_2 (1).mp4"
+    """
+    paths = tuple(str(tmp_path / f"방송 1080p_{number}.mp4") for number in (1, 2))
+
+    reserved = reserve_section_output_paths(paths, set())
+    others = build_section_output_paths(str(tmp_path), "방송", 1080, 2)
+    release_output_paths(reserved)
+    release_output_paths(others)
+
+    assert [os.path.basename(path) for path in others] == [
+        "방송 1080p_1 (1).mp4",
+        "방송 1080p_2 (1).mp4",
+    ]
