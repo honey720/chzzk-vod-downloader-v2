@@ -473,6 +473,9 @@ class _HeadlessRunner:
             base_url_resolver=resolve_m3u8_base_url, key_resolver=resolve_aes_key
         )
         self.task: DownloadTask | None = None
+        # 서비스에 제출해 받은 핸들 — 제출하기 전에는 None이다. 엔진이 실행을 넘겨받았는지
+        # (handle.engine) 볼 때 쓴다
+        self.handle = None
 
     def run(self) -> int:
         """다운로드를 제출하고 끝날 때까지 대기한 뒤 종료 코드를 반환한다."""
@@ -506,7 +509,7 @@ class _HeadlessRunner:
             self.item.resolution,
             " · ".join(self.section_paths) if self.section_paths else self.item.output_path,
         )
-        handle = self.service.submit(
+        handle = self.handle = self.service.submit(
             data.content,
             data=data,
             task_logger=task_logger,
@@ -682,6 +685,61 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _engine_took_over(runner) -> bool:
+    """엔진이 실행을 넘겨받았는지 — 서비스가 그 다운로드의 엔진을 만들어 핸들에 걸어 두었는지로 본다.
+
+    서비스의 워커는 엔진을 만들어 ``handle.engine``에 건 바로 다음에 ``engine.run()``을 부른다
+    (core/services/download_service.py의 ``_run_handle``). ``run()``에 들어간 뒤로는 엔진이
+    세그먼트 폴더와 구간 파일명 예약을 정리한다. 러너가 없거나, 제출하지 못했거나, 워커가
+    엔진을 만들지 못했으면 넘겨받지 않은 것이다.
+    """
+    handle = getattr(runner, "handle", None)
+    return handle is not None and handle.engine is not None
+
+
+def _download_ts_sections(
+    item: ContentItem, args: argparse.Namespace, cookies: dict, kind: str
+) -> int:
+    """암호화 VOD의 구간 다운로드를 구간 해석부터 끝까지 돌리고 종료 코드를 돌려준다.
+
+    구간 해석은 복호화한 세그먼트를 폴더에 받아 두고, 엔진이 그 폴더를 넘겨받아 끝날 때
+    정리한다. 그 사이 — 구간 파일명을 배정한 때부터 엔진이 넘겨받기 전까지 — 는 여기가
+    정리한다: 해석이 실패하든, 해석 도중 중단(Ctrl+C)되든, 엔진을 시작하지 못하든 구간 파일명
+    예약을 풀고 세그먼트 폴더를 지운다. 복호화한 세그먼트를 주인 없이 남기지 않는다.
+    예외는 정리한 뒤 그대로 올라간다 — 삼키지 않는다.
+
+    엔진이 넘겨받은 뒤(``_engine_took_over``)에는 여기서 지우지 않는다. 후처리가 실패하면
+    엔진이 세그먼트를 일부러 남긴다(#92).
+
+    Returns:
+        러너의 종료 코드. 구간 해석이 실패하면 2
+    """
+    # 구간 파일명을 먼저 배정한다 — 받은 세그먼트를 둘 폴더는 엔진이 혼자 돌 때와 같은
+    # 규칙(choose_temp_dir, 첫 구간 파일의 이름)으로 정한다. 엔진이 그 폴더를 넘겨받는다
+    section_paths = build_section_output_paths(
+        item.download_path, item.title, item.resolution, len(args.section)
+    )
+    segment_dir = None
+    runner = None
+    try:
+        segment_dir = choose_temp_dir(section_paths[0])
+        # 고른 해상도에 매니페스트가 선언한 프레임률 — 있으면 구간 해석이 그 값을 쓴다
+        declared = _fetch_frame_rates(args.url, cookies, kind).get(item.base_url)
+        resolved = _resolve_ts_sections(item, args.section, segment_dir, declared)
+        if resolved is None:
+            return 2
+        selections, ts_head = resolved
+        runner = _HeadlessRunner(
+            item, args.timeout, selections, section_paths=section_paths, ts_head=ts_head
+        )
+        return runner.run()
+    finally:
+        if not _engine_took_over(runner):
+            release_output_paths(section_paths)
+            if segment_dir is not None:
+                shutil.rmtree(segment_dir, ignore_errors=True)
+
+
 def main(argv: list[str] | None = None) -> int:
     """헤드리스 다운로드 진입점. 종료 코드를 반환한다."""
     args = _parse_args(sys.argv[1:] if argv is None else argv)
@@ -714,7 +772,7 @@ def main(argv: list[str] | None = None) -> int:
 
     selections: tuple[TimeRange, ...] = ()
     section_paths: tuple[str, ...] = ()
-    mp4_head = fmp4_head = ts_head = None
+    mp4_head = fmp4_head = None
     if args.section:
         if content_type == "video":
             resolved = _resolve_sections(item, args.section)
@@ -734,27 +792,12 @@ def main(argv: list[str] | None = None) -> int:
                 return 2
             selections, fmp4_head = resolved
         elif content_type == "hls_aes":
-            # 구간 파일명을 먼저 배정한다 — 받은 세그먼트를 둘 폴더는 엔진이 혼자 돌 때와 같은
-            # 규칙(choose_temp_dir, 첫 구간 파일의 이름)으로 정한다. 엔진이 그 폴더를 넘겨받는다
-            section_paths = build_section_output_paths(
-                item.download_path, item.title, item.resolution, len(args.section)
-            )
-            segment_dir = choose_temp_dir(section_paths[0])
-            # 고른 해상도에 매니페스트가 선언한 프레임률 — 있으면 구간 해석이 그 값을 쓴다
-            declared = _fetch_frame_rates(args.url, cookies, content_type).get(item.base_url)
-            resolved = _resolve_ts_sections(item, args.section, segment_dir, declared)
-            if resolved is None:
-                release_output_paths(section_paths)
-                shutil.rmtree(segment_dir, ignore_errors=True)
-                return 2
-            selections, ts_head = resolved
+            return _download_ts_sections(item, args, cookies, content_type)
         else:
             logger.error("구간 다운로드는 클립을 지원하지 않습니다: %s", content_type)
             return 2
 
-    return _HeadlessRunner(
-        item, args.timeout, selections, mp4_head, fmp4_head, section_paths, ts_head=ts_head
-    ).run()
+    return _HeadlessRunner(item, args.timeout, selections, mp4_head, fmp4_head, section_paths).run()
 
 
 if __name__ == "__main__":

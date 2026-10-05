@@ -15,6 +15,7 @@
 
 import logging
 import os
+import threading
 import xml.etree.ElementTree as ET
 from fractions import Fraction
 from types import SimpleNamespace
@@ -32,6 +33,7 @@ from core.models.download_data import DownloadData
 from core.models.plan import TimeRange
 from core.models.ts_index import TsHead
 from core.utils.cut_check import check_cut
+from core.utils.hybrid_cut import CUT_FAILED, CutError
 from core.utils.paths import build_section_output_paths, release_output_paths, temp_dir_for
 from tests.unit.core.encrypted_hls import FPS, KEY_EVERY, LEAD, SEGMENT_FRAMES, make_encrypted_hls
 from tests.unit.core.range_host import RangeHost
@@ -406,6 +408,105 @@ def test_failed_ts_resolution_releases_names_and_removes_the_segment_folder(monk
     again = build_section_output_paths(str(tmp_path), TITLE, 144, 1)
     release_output_paths(again)
     assert os.path.basename(again[0]) == SECTION_FILES[0]
+
+
+# ================================================================ 엔진이 넘겨받기 전의 정리
+
+
+def _name_is_free(folder) -> bool:
+    """첫 구간 파일명을 다시 배정받을 수 있는지 — 예약이 풀려 있으면 접미사 없는 `_1`이 나온다."""
+    again = build_section_output_paths(str(folder), TITLE, 144, 1)
+    release_output_paths(again)
+    return os.path.basename(again[0]) == SECTION_FILES[0]
+
+
+def test_interrupt_during_ts_resolution_removes_the_segment_folder_and_is_raised_again(
+    vod, host, tmp_path, monkeypatch
+):
+    """구간 해석이 세그먼트를 받아 둔 뒤 중단(KeyboardInterrupt)되면 폴더를 지우고 이름을 풀고 그 중단을 그대로 올려야 한다.
+
+    --section 하나. 구간 해석이 첫 세그먼트를 받아 둔 다음 부르는 ts_timeline이 KeyboardInterrupt를 냄
+    -> KeyboardInterrupt가 main 밖으로 나온다, 중단될 때 폴더에 "0.ts"가 있었다,
+       끝난 뒤 그 폴더가 없다, 구간 파일명을 다시 배정받을 수 있다, 엔진은 만들어지지 않았다
+    """
+    run = _Headless(monkeypatch, host, tmp_path)
+    stored = []
+
+    def interrupted(playlist, segment_at, fps):
+        stored.append(sorted(os.listdir(run.segment_dirs[0])))
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(headless, "ts_timeline", interrupted)
+
+    with pytest.raises(KeyboardInterrupt):
+        run.main(["00:00:01:00-00:00:02:00"])
+
+    assert stored == [["0.ts"]]
+    assert not os.path.exists(run.segment_dirs[0])
+    assert _name_is_free(run.folder)
+    assert run.engines == []
+    assert run.listing() == []
+
+
+@pytest.mark.parametrize("where", ["before-submit", "engine-not-created"])
+def test_failure_between_ts_resolution_and_the_engine_removes_the_segment_folder(
+    vod, host, tmp_path, monkeypatch, where
+):
+    """구간 해석이 끝난 뒤 엔진이 실행을 넘겨받기 전에 실패하면 폴더를 지우고 이름을 풀어야 한다.
+
+    --section 하나, 구간 해석은 끝까지 감(세그먼트를 받아 둔다).
+    before-submit: 러너가 제출하기 전에 태스크를 만들다 RuntimeError
+    engine-not-created: 서비스의 워커가 엔진을 만들다 RuntimeError(핸들에 엔진이 걸리지 않는다)
+    -> before-submit은 RuntimeError가 main 밖으로 나오고, engine-not-created는 종료 코드 1.
+       실패할 때 폴더에 받아 둔 세그먼트가 있었다, 끝난 뒤 그 폴더가 없다,
+       구간 파일명을 다시 배정받을 수 있다, 저장 폴더가 비어 있다
+    """
+    run = _Headless(monkeypatch, host, tmp_path)
+    stored = []
+
+    def failing(*_args, **_kwargs):
+        stored.append(sorted(os.listdir(run.segment_dirs[0])))
+        raise RuntimeError("시험")
+
+    if where == "before-submit":
+        monkeypatch.setattr(headless, "DownloadTask", failing)
+        with pytest.raises(RuntimeError):
+            run.main(["00:00:01:00-00:00:02:00"])
+    else:
+        died = []  # 워커 스레드를 끝낸 예외 — 스레드 밖으로 나온 것을 여기서 받는다
+        monkeypatch.setattr(threading, "excepthook", lambda args: died.append(args.exc_value))
+        monkeypatch.setattr(HlsAesDownloader, "__init__", failing)
+        assert run.main(["00:00:01:00-00:00:02:00"]) == 1
+        assert [type(error) for error in died] == [RuntimeError]
+
+    assert len(stored) == 1 and stored[0]  # 실패할 때 받아 둔 세그먼트가 있었다
+    assert all(name.endswith(".ts") for name in stored[0])
+    assert not os.path.exists(run.segment_dirs[0])
+    assert _name_is_free(run.folder)
+    assert run.listing() == []
+
+
+def test_headless_leaves_the_segment_folder_to_the_engine_once_it_took_over(
+    vod, host, tmp_path, monkeypatch
+):
+    """엔진이 실행을 넘겨받은 뒤의 실패에서는 헤드리스가 세그먼트 폴더를 지우지 않아야 한다.
+
+    --section 하나. 엔진의 컷이 CutError를 내 후처리가 실패함(엔진은 세그먼트를 남긴다)
+    -> 종료 코드 1, 엔진이 만들어졌다, 세그먼트 폴더가 남아 있고 구간의 세그먼트가 들어 있다
+    """
+    run = _Headless(monkeypatch, host, tmp_path)
+
+    def failing_cut(*_args, **_kwargs):
+        raise CutError(CUT_FAILED, "시험")
+
+    monkeypatch.setattr(aes_module, "cut_ts_section", failing_cut)
+
+    code = run.main(["00:00:01:00-00:00:02:00"])
+
+    assert code == 1
+    assert len(run.engines) == 1
+    kept = sorted(os.listdir(run.segment_dirs[0]))
+    assert kept and all(name.endswith(".ts") for name in kept)
 
 
 # ================================================================ 키
