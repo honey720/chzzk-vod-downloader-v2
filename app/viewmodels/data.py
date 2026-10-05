@@ -24,6 +24,10 @@ class ContentItem:
         self.content_type = content_type
         self.liveRewindPlaybackJson = liveRewindPlaybackJson
         self.post_process = False
+        # 받을 구간 목록 (#309) — core.models.plan.TimeRange의 튜플. 비어 있으면 전체 다운로드다
+        self.selections = ()
+        self.sections_done = 0  # 잘라서 파일로 만든 구간 수 — 엔진의 구간 상태에서 옮긴 값
+        self.sections_failed = 0  # 자르지 못한 구간 수
 
         self.unique_reps = unique_reps
         

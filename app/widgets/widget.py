@@ -693,6 +693,43 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         painter.end()
         return result
 
+    # 대기 카드의 재생 시간 자리에 적는 구간 요약의 형식 (#309) — "count"는 구간 수와 길이의
+    # 합("구간 3개 · 0:45"), "range"는 첫 구간의 범위와 나머지 수("10:05–10:16 외 2개")
+    SECTION_SUMMARY_STYLE = "count"
+
+    def _sectionCount(self) -> int:
+        """이 카드가 받을 구간 수 — 전체 다운로드면 0."""
+        return len(getattr(self.item, "selections", ()) or ())
+
+    def _sectionTally(self) -> str:
+        """상태 문구에 붙이는 완료 구간 수 — " · 2/3". 구간이 둘보다 적으면 빈 문자열이다.
+
+        구간이 하나인 카드와 전체 다운로드 카드의 문구는 구간 표시가 없던 때와 같다.
+        """
+        total = self._sectionCount()
+        if total < 2:
+            return ""
+        return f" · {self.item.sections_done}/{total}"
+
+    def _sectionSummary(self) -> str:
+        """대기 카드의 재생 시간 자리에 적는 구간 요약 (#309).
+
+        시각은 남은 시간과 같은 짧은 표기("3:12" · "1:02:03")로 적는다.
+        """
+        selections = self.item.selections
+
+        def clock(seconds: float) -> str:
+            return self._shortRemain(strftime("%H:%M:%S", gmtime(max(seconds, 0))))
+
+        if self.SECTION_SUMMARY_STYLE == "range":
+            first = selections[0]
+            shown = f"{clock(first.start)}–{clock(first.end)}"
+            if len(selections) == 1:
+                return shown
+            return self.tr("{0} and {1} more").format(shown, len(selections) - 1)
+        length = sum(selection.end - selection.start for selection in selections)
+        return self.tr("Sections {0} · {1}").format(len(selections), clock(length))
+
     def _shortRemain(self, remain: str) -> str:
         """"HH:MM:SS" 시간을 짧은 표시("3:12")로 줄인다 — 표시 정책.
 
@@ -738,13 +775,23 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             # 슬롯은 해상도 pill이 차지한다 — statusLabel은 숨겨지지만
             # 값은 유지한다(테스트·툴팁 등 텍스트 조회 경로 보존)
             self.statusLabel.setText(self.tr("Download waiting"))
-            if self.item.is_segment_based:
+            if self._sectionCount():
+                # 구간 다운로드는 재생 시간 자리에 구간 요약을 적는다 (#309)
+                self.fileSizeLabel.setText(self._sectionSummary())
+            elif self.item.is_segment_based:
                 self.fileSizeLabel.setText(strftime('%H:%M:%S', gmtime(item.duration)))
             else:
                 self.fileSizeLabel.setText(f"{item.total_size}")
 
         elif self.item.downloadState == DownloadState.RUNNING:
-            if self.item.is_segment_based and self.item.post_process:
+            if self._sectionCount() and self.item.post_process:
+                # 구간을 자르는 단계 (#309) — 속도 · 남은 시간은 뜻이 없어 적지 않고 단계
+                # 문구를 적는다. 막대는 전송과 컷을 합친 하나다
+                cutting_text = self.tr("Cutting")
+                self.statusLabel.setText(
+                    f"{item.download_progress}% · {cutting_text}{self._sectionTally()}"
+                )
+            elif self.item.is_segment_based and self.item.post_process:
                 # "13% · 후처리 중" — 후처리 진행률(download_progress는 후처리에서
                 # 0부터 다시 차오른다)을 **앞에** 둔다. 전송 "42% · …"·일시정지
                 # "13% · 일시정지됨"과 자리를 맞춰 상태가 바뀌어도 퍼센트 위치가
@@ -756,6 +803,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
                 self.statusLabel.setText(
                     f"{item.download_progress}% · {item.download_speed} · "
                     + self.tr("{0} left").format(remain)
+                    + self._sectionTally()
                 )
             self.fileSizeLabel.setText(self._withResolution(self._sizeText(item)))
 
@@ -765,7 +813,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             # ⚠️ tr()은 f-string 밖에 둔다 — pyside6-lupdate는 f-string 중괄호
             # 안의 tr()을 못 읽어 -no-obsolete 재생성에서 항목이 지워진다(실측).
             paused_text = self.tr("Paused")
-            self.statusLabel.setText(f"{item.download_progress}% · {paused_text}")
+            self.statusLabel.setText(
+                f"{item.download_progress}% · {paused_text}{self._sectionTally()}"
+            )
             self.fileSizeLabel.setText(self._withResolution(self._sizeText(item)))
 
         elif self.item.downloadState == DownloadState.FINISHED:
@@ -774,7 +824,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             # start_time~end_time으로 만든 "HH:MM:SS"이고, end_time은 후처리가
             # 끝난 뒤 찍히므로 유저가 체감하는 전체(로그의 "Download completed")다.
             # 값이 없으면(앱 재시작 복원 등) 시간 없이 "✓ 완료"만.
-            completed = f"{STATE_ICON['finished']} " + self.tr("Completed")
+            completed = f"{STATE_ICON['finished']} " + self.tr("Completed") + self._sectionTally()
             elapsed = self._shortRemain(item.download_time) if item.download_time else ""
             self.statusLabel.setText(f"{completed} · {elapsed}" if elapsed else completed)
             self.fileSizeLabel.setText(self._withResolution(self.setSize(item.download_size)))
@@ -794,6 +844,11 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             # 올리고 전문은 툴팁으로(#245). 실패 사유는 마우스를 올려야 보이면 안
             # 된다 — 640px에서 잘리던 두 문구를 이렇게 갈랐다(ko 실측).
             headline = text.splitlines()[0] if text else text
+            failed_sections = getattr(item, "sections_failed", 0)
+            if self._sectionCount() >= 2 and failed_sections:
+                # 일부 구간만 자르지 못했다 (#309) — 실패한 구간 수와 완료 구간 수를 사유 앞에 적는다
+                tally = self.tr("{0} failed").format(failed_sections) + self._sectionTally()
+                headline = f"{tally} · {headline}"
             self.statusLabel.setText(f"{STATE_ICON['failed']} {headline}")
             self.statusLabel.setToolTip(text)
 
