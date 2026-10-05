@@ -621,3 +621,35 @@ def test_cut_failure_card_shows_its_own_reason(card, cause, headline):
     card.qapp.processEvents()
 
     assert card.status == f"✕ 1 failed · 2/3 · {headline}"
+
+
+@pytest.mark.parametrize("changed", ["folder", "title"])
+def test_retry_after_the_folder_or_title_changed_starts_over_in_the_place_now_chosen(
+    card, tmp_path, changed
+):
+    """실패한 뒤 저장 폴더나 제목을 바꿨으면 이어받지 않고, 지금 고른 폴더 · 제목으로 처음부터 받아야 한다.
+
+    구간 셋, 둘째만 실패(옛 폴더에 `_1` · `_3` 파일이 있다).
+    folder: 저장 폴더를 새 폴더로 바꿈 / title: 제목을 "새 제목"으로 바꿈 → ↻ → 시작
+    -> 제출된 content의 section_resume is None, 구간 파일 셋의 폴더 == 아이템의 지금 저장 폴더,
+       파일 이름 == 지금 제목의 `_1` · `_2` · `_3`(" (1)" 없음), 아이템의 완료 구간 수 == 0
+    """
+    _fail_second_section(card)
+    if changed == "folder":
+        moved = tmp_path / "moved"
+        moved.mkdir()
+        card.item.download_path = str(moved)
+    else:
+        card.item.title = "새 제목"
+
+    card.retry()
+    card.restart()
+
+    content = card.submission["content"]
+    title = "새 제목" if changed == "title" else "구간 시험"
+    assert content.section_resume is None
+    assert {os.path.dirname(path) for path in content.selection_paths} == {card.item.download_path}
+    assert [os.path.basename(path) for path in content.selection_paths] == [
+        f"{title} 1080p_{number}.mp4" for number in (1, 2, 3)
+    ]
+    assert card.item.sections_done == 0

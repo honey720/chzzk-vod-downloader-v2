@@ -31,8 +31,9 @@ core/downloaders/base.py의 BaseDownloader로 이주했다(#82). 이 클래스�
 - 일부 구간의 컷만 실패하면 끝낸 구간과 임시 원본을 공유 데이터에 남긴다
   (``DownloadData.section_resume``). 그것을 ``Content.section_resume``으로 받은 실행은
   끝나지 않은 구간만 자른다 — 임시 원본이 남긴 크기 그대로 있으면 다시 받지 않고(요청 0건),
-  아니면 끝나지 않은 구간의 범위만 다시 받는다. 이전 실행의 것(끝낸 구간 파일 · 다시 쓴
-  임시 원본)은 이 실행이 실패 · 중단해도 지우지 않는다
+  아니면 moov를 새로 받아 끝나지 않은 구간의 범위만 다시 받는다(남겨 둔 moov로 범위를
+  정하지 않는다 — 새로 받는 바이트는 지금의 파일의 것이다). 이전 실행의 것(끝낸 구간 파일 ·
+  다시 쓴 임시 원본)은 이 실행이 실패 · 중단해도 지우지 않는다
 - m3u8·hls_aes는 구간을 받지 않는다(베이스가 거부한다). clip도 받지 않는다
 
 스레드 스케일링 기준 속도는 베이스 기본값(4 MB/s — 구 고정 임계 4/2와 동일)을
@@ -194,16 +195,14 @@ class FileDownloader(BaseDownloader):
             or content.mp4_head
             or fetch_mp4_head(self.s.base_url)
         )
-        index = head.index
-        violations = validate_selections(content.selections, index.duration, index.fps)
-        if violations:
-            raise SelectionError(violations)
-
-        picked = [selection_byte_ranges(index, selection) for selection in content.selections]
-        if head.data is None:
-            raise Mp4Error(MP4_UNSUPPORTED, "moov가 파일 앞부분에 없다")
+        index, picked = self._pick_ranges(head, content)
         source_path = partial_source_path_for(content.selection_paths[0])
         stored = self._stored_layout(resume, index, picked, head.data) if resume else None
+        if resume is not None and stored is None and head is resume.mp4_head:
+            # 임시 원본을 다시 쓸 수 없어 새로 받는다. 새로 받는 바이트는 지금의 파일의 것이다 —
+            # 남겨 둔 moov가 아니라 지금의 moov로 범위를 정한다(그 사이 파일이 바뀌었을 수 있다)
+            head = fetch_mp4_head(self.s.base_url)
+            index, picked = self._pick_ranges(head, content)
         self._reuses_source = stored is not None
         if stored is not None:
             # 이전 실행이 전송을 끝낸 임시 원본을 그대로 쓴다 — 받지 않는다
@@ -356,6 +355,22 @@ class FileDownloader(BaseDownloader):
                 f"후처리(cut) 실패: 구간 {len(failures)}개 — {failures[0]}"
             ) from failures[0]
         os.remove(self._source_path)
+
+    @staticmethod
+    def _pick_ranges(head, content: Content) -> tuple[Mp4Index, list]:
+        """그 moov로 구간을 검증하고 구간마다 받을 바이트 범위를 정한다.
+
+        Raises:
+            SelectionError: 구간이 검증을 통과하지 못한 경우
+            Mp4Error: moov가 파일 앞부분에 없는 경우
+        """
+        index = head.index
+        violations = validate_selections(content.selections, index.duration, index.fps)
+        if violations:
+            raise SelectionError(violations)
+        if head.data is None:
+            raise Mp4Error(MP4_UNSUPPORTED, "moov가 파일 앞부분에 없다")
+        return index, [selection_byte_ranges(index, selection) for selection in content.selections]
 
     def _stored_layout(
         self, resume: SectionResume, index: Mp4Index, picked: list, head_data: bytes

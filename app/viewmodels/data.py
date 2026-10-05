@@ -34,9 +34,9 @@ class ContentItem:
         self.selections = ()
         self.sections_done = 0  # 잘라서 파일로 만든 구간 수 — 엔진의 구간 상태에서 옮긴 값
         self.sections_failed = 0  # 자르지 못한 구간 수
-        # 일부 구간의 컷만 실패하고 끝난 다운로드가 남긴 것 (#309) — (그때의 스트림을 가리키는
-        # 값, core.models.section_resume.SectionResume). 다음 다운로드가 끝나지 않은 구간만
-        # 다시 처리하는 데 쓴다. 없으면 None이다
+        # 일부 구간의 컷만 실패하고 끝난 다운로드가 남긴 것 (#309) — (그때의 스트림 · 저장 폴더 ·
+        # 제목을 가리키는 값, core.models.section_resume.SectionResume). 다음 다운로드가 끝나지
+        # 않은 구간만 다시 처리하는 데 쓴다. 없으면 None이다
         self.section_retry = None
 
         self.unique_reps = unique_reps

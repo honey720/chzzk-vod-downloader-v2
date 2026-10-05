@@ -143,9 +143,9 @@ class DownloadViewModel(QObject):
         self.item: ContentItem | None = None
         # 실행 중인 다운로드의 엔진 공유 데이터 — 구간 상태(완료 · 실패 수)를 여기서 읽는다
         self._data: DownloadData | None = None
-        # 실행 중인 다운로드가 받는 스트림을 가리키는 값 — 일부 구간 실패로 끝나면 남긴 것과
-        # 함께 아이템에 적어, 다음 다운로드가 같은 스트림일 때만 이어받게 한다
-        self._stream_key: tuple | None = None
+        # 실행 중인 다운로드가 무엇을 받아 어디에 쓰는지를 가리키는 값 — 일부 구간 실패로 끝나면
+        # 남긴 것과 함께 아이템에 적어, 다음 다운로드가 같은 값일 때만 이어받게 한다
+        self._resume_key: tuple | None = None
         # 진행 통지가 메인 스레드에 닿으면 구간 상태를 아이템에 먼저 옮긴다 — content보다
         # 먼저 연결해, content가 카드를 다시 그릴 때 값이 이미 들어 있게 한다
         self.progress.connect(self._syncSections)
@@ -183,7 +183,7 @@ class DownloadViewModel(QObject):
             # 구간 다운로드 (#309) — 구간 파일명은 시작할 때 한꺼번에 배정한다. 예약은 엔진이
             # 끝날 때 푼다
             data.content.selections = selections
-            self._stream_key = _stream_key(item)
+            self._resume_key = _resume_key(item)
             resume = _usable_resume(item, selections)
             if resume is not None:
                 # 일부 구간만 실패한 다운로드를 이어서 처리한다 — 구간 파일 이름을 새로 배정하지
@@ -227,9 +227,9 @@ class DownloadViewModel(QObject):
         retry = getattr(item, "section_retry", None)
         if retry is None:
             return
-        stream_key, resume = retry
+        resume_key, resume = retry
         done = frozenset(number for number in resume.done if os.path.isfile(resume.paths[number]))
-        item.section_retry = (stream_key, dataclasses.replace(resume, done=done))
+        item.section_retry = (resume_key, dataclasses.replace(resume, done=done))
 
     def pause(self) -> None:
         """다운로드 일시정지 (구 DownloadManager.pause)."""
@@ -357,7 +357,7 @@ class DownloadViewModel(QObject):
         if resume is not None:
             # 엔진이 끝낸 구간과 받아 둔 데이터를 남겼다 — 다음 다운로드가 실패한 구간만 다시
             # 처리한다. 남기지 않은 실패(전송 실패 등)는 아이템에 있던 것을 그대로 둔다
-            item.section_retry = (self._stream_key, resume)
+            item.section_retry = (self._resume_key, resume)
         if self.task is not None:
             self.task.stop()
         self.handle = None
@@ -426,22 +426,35 @@ class DownloadViewModel(QObject):
         return translated.get(key, "") if key is not None else ""
 
 
-def _stream_key(item: ContentItem) -> tuple:
-    """아이템이 지금 받으려는 스트림을 가리키는 값 — 해상도를 바꾸면 달라진다."""
-    return (item.content_type, item.base_url, item.resolution, getattr(item, "stream", None))
+def _resume_key(item: ContentItem) -> tuple:
+    """아이템이 지금 무엇을 받아 어디에 쓰려는지를 가리키는 값 (#309).
+
+    받을 스트림(종류 · 주소 · 해상도 · 변형)과, 구간 파일이 놓일 자리(저장 폴더 · 파일명의
+    바탕인 제목)다. 해상도 · 저장 폴더 · 제목 가운데 하나라도 바꾸면 달라진다.
+    """
+    return (
+        item.content_type,
+        item.base_url,
+        item.resolution,
+        getattr(item, "stream", None),
+        item.download_path,
+        item.title,
+    )
 
 
 def _usable_resume(item: ContentItem, selections: tuple):
     """아이템에 남아 있는, 지금 시작하는 다운로드가 이어받을 수 있는 것을 돌려준다. 없으면 None.
 
-    그때와 같은 스트림 · 같은 구간 목록일 때만 이어받는다 — 해상도를 바꿨으면 받아 둔
-    데이터와 만든 구간 파일이 다른 영상의 것이다.
+    그때와 같은 스트림 · 같은 저장 폴더 · 같은 제목 · 같은 구간 목록일 때만 이어받는다.
+    해상도를 바꿨으면 받아 둔 데이터와 만든 구간 파일이 다른 영상의 것이다. 저장 폴더나
+    제목을 바꿨으면 남겨 둔 경로는 지금 고른 자리가 아니다 — 이어받으면 시작 전 쓰기 검사를
+    거친 폴더가 아닌 곳에 쓰게 된다. 그때는 새 자리에 새 이름으로 처음부터 받는다.
     """
     retry = getattr(item, "section_retry", None)
     if retry is None:
         return None
-    stream_key, resume = retry
-    if stream_key != _stream_key(item) or resume.selections != selections:
+    resume_key, resume = retry
+    if resume_key != _resume_key(item) or resume.selections != selections:
         return None
     return resume
 
