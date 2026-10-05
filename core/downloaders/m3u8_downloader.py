@@ -400,8 +400,9 @@ class M3U8Downloader(BaseDownloader):
         """구간마다 초기화 세그먼트 + 그 구간의 세그먼트를 이은 임시 fMP4를 만들고 자른다.
 
         구간 목록 순서대로 자른다. 자르지 못한 구간이 있어도 나머지 구간을 끝까지 자르고,
-        그 뒤에 PostprocessError로 끝낸다 — 임시 폴더와 만든 구간 파일은 남는다. 이은
-        파일은 그 구간을 자르면 바로 지운다(자르지 못한 구간의 것은 남는다). 구간마다의
+        그 뒤에 PostprocessError로 끝낸다 — 임시 폴더(받은 세그먼트)와 만든 구간 파일은
+        남는다. 이은 파일은 그 구간의 컷이 끝나면(성공이든 실패든) 바로 지운다 — 받은
+        세그먼트에서 다시 만들 수 있고, 구간이 여럿 실패해도 쌓이지 않는다. 구간마다의
         결과는 공유 데이터의 sections_done · sections_failed에 센다.
         구간 사이에서 중단·일시정지를 확인한다(컷 하나는 중간에 멈추지 않는다).
         """
@@ -413,8 +414,8 @@ class M3U8Downloader(BaseDownloader):
                 self.s._pause_event.wait()
             if self.state == DownloadState.WAITING:
                 return  # 정리(임시 폴더·만든 구간 파일 삭제)는 run()의 중단 경로가 한다
+            joined = os.path.join(self.temp_dir, f"section_{number}.mp4")
             try:
-                joined = os.path.join(self.temp_dir, f"section_{number}.mp4")
                 parsed = []
                 with open(joined, "wb") as out:
                     out.write(head.init_data)
@@ -436,7 +437,6 @@ class M3U8Downloader(BaseDownloader):
                     output_path,
                     inspect=self._inspect_cuts,
                 )
-                os.remove(joined)
             except (CutError, Mp4Error) as e:
                 # 이 구간은 자르지 못했다 — 나머지 구간은 끝까지 자른다
                 self.logger.log_error("Cut failed — segments preserved for retry", e)
@@ -447,6 +447,9 @@ class M3U8Downloader(BaseDownloader):
                 self.cut_frames.append(frames)
                 self._made_sections.append(output_path)
                 self.s.sections_done += 1
+            finally:
+                if os.path.exists(joined):
+                    os.remove(joined)
             # 병합 진행(세그먼트 수 기반)을 구간 수에 비례해 올린다 — 어댑터의 분모는
             # 받은 세그먼트 수 + 초기화 세그먼트다
             self.s.merged_segments = (self.s.max_threads + 1) * number // len(self._sections)

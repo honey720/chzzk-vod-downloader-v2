@@ -70,6 +70,7 @@ from core.utils.selections import (
     SELECTION_TOO_SHORT,
     SelectionError,
 )
+from tests.unit.core.midway_cut_failure import MidwayCutFailure
 from tests.unit.core.range_host import RangeHost
 
 KEYFRAMES = (0, 30, 36, 60, 90, 120, 150)  # -force_key_frames 0,1,1.2,2,3,4,5 (30fps)
@@ -813,7 +814,7 @@ def test_cut_failure_keeps_segments_and_finished_sections(host, sources, tmp_pat
 
     plain, 구간 둘, 둘째 컷이 CutError를 내도록 바꿈
     -> 완료 0회, 실패 1건(PostprocessError, 원인 CutError), `_1` 파일과 임시 폴더가 남고
-       임시 폴더에 초기화 세그먼트 · 세그먼트 · 둘째 구간의 이은 파일이 있다
+       임시 폴더에 초기화 세그먼트 · 세그먼트만 있다(둘째 구간의 이은 파일은 없다)
     """
     source = sources["plain"]
     real = m3u8_module.hybrid_cut
@@ -835,7 +836,7 @@ def test_cut_failure_keeps_segments_and_finished_sections(host, sources, tmp_pat
     assert isinstance(run.failures[0].__cause__, CutError)
     assert run.listing() == ["CVDv2_temp_구간 시험 144p_1", "구간 시험 144p_1.mp4"]
     kept = sorted(os.listdir(temp_dir_for(run.paths[0])))
-    assert kept == ["0.m4s", "1.m4v", "2.m4v", "3.m4v", "section_2.mp4"]
+    assert kept == ["0.m4s", "1.m4v", "2.m4v", "3.m4v"]
 
 
 def test_cut_failure_of_one_section_still_cuts_the_sections_after_it(
@@ -843,18 +844,22 @@ def test_cut_failure_of_one_section_still_cuts_the_sections_after_it(
 ):
     """구간 셋 가운데 둘째의 컷이 실패해도 셋째는 잘라야 하고, 다운로드는 그 뒤에 한 번 실패해야 한다.
 
-    plain, 구간 프레임 5~20 · 40~70 · 100~130, 둘째 컷이 CutError를 내도록 바꿈
+    plain, 구간 프레임 5~20 · 40~70 · 100~130, 둘째 컷이 첫 ffmpeg 실행 자리에서 출력 파일을
+    반쯤 쓰고 CutError를 냄
     -> 컷 호출 3회, 완료 0회, 실패 1건(PostprocessError, 원인 CutError),
-       저장 폴더에 `_1` · `_3` 파일과 임시 폴더, 공유 데이터의 구간 상태 == (전체 3, 완료 2, 실패 1)
+       저장 폴더에 `_1` · `_3` 파일과 임시 폴더뿐(`_2` 파일 · 컷 작업 폴더 없음),
+       임시 폴더에 이은 파일(section_*.mp4) 없음,
+       공유 데이터의 구간 상태 == (전체 3, 완료 2, 실패 1)
     """
     source = sources["plain"]
     real = m3u8_module.hybrid_cut
+    failure = MidwayCutFailure(monkeypatch)
     calls = []
 
     def second_fails(*args, **kwargs):
         calls.append(args)
         if len(calls) == 2:
-            raise CutError(CUT_FAILED, "시험")
+            failure.arm(source_path=args[0], output_path=args[4])
         return real(*args, **kwargs)
 
     monkeypatch.setattr(m3u8_module, "hybrid_cut", second_fails)
@@ -867,11 +872,21 @@ def test_cut_failure_of_one_section_still_cuts_the_sections_after_it(
     assert len(run.failures) == 1
     assert isinstance(run.failures[0], PostprocessError)
     assert isinstance(run.failures[0].__cause__, CutError)
+    # 실패시킨 순간에는 있었다 — 아래의 "없다"가 정리의 결과임을 먼저 확인한다
+    assert (failure.fired, failure.source_existed, failure.work_dir_existed) == (1, True, True)
+    assert os.path.basename(failure.source_path) == "section_2.mp4"
+    assert os.path.basename(failure.output_path) == "구간 시험 144p_2.mp4"
+    assert not os.path.exists(failure.source_path)
+    assert not os.path.exists(failure.output_path)
+    assert not os.path.exists(failure.work_dir)
     assert run.listing() == [
         "CVDv2_temp_구간 시험 144p_1",
         "구간 시험 144p_1.mp4",
         "구간 시험 144p_3.mp4",
     ]
+    temp_names = os.listdir(run.engine.temp_dir)
+    assert temp_names  # 받은 세그먼트는 남는다
+    assert [name for name in temp_names if name.startswith("section_")] == []
     data = run.data
     assert (data.sections_total, data.sections_done, data.sections_failed) == (3, 2, 1)
 
@@ -1012,7 +1027,7 @@ def test_engine_keeps_handed_in_segments_and_removes_other_files_from_the_segmen
 
     plain, 구간 프레임 40~100(세그먼트 0~3). 해석 뒤 폴더에 이전 실행의 것처럼 "9.m4v"와 "old.bin"을 넣음.
     컷이 CutError를 내게 해 폴더가 남게 함
-    -> 폴더에 초기화 세그먼트 · 세그먼트 1~4(0~3번째) · 이은 파일만 있다 — "9.m4v" · "old.bin"과,
+    -> 폴더에 초기화 세그먼트 · 세그먼트 1~4(0~3번째)만 있다 — "9.m4v" · "old.bin"과,
        해석이 길이를 재려고 받았지만 이 구간에는 쓰지 않는 "6.m4v"는 없다
     """
     source = sources["plain"]
@@ -1033,7 +1048,7 @@ def test_engine_keeps_handed_in_segments_and_removes_other_files_from_the_segmen
 
     assert isinstance(run.failures[0], PostprocessError)
     kept = sorted(os.listdir(head.segment_dir))
-    assert kept == ["0.m4s", "1.m4v", "2.m4v", "3.m4v", "4.m4v", "section_1.mp4"]
+    assert kept == ["0.m4s", "1.m4v", "2.m4v", "3.m4v", "4.m4v"]
 
 
 # ================================================================ 전체 다운로드 (보존)
