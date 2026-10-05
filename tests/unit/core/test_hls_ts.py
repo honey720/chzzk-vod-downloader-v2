@@ -16,11 +16,13 @@ import pytest
 from Crypto.Cipher import AES
 
 import core.api.hls_ts as hls_ts_module
+from core.api.dash import parse_sea_manifest
 from core.api.hls import parse_media_playlist
 from core.api.hls_ts import (
     fetch_ts_head,
     fetch_ts_segment,
     open_ts_segment,
+    playlist_ref,
     segment_iv,
     segment_streams,
     ts_key_uri,
@@ -195,6 +197,75 @@ def test_fetch_ts_head_reads_the_playlist_and_fetches_no_segment(host):
 
 
 @pytest.mark.parametrize(
+    "url",
+    [
+        "https://cdn.test/hls-aes/720/media.m3u8",
+        "https://cdn.test/hls-aes/720/media.m3u8?token=abc&expires=1",
+        "https://cdn.test/hls-aes/720/media.m3u8#part",
+        "https://cdn.test/hls-aes/720/media.m3u8?token=zzz#part",
+    ],
+    ids=["bare", "query", "fragment", "query-and-fragment"],
+)
+def test_playlist_ref_has_no_query_and_no_fragment(url):
+    """playlist_ref는 주소에서 쿼리와 프래그먼트를 뺀 값이어야 한다.
+
+    같은 경로에 쿼리 · 프래그먼트만 다른 주소 넷
+    -> 모두 "https://cdn.test/hls-aes/720/media.m3u8", "?" · "#" · "token" 없음
+    """
+    ref = playlist_ref(url)
+
+    assert ref == "https://cdn.test/hls-aes/720/media.m3u8"
+    assert "?" not in ref and "#" not in ref and "token" not in ref
+
+
+def test_playlist_ref_differs_between_paths():
+    """playlist_ref는 경로가 다른 플레이리스트끼리 달라야 한다.
+
+    경로가 720 · 1080인 주소(쿼리는 같다)
+    -> 두 값이 다르다
+    """
+    low = playlist_ref("https://cdn.test/hls-aes/720/media.m3u8?token=abc")
+    high = playlist_ref("https://cdn.test/hls-aes/1080/media.m3u8?token=abc")
+
+    assert low != high
+
+
+@pytest.mark.parametrize(
+    "fixture_name", ["dash_manifest_sea_13714380.xml", "dash_manifest_sea_14283698.xml"]
+)
+def test_playlist_ref_differs_between_the_resolutions_of_a_real_manifest(
+    load_mock_response, fixture_name
+):
+    """실제 매니페스트의 해상도마다 플레이리스트 주소의 playlist_ref가 서로 달라야 한다.
+
+    박제한 SEA 매니페스트의 해상도 셋(144 · 720 · 1080)의 플레이리스트 주소
+    -> playlist_ref 셋이 모두 다르다
+    """
+    reps, _resolution, _url = parse_sea_manifest(load_mock_response(fixture_name))
+
+    refs = {playlist_ref(url) for _height, url in reps}
+
+    assert len(reps) == 3
+    assert len(refs) == 3
+
+
+def test_fetch_ts_head_records_the_playlist_ref_without_the_query(monkeypatch):
+    """fetch_ts_head는 받은 주소에서 쿼리를 뺀 값을 playlist_ref에 적어야 한다.
+
+    "vod/media.m3u8?token=abc"로 받는다
+    -> head.playlist_ref == 호스트의 "vod/media.m3u8" 주소
+    """
+    files = _files()
+    files["vod/media.m3u8?token=abc"] = files["vod/media.m3u8"]
+    served = RangeHost(files)
+    monkeypatch.setattr(hls_ts_module, "get_thread_session", served.session)
+
+    head = fetch_ts_head(served.url("vod/media.m3u8?token=abc"))
+
+    assert head.playlist_ref == served.url("vod/media.m3u8")
+
+
+@pytest.mark.parametrize(
     "key_line",
     ["#EXT-X-VERSION:3", '#EXT-X-KEY:METHOD=SAMPLE-AES,URI="k"'],
     ids=["no-key", "other-method"],
@@ -360,10 +431,10 @@ def test_key_is_not_left_in_the_error_the_model_or_the_log_on_failure(
 
 
 def test_ts_head_has_no_field_that_can_hold_a_key():
-    """TsHead에는 키를 담을 칸이 없어야 한다 — 필드 이름이 정해진 다섯 개다.
+    """TsHead에는 키를 담을 칸이 없어야 한다 — 필드 이름이 정해진 여섯 개다.
 
     TsHead의 필드 이름
-    -> {"playlist", "segments", "frame_rate", "segment_dir", "stored"}
+    -> {"playlist", "segments", "frame_rate", "segment_dir", "stored", "playlist_ref"}
     """
     assert set(TsHead.__dataclass_fields__) == {
         "playlist",
@@ -371,6 +442,7 @@ def test_ts_head_has_no_field_that_can_hold_a_key():
         "frame_rate",
         "segment_dir",
         "stored",
+        "playlist_ref",
     }
 
 

@@ -15,6 +15,8 @@
 받은 것은 ``TsHead``에 모은다. 세그먼트의 **복호화한** 본문은 ``TsHead.segment_dir``(엔진의
 세그먼트 임시 폴더)에 엔진과 같은 이름의 파일로 두고, 프레임 정보만 메모리에 둔다. 구간을
 해석한 쪽이 이것을 ``Content.ts_head``로 넘기면 엔진은 같은 것을 다시 받지 않는다.
+받아 둔 세그먼트는 그것을 받은 플레이리스트에 묶인다(``TsHead.playlist_ref`` — 주소에서 쿼리를
+뺀 값). 엔진이 받을 플레이리스트가 그것과 다르면 엔진은 받아 둔 것을 쓰지 않는다.
 
 **복호화 키는 받는 쪽이 인자로 준다. 이 모듈은 키를 받아 오지도 보관하지도 않는다.**
 ``TsHead``에 키를 넣지 않는다 — 엔진은 키를 다시 받는다. 키 값은 로그 · 예외 메시지에 싣지
@@ -25,7 +27,7 @@
 
 import os
 from collections.abc import Mapping
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from core.api.hls import HlsPlaylist, parse_media_playlist
 from core.api.mpegts import TS_UNSUPPORTED, TsError, parse_ts
@@ -111,7 +113,20 @@ def fetch_ts_head(playlist_url: str, segment_dir: str | None = None) -> TsHead:
         raise DecryptionError("암호화 정보(#EXT-X-KEY)가 없는 플레이리스트다")
     if not playlist.key.is_aes_128:
         raise DecryptionError(f"지원하지 않는 암호화 방식: {playlist.key.method}")
-    return TsHead(playlist=playlist, segment_dir=segment_dir)
+    return TsHead(
+        playlist=playlist, segment_dir=segment_dir, playlist_ref=playlist_ref(playlist_url)
+    )
+
+
+def playlist_ref(playlist_url: str) -> str:
+    """플레이리스트를 가리키는 값 — 주소에서 쿼리와 프래그먼트를 뺀 것.
+
+    받아 둔 세그먼트가 어느 플레이리스트(해상도)의 것인지 견주는 데 쓴다(``TsHead.playlist_ref``).
+    쿼리는 뺀다 — 같은 플레이리스트라도 받을 때마다 달라질 수 있는 값(서명 · 만료 시각)이
+    실리는 자리다. 해상도는 경로로 갈린다.
+    """
+    parts = urlsplit(playlist_url)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
 
 
 def ts_key_uri(playlist_url: str, head: TsHead) -> str:

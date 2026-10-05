@@ -4,9 +4,10 @@
 - DownloadPlan 모델: 불변(frozen), 기본값(빈 selections = 전체 다운로드), part_count
 - 두 다운로더의 prepare()가 DownloadPlan을 반환하고, 계획 필드가 현행
   실행에 필요한 정보(items·total_size·requires_postprocess)를 담는다
-- 구간을 해석하지 못하는 다운로더(hls_aes)가 낸 계획에 selections가 있으면 베이스
-  run()이 명시적 미지원 예외를 낸다. file(mp4)과 m3u8(HLS fMP4)은 구간을 받는다 —
-  그 경로는 tests/unit/core/test_file_sections.py · test_m3u8_sections.py가 본다 (#309)
+- 구간을 해석하지 못하는 다운로더가 낸 계획에 selections가 있으면 베이스 run()이 명시적
+  미지원 예외를 낸다. file(mp4) · m3u8(HLS fMP4) · hls_aes(암호화 HLS TS)는 구간을 받는다 —
+  그 경로는 tests/unit/core/test_file_sections.py · test_m3u8_sections.py ·
+  test_hls_aes_sections.py가 본다 (#309)
 
 selections가 빈 값일 때 현행과 동일 동작인 것은 기존 실행 테스트
 (test_file_downloader_run / test_m3u8_downloader_run)와 규칙 박제 테스트가
@@ -165,41 +166,16 @@ def _selection_plan() -> DownloadPlan:
     return DownloadPlan(items=((0, MB - 1),), total_size=MB, selections=(TimeRange(0.0, 10.0),))
 
 
-def test_file_and_m3u8_accept_selections_and_hls_aes_does_not():
-    """구간을 받는 다운로더는 file과 m3u8이고, hls_aes와 기본값은 받지 않아야 한다 (#309).
+def test_file_m3u8_and_hls_aes_accept_selections_and_the_default_does_not():
+    """구간을 받는 다운로더는 file · m3u8 · hls_aes이고, 기본값은 받지 않아야 한다 (#309).
 
     BaseDownloader · FileDownloader · M3U8Downloader · HlsAesDownloader의 supports_selections
-    -> 기본 False, file · m3u8 True, hls_aes False
+    -> 기본 False, file · m3u8 · hls_aes True
     """
     assert BaseDownloader.supports_selections is False
     assert FileDownloader.supports_selections is True
     assert M3U8Downloader.supports_selections is True
-    assert HlsAesDownloader.supports_selections is False
-
-
-def test_hls_aes_run_rejects_selections_via_failure_callback(tmp_path, monkeypatch):
-    """hls_aes는 계획에 selections가 있으면 미지원 예외를 실패 콜백으로 통지해야 한다 (#309).
-
-    prepare가 selections 있는 계획을 내도록 바꿈
-    -> 실패 1건(NotImplementedError), 산출물 없음
-    """
-    failures: list[BaseException] = []
-    data = DownloadData(
-        base_url="https://example.invalid/hls/video.m3u8",
-        vod_url="https://chzzk.naver.com/video/1",
-        output_path=str(tmp_path / "out.mp4"),
-        resolution=1080,
-        content_type="hls_aes",
-    )
-    engine = HlsAesDownloader(data, RecordingLogger(), on_failed=failures.append)
-    monkeypatch.setattr(engine, "prepare", lambda content: _selection_plan())
-
-    data.model.start()
-    engine.run()
-
-    assert len(failures) == 1
-    assert isinstance(failures[0], NotImplementedError)
-    assert not (tmp_path / "out.mp4").exists()
+    assert HlsAesDownloader.supports_selections is True
 
 
 def test_base_run_rejects_selections_for_a_downloader_that_does_not_support_them(
