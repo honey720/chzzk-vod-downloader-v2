@@ -903,3 +903,35 @@ def test_retry_receives_only_the_failed_sections_ranges_when_the_kept_source_is_
     assert cuts.outputs == [THREE_FILES[1]]
     assert snapshot(kept) == kept
     assert again.listing() == THREE_FILES
+
+
+def test_retry_does_not_trust_a_kept_source_of_the_same_size_with_another_head(
+    server, tmp_path, monkeypatch
+):
+    """남겨 둔 임시 원본이 크기는 같아도 머리가 다르면 이어받은 실행은 그것을 쓰지 않고 다시 받아야 한다.
+
+    첫 실행: 구간 셋, 둘째 컷이 도중에 실패. 임시 원본을 같은 크기의 0으로 채운 파일로 바꿈. 이어받은 실행
+    -> 완료 1회 · 실패 0건, 이어받은 실행의 요청이 있고 모두 범위 요청, 컷 호출 1회(`_2`),
+       `_1` · `_3`의 수정 시각 · 내용이 그대로, 저장 폴더에 `_1` · `_2` · `_3`뿐
+    """
+    cuts = CutCalls(monkeypatch, fd_module, "hybrid_cut", source_arg=0)
+    cuts.fail_on = (2,)
+    failed = _Run(server, "plain", tmp_path, _three()).start()
+    assert len(failed.failures) == 1
+    kept = snapshot([failed.paths[0], failed.paths[2]])
+    size = os.path.getsize(failed.source_path)
+    with open(failed.source_path, "wb") as f:
+        f.write(bytes(size))
+    assert os.path.getsize(failed.source_path) == failed.data.section_resume.source_size
+    requests_before = len(server.requests)
+    cuts.restart()
+
+    again = hand_over(failed, _Run(server, "plain", tmp_path, _three())).start()
+
+    assert (again.finished, again.failures) == (1, [])
+    requested = server.requests[requests_before:]
+    assert requested
+    assert all(header is not None for _method, _name, header in requested)
+    assert cuts.outputs == [THREE_FILES[1]]
+    assert snapshot(kept) == kept
+    assert again.listing() == THREE_FILES

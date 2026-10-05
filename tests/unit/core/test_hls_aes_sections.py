@@ -998,3 +998,45 @@ def test_retry_receives_only_the_segment_that_is_gone(vod, host, tmp_path, monke
     assert cuts.outputs == [THREE_FILES[1]]
     assert snapshot(kept) == kept
     assert again.listing() == THREE_FILES
+
+
+@pytest.mark.parametrize("how", ["success", "failure"])
+def test_key_is_not_left_in_the_log_or_in_what_a_failed_run_leaves(
+    vod, host, tmp_path, monkeypatch, caplog, how
+):
+    """이어받은 실행이 끝나든 실패하든, 키 값은 로그 · 남긴 것의 repr · 실패 예외 어디에도 없어야 한다.
+
+    첫 실행: 구간 셋, 둘째 컷이 도중에 실패(맞는 키로 받음). 둘째 구간의 마지막 세그먼트 파일을 지움.
+    이어받은 실행 — success: 맞는 키 / failure: 다른 키(복호화 실패). 모든 로거를 DEBUG로 캡처
+    -> success는 완료 1회 · failure는 실패 1건(DecryptionError), 이어받은 실행의 키 요청 1회,
+       캡처한 로그 · 두 실행의 엔진 로거 호출 · repr(남긴 것) · repr(이어받은 Content) ·
+       실패 예외의 str · repr에 두 키의 16진 · bytes 표기 없음 (캡처가 살아 있는지 표식 레코드로 먼저 확인)
+    """
+    cuts = CutCalls(monkeypatch, aes_module, "cut_ts_section", source_arg=JOINED_ARG)
+    cuts.fail_on = (2,)
+    with caplog.at_level(logging.DEBUG):
+        logging.getLogger("core.downloaders.hls_aes_downloader").debug("표식")
+        failed = _Run(host, tmp_path, THREE).start()
+        os.remove(failed.engine._segment_path(failed.engine.sections[1].last_segment))
+        cuts.restart()
+        retry_key = KEY if how == "success" else WRONG_KEY
+        again = hand_over(failed, _Run(host, tmp_path, THREE, key=retry_key)).start()
+
+    assert "표식" in _logged(caplog)
+    assert failed.logger.calls and again.logger.calls  # 두 엔진이 로거를 불렀다
+    assert again.key_requests == [KEY_URI]
+    assert (again.finished, len(again.failures)) == ((1, 0) if how == "success" else (0, 1))
+    if how == "failure":
+        assert isinstance(again.failures[0], DecryptionError)
+    texts = [
+        _logged(caplog),
+        repr(failed.logger.calls),
+        repr(again.logger.calls),
+        repr(failed.data.section_resume),
+        repr(again.data.content),
+        *(str(failure) for failure in (*failed.failures, *again.failures)),
+        *(repr(failure) for failure in (*failed.failures, *again.failures)),
+    ]
+    assert "구간 시험 144p_1.mp4" in texts[3]  # 남긴 것의 repr이 비어 있지 않다
+    for text in texts:
+        assert not any(form in text for key in (KEY, WRONG_KEY) for form in _key_forms(key))
