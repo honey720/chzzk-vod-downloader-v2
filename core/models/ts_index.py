@@ -80,6 +80,9 @@ class TsHead:
     ``segment_dir``에 파일로 둔다. 엔진은 그 폴더를 세그먼트 임시 폴더로 쓰고, ``stored``에 든
     세그먼트는 다시 받지 않는다.
 
+    받아 둔 세그먼트는 그것을 받은 플레이리스트(해상도마다 다르다)에 묶인다 — ``playlist_ref``.
+    구간을 해석한 뒤 해상도가 바뀌면 엔진은 받아 둔 것을 쓰지 않는다.
+
     **복호화 키는 담지 않는다.** 엔진은 키를 다시 받는다 — 키 값이 이 객체를 따라
     ``Content`` · repr · 로그로 나가지 않는다.
     """
@@ -94,3 +97,8 @@ class TsHead:
     segment_dir: str | None = None
     # 이 객체가 segment_dir에 온전하게 받아 둔 세그먼트의 인덱스
     stored: set[int] = field(default_factory=set)
+    # 이 플레이리스트를 가리키는 값 — 받은 주소에서 쿼리·프래그먼트를 뺀 것
+    # (core.api.hls_ts.playlist_ref). 받아 둔 세그먼트는 이 플레이리스트의 것이다. 엔진은 자기가
+    # 받을 플레이리스트와 이 값이 다르면 받아 둔 것을 쓰지 않는다. None이면 어느
+    # 플레이리스트의 것인지 모른다 — 엔진이 쓰지 않는다
+    playlist_ref: str | None = None
