@@ -25,7 +25,7 @@ import re
 import shutil
 import tempfile
 import threading
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 
 from core.utils.disk_speed import measure_write_speed
 
@@ -122,6 +122,25 @@ def build_section_output_paths(
             _reserved_paths.add(_path_key(path))
             paths.append(path)
     return tuple(paths)
+
+
+def reserve_section_output_paths(paths: Iterable[str], kept: Collection[int]) -> tuple[str, ...]:
+    """이전 실행이 배정한 구간 파일 경로를 그대로 다시 예약한다 (#309).
+
+    일부 구간만 다시 처리할 때 쓴다. ``kept``(구간 번호, 0부터)의 경로는 이전 실행이 만든
+    파일이 있는 자리다 — 디스크에 있어도 이름을 바꾸지 않고 그대로 돌려준다.
+    ``build_section_output_paths``로 다시 배정하면 그 파일 때문에 모든 구간이 새 이름
+    (" (n)")을 받는다. 그 밖의 경로도 비어 있으면 그대로 쓰고, 그 사이 다른 것이 차지했을
+    때만 " (n)"을 붙인다. 끝나면 ``release_output_paths``로 예약을 푼다.
+    """
+    reserved = []
+    with _reserved_lock:
+        for number, path in enumerate(paths):
+            if number not in kept:
+                path = _first_free(path, lambda p: _path_key(p) in _reserved_paths)
+            _reserved_paths.add(_path_key(path))
+            reserved.append(path)
+    return tuple(reserved)
 
 
 def release_output_paths(paths: Iterable[str]) -> None:

@@ -183,6 +183,12 @@ The stream for the selected resolution could not be found. Try another resolutio
 The stream for the selected resolution could not be found. Try another resolution.</translation>
     </message>
     <message>
+        <source>Could not cut the section · press retry
+Cutting the section failed. Retry processes only the failed sections.</source>
+        <translation>Could not cut the section · press retry
+Cutting the section failed. Retry processes only the failed sections.</translation>
+    </message>
+    <message>
         <source>Video data arrived corrupted · try again later
 Part of the video kept arriving incomplete from the server. Try again later.</source>
         <translation>Video data arrived corrupted · try again later

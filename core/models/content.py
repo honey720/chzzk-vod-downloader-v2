@@ -13,6 +13,7 @@ from uuid import uuid4
 from core.models.fmp4_index import Fmp4Head
 from core.models.mp4_index import Mp4Head
 from core.models.plan import TimeRange
+from core.models.section_resume import SectionResume
 from core.models.ts_index import TsHead
 
 
@@ -82,6 +83,10 @@ class Content:
     # 않는다. 암호화 VOD(hls_aes)에 쓴다. 복호화 키는 들어 있지 않다 — 엔진이 다시 받는다.
     # None이면 엔진이 받는다
     ts_head: TsHead | None = None
+    # 이전 실행이 끝낸 구간과 받아 둔 데이터 (#309). 넘기면 엔진이 끝나지 않은 구간만 다시
+    # 처리하고, 받아 둔 데이터가 온전하면 다시 받지 않는다. 구간 목록이 다르거나 끝낸 구간의
+    # 경로가 다르면 쓰지 않는다. None이면 모든 구간을 처음부터 처리한다
+    section_resume: SectionResume | None = None
     # 인코딩 전 다시보기에서 고른 변형의 정체 (#318). 없으면 해상도로 찾는다
     stream: StreamKey | None = None
 

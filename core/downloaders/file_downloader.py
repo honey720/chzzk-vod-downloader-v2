@@ -28,6 +28,11 @@ core/downloaders/base.py의 BaseDownloader로 이주했다(#82). 이 클래스�
 - 임시 원본은 구간을 모두 만들면 지운다. 컷이 실패하면 남긴다(다시 받지 않게) —
   세그먼트 경로의 후처리 실패(#92)와 같은 규칙이다. 전송 실패·중단이면 전체
   다운로드의 산출물처럼 지운다
+- 일부 구간의 컷만 실패하면 끝낸 구간과 임시 원본을 공유 데이터에 남긴다
+  (``DownloadData.section_resume``). 그것을 ``Content.section_resume``으로 받은 실행은
+  끝나지 않은 구간만 자른다 — 임시 원본이 남긴 크기 그대로 있으면 다시 받지 않고(요청 0건),
+  아니면 끝나지 않은 구간의 범위만 다시 받는다. 이전 실행의 것(끝낸 구간 파일 · 다시 쓴
+  임시 원본)은 이 실행이 실패 · 중단해도 지우지 않는다
 - m3u8·hls_aes는 구간을 받지 않는다(베이스가 거부한다). clip도 받지 않는다
 
 스레드 스케일링 기준 속도는 베이스 기본값(4 MB/s — 구 고정 임계 4/2와 동일)을
@@ -55,6 +60,7 @@ from core.models.download_state import DownloadState
 from core.models.events import ProgressEvent
 from core.models.mp4_index import Mp4Index
 from core.models.plan import DownloadPlan
+from core.models.section_resume import SectionResume
 from core.utils.hybrid_cut import CutError, cut_frames_from_mp4, hybrid_cut
 from core.utils.mp4_partial import PartialLayout, build_head, plan_partial
 from core.utils.mp4_ranges import selection_byte_ranges
@@ -100,7 +106,14 @@ class FileDownloader(BaseDownloader):
         self._head: bytes = b""  # 임시 원본의 머리(ftyp · 위치를 고친 moov · mdat 머리)
         self._source_path: str | None = None  # 임시 원본(받은 범위만 이어 쓴 mp4)
         self._made_sections: list[str] = []  # 이번 실행이 만든 구간 파일
-        self.cut_results: list[CutResult] = []  # 구간마다의 컷 결과 — sections와 같은 순서
+        # 이전 실행이 끝내 이번 실행이 건너뛰는 구간의 번호(0부터) — Content.section_resume에서 온다
+        self._done_before: frozenset[int] = frozenset()
+        self._mp4_head = None  # 구간을 정할 때 쓴 moov — 일부 실패로 끝나면 다음 실행에 넘긴다
+        # 이전 실행이 전송을 끝낸 임시 원본을 그대로 쓰는지 — 쓰면 받지 않고 지우지도 않는다
+        self._reuses_source: bool = False
+        # 임시 원본이 범위를 담고 있는 구간의 번호 — 일부 실패로 끝나면 다음 실행에 넘긴다
+        self._source_sections: frozenset[int] = frozenset()
+        self.cut_results: list[CutResult] = []  # 이번 실행이 자른 구간의 컷 결과 — 자른 순서
 
     @property
     def sections(self) -> tuple[CutSection, ...]:
@@ -168,17 +181,49 @@ class FileDownloader(BaseDownloader):
             raise ValueError(
                 f"구간 {len(content.selections)}개에 산출물 경로 {len(content.selection_paths)}개"
             )
-        head = content.mp4_head or fetch_mp4_head(self.s.base_url)
+        # 이전 실행이 만든 구간 파일은 이번 실행의 것이 아니다 — 이번 실행이 실패해도 지우지 않는다
+        self._made_sections.clear()
+        self.cut_results.clear()
+        self.s.section_resume = None
+        resume = content.section_resume
+        if resume is not None and not resume.fits(content.selections, content.selection_paths):
+            resume = None
+        self._done_before = resume.done if resume is not None else frozenset()
+        head = (
+            (resume.mp4_head if resume is not None else None)
+            or content.mp4_head
+            or fetch_mp4_head(self.s.base_url)
+        )
         index = head.index
         violations = validate_selections(content.selections, index.duration, index.fps)
         if violations:
             raise SelectionError(violations)
 
         picked = [selection_byte_ranges(index, selection) for selection in content.selections]
-        layout = plan_partial(index, [span for item in picked for span in item.ranges])
         if head.data is None:
             raise Mp4Error(MP4_UNSUPPORTED, "moov가 파일 앞부분에 없다")
+        source_path = partial_source_path_for(content.selection_paths[0])
+        stored = self._stored_layout(resume, index, picked, head.data) if resume else None
+        self._reuses_source = stored is not None
+        if stored is not None:
+            # 이전 실행이 전송을 끝낸 임시 원본을 그대로 쓴다 — 받지 않는다
+            layout = stored
+            source_path = resume.source_path
+            self._source_sections = resume.source_sections
+        else:
+            # 끝나지 않은 구간의 범위만 받는다. 이전 실행이 없으면 모든 구간이다
+            self._source_sections = frozenset(range(len(picked))) - self._done_before
+            layout = plan_partial(
+                index,
+                [
+                    span
+                    for number, item in enumerate(picked)
+                    if number in self._source_sections
+                    for span in item.ranges
+                ],
+            )
         self._head = build_head(head.data, layout, index.moov_range)
+        self._mp4_head = head
         self._part_size = decide_part_size(self.s.content_type, self.s.resolution)
         self._index = index
         self._layout = layout
@@ -186,9 +231,10 @@ class FileDownloader(BaseDownloader):
             CutSection(selection, item.first_frame, item.last_frame, path)
             for selection, item, path in zip(content.selections, picked, content.selection_paths)
         )
-        self._source_path = partial_source_path_for(content.selection_paths[0])
+        self._source_path = source_path
         self.s.sections_total = len(self._sections)
-        self.s.sections_done = self.s.sections_failed = 0
+        self.s.sections_done = self.s.sections_resumed = len(self._done_before)
+        self.s.sections_failed = 0
         return DownloadPlan(
             items=tuple(
                 part
@@ -204,12 +250,19 @@ class FileDownloader(BaseDownloader):
         return (self.s.total_size, self._part_size, self.s.total_ranges, self.s.adjust_threads)
 
     def _prepare_output(self) -> None:
-        """빈 파일 생성(사이즈: 0). 구간 다운로드는 임시 원본에 머리를 먼저 써 둔다."""
+        """빈 파일 생성(사이즈: 0). 구간 다운로드는 임시 원본에 머리를 먼저 써 둔다.
+
+        이전 실행이 전송을 끝낸 임시 원본을 그대로 쓸 때는 건드리지 않는다 (#309).
+        """
+        if self._reuses_source:
+            return
         with open(self._target_path, "wb") as f:
             f.write(self._head)
 
     def _initial_queue(self, items: list) -> list:
         """중단 이후 재시작 같은 상황을 고려해 미수신 구간만 큐에 넣는다."""
+        if self._reuses_source:
+            return []  # 이전 실행이 전송을 끝낸 임시 원본을 그대로 쓴다 — 받을 것이 없다
         if self._layout is not None:
             # 임시 원본은 위치가 원본과 달라 파일 크기로 미수신 구간을 가릴 수 없다 — 전부 받는다
             return list(items)
@@ -224,8 +277,13 @@ class FileDownloader(BaseDownloader):
         return self._download_part(start, end, part_num, self.s.total_size)
 
     def _cleanup_partial(self) -> None:
-        """실패·중단 시 다운로드 파일 삭제. 구간 다운로드는 임시 원본과 이번에 만든 구간 파일을 지운다."""
-        for path in (self._target_path, *self._made_sections):
+        """실패·중단 시 다운로드 파일 삭제. 구간 다운로드는 임시 원본과 이번에 만든 구간 파일을 지운다.
+
+        이전 실행이 전송을 끝낸 임시 원본을 그대로 쓴 실행은 그 임시 원본을 지우지 않는다 —
+        이번 실행이 만든 것만 지운다 (#309).
+        """
+        targets = [] if self._reuses_source else [self._target_path]
+        for path in (*targets, *self._made_sections):
             if os.path.exists(path):
                 os.remove(path)
         self._made_sections.clear()
@@ -239,6 +297,9 @@ class FileDownloader(BaseDownloader):
         그 뒤에 PostprocessError로 끝낸다 — 임시 원본과 만든 구간 파일은 남는다. 모두 만들면
         임시 원본을 지운다. 구간 사이에서 중단·일시정지를 확인한다(컷 하나는 중간에 멈추지
         않는다). 구간마다의 결과는 공유 데이터의 sections_done · sections_failed에 센다.
+
+        이전 실행이 끝낸 구간(Content.section_resume)은 자르지 않는다. 자르지 못한 구간이
+        있으면 끝낸 구간과 임시 원본을 공유 데이터의 section_resume에 남긴다.
         """
         self._on_merge_start()
         try:
@@ -247,7 +308,10 @@ class FileDownloader(BaseDownloader):
             self.logger.log_error("Cut failed — partial source preserved for retry", e)
             raise PostprocessError(f"후처리(cut) 실패: {e}") from e
         failures: list[CutError] = []
-        for section in self._sections:
+        done = set(self._done_before)
+        for number, section in enumerate(self._sections):
+            if number in self._done_before:
+                continue  # 이전 실행이 만든 구간 — 다시 만들지 않는다
             if self.state == DownloadState.PAUSED:
                 self.s._pause_event.wait()
             if self.state == DownloadState.WAITING:
@@ -269,6 +333,7 @@ class FileDownloader(BaseDownloader):
                 self.cut_results.append(result)
                 self._made_sections.append(section.output_path)
                 self.s.sections_done += 1
+                done.add(number)
             self._on_progress(
                 ProgressEvent(
                     downloaded_size=self.s.total_downloaded_size,
@@ -278,10 +343,55 @@ class FileDownloader(BaseDownloader):
                 )
             )
         if failures:
+            self.s.section_resume = SectionResume(
+                selections=tuple(self.s.content.selections),
+                paths=tuple(self.s.content.selection_paths),
+                done=frozenset(done),
+                mp4_head=self._mp4_head,
+                source_path=self._source_path,
+                source_size=os.path.getsize(self._source_path),
+                source_sections=self._source_sections,
+            )
             raise PostprocessError(
                 f"후처리(cut) 실패: 구간 {len(failures)}개 — {failures[0]}"
             ) from failures[0]
         os.remove(self._source_path)
+
+    def _stored_layout(
+        self, resume: SectionResume, index: Mp4Index, picked: list, head_data: bytes
+    ) -> PartialLayout | None:
+        """이전 실행이 남긴 임시 원본을 그대로 쓸 수 있으면 그 배치를, 아니면 None을 돌려준다.
+
+        쓸 수 있는 것은 그 임시 원본이 끝나지 않은 구간의 범위를 모두 담고 있고, 남긴 경로에
+        남긴 크기 그대로 있고, 그 배치로 만든 머리와 파일의 앞부분이 같을 때다. 임시 원본에는
+        세그먼트와 같은 내용 검사가 없다 — 전송을 끝낸 실행이 남긴 크기와 머리로 확인한다.
+        """
+        if resume.source_path is None or resume.source_sections is None:
+            return None
+        pending = set(range(len(picked))) - resume.done
+        if not pending <= resume.source_sections:
+            return None
+        layout = plan_partial(
+            index,
+            [
+                span
+                for number, item in enumerate(picked)
+                if number in resume.source_sections
+                for span in item.ranges
+            ],
+        )
+        head = build_head(head_data, layout, index.moov_range)
+        try:
+            if os.path.getsize(resume.source_path) != resume.source_size:
+                return None
+            if resume.source_size != len(head) + layout.download_size:
+                return None
+            with open(resume.source_path, "rb") as f:
+                if f.read(len(head)) != head:
+                    return None
+        except OSError:
+            return None
+        return layout
 
     @staticmethod
     def _require_whole_file_on_200(response, file_size: int | None, range_start: int = 0) -> None:
