@@ -8,10 +8,6 @@
         <translation>(source)</translation>
     </message>
     <message>
-        <source>{0} and {1} more</source>
-        <translation>{0} and {1} more</translation>
-    </message>
-    <message>
         <source>Sections {0} · {1}</source>
         <translation>Sections {0} · {1}</translation>
     </message>

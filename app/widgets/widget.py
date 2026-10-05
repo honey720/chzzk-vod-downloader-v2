@@ -693,42 +693,35 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         painter.end()
         return result
 
-    # 대기 카드의 재생 시간 자리에 적는 구간 요약의 형식 (#309) — "count"는 구간 수와 길이의
-    # 합("구간 3개 · 0:45"), "range"는 첫 구간의 범위와 나머지 수("10:05–10:16 외 2개")
-    SECTION_SUMMARY_STYLE = "count"
-
     def _sectionCount(self) -> int:
         """이 카드가 받을 구간 수 — 전체 다운로드면 0."""
         return len(getattr(self.item, "selections", ()) or ())
 
     def _sectionTally(self) -> str:
-        """상태 문구에 붙이는 완료 구간 수 — " · 2/3". 구간이 둘보다 적으면 빈 문자열이다.
+        """상태 문구에 붙이는 완료 구간 수 — " · 2/3". 붙이지 않을 때는 빈 문자열이다.
 
-        구간이 하나인 카드와 전체 다운로드 카드의 문구는 구간 표시가 없던 때와 같다.
+        구간이 둘보다 적으면 붙이지 않는다 — 구간이 하나인 카드와 전체 다운로드 카드의
+        문구는 구간 표시가 없던 때와 같다. 전송 중(진행 · 일시정지)에도 붙이지 않는다 —
+        구간은 전송이 모두 끝난 뒤 컷 단계에서 하나씩 끝나므로 그 전에는 늘 0이다. 컷
+        단계 · 완료 · 실패에서 붙인다.
         """
         total = self._sectionCount()
         if total < 2:
             return ""
+        transferring = self.item.downloadState in (DownloadState.RUNNING, DownloadState.PAUSED)
+        if transferring and not self.item.post_process:
+            return ""
         return f" · {self.item.sections_done}/{total}"
 
     def _sectionSummary(self) -> str:
-        """대기 카드의 재생 시간 자리에 적는 구간 요약 (#309).
+        """대기 카드의 재생 시간 자리에 적는 구간 요약 — 구간 수와 길이의 합 (#309).
 
-        시각은 남은 시간과 같은 짧은 표기("3:12" · "1:02:03")로 적는다.
+        길이는 남은 시간과 같은 짧은 표기("3:12" · "1:02:03")로 적는다.
         """
         selections = self.item.selections
-
-        def clock(seconds: float) -> str:
-            return self._shortRemain(strftime("%H:%M:%S", gmtime(max(seconds, 0))))
-
-        if self.SECTION_SUMMARY_STYLE == "range":
-            first = selections[0]
-            shown = f"{clock(first.start)}–{clock(first.end)}"
-            if len(selections) == 1:
-                return shown
-            return self.tr("{0} and {1} more").format(shown, len(selections) - 1)
         length = sum(selection.end - selection.start for selection in selections)
-        return self.tr("Sections {0} · {1}").format(len(selections), clock(length))
+        clock = self._shortRemain(strftime("%H:%M:%S", gmtime(max(length, 0))))
+        return self.tr("Sections {0} · {1}").format(len(selections), clock)
 
     def _shortRemain(self, remain: str) -> str:
         """"HH:MM:SS" 시간을 짧은 표시("3:12")로 줄인다 — 표시 정책.

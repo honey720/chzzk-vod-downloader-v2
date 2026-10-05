@@ -8,10 +8,6 @@
         <translation>(원본)</translation>
     </message>
     <message>
-        <source>{0} and {1} more</source>
-        <translation>{0} 외 {1}개</translation>
-    </message>
-    <message>
         <source>Sections {0} · {1}</source>
         <translation>구간 {0}개 · {1}</translation>
     </message>

@@ -12,7 +12,8 @@ mainWindow와 같은 배선(ContentViewModel ↔ ContentListView ↔ DownloadVie
 - 컷 단계의 카드에는 속도 · 남은 시간 대신 단계 문구가 나온다
 - 일부 구간만 자르지 못하면 나머지가 끝난 뒤에 카드가 실패가 되고, 실패한 구간 수와 완료
   구간 수가 사유 앞에 나온다. 엔진은 WAITING으로 끝난다
-- 완료 구간 수는 구간이 둘 이상일 때만 나온다. 전체 다운로드 카드의 문구는 그대로다
+- 완료 구간 수는 구간이 둘 이상일 때만, 컷 단계부터 나온다(전송 중에는 숨긴다). 전체
+  다운로드 카드의 문구는 그대로다
 """
 
 import os
@@ -252,15 +253,21 @@ def test_done_count_comes_from_the_engine_state_not_from_notifications(card):
     assert not any(wrong in card.status for wrong in ("3/3", "4/3", "5/3"))
 
 
-def test_done_count_is_shown_while_transferring_and_when_finished(card):
-    """완료 구간 수는 전송 중 · 컷 중 · 완료 카드의 상태 문구 끝에 붙어야 한다.
+def test_done_count_is_hidden_while_transferring_and_shown_from_the_cut_stage(card):
+    """완료 구간 수는 전송 중에는 숨기고, 컷 단계와 완료 카드의 상태 문구에 붙어야 한다.
 
-    구간 셋. 전송 40% → 컷 단계에서 구간 하나 끝남 → 셋 다 끝나고 완료 통지
-    -> 전송 중 "… · 0/3", 컷 중 "… · 1/3", 완료 "✓ Completed · 3/3 · 1:12"
+    구간 셋. 전송 40% → 그 상태에서 일시정지 → 재개 → 컷 단계에서 구간 하나 끝남 → 셋 다 끝나고 완료 통지
+    -> 전송 중 == "32% · 3.1 MB/s · 0:19 left"(수 없음), 전송 중 일시정지 == "32% · Paused"(수 없음),
+       컷 중 == "86% · Cutting · 1/3", 완료 == "✓ Completed · 3/3 · 1:12"
     """
     card.start()
     card.transfer(0.4)
     transferring = card.status
+    card.viewmodel.pause()
+    card.qapp.processEvents()
+    paused = card.status
+    card.viewmodel.resume()
+    card.qapp.processEvents()
     card.begin_cut()
     card.cut(1)
     cutting = card.status
@@ -269,8 +276,9 @@ def test_done_count_is_shown_while_transferring_and_when_finished(card):
     card.submission["on_finished"]()
     card.qapp.processEvents()
 
-    assert transferring.endswith(" · 0/3")
-    assert cutting.endswith(" · 1/3")
+    assert transferring == "32% · 3.1 MB/s · 0:19 left"
+    assert paused == "32% · Paused"
+    assert cutting == "86% · Cutting · 1/3"
     assert card.item.downloadState is DownloadState.FINISHED
     assert card.status == "✓ Completed · 3/3 · 1:12"
 
@@ -330,24 +338,14 @@ def test_partial_failure_fails_the_card_only_after_the_remaining_sections_finish
 # ================================================================ 구간 요약
 
 
-@pytest.mark.parametrize(
-    ("style", "expected"),
-    [("count", "Sections 3 · 0:46"), ("range", "10:05–10:11 and 2 more")],
-)
-def test_waiting_card_shows_the_section_summary_in_the_duration_slot(
-    card, monkeypatch, style, expected
-):
-    """구간이 있는 대기 카드는 재생 시간 자리에 구간 요약을 적어야 한다.
+def test_waiting_card_shows_the_section_summary_in_the_duration_slot(card):
+    """구간이 있는 대기 카드는 재생 시간 자리에 구간 수와 길이의 합을 적어야 한다.
 
-    구간 셋(6 · 11 · 29초 = 46초, 첫 구간 10:05 ~ 10:11), 요약 형식은 주석의 두 가지
-    -> 재생 시간 자리의 글 == 기대값
+    구간 셋(6 · 11 · 29초 = 46초)
+    -> 재생 시간 자리의 글 == "Sections 3 · 0:46"
     """
-    monkeypatch.setattr(type(card.widget), "SECTION_SUMMARY_STYLE", style)
-
-    card.widget.setData(card.item, 0)
-
     assert card.item.downloadState is DownloadState.WAITING
-    assert card.widget.fileSizeLabel.text() == expected
+    assert card.widget.fileSizeLabel.text() == "Sections 3 · 0:46"
 
 
 # ================================================================ 구간이 없거나 하나인 카드
