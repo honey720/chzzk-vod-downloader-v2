@@ -78,9 +78,11 @@ class FakeHandle:
         self.data = data
 
     def elapsed_seconds(self) -> float:
+        """걸린 시간으로 늘 72초를 돌려준다 — 완료 카드의 "1:12"가 이 값이다."""
         return 72.0
 
     def wait(self, timeout=None) -> bool:
+        """기다릴 것이 없으므로 바로 끝났다고 답한다."""
         return True
 
 
@@ -91,6 +93,7 @@ class FakeService:
         self.submissions: list[dict] = []
 
     def submit(self, content, **kwargs):
+        """아무것도 돌리지 않고 받은 인자를 적어 둔 뒤 대역 핸들을 돌려준다."""
         self.submissions.append({"content": content, **kwargs})
         return FakeHandle(kwargs["data"])
 
@@ -105,6 +108,7 @@ class WindowHarness(QObject):
         manager.downloadRequested.connect(self.startDownload)
 
     def startDownload(self, item: ContentItem) -> None:
+        """다운로드 요청을 받아 목록과 다운로드 뷰모델을 차례로 시작시킨다."""
         self.manager.start(item)
         self.viewmodel.start(item)
 

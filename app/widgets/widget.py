@@ -1,3 +1,5 @@
+"""목록의 카드 위젯(ContentItemWidget)과 그 부속 위젯을 정의한다."""
+
 import os
 import re
 import threading
