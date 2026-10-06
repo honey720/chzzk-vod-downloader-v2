@@ -15,9 +15,9 @@
 | 조회 실패 | 실패 안내 | 꺼짐 |
 | 준비됨 | 머리줄(구간 수 · 프레임률) · 구간 행 · 구간 추가 | 오류가 없을 때만 켜짐 |
 
-오류는 팝업으로 띄우지 않는다 — 틀린 칸의 테두리와 그 행의 문구로 보인다. 치고 있는 행의
-오류는 칸을 떠나거나 Enter를 칠 때 보인다 — 숫자를 다 치기 전의 값은 대개 틀려 있다. 확인
-버튼은 치는 도중에도 지금 값으로 켜지고 꺼진다.
+오류는 팝업으로 띄우지 않는다 — 틀린 칸의 테두리와 그 행의 문구로 보인다. 값이 바뀔 때마다
+검사하고, 치고 있는 행의 오류를 바로 띄울지 칸을 떠날 때 띄울지는 뷰모델의 표
+(``ERROR_TIMING``)가 정한다. 확인 버튼은 띄우지 않은 오류가 있어도 꺼진다.
 
 타임코드 칸은 숫자만 받는다(``app/widgets/timecode_edit.py``).
 """
@@ -123,8 +123,8 @@ class SectionEditDialog(QDialog):
         super().__init__(parent)
         self._viewmodel = viewmodel
         self._rows: list[SectionRow] = []
-        # 숫자를 치고 있는 행 — 그 행의 오류는 편집을 끝낼 때까지 보이지 않는다. 없으면 None
-        self._typingRow: int | None = None
+        # 숫자를 치고 있는 (행, 칸) — 그 행의 오류 가운데 일부는 칸을 떠날 때 띄운다. 없으면 None
+        self._typing: tuple[int, int] | None = None
         self.setObjectName("sectionEditDialog")
         self.setModal(True)
         self.setupUi()
@@ -239,7 +239,7 @@ class SectionEditDialog(QDialog):
             row.hide()  # 부모를 떼지 않는다 — 떼면 파괴될 때까지 최상위 창이 된다
             row.deleteLater()
         self._rows = []
-        self._typingRow = None
+        self._typing = None
         for index in range(len(self._viewmodel.rows)):
             row = SectionRow(self._rowContainer)
             for column in (START, END):
@@ -257,14 +257,14 @@ class SectionEditDialog(QDialog):
         self._refresh()
 
     def _onEdited(self, row: int, column: int, text: str) -> None:
-        """칸의 숫자가 바뀌었다 — 값을 넘겨 다시 검증하되 그 행의 오류는 아직 보이지 않는다."""
-        self._typingRow = row
+        """칸의 숫자가 바뀌었다 — 값을 넘겨 다시 검증한다. 이 칸을 치는 중이라고 적어 둔다."""
+        self._typing = (row, column)
         self._viewmodel.setText(row, column, text, False)
 
     def _onCommitted(self, row: int, column: int, edit: TimecodeEdit) -> None:
-        """칸의 편집이 끝났다(칸을 떠남 · Enter) — 그 행의 오류를 보인다."""
-        if self._typingRow == row:
-            self._typingRow = None
+        """칸의 편집이 끝났다(칸을 떠남 · Enter) — 미뤄 둔 오류를 띄운다."""
+        if self._typing == (row, column):
+            self._typing = None
         self._viewmodel.setText(row, column, edit.text())
 
     def _refresh(self) -> None:
@@ -275,8 +275,8 @@ class SectionEditDialog(QDialog):
             if index >= len(viewmodel.rows):
                 break
             row.numberLabel.setText(str(index + 1))
-            # 치고 있는 행의 오류는 편집을 끝낸 뒤에 보인다
-            error = "" if index == self._typingRow else viewmodel.errorText(index)
+            # 치고 있는 행의 오류는 표(ERROR_TIMING)가 정한 때에 띄운다
+            error = viewmodel.shownErrorText(index, self._typing)
             for column in (START, END):
                 edit = row.edit(column)
                 text = viewmodel.rows[index][column]

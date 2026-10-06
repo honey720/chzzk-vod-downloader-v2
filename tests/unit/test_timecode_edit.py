@@ -4,6 +4,9 @@
 내놓는 값을 잰다. 기대값은 손으로 적은 글자다.
 """
 
+import random
+from fractions import Fraction
+
 import pytest
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QFocusEvent
@@ -234,6 +237,30 @@ def test_the_value_is_always_four_fields(edit):
         assert len(value) == 11 and len(fields) == 4
         assert all(len(field) == 2 and field.isascii() and field.isdigit() for field in fields)
     assert values[-1] == "12:34:56:78"
+
+
+def _seconds(value: str, fps: Fraction) -> Fraction:
+    """네 칸 값의 명목 시각 — 시 × 3600 + 분 × 60 + 초 + 프레임 ÷ 프레임률. 범위를 따지지 않는다."""
+    hours, minutes, seconds, frames = (int(field) for field in value.split(":"))
+    return hours * 3600 + minutes * 60 + seconds + Fraction(frames) / fps
+
+
+@pytest.mark.parametrize("fps", [Fraction(2997, 100), Fraction(30), Fraction(60)])
+def test_typing_one_more_digit_never_makes_the_value_smaller(edit, fps):
+    """숫자를 하나 더 치면 값(명목 시각)이 줄지 않아야 한다 — 치는 도중의 "너무 크다"는 더 쳐도 풀리지 않는다.
+
+    씨앗을 고정한 무작위 여덟 자리 숫자열 200개를 한 글자씩 침(29.97 · 30 · 60fps)
+    -> 글자를 칠 때마다 값이 직전 값 이상이다
+    """
+    generator = random.Random(309)
+    for _ in range(200):
+        QTest.keyClick(edit, Qt.Key.Key_Delete)
+        previous = Fraction(0)
+        for digit in (str(generator.randrange(10)) for _ in range(8)):
+            type_digits(edit, digit)
+            value = _seconds(edit.text(), fps)
+            assert value >= previous, f"{edit.digits()!r}: {previous} → {value}"
+            previous = value
 
 
 def _focus_in() -> QFocusEvent:

@@ -590,32 +590,201 @@ def test_out_of_range_digits_are_flagged_and_left_as_typed(qtbot, tmp_path, basi
     assert shown(row.errorLabel) == "Frame number must be below the frame rate"
 
 
-def test_row_errors_wait_until_the_field_is_left_but_ok_follows_the_value(qtbot, tmp_path, basis):
-    """치는 도중에는 그 행의 오류를 띄우지 않고 칸을 떠나면 띄워야 한다. 확인 버튼은 치는 도중에도 값을 따른다.
+def type_more(edit, digits: str) -> None:
+    """칸을 비우지 않고 숫자를 이어 친다 — 한 글자씩 치며 화면을 보는 테스트용."""
+    QTest.keyClicks(edit, digits)
+    _pump()
 
-    60fps · 3600초. 끝 칸을 비우고 숫자 5를 침(끝 00:00:00:05 — 시작 00:00:00:00보다 뒤라 아직 유효)
-    이어서 시작 칸에 100000(00:10:00:00)을 침 — 이제 시작이 끝보다 뒤다
-    -> 치는 도중: 오류 문구 숨김, 칸 강조 없음, 확인 꺼짐
-    시작 칸을 떠남 -> 오류 문구 "Start must be before end", 두 칸 강조
+
+def error_shown(row) -> str:
+    """행 아래에 지금 보이는 오류 문구. 보이지 않으면 빈 문자열."""
+    return shown(row.errorLabel) if row.errorLabel.isVisible() else ""
+
+
+def test_start_past_the_end_is_flagged_while_typing(qtbot, tmp_path, basis):
+    """시작 칸을 치는 중 시작이 끝과 같거나 넘으면 칸을 떠나기 전에 바로 오류를 띄워야 한다.
+
+    60fps · 3600초. 끝을 00:10:00:00으로 둔 행의 시작 칸에 2 · 0 · 0 · 0 · 0 · 0을 차례로 침
+    -> 00:02:00:00(숫자 다섯)까지는 오류 없음, 00:20:00:00(숫자 여섯)이 되는 순간
+       "Start must be before end"와 두 칸 강조, 확인 꺼짐 — 칸을 떠나지 않았다
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
     dialog = open_editor(qtbot, win, item)
     row = dialog._rows[0]
-    type_into(row.endEdit, "5")
+    type_into(row.endEdit, "100000")
     leave(row.endEdit)
-    assert dialog.okButton.isEnabled(), "전제: 0프레임~5프레임은 유효하다"
 
+    type_into(row.startEdit, "20000")
+    assert row.startEdit.text() == "00:02:00:00" and error_shown(row) == ""
+
+    type_more(row.startEdit, "0")
+
+    assert row.startEdit.text() == "00:20:00:00"
+    assert error_shown(row) == "Start must be before end"
+    assert row.startEdit.property("invalid") is True and row.endEdit.property("invalid") is True
+    assert not dialog.okButton.isEnabled()
+
+
+def test_a_value_past_the_video_is_flagged_while_typing(qtbot, tmp_path, basis):
+    """치는 중 끝이 영상 길이를 넘으면 칸을 떠나기 전에 바로 오류를 띄워야 한다.
+
+    60fps · 3600초. 끝 칸에 1000000(01:00:00:00 — 영상 끝)까지는 오류 없음, 1을 더 쳐
+    10:00:00:01이 되는 순간 "Selection is outside the video"
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    row = dialog._rows[0]
+
+    type_into(row.endEdit, "1000000")
+    assert row.endEdit.text() == "01:00:00:00" and error_shown(row) == ""
+
+    type_more(row.endEdit, "1")
+
+    assert row.endEdit.text() == "10:00:00:01"
+    assert error_shown(row) == "Selection is outside the video"
+    assert row.endEdit.property("invalid") is True
+
+
+def test_an_end_still_below_the_start_waits_until_the_field_is_left(qtbot, tmp_path, basis):
+    """끝 칸을 치는 중 끝이 아직 시작에 못 미치는 것은 칸을 떠날 때까지 띄우지 않되, 확인은 꺼 두어야 한다.
+
+    60fps · 3600초. 시작 00:10:00:00인 행의 끝 칸을 비우고 2 · 0 · 0 · 0 · 0 · 0을 차례로 침
+    -> 00:02:00:00(숫자 다섯)까지 매 단계: 오류 문구 없음, 칸 강조 없음, 확인 꺼짐
+    -> 00:20:00:00(숫자 여섯): 오류 없음, 확인 켜짐
+    끝 칸을 5로 바꾸고 칸을 떠남 -> "Start must be before end", 시작 칸도 함께 강조
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    row = dialog._rows[0]
     type_into(row.startEdit, "100000")
-
-    assert not row.errorLabel.isVisible(), "치는 도중에 행 오류가 떴다"
-    assert row.startEdit.property("invalid") is False and row.endEdit.property("invalid") is False
-    assert not dialog.okButton.isEnabled(), "확인 버튼이 지금 값을 따르지 않는다"
-
     leave(row.startEdit)
 
-    assert shown(row.errorLabel) == "Start must be before end"
+    QTest.keyClick(row.endEdit, Qt.Key.Key_Delete)
+    for digit in "20000":
+        type_more(row.endEdit, digit)
+        assert error_shown(row) == "", f"{row.endEdit.text()}: 치는 도중에 오류가 떴다"
+        assert row.endEdit.property("invalid") is False
+        assert not dialog.okButton.isEnabled(), "띄우지 않은 오류가 확인을 막지 않는다"
+    type_more(row.endEdit, "0")
+    assert row.endEdit.text() == "00:20:00:00"
+    assert error_shown(row) == "" and dialog.okButton.isEnabled()
+
+    type_into(row.endEdit, "5")
+    assert error_shown(row) == ""
+    leave(row.endEdit)
+
+    assert error_shown(row) == "Start must be before end"
     assert row.startEdit.property("invalid") is True and row.endEdit.property("invalid") is True
+
+
+def test_a_field_overflow_on_the_way_to_a_valid_value_is_not_flagged(qtbot, tmp_path, basis):
+    """치는 도중 잠깐 생기는 자리 넘침(프레임 ≥ 프레임률)은 띄우지 않고, 다 친 값이 유효하면 오류가 없어야 한다.
+
+    30fps · 3600초. 끝 칸에 1 · 3 · 0 · 0 · 0을 차례로 침
+    -> "130"(00:00:01:30 — 프레임 30은 30fps에서 넘친다)에서 오류 문구 없음
+    -> "13000"(00:01:30:00)을 치고 칸을 떠나도 오류 없음, 확인 켜짐
+    """
+    basis.fps = Fraction(30)
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    row = dialog._rows[0]
+
+    type_into(row.endEdit, "130")
+    assert row.endEdit.text() == "00:00:01:30"
+    assert error_shown(row) == "" and not dialog.okButton.isEnabled()
+
+    type_more(row.endEdit, "00")
+    leave(row.endEdit)
+
+    assert row.endEdit.text() == "00:01:30:00"
+    assert error_shown(row) == "" and dialog.okButton.isEnabled()
+
+
+def test_a_frame_number_past_the_frame_rate_is_flagged_when_the_field_is_left(
+    qtbot, tmp_path, basis
+):
+    """프레임이 프레임률 이상인 값은 치는 도중에는 띄우지 않고 칸을 떠나면 띄워야 한다.
+
+    30fps. 끝 칸에 0075(00:00:00:75)를 침 -> 오류 문구 없음
+    칸을 떠남 -> "Frame number must be below the frame rate"
+    """
+    basis.fps = Fraction(30)
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    row = dialog._rows[0]
+
+    type_into(row.endEdit, "0075")
+    assert error_shown(row) == ""
+
+    leave(row.endEdit)
+
+    assert error_shown(row) == "Frame number must be below the frame rate"
+
+
+def test_an_error_disappears_at_once_when_the_value_becomes_valid(qtbot, tmp_path, basis):
+    """오류는 값이 유효해지는 순간 칸을 떠나지 않아도 바로 사라져야 한다.
+
+    60fps · 3600초. 끝 칸에 10000001(10:00:00:01 — 길이 초과)을 쳐 오류가 뜬 뒤 Backspace
+    -> 01:00:00:00(영상 끝)이 되는 순간 오류 문구 없음, 칸 강조 없음, 확인 켜짐
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    row = dialog._rows[0]
+    type_into(row.endEdit, "10000001")
+    assert error_shown(row) == "Selection is outside the video"
+
+    QTest.keyClick(row.endEdit, Qt.Key.Key_Backspace)
+    _pump()
+
+    assert row.endEdit.text() == "01:00:00:00"
+    assert error_shown(row) == "" and row.endEdit.property("invalid") is False
+    assert dialog.okButton.isEnabled()
+
+
+def test_an_error_caused_in_another_row_shows_at_once(qtbot, tmp_path, basis):
+    """치고 있는 칸 때문에 다른 행에 생긴 오류는 그 행에 바로 띄우고, 치고 있는 행의 것은 떠날 때 띄워야 한다.
+
+    60fps. 첫째 행 00:10:00:00~00:20:00:00, 둘째 행 00:10:00:00~00:30:00:00.
+    둘째 행의 끝 칸에 200000을 쳐 첫째 행과 같게 만듦(칸을 떠나지 않는다)
+    -> 첫째 행: "Duplicate selection" 바로 표시. 둘째 행(치는 중): 오류 문구 없음. 확인 꺼짐
+    둘째 행의 끝 칸을 떠남 -> 둘째 행에도 "Duplicate selection"
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    set_rows(dialog, [("00:10:00:00", "00:20:00:00"), ("00:10:00:00", "00:30:00:00")])
+    first, second = dialog._rows
+
+    type_into(second.endEdit, "200000")
+
+    assert error_shown(first) == "Duplicate selection", "다른 행에 생긴 오류가 늦게 뜬다"
+    assert error_shown(second) == ""
+    assert not dialog.okButton.isEnabled()
+
+    leave(second.endEdit)
+    assert error_shown(second) == "Duplicate selection"
+
+
+def test_every_error_is_shown_at_once_when_the_window_opens(qtbot, tmp_path, basis):
+    """창을 열 때는 치고 있는 칸이 없으므로 떠날 때 띄우는 종류의 오류도 바로 띄워야 한다.
+
+    카드의 구간이 600~1200초 둘(같은 구간 두 개 — 중복)인 채로 편집 창을 엶
+    -> 두 행 모두 "Duplicate selection", 확인 꺼짐
+    """
+    item = _make_item(str(tmp_path))
+    item.selections = (TimeRange(600.0, 1200.0), TimeRange(600.0, 1200.0))
+    win = open_window(tmp_path, item)
+
+    dialog = open_editor(qtbot, win, item)
+
+    assert [error_shown(row) for row in dialog._rows] == ["Duplicate selection"] * 2
+    assert not dialog.okButton.isEnabled()
 
 
 def test_typed_digits_reach_the_card_and_milliseconds_are_only_shown(qtbot, tmp_path, basis):
