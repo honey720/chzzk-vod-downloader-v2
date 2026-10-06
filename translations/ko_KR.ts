@@ -447,6 +447,17 @@ Check your connection and cookies, then open this window again.</source>
     </message>
 </context>
 <context>
+    <name>TimecodeEdit</name>
+    <message>
+        <source>Copy</source>
+        <translation>복사</translation>
+    </message>
+    <message>
+        <source>Paste</source>
+        <translation>붙여넣기</translation>
+    </message>
+</context>
+<context>
     <name>VodDownloader</name>
     <message>
         <source>Warning</source>

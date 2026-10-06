@@ -8,8 +8,8 @@ import random
 from fractions import Fraction
 
 import pytest
-from PySide6.QtCore import QEvent, Qt
-from PySide6.QtGui import QFocusEvent
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+from PySide6.QtGui import QFocusEvent, QMouseEvent
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication
 
@@ -36,6 +36,9 @@ def clipboard(monkeypatch):
 
         def text(self) -> str:
             return self.content
+
+        def setText(self, text: str) -> None:
+            self.content = text
 
     fake = _Clipboard()
     application = type("_Application", (), {"clipboard": staticmethod(lambda: fake)})
@@ -237,6 +240,116 @@ def test_the_value_is_always_four_fields(edit):
         assert len(value) == 11 and len(fields) == 4
         assert all(len(field) == 2 and field.isascii() and field.isdigit() for field in fields)
     assert values[-1] == "12:34:56:78"
+
+
+def test_copy_puts_the_whole_four_field_value_on_the_clipboard(edit, clipboard):
+    """복사는 흐린 자리까지 포함한 네 칸 값 전체를 클립보드에 넣어야 한다.
+
+    0010을 친 칸(밝은 부분 "00:10")에서 Ctrl+C -> 클립보드 "00:00:00:10"
+    """
+    type_digits(edit, "0010")
+
+    QTest.keyClick(edit, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
+
+    assert clipboard.content == "00:00:00:10"
+
+
+def test_select_all_selects_the_whole_field_and_a_digit_then_starts_over(edit):
+    """Ctrl+A는 칸 전체를 선택하고, 선택된 칸에 숫자를 치면 새로 시작하며 선택이 풀려야 한다.
+
+    001003을 친 칸에서 Ctrl+A -> 선택됨. 5를 침 -> 값 "00:00:00:05", 선택 풀림
+    """
+    type_digits(edit, "001003")
+    assert not edit.isAllSelected()
+
+    QTest.keyClick(edit, Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier)
+    assert edit.isAllSelected()
+    type_digits(edit, "5")
+
+    assert edit.text() == "00:00:00:05"
+    assert not edit.isAllSelected()
+
+
+def test_backspace_on_a_selected_field_still_removes_one_digit(edit):
+    """선택된 칸에서도 Backspace는 맨 오른쪽 숫자 하나를, Delete는 전부를 지워야 한다.
+
+    001003을 치고 Ctrl+A → Backspace -> "00:00:01:00". 다시 Ctrl+A → Delete -> "00:00:00:00"
+    """
+    type_digits(edit, "001003")
+    edit.selectAll()
+
+    QTest.keyClick(edit, Qt.Key.Key_Backspace)
+    assert edit.text() == "00:00:01:00" and not edit.isAllSelected()
+    edit.selectAll()
+    QTest.keyClick(edit, Qt.Key.Key_Delete)
+    assert edit.text() == "00:00:00:00"
+
+
+def test_double_click_and_drag_select_the_whole_field_and_a_click_clears_it(edit):
+    """더블클릭과 드래그는 칸 전체를 선택하고, 한 번 누르면 선택이 풀려야 한다.
+
+    칸을 더블클릭 -> 선택됨. 한 번 누름 -> 풀림. 누른 채 끌어 옮김 -> 선택됨
+    """
+    center = edit.rect().center()
+
+    QTest.mouseDClick(edit, Qt.MouseButton.LeftButton, pos=center)
+    assert edit.isAllSelected()
+    QTest.mouseClick(edit, Qt.MouseButton.LeftButton, pos=center)
+    assert not edit.isAllSelected()
+
+    far = QPoint(center.x() + QApplication.startDragDistance() * 3, center.y())
+    QTest.mousePress(edit, Qt.MouseButton.LeftButton, pos=center)
+    QApplication.sendEvent(edit, _drag_to(far))
+    QTest.mouseRelease(edit, Qt.MouseButton.LeftButton, pos=far)
+    assert edit.isAllSelected()
+
+
+def test_a_selected_field_is_painted_differently(edit):
+    """선택된 칸은 선택되지 않은 칸과 다르게 그려져야 한다.
+
+    001003을 친 칸의 그림을 선택 전 · 후로 견줌 -> 다르다
+    """
+    type_digits(edit, "001003")
+    plain = edit.grab().toImage()
+
+    edit.selectAll()
+    QApplication.processEvents()
+
+    assert edit.grab().toImage() != plain
+
+
+def test_context_menu_has_only_copy_and_paste(edit, clipboard):
+    """우클릭 메뉴에는 복사 · 붙여넣기 두 항목만 있어야 하고, 붙여넣기는 Ctrl+V와 같은 규칙이어야 한다.
+
+    클립보드 "03:04"인 채 메뉴를 만듦 -> 항목 == ["Copy", "Paste"], 붙여넣기 켜짐
+    붙여넣기를 누름 -> 값 "00:00:03:04". 복사를 누름 -> 클립보드 "00:00:03:04"
+    클립보드 "abc"인 채 메뉴를 만듦 -> 붙여넣기 꺼짐
+    """
+    clipboard.content = "03:04"
+    menu = edit.buildContextMenu()
+    copy, paste = menu.actions()
+
+    assert [action.text() for action in menu.actions()] == ["Copy", "Paste"]
+    assert paste.isEnabled()
+    paste.trigger()
+    assert edit.text() == "00:00:03:04"
+    copy.trigger()
+    assert clipboard.content == "00:00:03:04"
+
+    clipboard.content = "abc"
+    assert not edit.buildContextMenu().actions()[1].isEnabled()
+
+
+def _drag_to(point: QPoint) -> QMouseEvent:
+    """왼쪽 버튼을 누른 채 point로 옮기는 이벤트."""
+    return QMouseEvent(
+        QEvent.Type.MouseMove,
+        QPointF(point),
+        QPointF(point),  # 전역 위치 — 칸은 보지 않는다
+        Qt.MouseButton.NoButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
 
 
 def _seconds(value: str, fps: Fraction) -> Fraction:

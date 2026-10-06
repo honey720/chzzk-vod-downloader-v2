@@ -16,11 +16,14 @@ QLineEdit을 잇는다 — 테두리 · 포커스 강조 · 오류 강조(``inva
 QSS와 Qt가 그대로 준다. 글자만 이 클래스가 그린다(흐린 부분과 밝은 부분의 색이 달라 QLineEdit의
 한 가지 글자색으로는 그릴 수 없다). QLineEdit 자신의 글자는 늘 비워 두고 읽기 전용으로 둔다 —
 자체 커서 · 선택 · 붙여넣기 · 입력기 조합이 끼어들지 않는다. 키는 이 클래스가 받는다.
+
+선택은 **칸 전체**뿐이다(드래그 · 더블클릭 · Ctrl+A). 부분 선택은 없다 — 숫자가 오른쪽부터
+채워져 가운데를 골라 고칠 일이 없다. 복사(Ctrl+C)는 선택과 무관하게 네 칸 값 전체를 넣는다.
 """
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QGuiApplication, QKeySequence, QPainter
-from PySide6.QtWidgets import QLineEdit, QStyle, QStyleOptionFrame, QWidget
+from PySide6.QtGui import QAction, QColor, QGuiApplication, QKeySequence, QPainter
+from PySide6.QtWidgets import QApplication, QLineEdit, QMenu, QStyle, QStyleOptionFrame, QWidget
 
 import app.theme as theme
 
@@ -57,6 +60,9 @@ class TimecodeEdit(QLineEdit):
       숫자는 기존 값을 지우고 새로 시작한다
     - Backspace: 맨 오른쪽 숫자를 지운다 · Delete: 전부 지운다
     - 붙여넣기(Ctrl+V): ``digits_from_text``가 받는 글만
+    - 복사(Ctrl+C): 네 칸 값 전체(흐린 자리 포함)
+    - 드래그 · 더블클릭 · Ctrl+A: 칸 전체를 선택한다. 선택된 칸에 숫자를 치면 새로 시작한다
+    - 우클릭: 복사 · 붙여넣기 두 항목만 있는 메뉴
     - 칸을 떠나거나 Enter를 치면 ``committed``를 낸다. Enter는 이어서 ``entered``를 낸다 —
       받는 쪽이 다음 칸으로 넘긴다. Enter는 창으로 올라가지 않는다(창을 닫지 않는다)
     """
@@ -70,10 +76,12 @@ class TimecodeEdit(QLineEdit):
         self._digits = ""  # 친 숫자 — 오른쪽 끝이 프레임의 일의 자리다
         # 포커스를 받은 뒤 아직 아무것도 치지 않았다 — 다음 숫자가 기존 값을 지운다
         self._fresh = False
+        self._selected = False  # 칸 전체가 선택됐다
+        self._pressed_at = None  # 마우스를 누른 자리 — 거기서 끌면 칸 전체를 선택한다
         self.setProperty("role", "timecode")
         self.setReadOnly(True)  # QLineEdit 자신의 커서 · 선택 · 입력기 조합을 끈다
         self.setAttribute(Qt.WidgetAttribute.WA_InputMethodEnabled, False)
-        self.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.DefaultContextMenu)
         self.setDragEnabled(False)
         self.setAcceptDrops(False)
         self.setCursor(Qt.CursorShape.IBeamCursor)
@@ -130,8 +138,54 @@ class TimecodeEdit(QLineEdit):
         self._fresh = False
         self.committed.emit()
 
+    def copy(self) -> None:
+        """네 칸 값 전체를 클립보드에 넣는다 — 흐린 자리도 값이다(0)."""
+        QGuiApplication.clipboard().setText(self.text())
+
+    def paste(self) -> None:
+        """클립보드의 글을 붙여넣는다 — ``pasteText``의 규칙."""
+        self.pasteText(QGuiApplication.clipboard().text())
+
+    def selectAll(self) -> None:
+        """칸 전체를 선택한다."""
+        self._setSelected(True)
+
+    def deselect(self) -> None:
+        """선택을 푼다."""
+        self._setSelected(False)
+
+    def isAllSelected(self) -> bool:
+        """칸 전체가 선택됐는지."""
+        return self._selected
+
+    def _setSelected(self, selected: bool) -> None:
+        if selected != self._selected:
+            self._selected = selected
+            self.update()
+
+    def buildContextMenu(self) -> QMenu:
+        """우클릭 메뉴를 만든다 — 복사 · 붙여넣기 두 항목뿐이다.
+
+        붙여넣기는 클립보드의 글을 받을 수 있을 때만 켜진다.
+        """
+        menu = QMenu(self)
+        copy = QAction(self.tr("Copy"), menu)
+        copy.triggered.connect(self.copy)
+        paste = QAction(self.tr("Paste"), menu)
+        paste.setEnabled(digits_from_text(QGuiApplication.clipboard().text()) is not None)
+        paste.triggered.connect(self.paste)
+        menu.addAction(copy)
+        menu.addAction(paste)
+        return menu
+
+    def contextMenuEvent(self, event) -> None:
+        menu = self.buildContextMenu()
+        menu.exec(event.globalPos())
+        menu.deleteLater()
+
     def _setDigits(self, digits: str) -> None:
         self._fresh = False
+        self._setSelected(False)
         if digits == self._digits:
             return
         self._digits = digits
@@ -142,7 +196,13 @@ class TimecodeEdit(QLineEdit):
 
     def keyPressEvent(self, event) -> None:
         if event.matches(QKeySequence.StandardKey.Paste):
-            self.pasteText(QGuiApplication.clipboard().text())
+            self.paste()
+            return
+        if event.matches(QKeySequence.StandardKey.Copy):
+            self.copy()
+            return
+        if event.matches(QKeySequence.StandardKey.SelectAll):
+            self.selectAll()
             return
         key = event.key()
         if key == Qt.Key.Key_Backspace:
@@ -164,7 +224,7 @@ class TimecodeEdit(QLineEdit):
         )
         # 숫자 키패드의 숫자도 글자로 온다(KeypadModifier는 막지 않는다)
         if len(typed) == 1 and typed in _DIGITS and not event.modifiers() & blocked:
-            current = "" if self._fresh else self._digits
+            current = "" if (self._fresh or self._selected) else self._digits
             if len(current) < MAX_DIGITS:
                 self._setDigits(current + typed)
             else:
@@ -179,17 +239,32 @@ class TimecodeEdit(QLineEdit):
 
     def focusOutEvent(self, event) -> None:
         super().focusOutEvent(event)
-        self.commit()
+        if (
+            event.reason() != Qt.FocusReason.PopupFocusReason
+        ):  # 우클릭 메뉴가 뜬 것은 떠난 것이 아니다
+            self._setSelected(False)
+            self.commit()
         self.update()
 
     def mousePressEvent(self, event) -> None:
-        self.setFocus(Qt.FocusReason.MouseFocusReason)  # 글자를 선택하지 않는다
+        self.setFocus(Qt.FocusReason.MouseFocusReason)
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._pressed_at = event.position().toPoint()
+            self._setSelected(False)  # 한 번 누르면 선택이 풀린다
 
     def mouseMoveEvent(self, event) -> None:
-        event.ignore()
+        # 누른 채 끌면 칸 전체를 선택한다 — 어디서 어디까지 끌었는지는 보지 않는다
+        if self._pressed_at is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            moved = (event.position().toPoint() - self._pressed_at).manhattanLength()
+            if moved >= QApplication.startDragDistance():
+                self._setSelected(True)
+
+    def mouseReleaseEvent(self, event) -> None:
+        self._pressed_at = None
 
     def mouseDoubleClickEvent(self, event) -> None:
-        event.ignore()
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._setSelected(True)
 
     # ---- 그리기 ----
 
@@ -206,6 +281,18 @@ class TimecodeEdit(QLineEdit):
         baseline = rect.center().y() + (metrics.ascent() - metrics.descent()) // 2 + 1
         painter = QPainter(self)
         painter.setFont(self.font())
+        if self._selected:
+            # 선택된 칸 — 글자 전체에 선택 바탕을 깔고 글자는 그 위의 색으로 그린다. 입력창의
+            # 선택 색(QSS의 selection-background-color · selection-color)과 같은 토큰이다
+            width = dim_width + metrics.horizontalAdvance(bright)
+            top = baseline - metrics.ascent() - 1
+            painter.fillRect(
+                left - 1, top, width + 2, metrics.height() + 2, QColor(tokens["accent"])
+            )
+            painter.setPen(QColor(tokens["onAccent"]))
+            painter.drawText(left, baseline, dim + bright)
+            painter.end()
+            return
         # 흐린 자리는 비활성 글자색, 친 자리는 본문 글자색 — 둘 다 theme.py의 토큰이다
         painter.setPen(QColor(tokens["textDisabled"]))
         painter.drawText(left, baseline, dim)
