@@ -1044,6 +1044,47 @@ def test_a_late_result_for_an_earlier_resolution_is_dropped(qtbot, tmp_path, bas
     assert summary_text(win, item) == "Sections 1 · 0:09"
 
 
+def test_an_earlier_result_that_arrives_first_is_dropped_and_the_newer_one_settles(
+    qtbot, tmp_path, basis
+):
+    """해상도를 또 바꾼 뒤 앞 해상도의 결과가 먼저 와도 쓰지 않고, 새 해상도의 결과로 정해야 한다.
+
+    1080p(60) · 720p(60) · 480p(선언 30) 카드. 480p를 고르고(조회 붙잡음) 곧 720p를 고름.
+    480p의 조회(25fps · 3000초)를 먼저 끝내고, 그 뒤에 720p의 조회(60fps · 3600초)를 끝냄
+    -> 480p의 결과가 온 뒤에도 selections == 처음 정한 구간이고 section_check == "pending"
+    -> 720p의 결과가 온 뒤 selections == 처음 정한 구간, section_frame_rate == 60, 알림 없음
+    """
+    item = _make_item(str(tmp_path))
+    item.unique_reps = [
+        StreamEntry(1080, "u1", frame_rate=60.0),
+        StreamEntry(720, "u2", frame_rate=60.0),
+        StreamEntry(480, "u3", frame_rate=30.0),
+    ]
+    win = open_window(tmp_path, item)
+    before = give_sections(qtbot, win, item, ODD)
+    basis.by_resolution[480] = (Fraction(25), 3000.0)
+    basis.gates[480], basis.gates[720] = threading.Event(), threading.Event()
+    try:
+        _pick(win, item, 480)
+        _pick(win, item, 720)
+
+        basis.gates[480].set()  # 앞 해상도의 결과가 먼저 온다
+        settle(qtbot, win, pending=1)
+        assert basis.returned[-1] == 480, "전제: 480p의 조회가 먼저 끝나야 한다"
+        assert item.selections == before, "앞 해상도의 결과가 쓰였다"
+        assert item.section_check == "pending", "새 해상도의 조회를 아직 기다려야 한다"
+
+        basis.gates[720].set()
+        settle(qtbot, win)
+    finally:
+        basis.gates[480].set()
+        basis.gates[720].set()
+
+    assert item.selections == before
+    assert item.section_frame_rate == Fraction(60) and item.section_check == ""
+    assert summary_text(win, item) == "Sections 1 · 0:09"
+
+
 def test_a_result_that_arrives_after_the_download_started_is_dropped(qtbot, tmp_path, basis):
     """조회가 끝나기 전에 받기 시작한 카드에는 늦은 결과를 쓰지 않아야 한다.
 
