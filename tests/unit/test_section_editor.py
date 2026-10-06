@@ -1191,6 +1191,26 @@ def test_picking_the_resolution_already_picked_starts_no_lookup(qtbot, tmp_path,
     assert item.section_check == ""
 
 
+def test_the_default_pick_of_a_new_card_starts_no_lookup(qtbot, tmp_path, basis):
+    """카드가 만들어질 때 스스로 고르는 기본 해상도는 조회를 돌리지 않아야 한다.
+
+    구간과 확인된 기준값(60fps · 3600초)을 이미 든 아이템(고른 해상도 없음)을 목록에 넣음
+    -> 카드가 1080p를 기본으로 고른다, 조회 0건, section_verified가 넣을 때의 객체 그대로
+    """
+    item = _make_item(str(tmp_path))
+    item.selections = (TimeRange(600.0, 1200.0),)
+    item.section_frame_rate = Fraction(60)
+    verified = (item.selections, SectionBasis(fps=Fraction(60), duration=HOUR))
+    item.section_verified = verified
+
+    win = open_window(tmp_path, item)
+    settle(qtbot, win)
+
+    assert item.resolution == 1080, "전제: 카드가 기본 해상도를 골라야 한다"
+    assert basis.calls == []
+    assert item.section_verified is verified and item.section_check == ""
+
+
 def test_notice_gives_way_when_it_does_not_fit_in_the_row(qtbot, tmp_path, basis):
     """알림까지 붙인 요약이 3행에 안 들어가면 알림을 떼고 요약만 적어야 한다.
 

@@ -625,10 +625,11 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
                 # 해상도가 같은 항목이 둘일 수 있다 — 고른 항목의 스트림까지 기억한다 (#318)
                 self.item.select_rep(self.item.unique_reps[index])
             picked_now = (self.item.resolution, self.item.base_url, self.item.stream)
-            if picked_now != picked_before and self._sectionCount():
-                # 구간이 있는 카드의 해상도가 바뀌었다 (#309) — 구간을 새 해상도의 프레임 · 길이에
-                # 다시 맞추는 것은 뷰모델이 한다(곧바로 선언값으로, 조회가 끝나면 조회값으로).
-                # 같은 항목을 다시 고른 것(크기 조회가 늦게 도착한 자동 선택 등)은 알리지 않는다
+            if self._userPicked and picked_now != picked_before and self._sectionCount():
+                # 유저가 구간이 있는 카드의 해상도를 바꿨다 (#309) — 구간을 새 해상도의 프레임 ·
+                # 길이에 다시 맞추는 것은 뷰모델이 한다(곧바로 선언값으로, 조회가 끝나면
+                # 조회값으로). 카드가 스스로 고른 것(만들어질 때의 기본 선택 · 크기 조회가 늦게
+                # 도착한 자동 선택)과 같은 항목을 다시 고른 것은 알리지 않는다
                 self.sectionRefitRequest.emit()
             # 세그먼트 기반(m3u8·hls_aes)은 total_size를 미리 알 수 없어 처리하지 않음
             if not self.item.is_segment_based and index is not None:
