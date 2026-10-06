@@ -2052,3 +2052,101 @@ def test_the_end_follows_the_looked_up_rate_not_the_declared_one(qtbot, tmp_path
     dialog = open_editor(qtbot, win, item)
 
     assert dialog.viewModel().endTimecodeText() == "00:00:10:15"
+
+
+# ================================================================ Enter
+
+
+def test_enter_confirms_the_field_and_moves_on_without_closing_the_window(qtbot, tmp_path, basis):
+    """칸에서 Enter를 치면 그 칸의 값을 확정하고 다음 칸으로 넘어가야 하며 창은 닫히지 않아야 한다.
+
+    60fps. 행 둘. 첫째 행 시작 칸에 100000을 치고 Enter -> 포커스가 첫째 행의 끝 칸, 창 열림
+    끝 칸에서 Enter -> 둘째 행의 시작 칸. 둘째 행 시작 → 끝 → Enter -> 확인 버튼. 창은 계속 열려 있다
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    dialog.addButton.click()
+    _pump()
+    first, second = dialog._rows
+
+    type_into(first.startEdit, "100000")
+    QTest.keyClick(first.startEdit, Qt.Key.Key_Return)
+    _pump()
+    assert dialog.focusWidget() is first.endEdit
+    assert dialog.viewModel().rows[0][0] == "00:10:00:00", "Enter가 칸의 값을 확정하지 않았다"
+
+    QTest.keyClick(first.endEdit, Qt.Key.Key_Enter)  # 숫자 키패드의 Enter
+    _pump()
+    assert dialog.focusWidget() is second.startEdit
+    QTest.keyClick(second.startEdit, Qt.Key.Key_Return)
+    _pump()
+    assert dialog.focusWidget() is second.endEdit
+    QTest.keyClick(second.endEdit, Qt.Key.Key_Return)
+    _pump()
+
+    assert dialog.focusWidget() is dialog.okButton
+    assert win._sectionDialog is dialog and dialog.isVisible(), "Enter가 창을 닫았다"
+    assert item.selections == ()
+
+
+def test_enter_shows_the_errors_that_wait_for_the_field_to_be_left(qtbot, tmp_path, basis):
+    """Enter는 칸을 떠날 때 띄우는 오류를 띄워야 한다.
+
+    30fps. 끝 칸에 0075(프레임 75)를 치고 Enter
+    -> "Frame number must be below the frame rate", 창은 열려 있다
+    """
+    basis.fps = Fraction(30)
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    row = dialog._rows[0]
+
+    type_into(row.endEdit, "0075")
+    QTest.keyClick(row.endEdit, Qt.Key.Key_Return)
+    _pump()
+
+    assert shown(row.errorLabel) == "Frame number must be below the frame rate"
+    assert dialog.isVisible()
+
+
+def test_the_window_closes_only_through_the_ok_button(qtbot, tmp_path, basis):
+    """창은 확인 버튼으로만 닫혀야 한다 — 창이나 다른 버튼에 간 Enter는 닫지 않고, 확인 버튼에 포커스가 있을 때의 Enter는 닫는다.
+
+    값이 유효한 창에서 창 자신과 구간 추가 버튼에 Enter를 보냄 -> 창 열림, 구간 그대로
+    확인 버튼에 포커스를 두고 Enter를 보냄 -> 창 닫힘, 구간이 쓰인다
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    set_rows(dialog, [("00:10:00:00", "00:20:00:00")])
+    assert not dialog.okButton.isDefault(), "기본 버튼이면 창 어디서든 Enter가 확인을 누른다"
+
+    QTest.keyClick(dialog, Qt.Key.Key_Return)
+    QTest.keyClick(dialog.addButton, Qt.Key.Key_Return)
+    _pump()
+    assert win._sectionDialog is dialog and dialog.isVisible()
+    assert item.selections == ()
+
+    dialog.okButton.setFocus()
+    QTest.keyClick(dialog.okButton, Qt.Key.Key_Return)
+    _pump()
+
+    assert win._sectionDialog is None
+    assert item.selections == (TimeRange(600.0, 1200.0),)
+
+
+def test_escape_cancels_the_window(qtbot, tmp_path, basis):
+    """Esc는 취소와 같이 창을 닫고 구간을 쓰지 않아야 한다.
+
+    구간을 고친 창의 입력 칸에서 Esc -> 창 닫힘, selections == ()
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    set_rows(dialog, [("00:10:00:00", "00:20:00:00")])
+
+    QTest.keyClick(dialog._rows[0].endEdit, Qt.Key.Key_Escape)
+    _pump()
+
+    assert win._sectionDialog is None and item.selections == ()

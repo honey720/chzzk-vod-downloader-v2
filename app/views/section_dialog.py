@@ -19,7 +19,10 @@
 검사하고, 치고 있는 행의 오류를 바로 띄울지 칸을 떠날 때 띄울지는 뷰모델의 표
 (``ERROR_TIMING``)가 정한다. 확인 버튼은 띄우지 않은 오류가 있어도 꺼진다.
 
-타임코드 칸은 숫자만 받는다(``app/widgets/timecode_edit.py``).
+타임코드 칸은 숫자만 받는다(``app/widgets/timecode_edit.py``). 칸에서 Enter를 치면 그 칸의
+값을 확정하고 다음 칸으로 넘어간다(시작 → 끝 → 다음 행의 시작, 마지막 행의 끝에서는 확인
+버튼). **Enter는 창을 닫지 않는다** — 창은 확인 버튼으로만 닫는다(확인 버튼에 포커스가 있을
+때의 Enter · Space 포함). 그래서 창에 기본 버튼을 두지 않는다. Esc는 취소로 닫는다.
 """
 
 from PySide6.QtCore import Qt
@@ -193,7 +196,10 @@ class SectionEditDialog(QDialog):
         self.cancelButton.clicked.connect(self.reject)
         self.okButton = QPushButton(self)
         self.okButton.setObjectName("sectionOkButton")
-        self.okButton.setDefault(True)
+        # 기본 버튼으로 두지 않는다 — 두면 창 어디서든 Enter가 확인을 누른다. autoDefault도
+        # 끈다(QDialog는 autoDefault 버튼을 스스로 기본 버튼으로 올린다). 포커스가 이 버튼에
+        # 있을 때의 Enter는 keyPressEvent가 받는다
+        self.okButton.setAutoDefault(False)
         self.okButton.clicked.connect(self.accept)
         buttons.addWidget(self.cancelButton)
         buttons.addWidget(self.okButton)
@@ -246,6 +252,7 @@ class SectionEditDialog(QDialog):
                 edit = row.edit(column)
                 edit.edited.connect(lambda text, r=index, c=column: self._onEdited(r, c, text))
                 edit.committed.connect(lambda r=index, c=column, e=edit: self._onCommitted(r, c, e))
+                edit.entered.connect(lambda r=index, c=column: self._onEntered(r, c))
                 # 목록의 값을 넣는다 — 넣은 값은 전부 밝게 보인다. 넣지 않으면 값이 0인 칸
                 # (00:00:00:00)이 아무것도 치지 않은 칸처럼 흐리게 보인다
                 edit.setText(self._viewmodel.rows[index][column])
@@ -266,6 +273,18 @@ class SectionEditDialog(QDialog):
         if self._typing == (row, column):
             self._typing = None
         self._viewmodel.setText(row, column, edit.text())
+
+    def _onEntered(self, row: int, column: int) -> None:
+        """칸에서 Enter를 쳤다 — 다음 칸으로 포커스를 옮긴다. 창을 닫지 않는다."""
+        self.focusTargetAfter(row, column).setFocus(Qt.FocusReason.TabFocusReason)
+
+    def focusTargetAfter(self, row: int, column: int) -> QWidget:
+        """그 칸 다음에 포커스를 받을 위젯 — 시작 → 끝 → 다음 행의 시작, 마지막 행의 끝 → 확인 버튼."""
+        if column == START:
+            return self._rows[row].endEdit
+        if row + 1 < len(self._rows):
+            return self._rows[row + 1].startEdit
+        return self.okButton
 
     def _refresh(self) -> None:
         """행의 글자 · 오류 표시와 머리줄 · 버튼 상태를 뷰모델에 맞춘다."""
@@ -306,6 +325,19 @@ class SectionEditDialog(QDialog):
             theme.repolish(widget)
 
     # ---- 닫기 ----
+
+    def keyPressEvent(self, event) -> None:
+        """Enter는 확인 버튼에 포커스가 있을 때만 확인을 누른다. 그 밖의 Enter는 아무것도 하지 않는다.
+
+        QDialog는 Enter를 받으면 기본 버튼을 누른다 — 창 어디서든 Enter가 창을 닫게 된다. 그 길을
+        막는다. Esc(취소)를 비롯한 다른 키는 QDialog에 맡긴다.
+        """
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if self.focusWidget() is self.okButton and self.okButton.isEnabled():
+                self.okButton.click()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def accept(self) -> None:
         """구간을 카드에 쓰고 닫는다. 오류가 남아 있으면 닫지 않는다.

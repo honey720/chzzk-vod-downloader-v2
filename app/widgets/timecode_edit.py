@@ -57,11 +57,13 @@ class TimecodeEdit(QLineEdit):
       숫자는 기존 값을 지우고 새로 시작한다
     - Backspace: 맨 오른쪽 숫자를 지운다 · Delete: 전부 지운다
     - 붙여넣기(Ctrl+V): ``digits_from_text``가 받는 글만
-    - 칸을 떠나거나 Enter를 치면 ``committed``를 낸다
+    - 칸을 떠나거나 Enter를 치면 ``committed``를 낸다. Enter는 이어서 ``entered``를 낸다 —
+      받는 쪽이 다음 칸으로 넘긴다. Enter는 창으로 올라가지 않는다(창을 닫지 않는다)
     """
 
     edited = Signal(str)  # 친 숫자가 바뀌었다 — 네 칸 표기(text())를 싣는다
     committed = Signal()  # 편집을 끝냈다 — 칸을 떠났거나 Enter를 쳤다
+    entered = Signal()  # Enter를 쳤다 — committed 뒤에 나온다
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -151,7 +153,8 @@ class TimecodeEdit(QLineEdit):
             return
         if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             self.commit()
-            event.ignore()  # 창의 기본 버튼(확인)이 이어서 받는다
+            self.entered.emit()
+            event.accept()  # 창으로 올리지 않는다 — Enter가 창을 닫지 않는다
             return
         typed = event.text()
         blocked = (
