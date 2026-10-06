@@ -54,7 +54,7 @@ def test_replay_uses_the_picked_variant_and_its_declared_frame_rate(monkeypatch)
     고른 변형 StreamKey(1920, 1080, 60.0, 6336000), 마스터의 선언값 60
     -> 변형 해석에 그 StreamKey가 넘어간다
     -> 프레임률 정하기에 선언값 60과 첫 세그먼트가 넘어간다
-    -> 세그먼트를 둘 폴더를 주지 않는다(받은 본문을 버린다)
+    -> 세그먼트를 둘 폴더는 None이다(받은 본문을 버린다)
     -> SectionBasis(60, 3599.983)
     """
     stream = StreamKey(1920, 1080, 60.0, 6336000)
@@ -74,7 +74,7 @@ def test_replay_uses_the_picked_variant_and_its_declared_frame_rate(monkeypatch)
 
     def choose(init, segments, declared):
         seen["choose"] = (init, segments, declared)
-        return SimpleNamespace(rate=Fraction(60))
+        return SimpleNamespace(rate=Fraction(60), source="declared")
 
     def timeline(playlist, init, segment_at):
         seen["last"] = segment_at(7)
@@ -92,7 +92,7 @@ def test_replay_uses_the_picked_variant_and_its_declared_frame_rate(monkeypatch)
     content = seen["content"]
     assert content.content_type is ContentType.CHZZK_VIDEO_M3U8
     assert (content.stream, content.resolution) == (stream, 1080)
-    assert seen["head_args"] == (("https://media.invalid/1080.m3u8",), {})
+    assert seen["head_args"] == (("https://media.invalid/1080.m3u8", None), {})
     assert seen["choose"] == ("init", ["segment0"], Fraction(60))
     assert seen["segments"] == [
         ("https://media.invalid/1080.m3u8", 0),
@@ -105,7 +105,7 @@ def test_encrypted_vod_decrypts_with_the_resolved_key_and_keeps_it_out_of_the_re
 
     매니페스트의 선언값 {base_url: 30}, 키 b"K" * 16
     -> 세그먼트 읽기에 그 키가 넘어간다, 프레임률 정하기에 선언값 30이 넘어간다
-    -> 세그먼트를 둘 폴더를 주지 않는다
+    -> 세그먼트를 둘 폴더는 None이다
     -> SectionBasis(30, 100.0) — 칸은 fps · duration 둘뿐이다
     """
     key = b"K" * 16
@@ -122,7 +122,7 @@ def test_encrypted_vod_decrypts_with_the_resolved_key_and_keeps_it_out_of_the_re
 
     def choose(segments, declared):
         seen["choose"] = (segments, declared)
-        return SimpleNamespace(rate=Fraction(30))
+        return SimpleNamespace(rate=Fraction(30), source="declared")
 
     def timeline(playlist, segment_at, fps):
         segment_at(3)
@@ -145,7 +145,7 @@ def test_encrypted_vod_decrypts_with_the_resolved_key_and_keeps_it_out_of_the_re
 
     assert basis == SectionBasis(fps=Fraction(30), duration=100.0)
     assert vars(basis) == {"fps": Fraction(30), "duration": 100.0}
-    assert seen["head_args"] == ((base_url,), {})
+    assert seen["head_args"] == ((base_url, None), {})
     assert seen["keys"] == [key, key]
     assert seen["choose"] == (["segment0"], Fraction(30))
 
@@ -163,10 +163,12 @@ def test_encrypted_vod_measures_the_frame_rate_when_the_manifest_cannot_be_read(
 
     def choose(segments, declared):
         seen["declared"] = declared
-        return SimpleNamespace(rate=Fraction(60))
+        return SimpleNamespace(rate=Fraction(60), source="standard")
 
     network = SimpleNamespace(extract_content_no=lambda url: ("video", "1"), get_video_info=broken)
-    monkeypatch.setattr(section_basis, "fetch_ts_head", lambda url: SimpleNamespace(playlist="p"))
+    monkeypatch.setattr(
+        section_basis, "fetch_ts_head", lambda url, folder: SimpleNamespace(playlist="p")
+    )
     monkeypatch.setattr(section_basis, "ts_key_uri", lambda url, head: "https://key.invalid/k")
     monkeypatch.setattr(section_basis, "resolve_aes_key", lambda content, uri: b"K" * 16)
     monkeypatch.setattr(section_basis, "segment_streams", lambda head, url, index, key: "segment")

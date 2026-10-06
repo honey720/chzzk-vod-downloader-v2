@@ -25,6 +25,7 @@ import pytest
 import core.api.hls_ts as hls_ts_module
 import core.downloaders.hls_aes_downloader as aes_module
 import core.utils.paths as paths_module
+import app.section_basis as section_basis
 import scripts.headless_download as headless
 from core.api.dash import parse_frame_rates, parse_sea_manifest
 from core.downloaders.hls_aes_downloader import HlsAesDownloader
@@ -110,7 +111,10 @@ class _Headless:
             "_fetch_frame_rates",
             lambda url, cookies, kind: dict(rates or {}),
         )
+        # 키 리졸버는 두 곳이 쓴다 — 엔진(헤드리스가 서비스에 넘긴다)과 구간 조회
+        # (app/section_basis.py)
         monkeypatch.setattr(headless, "resolve_aes_key", resolve_key)
+        monkeypatch.setattr(section_basis, "resolve_aes_key", resolve_key)
         monkeypatch.setattr(headless, "_resolve_ts_sections", observed_resolve)
         # 임시 폴더는 산출물 폴더에 둔다 — 실제 디스크 속도 재기를 타지 않는다(엔진 쪽은 conftest가 같게 둔다)
         monkeypatch.setattr(headless, "choose_temp_dir", temp_dir_for)
@@ -210,7 +214,7 @@ def test_ts_sections_use_the_declared_frame_rate_when_there_is_one(
     -> head.frame_rate == 기대값(선언값이 있으면 잰 값 30이 아니라 선언값),
        "프레임률:" 로그에 그 값과 경로 번호, 구간의 끝 == 1 + 20 ÷ 프레임률
     """
-    monkeypatch.setattr(headless, "resolve_aes_key", lambda content, key_uri: KEY)
+    monkeypatch.setattr(section_basis, "resolve_aes_key", lambda content, key_uri: KEY)
     item = SimpleNamespace(base_url=host.url("vod/media.m3u8"), vod_url=VOD_URL, resolution=144)
 
     with caplog.at_level(logging.INFO, logger="headless"):
@@ -436,7 +440,7 @@ def test_interrupt_during_ts_resolution_removes_the_segment_folder_and_is_raised
         stored.append(sorted(os.listdir(run.segment_dirs[0])))
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(headless, "ts_timeline", interrupted)
+    monkeypatch.setattr(section_basis, "ts_timeline", interrupted)
 
     with pytest.raises(KeyboardInterrupt):
         run.main(["00:00:01:00-00:00:02:00"])
@@ -529,7 +533,7 @@ def test_key_is_not_left_in_the_log_or_in_what_the_resolver_returns(
         asked.append(key_uri)
         return key
 
-    monkeypatch.setattr(headless, "resolve_aes_key", resolve_key)
+    monkeypatch.setattr(section_basis, "resolve_aes_key", resolve_key)
     item = SimpleNamespace(base_url=host.url("vod/media.m3u8"), vod_url=VOD_URL, resolution=144)
 
     with caplog.at_level(logging.DEBUG):
