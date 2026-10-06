@@ -45,6 +45,7 @@ class ContentListView(QScrollArea):
     # 내고, 뷰가 아이템을 붙여 앱 계층(mainWindow)으로 올린다.
     pauseRequested = Signal(object)
     retryRequested = Signal(object)
+    sectionEditRequested = Signal(object)  # 대기 카드의 구간 요약 클릭 (#309)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -139,6 +140,7 @@ class ContentListView(QScrollArea):
         widget.deleteRequest.connect(lambda it=item: self.onDeleteItem(it))
         widget.pauseRequest.connect(lambda it=item: self.pauseRequested.emit(it))
         widget.retryRequest.connect(lambda it=item: self.retryRequested.emit(it))
+        widget.sectionEditRequest.connect(lambda it=item: self.sectionEditRequested.emit(it))
         # 해상도 펼침은 한 번에 하나 — 다른 카드가 펼쳐지면 앞의 것을 접는다 (#244 3행 정리)
         widget.expandedChanged.connect(lambda expanded, w=widget: self._onCardExpanded(w, expanded))
         widget.addRepresentationButtons()

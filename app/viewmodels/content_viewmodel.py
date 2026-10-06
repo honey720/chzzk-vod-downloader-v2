@@ -89,6 +89,10 @@ def probe_writable(directory: str, timeout_s: float = _WRITE_PROBE_TIMEOUT_S) ->
     return reason == "", reason
 
 
+# 다운로드 대상이 아닌 카드 상태 — 끝났거나(완료 · 실패) 아직 조회 중이다
+_NOT_DOWNLOADABLE = (DownloadState.FINISHED, DownloadState.FAILED, ItemState.LOADING)
+
+
 class FetchJob(QObject):
     """메타데이터 조회 한 건 — 풀 스레드에서 `run()`하고 결과를 Signal로 메인에 넘긴다 (구 ContentWorker, #72).
 
@@ -206,6 +210,11 @@ class ContentViewModel(QObject):
         # 파괴되어 큐에 남은 finished/error 전달이 유실된다 (#124)
         self._pendingPlaceholders = {}
         self._relays = {}
+        # 구간 편집 창이 열려 있는 카드 (#309). 다운로드 대상에서 건너뛴다 — 상태
+        # (DownloadState)로 만들지 않는다. 엔진과 카드는 이 값을 모른다
+        self._editingItem: ContentItem | None = None
+        # 편집 중인 카드만 남아 배치를 끝내지 않고 멈춰 둔 상태 — 창을 닫으면 이어 간다
+        self._heldForEdit = False
 
     def fetchContent(self, vod_url: str, cookies: dict, downloadPath: str) -> None:
         # 조회가 끝나기 전에도 카드가 보이도록 LOADING 상태의 자리표시 아이템을
@@ -323,8 +332,42 @@ class ContentViewModel(QObject):
                 # 유저에게 보내지 않는다 (#134) — 상세는 로그로만 남긴다
                 logger.exception("다운로드 준비 실패: %s", item.title)
                 self.fail(item, self._saveFailedMessage())
+        elif self._editingIsCandidate():
+            # 남은 대상이 편집 중인 카드뿐이다 (#309) — 배치를 끝내지 않고 멈춰 둔다. 끝내면
+            # 편집하는 사이에 완료 안내와 다운로드 후 동작(절전 · 종료)이 실행된다
+            self._heldForEdit = True
         else:
             self.finishedAllRequested.emit()
+
+    def beginSectionEdit(self, item: ContentItem) -> None:
+        """구간 편집 창이 열린 카드를 다운로드 대상에서 뺀다 (#309).
+
+        창이 열린 사이 그 카드의 차례가 오면 건너뛰고 다음 카드로 간다. 한 번에 한 카드만
+        편집한다(창이 모달이다).
+        """
+        self._editingItem = item
+
+    def endSectionEdit(self, item: ContentItem) -> None:
+        """구간 편집 창이 닫혔다 — 카드가 다시 다운로드 대상이 된다 (#309).
+
+        편집 중인 카드만 남아 멈춰 둔 배치가 있으면 이어 간다. 멈춰 둔 것이 없으면 아무것도
+        시작하지 않는다 — 창을 닫는 것이 다운로드를 시작시키지 않는다.
+        """
+        if self._editingItem is not item:
+            return
+        self._editingItem = None
+        if self._heldForEdit:
+            self._heldForEdit = False
+            self.downloadItem()
+
+    def _editingIsCandidate(self) -> bool:
+        """편집 중인 카드가 목록에 있고, 편집 중이 아니었다면 다운로드 대상이었는지."""
+        item = self._editingItem
+        return (
+            item is not None
+            and self.model.getRow(item) is not None
+            and item.downloadState not in _NOT_DOWNLOADABLE
+        )
 
     def onDownload(self, item: ContentItem):
         """해상도가 정해진 아이템의 산출물 경로를 조립하고 다운로드를 요청한다."""
@@ -389,8 +432,11 @@ class ContentViewModel(QObject):
         row_count = self.model.rowCount()
         for row in range(row_count):
             item = self.model.itemAt(row)
-            # LOADING은 메타데이터가 아직 없어 다운로드 대상이 아니다 (#124)
-            if item.downloadState not in [DownloadState.FINISHED, DownloadState.FAILED, ItemState.LOADING]:
+            # LOADING은 메타데이터가 아직 없어 다운로드 대상이 아니다 (#124).
+            # 구간 편집 창이 열린 카드는 건너뛴다 — 창을 닫으면 다시 대상이 된다 (#309)
+            if item is self._editingItem:
+                continue
+            if item.downloadState not in _NOT_DOWNLOADABLE:
                 return True, item, row
         return False, None, None
 

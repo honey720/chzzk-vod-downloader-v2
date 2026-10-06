@@ -8,8 +8,20 @@
         <translation>(원본)</translation>
     </message>
     <message>
+        <source>refit to {0}fps</source>
+        <translation>{0}fps에 맞춤</translation>
+    </message>
+    <message>
         <source>Sections {0} · {1}</source>
         <translation>구간 {0}개 · {1}</translation>
+    </message>
+    <message>
+        <source>Sections were moved to the frames of the new frame rate.</source>
+        <translation>해상도를 바꿔 프레임률이 달라져, 구간을 새 프레임에 맞게 옮겼습니다.</translation>
+    </message>
+    <message>
+        <source>Click to edit sections</source>
+        <translation>누르면 구간을 편집합니다</translation>
     </message>
     <message>
         <source>Cutting</source>
@@ -231,6 +243,86 @@ Part of the video kept arriving incomplete from the server. Try again later.</so
     <message>
         <source>Failed to fetch video information</source>
         <translation>영상 정보를 가져오지 못했습니다.</translation>
+    </message>
+</context>
+<context>
+    <name>SectionEditDialog</name>
+    <message>
+        <source>Edit sections</source>
+        <translation>구간 편집</translation>
+    </message>
+    <message>
+        <source>+ Add section</source>
+        <translation>+ 구간 추가</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>취소</translation>
+    </message>
+    <message>
+        <source>OK</source>
+        <translation>확인</translation>
+    </message>
+    <message>
+        <source>Move up</source>
+        <translation>위로</translation>
+    </message>
+    <message>
+        <source>Move down</source>
+        <translation>아래로</translation>
+    </message>
+    <message>
+        <source>Delete section</source>
+        <translation>구간 삭제</translation>
+    </message>
+</context>
+<context>
+    <name>SectionEditViewModel</name>
+    <message>
+        <source>Could not read the video information.
+Check your connection and cookies, then open this window again.</source>
+        <translation>영상 정보를 읽지 못했습니다.
+연결 상태와 쿠키를 확인한 뒤 이 창을 다시 열어 주세요.</translation>
+    </message>
+    <message>
+        <source>Reading the video information...</source>
+        <translation>영상 정보를 읽는 중...</translation>
+    </message>
+    <message>
+        <source>Sections {0} / {1} · {2}fps</source>
+        <translation>구간 {0} / {1} · {2}fps</translation>
+    </message>
+    <message>
+        <source>Invalid timecode format</source>
+        <translation>시:분:초:프레임으로 입력해 주세요 (예: 01:05:03:00)</translation>
+    </message>
+    <message>
+        <source>Minutes and seconds must be below 60</source>
+        <translation>분과 초는 59까지 입력할 수 있습니다</translation>
+    </message>
+    <message>
+        <source>Frame number must be below the frame rate</source>
+        <translation>프레임 번호가 이 영상의 프레임률보다 큽니다</translation>
+    </message>
+    <message>
+        <source>Start must be before end</source>
+        <translation>시작이 끝보다 앞이어야 합니다</translation>
+    </message>
+    <message>
+        <source>Selection is outside the video</source>
+        <translation>구간이 영상 길이를 벗어났습니다</translation>
+    </message>
+    <message>
+        <source>Selection is shorter than one frame</source>
+        <translation>구간이 한 프레임보다 짧습니다</translation>
+    </message>
+    <message>
+        <source>Duplicate selection</source>
+        <translation>같은 구간이 이미 있습니다</translation>
+    </message>
+    <message>
+        <source>Too many selections</source>
+        <translation>구간은 20개까지 넣을 수 있습니다</translation>
     </message>
 </context>
 <context>

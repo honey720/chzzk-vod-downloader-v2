@@ -7,7 +7,14 @@ from PySide6.QtWidgets import QWidget, QPushButton, QMessageBox, QFileDialog, QH
 from PySide6.QtGui import QPainter, QPainterPath, QPixmap, QDesktopServices, QRegion
 from PySide6.QtCore import Qt, Signal, QUrl, QDir, QProcess, QRectF
 from app.viewmodels.data import ContentItem
+from app.viewmodels.section_edit_viewmodel import (
+    declared_frame_rate,
+    format_fps,
+    refit_selections,
+    same_frame_rate,
+)
 from app.network import REQUEST_TIMEOUT
+from app.section_basis import SECTION_CONTENT_TYPES
 from core.api.session import get_thread_session
 from app.widgets.pill import ResolutionPill
 from core.models.download_state import DownloadState
@@ -132,6 +139,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     deleteRequest = Signal()
     pauseRequest = Signal()   # 진행 카드의 ⏸ (#245 상태별 조작)
     retryRequest = Signal()   # 실패 카드의 ↻ (#245 상태별 조작)
+    sectionEditRequest = Signal()  # 대기 카드의 구간 요약(재생 시간 자리) 클릭 (#309)
     expandedChanged = Signal(bool)  # 해상도 펼침/접힘 — 목록이 "한 번에 하나"를 맞춘다
 
     # 워커 스레드 → 메인 스레드 중계 (#168). 위젯·아이템 조작은 반드시 메인
@@ -287,6 +295,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.titleEdit.editingFinished.connect(self.finishTitleEditing)
         self.directoryLabel.mousePressEvent = self.choosePath
         self.pathIconButton.clicked.connect(self.choosePath)  # 아이콘만 남아도 같은 진입점
+        self.fileSizeLabel.mousePressEvent = self.requestSectionEdit  # 구간 편집 창 (#309)
         self.openDirectoryButton.clicked.connect(self.requestOpenDir)
         self.pauseButton.clicked.connect(self.pauseRequest.emit)
         self.retryButton.clicked.connect(self.retryRequest.emit)
@@ -572,13 +581,46 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             if index is not None:
                 # 해상도가 같은 항목이 둘일 수 있다 — 고른 항목의 스트림까지 기억한다 (#318)
                 self.item.select_rep(self.item.unique_reps[index])
+                self._refitSections(self.item.unique_reps[index])
             # 세그먼트 기반(m3u8·hls_aes)은 total_size를 미리 알 수 없어 처리하지 않음
             if not self.item.is_segment_based and index is not None:
                 self.item.total_size = self.item.unique_reps[index][-1]
+            if self._sectionCount():
+                # 구간이 있는 카드는 이 자리에 구간 요약을 적는다 (#309) — 크기로 덮지 않는다.
+                # 다시 맞춘 알림이 붙으면 글이 길어지므로 확보 폭과 3행 배치를 다시 잡는다
+                self.fileSizeLabel.setText(self._sectionSummary())
+                self._applySectionHint()
+                self._reserveFileSizeWidth()
+                self._layoutRowThree()
+            elif not self.item.is_segment_based and index is not None:
                 # 앞 공백 없이 — 이 라벨의 다른 쓰기(setData)와 같은 형태다. v2.5.0의 일괄
                 # 패딩 관례가 #245에서 걷힐 때 이 한 줄만 남아, 글꼴에 따라 확보 폭
                 # (_reserveFileSizeWidth 후보에 없는 형태)을 넘어 아이콘을 밀었다 (#280).
                 self.fileSizeLabel.setText(f"{self.item.unique_reps[index][-1]}")
+                self._applySectionHint()
+
+    def _refitSections(self, rep) -> None:
+        """고른 해상도의 프레임률이 구간을 정할 때와 다르면 구간을 새 프레임에 다시 맞춘다 (#309).
+
+        구간은 시각(초)이라 그대로 두어도 받을 때 엔진이 가까운 프레임을 고르지만, 적어 둔
+        프레임 번호(FF)와 저장되는 프레임이 달라진다. 시각 기준으로 새 프레임률의 프레임
+        경계에 옮기고 카드에 한 줄로 알린다. 프레임률이 같으면 아무것도 바꾸지 않는다.
+
+        새 프레임률은 목록 항목의 선언값이다 — 고르는 순간에 네트워크를 타지 않는다. 선언값이
+        없거나 구간을 정할 때의 프레임률을 모르면 다시 맞추지 않는다.
+        """
+        old_rate = getattr(self.item, "section_frame_rate", None)
+        new_rate = declared_frame_rate(rep)
+        if not self._sectionCount() or old_rate is None or new_rate is None:
+            return
+        if same_frame_rate(old_rate, new_rate):
+            return
+        self.item.selections = refit_selections(self.item.selections, new_rate)
+        self.item.section_frame_rate = new_rate
+        self.item.section_notice = self.tr("refit to {0}fps").format(format_fps(new_rate))
+        logger.info(
+            "해상도 변경으로 구간을 다시 맞춤: %sfps → %sfps", format_fps(old_rate), format_fps(new_rate)
+        )
 
     def loadImageFromUrl(self, label, url, maxHeight, type):
         """
@@ -723,7 +765,48 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         selections = self.item.selections
         length = sum(selection.end - selection.start for selection in selections)
         clock = self._shortRemain(strftime("%H:%M:%S", gmtime(max(length, 0))))
-        return self.tr("Sections {0} · {1}").format(len(selections), clock)
+        summary = self.tr("Sections {0} · {1}").format(len(selections), clock)
+        notice = getattr(self.item, "section_notice", "")
+        return f"{summary} · {notice}" if notice else summary
+
+    def _sectionsEditable(self) -> bool:
+        """구간 편집 창을 열 수 있는 카드인지 — 대기 상태이고 구간 기능이 있는 타입이다 (#309)."""
+        return (
+            self.item.downloadState == DownloadState.WAITING
+            and self.item.content_type in SECTION_CONTENT_TYPES
+        )
+
+    def _applySectionHint(self) -> None:
+        """구간 요약 자리(재생 시간 · 파일 크기)가 눌리는지를 모양으로 알린다 (#309).
+
+        누를 수 있을 때만 호버 강조(`editable` 동적 속성 — QSS `#fileSizeLabel[editable="true"]:hover`)
+        와 손가락 커서, "눌러서 편집" 툴팁을 준다. 대기가 아닌 카드는 눌러도 아무 일이 없으므로
+        셋 다 주지 않는다 — 제목 · 경로(`_applyEditability`)와 같은 규칙이다.
+
+        ElidingLabel은 setText 때 툴팁을 글 그대로로 되돌린다 — 글을 바꾼 뒤에 부른다.
+        """
+        label = self.fileSizeLabel
+        editable = self._sectionsEditable()
+        if label.property("editable") != editable:
+            label.setProperty("editable", editable)
+            theme.repolish(label)
+        label.setCursor(
+            Qt.CursorShape.PointingHandCursor if editable else Qt.CursorShape.ArrowCursor
+        )
+        if editable:
+            lines = [label.text()]
+            if getattr(self.item, "section_notice", ""):
+                lines.append(self.tr("Sections were moved to the frames of the new frame rate."))
+            lines.append(self.tr("Click to edit sections"))
+            label.setToolTip("\n".join(lines))
+
+    def requestSectionEdit(self, event=None) -> None:
+        """구간 요약 자리를 누르면 구간 편집 창을 청한다 — 대기 상태 카드에서만 (#309)."""
+        if event is not None and event.button() != Qt.MouseButton.LeftButton:
+            return
+        if not self._sectionsEditable():
+            return
+        self.sectionEditRequest.emit()
 
     def _shortRemain(self, remain: str) -> str:
         """"HH:MM:SS" 시간을 짧은 표시("3:12")로 줄인다 — 표시 정책.
@@ -1097,6 +1180,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             Qt.CursorShape.PointingHandCursor if editable else Qt.CursorShape.ArrowCursor
         )
         self.pathIconButton.setInteractive(editable)
+        self._applySectionHint()
 
     def _updatePathVisibility(self) -> None:
         """경로는 **대기면 항상, 그 외엔 전역 설정 경로와 다를 때만** 보인다 (#245).

@@ -38,6 +38,12 @@ class ContentItem:
         # 제목을 가리키는 값, core.models.section_resume.SectionResume). 다음 다운로드가 끝나지
         # 않은 구간만 다시 처리하는 데 쓴다. 없으면 None이다
         self.section_retry = None
+        # 구간을 정할 때의 프레임률(Fraction) — 구간 편집 창이 조회한 값이다. 해상도를 바꿔
+        # 프레임률이 달라지면 구간을 새 프레임에 다시 맞추는 기준이다. 구간이 없으면 None
+        self.section_frame_rate = None
+        # 구간 요약 뒤에 붙이는 한 줄 알림(번역된 문자열) — 프레임률이 바뀌어 구간을 다시
+        # 맞췄을 때 채운다. 구간을 다시 편집하면 비운다
+        self.section_notice = ""
 
         self.unique_reps = unique_reps
         

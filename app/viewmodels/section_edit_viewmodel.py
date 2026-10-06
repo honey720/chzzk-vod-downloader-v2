@@ -1,0 +1,397 @@
+"""구간 편집 창의 뷰모델 — 기준값 조회 · 행 해석 · 검증 · 카드에 쓰기 (#309).
+
+구간 편집 창(``app/views/section_dialog.py``)은 이 뷰모델만 본다. 타임코드 해석과 구간
+검증은 core의 기존 계약(``core/utils/timecode.py`` · ``core/utils/selections.py``)을 그대로
+부른다 — 규칙을 여기서 다시 구현하지 않는다. 엔진이 다운로드를 시작할 때 같은 함수로 다시
+검증하므로, 여기서 통과한 구간은 같은 프레임률 · 같은 길이에서 엔진도 통과시킨다.
+
+행은 ``TimeRange``가 아니라 글자 둘(시작 · 끝)로 든다. ``TimeRange``는 시작 < 끝이 아니면
+만들 수 없어 틀린 입력을 들고 있을 수 없다. 확인할 때만 ``TimeRange``로 바꾼다.
+
+**전체 구간 하나 = 구간 없음.** 창은 구간이 없는 카드를 "처음 ~ 끝" 한 행으로 보여 주고,
+확인할 때 행이 그 한 행뿐이면 카드에 빈 튜플을 쓴다 — 전체 다운로드는 구간 다운로드
+경로(받은 뒤 자르기)가 아니라 기존 경로로 간다.
+"""
+
+import logging
+from collections.abc import Callable, Sequence
+from fractions import Fraction
+
+from PySide6.QtCore import QObject, QThreadPool, Signal
+
+import app.section_basis as section_basis
+from app.viewmodels.data import ContentItem
+from core.models.download_state import DownloadState
+from core.models.plan import TimeRange
+from core.utils.selections import (
+    MAX_SELECTIONS,
+    SELECTION_DUPLICATE,
+    SELECTION_ORDER,
+    SELECTION_OUT_OF_RANGE,
+    SELECTION_TOO_MANY,
+    SELECTION_TOO_SHORT,
+    reaches_end,
+    validate_selections,
+)
+from core.utils.timecode import (
+    TIMECODE_FIELD_OUT_OF_RANGE,
+    TIMECODE_FRAME_OUT_OF_RANGE,
+    TIMECODE_INVALID_FORMAT,
+    TimecodeError,
+    format_milliseconds,
+    format_timecode,
+    frame_index,
+    frame_rate,
+    parse_timecode,
+)
+
+logger = logging.getLogger(__name__)
+
+STATE_LOADING = "loading"  # 기준값을 조회하는 중 — 입력을 받지 않는다
+STATE_READY = "ready"  # 조회가 끝났다 — 편집할 수 있다
+STATE_FAILED = "failed"  # 조회가 실패했다 — 편집할 수 없다
+
+START, END = 0, 1  # 행의 칸 번호
+
+# 창이 받는 타임코드의 칸 수 — HH:MM:SS:FF. parse_timecode는 짧은 형태(MM:SS 등)도 받지만
+# 창은 네 칸만 받는다(오너 결정)
+_TIMECODE_FIELDS = 4
+
+# 두 프레임률을 같은 것으로 보는 상대 오차의 상한 — 1%. 목록의 선언값(60.0)과 조회로 정한
+# 값(60000/1001)의 차이는 0.1%이고, 30과 60 같은 실제 변경은 이보다 훨씬 크다
+_SAME_RATE_TOLERANCE = Fraction(1, 100)
+
+
+def declared_frame_rate(rep) -> Fraction | None:
+    """해상도 목록의 한 항목이 든 선언 프레임률. 없으면 None.
+
+    항목의 값은 조회 때 응답에서 읽은 소수다(마스터 플레이리스트의 FRAME-RATE ·
+    매니페스트의 frameRate, #318). 분모 1001까지의 가까운 비로 옮긴다.
+    """
+    declared = getattr(rep, "frame_rate", None)
+    if not declared or declared <= 0:
+        return None
+    return Fraction(declared).limit_denominator(1001)
+
+
+def same_frame_rate(first: Fraction, second: Fraction) -> bool:
+    """두 프레임률이 같은 프레임 격자를 뜻하는지 — 상대 오차 1% 안이면 같다."""
+    return abs(first - second) <= max(first, second) * _SAME_RATE_TOLERANCE
+
+
+def refit_selections(selections: Sequence[TimeRange], fps: Fraction) -> tuple[TimeRange, ...]:
+    """구간을 시각 기준으로 새 프레임률의 프레임에 다시 맞춘다.
+
+    시작 · 끝을 각각 가장 가까운 프레임의 시각으로 옮긴다. 옮긴 뒤 시작과 끝이 같은
+    프레임이 되면(60fps의 한 프레임짜리 구간을 30fps로 옮길 때) 끝을 한 프레임 뒤로 둔다 —
+    구간의 최소 길이는 한 프레임이다.
+    """
+    rate = frame_rate(fps)
+    refit = []
+    for selection in selections:
+        first = max(frame_index(selection.start, rate), 0)
+        last = max(frame_index(selection.end, rate), first + 1)
+        refit.append(TimeRange(float(Fraction(first) / rate), float(Fraction(last) / rate)))
+    return tuple(refit)
+
+
+def last_frame_seconds(duration: float, fps: Fraction) -> float:
+    """구간의 끝으로 적을 수 있는 가장 늦은 시각 — 영상 길이를 넘지 않는 마지막 프레임 경계.
+
+    영상 길이는 프레임 경계에 놓이지 않을 수 있어, 길이를 그대로 타임코드로 적으면 반올림으로
+    길이를 넘을 수 있다. 검증(``validate_selections``)이 받는 가장 큰 프레임 번호를 고른다.
+    """
+    rate = frame_rate(fps)
+    nearest = frame_index(duration, rate)
+    for frames in (nearest, nearest - 1):
+        end = float(Fraction(frames) / rate)
+        if end > 0 and SELECTION_OUT_OF_RANGE not in _violations_of((0.0, end), duration, rate):
+            return end
+    return duration
+
+
+def _violations_of(pair: tuple[float, float], duration: float, fps: Fraction) -> tuple[str, ...]:
+    """구간 하나의 위반 키들."""
+    return validate_selections([pair], duration, fps).get(0, ())
+
+
+def format_fps(rate: Fraction) -> str:
+    """프레임률을 표시 문자열로 — 정수면 "60", 아니면 소수 둘째 자리까지("29.97")."""
+    if rate.denominator == 1:
+        return str(rate.numerator)
+    return f"{float(rate):.2f}".rstrip("0").rstrip(".")
+
+
+class SectionBasisJob(QObject):
+    """기준값 조회 한 건 — 풀 스레드에서 ``run()``하고 결과를 Signal로 메인에 넘긴다.
+
+    emit은 풀 스레드에서 일어나고, 메인 스레드에 사는 뷰모델의 바운드 메서드가 큐로 받는다.
+    뷰모델이 결과가 올 때까지 이 객체의 참조를 든다 — 참조가 없으면 ``run()``이 끝난 직후
+    파괴되어 큐에 남은 전달이 유실된다(#124).
+    """
+
+    finished = Signal(object)  # SectionBasis
+    failed = Signal()
+
+    def __init__(self, item: ContentItem):
+        super().__init__()
+        self._item = item
+
+    def run(self) -> None:
+        """기준값을 조회해 finished(성공) 또는 failed(실패)를 emit한다."""
+        try:
+            # 모듈 전역을 호출 시점에 조회한다 — 테스트의 monkeypatch 지점
+            basis = section_basis.probe_section_basis(self._item)
+        except Exception:
+            # 원시 예외 문자열에는 주소가 섞여 있어 화면에 올리지 않는다 — 상세는 로그로만
+            logger.exception("구간 기준값 조회 실패: %s", self._item.vod_url)
+            self.failed.emit()
+            return
+        self.finished.emit(basis)
+
+
+class SectionEditViewModel(QObject):
+    """구간 편집 창 한 번의 상태 — 조회 상태, 행, 검증 결과.
+
+    ``start()``로 조회를 시작하고, ``commit()``으로 카드에 쓴다. 창을 닫으면 버린다.
+    """
+
+    stateChanged = Signal()  # 조회 상태가 바뀌었다(loading → ready/failed)
+    rowsReset = Signal()  # 행의 수 · 순서가 바뀌었다 — 창이 행을 다시 만든다
+    validated = Signal()  # 행의 글자 · 검증 결과가 바뀌었다 — 창이 표시만 고친다
+
+    def __init__(
+        self,
+        item: ContentItem,
+        notify: Callable[[ContentItem], None] | None = None,
+        parent: QObject | None = None,
+    ):
+        """
+        Args:
+            item: 편집할 카드의 데이터
+            notify: 카드에 쓴 뒤 부르는 함수 — 목록 모델의 ``notifyChanged``
+        """
+        super().__init__(parent)
+        self.item = item
+        self.state = STATE_LOADING
+        self.fps: Fraction | None = None
+        self.duration = 0.0
+        self.rows: list[list[str]] = []  # 행마다 [시작 글자, 끝 글자]
+        self._notify = notify
+        self._job: SectionBasisJob | None = None
+        self._errors: dict[int, str] = {}  # 행 번호 → 오류 키
+        self._pairs: dict[int, tuple[float, float]] = {}  # 행 번호 → 해석한 (시작, 끝) 초
+
+    # ---- 조회 ----
+
+    def start(self, pool: QThreadPool | None = None) -> None:
+        """기준값 조회를 풀 스레드에서 시작한다. 한 번만 부른다."""
+        job = SectionBasisJob(self.item)
+        job.finished.connect(self._onBasis)
+        job.failed.connect(self._onBasisFailed)
+        self._job = job
+        (pool or QThreadPool.globalInstance()).start(lambda: job.run())
+
+    def _onBasis(self, basis) -> None:
+        self._job = None
+        self.fps = frame_rate(basis.fps)
+        self.duration = basis.duration
+        self.rows = [
+            [format_timecode(selection.start, self.fps), format_timecode(selection.end, self.fps)]
+            for selection in self.item.selections
+        ] or [self._wholeRow()]
+        self.state = STATE_READY
+        self._evaluate()
+        self.stateChanged.emit()
+        self.rowsReset.emit()
+
+    def _onBasisFailed(self) -> None:
+        self._job = None
+        self.state = STATE_FAILED
+        self.stateChanged.emit()
+
+    def failureText(self) -> str:
+        """조회 실패 때 창에 보이는 문구."""
+        return self.tr(
+            "Could not read the video information.\n"
+            "Check your connection and cookies, then open this window again."
+        )
+
+    def loadingText(self) -> str:
+        """조회 중에 창에 보이는 문구."""
+        return self.tr("Reading the video information...")
+
+    # ---- 행 ----
+
+    def _wholeRow(self) -> list[str]:
+        """영상 전체를 가리키는 행 — 처음 ~ 마지막 프레임 경계."""
+        end = last_frame_seconds(self.duration, self.fps)
+        return [format_timecode(0.0, self.fps), format_timecode(end, self.fps)]
+
+    def canAdd(self) -> bool:
+        """행을 더 넣을 수 있는지 — 구간은 ``MAX_SELECTIONS``개까지다."""
+        return self.state == STATE_READY and len(self.rows) < MAX_SELECTIONS
+
+    def addRow(self) -> None:
+        """영상 전체를 가리키는 행을 끝에 넣는다."""
+        if not self.canAdd():
+            return
+        self.rows.append(self._wholeRow())
+        self._evaluate()
+        self.rowsReset.emit()
+
+    def removeRow(self, row: int) -> None:
+        """행을 지운다. 마지막 남은 행을 지우면 영상 전체를 가리키는 행으로 돌아간다."""
+        if self.state != STATE_READY or not 0 <= row < len(self.rows):
+            return
+        del self.rows[row]
+        if not self.rows:
+            self.rows.append(self._wholeRow())
+        self._evaluate()
+        self.rowsReset.emit()
+
+    def moveRow(self, row: int, step: int) -> None:
+        """행을 위(step=-1) · 아래(step=1)로 옮긴다. 행의 순서가 구간 번호이고 파일 이름의 번호다."""
+        target = row + step
+        if self.state != STATE_READY or not (
+            0 <= row < len(self.rows) and 0 <= target < len(self.rows)
+        ):
+            return
+        self.rows[row], self.rows[target] = self.rows[target], self.rows[row]
+        self._evaluate()
+        self.rowsReset.emit()
+
+    def setText(self, row: int, column: int, text: str, normalize: bool = True) -> None:
+        """칸의 글자를 받아 다시 검증한다.
+
+        Args:
+            normalize: 해석되는 글자를 ``HH:MM:SS:FF`` 표기로 고쳐 들지 여부. 입력하는 도중에는
+                False로 준다 — 치고 있는 글자를 고쳐 쓰지 않는다
+        """
+        if self.state != STATE_READY or not 0 <= row < len(self.rows):
+            return
+        try:
+            if normalize:
+                text = format_timecode(self._parse(text), self.fps)
+        except TimecodeError:
+            pass  # 틀린 글자는 그대로 들고 오류로 보인다
+        self.rows[row][column] = text
+        self._evaluate()
+        self.validated.emit()
+
+    # ---- 검증 ----
+
+    def _parse(self, text: str) -> float:
+        """칸의 글자를 명목 시각(초)으로 바꾼다 — 네 칸(HH:MM:SS:FF)만 받는다.
+
+        Raises:
+            TimecodeError: 네 칸이 아니거나 ``parse_timecode``가 거부한 경우
+        """
+        if len(text.strip().split(":")) != _TIMECODE_FIELDS:
+            raise TimecodeError(TIMECODE_INVALID_FORMAT, text)
+        return parse_timecode(text, self.fps)
+
+    def _evaluate(self) -> None:
+        """모든 행을 해석하고 검증해 행마다의 오류 키를 정한다.
+
+        해석된 행만 모아 ``validate_selections``에 넣는다 — 중복 · 개수는 행 사이의 규칙이라
+        한꺼번에 봐야 한다. 행의 오류는 그 행의 첫 위반 키다(키의 순서는 core가 정한다).
+        """
+        self._errors, self._pairs = {}, {}
+        for row, (start, end) in enumerate(self.rows):
+            try:
+                self._pairs[row] = (self._parse(start), self._parse(end))
+            except TimecodeError as e:
+                self._errors[row] = e.message_key
+        parsed = sorted(self._pairs)
+        violations = validate_selections(
+            [self._pairs[row] for row in parsed], self.duration, self.fps
+        )
+        for position, keys in violations.items():
+            self._errors[parsed[position]] = keys[0]
+
+    def errorKey(self, row: int) -> str:
+        """행의 오류 키(번역하지 않은 원문). 오류가 없으면 빈 문자열."""
+        return self._errors.get(row, "")
+
+    def errorText(self, row: int) -> str:
+        """행의 오류 문구(번역된 것). 오류가 없으면 빈 문자열."""
+        key = self.errorKey(row)
+        return self._translate(key) if key else ""
+
+    def lengthText(self, row: int) -> str:
+        """행의 구간 길이 — ``HH:MM:SS.mmm``. 오류가 있는 행은 빈 문자열."""
+        if row in self._errors or row not in self._pairs:
+            return ""
+        start, end = self._pairs[row]
+        return format_milliseconds(end - start)
+
+    def millisecondsText(self, row: int, column: int) -> str:
+        """칸의 시각을 밀리초 표기로 — 표시만 한다. 해석되지 않는 칸은 빈 문자열."""
+        try:
+            return format_milliseconds(self._parse(self.rows[row][column]))
+        except TimecodeError:
+            return ""
+
+    def headerText(self) -> str:
+        """머리줄 — 구간 수와 프레임률."""
+        if self.state != STATE_READY:
+            return ""
+        return self.tr("Sections {0} / {1} · {2}fps").format(
+            len(self.rows), MAX_SELECTIONS, format_fps(self.fps)
+        )
+
+    def canCommit(self) -> bool:
+        """확인할 수 있는지 — 조회가 끝났고 오류가 없다."""
+        return self.state == STATE_READY and not self._errors
+
+    def selections(self) -> tuple[TimeRange, ...]:
+        """지금의 행을 카드에 쓸 구간 목록으로 바꾼다. 오류가 없을 때만 부른다.
+
+        행이 영상 전체를 가리키는 한 행뿐이면 빈 튜플(전체 다운로드)이다.
+        """
+        pairs = [self._pairs[row] for row in range(len(self.rows))]
+        if len(pairs) == 1:
+            start, end = pairs[0]
+            if frame_index(start, self.fps) == 0 and reaches_end(end, self.duration, self.fps):
+                return ()
+        return tuple(TimeRange(start, end) for start, end in pairs)
+
+    def commit(self) -> bool:
+        """구간을 카드에 쓴다. 썼으면 True.
+
+        카드가 대기 상태가 아니면 쓰지 않는다 — 창이 열린 사이 받기 시작한 카드는 그때의
+        구간으로 이미 돌고 있다.
+        """
+        if not self.canCommit():
+            return False
+        if self.item.downloadState != DownloadState.WAITING:
+            logger.info("구간 편집 무시 — 창이 열린 사이 상태가 %s로 바뀜", self.item.downloadState)
+            return False
+        selections = self.selections()
+        self.item.selections = selections
+        self.item.section_frame_rate = self.fps if selections else None
+        self.item.section_notice = ""
+        logger.info("구간 편집: %d개 (%sfps)", len(selections), format_fps(self.fps))
+        if self._notify is not None:
+            self._notify(self.item)
+        return True
+
+    def _translate(self, key: str) -> str:
+        """오류 키를 현재 언어로 번역한다.
+
+        키는 core가 내는 원문이다. lupdate가 추출하도록 리터럴로 tr()을 부른다 — 키 목록은
+        ``core/utils/timecode.py``의 ``TIMECODE_*``와 ``core/utils/selections.py``의
+        ``SELECTION_*`` 가운데 입력 검증이 내는 것 전부다.
+        """
+        translated = {
+            TIMECODE_INVALID_FORMAT: self.tr("Invalid timecode format"),
+            TIMECODE_FIELD_OUT_OF_RANGE: self.tr("Minutes and seconds must be below 60"),
+            TIMECODE_FRAME_OUT_OF_RANGE: self.tr("Frame number must be below the frame rate"),
+            SELECTION_ORDER: self.tr("Start must be before end"),
+            SELECTION_OUT_OF_RANGE: self.tr("Selection is outside the video"),
+            SELECTION_TOO_SHORT: self.tr("Selection is shorter than one frame"),
+            SELECTION_DUPLICATE: self.tr("Duplicate selection"),
+            SELECTION_TOO_MANY: self.tr("Too many selections"),
+        }
+        return translated.get(key, key)

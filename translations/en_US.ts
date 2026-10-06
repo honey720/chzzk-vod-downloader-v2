@@ -8,8 +8,20 @@
         <translation>(source)</translation>
     </message>
     <message>
+        <source>refit to {0}fps</source>
+        <translation>refit to {0}fps</translation>
+    </message>
+    <message>
         <source>Sections {0} · {1}</source>
         <translation>Sections {0} · {1}</translation>
+    </message>
+    <message>
+        <source>Sections were moved to the frames of the new frame rate.</source>
+        <translation>Sections were moved to the frames of the new frame rate.</translation>
+    </message>
+    <message>
+        <source>Click to edit sections</source>
+        <translation>Click to edit sections</translation>
     </message>
     <message>
         <source>Cutting</source>
@@ -236,6 +248,86 @@ Part of the video kept arriving incomplete from the server. Try again later.</tr
     <message>
         <source>Failed to fetch video information</source>
         <translation>Could not fetch the video information.</translation>
+    </message>
+</context>
+<context>
+    <name>SectionEditDialog</name>
+    <message>
+        <source>Edit sections</source>
+        <translation>Edit sections</translation>
+    </message>
+    <message>
+        <source>+ Add section</source>
+        <translation>+ Add section</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Cancel</translation>
+    </message>
+    <message>
+        <source>OK</source>
+        <translation>OK</translation>
+    </message>
+    <message>
+        <source>Move up</source>
+        <translation>Move up</translation>
+    </message>
+    <message>
+        <source>Move down</source>
+        <translation>Move down</translation>
+    </message>
+    <message>
+        <source>Delete section</source>
+        <translation>Delete section</translation>
+    </message>
+</context>
+<context>
+    <name>SectionEditViewModel</name>
+    <message>
+        <source>Could not read the video information.
+Check your connection and cookies, then open this window again.</source>
+        <translation>Could not read the video information.
+Check your connection and cookies, then open this window again.</translation>
+    </message>
+    <message>
+        <source>Reading the video information...</source>
+        <translation>Reading the video information...</translation>
+    </message>
+    <message>
+        <source>Sections {0} / {1} · {2}fps</source>
+        <translation>Sections {0} / {1} · {2}fps</translation>
+    </message>
+    <message>
+        <source>Invalid timecode format</source>
+        <translation>Invalid timecode format</translation>
+    </message>
+    <message>
+        <source>Minutes and seconds must be below 60</source>
+        <translation>Minutes and seconds must be below 60</translation>
+    </message>
+    <message>
+        <source>Frame number must be below the frame rate</source>
+        <translation>Frame number must be below the frame rate</translation>
+    </message>
+    <message>
+        <source>Start must be before end</source>
+        <translation>Start must be before end</translation>
+    </message>
+    <message>
+        <source>Selection is outside the video</source>
+        <translation>Selection is outside the video</translation>
+    </message>
+    <message>
+        <source>Selection is shorter than one frame</source>
+        <translation>Selection is shorter than one frame</translation>
+    </message>
+    <message>
+        <source>Duplicate selection</source>
+        <translation>Duplicate selection</translation>
+    </message>
+    <message>
+        <source>Too many selections</source>
+        <translation>Too many selections</translation>
     </message>
 </context>
 <context>
