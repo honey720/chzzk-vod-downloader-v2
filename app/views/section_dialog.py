@@ -15,7 +15,11 @@
 | 조회 실패 | 실패 안내 | 꺼짐 |
 | 준비됨 | 머리줄(구간 수 · 프레임률) · 구간 행 · 구간 추가 | 오류가 없을 때만 켜짐 |
 
-오류는 팝업으로 띄우지 않는다 — 틀린 칸의 테두리와 그 행의 문구로 보인다.
+오류는 팝업으로 띄우지 않는다 — 틀린 칸의 테두리와 그 행의 문구로 보인다. 치고 있는 행의
+오류는 칸을 떠나거나 Enter를 칠 때 보인다 — 숫자를 다 치기 전의 값은 대개 틀려 있다. 확인
+버튼은 치는 도중에도 지금 값으로 켜지고 꺼진다.
+
+타임코드 칸은 숫자만 받는다(``app/widgets/timecode_edit.py``).
 """
 
 from PySide6.QtCore import Qt
@@ -23,7 +27,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
@@ -40,6 +43,7 @@ from app.viewmodels.section_edit_viewmodel import (
     SectionEditViewModel,
 )
 from app.widgets.eliding_label import ElidingLabel
+from app.widgets.timecode_edit import TimecodeEdit
 
 # 타임코드 칸의 폭을 재는 본보기 글자 — 시가 세 자리인 경우까지 들어간다
 _TIMECODE_SAMPLE = "000:00:00:00"
@@ -92,10 +96,9 @@ class SectionRow(QWidget):
         self.errorLabel.setIndent(self.numberLabel.minimumWidth() + layout.spacing())
         column.addWidget(self.errorLabel)
 
-    def _timecodeEdit(self, name: str) -> QLineEdit:
-        edit = QLineEdit(self)
+    def _timecodeEdit(self, name: str) -> TimecodeEdit:
+        edit = TimecodeEdit(self)
         edit.setObjectName(name)
-        edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # 폭은 글자에서 유도한다 — 여백은 QSS의 padding과 테두리 몫을 넉넉히 잡은 값이다
         edit.setFixedWidth(edit.fontMetrics().horizontalAdvance(_TIMECODE_SAMPLE) + 28)
         return edit
@@ -108,7 +111,7 @@ class SectionRow(QWidget):
         button.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         return button
 
-    def edit(self, column: int) -> QLineEdit:
+    def edit(self, column: int) -> TimecodeEdit:
         """칸 번호(START · END)의 입력창."""
         return self.startEdit if column == START else self.endEdit
 
@@ -120,6 +123,8 @@ class SectionEditDialog(QDialog):
         super().__init__(parent)
         self._viewmodel = viewmodel
         self._rows: list[SectionRow] = []
+        # 숫자를 치고 있는 행 — 그 행의 오류는 편집을 끝낼 때까지 보이지 않는다. 없으면 None
+        self._typingRow: int | None = None
         self.setObjectName("sectionEditDialog")
         self.setModal(True)
         self.setupUi()
@@ -234,22 +239,33 @@ class SectionEditDialog(QDialog):
             row.hide()  # 부모를 떼지 않는다 — 떼면 파괴될 때까지 최상위 창이 된다
             row.deleteLater()
         self._rows = []
+        self._typingRow = None
         for index in range(len(self._viewmodel.rows)):
             row = SectionRow(self._rowContainer)
             for column in (START, END):
                 edit = row.edit(column)
-                edit.textEdited.connect(
-                    lambda text, r=index, c=column: self._viewmodel.setText(r, c, text, False)
-                )
-                edit.editingFinished.connect(
-                    lambda r=index, c=column, e=edit: self._viewmodel.setText(r, c, e.text())
-                )
+                edit.edited.connect(lambda text, r=index, c=column: self._onEdited(r, c, text))
+                edit.committed.connect(lambda r=index, c=column, e=edit: self._onCommitted(r, c, e))
+                # 목록의 값을 넣는다 — 넣은 값은 전부 밝게 보인다. 넣지 않으면 값이 0인 칸
+                # (00:00:00:00)이 아무것도 치지 않은 칸처럼 흐리게 보인다
+                edit.setText(self._viewmodel.rows[index][column])
             row.upButton.clicked.connect(lambda _=False, r=index: self._viewmodel.moveRow(r, -1))
             row.downButton.clicked.connect(lambda _=False, r=index: self._viewmodel.moveRow(r, 1))
             row.deleteButton.clicked.connect(lambda _=False, r=index: self._viewmodel.removeRow(r))
             self._rowLayout.insertWidget(index, row)
             self._rows.append(row)
         self._refresh()
+
+    def _onEdited(self, row: int, column: int, text: str) -> None:
+        """칸의 숫자가 바뀌었다 — 값을 넘겨 다시 검증하되 그 행의 오류는 아직 보이지 않는다."""
+        self._typingRow = row
+        self._viewmodel.setText(row, column, text, False)
+
+    def _onCommitted(self, row: int, column: int, edit: TimecodeEdit) -> None:
+        """칸의 편집이 끝났다(칸을 떠남 · Enter) — 그 행의 오류를 보인다."""
+        if self._typingRow == row:
+            self._typingRow = None
+        self._viewmodel.setText(row, column, edit.text())
 
     def _refresh(self) -> None:
         """행의 글자 · 오류 표시와 머리줄 · 버튼 상태를 뷰모델에 맞춘다."""
@@ -259,7 +275,8 @@ class SectionEditDialog(QDialog):
             if index >= len(viewmodel.rows):
                 break
             row.numberLabel.setText(str(index + 1))
-            error = viewmodel.errorText(index)
+            # 치고 있는 행의 오류는 편집을 끝낸 뒤에 보인다
+            error = "" if index == self._typingRow else viewmodel.errorText(index)
             for column in (START, END):
                 edit = row.edit(column)
                 text = viewmodel.rows[index][column]
@@ -295,8 +312,8 @@ class SectionEditDialog(QDialog):
         카드가 그사이 대기 상태가 아니게 됐으면 쓰지 않고 닫는다(뷰모델의 ``commit``이 판정한다).
         """
         focused = self.focusWidget()
-        if isinstance(focused, QLineEdit):
-            focused.editingFinished.emit()  # Enter 없이 확인을 누른 칸의 글자를 넘긴다
+        if isinstance(focused, TimecodeEdit):
+            focused.commit()  # Enter 없이 확인을 누른 칸의 편집을 끝낸다
         if not self._viewmodel.canCommit():
             return
         if self._viewmodel.commit():

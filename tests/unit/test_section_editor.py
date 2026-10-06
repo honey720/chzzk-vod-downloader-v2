@@ -177,21 +177,34 @@ def open_editor(qtbot, win: VodDownloader, item: ContentItem):
 
 
 def type_into(edit, text: str) -> None:
-    """칸의 글자를 지우고 키 입력으로 넣는다 — Enter는 누르지 않는다."""
-    edit.selectAll()
+    """칸을 비우고 키 입력으로 숫자를 넣는다 — 칸을 떠나지 않는다(Enter도 누르지 않는다).
+
+    text의 콜론은 읽기 좋으라고 적은 것이다 — 칸은 숫자만 받으므로 "00:10:00:00"은 숫자
+    여덟 개를 친 것과 같다.
+    """
     QTest.keyClick(edit, Qt.Key.Key_Delete)
     QTest.keyClicks(edit, text)
     _pump()
 
 
+def leave(edit) -> None:
+    """칸의 편집을 끝낸다 — 칸을 떠날 때 칸이 스스로 하는 일(`commit`)이다."""
+    edit.commit()
+    _pump()
+
+
 def set_rows(dialog, rows: list[tuple[str, str]]) -> None:
-    """편집 창의 행을 주어진 (시작, 끝) 글자들로 만든다 — 추가 버튼과 키 입력으로."""
+    """편집 창의 행을 주어진 (시작, 끝) 타임코드로 만든다 — 추가 버튼과 키 입력으로, 칸마다 떠난다."""
     while len(dialog._rows) < len(rows):
         dialog.addButton.click()
         _pump()
     for index, (start, end) in enumerate(rows):
-        type_into(dialog._rows[index].startEdit, start)
-        type_into(dialog._rows[index].endEdit, end)
+        for edit, text in (
+            (dialog._rows[index].startEdit, start),
+            (dialog._rows[index].endEdit, end),
+        ):
+            type_into(edit, text)
+            leave(edit)
 
 
 def press_ok(dialog) -> None:
@@ -432,10 +445,9 @@ def test_reopening_shows_the_sections_already_on_the_card(qtbot, tmp_path, basis
         ("00:20:00:00", "00:10:00:00", "Start must be before end"),  # 역방향
         ("00:10:00:00", "00:10:00:00", "Start must be before end"),  # 길이 0
         ("00:10:00:00", "01:00:00:01", "Selection is outside the video"),  # 길이보다 1프레임 뒤
-        ("00:10:00", "00:20:00:00", "Invalid timecode format"),  # 세 칸
-        ("00:10:00.500", "00:20:00:00", "Invalid timecode format"),  # 밀리초 입력
-        ("00:10:00:0x", "00:20:00:00", "Invalid timecode format"),  # 숫자가 아닌 글자
-        ("00:10:60:00", "00:20:00:00", "Minutes and seconds must be below 60"),
+        ("00:10:60:00", "00:20:00:00", "Minutes and seconds must be below 60"),  # 초 60
+        ("00:60:00:00", "00:20:00:00", "Minutes and seconds must be below 60"),  # 분 60
+        ("00:00:75:00", "00:20:00:00", "Minutes and seconds must be below 60"),  # 초 75
         (
             "00:10:00:60",
             "00:20:00:00",
@@ -553,27 +565,113 @@ def test_the_twenty_first_section_cannot_be_added(qtbot, tmp_path, basis):
     assert shown(dialog.headerLabel) == "Sections 20 / 20 · 60fps"
 
 
-def test_typed_text_is_rewritten_in_four_fields_and_milliseconds_are_only_shown(
-    qtbot, tmp_path, basis
-):
-    """해석된 입력은 편집을 끝내면 네 칸 표기로 고쳐지고, 밀리초는 툴팁에만 나와야 한다.
+def test_out_of_range_digits_are_flagged_and_left_as_typed(qtbot, tmp_path, basis):
+    """초 · 분이 60 이상이거나 프레임이 프레임률 이상이면 올림하지 않고 친 그대로 두고 오류로 강조해야 한다.
 
-    60fps. 시작 칸에 "0:5:3:30" 입력 뒤 Enter 없이 끝 칸으로 이동
-    -> 시작 칸 "00:05:03:30", 툴팁 "00:05:03.500"
+    60fps. 시작 칸에 숫자 7500(초 75)을 치고 칸을 떠남
+    -> 칸의 값 == "00:00:75:00"(00:01:15:00으로 바뀌지 않는다), invalid, 확인 꺼짐
+    시작 칸에 60(프레임 60)을 치고 칸을 떠남 -> 값 == "00:00:00:60", invalid
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
     dialog = open_editor(qtbot, win, item)
     row = dialog._rows[0]
 
-    type_into(row.startEdit, "0:5:3:30")
-    row.startEdit.editingFinished.emit()  # 포커스가 떠날 때 Qt가 내는 신호
-    row.startEdit.clearFocus()
-    dialog.viewModel().validated.emit()
-    _pump()
+    type_into(row.startEdit, "7500")
+    leave(row.startEdit)
+    assert row.startEdit.text() == "00:00:75:00"
+    assert row.startEdit.property("invalid") is True and not dialog.okButton.isEnabled()
+    assert shown(row.errorLabel) == "Minutes and seconds must be below 60"
+
+    type_into(row.startEdit, "60")
+    leave(row.startEdit)
+    assert row.startEdit.text() == "00:00:00:60"
+    assert row.startEdit.property("invalid") is True
+    assert shown(row.errorLabel) == "Frame number must be below the frame rate"
+
+
+def test_row_errors_wait_until_the_field_is_left_but_ok_follows_the_value(qtbot, tmp_path, basis):
+    """치는 도중에는 그 행의 오류를 띄우지 않고 칸을 떠나면 띄워야 한다. 확인 버튼은 치는 도중에도 값을 따른다.
+
+    60fps · 3600초. 끝 칸을 비우고 숫자 5를 침(끝 00:00:00:05 — 시작 00:00:00:00보다 뒤라 아직 유효)
+    이어서 시작 칸에 100000(00:10:00:00)을 침 — 이제 시작이 끝보다 뒤다
+    -> 치는 도중: 오류 문구 숨김, 칸 강조 없음, 확인 꺼짐
+    시작 칸을 떠남 -> 오류 문구 "Start must be before end", 두 칸 강조
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    row = dialog._rows[0]
+    type_into(row.endEdit, "5")
+    leave(row.endEdit)
+    assert dialog.okButton.isEnabled(), "전제: 0프레임~5프레임은 유효하다"
+
+    type_into(row.startEdit, "100000")
+
+    assert not row.errorLabel.isVisible(), "치는 도중에 행 오류가 떴다"
+    assert row.startEdit.property("invalid") is False and row.endEdit.property("invalid") is False
+    assert not dialog.okButton.isEnabled(), "확인 버튼이 지금 값을 따르지 않는다"
+
+    leave(row.startEdit)
+
+    assert shown(row.errorLabel) == "Start must be before end"
+    assert row.startEdit.property("invalid") is True and row.endEdit.property("invalid") is True
+
+
+def test_typed_digits_reach_the_card_and_milliseconds_are_only_shown(qtbot, tmp_path, basis):
+    """숫자만 쳐서 넣은 값이 카드에 쓰이고, 밀리초는 툴팁에만 나와야 한다.
+
+    60fps. 시작 칸에 50330(00:05:03:30), 끝 칸에 100000(00:10:00:00)을 치고 확인
+    -> 시작 칸의 값 "00:05:03:30", 툴팁 "00:05:03.500", selections == ((303.5, 600),)
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    row = dialog._rows[0]
+
+    type_into(row.startEdit, "50330")
+    leave(row.startEdit)
+    type_into(row.endEdit, "100000")
+    leave(row.endEdit)
 
     assert row.startEdit.text() == "00:05:03:30"
     assert row.startEdit.toolTip() == "00:05:03.500"
+    press_ok(dialog)
+    assert item.selections == (TimeRange(303.5, 600.0),)
+
+
+def test_ok_takes_the_digits_of_the_field_still_being_typed(qtbot, tmp_path, basis):
+    """칸을 떠나지 않고 확인을 눌러도 그 칸에 친 숫자가 카드에 쓰여야 한다.
+
+    60fps. 끝 칸에 100000(00:10:00:00)을 치고 칸을 떠나지 않은 채 확인을 누름
+    -> selections == ((0, 600),)
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+
+    type_into(dialog._rows[0].endEdit, "100000")
+    press_ok(dialog)
+
+    assert item.selections == (TimeRange(0.0, 600.0),)
+
+
+@pytest.mark.parametrize("text", ["00:10:00", "5:03", "00:10:00.500", "00:10:00:0x", ""])
+def test_viewmodel_still_refuses_text_that_is_not_four_fields(qtbot, tmp_path, basis, text):
+    """뷰모델은 네 칸이 아니거나 숫자가 아닌 글을 형식 오류로 봐야 한다 — 입력 칸이 막아 주는 것에 기대지 않는다.
+
+    60fps. 뷰모델의 첫 행 시작 칸에 세 칸 · 두 칸 · 밀리초 · 숫자 아닌 글자 · 빈 글을 직접 넣음
+    -> 그 행의 오류 키 == "Invalid timecode format", 확인할 수 없다
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    viewmodel = dialog.viewModel()
+
+    viewmodel.setText(0, 0, text)
+
+    assert viewmodel.errorKey(0) == "Invalid timecode format"
+    assert not viewmodel.canCommit()
 
 
 # ================================================================ 순서 · 삭제
@@ -1649,3 +1747,21 @@ def test_the_waiting_hint_shows_only_while_the_batch_waits_for_the_edited_card(
 
     assert win.contentManager.isWaitingOnEdit()
     assert "A download is waiting for this card" in shown(dialog.waitHintLabel)
+
+
+def test_values_from_the_card_are_shown_bright_even_when_they_are_zero(qtbot, tmp_path, basis):
+    """목록에서 온 값은 0이어도 친 값처럼 전부 밝게 보여야 한다 — 아무것도 치지 않은 칸과 구분된다.
+
+    구간 없는 카드를 열면 기본 행은 00:00:00:00 ~ 01:00:00:00
+    -> 시작 칸의 밝은 부분 "00:00:00:00", 흐린 부분 ""
+    시작 칸을 Delete로 비움 -> 밝은 부분 "", 흐린 부분 "00:00:00:00"
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    edit = dialog._rows[0].startEdit
+
+    assert (edit.dimText(), edit.brightText()) == ("", "00:00:00:00")
+
+    QTest.keyClick(edit, Qt.Key.Key_Delete)
+    assert (edit.dimText(), edit.brightText()) == ("00:00:00:00", "")
