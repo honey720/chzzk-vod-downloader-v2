@@ -289,8 +289,8 @@ class SectionEditViewModel(QObject):
     # ---- 행 ----
 
     def _wholeRow(self) -> list[str]:
-        """영상 전체를 가리키는 행 — 처음 ~ 마지막 프레임 경계."""
-        end = last_frame_seconds(self.duration, self.fps)
+        """영상 전체를 가리키는 행 — 처음 ~ 영상의 끝 타임코드."""
+        end = last_frame_seconds(self.duration, self.fps)  # endSeconds()와 같은 값이다
         return [format_timecode(0.0, self.fps), format_timecode(end, self.fps)]
 
     def canAdd(self) -> bool:
@@ -399,12 +399,35 @@ class SectionEditViewModel(QObject):
             return ""
 
     def headerText(self) -> str:
-        """머리줄 — 구간 수와 프레임률."""
+        """머리줄 — 구간 수 · 프레임률 · 영상의 끝 타임코드. 조회가 끝나기 전에는 빈 문자열."""
         if self.state != STATE_READY:
             return ""
-        return self.tr("Sections {0} / {1} · {2}fps").format(
-            len(self.rows), MAX_SELECTIONS, format_fps(self.fps)
+        return self.tr("Sections {0} / {1} · {2}fps · video ends at {3}").format(
+            len(self.rows), MAX_SELECTIONS, format_fps(self.fps), self.endTimecodeText()
         )
+
+    def endSeconds(self) -> float | None:
+        """구간의 끝으로 적을 수 있는 가장 늦은 시각(초). 조회가 끝나기 전에는 None.
+
+        조회한 프레임률 · 길이로 정한다 — 영상 길이를 넘지 않는 마지막 프레임 경계다. 끝 칸에
+        이 값을 넣은 구간은 영상의 마지막 프레임까지 받는다(``reaches_end``).
+        """
+        if self.state != STATE_READY:
+            return None
+        return last_frame_seconds(self.duration, self.fps)
+
+    def endTimecodeText(self) -> str:
+        """영상의 끝 타임코드 ``HH:MM:SS:FF`` — 끝 칸에 그대로 치면 "영상 끝까지"가 되는 값.
+
+        조회가 끝나기 전 · 실패한 뒤에는 빈 문자열이다 — 모르는 값을 보이지 않는다.
+        """
+        end = self.endSeconds()
+        return "" if end is None else format_timecode(end, self.fps)
+
+    def endMillisecondsText(self) -> str:
+        """영상의 끝을 밀리초 표기로 — 표시만 한다. 조회가 끝나기 전에는 빈 문자열."""
+        end = self.endSeconds()
+        return "" if end is None else format_milliseconds(end)
 
     def canCommit(self) -> bool:
         """확인할 수 있는지 — 조회가 끝났고 오류가 없다."""

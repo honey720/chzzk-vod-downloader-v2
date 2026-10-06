@@ -294,6 +294,7 @@ class SectionEditDialog(QDialog):
             row.downButton.setToolTip(self.tr("Move down"))
             row.deleteButton.setToolTip(self.tr("Delete section"))
         self.headerLabel.setText(viewmodel.headerText())
+        self.headerLabel.setToolTip(viewmodel.endMillisecondsText())  # 영상 끝의 밀리초 표기
         self.addButton.setEnabled(viewmodel.canAdd())
         self.okButton.setEnabled(viewmodel.canCommit())
 

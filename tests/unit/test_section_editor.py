@@ -562,7 +562,7 @@ def test_the_twenty_first_section_cannot_be_added(qtbot, tmp_path, basis):
     dialog.viewModel().addRow()
     _pump()
     assert len(dialog._rows) == 20 and len(dialog.viewModel().rows) == 20
-    assert shown(dialog.headerLabel) == "Sections 20 / 20 · 60fps"
+    assert shown(dialog.headerLabel) == "Sections 20 / 20 · 60fps · video ends at 01:00:00:00"
 
 
 def test_out_of_range_digits_are_flagged_and_left_as_typed(qtbot, tmp_path, basis):
@@ -1765,3 +1765,121 @@ def test_values_from_the_card_are_shown_bright_even_when_they_are_zero(qtbot, tm
 
     QTest.keyClick(edit, Qt.Key.Key_Delete)
     assert (edit.dimText(), edit.brightText()) == ("00:00:00:00", "")
+
+
+# ================================================================ 영상의 끝 타임코드
+
+
+def test_header_shows_the_end_of_the_video_only_after_the_lookup(qtbot, tmp_path, basis):
+    """머리줄은 조회가 끝난 뒤에만 영상의 끝 타임코드를 보여야 한다.
+
+    조회를 붙잡아 둔 동안 -> 끝 타임코드 "" (모르는 값을 보이지 않는다), 머리줄 숨김
+    60fps · 3600초로 조회가 끝남 -> 머리줄 "Sections 1 / 20 · 60fps · video ends at 01:00:00:00",
+    머리줄 툴팁(밀리초) "01:00:00.000"
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    basis.gate.clear()
+    click_summary(win, item)
+    dialog = win._sectionDialog
+    assert dialog.viewModel().endTimecodeText() == ""
+    assert not dialog.headerLabel.isVisible()
+
+    basis.gate.set()
+    qtbot.waitUntil(lambda: dialog.viewModel().state == "ready", timeout=3000)
+    _pump()
+
+    assert shown(dialog.headerLabel) == "Sections 1 / 20 · 60fps · video ends at 01:00:00:00"
+    assert dialog.headerLabel.toolTip() == "01:00:00.000"
+
+
+def test_no_end_is_shown_when_the_lookup_failed(qtbot, tmp_path, basis):
+    """조회가 실패하면 영상의 끝 타임코드를 보이지 않아야 한다.
+
+    조회 대역이 예외를 던짐 -> 끝 타임코드 "", 머리줄 숨김
+    """
+    basis.fail = True
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+
+    dialog = open_editor(qtbot, win, item)
+
+    assert dialog.viewModel().endTimecodeText() == ""
+    assert not dialog.headerLabel.isVisible()
+
+
+@pytest.mark.parametrize(
+    "fps, duration, end",
+    [
+        (Fraction(60), 3600.0, "01:00:00:00"),  # 길이가 프레임 경계다
+        (Fraction(60), 11524.5, "03:12:04:30"),  # 0.5초 = 30프레임
+        (Fraction(60), 10.99, "00:00:10:59"),  # 659.4프레임 → 659번째 경계
+        (Fraction(30), 3600.5, "01:00:00:15"),
+        (Fraction(2997, 100), 10.02, "00:00:10:00"),  # 300.3프레임 → 300번째 = 10초 + 0.3프레임
+        (Fraction(30), 360000.0, "100:00:00:00"),  # 100시간 — 시가 세 자리여도 깨지지 않는다
+    ],
+)
+def test_the_shown_end_is_the_last_frame_boundary_of_the_looked_up_length(
+    qtbot, tmp_path, basis, fps, duration, end
+):
+    """영상의 끝 타임코드는 조회한 프레임률 · 길이에서 길이를 넘지 않는 마지막 프레임 경계여야 한다.
+
+    위 표의 프레임률 · 길이 -> 끝 타임코드가 표와 같고, 머리줄에 그 값이 들어 있다
+    """
+    basis.fps, basis.duration = fps, duration
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+
+    dialog = open_editor(qtbot, win, item)
+
+    assert dialog.viewModel().endTimecodeText() == end
+    assert shown(dialog.headerLabel).endswith(f"video ends at {end}")
+
+
+@pytest.mark.parametrize(
+    "fps, duration, end_digits, one_more",
+    [
+        (Fraction(60), 10.99, "1059", "1100"),
+        (Fraction(30), 3600.5, "01000015", "01000016"),
+        (Fraction(2997, 100), 10.02, "1000", "1001"),
+    ],
+)
+def test_typing_the_shown_end_reaches_the_end_and_one_frame_more_is_outside(
+    qtbot, tmp_path, basis, fps, duration, end_digits, one_more
+):
+    """보인 끝 타임코드를 끝 칸에 치면 통과하고 전체 다운로드로 판정되며, 한 프레임 더하면 길이 초과여야 한다.
+
+    위 표의 프레임률 · 길이에서 끝 칸에 끝 타임코드의 숫자를 침 -> 오류 없음, 확인하면 selections == ()
+    한 프레임 뒤의 숫자를 침 -> "Selection is outside the video"
+    """
+    basis.fps, basis.duration = fps, duration
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    row = dialog._rows[0]
+
+    type_into(row.endEdit, one_more)
+    leave(row.endEdit)
+    assert shown(row.errorLabel) == "Selection is outside the video"
+
+    type_into(row.endEdit, end_digits)
+    leave(row.endEdit)
+    assert row.endEdit.text() == dialog.viewModel().endTimecodeText()
+    assert not row.errorLabel.isVisible() and dialog.okButton.isEnabled()
+    press_ok(dialog)
+    assert item.selections == ()
+
+
+def test_the_end_follows_the_looked_up_rate_not_the_declared_one(qtbot, tmp_path, basis):
+    """영상의 끝 타임코드는 목록의 선언 프레임률이 아니라 조회한 프레임률로 정해야 한다.
+
+    카드의 1080p 선언값 60fps, 조회값 30fps · 10.5초
+    -> 끝 타임코드 "00:00:10:15"(30fps의 15프레임. 60fps로 계산하면 "00:00:10:30"이다)
+    """
+    basis.fps, basis.duration = Fraction(30), 10.5
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+
+    dialog = open_editor(qtbot, win, item)
+
+    assert dialog.viewModel().endTimecodeText() == "00:00:10:15"

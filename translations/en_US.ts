@@ -344,8 +344,8 @@ Check your connection and cookies, then open this window again.</translation>
         <translation>Reading the video information...</translation>
     </message>
     <message>
-        <source>Sections {0} / {1} · {2}fps</source>
-        <translation>Sections {0} / {1} · {2}fps</translation>
+        <source>Sections {0} / {1} · {2}fps · video ends at {3}</source>
+        <translation>Sections {0} / {1} · {2}fps · video ends at {3}</translation>
     </message>
     <message>
         <source>Invalid timecode format</source>

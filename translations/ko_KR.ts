@@ -339,8 +339,8 @@ Check your connection and cookies, then open this window again.</source>
         <translation>영상 정보를 읽는 중...</translation>
     </message>
     <message>
-        <source>Sections {0} / {1} · {2}fps</source>
-        <translation>구간 {0} / {1} · {2}fps</translation>
+        <source>Sections {0} / {1} · {2}fps · video ends at {3}</source>
+        <translation>구간 {0} / {1} · {2}fps · 영상 끝 {3}</translation>
     </message>
     <message>
         <source>Invalid timecode format</source>
