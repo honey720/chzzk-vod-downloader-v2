@@ -54,8 +54,11 @@ class ContentItem:
         self.section_check = ""
         # 구간 요약 뒤에 붙이는 알림의 재료 — 문구는 카드가 만든다. 구간을 다시 편집하면 비운다
         self.section_refit_fps = None  # 구간을 이 프레임률(Fraction)의 프레임에 다시 맞췄다
-        self.section_end_fitted = False  # 영상 끝에 닿아 있던 구간의 끝을 새 길이에 맞췄다
-        self.section_out_of_range = False  # 새 길이를 벗어난 구간이 있다(고치지 않고 둔다)
+        self.section_end_pulled = False  # 새 길이를 넘는 구간의 끝을 새 영상의 끝으로 당겼다
+        self.section_end_extended = False  # 영상 끝에 닿아 있던 구간의 끝을 더 긴 새 끝으로 늘렸다
+        # 새 영상의 끝 이후에서 시작해 당길 수 없는 구간의 번호(0부터). 구간은 그대로 두고
+        # 카드에 경고를 붙이며, 받을 때 이 구간만 엔진에 넘기지 않는다
+        self.section_unfit = frozenset()
         # 고른 해상도 항목의 선언 프레임률(소수). 선언이 없으면 None
         self.selected_frame_rate = None
 

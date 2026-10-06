@@ -940,11 +940,21 @@ def test_same_frame_rate_and_length_change_nothing(qtbot, tmp_path, basis):
     assert summary_text(win, item) == "Sections 1 · 0:09"
 
 
-def test_a_section_that_reached_the_end_follows_the_new_length(qtbot, tmp_path, basis):
-    """옛 영상의 끝에 닿아 있던 구간은 새 길이에 맞춰 끝이 옮겨지고 카드에 적혀야 한다.
+def tooltip_of(win: VodDownloader, item: ContentItem) -> str:
+    """구간 요약 자리의 툴팁 — 알림의 전문이 폭과 무관하게 여기에 있다."""
+    return win.listView.widgetFor(item).fileSizeLabel.toolTip()
+
+
+PULLED = "This resolution is shorter. Sections now end at the end of the video."
+EXTENDED = "This resolution is longer. Sections that reached the end now reach it."
+UNFIT = "Some sections start after the end of this resolution."
+
+
+def test_a_section_that_reached_the_end_is_pulled_to_the_shorter_end(qtbot, tmp_path, basis):
+    """옛 영상의 끝에 닿아 있던 구간은 더 짧은 새 영상의 끝으로 당겨지고 카드에 적혀야 한다.
 
     60fps · 3600초에서 3540~3600초(끝 = 영상 끝)를 정함. 480p의 조회값 30fps · 3590초
-    -> 구간 == (3540, 3590), section_end_fitted, 요약 자리의 툴팁에 끝을 옮겼다는 문장
+    -> 구간 == (3540, 3590), section_end_pulled, 늘림 · 받을 수 없는 구간 없음, 툴팁에 당겼다는 문장
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -955,17 +965,16 @@ def test_a_section_that_reached_the_end_follows_the_new_length(qtbot, tmp_path, 
     settle(qtbot, win)
 
     assert item.selections == (TimeRange(3540.0, 3590.0),)
-    assert item.section_end_fitted and not item.section_out_of_range
-    # 요약 뒤의 알림은 폭이 모자라면 떼인다 — 폭과 무관한 툴팁으로 잰다
-    tooltip = win.listView.widgetFor(item).fileSizeLabel.toolTip()
-    assert "A section that reached the end now ends at the end of this resolution." in tooltip
+    assert item.section_end_pulled and not item.section_end_extended
+    assert item.section_unfit == frozenset()
+    assert PULLED in tooltip_of(win, item)
 
 
-def test_a_section_past_the_new_length_is_left_alone_and_flagged(qtbot, tmp_path, basis):
-    """영상 끝에 닿아 있지 않던 구간이 새 길이를 벗어나면 고치지 않고 벗어났다고 알려야 한다.
+def test_a_section_past_the_new_length_is_pulled_and_sections_inside_stay(qtbot, tmp_path, basis):
+    """끝이 새 길이를 넘는 구간은 새 영상의 끝으로 당겨지고, 길이 안의 구간은 그대로여야 한다.
 
     60fps · 3600초에서 600~1200초와 3500~3595초를 정함. 480p의 조회값 30fps · 3590초
-    -> 구간 == ((600, 1200), (3500, 3595)), section_out_of_range, 요약 자리의 툴팁에 벗어났다는 문장
+    -> 구간 == ((600, 1200), (3500, 3590)), section_end_pulled, 툴팁에 당겼다는 문장
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -977,10 +986,56 @@ def test_a_section_past_the_new_length_is_left_alone_and_flagged(qtbot, tmp_path
     _pick(win, item, 480)
     settle(qtbot, win)
 
-    assert item.selections == (TimeRange(600.0, 1200.0), TimeRange(3500.0, 3595.0))
-    assert item.section_out_of_range and not item.section_end_fitted
-    tooltip = win.listView.widgetFor(item).fileSizeLabel.toolTip()
-    assert "Some sections are longer than this resolution. Edit the sections." in tooltip
+    assert item.selections == (TimeRange(600.0, 1200.0), TimeRange(3500.0, 3590.0))
+    assert item.section_end_pulled and not item.section_end_extended
+    assert item.section_unfit == frozenset()
+    assert PULLED in tooltip_of(win, item)
+
+
+def test_only_the_section_that_reached_the_end_grows_with_a_longer_video(qtbot, tmp_path, basis):
+    """새 영상이 더 길면 옛 영상의 끝에 닿아 있던 구간만 늘어나고 그 밖의 구간은 그대로여야 한다.
+
+    60fps · 3600초에서 600~1200초와 3540~3600초(끝 = 영상 끝)를 정함. 480p의 조회값 30fps · 3700초
+    -> 구간 == ((600, 1200), (3540, 3700)), section_end_extended, 당김 없음, 툴팁에 늘렸다는 문장
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    give_sections(
+        qtbot, win, item, [("00:10:00:00", "00:20:00:00"), ("00:59:00:00", "01:00:00:00")]
+    )
+    basis.by_resolution[480] = (Fraction(30), 3700.0)
+
+    _pick(win, item, 480)
+    settle(qtbot, win)
+
+    assert item.selections == (TimeRange(600.0, 1200.0), TimeRange(3540.0, 3700.0))
+    assert item.section_end_extended and not item.section_end_pulled
+    assert EXTENDED in tooltip_of(win, item)
+
+
+def test_a_section_that_starts_after_the_new_end_is_kept_and_flagged(qtbot, tmp_path, basis):
+    """새 영상의 끝 이후에서 시작하는 구간은 지우거나 고치지 않고 받을 수 없다고 경고해야 한다.
+
+    60fps · 3600초에서 600~1200초와 3595~3599초를 정함. 480p의 조회값 30fps · 3590초
+    -> 구간 == ((600, 1200), (3595, 3599)), section_unfit == {1}, 당김 없음,
+       경고 알림 == "1 outside the video", 툴팁에 받을 수 없다는 문장
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    give_sections(
+        qtbot, win, item, [("00:10:00:00", "00:20:00:00"), ("00:59:55:00", "00:59:59:00")]
+    )
+    basis.by_resolution[480] = (Fraction(30), 3590.0)
+
+    _pick(win, item, 480)
+    settle(qtbot, win)
+
+    assert item.selections == (TimeRange(600.0, 1200.0), TimeRange(3595.0, 3599.0))
+    assert item.section_unfit == frozenset({1})
+    assert not item.section_end_pulled and not item.section_end_extended
+    assert win.listView.widgetFor(item)._sectionNotice(warnings_only=True) == "1 outside the video"
+    assert notice_of(win, item) == "refit to 30fps · 1 outside the video"
+    assert UNFIT in tooltip_of(win, item)
 
 
 def test_a_failed_lookup_keeps_the_declared_refit_and_says_the_length_is_unchecked(
@@ -1233,3 +1288,364 @@ def test_notice_gives_way_when_it_does_not_fit_in_the_row(qtbot, tmp_path, basis
     selected = widget._selectedButton
     assert selected.isVisible() and selected.width() >= selected.minimumSizeHint().width()
     assert widget.width() <= win.listView.viewport().width()
+
+
+# ================================================================ 받을 수 없는 구간 빼고 받기
+
+
+class _Handle:
+    """DownloadHandle 대역 — 뷰모델이 쓰는 것만."""
+
+    def elapsed_seconds(self) -> float:
+        return 72.0
+
+    def wait(self, timeout=None) -> bool:
+        return True
+
+
+class _Service:
+    """DownloadService 대역 — 제출된 것을 적어 두고 테스트가 엔진처럼 콜백을 부르게 한다."""
+
+    def __init__(self):
+        self.submissions: list[dict] = []
+
+    def submit(self, content, **kwargs):
+        self.submissions.append({"content": content, **kwargs})
+        return _Handle()
+
+    def finish(self, index: int = -1) -> None:
+        """엔진이 넘겨받은 구간을 모두 잘라 끝냈다고 알린다 — 구간 파일도 만든다."""
+        submission = self.submissions[index]
+        content, data = submission["content"], submission["data"]
+        for path in content.selection_paths:
+            with open(path, "wb") as file:
+                file.write(b"section")
+        data.sections_total = data.sections_done = len(content.selections)
+        submission["on_finished"]()
+
+
+@pytest.fixture
+def service(monkeypatch):
+    """엔진 자리의 서비스 대역 — 창을 만든 뒤 `use(win)`으로 끼운다. 끝나면 파일명 예약을 푼다."""
+    monkeypatch.setattr(mw_mod.QMessageBox, "warning", lambda *a, **k: None)
+    monkeypatch.setattr(mw_mod.QMessageBox, "information", lambda *a, **k: None)
+    fake = _Service()
+
+    def use(win: VodDownloader) -> _Service:
+        win.downloadViewModel._service = fake
+        return fake
+
+    yield use
+    for submission in fake.submissions:
+        release_output_paths(submission["content"].selection_paths)
+
+
+THREE = [
+    ("00:10:00:00", "00:20:00:00"),
+    ("00:59:55:00", "00:59:59:00"),  # 480p(3590초)에서는 영상 끝 이후다
+    ("00:30:00:00", "00:40:00:00"),
+]
+FIRST, SECOND, THIRD = (
+    TimeRange(600.0, 1200.0),
+    TimeRange(3595.0, 3599.0),
+    TimeRange(1800.0, 2400.0),
+)
+
+
+def card_with_an_unfit_section(qtbot, tmp_path, basis, service, rows=THREE):
+    """구간을 정한 뒤 480p(30fps · 3590초)로 바꿔 둘째 구간이 받을 수 없게 된 대기 카드."""
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    engine = service(win)
+    give_sections(qtbot, win, item, rows)
+    basis.by_resolution[480] = (Fraction(30), 3590.0)
+    _pick(win, item, 480)
+    settle(qtbot, win)
+    return win, item, engine
+
+
+def start_batch(win: VodDownloader) -> None:
+    win.downloadButton.click()
+    _pump()
+
+
+def names(paths) -> list[str]:
+    return [os.path.basename(path) for path in paths]
+
+
+def test_only_the_unfit_section_is_left_out_and_its_file_number_stays_empty(
+    qtbot, tmp_path, basis, service
+):
+    """받을 수 없는 구간만 엔진에 넘어가지 않고, 파일 번호는 목록 순서대로 비워 두어야 한다.
+
+    구간 셋 가운데 둘째가 받을 수 없는 카드(480p)를 받기 시작
+    -> 제출된 selections == (첫째, 셋째), 파일 이름 == "제목 480p_1.mp4" · "제목 480p_3.mp4"
+    -> 카드의 selections는 셋 그대로
+    """
+    win, item, engine = card_with_an_unfit_section(qtbot, tmp_path, basis, service)
+    assert item.section_unfit == frozenset({1}), "전제: 둘째 구간이 받을 수 없어야 한다"
+
+    start_batch(win)
+
+    assert len(engine.submissions) == 1, "카드가 엔진에 넘어가지 않았다"
+    content = engine.submissions[0]["content"]
+    assert content.selections == (FIRST, THIRD)
+    assert names(content.selection_paths) == ["제목 480p_1.mp4", "제목 480p_3.mp4"]
+    assert item.selections == (FIRST, SECOND, THIRD)
+
+
+def test_the_card_ends_as_a_partial_failure_counting_the_section_left_out(
+    qtbot, tmp_path, basis, service
+):
+    """넘긴 구간을 다 받아도 뺀 구간이 있으면 카드는 일부 실패로 끝나고 뺀 수가 실패 수에 들어야 한다.
+
+    구간 셋 가운데 둘째를 뺀 카드에서 엔진이 넘겨받은 둘을 모두 끝냄
+    -> 상태 FAILED, sections_done == 2, sections_failed == 1,
+       카드 문구에 "1 failed" · "2/3" · "Section is outside the video"
+    """
+    win, item, engine = card_with_an_unfit_section(qtbot, tmp_path, basis, service)
+    start_batch(win)
+
+    engine.finish()
+    qtbot.waitUntil(lambda: item.downloadState == DownloadState.FAILED, timeout=3000)
+    _pump()
+
+    assert (item.sections_done, item.sections_failed) == (2, 1)
+    status = shown(win.listView.widgetFor(item).statusLabel)
+    assert "1 failed" in status and "2/3" in status
+    assert "Section is outside the video" in status
+
+
+def test_retry_leaves_the_same_section_out_again_and_does_not_redo_finished_files(
+    qtbot, tmp_path, basis, service
+):
+    """재시도해도 받을 수 없는 구간은 다시 빠지고, 이미 만든 구간 파일은 다시 받지 않아야 한다.
+
+    둘째를 빼고 끝난 카드에서 ↻ → 받기 시작: 구간 파일 둘이 그대로 있다
+    -> 새 제출 없음, 카드는 다시 FAILED · "Section is outside the video"
+    셋째 구간의 파일을 지우고 ↻ → 받기 시작
+    -> 새 제출 1건: selections == (첫째, 셋째)(둘째는 다시 빠진다), 파일 이름 그대로,
+       이어받기 기록의 끝낸 구간 == {0}
+    """
+    win, item, engine = card_with_an_unfit_section(qtbot, tmp_path, basis, service)
+    start_batch(win)
+    engine.finish()
+    qtbot.waitUntil(lambda: item.downloadState == DownloadState.FAILED, timeout=3000)
+    _pump()
+    widget = win.listView.widgetFor(item)
+
+    widget.retryButton.click()
+    _pump()
+    start_batch(win)
+    qtbot.waitUntil(lambda: item.downloadState == DownloadState.FAILED, timeout=3000)
+    _pump()
+    assert len(engine.submissions) == 1, "끝낸 구간을 다시 받으려 했다"
+    assert "Section is outside the video" in shown(widget.statusLabel)
+
+    os.remove(engine.submissions[0]["content"].selection_paths[1])
+    widget.retryButton.click()
+    _pump()
+    start_batch(win)
+
+    assert len(engine.submissions) == 2
+    content = engine.submissions[1]["content"]
+    assert content.selections == (FIRST, THIRD)
+    assert names(content.selection_paths) == ["제목 480p_1.mp4", "제목 480p_3.mp4"]
+    assert content.section_resume.done == frozenset({0})
+
+
+def test_a_card_whose_sections_are_all_unfit_fails_at_once_and_the_batch_goes_on(
+    qtbot, tmp_path, basis, service
+):
+    """모든 구간이 빠지는 카드는 엔진에 넘기지 않고 곧바로 실패로 끝내고 다음 카드로 가야 한다.
+
+    카드 A의 구간은 하나뿐이고 받을 수 없다(480p). 카드 B는 구간 없는 대기 카드
+    -> A는 제출되지 않고 FAILED · "Section is outside the video", sections_failed == 1
+    -> B가 제출된다(구간 없음)
+    """
+    win, first, engine = card_with_an_unfit_section(
+        qtbot, tmp_path, basis, service, rows=[("00:59:55:00", "00:59:59:00")]
+    )
+    second = _make_item(str(tmp_path), "B")
+    win.contentManager.model.addItem(second)
+    _pump()
+    assert first.section_unfit == frozenset({0}), "전제: 하나뿐인 구간이 받을 수 없어야 한다"
+
+    start_batch(win)
+    qtbot.waitUntil(lambda: first.downloadState == DownloadState.FAILED, timeout=3000)
+    _pump()
+
+    assert first.sections_failed == 1
+    status = shown(win.listView.widgetFor(first).statusLabel)
+    assert "Section is outside the video" in status
+    assert [submission["content"].url for submission in engine.submissions] == [second.vod_url]
+    assert engine.submissions[0]["content"].selections == ()
+
+
+def test_a_card_whose_length_could_not_be_checked_hands_every_section_to_the_engine(
+    qtbot, tmp_path, basis, service
+):
+    """길이를 확인하지 못한 카드는 구간을 빼지 않고 전부 엔진에 넘겨야 한다.
+
+    구간 셋을 정한 뒤 480p로 바꿨는데 조회가 실패함(길이 미확인)
+    -> 제출된 selections가 셋, 파일 이름 "_1" ~ "_3"
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    engine = service(win)
+    give_sections(qtbot, win, item, THREE)
+    basis.fail_resolutions.add(480)
+    _pick(win, item, 480)
+    settle(qtbot, win)
+    assert item.section_check == "unverified"
+
+    start_batch(win)
+
+    content = engine.submissions[0]["content"]
+    assert len(content.selections) == 3
+    assert names(content.selection_paths) == [f"제목 480p_{n}.mp4" for n in (1, 2, 3)]
+
+
+# ================================================================ 길이 확인 중 건너뛰기
+
+
+def card_checking_its_length(qtbot, win: VodDownloader, item: ContentItem, basis) -> None:
+    """구간을 정한 뒤 480p로 바꿔, 조회가 붙잡혀 길이를 확인하는 중인 카드로 만든다."""
+    give_sections(qtbot, win, item, ODD)
+    basis.gates[480] = threading.Event()
+    _pick(win, item, 480)
+    assert item.section_check == "pending", "전제: 길이를 확인하는 중이어야 한다"
+
+
+def test_a_card_still_checking_its_length_is_skipped_and_taken_after_the_lookup(
+    qtbot, tmp_path, basis, started
+):
+    """길이를 확인하는 중인 카드는 건너뛰고, 조회가 끝난 뒤에는 다시 대상이 되어야 한다.
+
+    카드 A(첫 줄)는 길이 확인 중, B는 대기. 받기를 청함 -> 시작된 카드 == [B]
+    조회를 끝내고 B가 끝남 -> 시작된 카드 == [B, A]
+    """
+    first, second = _make_item(str(tmp_path), "A"), _make_item(str(tmp_path), "B")
+    win = open_window(tmp_path, first, second)
+    card_checking_its_length(qtbot, win, first, basis)
+    try:
+        win.contentManager.downloadItem()
+        _pump()
+        assert started == [second], f"길이 확인 중인 카드가 건너뛰어지지 않았다: {started}"
+    finally:
+        basis.gates[480].set()
+    settle(qtbot, win)
+    assert started == [second], "조회가 끝난 것만으로 받는 중에 또 시작됐다"
+
+    second.downloadState = DownloadState.FINISHED
+    win.contentManager.emitFinishedRequest(second)
+    _pump()
+
+    assert started == [second, first]
+
+
+def test_batch_waits_for_the_lookup_when_only_a_checking_card_is_left(
+    qtbot, tmp_path, basis, started
+):
+    """남은 대상이 길이 확인 중인 카드뿐이면 배치를 끝내지 않고, 조회가 끝나면 그 카드를 받아야 한다.
+
+    길이 확인 중인 카드 하나만 있는 목록에서 받기를 청함 -> 시작된 카드 없음, 전체 완료 신호 0건
+    조회를 끝냄 -> 시작된 카드 == [그 카드], 전체 완료 신호 0건
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    finished_all = QSignalSpy(win.contentManager.finishedAllRequested)
+    card_checking_its_length(qtbot, win, item, basis)
+    try:
+        win.contentManager.downloadItem()
+        _pump()
+        assert started == [] and finished_all.count() == 0
+    finally:
+        basis.gates[480].set()
+
+    qtbot.waitUntil(lambda: started == [item], timeout=5000)
+    assert item.section_check == "" and finished_all.count() == 0
+
+
+def test_a_card_whose_lookup_failed_is_received_as_it_is(qtbot, tmp_path, basis, started):
+    """조회가 실패한 카드는 막지 않고 선언값으로 맞춘 그대로 받아야 한다.
+
+    길이 확인 중인 카드 하나에서 받기를 청한 뒤 조회가 예외로 끝남
+    -> 시작된 카드 == [그 카드], section_check == "unverified"
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    basis.fail_resolutions.add(480)
+    card_checking_its_length(qtbot, win, item, basis)
+    try:
+        win.contentManager.downloadItem()
+        _pump()
+        assert started == []
+    finally:
+        basis.gates[480].set()
+
+    qtbot.waitUntil(lambda: started == [item], timeout=5000)
+    assert item.section_check == "unverified"
+
+
+# ================================================================ 편집 창 — 받을 수 없는 구간 · 기다리는 안내
+
+
+def test_opening_the_editor_marks_the_unfit_section_and_fixing_it_clears_the_warning(
+    qtbot, tmp_path, basis, service
+):
+    """받을 수 없는 구간이 든 카드를 열면 그 행이 강조되고 확인이 막히며, 고치면 풀려야 한다.
+
+    둘째 구간(3595~3599초)이 받을 수 없는 480p(30fps · 3590초) 카드의 편집 창을 엶
+    -> 둘째 행의 두 칸 invalid, 오류 문구 "Selection is outside the video", 첫째 · 셋째 행은 정상, 확인 꺼짐
+    둘째 행을 00:45:00:00~00:50:00:00으로 고침 -> invalid 풀림, 확인 켜짐
+    확인 -> section_unfit == 빈 집합, 알림 없음
+    """
+    win, item, _engine = card_with_an_unfit_section(qtbot, tmp_path, basis, service)
+
+    dialog = open_editor(qtbot, win, item)
+
+    rows = dialog._rows
+    assert rows[1].startEdit.property("invalid") is True
+    assert rows[1].endEdit.property("invalid") is True
+    assert shown(rows[1].errorLabel) == "Selection is outside the video"
+    for row in (rows[0], rows[2]):
+        assert row.startEdit.property("invalid") is False and not row.errorLabel.isVisible()
+    assert not dialog.okButton.isEnabled()
+
+    type_into(rows[1].startEdit, "00:45:00:00")
+    type_into(rows[1].endEdit, "00:50:00:00")
+    assert rows[1].startEdit.property("invalid") is False
+    assert rows[1].endEdit.property("invalid") is False
+    assert not rows[1].errorLabel.isVisible() and dialog.okButton.isEnabled()
+    press_ok(dialog)
+
+    assert item.section_unfit == frozenset()
+    assert notice_of(win, item) == ""
+
+
+def test_the_waiting_hint_shows_only_while_the_batch_waits_for_the_edited_card(
+    qtbot, tmp_path, basis, started
+):
+    """편집 창 아래쪽 안내는 배치가 그 카드를 기다리는 동안에만 보여야 한다.
+
+    A 편집 중, B 대기. 창을 열었을 때 -> 안내 숨김
+    받기를 청해 B가 받는 중 -> 안내 숨김
+    B가 끝나 남은 대상이 A뿐 -> 안내 보임
+    """
+    first, second = _make_item(str(tmp_path), "A"), _make_item(str(tmp_path), "B")
+    win = open_window(tmp_path, first, second)
+    dialog = open_editor(qtbot, win, first)
+    assert not dialog.waitHintLabel.isVisible()
+
+    win.contentManager.downloadItem()
+    _pump()
+    assert started == [second]
+    assert not dialog.waitHintLabel.isVisible(), "다른 카드를 받는 중인데 안내가 보인다"
+
+    second.downloadState = DownloadState.FINISHED
+    win.contentManager.emitFinishedRequest(second)
+    _pump()
+
+    assert win.contentManager.isWaitingOnEdit()
+    assert "A download is waiting for this card" in shown(dialog.waitHintLabel)

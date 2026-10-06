@@ -29,7 +29,7 @@ import os
 from time import gmtime, strftime
 
 import requests
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Qt, Signal
 
 from app.viewmodels.data import ContentItem
 from core.api.playback_tracks import StreamSelectionError
@@ -39,8 +39,13 @@ from core.downloaders.integrity import TruncatedSegmentError
 from core.models.events import ProgressEvent
 from core.services.download_service import DownloadService
 from core.models.download_data import DownloadData
+from core.models.section_resume import SectionResume
 from core.utils.hybrid_cut import CutError
-from core.utils.paths import build_section_output_paths, reserve_section_output_paths
+from core.utils.paths import (
+    build_section_output_paths,
+    release_output_paths,
+    reserve_section_output_paths,
+)
 from core.utils.ffmpeg import FFmpegNotFoundError
 from app.download_logger import DownloadLogger
 from app.download_resolvers import resolve_aes_key, resolve_m3u8_base_url
@@ -128,6 +133,9 @@ class DownloadViewModel(QObject):
     # 일어난다 — 스레드 축 게이트가 잡는다
     _engineFinished = Signal()
     _engineFailed = Signal(object)
+    # 내부 전용: 받을 구간이 하나도 없는 카드 — 엔진에 넘기지 않고 실패로 끝낸다. 큐로 돌려
+    # start()가 돌아간 뒤에 끝낸다(끝내는 통지가 다음 카드의 start()를 부른다)
+    _nothingToReceive = Signal(object)
 
     def __init__(self, content, service: DownloadService | None = None, parent=None):
         """content: 다운로드 이벤트를 반영할 상대 — update_progress/pause/resume/
@@ -146,11 +154,17 @@ class DownloadViewModel(QObject):
         # 실행 중인 다운로드가 무엇을 받아 어디에 쓰는지를 가리키는 값 — 일부 구간 실패로 끝나면
         # 남긴 것과 함께 아이템에 적어, 다음 다운로드가 같은 값일 때만 이어받게 한다
         self._resume_key: tuple | None = None
+        # 실행 중인 다운로드에서 엔진에 넘기지 않고 뺀 구간 수 (#309) — 새 영상의 끝 이후에서
+        # 시작해 받을 수 없는 구간이다. 실패한 구간 수에 더해 카드에 보인다
+        self._excluded = 0
         # 진행 통지가 메인 스레드에 닿으면 구간 상태를 아이템에 먼저 옮긴다 — content보다
         # 먼저 연결해, content가 카드를 다시 그릴 때 값이 이미 들어 있게 한다
         self.progress.connect(self._syncSections)
         self._engineFinished.connect(self._onEngineFinished)
         self._engineFailed.connect(self._onEngineFailed)
+        self._nothingToReceive.connect(
+            self._onNothingToReceive, Qt.ConnectionType.QueuedConnection
+        )
         # 구 mainWindow.setupThreadSignals의 다운로드 릴레이 6개 — 위임 없이 직결.
         # 워커 스레드에서 emit되는 progress도 이 연결이 큐로 메인 스레드에 배달한다
         self.progress.connect(content.update_progress)
@@ -179,28 +193,47 @@ class DownloadViewModel(QObject):
         # 해상도가 같은 두 스트림을 가르는 값 — 다운로드 시작 때 그 변형을 다시 찾는다 (#318)
         data.content.stream = getattr(item, "stream", None)
         selections = tuple(getattr(item, "selections", ()) or ())
+        self._excluded = 0
         if selections:
             # 구간 다운로드 (#309) — 구간 파일명은 시작할 때 한꺼번에 배정한다. 예약은 엔진이
-            # 끝날 때 푼다
-            data.content.selections = selections
+            # 끝날 때 푼다.
+            # 받을 수 없는 구간(새 영상의 끝 이후에서 시작한다)은 엔진에 넘기지 않는다 — 엔진의
+            # 길이 검사는 위반 구간이 하나라도 있으면 다운로드 전체를 실패시킨다. 그 구간만
+            # 빼고 나머지를 받은 뒤, 뺀 수를 실패한 구간 수에 더해 일부 실패로 끝낸다
+            unfit = _unfit_sections(item, len(selections))
+            kept = [number for number in range(len(selections)) if number not in unfit]
+            self._excluded = len(unfit)
+            received = tuple(selections[number] for number in kept)
             self._resume_key = _resume_key(item)
-            resume = _usable_resume(item, selections)
+            resume = _usable_resume(item, received)
             if resume is not None:
                 # 일부 구간만 실패한 다운로드를 이어서 처리한다 — 구간 파일 이름을 새로 배정하지
                 # 않고 그때의 경로를 그대로 쓴다. 새로 배정하면 남아 있는 구간 파일 때문에
                 # 모든 구간이 새 이름(" (n)")을 받는다
-                data.content.section_resume = resume
-                data.content.selection_paths = reserve_section_output_paths(
-                    resume.paths, resume.done
-                )
+                paths = reserve_section_output_paths(resume.paths, resume.done)
                 item.sections_done = len(resume.done)
-                item.sections_failed = 0
             else:
                 item.section_retry = None
-                data.content.selection_paths = build_section_output_paths(
+                # 파일 번호는 구간 목록의 순서다 — 뺀 구간의 번호는 비운다(3개 중 2번을 빼면
+                # _1 · _3). 번호를 당기면 유저가 정한 순서와 파일 이름이 어긋난다
+                numbered = build_section_output_paths(
                     item.download_path, item.title, item.resolution, len(selections)
                 )
-                item.sections_done = item.sections_failed = 0
+                release_output_paths(numbered[number] for number in unfit)
+                paths = tuple(numbered[number] for number in kept)
+                item.sections_done = 0
+            item.sections_failed = 0
+            if self._excluded and item.sections_done == len(kept):
+                # 받을 구간이 없다 — 전부 빠졌거나, 남은 구간은 이전 실행이 이미 끝냈다.
+                # 엔진에 넘기지 않고 실패로 끝낸다
+                release_output_paths(paths)
+                item.sections_failed = self._excluded
+                self._data = None
+                self._nothingToReceive.emit(item)
+                return
+            data.content.selections = received
+            data.content.section_resume = resume
+            data.content.selection_paths = paths
         self._data = data
         task_logger = DownloadLogger()
         # DownloadTask가 상태 전이 흡수와 모델↔카드(item) 상태 연결을 담당한다
@@ -311,7 +344,8 @@ class DownloadViewModel(QObject):
         if self.item is None or self._data is None or not self._data.sections_total:
             return
         self.item.sections_done = self._data.sections_done
-        self.item.sections_failed = self._data.sections_failed
+        # 엔진에 넘기지 않고 뺀 구간도 받지 못한 구간이다
+        self.item.sections_failed = self._data.sections_failed + self._excluded
 
     def _onEngineFinished(self) -> None:
         """정상 완료 후처리 (구 DownloadManager.finish의 잔여분).
@@ -324,10 +358,38 @@ class DownloadViewModel(QObject):
             return
         item = self.item
         self._syncSections()
+        if self._excluded:
+            # 넘긴 구간은 모두 만들었지만 뺀 구간이 있다 (#309) — 일부 실패로 끝낸다. 넘긴
+            # 구간을 모두 끝낸 것으로 적어 둔다: 재시도해도 뺀 구간은 다시 빠지고, 만든 파일은
+            # 다시 받지 않는다
+            content = self._data.content
+            item.section_retry = (
+                self._resume_key,
+                SectionResume(
+                    selections=tuple(content.selections),
+                    paths=tuple(content.selection_paths),
+                    done=frozenset(range(len(content.selections))),
+                ),
+            )
+            self.removeThreads()
+            self.failed.emit(item, self._outsideVideoMessage())
+            return
         item.section_retry = None  # 모든 구간을 만들었다 — 이어받을 것이 없다
         download_time = strftime("%H:%M:%S", gmtime(self.handle.elapsed_seconds()))
         self.removeThreads()
         self.finished.emit(item, download_time)
+
+    def _onNothingToReceive(self, item: ContentItem) -> None:
+        """받을 구간이 하나도 없는 카드를 실패로 끝낸다 (#309). 엔진은 돌지 않았다."""
+        self.failed.emit(item, self._outsideVideoMessage())
+
+    def _outsideVideoMessage(self) -> str:
+        """받을 수 없어 뺀 구간이 있는 카드의 실패 사유 — 첫 줄이 카드에 오르고 전문은 툴팁이다."""
+        return self.tr(
+            "Section is outside the video · edit the sections\n"
+            "Sections that start after the end of this resolution were skipped. "
+            "Edit the sections or pick another resolution."
+        )
 
     def _onEngineFailed(self, exc: BaseException) -> None:
         """실패 후처리 (#134) — 엔진 종료 신호 후 참조를 정리하고 failed Signal로 사유를 알린다.
@@ -440,6 +502,17 @@ def _resume_key(item: ContentItem) -> tuple:
         item.download_path,
         item.title,
     )
+
+
+def _unfit_sections(item: ContentItem, count: int) -> frozenset[int]:
+    """엔진에 넘기지 않을 구간의 번호(0부터) — 카드에 받을 수 없다고 표시된 구간이다 (#309).
+
+    조회로 확인된 길이를 기준으로 표시된 것만 뺀다. 길이를 확인하는 중이거나 확인하지 못한
+    카드는 아무것도 빼지 않는다 — 그대로 넘기고 엔진이 실제 길이로 검사한다.
+    """
+    if getattr(item, "section_check", ""):
+        return frozenset()
+    return frozenset(n for n in getattr(item, "section_unfit", ()) if 0 <= n < count)
 
 
 def _usable_resume(item: ContentItem, selections: tuple):

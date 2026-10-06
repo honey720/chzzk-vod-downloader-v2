@@ -12,6 +12,30 @@
         <translation>refit to {0}fps</translation>
     </message>
     <message>
+        <source>end pulled to the video length</source>
+        <translation>end pulled to the video length</translation>
+    </message>
+    <message>
+        <source>end extended to the video length</source>
+        <translation>end extended to the video length</translation>
+    </message>
+    <message>
+        <source>{0} outside the video</source>
+        <translation>{0} outside the video</translation>
+    </message>
+    <message>
+        <source>This resolution is shorter. Sections now end at the end of the video.</source>
+        <translation>This resolution is shorter. Sections now end at the end of the video.</translation>
+    </message>
+    <message>
+        <source>This resolution is longer. Sections that reached the end now reach it.</source>
+        <translation>This resolution is longer. Sections that reached the end now reach it.</translation>
+    </message>
+    <message>
+        <source>Some sections start after the end of this resolution. They will be skipped. Edit the sections to fix them.</source>
+        <translation>Some sections start after the end of this resolution. They will be skipped. Edit the sections to fix them.</translation>
+    </message>
+    <message>
         <source>Sections {0} · {1}</source>
         <translation>Sections {0} · {1}</translation>
     </message>
@@ -20,28 +44,12 @@
         <translation>Sections were moved to the frames of the new frame rate.</translation>
     </message>
     <message>
-        <source>end moved to the video length</source>
-        <translation>end moved to the video length</translation>
-    </message>
-    <message>
-        <source>sections outside the video</source>
-        <translation>sections outside the video</translation>
-    </message>
-    <message>
         <source>checking length</source>
         <translation>checking length</translation>
     </message>
     <message>
         <source>length not checked</source>
         <translation>length not checked</translation>
-    </message>
-    <message>
-        <source>A section that reached the end now ends at the end of this resolution.</source>
-        <translation>A section that reached the end now ends at the end of this resolution.</translation>
-    </message>
-    <message>
-        <source>Some sections are longer than this resolution. Edit the sections.</source>
-        <translation>Some sections are longer than this resolution. Edit the sections.</translation>
     </message>
     <message>
         <source>Checking the length of this resolution...</source>
@@ -179,6 +187,12 @@ The file could not be saved. Check the download path and free disk space.</trans
 <context>
     <name>DownloadViewModel</name>
     <message>
+        <source>Section is outside the video · edit the sections
+Sections that start after the end of this resolution were skipped. Edit the sections or pick another resolution.</source>
+        <translation>Section is outside the video · edit the sections
+Sections that start after the end of this resolution were skipped. Edit the sections or pick another resolution.</translation>
+    </message>
+    <message>
         <source>ffmpeg not found · check the installation
 Postprocessing failed: the ffmpeg executable could not be found.</source>
         <translation>ffmpeg not found · check the installation
@@ -299,6 +313,10 @@ Part of the video kept arriving incomplete from the server. Try again later.</tr
     <message>
         <source>OK</source>
         <translation>OK</translation>
+    </message>
+    <message>
+        <source>A download is waiting for this card — it continues when you close this window</source>
+        <translation>A download is waiting for this card — it continues when you close this window</translation>
     </message>
     <message>
         <source>Move up</source>

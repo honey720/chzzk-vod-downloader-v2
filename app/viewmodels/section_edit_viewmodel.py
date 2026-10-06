@@ -108,8 +108,9 @@ class RefitResult:
 
     selections: tuple[TimeRange, ...]  # 다시 맞춘 구간. 바뀐 것이 없으면 받은 튜플 그대로다
     regridded: bool  # 프레임률이 달라 구간을 새 프레임 경계로 옮겼다
-    end_fitted: bool  # 영상 끝에 닿아 있던 구간의 끝을 새 길이에 맞춰 옮겼다
-    out_of_range: bool  # 새 길이를 벗어난 구간이 남아 있다
+    end_pulled: bool  # 새 길이를 넘는 구간의 끝을 새 영상의 끝으로 당겼다
+    end_extended: bool  # 영상 끝에 닿아 있던 구간의 끝을 더 긴 새 끝으로 늘렸다
+    unfit: frozenset[int]  # 당길 수 없는 구간의 번호(0부터) — 새 영상의 끝 이후에서 시작한다
 
 
 def refit_to_basis(
@@ -119,10 +120,12 @@ def refit_to_basis(
 
     - 프레임률이 다르면 시작 · 끝을 새 프레임률의 가장 가까운 프레임 경계로 옮긴다
       (``refit_selections``)
-    - **옛 영상의 끝에 닿아 있던 구간**(``reaches_end``)은 끝을 새 영상의 끝에 둔다. "끝까지"
-      받으려던 구간이 새 해상도에서도 끝까지 가고, 새 영상이 더 짧으면 그 길이로 줄어든다
-    - 그 밖의 구간이 새 길이를 벗어나면 **고치지 않고** 벗어났다고만 알린다 — 어디를 받을지를
-      대신 정하지 않는다
+    - **끝은 새 영상의 끝을 넘지 않는다.** 새 길이를 넘는 구간은 끝을 새 영상의 끝으로
+      당긴다 — 새 해상도에 없는 부분만 잘린다
+    - **옛 영상의 끝에 닿아 있던 구간**(``reaches_end``)은 새 영상의 끝을 따라간다. 새 영상이
+      더 짧으면 당겨지고, 더 길면 늘어난다. 끝에 닿아 있지 않던 구간은 늘어나지 않는다
+    - **당길 수 없는 구간** — 새 영상의 끝 이후에서 시작해 한 프레임도 남지 않는 구간 — 은
+      고치지 않고 번호만 돌려준다. 지우지 않는다
 
     Args:
         selections: 옛 기준값으로 확인된 구간
@@ -133,20 +136,28 @@ def refit_to_basis(
     regridded = old_rate != new_rate
     moved = refit_selections(selections, new_rate) if regridded else selections
     new_end = last_frame_seconds(new.duration, new_rate)
+    last_frame = frame_index(new_end, new_rate)
     refit: list[TimeRange] = []
-    end_fitted = out_of_range = False
-    for before, after in zip(selections, moved):
-        start, end = after.start, after.end
-        if reaches_end(before.end, old.duration, old_rate) and start < new_end:
-            if frame_index(end, new_rate) != frame_index(new_end, new_rate):
-                end_fitted = True
-            end = new_end
-        if _violations_of((start, end), new.duration, new_rate):
-            out_of_range = True
-        refit.append(after if (start, end) == (after.start, after.end) else TimeRange(start, end))
-    if not regridded and not end_fitted:
-        return RefitResult(selections, False, False, out_of_range)
-    return RefitResult(tuple(refit), regridded, end_fitted, out_of_range)
+    unfit: set[int] = set()
+    end_pulled = end_extended = False
+    for number, (before, after) in enumerate(zip(selections, moved)):
+        if _violations_of((after.start, new_end), new.duration, new_rate):
+            unfit.add(number)  # 시작이 새 영상의 끝 이후다 — 끝을 당겨도 한 프레임이 안 남는다
+            refit.append(after)
+            continue
+        end_frame = frame_index(after.end, new_rate)
+        follows_end = reaches_end(before.end, old.duration, old_rate)
+        if end_frame > last_frame:
+            end_pulled = True
+        elif follows_end and end_frame < last_frame:
+            end_extended = True
+        else:
+            refit.append(after)
+            continue
+        refit.append(TimeRange(after.start, new_end))
+    if not (regridded or end_pulled or end_extended):
+        return RefitResult(selections, False, False, False, frozenset(unfit))
+    return RefitResult(tuple(refit), regridded, end_pulled, end_extended, frozenset(unfit))
 
 
 def last_frame_seconds(duration: float, fps: Fraction) -> float:
@@ -431,8 +442,8 @@ class SectionEditViewModel(QObject):
         self.item.section_verified = (selections, basis) if selections else None
         self.item.section_check = ""
         self.item.section_refit_fps = None
-        self.item.section_end_fitted = False
-        self.item.section_out_of_range = False
+        self.item.section_end_pulled = self.item.section_end_extended = False
+        self.item.section_unfit = frozenset()
         logger.info("구간 편집: %d개 (%sfps)", len(selections), format_fps(self.fps))
         if self._notify is not None:
             self._notify(self.item)
@@ -500,7 +511,13 @@ class SectionRefitter(QObject):
 
     늦게 온 결과는 버린다: 그사이 해상도를 또 바꿨거나(요청 번호가 다르다), 카드가 지워졌거나,
     대기 상태가 아니게 됐거나(받기 시작했다), 구간을 다시 편집한 경우다.
+
+    조회가 도는 동안(``section_check``가 조회 중) 그 카드는 다운로드 대상에서 빠진다
+    (``ContentViewModel.findItem``). 조회가 끝나면 ``settled``로 알린다 — 그 카드를 기다리던
+    배치가 이어 간다.
     """
+
+    settled = Signal(object)  # 카드의 조회가 끝났다(성공 · 실패) — 더는 조회 중이 아니다
 
     def __init__(self, model, pool: QThreadPool, parent: QObject | None = None):
         """
@@ -532,7 +549,8 @@ class SectionRefitter(QObject):
         else:
             item.selections = selections
             item.section_frame_rate, item.section_refit_fps = basis.fps, None
-        item.section_end_fitted = item.section_out_of_range = False
+        item.section_end_pulled = item.section_end_extended = False
+        item.section_unfit = frozenset()
         item.section_check = SECTION_CHECK_PENDING
 
         generation = self._generation.get(item, 0) + 1
@@ -573,6 +591,7 @@ class SectionRefitter(QObject):
         if basis is None:
             item.section_check = SECTION_CHECK_UNVERIFIED
             self._model.notifyChanged(item)
+            self.settled.emit(item)
             return
         selections, old = item.section_verified
         result = refit_to_basis(selections, old, basis)
@@ -582,12 +601,15 @@ class SectionRefitter(QObject):
         item.section_verified = (result.selections, SectionBasis(fps=rate, duration=basis.duration))
         item.section_check = ""
         item.section_refit_fps = rate if result.regridded else None
-        item.section_end_fitted = result.end_fitted
-        item.section_out_of_range = result.out_of_range
+        item.section_end_pulled = result.end_pulled
+        item.section_end_extended = result.end_extended
+        item.section_unfit = result.unfit
         logger.info(
-            "해상도 변경으로 구간을 다시 맞춤: %sfps%s%s",
+            "해상도 변경으로 구간을 다시 맞춤: %sfps%s%s%s",
             format_fps(rate),
-            " · 끝을 새 길이에 맞춤" if result.end_fitted else "",
-            " · 길이를 벗어난 구간 있음" if result.out_of_range else "",
+            " · 끝을 당김" if result.end_pulled else "",
+            " · 끝을 늘림" if result.end_extended else "",
+            f" · 당길 수 없는 구간 {len(result.unfit)}개" if result.unfit else "",
         )
         self._model.notifyChanged(item)
+        self.settled.emit(item)

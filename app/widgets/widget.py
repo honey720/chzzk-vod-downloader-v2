@@ -651,8 +651,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     def _sectionNotice(self, warnings_only: bool = False) -> str:
         """구간 요약 뒤에 붙이는 알림 — 해상도를 바꿔 구간에 일어난 일을 짧게 적는다 (#309).
 
-        재료는 뷰모델이 아이템에 적어 둔 값이다(``section_refit_fps`` · ``section_end_fitted`` ·
-        ``section_out_of_range`` · ``section_check``). 알릴 것이 없으면 빈 문자열이다.
+        재료는 뷰모델이 아이템에 적어 둔 값이다(``section_refit_fps`` · ``section_end_pulled`` ·
+        ``section_end_extended`` · ``section_unfit`` · ``section_check``). 알릴 것이 없으면 빈 문자열이다.
 
         알림은 두 무게다. **한 일을 알리는 것**(프레임에 맞춤 · 끝을 옮김)과 **유저가 봐야 하는
         것**(길이를 벗어난 구간 · 길이 미확인)이다. 폭이 모자라면 앞의 것부터 뗀다
@@ -666,10 +666,13 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         refit_fps = getattr(item, "section_refit_fps", None)
         if refit_fps is not None and not warnings_only:
             parts.append(self.tr("refit to {0}fps").format(format_fps(refit_fps)))
-        if getattr(item, "section_end_fitted", False) and not warnings_only:
-            parts.append(self.tr("end moved to the video length"))
-        if getattr(item, "section_out_of_range", False):
-            parts.append(self.tr("sections outside the video"))
+        if getattr(item, "section_end_pulled", False) and not warnings_only:
+            parts.append(self.tr("end pulled to the video length"))
+        if getattr(item, "section_end_extended", False) and not warnings_only:
+            parts.append(self.tr("end extended to the video length"))
+        unfit = len(getattr(item, "section_unfit", ()))
+        if unfit:
+            parts.append(self.tr("{0} outside the video").format(unfit))
         check = getattr(item, "section_check", "")
         if check == SECTION_CHECK_PENDING:
             parts.append(self.tr("checking length"))
@@ -683,13 +686,20 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         lines = []
         if getattr(item, "section_refit_fps", None) is not None:
             lines.append(self.tr("Sections were moved to the frames of the new frame rate."))
-        if getattr(item, "section_end_fitted", False):
+        if getattr(item, "section_end_pulled", False):
             lines.append(
-                self.tr("A section that reached the end now ends at the end of this resolution.")
+                self.tr("This resolution is shorter. Sections now end at the end of the video.")
             )
-        if getattr(item, "section_out_of_range", False):
+        if getattr(item, "section_end_extended", False):
             lines.append(
-                self.tr("Some sections are longer than this resolution. Edit the sections.")
+                self.tr("This resolution is longer. Sections that reached the end now reach it.")
+            )
+        if getattr(item, "section_unfit", ()):
+            lines.append(
+                self.tr(
+                    "Some sections start after the end of this resolution. "
+                    "They will be skipped. Edit the sections to fix them."
+                )
             )
         check = getattr(item, "section_check", "")
         if check == SECTION_CHECK_PENDING:

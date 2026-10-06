@@ -173,6 +173,13 @@ class SectionEditDialog(QDialog):
         self.scrollArea.setWidget(self._rowContainer)
         layout.addWidget(self.scrollArea, 1)
 
+        # 받는 중인 배치가 이 카드를 기다릴 때만 보인다 — 창을 닫아야 이어 간다는 것을 알린다
+        self.waitHintLabel = QLabel(self)
+        self.waitHintLabel.setObjectName("sectionWaitHintLabel")
+        self.waitHintLabel.setWordWrap(True)
+        self.waitHintLabel.setVisible(False)
+        layout.addWidget(self.waitHintLabel)
+
         buttons = QHBoxLayout()
         buttons.addStretch(1)
         self.cancelButton = QPushButton(self)
@@ -193,6 +200,13 @@ class SectionEditDialog(QDialog):
         self.addButton.setText(self.tr("+ Add section"))
         self.cancelButton.setText(self.tr("Cancel"))
         self.okButton.setText(self.tr("OK"))
+        self.waitHintLabel.setText(
+            self.tr("A download is waiting for this card — it continues when you close this window")
+        )
+
+    def setWaitingHint(self, waiting: bool) -> None:
+        """받는 중인 배치가 이 카드를 기다리는지에 맞춰 아래쪽 안내를 켜고 끈다."""
+        self.waitHintLabel.setVisible(waiting)
 
     # ---- 그리기 ----
 

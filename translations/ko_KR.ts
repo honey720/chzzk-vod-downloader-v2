@@ -12,6 +12,30 @@
         <translation>{0}fps에 맞춤</translation>
     </message>
     <message>
+        <source>end pulled to the video length</source>
+        <translation>끝을 영상 길이에 맞춰 당김</translation>
+    </message>
+    <message>
+        <source>end extended to the video length</source>
+        <translation>끝을 영상 길이에 맞춰 늘림</translation>
+    </message>
+    <message>
+        <source>{0} outside the video</source>
+        <translation>받을 수 없는 구간 {0}개</translation>
+    </message>
+    <message>
+        <source>This resolution is shorter. Sections now end at the end of the video.</source>
+        <translation>이 해상도는 영상이 더 짧습니다. 영상 길이를 넘는 구간의 끝을 영상 끝으로 당겼습니다.</translation>
+    </message>
+    <message>
+        <source>This resolution is longer. Sections that reached the end now reach it.</source>
+        <translation>이 해상도는 영상이 더 깁니다. 영상 끝까지 받던 구간을 새 끝까지 늘렸습니다.</translation>
+    </message>
+    <message>
+        <source>Some sections start after the end of this resolution. They will be skipped. Edit the sections to fix them.</source>
+        <translation>이 해상도의 영상이 끝난 뒤에서 시작하는 구간이 있습니다. 그 구간은 받지 않습니다. 구간을 고쳐 주세요.</translation>
+    </message>
+    <message>
         <source>Sections {0} · {1}</source>
         <translation>구간 {0}개 · {1}</translation>
     </message>
@@ -20,28 +44,12 @@
         <translation>해상도를 바꿔 프레임률이 달라져, 구간을 새 프레임에 맞게 옮겼습니다.</translation>
     </message>
     <message>
-        <source>end moved to the video length</source>
-        <translation>끝을 영상 길이에 맞춤</translation>
-    </message>
-    <message>
-        <source>sections outside the video</source>
-        <translation>영상 길이를 벗어난 구간 있음</translation>
-    </message>
-    <message>
         <source>checking length</source>
         <translation>길이 확인 중</translation>
     </message>
     <message>
         <source>length not checked</source>
         <translation>길이 미확인</translation>
-    </message>
-    <message>
-        <source>A section that reached the end now ends at the end of this resolution.</source>
-        <translation>영상 끝까지 받던 구간의 끝을 이 해상도의 영상 길이에 맞췄습니다.</translation>
-    </message>
-    <message>
-        <source>Some sections are longer than this resolution. Edit the sections.</source>
-        <translation>이 해상도의 영상 길이를 벗어난 구간이 있습니다. 구간을 고쳐 주세요.</translation>
     </message>
     <message>
         <source>Checking the length of this resolution...</source>
@@ -178,6 +186,12 @@ The file could not be saved. Check the download path and free disk space.</sourc
 <context>
     <name>DownloadViewModel</name>
     <message>
+        <source>Section is outside the video · edit the sections
+Sections that start after the end of this resolution were skipped. Edit the sections or pick another resolution.</source>
+        <translation>구간이 영상 길이를 벗어났습니다 · 구간을 고쳐 주세요
+이 해상도의 영상이 끝난 뒤에서 시작하는 구간은 받지 않았습니다. 구간을 고치거나 다른 해상도를 골라 주세요.</translation>
+    </message>
+    <message>
         <source>ffmpeg not found · check the installation
 Postprocessing failed: the ffmpeg executable could not be found.</source>
         <translation>ffmpeg를 찾을 수 없습니다 · 설치 상태를 확인해 주세요
@@ -294,6 +308,10 @@ Part of the video kept arriving incomplete from the server. Try again later.</so
     <message>
         <source>OK</source>
         <translation>확인</translation>
+    </message>
+    <message>
+        <source>A download is waiting for this card — it continues when you close this window</source>
+        <translation>이 카드를 기다리는 다운로드가 있습니다 — 창을 닫으면 이어서 받습니다</translation>
     </message>
     <message>
         <source>Move up</source>
