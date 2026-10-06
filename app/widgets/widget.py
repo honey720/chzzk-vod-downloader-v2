@@ -16,7 +16,7 @@ from app.viewmodels.section_edit_viewmodel import (
 from app.network import REQUEST_TIMEOUT
 from app.section_basis import SECTION_CONTENT_TYPES
 from core.api.session import get_thread_session
-from app.widgets.pill import ResolutionPill
+from app.widgets.pill import CARET_GAP, CARET_WIDTH, ResolutionPill
 from core.models.download_state import DownloadState
 from app.viewmodels.item_state import ItemState
 from app.widgets.contentItemWidget import Ui_ContentItemWidget
@@ -416,6 +416,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             spacing = layout.spacing()
             row_width = layout.geometry().width()
             known = row_width > 0
+            # ⓪ 구간 요약 뒤의 알림 — 가장 먼저 양보한다 (#309)
+            if known:
+                self._fitSectionNotice(row_width, spacing)
             # ② pill 모드
             if not self._slotShowsPills():
                 mode = "hidden"
@@ -465,6 +468,35 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             self.pathIconButton.setVisible(icon_only)
         finally:
             self._layingOutRowThree = False
+
+    def _fitSectionNotice(self, row_width: int, spacing: int) -> None:
+        """구간 요약 뒤의 알림("30fps에 맞춤")을 폭이 될 때만 붙인다 (#309).
+
+        이 자리의 글은 말줄임하지 않고 폭을 먼저 확보하므로(``_reserveFileSizeWidth``), 알림까지
+        붙인 글이 접힌 pill · 경로 아이콘과 함께 한 줄에 안 들어가면 pill이 눌려 잘린다. 그
+        폭에서는 알림을 떼고 요약만 적는다 — 알림의 전문은 툴팁에 남는다. 3행에서 가장 먼저
+        양보하는 것이 이 알림이다.
+
+        판정은 지금 표시 중인 글의 폭이 아니라 "행 폭 − 접힌 pill − 경로 아이콘"으로만 한다 —
+        글을 바꿔도 되먹임이 없다.
+        """
+        if not self._sectionCount() or self.item.downloadState != DownloadState.WAITING:
+            return
+        if not getattr(self.item, "section_notice", ""):
+            return
+        label = self.fileSizeLabel
+        full, short = self._sectionSummary(), self._sectionSummary(with_notice=False)
+        need = label.fontMetrics().horizontalAdvance(full) + 4
+        selected = self._selectedButton or (self.buttons[0] if self.buttons else None)
+        if selected is not None:
+            need += selected.naturalWidth() + CARET_WIDTH + CARET_GAP + spacing
+        if getattr(self, "_pathShown", False):
+            need += self.pathIconButton.minimumWidth() + spacing
+        text = full if need <= row_width else short
+        if label.text() != text:
+            label.setText(text)
+            self._applySectionHint()
+            self._reserveFileSizeWidth()
 
     def _repLabel(self, rep) -> str:
         """해상도 버튼의 본 글자 — "1080p", 원본이면 "1080p(원본)" (#318).
@@ -757,16 +789,17 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             return ""
         return f" · {self.item.sections_done}/{total}"
 
-    def _sectionSummary(self) -> str:
+    def _sectionSummary(self, with_notice: bool = True) -> str:
         """대기 카드의 재생 시간 자리에 적는 구간 요약 — 구간 수와 길이의 합 (#309).
 
-        길이는 남은 시간과 같은 짧은 표기("3:12" · "1:02:03")로 적는다.
+        길이는 남은 시간과 같은 짧은 표기("3:12" · "1:02:03")로 적는다. 구간을 다시 맞춘
+        알림이 있으면 뒤에 붙인다 — 좁은 폭에서는 ``_fitSectionNotice``가 알림을 뗀다.
         """
         selections = self.item.selections
         length = sum(selection.end - selection.start for selection in selections)
         clock = self._shortRemain(strftime("%H:%M:%S", gmtime(max(length, 0))))
         summary = self.tr("Sections {0} · {1}").format(len(selections), clock)
-        notice = getattr(self.item, "section_notice", "")
+        notice = getattr(self.item, "section_notice", "") if with_notice else ""
         return f"{summary} · {notice}" if notice else summary
 
     def _sectionsEditable(self) -> bool:

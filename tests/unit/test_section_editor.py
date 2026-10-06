@@ -849,3 +849,30 @@ def test_whole_download_card_keeps_showing_the_file_size_after_a_resolution_chan
     assert item.selections == () and item.section_notice == ""
     text = summary_text(win, item)
     assert "Sections" not in text and "refit" not in text
+
+
+def test_refit_notice_gives_way_when_it_does_not_fit_in_the_row(qtbot, tmp_path, basis):
+    """알림까지 붙인 요약이 3행에 안 들어가면 알림을 떼고 요약만 적어야 한다.
+
+    구간 하나인 대기 카드의 알림을 어떤 창 폭보다도 긴 글("가" 400자)로 둠
+    -> 요약 자리의 글 == "Sections 1 · 0:09"(알림 없음), 툴팁에는 알림 문장이 남는다
+    -> 고른 해상도 버튼이 제 폭보다 좁게 눌리지 않고, 카드가 목록 폭을 넘지 않는다
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    set_rows(dialog, [("00:00:10:31", "00:00:20:01")])
+    press_ok(dialog)
+    widget = win.listView.widgetFor(item)
+
+    item.section_notice = "가" * 400  # 폭을 폰트에서 유도하지 않아도 어떤 행보다 길다
+    win.contentManager.model.notifyChanged(item)
+    _pump()
+
+    assert summary_text(win, item) == "Sections 1 · 0:09"
+    assert (
+        "Sections were moved to the frames of the new frame rate." in widget.fileSizeLabel.toolTip()
+    )
+    selected = widget._selectedButton
+    assert selected.isVisible() and selected.width() >= selected.minimumSizeHint().width()
+    assert widget.width() <= win.listView.viewport().width()

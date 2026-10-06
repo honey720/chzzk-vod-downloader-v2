@@ -217,7 +217,7 @@ class SectionEditDialog(QDialog):
         """행 위젯을 뷰모델의 행 수 · 순서대로 다시 만든다."""
         for row in self._rows:
             self._rowLayout.removeWidget(row)
-            row.setParent(None)
+            row.hide()  # 부모를 떼지 않는다 — 떼면 파괴될 때까지 최상위 창이 된다
             row.deleteLater()
         self._rows = []
         for index in range(len(self._viewmodel.rows)):
