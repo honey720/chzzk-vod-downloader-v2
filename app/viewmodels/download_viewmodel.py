@@ -47,6 +47,7 @@ from core.utils.paths import (
     reserve_section_output_paths,
 )
 from core.utils.ffmpeg import FFmpegNotFoundError
+from core.utils.timecode import frame_index
 from app.download_logger import DownloadLogger
 from app.download_resolvers import resolve_aes_key, resolve_m3u8_base_url
 from app.download_task import DownloadTask
@@ -211,6 +212,9 @@ class DownloadViewModel(QObject):
                 # 않고 그때의 경로를 그대로 쓴다. 새로 배정하면 남아 있는 구간 파일 때문에
                 # 모든 구간이 새 이름(" (n)")을 받는다
                 paths = reserve_section_output_paths(resume.paths, resume.done)
+                if paths != resume.paths:
+                    # 끝내지 않은 구간의 이름이 그사이 다른 것에 차지돼 바뀌었다 — 기록도 맞춘다
+                    resume = dataclasses.replace(resume, paths=paths)
                 item.sections_done = len(resume.done)
             else:
                 item.section_retry = None
@@ -527,9 +531,63 @@ def _usable_resume(item: ContentItem, selections: tuple):
     if retry is None:
         return None
     resume_key, resume = retry
-    if resume_key != _resume_key(item) or resume.selections != selections:
+    if resume_key != _resume_key(item):
         return None
-    return resume
+    if resume.selections == selections:
+        return resume
+    return _resume_for_edited_sections(item, resume, selections)
+
+
+def _resume_for_edited_sections(item: ContentItem, resume: SectionResume, selections: tuple):
+    """구간을 편집한 카드가 이어받을 수 있는 것을 만든다. 이어받을 구간이 없으면 None (#309).
+
+    **같은 번호에 같은 값(시작 · 끝 프레임)인 구간만** 끝낸 것으로 이어받는다 — 그 구간의 파일은
+    다시 받지 않는다. 값이 바뀐 구간과 새로 생긴 구간은 새로 받는다. 번호와 값이 함께 맞는
+    끝낸 구간이 하나도 없으면(순서를 바꾼 경우 등) None이다 — 기록을 버리고 처음부터 받는다.
+
+    파일 이름은 번호를 따른다. 그때 있던 번호는 그때의 경로를 그대로 후보로 두고, 새로 생긴
+    번호만 새로 배정한다. 후보 자리에 이미 파일이 있으면(값이 바뀐 구간의 옛 파일) 시작할 때
+    ``reserve_section_output_paths``가 피한다 — 덮어쓰지 않는다.
+
+    받아 둔 것 가운데 구간 목록에 묶인 것은 넘기지 않는다 — mp4의 임시 원본은 그때의 구간
+    범위만 담고 있다. 구간과 무관한 것(moov · 플레이리스트 · 받아 둔 세그먼트)은 그대로 넘긴다.
+
+    받을 수 없어 뺀 구간이 있는 카드는 대상이 아니다 — 뺀 뒤의 순서와 파일 번호가 어긋난다.
+    """
+    if _unfit_sections(item, len(item.selections)):
+        return None
+    fps = getattr(item, "section_frame_rate", None)
+
+    def frames(selection) -> tuple:
+        if fps is None:
+            return (selection.start, selection.end)
+        return (frame_index(selection.start, fps), frame_index(selection.end, fps))
+
+    kept = frozenset(
+        number
+        for number in resume.done
+        if number < len(selections) and frames(resume.selections[number]) == frames(selections[number])
+    )
+    if not kept:
+        return None
+    # 새로 생긴 번호의 이름만 얻는다 — 배정은 예약까지 하므로 곧바로 풀고, 시작할 때 다시 예약한다
+    numbered = build_section_output_paths(
+        item.download_path, item.title, item.resolution, len(selections)
+    )
+    release_output_paths(numbered)
+    paths = tuple(
+        resume.paths[number] if number < len(resume.paths) else numbered[number]
+        for number in range(len(selections))
+    )
+    return dataclasses.replace(
+        resume,
+        selections=tuple(selections),
+        paths=paths,
+        done=kept,
+        source_path=None,
+        source_size=None,
+        source_sections=None,
+    )
 
 
 # ============ 진행 이벤트 변환식 (구 MonitorThread / MonitorM3U8Thread) ============
