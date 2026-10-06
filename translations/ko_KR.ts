@@ -20,6 +20,38 @@
         <translation>해상도를 바꿔 프레임률이 달라져, 구간을 새 프레임에 맞게 옮겼습니다.</translation>
     </message>
     <message>
+        <source>end moved to the video length</source>
+        <translation>끝을 영상 길이에 맞춤</translation>
+    </message>
+    <message>
+        <source>sections outside the video</source>
+        <translation>영상 길이를 벗어난 구간 있음</translation>
+    </message>
+    <message>
+        <source>checking length</source>
+        <translation>길이 확인 중</translation>
+    </message>
+    <message>
+        <source>length not checked</source>
+        <translation>길이 미확인</translation>
+    </message>
+    <message>
+        <source>A section that reached the end now ends at the end of this resolution.</source>
+        <translation>영상 끝까지 받던 구간의 끝을 이 해상도의 영상 길이에 맞췄습니다.</translation>
+    </message>
+    <message>
+        <source>Some sections are longer than this resolution. Edit the sections.</source>
+        <translation>이 해상도의 영상 길이를 벗어난 구간이 있습니다. 구간을 고쳐 주세요.</translation>
+    </message>
+    <message>
+        <source>Checking the length of this resolution...</source>
+        <translation>이 해상도의 영상 길이를 확인하는 중...</translation>
+    </message>
+    <message>
+        <source>Could not check the length of this resolution. Open the section editor to check again.</source>
+        <translation>이 해상도의 영상 길이를 확인하지 못했습니다. 구간 편집 창을 열면 다시 확인합니다.</translation>
+    </message>
+    <message>
         <source>Click to edit sections</source>
         <translation>누르면 구간을 편집합니다</translation>
     </message>

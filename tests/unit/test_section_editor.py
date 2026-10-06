@@ -71,24 +71,39 @@ def _no_network(monkeypatch):
 
 @pytest.fixture
 def basis(monkeypatch):
-    """프레임률 · 영상 길이 조회 대역 — 기본 60fps · 1시간. 값을 바꾸거나 실패시킬 수 있다."""
+    """프레임률 · 영상 길이 조회 대역 — 기본 60fps · 1시간.
+
+    해상도마다 다른 값을 돌려주거나(by_resolution) 실패시키고(fail_resolutions), 조회가 끝나는
+    때를 테스트가 정할 수 있다(gate — 모든 조회, gates — 해상도별).
+    """
 
     class _Basis:
         fps = Fraction(60)
         duration = HOUR
         fail = False
-        calls: list = []
-        # 조회가 끝나는 때를 테스트가 정한다 — 내려 두면 조회가 올릴 때까지 기다린다
-        gate = threading.Event()
+        calls: list = []  # 조회에 넘어온 것(편집 창은 카드 데이터, 다시 맞추기는 그 순간의 사본)
+        returned: list = []  # 조회가 끝난 해상도 — 끝난 순서대로
+        by_resolution: dict = {}  # 해상도 → (프레임률, 길이)
+        fail_resolutions: set = set()
+        gate = threading.Event()  # 내려 두면 모든 조회가 기다린다
+        gates: dict = {}  # 해상도 → Event. 내려 두면 그 해상도의 조회가 기다린다
 
     def probe(item):
         _Basis.calls.append(item)
+        resolution = getattr(item, "resolution", None)
         assert _Basis.gate.wait(5), "조회 대역의 문이 열리지 않았다"
-        if _Basis.fail:
-            raise RuntimeError("조회 실패(대역)")
-        return SectionBasis(fps=_Basis.fps, duration=_Basis.duration)
+        if resolution in _Basis.gates:
+            assert _Basis.gates[resolution].wait(5), "조회 대역의 해상도별 문이 열리지 않았다"
+        try:
+            if _Basis.fail or resolution in _Basis.fail_resolutions:
+                raise RuntimeError("조회 실패(대역)")
+            fps, duration = _Basis.by_resolution.get(resolution, (_Basis.fps, _Basis.duration))
+            return SectionBasis(fps=fps, duration=duration)
+        finally:
+            _Basis.returned.append(resolution)
 
-    _Basis.calls = []
+    _Basis.calls, _Basis.returned = [], []
+    _Basis.by_resolution, _Basis.fail_resolutions, _Basis.gates = {}, set(), {}
     _Basis.gate.set()
     monkeypatch.setattr(section_basis, "probe_section_basis", probe)
     return _Basis
@@ -191,6 +206,26 @@ def press_cancel(dialog) -> None:
 
 def summary_text(win: VodDownloader, item: ContentItem) -> str:
     return shown(win.listView.widgetFor(item).fileSizeLabel)
+
+
+def notice_of(win: VodDownloader, item: ContentItem) -> str:
+    """카드가 구간 요약 뒤에 붙이는 알림 — 폭이 모자라 떼인 것과 무관한 전문.
+
+    알림은 3행에 들어갈 때만 요약 뒤에 붙는다. 들어가는 폭은 폰트마다 달라(로컬과 CI의
+    offscreen 폰트가 다르다) 라벨의 글자로 재면 폰트에 기댄다. 카드가 만든 알림 전문을 읽고,
+    라벨에는 요약이 보이고 그 뒤가 전문의 일부(전부 · 경고만 · 없음)인지만 본다.
+    """
+    widget = win.listView.widgetFor(item)
+    notice = widget._sectionNotice()
+    base = widget._sectionSummary(with_notice=False)
+    text = summary_text(win, item)
+    allowed = {
+        base,
+        f"{base} · {notice}",
+        f"{base} · {widget._sectionNotice(warnings_only=True)}".removesuffix(" · "),
+    }
+    assert text in allowed, f"요약 자리의 글이 요약 · 알림의 조합이 아니다: {text!r}"
+    return notice
 
 
 # ================================================================ 열기
@@ -744,6 +779,31 @@ def test_sections_are_not_written_when_the_card_left_waiting_while_the_editor_wa
     assert win._sectionDialog is None
 
 
+# ================================================================ 배치 중 편집
+
+
+def test_a_waiting_card_can_be_edited_while_another_card_is_downloading(
+    qtbot, tmp_path, basis, started
+):
+    """다른 카드가 받는 중이어도 대기 카드의 편집 창이 열리고 구간이 쓰여야 한다.
+
+    카드 A가 RUNNING, 카드 B가 대기. B의 구간 요약을 누르고 00:10:00:00~00:20:00:00을 확인
+    -> 편집 창이 열린다, B의 selections == ((600, 1200),), 새로 시작된 카드 없음
+    """
+    first, second = _make_item(str(tmp_path), "A"), _make_item(str(tmp_path), "B")
+    win = open_window(tmp_path, first, second)
+    first.downloadState = DownloadState.RUNNING
+    win.contentManager.model.notifyChanged(first)
+    _pump()
+
+    dialog = open_editor(qtbot, win, second)
+    set_rows(dialog, [("00:10:00:00", "00:20:00:00")])
+    press_ok(dialog)
+
+    assert second.selections == (TimeRange(600.0, 1200.0),)
+    assert started == []
+
+
 # ================================================================ 해상도 변경
 
 
@@ -759,41 +819,110 @@ def _pick(win: VodDownloader, item: ContentItem, resolution: int) -> None:
     assert item.resolution == resolution, "전제: 해상도가 바뀌어야 한다"
 
 
-def test_changing_to_a_resolution_with_another_frame_rate_refits_the_sections_and_tells_the_user(
+def _refitter(win: VodDownloader):
+    return win.contentManager._sectionRefitter
+
+
+def settle(qtbot, win: VodDownloader, pending: int = 0) -> None:
+    """결과를 기다리는 조회가 pending건이 될 때까지 기다린다."""
+    qtbot.waitUntil(lambda: _refitter(win).pendingCount() == pending, timeout=5000)
+    _pump()
+
+
+def give_sections(qtbot, win: VodDownloader, item: ContentItem, rows) -> tuple:
+    """편집 창으로 구간을 넣는다 — 60fps · 1시간으로 확인된 구간이 된다."""
+    dialog = open_editor(qtbot, win, item)
+    set_rows(dialog, rows)
+    press_ok(dialog)
+    assert len(item.selections) == len(rows), "전제: 구간이 쓰여야 한다"
+    return item.selections
+
+
+def _on_grid(seconds: float, fps: int) -> bool:
+    return abs(seconds * fps - round(seconds * fps)) < 1e-9
+
+
+ODD = [("00:00:10:31", "00:00:20:01")]  # 60fps의 홀수 프레임 — 30fps에는 없는 자리다
+
+
+def test_changing_resolution_refits_by_the_declared_rate_at_once_and_marks_the_length_unchecked(
     qtbot, tmp_path, basis
 ):
-    """프레임률이 다른 해상도로 바꾸면 구간이 새 프레임에 다시 맞춰지고 카드에 알림이 떠야 한다.
+    """해상도를 바꾸면 조회가 끝나기 전에도 선언 프레임률로 맞추고 길이를 확인하는 중이라고 알려야 한다.
 
-    60fps에서 00:00:10:31~00:00:20:01(10.5167초~20.0167초)을 정한 뒤 480p(30fps)를 고름
-    -> 시작 · 끝이 30fps의 프레임 경계이고, 옮겨진 거리가 30fps의 반 프레임(1/60초) 이하다
-    -> 요약에 "refit to 30fps", section_frame_rate == 30
+    60fps에서 정한 10.5167~20.0167초, 480p의 선언값 30fps, 480p의 조회는 붙잡아 둠
+    -> 곧바로: 시작 · 끝이 30fps의 프레임 경계, section_check == "pending",
+       알림 == "refit to 30fps · checking length"
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
-    dialog = open_editor(qtbot, win, item)
-    set_rows(dialog, [("00:00:10:31", "00:00:20:01")])
-    press_ok(dialog)
-    before = item.selections[0]
-    assert (before.start, before.end) == pytest.approx((10 + 31 / 60, 20 + 1 / 60))
+    give_sections(qtbot, win, item, ODD)
+    basis.gates[480] = threading.Event()
+    try:
+        _pick(win, item, 480)
+
+        after = item.selections[0]
+        assert _on_grid(after.start, 30) and _on_grid(after.end, 30)
+        assert item.section_check == "pending"
+        assert notice_of(win, item) == "refit to 30fps · checking length"
+    finally:
+        basis.gates[480].set()
+        settle(qtbot, win)
+
+
+def test_the_looked_up_frame_rate_and_length_settle_the_sections(qtbot, tmp_path, basis):
+    """조회가 끝나면 조회한 프레임률로 다시 맞추고 길이 확인 표시를 지워야 한다.
+
+    60fps에서 정한 10.5167~20.0167초, 480p의 조회값 30fps · 3600초
+    -> 시작 · 끝이 30fps의 프레임 경계이고 원래 시각에서 반 프레임(1/60초) 이내,
+       section_frame_rate == 30, section_check == "", 알림 == "refit to 30fps"
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    before = give_sections(qtbot, win, item, ODD)[0]
+    basis.by_resolution[480] = (Fraction(30), HOUR)
 
     _pick(win, item, 480)
+    settle(qtbot, win)
 
     after = item.selections[0]
     for moved, original in ((after.start, before.start), (after.end, before.end)):
-        assert moved * 30 == pytest.approx(round(moved * 30), abs=1e-9), (
-            "30fps의 프레임 경계가 아니다"
-        )
+        assert _on_grid(moved, 30), "30fps의 프레임 경계가 아니다"
         assert abs(moved - original) <= 1 / 60 + 1e-9
     assert (after.start, after.end) != (before.start, before.end)
-    assert item.section_frame_rate == Fraction(30)
-    assert summary_text(win, item) == "Sections 1 · 0:09 · refit to 30fps"
+    assert item.section_frame_rate == Fraction(30) and item.section_check == ""
+    assert notice_of(win, item) == "refit to 30fps"
+    assert [call.resolution for call in basis.calls[1:]] == [480], "새 해상도로 조회해야 한다"
 
 
-def test_changing_to_a_resolution_with_the_same_frame_rate_changes_nothing(qtbot, tmp_path, basis):
-    """프레임률이 같은 해상도로 바꾸면 구간이 그대로이고 알림이 없어야 한다.
+def test_the_looked_up_rate_wins_over_the_declared_rate(qtbot, tmp_path, basis):
+    """선언값과 조회값이 다르면 조회값으로 맞춰야 한다.
 
-    1080p · 720p 모두 60fps인 카드에서 00:00:10:31~00:00:20:01을 정한 뒤 720p를 고름
-    -> selections가 같은 객체, 요약 "Sections 1 · 0:09"
+    480p의 선언값 30fps, 조회값 25fps · 3600초. 60fps에서 정한 10.5167~20.0167초
+    -> 시작 · 끝이 25fps의 프레임 경계이고 원래 시각에서 반 프레임(1/50초) 이내,
+       section_frame_rate == 25, 알림 == "refit to 25fps"
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    before = give_sections(qtbot, win, item, ODD)[0]
+    basis.by_resolution[480] = (Fraction(25), HOUR)
+
+    _pick(win, item, 480)
+    settle(qtbot, win)
+
+    after = item.selections[0]
+    for moved, original in ((after.start, before.start), (after.end, before.end)):
+        assert _on_grid(moved, 25), "25fps의 프레임 경계가 아니다"
+        assert abs(moved - original) <= 1 / 50 + 1e-9
+    assert item.section_frame_rate == Fraction(25)
+    assert notice_of(win, item) == "refit to 25fps"
+
+
+def test_same_frame_rate_and_length_change_nothing(qtbot, tmp_path, basis):
+    """프레임률 · 길이가 같은 해상도로 바꾸면 구간이 그대로이고 알림이 남지 않아야 한다.
+
+    1080p · 720p 모두 60fps · 3600초인 카드에서 10.5167~20.0167초를 정한 뒤 720p를 고름
+    -> 조회가 끝난 뒤 selections가 같은 객체, 요약 == "Sections 1 · 0:09"
     """
     item = _make_item(str(tmp_path))
     item.unique_reps = [
@@ -801,78 +930,245 @@ def test_changing_to_a_resolution_with_the_same_frame_rate_changes_nothing(qtbot
         StreamEntry(720, "u2", frame_rate=60.0),
     ]
     win = open_window(tmp_path, item)
-    dialog = open_editor(qtbot, win, item)
-    set_rows(dialog, [("00:00:10:31", "00:00:20:01")])
-    press_ok(dialog)
-    before = item.selections
+    before = give_sections(qtbot, win, item, ODD)
 
     _pick(win, item, 720)
+    settle(qtbot, win)
 
     assert item.selections is before
-    assert item.section_notice == ""
+    assert item.section_refit_fps is None and item.section_check == ""
     assert summary_text(win, item) == "Sections 1 · 0:09"
+
+
+def test_a_section_that_reached_the_end_follows_the_new_length(qtbot, tmp_path, basis):
+    """옛 영상의 끝에 닿아 있던 구간은 새 길이에 맞춰 끝이 옮겨지고 카드에 적혀야 한다.
+
+    60fps · 3600초에서 3540~3600초(끝 = 영상 끝)를 정함. 480p의 조회값 30fps · 3590초
+    -> 구간 == (3540, 3590), section_end_fitted, 요약 자리의 툴팁에 끝을 옮겼다는 문장
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    give_sections(qtbot, win, item, [("00:59:00:00", "01:00:00:00")])
+    basis.by_resolution[480] = (Fraction(30), 3590.0)
+
+    _pick(win, item, 480)
+    settle(qtbot, win)
+
+    assert item.selections == (TimeRange(3540.0, 3590.0),)
+    assert item.section_end_fitted and not item.section_out_of_range
+    # 요약 뒤의 알림은 폭이 모자라면 떼인다 — 폭과 무관한 툴팁으로 잰다
+    tooltip = win.listView.widgetFor(item).fileSizeLabel.toolTip()
+    assert "A section that reached the end now ends at the end of this resolution." in tooltip
+
+
+def test_a_section_past_the_new_length_is_left_alone_and_flagged(qtbot, tmp_path, basis):
+    """영상 끝에 닿아 있지 않던 구간이 새 길이를 벗어나면 고치지 않고 벗어났다고 알려야 한다.
+
+    60fps · 3600초에서 600~1200초와 3500~3595초를 정함. 480p의 조회값 30fps · 3590초
+    -> 구간 == ((600, 1200), (3500, 3595)), section_out_of_range, 요약 자리의 툴팁에 벗어났다는 문장
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    give_sections(
+        qtbot, win, item, [("00:10:00:00", "00:20:00:00"), ("00:58:20:00", "00:59:55:00")]
+    )
+    basis.by_resolution[480] = (Fraction(30), 3590.0)
+
+    _pick(win, item, 480)
+    settle(qtbot, win)
+
+    assert item.selections == (TimeRange(600.0, 1200.0), TimeRange(3500.0, 3595.0))
+    assert item.section_out_of_range and not item.section_end_fitted
+    tooltip = win.listView.widgetFor(item).fileSizeLabel.toolTip()
+    assert "Some sections are longer than this resolution. Edit the sections." in tooltip
+
+
+def test_a_failed_lookup_keeps_the_declared_refit_and_says_the_length_is_unchecked(
+    qtbot, tmp_path, basis
+):
+    """조회가 실패하면 선언값으로 맞춘 구간을 두고 길이를 확인하지 못했다고 알려야 한다.
+
+    60fps에서 정한 10.5167~20.0167초, 480p의 선언값 30fps, 480p의 조회는 예외
+    -> 시작 · 끝이 30fps의 프레임 경계, section_check == "unverified",
+       알림 == "refit to 30fps · length not checked"
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    give_sections(qtbot, win, item, ODD)
+    basis.fail_resolutions.add(480)
+
+    _pick(win, item, 480)
+    settle(qtbot, win)
+
+    after = item.selections[0]
+    assert _on_grid(after.start, 30) and _on_grid(after.end, 30)
+    assert item.section_check == "unverified"
+    assert notice_of(win, item) == "refit to 30fps · length not checked"
+
+
+def test_a_late_result_for_an_earlier_resolution_is_dropped(qtbot, tmp_path, basis):
+    """조회가 끝나기 전에 해상도를 또 바꾸면 앞 해상도의 늦은 결과를 버려야 한다.
+
+    1080p(60) · 720p(60) · 480p(선언 30) 카드. 480p를 고르고(조회 붙잡음) 곧 720p를 고름.
+    720p의 조회(60fps · 3600초)를 먼저 끝내고, 그 뒤에 480p의 조회(25fps · 3000초)를 끝냄
+    -> 끝까지 selections == 처음 정한 구간, section_frame_rate == 60, 요약 == "Sections 1 · 0:09"
+    """
+    item = _make_item(str(tmp_path))
+    item.unique_reps = [
+        StreamEntry(1080, "u1", frame_rate=60.0),
+        StreamEntry(720, "u2", frame_rate=60.0),
+        StreamEntry(480, "u3", frame_rate=30.0),
+    ]
+    win = open_window(tmp_path, item)
+    before = give_sections(qtbot, win, item, ODD)
+    basis.by_resolution[480] = (Fraction(25), 3000.0)
+    basis.gates[480], basis.gates[720] = threading.Event(), threading.Event()
+    try:
+        _pick(win, item, 480)
+        _pick(win, item, 720)
+        assert _refitter(win).pendingCount() == 2
+
+        basis.gates[720].set()  # 새 해상도의 결과가 먼저 온다
+        settle(qtbot, win, pending=1)
+        assert item.selections == before and item.section_check == ""
+
+        basis.gates[480].set()  # 앞 해상도의 결과가 늦게 온다
+        settle(qtbot, win)
+    finally:
+        basis.gates[480].set()
+        basis.gates[720].set()
+
+    assert basis.returned[-2:] == [720, 480], "전제: 480p의 결과가 나중에 와야 한다"
+    assert item.selections == before
+    assert item.section_frame_rate == Fraction(60)
+    assert summary_text(win, item) == "Sections 1 · 0:09"
+
+
+def test_a_result_that_arrives_after_the_download_started_is_dropped(qtbot, tmp_path, basis):
+    """조회가 끝나기 전에 받기 시작한 카드에는 늦은 결과를 쓰지 않아야 한다.
+
+    480p를 고르고(조회 붙잡음, 조회값 25fps · 3000초) 카드 상태를 RUNNING으로 바꾼 뒤 조회를 끝냄
+    -> selections가 받기 시작할 때의 객체 그대로, section_frame_rate == 30(선언값)
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    give_sections(qtbot, win, item, ODD)
+    basis.by_resolution[480] = (Fraction(25), 3000.0)
+    basis.gates[480] = threading.Event()
+    try:
+        _pick(win, item, 480)
+        at_start = item.selections
+        item.downloadState = DownloadState.RUNNING
+        win.contentManager.model.notifyChanged(item)
+    finally:
+        basis.gates[480].set()
+    settle(qtbot, win)
+
+    assert basis.returned[-1] == 480, "전제: 조회가 끝나야 한다"
+    assert item.selections is at_start
+    assert item.section_frame_rate == Fraction(30)
+
+
+def test_a_result_that_arrives_after_the_card_was_deleted_is_dropped(qtbot, tmp_path, basis):
+    """조회가 끝나기 전에 지운 카드에는 늦은 결과를 쓰지 않아야 한다.
+
+    480p를 고르고(조회 붙잡음, 조회값 25fps · 3000초) 카드를 지운 뒤 조회를 끝냄
+    -> selections가 지울 때의 객체 그대로, section_frame_rate == 30(선언값)
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    give_sections(qtbot, win, item, ODD)
+    basis.by_resolution[480] = (Fraction(25), 3000.0)
+    basis.gates[480] = threading.Event()
+    try:
+        _pick(win, item, 480)
+        at_delete = item.selections
+        win.contentManager.removeItem(item)
+        _pump()
+    finally:
+        basis.gates[480].set()
+    settle(qtbot, win)
+
+    assert basis.returned[-1] == 480, "전제: 조회가 끝나야 한다"
+    assert item.selections is at_delete
+    assert item.section_frame_rate == Fraction(30)
 
 
 def test_editing_again_clears_the_refit_notice(qtbot, tmp_path, basis):
     """다시 맞춘 알림은 구간을 다시 편집해 확인하면 사라져야 한다.
 
-    60fps에서 정한 구간을 480p(30fps)로 옮겨 알림이 뜬 뒤, 30fps로 편집 창을 열어 확인
-    -> 요약에 "refit" 없음
+    60fps에서 정한 구간을 480p(30fps)로 옮겨 알림이 뜬 뒤, 편집 창을 열어 확인
+    -> 요약 == "Sections 1 · 0:09"
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
-    dialog = open_editor(qtbot, win, item)
-    set_rows(dialog, [("00:00:10:31", "00:00:20:01")])
-    press_ok(dialog)
+    give_sections(qtbot, win, item, ODD)
+    basis.by_resolution[480] = (Fraction(30), HOUR)
     _pick(win, item, 480)
-    assert "refit" in summary_text(win, item)
+    settle(qtbot, win)
+    assert notice_of(win, item) == "refit to 30fps"
 
-    basis.fps = Fraction(30)
     dialog = open_editor(qtbot, win, item)
     press_ok(dialog)
 
-    assert "refit" not in summary_text(win, item)
+    assert summary_text(win, item) == "Sections 1 · 0:09"
     assert len(item.selections) == 1
 
 
-def test_whole_download_card_keeps_showing_the_file_size_after_a_resolution_change(tmp_path, basis):
-    """구간 없는 카드는 해상도를 바꿔도 요약 자리에 구간 요약이나 알림이 나오지 않아야 한다.
+def test_whole_download_card_changes_resolution_without_a_lookup(qtbot, tmp_path, basis):
+    """구간 없는 카드는 해상도를 바꿔도 조회를 돌리지 않고 요약 자리에 구간 요약이 나오지 않아야 한다.
 
     구간 없는 mp4 카드에서 480p를 고름
-    -> selections == (), 요약 자리의 글자에 "Sections" · "refit" 없음
+    -> 조회 0건, selections == (), 요약 자리의 글자에 "Sections" · "refit" · "length" 없음
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
 
     _pick(win, item, 480)
+    settle(qtbot, win)
 
-    assert item.selections == () and item.section_notice == ""
+    assert basis.calls == []
+    assert item.selections == () and item.section_check == ""
     text = summary_text(win, item)
-    assert "Sections" not in text and "refit" not in text
+    assert not any(word in text for word in ("Sections", "refit", "length"))
 
 
-def test_refit_notice_gives_way_when_it_does_not_fit_in_the_row(qtbot, tmp_path, basis):
+def test_picking_the_resolution_already_picked_starts_no_lookup(qtbot, tmp_path, basis):
+    """이미 고른 해상도를 다시 고르면 조회를 돌리지 않아야 한다.
+
+    구간이 있는 카드(1080p)에서 1080p 버튼을 다시 누름
+    -> 편집 창의 조회 1건뿐, section_check == ""
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    give_sections(qtbot, win, item, ODD)
+
+    _pick(win, item, 1080)
+    settle(qtbot, win)
+
+    assert len(basis.calls) == 1
+    assert item.section_check == ""
+
+
+def test_notice_gives_way_when_it_does_not_fit_in_the_row(qtbot, tmp_path, basis):
     """알림까지 붙인 요약이 3행에 안 들어가면 알림을 떼고 요약만 적어야 한다.
 
-    구간 하나인 대기 카드의 알림을 어떤 창 폭보다도 긴 글("가" 400자)로 둠
+    구간 하나인 대기 카드의 알림을 어떤 창 폭보다도 긴 글(프레임률 숫자 400자리)로 둠
     -> 요약 자리의 글 == "Sections 1 · 0:09"(알림 없음), 툴팁에는 알림 문장이 남는다
     -> 고른 해상도 버튼이 제 폭보다 좁게 눌리지 않고, 카드가 목록 폭을 넘지 않는다
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
-    dialog = open_editor(qtbot, win, item)
-    set_rows(dialog, [("00:00:10:31", "00:00:20:01")])
-    press_ok(dialog)
+    give_sections(qtbot, win, item, ODD)
     widget = win.listView.widgetFor(item)
 
-    item.section_notice = "가" * 400  # 폭을 폰트에서 유도하지 않아도 어떤 행보다 길다
+    item.section_refit_fps = Fraction(10**400)  # 폭을 폰트에서 유도하지 않아도 어떤 행보다 길다
     win.contentManager.model.notifyChanged(item)
     _pump()
 
     assert summary_text(win, item) == "Sections 1 · 0:09"
-    assert (
-        "Sections were moved to the frames of the new frame rate." in widget.fileSizeLabel.toolTip()
-    )
+    tooltip = widget.fileSizeLabel.toolTip()
+    assert "Sections were moved to the frames of the new frame rate." in tooltip
     selected = widget._selectedButton
     assert selected.isVisible() and selected.width() >= selected.minimumSizeHint().width()
     assert widget.width() <= win.listView.viewport().width()

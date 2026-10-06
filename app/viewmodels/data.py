@@ -3,6 +3,10 @@
 from core.api.representations import file_tag, is_original, shown_frame_rate
 from core.models.download_state import DownloadState
 
+# ContentItem.section_check의 값 — 해상도를 바꾼 뒤 새 해상도의 길이를 확인하는 조회의 상태
+SECTION_CHECK_PENDING = "pending"  # 조회 중 — 구간은 선언 프레임률로만 맞춰져 있다
+SECTION_CHECK_UNVERIFIED = "unverified"  # 조회 실패 — 길이를 확인하지 못했다
+
 # 세그먼트 단위로 받는 타입 — 전체 크기를 미리 알 수 없어 진행률·표시가
 # 세그먼트 수 기반이다 (m3u8: 라이브 다시보기, hls_aes: AES 암호화 VOD #57)
 SEGMENT_BASED_TYPES = ("m3u8", "hls_aes")
@@ -38,12 +42,22 @@ class ContentItem:
         # 제목을 가리키는 값, core.models.section_resume.SectionResume). 다음 다운로드가 끝나지
         # 않은 구간만 다시 처리하는 데 쓴다. 없으면 None이다
         self.section_retry = None
-        # 구간을 정할 때의 프레임률(Fraction) — 구간 편집 창이 조회한 값이다. 해상도를 바꿔
-        # 프레임률이 달라지면 구간을 새 프레임에 다시 맞추는 기준이다. 구간이 없으면 None
+        # 지금의 구간이 맞춰져 있는 프레임률(Fraction). 조회한 값이거나, 해상도를 바꾼 직후
+        # 조회가 끝나기 전에는 목록 항목의 선언값이다. 구간이 없으면 None
         self.section_frame_rate = None
-        # 구간 요약 뒤에 붙이는 한 줄 알림(번역된 문자열) — 프레임률이 바뀌어 구간을 다시
-        # 맞췄을 때 채운다. 구간을 다시 편집하면 비운다
-        self.section_notice = ""
+        # 조회한 값으로 마지막에 확인한 (구간 목록, app.section_basis.SectionBasis) — 구간 편집
+        # 창이 확인할 때와, 해상도를 바꾼 뒤의 조회가 끝날 때 채운다. 해상도를 바꾸면 이 구간을
+        # 새 프레임률 · 길이에 다시 맞춘다(맞춘 것을 또 맞추지 않는다). 구간이 없으면 None
+        self.section_verified = None
+        # 해상도를 바꾼 뒤 새 해상도의 길이를 확인했는지 — ""(확인함 · 바꾼 적 없음) ·
+        # SECTION_CHECK_PENDING(조회 중) · SECTION_CHECK_UNVERIFIED(조회 실패)
+        self.section_check = ""
+        # 구간 요약 뒤에 붙이는 알림의 재료 — 문구는 카드가 만든다. 구간을 다시 편집하면 비운다
+        self.section_refit_fps = None  # 구간을 이 프레임률(Fraction)의 프레임에 다시 맞췄다
+        self.section_end_fitted = False  # 영상 끝에 닿아 있던 구간의 끝을 새 길이에 맞췄다
+        self.section_out_of_range = False  # 새 길이를 벗어난 구간이 있다(고치지 않고 둔다)
+        # 고른 해상도 항목의 선언 프레임률(소수). 선언이 없으면 None
+        self.selected_frame_rate = None
 
         self.unique_reps = unique_reps
         
@@ -85,6 +99,7 @@ class ContentItem:
         self.resolution = rep[0]
         self.base_url = rep[1]
         self.stream = getattr(rep, "stream", None)
+        self.selected_frame_rate = getattr(rep, "frame_rate", None)
         self.resolution_tag = file_tag(self.unique_reps, rep)
 
     @staticmethod

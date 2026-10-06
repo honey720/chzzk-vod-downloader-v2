@@ -343,6 +343,7 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         self.listView.pauseRequested.connect(self.onCardPause)
         self.listView.retryRequested.connect(self.onCardRetry)
         self.listView.sectionEditRequested.connect(self.onCardSectionEdit)
+        self.listView.sectionRefitRequested.connect(self.contentManager.refitSections)
 
     def onCardPause(self, item: ContentItem) -> None:
         """진행 카드의 ⏸ — 전역 일시정지/재개 토글과 같은 경로를 탄다 (#245).

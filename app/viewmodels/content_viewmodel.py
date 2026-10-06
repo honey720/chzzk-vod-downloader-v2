@@ -37,6 +37,7 @@ from app.viewmodels.item_state import ItemState
 from app.viewmodels.path_gates import check_download_path
 from app.viewmodels.data import ContentItem
 from app.viewmodels.model import ContentListModel
+from app.viewmodels.section_edit_viewmodel import SectionRefitter
 from app.network import NetworkManager
 from core.services import metadata_service
 from core.services.metadata_service import MetadataError
@@ -215,6 +216,8 @@ class ContentViewModel(QObject):
         self._editingItem: ContentItem | None = None
         # 편집 중인 카드만 남아 배치를 끝내지 않고 멈춰 둔 상태 — 창을 닫으면 이어 간다
         self._heldForEdit = False
+        # 구간이 있는 카드의 해상도가 바뀌면 구간을 새 해상도에 다시 맞춘다 (#309)
+        self._sectionRefitter = SectionRefitter(self.model, self.threadpool, self)
 
     def fetchContent(self, vod_url: str, cookies: dict, downloadPath: str) -> None:
         # 조회가 끝나기 전에도 카드가 보이도록 LOADING 상태의 자리표시 아이템을
@@ -338,6 +341,14 @@ class ContentViewModel(QObject):
             self._heldForEdit = True
         else:
             self.finishedAllRequested.emit()
+
+    def refitSections(self, item: ContentItem) -> None:
+        """구간이 있는 카드의 해상도가 바뀌었다 — 구간을 새 해상도에 다시 맞춘다 (#309).
+
+        곧바로 선언 프레임률로 맞추고, 새 해상도의 프레임률 · 길이를 백그라운드에서 조회해
+        그 값으로 다시 맞춘다(``SectionRefitter``). 구간이 없는 카드는 조회하지 않는다.
+        """
+        self._sectionRefitter.request(item)
 
     def beginSectionEdit(self, item: ContentItem) -> None:
         """구간 편집 창이 열린 카드를 다운로드 대상에서 뺀다 (#309).

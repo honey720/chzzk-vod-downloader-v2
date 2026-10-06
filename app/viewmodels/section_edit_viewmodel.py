@@ -15,12 +15,19 @@
 
 import logging
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from fractions import Fraction
+from types import SimpleNamespace
 
 from PySide6.QtCore import QObject, QThreadPool, Signal
 
 import app.section_basis as section_basis
-from app.viewmodels.data import ContentItem
+from app.section_basis import SectionBasis
+from app.viewmodels.data import (
+    SECTION_CHECK_PENDING,
+    SECTION_CHECK_UNVERIFIED,
+    ContentItem,
+)
 from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
 from core.utils.selections import (
@@ -93,6 +100,53 @@ def refit_selections(selections: Sequence[TimeRange], fps: Fraction) -> tuple[Ti
         last = max(frame_index(selection.end, rate), first + 1)
         refit.append(TimeRange(float(Fraction(first) / rate), float(Fraction(last) / rate)))
     return tuple(refit)
+
+
+@dataclass(frozen=True)
+class RefitResult:
+    """구간을 새 기준값(프레임률 · 길이)에 다시 맞춘 결과를 담는다."""
+
+    selections: tuple[TimeRange, ...]  # 다시 맞춘 구간. 바뀐 것이 없으면 받은 튜플 그대로다
+    regridded: bool  # 프레임률이 달라 구간을 새 프레임 경계로 옮겼다
+    end_fitted: bool  # 영상 끝에 닿아 있던 구간의 끝을 새 길이에 맞춰 옮겼다
+    out_of_range: bool  # 새 길이를 벗어난 구간이 남아 있다
+
+
+def refit_to_basis(
+    selections: tuple[TimeRange, ...], old: SectionBasis, new: SectionBasis
+) -> RefitResult:
+    """조회한 기준값으로 구간을 다시 맞춘다 — 프레임은 시각 기준으로, 끝은 새 길이에.
+
+    - 프레임률이 다르면 시작 · 끝을 새 프레임률의 가장 가까운 프레임 경계로 옮긴다
+      (``refit_selections``)
+    - **옛 영상의 끝에 닿아 있던 구간**(``reaches_end``)은 끝을 새 영상의 끝에 둔다. "끝까지"
+      받으려던 구간이 새 해상도에서도 끝까지 가고, 새 영상이 더 짧으면 그 길이로 줄어든다
+    - 그 밖의 구간이 새 길이를 벗어나면 **고치지 않고** 벗어났다고만 알린다 — 어디를 받을지를
+      대신 정하지 않는다
+
+    Args:
+        selections: 옛 기준값으로 확인된 구간
+        old: 그 구간을 확인한 기준값
+        new: 새 해상도에서 조회한 기준값
+    """
+    old_rate, new_rate = frame_rate(old.fps), frame_rate(new.fps)
+    regridded = old_rate != new_rate
+    moved = refit_selections(selections, new_rate) if regridded else selections
+    new_end = last_frame_seconds(new.duration, new_rate)
+    refit: list[TimeRange] = []
+    end_fitted = out_of_range = False
+    for before, after in zip(selections, moved):
+        start, end = after.start, after.end
+        if reaches_end(before.end, old.duration, old_rate) and start < new_end:
+            if frame_index(end, new_rate) != frame_index(new_end, new_rate):
+                end_fitted = True
+            end = new_end
+        if _violations_of((start, end), new.duration, new_rate):
+            out_of_range = True
+        refit.append(after if (start, end) == (after.start, after.end) else TimeRange(start, end))
+    if not regridded and not end_fitted:
+        return RefitResult(selections, False, False, out_of_range)
+    return RefitResult(tuple(refit), regridded, end_fitted, out_of_range)
 
 
 def last_frame_seconds(duration: float, fps: Fraction) -> float:
@@ -369,9 +423,16 @@ class SectionEditViewModel(QObject):
             logger.info("구간 편집 무시 — 창이 열린 사이 상태가 %s로 바뀜", self.item.downloadState)
             return False
         selections = self.selections()
+        basis = SectionBasis(fps=self.fps, duration=self.duration)
         self.item.selections = selections
         self.item.section_frame_rate = self.fps if selections else None
-        self.item.section_notice = ""
+        # 조회한 값으로 확인한 구간이다 — 해상도를 바꾸면 이것을 다시 맞춘다. 돌고 있던
+        # 다시 맞추기 조회의 결과는 버려진다(section_check가 조회 중이 아니게 된다)
+        self.item.section_verified = (selections, basis) if selections else None
+        self.item.section_check = ""
+        self.item.section_refit_fps = None
+        self.item.section_end_fitted = False
+        self.item.section_out_of_range = False
         logger.info("구간 편집: %d개 (%sfps)", len(selections), format_fps(self.fps))
         if self._notify is not None:
             self._notify(self.item)
@@ -395,3 +456,138 @@ class SectionEditViewModel(QObject):
             SELECTION_TOO_MANY: self.tr("Too many selections"),
         }
         return translated.get(key, key)
+
+
+class SectionRefitJob(QObject):
+    """해상도를 바꾼 뒤의 기준값 조회 한 건 — 풀 스레드에서 돌고 결과를 Signal로 메인에 넘긴다.
+
+    조회는 요청한 순간의 값(``snapshot``)으로 한다 — 카드의 값은 그사이 또 바뀔 수 있다.
+    ``token``은 요청을 가리키는 값이고 결과와 함께 돌려준다. 받는 쪽이 그것으로 늦게 온
+    결과를 가려낸다.
+    """
+
+    done = Signal(object, object)  # (token, SectionBasis 또는 None — 조회 실패)
+
+    def __init__(self, snapshot, token):
+        super().__init__()
+        self._snapshot = snapshot
+        self._token = token
+
+    def run(self) -> None:
+        """기준값을 조회해 done을 emit한다. 실패하면 값 자리에 None을 싣는다."""
+        try:
+            # 모듈 전역을 호출 시점에 조회한다 — 테스트의 monkeypatch 지점
+            basis = section_basis.probe_section_basis(self._snapshot)
+        except Exception:
+            logger.exception("해상도 변경 뒤 구간 기준값 조회 실패: %s", self._snapshot.vod_url)
+            basis = None
+        self.done.emit(self._token, basis)
+
+
+class SectionRefitter(QObject):
+    """구간이 있는 카드의 해상도가 바뀌면 구간을 새 해상도에 다시 맞춘다 (#309).
+
+    두 단계다.
+
+    1. **곧바로**: 목록 항목의 선언 프레임률로 맞춘다 — 네트워크를 타지 않는다. 카드에는
+       길이를 확인하는 중이라고 표시된다(``section_check``)
+    2. **조회가 끝나면**: 편집 창과 같은 조회(``probe_section_basis``)로 얻은 프레임률 · 길이로
+       다시 맞춘다(``refit_to_basis``). 선언값과 조회값이 다르면 조회값이 이긴다. 조회가
+       실패하면 1의 결과를 두고 길이를 확인하지 못했다고 표시한다
+
+    두 단계 모두 **마지막으로 확인된 구간**(``ContentItem.section_verified``)에서 출발한다 —
+    선언값으로 맞춘 것을 조회값으로 또 맞추면 반올림이 두 번 쌓인다.
+
+    늦게 온 결과는 버린다: 그사이 해상도를 또 바꿨거나(요청 번호가 다르다), 카드가 지워졌거나,
+    대기 상태가 아니게 됐거나(받기 시작했다), 구간을 다시 편집한 경우다.
+    """
+
+    def __init__(self, model, pool: QThreadPool, parent: QObject | None = None):
+        """
+        Args:
+            model: 목록 모델 — ``getRow`` · ``notifyChanged``를 쓴다
+            pool: 조회를 돌릴 스레드 풀
+        """
+        super().__init__(parent)
+        self._model = model
+        self._pool = pool
+        self._generation: dict[ContentItem, int] = {}  # 카드마다의 마지막 요청 번호
+        # 결과를 기다리는 조회 — (카드, 요청 번호) → 조회 객체. 결과가 올 때까지 참조를 든다(#124)
+        self._jobs: dict[tuple[ContentItem, int], SectionRefitJob] = {}
+
+    def request(self, item: ContentItem) -> None:
+        """카드의 해상도가 바뀌었다 — 구간을 선언값으로 맞추고 새 해상도의 조회를 시작한다.
+
+        구간이 없는 카드, 대기가 아닌 카드, 확인된 구간이 없는 카드는 아무것도 하지 않는다 —
+        조회도 돌리지 않는다.
+        """
+        verified = item.section_verified
+        if item.downloadState != DownloadState.WAITING or not item.selections or verified is None:
+            return
+        selections, basis = verified
+        declared = declared_frame_rate(SimpleNamespace(frame_rate=item.selected_frame_rate))
+        if declared is not None and not same_frame_rate(basis.fps, declared):
+            item.selections = refit_selections(selections, declared)
+            item.section_frame_rate = item.section_refit_fps = declared
+        else:
+            item.selections = selections
+            item.section_frame_rate, item.section_refit_fps = basis.fps, None
+        item.section_end_fitted = item.section_out_of_range = False
+        item.section_check = SECTION_CHECK_PENDING
+
+        generation = self._generation.get(item, 0) + 1
+        self._generation[item] = generation
+        token = (item, generation)
+        snapshot = SimpleNamespace(
+            content_type=item.content_type,
+            base_url=item.base_url,
+            vod_url=item.vod_url,
+            resolution=item.resolution,
+            stream=item.stream,
+        )
+        job = SectionRefitJob(snapshot, token)
+        job.done.connect(self._onDone)
+        self._jobs[token] = job
+        self._pool.start(lambda: job.run())
+        self._model.notifyChanged(item)
+
+    def pendingCount(self) -> int:
+        """결과를 기다리는 조회의 수."""
+        return len(self._jobs)
+
+    def _onDone(self, token, basis) -> None:
+        """조회 결과를 받는다 — 아직 유효한 요청이면 구간을 조회값으로 다시 맞춘다."""
+        self._jobs.pop(token, None)
+        item, generation = token
+        if self._model.getRow(item) is None:
+            self._generation.pop(item, None)  # 카드가 지워졌다
+            return
+        if self._generation.get(item) != generation:
+            return  # 그사이 해상도를 또 바꿨다 — 새 요청의 결과를 기다린다
+        if (
+            item.downloadState != DownloadState.WAITING
+            or item.section_check != SECTION_CHECK_PENDING
+            or item.section_verified is None
+        ):
+            return  # 받기 시작했거나 구간을 다시 편집했다
+        if basis is None:
+            item.section_check = SECTION_CHECK_UNVERIFIED
+            self._model.notifyChanged(item)
+            return
+        selections, old = item.section_verified
+        result = refit_to_basis(selections, old, basis)
+        rate = frame_rate(basis.fps)
+        item.selections = result.selections
+        item.section_frame_rate = rate
+        item.section_verified = (result.selections, SectionBasis(fps=rate, duration=basis.duration))
+        item.section_check = ""
+        item.section_refit_fps = rate if result.regridded else None
+        item.section_end_fitted = result.end_fitted
+        item.section_out_of_range = result.out_of_range
+        logger.info(
+            "해상도 변경으로 구간을 다시 맞춤: %sfps%s%s",
+            format_fps(rate),
+            " · 끝을 새 길이에 맞춤" if result.end_fitted else "",
+            " · 길이를 벗어난 구간 있음" if result.out_of_range else "",
+        )
+        self._model.notifyChanged(item)

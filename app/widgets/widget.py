@@ -6,13 +6,12 @@ import threading
 from PySide6.QtWidgets import QWidget, QPushButton, QMessageBox, QFileDialog, QHBoxLayout, QSizePolicy
 from PySide6.QtGui import QPainter, QPainterPath, QPixmap, QDesktopServices, QRegion
 from PySide6.QtCore import Qt, Signal, QUrl, QDir, QProcess, QRectF
-from app.viewmodels.data import ContentItem
-from app.viewmodels.section_edit_viewmodel import (
-    declared_frame_rate,
-    format_fps,
-    refit_selections,
-    same_frame_rate,
+from app.viewmodels.data import (
+    SECTION_CHECK_PENDING,
+    SECTION_CHECK_UNVERIFIED,
+    ContentItem,
 )
+from app.viewmodels.section_edit_viewmodel import format_fps
 from app.network import REQUEST_TIMEOUT
 from app.section_basis import SECTION_CONTENT_TYPES
 from core.api.session import get_thread_session
@@ -140,6 +139,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     pauseRequest = Signal()   # 진행 카드의 ⏸ (#245 상태별 조작)
     retryRequest = Signal()   # 실패 카드의 ↻ (#245 상태별 조작)
     sectionEditRequest = Signal()  # 대기 카드의 구간 요약(재생 시간 자리) 클릭 (#309)
+    # 구간이 있는 카드의 해상도가 바뀌었다 (#309) — 뷰모델이 구간을 새 해상도에 다시 맞춘다
+    sectionRefitRequest = Signal()
     expandedChanged = Signal(bool)  # 해상도 펼침/접힘 — 목록이 "한 번에 하나"를 맞춘다
 
     # 워커 스레드 → 메인 스레드 중계 (#168). 위젯·아이템 조작은 반드시 메인
@@ -482,17 +483,26 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """
         if not self._sectionCount() or self.item.downloadState != DownloadState.WAITING:
             return
-        if not getattr(self.item, "section_notice", ""):
+        if not self._sectionNotice():
             return
         label = self.fileSizeLabel
-        full, short = self._sectionSummary(), self._sectionSummary(with_notice=False)
-        need = label.fontMetrics().horizontalAdvance(full) + 4
+        others = 0
         selected = self._selectedButton or (self.buttons[0] if self.buttons else None)
         if selected is not None:
-            need += selected.naturalWidth() + CARET_WIDTH + CARET_GAP + spacing
+            others += selected.naturalWidth() + CARET_WIDTH + CARET_GAP + spacing
         if getattr(self, "_pathShown", False):
-            need += self.pathIconButton.minimumWidth() + spacing
-        text = full if need <= row_width else short
+            others += self.pathIconButton.minimumWidth() + spacing
+        # 긴 것부터 대 본다 — 전부, 유저가 봐야 하는 것만, 요약만
+        candidates = [
+            self._sectionSummary(),
+            self._sectionSummary(warnings_only=True),
+            self._sectionSummary(with_notice=False),
+        ]
+        metrics = label.fontMetrics()
+        text = next(
+            (c for c in candidates if metrics.horizontalAdvance(c) + 4 + others <= row_width),
+            candidates[-1],
+        )
         if label.text() != text:
             label.setText(text)
             self._applySectionHint()
@@ -608,12 +618,18 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
                 if button is not self._selectedButton:
                     self._selectedButton = button
                     self._layoutRowThree()  # 접힘이면 보이는 pill이 바뀐다
+            picked_before = (self.item.resolution, self.item.base_url, self.item.stream)
             self.item.resolution = resolution
             self.item.base_url = base_url
             if index is not None:
                 # 해상도가 같은 항목이 둘일 수 있다 — 고른 항목의 스트림까지 기억한다 (#318)
                 self.item.select_rep(self.item.unique_reps[index])
-                self._refitSections(self.item.unique_reps[index])
+            picked_now = (self.item.resolution, self.item.base_url, self.item.stream)
+            if picked_now != picked_before and self._sectionCount():
+                # 구간이 있는 카드의 해상도가 바뀌었다 (#309) — 구간을 새 해상도의 프레임 · 길이에
+                # 다시 맞추는 것은 뷰모델이 한다(곧바로 선언값으로, 조회가 끝나면 조회값으로).
+                # 같은 항목을 다시 고른 것(크기 조회가 늦게 도착한 자동 선택 등)은 알리지 않는다
+                self.sectionRefitRequest.emit()
             # 세그먼트 기반(m3u8·hls_aes)은 total_size를 미리 알 수 없어 처리하지 않음
             if not self.item.is_segment_based and index is not None:
                 self.item.total_size = self.item.unique_reps[index][-1]
@@ -631,28 +647,60 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
                 self.fileSizeLabel.setText(f"{self.item.unique_reps[index][-1]}")
                 self._applySectionHint()
 
-    def _refitSections(self, rep) -> None:
-        """고른 해상도의 프레임률이 구간을 정할 때와 다르면 구간을 새 프레임에 다시 맞춘다 (#309).
+    def _sectionNotice(self, warnings_only: bool = False) -> str:
+        """구간 요약 뒤에 붙이는 알림 — 해상도를 바꿔 구간에 일어난 일을 짧게 적는다 (#309).
 
-        구간은 시각(초)이라 그대로 두어도 받을 때 엔진이 가까운 프레임을 고르지만, 적어 둔
-        프레임 번호(FF)와 저장되는 프레임이 달라진다. 시각 기준으로 새 프레임률의 프레임
-        경계에 옮기고 카드에 한 줄로 알린다. 프레임률이 같으면 아무것도 바꾸지 않는다.
+        재료는 뷰모델이 아이템에 적어 둔 값이다(``section_refit_fps`` · ``section_end_fitted`` ·
+        ``section_out_of_range`` · ``section_check``). 알릴 것이 없으면 빈 문자열이다.
 
-        새 프레임률은 목록 항목의 선언값이다 — 고르는 순간에 네트워크를 타지 않는다. 선언값이
-        없거나 구간을 정할 때의 프레임률을 모르면 다시 맞추지 않는다.
+        알림은 두 무게다. **한 일을 알리는 것**(프레임에 맞춤 · 끝을 옮김)과 **유저가 봐야 하는
+        것**(길이를 벗어난 구간 · 길이 미확인)이다. 폭이 모자라면 앞의 것부터 뗀다
+        (``_fitSectionNotice``).
+
+        Args:
+            warnings_only: 유저가 봐야 하는 것만 적을지
         """
-        old_rate = getattr(self.item, "section_frame_rate", None)
-        new_rate = declared_frame_rate(rep)
-        if not self._sectionCount() or old_rate is None or new_rate is None:
-            return
-        if same_frame_rate(old_rate, new_rate):
-            return
-        self.item.selections = refit_selections(self.item.selections, new_rate)
-        self.item.section_frame_rate = new_rate
-        self.item.section_notice = self.tr("refit to {0}fps").format(format_fps(new_rate))
-        logger.info(
-            "해상도 변경으로 구간을 다시 맞춤: %sfps → %sfps", format_fps(old_rate), format_fps(new_rate)
-        )
+        item = self.item
+        parts = []
+        refit_fps = getattr(item, "section_refit_fps", None)
+        if refit_fps is not None and not warnings_only:
+            parts.append(self.tr("refit to {0}fps").format(format_fps(refit_fps)))
+        if getattr(item, "section_end_fitted", False) and not warnings_only:
+            parts.append(self.tr("end moved to the video length"))
+        if getattr(item, "section_out_of_range", False):
+            parts.append(self.tr("sections outside the video"))
+        check = getattr(item, "section_check", "")
+        if check == SECTION_CHECK_PENDING:
+            parts.append(self.tr("checking length"))
+        elif check == SECTION_CHECK_UNVERIFIED:
+            parts.append(self.tr("length not checked"))
+        return " · ".join(parts)
+
+    def _sectionNoticeDetail(self) -> list[str]:
+        """알림의 전문 — 툴팁에 한 줄씩 적는다. 좁은 폭에서 알림을 떼도 여기에는 남는다."""
+        item = self.item
+        lines = []
+        if getattr(item, "section_refit_fps", None) is not None:
+            lines.append(self.tr("Sections were moved to the frames of the new frame rate."))
+        if getattr(item, "section_end_fitted", False):
+            lines.append(
+                self.tr("A section that reached the end now ends at the end of this resolution.")
+            )
+        if getattr(item, "section_out_of_range", False):
+            lines.append(
+                self.tr("Some sections are longer than this resolution. Edit the sections.")
+            )
+        check = getattr(item, "section_check", "")
+        if check == SECTION_CHECK_PENDING:
+            lines.append(self.tr("Checking the length of this resolution..."))
+        elif check == SECTION_CHECK_UNVERIFIED:
+            lines.append(
+                self.tr(
+                    "Could not check the length of this resolution. "
+                    "Open the section editor to check again."
+                )
+            )
+        return lines
 
     def loadImageFromUrl(self, label, url, maxHeight, type):
         """
@@ -789,7 +837,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             return ""
         return f" · {self.item.sections_done}/{total}"
 
-    def _sectionSummary(self, with_notice: bool = True) -> str:
+    def _sectionSummary(self, with_notice: bool = True, warnings_only: bool = False) -> str:
         """대기 카드의 재생 시간 자리에 적는 구간 요약 — 구간 수와 길이의 합 (#309).
 
         길이는 남은 시간과 같은 짧은 표기("3:12" · "1:02:03")로 적는다. 구간을 다시 맞춘
@@ -799,7 +847,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         length = sum(selection.end - selection.start for selection in selections)
         clock = self._shortRemain(strftime("%H:%M:%S", gmtime(max(length, 0))))
         summary = self.tr("Sections {0} · {1}").format(len(selections), clock)
-        notice = getattr(self.item, "section_notice", "") if with_notice else ""
+        notice = self._sectionNotice(warnings_only) if with_notice else ""
         return f"{summary} · {notice}" if notice else summary
 
     def _sectionsEditable(self) -> bool:
@@ -828,8 +876,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         )
         if editable:
             lines = [label.text()]
-            if getattr(self.item, "section_notice", ""):
-                lines.append(self.tr("Sections were moved to the frames of the new frame rate."))
+            if self._sectionCount():
+                lines.extend(self._sectionNoticeDetail())
             lines.append(self.tr("Click to edit sections"))
             label.setToolTip("\n".join(lines))
 

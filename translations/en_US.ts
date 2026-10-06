@@ -20,6 +20,38 @@
         <translation>Sections were moved to the frames of the new frame rate.</translation>
     </message>
     <message>
+        <source>end moved to the video length</source>
+        <translation>end moved to the video length</translation>
+    </message>
+    <message>
+        <source>sections outside the video</source>
+        <translation>sections outside the video</translation>
+    </message>
+    <message>
+        <source>checking length</source>
+        <translation>checking length</translation>
+    </message>
+    <message>
+        <source>length not checked</source>
+        <translation>length not checked</translation>
+    </message>
+    <message>
+        <source>A section that reached the end now ends at the end of this resolution.</source>
+        <translation>A section that reached the end now ends at the end of this resolution.</translation>
+    </message>
+    <message>
+        <source>Some sections are longer than this resolution. Edit the sections.</source>
+        <translation>Some sections are longer than this resolution. Edit the sections.</translation>
+    </message>
+    <message>
+        <source>Checking the length of this resolution...</source>
+        <translation>Checking the length of this resolution...</translation>
+    </message>
+    <message>
+        <source>Could not check the length of this resolution. Open the section editor to check again.</source>
+        <translation>Could not check the length of this resolution. Open the section editor to check again.</translation>
+    </message>
+    <message>
         <source>Click to edit sections</source>
         <translation>Click to edit sections</translation>
     </message>
