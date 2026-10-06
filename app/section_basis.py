@@ -17,6 +17,10 @@
 
 **HLS 세그먼트는 전체 요청으로만 받는다.** 받는 함수(``core/api/hls_fmp4.py`` ·
 ``core/api/hls_ts.py``)가 그렇게 받는다.
+
+조회마다 단계별로 걸린 시간을 INFO 로그 한 줄로 남긴다(``app/probe_timing.py`` —
+"구간 기준값 조회"로 시작하는 줄). 주소 · 쿠키 · 키 · 영상 번호는 그 줄에 없다. 재는 일은
+조회의 동작을 바꾸지 않는다.
 """
 
 import logging
@@ -27,6 +31,7 @@ from fractions import Fraction
 import config.config as config
 from app.download_resolvers import resolve_aes_key, resolve_m3u8_variant
 from app.network import NetworkManager
+from app.probe_timing import ProbeTiming
 from core.api.hls_fmp4 import fetch_fmp4_head, segment_frames
 from core.api.hls_ts import fetch_ts_head, segment_streams, ts_key_uri
 from core.api.mp4 import fetch_mp4_head
@@ -104,13 +109,21 @@ def probe_mp4(base_url: str) -> SectionProbe:
         Mp4Error: moov를 찾지 못했거나 해석하지 못한 경우
         requests.RequestException: 연결 실패 · 타임아웃 · HTTP 오류 상태
     """
-    head = fetch_mp4_head(base_url)
-    index = head.index
-    return SectionProbe(
-        basis=SectionBasis(fps=index.fps, duration=index.duration),
-        fps_source=FPS_DECLARED,
-        head=head,
-    )
+    timing = ProbeTiming("mp4")
+    with timing.watching():
+        # 받기(첫 읽기 · moov의 나머지)와 해석이 core의 한 함수 안에 있어 단계로 나누지 못한다 —
+        # 요청마다의 시간 · 크기가 그 안의 첫 읽기와 나머지 받기를 보여 준다
+        with timing.stage("moov 받기 · 해석"):
+            head = fetch_mp4_head(base_url)
+        index = head.index
+        timing.note("moov", lambda: f"{index.moov_range[1] - index.moov_range[0] + 1:,}바이트")
+        timing.note("프레임", lambda: f"{len(index.frame_pts):,}개")
+        timing.note("영상 길이", lambda: f"{index.duration:.3f}초")
+        return SectionProbe(
+            basis=SectionBasis(fps=index.fps, duration=index.duration),
+            fps_source=FPS_DECLARED,
+            head=head,
+        )
 
 
 def probe_fmp4(item, segment_dir: str | None = None) -> SectionProbe:
@@ -131,21 +144,32 @@ def probe_fmp4(item, segment_dir: str | None = None) -> SectionProbe:
         # 목록에서 고른 변형 (#318) — 엔진이 받는 변형과 같은 변형에서 읽는다
         stream=getattr(item, "stream", None),
     )
-    base_url, declared = resolve_m3u8_variant(content)
-    head = fetch_fmp4_head(base_url, segment_dir)
+    timing = ProbeTiming("fmp4")
+    with timing.watching():
+        with timing.stage("변형 해석"):
+            base_url, declared = resolve_m3u8_variant(content)
+        with timing.stage("플레이리스트 · 초기화 세그먼트"):
+            head = fetch_fmp4_head(base_url, segment_dir)
+        timing.note("세그먼트", lambda: f"{len(head.playlist.segments):,}개")
 
-    def segment_at(index: int):
-        return segment_frames(head, base_url, index)
+        def segment_at(index: int):
+            return segment_frames(head, base_url, index)
 
-    choice = choose_frame_rate(head.init, [segment_at(0)], declared)
-    head.frame_rate = choice.rate
-    duration = fmp4_timeline(head.playlist, head.init, segment_at).duration
-    return SectionProbe(
-        basis=SectionBasis(fps=choice.rate, duration=duration),
-        fps_source=choice.source,
-        head=head,
-        segment_at=segment_at,
-    )
+        with timing.stage("첫 세그먼트"):
+            first = segment_at(0)
+        with timing.stage("프레임률 결정"):
+            choice = choose_frame_rate(head.init, [first], declared)
+        head.frame_rate = choice.rate
+        with timing.stage("묶음별 끝 세그먼트"):
+            timeline = fmp4_timeline(head.playlist, head.init, segment_at)
+        timing.note("묶음", lambda: f"{len(timeline.groups)}개")
+        timing.note("영상 길이", lambda: f"{timeline.duration:.3f}초")
+        return SectionProbe(
+            basis=SectionBasis(fps=choice.rate, duration=timeline.duration),
+            fps_source=choice.source,
+            head=head,
+            segment_at=segment_at,
+        )
 
 
 def probe_ts(
@@ -168,36 +192,51 @@ def probe_ts(
         declared: 매니페스트가 그 해상도에 선언한 프레임률. 없으면 None
     """
     base_url = item.base_url
-    head = fetch_ts_head(base_url, segment_dir)
-    content = Content(
-        content_type=ContentType.CHZZK_VIDEO_HLS_AES,
-        url=item.vod_url,
-        resolution=item.resolution,
-        base_url=base_url,
-    )
-    key = resolve_aes_key(content, ts_key_uri(base_url, head))
+    timing = ProbeTiming("ts")
+    with timing.watching():
+        with timing.stage("플레이리스트"):
+            head = fetch_ts_head(base_url, segment_dir)
+        timing.note("세그먼트", lambda: f"{len(head.playlist.segments):,}개")
+        content = Content(
+            content_type=ContentType.CHZZK_VIDEO_HLS_AES,
+            url=item.vod_url,
+            resolution=item.resolution,
+            base_url=base_url,
+        )
+        with timing.stage("키"):
+            key = resolve_aes_key(content, ts_key_uri(base_url, head))
 
-    def segment_at(index: int):
-        return segment_streams(head, base_url, index, key)
+        def segment_at(index: int):
+            return segment_streams(head, base_url, index, key)
 
-    choice = choose_ts_frame_rate([segment_at(0)], declared)
-    head.frame_rate = choice.rate
-    duration = ts_timeline(head.playlist, segment_at, choice.rate).duration
-    return SectionProbe(
-        basis=SectionBasis(fps=choice.rate, duration=duration),
-        fps_source=choice.source,
-        head=head,
-        segment_at=segment_at,
-    )
+        with timing.stage("첫 세그먼트"):
+            first = segment_at(0)
+        with timing.stage("프레임률 결정"):
+            choice = choose_ts_frame_rate([first], declared)
+        head.frame_rate = choice.rate
+        with timing.stage("끝 세그먼트"):
+            timeline = ts_timeline(head.playlist, segment_at, choice.rate)
+        timing.note("묶음", lambda: f"{len(timeline.groups)}개")
+        timing.note("영상 길이", lambda: f"{timeline.duration:.3f}초")
+        return SectionProbe(
+            basis=SectionBasis(fps=choice.rate, duration=timeline.duration),
+            fps_source=choice.source,
+            head=head,
+            segment_at=segment_at,
+        )
 
 
 def _declared_ts_rate(item) -> Fraction | None:
     """매니페스트가 고른 해상도에 선언한 프레임률. 읽지 못하면 None — 첫 세그먼트에서 잰다."""
+    timing = ProbeTiming("ts 선언 프레임률")
     try:
-        cookies = config.load_cookies()
-        _kind, content_no = NetworkManager.extract_content_no(item.vod_url)
-        info = NetworkManager.get_video_info(content_no, cookies)
-        rates = NetworkManager.get_video_frame_rates(info.video_id, info.in_key, cookies)
+        with timing.watching():
+            cookies = config.load_cookies()
+            _kind, content_no = NetworkManager.extract_content_no(item.vod_url)
+            with timing.stage("영상 정보 API"):
+                info = NetworkManager.get_video_info(content_no, cookies)
+            with timing.stage("매니페스트"):
+                rates = NetworkManager.get_video_frame_rates(info.video_id, info.in_key, cookies)
     except Exception:
         logger.exception("선언된 프레임률을 읽지 못했다 — 첫 세그먼트에서 잰다")
         return None
