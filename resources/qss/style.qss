@@ -171,6 +171,13 @@ QLabel#thumbnailLabel {
     color: @textMuted;
 }
 
+/* 경로 글자는 대기 카드에서만 누를 수 있다(저장 폴더 바꾸기) — 구간 요약 · 제목과 같은
+ * 규칙으로 그때만 호버에서 알린다(#309). `editable`은 app/widgets/widget.py::
+ * _applyEditability가 상태에 맞춰 심는다. */
+#directoryLabel[editable="true"]:hover {
+    color: @accent;
+}
+
 /* 카드 테두리 — 항상 중립색이다(#244). 상태는 상태 아이콘·상태 텍스트·
  * (진행분이 있을 때 — 진행·일시정지 — 보이는) 하단 진행바가 알린다 — 카드 프레임 자체는
  * state 동적 속성을 안 본다.

@@ -230,11 +230,17 @@ class TestPathLabelSurface:
         )
 
     @pytest.mark.parametrize("state", STATES, ids=IDS)
-    def test_label_never_highlights_on_hover(self, qapp, qtbot, state):
-        """경로 라벨은 호버 강조가 없는 표면이다(커서만) — 어느 상태에서도 색이 변하지 않는다."""
+    def test_label_highlights_on_hover_only_when_clickable(self, qapp, qtbot, state):
+        """경로 라벨은 누를 수 있는 상태(대기)에서만 호버에 색이 바뀌어야 한다 (#309).
+
+        종전 단언은 "어느 상태에서도 호버에 반응하지 않는다"였다. 대기 카드의 구간 요약 · 제목과
+        같이 누를 수 있을 때만 알리기로 정해(오너 결정) 단언을 클릭 가능 여부로 바꿨다.
+        """
         window, widget = make_card(state)
         qtbot.addWidget(window)
-        assert not highlights_on_hover(qtbot, window, widget.directoryLabel), f"{state.name}: 경로 라벨이 호버에 반응한다"
+        assert highlights_on_hover(qtbot, window, widget.directoryLabel) == _clickable(state), (
+            f"{state.name}: 경로 라벨의 호버 강조가 클릭 가능 여부와 다르다"
+        )
 
     @pytest.mark.parametrize("state", STATES, ids=IDS)
     def test_click_opens_the_folder_dialog_only_when_clickable(self, qapp, qtbot, monkeypatch, state):

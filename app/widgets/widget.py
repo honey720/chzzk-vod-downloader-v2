@@ -1271,6 +1271,11 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.directoryLabel.setCursor(
             Qt.CursorShape.PointingHandCursor if editable else Qt.CursorShape.ArrowCursor
         )
+        # 경로 글자도 누를 수 있을 때만 호버에서 알린다 (#309) — 구간 요약 · 제목과 같은 색이다
+        # (QSS `#directoryLabel[editable="true"]:hover`). 누르면 저장 폴더를 바꾼다(choosePath)
+        if self.directoryLabel.property("editable") != editable:
+            self.directoryLabel.setProperty("editable", editable)
+            theme.repolish(self.directoryLabel)
         self.pathIconButton.setInteractive(editable)
         self._applySectionHint()
 
