@@ -9,9 +9,15 @@
 **조회의 동작을 바꾸지 않는다.** 재는 일이 실패해도(시계 · 훅 · 로그) 조회는 그대로 끝나야
 하므로, 이 모듈 안의 실패는 모두 삼킨다. 단계 안에서 난 예외(조회의 실패)는 그대로 올린다.
 
-요청은 ``requests``의 응답 훅으로 센다. core의 받는 함수는 스레드 전용 세션을, 치지직 API
-조회는 공유 세션을 쓴다 — 조회가 도는 동안 두 세션에 훅을 걸고 끝나면 뗀다. 공유 세션은 다른
-스레드도 쓰므로 조회를 돌리는 스레드의 요청만 센다.
+요청은 ``requests``의 응답 훅으로 센다. 훅은 **조회를 돌리는 스레드의 전용 세션 하나에만**,
+**조회 한 번 동안만** 건다(``watching``) — 끝나면 성공이든 예외든 뗀다.
+
+- 그 세션은 그 스레드만 쓴다(``core.api.session.get_thread_session``). 엔진의 다운로드 워커는
+  저마다 다른 스레드라 다른 세션을 쓰고, 조회가 끝난 뒤에는 훅이 없으므로 **엔진의 요청에는
+  걸리지 않는다.** 조회가 동시에 둘 돌아도 스레드가 달라 세션이 다르고 셈이 섞이지 않는다
+- **공유 세션에는 걸지 않는다.** 치지직 API 조회(변형 해석 · 키 · 선언 프레임률)는 모든 스레드가
+  함께 쓰는 세션으로 나가므로, 거기에 걸면 다른 스레드의 요청(목록 조회 · 엔진의 주소 해석)이
+  훅을 지난다. 그래서 그 단계들은 걸린 시간만 적고 요청 수 · 크기는 적지 않는다
 """
 
 import logging
@@ -20,7 +26,7 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
-from core.api.session import _session, get_thread_session
+from core.api.session import get_thread_session
 
 logger = logging.getLogger("app.section_basis")
 
@@ -45,7 +51,10 @@ class ProbeTiming:
 
     @contextmanager
     def watching(self) -> Iterator[None]:
-        """이 안에서 나간 요청을 세고, 끝나면(성공 · 실패 모두) 로그 한 줄을 낸다."""
+        """이 안에서 이 스레드의 전용 세션으로 나간 요청을 세고, 끝나면 로그 한 줄을 낸다.
+
+        훅은 여기서 걸고 여기서 뗀다 — 성공이든 예외든 이 블록을 나가면 세션에 남지 않는다.
+        """
         sessions = self._attach()
         try:
             yield
@@ -118,7 +127,8 @@ class ProbeTiming:
     def _attach(self) -> list:
         sessions = []
         try:
-            for session in (get_thread_session(), _session):
+            # 이 스레드의 전용 세션에만 건다 — 공유 세션에는 걸지 않는다(모듈 설명 참조)
+            for session in (get_thread_session(),):
                 session.hooks["response"].append(self._on_response)
                 sessions.append(session)
         except Exception:

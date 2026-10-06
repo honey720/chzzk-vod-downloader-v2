@@ -11,8 +11,11 @@ from types import SimpleNamespace
 
 import pytest
 
+import threading
+
 import app.probe_timing as probe_timing
 import app.section_basis as section_basis
+import core.api.session as session_module
 from app.probe_timing import LOG_PREFIX, ProbeTiming
 from app.section_basis import SectionBasis, probe_fmp4, probe_mp4, probe_ts
 
@@ -89,7 +92,6 @@ def fake_fmp4(monkeypatch):
 
     session = SimpleNamespace(hooks={"response": hooks})
     monkeypatch.setattr(probe_timing, "get_thread_session", lambda: session)
-    monkeypatch.setattr(probe_timing, "_session", SimpleNamespace(hooks={"response": []}))
     monkeypatch.setattr(section_basis, "resolve_m3u8_variant", resolve)
     monkeypatch.setattr(section_basis, "fetch_fmp4_head", fetch_head)
     monkeypatch.setattr(section_basis, "segment_frames", frames)
@@ -257,3 +259,112 @@ def test_requests_of_other_threads_are_not_counted():
         timing._on_response(_response("200", 2.0))
 
     assert "요청 1건" in timing.line() and "2ms/200B" in timing.line()
+
+
+# ================================================================ 훅의 적용 범위
+
+
+def test_requests_after_the_lookup_are_not_counted_and_the_session_keeps_no_hook(
+    caplog, item, fake_fmp4
+):
+    """조회가 끝난 뒤 같은 세션으로 나간 요청은 세지 않아야 하고, 세션에 훅이 남지 않아야 한다.
+
+    조회 한 번(요청 5건)이 끝난 뒤 같은 세션의 훅 목록으로 응답 하나를 더 흘림
+    -> 세션의 훅 목록이 비어 있다, 로그 줄은 하나뿐이고 "요청 5건" 그대로다
+    """
+    with caplog.at_level(logging.INFO, logger=LOGGER):
+        probe_fmp4(item)
+        for hook in list(fake_fmp4):  # 엔진이 같은 세션을 다시 쓰는 경우 — 남은 훅이 있으면 불린다
+            hook(_response("999999", 1.0))
+
+    assert fake_fmp4 == []
+    lines = _lines(caplog)
+    assert len(lines) == 1 and "요청 5건" in lines[0]
+
+
+def test_a_lookup_that_ends_with_an_exception_leaves_no_hook(monkeypatch):
+    """예외로 끝난 조회 뒤에도 세션에 훅이 남지 않아야 한다.
+
+    moov 받기가 RuntimeError를 던지는 조회
+    -> 예외가 그대로 올라오고, 조회가 도는 동안에는 훅이 하나 있었고, 끝난 뒤 훅 목록이 비어 있다
+    """
+    hooks: list = []
+    during = []
+
+    def broken(url):
+        during.append(len(hooks))
+        raise RuntimeError("조회 실패(대역)")
+
+    session = SimpleNamespace(hooks={"response": hooks})
+    monkeypatch.setattr(probe_timing, "get_thread_session", lambda: session)
+    monkeypatch.setattr(section_basis, "fetch_mp4_head", broken)
+
+    with pytest.raises(RuntimeError):
+        probe_mp4(URL)
+
+    assert during == [1], "전제: 조회가 도는 동안에는 훅이 걸려 있어야 한다"
+    assert hooks == []
+
+
+def test_the_shared_session_never_gets_a_hook(monkeypatch, item, fake_fmp4):
+    """모든 스레드가 함께 쓰는 공유 세션에는 조회가 도는 동안에도 훅을 걸지 않아야 한다.
+
+    조회의 단계(변형 해석 · 첫 세그먼트) 안에서 공유 세션의 훅 목록을 들여다봄
+    -> 매번 비어 있다. 조회가 끝난 뒤에도 비어 있다
+    """
+    shared = session_module._session.hooks["response"]
+    assert shared == [], "전제: 공유 세션에 다른 훅이 없어야 한다"
+    seen = []
+    inner = section_basis.segment_frames
+
+    def watching_frames(head, url, index):
+        seen.append(list(shared))
+        return inner(head, url, index)
+
+    monkeypatch.setattr(section_basis, "segment_frames", watching_frames)
+
+    probe_fmp4(item)
+
+    assert seen and all(hooks == [] for hooks in seen)
+    assert shared == []
+
+
+def test_two_lookups_running_at_once_do_not_mix_their_counts(caplog, monkeypatch):
+    """조회 둘이 동시에 돌아도 요청의 셈이 서로 섞이지 않아야 한다.
+
+    스레드 둘이 각자의 세션으로 mp4 조회를 동시에 돌린다(둘 다 moov 받기 안에 들어온 뒤 진행).
+    한쪽은 요청 1건(100B), 다른 쪽은 요청 3건(각 200B)을 보낸다
+    -> 로그 줄 둘: 하나는 "요청 1건 · 응답이 말한 크기 100바이트", 하나는 "요청 3건 · … 600바이트"
+    -> 끝난 뒤 두 세션 모두 훅이 없다
+    """
+    sessions: dict[int, SimpleNamespace] = {}
+    both_inside = threading.Barrier(2, timeout=5)
+
+    def thread_session():
+        return sessions.setdefault(threading.get_ident(), SimpleNamespace(hooks={"response": []}))
+
+    def fetch(url):
+        count, size = (1, "100") if url == "one" else (3, "200")
+        both_inside.wait()  # 둘 다 조회 안에 들어온 뒤에 요청을 흘린다
+        for _ in range(count):
+            for hook in list(thread_session().hooks["response"]):
+                hook(_response(size, 1.0))
+        index = SimpleNamespace(fps=Fraction(60), duration=1.0, moov_range=(0, 9), frame_pts=(0.0,))
+        return SimpleNamespace(index=index)
+
+    monkeypatch.setattr(probe_timing, "get_thread_session", thread_session)
+    monkeypatch.setattr(section_basis, "fetch_mp4_head", fetch)
+
+    with caplog.at_level(logging.INFO, logger=LOGGER):
+        workers = [threading.Thread(target=probe_mp4, args=(name,)) for name in ("one", "three")]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(10)
+
+    lines = sorted(_lines(caplog), key=lambda line: "요청 3건" in line)
+    assert len(lines) == 2, lines
+    assert "요청 1건" in lines[0] and "응답이 말한 크기 100바이트" in lines[0]
+    assert "요청 3건" in lines[1] and "응답이 말한 크기 600바이트" in lines[1]
+    assert len(sessions) == 2, "전제: 두 조회가 서로 다른 스레드에서 돌아야 한다"
+    assert all(session.hooks["response"] == [] for session in sessions.values())
