@@ -577,24 +577,30 @@ def test_card_shows_preparing_until_the_engine_reports_progress(qtbot, window, m
 
 
 def test_a_short_prepare_never_shows_preparing(qtbot, window):
-    """준비가 지연(0.5초)보다 먼저 끝나면 "Preparing"은 한 번도 보이지 않아야 한다.
+    """준비가 지연보다 먼저 끝나면 "Preparing"은 한 번도 보이지 않아야 한다.
 
-    전역 다운로드 직후 첫 진행 통지가 옴
-    -> 통지가 닿은 뒤 preparing이 꺼져 있고 타이머가 멈춰 있다(뒤늦게 켜지지 않는다),
-       그사이 카드가 그린 상태 문구에 "Preparing"이 없다
+    지연을 60초로 둠(테스트가 느려도 그 안에 끝난다). 전역 다운로드 → 카드가 받는 중으로 그려짐 → 첫 진행 통지
+    -> 통지 전: 카드는 받는 중이고 preparing이 꺼져 있다, 상태 문구는 "Preparing"이 아니다, 막대의 최대값 100
+    -> 통지 뒤: preparing이 꺼져 있고 타이머가 멈춰 있다(뒤늦게 켜지지 않는다)
     """
     win, item, engine = window
+    win.downloadViewModel._prepareTimer.setInterval(60_000)
     widget = win.listView.widgetFor(item)
-    seen = []
-    win.contentManager.model.itemChanged.connect(lambda *_: seen.append(widget.statusLabel.text()))
     win.downloadButton.click()
+    _pump()
+
+    assert item.downloadState == DownloadState.RUNNING
+    assert win.downloadViewModel._prepareTimer.isActive(), "전제: 아직 지연 안이다"
+    assert not item.preparing
+    assert shown(widget.statusLabel) != "Preparing"
+    assert widget.progressBar.maximum() == 100
 
     _first_progress(engine.submissions[0])
-    qtbot.waitUntil(lambda: shown(widget.statusLabel).startswith("0%"), timeout=3000)
+    qtbot.waitUntil(lambda: not win.downloadViewModel._prepareTimer.isActive(), timeout=3000)
+    _pump()
 
     assert not item.preparing
-    assert not win.downloadViewModel._prepareTimer.isActive()
-    assert "Preparing" not in seen
+    assert shown(widget.statusLabel).startswith("0%")
 
 
 def test_preparing_is_cleared_when_the_download_fails_while_preparing(qtbot, window):
