@@ -10,8 +10,10 @@ from types import SimpleNamespace
 import pytest
 
 import app.section_basis as section_basis
+import core.api.mp4 as mp4_module
 from app.section_basis import SectionBasis, SectionBasisError, probe_section_basis
 from core.models.content import ContentType, StreamKey
+from core.api.mp4 import pending_mp4_head
 from core.models.mp4_index import Mp4Head, Mp4Summary
 
 
@@ -33,7 +35,8 @@ def test_encoded_vod_reads_the_frame_rate_and_length_from_the_moov(monkeypatch):
 
     받은 moov를 가볍게 읽은 값: fps 60000/1001, 길이 1234.5초
     -> SectionBasis(60000/1001, 1234.5), 조회한 주소 == base_url,
-       mp4_raw is 받은 바이트(다운로드가 다시 쓴다 — #309), mp4_head is None(색인을 만들지 않는다)
+       mp4_pending이 받은 바이트를 쥔다(다운로드가 다시 쓴다 — #309), mp4_head is None,
+       색인을 만들지 않는다(아직 해석하지 않았다)
     """
     asked = []
     raws = []
@@ -52,13 +55,14 @@ def test_encoded_vod_reads_the_frame_rate_and_length_from_the_moov(monkeypatch):
 
     monkeypatch.setattr(section_basis, "fetch_mp4_raw", fetch)
     monkeypatch.setattr(section_basis, "summarize_mp4", summarize)
-    monkeypatch.setattr(section_basis, "index_mp4", no_index)
+    monkeypatch.setattr(mp4_module, "index_mp4", no_index)
 
     basis = probe_section_basis(_item("video"))
 
     assert basis == SectionBasis(fps=Fraction(60000, 1001), duration=1234.5)
     assert asked == ["https://media.invalid/stream"]
-    assert basis.mp4_raw is raws[0]
+    assert basis.mp4_pending.raw is raws[0]
+    assert basis.mp4_pending.peek() is None
     assert basis.mp4_head is None
 
 
@@ -69,10 +73,10 @@ def _no_fetch(url):
 def test_encoded_vod_lookup_reuses_the_bytes_the_card_holds_for_the_same_address(monkeypatch):
     """카드가 지금의 주소에서 받은 moov 바이트를 쥐고 있으면 조회가 다시 받지 않고 그것을 읽어야 한다.
 
-    카드의 section_head == (base_url, 바이트), moov 받기를 부르면 실패하게 바꿈
-    -> 가볍게 읽은 값이 돌아오고 mp4_raw is 쥐고 있던 바이트
+    카드의 section_head == (base_url, 아직 해석하지 않은 moov), moov 받기를 부르면 실패하게 바꿈
+    -> 가볍게 읽은 값이 돌아오고 mp4_pending is 쥐고 있던 그 객체(새로 싸지 않는다)
     """
-    held = SimpleNamespace(moov=b"moov")
+    held = pending_mp4_head(SimpleNamespace(moov=b"moov"))
     summary = Mp4Summary(fps=Fraction(30), duration=10.0, frames=300)
     monkeypatch.setattr(section_basis, "fetch_mp4_raw", _no_fetch)
     monkeypatch.setattr(section_basis, "summarize_mp4", lambda raw: summary)
@@ -80,7 +84,7 @@ def test_encoded_vod_lookup_reuses_the_bytes_the_card_holds_for_the_same_address
     basis = probe_section_basis(_item("video", section_head=("https://media.invalid/stream", held)))
 
     assert basis == SectionBasis(fps=Fraction(30), duration=10.0)
-    assert basis.mp4_raw is held
+    assert basis.mp4_pending is held
 
 
 def test_encoded_vod_lookup_reuses_the_index_the_card_holds_for_the_same_address(monkeypatch):
@@ -102,10 +106,10 @@ def test_encoded_vod_lookup_reuses_the_index_the_card_holds_for_the_same_address
 def test_encoded_vod_lookup_fetches_again_when_the_held_moov_is_of_another_address(monkeypatch):
     """카드가 쥔 moov가 다른 주소의 것이면 조회가 지금의 주소에서 다시 받아야 한다.
 
-    카드의 section_head == ("https://media.invalid/other", 바이트)
-    -> moov 받기 1회(주소 == base_url), mp4_raw is 새로 받은 것
+    카드의 section_head == ("https://media.invalid/other", 아직 해석하지 않은 moov)
+    -> moov 받기 1회(주소 == base_url), mp4_pending이 새로 받은 바이트를 쥔다
     """
-    stale = SimpleNamespace(moov=b"old")
+    stale = pending_mp4_head(SimpleNamespace(moov=b"old"))
     fresh = SimpleNamespace(moov=b"new")
     asked = []
 
@@ -120,7 +124,26 @@ def test_encoded_vod_lookup_fetches_again_when_the_held_moov_is_of_another_addre
     basis = probe_section_basis(_item("video", section_head=("https://media.invalid/other", stale)))
 
     assert asked == ["https://media.invalid/stream"]
-    assert basis.mp4_raw is fresh
+    assert basis.mp4_pending.raw is fresh
+
+
+def test_encoded_vod_lookup_uses_the_index_when_the_held_moov_was_parsed_meanwhile(monkeypatch):
+    """카드가 쥔 moov가 그사이 해석됐으면 조회가 받지도 읽지도 않고 그 색인의 값을 돌려줘야 한다.
+
+    카드의 section_head == (base_url, 이미 get()으로 해석한 PendingMp4Head — fps 60 · 길이 99.5초)
+    -> SectionBasis(60, 99.5), mp4_head is 그 색인, mp4_pending is None
+    """
+    head = Mp4Head(index=SimpleNamespace(fps=Fraction(60), duration=99.5), data=None)
+    monkeypatch.setattr(mp4_module, "index_mp4", lambda raw: head)
+    held = pending_mp4_head(SimpleNamespace(moov=b"moov"))
+    assert held.get() is head and held.raw is None, "전제: 해석이 끝났다"
+    monkeypatch.setattr(section_basis, "fetch_mp4_raw", _no_fetch)
+    monkeypatch.setattr(section_basis, "summarize_mp4", _no_fetch)
+
+    basis = probe_section_basis(_item("video", section_head=("https://media.invalid/stream", held)))
+
+    assert basis == SectionBasis(fps=Fraction(60), duration=99.5)
+    assert basis.mp4_head is head and basis.mp4_pending is None
 
 
 def test_lookup_builds_the_index_only_when_asked(monkeypatch):
@@ -134,7 +157,7 @@ def test_lookup_builds_the_index_only_when_asked(monkeypatch):
     summary = Mp4Summary(fps=Fraction(30), duration=10.0, frames=300)
     monkeypatch.setattr(section_basis, "fetch_mp4_raw", lambda url: raw)
     monkeypatch.setattr(section_basis, "summarize_mp4", lambda got: summary)
-    monkeypatch.setattr(section_basis, "index_mp4", lambda got: built)
+    monkeypatch.setattr(mp4_module, "index_mp4", lambda got: built)
 
     asked = section_basis.probe_mp4("https://media.invalid/stream", index=True)
     plain = section_basis.probe_mp4("https://media.invalid/stream")
@@ -201,7 +224,7 @@ def test_encrypted_vod_decrypts_with_the_resolved_key_and_keeps_it_out_of_the_re
     매니페스트의 선언값 {base_url: 30}, 키 b"K" * 16
     -> 세그먼트 읽기에 그 키가 넘어간다, 프레임률 정하기에 선언값 30이 넘어간다
     -> 세그먼트를 둘 폴더는 None이다
-    -> SectionBasis(30, 100.0) — 칸은 fps · duration과 비어 있는 mp4_head · mp4_raw뿐이다
+    -> SectionBasis(30, 100.0) — 칸은 fps · duration과 비어 있는 mp4_head · mp4_pending뿐이다
     """
     key = b"K" * 16
     seen = {}
@@ -243,7 +266,7 @@ def test_encrypted_vod_decrypts_with_the_resolved_key_and_keeps_it_out_of_the_re
         "fps": Fraction(30),
         "duration": 100.0,
         "mp4_head": None,
-        "mp4_raw": None,
+        "mp4_pending": None,
     }
     assert seen["head_args"] == ((base_url, None), {})
     assert seen["keys"] == [key, key]

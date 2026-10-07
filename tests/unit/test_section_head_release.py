@@ -152,7 +152,9 @@ def window(server, tmp_path):
     return win, item
 
 
-def _give_section(qtbot, win, item, start: str = "00000105", end: str = "00000220") -> None:
+def _give_section(
+    qtbot, win, item, start: str = "00000105", end: str = "00000220", wait_size: bool = True
+) -> None:
     """편집 창으로 구간 하나를 넣는다 — 기본은 1초 5프레임~2초 20프레임(프레임 35~80)."""
     QTest.mouseClick(win.listView.widgetFor(item).fileSizeLabel, Qt.MouseButton.LeftButton)
     _pump()
@@ -165,6 +167,8 @@ def _give_section(qtbot, win, item, start: str = "00000105", end: str = "0000022
     dialog.okButton.click()
     _pump()
     assert len(item.selections) == 1, "전제: 구간이 쓰여야 한다"
+    if not wait_size:
+        return
     # 받을 크기를 세는 백그라운드 일이 끝나면 카드가 받은 바이트 대신 만든 색인을 쥔다
     sizer = win.contentManager._sectionSizer
     qtbot.waitUntil(lambda: sizer.pendingCount() == 0, timeout=10_000)
@@ -252,6 +256,56 @@ def test_index_is_freed_after_a_section_download_finishes(qtbot, window):
 
     assert item.section_paths and all(map(os.path.isfile, item.section_paths))
     _assert_released(head)
+
+
+def test_download_started_while_the_total_is_counted_parses_once_and_frees_the_index(
+    qtbot, window, monkeypatch
+):
+    """확인 직후(받을 크기를 세는 중) 받기 시작해도 해석은 한 번만 돌고, 끝나면 색인이 풀려야 한다.
+
+    해석 함수를 문으로 막고 호출을 세는 대역으로 바꿈. 구간을 확인(크기 계산이 해석 안에 들어가
+    선다) → 전역 다운로드(실제 엔진이 준비 단계에서 같은 moov를 청한다) → 엔진이 기다리도록
+    잠깐 둔 뒤 문을 엶 → 완료
+    -> 해석 1회, 구간 파일이 만들어짐, 준비 로그에 "moov reused", 그 색인의 약한 참조 == None
+    """
+    win, item = window
+    real = mp4_module.index_mp4
+    gate = threading.Event()
+    built: list[weakref.ref] = []
+    calls = []
+
+    def gated(raw):
+        calls.append(1)
+        assert gate.wait(30), "문이 열리지 않았다"
+        head = real(raw)
+        built.append(weakref.ref(head))
+        return head
+
+    monkeypatch.setattr(mp4_module, "index_mp4", gated)
+    notes = []
+    real_note = fd_module.FileDownloader._prepare_note
+    monkeypatch.setattr(
+        fd_module.FileDownloader,
+        "_prepare_note",
+        lambda self: notes.append(real_note(self)) or notes[-1],
+    )
+    _give_section(qtbot, win, item, wait_size=False)
+    qtbot.waitUntil(lambda: len(calls) == 1, timeout=10_000)
+
+    win.downloadButton.click()
+    qtbot.waitUntil(lambda: item.downloadState == DownloadState.RUNNING, timeout=10_000)
+    qtbot.wait(300)  # 엔진이 준비 단계에서 같은 moov를 청하고 기다리는 구간을 넓힌다
+    gate.set()
+    qtbot.waitUntil(lambda: item.downloadState == DownloadState.FINISHED, timeout=FINISH_TIMEOUT)
+    qtbot.waitUntil(lambda: win.downloadViewModel.handle is None, timeout=FINISH_TIMEOUT)
+    _wait_for_engine_threads()
+    sizer = win.contentManager._sectionSizer
+    qtbot.waitUntil(lambda: sizer.pendingCount() == 0, timeout=10_000)
+
+    assert len(calls) == 1
+    assert item.section_paths and all(map(os.path.isfile, item.section_paths))
+    assert notes == ["moov reused"]
+    _assert_released(built[0])
 
 
 def test_index_is_freed_after_the_same_card_is_downloaded_twice(qtbot, window):

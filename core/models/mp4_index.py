@@ -9,7 +9,8 @@
 먼저 표시되는 샘플의 시각이 0이다.
 """
 
-from collections.abc import Sequence
+import threading
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from fractions import Fraction
 
@@ -91,6 +92,58 @@ class Mp4Raw:
     # 파일의 0부터 moov가 시작하기 전까지의 바이트(ftyp 등). moov가 첫 읽기 안에서 시작하지
     # 않았으면(mdat 뒤의 moov 등) 앞부분을 받지 않았으므로 None이다
     prefix: bytes | None = field(default=None, repr=False)
+
+
+class PendingMp4Head:
+    """받아 둔 moov를 필요할 때 **한 번만** 해석해 여럿이 함께 쓰게 한다 (#309).
+
+    긴 영상의 moov는 해석에 몇 초가 걸리고 그동안 수백 MB를 쓴다. 받을 크기를 세는 쪽과
+    다운로드 엔진이 같은 moov를 거의 같은 때에 필요로 할 수 있다 — 각자 해석하면 그 몇 초
+    동안 해석이 둘 돈다. 이 객체를 함께 쥐면 먼저 ``get()``을 부른 쪽이 해석하고, 다른 쪽은
+    끝나기를 기다렸다가 같은 색인을 받는다. 도는 해석을 멈출 방법이 없어, 멈추는 대신 기다린다.
+
+    해석이 끝나면 바이트를 놓는다 — 색인(``Mp4Head.data``)이 같은 바이트를 들고 있다. 해석이
+    실패하면 그 예외를 들고 있다가 부르는 쪽마다 다시 던진다(다시 해석하지 않는다).
+    """
+
+    def __init__(self, raw: Mp4Raw, build: Callable[[Mp4Raw], Mp4Head]):
+        """
+        Args:
+            raw: 받아 둔 moov
+            build: 그것을 해석하는 함수 — ``core.api.mp4.index_mp4``
+              (``core.api.mp4.pending_mp4_head``로 만든다)
+        """
+        self._raw: Mp4Raw | None = raw
+        self._build = build
+        self._head: Mp4Head | None = None
+        self._error: Exception | None = None
+        self._lock = threading.Lock()  # 해석을 한 번만 돌게 한다 — 기다리는 쪽이 여기서 선다
+
+    @property
+    def raw(self) -> Mp4Raw | None:
+        """받아 둔 바이트. 해석이 끝났으면 None이다."""
+        return self._raw
+
+    def peek(self) -> Mp4Head | None:
+        """이미 해석한 색인. 아직이면 None — 기다리지 않는다."""
+        return self._head
+
+    def get(self) -> Mp4Head:
+        """색인을 돌려준다. 아직이면 해석하고, 다른 쪽이 해석하는 중이면 끝나기를 기다린다.
+
+        Raises:
+            Exception: 해석이 던진 예외(``Mp4Error`` 등) — 부를 때마다 같은 것을 던진다
+        """
+        with self._lock:
+            if self._head is None and self._error is None:
+                try:
+                    self._head = self._build(self._raw)
+                except Exception as e:
+                    self._error = e
+                self._raw = None
+            if self._error is not None:
+                raise self._error
+            return self._head
 
 
 @dataclass(frozen=True)

@@ -30,9 +30,9 @@ from app.viewmodels.data import (
     SECTION_CHECK_UNVERIFIED,
     ContentItem,
 )
-from core.api.mp4 import Mp4Error, index_mp4
+from core.api.mp4 import Mp4Error
 from core.models.download_state import DownloadState
-from core.models.mp4_index import Mp4Raw
+from core.models.mp4_index import PendingMp4Head
 from core.models.plan import TimeRange
 from core.utils.mp4_ranges import sections_download_size
 from core.utils.selections import (
@@ -131,11 +131,11 @@ class _IndexReleaseReporter(QObject):
     def watch(self, head) -> None:
         """그 색인이 사라지면 적게 한다. 같은 것을 두 번 걸지 않는다.
 
-        해석한 색인(``Mp4Head``)에만 건다 — 아직 해석하지 않은 바이트(``Mp4Raw``)는 수십 MB라
-        놓여도 줄을 남기지 않는다.
+        해석한 색인(``Mp4Head``)에만 건다 — 아직 해석하지 않은 것(``PendingMp4Head``)은 수십
+        MB라 놓여도 줄을 남기지 않는다.
         """
         key = id(head)
-        if head is None or isinstance(head, Mp4Raw) or key in self._watching:
+        if head is None or isinstance(head, PendingMp4Head) or key in self._watching:
             return
         try:
             watcher = weakref.finalize(head, self._onDying, key)
@@ -454,7 +454,7 @@ class SectionEditViewModel(QObject):
         self.fps = frame_rate(basis.fps)
         self.duration = basis.duration
         # 조회가 받은 moov — 해석한 색인이 있으면 그것, 없으면 바이트. 확인하면 카드에 둔다
-        moov = getattr(basis, "mp4_head", None) or getattr(basis, "mp4_raw", None)
+        moov = getattr(basis, "mp4_head", None) or getattr(basis, "mp4_pending", None)
         if not self._released:
             self._head = moov
         watch_section_head(moov)
@@ -874,7 +874,9 @@ class SectionSizeJob(QObject):
         """색인을 만들고 크기를 세어 done을 emit한다. 실패하면 값 자리에 None을 싣는다."""
         head = size = None
         try:
-            head = index_mp4(self._moov) if isinstance(self._moov, Mp4Raw) else self._moov
+            # 아직 해석하지 않은 moov면 여기서 해석한다 — 엔진이 먼저 해석하는 중이면 기다린다
+            moov = self._moov
+            head = moov.get() if isinstance(moov, PendingMp4Head) else moov
             size = section_bytes_of(head, self._selections)
         except Exception:
             logger.exception("받을 구간의 크기를 세지 못했다")
@@ -1116,7 +1118,7 @@ class SectionRefitter(QObject):
         item.section_unfit = result.unfit
         # 새 해상도를 조회하며 받은 moov(바이트 또는 색인) — 요청이 아직 유효하므로 지금의
         # 주소에서 받은 것이다. 받을 크기는 settled를 받은 쪽이 백그라운드에서 센다(SectionSizer)
-        moov = getattr(basis, "mp4_head", None) or getattr(basis, "mp4_raw", None)
+        moov = getattr(basis, "mp4_head", None) or getattr(basis, "mp4_pending", None)
         item.section_bytes = None
         watch_section_head(moov)
         log_process_memory("조회 끝")

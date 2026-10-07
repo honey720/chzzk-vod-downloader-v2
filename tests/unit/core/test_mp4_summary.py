@@ -9,6 +9,7 @@
 import dataclasses
 import random
 import struct
+import threading
 from fractions import Fraction
 
 import pytest
@@ -21,6 +22,7 @@ from core.api.mp4 import (
     Mp4Error,
     index_mp4,
     parse_moov,
+    pending_mp4_head,
     read_mp4_raw,
     summarize_moov,
     summarize_mp4,
@@ -315,3 +317,78 @@ def test_raw_moov_gives_the_index_and_bytes_of_the_file():
     summary = summarize_mp4(raw)
     assert (summary.fps, summary.duration) == (head.index.fps, head.index.duration)
     assert summary.fps == Fraction(10)
+
+
+# ================================================================ 한 번만 해석하기
+
+
+def _raw_of_standard_mp4():
+    data = build_mp4([video_spec(), audio_spec()]).data
+    return read_mp4_raw(lambda offset, size: data[offset : offset + size])
+
+
+def test_pending_head_parses_once_when_two_threads_ask_at_the_same_time(monkeypatch):
+    """받아 둔 moov를 두 스레드가 함께 청해도 해석은 한 번만 돌고 둘이 같은 색인을 받아야 한다.
+
+    해석 함수를 문으로 막고 호출을 세는 대역으로 바꿈. 스레드 A가 get()으로 해석 안에 들어간 뒤
+    스레드 B가 get()을 부르고, B가 기다리는 것을 본 뒤 문을 엶
+    -> 해석 1회, 두 스레드가 받은 것이 같은 객체, 그 색인 == index_mp4로 따로 해석한 색인
+    -> 문을 열기 전 peek() is None, 끝난 뒤 raw is None
+    """
+    raw = _raw_of_standard_mp4()
+    expected = index_mp4(raw)
+    real = mp4_module.index_mp4
+    inside, gate = threading.Event(), threading.Event()
+    calls = []
+
+    def gated(held):
+        calls.append(held)
+        inside.set()
+        assert gate.wait(10), "문이 열리지 않았다"
+        return real(held)
+
+    monkeypatch.setattr(mp4_module, "index_mp4", gated)
+    pending = pending_mp4_head(raw)
+    got: dict[str, object] = {}
+    first = threading.Thread(target=lambda: got.setdefault("first", pending.get()))
+    second = threading.Thread(target=lambda: got.setdefault("second", pending.get()))
+
+    first.start()
+    assert inside.wait(10), "전제: 첫 스레드가 해석 안에 들어갔다"
+    second.start()
+    second.join(0.3)  # 둘째가 기다리는 구간을 넓힌다
+    waiting, peeked = second.is_alive(), pending.peek()
+    gate.set()
+    first.join(10)
+    second.join(10)
+
+    assert waiting and peeked is None
+    assert len(calls) == 1
+    assert got["first"] is got["second"]
+    assert got["first"].index == expected.index and got["first"].data == expected.data
+    assert pending.raw is None and pending.peek() is got["first"]
+
+
+def test_pending_head_raises_the_same_error_again_without_parsing_again(monkeypatch):
+    """해석이 실패한 받아 둔 moov는 청할 때마다 같은 예외를 던지고 다시 해석하지 않아야 한다.
+
+    해석 함수가 Mp4Error를 던지게 바꾸고 get()을 두 번 부름
+    -> 두 번 모두 같은 예외 객체, 해석 1회, peek() is None
+    """
+    calls = []
+
+    def broken(held):
+        calls.append(held)
+        raise Mp4Error(MP4_INVALID, "깨진 moov(대역)")
+
+    monkeypatch.setattr(mp4_module, "index_mp4", broken)
+    pending = pending_mp4_head(_raw_of_standard_mp4())
+
+    with pytest.raises(Mp4Error) as first:
+        pending.get()
+    with pytest.raises(Mp4Error) as second:
+        pending.get()
+
+    assert first.value is second.value
+    assert len(calls) == 1
+    assert pending.peek() is None

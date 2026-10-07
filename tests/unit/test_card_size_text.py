@@ -22,7 +22,6 @@ from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 
 import app.process_memory as process_memory
 import app.section_basis as section_basis
-import app.viewmodels.section_edit_viewmodel as section_edit_module
 import app.theme as theme
 import main as main_module
 from app.download_logger import DownloadLogger
@@ -31,7 +30,8 @@ from app.viewmodels.data import ContentItem
 from app.views import mainWindow as mw_mod
 from app.views.mainWindow import VodDownloader
 from app.widgets.widget import ContentItemWidget
-from core.api.mp4 import index_mp4, read_mp4_raw
+import core.api.mp4 as mp4_module
+from core.api.mp4 import index_mp4, pending_mp4_head, read_mp4_raw
 from core.api.representations import StreamEntry
 from core.models.download_state import DownloadState
 from core.models.events import ProgressEvent
@@ -405,8 +405,9 @@ REAL_PROBE = section_basis.probe_section_basis  # 대역으로 바꾸기 전의 
 class _Probe:
     """조회 대역 — 해상도마다 다른 실제 moov의 바이트를 돌려준다(1080p는 샘플이 480p의 3배).
 
-    제품의 조회처럼 색인을 만들지 않는다. ``heads``는 기대값을 세는 데 쓰는, 같은 바이트를
-    테스트가 따로 해석한 색인이다.
+    제품의 조회처럼 색인을 만들지 않고, 아직 해석하지 않은 moov(``PendingMp4Head``)를 조회마다
+    새로 싸서 돌려준다. ``heads``는 기대값을 세는 데 쓰는, 같은 바이트를 테스트가 따로 해석한
+    색인이다.
     """
 
     def __init__(self):
@@ -422,7 +423,9 @@ class _Probe:
             raise RuntimeError("조회 실패(대역)")
         index = self.heads[item.resolution].index
         return SectionBasis(
-            fps=index.fps, duration=index.duration, mp4_raw=self.raws[item.resolution]
+            fps=index.fps,
+            duration=index.duration,
+            mp4_pending=pending_mp4_head(self.raws[item.resolution]),
         )
 
 
@@ -560,7 +563,7 @@ class _GatedIndex:
 @pytest.fixture
 def gated_index(monkeypatch):
     gated = _GatedIndex()
-    monkeypatch.setattr(section_edit_module, "index_mp4", gated)
+    monkeypatch.setattr(mp4_module, "index_mp4", gated)
     yield gated
     gated.gate.set()
 
@@ -580,7 +583,7 @@ def test_card_says_checking_while_the_section_total_is_counted_in_the_background
     _give_section(qtbot, win, item, wait_size=False)
     qtbot.waitUntil(lambda: gated_index.calls == 1, timeout=3000)
     _pump()
-    during = (item.section_bytes, item.section_head[1])
+    during = (item.section_bytes, item.section_head[1].raw)
     label = shown(win.listView.widgetFor(item).fileSizeLabel)
     gated_index.gate.set()
     _wait_size(qtbot, win)
@@ -610,7 +613,7 @@ def test_card_stops_saying_checking_when_counting_fails_and_takes_the_engine_tot
     def broken(raw):
         raise RuntimeError("색인 만들기 실패(대역)")
 
-    monkeypatch.setattr(section_edit_module, "index_mp4", broken)
+    monkeypatch.setattr(mp4_module, "index_mp4", broken)
     _give_section(qtbot, win, item)
 
     assert item.section_bytes is None and item.section_sizing is False
@@ -679,7 +682,7 @@ def test_download_started_before_the_index_is_built_hands_the_bytes_to_the_engin
     """색인을 만들기 전에 다운로드를 시작하면 받은 바이트가 엔진에 넘어가고, 늦은 크기는 적히지 않아야 한다.
 
     색인 만들기를 막아 둔 채 구간을 확인, 전역 다운로드, 문을 엶
-    -> content.mp4_raw is 조회가 받은 바이트, content.mp4_head is None, 카드에는 남지 않음,
+    -> content.mp4_pending이 조회가 받은 바이트를 쥔다, content.mp4_head is None, 카드에는 남지 않음,
        section_bytes is None(엔진이 정한 크기를 기다린다)
     """
     win, item, engine = window
@@ -688,11 +691,12 @@ def test_download_started_before_the_index_is_built_hands_the_bytes_to_the_engin
 
     win.downloadButton.click()
     _pump()
+    content = engine.submissions[0]["content"]
+    handed = content.mp4_pending.raw
     gated_index.gate.set()
     _wait_size(qtbot, win)
 
-    content = engine.submissions[0]["content"]
-    assert content.mp4_raw is probe.raws[1080]
+    assert handed is probe.raws[1080]
     assert content.mp4_head is None
     assert item.section_head is None
     assert item.section_bytes is None
@@ -709,7 +713,7 @@ def test_a_late_section_total_is_dropped_when_the_card_holds_another_moov(
     win, item, _engine = window
     _give_section(qtbot, win, item, wait_size=False)
     qtbot.waitUntil(lambda: gated_index.calls == 1, timeout=3000)
-    other = _mp4_raw(2)
+    other = pending_mp4_head(_mp4_raw(2))
 
     item.section_head = ("u1", other)
     gated_index.gate.set()
@@ -739,10 +743,10 @@ def test_confirming_edited_sections_recomputes_the_total(qtbot, window, probe):
 def test_bytes_handed_to_the_engine_are_dropped_when_the_download_ends(
     qtbot, window, probe, gated_index
 ):
-    """엔진에 넘긴 moov 바이트는 다운로드가 끝나면 Content에 남지 않아야 한다.
+    """엔진에 넘긴, 아직 해석하지 않은 moov는 다운로드가 끝나면 Content에 남지 않아야 한다.
 
-    색인 만들기를 막아 둔 채 구간을 확인, 전역 다운로드(바이트가 넘어간다), 완료 통지
-    -> 통지 전 content.mp4_raw is 조회가 받은 바이트, 끝난 뒤 content.mp4_raw is None
+    색인 만들기를 막아 둔 채 구간을 확인, 전역 다운로드(받아 둔 moov가 넘어간다), 완료 통지
+    -> 통지 전 content.mp4_pending이 조회가 받은 바이트를 쥔다, 끝난 뒤 content.mp4_pending is None
     """
     win, item, engine = window
     _give_section(qtbot, win, item, wait_size=False)
@@ -750,14 +754,43 @@ def test_bytes_handed_to_the_engine_are_dropped_when_the_download_ends(
     win.downloadButton.click()
     _pump()
     content = engine.submissions[0]["content"]
-    handed = content.mp4_raw
+    handed = content.mp4_pending.raw
 
     item.downloadState = DownloadState.FINISHED  # 배치가 이 카드를 다시 고르지 않게 한다
     engine.submissions[0]["on_finished"]()
     qtbot.waitUntil(lambda: win.downloadViewModel.handle is None, timeout=3000)
 
     assert handed is probe.raws[1080]
-    assert content.mp4_raw is None
+    assert content.mp4_pending is None
+
+
+def test_engine_and_the_background_count_share_one_parse(qtbot, window, probe, gated_index):
+    """확인 직후 받기 시작해 엔진과 크기 계산이 같은 moov를 함께 필요로 해도 해석은 한 번만 돌아야 한다.
+
+    색인 만들기를 막아 둔 채 구간을 확인(크기 계산이 해석 안에 들어가 선다), 전역 다운로드.
+    엔진처럼 다른 스레드에서 넘겨받은 content.mp4_pending.get()을 부르고, 그 스레드가 기다리는
+    동안 문을 엶
+    -> 색인 만들기 호출 1회, 엔진 쪽이 받은 색인 == 1080p의 색인(테스트가 따로 해석한 것과 같은 값)
+    """
+    win, item, engine = window
+    _give_section(qtbot, win, item, wait_size=False)
+    qtbot.waitUntil(lambda: gated_index.calls == 1, timeout=3000)
+    win.downloadButton.click()
+    _pump()
+    pending = engine.submissions[0]["content"].mp4_pending
+    got: list = []
+    worker = threading.Thread(target=lambda: got.append(pending.get()))
+
+    worker.start()
+    worker.join(0.3)  # 엔진 쪽이 기다리는 구간을 넓힌다 — 해석이 끝나기 전에는 돌아오지 않는다
+    waiting = worker.is_alive()
+    gated_index.gate.set()
+    worker.join(10)
+    _wait_size(qtbot, win)
+
+    assert waiting, "전제: 엔진 쪽이 해석이 끝나기를 기다렸다"
+    assert gated_index.calls == 1
+    assert got[0].index == probe.heads[1080].index
 
 
 def test_download_started_after_the_index_is_built_hands_the_index_to_the_engine(
@@ -766,7 +799,7 @@ def test_download_started_after_the_index_is_built_hands_the_index_to_the_engine
     """색인을 만든 뒤에 다운로드를 시작하면 그 색인이 엔진에 넘어가야 한다.
 
     구간을 확인하고 크기를 세는 일이 끝난 뒤 전역 다운로드
-    -> content.mp4_head는 Mp4Head, content.mp4_raw is None
+    -> content.mp4_head는 Mp4Head, content.mp4_pending is None
     """
     win, item, engine = window
     _give_section(qtbot, win, item)
@@ -776,7 +809,7 @@ def test_download_started_after_the_index_is_built_hands_the_index_to_the_engine
 
     content = engine.submissions[0]["content"]
     assert isinstance(content.mp4_head, Mp4Head)
-    assert content.mp4_raw is None
+    assert content.mp4_pending is None
 
 
 def test_reopening_the_editor_hands_the_held_moov_to_the_lookup(qtbot, window, probe, monkeypatch):

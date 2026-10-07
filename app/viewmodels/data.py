@@ -71,7 +71,7 @@ class ContentItem:
         # 카드에 경고를 붙이며, 받을 때 이 구간만 엔진에 넘기지 않는다
         self.section_unfit = frozenset()
         # 구간을 정하며 받은 moov — (그때의 주소, 받은 것). 받은 것은 moov의 바이트
-        # (core.models.mp4_index.Mp4Raw)이고, 구간을 확인한 뒤 받을 크기를 세면서 해석한 색인
+        # (core.models.mp4_index.PendingMp4Head)이고, 구간을 확인한 뒤 받을 크기를 세면서 해석한 색인
         # (Mp4Head)으로 바뀐다. 다운로드를 시작할 때 주소가 같으면 엔진에 넘겨 다시 받지 않게
         # 하고, 같은 카드의 편집 창을 다시 열 때도 다시 받지 않는다. 긴 영상의 색인은 100MB를
         # 넘어 앱 전체에서 한 카드의 것만 든다(section_edit_viewmodel.keep_section_head).

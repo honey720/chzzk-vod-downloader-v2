@@ -35,10 +35,10 @@ from app.network import NetworkManager
 from app.probe_timing import ProbeTiming
 from core.api.hls_fmp4 import fetch_fmp4_head, segment_frames
 from core.api.hls_ts import fetch_ts_head, segment_streams, ts_key_uri
-from core.api.mp4 import fetch_mp4_raw, index_mp4, summarize_mp4
+from core.api.mp4 import Mp4Error, fetch_mp4_raw, pending_mp4_head, summarize_mp4
 from core.models.content import Content, ContentType
 from core.models.fmp4_index import Fmp4Head
-from core.models.mp4_index import Mp4Head, Mp4Raw
+from core.models.mp4_index import Mp4Head, PendingMp4Head
 from core.models.ts_index import TsHead
 from core.utils.fmp4_sections import FPS_DECLARED, choose_frame_rate, fmp4_timeline
 from core.utils.ts_sections import choose_ts_frame_rate, ts_timeline
@@ -62,10 +62,10 @@ class SectionBasis:
     # 인코딩 완료 VOD를 조회하며 받은 moov. 다운로드를 시작할 때 엔진에 넘기면 엔진이 다시
     # 받지 않는다. 그 밖의 타입과 대역은 None이다. 같은지 견줄 때와 repr에는 들지 않는다
     mp4_head: Mp4Head | None = field(default=None, compare=False, repr=False)
-    # 인코딩 완료 VOD를 조회하며 받은 moov의 바이트 — 아직 해석하지 않은 것. 편집 창의 조회는
-    # 프레임률 · 길이만 가볍게 읽고 이것을 싣는다(색인은 필요할 때 만든다). 같은지 견줄 때와
-    # repr에는 들지 않는다
-    mp4_raw: Mp4Raw | None = field(default=None, compare=False, repr=False)
+    # 인코딩 완료 VOD를 조회하며 받은 moov — 아직 해석하지 않은 것. 편집 창의 조회는 프레임률 ·
+    # 길이만 가볍게 읽고 이것을 싣는다. 색인은 필요한 쪽이 ``get()``으로 만들고, 한 번만
+    # 만들어진다(PendingMp4Head). 같은지 견줄 때와 repr에는 들지 않는다
+    mp4_pending: PendingMp4Head | None = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -135,11 +135,13 @@ def probe_mp4(base_url: str, held=None, index: bool = False) -> SectionProbe:
 
     moov의 바이트만 받고 프레임률 · 길이는 가볍게 읽는다(``summarize_mp4``) — 샘플마다 펼친
     색인을 만들지 않는다. 긴 영상은 색인을 만드는 데만 몇 초가 걸린다. 값은 색인의 것과
-    비트까지 같다. 받은 바이트는 결과에 싣는다(``SectionBasis.mp4_raw``) — 색인이 필요한 쪽이
+    비트까지 같다. 받은 moov는 결과에 싣는다(``SectionBasis.mp4_pending``) — 색인이 필요한 쪽이
     다시 받지 않고 해석한다.
 
     Args:
-        held: 이미 쥐고 있는 그 주소의 moov(``Mp4Raw`` 또는 ``Mp4Head``). 주면 받지 않는다
+        held: 이미 쥐고 있는 그 주소의 moov(``PendingMp4Head`` 또는 ``Mp4Head``). 주면 받지
+            않는다. 아직 해석하지 않은 것을 주면 결과에 **그 객체를 그대로** 싣는다 — 이미
+            돌고 있는 해석과 겹치지 않는다
         index: True면 색인까지 만들어 ``head``에 싣는다 — 헤드리스처럼 곧바로 엔진에 넘길 때
 
     Raises:
@@ -148,17 +150,26 @@ def probe_mp4(base_url: str, held=None, index: bool = False) -> SectionProbe:
     """
     timing = ProbeTiming("mp4")
     with timing.watching():
+        pending = raw = None
+        if isinstance(held, PendingMp4Head):
+            pending, raw = held, held.raw
+            if raw is None:  # 그사이 해석이 끝났다 — 색인을 쓴다. 해석이 실패했으면 다시 받는다
+                try:
+                    held = pending.get()
+                except Mp4Error:
+                    held = None
+                pending = None
         if isinstance(held, Mp4Head):
             # 색인까지 만들어 둔 카드를 다시 열었다 — 받지도 해석하지도 않는다
             timing.note("moov", lambda: "쥐고 있던 색인을 다시 씀")
             basis = SectionBasis(fps=held.index.fps, duration=held.index.duration, mp4_head=held)
             return SectionProbe(basis=basis, fps_source=FPS_DECLARED, head=held)
-        if held is not None:
-            raw = held
+        if pending is not None:
             timing.note("moov", lambda: "쥐고 있던 바이트를 다시 씀")
         else:
             with timing.stage("moov 받기"):
                 raw = fetch_mp4_raw(base_url)
+            pending = pending_mp4_head(raw)
         with timing.stage("가벼운 해석"):
             summary = summarize_mp4(raw)
         timing.note("moov 크기", lambda: f"{len(raw.moov):,}바이트")
@@ -167,10 +178,10 @@ def probe_mp4(base_url: str, held=None, index: bool = False) -> SectionProbe:
         head = None
         if index:
             with timing.stage("moov 해석"):
-                head = index_mp4(raw)
+                head = pending.get()
         return SectionProbe(
             basis=SectionBasis(
-                fps=summary.fps, duration=summary.duration, mp4_head=head, mp4_raw=raw
+                fps=summary.fps, duration=summary.duration, mp4_head=head, mp4_pending=pending
             ),
             fps_source=FPS_DECLARED,
             head=head,

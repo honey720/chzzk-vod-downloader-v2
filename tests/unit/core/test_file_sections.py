@@ -37,6 +37,7 @@ from core.api.mp4 import (
     Mp4Error,
     fetch_mp4_head,
     fetch_mp4_raw,
+    pending_mp4_head,
     read_mp4_index,
 )
 from core.downloaders.base import PostprocessError, TruncatedBodyError
@@ -1041,8 +1042,8 @@ def test_prepare_log_says_the_moov_was_reused_when_one_was_handed_in(server, tmp
 def test_engine_parses_handed_moov_bytes_without_fetching_again(server, tmp_path, monkeypatch):
     """해석하지 않은 moov 바이트를 넘겨받은 구간 다운로드는 moov를 다시 받지 않고 같은 파일을 내야 한다.
 
-    기본 입력, 구간 프레임 35~80. fetch_mp4_raw의 결과를 content.mp4_raw에 넣고 엔진의
-    moov 받기를 부르면 실패하게 바꿈. 같은 구간을 아무것도 넘기지 않고 받은 것과 견줌
+    기본 입력, 구간 프레임 35~80. fetch_mp4_raw의 결과를 pending_mp4_head로 싸 content.mp4_pending에
+    넣고 엔진의 moov 받기를 부르면 실패하게 바꿈. 같은 구간을 아무것도 넘기지 않고 받은 것과 견줌
     -> 준비 로그의 덧붙인 말 == "moov reused", 둘 다 완료 1회, 산출물의 프레임 == 넘기지 않고 받은 산출물의 프레임
     """
     sections = [TimeRange(_seconds(35), _seconds(80))]
@@ -1056,7 +1057,7 @@ def test_engine_parses_handed_moov_bytes_without_fetching_again(server, tmp_path
 
     monkeypatch.setattr(fd_module, "fetch_mp4_head", no_fetch)
     run = _Run(server, "plain", tmp_path / "handed", sections)
-    run.data.content.mp4_raw = raw
+    run.data.content.mp4_pending = pending_mp4_head(raw)
 
     run.start()
 
@@ -1064,6 +1065,34 @@ def test_engine_parses_handed_moov_bytes_without_fetching_again(server, tmp_path
     assert note == "moov reused"
     assert (plain.finished, run.finished) == (1, 1)
     assert _frames(run.paths[0]) == _frames(plain.paths[0])
+
+
+def test_engine_uses_the_index_someone_else_already_parsed(server, tmp_path, monkeypatch):
+    """넘겨받은 moov를 다른 쪽이 이미 해석했으면 엔진은 다시 해석하지 않고 그 색인으로 받아야 한다.
+
+    기본 입력, 구간 프레임 35~80. content.mp4_pending을 먼저 get()으로 해석해 두고, 해석 함수를
+    세는 대역으로 바꾼 뒤 엔진을 돌림
+    -> 엔진이 도는 동안 해석 0회, 완료 1회, 준비 로그의 덧붙인 말 == "moov reused"
+    """
+    pending = pending_mp4_head(fetch_mp4_raw(server.url("plain")))
+    pending.get()
+    calls = []
+    real = mp4_module.index_mp4
+
+    def counting(raw):
+        calls.append(raw)
+        return real(raw)
+
+    monkeypatch.setattr(mp4_module, "index_mp4", counting)
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))])
+    run.data.content.mp4_pending = pending
+
+    run.start()
+
+    assert calls == []
+    assert run.finished == 1
+    ((_elapsed, note),) = _logged(run, "log_prepare_complete")
+    assert note == "moov reused"
 
 
 def test_prepare_log_of_a_whole_download_says_nothing_about_the_moov(server, tmp_path):

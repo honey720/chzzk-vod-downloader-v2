@@ -33,7 +33,14 @@ from itertools import accumulate, chain, compress, count, repeat
 from operator import add, le, mul, sub, truediv
 
 from core.api.session import get_thread_session
-from core.models.mp4_index import Mp4Head, Mp4Index, Mp4Raw, Mp4Summary, Mp4Track
+from core.models.mp4_index import (
+    Mp4Head,
+    Mp4Index,
+    Mp4Raw,
+    Mp4Summary,
+    Mp4Track,
+    PendingMp4Head,
+)
 from core.models.sample_column import count_column, float_column, offset_column
 
 # 실패 키 — 번역하지 않은 i18n 키 원문
@@ -224,6 +231,12 @@ def index_mp4(raw: Mp4Raw) -> Mp4Head:
         data=raw.prefix + raw.moov if raw.prefix is not None else None,
         parse_seconds=parse_seconds,
     )
+
+
+def pending_mp4_head(raw: Mp4Raw) -> PendingMp4Head:
+    """받아 둔 moov를 필요할 때 한 번만 해석하는 묶음으로 싼다 (#309) — ``PendingMp4Head``."""
+    # 모듈 전역을 호출 시점에 조회한다 — 테스트의 monkeypatch 지점
+    return PendingMp4Head(raw, lambda held: index_mp4(held))
 
 
 def summarize_mp4(raw: Mp4Raw) -> Mp4Summary:

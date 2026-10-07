@@ -43,7 +43,7 @@ from core.downloaders.integrity import TruncatedSegmentError
 from core.models.events import ProgressEvent
 from core.services.download_service import DownloadService
 from core.models.download_data import DownloadData
-from core.models.mp4_index import Mp4Raw
+from core.models.mp4_index import PendingMp4Head
 from core.models.section_resume import SectionResume
 from core.utils.hybrid_cut import CutError
 from core.utils.paths import (
@@ -267,9 +267,10 @@ class DownloadViewModel(QObject):
             # 구간을 정하며 받은 moov를 넘긴다 (#309) — 주소가 같을 때만. 엔진이 다시 받지 않는다.
             # 카드에서는 비운다 — 이제 엔진이 들고, 다운로드가 끝나면 함께 사라진다
             moov = take_section_head(item)
-            if isinstance(moov, Mp4Raw):
-                # 아직 색인을 만들지 않았다 — 바이트를 넘긴다. 엔진이 받지 않고 해석만 한다
-                data.content.mp4_raw = moov
+            if isinstance(moov, PendingMp4Head):
+                # 아직 색인을 만들지 않았다 — 받아 둔 것을 넘긴다. 엔진이 다시 받지 않고, 받을
+                # 크기를 세는 쪽이 해석하는 중이면 기다려 그 색인을 쓴다(해석은 한 번만 돈다)
+                data.content.mp4_pending = moov
             else:
                 data.content.mp4_head = moov
         self._data = data
@@ -336,7 +337,7 @@ class DownloadViewModel(QObject):
         """
         if self._data is not None:
             self._data.content.mp4_head = None
-            self._data.content.mp4_raw = None
+            self._data.content.mp4_pending = None
 
     def _showPreparing(self) -> None:
         """준비가 길어지고 있다 — 카드에 "준비 중"을 켠다 (#309). 타이머가 부른다."""
