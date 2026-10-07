@@ -579,7 +579,7 @@ def test_card_shows_preparing_until_the_engine_reports_progress(qtbot, window, m
 def test_a_short_prepare_never_shows_preparing(qtbot, window):
     """준비가 지연보다 먼저 끝나면 "Preparing"은 한 번도 보이지 않아야 한다.
 
-    지연을 60초로 둠(테스트가 느려도 그 안에 끝난다). 전역 다운로드 → 카드가 받는 중으로 그려짐 → 첫 진행 통지
+    지연을 60초로 둠(테스트가 느려도 그 안에 끝난다). 전역 다운로드 → 카드를 다시 그리게 함 → 첫 진행 통지
     -> 통지 전: 카드는 받는 중이고 preparing이 꺼져 있다, 상태 문구는 "Preparing"이 아니다, 막대의 최대값 100
     -> 통지 뒤: preparing이 꺼져 있고 타이머가 멈춰 있다(뒤늦게 켜지지 않는다)
     """
@@ -587,6 +587,7 @@ def test_a_short_prepare_never_shows_preparing(qtbot, window):
     win.downloadViewModel._prepareTimer.setInterval(60_000)
     widget = win.listView.widgetFor(item)
     win.downloadButton.click()
+    win.contentManager.model.notifyChanged(item)  # 지연 안에 온 다른 통지가 카드를 다시 그린다
     _pump()
 
     assert item.downloadState == DownloadState.RUNNING
