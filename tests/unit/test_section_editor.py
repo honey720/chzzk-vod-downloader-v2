@@ -3558,3 +3558,38 @@ def test_nothing_is_set_before_the_end_of_the_video_is_known(qtbot, tmp_path, ba
         assert viewmodel.clampedRow() is None
     finally:
         basis.gate.set()
+
+
+def test_a_saved_end_past_the_video_opens_as_an_error_on_the_end_and_is_set_when_the_field_is_left(
+    qtbot, tmp_path, basis
+):
+    """카드에 있던 끝이 영상 끝을 넘으면 열 때는 끝 칸만 칠한 오류이고, 그 칸을 떠나면 끝으로 맞춰야 한다.
+
+    60fps · 3600초. 카드의 selections = ((600, 3700),) — 끝이 영상 끝을 넘는다(시작은 안이다)
+    -> 열면: 끝 "01:01:40:00", 오류 "Selection is outside the video", 끝의 두 칸만 강조, 확인 꺼짐
+    -> 끝 칸의 편집을 끝내면: 끝 == "01:00:00:00", 오류 없음, 맞춘 안내, 확인 켜짐
+    """
+    item = _make_item(str(tmp_path))
+    item.selections = (TimeRange(600.0, 3700.0),)
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    row = dialog._rows[0]
+
+    opened = (
+        row.endEdit.text(),
+        error_shown(row),
+        flagged_fields(row),
+        dialog.okButton.isEnabled(),
+    )
+    leave(row.endEdit)
+    _pump()
+
+    assert opened == (
+        "01:01:40:00",
+        "Selection is outside the video",
+        {"end clock", "end frame"},
+        False,
+    )
+    assert row.endEdit.text() == "01:00:00:00"
+    assert error_shown(row) == "" and notice_shown(row) == SET_TO_END.format("01:00:00:00")
+    assert dialog.okButton.isEnabled()
