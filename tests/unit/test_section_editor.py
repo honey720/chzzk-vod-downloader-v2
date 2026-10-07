@@ -456,13 +456,9 @@ def flagged_fields(row) -> set[str]:
         # 시각 전체의 오류 — 시작과 끝의 두 칸 모두
         ("00:20:00:00", "00:10:00:00", "Start must be before end", ALL_FOUR),  # 역방향
         ("00:10:00:00", "00:10:00:00", "Start must be before end", ALL_FOUR),  # 길이 0
-        # 길이보다 1프레임 뒤 — 영상의 끝을 넘은 시각(끝)의 두 칸
-        (
-            "00:10:00:00",
-            "01:00:00:01",
-            "Selection is outside the video",
-            {"end clock", "end frame"},
-        ),
+        # 시작과 끝이 모두 영상 끝을 넘음 — 넘은 시각의 칸 모두. 끝만 넘은 것은 오류가 아니라
+        # 영상 끝으로 맞춘다(아래 "끝이 영상 끝을 넘으면 맞춘다"의 테스트들)
+        ("01:10:00:00", "01:20:00:00", "Selection is outside the video", ALL_FOUR),
         # 초 · 분 넘침 — 그 시각의 시분초 칸만
         ("00:10:60:00", "00:20:00:00", "Minutes and seconds must be below 60", {"start clock"}),
         ("00:60:00:00", "00:20:00:00", "Minutes and seconds must be below 60", {"start clock"}),
@@ -510,7 +506,8 @@ def test_frame_field_and_range_follow_the_looked_up_frame_rate_and_length(qtbot,
     """FF의 범위와 구간의 끝은 조회한 프레임률 · 길이로 판정해야 한다.
 
     29.97fps(2997/100) · 길이 10.02초
-    -> 끝 "00:00:10:00" 통과 / "00:00:09:30" FF 초과 / "00:00:10:01"(10.0334초) 길이 초과
+    -> 끝 "00:00:10:00" 통과 / "00:00:09:30" FF 초과 / "00:00:10:01"(10.0334초)은 길이를 넘어
+       영상 끝 "00:00:10:00"으로 맞춰진다
     -> 통과한 "00:00:01:15"~"00:00:10:00"의 시작 == 1 + 15 × 100 ÷ 2997초
     """
     basis.fps = Fraction(2997, 100)
@@ -523,7 +520,7 @@ def test_frame_field_and_range_follow_the_looked_up_frame_rate_and_length(qtbot,
     set_rows(dialog, [("00:00:01:15", "00:00:09:30")])
     assert shown(row.errorLabel) == "Frame number must be below the frame rate"
     set_rows(dialog, [("00:00:01:15", "00:00:10:01")])
-    assert shown(row.errorLabel) == "Selection is outside the video"
+    assert row.endEdit.text() == "00:00:10:00" and not row.errorLabel.isVisible()
     set_rows(dialog, [("00:00:01:15", "00:00:10:00")])
     assert not row.errorLabel.isVisible()
     press_ok(dialog)
@@ -652,27 +649,6 @@ def test_start_past_the_end_is_flagged_while_typing(qtbot, tmp_path, basis):
     assert not dialog.okButton.isEnabled()
 
 
-def test_a_value_past_the_video_is_flagged_while_typing(qtbot, tmp_path, basis):
-    """치는 중 끝이 영상 길이를 넘으면 칸을 떠나기 전에 바로 오류를 띄워야 한다.
-
-    60fps · 3600초. 끝의 시분초 칸에 10000(01:00:00 — 영상 끝)까지는 오류 없음, 1을 더 쳐
-    10:00:01이 되는 순간 "Selection is outside the video"
-    """
-    item = _make_item(str(tmp_path))
-    win = open_window(tmp_path, item)
-    dialog = open_editor(qtbot, win, item)
-    row = dialog._rows[0]
-
-    type_into(row.endEdit, "1000000")
-    assert row.endEdit.text() == "01:00:00:00" and error_shown(row) == ""
-
-    type_more(row.endEdit, "1")
-
-    assert row.endEdit.text() == "10:00:01:00"
-    assert error_shown(row) == "Selection is outside the video"
-    assert row.endEdit.property("invalid") is True
-
-
 def test_an_end_still_below_the_start_waits_until_the_field_is_left(qtbot, tmp_path, basis):
     """끝 칸을 치는 중 끝이 아직 시작에 못 미치는 것은 칸을 떠날 때까지 띄우지 않되, 확인은 꺼 두어야 한다.
 
@@ -764,21 +740,23 @@ def test_a_frame_past_the_frame_rate_is_flagged_as_soon_as_both_digits_are_typed
 def test_an_error_disappears_at_once_when_the_value_becomes_valid(qtbot, tmp_path, basis):
     """오류는 값이 유효해지는 순간 칸을 떠나지 않아도 바로 사라져야 한다.
 
-    60fps · 3600초. 끝 시분초 칸에 100001(10:00:01 — 길이 초과)을 쳐 오류가 뜬 뒤 Backspace
-    -> 01:00:00(영상 끝)이 되는 순간 오류 문구 없음, 칸 강조 없음, 확인 켜짐
+    60fps · 3600초. 끝이 00:10:00:00인 행의 시작 시분초 칸에 2000(00:20:00 — 끝보다 뒤)을 쳐
+    오류가 뜬 뒤 Backspace -> 00:02:00이 되는 순간 오류 문구 없음, 칸 강조 없음, 확인 켜짐
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
     dialog = open_editor(qtbot, win, item)
     row = dialog._rows[0]
-    type_into(row.endEdit, "10:00:01:00")
-    assert error_shown(row) == "Selection is outside the video"
+    type_into(row.endEdit, "00:10:00:00")
+    leave(row.endEdit)
+    type_into(row.startEdit, "00:20:00:00")
+    assert error_shown(row) == "Start must be before end"
 
-    QTest.keyClick(row.endEdit.clockEdit, Qt.Key.Key_Backspace)
+    QTest.keyClick(row.startEdit.clockEdit, Qt.Key.Key_Backspace)
     _pump()
 
-    assert row.endEdit.text() == "01:00:00:00"
-    assert error_shown(row) == "" and row.endEdit.property("invalid") is False
+    assert row.startEdit.text() == "00:02:00:00"
+    assert error_shown(row) == "" and row.startEdit.property("invalid") is False
     assert dialog.okButton.isEnabled()
 
 
@@ -2053,13 +2031,13 @@ def test_the_shown_end_is_the_last_frame_boundary_of_the_looked_up_length(
         (Fraction(2997, 100), 10.02, "1000", "1001"),
     ],
 )
-def test_typing_the_shown_end_reaches_the_end_and_one_frame_more_is_outside(
+def test_typing_the_shown_end_reaches_the_end_and_one_frame_more_is_set_back_to_it(
     qtbot, tmp_path, basis, fps, duration, end_digits, one_more
 ):
-    """보인 끝 타임코드를 끝 칸에 치면 통과하고 전체 다운로드로 판정되며, 한 프레임 더하면 길이 초과여야 한다.
+    """보인 끝 타임코드를 끝 칸에 치면 통과하고 전체 다운로드로 판정되며, 한 프레임 더하면 그 끝으로 맞춰져야 한다.
 
     위 표의 프레임률 · 길이에서 끝 칸에 끝 타임코드의 숫자를 침 -> 오류 없음, 확인하면 selections == ()
-    한 프레임 뒤의 숫자를 침 -> "Selection is outside the video"
+    한 프레임 뒤의 숫자를 치고 떠남 -> 끝 == 끝 타임코드(한 프레임 앞도 뒤도 아니다), 오류 없음
     """
     basis.fps, basis.duration = fps, duration
     item = _make_item(str(tmp_path))
@@ -2069,7 +2047,8 @@ def test_typing_the_shown_end_reaches_the_end_and_one_frame_more_is_outside(
 
     type_into(row.endEdit, one_more)
     leave(row.endEdit)
-    assert shown(row.errorLabel) == "Selection is outside the video"
+    assert row.endEdit.text() == dialog.viewModel().endTimecodeText()
+    assert not row.errorLabel.isVisible()
 
     type_into(row.endEdit, end_digits)
     leave(row.endEdit)
@@ -3190,3 +3169,392 @@ def test_only_the_error_shows_when_an_error_and_a_note_fall_on_the_same_row(qtbo
     row.showMessage({"note": "N"})
     _pump()
     assert shown(row.noteLabel) == "N" and not row.errorLabel.isVisible()
+
+
+# ================================================================ 끝이 영상 끝을 넘으면 맞춘다 (#309)
+
+HALF_HOUR = 1800.0  # 30분 영상 — 60fps의 끝 타임코드는 00:30:00:00
+PAST_END = "Past the end of the video — leaving the field sets it to the end"
+SET_TO_END = "Set to the end of the video ({0})"
+
+
+def notice_shown(row) -> str:
+    """행 아래에 지금 보이는 흐린 안내(넘음 · 맞춤). 보이지 않으면 빈 문자열."""
+    return shown(row.noticeLabel) if row.noticeLabel.isVisible() else ""
+
+
+def half_hour_editor(qtbot, tmp_path, basis, rows: int = 1, duration: float = HALF_HOUR):
+    """30분(60fps) 영상의 편집 창 — 행을 rows개로 늘려 둔다."""
+    basis.duration = duration
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    while len(dialog._rows) < rows:
+        dialog.addButton.click()
+        _pump()
+    return win, item, dialog
+
+
+def wait_armed(qtbot, dialog) -> None:
+    """맞춘 안내가 뜨고, 다음 조작이 그것을 내릴 수 있게 되기를 기다린다."""
+    qtbot.waitUntil(dialog.clampNoticeArmed, timeout=3000)
+
+
+def test_an_end_past_the_video_is_set_to_the_end_when_the_field_is_left(qtbot, tmp_path, basis):
+    """끝 칸이 영상의 끝을 넘은 채 떠나면 끝 타임코드로 바뀌고, 오류 없이 맞춘 안내가 보여야 한다.
+
+    30분(60fps) 영상. 시작 00:10:00:00, 끝에 01:00:00:00을 치고 떠남
+    -> 끝 == "00:30:00:00"(전부 밝게), 오류 없음 · 칸 강조 없음, 안내 == "Set to the end of the
+       video (00:30:00:00)", 행의 높이는 치기 전과 같다, 확인 켜짐
+    확인 -> selections == ((600, 1800),)
+    """
+    _win, item, dialog = half_hour_editor(qtbot, tmp_path, basis)
+    row = dialog._rows[0]
+    type_into(row.startEdit, "00:10:00:00")
+    leave(row.startEdit)
+    _pump()
+    height = row.height()
+
+    type_into(row.endEdit, "01:00:00:00")
+    leave(row.endEdit)
+    _pump()
+
+    assert row.endEdit.text() == "00:30:00:00"
+    assert (row.endEdit.clockEdit.dimText(), row.endEdit.clockEdit.brightText()) == ("", "00:30:00")
+    assert error_shown(row) == "" and flagged_fields(row) == set()
+    assert notice_shown(row) == SET_TO_END.format("00:30:00:00")
+    assert row.height() == height
+    assert dialog.okButton.isEnabled()
+    press_ok(dialog)
+    assert item.selections == (TimeRange(600.0, HALF_HOUR),)
+
+
+def test_enter_sets_an_end_past_the_video_to_the_end_and_moves_on(qtbot, tmp_path, basis):
+    """끝 칸에서 Enter를 쳐도 영상 끝으로 맞추고, 포커스는 다음 칸으로 가야 한다.
+
+    30분 영상 · 행 둘. 첫 행의 끝 시분초 칸에 010000을 치고 Enter
+    -> 끝 == "00:30:00:00", 맞춘 안내, 포커스 == 둘째 행의 시작 시분초 칸
+    """
+    _win, _item, dialog = half_hour_editor(qtbot, tmp_path, basis, rows=2)
+    row = dialog._rows[0]
+    row.endEdit.clockEdit.setFocus()
+    QTest.keyClicks(row.endEdit.clockEdit, "010000")
+
+    QTest.keyClick(row.endEdit.clockEdit, Qt.Key.Key_Return)
+    _pump()
+
+    assert row.endEdit.text() == "00:30:00:00"
+    assert notice_shown(row) == SET_TO_END.format("00:30:00:00")
+    assert QApplication.focusWidget() is dialog._rows[1].startEdit.clockEdit
+
+
+def test_pasting_an_end_past_the_video_sets_it_to_the_end_at_once(
+    qtbot, tmp_path, basis, monkeypatch
+):
+    """끝 칸에 영상 끝을 넘는 값을 붙여넣으면 떠나기를 기다리지 않고 바로 영상 끝으로 맞춰야 한다.
+
+    30분 영상. 클립보드 "01:00:00:00"을 끝 시분초 칸에 붙여넣음(포커스는 그 칸에 그대로)
+    -> 끝 == "00:30:00:00", 맞춘 안내, 오류 없음
+    """
+
+    class _Clipboard:
+        def text(self) -> str:
+            return "01:00:00:00"
+
+        def setText(self, text: str) -> None:
+            pass
+
+    monkeypatch.setattr(
+        "app.widgets.timecode_edit.QGuiApplication.clipboard", staticmethod(lambda: _Clipboard())
+    )
+    _win, _item, dialog = half_hour_editor(qtbot, tmp_path, basis)
+    row = dialog._rows[0]
+    row.endEdit.clockEdit.setFocus()
+
+    row.endEdit.clockEdit.paste()
+    _pump()
+
+    assert row.endEdit.text() == "00:30:00:00"
+    assert notice_shown(row) == SET_TO_END.format("00:30:00:00")
+    assert error_shown(row) == ""
+
+
+def test_typing_past_the_end_changes_nothing_and_shows_a_notice_instead_of_an_error(
+    qtbot, tmp_path, basis
+):
+    """끝 칸을 치는 동안 영상 끝을 넘으면 값을 바꾸지 않고, 붉은 오류 대신 흐린 안내만 보여야 한다.
+
+    30분 영상. 끝 시분초 칸에 010000을 침(떠나지 않음) → Backspace 한 번(00:10:00)
+    -> 넘는 동안: 끝 == "01:00:00:00" 그대로, 오류 없음 · 칸 강조 없음, 안내 == 넘음 안내, 확인 켜짐
+    -> 고친 뒤: 안내 없음
+    """
+    _win, _item, dialog = half_hour_editor(qtbot, tmp_path, basis)
+    row = dialog._rows[0]
+    row.endEdit.clockEdit.setFocus()
+
+    QTest.keyClicks(row.endEdit.clockEdit, "010000")
+    _pump()
+    during = (row.endEdit.text(), error_shown(row), flagged_fields(row), notice_shown(row))
+    enabled = dialog.okButton.isEnabled()
+    QTest.keyClick(row.endEdit.clockEdit, Qt.Key.Key_Backspace)
+    _pump()
+
+    assert during == ("01:00:00:00", "", set(), PAST_END)
+    assert enabled
+    assert row.endEdit.text() == "00:10:00:00"
+    assert notice_shown(row) == "" and error_shown(row) == ""
+
+
+def test_ok_pressed_while_typing_past_the_end_sets_the_end_and_confirms(qtbot, tmp_path, basis):
+    """끝 칸을 치는 중 영상 끝을 넘은 채 확인을 눌러도 끝으로 맞춰 카드에 써야 한다.
+
+    30분 영상. 시작 00:10:00:00, 끝 시분초 칸에 010000을 친 채(떠나지 않음) 확인
+    -> selections == ((600, 1800),)
+    """
+    _win, item, dialog = half_hour_editor(qtbot, tmp_path, basis)
+    row = dialog._rows[0]
+    type_into(row.startEdit, "00:10:00:00")
+    leave(row.startEdit)
+    row.endEdit.clockEdit.setFocus()
+    QTest.keyClicks(row.endEdit.clockEdit, "010000")
+    _pump()
+
+    press_ok(dialog)
+
+    assert item.selections == (TimeRange(600.0, HALF_HOUR),)
+
+
+def test_the_set_notice_stays_through_the_tab_that_caused_it_and_goes_with_the_next_key(
+    qtbot, tmp_path, basis
+):
+    """맞춘 안내는 맞추게 만든 Tab으로는 남고, 그 뒤의 키 하나에 내려가며 그 키는 칸에 들어가야 한다.
+
+    30분 영상. 끝 시분초 칸에 010000을 치고 프레임 칸에서 Tab(그 시각을 떠난다) → 시작 시분초
+    칸에 5를 침
+    -> Tab 뒤: 끝 == "00:30:00:00", 맞춘 안내가 보인다
+    -> 5를 친 뒤: 안내 없음, 시작 시분초 칸의 친 숫자 == "5"
+    """
+    _win, _item, dialog = half_hour_editor(qtbot, tmp_path, basis)
+    row = dialog._rows[0]
+    row.endEdit.clockEdit.setFocus()
+    QTest.keyClicks(row.endEdit.clockEdit, "010000")
+    row.endEdit.frameEdit.setFocus()
+
+    QTest.keyClick(row.endEdit.frameEdit, Qt.Key.Key_Tab)
+    _pump()
+    after_tab = (row.endEdit.text(), notice_shown(row))
+    wait_armed(qtbot, dialog)
+    still = notice_shown(row)
+    row.startEdit.clockEdit.setFocus()
+    QTest.keyClick(row.startEdit.clockEdit, Qt.Key.Key_5)
+    _pump()
+
+    assert after_tab == ("00:30:00:00", SET_TO_END.format("00:30:00:00"))
+    assert still == SET_TO_END.format("00:30:00:00")
+    assert notice_shown(row) == ""
+    assert row.startEdit.clockEdit.digits() == "5"
+
+
+def test_the_set_notice_stays_through_the_click_that_caused_it_and_goes_with_the_next_click(
+    qtbot, tmp_path, basis
+):
+    """맞춘 안내는 맞추게 만든 클릭으로는 남고, 그 뒤의 클릭 하나에 내려가며 그 클릭은 포커스를 줘야 한다.
+
+    30분 영상. 끝 시분초 칸에 010000을 친 채 시작 시분초 칸을 클릭(끝을 떠난다) → 끝 프레임 칸을 클릭
+    -> 첫 클릭 뒤: 끝 == "00:30:00:00", 맞춘 안내가 보인다, 포커스 == 시작 시분초 칸
+    -> 둘째 클릭 뒤: 안내 없음, 포커스 == 끝 프레임 칸
+    """
+    _win, _item, dialog = half_hour_editor(qtbot, tmp_path, basis)
+    row = dialog._rows[0]
+    row.endEdit.clockEdit.setFocus()
+    QTest.keyClicks(row.endEdit.clockEdit, "010000")
+
+    QTest.mouseClick(row.startEdit.clockEdit, Qt.MouseButton.LeftButton)
+    _pump()
+    after_first = (row.endEdit.text(), notice_shown(row), QApplication.focusWidget())
+    wait_armed(qtbot, dialog)
+    QTest.mouseClick(row.endEdit.frameEdit, Qt.MouseButton.LeftButton)
+    _pump()
+
+    assert after_first == (
+        "00:30:00:00",
+        SET_TO_END.format("00:30:00:00"),
+        row.startEdit.clockEdit,
+    )
+    assert notice_shown(row) == ""
+    assert QApplication.focusWidget() is row.endEdit.frameEdit
+
+
+def test_an_end_inside_the_video_gets_no_notice(qtbot, tmp_path, basis):
+    """영상 끝을 넘지 않는 끝을 치고 떠나면 값이 그대로이고 맞춘 안내가 뜨지 않아야 한다.
+
+    30분 영상. 끝에 00:20:00:00, 그리고 끝 타임코드 그대로 00:30:00:00을 치고 떠남
+    -> 두 번 모두 친 값 그대로, 안내 없음, 오류 없음
+    """
+    _win, _item, dialog = half_hour_editor(qtbot, tmp_path, basis)
+    row = dialog._rows[0]
+
+    for text in ("00:20:00:00", "00:30:00:00"):
+        type_into(row.endEdit, text)
+        leave(row.endEdit)
+        _pump()
+        assert row.endEdit.text() == text
+        assert notice_shown(row) == "" and error_shown(row) == ""
+    assert dialog.viewModel().clampedRow() is None
+
+
+def test_only_the_frame_past_the_end_is_set_and_a_frame_past_the_rate_stays_an_error(
+    qtbot, tmp_path, basis
+):
+    """끝의 초는 영상 끝과 같고 프레임만 넘으면 맞추고, 프레임이 프레임률 이상이면 칸 오류로 둬야 한다.
+
+    60fps · 1800.5초(끝 타임코드 00:30:00:30). 끝에 00:30:00:45를 치고 떠남 → 00:30:00:75를 치고 떠남
+    -> 45: 끝 == "00:30:00:30", 맞춘 안내
+    -> 75: 끝 == "00:30:00:75" 그대로, 오류 "Frame number must be below the frame rate", 프레임 칸만 강조
+    """
+    _win, _item, dialog = half_hour_editor(qtbot, tmp_path, basis, duration=1800.5)
+    row = dialog._rows[0]
+    assert dialog.viewModel().endTimecodeText() == "00:30:00:30", "전제: 끝 타임코드"
+
+    type_into(row.endEdit, "00:30:00:45")
+    leave(row.endEdit)
+    _pump()
+    set_to_end = (row.endEdit.text(), notice_shown(row))
+    type_into(row.endEdit, "00:30:00:75")
+    leave(row.endEdit)
+    _pump()
+
+    assert set_to_end == ("00:30:00:30", SET_TO_END.format("00:30:00:30"))
+    assert row.endEdit.text() == "00:30:00:75"
+    assert error_shown(row) == "Frame number must be below the frame rate"
+    assert flagged_fields(row) == {"end frame"}
+
+
+@pytest.mark.parametrize(
+    ("end", "message"),
+    [
+        ("", "Start must be before end"),  # 빈 끝 = 영상 끝 — 시작이 그 뒤다
+        (
+            "01:00:00:00",
+            "Selection is outside the video",
+        ),  # 끝도 넘었다 — 맞춰도 한 프레임이 안 남는다
+    ],
+)
+def test_a_start_at_or_past_the_end_of_the_video_stays_an_error(
+    qtbot, tmp_path, basis, end, message
+):
+    """시작이 영상 끝 이상이면 맞추지 않고 오류로 둬야 한다 — 끝을 넘은 끝이 함께 있어도.
+
+    30분 영상. 시작 00:40:00:00, 끝은 빈 칸 / 01:00:00:00, 둘 다 떠남
+    -> 시작 · 끝 모두 친 값 그대로, 오류 == message, 맞춘 안내 없음, 확인 꺼짐
+    """
+    _win, _item, dialog = half_hour_editor(qtbot, tmp_path, basis)
+    row = dialog._rows[0]
+
+    type_into(row.startEdit, "00:40:00:00")
+    leave(row.startEdit)
+    if end:
+        type_into(row.endEdit, end)
+        leave(row.endEdit)
+    _pump()
+
+    assert (row.startEdit.text(), row.endEdit.text()) == ("00:40:00:00", end)
+    assert error_shown(row) == message
+    assert notice_shown(row) == ""
+    assert not dialog.okButton.isEnabled()
+
+
+def test_an_error_caused_by_setting_the_end_is_shown_instead_of_the_notice(qtbot, tmp_path, basis):
+    """끝을 맞춘 뒤 생긴 중복은 오류이고, 안내 줄에는 맞춘 안내가 아니라 오류가 보여야 한다.
+
+    30분 영상. 행 A: 10분~(빈 끝 = 영상 끝). 행 B: 시작 10분, 끝에 01:00:00:00을 치고 떠남
+    -> B의 끝 == "00:30:00:00", 두 행 모두 "Duplicate selection", B에 맞춘 안내는 보이지 않는다
+    """
+    _win, _item, dialog = half_hour_editor(qtbot, tmp_path, basis, rows=2)
+    first, second = dialog._rows
+    for row in (first, second):
+        type_into(row.startEdit, "00:10:00:00")
+        leave(row.startEdit)
+
+    type_into(second.endEdit, "01:00:00:00")
+    leave(second.endEdit)
+    _pump()
+
+    assert second.endEdit.text() == "00:30:00:00"
+    assert dialog.viewModel().clampedRow() == 1, "전제: 뷰모델은 그 행을 맞췄다"
+    assert [error_shown(row) for row in (first, second)] == ["Duplicate selection"] * 2
+    assert notice_shown(second) == ""
+
+
+def test_a_row_button_settles_the_field_being_typed_before_it_moves_the_row(qtbot, tmp_path, basis):
+    """끝 칸을 치는 중 영상 끝을 넘은 채 행의 ▼를 눌러도, 그 칸을 끝으로 맞춘 뒤 행을 옮겨야 한다.
+
+    30분 영상 · 행 A(10분~) · B(20분~25분). A의 끝 시분초 칸에 010000을 친 채 A의 ▼
+    -> 행 B · A, A의 끝 == "00:30:00:00", 오류 없음
+    """
+    _win, _item, dialog = half_hour_editor(qtbot, tmp_path, basis, rows=2)
+    set_rows(dialog, [("00:10:00:00", "00:20:00:00"), ("00:20:00:00", "00:25:00:00")])
+    first = dialog._rows[0]
+    first.endEdit.clockEdit.setFocus()
+    QTest.keyClicks(first.endEdit.clockEdit, "010000")
+    _pump()
+
+    first.downButton.click()
+    _pump()
+
+    assert dialog.viewModel().rows == [
+        ["00:20:00:00", "00:25:00:00"],
+        ["00:10:00:00", "00:30:00:00"],
+    ]
+    assert [error_shown(row) for row in dialog._rows] == ["", ""]
+
+
+def test_an_end_set_to_the_end_reopens_empty_and_follows_a_new_resolution_without_a_notice(
+    qtbot, tmp_path, basis
+):
+    """맞춘 끝은 영상 끝으로 저장돼, 다시 열면 끝 칸이 비고 해상도를 바꾸면 새 끝을 따라가야 한다.
+
+    1080p 30분(60fps)에서 시작 10분 · 끝 01:00:00:00을 떠나 맞추고 확인 → 다시 엶 → 닫고
+    480p(30fps · 1900초)를 고름 → 다시 엶
+    -> 다시 연 창: 행 ("00:10:00:00", ""), 맞춘 안내 없음
+    -> 해상도 변경 뒤: selections == ((600, 1900),), 다시 연 창에 맞춘 안내 없음
+    """
+    basis.by_resolution[480] = (Fraction(30), 1900.0)
+    win, item, dialog = half_hour_editor(qtbot, tmp_path, basis)
+    row = dialog._rows[0]
+    type_into(row.startEdit, "00:10:00:00")
+    leave(row.startEdit)
+    type_into(row.endEdit, "01:00:00:00")
+    leave(row.endEdit)
+    press_ok(dialog)
+    assert item.selections == (TimeRange(600.0, HALF_HOUR),), "전제: 영상 끝으로 저장됐다"
+
+    dialog = open_editor(qtbot, win, item)
+    reopened = (texts(dialog), [notice_shown(r) for r in dialog._rows])
+    press_cancel(dialog)
+    _pick(win, item, 480)
+    settle(qtbot, win)
+    dialog = open_editor(qtbot, win, item)
+
+    assert reopened == ([("00:10:00:00", "")], [""])
+    assert item.selections == (TimeRange(600.0, 1900.0),)
+    assert [notice_shown(r) for r in dialog._rows] == [""]
+    assert dialog.viewModel().clampedRow() is None
+
+
+def test_nothing_is_set_before_the_end_of_the_video_is_known(qtbot, tmp_path, basis):
+    """영상의 끝을 모르는 동안(조회 중)에는 끝을 맞추지 않아야 한다.
+
+    조회를 붙잡아 둔 편집 창의 뷰모델에 끝 맞추기를 직접 청함 -> False, 맞춘 행 없음
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    basis.gate.clear()
+    click_summary(win, item)
+    viewmodel = win._sectionDialog.viewModel()
+    try:
+        assert viewmodel.state == "loading", "전제: 조회 중이다"
+        assert viewmodel.clampEnd(0) is False
+        assert viewmodel.clampedRow() is None
+    finally:
+        basis.gate.set()

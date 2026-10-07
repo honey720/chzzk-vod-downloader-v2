@@ -382,6 +382,14 @@ Check your connection and cookies, then open this window again.</source>
         <source>Empty — this row is ignored</source>
         <translation>비어 있어 무시됩니다</translation>
     </message>
+    <message>
+        <source>Past the end of the video — leaving the field sets it to the end</source>
+        <translation>영상 끝을 넘습니다 · 칸을 떠나면 끝으로 맞춥니다</translation>
+    </message>
+    <message>
+        <source>Set to the end of the video ({0})</source>
+        <translation>영상 끝({0})으로 맞췄습니다</translation>
+    </message>
 </context>
 <context>
     <name>SettingDialog</name>

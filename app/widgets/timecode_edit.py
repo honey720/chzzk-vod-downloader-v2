@@ -122,6 +122,7 @@ class TimecodeEdit(QLineEdit):
     committed = Signal()  # 편집을 끝냈다 — 칸을 떠났거나 Enter를 쳤다
     entered = Signal()  # Enter를 쳤다 — committed 뒤에 나온다
     dotPressed = Signal()  # "."을 쳤다 — 칸에는 들어가지 않는다
+    touched = Signal()  # 키를 누르거나 마우스로 눌렀다 — 그 입력을 처리하기 **전에** 나온다
 
     def __init__(self, parent: QWidget | None = None, fields: int = _FIELDS):
         """
@@ -304,6 +305,7 @@ class TimecodeEdit(QLineEdit):
     # ---- 입력 ----
 
     def keyPressEvent(self, event) -> None:
+        self.touched.emit()
         if event.matches(QKeySequence.StandardKey.Paste):
             self.paste()
             return
@@ -367,6 +369,7 @@ class TimecodeEdit(QLineEdit):
         return self._leaving
 
     def mousePressEvent(self, event) -> None:
+        self.touched.emit()
         self.setFocus(Qt.FocusReason.MouseFocusReason)
         if event.button() == Qt.MouseButton.LeftButton:
             self._pressed_at = event.position().toPoint()
@@ -446,6 +449,8 @@ class TimePointEdit(QWidget):
     edited = Signal(str)  # 두 칸 가운데 하나가 바뀌었다 — 네 칸 표기(text())를 싣는다
     committed = Signal()  # 이 시각의 편집을 끝냈다
     entered = Signal()  # Enter를 쳤다 — committed 뒤에 나온다
+    pasted = Signal()  # 붙여넣은 글을 받았다 — edited 뒤에 나온다(값이 그대로여도 나온다)
+    touched = Signal()  # 두 칸 가운데 하나에 키 · 마우스 입력이 왔다 — 처리하기 전에 나온다
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -462,6 +467,7 @@ class TimePointEdit(QWidget):
             part.edited.connect(self._edited(part))
             part.committed.connect(self._committed(part))
             part.entered.connect(self.entered)
+            part.touched.connect(self.touched)
         self.clockEdit.dotPressed.connect(self._toFrame)
         self.setFocusProxy(self.clockEdit)
 
@@ -559,7 +565,13 @@ class TimePointEdit(QWidget):
         return True
 
     def _handler(self, part: TimecodeEdit):
-        return lambda text: self.pasteInto(part, text)
+        def handle(text: str) -> bool:
+            accepted = self.pasteInto(part, text)
+            if accepted:
+                self.pasted.emit()  # 받는 쪽이 붙여넣은 값을 한 번에 들어온 값으로 다룬다
+            return accepted
+
+        return handle
 
     # ---- 두 칸의 신호 ----
 

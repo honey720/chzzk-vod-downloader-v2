@@ -32,7 +32,7 @@
 Enter · Space 포함). 그래서 창에 기본 버튼을 두지 않는다. Esc는 취소로 닫는다.
 """
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -69,6 +69,7 @@ _EDIT_PADDING = 22  # 칸의 글자 양옆 몫(px) — QSS의 padding과 테두�
 NEXT_AFTER_ENTER = "clock"
 # 행 아래 안내 줄에 보이는 글의 종류 — SectionRow.showMessage가 우선순위대로 하나만 보인다
 MESSAGE_ERROR = "error"  # 오류 — 그 행을 확인할 수 없다
+MESSAGE_NOTICE = "notice"  # 끝이 영상 끝을 넘는 중 · 영상 끝으로 맞췄다는 안내
 MESSAGE_NOTE = "note"  # 무시 안내 — 완전히 빈 행
 _INITIAL_SIZE = (560, 420)  # 창의 첫 크기(px) — 행 일곱 개쯤이 스크롤 없이 보인다
 # 행 사이의 간격(px). 행마다 아래에 안내 줄 한 줄이 늘 서 있어 그 줄이 행 사이를 띄운다 —
@@ -82,8 +83,8 @@ class SectionRow(QWidget):
     그 아래 안내 줄 한 줄.
 
     안내 줄(``messageSlot``)은 글이 없어도 **늘 한 줄의 높이를 차지한다** — 오류가 나고
-    사라져도, 안내가 바뀌어도 행의 높이가 같아 아래 행들이 오르내리지 않는다. 오류 · 무시
-    안내가 이 한 줄을 함께 쓰고 한 번에 하나만 보인다(``showMessage``). 줄바꿈하지 않는다 —
+    사라져도, 안내가 바뀌어도 행의 높이가 같아 아래 행들이 오르내리지 않는다. 오류 · 끝을
+    맞춘 안내 · 무시 안내가 이 한 줄을 함께 쓰고 한 번에 하나만 보인다(``showMessage``). 줄바꿈하지 않는다 —
     넘치는 글은 말줄임하고 전문은 툴팁에 둔다(``ElidingLabel``).
     """
 
@@ -129,10 +130,16 @@ class SectionRow(QWidget):
         slot.setSpacing(0)
         # 오류 문구 — 오류가 있을 때만 보인다
         self.errorLabel = self._messageLabel("sectionErrorLabel")
+        # 끝이 영상 끝을 넘는 중 · 영상 끝으로 맞췄다는 안내 — 흐린 글이다. 오류가 아니다
+        self.noticeLabel = self._messageLabel("sectionNoticeLabel")
         # 걸러 낼 행의 안내 — 완전히 비어 있어 구간에 넣지 않는 행에만 보인다. 오류가 아니다
         self.noteLabel = self._messageLabel("sectionNoteLabel")
         # 우선순위가 높은 것부터 — 한 번에 하나만 보인다
-        self._messages = ((MESSAGE_ERROR, self.errorLabel), (MESSAGE_NOTE, self.noteLabel))
+        self._messages = (
+            (MESSAGE_ERROR, self.errorLabel),
+            (MESSAGE_NOTICE, self.noticeLabel),
+            (MESSAGE_NOTE, self.noteLabel),
+        )
         for _kind, label in self._messages:
             slot.addWidget(label, 1)
         # 높이는 글자에서 유도한다 — 안내 줄의 글꼴(QSS)이 입혀진 뒤의 한 줄 높이
@@ -150,7 +157,7 @@ class SectionRow(QWidget):
     def showMessage(self, texts: dict[str, str]) -> None:
         """안내 줄에 글 하나를 보인다 — 종류(``MESSAGE_*``) → 글. 빈 글은 없는 것이다.
 
-        둘 이상이 걸리면 우선순위가 가장 높은 것만 보인다: 오류 > 무시 안내. 아무것도 없으면
+        둘 이상이 걸리면 우선순위가 가장 높은 것만 보인다: 오류 > 끝을 맞춘 안내 > 무시 안내. 아무것도 없으면
         줄은 빈 채로 높이만 차지한다.
         """
         chosen = next((kind for kind, _label in self._messages if texts.get(kind)), None)
@@ -188,6 +195,13 @@ class SectionEditDialog(QDialog):
         self._rows: list[SectionRow] = []
         # 숫자를 치고 있는 (행, 칸) — 그 행의 오류 가운데 일부는 칸을 떠날 때 띄운다. 없으면 None
         self._typing: tuple[int, int] | None = None
+        # 끝을 맞췄다는 안내를 다음 조작이 내려도 되는지. 맞추게 만든 클릭 · 키는 내리지 않는다 —
+        # 그 조작의 처리가 끝난 뒤(타이머 0)에야 켜진다
+        self._clampNoticeArmed = False
+        self._armTimer = QTimer(self)
+        self._armTimer.setSingleShot(True)
+        self._armTimer.setInterval(0)
+        self._armTimer.timeout.connect(self._armClampNotice)
         self.setObjectName("sectionEditDialog")
         self.setModal(True)
         self.setupUi()
@@ -195,6 +209,7 @@ class SectionEditDialog(QDialog):
         viewmodel.stateChanged.connect(self._onStateChanged)
         viewmodel.rowsReset.connect(self._rebuildRows)
         viewmodel.validated.connect(self._refresh)
+        viewmodel.endClamped.connect(self._onEndClamped)
         self._onStateChanged()
         self._rebuildRows()
         self.resize(*_INITIAL_SIZE)
@@ -309,8 +324,57 @@ class SectionEditDialog(QDialog):
             widget.setVisible(ready)
         self._refresh()
 
+    # ---- 끝을 맞췄다는 안내 ----
+
+    def _onEndClamped(self, _row: int) -> None:
+        """뷰모델이 끝을 영상 끝으로 맞췄다 — 이 조작이 끝난 뒤의 다음 조작부터 안내를 내릴 수 있다."""
+        self._clampNoticeArmed = False
+        self._armTimer.start()
+
+    def _armClampNotice(self) -> None:
+        self._clampNoticeArmed = True
+
+    def clampNoticeArmed(self) -> bool:
+        """끝을 맞췄다는 안내가 떠 있고, 다음 조작이 그것을 내리는지."""
+        return self._clampNoticeArmed and self._viewmodel.clampedRow() is not None
+
+    def _onInput(self) -> None:
+        """창 안에 클릭 · 키 입력 하나가 왔다 — 끝을 맞췄다는 안내를 내린다. 그 조작은 그대로 처리된다.
+
+        입력 칸(누르기 · 키)과 창의 버튼, 창의 빈 자리(누르기 · 칸이 받지 않은 키)가 부른다. 입력
+        칸은 그 입력을 처리하기 전에 알린다. 맞추게 만든 조작(칸을 떠나게 한 클릭 · Tab · Enter ·
+        붙여넣기)으로는 내리지 않는다 — 그 조작의 처리가 끝난 뒤에야 내릴 수 있게 된다
+        (``_armClampNotice``).
+
+        앱 전체의 이벤트를 지켜보지 않는다 — 파이썬으로 받는 앱 이벤트 필터는 사라지는 중인
+        위젯의 이벤트까지 받아 프로세스를 죽일 수 있다.
+        """
+        if not self._clampNoticeArmed or not isValid(self._viewmodel):
+            return
+        self._clampNoticeArmed = False
+        self._viewmodel.clearClampNotice()
+
+    def mousePressEvent(self, event) -> None:
+        """창의 빈 자리 · 글자를 눌렀다 — 입력 하나로 센다."""
+        self._onInput()
+        super().mousePressEvent(event)
+
+    def _commitFocused(self) -> None:
+        """치고 있는 칸의 편집을 끝낸다 — 포커스를 옮기지 않는 버튼(확인 · 구간 추가 · 행의 버튼)이 부른다."""
+        focused = self.focusWidget()
+        if isinstance(focused, TimecodeEdit):
+            focused.commit()
+
+    def _rowAction(self, action, row: int, *args) -> None:
+        """행의 버튼 — 치고 있는 칸의 편집을 끝낸 뒤 뷰모델의 행 조작을 부른다."""
+        self._onInput()
+        self._commitFocused()
+        action(row, *args)
+
     def _onAdd(self) -> None:
         """구간 추가 — 빈 행을 끝에 넣고 그 행의 시작 시분초 칸으로 간다."""
+        self._onInput()
+        self._commitFocused()
         before = len(self._viewmodel.rows)
         self._viewmodel.addRow()
         if len(self._viewmodel.rows) > before and self._rows:
@@ -337,9 +401,12 @@ class SectionEditDialog(QDialog):
                 )
                 edit.committed.connect(lambda r=index, c=column, e=edit: self._onCommitted(r, c, e))
                 edit.entered.connect(lambda r=index, c=column: self._onEntered(r, c))
-            row.upButton.clicked.connect(lambda _=False, r=index: self._viewmodel.moveRow(r, -1))
-            row.downButton.clicked.connect(lambda _=False, r=index: self._viewmodel.moveRow(r, 1))
-            row.deleteButton.clicked.connect(lambda _=False, r=index: self._viewmodel.removeRow(r))
+                edit.pasted.connect(lambda r=index, c=column, e=edit: self._onPasted(r, c, e))
+                edit.touched.connect(self._onInput)
+            moveRow, removeRow = self._viewmodel.moveRow, self._viewmodel.removeRow
+            row.upButton.clicked.connect(lambda _=False, r=index: self._rowAction(moveRow, r, -1))
+            row.downButton.clicked.connect(lambda _=False, r=index: self._rowAction(moveRow, r, 1))
+            row.deleteButton.clicked.connect(lambda _=False, r=index: self._rowAction(removeRow, r))
             self._rowLayout.insertWidget(index, row)
             self._rows.append(row)
         # 목록의 값은 _refresh가 칸에 넣는다 — 빈 시각(빈 글)이 아닌 값은 새 칸의 값과 달라
@@ -371,6 +438,24 @@ class SectionEditDialog(QDialog):
         if self._typing == (row, column):
             self._typing = None
         self._viewmodel.setText(row, column, edit.text())
+        self._showSettled(row, column, edit)
+
+    def _showSettled(self, row: int, column: int, edit: TimePointEdit) -> None:
+        """편집을 끝낸 칸의 값이 뷰모델에서 바뀌었으면(영상 끝으로 맞춤) 칸에 그 값을 넣는다.
+
+        표시를 맞추는 쪽(``_refresh``)은 포커스가 있는 칸을 건드리지 않는다 — Enter · 붙여넣기는
+        포커스가 그 칸에 있는 채로 편집을 끝내므로 여기서 넣는다. 넣은 값은 전부 밝게 보인다.
+        """
+        settled = self._viewmodel.rows[row][column]
+        if edit.text() != settled:
+            edit.setText(settled)
+
+    def _onPasted(self, row: int, column: int, edit: TimePointEdit) -> None:
+        """칸에 글을 붙여넣었다 — 끝이 영상의 끝을 넘으면 떠나기를 기다리지 않고 바로 맞춘다."""
+        if not isValid(self._viewmodel) or not self._isCurrent(row, column, edit):
+            return
+        if column == END and self._viewmodel.clampEnd(row):
+            self._showSettled(row, column, edit)
 
     def _onEntered(self, row: int, column: int) -> None:
         """칸에서 Enter를 쳤다 — 다음 칸으로 포커스를 옮긴다. 창을 닫지 않는다."""
@@ -429,6 +514,7 @@ class SectionEditDialog(QDialog):
             row.showMessage(
                 {
                     MESSAGE_ERROR: error,
+                    MESSAGE_NOTICE: viewmodel.noticeText(index, self._typing),
                     MESSAGE_NOTE: viewmodel.ignoredText() if ignored else "",
                 }
             )
@@ -441,7 +527,8 @@ class SectionEditDialog(QDialog):
         self.headerLabel.setText(viewmodel.headerText())
         self.headerLabel.setToolTip(viewmodel.endMillisecondsText())  # 영상 끝의 밀리초 표기
         self.addButton.setEnabled(viewmodel.canAdd())
-        self.okButton.setEnabled(viewmodel.canCommit())
+        # 끝 칸을 치는 중 끝만 영상 끝을 넘은 것은 확인을 막지 않는다 — 확인이 그 칸을 맞춘다
+        self.okButton.setEnabled(viewmodel.canCommit(self._typing))
 
     @staticmethod
     def _setFlag(widget: QWidget, name: str, on: bool) -> None:
@@ -458,6 +545,7 @@ class SectionEditDialog(QDialog):
         QDialog는 Enter를 받으면 기본 버튼을 누른다 — 창 어디서든 Enter가 창을 닫게 된다. 그 길을
         막는다. Esc(취소)를 비롯한 다른 키는 QDialog에 맡긴다.
         """
+        self._onInput()  # 칸이 받지 않은 키 — 입력 하나로 센다
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             if self.focusWidget() is self.okButton and self.okButton.isEnabled():
                 self.okButton.click()
@@ -470,9 +558,7 @@ class SectionEditDialog(QDialog):
 
         카드가 그사이 대기 상태가 아니게 됐으면 쓰지 않고 닫는다(뷰모델의 ``commit``이 판정한다).
         """
-        focused = self.focusWidget()
-        if isinstance(focused, TimecodeEdit):
-            focused.commit()  # Enter 없이 확인을 누른 칸의 편집을 끝낸다
+        self._commitFocused()  # Enter 없이 확인을 누른 칸의 편집을 끝낸다
         if not self._viewmodel.canCommit():
             return
         if self._viewmodel.commit():

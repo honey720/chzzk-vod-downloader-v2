@@ -387,6 +387,14 @@ Check your connection and cookies, then open this window again.</translation>
         <source>Empty — this row is ignored</source>
         <translation>Empty — this row is ignored</translation>
     </message>
+    <message>
+        <source>Past the end of the video — leaving the field sets it to the end</source>
+        <translation>Past the end of the video — leaving the field sets it to the end</translation>
+    </message>
+    <message>
+        <source>Set to the end of the video ({0})</source>
+        <translation>Set to the end of the video ({0})</translation>
+    </message>
 </context>
 <context>
     <name>SettingDialog</name>

@@ -368,6 +368,7 @@ QLineEdit[invalid="true"]:focus {
 #sectionHeaderLabel,
 #sectionWaitHintLabel,
 #sectionNumberLabel,
+#sectionNoticeLabel,
 #sectionNoteLabel,
 #sectionInfoLabel {
     font-size: @fontSizeMeta;

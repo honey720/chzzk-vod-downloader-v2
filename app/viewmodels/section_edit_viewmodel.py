@@ -78,7 +78,9 @@ SHOW_ON_LEAVE = "leave"  # 칸을 떠나거나 Enter를 칠 때 띄운다
 # 등)와 창을 열 때의 오류는 언제나 바로 띄운다. 오류가 사라지는 것도 언제나 바로다. 띄우지
 # 않은 오류도 확인 버튼은 막는다(``canCommit``).
 ERROR_TIMING: dict[str, tuple[str, str]] = {
-    SELECTION_OUT_OF_RANGE: (SHOW_NOW, SHOW_NOW),  # 영상 길이 초과 — 더 쳐도 커지기만 한다
+    # 영상 길이 초과 — 더 쳐도 커지기만 한다. 단 **끝만** 영상 끝을 넘은 것은 오류로 띄우지
+    # 않는다: 치는 동안에는 안내로 알리고, 칸을 떠나면 영상 끝으로 맞춘다(_endOverflows)
+    SELECTION_OUT_OF_RANGE: (SHOW_NOW, SHOW_NOW),
     SELECTION_ORDER: (SHOW_NOW, SHOW_ON_LEAVE),  # 시작이 끝을 넘음 / 끝이 아직 시작에 못 미침
     SELECTION_TOO_SHORT: (SHOW_NOW, SHOW_ON_LEAVE),
     SELECTION_DUPLICATE: (SHOW_ON_LEAVE, SHOW_ON_LEAVE),  # 치는 도중 다른 행과 잠깐 같아진다
@@ -400,6 +402,7 @@ class SectionEditViewModel(QObject):
     stateChanged = Signal()  # 조회 상태가 바뀌었다(loading → ready/failed)
     rowsReset = Signal()  # 행의 수 · 순서가 바뀌었다 — 창이 행을 다시 만든다
     validated = Signal()  # 행의 글자 · 검증 결과가 바뀌었다 — 창이 표시만 고친다
+    endClamped = Signal(int)  # 그 행의 끝을 영상 끝으로 맞췄다 — validated 앞에 나온다
 
     def __init__(
         self,
@@ -421,6 +424,9 @@ class SectionEditViewModel(QObject):
         self.rows: list[list[str]] = []
         # 걸러 낸 행 — 행이 둘 이상일 때의 완전히 빈 행. 구간도 오류도 아니고 번호도 받지 않는다
         self._ignored: frozenset[int] = frozenset()
+        # 끝을 방금 영상 끝으로 맞춘 행 — 그 행의 안내 줄에 맞췄다고 적는다. 없으면 None.
+        # 창이 다음 조작에서 내린다(clearClampNotice)
+        self._clamped: int | None = None
         self._notify = notify
         self._job: SectionBasisJob | None = None
         self._head = None  # 조회하며 받은 moov(인코딩 완료 VOD) — 없으면 None
@@ -522,6 +528,7 @@ class SectionEditViewModel(QObject):
         if not self.canAdd():
             return
         self.rows.append(self._emptyRow())
+        self._clamped = None
         self._evaluate()
         self.rowsReset.emit()
 
@@ -534,6 +541,7 @@ class SectionEditViewModel(QObject):
         if not self.canRemove() or not 0 <= row < len(self.rows):
             return
         del self.rows[row]
+        self._clamped = None  # 행 번호가 바뀐다
         self._evaluate()
         self.rowsReset.emit()
 
@@ -545,11 +553,16 @@ class SectionEditViewModel(QObject):
         ):
             return
         self.rows[row], self.rows[target] = self.rows[target], self.rows[row]
+        self._clamped = None  # 행 번호가 바뀐다
         self._evaluate()
         self.rowsReset.emit()
 
     def setText(self, row: int, column: int, text: str, normalize: bool = True) -> None:
         """칸의 글자를 받아 다시 검증한다.
+
+        편집을 끝낸 끝 칸(normalize=True)이 영상의 끝을 넘으면 영상 끝으로 맞춘다(``clampEnd``).
+        입력하는 도중에는 맞추지 않는다 — 숫자가 오른쪽부터 채워져, 치는 도중에 값을 바꾸면
+        입력이 깨진다.
 
         Args:
             normalize: 해석되는 글자를 ``HH:MM:SS:FF`` 표기로 고쳐 들지 여부. 입력하는 도중에는
@@ -564,7 +577,68 @@ class SectionEditViewModel(QObject):
             pass  # 틀린 글자는 그대로 들고 오류로 보인다
         self.rows[row][column] = text
         self._evaluate()
+        if normalize and column == END:
+            self._clampEnd(row)
         self.validated.emit()
+
+    # ---- 끝을 영상 끝으로 맞추기 ----
+
+    def _endOverflows(self, row: int) -> bool:
+        """그 행이 **끝만** 영상의 끝을 넘었는지 — 끝을 영상 끝으로 맞추면 풀리는 행이다.
+
+        시작이 영상 끝 이상이면 아니다(맞춰도 한 프레임이 안 남는다 — 오류다). 칸의 글자가
+        타임코드로 읽히지 않는 행(프레임 ≥ 프레임률 등)도 아니다 — 그것은 칸 오류다.
+        """
+        # 해석된 행만 본다 — 조회가 끝나기 전에는 행이 없어 맞출 것도 없다
+        if row not in self._pairs or not self.rows[row][END]:
+            return False
+        start, end = self._pairs[row]
+        last = frame_index(last_frame_seconds(self.duration, self.fps), self.fps)
+        return frame_index(end, self.fps) > last and frame_index(start, self.fps) < last
+
+    def _clampEnd(self, row: int) -> bool:
+        if not self._endOverflows(row):
+            return False
+        self.rows[row][END] = self.endTimecodeText()
+        self._clamped = row
+        self._evaluate()  # 맞춘 뒤에 생기는 중복 등은 지금 판정 그대로 오류다
+        self.endClamped.emit(row)
+        return True
+
+    def clampEnd(self, row: int) -> bool:
+        """그 행의 끝이 영상의 끝을 넘었으면 영상 끝으로 맞춘다. 맞췄으면 True.
+
+        붙여넣은 값처럼 한 번에 들어온 값에 창이 부른다. 영상의 끝을 모르면(조회 전 · 실패)
+        맞추지 않는다.
+        """
+        if not self._clampEnd(row):
+            return False
+        self.validated.emit()
+        return True
+
+    def clampedRow(self) -> int | None:
+        """끝을 방금 영상 끝으로 맞춘 행. 없으면 None."""
+        return self._clamped
+
+    def clearClampNotice(self) -> None:
+        """끝을 맞췄다는 안내를 내린다 — 창이 맞춘 뒤의 다음 조작에서 부른다."""
+        if self._clamped is None:
+            return
+        self._clamped = None
+        self.validated.emit()
+
+    def noticeText(self, row: int, typing: tuple[int, int] | None = None) -> str:
+        """행의 안내 줄에 흐리게 적을 글 — 끝이 영상 끝을 넘는 중이거나 방금 맞췄을 때. 없으면 빈 글.
+
+        Args:
+            typing: 숫자를 치고 있는 (행, 칸). 그 행의 끝 칸을 치는 중에 끝이 영상 끝을 넘으면
+                오류 대신 이 안내가 나간다
+        """
+        if typing == (row, END) and self._endOverflows(row):
+            return self.tr("Past the end of the video — leaving the field sets it to the end")
+        if row == self._clamped:
+            return self.tr("Set to the end of the video ({0})").format(self.endTimecodeText())
+        return ""
 
     # ---- 검증 ----
 
@@ -664,6 +738,8 @@ class SectionEditViewModel(QObject):
             return keys[0] if keys else ""
         column = typing[1]
         for key in keys:
+            if key == SELECTION_OUT_OF_RANGE and column == END and self._endOverflows(row):
+                continue  # 끝 칸을 치는 중 끝만 넘었다 — 오류가 아니라 안내다(noticeText)
             if ERROR_TIMING.get(key, (SHOW_NOW, SHOW_NOW))[column] == SHOW_NOW:
                 return key
             if key == TIMECODE_FRAME_OUT_OF_RANGE and frame_full:
@@ -787,9 +863,21 @@ class SectionEditViewModel(QObject):
         end = self.endSeconds()
         return "" if end is None else format_milliseconds(end)
 
-    def canCommit(self) -> bool:
-        """확인할 수 있는지 — 조회가 끝났고 오류가 없다."""
-        return self.state == STATE_READY and not self._errors
+    def canCommit(self, typing: tuple[int, int] | None = None) -> bool:
+        """확인할 수 있는지 — 조회가 끝났고 오류가 없다.
+
+        Args:
+            typing: 숫자를 치고 있는 (행, 칸). 그 행의 끝 칸을 치는 중에 끝만 영상 끝을 넘은
+                것은 오류로 세지 않는다 — 확인을 누르면 그 칸의 편집이 끝나며 영상 끝으로
+                맞춰진다
+        """
+        if self.state != STATE_READY:
+            return False
+        blocking = set(self._errors)
+        if typing is not None and typing[1] == END and self._endOverflows(typing[0]):
+            if self._allErrors.get(typing[0]) == (SELECTION_OUT_OF_RANGE,):
+                blocking.discard(typing[0])
+        return not blocking
 
     def selections(self) -> tuple[TimeRange, ...]:
         """지금의 행을 카드에 쓸 구간 목록으로 바꾼다. 오류가 없을 때만 부른다.
