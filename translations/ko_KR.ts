@@ -378,6 +378,10 @@ Check your connection and cookies, then open this window again.</source>
         <source>Too many selections</source>
         <translation>구간은 20개까지 넣을 수 있습니다</translation>
     </message>
+    <message>
+        <source>Empty — this row is ignored</source>
+        <translation>비어 있어 무시됩니다</translation>
+    </message>
 </context>
 <context>
     <name>SettingDialog</name>

@@ -246,11 +246,11 @@ def notice_of(win: VodDownloader, item: ContentItem) -> str:
 def test_clicking_the_summary_of_a_waiting_card_opens_the_editor_with_the_whole_video(
     qtbot, tmp_path, basis
 ):
-    """대기 카드의 구간 요약을 누르면 편집 창이 열리고 영상 전체 한 행이 보여야 한다.
+    """대기 카드의 구간 요약을 누르면 편집 창이 열리고 빈 행 하나가 보여야 한다.
 
     60fps · 길이 3600초, 구간 없는 카드
     -> 조회 중에는 안내가 보이고 확인이 꺼져 있다
-    -> 조회 뒤 행 1개 ("00:00:00:00", "01:00:00:00"), 확인 켜짐
+    -> 조회 뒤 행 1개 ("", ""), 확인 켜짐
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -267,9 +267,7 @@ def test_clicking_the_summary_of_a_waiting_card_opens_the_editor_with_the_whole_
     _pump()
     assert basis.calls == [item]
     assert not dialog.statusLabel.isVisible()
-    assert [(row.startEdit.text(), row.endEdit.text()) for row in dialog._rows] == [
-        ("00:00:00:00", "01:00:00:00")
-    ]
+    assert [(row.startEdit.text(), row.endEdit.text()) for row in dialog._rows] == [("", "")]
     assert dialog.okButton.isEnabled()
 
 
@@ -574,8 +572,8 @@ def test_overlapping_sections_are_accepted(qtbot, tmp_path, basis):
 def test_the_twenty_first_section_cannot_be_added(qtbot, tmp_path, basis):
     """구간이 20개면 추가 버튼이 꺼지고 21번째 행이 생기지 않아야 한다.
 
-    추가 버튼을 19번 눌러 20행
-    -> 추가 버튼 꺼짐, 뷰모델에 직접 추가를 청해도 20행
+    추가 버튼을 19번 눌러 20행(모두 빈 행 — 구간으로는 맨 위 한 행만 센다)
+    -> 추가 버튼 꺼짐, 뷰모델에 직접 추가를 청해도 20행, 머리줄의 구간 수는 1
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -591,7 +589,7 @@ def test_the_twenty_first_section_cannot_be_added(qtbot, tmp_path, basis):
     dialog.viewModel().addRow()
     _pump()
     assert len(dialog._rows) == 20 and len(dialog.viewModel().rows) == 20
-    assert shown(dialog.headerLabel) == "Sections 20 / 20 · 60fps · video ends at 01:00:00:00"
+    assert shown(dialog.headerLabel) == "Sections 1 / 20 · 60fps · video ends at 01:00:00:00"
 
 
 def test_out_of_range_digits_are_flagged_and_left_as_typed(qtbot, tmp_path, basis):
@@ -863,11 +861,12 @@ def test_ok_takes_the_digits_of_the_field_still_being_typed(qtbot, tmp_path, bas
     assert item.selections == (TimeRange(0.0, 600.0),)
 
 
-@pytest.mark.parametrize("text", ["00:10:00", "5:03", "00:10:00.500", "00:10:00:0x", ""])
+@pytest.mark.parametrize("text", ["00:10:00", "5:03", "00:10:00.500", "00:10:00:0x"])
 def test_viewmodel_still_refuses_text_that_is_not_four_fields(qtbot, tmp_path, basis, text):
     """뷰모델은 네 칸이 아니거나 숫자가 아닌 글을 형식 오류로 봐야 한다 — 입력 칸이 막아 주는 것에 기대지 않는다.
 
-    60fps. 뷰모델의 첫 행 시작 칸에 세 칸 · 두 칸 · 밀리초 · 숫자 아닌 글자 · 빈 글을 직접 넣음
+    60fps. 뷰모델의 첫 행 시작 칸에 세 칸 · 두 칸 · 밀리초 · 숫자 아닌 글자를 직접 넣음
+    (빈 글은 빈 시각이다 — 오류가 아니다)
     -> 그 행의 오류 키 == "Invalid timecode format", 확인할 수 없다
     """
     item = _make_item(str(tmp_path))
@@ -946,13 +945,11 @@ def test_moved_rows_reach_the_engine_in_the_new_order_with_matching_file_numbers
             release_output_paths(submissions[0].selection_paths)
 
 
-def test_deleting_a_row_removes_that_section_and_the_last_row_returns_to_the_whole_video(
-    qtbot, tmp_path, basis
-):
-    """삭제는 그 행만 지우고, 마지막 남은 행을 지우면 영상 전체 한 행으로 돌아가야 한다.
+def test_deleting_a_row_removes_that_section_and_the_last_row_stays(qtbot, tmp_path, basis):
+    """삭제는 그 행만 지우고, 하나 남은 행은 지워지지 않아야 한다.
 
     행 A(600~1200) · B(1800~1860)에서 A의 ✕ -> 행 B만 남는다
-    B의 ✕ -> 행 ("00:00:00:00", "01:00:00:00"), 확인하면 selections == ()
+    B의 ✕(꺼져 있다) -> 행 B 그대로, 확인하면 selections == (B,)
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -965,13 +962,14 @@ def test_deleting_a_row_removes_that_section_and_the_last_row_returns_to_the_who
         ("00:30:00:00", "00:31:00:00")
     ]
 
+    assert not dialog._rows[0].deleteButton.isEnabled()
     dialog._rows[0].deleteButton.click()
     _pump()
     assert [(row.startEdit.text(), row.endEdit.text()) for row in dialog._rows] == [
-        ("00:00:00:00", "01:00:00:00")
+        ("00:30:00:00", "00:31:00:00")
     ]
     press_ok(dialog)
-    assert item.selections == ()
+    assert item.selections == (TimeRange(1800.0, 1860.0),)
 
 
 # ================================================================ 편집 중 건너뛰기
@@ -1959,11 +1957,12 @@ def test_the_waiting_hint_shows_only_while_the_batch_waits_for_the_edited_card(
 def test_values_from_the_card_are_shown_bright_even_when_they_are_zero(qtbot, tmp_path, basis):
     """목록에서 온 값은 0이어도 친 값처럼 전부 밝게 보여야 한다 — 아무것도 치지 않은 칸과 구분된다.
 
-    구간 없는 카드를 열면 기본 행은 00:00:00:00 ~ 01:00:00:00
+    구간 (0, 3600) · (600, 1200)이 있는 카드를 열면 첫 행은 00:00:00:00 ~ 01:00:00:00
     -> 시작의 시분초 칸은 밝은 부분 "00:00:00" · 흐린 부분 "", 프레임 칸은 밝은 부분 "00" · 흐린 부분 ""
     두 칸을 Delete로 비움 -> 시분초 칸은 흐린 부분 "00:00:00", 프레임 칸은 흐린 부분 "00"
     """
     item = _make_item(str(tmp_path))
+    item.selections = (TimeRange(0.0, HOUR), TimeRange(600.0, 1200.0))
     win = open_window(tmp_path, item)
     dialog = open_editor(qtbot, win, item)
     edit = dialog._rows[0].startEdit
@@ -2651,3 +2650,410 @@ def test_a_section_pulled_to_a_shorter_end_gets_its_end_back(qtbot, tmp_path, ba
     assert (pulled, was_marked) == (3590.0, True)
     assert item.selections == original
     assert not item.section_end_pulled and not item.section_end_extended
+
+
+# ================================================================ 빈 행 · 빈 시각 (#309)
+
+
+def texts(dialog) -> list[tuple[str, str]]:
+    return [(row.startEdit.text(), row.endEdit.text()) for row in dialog._rows]
+
+
+def notes(dialog) -> list[str]:
+    """행마다 보이는 무시 안내 — 보이지 않으면 빈 글."""
+    return [shown(row.noteLabel) if row.noteLabel.isVisible() else "" for row in dialog._rows]
+
+
+def numbers(dialog) -> list[str]:
+    return [row.numberLabel.text() for row in dialog._rows]
+
+
+def delete_enabled(dialog) -> list[bool]:
+    return [row.deleteButton.isEnabled() for row in dialog._rows]
+
+
+IGNORED = "Empty — this row is ignored"
+
+
+def test_a_card_without_sections_opens_with_one_empty_row_that_confirms_as_a_whole_download(
+    qtbot, tmp_path, basis
+):
+    """구간 없는 카드를 열면 빈 행 하나가 보이고, 그대로 확인하면 빈 튜플이어야 한다.
+
+    60fps · 3600초, 구간 없는 카드
+    -> 행 1개 ("", ""), 네 칸 모두 친 숫자 없음, 안내 없음, 번호 "1", 확인 켜짐
+    확인 -> selections == ()
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+
+    row = dialog._rows[0]
+    assert texts(dialog) == [("", "")]
+    assert [
+        part.digits()
+        for edit in (row.startEdit, row.endEdit)
+        for part in (edit.clockEdit, edit.frameEdit)
+    ] == ["", "", "", ""]
+    assert notes(dialog) == [""] and numbers(dialog) == ["1"]
+    assert dialog.okButton.isEnabled()
+    press_ok(dialog)
+
+    assert item.selections == ()
+
+
+def test_the_only_row_cannot_be_deleted_and_no_action_leaves_zero_rows(qtbot, tmp_path, basis):
+    """행이 하나면 삭제 버튼이 꺼져 있고, 어떤 조작으로도 행이 0개가 되지 않아야 한다.
+
+    행 1개 -> 삭제 꺼짐. 뷰모델에 직접 삭제를 청해도 1행
+    구간 추가 -> 2행, 둘 다 삭제 켜짐. 첫 행 삭제 -> 1행, 삭제 꺼짐. 다시 삭제를 청해도 1행
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    viewmodel = dialog.viewModel()
+
+    assert delete_enabled(dialog) == [False]
+    viewmodel.removeRow(0)
+    _pump()
+    assert len(dialog._rows) == 1 and len(viewmodel.rows) == 1
+
+    dialog.addButton.click()
+    _pump()
+    assert delete_enabled(dialog) == [True, True]
+
+    dialog._rows[0].deleteButton.click()
+    _pump()
+    assert delete_enabled(dialog) == [False]
+    dialog._rows[0].deleteButton.click()
+    viewmodel.removeRow(0)
+    _pump()
+    assert len(dialog._rows) == 1 and len(viewmodel.rows) == 1
+
+
+def test_adding_a_section_gives_an_empty_row_and_focuses_its_start_clock_field(
+    qtbot, tmp_path, basis
+):
+    """구간 추가는 빈 행을 끝에 넣고 그 행의 시작 시분초 칸에 포커스를 줘야 한다.
+
+    첫 행에 10분~20분을 넣고 구간 추가
+    -> 2행, 둘째 행 ("", ""), 포커스 == 둘째 행의 시작 시분초 칸
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    set_rows(dialog, [("00:10:00:00", "00:20:00:00")])
+
+    dialog.addButton.click()
+    _pump()
+
+    assert texts(dialog) == [("00:10:00:00", "00:20:00:00"), ("", "")]
+    assert QApplication.focusWidget() is dialog._rows[1].startEdit.clockEdit
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "expected"),
+    [
+        ("00:10:00:00", "", TimeRange(600.0, HOUR)),  # 시작만 — 그 시각부터 끝까지
+        ("", "00:20:00:00", TimeRange(0.0, 1200.0)),  # 끝만 — 처음부터 그 시각까지
+    ],
+)
+def test_an_empty_start_means_the_beginning_and_an_empty_end_means_the_end(
+    qtbot, tmp_path, basis, start, end, expected
+):
+    """빈 시작은 영상 맨 처음, 빈 끝은 영상 맨 끝이어야 한다.
+
+    60fps · 3600초. 한 행의 시작만 00:10:00:00 / 끝만 00:20:00:00
+    -> selections == ((600, 3600),) / ((0, 1200),), 오류 없음
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    row = dialog._rows[0]
+
+    for edit, text in ((row.startEdit, start), (row.endEdit, end)):
+        if text:
+            type_into(edit, text)
+            leave(edit)
+    assert not row.errorLabel.isVisible()
+    press_ok(dialog)
+
+    assert item.selections == (expected,)
+
+
+def test_a_frame_typed_under_an_empty_clock_field_counts_from_zero(qtbot, tmp_path, basis):
+    """시분초 칸이 빈 채 프레임 칸만 치면 그 시각은 00:00:00에 그 프레임이어야 한다.
+
+    60fps. 끝의 프레임 칸에만 30을 침(시분초 칸은 치지 않음)
+    -> 끝의 값 "00:00:00:30", 끝 시분초 칸의 흐린 글 "00:00:00"(영상 끝이 아니다)
+    확인 -> selections == ((0, 0.5),)
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    end = dialog._rows[0].endEdit
+
+    type_frame(end, "30")
+
+    assert end.text() == "00:00:00:30"
+    assert end.clockEdit.dimText() == "00:00:00"
+    leave(end)
+    press_ok(dialog)
+    assert item.selections == (TimeRange(0.0, 0.5),)
+
+
+def test_three_empty_rows_keep_the_top_one_and_confirm_as_a_whole_download(qtbot, tmp_path, basis):
+    """모든 행이 비어 있으면 맨 위 행만 남고 나머지는 안내와 함께 걸러져야 한다.
+
+    빈 행 셋
+    -> 안내는 둘째 · 셋째 행에만, 번호 "1" · "" · "", 오류 없음, 머리줄 "Sections 1 / 20 …", 확인 켜짐
+    확인 -> selections == (). 다시 열면 빈 행 하나
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    for _ in range(2):
+        dialog.addButton.click()
+        _pump()
+
+    assert notes(dialog) == ["", IGNORED, IGNORED]
+    assert numbers(dialog) == ["1", "", ""]
+    assert not any(row.errorLabel.isVisible() for row in dialog._rows)
+    assert shown(dialog.headerLabel).startswith("Sections 1 / 20 ")
+    assert dialog.okButton.isEnabled()
+    press_ok(dialog)
+    assert item.selections == ()
+
+    dialog = open_editor(qtbot, win, item)
+    assert texts(dialog) == [("", "")]
+
+
+def test_an_empty_row_beside_a_filled_row_is_left_out(qtbot, tmp_path, basis):
+    """빈 행과 입력한 행이 함께 있으면 입력한 행만 구간이 되고 안내는 빈 행에만 보여야 한다.
+
+    첫 행은 빈 채, 둘째 행에 10분~20분
+    -> 안내 [IGNORED, ""], 번호 ["", "1"], 머리줄 "Sections 1 / 20 …"
+    확인 -> selections == ((600, 1200),). 다시 열면 그 한 행뿐
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    dialog.addButton.click()
+    _pump()
+    for edit, text in (
+        (dialog._rows[1].startEdit, "00:10:00:00"),
+        (dialog._rows[1].endEdit, "00:20:00:00"),
+    ):
+        type_into(edit, text)
+        leave(edit)
+
+    assert notes(dialog) == [IGNORED, ""]
+    assert numbers(dialog) == ["", "1"]
+    assert shown(dialog.headerLabel).startswith("Sections 1 / 20 ")
+    press_ok(dialog)
+    assert item.selections == (TimeRange(600.0, 1200.0),)
+
+    dialog = open_editor(qtbot, win, item)
+    assert texts(dialog) == [("00:10:00:00", "00:20:00:00")]
+
+
+def test_rows_around_an_empty_row_are_numbered_one_and_two(qtbot, tmp_path, basis, service):
+    """입력한 행 사이의 빈 행은 번호를 받지 않고, 남은 행의 파일 번호가 _1 · _2로 이어져야 한다.
+
+    행: 10분~20분 · 빈 행 · 30분~31분. 확인하고 받기 시작
+    -> 번호 ["1", "", "2"], selections == ((600, 1200), (1800, 1860)),
+       파일 이름 == "제목 1080p_1.mp4" · "제목 1080p_2.mp4"
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    engine = service(win)
+    dialog = open_editor(qtbot, win, item)
+    for _ in range(2):
+        dialog.addButton.click()
+        _pump()
+    for index, (start, end) in (
+        (0, ("00:10:00:00", "00:20:00:00")),
+        (2, ("00:30:00:00", "00:31:00:00")),
+    ):
+        for edit, text in (
+            (dialog._rows[index].startEdit, start),
+            (dialog._rows[index].endEdit, end),
+        ):
+            type_into(edit, text)
+            leave(edit)
+
+    assert numbers(dialog) == ["1", "", "2"]
+    press_ok(dialog)
+    assert item.selections == (TimeRange(600.0, 1200.0), TimeRange(1800.0, 1860.0))
+    start_batch(win)
+
+    assert names(engine.submissions[0]["content"].selection_paths) == [
+        "제목 1080p_1.mp4",
+        "제목 1080p_2.mp4",
+    ]
+
+
+def test_two_rows_with_only_the_same_start_are_duplicates(qtbot, tmp_path, basis):
+    """일부만 빈 행은 걸러지지 않아, 시작만 같은 값인 두 행은 중복 오류여야 한다.
+
+    두 행 모두 시작만 00:10:00:00(끝은 빈 채)
+    -> 두 행 모두 "Duplicate selection", 안내 없음, 확인 꺼짐
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    dialog.addButton.click()
+    _pump()
+    for row in dialog._rows:
+        type_into(row.startEdit, "00:10:00:00")
+        leave(row.startEdit)
+
+    assert [shown(row.errorLabel) for row in dialog._rows] == ["Duplicate selection"] * 2
+    assert notes(dialog) == ["", ""]
+    assert not dialog.okButton.isEnabled()
+
+
+def test_a_typed_whole_video_row_beside_another_row_is_a_section(qtbot, tmp_path, basis):
+    """직접 00:00:00:00 ~ 끝을 친 행은 빈 행이 아니어서, 다른 행과 함께 있으면 구간으로 들어가야 한다.
+
+    행: 직접 친 00:00:00:00~01:00:00:00 · 10분~20분
+    -> 안내 없음, selections == ((0, 3600), (600, 1200))
+    다시 열면 첫 행이 값 그대로 보인다(비워 보이지 않는다) — 다시 확인해도 두 구간이 남는다
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    set_rows(dialog, [("00:00:00:00", "01:00:00:00"), ("00:10:00:00", "00:20:00:00")])
+
+    assert notes(dialog) == ["", ""]
+    press_ok(dialog)
+    expected = (TimeRange(0.0, HOUR), TimeRange(600.0, 1200.0))
+    assert item.selections == expected
+
+    dialog = open_editor(qtbot, win, item)
+    assert texts(dialog) == [("00:00:00:00", "01:00:00:00"), ("00:10:00:00", "00:20:00:00")]
+    press_ok(dialog)
+    assert item.selections == expected
+
+
+def test_the_empty_end_field_shows_the_end_of_the_video_dimmed(qtbot, tmp_path, basis):
+    """빈 끝 칸에는 영상의 끝 타임코드가, 빈 시작 칸에는 00:00:00이 흐리게 보여야 한다.
+
+    60fps · 3599.5초(끝 타임코드 00:59:59:30)인 카드의 빈 행
+    -> 끝의 흐린 글: 시분초 "00:59:59" · 프레임 "30", 시작의 흐린 글: "00:00:00" · "00", 밝은 부분 없음
+    """
+    basis.duration = 3599.5
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    row = dialog._rows[0]
+
+    assert dialog.viewModel().endTimecodeText() == "00:59:59:30", "전제: 끝 타임코드"
+    assert (row.endEdit.clockEdit.dimText(), row.endEdit.frameEdit.dimText()) == ("00:59:59", "30")
+    assert (row.startEdit.clockEdit.dimText(), row.startEdit.frameEdit.dimText()) == (
+        "00:00:00",
+        "00",
+    )
+    assert [
+        part.brightText()
+        for edit in (row.startEdit, row.endEdit)
+        for part in (edit.clockEdit, edit.frameEdit)
+    ] == ["", "", "", ""]
+
+
+def test_copying_from_an_empty_field_gives_the_value_it_stands_for(
+    qtbot, tmp_path, basis, monkeypatch
+):
+    """빈 칸에서 복사하면 그 칸이 뜻하는 값이 클립보드에 들어가야 한다.
+
+    60fps · 3600초의 빈 행. 시작 칸 · 끝 칸에서 차례로 복사
+    -> "00:00:00:00", "01:00:00:00"
+    """
+    copied: list[str] = []
+
+    class _Clipboard:
+        def setText(self, text: str) -> None:
+            copied.append(text)
+
+        def text(self) -> str:
+            return ""
+
+    monkeypatch.setattr(
+        "app.widgets.timecode_edit.QGuiApplication.clipboard", staticmethod(lambda: _Clipboard())
+    )
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    row = dialog._rows[0]
+
+    row.startEdit.clockEdit.copy()
+    row.endEdit.frameEdit.copy()
+
+    assert copied == ["00:00:00:00", "01:00:00:00"]
+
+
+def test_times_at_the_beginning_and_the_end_are_shown_as_empty_fields(qtbot, tmp_path, basis):
+    """구간이 있는 카드를 열 때 영상 맨 처음과 같은 시작 · 맨 끝과 같은 끝은 빈 칸으로 보여야 한다.
+
+    60fps · 3600초, selections = ((0, 1200), (1800, 3600))
+    -> 행 ("", "00:20:00:00"), ("00:30:00:00", "")
+    그대로 확인 -> selections 그대로
+    """
+    item = _make_item(str(tmp_path))
+    sections = (TimeRange(0.0, 1200.0), TimeRange(1800.0, HOUR))
+    item.selections = sections
+    win = open_window(tmp_path, item)
+
+    dialog = open_editor(qtbot, win, item)
+
+    assert texts(dialog) == [("", "00:20:00:00"), ("00:30:00:00", "")]
+    press_ok(dialog)
+    assert item.selections == sections
+
+
+def test_a_section_with_an_empty_end_follows_the_new_end_after_a_resolution_change(
+    qtbot, tmp_path, basis
+):
+    """빈 끝으로 정한 구간은 해상도를 바꾼 뒤 새 영상의 끝을 따라가야 한다.
+
+    1080p(60fps · 3600초)에서 시작만 00:10:00:00으로 확인 → 480p(30fps · 3700초)를 고름
+    -> 조회 뒤 selections == ((600, 3700),)
+    """
+    basis.by_resolution[480] = (Fraction(30), 3700.0)
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    type_into(dialog._rows[0].startEdit, "00:10:00:00")
+    leave(dialog._rows[0].startEdit)
+    press_ok(dialog)
+    assert item.selections == (TimeRange(600.0, HOUR),), "전제: 빈 끝이 영상 끝으로 쓰였다"
+
+    _pick(win, item, 480)
+    settle(qtbot, win)
+
+    assert item.selections == (TimeRange(600.0, 3700.0),)
+
+
+def test_moving_a_row_while_a_field_has_focus_does_not_overwrite_the_row_that_took_its_place(
+    qtbot, tmp_path, basis
+):
+    """칸에 포커스가 있는 채로 행의 순서를 바꿔도 그 자리에 온 행의 값이 덮이지 않아야 한다.
+
+    행 A(10분~20분) · B(30분~31분). B의 시작 시분초 칸에 포커스를 두고 B의 ▲
+    -> 행 B · A, 값 그대로
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    set_rows(dialog, [("00:10:00:00", "00:20:00:00"), ("00:30:00:00", "00:31:00:00")])
+    dialog._rows[1].startEdit.clockEdit.setFocus()
+    _pump()
+    assert QApplication.focusWidget() is dialog._rows[1].startEdit.clockEdit, "전제: 포커스"
+
+    dialog._rows[1].upButton.click()
+    _pump()
+
+    assert dialog.viewModel().rows == [
+        ["00:30:00:00", "00:31:00:00"],
+        ["00:10:00:00", "00:20:00:00"],
+    ]

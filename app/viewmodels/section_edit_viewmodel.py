@@ -417,7 +417,10 @@ class SectionEditViewModel(QObject):
         self.state = STATE_LOADING
         self.fps: Fraction | None = None
         self.duration = 0.0
-        self.rows: list[list[str]] = []  # 행마다 [시작 글자, 끝 글자]
+        # 행마다 [시작 글자, 끝 글자]. 빈 글은 빈 시각이다 — 시작이면 영상 맨 처음, 끝이면 맨 끝
+        self.rows: list[list[str]] = []
+        # 걸러 낸 행 — 행이 둘 이상일 때의 완전히 빈 행. 구간도 오류도 아니고 번호도 받지 않는다
+        self._ignored: frozenset[int] = frozenset()
         self._notify = notify
         self._job: SectionBasisJob | None = None
         self._head = None  # 조회하며 받은 moov(인코딩 완료 VOD) — 없으면 None
@@ -456,10 +459,9 @@ class SectionEditViewModel(QObject):
             self._head = moov
         watch_section_head(moov)
         log_process_memory("조회 끝")
-        self.rows = [
-            [format_timecode(selection.start, self.fps), format_timecode(selection.end, self.fps)]
-            for selection in self.item.selections
-        ] or [self._wholeRow()]
+        self.rows = [self._rowOf(selection) for selection in self.item.selections] or [
+            self._emptyRow()
+        ]
         self.state = STATE_READY
         self._evaluate()
         self.stateChanged.emit()
@@ -483,30 +485,55 @@ class SectionEditViewModel(QObject):
 
     # ---- 행 ----
 
-    def _wholeRow(self) -> list[str]:
-        """영상 전체를 가리키는 행 — 처음 ~ 영상의 끝 타임코드."""
-        end = last_frame_seconds(self.duration, self.fps)  # endSeconds()와 같은 값이다
-        return [format_timecode(0.0, self.fps), format_timecode(end, self.fps)]
+    @staticmethod
+    def _emptyRow() -> list[str]:
+        """빈 행 — 시작 · 끝이 모두 빈 시각이다. 한 행뿐이면 영상 전체를 가리킨다."""
+        return ["", ""]
+
+    def _rowOf(self, selection: TimeRange) -> list[str]:
+        """카드의 구간 하나를 행의 글자로 바꾼다.
+
+        시작이 영상 맨 처음이면 시작을, 끝이 영상 맨 끝이면 끝을 빈 시각으로 보인다. 둘 다
+        해당하는 구간(영상 전체)은 값을 그대로 적는다 — 둘 다 비우면 완전히 빈 행이 되어, 다른
+        구간과 함께 있을 때 다시 확인하는 순간 걸러져 사라진다.
+        """
+        texts = [
+            format_timecode(selection.start, self.fps),
+            format_timecode(selection.end, self.fps),
+        ]
+        at_start = frame_index(selection.start, self.fps) == 0
+        # 영상의 끝을 넘은 끝(해상도를 바꿔 받을 수 없게 된 구간)은 비우지 않는다 — 넘었다는
+        # 오류가 그 값으로 보여야 한다
+        last = frame_index(last_frame_seconds(self.duration, self.fps), self.fps)
+        at_end = (
+            reaches_end(selection.end, self.duration, self.fps)
+            and frame_index(selection.end, self.fps) <= last
+        )
+        if at_start and at_end:
+            return texts
+        return ["" if at_start else texts[START], "" if at_end else texts[END]]
 
     def canAdd(self) -> bool:
         """행을 더 넣을 수 있는지 — 구간은 ``MAX_SELECTIONS``개까지다."""
         return self.state == STATE_READY and len(self.rows) < MAX_SELECTIONS
 
     def addRow(self) -> None:
-        """영상 전체를 가리키는 행을 끝에 넣는다."""
+        """빈 행을 끝에 넣는다."""
         if not self.canAdd():
             return
-        self.rows.append(self._wholeRow())
+        self.rows.append(self._emptyRow())
         self._evaluate()
         self.rowsReset.emit()
 
+    def canRemove(self) -> bool:
+        """행을 지울 수 있는지 — 행은 언제나 하나 이상이다. 하나뿐이면 지울 수 없다."""
+        return self.state == STATE_READY and len(self.rows) > 1
+
     def removeRow(self, row: int) -> None:
-        """행을 지운다. 마지막 남은 행을 지우면 영상 전체를 가리키는 행으로 돌아간다."""
-        if self.state != STATE_READY or not 0 <= row < len(self.rows):
+        """행을 지운다. 하나뿐인 행은 지우지 않는다."""
+        if not self.canRemove() or not 0 <= row < len(self.rows):
             return
         del self.rows[row]
-        if not self.rows:
-            self.rows.append(self._wholeRow())
         self._evaluate()
         self.rowsReset.emit()
 
@@ -531,7 +558,7 @@ class SectionEditViewModel(QObject):
         if self.state != STATE_READY or not 0 <= row < len(self.rows):
             return
         try:
-            if normalize:
+            if normalize and text:  # 빈 시각은 빈 글 그대로 둔다
                 text = format_timecode(self._parse(text), self.fps)
         except TimecodeError:
             pass  # 틀린 글자는 그대로 들고 오류로 보인다
@@ -551,18 +578,54 @@ class SectionEditViewModel(QObject):
             raise TimecodeError(TIMECODE_INVALID_FORMAT, text)
         return parse_timecode(text, self.fps)
 
+    def _seconds(self, column: int, text: str) -> float:
+        """칸의 글자가 뜻하는 시각(초). 빈 시각은 시작이면 영상 맨 처음, 끝이면 맨 끝이다.
+
+        Raises:
+            TimecodeError: 글자가 타임코드로 읽히지 않는 경우
+        """
+        if text:
+            return self._parse(text)
+        if column == START:
+            return 0.0
+        return last_frame_seconds(self.duration, self.fps)  # 머리줄의 끝 타임코드와 같은 값
+
+    def _blankRows(self) -> frozenset[int]:
+        """걸러 낼 행 — 행이 둘 이상일 때의 완전히 빈 행(두 시각 모두 빈 시각).
+
+        남는 행은 언제나 하나 이상이다. 모든 행이 비어 있으면 맨 위 행을 남긴다.
+        """
+        if len(self.rows) < 2:
+            return frozenset()
+        blank = [row for row, texts in enumerate(self.rows) if not any(texts)]
+        if len(blank) == len(self.rows):
+            blank = blank[1:]
+        return frozenset(blank)
+
     def _evaluate(self) -> None:
         """모든 행을 해석하고 검증해 행마다의 오류 키를 정한다.
 
+        무엇이 오류인지는 이 순서로 정한다 — 앞 단계에서 빠진 행은 뒤 단계에 들어가지 않는다.
+
+        1. 완전히 빈 행을 걸러 낸다(``_blankRows``)
+        2. 남은 행이 영상 전체를 가리키는 한 행뿐이면 구간 없음이다(``selections``) — 그 행은
+           아래 단계에서 걸릴 것이 없다
+        3. 칸 오류 — 초 · 분 60 이상, 프레임 ≥ 프레임률
+        4. 시각 오류 — 빈 시각을 처음 · 끝의 값으로 바꾼 뒤 시작 ≥ 끝, 길이 초과
+        5. 행 사이 오류 — 중복 · 개수
+
         해석된 행만 모아 ``validate_selections``에 넣는다 — 중복 · 개수는 행 사이의 규칙이라
-        한꺼번에 봐야 한다. 행의 오류는 그 행의 첫 위반 키다(키의 순서는 core가 정한다).
+        한꺼번에 봐야 한다. 행의 오류는 그 행의 첫 위반 키다(4 · 5의 키 순서는 core가 정한다).
         """
         self._errors, self._pairs, self._allErrors, self._columnErrors = {}, {}, {}, {}
+        self._ignored = self._blankRows()
         for row, texts in enumerate(self.rows):
+            if row in self._ignored:
+                continue
             values = []
             for column, text in enumerate(texts):
                 try:
-                    values.append(self._parse(text))
+                    values.append(self._seconds(column, text))
                 except TimecodeError as e:
                     # 칸마다 따로 적는다 — 어느 시각의 어느 칸을 칠할지 가린다
                     self._columnErrors.setdefault(row, {})[column] = e.message_key
@@ -659,17 +722,37 @@ class SectionEditViewModel(QObject):
         key = self.errorKey(row)
         return self._translate(key) if key else ""
 
+    def isIgnored(self, row: int) -> bool:
+        """걸러 낸 행인지 — 완전히 비어 있어 구간에 넣지 않는다."""
+        return row in self._ignored
+
+    def ignoredText(self) -> str:
+        """걸러 낸 행 아래에 보이는 안내."""
+        return self.tr("Empty — this row is ignored")
+
+    def rowNumber(self, row: int) -> int | None:
+        """행의 구간 번호(1부터) — 파일 이름의 번호다. 걸러 낸 행은 번호가 없다(None)."""
+        if row in self._ignored:
+            return None
+        return row + 1 - sum(1 for ignored in self._ignored if ignored < row)
+
+    def sectionCount(self) -> int:
+        """구간으로 세는 행의 수 — 걸러 낸 행을 뺀다."""
+        return len(self.rows) - len(self._ignored)
+
     def lengthText(self, row: int) -> str:
-        """행의 구간 길이 — ``HH:MM:SS.mmm``. 오류가 있는 행은 빈 문자열."""
+        """행의 구간 길이 — ``HH:MM:SS.mmm``. 오류가 있는 행 · 걸러 낸 행은 빈 문자열."""
         if row in self._errors or row not in self._pairs:
             return ""
         start, end = self._pairs[row]
         return format_milliseconds(end - start)
 
     def millisecondsText(self, row: int, column: int) -> str:
-        """칸의 시각을 밀리초 표기로 — 표시만 한다. 해석되지 않는 칸은 빈 문자열."""
+        """칸의 시각을 밀리초 표기로 — 표시만 한다. 해석되지 않는 칸 · 걸러 낸 행은 빈 문자열."""
+        if row in self._ignored:
+            return ""
         try:
-            return format_milliseconds(self._parse(self.rows[row][column]))
+            return format_milliseconds(self._seconds(column, self.rows[row][column]))
         except TimecodeError:
             return ""
 
@@ -678,7 +761,7 @@ class SectionEditViewModel(QObject):
         if self.state != STATE_READY:
             return ""
         return self.tr("Sections {0} / {1} · {2}fps · video ends at {3}").format(
-            len(self.rows), MAX_SELECTIONS, format_fps(self.fps), self.endTimecodeText()
+            self.sectionCount(), MAX_SELECTIONS, format_fps(self.fps), self.endTimecodeText()
         )
 
     def endSeconds(self) -> float | None:
@@ -711,9 +794,10 @@ class SectionEditViewModel(QObject):
     def selections(self) -> tuple[TimeRange, ...]:
         """지금의 행을 카드에 쓸 구간 목록으로 바꾼다. 오류가 없을 때만 부른다.
 
-        행이 영상 전체를 가리키는 한 행뿐이면 빈 튜플(전체 다운로드)이다.
+        걸러 낸 행은 넣지 않는다 — 남은 행의 순서가 구간 번호다. 남은 행이 영상 전체를 가리키는
+        한 행뿐이면 빈 튜플(전체 다운로드)이다.
         """
-        pairs = [self._pairs[row] for row in range(len(self.rows))]
+        pairs = [self._pairs[row] for row in range(len(self.rows)) if row not in self._ignored]
         if len(pairs) == 1:
             start, end = pairs[0]
             if frame_index(start, self.fps) == 0 and reaches_end(end, self.duration, self.fps):

@@ -499,9 +499,9 @@ def test_frame_field_takes_two_digits_and_ignores_the_third(point):
 def test_time_point_joins_the_two_fields_into_four_fields(point):
     """시각의 값은 시분초 칸과 프레임 칸을 합친 네 칸 HH:MM:SS:FF여야 한다.
 
-    시분초 칸에 0100, 프레임 칸에 30 -> "00:01:00:30". 아무것도 치지 않은 시각은 "00:00:00:00"
+    시분초 칸에 0100, 프레임 칸에 30 -> "00:01:00:30". 아무것도 치지 않은 시각은 빈 글(빈 시각)
     """
-    assert point.text() == "00:00:00:00"
+    assert point.text() == ""
 
     type_digits(point.clockEdit, "0100")
     type_digits(point.frameEdit, "30")
@@ -513,14 +513,14 @@ def test_set_text_splits_a_timecode_into_both_fields_and_shows_it_bright(point):
     """setText는 네 칸 타임코드를 두 칸에 나눠 넣고 전부 밝게 보여야 한다. 읽을 수 없으면 비운다.
 
     "01:02:03:04" -> 시분초 "01:02:03" · 프레임 "04", 흐린 부분 없음
-    "abc" -> 두 칸 모두 비어 값 "00:00:00:00", 밝은 부분 없음
+    "abc" -> 두 칸 모두 비어 값 ""(빈 시각), 밝은 부분 없음
     """
     point.setText("01:02:03:04")
     assert (point.clockEdit.text(), point.frameEdit.text()) == ("01:02:03", "04")
     assert (point.clockEdit.dimText(), point.frameEdit.dimText()) == ("", "")
 
     point.setText("abc")
-    assert point.text() == "00:00:00:00"
+    assert point.text() == ""
     assert (point.clockEdit.brightText(), point.frameEdit.brightText()) == ("", "")
 
 
@@ -658,3 +658,115 @@ def test_time_point_tells_when_the_frame_field_is_being_typed_and_full(point):
 
     type_digits(point.frameEdit, "0")
     assert (point.typingFrame(), point.frameIsFull()) == (True, True)
+
+
+# ================================================================ 빈 시각 · 확정 표시 (#309)
+
+
+def test_typed_digits_are_bright_and_the_whole_field_turns_bright_when_left(point):
+    """치는 동안에는 친 자리만 밝고, 칸을 떠나면 앞쪽의 0까지 전부 밝아야 한다. 값은 그대로다.
+
+    시분초 칸에 0100 -> 밝은 부분 "01:00" · 흐린 부분 "00:"
+    칸의 편집을 끝냄 -> 밝은 부분 "00:01:00" · 흐린 부분 "", 값 "00:01:00" 그대로
+    """
+    clock = point.clockEdit
+    type_digits(clock, "0100")
+    assert (clock.dimText(), clock.brightText()) == ("00:", "01:00")
+    value = clock.text()
+
+    clock.commit()
+
+    assert (clock.dimText(), clock.brightText()) == ("", "00:01:00")
+    assert clock.text() == value == "00:01:00"
+
+
+def test_a_frame_field_turns_bright_when_left(point):
+    """프레임 칸에 한 자리만 치고 떠나면 앞의 0까지 밝아야 한다.
+
+    프레임 칸에 5 -> 밝은 부분 "5" · 흐린 부분 "0". 편집을 끝냄 -> 밝은 부분 "05" · 흐린 부분 ""
+    """
+    frame = point.frameEdit
+    type_digits(frame, "5")
+    assert (frame.dimText(), frame.brightText()) == ("0", "5")
+
+    frame.commit()
+
+    assert (frame.dimText(), frame.brightText()) == ("", "05")
+
+
+def test_enter_turns_the_field_bright(point):
+    """Enter를 쳐도 칸이 확정돼 앞쪽의 0까지 밝아야 한다.
+
+    시분초 칸에 12를 치고 Enter -> 밝은 부분 "00:00:12"
+    """
+    type_digits(point.clockEdit, "12")
+
+    QTest.keyClick(point.clockEdit, Qt.Key.Key_Return)
+
+    assert point.clockEdit.brightText() == "00:00:12"
+
+
+def test_typing_again_in_a_confirmed_field_goes_back_to_the_typing_look(point):
+    """확정된 칸에 다시 들어가 치면 치는 동안의 표시(친 자리만 밝음)로 돌아가야 한다.
+
+    0100을 치고 편집을 끝낸 칸에 포커스를 주고 5를 침 -> 밝은 부분 "5", 값 "00:00:05"
+    같은 숫자를 다시 쳐 값이 그대로여도(5를 친 뒤 확정, 다시 5) 밝은 부분은 "5"
+    """
+    clock = point.clockEdit
+    type_digits(clock, "0100")
+    clock.commit()
+
+    clock.focusInEvent(QFocusEvent(QEvent.Type.FocusIn))
+    type_digits(clock, "5")
+    assert (clock.brightText(), clock.text()) == ("5", "00:00:05")
+
+    clock.commit()
+    clock.focusInEvent(QFocusEvent(QEvent.Type.FocusIn))
+    type_digits(clock, "5")
+    assert (clock.brightText(), clock.text()) == ("5", "00:00:05")
+
+
+def test_an_untouched_field_stays_dim_when_left(point):
+    """숫자를 하나도 치지 않은 칸은 떠나도 흐린 채여야 한다.
+
+    아무것도 치지 않은 시분초 칸 · 프레임 칸의 편집을 끝냄 -> 밝은 부분 "" · 흐린 부분 "00:00:00" · "00"
+    """
+    point.clockEdit.commit()
+    point.frameEdit.commit()
+
+    assert (point.clockEdit.dimText(), point.clockEdit.brightText()) == ("00:00:00", "")
+    assert (point.frameEdit.dimText(), point.frameEdit.brightText()) == ("00", "")
+
+
+def test_an_untouched_time_is_empty_and_shows_what_it_stands_for(point):
+    """두 칸 모두 치지 않은 시각은 빈 시각이고, 정해 준 뜻하는 값을 흐리게 보여야 한다.
+
+    기본 -> isEmpty, text() == "", 흐린 글 "00:00:00" · "00", meaningText() == "00:00:00:00"
+    setEmptyText("01:23:45:10") -> 흐린 글 "01:23:45" · "10", meaningText() == "01:23:45:10", text() == ""
+    """
+    assert point.isEmpty() and point.text() == ""
+    assert (point.clockEdit.dimText(), point.frameEdit.dimText()) == ("00:00:00", "00")
+    assert point.meaningText() == "00:00:00:00"
+
+    point.setEmptyText("01:23:45:10")
+
+    assert (point.clockEdit.dimText(), point.frameEdit.dimText()) == ("01:23:45", "10")
+    assert point.meaningText() == "01:23:45:10"
+    assert point.text() == ""
+
+
+def test_the_dimmed_meaning_gives_way_to_zeros_once_either_field_is_typed(point):
+    """한 칸이라도 치면 빈 시각이 아니어서, 치지 않은 칸의 흐린 글은 0으로 돌아가야 한다.
+
+    뜻하는 값 01:23:45:10. 프레임 칸에 7 -> text() == "00:00:00:07", 시분초 칸의 흐린 글 "00:00:00"
+    Delete로 비움 -> 다시 빈 시각, 흐린 글 "01:23:45" · "10"
+    """
+    point.setEmptyText("01:23:45:10")
+
+    type_digits(point.frameEdit, "7")
+    assert point.text() == "00:00:00:07"
+    assert point.clockEdit.dimText() == "00:00:00"
+
+    QTest.keyClick(point.frameEdit, Qt.Key.Key_Delete)
+    assert point.isEmpty()
+    assert (point.clockEdit.dimText(), point.frameEdit.dimText()) == ("01:23:45", "10")

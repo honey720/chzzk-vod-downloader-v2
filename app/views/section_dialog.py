@@ -119,6 +119,14 @@ class SectionRow(QWidget):
         self.errorLabel.setIndent(self.numberLabel.minimumWidth() + layout.spacing())
         column.addWidget(self.errorLabel)
 
+        # 걸러 낼 행의 안내 — 완전히 비어 있어 구간에 넣지 않는 행에만 보인다. 오류가 아니다
+        self.noteLabel = QLabel(self)
+        self.noteLabel.setObjectName("sectionNoteLabel")
+        self.noteLabel.setWordWrap(True)
+        self.noteLabel.setVisible(False)
+        self.noteLabel.setIndent(self.errorLabel.indent())
+        column.addWidget(self.noteLabel)
+
     def _timePointEdit(self, name: str) -> TimePointEdit:
         edit = TimePointEdit(self)
         edit.setObjectName(name)
@@ -187,7 +195,7 @@ class SectionEditDialog(QDialog):
         self.addButton = QPushButton(self)
         self.addButton.setObjectName("sectionAddButton")
         self.addButton.setAutoDefault(False)
-        self.addButton.clicked.connect(self._viewmodel.addRow)
+        self.addButton.clicked.connect(self._onAdd)
         header.addWidget(self.addButton)
         layout.addLayout(header)
 
@@ -259,19 +267,32 @@ class SectionEditDialog(QDialog):
             widget.setVisible(ready)
         self._refresh()
 
+    def _onAdd(self) -> None:
+        """구간 추가 — 빈 행을 끝에 넣고 그 행의 시작 시분초 칸으로 간다."""
+        before = len(self._viewmodel.rows)
+        self._viewmodel.addRow()
+        if len(self._viewmodel.rows) > before and self._rows:
+            self._rows[-1].startEdit.clockEdit.setFocus(Qt.FocusReason.TabFocusReason)
+
     def _rebuildRows(self) -> None:
         """행 위젯을 뷰모델의 행 수 · 순서대로 다시 만든다."""
-        for row in self._rows:
+        old, self._rows = self._rows, []  # 먼저 비운다 — 사라지는 칸의 알림을 받지 않는다
+        self._typing = None
+        for row in old:
             self._rowLayout.removeWidget(row)
             row.hide()  # 부모를 떼지 않는다 — 떼면 파괴될 때까지 최상위 창이 된다
             row.deleteLater()
-        self._rows = []
-        self._typing = None
+        # 빈 끝 칸에 흐리게 깔 값 — 영상의 끝 타임코드(머리줄의 것과 같다). 빈 시작 칸은 00:00:00:00
+        end_text = self._viewmodel.endTimecodeText()
         for index in range(len(self._viewmodel.rows)):
             row = SectionRow(self._rowContainer)
+            if end_text:
+                row.endEdit.setEmptyText(end_text)
             for column in (START, END):
                 edit = row.edit(column)
-                edit.edited.connect(lambda text, r=index, c=column: self._onEdited(r, c, text))
+                edit.edited.connect(
+                    lambda text, r=index, c=column, e=edit: self._onEdited(r, c, text, e)
+                )
                 edit.committed.connect(lambda r=index, c=column, e=edit: self._onCommitted(r, c, e))
                 edit.entered.connect(lambda r=index, c=column: self._onEntered(r, c))
                 # 목록의 값을 넣는다 — 넣은 값은 전부 밝게 보인다. 넣지 않으면 값이 0인 칸
@@ -284,9 +305,18 @@ class SectionEditDialog(QDialog):
             self._rows.append(row)
         self._refresh()
 
-    def _onEdited(self, row: int, column: int, text: str) -> None:
+    def _isCurrent(self, row: int, column: int, edit: TimePointEdit) -> bool:
+        """그 시각 입력이 지금 그 (행, 칸)에 놓인 것인지.
+
+        행을 다시 만들면(추가 · 삭제 · 순서 바꾸기) 앞의 행 위젯은 숨겨져 사라진다. 그 가운데
+        포커스가 있던 칸은 숨겨지며 포커스를 잃어 편집 끝을 알리는데, 그 칸이 알던 행 번호에는
+        이제 다른 구간이 있다 — 그 알림을 받아 쓰면 옮겨 간 행의 값이 덮인다.
+        """
+        return row < len(self._rows) and self._rows[row].edit(column) is edit
+
+    def _onEdited(self, row: int, column: int, text: str, edit: TimePointEdit) -> None:
         """칸의 숫자가 바뀌었다 — 값을 넘겨 다시 검증한다. 이 칸을 치는 중이라고 적어 둔다."""
-        if not isValid(self._viewmodel):
+        if not isValid(self._viewmodel) or not self._isCurrent(row, column, edit):
             return
         self._typing = (row, column)
         self._viewmodel.setText(row, column, text, False)
@@ -295,6 +325,8 @@ class SectionEditDialog(QDialog):
         """그 시각의 편집이 끝났다(두 칸을 모두 떠남 · Enter) — 미뤄 둔 오류를 띄운다."""
         if not isValid(self._viewmodel):
             return  # 창이 닫히며 칸이 포커스를 잃었다 — 뷰모델은 이미 사라졌다
+        if not self._isCurrent(row, column, edit):
+            return  # 행을 다시 만들며 사라지는 칸이다 — 그 번호의 행은 이제 다른 구간이다
         if self._typing == (row, column):
             self._typing = None
         self._viewmodel.setText(row, column, edit.text())
@@ -326,7 +358,9 @@ class SectionEditDialog(QDialog):
         for index, row in enumerate(self._rows):
             if index >= len(viewmodel.rows):
                 break
-            row.numberLabel.setText(str(index + 1))
+            # 걸러 낸 행은 번호가 없다 — 남은 행끼리 1부터 잇는다(파일 이름의 번호)
+            number = viewmodel.rowNumber(index)
+            row.numberLabel.setText("" if number is None else str(number))
             # 치고 있는 행의 오류는 표(ERROR_TIMING)가 정한 때에 띄운다. 프레임 칸에 두 자리를
             # 다 쳤으면 프레임 넘침은 바로 띄운다
             frame_full = False
@@ -352,6 +386,10 @@ class SectionEditDialog(QDialog):
             row.infoLabel.setText(viewmodel.lengthText(index))
             row.errorLabel.setText(error)
             row.errorLabel.setVisible(bool(error))
+            ignored = viewmodel.isIgnored(index)
+            row.noteLabel.setText(viewmodel.ignoredText() if ignored else "")
+            row.noteLabel.setVisible(ignored)
+            row.deleteButton.setEnabled(viewmodel.canRemove())  # 하나뿐인 행은 지울 수 없다
             row.upButton.setEnabled(index > 0)
             row.downButton.setEnabled(index < count - 1)
             row.upButton.setToolTip(self.tr("Move up"))

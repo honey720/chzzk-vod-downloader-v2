@@ -3,7 +3,12 @@
 시각 하나는 칸 둘이다(``TimePointEdit``) — **시분초 칸**(``HH:MM:SS``, 숫자 여섯 자리)과
 **프레임 칸**(``FF``, 두 자리). 숫자를 치는 기본 단위가 초다: 시분초 칸에 친 숫자는 맨 오른쪽
 (초 자리)부터 채워지며 앞서 친 숫자를 왼쪽으로 민다. 콜론은 치지 않는다 — 자리가 정해져 있다.
-칸에는 ``00:00:00`` · ``00``이 흐리게 깔려 있고 친 부분만 밝게 보인다.
+칸에는 ``00:00:00`` · ``00``이 흐리게 깔려 있고 친 부분만 밝게 보인다. 숫자를 하나라도 친 칸은
+떠나거나 Enter를 치면 앞쪽의 0까지 전부 밝아진다(확정) — 표시만 바뀌고 값은 그대로다.
+
+두 칸 모두 숫자를 하나도 치지 않은 시각은 **빈 시각**이다 — 값(``TimePointEdit.text()``)이 빈
+글이고, 그것이 무엇을 뜻하는지는 받는 쪽이 정한다(구간의 시작이면 영상 맨 처음, 끝이면 맨 끝).
+빈 시각의 칸에는 그 뜻하는 값이 흐리게 깔린다(``setEmptyText``).
 
     시분초 칸에 친 숫자   밝게 보이는 부분   값
     0                     0                  00:00:00
@@ -11,7 +16,7 @@
     001003                00:10:03           00:10:03
     012345                01:23:45           01:23:45
 
-두 칸을 합친 값(``TimePointEdit.text()``)은 **언제나 네 칸** ``HH:MM:SS:FF``다. 그 값이
+두 칸을 합친 값(``TimePointEdit.text()``)은 빈 시각이 아니면 **언제나 네 칸** ``HH:MM:SS:FF``다. 그 값이
 타임코드로 맞는지(분 · 초가 60 미만인지, 프레임이 프레임률 미만인지)는 이 칸들이 판정하지
 않는다 — 올림하거나 고치지 않고 친 그대로 내놓고, 해석과 검증은 받는 쪽
 (``core/utils/timecode.py``)이 한다.
@@ -51,6 +56,7 @@ _FIELDS = MAX_DIGITS // _FIELD_DIGITS  # 시각 하나의 묶음 수 — 시 · 
 CLOCK_FIELDS = 3  # 시분초 칸의 묶음 수 — 시 · 분 · 초(숫자 여섯 자리)
 FRAME_FIELDS = 1  # 프레임 칸의 묶음 수(숫자 두 자리)
 _PART_SPACING = 3  # 시분초 칸과 프레임 칸 사이(px) — 한 시각으로 읽히게 붙여 둔다
+_EMPTY_TIME_POINT = "00:00:00:00"  # 빈 시각의 칸에 깔리는 기본 글 — 받는 쪽이 바꾼다(setEmptyText)
 _DOT = "."  # 시분초 칸에서 프레임 칸으로 넘어가는 키 — 숫자 키패드의 소수점도 이 글자로 온다
 
 
@@ -131,6 +137,11 @@ class TimecodeEdit(QLineEdit):
         self._digits = ""  # 친 숫자 — 오른쪽 끝이 맨 오른쪽 묶음의 일의 자리다
         # 포커스를 받은 뒤 아직 아무것도 치지 않았다 — 다음 숫자가 기존 값을 지운다
         self._fresh = False
+        # 편집을 끝낸 값이다(칸을 떠났거나 Enter를 쳤다) — 앞쪽의 0까지 전부 밝게 그린다.
+        # 숫자를 하나도 치지 않은 칸은 확정되지 않는다
+        self._confirmed = False
+        # 숫자를 하나도 치지 않았을 때 흐리게 깔 글(이 칸의 묶음 수만큼) — 없으면 0으로 깐다
+        self._empty_text: str | None = None
         self._selected = False  # 칸 전체가 선택됐다
         self._leaving = False  # 포커스를 잃어 편집을 끝내는 중이다
         self._pressed_at = None  # 마우스를 누른 자리 — 거기서 끌면 칸 전체를 선택한다
@@ -166,8 +177,19 @@ class TimecodeEdit(QLineEdit):
         if digits is not None and len(parts) == self._fields:
             digits = "".join(part.zfill(_FIELD_DIGITS) for part in parts)  # 전부 밝게
         self._digits = (digits or "")[-self._max_digits :]
+        self._confirmed = bool(self._digits)
         self._fresh = self.hasFocus()
         self.update()
+
+    def setEmptyText(self, text: str | None) -> None:
+        """숫자를 하나도 치지 않았을 때 흐리게 깔 글을 정한다 — 값(``text()``)은 바뀌지 않는다.
+
+        Args:
+            text: 이 칸의 묶음 수만큼의 글(``HH:MM:SS`` · ``FF``). None이면 0으로 깐다
+        """
+        if text != self._empty_text:
+            self._empty_text = text
+            self.update()
 
     def setClipboardHandlers(self, copy_source, paste_handler, paste_check) -> None:
         """복사 · 붙여넣기를 묶은 쪽에 맡긴다 — 시각 하나의 두 칸이 함께 움직인다.
@@ -186,10 +208,14 @@ class TimecodeEdit(QLineEdit):
         count = len(self._digits)
         if not count:
             return ""
+        if self._confirmed:
+            return self.text()  # 편집을 끝낸 값 — 앞쪽의 0까지 밝다
         return self.text()[-(count + (count - 1) // _FIELD_DIGITS) :]
 
     def dimText(self) -> str:
-        """흐리게 보이는 부분 — 아직 치지 않은 자리."""
+        """흐리게 보이는 부분 — 아직 치지 않은 자리. 빈 칸이면 깔아 둔 글(``setEmptyText``)이다."""
+        if not self._digits and self._empty_text is not None:
+            return self._empty_text
         shown = self.text()
         return shown[: len(shown) - len(self.brightText())]
 
@@ -202,8 +228,10 @@ class TimecodeEdit(QLineEdit):
         return True
 
     def commit(self) -> None:
-        """편집을 끝낸다 — ``committed``를 낸다."""
+        """편집을 끝낸다 — 친 칸은 앞쪽의 0까지 밝게 채우고 ``committed``를 낸다."""
         self._fresh = False
+        self._confirmed = bool(self._digits)  # 빈 칸은 떠나도 흐린 채로 둔다
+        self.update()
         self.committed.emit()
 
     def copy(self) -> None:
@@ -264,6 +292,9 @@ class TimecodeEdit(QLineEdit):
     def _setDigits(self, digits: str) -> None:
         self._fresh = False
         self._setSelected(False)
+        if self._confirmed:
+            self._confirmed = False  # 다시 치기 시작했다 — 친 자리만 밝게 그린다
+            self.update()
         if digits == self._digits:
             return
         self._digits = digits
@@ -403,7 +434,9 @@ class TimePointEdit(QWidget):
     타임코드 하나다. 두 칸은 각자 숫자를 받고(시분초 여섯 자리 · 프레임 두 자리), 아래는 함께 한다.
 
     - "."(시분초 칸): 같은 시각의 프레임 칸으로 간다
-    - 복사: 어느 칸에서든 시각 전체(``HH:MM:SS:FF``)
+    - 복사: 어느 칸에서든 시각 전체(``HH:MM:SS:FF``). 빈 시각이면 그 시각이 뜻하는 값
+    - 빈 시각: 두 칸 모두 숫자를 하나도 치지 않았다 — ``text()``가 빈 글이다. 시분초 칸이 빈 채
+      프레임 칸만 쳤으면 빈 시각이 아니고 시분초는 ``00:00:00``이다
     - 붙여넣기: 콜론이 있으면 두 칸에 나눠 넣는다(``split_time_point``). 숫자만 있으면
       붙여넣은 칸의 입력 규칙이다. 숫자 · 콜론 밖의 글자가 있으면 받지 않는다
     - ``committed``: 이 시각을 떠났거나 Enter를 쳤을 때 한 번. 두 칸 사이를 오가는 것은 떠난 것이 아니다
@@ -422,9 +455,10 @@ class TimePointEdit(QWidget):
         self.clockEdit = TimecodeEdit(self, CLOCK_FIELDS)
         self.frameEdit = TimecodeEdit(self, FRAME_FIELDS)
         self._typing: TimecodeEdit | None = None  # 지금 숫자를 치고 있는 칸
+        self._empty_text = _EMPTY_TIME_POINT  # 빈 시각이 뜻하는 값 — 칸에 흐리게 깔린다
         for part in (self.clockEdit, self.frameEdit):
             layout.addWidget(part)
-            part.setClipboardHandlers(self.text, self._handler(part), self.canPaste)
+            part.setClipboardHandlers(self.meaningText, self._handler(part), self.canPaste)
             part.edited.connect(self._edited(part))
             part.committed.connect(self._committed(part))
             part.entered.connect(self.entered)
@@ -434,8 +468,36 @@ class TimePointEdit(QWidget):
     # ---- 값 ----
 
     def text(self) -> str:
-        """이 시각의 값 — 언제나 네 칸 ``HH:MM:SS:FF``."""
+        """이 시각의 값 — 네 칸 ``HH:MM:SS:FF``. 빈 시각이면 빈 글이다."""
+        if self.isEmpty():
+            return ""
         return f"{self.clockEdit.text()}:{self.frameEdit.text()}"
+
+    def isEmpty(self) -> bool:
+        """빈 시각인지 — 두 칸 모두 숫자를 하나도 치지 않았다."""
+        return not (self.clockEdit.digits() or self.frameEdit.digits())
+
+    def meaningText(self) -> str:
+        """이 시각이 뜻하는 값 — 빈 시각이면 깔아 둔 값(``setEmptyText``), 아니면 ``text()``."""
+        return self.text() or self._empty_text
+
+    def setEmptyText(self, text: str) -> None:
+        """빈 시각이 뜻하는 값을 정한다 — 빈 시각의 두 칸에 흐리게 깔리고, 복사하면 이 값이 나간다.
+
+        Args:
+            text: 네 칸 타임코드 ``HH:MM:SS:FF``. 읽을 수 없으면 ``00:00:00:00``으로 둔다
+        """
+        readable = text.count(":") == _FIELDS - 1 and split_time_point(text) is not None
+        self._empty_text = text if readable else _EMPTY_TIME_POINT
+        self._syncEmptyText()
+
+    def _syncEmptyText(self) -> None:
+        """빈 시각이면 두 칸에 뜻하는 값을 깔고, 아니면 걷는다(치지 않은 칸은 0으로 깔린다)."""
+        clock = frame = None
+        if self.isEmpty():
+            clock, frame = split_time_point(self._empty_text)
+        self.clockEdit.setEmptyText(clock)
+        self.frameEdit.setEmptyText(frame)
 
     def setText(self, text: str) -> None:
         """네 칸 타임코드를 두 칸에 나눠 넣는다 — 넣은 값은 전부 밝게 보인다. 읽을 수 없으면 비운다."""
@@ -443,11 +505,13 @@ class TimePointEdit(QWidget):
         if parts is None:
             self.clockEdit.setText("")
             self.frameEdit.setText("")
+            self._syncEmptyText()
             return
         clock, frame = parts
         # 묶음을 두 자리로 채워 넣어야 전부 밝게 보인다(값이 0인 자리도 넣은 값이다)
         self.clockEdit.setText(":".join(part.zfill(_FIELD_DIGITS) for part in clock.split(":")))
         self.frameEdit.setText(frame.zfill(_FIELD_DIGITS))
+        self._syncEmptyText()
 
     def hasEditFocus(self) -> bool:
         """두 칸 가운데 하나에 포커스가 있는지."""
@@ -488,6 +552,7 @@ class TimePointEdit(QWidget):
         clock, frame = parts
         self.clockEdit.setText(clock)
         self.frameEdit.setText(frame.zfill(_FIELD_DIGITS))
+        self._syncEmptyText()
         if self.text() != before:
             self._typing = part
             self.edited.emit(self.text())
@@ -503,6 +568,7 @@ class TimePointEdit(QWidget):
             if not isValid(self):
                 return
             self._typing = part
+            self._syncEmptyText()
             self.edited.emit(self.text())
 
         return relay

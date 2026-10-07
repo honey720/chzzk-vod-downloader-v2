@@ -383,6 +383,10 @@ Check your connection and cookies, then open this window again.</translation>
         <source>Too many selections</source>
         <translation>Too many selections</translation>
     </message>
+    <message>
+        <source>Empty — this row is ignored</source>
+        <translation>Empty — this row is ignored</translation>
+    </message>
 </context>
 <context>
     <name>SettingDialog</name>
