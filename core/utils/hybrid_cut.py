@@ -39,6 +39,8 @@ from collections import Counter
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
+from itertools import compress, repeat
+from operator import add, le
 
 from core.models.cut import (
     CutFrames,
@@ -148,16 +150,22 @@ def cut_frames_from_mp4(index: Mp4Index) -> CutFrames:
     """mp4 색인에서 컷에 필요한 프레임 정보를 뽑는다."""
     video = index.video
     audio = index.audio
-    shown = [n for n, time in enumerate(audio.times) if time >= 0] if audio else []
+    # 표시되는(시각이 0 이상인) 오디오 샘플의 처음과 끝 — 샘플마다 파이썬 코드를 돌지 않는다
+    if audio is not None and audio.times:
+        visible = list(map(le, repeat(0.0), audio.times))
+        audio_start = min(compress(audio.times, visible), default=None)
+        audio_end = max(compress(map(add, audio.times, audio.durations), visible), default=None)
+    else:
+        audio_start = audio_end = None
     return CutFrames(
         frame_pts=index.frame_pts,
         # 색인의 표와 같이 연속 배열로 담는다 — 긴 영상은 프레임이 수백만 개다 (#309)
-        frame_dts=float_column([video.decode_times[sample] for sample in index.frame_samples]),
+        frame_dts=float_column(map(video.decode_times.__getitem__, index.frame_samples)),
         keyframes=index.keyframes,
         timescale=video.timescale,
         frame_duration=float(1 / index.fps),
-        audio_start=min(audio.times[n] for n in shown) if shown else None,
-        audio_end=max(audio.times[n] + audio.durations[n] for n in shown) if shown else None,
+        audio_start=audio_start,
+        audio_end=audio_end,
         audio_bitrate=_mp4_audio_bitrate(audio) if audio else None,
     )
 

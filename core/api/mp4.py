@@ -19,14 +19,17 @@ moof에 흩어져 있어 이 방식으로 읽을 수 없다 — 조용히 틀린
 (``MetadataError``와 같은 방식).
 """
 
+import array
 import re
 import struct
+import sys
 import time
 from collections import Counter
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
 from fractions import Fraction
-from itertools import accumulate
+from itertools import accumulate, chain, compress, count, repeat
+from operator import add, le, mul, sub, truediv
 
 from core.api.session import get_thread_session
 from core.models.mp4_index import Mp4Head, Mp4Index, Mp4Track
@@ -292,7 +295,7 @@ def parse_moov(moov: bytes) -> Mp4Index:
     """
     try:
         return _parse_moov(moov)
-    except (struct.error, IndexError) as e:
+    except (struct.error, IndexError, ValueError, OverflowError) as e:
         raise Mp4Error(MP4_INVALID, str(e)) from e
 
 
@@ -348,34 +351,71 @@ def _entry_count(data: bytes, span: tuple[int, int], entry_bytes: int, at: int =
 
 
 def _u32_table(data: bytes, span: tuple[int, int], columns: int) -> list[tuple[int, ...]]:
-    """버전·플래그(4) + 항목 수(4) 뒤에 32비트 열이 columns개씩 놓인 표를 읽는다."""
-    count = _entry_count(data, span, columns * 4)
-    values = struct.unpack_from(f">{count * columns}I", data, span[0] + 8)
+    """버전·플래그(4) + 항목 수(4) 뒤에 32비트 열이 columns개씩 놓인 표를 읽는다.
+
+    항목이 적은 표(stsc)에 쓴다. 샘플 수만큼 긴 표는 ``_read_table``로 배열에 읽는다.
+    """
+    count_ = _entry_count(data, span, columns * 4)
+    values = struct.unpack_from(f">{count_ * columns}I", data, span[0] + 8)
     return [values[i : i + columns] for i in range(0, len(values), columns)]
+
+
+def _read_table(data: bytes, start: int, values: int, typecode: str) -> array.array:
+    """data의 start부터 빅엔디언 정수 values개를 배열로 통째로 읽는다 (#309).
+
+    긴 영상의 표는 항목이 수백만 개다. 값을 하나씩 파이썬 객체로 풀어 리스트에 담으면
+    해석하는 동안 색인의 몇 배를 쓴다 — 바이트를 C 배열에 그대로 옮기고 바이트 순서만 맞춘다.
+
+    Args:
+        typecode: ``"I"``(32비트 부호 없음) · ``"i"``(32비트 부호 있음) · ``"Q"``(64비트 부호 없음)
+
+    Raises:
+        Mp4Error: 표가 data의 끝을 넘는 경우(``MP4_INVALID``)
+    """
+    table = array.array(typecode)
+    end = start + values * table.itemsize
+    if values < 0 or end > len(data):
+        raise Mp4Error(MP4_INVALID, f"표의 항목 {values}개가 상자를 넘는다")
+    table.frombytes(data[start:end])
+    if sys.byteorder == "little":
+        table.byteswap()
+    return table
+
+
+def _expand_runs(runs: array.array, values: array.array, typecode: str) -> array.array:
+    """(개수, 값) 구간들을 샘플마다 값 하나씩으로 펼친다 — 반복은 C에서 돈다."""
+    return array.array(typecode, chain.from_iterable(map(repeat, values, runs)))
+
+
+def _shown(ticks: array.array) -> compress:
+    """표시되는(0 이상인) 값만 낸다 — 편집 목록이 가린 샘플은 음수다."""
+    return compress(ticks, map(le, repeat(0), ticks))
 
 
 @dataclass
 class _RawTrack:
-    """표시 시각으로 바꾸기 전의 트랙 — 틱 단위."""
+    """표시 시각으로 바꾸기 전의 트랙 — 틱 단위. 샘플별 표는 C 배열이다."""
 
     handler: bytes
     timescale: int
     empty_edit: Fraction  # 앞의 빈 편집 길이(초)
-    presented: list[int]  # 샘플별 (PTS − 편집 목록의 media_time), 틱
-    decoded: list[int]  # 샘플별 (DTS − 편집 목록의 media_time), 틱
-    deltas: list[int]  # 샘플별 길이, 틱
-    offsets: list[int]
-    sizes: list[int]
-    chunk_starts: list[int]  # 청크마다의 첫 샘플 인덱스
-    sync_samples: tuple[int, ...]
+    presented: array.array  # 샘플별 (PTS − 편집 목록의 media_time), 틱
+    decoded: array.array  # 샘플별 (DTS − 편집 목록의 media_time), 틱
+    deltas: array.array  # 샘플별 길이, 틱
+    # stts의 (개수, 길이) 구간 — 샘플별 길이(초)를 구간마다 한 번만 나눠서 만드는 데 쓴다
+    delta_runs: tuple[array.array, array.array]
+    offsets: array.array
+    sizes: array.array
+    chunk_starts: array.array  # 청크마다의 첫 샘플 인덱스
+    sync_samples: array.array
     declared_bitrate: int | None = None  # 오디오 샘플 엔트리가 선언한 비트레이트(bit/s)
 
     def start(self) -> Fraction | None:
         """이 트랙에서 가장 먼저 표시되는 샘플의 시각(초). 표시되는 샘플이 없으면 None."""
-        shown = [ticks for ticks in self.presented if ticks >= 0]
-        if not shown:
+        first = min(_shown(self.presented), default=None)
+        if first is None:
             return None
-        return self.empty_edit + Fraction(min(shown), self.timescale)
+        return self.empty_edit + Fraction(first, self.timescale)
 
 
 def _parse_moov(moov: bytes) -> Mp4Index:
@@ -410,19 +450,22 @@ def _parse_moov(moov: bytes) -> Mp4Index:
     origin = video_start if audio_start is None else min(video_start, audio_start)
 
     video_track = _to_track(video, origin)
-    shown = sorted(
-        (index for index, ticks in enumerate(video.presented) if ticks >= 0),
-        key=lambda index: video.presented[index],
-    )
-    sync = set(video.sync_samples)
+    # 표시 순서 — 표시 시각(틱)으로 샘플 번호를 정렬하고, 가려진(음수) 샘플을 뺀다. 같은 시각은
+    # 샘플 번호 순서다(정렬이 안정적이다). 샘플마다 파이썬 함수를 부르지 않는다
+    presented = video.presented
+    order = sorted(range(len(presented)), key=presented.__getitem__)
+    shown = array.array("Q", compress(order, map(le, repeat(0), map(presented.__getitem__, order))))
+    del order
+    sync = frozenset(video.sync_samples)
     modal_delta = Counter(video.deltas).most_common(1)[0][0]
     if modal_delta <= 0:
         raise Mp4Error(MP4_INVALID, "영상 샘플 길이가 0이다")
+    times, durations = video_track.times, video_track.durations
     return Mp4Index(
-        frame_pts=float_column([video_track.times[index] for index in shown]),
+        frame_pts=float_column(map(times.__getitem__, shown)),
         frame_samples=count_column(shown),
-        keyframes=count_column([number for number, index in enumerate(shown) if index in sync]),
-        duration=max(video_track.times[index] + video_track.durations[index] for index in shown),
+        keyframes=count_column(array.array("Q", compress(count(), map(sync.__contains__, shown)))),
+        duration=max(map(add, map(times.__getitem__, shown), map(durations.__getitem__, shown))),
         fps=Fraction(video.timescale, modal_delta),
         video=video_track,
         audio=_to_track(audio, origin) if audio else None,
@@ -435,15 +478,27 @@ def _to_track(raw: _RawTrack, origin: Fraction) -> Mp4Track:
     # 시각 = shift + ticks ÷ timescale. 샘플마다 Fraction을 만들지 않고 같은 유리수를 정수 둘의
     # 나눗셈으로 낸다: (shift의 분자 × timescale + ticks × shift의 분모) ÷ (shift의 분모 × timescale).
     # 정수 ÷ 정수는 가장 가까운 float로 반올림되고 float(Fraction)도 같은 나눗셈이라 값이 같다.
-    # 8시간 영상(샘플 300만 개)에서 이 변환이 해석 시간의 대부분이었다 (#309)
+    # 계산은 샘플마다 파이썬 코드를 돌지 않고 map으로 C에서 돈다 (#309)
     offset = shift.numerator * raw.timescale
     step = shift.denominator
     scale = shift.denominator * raw.timescale
+
+    def seconds(ticks: array.array) -> map:
+        scaled = ticks if step == 1 else map(mul, ticks, repeat(step))
+        moved = scaled if offset == 0 else map(add, scaled, repeat(offset))
+        return map(truediv, moved, repeat(scale))
+
+    times = float_column(seconds(raw.presented))
+    runs, run_deltas = raw.delta_runs
     return Mp4Track(
         timescale=raw.timescale,
-        times=float_column([(offset + ticks * step) / scale for ticks in raw.presented]),
-        decode_times=float_column([(offset + ticks * step) / scale for ticks in raw.decoded]),
-        durations=float_column([delta / raw.timescale for delta in raw.deltas]),
+        times=times,
+        # PTS와 DTS가 같은 트랙은 같은 표를 함께 쓴다 — 고칠 수 없는 표라 나눠 쓸 수 있다
+        decode_times=times if raw.decoded is raw.presented else float_column(seconds(raw.decoded)),
+        # 길이(초) = 길이(틱) ÷ timescale. 구간마다 한 번 나눈 값을 개수만큼 편다 — 값은 같다
+        durations=float_column(
+            chain.from_iterable(map(repeat, map(truediv, run_deltas, repeat(raw.timescale)), runs))
+        ),
         offsets=offset_column(raw.offsets),
         sizes=count_column(raw.sizes),
         chunk_starts=count_column(raw.chunk_starts),
@@ -473,28 +528,46 @@ def _parse_track(data: bytes, start: int, end: int, movie_timescale: int) -> _Ra
     if count > _MAX_SAMPLES[handler]:
         raise Mp4Error(MP4_TOO_LONG, f"{handler!r} 샘플 {count}개 · 상한 {_MAX_SAMPLES[handler]}")
     sizes = _sample_sizes(data, boxes[b"stsz"], count)
-    time_runs = _u32_table(data, boxes[b"stts"], 2)
-    declared = sum(run for run, _delta in time_runs)
+    time_table = _read_table(
+        data, boxes[b"stts"][0] + 8, 2 * _entry_count(data, boxes[b"stts"], 8), "I"
+    )
+    time_runs, time_deltas = time_table[0::2], time_table[1::2]
+    declared = sum(time_runs)
     if declared != count:
         raise Mp4Error(MP4_INVALID, f"stts {declared}개 · stsz {count}개")
-    deltas = [delta for run, delta in time_runs for _ in range(run)]
-    decode_times = [0, *accumulate(deltas)][:count]
-    composition = _composition_offsets(data, boxes.get(b"ctts"), count)
+    deltas = _expand_runs(time_runs, time_deltas, "I")
+    # 샘플의 DTS는 앞 샘플들의 길이를 더한 값이다 — 누적은 C에서 돈다
+    decode_times = array.array("q", accumulate(deltas, initial=0))
+    decode_times.pop()  # 마지막 값은 트랙의 끝이다 — 샘플의 DTS가 아니다
+    has_composition = b"ctts" in boxes
+    composition = _composition_offsets(data, boxes[b"ctts"], count) if has_composition else None
     empty_edit, media_time = _edit_list(data, boxes.get(b"elst"), movie_timescale)
     if b"stss" in boxes:
         # stss의 샘플 번호는 1부터다
-        sync_samples = tuple(row[0] - 1 for row in _u32_table(data, boxes[b"stss"], 1))
+        numbers = _read_table(
+            data, boxes[b"stss"][0] + 8, _entry_count(data, boxes[b"stss"], 4), "I"
+        )
+        sync_samples = array.array("q", map(sub, numbers, repeat(1)))
     else:
-        sync_samples = tuple(range(count))  # stss가 없으면 모든 샘플이 단독 디코드 가능하다
+        sync_samples = array.array(
+            "q", range(count)
+        )  # stss가 없으면 모든 샘플이 단독 디코드 가능하다
 
     offsets, chunk_starts = _sample_offsets(data, boxes, sizes)
+    decoded = (
+        decode_times
+        if media_time == 0
+        else array.array("q", map(sub, decode_times, repeat(media_time)))
+    )
     return _RawTrack(
         handler=handler,
         timescale=timescale,
         empty_edit=empty_edit,
-        presented=[dts + cts - media_time for dts, cts in zip(decode_times, composition)],
-        decoded=[dts - media_time for dts in decode_times],
+        # ctts가 없으면 PTS가 DTS다 — 같은 배열을 함께 쓴다(오디오 트랙이 그렇다)
+        presented=array.array("q", map(add, decoded, composition)) if has_composition else decoded,
+        decoded=decoded,
         deltas=deltas,
+        delta_runs=(time_runs, time_deltas),
         offsets=offsets,
         sizes=sizes,
         chunk_starts=chunk_starts,
@@ -574,7 +647,7 @@ def _descriptor_body(data: bytes, position: int, end: int, tag: int) -> int:
     return position
 
 
-def _sample_sizes(data: bytes, span: tuple[int, int], count: int) -> list[int]:
+def _sample_sizes(data: bytes, span: tuple[int, int], count: int) -> array.array:
     """stsz — 샘플별 크기. 고정 크기 칸이 0이 아니면 모든 샘플이 그 크기다.
 
     count는 호출자가 상한을 확인한 샘플 수다. 고정 크기일 때는 표가 없어 상자 크기로
@@ -582,27 +655,25 @@ def _sample_sizes(data: bytes, span: tuple[int, int], count: int) -> list[int]:
     """
     uniform = struct.unpack_from(">I", data, span[0] + 4)[0]
     if uniform:
-        return [uniform] * count
+        return array.array("I", [uniform]) * count
     _entry_count(data, span, 4, at=8)
-    return list(struct.unpack_from(f">{count}I", data, span[0] + 12))
+    return _read_table(data, span[0] + 12, count, "I")
 
 
-def _composition_offsets(data: bytes, span: tuple[int, int] | None, count: int) -> list[int]:
+def _composition_offsets(data: bytes, span: tuple[int, int] | None, count: int) -> array.array:
     """ctts — 샘플별 (PTS − DTS). 상자가 없으면 전부 0이다."""
     if span is None:
-        return [0] * count
+        return array.array("q", bytes(8 * count))
     runs = _entry_count(data, span, 8)
     # 버전 0은 부호 없는 값이지만 음수를 넣는 파일이 있어 버전과 무관하게 부호 있는 값으로 읽는다.
-    # 칸마다 형식 글자를 늘어놓은 형식 문자열("IiIi…")로 읽지 않는다 — struct가 해석한 형식을
-    # 캐시에 붙들어, 긴 영상(항목 수백만 개)에서 해석이 끝난 뒤에도 수십 MB가 남는다 (#309).
-    # 개수(부호 없음)와 값(부호 있음)을 같은 바이트에서 따로 읽는다
-    words = 2 * runs
-    counts = struct.unpack_from(f">{words}I", data, span[0] + 8)[0::2]
-    offsets = struct.unpack_from(f">{words}i", data, span[0] + 8)[1::2]
+    # 개수(부호 없음)와 값(부호 있음)을 같은 바이트에서 따로 읽는다 — 칸마다 형식 글자를 늘어놓은
+    # 형식 문자열("IiIi…")은 struct가 캐시에 붙들어 긴 영상에서 수십 MB가 남는다 (#309)
+    counts = _read_table(data, span[0] + 8, 2 * runs, "I")[0::2]
+    offsets = _read_table(data, span[0] + 8, 2 * runs, "i")[1::2]
     declared = sum(counts)
     if declared != count:
         raise Mp4Error(MP4_INVALID, f"ctts {declared}개 · stsz {count}개")
-    return [offset for run, offset in zip(counts, offsets) for _ in range(run)]
+    return _expand_runs(counts, offsets, "q")
 
 
 def _edit_list(
@@ -631,8 +702,8 @@ def _edit_list(
 
 
 def _sample_offsets(
-    data: bytes, boxes: dict[bytes, tuple[int, int]], sizes: list[int]
-) -> tuple[list[int], list[int]]:
+    data: bytes, boxes: dict[bytes, tuple[int, int]], sizes: array.array
+) -> tuple[array.array, array.array]:
     """stsc + stco/co64 + stsz — (샘플별 파일 안 시작 위치, 청크마다의 첫 샘플 인덱스).
 
     청크 하나에 샘플이 이어 붙어 있다. stsc는 "이 청크부터는 청크당 샘플이 몇 개"를
@@ -640,19 +711,30 @@ def _sample_offsets(
     """
     if b"co64" in boxes:
         chunk_count = _entry_count(data, boxes[b"co64"], 8)
-        chunk_offsets = struct.unpack_from(f">{chunk_count}Q", data, boxes[b"co64"][0] + 8)
+        chunk_offsets = _read_table(data, boxes[b"co64"][0] + 8, chunk_count, "Q")
     else:
-        chunk_offsets = tuple(row[0] for row in _u32_table(data, boxes[b"stco"], 1))
+        chunk_count = _entry_count(data, boxes[b"stco"], 4)
+        chunk_offsets = _read_table(data, boxes[b"stco"][0] + 8, chunk_count, "I")
     runs = _u32_table(data, boxes[b"stsc"], 3)
     if not runs and sizes:
         raise Mp4Error(MP4_INVALID, "stsc가 비어 있다")
 
-    offsets: list[int] = []
-    chunk_starts: list[int] = []
+    offsets = array.array("q")
+    chunk_starts = array.array("q")
     sample = 0
     for run_index, (first_chunk, samples_per_chunk, _description) in enumerate(runs):
         # first_chunk는 1부터다. 구간은 다음 구간의 first_chunk 직전 청크까지다
         last_chunk = runs[run_index + 1][0] - 1 if run_index + 1 < len(runs) else len(chunk_offsets)
+        if samples_per_chunk == 1:
+            # 청크마다 샘플 하나 — 샘플의 위치가 곧 청크의 위치다. 청크마다 돌지 않는다
+            chunks = max(last_chunk - (first_chunk - 1), 0)
+            if sample + chunks > len(sizes):
+                raise Mp4Error(MP4_INVALID, "stsc의 샘플 수가 stsz보다 많다")
+            chunk_starts.extend(range(sample, sample + chunks))
+            # 종류가 다른 배열끼리는 바로 잇지 못한다 — 값으로 넘긴다
+            offsets.extend(iter(chunk_offsets[first_chunk - 1 : last_chunk]))
+            sample += chunks
+            continue
         for chunk in range(first_chunk - 1, last_chunk):
             chunk_starts.append(sample)
             if not samples_per_chunk:

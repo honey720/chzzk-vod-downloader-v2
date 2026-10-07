@@ -940,4 +940,88 @@ def test_composition_offsets_reads_negative_values_and_expands_runs():
     """
     ctts = bytes(4) + struct.pack(">I", 3) + struct.pack(">IiIiIi", 2, -100, 1, 0, 1, 300)
 
-    assert mp4_module._composition_offsets(ctts, (0, len(ctts)), 4) == [-100, -100, 0, 300]
+    assert list(mp4_module._composition_offsets(ctts, (0, len(ctts)), 4)) == [-100, -100, 0, 300]
+
+
+# ================================================================ 표를 배열로 통째로 읽기 (#309)
+
+
+def test_read_table_reads_big_endian_values_of_each_width():
+    """_read_table은 빅엔디언 32비트(부호 없음 · 있음) · 64비트 값을 그 개수만큼 읽어야 한다.
+
+    바이트 00 00 00 01 · FF FF FF FE · 00 00 00 01 00 00 00 00
+    -> "I" 둘 == [1, 4294967294], "i" 둘 == [1, -2], 뒤 8바이트의 "Q" 하나 == [4294967296]
+    """
+    data = struct.pack(">IIQ", 1, 0xFFFFFFFE, 1 << 32)
+
+    assert list(mp4_module._read_table(data, 0, 2, "I")) == [1, 0xFFFFFFFE]
+    assert list(mp4_module._read_table(data, 0, 2, "i")) == [1, -2]
+    assert list(mp4_module._read_table(data, 8, 1, "Q")) == [1 << 32]
+
+
+def test_read_table_rejects_a_table_that_runs_past_the_data():
+    """_read_table은 표가 바이트의 끝을 넘으면 손상 키로 거부해야 한다.
+
+    8바이트에서 32비트 값 3개(12바이트)를 읽음 -> Mp4Error(MP4_INVALID)
+    """
+    with pytest.raises(Mp4Error) as info:
+        mp4_module._read_table(bytes(8), 0, 3, "I")
+
+    assert info.value.message_key == MP4_INVALID
+
+
+def test_expand_runs_repeats_each_value_by_its_count():
+    """_expand_runs는 (개수, 값) 구간을 샘플마다 값 하나씩으로 펴야 한다 — 개수 0인 구간은 사라진다.
+
+    개수 [2, 0, 3] · 값 [7, 8, 9] -> [7, 7, 9, 9, 9]
+    """
+    import array
+
+    runs, values = array.array("I", [2, 0, 3]), array.array("I", [7, 8, 9])
+
+    assert list(mp4_module._expand_runs(runs, values, "q")) == [7, 7, 9, 9, 9]
+
+
+def test_parse_moov_reads_chunks_that_hold_one_sample_each():
+    """parse_moov는 청크마다 샘플이 하나인 트랙의 샘플 위치를 조립기가 쓴 위치 그대로 읽어야 한다.
+
+    영상 12샘플을 청크 12개에(청크당 1샘플), 오디오는 표준 재료
+    -> 영상 offsets == 조립기가 기록한 샘플 위치, chunk_starts == 0 … 11
+    """
+    built = build_mp4([video_spec(chunks=[1] * 12), audio_spec()])
+
+    index = parse_moov(built.moov)
+
+    assert list(index.video.offsets) == built.sample_offsets[b"vide"]
+    assert list(index.video.chunk_starts) == list(range(12))
+
+
+def test_parse_moov_does_not_hold_many_times_the_index_while_parsing():
+    """parse_moov가 해석하는 동안 쓰는 메모리의 최고치는 다 만든 색인의 3배를 넘지 않아야 한다.
+
+    영상 12,000샘플(재정렬 I P B B) + 오디오 9,000샘플을 tracemalloc 아래에서 해석
+    -> 해석 중 최고 ÷ 해석이 끝난 뒤 남은 양 < 3 (표를 샘플마다 파이썬 객체로 풀어 리스트에 담으면 5배를 넘는다)
+    """
+    frames, samples = (
+        12_000,
+        9_000,
+    )  # 조립기가 샘플 수의 제곱으로 느려진다 — 이 크기에서도 비는 같다
+    video = video_spec(
+        deltas=[100] * frames,
+        sizes=[40] * frames,
+        chunks=[30] * (frames // 30),
+        composition=[100, 300, 0, 0] * (frames // 4),
+        sync=list(range(1, frames + 1, 60)),
+    )
+    audio = audio_spec(deltas=[1024] * samples, sizes=[7] * samples, chunks=[25] * (samples // 25))
+    moov = build_mp4([video, audio]).moov
+
+    tracemalloc.start()
+    try:
+        index = parse_moov(moov)
+        held, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert len(index.frame_pts) == frames
+    assert peak / held < 3, f"최고 {peak / 1e6:.1f}MB · 색인 {held / 1e6:.1f}MB"
