@@ -628,7 +628,9 @@ def test_memory_is_logged_at_each_point_of_the_section_download(qtbot, window, m
     """구간을 정해 받는 동안 정해진 시점마다 프로세스 메모리 줄을 순서대로 남겨야 한다.
 
     메모리 읽기를 고정값으로 바꿈. 편집 창에서 구간을 확인 → 전역 다운로드 → 완료 통지
-    -> app.process_memory 로거의 시점 == [조회 끝, 편집 창 닫힘, 다운로드 시작, 다운로드 끝, 색인을 놓은 뒤]
+    -> app.process_memory 로거의 시점 == [조회 끝, 편집 창 닫힘, 다운로드 시작, 다운로드 끝].
+    "색인을 놓은 뒤"는 색인이 실제로 사라진 뒤에만 남는다 — 여기서는 조회 대역이 색인을 계속
+    들고 있어 남지 않는다(tests/unit/test_section_head_release.py가 잰다)
     """
     win, item, engine = window
     monkeypatch.setattr(process_memory, "read_process_memory", lambda: {"RSS": 512 * MB})
@@ -647,5 +649,4 @@ def test_memory_is_logged_at_each_point_of_the_section_download(qtbot, window, m
         "프로세스 메모리 [편집 창 닫힘] RSS 512.0MB",
         "프로세스 메모리 [다운로드 시작] RSS 512.0MB",
         "프로세스 메모리 [다운로드 끝] RSS 512.0MB",
-        "프로세스 메모리 [색인을 놓은 뒤] RSS 512.0MB",
     ]

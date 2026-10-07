@@ -29,6 +29,7 @@ logger 매개변수: DownloadLogger 호환 객체를 건별로 주입받는다(�
 
 import logging
 import threading
+import weakref
 from collections import deque
 from collections.abc import Callable
 
@@ -357,13 +358,32 @@ class DownloadService:
         클래스를 구분하지 않는다. 후처리(병합) 콜백은 후처리가 없는
         다운로더에서는 호출되지 않을 뿐 배선은 동일하다.
         """
+        # 엔진은 핸들을 약하게만 가리킨다 (#309). 핸들이 엔진을 들고(handle.engine) 엔진의
+        # 콜백이 핸들을 들면 둘이 서로를 붙잡아, 바깥의 참조가 다 끊겨도 순환 수집기가 돌 때까지
+        # 엔진과 엔진이 든 것(긴 영상의 moov 색인은 1GB를 넘는다)이 남는다. 실행 중에는 실행
+        # 스레드와 _active가 핸들을 붙들고 있다
+        target = weakref.ref(handle)
+
+        def relay(name: str):
+            def call(*args):
+                alive = target()
+                if alive is not None:
+                    getattr(alive, name)(*args)
+
+            return call
+
+        def finished() -> None:
+            alive = target()
+            if alive is not None:
+                self._handle_finished(alive)
+
         return handle.engine_cls(
             data=handle.data,
             logger=handle.logger,
-            on_progress=handle._relay_progress,
-            on_finished=lambda: self._handle_finished(handle),
-            on_failed=handle._relay_failed,
-            on_merge_start=handle._relay_merge_start,
+            on_progress=relay("_relay_progress"),
+            on_finished=finished,
+            on_failed=relay("_relay_failed"),
+            on_merge_start=relay("_relay_merge_start"),
         )
 
     def _resolve_base_url(self, content: Content) -> str:

@@ -330,9 +330,8 @@ class DownloadViewModel(QObject):
         다운로드의 데이터를 들고 있으므로 여기서 놓지 않으면 그때까지 남는다. 일부 구간만
         실패해 엔진이 남긴 이어받기 기록(``section_retry``)의 moov는 그대로 둔다 — 재시도가 쓴다.
         """
-        if self._data is not None and self._data.content.mp4_head is not None:
+        if self._data is not None:
             self._data.content.mp4_head = None
-            log_process_memory("색인을 놓은 뒤")
 
     def _showPreparing(self) -> None:
         """준비가 길어지고 있다 — 카드에 "준비 중"을 켠다 (#309). 타이머가 부른다."""
@@ -507,6 +506,9 @@ class DownloadViewModel(QObject):
             # 엔진이 끝낸 구간과 받아 둔 데이터를 남겼다 — 다음 다운로드가 실패한 구간만 다시
             # 처리한다. 남기지 않은 실패(전송 실패 등)는 아이템에 있던 것을 그대로 둔다
             item.section_retry = (self._resume_key, resume)
+            # 기록은 이제 카드가 든다 — 공유 데이터에 남겨 두면 다음 다운로드를 시작할 때까지
+            # 이 뷰모델이 moov 색인을 하나 더 쥔다(카드가 기록을 지워도 풀리지 않는다)
+            self._data.section_resume = None
         self._endPreparing()
         log_process_memory("다운로드 끝")
         self._dropHead()

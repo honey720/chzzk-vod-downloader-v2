@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from fractions import Fraction
 from types import SimpleNamespace
 
-from PySide6.QtCore import QObject, QThreadPool, Signal
+from PySide6.QtCore import QObject, Qt, QThreadPool, QTimer, Signal
 
 import app.section_basis as section_basis
 from app.process_memory import log_process_memory
@@ -100,6 +100,63 @@ _SAME_RATE_TOLERANCE = Fraction(1, 100)
 _head_owner: weakref.ref | None = None
 
 
+# 색인이 사라진 뒤 프로세스 메모리를 적기까지 두는 틈(ms). 약한 참조의 알림은 객체가 사라지기
+# **시작할 때** 온다 — 그 순간에는 색인이 쥔 메모리가 아직 풀리지 않았다(수백만 개의 값을
+# 놓는 데 수백 ms가 걸린다)
+INDEX_RELEASE_LOG_DELAY_MS = 1000
+
+
+class _IndexReleaseReporter(QObject):
+    """moov 색인이 메모리에서 사라진 뒤 프로세스 메모리를 로그에 남긴다 (#309).
+
+    앱이 참조를 놓은 시점이 아니라 **마지막 참조가 사라진 뒤**에 적는다 — 다른 곳(엔진 등)이
+    쥐고 있으면 줄이 남지 않는다. 마지막 참조는 어느 스레드에서든 사라질 수 있어, 알림을
+    큐 연결 시그널로 메인 스레드에 넘긴 뒤 타이머로 틈을 두고 적는다.
+    """
+
+    _released = Signal()
+
+    def __init__(self):
+        super().__init__()
+        self._watching: set[int] = set()  # 걸어 둔 moov의 id — 같은 것을 두 번 걸지 않는다
+        self._released.connect(self._onReleased, Qt.ConnectionType.QueuedConnection)
+
+    def watch(self, head) -> None:
+        """그 moov가 사라지면 적게 한다. 같은 moov를 두 번 걸지 않는다."""
+        key = id(head)
+        if head is None or key in self._watching:
+            return
+        try:
+            watcher = weakref.finalize(head, self._onDying, key)
+        except TypeError:
+            return  # 약한 참조를 걸 수 없는 대역 등 — 적지 않는다
+        watcher.atexit = False  # 앱이 끝날 때는 적지 않는다
+        self._watching.add(key)
+
+    def _onDying(self, key: int) -> None:
+        """마지막 참조가 사라졌다 — 그 참조를 놓은 스레드에서 불린다. 알림만 넘긴다."""
+        self._watching.discard(key)
+        self._released.emit()
+
+    def _onReleased(self) -> None:
+        QTimer.singleShot(INDEX_RELEASE_LOG_DELAY_MS, _log_index_released)
+
+
+def _log_index_released() -> None:
+    log_process_memory("색인을 놓은 뒤")
+
+
+_index_release_reporter: _IndexReleaseReporter | None = None
+
+
+def watch_section_head(head) -> None:
+    """조회가 받은 moov가 메모리에서 사라지면 프로세스 메모리를 적게 한다. 메인 스레드에서 부른다."""
+    global _index_release_reporter
+    if _index_release_reporter is None:
+        _index_release_reporter = _IndexReleaseReporter()
+    _index_release_reporter.watch(head)
+
+
 def section_bytes_of(head, selections, skip: frozenset = frozenset()) -> int | None:
     """그 moov로 본, 구간들을 받는 데 드는 바이트의 합 (#309). 알 수 없으면 None.
 
@@ -131,14 +188,10 @@ def keep_section_head(item: ContentItem, base_url: str, head) -> None:
     """
     global _head_owner
     owner = _head_owner() if _head_owner is not None else None
-    dropped = getattr(item, "section_head", None) is not None and head is None
     if owner is not None and owner is not item:
-        dropped = dropped or owner.section_head is not None
         owner.section_head = None
     item.section_head = (base_url, head) if head is not None else None
     _head_owner = weakref.ref(item) if head is not None else None
-    if dropped:
-        log_process_memory("색인을 놓은 뒤")
 
 
 def take_section_head(item: ContentItem):
@@ -361,6 +414,7 @@ class SectionEditViewModel(QObject):
         self.duration = basis.duration
         if not self._released:
             self._head = getattr(basis, "mp4_head", None)  # 확인하면 카드에 둔다
+        watch_section_head(getattr(basis, "mp4_head", None))
         log_process_memory("조회 끝")
         self.rows = [
             [format_timecode(selection.start, self.fps), format_timecode(selection.end, self.fps)]
@@ -704,9 +758,7 @@ class SectionRefitter(QObject):
         item.section_end_pulled = item.section_end_extended = False
         item.section_unfit = frozenset()
         item.section_check = SECTION_CHECK_PENDING
-        if item.section_head is not None:
-            item.section_head = None  # 앞 해상도의 moov다 — 새 해상도의 조회가 끝나면 새로 둔다
-            log_process_memory("색인을 놓은 뒤")
+        item.section_head = None  # 앞 해상도의 moov다 — 새 해상도의 조회가 끝나면 새로 둔다
         item.section_bytes = None  # 앞 해상도의 크기다 — 새 moov로 다시 센다
 
         generation = self._generation.get(item, 0) + 1
@@ -762,6 +814,7 @@ class SectionRefitter(QObject):
         item.section_unfit = result.unfit
         head = getattr(basis, "mp4_head", None)
         item.section_bytes = section_bytes_of(head, result.selections, result.unfit)
+        watch_section_head(head)
         log_process_memory("조회 끝")
         # 새 해상도를 조회하며 받은 moov — 요청이 아직 유효하므로 지금의 주소에서 받은 것이다
         keep_section_head(item, item.base_url, getattr(basis, "mp4_head", None))

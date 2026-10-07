@@ -33,7 +33,6 @@ import threading
 
 from PySide6.QtCore import QObject, QThreadPool, Signal
 
-from app.process_memory import log_process_memory
 from app.viewmodels.item_state import ItemState
 from app.viewmodels.path_gates import check_download_path
 from app.viewmodels.data import SECTION_CHECK_PENDING, ContentItem
@@ -304,9 +303,7 @@ class ContentViewModel(QObject):
         row = self.model.getRow(item)
         if row is not None:
             self.model.removeRows(row, 1)
-            if getattr(item, "section_head", None) is not None:
-                item.section_head = None  # 구간을 정하며 받아 둔 moov를 버린다 (#309)
-                log_process_memory("색인을 놓은 뒤")
+            item.section_head = None  # 구간을 정하며 받아 둔 moov를 버린다 (#309)
             self._resumeHeldBatch()  # 기다리던 카드가 지워졌을 수 있다
             index = self.model.rowCount()
             self.deleteItemRequested.emit(item, index)

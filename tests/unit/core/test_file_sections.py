@@ -1252,3 +1252,51 @@ def test_engine_reports_progress_once_before_it_starts_receiving(server, tmp_pat
     run.start()
 
     assert seen[0] == (0, run.data.total_size, None)
+
+
+# ================================================================ 끝난 엔진이 색인을 놓는지
+
+
+def test_engine_drops_the_index_when_the_run_ends(server, tmp_path):
+    """실행이 끝난 엔진은 moov와 색인, 임시 원본의 머리를 들고 있지 않아야 한다.
+
+    기본 입력, 구간 프레임 35~80, 완료
+    -> 엔진의 _mp4_head is None, _index is None, _head == b"", 구간 목록과 컷 결과는 그대로 있다
+    """
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))]).start()
+
+    assert (run.finished, run.failures) == (1, [])
+    assert run.engine._mp4_head is None
+    assert run.engine._index is None
+    assert run.engine._head == b""
+    assert len(run.engine.sections) == 1 and len(run.engine.cut_results) == 1
+
+
+def test_engine_drops_the_index_after_a_cut_failure_and_the_resume_record_keeps_it(
+    server, tmp_path, monkeypatch
+):
+    """컷이 실패해 끝난 엔진도 색인을 놓아야 하고, 다음 실행이 쓸 moov는 이어받기 기록에 있어야 한다.
+
+    기본 입력, 구간 프레임 35~80, 컷의 셋째 ffmpeg 실행이 종료 코드 1로 끝남
+    -> 실패 1건, 엔진의 _mp4_head is None · _index is None,
+       공유 데이터의 section_resume.mp4_head is not None
+    """
+    real = cut_module.run_ffmpeg
+    calls = []
+
+    def flaky(args, **kwargs):
+        calls.append(args)
+        if len(calls) == 3:
+            return subprocess.CompletedProcess(args, 1, "", "boom")
+        return real(args, **kwargs)
+
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))])
+    run.engine._inspect_cuts = False
+    monkeypatch.setattr(cut_module, "run_ffmpeg", flaky)
+
+    run.start()
+
+    assert len(run.failures) == 1
+    assert run.engine._mp4_head is None
+    assert run.engine._index is None
+    assert run.data.section_resume.mp4_head is not None

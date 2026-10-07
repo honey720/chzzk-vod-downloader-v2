@@ -164,6 +164,16 @@ class FileDownloader(BaseDownloader):
             total_size=total_size,
         )
 
+    def _release_after_run(self) -> None:
+        """구간을 정할 때 쓴 moov와 색인, 임시 원본의 머리를 놓는다 (#309).
+
+        긴 영상의 해석된 색인은 수백 MB~1GB다. 일부 구간만 실패했으면 다음 실행이 쓸 moov는
+        이어받기 기록(공유 데이터의 section_resume)이 들고 있다 — 엔진이 따로 들 까닭이 없다.
+        """
+        self._mp4_head = None
+        self._index = None
+        self._head = b""
+
     def _prepare_note(self) -> str:
         """준비 단계의 로그에 moov를 넘겨받아 다시 썼는지(reused) 새로 받았는지(fetched)를 적는다."""
         reused = getattr(self, "_moov_reused", None)
