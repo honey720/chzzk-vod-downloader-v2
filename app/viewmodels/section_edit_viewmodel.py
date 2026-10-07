@@ -87,6 +87,12 @@ ERROR_TIMING: dict[str, tuple[str, str]] = {
     TIMECODE_INVALID_FORMAT: (SHOW_ON_LEAVE, SHOW_ON_LEAVE),
 }
 
+# 시각 하나의 입력은 칸 둘이다(app/widgets/timecode_edit.py의 TimePointEdit) — 오류를 어느
+# 칸에 칠할지 가리키는 이름
+PART_CLOCK = "clock"  # 시분초 칸
+PART_FRAME = "frame"  # 프레임 칸
+_BOTH_PARTS = (PART_CLOCK, PART_FRAME)
+
 # 창이 받는 타임코드의 칸 수 — HH:MM:SS:FF. parse_timecode는 짧은 형태(MM:SS 등)도 받지만
 # 창은 네 칸만 받는다(오너 결정)
 _TIMECODE_FIELDS = 4
@@ -386,6 +392,7 @@ class SectionEditViewModel(QObject):
         self._head = None  # 조회하며 받은 moov(인코딩 완료 VOD) — 없으면 None
         self._released = False  # 창이 닫혔다 — 늦게 온 조회 결과의 moov를 받아 두지 않는다
         self._errors: dict[int, str] = {}  # 행 번호 → 오류 키
+        self._columnErrors: dict[int, dict[int, str]] = {}  # 행 번호 → {칸 번호: 해석 오류 키}
         self._allErrors: dict[int, tuple[str, ...]] = {}  # 행 번호 → 그 행의 오류 키 전부
         self._pairs: dict[int, tuple[float, float]] = {}  # 행 번호 → 해석한 (시작, 끝) 초
 
@@ -517,13 +524,21 @@ class SectionEditViewModel(QObject):
         해석된 행만 모아 ``validate_selections``에 넣는다 — 중복 · 개수는 행 사이의 규칙이라
         한꺼번에 봐야 한다. 행의 오류는 그 행의 첫 위반 키다(키의 순서는 core가 정한다).
         """
-        self._errors, self._pairs, self._allErrors = {}, {}, {}
-        for row, (start, end) in enumerate(self.rows):
-            try:
-                self._pairs[row] = (self._parse(start), self._parse(end))
-            except TimecodeError as e:
-                self._errors[row] = e.message_key
-                self._allErrors[row] = (e.message_key,)
+        self._errors, self._pairs, self._allErrors, self._columnErrors = {}, {}, {}, {}
+        for row, texts in enumerate(self.rows):
+            values = []
+            for column, text in enumerate(texts):
+                try:
+                    values.append(self._parse(text))
+                except TimecodeError as e:
+                    # 칸마다 따로 적는다 — 어느 시각의 어느 칸을 칠할지 가린다
+                    self._columnErrors.setdefault(row, {})[column] = e.message_key
+            if row in self._columnErrors:
+                first = self._columnErrors[row][min(self._columnErrors[row])]
+                self._errors[row] = first
+                self._allErrors[row] = (first,)
+            else:
+                self._pairs[row] = (values[START], values[END])
         parsed = sorted(self._pairs)
         violations = validate_selections(
             [self._pairs[row] for row in parsed], self.duration, self.fps
@@ -532,14 +547,21 @@ class SectionEditViewModel(QObject):
             self._errors[parsed[position]] = keys[0]
             self._allErrors[parsed[position]] = tuple(keys)
 
-    def shownErrorKey(self, row: int, typing: tuple[int, int] | None = None) -> str:
+    def shownErrorKey(
+        self, row: int, typing: tuple[int, int] | None = None, frame_full: bool = False
+    ) -> str:
         """행에 지금 띄울 오류 키. 띄울 것이 없으면 빈 문자열.
 
         치고 있는 행이 아니면 그 행의 첫 오류다. 치고 있는 행이면 ``ERROR_TIMING``이 바로
         띄우라고 한 오류 가운데 첫 것이다 — 떠날 때 띄울 오류만 있으면 아직 띄우지 않는다.
 
+        프레임 칸에 두 자리를 다 친 뒤의 프레임 넘침(프레임 ≥ 프레임률)은 표와 달리 바로
+        띄운다 — 세 자리째를 받지 않으므로 더 쳐도 값이 바뀌지 않는다. 한 자리일 때는 표대로
+        떠날 때 띄운다(6을 치고 0을 더 치려는 중일 수 있다).
+
         Args:
             typing: 숫자를 치고 있는 (행, 칸). 없으면 None — 모든 오류를 바로 띄운다
+            frame_full: 치고 있는 칸이 프레임 칸이고 두 자리가 다 찼는지
         """
         keys = self._allErrors.get(row, ())
         if typing is None or typing[0] != row:
@@ -548,12 +570,52 @@ class SectionEditViewModel(QObject):
         for key in keys:
             if ERROR_TIMING.get(key, (SHOW_NOW, SHOW_NOW))[column] == SHOW_NOW:
                 return key
+            if key == TIMECODE_FRAME_OUT_OF_RANGE and frame_full:
+                return key
         return ""
 
-    def shownErrorText(self, row: int, typing: tuple[int, int] | None = None) -> str:
+    def shownErrorText(
+        self, row: int, typing: tuple[int, int] | None = None, frame_full: bool = False
+    ) -> str:
         """행에 지금 띄울 오류 문구(번역된 것). 띄울 것이 없으면 빈 문자열."""
-        key = self.shownErrorKey(row, typing)
+        key = self.shownErrorKey(row, typing, frame_full)
         return self._translate(key) if key else ""
+
+    def shownErrorParts(
+        self, row: int, typing: tuple[int, int] | None = None, frame_full: bool = False
+    ) -> frozenset[tuple[int, str]]:
+        """지금 띄운 오류로 붉게 칠할 칸들 — (칸 번호 START · END, ``PART_CLOCK`` · ``PART_FRAME``).
+
+        - 초 · 분 넘침: 그 시각의 시분초 칸
+        - 프레임 넘침: 그 시각의 프레임 칸
+        - 시각 전체의 오류(시작 ≥ 끝 · 중복 · 개수): 시작과 끝의 두 칸 모두
+        - 길이 초과: 영상의 끝을 넘은 시각의 두 칸. 가리지 못하면 시작과 끝 모두
+        띄울 오류가 없으면 빈 집합이다.
+        """
+        key = self.shownErrorKey(row, typing, frame_full)
+        if not key:
+            return frozenset()
+        own = self._columnErrors.get(row)
+        if own:  # 칸의 글자가 타임코드로 읽히지 않는다 — 읽히지 않는 칸만 칠한다
+            parts = set()
+            for column, column_key in own.items():
+                if column_key == TIMECODE_FIELD_OUT_OF_RANGE:
+                    parts.add((column, PART_CLOCK))
+                elif column_key == TIMECODE_FRAME_OUT_OF_RANGE:
+                    parts.add((column, PART_FRAME))
+                else:
+                    parts.update((column, part) for part in _BOTH_PARTS)
+            return frozenset(parts)
+        columns = (START, END)
+        if key == SELECTION_OUT_OF_RANGE and row in self._pairs:
+            start, end = self._pairs[row]
+            past = tuple(
+                column
+                for column, seconds in ((START, start), (END, end))
+                if seconds > self.duration or (column == START and seconds >= self.duration)
+            )
+            columns = past or columns
+        return frozenset((column, part) for column in columns for part in _BOTH_PARTS)
 
     def errorKey(self, row: int) -> str:
         """행의 오류 키(번역하지 않은 원문). 오류가 없으면 빈 문자열."""

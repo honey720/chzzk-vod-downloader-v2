@@ -29,6 +29,7 @@ from core.models.plan import TimeRange
 from core.models.section_resume import SectionResume
 from core.utils.hybrid_cut import CUT_FAILED, CutError
 from core.utils.paths import release_output_paths
+from tests.unit.section_input import enter_time
 from tests.unit.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
 
 FIRST, SECOND, THIRD = (
@@ -122,9 +123,7 @@ def _edit(qtbot, win, item, rows) -> None:
             (dialog._rows[index].startEdit, row[0]),
             (dialog._rows[index].endEdit, row[1]),
         ):
-            QTest.keyClick(edit, Qt.Key.Key_Delete)
-            QTest.keyClicks(edit, digits)
-            edit.commit()
+            enter_time(edit, digits)  # 끝 두 자리는 프레임 칸, 그 앞은 시분초 칸
     _pump()
     return dialog
 

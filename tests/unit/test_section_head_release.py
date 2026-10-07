@@ -41,6 +41,7 @@ from core.api.representations import StreamEntry
 from core.models.download_state import DownloadState
 from core.models.mp4_index import Mp4Head
 from core.utils.ffmpeg import get_ffmpeg_exe
+from tests.unit.section_input import enter_time
 from tests.unit.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
 from tests.unit.core.range_host import RangeHost
 
@@ -159,9 +160,7 @@ def _give_section(qtbot, win, item, start: str = "00000105", end: str = "0000022
     qtbot.waitUntil(lambda: dialog.viewModel().state == "ready", timeout=10_000)
     _pump()
     for edit, digits in ((dialog._rows[0].startEdit, start), (dialog._rows[0].endEdit, end)):
-        QTest.keyClick(edit, Qt.Key.Key_Delete)
-        QTest.keyClicks(edit, digits)
-        edit.commit()
+        enter_time(edit, digits)  # 끝 두 자리는 프레임 칸, 그 앞은 시분초 칸
     _pump()
     dialog.okButton.click()
     _pump()

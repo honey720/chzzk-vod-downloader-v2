@@ -27,6 +27,7 @@ from app.views.mainWindow import VodDownloader
 from core.api.representations import StreamEntry
 from core.models.download_state import DownloadState
 from core.utils.paths import release_output_paths
+from tests.unit.section_input import enter_time
 from tests.unit.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
 
 ROW = ("00100000", "00200000")
@@ -144,9 +145,7 @@ def _give_section(qtbot, win, item: ContentItem) -> None:
     qtbot.waitUntil(lambda: dialog.viewModel().state == "ready", timeout=3000)
     _pump()
     for edit, digits in zip((dialog._rows[0].startEdit, dialog._rows[0].endEdit), ROW):
-        QTest.keyClick(edit, Qt.Key.Key_Delete)
-        QTest.keyClicks(edit, digits)
-        edit.commit()
+        enter_time(edit, digits)  # 끝 두 자리는 프레임 칸, 그 앞은 시분초 칸
     _pump()
     dialog.okButton.click()
     _pump()

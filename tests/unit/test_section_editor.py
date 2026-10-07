@@ -32,6 +32,7 @@ from core.api.representations import StreamEntry
 from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
 from core.utils.paths import release_output_paths
+from tests.unit.section_input import leave_time, type_clock, type_frame, type_time
 from tests.unit.card_helpers import drop_new_top_levels, hold_style, shown, snapshot_top_levels
 
 HOUR = 3600.0  # 대역이 돌려주는 영상 길이(초) — 60fps · 30fps 모두에서 프레임 경계다
@@ -177,20 +178,17 @@ def open_editor(qtbot, win: VodDownloader, item: ContentItem):
 
 
 def type_into(edit, text: str) -> None:
-    """칸을 비우고 키 입력으로 숫자를 넣는다 — 칸을 떠나지 않는다(Enter도 누르지 않는다).
+    """시각(시분초 칸 + 프레임 칸)을 비우고 키 입력으로 값을 넣는다 — 칸을 떠나지 않는다.
 
-    text의 콜론은 읽기 좋으라고 적은 것이다 — 칸은 숫자만 받으므로 "00:10:00:00"은 숫자
-    여덟 개를 친 것과 같다.
+    text는 ``HH:MM:SS:FF`` 꼴이다(콜론은 읽기 좋으라고 적은 것 — 칸은 숫자만 받는다). 끝 두
+    자리를 프레임 칸에, 그 앞을 시분초 칸에 친다(tests/unit/section_input.py).
     """
-    QTest.keyClick(edit, Qt.Key.Key_Delete)
-    QTest.keyClicks(edit, text)
-    _pump()
+    type_time(edit, text)
 
 
 def leave(edit) -> None:
-    """칸의 편집을 끝낸다 — 칸을 떠날 때 칸이 스스로 하는 일(`commit`)이다."""
-    edit.commit()
-    _pump()
+    """그 시각의 편집을 끝낸다 — 두 칸을 모두 떠날 때 스스로 하는 일(`commit`)이다."""
+    leave_time(edit)
 
 
 def set_rows(dialog, rows: list[tuple[str, str]]) -> None:
@@ -439,29 +437,59 @@ def test_reopening_shows_the_sections_already_on_the_card(qtbot, tmp_path, basis
 # ================================================================ 검증
 
 
+ALL_FOUR = {"start clock", "start frame", "end clock", "end frame"}
+
+
+def flagged_fields(row) -> set[str]:
+    """붉게 칠해진 칸의 이름 — "start clock" · "start frame" · "end clock" · "end frame"."""
+    fields = {
+        "start clock": row.startEdit.clockEdit,
+        "start frame": row.startEdit.frameEdit,
+        "end clock": row.endEdit.clockEdit,
+        "end frame": row.endEdit.frameEdit,
+    }
+    return {name for name, widget in fields.items() if widget.property("invalid") is True}
+
+
 @pytest.mark.parametrize(
-    "start, end, message",
+    "start, end, message, flagged",
     [
-        ("00:20:00:00", "00:10:00:00", "Start must be before end"),  # 역방향
-        ("00:10:00:00", "00:10:00:00", "Start must be before end"),  # 길이 0
-        ("00:10:00:00", "01:00:00:01", "Selection is outside the video"),  # 길이보다 1프레임 뒤
-        ("00:10:60:00", "00:20:00:00", "Minutes and seconds must be below 60"),  # 초 60
-        ("00:60:00:00", "00:20:00:00", "Minutes and seconds must be below 60"),  # 분 60
-        ("00:00:75:00", "00:20:00:00", "Minutes and seconds must be below 60"),  # 초 75
+        # 시각 전체의 오류 — 시작과 끝의 두 칸 모두
+        ("00:20:00:00", "00:10:00:00", "Start must be before end", ALL_FOUR),  # 역방향
+        ("00:10:00:00", "00:10:00:00", "Start must be before end", ALL_FOUR),  # 길이 0
+        # 길이보다 1프레임 뒤 — 영상의 끝을 넘은 시각(끝)의 두 칸
+        (
+            "00:10:00:00",
+            "01:00:00:01",
+            "Selection is outside the video",
+            {"end clock", "end frame"},
+        ),
+        # 초 · 분 넘침 — 그 시각의 시분초 칸만
+        ("00:10:60:00", "00:20:00:00", "Minutes and seconds must be below 60", {"start clock"}),
+        ("00:60:00:00", "00:20:00:00", "Minutes and seconds must be below 60", {"start clock"}),
+        ("00:00:75:00", "00:20:00:00", "Minutes and seconds must be below 60", {"start clock"}),
+        # 프레임 넘침(60fps의 FF는 59까지) — 그 시각의 프레임 칸만
         (
             "00:10:00:60",
             "00:20:00:00",
             "Frame number must be below the frame rate",
-        ),  # 60fps의 FF는 59까지
+            {"start frame"},
+        ),
+        (
+            "00:10:00:00",
+            "00:20:00:75",
+            "Frame number must be below the frame rate",
+            {"end frame"},
+        ),
     ],
 )
 def test_invalid_input_is_shown_on_the_row_and_cannot_be_confirmed(
-    qtbot, tmp_path, basis, start, end, message
+    qtbot, tmp_path, basis, start, end, message, flagged
 ):
-    """틀린 입력은 그 행에 오류로 보이고 확인으로 카드에 쓰이지 않아야 한다.
+    """틀린 입력은 그 행에 오류로 보이고, 틀린 칸만 붉게 칠해지며, 확인으로 카드에 쓰이지 않아야 한다.
 
     60fps · 길이 3600초에서 위 표의 (시작, 끝)
-    -> 행의 문구 == message, 두 칸의 invalid 속성 참, 확인 꺼짐, 확인을 눌러도 selections == ()
+    -> 행의 문구 == message, 붉게 칠해진 칸 == flagged, 확인 꺼짐, 확인을 눌러도 selections == ()
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -471,7 +499,7 @@ def test_invalid_input_is_shown_on_the_row_and_cannot_be_confirmed(
 
     row = dialog._rows[0]
     assert shown(row.errorLabel) == message
-    assert row.startEdit.property("invalid") is True and row.endEdit.property("invalid") is True
+    assert flagged_fields(row) == flagged
     assert not dialog.okButton.isEnabled()
     dialog.accept()  # 꺼진 버튼을 건너뛰어 직접 확인을 청해도
     _pump()
@@ -591,9 +619,8 @@ def test_out_of_range_digits_are_flagged_and_left_as_typed(qtbot, tmp_path, basi
 
 
 def type_more(edit, digits: str) -> None:
-    """칸을 비우지 않고 숫자를 이어 친다 — 한 글자씩 치며 화면을 보는 테스트용."""
-    QTest.keyClicks(edit, digits)
-    _pump()
+    """시분초 칸을 비우지 않고 숫자를 이어 친다 — 한 글자씩 치며 화면을 보는 테스트용."""
+    type_clock(edit, digits)
 
 
 def error_shown(row) -> str:
@@ -604,8 +631,8 @@ def error_shown(row) -> str:
 def test_start_past_the_end_is_flagged_while_typing(qtbot, tmp_path, basis):
     """시작 칸을 치는 중 시작이 끝과 같거나 넘으면 칸을 떠나기 전에 바로 오류를 띄워야 한다.
 
-    60fps · 3600초. 끝을 00:10:00:00으로 둔 행의 시작 칸에 2 · 0 · 0 · 0 · 0 · 0을 차례로 침
-    -> 00:02:00:00(숫자 다섯)까지는 오류 없음, 00:20:00:00(숫자 여섯)이 되는 순간
+    60fps · 3600초. 끝을 00:10:00:00으로 둔 행의 시작 시분초 칸에 2 · 0 · 0 · 0을 차례로 침
+    -> 00:02:00(숫자 셋)까지는 오류 없음, 00:20:00(숫자 넷)이 되는 순간
        "Start must be before end"와 두 칸 강조, 확인 꺼짐 — 칸을 떠나지 않았다
     """
     item = _make_item(str(tmp_path))
@@ -629,8 +656,8 @@ def test_start_past_the_end_is_flagged_while_typing(qtbot, tmp_path, basis):
 def test_a_value_past_the_video_is_flagged_while_typing(qtbot, tmp_path, basis):
     """치는 중 끝이 영상 길이를 넘으면 칸을 떠나기 전에 바로 오류를 띄워야 한다.
 
-    60fps · 3600초. 끝 칸에 1000000(01:00:00:00 — 영상 끝)까지는 오류 없음, 1을 더 쳐
-    10:00:00:01이 되는 순간 "Selection is outside the video"
+    60fps · 3600초. 끝의 시분초 칸에 10000(01:00:00 — 영상 끝)까지는 오류 없음, 1을 더 쳐
+    10:00:01이 되는 순간 "Selection is outside the video"
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -642,7 +669,7 @@ def test_a_value_past_the_video_is_flagged_while_typing(qtbot, tmp_path, basis):
 
     type_more(row.endEdit, "1")
 
-    assert row.endEdit.text() == "10:00:00:01"
+    assert row.endEdit.text() == "10:00:01:00"
     assert error_shown(row) == "Selection is outside the video"
     assert row.endEdit.property("invalid") is True
 
@@ -650,20 +677,20 @@ def test_a_value_past_the_video_is_flagged_while_typing(qtbot, tmp_path, basis):
 def test_an_end_still_below_the_start_waits_until_the_field_is_left(qtbot, tmp_path, basis):
     """끝 칸을 치는 중 끝이 아직 시작에 못 미치는 것은 칸을 떠날 때까지 띄우지 않되, 확인은 꺼 두어야 한다.
 
-    60fps · 3600초. 시작 00:10:00:00인 행의 끝 칸을 비우고 2 · 0 · 0 · 0 · 0 · 0을 차례로 침
-    -> 00:02:00:00(숫자 다섯)까지 매 단계: 오류 문구 없음, 칸 강조 없음, 확인 꺼짐
-    -> 00:20:00:00(숫자 여섯): 오류 없음, 확인 켜짐
-    끝 칸을 5로 바꾸고 칸을 떠남 -> "Start must be before end", 시작 칸도 함께 강조
+    60fps · 3600초. 시작 00:10:00:00인 행의 끝 시분초 칸을 비우고 2 · 0 · 0 · 0을 차례로 침
+    -> 00:02:00(숫자 셋)까지 매 단계: 오류 문구 없음, 칸 강조 없음, 확인 꺼짐
+    -> 00:20:00(숫자 넷): 오류 없음, 확인 켜짐
+    끝을 프레임 5로 바꾸고 칸을 떠남 -> "Start must be before end", 시작 칸도 함께 강조
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
     dialog = open_editor(qtbot, win, item)
     row = dialog._rows[0]
-    type_into(row.startEdit, "100000")
+    type_into(row.startEdit, "00:10:00:00")
     leave(row.startEdit)
 
-    QTest.keyClick(row.endEdit, Qt.Key.Key_Delete)
-    for digit in "20000":
+    type_into(row.endEdit, "")
+    for digit in "200":
         type_more(row.endEdit, digit)
         assert error_shown(row) == "", f"{row.endEdit.text()}: 치는 도중에 오류가 떴다"
         assert row.endEdit.property("invalid") is False
@@ -672,7 +699,7 @@ def test_an_end_still_below_the_start_waits_until_the_field_is_left(qtbot, tmp_p
     assert row.endEdit.text() == "00:20:00:00"
     assert error_shown(row) == "" and dialog.okButton.isEnabled()
 
-    type_into(row.endEdit, "5")
+    type_into(row.endEdit, "00:00:00:05")
     assert error_shown(row) == ""
     leave(row.endEdit)
 
@@ -681,11 +708,11 @@ def test_an_end_still_below_the_start_waits_until_the_field_is_left(qtbot, tmp_p
 
 
 def test_a_field_overflow_on_the_way_to_a_valid_value_is_not_flagged(qtbot, tmp_path, basis):
-    """치는 도중 잠깐 생기는 자리 넘침(프레임 ≥ 프레임률)은 띄우지 않고, 다 친 값이 유효하면 오류가 없어야 한다.
+    """치는 도중 잠깐 생기는 자리 넘침(초 ≥ 60)은 띄우지 않고, 다 친 값이 유효하면 오류가 없어야 한다.
 
-    30fps · 3600초. 끝 칸에 1 · 3 · 0 · 0 · 0을 차례로 침
-    -> "130"(00:00:01:30 — 프레임 30은 30fps에서 넘친다)에서 오류 문구 없음
-    -> "13000"(00:01:30:00)을 치고 칸을 떠나도 오류 없음, 확인 켜짐
+    30fps · 3600초. 끝 시분초 칸에 1 · 9 · 0 · 0을 차례로 침
+    -> "190"(00:01:90 — 초 90은 넘친다)에서 오류 문구 없음, 확인 꺼짐
+    -> "1900"(00:19:00)을 치고 칸을 떠나도 오류 없음, 확인 켜짐
     """
     basis.fps = Fraction(30)
     item = _make_item(str(tmp_path))
@@ -693,53 +720,62 @@ def test_a_field_overflow_on_the_way_to_a_valid_value_is_not_flagged(qtbot, tmp_
     dialog = open_editor(qtbot, win, item)
     row = dialog._rows[0]
 
-    type_into(row.endEdit, "130")
-    assert row.endEdit.text() == "00:00:01:30"
+    type_into(row.endEdit, "")  # 두 칸을 비운다
+    type_more(row.endEdit, "190")
+    assert row.endEdit.text() == "00:01:90:00"
     assert error_shown(row) == "" and not dialog.okButton.isEnabled()
 
-    type_more(row.endEdit, "00")
+    type_more(row.endEdit, "0")
     leave(row.endEdit)
 
-    assert row.endEdit.text() == "00:01:30:00"
+    assert row.endEdit.text() == "00:19:00:00"
     assert error_shown(row) == "" and dialog.okButton.isEnabled()
 
 
-def test_a_frame_number_past_the_frame_rate_is_flagged_when_the_field_is_left(
+def test_a_frame_past_the_frame_rate_is_flagged_as_soon_as_both_digits_are_typed(
     qtbot, tmp_path, basis
 ):
-    """프레임이 프레임률 이상인 값은 치는 도중에는 띄우지 않고 칸을 떠나면 띄워야 한다.
+    """프레임 칸은 한 자리일 때는 오류를 띄우지 않고, 두 자리를 다 쳐 프레임률 이상이 되면 칸을 떠나기 전에 바로 띄워야 한다.
 
-    30fps. 끝 칸에 0075(00:00:00:75)를 침 -> 오류 문구 없음
-    칸을 떠남 -> "Frame number must be below the frame rate"
+    60fps. 끝 프레임 칸에 6 -> 오류 문구 없음(00:00:00:06). 0을 더 침(60)
+    -> 칸을 떠나지 않았는데 "Frame number must be below the frame rate", 프레임 칸만 강조
+    세 자리째 5를 침 -> 받지 않는다(값은 그대로 60)
     """
-    basis.fps = Fraction(30)
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
     dialog = open_editor(qtbot, win, item)
     row = dialog._rows[0]
+    type_into(row.endEdit, "00:30:00:00")
 
-    type_into(row.endEdit, "0075")
-    assert error_shown(row) == ""
+    type_frame(row.endEdit, "6")
+    assert row.endEdit.text() == "00:30:00:06" and error_shown(row) == ""
 
-    leave(row.endEdit)
+    type_frame(row.endEdit, "0")
 
+    assert row.endEdit.text() == "00:30:00:60"
     assert error_shown(row) == "Frame number must be below the frame rate"
+    assert row.endEdit.frameEdit.property("invalid") is True
+    assert row.endEdit.clockEdit.property("invalid") is False
+    assert row.startEdit.property("invalid") is False
+
+    type_frame(row.endEdit, "5")
+    assert row.endEdit.text() == "00:30:00:60"
 
 
 def test_an_error_disappears_at_once_when_the_value_becomes_valid(qtbot, tmp_path, basis):
     """오류는 값이 유효해지는 순간 칸을 떠나지 않아도 바로 사라져야 한다.
 
-    60fps · 3600초. 끝 칸에 10000001(10:00:00:01 — 길이 초과)을 쳐 오류가 뜬 뒤 Backspace
-    -> 01:00:00:00(영상 끝)이 되는 순간 오류 문구 없음, 칸 강조 없음, 확인 켜짐
+    60fps · 3600초. 끝 시분초 칸에 100001(10:00:01 — 길이 초과)을 쳐 오류가 뜬 뒤 Backspace
+    -> 01:00:00(영상 끝)이 되는 순간 오류 문구 없음, 칸 강조 없음, 확인 켜짐
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
     dialog = open_editor(qtbot, win, item)
     row = dialog._rows[0]
-    type_into(row.endEdit, "10000001")
+    type_into(row.endEdit, "10:00:01:00")
     assert error_shown(row) == "Selection is outside the video"
 
-    QTest.keyClick(row.endEdit, Qt.Key.Key_Backspace)
+    QTest.keyClick(row.endEdit.clockEdit, Qt.Key.Key_Backspace)
     _pump()
 
     assert row.endEdit.text() == "01:00:00:00"
@@ -790,8 +826,8 @@ def test_every_error_is_shown_at_once_when_the_window_opens(qtbot, tmp_path, bas
 def test_typed_digits_reach_the_card_and_milliseconds_are_only_shown(qtbot, tmp_path, basis):
     """숫자만 쳐서 넣은 값이 카드에 쓰이고, 밀리초는 툴팁에만 나와야 한다.
 
-    60fps. 시작 칸에 50330(00:05:03:30), 끝 칸에 100000(00:10:00:00)을 치고 확인
-    -> 시작 칸의 값 "00:05:03:30", 툴팁 "00:05:03.500", selections == ((303.5, 600),)
+    60fps. 시작의 시분초 칸에 503 · 프레임 칸에 30(00:05:03:30), 끝의 시분초 칸에 1000(00:10:00:00)을 치고 확인
+    -> 시작의 값 "00:05:03:30", 두 칸의 툴팁 "00:05:03.500", selections == ((303.5, 600),)
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -804,7 +840,8 @@ def test_typed_digits_reach_the_card_and_milliseconds_are_only_shown(qtbot, tmp_
     leave(row.endEdit)
 
     assert row.startEdit.text() == "00:05:03:30"
-    assert row.startEdit.toolTip() == "00:05:03.500"
+    assert row.startEdit.clockEdit.toolTip() == "00:05:03.500"
+    assert row.startEdit.frameEdit.toolTip() == "00:05:03.500"
     press_ok(dialog)
     assert item.selections == (TimeRange(303.5, 600.0),)
 
@@ -1922,18 +1959,21 @@ def test_values_from_the_card_are_shown_bright_even_when_they_are_zero(qtbot, tm
     """목록에서 온 값은 0이어도 친 값처럼 전부 밝게 보여야 한다 — 아무것도 치지 않은 칸과 구분된다.
 
     구간 없는 카드를 열면 기본 행은 00:00:00:00 ~ 01:00:00:00
-    -> 시작 칸의 밝은 부분 "00:00:00:00", 흐린 부분 ""
-    시작 칸을 Delete로 비움 -> 밝은 부분 "", 흐린 부분 "00:00:00:00"
+    -> 시작의 시분초 칸은 밝은 부분 "00:00:00" · 흐린 부분 "", 프레임 칸은 밝은 부분 "00" · 흐린 부분 ""
+    두 칸을 Delete로 비움 -> 시분초 칸은 흐린 부분 "00:00:00", 프레임 칸은 흐린 부분 "00"
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
     dialog = open_editor(qtbot, win, item)
     edit = dialog._rows[0].startEdit
 
-    assert (edit.dimText(), edit.brightText()) == ("", "00:00:00:00")
+    assert (edit.clockEdit.dimText(), edit.clockEdit.brightText()) == ("", "00:00:00")
+    assert (edit.frameEdit.dimText(), edit.frameEdit.brightText()) == ("", "00")
 
-    QTest.keyClick(edit, Qt.Key.Key_Delete)
-    assert (edit.dimText(), edit.brightText()) == ("00:00:00:00", "")
+    QTest.keyClick(edit.clockEdit, Qt.Key.Key_Delete)
+    QTest.keyClick(edit.frameEdit, Qt.Key.Key_Delete)
+    assert (edit.clockEdit.dimText(), edit.clockEdit.brightText()) == ("00:00:00", "")
+    assert (edit.frameEdit.dimText(), edit.frameEdit.brightText()) == ("00", "")
 
 
 # ================================================================ 영상의 끝 타임코드
@@ -2058,10 +2098,10 @@ def test_the_end_follows_the_looked_up_rate_not_the_declared_one(qtbot, tmp_path
 
 
 def test_enter_confirms_the_field_and_moves_on_without_closing_the_window(qtbot, tmp_path, basis):
-    """칸에서 Enter를 치면 그 칸의 값을 확정하고 다음 칸으로 넘어가야 하며 창은 닫히지 않아야 한다.
+    """시분초 칸에서 Enter를 치면 값을 확정하고 프레임 칸을 건너뛰어 다음 시각의 시분초 칸으로 가야 하며 창은 닫히지 않아야 한다.
 
-    60fps. 행 둘. 첫째 행 시작 칸에 100000을 치고 Enter -> 포커스가 첫째 행의 끝 칸, 창 열림
-    끝 칸에서 Enter -> 둘째 행의 시작 칸. 둘째 행 시작 → 끝 → Enter -> 확인 버튼. 창은 계속 열려 있다
+    60fps. 행 둘. 첫째 행 시작 시분초 칸에 1000(10분)을 치고 Enter -> 포커스가 첫째 행 끝의 시분초 칸, 창 열림
+    끝에서 Enter -> 둘째 행 시작의 시분초 칸. 둘째 행 시작 → 끝 → Enter -> 확인 버튼. 창은 계속 열려 있다
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -2070,19 +2110,19 @@ def test_enter_confirms_the_field_and_moves_on_without_closing_the_window(qtbot,
     _pump()
     first, second = dialog._rows
 
-    type_into(first.startEdit, "100000")
-    QTest.keyClick(first.startEdit, Qt.Key.Key_Return)
+    type_into(first.startEdit, "00:10:00:00")
+    QTest.keyClick(first.startEdit.clockEdit, Qt.Key.Key_Return)
     _pump()
-    assert dialog.focusWidget() is first.endEdit
+    assert dialog.focusWidget() is first.endEdit.clockEdit
     assert dialog.viewModel().rows[0][0] == "00:10:00:00", "Enter가 칸의 값을 확정하지 않았다"
 
-    QTest.keyClick(first.endEdit, Qt.Key.Key_Enter)  # 숫자 키패드의 Enter
+    QTest.keyClick(first.endEdit.clockEdit, Qt.Key.Key_Enter)  # 숫자 키패드의 Enter
     _pump()
-    assert dialog.focusWidget() is second.startEdit
-    QTest.keyClick(second.startEdit, Qt.Key.Key_Return)
+    assert dialog.focusWidget() is second.startEdit.clockEdit
+    QTest.keyClick(second.startEdit.clockEdit, Qt.Key.Key_Return)
     _pump()
-    assert dialog.focusWidget() is second.endEdit
-    QTest.keyClick(second.endEdit, Qt.Key.Key_Return)
+    assert dialog.focusWidget() is second.endEdit.clockEdit
+    QTest.keyClick(second.endEdit.clockEdit, Qt.Key.Key_Return)
     _pump()
 
     assert dialog.focusWidget() is dialog.okButton
@@ -2093,8 +2133,8 @@ def test_enter_confirms_the_field_and_moves_on_without_closing_the_window(qtbot,
 def test_enter_shows_the_errors_that_wait_for_the_field_to_be_left(qtbot, tmp_path, basis):
     """Enter는 칸을 떠날 때 띄우는 오류를 띄워야 한다.
 
-    30fps. 끝 칸에 0075(프레임 75)를 치고 Enter
-    -> "Frame number must be below the frame rate", 창은 열려 있다
+    30fps. 끝 시분초 칸에 75(초 75)를 치고 Enter
+    -> "Minutes and seconds must be below 60", 창은 열려 있다
     """
     basis.fps = Fraction(30)
     item = _make_item(str(tmp_path))
@@ -2102,11 +2142,12 @@ def test_enter_shows_the_errors_that_wait_for_the_field_to_be_left(qtbot, tmp_pa
     dialog = open_editor(qtbot, win, item)
     row = dialog._rows[0]
 
-    type_into(row.endEdit, "0075")
-    QTest.keyClick(row.endEdit, Qt.Key.Key_Return)
+    type_into(row.endEdit, "00:00:75:00")
+    assert error_shown(row) == "", "전제: 치는 동안에는 띄우지 않는다"
+    QTest.keyClick(row.endEdit.clockEdit, Qt.Key.Key_Return)
     _pump()
 
-    assert shown(row.errorLabel) == "Frame number must be below the frame rate"
+    assert shown(row.errorLabel) == "Minutes and seconds must be below 60"
     assert dialog.isVisible()
 
 
@@ -2146,7 +2187,7 @@ def test_escape_cancels_the_window(qtbot, tmp_path, basis):
     dialog = open_editor(qtbot, win, item)
     set_rows(dialog, [("00:10:00:00", "00:20:00:00")])
 
-    QTest.keyClick(dialog._rows[0].endEdit, Qt.Key.Key_Escape)
+    QTest.keyClick(dialog._rows[0].endEdit.clockEdit, Qt.Key.Key_Escape)
     _pump()
 
     assert win._sectionDialog is None and item.selections == ()
@@ -2267,3 +2308,192 @@ def test_folder_button_of_a_whole_download_card_still_selects_its_output_file(
 
     assert len(opened) == 1 and opened[0][0] == "select"
     assert _same_file(opened[0][1], item.output_path)
+
+
+# ================================================================ 시분초 칸 + 프레임 칸 (#309)
+
+
+def test_a_row_has_a_clock_and_a_frame_field_for_each_time_with_a_tilde_between(
+    qtbot, tmp_path, basis
+):
+    """한 행은 [시작 시분초][시작 프레임] ~ [끝 시분초][끝 프레임] 순서로 놓여야 한다.
+
+    편집 창의 첫 행 -> 네 칸과 "~"가 보이고, 왼쪽 끝의 x가 그 순서로 커진다
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    row = dialog._rows[0]
+
+    widgets = [
+        row.startEdit.clockEdit,
+        row.startEdit.frameEdit,
+        row.rangeLabel,
+        row.endEdit.clockEdit,
+        row.endEdit.frameEdit,
+    ]
+    assert all(widget.isVisible() for widget in widgets)
+    lefts = [widget.mapTo(row, widget.rect().topLeft()).x() for widget in widgets]
+    assert lefts == sorted(lefts) and len(set(lefts)) == len(lefts)
+    assert shown(row.rangeLabel) == "~"
+
+
+def test_one_minute_typed_as_0100_reaches_the_card_as_sixty_seconds(qtbot, tmp_path, basis):
+    """시분초 칸에 0100을 치면 1분이어야 한다 — 카드에 60초로 쓰인다.
+
+    60fps. 시작 시분초 칸에 0100, 끝 시분초 칸에 012345 · 프레임 칸에 30을 치고 확인
+    -> 시작 "00:01:00:00", 끝 "01:23:45:30", selections == ((60.0, 5025.5),)
+    """
+    basis.duration = 7200.0
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    row = dialog._rows[0]
+
+    type_into(row.startEdit, "")
+    type_clock(row.startEdit, "0100")
+    leave(row.startEdit)
+    type_into(row.endEdit, "")
+    type_clock(row.endEdit, "012345")
+    type_frame(row.endEdit, "30")
+    leave(row.endEdit)
+
+    assert (row.startEdit.text(), row.endEdit.text()) == ("00:01:00:00", "01:23:45:30")
+    press_ok(dialog)
+    assert item.selections == (TimeRange(60.0, 5025.5),)
+
+
+def test_tab_walks_the_four_fields_of_a_row_in_order(qtbot, tmp_path, basis):
+    """Tab은 시작 시분초 → 시작 프레임 → 끝 시분초 → 끝 프레임 순서로 가고 Shift+Tab은 거꾸로 가야 한다.
+
+    첫 행의 시작 시분초 칸에서 Tab을 세 번, 이어 Shift+Tab을 세 번
+    -> 포커스: 시작 프레임 → 끝 시분초 → 끝 프레임 → 끝 시분초 → 시작 프레임 → 시작 시분초
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    row = dialog._rows[0]
+    dialog.activateWindow()
+    row.startEdit.clockEdit.setFocus()
+    _pump()
+    seen = []
+
+    for _ in range(3):
+        QTest.keyClick(dialog.focusWidget(), Qt.Key.Key_Tab)
+        _pump()
+        seen.append(dialog.focusWidget())
+    for _ in range(3):
+        QTest.keyClick(dialog.focusWidget(), Qt.Key.Key_Backtab, Qt.KeyboardModifier.ShiftModifier)
+        _pump()
+        seen.append(dialog.focusWidget())
+
+    assert seen == [
+        row.startEdit.frameEdit,
+        row.endEdit.clockEdit,
+        row.endEdit.frameEdit,
+        row.endEdit.clockEdit,
+        row.startEdit.frameEdit,
+        row.startEdit.clockEdit,
+    ]
+
+
+def test_enter_in_a_frame_field_goes_to_the_next_clock_field(qtbot, tmp_path, basis):
+    """프레임 칸에서 Enter를 치면 다음 시각의 시분초 칸으로 가고, 마지막 끝의 프레임 칸에서는 확인 버튼으로 가야 한다.
+
+    행 하나. 시작 프레임 칸에서 Enter -> 끝 시분초 칸. 끝 프레임 칸에서 Enter -> 확인 버튼. 창은 열려 있다
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    row = dialog._rows[0]
+    dialog.activateWindow()
+    row.startEdit.frameEdit.setFocus()
+    _pump()
+
+    QTest.keyClick(row.startEdit.frameEdit, Qt.Key.Key_Return)
+    _pump()
+    first = dialog.focusWidget()
+    row.endEdit.frameEdit.setFocus()
+    _pump()
+    QTest.keyClick(row.endEdit.frameEdit, Qt.Key.Key_Return)
+    _pump()
+
+    assert first is row.endEdit.clockEdit
+    assert dialog.focusWidget() is dialog.okButton
+    assert dialog.isVisible()
+
+
+def test_period_moves_from_the_clock_field_to_the_frame_field_of_the_same_time(
+    qtbot, tmp_path, basis
+):
+    """시분초 칸에서 "."을 누르면 같은 시각의 프레임 칸으로 가고, 이어 친 숫자가 프레임이 되어야 한다.
+
+    끝 시분초 칸에 1000 · "." · 30
+    -> "."을 누른 뒤 포커스가 끝 프레임 칸, 끝의 값 "00:10:00:30"
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    row = dialog._rows[0]
+    dialog.activateWindow()
+    row.endEdit.clockEdit.setFocus()
+    _pump()
+
+    QTest.keyClicks(row.endEdit.clockEdit, "1000")
+    QTest.keyClick(row.endEdit.clockEdit, Qt.Key.Key_Period)
+    _pump()
+    moved_to = dialog.focusWidget()
+    QTest.keyClicks(row.endEdit.frameEdit, "30")
+    _pump()
+
+    assert moved_to is row.endEdit.frameEdit
+    assert row.endEdit.text() == "00:10:00:30"
+
+
+def test_end_timecode_of_the_header_typed_into_both_fields_reaches_the_end(qtbot, tmp_path, basis):
+    """머리줄의 끝 타임코드를 시분초 칸과 프레임 칸에 나눠 치면 영상 끝까지 받는 구간이어야 한다.
+
+    60fps · 길이 100.25초(끝 타임코드 00:01:40:15). 끝 시분초 칸에 140, 프레임 칸에 15를 치고 확인
+    -> 오류 없음, 카드의 구간 끝 == 100.25(영상 길이)
+    """
+    basis.duration = 100.25
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    row = dialog._rows[0]
+    assert dialog.viewModel().endTimecodeText() == "00:01:40:15", "전제: 머리줄의 끝 타임코드"
+    type_into(row.startEdit, "00:00:10:00")
+    leave(row.startEdit)
+
+    type_into(row.endEdit, "")
+    type_clock(row.endEdit, "140")
+    type_frame(row.endEdit, "15")
+    leave(row.endEdit)
+
+    assert error_shown(row) == "" and dialog.okButton.isEnabled()
+    press_ok(dialog)
+    assert item.selections == (TimeRange(10.0, 100.25),)
+
+
+def test_frame_change_that_breaks_the_whole_time_follows_the_timing_table(qtbot, tmp_path, basis):
+    """프레임 칸의 값이 바뀌어 생긴 시각 전체의 오류도 표를 따라야 한다 — 끝이 시작에 못 미치는 것은 떠날 때 띄운다.
+
+    60fps. 시작 00:10:00:30, 끝 시분초 00:10:00인 행의 끝 프레임 칸에 2 · 0을 침(00:10:00:20 < 시작)
+    -> 치는 동안 오류 문구 없음, 확인 꺼짐. 끝을 떠나면 "Start must be before end", 네 칸 모두 강조
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    row = dialog._rows[0]
+    type_into(row.startEdit, "00:10:00:30")
+    leave(row.startEdit)
+    type_into(row.endEdit, "00:10:00:00")
+
+    type_frame(row.endEdit, "20")
+    assert row.endEdit.text() == "00:10:00:20"
+    assert error_shown(row) == "" and not dialog.okButton.isEnabled()
+
+    leave(row.endEdit)
+
+    assert error_shown(row) == "Start must be before end"
+    assert flagged_fields(row) == ALL_FOUR

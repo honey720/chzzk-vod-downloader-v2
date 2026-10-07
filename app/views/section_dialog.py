@@ -19,10 +19,17 @@
 검사하고, 치고 있는 행의 오류를 바로 띄울지 칸을 떠날 때 띄울지는 뷰모델의 표
 (``ERROR_TIMING``)가 정한다. 확인 버튼은 띄우지 않은 오류가 있어도 꺼진다.
 
-타임코드 칸은 숫자만 받는다(``app/widgets/timecode_edit.py``). 칸에서 Enter를 치면 그 칸의
-값을 확정하고 다음 칸으로 넘어간다(시작 → 끝 → 다음 행의 시작, 마지막 행의 끝에서는 확인
-버튼). **Enter는 창을 닫지 않는다** — 창은 확인 버튼으로만 닫는다(확인 버튼에 포커스가 있을
-때의 Enter · Space 포함). 그래서 창에 기본 버튼을 두지 않는다. Esc는 취소로 닫는다.
+시각 하나는 칸 둘이다 — 시분초 칸과 프레임 칸(``app/widgets/timecode_edit.py``의
+``TimePointEdit``). 숫자만 받고, 시분초 칸은 초 자리부터 채운다. 한 행은
+[시작 시분초][시작 프레임] ~ [끝 시분초][끝 프레임]이다.
+
+- Tab: 시작 시분초 → 시작 프레임 → 끝 시분초 → 끝 프레임 → 그 행의 버튼 → 다음 행
+- Enter: 그 시각의 값을 확정하고 **다음 시각의 시분초 칸**으로 간다(프레임 칸을 건너뛴다) —
+  시작 → 끝 → 다음 행의 시작, 마지막 행의 끝에서는 확인 버튼. ``NEXT_AFTER_ENTER``가 정한다
+- ".": 시분초 칸에서 같은 시각의 프레임 칸으로 간다
+
+**Enter는 창을 닫지 않는다** — 창은 확인 버튼으로만 닫는다(확인 버튼에 포커스가 있을 때의
+Enter · Space 포함). 그래서 창에 기본 버튼을 두지 않는다. Esc는 취소로 닫는다.
 """
 
 from PySide6.QtCore import Qt
@@ -36,9 +43,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from shiboken6 import isValid
+
 import app.theme as theme
 from app.viewmodels.section_edit_viewmodel import (
     END,
+    PART_CLOCK,
+    PART_FRAME,
     START,
     STATE_FAILED,
     STATE_LOADING,
@@ -46,15 +57,21 @@ from app.viewmodels.section_edit_viewmodel import (
     SectionEditViewModel,
 )
 from app.widgets.eliding_label import ElidingLabel
-from app.widgets.timecode_edit import TimecodeEdit
+from app.widgets.timecode_edit import TimecodeEdit, TimePointEdit
 
-# 타임코드 칸의 폭을 재는 본보기 글자 — 시가 세 자리인 경우까지 들어간다
-_TIMECODE_SAMPLE = "000:00:00:00"
+# 칸의 폭을 재는 본보기 글자 — 칸에 깔리는 글자 그대로다
+_CLOCK_SAMPLE = "00:00:00"
+_FRAME_SAMPLE = "00"
+_EDIT_PADDING = 22  # 칸의 글자 양옆 몫(px) — QSS의 padding과 테두리, 커서 한 줄
+# Enter를 친 뒤 포커스가 갈 곳 — "clock"이면 다음 시각의 시분초 칸(프레임 칸을 건너뛴다),
+# "frame"이면 같은 시각의 프레임 칸을 먼저 지난다. 바꾸기 쉽게 한 곳에 둔다
+NEXT_AFTER_ENTER = "clock"
 _INITIAL_SIZE = (560, 420)  # 창의 첫 크기(px) — 행 일곱 개쯤이 스크롤 없이 보인다
 
 
 class SectionRow(QWidget):
-    """구간 한 행 — 번호 · 시작 · 끝 · 길이 · 위 · 아래 · 삭제, 오류가 있으면 그 아래 한 줄.
+    """구간 한 행 — 번호 · [시작 시분초][프레임] ~ [끝 시분초][프레임] · 길이 · 위 · 아래 · 삭제,
+    오류가 있으면 그 아래 한 줄.
 
     오류 문구는 칸 옆이 아니라 아래 줄에 둔다 — 옆에 두면 좁은 창에서 말줄임되어, 무엇이
     틀렸는지 마우스를 올려야 보인다. 아래 줄은 줄바꿈하므로 어떤 폭에서도 전문이 보인다.
@@ -75,9 +92,12 @@ class SectionRow(QWidget):
         self.numberLabel.setMinimumWidth(self.numberLabel.fontMetrics().horizontalAdvance("00"))
         layout.addWidget(self.numberLabel)
 
-        self.startEdit = self._timecodeEdit("sectionStartEdit")
-        self.endEdit = self._timecodeEdit("sectionEndEdit")
+        self.startEdit = self._timePointEdit("sectionStartEdit")
+        self.rangeLabel = QLabel("~", self)  # 시작과 끝 사이 — 번역하지 않는 기호다
+        self.rangeLabel.setObjectName("sectionRangeLabel")
+        self.endEdit = self._timePointEdit("sectionEndEdit")
         layout.addWidget(self.startEdit)
+        layout.addWidget(self.rangeLabel)
         layout.addWidget(self.endEdit)
 
         # 구간 길이(밀리초 표기) — 좁으면 말줄임하고 전문은 툴팁이다(ElidingLabel)
@@ -99,11 +119,12 @@ class SectionRow(QWidget):
         self.errorLabel.setIndent(self.numberLabel.minimumWidth() + layout.spacing())
         column.addWidget(self.errorLabel)
 
-    def _timecodeEdit(self, name: str) -> TimecodeEdit:
-        edit = TimecodeEdit(self)
+    def _timePointEdit(self, name: str) -> TimePointEdit:
+        edit = TimePointEdit(self)
         edit.setObjectName(name)
-        # 폭은 글자에서 유도한다 — 여백은 QSS의 padding과 테두리 몫을 넉넉히 잡은 값이다
-        edit.setFixedWidth(edit.fontMetrics().horizontalAdvance(_TIMECODE_SAMPLE) + 28)
+        # 폭은 글자에서 유도한다
+        for part, sample in ((edit.clockEdit, _CLOCK_SAMPLE), (edit.frameEdit, _FRAME_SAMPLE)):
+            part.setFixedWidth(part.fontMetrics().horizontalAdvance(sample) + _EDIT_PADDING)
         return edit
 
     def _rowButton(self, text: str, name: str) -> QPushButton:
@@ -114,8 +135,8 @@ class SectionRow(QWidget):
         button.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         return button
 
-    def edit(self, column: int) -> TimecodeEdit:
-        """칸 번호(START · END)의 입력창."""
+    def edit(self, column: int) -> TimePointEdit:
+        """칸 번호(START · END)의 시각 입력 — 시분초 칸과 프레임 칸의 묶음."""
         return self.startEdit if column == START else self.endEdit
 
 
@@ -265,11 +286,15 @@ class SectionEditDialog(QDialog):
 
     def _onEdited(self, row: int, column: int, text: str) -> None:
         """칸의 숫자가 바뀌었다 — 값을 넘겨 다시 검증한다. 이 칸을 치는 중이라고 적어 둔다."""
+        if not isValid(self._viewmodel):
+            return
         self._typing = (row, column)
         self._viewmodel.setText(row, column, text, False)
 
-    def _onCommitted(self, row: int, column: int, edit: TimecodeEdit) -> None:
-        """칸의 편집이 끝났다(칸을 떠남 · Enter) — 미뤄 둔 오류를 띄운다."""
+    def _onCommitted(self, row: int, column: int, edit: TimePointEdit) -> None:
+        """그 시각의 편집이 끝났다(두 칸을 모두 떠남 · Enter) — 미뤄 둔 오류를 띄운다."""
+        if not isValid(self._viewmodel):
+            return  # 창이 닫히며 칸이 포커스를 잃었다 — 뷰모델은 이미 사라졌다
         if self._typing == (row, column):
             self._typing = None
         self._viewmodel.setText(row, column, edit.text())
@@ -279,11 +304,19 @@ class SectionEditDialog(QDialog):
         self.focusTargetAfter(row, column).setFocus(Qt.FocusReason.TabFocusReason)
 
     def focusTargetAfter(self, row: int, column: int) -> QWidget:
-        """그 칸 다음에 포커스를 받을 위젯 — 시작 → 끝 → 다음 행의 시작, 마지막 행의 끝 → 확인 버튼."""
+        """그 시각에서 Enter를 친 뒤 포커스를 받을 위젯.
+
+        시작 → 끝 → 다음 행의 시작, 마지막 행의 끝 → 확인 버튼. 시각 안에서는
+        ``NEXT_AFTER_ENTER``가 정한 칸으로 간다 — 기본은 시분초 칸이다(프레임 칸을 건너뛴다).
+        시분초 칸에서 친 Enter가 프레임 칸을 지나게 하려면 그 값을 "frame"으로 바꾼다.
+        """
+        current = self._rows[row].edit(column)
+        if NEXT_AFTER_ENTER == PART_FRAME and current.clockEdit.hasFocus():
+            return current.frameEdit
         if column == START:
-            return self._rows[row].endEdit
+            return self._rows[row].endEdit.clockEdit
         if row + 1 < len(self._rows):
-            return self._rows[row + 1].startEdit
+            return self._rows[row + 1].startEdit.clockEdit
         return self.okButton
 
     def _refresh(self) -> None:
@@ -294,16 +327,28 @@ class SectionEditDialog(QDialog):
             if index >= len(viewmodel.rows):
                 break
             row.numberLabel.setText(str(index + 1))
-            # 치고 있는 행의 오류는 표(ERROR_TIMING)가 정한 때에 띄운다
-            error = viewmodel.shownErrorText(index, self._typing)
+            # 치고 있는 행의 오류는 표(ERROR_TIMING)가 정한 때에 띄운다. 프레임 칸에 두 자리를
+            # 다 쳤으면 프레임 넘침은 바로 띄운다
+            frame_full = False
+            if self._typing is not None and self._typing[0] == index:
+                typed = row.edit(self._typing[1])
+                frame_full = typed.typingFrame() and typed.frameIsFull()
+            error = viewmodel.shownErrorText(index, self._typing, frame_full)
+            flagged = viewmodel.shownErrorParts(index, self._typing, frame_full)
             for column in (START, END):
                 edit = row.edit(column)
                 text = viewmodel.rows[index][column]
-                # 입력 중인 칸은 건드리지 않는다 — 고쳐 쓴 표기는 편집을 끝낸 뒤에 넣는다
-                if not edit.hasFocus() and edit.text() != text:
+                # 입력 중인 시각은 건드리지 않는다 — 고쳐 쓴 표기는 편집을 끝낸 뒤에 넣는다
+                if not edit.hasEditFocus() and edit.text() != text:
                     edit.setText(text)
-                edit.setToolTip(viewmodel.millisecondsText(index, column))
-                self._setFlag(edit, "invalid", bool(error))
+                tooltip = viewmodel.millisecondsText(index, column)
+                for part, widget in ((PART_CLOCK, edit.clockEdit), (PART_FRAME, edit.frameEdit)):
+                    widget.setToolTip(tooltip)
+                    # 오류가 난 칸만 붉게 — 초 · 분 넘침은 시분초 칸, 프레임 넘침은 프레임 칸,
+                    # 시각 전체의 오류는 그 시각의 두 칸
+                    self._setFlag(widget, "invalid", (column, part) in flagged)
+                # 묶음에도 적어 둔다 — 그 시각의 어느 칸이든 칠해졌는지(스타일에는 쓰지 않는다)
+                edit.setProperty("invalid", any(key[0] == column for key in flagged))
             row.infoLabel.setText(viewmodel.lengthText(index))
             row.errorLabel.setText(error)
             row.errorLabel.setVisible(bool(error))

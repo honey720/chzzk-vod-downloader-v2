@@ -14,7 +14,12 @@ from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication
 
 import app.widgets.timecode_edit as timecode_edit
-from app.widgets.timecode_edit import TimecodeEdit, digits_from_text
+from app.widgets.timecode_edit import (
+    CLOCK_FIELDS,
+    TimecodeEdit,
+    TimePointEdit,
+    digits_from_text,
+)
 
 
 @pytest.fixture
@@ -384,3 +389,272 @@ def _focus_in() -> QFocusEvent:
 def _focus_out() -> QFocusEvent:
     """포커스가 칸에서 나가는 이벤트."""
     return QFocusEvent(QEvent.Type.FocusOut, Qt.FocusReason.TabFocusReason)
+
+
+# ================================================================ 시분초 칸 · 프레임 칸 · 시각 하나 (#309)
+
+
+@pytest.fixture
+def clock(qtbot):
+    """보이는 시분초 칸 하나(묶음 셋 — 숫자 여섯 자리)."""
+    widget = TimecodeEdit(fields=CLOCK_FIELDS)
+    qtbot.addWidget(widget)
+    widget.show()
+    QTest.qWaitForWindowExposed(widget)
+    return widget
+
+
+@pytest.fixture
+def point(qtbot):
+    """보이는 시각 입력 하나 — 시분초 칸과 프레임 칸의 묶음."""
+    widget = TimePointEdit()
+    qtbot.addWidget(widget)
+    widget.show()
+    QTest.qWaitForWindowExposed(widget)
+    return widget
+
+
+@pytest.mark.parametrize(
+    ("digits", "value", "bright"),
+    [
+        ("0100", "00:01:00", "01:00"),  # 1분
+        ("012345", "01:23:45", "01:23:45"),
+        ("5", "00:00:05", "5"),
+        ("130", "00:01:30", "1:30"),
+    ],
+)
+def test_clock_field_fills_from_the_seconds(clock, digits, value, bright):
+    """시분초 칸에 친 숫자는 초 자리부터 채워져야 한다 — 숫자의 기본 단위가 초다.
+
+    0100 -> 00:01:00(1분) / 012345 -> 01:23:45 / 5 -> 00:00:05 / 130 -> 00:01:30
+    """
+    type_digits(clock, digits)
+
+    assert (clock.text(), clock.brightText()) == (value, bright)
+
+
+def test_clock_field_shows_the_six_steps_with_seconds_as_the_base(clock):
+    """오너의 여섯 단계는 보이는 모양이 그대로이고 값은 초 기준이어야 한다.
+
+    0 · 0 · 1 · 0 · 0 · 3을 차례로 침
+    -> 밝은 부분: "0" → "00" → "0:01" → "00:10" → "0:01:00" → "00:10:03"
+    -> 값: 00:00:00 → 00:00:00 → 00:00:01 → 00:00:10 → 00:01:00 → 00:10:03
+    """
+    seen = []
+    for digit in "001003":
+        type_digits(clock, digit)
+        seen.append((clock.brightText(), clock.text()))
+
+    assert seen == [
+        ("0", "00:00:00"),
+        ("00", "00:00:00"),
+        ("0:01", "00:00:01"),
+        ("00:10", "00:00:10"),
+        ("0:01:00", "00:01:00"),
+        ("00:10:03", "00:10:03"),
+    ]
+
+
+def test_clock_field_ignores_the_seventh_digit(clock):
+    """시분초 칸은 일곱째 숫자를 받지 않아야 한다.
+
+    123456을 치고 7을 더 침 -> 값 "12:34:56" 그대로
+    """
+    type_digits(clock, "1234567")
+
+    assert clock.text() == "12:34:56"
+    assert clock.digits() == "123456"
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_typing_one_more_digit_into_the_clock_field_never_makes_it_smaller(clock, seed):
+    """시분초 칸에 숫자를 하나 더 치면 값(시 · 분 · 초를 이어 읽은 수)이 줄지 않아야 한다.
+
+    씨앗마다 무작위 숫자 여섯 개를 차례로 침 -> 단계마다 int(값의 숫자)가 앞 단계 이상
+    """
+    generator = random.Random(seed)
+    previous = 0
+    for _ in range(6):
+        type_digits(clock, str(generator.randrange(10)))
+        current = int(clock.text().replace(":", ""))
+        assert current >= previous, clock.text()
+        previous = current
+
+
+def test_frame_field_takes_two_digits_and_ignores_the_third(point):
+    """프레임 칸은 오른쪽부터 두 자리를 받고 세 자리째를 받지 않아야 한다. 치지 않으면 00이다.
+
+    아무것도 안 침 -> "00" / 3 -> "03" / 30 -> "30" / 5를 더 침 -> "30" 그대로
+    """
+    frame = point.frameEdit
+    seen = [frame.text()]
+    for digit in "305":
+        type_digits(frame, digit)
+        seen.append(frame.text())
+
+    assert seen == ["00", "03", "30", "30"]
+    assert (frame.dimText(), frame.brightText()) == ("", "30")
+
+
+def test_time_point_joins_the_two_fields_into_four_fields(point):
+    """시각의 값은 시분초 칸과 프레임 칸을 합친 네 칸 HH:MM:SS:FF여야 한다.
+
+    시분초 칸에 0100, 프레임 칸에 30 -> "00:01:00:30". 아무것도 치지 않은 시각은 "00:00:00:00"
+    """
+    assert point.text() == "00:00:00:00"
+
+    type_digits(point.clockEdit, "0100")
+    type_digits(point.frameEdit, "30")
+
+    assert point.text() == "00:01:00:30"
+
+
+def test_set_text_splits_a_timecode_into_both_fields_and_shows_it_bright(point):
+    """setText는 네 칸 타임코드를 두 칸에 나눠 넣고 전부 밝게 보여야 한다. 읽을 수 없으면 비운다.
+
+    "01:02:03:04" -> 시분초 "01:02:03" · 프레임 "04", 흐린 부분 없음
+    "abc" -> 두 칸 모두 비어 값 "00:00:00:00", 밝은 부분 없음
+    """
+    point.setText("01:02:03:04")
+    assert (point.clockEdit.text(), point.frameEdit.text()) == ("01:02:03", "04")
+    assert (point.clockEdit.dimText(), point.frameEdit.dimText()) == ("", "")
+
+    point.setText("abc")
+    assert point.text() == "00:00:00:00"
+    assert (point.clockEdit.brightText(), point.frameEdit.brightText()) == ("", "")
+
+
+@pytest.mark.parametrize(
+    "modifier", [Qt.KeyboardModifier.NoModifier, Qt.KeyboardModifier.KeypadModifier]
+)
+def test_period_in_the_clock_field_moves_to_the_frame_field(point, modifier):
+    """시분초 칸에서 "."을 누르면 같은 시각의 프레임 칸으로 가야 하고 칸에는 들어가지 않아야 한다.
+
+    시분초 칸에 12를 치고 "."(자판 · 숫자 키패드) -> 포커스가 프레임 칸, 시분초 값 "00:00:12" 그대로
+    """
+    point.clockEdit.setFocus()
+    type_digits(point.clockEdit, "12")
+
+    QTest.keyClick(point.clockEdit, Qt.Key.Key_Period, modifier)
+    QApplication.processEvents()
+
+    assert point.frameEdit.hasFocus()
+    assert point.clockEdit.text() == "00:00:12"
+
+
+@pytest.mark.parametrize("part", ["clockEdit", "frameEdit"])
+def test_copy_from_either_field_puts_the_whole_time_point_on_the_clipboard(point, clipboard, part):
+    """어느 칸에서 복사하든 그 시각 전체(HH:MM:SS:FF)가 클립보드에 들어가야 한다.
+
+    시분초 01:02:03 · 프레임 04인 시각의 시분초 칸 / 프레임 칸에서 Ctrl+C -> "01:02:03:04"
+    """
+    point.setText("01:02:03:04")
+
+    QTest.keyClick(getattr(point, part), Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
+
+    assert clipboard.content == "01:02:03:04"
+
+
+@pytest.mark.parametrize(
+    ("pasted", "part", "expected"),
+    [
+        ("1:02:03:04", "clockEdit", "01:02:03:04"),  # 네 묶음 — 두 칸 모두
+        ("1:02:03:04", "frameEdit", "01:02:03:04"),
+        ("1:02:03", "clockEdit", "01:02:03:00"),  # 세 묶음 — 시분초 + 프레임 00
+        ("1:02:03", "frameEdit", "01:02:03:00"),
+        ("12:34", "clockEdit", "00:12:34:00"),  # 두 묶음 — 분:초 + 프레임 00
+        ("0130", "clockEdit", "00:01:30:15"),  # 숫자만 — 붙여넣은 칸의 규칙(시분초 칸)
+        ("30", "frameEdit", "00:00:07:30"),  # 숫자만 — 붙여넣은 칸의 규칙(프레임 칸)
+    ],
+)
+def test_paste_follows_the_shape_of_the_text(point, clipboard, pasted, part, expected):
+    """붙여넣기는 글의 모양에 따라 두 칸에 나눠 넣거나 붙여넣은 칸에만 넣어야 한다.
+
+    시분초 00:00:07 · 프레임 15인 시각에 위 표의 글을 그 칸에서 Ctrl+V -> 기대한 시각
+    """
+    point.setText("00:00:07:15")
+    clipboard.content = pasted
+
+    QTest.keyClick(getattr(point, part), Qt.Key.Key_V, Qt.KeyboardModifier.ControlModifier)
+
+    assert point.text() == expected
+
+
+@pytest.mark.parametrize(
+    ("pasted", "part"),
+    [
+        ("1:02:03:04:05", "clockEdit"),  # 다섯 묶음
+        ("ab:cd", "clockEdit"),  # 숫자 · 콜론 밖의 글자
+        ("12a", "clockEdit"),
+        ("1::2", "clockEdit"),  # 빈 묶음
+        ("123:45", "clockEdit"),  # 세 자리 묶음
+        ("1234567", "clockEdit"),  # 시분초 칸에 일곱 자리
+        ("123", "frameEdit"),  # 프레임 칸에 세 자리
+        ("", "clockEdit"),
+    ],
+)
+def test_paste_of_a_text_that_does_not_fit_changes_nothing(point, clipboard, pasted, part):
+    """받을 수 없는 글을 붙여넣으면 시각이 그대로여야 하고 edited도 나오지 않아야 한다.
+
+    시분초 00:00:07 · 프레임 15인 시각에 위 표의 글을 붙여넣음 -> "00:00:07:15" 그대로, edited 0회
+    """
+    point.setText("00:00:07:15")
+    clipboard.content = pasted
+    edited = QSignalSpy(point.edited)
+
+    QTest.keyClick(getattr(point, part), Qt.Key.Key_V, Qt.KeyboardModifier.ControlModifier)
+
+    assert point.text() == "00:00:07:15"
+    assert edited.count() == 0
+
+
+def test_moving_between_the_two_fields_is_not_leaving_the_time_point(point, qtbot):
+    """시분초 칸에서 프레임 칸으로 가는 것은 그 시각을 떠난 것이 아니어야 하고, 둘 다 떠나면 committed가 한 번 나와야 한다.
+
+    시분초 칸에 포커스 → "."으로 프레임 칸 -> committed 0회
+    다른 위젯으로 포커스를 옮김 -> committed 1회
+    """
+    other = TimecodeEdit()
+    qtbot.addWidget(other)
+    other.show()
+    QTest.qWaitForWindowExposed(other)
+    point.activateWindow()
+    point.clockEdit.setFocus()
+    QApplication.processEvents()
+    committed = QSignalSpy(point.committed)
+
+    QTest.keyClick(point.clockEdit, Qt.Key.Key_Period)
+    QApplication.processEvents()
+    assert point.frameEdit.hasFocus() and committed.count() == 0
+
+    point.frameEdit.clearFocus()
+    QApplication.processEvents()
+
+    assert committed.count() == 1
+
+
+@pytest.mark.parametrize("part", ["clockEdit", "frameEdit"])
+def test_enter_in_either_field_commits_and_reports_entered_once(point, part):
+    """어느 칸에서 Enter를 치든 그 시각의 committed와 entered가 한 번씩, 그 순서로 나와야 한다."""
+    order = []
+    point.committed.connect(lambda: order.append("committed"))
+    point.entered.connect(lambda: order.append("entered"))
+
+    QTest.keyClick(getattr(point, part), Qt.Key.Key_Return)
+
+    assert order == ["committed", "entered"]
+
+
+def test_time_point_tells_when_the_frame_field_is_being_typed_and_full(point):
+    """프레임 칸에 두 자리를 다 쳤는지, 지금 치는 칸이 프레임 칸인지를 알려야 한다.
+
+    시분초 칸에 5 -> 프레임 칸을 치는 중 아님. 프레임 칸에 6 -> 치는 중 · 다 차지 않음. 0 -> 다 참
+    """
+    type_digits(point.clockEdit, "5")
+    assert (point.typingFrame(), point.frameIsFull()) == (False, False)
+
+    type_digits(point.frameEdit, "6")
+    assert (point.typingFrame(), point.frameIsFull()) == (True, False)
+
+    type_digits(point.frameEdit, "0")
+    assert (point.typingFrame(), point.frameIsFull()) == (True, True)
