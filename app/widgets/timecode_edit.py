@@ -205,11 +205,11 @@ class TimecodeEdit(QLineEdit):
 
     def brightText(self) -> str:
         """밝게 보이는 부분 — 친 숫자와 그 사이의 콜론."""
+        if self._confirmed:
+            return self.text()  # 편집을 끝낸 값 — 앞쪽의 0까지 밝다
         count = len(self._digits)
         if not count:
             return ""
-        if self._confirmed:
-            return self.text()  # 편집을 끝낸 값 — 앞쪽의 0까지 밝다
         return self.text()[-(count + (count - 1) // _FIELD_DIGITS) :]
 
     def dimText(self) -> str:
