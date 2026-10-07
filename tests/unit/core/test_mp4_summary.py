@@ -7,9 +7,12 @@
 """
 
 import dataclasses
+import gc
 import random
 import struct
 import threading
+import traceback
+import weakref
 from fractions import Fraction
 
 import pytest
@@ -370,10 +373,10 @@ def test_pending_head_parses_once_when_two_threads_ask_at_the_same_time(monkeypa
 
 
 def test_pending_head_raises_the_same_error_again_without_parsing_again(monkeypatch):
-    """해석이 실패한 받아 둔 moov는 청할 때마다 같은 예외를 던지고 다시 해석하지 않아야 한다.
+    """moov가 틀려 해석이 실패한(Mp4Error) 묶음은 청할 때마다 같은 예외를 내고 다시 해석하지 않아야 한다.
 
-    해석 함수가 Mp4Error를 던지게 바꾸고 get()을 두 번 부름
-    -> 두 번 모두 같은 예외 객체, 해석 1회, peek() is None
+    해석 함수가 Mp4Error를 던지게 바꾸고 get()을 세 번 부름
+    -> 세 번 모두 Mp4Error · 같은 키 · 같은 글, 해석 1회, peek() is None, 바이트를 놓았다(raw is None)
     """
     calls = []
 
@@ -384,11 +387,130 @@ def test_pending_head_raises_the_same_error_again_without_parsing_again(monkeypa
     monkeypatch.setattr(mp4_module, "index_mp4", broken)
     pending = pending_mp4_head(_raw_of_standard_mp4())
 
-    with pytest.raises(Mp4Error) as first:
-        pending.get()
-    with pytest.raises(Mp4Error) as second:
-        pending.get()
+    seen = []
+    for _ in range(3):
+        with pytest.raises(Mp4Error) as raised:
+            pending.get()
+        seen.append((type(raised.value), raised.value.message_key, str(raised.value)))
 
-    assert first.value is second.value
+    assert seen == [(Mp4Error, MP4_INVALID, f"{MP4_INVALID}: 깨진 moov(대역)")] * 3
     assert len(calls) == 1
-    assert pending.peek() is None
+    assert pending.peek() is None and pending.raw is None
+
+
+def test_pending_head_parses_again_after_a_failure_that_is_not_about_the_moov(monkeypatch):
+    """moov와 무관한 실패(Mp4Error가 아닌 예외)는 기억하지 않아, 다시 청하면 해석이 다시 돌고 성공해야 한다.
+
+    해석 함수가 첫 호출에만 MemoryError를 던지게 바꾸고 get()을 두 번 부름
+    -> 첫 청: MemoryError가 그대로 나오고 바이트를 놓지 않았다(raw is not None), peek() is None
+    -> 둘째 청: 색인을 돌려준다, 해석 2회
+    """
+    real = mp4_module.index_mp4
+    calls = []
+
+    def flaky(held):
+        calls.append(held)
+        if len(calls) == 1:
+            raise MemoryError("메모리가 모자라다(대역)")
+        return real(held)
+
+    monkeypatch.setattr(mp4_module, "index_mp4", flaky)
+    raw = _raw_of_standard_mp4()
+    pending = pending_mp4_head(raw)
+
+    with pytest.raises(MemoryError):
+        pending.get()
+    after_failure = (pending.raw, pending.peek())
+    head = pending.get()
+
+    assert after_failure == (raw, None) and after_failure[0] is raw
+    assert head.index == index_mp4(raw).index
+    assert len(calls) == 2
+
+
+def test_a_waiter_parses_by_itself_after_the_first_caller_failed_for_another_reason(monkeypatch):
+    """먼저 청한 쪽이 moov와 무관한 이유로 실패하면, 기다리던 쪽이 스스로 해석해 색인을 받아야 한다.
+
+    해석 함수를 문으로 막고 첫 호출에만 RuntimeError를 던지게 바꿈. 스레드 A가 해석 안에 들어간
+    뒤 스레드 B가 get()을 부르고, B가 기다리는 것을 본 뒤 문을 엶
+    -> A는 RuntimeError, B는 색인을 받는다, 해석 2회
+    """
+    real = mp4_module.index_mp4
+    inside, gate = threading.Event(), threading.Event()
+    calls = []
+
+    def gated(held):
+        calls.append(held)
+        if len(calls) == 1:
+            inside.set()
+            assert gate.wait(10), "문이 열리지 않았다"
+            raise RuntimeError("그때의 사정으로 난 실패(대역)")
+        return real(held)
+
+    monkeypatch.setattr(mp4_module, "index_mp4", gated)
+    pending = pending_mp4_head(_raw_of_standard_mp4())
+    got: dict[str, object] = {}
+
+    def ask(name: str) -> None:
+        try:
+            got[name] = pending.get()
+        except Exception as error:
+            got[name] = error
+
+    first = threading.Thread(target=ask, args=("first",))
+    second = threading.Thread(target=ask, args=("second",))
+    first.start()
+    assert inside.wait(10), "전제: 첫 스레드가 해석 안에 들어갔다"
+    second.start()
+    second.join(0.3)  # 둘째가 기다리는 구간을 넓힌다
+    waiting = second.is_alive()
+    gate.set()
+    first.join(10)
+    second.join(10)
+
+    assert waiting, "전제: 둘째가 기다렸다"
+    assert isinstance(got["first"], RuntimeError)
+    assert got["second"] is pending.peek() and got["second"] is not None
+    assert len(calls) == 2
+
+
+def test_a_remembered_failure_does_not_keep_what_the_parser_was_holding(monkeypatch):
+    """기억한 실패는 해석 중의 지역 변수를 붙잡지 않아야 한다 — 처음 실패한 쪽에는 해석 자리가 보인다.
+
+    해석 함수가 받은 moov를 지역 변수로 쥔 채 Mp4Error를 던지게 바꿈(순환 수집을 끈 채 잰다).
+    처음 청한 쪽의 예외를 놓은 뒤 묶음만 남김 → 다시 청함
+    -> 처음 청한 쪽의 traceback에 해석 함수가 있다
+    -> 묶음만 남은 뒤 moov의 약한 참조 == None
+    -> 다시 낸 예외는 종류 · 글이 같고, 그 traceback에는 해석 함수가 없다
+    """
+
+    def broken(held):
+        kept_by_the_parser = held  # noqa: F841 — 해석 중에 쥐고 있던 것
+        raise Mp4Error(MP4_INVALID, "깨진 moov(대역)")
+
+    monkeypatch.setattr(mp4_module, "index_mp4", broken)
+    raw = _raw_of_standard_mp4()
+    held = weakref.ref(raw)
+    pending = pending_mp4_head(raw)
+    del raw
+    gc.collect()
+    gc.disable()  # 참조 계수만으로 풀리는지 본다
+    try:
+        try:
+            pending.get()
+        except Mp4Error as error:
+            first_frames = [frame.name for frame in traceback.extract_tb(error.__traceback__)]
+            first_text = str(error)
+        alive_after_first = held()
+        try:
+            pending.get()
+        except Mp4Error as error:
+            again = (type(error), str(error))
+            again_frames = [frame.name for frame in traceback.extract_tb(error.__traceback__)]
+    finally:
+        gc.enable()
+
+    assert "broken" in first_frames
+    assert alive_after_first is None
+    assert again == (Mp4Error, first_text)
+    assert "broken" not in again_frames

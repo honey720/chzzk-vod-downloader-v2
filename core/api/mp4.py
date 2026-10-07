@@ -244,7 +244,8 @@ def index_mp4(raw: Mp4Raw) -> Mp4Head:
 def pending_mp4_head(raw: Mp4Raw) -> PendingMp4Head:
     """받아 둔 moov를 필요할 때 한 번만 해석하는 묶음으로 싼다 (#309) — ``PendingMp4Head``."""
     # 모듈 전역을 호출 시점에 조회한다 — 테스트의 monkeypatch 지점
-    return PendingMp4Head(raw, lambda held: index_mp4(held))
+    # 기억하는 실패는 Mp4Error뿐이다 — moov가 틀린 것이라 다시 해석해도 같다
+    return PendingMp4Head(raw, lambda held: index_mp4(held), permanent=(Mp4Error,))
 
 
 def summarize_mp4(raw: Mp4Raw) -> Mp4Summary:

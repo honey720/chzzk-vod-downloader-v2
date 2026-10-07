@@ -9,6 +9,7 @@
 먼저 표시되는 샘플의 시각이 0이다.
 """
 
+import copy
 import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -102,21 +103,37 @@ class PendingMp4Head:
     동안 해석이 둘 돈다. 이 객체를 함께 쥐면 먼저 ``get()``을 부른 쪽이 해석하고, 다른 쪽은
     끝나기를 기다렸다가 같은 색인을 받는다. 도는 해석을 멈출 방법이 없어, 멈추는 대신 기다린다.
 
-    해석이 끝나면 바이트를 놓는다 — 색인(``Mp4Head.data``)이 같은 바이트를 들고 있다. 해석이
-    실패하면 그 예외를 들고 있다가 부르는 쪽마다 다시 던진다(다시 해석하지 않는다).
+    해석이 끝나면 바이트를 놓는다 — 색인(``Mp4Head.data``)이 같은 바이트를 들고 있다.
+
+    실패는 **다시 해도 같을 것만** 기억한다(``permanent`` — moov 자체가 틀린 경우). 그런 실패는
+    바이트를 놓고, 그 뒤로 청하는 쪽마다 같은 예외를 낸다(다시 해석하지 않는다). 그 밖의 예외
+    (메모리 부족처럼 그때의 사정으로 난 것)는 기억하지 않는다 — 그 청에만 그대로 내고 바이트를
+    놓지 않아, 다음에 청한 쪽(기다리던 쪽 포함)이 해석을 다시 돌린다.
+
+    기억하는 예외에는 traceback을 두지 않는다 — traceback은 해석 중의 지역 변수(moov 바이트 ·
+    만들던 표)를 붙잡아, 이 묶음이 살아 있는 동안 그것들이 풀리지 않는다. 처음 실패한 청에는
+    원래의 예외를 그대로 낸다(해석 자리까지의 traceback이 그쪽 로그에 남는다).
     """
 
-    def __init__(self, raw: Mp4Raw, build: Callable[[Mp4Raw], Mp4Head]):
+    def __init__(
+        self,
+        raw: Mp4Raw,
+        build: Callable[[Mp4Raw], Mp4Head],
+        permanent: tuple[type[Exception], ...] = (),
+    ):
         """
         Args:
             raw: 받아 둔 moov
             build: 그것을 해석하는 함수 — ``core.api.mp4.index_mp4``
               (``core.api.mp4.pending_mp4_head``로 만든다)
+            permanent: 다시 해석해도 같은 결과일 실패의 예외 종류 — 이것만 기억한다.
+              주지 않으면 어떤 실패도 기억하지 않는다
         """
         self._raw: Mp4Raw | None = raw
         self._build = build
+        self._permanent = permanent
         self._head: Mp4Head | None = None
-        self._error: Exception | None = None
+        self._error: Exception | None = None  # 기억한 실패 — traceback이 없다
         self._lock = threading.Lock()  # 해석을 한 번만 돌게 한다 — 기다리는 쪽이 여기서 선다
 
     @property
@@ -132,18 +149,29 @@ class PendingMp4Head:
         """색인을 돌려준다. 아직이면 해석하고, 다른 쪽이 해석하는 중이면 끝나기를 기다린다.
 
         Raises:
-            Exception: 해석이 던진 예외(``Mp4Error`` 등) — 부를 때마다 같은 것을 던진다
+            Exception: 해석이 던진 예외. 기억하는 종류(``permanent``)면 그 뒤로 부를 때마다
+                같은 종류 · 같은 글의 예외를 던진다
         """
         with self._lock:
-            if self._head is None and self._error is None:
+            if self._error is not None:
+                # 앞의 청이 남긴 traceback(그 청의 호출 자리들)을 떼고 던진다
+                raise self._error.with_traceback(None)
+            if self._head is None:
                 try:
                     self._head = self._build(self._raw)
-                except Exception as e:
-                    self._error = e
+                except self._permanent as e:
+                    self._error = _without_traceback(e)
+                    self._raw = None
+                    raise  # 처음 실패한 청 — 원래의 예외를 해석 자리까지의 traceback과 함께 낸다
                 self._raw = None
-            if self._error is not None:
-                raise self._error
             return self._head
+
+
+def _without_traceback(error: Exception) -> Exception:
+    """같은 종류 · 같은 글의 예외를 traceback과 원인 사슬 없이 새로 만든다 — 기억해 두는 용도다."""
+    remembered = copy.copy(error)
+    remembered.__traceback__ = remembered.__cause__ = remembered.__context__ = None
+    return remembered
 
 
 @dataclass(frozen=True)
