@@ -420,6 +420,7 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         self._sectionEditItem = None
         if dialog is not None:
             self.contentManager.editWaitChanged.disconnect(dialog.setWaitingHint)
+            dialog.viewModel().release()  # 조회하며 받은 moov를 놓는다
             dialog.viewModel().deleteLater()
             dialog.deleteLater()
         if item is not None:

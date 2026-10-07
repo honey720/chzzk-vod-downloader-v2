@@ -31,14 +31,17 @@ def test_encoded_vod_reads_the_frame_rate_and_length_from_the_moov(monkeypatch):
     """인코딩 완료 VOD는 고른 해상도의 mp4에서 moov를 받아 그 값을 돌려줘야 한다.
 
     moov 색인: fps 60000/1001, 길이 1234.5초
-    -> SectionBasis(60000/1001, 1234.5), 조회한 주소 == base_url
+    -> SectionBasis(60000/1001, 1234.5), 조회한 주소 == base_url,
+       mp4_head is 받은 moov(다운로드가 다시 쓴다 — #309)
     """
     asked = []
+    heads = []
 
     def fetch(url):
         asked.append(url)
         index = SimpleNamespace(fps=Fraction(60000, 1001), duration=1234.5)
-        return SimpleNamespace(index=index)
+        heads.append(SimpleNamespace(index=index))
+        return heads[-1]
 
     monkeypatch.setattr(section_basis, "fetch_mp4_head", fetch)
 
@@ -46,6 +49,7 @@ def test_encoded_vod_reads_the_frame_rate_and_length_from_the_moov(monkeypatch):
 
     assert basis == SectionBasis(fps=Fraction(60000, 1001), duration=1234.5)
     assert asked == ["https://media.invalid/stream"]
+    assert basis.mp4_head is heads[0]
 
 
 def test_replay_uses_the_picked_variant_and_its_declared_frame_rate(monkeypatch):
@@ -106,7 +110,7 @@ def test_encrypted_vod_decrypts_with_the_resolved_key_and_keeps_it_out_of_the_re
     매니페스트의 선언값 {base_url: 30}, 키 b"K" * 16
     -> 세그먼트 읽기에 그 키가 넘어간다, 프레임률 정하기에 선언값 30이 넘어간다
     -> 세그먼트를 둘 폴더는 None이다
-    -> SectionBasis(30, 100.0) — 칸은 fps · duration 둘뿐이다
+    -> SectionBasis(30, 100.0) — 칸은 fps · duration과 비어 있는 mp4_head뿐이다
     """
     key = b"K" * 16
     seen = {}
@@ -144,7 +148,7 @@ def test_encrypted_vod_decrypts_with_the_resolved_key_and_keeps_it_out_of_the_re
     basis = probe_section_basis(_item("hls_aes"))
 
     assert basis == SectionBasis(fps=Fraction(30), duration=100.0)
-    assert vars(basis) == {"fps": Fraction(30), "duration": 100.0}
+    assert vars(basis) == {"fps": Fraction(30), "duration": 100.0, "mp4_head": None}
     assert seen["head_args"] == ((base_url, None), {})
     assert seen["keys"] == [key, key]
     assert seen["choose"] == (["segment0"], Fraction(30))

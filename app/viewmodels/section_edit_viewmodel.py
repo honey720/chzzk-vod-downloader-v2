@@ -14,6 +14,7 @@
 """
 
 import logging
+import weakref
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
@@ -90,6 +91,42 @@ _TIMECODE_FIELDS = 4
 # 두 프레임률을 같은 것으로 보는 상대 오차의 상한 — 1%. 목록의 선언값(60.0)과 조회로 정한
 # 값(60000/1001)의 차이는 0.1%이고, 30과 60 같은 실제 변경은 이보다 훨씬 크다
 _SAME_RATE_TOLERANCE = Fraction(1, 100)
+
+
+# 받은 moov를 들고 있는 카드 — 앱 전체에서 하나뿐이다. 약한 참조라 카드가 사라지면 함께 사라진다
+_head_owner: weakref.ref | None = None
+
+
+def keep_section_head(item: ContentItem, base_url: str, head) -> None:
+    """구간을 정하며 받은 moov를 카드에 둔다 — 다운로드를 시작할 때 엔진에 넘긴다 (#309).
+
+    **한 번에 한 카드의 것만 든다.** 긴 영상의 해석된 색인은 메모리를 크게 쓴다(8시간 60fps에서
+    약 770MB — 샘플마다의 시각 · 위치 · 크기). 다른 카드가 들고 있던 것은 여기서 버린다.
+    head가 None이면 이 카드의 것을 버린다.
+
+    Args:
+        base_url: 그 moov를 받은 주소 — 다운로드를 시작할 때의 주소와 같을 때만 넘긴다
+    """
+    global _head_owner
+    owner = _head_owner() if _head_owner is not None else None
+    if owner is not None and owner is not item:
+        owner.section_head = None
+    item.section_head = (base_url, head) if head is not None else None
+    _head_owner = weakref.ref(item) if head is not None else None
+
+
+def take_section_head(item: ContentItem):
+    """카드에 둔 moov를 꺼낸다 — 카드에서는 비운다. 넘길 수 없으면 None.
+
+    그 moov를 받은 주소가 지금의 주소와 같을 때만 돌려준다 — 해상도가 바뀌었으면 다른 파일의
+    moov다. 꺼낸 뒤에는 엔진이 들고, 다운로드가 끝나면 엔진과 함께 사라진다.
+    """
+    kept = getattr(item, "section_head", None)
+    item.section_head = None
+    if kept is None:
+        return None
+    base_url, head = kept
+    return head if base_url == item.base_url else None
 
 
 def declared_frame_rate(rep) -> Fraction | None:
@@ -267,6 +304,8 @@ class SectionEditViewModel(QObject):
         self.rows: list[list[str]] = []  # 행마다 [시작 글자, 끝 글자]
         self._notify = notify
         self._job: SectionBasisJob | None = None
+        self._head = None  # 조회하며 받은 moov(인코딩 완료 VOD) — 없으면 None
+        self._released = False  # 창이 닫혔다 — 늦게 온 조회 결과의 moov를 받아 두지 않는다
         self._errors: dict[int, str] = {}  # 행 번호 → 오류 키
         self._allErrors: dict[int, tuple[str, ...]] = {}  # 행 번호 → 그 행의 오류 키 전부
         self._pairs: dict[int, tuple[float, float]] = {}  # 행 번호 → 해석한 (시작, 끝) 초
@@ -281,10 +320,21 @@ class SectionEditViewModel(QObject):
         self._job = job
         (pool or QThreadPool.globalInstance()).start(lambda: job.run())
 
+    def release(self) -> None:
+        """조회하며 받은 moov를 놓는다 — 편집 창이 닫힐 때 부른다 (#309).
+
+        이 객체는 ``deleteLater`` 뒤에도 한동안 남을 수 있고, 긴 영상의 해석된 색인은 수백 MB다.
+        확인했으면 카드가 이미 넘겨받았고, 취소했으면 쓸 곳이 없다.
+        """
+        self._released = True
+        self._head = None
+
     def _onBasis(self, basis) -> None:
         self._job = None
         self.fps = frame_rate(basis.fps)
         self.duration = basis.duration
+        if not self._released:
+            self._head = getattr(basis, "mp4_head", None)  # 확인하면 카드에 둔다
         self.rows = [
             [format_timecode(selection.start, self.fps), format_timecode(selection.end, self.fps)]
             for selection in self.item.selections
@@ -516,6 +566,8 @@ class SectionEditViewModel(QObject):
         self.item.section_refit_fps = None
         self.item.section_end_pulled = self.item.section_end_extended = False
         self.item.section_unfit = frozenset()
+        # 조회하며 받은 moov를 카드에 둔다 — 구간이 있을 때만(전체 다운로드는 moov를 쓰지 않는다)
+        keep_section_head(self.item, self.item.base_url, self._head if selections else None)
         logger.info("구간 편집: %d개 (%sfps)", len(selections), format_fps(self.fps))
         if self._notify is not None:
             self._notify(self.item)
@@ -624,6 +676,7 @@ class SectionRefitter(QObject):
         item.section_end_pulled = item.section_end_extended = False
         item.section_unfit = frozenset()
         item.section_check = SECTION_CHECK_PENDING
+        item.section_head = None  # 앞 해상도의 moov다 — 새 해상도의 조회가 끝나면 새로 둔다
 
         generation = self._generation.get(item, 0) + 1
         self._generation[item] = generation
@@ -676,6 +729,8 @@ class SectionRefitter(QObject):
         item.section_end_pulled = result.end_pulled
         item.section_end_extended = result.end_extended
         item.section_unfit = result.unfit
+        # 새 해상도를 조회하며 받은 moov — 요청이 아직 유효하므로 지금의 주소에서 받은 것이다
+        keep_section_head(item, item.base_url, getattr(basis, "mp4_head", None))
         logger.info(
             "해상도 변경으로 구간을 다시 맞춤: %sfps%s%s%s",
             format_fps(rate),

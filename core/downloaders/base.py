@@ -383,6 +383,19 @@ class BaseDownloader(ABC):
         """ProgressEvent에 실을 전체 크기. 미리 알 수 없는 다운로더는 None."""
         return self.s.total_size
 
+    def _prepare_note(self) -> str:
+        """준비 단계의 로그 줄에 덧붙일 말 (기본: 없음). 무엇을 받았고 무엇을 다시 썼는지 등."""
+        return ""
+
+    def _log_if_supported(self, name: str, *args) -> None:
+        """로거에 그 메서드가 있을 때만 부른다.
+
+        나중에 더한 로그 줄에 쓴다 — 그 메서드가 없는 로거(기존 대역 등)를 깨뜨리지 않는다.
+        """
+        method = getattr(self.logger, name, None)
+        if callable(method):
+            method(*args)
+
     def _postprocess_output_size(self) -> int:
         """후처리 종료 로그에 남길 산출물 크기(바이트) (기본: output_path의 크기)."""
         return os.path.getsize(self.s.output_path)
@@ -395,6 +408,11 @@ class BaseDownloader(ABC):
         try:
             self.s.start_time = tm.time()
             plan = self.prepare(self.s.content)
+            # 준비(받을 것을 정하는 단계 — 구간 다운로드는 여기서 moov · 플레이리스트를 받는다)에
+            # 걸린 시간. 전송 시간(Transfer)은 이것을 포함한 채로 둔다 — 그 줄의 뜻을 바꾸지
+            # 않고, 준비를 뺀 값을 따로 한 줄 남긴다 (#309)
+            prepare_elapsed = tm.time() - self.s.start_time
+            self._log_if_supported("log_prepare_complete", prepare_elapsed, self._prepare_note())
             if plan.selections and not self.supports_selections:
                 # 구간을 해석하지 못하는 다운로더는 명시적으로 거부한다 (#83, #309)
                 raise NotImplementedError(
@@ -473,6 +491,9 @@ class BaseDownloader(ABC):
                     self.s.total_downloaded_size,
                     self.s.failed_threads + self.s.restart_threads,
                     self._peak_threads,
+                )
+                self._log_if_supported(
+                    "log_transfer_net", max(transfer_elapsed - prepare_elapsed, 0.0)
                 )
                 # (4) 다운로드 완료 후 타입별 마무리(병합 등) 후 완료 통지 —
                 # 후처리 필요 여부는 실행 중 추측하지 않고 계획이 답한다 (#83)

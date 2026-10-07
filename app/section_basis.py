@@ -26,7 +26,7 @@
 import logging
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fractions import Fraction
 
 import config.config as config
@@ -59,6 +59,9 @@ class SectionBasis:
 
     fps: Fraction  # 프레임률 — 타임코드의 FF를 읽고 구간을 검증하는 기준
     duration: float  # 영상 길이(초) — 마지막 영상 프레임이 끝나는 시각
+    # 인코딩 완료 VOD를 조회하며 받은 moov. 다운로드를 시작할 때 엔진에 넘기면 엔진이 다시
+    # 받지 않는다. 그 밖의 타입과 대역은 None이다. 같은지 견줄 때와 repr에는 들지 않는다
+    mp4_head: Mp4Head | None = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -134,7 +137,7 @@ def probe_mp4(base_url: str) -> SectionProbe:
         timing.note("프레임", lambda: f"{len(index.frame_pts):,}개")
         timing.note("영상 길이", lambda: f"{index.duration:.3f}초")
         return SectionProbe(
-            basis=SectionBasis(fps=index.fps, duration=index.duration),
+            basis=SectionBasis(fps=index.fps, duration=index.duration, mp4_head=head),
             fps_source=FPS_DECLARED,
             head=head,
         )

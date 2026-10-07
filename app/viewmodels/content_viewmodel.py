@@ -303,6 +303,7 @@ class ContentViewModel(QObject):
         row = self.model.getRow(item)
         if row is not None:
             self.model.removeRows(row, 1)
+            item.section_head = None  # 구간을 정하며 받아 둔 moov를 버린다 (#309)
             self._resumeHeldBatch()  # 기다리던 카드가 지워졌을 수 있다
             index = self.model.rowCount()
             self.deleteItemRequested.emit(item, index)

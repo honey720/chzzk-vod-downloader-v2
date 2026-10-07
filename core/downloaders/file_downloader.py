@@ -164,6 +164,13 @@ class FileDownloader(BaseDownloader):
             total_size=total_size,
         )
 
+    def _prepare_note(self) -> str:
+        """준비 단계의 로그에 moov를 넘겨받아 다시 썼는지(reused) 새로 받았는지(fetched)를 적는다."""
+        reused = getattr(self, "_moov_reused", None)
+        if reused is None:
+            return ""  # 구간 다운로드가 아니다 — moov를 쓰지 않는다
+        return "moov reused" if reused else "moov fetched"
+
     def _prepare_sections(self, content: Content) -> DownloadPlan:
         """구간 다운로드의 계획 — 구간마다의 바이트 범위를 받는다 (#309).
 
@@ -190,11 +197,9 @@ class FileDownloader(BaseDownloader):
         if resume is not None and not resume.fits(content.selections, content.selection_paths):
             resume = None
         self._done_before = resume.done if resume is not None else frozenset()
-        head = (
-            (resume.mp4_head if resume is not None else None)
-            or content.mp4_head
-            or fetch_mp4_head(self.s.base_url)
-        )
+        handed = (resume.mp4_head if resume is not None else None) or content.mp4_head
+        head = handed or fetch_mp4_head(self.s.base_url)
+        self._moov_reused = handed is not None
         index, picked = self._pick_ranges(head, content)
         source_path = partial_source_path_for(content.selection_paths[0])
         stored = self._stored_layout(resume, index, picked, head.data) if resume else None
@@ -202,6 +207,7 @@ class FileDownloader(BaseDownloader):
             # 임시 원본을 다시 쓸 수 없어 새로 받는다. 새로 받는 바이트는 지금의 파일의 것이다 —
             # 남겨 둔 moov가 아니라 지금의 moov로 범위를 정한다(그 사이 파일이 바뀌었을 수 있다)
             head = fetch_mp4_head(self.s.base_url)
+            self._moov_reused = False
             index, picked = self._pick_ranges(head, content)
         self._reuses_source = stored is not None
         if stored is not None:

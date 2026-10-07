@@ -59,6 +59,11 @@ class ContentItem:
         # 새 영상의 끝 이후에서 시작해 당길 수 없는 구간의 번호(0부터). 구간은 그대로 두고
         # 카드에 경고를 붙이며, 받을 때 이 구간만 엔진에 넘기지 않는다
         self.section_unfit = frozenset()
+        # 구간을 정하며 받은 moov — (그때의 주소, core.models.mp4_index.Mp4Head). 다운로드를
+        # 시작할 때 주소가 같으면 엔진에 넘겨 다시 받지 않게 한다. 긴 영상의 해석된 색인은
+        # 수백 MB라 앱 전체에서 한 카드의 것만 든다(section_edit_viewmodel.keep_section_head).
+        # 인코딩 완료 VOD에만 있다. 없으면 None
+        self.section_head = None
         # 마지막 다운로드가 엔진에 넘긴 구간 파일 경로 — 번호가 작은 것부터. 완료 카드의 폴더
         # 열기가 실제로 만들어진 구간 파일을 찾는 데 쓴다. 구간 다운로드를 한 적이 없으면 빈 튜플
         self.section_paths = ()

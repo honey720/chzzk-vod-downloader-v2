@@ -32,6 +32,7 @@ import requests
 from PySide6.QtCore import QObject, Qt, Signal
 
 from app.viewmodels.data import ContentItem
+from app.viewmodels.section_edit_viewmodel import take_section_head
 from core.api.playback_tracks import StreamSelectionError
 from core.downloaders.base import PostprocessError
 from core.downloaders.hls_aes_downloader import DecryptionError
@@ -239,6 +240,9 @@ class DownloadViewModel(QObject):
             data.content.section_resume = resume
             data.content.selection_paths = paths
             item.section_paths = tuple(paths)  # 완료 카드의 폴더 열기가 여기서 구간 파일을 찾는다
+            # 구간을 정하며 받은 moov를 넘긴다 (#309) — 주소가 같을 때만. 엔진이 다시 받지 않는다.
+            # 카드에서는 비운다 — 이제 엔진이 들고, 다운로드가 끝나면 함께 사라진다
+            data.content.mp4_head = take_section_head(item)
         self._data = data
         task_logger = DownloadLogger()
         # DownloadTask가 상태 전이 흡수와 모델↔카드(item) 상태 연결을 담당한다
@@ -283,10 +287,21 @@ class DownloadViewModel(QObject):
         """다운로드 중지 (구 DownloadManager.stop). 병합 표시도 함께 해제한다."""
         if self.task is not None:
             self.task.stop()
+        self._dropHead()
         if self.item is not None:
             # 구 DownloadM3U8Thread가 run 종료 후 수행하던 WAITING 정리와 동일
             self.item.post_process = False
         self.stopped.emit(self.item)
+
+    def _dropHead(self) -> None:
+        """엔진에 넘겼던 moov를 놓는다 (#309) — 다운로드가 끝났다(완료 · 실패 · 정지).
+
+        긴 영상의 해석된 색인은 수백 MB다. 이 뷰모델은 다음 다운로드를 시작할 때까지 마지막
+        다운로드의 데이터를 들고 있으므로 여기서 놓지 않으면 그때까지 남는다. 일부 구간만
+        실패해 엔진이 남긴 이어받기 기록(``section_retry``)의 moov는 그대로 둔다 — 재시도가 쓴다.
+        """
+        if self._data is not None:
+            self._data.content.mp4_head = None
 
     def removeThreads(self) -> None:
         """실행 중인 워커의 종료를 상한을 두고 기다린 뒤 참조를 정리한다 (구 removeThreads).
@@ -363,6 +378,7 @@ class DownloadViewModel(QObject):
             return
         item = self.item
         self._syncSections()
+        self._dropHead()
         if self._excluded:
             # 넘긴 구간은 모두 만들었지만 뺀 구간이 있다 (#309) — 일부 실패로 끝낸다. 넘긴
             # 구간을 모두 끝낸 것으로 적어 둔다: 재시도해도 뺀 구간은 다시 빠지고, 만든 파일은
@@ -425,6 +441,7 @@ class DownloadViewModel(QObject):
             # 엔진이 끝낸 구간과 받아 둔 데이터를 남겼다 — 다음 다운로드가 실패한 구간만 다시
             # 처리한다. 남기지 않은 실패(전송 실패 등)는 아이템에 있던 것을 그대로 둔다
             item.section_retry = (self._resume_key, resume)
+        self._dropHead()
         if self.task is not None:
             self.task.stop()
         self.handle = None

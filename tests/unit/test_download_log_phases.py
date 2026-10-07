@@ -177,3 +177,44 @@ def test_download_info_logs_output_path_without_sections(tmp_path, monkeypatch):
     text = log_file.read_text(encoding="utf-8")
     assert "output_path: 'out.mp4'" in text
     assert "output_path_1" not in text
+
+
+def test_prepare_and_net_transfer_lines_are_added_without_changing_the_transfer_line(
+    tmp_path, monkeypatch
+):
+    """준비 줄과 준비를 뺀 전송 줄을 더해도 Transfer 줄과 요약 지표는 그대로여야 한다 (#309).
+
+    준비 6.90초(moov reused) · Transfer 12.34초 · 준비를 뺀 전송 5.44초를 차례로 로깅
+    -> 로그에 세 줄이 그 글자 그대로, 요약의 transfer_seconds == 12.34
+    """
+    logger = _make_logger(tmp_path, monkeypatch)
+    logger.log_prepare_complete(6.9, "moov reused")
+    logger.log_transfer_complete(12.34, 987654321, 3, 40)
+    logger.log_transfer_net(5.44)
+    log_file = Path(logger.log_file)
+    logger.save_and_close()
+
+    text = log_file.read_text(encoding="utf-8")
+    assert "Prepare completed in 6.90 seconds - moov reused" in text
+    assert (
+        "Transfer completed in 12.34 seconds - Bytes: 987654321 - Retries: 3 - Peak threads: 40"
+        in text
+    )
+    assert "Transfer without prepare: 5.44 seconds" in text
+    assert summarize(log_file)["transfer_seconds"] == 12.34
+
+
+def test_prepare_line_without_a_note_ends_at_the_seconds(tmp_path, monkeypatch):
+    """덧붙일 말이 없는 준비 줄은 시간에서 끝나야 한다 (#309).
+
+    준비 0.02초, 덧붙인 말 없음 -> 줄이 "Prepare completed in 0.02 seconds"로 끝남
+    """
+    logger = _make_logger(tmp_path, monkeypatch)
+    logger.log_prepare_complete(0.02)
+    log_file = Path(logger.log_file)
+    logger.save_and_close()
+
+    lines = log_file.read_text(encoding="utf-8").splitlines()
+    assert [line for line in lines if "Prepare completed" in line][0].endswith(
+        "Prepare completed in 0.02 seconds"
+    )

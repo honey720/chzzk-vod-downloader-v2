@@ -181,6 +181,22 @@ class DownloadLogger:
             f" - Retries: {retries} - Peak threads: {peak_threads}"
         )
 
+    def log_prepare_complete(self, elapsed: float, note: str = ""):
+        """준비 단계 종료를 로깅합니다 — 받을 것을 정하는 데 걸린 시간 (#309).
+
+        구간 다운로드는 준비에서 moov · 플레이리스트를 받는다. note는 엔진이 덧붙이는 말이다
+        ("moov reused" — 넘겨받은 moov를 다시 썼다 / "moov fetched" — 새로 받았다).
+        """
+        self.info(f"Prepare completed in {elapsed:.2f} seconds" + (f" - {note}" if note else ""))
+
+    def log_transfer_net(self, elapsed: float):
+        """준비를 뺀 실제 전송 시간을 로깅합니다 (#309).
+
+        "Transfer completed in"의 시간은 준비를 포함한다 — 그 줄의 뜻은 바꾸지 않고, 준비를 뺀
+        값을 이 줄에 따로 남긴다.
+        """
+        self.info(f"Transfer without prepare: {elapsed:.2f} seconds")
+
     def log_postprocess_start(self, kind: str):
         """후처리 시작을 로깅합니다 (kind: remux 등)."""
         self.info(f"Postprocess started - {kind}")

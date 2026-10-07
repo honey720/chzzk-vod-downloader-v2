@@ -23,6 +23,7 @@ requests 세션으로 요청하고 진짜 응답 객체를 받으며, 전송 어
 import os
 import re
 import subprocess
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -993,3 +994,78 @@ def test_retry_without_the_kept_source_plans_the_ranges_from_a_freshly_received_
     check = check_cut(_frames(sources["gappy"]), again.engine.cut_results[0])
     assert check.ok, check.notes
     assert snapshot(kept) == kept
+
+
+# ================================================================ 준비 단계의 로그
+
+
+def _logged(run: "_Run", name: str) -> list[tuple]:
+    return [args for called, args in run.logger.calls if called == name]
+
+
+def test_prepare_log_says_the_moov_was_fetched_when_none_was_handed_in(server, tmp_path):
+    """moov를 넘겨받지 않은 구간 다운로드는 준비 로그에 "moov fetched"를 남겨야 한다.
+
+    기본 입력, 구간 프레임 35~80, content.mp4_head 없음
+    -> log_prepare_complete 1회, 덧붙인 말 == "moov fetched", 걸린 시간 >= 0
+    """
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))]).start()
+
+    ((elapsed, note),) = _logged(run, "log_prepare_complete")
+    assert note == "moov fetched"
+    assert elapsed >= 0
+
+
+def test_prepare_log_says_the_moov_was_reused_when_one_was_handed_in(server, tmp_path):
+    """moov를 넘겨받은 구간 다운로드는 준비 로그에 "moov reused"를 남겨야 한다.
+
+    기본 입력, 구간 프레임 35~80, fetch_mp4_head의 결과를 content.mp4_head에 넣음
+    -> log_prepare_complete 1회, 덧붙인 말 == "moov reused"
+    """
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))])
+    run.data.content.mp4_head = fetch_mp4_head(server.url("plain"))
+
+    run.start()
+
+    ((_elapsed, note),) = _logged(run, "log_prepare_complete")
+    assert note == "moov reused"
+
+
+def test_prepare_log_of_a_whole_download_says_nothing_about_the_moov(server, tmp_path):
+    """구간이 없는 다운로드의 준비 로그는 moov에 대해 아무 말도 덧붙이지 않아야 한다.
+
+    기본 입력, selections 빈 튜플
+    -> log_prepare_complete 1회, 덧붙인 말 == ""
+    """
+    run = _Run(server, "plain", tmp_path, []).start()
+
+    ((_elapsed, note),) = _logged(run, "log_prepare_complete")
+    assert note == ""
+
+
+def test_transfer_without_prepare_is_the_transfer_time_minus_the_prepare_time(
+    server, tmp_path, monkeypatch
+):
+    """준비를 뺀 전송 시간은 Transfer 줄의 시간에서 준비 시간을 뺀 값이어야 한다.
+
+    moov 받기가 0.3초 걸리게 함, 구간 프레임 35~80
+    -> 준비 >= 0.3초, log_transfer_net의 값 == log_transfer_complete의 시간 − 준비 시간,
+       log_transfer_complete의 시간 >= 0.3초(준비를 포함한 채다)
+    """
+    slow = 0.3  # 초 — 시계 해상도보다 충분히 길다
+    real_fetch = fd_module.fetch_mp4_head
+
+    def slow_fetch(url):
+        time.sleep(slow)
+        return real_fetch(url)
+
+    monkeypatch.setattr(fd_module, "fetch_mp4_head", slow_fetch)
+
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))]).start()
+
+    ((prepare, _note),) = _logged(run, "log_prepare_complete")
+    ((transfer, *_rest),) = _logged(run, "log_transfer_complete")
+    ((net,),) = _logged(run, "log_transfer_net")
+    assert prepare >= slow
+    assert transfer >= slow
+    assert net == pytest.approx(transfer - prepare, abs=1e-9)
