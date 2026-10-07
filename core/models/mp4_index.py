@@ -9,7 +9,7 @@
 먼저 표시되는 샘플의 시각이 0이다.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fractions import Fraction
 
 
@@ -66,6 +66,9 @@ class Mp4Head:
     # 파일의 0부터 moov의 마지막 바이트까지. moov가 첫 읽기 안에서 시작하지 않았으면
     # (mdat 뒤의 moov 등) 앞부분을 받지 않았으므로 None이다
     data: bytes | None
+    # moov를 해석하는 데 걸린 시간(초) — 받는 시간과 나눠 보려고 적는 진단값이다. 재지
+    # 않았으면 None. 같은지 견줄 때와 repr에는 들지 않는다
+    parse_seconds: float | None = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True)

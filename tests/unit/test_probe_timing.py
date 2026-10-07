@@ -186,21 +186,23 @@ def test_encrypted_lookup_keeps_the_key_out_of_the_line(caplog, monkeypatch):
 
 
 def test_mp4_lookup_logs_the_moov_size_and_length(caplog, monkeypatch):
-    """인코딩 완료 VOD 조회는 moov 크기 · 프레임 수 · 영상 길이를 줄에 적어야 한다.
+    """인코딩 완료 VOD 조회는 moov 크기 · 프레임 수 · 영상 길이와, 받기 · 해석으로 나눈 시간을 줄에 적어야 한다.
 
-    moov가 파일의 32~340627바이트, 프레임 3개, 길이 1234.5초
-    -> "[mp4]", "moov 340,596바이트", "프레임 3개", "영상 길이 1234.500초"
+    moov가 파일의 32~340627바이트, 프레임 3개, 길이 1234.5초, 해석에 걸린 시간 0.5초
+    -> "[mp4]", "moov 340,596바이트", "프레임 3개", "영상 길이 1234.500초", "moov 해석 0.50초", "moov 받기"
     """
     index = SimpleNamespace(
         fps=Fraction(60), duration=1234.5, moov_range=(32, 340627), frame_pts=(0.0, 0.1, 0.2)
     )
-    monkeypatch.setattr(section_basis, "fetch_mp4_head", lambda url: SimpleNamespace(index=index))
+    head = SimpleNamespace(index=index, parse_seconds=0.5)  # 해석에 0.5초 걸렸다고 알린다
+    monkeypatch.setattr(section_basis, "fetch_mp4_head", lambda url: head)
 
     with caplog.at_level(logging.INFO, logger=LOGGER):
         probe_mp4(URL)
 
     line = _lines(caplog)[0]
     assert "[mp4]" in line and "moov 340,596바이트" in line
+    assert "moov 해석 0.50초" in line and "moov 받기" in line  # 받기와 해석을 나눠 적는다
     assert "프레임 3개" in line and "영상 길이 1234.500초" in line
     assert SECRETS["host"] not in line and SECRETS["token"] not in line
 

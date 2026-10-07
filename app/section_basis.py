@@ -24,6 +24,7 @@
 """
 
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from fractions import Fraction
@@ -102,6 +103,14 @@ def probe_section_basis(item) -> SectionBasis:
     raise SectionBasisError(f"구간 기능이 없는 타입이다: {kind!r}")
 
 
+def _clock() -> float:
+    """시간 기록용 시계. 읽지 못하면 0.0 — 재는 일의 실패가 조회를 막지 않는다."""
+    try:
+        return time.perf_counter()
+    except Exception:
+        return 0.0
+
+
 def probe_mp4(base_url: str) -> SectionProbe:
     """인코딩 완료 VOD — mp4의 moov를 받아 샘플 표에서 읽는다.
 
@@ -111,11 +120,16 @@ def probe_mp4(base_url: str) -> SectionProbe:
     """
     timing = ProbeTiming("mp4")
     with timing.watching():
-        # 받기(첫 읽기 · moov의 나머지)와 해석이 core의 한 함수 안에 있어 단계로 나누지 못한다 —
-        # 요청마다의 시간 · 크기가 그 안의 첫 읽기와 나머지 받기를 보여 준다
+        # 받기(첫 읽기 · moov의 나머지)와 해석이 core의 한 함수 안에 있다 — 그 함수가 해석에 쓴
+        # 시간을 돌려주므로(Mp4Head.parse_seconds) 단계 시간에서 빼 받기와 해석으로 나눠 적는다.
+        # 요청마다의 시간 · 크기는 첫 읽기와 나머지 받기를 보여 준다
         with timing.stage("moov 받기 · 해석"):
+            started = _clock()
             head = fetch_mp4_head(base_url)
+            elapsed = _clock() - started
         index = head.index
+        timing.note("moov 받기", lambda: f"{elapsed - head.parse_seconds:.2f}초")
+        timing.note("moov 해석", lambda: f"{head.parse_seconds:.2f}초")
         timing.note("moov", lambda: f"{index.moov_range[1] - index.moov_range[0] + 1:,}바이트")
         timing.note("프레임", lambda: f"{len(index.frame_pts):,}개")
         timing.note("영상 길이", lambda: f"{index.duration:.3f}초")

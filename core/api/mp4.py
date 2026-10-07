@@ -21,6 +21,7 @@ moof에 흩어져 있어 이 방식으로 읽을 수 없다 — 조용히 틀린
 
 import re
 import struct
+import time
 from collections import Counter
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
@@ -181,8 +182,15 @@ def read_mp4_head(read: Callable[[int, int], bytes]) -> Mp4Head:
                 moov += read(moov_offset + len(moov), moov_size - len(moov))
             if len(moov) < moov_size:
                 raise Mp4Error(MP4_INVALID, "moov가 파일 끝에서 잘렸다")
-            index = replace(parse_moov(moov), moov_range=(moov_offset, moov_offset + moov_size - 1))
-            return Mp4Head(index=index, data=data[:start] + moov if offset == 0 else None)
+            parse_started = time.perf_counter()
+            parsed = parse_moov(moov)
+            parse_seconds = time.perf_counter() - parse_started
+            index = replace(parsed, moov_range=(moov_offset, moov_offset + moov_size - 1))
+            return Mp4Head(
+                index=index,
+                data=data[:start] + moov if offset == 0 else None,
+                parse_seconds=parse_seconds,
+            )
         if scan.reached_end or scan.next_offset <= offset:
             break
         offset, request = scan.next_offset, _HEADER_READ_BYTES
@@ -423,10 +431,17 @@ def _parse_moov(moov: bytes) -> Mp4Index:
 def _to_track(raw: _RawTrack, origin: Fraction) -> Mp4Track:
     """틱 단위 트랙을 초 단위 표시 시각으로 바꾼다."""
     shift = raw.empty_edit - origin
+    # 시각 = shift + ticks ÷ timescale. 샘플마다 Fraction을 만들지 않고 같은 유리수를 정수 둘의
+    # 나눗셈으로 낸다: (shift의 분자 × timescale + ticks × shift의 분모) ÷ (shift의 분모 × timescale).
+    # 정수 ÷ 정수는 가장 가까운 float로 반올림되고 float(Fraction)도 같은 나눗셈이라 값이 같다.
+    # 8시간 영상(샘플 300만 개)에서 이 변환이 해석 시간의 대부분이었다 (#309)
+    offset = shift.numerator * raw.timescale
+    step = shift.denominator
+    scale = shift.denominator * raw.timescale
     return Mp4Track(
         timescale=raw.timescale,
-        times=tuple(float(shift + Fraction(ticks, raw.timescale)) for ticks in raw.presented),
-        decode_times=tuple(float(shift + Fraction(ticks, raw.timescale)) for ticks in raw.decoded),
+        times=tuple([(offset + ticks * step) / scale for ticks in raw.presented]),
+        decode_times=tuple([(offset + ticks * step) / scale for ticks in raw.decoded]),
         durations=tuple(delta / raw.timescale for delta in raw.deltas),
         offsets=tuple(raw.offsets),
         sizes=tuple(raw.sizes),
@@ -633,14 +648,16 @@ def _sample_offsets(
         # first_chunk는 1부터다. 구간은 다음 구간의 first_chunk 직전 청크까지다
         last_chunk = runs[run_index + 1][0] - 1 if run_index + 1 < len(runs) else len(chunk_offsets)
         for chunk in range(first_chunk - 1, last_chunk):
-            position = chunk_offsets[chunk]
             chunk_starts.append(sample)
-            for _ in range(samples_per_chunk):
-                if sample >= len(sizes):
-                    raise Mp4Error(MP4_INVALID, "stsc의 샘플 수가 stsz보다 많다")
-                offsets.append(position)
-                position += sizes[sample]
-                sample += 1
+            if not samples_per_chunk:
+                continue
+            last = sample + samples_per_chunk
+            if last > len(sizes):
+                raise Mp4Error(MP4_INVALID, "stsc의 샘플 수가 stsz보다 많다")
+            # 청크 안의 샘플은 이어 붙어 있다 — 청크 위치에서 앞 샘플들의 크기를 누적한 자리다.
+            # 샘플마다 파이썬 루프를 돌지 않고 청크 단위로 누적한다(긴 영상의 해석 시간 #309)
+            offsets.extend(accumulate(sizes[sample : last - 1], initial=chunk_offsets[chunk]))
+            sample = last
     if sample != len(sizes):
         raise Mp4Error(MP4_INVALID, f"stsc {sample}개 · stsz {len(sizes)}개")
     return offsets, chunk_starts
