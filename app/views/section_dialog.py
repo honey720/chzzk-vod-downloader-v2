@@ -295,14 +295,13 @@ class SectionEditDialog(QDialog):
                 )
                 edit.committed.connect(lambda r=index, c=column, e=edit: self._onCommitted(r, c, e))
                 edit.entered.connect(lambda r=index, c=column: self._onEntered(r, c))
-                # 목록의 값을 넣는다 — 넣은 값은 전부 밝게 보인다. 넣지 않으면 값이 0인 칸
-                # (00:00:00:00)이 아무것도 치지 않은 칸처럼 흐리게 보인다
-                edit.setText(self._viewmodel.rows[index][column])
             row.upButton.clicked.connect(lambda _=False, r=index: self._viewmodel.moveRow(r, -1))
             row.downButton.clicked.connect(lambda _=False, r=index: self._viewmodel.moveRow(r, 1))
             row.deleteButton.clicked.connect(lambda _=False, r=index: self._viewmodel.removeRow(r))
             self._rowLayout.insertWidget(index, row)
             self._rows.append(row)
+        # 목록의 값은 _refresh가 칸에 넣는다 — 빈 시각(빈 글)이 아닌 값은 새 칸의 값과 달라
+        # 언제나 들어가고, 넣은 값은 0이어도 전부 밝게 보인다
         self._refresh()
 
     def _isCurrent(self, row: int, column: int, edit: TimePointEdit) -> bool:
