@@ -64,6 +64,10 @@
         <translation>Click to edit sections</translation>
     </message>
     <message>
+        <source>Preparing</source>
+        <translation>Preparing</translation>
+    </message>
+    <message>
         <source>Cutting</source>
         <translation>Cutting</translation>
     </message>

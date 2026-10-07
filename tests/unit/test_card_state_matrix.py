@@ -374,13 +374,17 @@ class TestProgressBarColumn:
 
 class TestRightColumnResolutionAndSize:
     """3행 우측 — 확정 해상도를 파일 크기 옆에 붙인다("1080p · 595.34 MB").
-    한 자리라 행이 늘지 않는다. 대기에서는 pill이 선택을 보여주므로 안 붙인다."""
+    한 자리라 행이 늘지 않는다. 대기에서는 pill이 선택을 보여주므로 안 붙인다.
+    받는 중 · 일시정지의 인코딩 완료 VOD는 "받은 크기 / 전체 크기"다 (#309 — v2.9.6의
+    표기를 되살렸다. 폭이 모자라면 전체 크기만 남는다 — tests/unit/test_card_size_text.py)."""
 
     @pytest.mark.parametrize("state", (DownloadState.RUNNING, DownloadState.PAUSED))
     def test_running_and_paused_show_resolution_with_total_size(self, qapp, state):
         widget = _make_widget(qapp, state, PROGRESS[state])
         assert widget.fileSizeLabel.isVisible()
-        assert widget.fileSizeLabel.text() == "1080p · 595.34 MB", widget.fileSizeLabel.text()
+        assert widget.fileSizeLabel.text() == "1080p · 595.09 MB / 595.34 MB", (
+            widget.fileSizeLabel.text()
+        )
 
     def test_finished_shows_resolution_with_downloaded_size(self, qapp):
         widget = _make_widget(qapp, DownloadState.FINISHED, 100)

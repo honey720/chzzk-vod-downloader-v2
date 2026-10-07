@@ -6,6 +6,7 @@ import config.config as config
 from PySide6.QtWidgets import QMainWindow, QMessageBox, QFileDialog, QApplication, QSizePolicy, QWidget
 from PySide6.QtCore import QPoint, QRect, QStandardPaths, QTimer
 
+from app.process_memory import log_process_memory
 from app.viewmodels.download_viewmodel import DownloadViewModel
 from app.viewmodels.path_gates import check_fetch_path, check_remember_path, normalize_path
 from app.views.dialog import SettingDialog
@@ -421,6 +422,7 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         if dialog is not None:
             self.contentManager.editWaitChanged.disconnect(dialog.setWaitingHint)
             dialog.viewModel().release()  # 조회하며 받은 moov를 놓는다
+            log_process_memory("편집 창 닫힘")
             dialog.viewModel().deleteLater()
             dialog.deleteLater()
         if item is not None:

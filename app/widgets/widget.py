@@ -420,6 +420,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             # ⓪ 구간 요약 뒤의 알림 — 가장 먼저 양보한다 (#309)
             if known:
                 self._fitSectionNotice(row_width, spacing)
+                self._fitReceivedSize(row_width, spacing)
             # ② pill 모드
             if not self._slotShowsPills():
                 mode = "hidden"
@@ -483,7 +484,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """
         if not self._sectionCount() or self.item.downloadState != DownloadState.WAITING:
             return
-        if not self._sectionNotice():
+        if not self._sectionNotice() and not self._sectionSizeText():
             return
         label = self.fileSizeLabel
         others = 0
@@ -492,11 +493,12 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             others += selected.naturalWidth() + CARET_WIDTH + CARET_GAP + spacing
         if getattr(self, "_pathShown", False):
             others += self.pathIconButton.minimumWidth() + spacing
-        # 긴 것부터 대 본다 — 전부, 유저가 봐야 하는 것만, 요약만
+        # 긴 것부터 대 본다 — 전부, 유저가 봐야 하는 것만, 알림 없이, 크기도 없이
         candidates = [
             self._sectionSummary(),
             self._sectionSummary(warnings_only=True),
             self._sectionSummary(with_notice=False),
+            self._sectionSummary(with_notice=False, with_size=False),
         ]
         metrics = label.fontMetrics()
         text = next(
@@ -506,6 +508,36 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         if label.text() != text:
             label.setText(text)
             self._applySectionHint()
+            self._reserveFileSizeWidth()
+
+    def _fitReceivedSize(self, row_width: int, spacing: int) -> None:
+        """받는 중 · 일시정지 카드의 "받은 크기 / 받을 크기"를 폭이 될 때만 다 적는다 (#309).
+
+        이 자리의 글은 말줄임하지 않고 폭을 먼저 확보한다(``_reserveFileSizeWidth``). 받은
+        크기까지 적은 글이 진행 문구 · 경로와 함께 한 줄에 안 들어가면 그것들이 밀려 잘린다 —
+        그 폭에서는 받은 크기를 떼고 받을 크기만 적는다(진행률이 받은 양을 알린다). 3행에서
+        경로보다 먼저 양보하는 것이 받은 크기다.
+
+        판정은 지금 표시 중인 글의 폭이 아니라 "행 폭 − 진행 문구 − 경로의 최소 폭"으로만
+        한다 — 글을 바꿔도 되먹임이 없다.
+        """
+        item = self.item
+        if item.downloadState not in (DownloadState.RUNNING, DownloadState.PAUSED):
+            return
+        full = self._withResolution(self._sizeText(item))
+        short = self._withResolution(self._sizeText(item, with_received=False))
+        if full == short:
+            return
+        others = 0
+        if self.statusLabel.isVisibleTo(self):
+            others += self.statusLabel.sizeHint().width() + spacing
+        if getattr(self, "_pathShown", False):
+            others += self._pathMinTextWidth() + spacing
+        label = self.fileSizeLabel
+        fits = label.fontMetrics().horizontalAdvance(full) + 4 + others <= row_width
+        text = full if fits else short
+        if label.text() != text:
+            label.setText(text)
             self._reserveFileSizeWidth()
 
     def _repLabel(self, rep) -> str:
@@ -848,18 +880,35 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             return ""
         return f" · {self.item.sections_done}/{total}"
 
-    def _sectionSummary(self, with_notice: bool = True, warnings_only: bool = False) -> str:
+    def _sectionSummary(
+        self, with_notice: bool = True, warnings_only: bool = False, with_size: bool = True
+    ) -> str:
         """대기 카드의 재생 시간 자리에 적는 구간 요약 — 구간 수와 길이의 합 (#309).
 
-        길이는 남은 시간과 같은 짧은 표기("3:12" · "1:02:03")로 적는다. 구간을 다시 맞춘
-        알림이 있으면 뒤에 붙인다 — 좁은 폭에서는 ``_fitSectionNotice``가 알림을 뗀다.
+        길이는 남은 시간과 같은 짧은 표기("3:12" · "1:02:03")로 적는다. 받을 크기를 알면
+        (인코딩 완료 VOD) 그 뒤에 적고, 구간을 다시 맞춘 알림이 있으면 그 뒤에 붙인다 —
+        좁은 폭에서는 ``_fitSectionNotice``가 알림과 크기를 뗀다.
         """
         selections = self.item.selections
         length = sum(selection.end - selection.start for selection in selections)
         clock = self._shortRemain(strftime("%H:%M:%S", gmtime(max(length, 0))))
         summary = self.tr("Sections {0} · {1}").format(len(selections), clock)
+        size = self._sectionSizeText() if with_size else ""
+        if size:
+            summary = f"{summary} · {size}"
         notice = self._sectionNotice(warnings_only) if with_notice else ""
         return f"{summary} · {notice}" if notice else summary
+
+    def _sectionSizeText(self) -> str:
+        """구간 다운로드가 받을 크기 — 인코딩 완료 VOD에서 그 값을 알 때만. 모르면 빈 글이다.
+
+        세그먼트 방식(fMP4 · TS)은 받기 전에 크기를 모른다. 영상 전체 크기를 대신 적지 않는다 —
+        구간 카드가 받는 양이 아니다.
+        """
+        size = getattr(self.item, "section_bytes", None)
+        if self.item.is_segment_based or not size:
+            return ""
+        return self.setSize(size)
 
     def _sectionsEditable(self) -> bool:
         """구간 편집 창을 열 수 있는 카드인지 — 대기 상태이고 구간 기능이 있는 타입이다 (#309)."""
@@ -954,7 +1003,10 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
                 self.fileSizeLabel.setText(f"{item.total_size}")
 
         elif self.item.downloadState == DownloadState.RUNNING:
-            if self._sectionCount() and self.item.post_process:
+            if self._isPreparing():
+                # 엔진이 받을 것을 정하는 중 (#309) — 진행률 · 속도가 아직 없다. 막대는 값 없이 움직인다
+                self.statusLabel.setText(self.tr("Preparing"))
+            elif self._sectionCount() and self.item.post_process:
                 # 구간을 자르는 단계 (#309) — 속도 · 남은 시간은 뜻이 없어 적지 않고 단계
                 # 문구를 적는다. 막대는 전송과 컷을 합친 하나다
                 cutting_text = self.tr("Cutting")
@@ -1024,11 +1076,50 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
 
         self.applyStateStyle()
 
-    def _sizeText(self, item: ContentItem) -> str:
-        """진행·일시정지 카드의 크기 표기 — 세그먼트 기반은 받은 양, 그 외는 총량."""
+    def _sizeText(self, item: ContentItem, with_received: bool = True) -> str:
+        """진행·일시정지 카드의 크기 표기 — "받은 크기 / 받을 크기".
+
+        - 세그먼트 기반(fMP4 · TS): 받은 크기만 — 받을 크기를 미리 알 수 없다
+        - 인코딩 완료 VOD 전체: 받은 크기 / 파일 크기
+        - 인코딩 완료 VOD 구간 (#309): 받은 크기 / 받을 구간의 합. 영상 전체 크기를 적지 않는다.
+          자르는 동안에는 받은 크기를 받을 크기로 적는다 — 전송은 끝났다
+        받을 크기를 모르면 받은 크기만 적는다.
+
+        Args:
+            with_received: False면 받을 크기를 알 때 그것만 적는다 — 좁은 폭의 짧은 표기
+                (``_fitReceivedSize``)
+        """
+        received = self.setSize(item.download_size)
         if item.is_segment_based:
-            return self.setSize(item.download_size)
-        return f"{item.total_size}"
+            return received
+        if self._sectionCount():
+            total = self._sectionSizeText()
+            if total and item.post_process:
+                received = total
+        else:
+            total = self._wholeSizeText(item)
+        if total and not with_received:
+            return total
+        return f"{received} / {total}" if total else received
+
+    def _wholeSizeText(self, item: ContentItem) -> str:
+        """인코딩 완료 VOD 전체의 크기 글 — 모르면 빈 글이다.
+
+        카드의 크기 조회가 끝났으면 그 값(``total_size``)이다. 끝나지 않았거나 실패했으면 그
+        자리에 "확인 중..." 같은 안내 글이 들어 있다 — 크기로 쓰지 않고, 받기 시작 때 엔진이
+        정한 크기(``transfer_bytes``)가 있으면 그것을 쓴다.
+        """
+        known = f"{item.total_size}" if item.total_size else ""
+        if known[:1].isdigit():
+            return known
+        transfer = getattr(item, "transfer_bytes", None)
+        return self.setSize(transfer) if transfer else ""
+
+    def _isPreparing(self) -> bool:
+        """카드가 "준비 중"을 보일 때인지 — 받는 중이고 뷰모델이 준비가 길다고 알렸다 (#309)."""
+        return self.item.downloadState == DownloadState.RUNNING and bool(
+            getattr(self.item, "preparing", False)
+        )
 
     def _withResolution(self, size_text: str) -> str:
         """확정 해상도를 크기 앞에 붙인다 — "1080p · 595.34 MB" (#245).
@@ -1083,6 +1174,10 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """
         state = self._cardState()
         raw = self.item.downloadState
+        # 준비 중에는 막대를 값 없는(움직이는) 상태로 둔다 — 범위 0~0이 그 상태다
+        busy_maximum = 0 if self._isPreparing() else 100
+        if self.progressBar.maximum() != busy_maximum:
+            self.progressBar.setRange(0, busy_maximum)
         self.progressBar.setValue(self._progressValue())
         self.progressBar.setVisible(self._hasProgress())
         if self.progressBar.property("state") != state:

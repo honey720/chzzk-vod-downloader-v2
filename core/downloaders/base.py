@@ -511,6 +511,17 @@ class BaseDownloader(ABC):
 
             self._prepare_output()
 
+            # 준비가 끝났다 — 받기 전에 진행을 한 번 알린다 (#309). 표시 계층은 이 통지로
+            # "준비 중"을 걷고, 받을 크기(total_size)를 안다. 관측 스레드의 첫 통지는 1초 뒤다
+            self._on_progress(
+                ProgressEvent(
+                    downloaded_size=self.s.total_downloaded_size,
+                    total_size=self._progress_total_size(),
+                    speed=0.0,
+                    active_threads=0,
+                )
+            )
+
             # 진행률 배열이 준비된 뒤에 관측을 시작한다
             monitor.start()
 

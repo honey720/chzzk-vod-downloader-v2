@@ -22,11 +22,30 @@ mp4 색인(``Mp4Index``)과 구간(``TimeRange``)으로, 그 구간을 잘라 �
 """
 
 from bisect import bisect_right
+from collections.abc import Iterable
 
 from core.models.mp4_index import Mp4Index, Mp4Track, SelectionBytes
 from core.models.plan import TimeRange
 from core.utils.hybrid_cut import SOURCE_LEAD_SECONDS
+from core.utils.mp4_partial import plan_partial
 from core.utils.timecode import snap_to_frame
+
+
+def sections_download_size(index: Mp4Index, selections: Iterable[TimeRange]) -> int:
+    """그 구간들을 받는 데 드는 바이트의 합 — 구간 다운로드가 받는 양이다 (#309).
+
+    구간마다의 범위(``selection_byte_ranges``)를 합쳐 센다 — 겹치는 자리는 한 번만 받는다.
+    file 다운로더가 같은 구간을 모두 받을 때의 전체 크기(``DownloadPlan.total_size``)와 같다.
+
+    Raises:
+        ValueError: 구간이 영상 밖인 경우(``selection_byte_ranges``)
+        Mp4Error: moov가 샘플보다 뒤에 있는 등 부분 파일을 만들 수 없는 경우
+    """
+    spans = [
+        span for selection in selections for span in selection_byte_ranges(index, selection).ranges
+    ]
+    return plan_partial(index, spans).download_size
+
 
 # 오디오가 시작하는 시각을 이만큼 앞으로 잡는다(초) — 키프레임의 DTS가 오디오 샘플의
 # 경계에 놓였을 때 반올림 방향에 따라 앞 샘플부터 읽힐 수 있다

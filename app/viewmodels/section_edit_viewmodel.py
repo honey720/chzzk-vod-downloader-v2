@@ -23,14 +23,17 @@ from types import SimpleNamespace
 from PySide6.QtCore import QObject, QThreadPool, Signal
 
 import app.section_basis as section_basis
+from app.process_memory import log_process_memory
 from app.section_basis import SectionBasis
 from app.viewmodels.data import (
     SECTION_CHECK_PENDING,
     SECTION_CHECK_UNVERIFIED,
     ContentItem,
 )
+from core.api.mp4 import Mp4Error
 from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
+from core.utils.mp4_ranges import sections_download_size
 from core.utils.selections import (
     MAX_SELECTIONS,
     SELECTION_DUPLICATE,
@@ -97,6 +100,25 @@ _SAME_RATE_TOLERANCE = Fraction(1, 100)
 _head_owner: weakref.ref | None = None
 
 
+def section_bytes_of(head, selections, skip: frozenset = frozenset()) -> int | None:
+    """그 moov로 본, 구간들을 받는 데 드는 바이트의 합 (#309). 알 수 없으면 None.
+
+    엔진이 받는 양과 같은 core 함수로 센다(``sections_download_size``). moov가 없거나(인코딩
+    완료 VOD가 아니다 · 조회 실패) 구간이 그 영상에 맞지 않으면 None이다.
+
+    Args:
+        skip: 세지 않을 구간 번호 — 받을 수 없어 엔진에 넘기지 않는 구간
+    """
+    index = getattr(head, "index", None)
+    wanted = [selection for number, selection in enumerate(selections) if number not in skip]
+    if index is None or not wanted:
+        return None
+    try:
+        return sections_download_size(index, wanted)
+    except (ValueError, Mp4Error):
+        return None
+
+
 def keep_section_head(item: ContentItem, base_url: str, head) -> None:
     """구간을 정하며 받은 moov를 카드에 둔다 — 다운로드를 시작할 때 엔진에 넘긴다 (#309).
 
@@ -109,10 +131,14 @@ def keep_section_head(item: ContentItem, base_url: str, head) -> None:
     """
     global _head_owner
     owner = _head_owner() if _head_owner is not None else None
+    dropped = getattr(item, "section_head", None) is not None and head is None
     if owner is not None and owner is not item:
+        dropped = dropped or owner.section_head is not None
         owner.section_head = None
     item.section_head = (base_url, head) if head is not None else None
     _head_owner = weakref.ref(item) if head is not None else None
+    if dropped:
+        log_process_memory("색인을 놓은 뒤")
 
 
 def take_section_head(item: ContentItem):
@@ -335,6 +361,7 @@ class SectionEditViewModel(QObject):
         self.duration = basis.duration
         if not self._released:
             self._head = getattr(basis, "mp4_head", None)  # 확인하면 카드에 둔다
+        log_process_memory("조회 끝")
         self.rows = [
             [format_timecode(selection.start, self.fps), format_timecode(selection.end, self.fps)]
             for selection in self.item.selections
@@ -566,6 +593,7 @@ class SectionEditViewModel(QObject):
         self.item.section_refit_fps = None
         self.item.section_end_pulled = self.item.section_end_extended = False
         self.item.section_unfit = frozenset()
+        self.item.section_bytes = section_bytes_of(self._head, selections)
         # 조회하며 받은 moov를 카드에 둔다 — 구간이 있을 때만(전체 다운로드는 moov를 쓰지 않는다)
         keep_section_head(self.item, self.item.base_url, self._head if selections else None)
         logger.info("구간 편집: %d개 (%sfps)", len(selections), format_fps(self.fps))
@@ -676,7 +704,10 @@ class SectionRefitter(QObject):
         item.section_end_pulled = item.section_end_extended = False
         item.section_unfit = frozenset()
         item.section_check = SECTION_CHECK_PENDING
-        item.section_head = None  # 앞 해상도의 moov다 — 새 해상도의 조회가 끝나면 새로 둔다
+        if item.section_head is not None:
+            item.section_head = None  # 앞 해상도의 moov다 — 새 해상도의 조회가 끝나면 새로 둔다
+            log_process_memory("색인을 놓은 뒤")
+        item.section_bytes = None  # 앞 해상도의 크기다 — 새 moov로 다시 센다
 
         generation = self._generation.get(item, 0) + 1
         self._generation[item] = generation
@@ -729,6 +760,9 @@ class SectionRefitter(QObject):
         item.section_end_pulled = result.end_pulled
         item.section_end_extended = result.end_extended
         item.section_unfit = result.unfit
+        head = getattr(basis, "mp4_head", None)
+        item.section_bytes = section_bytes_of(head, result.selections, result.unfit)
+        log_process_memory("조회 끝")
         # 새 해상도를 조회하며 받은 moov — 요청이 아직 유효하므로 지금의 주소에서 받은 것이다
         keep_section_head(item, item.base_url, getattr(basis, "mp4_head", None))
         logger.info(

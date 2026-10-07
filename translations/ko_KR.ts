@@ -64,6 +64,10 @@
         <translation>누르면 구간을 편집합니다</translation>
     </message>
     <message>
+        <source>Preparing</source>
+        <translation>준비 중</translation>
+    </message>
+    <message>
         <source>Cutting</source>
         <translation>자르는 중</translation>
     </message>

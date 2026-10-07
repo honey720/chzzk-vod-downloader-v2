@@ -64,6 +64,16 @@ class ContentItem:
         # 수백 MB라 앱 전체에서 한 카드의 것만 든다(section_edit_viewmodel.keep_section_head).
         # 인코딩 완료 VOD에만 있다. 없으면 None
         self.section_head = None
+        # 구간 다운로드가 받을 바이트의 합 — 인코딩 완료 VOD(mp4)만. 구간을 확인할 때 moov로
+        # 계산하고, 받기 시작하면 엔진이 정한 값(이어받기 · 뺀 구간이 반영된다)으로 바뀐다.
+        # 모르면 None — 카드는 크기를 적지 않는다
+        self.section_bytes = None
+        # 받기 시작 때 엔진이 정한 받을 크기(바이트) — 인코딩 완료 VOD만. 카드의 크기 조회가
+        # 끝나지 않아 파일 크기를 모를 때 "받은 크기 / 받을 크기"의 분모로 쓴다. 받기 전에는 None
+        self.transfer_bytes = None
+        # 다운로드 준비 중(엔진이 받을 것을 정하는 중)임을 카드에 보일지 — 준비가 잠깐이면
+        # 켜지 않는다(DownloadViewModel)
+        self.preparing = False
         # 마지막 다운로드가 엔진에 넘긴 구간 파일 경로 — 번호가 작은 것부터. 완료 카드의 폴더
         # 열기가 실제로 만들어진 구간 파일을 찾는 데 쓴다. 구간 다운로드를 한 적이 없으면 빈 튜플
         self.section_paths = ()

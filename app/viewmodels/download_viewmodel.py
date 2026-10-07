@@ -31,8 +31,9 @@ import time
 from time import gmtime, strftime
 
 import requests
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 
+from app.process_memory import log_process_memory
 from app.viewmodels.data import ContentItem
 from app.viewmodels.section_edit_viewmodel import take_section_head
 from core.api.playback_tracks import StreamSelectionError
@@ -79,6 +80,11 @@ CUT_SECONDS_PER_SECTION = 1.0  # 구간 하나의 고정비(초)
 CUT_SECONDS_PER_MEDIA_SECOND = 0.018  # 구간 길이 1초에 드는 시간(초)
 
 _clock = time.monotonic  # 진행 막대가 지난 시간을 재는 시계 — 테스트가 바꿔 끼운다
+
+# 다운로드 준비(엔진이 받을 것을 정하는 단계 — 구간 다운로드는 moov · 플레이리스트를 받는다)가
+# 이보다 오래 걸릴 때만 카드에 "준비 중"을 보인다(ms). moov를 다시 쓰는 카드의 준비는 0.2초
+# 안팎이라, 바로 보이면 문구가 깜빡이기만 한다
+PREPARE_NOTICE_DELAY_MS = 500
 
 
 def _failure_message_key(exc: BaseException) -> str | None:
@@ -171,8 +177,15 @@ class DownloadViewModel(QObject):
         # 실행 중인 다운로드에서 엔진에 넘기지 않고 뺀 구간 수 (#309) — 새 영상의 끝 이후에서
         # 시작해 받을 수 없는 구간이다. 실패한 구간 수에 더해 카드에 보인다
         self._excluded = 0
+        self._content = content
+        # 준비가 길어지면 카드에 "준비 중"을 켜는 타이머 — 엔진의 첫 진행 통지가 끈다
+        self._prepareTimer = QTimer(self)
+        self._prepareTimer.setSingleShot(True)
+        self._prepareTimer.setInterval(PREPARE_NOTICE_DELAY_MS)
+        self._prepareTimer.timeout.connect(self._showPreparing)
         # 진행 통지가 메인 스레드에 닿으면 구간 상태를 아이템에 먼저 옮긴다 — content보다
         # 먼저 연결해, content가 카드를 다시 그릴 때 값이 이미 들어 있게 한다
+        self.progress.connect(self._onPrepared)
         self.progress.connect(self._syncSections)
         self._engineFinished.connect(self._onEngineFinished)
         self._engineFailed.connect(self._onEngineFailed)
@@ -256,6 +269,10 @@ class DownloadViewModel(QObject):
             # 카드에서는 비운다 — 이제 엔진이 들고, 다운로드가 끝나면 함께 사라진다
             data.content.mp4_head = take_section_head(item)
         self._data = data
+        item.transfer_bytes = None
+        item.preparing = False
+        self._prepareTimer.start()
+        log_process_memory("다운로드 시작")
         task_logger = DownloadLogger()
         # DownloadTask가 상태 전이 흡수와 모델↔카드(item) 상태 연결을 담당한다
         self.task = DownloadTask(data, item, task_logger)
@@ -299,6 +316,7 @@ class DownloadViewModel(QObject):
         """다운로드 중지 (구 DownloadManager.stop). 병합 표시도 함께 해제한다."""
         if self.task is not None:
             self.task.stop()
+        self._endPreparing()
         self._dropHead()
         if self.item is not None:
             # 구 DownloadM3U8Thread가 run 종료 후 수행하던 WAITING 정리와 동일
@@ -312,8 +330,41 @@ class DownloadViewModel(QObject):
         다운로드의 데이터를 들고 있으므로 여기서 놓지 않으면 그때까지 남는다. 일부 구간만
         실패해 엔진이 남긴 이어받기 기록(``section_retry``)의 moov는 그대로 둔다 — 재시도가 쓴다.
         """
-        if self._data is not None:
+        if self._data is not None and self._data.content.mp4_head is not None:
             self._data.content.mp4_head = None
+            log_process_memory("색인을 놓은 뒤")
+
+    def _showPreparing(self) -> None:
+        """준비가 길어지고 있다 — 카드에 "준비 중"을 켠다 (#309). 타이머가 부른다."""
+        item = self.item
+        if item is None or self.handle is None:
+            return
+        item.preparing = True
+        self._content.model.notifyChanged(item)
+
+    def _endPreparing(self) -> None:
+        """준비가 끝났다(또는 다운로드가 끝났다) — "준비 중"을 끄고 타이머를 멈춘다.
+
+        카드를 다시 그리지는 않는다 — 부르는 쪽의 통지(진행 · 완료 · 실패 · 정지)가 그린다.
+        """
+        self._prepareTimer.stop()
+        if self.item is not None:
+            self.item.preparing = False
+
+    def _onPrepared(self, *_args) -> None:
+        """진행 통지가 왔다 — 엔진의 준비가 끝났다 (#309). 메인 스레드에서 돈다.
+
+        엔진은 준비가 끝나면 받기 전에 진행을 한 번 알린다. "준비 중"을 끄고, 인코딩 완료
+        VOD면 엔진이 정한 받을 크기를 카드에 옮긴다. 구간 다운로드에서는 그 값이 받을 구간의
+        합이다 — 이어받기와 뺀 구간이 반영된 값이다.
+        """
+        self._endPreparing()
+        item, data = self.item, self._data
+        if item is None or data is None or item.is_segment_based or not data.total_size:
+            return
+        item.transfer_bytes = data.total_size
+        if data.sections_total:
+            item.section_bytes = data.total_size
 
     def removeThreads(self) -> None:
         """실행 중인 워커의 종료를 상한을 두고 기다린 뒤 참조를 정리한다 (구 removeThreads).
@@ -391,6 +442,8 @@ class DownloadViewModel(QObject):
             return
         item = self.item
         self._syncSections()
+        self._endPreparing()
+        log_process_memory("다운로드 끝")
         self._dropHead()
         if self._excluded:
             # 넘긴 구간은 모두 만들었지만 뺀 구간이 있다 (#309) — 일부 실패로 끝낸다. 넘긴
@@ -454,6 +507,8 @@ class DownloadViewModel(QObject):
             # 엔진이 끝낸 구간과 받아 둔 데이터를 남겼다 — 다음 다운로드가 실패한 구간만 다시
             # 처리한다. 남기지 않은 실패(전송 실패 등)는 아이템에 있던 것을 그대로 둔다
             item.section_retry = (self._resume_key, resume)
+        self._endPreparing()
+        log_process_memory("다운로드 끝")
         self._dropHead()
         if self.task is not None:
             self.task.stop()

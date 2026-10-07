@@ -41,7 +41,7 @@ from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
 from core.utils.cut_check import check_cut
 from core.utils.ffmpeg import get_ffmpeg_exe
-from core.utils.mp4_ranges import selection_byte_ranges
+from core.utils.mp4_ranges import selection_byte_ranges, sections_download_size
 from core.utils.hybrid_cut import CUT_FAILED, CutError, cut_frames_from_mp4, hybrid_cut
 from core.utils.paths import build_section_output_paths, partial_source_path_for
 from core.utils.selections import SELECTION_OUT_OF_RANGE, SelectionError
@@ -1204,3 +1204,51 @@ def test_failed_section_still_fills_its_share_of_the_cut_progress(server, tmp_pa
 
     assert len(run.failures) == 1
     assert seen[-1][1] == 1.0
+
+
+# ================================================================ 받을 크기 · 준비가 끝난 통지
+
+
+@pytest.mark.parametrize(
+    "frames",
+    [
+        [(35, 80)],
+        [(35, 80), (120, 140)],  # 떨어진 구간 둘
+        [(35, 80), (60, 110)],  # 겹치는 구간 — 겹친 자리는 한 번만 받는다
+        [(0, 5), (150, 170), (40, 41)],
+    ],
+)
+def test_sections_download_size_equals_the_total_the_engine_plans(
+    server, sources, tmp_path, frames
+):
+    """sections_download_size는 엔진이 그 구간들을 받을 때 정하는 전체 크기와 같아야 한다.
+
+    기본 입력, 프레임 구간 목록(하나 · 떨어진 둘 · 겹치는 둘 · 순서가 섞인 셋)
+    -> sections_download_size(색인, 구간들) == 엔진이 공유 데이터에 적은 total_size
+       == log_download_start의 첫 인자
+    """
+    selections = [TimeRange(_seconds(first), _seconds(last)) for first, last in frames]
+
+    run = _Run(server, "plain", tmp_path, selections).start()
+
+    expected = sections_download_size(_index(sources["plain"]), selections)
+    assert (run.finished, run.failures) == (1, [])
+    assert run.data.total_size == expected
+    assert _logged(run, "log_download_start")[0][0] == expected
+
+
+def test_engine_reports_progress_once_before_it_starts_receiving(server, tmp_path):
+    """엔진은 준비가 끝나면 받기 전에 진행을 한 번 알려야 한다 — 받은 크기 0, 전체 크기는 받을 크기.
+
+    기본 입력, 구간 프레임 35~80
+    -> 첫 진행 통지 == (받은 0, 전체 == 공유 데이터의 total_size), 그때 컷 진행은 아직 없다(None)
+    """
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))])
+    seen = []
+    run.engine.set_on_progress(
+        lambda event: seen.append((event.downloaded_size, event.total_size, run.data.cut_progress))
+    )
+
+    run.start()
+
+    assert seen[0] == (0, run.data.total_size, None)
