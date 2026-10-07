@@ -238,6 +238,7 @@ class DownloadViewModel(QObject):
             data.content.selections = received
             data.content.section_resume = resume
             data.content.selection_paths = paths
+            item.section_paths = tuple(paths)  # 완료 카드의 폴더 열기가 여기서 구간 파일을 찾는다
         self._data = data
         task_logger = DownloadLogger()
         # DownloadTask가 상태 전이 흡수와 모델↔카드(item) 상태 연결을 담당한다

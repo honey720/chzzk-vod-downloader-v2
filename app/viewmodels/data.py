@@ -59,6 +59,9 @@ class ContentItem:
         # 새 영상의 끝 이후에서 시작해 당길 수 없는 구간의 번호(0부터). 구간은 그대로 두고
         # 카드에 경고를 붙이며, 받을 때 이 구간만 엔진에 넘기지 않는다
         self.section_unfit = frozenset()
+        # 마지막 다운로드가 엔진에 넘긴 구간 파일 경로 — 번호가 작은 것부터. 완료 카드의 폴더
+        # 열기가 실제로 만들어진 구간 파일을 찾는 데 쓴다. 구간 다운로드를 한 적이 없으면 빈 튜플
+        self.section_paths = ()
         # 고른 해상도 항목의 선언 프레임률(소수). 선언이 없으면 None
         self.selected_frame_rate = None
 

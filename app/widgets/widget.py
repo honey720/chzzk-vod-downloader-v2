@@ -1419,12 +1419,27 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         # print("widget - requestDelete") # Debugging
         self.deleteRequest.emit()
 
+    def _openTarget(self) -> str:
+        """폴더 열기가 열 경로 — 파일이면 그 파일을 선택한 채 폴더를 열고, 폴더면 폴더를 연다.
+
+        - 대기 카드: 저장 폴더
+        - 전체 다운로드 카드: 산출물 파일(``output_path``)
+        - 구간 다운로드 카드 (#309): 실제로 만들어진 구간 파일 가운데 **번호가 가장 작은 것**.
+          하나도 없으면 저장 폴더. 구간 다운로드는 ``output_path``에 쓰지 않는다 — 그 이름의
+          파일은 없다
+        """
+        item = self.item
+        if item.downloadState == DownloadState.WAITING:
+            return item.download_path
+        if self._sectionCount():
+            made = [path for path in getattr(item, "section_paths", ()) if os.path.isfile(path)]
+            return made[0] if made else item.download_path
+        return item.output_path
+
     def requestOpenDir(self):
         try:
             # 라벨 텍스트는 축약형이다 — 실제 경로는 아이템에서 읽는다(#245)
-            path = self.item.download_path
-            if self.item.downloadState != DownloadState.WAITING:
-                path = self.item.output_path
+            path = self._openTarget()
             if os.path.isfile(path):
                 nativePath = QDir.toNativeSeparators(path)
                 success = False

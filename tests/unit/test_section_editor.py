@@ -2150,3 +2150,120 @@ def test_escape_cancels_the_window(qtbot, tmp_path, basis):
     _pump()
 
     assert win._sectionDialog is None and item.selections == ()
+
+
+# ================================================================ 완료 카드의 폴더 열기
+
+
+@pytest.fixture
+def opened(monkeypatch):
+    """폴더 열기가 OS에 넘기는 것을 적어 둔다 — 탐색기 · 파일 관리자를 실제로 띄우지 않는다."""
+    import app.widgets.widget as widget_module
+
+    calls: list = []
+
+    def detached(program, arguments):
+        calls.append(("select", arguments[-1]))
+        return True
+
+    def open_url(url):
+        calls.append(("open", url.toLocalFile()))
+        return True
+
+    monkeypatch.setattr(widget_module.QProcess, "startDetached", staticmethod(detached))
+    monkeypatch.setattr(widget_module.QDesktopServices, "openUrl", staticmethod(open_url))
+    monkeypatch.setattr(
+        widget_module.QMessageBox, "warning", lambda *a, **k: calls.append("warning")
+    )
+    return calls
+
+
+def finished_section_card(qtbot, tmp_path, basis, service):
+    """구간 셋을 모두 받아 완료된 카드 — 구간 파일 `_1` · `_2` · `_3`이 디스크에 있다."""
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    engine = service(win)
+    give_sections(
+        qtbot,
+        win,
+        item,
+        [
+            ("00:10:00:00", "00:20:00:00"),
+            ("00:30:00:00", "00:40:00:00"),
+            ("00:50:00:00", "00:55:00:00"),
+        ],
+    )
+    start_batch(win)
+    # 완료 상태는 실제로는 서비스가 완료를 알리기 전에 태스크 모델을 거쳐 카드에 옮긴다 —
+    # 대역에서는 직접 둔다. 알린 뒤에 두면 배치가 같은 카드를 한 번 더 집어 간다
+    item.downloadState = DownloadState.FINISHED
+    engine.finish()
+    _pump()
+    win.contentManager.model.notifyChanged(item)
+    _pump()
+    return win, item, engine.submissions[0]["content"].selection_paths
+
+
+def _same_file(first: str, second: str) -> bool:
+    return os.path.normcase(os.path.normpath(first)) == os.path.normcase(os.path.normpath(second))
+
+
+def test_folder_button_of_a_section_card_selects_the_lowest_numbered_file_that_exists(
+    qtbot, tmp_path, basis, service, opened
+):
+    """구간 카드의 폴더 버튼은 실제로 있는 구간 파일 가운데 번호가 가장 작은 것을 선택한 채 폴더를 열어야 한다.
+
+    구간 파일 `_1` · `_2` · `_3`이 있는 완료 카드에서 폴더 버튼 -> `_1`을 선택
+    `_1`을 지우고 다시 누름 -> `_2`를 선택. 전체 다운로드 이름("제목 1080p.mp4")은 쓰지 않는다
+    """
+    win, item, paths = finished_section_card(qtbot, tmp_path, basis, service)
+    button = win.listView.widgetFor(item).openDirectoryButton
+    shown_button = button.isVisible()
+    assert shown_button, "전제: 완료 카드에 폴더 버튼이 보여야 한다"
+
+    button.click()
+    os.remove(paths[0])
+    button.click()
+
+    assert [kind for kind, _ in opened] == ["select", "select"], opened
+    assert _same_file(opened[0][1], paths[0]) and _same_file(opened[1][1], paths[1])
+    assert not any(_same_file(path, item.output_path) for _, path in opened)
+
+
+def test_folder_button_opens_the_download_folder_when_no_section_file_is_left(
+    qtbot, tmp_path, basis, service, opened
+):
+    """구간 파일이 하나도 없으면 폴더 버튼은 경고 없이 저장 폴더를 열어야 한다.
+
+    완료 카드의 구간 파일 셋을 모두 지우고 폴더 버튼 -> 저장 폴더를 연다, 경고 없음
+    """
+    win, item, paths = finished_section_card(qtbot, tmp_path, basis, service)
+    for path in paths:
+        os.remove(path)
+
+    win.listView.widgetFor(item).openDirectoryButton.click()
+
+    assert len(opened) == 1 and opened[0][0] == "open"
+    assert _same_file(opened[0][1], str(tmp_path))
+
+
+def test_folder_button_of_a_whole_download_card_still_selects_its_output_file(
+    qtbot, tmp_path, basis, opened
+):
+    """구간 없는 카드의 폴더 버튼은 전과 같이 산출물 파일을 선택한 채 폴더를 열어야 한다.
+
+    산출물 파일("제목 1080p.mp4")이 있는 완료 카드에서 폴더 버튼 -> 그 파일을 선택
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    item.output_path = os.path.join(str(tmp_path), "제목 1080p.mp4")
+    with open(item.output_path, "wb") as file:
+        file.write(b"whole")
+    item.downloadState = DownloadState.FINISHED
+    win.contentManager.model.notifyChanged(item)
+    _pump()
+
+    win.listView.widgetFor(item).openDirectoryButton.click()
+
+    assert len(opened) == 1 and opened[0][0] == "select"
+    assert _same_file(opened[0][1], item.output_path)
