@@ -1025,3 +1025,16 @@ def test_parse_moov_does_not_hold_many_times_the_index_while_parsing():
 
     assert len(index.frame_pts) == frames
     assert peak / held < 3, f"최고 {peak / 1e6:.1f}MB · 색인 {held / 1e6:.1f}MB"
+
+
+def test_parse_moov_gives_each_sample_its_own_duration_when_they_differ():
+    """샘플 길이가 고르지 않은 트랙은 샘플마다 제 길이(틱 ÷ timescale)를 가져야 한다.
+
+    영상 12샘플의 길이(틱) [100, 100, 150, 150, 150, 90, 100, 100, 100, 100, 100, 110], timescale 1000
+    -> video.durations == 그 값을 1000으로 나눈 것(구간 다섯 — 값이 바뀔 때마다 새 구간이다)
+    """
+    deltas = [100, 100, 150, 150, 150, 90, 100, 100, 100, 100, 100, 110]
+
+    index = parse_moov(build_mp4([video_spec(deltas=deltas), audio_spec()]).moov)
+
+    assert list(index.video.durations) == [delta / 1000 for delta in deltas]
