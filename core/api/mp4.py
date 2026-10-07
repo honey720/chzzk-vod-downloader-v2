@@ -815,10 +815,11 @@ def _presentation_order(
         order.extend(sorted(range(total), key=presented.__getitem__))
         return order
     start = 0
-    latest = presented[0]  # 지금까지 본 샘플의 가장 늦은 표시 시각
     while start < total:
         end = min(start + CHUNK_ITEMS, total)
-        latest = max(latest, max(presented[start:end]))
+        # 이 조각의 가장 늦은 표시 시각 — 앞 조각들의 것은 볼 필요가 없다. 앞 조각은 그 뒤의 어느
+        # 표시 시각보다도 늦지 않은 자리에서 끊겼으므로 이 조각의 어느 값도 그보다 이르지 않다
+        latest = max(presented[start:end])
         while end < total and latest > decoded[end] + lowest_lead:
             further = min(end + _ORDER_STEP, total)
             latest = max(latest, max(presented[end:further]))
