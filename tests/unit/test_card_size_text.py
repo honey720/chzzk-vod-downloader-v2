@@ -484,12 +484,14 @@ def _wait_size(qtbot, win) -> None:
     _pump()
 
 
-def _give_section(qtbot, win, item, wait_size: bool = True) -> None:
-    """편집 창으로 구간 하나(0.2초~1.0초 — 10fps의 프레임 2~10)를 넣는다.
+def _give_section(qtbot, win, item, wait_size: bool = True, end: float = 1.0) -> None:
+    """편집 창으로 구간 하나(0.2초~end초 — 10fps의 프레임 2~10×end)를 넣는다.
 
     Args:
         wait_size: False면 받을 크기를 세는 일이 끝나기를 기다리지 않는다
+        end: 구간의 끝(초) — 1.0 또는 0.5
     """
+    end_digits = {1.0: "00000100", 0.5: "00000005"}[end]
     QTest.mouseClick(win.listView.widgetFor(item).fileSizeLabel, Qt.MouseButton.LeftButton)
     _pump()
     dialog = win._sectionDialog
@@ -497,13 +499,13 @@ def _give_section(qtbot, win, item, wait_size: bool = True) -> None:
     _pump()
     for edit, digits in (
         (dialog._rows[0].startEdit, "00000002"),
-        (dialog._rows[0].endEdit, "00000100"),
+        (dialog._rows[0].endEdit, end_digits),
     ):
         enter_time(edit, digits)  # 끝 두 자리는 프레임 칸, 그 앞은 시분초 칸
     _pump()
     dialog.okButton.click()
     _pump()
-    assert item.selections == (TimeRange(0.2, 1.0),), "전제: 구간이 쓰여야 한다"
+    assert item.selections == (TimeRange(0.2, end),), "전제: 구간이 쓰여야 한다"
     if wait_size:
         _wait_size(qtbot, win)
 
@@ -659,6 +661,44 @@ def test_download_started_before_the_index_is_built_hands_the_bytes_to_the_engin
     assert content.mp4_head is None
     assert item.section_head is None
     assert item.section_bytes is None
+
+
+def test_a_late_section_total_is_dropped_when_the_card_holds_another_moov(
+    qtbot, window, probe, gated_index
+):
+    """크기를 세는 동안 카드가 쥔 moov가 다른 것으로 바뀌면 늦게 온 결과를 적지 않아야 한다.
+
+    색인 만들기를 막아 둔 채 구간을 확인, 카드의 section_head를 같은 주소의 다른 바이트로 바꾼 뒤 문을 엶
+    -> section_bytes is None, 카드가 쥔 것 is 바꿔 둔 바이트(만든 색인으로 바뀌지 않는다)
+    """
+    win, item, _engine = window
+    _give_section(qtbot, win, item, wait_size=False)
+    qtbot.waitUntil(lambda: gated_index.calls == 1, timeout=3000)
+    other = _mp4_raw(2)
+
+    item.section_head = ("u1", other)
+    gated_index.gate.set()
+    _wait_size(qtbot, win)
+
+    assert item.section_bytes is None
+    assert item.section_head[1] is other
+
+
+def test_confirming_edited_sections_recomputes_the_total(qtbot, window, probe):
+    """구간을 고쳐 다시 확인하면 앞 구간의 합을 지우고 새 구간으로 다시 세어야 한다.
+
+    구간 0.2~1.0초를 확인(크기 계산까지 끝남) → 편집 창을 다시 열어 끝을 0.5초로 고쳐 확인
+    -> section_bytes == 1080p의 색인으로 센 0.2~0.5초의 값(0.2~1.0초의 값과 다르다)
+    """
+    win, item, _engine = window
+    _give_section(qtbot, win, item)
+    before = item.section_bytes
+
+    _give_section(qtbot, win, item, end=0.5)
+
+    expected = sections_download_size(probe.heads[1080].index, (TimeRange(0.2, 0.5),))
+    assert expected != before
+    assert item.section_bytes == expected
 
 
 def test_bytes_handed_to_the_engine_are_dropped_when_the_download_ends(

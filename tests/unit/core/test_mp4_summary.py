@@ -6,7 +6,9 @@
 종류마다 손으로 정한 것과 씨앗으로 흔든 것을 쓴다.
 """
 
+import dataclasses
 import random
+import struct
 from fractions import Fraction
 
 import pytest
@@ -273,24 +275,43 @@ def test_summary_rejects_what_the_full_parse_rejects(damage, key):
     assert light.value.message_key == full.value.message_key == key
 
 
-def test_raw_moov_gives_the_same_index_as_reading_it_in_one_step():
-    """받아 둔 moov 바이트를 나중에 해석한 색인은 한 번에 읽어 만든 색인과 같아야 한다.
+def _moov_span(data: bytes) -> tuple[int, int]:
+    """파일의 최상위 상자를 차례로 넘겨 moov의 (첫 바이트, 끝 다음 바이트)를 찾는다."""
+    position = 0
+    while position < len(data):
+        size, kind = struct.unpack_from(">I4s", data, position)
+        assert size >= 8, "전제: 재료의 상자는 32비트 크기를 쓴다"
+        if kind == b"moov":
+            return position, position + size
+        position += size
+    raise AssertionError("재료에 moov가 없다")
 
-    표준 재료의 mp4를 read_mp4_raw로 받은 뒤 index_mp4 / summarize_mp4
-    -> index_mp4의 색인 · 앞부분 바이트 == read_mp4_head의 것, summarize_mp4의 값 == 그 색인의 값
+
+def test_raw_moov_gives_the_index_and_bytes_of_the_file():
+    """받아 둔 moov 바이트를 나중에 해석한 색인은 파일의 그 moov의 것이어야 하고, 파일 앞부분을 실어야 한다.
+
+    표준 재료의 mp4(moov가 mdat 앞)를 read_mp4_raw로 받은 뒤 index_mp4 / summarize_mp4.
+    moov의 자리는 테스트가 파일의 상자를 직접 넘겨 찾는다
+    -> raw.moov == 파일의 moov 바이트, moov_range == (첫 바이트, 마지막 바이트)
+    -> index_mp4의 색인 == 그 바이트를 parse_moov로 해석하고 자리를 적은 것,
+       앞부분 바이트 == 파일의 0부터 moov의 끝까지
+    -> summarize_mp4의 값 == 그 색인의 값
     """
     data = build_mp4([video_spec(), audio_spec()]).data
+    start, end = _moov_span(data)
 
     def read(offset: int, size: int) -> bytes:
         return data[offset : offset + size]
 
     raw = read_mp4_raw(read)
     head = index_mp4(raw)
-    direct = mp4_module.read_mp4_head(read)
 
-    assert head.index == direct.index
-    assert head.data == direct.data
-    assert raw.moov_range == direct.index.moov_range
+    assert raw.moov == data[start:end]
+    assert raw.moov_range == (start, end - 1)
+    assert head.index == dataclasses.replace(
+        parse_moov(data[start:end]), moov_range=(start, end - 1)
+    )
+    assert head.data == data[:end]
     summary = summarize_mp4(raw)
-    assert (summary.fps, summary.duration) == (direct.index.fps, direct.index.duration)
+    assert (summary.fps, summary.duration) == (head.index.fps, head.index.duration)
     assert summary.fps == Fraction(10)
