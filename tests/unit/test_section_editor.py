@@ -16,7 +16,7 @@ import threading
 from fractions import Fraction
 
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication
 
@@ -3057,3 +3057,136 @@ def test_moving_a_row_while_a_field_has_focus_does_not_overwrite_the_row_that_to
         ["00:30:00:00", "00:31:00:00"],
         ["00:10:00:00", "00:20:00:00"],
     ]
+
+
+# ================================================================ 레이아웃 고정 — 스크롤바 · 안내 줄 (#309)
+
+
+def _spots(dialog) -> list[tuple[int, int]]:
+    """첫 행과 그 칸 · 삭제 버튼의 (창 기준 x, 폭)."""
+    row = dialog._rows[0]
+    widgets = (
+        row,
+        row.startEdit.clockEdit,
+        row.startEdit.frameEdit,
+        row.endEdit.clockEdit,
+        row.endEdit.frameEdit,
+        row.deleteButton,
+    )
+    return [(widget.mapTo(dialog, QPoint(0, 0)).x(), widget.width()) for widget in widgets]
+
+
+def test_rows_keep_their_place_when_the_scroll_bar_appears_and_disappears(qtbot, tmp_path, basis):
+    """구간 목록의 스크롤바가 생기고 사라져도 행의 폭과 칸의 자리가 같아야 한다.
+
+    창 560x420. 행 1개(스크롤바 없음) → 스크롤바가 보일 때까지 구간 추가 → 사라질 때까지 삭제
+    -> 세 시점의 첫 행 · 네 칸 · 삭제 버튼의 (x, 폭)이 모두 같다
+    -> 스크롤바가 보이는 동안 행 컨테이너의 오른쪽 여백 == 없을 때의 여백 − 스크롤바 폭
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    dialog.resize(560, 420)
+    _pump()
+    bar = dialog.scrollArea.verticalScrollBar()
+    assert not bar.isVisible(), "전제: 행 하나는 스크롤 없이 보인다"
+    without = _spots(dialog)
+    margin_without = dialog._rowLayout.contentsMargins().right()
+
+    while not bar.isVisible() and dialog.addButton.isEnabled():
+        dialog.addButton.click()
+        _pump()
+    assert bar.isVisible(), "전제: 행이 늘어 스크롤바가 생겼다"
+    with_bar = _spots(dialog)
+    margin_with = dialog._rowLayout.contentsMargins().right()
+
+    while bar.isVisible():
+        dialog._rows[-1].deleteButton.click()
+        _pump()
+    again = _spots(dialog)
+
+    assert with_bar == without
+    assert again == without
+    assert bar.width() > 0 and margin_with == margin_without - bar.width()
+    assert dialog._rowLayout.contentsMargins().right() == margin_without
+
+
+def test_row_height_is_the_same_with_and_without_a_message(qtbot, tmp_path, basis):
+    """안내 줄은 글이 없어도 한 줄을 차지해, 오류 · 무시 안내가 생기고 사라져도 행의 높이가 같아야 한다.
+
+    행 A(10분~20분) · B(30분~31분). 오류 없음 → A의 시작을 50분으로(시작이 끝보다 뒤) → 되돌림 →
+    빈 행을 하나 더함(무시 안내)
+    -> A의 높이가 네 시점에 같고, 빈 행의 높이도 같다. 글이 없을 때 안내 줄의 높이 > 0
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    set_rows(dialog, [("00:10:00:00", "00:20:00:00"), ("00:30:00:00", "00:31:00:00")])
+    _pump()
+    row = dialog._rows[0]
+    plain = row.height()
+    assert not row.errorLabel.isVisible() and row.messageSlot.height() > 0
+
+    type_into(row.startEdit, "00:50:00:00")
+    leave(row.startEdit)
+    _pump()
+    assert shown(row.errorLabel) == "Start must be before end", "전제: 오류가 보인다"
+    with_error = row.height()
+
+    type_into(row.startEdit, "00:10:00:00")
+    leave(row.startEdit)
+    _pump()
+    cleared = row.height()
+
+    dialog.addButton.click()
+    _pump()
+    blank = dialog._rows[2]
+    assert shown(blank.noteLabel) == IGNORED, "전제: 무시 안내가 보인다"
+
+    assert with_error == plain and cleared == plain
+    assert dialog._rows[0].height() == plain and blank.height() == plain
+
+
+def test_a_message_too_long_for_the_row_is_elided_on_one_line(qtbot, tmp_path, basis):
+    """안내 줄은 줄바꿈하지 않고, 넘치는 글은 말줄임하며 전문을 툴팁에 둬야 한다. 행의 높이는 그대로다.
+
+    창을 가장 좁게 줄이고 첫 행의 안내 줄에 행보다 긴 글(같은 글자 200개)을 오류로 보임
+    -> 줄바꿈 꺼짐, 보이는 글이 "…"로 끝나고 전문보다 짧다, 툴팁 == 전문, 행의 높이 == 글이 없을 때
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    dialog.resize(dialog.minimumSizeHint().width(), 300)
+    _pump()
+    row = dialog._rows[0]
+    plain = row.height()
+    long_text = "가" * 200
+
+    row.showMessage({"error": long_text})
+    _pump()
+
+    assert not row.errorLabel.wordWrap() and not row.noteLabel.wordWrap()
+    visible = shown(row.errorLabel)
+    assert visible.endswith("…") and len(visible) < len(long_text)
+    assert row.errorLabel.toolTip() == long_text
+    assert row.height() == plain
+
+
+def test_only_the_error_shows_when_an_error_and_a_note_fall_on_the_same_row(qtbot, tmp_path, basis):
+    """안내 줄에 오류와 무시 안내가 함께 걸리면 오류만 보여야 한다.
+
+    첫 행의 안내 줄에 오류 "E"와 무시 안내 "N"을 함께 넘김 -> 오류 라벨만 보이고 글 == "E"
+    무시 안내만 넘김 -> 무시 안내 라벨만 보이고 글 == "N"
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    row = dialog._rows[0]
+
+    row.showMessage({"error": "E", "note": "N"})
+    _pump()
+    assert shown(row.errorLabel) == "E" and not row.noteLabel.isVisible()
+
+    row.showMessage({"note": "N"})
+    _pump()
+    assert shown(row.noteLabel) == "N" and not row.errorLabel.isVisible()

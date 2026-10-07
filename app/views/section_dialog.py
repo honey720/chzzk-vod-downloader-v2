@@ -57,6 +57,7 @@ from app.viewmodels.section_edit_viewmodel import (
     SectionEditViewModel,
 )
 from app.widgets.eliding_label import ElidingLabel
+from app.widgets.scroll_padding import ScrollBarPadding
 from app.widgets.timecode_edit import TimecodeEdit, TimePointEdit
 
 # 칸의 폭을 재는 본보기 글자 — 칸에 깔리는 글자 그대로다
@@ -66,22 +67,31 @@ _EDIT_PADDING = 22  # 칸의 글자 양옆 몫(px) — QSS의 padding과 테두�
 # Enter를 친 뒤 포커스가 갈 곳 — "clock"이면 다음 시각의 시분초 칸(프레임 칸을 건너뛴다),
 # "frame"이면 같은 시각의 프레임 칸을 먼저 지난다. 바꾸기 쉽게 한 곳에 둔다
 NEXT_AFTER_ENTER = "clock"
+# 행 아래 안내 줄에 보이는 글의 종류 — SectionRow.showMessage가 우선순위대로 하나만 보인다
+MESSAGE_ERROR = "error"  # 오류 — 그 행을 확인할 수 없다
+MESSAGE_NOTE = "note"  # 무시 안내 — 완전히 빈 행
 _INITIAL_SIZE = (560, 420)  # 창의 첫 크기(px) — 행 일곱 개쯤이 스크롤 없이 보인다
+# 행 사이의 간격(px). 행마다 아래에 안내 줄 한 줄이 늘 서 있어 그 줄이 행 사이를 띄운다 —
+# 간격을 따로 두면 20행의 높이가 안내 줄만큼 더 길어진다
+_ROW_SPACING = 0
+_MESSAGE_GAP = 2  # 칸의 줄과 그 아래 안내 줄 사이(px)
 
 
 class SectionRow(QWidget):
     """구간 한 행 — 번호 · [시작 시분초][프레임] ~ [끝 시분초][프레임] · 길이 · 위 · 아래 · 삭제,
-    오류가 있으면 그 아래 한 줄.
+    그 아래 안내 줄 한 줄.
 
-    오류 문구는 칸 옆이 아니라 아래 줄에 둔다 — 옆에 두면 좁은 창에서 말줄임되어, 무엇이
-    틀렸는지 마우스를 올려야 보인다. 아래 줄은 줄바꿈하므로 어떤 폭에서도 전문이 보인다.
+    안내 줄(``messageSlot``)은 글이 없어도 **늘 한 줄의 높이를 차지한다** — 오류가 나고
+    사라져도, 안내가 바뀌어도 행의 높이가 같아 아래 행들이 오르내리지 않는다. 오류 · 무시
+    안내가 이 한 줄을 함께 쓰고 한 번에 하나만 보인다(``showMessage``). 줄바꿈하지 않는다 —
+    넘치는 글은 말줄임하고 전문은 툴팁에 둔다(``ElidingLabel``).
     """
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         column = QVBoxLayout(self)
         column.setContentsMargins(0, 0, 0, 0)
-        column.setSpacing(2)
+        column.setSpacing(_MESSAGE_GAP)
         layout = QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         column.addLayout(layout)
@@ -111,21 +121,42 @@ class SectionRow(QWidget):
         for button in (self.upButton, self.downButton, self.deleteButton):
             layout.addWidget(button)
 
-        # 오류 문구 — 오류가 있을 때만 보인다. 번호 폭만큼 들여 칸의 왼쪽 끝에 맞춘다
-        self.errorLabel = QLabel(self)
-        self.errorLabel.setObjectName("sectionErrorLabel")
-        self.errorLabel.setWordWrap(True)
-        self.errorLabel.setVisible(False)
-        self.errorLabel.setIndent(self.numberLabel.minimumWidth() + layout.spacing())
-        column.addWidget(self.errorLabel)
-
+        # 안내 줄 — 글이 없어도 한 줄의 높이를 차지한다. 번호 폭만큼 들여 칸의 왼쪽 끝에 맞춘다
+        self.messageSlot = QWidget(self)
+        self.messageSlot.setObjectName("sectionMessageSlot")
+        slot = QHBoxLayout(self.messageSlot)
+        slot.setContentsMargins(self.numberLabel.minimumWidth() + layout.spacing(), 0, 0, 0)
+        slot.setSpacing(0)
+        # 오류 문구 — 오류가 있을 때만 보인다
+        self.errorLabel = self._messageLabel("sectionErrorLabel")
         # 걸러 낼 행의 안내 — 완전히 비어 있어 구간에 넣지 않는 행에만 보인다. 오류가 아니다
-        self.noteLabel = QLabel(self)
-        self.noteLabel.setObjectName("sectionNoteLabel")
-        self.noteLabel.setWordWrap(True)
-        self.noteLabel.setVisible(False)
-        self.noteLabel.setIndent(self.errorLabel.indent())
-        column.addWidget(self.noteLabel)
+        self.noteLabel = self._messageLabel("sectionNoteLabel")
+        # 우선순위가 높은 것부터 — 한 번에 하나만 보인다
+        self._messages = ((MESSAGE_ERROR, self.errorLabel), (MESSAGE_NOTE, self.noteLabel))
+        for _kind, label in self._messages:
+            slot.addWidget(label, 1)
+        # 높이는 글자에서 유도한다 — 안내 줄의 글꼴(QSS)이 입혀진 뒤의 한 줄 높이
+        self.errorLabel.ensurePolished()
+        self.messageSlot.setFixedHeight(self.errorLabel.fontMetrics().height())
+        column.addWidget(self.messageSlot)
+
+    def _messageLabel(self, name: str) -> ElidingLabel:
+        label = ElidingLabel(self.messageSlot)
+        label.setObjectName(name)
+        label.setWordWrap(False)  # 한 줄 — 줄바꿈하면 행의 높이가 글 길이에 따라 달라진다
+        label.setVisible(False)
+        return label
+
+    def showMessage(self, texts: dict[str, str]) -> None:
+        """안내 줄에 글 하나를 보인다 — 종류(``MESSAGE_*``) → 글. 빈 글은 없는 것이다.
+
+        둘 이상이 걸리면 우선순위가 가장 높은 것만 보인다: 오류 > 무시 안내. 아무것도 없으면
+        줄은 빈 채로 높이만 차지한다.
+        """
+        chosen = next((kind for kind, _label in self._messages if texts.get(kind)), None)
+        for kind, label in self._messages:
+            label.setText(texts.get(kind, "") if kind == chosen else "")
+            label.setVisible(kind == chosen)
 
     def _timePointEdit(self, name: str) -> TimePointEdit:
         edit = TimePointEdit(self)
@@ -206,8 +237,19 @@ class SectionEditDialog(QDialog):
         self._rowContainer = QWidget(self.scrollArea)
         self._rowContainer.setObjectName("sectionRowContainer")
         self._rowLayout = QVBoxLayout(self._rowContainer)
+        self._rowLayout.setSpacing(_ROW_SPACING)
         self._rowLayout.addStretch(1)
         self.scrollArea.setWidget(self._rowContainer)
+        # 세로 스크롤바는 필요할 때만 보이고, 보이는 동안은 행 컨테이너의 오른쪽 여백 안에
+        # 들어간다 — 바가 생기고 사라져도 행의 폭과 칸의 자리가 같다(메인 카드 목록과 같은
+        # 방식). 여백이 바보다 좁으면 모자란 만큼 행이 좁아지므로 바의 폭 이상으로 둔다
+        self.scrollArea.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        margins = self._rowLayout.contentsMargins()
+        bar = self.scrollArea.verticalScrollBar()
+        bar.ensurePolished()
+        right = max(margins.right(), bar.sizeHint().width())
+        self._rowLayout.setContentsMargins(margins.left(), margins.top(), right, margins.bottom())
+        self._scrollPadding = ScrollBarPadding(self.scrollArea, self._rowLayout, right)
         layout.addWidget(self.scrollArea, 1)
 
         # 받는 중인 배치가 이 카드를 기다릴 때만 보인다 — 창을 닫아야 이어 간다는 것을 알린다
@@ -383,11 +425,13 @@ class SectionEditDialog(QDialog):
                 # 묶음에도 적어 둔다 — 그 시각의 어느 칸이든 칠해졌는지(스타일에는 쓰지 않는다)
                 edit.setProperty("invalid", any(key[0] == column for key in flagged))
             row.infoLabel.setText(viewmodel.lengthText(index))
-            row.errorLabel.setText(error)
-            row.errorLabel.setVisible(bool(error))
             ignored = viewmodel.isIgnored(index)
-            row.noteLabel.setText(viewmodel.ignoredText() if ignored else "")
-            row.noteLabel.setVisible(ignored)
+            row.showMessage(
+                {
+                    MESSAGE_ERROR: error,
+                    MESSAGE_NOTE: viewmodel.ignoredText() if ignored else "",
+                }
+            )
             row.deleteButton.setEnabled(viewmodel.canRemove())  # 하나뿐인 행은 지울 수 없다
             row.upButton.setEnabled(index > 0)
             row.downButton.setEnabled(index < count - 1)

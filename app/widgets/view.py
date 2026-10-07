@@ -1,7 +1,8 @@
 from PySide6.QtWidgets import QScrollArea, QWidget, QVBoxLayout
-from PySide6.QtCore import QEvent, Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDragLeaveEvent, QDropEvent, QPainter, QColor
 import app.theme as theme
+from app.widgets.scroll_padding import ScrollBarPadding
 from app.widgets.widget import ContentItemWidget
 from app.viewmodels.data import ContentItem
 
@@ -70,7 +71,8 @@ class ContentListView(QScrollArea):
         # 지킨다 — 값이 바뀐 게 아니라 자리가 옮겨진 것이다(#244 정렬선 유지).
         outer = theme.METRICS["outerMargin"]
         self._layout.setContentsMargins(outer, 4, outer, 8)
-        self.verticalScrollBar().installEventFilter(self)  # Show/Hide → 오른쪽 패딩 조정
+        # 스크롤바의 Show/Hide에 맞춰 오른쪽 패딩을 고친다 — 편집 창의 구간 목록과 함께 쓴다
+        self._scrollPadding = ScrollBarPadding(self, self._layout, outer)
         # 카드끼리 붙어 있으면 목록이 답답해 보인다 (#227). 카드 자체가 가진
         # 위쪽 여백(contentItemLayout 10px)에 이만큼을 더해 간격을 낸다 —
         # 카드 폭에는 영향을 주지 않는 값이라 ElidingLabel 폭 계산과 무관하다
@@ -94,22 +96,14 @@ class ContentListView(QScrollArea):
         super().resizeEvent(event)
         self._overlay.setGeometry(self.rect())
 
-    def eventFilter(self, watched, event):
-        if watched is self.verticalScrollBar() and event.type() in (QEvent.Type.Show, QEvent.Type.Hide):
-            self._fitPaddingAroundScrollBar()
-        return super().eventFilter(watched, event)
-
     def _fitPaddingAroundScrollBar(self) -> None:
         """스크롤바가 보이면 컨테이너 오른쪽 패딩에서 그 폭을 빼고, 숨으면 되돌린다 (v2.10.1).
 
         카드 오른쪽 끝은 스크롤바 유무와 무관하게 항상 목록 오른쪽 끝 − outerMargin이다 —
         스크롤바는 그 여백 안에 들어간다. 스크롤바가 여백보다 넓으면 패딩은 0에서 멈춘다.
+        하는 일은 ``ScrollBarPadding``에 있다.
         """
-        bar = self.verticalScrollBar()
-        outer = theme.METRICS["outerMargin"]
-        taken = bar.width() if bar.isVisible() else 0
-        margins = self._layout.contentsMargins()
-        self._layout.setContentsMargins(outer, margins.top(), max(0, outer - taken), margins.bottom())
+        self._scrollPadding.fit()
 
     def setModel(self, model):
         """✅ 모델을 설정하고 위젯을 자동으로 연결"""
