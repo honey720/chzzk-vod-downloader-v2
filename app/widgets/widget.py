@@ -484,7 +484,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """
         if not self._sectionCount() or self.item.downloadState != DownloadState.WAITING:
             return
-        if not self._sectionNotice() and not self._sectionSizeText():
+        if not self._sectionNotice() and not self._sectionSizeNote():
             return
         label = self.fileSizeLabel
         others = 0
@@ -894,11 +894,23 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         length = sum(selection.end - selection.start for selection in selections)
         clock = self._shortRemain(strftime("%H:%M:%S", gmtime(max(length, 0))))
         summary = self.tr("Sections {0} · {1}").format(len(selections), clock)
-        size = self._sectionSizeText() if with_size else ""
+        size = self._sectionSizeNote() if with_size else ""
         if size:
             summary = f"{summary} · {size}"
         notice = self._sectionNotice(warnings_only) if with_notice else ""
         return f"{summary} · {notice}" if notice else summary
+
+    def _sectionSizeNote(self) -> str:
+        """대기 카드의 구간 요약에 적는 크기 자리의 글 — 받을 크기, 세는 중이면 "확인 중...".
+
+        받을 크기는 구간을 확인한 뒤 백그라운드에서 센다(``section_sizing``). 그동안 자리를
+        비워 두지 않고 카드의 크기 조회가 쓰는 문구를 그대로 쓴다. 세지 못했으면 빈 글이다 —
+        받기 시작 때 엔진이 정한 값이 들어온다.
+        """
+        size = self._sectionSizeText()
+        if size or not getattr(self.item, "section_sizing", False):
+            return size
+        return self.tr("Checking...")
 
     def _sectionSizeText(self) -> str:
         """구간 다운로드가 받을 크기 — 인코딩 완료 VOD에서 그 값을 알 때만. 모르면 빈 글이다.

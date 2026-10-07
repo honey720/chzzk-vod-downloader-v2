@@ -81,6 +81,9 @@ class ContentItem:
         # 계산하고, 받기 시작하면 엔진이 정한 값(이어받기 · 뺀 구간이 반영된다)으로 바뀐다.
         # 모르면 None — 카드는 크기를 적지 않는다
         self.section_bytes = None
+        # 받을 구간의 합을 백그라운드에서 세는 중이다(SectionSizer) — 대기 카드가 크기 자리에
+        # "확인 중..."을 적는다. 다 세면(성공 · 실패 모두) False로 돌아간다
+        self.section_sizing = False
         # 받기 시작 때 엔진이 정한 받을 크기(바이트) — 인코딩 완료 VOD만. 카드의 크기 조회가
         # 끝나지 않아 파일 크기를 모를 때 "받은 크기 / 받을 크기"의 분모로 쓴다. 받기 전에는 None
         self.transfer_bytes = None

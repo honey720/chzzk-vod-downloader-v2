@@ -565,14 +565,15 @@ def gated_index(monkeypatch):
     gated.gate.set()
 
 
-def test_section_total_is_empty_until_the_index_is_built_in_the_background(
+def test_card_says_checking_while_the_section_total_is_counted_in_the_background(
     qtbot, window, probe, gated_index
 ):
-    """구간을 확인한 직후에는 받을 크기가 없고, 백그라운드에서 색인을 만든 뒤에 적혀야 한다.
+    """받을 크기를 세는 동안 카드는 크기 자리에 "Checking..."을 적고, 다 세면 크기로 바꿔야 한다.
 
     색인 만들기를 문으로 막아 둔 채 1080p에서 구간을 확인 → 문을 엶
-    -> 막힌 동안: section_bytes is None, 요약 == "Sections 1 · 0:00"(크기가 없다), 카드는 받은 바이트를 쥔다
-    -> 연 뒤: section_bytes == 1080p의 색인으로 센 값, 카드가 쥔 것이 Mp4Head로 바뀐다
+    -> 막힌 동안: section_bytes is None, 요약 == "Sections 1 · 0:00 · Checking...", 카드는 받은 바이트를 쥔다
+    -> 연 뒤: section_bytes == 1080p의 색인으로 센 값, 요약이 그 크기(KB)로 끝난다,
+       카드가 쥔 것이 Mp4Head로 바뀐다
     """
     win, item, _engine = window
 
@@ -586,10 +587,44 @@ def test_section_total_is_empty_until_the_index_is_built_in_the_background(
 
     assert during[0] is None
     assert during[1] is probe.raws[1080]
-    assert label == "Sections 1 · 0:00"
-    assert item.section_bytes == sections_download_size(probe.heads[1080].index, item.selections)
+    assert label == "Sections 1 · 0:00 · Checking..."
+    expected = sections_download_size(probe.heads[1080].index, item.selections)
+    assert item.section_bytes == expected
+    assert shown(win.listView.widgetFor(item).fileSizeLabel).endswith(f"· {expected / 1024:.2f} KB")
     assert isinstance(item.section_head[1], Mp4Head)
     assert item.section_head[0] == "u1"
+
+
+def test_card_stops_saying_checking_when_counting_fails_and_takes_the_engine_total(
+    qtbot, window, probe, monkeypatch
+):
+    """받을 크기를 세다 실패하면 "Checking..."을 내리고, 받기 시작 때 엔진이 정한 값을 적어야 한다.
+
+    색인 만들기가 예외를 던지게 바꾸고 구간을 확인. 전역 다운로드 뒤 엔진처럼 구간 수 1 ·
+    전체 크기 4321바이트를 적고 진행을 한 번 알림
+    -> 센 뒤: section_bytes is None, section_sizing이 꺼짐, 요약 == "Sections 1 · 0:00"
+    -> 진행 통지 뒤: section_bytes == 4321
+    """
+    win, item, engine = window
+
+    def broken(raw):
+        raise RuntimeError("색인 만들기 실패(대역)")
+
+    monkeypatch.setattr(section_edit_module, "index_mp4", broken)
+    _give_section(qtbot, win, item)
+
+    assert item.section_bytes is None and item.section_sizing is False
+    assert shown(win.listView.widgetFor(item).fileSizeLabel) == "Sections 1 · 0:00"
+
+    win.downloadButton.click()
+    _pump()
+    submission = engine.submissions[0]
+    submission["data"].sections_total = 1
+    submission["data"].total_size = 4321
+    submission["on_progress"](
+        ProgressEvent(downloaded_size=0, total_size=4321, speed=0.0, active_threads=0)
+    )
+    qtbot.waitUntil(lambda: item.section_bytes == 4321, timeout=3000)
 
 
 def test_a_late_section_total_is_dropped_when_the_resolution_changed_meanwhile(

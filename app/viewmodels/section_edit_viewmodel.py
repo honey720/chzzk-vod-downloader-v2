@@ -827,7 +827,7 @@ class SectionEditViewModel(QObject):
         self.item.section_end_pulled = self.item.section_end_extended = False
         self.item.section_unfit = frozenset()
         # 받을 크기는 색인을 만들어야 셀 수 있다 — 여기서 세지 않고 창이 닫힌 뒤 백그라운드에서
-        # 센다(SectionSizer). 그때까지 카드는 크기를 적지 않는다
+        # 센다(SectionSizer). 그때까지 카드는 크기 자리에 "확인 중..."을 적는다
         self.item.section_bytes = None
         # 조회하며 받은 moov를 카드에 둔다 — 구간이 있을 때만(전체 다운로드는 moov를 쓰지 않는다)
         keep_section_head(self.item, self.item.base_url, self._head if selections else None)
@@ -935,6 +935,8 @@ class SectionSizer(QObject):
         job = SectionSizeJob(kept[1], wanted, token)
         job.done.connect(self._onDone)
         self._jobs[token] = (job, kept[1], item.selections)
+        item.section_sizing = True  # 카드가 크기 자리에 "확인 중..."을 적는다
+        self._model.notifyChanged(item)
         self._pool.start(lambda: job.run())
 
     def pendingCount(self) -> int:
@@ -948,10 +950,13 @@ class SectionSizer(QObject):
         if self._model.getRow(item) is None:
             self._generation.pop(item, None)  # 카드가 지워졌다
             return
+        if self._generation.get(item) != generation:
+            return  # 더 새 요청이 세고 있다 — 표시는 그 요청이 끝낸다
+        item.section_sizing = False  # 다 셌다 — 쓸 수 없는 결과여도 "확인 중..."은 내린다
+        self._model.notifyChanged(item)
         kept = getattr(item, "section_head", None)
         if (
-            self._generation.get(item) != generation
-            or item.downloadState != DownloadState.WAITING
+            item.downloadState != DownloadState.WAITING
             or kept is None
             or kept[1] is not moov
             or item.selections != selections
