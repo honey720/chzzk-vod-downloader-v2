@@ -26,6 +26,8 @@ MonitorM3U8Thread의 계산과 동일하며 모듈 수준 함수로 둔다.
 import dataclasses
 import logging
 import os
+import threading
+import time
 from time import gmtime, strftime
 
 import requests
@@ -62,11 +64,21 @@ logger = logging.getLogger(__name__)
 # 없어 짧게 둔다
 _HANDLE_WAIT_TIMEOUT_S = 2.0
 
-# 구간 다운로드의 진행 막대에서 전송 단계가 차지하는 몫(%) — 나머지가 컷 단계다 (#309).
-# 컷 하나는 중간 진행을 알리지 않아 구간이 끝날 때마다만 오른다. 그래서 컷에 큰 몫을 주면
-# 막대가 오래 멈췄다가 크게 뛴다. 전송이 대부분을 차지하게 두고, 컷은 남은 몫을 구간 수로
-# 고르게 나눈다
-SECTION_TRANSFER_SHARE = 80
+# 구간 다운로드의 진행 막대는 "지난 시간 ÷ 예상 전체 시간"이다 (#309). 전송에 걸리는 시간은
+# 재면서 알고, 컷에 걸릴 시간은 아래 두 값으로 어림한다:
+#
+#     컷 예상 시간(초) = 자를 구간 수 × CUT_SECONDS_PER_SECTION
+#                      + 자를 구간 길이의 합(초) × CUT_SECONDS_PER_MEDIA_SECOND
+#
+# 전송과 컷의 몫을 고정하지 않는다 — 회선이 빠르면 컷이, 느리면 전송이 대부분이다(실측:
+# 8시간 영상에서 구간 2개 678MB는 전송 6.8초 · 컷 13.9초, 구간 3개 73MB는 전송 1.3초 · 컷 5.5초).
+# 값은 그 두 실측과 합성 영상의 단계별 측정에서 정했다 — 구간마다 ffmpeg를 다섯 번쯤 띄우는
+# 고정비가 약 1초, 길이에 비례하는 몫(대부분 오디오 재인코딩)이 1초에 약 0.018초다.
+# 어림이 틀려도 막대는 거꾸로 가지 않고, 100은 마지막 구간을 다 잘랐을 때만 된다
+CUT_SECONDS_PER_SECTION = 1.0  # 구간 하나의 고정비(초)
+CUT_SECONDS_PER_MEDIA_SECOND = 0.018  # 구간 길이 1초에 드는 시간(초)
+
+_clock = time.monotonic  # 진행 막대가 지난 시간을 재는 시계 — 테스트가 바꿔 끼운다
 
 
 def _failure_message_key(exc: BaseException) -> str | None:
@@ -330,10 +342,11 @@ class DownloadViewModel(QObject):
         엔진 관측 스레드에서 호출되므로 계산과 Signal emit까지만 수행한다.
         """
         is_segment_based = item.is_segment_based
+        sections = _SectionProgress(_cut_seconds(data.content))
 
         def relay(event: ProgressEvent) -> None:
             if data.sections_total:
-                args = _section_progress_args(event, data, item)
+                args = _section_progress_args(event, data, item, sections)
             elif is_segment_based:
                 args = _segment_progress_args(event, data, item)
             else:
@@ -627,15 +640,74 @@ def _file_progress_args(event: ProgressEvent) -> tuple[str, str, str, int]:
     return remaining_time_str, str(event.downloaded_size), f"{speed_mb:.1f} MB/s", progress
 
 
+def _cut_seconds(content) -> float:
+    """이번 다운로드가 자를 구간들의 컷에 걸릴 시간의 어림(초). 구간이 없으면 0.
+
+    이전 실행이 끝낸 구간(``section_resume.done``)은 자르지 않으므로 세지 않는다.
+    """
+    resume = getattr(content, "section_resume", None)
+    done = resume.done if resume is not None else frozenset()
+    todo = [
+        selection
+        for number, selection in enumerate(getattr(content, "selections", ()) or ())
+        if number not in done
+    ]
+    length = sum(selection.end - selection.start for selection in todo)
+    return len(todo) * CUT_SECONDS_PER_SECTION + length * CUT_SECONDS_PER_MEDIA_SECOND
+
+
+class _SectionProgress:
+    """구간 다운로드 하나의 진행 막대(%) — 지난 시간 ÷ 예상 전체 시간 (#309).
+
+    전송 중에는 지금까지의 속도로 전송이 끝날 때를 어림하고, 그 뒤에 컷의 어림을 더한 것이
+    전체다. 컷 단계에서는 전송에 실제로 걸린 시간과 컷의 어림이 전체이고, 컷의 진행만큼
+    찬다. 내는 값은 줄지 않고, 100은 컷이 다 끝났을 때만 낸다. 엔진의 관측 스레드와 컷을
+    돌리는 스레드가 함께 부른다.
+    """
+
+    def __init__(self, cut_seconds: float):
+        self._cut_seconds = cut_seconds
+        self._started = _clock()
+        self._transfer_seconds: float | None = None  # 컷이 시작된 때까지 걸린 시간
+        self._shown = 0
+        self._lock = threading.Lock()
+
+    def percent(self, transfer: float, cutting: bool, cut: float) -> int:
+        """지금 막대에 보일 값(0~100).
+
+        Args:
+            transfer: 전송의 진행(0~1)
+            cutting: 컷 단계에 들어갔는지
+            cut: 컷의 진행(0~1) — 컷 단계에서만 쓴다
+        """
+        with self._lock:
+            elapsed = _clock() - self._started
+            if cutting:
+                if self._transfer_seconds is None:
+                    self._transfer_seconds = elapsed
+                total = self._transfer_seconds + self._cut_seconds
+                spent = self._transfer_seconds + self._cut_seconds * min(max(cut, 0.0), 1.0)
+                value = 100 if cut >= 1.0 else min(int(100 * spent / total) if total else 0, 99)
+            elif transfer > 0:
+                # 전송 예상 시간 = 지난 시간 ÷ 전송의 진행. 지난 시간 ÷ (전송 예상 + 컷 예상)
+                total = elapsed / transfer + self._cut_seconds
+                value = min(int(100 * elapsed / total) if total else 0, 99)
+            else:
+                value = 0
+            self._shown = max(self._shown, value)
+            return self._shown
+
+
 def _section_progress_args(
-    event: ProgressEvent, data: DownloadData, item: ContentItem
+    event: ProgressEvent, data: DownloadData, item: ContentItem, sections: _SectionProgress
 ) -> tuple[str, str, str, int]:
     """구간 다운로드의 진행 변환 — 전송과 컷을 하나의 막대로 합친다 (#309).
 
-    막대의 앞 ``SECTION_TRANSFER_SHARE``%는 전송이고 나머지는 컷이다. 전송의 진행은 전달
-    방식의 단위 그대로다(파일은 받은 바이트 ÷ 받을 바이트, 세그먼트 기반은 받은 세그먼트 수
-    ÷ 받을 세그먼트 수). 컷의 진행은 (끝난 구간 수 ÷ 구간 수)이고, 끝난 구간에는 자르지
-    못한 구간도 센다 — 그 구간의 일은 끝났다.
+    막대는 지난 시간 ÷ 예상 전체 시간이다(``_SectionProgress``). 전송의 진행은 전달 방식의
+    단위 그대로다(파일은 받은 바이트 ÷ 받을 바이트, 세그먼트 기반은 받은 세그먼트 수 ÷ 받을
+    세그먼트 수). 컷의 진행은 엔진이 적어 둔 값(``cut_progress`` — 구간 안에서도 오른다)이고,
+    그 값이 없으면 (끝난 구간 수 ÷ 구간 수)다. 끝난 구간에는 자르지 못한 구간도 센다 — 그
+    구간의 일은 끝났다.
 
     이전 실행이 끝낸 구간을 이어받은 다운로드는 이번에 처리할 구간만으로 센다 — 막대는 0에서
     다시 찬다. 카드의 완료 구간 수는 전체 기준 그대로다(2/3에서 이어진다).
@@ -652,12 +724,16 @@ def _section_progress_args(
         transfer = event.downloaded_size / total_size if total_size > 0 else 0.0
     cut = 0.0
     if item.post_process:
-        transfer = 1.0  # 컷은 전송이 끝난 뒤에 시작한다
         todo = data.sections_total - data.sections_resumed
         handled = data.sections_done + data.sections_failed - data.sections_resumed
         cut = handled / todo if todo > 0 else 1.0
+        reported = getattr(data, "cut_progress", None)
+        if reported is not None and handled < todo:
+            # 구간 안에서도 오르는 값. 다 찼다고 적혀 있어도 끝나지 않은 구간이 있으면 1로
+            # 보지 않는다 — 100은 마지막 구간의 일이 끝났을 때(위의 1.0)만이다
+            cut = min(reported, 0.999)
     transfer = min(max(transfer, 0.0), 1.0)
-    progress = int(SECTION_TRANSFER_SHARE * transfer + (100 - SECTION_TRANSFER_SHARE) * cut)
+    progress = sections.percent(transfer, bool(item.post_process), cut)
     return remaining, size, speed, progress
 
 

@@ -30,7 +30,7 @@ from core.api.hls import parse_media_playlist
 from core.api.mp4 import parse_moov, read_mp4_index
 from core.models.cut import CutFrames, CutPiece
 from core.utils.cut_check import check_cut
-from core.utils.ffmpeg import FFmpegTimeoutError, get_ffmpeg_exe, run_ffmpeg
+from core.utils.ffmpeg import FFmpegTimeoutError, get_ffmpeg_exe, parse_out_time, run_ffmpeg
 from core.utils.hybrid_cut import (
     CUT_FAILED,
     CUT_TIMEOUT,
@@ -936,3 +936,152 @@ def test_cut_reports_the_stage_that_failed_and_nothing_after_it(mp4_source, tmp_
         )
 
     assert stages == ["probe", "0_head", "1_mid"]
+
+
+# ================================================================ 컷의 진행
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("out_time_us=1500000\n", 1.5),
+        ("out_time_us=0\n", 0.0),
+        ("out_time_us=N/A\n", None),  # 첫 패킷을 쓰기 전
+        ("out_time_ms=1500000\n", None),  # 이름과 달리 마이크로초인 줄 — 읽지 않는다
+        ("out_time=00:00:01.500000\n", None),
+        ("progress=end\n", None),
+        ("\n", None),
+    ],
+)
+def test_parse_out_time_reads_only_the_microsecond_line(line, expected):
+    """parse_out_time은 out_time_us 줄의 값을 초로 돌려주고 그 밖의 줄은 None이어야 한다."""
+    assert parse_out_time(line) == expected
+
+
+def test_run_ffmpeg_reports_the_output_time_while_it_runs():
+    """run_ffmpeg에 on_out_time을 주면 도는 동안 출력 시각을 여러 번, 줄지 않게 알려야 한다.
+
+    10fps 1.5초짜리 lavfi 입력을 실시간 속도(-re)로 읽기
+    -> 종료 코드 0, 알린 값이 서로 다른 것 2개 이상, 오름차순, 마지막 값은 1.3~1.6초
+    """
+    seen = []
+
+    done = run_ffmpeg(
+        ["-re", "-f", "lavfi", "-i", "testsrc2=duration=1.5:rate=10", "-f", "null", "-"],
+        timeout=30,
+        on_out_time=seen.append,
+    )
+
+    assert done.returncode == 0
+    assert len(set(seen)) >= 2
+    assert seen == sorted(seen)
+    assert 1.3 <= seen[-1] <= 1.6
+
+
+def test_run_ffmpeg_reporting_progress_still_times_out():
+    """on_out_time을 준 run_ffmpeg도 제한 시간을 넘기면 FFmpegTimeoutError를 내야 한다.
+
+    1시간짜리 lavfi 입력을 실시간 속도(-re)로 읽기, 제한 0.5초
+    -> FFmpegTimeoutError
+    """
+    with pytest.raises(FFmpegTimeoutError):
+        run_ffmpeg(
+            ["-re", "-f", "lavfi", "-i", "testsrc2=duration=3600", "-f", "null", "-"],
+            timeout=0.5,
+            on_out_time=lambda seconds: None,
+        )
+
+
+def test_cut_progress_rises_at_every_stage_and_ends_at_one(mp4_source, tmp_path):
+    """컷은 단계가 끝날 때마다 진행을 올려 알리고, 산출물을 다 쓴 뒤에 1을 알려야 한다.
+
+    mp4, 프레임 35~80 (입력 읽기 · 조각 셋 · 오디오 · 잇기 — 단계 여섯)
+    -> 알린 값이 6개 이상, 모두 앞의 값보다 크다, 마지막 값 == 1.0, 그 앞의 값은 모두 1 미만
+    """
+    path, frames = mp4_source
+    seen = []
+
+    hybrid_cut(path, frames, 35, 80, str(tmp_path / "out.mp4"), on_progress=seen.append)
+
+    assert len(seen) >= 6
+    assert all(later > earlier for earlier, later in zip(seen, seen[1:]))
+    assert seen[-1] == 1.0
+    assert all(value < 1.0 for value in seen[:-1])
+
+
+def test_cut_writes_the_same_file_whether_or_not_progress_is_reported(mp4_source, tmp_path):
+    """진행을 받으며 자른 파일은 받지 않고 자른 파일과 바이트가 같아야 한다.
+
+    mp4, 프레임 35~80을 on_progress 없이 한 번, 주고 한 번
+    -> 두 산출물의 bytes가 같다
+    """
+    path, frames = mp4_source
+    plain, reported = str(tmp_path / "plain.mp4"), str(tmp_path / "reported.mp4")
+
+    hybrid_cut(path, frames, 35, 80, plain)
+    hybrid_cut(path, frames, 35, 80, reported, on_progress=lambda value: None)
+
+    with open(plain, "rb") as first, open(reported, "rb") as second:
+        assert first.read() == second.read()
+
+
+def test_cut_progress_rises_inside_a_stage_as_ffmpeg_reports_its_output_time(
+    mp4_source, tmp_path, monkeypatch
+):
+    """한 단계가 도는 동안 ffmpeg가 출력 시각을 알리면 그 단계 안에서도 진행이 올라야 한다.
+
+    mp4, 프레임 35~80. 가운데 복사(42~71, 1초 분량)가 도는 동안 출력 시각 0.25 · 0.5 · 0.75초를 알림
+    -> 머리 조각이 끝난 뒤부터 가운데 조각이 끝나기까지 진행이 4번 오른다(안에서 3번 + 끝에서 1번)
+    """
+    path, frames = mp4_source
+    real = cut_module.run_ffmpeg
+    events = []
+
+    def feeding(args, **kwargs):
+        sink = kwargs.pop("on_out_time", None)
+        if sink is not None and "copy" in args and "-an" in args:  # 가운데 복사
+            for seconds in (0.25, 0.5, 0.75):
+                sink(seconds)
+        return real(args, **kwargs)
+
+    monkeypatch.setattr(cut_module, "run_ffmpeg", feeding)
+
+    hybrid_cut(
+        path,
+        frames,
+        35,
+        80,
+        str(tmp_path / "out.mp4"),
+        on_stage=lambda name, seconds: events.append(name),
+        on_progress=events.append,
+    )
+
+    inside = events[events.index("0_head") + 1 : events.index("1_mid")]
+    assert len(inside) == 4
+    assert inside == sorted(set(inside))
+
+
+def test_failed_cut_never_reports_full_progress(mp4_source, tmp_path, monkeypatch):
+    """도중에 실패한 컷은 진행 1을 알리지 않아야 한다.
+
+    조각을 잇는 실행(마지막)이 종료 코드 1로 끝나도록 바꿈, 프레임 35~80
+    -> CutError, 알린 값은 모두 1 미만
+    """
+    path, frames = mp4_source
+    real = cut_module.run_ffmpeg
+    calls = []
+
+    def flaky(args, **kwargs):
+        calls.append(args)
+        if len(calls) == 6:  # 입력 읽기 · 조각 셋 · 오디오 다음이 잇기다
+            return subprocess.CompletedProcess(args, 1, "", "boom")
+        return real(args, **kwargs)
+
+    monkeypatch.setattr(cut_module, "run_ffmpeg", flaky)
+    seen = []
+
+    with pytest.raises(CutError):
+        hybrid_cut(path, frames, 35, 80, str(tmp_path / "out.mp4"), on_progress=seen.append)
+
+    assert seen
+    assert all(value < 1.0 for value in seen)

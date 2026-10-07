@@ -56,6 +56,10 @@ class DownloadData:
         self.sections_failed = 0  # 자르지 못한 구간 수
         # 이전 실행이 끝내 이번 실행이 건너뛴 구간 수 — sections_done에 들어 있다
         self.sections_resumed = 0
+        # 컷 단계의 진행(0~1) — 이번 실행이 자를 구간들을 길이로 가중해 합친 값이다. 구간
+        # 하나를 자르는 동안에도 오른다. 줄지 않고, 1은 마지막 구간의 일이 끝났을 때만 된다.
+        # 컷을 시작하기 전과 구간이 없는 다운로드는 None이다
+        self.cut_progress = None
         # 일부 구간의 컷만 실패하고 끝났을 때 엔진이 남기는 것 — 끝낸 구간과 받아 둔 데이터
         # (core.models.section_resume.SectionResume). 다음 실행의 Content.section_resume으로
         # 넘기면 끝나지 않은 구간만 다시 처리한다. 그렇게 끝나지 않았으면 None이다

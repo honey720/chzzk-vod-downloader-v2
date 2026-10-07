@@ -450,6 +450,13 @@ class M3U8Downloader(BaseDownloader):
         paths = self.s.content.selection_paths
         failures: list[Exception] = []
         done = set(self._done_before)
+        progress = self._track_cuts(
+            {
+                number: section.last_pts - section.first_pts
+                for number, section in enumerate(self._sections, start=1)
+                if number - 1 not in self._done_before
+            }
+        )
         for number, (section, output_path) in enumerate(zip(self._sections, paths), start=1):
             if number - 1 in self._done_before:
                 continue  # 이전 실행이 만든 구간 — 다시 만들지 않는다
@@ -483,6 +490,7 @@ class M3U8Downloader(BaseDownloader):
                     output_path,
                     inspect=self._inspect_cuts,
                     on_stage=lambda name, seconds: stages.append((name, seconds)),
+                    on_progress=progress.section(number),
                 )
             except (CutError, Mp4Error) as e:
                 # 이 구간은 자르지 못했다 — 나머지 구간은 끝까지 자른다
@@ -502,6 +510,7 @@ class M3U8Downloader(BaseDownloader):
             # 병합 진행(세그먼트 수 기반)을 구간 수에 비례해 올린다 — 어댑터의 분모는
             # 받은 세그먼트 수 + 초기화 세그먼트다
             self.s.merged_segments = (self.s.max_threads + 1) * number // len(self._sections)
+            progress.finish(number)
             self._on_progress(
                 ProgressEvent(
                     downloaded_size=self.s.total_downloaded_size,

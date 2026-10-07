@@ -61,6 +61,7 @@ def cut_ts_section(
     *,
     inspect: bool = False,
     on_stage: Callable[[str, float], None] | None = None,
+    on_progress: Callable[[float], None] | None = None,
 ) -> tuple[CutResult, CutFrames]:
     """받아 둔 TS 세그먼트에서 구간 하나를 잘라 output_path에 mp4로 쓴다.
 
@@ -81,6 +82,7 @@ def cut_ts_section(
             (``core.utils.cut_check.check_cut``이 쓴다)
         on_stage: 단계 하나가 끝날 때마다 ``(단계 이름, 걸린 초)``로 부른다 — ``join``(세그먼트를
             mp4로 다시 싸기)에 이어 ``hybrid_cut``의 단계들
+        on_progress: 컷의 진행(0~1) — ``hybrid_cut``의 것 그대로다. 다시 싸는 동안에는 오르지 않는다
 
     Returns:
         (컷 결과, 다시 싼 mp4의 프레임 정보). 판정(``check_cut``)에는 뒤의 것을 넘긴다 —
@@ -101,7 +103,14 @@ def cut_ts_section(
                 on_stage("join", time.perf_counter() - started)
         _require_same_frames(ts_frames, frames)
         result = hybrid_cut(
-            joined_path, frames, first, last, output_path, inspect=inspect, on_stage=on_stage
+            joined_path,
+            frames,
+            first,
+            last,
+            output_path,
+            inspect=inspect,
+            on_stage=on_stage,
+            on_progress=on_progress,
         )
     finally:
         if os.path.exists(joined_path):

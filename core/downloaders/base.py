@@ -147,6 +147,55 @@ class _PostprocessAborted(Exception):
     """후처리 공급 루프의 사용자 중단 신호 — 실패가 아니라 중단 경로로 보낸다."""
 
 
+# 컷 진행을 이만큼 오를 때마다 알린다 — 막대의 1%보다 잘게, ffmpeg가 알리는 횟수보다는 드물게
+_CUT_PROGRESS_STEP = 0.002
+
+
+class SectionCutProgress:
+    """구간마다의 컷 진행(0~1)을 구간 길이로 가중해 하나의 값(0~1)으로 합친다 (#309).
+
+    구간 하나를 자르는 동안에는 ``section(number)``이 돌려준 함수로 그 구간의 진행을 받고,
+    그 구간의 일이 끝나면(자르지 못했어도) ``finish(number)``로 그 구간의 몫을 다 채운다.
+    알리는 값은 줄지 않는다. 1은 모든 구간이 끝났을 때만 알린다.
+    """
+
+    def __init__(self, lengths: dict[int, float], publish: Callable[[float], None]):
+        self._lengths = lengths
+        self._total = sum(lengths.values())
+        self._publish = publish
+        self._finished: set[int] = set()
+        self._published = 0.0
+
+    def section(self, number: int) -> Callable[[float], None]:
+        """그 구간의 컷이 진행(0~1)을 알릴 함수 — ``hybrid_cut``의 on_progress로 넘긴다."""
+
+        def on_progress(fraction: float) -> None:
+            inside = min(max(fraction, 0.0), 1.0)
+            self._advance(self._done() + self._lengths[number] * inside, final=False)
+
+        return on_progress
+
+    def finish(self, number: int) -> None:
+        """그 구간의 일이 끝났다 — 만들었든 자르지 못했든 그 구간의 몫을 다 채운다."""
+        self._finished.add(number)
+        self._advance(self._done(), final=True)
+
+    def _done(self) -> float:
+        return sum(self._lengths[number] for number in self._finished)
+
+    def _advance(self, amount: float, final: bool) -> None:
+        everything = len(self._finished) == len(self._lengths)
+        value = 1.0 if everything else amount / self._total if self._total > 0 else 0.0
+        if not everything:
+            value = min(value, 0.999)  # 1은 모든 구간이 끝났을 때만
+        if value <= self._published:
+            return
+        if not final and value - self._published < _CUT_PROGRESS_STEP:
+            return
+        self._published = value
+        self._publish(value)
+
+
 class BaseDownloader(ABC):
     """작업 목록 기반 멀티스레드 다운로드의 공통 실행 엔진."""
 
@@ -386,6 +435,27 @@ class BaseDownloader(ABC):
     def _prepare_note(self) -> str:
         """준비 단계의 로그 줄에 덧붙일 말 (기본: 없음). 무엇을 받았고 무엇을 다시 썼는지 등."""
         return ""
+
+    def _track_cuts(self, lengths: dict[int, float]) -> "SectionCutProgress":
+        """이번 실행이 자를 구간들의 컷 진행을 공유 데이터(``cut_progress``)에 싣는 것을 만든다.
+
+        Args:
+            lengths: 구간 번호 → 그 구간의 길이(단위는 무엇이든 같기만 하면 된다 — 초, 프레임 수).
+                이번 실행이 자를 구간만 담는다
+        """
+        return SectionCutProgress(lengths, self._publish_cut_progress)
+
+    def _publish_cut_progress(self, value: float) -> None:
+        """컷 진행을 공유 데이터에 적고 진행 통지를 보낸다 — 구간을 자르는 스레드에서 돈다."""
+        self.s.cut_progress = value
+        self._on_progress(
+            ProgressEvent(
+                downloaded_size=self.s.total_downloaded_size,
+                total_size=self._progress_total_size(),
+                speed=0.0,
+                active_threads=0,
+            )
+        )
 
     def _log_cut_stages(self, number: int, stages: Sequence[tuple[str, float]]) -> None:
         """구간 하나의 컷이 단계마다 걸린 시간을 로그 한 줄로 남긴다 (#309).

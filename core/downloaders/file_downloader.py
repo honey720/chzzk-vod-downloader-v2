@@ -317,6 +317,13 @@ class FileDownloader(BaseDownloader):
         self._log_if_supported("log_cut_setup", tm.perf_counter() - started)
         failures: list[CutError] = []
         done = set(self._done_before)
+        progress = self._track_cuts(
+            {
+                number: section.last_frame - section.first_frame + 1
+                for number, section in enumerate(self._sections)
+                if number not in self._done_before
+            }
+        )
         for number, section in enumerate(self._sections):
             if number in self._done_before:
                 continue  # 이전 실행이 만든 구간 — 다시 만들지 않는다
@@ -334,6 +341,7 @@ class FileDownloader(BaseDownloader):
                     section.output_path,
                     inspect=self._inspect_cuts,
                     on_stage=lambda name, seconds: stages.append((name, seconds)),
+                    on_progress=progress.section(number),
                 )
             except (CutError, Mp4Error) as e:
                 self.logger.log_error("Cut failed — partial source preserved for retry", e)
@@ -345,6 +353,7 @@ class FileDownloader(BaseDownloader):
                 self.s.sections_done += 1
                 done.add(number)
             self._log_cut_stages(number + 1, stages)
+            progress.finish(number)
             self._on_progress(
                 ProgressEvent(
                     downloaded_size=self.s.total_downloaded_size,

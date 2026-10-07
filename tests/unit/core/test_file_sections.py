@@ -1127,3 +1127,80 @@ def test_cut_stages_of_a_failed_section_are_logged_up_to_the_failure(server, tmp
     ((number, total, stages),) = _logged(run, "log_cut_stages")
     assert (number, total) == (1, 1)
     assert [name for name, _seconds in stages] == ["probe", "0_head", "1_mid"]
+
+
+# ================================================================ 컷의 진행
+
+
+def _watch_cut_progress(run: "_Run") -> list[tuple[int, float]]:
+    """진행 통지가 올 때마다 (끝난 구간 수, 컷 진행)을 적는다 — 컷 진행이 적힌 통지만."""
+    seen: list[tuple[int, float]] = []
+
+    def record(event) -> None:
+        if run.data.cut_progress is not None:
+            seen.append((run.data.sections_done, run.data.cut_progress))
+
+    run.engine.set_on_progress(record)
+    return seen
+
+
+def test_cut_progress_rises_inside_a_section_and_reaches_one_after_the_last(server, tmp_path):
+    """컷 진행은 구간 하나를 자르는 동안에도 여러 번 오르고, 줄지 않으며, 마지막 구간이 끝난 뒤에만 1이어야 한다.
+
+    기본 입력, 구간 둘(프레임 35~80 · 100~110)
+    -> 끝난 구간이 0개인 동안 서로 다른 컷 진행이 3개 이상, 전체가 오름차순,
+       끝난 구간이 2개가 되기 전의 값은 모두 1 미만, 마지막 값 == 1.0
+    """
+    selections = [TimeRange(_seconds(35), _seconds(80)), TimeRange(_seconds(100), _seconds(110))]
+    run = _Run(server, "plain", tmp_path, selections)
+    seen = _watch_cut_progress(run)
+
+    run.start()
+
+    values = [value for _done, value in seen]
+    assert len({value for done, value in seen if done == 0}) >= 3
+    assert values == sorted(values)
+    assert all(value < 1.0 for done, value in seen if done < 2)
+    assert values[-1] == 1.0
+
+
+def test_cut_progress_weighs_sections_by_their_length(server, tmp_path):
+    """컷 진행에서 구간 하나의 몫은 그 구간의 길이에 비례해야 한다.
+
+    기본 입력, 구간 둘 — 프레임 35~80(46프레임) · 100~110(11프레임)
+    -> 첫 구간이 끝난 직후의 컷 진행 == 46 ÷ 57
+    """
+    selections = [TimeRange(_seconds(35), _seconds(80)), TimeRange(_seconds(100), _seconds(110))]
+    run = _Run(server, "plain", tmp_path, selections)
+    seen = _watch_cut_progress(run)
+
+    run.start()
+
+    after_first = [value for done, value in seen if done == 1]
+    assert after_first[0] == pytest.approx(46 / 57)
+
+
+def test_failed_section_still_fills_its_share_of_the_cut_progress(server, tmp_path, monkeypatch):
+    """자르지 못한 구간도 그 구간의 일이 끝나면 컷 진행에서 제 몫을 다 채워야 한다.
+
+    기본 입력, 구간 하나(프레임 35~80), 컷의 셋째 ffmpeg 실행이 종료 코드 1로 끝남
+    -> 실패 1건, 마지막 컷 진행 == 1.0
+    """
+    real = cut_module.run_ffmpeg
+    calls = []
+
+    def flaky(args, **kwargs):
+        calls.append(args)
+        if len(calls) == 3:
+            return subprocess.CompletedProcess(args, 1, "", "boom")
+        return real(args, **kwargs)
+
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))])
+    run.engine._inspect_cuts = False
+    seen = _watch_cut_progress(run)
+    monkeypatch.setattr(cut_module, "run_ffmpeg", flaky)
+
+    run.start()
+
+    assert len(run.failures) == 1
+    assert seen[-1][1] == 1.0
