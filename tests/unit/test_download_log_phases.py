@@ -218,3 +218,20 @@ def test_prepare_line_without_a_note_ends_at_the_seconds(tmp_path, monkeypatch):
     assert [line for line in lines if "Prepare completed" in line][0].endswith(
         "Prepare completed in 0.02 seconds"
     )
+
+
+def test_cut_stage_line_lists_each_stage_and_their_sum(tmp_path, monkeypatch):
+    """컷 단계 줄은 구간 번호 · 단계마다의 시간 · 그 합을 한 줄에 적어야 한다 (#309).
+
+    구간 2/3, 단계 probe 0.41초 · 0_head 1.20초 · audio 2.00초 · mux 0.30초
+    -> "Cut 2/3 stages - probe: 0.41s, 0_head: 1.20s, audio: 2.00s, mux: 0.30s = 3.91s"
+    """
+    logger = _make_logger(tmp_path, monkeypatch)
+    logger.log_cut_setup(0.52)
+    logger.log_cut_stages(2, 3, (("probe", 0.41), ("0_head", 1.2), ("audio", 2.0), ("mux", 0.3)))
+    log_file = Path(logger.log_file)
+    logger.save_and_close()
+
+    text = log_file.read_text(encoding="utf-8")
+    assert "Cut frames prepared in 0.52 seconds" in text
+    assert "Cut 2/3 stages - probe: 0.41s, 0_head: 1.20s, audio: 2.00s, mux: 0.30s = 3.91s" in text

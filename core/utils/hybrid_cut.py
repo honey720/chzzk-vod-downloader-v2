@@ -33,9 +33,11 @@
 import os
 import re
 import shutil
+import time
 from bisect import bisect_left, bisect_right
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 
 from core.models.cut import (
     CutFrames,
@@ -239,6 +241,7 @@ def hybrid_cut(
     output_path: str,
     *,
     inspect: bool = False,
+    on_stage: Callable[[str, float], None] | None = None,
 ) -> CutResult:
     """입력 파일에서 프레임 [first, last]를 잘라 output_path에 mp4로 쓴다.
 
@@ -253,6 +256,9 @@ def hybrid_cut(
         output_path: 만들 파일. 이미 있으면 덮어쓴다
         inspect: True면 조각마다 파라미터·패킷 수를 읽어 결과에 싣는다 —
             ``core.utils.cut_check.check_cut``이 쓴다. 조각을 한 번씩 더 읽으므로 느리다
+        on_stage: 단계 하나가 끝날 때마다(실패로 끝나도) ``(단계 이름, 걸린 초)``로 부른다.
+            단계는 순서대로 ``probe``(입력의 SPS 읽기) · 조각마다 ``<번호>_<종류>``(재인코딩
+            또는 복사) · ``audio`` · ``mux``다. 걸린 시간에는 명령을 만드는 계산도 든다
 
     Raises:
         CutError: 입력을 다룰 수 없는 경우(``CUT_UNSUPPORTED``), ffmpeg가 실패한
@@ -261,7 +267,8 @@ def hybrid_cut(
     """
     _reject_transport_stream(source_path)
     plan = plan_cut(frames, first, last)
-    source = _probe_source(source_path, frames, plan)
+    with _stage(on_stage, "probe"):
+        source = _probe_source(source_path, frames, plan)
     source_path = os.path.abspath(source_path)
     output_path = os.path.abspath(output_path)
 
@@ -273,26 +280,31 @@ def hybrid_cut(
         inspected = []
         for number, piece in enumerate(plan.pieces):
             name = f"{number}_{piece.kind}.mp4"
-            if piece.reencoded:
-                _run(
-                    _encode_command(source_path, frames, piece, source.video, name),
-                    _ENCODE_TIMEOUT,
-                    work,
-                )
-            else:
-                _run(_copy_command(source_path, frames, piece, name), _COPY_TIMEOUT, work)
+            with _stage(on_stage, f"{number}_{piece.kind}"):
+                if piece.reencoded:
+                    _run(
+                        _encode_command(source_path, frames, piece, source.video, name),
+                        _ENCODE_TIMEOUT,
+                        work,
+                    )
+                else:
+                    _run(_copy_command(source_path, frames, piece, name), _COPY_TIMEOUT, work)
             names.append(name)
             if inspect:
                 inspected.append(_inspect_piece(os.path.join(work, name), piece, frames))
 
         has_audio = frames.audio_start is not None
         if has_audio:
-            _run(
-                _audio_command(source_path, frames, plan, source.audio_bitrate), _COPY_TIMEOUT, work
+            with _stage(on_stage, "audio"):
+                _run(
+                    _audio_command(source_path, frames, plan, source.audio_bitrate),
+                    _COPY_TIMEOUT,
+                    work,
+                )
+        with _stage(on_stage, "mux"):
+            stderr = _run(
+                _mux_command(frames, plan, names, has_audio, output_path, work), _COPY_TIMEOUT, work
             )
-        stderr = _run(
-            _mux_command(frames, plan, names, has_audio, output_path, work), _COPY_TIMEOUT, work
-        )
         if "Non-monotonic DTS" in stderr:
             raise CutError(CUT_FAILED, "조각을 잇는 곳에서 DTS가 뒤로 간다")
     except BaseException:
@@ -302,6 +314,17 @@ def hybrid_cut(
     finally:
         shutil.rmtree(work, ignore_errors=True)
     return CutResult(output_path=output_path, plan=plan, source=source, pieces=tuple(inspected))
+
+
+@contextmanager
+def _stage(on_stage: Callable[[str, float], None] | None, name: str) -> Iterator[None]:
+    """단계 하나에 걸린 시간을 on_stage에 알린다 — 그 단계가 예외로 끝나도 알린다."""
+    started = time.perf_counter()
+    try:
+        yield
+    finally:
+        if on_stage is not None:
+            on_stage(name, time.perf_counter() - started)
 
 
 def _run(args: list[str], timeout: float, cwd: str) -> str:

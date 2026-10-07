@@ -197,6 +197,20 @@ class DownloadLogger:
         """
         self.info(f"Transfer without prepare: {elapsed:.2f} seconds")
 
+    def log_cut_setup(self, elapsed: float):
+        """컷을 시작하기 전 색인에서 프레임 정보를 뽑는 데 걸린 시간을 로깅합니다 (#309)."""
+        self.info(f"Cut frames prepared in {elapsed:.2f} seconds")
+
+    def log_cut_stages(self, number: int, total: int, stages):
+        """구간 하나의 컷이 단계마다 걸린 시간을 한 줄로 로깅합니다 (#309).
+
+        단계는 probe(입력 읽기) · 조각마다 <번호>_<종류>(재인코딩 또는 복사) · audio · mux이고,
+        세그먼트 방식은 앞에 join(세그먼트 잇기)이 붙는다. 실패한 컷은 실패한 단계까지 남는다.
+        """
+        parts = ", ".join(f"{name}: {seconds:.2f}s" for name, seconds in stages)
+        total_seconds = sum(seconds for _name, seconds in stages)
+        self.info(f"Cut {number}/{total} stages - {parts} = {total_seconds:.2f}s")
+
     def log_postprocess_start(self, kind: str):
         """후처리 시작을 로깅합니다 (kind: remux 등)."""
         self.info(f"Postprocess started - {kind}")

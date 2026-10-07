@@ -57,7 +57,7 @@ import re
 import threading
 import time as tm
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
@@ -386,6 +386,17 @@ class BaseDownloader(ABC):
     def _prepare_note(self) -> str:
         """준비 단계의 로그 줄에 덧붙일 말 (기본: 없음). 무엇을 받았고 무엇을 다시 썼는지 등."""
         return ""
+
+    def _log_cut_stages(self, number: int, stages: Sequence[tuple[str, float]]) -> None:
+        """구간 하나의 컷이 단계마다 걸린 시간을 로그 한 줄로 남긴다 (#309).
+
+        Args:
+            number: 구간 번호(1부터 — 구간 목록의 순서)
+            stages: ``hybrid_cut``의 on_stage가 알린 (단계 이름, 걸린 초) — 알린 순서대로
+        """
+        self._log_if_supported(
+            "log_cut_stages", number, len(self.s.content.selections), tuple(stages)
+        )
 
     def _log_if_supported(self, name: str, *args) -> None:
         """로거에 그 메서드가 있을 때만 부른다.

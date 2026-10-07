@@ -458,6 +458,8 @@ class M3U8Downloader(BaseDownloader):
             if self.state == DownloadState.WAITING:
                 return  # 정리(임시 폴더·만든 구간 파일 삭제)는 run()의 중단 경로가 한다
             joined = os.path.join(self.temp_dir, f"section_{number}.mp4")
+            stages: list[tuple[str, float]] = []
+            started = tm.perf_counter()
             try:
                 parsed = []
                 with open(joined, "wb") as out:
@@ -472,6 +474,7 @@ class M3U8Downloader(BaseDownloader):
                 # 이은 파일은 VOD의 중간에서 시작한다 — ffmpeg의 -ss는 파일의 시작부터 센다
                 input_start = float(fmp4_origin(head.init, parsed[0]) - section.origin)
                 frames = cut_frames_from_fmp4(head.init, parsed, index, input_start)
+                stages.append(("join", tm.perf_counter() - started))  # 세그먼트 잇기 · 프레임 읽기
                 result = hybrid_cut(
                     joined,
                     frames,
@@ -479,6 +482,7 @@ class M3U8Downloader(BaseDownloader):
                     _frame_at(frames, section.last_pts),
                     output_path,
                     inspect=self._inspect_cuts,
+                    on_stage=lambda name, seconds: stages.append((name, seconds)),
                 )
             except (CutError, Mp4Error) as e:
                 # 이 구간은 자르지 못했다 — 나머지 구간은 끝까지 자른다
@@ -494,6 +498,7 @@ class M3U8Downloader(BaseDownloader):
             finally:
                 if os.path.exists(joined):
                     os.remove(joined)
+            self._log_cut_stages(number, stages)
             # 병합 진행(세그먼트 수 기반)을 구간 수에 비례해 올린다 — 어댑터의 분모는
             # 받은 세그먼트 수 + 초기화 세그먼트다
             self.s.merged_segments = (self.s.max_threads + 1) * number // len(self._sections)

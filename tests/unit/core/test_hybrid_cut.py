@@ -872,3 +872,67 @@ def test_mp4_source_frame_rate_is_thirty(mp4_source):
     -> frame_duration == 1/30
     """
     assert Fraction(mp4_source[1].frame_duration).limit_denominator(1000) == Fraction(1, 30)
+
+
+# ================================================================ 단계마다 걸린 시간
+
+
+def test_cut_reports_every_stage_in_the_order_it_ran(mp4_source, tmp_path):
+    """컷은 단계가 끝날 때마다 on_stage를 돈 순서대로 한 번씩 불러야 한다.
+
+    mp4, 프레임 35~80 (머리 · 가운데 · 꼬리 세 조각, 오디오 있음)
+    -> 단계 이름 == [probe, 0_head, 1_mid, 2_tail, audio, mux], 걸린 시간은 모두 0 이상
+    """
+    path, frames = mp4_source
+    stages = []
+
+    hybrid_cut(
+        path,
+        frames,
+        35,
+        80,
+        str(tmp_path / "out.mp4"),
+        on_stage=lambda name, seconds: stages.append((name, seconds)),
+    )
+
+    assert [name for name, _seconds in stages] == [
+        "probe",
+        "0_head",
+        "1_mid",
+        "2_tail",
+        "audio",
+        "mux",
+    ]
+    assert all(seconds >= 0 for _name, seconds in stages)
+
+
+def test_cut_reports_the_stage_that_failed_and_nothing_after_it(mp4_source, tmp_path, monkeypatch):
+    """컷이 도중에 실패하면 실패한 단계까지만 on_stage로 알려야 한다.
+
+    셋째 ffmpeg 실행(가운데 복사)이 종료 코드 1로 끝나도록 바꿈, 프레임 35~80
+    -> CutError, 단계 이름 == [probe, 0_head, 1_mid]
+    """
+    path, frames = mp4_source
+    real = cut_module.run_ffmpeg
+    calls = []
+
+    def flaky(args, **kwargs):
+        calls.append(args)
+        if len(calls) == 3:  # 0번은 입력 읽기, 1번은 머리, 2번이 가운데 복사다
+            return subprocess.CompletedProcess(args, 1, "", "boom")
+        return real(args, **kwargs)
+
+    monkeypatch.setattr(cut_module, "run_ffmpeg", flaky)
+    stages = []
+
+    with pytest.raises(CutError):
+        hybrid_cut(
+            path,
+            frames,
+            35,
+            80,
+            str(tmp_path / "out.mp4"),
+            on_stage=lambda name, seconds: stages.append(name),
+        )
+
+    assert stages == ["probe", "0_head", "1_mid"]

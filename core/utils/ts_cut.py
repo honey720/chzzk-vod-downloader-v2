@@ -18,8 +18,9 @@ mp4 경로의 것을 그대로 쓴다.
 """
 
 import os
+import time
 from bisect import bisect_left
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from core.api.mp4 import Mp4Error, read_mp4_index
 from core.models.cut import CutFrames, CutResult
@@ -59,6 +60,7 @@ def cut_ts_section(
     joined_path: str,
     *,
     inspect: bool = False,
+    on_stage: Callable[[str, float], None] | None = None,
 ) -> tuple[CutResult, CutFrames]:
     """받아 둔 TS 세그먼트에서 구간 하나를 잘라 output_path에 mp4로 쓴다.
 
@@ -77,6 +79,8 @@ def cut_ts_section(
         joined_path: 다시 싼 mp4를 둘 임시 경로
         inspect: True면 조각마다 파라미터·패킷 수를 읽어 결과에 싣는다
             (``core.utils.cut_check.check_cut``이 쓴다)
+        on_stage: 단계 하나가 끝날 때마다 ``(단계 이름, 걸린 초)``로 부른다 — ``join``(세그먼트를
+            mp4로 다시 싸기)에 이어 ``hybrid_cut``의 단계들
 
     Returns:
         (컷 결과, 다시 싼 mp4의 프레임 정보). 판정(``check_cut``)에는 뒤의 것을 넘긴다 —
@@ -89,9 +93,16 @@ def cut_ts_section(
     first = ts_frame_number(ts_frames, first_pts)
     last = ts_frame_number(ts_frames, last_pts)
     try:
-        frames = _remux(segment_paths, joined_path)
+        started = time.perf_counter()
+        try:
+            frames = _remux(segment_paths, joined_path)
+        finally:
+            if on_stage is not None:
+                on_stage("join", time.perf_counter() - started)
         _require_same_frames(ts_frames, frames)
-        result = hybrid_cut(joined_path, frames, first, last, output_path, inspect=inspect)
+        result = hybrid_cut(
+            joined_path, frames, first, last, output_path, inspect=inspect, on_stage=on_stage
+        )
     finally:
         if os.path.exists(joined_path):
             os.remove(joined_path)

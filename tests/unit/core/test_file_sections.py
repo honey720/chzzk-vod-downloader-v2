@@ -30,6 +30,7 @@ import pytest
 
 import core.api.mp4 as mp4_module
 import core.downloaders.file_downloader as fd_module
+import core.utils.hybrid_cut as cut_module
 import core.utils.mp4_partial as partial_module
 from core.api.mp4 import MP4_UNSUPPORTED, Mp4Error, fetch_mp4_head, read_mp4_index
 from core.downloaders.base import PostprocessError, TruncatedBodyError
@@ -1069,3 +1070,60 @@ def test_transfer_without_prepare_is_the_transfer_time_minus_the_prepare_time(
     assert prepare >= slow
     assert transfer >= slow
     assert net == pytest.approx(transfer - prepare, abs=1e-9)
+
+
+# ================================================================ 컷 단계의 로그
+
+
+def test_cut_stages_are_logged_once_per_section_with_its_number(server, tmp_path):
+    """구간마다 컷의 단계별 시간을 그 구간의 번호와 함께 한 번씩 로그에 남겨야 한다.
+
+    기본 입력, 구간 둘(프레임 35~80은 세 조각, 100~110은 한 GOP 안이라 한 조각)
+    -> log_cut_setup 1회, log_cut_stages 2회: (1, 2, …) · (2, 2, …),
+       첫 구간의 단계 이름 == [probe, 0_head, 1_mid, 2_tail, audio, mux],
+       둘째 구간의 단계 이름 == [probe, 0_whole, audio, mux]
+    """
+    selections = [TimeRange(_seconds(35), _seconds(80)), TimeRange(_seconds(100), _seconds(110))]
+
+    run = _Run(server, "plain", tmp_path, selections).start()
+
+    assert len(_logged(run, "log_cut_setup")) == 1
+    first, second = _logged(run, "log_cut_stages")
+    assert first[:2] == (1, 2)
+    assert second[:2] == (2, 2)
+    assert [name for name, _seconds in first[2]] == [
+        "probe",
+        "0_head",
+        "1_mid",
+        "2_tail",
+        "audio",
+        "mux",
+    ]
+    assert [name for name, _seconds in second[2]] == ["probe", "0_whole", "audio", "mux"]
+
+
+def test_cut_stages_of_a_failed_section_are_logged_up_to_the_failure(server, tmp_path, monkeypatch):
+    """컷이 실패한 구간도 실패한 단계까지의 시간을 로그에 남겨야 한다.
+
+    기본 입력, 구간 프레임 35~80, 컷의 셋째 ffmpeg 실행(가운데 복사)이 종료 코드 1로 끝남
+    -> 실패 1건, log_cut_stages 1회, 단계 이름 == [probe, 0_head, 1_mid]
+    """
+    real = cut_module.run_ffmpeg
+    calls = []
+
+    def flaky(args, **kwargs):
+        calls.append(args)
+        if len(calls) == 3:  # 0번은 입력 읽기, 1번은 머리, 2번이 가운데 복사다
+            return subprocess.CompletedProcess(args, 1, "", "boom")
+        return real(args, **kwargs)
+
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))])
+    run.engine._inspect_cuts = False  # 조각을 따로 읽는 실행이 세는 수에 끼지 않게 한다
+    monkeypatch.setattr(cut_module, "run_ffmpeg", flaky)
+
+    run.start()
+
+    assert len(run.failures) == 1
+    ((number, total, stages),) = _logged(run, "log_cut_stages")
+    assert (number, total) == (1, 1)
+    assert [name for name, _seconds in stages] == ["probe", "0_head", "1_mid"]

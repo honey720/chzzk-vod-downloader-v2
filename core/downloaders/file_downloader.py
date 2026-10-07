@@ -307,11 +307,14 @@ class FileDownloader(BaseDownloader):
         있으면 끝낸 구간과 임시 원본을 공유 데이터의 section_resume에 남긴다.
         """
         self._on_merge_start()
+        started = tm.perf_counter()
         try:
             frames = cut_frames_from_mp4(self._index)
         except (CutError, Mp4Error) as e:
             self.logger.log_error("Cut failed — partial source preserved for retry", e)
             raise PostprocessError(f"후처리(cut) 실패: {e}") from e
+        # 색인에서 컷의 프레임 정보를 뽑는 데 걸린 시간 — 긴 영상은 샘플이 수백만 개다
+        self._log_if_supported("log_cut_setup", tm.perf_counter() - started)
         failures: list[CutError] = []
         done = set(self._done_before)
         for number, section in enumerate(self._sections):
@@ -321,6 +324,7 @@ class FileDownloader(BaseDownloader):
                 self.s._pause_event.wait()
             if self.state == DownloadState.WAITING:
                 return  # 정리(임시 원본·만든 구간 파일 삭제)는 run()의 중단 경로가 한다
+            stages: list[tuple[str, float]] = []
             try:
                 result = hybrid_cut(
                     self._source_path,
@@ -329,6 +333,7 @@ class FileDownloader(BaseDownloader):
                     section.last_frame,
                     section.output_path,
                     inspect=self._inspect_cuts,
+                    on_stage=lambda name, seconds: stages.append((name, seconds)),
                 )
             except (CutError, Mp4Error) as e:
                 self.logger.log_error("Cut failed — partial source preserved for retry", e)
@@ -339,6 +344,7 @@ class FileDownloader(BaseDownloader):
                 self._made_sections.append(section.output_path)
                 self.s.sections_done += 1
                 done.add(number)
+            self._log_cut_stages(number + 1, stages)
             self._on_progress(
                 ProgressEvent(
                     downloaded_size=self.s.total_downloaded_size,
