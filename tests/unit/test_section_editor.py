@@ -32,6 +32,7 @@ from core.api.representations import StreamEntry
 from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
 from core.utils.paths import release_output_paths
+from app.viewmodels.section_edit_viewmodel import refit_selections
 from tests.unit.section_input import leave_time, type_clock, type_frame, type_time
 from tests.unit.card_helpers import drop_new_top_levels, hold_style, shown, snapshot_top_levels
 
@@ -2497,3 +2498,156 @@ def test_frame_change_that_breaks_the_whole_time_follows_the_timing_table(qtbot,
 
     assert error_shown(row) == "Start must be before end"
     assert flagged_fields(row) == ALL_FOUR
+
+
+# ================================================================ 가운데 값의 방향 · 원래 값에서 다시 맞추기 (#309)
+
+
+def _range(first: int, last: int, rate: Fraction) -> TimeRange:
+    """그 프레임률의 프레임 번호 둘로 만든 구간 — 시각은 번호 ÷ 프레임률을 float로 바꾼 값."""
+    return TimeRange(float(Fraction(first) / rate), float(Fraction(last) / rate))
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [(Fraction(60), Fraction(30)), (Fraction(60000, 1001), Fraction(30000, 1001))],
+    ids=["60-30", "59.94-29.97"],
+)
+@pytest.mark.parametrize(
+    ("first", "last", "expected"),
+    [
+        (31, 91, (15, 46)),  # 시작 31 → 15(앞), 끝 91 → 46(뒤)
+        (33, 93, (16, 47)),  # 시작 33 → 16(앞), 끝 93 → 47(뒤)
+        (10, 31, (5, 16)),  # 끝 31 → 16
+        (10, 33, (5, 17)),  # 끝 33 → 17
+        (30, 90, (15, 45)),  # 가운데가 아니면 그 프레임 그대로
+    ],
+)
+def test_refit_sends_an_exact_midpoint_outwards(old, new, first, last, expected):
+    """새 프레임률의 두 프레임 정확히 가운데에 오는 시각은 시작이면 앞 프레임, 끝이면 뒤 프레임으로 가야 한다.
+
+    60fps(또는 59.94fps)의 프레임 번호 (first, last)로 만든 구간을 절반의 프레임률에 맞춤
+    -> 새 프레임 번호 == expected (홀수 번호는 시작이면 내림, 끝이면 올림)
+    """
+    (refit,) = refit_selections([_range(first, last, old)], new)
+
+    assert (round(Fraction(refit.start) * new), round(Fraction(refit.end) * new)) == expected
+    assert refit == _range(*expected, new)
+
+
+def test_refit_to_a_doubled_frame_rate_is_exactly_twice_the_frame_number():
+    """30fps에서 60fps로 맞추면 프레임 번호가 정확히 두 배여야 한다 — 가운데가 생기지 않는다.
+
+    30fps의 프레임 15~46 -> 60fps의 프레임 30~92
+    """
+    (refit,) = refit_selections([_range(15, 46, Fraction(30))], Fraction(60))
+
+    assert refit == _range(30, 92, Fraction(60))
+
+
+def test_refit_picks_the_nearest_frame_when_not_at_a_midpoint():
+    """가운데가 아닌 시각은 시작이든 끝이든 가장 가까운 프레임으로 가야 한다.
+
+    60fps의 프레임 7~101을 24fps에 맞춤(7/60초 = 24fps의 2.8번째, 101/60초 = 40.4번째)
+    -> 24fps의 프레임 3~40
+    """
+    (refit,) = refit_selections([_range(7, 101, Fraction(60))], Fraction(24))
+
+    assert refit == _range(3, 40, Fraction(24))
+
+
+def test_going_back_to_the_original_frame_rate_restores_the_original_sections(
+    qtbot, tmp_path, basis
+):
+    """해상도를 바꿨다가 원래 프레임률로 돌아오면 사용자가 확정한 원래 구간이 그대로 나와야 한다.
+
+    60fps에서 홀수 프레임의 구간(00:00:10:31 ~ 00:00:20:01)을 확인 → 480p(30fps) → 1080p(60fps)
+    -> 30fps에서는 30fps의 프레임 경계, 돌아온 뒤 selections == 처음 확정한 구간(31번 프레임은 31번)
+    """
+    basis.by_resolution[480] = (Fraction(30), HOUR)
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    original = give_sections(qtbot, win, item, ODD)
+
+    _pick(win, item, 480)
+    settle(qtbot, win)
+    at_thirty = item.selections
+    _pick(win, item, 1080)
+    settle(qtbot, win)
+
+    assert at_thirty != original and _on_grid(at_thirty[0].start, 30)
+    assert item.selections == original
+    assert notice_of(win, item) == ""
+
+
+def test_changing_twice_refits_from_the_original_not_from_the_last_result(qtbot, tmp_path, basis):
+    """해상도를 연달아 바꿔도 결과는 원래 구간을 지금의 프레임률에 한 번 맞춘 것이어야 한다.
+
+    60fps에서 00:00:10:31 ~ 00:00:20:01을 확인 → 480p(30fps) → 1080p(60fps) → 480p(30fps)
+    -> 마지막 selections == 첫 480p에서의 selections == (10.5초, 601/30초)
+       (시작 631번은 가운데라 앞 프레임 315, 끝 1201번은 가운데라 뒤 프레임 601)
+    """
+    basis.by_resolution[480] = (Fraction(30), HOUR)
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    give_sections(qtbot, win, item, ODD)
+
+    seen = []
+    for resolution in (480, 1080, 480):
+        _pick(win, item, resolution)
+        settle(qtbot, win)
+        seen.append(item.selections)
+
+    expected = (TimeRange(10.5, float(Fraction(601, 30))),)
+    assert seen[0] == expected
+    assert seen[2] == expected
+
+
+def test_editing_after_a_change_makes_the_edit_the_new_original(qtbot, tmp_path, basis):
+    """해상도를 바꾼 뒤 구간을 다시 확정하면 그 값이 새 원래 값이 되어야 한다.
+
+    60fps에서 구간을 확인 → 480p(30fps)에서 편집 창을 열어 00:00:05:07 ~ 00:00:09:11로 확정
+    → 1080p(60fps) → 480p(30fps)
+    -> 60fps에서는 프레임 번호가 정확히 두 배(5초 14프레임 ~ 9초 22프레임),
+       30fps로 돌아오면 selections == 480p에서 확정한 구간
+    """
+    basis.by_resolution[480] = (Fraction(30), HOUR)
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    give_sections(qtbot, win, item, ODD)
+    _pick(win, item, 480)
+    settle(qtbot, win)
+    edited = give_sections(qtbot, win, item, [("00:00:05:07", "00:00:09:11")])
+    assert edited == (_range(157, 281, Fraction(30)),), "전제: 30fps의 프레임으로 확정됐다"
+
+    _pick(win, item, 1080)
+    settle(qtbot, win)
+    at_sixty = item.selections
+    _pick(win, item, 480)
+    settle(qtbot, win)
+
+    assert at_sixty == (_range(314, 562, Fraction(60)),)
+    assert item.selections == edited
+
+
+def test_a_section_pulled_to_a_shorter_end_gets_its_end_back(qtbot, tmp_path, basis):
+    """더 짧은 해상도에서 끝이 당겨진 구간도 원래 해상도로 돌아오면 원래 끝으로 돌아가야 한다.
+
+    60fps · 3600초에서 00:10:00:00 ~ 01:00:00:00(영상 끝)을 확인 → 480p(30fps · 3590초) → 1080p
+    -> 480p에서는 끝이 3590초로 당겨지고 알림이 붙는다, 돌아온 뒤 끝 == 3600초 · 알림 없음
+    """
+    basis.by_resolution[480] = (Fraction(30), 3590.0)
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    original = give_sections(qtbot, win, item, [("00:10:00:00", "01:00:00:00")])
+
+    _pick(win, item, 480)
+    settle(qtbot, win)
+    pulled = item.selections[0].end
+    was_marked = item.section_end_pulled
+    _pick(win, item, 1080)
+    settle(qtbot, win)
+
+    assert (pulled, was_marked) == (3590.0, True)
+    assert item.selections == original
+    assert not item.section_end_pulled and not item.section_end_extended

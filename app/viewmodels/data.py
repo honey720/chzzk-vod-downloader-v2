@@ -45,9 +45,10 @@ class ContentItem:
         # 지금의 구간이 맞춰져 있는 프레임률(Fraction). 조회한 값이거나, 해상도를 바꾼 직후
         # 조회가 끝나기 전에는 목록 항목의 선언값이다. 구간이 없으면 None
         self.section_frame_rate = None
-        # 조회한 값으로 마지막에 확인한 (구간 목록, app.section_basis.SectionBasis) — 구간 편집
-        # 창이 확인할 때와, 해상도를 바꾼 뒤의 조회가 끝날 때 채운다. 해상도를 바꾸면 이 구간을
-        # 새 프레임률 · 길이에 다시 맞춘다(맞춘 것을 또 맞추지 않는다). 구간이 없으면 None
+        # 사용자가 마지막으로 확정한 (구간 목록, 그때의 app.section_basis.SectionBasis) — 원래 값.
+        # 구간 편집 창이 확인할 때만 바뀐다. 해상도를 바꿀 때마다 이 값을 새 프레임률 · 길이에
+        # 다시 맞춘다(맞춘 것을 또 맞추지 않는다 — 원래 프레임률로 돌아오면 이 값이 그대로 나온다).
+        # 저장 · 다운로드에는 쓰지 않는다 — 엔진에 넘기는 것은 맞춘 값(selections)이다. 구간이 없으면 None
         self.section_verified = None
         # 해상도를 바꾼 뒤 새 해상도의 길이를 확인했는지 — ""(확인함 · 바꾼 적 없음) ·
         # SECTION_CHECK_PENDING(조회 중) · SECTION_CHECK_UNVERIFIED(조회 실패)

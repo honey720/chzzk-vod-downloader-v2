@@ -231,18 +231,44 @@ def same_frame_rate(first: Fraction, second: Fraction) -> bool:
     return abs(first - second) <= max(first, second) * _SAME_RATE_TOLERANCE
 
 
+# 시각이 두 프레임의 "정확히 가운데"인지 가릴 때의 여유(프레임 단위). 시각은 float라 60fps의
+# 31번 프레임(31/60초)에 30을 곱해도 15.5가 꼭 나오지 않는다 — 이만큼 안이면 가운데로 본다
+_MIDPOINT_SLACK = Fraction(1, 10**6)
+_HALF = Fraction(1, 2)
+
+
+def _refit_frame(seconds: float, rate: Fraction, edge: str) -> int:
+    """시각을 그 프레임률의 프레임 번호로 옮긴다 — 가장 가까운 프레임, 가운데면 구간이 넓어지는 쪽.
+
+    두 프레임의 정확히 가운데에 오는 시각(60fps의 홀수 프레임을 30fps로 옮길 때)은 시작이면
+    앞 프레임, 끝이면 뒤 프레임이다 — 고른 장면이 잘리지 않는다. 엔진이 실제 프레임을 고르는
+    규칙(``core.utils.timecode.snap_to_frame``)과 같은 방향이다. ``frame_index``의 반올림은
+    가운데에서 짝수 쪽으로 가(31 → 16 · 33 → 16) 시작과 끝의 방향이 뒤섞였다.
+
+    Args:
+        edge: ``"start"`` 또는 ``"end"``
+    """
+    position = Fraction(seconds) * rate
+    before = position.numerator // position.denominator
+    inside = position - before
+    if abs(inside - _HALF) <= _MIDPOINT_SLACK:
+        return before if edge == "start" else before + 1
+    return before + 1 if inside > _HALF else before
+
+
 def refit_selections(selections: Sequence[TimeRange], fps: Fraction) -> tuple[TimeRange, ...]:
     """구간을 시각 기준으로 새 프레임률의 프레임에 다시 맞춘다.
 
-    시작 · 끝을 각각 가장 가까운 프레임의 시각으로 옮긴다. 옮긴 뒤 시작과 끝이 같은
+    시작 · 끝을 각각 가장 가까운 프레임의 시각으로 옮긴다. 두 프레임의 정확히 가운데면
+    시작은 앞 프레임, 끝은 뒤 프레임으로 보낸다(``_refit_frame``). 옮긴 뒤 시작과 끝이 같은
     프레임이 되면(60fps의 한 프레임짜리 구간을 30fps로 옮길 때) 끝을 한 프레임 뒤로 둔다 —
     구간의 최소 길이는 한 프레임이다.
     """
     rate = frame_rate(fps)
     refit = []
     for selection in selections:
-        first = max(frame_index(selection.start, rate), 0)
-        last = max(frame_index(selection.end, rate), first + 1)
+        first = max(_refit_frame(selection.start, rate, "start"), 0)
+        last = max(_refit_frame(selection.end, rate, "end"), first + 1)
         refit.append(TimeRange(float(Fraction(first) / rate), float(Fraction(last) / rate)))
     return tuple(refit)
 
@@ -774,8 +800,12 @@ class SectionRefitter(QObject):
        다시 맞춘다(``refit_to_basis``). 선언값과 조회값이 다르면 조회값이 이긴다. 조회가
        실패하면 1의 결과를 두고 길이를 확인하지 못했다고 표시한다
 
-    두 단계 모두 **마지막으로 확인된 구간**(``ContentItem.section_verified``)에서 출발한다 —
-    선언값으로 맞춘 것을 조회값으로 또 맞추면 반올림이 두 번 쌓인다.
+    두 단계 모두 **사용자가 마지막으로 확정한 구간**(``ContentItem.section_verified`` — 편집 창이
+    확인할 때만 바뀐다)에서 출발한다. 맞춘 것을 또 맞추지 않는다 — 선언값으로 맞춘 것을
+    조회값으로 또 맞추거나, 한 해상도에서 맞춘 것을 다음 해상도에 또 맞추면 반올림이 쌓인다.
+    그래서 해상도를 몇 번 바꾸든 결과는 "원래 값을 지금의 해상도에 한 번 맞춘 것"이고, 원래
+    프레임률로 돌아오면 원래 값이 그대로 나온다. 끝 당기기 · 늘리기 · 당길 수 없는 구간의
+    판정도 원래 값과 그때의 길이에서 출발한다.
 
     늦게 온 결과는 버린다: 그사이 해상도를 또 바꿨거나(요청 번호가 다르다), 카드가 지워졌거나,
     대기 상태가 아니게 됐거나(받기 시작했다), 구간을 다시 편집한 경우다.
@@ -863,12 +893,14 @@ class SectionRefitter(QObject):
             self._model.notifyChanged(item)
             self.settled.emit(item)
             return
+        # 사용자가 마지막으로 확정한 구간(원래 값)에서 출발한다. 맞춘 결과를 원래 값 자리에 적지
+        # 않는다 — 적으면 다음에 해상도를 바꿀 때 맞춘 것을 또 맞추게 되어, 원래 프레임률로
+        # 돌아와도 원래 값이 나오지 않는다(60 → 30 → 60에서 31번 프레임이 30이나 32가 된다)
         selections, old = item.section_verified
         result = refit_to_basis(selections, old, basis)
         rate = frame_rate(basis.fps)
         item.selections = result.selections
         item.section_frame_rate = rate
-        item.section_verified = (result.selections, SectionBasis(fps=rate, duration=basis.duration))
         item.section_check = ""
         item.section_refit_fps = rate if result.regridded else None
         item.section_end_pulled = result.end_pulled
