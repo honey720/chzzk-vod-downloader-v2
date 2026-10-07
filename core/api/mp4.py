@@ -29,7 +29,7 @@ from collections import Counter
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
 from fractions import Fraction
-from itertools import accumulate, chain, compress, count, repeat
+from itertools import accumulate, chain, compress, islice, repeat
 from operator import add, le, mul, sub, truediv
 
 from core.api.session import get_thread_session
@@ -41,7 +41,15 @@ from core.models.mp4_index import (
     Mp4Track,
     PendingMp4Head,
 )
-from core.models.sample_column import count_column, float_column, offset_column
+from core.models.sample_column import (
+    CHUNK_ITEMS,
+    array_in_chunks,
+    count_column,
+    fill_in_chunks,
+    float_column,
+    in_chunks,
+    offset_column,
+)
 
 # 실패 키 — 번역하지 않은 i18n 키 원문
 MP4_FRAGMENTED = "Fragmented MP4 is not supported"  # moof·mvex가 있다
@@ -392,14 +400,17 @@ class _TimeTrack:
         if len(self.composition) == self.count:
             return self.composition[sample]  # 구간마다 샘플 하나 — 번호가 곧 자리다
         if self._ends is None:
-            self._ends = array.array("q", accumulate(self.composition_runs))
+            self._ends = array_in_chunks("q", accumulate(self.composition_runs))
         return self.composition[bisect_right(self._ends, sample)]
 
     def spread(self) -> tuple[int, int]:
         """(PTS − DTS)의 (가장 작은 값, 가장 큰 값)."""
         if not self.composition:
             return 0, 0
-        return min(self.composition), max(self.composition)
+        return (
+            min(map(min, in_chunks(self.composition))),
+            max(map(max, in_chunks(self.composition))),
+        )
 
 
 def summarize_moov(moov: bytes) -> Mp4Summary:
@@ -678,8 +689,8 @@ def _read_table(data: bytes, start: int, values: int, typecode: str) -> array.ar
 
 
 def _expand_runs(runs: array.array, values: array.array, typecode: str) -> array.array:
-    """(개수, 값) 구간들을 샘플마다 값 하나씩으로 펼친다 — 반복은 C에서 돈다."""
-    return array.array(typecode, chain.from_iterable(map(repeat, values, runs)))
+    """(개수, 값) 구간들을 샘플마다 값 하나씩으로 펼친다 — 반복은 C에서 돈다(잘라서)."""
+    return array_in_chunks(typecode, chain.from_iterable(map(repeat, values, runs)))
 
 
 def _shown(ticks: array.array) -> compress:
@@ -697,6 +708,7 @@ class _RawTrack:
     presented: array.array  # 샘플별 (PTS − 편집 목록의 media_time), 틱
     decoded: array.array  # 샘플별 (DTS − 편집 목록의 media_time), 틱
     deltas: array.array  # 샘플별 길이, 틱
+    lowest_lead: int  # (PTS − DTS)의 최솟값, 틱. ctts가 없으면 0 — 표시 순서를 잘라 정렬할 때 쓴다
     # stts의 (개수, 길이) 구간 — 샘플별 길이(초)를 구간마다 한 번만 나눠서 만드는 데 쓴다
     delta_runs: tuple[array.array, array.array]
     offsets: array.array
@@ -707,7 +719,8 @@ class _RawTrack:
 
     def start(self) -> Fraction | None:
         """이 트랙에서 가장 먼저 표시되는 샘플의 시각(초). 표시되는 샘플이 없으면 None."""
-        first = min(_shown(self.presented), default=None)
+        firsts = [min(_shown(chunk), default=None) for chunk in in_chunks(self.presented)]
+        first = min((value for value in firsts if value is not None), default=None)
         if first is None:
             return None
         return self.empty_edit + Fraction(first, self.timescale)
@@ -748,23 +761,95 @@ def _parse_moov(moov: bytes) -> Mp4Index:
     # 표시 순서 — 표시 시각(틱)으로 샘플 번호를 정렬하고, 가려진(음수) 샘플을 뺀다. 같은 시각은
     # 샘플 번호 순서다(정렬이 안정적이다). 샘플마다 파이썬 함수를 부르지 않는다
     presented = video.presented
-    order = sorted(range(len(presented)), key=presented.__getitem__)
-    shown = array.array("Q", compress(order, map(le, repeat(0), map(presented.__getitem__, order))))
+    order = _presentation_order(presented, video.decoded, video.lowest_lead)
+    shown = array_in_chunks(
+        "Q", compress(order, map(le, repeat(0), map(presented.__getitem__, order)))
+    )
     del order
     sync = frozenset(video.sync_samples)
-    modal_delta = Counter(video.deltas).most_common(1)[0][0]
+    lengths: Counter = Counter()
+    for chunk in in_chunks(video.deltas):
+        lengths.update(chunk)  # 처음 나온 순서가 그대로다 — 수가 같으면 먼저 나온 길이가 뽑힌다
+    modal_delta = lengths.most_common(1)[0][0]
     if modal_delta <= 0:
         raise Mp4Error(MP4_INVALID, "영상 샘플 길이가 0이다")
     times, durations = video_track.times, video_track.durations
     return Mp4Index(
         frame_pts=float_column(map(times.__getitem__, shown)),
         frame_samples=count_column(shown),
-        keyframes=count_column(array.array("Q", compress(count(), map(sync.__contains__, shown)))),
-        duration=max(map(add, map(times.__getitem__, shown), map(durations.__getitem__, shown))),
+        keyframes=count_column(_positions_in(shown, sync)),
+        duration=_largest(
+            map(add, map(times.__getitem__, shown), map(durations.__getitem__, shown))
+        ),
         fps=Fraction(video.timescale, modal_delta),
         video=video_track,
         audio=_to_track(audio, origin) if audio else None,
     )
+
+
+# 표시 순서의 조각을 끊을 자리를 찾을 때 한 번에 더 들여다보는 샘플 수 — B프레임의 재배열은
+# 몇 프레임 안에서 끝나므로 한두 번이면 찾는다
+_ORDER_STEP = 64
+
+
+def _presentation_order(
+    presented: array.array, decoded: array.array, lowest_lead: int
+) -> array.array:
+    """표시 순서 — 표시 시각(틱)으로 정렬한 샘플 번호. 같은 시각은 샘플 번호 순서다.
+
+    ``sorted(range(n), key=presented.__getitem__)``과 같은 결과를 조각마다 따로 정렬해 낸다 —
+    정렬 한 번이 통째로 C에서 돌면 그동안 GIL을 놓지 않는다(``CHUNK_ITEMS``).
+
+    조각은 **앞쪽의 가장 늦은 표시 시각이 뒤쪽의 어느 표시 시각보다도 늦지 않은 자리**에서만
+    끊는다. 그런 자리에서 끊으면 조각을 따로 정렬해 이은 것이 전체를 안정 정렬한 것과 같다
+    (값이 같은 샘플은 앞 조각의 것이 번호도 앞이다). 뒤쪽의 표시 시각은 모두
+    ``decoded[끝] + lowest_lead`` 이상이다 — DTS는 줄지 않는다.
+
+    Args:
+        lowest_lead: (PTS − DTS)의 최솟값(틱). ctts가 없으면 0이다
+    """
+    total = len(presented)
+    order = array.array("Q")
+    if total <= CHUNK_ITEMS:
+        order.extend(sorted(range(total), key=presented.__getitem__))
+        return order
+    start = 0
+    latest = presented[0]  # 지금까지 본 샘플의 가장 늦은 표시 시각
+    while start < total:
+        end = min(start + CHUNK_ITEMS, total)
+        latest = max(latest, max(presented[start:end]))
+        while end < total and latest > decoded[end] + lowest_lead:
+            further = min(end + _ORDER_STEP, total)
+            latest = max(latest, max(presented[end:further]))
+            end = further
+        order.extend(sorted(range(start, end), key=presented.__getitem__))
+        start = end
+    return order
+
+
+def _largest(values: Iterator[float]) -> float:
+    """값들의 최댓값 — ``max(values)``와 같다. 잘라서 훑는다(``CHUNK_ITEMS``). 값이 하나는 있어야 한다."""
+    largest = max(islice(values, CHUNK_ITEMS))
+    while True:
+        further = max(islice(values, CHUNK_ITEMS), default=None)
+        if further is None:
+            return largest
+        largest = max(largest, further)
+
+
+def _positions_in(samples: array.array, wanted: frozenset) -> array.array:
+    """samples 가운데 wanted에 든 것의 자리(0부터) — ``compress(count(), …)``와 같다.
+
+    걸러 내는 반복은 **들어가는 쪽**을 잘라야 한다 — 나오는 값이 드물면(키프레임은 수십 프레임에
+    하나다) 나오는 쪽을 ``CHUNK_ITEMS``개씩 잘라도 조각 하나가 표 전체를 훑는다.
+    """
+    positions = array.array("Q")
+    for start in range(0, len(samples), CHUNK_ITEMS):
+        chunk = samples[start : start + CHUNK_ITEMS]
+        positions.extend(
+            compress(range(start, start + len(chunk)), map(wanted.__contains__, chunk))
+        )
+    return positions
 
 
 def _to_track(raw: _RawTrack, origin: Fraction) -> Mp4Track:
@@ -832,7 +917,7 @@ def _parse_track(data: bytes, start: int, end: int, movie_timescale: int) -> _Ra
         raise Mp4Error(MP4_INVALID, f"stts {declared}개 · stsz {count}개")
     deltas = _expand_runs(time_runs, time_deltas, "I")
     # 샘플의 DTS는 앞 샘플들의 길이를 더한 값이다 — 누적은 C에서 돈다
-    decode_times = array.array("q", accumulate(deltas, initial=0))
+    decode_times = array_in_chunks("q", accumulate(deltas, initial=0))
     decode_times.pop()  # 마지막 값은 트랙의 끝이다 — 샘플의 DTS가 아니다
     has_composition = b"ctts" in boxes
     composition = _composition_offsets(data, boxes[b"ctts"], count) if has_composition else None
@@ -842,26 +927,28 @@ def _parse_track(data: bytes, start: int, end: int, movie_timescale: int) -> _Ra
         numbers = _read_table(
             data, boxes[b"stss"][0] + 8, _entry_count(data, boxes[b"stss"], 4), "I"
         )
-        sync_samples = array.array("q", map(sub, numbers, repeat(1)))
+        sync_samples = array_in_chunks("q", map(sub, numbers, repeat(1)))
     else:
-        sync_samples = array.array(
-            "q", range(count)
-        )  # stss가 없으면 모든 샘플이 단독 디코드 가능하다
+        # stss가 없으면 모든 샘플이 단독 디코드 가능하다
+        sync_samples = array_in_chunks("q", range(count))
 
     offsets, chunk_starts = _sample_offsets(data, boxes, sizes)
     decoded = (
         decode_times
         if media_time == 0
-        else array.array("q", map(sub, decode_times, repeat(media_time)))
+        else array_in_chunks("q", map(sub, decode_times, repeat(media_time)))
     )
     return _RawTrack(
         handler=handler,
         timescale=timescale,
         empty_edit=empty_edit,
         # ctts가 없으면 PTS가 DTS다 — 같은 배열을 함께 쓴다(오디오 트랙이 그렇다)
-        presented=array.array("q", map(add, decoded, composition)) if has_composition else decoded,
+        presented=(
+            array_in_chunks("q", map(add, decoded, composition)) if has_composition else decoded
+        ),
         decoded=decoded,
         deltas=deltas,
+        lowest_lead=min(map(min, in_chunks(composition))) if composition else 0,
         delta_runs=(time_runs, time_deltas),
         offsets=offsets,
         sizes=sizes,
@@ -1025,9 +1112,9 @@ def _sample_offsets(
             chunks = max(last_chunk - (first_chunk - 1), 0)
             if sample + chunks > len(sizes):
                 raise Mp4Error(MP4_INVALID, "stsc의 샘플 수가 stsz보다 많다")
-            chunk_starts.extend(range(sample, sample + chunks))
+            fill_in_chunks(chunk_starts, range(sample, sample + chunks))
             # 종류가 다른 배열끼리는 바로 잇지 못한다 — 값으로 넘긴다
-            offsets.extend(iter(chunk_offsets[first_chunk - 1 : last_chunk]))
+            fill_in_chunks(offsets, iter(chunk_offsets[first_chunk - 1 : last_chunk]))
             sample += chunks
             continue
         for chunk in range(first_chunk - 1, last_chunk):
