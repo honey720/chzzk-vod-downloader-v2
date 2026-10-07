@@ -61,15 +61,27 @@ class DownloadTask:
             else:
                 self.logger.log_download_info(self.item)
 
-    def pause(self):
-        """다운로드 일시정지. 성공 시 로그를 남긴다 (#78 스모크 — UI→엔진 도달 확인용)."""
-        if self._try_transition("pause"):
-            self.logger.info("Download paused")
+    def pause(self) -> bool:
+        """다운로드 일시정지. 성공 시 로그를 남긴다 (#78 스모크 — UI→엔진 도달 확인용).
 
-    def resume(self):
-        """다운로드 재개. 성공 시 로그를 남긴다 (#78 스모크 — UI→엔진 도달 확인용)."""
-        if self._try_transition("resume"):
+        Returns:
+            일시정지로 바뀌었는지 — 받는 중이 아니면(이미 끝났거나 이미 일시정지) False
+        """
+        changed = self._try_transition("pause")
+        if changed:
+            self.logger.info("Download paused")
+        return changed
+
+    def resume(self) -> bool:
+        """다운로드 재개. 성공 시 로그를 남긴다 (#78 스모크 — UI→엔진 도달 확인용).
+
+        Returns:
+            받는 중으로 돌아왔는지 — 일시정지가 아니었으면 False
+        """
+        changed = self._try_transition("resume")
+        if changed:
             self.logger.info("Download resumed")
+        return changed
 
     def stop(self):
         """다운로드 취소(대기 상태로 복귀)."""

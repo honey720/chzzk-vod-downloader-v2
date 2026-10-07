@@ -43,6 +43,7 @@ from core.downloaders.integrity import TruncatedSegmentError
 from core.models.events import ProgressEvent
 from core.services.download_service import DownloadService
 from core.models.download_data import DownloadData
+from core.models.download_state import DownloadState
 from core.models.mp4_index import PendingMp4Head
 from core.models.section_resume import SectionResume
 from core.utils.hybrid_cut import CutError
@@ -307,15 +308,27 @@ class DownloadViewModel(QObject):
         done = frozenset(number for number in resume.done if os.path.isfile(resume.paths[number]))
         item.section_retry = (resume_key, dataclasses.replace(resume, done=done))
 
-    def pause(self) -> None:
-        """다운로드 일시정지 (구 DownloadManager.pause)."""
-        self.task.pause()
-        self.paused.emit(self.item)
+    def isPaused(self) -> bool:
+        """지금의 다운로드가 일시정지 상태인지 — 엔진의 상태로 답한다."""
+        return self.task is not None and self.task.state == DownloadState.PAUSED
 
-    def resume(self) -> None:
-        """다운로드 재개 (구 DownloadManager.resume)."""
-        self.task.resume()
+    def pause(self) -> bool:
+        """다운로드 일시정지 (구 DownloadManager.pause). 일시정지로 바뀌었으면 True.
+
+        엔진이 받는 중이 아니면 아무것도 알리지 않는다 — 엔진이 막 끝났는데 그 알림이 아직
+        처리되지 않은 틈에 눌린 경우다. 알리면 카드와 버튼이 엔진과 어긋난다.
+        """
+        if self.task is None or not self.task.pause():
+            return False
+        self.paused.emit(self.item)
+        return True
+
+    def resume(self) -> bool:
+        """다운로드 재개 (구 DownloadManager.resume). 받는 중으로 돌아왔으면 True."""
+        if self.task is None or not self.task.resume():
+            return False
         self.resumed.emit(self.item)
+        return True
 
     def stop(self) -> None:
         """다운로드 중지 (구 DownloadManager.stop). 병합 표시도 함께 해제한다."""

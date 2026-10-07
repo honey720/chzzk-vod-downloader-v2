@@ -496,12 +496,15 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         추가한 동영상에 대한 다운로드 버튼.
         """
         if self.downloadViewModel.isDownloading():
-            if self.downloadButton.text() == self.tr('Pause'):
-                self.downloadViewModel.pause()
-                self.downloadButton.setText(self.tr('Download'))
-            else:
+            # 일시정지 · 재개는 버튼의 글자가 아니라 엔진의 상태로 정한다 (#309). 클릭이 쌓였다가
+            # 한꺼번에 처리돼도(앱이 잠깐 멈춘 사이의 연타) 누를 때마다 엔진이 실제로 바뀐
+            # 만큼만 따라간다 — 글자로 정하면 엔진이 받지 않은 누름에도 글자가 뒤집혀 어긋난다
+            if self.downloadViewModel.isPaused():
                 self.downloadViewModel.resume()
-                self.downloadButton.setText(self.tr('Pause'))
+            else:
+                self.downloadViewModel.pause()
+            paused = self.downloadViewModel.isPaused()
+            self.downloadButton.setText(self.tr('Download') if paused else self.tr('Pause'))
         else:
             if not self.contentManager.findItem()[0]:
                 # 조회 중인 아이템만 있는 경우와 아무것도 없는 경우를 구분해 안내 (#124)
