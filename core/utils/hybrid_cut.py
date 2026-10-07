@@ -51,6 +51,7 @@ from core.models.cut import (
 )
 from core.models.fmp4_index import Fmp4Index, Fmp4Init, Fmp4Segment
 from core.models.mp4_index import Mp4Index, Mp4Track
+from core.models.sample_column import float_column
 from core.utils.ffmpeg import FFmpegError, FFmpegTimeoutError, run_ffmpeg
 from core.utils.paths import cut_temp_dir_for
 
@@ -150,7 +151,8 @@ def cut_frames_from_mp4(index: Mp4Index) -> CutFrames:
     shown = [n for n, time in enumerate(audio.times) if time >= 0] if audio else []
     return CutFrames(
         frame_pts=index.frame_pts,
-        frame_dts=tuple(video.decode_times[sample] for sample in index.frame_samples),
+        # 색인의 표와 같이 연속 배열로 담는다 — 긴 영상은 프레임이 수백만 개다 (#309)
+        frame_dts=float_column([video.decode_times[sample] for sample in index.frame_samples]),
         keyframes=index.keyframes,
         timescale=video.timescale,
         frame_duration=float(1 / index.fps),

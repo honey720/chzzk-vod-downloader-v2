@@ -30,6 +30,7 @@ from itertools import accumulate
 
 from core.api.session import get_thread_session
 from core.models.mp4_index import Mp4Head, Mp4Index, Mp4Track
+from core.models.sample_column import count_column, float_column, offset_column
 
 # 실패 키 — 번역하지 않은 i18n 키 원문
 MP4_FRAGMENTED = "Fragmented MP4 is not supported"  # moof·mvex가 있다
@@ -418,9 +419,9 @@ def _parse_moov(moov: bytes) -> Mp4Index:
     if modal_delta <= 0:
         raise Mp4Error(MP4_INVALID, "영상 샘플 길이가 0이다")
     return Mp4Index(
-        frame_pts=tuple(video_track.times[index] for index in shown),
-        frame_samples=tuple(shown),
-        keyframes=tuple(number for number, index in enumerate(shown) if index in sync),
+        frame_pts=float_column([video_track.times[index] for index in shown]),
+        frame_samples=count_column(shown),
+        keyframes=count_column([number for number, index in enumerate(shown) if index in sync]),
         duration=max(video_track.times[index] + video_track.durations[index] for index in shown),
         fps=Fraction(video.timescale, modal_delta),
         video=video_track,
@@ -440,13 +441,13 @@ def _to_track(raw: _RawTrack, origin: Fraction) -> Mp4Track:
     scale = shift.denominator * raw.timescale
     return Mp4Track(
         timescale=raw.timescale,
-        times=tuple([(offset + ticks * step) / scale for ticks in raw.presented]),
-        decode_times=tuple([(offset + ticks * step) / scale for ticks in raw.decoded]),
-        durations=tuple(delta / raw.timescale for delta in raw.deltas),
-        offsets=tuple(raw.offsets),
-        sizes=tuple(raw.sizes),
-        chunk_starts=tuple(raw.chunk_starts),
-        sync_samples=raw.sync_samples,
+        times=float_column([(offset + ticks * step) / scale for ticks in raw.presented]),
+        decode_times=float_column([(offset + ticks * step) / scale for ticks in raw.decoded]),
+        durations=float_column([delta / raw.timescale for delta in raw.deltas]),
+        offsets=offset_column(raw.offsets),
+        sizes=count_column(raw.sizes),
+        chunk_starts=count_column(raw.chunk_starts),
+        sync_samples=count_column(raw.sync_samples),
         declared_bitrate=raw.declared_bitrate,
     )
 
@@ -591,12 +592,17 @@ def _composition_offsets(data: bytes, span: tuple[int, int] | None, count: int) 
     if span is None:
         return [0] * count
     runs = _entry_count(data, span, 8)
-    # 버전 0은 부호 없는 값이지만 음수를 넣는 파일이 있어 버전과 무관하게 부호 있는 값으로 읽는다
-    values = struct.unpack_from(">" + "Ii" * runs, data, span[0] + 8)
-    declared = sum(values[0::2])
+    # 버전 0은 부호 없는 값이지만 음수를 넣는 파일이 있어 버전과 무관하게 부호 있는 값으로 읽는다.
+    # 칸마다 형식 글자를 늘어놓은 형식 문자열("IiIi…")로 읽지 않는다 — struct가 해석한 형식을
+    # 캐시에 붙들어, 긴 영상(항목 수백만 개)에서 해석이 끝난 뒤에도 수십 MB가 남는다 (#309).
+    # 개수(부호 없음)와 값(부호 있음)을 같은 바이트에서 따로 읽는다
+    words = 2 * runs
+    counts = struct.unpack_from(f">{words}I", data, span[0] + 8)[0::2]
+    offsets = struct.unpack_from(f">{words}i", data, span[0] + 8)[1::2]
+    declared = sum(counts)
     if declared != count:
         raise Mp4Error(MP4_INVALID, f"ctts {declared}개 · stsz {count}개")
-    return [values[i + 1] for i in range(0, len(values), 2) for _ in range(values[i])]
+    return [offset for run, offset in zip(counts, offsets) for _ in range(run)]
 
 
 def _edit_list(
