@@ -146,13 +146,14 @@ class TestStatusAndFileSizeAreVisible:
         widget = _build_widget(item, qapp)
 
         # #245 상태별 슬롯: 진행 슬롯은 "%·속도·남은시간"이고 남은 시간은
-        # 짧은 표기(1:23)로 줄어든다. 파일형은 3행 우측에 총 크기를 보인다.
+        # 짧은 표기(1:23)로 줄어든다. 파일형은 3행 우측에 "받은 크기 / 총 크기"를 보이고,
+        # 이 카드의 폭처럼 둘 다 들어가지 않으면 받은 크기만 남긴다 (#309)
         rendered = _rendered(widget.statusLabel)
         assert "42%" in rendered
         assert "3.2 MB/s" in rendered
         assert "1:23" in rendered
         assert _rendered(widget.fileSizeLabel) != ""
-        assert "500 MB" in _rendered(widget.fileSizeLabel)
+        assert "123.00 MB" in _rendered(widget.fileSizeLabel)
 
     def test_finished_shows_completion_and_size(self, qapp):
         # #245 상태별 슬롯: 완료 슬롯은 "✓ 완료 표시"다 — 소요 시간(download_time)

@@ -420,7 +420,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             # ⓪ 구간 요약 뒤의 알림 — 가장 먼저 양보한다 (#309)
             if known:
                 self._fitSectionNotice(row_width, spacing)
-                self._fitReceivedSize(row_width, spacing)
+                self._fitSizeTotal(row_width, spacing)
             # ② pill 모드
             if not self._slotShowsPills():
                 mode = "hidden"
@@ -510,13 +510,14 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             self._applySectionHint()
             self._reserveFileSizeWidth()
 
-    def _fitReceivedSize(self, row_width: int, spacing: int) -> None:
+    def _fitSizeTotal(self, row_width: int, spacing: int) -> None:
         """받는 중 · 일시정지 카드의 "받은 크기 / 받을 크기"를 폭이 될 때만 다 적는다 (#309).
 
-        이 자리의 글은 말줄임하지 않고 폭을 먼저 확보한다(``_reserveFileSizeWidth``). 받은
-        크기까지 적은 글이 진행 문구 · 경로와 함께 한 줄에 안 들어가면 그것들이 밀려 잘린다 —
-        그 폭에서는 받은 크기를 떼고 받을 크기만 적는다(진행률이 받은 양을 알린다). 3행에서
-        경로보다 먼저 양보하는 것이 받은 크기다.
+        이 자리의 글은 말줄임하지 않고 폭을 먼저 확보한다(``_reserveFileSizeWidth``). 둘 다
+        적은 글이 진행 문구 · 경로와 함께 한 줄에 안 들어가면 그것들이 밀려 잘린다 — 그
+        폭에서는 받을 크기를 떼고 받은 크기만 적는다(세그먼트 방식의 카드와 같은 모양이 된다.
+        받을 크기는 변하지 않는 값이고 대기 카드에서 이미 보였다). 3행에서 경로보다 먼저
+        양보하는 것이 받을 크기다.
 
         판정은 지금 표시 중인 글의 폭이 아니라 "행 폭 − 진행 문구 − 경로의 최소 폭"으로만
         한다 — 글을 바꿔도 되먹임이 없다.
@@ -525,7 +526,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         if item.downloadState not in (DownloadState.RUNNING, DownloadState.PAUSED):
             return
         full = self._withResolution(self._sizeText(item))
-        short = self._withResolution(self._sizeText(item, with_received=False))
+        short = self._withResolution(self._sizeText(item, with_total=False))
         if full == short:
             return
         others = 0
@@ -1076,7 +1077,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
 
         self.applyStateStyle()
 
-    def _sizeText(self, item: ContentItem, with_received: bool = True) -> str:
+    def _sizeText(self, item: ContentItem, with_total: bool = True) -> str:
         """진행·일시정지 카드의 크기 표기 — "받은 크기 / 받을 크기".
 
         - 세그먼트 기반(fMP4 · TS): 받은 크기만 — 받을 크기를 미리 알 수 없다
@@ -1086,8 +1087,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         받을 크기를 모르면 받은 크기만 적는다.
 
         Args:
-            with_received: False면 받을 크기를 알 때 그것만 적는다 — 좁은 폭의 짧은 표기
-                (``_fitReceivedSize``)
+            with_total: False면 받을 크기를 알아도 받은 크기만 적는다 — 좁은 폭의 짧은 표기
+                (``_fitSizeTotal``)
         """
         received = self.setSize(item.download_size)
         if item.is_segment_based:
@@ -1098,8 +1099,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
                 received = total
         else:
             total = self._wholeSizeText(item)
-        if total and not with_received:
-            return total
+        if not with_total:
+            return received
         return f"{received} / {total}" if total else received
 
     def _wholeSizeText(self, item: ContentItem) -> str:

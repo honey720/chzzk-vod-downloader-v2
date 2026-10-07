@@ -314,21 +314,22 @@ def _narrow_until(window, widget, done) -> None:
         )
 
 
-def test_received_size_is_the_first_thing_to_give_way_when_the_card_narrows(qtbot):
-    """창이 좁아지면 받은 크기가 가장 먼저 빠지고, 그때 진행 문구와 경로 글자는 그대로 보여야 한다.
+@pytest.mark.parametrize("state", [DownloadState.RUNNING, DownloadState.PAUSED])
+def test_total_size_is_the_first_thing_to_give_way_when_the_card_narrows(qtbot, state):
+    """창이 좁아지면 받을 크기가 가장 먼저 빠져 받은 크기만 남고, 그때 진행 문구와 경로 글자는 그대로 보여야 한다.
 
-    인코딩 완료 VOD 받는 중(받은 100 MiB / 전체 28.99 GB), 넓은 창에서 4px씩 좁힘
-    -> 처음 글이 바뀐 폭에서: 크기 == "1080p · 28.99 GB", 진행 문구는 잘리지 않음, 경로 글자가 보임
+    인코딩 완료 VOD 받는 중 · 일시정지(받은 100 MiB / 전체 28.99 GB), 넓은 창에서 4px씩 좁힘
+    -> 처음 글이 바뀐 폭에서: 크기 == "1080p · 100.00 MB", 진행 문구는 잘리지 않음, 경로 글자가 보임
     -> 더 좁혀 경로가 아이콘이 될 때까지: 크기 글은 다시 길어지지 않음
     """
-    window, widget = _card("video", DownloadState.RUNNING, received=100 * MB)
+    window, widget = _card("video", state, received=100 * MB)
     qtbot.addWidget(window)
     full = "1080p · 100.00 MB / 28.99 GB"
     assert shown(widget.fileSizeLabel) == full, "전제: 넓은 창에서는 다 적는다"
 
     _narrow_until(window, widget, lambda: widget.fileSizeLabel.text() != full)
 
-    assert shown(widget.fileSizeLabel) == "1080p · 28.99 GB"
+    assert shown(widget.fileSizeLabel) == "1080p · 100.00 MB"
     assert QLabel.text(widget.statusLabel) == widget.statusLabel.text()  # 말줄임 없음
     assert widget.directoryLabel.isVisible()
 
@@ -338,7 +339,29 @@ def test_received_size_is_the_first_thing_to_give_way_when_the_card_narrows(qtbo
         widget,
         lambda: seen.append(widget.fileSizeLabel.text()) or not widget.directoryLabel.isVisible(),
     )
-    assert set(seen) == {"1080p · 28.99 GB"}
+    assert set(seen) == {"1080p · 100.00 MB"}
+
+
+def test_section_card_keeps_what_it_received_when_the_card_narrows(qtbot):
+    """구간 카드도 좁아지면 받을 구간의 합이 빠지고 받은 크기가 남아야 한다.
+
+    구간 둘, 받을 합 200 MiB, 받은 50 MiB, 넓은 창에서 4px씩 좁힘
+    -> 처음 글이 바뀐 폭에서: 크기 == "1080p · 50.00 MB"
+    """
+    window, widget = _card(
+        "video",
+        DownloadState.RUNNING,
+        selections=TWO_SECTIONS,
+        received=50 * MB,
+        section_bytes=200 * MB,
+    )
+    qtbot.addWidget(window)
+    full = "1080p · 50.00 MB / 200.00 MB"
+    assert shown(widget.fileSizeLabel) == full, "전제: 넓은 창에서는 다 적는다"
+
+    _narrow_until(window, widget, lambda: widget.fileSizeLabel.text() != full)
+
+    assert shown(widget.fileSizeLabel) == "1080p · 50.00 MB"
 
 
 def test_preparing_card_shows_the_text_and_a_bar_without_a_value(qtbot):
