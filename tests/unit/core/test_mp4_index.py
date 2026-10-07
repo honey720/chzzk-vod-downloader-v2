@@ -930,3 +930,14 @@ def test_parse_moov_leaves_declared_bitrate_empty_without_a_sample_entry():
     index = parse_moov(build_mp4([video_spec(), audio_spec()]).moov)
 
     assert (index.video.declared_bitrate, index.audio.declared_bitrate) == (None, None)
+
+
+def test_composition_offsets_reads_negative_values_and_expands_runs():
+    """_composition_offsets는 ctts의 값을 부호 있는 수로 읽고, 개수만큼 펼쳐 샘플마다 하나씩 돌려줘야 한다.
+
+    손으로 조립한 ctts 본문 — (개수 2, 값 -100) · (개수 1, 값 0) · (개수 1, 값 300), 샘플 4개
+    -> [-100, -100, 0, 300]
+    """
+    ctts = bytes(4) + struct.pack(">I", 3) + struct.pack(">IiIiIi", 2, -100, 1, 0, 1, 300)
+
+    assert mp4_module._composition_offsets(ctts, (0, len(ctts)), 4) == [-100, -100, 0, 300]
