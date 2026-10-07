@@ -43,6 +43,7 @@ from core.downloaders.integrity import TruncatedSegmentError
 from core.models.events import ProgressEvent
 from core.services.download_service import DownloadService
 from core.models.download_data import DownloadData
+from core.models.mp4_index import Mp4Raw
 from core.models.section_resume import SectionResume
 from core.utils.hybrid_cut import CutError
 from core.utils.paths import (
@@ -189,9 +190,7 @@ class DownloadViewModel(QObject):
         self.progress.connect(self._syncSections)
         self._engineFinished.connect(self._onEngineFinished)
         self._engineFailed.connect(self._onEngineFailed)
-        self._nothingToReceive.connect(
-            self._onNothingToReceive, Qt.ConnectionType.QueuedConnection
-        )
+        self._nothingToReceive.connect(self._onNothingToReceive, Qt.ConnectionType.QueuedConnection)
         # 구 mainWindow.setupThreadSignals의 다운로드 릴레이 6개 — 위임 없이 직결.
         # 워커 스레드에서 emit되는 progress도 이 연결이 큐로 메인 스레드에 배달한다
         self.progress.connect(content.update_progress)
@@ -267,7 +266,12 @@ class DownloadViewModel(QObject):
             item.section_paths = tuple(paths)  # 완료 카드의 폴더 열기가 여기서 구간 파일을 찾는다
             # 구간을 정하며 받은 moov를 넘긴다 (#309) — 주소가 같을 때만. 엔진이 다시 받지 않는다.
             # 카드에서는 비운다 — 이제 엔진이 들고, 다운로드가 끝나면 함께 사라진다
-            data.content.mp4_head = take_section_head(item)
+            moov = take_section_head(item)
+            if isinstance(moov, Mp4Raw):
+                # 아직 색인을 만들지 않았다 — 바이트를 넘긴다. 엔진이 받지 않고 해석만 한다
+                data.content.mp4_raw = moov
+            else:
+                data.content.mp4_head = moov
         self._data = data
         item.transfer_bytes = None
         item.preparing = False
@@ -332,6 +336,7 @@ class DownloadViewModel(QObject):
         """
         if self._data is not None:
             self._data.content.mp4_head = None
+            self._data.content.mp4_raw = None
 
     def _showPreparing(self) -> None:
         """준비가 길어지고 있다 — 카드에 "준비 중"을 켠다 (#309). 타이머가 부른다."""
@@ -654,7 +659,8 @@ def _resume_for_edited_sections(item: ContentItem, resume: SectionResume, select
     kept = frozenset(
         number
         for number in resume.done
-        if number < len(selections) and frames(resume.selections[number]) == frames(selections[number])
+        if number < len(selections)
+        and frames(resume.selections[number]) == frames(selections[number])
     )
     if not kept:
         return None

@@ -5,6 +5,7 @@
 """
 
 import logging
+import re
 from datetime import timedelta
 from fractions import Fraction
 from types import SimpleNamespace
@@ -18,6 +19,7 @@ import app.section_basis as section_basis
 import core.api.session as session_module
 from app.probe_timing import LOG_PREFIX, ProbeTiming
 from app.section_basis import SectionBasis, probe_fmp4, probe_mp4, probe_ts
+from core.models.mp4_index import Mp4Summary
 
 LOGGER = "app.section_basis"
 # 로그에 나오면 안 되는 것 — 주소 · 쿼리의 토큰 · 영상 번호 · 쿠키 · 키 · 제목
@@ -186,23 +188,25 @@ def test_encrypted_lookup_keeps_the_key_out_of_the_line(caplog, monkeypatch):
 
 
 def test_mp4_lookup_logs_the_moov_size_and_length(caplog, monkeypatch):
-    """인코딩 완료 VOD 조회는 moov 크기 · 프레임 수 · 영상 길이와, 받기 · 해석으로 나눈 시간을 줄에 적어야 한다.
+    """인코딩 완료 VOD 조회는 받은 moov의 크기 · 프레임 수 · 영상 길이와, 받기 · 가벼운 해석의 시간을 줄에 적어야 한다.
 
-    moov가 파일의 32~340627바이트, 프레임 3개, 길이 1234.5초, 해석에 걸린 시간 0.5초
-    -> "[mp4]", "moov 340,596바이트", "프레임 3개", "영상 길이 1234.500초", "moov 해석 0.50초", "moov 받기"
+    받은 moov 340,596바이트, 가볍게 읽은 값: 프레임 3개 · 길이 1234.5초
+    -> "[mp4]", "moov 크기 340,596바이트", "프레임 3개", "영상 길이 1234.500초",
+       단계 "moov 받기" · "가벼운 해석"이 초와 함께 적힌다. 색인을 만드는 단계("moov 해석")는 없다
     """
-    index = SimpleNamespace(
-        fps=Fraction(60), duration=1234.5, moov_range=(32, 340627), frame_pts=(0.0, 0.1, 0.2)
-    )
-    head = SimpleNamespace(index=index, parse_seconds=0.5)  # 해석에 0.5초 걸렸다고 알린다
-    monkeypatch.setattr(section_basis, "fetch_mp4_head", lambda url: head)
+    raw = SimpleNamespace(moov=b"\0" * 340_596)
+    summary = Mp4Summary(fps=Fraction(60), duration=1234.5, frames=3)
+    monkeypatch.setattr(section_basis, "fetch_mp4_raw", lambda url: raw)
+    monkeypatch.setattr(section_basis, "summarize_mp4", lambda got: summary)
 
     with caplog.at_level(logging.INFO, logger=LOGGER):
         probe_mp4(URL)
 
     line = _lines(caplog)[0]
-    assert "[mp4]" in line and "moov 340,596바이트" in line
-    assert "moov 해석 0.50초" in line and "moov 받기" in line  # 받기와 해석을 나눠 적는다
+    assert "[mp4]" in line and "moov 크기 340,596바이트" in line
+    assert re.search(r"moov 받기 \d+\.\d+초", line), line
+    assert re.search(r"가벼운 해석 \d+\.\d+초", line), line
+    assert "moov 해석" not in line
     assert "프레임 3개" in line and "영상 길이 1234.500초" in line
     assert SECRETS["host"] not in line and SECRETS["token"] not in line
 
@@ -217,7 +221,7 @@ def test_a_failed_lookup_still_logs_and_names_only_the_exception_type(caplog, mo
     def broken(url):
         raise RuntimeError(f"failed to fetch {url}")
 
-    monkeypatch.setattr(section_basis, "fetch_mp4_head", broken)
+    monkeypatch.setattr(section_basis, "fetch_mp4_raw", broken)
 
     with caplog.at_level(logging.INFO, logger=LOGGER), pytest.raises(RuntimeError):
         probe_mp4(URL)
@@ -299,7 +303,7 @@ def test_a_lookup_that_ends_with_an_exception_leaves_no_hook(monkeypatch):
 
     session = SimpleNamespace(hooks={"response": hooks})
     monkeypatch.setattr(probe_timing, "get_thread_session", lambda: session)
-    monkeypatch.setattr(section_basis, "fetch_mp4_head", broken)
+    monkeypatch.setattr(section_basis, "fetch_mp4_raw", broken)
 
     with pytest.raises(RuntimeError):
         probe_mp4(URL)
@@ -351,11 +355,12 @@ def test_two_lookups_running_at_once_do_not_mix_their_counts(caplog, monkeypatch
         for _ in range(count):
             for hook in list(thread_session().hooks["response"]):
                 hook(_response(size, 1.0))
-        index = SimpleNamespace(fps=Fraction(60), duration=1.0, moov_range=(0, 9), frame_pts=(0.0,))
-        return SimpleNamespace(index=index)
+        return SimpleNamespace(moov=b"moov")
 
+    summary = Mp4Summary(fps=Fraction(60), duration=1.0, frames=1)
     monkeypatch.setattr(probe_timing, "get_thread_session", thread_session)
-    monkeypatch.setattr(section_basis, "fetch_mp4_head", fetch)
+    monkeypatch.setattr(section_basis, "fetch_mp4_raw", fetch)
+    monkeypatch.setattr(section_basis, "summarize_mp4", lambda raw: summary)
 
     with caplog.at_level(logging.INFO, logger=LOGGER):
         workers = [threading.Thread(target=probe_mp4, args=(name,)) for name in ("one", "three")]

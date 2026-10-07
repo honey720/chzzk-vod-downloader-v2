@@ -30,8 +30,9 @@ from app.viewmodels.data import (
     SECTION_CHECK_UNVERIFIED,
     ContentItem,
 )
-from core.api.mp4 import Mp4Error
+from core.api.mp4 import Mp4Error, index_mp4
 from core.models.download_state import DownloadState
+from core.models.mp4_index import Mp4Raw
 from core.models.plan import TimeRange
 from core.utils.mp4_ranges import sections_download_size
 from core.utils.selections import (
@@ -128,9 +129,13 @@ class _IndexReleaseReporter(QObject):
         self._released.connect(self._onReleased, Qt.ConnectionType.QueuedConnection)
 
     def watch(self, head) -> None:
-        """그 moov가 사라지면 적게 한다. 같은 moov를 두 번 걸지 않는다."""
+        """그 색인이 사라지면 적게 한다. 같은 것을 두 번 걸지 않는다.
+
+        해석한 색인(``Mp4Head``)에만 건다 — 아직 해석하지 않은 바이트(``Mp4Raw``)는 수십 MB라
+        놓여도 줄을 남기지 않는다.
+        """
         key = id(head)
-        if head is None or key in self._watching:
+        if head is None or isinstance(head, Mp4Raw) or key in self._watching:
             return
         try:
             watcher = weakref.finalize(head, self._onDying, key)
@@ -445,9 +450,11 @@ class SectionEditViewModel(QObject):
         self._job = None
         self.fps = frame_rate(basis.fps)
         self.duration = basis.duration
+        # 조회가 받은 moov — 해석한 색인이 있으면 그것, 없으면 바이트. 확인하면 카드에 둔다
+        moov = getattr(basis, "mp4_head", None) or getattr(basis, "mp4_raw", None)
         if not self._released:
-            self._head = getattr(basis, "mp4_head", None)  # 확인하면 카드에 둔다
-        watch_section_head(getattr(basis, "mp4_head", None))
+            self._head = moov
+        watch_section_head(moov)
         log_process_memory("조회 끝")
         self.rows = [
             [format_timecode(selection.start, self.fps), format_timecode(selection.end, self.fps)]
@@ -735,7 +742,9 @@ class SectionEditViewModel(QObject):
         self.item.section_refit_fps = None
         self.item.section_end_pulled = self.item.section_end_extended = False
         self.item.section_unfit = frozenset()
-        self.item.section_bytes = section_bytes_of(self._head, selections)
+        # 받을 크기는 색인을 만들어야 셀 수 있다 — 여기서 세지 않고 창이 닫힌 뒤 백그라운드에서
+        # 센다(SectionSizer). 그때까지 카드는 크기를 적지 않는다
+        self.item.section_bytes = None
         # 조회하며 받은 moov를 카드에 둔다 — 구간이 있을 때만(전체 다운로드는 moov를 쓰지 않는다)
         keep_section_head(self.item, self.item.base_url, self._head if selections else None)
         logger.info("구간 편집: %d개 (%sfps)", len(selections), format_fps(self.fps))
@@ -761,6 +770,116 @@ class SectionEditViewModel(QObject):
             SELECTION_TOO_MANY: self.tr("Too many selections"),
         }
         return translated.get(key, key)
+
+
+class SectionSizeJob(QObject):
+    """받을 구간의 합을 세는 일 한 건 — 풀 스레드에서 색인을 만들고(필요하면) 크기를 센다.
+
+    긴 영상은 색인을 만드는 데 몇 초가 걸린다. 메인 스레드에서 하지 않는다.
+    """
+
+    done = Signal(object, object, object)  # (token, 색인(Mp4Head) 또는 None, 크기 또는 None)
+
+    def __init__(self, moov, selections, token):
+        super().__init__()
+        self._moov = moov
+        self._selections = selections
+        self._token = token
+
+    def run(self) -> None:
+        """색인을 만들고 크기를 세어 done을 emit한다. 실패하면 값 자리에 None을 싣는다."""
+        head = size = None
+        try:
+            head = index_mp4(self._moov) if isinstance(self._moov, Mp4Raw) else self._moov
+            size = section_bytes_of(head, self._selections)
+        except Exception:
+            logger.exception("받을 구간의 크기를 세지 못했다")
+            head = None
+        self._moov = None  # 결과를 넘긴 뒤에는 이 객체가 moov를 붙들지 않는다
+        self.done.emit(self._token, head, size)
+
+
+class SectionSizer(QObject):
+    """구간 카드가 받을 크기(구간의 합)를 백그라운드에서 센다 (#309).
+
+    편집 창의 조회는 moov의 바이트만 받는다 — 프레임률 · 길이는 가볍게 읽을 수 있지만 받을
+    크기는 색인이 있어야 센다. 구간을 확인했거나 해상도 변경의 조회가 끝나면 여기서 색인을
+    만들어 크기를 세고, 카드가 쥔 바이트를 **만든 색인으로 바꿔 든다** — 색인은 어차피 만들었고,
+    다운로드가 그것을 바로 쓴다(준비가 색인을 다시 만드는 몇 초를 건너뛴다).
+
+    늦게 온 결과는 버린다: 카드가 지워졌거나, 대기가 아니게 됐거나(받기 시작했다), 그사이 구간이나
+    해상도가 바뀌어 쥔 moov가 달라진 경우다.
+    """
+
+    def __init__(self, model, pool: QThreadPool, parent: QObject | None = None):
+        """
+        Args:
+            model: 목록 모델 — ``getRow`` · ``notifyChanged``를 쓴다
+            pool: 일을 돌릴 스레드 풀
+        """
+        super().__init__(parent)
+        self._model = model
+        self._pool = pool
+        self._generation: dict[ContentItem, int] = {}  # 카드마다의 마지막 요청 번호
+        # 결과를 기다리는 일 — (카드, 요청 번호) → (일, 넘긴 moov, 그때의 구간). 결과가 올 때까지
+        # 일의 참조를 든다(#124)
+        self._jobs: dict[tuple, tuple] = {}
+
+    def request(self, item: ContentItem) -> None:
+        """카드가 받을 크기를 세기 시작한다. 셀 것이 없으면 아무것도 하지 않는다.
+
+        대기 중인 인코딩 완료 VOD의 구간 카드이고, 지금의 주소에서 받은 moov를 쥐고 있으며,
+        아직 크기를 모를 때만 센다.
+        """
+        kept = getattr(item, "section_head", None)
+        if (
+            item.downloadState != DownloadState.WAITING
+            or not item.selections
+            or item.is_segment_based
+            or item.section_bytes is not None
+            or kept is None
+            or kept[0] != item.base_url
+        ):
+            return
+        unfit = getattr(item, "section_unfit", frozenset())
+        wanted = tuple(s for number, s in enumerate(item.selections) if number not in unfit)
+        if not wanted:
+            return
+        generation = self._generation.get(item, 0) + 1
+        self._generation[item] = generation
+        token = (item, generation)
+        job = SectionSizeJob(kept[1], wanted, token)
+        job.done.connect(self._onDone)
+        self._jobs[token] = (job, kept[1], item.selections)
+        self._pool.start(lambda: job.run())
+
+    def pendingCount(self) -> int:
+        """결과를 기다리는 일의 수."""
+        return len(self._jobs)
+
+    def _onDone(self, token, head, size) -> None:
+        """결과를 받는다 — 아직 유효하면 크기를 적고, 카드가 쥔 것을 만든 색인으로 바꾼다."""
+        _job, moov, selections = self._jobs.pop(token)
+        item, generation = token
+        if self._model.getRow(item) is None:
+            self._generation.pop(item, None)  # 카드가 지워졌다
+            return
+        kept = getattr(item, "section_head", None)
+        if (
+            self._generation.get(item) != generation
+            or item.downloadState != DownloadState.WAITING
+            or kept is None
+            or kept[1] is not moov
+            or item.selections != selections
+            or head is None
+        ):
+            return
+        item.section_bytes = size
+        if head is not moov:
+            watch_section_head(head)
+            keep_section_head(item, kept[0], head)  # 바이트를 놓고 만든 색인을 든다
+            log_process_memory("색인 해석 끝")
+        self._model.notifyChanged(item)
 
 
 class SectionRefitJob(QObject):
@@ -906,12 +1025,13 @@ class SectionRefitter(QObject):
         item.section_end_pulled = result.end_pulled
         item.section_end_extended = result.end_extended
         item.section_unfit = result.unfit
-        head = getattr(basis, "mp4_head", None)
-        item.section_bytes = section_bytes_of(head, result.selections, result.unfit)
-        watch_section_head(head)
+        # 새 해상도를 조회하며 받은 moov(바이트 또는 색인) — 요청이 아직 유효하므로 지금의
+        # 주소에서 받은 것이다. 받을 크기는 settled를 받은 쪽이 백그라운드에서 센다(SectionSizer)
+        moov = getattr(basis, "mp4_head", None) or getattr(basis, "mp4_raw", None)
+        item.section_bytes = None
+        watch_section_head(moov)
         log_process_memory("조회 끝")
-        # 새 해상도를 조회하며 받은 moov — 요청이 아직 유효하므로 지금의 주소에서 받은 것이다
-        keep_section_head(item, item.base_url, getattr(basis, "mp4_head", None))
+        keep_section_head(item, item.base_url, moov)
         logger.info(
             "해상도 변경으로 구간을 다시 맞춤: %sfps%s%s%s",
             format_fps(rate),

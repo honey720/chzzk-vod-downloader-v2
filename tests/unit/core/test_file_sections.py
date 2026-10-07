@@ -32,7 +32,13 @@ import core.api.mp4 as mp4_module
 import core.downloaders.file_downloader as fd_module
 import core.utils.hybrid_cut as cut_module
 import core.utils.mp4_partial as partial_module
-from core.api.mp4 import MP4_UNSUPPORTED, Mp4Error, fetch_mp4_head, read_mp4_index
+from core.api.mp4 import (
+    MP4_UNSUPPORTED,
+    Mp4Error,
+    fetch_mp4_head,
+    fetch_mp4_raw,
+    read_mp4_index,
+)
 from core.downloaders.base import PostprocessError, TruncatedBodyError
 from core.downloaders.file_downloader import FileDownloader
 from core.downloaders.ranges import split_span
@@ -1030,6 +1036,34 @@ def test_prepare_log_says_the_moov_was_reused_when_one_was_handed_in(server, tmp
 
     ((_elapsed, note),) = _logged(run, "log_prepare_complete")
     assert note == "moov reused"
+
+
+def test_engine_parses_handed_moov_bytes_without_fetching_again(server, tmp_path, monkeypatch):
+    """해석하지 않은 moov 바이트를 넘겨받은 구간 다운로드는 moov를 다시 받지 않고 같은 파일을 내야 한다.
+
+    기본 입력, 구간 프레임 35~80. fetch_mp4_raw의 결과를 content.mp4_raw에 넣고 엔진의
+    moov 받기를 부르면 실패하게 바꿈. 같은 구간을 아무것도 넘기지 않고 받은 것과 견줌
+    -> 준비 로그의 덧붙인 말 == "moov reused", 둘 다 완료 1회, 산출물의 프레임 == 넘기지 않고 받은 산출물의 프레임
+    """
+    sections = [TimeRange(_seconds(35), _seconds(80))]
+    (tmp_path / "plain").mkdir()
+    (tmp_path / "handed").mkdir()
+    plain = _Run(server, "plain", tmp_path / "plain", sections).start()
+    raw = fetch_mp4_raw(server.url("plain"))
+
+    def no_fetch(url):
+        raise AssertionError("엔진이 moov를 다시 받았다")
+
+    monkeypatch.setattr(fd_module, "fetch_mp4_head", no_fetch)
+    run = _Run(server, "plain", tmp_path / "handed", sections)
+    run.data.content.mp4_raw = raw
+
+    run.start()
+
+    ((_elapsed, note),) = _logged(run, "log_prepare_complete")
+    assert note == "moov reused"
+    assert (plain.finished, run.finished) == (1, 1)
+    assert _frames(run.paths[0]) == _frames(plain.paths[0])
 
 
 def test_prepare_log_of_a_whole_download_says_nothing_about_the_moov(server, tmp_path):

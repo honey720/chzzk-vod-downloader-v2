@@ -165,6 +165,10 @@ def _give_section(qtbot, win, item, start: str = "00000105", end: str = "0000022
     dialog.okButton.click()
     _pump()
     assert len(item.selections) == 1, "전제: 구간이 쓰여야 한다"
+    # 받을 크기를 세는 백그라운드 일이 끝나면 카드가 받은 바이트 대신 만든 색인을 쥔다
+    sizer = win.contentManager._sectionSizer
+    qtbot.waitUntil(lambda: sizer.pendingCount() == 0, timeout=10_000)
+    _pump()
 
 
 def _held_head(item) -> weakref.ref:

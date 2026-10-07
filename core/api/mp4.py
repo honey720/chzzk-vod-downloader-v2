@@ -21,6 +21,7 @@ moof에 흩어져 있어 이 방식으로 읽을 수 없다 — 조용히 틀린
 
 import array
 import re
+from bisect import bisect_right
 import struct
 import sys
 import time
@@ -32,7 +33,7 @@ from itertools import accumulate, chain, compress, count, repeat
 from operator import add, le, mul, sub, truediv
 
 from core.api.session import get_thread_session
-from core.models.mp4_index import Mp4Head, Mp4Index, Mp4Track
+from core.models.mp4_index import Mp4Head, Mp4Index, Mp4Raw, Mp4Summary, Mp4Track
 from core.models.sample_column import count_column, float_column, offset_column
 
 # 실패 키 — 번역하지 않은 i18n 키 원문
@@ -169,6 +170,18 @@ def read_mp4_head(read: Callable[[int, int], bytes]) -> Mp4Head:
     Raises:
         Mp4Error: moov가 없거나, 조각난 mp4이거나, 색인이 손상된 경우
     """
+    return index_mp4(read_mp4_raw(read))
+
+
+def read_mp4_raw(read: Callable[[int, int], bytes]) -> Mp4Raw:
+    """읽기 함수로 파일에서 moov를 찾아 그 바이트를 돌려준다 — 해석하지 않는다 (#309).
+
+    읽는 순서는 ``read_mp4_index``와 같다. 받은 것을 ``summarize_mp4``(프레임률 · 길이만) ·
+    ``index_mp4``(색인)에 넘겨 쓴다.
+
+    Raises:
+        Mp4Error: moov가 없거나 잘린 경우
+    """
     offset = 0
     request = _FIRST_READ_BYTES
     for _ in range(_MAX_SCAN_STEPS):
@@ -186,19 +199,36 @@ def read_mp4_head(read: Callable[[int, int], bytes]) -> Mp4Head:
                 moov += read(moov_offset + len(moov), moov_size - len(moov))
             if len(moov) < moov_size:
                 raise Mp4Error(MP4_INVALID, "moov가 파일 끝에서 잘렸다")
-            parse_started = time.perf_counter()
-            parsed = parse_moov(moov)
-            parse_seconds = time.perf_counter() - parse_started
-            index = replace(parsed, moov_range=(moov_offset, moov_offset + moov_size - 1))
-            return Mp4Head(
-                index=index,
-                data=data[:start] + moov if offset == 0 else None,
-                parse_seconds=parse_seconds,
+            return Mp4Raw(
+                moov=moov,
+                moov_range=(moov_offset, moov_offset + moov_size - 1),
+                prefix=data[:start] if offset == 0 else None,
             )
         if scan.reached_end or scan.next_offset <= offset:
             break
         offset, request = scan.next_offset, _HEADER_READ_BYTES
     raise Mp4Error(MP4_MOOV_NOT_FOUND)
+
+
+def index_mp4(raw: Mp4Raw) -> Mp4Head:
+    """받아 둔 moov를 해석해 색인과 파일 앞부분의 바이트를 돌려준다 (#309).
+
+    Raises:
+        Mp4Error: 조각난 mp4이거나 색인이 손상된 경우
+    """
+    parse_started = time.perf_counter()
+    parsed = parse_moov(raw.moov)
+    parse_seconds = time.perf_counter() - parse_started
+    return Mp4Head(
+        index=replace(parsed, moov_range=raw.moov_range),
+        data=raw.prefix + raw.moov if raw.prefix is not None else None,
+        parse_seconds=parse_seconds,
+    )
+
+
+def summarize_mp4(raw: Mp4Raw) -> Mp4Summary:
+    """받아 둔 moov에서 프레임률 · 길이만 읽는다 — ``summarize_moov``."""
+    return summarize_moov(raw.moov)
 
 
 def fetch_mp4_index(url: str) -> Mp4Index:
@@ -222,16 +252,8 @@ def fetch_mp4_index(url: str) -> Mp4Index:
     return fetch_mp4_head(url).index
 
 
-def fetch_mp4_head(url: str) -> Mp4Head:
-    """mp4 주소에서 범위 요청으로 moov를 받아 색인과 받은 바이트를 돌려준다 (#309).
-
-    요청·검사는 ``fetch_mp4_index``와 같다. 구간 다운로드처럼 moov의 바이트가 다시
-    필요한 쪽이 쓴다 — 결과를 넘겨 쓰면 moov를 한 번만 받는다.
-
-    Raises:
-        Mp4Error: ``fetch_mp4_index``와 같다
-        requests.RequestException: 연결 실패·타임아웃·HTTP 오류 상태
-    """
+def _range_reader(url: str) -> Callable[[int, int], bytes]:
+    """그 주소를 HTTP 범위 요청으로 읽는 읽기 함수 — 응답을 검사한다(``fetch_mp4_index`` 참고)."""
 
     def read(offset: int, size: int) -> bytes:
         last = offset + size - 1
@@ -254,7 +276,32 @@ def fetch_mp4_head(url: str) -> Mp4Head:
                 raise Mp4Error(MP4_RANGE_MISMATCH, f"본문 {len(body)}바이트 · 기대 {expected}")
             return bytes(body)
 
-    return read_mp4_head(read)
+    return read
+
+
+def fetch_mp4_head(url: str) -> Mp4Head:
+    """mp4 주소에서 범위 요청으로 moov를 받아 색인과 받은 바이트를 돌려준다 (#309).
+
+    요청·검사는 ``fetch_mp4_index``와 같다. 구간 다운로드처럼 moov의 바이트가 다시
+    필요한 쪽이 쓴다 — 결과를 넘겨 쓰면 moov를 한 번만 받는다.
+
+    Raises:
+        Mp4Error: ``fetch_mp4_index``와 같다
+        requests.RequestException: 연결 실패·타임아웃·HTTP 오류 상태
+    """
+    return read_mp4_head(_range_reader(url))
+
+
+def fetch_mp4_raw(url: str) -> Mp4Raw:
+    """mp4 주소에서 범위 요청으로 moov의 바이트만 받는다 — 해석하지 않는다 (#309).
+
+    요청·검사는 ``fetch_mp4_index``와 같다.
+
+    Raises:
+        Mp4Error: 범위 요청 미지원, 요청과 다른 범위·길이의 응답, moov 없음
+        requests.RequestException: 연결 실패·타임아웃·HTTP 오류 상태
+    """
+    return read_mp4_raw(_range_reader(url))
 
 
 def _granted_length(content_range: str | None, first: int, last: int) -> int:
@@ -297,6 +344,241 @@ def parse_moov(moov: bytes) -> Mp4Index:
         return _parse_moov(moov)
     except (struct.error, IndexError, ValueError, OverflowError) as e:
         raise Mp4Error(MP4_INVALID, str(e)) from e
+
+
+# ================================================================ 프레임률 · 길이만 읽기 (#309)
+
+# 가볍게 읽기를 포기하고 전체 해석으로 넘어가는 한계. 값은 어느 쪽이든 같다 — 이 한계는 속도만 가른다
+_SUMMARY_MAX_RUNS = 50_000  # stts의 구간 수 — 샘플 길이가 거의 매번 바뀌는 영상
+_SUMMARY_MAX_SCAN = 4_096  # 샘플을 하나씩 들여다보는 횟수
+
+
+class _NeedsFullParse(Exception):
+    """가볍게 읽을 수 없는 모양이다 — 전체 해석으로 같은 값을 구한다."""
+
+
+@dataclass
+class _TimeTrack:
+    """트랙의 시각 표만 — 구간(개수, 값) 그대로. 샘플마다 펴지 않는다."""
+
+    handler: bytes
+    timescale: int
+    empty_edit: Fraction  # 앞의 빈 편집 길이(초)
+    media_time: int  # 편집 목록의 media_time(틱)
+    count: int  # 샘플 수(stsz)
+    runs: array.array  # stts의 구간마다의 샘플 수
+    deltas: array.array  # stts의 구간마다의 샘플 길이(틱)
+    composition_runs: array.array | None  # ctts의 구간마다의 샘플 수. 상자가 없으면 None
+    composition: array.array | None  # ctts의 구간마다의 (PTS − DTS)
+    _ends: array.array | None = None  # ctts 구간이 끝나는 샘플 번호의 누적 — 필요할 때 만든다
+
+    def composition_at(self, sample: int) -> int:
+        """그 샘플의 (PTS − DTS)."""
+        if self.composition is None:
+            return 0
+        if len(self.composition) == self.count:
+            return self.composition[sample]  # 구간마다 샘플 하나 — 번호가 곧 자리다
+        if self._ends is None:
+            self._ends = array.array("q", accumulate(self.composition_runs))
+        return self.composition[bisect_right(self._ends, sample)]
+
+    def spread(self) -> tuple[int, int]:
+        """(PTS − DTS)의 (가장 작은 값, 가장 큰 값)."""
+        if not self.composition:
+            return 0, 0
+        return min(self.composition), max(self.composition)
+
+
+def summarize_moov(moov: bytes) -> Mp4Summary:
+    """moov에서 프레임률 · 영상 길이 · 영상 샘플 수만 읽는다 — 색인을 만들지 않는다 (#309).
+
+    ``parse_moov``가 만든 색인의 ``fps`` · ``duration``과 **비트까지 같은 값**을 돌려준다.
+    샘플마다 값을 펴지 않고 stts · ctts의 구간(개수, 값)에서 구한다.
+
+    - 프레임률: timescale ÷ 가장 많은 샘플 길이. 구간의 개수를 길이마다 더해 센다
+    - 길이: 표시되는 샘플 가운데 (표시 시각 + 그 샘플의 길이)가 가장 큰 값. 표시 시각과 길이는
+      각각 float로 반올림한 뒤 더하므로, 수학적으로 가장 늦게 끝나는 샘플이 float로도 가장
+      크다고 할 수 없다. 대신 float 덧셈은 두 값에 대해 줄지 않으므로, **샘플 길이마다 표시
+      시각이 가장 늦은 샘플**만 견주면 전체의 최댓값이 나온다. 그 샘플은 그 길이의 마지막
+      샘플에서 (PTS − DTS)의 폭만큼 앞까지 안에 있다 — 그 안만 들여다본다
+    - 0이 되는 시각(가장 먼저 표시되는 샘플)은 트랙의 앞에서부터 찾는다
+
+    가볍게 읽을 수 없는 모양(샘플 길이가 거의 매번 바뀌는 영상 등)이면 ``parse_moov``로 같은 값을
+    구한다. 샘플 위치 표(stsc · stco)는 읽지 않는다 — 그 표의 손상은 여기서 드러나지 않고 색인을
+    만들 때 드러난다.
+
+    Raises:
+        Mp4Error: ``parse_moov``와 같다(샘플 위치 표의 손상은 빼고)
+    """
+    try:
+        return _summarize(moov)
+    except _NeedsFullParse:
+        index = parse_moov(moov)
+        return Mp4Summary(fps=index.fps, duration=index.duration, frames=len(index.video.sizes))
+    except (struct.error, IndexError, ValueError, OverflowError) as e:
+        raise Mp4Error(MP4_INVALID, str(e)) from e
+
+
+def _summarize(moov: bytes) -> Mp4Summary:
+    top = list(_boxes(moov, 0, len(moov)))
+    if len(top) != 1 or top[0][0] != b"moov":
+        raise Mp4Error(MP4_INVALID, "moov 상자가 아니다")
+    _, moov_body, moov_end = top[0]
+    movie_timescale = 0
+    tracks: dict[bytes, _TimeTrack] = {}
+    for box_type, body, body_end in _boxes(moov, moov_body, moov_end):
+        if box_type == b"mvex":
+            raise Mp4Error(MP4_FRAGMENTED)
+        if box_type == b"mvhd":
+            movie_timescale = _timescale(moov, body)
+        elif box_type == b"trak":
+            if movie_timescale <= 0:
+                raise Mp4Error(MP4_INVALID, "mvhd가 trak보다 앞에 없다")
+            track = _time_track(moov, body, body_end, movie_timescale)
+            if track is not None:
+                tracks.setdefault(track.handler, track)
+    video = tracks.get(b"vide")
+    if video is None:
+        raise Mp4Error(MP4_UNSUPPORTED, "영상 트랙이 없다")
+    audio = tracks.get(b"soun")
+
+    video_first = _first_shown(video)
+    if video_first is None:
+        raise Mp4Error(MP4_UNSUPPORTED, "표시되는 영상 프레임이 없다")
+    origin = video.empty_edit + Fraction(video_first, video.timescale)
+    audio_first = _first_shown(audio) if audio else None
+    if audio_first is not None:
+        origin = min(origin, audio.empty_edit + Fraction(audio_first, audio.timescale))
+
+    # 가장 많은 샘플 길이 — 같은 수면 먼저 나온 길이(Counter.most_common과 같은 순서)
+    seen: dict[int, int] = {}
+    for run, delta in zip(video.runs, video.deltas):
+        if run:
+            seen[delta] = seen.get(delta, 0) + run
+    modal_delta = max(seen.items(), key=lambda entry: entry[1])[0]
+    if modal_delta <= 0:
+        raise Mp4Error(MP4_INVALID, "영상 샘플 길이가 0이다")
+
+    # 표시 시각(초) = (offset + ticks × step) ÷ scale — 색인의 식(_to_track) 그대로다
+    shift = video.empty_edit - origin
+    offset = shift.numerator * video.timescale
+    step = shift.denominator
+    scale = shift.denominator * video.timescale
+    ends = [
+        (offset + ticks * step) / scale + delta / video.timescale
+        for delta, ticks in _latest_shown_by_delta(video).items()
+    ]
+    return Mp4Summary(
+        fps=Fraction(video.timescale, modal_delta), duration=max(ends), frames=video.count
+    )
+
+
+def _time_track(data: bytes, start: int, end: int, movie_timescale: int) -> _TimeTrack | None:
+    """trak 하나의 시각 표를 읽는다. 영상·오디오가 아니거나 샘플 표가 없으면 None."""
+    boxes = _leaf_boxes(data, start, end)
+    if b"hdlr" not in boxes or b"mdhd" not in boxes:
+        return None
+    hdlr_body = boxes[b"hdlr"][0]
+    handler = data[hdlr_body + 8 : hdlr_body + 12]
+    if handler not in (b"vide", b"soun"):
+        return None
+    required = (b"stts", b"stsc", b"stsz")
+    if any(name not in boxes for name in required) or not (b"stco" in boxes or b"co64" in boxes):
+        raise Mp4Error(MP4_INVALID, f"{handler!r} 트랙에 샘플 표가 없다")
+    timescale = _timescale(data, boxes[b"mdhd"][0])
+    if timescale <= 0:
+        raise Mp4Error(MP4_INVALID, "timescale이 0이다")
+    count = struct.unpack_from(">I", data, boxes[b"stsz"][0] + 8)[0]
+    if count > _MAX_SAMPLES[handler]:
+        raise Mp4Error(MP4_TOO_LONG, f"{handler!r} 샘플 {count}개 · 상한 {_MAX_SAMPLES[handler]}")
+    table = _read_table(data, boxes[b"stts"][0] + 8, 2 * _entry_count(data, boxes[b"stts"], 8), "I")
+    runs, deltas = table[0::2], table[1::2]
+    if sum(runs) != count:
+        raise Mp4Error(MP4_INVALID, f"stts {sum(runs)}개 · stsz {count}개")
+    composition_runs = composition = None
+    if b"ctts" in boxes:
+        span = boxes[b"ctts"]
+        entries = _entry_count(data, span, 8)
+        composition_runs = _read_table(data, span[0] + 8, 2 * entries, "I")[0::2]
+        composition = _read_table(data, span[0] + 8, 2 * entries, "i")[1::2]
+        if sum(composition_runs) != count:
+            raise Mp4Error(MP4_INVALID, f"ctts {sum(composition_runs)}개 · stsz {count}개")
+    empty_edit, media_time = _edit_list(data, boxes.get(b"elst"), movie_timescale)
+    return _TimeTrack(
+        handler=handler,
+        timescale=timescale,
+        empty_edit=empty_edit,
+        media_time=media_time,
+        count=count,
+        runs=runs,
+        deltas=deltas,
+        composition_runs=composition_runs,
+        composition=composition,
+    )
+
+
+def _first_shown(track: _TimeTrack) -> int | None:
+    """표시되는 샘플 가운데 가장 이른 표시 시각(틱 — media_time을 뺀 값). 없으면 None.
+
+    DTS는 줄지 않으므로, 지금까지 찾은 값보다 (DTS + 가장 작은 PTS − DTS)가 큰 샘플부터는 더
+    이를 수 없다 — 거기서 멈춘다.
+    """
+    lowest, _highest = track.spread()
+    best: int | None = None
+    sample = dts = scanned = 0
+    for run, delta in zip(track.runs, track.deltas):
+        for _ in range(run):
+            if best is not None and dts + lowest - track.media_time > best:
+                return best
+            shown = dts + track.composition_at(sample) - track.media_time
+            if shown >= 0 and (best is None or shown < best):
+                best = shown
+            scanned += 1
+            if scanned > _SUMMARY_MAX_SCAN:
+                raise _NeedsFullParse
+            sample += 1
+            dts += delta
+    return best
+
+
+def _latest_shown_by_delta(track: _TimeTrack) -> dict[int, int]:
+    """샘플 길이(틱) → 그 길이의 표시되는 샘플 가운데 가장 늦은 표시 시각(틱 — media_time을 뺀 값).
+
+    구간을 뒤에서부터 본다. 길이마다 마지막 샘플의 DTS에서 (PTS − DTS)의 폭만큼 앞까지만
+    들여다보면 된다 — 그보다 앞의 샘플은 표시 시각이 마지막 샘플을 넘지 못한다.
+    """
+    if len(track.runs) > _SUMMARY_MAX_RUNS:
+        raise _NeedsFullParse
+    lowest, highest = track.spread()
+    width = highest - lowest
+    starts = [0, *accumulate(track.runs)]  # 구간의 첫 샘플 번호
+    bases = [0, *accumulate(map(mul, track.runs, track.deltas))]  # 구간의 첫 샘플의 DTS
+    last_dts: dict[int, int] = {}  # 길이 → 그 길이의 마지막 샘플의 DTS
+    latest: dict[int, int] = {}
+    scanned = 0
+    for number in range(len(track.runs) - 1, -1, -1):
+        run, delta = track.runs[number], track.deltas[number]
+        if not run:
+            continue
+        base = bases[number]
+        end_dts = base + (run - 1) * delta
+        threshold = last_dts.setdefault(delta, end_dts) - width
+        if end_dts < threshold:
+            continue  # 이 길이의 뒤쪽 구간에서 이미 가장 늦은 것을 찾았다
+        first = 0 if delta == 0 else max(0, -((base - threshold) // delta))
+        for position in range(first, run):
+            shown = (
+                base
+                + position * delta
+                + track.composition_at(starts[number] + position)
+                - track.media_time
+            )
+            if shown >= 0 and shown > latest.get(delta, -1):
+                latest[delta] = shown
+            scanned += 1
+            if scanned > _SUMMARY_MAX_SCAN:
+                raise _NeedsFullParse
+    return latest
 
 
 # ================================================================ 내부 — 상자 읽기

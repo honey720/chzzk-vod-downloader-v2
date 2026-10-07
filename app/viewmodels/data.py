@@ -19,17 +19,27 @@ class ContentItem:
     다운로드의 구간 목록과 완료 · 실패 구간 수도 여기에 둔다 (#309).
     """
 
-    def __init__(self, vod_url, metadata, unique_reps, resolution, base_url, download_path, content_type, liveRewindPlaybackJson):
+    def __init__(
+        self,
+        vod_url,
+        metadata,
+        unique_reps,
+        resolution,
+        base_url,
+        download_path,
+        content_type,
+        liveRewindPlaybackJson,
+    ):
         self.vod_url = vod_url
-        
-        self.default_title = metadata.get('title', 'Unknown Title')
+
+        self.default_title = metadata.get("title", "Unknown Title")
         self.title = self.default_title
-        self.thumbnail_url = metadata.get('thumbnailImageUrl', '')
-        self.category = metadata.get('category', 'Unknown Category')
-        self.channel_name = metadata.get('channelName', 'Unknown Channel')
-        self.channel_image_url = metadata.get('channelImageUrl', '')
-        self.live_open_date = metadata.get('createdDate', 'Unknown Date')
-        self.duration = metadata.get('duration', 0)
+        self.thumbnail_url = metadata.get("thumbnailImageUrl", "")
+        self.category = metadata.get("category", "Unknown Category")
+        self.channel_name = metadata.get("channelName", "Unknown Channel")
+        self.channel_image_url = metadata.get("channelImageUrl", "")
+        self.live_open_date = metadata.get("createdDate", "Unknown Date")
+        self.duration = metadata.get("duration", 0)
 
         self.content_type = content_type
         self.liveRewindPlaybackJson = liveRewindPlaybackJson
@@ -60,9 +70,11 @@ class ContentItem:
         # 새 영상의 끝 이후에서 시작해 당길 수 없는 구간의 번호(0부터). 구간은 그대로 두고
         # 카드에 경고를 붙이며, 받을 때 이 구간만 엔진에 넘기지 않는다
         self.section_unfit = frozenset()
-        # 구간을 정하며 받은 moov — (그때의 주소, core.models.mp4_index.Mp4Head). 다운로드를
-        # 시작할 때 주소가 같으면 엔진에 넘겨 다시 받지 않게 한다. 긴 영상의 해석된 색인은
-        # 수백 MB라 앱 전체에서 한 카드의 것만 든다(section_edit_viewmodel.keep_section_head).
+        # 구간을 정하며 받은 moov — (그때의 주소, 받은 것). 받은 것은 moov의 바이트
+        # (core.models.mp4_index.Mp4Raw)이고, 구간을 확인한 뒤 받을 크기를 세면서 해석한 색인
+        # (Mp4Head)으로 바뀐다. 다운로드를 시작할 때 주소가 같으면 엔진에 넘겨 다시 받지 않게
+        # 하고, 같은 카드의 편집 창을 다시 열 때도 다시 받지 않는다. 긴 영상의 색인은 100MB를
+        # 넘어 앱 전체에서 한 카드의 것만 든다(section_edit_viewmodel.keep_section_head).
         # 인코딩 완료 VOD에만 있다. 없으면 None
         self.section_head = None
         # 구간 다운로드가 받을 바이트의 합 — 인코딩 완료 VOD(mp4)만. 구간을 확인할 때 moov로
@@ -82,7 +94,7 @@ class ContentItem:
         self.selected_frame_rate = None
 
         self.unique_reps = unique_reps
-        
+
         self.resolution = resolution
         self.total_size = ""
         self.base_url = base_url

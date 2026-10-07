@@ -37,7 +37,7 @@ from app.viewmodels.item_state import ItemState
 from app.viewmodels.path_gates import check_download_path
 from app.viewmodels.data import SECTION_CHECK_PENDING, ContentItem
 from app.viewmodels.model import ContentListModel
-from app.viewmodels.section_edit_viewmodel import SectionRefitter
+from app.viewmodels.section_edit_viewmodel import SectionRefitter, SectionSizer
 from app.network import NetworkManager
 from core.services import metadata_service
 from core.services.metadata_service import MetadataError
@@ -224,14 +224,21 @@ class ContentViewModel(QObject):
         # 구간이 있는 카드의 해상도가 바뀌면 구간을 새 해상도에 다시 맞춘다 (#309)
         self._sectionRefitter = SectionRefitter(self.model, self.threadpool, self)
         self._sectionRefitter.settled.connect(self._onSectionSettled)
+        # 구간 카드가 받을 크기를 백그라운드에서 센다 — 구간을 확인했을 때와 해상도 변경의 조회가 끝났을 때
+        self._sectionSizer = SectionSizer(self.model, self.threadpool, self)
 
     def fetchContent(self, vod_url: str, cookies: dict, downloadPath: str) -> None:
         # 조회가 끝나기 전에도 카드가 보이도록 LOADING 상태의 자리표시 아이템을
         # 즉시 추가한다. LOADING 아이템은 findItem이 건너뛰므로 다운로드되지 않는다 (#124)
         placeholder = ContentItem(
             vod_url,
-            {'title': vod_url, 'category': '', 'channelName': '', 'createdDate': '', 'duration': 0},
-            [], None, '', downloadPath, '', None,
+            {"title": vod_url, "category": "", "channelName": "", "createdDate": "", "duration": 0},
+            [],
+            None,
+            "",
+            downloadPath,
+            "",
+            None,
         )
         placeholder.downloadState = ItemState.LOADING
         self.model.addItem(placeholder)
@@ -254,7 +261,15 @@ class ContentViewModel(QObject):
         self._relays.pop(worker, None)
         if placeholder is None:
             return
-        vod_url, metadata, unique_reps, resolution, base_url, downloadPath, liveRewindPlaybackJson = result
+        (
+            vod_url,
+            metadata,
+            unique_reps,
+            resolution,
+            base_url,
+            downloadPath,
+            liveRewindPlaybackJson,
+        ) = result
         self.downloadPath = downloadPath
         row = self.model.getRow(placeholder)
         if row is None:
@@ -262,7 +277,16 @@ class ContentViewModel(QObject):
             return
         # 완성된 아이템으로 같은 자리에서 교체한다. 행 삭제→삽입을 거쳐야
         # 해상도 버튼·썸네일이 붙은 위젯이 새로 만들어진다
-        item = ContentItem(vod_url, metadata, unique_reps, resolution, base_url, downloadPath, content_type, liveRewindPlaybackJson)
+        item = ContentItem(
+            vod_url,
+            metadata,
+            unique_reps,
+            resolution,
+            base_url,
+            downloadPath,
+            content_type,
+            liveRewindPlaybackJson,
+        )
         self.model.removeRows(row, 1)
         self.model.addItem(item, row)
 
@@ -380,10 +404,12 @@ class ContentViewModel(QObject):
         if self._editingItem is not item:
             return
         self._editingItem = None
+        self._sectionSizer.request(item)  # 구간을 확인했으면 받을 크기를 센다
         self._resumeHeldBatch()
 
-    def _onSectionSettled(self, _item: ContentItem) -> None:
+    def _onSectionSettled(self, item: ContentItem) -> None:
         """카드의 길이 확인 조회가 끝났다 — 그 카드가 다시 다운로드 대상이 된다 (#309)."""
+        self._sectionSizer.request(item)  # 새 해상도의 moov로 받을 크기를 다시 센다
         self._resumeHeldBatch()
 
     def _resumeHeldBatch(self) -> None:

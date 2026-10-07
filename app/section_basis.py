@@ -35,10 +35,10 @@ from app.network import NetworkManager
 from app.probe_timing import ProbeTiming
 from core.api.hls_fmp4 import fetch_fmp4_head, segment_frames
 from core.api.hls_ts import fetch_ts_head, segment_streams, ts_key_uri
-from core.api.mp4 import fetch_mp4_head
+from core.api.mp4 import fetch_mp4_raw, index_mp4, summarize_mp4
 from core.models.content import Content, ContentType
 from core.models.fmp4_index import Fmp4Head
-from core.models.mp4_index import Mp4Head
+from core.models.mp4_index import Mp4Head, Mp4Raw
 from core.models.ts_index import TsHead
 from core.utils.fmp4_sections import FPS_DECLARED, choose_frame_rate, fmp4_timeline
 from core.utils.ts_sections import choose_ts_frame_rate, ts_timeline
@@ -62,6 +62,10 @@ class SectionBasis:
     # 인코딩 완료 VOD를 조회하며 받은 moov. 다운로드를 시작할 때 엔진에 넘기면 엔진이 다시
     # 받지 않는다. 그 밖의 타입과 대역은 None이다. 같은지 견줄 때와 repr에는 들지 않는다
     mp4_head: Mp4Head | None = field(default=None, compare=False, repr=False)
+    # 인코딩 완료 VOD를 조회하며 받은 moov의 바이트 — 아직 해석하지 않은 것. 편집 창의 조회는
+    # 프레임률 · 길이만 가볍게 읽고 이것을 싣는다(색인은 필요할 때 만든다). 같은지 견줄 때와
+    # repr에는 들지 않는다
+    mp4_raw: Mp4Raw | None = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -79,7 +83,8 @@ class SectionProbe:
     # 프레임률을 정한 경로 — core.utils.section_plan의 FPS_DECLARED · FPS_STANDARD · FPS_MEASURED.
     # mp4는 샘플 표가 말한 값이라 FPS_DECLARED다
     fps_source: str
-    head: Mp4Head | Fmp4Head | TsHead  # 받은 것 — 엔진에 넘길 수 있다
+    # 받은 것 — 엔진에 넘길 수 있다. mp4는 색인까지 만들라고 했을 때만 있다(probe_mp4의 index)
+    head: Mp4Head | Fmp4Head | TsHead | None
     # 세그먼트 번호 → 그 세그먼트의 프레임 정보(받아 둔 것은 다시 받지 않는다). mp4는 None
     segment_at: Callable[[int], object] | None = None
 
@@ -98,12 +103,23 @@ def probe_section_basis(item) -> SectionBasis:
     """
     kind = item.content_type
     if kind == "video":
-        return probe_mp4(item.base_url).basis
+        return probe_mp4(item.base_url, held=_held_moov(item)).basis
     if kind == "m3u8":
         return probe_fmp4(item).basis
     if kind == "hls_aes":
         return probe_ts(item, declared=_declared_ts_rate(item)).basis
     raise SectionBasisError(f"구간 기능이 없는 타입이다: {kind!r}")
+
+
+def _held_moov(item):
+    """카드가 이미 쥐고 있는, 지금의 주소에서 받은 moov(바이트 또는 색인). 없으면 None.
+
+    같은 카드를 다시 열 때 moov를 또 받지 않는다 — 주소가 같으면 같은 파일이다.
+    """
+    kept = getattr(item, "section_head", None)
+    if kept is None or kept[0] != item.base_url:
+        return None
+    return kept[1]
 
 
 def _clock() -> float:
@@ -114,8 +130,17 @@ def _clock() -> float:
         return 0.0
 
 
-def probe_mp4(base_url: str) -> SectionProbe:
-    """인코딩 완료 VOD — mp4의 moov를 받아 샘플 표에서 읽는다.
+def probe_mp4(base_url: str, held=None, index: bool = False) -> SectionProbe:
+    """인코딩 완료 VOD — mp4의 moov를 받아 프레임률 · 길이를 읽는다.
+
+    moov의 바이트만 받고 프레임률 · 길이는 가볍게 읽는다(``summarize_mp4``) — 샘플마다 펼친
+    색인을 만들지 않는다. 긴 영상은 색인을 만드는 데만 몇 초가 걸린다. 값은 색인의 것과
+    비트까지 같다. 받은 바이트는 결과에 싣는다(``SectionBasis.mp4_raw``) — 색인이 필요한 쪽이
+    다시 받지 않고 해석한다.
+
+    Args:
+        held: 이미 쥐고 있는 그 주소의 moov(``Mp4Raw`` 또는 ``Mp4Head``). 주면 받지 않는다
+        index: True면 색인까지 만들어 ``head``에 싣는다 — 헤드리스처럼 곧바로 엔진에 넘길 때
 
     Raises:
         Mp4Error: moov를 찾지 못했거나 해석하지 못한 경우
@@ -123,21 +148,30 @@ def probe_mp4(base_url: str) -> SectionProbe:
     """
     timing = ProbeTiming("mp4")
     with timing.watching():
-        # 받기(첫 읽기 · moov의 나머지)와 해석이 core의 한 함수 안에 있다 — 그 함수가 해석에 쓴
-        # 시간을 돌려주므로(Mp4Head.parse_seconds) 단계 시간에서 빼 받기와 해석으로 나눠 적는다.
-        # 요청마다의 시간 · 크기는 첫 읽기와 나머지 받기를 보여 준다
-        with timing.stage("moov 받기 · 해석"):
-            started = _clock()
-            head = fetch_mp4_head(base_url)
-            elapsed = _clock() - started
-        index = head.index
-        timing.note("moov 받기", lambda: f"{elapsed - head.parse_seconds:.2f}초")
-        timing.note("moov 해석", lambda: f"{head.parse_seconds:.2f}초")
-        timing.note("moov", lambda: f"{index.moov_range[1] - index.moov_range[0] + 1:,}바이트")
-        timing.note("프레임", lambda: f"{len(index.frame_pts):,}개")
-        timing.note("영상 길이", lambda: f"{index.duration:.3f}초")
+        if isinstance(held, Mp4Head):
+            # 색인까지 만들어 둔 카드를 다시 열었다 — 받지도 해석하지도 않는다
+            timing.note("moov", lambda: "쥐고 있던 색인을 다시 씀")
+            basis = SectionBasis(fps=held.index.fps, duration=held.index.duration, mp4_head=held)
+            return SectionProbe(basis=basis, fps_source=FPS_DECLARED, head=held)
+        if held is not None:
+            raw = held
+            timing.note("moov", lambda: "쥐고 있던 바이트를 다시 씀")
+        else:
+            with timing.stage("moov 받기"):
+                raw = fetch_mp4_raw(base_url)
+        with timing.stage("가벼운 해석"):
+            summary = summarize_mp4(raw)
+        timing.note("moov 크기", lambda: f"{len(raw.moov):,}바이트")
+        timing.note("프레임", lambda: f"{summary.frames:,}개")
+        timing.note("영상 길이", lambda: f"{summary.duration:.3f}초")
+        head = None
+        if index:
+            with timing.stage("moov 해석"):
+                head = index_mp4(raw)
         return SectionProbe(
-            basis=SectionBasis(fps=index.fps, duration=index.duration, mp4_head=head),
+            basis=SectionBasis(
+                fps=summary.fps, duration=summary.duration, mp4_head=head, mp4_raw=raw
+            ),
             fps_source=FPS_DECLARED,
             head=head,
         )

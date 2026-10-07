@@ -45,7 +45,7 @@ import time as tm
 
 import requests
 
-from core.api.mp4 import MP4_UNSUPPORTED, Mp4Error, fetch_mp4_head
+from core.api.mp4 import MP4_UNSUPPORTED, Mp4Error, fetch_mp4_head, index_mp4
 from core.api.session import get_thread_session
 from core.downloaders.base import (
     REQUEST_TIMEOUT,
@@ -208,6 +208,8 @@ class FileDownloader(BaseDownloader):
             resume = None
         self._done_before = resume.done if resume is not None else frozenset()
         handed = (resume.mp4_head if resume is not None else None) or content.mp4_head
+        if handed is None and content.mp4_raw is not None:
+            handed = index_mp4(content.mp4_raw)  # 받아 둔 바이트 — 다시 받지 않고 해석만 한다
         head = handed or fetch_mp4_head(self.s.base_url)
         self._moov_reused = handed is not None
         index, picked = self._pick_ranges(head, content)

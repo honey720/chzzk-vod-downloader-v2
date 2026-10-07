@@ -77,6 +77,32 @@ class Mp4Head:
 
 
 @dataclass(frozen=True)
+class Mp4Raw:
+    """파일에서 받은 moov의 바이트를 담는다 — 아직 해석하지 않은 것 (#309).
+
+    긴 영상의 moov는 수십 MB이고, 샘플마다 펼친 색인(``Mp4Index``)을 만드는 데 몇 초가 걸린다.
+    프레임률과 길이만 필요한 쪽(구간 편집 창)은 이것에서 가볍게 읽고
+    (``core.api.mp4.summarize_mp4``), 색인이 필요한 쪽은 필요할 때 해석한다
+    (``core.api.mp4.index_mp4``). 같은 바이트를 두 번 받지 않는다.
+    """
+
+    moov: bytes = field(repr=False)  # moov 상자 전체(머리 포함)
+    moov_range: tuple[int, int]  # 파일 안에서 moov가 놓인 (시작, 끝) 바이트 — 양 끝 포함
+    # 파일의 0부터 moov가 시작하기 전까지의 바이트(ftyp 등). moov가 첫 읽기 안에서 시작하지
+    # 않았으면(mdat 뒤의 moov 등) 앞부분을 받지 않았으므로 None이다
+    prefix: bytes | None = field(default=None, repr=False)
+
+
+@dataclass(frozen=True)
+class Mp4Summary:
+    """moov에서 가볍게 읽은 프레임률 · 길이 — 색인(``Mp4Index``)의 같은 이름의 값과 비트까지 같다."""
+
+    fps: Fraction  # 샘플 표가 선언한 프레임률 — timescale ÷ 가장 많은 샘플 길이
+    duration: float  # 영상 길이(초) — 마지막으로 표시되는 영상 프레임이 끝나는 시각
+    frames: int  # 영상 트랙의 샘플 수
+
+
+@dataclass(frozen=True)
 class SelectionBytes:
     """구간 하나를 받는 데 필요한 파일 바이트 범위를 담는다."""
 

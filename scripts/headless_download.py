@@ -220,7 +220,7 @@ def _resolve_sections(
     """
     try:
         # 조회 순서는 app/section_basis.py 한 곳에 있다 — 구간 편집 창과 같은 함수다
-        head = section_basis.probe_mp4(item.base_url).head
+        head = section_basis.probe_mp4(item.base_url, index=True).head
         index = head.index
         pairs = _parse_sections(texts, index.fps)
     except TimecodeError as e:
