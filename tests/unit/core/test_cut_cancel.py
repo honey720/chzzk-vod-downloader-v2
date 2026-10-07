@@ -17,6 +17,7 @@ import pytest
 
 import core.utils.hybrid_cut as cut_module
 from core.utils.ffmpeg import FFmpegCancelledError, run_ffmpeg
+import core.utils.ts_cut as ts_cut_module
 from core.utils.hybrid_cut import CutCancelled, hybrid_cut
 from core.utils.paths import cut_temp_dir_for
 from tests.unit.core.long_ffmpeg import LONG_RUNNING, end_all, record_processes
@@ -52,6 +53,11 @@ class _Stop:
         self.running_then = bool(self._processes) and self._processes[-1].poll() is None
         self.at = time.perf_counter()
         self._event.set()
+        # 제품이 멈추지 못하면 10분을 돈다 — 상한을 넘기면 테스트가 띄운 프로세스를 직접 끝내
+        # 호출이 돌아오게 한다(그때는 걸린 시간의 단언이 실패한다)
+        guard = threading.Timer(RETURN_WITHIN + 2.0, end_all, [self._processes])
+        guard.daemon = True
+        guard.start()
 
     def __call__(self) -> bool:
         return self._event.is_set()
@@ -116,7 +122,7 @@ def test_cut_stops_in_the_middle_of_any_stage(mp4_source, tmp_path, monkeypatch,
     mp4, 프레임 35~80. 표의 단계(입력 읽기 · 머리 · 가운데 · 끝 · 오디오 · 잇기)의 명령을 10분 도는
     명령으로 바꿔 띄우고 0.4초 뒤 멈추라고 함
     -> CutCancelled, 요청 뒤 1.5초 안에 돌아온다, 요청 때 그 단계의 프로세스는 돌고 있었다
-    -> 띄운 프로세스가 모두 끝났다, 산출물 없음, 중간 파일 폴더 없음
+    -> 띄운 프로세스가 모두 끝났다, 산출물 자리에 쓰다 만 파일이 없다, 중간 파일 폴더 없음
     """
     path, frames = mp4_source
     output = str(tmp_path / "out.mp4")
@@ -129,6 +135,9 @@ def test_cut_stops_in_the_middle_of_any_stage(mp4_source, tmp_path, monkeypatch,
         if any(marker in str(arg) for arg in args) and not swapped:
             swapped.append(stage)
             kwargs.pop("on_out_time", None)  # 바꿔 띄운 명령은 진행을 내지 않는다
+            if stage != "probe":  # 입력 읽기는 산출물 자리를 건드리기 전이다
+                with open(output, "wb") as partial:
+                    partial.write(b"partial")  # 쓰다 만 산출물 — 바꿔 띄운 명령은 쓰지 않는다
             stop.arm()
             return real(LONG_RUNNING, **kwargs)
         return real(args, **kwargs)
@@ -160,3 +169,28 @@ def test_cut_told_to_stop_before_it_starts_launches_nothing(mp4_source, tmp_path
 
     assert launched == []
     assert not os.path.exists(output)
+
+
+def test_rewrapping_ts_segments_stops_when_told_to(tmp_path, launched):
+    """TS 세그먼트를 mp4로 다시 싸는 도중 멈추라고 하면 그만두고 쓰다 만 파일을 남기지 않아야 한다.
+
+    세그먼트 파일 둘(내용은 아무 바이트). should_stop이 둘째 조각을 흘려 넣기 전에 참이 됨
+    -> CutCancelled, 띄운 ffmpeg가 끝났다, 다시 싼 파일이 없다
+    """
+    segments = []
+    for number in range(2):
+        path = tmp_path / f"{number}.ts"
+        path.write_bytes(bytes(188) * 4)
+        segments.append(str(path))
+    joined = str(tmp_path / "joined.mp4")
+    asked = []
+
+    def should_stop() -> bool:
+        asked.append(1)
+        return len(asked) > 1
+
+    with pytest.raises(CutCancelled):
+        ts_cut_module._remux(segments, joined, should_stop)
+
+    assert launched and all(process.poll() is not None for process in launched)
+    assert not os.path.exists(joined)

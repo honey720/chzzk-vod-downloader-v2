@@ -432,6 +432,10 @@ def test_stopping_during_the_cut_does_not_make_the_app_give_up_waiting_for_the_w
         if "audio.m4a" in args:
             kwargs.pop("on_out_time", None)
             threading.Timer(0.3, launched.set).start()  # 프로세스가 뜬 뒤에 알린다
+            # 제품이 멈추지 못하면 10분을 돈다 — 띄운 프로세스를 직접 끝내 워커가 끝나게 한다
+            guard = threading.Timer(8.0, end_all, [processes])
+            guard.daemon = True
+            guard.start()
             return real(LONG_RUNNING, **kwargs)
         return real(args, **kwargs)
 
