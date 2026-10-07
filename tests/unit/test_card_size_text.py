@@ -661,6 +661,30 @@ def test_download_started_before_the_index_is_built_hands_the_bytes_to_the_engin
     assert item.section_bytes is None
 
 
+def test_bytes_handed_to_the_engine_are_dropped_when_the_download_ends(
+    qtbot, window, probe, gated_index
+):
+    """엔진에 넘긴 moov 바이트는 다운로드가 끝나면 Content에 남지 않아야 한다.
+
+    색인 만들기를 막아 둔 채 구간을 확인, 전역 다운로드(바이트가 넘어간다), 완료 통지
+    -> 통지 전 content.mp4_raw is 조회가 받은 바이트, 끝난 뒤 content.mp4_raw is None
+    """
+    win, item, engine = window
+    _give_section(qtbot, win, item, wait_size=False)
+    qtbot.waitUntil(lambda: gated_index.calls == 1, timeout=3000)
+    win.downloadButton.click()
+    _pump()
+    content = engine.submissions[0]["content"]
+    handed = content.mp4_raw
+
+    item.downloadState = DownloadState.FINISHED  # 배치가 이 카드를 다시 고르지 않게 한다
+    engine.submissions[0]["on_finished"]()
+    qtbot.waitUntil(lambda: win.downloadViewModel.handle is None, timeout=3000)
+
+    assert handed is probe.raws[1080]
+    assert content.mp4_raw is None
+
+
 def test_download_started_after_the_index_is_built_hands_the_index_to_the_engine(
     qtbot, window, probe
 ):
