@@ -18,6 +18,7 @@ import logging
 import os
 import subprocess
 import threading
+import time
 import types
 import weakref
 
@@ -43,6 +44,7 @@ from core.models.mp4_index import Mp4Head
 from core.utils.ffmpeg import get_ffmpeg_exe
 from tests.unit.section_input import enter_time
 from tests.unit.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
+from tests.unit.core.long_ffmpeg import LONG_RUNNING, end_all, record_processes
 from tests.unit.core.range_host import RangeHost
 
 FINISH_TIMEOUT = 60_000  # ms — 실제 ffmpeg로 구간 하나를 자른다
@@ -408,6 +410,56 @@ def test_index_is_freed_after_the_download_is_stopped(qtbot, window, monkeypatch
     _wait_for_engine_threads()
 
     _assert_released(head)
+
+
+def test_stopping_during_the_cut_does_not_make_the_app_give_up_waiting_for_the_worker(
+    qtbot, window, monkeypatch, caplog, tmp_path
+):
+    """구간을 자르는 도중 정지해도 앱이 워커를 기다리다 포기하지 않아야 한다 — ffmpeg가 바로 끝난다.
+
+    컷의 오디오 단계를 10분 도는 명령으로 바꿔 띄움. 그 ffmpeg가 뜬 뒤 정지 버튼을 누름
+    (정지는 워커가 끝나기를 2초까지 기다린다 — 그동안 앱이 선다)
+    -> 정지 버튼의 처리가 1.5초 안에 끝난다, "대기를 포기한다" 경고가 없다(같은 로거의 표식은 잡힌다)
+    -> 카드는 대기, 핸들 없음, 띄운 ffmpeg가 모두 끝났다, 저장 폴더에 mp4가 남지 않았다
+    """
+    win, item = window
+    _give_section(qtbot, win, item)
+    processes = record_processes(monkeypatch)
+    launched = threading.Event()
+    real = cut_module.run_ffmpeg
+
+    def slowed(args, **kwargs):
+        if "audio.m4a" in args:
+            kwargs.pop("on_out_time", None)
+            threading.Timer(0.3, launched.set).start()  # 프로세스가 뜬 뒤에 알린다
+            return real(LONG_RUNNING, **kwargs)
+        return real(args, **kwargs)
+
+    monkeypatch.setattr(cut_module, "run_ffmpeg", slowed)
+    monkeypatch.setattr(mw_mod.QMessageBox, "warning", lambda *a, **k: mw_mod.QMessageBox.Yes)
+    logger_name = "app.viewmodels.download_viewmodel"
+    try:
+        with caplog.at_level(logging.WARNING, logger=logger_name):
+            win.downloadButton.click()
+            qtbot.waitUntil(launched.is_set, timeout=FINISH_TIMEOUT)
+            assert processes[-1].poll() is None, "전제: 정지할 때 컷의 ffmpeg가 돌고 있다"
+
+            started = time.perf_counter()
+            win.stopButton.click()
+            took = time.perf_counter() - started
+            logging.getLogger(logger_name).warning("표식 — 이 로거의 경고가 잡힌다")
+
+        messages = [r.getMessage() for r in caplog.records if r.name == logger_name]
+        assert "표식 — 이 로거의 경고가 잡힌다" in messages
+        assert not [message for message in messages if "대기를 포기" in message]
+        assert took < 1.5
+        assert item.downloadState == DownloadState.WAITING
+        assert win.downloadViewModel.handle is None
+        _wait_for_engine_threads()
+        assert all(process.poll() is not None for process in processes)
+        assert [name for name in os.listdir(tmp_path) if name.endswith(".mp4")] == []
+    finally:
+        end_all(processes)
 
 
 def test_index_is_freed_when_the_card_is_deleted_while_downloading(qtbot, window, monkeypatch):

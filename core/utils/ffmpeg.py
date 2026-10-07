@@ -36,6 +36,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from collections.abc import Callable, Iterable, Iterator, Sequence
 
 # GUI 앱의 서브프로세스가 콘솔 창을 띄우지 않게 한다 (Windows 전용 플래그)
@@ -60,6 +61,18 @@ class RemuxError(FFmpegError):
 
 class FFmpegTimeoutError(FFmpegError):
     """ffmpeg가 제한 시간 안에 끝나지 않아 종료시켰다."""
+
+
+class FFmpegCancelledError(Exception):
+    """부르는 쪽이 멈추라고 해(``should_stop``) ffmpeg를 끝냈다 — 실패가 아니다 (#309).
+
+    ``FFmpegError``를 잇지 않는다 — ffmpeg의 실패를 한꺼번에 잡는 자리에서 실패로 오인되지 않게.
+    """
+
+
+# 멈추라는 요청을 확인하는 간격(초) — 중단을 누른 뒤 ffmpeg가 끝나기까지의 상한이다. 앱은
+# 워커가 끝나기를 2초까지 기다리므로(그동안 GUI가 선다) 그보다 훨씬 짧아야 한다
+_STOP_POLL_SECONDS = 0.05
 
 
 def get_ffmpeg_exe() -> str:
@@ -246,6 +259,7 @@ def run_ffmpeg(
     timeout: float,
     cwd: str | None = None,
     on_out_time: Callable[[float], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """ffmpeg를 끝날 때까지 실행하고 종료 코드와 출력을 돌려준다 (#309).
 
@@ -260,15 +274,21 @@ def run_ffmpeg(
         on_out_time: 주면 ffmpeg가 진행을 알릴 때마다(``-progress``) 그때까지 쓴 출력의
             시각(초)으로 부른다 — 부르는 스레드에서 돈다. 이때 돌려주는 값의 stdout은
             비어 있다(진행 글자가 그 자리로 나온다)
+        should_stop: 주면 도는 동안 ``_STOP_POLL_SECONDS``마다 부른다. 참을 돌려주면
+            프로세스를 바로 끝내고 ``FFmpegCancelledError``를 낸다 — 다운로드를 중단했을 때
+            도는 ffmpeg가 끝까지 돌지 않게 한다. 다른 스레드에서 불릴 수 있다
 
     Raises:
         FFmpegNotFoundError: ffmpeg 실행 파일을 찾지 못한 경우
         FFmpegTimeoutError: 제한 시간을 넘긴 경우
+        FFmpegCancelledError: should_stop이 참을 돌려줘 끝낸 경우
         FFmpegError: 프로세스를 시작하지 못한 경우
     """
     exe = get_ffmpeg_exe()
     if on_out_time is not None:
-        return _run_reporting(exe, args, timeout, cwd, on_out_time)
+        return _run_reporting(exe, args, timeout, cwd, on_out_time, should_stop)
+    if should_stop is not None:
+        return _run_stoppable(exe, args, timeout, cwd, should_stop)
     try:
         return subprocess.run(
             [exe, "-hide_banner", *args],
@@ -302,18 +322,64 @@ def parse_out_time(line: str) -> float | None:
         return None
 
 
+def _run_stoppable(
+    exe: str,
+    args: Sequence[str],
+    timeout: float,
+    cwd: str | None,
+    should_stop: Callable[[], bool],
+) -> subprocess.CompletedProcess[str]:
+    """ffmpeg를 실행해 출력을 모으되, 멈추라는 요청이 오면 바로 끝낸다. ``run_ffmpeg``가 부른다.
+
+    출력을 모으는 일(``communicate``)을 짧은 간격으로 끊어 그 사이에 should_stop을 확인한다.
+    돌려주는 값은 멈춤 확인이 없는 경로(``subprocess.run``)와 같다.
+    """
+    command = [exe, "-hide_banner", *args]
+    try:
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=cwd,
+            creationflags=_CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+            env=_subprocess_env(exe),
+        )
+    except OSError as e:
+        raise FFmpegError(f"ffmpeg 실행 실패: {e}") from e
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            output, errors = process.communicate(timeout=_STOP_POLL_SECONDS)
+            return subprocess.CompletedProcess(command, process.returncode, output, errors)
+        except subprocess.TimeoutExpired:
+            cancelled = should_stop()
+            if not cancelled and time.monotonic() < deadline:
+                continue
+            process.kill()
+            process.communicate()  # 파이프를 비우고 닫는다 — 프로세스가 끝난 것까지 기다린다
+            if cancelled:
+                raise FFmpegCancelledError("멈추라는 요청으로 ffmpeg를 끝냈다") from None
+            raise FFmpegTimeoutError(f"ffmpeg가 {timeout:g}초 안에 끝나지 않았다") from None
+
+
 def _run_reporting(
     exe: str,
     args: Sequence[str],
     timeout: float,
     cwd: str | None,
     on_out_time: Callable[[float], None],
+    should_stop: Callable[[], bool] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """ffmpeg를 실행하면서 진행(출력 시각)을 on_out_time에 알린다. ``run_ffmpeg``가 부른다.
 
     진행은 stdout으로 받는다(``-progress pipe:1``). stderr는 따로 읽어 둔다 — 한쪽 파이프만
     읽으면 다른 쪽이 차서 ffmpeg가 멈춘다. 제한 시간은 타이머가 프로세스를 끝내는 것으로
-    지킨다. on_out_time이 예외를 내면 프로세스를 끝내고 그 예외를 그대로 올린다.
+    지킨다. on_out_time이 예외를 내면 프로세스를 끝내고 그 예외를 그대로 올린다. should_stop은
+    지켜보는 스레드가 짧은 간격으로 확인한다 — 진행 줄을 기다리는 동안에도 멈출 수 있다.
     """
     command = [exe, "-hide_banner", "-nostats", "-progress", "pipe:1", *args]
     try:
@@ -340,8 +406,20 @@ def _run_reporting(
         timed_out.set()
         process.kill()
 
+    finished, cancelled = threading.Event(), threading.Event()
+
+    def watch() -> None:
+        while not finished.wait(_STOP_POLL_SECONDS):
+            if should_stop():
+                cancelled.set()
+                process.kill()  # stdout이 닫혀 아래의 읽기가 끝난다
+                return
+
+    watcher = threading.Thread(target=watch, daemon=True) if should_stop is not None else None
     timer = threading.Timer(timeout, expire)
     timer.start()
+    if watcher is not None:
+        watcher.start()
     try:
         for line in process.stdout:
             seconds = parse_out_time(line)
@@ -350,12 +428,17 @@ def _run_reporting(
         returncode = process.wait()
     finally:
         timer.cancel()
+        finished.set()
+        if watcher is not None:
+            watcher.join()
         if process.poll() is None:
             process.kill()
             process.wait()
         reader.join()
         process.stdout.close()
         process.stderr.close()
+    if cancelled.is_set():
+        raise FFmpegCancelledError("멈추라는 요청으로 ffmpeg를 끝냈다")
     if timed_out.is_set():
         raise FFmpegTimeoutError(f"ffmpeg가 {timeout:g}초 안에 끝나지 않았다")
     return subprocess.CompletedProcess(command, returncode, "", "".join(errors))

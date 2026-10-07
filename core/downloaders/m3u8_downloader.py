@@ -70,7 +70,13 @@ from core.models.fmp4_index import Fmp4Head
 from core.models.plan import DownloadPlan
 from core.models.section_resume import SectionResume
 from core.utils.fmp4_sections import Fmp4Section, plan_fmp4_sections
-from core.utils.hybrid_cut import CUT_FAILED, CutError, cut_frames_from_fmp4, hybrid_cut
+from core.utils.hybrid_cut import (
+    CUT_FAILED,
+    CutCancelled,
+    CutError,
+    cut_frames_from_fmp4,
+    hybrid_cut,
+)
 from core.utils.paths import choose_temp_dir, release_output_paths
 
 # 받은 세그먼트의 프레임 PTS를 prepare가 정한 PTS와 견줄 때 허용하는 차이(초) — 같은
@@ -491,7 +497,10 @@ class M3U8Downloader(BaseDownloader):
                     inspect=self._inspect_cuts,
                     on_stage=lambda name, seconds: stages.append((name, seconds)),
                     on_progress=progress.section(number),
+                    should_stop=self._stop_requested,
                 )
+            except CutCancelled:
+                return  # 컷이 도는 동안 중단됐다 — 정리는 run()의 중단 경로가 한다
             except (CutError, Mp4Error) as e:
                 # 이 구간은 자르지 못했다 — 나머지 구간은 끝까지 자른다
                 self.logger.log_error("Cut failed — segments preserved for retry", e)

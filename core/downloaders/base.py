@@ -323,6 +323,14 @@ class BaseDownloader(ABC):
     def _cleanup_partial(self) -> None:
         """실패·중단 시 부분 산출물을 정리한다."""
 
+    def _stop_requested(self) -> bool:
+        """다운로드를 중단하라는 요청이 왔는지 — 컷이 도는 ffmpeg를 끝낼지 묻는 데 쓴다 (#309).
+
+        컷의 ffmpeg를 지켜보는 스레드에서도 불린다. 일시정지는 중단이 아니다 — 도는 컷은
+        끝까지 돌고 다음 구간 앞에서 멈춘다.
+        """
+        return self.state == DownloadState.WAITING
+
     # ============ 하위 다운로더가 선택적으로 오버라이드 ============
 
     def postprocess(self) -> None:

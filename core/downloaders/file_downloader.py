@@ -62,7 +62,7 @@ from core.models.events import ProgressEvent
 from core.models.mp4_index import Mp4Index
 from core.models.plan import DownloadPlan
 from core.models.section_resume import SectionResume
-from core.utils.hybrid_cut import CutError, cut_frames_from_mp4, hybrid_cut
+from core.utils.hybrid_cut import CutCancelled, CutError, cut_frames_from_mp4, hybrid_cut
 from core.utils.mp4_partial import PartialLayout, build_head, plan_partial
 from core.utils.mp4_ranges import selection_byte_ranges
 from core.utils.paths import partial_source_path_for, release_output_paths
@@ -355,7 +355,12 @@ class FileDownloader(BaseDownloader):
                     inspect=self._inspect_cuts,
                     on_stage=lambda name, seconds: stages.append((name, seconds)),
                     on_progress=progress.section(number),
+                    should_stop=self._stop_requested,
                 )
+            except CutCancelled:
+                # 컷이 도는 동안 중단됐다 — 도는 ffmpeg는 끝났고 쓰다 만 것은 컷이 지웠다.
+                # 나머지 정리는 구간 사이에서 중단됐을 때와 같이 run()의 중단 경로가 한다
+                return
             except (CutError, Mp4Error) as e:
                 self.logger.log_error("Cut failed — partial source preserved for retry", e)
                 failures.append(e)

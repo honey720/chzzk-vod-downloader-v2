@@ -23,6 +23,7 @@ requests 세션으로 요청하고 진짜 응답 객체를 받으며, 전송 어
 import os
 import re
 import subprocess
+import threading
 import time
 from types import SimpleNamespace
 
@@ -52,6 +53,7 @@ from core.utils.mp4_ranges import selection_byte_ranges, sections_download_size
 from core.utils.hybrid_cut import CUT_FAILED, CutError, cut_frames_from_mp4, hybrid_cut
 from core.utils.paths import build_section_output_paths, partial_source_path_for
 from core.utils.selections import SELECTION_OUT_OF_RANGE, SelectionError
+from tests.unit.core.long_ffmpeg import LONG_RUNNING, end_all, record_processes
 from tests.unit.core.midway_cut_failure import MidwayCutFailure
 from tests.unit.core.range_host import RangeHost
 from tests.unit.core.section_retry import CutCalls, hand_over, snapshot
@@ -1363,3 +1365,60 @@ def test_engine_drops_the_index_after_a_cut_failure_and_the_resume_record_keeps_
     assert run.engine._mp4_head is None
     assert run.engine._index is None
     assert run.data.section_resume.mp4_head is not None
+
+
+# ================================================================ 컷 도중 중단
+
+
+def test_stopping_while_a_section_is_being_cut_ends_ffmpeg_and_the_run_at_once(
+    server, tmp_path, monkeypatch
+):
+    """구간을 자르는 도중 중단하면 도는 ffmpeg가 바로 끝나고, 실행도 곧 끝나며 이번 실행의 것이 남지 않아야 한다.
+
+    기본 입력, 구간 둘(프레임 5~25 · 35~80). 둘째 구간의 오디오 단계를 10분 도는 명령으로 바꿔
+    띄우고 0.4초 뒤 중단(model.stop())
+    -> 중단 뒤 1.5초 안에 run()이 돌아온다, 중단할 때 그 ffmpeg는 돌고 있었고 지금은 모두 끝났다
+    -> 완료 · 실패 통지 없음, 실패한 구간 0, 폴더에 남은 것 없음(임시 원본 · 이번 실행이 만든
+       구간 파일 — 끝낸 첫 구간의 파일까지 — 을 지운다: 중단의 지금 규칙이다)
+    """
+    processes = record_processes(monkeypatch)
+    run = _Run(
+        server,
+        "plain",
+        tmp_path,
+        [TimeRange(_seconds(5), _seconds(25)), TimeRange(_seconds(35), _seconds(80))],
+    )
+    real = cut_module.run_ffmpeg
+    audio_runs = []
+    stopped = {}
+
+    def stop() -> None:
+        stopped["running"] = processes[-1].poll() is None
+        stopped["made"] = sorted(os.listdir(run.folder))
+        stopped["at"] = time.perf_counter()
+        run.data.model.stop()
+
+    def slowed(args, **kwargs):
+        if (
+            args[-1] == "audio.m4a"
+        ):  # 오디오 단계 — 잇기 단계의 명령에도 이 이름이 입력으로 들어 있다
+            audio_runs.append(args)
+            if len(audio_runs) == 2:
+                kwargs.pop("on_out_time", None)
+                threading.Timer(0.4, stop).start()
+                return real(LONG_RUNNING, **kwargs)
+        return real(args, **kwargs)
+
+    monkeypatch.setattr(cut_module, "run_ffmpeg", slowed)
+    try:
+        run.start()
+        returned = time.perf_counter()
+
+        assert stopped["running"], "전제: 중단할 때 둘째 구간의 ffmpeg가 돌고 있었다"
+        assert "구간 시험 144p_1.mp4" in stopped["made"], "전제: 첫 구간은 끝나 있었다"
+        assert returned - stopped["at"] < 1.5
+        assert all(process.poll() is not None for process in processes)
+        assert (run.finished, run.failures, run.data.sections_failed) == (0, [], 0)
+        assert run.listing() == []
+    finally:
+        end_all(processes)

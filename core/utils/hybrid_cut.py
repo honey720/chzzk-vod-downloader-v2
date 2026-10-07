@@ -33,6 +33,7 @@
 import os
 import re
 import shutil
+import subprocess
 import time
 from bisect import bisect_left, bisect_right
 from collections import Counter
@@ -54,7 +55,12 @@ from core.models.cut import (
 from core.models.fmp4_index import Fmp4Index, Fmp4Init, Fmp4Segment
 from core.models.mp4_index import Mp4Index, Mp4Track
 from core.models.sample_column import float_column
-from core.utils.ffmpeg import FFmpegError, FFmpegTimeoutError, run_ffmpeg
+from core.utils.ffmpeg import (
+    FFmpegCancelledError,
+    FFmpegError,
+    FFmpegTimeoutError,
+    run_ffmpeg,
+)
 from core.utils.paths import cut_temp_dir_for
 
 # 실패 키 — 번역하지 않은 i18n 키 원문
@@ -144,6 +150,38 @@ class CutError(Exception):
 
 
 # ================================================================ 프레임 정보
+
+
+class CutCancelled(Exception):
+    """부르는 쪽이 멈추라고 해(``should_stop``) 컷을 그만뒀다 — 실패가 아니다 (#309).
+
+    ``CutError``를 잇지 않는다 — 자르지 못한 구간으로 세어지지 않게. 중간 파일과 쓰다 만
+    산출물은 지우고 올린다.
+    """
+
+
+# 지금 도는 컷이 받은 멈춤 확인(``hybrid_cut``의 should_stop) — ffmpeg를 부르는 자리들이 읽는다
+_stop_check: ContextVar[Callable[[], bool] | None] = ContextVar("_stop_check", default=None)
+
+
+def _ffmpeg(args: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
+    """``run_ffmpeg``를 부른다 — 컷이 멈춤 확인을 받았으면 그것을 넘긴다.
+
+    컷의 모든 단계(입력 읽기 · 조각 · 오디오 · 잇기 · 조각 검사)가 이 함수로 ffmpeg를 부른다.
+    한 단계라도 건너뛰면 그 단계가 도는 동안에는 중단이 닿지 않는다.
+
+    Raises:
+        CutCancelled: 멈추라는 요청이 와 ffmpeg를 끝냈거나 시작하지 않은 경우
+    """
+    check = _stop_check.get()
+    if check is None:
+        return run_ffmpeg(args, **kwargs)
+    if check():
+        raise CutCancelled("멈추라는 요청으로 컷을 그만뒀다")
+    try:
+        return run_ffmpeg(args, should_stop=check, **kwargs)
+    except FFmpegCancelledError as e:
+        raise CutCancelled(str(e)) from e
 
 
 def cut_frames_from_mp4(index: Mp4Index) -> CutFrames:
@@ -270,6 +308,7 @@ def hybrid_cut(
     inspect: bool = False,
     on_stage: Callable[[str, float], None] | None = None,
     on_progress: Callable[[float], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> CutResult:
     """입력 파일에서 프레임 [first, last]를 잘라 output_path에 mp4로 쓴다.
 
@@ -290,12 +329,35 @@ def hybrid_cut(
         on_progress: 이 컷의 진행을 0~1로 알린다 — 단계가 끝날 때와, 단계가 도는 동안
             ffmpeg가 진행을 알릴 때마다. 값은 줄지 않고, 1은 산출물을 다 쓴 뒤에만 나온다.
             실패한 컷은 1을 알리지 않는다
+        should_stop: 주면 컷이 도는 동안 짧은 간격으로 부른다. 참을 돌려주면 도는 ffmpeg를
+            바로 끝내고 중간 파일 · 쓰다 만 산출물을 지운 뒤 ``CutCancelled``를 낸다 —
+            어느 단계에서든 닿는다. 다른 스레드에서 불릴 수 있다
 
     Raises:
         CutError: 입력을 다룰 수 없는 경우(``CUT_UNSUPPORTED``), ffmpeg가 실패한
             경우(``CUT_FAILED``), 제한 시간을 넘긴 경우(``CUT_TIMEOUT``)
+        CutCancelled: should_stop이 참을 돌려줘 그만둔 경우
         ValueError: 프레임 번호가 범위를 벗어난 경우
     """
+    token = _stop_check.set(should_stop)
+    try:
+        return _hybrid_cut(
+            source_path, frames, first, last, output_path, inspect, on_stage, on_progress
+        )
+    finally:
+        _stop_check.reset(token)
+
+
+def _hybrid_cut(
+    source_path: str,
+    frames: CutFrames,
+    first: int,
+    last: int,
+    output_path: str,
+    inspect: bool,
+    on_stage: Callable[[str, float], None] | None,
+    on_progress: Callable[[float], None] | None,
+) -> CutResult:
     _reject_transport_stream(source_path)
     plan = plan_cut(frames, first, last)
     has_audio = frames.audio_start is not None
@@ -439,7 +501,7 @@ def _run(args: list[str], timeout: float, cwd: str) -> str:
     sink = _out_time_sink.get()
     extra = {} if sink is None else {"on_out_time": sink}
     try:
-        done = run_ffmpeg(["-v", "warning", "-y", *args], timeout=timeout, cwd=cwd, **extra)
+        done = _ffmpeg(["-v", "warning", "-y", *args], timeout=timeout, cwd=cwd, **extra)
     except FFmpegTimeoutError as e:
         raise CutError(CUT_TIMEOUT, str(e)) from e
     except FFmpegError as e:
@@ -669,7 +731,7 @@ def _read_params(path: str, reorder_delay: int) -> VideoParams:
     것(avcC)이라 파일의 첫 샘플이 없어도 나온다.
     """
     try:
-        done = run_ffmpeg(
+        done = _ffmpeg(
             ["-v", "info", "-i", path, "-map", "0:v:0", "-c", "copy", "-frames:v", "1",
              "-bsf:v", "trace_headers", "-f", "null", "-"],
             timeout=_PROBE_TIMEOUT,
@@ -762,7 +824,7 @@ def read_packets(
         CutError: ffmpeg가 실패했거나 패킷을 하나도 읽지 못한 경우(``CUT_FAILED``)
     """
     try:
-        done = run_ffmpeg(
+        done = _ffmpeg(
             ["-v", "error", *extra, "-i", path, "-map", f"0:{stream}", "-c", "copy", "-f", "framecrc", "-"],
             timeout=_COPY_TIMEOUT,
         )  # fmt: skip

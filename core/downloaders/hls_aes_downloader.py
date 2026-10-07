@@ -77,7 +77,7 @@ from core.models.events import ProgressEvent
 from core.models.plan import DownloadPlan
 from core.models.section_resume import SectionResume
 from core.models.ts_index import TsHead, TsStreams
-from core.utils.hybrid_cut import CutError
+from core.utils.hybrid_cut import CutCancelled, CutError
 from core.utils.paths import choose_temp_dir, release_output_paths
 from core.utils.section_plan import PlannedSection
 from core.utils.ts_cut import cut_ts_section
@@ -562,7 +562,10 @@ class HlsAesDownloader(BaseDownloader):
                     inspect=self._inspect_cuts,
                     on_stage=lambda name, seconds: stages.append((name, seconds)),
                     on_progress=progress.section(number),
+                    should_stop=self._stop_requested,
                 )
+            except CutCancelled:
+                return  # 컷이 도는 동안 중단됐다 — 정리는 run()의 중단 경로가 한다
             except (CutError, TsError) as e:
                 # 이 구간은 자르지 못했다 — 나머지 구간은 끝까지 자른다
                 self.logger.log_error("Cut failed — segments preserved for retry", e)
