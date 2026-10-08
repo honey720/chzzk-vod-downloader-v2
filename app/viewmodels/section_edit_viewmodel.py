@@ -926,6 +926,17 @@ class SectionEditViewModel(QObject):
         except TimecodeError:
             return ""
 
+    def topFrame(self) -> int | None:
+        """프레임 칸에 넣을 수 있는 가장 큰 값 — 프레임률 − 1. 프레임률을 모르면 None."""
+        if self.state != STATE_READY or self.fps is None:
+            return None
+        return frames_per_second(self.fps) - 1
+
+    @staticmethod
+    def maxSections() -> int:
+        """구간을 넣을 수 있는 최대 개수."""
+        return MAX_SELECTIONS
+
     def headerText(self) -> str:
         """머리줄 — 구간 수 · 프레임률 · 영상의 끝 타임코드. 조회가 끝나기 전에는 빈 문자열."""
         if self.state != STATE_READY:

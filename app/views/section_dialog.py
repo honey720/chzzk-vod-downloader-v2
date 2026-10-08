@@ -514,9 +514,11 @@ class SectionEditDialog(QDialog):
                 # 입력 중인 시각은 건드리지 않는다 — 고쳐 쓴 표기는 편집을 끝낸 뒤에 넣는다
                 if not edit.hasEditFocus() and edit.text() != text:
                     edit.setText(text)
-                tooltip = viewmodel.millisecondsText(index, column)
+                # 툴팁 — 첫 줄은 그 시각의 밀리초 표기(값이 읽힐 때), 그 아래는 칸을 쓰는 법이다
+                value = viewmodel.millisecondsText(index, column)
                 for part, widget in ((PART_CLOCK, edit.clockEdit), (PART_FRAME, edit.frameEdit)):
-                    widget.setToolTip(tooltip)
+                    lines = [value, self._fieldHelp(part, widget), self._emptyHelp(column)]
+                    widget.setToolTip("\n".join(line for line in lines if line))
                     # 오류가 난 칸만 붉게 — 초 · 분 넘침은 시분초 칸, 프레임 넘침은 프레임 칸,
                     # 시각 전체의 오류는 그 시각의 두 칸
                     self._setFlag(widget, "invalid", (column, part) in flagged)
@@ -537,16 +539,39 @@ class SectionEditDialog(QDialog):
             row.deleteButton.setEnabled(viewmodel.canRemove() or viewmodel.canClear())
             row.upButton.setEnabled(index > 0)
             row.downButton.setEnabled(index < count - 1)
-            row.upButton.setToolTip(self.tr("Move up"))
-            row.downButton.setToolTip(self.tr("Move down"))
+            order_help = self.tr("The order is the file number (_N)")
+            row.upButton.setToolTip(self.tr("Move up") + "\n" + order_help)
+            row.downButton.setToolTip(self.tr("Move down") + "\n" + order_help)
             row.deleteButton.setToolTip(
                 self.tr("Delete section") if count > 1 else self.tr("Clear values")
             )
         self.headerLabel.setText(viewmodel.headerText())
-        self.headerLabel.setToolTip(viewmodel.endMillisecondsText())  # 영상 끝의 밀리초 표기
+        # 머리줄의 툴팁 — 첫 줄은 영상 끝의 밀리초 표기, 그 아래는 머리줄에 적힌 것이 무엇인지다
+        header_help = self.tr("Sections / maximum · frame rate · end of the video")
+        self.headerLabel.setToolTip(
+            "\n".join(line for line in (viewmodel.endMillisecondsText(), header_help) if line)
+        )
+        self.addButton.setToolTip(
+            self.tr("Add a section (up to {0})").format(viewmodel.maxSections())
+        )
         self.addButton.setEnabled(viewmodel.canAdd())
         # 끝 칸을 치는 중 끝만 영상 끝을 넘은 것은 확인을 막지 않는다 — 확인이 그 칸을 맞춘다
         self.okButton.setEnabled(viewmodel.canCommit(self._typing))
+
+    def _fieldHelp(self, part: str, widget: TimecodeEdit) -> str:
+        """칸을 쓰는 법 한 줄 — 숫자는 칸과 뷰모델의 값에서 가져온다."""
+        if part == PART_CLOCK:
+            return self.tr(
+                "Digits fill from the right, up to {0} (0100 = 1 minute) · '.' moves to the frame field"
+            ).format(widget.maxDigits())
+        top = self._viewmodel.topFrame()
+        return "" if top is None else self.tr("Frame number, 0 to {0}").format(top)
+
+    def _emptyHelp(self, column: int) -> str:
+        """빈 시각이 무엇을 뜻하는지 한 줄."""
+        if column == START:
+            return self.tr("Empty = start of the video")
+        return self.tr("Empty = end of the video")
 
     def _fullParts(self, index: int) -> frozenset[str]:
         """치고 있는 시각이 그 행의 것이면, 그 시각에서 자리를 다 채운 칸. 아니면 빈 집합."""

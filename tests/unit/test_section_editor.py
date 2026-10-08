@@ -949,8 +949,9 @@ def test_typed_digits_reach_the_card_and_milliseconds_are_only_shown(qtbot, tmp_
     leave(row.endEdit)
 
     assert row.startEdit.text() == "00:05:03:30"
-    assert row.startEdit.clockEdit.toolTip() == "00:05:03.500"
-    assert row.startEdit.frameEdit.toolTip() == "00:05:03.500"
+    # 툴팁의 첫 줄이 밀리초 표기다 — 그 아래는 칸을 쓰는 법이다
+    assert row.startEdit.clockEdit.toolTip().splitlines()[0] == "00:05:03.500"
+    assert row.startEdit.frameEdit.toolTip().splitlines()[0] == "00:05:03.500"
     press_ok(dialog)
     assert item.selections == (TimeRange(303.5, 600.0),)
 
@@ -2107,7 +2108,7 @@ def test_header_shows_the_end_of_the_video_only_after_the_lookup(qtbot, tmp_path
     _pump()
 
     assert shown(dialog.headerLabel) == "Sections 1 / 20 · 60fps · video ends at 01:00:00:00"
-    assert dialog.headerLabel.toolTip() == "01:00:00.000"
+    assert dialog.headerLabel.toolTip().splitlines()[0] == "01:00:00.000"
 
 
 def test_no_end_is_shown_when_the_lookup_failed(qtbot, tmp_path, basis):
@@ -3859,3 +3860,58 @@ def test_a_saved_end_past_the_video_opens_as_an_error_on_the_end_and_is_set_when
     assert row.endEdit.text() == "01:00:00:00"
     assert error_shown(row) == "" and notice_shown(row) == SET_TO_END.format("01:00:00:00")
     assert dialog.okButton.isEnabled()
+
+
+# ================================================================ 칸 · 버튼의 툴팁 (#309)
+
+
+def test_fields_and_buttons_say_how_they_work_in_their_tooltips(qtbot, tmp_path, basis):
+    """편집 창의 시분초 칸 · 프레임 칸 · 구간 추가 · ▲▼ · 머리줄은 쓰는 법을 툴팁에 적어야 하고, 그 숫자는 코드의 값과 같아야 한다.
+
+    60fps · 3600초, 빈 행 하나
+    -> 시분초 칸: 받는 자릿수(칸의 maxDigits) · "0100 = 1 minute" · '.'이 프레임 칸으로 간다는 줄
+    -> 프레임 칸: "Frame number, 0 to 59"(프레임률 − 1)
+    -> 시작 칸: "Empty = start of the video", 끝 칸: "Empty = end of the video"
+    -> 구간 추가: "Add a section (up to N)"(N == 뷰모델의 최대 구간 수)
+    -> ▲▼: "Move up" · "Move down" 아래에 "The order is the file number (_N)"
+    -> 머리줄: 영상 끝의 밀리초 표기 아래에 머리줄이 무엇을 적는지
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    row = dialog._rows[0]
+    viewmodel = dialog.viewModel()
+
+    clock = row.startEdit.clockEdit.toolTip().splitlines()
+    frame = row.startEdit.frameEdit.toolTip().splitlines()
+    digits = row.startEdit.clockEdit.maxDigits()
+
+    assert (digits, viewmodel.topFrame(), viewmodel.maxSections()) == (6, 59, 20)
+    assert (
+        f"Digits fill from the right, up to {digits} (0100 = 1 minute) · "
+        "'.' moves to the frame field"
+    ) in clock
+    assert f"Frame number, 0 to {viewmodel.topFrame()}" in frame
+    assert "Empty = start of the video" in clock and "Empty = start of the video" in frame
+    assert "Empty = end of the video" in row.endEdit.clockEdit.toolTip().splitlines()
+    assert dialog.addButton.toolTip() == f"Add a section (up to {viewmodel.maxSections()})"
+    order_help = "The order is the file number (_N)"
+    assert row.upButton.toolTip().splitlines() == ["Move up", order_help]
+    assert row.downButton.toolTip().splitlines() == ["Move down", order_help]
+    assert dialog.headerLabel.toolTip().splitlines() == [
+        "01:00:00.000",
+        "Sections / maximum · frame rate · end of the video",
+    ]
+
+
+def test_frame_field_tooltip_follows_the_frame_rate(qtbot, tmp_path, basis):
+    """프레임 칸의 툴팁에 적는 최대값은 조회한 프레임률 − 1이어야 한다.
+
+    30fps -> "Frame number, 0 to 29"
+    """
+    basis.fps = Fraction(30)
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+
+    assert "Frame number, 0 to 29" in dialog._rows[0].endEdit.frameEdit.toolTip().splitlines()
