@@ -68,6 +68,22 @@
         <translation>이 해상도의 영상 길이를 확인하지 못했습니다. 구간 편집 창을 열면 다시 확인합니다.</translation>
     </message>
     <message>
+        <source>overlap</source>
+        <translation>겹침</translation>
+    </message>
+    <message>
+        <source>To receive: {0}</source>
+        <translation>받을 양: {0}</translation>
+    </message>
+    <message>
+        <source>Sections add up to {0}</source>
+        <translation>구간 길이의 합: {0}</translation>
+    </message>
+    <message>
+        <source>Overlapping parts are received once</source>
+        <translation>겹치는 구간은 한 번만 받습니다</translation>
+    </message>
+    <message>
         <source>Click to edit sections</source>
         <translation>누르면 구간을 편집합니다</translation>
     </message>

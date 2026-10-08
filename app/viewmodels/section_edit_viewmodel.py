@@ -34,7 +34,7 @@ from core.api.mp4 import Mp4Error
 from core.models.download_state import DownloadState
 from core.models.mp4_index import PendingMp4Head
 from core.models.plan import TimeRange
-from core.utils.mp4_ranges import sections_download_size
+from core.utils.mp4_ranges import sections_download_size, sections_head_size
 from core.utils.selections import (
     MAX_SELECTIONS,
     SELECTION_DUPLICATE,
@@ -191,6 +191,20 @@ def section_bytes_of(head, selections, skip: frozenset = frozenset()) -> int | N
         return None
     try:
         return sections_download_size(index, wanted)
+    except (ValueError, Mp4Error):
+        return None
+
+
+def section_head_bytes_of(head) -> int | None:
+    """그 moov로 본, 구간 다운로드가 만드는 파일의 머리 길이 (#309). 알 수 없으면 None.
+
+    머리(ftyp · moov 등)는 조회 때 이미 받아 두어 ``section_bytes_of``에 들지 않는다.
+    """
+    index = getattr(head, "index", None)
+    if index is None:
+        return None
+    try:
+        return sections_head_size(index)
     except (ValueError, Mp4Error):
         return None
 
@@ -1091,6 +1105,8 @@ class SectionSizeJob(QObject):
         self._moov = moov
         self._selections = selections
         self._token = token
+        # 파일의 머리 길이 — 결과를 받는 쪽이 done 뒤에 읽는다(일의 참조를 들고 있다)
+        self.head_bytes: int | None = None
 
     def run(self) -> None:
         """색인을 만들고 크기를 세어 done을 emit한다. 실패하면 값 자리에 None을 싣는다."""
@@ -1100,6 +1116,7 @@ class SectionSizeJob(QObject):
             moov = self._moov
             head = moov.get() if isinstance(moov, PendingMp4Head) else moov
             size = section_bytes_of(head, self._selections)
+            self.head_bytes = section_head_bytes_of(head)
         except Exception:
             logger.exception("받을 구간의 크기를 세지 못했다")
             head = None
@@ -1169,7 +1186,7 @@ class SectionSizer(QObject):
 
     def _onDone(self, token, head, size) -> None:
         """결과를 받는다 — 아직 유효하면 크기를 적고, 카드가 쥔 것을 만든 색인으로 바꾼다."""
-        _job, moov, selections = self._jobs.pop(token)
+        job, moov, selections = self._jobs.pop(token)
         item, generation = token
         if self._model.getRow(item) is None:
             self._generation.pop(item, None)  # 카드가 지워졌다
@@ -1188,6 +1205,7 @@ class SectionSizer(QObject):
         ):
             return
         item.section_bytes = size
+        item.section_head_bytes = job.head_bytes
         if head is not moov:
             watch_section_head(head)
             keep_section_head(item, kept[0], head)  # 바이트를 놓고 만든 색인을 든다

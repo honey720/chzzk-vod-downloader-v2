@@ -48,6 +48,10 @@ _global_download_path = ""
 # Qt의 QWIDGETSIZE_MAX(PySide6가 노출하지 않음) — 최대폭 제한을 푸는 값.
 _NO_MAX_WIDTH = (1 << 24) - 1
 
+# 구간 길이의 합이 합친 범위의 길이보다 이만큼(초) 넘게 길어야 겹침으로 본다 — 1ms.
+# 가장 짧은 프레임(120fps ≈ 8.3ms)보다 훨씬 짧고, 소수 초 덧셈의 오차보다는 훨씬 길다
+_OVERLAP_SLACK = 0.001
+
 
 def set_global_download_path(path: str) -> None:
     """전역 다운로드 경로를 갱신한다 — 카드의 경로 표시 여부 판단 기준."""
@@ -893,14 +897,60 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         좁은 폭에서는 ``_fitSectionNotice``가 알림과 크기를 뗀다.
         """
         selections = self.item.selections
-        length = sum(selection.end - selection.start for selection in selections)
-        clock = self._shortRemain(strftime("%H:%M:%S", gmtime(max(length, 0))))
+        # 길이는 받을 양이다 — 겹치는 자리는 한 번만 받으므로 합친 범위의 길이를 적는다.
+        # 겹침이 없으면 구간 길이의 합과 같다
+        clock = self._clock(self._sectionSpan())
+        if self._sectionsOverlap():
+            marker = self.tr("overlap")  # f-string 안의 tr은 lupdate가 줍지 못한다
+            clock = f"{marker} · {clock}"
         summary = self.tr("Sections {0} · {1}").format(len(selections), clock)
         size = self._sectionSizeNote() if with_size else ""
         if size:
             summary = f"{summary} · {size}"
         notice = self._sectionNotice(warnings_only) if with_notice else ""
         return f"{summary} · {notice}" if notice else summary
+
+    def _sectionTotal(self) -> float:
+        """구간 길이의 합(초) — 겹치는 자리를 구간마다 센다."""
+        return sum(max(s.end - s.start, 0.0) for s in self.item.selections)
+
+    def _sectionSpan(self) -> float:
+        """구간들을 합친 범위의 길이(초) — 겹치는 자리를 한 번만 센다. 받을 양이다."""
+        length = 0.0
+        reached = None  # 지금까지 센 범위의 끝
+        for selection in sorted(self.item.selections, key=lambda s: (s.start, s.end)):
+            start = selection.start if reached is None else max(selection.start, reached)
+            if selection.end > start:
+                length += selection.end - start
+                reached = selection.end
+        return length
+
+    def _sectionsOverlap(self) -> bool:
+        """구간끼리 겹치는 자리가 있는지 — 길이의 합이 합친 범위의 길이보다 길다 (#309).
+
+        맞닿기만 한 구간(앞의 끝 = 뒤의 시작)은 겹침이 아니다. 판정은 프레임 하나보다 훨씬 짧은
+        여유를 둔다 — 소수 초의 덧셈 오차를 겹침으로 읽지 않는다.
+        """
+        return self._sectionTotal() - self._sectionSpan() > _OVERLAP_SLACK
+
+    def _clock(self, seconds: float) -> str:
+        """초를 짧은 시간 표기("3:12" · "1:02:03")로 적는다 — 하루를 넘어도 시간을 그대로 센다."""
+        whole = int(max(seconds, 0))
+        return self._shortRemain(f"{whole // 3600:02d}:{whole % 3600 // 60:02d}:{whole % 60:02d}")
+
+    def _sectionOverlapDetail(self) -> list[str]:
+        """겹침이 있는 구간 카드의 툴팁에 더하는 줄 — 받을 양 · 구간 길이의 합 · 한 번만 받는다."""
+        if not self._sectionsOverlap():
+            return []
+        amount = self._clock(self._sectionSpan())
+        size = self._sectionSizeText(with_head=True)
+        if size:
+            amount = f"{amount} · {size}"
+        return [
+            self.tr("To receive: {0}").format(amount),
+            self.tr("Sections add up to {0}").format(self._clock(self._sectionTotal())),
+            self.tr("Overlapping parts are received once"),
+        ]
 
     def _sectionSizeNote(self) -> str:
         """대기 카드의 구간 요약에 적는 크기 자리의 글 — 받을 크기, 세는 중이면 "확인 중...".
@@ -909,20 +959,28 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         비워 두지 않고 카드의 크기 조회가 쓰는 문구를 그대로 쓴다. 세지 못했으면 빈 글이다 —
         받기 시작 때 엔진이 정한 값이 들어온다.
         """
-        size = self._sectionSizeText()
+        size = self._sectionSizeText(with_head=True)
         if size or not getattr(self.item, "section_sizing", False):
             return size
         return self.tr("Checking...")
 
-    def _sectionSizeText(self) -> str:
+    def _sectionSizeText(self, with_head: bool = False) -> str:
         """구간 다운로드가 받을 크기 — 인코딩 완료 VOD에서 그 값을 알 때만. 모르면 빈 글이다.
 
         세그먼트 방식(fMP4 · TS)은 받기 전에 크기를 모른다. 영상 전체 크기를 대신 적지 않는다 —
         구간 카드가 받는 양이 아니다.
+
+        Args:
+            with_head: True면 조회 때 이미 받아 둔 머리(ftyp · moov 등)를 더해 파일 기준으로
+                적는다 — 대기 카드의 요약이 쓴다. 구간이 영상 전체를 덮으면 구간 없는 카드의
+                크기와 같은 숫자가 된다. 받는 동안의 "받은 크기 / 받을 크기"는 엔진이 세는
+                전송량 기준이라 더하지 않는다
         """
         size = getattr(self.item, "section_bytes", None)
         if self.item.is_segment_based or not size:
             return ""
+        if with_head:
+            size += getattr(self.item, "section_head_bytes", None) or 0
         return self.setSize(size)
 
     def _pathEditable(self) -> bool:
@@ -960,6 +1018,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         if editable:
             lines = [label.text()]
             if self._sectionCount():
+                lines.extend(self._sectionOverlapDetail())
                 lines.extend(self._sectionNoticeDetail())
             lines.append(self.tr("Click to edit sections"))
             label.setToolTip("\n".join(lines))

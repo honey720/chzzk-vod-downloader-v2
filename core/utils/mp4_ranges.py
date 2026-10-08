@@ -47,6 +47,18 @@ def sections_download_size(index: Mp4Index, selections: Iterable[TimeRange]) -> 
     return plan_partial(index, spans).download_size
 
 
+def sections_head_size(index: Mp4Index) -> int:
+    """구간 다운로드가 만드는 파일의 머리 길이(바이트) — ftyp · moov 등 첫 샘플 앞의 것이다 (#309).
+
+    머리는 구간을 정할 때 이미 받아 두어 다시 받지 않는다(``sections_download_size``에 들지
+    않는다). 받은 파일의 크기는 두 값의 합이다 — 구간이 영상 전체를 덮으면 원본의 크기와 같다.
+
+    Raises:
+        Mp4Error: moov가 샘플보다 뒤에 있는 등 부분 파일을 만들 수 없는 경우
+    """
+    return plan_partial(index, ()).head_size
+
+
 # 오디오가 시작하는 시각을 이만큼 앞으로 잡는다(초) — 키프레임의 DTS가 오디오 샘플의
 # 경계에 놓였을 때 반올림 방향에 따라 앞 샘플부터 읽힐 수 있다
 _AUDIO_SEEK_SLACK = 0.001

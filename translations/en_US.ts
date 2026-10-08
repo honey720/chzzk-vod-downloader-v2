@@ -68,6 +68,22 @@
         <translation>Could not check the length of this resolution. Open the section editor to check again.</translation>
     </message>
     <message>
+        <source>overlap</source>
+        <translation>overlap</translation>
+    </message>
+    <message>
+        <source>To receive: {0}</source>
+        <translation>To receive: {0}</translation>
+    </message>
+    <message>
+        <source>Sections add up to {0}</source>
+        <translation>Sections add up to {0}</translation>
+    </message>
+    <message>
+        <source>Overlapping parts are received once</source>
+        <translation>Overlapping parts are received once</translation>
+    </message>
+    <message>
         <source>Click to edit sections</source>
         <translation>Click to edit sections</translation>
     </message>

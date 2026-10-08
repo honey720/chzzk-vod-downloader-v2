@@ -81,6 +81,10 @@ class ContentItem:
         # 계산하고, 받기 시작하면 엔진이 정한 값(이어받기 · 뺀 구간이 반영된다)으로 바뀐다.
         # 모르면 None — 카드는 크기를 적지 않는다
         self.section_bytes = None
+        # 구간 다운로드가 만드는 파일의 머리 길이(ftyp · moov 등) — 조회 때 이미 받아 두어
+        # section_bytes에는 들지 않는다. 대기 카드는 둘을 더해 파일 기준의 크기를 적는다 —
+        # 구간이 영상 전체를 덮으면 구간 없는 카드와 같은 숫자다. 모르면 None
+        self.section_head_bytes = None
         # 받을 구간의 합을 백그라운드에서 세는 중이다(SectionSizer) — 대기 카드가 크기 자리에
         # "확인 중..."을 적는다. 다 세면(성공 · 실패 모두) False로 돌아간다
         self.section_sizing = False
