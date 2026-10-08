@@ -78,25 +78,24 @@ class FFmpegCancelledError(Exception):
 # (그동안 GUI가 선다) 그보다 훨씬 짧아야 한다
 _STOP_POLL_SECONDS = 0.05
 
-_PROCESS_SUSPEND_RESUME = 0x0800  # Windows — 프로세스를 멈추고 다시 돌릴 권한(OpenProcess)
-
 
 @functools.lru_cache(maxsize=1)
 def _windows_process_api() -> tuple:
-    """Windows의 (OpenProcess, CloseHandle, NtSuspendProcess, NtResumeProcess) — 한 번만 만든다.
+    """Windows의 (NtSuspendProcess, NtResumeProcess) — 한 번만 만든다. Windows에서만 부른다.
+
+    두 함수 모두 프로세스 핸들 하나를 받고 NTSTATUS를 돌려준다. 핸들은 포인터 크기라
+    ``c_void_p``로, NTSTATUS는 32비트 부호 있는 정수라 ``c_long``으로 적는다 — 적지 않으면
+    ctypes가 인자를 C int로 넘겨 64비트 핸들의 윗부분이 잘릴 수 있다.
 
     ⚠️ 부를 때마다 ``ctypes.WinDLL``을 새로 만들지 않는다. 그렇게 만들었더니 멈춤을 몇 번 거친
-    프로세스가 한참 뒤 Qt의 이벤트 처리 안에서 접근 위반으로 죽었다(#309 — 전체 테스트에서
-    재현, DLL 객체를 한 번만 만들면 사라진다). Windows에서만 부른다.
+    프로세스가 한참 뒤 Qt의 이벤트 처리 안에서 접근 위반으로 죽었다(#309). 재현으로 가른 것:
+    부를 때마다 만들면 죽고(핸들을 따로 열고 닫지 않아도 죽는다), 한 번만 만들면 안 죽는다.
     """
-    kernel32 = ctypes.WinDLL("kernel32")
     ntdll = ctypes.WinDLL("ntdll")
-    kernel32.OpenProcess.restype = ctypes.c_void_p
-    kernel32.OpenProcess.argtypes = (ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32)
-    kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
-    ntdll.NtSuspendProcess.argtypes = (ctypes.c_void_p,)
-    ntdll.NtResumeProcess.argtypes = (ctypes.c_void_p,)
-    return kernel32.OpenProcess, kernel32.CloseHandle, ntdll.NtSuspendProcess, ntdll.NtResumeProcess
+    for function in (ntdll.NtSuspendProcess, ntdll.NtResumeProcess):
+        function.argtypes = (ctypes.c_void_p,)
+        function.restype = ctypes.c_long
+    return ntdll.NtSuspendProcess, ntdll.NtResumeProcess
 
 
 def _set_suspended(process: subprocess.Popen, suspended: bool) -> bool:
@@ -109,20 +108,21 @@ def _set_suspended(process: subprocess.Popen, suspended: bool) -> bool:
     - 그 밖(리눅스 · macOS): ``SIGSTOP`` · ``SIGCONT``
 
     멈춘 프로세스도 끝낼 수 있다(``Popen.kill`` — Windows의 TerminateProcess · POSIX의 SIGKILL은
-    멈춘 프로세스에도 듣는다). 이미 끝난 프로세스에는 아무것도 하지 않는다. 프로세스는 **그
-    객체의 PID**로만 가리킨다 — ``Popen``이 기다려 주기 전까지 그 PID는 다른 프로세스에 가지 않는다.
+    멈춘 프로세스에도 듣는다). 이미 끝난 프로세스에는 아무것도 하지 않는다.
+
+    프로세스는 **그 ``Popen`` 객체가 쥔 것**으로만 가리킨다. Windows에서는 ``Popen``이 프로세스를
+    띄울 때 받은 핸들을 그대로 쓴다 — PID로 다시 열지 않으므로 다른 프로세스를 잡을 일이 없고
+    따로 닫을 핸들도 없다. 그 밖에서는 ``Popen``이 아직 거두지 않은 자식의 PID에 신호를 보낸다.
     """
     if process.poll() is not None:
         return False
     if sys.platform == "win32":
-        open_process, close_handle, suspend, resume = _windows_process_api()
-        handle = open_process(_PROCESS_SUSPEND_RESUME, False, process.pid)
-        if not handle:
+        # Popen이 프로세스를 띄울 때 받아 쥐고 있는 핸들(모든 권한) — Popen이 살아 있는 동안 유효하다
+        handle = getattr(process, "_handle", None)
+        if handle is None:
             return False
-        try:
-            return (suspend if suspended else resume)(handle) == 0  # NTSTATUS — 0이 성공이다
-        finally:
-            close_handle(handle)
+        suspend, resume = _windows_process_api()
+        return (suspend if suspended else resume)(int(handle)) == 0  # NTSTATUS — 0이 성공이다
     try:
         os.kill(process.pid, signal.SIGSTOP if suspended else signal.SIGCONT)
     except OSError:
