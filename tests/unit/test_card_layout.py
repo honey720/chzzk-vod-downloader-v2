@@ -496,12 +496,12 @@ class TestRowThreePriority:
 
     def test_path_collapses_to_an_icon_but_stays_clickable(self, qapp, monkeypatch):
         """남는 폭이 최소치 아래면 경로 글자는 숨는다 — 글자가 사라져도 폴더 선택
-        진입점(1행의 저장 위치 버튼)은 산다. 전역과 다르면 점 표시(folder_dot) (#309)."""
+        진입점(1행의 저장 위치 버튼)은 산다. 전역과 다르면 점 표시(folder_edit_dot) (#309)."""
         widget = self._tight(qapp, None)  # T — 경로 자리가 최소 텍스트 폭보다 좁다
         assert [shown(b) for b in widget.buttons] == [f"{r}p" for r in self.FIVE], "전제: pill 5개가 전부 보인다(압력의 근원)"
         assert not widget.directoryLabel.isVisible(), "경로 글자가 숨지 않았다 — 전제(최소폭, 5 pill) 확인"
         assert widget.pathButton.isVisible(), "경로 글자가 숨었는데 저장 위치 버튼이 없다"
-        assert widget.pathButton.iconName() == "folder_dot", "전역과 다른 경로인데 점 표시가 없다"
+        assert widget.pathButton.iconName() == "folder_edit_dot", "전역과 다른 경로인데 점 표시가 없다"
         assert widget.pathButton.toolTip().endswith(self.LONG_PATH)
         from app.widgets import widget as widget_mod
 
@@ -622,7 +622,7 @@ class TestRowThreePriority:
     def test_icon_has_no_dot_when_the_path_matches_global(self, qapp):
         widget = self._tight(qapp, None, path="C:/dl")  # 전역과 같음
         assert widget.pathButton.isVisible(), "전제: 대기 카드라 저장 위치 버튼이 보인다"
-        assert widget.pathButton.iconName() == "folder"
+        assert widget.pathButton.iconName() == "folder_edit"
 
     def test_path_text_recovers_when_the_card_widens_again(self, qapp):
         """되먹임 루프 회귀 게이트 — 한 번 아이콘/말줄임까지 줄었다가 넓히면

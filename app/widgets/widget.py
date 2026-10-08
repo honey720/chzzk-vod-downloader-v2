@@ -1480,7 +1480,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         else:
             self._pathShown = differs
         # 위 줄 저장 위치 버튼의 도형 — 전역과 다르면 점 표시 + 밝은 본체색(다르다는 것이 정보)
-        self.pathButton.setIconName("folder_dot" if differs else "folder")
+        self.pathButton.setIconName("folder_edit_dot" if differs else "folder_edit")
         self.pathButton.setIdleToken("text" if differs else "textMuted")
         self.pathButton.setAccentToken("accent" if differs else "")
         self._layoutRowThree()
