@@ -19,7 +19,8 @@ import pytest
 import core.utils.ffmpeg as ffmpeg_module
 import core.utils.hybrid_cut as cut_module
 from core.utils.ffmpeg import FFmpegCancelledError, run_ffmpeg
-from core.utils.hybrid_cut import CutCancelled, hybrid_cut
+import core.utils.ts_cut as ts_cut_module
+from core.utils.hybrid_cut import CutCancelled, CutError, hybrid_cut
 from core.utils.paths import cut_temp_dir_for
 from tests.unit.core.long_ffmpeg import LONG_RUNNING, end_all, record_processes
 from tests.unit.core.test_hybrid_cut import mp4_source  # noqa: F401 — 모듈 범위 픽스처
@@ -98,7 +99,8 @@ def test_a_paused_ffmpeg_stands_still_and_writes_the_same_file_when_resumed(
 
     started = time.perf_counter()
     pause.schedule(PAUSE_AFTER, PAUSE_FOR, observe)
-    done = run_ffmpeg(_work(paused_output), timeout=300, should_pause=pause, **extra)
+    # 제한 시간은 일하는 시간만 센다(멈춰 있던 시간은 빼고) — 재개가 듣지 않으면 여기서 끝난다
+    done = run_ffmpeg(_work(paused_output), timeout=90, should_pause=pause, **extra)
     took = time.perf_counter() - started
 
     (alive_early, size_early, at_early), (alive_late, size_late, at_late) = (
@@ -119,7 +121,7 @@ def test_a_paused_ffmpeg_stands_still_and_writes_the_same_file_when_resumed(
 def test_time_spent_paused_does_not_count_towards_the_timeout(tmp_path, launched, reporting):
     """일시정지해 둔 시간은 제한 시간에 세지 않아야 한다 — 일시정지가 길었다고 시간 초과가 되지 않는다.
 
-    일하는 명령이 혼자 도는 시간 D를 먼저 잼. 제한 시간을 1.5 × D + 1초로 주고, 띄운 지 0.5초
+    일하는 명령이 혼자 도는 시간 D를 먼저 잼. 제한 시간을 3 × D + 3초로 주고, 띄운 지 0.5초
     뒤부터 그 제한 시간만큼 일시정지(일시정지를 합친 전체 시간은 제한 시간을 넘는다)
     -> 종료 코드 0(시간 초과 예외 없음), 걸린 시간 > 제한 시간
     """
@@ -127,7 +129,8 @@ def test_time_spent_paused_does_not_count_towards_the_timeout(tmp_path, launched
     started = time.perf_counter()
     assert run_ffmpeg(_work(output), timeout=300).returncode == 0
     alone = time.perf_counter() - started
-    timeout = 1.5 * alone + 1.0
+    # 일하는 시간은 러너가 바쁘면 혼자 돌 때의 두 배도 걸린다 — 그래도 제한 시간 안이게 넉넉히 준다
+    timeout = 3.0 * alone + 3.0
     pause = _Pause()
     extra = {"on_out_time": lambda seconds: None} if reporting else {}
 
@@ -355,3 +358,30 @@ def test_cut_stopped_while_paused_ends_its_ffmpeg_and_leaves_nothing(
     assert returned - stopped_at[0] < 1.5
     assert all(process.poll() is not None for process in launched)
     assert not os.path.exists(output) and not os.path.exists(cut_temp_dir_for(output))
+
+
+def test_rewrapping_ts_segments_waits_while_paused(tmp_path, launched):
+    """TS 세그먼트를 mp4로 다시 싸는 동안 일시정지 중이면 세그먼트를 흘려 넣지 않고 기다려야 한다.
+
+    세그먼트 파일 하나(내용은 아무 바이트 — 다시 싸기는 결국 실패한다). 처음부터 일시정지 상태로
+    두고 0.6초 뒤 풂. 0.4초 시점에 띄운 ffmpeg가 살아 있는지 적음
+    -> 0.4초 시점: ffmpeg가 살아 있다(입력을 기다린다)
+    -> 풀린 뒤에야 끝난다: 걸린 시간 >= 0.6초(끝은 입력이 틀려 CutError다)
+    """
+    segment = tmp_path / "0.ts"
+    segment.write_bytes(bytes(188) * 4)
+    pause = threading.Event()
+    pause.set()
+    seen = []
+    threading.Timer(
+        0.4, lambda: seen.append(bool(launched) and launched[-1].poll() is None)
+    ).start()
+    threading.Timer(0.6, pause.clear).start()
+
+    started = time.perf_counter()
+    with pytest.raises(CutError):
+        ts_cut_module._remux([str(segment)], str(tmp_path / "joined.mp4"), None, pause.is_set)
+    took = time.perf_counter() - started
+
+    assert seen == [True]
+    assert took >= 0.6
