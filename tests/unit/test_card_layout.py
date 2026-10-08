@@ -421,14 +421,13 @@ class TestRowThreePriority:
         visible = [b for b in widget.buttons if b.isVisible()]
         pills = sum(b.sizeHint().width() for b in visible)
         size = max(widget.fileSizeLabel.minimumWidth(), widget.fileSizeLabel.sizeHint().width())
-        # 경로 자리: 아이콘(20px)과 텍스트 라벨의 최소 힌트("…"+4 — offscreen 폰트에선
-        # 아이콘보다 넓다) 중 큰 쪽. 작은 쪽을 쓰면 텍스트 모드에서 T가 카드 최소폭보다
-        # 작아져 resize_to가 클램프를 잡는다(실측 offscreen 3px).
-        slot = max(widget.pathIconButton.minimumWidth(), widget.directoryLabel.minimumSizeHint().width())
+        # 경로 자리: 텍스트 라벨의 최소 힌트("…"+4). 경로 글자가 의미 있게 남는 최소 폭보다
+        # 좁아 T에서는 경로가 숨는다 — 진입점은 1행의 저장 위치 버튼이다 (#309)
+        slot = widget.directoryLabel.minimumSizeHint().width()
         return offset + pills + size + slot + (len(visible) + 2) * FIXED_SPACING
 
     def _points(self, widget) -> dict:
-        """측정점 — T(경로 아이콘) / T+경로 자연 폭÷2(경로 텍스트이되 부분) / T+200."""
+        """측정점 — T(경로 숨김) / T+경로 자연 폭÷2(경로 텍스트이되 부분) / T+200."""
         threshold = self._threshold_waiting(widget)
         return {"T": threshold, "T+path/2": threshold + widget.directoryLabel.sizeHint().width() // 2, "T+200": threshold + 200}
 
@@ -491,17 +490,19 @@ class TestRowThreePriority:
             f"경로 폭이 단조 감소하지 않는다: {path_widths}"
         )
         assert path_widths[0] > path_widths[2] > path_widths[-1], f"좁혀도 경로가 줄지 않았다: {path_widths}"
-        assert path_widths[-1] == 0 and widget.pathIconButton.isVisible(), "T에서는 경로가 아이콘이어야 한다"
+        assert path_widths[-1] == 0 and widget.pathButton.isVisible(), (
+            "T에서는 경로 글자가 숨고 진입점(1행의 저장 위치 버튼)이 있어야 한다"
+        )
 
     def test_path_collapses_to_an_icon_but_stays_clickable(self, qapp, monkeypatch):
-        """남는 폭이 최소치 아래면 경로는 아이콘만 남는다 — 텍스트가 사라져도
-        폴더 선택 진입점은 산다. 전역과 다르면 점 표시(folder_dot)."""
-        widget = self._tight(qapp, None)  # T — 경로 자리가 아이콘 하나 폭 < 최소 텍스트 폭
+        """남는 폭이 최소치 아래면 경로 글자는 숨는다 — 글자가 사라져도 폴더 선택
+        진입점(1행의 저장 위치 버튼)은 산다. 전역과 다르면 점 표시(folder_dot) (#309)."""
+        widget = self._tight(qapp, None)  # T — 경로 자리가 최소 텍스트 폭보다 좁다
         assert [shown(b) for b in widget.buttons] == [f"{r}p" for r in self.FIVE], "전제: pill 5개가 전부 보인다(압력의 근원)"
-        assert widget.pathIconButton.isVisible(), "경로가 아이콘으로 접히지 않았다 — 전제(최소폭, 5 pill) 확인"
-        assert not widget.directoryLabel.isVisible()
-        assert widget.pathIconButton.iconName() == "folder_dot", "전역과 다른 경로인데 점 표시가 없다"
-        assert widget.pathIconButton.toolTip() == self.LONG_PATH
+        assert not widget.directoryLabel.isVisible(), "경로 글자가 숨지 않았다 — 전제(최소폭, 5 pill) 확인"
+        assert widget.pathButton.isVisible(), "경로 글자가 숨었는데 저장 위치 버튼이 없다"
+        assert widget.pathButton.iconName() == "folder_dot", "전역과 다른 경로인데 점 표시가 없다"
+        assert widget.pathButton.toolTip().endswith(self.LONG_PATH)
         from app.widgets import widget as widget_mod
 
         calls = []
@@ -509,8 +510,8 @@ class TestRowThreePriority:
             widget_mod.QFileDialog, "getExistingDirectory",
             staticmethod(lambda parent, caption, start, *a, **k: calls.append(start) or "E:/picked"),
         )
-        widget.pathIconButton.click()
-        assert calls == [self.LONG_PATH], "아이콘 모드에서 클릭이 폴더 선택으로 이어지지 않는다"
+        widget.pathButton.click()
+        assert calls == [self.LONG_PATH], "저장 위치 버튼의 클릭이 폴더 선택으로 이어지지 않는다"
         assert widget.item.download_path == "E:/picked"
 
     def test_icon_mode_is_decided_on_the_very_first_show(self, qapp):
@@ -546,8 +547,8 @@ class TestRowThreePriority:
         for _ in range(3):
             QApplication.processEvents()
         assert widget.isVisible() and widget.width() == box.width(), "전제: 카드가 컨테이너 폭으로 보인다"
-        assert widget.pathIconButton.isVisible() and not widget.directoryLabel.isVisible(), (
-            "첫 표시에서 경로가 아이콘으로 접히지 않았다 — 창을 흔들어야 고쳐지는 결함"
+        assert widget.pathButton.isVisible() and not widget.directoryLabel.isVisible(), (
+            "첫 표시에서 경로 글자가 숨지 않았다 — 창을 흔들어야 고쳐지는 결함"
         )
 
     def _running_widget(self, qapp):
@@ -568,7 +569,7 @@ class TestRowThreePriority:
         ⚠️ 제품의 계산 함수(_layoutPathLabel·_pathMinTextWidth)를 부르지 않고
         테스트가 구성 요소를 **독립적으로 합산**한다 — 제품이 틀리면 테스트도
         같이 틀리는 동어반복을 피하기 위함. 요소: 슬롯 자연 폭 · 크기 라벨
-        확보 폭 · 아이콘 폭 · 간격 3개, 그리고 카드 폭↔3행 폭의 차(썸네일·
+        확보 폭 · 경로 라벨의 최소 힌트 · 간격 3개, 그리고 카드 폭↔3행 폭의 차(썸네일·
         패딩, 순수 기하로 실측). 폰트가 달라도 T가 따라 움직이므로 T±에서는
         어떤 QPA에서도 전제("접으면 슬롯 자리 있음")가 항상 참이다.
         """
@@ -576,8 +577,9 @@ class TestRowThreePriority:
         offset = widget.width() - layout.geometry().width()
         slot = widget.statusLabel.sizeHint().width()
         size = max(widget.fileSizeLabel.minimumWidth(), widget.fileSizeLabel.sizeHint().width())
-        icon = widget.pathIconButton.minimumWidth()
-        return offset + slot + size + icon + 3 * FIXED_SPACING
+        # 경로 자리: 라벨의 최소 힌트 — 글자가 의미 있게 남는 최소 폭보다 좁아 T에서는 경로가 숨는다
+        path = widget.directoryLabel.minimumSizeHint().width()
+        return offset + slot + size + path + 3 * FIXED_SPACING
 
     @pytest.mark.parametrize("point", ("T", "T+path/2", "T+200"))
     def test_progress_slot_keeps_its_text_and_the_path_yields(self, qapp, point):
@@ -600,11 +602,12 @@ class TestRowThreePriority:
             f"{point}(+{extra}px)에서 진행 슬롯이 잘렸다: {self._rendered(widget.statusLabel)!r} — 줄어드는 것은 경로뿐이어야 한다"
         )
         assert self._rendered(widget.fileSizeLabel) == widget.fileSizeLabel.text()
-        assert widget.directoryLabel.isVisible() or widget.pathIconButton.isVisible(), "경로 진입점이 사라졌다"
+        # 받는 중에는 저장 위치를 바꿀 수 없다 — 경로 글자가 숨어도 남길 진입점이 없다 (#309)
+        assert not widget.pathButton.isVisible()
 
     def test_slot_longer_than_the_row_still_keeps_size_and_folds_the_path_to_an_icon(self, qapp):
-        """T−1 — 슬롯·아이콘·크기가 1px 모자라는 "슬롯이 행보다 긴 상황"의 별도
-        게이트(완화 조건에 섞지 않는다). 그때도 크기는 온전하고 경로는 아이콘까지
+        """T−1 — 슬롯·경로 최소 자리·크기가 1px 모자라는 "슬롯이 행보다 긴 상황"의 별도
+        게이트(완화 조건에 섞지 않는다). 그때도 크기는 온전하고 경로는 숨어
         완전히 양보한다(텍스트를 붙들고 있으면 안 된다)."""
         widget = self._running_widget(qapp)
         threshold = self._threshold(widget)
@@ -612,23 +615,23 @@ class TestRowThreePriority:
         _at_width(widget, threshold - 1)
         assert widget.width() == threshold - 1
         assert self._rendered(widget.fileSizeLabel) == widget.fileSizeLabel.text(), "크기가 잘렸다"
-        assert widget.pathIconButton.isVisible() and not widget.directoryLabel.isVisible(), (
+        assert not widget.directoryLabel.isVisible(), (
             "슬롯이 행보다 긴데 경로가 텍스트를 붙들고 있다 — 경로가 먼저 양보해야 한다"
         )
 
     def test_icon_has_no_dot_when_the_path_matches_global(self, qapp):
         widget = self._tight(qapp, None, path="C:/dl")  # 전역과 같음
-        widget.pathIconButton.setVisible(True)  # 판정과 무관하게 도형만 확인
-        assert widget.pathIconButton.iconName() == "folder"
+        assert widget.pathButton.isVisible(), "전제: 대기 카드라 저장 위치 버튼이 보인다"
+        assert widget.pathButton.iconName() == "folder"
 
     def test_path_text_recovers_when_the_card_widens_again(self, qapp):
         """되먹임 루프 회귀 게이트 — 한 번 아이콘/말줄임까지 줄었다가 넓히면
         경로가 원래 길이(축약형 전문)로 돌아온다."""
         widget = self._tight(qapp, None)
-        assert widget.pathIconButton.isVisible()
+        assert not widget.directoryLabel.isVisible(), "전제: 좁은 폭에서 경로 글자가 숨었다"
         _at_width(widget, 1600)
         QApplication.processEvents()
-        assert widget.directoryLabel.isVisible() and not widget.pathIconButton.isVisible()
+        assert widget.directoryLabel.isVisible()
         assert self._rendered(widget.directoryLabel) == widget.directoryLabel.text(), (
             f"넓혔는데 경로가 회복되지 않았다: {self._rendered(widget.directoryLabel)!r}"
         )

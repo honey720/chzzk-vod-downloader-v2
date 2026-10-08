@@ -35,11 +35,21 @@ import app.theme as theme
 
 #: 그릴 수 있는 아이콘 이름 — `IconButton.setIconName()`이 받는 어휘.
 #: folder_dot = 폴더 + 우상단 점(강조색) — 카드 경로가 전역 설정과 다를 때
-#: 아이콘만 남은 경로 자리에 "다르다"를 표시한다(#245).
+#: 카드 위 줄의 저장 위치 버튼이 "다르다"를 표시한다(#245, #309).
 #: settings = 상단 바 설정 버튼의 톱니 — Windows에서는 설정 앱과 같은 글리프(Segoe Fluent
 #: Icons U+E713), 그 폰트가 없는 OS에서는 같은 자세의 외곽선 톱니를 그린다. 이전의
 #: `⚙`(U+2699)는 어느 폰트가 받든 그 폰트 모양이라 플랫폼마다 달랐다.
-ICON_NAMES = ("pause", "resume", "retry", "folder", "folder_dot", "delete", "settings")
+#: scissors = 카드 위 줄의 구간 편집 버튼 — 가위(자를 구간을 정한다, #309).
+ICON_NAMES = (
+    "pause",
+    "resume",
+    "retry",
+    "folder",
+    "folder_dot",
+    "delete",
+    "settings",
+    "scissors",
+)
 
 _CACHE: dict[tuple[str, str, int, float, str], QPixmap] = {}
 
@@ -167,6 +177,16 @@ def _paint_folder_dot(painter: QPainter, s: float, color: QColor, accent: QColor
     painter.drawEllipse(QPointF(s * 0.82, s * 0.20), radius, radius)
 
 
+def _paint_scissors(painter: QPainter, s: float, color: QColor, accent: QColor) -> None:
+    """구간 편집 — 가위. 엇갈린 날 둘과 아래의 손잡이 고리 둘. 삭제(✕)와 같은 굵기 계열의 선이다."""
+    _stroke(painter, color, s * 0.12)
+    painter.drawLine(QPointF(s * 0.34, s * 0.60), QPointF(s * 0.84, s * 0.12))
+    painter.drawLine(QPointF(s * 0.66, s * 0.60), QPointF(s * 0.16, s * 0.12))
+    ring = s * 0.14
+    painter.drawEllipse(QPointF(s * 0.25, s * 0.76), ring, ring)
+    painter.drawEllipse(QPointF(s * 0.75, s * 0.76), ring, ring)
+
+
 def _paint_delete(painter: QPainter, s: float, color: QColor, accent: QColor) -> None:
     """삭제 — 대각선 둘(✕)."""
     _stroke(painter, color, s * 0.16)
@@ -250,6 +270,7 @@ _PAINTERS = {
     "folder_dot": _paint_folder_dot,
     "delete": _paint_delete,
     "settings": _paint_settings,
+    "scissors": _paint_scissors,
 }
 
 

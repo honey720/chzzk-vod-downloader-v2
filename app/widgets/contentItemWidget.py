@@ -120,6 +120,27 @@ class Ui_ContentItemWidget(object):
         # 상태별 조작 — 진행: 일시정지 / 일시정지: 재개 / 완료: 폴더 열기 /
         # 실패: 재시도. 한 아이콘은 한 가지 일만 한다. 도형 이름은
         # app/widgets/widget.py가 상태에 맞춰 넣는다(pauseButton은 pause↔resume).
+        # 대기 카드의 두 조작 (#309) — 구간 편집 창 열기 · 저장 위치 바꾸기. 아래 줄의 구간 요약
+        # 글자 · 경로 글자를 누르는 것과 같은 일을 한다(글자는 눌린다는 것이 잘 보이지 않는다).
+        # 그 동작이 허용되는 상태에서만 보인다(app/widgets/widget.py::applyStateStyle)
+        self.sectionEditButton = IconButton(self.contentFrame)
+        self.sectionEditButton.setObjectName(u"sectionEditButton")
+        self.sectionEditButton.setMinimumSize(QSize(icon, icon))
+        self.sectionEditButton.setMaximumSize(QSize(icon, icon))
+        self.sectionEditButton.setProperty("role", u"icon")
+        self.sectionEditButton.setVisible(False)
+
+        self.topLayout.addWidget(self.sectionEditButton)
+
+        self.pathButton = IconButton(self.contentFrame)
+        self.pathButton.setObjectName(u"pathButton")
+        self.pathButton.setMinimumSize(QSize(icon, icon))
+        self.pathButton.setMaximumSize(QSize(icon, icon))
+        self.pathButton.setProperty("role", u"icon")
+        self.pathButton.setVisible(False)
+
+        self.topLayout.addWidget(self.pathButton)
+
         self.pauseButton = IconButton(self.contentFrame)
         self.pauseButton.setObjectName(u"pauseButton")
         self.pauseButton.setMinimumSize(QSize(icon, icon))
@@ -214,17 +235,9 @@ class Ui_ContentItemWidget(object):
 
         self.resolutionLayout.addWidget(self.directoryLabel)
 
-        # 경로 아이콘 — 3행 폭이 모자라 경로 텍스트가 최소치 아래로 내려가면
-        # 라벨 대신 이 버튼만 남는다(#245). 텍스트가 사라져도 **클릭 대상(폴더
-        # 선택 진입점)은 남아야 한다.** 전역 경로와 다르면 folder_dot(점 표시).
-        self.pathIconButton = IconButton(self.contentFrame)
-        self.pathIconButton.setObjectName(u"pathIconButton")
-        self.pathIconButton.setMinimumSize(QSize(icon, icon))
-        self.pathIconButton.setMaximumSize(QSize(icon, icon))
-        self.pathIconButton.setProperty("role", u"icon")
-        self.pathIconButton.setVisible(False)
-
-        self.resolutionLayout.addWidget(self.pathIconButton)
+        # 3행 폭이 모자라 경로 텍스트가 최소치 아래로 내려가면 경로는 숨는다. 폴더 선택의
+        # 진입점은 1행의 저장 위치 버튼(pathButton)에 늘 있다 (#309 — 이 자리에 남던 경로
+        # 아이콘은 그 버튼으로 옮겼다)
 
         # 파일 크기·재생 시간 — **어떤 폭에서도 말줄임하지 않는다**(#245). 폭은
         # app/widgets/widget.py::_reserveFileSizeWidth가 "가장 긴 경우"(재생 시간

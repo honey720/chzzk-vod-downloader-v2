@@ -44,6 +44,14 @@
         <translation>Sections were moved to the frames of the new frame rate.</translation>
     </message>
     <message>
+        <source>Edit sections</source>
+        <translation>Edit sections</translation>
+    </message>
+    <message>
+        <source>Change save location</source>
+        <translation>Change save location</translation>
+    </message>
+    <message>
         <source>checking length</source>
         <translation>checking length</translation>
     </message>

@@ -131,16 +131,6 @@ def resize_window(window, widget, width):
     assert widget.width() == width, f"요청 폭 {width}px인데 실제 {widget.width()}px — 클램프"
 
 
-def narrow_until_path_is_an_icon(window, widget) -> None:
-    """경로가 아이콘 모드가 될 때까지 4px씩 좁힌다 — 절대 px 없이 유도. 최소폭에서 멈춘다."""
-    width = widget.width()
-    floor = widget.minimumSizeHint().width()
-    while not widget.pathIconButton.isVisible() and width - 4 >= floor:
-        width -= 4
-        resize_window(window, widget, width)
-    assert widget.pathIconButton.isVisible(), "전제: 경로가 아이콘으로 접히는 폭에 닿지 못했다"
-
-
 def hover(qtbot, window, target, on: bool) -> None:
     """`target` 위(on) 또는 창의 빈 바닥(off)으로 합성 이동. 두 번 보내 이동량 0 함정을 피한다."""
     if on:
@@ -253,39 +243,149 @@ class TestPathLabelSurface:
         assert (len(calls) == 1) == _clickable(state), f"{state.name}: 경로 클릭의 폴더 선택 호출이 상태와 다르다"
 
 
-class TestPathIconSurface:
-    def _icon_card(self, qtbot, state):
+class TestPathButtonSurface:
+    """1행의 저장 위치 버튼 (#309) — 아래 줄에 남던 경로 아이콘의 자리를 이어받았다.
+
+    누를 수 없는 상태에서는 꺼 두지 않고 아예 숨긴다(1행의 다른 조작 버튼과 같다).
+    """
+
+    def _card(self, qtbot, state):
         window, widget = make_card(state)
         qtbot.addWidget(window)
-        narrow_until_path_is_an_icon(window, widget)
         return window, widget
 
     @pytest.mark.parametrize("state", STATES, ids=IDS)
-    def test_hover_highlight_matches_clickability(self, qapp, qtbot, state):
-        window, widget = self._icon_card(qtbot, state)
-        assert highlights_on_hover(qtbot, window, widget.pathIconButton) == _clickable(state), (
-            f"{state.name}: 경로 아이콘 호버 강조가 클릭 가능 여부와 다르다 — 미발견 칸"
+    def test_button_is_there_only_when_the_path_can_be_changed(self, qapp, qtbot, state):
+        """저장 위치 버튼은 저장 위치를 바꿀 수 있는 상태(대기)에서만 보여야 하고, 숨을 때는 꺼 두는 것이 아니라 없어야 한다.
+
+        상태마다 카드 하나 -> 보임 == (대기), 보일 때는 켜져 있다
+        """
+        _window, widget = self._card(qtbot, state)
+        assert widget.pathButton.isVisible() == _clickable(state), (
+            f"{state.name}: 저장 위치 버튼의 가시성이 누를 수 있는지와 다르다"
+        )
+        assert widget.pathButton.isEnabled(), f"{state.name}: 버튼을 숨기지 않고 꺼 두었다"
+
+    def test_hover_highlights_the_button_like_the_other_row_one_buttons(self, qapp, qtbot):
+        window, widget = self._card(qtbot, DownloadState.WAITING)
+        assert highlights_on_hover(qtbot, window, widget.pathButton), (
+            "대기 카드의 저장 위치 버튼이 호버에 반응하지 않는다"
         )
 
-    @pytest.mark.parametrize("state", STATES, ids=IDS)
-    def test_cursor_is_the_arrow_like_every_other_button(self, qapp, qtbot, state):
+    def test_cursor_is_the_arrow_like_every_other_button(self, qapp, qtbot):
         """버튼의 조작 표면은 호버 배경(위 게이트)이다 — 1행 조작 버튼과 같이 커서는 화살표."""
-        window, widget = self._icon_card(qtbot, state)
-        assert widget.pathIconButton.cursor().shape() == Qt.CursorShape.ArrowCursor
+        _window, widget = self._card(qtbot, DownloadState.WAITING)
+        assert widget.pathButton.cursor().shape() == Qt.CursorShape.ArrowCursor
 
-    @pytest.mark.parametrize("state", STATES, ids=IDS)
-    def test_click_opens_the_folder_dialog_only_when_clickable(self, qapp, qtbot, monkeypatch, state):
-        window, widget = self._icon_card(qtbot, state)
+    def test_click_opens_the_folder_dialog(self, qapp, qtbot, monkeypatch):
+        """저장 위치 버튼을 누르면 경로 글자를 눌렀을 때와 같은 폴더 선택이 열려야 한다.
+
+        대기 카드에서 버튼을 클릭 -> 폴더 선택 대화상자 호출 1회
+        """
+        _window, widget = self._card(qtbot, DownloadState.WAITING)
         calls = _record_dialog(monkeypatch)
-        QTest.mouseClick(widget.pathIconButton, Qt.MouseButton.LeftButton)
+        QTest.mouseClick(widget.pathButton, Qt.MouseButton.LeftButton)
         _pump()
-        assert (len(calls) == 1) == _clickable(state), f"{state.name}: 아이콘 클릭의 폴더 선택 호출이 상태와 다르다"
+        assert len(calls) == 1
 
     @pytest.mark.parametrize("state", STATES, ids=IDS)
-    def test_tooltip_carries_the_full_path_in_every_state(self, qapp, qtbot, state):
-        """툴팁은 정보 표면이라 상태와 무관하게 전문을 준다."""
-        window, widget = self._icon_card(qtbot, state)
-        assert widget.pathIconButton.toolTip() == OTHER_PATH
+    def test_choose_path_does_nothing_outside_waiting(self, qapp, qtbot, monkeypatch, state):
+        """폴더 선택은 버튼이 불러도 대기가 아닌 상태에서는 열리지 않아야 한다.
+
+        상태마다 choosePath()를 직접 부름(버튼이 부르는 모양 — 이벤트 없이)
+        -> 대화상자 호출 수 == (대기면 1, 아니면 0)
+        """
+        _window, widget = self._card(qtbot, state)
+        calls = _record_dialog(monkeypatch)
+        widget.choosePath()
+        assert (len(calls) == 1) == _clickable(state)
+
+    def test_tooltip_says_what_the_button_does_and_carries_the_full_path(self, qapp, qtbot):
+        """툴팁은 무엇을 하는 버튼인지와 지금의 경로 전문을 준다."""
+        _window, widget = self._card(qtbot, DownloadState.WAITING)
+        assert widget.pathButton.toolTip() == f"Change save location\n{OTHER_PATH}"
+
+
+class TestSectionEditButtonSurface:
+    """1행의 구간 편집 버튼 (#309) — 아래 줄의 구간 요약 글자를 누르는 것과 같은 일을 한다."""
+
+    def _card(self, qtbot, state, content_type: str = "video"):
+        window, widget = make_card(state)
+        qtbot.addWidget(window)
+        if content_type != "video":
+            widget.item.content_type = content_type
+            widget.setData(widget.item, 0)
+            _pump()
+        return window, widget
+
+    @pytest.mark.parametrize("state", STATES, ids=IDS)
+    def test_button_is_there_only_when_the_sections_can_be_edited(self, qapp, qtbot, state):
+        """구간 편집 버튼은 편집 창을 열 수 있는 상태(대기)에서만 보여야 하고, 숨을 때는 꺼 두는 것이 아니라 없어야 한다.
+
+        상태마다 구간 기능이 있는 타입(video)의 카드 하나 -> 보임 == (대기), 보일 때는 켜져 있다
+        """
+        _window, widget = self._card(qtbot, state)
+        assert widget.sectionEditButton.isVisible() == (state == DownloadState.WAITING), (
+            f"{state.name}: 구간 편집 버튼의 가시성이 편집 창을 열 수 있는지와 다르다"
+        )
+        assert widget.sectionEditButton.isEnabled(), f"{state.name}: 버튼을 숨기지 않고 꺼 두었다"
+
+    def test_button_is_hidden_on_a_waiting_card_whose_type_has_no_sections(self, qapp, qtbot):
+        """구간 기능이 없는 타입의 카드에는 대기 상태여도 구간 편집 버튼이 없어야 한다.
+
+        대기 카드의 타입을 구간 기능이 없는 것(clip)으로 둠 -> 구간 편집 버튼 숨김, 저장 위치 버튼은 보임
+        """
+        _window, widget = self._card(qtbot, DownloadState.WAITING, content_type="clip")
+        assert not widget.sectionEditButton.isVisible()
+        assert widget.pathButton.isVisible()
+
+    def test_click_asks_for_the_editor_like_a_click_on_the_summary_text(self, qapp, qtbot):
+        """구간 편집 버튼을 누르면 구간 요약 글자를 눌렀을 때와 같은 요청(sectionEditRequest)이 한 번 나와야 한다.
+
+        대기 카드에서 버튼을 클릭, 이어서 구간 요약 글자를 클릭 -> 요청이 각각 1회씩(모두 2회)
+        """
+        _window, widget = self._card(qtbot, DownloadState.WAITING)
+        asked = []
+        widget.sectionEditRequest.connect(lambda: asked.append(1))
+
+        QTest.mouseClick(widget.sectionEditButton, Qt.MouseButton.LeftButton)
+        _pump()
+        after_button = len(asked)
+        QTest.mouseClick(widget.fileSizeLabel, Qt.MouseButton.LeftButton)
+        _pump()
+
+        assert (after_button, len(asked)) == (1, 2)
+
+    def test_tooltip_says_what_the_button_does(self, qapp, qtbot):
+        _window, widget = self._card(qtbot, DownloadState.WAITING)
+        assert widget.sectionEditButton.toolTip() == "Edit sections"
+
+    def test_row_three_has_no_path_icon_any_more(self, qapp, qtbot):
+        """아래 줄에 남던 경로 아이콘은 없어야 한다 — 그 일은 1행의 저장 위치 버튼이 한다."""
+        _window, widget = self._card(qtbot, DownloadState.WAITING)
+        assert not hasattr(widget, "pathIconButton")
+        assert widget.findChild(QWidget, "pathIconButton") is None
+
+
+class TestRowOneAtTheNarrowestCard:
+    def test_waiting_card_keeps_its_three_buttons_apart_from_the_channel_name(self, qapp, qtbot):
+        """1행의 버튼이 가장 많은 대기 카드는 가장 좁은 폭에서도 채널 이름 · 버튼이 겹치거나 잘리지 않아야 한다.
+
+        대기 카드(구간 편집 · 저장 위치 · 삭제 세 버튼)를 카드의 최소 폭으로 줄임
+        -> 왼쪽부터 채널 이름 < 구간 편집 < 저장 위치 < 삭제 순으로 서로 겹치지 않고, 모두 카드 안에 있다
+        """
+        window, widget = make_card(DownloadState.WAITING)
+        qtbot.addWidget(window)
+        resize_window(window, widget, widget.minimumSizeHint().width())
+        row = [widget.channelNameLabel, widget.sectionEditButton, widget.pathButton, widget.deleteButton]
+        assert all(part.isVisible() for part in row), "전제: 네 가지가 모두 보인다"
+
+        spans = [(part.mapTo(widget, part.rect().topLeft()).x(), part.width()) for part in row]
+
+        for (left, width), (next_left, _next_width) in zip(spans, spans[1:]):
+            assert left + width <= next_left, f"1행에서 겹친다: {spans}"
+        assert spans[0][0] >= 0 and spans[-1][0] + spans[-1][1] <= widget.width(), f"카드 밖으로 나갔다: {spans}"
+        assert all(width > 0 for _left, width in spans)
 
 
 class TestPathDialogDuringTransition:

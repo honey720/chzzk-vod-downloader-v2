@@ -44,6 +44,14 @@
         <translation>해상도를 바꿔 프레임률이 달라져, 구간을 새 프레임에 맞게 옮겼습니다.</translation>
     </message>
     <message>
+        <source>Edit sections</source>
+        <translation>구간 편집</translation>
+    </message>
+    <message>
+        <source>Change save location</source>
+        <translation>저장 위치 변경</translation>
+    </message>
+    <message>
         <source>checking length</source>
         <translation>길이 확인 중</translation>
     </message>
