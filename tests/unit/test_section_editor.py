@@ -601,7 +601,7 @@ def test_digits_above_the_maximum_are_set_to_the_maximum_when_the_field_is_left(
     """분 · 초 · 프레임이 최대를 넘은 채 칸을 떠나면 오류 없이 최대값으로 맞춰지고, 맞췄다는 안내가 보여야 한다.
 
     3600초 영상. 표의 프레임률에서 표의 칸에 값을 치고 떠남
-    -> 치는 동안: 값은 친 그대로, 오류 없음 · 칸 강조 없음, 안내 == 넘음 안내
+    -> 치는 동안: 값은 친 그대로, 오류 없음 · 칸 강조 없음, 안내 == 넘음 안내, 확인 켜짐
     -> 떠난 뒤: 값 == settled, 오류 없음 · 칸 강조 없음, 안내 == "Set to the maximum (settled)", 확인 켜짐
     """
     basis.fps = Fraction(fps)
@@ -614,10 +614,12 @@ def test_digits_above_the_maximum_are_set_to_the_maximum_when_the_field_is_left(
     type_into(edit, typed)
     _pump()
     during = (edit.text(), error_shown(row), flagged_fields(row), _notice(row))
+    confirmable = dialog.okButton.isEnabled()
     leave(edit)
     _pump()
 
     assert during == (typed, "", set(), ABOVE_MAX)
+    assert confirmable, "치는 칸의 넘침은 확인을 막지 않는다 — 확인이 그 칸을 맞춘다"
     assert edit.text() == settled
     assert (error_shown(row), flagged_fields(row)) == ("", set())
     assert _notice(row) == SET_TO_MAX.format(settled)
