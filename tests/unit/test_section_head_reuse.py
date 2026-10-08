@@ -137,8 +137,8 @@ def _add(win, item: ContentItem) -> None:
     _pump()
 
 
-def _give_section(qtbot, win, item: ContentItem) -> None:
-    """편집 창으로 구간 하나(10분~20분)를 넣는다."""
+def _give_section(qtbot, win, item: ContentItem):
+    """편집 창으로 구간 하나(10분~20분)를 넣는다. 닫힌 그 편집 창을 돌려준다."""
     QTest.mouseClick(win.listView.widgetFor(item).fileSizeLabel, Qt.MouseButton.LeftButton)
     _pump()
     dialog = win._sectionDialog
@@ -150,6 +150,7 @@ def _give_section(qtbot, win, item: ContentItem) -> None:
     dialog.okButton.click()
     _pump()
     assert len(item.selections) == 1, "전제: 구간이 쓰여야 한다"
+    return dialog
 
 
 def _pick(win, item: ContentItem, resolution: int) -> None:
@@ -256,13 +257,14 @@ def test_a_moov_fetched_at_another_address_is_not_handed_over(tmp_path):
 def test_deleting_the_card_drops_its_moov(qtbot, tmp_path, window, probe):
     """카드를 지우면 그 카드가 들고 있던 moov를 아무도 붙잡지 않아야 한다.
 
-    구간을 확인해 moov를 든 카드를 목록에서 지움. 받을 크기를 세던 일이 끝나기를 기다림
+    구간을 확인해 moov를 든 카드를 목록에서 지움. 받을 크기를 세던 일이 끝나기를 기다림.
+    닫힌 편집 창은 테스트가 끝까지 쥐고 있음
     -> 카드의 section_head is None, 조회 대역의 기록을 비운 뒤 그 moov의 약한 참조 == None
     """
     win, engine = window
     item = _item(tmp_path)
     _add(win, item)
-    _give_section(qtbot, win, item)
+    dialog = _give_section(qtbot, win, item)  # 닫힌 창과 그 뷰모델이 남아 있어도 moov는 놓여야 한다
     held = weakref.ref(probe.heads[0])
 
     win.contentManager.removeItem(item)
@@ -276,6 +278,7 @@ def test_deleting_the_card_drops_its_moov(qtbot, tmp_path, window, probe):
 
     assert item.section_head is None
     assert held() is None
+    assert dialog is not None, "전제: 닫힌 편집 창을 테스트가 쥐고 있었다"
 
 
 def test_only_the_most_recent_card_keeps_a_moov(qtbot, tmp_path, window, probe):
