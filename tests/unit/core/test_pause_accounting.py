@@ -534,3 +534,37 @@ def test_monitor_logs_the_speed_over_the_time_spent_receiving_right_after_a_resu
     assert not loop.is_alive() and before_resume == []
     assert len(after_resume) == 1
     assert 6.0 < after_resume[0][2] < 10.0
+
+
+def test_a_second_run_with_the_same_model_does_not_take_off_the_first_runs_pause(
+    tmp_path, monkeypatch
+):
+    """같은 다운로드 모델로 다시 실행하면, 앞 실행에서 일시정지한 시간이 이번 실행의 전송 시간에서 빠지지 않아야 한다.
+
+    첫 실행: 받는 도중 0.3초에 일시정지, 1.2초 뒤 중단. 둘째 실행: 같은 엔진 · 같은 모델로 일시정지
+    없이 끝까지 받음
+    -> 둘째 실행의 전송 줄에 함께 온 일시정지한 시간 == 0.0
+    -> 둘째 실행의 전송 시간 >= 둘째 실행에 실제로 걸린 시간 − 0.3초(앞 실행의 1.2초가 빠지지 않았다)
+    """
+    engine, data, logger, output, finished, failures = _recording_engine(
+        tmp_path, monkeypatch, throttle=0.005
+    )
+    data.model.start()
+    first = _run_in_thread(engine)
+    time.sleep(0.3)
+    assert data.model.pause() is True, "전제: 첫 실행이 받는 도중에 일시정지됐다"
+    time.sleep(1.2)
+    data.model.stop()
+    first.join(timeout=10)
+    assert not first.is_alive() and data.model.paused_seconds >= 1.1, "전제: 모델에 1.2초가 쌓였다"
+
+    started = time.perf_counter()
+    data.model.start()
+    second = _run_in_thread(engine)
+    assert finished.wait(timeout=60), "둘째 실행이 끝나지 않았다"
+    took = time.perf_counter() - started
+    second.join(timeout=10)
+
+    assert failures == [] and output.read_bytes() == CONTENT
+    assert logger.transfer_paused == [0.0]
+    assert logger.transfer_completes[0][0] >= took - 0.3

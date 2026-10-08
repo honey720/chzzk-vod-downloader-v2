@@ -582,6 +582,9 @@ class BaseDownloader(ABC):
         stopped_in = None  # 중단을 처음 본 단계 — prepare · transfer · postprocess
         try:
             self.s.start_time = tm.time()
+            # 모델이 세는 일시정지 시간은 모델이 사는 동안의 합이다 — 같은 모델로 다시 실행하면
+            # 앞 실행의 것이 들어 있다. 이번 실행의 것만 쓰도록 시작할 때의 값을 적어 둔다
+            paused_before = self.s.model.paused_seconds
             plan = self.prepare(self.s.content)
             # 준비(받을 것을 정하는 단계 — 구간 다운로드는 여기서 moov · 플레이리스트를 받는다)에
             # 걸린 시간. 전송 시간(Transfer)은 이것을 포함한 채로 둔다 — 그 줄의 뜻을 바꾸지
@@ -675,7 +678,7 @@ class BaseDownloader(ABC):
             # 전송 구간 소요는 관측 정지까지 포함해 여기서 확정한다 (#110) —
             # 이후 구간(후처리)과 합이 전체와 어긋나지 않게 하기 위함이다.
             # 일시정지해 있던 시간은 전송에 든 시간이 아니다 — 빼고, 그 합은 따로 적는다 (#309)
-            transfer_paused = self.s.model.paused_seconds
+            transfer_paused = self.s.model.paused_seconds - paused_before
             transfer_elapsed = max(tm.time() - self.s.start_time - transfer_paused, 0.0)
             if self.state == DownloadState.WAITING and stopped_in is None:
                 stopped_in = "transfer"
@@ -716,7 +719,7 @@ class BaseDownloader(ABC):
                     # 전체 = 전송 + 후처리 구분 (#110) — 위 완료 줄(형식 불변)이
                     # 전체 시간임을 새 줄이 드러낸다
                     # 구분의 두 값도 일시정지한 시간을 뺀 것이다 — 전송 줄과 같은 기준이다
-                    all_paused = self.s.model.paused_seconds
+                    all_paused = self.s.model.paused_seconds - paused_before
                     if postprocess_elapsed is not None:
                         postprocess_elapsed = max(
                             postprocess_elapsed - (all_paused - transfer_paused), 0.0
