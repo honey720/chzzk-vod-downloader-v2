@@ -2721,6 +2721,8 @@ def test_adding_a_section_gives_an_empty_row_and_focuses_its_start_clock_field(
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
     dialog = open_editor(qtbot, win, item)
+    dialog.activateWindow()
+    QTest.qWaitForWindowActive(dialog)  # 활성 창이어야 앱의 포커스 위젯이 이 창의 것이다
     set_rows(dialog, [("00:10:00:00", "00:20:00:00")])
 
     dialog.addButton.click()
@@ -3024,6 +3026,8 @@ def test_moving_a_row_while_a_field_has_focus_does_not_overwrite_the_row_that_to
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
     dialog = open_editor(qtbot, win, item)
+    dialog.activateWindow()
+    QTest.qWaitForWindowActive(dialog)  # 활성 창이어야 앱의 포커스 위젯이 이 창의 것이다
     set_rows(dialog, [("00:10:00:00", "00:20:00:00"), ("00:30:00:00", "00:31:00:00")])
     dialog._rows[1].startEdit.clockEdit.setFocus()
     _pump()
@@ -3236,6 +3240,8 @@ def test_enter_sets_an_end_past_the_video_to_the_end_and_moves_on(qtbot, tmp_pat
     -> 끝 == "00:30:00:00", 맞춘 안내, 포커스 == 둘째 행의 시작 시분초 칸
     """
     _win, _item, dialog = half_hour_editor(qtbot, tmp_path, basis, rows=2)
+    dialog.activateWindow()
+    QTest.qWaitForWindowActive(dialog)  # 활성 창이어야 앱의 포커스 위젯이 이 창의 것이다
     row = dialog._rows[0]
     row.endEdit.clockEdit.setFocus()
     QTest.keyClicks(row.endEdit.clockEdit, "010000")
@@ -3365,6 +3371,8 @@ def test_the_set_notice_stays_through_the_click_that_caused_it_and_goes_with_the
     -> 둘째 클릭 뒤: 안내 없음, 포커스 == 끝 프레임 칸
     """
     _win, _item, dialog = half_hour_editor(qtbot, tmp_path, basis)
+    dialog.activateWindow()
+    QTest.qWaitForWindowActive(dialog)  # 활성 창이어야 앱의 포커스 위젯이 이 창의 것이다
     row = dialog._rows[0]
     row.endEdit.clockEdit.setFocus()
     QTest.keyClicks(row.endEdit.clockEdit, "010000")

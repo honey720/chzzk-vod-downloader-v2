@@ -532,6 +532,8 @@ def test_period_in_the_clock_field_moves_to_the_frame_field(point, modifier):
 
     시분초 칸에 12를 치고 "."(자판 · 숫자 키패드) -> 포커스가 프레임 칸, 시분초 값 "00:00:12" 그대로
     """
+    point.activateWindow()
+    QTest.qWaitForWindowActive(point)  # 활성 창이 아니면 hasFocus()가 거짓으로 남는다
     point.clockEdit.setFocus()
     type_digits(point.clockEdit, "12")
 
