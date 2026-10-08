@@ -3222,6 +3222,38 @@ def test_row_height_is_the_same_with_and_without_a_message(qtbot, tmp_path, basi
     assert dialog._rows[0].height() == plain and blank.height() == plain
 
 
+def test_message_line_sits_right_under_the_fields_with_no_gap(qtbot, tmp_path, basis):
+    """안내 줄은 칸의 줄 바로 아래에 붙어야 한다 — 그 사이에 간격이 없다.
+
+    행 A(10분~20분) 하나
+    -> 행의 높이 == 칸의 줄에서 가장 큰 위젯의 높이 + 안내 줄의 높이,
+       안내 줄의 위쪽 == 칸의 줄에서 가장 낮은 아래쪽 + 1
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    set_rows(dialog, [("00:10:00:00", "00:20:00:00")])
+    _pump()
+    row = dialog._rows[0]
+    line = [
+        row.numberLabel,
+        row.startEdit,
+        row.rangeLabel,
+        row.endEdit,
+        row.infoLabel,
+        row.upButton,
+        row.downButton,
+        row.deleteButton,
+    ]
+    assert all(part.isVisible() for part in line) and row.messageSlot.isVisible()
+
+    tallest = max(part.height() for part in line)
+    lowest = max(part.geometry().bottom() for part in line)
+
+    assert row.height() == tallest + row.messageSlot.height()
+    assert row.messageSlot.y() == lowest + 1
+
+
 def test_a_message_too_long_for_the_row_is_elided_on_one_line(qtbot, tmp_path, basis):
     """안내 줄은 줄바꿈하지 않고, 넘치는 글은 말줄임하며 전문을 툴팁에 둬야 한다. 행의 높이는 그대로다.
 
