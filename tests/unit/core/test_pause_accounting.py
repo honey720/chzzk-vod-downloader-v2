@@ -488,3 +488,49 @@ def test_transfer_time_leaves_out_the_pause_and_the_pause_is_reported_apart(tmp_
     assert 1.1 <= paused <= 1.5
     assert elapsed + paused <= took + 0.3 and elapsed < took - 1.0
     assert logger.breakdowns[0][0] == elapsed
+
+
+def test_monitor_logs_the_speed_over_the_time_spent_receiving_right_after_a_resume(
+    tmp_path, monkeypatch
+):
+    """관측 루프가 재개 직후 남기는 속도 줄의 값은 일시정지한 시간을 뺀, 받던 시간으로 나눈 값이어야 한다.
+
+    관측 루프를 돌림. 첫 측정 뒤 0.5초 동안 4MiB를 받고 → 일시정지 1.6초 → 재개
+    (스레드 수 조정과 진행 통지는 대역이다 — 속도 측정과 그 줄만 본다)
+    -> 재개 뒤 남은 속도 줄(log_thread_adjust) 1건, 그 속도가 4MiB ÷ 0.5초 = 8MB/s 둘레다(6 초과 10 미만).
+       틱 하나로 보면 4.0이다
+    """
+    engine, data, _logger, _output, _finished, _failures = _recording_engine(
+        tmp_path, monkeypatch, throttle=0.0
+    )
+    spy = _SpeedSpy(engine.logger)
+    engine.logger = spy
+    measured = threading.Event()
+    real_measure = engine.measure_speed
+
+    def counting_measure(*args, **kwargs):
+        real_measure(*args, **kwargs)
+        measured.set()
+
+    monkeypatch.setattr(engine, "measure_speed", counting_measure)
+    monkeypatch.setattr(engine, "_adjust_threads", lambda: None)
+    monkeypatch.setattr(engine, "emit_progress", lambda: None)
+    data.model.start()
+
+    loop = threading.Thread(target=engine._monitor_loop, daemon=True)
+    loop.start()
+    assert measured.wait(5), "전제: 관측이 첫 측정을 했다"
+    time.sleep(0.5)
+    data.total_downloaded_size = 4 * 1024 * 1024
+    data.model.pause()
+    time.sleep(1.6)
+    before_resume = [line for line in spy.speed_lines if line[0] == "adjust"]
+    data.model.resume()
+    time.sleep(0.4)
+    engine._monitor_stop.set()
+    loop.join(timeout=5)
+
+    after_resume = [line for line in spy.speed_lines if line[0] == "adjust"][len(before_resume) :]
+    assert not loop.is_alive() and before_resume == []
+    assert len(after_resume) == 1
+    assert 6.0 < after_resume[0][2] < 10.0
