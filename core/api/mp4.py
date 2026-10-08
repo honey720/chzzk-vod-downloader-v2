@@ -1112,6 +1112,9 @@ def _sample_offsets(
         if samples_per_chunk == 1:
             # 청크마다 샘플 하나 — 샘플의 위치가 곧 청크의 위치다. 청크마다 돌지 않는다
             chunks = max(last_chunk - (first_chunk - 1), 0)
+            if last_chunk > len(chunk_offsets):
+                # 조각으로 자르면 범위를 넘어도 조용히 잘린다 — 청크마다 도는 쪽처럼 거부한다
+                raise Mp4Error(MP4_INVALID, "stsc가 stco/co64에 없는 청크를 가리킨다")
             if sample + chunks > len(sizes):
                 raise Mp4Error(MP4_INVALID, "stsc의 샘플 수가 stsz보다 많다")
             fill_in_chunks(chunk_starts, range(sample, sample + chunks))

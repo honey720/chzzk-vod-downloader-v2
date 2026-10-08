@@ -394,6 +394,26 @@ def test_parse_moov_rejects_entry_count_that_runs_past_its_box():
     assert info.value.message_key == MP4_INVALID
 
 
+def test_parse_moov_rejects_one_sample_chunks_that_run_past_the_chunk_table():
+    """parse_moov는 청크당 샘플 1개인 stsc 구간이 실제 청크 수보다 큰 범위를 가리키면 거부해야 한다.
+
+    12샘플, 청크 8개([1, 1, 1, 1, 2, 2, 2, 2]샘플 — stsc 구간 2개). 둘째 구간의 first_chunk를
+    5에서 13으로 바꾼 moov (첫 구간이 청크 1~12를 가리키고 샘플 수는 12로 맞는다)
+    -> message_key == MP4_INVALID
+    """
+    video = video_spec(chunks=[1, 1, 1, 1, 2, 2, 2, 2])
+    assert len(video.sizes) == 12, "전제: 샘플이 12개다"
+    moov = bytearray(build_mp4([video]).moov)
+    second_row = moov.find(b"stsc") + 4 + 4 + 4 + 12  # 종류 · 버전 · 항목 수 · 첫 항목 뒤
+    assert struct.unpack_from(">III", moov, second_row) == (5, 2, 1), "전제: 둘째 구간의 자리다"
+    struct.pack_into(">I", moov, second_row, 13)
+
+    with pytest.raises(Mp4Error) as info:
+        parse_moov(bytes(moov))
+
+    assert info.value.message_key == MP4_INVALID
+
+
 def test_parse_moov_rejects_sample_count_mismatch():
     """parse_moov는 stts와 stsz의 샘플 수가 다르면 손상 키로 Mp4Error를 내야 한다.
 
