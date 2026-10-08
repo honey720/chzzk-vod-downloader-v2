@@ -463,7 +463,7 @@ def test_transfer_time_leaves_out_the_pause_and_the_pause_is_reported_apart(tmp_
     청크마다 5ms 쉬는 가짜 세션으로 받는 도중 0.3초에 일시정지, 1.2초 뒤 재개해 끝까지 받음
     -> 전송 줄에 함께 온 일시정지한 시간 1.1초 이상 1.5초 이하
     -> 전송 시간 + 일시정지한 시간 <= 실제로 걸린 시간 + 0.3초, 전송 시간 < 실제로 걸린 시간 − 1초
-    -> 시간 구분의 전송 값 == 전송 줄의 전송 시간
+    -> 시간 구분의 전송 값 == 전송 줄의 전송 시간, 시간 구분 줄에 함께 온 일시정지한 시간도 같다
     """
     engine, data, logger, output, finished, failures = _recording_engine(
         tmp_path, monkeypatch, throttle=0.005
@@ -488,6 +488,7 @@ def test_transfer_time_leaves_out_the_pause_and_the_pause_is_reported_apart(tmp_
     assert 1.1 <= paused <= 1.5
     assert elapsed + paused <= took + 0.3 and elapsed < took - 1.0
     assert logger.breakdowns[0][0] == elapsed
+    assert logger.breakdown_paused == [paused]
 
 
 def test_monitor_logs_the_speed_over_the_time_spent_receiving_right_after_a_resume(
@@ -543,7 +544,7 @@ def test_a_second_run_with_the_same_model_does_not_take_off_the_first_runs_pause
 
     첫 실행: 받는 도중 0.3초에 일시정지, 1.2초 뒤 중단. 둘째 실행: 같은 엔진 · 같은 모델로 일시정지
     없이 끝까지 받음
-    -> 둘째 실행의 전송 줄에 함께 온 일시정지한 시간 == 0.0
+    -> 둘째 실행의 전송 줄 · 시간 구분 줄에 함께 온 일시정지한 시간 == 0.0
     -> 둘째 실행의 전송 시간 >= 둘째 실행에 실제로 걸린 시간 − 0.3초(앞 실행의 1.2초가 빠지지 않았다)
     """
     engine, data, logger, output, finished, failures = _recording_engine(
@@ -567,4 +568,5 @@ def test_a_second_run_with_the_same_model_does_not_take_off_the_first_runs_pause
 
     assert failures == [] and output.read_bytes() == CONTENT
     assert logger.transfer_paused == [0.0]
+    assert logger.breakdown_paused == [0.0]
     assert logger.transfer_completes[0][0] >= took - 0.3
