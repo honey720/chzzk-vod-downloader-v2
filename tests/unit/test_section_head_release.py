@@ -32,6 +32,7 @@ import app.theme as theme
 import app.viewmodels.section_edit_viewmodel as section_edit_module
 import core.api.mp4 as mp4_module
 import core.downloaders.file_downloader as fd_module
+import core.utils.ffmpeg as ffmpeg_module
 import core.utils.hybrid_cut as cut_module
 import main as main_module
 from app.download_logger import DownloadLogger
@@ -491,7 +492,8 @@ def test_pausing_during_the_cut_shows_paused_and_resuming_goes_back_to_cutting(
 ):
     """구간을 자르는 도중 일시정지하면 카드가 "Paused"로 서 있고, 재개하면 "Cutting"으로 돌아가 끝나야 한다.
 
-    컷의 오디오 단계의 ffmpeg가 뜬 뒤 전역 버튼으로 일시정지 → 진행률이 선 뒤 0.8초 지켜봄 → 다시 눌러 재개
+    컷의 오디오 단계의 ffmpeg를 띄우는 순간에 전역 버튼으로 일시정지(버튼이 눌릴 때까지 테스트가
+    그 ffmpeg를 세워 둔다) → 진행률이 선 뒤 0.8초 지켜봄 → 다시 눌러 재개
     -> 일시정지 중: 카드 PAUSED, 상태 문구가 "% · Paused"로 끝난다, 진행률이 0.8초 동안 그대로다,
        그 ffmpeg가 살아 있다, 카드가 완료되지 않았다
     -> 재개 직후: 카드 RUNNING, 상태 문구에 "Cutting"
@@ -499,13 +501,18 @@ def test_pausing_during_the_cut_shows_paused_and_resuming_goes_back_to_cutting(
     """
     win, item = window
     _give_section(qtbot, win, item)
-    reached = threading.Event()
+    reached, pressed = threading.Event(), threading.Event()
     audio = []
 
     def on_launch(command, process) -> None:
         if command[-1] == "audio.m4a":
             audio.append(process)
+            # 버튼이 눌릴 때까지 막 뜬 ffmpeg를 세워 둔다 — 짧은 단계가 그사이 끝나지 않게.
+            # 풀고 돌아가면 제품이 띄운 직후의 확인에서 일시정지를 보고 멈춘다
+            ffmpeg_module._set_suspended(process, True)
             reached.set()
+            pressed.wait(30)
+            ffmpeg_module._set_suspended(process, False)
 
     processes = record_processes(monkeypatch, on_launch)
     card = win.listView.widgetFor(item)
@@ -513,6 +520,7 @@ def test_pausing_during_the_cut_shows_paused_and_resuming_goes_back_to_cutting(
         win.downloadButton.click()
         qtbot.waitUntil(reached.is_set, timeout=FINISH_TIMEOUT)
         win.downloadButton.click()  # 일시정지
+        pressed.set()
         _pump()
         _wait_until_progress_stands(qtbot, item)
         first = (item.downloadState, card.statusLabel.text(), item.download_progress)
