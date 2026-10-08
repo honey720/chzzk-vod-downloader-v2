@@ -576,8 +576,6 @@ class BaseDownloader(ABC):
         try:
             self.s.start_time = tm.time()
             plan = self.prepare(self.s.content)
-            if self.state == DownloadState.WAITING:
-                stopped_in = "prepare"
             # 준비(받을 것을 정하는 단계 — 구간 다운로드는 여기서 moov · 플레이리스트를 받는다)에
             # 걸린 시간. 전송 시간(Transfer)은 이것을 포함한 채로 둔다 — 그 줄의 뜻을 바꾸지
             # 않고, 준비를 뺀 값을 따로 한 줄 남긴다 (#309)
@@ -614,8 +612,8 @@ class BaseDownloader(ABC):
             # 준비하는 동안 일시정지됐으면 받기를 띄우지 않고 여기서 선다 — 재개하면 그때
             # 받기 시작한다 (#309). 중단되면 아래의 받기 루프가 돌지 않고 지나간다
             self._wait_while_paused()
-            if self.state == DownloadState.WAITING and stopped_in is None:
-                stopped_in = "prepare"
+            if self.state == DownloadState.WAITING:
+                stopped_in = "prepare"  # 준비하는 동안이나 준비 뒤 서 있는 동안 중단됐다
 
             # 진행률 배열이 준비된 뒤에 관측을 시작한다
             monitor.start()

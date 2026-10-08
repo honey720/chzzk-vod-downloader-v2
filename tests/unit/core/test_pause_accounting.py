@@ -325,3 +325,33 @@ def test_stopping_during_the_cut_tells_the_logger_it_stopped_during_postprocess(
 
     assert [args for name, args in run.logger.calls if name == "log_stopped"] == [("postprocess",)]
     assert run.finished == 0
+
+
+def test_monitor_measures_nothing_when_the_pause_lands_between_its_check_and_its_work(
+    tmp_path, monkeypatch
+):
+    """관측은 일시정지 상태로 바뀐 직후(일시정지 신호가 아직 내려가기 전)에도 스레드 수 · 속도를 재지 않아야 한다.
+
+    상태는 PAUSED인데 일시정지 신호(pause_event)는 아직 켜져 있는 순간을 만든다 — 일시정지는
+    상태를 먼저 바꾸고 신호를 그 뒤에 내린다. 그 상태로 관측 루프를 1.4초 돌림(첫 틱은 1초 뒤다)
+    -> 스레드 수 조정 · 속도 측정 · 진행 통지가 한 번도 불리지 않는다
+    """
+    engine, data, _logger, _output, _finished, _failures = _recording_engine(
+        tmp_path, monkeypatch, throttle=0.0
+    )
+    called: list[str] = []
+    for name in ("_adjust_threads", "measure_speed", "emit_progress"):
+        monkeypatch.setattr(engine, name, lambda name=name: called.append(name))
+    data.model.start()
+    data.model.pause()
+    data.model.pause_event.set()  # 신호가 아직 내려가지 않은 틈
+    assert data.model.state is DownloadState.PAUSED and data.model.pause_event.is_set()
+
+    loop = threading.Thread(target=engine._monitor_loop, daemon=True)
+    loop.start()
+    time.sleep(1.4)
+    engine._monitor_stop.set()
+    loop.join(timeout=5)
+
+    assert not loop.is_alive(), "전제: 관측 루프가 끝났다"
+    assert called == []
