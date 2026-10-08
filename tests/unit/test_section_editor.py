@@ -648,6 +648,43 @@ def test_an_end_that_is_not_a_timecode_is_left_as_it_is_and_shown_as_a_format_er
     assert not dialog.okButton.isEnabled()
 
 
+@pytest.mark.parametrize(
+    ("part", "digits", "typed", "settled"),
+    [
+        ("clockEdit", "7500", "00:75:00:00", "00:59:00:00"),  # 여섯 자리 가운데 넷 — 분 75
+        ("clockEdit", "99", "00:00:99:00", "00:00:59:00"),  # 여섯 자리 가운데 둘 — 초 99
+        ("clockEdit", "007500", "00:75:00:00", "00:59:00:00"),  # 여섯 자리를 다 채웠다
+        ("frameEdit", "75", "00:00:00:75", "00:00:00:59"),  # 프레임 두 자리를 다 채웠다
+    ],
+    ids=["분 75 — 덜 채움", "초 99 — 덜 채움", "분 75 — 다 채움", "프레임 75 — 다 채움"],
+)
+def test_the_over_the_maximum_notice_waits_until_the_field_is_full(
+    qtbot, tmp_path, basis, part, digits, typed, settled
+):
+    """최대를 넘는다는 안내는 넘은 칸의 자리를 다 채웠을 때만 보이고, 덜 채웠어도 칸을 떠나면 맞춰져야 한다.
+
+    60fps · 3600초. 시작 시각의 표의 칸에 표의 숫자를 침(시분초 칸은 여섯 자리, 프레임 칸은 두 자리)
+    -> 치는 동안: 값 == typed 그대로, 오류 없음, 안내 == (다 채웠으면 넘음 안내, 아니면 없음)
+    -> 떠난 뒤: 값 == settled, 안내 == "Set to the maximum (settled)"
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    row = dialog._rows[0]
+    field = getattr(row.startEdit, part)
+    full = len(digits) == (6 if part == "clockEdit" else 2)
+
+    QTest.keyClicks(field, digits)
+    _pump()
+    during = (row.startEdit.text(), error_shown(row), _notice(row))
+    leave(row.startEdit)
+    _pump()
+
+    assert during == (typed, "", ABOVE_MAX if full else "")
+    assert row.startEdit.text() == settled
+    assert _notice(row) == SET_TO_MAX.format(settled)
+
+
 def test_a_pasted_value_above_the_maximum_is_set_at_once(qtbot, tmp_path, basis, monkeypatch):
     """붙여넣은 값의 분 · 초 · 프레임이 최대를 넘으면 칸을 떠나기를 기다리지 않고 바로 최대값으로 맞춰야 한다.
 
@@ -776,10 +813,10 @@ def test_an_end_still_below_the_start_waits_until_the_field_is_left(qtbot, tmp_p
 
 
 def test_a_field_overflow_on_the_way_to_a_valid_value_is_not_flagged(qtbot, tmp_path, basis):
-    """치는 도중 잠깐 생기는 자리 넘침(초 ≥ 60)은 값을 바꾸지 않고 안내만 보이며, 다 친 값이 유효하면 그대로 남아야 한다.
+    """치는 도중 잠깐 생기는 자리 넘침(초 ≥ 60)은 값을 바꾸지 않고 아무것도 띄우지 않으며, 다 친 값이 유효하면 그대로 남아야 한다.
 
     30fps · 3600초. 끝 시분초 칸에 1 · 9 · 0 · 0을 차례로 침
-    -> "190"(00:01:90 — 초 90은 넘친다)에서 값 그대로, 오류 문구 없음, 넘음 안내
+    -> "190"(00:01:90 — 초 90은 넘친다. 여섯 자리 가운데 셋만 찼다)에서 값 그대로, 오류 · 안내 없음
     -> "1900"(00:19:00)을 치고 칸을 떠나면 값 == "00:19:00:00"(맞춰지지 않았다), 오류 · 안내 없음, 확인 켜짐
     """
     basis.fps = Fraction(30)
@@ -791,7 +828,7 @@ def test_a_field_overflow_on_the_way_to_a_valid_value_is_not_flagged(qtbot, tmp_
     type_into(row.endEdit, "")  # 두 칸을 비운다
     type_more(row.endEdit, "190")
     assert row.endEdit.text() == "00:01:90:00"
-    assert (error_shown(row), _notice(row)) == ("", ABOVE_MAX)
+    assert (error_shown(row), _notice(row)) == ("", "")
 
     type_more(row.endEdit, "0")
     leave(row.endEdit)

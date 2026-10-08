@@ -652,6 +652,19 @@ class SectionEditViewModel(QObject):
         )
         return ":".join(f"{value:02d}" for value in fixed)
 
+    def _overflowParts(self, text: str) -> frozenset[str]:
+        """그 글에서 최대를 넘은 칸 — 분 · 초가 넘으면 시분초 칸, 프레임이 넘으면 프레임 칸."""
+        parts = text.strip().split(":")
+        if len(parts) != _TIMECODE_FIELDS or not all(part.isdigit() for part in parts):
+            return frozenset()
+        _hours, minutes, seconds, frames = (int(part) for part in parts)
+        over = set()
+        if minutes > _TOP_MINUTE_SECOND or seconds > _TOP_MINUTE_SECOND:
+            over.add(PART_CLOCK)
+        if frames > frames_per_second(self.fps) - 1:
+            over.add(PART_FRAME)
+        return frozenset(over)
+
     def _fieldOverflows(self, row: int, column: int) -> bool:
         """그 칸의 분 · 초 · 프레임 가운데 최대를 넘은 것이 있는지 — 칸을 떠나면 맞춰질 값이다."""
         if self.state != STATE_READY or not 0 <= row < len(self.rows):
@@ -699,18 +712,30 @@ class SectionEditViewModel(QObject):
         self._clamped = None
         self.validated.emit()
 
-    def noticeText(self, row: int, typing: tuple[int, int] | None = None) -> str:
+    def noticeText(
+        self,
+        row: int,
+        typing: tuple[int, int] | None = None,
+        full_parts: frozenset[str] = frozenset(),
+    ) -> str:
         """행의 안내 줄에 흐리게 적을 글 — 값이 넘는 중이거나 방금 맞췄을 때. 없으면 빈 글.
 
         한 번에 하나만 나간다. 칸의 최대값과 영상 끝을 함께 맞췄으면 영상 끝으로 맞췄다는 글
         하나다 — 칸에 남은 값이 영상 끝이다.
 
+        최대를 넘는다는 안내는 넘은 칸의 자리를 **다 채웠을 때만** 나간다. 숫자가 오른쪽부터
+        채워져, 덜 채운 동안의 넘침은 치는 도중에 거쳐 가는 값이다("1900"의 "190"은 초 90이다).
+        영상 끝을 넘는다는 안내는 그 규칙을 따르지 않는다 — 숫자를 더 칠수록 값이 커지기만 하므로
+        치는 도중에 영상 끝을 넘었으면 다 쳐도 넘는다.
+
         Args:
             typing: 숫자를 치고 있는 (행, 칸). 그 칸의 분 · 초 · 프레임이 최대를 넘거나 끝 칸이
                 영상 끝을 넘으면 오류 대신 이 안내가 나간다
+            full_parts: 치고 있는 시각에서 자리를 다 채운 칸(``PART_CLOCK`` · ``PART_FRAME``)
         """
-        if typing is not None and typing[0] == row and self._fieldOverflows(row, typing[1]):
-            return self.tr("Above the maximum — leaving the field sets it to the maximum")
+        if typing is not None and typing[0] == row:
+            if self._overflowParts(self.rows[row][typing[1]]) & full_parts:
+                return self.tr("Above the maximum — leaving the field sets it to the maximum")
         if typing == (row, END) and self._endOverflows(row):
             return self.tr("Past the end of the video — leaving the field sets it to the end")
         if row == self._clamped:

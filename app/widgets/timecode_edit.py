@@ -160,6 +160,10 @@ class TimecodeEdit(QLineEdit):
         """친 숫자 — 아직 치지 않은 자리는 들어 있지 않다."""
         return self._digits
 
+    def isFull(self) -> bool:
+        """자리를 다 채웠는지(시분초 칸은 6자리, 프레임 칸은 2자리) — 더 쳐도 값이 바뀌지 않는다."""
+        return len(self._digits) == self._max_digits
+
     def text(self) -> str:
         """칸의 값 — 언제나 묶음 수만큼(``HH:MM:SS:FF`` · ``HH:MM:SS`` · ``FF``). 치지 않은 자리는 0이다."""
         padded = self._digits.zfill(self._max_digits)

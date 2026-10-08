@@ -527,7 +527,9 @@ class SectionEditDialog(QDialog):
             row.showMessage(
                 {
                     MESSAGE_ERROR: error,
-                    MESSAGE_NOTICE: viewmodel.noticeText(index, self._typing),
+                    MESSAGE_NOTICE: viewmodel.noticeText(
+                        index, self._typing, self._fullParts(index)
+                    ),
                     MESSAGE_NOTE: viewmodel.ignoredText() if ignored else "",
                 }
             )
@@ -545,6 +547,14 @@ class SectionEditDialog(QDialog):
         self.addButton.setEnabled(viewmodel.canAdd())
         # 끝 칸을 치는 중 끝만 영상 끝을 넘은 것은 확인을 막지 않는다 — 확인이 그 칸을 맞춘다
         self.okButton.setEnabled(viewmodel.canCommit(self._typing))
+
+    def _fullParts(self, index: int) -> frozenset[str]:
+        """치고 있는 시각이 그 행의 것이면, 그 시각에서 자리를 다 채운 칸. 아니면 빈 집합."""
+        if self._typing is None or self._typing[0] != index:
+            return frozenset()
+        typed = self._rows[index].edit(self._typing[1])
+        parts = ((PART_CLOCK, typed.clockEdit), (PART_FRAME, typed.frameEdit))
+        return frozenset(name for name, part in parts if part.isFull())
 
     @staticmethod
     def _setFlag(widget: QWidget, name: str, on: bool) -> None:
