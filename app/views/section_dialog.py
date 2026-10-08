@@ -277,7 +277,12 @@ class SectionEditDialog(QDialog):
         layout.addWidget(self.waitHintLabel)
 
         buttons = QHBoxLayout()
-        buttons.addStretch(1)
+        # 구간 길이의 합이 영상보다 길다는 알림 — 버튼 줄의 왼쪽 남는 자리를 쓴다. 글이 없어도
+        # 그 자리를 차지해, 알림이 생기고 사라져도 행 영역과 버튼이 움직이지 않는다. 좁으면
+        # 말줄임하고 전문은 툴팁이다(ElidingLabel)
+        self.totalLabel = ElidingLabel(self)
+        self.totalLabel.setObjectName("sectionTotalLabel")
+        buttons.addWidget(self.totalLabel, 1)
         self.cancelButton = QPushButton(self)
         self.cancelButton.setObjectName("sectionCancelButton")
         self.cancelButton.setAutoDefault(False)
@@ -555,6 +560,7 @@ class SectionEditDialog(QDialog):
             self.tr("Add a section (up to {0})").format(viewmodel.maxSections())
         )
         self.addButton.setEnabled(viewmodel.canAdd())
+        self.totalLabel.setText(viewmodel.totalNoticeText())
         # 끝 칸을 치는 중 끝만 영상 끝을 넘은 것은 확인을 막지 않는다 — 확인이 그 칸을 맞춘다
         self.okButton.setEnabled(viewmodel.canCommit(self._typing))
 

@@ -391,6 +391,10 @@ Check your connection and cookies, then open this window again.</source>
         <translation>최대값({0})으로 맞췄습니다</translation>
     </message>
     <message>
+        <source>Sections add up to {0} — longer than the video ({1})</source>
+        <translation>구간 합 {0} · 영상 길이({1})보다 깁니다</translation>
+    </message>
+    <message>
         <source>Sections {0} / {1} · {2}fps · video ends at {3}</source>
         <translation>구간 {0} / {1} · {2}fps · 영상 끝 {3}</translation>
     </message>

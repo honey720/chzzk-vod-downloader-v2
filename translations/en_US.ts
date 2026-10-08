@@ -396,6 +396,10 @@ Check your connection and cookies, then open this window again.</translation>
         <translation>Set to the maximum ({0})</translation>
     </message>
     <message>
+        <source>Sections add up to {0} — longer than the video ({1})</source>
+        <translation>Sections add up to {0} — longer than the video ({1})</translation>
+    </message>
+    <message>
         <source>Sections {0} / {1} · {2}fps · video ends at {3}</source>
         <translation>Sections {0} / {1} · {2}fps · video ends at {3}</translation>
     </message>

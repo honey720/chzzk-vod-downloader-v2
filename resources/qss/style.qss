@@ -380,6 +380,12 @@ QLineEdit[invalid="true"]:focus {
     color: @stateFailed;
 }
 
+/* 구간 길이의 합이 영상보다 길다는 알림 — 오류(빨강)보다 약하고 흐린 안내보다는 또렷하게 */
+#sectionTotalLabel {
+    font-size: @fontSizeMeta;
+    color: @text;
+}
+
 #sectionStatusLabel {
     color: @textMuted;
 }

@@ -917,6 +917,29 @@ class SectionEditViewModel(QObject):
         start, end = self._pairs[row]
         return format_milliseconds(end - start)
 
+    def totalNoticeText(self) -> str:
+        """구간 길이의 합이 영상 길이보다 길 때의 알림. 그렇지 않으면 빈 글 — 오류가 아니다.
+
+        걸러 내지 않은 행 가운데 해석된 행의 길이를 더한다(빈 시각은 처음 · 끝으로 푼 값이다).
+        구간이 겹치면 합이 영상보다 길어질 수 있다 — 겹치는 부분을 구간마다 따로 만든다는 뜻이라
+        확인은 막지 않고 알리기만 한다. 견주는 단위는 프레임이다(초로 더하면 끝자리가 흔들린다).
+        영상 길이를 모르면(조회 전 · 실패) 알리지 않는다.
+        """
+        if self.state != STATE_READY or self.fps is None or self.duration <= 0:
+            return ""
+        total_frames = sum(
+            frame_index(end, self.fps) - frame_index(start, self.fps)
+            for start, end in self._pairs.values()
+            if end > start
+        )
+        video_frames = round(self.duration * frame_rate(self.fps))
+        if total_frames <= video_frames:
+            return ""
+        total_seconds = float(total_frames / frame_rate(self.fps))
+        return self.tr("Sections add up to {0} — longer than the video ({1})").format(
+            format_milliseconds(total_seconds), format_milliseconds(self.duration)
+        )
+
     def millisecondsText(self, row: int, column: int) -> str:
         """칸의 시각을 밀리초 표기로 — 표시만 한다. 해석되지 않는 칸 · 걸러 낸 행은 빈 문자열."""
         if row in self._ignored:

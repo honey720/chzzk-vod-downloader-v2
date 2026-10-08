@@ -3915,3 +3915,138 @@ def test_frame_field_tooltip_follows_the_frame_rate(qtbot, tmp_path, basis):
     dialog = open_editor(qtbot, win, item)
 
     assert "Frame number, 0 to 29" in dialog._rows[0].endEdit.frameEdit.toolTip().splitlines()
+
+
+# ================================================================ 구간 길이의 합이 영상보다 길면 알린다 (#309)
+
+TOTAL_OVER = "Sections add up to {0} — longer than the video ({1})"
+
+
+def total_shown(dialog) -> str:
+    """버튼 줄 왼쪽에 지금 보이는 합 알림. 없으면 빈 문자열."""
+    return dialog.totalLabel.text() if dialog.totalLabel.isVisible() else ""
+
+
+def test_total_longer_than_the_video_is_noted_and_does_not_block_ok(qtbot, tmp_path, basis):
+    """구간 길이의 합이 영상 길이보다 길면 버튼 줄 왼쪽에 알림이 보이고, 확인은 켜져 있어야 한다.
+
+    60fps · 3600초. 세 행: 처음~10분 / 4분~끝 / 1분~끝(빈 끝 = 3600초)
+    -> 합 = 10분 + 56분 + 59분 = 02:05:00.000 > 영상 01:00:00.000
+    -> 알림 == "Sections add up to 02:05:00.000 — longer than the video (01:00:00.000)", 오류 없음, 확인 켜짐
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+
+    set_rows(
+        dialog,
+        [("", "00:10:00:00"), ("00:04:00:00", ""), ("00:01:00:00", "")],
+    )
+    _pump()
+
+    assert total_shown(dialog) == TOTAL_OVER.format("02:05:00.000", "01:00:00.000")
+    assert [error_shown(row) for row in dialog._rows] == ["", "", ""]
+    assert dialog.okButton.isEnabled()
+
+
+@pytest.mark.parametrize(
+    ("second_start", "shown_text"),
+    [
+        # 처음~30분(108000프레임) + 그 시각~끝(216000프레임째)
+        ("00:30:00:00", ""),  # 108000 + 108000 = 216000 == 영상의 프레임 수 — 같으면 알리지 않는다
+        # 108000 + 108001 = 216001프레임 = 3600.0166…초
+        ("00:29:59:59", TOTAL_OVER.format("01:00:00.017", "01:00:00.000")),
+    ],
+    ids=["합이 영상과 같다", "합이 한 프레임 길다"],
+)
+def test_total_is_noted_only_when_it_is_longer_than_the_video(
+    qtbot, tmp_path, basis, second_start, shown_text
+):
+    """구간 길이의 합이 영상 길이와 같거나 짧으면 알림이 없고, 한 프레임이라도 길면 보여야 한다.
+
+    60fps · 3600초(216000프레임). 행 처음~00:30:00:00, 행 second_start~끝 -> 알림 == shown_text
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+
+    set_rows(dialog, [("", "00:30:00:00"), (second_start, "")])
+    _pump()
+
+    assert total_shown(dialog) == shown_text
+
+
+def test_an_empty_row_is_left_out_of_the_total_and_an_empty_end_counts_to_the_end(
+    qtbot, tmp_path, basis
+):
+    """완전히 빈 행은 합에 들지 않고, 빈 끝은 영상 끝까지로 세야 한다.
+
+    60fps · 3600초
+    행 처음~00:59:00:00 과 완전히 빈 행 -> 알림 없음(빈 행을 영상 전체로 세면 넘는다)
+    그 빈 행의 시작에 00:50:00:00을 넣음(끝은 빈 채 — 영상 끝) -> 59분 + 10분 = 01:09:00.000
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+
+    set_rows(dialog, [("", "00:59:00:00"), ("", "")])
+    _pump()
+    with_blank_row = (total_shown(dialog), notes(dialog))
+    type_into(dialog._rows[1].startEdit, "00:50:00:00")
+    leave(dialog._rows[1].startEdit)
+    _pump()
+
+    assert with_blank_row == ("", ["", IGNORED])
+    assert total_shown(dialog) == TOTAL_OVER.format("01:09:00.000", "01:00:00.000")
+
+
+def test_the_total_note_coming_and_going_moves_neither_the_rows_nor_the_buttons(
+    qtbot, tmp_path, basis
+):
+    """합 알림이 생기고 사라져도 행 영역과 취소 · 확인 버튼의 자리가 그대로여야 한다.
+
+    60fps · 3600초. 두 행(알림 없음) → 둘째 행의 시작을 당겨 합이 넘게 함(알림) → 되돌림(알림 없음)
+    -> 세 시점의 (행 영역의 자리, 취소 버튼의 자리, 확인 버튼의 자리)가 모두 같다
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+
+    def places():
+        return (
+            dialog.scrollArea.geometry(),
+            dialog.cancelButton.geometry(),
+            dialog.okButton.geometry(),
+        )
+
+    set_rows(dialog, [("", "00:30:00:00"), ("00:40:00:00", "")])
+    _pump()
+    quiet = (total_shown(dialog), places())
+    type_into(dialog._rows[1].startEdit, "00:10:00:00")
+    leave(dialog._rows[1].startEdit)
+    _pump()
+    noted = (bool(total_shown(dialog)), places())
+    type_into(dialog._rows[1].startEdit, "00:40:00:00")
+    leave(dialog._rows[1].startEdit)
+    _pump()
+
+    assert quiet[0] == "" and noted[0] is True and total_shown(dialog) == ""
+    assert noted[1] == quiet[1] and places() == quiet[1]
+
+
+def test_no_total_is_noted_before_the_length_of_the_video_is_known(qtbot, tmp_path, basis):
+    """영상 길이를 모르는 동안(조회 중)에는 합 알림이 없어야 한다.
+
+    조회를 붙잡아 둔 편집 창 -> 뷰모델의 합 알림 == "", 창의 합 알림 없음
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    basis.gate.clear()
+    click_summary(win, item)
+    dialog = win._sectionDialog
+    try:
+        assert dialog.viewModel().state == "loading", "전제: 조회 중이다"
+        assert dialog.viewModel().totalNoticeText() == ""
+        assert total_shown(dialog) == ""
+    finally:
+        basis.gate.set()
