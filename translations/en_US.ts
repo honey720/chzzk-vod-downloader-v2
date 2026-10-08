@@ -360,6 +360,14 @@ Check your connection and cookies, then open this window again.</translation>
         <translation>Reading the video information...</translation>
     </message>
     <message>
+        <source>Above the maximum — leaving the field sets it to the maximum</source>
+        <translation>Above the maximum — leaving the field sets it to the maximum</translation>
+    </message>
+    <message>
+        <source>Set to the maximum ({0})</source>
+        <translation>Set to the maximum ({0})</translation>
+    </message>
+    <message>
         <source>Sections {0} / {1} · {2}fps · video ends at {3}</source>
         <translation>Sections {0} / {1} · {2}fps · video ends at {3}</translation>
     </message>

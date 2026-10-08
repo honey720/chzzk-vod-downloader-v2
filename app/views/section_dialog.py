@@ -329,7 +329,7 @@ class SectionEditDialog(QDialog):
     # ---- 끝을 맞췄다는 안내 ----
 
     def _onEndClamped(self, _row: int) -> None:
-        """뷰모델이 끝을 영상 끝으로 맞췄다 — 이 조작이 끝난 뒤의 다음 조작부터 안내를 내릴 수 있다."""
+        """뷰모델이 값을 맞췄다(영상 끝 · 칸의 최대값) — 이 조작이 끝난 뒤의 다음 조작부터 안내를 내릴 수 있다."""
         self._clampNoticeArmed = False
         self._armTimer.start()
 
@@ -459,7 +459,7 @@ class SectionEditDialog(QDialog):
         self._showSettled(row, column, edit)
 
     def _showSettled(self, row: int, column: int, edit: TimePointEdit) -> None:
-        """편집을 끝낸 칸의 값이 뷰모델에서 바뀌었으면(영상 끝으로 맞춤) 칸에 그 값을 넣는다.
+        """편집을 끝낸 칸의 값이 뷰모델에서 바뀌었으면(영상 끝 · 칸의 최대값으로 맞춤) 칸에 그 값을 넣는다.
 
         표시를 맞추는 쪽(``_refresh``)은 포커스가 있는 칸을 건드리지 않는다 — Enter · 붙여넣기는
         포커스가 그 칸에 있는 채로 편집을 끝내므로 여기서 넣는다. 넣은 값은 전부 밝게 보인다.
@@ -469,10 +469,10 @@ class SectionEditDialog(QDialog):
             edit.setText(settled)
 
     def _onPasted(self, row: int, column: int, edit: TimePointEdit) -> None:
-        """칸에 글을 붙여넣었다 — 끝이 영상의 끝을 넘으면 떠나기를 기다리지 않고 바로 맞춘다."""
+        """칸에 글을 붙여넣었다 — 넘는 값(칸의 최대값 · 영상의 끝)을 떠나기를 기다리지 않고 바로 맞춘다."""
         if not isValid(self._viewmodel) or not self._isCurrent(row, column, edit):
             return
-        if column == END and self._viewmodel.clampEnd(row):
+        if self._viewmodel.settle(row, column):
             self._showSettled(row, column, edit)
 
     def _onEntered(self, row: int, column: int) -> None:
@@ -505,14 +505,9 @@ class SectionEditDialog(QDialog):
             # 걸러 낸 행은 번호가 없다 — 남은 행끼리 1부터 잇는다(파일 이름의 번호)
             number = viewmodel.rowNumber(index)
             row.numberLabel.setText("" if number is None else str(number))
-            # 치고 있는 행의 오류는 표(ERROR_TIMING)가 정한 때에 띄운다. 프레임 칸에 두 자리를
-            # 다 쳤으면 프레임 넘침은 바로 띄운다
-            frame_full = False
-            if self._typing is not None and self._typing[0] == index:
-                typed = row.edit(self._typing[1])
-                frame_full = typed.typingFrame() and typed.frameIsFull()
-            error = viewmodel.shownErrorText(index, self._typing, frame_full)
-            flagged = viewmodel.shownErrorParts(index, self._typing, frame_full)
+            # 치고 있는 행의 오류는 표(ERROR_TIMING)가 정한 때에 띄운다
+            error = viewmodel.shownErrorText(index, self._typing)
+            flagged = viewmodel.shownErrorParts(index, self._typing)
             for column in (START, END):
                 edit = row.edit(column)
                 text = viewmodel.rows[index][column]

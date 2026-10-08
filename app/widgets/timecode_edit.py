@@ -459,7 +459,6 @@ class TimePointEdit(QWidget):
         layout.setSpacing(_PART_SPACING)
         self.clockEdit = TimecodeEdit(self, CLOCK_FIELDS)
         self.frameEdit = TimecodeEdit(self, FRAME_FIELDS)
-        self._typing: TimecodeEdit | None = None  # 지금 숫자를 치고 있는 칸
         self._empty_text = _EMPTY_TIME_POINT  # 빈 시각이 뜻하는 값 — 칸에 흐리게 깔린다
         for part in (self.clockEdit, self.frameEdit):
             layout.addWidget(part)
@@ -523,17 +522,8 @@ class TimePointEdit(QWidget):
         """두 칸 가운데 하나에 포커스가 있는지."""
         return self.clockEdit.hasFocus() or self.frameEdit.hasFocus()
 
-    def typingFrame(self) -> bool:
-        """지금 치고 있는 칸이 프레임 칸인지."""
-        return self._typing is self.frameEdit
-
-    def frameIsFull(self) -> bool:
-        """프레임 칸에 두 자리를 다 쳤는지 — 더 칠 수 없으므로 값이 더 바뀌지 않는다."""
-        return len(self.frameEdit.digits()) == FRAME_FIELDS * _FIELD_DIGITS
-
     def commit(self) -> None:
         """이 시각의 편집을 끝낸다 — ``committed``를 낸다."""
-        self._typing = None
         self.committed.emit()
 
     # ---- 복사 · 붙여넣기 ----
@@ -560,7 +550,6 @@ class TimePointEdit(QWidget):
         self.frameEdit.setText(frame.zfill(_FIELD_DIGITS))
         self._syncEmptyText()
         if self.text() != before:
-            self._typing = part
             self.edited.emit(self.text())
         return True
 
@@ -579,7 +568,6 @@ class TimePointEdit(QWidget):
         def relay(_text: str) -> None:
             if not isValid(self):
                 return
-            self._typing = part
             self._syncEmptyText()
             self.edited.emit(self.text())
 

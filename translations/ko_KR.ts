@@ -355,6 +355,14 @@ Check your connection and cookies, then open this window again.</source>
         <translation>영상 정보를 읽는 중...</translation>
     </message>
     <message>
+        <source>Above the maximum — leaving the field sets it to the maximum</source>
+        <translation>최대값을 넘습니다 · 칸을 떠나면 최대값으로 맞춥니다</translation>
+    </message>
+    <message>
+        <source>Set to the maximum ({0})</source>
+        <translation>최대값({0})으로 맞췄습니다</translation>
+    </message>
+    <message>
         <source>Sections {0} / {1} · {2}fps · video ends at {3}</source>
         <translation>구간 {0} / {1} · {2}fps · 영상 끝 {3}</translation>
     </message>

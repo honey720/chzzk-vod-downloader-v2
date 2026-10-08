@@ -459,23 +459,8 @@ def flagged_fields(row) -> set[str]:
         # 시작과 끝이 모두 영상 끝을 넘음 — 넘은 시각의 칸 모두. 끝만 넘은 것은 오류가 아니라
         # 영상 끝으로 맞춘다(아래 "끝이 영상 끝을 넘으면 맞춘다"의 테스트들)
         ("01:10:00:00", "01:20:00:00", "Selection is outside the video", ALL_FOUR),
-        # 초 · 분 넘침 — 그 시각의 시분초 칸만
-        ("00:10:60:00", "00:20:00:00", "Minutes and seconds must be below 60", {"start clock"}),
-        ("00:60:00:00", "00:20:00:00", "Minutes and seconds must be below 60", {"start clock"}),
-        ("00:00:75:00", "00:20:00:00", "Minutes and seconds must be below 60", {"start clock"}),
-        # 프레임 넘침(60fps의 FF는 59까지) — 그 시각의 프레임 칸만
-        (
-            "00:10:00:60",
-            "00:20:00:00",
-            "Frame number must be below the frame rate",
-            {"start frame"},
-        ),
-        (
-            "00:10:00:00",
-            "00:20:00:75",
-            "Frame number must be below the frame rate",
-            {"end frame"},
-        ),
+        # 초 · 분 · 프레임의 넘침은 오류가 아니다 — 칸을 떠나면 최대값으로 맞춘다
+        # (아래 "칸의 최대값으로 맞춘다"의 테스트들)
     ],
 )
 def test_invalid_input_is_shown_on_the_row_and_cannot_be_confirmed(
@@ -506,8 +491,8 @@ def test_frame_field_and_range_follow_the_looked_up_frame_rate_and_length(qtbot,
     """FF의 범위와 구간의 끝은 조회한 프레임률 · 길이로 판정해야 한다.
 
     29.97fps(2997/100) · 길이 10.02초
-    -> 끝 "00:00:10:00" 통과 / "00:00:09:30" FF 초과 / "00:00:10:01"(10.0334초)은 길이를 넘어
-       영상 끝 "00:00:10:00"으로 맞춰진다
+    -> 끝 "00:00:10:00" 통과 / "00:00:09:30"은 FF가 최대(29)로 맞춰져 "00:00:09:29" /
+       "00:00:10:01"(10.0334초)은 길이를 넘어 영상 끝 "00:00:10:00"으로 맞춰진다
     -> 통과한 "00:00:01:15"~"00:00:10:00"의 시작 == 1 + 15 × 100 ÷ 2997초
     """
     basis.fps = Fraction(2997, 100)
@@ -518,7 +503,7 @@ def test_frame_field_and_range_follow_the_looked_up_frame_rate_and_length(qtbot,
     row = dialog._rows[0]
 
     set_rows(dialog, [("00:00:01:15", "00:00:09:30")])
-    assert shown(row.errorLabel) == "Frame number must be below the frame rate"
+    assert row.endEdit.text() == "00:00:09:29" and not row.errorLabel.isVisible()
     set_rows(dialog, [("00:00:01:15", "00:00:10:01")])
     assert row.endEdit.text() == "00:00:10:00" and not row.errorLabel.isVisible()
     set_rows(dialog, [("00:00:01:15", "00:00:10:00")])
@@ -589,29 +574,113 @@ def test_the_twenty_first_section_cannot_be_added(qtbot, tmp_path, basis):
     assert shown(dialog.headerLabel) == "Sections 1 / 20 · 60fps · video ends at 01:00:00:00"
 
 
-def test_out_of_range_digits_are_flagged_and_left_as_typed(qtbot, tmp_path, basis):
-    """초 · 분이 60 이상이거나 프레임이 프레임률 이상이면 올림하지 않고 친 그대로 두고 오류로 강조해야 한다.
+ABOVE_MAX = "Above the maximum — leaving the field sets it to the maximum"
+SET_TO_MAX = "Set to the maximum ({0})"
 
-    60fps. 시작 칸에 숫자 7500(초 75)을 치고 칸을 떠남
-    -> 칸의 값 == "00:00:75:00"(00:01:15:00으로 바뀌지 않는다), invalid, 확인 꺼짐
-    시작 칸에 60(프레임 60)을 치고 칸을 떠남 -> 값 == "00:00:00:60", invalid
+
+def _notice(row) -> str:
+    """행 아래에 지금 보이는 흐린 안내. 보이지 않으면 빈 문자열."""
+    return shown(row.noticeLabel) if row.noticeLabel.isVisible() else ""
+
+
+@pytest.mark.parametrize(
+    ("fps", "column", "typed", "settled"),
+    [
+        (60, "startEdit", "00:75:00:00", "00:59:00:00"),  # 분 75
+        (60, "startEdit", "00:00:99:00", "00:00:59:00"),  # 초 99
+        (60, "startEdit", "00:10:00:75", "00:10:00:59"),  # 프레임 75 — 60fps의 프레임은 59까지
+        (60, "endEdit", "00:20:00:75", "00:20:00:59"),
+        (30, "startEdit", "00:10:00:45", "00:10:00:29"),  # 30fps의 프레임은 29까지
+        (60, "startEdit", "00:75:99:75", "00:59:59:59"),  # 셋이 함께 넘는다
+    ],
+    ids=["분 75", "초 99", "프레임 75", "끝의 프레임 75", "30fps 프레임 45", "셋 모두"],
+)
+def test_digits_above_the_maximum_are_set_to_the_maximum_when_the_field_is_left(
+    qtbot, tmp_path, basis, fps, column, typed, settled
+):
+    """분 · 초 · 프레임이 최대를 넘은 채 칸을 떠나면 오류 없이 최대값으로 맞춰지고, 맞췄다는 안내가 보여야 한다.
+
+    3600초 영상. 표의 프레임률에서 표의 칸에 값을 치고 떠남
+    -> 치는 동안: 값은 친 그대로, 오류 없음 · 칸 강조 없음, 안내 == 넘음 안내
+    -> 떠난 뒤: 값 == settled, 오류 없음 · 칸 강조 없음, 안내 == "Set to the maximum (settled)", 확인 켜짐
     """
+    basis.fps = Fraction(fps)
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
     dialog = open_editor(qtbot, win, item)
     row = dialog._rows[0]
+    edit = getattr(row, column)
 
-    type_into(row.startEdit, "7500")
-    leave(row.startEdit)
-    assert row.startEdit.text() == "00:00:75:00"
-    assert row.startEdit.property("invalid") is True and not dialog.okButton.isEnabled()
-    assert shown(row.errorLabel) == "Minutes and seconds must be below 60"
+    type_into(edit, typed)
+    _pump()
+    during = (edit.text(), error_shown(row), flagged_fields(row), _notice(row))
+    leave(edit)
+    _pump()
 
-    type_into(row.startEdit, "60")
-    leave(row.startEdit)
-    assert row.startEdit.text() == "00:00:00:60"
-    assert row.startEdit.property("invalid") is True
-    assert shown(row.errorLabel) == "Frame number must be below the frame rate"
+    assert during == (typed, "", set(), ABOVE_MAX)
+    assert edit.text() == settled
+    assert (error_shown(row), flagged_fields(row)) == ("", set())
+    assert _notice(row) == SET_TO_MAX.format(settled)
+    assert dialog.okButton.isEnabled()
+
+
+def test_a_pasted_value_above_the_maximum_is_set_at_once(qtbot, tmp_path, basis, monkeypatch):
+    """붙여넣은 값의 분 · 초 · 프레임이 최대를 넘으면 칸을 떠나기를 기다리지 않고 바로 최대값으로 맞춰야 한다.
+
+    60fps · 3600초. 클립보드 "00:75:99:75"를 시작 시분초 칸에 붙여넣음(포커스는 그 칸에 그대로)
+    -> 시작 == "00:59:59:59", 맞춘 안내, 오류 없음
+    """
+
+    class _Clipboard:
+        def text(self) -> str:
+            return "00:75:99:75"
+
+        def setText(self, text: str) -> None:
+            pass
+
+    monkeypatch.setattr(
+        "app.widgets.timecode_edit.QGuiApplication.clipboard", staticmethod(lambda: _Clipboard())
+    )
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    row = dialog._rows[0]
+    row.startEdit.clockEdit.setFocus()
+
+    row.startEdit.clockEdit.paste()
+    _pump()
+
+    assert row.startEdit.text() == "00:59:59:59"
+    assert (error_shown(row), _notice(row)) == ("", SET_TO_MAX.format("00:59:59:59"))
+
+
+@pytest.mark.parametrize(
+    ("text", "message", "flagged"),
+    [
+        ("00:10:60:00", "Minutes and seconds must be below 60", {"start clock"}),
+        ("00:10:00:60", "Frame number must be below the frame rate", {"start frame"}),
+    ],
+    ids=["초 60", "프레임 60"],
+)
+def test_an_overflow_left_in_a_field_nobody_is_typing_in_is_shown_as_an_error(
+    qtbot, tmp_path, basis, text, message, flagged
+):
+    """치고 있지 않은 칸에 넘는 값이 맞춰지지 않은 채 남아 있으면 그 칸의 오류로 보이고 확인을 막아야 한다.
+
+    60fps. 뷰모델의 시작 칸에 넘는 값을 "치는 도중의 값"으로 직접 넣음(창은 아무 칸도 치고 있지 않다)
+    -> 행의 문구 == message, 붉게 칠해진 칸 == flagged, 확인 꺼짐
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+
+    dialog.viewModel().setText(0, 0, text, False)
+    _pump()
+
+    row = dialog._rows[0]
+    assert shown(row.errorLabel) == message
+    assert flagged_fields(row) == flagged
+    assert not dialog.okButton.isEnabled()
 
 
 def type_more(edit, digits: str) -> None:
@@ -683,11 +752,11 @@ def test_an_end_still_below_the_start_waits_until_the_field_is_left(qtbot, tmp_p
 
 
 def test_a_field_overflow_on_the_way_to_a_valid_value_is_not_flagged(qtbot, tmp_path, basis):
-    """치는 도중 잠깐 생기는 자리 넘침(초 ≥ 60)은 띄우지 않고, 다 친 값이 유효하면 오류가 없어야 한다.
+    """치는 도중 잠깐 생기는 자리 넘침(초 ≥ 60)은 값을 바꾸지 않고 안내만 보이며, 다 친 값이 유효하면 그대로 남아야 한다.
 
     30fps · 3600초. 끝 시분초 칸에 1 · 9 · 0 · 0을 차례로 침
-    -> "190"(00:01:90 — 초 90은 넘친다)에서 오류 문구 없음, 확인 꺼짐
-    -> "1900"(00:19:00)을 치고 칸을 떠나도 오류 없음, 확인 켜짐
+    -> "190"(00:01:90 — 초 90은 넘친다)에서 값 그대로, 오류 문구 없음, 넘음 안내
+    -> "1900"(00:19:00)을 치고 칸을 떠나면 값 == "00:19:00:00"(맞춰지지 않았다), 오류 · 안내 없음, 확인 켜짐
     """
     basis.fps = Fraction(30)
     item = _make_item(str(tmp_path))
@@ -698,23 +767,23 @@ def test_a_field_overflow_on_the_way_to_a_valid_value_is_not_flagged(qtbot, tmp_
     type_into(row.endEdit, "")  # 두 칸을 비운다
     type_more(row.endEdit, "190")
     assert row.endEdit.text() == "00:01:90:00"
-    assert error_shown(row) == "" and not dialog.okButton.isEnabled()
+    assert (error_shown(row), _notice(row)) == ("", ABOVE_MAX)
 
     type_more(row.endEdit, "0")
     leave(row.endEdit)
 
     assert row.endEdit.text() == "00:19:00:00"
-    assert error_shown(row) == "" and dialog.okButton.isEnabled()
+    assert (error_shown(row), _notice(row)) == ("", "") and dialog.okButton.isEnabled()
 
 
-def test_a_frame_past_the_frame_rate_is_flagged_as_soon_as_both_digits_are_typed(
+def test_a_frame_past_the_frame_rate_shows_a_notice_while_typed_and_is_set_when_left(
     qtbot, tmp_path, basis
 ):
-    """프레임 칸은 한 자리일 때는 오류를 띄우지 않고, 두 자리를 다 쳐 프레임률 이상이 되면 칸을 떠나기 전에 바로 띄워야 한다.
+    """프레임 칸에 프레임률 이상을 치면 값을 바꾸지 않고 안내만 보이고, 칸을 떠나면 프레임률 − 1로 맞춰져야 한다.
 
-    60fps. 끝 프레임 칸에 6 -> 오류 문구 없음(00:00:00:06). 0을 더 침(60)
-    -> 칸을 떠나지 않았는데 "Frame number must be below the frame rate", 프레임 칸만 강조
-    세 자리째 5를 침 -> 받지 않는다(값은 그대로 60)
+    60fps. 끝 프레임 칸에 6 -> 안내 없음(00:30:00:06). 0을 더 침(60)
+    -> 값 == "00:30:00:60" 그대로, 오류 없음 · 칸 강조 없음, 넘음 안내
+    세 자리째 5를 침 -> 받지 않는다(값은 그대로 60). 칸을 떠남 -> "00:30:00:59", 맞춘 안내
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -723,18 +792,20 @@ def test_a_frame_past_the_frame_rate_is_flagged_as_soon_as_both_digits_are_typed
     type_into(row.endEdit, "00:30:00:00")
 
     type_frame(row.endEdit, "6")
-    assert row.endEdit.text() == "00:30:00:06" and error_shown(row) == ""
+    assert row.endEdit.text() == "00:30:00:06" and _notice(row) == ""
 
     type_frame(row.endEdit, "0")
 
     assert row.endEdit.text() == "00:30:00:60"
-    assert error_shown(row) == "Frame number must be below the frame rate"
-    assert row.endEdit.frameEdit.property("invalid") is True
-    assert row.endEdit.clockEdit.property("invalid") is False
-    assert row.startEdit.property("invalid") is False
+    assert (error_shown(row), flagged_fields(row), _notice(row)) == ("", set(), ABOVE_MAX)
 
     type_frame(row.endEdit, "5")
     assert row.endEdit.text() == "00:30:00:60"
+    leave(row.endEdit)
+    _pump()
+
+    assert row.endEdit.text() == "00:30:00:59"
+    assert _notice(row) == SET_TO_MAX.format("00:30:00:59")
 
 
 def test_an_error_disappears_at_once_when_the_value_becomes_valid(qtbot, tmp_path, basis):
@@ -2107,11 +2178,11 @@ def test_enter_confirms_the_field_and_moves_on_without_closing_the_window(qtbot,
     assert item.selections == ()
 
 
-def test_enter_shows_the_errors_that_wait_for_the_field_to_be_left(qtbot, tmp_path, basis):
-    """Enter는 칸을 떠날 때 띄우는 오류를 띄워야 한다.
+def test_enter_sets_digits_above_the_maximum_like_leaving_the_field(qtbot, tmp_path, basis):
+    """Enter는 칸을 떠날 때처럼 최대를 넘은 값을 최대값으로 맞춰야 한다.
 
     30fps. 끝 시분초 칸에 75(초 75)를 치고 Enter
-    -> "Minutes and seconds must be below 60", 창은 열려 있다
+    -> 끝 == "00:00:59:00", 맞춘 안내, 오류 없음, 창은 열려 있다
     """
     basis.fps = Fraction(30)
     item = _make_item(str(tmp_path))
@@ -2124,7 +2195,8 @@ def test_enter_shows_the_errors_that_wait_for_the_field_to_be_left(qtbot, tmp_pa
     QTest.keyClick(row.endEdit.clockEdit, Qt.Key.Key_Return)
     _pump()
 
-    assert shown(row.errorLabel) == "Minutes and seconds must be below 60"
+    assert row.endEdit.text() == "00:00:59:00"
+    assert (error_shown(row), _notice(row)) == ("", SET_TO_MAX.format("00:00:59:00"))
     assert dialog.isVisible()
 
 
@@ -3535,14 +3607,15 @@ def test_an_end_inside_the_video_gets_no_notice(qtbot, tmp_path, basis):
     assert dialog.viewModel().clampedRow() is None
 
 
-def test_only_the_frame_past_the_end_is_set_and_a_frame_past_the_rate_stays_an_error(
+def test_a_value_set_to_the_field_maximum_that_is_still_past_the_end_goes_on_to_the_end(
     qtbot, tmp_path, basis
 ):
-    """끝의 초는 영상 끝과 같고 프레임만 넘으면 맞추고, 프레임이 프레임률 이상이면 칸 오류로 둬야 한다.
+    """끝의 프레임이 프레임률 이상이면 최대값으로 맞추고, 그 결과가 영상 끝을 넘으면 이어서 영상 끝으로 맞추며 안내는 하나여야 한다.
 
     60fps · 1800.5초(끝 타임코드 00:30:00:30). 끝에 00:30:00:45를 치고 떠남 → 00:30:00:75를 치고 떠남
-    -> 45: 끝 == "00:30:00:30", 맞춘 안내
-    -> 75: 끝 == "00:30:00:75" 그대로, 오류 "Frame number must be below the frame rate", 프레임 칸만 강조
+    -> 45: 끝 == "00:30:00:30", 맞춘 안내(영상 끝)
+    -> 75: 최대값 59로 맞춘 "00:30:00:59"가 영상 끝을 넘어 끝 == "00:30:00:30", 안내는 영상 끝으로
+       맞췄다는 것 하나, 오류 없음 · 칸 강조 없음
     """
     _win, _item, dialog = half_hour_editor(qtbot, tmp_path, basis, duration=1800.5)
     row = dialog._rows[0]
@@ -3557,9 +3630,9 @@ def test_only_the_frame_past_the_end_is_set_and_a_frame_past_the_rate_stays_an_e
     _pump()
 
     assert set_to_end == ("00:30:00:30", SET_TO_END.format("00:30:00:30"))
-    assert row.endEdit.text() == "00:30:00:75"
-    assert error_shown(row) == "Frame number must be below the frame rate"
-    assert flagged_fields(row) == {"end frame"}
+    assert row.endEdit.text() == "00:30:00:30"
+    assert notice_shown(row) == SET_TO_END.format("00:30:00:30")
+    assert (error_shown(row), flagged_fields(row)) == ("", set())
 
 
 @pytest.mark.parametrize(
@@ -3677,7 +3750,7 @@ def test_an_end_set_to_the_end_reopens_empty_and_follows_a_new_resolution_withou
 def test_nothing_is_set_before_the_end_of_the_video_is_known(qtbot, tmp_path, basis):
     """영상의 끝을 모르는 동안(조회 중)에는 끝을 맞추지 않아야 한다.
 
-    조회를 붙잡아 둔 편집 창의 뷰모델에 끝 맞추기를 직접 청함 -> False, 맞춘 행 없음
+    조회를 붙잡아 둔 편집 창의 뷰모델에 끝 칸의 값을 맞추라고 직접 청함 -> False, 맞춘 행 없음
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -3686,7 +3759,7 @@ def test_nothing_is_set_before_the_end_of_the_video_is_known(qtbot, tmp_path, ba
     viewmodel = win._sectionDialog.viewModel()
     try:
         assert viewmodel.state == "loading", "전제: 조회 중이다"
-        assert viewmodel.clampEnd(0) is False
+        assert viewmodel.settle(0, 1) is False
         assert viewmodel.clampedRow() is None
     finally:
         basis.gate.set()
