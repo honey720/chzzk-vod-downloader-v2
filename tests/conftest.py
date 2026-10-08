@@ -5,6 +5,7 @@
 """
 
 import faulthandler
+import gc
 import os
 import re
 import socket
@@ -222,6 +223,11 @@ def _destroy_top_level_widgets():
         widget.deleteLater()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     app.processEvents()
+    # 테스트가 버린 Qt 객체(창 없이 만든 뷰모델과 그 타이머 등)를 여기 메인 스레드에서 수집한다.
+    # 두면 순환 수집이 아무 스레드에서나 돌 때 파괴된다 — 카드의 크기 조회 스레드에서 돌면 도는
+    # QTimer가 제 스레드 밖에서 파괴돼 등록이 남고, 그 타이머가 끝나는 순간 접근 위반으로 죽는다
+    # (일부 테스트만 골라 돌릴 때 재현됐다 #309). Qt를 쓴 테스트에서만 돈다
+    gc.collect()
     leftover = [f"{type(w).__name__}({w.objectName() or '-'})" for w in QApplication.topLevelWidgets()]
     assert not leftover, f"테스트 뒤 파괴되지 않은 최상위 위젯 {len(leftover)}개: {leftover}"
 
