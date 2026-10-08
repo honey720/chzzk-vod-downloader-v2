@@ -60,6 +60,8 @@ from tests.unit.core.section_retry import CutCalls, hand_over, snapshot
 
 FPS = 30
 KEYFRAMES = (0, 30, 42, 72, 90, 120, 150)  # -force_key_frames 0,1,1.4,2.4,3,4,5 (30fps)
+# 엔진 한 번의 실행을 기다려 주는 시간(초) — 가장 긴 실행이 2초 안팎이다. 넘으면 중단을 보낸다
+_RUN_LIMIT_SECONDS = 30.0
 
 
 def _seconds(frame: int) -> float:
@@ -179,7 +181,14 @@ class _Run:
 
     def start(self) -> "_Run":
         self.data.model.start()
-        self.engine.run()
+        # 실행이 끝나지 않으면 테스트가 중단을 보낸다 — 제품의 기다림(일시정지 등)에는 상한이 없다
+        guard = threading.Timer(_RUN_LIMIT_SECONDS, self.data.model.stop)
+        guard.daemon = True
+        guard.start()
+        try:
+            self.engine.run()
+        finally:
+            guard.cancel()
         return self
 
     @property

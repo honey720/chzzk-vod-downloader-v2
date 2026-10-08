@@ -225,6 +225,22 @@ STAGES = {
 }
 
 
+# 컷 한 번을 기다려 주는 시간(초) — 일시정지 0.6초를 합쳐 2초 안팎이면 끝난다
+_CUT_LIMIT_SECONDS = 30.0
+
+
+def _end_if_still_running(processes: list) -> threading.Timer:
+    """컷이 ``_CUT_LIMIT_SECONDS`` 안에 끝나지 않으면 띄운 ffmpeg를 끝내는 타이머를 걸어 돌려준다.
+
+    재개가 닿지 않으면 멈춘 ffmpeg는 컷의 제한 시간(10분 · 1시간)까지 서 있다 — 테스트가 끝낸다.
+    끝난 뒤 ``cancel()``한다.
+    """
+    guard = threading.Timer(_CUT_LIMIT_SECONDS, end_all, [processes])
+    guard.daemon = True
+    guard.start()
+    return guard
+
+
 @pytest.fixture(scope="module")
 def plain_cut(mp4_source, tmp_path_factory) -> bytes:  # noqa: F811
     """일시정지 없이 자른 결과의 바이트 — mp4, 프레임 35~80."""
@@ -267,6 +283,7 @@ def test_cut_paused_during_any_stage_resumes_and_writes_the_same_file(
             threading.Timer(0.6, pause.clear).start()
 
     launched = record_processes(monkeypatch, on_launch)
+    guard = _end_if_still_running(launched)
     try:
         hybrid_cut(path, frames, 35, 80, output, should_pause=pause.is_set)
         returned.append(time.perf_counter())
@@ -278,6 +295,7 @@ def test_cut_paused_during_any_stage_resumes_and_writes_the_same_file(
         assert not os.path.exists(cut_temp_dir_for(output))
         assert all(process.poll() is not None for process in launched)
     finally:
+        guard.cancel()
         end_all(launched)
 
 
@@ -310,8 +328,12 @@ def test_cut_paused_between_stages_launches_the_next_stage_only_after_resuming(
         return real(args, **kwargs)
 
     monkeypatch.setattr(cut_module, "run_ffmpeg", pausing)
+    guard = _end_if_still_running(launched)
 
-    hybrid_cut(path, frames, 35, 80, output, should_pause=pause.is_set)
+    try:
+        hybrid_cut(path, frames, 35, 80, output, should_pause=pause.is_set)
+    finally:
+        guard.cancel()
 
     assert during == before and len(launched) > before[0]
     with open(output, "rb") as made:
