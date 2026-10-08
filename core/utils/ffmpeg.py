@@ -98,6 +98,95 @@ def _windows_process_api() -> tuple:
     return ntdll.NtSuspendProcess, ntdll.NtResumeProcess
 
 
+_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000  # 잡의 마지막 핸들이 닫히면 잡 안의 프로세스를 끝낸다
+_JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9  # SetInformationJobObject의 정보 종류 번호
+
+
+@functools.lru_cache(maxsize=1)
+def _windows_child_job() -> tuple | None:
+    """Windows의 (잡 핸들, AssignProcessToJobObject) — 한 번만 만든다. 만들지 못하면 None.
+
+    잡(Job Object)은 프로세스 묶음이다. "마지막 핸들이 닫히면 안의 프로세스를 끝낸다"로 설정해
+    두고 이 프로세스만 그 핸들을 쥔다 — 이 프로세스가 **어떻게 끝나든**(정상 종료 · 강제 종료 ·
+    충돌) OS가 핸들을 닫으므로 잡에 넣은 ffmpeg가 함께 끝난다. 일시정지로 멈춰 있는 것도 끝난다.
+
+    핸들은 닫지 않는다 — 닫는 순간이 곧 자식을 끝내는 순간이다. 자식에게 물려주지도 않는다
+    (기본 보안 속성은 상속 불가다).
+
+    ⚠️ DLL · 함수 객체는 여기서 한 번만 만들고 인자 · 돌려주는 값의 형식을 적는다
+    (``_windows_process_api``의 주의와 같다).
+    """
+
+    class _BasicLimits(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", ctypes.c_int64),
+            ("PerJobUserTimeLimit", ctypes.c_int64),
+            ("LimitFlags", ctypes.c_uint32),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", ctypes.c_uint32),
+            ("Affinity", ctypes.c_size_t),
+            ("PriorityClass", ctypes.c_uint32),
+            ("SchedulingClass", ctypes.c_uint32),
+        ]
+
+    class _IoCounters(ctypes.Structure):
+        _fields_ = [(name, ctypes.c_uint64) for name in ("r", "w", "o", "rb", "wb", "ob")]
+
+    class _ExtendedLimits(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", _BasicLimits),
+            ("IoInfo", _IoCounters),
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32")
+    create = kernel32.CreateJobObjectW
+    create.argtypes = (ctypes.c_void_p, ctypes.c_wchar_p)
+    create.restype = ctypes.c_void_p  # HANDLE — 포인터 크기
+    configure = kernel32.SetInformationJobObject
+    configure.argtypes = (ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32)
+    configure.restype = ctypes.c_int  # BOOL
+    assign = kernel32.AssignProcessToJobObject
+    assign.argtypes = (ctypes.c_void_p, ctypes.c_void_p)
+    assign.restype = ctypes.c_int  # BOOL
+
+    job = create(None, None)
+    if not job:
+        return None
+    limits = _ExtendedLimits()
+    limits.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    configured = configure(
+        job, _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION, ctypes.byref(limits), ctypes.sizeof(limits)
+    )
+    return (job, assign) if configured else None
+
+
+def _end_with_parent(process: subprocess.Popen) -> bool:
+    """우리가 띄운 프로세스가 이 프로세스와 함께 끝나게 한다 (#309). 걸었으면 True.
+
+    컷 도중 일시정지한 채 앱이 정상 종료가 아닌 길로 끝나면(작업 관리자로 끝냄 · 충돌) 멈춘
+    ffmpeg가 멈춘 채 남았다. 정상 종료는 중단을 거쳐 끝내지만 그 길을 타지 못하는 종료가 있다.
+
+    - Windows: 프로세스를 잡에 넣는다(``_windows_child_job``)
+    - 그 밖: 아직 하지 않는다 — False를 돌려준다
+
+    걸지 못해도(잡을 만들지 못했거나 이미 끝난 프로세스) 실행은 그대로 간다. 띄운 직후에
+    부른다 — 띄우기와 넣기 사이의 짧은 틈에 이 프로세스가 죽으면 그 자식은 남는다.
+    """
+    if sys.platform != "win32":
+        return False
+    handle = getattr(process, "_handle", None)  # Popen이 띄울 때 받아 쥔 핸들
+    job = _windows_child_job()
+    if handle is None or job is None:
+        return False
+    job_handle, assign = job
+    return bool(assign(job_handle, int(handle)))
+
+
 def _set_suspended(process: subprocess.Popen, suspended: bool) -> bool:
     """우리가 띄운 프로세스를 OS 수준에서 멈추거나(True) 다시 돌린다(False) (#309). 됐으면 True.
 
@@ -330,6 +419,7 @@ def remux_stream(chunks: Iterable[bytes], dst_path: str) -> None:
         )
     except OSError as e:
         raise RemuxError(f"ffmpeg 실행 실패: {e}") from e
+    _end_with_parent(proc)
 
     # stderr는 별도 스레드로 계속 비운다 — 파이프 버퍼가 차면 ffmpeg가 멈춘다
     stderr_parts: list[bytes] = []
@@ -408,19 +498,32 @@ def run_ffmpeg(
         return _run_reporting(exe, args, timeout, cwd, on_out_time, should_stop, should_pause)
     if should_stop is not None or should_pause is not None:
         return _run_controlled(exe, args, timeout, cwd, should_stop, should_pause)
+    command = [exe, "-hide_banner", *args]
     try:
-        return subprocess.run(
-            [exe, "-hide_banner", *args],
-            capture_output=True,
+        # subprocess.run과 같은 일을 한다 — 띄운 프로세스를 쥐어야 앱과 함께 끝나게 걸 수 있다
+        with subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
             errors="replace",
             stdin=subprocess.DEVNULL,
-            timeout=timeout,
             cwd=cwd,
             creationflags=_CREATE_NO_WINDOW if sys.platform == "win32" else 0,
             env=_subprocess_env(exe),
-        )
+        ) as process:
+            _end_with_parent(process)
+            try:
+                output, errors = process.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.communicate()  # 끝난 프로세스의 파이프를 비우고 거둔다
+                raise
+            except BaseException:
+                process.kill()  # 기다리는 도중의 예외(인터럽트 등) — 프로세스를 남기지 않는다
+                raise
+        return subprocess.CompletedProcess(command, process.returncode, output, errors)
     except subprocess.TimeoutExpired as e:
         raise FFmpegTimeoutError(f"ffmpeg가 {timeout:g}초 안에 끝나지 않았다") from e
     except OSError as e:
@@ -470,6 +573,7 @@ def _run_controlled(
         )
     except OSError as e:
         raise FFmpegError(f"ffmpeg 실행 실패: {e}") from e
+    _end_with_parent(process)
     control = _Control(process, timeout, should_stop, should_pause)
     # 띄우자마자 한 번 확인한다 — 띄우는 사이에 온 일시정지 · 중단이 첫 간격만큼 늦지 않게
     outcome = control.poll()
@@ -522,6 +626,7 @@ def _run_reporting(
         )
     except OSError as e:
         raise FFmpegError(f"ffmpeg 실행 실패: {e}") from e
+    _end_with_parent(process)
     errors: list[str] = []
     reader = threading.Thread(target=lambda: errors.append(process.stderr.read()), daemon=True)
     reader.start()

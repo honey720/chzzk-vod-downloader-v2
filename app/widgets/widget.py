@@ -1048,9 +1048,14 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             # ⚠️ tr()은 f-string 밖에 둔다 — pyside6-lupdate는 f-string 중괄호
             # 안의 tr()을 못 읽어 -no-obsolete 재생성에서 항목이 지워진다(실측).
             paused_text = self.tr("Paused")
-            self.statusLabel.setText(
-                f"{item.download_progress}% · {paused_text}{self._sectionTally()}"
-            )
+            if getattr(item, "prepare_pending", False):
+                # 준비 중에 일시정지했다 (#309) — 아직 받은 것이 없어 진행률을 적지 않는다.
+                # 준비가 끝나면 받기를 띄우지 않고 일시정지 상태로 서고, 그때부터 "0% · …"다
+                self.statusLabel.setText(paused_text)
+            else:
+                self.statusLabel.setText(
+                    f"{item.download_progress}% · {paused_text}{self._sectionTally()}"
+                )
             self.fileSizeLabel.setText(self._withResolution(self._sizeText(item)))
 
         elif self.item.downloadState == DownloadState.FINISHED:

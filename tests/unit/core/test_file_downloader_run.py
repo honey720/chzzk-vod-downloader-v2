@@ -30,6 +30,8 @@ class RunLogger:
         self.closed = 0
         # 단계 경계 로그 (#110)
         self.transfer_completes: list[tuple] = []
+        self.transfer_paused: list[float] = []  # 전송 줄에 함께 온 일시정지한 시간(초)
+        self.breakdown_paused: list[float] = []  # 시간 구분 줄에 함께 온 일시정지한 시간(초)
         self.postprocess_starts: list[str] = []
         self.postprocess_completes: list[tuple] = []
         self.breakdowns: list[tuple] = []
@@ -40,8 +42,9 @@ class RunLogger:
     def log_part_resume(self, part_num, offset, part_size):
         pass
 
-    def log_transfer_complete(self, elapsed, downloaded_bytes, retries, peak_threads):
+    def log_transfer_complete(self, elapsed, downloaded_bytes, retries, peak_threads, paused=0.0):
         self.transfer_completes.append((elapsed, downloaded_bytes, retries, peak_threads))
+        self.transfer_paused.append(paused)
 
     def log_postprocess_start(self, kind):
         self.postprocess_starts.append(kind)
@@ -49,8 +52,9 @@ class RunLogger:
     def log_postprocess_complete(self, elapsed, output_size):
         self.postprocess_completes.append((elapsed, output_size))
 
-    def log_total_breakdown(self, transfer_elapsed, postprocess_elapsed):
+    def log_total_breakdown(self, transfer_elapsed, postprocess_elapsed, paused=0.0):
         self.breakdowns.append((transfer_elapsed, postprocess_elapsed))
+        self.breakdown_paused.append(paused)
 
     def log_thread_start(self, thread_id, start, end):
         pass

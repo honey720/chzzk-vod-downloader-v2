@@ -225,8 +225,9 @@ STAGES = {
 }
 
 
-# 컷 한 번을 기다려 주는 시간(초) — 일시정지 0.6초를 합쳐 2초 안팎이면 끝난다
-_CUT_LIMIT_SECONDS = 30.0
+# 컷 한 번을 기다려 주는 시간(초). 일시정지 0.6초를 합친 컷이 로컬에서 가장 길게 1.3초다 — 그
+# 8배다(CI 러너는 로컬의 두세 배 느리고, 잠깐 바쁘면 거기서 또 두 배쯤 늘어난다)
+_CUT_LIMIT_SECONDS = 10.0
 
 
 def _end_if_still_running(processes: list) -> threading.Timer:

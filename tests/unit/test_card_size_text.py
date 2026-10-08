@@ -1004,3 +1004,94 @@ def test_memory_is_logged_at_each_point_of_the_section_download(qtbot, window, m
         "프로세스 메모리 [다운로드 시작] RSS 512.0MB",
         "프로세스 메모리 [다운로드 끝] RSS 512.0MB",
     ]
+
+
+# ================================================================ 다시 시작 · 준비 중 일시정지 (#309)
+
+
+def _progress(submission, received: int, total: int) -> None:
+    submission["on_progress"](
+        ProgressEvent(downloaded_size=received, total_size=total, speed=1.0, active_threads=1)
+    )
+
+
+def test_restarted_card_shows_nothing_of_the_previous_run_while_preparing(qtbot, window):
+    """중단한 카드를 다시 시작하면 준비가 끝날 때까지 지난 실행의 진행률 · 크기가 보이지 않아야 한다.
+
+    지연 60초(준비 중 문구는 켜지지 않는다). 받기 시작 → 진행 400/1000 통지(40%) → 중단 → 다시 시작 → 카드를 다시 그리게 함
+    -> 다시 시작한 직후: download_progress == 0, 상태 문구가 "0%"로 시작한다, 크기에 "400.00 B"가 없다
+    """
+    win, item, engine = window
+    win.downloadViewModel._prepareTimer.setInterval(60_000)
+    widget = win.listView.widgetFor(item)
+    win.downloadButton.click()
+    _first_progress(engine.submissions[0])
+    _progress(engine.submissions[0], 400, 1000)
+    qtbot.waitUntil(lambda: item.download_progress == 40, timeout=3000)
+    _pump()
+    assert "400.00 B" in shown(widget.fileSizeLabel), "전제: 지난 실행의 받은 크기가 카드에 있었다"
+    win.stopDownload()
+    _pump()
+    assert item.downloadState == DownloadState.WAITING, "전제: 중단됐다"
+
+    win.downloadButton.click()
+    win.contentManager.model.notifyChanged(
+        item
+    )  # 준비가 끝나기 전에 온 다른 통지가 카드를 다시 그린다
+    _pump()
+
+    assert item.downloadState == DownloadState.RUNNING and len(engine.submissions) == 2
+    assert item.download_progress == 0
+    assert shown(widget.statusLabel).startswith("0%")
+    assert "400.00 B" not in shown(widget.fileSizeLabel)
+
+
+def test_card_paused_while_preparing_says_paused_without_a_percent(qtbot, window):
+    """준비 중에 일시정지한 카드는 진행률 없이 "Paused"만 적고, 준비가 끝나면 "0% · Paused"여야 한다.
+
+    받기 시작 → 진행 400/1000(40%) → 중단 → 다시 시작 → 준비가 끝나기 전에 일시정지 → 준비 끝 통지
+    -> 일시정지 직후: 카드 PAUSED, 상태 문구 == "Paused"
+    -> 준비 끝 통지 뒤: 카드 PAUSED, 상태 문구 == "0% · Paused"
+    """
+    win, item, engine = window
+    win.downloadViewModel._prepareTimer.setInterval(60_000)
+    widget = win.listView.widgetFor(item)
+    win.downloadButton.click()
+    _first_progress(engine.submissions[0])
+    _progress(engine.submissions[0], 400, 1000)
+    qtbot.waitUntil(lambda: item.download_progress == 40, timeout=3000)
+    win.stopDownload()
+    _pump()
+    win.downloadButton.click()
+    _pump()
+
+    win.downloadButton.click()  # 일시정지
+    _pump()
+    while_preparing = (item.downloadState, shown(widget.statusLabel))
+    _first_progress(engine.submissions[1])
+    qtbot.waitUntil(lambda: not item.prepare_pending, timeout=3000)
+    _pump()
+
+    assert while_preparing == (DownloadState.PAUSED, "Paused")
+    assert (item.downloadState, shown(widget.statusLabel)) == (DownloadState.PAUSED, "0% · Paused")
+
+
+def test_prepare_timer_is_stopped_when_the_work_is_cleaned_up(qtbot, window):
+    """작업을 정리하면 "준비 중" 타이머가 멈춰야 하고, 뒤늦게 불려도 카드에 "준비 중"을 켜지 않아야 한다.
+
+    지연 60초. 받기 시작(타이머가 돈다) → 워커 참조 정리(removeThreads) → 타이머의 처리 함수를 직접 부름
+    -> 정리 뒤: 타이머가 멈춰 있다
+    -> 처리 함수를 부른 뒤: preparing이 꺼져 있다
+    """
+    win, item, _engine = window
+    win.downloadViewModel._prepareTimer.setInterval(60_000)
+    win.downloadButton.click()
+    _pump()
+    assert win.downloadViewModel._prepareTimer.isActive(), "전제: 타이머가 돌고 있다"
+
+    win.downloadViewModel.removeThreads()
+    stopped = not win.downloadViewModel._prepareTimer.isActive()
+    win.downloadViewModel._showPreparing()
+
+    assert stopped
+    assert not item.preparing

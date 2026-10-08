@@ -58,6 +58,8 @@ class DownloadTaskModel:
 
         self.pause_event = pause_event if pause_event is not None else threading.Event()
         self.pause_event.set()  # set 상태 = 진행 가능
+        self._paused_total = 0.0  # 끝난 일시정지들의 길이 합(초)
+        self._paused_since: float | None = None  # 지금의 일시정지가 시작된 시각. 아니면 None
 
         # 진행률 관련 필드. 값 갱신은 엔진(Phase 3에서 이주 예정)이 담당한다.
         self.total_size = 0
@@ -109,6 +111,8 @@ class DownloadTaskModel:
         """RUNNING → PAUSED. 다운로드 스레드를 대기 상태로 보낸다."""
         changed = self._transition("pause", DownloadState.PAUSED)
         if changed:
+            with self._lock:
+                self._paused_since = time.perf_counter()
             self.pause_event.clear()
         return changed
 
@@ -116,6 +120,7 @@ class DownloadTaskModel:
         """PAUSED → RUNNING. 대기 중인 다운로드 스레드를 깨운다."""
         changed = self._transition("resume", DownloadState.RUNNING)
         if changed:
+            self._close_pause()
             self.pause_event.set()
         return changed
 
@@ -126,6 +131,7 @@ class DownloadTaskModel:
         no-op 여부와 무관하게 Event는 항상 set한다.
         """
         changed = self._transition("stop", DownloadState.WAITING)
+        self._close_pause()
         self.pause_event.set()
         return changed
 
@@ -144,6 +150,26 @@ class DownloadTaskModel:
             self.end_time = time.time()
             self.pause_event.set()
         return changed
+
+    def _close_pause(self) -> None:
+        """지금의 일시정지가 끝났다 — 그 길이를 합에 더한다. 일시정지 중이 아니면 아무것도 하지 않는다."""
+        with self._lock:
+            if self._paused_since is not None:
+                self._paused_total += time.perf_counter() - self._paused_since
+                self._paused_since = None
+
+    @property
+    def paused_seconds(self) -> float:
+        """지금까지 일시정지해 있던 시간의 합(초) — 지금 일시정지 중이면 지금까지를 넣는다.
+
+        엔진이 속도와 단계 시간에서 일시정지한 시간을 빼는 데 쓴다. 두 시점의 값의 차가 그
+        사이에 일시정지한 시간이다.
+        """
+        with self._lock:
+            open_part = (
+                time.perf_counter() - self._paused_since if self._paused_since is not None else 0.0
+            )
+            return self._paused_total + open_part
 
     def is_running(self) -> bool:
         """현재 상태가 RUNNING인지 여부."""

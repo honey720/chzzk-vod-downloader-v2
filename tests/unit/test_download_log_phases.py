@@ -235,3 +235,62 @@ def test_cut_stage_line_lists_each_stage_and_their_sum(tmp_path, monkeypatch):
     text = log_file.read_text(encoding="utf-8")
     assert "Cut frames prepared in 0.52 seconds" in text
     assert "Cut 2/3 stages - probe: 0.41s, 0_head: 1.20s, audio: 2.00s, mux: 0.30s = 3.91s" in text
+
+
+def test_cut_stage_line_adds_the_paused_time_only_when_there_was_a_pause(tmp_path, monkeypatch):
+    """컷 단계 줄은 일시정지한 시간이 있으면 끝에 따로 적고, 없으면 적지 않아야 한다 (#309).
+
+    구간 1/1, 단계 audio 2.00초 · mux 0.30초. 한 번은 일시정지 12.3초, 한 번은 일시정지 없이
+    -> "Cut 1/1 stages - audio: 2.00s, mux: 0.30s = 2.30s (paused: 12.30s)"
+    -> "Cut 1/1 stages - audio: 2.00s, mux: 0.30s = 2.30s"로 끝나는 줄이 하나 더 있다
+    """
+    logger = _make_logger(tmp_path, monkeypatch)
+    logger.log_cut_stages(1, 1, (("audio", 2.0), ("mux", 0.3)), 12.3)
+    logger.log_cut_stages(1, 1, (("audio", 2.0), ("mux", 0.3)))
+    log_file = Path(logger.log_file)
+    logger.save_and_close()
+
+    lines = [line for line in log_file.read_text(encoding="utf-8").splitlines() if "stages" in line]
+    assert len(lines) == 2
+    assert lines[0].endswith("Cut 1/1 stages - audio: 2.00s, mux: 0.30s = 2.30s (paused: 12.30s)")
+    assert lines[1].endswith("Cut 1/1 stages - audio: 2.00s, mux: 0.30s = 2.30s")
+
+
+def test_stopped_line_names_the_phase(tmp_path, monkeypatch):
+    """중단 줄은 어느 단계에서 중단됐는지 적어야 한다 (#309).
+
+    log_stopped("transfer") -> "Download stopped by user during transfer"
+    """
+    logger = _make_logger(tmp_path, monkeypatch)
+    logger.log_stopped("transfer")
+    log_file = Path(logger.log_file)
+    logger.save_and_close()
+
+    assert "Download stopped by user during transfer" in log_file.read_text(encoding="utf-8")
+
+
+def test_transfer_and_breakdown_lines_add_the_paused_time_only_when_there_was_a_pause(
+    tmp_path, monkeypatch
+):
+    """전송 줄과 시간 구분 줄은 일시정지한 시간이 있으면 끝에 따로 적고, 없으면 이전과 같아야 한다 (#309).
+
+    전송 12.5초 · 1000바이트 · 재시도 0 · 정점 4. 일시정지 3.2초를 넘긴 것과 넘기지 않은 것
+    -> "... - Peak threads: 4 (paused: 3.20s)" 한 줄과 "... - Peak threads: 4"로 끝나는 한 줄
+    -> "Total time breakdown - Transfer: 12.50s (no postprocess) (paused: 3.20s)" 한 줄
+    """
+    logger = _make_logger(tmp_path, monkeypatch)
+    logger.log_transfer_complete(12.5, 1000, 0, 4, 3.2)
+    logger.log_transfer_complete(12.5, 1000, 0, 4)
+    logger.log_total_breakdown(12.5, None, 3.2)
+    log_file = Path(logger.log_file)
+    logger.save_and_close()
+
+    lines = log_file.read_text(encoding="utf-8").splitlines()
+    transfer = [line for line in lines if "Transfer completed" in line]
+    base_line = "Transfer completed in 12.50 seconds - Bytes: 1000 - Retries: 0 - Peak threads: 4"
+    assert transfer[0].endswith(base_line + " (paused: 3.20s)")
+    assert transfer[1].endswith(base_line)
+    breakdown = [line for line in lines if "breakdown" in line]
+    assert breakdown[0].endswith(
+        "Total time breakdown - Transfer: 12.50s (no postprocess) (paused: 3.20s)"
+    )
