@@ -60,8 +60,10 @@ from tests.unit.core.section_retry import CutCalls, hand_over, snapshot
 
 FPS = 30
 KEYFRAMES = (0, 30, 42, 72, 90, 120, 150)  # -force_key_frames 0,1,1.4,2.4,3,4,5 (30fps)
-# 엔진 한 번의 실행을 기다려 주는 시간(초) — 가장 긴 실행이 2초 안팎이다. 넘으면 중단을 보낸다
-_RUN_LIMIT_SECONDS = 30.0
+# 엔진 한 번의 실행을 기다려 주는 시간(초). 넘으면 중단을 보낸다. 가장 긴 실행이 로컬에서 1.8초다
+# (구간 여럿 · 컷 도중 1초 일시정지) — 그 8배다. CI 러너는 로컬의 두세 배 느리고, 러너가 잠깐
+# 바쁘면 거기서 또 두 배쯤 늘어난다
+_RUN_LIMIT_SECONDS = 15.0
 
 
 def _seconds(frame: int) -> float:
