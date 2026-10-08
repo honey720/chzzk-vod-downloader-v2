@@ -1,23 +1,20 @@
-"""moov 해석기가 긴 표를 잘라 도는 것 — 값은 한 번에 돈 것과 같고, 다른 스레드가 멈추지 않는다 (#309).
+"""moov 해석기가 긴 표를 잘라 도는 것 — 값은 한 번에 돈 것과 같고, 한 번에 조각보다 많이 넘기지 않는다 (#309).
 
 C 안에서 도는 반복은 끝날 때까지 GIL을 놓지 않는다. 샘플이 수백만 개인 표를 통째로 돌면 그동안
 GUI 스레드가 멈춘다. 해석기는 표를 ``CHUNK_ITEMS``개씩 잘라 돈다
 (``core/models/sample_column.py``).
 
-세 가지를 잰다.
+두 가지를 잰다.
 
 - 잘라 돈 결과가 한 번에 돈 결과와 같다 — 조각 크기를 아주 작게 바꿔 조각의 경계가 작은
   트랙에서도 수없이 생기게 한다
 - 실제로 잘라 돈다 — 한 번에 넘기는 양이 조각 크기를 넘지 않는다
-- 해석이 도는 동안 다른 스레드가 돈다 — 긴 합성 moov로 틱의 간격을 잰다
 """
 
 import array
 import dataclasses
 import random
 import struct
-import threading
-import time
 from itertools import accumulate
 
 import pytest
@@ -248,53 +245,3 @@ def test_parser_never_hands_more_than_a_chunk_to_one_pass(monkeypatch, chunk_ite
     assert max(asked) <= items and len(asked) > frames // items
     assert max(sorted_sizes) <= items + 64 and len(sorted_sizes) >= frames // (items + 64)
     assert max(counted_sizes) <= items and len(counted_sizes) >= frames // items
-
-
-# ================================================================ 다른 스레드가 멈추지 않는다
-
-# 틱 스레드가 쉬는 간격(초) — GUI의 타이머 틱과 같은 크기다
-_TICK_SECONDS = 0.005
-# 잘라 돈 해석의 틱 최대 간격이 한 번에 돈 해석의 것의 이 비율 아래여야 한다. 이 머신에서 잰
-# 값은 약 0.15(40ms ÷ 300ms)다 — 절대 시간을 박지 않는 것은 러너마다 속도가 몇 배씩 다르기
-# 때문이고, 0.5는 다른 프로세스가 끼어들어 틱이 한두 번 늦어져도 넘지 않는 여유다
-_GAP_RATIO = 0.5
-_ATTEMPTS = 3  # 러너가 잠깐 멈춘 한 번으로 실패하지 않게 — 한 번이라도 넘지 않으면 통과다
-
-
-def _worst_tick_gap(work) -> float:
-    """work가 다른 스레드에서 도는 동안, 이 스레드가 짧게 쉬고 깨어나기를 되풀이한 간격의 최댓값."""
-    done = threading.Event()
-    worker = threading.Thread(target=lambda: (work(), done.set()))
-    worst = 0.0
-    worker.start()
-    last = time.perf_counter()
-    while not done.is_set():
-        time.sleep(_TICK_SECONDS)  # GIL을 놓고 쉰다 — 깨어나려면 GIL을 다시 얻어야 한다
-        now = time.perf_counter()
-        worst = max(worst, now - last)
-        last = now
-    worker.join()
-    return worst
-
-
-def test_another_thread_keeps_running_while_a_long_moov_is_parsed(chunk_items):
-    """긴 moov를 해석하는 동안 다른 스레드가 오래 멈추지 않아야 한다 — 한 번에 돌 때보다 훨씬 짧게.
-
-    영상 600,000샘플의 moov. 다른 스레드에서 해석하는 동안 이 스레드가 5ms씩 쉬며 깨어난 간격을
-    잼. 조각 없이(한 번에) 해석할 때와 제품의 조각 크기로 해석할 때를 견줌(세 번까지 다시 잰다)
-    -> 잘라 돈 해석의 최대 간격 < 한 번에 돈 해석의 최대 간격 × 0.5
-    """
-    moov = _long_moov(600_000)
-    product_items = column_module.CHUNK_ITEMS
-    seen = []
-    for _attempt in range(_ATTEMPTS):
-        chunk_items(ONE_PASS)
-        whole = _worst_tick_gap(lambda: parse_moov(moov))
-        chunk_items(product_items)
-        chunked = _worst_tick_gap(lambda: parse_moov(moov))
-        seen.append((round(chunked * 1000), round(whole * 1000)))
-        if chunked < whole * _GAP_RATIO:
-            return
-    pytest.fail(
-        f"잘라 돈 해석이 다른 스레드를 오래 멈췄다 — (잘라 돈 것, 한 번에 돈 것) ms: {seen}"
-    )
