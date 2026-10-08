@@ -267,3 +267,30 @@ def test_stopped_line_names_the_phase(tmp_path, monkeypatch):
     logger.save_and_close()
 
     assert "Download stopped by user during transfer" in log_file.read_text(encoding="utf-8")
+
+
+def test_transfer_and_breakdown_lines_add_the_paused_time_only_when_there_was_a_pause(
+    tmp_path, monkeypatch
+):
+    """전송 줄과 시간 구분 줄은 일시정지한 시간이 있으면 끝에 따로 적고, 없으면 이전과 같아야 한다 (#309).
+
+    전송 12.5초 · 1000바이트 · 재시도 0 · 정점 4. 일시정지 3.2초를 넘긴 것과 넘기지 않은 것
+    -> "... - Peak threads: 4 (paused: 3.20s)" 한 줄과 "... - Peak threads: 4"로 끝나는 한 줄
+    -> "Total time breakdown - Transfer: 12.50s (no postprocess) (paused: 3.20s)" 한 줄
+    """
+    logger = _make_logger(tmp_path, monkeypatch)
+    logger.log_transfer_complete(12.5, 1000, 0, 4, 3.2)
+    logger.log_transfer_complete(12.5, 1000, 0, 4)
+    logger.log_total_breakdown(12.5, None, 3.2)
+    log_file = Path(logger.log_file)
+    logger.save_and_close()
+
+    lines = log_file.read_text(encoding="utf-8").splitlines()
+    transfer = [line for line in lines if "Transfer completed" in line]
+    base_line = "Transfer completed in 12.50 seconds - Bytes: 1000 - Retries: 0 - Peak threads: 4"
+    assert transfer[0].endswith(base_line + " (paused: 3.20s)")
+    assert transfer[1].endswith(base_line)
+    breakdown = [line for line in lines if "breakdown" in line]
+    assert breakdown[0].endswith(
+        "Total time breakdown - Transfer: 12.50s (no postprocess) (paused: 3.20s)"
+    )

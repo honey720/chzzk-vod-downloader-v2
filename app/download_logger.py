@@ -173,12 +173,22 @@ class DownloadLogger:
         self.info(f"Part {part_num} resuming from byte {offset}/{part_size}")
 
     def log_transfer_complete(
-        self, elapsed: float, downloaded_bytes: int, retries: int, peak_threads: int
+        self,
+        elapsed: float,
+        downloaded_bytes: int,
+        retries: int,
+        peak_threads: int,
+        paused: float = 0.0,
     ):
-        """전송 단계 종료를 한 줄로 로깅합니다 — 소요·총 바이트·재시도·정점 스레드."""
+        """전송 단계 종료를 한 줄로 로깅합니다 — 소요·총 바이트·재시도·정점 스레드.
+
+        소요에는 일시정지한 시간이 들어 있지 않다 — 일시정지가 있었으면 그 합을 줄 끝에 따로
+        적는다("(paused: 12.30s)", #309). 앞부분의 형식은 그대로다.
+        """
+        tail = f" (paused: {paused:.2f}s)" if paused > 0 else ""
         self.info(
             f"Transfer completed in {elapsed:.2f} seconds - Bytes: {downloaded_bytes}"
-            f" - Retries: {retries} - Peak threads: {peak_threads}"
+            f" - Retries: {retries} - Peak threads: {peak_threads}{tail}"
         )
 
     def log_prepare_complete(self, elapsed: float, note: str = ""):
@@ -193,7 +203,7 @@ class DownloadLogger:
         """준비를 뺀 실제 전송 시간을 로깅합니다 (#309).
 
         "Transfer completed in"의 시간은 준비를 포함한다 — 그 줄의 뜻은 바꾸지 않고, 준비를 뺀
-        값을 이 줄에 따로 남긴다.
+        값을 이 줄에 따로 남긴다. 두 줄 모두 일시정지한 시간은 들어 있지 않다.
         """
         self.info(f"Transfer without prepare: {elapsed:.2f} seconds")
 
@@ -229,19 +239,28 @@ class DownloadLogger:
         """후처리 종료를 로깅합니다 — 소요 시간과 최종 산출물 크기."""
         self.info(f"Postprocess completed in {elapsed:.2f} seconds - Output size: {output_size} bytes")
 
-    def log_total_breakdown(self, transfer_elapsed: float, postprocess_elapsed: Optional[float]):
+    def log_total_breakdown(
+        self,
+        transfer_elapsed: float,
+        postprocess_elapsed: Optional[float],
+        paused: float = 0.0,
+    ):
         """전체 시간의 전송/후처리 구분을 로깅합니다.
 
         후처리가 없는 경로(file)는 "(no postprocess)"로 표기해 세 다운로더의
-        로그가 같은 위치에서 같은 형태로 끝나게 한다 (#110).
+        로그가 같은 위치에서 같은 형태로 끝나게 한다 (#110). 두 값에는 일시정지한 시간이 들어
+        있지 않다 — 일시정지가 있었으면 그 합을 줄 끝에 따로 적는다 (#309).
         """
+        tail = f" (paused: {paused:.2f}s)" if paused > 0 else ""
         if postprocess_elapsed is None:
-            self.info(f"Total time breakdown - Transfer: {transfer_elapsed:.2f}s (no postprocess)")
+            self.info(
+                f"Total time breakdown - Transfer: {transfer_elapsed:.2f}s (no postprocess){tail}"
+            )
         else:
             total = transfer_elapsed + postprocess_elapsed
             self.info(
                 f"Total time breakdown - Transfer: {transfer_elapsed:.2f}s"
-                f" + Postprocess: {postprocess_elapsed:.2f}s = {total:.2f}s"
+                f" + Postprocess: {postprocess_elapsed:.2f}s = {total:.2f}s{tail}"
             )
 
     def log_error(self, error_message: str, exception: Optional[Exception] = None):

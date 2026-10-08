@@ -12,7 +12,11 @@
 import threading
 import time
 
+import pytest
+
 import core.downloaders.file_downloader as fd_module
+import tests.unit.core.test_hls_aes_downloader as aes_run
+import tests.unit.core.test_m3u8_downloader_run as m3u8_run
 from core.downloaders.file_downloader import FileDownloader
 from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
@@ -355,3 +359,132 @@ def test_monitor_measures_nothing_when_the_pause_lands_between_its_check_and_its
 
     assert not loop.is_alive(), "전제: 관측 루프가 끝났다"
     assert called == []
+
+
+# ================================================================ 일시정지 → 중단 · 재개 직후의 속도 · 전송 시간
+
+
+class _SpeedSpy:
+    """엔진의 로거를 감싸 스레드 수 · 속도 로그와 중단 알림만 가로챈다 — 나머지는 그대로 넘긴다."""
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.speed_lines: list[tuple] = []
+        self.stopped: list[str] = []
+
+    def log_thread_adjust(self, active_threads, avg_speed):
+        self.speed_lines.append(("adjust", active_threads, avg_speed))
+
+    def log_thread_debug(self, active_threads, download_speed, avg_speed):
+        self.speed_lines.append(("debug", active_threads, download_speed))
+
+    def log_stopped(self, phase):
+        self.stopped.append(phase)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+def _file_engine(tmp_path, monkeypatch):
+    return _make_engine(tmp_path, monkeypatch)[:2]
+
+
+def _m3u8_engine(tmp_path, monkeypatch):
+    return m3u8_run._make_engine(tmp_path, monkeypatch)[:2]
+
+
+def _aes_engine(tmp_path, monkeypatch):
+    return aes_run._make_engine(tmp_path, monkeypatch, key_resolver=lambda c, u: aes_run.KEY)[:2]
+
+
+@pytest.mark.parametrize(
+    "make", [_file_engine, _m3u8_engine, _aes_engine], ids=["file", "m3u8", "hls_aes"]
+)
+def test_stopping_a_paused_download_logs_no_thread_or_speed_line(tmp_path, monkeypatch, make):
+    """일시정지한 다운로드를 중단하면 중단까지 스레드 수 · 속도 로그가 한 줄도 남지 않아야 한다.
+
+    받는 스레드를 붙잡아 둔 채(전송이 끝나지 않는다) 0.3초에 일시정지, 관측이 일시정지에 들어설
+    1.6초를 둔 뒤 중단. 엔진마다(파일 · m3u8 · 암호화 VOD) 같은 순서
+    -> 일시정지한 뒤로 남긴 스레드 수 · 속도 로그 0건, log_stopped("transfer") 1회
+    """
+    engine, data = make(tmp_path, monkeypatch)
+    spy = _SpeedSpy(engine.logger)
+    engine.logger = spy
+    release = threading.Event()
+    real_download = engine._download_item
+
+    def held(item, part_num):
+        release.wait(20)  # 중단할 때까지 받기를 붙잡아 둔다
+        return real_download(item, part_num)
+
+    monkeypatch.setattr(engine, "_download_item", held)
+
+    data.model.start()
+    thread = _run_in_thread(engine)
+    time.sleep(0.3)
+    assert data.model.pause() is True, "전제: 받는 도중에 일시정지됐다"
+    logged_before_pause = len(spy.speed_lines)
+    time.sleep(1.6)
+    data.model.stop()
+    release.set()
+    thread.join(timeout=20)
+
+    assert not thread.is_alive(), "전제: 엔진이 끝났다"
+    assert spy.speed_lines[logged_before_pause:] == []
+    assert spy.stopped == ["transfer"]
+
+
+def test_speed_measured_right_after_resuming_leaves_out_the_paused_time(tmp_path, monkeypatch):
+    """재개 직후의 속도는 일시정지한 시간을 뺀, 실제로 받던 시간으로 재야 한다.
+
+    직전 측정 뒤 0.5초 동안 4MiB를 받고 → 1초 일시정지 → 재개 직후에 측정
+    -> 속도가 4MiB ÷ 0.5초 = 8MB/s 둘레다(6 초과 10 미만). 일시정지한 1초를 넣으면 2.7, 틱 하나로
+       보면 4.0이다
+    """
+    engine, data, _logger, _output, _finished, _failures = _recording_engine(
+        tmp_path, monkeypatch, throttle=0.0
+    )
+    data.model.start()
+    engine.measure_speed()  # 직전 측정
+    time.sleep(0.5)
+    data.total_downloaded_size = 4 * 1024 * 1024
+    data.model.pause()
+    time.sleep(1.0)
+    data.model.resume()
+
+    engine.measure_speed(since_pause=True)
+
+    assert 6.0 < data.speed_mb < 10.0
+
+
+def test_transfer_time_leaves_out_the_pause_and_the_pause_is_reported_apart(tmp_path, monkeypatch):
+    """전송 시간에는 일시정지한 시간이 들지 않아야 하고, 그 합은 전송 줄과 함께 따로 넘겨야 한다.
+
+    청크마다 5ms 쉬는 가짜 세션으로 받는 도중 0.3초에 일시정지, 1.2초 뒤 재개해 끝까지 받음
+    -> 전송 줄에 함께 온 일시정지한 시간 1.1초 이상 1.5초 이하
+    -> 전송 시간 + 일시정지한 시간 <= 실제로 걸린 시간 + 0.3초, 전송 시간 < 실제로 걸린 시간 − 1초
+    -> 시간 구분의 전송 값 == 전송 줄의 전송 시간
+    """
+    engine, data, logger, output, finished, failures = _recording_engine(
+        tmp_path, monkeypatch, throttle=0.005
+    )
+
+    started = time.perf_counter()
+    data.model.start()
+    thread = _run_in_thread(engine)
+    time.sleep(0.3)
+    assert data.model.pause() is True, "전제: 받는 도중에 일시정지됐다"
+    time.sleep(1.2)
+    data.model.resume()
+    assert finished.wait(timeout=60)
+    took = time.perf_counter() - started
+    thread.join(timeout=10)
+
+    assert failures == [] and output.read_bytes() == CONTENT
+    (elapsed, _bytes, _retries, _peak), paused = (
+        logger.transfer_completes[0],
+        logger.transfer_paused[0],
+    )
+    assert 1.1 <= paused <= 1.5
+    assert elapsed + paused <= took + 0.3 and elapsed < took - 1.0
+    assert logger.breakdowns[0][0] == elapsed

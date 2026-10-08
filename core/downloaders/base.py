@@ -196,6 +196,11 @@ class SectionCutProgress:
         self._publish(value)
 
 
+# 재개 직후의 속도를 잴 때, 직전 측정 뒤로 받던 시간이 이보다 짧으면 재지 않는다(초) —
+# 수십 ms로 나누면 값이 튄다
+_MIN_ACTIVE_SECONDS = 0.1
+
+
 class _PauseClock:
     """일시정지가 이어진 시간을 잰다 — 컷이 일시정지를 물을 때마다(짧은 간격) 본다 (#309).
 
@@ -286,6 +291,8 @@ class BaseDownloader(ABC):
         self._monitor_stop = threading.Event()
         self._pause_clock = _PauseClock()  # 컷이 도는 동안의 일시정지 시간
         self._cut_paused = 0.0  # 지금 자르는 구간에서 일시정지한 시간의 합(초)
+        self._measured_at = tm.perf_counter()  # 속도를 마지막으로 잰 시각
+        self._measured_paused = 0.0  # 그때까지 일시정지한 시간의 합(초)
         # 전송 중 관측된 정점 동시 스레드 수 — 전송 종료 요약 로그용 (#110)
         self._peak_threads = 0
         # 총 처리량 등반 상태 (#112) — 판단 규칙은 _adjust_threads 참조
@@ -666,18 +673,22 @@ class BaseDownloader(ABC):
             # _remux_streamed의 공급 루프가 담당한다
             self._stop_monitor(monitor)
             # 전송 구간 소요는 관측 정지까지 포함해 여기서 확정한다 (#110) —
-            # 이후 구간(후처리)과 합이 전체와 어긋나지 않게 하기 위함이다
-            transfer_elapsed = tm.time() - self.s.start_time
+            # 이후 구간(후처리)과 합이 전체와 어긋나지 않게 하기 위함이다.
+            # 일시정지해 있던 시간은 전송에 든 시간이 아니다 — 빼고, 그 합은 따로 적는다 (#309)
+            transfer_paused = self.s.model.paused_seconds
+            transfer_elapsed = max(tm.time() - self.s.start_time - transfer_paused, 0.0)
             if self.state == DownloadState.WAITING and stopped_in is None:
                 stopped_in = "transfer"
 
             if self.state == DownloadState.RUNNING:
                 # 전송 단계 종료 요약 한 줄 (#110)
+                # 일시정지한 시간은 있었을 때만 넘긴다 — 그 인자를 모르는 로거를 깨뜨리지 않는다
                 self.logger.log_transfer_complete(
                     transfer_elapsed,
                     self.s.total_downloaded_size,
                     self.s.failed_threads + self.s.restart_threads,
                     self._peak_threads,
+                    *((transfer_paused,) if transfer_paused > 0 else ()),
                 )
                 self._log_if_supported(
                     "log_transfer_net", max(transfer_elapsed - prepare_elapsed, 0.0)
@@ -704,7 +715,17 @@ class BaseDownloader(ABC):
                     self.logger.log_download_complete(total_time)
                     # 전체 = 전송 + 후처리 구분 (#110) — 위 완료 줄(형식 불변)이
                     # 전체 시간임을 새 줄이 드러낸다
-                    self.logger.log_total_breakdown(transfer_elapsed, postprocess_elapsed)
+                    # 구분의 두 값도 일시정지한 시간을 뺀 것이다 — 전송 줄과 같은 기준이다
+                    all_paused = self.s.model.paused_seconds
+                    if postprocess_elapsed is not None:
+                        postprocess_elapsed = max(
+                            postprocess_elapsed - (all_paused - transfer_paused), 0.0
+                        )
+                    self.logger.log_total_breakdown(
+                        transfer_elapsed,
+                        postprocess_elapsed,
+                        *((all_paused,) if all_paused > 0 else ()),
+                    )
                     self.logger.save_and_close()
                     self._on_finished()
 
@@ -876,7 +897,11 @@ class BaseDownloader(ABC):
         ]:
             if not self.s._pause_event.is_set():
                 self.s._pause_event.wait()
-                self.measure_speed()
+                if self.state != DownloadState.RUNNING:
+                    # 재개가 아니라 중단으로 깨어났다 — 재지도 적지도 않는다 (#309). 일시정지한
+                    # 채 중단하면 중단 직전에 속도 줄이 하나 찍혔다
+                    continue
+                self.measure_speed(since_pause=True)
                 # 재개 직후 궤적 앵커 (#78) — 관측 로그가 스레드 수 변화 시에만
                 # 남으면 재개 후 재상승 여부를 로그로 확인할 수 없다. 기존
                 # 조정 로그와 같은 형식으로 현재 목표·속도를 한 줄 남긴다.
@@ -1014,16 +1039,29 @@ class BaseDownloader(ABC):
         self._reference_speed = None
         self.adjust_count = 0
 
-    def measure_speed(self):
-        """직전 틱 대비 다운로드 바이트 증가량으로 속도(MB/s)를 계산한다."""
+    def measure_speed(self, since_pause: bool = False):
+        """직전 틱 대비 다운로드 바이트 증가량으로 속도(MB/s)를 계산한다.
+
+        Args:
+            since_pause: 재개 직후의 측정이다 — 직전 측정 뒤로 실제로 받던 시간(일시정지해 있던
+                시간을 뺀 것)으로 나눈다. 틱 하나로 보면 일시정지 직전에 받은 조금이 한 틱의
+                속도로 적힌다. 받던 시간이 너무 짧으면(0.1초 미만) 직전 값을 그대로 둔다
+        """
         current_size = self.s.total_downloaded_size
         speed = current_size - self.s.prev_size
         self.s.prev_size = current_size
+        now, paused = tm.perf_counter(), self.s.model.paused_seconds
+        active = (now - self._measured_at) - (paused - self._measured_paused)
+        self._measured_at, self._measured_paused = now, paused
 
         with self.lock:
             future_count = self.s.future_count
-        # MB/s로 변환
-        self.s.speed_mb = speed / (1024 * 1024)
+        if since_pause:
+            if active >= _MIN_ACTIVE_SECONDS:
+                self.s.speed_mb = speed / (1024 * 1024) / active
+        else:
+            # MB/s로 변환 — 틱은 1초다
+            self.s.speed_mb = speed / (1024 * 1024)
         avg_speed = self.s.speed_mb / future_count if future_count > 0 else 0
         self.logger.log_thread_debug(future_count, self.s.speed_mb, avg_speed)
 
