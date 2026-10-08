@@ -1428,36 +1428,43 @@ def test_stopping_while_a_section_is_being_cut_ends_ffmpeg_and_the_run_at_once(
         end_all(processes)
 
 
-def test_pausing_while_a_section_is_being_cut_lets_that_cut_finish(server, tmp_path, monkeypatch):
-    """구간을 자르는 도중 일시정지해도 도는 컷은 끝까지 돌고, 재개하면 나머지를 마쳐야 한다.
+def test_pausing_while_a_section_is_being_cut_holds_the_cut_until_resumed(
+    server, tmp_path, monkeypatch
+):
+    """구간을 자르는 도중 일시정지하면 컷이 그 자리에서 서고, 재개하면 이어서 끝내야 한다.
 
-    기본 입력, 구간 둘(프레임 5~25 · 35~80). 첫 구간의 오디오 단계가 시작할 때 일시정지하고
-    0.5초 뒤 재개
-    -> 완료 1회, 실패 없음, 구간 파일 둘이 만들어진다, 컷이 취소된 적이 없다(ffmpeg가 모두 종료 코드 0)
+    기본 입력, 구간 하나(프레임 35~80). 오디오 단계의 ffmpeg가 뜬 직후 일시정지(model.pause())하고
+    1초 뒤 재개. 0.8초 시점에 적음(일시정지가 없으면 컷은 그 전에 끝난다)
+    -> 0.8초 시점: 그 ffmpeg가 살아 있다, 완료 통지 없음, 끝낸 구간 0, 구간 파일이 아직 없다
+    -> 재개 뒤: 완료 1회, 실패 없음, 구간 파일이 만들어진다, ffmpeg가 모두 종료 코드 0으로 끝났다
     """
-    processes = record_processes(monkeypatch)
-    run = _Run(
-        server,
-        "plain",
-        tmp_path,
-        [TimeRange(_seconds(5), _seconds(25)), TimeRange(_seconds(35), _seconds(80))],
-    )
-    real = cut_module.run_ffmpeg
-    paused = []
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))])
+    paused, during = [], []
 
-    def pausing(args, **kwargs):
-        if args[-1] == "audio.m4a" and not paused:
+    def on_launch(command, process) -> None:
+        if command[-1] == "audio.m4a" and not paused:
             paused.append(run.data.model.pause())
-            threading.Timer(0.5, run.data.model.resume).start()
-        return real(args, **kwargs)
+            threading.Timer(
+                0.8,
+                lambda: during.append(
+                    (
+                        process.poll() is None,
+                        run.finished,
+                        run.data.sections_done,
+                        [name for name in os.listdir(run.folder) if name.endswith("_1.mp4")],
+                    )
+                ),
+            ).start()
+            threading.Timer(1.0, run.data.model.resume).start()
 
-    monkeypatch.setattr(cut_module, "run_ffmpeg", pausing)
+    processes = record_processes(monkeypatch, on_launch)
     try:
         run.start()
 
         assert paused == [True], "전제: 컷 도중에 일시정지됐다"
+        assert during == [(True, 0, 0, ["CVDv2_part_구간 시험 144p_1.mp4"])]
         assert (run.finished, run.failures) == (1, [])
-        assert run.listing() == ["구간 시험 144p_1.mp4", "구간 시험 144p_2.mp4"]
+        assert run.listing() == ["구간 시험 144p_1.mp4"]
         assert all(process.returncode == 0 for process in processes)
     finally:
         end_all(processes)

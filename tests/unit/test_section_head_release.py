@@ -466,6 +466,114 @@ def test_stopping_during_the_cut_does_not_make_the_app_give_up_waiting_for_the_w
         end_all(processes)
 
 
+def test_pausing_during_the_cut_shows_paused_and_resuming_goes_back_to_cutting(
+    qtbot, window, monkeypatch
+):
+    """구간을 자르는 도중 일시정지하면 카드가 "Paused"로 서 있고, 재개하면 "Cutting"으로 돌아가 끝나야 한다.
+
+    컷의 오디오 단계의 ffmpeg가 뜬 뒤 전역 버튼으로 일시정지 → 0.8초 지켜봄 → 다시 눌러 재개
+    -> 일시정지 중: 카드 PAUSED, 상태 문구가 "% · Paused"로 끝난다, 진행률이 0.8초 동안 그대로다,
+       그 ffmpeg가 살아 있다, 카드가 완료되지 않았다
+    -> 재개 직후: 카드 RUNNING, 상태 문구에 "Cutting"
+    -> 끝: 카드 FINISHED, 구간 파일이 만들어진다, 띄운 ffmpeg가 모두 끝났다
+    """
+    win, item = window
+    _give_section(qtbot, win, item)
+    reached = threading.Event()
+    audio = []
+
+    def on_launch(command, process) -> None:
+        if command[-1] == "audio.m4a":
+            audio.append(process)
+            reached.set()
+
+    processes = record_processes(monkeypatch, on_launch)
+    card = win.listView.widgetFor(item)
+    try:
+        win.downloadButton.click()
+        qtbot.waitUntil(reached.is_set, timeout=FINISH_TIMEOUT)
+        win.downloadButton.click()  # 일시정지
+        _pump()
+        first = (item.downloadState, card.statusLabel.text(), item.download_progress)
+        qtbot.wait(800)
+        second = (item.downloadState, card.statusLabel.text(), item.download_progress)
+        alive = audio[0].poll() is None
+
+        win.downloadButton.click()  # 재개
+        _pump()
+        resumed = (item.downloadState, card.statusLabel.text())
+        qtbot.waitUntil(
+            lambda: item.downloadState == DownloadState.FINISHED, timeout=FINISH_TIMEOUT
+        )
+        qtbot.waitUntil(lambda: win.downloadViewModel.handle is None, timeout=FINISH_TIMEOUT)
+        _wait_for_engine_threads()
+
+        assert first[0] == second[0] == DownloadState.PAUSED
+        assert first[1].endswith("% · Paused") and second[1] == first[1]
+        assert second[2] == first[2]
+        assert alive, "전제: 일시정지 중에 컷의 ffmpeg가 살아 있다(끝나지 않았다)"
+        assert resumed[0] == DownloadState.RUNNING and "Cutting" in resumed[1]
+        assert item.section_paths and all(map(os.path.isfile, item.section_paths))
+        assert all(process.poll() is not None for process in processes)
+    finally:
+        end_all(processes)
+
+
+def test_stopping_a_cut_that_is_paused_ends_the_suspended_ffmpeg(
+    qtbot, window, monkeypatch, caplog, tmp_path
+):
+    """컷 도중 일시정지한 채 정지하면(앱을 닫을 때도 이 길이다) 멈춰 있던 ffmpeg가 끝나고 아무것도 남지 않아야 한다.
+
+    컷의 오디오 단계를 10분 도는 명령으로 바꿔 띄움. 그 ffmpeg가 뜬 뒤 일시정지 → 0.4초 뒤 정지 버튼
+    -> 정지 버튼의 처리가 1.5초 안에 끝난다, "대기를 포기한다" 경고가 없다(같은 로거의 표식은 잡힌다)
+    -> 카드는 대기, 핸들 없음, 띄운 ffmpeg가 모두 끝났다, 저장 폴더에 mp4가 남지 않았다
+    """
+    win, item = window
+    _give_section(qtbot, win, item)
+    processes = record_processes(monkeypatch)
+    launched = threading.Event()
+    real = cut_module.run_ffmpeg
+
+    def slowed(args, **kwargs):
+        if args[-1] == "audio.m4a":
+            kwargs.pop("on_out_time", None)
+            threading.Timer(0.3, launched.set).start()  # 프로세스가 뜬 뒤에 알린다
+            guard = threading.Timer(8.0, end_all, [processes])  # 제품이 못 끝내면 테스트가 끝낸다
+            guard.daemon = True
+            guard.start()
+            return real(LONG_RUNNING, **kwargs)
+        return real(args, **kwargs)
+
+    monkeypatch.setattr(cut_module, "run_ffmpeg", slowed)
+    monkeypatch.setattr(mw_mod.QMessageBox, "warning", lambda *a, **k: mw_mod.QMessageBox.Yes)
+    logger_name = "app.viewmodels.download_viewmodel"
+    try:
+        with caplog.at_level(logging.WARNING, logger=logger_name):
+            win.downloadButton.click()
+            qtbot.waitUntil(launched.is_set, timeout=FINISH_TIMEOUT)
+            win.downloadButton.click()  # 일시정지 — 그 ffmpeg가 멈춘다
+            qtbot.wait(400)
+            assert item.downloadState == DownloadState.PAUSED, "전제: 일시정지됐다"
+            assert processes[-1].poll() is None, "전제: 멈춘 ffmpeg가 살아 있다"
+
+            started = time.perf_counter()
+            win.stopButton.click()
+            took = time.perf_counter() - started
+            logging.getLogger(logger_name).warning("표식 — 이 로거의 경고가 잡힌다")
+
+        messages = [r.getMessage() for r in caplog.records if r.name == logger_name]
+        assert "표식 — 이 로거의 경고가 잡힌다" in messages
+        assert not [message for message in messages if "대기를 포기" in message]
+        assert took < 1.5
+        assert item.downloadState == DownloadState.WAITING
+        assert win.downloadViewModel.handle is None
+        _wait_for_engine_threads()
+        assert all(process.poll() is not None for process in processes)
+        assert [name for name in os.listdir(tmp_path) if name.endswith(".mp4")] == []
+    finally:
+        end_all(processes)
+
+
 def test_index_is_freed_when_the_card_is_deleted_while_downloading(qtbot, window, monkeypatch):
     """받는 도중 카드를 지워(취소) 다운로드가 끝나도 moov 색인이 풀려야 한다.
 

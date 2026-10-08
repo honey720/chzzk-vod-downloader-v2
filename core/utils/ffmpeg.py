@@ -30,8 +30,11 @@ distro·BtbN 빌드는 정상임을 CI 교차 실측으로 확인했다. pip 방
 동작한다. 상세는 _subprocess_env 참조.
 """
 
+import ctypes
+import functools
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -70,9 +73,119 @@ class FFmpegCancelledError(Exception):
     """
 
 
-# 멈추라는 요청을 확인하는 간격(초) — 중단을 누른 뒤 ffmpeg가 끝나기까지의 상한이다. 앱은
-# 워커가 끝나기를 2초까지 기다리므로(그동안 GUI가 선다) 그보다 훨씬 짧아야 한다
+# 멈추라는 요청 · 일시정지를 확인하는 간격(초) — 중단을 누른 뒤 ffmpeg가 끝나기까지,
+# 일시정지를 누른 뒤 ffmpeg가 서기까지의 상한이다. 앱은 워커가 끝나기를 2초까지 기다리므로
+# (그동안 GUI가 선다) 그보다 훨씬 짧아야 한다
 _STOP_POLL_SECONDS = 0.05
+
+_PROCESS_SUSPEND_RESUME = 0x0800  # Windows — 프로세스를 멈추고 다시 돌릴 권한(OpenProcess)
+
+
+@functools.lru_cache(maxsize=1)
+def _windows_process_api() -> tuple:
+    """Windows의 (OpenProcess, CloseHandle, NtSuspendProcess, NtResumeProcess) — 한 번만 만든다.
+
+    ⚠️ 부를 때마다 ``ctypes.WinDLL``을 새로 만들지 않는다. 그렇게 만들었더니 멈춤을 몇 번 거친
+    프로세스가 한참 뒤 Qt의 이벤트 처리 안에서 접근 위반으로 죽었다(#309 — 전체 테스트에서
+    재현, DLL 객체를 한 번만 만들면 사라진다). Windows에서만 부른다.
+    """
+    kernel32 = ctypes.WinDLL("kernel32")
+    ntdll = ctypes.WinDLL("ntdll")
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    kernel32.OpenProcess.argtypes = (ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32)
+    kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+    ntdll.NtSuspendProcess.argtypes = (ctypes.c_void_p,)
+    ntdll.NtResumeProcess.argtypes = (ctypes.c_void_p,)
+    return kernel32.OpenProcess, kernel32.CloseHandle, ntdll.NtSuspendProcess, ntdll.NtResumeProcess
+
+
+def _set_suspended(process: subprocess.Popen, suspended: bool) -> bool:
+    """우리가 띄운 프로세스를 OS 수준에서 멈추거나(True) 다시 돌린다(False) (#309). 됐으면 True.
+
+    멈춘 프로세스는 CPU를 쓰지 않고 파일도 쓰지 않는다 — 다시 돌리면 멈춘 자리에서 이어 간다.
+    일시정지를 ffmpeg에 그대로 옮기는 데 쓴다. 새 의존성 없이 OS가 주는 것만 쓴다:
+
+    - Windows: ``NtSuspendProcess`` · ``NtResumeProcess``(ntdll)
+    - 그 밖(리눅스 · macOS): ``SIGSTOP`` · ``SIGCONT``
+
+    멈춘 프로세스도 끝낼 수 있다(``Popen.kill`` — Windows의 TerminateProcess · POSIX의 SIGKILL은
+    멈춘 프로세스에도 듣는다). 이미 끝난 프로세스에는 아무것도 하지 않는다. 프로세스는 **그
+    객체의 PID**로만 가리킨다 — ``Popen``이 기다려 주기 전까지 그 PID는 다른 프로세스에 가지 않는다.
+    """
+    if process.poll() is not None:
+        return False
+    if sys.platform == "win32":
+        open_process, close_handle, suspend, resume = _windows_process_api()
+        handle = open_process(_PROCESS_SUSPEND_RESUME, False, process.pid)
+        if not handle:
+            return False
+        try:
+            return (suspend if suspended else resume)(handle) == 0  # NTSTATUS — 0이 성공이다
+        finally:
+            close_handle(handle)
+    try:
+        os.kill(process.pid, signal.SIGSTOP if suspended else signal.SIGCONT)
+    except OSError:
+        return False
+    return True
+
+
+class _Control:
+    """도는 ffmpeg 하나에 멈춤 · 일시정지 · 제한 시간을 건다 — ``_STOP_POLL_SECONDS``마다 ``poll``을 부른다.
+
+    일시정지 중에는 프로세스가 서 있으므로 그 시간을 제한 시간에 세지 않는다 — 일시정지가
+    길었다고 컷이 시간 초과로 실패하지 않는다.
+    """
+
+    CANCELLED = "cancelled"
+    TIMED_OUT = "timed out"
+
+    def __init__(
+        self,
+        process: subprocess.Popen,
+        timeout: float,
+        should_stop: Callable[[], bool] | None,
+        should_pause: Callable[[], bool] | None,
+    ):
+        self._process = process
+        self._should_stop = should_stop
+        self._should_pause = should_pause
+        self._deadline = time.monotonic() + timeout
+        self._suspended_at: float | None = None  # 멈춘 시각. 돌고 있으면 None
+
+    def poll(self) -> str | None:
+        """요청을 확인해 프로세스에 옮긴다. 끝내야 하면 그 까닭(``CANCELLED`` · ``TIMED_OUT``)을 돌려준다.
+
+        끝내는 것은 부르는 쪽이 한다(``Popen.kill``) — 멈춰 있는 프로세스도 그대로 끝난다.
+        """
+        now = time.monotonic()
+        if self._should_stop is not None and self._should_stop():
+            return self.CANCELLED
+        paused = self._should_pause is not None and self._should_pause()
+        if paused and self._suspended_at is None:
+            if _set_suspended(self._process, True):
+                self._suspended_at = now
+        elif not paused and self._suspended_at is not None:
+            _set_suspended(self._process, False)
+            self._deadline += now - self._suspended_at  # 서 있던 시간은 제한 시간에 세지 않는다
+            self._suspended_at = None
+        if self._suspended_at is None and now >= self._deadline:
+            return self.TIMED_OUT
+        return None
+
+
+def _hold_while_paused(
+    should_pause: Callable[[], bool] | None, should_stop: Callable[[], bool] | None
+) -> None:
+    """일시정지 중이면 풀릴 때까지 기다린다 — 일시정지 중에는 새 ffmpeg를 띄우지 않는다.
+
+    Raises:
+        FFmpegCancelledError: 기다리는 동안 멈추라는 요청이 온 경우
+    """
+    while should_pause is not None and should_pause():
+        if should_stop is not None and should_stop():
+            raise FFmpegCancelledError("일시정지 중에 멈추라는 요청이 왔다")
+        time.sleep(_STOP_POLL_SECONDS)
 
 
 def get_ffmpeg_exe() -> str:
@@ -260,6 +373,7 @@ def run_ffmpeg(
     cwd: str | None = None,
     on_out_time: Callable[[float], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
+    should_pause: Callable[[], bool] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """ffmpeg를 끝날 때까지 실행하고 종료 코드와 출력을 돌려준다 (#309).
 
@@ -277,6 +391,10 @@ def run_ffmpeg(
         should_stop: 주면 도는 동안 ``_STOP_POLL_SECONDS``마다 부른다. 참을 돌려주면
             프로세스를 바로 끝내고 ``FFmpegCancelledError``를 낸다 — 다운로드를 중단했을 때
             도는 ffmpeg가 끝까지 돌지 않게 한다. 다른 스레드에서 불릴 수 있다
+        should_pause: 주면 같은 간격으로 부른다. 참인 동안 프로세스를 OS 수준에서 멈춰 두고
+            (``_set_suspended``), 거짓이 되면 멈춘 자리에서 다시 돌린다. 시작할 때 참이면
+            프로세스를 띄우지 않고 기다린다. 멈춰 있던 시간은 제한 시간에 세지 않는다.
+            다른 스레드에서 불릴 수 있다
 
     Raises:
         FFmpegNotFoundError: ffmpeg 실행 파일을 찾지 못한 경우
@@ -285,10 +403,11 @@ def run_ffmpeg(
         FFmpegError: 프로세스를 시작하지 못한 경우
     """
     exe = get_ffmpeg_exe()
+    _hold_while_paused(should_pause, should_stop)
     if on_out_time is not None:
-        return _run_reporting(exe, args, timeout, cwd, on_out_time, should_stop)
-    if should_stop is not None:
-        return _run_stoppable(exe, args, timeout, cwd, should_stop)
+        return _run_reporting(exe, args, timeout, cwd, on_out_time, should_stop, should_pause)
+    if should_stop is not None or should_pause is not None:
+        return _run_controlled(exe, args, timeout, cwd, should_stop, should_pause)
     try:
         return subprocess.run(
             [exe, "-hide_banner", *args],
@@ -322,17 +441,18 @@ def parse_out_time(line: str) -> float | None:
         return None
 
 
-def _run_stoppable(
+def _run_controlled(
     exe: str,
     args: Sequence[str],
     timeout: float,
     cwd: str | None,
-    should_stop: Callable[[], bool],
+    should_stop: Callable[[], bool] | None,
+    should_pause: Callable[[], bool] | None,
 ) -> subprocess.CompletedProcess[str]:
-    """ffmpeg를 실행해 출력을 모으되, 멈추라는 요청이 오면 바로 끝낸다. ``run_ffmpeg``가 부른다.
+    """ffmpeg를 실행해 출력을 모으되, 멈춤 · 일시정지 요청을 따른다. ``run_ffmpeg``가 부른다.
 
-    출력을 모으는 일(``communicate``)을 짧은 간격으로 끊어 그 사이에 should_stop을 확인한다.
-    돌려주는 값은 멈춤 확인이 없는 경로(``subprocess.run``)와 같다.
+    출력을 모으는 일(``communicate``)을 짧은 간격으로 끊어 그 사이에 요청을 확인한다
+    (``_Control``). 돌려주는 값은 그런 확인이 없는 경로(``subprocess.run``)와 같다.
     """
     command = [exe, "-hide_banner", *args]
     try:
@@ -350,20 +470,22 @@ def _run_stoppable(
         )
     except OSError as e:
         raise FFmpegError(f"ffmpeg 실행 실패: {e}") from e
-    deadline = time.monotonic() + timeout
+    control = _Control(process, timeout, should_stop, should_pause)
+    # 띄우자마자 한 번 확인한다 — 띄우는 사이에 온 일시정지 · 중단이 첫 간격만큼 늦지 않게
+    outcome = control.poll()
     while True:
         try:
-            output, errors = process.communicate(timeout=_STOP_POLL_SECONDS)
-            return subprocess.CompletedProcess(command, process.returncode, output, errors)
+            if outcome is None:
+                output, errors = process.communicate(timeout=_STOP_POLL_SECONDS)
+                return subprocess.CompletedProcess(command, process.returncode, output, errors)
         except subprocess.TimeoutExpired:
-            cancelled = should_stop()
-            if not cancelled and time.monotonic() < deadline:
-                continue
-            process.kill()
+            outcome = control.poll()
+        if outcome is not None:
+            process.kill()  # 멈춰 있는 프로세스도 그대로 끝난다
             process.communicate()  # 파이프를 비우고 닫는다 — 프로세스가 끝난 것까지 기다린다
-            if cancelled:
-                raise FFmpegCancelledError("멈추라는 요청으로 ffmpeg를 끝냈다") from None
-            raise FFmpegTimeoutError(f"ffmpeg가 {timeout:g}초 안에 끝나지 않았다") from None
+            if outcome == _Control.CANCELLED:
+                raise FFmpegCancelledError("멈추라는 요청으로 ffmpeg를 끝냈다")
+            raise FFmpegTimeoutError(f"ffmpeg가 {timeout:g}초 안에 끝나지 않았다")
 
 
 def _run_reporting(
@@ -373,13 +495,16 @@ def _run_reporting(
     cwd: str | None,
     on_out_time: Callable[[float], None],
     should_stop: Callable[[], bool] | None = None,
+    should_pause: Callable[[], bool] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """ffmpeg를 실행하면서 진행(출력 시각)을 on_out_time에 알린다. ``run_ffmpeg``가 부른다.
 
     진행은 stdout으로 받는다(``-progress pipe:1``). stderr는 따로 읽어 둔다 — 한쪽 파이프만
     읽으면 다른 쪽이 차서 ffmpeg가 멈춘다. 제한 시간은 타이머가 프로세스를 끝내는 것으로
-    지킨다. on_out_time이 예외를 내면 프로세스를 끝내고 그 예외를 그대로 올린다. should_stop은
-    지켜보는 스레드가 짧은 간격으로 확인한다 — 진행 줄을 기다리는 동안에도 멈출 수 있다.
+    지킨다. on_out_time이 예외를 내면 프로세스를 끝내고 그 예외를 그대로 올린다. 멈춤 · 일시정지
+    요청은 지켜보는 스레드가 짧은 간격으로 확인한다(``_Control``) — 진행 줄을 기다리는 동안에도
+    듣는다. 그때는 제한 시간도 그 스레드가 지킨다(멈춰 있던 시간을 빼고 센다). 프로세스가 멈춰
+    있는 동안 진행 줄을 읽는 쪽은 다음 줄을 기다리며 서 있을 뿐이다.
     """
     command = [exe, "-hide_banner", "-nostats", "-progress", "pipe:1", *args]
     try:
@@ -407,18 +532,26 @@ def _run_reporting(
         process.kill()
 
     finished, cancelled = threading.Event(), threading.Event()
+    controlled = should_stop is not None or should_pause is not None
 
     def watch() -> None:
-        while not finished.wait(_STOP_POLL_SECONDS):
-            if should_stop():
-                cancelled.set()
-                process.kill()  # stdout이 닫혀 아래의 읽기가 끝난다
+        control = _Control(process, timeout, should_stop, should_pause)
+        while True:
+            # 띄우자마자 한 번, 그 뒤로는 간격마다 확인한다
+            outcome = control.poll()
+            if outcome is not None:
+                (cancelled if outcome == _Control.CANCELLED else timed_out).set()
+                process.kill()  # 멈춰 있어도 끝난다. stdout이 닫혀 아래의 읽기가 끝난다
+                return
+            if finished.wait(_STOP_POLL_SECONDS):
                 return
 
-    watcher = threading.Thread(target=watch, daemon=True) if should_stop is not None else None
+    watcher = threading.Thread(target=watch, daemon=True) if controlled else None
+    # 지켜보는 스레드가 있으면 제한 시간도 그쪽이 지킨다 — 멈춰 있던 시간을 빼야 한다
     timer = threading.Timer(timeout, expire)
-    timer.start()
-    if watcher is not None:
+    if watcher is None:
+        timer.start()
+    else:
         watcher.start()
     try:
         for line in process.stdout:

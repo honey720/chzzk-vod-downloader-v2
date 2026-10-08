@@ -162,24 +162,27 @@ class CutCancelled(Exception):
 
 # 지금 도는 컷이 받은 멈춤 확인(``hybrid_cut``의 should_stop) — ffmpeg를 부르는 자리들이 읽는다
 _stop_check: ContextVar[Callable[[], bool] | None] = ContextVar("_stop_check", default=None)
+# 지금 도는 컷이 받은 일시정지 확인(``hybrid_cut``의 should_pause)
+_pause_check: ContextVar[Callable[[], bool] | None] = ContextVar("_pause_check", default=None)
 
 
 def _ffmpeg(args: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
-    """``run_ffmpeg``를 부른다 — 컷이 멈춤 확인을 받았으면 그것을 넘긴다.
+    """``run_ffmpeg``를 부른다 — 컷이 멈춤 · 일시정지 확인을 받았으면 그것을 넘긴다.
 
     컷의 모든 단계(입력 읽기 · 조각 · 오디오 · 잇기 · 조각 검사)가 이 함수로 ffmpeg를 부른다.
-    한 단계라도 건너뛰면 그 단계가 도는 동안에는 중단이 닿지 않는다.
+    한 단계라도 건너뛰면 그 단계가 도는 동안에는 중단 · 일시정지가 닿지 않는다. 일시정지 중에는
+    도는 ffmpeg가 서고, 다음 단계의 ffmpeg는 뜨지 않는다.
 
     Raises:
         CutCancelled: 멈추라는 요청이 와 ffmpeg를 끝냈거나 시작하지 않은 경우
     """
-    check = _stop_check.get()
-    if check is None:
+    check, pause = _stop_check.get(), _pause_check.get()
+    if check is None and pause is None:
         return run_ffmpeg(args, **kwargs)
-    if check():
+    if check is not None and check():
         raise CutCancelled("멈추라는 요청으로 컷을 그만뒀다")
     try:
-        return run_ffmpeg(args, should_stop=check, **kwargs)
+        return run_ffmpeg(args, should_stop=check, should_pause=pause, **kwargs)
     except FFmpegCancelledError as e:
         raise CutCancelled(str(e)) from e
 
@@ -309,6 +312,7 @@ def hybrid_cut(
     on_stage: Callable[[str, float], None] | None = None,
     on_progress: Callable[[float], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
+    should_pause: Callable[[], bool] | None = None,
 ) -> CutResult:
     """입력 파일에서 프레임 [first, last]를 잘라 output_path에 mp4로 쓴다.
 
@@ -332,6 +336,9 @@ def hybrid_cut(
         should_stop: 주면 컷이 도는 동안 짧은 간격으로 부른다. 참을 돌려주면 도는 ffmpeg를
             바로 끝내고 중간 파일 · 쓰다 만 산출물을 지운 뒤 ``CutCancelled``를 낸다 —
             어느 단계에서든 닿는다. 다른 스레드에서 불릴 수 있다
+        should_pause: 주면 같은 간격으로 부른다. 참인 동안 도는 ffmpeg를 멈춰 두고 다음 단계의
+            ffmpeg를 띄우지 않는다. 거짓이 되면 멈춘 자리에서 이어 간다 — 산출물은 일시정지
+            없이 자른 것과 같다. 다른 스레드에서 불릴 수 있다
 
     Raises:
         CutError: 입력을 다룰 수 없는 경우(``CUT_UNSUPPORTED``), ffmpeg가 실패한
@@ -340,11 +347,13 @@ def hybrid_cut(
         ValueError: 프레임 번호가 범위를 벗어난 경우
     """
     token = _stop_check.set(should_stop)
+    pause_token = _pause_check.set(should_pause)
     try:
         return _hybrid_cut(
             source_path, frames, first, last, output_path, inspect, on_stage, on_progress
         )
     finally:
+        _pause_check.reset(pause_token)
         _stop_check.reset(token)
 
 

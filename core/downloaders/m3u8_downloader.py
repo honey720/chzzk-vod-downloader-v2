@@ -498,6 +498,7 @@ class M3U8Downloader(BaseDownloader):
                     on_stage=lambda name, seconds: stages.append((name, seconds)),
                     on_progress=progress.section(number),
                     should_stop=self._stop_requested,
+                    should_pause=self._pause_requested,
                 )
             except CutCancelled:
                 return  # 컷이 도는 동안 중단됐다 — 정리는 run()의 중단 경로가 한다

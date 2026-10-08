@@ -356,6 +356,7 @@ class FileDownloader(BaseDownloader):
                     on_stage=lambda name, seconds: stages.append((name, seconds)),
                     on_progress=progress.section(number),
                     should_stop=self._stop_requested,
+                    should_pause=self._pause_requested,
                 )
             except CutCancelled:
                 # 컷이 도는 동안 중단됐다 — 도는 ffmpeg는 끝났고 쓰다 만 것은 컷이 지웠다.

@@ -18,8 +18,13 @@ LONG_RUNNING = [
 ]  # fmt: skip
 
 
-def record_processes(monkeypatch) -> list[subprocess.Popen]:
-    """ffmpeg 모듈이 띄우는 프로세스를 적는 목록을 돌려준다 — 띄울 때마다 그 객체가 들어간다."""
+def record_processes(monkeypatch, on_launch=None) -> list[subprocess.Popen]:
+    """ffmpeg 모듈이 띄우는 프로세스를 적는 목록을 돌려준다 — 띄울 때마다 그 객체가 들어간다.
+
+    Args:
+        on_launch: 주면 프로세스를 띄운 직후(제품이 그 프로세스를 지켜보기 전)에
+            ``(명령, 프로세스)``로 부른다 — "막 뜬 프로세스가 도는 도중"을 만드는 데 쓴다
+    """
     processes: list[subprocess.Popen] = []
     real = subprocess.Popen
 
@@ -27,6 +32,8 @@ def record_processes(monkeypatch) -> list[subprocess.Popen]:
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             processes.append(self)
+            if on_launch is not None:
+                on_launch(args[0] if args else kwargs.get("args"), self)
 
     monkeypatch.setattr(ffmpeg_module.subprocess, "Popen", Recording)
     return processes
@@ -34,7 +41,7 @@ def record_processes(monkeypatch) -> list[subprocess.Popen]:
 
 def end_all(processes: list[subprocess.Popen]) -> None:
     """아직 도는 프로세스를 그 객체로 끝낸다 — 테스트가 실패해도 10분짜리 프로세스가 남지 않게."""
-    for process in processes:
+    for process in list(processes):
         if process.poll() is None:
-            process.kill()
+            process.kill()  # 멈춰 있는 프로세스도 끝난다
             process.wait()

@@ -42,6 +42,10 @@ _PTS_TOLERANCE = 1e-6
 _OFFSET_SPREAD = 2 / 90_000
 
 
+# 다시 싸는 동안 일시정지가 풀렸는지 확인하는 간격(초) — ffmpeg 실행 쪽의 확인 간격과 같은 크기다
+_PAUSE_POLL_SECONDS = 0.05
+
+
 def ts_frame_number(frames: CutFrames, pts: float) -> int:
     """PTS가 pts인 프레임의 번호(``frames.frame_pts``의 인덱스)를 찾는다.
 
@@ -69,6 +73,7 @@ def cut_ts_section(
     on_stage: Callable[[str, float], None] | None = None,
     on_progress: Callable[[float], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
+    should_pause: Callable[[], bool] | None = None,
 ) -> tuple[CutResult, CutFrames]:
     """받아 둔 TS 세그먼트에서 구간 하나를 잘라 output_path에 mp4로 쓴다.
 
@@ -92,6 +97,8 @@ def cut_ts_section(
         on_progress: 컷의 진행(0~1) — ``hybrid_cut``의 것 그대로다. 다시 싸는 동안에는 오르지 않는다
         should_stop: 멈추라는 요청을 확인하는 함수 — ``hybrid_cut``의 것 그대로다. 다시 싸는
             동안에도 닿는다(세그먼트를 흘려 넣는 사이사이에 확인한다)
+        should_pause: 일시정지를 확인하는 함수 — ``hybrid_cut``의 것 그대로다. 다시 싸는 동안에는
+            세그먼트를 흘려 넣기를 멈춘다(ffmpeg는 다음 입력을 기다리며 선다)
 
     Returns:
         (컷 결과, 다시 싼 mp4의 프레임 정보). 판정(``check_cut``)에는 뒤의 것을 넘긴다 —
@@ -107,7 +114,7 @@ def cut_ts_section(
     try:
         started = time.perf_counter()
         try:
-            frames = _remux(segment_paths, joined_path, should_stop)
+            frames = _remux(segment_paths, joined_path, should_stop, should_pause)
         finally:
             if on_stage is not None:
                 on_stage("join", time.perf_counter() - started)
@@ -122,6 +129,7 @@ def cut_ts_section(
             on_stage=on_stage,
             on_progress=on_progress,
             should_stop=should_stop,
+            should_pause=should_pause,
         )
     finally:
         if os.path.exists(joined_path):
@@ -133,6 +141,7 @@ def _remux(
     segment_paths: Sequence[str],
     joined_path: str,
     should_stop: Callable[[], bool] | None = None,
+    should_pause: Callable[[], bool] | None = None,
 ) -> CutFrames:
     """세그먼트를 순서대로 ffmpeg에 흘려 mp4로 다시 싸고, 그 파일의 프레임 정보를 읽는다.
 
@@ -144,6 +153,10 @@ def _remux(
     def feed():
         for path in segment_paths:
             for chunk in read_in_chunks(path):
+                while should_pause is not None and should_pause():
+                    if should_stop is not None and should_stop():
+                        break
+                    time.sleep(_PAUSE_POLL_SECONDS)  # 일시정지 — 흘려 넣기를 멈추고 기다린다
                 if should_stop is not None and should_stop():
                     raise CutCancelled("멈추라는 요청으로 다시 싸기를 그만뒀다")
                 yield chunk

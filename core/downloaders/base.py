@@ -326,10 +326,18 @@ class BaseDownloader(ABC):
     def _stop_requested(self) -> bool:
         """다운로드를 중단하라는 요청이 왔는지 — 컷이 도는 ffmpeg를 끝낼지 묻는 데 쓴다 (#309).
 
-        컷의 ffmpeg를 지켜보는 스레드에서도 불린다. 일시정지는 중단이 아니다 — 도는 컷은
-        끝까지 돌고 다음 구간 앞에서 멈춘다.
+        컷의 ffmpeg를 지켜보는 스레드에서도 불린다. 일시정지는 중단이 아니다
+        (``_pause_requested``).
         """
         return self.state == DownloadState.WAITING
+
+    def _pause_requested(self) -> bool:
+        """다운로드가 일시정지 중인지 — 컷이 도는 ffmpeg를 멈춰 둘지 묻는 데 쓴다 (#309).
+
+        일시정지하는 순간 도는 컷이 서고(ffmpeg 프로세스를 멈춘다) 재개하면 멈춘 자리에서 이어
+        간다. 컷의 ffmpeg를 지켜보는 스레드에서도 불린다.
+        """
+        return self.state == DownloadState.PAUSED
 
     # ============ 하위 다운로더가 선택적으로 오버라이드 ============
 
