@@ -35,8 +35,9 @@ from PySide6.QtCore import QObject, QThreadPool, Signal
 
 from app.viewmodels.item_state import ItemState
 from app.viewmodels.path_gates import check_download_path
-from app.viewmodels.data import ContentItem
+from app.viewmodels.data import SECTION_CHECK_PENDING, ContentItem
 from app.viewmodels.model import ContentListModel
+from app.viewmodels.section_edit_viewmodel import SectionRefitter, SectionSizer
 from app.network import NetworkManager
 from core.services import metadata_service
 from core.services.metadata_service import MetadataError
@@ -87,6 +88,10 @@ def probe_writable(directory: str, timeout_s: float = _WRITE_PROBE_TIMEOUT_S) ->
     worker.join(timeout_s)
     reason = outcome.get("reason", "timeout")
     return reason == "", reason
+
+
+# 다운로드 대상이 아닌 카드 상태 — 끝났거나(완료 · 실패) 아직 조회 중이다
+_NOT_DOWNLOADABLE = (DownloadState.FINISHED, DownloadState.FAILED, ItemState.LOADING)
 
 
 class FetchJob(QObject):
@@ -187,6 +192,9 @@ class ContentViewModel(QObject):
     finishedAllRequested = Signal()
     fetchRequested = Signal(str)
     contentError = Signal(str)
+    # 배치가 구간 편집 중인 카드를 기다리기 시작했다(True) · 그만 기다린다(False) (#309) —
+    # 편집 창이 아래쪽 안내를 켜고 끈다
+    editWaitChanged = Signal(bool)
 
     # 뷰 방향 시그널 — 구 ContentManager의 view 직접 호출 6곳을 반전한 것.
     # 바인더가 view.onDownload*에 연결한다
@@ -206,14 +214,31 @@ class ContentViewModel(QObject):
         # 파괴되어 큐에 남은 finished/error 전달이 유실된다 (#124)
         self._pendingPlaceholders = {}
         self._relays = {}
+        # 구간 편집 창이 열려 있는 카드 (#309). 다운로드 대상에서 건너뛴다 — 상태
+        # (DownloadState)로 만들지 않는다. 엔진과 카드는 이 값을 모른다
+        self._editingItem: ContentItem | None = None
+        # 편집 중인 카드만 남아 배치를 끝내지 않고 멈춰 둔 상태 — 창을 닫으면 이어 간다
+        self._heldForEdit = False
+        # 길이를 확인하는 중인 카드만 남아 배치를 멈춰 둔 상태 — 조회가 끝나면 이어 간다
+        self._heldForCheck = False
+        # 구간이 있는 카드의 해상도가 바뀌면 구간을 새 해상도에 다시 맞춘다 (#309)
+        self._sectionRefitter = SectionRefitter(self.model, self.threadpool, self)
+        self._sectionRefitter.settled.connect(self._onSectionSettled)
+        # 구간 카드가 받을 크기를 백그라운드에서 센다 — 구간을 확인했을 때와 해상도 변경의 조회가 끝났을 때
+        self._sectionSizer = SectionSizer(self.model, self.threadpool, self)
 
     def fetchContent(self, vod_url: str, cookies: dict, downloadPath: str) -> None:
         # 조회가 끝나기 전에도 카드가 보이도록 LOADING 상태의 자리표시 아이템을
         # 즉시 추가한다. LOADING 아이템은 findItem이 건너뛰므로 다운로드되지 않는다 (#124)
         placeholder = ContentItem(
             vod_url,
-            {'title': vod_url, 'category': '', 'channelName': '', 'createdDate': '', 'duration': 0},
-            [], None, '', downloadPath, '', None,
+            {"title": vod_url, "category": "", "channelName": "", "createdDate": "", "duration": 0},
+            [],
+            None,
+            "",
+            downloadPath,
+            "",
+            None,
         )
         placeholder.downloadState = ItemState.LOADING
         self.model.addItem(placeholder)
@@ -236,7 +261,15 @@ class ContentViewModel(QObject):
         self._relays.pop(worker, None)
         if placeholder is None:
             return
-        vod_url, metadata, unique_reps, resolution, base_url, downloadPath, liveRewindPlaybackJson = result
+        (
+            vod_url,
+            metadata,
+            unique_reps,
+            resolution,
+            base_url,
+            downloadPath,
+            liveRewindPlaybackJson,
+        ) = result
         self.downloadPath = downloadPath
         row = self.model.getRow(placeholder)
         if row is None:
@@ -244,7 +277,16 @@ class ContentViewModel(QObject):
             return
         # 완성된 아이템으로 같은 자리에서 교체한다. 행 삭제→삽입을 거쳐야
         # 해상도 버튼·썸네일이 붙은 위젯이 새로 만들어진다
-        item = ContentItem(vod_url, metadata, unique_reps, resolution, base_url, downloadPath, content_type, liveRewindPlaybackJson)
+        item = ContentItem(
+            vod_url,
+            metadata,
+            unique_reps,
+            resolution,
+            base_url,
+            downloadPath,
+            content_type,
+            liveRewindPlaybackJson,
+        )
         self.model.removeRows(row, 1)
         self.model.addItem(item, row)
 
@@ -285,6 +327,8 @@ class ContentViewModel(QObject):
         row = self.model.getRow(item)
         if row is not None:
             self.model.removeRows(row, 1)
+            item.section_head = None  # 구간을 정하며 받아 둔 moov를 버린다 (#309)
+            self._resumeHeldBatch()  # 기다리던 카드가 지워졌을 수 있다
             index = self.model.rowCount()
             self.deleteItemRequested.emit(item, index)
 
@@ -323,8 +367,94 @@ class ContentViewModel(QObject):
                 # 유저에게 보내지 않는다 (#134) — 상세는 로그로만 남긴다
                 logger.exception("다운로드 준비 실패: %s", item.title)
                 self.fail(item, self._saveFailedMessage())
+        elif self._editingIsCandidate():
+            # 남은 대상이 편집 중인 카드뿐이다 (#309) — 배치를 끝내지 않고 멈춰 둔다. 끝내면
+            # 편집하는 사이에 완료 안내와 다운로드 후 동작(절전 · 종료)이 실행된다
+            self._heldForEdit = True
+            self.editWaitChanged.emit(True)
+        elif self._checkingIsCandidate():
+            # 남은 대상이 새 해상도의 길이를 확인하는 중인 카드뿐이다 (#309) — 조회가 끝나
+            # 구간을 다시 맞출 때까지 기다린다. 조회는 성공하든 실패하든 끝난다
+            self._heldForCheck = True
         else:
             self.finishedAllRequested.emit()
+
+    def refitSections(self, item: ContentItem) -> None:
+        """구간이 있는 카드의 해상도가 바뀌었다 — 구간을 새 해상도에 다시 맞춘다 (#309).
+
+        곧바로 선언 프레임률로 맞추고, 새 해상도의 프레임률 · 길이를 백그라운드에서 조회해
+        그 값으로 다시 맞춘다(``SectionRefitter``). 구간이 없는 카드는 조회하지 않는다.
+        """
+        self._sectionRefitter.request(item)
+
+    def beginSectionEdit(self, item: ContentItem) -> None:
+        """구간 편집 창이 열린 카드를 다운로드 대상에서 뺀다 (#309).
+
+        창이 열린 사이 그 카드의 차례가 오면 건너뛰고 다음 카드로 간다. 한 번에 한 카드만
+        편집한다(창이 모달이다).
+        """
+        self._editingItem = item
+
+    def endSectionEdit(self, item: ContentItem) -> None:
+        """구간 편집 창이 닫혔다 — 카드가 다시 다운로드 대상이 된다 (#309).
+
+        편집 중인 카드만 남아 멈춰 둔 배치가 있으면 이어 간다. 멈춰 둔 것이 없으면 아무것도
+        시작하지 않는다 — 창을 닫는 것이 다운로드를 시작시키지 않는다.
+        """
+        if self._editingItem is not item:
+            return
+        self._editingItem = None
+        self._sectionSizer.request(item)  # 구간을 확인했으면 받을 크기를 센다
+        self._resumeHeldBatch()
+
+    def _onSectionSettled(self, item: ContentItem) -> None:
+        """카드의 길이 확인 조회가 끝났다 — 그 카드가 다시 다운로드 대상이 된다 (#309)."""
+        self._sectionSizer.request(item)  # 새 해상도의 moov로 받을 크기를 다시 센다
+        self._resumeHeldBatch()
+
+    def _resumeHeldBatch(self) -> None:
+        """멈춰 둔 배치가 있으면 이어 간다. 없으면 아무것도 시작하지 않는다.
+
+        기다리던 사유(편집 중 · 길이 확인 중)가 풀렸거나 기다리던 카드가 지워졌을 때 부른다.
+        표시를 먼저 내리고 다음 카드를 다시 고른다 — 여전히 기다려야 하면 ``downloadItem``이
+        다시 멈춰 둔다. 표시를 든 채 시작하면 받는 중에 한 번 더 시작하게 된다.
+        """
+        if not (self._heldForEdit or self._heldForCheck):
+            return
+        if self._heldForEdit:
+            self.editWaitChanged.emit(False)
+        self._heldForEdit = self._heldForCheck = False
+        self.downloadItem()
+
+    def isWaitingOnEdit(self) -> bool:
+        """배치가 구간 편집 중인 카드를 기다리고 있는지."""
+        return self._heldForEdit
+
+    def _editingIsCandidate(self) -> bool:
+        """편집 중인 카드가 목록에 있고, 편집 중이 아니었다면 다운로드 대상이었는지."""
+        item = self._editingItem
+        return (
+            item is not None
+            and self.model.getRow(item) is not None
+            and item.downloadState not in _NOT_DOWNLOADABLE
+        )
+
+    @staticmethod
+    def _awaitsSectionCheck(item: ContentItem) -> bool:
+        """해상도를 바꾼 뒤 새 해상도의 길이를 확인하는 중인 구간 카드인지 (#309).
+
+        조회가 끝나 구간을 다시 맞추기 전에는 받지 않는다 — 선언값으로만 맞춘 구간은 새
+        영상의 길이를 넘을 수 있다. 조회가 실패한 카드는 여기에 들지 않는다(그대로 받는다).
+        """
+        return bool(item.selections) and item.section_check == SECTION_CHECK_PENDING
+
+    def _checkingIsCandidate(self) -> bool:
+        """길이를 확인하는 중이 아니었다면 다운로드 대상이었을 카드가 목록에 있는지."""
+        for row in range(self.model.rowCount()):
+            item = self.model.itemAt(row)
+            if item.downloadState not in _NOT_DOWNLOADABLE and self._awaitsSectionCheck(item):
+                return True
+        return False
 
     def onDownload(self, item: ContentItem):
         """해상도가 정해진 아이템의 산출물 경로를 조립하고 다운로드를 요청한다."""
@@ -389,8 +519,14 @@ class ContentViewModel(QObject):
         row_count = self.model.rowCount()
         for row in range(row_count):
             item = self.model.itemAt(row)
-            # LOADING은 메타데이터가 아직 없어 다운로드 대상이 아니다 (#124)
-            if item.downloadState not in [DownloadState.FINISHED, DownloadState.FAILED, ItemState.LOADING]:
+            # LOADING은 메타데이터가 아직 없어 다운로드 대상이 아니다 (#124).
+            # 구간 편집 창이 열린 카드는 건너뛴다 — 창을 닫으면 다시 대상이 된다 (#309)
+            if item is self._editingItem:
+                continue
+            # 새 해상도의 길이를 확인하는 중인 구간 카드도 건너뛴다 — 조회가 끝나면 대상이 된다
+            if self._awaitsSectionCheck(item):
+                continue
+            if item.downloadState not in _NOT_DOWNLOADABLE:
                 return True, item, row
         return False, None, None
 

@@ -181,6 +181,36 @@ class DownloadLogger:
             f" - Retries: {retries} - Peak threads: {peak_threads}"
         )
 
+    def log_prepare_complete(self, elapsed: float, note: str = ""):
+        """준비 단계 종료를 로깅합니다 — 받을 것을 정하는 데 걸린 시간 (#309).
+
+        구간 다운로드는 준비에서 moov · 플레이리스트를 받는다. note는 엔진이 덧붙이는 말이다
+        ("moov reused" — 넘겨받은 moov를 다시 썼다 / "moov fetched" — 새로 받았다).
+        """
+        self.info(f"Prepare completed in {elapsed:.2f} seconds" + (f" - {note}" if note else ""))
+
+    def log_transfer_net(self, elapsed: float):
+        """준비를 뺀 실제 전송 시간을 로깅합니다 (#309).
+
+        "Transfer completed in"의 시간은 준비를 포함한다 — 그 줄의 뜻은 바꾸지 않고, 준비를 뺀
+        값을 이 줄에 따로 남긴다.
+        """
+        self.info(f"Transfer without prepare: {elapsed:.2f} seconds")
+
+    def log_cut_setup(self, elapsed: float):
+        """컷을 시작하기 전 색인에서 프레임 정보를 뽑는 데 걸린 시간을 로깅합니다 (#309)."""
+        self.info(f"Cut frames prepared in {elapsed:.2f} seconds")
+
+    def log_cut_stages(self, number: int, total: int, stages):
+        """구간 하나의 컷이 단계마다 걸린 시간을 한 줄로 로깅합니다 (#309).
+
+        단계는 probe(입력 읽기) · 조각마다 <번호>_<종류>(재인코딩 또는 복사) · audio · mux이고,
+        세그먼트 방식은 앞에 join(세그먼트 잇기)이 붙는다. 실패한 컷은 실패한 단계까지 남는다.
+        """
+        parts = ", ".join(f"{name}: {seconds:.2f}s" for name, seconds in stages)
+        total_seconds = sum(seconds for _name, seconds in stages)
+        self.info(f"Cut {number}/{total} stages - {parts} = {total_seconds:.2f}s")
+
     def log_postprocess_start(self, kind: str):
         """후처리 시작을 로깅합니다 (kind: remux 등)."""
         self.info(f"Postprocess started - {kind}")

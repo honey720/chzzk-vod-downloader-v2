@@ -33,9 +33,15 @@
 import os
 import re
 import shutil
+import subprocess
+import time
 from bisect import bisect_left, bisect_right
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
+from itertools import compress, repeat
+from operator import add, le
 
 from core.models.cut import (
     CutFrames,
@@ -48,7 +54,13 @@ from core.models.cut import (
 )
 from core.models.fmp4_index import Fmp4Index, Fmp4Init, Fmp4Segment
 from core.models.mp4_index import Mp4Index, Mp4Track
-from core.utils.ffmpeg import FFmpegError, FFmpegTimeoutError, run_ffmpeg
+from core.models.sample_column import float_column
+from core.utils.ffmpeg import (
+    FFmpegCancelledError,
+    FFmpegError,
+    FFmpegTimeoutError,
+    run_ffmpeg,
+)
 from core.utils.paths import cut_temp_dir_for
 
 # 실패 키 — 번역하지 않은 i18n 키 원문
@@ -93,6 +105,22 @@ _PROBE_TIMEOUT = 60  # 머리만 읽는다
 _ENCODE_TIMEOUT = 600  # 머리·꼬리·구간 전체 재인코딩 — 길어야 GOP 하나(수 초 분량)
 _COPY_TIMEOUT = 3600  # 가운데 복사·오디오·합치기 — 구간 길이만큼 읽고 쓴다
 
+# 컷 하나의 진행(0~1)을 단계마다의 일의 양으로 합칠 때 쓰는 값 — 그 단계가 걸리는 시간(초)의
+# 어림이다. 막대가 고르게 오르게 하는 데만 쓴다 — 틀려도 진행은 거꾸로 가지 않고 끝에서
+# 1이 된다. 8시간 영상의 구간 1 · 10 · 60분을 잘라 잰 값에서 정했다(#309):
+# ffmpeg를 한 번 띄워 입력을 여는 데 약 0.2초, 재인코딩 조각(GOP 하나 이내)은 화면 크기에
+# 따라 그 몇 배, 오디오 재인코딩이 구간 길이 1초에 0.01~0.02초로 가장 크다
+_WORK_CALL = 0.2  # ffmpeg 실행 한 번 — 입력 읽기, 그리고 복사 · 오디오 · 잇기의 바탕
+_WORK_ENCODE_PIECE = 0.5  # 재인코딩 조각 하나 — 길이와 거의 무관하다(길어야 GOP 하나)
+_WORK_COPY_PER_SECOND = 0.002  # 복사 조각 — 구간 길이 1초에
+_WORK_AUDIO_PER_SECOND = 0.015  # 오디오 재인코딩 — 구간 길이 1초에
+_WORK_MUX_PER_SECOND = 0.002  # 조각 잇기 · 오디오 합치기 — 구간 길이 1초에
+
+# 지금 도는 단계가 ffmpeg의 출력 시각을 받는 곳 — ``_run``이 읽는다. 없으면 진행을 받지 않는다
+_out_time_sink: ContextVar[Callable[[float], None] | None] = ContextVar(
+    "_out_time_sink", default=None
+)
+
 _TS_PACKET_SIZE = 188  # MPEG-TS 패킷 길이 — 입력이 TS인지 가릴 때 쓴다
 _TS_SYNC_BYTE = 0x47
 
@@ -124,19 +152,61 @@ class CutError(Exception):
 # ================================================================ 프레임 정보
 
 
+class CutCancelled(Exception):
+    """부르는 쪽이 멈추라고 해(``should_stop``) 컷을 그만뒀다 — 실패가 아니다 (#309).
+
+    ``CutError``를 잇지 않는다 — 자르지 못한 구간으로 세어지지 않게. 중간 파일과 쓰다 만
+    산출물은 지우고 올린다.
+    """
+
+
+# 지금 도는 컷이 받은 멈춤 확인(``hybrid_cut``의 should_stop) — ffmpeg를 부르는 자리들이 읽는다
+_stop_check: ContextVar[Callable[[], bool] | None] = ContextVar("_stop_check", default=None)
+# 지금 도는 컷이 받은 일시정지 확인(``hybrid_cut``의 should_pause)
+_pause_check: ContextVar[Callable[[], bool] | None] = ContextVar("_pause_check", default=None)
+
+
+def _ffmpeg(args: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
+    """``run_ffmpeg``를 부른다 — 컷이 멈춤 · 일시정지 확인을 받았으면 그것을 넘긴다.
+
+    컷의 모든 단계(입력 읽기 · 조각 · 오디오 · 잇기 · 조각 검사)가 이 함수로 ffmpeg를 부른다.
+    한 단계라도 건너뛰면 그 단계가 도는 동안에는 중단 · 일시정지가 닿지 않는다. 일시정지 중에는
+    도는 ffmpeg가 서고, 다음 단계의 ffmpeg는 뜨지 않는다.
+
+    Raises:
+        CutCancelled: 멈추라는 요청이 와 ffmpeg를 끝냈거나 시작하지 않은 경우
+    """
+    check, pause = _stop_check.get(), _pause_check.get()
+    if check is None and pause is None:
+        return run_ffmpeg(args, **kwargs)
+    if check is not None and check():
+        raise CutCancelled("멈추라는 요청으로 컷을 그만뒀다")
+    try:
+        return run_ffmpeg(args, should_stop=check, should_pause=pause, **kwargs)
+    except FFmpegCancelledError as e:
+        raise CutCancelled(str(e)) from e
+
+
 def cut_frames_from_mp4(index: Mp4Index) -> CutFrames:
     """mp4 색인에서 컷에 필요한 프레임 정보를 뽑는다."""
     video = index.video
     audio = index.audio
-    shown = [n for n, time in enumerate(audio.times) if time >= 0] if audio else []
+    # 표시되는(시각이 0 이상인) 오디오 샘플의 처음과 끝 — 샘플마다 파이썬 코드를 돌지 않는다
+    if audio is not None and audio.times:
+        visible = list(map(le, repeat(0.0), audio.times))
+        audio_start = min(compress(audio.times, visible), default=None)
+        audio_end = max(compress(map(add, audio.times, audio.durations), visible), default=None)
+    else:
+        audio_start = audio_end = None
     return CutFrames(
         frame_pts=index.frame_pts,
-        frame_dts=tuple(video.decode_times[sample] for sample in index.frame_samples),
+        # 색인의 표와 같이 연속 배열로 담는다 — 긴 영상은 프레임이 수백만 개다 (#309)
+        frame_dts=float_column(map(video.decode_times.__getitem__, index.frame_samples)),
         keyframes=index.keyframes,
         timescale=video.timescale,
         frame_duration=float(1 / index.fps),
-        audio_start=min(audio.times[n] for n in shown) if shown else None,
-        audio_end=max(audio.times[n] + audio.durations[n] for n in shown) if shown else None,
+        audio_start=audio_start,
+        audio_end=audio_end,
         audio_bitrate=_mp4_audio_bitrate(audio) if audio else None,
     )
 
@@ -239,6 +309,10 @@ def hybrid_cut(
     output_path: str,
     *,
     inspect: bool = False,
+    on_stage: Callable[[str, float], None] | None = None,
+    on_progress: Callable[[float], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
+    should_pause: Callable[[], bool] | None = None,
 ) -> CutResult:
     """입력 파일에서 프레임 [first, last]를 잘라 output_path에 mp4로 쓴다.
 
@@ -253,15 +327,52 @@ def hybrid_cut(
         output_path: 만들 파일. 이미 있으면 덮어쓴다
         inspect: True면 조각마다 파라미터·패킷 수를 읽어 결과에 싣는다 —
             ``core.utils.cut_check.check_cut``이 쓴다. 조각을 한 번씩 더 읽으므로 느리다
+        on_stage: 단계 하나가 끝날 때마다(실패로 끝나도) ``(단계 이름, 걸린 초)``로 부른다.
+            단계는 순서대로 ``probe``(입력의 SPS 읽기) · 조각마다 ``<번호>_<종류>``(재인코딩
+            또는 복사) · ``audio`` · ``mux``다. 걸린 시간에는 명령을 만드는 계산도 든다
+        on_progress: 이 컷의 진행을 0~1로 알린다 — 단계가 끝날 때와, 단계가 도는 동안
+            ffmpeg가 진행을 알릴 때마다. 값은 줄지 않고, 1은 산출물을 다 쓴 뒤에만 나온다.
+            실패한 컷은 1을 알리지 않는다
+        should_stop: 주면 컷이 도는 동안 짧은 간격으로 부른다. 참을 돌려주면 도는 ffmpeg를
+            바로 끝내고 중간 파일 · 쓰다 만 산출물을 지운 뒤 ``CutCancelled``를 낸다 —
+            어느 단계에서든 닿는다. 다른 스레드에서 불릴 수 있다
+        should_pause: 주면 같은 간격으로 부른다. 참인 동안 도는 ffmpeg를 멈춰 두고 다음 단계의
+            ffmpeg를 띄우지 않는다. 거짓이 되면 멈춘 자리에서 이어 간다 — 산출물은 일시정지
+            없이 자른 것과 같다. 다른 스레드에서 불릴 수 있다
 
     Raises:
         CutError: 입력을 다룰 수 없는 경우(``CUT_UNSUPPORTED``), ffmpeg가 실패한
             경우(``CUT_FAILED``), 제한 시간을 넘긴 경우(``CUT_TIMEOUT``)
+        CutCancelled: should_stop이 참을 돌려줘 그만둔 경우
         ValueError: 프레임 번호가 범위를 벗어난 경우
     """
+    token = _stop_check.set(should_stop)
+    pause_token = _pause_check.set(should_pause)
+    try:
+        return _hybrid_cut(
+            source_path, frames, first, last, output_path, inspect, on_stage, on_progress
+        )
+    finally:
+        _pause_check.reset(pause_token)
+        _stop_check.reset(token)
+
+
+def _hybrid_cut(
+    source_path: str,
+    frames: CutFrames,
+    first: int,
+    last: int,
+    output_path: str,
+    inspect: bool,
+    on_stage: Callable[[str, float], None] | None,
+    on_progress: Callable[[float], None] | None,
+) -> CutResult:
     _reject_transport_stream(source_path)
     plan = plan_cut(frames, first, last)
-    source = _probe_source(source_path, frames, plan)
+    has_audio = frames.audio_start is not None
+    progress = _CutProgress(on_progress, _stage_work(frames, plan, has_audio))
+    with _stage(on_stage, "probe", progress):
+        source = _probe_source(source_path, frames, plan)
     source_path = os.path.abspath(source_path)
     output_path = os.path.abspath(output_path)
 
@@ -273,28 +384,33 @@ def hybrid_cut(
         inspected = []
         for number, piece in enumerate(plan.pieces):
             name = f"{number}_{piece.kind}.mp4"
-            if piece.reencoded:
-                _run(
-                    _encode_command(source_path, frames, piece, source.video, name),
-                    _ENCODE_TIMEOUT,
-                    work,
-                )
-            else:
-                _run(_copy_command(source_path, frames, piece, name), _COPY_TIMEOUT, work)
+            with _stage(on_stage, f"{number}_{piece.kind}", progress):
+                if piece.reencoded:
+                    _run(
+                        _encode_command(source_path, frames, piece, source.video, name),
+                        _ENCODE_TIMEOUT,
+                        work,
+                    )
+                else:
+                    _run(_copy_command(source_path, frames, piece, name), _COPY_TIMEOUT, work)
             names.append(name)
             if inspect:
                 inspected.append(_inspect_piece(os.path.join(work, name), piece, frames))
 
-        has_audio = frames.audio_start is not None
         if has_audio:
-            _run(
-                _audio_command(source_path, frames, plan, source.audio_bitrate), _COPY_TIMEOUT, work
+            with _stage(on_stage, "audio", progress):
+                _run(
+                    _audio_command(source_path, frames, plan, source.audio_bitrate),
+                    _COPY_TIMEOUT,
+                    work,
+                )
+        with _stage(on_stage, "mux", progress, last=False):
+            stderr = _run(
+                _mux_command(frames, plan, names, has_audio, output_path, work), _COPY_TIMEOUT, work
             )
-        stderr = _run(
-            _mux_command(frames, plan, names, has_audio, output_path, work), _COPY_TIMEOUT, work
-        )
         if "Non-monotonic DTS" in stderr:
             raise CutError(CUT_FAILED, "조각을 잇는 곳에서 DTS가 뒤로 간다")
+        progress.finish("mux")
     except BaseException:
         if os.path.exists(output_path):
             os.remove(output_path)
@@ -304,10 +420,97 @@ def hybrid_cut(
     return CutResult(output_path=output_path, plan=plan, source=source, pieces=tuple(inspected))
 
 
-def _run(args: list[str], timeout: float, cwd: str) -> str:
-    """ffmpeg를 실행하고 stderr를 돌려준다. 실패·시간 초과는 CutError로 바꾼다."""
+def _stage_work(
+    frames: CutFrames, plan: CutPlan, has_audio: bool
+) -> dict[str, tuple[float, float]]:
+    """단계 이름 → (그 단계의 일의 양, 그 단계가 쓰는 출력의 길이[초]). 도는 순서대로 담는다.
+
+    일의 양은 구간 길이에서 어림한 시간이다(``_WORK_*``). 출력의 길이는 ffmpeg가 알리는
+    출력 시각을 그 단계 안의 진행으로 바꾸는 분모다 — 0이면 단계가 끝날 때만 오른다.
+    """
+    length = _end_of(frames, plan.last + 1) - _start_of(frames, plan.first)
+    work: dict[str, tuple[float, float]] = {"probe": (_WORK_CALL, 0.0)}
+    for number, piece in enumerate(plan.pieces):
+        span = _end_of(frames, piece.end) - _start_of(frames, piece.first)
+        if piece.reencoded:
+            work[f"{number}_{piece.kind}"] = (_WORK_ENCODE_PIECE, span)
+        else:
+            work[f"{number}_{piece.kind}"] = (_WORK_CALL + span * _WORK_COPY_PER_SECOND, span)
+    if has_audio:
+        work["audio"] = (_WORK_CALL + length * _WORK_AUDIO_PER_SECOND, length)
+    work["mux"] = (_WORK_CALL + length * _WORK_MUX_PER_SECOND, length)
+    return work
+
+
+class _CutProgress:
+    """컷 하나의 진행(0~1)을 단계마다의 일의 양으로 합쳐 알린다. 알리는 값은 줄지 않는다."""
+
+    def __init__(
+        self, on_progress: Callable[[float], None] | None, work: dict[str, tuple[float, float]]
+    ):
+        self._on_progress = on_progress
+        self._work = work
+        self._total = sum(amount for amount, _length in work.values())
+        self._done = 0.0  # 끝난 단계들의 일의 양
+        self._reported = 0.0
+
+    def sink(self, name: str) -> Callable[[float], None] | None:
+        """그 단계가 도는 동안 ffmpeg의 출력 시각(초)을 받을 함수. 알릴 곳이 없으면 None."""
+        amount, length = self._work[name]
+        if self._on_progress is None or length <= 0:
+            return None
+
+        def on_out_time(seconds: float) -> None:
+            # 단계가 끝나기 전에는 그 단계의 몫을 다 채우지 않는다 — 끝은 finish가 알린다
+            inside = min(max(seconds / length, 0.0), 0.99)
+            self._report((self._done + amount * inside) / self._total)
+
+        return on_out_time
+
+    def finish(self, name: str) -> None:
+        """그 단계가 끝났다 — 그 단계의 일의 양을 다 채운다."""
+        self._done += self._work[name][0]
+        self._report(self._done / self._total)
+
+    def _report(self, value: float) -> None:
+        if self._on_progress is not None and value > self._reported:
+            self._reported = min(value, 1.0)
+            self._on_progress(self._reported)
+
+
+@contextmanager
+def _stage(
+    on_stage: Callable[[str, float], None] | None,
+    name: str,
+    progress: _CutProgress,
+    last: bool = True,
+) -> Iterator[None]:
+    """단계 하나를 감싼다 — 걸린 시간을 on_stage에 알리고, 그 단계의 진행을 progress에 싣는다.
+
+    걸린 시간은 그 단계가 예외로 끝나도 알린다. 진행은 무사히 끝났을 때만 다 채운다.
+    last=False면 끝났을 때 채우지 않는다 — 단계 뒤의 확인까지 마친 호출자가 채운다.
+    """
+    started = time.perf_counter()
+    token = _out_time_sink.set(progress.sink(name))
     try:
-        done = run_ffmpeg(["-v", "warning", "-y", *args], timeout=timeout, cwd=cwd)
+        yield
+        if last:
+            progress.finish(name)
+    finally:
+        _out_time_sink.reset(token)
+        if on_stage is not None:
+            on_stage(name, time.perf_counter() - started)
+
+
+def _run(args: list[str], timeout: float, cwd: str) -> str:
+    """ffmpeg를 실행하고 stderr를 돌려준다. 실패·시간 초과는 CutError로 바꾼다.
+
+    도는 단계가 진행을 받기로 했으면(``_out_time_sink``) ffmpeg의 출력 시각을 그리로 넘긴다.
+    """
+    sink = _out_time_sink.get()
+    extra = {} if sink is None else {"on_out_time": sink}
+    try:
+        done = _ffmpeg(["-v", "warning", "-y", *args], timeout=timeout, cwd=cwd, **extra)
     except FFmpegTimeoutError as e:
         raise CutError(CUT_TIMEOUT, str(e)) from e
     except FFmpegError as e:
@@ -537,7 +740,7 @@ def _read_params(path: str, reorder_delay: int) -> VideoParams:
     것(avcC)이라 파일의 첫 샘플이 없어도 나온다.
     """
     try:
-        done = run_ffmpeg(
+        done = _ffmpeg(
             ["-v", "info", "-i", path, "-map", "0:v:0", "-c", "copy", "-frames:v", "1",
              "-bsf:v", "trace_headers", "-f", "null", "-"],
             timeout=_PROBE_TIMEOUT,
@@ -630,7 +833,7 @@ def read_packets(
         CutError: ffmpeg가 실패했거나 패킷을 하나도 읽지 못한 경우(``CUT_FAILED``)
     """
     try:
-        done = run_ffmpeg(
+        done = _ffmpeg(
             ["-v", "error", *extra, "-i", path, "-map", f"0:{stream}", "-c", "copy", "-f", "framecrc", "-"],
             timeout=_COPY_TIMEOUT,
         )  # fmt: skip

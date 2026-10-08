@@ -57,7 +57,7 @@ import re
 import threading
 import time as tm
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
@@ -145,6 +145,55 @@ class PostprocessError(Exception):
 
 class _PostprocessAborted(Exception):
     """후처리 공급 루프의 사용자 중단 신호 — 실패가 아니라 중단 경로로 보낸다."""
+
+
+# 컷 진행을 이만큼 오를 때마다 알린다 — 막대의 1%보다 잘게, ffmpeg가 알리는 횟수보다는 드물게
+_CUT_PROGRESS_STEP = 0.002
+
+
+class SectionCutProgress:
+    """구간마다의 컷 진행(0~1)을 구간 길이로 가중해 하나의 값(0~1)으로 합친다 (#309).
+
+    구간 하나를 자르는 동안에는 ``section(number)``이 돌려준 함수로 그 구간의 진행을 받고,
+    그 구간의 일이 끝나면(자르지 못했어도) ``finish(number)``로 그 구간의 몫을 다 채운다.
+    알리는 값은 줄지 않는다. 1은 모든 구간이 끝났을 때만 알린다.
+    """
+
+    def __init__(self, lengths: dict[int, float], publish: Callable[[float], None]):
+        self._lengths = lengths
+        self._total = sum(lengths.values())
+        self._publish = publish
+        self._finished: set[int] = set()
+        self._published = 0.0
+
+    def section(self, number: int) -> Callable[[float], None]:
+        """그 구간의 컷이 진행(0~1)을 알릴 함수 — ``hybrid_cut``의 on_progress로 넘긴다."""
+
+        def on_progress(fraction: float) -> None:
+            inside = min(max(fraction, 0.0), 1.0)
+            self._advance(self._done() + self._lengths[number] * inside, final=False)
+
+        return on_progress
+
+    def finish(self, number: int) -> None:
+        """그 구간의 일이 끝났다 — 만들었든 자르지 못했든 그 구간의 몫을 다 채운다."""
+        self._finished.add(number)
+        self._advance(self._done(), final=True)
+
+    def _done(self) -> float:
+        return sum(self._lengths[number] for number in self._finished)
+
+    def _advance(self, amount: float, final: bool) -> None:
+        everything = len(self._finished) == len(self._lengths)
+        value = 1.0 if everything else amount / self._total if self._total > 0 else 0.0
+        if not everything:
+            value = min(value, 0.999)  # 1은 모든 구간이 끝났을 때만
+        if value <= self._published:
+            return
+        if not final and value - self._published < _CUT_PROGRESS_STEP:
+            return
+        self._published = value
+        self._publish(value)
 
 
 class BaseDownloader(ABC):
@@ -274,6 +323,22 @@ class BaseDownloader(ABC):
     def _cleanup_partial(self) -> None:
         """실패·중단 시 부분 산출물을 정리한다."""
 
+    def _stop_requested(self) -> bool:
+        """다운로드를 중단하라는 요청이 왔는지 — 컷이 도는 ffmpeg를 끝낼지 묻는 데 쓴다 (#309).
+
+        컷의 ffmpeg를 지켜보는 스레드에서도 불린다. 일시정지는 중단이 아니다
+        (``_pause_requested``).
+        """
+        return self.state == DownloadState.WAITING
+
+    def _pause_requested(self) -> bool:
+        """다운로드가 일시정지 중인지 — 컷이 도는 ffmpeg를 멈춰 둘지 묻는 데 쓴다 (#309).
+
+        일시정지하는 순간 도는 컷이 서고(ffmpeg 프로세스를 멈춘다) 재개하면 멈춘 자리에서 이어
+        간다. 컷의 ffmpeg를 지켜보는 스레드에서도 불린다.
+        """
+        return self.state == DownloadState.PAUSED
+
     # ============ 하위 다운로더가 선택적으로 오버라이드 ============
 
     def postprocess(self) -> None:
@@ -383,6 +448,51 @@ class BaseDownloader(ABC):
         """ProgressEvent에 실을 전체 크기. 미리 알 수 없는 다운로더는 None."""
         return self.s.total_size
 
+    def _prepare_note(self) -> str:
+        """준비 단계의 로그 줄에 덧붙일 말 (기본: 없음). 무엇을 받았고 무엇을 다시 썼는지 등."""
+        return ""
+
+    def _track_cuts(self, lengths: dict[int, float]) -> "SectionCutProgress":
+        """이번 실행이 자를 구간들의 컷 진행을 공유 데이터(``cut_progress``)에 싣는 것을 만든다.
+
+        Args:
+            lengths: 구간 번호 → 그 구간의 길이(단위는 무엇이든 같기만 하면 된다 — 초, 프레임 수).
+                이번 실행이 자를 구간만 담는다
+        """
+        return SectionCutProgress(lengths, self._publish_cut_progress)
+
+    def _publish_cut_progress(self, value: float) -> None:
+        """컷 진행을 공유 데이터에 적고 진행 통지를 보낸다 — 구간을 자르는 스레드에서 돈다."""
+        self.s.cut_progress = value
+        self._on_progress(
+            ProgressEvent(
+                downloaded_size=self.s.total_downloaded_size,
+                total_size=self._progress_total_size(),
+                speed=0.0,
+                active_threads=0,
+            )
+        )
+
+    def _log_cut_stages(self, number: int, stages: Sequence[tuple[str, float]]) -> None:
+        """구간 하나의 컷이 단계마다 걸린 시간을 로그 한 줄로 남긴다 (#309).
+
+        Args:
+            number: 구간 번호(1부터 — 구간 목록의 순서)
+            stages: ``hybrid_cut``의 on_stage가 알린 (단계 이름, 걸린 초) — 알린 순서대로
+        """
+        self._log_if_supported(
+            "log_cut_stages", number, len(self.s.content.selections), tuple(stages)
+        )
+
+    def _log_if_supported(self, name: str, *args) -> None:
+        """로거에 그 메서드가 있을 때만 부른다.
+
+        나중에 더한 로그 줄에 쓴다 — 그 메서드가 없는 로거(기존 대역 등)를 깨뜨리지 않는다.
+        """
+        method = getattr(self.logger, name, None)
+        if callable(method):
+            method(*args)
+
     def _postprocess_output_size(self) -> int:
         """후처리 종료 로그에 남길 산출물 크기(바이트) (기본: output_path의 크기)."""
         return os.path.getsize(self.s.output_path)
@@ -395,6 +505,11 @@ class BaseDownloader(ABC):
         try:
             self.s.start_time = tm.time()
             plan = self.prepare(self.s.content)
+            # 준비(받을 것을 정하는 단계 — 구간 다운로드는 여기서 moov · 플레이리스트를 받는다)에
+            # 걸린 시간. 전송 시간(Transfer)은 이것을 포함한 채로 둔다 — 그 줄의 뜻을 바꾸지
+            # 않고, 준비를 뺀 값을 따로 한 줄 남긴다 (#309)
+            prepare_elapsed = tm.time() - self.s.start_time
+            self._log_if_supported("log_prepare_complete", prepare_elapsed, self._prepare_note())
             if plan.selections and not self.supports_selections:
                 # 구간을 해석하지 못하는 다운로더는 명시적으로 거부한다 (#83, #309)
                 raise NotImplementedError(
@@ -411,6 +526,17 @@ class BaseDownloader(ABC):
             self.logger.log_download_start(*self._download_start_log_args())
 
             self._prepare_output()
+
+            # 준비가 끝났다 — 받기 전에 진행을 한 번 알린다 (#309). 표시 계층은 이 통지로
+            # "준비 중"을 걷고, 받을 크기(total_size)를 안다. 관측 스레드의 첫 통지는 1초 뒤다
+            self._on_progress(
+                ProgressEvent(
+                    downloaded_size=self.s.total_downloaded_size,
+                    total_size=self._progress_total_size(),
+                    speed=0.0,
+                    active_threads=0,
+                )
+            )
 
             # 진행률 배열이 준비된 뒤에 관측을 시작한다
             monitor.start()
@@ -474,6 +600,9 @@ class BaseDownloader(ABC):
                     self.s.failed_threads + self.s.restart_threads,
                     self._peak_threads,
                 )
+                self._log_if_supported(
+                    "log_transfer_net", max(transfer_elapsed - prepare_elapsed, 0.0)
+                )
                 # (4) 다운로드 완료 후 타입별 마무리(병합 등) 후 완료 통지 —
                 # 후처리 필요 여부는 실행 중 추측하지 않고 계획이 답한다 (#83)
                 postprocess_elapsed = None
@@ -536,6 +665,14 @@ class BaseDownloader(ABC):
             # 실패 후 상태가 RUNNING인 채 남는 경로(헤드리스 등)에서는 기존
             # 관측 루프가 상태 변화만 기다리며 영원히 돌았다
             self._stop_monitor(monitor)
+            self._release_after_run()
+
+    def _release_after_run(self) -> None:
+        """실행이 끝난 뒤(완료 · 실패 · 중단 모두) 실행 동안만 쓰는 큰 데이터를 놓는다 (기본: 없음).
+
+        엔진 객체는 실행이 끝난 뒤에도 핸들에 걸려 한동안 남는다. 그동안 붙잡고 있으면 안 되는
+        것을 여기서 놓는다. 다음 실행에 넘길 것(이어받기 기록)은 이미 공유 데이터에 적혀 있다.
+        """
 
     # ============ 다운로드 조정 및 콜백 메서드 ============
 

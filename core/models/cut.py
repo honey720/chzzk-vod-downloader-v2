@@ -7,6 +7,7 @@
 ``core.utils.cut_check``가 한다.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -20,9 +21,11 @@ class CutFrames:
     시각은 모두 VOD 시작 = 0 기준의 초다(``Mp4Index`` · ``Fmp4Index``와 같다).
     """
 
-    frame_pts: tuple[float, ...]  # 영상 프레임의 PTS, 표시 순서
-    frame_dts: tuple[float, ...]  # frame_pts와 같은 순서로, 그 프레임의 DTS
-    keyframes: tuple[int, ...]  # 키프레임인 프레임의 번호(오름차순)
+    # 프레임별 표는 튜플이거나 읽기 전용 연속 배열(SampleColumn)이다 — mp4 색인에서 온 것은
+    # 배열이다. 어느 쪽이든 인덱스 · 길이 · 순회 · bisect로만 쓴다
+    frame_pts: Sequence[float]  # 영상 프레임의 PTS, 표시 순서
+    frame_dts: Sequence[float]  # frame_pts와 같은 순서로, 그 프레임의 DTS
+    keyframes: Sequence[int]  # 키프레임인 프레임의 번호(오름차순)
     timescale: int  # 영상 트랙의 초당 틱 수 — 재인코딩 조각과 결과 파일이 이 값을 쓴다
     frame_duration: float  # 프레임 하나의 길이(초) — 가장 많은 샘플 길이
     audio_start: float | None  # 오디오가 시작하는 시각. 오디오가 없으면 None

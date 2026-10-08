@@ -6,8 +6,10 @@ mainWindow와 같은 배선(ContentViewModel ↔ ContentListView ↔ DownloadVie
 위젯까지 실제 시그널로 지나가게 한다. 실제 다운로드 · 네트워크는 없다.
 
 핵심 계약:
-- 진행 막대는 전송과 컷을 합친 하나다 — 전송이 앞 80%, 컷이 뒤 20%를 구간 수로 나눈다.
-  전달 방식(파일 · 세그먼트)이 달라도 같은 진행에는 같은 값이 나온다
+- 진행 막대는 전송과 컷을 합친 하나다 — 지난 시간 ÷ 예상 전체 시간이고, 컷의 예상 시간은
+  구간 수와 구간 길이에서 어림한다. 여기서는 시계를 고정해 전송이 컷 예상 시간의 4.02배
+  걸리게 한다(전송이 막대의 약 80%). 전달 방식(파일 · 세그먼트)이 달라도 같은 진행에는
+  같은 값이 나온다
 - 완료 구간 수는 엔진이 적어 둔 구간 상태에서 읽는다 — 같은 통지가 두 번 와도 늘지 않는다
 - 컷 단계의 카드에는 속도 · 남은 시간 대신 단계 문구가 나온다
 - 일부 구간만 자르지 못하면 나머지가 끝난 뒤에 카드가 실패가 되고, 실패한 구간 수와 완료
@@ -24,6 +26,7 @@ from PySide6.QtCore import QObject
 
 import main as main_module
 import app.theme as theme
+import app.viewmodels.download_viewmodel as download_viewmodel_module
 from app.download_logger import DownloadLogger
 from app.viewmodels.content_viewmodel import ContentViewModel
 from app.viewmodels.data import ContentItem
@@ -42,6 +45,30 @@ from tests.unit.card_helpers import hold_style
 MB = 1024 * 1024
 # 길이가 서로 다른 구간 셋 — 6초 · 11초 · 29초
 SELECTIONS = (TimeRange(605.0, 611.0), TimeRange(2520.0, 2531.0), TimeRange(3600.0, 3629.0))
+
+
+def cut_estimate(*lengths: float) -> float:
+    """그 길이(초)의 구간들을 자르는 데 걸릴 시간의 어림 — 구간마다 1초 + 길이 1초에 0.018초."""
+    return len(lengths) * 1.0 + sum(lengths) * 0.018
+
+
+# 전송에 걸리는 시간(초) — 구간 셋의 컷 예상 시간의 4.02배. 전송이 막대의 80.08%를 차지한다
+# (꼭 4배로 두면 80이 부동소수점 오차로 79가 될 수 있다)
+TRANSFER_SECONDS = 4.02 * cut_estimate(6, 11, 29)
+
+
+class _Clock:
+    """진행 막대의 시계 대역 — 테스트가 시각을 정한다."""
+
+    now = 0.0
+
+
+@pytest.fixture(autouse=True)
+def clock(monkeypatch):
+    """진행 막대가 재는 시간을 고정한다 — `_Card.transfer`가 전송의 진행만큼 시계를 돌린다."""
+    _Clock.now = 0.0
+    monkeypatch.setattr(download_viewmodel_module, "_clock", lambda: _Clock.now)
+    return _Clock
 
 
 @pytest.fixture(autouse=True)
@@ -147,6 +174,8 @@ class _Card:
         )
         self.item.total_size = "595.34 MB"
         self.item.selections = tuple(selections)
+        self.transfer_seconds = TRANSFER_SECONDS  # 전송이 끝나기까지 시계가 가는 양
+        self._started_at = _Clock.now  # 다운로드를 시작한 때의 시계
         self.manager.model.addItem(self.item)
         qapp.processEvents()
 
@@ -161,6 +190,7 @@ class _Card:
 
     def start(self, segments: int = 10) -> None:
         """다운로드를 시작하고, 엔진의 prepare가 한 것처럼 구간 수와 전송 단위 수를 적는다."""
+        self._started_at = _Clock.now
         self.manager.downloadItem()
         self.submission = self.service.submissions[-1]
         self.data = self.submission["data"]
@@ -171,6 +201,7 @@ class _Card:
     def transfer(self, fraction: float, speed: float = 3.1) -> None:
         """전송이 fraction만큼 진행됐다고 엔진처럼 알린다 — 파일은 바이트, 세그먼트 기반은 세그먼트 수."""
         total = 100 * MB
+        _Clock.now = self._started_at + self.transfer_seconds * fraction
         self.data.completed_threads = round(self.data.max_threads * fraction)
         self.submission["on_progress"](
             ProgressEvent(
@@ -190,6 +221,11 @@ class _Card:
     def cut(self, done: int, failed: int = 0) -> None:
         """구간 하나의 컷이 끝났다고 알린다 — 엔진이 하듯 구간 상태를 적고 속도 0의 진행을 보낸다."""
         self.data.sections_done, self.data.sections_failed = done, failed
+        self.notify_cut()
+
+    def cut_inside(self, progress: float) -> None:
+        """구간을 자르는 도중의 진행을 엔진처럼 알린다 — 컷 진행(0~1)을 적고 통지를 보낸다."""
+        self.data.cut_progress = progress
         self.notify_cut()
 
     def notify_cut(self) -> None:
@@ -237,8 +273,9 @@ def card(qapp, tmp_path, request):
 def test_combined_progress_rises_through_transfer_and_cut_to_100(card):
     """구간 셋의 진행률은 전송과 컷을 합쳐 단조 증가하고, 전달 방식이 달라도 같은 값이며, 마지막에 100이어야 한다.
 
-    길이가 다른 구간 셋. 전송 0 · 30 · 70 · 100% → 컷 단계 → 구간 1 · 2 · 3이 차례로 끝남
-    -> 카드의 진행률 == [0, 24, 56, 80, 86, 93, 100] (전송이 80%, 컷이 구간마다 20% ÷ 3),
+    길이가 다른 구간 셋. 전송 0 · 30 · 70 · 100% → 컷 단계 → 구간 1 · 2 · 3이 차례로 끝남.
+    전송에 컷 예상 시간의 4.02배가 걸림(전송이 막대의 80.08%), 엔진이 컷 진행을 적지 않음
+    -> 카드의 진행률 == [0, 24, 56, 80, 86, 93, 100] (컷은 구간이 끝날 때마다 나머지의 1/3),
        진행 막대의 값도 같다
     """
     card.start()
@@ -513,12 +550,14 @@ def test_retry_bar_starts_from_zero_and_the_count_continues_from_the_finished_se
     """재시도한 카드의 진행 막대는 0부터 다시 차고, 완료 구간 수는 끝낸 구간 수에서 이어져야 한다.
 
     구간 셋, 둘째만 실패 → ↻ → 시작. 엔진처럼 구간 상태를 (전체 3, 완료 2, 이어받음 2)로 적고
-    전송 0% · 50% → 컷 단계 → 둘째 구간 끝남 → 완료 통지
+    전송 0% · 50% → 컷 단계 → 둘째 구간 끝남 → 완료 통지. 전송에 둘째 구간(11초)의 컷 예상
+    시간의 4.02배가 걸림
     -> 진행률 == [0, 40, 80, 100], 전송 중 문구에 구간 수 없음, 컷 단계 == "80% · Cutting · 2/3",
        둘째가 끝난 뒤 == "100% · Cutting · 3/3", 완료 == "✓ Completed · 3/3 · 1:12", 남긴 것이 지워진다
     """
     _fail_second_section(card)
     card.retry()
+    card.transfer_seconds = 4.02 * cut_estimate(11)  # 이번에 자를 것은 둘째 구간뿐이다
     card.restart()
     card.data.sections_done = card.data.sections_resumed = 2
     seen = []
@@ -653,3 +692,98 @@ def test_retry_after_the_folder_or_title_changed_starts_over_in_the_place_now_ch
         f"{title} 1080p_{number}.mp4" for number in (1, 2, 3)
     ]
     assert card.item.sections_done == 0
+
+
+# ================================================================ 구간 안의 진행 · 전송과 컷의 몫
+
+
+@pytest.mark.parametrize("card", ["video", "m3u8", "hls_aes"], indirect=True)
+def test_bar_rises_inside_a_section_while_it_is_being_cut(card):
+    """구간 하나를 자르는 동안 엔진이 컷 진행을 올리면 끝난 구간 수가 그대로여도 막대가 올라야 한다.
+
+    구간 셋, 전송이 막대의 80.08%. 컷 단계에서 끝난 구간 0개인 채로 컷 진행 0.1 · 0.2 · 0.3 · 0.4
+    -> 진행률 == [82, 84, 86, 88], 문구의 완료 구간 수는 내내 0/3
+    """
+    card.start()
+    card.begin_cut()
+    seen = []
+
+    for progress in (0.1, 0.2, 0.3, 0.4):
+        card.cut_inside(progress)
+        seen.append(card.item.download_progress)
+        assert card.status.endswith("Cutting · 0/3")
+
+    assert seen == [82, 84, 86, 88]
+
+
+def test_bar_never_goes_back_when_a_lower_cut_progress_arrives(card):
+    """앞서 보인 값보다 낮은 컷 진행이 와도 막대는 내려가지 않아야 한다.
+
+    구간 셋. 컷 진행 0.5 → 0.2 → 0.6
+    -> 진행률 == [90, 90, 92]
+    """
+    card.start()
+    card.begin_cut()
+    seen = []
+
+    for progress in (0.5, 0.2, 0.6):
+        card.cut_inside(progress)
+        seen.append(card.item.download_progress)
+
+    assert seen == [90, 90, 92]
+
+
+def test_bar_reaches_100_only_when_the_last_section_is_done(card):
+    """막대는 마지막 구간의 일이 끝났을 때만 100이어야 한다 — 컷 진행이 1에 닿아도 그 전에는 99다.
+
+    구간 셋. 구간 둘이 끝난 채 컷 진행 0.999 · 1.0 → 셋째 구간 끝남
+    -> 진행률 == [99, 99, 100]
+    """
+    card.start()
+    card.begin_cut()
+    card.cut(2)
+    seen = []
+
+    for progress in (0.999, 1.0):
+        card.cut_inside(progress)
+        seen.append(card.item.download_progress)
+    card.cut(3)
+    seen.append(card.item.download_progress)
+
+    assert seen == [99, 99, 100]
+
+
+@pytest.mark.parametrize(
+    ("times_the_cut_estimate", "at_cut_start"),
+    [(0.25, 20), (1.0, 50), (3.0, 75), (9.0, 90)],
+)
+def test_share_of_the_transfer_follows_how_long_the_transfer_took(
+    card, times_the_cut_estimate, at_cut_start
+):
+    """전송이 막대에서 차지하는 몫은 전송에 걸린 시간 ÷ (그 시간 + 컷 예상 시간)이어야 한다.
+
+    구간 셋(6 · 11 · 29초 — 컷 예상 3 × 1초 + 46 × 0.018초 = 3.828초).
+    전송에 그 0.25 · 1 · 3 · 9배가 걸림
+    -> 컷 단계에 들어선 순간의 진행률 == 20 · 50 · 75 · 90
+    """
+    card.transfer_seconds = times_the_cut_estimate * cut_estimate(6, 11, 29) * 1.0001  # 내림 여유
+    card.start()
+
+    card.begin_cut()
+    card.notify_cut()
+
+    assert card.item.download_progress == at_cut_start
+
+
+def test_bar_during_transfer_is_the_time_spent_over_the_expected_total(card):
+    """전송 중의 막대는 지난 시간 ÷ (지금 속도로 본 전송 예상 시간 + 컷 예상 시간)이어야 한다.
+
+    구간 셋(컷 예상 3.828초). 7.656초가 지났을 때 전송이 50%(전송 예상 15.312초)
+    -> 진행률 == int(100 × 7.656 ÷ (15.312 + 3.828)) == 40
+    """
+    card.transfer_seconds = 4 * cut_estimate(6, 11, 29) * 1.0001  # 내림 여유
+    card.start()
+
+    card.transfer(0.5)
+
+    assert card.item.download_progress == 40

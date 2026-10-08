@@ -6,8 +6,10 @@
 test_file_downloader_*·test_m3u8_downloader_*가 박제한다.
 """
 
+import gc
 import threading
 import time
+import weakref
 
 import pytest
 
@@ -25,12 +27,22 @@ class FakeEngine:
     release Event가 set될 때까지 run()이 블로킹해 동시 실행 검증을 가능하게 한다.
     """
 
-    def __init__(self, data, logger, on_progress=None, on_finished=None, on_failed=None, **_):
+    def __init__(
+        self,
+        data,
+        logger,
+        on_progress=None,
+        on_finished=None,
+        on_failed=None,
+        on_merge_start=None,
+        **_,
+    ):
         self.data = data
         self.logger = logger
         self.on_progress = on_progress
         self.on_finished = on_finished
         self.on_failed = on_failed
+        self.on_merge_start = on_merge_start
         self.key_resolver = None
         self.started = threading.Event()
         self.release = threading.Event()
@@ -455,3 +467,113 @@ def _wait_for_count(factory: FakeEngineFactory, count: int, timeout: float = WAI
 
 def _wait_for_second(factory: FakeEngineFactory) -> bool:
     return _wait_for_count(factory, 2)
+
+
+class TestHandleOutlivesItsCaller:
+    """엔진의 콜백은 핸들을 약하게만 가리킨다 (#309) — 호출한 쪽이 핸들을 버려도 실행 중에는
+    서비스(실행 목록과 실행 스레드)가 핸들을 쥐고 있어 알림이 모두 닿아야 한다."""
+
+    @staticmethod
+    def _submit_and_drop(service: DownloadService, **callbacks) -> weakref.ref:
+        """제출하고 핸들을 버린다 — 약한 참조만 돌려준다."""
+        return weakref.ref(service.submit(_make_content(), **callbacks))
+
+    def test_progress_merge_and_finish_arrive_after_the_caller_drops_the_handle(self, file_factory):
+        """핸들을 버린 채 돌려도 진행 · 병합 시작 · 완료 알림이 모두 와야 하고, 도는 중 순환 수집을 돌려도 같아야 한다.
+
+        제출한 핸들을 버림 → 엔진이 도는 중 gc.collect() → 엔진이 진행 · 병합 시작을 알리고 끝남
+        -> 도는 중 핸들이 살아 있다, 진행 1건 · 병합 시작 1건 · 완료 1건이 온다
+        """
+        seen: list[str] = []
+        finished = threading.Event()
+        service = DownloadService()
+        handle = self._submit_and_drop(
+            service,
+            on_progress=lambda event: seen.append(f"progress:{event}"),
+            on_merge_start=lambda: seen.append("merge"),
+            on_finished=lambda: (seen.append("finished"), finished.set()),
+        )
+        engine = _first(file_factory)
+        assert engine.started.wait(WAIT)
+
+        gc.collect()
+        alive_while_running = handle() is not None
+        engine.on_progress("event")
+        engine.on_merge_start()
+        _finish(engine)
+
+        assert finished.wait(WAIT)
+        assert alive_while_running
+        assert seen == ["progress:event", "merge", "finished"]
+
+    def test_failure_arrives_after_the_caller_drops_the_handle(self, file_factory):
+        """핸들을 버린 채 돌려도 실패 알림이 예외 객체 그대로 와야 한다.
+
+        제출한 핸들을 버림 → gc.collect() → 엔진이 OSError로 실패
+        -> on_failed가 그 예외 객체를 받는다
+        """
+        failures: list[BaseException] = []
+        failed = threading.Event()
+        service = DownloadService()
+        self._submit_and_drop(service, on_failed=lambda exc: (failures.append(exc), failed.set()))
+        engine = _first(file_factory)
+        assert engine.started.wait(WAIT)
+        error = OSError("전송 실패(대역)")
+
+        gc.collect()
+        engine.fail_with = error
+        _finish(engine)
+
+        assert failed.wait(WAIT)
+        assert failures == [error]
+
+    def test_stop_releases_the_slot_and_starts_the_next_after_the_caller_drops_the_handle(
+        self, file_factory
+    ):
+        """핸들을 버린 채 정지해도 상태 알림이 오고, 서비스가 자리를 비워 기다리던 다음 건을 시작해야 한다.
+
+        동시 실행 1. 첫 건의 핸들을 버림, 둘째 건을 제출(대기) → gc.collect() → 첫 건의 공유 데이터로 정지 → 엔진이 끝남
+        -> 첫 건의 상태 알림에 WAITING이 온다, 둘째 건의 엔진이 시작된다
+        """
+        from core.models.download_data import DownloadData
+
+        states: list[DownloadState] = []
+        content = _make_content()
+        data = DownloadData.from_content(content)
+        service = DownloadService(max_concurrent=1)
+        weakref.ref(service.submit(content, data=data, on_state_change=states.append))
+        service.submit(_make_content())
+        engine = _first(file_factory)
+        assert engine.started.wait(WAIT)
+
+        gc.collect()
+        data.model.stop()
+        _finish(engine)
+
+        assert _wait_for_second(file_factory)
+        assert DownloadState.WAITING in states
+
+    def test_service_lets_go_of_the_handle_when_the_run_ends(self, file_factory):
+        """실행이 끝나면 서비스는 핸들을 놓아야 한다 — 순환 수집 없이 사라진다.
+
+        순환 수집기를 끔. 제출한 핸들을 버림 → 엔진이 끝남
+        -> 도는 중에는 약한 참조가 살아 있고, 끝난 뒤에는 None이 된다
+        """
+        finished = threading.Event()
+        service = DownloadService()
+        gc.collect()
+        gc.disable()
+        try:
+            handle = self._submit_and_drop(service, on_finished=finished.set)
+            engine = _first(file_factory)
+            assert engine.started.wait(WAIT)
+            alive_while_running = handle() is not None
+            file_factory.instances.clear()  # 테스트가 든 엔진 참조를 놓는다
+            _finish(engine)
+            del engine
+
+            assert finished.wait(WAIT)
+            assert alive_while_running
+            assert _wait_until(lambda: handle() is None)
+        finally:
+            gc.enable()

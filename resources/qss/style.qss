@@ -158,10 +158,24 @@ QLabel#thumbnailLabel {
     color: @textMuted;
 }
 
+/* 대기 카드에서는 이 자리(재생 시간 · 파일 크기 · 구간 요약)를 누르면 구간 편집 창이
+ * 열린다(#309). 제목과 같은 규칙이다 — 누를 수 있을 때만 호버에서 알린다. `editable`은
+ * app/widgets/widget.py::_applySectionHint가 상태에 맞춰 심는다. */
+#fileSizeLabel[editable="true"]:hover {
+    color: @accent;
+}
+
 #directoryLabel,
 #directoryEdit {
     font-size: @fontSizePath;
     color: @textMuted;
+}
+
+/* 경로 글자는 대기 카드에서만 누를 수 있다(저장 폴더 바꾸기) — 구간 요약 · 제목과 같은
+ * 규칙으로 그때만 호버에서 알린다(#309). `editable`은 app/widgets/widget.py::
+ * _applyEditability가 상태에 맞춰 심는다. */
+#directoryLabel[editable="true"]:hover {
+    color: @accent;
 }
 
 /* 카드 테두리 — 항상 중립색이다(#244). 상태는 상태 아이콘·상태 텍스트·
@@ -335,6 +349,55 @@ QLineEdit:focus {
 
 QLineEdit:disabled {
     color: @textDisabled;
+}
+
+/* ---------- 구간 편집 창 (#309) ---------- */
+
+/* 틀린 칸 — `invalid`는 app/views/section_dialog.py가 검증 결과에 맞춰 심는다.
+ * :focus 규칙보다 뒤에 두어 입력 중에도 오류 색이 남는다. */
+QLineEdit[invalid="true"],
+QLineEdit[invalid="true"]:focus {
+    border-color: @stateFailed;
+}
+
+#sectionTitleLabel {
+    font-size: @fontSizeTitle;
+    color: @text;
+}
+
+#sectionHeaderLabel,
+#sectionWaitHintLabel,
+#sectionNumberLabel,
+#sectionNoticeLabel,
+#sectionNoteLabel,
+#sectionInfoLabel {
+    font-size: @fontSizeMeta;
+    color: @textMuted;
+}
+
+#sectionErrorLabel {
+    font-size: @fontSizeMeta;
+    color: @stateFailed;
+}
+
+#sectionStatusLabel {
+    color: @textMuted;
+}
+
+#sectionStatusLabel[status="error"] {
+    color: @stateFailed;
+}
+
+/* 행 목록의 스크롤 영역 — 창 바탕과 같은 색으로 둔다(뷰포트는 QScrollArea 규칙이
+ * 칠하지 않아 따로 적는다). */
+QScrollArea#sectionScrollArea {
+    background-color: transparent;
+    border: none;
+}
+
+QScrollArea#sectionScrollArea > QWidget#qt_scrollarea_viewport,
+QWidget#sectionRowContainer {
+    background-color: transparent;
 }
 
 /* `selection-background-color`/`selection-color`를 여기(QComboBox 자신)에

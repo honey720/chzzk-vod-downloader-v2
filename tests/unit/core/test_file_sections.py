@@ -23,14 +23,24 @@ requests 세션으로 요청하고 진짜 응답 객체를 받으며, 전송 어
 import os
 import re
 import subprocess
+import threading
+import time
 from types import SimpleNamespace
 
 import pytest
 
 import core.api.mp4 as mp4_module
 import core.downloaders.file_downloader as fd_module
+import core.utils.hybrid_cut as cut_module
 import core.utils.mp4_partial as partial_module
-from core.api.mp4 import MP4_UNSUPPORTED, Mp4Error, fetch_mp4_head, read_mp4_index
+from core.api.mp4 import (
+    MP4_UNSUPPORTED,
+    Mp4Error,
+    fetch_mp4_head,
+    fetch_mp4_raw,
+    pending_mp4_head,
+    read_mp4_index,
+)
 from core.downloaders.base import PostprocessError, TruncatedBodyError
 from core.downloaders.file_downloader import FileDownloader
 from core.downloaders.ranges import split_span
@@ -39,16 +49,19 @@ from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
 from core.utils.cut_check import check_cut
 from core.utils.ffmpeg import get_ffmpeg_exe
-from core.utils.mp4_ranges import selection_byte_ranges
+from core.utils.mp4_ranges import selection_byte_ranges, sections_download_size
 from core.utils.hybrid_cut import CUT_FAILED, CutError, cut_frames_from_mp4, hybrid_cut
 from core.utils.paths import build_section_output_paths, partial_source_path_for
 from core.utils.selections import SELECTION_OUT_OF_RANGE, SelectionError
+from tests.unit.core.long_ffmpeg import LONG_RUNNING, end_all, record_processes
 from tests.unit.core.midway_cut_failure import MidwayCutFailure
 from tests.unit.core.range_host import RangeHost
 from tests.unit.core.section_retry import CutCalls, hand_over, snapshot
 
 FPS = 30
 KEYFRAMES = (0, 30, 42, 72, 90, 120, 150)  # -force_key_frames 0,1,1.4,2.4,3,4,5 (30fps)
+# 엔진 한 번의 실행을 기다려 주는 시간(초) — 가장 긴 실행이 2초 안팎이다. 넘으면 중단을 보낸다
+_RUN_LIMIT_SECONDS = 30.0
 
 
 def _seconds(frame: int) -> float:
@@ -168,7 +181,14 @@ class _Run:
 
     def start(self) -> "_Run":
         self.data.model.start()
-        self.engine.run()
+        # 실행이 끝나지 않으면 테스트가 중단을 보낸다 — 제품의 기다림(일시정지 등)에는 상한이 없다
+        guard = threading.Timer(_RUN_LIMIT_SECONDS, self.data.model.stop)
+        guard.daemon = True
+        guard.start()
+        try:
+            self.engine.run()
+        finally:
+            guard.cancel()
         return self
 
     @property
@@ -993,3 +1013,467 @@ def test_retry_without_the_kept_source_plans_the_ranges_from_a_freshly_received_
     check = check_cut(_frames(sources["gappy"]), again.engine.cut_results[0])
     assert check.ok, check.notes
     assert snapshot(kept) == kept
+
+
+# ================================================================ 준비 단계의 로그
+
+
+def _logged(run: "_Run", name: str) -> list[tuple]:
+    return [args for called, args in run.logger.calls if called == name]
+
+
+def test_prepare_log_says_the_moov_was_fetched_when_none_was_handed_in(server, tmp_path):
+    """moov를 넘겨받지 않은 구간 다운로드는 준비 로그에 "moov fetched"를 남겨야 한다.
+
+    기본 입력, 구간 프레임 35~80, content.mp4_head 없음
+    -> log_prepare_complete 1회, 덧붙인 말 == "moov fetched", 걸린 시간 >= 0
+    """
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))]).start()
+
+    ((elapsed, note),) = _logged(run, "log_prepare_complete")
+    assert note == "moov fetched"
+    assert elapsed >= 0
+
+
+def test_prepare_log_says_the_moov_was_reused_when_one_was_handed_in(server, tmp_path):
+    """moov를 넘겨받은 구간 다운로드는 준비 로그에 "moov reused"를 남겨야 한다.
+
+    기본 입력, 구간 프레임 35~80, fetch_mp4_head의 결과를 content.mp4_head에 넣음
+    -> log_prepare_complete 1회, 덧붙인 말 == "moov reused"
+    """
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))])
+    run.data.content.mp4_head = fetch_mp4_head(server.url("plain"))
+
+    run.start()
+
+    ((_elapsed, note),) = _logged(run, "log_prepare_complete")
+    assert note == "moov reused"
+
+
+def test_engine_parses_handed_moov_bytes_without_fetching_again(server, tmp_path, monkeypatch):
+    """해석하지 않은 moov 바이트를 넘겨받은 구간 다운로드는 moov를 다시 받지 않고 같은 파일을 내야 한다.
+
+    기본 입력, 구간 프레임 35~80. fetch_mp4_raw의 결과를 pending_mp4_head로 싸 content.mp4_pending에
+    넣고 엔진의 moov 받기를 부르면 실패하게 바꿈. 같은 구간을 아무것도 넘기지 않고 받은 것과 견줌
+    -> 준비 로그의 덧붙인 말 == "moov reused", 둘 다 완료 1회, 산출물의 프레임 == 넘기지 않고 받은 산출물의 프레임
+    """
+    sections = [TimeRange(_seconds(35), _seconds(80))]
+    (tmp_path / "plain").mkdir()
+    (tmp_path / "handed").mkdir()
+    plain = _Run(server, "plain", tmp_path / "plain", sections).start()
+    raw = fetch_mp4_raw(server.url("plain"))
+
+    def no_fetch(url):
+        raise AssertionError("엔진이 moov를 다시 받았다")
+
+    monkeypatch.setattr(fd_module, "fetch_mp4_head", no_fetch)
+    run = _Run(server, "plain", tmp_path / "handed", sections)
+    run.data.content.mp4_pending = pending_mp4_head(raw)
+
+    run.start()
+
+    ((_elapsed, note),) = _logged(run, "log_prepare_complete")
+    assert note == "moov reused"
+    assert (plain.finished, run.finished) == (1, 1)
+    assert _frames(run.paths[0]) == _frames(plain.paths[0])
+
+
+def test_engine_uses_the_index_someone_else_already_parsed(server, tmp_path, monkeypatch):
+    """넘겨받은 moov를 다른 쪽이 이미 해석했으면 엔진은 다시 해석하지 않고 그 색인으로 받아야 한다.
+
+    기본 입력, 구간 프레임 35~80. content.mp4_pending을 먼저 get()으로 해석해 두고, 해석 함수를
+    세는 대역으로 바꾼 뒤 엔진을 돌림
+    -> 엔진이 도는 동안 해석 0회, 완료 1회, 준비 로그의 덧붙인 말 == "moov reused"
+    """
+    pending = pending_mp4_head(fetch_mp4_raw(server.url("plain")))
+    pending.get()
+    calls = []
+    real = mp4_module.index_mp4
+
+    def counting(raw):
+        calls.append(raw)
+        return real(raw)
+
+    monkeypatch.setattr(mp4_module, "index_mp4", counting)
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))])
+    run.data.content.mp4_pending = pending
+
+    run.start()
+
+    assert calls == []
+    assert run.finished == 1
+    ((_elapsed, note),) = _logged(run, "log_prepare_complete")
+    assert note == "moov reused"
+
+
+def test_prepare_log_of_a_whole_download_says_nothing_about_the_moov(server, tmp_path):
+    """구간이 없는 다운로드의 준비 로그는 moov에 대해 아무 말도 덧붙이지 않아야 한다.
+
+    기본 입력, selections 빈 튜플
+    -> log_prepare_complete 1회, 덧붙인 말 == ""
+    """
+    run = _Run(server, "plain", tmp_path, []).start()
+
+    ((_elapsed, note),) = _logged(run, "log_prepare_complete")
+    assert note == ""
+
+
+def test_transfer_without_prepare_is_the_transfer_time_minus_the_prepare_time(
+    server, tmp_path, monkeypatch
+):
+    """준비를 뺀 전송 시간은 Transfer 줄의 시간에서 준비 시간을 뺀 값이어야 한다.
+
+    moov 받기가 0.3초 걸리게 함, 구간 프레임 35~80
+    -> 준비 >= 0.3초, log_transfer_net의 값 == log_transfer_complete의 시간 − 준비 시간,
+       log_transfer_complete의 시간 >= 0.3초(준비를 포함한 채다)
+    """
+    slow = 0.3  # 초 — 시계 해상도보다 충분히 길다
+    real_fetch = fd_module.fetch_mp4_head
+
+    def slow_fetch(url):
+        time.sleep(slow)
+        return real_fetch(url)
+
+    monkeypatch.setattr(fd_module, "fetch_mp4_head", slow_fetch)
+
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))]).start()
+
+    ((prepare, _note),) = _logged(run, "log_prepare_complete")
+    ((transfer, *_rest),) = _logged(run, "log_transfer_complete")
+    ((net,),) = _logged(run, "log_transfer_net")
+    assert prepare >= slow
+    assert transfer >= slow
+    assert net == pytest.approx(transfer - prepare, abs=1e-9)
+
+
+# ================================================================ 컷 단계의 로그
+
+
+def test_cut_stages_are_logged_once_per_section_with_its_number(server, tmp_path):
+    """구간마다 컷의 단계별 시간을 그 구간의 번호와 함께 한 번씩 로그에 남겨야 한다.
+
+    기본 입력, 구간 둘(프레임 35~80은 세 조각, 100~110은 한 GOP 안이라 한 조각)
+    -> log_cut_setup 1회, log_cut_stages 2회: (1, 2, …) · (2, 2, …),
+       첫 구간의 단계 이름 == [probe, 0_head, 1_mid, 2_tail, audio, mux],
+       둘째 구간의 단계 이름 == [probe, 0_whole, audio, mux]
+    """
+    selections = [TimeRange(_seconds(35), _seconds(80)), TimeRange(_seconds(100), _seconds(110))]
+
+    run = _Run(server, "plain", tmp_path, selections).start()
+
+    assert len(_logged(run, "log_cut_setup")) == 1
+    first, second = _logged(run, "log_cut_stages")
+    assert first[:2] == (1, 2)
+    assert second[:2] == (2, 2)
+    assert [name for name, _seconds in first[2]] == [
+        "probe",
+        "0_head",
+        "1_mid",
+        "2_tail",
+        "audio",
+        "mux",
+    ]
+    assert [name for name, _seconds in second[2]] == ["probe", "0_whole", "audio", "mux"]
+
+
+def test_cut_stages_of_a_failed_section_are_logged_up_to_the_failure(server, tmp_path, monkeypatch):
+    """컷이 실패한 구간도 실패한 단계까지의 시간을 로그에 남겨야 한다.
+
+    기본 입력, 구간 프레임 35~80, 컷의 셋째 ffmpeg 실행(가운데 복사)이 종료 코드 1로 끝남
+    -> 실패 1건, log_cut_stages 1회, 단계 이름 == [probe, 0_head, 1_mid]
+    """
+    real = cut_module.run_ffmpeg
+    calls = []
+
+    def flaky(args, **kwargs):
+        calls.append(args)
+        if len(calls) == 3:  # 0번은 입력 읽기, 1번은 머리, 2번이 가운데 복사다
+            return subprocess.CompletedProcess(args, 1, "", "boom")
+        return real(args, **kwargs)
+
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))])
+    run.engine._inspect_cuts = False  # 조각을 따로 읽는 실행이 세는 수에 끼지 않게 한다
+    monkeypatch.setattr(cut_module, "run_ffmpeg", flaky)
+
+    run.start()
+
+    assert len(run.failures) == 1
+    ((number, total, stages),) = _logged(run, "log_cut_stages")
+    assert (number, total) == (1, 1)
+    assert [name for name, _seconds in stages] == ["probe", "0_head", "1_mid"]
+
+
+# ================================================================ 컷의 진행
+
+
+def _watch_cut_progress(run: "_Run") -> list[tuple[int, float]]:
+    """진행 통지가 올 때마다 (끝난 구간 수, 컷 진행)을 적는다 — 컷 진행이 적힌 통지만."""
+    seen: list[tuple[int, float]] = []
+
+    def record(event) -> None:
+        if run.data.cut_progress is not None:
+            seen.append((run.data.sections_done, run.data.cut_progress))
+
+    run.engine.set_on_progress(record)
+    return seen
+
+
+def test_cut_progress_rises_inside_a_section_and_reaches_one_after_the_last(server, tmp_path):
+    """컷 진행은 구간 하나를 자르는 동안에도 여러 번 오르고, 줄지 않으며, 마지막 구간이 끝난 뒤에만 1이어야 한다.
+
+    기본 입력, 구간 둘(프레임 35~80 · 100~110)
+    -> 끝난 구간이 0개인 동안 서로 다른 컷 진행이 3개 이상, 전체가 오름차순,
+       끝난 구간이 2개가 되기 전의 값은 모두 1 미만, 마지막 값 == 1.0
+    """
+    selections = [TimeRange(_seconds(35), _seconds(80)), TimeRange(_seconds(100), _seconds(110))]
+    run = _Run(server, "plain", tmp_path, selections)
+    seen = _watch_cut_progress(run)
+
+    run.start()
+
+    values = [value for _done, value in seen]
+    assert len({value for done, value in seen if done == 0}) >= 3
+    assert values == sorted(values)
+    assert all(value < 1.0 for done, value in seen if done < 2)
+    assert values[-1] == 1.0
+
+
+def test_cut_progress_weighs_sections_by_their_length(server, tmp_path):
+    """컷 진행에서 구간 하나의 몫은 그 구간의 길이에 비례해야 한다.
+
+    기본 입력, 구간 둘 — 프레임 35~80(46프레임) · 100~110(11프레임)
+    -> 첫 구간이 끝난 직후의 컷 진행 == 46 ÷ 57
+    """
+    selections = [TimeRange(_seconds(35), _seconds(80)), TimeRange(_seconds(100), _seconds(110))]
+    run = _Run(server, "plain", tmp_path, selections)
+    seen = _watch_cut_progress(run)
+
+    run.start()
+
+    after_first = [value for done, value in seen if done == 1]
+    assert after_first[0] == pytest.approx(46 / 57)
+
+
+def test_failed_section_still_fills_its_share_of_the_cut_progress(server, tmp_path, monkeypatch):
+    """자르지 못한 구간도 그 구간의 일이 끝나면 컷 진행에서 제 몫을 다 채워야 한다.
+
+    기본 입력, 구간 하나(프레임 35~80), 컷의 셋째 ffmpeg 실행이 종료 코드 1로 끝남
+    -> 실패 1건, 마지막 컷 진행 == 1.0
+    """
+    real = cut_module.run_ffmpeg
+    calls = []
+
+    def flaky(args, **kwargs):
+        calls.append(args)
+        if len(calls) == 3:
+            return subprocess.CompletedProcess(args, 1, "", "boom")
+        return real(args, **kwargs)
+
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))])
+    run.engine._inspect_cuts = False
+    seen = _watch_cut_progress(run)
+    monkeypatch.setattr(cut_module, "run_ffmpeg", flaky)
+
+    run.start()
+
+    assert len(run.failures) == 1
+    assert seen[-1][1] == 1.0
+
+
+# ================================================================ 받을 크기 · 준비가 끝난 통지
+
+
+@pytest.mark.parametrize(
+    "frames",
+    [
+        [(35, 80)],
+        [(35, 80), (120, 140)],  # 떨어진 구간 둘
+        [(35, 80), (60, 110)],  # 겹치는 구간 — 겹친 자리는 한 번만 받는다
+        [(0, 5), (150, 170), (40, 41)],
+    ],
+)
+def test_sections_download_size_equals_the_total_the_engine_plans(
+    server, sources, tmp_path, frames
+):
+    """sections_download_size는 엔진이 그 구간들을 받을 때 정하는 전체 크기와 같아야 한다.
+
+    기본 입력, 프레임 구간 목록(하나 · 떨어진 둘 · 겹치는 둘 · 순서가 섞인 셋)
+    -> sections_download_size(색인, 구간들) == 엔진이 공유 데이터에 적은 total_size
+       == log_download_start의 첫 인자
+    """
+    selections = [TimeRange(_seconds(first), _seconds(last)) for first, last in frames]
+
+    run = _Run(server, "plain", tmp_path, selections).start()
+
+    expected = sections_download_size(_index(sources["plain"]), selections)
+    assert (run.finished, run.failures) == (1, [])
+    assert run.data.total_size == expected
+    assert _logged(run, "log_download_start")[0][0] == expected
+
+
+def test_engine_reports_progress_once_before_it_starts_receiving(server, tmp_path):
+    """엔진은 준비가 끝나면 받기 전에 진행을 한 번 알려야 한다 — 받은 크기 0, 전체 크기는 받을 크기.
+
+    기본 입력, 구간 프레임 35~80
+    -> 첫 진행 통지 == (받은 0, 전체 == 공유 데이터의 total_size), 그때 컷 진행은 아직 없다(None)
+    """
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))])
+    seen = []
+    run.engine.set_on_progress(
+        lambda event: seen.append((event.downloaded_size, event.total_size, run.data.cut_progress))
+    )
+
+    run.start()
+
+    assert seen[0] == (0, run.data.total_size, None)
+
+
+# ================================================================ 끝난 엔진이 색인을 놓는지
+
+
+def test_engine_drops_the_index_when_the_run_ends(server, tmp_path):
+    """실행이 끝난 엔진은 moov와 색인, 임시 원본의 머리를 들고 있지 않아야 한다.
+
+    기본 입력, 구간 프레임 35~80, 완료
+    -> 엔진의 _mp4_head is None, _index is None, _head == b"", 구간 목록과 컷 결과는 그대로 있다
+    """
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))]).start()
+
+    assert (run.finished, run.failures) == (1, [])
+    assert run.engine._mp4_head is None
+    assert run.engine._index is None
+    assert run.engine._head == b""
+    assert len(run.engine.sections) == 1 and len(run.engine.cut_results) == 1
+
+
+def test_engine_drops_the_index_after_a_cut_failure_and_the_resume_record_keeps_it(
+    server, tmp_path, monkeypatch
+):
+    """컷이 실패해 끝난 엔진도 색인을 놓아야 하고, 다음 실행이 쓸 moov는 이어받기 기록에 있어야 한다.
+
+    기본 입력, 구간 프레임 35~80, 컷의 셋째 ffmpeg 실행이 종료 코드 1로 끝남
+    -> 실패 1건, 엔진의 _mp4_head is None · _index is None,
+       공유 데이터의 section_resume.mp4_head is not None
+    """
+    real = cut_module.run_ffmpeg
+    calls = []
+
+    def flaky(args, **kwargs):
+        calls.append(args)
+        if len(calls) == 3:
+            return subprocess.CompletedProcess(args, 1, "", "boom")
+        return real(args, **kwargs)
+
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))])
+    run.engine._inspect_cuts = False
+    monkeypatch.setattr(cut_module, "run_ffmpeg", flaky)
+
+    run.start()
+
+    assert len(run.failures) == 1
+    assert run.engine._mp4_head is None
+    assert run.engine._index is None
+    assert run.data.section_resume.mp4_head is not None
+
+
+# ================================================================ 컷 도중 중단
+
+
+def test_stopping_while_a_section_is_being_cut_ends_ffmpeg_and_the_run_at_once(
+    server, tmp_path, monkeypatch
+):
+    """구간을 자르는 도중 중단하면 도는 ffmpeg가 바로 끝나고, 실행도 곧 끝나며 이번 실행의 것이 남지 않아야 한다.
+
+    기본 입력, 구간 둘(프레임 5~25 · 35~80). 둘째 구간의 오디오 단계를 10분 도는 명령으로 바꿔
+    띄우고 0.4초 뒤 중단(model.stop())
+    -> 중단 뒤 1.5초 안에 run()이 돌아온다, 중단할 때 그 ffmpeg는 돌고 있었고 지금은 모두 끝났다
+    -> 완료 · 실패 통지 없음, 실패한 구간 0, 폴더에 남은 것 없음(임시 원본 · 이번 실행이 만든
+       구간 파일 — 끝낸 첫 구간의 파일까지 — 을 지운다: 중단의 지금 규칙이다)
+    """
+    processes = record_processes(monkeypatch)
+    run = _Run(
+        server,
+        "plain",
+        tmp_path,
+        [TimeRange(_seconds(5), _seconds(25)), TimeRange(_seconds(35), _seconds(80))],
+    )
+    real = cut_module.run_ffmpeg
+    audio_runs = []
+    stopped = {}
+
+    def stop() -> None:
+        stopped["running"] = processes[-1].poll() is None
+        stopped["made"] = sorted(os.listdir(run.folder))
+        stopped["at"] = time.perf_counter()
+        run.data.model.stop()
+        # 제품이 멈추지 못하면 10분을 돈다 — 띄운 프로세스를 직접 끝내 run()이 돌아오게 한다
+        guard = threading.Timer(4.0, end_all, [processes])
+        guard.daemon = True
+        guard.start()
+
+    def slowed(args, **kwargs):
+        if (
+            args[-1] == "audio.m4a"
+        ):  # 오디오 단계 — 잇기 단계의 명령에도 이 이름이 입력으로 들어 있다
+            audio_runs.append(args)
+            if len(audio_runs) == 2:
+                kwargs.pop("on_out_time", None)
+                threading.Timer(0.4, stop).start()
+                return real(LONG_RUNNING, **kwargs)
+        return real(args, **kwargs)
+
+    monkeypatch.setattr(cut_module, "run_ffmpeg", slowed)
+    try:
+        run.start()
+        returned = time.perf_counter()
+
+        assert stopped["running"], "전제: 중단할 때 둘째 구간의 ffmpeg가 돌고 있었다"
+        assert "구간 시험 144p_1.mp4" in stopped["made"], "전제: 첫 구간은 끝나 있었다"
+        assert returned - stopped["at"] < 1.5
+        assert all(process.poll() is not None for process in processes)
+        assert (run.finished, run.failures, run.data.sections_failed) == (0, [], 0)
+        assert run.listing() == []
+    finally:
+        end_all(processes)
+
+
+def test_pausing_while_a_section_is_being_cut_holds_the_cut_until_resumed(
+    server, tmp_path, monkeypatch
+):
+    """구간을 자르는 도중 일시정지하면 컷이 그 자리에서 서고, 재개하면 이어서 끝내야 한다.
+
+    기본 입력, 구간 하나(프레임 35~80). 오디오 단계의 ffmpeg가 뜬 직후 일시정지(model.pause())하고
+    1초 뒤 재개. 0.8초 시점에 적음(일시정지가 없으면 컷은 그 전에 끝난다)
+    -> 0.8초 시점: 그 ffmpeg가 살아 있다, 완료 통지 없음, 끝낸 구간 0, 구간 파일이 아직 없다
+    -> 재개 뒤: 완료 1회, 실패 없음, 구간 파일이 만들어진다, ffmpeg가 모두 종료 코드 0으로 끝났다
+    """
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))])
+    paused, during = [], []
+
+    def on_launch(command, process) -> None:
+        if command[-1] == "audio.m4a" and not paused:
+            paused.append(run.data.model.pause())
+            threading.Timer(
+                0.8,
+                lambda: during.append(
+                    (
+                        process.poll() is None,
+                        run.finished,
+                        run.data.sections_done,
+                        [name for name in os.listdir(run.folder) if name.endswith("_1.mp4")],
+                    )
+                ),
+            ).start()
+            threading.Timer(1.0, run.data.model.resume).start()
+
+    processes = record_processes(monkeypatch, on_launch)
+    try:
+        run.start()
+
+        assert paused == [True], "전제: 컷 도중에 일시정지됐다"
+        assert during == [(True, 0, 0, ["CVDv2_part_구간 시험 144p_1.mp4"])]
+        assert (run.finished, run.failures) == (1, [])
+        assert run.listing() == ["구간 시험 144p_1.mp4"]
+        assert all(process.returncode == 0 for process in processes)
+    finally:
+        end_all(processes)

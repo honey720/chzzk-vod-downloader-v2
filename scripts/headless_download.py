@@ -49,15 +49,13 @@ from time import gmtime, strftime
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config.config as config  # noqa: E402
+import app.section_basis as section_basis  # noqa: E402
 from app.log_setup import setup_logging  # noqa: E402
 from app.viewmodels.data import ContentItem  # noqa: E402
 from app.network import NetworkManager  # noqa: E402
 from fractions import Fraction  # noqa: E402
 
-from core.api.hls_fmp4 import fetch_fmp4_head, segment_frames  # noqa: E402
-from core.api.hls_ts import fetch_ts_head, segment_streams, ts_key_uri  # noqa: E402
-from core.api.mp4 import Mp4Error, fetch_mp4_head  # noqa: E402
-from core.models.content import Content, ContentType  # noqa: E402
+from core.api.mp4 import Mp4Error  # noqa: E402
 from core.models.fmp4_index import Fmp4Head  # noqa: E402
 from core.models.mp4_index import Mp4Head  # noqa: E402
 from core.models.ts_index import TsHead  # noqa: E402
@@ -69,8 +67,6 @@ from core.services.metadata_service import MetadataError  # noqa: E402
 from core.utils.fmp4_sections import (  # noqa: E402
     FPS_DECLARED,
     FPS_STANDARD,
-    choose_frame_rate,
-    fmp4_timeline,
     plan_fmp4_sections,
 )
 from core.utils.mp4_ranges import selection_byte_ranges  # noqa: E402
@@ -81,11 +77,7 @@ from core.utils.paths import (  # noqa: E402
     release_output_paths,
 )
 from core.utils.selections import SelectionError, validate_selections  # noqa: E402
-from core.utils.ts_sections import (  # noqa: E402
-    choose_ts_frame_rate,
-    plan_ts_sections,
-    ts_timeline,
-)
+from core.utils.ts_sections import plan_ts_sections  # noqa: E402
 from core.utils.timecode import (  # noqa: E402
     TIMECODE_INVALID_FORMAT,
     TimecodeError,
@@ -97,7 +89,6 @@ from app.download_logger import DownloadLogger  # noqa: E402
 from app.download_resolvers import (  # noqa: E402
     resolve_aes_key,
     resolve_m3u8_base_url,
-    resolve_m3u8_variant,
 )
 from app.download_task import DownloadTask  # noqa: E402
 
@@ -228,7 +219,8 @@ def _resolve_sections(
         (구간 목록, 받은 moov). 형식·검증 오류나 moov를 읽지 못한 경우 None
     """
     try:
-        head = fetch_mp4_head(item.base_url)
+        # 조회 순서는 app/section_basis.py 한 곳에 있다 — 구간 편집 창과 같은 함수다
+        head = section_basis.probe_mp4(item.base_url, index=True).head
         index = head.index
         pairs = _parse_sections(texts, index.fps)
     except TimecodeError as e:
@@ -301,26 +293,15 @@ def _resolve_fmp4_sections(
         (구간 목록, 받은 것). 형식·검증 오류나 읽지 못한 경우 None
     """
     try:
-        content = Content(
-            content_type=ContentType.CHZZK_VIDEO_M3U8,
-            url=item.vod_url,
-            resolution=item.resolution,
-            # 목록에서 고른 변형 (#318) — 엔진이 받는 변형과 같은 변형에서 구간을 정한다
-            stream=getattr(item, "stream", None),
-        )
-        base_url, declared = resolve_m3u8_variant(content)
-        head = fetch_fmp4_head(base_url, segment_dir)
-
-        def segment_at(index: int):
-            return segment_frames(head, base_url, index)
-
-        choice = choose_frame_rate(head.init, [segment_at(0)], declared)
-        fps = head.frame_rate = choice.rate  # 엔진이 같은 값으로 검증한다
+        # 조회 순서는 app/section_basis.py 한 곳에 있다 — 구간 편집 창과 같은 함수다. 고른
+        # 변형(#318)에서 읽고, 정한 프레임률을 받은 것에 싣는다(엔진이 같은 값으로 검증한다)
+        probe = section_basis.probe_fmp4(item, segment_dir)
+        head, segment_at = probe.head, probe.segment_at
+        fps, duration = probe.basis.fps, probe.basis.duration
         logger.info(
-            "프레임률: %s = %s (%s)", fps, _format_fps(fps), _fps_source_text(choice.source)
+            "프레임률: %s = %s (%s)", fps, _format_fps(fps), _fps_source_text(probe.fps_source)
         )
         pairs = _parse_sections(texts, fps)
-        duration = fmp4_timeline(head.playlist, head.init, segment_at).duration
         logger.info("영상 길이: %s", format_milliseconds(duration))
         violations = validate_selections(pairs, duration, fps)
         if violations:
@@ -388,29 +369,19 @@ def _resolve_ts_sections(
         (구간 목록, 받은 것). 형식·검증 오류나 읽지 못한 경우 None
     """
     try:
-        base_url = item.base_url
-        head = fetch_ts_head(base_url, segment_dir)
-        content = Content(
-            content_type=ContentType.CHZZK_VIDEO_HLS_AES,
-            url=item.vod_url,
-            resolution=item.resolution,
-            base_url=base_url,
-        )
-        key = resolve_aes_key(content, ts_key_uri(base_url, head))
-
-        def segment_at(index: int):
-            return segment_streams(head, base_url, index, key)
-
-        choice = choose_ts_frame_rate([segment_at(0)], declared)
-        fps = head.frame_rate = choice.rate  # 엔진이 같은 값으로 계획한다
+        # 조회 순서는 app/section_basis.py 한 곳에 있다 — 구간 편집 창과 같은 함수다. 키는 그
+        # 안에서 한 번 받아 쓰고, 정한 프레임률을 받은 것에 싣는다(엔진이 같은 값으로 계획한다).
+        # probe는 키를 품고 있다(segment_at) — 이 함수 밖으로 내보내지 않는다
+        probe = section_basis.probe_ts(item, segment_dir, declared)
+        head, segment_at = probe.head, probe.segment_at
+        fps, duration = probe.basis.fps, probe.basis.duration
         logger.info(
             "프레임률: %s = %s (%s)",
             fps,
             _format_fps(fps),
-            _fps_source_text(choice.source, "매니페스트의 frameRate"),
+            _fps_source_text(probe.fps_source, "매니페스트의 frameRate"),
         )
         pairs = _parse_sections(texts, fps)
-        duration = ts_timeline(head.playlist, segment_at, fps).duration
         logger.info("영상 길이: %s", format_milliseconds(duration))
         violations = validate_selections(pairs, duration, fps)
         if violations:

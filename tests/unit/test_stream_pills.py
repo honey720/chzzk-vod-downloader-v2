@@ -335,25 +335,28 @@ def test_running_card_of_the_other_entry_of_the_same_short_side_shows_only_the_n
 
 
 @pytest.mark.parametrize(
-    ("reps", "content_type"),
+    ("reps", "content_type", "expected"),
     [
-        (lambda: _streams(S1), "m3u8"),  # 원본 60fps
-        (lambda: _streams(S2), "m3u8"),  # 원본 30fps
-        (_encoded_vod, "video"),
+        (lambda: _streams(S1), "m3u8", "1080p · 1.20 GB"),  # 원본 60fps
+        (lambda: _streams(S2), "m3u8", "1080p · 1.20 GB"),  # 원본 30fps
+        # 인코딩 완료 VOD는 받은 크기 / 전체 크기다 (#309 — v2.9.6의 표기를 되살렸다)
+        (_encoded_vod, "video", "1080p · 1.20 GB / 1.20 GB"),
     ],
     ids=["S1", "S2", "encoded"],
 )
-def test_running_card_of_a_landscape_video_shows_only_the_number(qapp, reps, content_type):
+def test_running_card_of_a_landscape_video_shows_only_the_number(
+    qapp, reps, content_type, expected
+):
     """해상도마다 항목이 하나인 영상의 다운로드 중 카드는 원본을 골라도 해상도가 숫자만이어야 한다.
 
-    주석의 표본마다 기본 선택(최고 해상도), 크기 1.20 GB
-    -> "1080p · 1.20 GB"
+    주석의 표본마다 기본 선택(최고 해상도), 받은 크기 1.20 GB(인코딩 완료 VOD는 전체도 1.20 GB)
+    -> 다시보기 "1080p · 1.20 GB", 인코딩 완료 VOD "1080p · 1.20 GB / 1.20 GB"
     """
     widget = _card(reps(), content_type=content_type)
 
     _start(widget)
 
-    assert shown(widget.fileSizeLabel) == "1080p · 1.20 GB"
+    assert shown(widget.fileSizeLabel) == expected
 
 
 def _logged_resolution(tmp_path, monkeypatch, item: ContentItem) -> list[str]:

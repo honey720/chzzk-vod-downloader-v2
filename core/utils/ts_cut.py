@@ -18,13 +18,20 @@ mp4 경로의 것을 그대로 쓴다.
 """
 
 import os
+import time
 from bisect import bisect_left
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from core.api.mp4 import Mp4Error, read_mp4_index
 from core.models.cut import CutFrames, CutResult
 from core.utils.ffmpeg import FFmpegError, read_in_chunks, remux_stream
-from core.utils.hybrid_cut import CUT_FAILED, CutError, cut_frames_from_mp4, hybrid_cut
+from core.utils.hybrid_cut import (
+    CUT_FAILED,
+    CutCancelled,
+    CutError,
+    cut_frames_from_mp4,
+    hybrid_cut,
+)
 
 # 구간 계획이 정한 PTS를 같은 세그먼트에서 다시 읽은 PTS와 견줄 때 허용하는 차이(초) — 같은
 # 계산을 두 번 한 값이라 같아야 하고, float 오차만 흡수한다
@@ -33,6 +40,10 @@ _PTS_TOLERANCE = 1e-6
 # 다시 싼 mp4와 TS의 프레임마다 시각 차이가 서로 벗어나도 되는 폭(초) — 90kHz 2틱.
 # 두 쪽 모두 틱 단위라 차이는 프레임마다 같아야 한다
 _OFFSET_SPREAD = 2 / 90_000
+
+
+# 다시 싸는 동안 일시정지가 풀렸는지 확인하는 간격(초) — ffmpeg 실행 쪽의 확인 간격과 같은 크기다
+_PAUSE_POLL_SECONDS = 0.05
 
 
 def ts_frame_number(frames: CutFrames, pts: float) -> int:
@@ -59,6 +70,10 @@ def cut_ts_section(
     joined_path: str,
     *,
     inspect: bool = False,
+    on_stage: Callable[[str, float], None] | None = None,
+    on_progress: Callable[[float], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
+    should_pause: Callable[[], bool] | None = None,
 ) -> tuple[CutResult, CutFrames]:
     """받아 둔 TS 세그먼트에서 구간 하나를 잘라 output_path에 mp4로 쓴다.
 
@@ -77,6 +92,13 @@ def cut_ts_section(
         joined_path: 다시 싼 mp4를 둘 임시 경로
         inspect: True면 조각마다 파라미터·패킷 수를 읽어 결과에 싣는다
             (``core.utils.cut_check.check_cut``이 쓴다)
+        on_stage: 단계 하나가 끝날 때마다 ``(단계 이름, 걸린 초)``로 부른다 — ``join``(세그먼트를
+            mp4로 다시 싸기)에 이어 ``hybrid_cut``의 단계들
+        on_progress: 컷의 진행(0~1) — ``hybrid_cut``의 것 그대로다. 다시 싸는 동안에는 오르지 않는다
+        should_stop: 멈추라는 요청을 확인하는 함수 — ``hybrid_cut``의 것 그대로다. 다시 싸는
+            동안에도 닿는다(세그먼트를 흘려 넣는 사이사이에 확인한다)
+        should_pause: 일시정지를 확인하는 함수 — ``hybrid_cut``의 것 그대로다. 다시 싸는 동안에는
+            세그먼트를 흘려 넣기를 멈춘다(ffmpeg는 다음 입력을 기다리며 선다)
 
     Returns:
         (컷 결과, 다시 싼 mp4의 프레임 정보). 판정(``check_cut``)에는 뒤의 것을 넘긴다 —
@@ -85,29 +107,59 @@ def cut_ts_section(
     Raises:
         CutError: 첫·끝 프레임이 받은 세그먼트에 없거나, 다시 싸지 못했거나, 다시 싼 mp4의
             프레임이 TS와 다르거나, 컷이 실패한 경우
+        CutCancelled: should_stop이 참을 돌려줘 그만둔 경우
     """
     first = ts_frame_number(ts_frames, first_pts)
     last = ts_frame_number(ts_frames, last_pts)
     try:
-        frames = _remux(segment_paths, joined_path)
+        started = time.perf_counter()
+        try:
+            frames = _remux(segment_paths, joined_path, should_stop, should_pause)
+        finally:
+            if on_stage is not None:
+                on_stage("join", time.perf_counter() - started)
         _require_same_frames(ts_frames, frames)
-        result = hybrid_cut(joined_path, frames, first, last, output_path, inspect=inspect)
+        result = hybrid_cut(
+            joined_path,
+            frames,
+            first,
+            last,
+            output_path,
+            inspect=inspect,
+            on_stage=on_stage,
+            on_progress=on_progress,
+            should_stop=should_stop,
+            should_pause=should_pause,
+        )
     finally:
         if os.path.exists(joined_path):
             os.remove(joined_path)
     return result, frames
 
 
-def _remux(segment_paths: Sequence[str], joined_path: str) -> CutFrames:
+def _remux(
+    segment_paths: Sequence[str],
+    joined_path: str,
+    should_stop: Callable[[], bool] | None = None,
+    should_pause: Callable[[], bool] | None = None,
+) -> CutFrames:
     """세그먼트를 순서대로 ffmpeg에 흘려 mp4로 다시 싸고, 그 파일의 프레임 정보를 읽는다.
 
     Raises:
         CutError: 다시 싸지 못했거나 다시 싼 파일의 색인을 읽지 못한 경우(``CUT_FAILED``)
+        CutCancelled: 흘려 넣는 도중 멈추라는 요청이 온 경우 — ffmpeg는 끝내고 쓰다 만 파일은 지운다
     """
 
     def feed():
         for path in segment_paths:
-            yield from read_in_chunks(path)
+            for chunk in read_in_chunks(path):
+                while should_pause is not None and should_pause():
+                    if should_stop is not None and should_stop():
+                        break
+                    time.sleep(_PAUSE_POLL_SECONDS)  # 일시정지 — 흘려 넣기를 멈추고 기다린다
+                if should_stop is not None and should_stop():
+                    raise CutCancelled("멈추라는 요청으로 다시 싸기를 그만뒀다")
+                yield chunk
 
     try:
         remux_stream(feed(), joined_path)

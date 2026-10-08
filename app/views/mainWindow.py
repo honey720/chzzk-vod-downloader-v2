@@ -6,9 +6,12 @@ import config.config as config
 from PySide6.QtWidgets import QMainWindow, QMessageBox, QFileDialog, QApplication, QSizePolicy, QWidget
 from PySide6.QtCore import QPoint, QRect, QStandardPaths, QTimer
 
+from app.process_memory import log_process_memory
 from app.viewmodels.download_viewmodel import DownloadViewModel
 from app.viewmodels.path_gates import check_fetch_path, check_remember_path, normalize_path
 from app.views.dialog import SettingDialog
+from app.views.section_dialog import SectionEditDialog
+from app.viewmodels.section_edit_viewmodel import SectionEditViewModel
 from app.viewmodels.data import ContentItem
 from app.viewmodels.content_viewmodel import ContentViewModel
 from app.widgets import widget as content_widget
@@ -114,6 +117,9 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         # 다운로드 이벤트(진행·완료·실패)는 viewmodel이 content에 직결한다 (#170)
         # — 구 릴레이 슬롯 6개(_onProgress~_onFailed)는 함께 제거됐다
         self.downloadViewModel = DownloadViewModel(self.contentManager, parent=self)
+        # 열려 있는 구간 편집 창과 그 카드 (#309) — 창은 한 번에 하나다
+        self._sectionDialog: SectionEditDialog | None = None
+        self._sectionEditItem: ContentItem | None = None
         self.setupThreadSignals()
         self.setupSignals()
         
@@ -337,6 +343,8 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         # 카드 상태별 조작(#245) — ⏸/↻ 는 뷰가 아이템을 붙여 올려준다
         self.listView.pauseRequested.connect(self.onCardPause)
         self.listView.retryRequested.connect(self.onCardRetry)
+        self.listView.sectionEditRequested.connect(self.onCardSectionEdit)
+        self.listView.sectionRefitRequested.connect(self.contentManager.refitSections)
 
     def onCardPause(self, item: ContentItem) -> None:
         """진행 카드의 ⏸ — 전역 일시정지/재개 토글과 같은 경로를 탄다 (#245).
@@ -382,6 +390,43 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         item.downloadState = DownloadState.WAITING
         item.download_progress = 0
         self.contentManager.model.notifyChanged(item)
+
+    def onCardSectionEdit(self, item: ContentItem) -> None:
+        """대기 카드의 구간 요약 클릭 — 구간 편집 창을 모달로 연다 (#309).
+
+        창이 열려 있는 동안 그 카드는 다운로드 대상에서 빠진다(``beginSectionEdit``). 받는
+        중인 배치에서 그 카드의 차례가 오면 건너뛰고 다음 카드로 가며, 창을 닫으면 다시
+        대상이 된다. 편집 중임을 카드의 상태(DownloadState)로 만들지 않는다 — 엔진의 실행
+        루프는 WAITING만 종료 신호로 본다.
+
+        ``exec()``가 아니라 ``open()``으로 연다 — 창은 모달이지만 이 함수는 바로 돌아가고,
+        닫힘은 ``finished`` 시그널로 받는다.
+        """
+        if item.downloadState != DownloadState.WAITING or self._sectionDialog is not None:
+            return
+        viewmodel = SectionEditViewModel(item, self.contentManager.model.notifyChanged, self)
+        dialog = SectionEditDialog(viewmodel, self)
+        self._sectionDialog = dialog
+        self._sectionEditItem = item
+        self.contentManager.beginSectionEdit(item)
+        self.contentManager.editWaitChanged.connect(dialog.setWaitingHint)
+        dialog.finished.connect(self._onSectionDialogFinished)
+        dialog.open()
+        viewmodel.start()
+
+    def _onSectionDialogFinished(self, _result: int) -> None:
+        """구간 편집 창이 닫혔다 — 카드를 다시 다운로드 대상으로 돌리고 창을 버린다."""
+        dialog, item = self._sectionDialog, self._sectionEditItem
+        self._sectionDialog = None
+        self._sectionEditItem = None
+        if dialog is not None:
+            self.contentManager.editWaitChanged.disconnect(dialog.setWaitingHint)
+            dialog.viewModel().release()  # 조회하며 받은 moov를 놓는다
+            log_process_memory("편집 창 닫힘")
+            dialog.viewModel().deleteLater()
+            dialog.deleteLater()
+        if item is not None:
+            self.contentManager.endSectionEdit(item)
 
     def fetchContents(self, urls: str):
         # URL 목록을 미리 준비합니다.
@@ -451,12 +496,15 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         추가한 동영상에 대한 다운로드 버튼.
         """
         if self.downloadViewModel.isDownloading():
-            if self.downloadButton.text() == self.tr('Pause'):
-                self.downloadViewModel.pause()
-                self.downloadButton.setText(self.tr('Download'))
-            else:
+            # 일시정지 · 재개는 버튼의 글자가 아니라 엔진의 상태로 정한다 (#309). 클릭이 쌓였다가
+            # 한꺼번에 처리돼도(앱이 잠깐 멈춘 사이의 연타) 누를 때마다 엔진이 실제로 바뀐
+            # 만큼만 따라간다 — 글자로 정하면 엔진이 받지 않은 누름에도 글자가 뒤집혀 어긋난다
+            if self.downloadViewModel.isPaused():
                 self.downloadViewModel.resume()
-                self.downloadButton.setText(self.tr('Pause'))
+            else:
+                self.downloadViewModel.pause()
+            paused = self.downloadViewModel.isPaused()
+            self.downloadButton.setText(self.tr('Download') if paused else self.tr('Pause'))
         else:
             if not self.contentManager.findItem()[0]:
                 # 조회 중인 아이템만 있는 경우와 아무것도 없는 경우를 구분해 안내 (#124)

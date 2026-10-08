@@ -8,8 +8,64 @@
         <translation>(원본)</translation>
     </message>
     <message>
+        <source>refit to {0}fps</source>
+        <translation>{0}fps에 맞춤</translation>
+    </message>
+    <message>
+        <source>end pulled to the video length</source>
+        <translation>끝을 영상 길이에 맞춰 당김</translation>
+    </message>
+    <message>
+        <source>end extended to the video length</source>
+        <translation>끝을 영상 길이에 맞춰 늘림</translation>
+    </message>
+    <message>
+        <source>{0} outside the video</source>
+        <translation>받을 수 없는 구간 {0}개</translation>
+    </message>
+    <message>
+        <source>This resolution is shorter. Sections now end at the end of the video.</source>
+        <translation>이 해상도는 영상이 더 짧습니다. 영상 길이를 넘는 구간의 끝을 영상 끝으로 당겼습니다.</translation>
+    </message>
+    <message>
+        <source>This resolution is longer. Sections that reached the end now reach it.</source>
+        <translation>이 해상도는 영상이 더 깁니다. 영상 끝까지 받던 구간을 새 끝까지 늘렸습니다.</translation>
+    </message>
+    <message>
+        <source>Some sections start after the end of this resolution. They will be skipped. Edit the sections to fix them.</source>
+        <translation>이 해상도의 영상이 끝난 뒤에서 시작하는 구간이 있습니다. 그 구간은 받지 않습니다. 구간을 고쳐 주세요.</translation>
+    </message>
+    <message>
         <source>Sections {0} · {1}</source>
         <translation>구간 {0}개 · {1}</translation>
+    </message>
+    <message>
+        <source>Sections were moved to the frames of the new frame rate.</source>
+        <translation>해상도를 바꿔 프레임률이 달라져, 구간을 새 프레임에 맞게 옮겼습니다.</translation>
+    </message>
+    <message>
+        <source>checking length</source>
+        <translation>길이 확인 중</translation>
+    </message>
+    <message>
+        <source>length not checked</source>
+        <translation>길이 미확인</translation>
+    </message>
+    <message>
+        <source>Checking the length of this resolution...</source>
+        <translation>이 해상도의 영상 길이를 확인하는 중...</translation>
+    </message>
+    <message>
+        <source>Could not check the length of this resolution. Open the section editor to check again.</source>
+        <translation>이 해상도의 영상 길이를 확인하지 못했습니다. 구간 편집 창을 열면 다시 확인합니다.</translation>
+    </message>
+    <message>
+        <source>Click to edit sections</source>
+        <translation>누르면 구간을 편집합니다</translation>
+    </message>
+    <message>
+        <source>Preparing</source>
+        <translation>준비 중</translation>
     </message>
     <message>
         <source>Cutting</source>
@@ -134,6 +190,12 @@ The file could not be saved. Check the download path and free disk space.</sourc
 <context>
     <name>DownloadViewModel</name>
     <message>
+        <source>Section is outside the video · edit the sections
+Sections that start after the end of this resolution were skipped. Edit the sections or pick another resolution.</source>
+        <translation>구간이 영상 길이를 벗어났습니다 · 구간을 고쳐 주세요
+이 해상도의 영상이 끝난 뒤에서 시작하는 구간은 받지 않았습니다. 구간을 고치거나 다른 해상도를 골라 주세요.</translation>
+    </message>
+    <message>
         <source>ffmpeg not found · check the installation
 Postprocessing failed: the ffmpeg executable could not be found.</source>
         <translation>ffmpeg를 찾을 수 없습니다 · 설치 상태를 확인해 주세요
@@ -234,6 +296,102 @@ Part of the video kept arriving incomplete from the server. Try again later.</so
     </message>
 </context>
 <context>
+    <name>SectionEditDialog</name>
+    <message>
+        <source>Edit sections</source>
+        <translation>구간 편집</translation>
+    </message>
+    <message>
+        <source>+ Add section</source>
+        <translation>+ 구간 추가</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>취소</translation>
+    </message>
+    <message>
+        <source>OK</source>
+        <translation>확인</translation>
+    </message>
+    <message>
+        <source>A download is waiting for this card — it continues when you close this window</source>
+        <translation>이 카드를 기다리는 다운로드가 있습니다 — 창을 닫으면 이어서 받습니다</translation>
+    </message>
+    <message>
+        <source>Move up</source>
+        <translation>위로</translation>
+    </message>
+    <message>
+        <source>Move down</source>
+        <translation>아래로</translation>
+    </message>
+    <message>
+        <source>Delete section</source>
+        <translation>구간 삭제</translation>
+    </message>
+</context>
+<context>
+    <name>SectionEditViewModel</name>
+    <message>
+        <source>Could not read the video information.
+Check your connection and cookies, then open this window again.</source>
+        <translation>영상 정보를 읽지 못했습니다.
+연결 상태와 쿠키를 확인한 뒤 이 창을 다시 열어 주세요.</translation>
+    </message>
+    <message>
+        <source>Reading the video information...</source>
+        <translation>영상 정보를 읽는 중...</translation>
+    </message>
+    <message>
+        <source>Sections {0} / {1} · {2}fps · video ends at {3}</source>
+        <translation>구간 {0} / {1} · {2}fps · 영상 끝 {3}</translation>
+    </message>
+    <message>
+        <source>Invalid timecode format</source>
+        <translation>시:분:초:프레임으로 입력해 주세요 (예: 01:05:03:00)</translation>
+    </message>
+    <message>
+        <source>Minutes and seconds must be below 60</source>
+        <translation>분과 초는 59까지 입력할 수 있습니다</translation>
+    </message>
+    <message>
+        <source>Frame number must be below the frame rate</source>
+        <translation>프레임 번호가 이 영상의 프레임률보다 큽니다</translation>
+    </message>
+    <message>
+        <source>Start must be before end</source>
+        <translation>시작이 끝보다 앞이어야 합니다</translation>
+    </message>
+    <message>
+        <source>Selection is outside the video</source>
+        <translation>구간이 영상 길이를 벗어났습니다</translation>
+    </message>
+    <message>
+        <source>Selection is shorter than one frame</source>
+        <translation>구간이 한 프레임보다 짧습니다</translation>
+    </message>
+    <message>
+        <source>Duplicate selection</source>
+        <translation>같은 구간이 이미 있습니다</translation>
+    </message>
+    <message>
+        <source>Too many selections</source>
+        <translation>구간은 20개까지 넣을 수 있습니다</translation>
+    </message>
+    <message>
+        <source>Empty — this row is ignored</source>
+        <translation>비어 있어 무시됩니다</translation>
+    </message>
+    <message>
+        <source>Past the end of the video — leaving the field sets it to the end</source>
+        <translation>영상 끝을 넘습니다 · 칸을 떠나면 끝으로 맞춥니다</translation>
+    </message>
+    <message>
+        <source>Set to the end of the video ({0})</source>
+        <translation>영상 끝({0})으로 맞췄습니다</translation>
+    </message>
+</context>
+<context>
     <name>SettingDialog</name>
     <message>
         <source>Settings</source>
@@ -302,6 +460,17 @@ Part of the video kept arriving incomplete from the server. Try again later.</so
     <message>
         <source>Common</source>
         <translation>일반</translation>
+    </message>
+</context>
+<context>
+    <name>TimecodeEdit</name>
+    <message>
+        <source>Copy</source>
+        <translation>복사</translation>
+    </message>
+    <message>
+        <source>Paste</source>
+        <translation>붙여넣기</translation>
     </message>
 </context>
 <context>

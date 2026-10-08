@@ -13,6 +13,7 @@ import pytest
 
 import app.download_resolvers as resolvers
 import app.network as network
+import app.section_basis as section_basis
 import scripts.headless_download as headless
 from app.network import NetworkManager
 from core.api.mp4 import MP4_INVALID, Mp4Error
@@ -102,7 +103,7 @@ def test_headless_section_resolution_reads_the_variant_of_the_item(
         fetched.append(url)
         raise Mp4Error(MP4_INVALID, "여기서 멈춘다 — 주소만 본다")
 
-    monkeypatch.setattr(headless, "fetch_fmp4_head", fetch_fmp4_head)
+    monkeypatch.setattr(section_basis, "fetch_fmp4_head", fetch_fmp4_head)
 
     assert headless._resolve_fmp4_sections(item, ["00:00:01:00-00:00:02:00"]) is None
     assert fetched == [variant_url(number)]

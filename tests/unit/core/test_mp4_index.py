@@ -394,6 +394,26 @@ def test_parse_moov_rejects_entry_count_that_runs_past_its_box():
     assert info.value.message_key == MP4_INVALID
 
 
+def test_parse_moov_rejects_one_sample_chunks_that_run_past_the_chunk_table():
+    """parse_moov는 청크당 샘플 1개인 stsc 구간이 실제 청크 수보다 큰 범위를 가리키면 거부해야 한다.
+
+    12샘플, 청크 8개([1, 1, 1, 1, 2, 2, 2, 2]샘플 — stsc 구간 2개). 둘째 구간의 first_chunk를
+    5에서 13으로 바꾼 moov (첫 구간이 청크 1~12를 가리키고 샘플 수는 12로 맞는다)
+    -> message_key == MP4_INVALID
+    """
+    video = video_spec(chunks=[1, 1, 1, 1, 2, 2, 2, 2])
+    assert len(video.sizes) == 12, "전제: 샘플이 12개다"
+    moov = bytearray(build_mp4([video]).moov)
+    second_row = moov.find(b"stsc") + 4 + 4 + 4 + 12  # 종류 · 버전 · 항목 수 · 첫 항목 뒤
+    assert struct.unpack_from(">III", moov, second_row) == (5, 2, 1), "전제: 둘째 구간의 자리다"
+    struct.pack_into(">I", moov, second_row, 13)
+
+    with pytest.raises(Mp4Error) as info:
+        parse_moov(bytes(moov))
+
+    assert info.value.message_key == MP4_INVALID
+
+
 def test_parse_moov_rejects_sample_count_mismatch():
     """parse_moov는 stts와 stsz의 샘플 수가 다르면 손상 키로 Mp4Error를 내야 한다.
 
@@ -930,3 +950,111 @@ def test_parse_moov_leaves_declared_bitrate_empty_without_a_sample_entry():
     index = parse_moov(build_mp4([video_spec(), audio_spec()]).moov)
 
     assert (index.video.declared_bitrate, index.audio.declared_bitrate) == (None, None)
+
+
+def test_composition_offsets_reads_negative_values_and_expands_runs():
+    """_composition_offsets는 ctts의 값을 부호 있는 수로 읽고, 개수만큼 펼쳐 샘플마다 하나씩 돌려줘야 한다.
+
+    손으로 조립한 ctts 본문 — (개수 2, 값 -100) · (개수 1, 값 0) · (개수 1, 값 300), 샘플 4개
+    -> [-100, -100, 0, 300]
+    """
+    ctts = bytes(4) + struct.pack(">I", 3) + struct.pack(">IiIiIi", 2, -100, 1, 0, 1, 300)
+
+    assert list(mp4_module._composition_offsets(ctts, (0, len(ctts)), 4)) == [-100, -100, 0, 300]
+
+
+# ================================================================ 표를 배열로 통째로 읽기 (#309)
+
+
+def test_read_table_reads_big_endian_values_of_each_width():
+    """_read_table은 빅엔디언 32비트(부호 없음 · 있음) · 64비트 값을 그 개수만큼 읽어야 한다.
+
+    바이트 00 00 00 01 · FF FF FF FE · 00 00 00 01 00 00 00 00
+    -> "I" 둘 == [1, 4294967294], "i" 둘 == [1, -2], 뒤 8바이트의 "Q" 하나 == [4294967296]
+    """
+    data = struct.pack(">IIQ", 1, 0xFFFFFFFE, 1 << 32)
+
+    assert list(mp4_module._read_table(data, 0, 2, "I")) == [1, 0xFFFFFFFE]
+    assert list(mp4_module._read_table(data, 0, 2, "i")) == [1, -2]
+    assert list(mp4_module._read_table(data, 8, 1, "Q")) == [1 << 32]
+
+
+def test_read_table_rejects_a_table_that_runs_past_the_data():
+    """_read_table은 표가 바이트의 끝을 넘으면 손상 키로 거부해야 한다.
+
+    8바이트에서 32비트 값 3개(12바이트)를 읽음 -> Mp4Error(MP4_INVALID)
+    """
+    with pytest.raises(Mp4Error) as info:
+        mp4_module._read_table(bytes(8), 0, 3, "I")
+
+    assert info.value.message_key == MP4_INVALID
+
+
+def test_expand_runs_repeats_each_value_by_its_count():
+    """_expand_runs는 (개수, 값) 구간을 샘플마다 값 하나씩으로 펴야 한다 — 개수 0인 구간은 사라진다.
+
+    개수 [2, 0, 3] · 값 [7, 8, 9] -> [7, 7, 9, 9, 9]
+    """
+    import array
+
+    runs, values = array.array("I", [2, 0, 3]), array.array("I", [7, 8, 9])
+
+    assert list(mp4_module._expand_runs(runs, values, "q")) == [7, 7, 9, 9, 9]
+
+
+def test_parse_moov_reads_chunks_that_hold_one_sample_each():
+    """parse_moov는 청크마다 샘플이 하나인 트랙의 샘플 위치를 조립기가 쓴 위치 그대로 읽어야 한다.
+
+    영상 12샘플을 청크 12개에(청크당 1샘플), 오디오는 표준 재료
+    -> 영상 offsets == 조립기가 기록한 샘플 위치, chunk_starts == 0 … 11
+    """
+    built = build_mp4([video_spec(chunks=[1] * 12), audio_spec()])
+
+    index = parse_moov(built.moov)
+
+    assert list(index.video.offsets) == built.sample_offsets[b"vide"]
+    assert list(index.video.chunk_starts) == list(range(12))
+
+
+def test_parse_moov_does_not_hold_many_times_the_index_while_parsing():
+    """parse_moov가 해석하는 동안 쓰는 메모리의 최고치는 다 만든 색인의 3배를 넘지 않아야 한다.
+
+    영상 12,000샘플(재정렬 I P B B) + 오디오 9,000샘플을 tracemalloc 아래에서 해석
+    -> 해석 중 최고 ÷ 해석이 끝난 뒤 남은 양 < 3 (표를 샘플마다 파이썬 객체로 풀어 리스트에 담으면 5배를 넘는다)
+    """
+    frames, samples = (
+        12_000,
+        9_000,
+    )  # 조립기가 샘플 수의 제곱으로 느려진다 — 이 크기에서도 비는 같다
+    video = video_spec(
+        deltas=[100] * frames,
+        sizes=[40] * frames,
+        chunks=[30] * (frames // 30),
+        composition=[100, 300, 0, 0] * (frames // 4),
+        sync=list(range(1, frames + 1, 60)),
+    )
+    audio = audio_spec(deltas=[1024] * samples, sizes=[7] * samples, chunks=[25] * (samples // 25))
+    moov = build_mp4([video, audio]).moov
+
+    tracemalloc.start()
+    try:
+        index = parse_moov(moov)
+        held, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert len(index.frame_pts) == frames
+    assert peak / held < 3, f"최고 {peak / 1e6:.1f}MB · 색인 {held / 1e6:.1f}MB"
+
+
+def test_parse_moov_gives_each_sample_its_own_duration_when_they_differ():
+    """샘플 길이가 고르지 않은 트랙은 샘플마다 제 길이(틱 ÷ timescale)를 가져야 한다.
+
+    영상 12샘플의 길이(틱) [100, 100, 150, 150, 150, 90, 100, 100, 100, 100, 100, 110], timescale 1000
+    -> video.durations == 그 값을 1000으로 나눈 것(구간 다섯 — 값이 바뀔 때마다 새 구간이다)
+    """
+    deltas = [100, 100, 150, 150, 150, 90, 100, 100, 100, 100, 100, 110]
+
+    index = parse_moov(build_mp4([video_spec(deltas=deltas), audio_spec()]).moov)
+
+    assert list(index.video.durations) == [delta / 1000 for delta in deltas]

@@ -62,7 +62,7 @@ from core.models.events import ProgressEvent
 from core.models.mp4_index import Mp4Index
 from core.models.plan import DownloadPlan
 from core.models.section_resume import SectionResume
-from core.utils.hybrid_cut import CutError, cut_frames_from_mp4, hybrid_cut
+from core.utils.hybrid_cut import CutCancelled, CutError, cut_frames_from_mp4, hybrid_cut
 from core.utils.mp4_partial import PartialLayout, build_head, plan_partial
 from core.utils.mp4_ranges import selection_byte_ranges
 from core.utils.paths import partial_source_path_for, release_output_paths
@@ -164,6 +164,23 @@ class FileDownloader(BaseDownloader):
             total_size=total_size,
         )
 
+    def _release_after_run(self) -> None:
+        """구간을 정할 때 쓴 moov와 색인, 임시 원본의 머리를 놓는다 (#309).
+
+        긴 영상의 해석된 색인은 수백 MB~1GB다. 일부 구간만 실패했으면 다음 실행이 쓸 moov는
+        이어받기 기록(공유 데이터의 section_resume)이 들고 있다 — 엔진이 따로 들 까닭이 없다.
+        """
+        self._mp4_head = None
+        self._index = None
+        self._head = b""
+
+    def _prepare_note(self) -> str:
+        """준비 단계의 로그에 moov를 넘겨받아 다시 썼는지(reused) 새로 받았는지(fetched)를 적는다."""
+        reused = getattr(self, "_moov_reused", None)
+        if reused is None:
+            return ""  # 구간 다운로드가 아니다 — moov를 쓰지 않는다
+        return "moov reused" if reused else "moov fetched"
+
     def _prepare_sections(self, content: Content) -> DownloadPlan:
         """구간 다운로드의 계획 — 구간마다의 바이트 범위를 받는다 (#309).
 
@@ -190,11 +207,12 @@ class FileDownloader(BaseDownloader):
         if resume is not None and not resume.fits(content.selections, content.selection_paths):
             resume = None
         self._done_before = resume.done if resume is not None else frozenset()
-        head = (
-            (resume.mp4_head if resume is not None else None)
-            or content.mp4_head
-            or fetch_mp4_head(self.s.base_url)
-        )
+        handed = (resume.mp4_head if resume is not None else None) or content.mp4_head
+        if handed is None and content.mp4_pending is not None:
+            # 받아 둔 moov — 다시 받지 않는다. 다른 쪽이 해석하는 중이면 기다려 그 색인을 쓴다
+            handed = content.mp4_pending.get()
+        head = handed or fetch_mp4_head(self.s.base_url)
+        self._moov_reused = handed is not None
         index, picked = self._pick_ranges(head, content)
         source_path = partial_source_path_for(content.selection_paths[0])
         stored = self._stored_layout(resume, index, picked, head.data) if resume else None
@@ -202,6 +220,7 @@ class FileDownloader(BaseDownloader):
             # 임시 원본을 다시 쓸 수 없어 새로 받는다. 새로 받는 바이트는 지금의 파일의 것이다 —
             # 남겨 둔 moov가 아니라 지금의 moov로 범위를 정한다(그 사이 파일이 바뀌었을 수 있다)
             head = fetch_mp4_head(self.s.base_url)
+            self._moov_reused = False
             index, picked = self._pick_ranges(head, content)
         self._reuses_source = stored is not None
         if stored is not None:
@@ -301,13 +320,23 @@ class FileDownloader(BaseDownloader):
         있으면 끝낸 구간과 임시 원본을 공유 데이터의 section_resume에 남긴다.
         """
         self._on_merge_start()
+        started = tm.perf_counter()
         try:
             frames = cut_frames_from_mp4(self._index)
         except (CutError, Mp4Error) as e:
             self.logger.log_error("Cut failed — partial source preserved for retry", e)
             raise PostprocessError(f"후처리(cut) 실패: {e}") from e
+        # 색인에서 컷의 프레임 정보를 뽑는 데 걸린 시간 — 긴 영상은 샘플이 수백만 개다
+        self._log_if_supported("log_cut_setup", tm.perf_counter() - started)
         failures: list[CutError] = []
         done = set(self._done_before)
+        progress = self._track_cuts(
+            {
+                number: section.last_frame - section.first_frame + 1
+                for number, section in enumerate(self._sections)
+                if number not in self._done_before
+            }
+        )
         for number, section in enumerate(self._sections):
             if number in self._done_before:
                 continue  # 이전 실행이 만든 구간 — 다시 만들지 않는다
@@ -315,6 +344,7 @@ class FileDownloader(BaseDownloader):
                 self.s._pause_event.wait()
             if self.state == DownloadState.WAITING:
                 return  # 정리(임시 원본·만든 구간 파일 삭제)는 run()의 중단 경로가 한다
+            stages: list[tuple[str, float]] = []
             try:
                 result = hybrid_cut(
                     self._source_path,
@@ -323,7 +353,15 @@ class FileDownloader(BaseDownloader):
                     section.last_frame,
                     section.output_path,
                     inspect=self._inspect_cuts,
+                    on_stage=lambda name, seconds: stages.append((name, seconds)),
+                    on_progress=progress.section(number),
+                    should_stop=self._stop_requested,
+                    should_pause=self._pause_requested,
                 )
+            except CutCancelled:
+                # 컷이 도는 동안 중단됐다 — 도는 ffmpeg는 끝났고 쓰다 만 것은 컷이 지웠다.
+                # 나머지 정리는 구간 사이에서 중단됐을 때와 같이 run()의 중단 경로가 한다
+                return
             except (CutError, Mp4Error) as e:
                 self.logger.log_error("Cut failed — partial source preserved for retry", e)
                 failures.append(e)
@@ -333,6 +371,8 @@ class FileDownloader(BaseDownloader):
                 self._made_sections.append(section.output_path)
                 self.s.sections_done += 1
                 done.add(number)
+            self._log_cut_stages(number + 1, stages)
+            progress.finish(number)
             self._on_progress(
                 ProgressEvent(
                     downloaded_size=self.s.total_downloaded_size,
