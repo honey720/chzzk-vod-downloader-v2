@@ -495,7 +495,7 @@ class M3U8Downloader(BaseDownloader):
                     _frame_at(frames, section.last_pts),
                     output_path,
                     inspect=self._inspect_cuts,
-                    on_stage=lambda name, seconds: stages.append((name, seconds)),
+                    on_stage=self._stage_recorder(stages),
                     on_progress=progress.section(number),
                     should_stop=self._stop_requested,
                     should_pause=self._pause_requested,
@@ -590,7 +590,8 @@ class M3U8Downloader(BaseDownloader):
                         if self.state == DownloadState.WAITING:
                             return part_num
                         if self.state == DownloadState.PAUSED:
-                            self.s._pause_event.wait()
+                            # 일시정지한 시간은 이 파트의 속도 판정에서 뺀다 — 재개 직후 느린 속도로 끊기지 않게
+                            part_start_time += self._wait_while_paused()
 
                         if chunk:
                             write_start = tm.perf_counter()

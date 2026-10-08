@@ -277,6 +277,13 @@ class DownloadViewModel(QObject):
         self._data = data
         item.transfer_bytes = None
         item.preparing = False
+        item.prepare_pending = True
+        # 지난 실행의 진행 표시를 지운다 (#309) — 중단한 카드를 다시 시작하면 엔진의 첫 통지가
+        # 올 때까지(준비 중) 지난 실행의 진행률 · 크기가 그대로 보였다
+        item.download_progress = 0
+        item.download_size = ""
+        item.download_speed = ""
+        item.download_remain_time = ""
         self._prepareTimer.start()
         log_process_memory("다운로드 시작")
         task_logger = DownloadLogger()
@@ -355,8 +362,8 @@ class DownloadViewModel(QObject):
     def _showPreparing(self) -> None:
         """준비가 길어지고 있다 — 카드에 "준비 중"을 켠다 (#309). 타이머가 부른다."""
         item = self.item
-        if item is None or self.handle is None:
-            return
+        if item is None or self.handle is None or self.task is None:
+            return  # 그사이 작업이 끝났거나 정리됐다
         item.preparing = True
         self._content.model.notifyChanged(item)
 
@@ -368,6 +375,7 @@ class DownloadViewModel(QObject):
         self._prepareTimer.stop()
         if self.item is not None:
             self.item.preparing = False
+            self.item.prepare_pending = False
 
     def _onPrepared(self, *_args) -> None:
         """진행 통지가 왔다 — 엔진의 준비가 끝났다 (#309). 메인 스레드에서 돈다.
@@ -392,7 +400,10 @@ class DownloadViewModel(QObject):
         정리는 wait가 아니라 엔진 스레드(run 꼬리의 _cleanup_partial)가
         수행하므로, 포기해도 정리는 늦어질 뿐이며 갇힌 스레드가 깨어나면
         그때 수행된다. 재시작 충돌은 산출물 경로 유일화(#105)가 막는다.
+
+        "준비 중" 타이머도 여기서 멈춘다 (#309) — 정리된 작업이나 지운 카드에 타이머가 닿지 않게.
         """
+        self._endPreparing()
         if self.handle is not None and not self.handle.wait(_HANDLE_WAIT_TIMEOUT_S):
             logger.warning(
                 "워커가 %.0f초 안에 끝나지 않아 대기를 포기한다 — 슬롯 방출 (#137)",

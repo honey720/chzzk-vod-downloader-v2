@@ -201,15 +201,25 @@ class DownloadLogger:
         """컷을 시작하기 전 색인에서 프레임 정보를 뽑는 데 걸린 시간을 로깅합니다 (#309)."""
         self.info(f"Cut frames prepared in {elapsed:.2f} seconds")
 
-    def log_cut_stages(self, number: int, total: int, stages):
+    def log_cut_stages(self, number: int, total: int, stages, paused: float = 0.0):
         """구간 하나의 컷이 단계마다 걸린 시간을 한 줄로 로깅합니다 (#309).
 
         단계는 probe(입력 읽기) · 조각마다 <번호>_<종류>(재인코딩 또는 복사) · audio · mux이고,
         세그먼트 방식은 앞에 join(세그먼트 잇기)이 붙는다. 실패한 컷은 실패한 단계까지 남는다.
+        단계 시간에는 일시정지한 시간이 들어 있지 않다 — 일시정지가 있었으면 그 합을 끝에 따로
+        적는다("paused: 12.30s").
         """
         parts = ", ".join(f"{name}: {seconds:.2f}s" for name, seconds in stages)
         total_seconds = sum(seconds for _name, seconds in stages)
-        self.info(f"Cut {number}/{total} stages - {parts} = {total_seconds:.2f}s")
+        tail = f" (paused: {paused:.2f}s)" if paused > 0 else ""
+        self.info(f"Cut {number}/{total} stages - {parts} = {total_seconds:.2f}s{tail}")
+
+    def log_stopped(self, phase: str):
+        """사용자가 다운로드를 중단했음을 로깅합니다 — 어느 단계였는지와 함께 (#309).
+
+        phase는 prepare(준비) · transfer(전송) · postprocess(후처리 — 구간 다운로드는 컷)다.
+        """
+        self.info(f"Download stopped by user during {phase}")
 
     def log_postprocess_start(self, kind: str):
         """후처리 시작을 로깅합니다 (kind: remux 등)."""

@@ -196,6 +196,39 @@ class SectionCutProgress:
         self._publish(value)
 
 
+class _PauseClock:
+    """일시정지가 이어진 시간을 잰다 — 컷이 일시정지를 물을 때마다(짧은 간격) 본다 (#309).
+
+    컷의 단계 시간에는 ffmpeg가 멈춰 있던 시간이 들어 있다. 단계가 끝날 때 ``take``로 그동안의
+    일시정지 시간을 꺼내 뺀다. 여러 스레드가 부른다(컷을 도는 스레드 · ffmpeg를 지켜보는 스레드).
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._since: float | None = None  # 일시정지를 처음 본 시각. 일시정지 중이 아니면 None
+        self._total = 0.0  # 꺼내 가지 않은 일시정지 시간(초)
+
+    def see(self, paused: bool) -> None:
+        """지금 일시정지 중인지 본 것을 적는다."""
+        now = tm.perf_counter()
+        with self._lock:
+            if paused and self._since is None:
+                self._since = now
+            elif not paused and self._since is not None:
+                self._total += now - self._since
+                self._since = None
+
+    def take(self) -> float:
+        """지난번에 꺼낸 뒤로 일시정지가 이어진 시간(초)을 꺼낸다 — 아직 일시정지 중이면 지금까지."""
+        now = tm.perf_counter()
+        with self._lock:
+            if self._since is not None:
+                self._total += now - self._since
+                self._since = now
+            taken, self._total = self._total, 0.0
+        return taken
+
+
 class BaseDownloader(ABC):
     """작업 목록 기반 멀티스레드 다운로드의 공통 실행 엔진."""
 
@@ -251,6 +284,8 @@ class BaseDownloader(ABC):
         self._error_requeues: dict = {}
         # 전송 종료 시 관측 스레드를 깨워 끝내는 신호 — 후처리는 관측 대상이 아니다 (#89)
         self._monitor_stop = threading.Event()
+        self._pause_clock = _PauseClock()  # 컷이 도는 동안의 일시정지 시간
+        self._cut_paused = 0.0  # 지금 자르는 구간에서 일시정지한 시간의 합(초)
         # 전송 중 관측된 정점 동시 스레드 수 — 전송 종료 요약 로그용 (#110)
         self._peak_threads = 0
         # 총 처리량 등반 상태 (#112) — 판단 규칙은 _adjust_threads 참조
@@ -335,9 +370,38 @@ class BaseDownloader(ABC):
         """다운로드가 일시정지 중인지 — 컷이 도는 ffmpeg를 멈춰 둘지 묻는 데 쓴다 (#309).
 
         일시정지하는 순간 도는 컷이 서고(ffmpeg 프로세스를 멈춘다) 재개하면 멈춘 자리에서 이어
-        간다. 컷의 ffmpeg를 지켜보는 스레드에서도 불린다.
+        간다. 컷의 ffmpeg를 지켜보는 스레드에서도 불린다. 일시정지가 이어진 시간을 여기서
+        잰다 — 컷의 단계 시간에서 뺀다(``_stage_recorder``).
         """
-        return self.state == DownloadState.PAUSED
+        paused = self.state == DownloadState.PAUSED
+        self._pause_clock.see(paused)
+        return paused
+
+    def _wait_while_paused(self) -> float:
+        """일시정지 중이면 풀릴 때까지(재개 · 중단) 기다리고, 기다린 시간(초)을 돌려준다.
+
+        받는 스레드는 이 시간을 속도 판정에서 뺀다 — 빼지 않으면 일시정지한 만큼 평균 속도가
+        낮게 나와 재개 직후 파트가 느린 속도로 끊긴다.
+        """
+        if self.state != DownloadState.PAUSED:
+            return 0.0
+        started = tm.time()
+        self.s._pause_event.wait()
+        return tm.time() - started
+
+    def _stage_recorder(self, stages: list) -> Callable[[str, float], None]:
+        """컷의 on_stage로 넘길 것 — 단계 시간에서 일시정지한 시간을 빼고 stages에 적는다 (#309).
+
+        ffmpeg가 멈춰 있던 시간은 그 단계가 일한 시간이 아니다. 뺀 시간은 구간마다 모아
+        ``_log_cut_stages``가 따로 적는다.
+        """
+
+        def on_stage(name: str, seconds: float) -> None:
+            paused = self._pause_clock.take()
+            self._cut_paused += paused
+            stages.append((name, max(seconds - paused, 0.0)))
+
+        return on_stage
 
     # ============ 하위 다운로더가 선택적으로 오버라이드 ============
 
@@ -478,10 +542,16 @@ class BaseDownloader(ABC):
 
         Args:
             number: 구간 번호(1부터 — 구간 목록의 순서)
-            stages: ``hybrid_cut``의 on_stage가 알린 (단계 이름, 걸린 초) — 알린 순서대로
+            stages: ``hybrid_cut``의 on_stage가 알린 (단계 이름, 걸린 초) — 알린 순서대로.
+                ``_stage_recorder``로 모은 것이면 일시정지한 시간이 빠져 있다
+
+        그 구간을 자르는 동안 일시정지한 시간이 있으면 그 합을 함께 넘긴다(없으면 넘기지 않는다 —
+        그 인자를 모르는 로거를 깨뜨리지 않는다).
         """
+        paused, self._cut_paused = self._cut_paused, 0.0
+        extra = (paused,) if paused > 0 else ()
         self._log_if_supported(
-            "log_cut_stages", number, len(self.s.content.selections), tuple(stages)
+            "log_cut_stages", number, len(self.s.content.selections), tuple(stages), *extra
         )
 
     def _log_if_supported(self, name: str, *args) -> None:
@@ -502,9 +572,12 @@ class BaseDownloader(ABC):
     def run(self) -> None:
         """다운로드 파이프라인을 실행한다. 관측 스레드도 여기서 소유·시작한다."""
         monitor = threading.Thread(target=self._monitor_loop, name="DownloadMonitor", daemon=True)
+        stopped_in = None  # 중단을 처음 본 단계 — prepare · transfer · postprocess
         try:
             self.s.start_time = tm.time()
             plan = self.prepare(self.s.content)
+            if self.state == DownloadState.WAITING:
+                stopped_in = "prepare"
             # 준비(받을 것을 정하는 단계 — 구간 다운로드는 여기서 moov · 플레이리스트를 받는다)에
             # 걸린 시간. 전송 시간(Transfer)은 이것을 포함한 채로 둔다 — 그 줄의 뜻을 바꾸지
             # 않고, 준비를 뺀 값을 따로 한 줄 남긴다 (#309)
@@ -537,6 +610,12 @@ class BaseDownloader(ABC):
                     active_threads=0,
                 )
             )
+
+            # 준비하는 동안 일시정지됐으면 받기를 띄우지 않고 여기서 선다 — 재개하면 그때
+            # 받기 시작한다 (#309). 중단되면 아래의 받기 루프가 돌지 않고 지나간다
+            self._wait_while_paused()
+            if self.state == DownloadState.WAITING and stopped_in is None:
+                stopped_in = "prepare"
 
             # 진행률 배열이 준비된 뒤에 관측을 시작한다
             monitor.start()
@@ -591,6 +670,8 @@ class BaseDownloader(ABC):
             # 전송 구간 소요는 관측 정지까지 포함해 여기서 확정한다 (#110) —
             # 이후 구간(후처리)과 합이 전체와 어긋나지 않게 하기 위함이다
             transfer_elapsed = tm.time() - self.s.start_time
+            if self.state == DownloadState.WAITING and stopped_in is None:
+                stopped_in = "transfer"
 
             if self.state == DownloadState.RUNNING:
                 # 전송 단계 종료 요약 한 줄 (#110)
@@ -643,6 +724,9 @@ class BaseDownloader(ABC):
             # 중단을 같은 신호(WAITING)로 뭉뚱그려 구분하지 못한 게 뿌리였다
             # (#135와 같은 자리: 엔진 종료 신호와 실패 처리를 분리해야 한다).
             if self.state == DownloadState.WAITING:
+                # 사용자가 중단했다 — 어느 단계였는지 한 줄 남긴다 (#309). 로그가 완료도 실패도
+                # 없이 끊기면 중단인지 죽은 것인지 가릴 수 없다
+                self._log_if_supported("log_stopped", stopped_in or "postprocess")
                 self._cleanup_partial()
 
         except PostprocessError as e:
@@ -801,7 +885,9 @@ class BaseDownloader(ABC):
                 # 일시정지 구간이 섞인 이 측정으로는 조정 판단을 하지 않는다
                 self.logger.log_thread_adjust(self.s.adjust_threads, self.s.speed_mb)
                 self._settle_ticks = max(self._settle_ticks, 1)
-            else:
+            elif self.state == DownloadState.RUNNING:
+                # 일시정지가 위의 확인과 여기 사이에 들어올 수 있다 — 일시정지 중에는 스레드
+                # 수를 고치지도 속도를 적지도 않는다(받는 스레드가 서 있어 값이 뜻이 없다)
                 self._adjust_threads()
                 self.measure_speed()
                 self.emit_progress()
