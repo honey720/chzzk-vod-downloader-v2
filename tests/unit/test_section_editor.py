@@ -626,6 +626,28 @@ def test_digits_above_the_maximum_are_set_to_the_maximum_when_the_field_is_left(
     assert dialog.okButton.isEnabled()
 
 
+def test_an_end_that_is_not_a_timecode_is_left_as_it_is_and_shown_as_a_format_error(
+    qtbot, tmp_path, basis
+):
+    """타임코드로 읽히지 않는 끝 값은 편집을 끝내도 영상 끝으로 맞추지 않고 그대로 두며, 형식 오류로 보여야 한다.
+
+    60fps · 3600초. 뷰모델의 끝 칸에 칸이 모자란 글 "12:34:56"을 편집을 끝낸 값으로 넣음
+    -> 끝의 글 == "12:34:56" 그대로, 맞춘 행 없음, 행의 문구 == "Invalid timecode format", 확인 꺼짐
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    viewmodel = dialog.viewModel()
+
+    viewmodel.setText(0, 1, "12:34:56")
+    _pump()
+
+    assert viewmodel.rows[0][1] == "12:34:56"
+    assert viewmodel.clampedRow() is None
+    assert shown(dialog._rows[0].errorLabel) == "Invalid timecode format"
+    assert not dialog.okButton.isEnabled()
+
+
 def test_a_pasted_value_above_the_maximum_is_set_at_once(qtbot, tmp_path, basis, monkeypatch):
     """붙여넣은 값의 분 · 초 · 프레임이 최대를 넘으면 칸을 떠나기를 기다리지 않고 바로 최대값으로 맞춰야 한다.
 
