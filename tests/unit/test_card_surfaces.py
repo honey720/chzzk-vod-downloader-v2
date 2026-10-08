@@ -339,12 +339,16 @@ class TestSectionEditButtonSurface:
         assert not widget.sectionEditButton.isVisible()
         assert widget.pathButton.isVisible()
 
-    def test_click_asks_for_the_editor_like_a_click_on_the_summary_text(self, qapp, qtbot):
-        """구간 편집 버튼을 누르면 구간 요약 글자를 눌렀을 때와 같은 요청(sectionEditRequest)이 한 번 나와야 한다.
+    def test_click_asks_for_the_editor_like_a_click_on_the_summary_text(
+        self, qapp, qtbot, monkeypatch
+    ):
+        """구간 편집 버튼을 누르면 구간 요약 글자를 눌렀을 때와 같은 요청(sectionEditRequest)이 한 번 나와야 하고, 폴더 선택은 열리지 않아야 한다.
 
-        대기 카드에서 버튼을 클릭, 이어서 구간 요약 글자를 클릭 -> 요청이 각각 1회씩(모두 2회)
+        대기 카드에서 버튼을 클릭, 이어서 구간 요약 글자를 클릭(폴더 선택 대화상자는 대역)
+        -> 요청이 각각 1회씩(모두 2회), 폴더 선택 호출 0회
         """
         _window, widget = self._card(qtbot, DownloadState.WAITING)
+        dialogs = _record_dialog(monkeypatch)  # 잘못 이어지면 실제 대화상자가 떠서 끝나지 않는다
         asked = []
         widget.sectionEditRequest.connect(lambda: asked.append(1))
 
@@ -355,6 +359,7 @@ class TestSectionEditButtonSurface:
         _pump()
 
         assert (after_button, len(asked)) == (1, 2)
+        assert dialogs == []
 
     def test_tooltip_says_what_the_button_does(self, qapp, qtbot):
         _window, widget = self._card(qtbot, DownloadState.WAITING)
