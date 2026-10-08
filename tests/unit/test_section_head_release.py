@@ -237,6 +237,26 @@ def _download(qtbot, win, item, until=DownloadState.FINISHED) -> None:
     _wait_for_engine_threads()
 
 
+# 진행률이 이만큼(초) 그대로면 섰다고 본다 — 제품이 요청을 확인하는 간격(50ms)의 여섯 배
+_STANDING_SECONDS = 0.3
+
+
+def _wait_until_progress_stands(qtbot, item) -> None:
+    """카드의 진행률이 ``_STANDING_SECONDS`` 동안 그대로일 때까지 기다린다.
+
+    일시정지 요청은 다음 확인 때 ffmpeg에 닿고, 그 전에 ffmpeg가 낸 진행은 그 뒤에 도착한다.
+    """
+    seen = [item.download_progress, time.monotonic()]
+
+    def stands() -> bool:
+        now = time.monotonic()
+        if item.download_progress != seen[0]:
+            seen[:] = [item.download_progress, now]
+        return now - seen[1] >= _STANDING_SECONDS
+
+    qtbot.waitUntil(stands, timeout=5_000)
+
+
 def _wait_for_engine_threads() -> None:
     """엔진을 돌린 스레드가 끝나기를 기다린다 — 끝나기 전에는 스레드가 엔진을 쥐고 있다."""
     for thread in threading.enumerate():
@@ -471,7 +491,7 @@ def test_pausing_during_the_cut_shows_paused_and_resuming_goes_back_to_cutting(
 ):
     """구간을 자르는 도중 일시정지하면 카드가 "Paused"로 서 있고, 재개하면 "Cutting"으로 돌아가 끝나야 한다.
 
-    컷의 오디오 단계의 ffmpeg가 뜬 뒤 전역 버튼으로 일시정지 → 0.8초 지켜봄 → 다시 눌러 재개
+    컷의 오디오 단계의 ffmpeg가 뜬 뒤 전역 버튼으로 일시정지 → 진행률이 선 뒤 0.8초 지켜봄 → 다시 눌러 재개
     -> 일시정지 중: 카드 PAUSED, 상태 문구가 "% · Paused"로 끝난다, 진행률이 0.8초 동안 그대로다,
        그 ffmpeg가 살아 있다, 카드가 완료되지 않았다
     -> 재개 직후: 카드 RUNNING, 상태 문구에 "Cutting"
@@ -494,6 +514,7 @@ def test_pausing_during_the_cut_shows_paused_and_resuming_goes_back_to_cutting(
         qtbot.waitUntil(reached.is_set, timeout=FINISH_TIMEOUT)
         win.downloadButton.click()  # 일시정지
         _pump()
+        _wait_until_progress_stands(qtbot, item)
         first = (item.downloadState, card.statusLabel.text(), item.download_progress)
         qtbot.wait(800)
         second = (item.downloadState, card.statusLabel.text(), item.download_progress)

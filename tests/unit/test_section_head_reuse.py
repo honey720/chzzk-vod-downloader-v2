@@ -256,7 +256,7 @@ def test_a_moov_fetched_at_another_address_is_not_handed_over(tmp_path):
 def test_deleting_the_card_drops_its_moov(qtbot, tmp_path, window, probe):
     """카드를 지우면 그 카드가 들고 있던 moov를 아무도 붙잡지 않아야 한다.
 
-    구간을 확인해 moov를 든 카드를 목록에서 지움
+    구간을 확인해 moov를 든 카드를 목록에서 지움. 받을 크기를 세던 일이 끝나기를 기다림
     -> 카드의 section_head is None, 조회 대역의 기록을 비운 뒤 그 moov의 약한 참조 == None
     """
     win, engine = window
@@ -266,6 +266,10 @@ def test_deleting_the_card_drops_its_moov(qtbot, tmp_path, window, probe):
     held = weakref.ref(probe.heads[0])
 
     win.contentManager.removeItem(item)
+    _pump()
+    # 구간을 확인하며 시작한 크기 세기는 결과가 올 때까지 넘겨받은 moov를 든다
+    sizer = win.contentManager._sectionSizer
+    qtbot.waitUntil(lambda: sizer.pendingCount() == 0, timeout=5000)
     _pump()
     probe.heads.clear()
     gc.collect()
