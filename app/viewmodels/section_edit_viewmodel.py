@@ -545,6 +545,23 @@ class SectionEditViewModel(QObject):
         self._evaluate()
         self.rowsReset.emit()
 
+    def canClear(self) -> bool:
+        """하나뿐인 행의 값을 비울 수 있는지 — 행이 하나뿐이고 시각이 하나라도 적혀 있을 때다.
+
+        하나뿐인 행은 지울 수 없다(``canRemove``). 대신 그 행의 값을 비워 처음(영상 전체)으로
+        돌아갈 수 있다. 이미 비어 있으면 비울 것이 없다.
+        """
+        return self.state == STATE_READY and len(self.rows) == 1 and any(self.rows[0])
+
+    def clearRow(self, row: int) -> None:
+        """하나뿐인 행의 시작 · 끝을 비운다 — 행은 남는다. 비울 수 없으면 아무것도 하지 않는다."""
+        if not self.canClear() or row != 0:
+            return
+        self.rows[row] = self._emptyRow()
+        self._clamped = None  # 맞춘 안내도 그 값과 함께 사라진다
+        self._evaluate()
+        self.rowsReset.emit()
+
     def moveRow(self, row: int, step: int) -> None:
         """행을 위(step=-1) · 아래(step=1)로 옮긴다. 행의 순서가 구간 번호이고 파일 이름의 번호다."""
         target = row + step

@@ -371,6 +371,22 @@ class SectionEditDialog(QDialog):
         self._commitFocused()
         action(row, *args)
 
+    def _onDeleteOrClear(self, row: int) -> None:
+        """행의 ✕ — 행이 둘 이상이면 그 행을 지우고, 하나뿐이면 그 행의 값을 비운다(행은 남는다).
+
+        값을 비운 뒤에는 그 행의 시작 시분초 칸으로 간다 — 다시 넣기 시작할 자리다.
+        """
+        if self._viewmodel.canRemove():
+            self._rowAction(self._viewmodel.removeRow, row)
+            return
+        self._onInput()
+        self._commitFocused()
+        if not self._viewmodel.canClear():
+            return
+        self._viewmodel.clearRow(row)
+        if self._rows:
+            self._rows[0].startEdit.clockEdit.setFocus(Qt.FocusReason.TabFocusReason)
+
     def _onAdd(self) -> None:
         """구간 추가 — 빈 행을 끝에 넣고 그 행의 시작 시분초 칸으로 간다."""
         self._onInput()
@@ -403,10 +419,10 @@ class SectionEditDialog(QDialog):
                 edit.entered.connect(lambda r=index, c=column: self._onEntered(r, c))
                 edit.pasted.connect(lambda r=index, c=column, e=edit: self._onPasted(r, c, e))
                 edit.touched.connect(self._onInput)
-            moveRow, removeRow = self._viewmodel.moveRow, self._viewmodel.removeRow
+            moveRow = self._viewmodel.moveRow
             row.upButton.clicked.connect(lambda _=False, r=index: self._rowAction(moveRow, r, -1))
             row.downButton.clicked.connect(lambda _=False, r=index: self._rowAction(moveRow, r, 1))
-            row.deleteButton.clicked.connect(lambda _=False, r=index: self._rowAction(removeRow, r))
+            row.deleteButton.clicked.connect(lambda _=False, r=index: self._onDeleteOrClear(r))
             self._rowLayout.insertWidget(index, row)
             self._rows.append(row)
         # 목록의 값은 _refresh가 칸에 넣는다 — 빈 시각(빈 글)이 아닌 값은 새 칸의 값과 달라
@@ -518,12 +534,15 @@ class SectionEditDialog(QDialog):
                     MESSAGE_NOTE: viewmodel.ignoredText() if ignored else "",
                 }
             )
-            row.deleteButton.setEnabled(viewmodel.canRemove())  # 하나뿐인 행은 지울 수 없다
+            # 하나뿐인 행은 지울 수 없다 — 값이 있으면 ✕가 그 값을 비운다(비어 있으면 꺼 둔다)
+            row.deleteButton.setEnabled(viewmodel.canRemove() or viewmodel.canClear())
             row.upButton.setEnabled(index > 0)
             row.downButton.setEnabled(index < count - 1)
             row.upButton.setToolTip(self.tr("Move up"))
             row.downButton.setToolTip(self.tr("Move down"))
-            row.deleteButton.setToolTip(self.tr("Delete section"))
+            row.deleteButton.setToolTip(
+                self.tr("Delete section") if count > 1 else self.tr("Clear values")
+            )
         self.headerLabel.setText(viewmodel.headerText())
         self.headerLabel.setToolTip(viewmodel.endMillisecondsText())  # 영상 끝의 밀리초 표기
         self.addButton.setEnabled(viewmodel.canAdd())

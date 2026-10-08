@@ -342,6 +342,10 @@ Part of the video kept arriving incomplete from the server. Try again later.</tr
         <source>Delete section</source>
         <translation>Delete section</translation>
     </message>
+    <message>
+        <source>Clear values</source>
+        <translation>Clear values</translation>
+    </message>
 </context>
 <context>
     <name>SectionEditViewModel</name>

@@ -337,6 +337,10 @@ Part of the video kept arriving incomplete from the server. Try again later.</so
         <source>Delete section</source>
         <translation>구간 삭제</translation>
     </message>
+    <message>
+        <source>Clear values</source>
+        <translation>값 비우기</translation>
+    </message>
 </context>
 <context>
     <name>SectionEditViewModel</name>

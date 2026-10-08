@@ -924,10 +924,10 @@ def test_moved_rows_reach_the_engine_in_the_new_order_with_matching_file_numbers
 
 
 def test_deleting_a_row_removes_that_section_and_the_last_row_stays(qtbot, tmp_path, basis):
-    """삭제는 그 행만 지우고, 하나 남은 행은 지워지지 않아야 한다.
+    """삭제는 그 행만 지우고, 하나 남은 행은 지워지지 않고 값만 비워져야 한다.
 
     행 A(600~1200) · B(1800~1860)에서 A의 ✕ -> 행 B만 남는다
-    B의 ✕(꺼져 있다) -> 행 B 그대로, 확인하면 selections == (B,)
+    B의 ✕(값이 있어 켜져 있다) -> 행은 하나 그대로이고 값이 비워진다, 확인하면 selections == ()
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -940,14 +940,12 @@ def test_deleting_a_row_removes_that_section_and_the_last_row_stays(qtbot, tmp_p
         ("00:30:00:00", "00:31:00:00")
     ]
 
-    assert not dialog._rows[0].deleteButton.isEnabled()
+    assert dialog._rows[0].deleteButton.isEnabled()
     dialog._rows[0].deleteButton.click()
     _pump()
-    assert [(row.startEdit.text(), row.endEdit.text()) for row in dialog._rows] == [
-        ("00:30:00:00", "00:31:00:00")
-    ]
+    assert [(row.startEdit.text(), row.endEdit.text()) for row in dialog._rows] == [("", "")]
     press_ok(dialog)
-    assert item.selections == (TimeRange(1800.0, 1860.0),)
+    assert item.selections == ()
 
 
 # ================================================================ 편집 중 건너뛰기
@@ -2638,6 +2636,11 @@ def texts(dialog) -> list[tuple[str, str]]:
     return [(row.startEdit.text(), row.endEdit.text()) for row in dialog._rows]
 
 
+def shown_error(row) -> str:
+    """그 행에 보이는 오류 문구 — 보이지 않으면 빈 글."""
+    return shown(row.errorLabel) if row.errorLabel.isVisible() else ""
+
+
 def notes(dialog) -> list[str]:
     """행마다 보이는 무시 안내 — 보이지 않으면 빈 글."""
     return [shown(row.noteLabel) if row.noteLabel.isVisible() else "" for row in dialog._rows]
@@ -2679,6 +2682,95 @@ def test_a_card_without_sections_opens_with_one_empty_row_that_confirms_as_a_who
     press_ok(dialog)
 
     assert item.selections == ()
+
+
+@pytest.mark.parametrize(
+    ("column", "typer", "digits"),
+    [
+        ("startEdit", type_clock, "5"),
+        ("startEdit", type_frame, "5"),
+        ("endEdit", type_clock, "5"),
+        ("endEdit", type_frame, "5"),
+    ],
+    ids=["시작 시분초", "시작 프레임", "끝 시분초", "끝 프레임"],
+)
+def test_the_only_row_can_be_cleared_as_soon_as_any_field_has_a_value(
+    qtbot, tmp_path, basis, column, typer, digits
+):
+    """행이 하나뿐일 때 네 칸 중 하나라도 값이 있으면 ✕가 켜지고, 누르면 행은 남고 네 칸이 비워져야 한다.
+
+    60fps · 3600초, 빈 행 하나. 네 칸 가운데 하나에 5를 침(칸마다)
+    -> 치기 전: ✕ 꺼짐. 친 뒤: ✕ 켜짐
+    ✕를 누름 -> 행 1개, 값 ("", ""), 네 칸 모두 친 숫자 없음, ✕ 꺼짐
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    before = delete_enabled(dialog)
+
+    typer(getattr(dialog._rows[0], column), digits)
+    _pump()
+    typed = delete_enabled(dialog)
+    dialog._rows[0].deleteButton.click()
+    _pump()
+
+    row = dialog._rows[0]
+    assert (before, typed) == ([False], [True])
+    assert len(dialog._rows) == 1 and texts(dialog) == [("", "")]
+    assert [
+        part.digits()
+        for edit in (row.startEdit, row.endEdit)
+        for part in (edit.clockEdit, edit.frameEdit)
+    ] == ["", "", "", ""]
+    assert delete_enabled(dialog) == [False]
+
+
+def test_clearing_the_only_row_leaves_it_like_a_fresh_empty_row_and_focuses_its_start(
+    qtbot, tmp_path, basis
+):
+    """하나뿐인 행의 값을 비우면 안내 줄 · 오류 · 확인 버튼이 빈 행 하나일 때와 같아야 하고, 포커스는 시작 시분초 칸이어야 한다.
+
+    60fps · 3600초, 행 하나에 시작 00:20:00:00 · 끝 00:10:00:00(끝이 시작보다 앞이라 오류)을 넣고 ✕
+    -> 비우기 전: 오류가 보이고 확인이 꺼져 있다
+    -> 비운 뒤: 오류 없음, 안내 없음, 확인 켜짐, 포커스 == 그 행의 시작 시분초 칸. 확인하면 selections == ()
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    dialog.activateWindow()
+    QTest.qWaitForWindowActive(dialog)
+    set_rows(dialog, [("00:20:00:00", "00:10:00:00")])
+    before = (bool(shown_error(dialog._rows[0])), dialog.okButton.isEnabled())
+
+    dialog._rows[0].deleteButton.click()
+    _pump()
+
+    row = dialog._rows[0]
+    assert before == (True, False)
+    assert shown_error(row) == "" and notes(dialog) == [""]
+    assert dialog.okButton.isEnabled()
+    assert QApplication.focusWidget() is row.startEdit.clockEdit
+    press_ok(dialog)
+    assert item.selections == ()
+
+
+def test_the_x_button_says_clear_for_the_only_row_and_delete_when_there_are_more(
+    qtbot, tmp_path, basis
+):
+    """✕의 툴팁은 행이 하나뿐이면 값을 비운다고, 둘 이상이면 구간을 지운다고 말해야 한다.
+
+    행 하나 -> "Clear values". 구간 추가로 두 행 -> 두 행 모두 "Delete section"
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    alone = [row.deleteButton.toolTip() for row in dialog._rows]
+
+    dialog.addButton.click()
+    _pump()
+
+    assert alone == ["Clear values"]
+    assert [row.deleteButton.toolTip() for row in dialog._rows] == ["Delete section"] * 2
 
 
 def test_the_only_row_cannot_be_deleted_and_no_action_leaves_zero_rows(qtbot, tmp_path, basis):
