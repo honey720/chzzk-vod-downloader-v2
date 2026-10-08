@@ -209,7 +209,7 @@ def _isolate_choose_temp_dir(monkeypatch):
 # 건드리지 않는다. autouse 픽스처는 가장 먼저 세워져 가장 나중에 걷히므로,
 # 테스트 자신의 정리(qtbot·파일별 픽스처)가 끝난 뒤의 잔여만 여기로 온다.
 @pytest.fixture(autouse=True)
-def _destroy_top_level_widgets():
+def _destroy_top_level_widgets(request):
     """테스트가 끝나면 살아 있는 최상위 위젯을 닫고 실제로 파괴한 뒤, 하나도 안 남았음을 단언한다."""
     yield
     from PySide6.QtCore import QCoreApplication, QEvent
@@ -226,8 +226,11 @@ def _destroy_top_level_widgets():
     # 테스트가 버린 Qt 객체(창 없이 만든 뷰모델과 그 타이머 등)를 여기 메인 스레드에서 수집한다.
     # 두면 순환 수집이 아무 스레드에서나 돌 때 파괴된다 — 카드의 크기 조회 스레드에서 돌면 도는
     # QTimer가 제 스레드 밖에서 파괴돼 등록이 남고, 그 타이머가 끝나는 순간 접근 위반으로 죽는다
-    # (일부 테스트만 골라 돌릴 때 재현됐다 #309). Qt를 쓴 테스트에서만 돈다
-    gc.collect()
+    # (일부 테스트만 골라 돌릴 때 재현됐다 #309). Qt 앱을 청한 테스트(qapp · qtbot) 뒤에만 돈다 —
+    # 세션에 QApplication이 한 번 생기면 그 뒤의 모든 테스트가 여기까지 오는데, 전체 수집은 힙이
+    # 클수록 오래 걸려 Qt를 쓰지 않는 테스트 수천 건에서 돌리면 전체 시간이 크게 늘어난다
+    if "qapp" in request.fixturenames:
+        gc.collect()
     leftover = [f"{type(w).__name__}({w.objectName() or '-'})" for w in QApplication.topLevelWidgets()]
     assert not leftover, f"테스트 뒤 파괴되지 않은 최상위 위젯 {len(leftover)}개: {leftover}"
 
