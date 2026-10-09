@@ -11,7 +11,8 @@
   adjust_count < -4이면 adjust_threads를 절반으로 (하한 1), 카운터 리셋
 - 중간 대역(2~4 MB/s)에서는 adjust_count가 0을 향해 1씩 감쇠
 - 속도 계산: 직전 틱 대비 바이트 증가량을 MB/s로 환산, prev_size 갱신
-- 느린 파트 (#347로 바뀜): 응답 시작 뒤 3초가 지나고, 최근 3초의 속도가 100 KB/s 미만이면
+- 느린 파트 (#347로 바뀜): 응답 시작 뒤 3초가 지나고, 최근 3초의 속도가 100 KB/s 미만이고,
+  다른 연결들보다 뚜렷이 느려 끊고 다시 받는 쪽이 빠르면
   해당 파트를 중단하고 구간을 재큐잉(restart_threads += 1). 구 규칙은 누적 평균이
   연속 6회 미만일 때였다 — 응답 직후의 48KB로 판정해 잠깐 멎은 연결까지 끊었다
 - 파트 실패: 요청 예외 시 구간 재큐잉(failed_threads += 1)
@@ -349,6 +350,8 @@ def test_slow_part_restarts_when_the_recent_window_is_slow(tmp_path, monkeypatch
     engine, data, logger = _prepare_running_engine(
         tmp_path, monkeypatch, chunks=chunks, clock_step=1.0
     )
+    # 다른 연결 셋은 빠르다 — 이 연결만 느려야 끊는다 (#347 재시작 이득 판정)
+    monkeypatch.setattr(engine, "_peer_speeds", lambda part_num, now: [800.0, 900.0, 1000.0])
 
     returned = engine._download_part(0, 40 * MB - 1, 0, 40 * MB)
 
@@ -522,6 +525,8 @@ def test_slow_requeue_records_partial_progress(tmp_path, monkeypatch):
     engine, data, logger = _prepare_running_engine(
         tmp_path, monkeypatch, chunks=chunks, clock_step=1.0
     )
+    # 다른 연결 셋은 빠르다 — 이 연결만 느려야 끊는다 (#347 재시작 이득 판정)
+    monkeypatch.setattr(engine, "_peer_speeds", lambda part_num, now: [800.0, 900.0, 1000.0])
 
     engine._download_part(0, 40 * MB - 1, 0, 40 * MB)
 

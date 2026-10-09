@@ -1,4 +1,4 @@
-"""저속 판정 규칙 (#347) — 시간 창 · 다른 연결과 견주기 · 일시정지 시간 제외 · 응답 닫기.
+"""저속 판정 규칙 (#347) — 시간 창 · 다른 연결과 견주기 · 재시작 이득 · 일시정지 시간 제외 · 응답 닫기.
 
 시계는 엔진의 단조 시계(`_now`)를 가짜로 바꿔 끼운다. 실제 시간은 쓰지 않는다.
 """
@@ -71,6 +71,15 @@ def _peers(engine, speeds_kb_s, age: float = 0.0) -> None:
         engine._conn_speeds[slot] = (engine.clock.now - age, speed)
 
 
+FAST_PEERS = (800.0, 900.0, 1000.0)  # 다른 연결 셋의 속도(KB/s) — 이 연결만 느린 상황을 만든다
+BIG = 100 * MB  # 받을 양 — 남은 양이 많아 끊는 쪽이 늘 이득인 크기
+
+
+def _always_fast_peers(engine) -> None:
+    """어느 시각에 물어도 다른 연결 셋이 빠르다고 답하게 한다 — 받기 루프를 통째로 돌리는 시험용."""
+    engine._peer_speeds = lambda part_num, now: list(FAST_PEERS)
+
+
 # ================================================================ 시간 창
 
 
@@ -89,9 +98,10 @@ def test_slow_watch_does_not_judge_before_the_window_has_passed(engine):
 def test_slow_watch_judges_slow_when_the_last_window_is_below_the_threshold(engine):
     """응답 시작 뒤 3초가 지났고 최근 3초의 속도가 100 KB/s 미만이면 저속이어야 한다.
 
-    1 KB/s로 받음, 경과 3.0초에 3 KB -> True
+    다른 연결 셋은 빠르고 받을 양은 100 MB. 1 KB/s로 받음, 경과 3.0초에 3 KB -> True
     """
-    watch = engine._watch_slow(0)
+    _peers(engine, FAST_PEERS)
+    watch = engine._watch_slow(0, expected=BIG)
 
     verdicts = _feed(watch, [(1.0, 1 * KB), (2.0, 2 * KB), (3.0, 3 * KB)])
 
@@ -104,8 +114,10 @@ def test_slow_watch_looks_at_the_recent_window_not_the_average_since_the_start(e
     0~3초: 1 MB/s(누적 3 MB) / 3~6.5초: 10 KB/s
     -> 경과 4.0초(창에 빠른 구간이 남아 있다) False, 경과 6.5초 True
        (그때의 누적 평균은 약 470 KB/s로 임계보다 높다)
+    다른 연결 셋은 빠르고 받을 양은 100 MB다
     """
-    watch = engine._watch_slow(0)
+    _peers(engine, FAST_PEERS)
+    watch = engine._watch_slow(0, expected=BIG)
     fast = [(t / 2, int(t / 2 * MB)) for t in range(1, 7)]  # 0.5 ~ 3.0초
     slow = [(3.0 + t / 2, 3 * MB + int(t / 2 * 10 * KB)) for t in range(1, 8)]  # 3.5 ~ 6.5초
 
@@ -151,19 +163,21 @@ def test_slow_watch_never_judges_when_the_threshold_is_zero(engine):
         ((20.0, 25.0, 30.0), 15.0, False),  # 중앙 25의 0.3배(7.5) 이상 — 회선 전체가 느리다
         ((20.0, 25.0, 30.0), 2.0, True),  # 중앙의 0.3배 미만 — 이 연결만 유독 느리다
         ((800.0, 900.0, 1000.0), 50.0, True),  # 다른 연결은 빠르다
-        ((20.0, 25.0), 15.0, True),  # 견줄 연결이 3개 미만 — 임계만으로 판정
-        ((), 15.0, True),
+        ((20.0, 25.0), 2.0, False),  # 견줄 연결이 3개 미만 — 끊지 않는다
+        ((), 2.0, False),
     ],
     ids=["모두 느림", "유독 느림", "다른 연결은 빠름", "견줄 연결 둘", "견줄 연결 없음"],
 )
 def test_slow_watch_compares_with_the_other_connections(engine, peer_speeds, own_speed, slow):
     """임계 미만인 연결은 다른 연결들의 중앙 속도의 0.3배보다도 느릴 때만 저속이어야 한다.
 
-    다른 연결들이 방금 알린 속도 peer_speeds(KB/s), 이 연결은 3초 동안 own_speed(KB/s)
+    견줄 연결이 3개 미만이면 저속이 아니다 — 다시 받는 쪽이 얼마나 빠를지 알 수 없다.
+
+    다른 연결들이 방금 알린 속도 peer_speeds(KB/s), 이 연결은 3초 동안 own_speed(KB/s), 받을 양 100 MB
     -> 경과 3.0초의 판정 == slow
     """
     _peers(engine, peer_speeds)
-    watch = engine._watch_slow(0)
+    watch = engine._watch_slow(0, expected=BIG)
 
     assert watch.is_slow(3.0, int(own_speed * KB * 3)) is slow
 
@@ -171,13 +185,13 @@ def test_slow_watch_compares_with_the_other_connections(engine, peer_speeds, own
 def test_slow_watch_does_not_compare_with_connections_that_went_quiet(engine):
     """한참 전에 속도를 알린 연결과는 견주지 않아야 한다.
 
-    다른 연결 셋이 5초 전에 20 · 25 · 30 KB/s를 알림, 이 연결은 3초 동안 15 KB/s
-    -> True (방금 알린 것이었다면 False다)
+    다른 연결 셋이 5초 전에 800 · 900 · 1000 KB/s를 알림, 이 연결은 3초 동안 15 KB/s, 받을 양 100 MB
+    -> False — 견줄 연결이 없다 (방금 알린 것이었다면 True다)
     """
-    _peers(engine, (20.0, 25.0, 30.0), age=5.0)
-    watch = engine._watch_slow(0)
+    _peers(engine, FAST_PEERS, age=5.0)
+    watch = engine._watch_slow(0, expected=BIG)
 
-    assert watch.is_slow(3.0, int(15.0 * KB * 3)) is True
+    assert watch.is_slow(3.0, int(15.0 * KB * 3)) is False
 
 
 def test_slow_watch_publishes_its_speed_for_the_other_connections(engine):
@@ -202,6 +216,73 @@ def test_starting_a_new_request_clears_the_speed_of_that_slot(engine):
     engine._watch_slow(0)
 
     assert engine._peer_speeds(1, engine.clock.now) == []
+
+
+# ================================================================ 재시작 이득
+
+
+@pytest.mark.parametrize(
+    ("resumes", "expected_mb", "received_mb", "own_speed", "slow"),
+    [
+        # 처음부터 다시 받는 경로(세그먼트): 다시 받을 양 = 전체 10 MB → 10240 ÷ 400 + 1 = 26.6초, ×1.5 = 39.9초
+        (False, 10, 7, 90.0, False),  # 그대로 두면 3072 ÷ 90 = 34.1초 — 끊는 쪽이 더 늦다
+        (False, 10, 1, 90.0, True),  # 그대로 두면 9216 ÷ 90 = 102.4초
+        # 이어받는 경로(mp4): 다시 받을 양 = 남은 3 MB → 3072 ÷ 400 + 1 = 8.7초, ×1.5 = 13.0초
+        (True, 10, 7, 90.0, True),  # 그대로 두면 34.1초
+    ],
+    ids=["세그먼트 · 거의 다 받음", "세그먼트 · 막 시작", "이어받기 · 거의 다 받음"],
+)
+def test_slow_connection_is_cut_only_when_restarting_finishes_clearly_sooner(
+    engine, resumes, expected_mb, received_mb, own_speed, slow
+):
+    """느린 연결은, 그대로 두는 것보다 끊고 다시 받는 쪽이 1.5배 넘게 빨리 끝날 때만 저속이어야 한다.
+
+    다른 연결 셋은 400 KB/s. 이 연결은 expected_mb 가운데 received_mb를 받았고 최근 3초는 own_speed(KB/s)
+    -> 판정 == slow
+    """
+    _peers(engine, (400.0, 400.0, 400.0))
+    watch = engine._watch_slow(0, expected=expected_mb * MB, resumes=resumes)
+    received = received_mb * MB
+    watch.is_slow(7.0, received - int(own_speed * KB * 3))
+
+    assert watch.is_slow(10.0, received) is slow
+
+
+def test_slow_connection_is_not_cut_when_the_remaining_size_is_unknown(engine):
+    """받을 양을 모르는 응답은 아무리 느려도 저속으로 끊지 않아야 한다.
+
+    다른 연결 셋은 빠름, 받을 양 미상, 3초 동안 1 KB/s -> False
+    """
+    _peers(engine, FAST_PEERS)
+    watch = engine._watch_slow(0)
+
+    assert watch.is_slow(3.0, 3 * KB) is False
+
+
+def test_restart_cost_counts_one_second_for_the_new_request(engine):
+    """끊는 쪽의 시간에는 새 요청의 시작 비용 1초가 들어가야 한다.
+
+    이어받는 경로, 다른 연결 셋은 1000 KB/s, 남은 양 60 KB, 최근 3초는 50 KB/s
+    -> False — 그대로 두면 1.2초, 끊으면 (0.06 + 1.0) × 1.5 = 1.59초 (시작 비용이 없다면 0.09초라 끊는다)
+    """
+    _peers(engine, (1000.0, 1000.0, 1000.0))
+    watch = engine._watch_slow(0, expected=10 * MB, resumes=True)
+    received = 10 * MB - 60 * KB
+    watch.is_slow(7.0, received - 150 * KB)
+
+    assert watch.is_slow(10.0, received) is False
+
+
+def test_connection_that_received_nothing_in_the_window_is_cut(engine):
+    """최근 3초에 한 바이트도 오지 않은 연결은 저속이어야 한다 — 그대로 두면 끝나지 않는다.
+
+    다른 연결 셋은 빠름, 받을 양 1 MB 가운데 900 KB를 받은 뒤 3초 동안 0바이트 -> True
+    """
+    _peers(engine, FAST_PEERS)
+    watch = engine._watch_slow(0, expected=1 * MB)
+    watch.is_slow(7.0, 900 * KB)
+
+    assert watch.is_slow(10.0, 900 * KB) is True
 
 
 # ================================================================ 일시정지 시간 제외
@@ -329,6 +410,7 @@ class _CrawlingResponse:
     def __init__(self, clock: ManualClock):
         self._clock = clock
         self.status_code = 206
+        self.headers = {"Content-Length": str(40 * MB)}
         self.closed = 0
 
     def raise_for_status(self):
@@ -346,6 +428,7 @@ class _CrawlingResponse:
 def _crawl(monkeypatch, module, made, call) -> _CrawlingResponse:
     made.clock = ManualClock()
     made._now = made.clock
+    _always_fast_peers(made)
     response = _CrawlingResponse(made.clock)
 
     class _Session:
@@ -360,7 +443,7 @@ def _crawl(monkeypatch, module, made, call) -> _CrawlingResponse:
 def test_file_part_closes_the_response_when_it_restarts_for_slow_speed(tmp_path, monkeypatch):
     """저속으로 재시작하는 파트는 받다 만 응답을 닫아야 한다.
 
-    청크마다 2초가 흐르는 응답(4 KB/s) -> 재시작 1건, 응답의 close() 1번
+    다른 연결 셋은 빠르다. 청크마다 2초가 흐르는 응답(4 KB/s) -> 재시작 1건, 응답의 close() 1번
     """
     output = tmp_path / "part.bin"
     output.write_bytes(b"")
@@ -378,7 +461,7 @@ def test_file_part_closes_the_response_when_it_restarts_for_slow_speed(tmp_path,
 def test_m3u8_segment_closes_the_response_when_it_restarts_for_slow_speed(tmp_path, monkeypatch):
     """저속으로 재시작하는 세그먼트는 받다 만 응답을 닫아야 한다.
 
-    청크마다 2초가 흐르는 응답 -> 재시작 1건, 응답의 close() 1번
+    다른 연결 셋은 빠르다. 청크마다 2초가 흐르는 응답(받을 양 40 MB) -> 재시작 1건, 응답의 close() 1번
     """
     data = _make_data(str(tmp_path / "out.mp4"), content_type="m3u8")
     made = M3U8Downloader(data, QuietLogger())
@@ -399,7 +482,7 @@ def test_m3u8_segment_closes_the_response_when_it_restarts_for_slow_speed(tmp_pa
 def test_hls_aes_segment_closes_the_response_when_it_restarts_for_slow_speed(tmp_path, monkeypatch):
     """저속으로 재시작하는 암호화 세그먼트는 받다 만 응답을 닫아야 한다.
 
-    청크마다 2초가 흐르는 응답 -> 재시작 1건, 응답의 close() 1번
+    다른 연결 셋은 빠르다. 청크마다 2초가 흐르는 응답(받을 양 40 MB) -> 재시작 1건, 응답의 close() 1번
     """
     data = _make_data(str(tmp_path / "out.mp4"), content_type="hls_aes")
     made = HlsAesDownloader(data, QuietLogger())

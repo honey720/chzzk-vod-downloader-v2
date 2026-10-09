@@ -12,7 +12,8 @@
   adjust_count < -4이면 adjust_threads를 절반으로 (하한 1), 카운터 리셋
 - 중간 대역(기준/2 ~ 기준)에서는 adjust_count가 0을 향해 1씩 감쇠
 - 속도 계산: 직전 틱 대비 바이트 증가량을 MB/s로 환산, prev_size 갱신
-- 느린 세그먼트 (#347로 바뀜): 응답 시작 뒤 3초가 지나고, 최근 3초의 속도가 100 KB/s 미만이면
+- 느린 세그먼트 (#347로 바뀜): 응답 시작 뒤 3초가 지나고, 최근 3초의 속도가 100 KB/s 미만이고,
+  다른 연결들보다 뚜렷이 느려 끊고 다시 받는 쪽이 빠르면
   해당 세그먼트를 중단하고 (index, segment)를 재큐잉(restart_threads += 1). 구 규칙은 누적
   평균이 연속 6회 미만일 때였다
 - 세그먼트 실패: 요청 예외 시 (index, segment) 재큐잉(failed_threads += 1)
@@ -413,8 +414,10 @@ def test_measure_speed_with_no_active_threads_reports_zero_average():
 class FakeResponse:
     """스트리밍 응답 흉내 — 지정한 청크 목록을 그대로 흘린다."""
 
-    def __init__(self, chunks):
+    def __init__(self, chunks, content_length: int | None = None):
         self._chunks = chunks
+        if content_length is not None:
+            self.headers = {"Content-Length": str(content_length)}
 
     def raise_for_status(self):
         pass
@@ -451,7 +454,9 @@ class TickingClock:
         return self.now
 
 
-def _prepare_running_engine(tmp_path, monkeypatch, chunks=None, exception=None, clock_step=1.0):
+def _prepare_running_engine(
+    tmp_path, monkeypatch, chunks=None, exception=None, clock_step=1.0, content_length=None
+):
     """RUNNING 상태의 엔진과 부속(데이터·로거)을 준비한다.
 
     clock_step=1.0이면 시계를 읽을 때마다 1초가 흘러 최근 3초의 속도가 항상 저속(<100 KB/s)이고,
@@ -470,7 +475,9 @@ def _prepare_running_engine(tmp_path, monkeypatch, chunks=None, exception=None, 
 
     mod = _engine_module()
     monkeypatch.setattr(
-        mod, "get_thread_session", lambda: FakeSession(FakeResponse(chunks or []), exception)
+        mod,
+        "get_thread_session",
+        lambda: FakeSession(FakeResponse(chunks or [], content_length), exception),
     )
     monkeypatch.setattr(engine, "_now", TickingClock(clock_step))
     return engine, data, logger
@@ -480,8 +487,10 @@ def test_slow_segment_restarts_when_the_recent_window_is_slow(tmp_path, monkeypa
     """응답 시작 뒤 3초가 지났고 최근 3초의 속도가 100 KB/s 미만이면 세그먼트를 중단·재큐잉한다 (#347)."""
     chunks = [b"x" * 8192] * 10  # 시계 읽기마다 1초 → 청크당 2초, 4 KB/s로 항상 저속
     engine, data, logger = _prepare_running_engine(
-        tmp_path, monkeypatch, chunks=chunks, clock_step=1.0
+        tmp_path, monkeypatch, chunks=chunks, clock_step=1.0, content_length=40 * MB
     )
+    # 다른 연결 셋은 빠르다 — 이 연결만 느려야 끊는다 (#347 재시작 이득 판정)
+    monkeypatch.setattr(engine, "_peer_speeds", lambda part_num, now: [800.0, 900.0, 1000.0])
 
     returned = engine._download_segment(
         index=7, segment="segment_007.m4v", part_num=0, total_ranges=4

@@ -81,8 +81,15 @@ _SLOW_WINDOW_SECONDS = 3.0
 # 회선 전체가 느려진 순간에는 모든 연결이 임계 아래로 내려간다 — 그때 전부 끊으면 받던 것을
 # 버리고 다시 붙는 일만 는다. 다른 연결들보다 유독 느린 연결만 끊는다
 _SLOW_PEER_RATIO = 0.3  # 다른 연결들의 중앙 속도의 이 비율보다 느려야 저속으로 본다
-_SLOW_MIN_PEERS = 3  # 견줄 연결이 이보다 적으면 임계만으로 판정한다
+_SLOW_MIN_PEERS = 3  # 견줄 연결이 이보다 적으면 끊지 않는다 — 다시 받는 쪽의 속도를 알 수 없다
 _PEER_FRESH_SECONDS = 2.0  # 이보다 오래 속도를 알리지 않은 연결과는 견주지 않는다
+# 느린 연결이라도 끊는 것이 이득일 때만 끊는다 — 그대로 두면 남은 양을 받는 데 걸릴 시간이,
+# 끊고 다시 받는 데 걸릴 시간보다 뚜렷이 길 때다. 세그먼트는 처음부터 다시 받아야 해서
+# 조금 느린 정도로는 끊는 쪽이 더 늦다
+_RESTART_CONNECT_SECONDS = 1.0  # 새 요청의 첫 바이트까지 걸리는 시간(초)으로 셈하는 값
+_RESTART_MARGIN = (
+    1.5  # 그대로 두는 쪽이 이 배수를 넘게 오래 걸려야 끊는다 — 순간 속도가 크게 흔들린다
+)
 
 
 # ============ 요청 타임아웃 (#320) ============
@@ -138,9 +145,13 @@ class _SlowWatch:
     단조 시계 값이어야 한다.
     """
 
-    def __init__(self, engine: "BaseDownloader", part_num: int):
+    def __init__(
+        self, engine: "BaseDownloader", part_num: int, expected: int | None, resumes: bool
+    ):
         self._engine = engine
         self._part_num = part_num
+        self._expected = expected  # 이 응답이 줄 본문의 길이(바이트). 모르면 None
+        self._resumes = resumes  # 끊은 뒤 받은 데서 이어받는가(아니면 처음부터 다시 받는다)
         self._window: deque[tuple[float, int]] = deque([(0.0, 0)])  # (경과 시간, 받은 양)
 
     def is_slow(self, elapsed: float, received: int) -> bool:
@@ -148,7 +159,8 @@ class _SlowWatch:
 
         응답 시작 뒤 ``_SLOW_WINDOW_SECONDS``가 지나기 전에는 판정하지 않는다. 그 뒤로는
         최근 그 시간 동안의 속도가 임계 미만이고, 다른 연결들의 중앙 속도보다도 뚜렷이
-        느릴 때만 참이다. 견줄 연결이 모자라면 임계만으로 판정한다.
+        느리고, 끊고 다시 받는 쪽이 뚜렷이 빠를 때만 참이다(``_restart_pays``). 견줄 연결이
+        모자라거나 남은 양을 모르면 그 셈을 할 수 없어 끊지 않는다.
         """
         window = self._window
         window.append((elapsed, received))
@@ -166,11 +178,31 @@ class _SlowWatch:
         if speed_kb_s >= engine._slow_speed_threshold_kb_s:
             return False
         peers = engine._peer_speeds(self._part_num, now)
-        if len(peers) >= _SLOW_MIN_PEERS and speed_kb_s >= _SLOW_PEER_RATIO * statistics.median(
-            peers
-        ):
+        if len(peers) < _SLOW_MIN_PEERS:
+            return False
+        peer_speed_kb_s = statistics.median(peers)
+        if speed_kb_s >= _SLOW_PEER_RATIO * peer_speed_kb_s:
             return False  # 다른 연결들도 느리다 — 회선 전체의 일이다
-        return True
+        return self._restart_pays(received, speed_kb_s, peer_speed_kb_s)
+
+    def _restart_pays(self, received: int, speed_kb_s: float, peer_speed_kb_s: float) -> bool:
+        """끊고 다시 받는 쪽이 그대로 두는 쪽보다 뚜렷이 빨리 끝나는가.
+
+        그대로 두면 남은 양 ÷ 이 연결의 최근 속도, 끊으면 다시 받을 양 ÷ 다른 연결들의 중앙
+        속도 + 새 요청의 시작 비용이 든다. 다시 받을 양은 이어받는 경로면 남은 양, 아니면
+        응답 전체다.
+        """
+        if self._expected is None or peer_speed_kb_s <= 0:
+            return False
+        remaining = self._expected - received
+        if remaining <= 0:
+            return False
+        if speed_kb_s <= 0:
+            return True  # 최근 창에 한 바이트도 오지 않았다 — 그대로 두면 끝나지 않는다
+        redo = remaining if self._resumes else self._expected
+        keep_seconds = remaining / 1024 / speed_kb_s
+        restart_seconds = redo / 1024 / peer_speed_kb_s + _RESTART_CONNECT_SECONDS
+        return keep_seconds > _RESTART_MARGIN * restart_seconds
 
 
 class BaseDownloader(ABC):
@@ -278,10 +310,17 @@ class BaseDownloader(ABC):
         self.s._pause_event.wait()
         return self._now() - started
 
-    def _watch_slow(self, part_num: int) -> _SlowWatch:
-        """요청 하나의 저속 판정 창을 만든다 — 응답을 받기 시작할 때 부른다."""
+    def _watch_slow(
+        self, part_num: int, expected: int | None = None, resumes: bool = False
+    ) -> _SlowWatch:
+        """요청 하나의 저속 판정 창을 만든다 — 응답을 받기 시작할 때 부른다.
+
+        Args:
+            expected: 이 응답이 줄 본문의 길이(바이트). 모르면 None — 그러면 저속으로 끊지 않는다
+            resumes: 끊은 뒤 받은 데서 이어받는 경로인가. 아니면 처음부터 다시 받는 것으로 셈한다
+        """
         self._conn_speeds.pop(part_num, None)
-        return _SlowWatch(self, part_num)
+        return _SlowWatch(self, part_num, expected, resumes)
 
     def _publish_speed(self, part_num: int, speed_kb_s: float, now: float) -> None:
         """이 슬롯의 지금 속도를 알린다 — 다른 연결의 저속 판정이 견준다."""
