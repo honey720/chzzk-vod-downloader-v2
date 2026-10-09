@@ -51,9 +51,11 @@ data·logger는 DownloadData/DownloadLogger 호환 객체를 주입받는다.
 
 import os
 import re
+import statistics
 import threading
 import time as tm
 from abc import ABC, abstractmethod
+from collections import deque
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 
@@ -90,6 +92,16 @@ _RECOVERY_RATIO = 1.30
 _HOLD_EMA_ALPHA = 0.2  # 정체 기준의 지수이동평균 가중치 (안정 틱에서만 갱신)
 _COLLAPSE_TICKS = 5  # 감소 확정에 필요한 연속 틱 수 (구 규칙과 동일한 관성)
 _REPROBE_TICKS = 15  # 정체 상태에서 재탐침까지의 틱 수
+
+# ============ 저속 판정 (#347) ============
+# 응답 직후의 몇십 KB로 판정하면 잠깐 멎었다 풀리는 연결까지 끊는다. 시간 창으로 본다 —
+# 응답 시작 뒤 이 시간(초)은 판정하지 않고, 그 뒤로는 최근 이 시간의 속도로 판정한다
+_SLOW_WINDOW_SECONDS = 3.0
+# 회선 전체가 느려진 순간에는 모든 연결이 임계 아래로 내려간다 — 그때 전부 끊으면 받던 것을
+# 버리고 다시 붙는 일만 는다. 다른 연결들보다 유독 느린 연결만 끊는다
+_SLOW_PEER_RATIO = 0.3  # 다른 연결들의 중앙 속도의 이 비율보다 느려야 저속으로 본다
+_SLOW_MIN_PEERS = 3  # 견줄 연결이 이보다 적으면 임계만으로 판정한다
+_PEER_FRESH_SECONDS = 2.0  # 이보다 오래 속도를 알리지 않은 연결과는 견주지 않는다
 
 
 # ============ 요청 타임아웃 (#320) ============
@@ -134,6 +146,49 @@ class PostprocessError(Exception):
 
 class _PostprocessAborted(Exception):
     """후처리 공급 루프의 사용자 중단 신호 — 실패가 아니라 중단 경로로 보낸다."""
+
+
+class _SlowWatch:
+    """요청 하나의 저속 판정 창 (#347).
+
+    응답을 받기 시작할 때 만들고(``BaseDownloader._watch_slow``), 조각을 받을 때마다
+    ``is_slow``에 그때까지의 경과 시간과 받은 양을 넣는다. 경과 시간은 일시정지한 시간을 뺀
+    단조 시계 값이어야 한다.
+    """
+
+    def __init__(self, engine: "BaseDownloader", part_num: int):
+        self._engine = engine
+        self._part_num = part_num
+        self._window: deque[tuple[float, int]] = deque([(0.0, 0)])  # (경과 시간, 받은 양)
+
+    def is_slow(self, elapsed: float, received: int) -> bool:
+        """이 연결을 지금 저속으로 끊을지 답한다.
+
+        응답 시작 뒤 ``_SLOW_WINDOW_SECONDS``가 지나기 전에는 판정하지 않는다. 그 뒤로는
+        최근 그 시간 동안의 속도가 임계 미만이고, 다른 연결들의 중앙 속도보다도 뚜렷이
+        느릴 때만 참이다. 견줄 연결이 모자라면 임계만으로 판정한다.
+        """
+        window = self._window
+        window.append((elapsed, received))
+        while len(window) > 1 and window[1][0] <= elapsed - _SLOW_WINDOW_SECONDS:
+            window.popleft()
+        span = elapsed - window[0][0]
+        if span <= 0:
+            return False
+        speed_kb_s = (received - window[0][1]) / span / 1024
+        engine = self._engine
+        now = engine._now()
+        engine._publish_speed(self._part_num, speed_kb_s, now)
+        if elapsed < _SLOW_WINDOW_SECONDS:
+            return False
+        if speed_kb_s >= engine._slow_speed_threshold_kb_s:
+            return False
+        peers = engine._peer_speeds(self._part_num, now)
+        if len(peers) >= _SLOW_MIN_PEERS and speed_kb_s >= _SLOW_PEER_RATIO * statistics.median(
+            peers
+        ):
+            return False  # 다른 연결들도 느리다 — 회선 전체의 일이다
+        return True
 
 
 class BaseDownloader(ABC):
@@ -198,6 +253,9 @@ class BaseDownloader(ABC):
         self._at_ceiling = False  # 상한 도달(정체) 여부
         self._settle_ticks = 0  # 조정 직후 판단을 쉬는 틱 수
         self._stall_ticks = 0  # 정체 지속 틱 수 (재탐침 타이머)
+        self._measured_at: float | None = None  # 속도를 마지막으로 잰 시각 (#347)
+        # 슬롯 → (알린 시각, KB/s). 저속 판정이 다른 연결과 견주는 데 쓴다 (#347)
+        self._conn_speeds: dict[int, tuple[float, float]] = {}
         self._on_progress: ProgressCallback = on_progress or (lambda event: None)
         self._on_finished: FinishedCallback = on_finished or (lambda: None)
         self._on_failed: FailedCallback = on_failed or (lambda exc: None)
@@ -221,6 +279,51 @@ class BaseDownloader(ABC):
         계층이 수행하며 core는 호출만 한다.
         """
         self._key_resolver = resolver
+
+    # ============ 시계 · 저속 판정 도우미 (#347) ============
+
+    def _now(self) -> float:
+        """단조 시계(초). 속도 측정과 저속 판정이 쓴다 — 벽시계는 시각 보정에 흔들린다."""
+        return tm.perf_counter()
+
+    def _wait_while_paused(self) -> float:
+        """일시정지 중이면 풀릴 때까지(재개 · 중단) 기다리고, 기다린 시간(초)을 돌려준다.
+
+        받는 스레드는 이 시간을 속도 판정에서 뺀다 — 빼지 않으면 일시정지한 만큼 속도가
+        낮게 나와 재개 직후 파트가 느린 속도로 끊긴다.
+        """
+        if self.state != DownloadState.PAUSED:
+            return 0.0
+        started = self._now()
+        self.s._pause_event.wait()
+        return self._now() - started
+
+    def _watch_slow(self, part_num: int) -> _SlowWatch:
+        """요청 하나의 저속 판정 창을 만든다 — 응답을 받기 시작할 때 부른다."""
+        self._conn_speeds.pop(part_num, None)
+        return _SlowWatch(self, part_num)
+
+    def _publish_speed(self, part_num: int, speed_kb_s: float, now: float) -> None:
+        """이 슬롯의 지금 속도를 알린다 — 다른 연결의 저속 판정이 견준다."""
+        self._conn_speeds[part_num] = (now, speed_kb_s)
+
+    def _peer_speeds(self, part_num: int, now: float) -> list[float]:
+        """이 슬롯을 뺀, 방금(now 기준) 속도를 알린 연결들의 속도(KB/s)."""
+        return [
+            speed
+            for slot, (at, speed) in list(self._conn_speeds.items())
+            if slot != part_num and now - at <= _PEER_FRESH_SECONDS
+        ]
+
+    def _abandon_response(self, part_num: int, response) -> None:
+        """받다 만 응답을 닫고 그 슬롯의 속도 기록을 지운다 — 저속 재시작으로 빠져나올 때 부른다.
+
+        닫지 않으면 본문이 남은 연결이 참조가 풀릴 때까지 열려 있다.
+        """
+        self._conn_speeds.pop(part_num, None)
+        close = getattr(response, "close", None)
+        if close is not None:
+            close()
 
     # ============ 하위 다운로더의 책임 (추상) ============
 
@@ -630,6 +733,7 @@ class BaseDownloader(ABC):
         전송 단계 동안만 산다 — 전송이 끝나면 run()이 _monitor_stop으로
         정지시킨다. 후처리(병합·remux)는 관측 대상이 아니다 (#89).
         """
+        self._measured_at = self._now()
         self._monitor_stop.wait(1)
         while not self._monitor_stop.is_set() and self.state in [
             DownloadState.RUNNING,
@@ -637,7 +741,7 @@ class BaseDownloader(ABC):
         ]:
             if not self.s._pause_event.is_set():
                 self.s._pause_event.wait()
-                self.measure_speed()
+                self.measure_speed(since_pause=True)
                 # 재개 직후 궤적 앵커 (#78) — 관측 로그가 스레드 수 변화 시에만
                 # 남으면 재개 후 재상승 여부를 로그로 확인할 수 없다. 기존
                 # 조정 로그와 같은 형식으로 현재 목표·속도를 한 줄 남긴다.
@@ -773,11 +877,24 @@ class BaseDownloader(ABC):
         self._reference_speed = None
         self.adjust_count = 0
 
-    def measure_speed(self):
-        """직전 틱 대비 다운로드 바이트 증가량으로 속도(MB/s)를 계산한다."""
+    def measure_speed(self, since_pause: bool = False):
+        """직전 측정 뒤로 받은 바이트를 그 사이의 실제 시간으로 나눠 속도(MB/s)를 계산한다.
+
+        관측 틱은 0.1초 대기 열 번이라 1초보다 길다 — 받은 양을 그대로 MB/s로 읽으면 실제보다
+        크게 나오고, 틱 길이의 흔들림이 그대로 속도의 흔들림이 된다 (#347). 직전 측정 시각이
+        없으면(관측 루프 밖에서 처음 부른 경우) 나누지 않는다.
+
+        Args:
+            since_pause: 재개 직후의 측정이다 — 직전 측정 뒤의 시간에 일시정지가 섞여 있어
+                나누지 않는다. 이 측정으로는 조정 판단을 하지 않는다
+        """
         current_size = self.s.total_downloaded_size
         speed = current_size - self.s.prev_size
         self.s.prev_size = current_size
+        now = self._now()
+        if not since_pause and self._measured_at is not None and now > self._measured_at:
+            speed = speed / (now - self._measured_at)
+        self._measured_at = now
 
         with self.lock:
             future_count = self.s.future_count

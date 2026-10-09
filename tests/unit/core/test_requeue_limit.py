@@ -84,7 +84,10 @@ class FakeSession:
 
 
 class TickingClock:
-    """time.time 대체 — 호출마다 지정 간격으로 흐르는 가짜 시계."""
+    """엔진의 단조 시계(`_now`) 대체 — 읽을 때마다 지정 간격으로 흐르는 가짜 시계.
+
+    받기 루프는 청크마다 시계를 두 번 읽는다(경과 시간 · 저속 판정).
+    """
 
     def __init__(self, step: float):
         self.now = 1_000_000.0
@@ -162,7 +165,7 @@ def _prepare_file_engine(tmp_path, monkeypatch, exception=None, chunks=None, clo
     monkeypatch.setattr(
         mod, "get_thread_session", lambda: FakeSession(FakeResponse(chunks or []), exception)
     )
-    monkeypatch.setattr(mod.tm, "time", TickingClock(clock_step))
+    monkeypatch.setattr(engine, "_now", TickingClock(clock_step))
     return engine, data, logger, failures
 
 
@@ -250,9 +253,9 @@ def test_slow_requeues_are_unlimited_and_download_still_completes(tmp_path, monk
     """완료 조건: 저속 재큐가 양 상한(2·10회)을 넘게 반복돼도 실패하지 않고 완주한다."""
     engine, data, logger, failures, mod = _prepare_m3u8_engine(tmp_path)
 
-    slow_chunks = [b"x" * CHUNK] * 10  # 1초/청크 → 8 KB/s로 항상 저속
+    slow_chunks = [b"x" * CHUNK] * 10  # 시계 읽기마다 1초 → 청크당 2초, 항상 저속
     monkeypatch.setattr(mod, "get_thread_session", lambda: FakeSession(FakeResponse(slow_chunks)))
-    monkeypatch.setattr(mod.tm, "time", TickingClock(1.0))
+    monkeypatch.setattr(engine, "_now", TickingClock(1.0))
 
     for _ in range(12):  # 영구(2)·일시(10) 상한 모두 초과
         data.remaining_ranges = []
@@ -266,7 +269,7 @@ def test_slow_requeues_are_unlimited_and_download_still_completes(tmp_path, monk
     # 속도가 회복되면 같은 세그먼트가 정상 완주한다
     fast_chunks = split(media_segment(3 * CHUNK), CHUNK)  # 유효한 fMP4 상자 (#321)
     monkeypatch.setattr(mod, "get_thread_session", lambda: FakeSession(FakeResponse(fast_chunks)))
-    monkeypatch.setattr(mod.tm, "time", TickingClock(1e-6))
+    monkeypatch.setattr(engine, "_now", TickingClock(1e-6))
     engine._download_segment(index=7, segment="segment_007.m4v", part_num=0, total_ranges=4)
 
     assert data.completed_threads == 1
@@ -281,7 +284,7 @@ def test_slow_requeues_do_not_consume_error_allowance(tmp_path, monkeypatch):
         engine._requeue_slow((7, "segment_007.m4v"), 0)
 
     monkeypatch.setattr(mod, "get_thread_session", lambda: FakeSession(exception=_http_error(404)))
-    monkeypatch.setattr(mod.tm, "time", TickingClock(1e-6))
+    monkeypatch.setattr(engine, "_now", TickingClock(1e-6))
     data.remaining_ranges = []
     engine._download_segment(index=7, segment="segment_007.m4v", part_num=0, total_ranges=4)
 
@@ -311,7 +314,7 @@ def test_hls_aes_permanent_error_fails_at_limit(tmp_path, monkeypatch):
 
     error = _http_error(403)
     monkeypatch.setattr(mod, "get_thread_session", lambda: FakeSession(exception=error))
-    monkeypatch.setattr(mod.tm, "time", TickingClock(1e-6))
+    monkeypatch.setattr(engine, "_now", TickingClock(1e-6))
 
     for _ in range(2):
         data.remaining_ranges = []

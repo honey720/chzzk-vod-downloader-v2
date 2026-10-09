@@ -24,6 +24,9 @@ elapsed 계산 자체가 원래 식으로 돌아왔으므로 애초에 영향이
 
 import time as real_time
 
+import pytest
+
+import core.downloaders.base as base_module
 import core.downloaders.file_downloader as fd_module
 import core.downloaders.m3u8_downloader as m3u8_module
 from core.downloaders.file_downloader import FileDownloader
@@ -34,7 +37,17 @@ CHUNK = 8192
 # 청크당 이 지연이면 디스크 쓰기 시간만으로 8192/0.15/1024 ≈ 53 KB/s —
 # 저속 임계(100 KB/s) 아래로 확실히 떨어져 재큐를 유발한다.
 SLOW_WRITE_DELAY_S = 0.15
-CHUNK_COUNT = 8  # slow_count > 5(6회 연속)를 확실히 넘기는 여유
+CHUNK_COUNT = 8  # 0.15초 × 8 = 1.2초 — 아래에서 줄인 판정 창(0.5초)을 확실히 넘기는 여유
+
+
+@pytest.fixture(autouse=True)
+def _short_slow_window(monkeypatch):
+    """저속 판정 창을 0.5초로 줄인다 (#347).
+
+    이 파일은 실제 시계와 실제 지연으로 잰다. 제품의 창(3초)을 그대로 두면 시나리오가 판정에
+    닿으려면 테스트마다 몇 초를 기다려야 한다 — 창의 길이는 이 파일이 재는 것이 아니다.
+    """
+    monkeypatch.setattr(base_module, "_SLOW_WINDOW_SECONDS", 0.5)
 
 
 class _SlowWriteFile:
