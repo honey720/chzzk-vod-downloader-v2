@@ -462,8 +462,12 @@ def test_forced_slow_requeue_does_not_corrupt_output(tmp_path, monkeypatch):
     engine, data, logger, output, finished, failures, merge_starts = _make_engine(
         tmp_path, monkeypatch, chunks_per_segment=20
     )
-    # 극단적으로 높은 임계로 모든 청크를 "저속"으로 오판시켜 강제 재큐를 유발한다
+    # 극단적으로 높은 임계로 모든 청크를 "저속"으로 오판시켜 강제 재큐를 유발한다.
+    # 판정 창을 아주 짧게 하고 다른 연결과 견주지 않게 한다 (#347) — 임계만으로 판정이 나야
+    # 이 시험의 전제(강제 재큐)가 성립한다
     engine._slow_speed_threshold_kb_s = 1e15
+    monkeypatch.setattr(base_module, "_SLOW_WINDOW_SECONDS", 0.001)
+    monkeypatch.setattr(base_module, "_SLOW_MIN_PEERS", 10**9)
 
     def _disable_after_first_requeue():
         while data.restart_threads == 0:

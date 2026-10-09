@@ -12,8 +12,9 @@
   adjust_count < -4이면 adjust_threads를 절반으로 (하한 1), 카운터 리셋
 - 중간 대역(기준/2 ~ 기준)에서는 adjust_count가 0을 향해 1씩 감쇠
 - 속도 계산: 직전 틱 대비 바이트 증가량을 MB/s로 환산, prev_size 갱신
-- 느린 세그먼트: 청크 속도 < 100 KB/s가 연속 6회(slow_count > 5) 누적되면
-  해당 세그먼트를 중단하고 (index, segment)를 재큐잉(restart_threads += 1)
+- 느린 세그먼트 (#347로 바뀜): 응답 시작 뒤 3초가 지나고, 최근 3초의 속도가 100 KB/s 미만이면
+  해당 세그먼트를 중단하고 (index, segment)를 재큐잉(restart_threads += 1). 구 규칙은 누적
+  평균이 연속 6회 미만일 때였다
 - 세그먼트 실패: 요청 예외 시 (index, segment) 재큐잉(failed_threads += 1)
 - ★ 세그먼트 임시 파일명은 (index+1)을 width 자리로 0채움한 .m4v — 병합 순서의 전제
 """
@@ -416,7 +417,10 @@ class FakeSession:
 
 
 class TickingClock:
-    """time.time 대체 — 호출마다 지정 간격으로 흐르는 가짜 시계."""
+    """엔진의 단조 시계(`_now`) 대체 — 읽을 때마다 지정 간격으로 흐르는 가짜 시계.
+
+    받기 루프는 청크마다 시계를 두 번 읽는다(경과 시간 · 저속 판정).
+    """
 
     def __init__(self, step: float):
         self.now = 1_000_000.0
@@ -430,8 +434,8 @@ class TickingClock:
 def _prepare_running_engine(tmp_path, monkeypatch, chunks=None, exception=None, clock_step=1.0):
     """RUNNING 상태의 엔진과 부속(데이터·로거)을 준비한다.
 
-    clock_step=1.0이면 청크당 1초가 흘러 항상 저속(<100 KB/s) 판정,
-    아주 작은 값이면 항상 고속 판정이 난다.
+    clock_step=1.0이면 시계를 읽을 때마다 1초가 흘러 최근 3초의 속도가 항상 저속(<100 KB/s)이고,
+    아주 작은 값이면 판정 창(3초)에 닿지 않아 저속 판정이 나지 않는다.
     """
     data = _make_data(output_path=str(tmp_path / "out.mp4"))
     logger = RecordingLogger()
@@ -448,13 +452,13 @@ def _prepare_running_engine(tmp_path, monkeypatch, chunks=None, exception=None, 
     monkeypatch.setattr(
         mod, "get_thread_session", lambda: FakeSession(FakeResponse(chunks or []), exception)
     )
-    monkeypatch.setattr(mod.tm, "time", TickingClock(clock_step))
+    monkeypatch.setattr(engine, "_now", TickingClock(clock_step))
     return engine, data, logger
 
 
-def test_slow_segment_restarts_after_six_slow_chunks(tmp_path, monkeypatch):
-    """청크 속도 < 100 KB/s 연속 6회(slow_count > 5)면 세그먼트를 중단·재큐잉한다."""
-    chunks = [b"x" * 8192] * 10  # 1초/청크 → 8 KB/s로 항상 저속
+def test_slow_segment_restarts_when_the_recent_window_is_slow(tmp_path, monkeypatch):
+    """응답 시작 뒤 3초가 지났고 최근 3초의 속도가 100 KB/s 미만이면 세그먼트를 중단·재큐잉한다 (#347)."""
+    chunks = [b"x" * 8192] * 10  # 시계 읽기마다 1초 → 청크당 2초, 4 KB/s로 항상 저속
     engine, data, logger = _prepare_running_engine(
         tmp_path, monkeypatch, chunks=chunks, clock_step=1.0
     )
