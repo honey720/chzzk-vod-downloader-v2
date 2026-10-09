@@ -285,6 +285,88 @@ def test_connection_that_received_nothing_in_the_window_is_cut(engine):
     assert watch.is_slow(10.0, 900 * KB) is True
 
 
+class _OneChunkResponse:
+    """청크 하나를 주는 응답 — 받을 양을 선언한다."""
+
+    status_code = 206
+
+    def __init__(self, declared: int):
+        self.headers = {"Content-Length": str(declared)}
+
+    def raise_for_status(self):
+        pass
+
+    def close(self):
+        pass
+
+    def iter_content(self, chunk_size=CHUNK):
+        yield b"x" * CHUNK
+
+
+def _watch_arguments(monkeypatch, module, made, call) -> list[tuple]:
+    """받기 루프를 한 번 돌려, 판정 창을 만들 때 넘긴 (받을 양, 이어받는가)를 모은다."""
+    made.clock = ManualClock()
+    made._now = made.clock
+    seen: list[tuple] = []
+    real = made._watch_slow
+
+    def spy(part_num, expected=None, resumes=False):
+        seen.append((expected, resumes))
+        return real(part_num, expected, resumes)
+
+    made._watch_slow = spy
+
+    class _Session:
+        def get(self, url, **kwargs):
+            return _OneChunkResponse(declared=5 * MB)
+
+    monkeypatch.setattr(module, "get_thread_session", lambda: _Session())
+    call(made)
+    return seen
+
+
+def test_file_part_tells_the_watch_its_range_size_and_that_it_resumes(tmp_path, monkeypatch):
+    """mp4 파트는 판정 창에 요청한 범위의 크기를 받을 양으로, '이어받는다'로 넘겨야 한다.
+
+    범위 0 ~ 40 MB - 1을 요청 -> (40 MB, True)
+    """
+    output = tmp_path / "part.bin"
+    output.write_bytes(b"")
+    made = FileDownloader(_make_data(str(output)), QuietLogger())
+
+    seen = _watch_arguments(
+        monkeypatch, file_module, made, lambda e: e._download_part(0, 40 * MB - 1, 0, 40 * MB)
+    )
+
+    assert seen == [(40 * MB, True)]
+
+
+@pytest.mark.parametrize(
+    ("module", "engine_class", "content_type"),
+    [(m3u8_module, M3U8Downloader, "m3u8"), (hls_module, HlsAesDownloader, "hls_aes")],
+    ids=["m3u8", "hls_aes"],
+)
+def test_segment_tells_the_watch_the_declared_length_and_that_it_starts_over(
+    tmp_path, monkeypatch, module, engine_class, content_type
+):
+    """세그먼트는 판정 창에 응답이 선언한 길이를 받을 양으로, '처음부터 다시 받는다'로 넘겨야 한다.
+
+    Content-Length 5 MB인 응답 -> (5 MB, False)
+    """
+    made = engine_class(_make_data(str(tmp_path / "out.mp4"), content_type), QuietLogger())
+    made.temp_dir = str(tmp_path)
+    made.width = 4
+
+    seen = _watch_arguments(
+        monkeypatch,
+        module,
+        made,
+        lambda e: e._download_segment(index=3, segment="seg_3", part_num=0, total_ranges=4),
+    )
+
+    assert seen == [(5 * MB, False)]
+
+
 # ================================================================ 일시정지 시간 제외
 
 

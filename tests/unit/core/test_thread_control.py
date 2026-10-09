@@ -93,6 +93,33 @@ def test_raise_is_reverted_when_fewer_than_three_samples_beat_the_lower_peak():
     assert line.controller.target == 8
 
 
+def test_raise_is_reverted_when_the_samples_beat_the_peak_by_less_than_the_required_gain():
+    """아래 수준의 최댓값은 넘어도 요구폭(선형 기대의 12.5%)에 못 미치면 인상을 되물려야 한다.
+
+    8에서 10.0 고정 → 12에서 10.3 열 번 (요구치 10.0 × 1.0625 = 10.625)
+    -> 10초 뒤 목표 8
+    """
+    line = _line_probing_12_with_a_full_window(lambda: 10.0)
+
+    line.run(lambda target: 10.3, 10)
+
+    assert line.controller.target == 8
+
+
+def test_two_slightly_higher_samples_are_not_accepted_at_once():
+    """처음 두 표본이 요구폭은 넘어도 뚜렷하지 않으면(선형 기대의 절반 미만) 바로 받아들이지 않아야 한다.
+
+    8에서 10.0 → 12에서 10.7, 10.7 (요구치 10.625, 뚜렷함의 문턱 12.5)
+    -> 둘째 표본의 틱에 목표 12 그대로 (받아들여 16으로 올리지 않는다)
+    """
+    line = _line_probing_12_with_a_full_window(lambda: 10.0)
+
+    line.tick(10.7)
+    line.tick(10.7)
+
+    assert line.controller.target == 12
+
+
 def test_two_clearly_higher_samples_are_accepted_at_once_and_the_climb_goes_on():
     """올린 뒤 처음 두 표본이 모두 뚜렷이 높으면(선형 기대의 절반 이상) 바로 받아들이고 또 올려야 한다.
 

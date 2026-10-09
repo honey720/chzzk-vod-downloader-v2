@@ -115,6 +115,23 @@ def test_ticks_are_one_second_apart_whatever_the_work_takes():
     assert loop.gaps() == pytest.approx([1.0] * 5)
 
 
+def test_each_tick_measures_the_speed_before_adjusting_the_threads():
+    """틱마다 속도를 먼저 재고, 그 값으로 스레드를 조정한 뒤, 진행을 알려야 한다.
+
+    2틱 -> 부른 순서: 측정, 조정, 통지, 측정, 조정, 통지
+    """
+    loop = Loop(ticks=2)
+    order: list[str] = []
+    measure, adjust = loop.engine.measure_speed, loop.engine._adjust_threads
+    loop.engine.measure_speed = lambda **kwargs: (order.append("측정"), measure(**kwargs))[1]
+    loop.engine._adjust_threads = lambda: (order.append("조정"), adjust())[1]
+    loop.engine.emit_progress = lambda: order.append("통지")
+
+    loop.run()
+
+    assert order == ["측정", "조정", "통지"] * 2
+
+
 def test_a_tick_that_overruns_is_followed_by_a_full_period_not_a_burst():
     """틱 하나가 주기보다 오래 걸리면, 밀린 틱을 몰아서 돌지 않고 그때부터 1초 뒤에 다음 틱을 돌아야 한다.
 
