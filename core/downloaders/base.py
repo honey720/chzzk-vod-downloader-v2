@@ -772,7 +772,6 @@ class BaseDownloader(ABC):
                 if self._threads is not None:
                     self._threads.shift(now - paused_at)
                     self._threads.skip(now, TICK_SECONDS)
-                deadline = now
             else:
                 self.measure_speed()
                 self._adjust_threads()

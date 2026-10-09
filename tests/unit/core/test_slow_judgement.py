@@ -143,6 +143,17 @@ def test_slow_watch_ignores_a_one_second_stall_inside_a_fast_transfer(engine):
     assert verdicts == [False] * len(verdicts)
 
 
+def test_connection_above_the_threshold_is_not_slow_however_fast_the_others_are(engine):
+    """최근 3초의 속도가 임계(100 KB/s) 이상이면, 다른 연결들이 훨씬 빨라도 저속이 아니어야 한다.
+
+    다른 연결 셋은 9000 KB/s, 받을 양 100 MB, 이 연결은 3초 동안 500 KB/s -> False
+    """
+    _peers(engine, (9000.0, 9000.0, 9000.0))
+    watch = engine._watch_slow(0, expected=BIG)
+
+    assert watch.is_slow(3.0, int(500 * KB * 3)) is False
+
+
 def test_slow_watch_never_judges_when_the_threshold_is_zero(engine):
     """저속 임계가 0이면 어떤 속도도 저속이 아니어야 한다.
 
@@ -341,6 +352,23 @@ def test_file_part_tells_the_watch_its_range_size_and_that_it_resumes(tmp_path, 
     assert seen == [(40 * MB, True)]
 
 
+def test_resumed_file_part_tells_the_watch_only_what_is_left_of_its_range(tmp_path, monkeypatch):
+    """이어받는 mp4 파트는 판정 창에 범위 전체가 아니라 이어받을 나머지를 받을 양으로 넘겨야 한다.
+
+    범위 0 ~ 40 MB - 1 가운데 8 MB를 이미 받아 둠 -> (32 MB, True)
+    """
+    output = tmp_path / "part.bin"
+    output.write_bytes(b"\x00" * (8 * MB))
+    made = FileDownloader(_make_data(str(output)), QuietLogger())
+    made._part_progress[(0, 40 * MB - 1)] = 8 * MB
+
+    seen = _watch_arguments(
+        monkeypatch, file_module, made, lambda e: e._download_part(0, 40 * MB - 1, 0, 40 * MB)
+    )
+
+    assert seen == [(32 * MB, True)]
+
+
 @pytest.mark.parametrize(
     ("module", "engine_class", "content_type"),
     [(m3u8_module, M3U8Downloader, "m3u8"), (hls_module, HlsAesDownloader, "hls_aes")],
@@ -400,6 +428,7 @@ class _PausingResponse:
         self._seconds = seconds_per_chunk
         self._chunk_bytes = chunk_bytes
         self.status_code = 206
+        self.headers = {"Content-Length": str(chunks * chunk_bytes)}
         self.closed = 0
 
     def raise_for_status(self):
@@ -426,7 +455,8 @@ class _PausingResponse:
 def test_part_is_not_restarted_for_the_time_it_was_paused(tmp_path, monkeypatch):
     """받는 도중 일시정지한 시간은 저속 판정에서 빠져야 한다.
 
-    0.5초마다 512 KB(1 MB/s)를 받는 파트, 둘째 청크 앞에서 일시정지 → 60초 뒤 재개, 모두 12청크
+    0.5초마다 512 KB(1 MB/s)를 받는 파트, 둘째 청크 앞에서 일시정지 → 60초 뒤 재개, 모두 12청크.
+    다른 연결 셋은 빠르다(일시정지한 60초를 빼지 않으면 이 연결만 느린 것으로 보여 끊긴다)
     -> 재시작 0건, 파트 완료 1건
     """
     output = tmp_path / "part.bin"
@@ -435,6 +465,7 @@ def test_part_is_not_restarted_for_the_time_it_was_paused(tmp_path, monkeypatch)
     made = FileDownloader(data, QuietLogger())
     made.clock = ManualClock()
     made._now = made.clock
+    _always_fast_peers(made)
     response = _PausingResponse(made, chunks=12, seconds_per_chunk=0.5)
 
     class _Session:
@@ -459,7 +490,8 @@ def test_segment_is_not_restarted_for_the_time_it_was_paused(
 ):
     """세그먼트를 받는 도중 일시정지한 시간도 저속 판정에서 빠져야 한다.
 
-    0.5초마다 약 512 KB(1 MB/s)를 받는 세그먼트, 둘째 청크 앞에서 일시정지 → 60초 뒤 재개, 모두 12청크
+    0.5초마다 약 512 KB(1 MB/s)를 받는 세그먼트, 둘째 청크 앞에서 일시정지 → 60초 뒤 재개, 모두 12청크.
+    다른 연결 셋은 빠르다
     -> 저속 재시작 0건
     """
     data = _make_data(str(tmp_path / "out.mp4"), content_type=content_type)
@@ -468,6 +500,7 @@ def test_segment_is_not_restarted_for_the_time_it_was_paused(
     made.width = 4
     made.clock = ManualClock()
     made._now = made.clock
+    _always_fast_peers(made)
     # 본문 길이가 16의 배수가 아니다 — 다 받은 뒤 암호화 경로가 복호화까지 가지 않고 온전성 검사에서
     # 다시 받기로 빠진다(이 시험은 받는 동안의 저속 판정만 본다)
     response = _PausingResponse(made, chunks=12, seconds_per_chunk=0.5, chunk_bytes=512 * KB + 1)
