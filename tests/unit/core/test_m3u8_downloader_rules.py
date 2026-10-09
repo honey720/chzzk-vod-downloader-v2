@@ -106,9 +106,40 @@ def _engine_module():
 
 
 def _tick(scaler, data, speed: float) -> None:
-    """1초 관측 틱을 흉내 낸다 — 측정된 총 처리량 반영 후 조정 1회."""
+    """1초 관측 틱을 흉내 낸다 — 시계를 1초 옮기고, 측정된 총 처리량 반영 후 조정 1회."""
+    scaler._tick_clock = getattr(scaler, "_tick_clock", 0.0) + 1.0
+    scaler._now = lambda: scaler._tick_clock
     data.speed_mb = speed
     scaler._adjust_threads()
+
+
+def _ticks(scaler, data, speed: float, count: int) -> None:
+    for _ in range(count):
+        _tick(scaler, data, speed)
+
+
+def _hold_at_4(scaler, data) -> None:
+    """속도 5.0 고정으로 4→8 인상이 되물려 4에서 정체하게 한다 (기준 5.0).
+
+    틱 1에 4→8, 표본 둘이 뚜렷이 늘지 않아 4로 돌아가 묶음(10초)을 채우고, 다시 8로 올려
+    10초를 재도 늘지 않아 되물린다 — 29틱. 그 뒤 2틱은 되물린 직후라 재지 않는다
+    """
+    _ticks(scaler, data, 5.0, 29)
+    assert data.adjust_threads == 4, "전제: 되물려 4에 머문다"
+    _ticks(scaler, data, 5.0, 2)
+
+
+def _hold_at_8(scaler, data) -> None:
+    """4→8은 유효(5.0→9.0), 8→12는 무효(9.0→9.2)여서 8에서 정체하게 한다 (기준 9.0).
+
+    틱 5에 12로 올리고, 뚜렷이 늘지 않아 8로 돌아가 묶음을 채운 뒤 다시 12로 올려 10초를
+    재도 요구치(9.0×1.0625)에 못 미쳐 되물린다 — 33틱. 그 뒤 2틱은 재지 않는다
+    """
+    speeds = {4: 5.0, 8: 9.0, 12: 9.2}
+    for _ in range(33):
+        _tick(scaler, data, speeds[data.adjust_threads])
+    assert data.adjust_threads == 8, "전제: 되물려 8에 머문다"
+    _ticks(scaler, data, 9.0, 2)
 
 
 def test_warmup_without_measurement_does_nothing():
@@ -158,7 +189,7 @@ def test_climbs_to_cap_while_throughput_scales_linearly():
     data.max_threads = 6996
     scaler = _make_scaler(data, logger)
 
-    for _ in range(40):  # settle 틱 포함 여유 있는 반복
+    for _ in range(60):  # 한 단계가 4틱(재지 않는 2틱 + 표본 2개) — 여유 있는 반복
         _tick(scaler, data, data.adjust_threads * 0.95)
 
     assert data.adjust_threads == 48
@@ -188,13 +219,13 @@ def test_reverts_and_holds_when_raise_does_not_increase_throughput():
     data.max_threads = 6996
     scaler = _make_scaler(data, logger)
 
-    _tick(scaler, data, 5.0)  # 4→8 (기준 5.0)
-    _tick(scaler, data, 5.0)  # settle 1
-    _tick(scaler, data, 5.0)  # settle 2
-    _tick(scaler, data, 5.2)  # 요구치(5.0×1.125=5.625) 미달 → 8→4 되물림 + 정체
+    for _ in range(29):
+        # 틱 1: 4→8 (기준 5.0) · 틱 5: 표본 둘이 뚜렷이 늘지 않아 8→4, 묶음을 채운다
+        # 틱 17: 다시 4→8 · 틱 29: 10초를 재도 요구치(5.0×1.125=5.625) 미달 → 8→4 되물림 + 정체
+        _tick(scaler, data, 5.0 if data.adjust_threads == 4 else 5.2)
 
     assert data.adjust_threads == 4
-    assert logger.adjust_calls == [(8, 5.0), (4, 5.2)]
+    assert logger.adjust_calls == [(8, 5.0), (4, 5.2), (8, 5.0), (4, 5.2)]
 
     for _ in range(5):  # 정체 중 같은 속도로는 더 조정하지 않는다
         _tick(scaler, data, 5.0)
@@ -205,18 +236,25 @@ def test_growth_requirement_scales_with_target():
     """유효 판정 요구 증가폭은 인상 전 목표에 비례한다.
 
     고정 비율(+10% 등)은 목표가 커질수록 선형 이득(+4/n)보다 커져 정상
-    등반을 막는다 — 목표 40→44 인상의 선형 이득(+9.5%, 38.0→41.8)은
-    고정 +10%로는 기각되지만 비례 요구치(38×1.0125=38.475)로는 유효다.
-    등반 중간 상태는 시나리오로 만들기 길어 직접 세팅한다.
+    등반을 막는다 — 목표 40→44 인상의 +3%(38.0→39.14)는 고정 +10%로는
+    기각되지만 비례 요구치(38×1.0125=38.475)로는 유효다.
     """
     data, logger = _make_data(), RecordingLogger()
     data.max_threads = 6996
-    data.adjust_threads = 44
     scaler = _make_scaler(data, logger)
-    scaler._reference_speed = 38.0  # 목표 40이 내던 총 처리량 (40×0.95)
-    scaler._reference_target = 40
 
-    _tick(scaler, data, 41.8)  # 44×0.95 — 선형 이득. 요구치 38.475 초과
+    def speed() -> float:
+        if data.adjust_threads == 44:
+            return 39.14  # 40이 내던 38.0보다 +3% — 뚜렷하지는 않지만 요구치는 넘는다
+        return data.adjust_threads * 0.95
+
+    for _ in range(37):  # 선형 구간을 올라 틱 37에 40→44
+        _tick(scaler, data, speed())
+    assert data.adjust_threads == 44, "전제: 44로 올려 보는 중이다"
+    for _ in range(21):
+        # 틱 41: 뚜렷하지 않아 40으로 돌아가 묶음을 채운다 · 틱 53: 다시 44
+        # 틱 58: 44의 표본 셋이 모두 요구치를 넘는다 → 인상 유효
+        _tick(scaler, data, speed())
 
     assert data.adjust_threads == 48  # 인상 유효 → 계속 등반
 
@@ -227,16 +265,9 @@ def test_sustained_collapse_halves_after_five_ticks():
     data.max_threads = 6996
     scaler = _make_scaler(data, logger)
 
-    _tick(scaler, data, 5.0)  # 4→8
-    _tick(scaler, data, 9.0)  # settle 1
-    _tick(scaler, data, 9.0)  # settle 2
-    _tick(scaler, data, 9.0)  # 요구치(5.0×1.125) 초과 → 8→12 (기준 9.0)
-    _tick(scaler, data, 9.2)  # settle 1
-    _tick(scaler, data, 9.2)  # settle 2
-    _tick(scaler, data, 9.2)  # 요구치(9.0×1.0417=9.375) 미달 → 12→8 되물림 + 정체 (기준 9.2)
-    assert data.adjust_threads == 8
+    _hold_at_8(scaler, data)
 
-    for _ in range(4):  # 기준의 절반(4.6) 미만 4틱 — 아직 불변
+    for _ in range(4):  # 기준의 절반(4.5) 미만 4틱 — 아직 불변
         _tick(scaler, data, 4.0)
     assert data.adjust_threads == 8
 
@@ -255,13 +286,9 @@ def test_halving_floor_is_one_thread():
     data.max_threads = 6996
     scaler = _make_scaler(data, logger)
 
-    _tick(scaler, data, 5.0)  # 4→8
-    _tick(scaler, data, 5.0)  # settle 1
-    _tick(scaler, data, 5.0)  # settle 2
-    _tick(scaler, data, 5.0)  # 요구치 미달 → 되물림 → 4 정체 (기준 5.0)
-    assert data.adjust_threads == 4
+    _hold_at_4(scaler, data)
 
-    for _ in range(7):  # 기준(5.0)의 절반 미만 지속 → 4→2 (새 기준 2.0)
+    for _ in range(5):  # 기준(5.0)의 절반 미만 지속 → 4→2 (새 기준 2.0)
         _tick(scaler, data, 2.0)
     assert data.adjust_threads == 2
 
@@ -280,10 +307,7 @@ def test_collapse_counter_decays_on_stable_tick():
     data.max_threads = 6996
     scaler = _make_scaler(data, logger)
 
-    _tick(scaler, data, 5.0)  # 4→8
-    _tick(scaler, data, 5.0)  # settle 1
-    _tick(scaler, data, 5.0)  # settle 2
-    _tick(scaler, data, 5.0)  # 되물림 → 4 정체 (기준 5.0)
+    _hold_at_4(scaler, data)
 
     for _ in range(3):  # 붕괴 방향 3틱
         _tick(scaler, data, 2.0)
@@ -295,45 +319,41 @@ def test_collapse_counter_decays_on_stable_tick():
 
 
 def test_hold_resumes_climbing_on_recovery():
-    """정체 기준보다 +30% 넘게 빨라지면 등반을 재개한다 (경합 해소 등 상황 변화).
+    """정체 기준보다 +30% 넘게 빠른 상태가 5초 이어지면 등반을 재개한다 (경합 해소 등 상황 변화).
 
     임계 30%는 링크 포화 구간의 처리량 노이즈(±15% 실측)로 인한 정체↔등반
     진동을 막기 위한 값이다 — 노이즈 범위 안의 출렁임으로는 재개하지 않는다.
+    한 틱만 넘어서는 재개하지 않는다 — 출렁이는 회선에서는 그런 틱이 계속 나온다 (#347).
     """
     data, logger = _make_data(), RecordingLogger()
     data.max_threads = 6996
     scaler = _make_scaler(data, logger)
 
-    _tick(scaler, data, 5.0)  # 4→8
-    _tick(scaler, data, 5.0)  # settle 1
-    _tick(scaler, data, 5.0)  # settle 2
-    _tick(scaler, data, 5.0)  # 되물림 → 4 정체 (기준 5.0)
-    assert data.adjust_threads == 4
+    _hold_at_4(scaler, data)
 
     _tick(scaler, data, 5.6)  # +12% — 노이즈 범위, 재개하지 않는다
     assert data.adjust_threads == 4
 
-    _tick(scaler, data, 7.0)  # 기준×1.3(6.5+) 초과 — 재개 신호
-    _tick(scaler, data, 7.0)  # 등반 재개: +4 탐침
+    _ticks(scaler, data, 7.0, 4)  # 기준×1.3 초과가 4초 — 아직 재개하지 않는다
+    assert data.adjust_threads == 4
+
+    _tick(scaler, data, 7.0)  # 5초째 — 등반 재개: +4 탐침
 
     assert data.adjust_threads == 8
 
 
-def test_reprobe_after_fifteen_stall_ticks():
-    """정체가 15틱 이어지면 +4 재탐침한다 — 서버 상황 변화를 놓치지 않기 위함."""
+def test_reprobe_thirty_seconds_after_a_revert():
+    """되물린 뒤 30초가 지나면 +4 재탐침한다 — 서버 상황 변화를 놓치지 않기 위함."""
     data, logger = _make_data(), RecordingLogger()
     data.max_threads = 6996
     scaler = _make_scaler(data, logger)
 
-    _tick(scaler, data, 5.0)  # 4→8
-    _tick(scaler, data, 5.0)  # settle 1
-    _tick(scaler, data, 5.0)  # settle 2
-    _tick(scaler, data, 5.0)  # 되물림 → 4 정체
+    _ticks(scaler, data, 5.0, 29)  # 틱 29에 되물림 → 4 정체
     assert data.adjust_threads == 4
 
-    for _ in range(15):  # 안정 정체 15틱
-        _tick(scaler, data, 5.0)
-    _tick(scaler, data, 5.0)  # 재탐침 틱
+    _ticks(scaler, data, 5.0, 29)  # 되물린 뒤 29초 — 아직 머문다
+    assert data.adjust_threads == 4
+    _tick(scaler, data, 5.0)  # 30초째 — 재탐침
 
     assert data.adjust_threads == 8
 

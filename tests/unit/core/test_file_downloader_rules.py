@@ -106,9 +106,40 @@ def _engine_module():
 
 
 def _tick(scaler, data, speed: float) -> None:
-    """1초 관측 틱을 흉내 낸다 — 측정된 총 처리량 반영 후 조정 1회."""
+    """1초 관측 틱을 흉내 낸다 — 시계를 1초 옮기고, 측정된 총 처리량 반영 후 조정 1회."""
+    scaler._tick_clock = getattr(scaler, "_tick_clock", 0.0) + 1.0
+    scaler._now = lambda: scaler._tick_clock
     data.speed_mb = speed
     scaler._adjust_threads()
+
+
+def _ticks(scaler, data, speed: float, count: int) -> None:
+    for _ in range(count):
+        _tick(scaler, data, speed)
+
+
+def _hold_at_4(scaler, data) -> None:
+    """속도 5.0 고정으로 4→8 인상이 되물려 4에서 정체하게 한다 (기준 5.0).
+
+    틱 1에 4→8, 표본 둘이 뚜렷이 늘지 않아 4로 돌아가 묶음(10초)을 채우고, 다시 8로 올려
+    10초를 재도 늘지 않아 되물린다 — 29틱. 그 뒤 2틱은 되물린 직후라 재지 않는다
+    """
+    _ticks(scaler, data, 5.0, 29)
+    assert data.adjust_threads == 4, "전제: 되물려 4에 머문다"
+    _ticks(scaler, data, 5.0, 2)
+
+
+def _hold_at_8(scaler, data) -> None:
+    """4→8은 유효(5.0→9.0), 8→12는 무효(9.0→9.2)여서 8에서 정체하게 한다 (기준 9.0).
+
+    틱 5에 12로 올리고, 뚜렷이 늘지 않아 8로 돌아가 묶음을 채운 뒤 다시 12로 올려 10초를
+    재도 요구치(9.0×1.0625)에 못 미쳐 되물린다 — 33틱. 그 뒤 2틱은 재지 않는다
+    """
+    speeds = {4: 5.0, 8: 9.0, 12: 9.2}
+    for _ in range(33):
+        _tick(scaler, data, speeds[data.adjust_threads])
+    assert data.adjust_threads == 8, "전제: 되물려 8에 머문다"
+    _ticks(scaler, data, 9.0, 2)
 
 
 def test_warmup_without_measurement_does_nothing():
@@ -152,13 +183,13 @@ def test_reverts_and_holds_when_raise_does_not_increase_throughput():
     data.max_threads = 32
     scaler = _make_scaler(data, logger)
 
-    _tick(scaler, data, 5.0)  # 4→8 (기준 5.0)
-    _tick(scaler, data, 5.0)  # settle 1
-    _tick(scaler, data, 5.0)  # settle 2
-    _tick(scaler, data, 5.2)  # 요구치(5.0×1.125=5.625) 미달 → 8→4 되물림 + 정체
+    for _ in range(29):
+        # 틱 1: 4→8 (기준 5.0) · 틱 5: 표본 둘이 뚜렷이 늘지 않아 8→4, 묶음을 채운다
+        # 틱 17: 다시 4→8 · 틱 29: 10초를 재도 요구치(5.0×1.125=5.625) 미달 → 8→4 되물림 + 정체
+        _tick(scaler, data, 5.0 if data.adjust_threads == 4 else 5.2)
 
     assert data.adjust_threads == 4
-    assert logger.adjust_calls == [(8, 5.0), (4, 5.2)]
+    assert logger.adjust_calls == [(8, 5.0), (4, 5.2), (8, 5.0), (4, 5.2)]
 
 
 def test_sustained_collapse_halves_after_five_ticks():
@@ -167,16 +198,9 @@ def test_sustained_collapse_halves_after_five_ticks():
     data.max_threads = 32
     scaler = _make_scaler(data, logger)
 
-    _tick(scaler, data, 5.0)  # 4→8
-    _tick(scaler, data, 9.0)  # settle 1
-    _tick(scaler, data, 9.0)  # settle 2
-    _tick(scaler, data, 9.0)  # 요구치(5.0×1.125) 초과 → 8→12 (기준 9.0)
-    _tick(scaler, data, 9.2)  # settle 1
-    _tick(scaler, data, 9.2)  # settle 2
-    _tick(scaler, data, 9.2)  # 요구치(9.0×1.0417=9.375) 미달 → 12→8 되물림 + 정체 (기준 9.2)
-    assert data.adjust_threads == 8
+    _hold_at_8(scaler, data)
 
-    for _ in range(4):  # 기준의 절반(4.6) 미만 4틱 — 아직 불변
+    for _ in range(4):  # 기준의 절반(4.5) 미만 4틱 — 아직 불변
         _tick(scaler, data, 4.0)
     assert data.adjust_threads == 8
 
@@ -190,13 +214,9 @@ def test_halving_floor_is_one_thread():
     data.max_threads = 32
     scaler = _make_scaler(data, logger)
 
-    _tick(scaler, data, 5.0)  # 4→8
-    _tick(scaler, data, 5.0)  # settle 1
-    _tick(scaler, data, 5.0)  # settle 2
-    _tick(scaler, data, 5.0)  # 요구치 미달 → 되물림 → 4 정체 (기준 5.0)
-    assert data.adjust_threads == 4
+    _hold_at_4(scaler, data)
 
-    for _ in range(7):  # 기준(5.0)의 절반 미만 지속 → 4→2 (새 기준 2.0)
+    for _ in range(5):  # 기준(5.0)의 절반 미만 지속 → 4→2 (새 기준 2.0)
         _tick(scaler, data, 2.0)
     assert data.adjust_threads == 2
 
