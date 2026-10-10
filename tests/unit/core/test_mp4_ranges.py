@@ -14,10 +14,14 @@ PTS보다 0.1초 앞선다), 영상 청크는 샘플 0~2 · 3~5 · 6~7 · 8~11. 
 
 import pytest
 
-from core.api.mp4 import parse_moov
+from core.api.mp4 import index_mp4, parse_moov, read_mp4_raw
 from core.models.plan import TimeRange
 from core.utils.hybrid_cut import SOURCE_LEAD_SECONDS
-from core.utils.mp4_ranges import selection_byte_ranges
+from core.utils.mp4_ranges import (
+    sections_download_size,
+    sections_head_size,
+    selection_byte_ranges,
+)
 from core.utils.selections import reaches_end, validate_selections
 from tests.unit.core.mp4_builder import audio_spec, build_mp4, video_spec
 
@@ -229,3 +233,43 @@ def test_selection_ending_at_a_duration_off_the_frame_grid_ends_on_the_last_fram
     assert validate_selections([selection], index.duration, index.fps) == {}
     assert reaches_end(selection.end, index.duration, index.fps)
     assert selection_byte_ranges(index, selection).last_frame == 11
+
+
+def _file_index(data: bytes):
+    """파일의 바이트에서 읽은 색인 — moov의 위치가 들어 있다."""
+    return index_mp4(read_mp4_raw(lambda offset, size: data[offset : offset + size])).index
+
+
+def test_head_plus_the_download_of_sections_covering_the_video_is_the_size_of_the_file():
+    """구간이 영상 전체를 덮으면 머리 길이와 받을 바이트의 합이 파일 크기와 같아야 한다.
+
+    영상 1.2초 · 오디오 10샘플(영상 안에서 끝난다 — 1.152초). 파일: ftyp · moov · mdat
+    구간 0~길이 하나 / 겹치는 둘(0~0.6, 0.3~길이)
+    -> sections_head_size == mdat 본문이 시작하는 자리, 머리 + sections_download_size == 파일 크기
+    """
+    audio = audio_spec(deltas=[1024] * 10, sizes=[7] * 10, chunks=[4, 4, 2], edits=[(1152, 1024)])
+    built = build_mp4([video_spec(), audio])
+    index = _file_index(built.data)
+    whole = [TimeRange(0.0, index.duration)]
+    overlapping = [TimeRange(0.0, 0.6), TimeRange(0.3, index.duration)]
+
+    head = sections_head_size(index)
+
+    assert head == built.mdat_body[0]
+    assert head + sections_download_size(index, whole) == len(built.data)
+    assert head + sections_download_size(index, overlapping) == len(built.data)
+
+
+def test_head_is_left_out_of_the_download_of_a_part_of_the_video():
+    """영상의 일부만 받는 구간은 머리와 받을 바이트의 합이 파일 크기보다 작아야 한다.
+
+    위와 같은 파일, 구간 0~0.4초 -> 머리 == mdat 본문의 시작, 머리 + 받을 바이트 < 파일 크기
+    """
+    audio = audio_spec(deltas=[1024] * 10, sizes=[7] * 10, chunks=[4, 4, 2], edits=[(1152, 1024)])
+    built = build_mp4([video_spec(), audio])
+    index = _file_index(built.data)
+
+    part = sections_download_size(index, [TimeRange(0.0, 0.4)])
+
+    assert sections_head_size(index) == built.mdat_body[0]
+    assert 0 < part and sections_head_size(index) + part < len(built.data)

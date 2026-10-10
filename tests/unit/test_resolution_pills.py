@@ -2,7 +2,7 @@
 
 - 같은 높이 트랙이 둘인 매니페스트 → pill은 높이당 하나 (core/api/representations.py)
 - 해상도 인라인 확장 — 접힘/펼침, 고르면 접힘, 기하 복원, 줄바꿈 임계 T, 한 번에 하나
-- 3행 접힘 순서 한 방향(① 경로 줄임 → ② 아이콘 → ③ 해상도 접힘, 역방향 없음)
+- 3행 접힘 순서 한 방향(① 경로 줄임 → ② 경로 숨김 → ③ 해상도 접힘, 역방향 없음)
 - 늦게 온 크기 조회가 유저 선택을 덮지 않는다(자동 선택은 안 골랐을 때만)
 """
 
@@ -170,17 +170,17 @@ def _offset(widget) -> int:
 
 
 def fit_threshold(widget) -> int:
-    """pill 전부 + 경로 아이콘 + 크기가 3행 한 줄에 **딱** 들어가는 카드 폭 T — 독립 합산.
+    """pill 전부 + 크기가 3행 한 줄에 **딱** 들어가는 카드 폭 T — 독립 합산.
 
     offset + pill 자연 폭 합(전부 보이는 모드에서의 sizeHint = ▾ 없음) + 크기 확보 폭 +
-    아이콘 폭 + 간격 × (pill 개수 + 1)(pill 사이 n−1, 아이콘 앞 1, 크기 앞 1).
+    간격 × pill 개수(pill 사이 n−1, 크기 앞 1). 경로는 자리를 요구하지 않는다 — 글자가
+    숨고, 폴더 선택의 진입점은 1행의 저장 위치 버튼이다 (#309).
     제품의 판정 함수(_pillsFit)는 부르지 않는다.
     """
     assert widget.pillMode() == "all", "T는 전부 보이는 모드에서 잰다(▾ 없는 자연 폭)"
     pills = sum(b.sizeHint().width() for b in widget.buttons)
     size = max(widget.fileSizeLabel.minimumWidth(), widget.fileSizeLabel.sizeHint().width())
-    icon = widget.pathIconButton.minimumWidth()
-    return _offset(widget) + pills + size + icon + (len(widget.buttons) + 1) * FIXED_SPACING
+    return _offset(widget) + pills + size + len(widget.buttons) * FIXED_SPACING
 
 
 def expanded_threshold(widget) -> int:
@@ -210,7 +210,7 @@ def _row3_snapshot(widget) -> dict:
         # 우측 끝·y·높이만 잰다. 같은 pill을 고르는 왕복에서는 이것도 완전히 같다.
         "path": (widget.directoryLabel.isVisible(), widget.directoryLabel.geometry().right(),
                  widget.directoryLabel.y(), widget.directoryLabel.height()),
-        "icon": (widget.pathIconButton.isVisible(), widget.pathIconButton.geometry()),
+        "icon": (widget.pathButton.isVisible(), widget.pathButton.geometry()),
         "thumb": widget.thumbnailLabel.size(),
         "extra_rows": widget.contentLayout.count(),
     }
@@ -225,19 +225,19 @@ class TestResponsiveMode:
         resize_box(box, widget, threshold + 1)
         assert widget.pillMode() == "all" and _visible_pills(widget) == [f"{r}p" for r in FIVE]
         assert not any(b.hasCaret() for b in widget.buttons)
-        assert widget.fileSizeLabel.isVisible() and widget.pathIconButton.isVisible(), "T+1: 크기·경로 아이콘이 함께 있다"
+        assert widget.fileSizeLabel.isVisible() and widget.pathButton.isVisible(), "T+1: 크기가 있고 저장 위치 버튼이 1행에 있다"
         resize_box(box, widget, threshold - 1)
         assert widget.pillMode() == "collapsed" and _visible_pills(widget) == ["1080p"], "T−1에서 접혀야 한다"
         assert widget.buttons[0].hasCaret()
         assert widget.fileSizeLabel.isVisible(), "접혀도 크기는 그대로 보인다"
-        assert widget.directoryLabel.isVisible() or widget.pathIconButton.isVisible(), "접혀도 경로 진입점은 남는다"
+        assert widget.pathButton.isVisible(), "접혀도 경로 진입점(1행의 저장 위치 버튼)은 남는다"
 
     def test_exactly_at_t_everything_fits(self, qapp):
         box, widget = make_boxed()
         threshold = fit_threshold(widget)
         resize_box(box, widget, threshold)
         assert widget.pillMode() == "all"
-        assert widget.pathIconButton.isVisible() and not widget.directoryLabel.isVisible(), "T에서 경로는 아이콘 한 칸"
+        assert widget.pathButton.isVisible() and not widget.directoryLabel.isVisible(), "T에서 경로 글자는 숨고 진입점은 1행에 있다"
 
     def test_widening_shows_all_pills_again_without_feedback(self, qapp):
         box, widget = make_boxed()
@@ -281,7 +281,7 @@ class TestResponsiveMode:
         assert not widget.fileSizeLabel.isVisible()
         resize_box(box, widget, threshold + 1)
         assert widget.pillMode() == "all" and not widget.isExpanded() and events == [True, False]
-        assert widget.fileSizeLabel.isVisible() and widget.pathIconButton.isVisible(), "펼침이 풀리면 경로·크기가 돌아온다"
+        assert widget.fileSizeLabel.isVisible() and widget.pathButton.isVisible(), "펼침이 풀리면 크기가 돌아오고 저장 위치 버튼은 그대로다"
         resize_box(box, widget, threshold - 1)
         assert widget.pillMode() == "collapsed" and not widget.isExpanded(), "펼침은 기억되지 않는다"
         assert _visible_pills(widget) == ["1080p"]
@@ -336,7 +336,7 @@ class TestCollapsedAndExpandedStates:
         assert _visible_pills(widget) == [f"{r}p" for r in FIVE]
         assert not any(b.hasCaret() for b in widget.buttons), "펼치면 ▾는 사라진다"
         assert not widget.fileSizeLabel.isVisible(), "펼치는 동안 크기는 숨는다"
-        assert not widget.directoryLabel.isVisible() and not widget.pathIconButton.isVisible(), "펼치는 동안 경로는 숨는다"
+        assert not widget.directoryLabel.isVisible(), "펼치는 동안 경로는 숨는다"
         assert widget.buttons[0].isSelected(), "펼쳐도 선택 표시는 유지된다"
 
     def test_picking_a_pill_selects_it_and_collapses(self, qapp):
@@ -351,7 +351,7 @@ class TestCollapsedAndExpandedStates:
         assert _visible_pills(widget) == ["480p"] and widget.buttons[2].hasCaret()
         assert str(widget.item.resolution) == "480" and widget.item.base_url == "u480"
         assert widget.fileSizeLabel.isVisible(), "접히면 크기가 돌아온다"
-        assert widget.directoryLabel.isVisible() or widget.pathIconButton.isVisible(), "접히면 경로가 돌아온다"
+        assert widget.pathButton.isVisible(), "접혀도 경로 진입점(1행의 저장 위치 버튼)은 그대로다"
 
     def test_clicking_the_selected_pill_while_expanded_only_collapses(self, qapp):
         box, widget = self._collapsed(qapp)
@@ -501,7 +501,7 @@ class TestOneExpandedAtATime:
 
 # ======================= [P-4·1] 접힘 순서는 한 방향 =======================
 #
-# 폭이 줄수록: ① 경로 ElideMiddle → ② 경로 아이콘만 → ③ 해상도 접힘([▾]).
+# 폭이 줄수록: ① 경로 ElideMiddle → ② 경로 숨김(진입점은 1행의 저장 위치 버튼) → ③ 해상도 접힘([▾]).
 # ③ 뒤에 자리가 남아도 ①·②로 돌아가지 않는다(오너 확정). 파일 크기·재생 시간은 어떤
 # 폭에서도 접지 않는다. 실기에서 5-pill 카드는 "접힘+경로 텍스트", 3-pill 카드는
 # "전부+아이콘"으로 우선순위가 반대로 보였다 — pill을 접어 생긴 자리로 경로가 다시
@@ -513,20 +513,20 @@ class TestOneExpandedAtATime:
 
 
 def _stage(widget) -> int:
-    """3행 모양을 단계 번호로 — 0 전부+경로 전문 / 1 전부+경로 줄임 / 2 전부+아이콘 / 3 접힘+아이콘.
+    """3행 모양을 단계 번호로 — 0 전부+경로 전문 / 1 전부+경로 줄임 / 2 전부+경로 숨김 / 3 접힘+경로 숨김.
 
-    정의 밖의 조합(접힘+경로 텍스트, 크기 숨김 등)은 -1 — 있으면 안 되는 모양이다.
+    정의 밖의 조합(접힘+경로 텍스트, 크기 숨김, 1행의 저장 위치 버튼이 없음)은 -1 — 있으면 안 되는
+    모양이다. 경로 글자가 숨어도 폴더 선택의 진입점은 1행의 저장 위치 버튼에 있어야 한다 (#309).
     """
     mode = widget.pillMode()
     text = widget.directoryLabel.isVisible()
-    icon = widget.pathIconButton.isVisible()
-    if not widget.fileSizeLabel.isVisible() or text == icon:
+    if not widget.fileSizeLabel.isVisible() or not widget.pathButton.isVisible():
         return -1
     if mode == "all" and text:
         return 0 if QLabel.text(widget.directoryLabel) == widget.directoryLabel.text() else 1
-    if mode == "all" and icon:
+    if mode == "all":
         return 2
-    if mode == "collapsed" and icon:
+    if mode == "collapsed" and not text:
         return 3
     return -1
 
@@ -544,16 +544,16 @@ class TestShrinkOrderIsMonotonic:
     def _widths(self, widget):
         """경로 전문이 들어가는 폭에서 접힘 아래까지 FIXED_SPACING씩 — 절대 px 없음 (#280).
 
-        시작: T(pill 전부 + 아이콘 + 크기가 딱 들어가는 카드 폭) + 경로 ① 문자열의 표시 폭.
-        경로 라벨은 텍스트 모드에서 아이콘 자리를 대신 쓰므로, T에 그 문자열 폭을 더하면
-        라벨이 받는 폭이 문자열 폭보다 아이콘 폭 + 간격만큼 남아 ①(전문)이 성립한다.
+        시작: T(pill 전부 + 크기가 딱 들어가는 카드 폭) + 경로 ① 문자열의 표시 폭 + 간격 둘.
+        경로 라벨이 들어서면 그 앞에 간격 하나가 더 든다 — T에 문자열 폭과 간격 둘을 더하면
+        라벨이 받는 폭이 문자열 폭보다 간격 하나만큼 남아 ①(전문)이 성립한다.
         ⚠️ 문자열은 원문(LONG_PATH)이 아니라 **제품이 만든 축약형**(`directoryLabel.text()`,
         _stage가 ①의 기준으로 쓰는 바로 그 문자열)이고, 폭은 그 라벨의 글꼴 지표로 잰다 —
         제품의 판정 함수는 부르지 않는다. 종전의 `fit + 400`은 절대 px라 넓은 글꼴에서는
         그 폭이 이미 ②(줄임)였다.
         끝: 한 줄 펼침 임계(`one`)보다 간격 하나 아래, 그리고 range의 stop이 미포함이라 한 걸음
         더 — 시작 폭과 `one`이 간격에 맞아떨어져도 마지막 값이 `one` 위에서 멈추지 않는다.
-        지금은 `one < fit`(접힘 임계)이라 `one`에서도 이미 접힘(③)이지만 그 부등호는 아이콘·
+        지금은 `one < fit`(접힘 임계)이라 `one`에서도 이미 접힘(③)이지만 그 부등호는 크기 ·
         간격이 바뀌면 흔들리므로 경계에 기대지 않는다. 남은 숫자는 간격(FIXED_SPACING)뿐이며
         레이아웃 상수라 글꼴과 무관하다.
         """
@@ -561,7 +561,8 @@ class TestShrinkOrderIsMonotonic:
         one = expanded_threshold(widget)
         label = widget.directoryLabel
         full_path_width = QFontMetrics(label.font()).horizontalAdvance(label.text())
-        return list(range(fit + full_path_width, one - FIXED_SPACING - 1, -FIXED_SPACING))
+        start = fit + full_path_width + 2 * FIXED_SPACING
+        return list(range(start, one - FIXED_SPACING - 1, -FIXED_SPACING))
 
     def test_narrowing_only_moves_forward_through_the_stages(self, qapp):
         box, widget = make_boxed()
@@ -569,21 +570,21 @@ class TestShrinkOrderIsMonotonic:
         stages = list(seen.values())
         assert stages[0] == 0 and stages[-1] == 3, f"전제: 넓게 ①전문 → 좁게 ③접힘까지 내려간다: {stages[0]}…{stages[-1]}"
         assert all(a <= b for a, b in zip(stages, stages[1:])), f"역방향 전이가 있다: {stages}"
-        assert {1, 2} <= set(stages), f"①줄임·②아이콘 단계를 거치지 않았다: {sorted(set(stages))}"
+        assert {1, 2} <= set(stages), f"①줄임·②숨김 단계를 거치지 않았다: {sorted(set(stages))}"
 
     def test_collapsed_keeps_the_path_icon_even_with_room_to_spare(self, qapp):
         box, widget = make_boxed(width=900)
         fit = fit_threshold(widget)
         resize_box(box, widget, fit - 1)
         assert widget.pillMode() == "collapsed"
-        # 접힘으로 생긴 자리: 경로 텍스트 최소치보다 훨씬 넓다 — 그래도 아이콘이다
+        # 접힘으로 생긴 자리: 경로 텍스트 최소치보다 훨씬 넓다 — 그래도 경로는 숨은 채다
         used = widget.buttons[0].sizeHint().width() + widget.fileSizeLabel.width() + 3 * FIXED_SPACING
         room = widget.resolutionLayout.geometry().width() - used
         assert room > widget.fontMetrics().horizontalAdvance("~/…/abcdef"), "전제: 텍스트를 다시 펼 자리가 남아 있다"
-        assert _stage(widget) == 3 and widget.pathIconButton.isVisible() and not widget.directoryLabel.isVisible(), (
+        assert _stage(widget) == 3 and not widget.directoryLabel.isVisible(), (
             "③ 접힘 뒤 자리가 남는다고 경로가 다시 펴졌다 — 순서는 한 방향이다"
         )
-        assert widget.pathIconButton.toolTip() == LONG_PATH, "아이콘이어도 전문은 툴팁으로 남는다"
+        assert widget.pathButton.toolTip().endswith(LONG_PATH), "글자가 숨어도 전문은 저장 위치 버튼의 툴팁에 남는다"
 
     def test_widening_recovers_in_reverse_and_the_same_width_always_looks_the_same(self, qapp):
         """회복은 되돌아감이 아니다 — 같은 판정을 다시 하는 것. 같은 폭이면 같은 모양이어야 한다."""

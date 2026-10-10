@@ -44,6 +44,14 @@
         <translation>Sections were moved to the frames of the new frame rate.</translation>
     </message>
     <message>
+        <source>Edit sections</source>
+        <translation>Edit sections</translation>
+    </message>
+    <message>
+        <source>Change save location</source>
+        <translation>Change save location</translation>
+    </message>
+    <message>
         <source>checking length</source>
         <translation>checking length</translation>
     </message>
@@ -58,6 +66,22 @@
     <message>
         <source>Could not check the length of this resolution. Open the section editor to check again.</source>
         <translation>Could not check the length of this resolution. Open the section editor to check again.</translation>
+    </message>
+    <message>
+        <source>overlap</source>
+        <translation>overlap</translation>
+    </message>
+    <message>
+        <source>To receive: {0}</source>
+        <translation>To receive: {0}</translation>
+    </message>
+    <message>
+        <source>Sections add up to {0}</source>
+        <translation>Sections add up to {0}</translation>
+    </message>
+    <message>
+        <source>Overlapping parts are received once</source>
+        <translation>Overlapping parts are received once</translation>
     </message>
     <message>
         <source>Click to edit sections</source>
@@ -323,6 +347,10 @@ Part of the video kept arriving incomplete from the server. Try again later.</tr
         <translation>A download is waiting for this card — it continues when you close this window</translation>
     </message>
     <message>
+        <source>The order is the file number (_N)</source>
+        <translation>The order is the file number (_N)</translation>
+    </message>
+    <message>
         <source>Move up</source>
         <translation>Move up</translation>
     </message>
@@ -333,6 +361,34 @@ Part of the video kept arriving incomplete from the server. Try again later.</tr
     <message>
         <source>Delete section</source>
         <translation>Delete section</translation>
+    </message>
+    <message>
+        <source>Clear values</source>
+        <translation>Clear values</translation>
+    </message>
+    <message>
+        <source>Sections / maximum · frame rate · end of the video</source>
+        <translation>Sections / maximum · frame rate · end of the video</translation>
+    </message>
+    <message>
+        <source>Add a section (up to {0})</source>
+        <translation>Add a section (up to {0})</translation>
+    </message>
+    <message>
+        <source>Digits fill from the right, up to {0} (0100 = 1 minute) · &apos;.&apos; moves to the frame field</source>
+        <translation>Digits fill from the right, up to {0} (0100 = 1 minute) · &apos;.&apos; moves to the frame field</translation>
+    </message>
+    <message>
+        <source>Frame number, 0 to {0}</source>
+        <translation>Frame number, 0 to {0}</translation>
+    </message>
+    <message>
+        <source>Empty = start of the video</source>
+        <translation>Empty = start of the video</translation>
+    </message>
+    <message>
+        <source>Empty = end of the video</source>
+        <translation>Empty = end of the video</translation>
     </message>
 </context>
 <context>
@@ -346,6 +402,18 @@ Check your connection and cookies, then open this window again.</translation>
     <message>
         <source>Reading the video information...</source>
         <translation>Reading the video information...</translation>
+    </message>
+    <message>
+        <source>Above the maximum — leaving the field sets it to the maximum</source>
+        <translation>Above the maximum — leaving the field sets it to the maximum</translation>
+    </message>
+    <message>
+        <source>Set to the maximum ({0})</source>
+        <translation>Set to the maximum ({0})</translation>
+    </message>
+    <message>
+        <source>Sections add up to {0} — longer than the video ({1})</source>
+        <translation>Sections add up to {0} — longer than the video ({1})</translation>
     </message>
     <message>
         <source>Sections {0} / {1} · {2}fps · video ends at {3}</source>

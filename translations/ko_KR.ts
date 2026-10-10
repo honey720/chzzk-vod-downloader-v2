@@ -44,6 +44,14 @@
         <translation>해상도를 바꿔 프레임률이 달라져, 구간을 새 프레임에 맞게 옮겼습니다.</translation>
     </message>
     <message>
+        <source>Edit sections</source>
+        <translation>구간 편집</translation>
+    </message>
+    <message>
+        <source>Change save location</source>
+        <translation>저장 위치 변경</translation>
+    </message>
+    <message>
         <source>checking length</source>
         <translation>길이 확인 중</translation>
     </message>
@@ -58,6 +66,22 @@
     <message>
         <source>Could not check the length of this resolution. Open the section editor to check again.</source>
         <translation>이 해상도의 영상 길이를 확인하지 못했습니다. 구간 편집 창을 열면 다시 확인합니다.</translation>
+    </message>
+    <message>
+        <source>overlap</source>
+        <translation>겹침</translation>
+    </message>
+    <message>
+        <source>To receive: {0}</source>
+        <translation>받을 양: {0}</translation>
+    </message>
+    <message>
+        <source>Sections add up to {0}</source>
+        <translation>구간 길이의 합: {0}</translation>
+    </message>
+    <message>
+        <source>Overlapping parts are received once</source>
+        <translation>겹치는 구간은 한 번만 받습니다</translation>
     </message>
     <message>
         <source>Click to edit sections</source>
@@ -318,6 +342,10 @@ Part of the video kept arriving incomplete from the server. Try again later.</so
         <translation>이 카드를 기다리는 다운로드가 있습니다 — 창을 닫으면 이어서 받습니다</translation>
     </message>
     <message>
+        <source>The order is the file number (_N)</source>
+        <translation>순서가 파일 번호(_N)입니다</translation>
+    </message>
+    <message>
         <source>Move up</source>
         <translation>위로</translation>
     </message>
@@ -328,6 +356,34 @@ Part of the video kept arriving incomplete from the server. Try again later.</so
     <message>
         <source>Delete section</source>
         <translation>구간 삭제</translation>
+    </message>
+    <message>
+        <source>Clear values</source>
+        <translation>값 비우기</translation>
+    </message>
+    <message>
+        <source>Sections / maximum · frame rate · end of the video</source>
+        <translation>구간 수 / 최대 · 프레임률 · 영상 끝</translation>
+    </message>
+    <message>
+        <source>Add a section (up to {0})</source>
+        <translation>구간 추가(최대 {0}개)</translation>
+    </message>
+    <message>
+        <source>Digits fill from the right, up to {0} (0100 = 1 minute) · &apos;.&apos; moves to the frame field</source>
+        <translation>숫자를 치면 오른쪽부터 채웁니다(최대 {0}자리, 0100 = 1분) · &apos;.&apos;을 치면 프레임 칸으로</translation>
+    </message>
+    <message>
+        <source>Frame number, 0 to {0}</source>
+        <translation>프레임 번호 · 0~{0}</translation>
+    </message>
+    <message>
+        <source>Empty = start of the video</source>
+        <translation>비워 두면 영상 처음</translation>
+    </message>
+    <message>
+        <source>Empty = end of the video</source>
+        <translation>비워 두면 영상 끝</translation>
     </message>
 </context>
 <context>
@@ -341,6 +397,18 @@ Check your connection and cookies, then open this window again.</source>
     <message>
         <source>Reading the video information...</source>
         <translation>영상 정보를 읽는 중...</translation>
+    </message>
+    <message>
+        <source>Above the maximum — leaving the field sets it to the maximum</source>
+        <translation>최대값을 넘습니다 · 칸을 떠나면 최대값으로 맞춥니다</translation>
+    </message>
+    <message>
+        <source>Set to the maximum ({0})</source>
+        <translation>최대값({0})으로 맞췄습니다</translation>
+    </message>
+    <message>
+        <source>Sections add up to {0} — longer than the video ({1})</source>
+        <translation>구간 합 {0} · 영상 길이({1})보다 깁니다</translation>
     </message>
     <message>
         <source>Sections {0} / {1} · {2}fps · video ends at {3}</source>

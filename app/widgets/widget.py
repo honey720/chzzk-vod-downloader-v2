@@ -48,6 +48,10 @@ _global_download_path = ""
 # Qt의 QWIDGETSIZE_MAX(PySide6가 노출하지 않음) — 최대폭 제한을 푸는 값.
 _NO_MAX_WIDTH = (1 << 24) - 1
 
+# 구간 길이의 합이 합친 범위의 길이보다 이만큼(초) 넘게 길어야 겹침으로 본다 — 1ms.
+# 가장 짧은 프레임(120fps ≈ 8.3ms)보다 훨씬 짧고, 소수 초 덧셈의 오차보다는 훨씬 길다
+_OVERLAP_SLACK = 0.001
+
 
 def set_global_download_path(path: str) -> None:
     """전역 다운로드 경로를 갱신한다 — 카드의 경로 표시 여부 판단 기준."""
@@ -277,6 +281,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.pauseButton.setIconName("pause")
         self.retryButton.setIconName("retry")
         self.openDirectoryButton.setIconName("folder")
+        # 대기 카드의 두 조작 (#309) — 저장 위치 버튼의 도형은 _updatePathVisibility가 정한다
+        self.sectionEditButton.setIconName("scissors")
+        self.sectionEditButton.setToolTip(self.tr("Edit sections"))
         self.setIndex(self.index)  # 인덱스 업데이트
         self.titleLabel.setText(self.item.title) # 제목 업데이트
         self.titleEdit.setText(self.item.title) # 제목 업데이트
@@ -288,15 +295,20 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """경로 라벨 — 표시는 축약형(폭이 모자라면 PathLabel이 단계별로 더 줄임), 전문은 툴팁 (#245)."""
         self.directoryLabel.setPathParts(*path_display_parts(self.item.download_path))
         self.directoryLabel.setToolTip(self.item.download_path)
-        self.pathIconButton.setToolTip(self.item.download_path)
+        # 저장 위치 버튼 — 무엇을 하는 버튼인지가 먼저, 지금의 경로가 그 아래
+        change_text = self.tr("Change save location")
+        self.pathButton.setToolTip(f"{change_text}\n{self.item.download_path}")
 
     def setupSignals(self):
         self.deleteButton.clicked.connect(self.requestDelete)
         self.titleLabel.mousePressEvent = self.startTitleEditing
         self.titleEdit.editingFinished.connect(self.finishTitleEditing)
         self.directoryLabel.mousePressEvent = self.choosePath
-        self.pathIconButton.clicked.connect(self.choosePath)  # 아이콘만 남아도 같은 진입점
         self.fileSizeLabel.mousePressEvent = self.requestSectionEdit  # 구간 편집 창 (#309)
+        # 위 줄의 두 버튼 (#309) — 글자를 눌렀을 때와 같은 함수를 부른다. clicked가 싣는
+        # checked(bool)가 event 자리로 가지 않게 람다로 받는다
+        self.pathButton.clicked.connect(lambda: self.choosePath())
+        self.sectionEditButton.clicked.connect(lambda: self.requestSectionEdit())
         self.openDirectoryButton.clicked.connect(self.requestOpenDir)
         self.pauseButton.clicked.connect(self.pauseRequest.emit)
         self.retryButton.clicked.connect(self.retryRequest.emit)
@@ -317,7 +329,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         # 표시의 x가 지그재그로 흩어진다. 내림차순이면 항상 맨 앞 한 줄이다.
         # ②pill은 어떤 폭에서도 전부 보인다(접지 않는다 — #245 확정). 3행에서
         # 줄어드는 것은 다운로드 경로 하나뿐이다(_layoutRowThree) — 단 pill 전부가
-        # 경로 아이콘·크기와 함께 안 들어가는 폭에서는 pill이 선택 하나로 접힌다.
+        # 크기와 함께 안 들어가는 폭에서는 pill이 선택 하나로 접힌다.
         # core/api·app/network의 내부 정렬(오름차순, 마지막이 자동 선택)은
         # 건드리지 않고 표시 계층에서만 뒤집는다.
         # ⚠️ 순서는 고정이다 — 클릭해도 pill을 앞으로 옮기지 않는다(옮기면
@@ -372,18 +384,16 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         return self.item.downloadState != DownloadState.FAILED
 
     def _pillsFit(self, row_width: int, spacing: int) -> bool:
-        """pill 전부가 경로 아이콘·크기와 함께 3행 한 줄에 들어가는가 — 접힘 여부의 유일한 판정.
+        """pill 전부가 크기와 함께 3행 한 줄에 들어가는가 — 접힘 여부의 유일한 판정.
 
         절대 px가 아니라 지금 pill들의 자연 폭(naturalWidth — ▾ 몫 제외)으로 묻는다.
         손익분기는 OS 폰트·유저 폰트 크기·DPI·pill 개수마다 다르다(실측 Win 408 /
-        macOS 416 / Ubuntu 413, 4자리 세트면 +14). 경로는 아이콘 한 칸만 요구한다 —
-        #245의 우선순위대로 텍스트는 접힘보다 먼저 양보하기 때문이다.
+        macOS 416 / Ubuntu 413, 4자리 세트면 +14 — 경로 아이콘이 있던 때의 값이다). 경로는
+        자리를 요구하지 않는다 — #245의 우선순위대로 텍스트는 접힘보다 먼저 양보한다.
         """
         need = sum(b.naturalWidth() for b in self.buttons) + (len(self.buttons) - 1) * spacing
         if self._sizeShown():
             need += spacing + max(self.fileSizeLabel.minimumWidth(), self.fileSizeLabel.sizeHint().width())
-        if getattr(self, "_pathShown", False):
-            need += spacing + self.pathIconButton.minimumWidth()
         return need <= row_width
 
     def pillMode(self) -> str:
@@ -394,14 +404,14 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """3행이 폭을 보고 모양을 정하는 **유일한 지점** (#245 경로 → #244 3행 정리 pill).
 
         무엇이 먼저 양보하나 — 폭이 줄수록 이 순서로만 바뀐다(오너 확정, 역방향 없음):
-        ① 경로 ElideMiddle(PathLabel 단계) → ② 경로 아이콘만 → ③ 해상도 접힘([1080p ▾]).
+        ① 경로 ElideMiddle(PathLabel 단계) → ② 경로 숨김 → ③ 해상도 접힘([1080p ▾]).
         ③ 뒤에 자리가 남아도 ①·②로 돌아가지 않는다. 파일 크기·재생 시간은 어떤 폭에서도
         접지 않는다(확보 폭 고정).
-        - pill: 전부 + 경로 아이콘 + 크기가 들어가면 **전부**(클릭 한 번에 고른다).
+        - pill: 전부 + 크기가 들어가면 **전부**(클릭 한 번에 고른다).
           안 들어가면 접힘 — 누르면 그 자리에서 펼쳐지고 그동안 경로·크기는 숨는다
           (펼침 = 유저 조작, 폭이 넓어져 전부 들어가면 풀린다)
         - 경로: 남는 폭 전부(ElideMiddle). 최소치(_pathMinTextWidth) 아래거나 pill이
-          접혔으면 텍스트를 숨기고 pathIconButton만 — **클릭 대상은 남는다**
+          접혔으면 텍스트를 숨긴다 — 폴더 선택의 진입점은 1행의 저장 위치 버튼에 늘 있다
 
         판정은 라벨·pill 자신의 현재 폭이 아니라 "행 폭 − 자연 폭들"로만 하므로 표시
         모드가 바뀌어도 되먹임이 없다. 배치 전(행 폭 0)이면 전부 보이는 모습으로 두고
@@ -444,11 +454,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             # ③ 경로
             if not getattr(self, "_pathShown", False) or mode == "expanded":
                 self.directoryLabel.setVisible(False)
-                self.pathIconButton.setVisible(False)
                 return
             if not known:
                 self.directoryLabel.setVisible(True)
-                self.pathIconButton.setVisible(False)
                 return
             used = 0
             for button in self.buttons:
@@ -459,15 +467,15 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             if self.fileSizeLabel.isVisibleTo(self):
                 used += max(self.fileSizeLabel.minimumWidth(), self.fileSizeLabel.sizeHint().width()) + spacing
             available = row_width - used
-            # 접힘(③)이면 자리가 남아도 경로는 아이콘(②)에 머문다 — 순서는 한 방향이다:
-            # ① 경로 ElideMiddle → ② 경로 아이콘 → ③ 해상도 접힘. pill을 접어 생긴 자리로
+            # 접힘(③)이면 자리가 남아도 경로는 숨은 채(②)다 — 순서는 한 방향이다:
+            # ① 경로 ElideMiddle → ② 경로 숨김 → ③ 해상도 접힘. pill을 접어 생긴 자리로
             # 경로를 다시 펴면 "폭이 모자라면 해상도를 펴야 하나 접은 채 두나"가 정해지지
             # 않아 카드마다 우선순위가 반대로 보였다(실기: 5-pill 카드는 접힘+텍스트,
-            # 3-pill 카드는 전부+아이콘). 단조 판정이어야 같은 폭에서 같은 모양이다.
-            icon_only = mode == "collapsed" or available < self._pathMinTextWidth()
-            self.directoryLabel.setMaximumWidth(max(available, 0) if not icon_only else _NO_MAX_WIDTH)
-            self.directoryLabel.setVisible(not icon_only)
-            self.pathIconButton.setVisible(icon_only)
+            # 3-pill 카드는 전부+아이콘 — 경로 아이콘이 있던 때다). 단조 판정이어야 같은
+            # 폭에서 같은 모양이다.
+            hidden = mode == "collapsed" or available < self._pathMinTextWidth()
+            self.directoryLabel.setMaximumWidth(max(available, 0) if not hidden else _NO_MAX_WIDTH)
+            self.directoryLabel.setVisible(not hidden)
         finally:
             self._layingOutRowThree = False
 
@@ -475,11 +483,11 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """구간 요약 뒤의 알림("30fps에 맞춤")을 폭이 될 때만 붙인다 (#309).
 
         이 자리의 글은 말줄임하지 않고 폭을 먼저 확보하므로(``_reserveFileSizeWidth``), 알림까지
-        붙인 글이 접힌 pill · 경로 아이콘과 함께 한 줄에 안 들어가면 pill이 눌려 잘린다. 그
+        붙인 글이 접힌 pill과 함께 한 줄에 안 들어가면 pill이 눌려 잘린다. 그
         폭에서는 알림을 떼고 요약만 적는다 — 알림의 전문은 툴팁에 남는다. 3행에서 가장 먼저
         양보하는 것이 이 알림이다.
 
-        판정은 지금 표시 중인 글의 폭이 아니라 "행 폭 − 접힌 pill − 경로 아이콘"으로만 한다 —
+        판정은 지금 표시 중인 글의 폭이 아니라 "행 폭 − 접힌 pill"로만 한다 —
         글을 바꿔도 되먹임이 없다.
         """
         if not self._sectionCount() or self.item.downloadState != DownloadState.WAITING:
@@ -491,8 +499,6 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         selected = self._selectedButton or (self.buttons[0] if self.buttons else None)
         if selected is not None:
             others += selected.naturalWidth() + CARET_WIDTH + CARET_GAP + spacing
-        if getattr(self, "_pathShown", False):
-            others += self.pathIconButton.minimumWidth() + spacing
         # 긴 것부터 대 본다 — 전부, 유저가 봐야 하는 것만, 알림 없이, 크기도 없이
         candidates = [
             self._sectionSummary(),
@@ -891,14 +897,60 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         좁은 폭에서는 ``_fitSectionNotice``가 알림과 크기를 뗀다.
         """
         selections = self.item.selections
-        length = sum(selection.end - selection.start for selection in selections)
-        clock = self._shortRemain(strftime("%H:%M:%S", gmtime(max(length, 0))))
+        # 길이는 받을 양이다 — 겹치는 자리는 한 번만 받으므로 합친 범위의 길이를 적는다.
+        # 겹침이 없으면 구간 길이의 합과 같다
+        clock = self._clock(self._sectionSpan())
+        if self._sectionsOverlap():
+            marker = self.tr("overlap")  # f-string 안의 tr은 lupdate가 줍지 못한다
+            clock = f"{marker} · {clock}"
         summary = self.tr("Sections {0} · {1}").format(len(selections), clock)
         size = self._sectionSizeNote() if with_size else ""
         if size:
             summary = f"{summary} · {size}"
         notice = self._sectionNotice(warnings_only) if with_notice else ""
         return f"{summary} · {notice}" if notice else summary
+
+    def _sectionTotal(self) -> float:
+        """구간 길이의 합(초) — 겹치는 자리를 구간마다 센다."""
+        return sum(max(s.end - s.start, 0.0) for s in self.item.selections)
+
+    def _sectionSpan(self) -> float:
+        """구간들을 합친 범위의 길이(초) — 겹치는 자리를 한 번만 센다. 받을 양이다."""
+        length = 0.0
+        reached = None  # 지금까지 센 범위의 끝
+        for selection in sorted(self.item.selections, key=lambda s: (s.start, s.end)):
+            start = selection.start if reached is None else max(selection.start, reached)
+            if selection.end > start:
+                length += selection.end - start
+                reached = selection.end
+        return length
+
+    def _sectionsOverlap(self) -> bool:
+        """구간끼리 겹치는 자리가 있는지 — 길이의 합이 합친 범위의 길이보다 길다 (#309).
+
+        맞닿기만 한 구간(앞의 끝 = 뒤의 시작)은 겹침이 아니다. 판정은 프레임 하나보다 훨씬 짧은
+        여유를 둔다 — 소수 초의 덧셈 오차를 겹침으로 읽지 않는다.
+        """
+        return self._sectionTotal() - self._sectionSpan() > _OVERLAP_SLACK
+
+    def _clock(self, seconds: float) -> str:
+        """초를 짧은 시간 표기("3:12" · "1:02:03")로 적는다 — 하루를 넘어도 시간을 그대로 센다."""
+        whole = int(max(seconds, 0))
+        return self._shortRemain(f"{whole // 3600:02d}:{whole % 3600 // 60:02d}:{whole % 60:02d}")
+
+    def _sectionOverlapDetail(self) -> list[str]:
+        """겹침이 있는 구간 카드의 툴팁에 더하는 줄 — 받을 양 · 구간 길이의 합 · 한 번만 받는다."""
+        if not self._sectionsOverlap():
+            return []
+        amount = self._clock(self._sectionSpan())
+        size = self._sectionSizeText(with_head=True)
+        if size:
+            amount = f"{amount} · {size}"
+        return [
+            self.tr("To receive: {0}").format(amount),
+            self.tr("Sections add up to {0}").format(self._clock(self._sectionTotal())),
+            self.tr("Overlapping parts are received once"),
+        ]
 
     def _sectionSizeNote(self) -> str:
         """대기 카드의 구간 요약에 적는 크기 자리의 글 — 받을 크기, 세는 중이면 "확인 중...".
@@ -907,21 +959,37 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         비워 두지 않고 카드의 크기 조회가 쓰는 문구를 그대로 쓴다. 세지 못했으면 빈 글이다 —
         받기 시작 때 엔진이 정한 값이 들어온다.
         """
-        size = self._sectionSizeText()
+        size = self._sectionSizeText(with_head=True)
         if size or not getattr(self.item, "section_sizing", False):
             return size
         return self.tr("Checking...")
 
-    def _sectionSizeText(self) -> str:
+    def _sectionSizeText(self, with_head: bool = False) -> str:
         """구간 다운로드가 받을 크기 — 인코딩 완료 VOD에서 그 값을 알 때만. 모르면 빈 글이다.
 
         세그먼트 방식(fMP4 · TS)은 받기 전에 크기를 모른다. 영상 전체 크기를 대신 적지 않는다 —
         구간 카드가 받는 양이 아니다.
+
+        Args:
+            with_head: True면 조회 때 이미 받아 둔 머리(ftyp · moov 등)를 더해 파일 기준으로
+                적는다 — 대기 카드의 요약이 쓴다. 구간이 영상 전체를 덮으면 구간 없는 카드의
+                크기와 같은 숫자가 된다. 받는 동안의 "받은 크기 / 받을 크기"는 엔진이 세는
+                전송량 기준이라 더하지 않는다
         """
         size = getattr(self.item, "section_bytes", None)
         if self.item.is_segment_based or not size:
             return ""
+        if with_head:
+            size += getattr(self.item, "section_head_bytes", None) or 0
         return self.setSize(size)
+
+    def _pathEditable(self) -> bool:
+        """이 카드의 저장 위치를 바꿀 수 있는 상태인지 — 대기 상태만이다 (#245).
+
+        받기 시작한 뒤에는 이미 그 경로에 쓰고 있다. 경로 글자의 호버 · 손가락 커서, 위 줄의
+        저장 위치 버튼, 폴더 선택(``choosePath``)이 모두 이 판정을 쓴다.
+        """
+        return self.item.downloadState == DownloadState.WAITING
 
     def _sectionsEditable(self) -> bool:
         """구간 편집 창을 열 수 있는 카드인지 — 대기 상태이고 구간 기능이 있는 타입이다 (#309)."""
@@ -950,6 +1018,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         if editable:
             lines = [label.text()]
             if self._sectionCount():
+                lines.extend(self._sectionOverlapDetail())
                 lines.extend(self._sectionNoticeDetail())
             lines.append(self.tr("Click to edit sections"))
             label.setToolTip("\n".join(lines))
@@ -1217,6 +1286,10 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             self.pauseButton.setToolTip(self.tr("Pause"))
         self.openDirectoryButton.setVisible(raw == DownloadState.FINISHED)
         self.retryButton.setVisible(raw == DownloadState.FAILED)
+        # 구간 편집 · 저장 위치 (#309) — 아래 줄의 글자를 눌러 그 일을 할 수 있는 상태에서만
+        # 보인다(같은 판정을 쓴다). 꺼 두지 않고 숨긴다 — 다른 조작 버튼들과 같다
+        self.sectionEditButton.setVisible(self._sectionsEditable())
+        self.pathButton.setVisible(self._pathEditable())
         self.fileSizeLabel.setVisible(raw != DownloadState.FAILED)
         self._reserveFileSizeWidth()  # 우측 군집 폭을 먼저 확보 — 크기·시간은 잘리지 않는다
         self._updatePathVisibility()  # → _layoutRowThree: pill 모드·경로 모양을 한 곳에서
@@ -1271,7 +1344,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     def _packPills(self) -> None:
         """펼친 pill을 3행에, 넘치면 그 아래 추가 행에 왼쪽부터 채운다 — 줄바꿈.
 
-        줄바꿈이 여전히 필요한 이유: 접힘의 판정은 "pill + 경로 아이콘 + 크기"이고
+        줄바꿈이 여전히 필요한 이유: 접힘의 판정은 "pill + 크기"이고
         펼침은 경로·크기를 숨겨 pill만 두므로, 그 사이 폭(pill만 들어가는 폭 ~
         전부 들어가는 폭)에서는 펼쳐도 한 줄이지만 **그보다 좁으면**(창 콘텐츠
         최소폭 근처 — 실측 뷰포트 372~382 vs 5-pill 243+165) 펼친 pill이 한 줄에
@@ -1366,10 +1439,10 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
 
         - 제목: `editable` 동적 속성(QSS `#titleLabel[editable="true"]:hover`) + IBeam↔화살표
         - 경로 라벨: 손가락↔화살표 커서(호버 강조는 원래 없다)
-        - 경로 아이콘: IconButton.setInteractive — 호버 배경·도형 밝아짐을 끈다. 툴팁(전문)은
-          정보 표면이라 상태와 무관하게 남긴다
+        - 위 줄의 저장 위치 · 구간 편집 버튼은 여기가 아니라 applyStateStyle이 보이고 숨긴다
+          (누를 수 없는 상태에서는 아예 없다)
         """
-        editable = self.item.downloadState == DownloadState.WAITING
+        editable = self._pathEditable()  # 제목 편집도 같은 상태(대기)에서만이다
         if not editable and self.isEditing:
             # 편집 중에 상태가 바뀌었다 — 입력창을 닫고 기존 값으로 되돌린다(#244 P-5 결함 3).
             # 시작 순간에 편집값을 확정하는 안은 쓰지 않는다: 파일명은 시작 시점에 이미
@@ -1389,7 +1462,6 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         if self.directoryLabel.property("editable") != editable:
             self.directoryLabel.setProperty("editable", editable)
             theme.repolish(self.directoryLabel)
-        self.pathIconButton.setInteractive(editable)
         self._applySectionHint()
 
     def _updatePathVisibility(self) -> None:
@@ -1407,10 +1479,10 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             self._pathShown = bool(path)
         else:
             self._pathShown = differs
-        # 아이콘 모드의 도형 — 전역과 다르면 점 표시 + 밝은 본체색(다르다는 것이 정보)
-        self.pathIconButton.setIconName("folder_dot" if differs else "folder")
-        self.pathIconButton.setIdleToken("text" if differs else "textMuted")
-        self.pathIconButton.setAccentToken("accent" if differs else "")
+        # 위 줄 저장 위치 버튼의 도형 — 전역과 다르면 점 표시 + 밝은 본체색(다르다는 것이 정보)
+        self.pathButton.setIconName("folder_edit_dot" if differs else "folder_edit")
+        self.pathButton.setIdleToken("text" if differs else "textMuted")
+        self.pathButton.setAccentToken("accent" if differs else "")
         self._layoutRowThree()
 
     def _cardState(self) -> str:
@@ -1508,8 +1580,10 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         필요 없어졌다 — 그 코드 경로(check_card_edit_path·"Path does not
         exist." 팝업)는 이 교체로 제거됐다. 대기 상태에서만 동작한다(받기
         시작한 뒤의 경로 변경은 의미가 없다). 취소(빈 반환)는 무변경.
+
+        경로 글자를 누르거나(event가 온다) 위 줄의 저장 위치 버튼을 누르면(event 없음) 불린다.
         """
-        if self.item.downloadState != DownloadState.WAITING:
+        if not self._pathEditable():
             return
         chosen = QFileDialog.getExistingDirectory(
             self, self.tr("Select download folder"), self.item.download_path or ""

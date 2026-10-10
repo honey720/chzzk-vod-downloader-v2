@@ -75,7 +75,9 @@ _INITIAL_SIZE = (560, 420)  # 창의 첫 크기(px) — 행 일곱 개쯤이 스
 # 행 사이의 간격(px). 행마다 아래에 안내 줄 한 줄이 늘 서 있어 그 줄이 행 사이를 띄운다 —
 # 간격을 따로 두면 20행의 높이가 안내 줄만큼 더 길어진다
 _ROW_SPACING = 0
-_MESSAGE_GAP = 2  # 칸의 줄과 그 아래 안내 줄 사이(px)
+# 칸의 줄과 그 아래 안내 줄 사이(px) — 띄우지 않는다. 안내 줄이 늘 한 줄을 차지해 행 사이를
+# 이미 띄우고, 2px씩이면 20행에서 40px이 더 든다
+_MESSAGE_GAP = 0
 
 
 class SectionRow(QWidget):
@@ -265,6 +267,8 @@ class SectionEditDialog(QDialog):
         right = max(margins.right(), bar.sizeHint().width())
         self._rowLayout.setContentsMargins(margins.left(), margins.top(), right, margins.bottom())
         self._scrollPadding = ScrollBarPadding(self.scrollArea, self._rowLayout, right)
+        # 행의 양옆에 드는 폭(px) — 왼쪽 여백 + 오른쪽 여백(스크롤바가 보이면 바가 그 자리에 든다)
+        self._rowSideWidth = margins.left() + right
         layout.addWidget(self.scrollArea, 1)
 
         # 받는 중인 배치가 이 카드를 기다릴 때만 보인다 — 창을 닫아야 이어 간다는 것을 알린다
@@ -275,7 +279,12 @@ class SectionEditDialog(QDialog):
         layout.addWidget(self.waitHintLabel)
 
         buttons = QHBoxLayout()
-        buttons.addStretch(1)
+        # 구간 길이의 합이 영상보다 길다는 알림 — 버튼 줄의 왼쪽 남는 자리를 쓴다. 글이 없어도
+        # 그 자리를 차지해, 알림이 생기고 사라져도 행 영역과 버튼이 움직이지 않는다. 좁으면
+        # 말줄임하고 전문은 툴팁이다(ElidingLabel)
+        self.totalLabel = ElidingLabel(self)
+        self.totalLabel.setObjectName("sectionTotalLabel")
+        buttons.addWidget(self.totalLabel, 1)
         self.cancelButton = QPushButton(self)
         self.cancelButton.setObjectName("sectionCancelButton")
         self.cancelButton.setAutoDefault(False)
@@ -327,7 +336,7 @@ class SectionEditDialog(QDialog):
     # ---- 끝을 맞췄다는 안내 ----
 
     def _onEndClamped(self, _row: int) -> None:
-        """뷰모델이 끝을 영상 끝으로 맞췄다 — 이 조작이 끝난 뒤의 다음 조작부터 안내를 내릴 수 있다."""
+        """뷰모델이 값을 맞췄다(영상 끝 · 칸의 최대값) — 이 조작이 끝난 뒤의 다음 조작부터 안내를 내릴 수 있다."""
         self._clampNoticeArmed = False
         self._armTimer.start()
 
@@ -371,6 +380,22 @@ class SectionEditDialog(QDialog):
         self._commitFocused()
         action(row, *args)
 
+    def _onDeleteOrClear(self, row: int) -> None:
+        """행의 ✕ — 행이 둘 이상이면 그 행을 지우고, 하나뿐이면 그 행의 값을 비운다(행은 남는다).
+
+        값을 비운 뒤에는 그 행의 시작 시분초 칸으로 간다 — 다시 넣기 시작할 자리다.
+        """
+        if self._viewmodel.canRemove():
+            self._rowAction(self._viewmodel.removeRow, row)
+            return
+        self._onInput()
+        self._commitFocused()
+        if not self._viewmodel.canClear():
+            return
+        self._viewmodel.clearRow(row)
+        if self._rows:
+            self._rows[0].startEdit.clockEdit.setFocus(Qt.FocusReason.TabFocusReason)
+
     def _onAdd(self) -> None:
         """구간 추가 — 빈 행을 끝에 넣고 그 행의 시작 시분초 칸으로 간다."""
         self._onInput()
@@ -403,15 +428,29 @@ class SectionEditDialog(QDialog):
                 edit.entered.connect(lambda r=index, c=column: self._onEntered(r, c))
                 edit.pasted.connect(lambda r=index, c=column, e=edit: self._onPasted(r, c, e))
                 edit.touched.connect(self._onInput)
-            moveRow, removeRow = self._viewmodel.moveRow, self._viewmodel.removeRow
+            moveRow = self._viewmodel.moveRow
             row.upButton.clicked.connect(lambda _=False, r=index: self._rowAction(moveRow, r, -1))
             row.downButton.clicked.connect(lambda _=False, r=index: self._rowAction(moveRow, r, 1))
-            row.deleteButton.clicked.connect(lambda _=False, r=index: self._rowAction(removeRow, r))
+            row.deleteButton.clicked.connect(lambda _=False, r=index: self._onDeleteOrClear(r))
             self._rowLayout.insertWidget(index, row)
             self._rows.append(row)
         # 목록의 값은 _refresh가 칸에 넣는다 — 빈 시각(빈 글)이 아닌 값은 새 칸의 값과 달라
         # 언제나 들어가고, 넣은 값은 0이어도 전부 밝게 보인다
         self._refresh()
+        self._fitRowWidth()
+
+    def _fitRowWidth(self) -> None:
+        """스크롤 영역의 최소 폭을 행 하나가 다 들어가는 폭으로 둔다 — 창이 그보다 좁아지지 않는다.
+
+        스크롤 영역은 안에 든 위젯의 최소 폭을 밖으로 알리지 않는다. 가로 스크롤이 없어 그대로
+        두면 창을 가장 좁게 줄였을 때 행의 오른쪽 끝(✕ 버튼)이 잘린다 (#309). 행 컨테이너가
+        아니라 행에 묻는다 — 방금 만든 행은 아직 보이기 전이라 컨테이너의 최소 폭에 들지 않는다.
+        """
+        if not self._rows:
+            return
+        frame = 2 * self.scrollArea.frameWidth()
+        row = self._rows[0].minimumSizeHint().width()
+        self.scrollArea.setMinimumWidth(row + self._rowSideWidth + frame)
 
     def _isCurrent(self, row: int, column: int, edit: TimePointEdit) -> bool:
         """그 시각 입력이 지금 그 (행, 칸)에 놓인 것인지.
@@ -441,7 +480,7 @@ class SectionEditDialog(QDialog):
         self._showSettled(row, column, edit)
 
     def _showSettled(self, row: int, column: int, edit: TimePointEdit) -> None:
-        """편집을 끝낸 칸의 값이 뷰모델에서 바뀌었으면(영상 끝으로 맞춤) 칸에 그 값을 넣는다.
+        """편집을 끝낸 칸의 값이 뷰모델에서 바뀌었으면(영상 끝 · 칸의 최대값으로 맞춤) 칸에 그 값을 넣는다.
 
         표시를 맞추는 쪽(``_refresh``)은 포커스가 있는 칸을 건드리지 않는다 — Enter · 붙여넣기는
         포커스가 그 칸에 있는 채로 편집을 끝내므로 여기서 넣는다. 넣은 값은 전부 밝게 보인다.
@@ -451,10 +490,10 @@ class SectionEditDialog(QDialog):
             edit.setText(settled)
 
     def _onPasted(self, row: int, column: int, edit: TimePointEdit) -> None:
-        """칸에 글을 붙여넣었다 — 끝이 영상의 끝을 넘으면 떠나기를 기다리지 않고 바로 맞춘다."""
+        """칸에 글을 붙여넣었다 — 넘는 값(칸의 최대값 · 영상의 끝)을 떠나기를 기다리지 않고 바로 맞춘다."""
         if not isValid(self._viewmodel) or not self._isCurrent(row, column, edit):
             return
-        if column == END and self._viewmodel.clampEnd(row):
+        if self._viewmodel.settle(row, column):
             self._showSettled(row, column, edit)
 
     def _onEntered(self, row: int, column: int) -> None:
@@ -487,23 +526,20 @@ class SectionEditDialog(QDialog):
             # 걸러 낸 행은 번호가 없다 — 남은 행끼리 1부터 잇는다(파일 이름의 번호)
             number = viewmodel.rowNumber(index)
             row.numberLabel.setText("" if number is None else str(number))
-            # 치고 있는 행의 오류는 표(ERROR_TIMING)가 정한 때에 띄운다. 프레임 칸에 두 자리를
-            # 다 쳤으면 프레임 넘침은 바로 띄운다
-            frame_full = False
-            if self._typing is not None and self._typing[0] == index:
-                typed = row.edit(self._typing[1])
-                frame_full = typed.typingFrame() and typed.frameIsFull()
-            error = viewmodel.shownErrorText(index, self._typing, frame_full)
-            flagged = viewmodel.shownErrorParts(index, self._typing, frame_full)
+            # 치고 있는 행의 오류는 표(ERROR_TIMING)가 정한 때에 띄운다
+            error = viewmodel.shownErrorText(index, self._typing)
+            flagged = viewmodel.shownErrorParts(index, self._typing)
             for column in (START, END):
                 edit = row.edit(column)
                 text = viewmodel.rows[index][column]
                 # 입력 중인 시각은 건드리지 않는다 — 고쳐 쓴 표기는 편집을 끝낸 뒤에 넣는다
                 if not edit.hasEditFocus() and edit.text() != text:
                     edit.setText(text)
-                tooltip = viewmodel.millisecondsText(index, column)
+                # 툴팁 — 첫 줄은 그 시각의 밀리초 표기(값이 읽힐 때), 그 아래는 칸을 쓰는 법이다
+                value = viewmodel.millisecondsText(index, column)
                 for part, widget in ((PART_CLOCK, edit.clockEdit), (PART_FRAME, edit.frameEdit)):
-                    widget.setToolTip(tooltip)
+                    lines = [value, self._fieldHelp(part, widget), self._emptyHelp(column)]
+                    widget.setToolTip("\n".join(line for line in lines if line))
                     # 오류가 난 칸만 붉게 — 초 · 분 넘침은 시분초 칸, 프레임 넘침은 프레임 칸,
                     # 시각 전체의 오류는 그 시각의 두 칸
                     self._setFlag(widget, "invalid", (column, part) in flagged)
@@ -514,21 +550,58 @@ class SectionEditDialog(QDialog):
             row.showMessage(
                 {
                     MESSAGE_ERROR: error,
-                    MESSAGE_NOTICE: viewmodel.noticeText(index, self._typing),
+                    MESSAGE_NOTICE: viewmodel.noticeText(
+                        index, self._typing, self._fullParts(index)
+                    ),
                     MESSAGE_NOTE: viewmodel.ignoredText() if ignored else "",
                 }
             )
-            row.deleteButton.setEnabled(viewmodel.canRemove())  # 하나뿐인 행은 지울 수 없다
+            # 하나뿐인 행은 지울 수 없다 — 값이 있으면 ✕가 그 값을 비운다(비어 있으면 꺼 둔다)
+            row.deleteButton.setEnabled(viewmodel.canRemove() or viewmodel.canClear())
             row.upButton.setEnabled(index > 0)
             row.downButton.setEnabled(index < count - 1)
-            row.upButton.setToolTip(self.tr("Move up"))
-            row.downButton.setToolTip(self.tr("Move down"))
-            row.deleteButton.setToolTip(self.tr("Delete section"))
+            order_help = self.tr("The order is the file number (_N)")
+            row.upButton.setToolTip(self.tr("Move up") + "\n" + order_help)
+            row.downButton.setToolTip(self.tr("Move down") + "\n" + order_help)
+            row.deleteButton.setToolTip(
+                self.tr("Delete section") if count > 1 else self.tr("Clear values")
+            )
         self.headerLabel.setText(viewmodel.headerText())
-        self.headerLabel.setToolTip(viewmodel.endMillisecondsText())  # 영상 끝의 밀리초 표기
+        # 머리줄의 툴팁 — 첫 줄은 영상 끝의 밀리초 표기, 그 아래는 머리줄에 적힌 것이 무엇인지다
+        header_help = self.tr("Sections / maximum · frame rate · end of the video")
+        self.headerLabel.setToolTip(
+            "\n".join(line for line in (viewmodel.endMillisecondsText(), header_help) if line)
+        )
+        self.addButton.setToolTip(
+            self.tr("Add a section (up to {0})").format(viewmodel.maxSections())
+        )
         self.addButton.setEnabled(viewmodel.canAdd())
+        self.totalLabel.setText(viewmodel.totalNoticeText())
         # 끝 칸을 치는 중 끝만 영상 끝을 넘은 것은 확인을 막지 않는다 — 확인이 그 칸을 맞춘다
         self.okButton.setEnabled(viewmodel.canCommit(self._typing))
+
+    def _fieldHelp(self, part: str, widget: TimecodeEdit) -> str:
+        """칸을 쓰는 법 한 줄 — 숫자는 칸과 뷰모델의 값에서 가져온다."""
+        if part == PART_CLOCK:
+            return self.tr(
+                "Digits fill from the right, up to {0} (0100 = 1 minute) · '.' moves to the frame field"
+            ).format(widget.maxDigits())
+        top = self._viewmodel.topFrame()
+        return "" if top is None else self.tr("Frame number, 0 to {0}").format(top)
+
+    def _emptyHelp(self, column: int) -> str:
+        """빈 시각이 무엇을 뜻하는지 한 줄."""
+        if column == START:
+            return self.tr("Empty = start of the video")
+        return self.tr("Empty = end of the video")
+
+    def _fullParts(self, index: int) -> frozenset[str]:
+        """치고 있는 시각이 그 행의 것이면, 그 시각에서 자리를 다 채운 칸. 아니면 빈 집합."""
+        if self._typing is None or self._typing[0] != index:
+            return frozenset()
+        typed = self._rows[index].edit(self._typing[1])
+        parts = ((PART_CLOCK, typed.clockEdit), (PART_FRAME, typed.frameEdit))
+        return frozenset(name for name, part in parts if part.isFull())
 
     @staticmethod
     def _setFlag(widget: QWidget, name: str, on: bool) -> None:

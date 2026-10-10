@@ -34,12 +34,26 @@ from PySide6.QtWidgets import QPushButton
 import app.theme as theme
 
 #: 그릴 수 있는 아이콘 이름 — `IconButton.setIconName()`이 받는 어휘.
-#: folder_dot = 폴더 + 우상단 점(강조색) — 카드 경로가 전역 설정과 다를 때
-#: 아이콘만 남은 경로 자리에 "다르다"를 표시한다(#245).
+#: folder = 완료 카드의 폴더 열기.
+#: folder_edit = 폴더 + 우하단 연필 — 카드 위 줄의 저장 위치 버튼(위치를 바꾼다). 폴더
+#: 열기와 하는 일이 달라 모양을 나눈다(#309).
+#: folder_edit_dot = 거기에 우상단 점(강조색) — 카드 경로가 전역 설정과 다를 때
+#: 저장 위치 버튼이 "다르다"를 표시한다(#245, #309).
 #: settings = 상단 바 설정 버튼의 톱니 — Windows에서는 설정 앱과 같은 글리프(Segoe Fluent
 #: Icons U+E713), 그 폰트가 없는 OS에서는 같은 자세의 외곽선 톱니를 그린다. 이전의
 #: `⚙`(U+2699)는 어느 폰트가 받든 그 폰트 모양이라 플랫폼마다 달랐다.
-ICON_NAMES = ("pause", "resume", "retry", "folder", "folder_dot", "delete", "settings")
+#: scissors = 카드 위 줄의 구간 편집 버튼 — 가위(자를 구간을 정한다, #309).
+ICON_NAMES = (
+    "pause",
+    "resume",
+    "retry",
+    "folder",
+    "folder_edit",
+    "folder_edit_dot",
+    "delete",
+    "settings",
+    "scissors",
+)
 
 _CACHE: dict[tuple[str, str, int, float, str], QPixmap] = {}
 
@@ -49,7 +63,7 @@ def action_pixmap(name: str, color: str, size: int, dpr: float = 1.0, accent: st
 
     같은 (이름, 색, 크기, 배율, 강조색)은 항상 같은 QPixmap 객체다. 배율(dpr)
     만큼 크게 그린 뒤 `setDevicePixelRatio`로 논리 크기를 맞춰 HiDPI에서도
-    선명하다. `accent`는 두 색을 쓰는 도형(folder_dot의 점)만 읽는다.
+    선명하다. `accent`는 두 색을 쓰는 도형(folder_edit_dot의 점)만 읽는다.
     """
     if name not in ICON_NAMES:
         raise ValueError(f"알 수 없는 아이콘: {name!r} (허용: {ICON_NAMES})")
@@ -159,12 +173,49 @@ def _paint_folder(painter: QPainter, s: float, color: QColor, accent: QColor) ->
     painter.drawPath(path.simplified())
 
 
-def _paint_folder_dot(painter: QPainter, s: float, color: QColor, accent: QColor) -> None:
-    """폴더 + 우상단 점(강조색) — "이 카드의 경로는 전역과 다르다" 표시."""
+def _paint_folder_edit(painter: QPainter, s: float, color: QColor, accent: QColor) -> None:
+    """저장 위치 변경 — 폴더 몸통의 우하단에 비스듬한 연필.
+
+    폴더는 면으로 칠하므로 같은 색의 연필은 그 위에서 보이지 않는다. 연필 둘레를 먼저 투명하게
+    파내고 그 안에 연필을 그린다 — 삭제(✕) · 가위와 같은 굵기 계열의 선이다.
+    """
     _paint_folder(painter, s, color, accent)
+    tip, top = QPointF(s * 0.50, s * 0.94), QPointF(s * 0.90, s * 0.54)
+    painter.save()
+    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
+    _stroke(painter, color, s * 0.36)
+    painter.drawLine(tip, top)
+    painter.restore()
+    _stroke(painter, color, s * 0.14)
+    painter.drawLine(QPointF(s * 0.60, s * 0.84), top)
+    _fill(painter, color)
+    painter.drawPolygon(
+        QPolygonF(
+            [
+                QPointF(s * 0.44, s * 1.00),
+                QPointF(s * 0.49, s * 0.83),
+                QPointF(s * 0.61, s * 0.95),
+            ]
+        )
+    )
+
+
+def _paint_folder_edit_dot(painter: QPainter, s: float, color: QColor, accent: QColor) -> None:
+    """저장 위치 변경 + 우상단 점(강조색) — "이 카드의 경로는 전역과 다르다" 표시."""
+    _paint_folder_edit(painter, s, color, accent)
     _fill(painter, accent)
     radius = s * 0.17
     painter.drawEllipse(QPointF(s * 0.82, s * 0.20), radius, radius)
+
+
+def _paint_scissors(painter: QPainter, s: float, color: QColor, accent: QColor) -> None:
+    """구간 편집 — 가위. 엇갈린 날 둘과 아래의 손잡이 고리 둘. 삭제(✕)와 같은 굵기 계열의 선이다."""
+    _stroke(painter, color, s * 0.12)
+    painter.drawLine(QPointF(s * 0.34, s * 0.60), QPointF(s * 0.84, s * 0.12))
+    painter.drawLine(QPointF(s * 0.66, s * 0.60), QPointF(s * 0.16, s * 0.12))
+    ring = s * 0.14
+    painter.drawEllipse(QPointF(s * 0.25, s * 0.76), ring, ring)
+    painter.drawEllipse(QPointF(s * 0.75, s * 0.76), ring, ring)
 
 
 def _paint_delete(painter: QPainter, s: float, color: QColor, accent: QColor) -> None:
@@ -247,9 +298,11 @@ _PAINTERS = {
     "resume": _paint_resume,
     "retry": _paint_retry,
     "folder": _paint_folder,
-    "folder_dot": _paint_folder_dot,
+    "folder_edit": _paint_folder_edit,
+    "folder_edit_dot": _paint_folder_edit_dot,
     "delete": _paint_delete,
     "settings": _paint_settings,
+    "scissors": _paint_scissors,
 }
 
 
@@ -322,7 +375,7 @@ class IconButton(QPushButton):
         return self._idle_token
 
     def setAccentToken(self, token: str) -> None:
-        """두 색 도형(folder_dot의 점)의 강조색 토큰. 빈 문자열이면 본체 색을 따른다."""
+        """두 색 도형(folder_edit_dot의 점)의 강조색 토큰. 빈 문자열이면 본체 색을 따른다."""
         if token != self._accent_token:
             self._accent_token = token
             self.update()

@@ -647,21 +647,6 @@ def test_enter_in_either_field_commits_and_reports_entered_once(point, part):
     assert order == ["committed", "entered"]
 
 
-def test_time_point_tells_when_the_frame_field_is_being_typed_and_full(point):
-    """프레임 칸에 두 자리를 다 쳤는지, 지금 치는 칸이 프레임 칸인지를 알려야 한다.
-
-    시분초 칸에 5 -> 프레임 칸을 치는 중 아님. 프레임 칸에 6 -> 치는 중 · 다 차지 않음. 0 -> 다 참
-    """
-    type_digits(point.clockEdit, "5")
-    assert (point.typingFrame(), point.frameIsFull()) == (False, False)
-
-    type_digits(point.frameEdit, "6")
-    assert (point.typingFrame(), point.frameIsFull()) == (True, False)
-
-    type_digits(point.frameEdit, "0")
-    assert (point.typingFrame(), point.frameIsFull()) == (True, True)
-
-
 # ================================================================ 빈 시각 · 확정 표시 (#309)
 
 

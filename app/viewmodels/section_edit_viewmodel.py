@@ -34,7 +34,7 @@ from core.api.mp4 import Mp4Error
 from core.models.download_state import DownloadState
 from core.models.mp4_index import PendingMp4Head
 from core.models.plan import TimeRange
-from core.utils.mp4_ranges import sections_download_size
+from core.utils.mp4_ranges import sections_download_size, sections_head_size
 from core.utils.selections import (
     MAX_SELECTIONS,
     SELECTION_DUPLICATE,
@@ -54,6 +54,7 @@ from core.utils.timecode import (
     format_timecode,
     frame_index,
     frame_rate,
+    frames_per_second,
     parse_timecode,
 )
 
@@ -85,13 +86,18 @@ ERROR_TIMING: dict[str, tuple[str, str]] = {
     SELECTION_TOO_SHORT: (SHOW_NOW, SHOW_ON_LEAVE),
     SELECTION_DUPLICATE: (SHOW_ON_LEAVE, SHOW_ON_LEAVE),  # 치는 도중 다른 행과 잠깐 같아진다
     SELECTION_TOO_MANY: (SHOW_NOW, SHOW_NOW),
-    TIMECODE_FIELD_OUT_OF_RANGE: (SHOW_ON_LEAVE, SHOW_ON_LEAVE),  # 초 · 분 60 이상
-    TIMECODE_FRAME_OUT_OF_RANGE: (SHOW_ON_LEAVE, SHOW_ON_LEAVE),  # 프레임 ≥ 프레임률
+    # 초 · 분 60 이상, 프레임 ≥ 프레임률 — 치고 있는 칸의 것은 오류로 띄우지 않는다: 치는 동안에는
+    # 안내로 알리고, 칸을 떠나면 최대값으로 맞춘다(_fieldOverflows). 여기까지 오는 것은 치고 있지
+    # 않은 칸에 남은 넘침뿐이다
+    TIMECODE_FIELD_OUT_OF_RANGE: (SHOW_ON_LEAVE, SHOW_ON_LEAVE),
+    TIMECODE_FRAME_OUT_OF_RANGE: (SHOW_ON_LEAVE, SHOW_ON_LEAVE),
     TIMECODE_INVALID_FORMAT: (SHOW_ON_LEAVE, SHOW_ON_LEAVE),
 }
 
 # 시각 하나의 입력은 칸 둘이다(app/widgets/timecode_edit.py의 TimePointEdit) — 오류를 어느
 # 칸에 칠할지 가리키는 이름
+_TOP_MINUTE_SECOND = 59  # 분 · 초 칸의 최대값 — 넘으면 이 값으로 맞춘다
+
 PART_CLOCK = "clock"  # 시분초 칸
 PART_FRAME = "frame"  # 프레임 칸
 _BOTH_PARTS = (PART_CLOCK, PART_FRAME)
@@ -185,6 +191,20 @@ def section_bytes_of(head, selections, skip: frozenset = frozenset()) -> int | N
         return None
     try:
         return sections_download_size(index, wanted)
+    except (ValueError, Mp4Error):
+        return None
+
+
+def section_head_bytes_of(head) -> int | None:
+    """그 moov로 본, 구간 다운로드가 만드는 파일의 머리 길이 (#309). 알 수 없으면 None.
+
+    머리(ftyp · moov 등)는 조회 때 이미 받아 두어 ``section_bytes_of``에 들지 않는다.
+    """
+    index = getattr(head, "index", None)
+    if index is None:
+        return None
+    try:
+        return sections_head_size(index)
     except (ValueError, Mp4Error):
         return None
 
@@ -424,9 +444,13 @@ class SectionEditViewModel(QObject):
         self.rows: list[list[str]] = []
         # 걸러 낸 행 — 행이 둘 이상일 때의 완전히 빈 행. 구간도 오류도 아니고 번호도 받지 않는다
         self._ignored: frozenset[int] = frozenset()
-        # 끝을 방금 영상 끝으로 맞춘 행 — 그 행의 안내 줄에 맞췄다고 적는다. 없으면 None.
+        # 값을 방금 맞춘 행 — 그 행의 안내 줄에 맞췄다고 적는다. 없으면 None.
         # 창이 다음 조작에서 내린다(clearClampNotice)
         self._clamped: int | None = None
+        # 그 행에서 무엇을 맞췄는지 — 끝을 영상 끝으로 맞췄으면 True(칸의 최대값도 함께 맞췄을
+        # 수 있다), 칸의 최대값만 맞췄으면 False. 그리고 최대값으로 맞춘 칸(START · END)
+        self._clampedToEnd = False
+        self._clampedColumn = END
         self._notify = notify
         self._job: SectionBasisJob | None = None
         self._head = None  # 조회하며 받은 moov(인코딩 완료 VOD) — 없으면 None
@@ -545,6 +569,23 @@ class SectionEditViewModel(QObject):
         self._evaluate()
         self.rowsReset.emit()
 
+    def canClear(self) -> bool:
+        """하나뿐인 행의 값을 비울 수 있는지 — 행이 하나뿐이고 시각이 하나라도 적혀 있을 때다.
+
+        하나뿐인 행은 지울 수 없다(``canRemove``). 대신 그 행의 값을 비워 처음(영상 전체)으로
+        돌아갈 수 있다. 이미 비어 있으면 비울 것이 없다.
+        """
+        return self.state == STATE_READY and len(self.rows) == 1 and any(self.rows[0])
+
+    def clearRow(self, row: int) -> None:
+        """하나뿐인 행의 시작 · 끝을 비운다 — 행은 남는다. 비울 수 없으면 아무것도 하지 않는다."""
+        if not self.canClear() or row != 0:
+            return
+        self.rows[row] = self._emptyRow()
+        self._clamped = None  # 맞춘 안내도 그 값과 함께 사라진다
+        self._evaluate()
+        self.rowsReset.emit()
+
     def moveRow(self, row: int, step: int) -> None:
         """행을 위(step=-1) · 아래(step=1)로 옮긴다. 행의 순서가 구간 번호이고 파일 이름의 번호다."""
         target = row + step
@@ -560,9 +601,14 @@ class SectionEditViewModel(QObject):
     def setText(self, row: int, column: int, text: str, normalize: bool = True) -> None:
         """칸의 글자를 받아 다시 검증한다.
 
-        편집을 끝낸 끝 칸(normalize=True)이 영상의 끝을 넘으면 영상 끝으로 맞춘다(``clampEnd``).
+        편집을 끝낸 칸(normalize=True)은 두 가지를 차례로 맞춘다.
+
+        1. 분 · 초가 59를, 프레임이 프레임률 − 1을 넘으면 그 최대값으로 맞춘다(``_clampFields``)
+        2. 그 결과 끝 칸이 영상의 끝을 넘으면 영상 끝으로 맞춘다(``_clampEnd``)
+
         입력하는 도중에는 맞추지 않는다 — 숫자가 오른쪽부터 채워져, 치는 도중에 값을 바꾸면
-        입력이 깨진다.
+        입력이 깨진다("1900"을 치는 도중 "190"이 거쳐 간다). 맞춘 뒤에도 시작이 끝 이상이면
+        지금 판정 그대로 오류다.
 
         Args:
             normalize: 해석되는 글자를 ``HH:MM:SS:FF`` 표기로 고쳐 들지 여부. 입력하는 도중에는
@@ -570,16 +616,81 @@ class SectionEditViewModel(QObject):
         """
         if self.state != STATE_READY or not 0 <= row < len(self.rows):
             return
+        fields_clamped = False
         try:
             if normalize and text:  # 빈 시각은 빈 글 그대로 둔다
+                fixed = self._clampFields(text)
+                if fixed is not None:
+                    text, fields_clamped = fixed, True
                 text = format_timecode(self._parse(text), self.fps)
         except TimecodeError:
             pass  # 틀린 글자는 그대로 들고 오류로 보인다
         self.rows[row][column] = text
         self._evaluate()
-        if normalize and column == END:
-            self._clampEnd(row)
+        end_clamped = normalize and column == END and self._clampEnd(row)
+        if fields_clamped or end_clamped:
+            self._noteClamp(row, column, end_clamped)
         self.validated.emit()
+
+    def settle(self, row: int, column: int) -> bool:
+        """그 칸에 지금 든 글을 편집을 끝낸 것으로 다룬다 — 넘는 값을 맞춘다. 값이 바뀌었으면 True.
+
+        붙여넣은 값처럼 한 번에 들어온 값에 창이 부른다(떠나기를 기다리지 않는다).
+        """
+        if self.state != STATE_READY or not 0 <= row < len(self.rows):
+            return False
+        before = self.rows[row][column]
+        self.setText(row, column, before)
+        return self.rows[row][column] != before
+
+    # ---- 칸의 최대값으로 맞추기 ----
+
+    def _clampFields(self, text: str) -> str | None:
+        """분 · 초 · 프레임이 최대를 넘는 글을 최대값으로 고친 글. 넘는 칸이 없으면 None.
+
+        분 · 초는 59, 프레임은 프레임률 − 1이 최대다(30fps면 29). 시는 건드리지 않는다 — 시의
+        상한은 입력 칸의 자릿수다. 네 칸의 숫자가 아닌 글은 None이다(형식 오류로 보인다).
+        """
+        parts = text.strip().split(":")
+        if len(parts) != _TIMECODE_FIELDS or not all(part.isdigit() for part in parts):
+            return None
+        hours, minutes, seconds, frames = (int(part) for part in parts)
+        top_frame = frames_per_second(self.fps) - 1
+        if minutes <= _TOP_MINUTE_SECOND and seconds <= _TOP_MINUTE_SECOND and frames <= top_frame:
+            return None
+        fixed = (
+            hours,
+            min(minutes, _TOP_MINUTE_SECOND),
+            min(seconds, _TOP_MINUTE_SECOND),
+            min(frames, top_frame),
+        )
+        return ":".join(f"{value:02d}" for value in fixed)
+
+    def _overflowParts(self, text: str) -> frozenset[str]:
+        """그 글에서 최대를 넘은 칸 — 분 · 초가 넘으면 시분초 칸, 프레임이 넘으면 프레임 칸."""
+        parts = text.strip().split(":")
+        if len(parts) != _TIMECODE_FIELDS or not all(part.isdigit() for part in parts):
+            return frozenset()
+        _hours, minutes, seconds, frames = (int(part) for part in parts)
+        over = set()
+        if minutes > _TOP_MINUTE_SECOND or seconds > _TOP_MINUTE_SECOND:
+            over.add(PART_CLOCK)
+        if frames > frames_per_second(self.fps) - 1:
+            over.add(PART_FRAME)
+        return frozenset(over)
+
+    def _fieldOverflows(self, row: int, column: int) -> bool:
+        """그 칸의 분 · 초 · 프레임 가운데 최대를 넘은 것이 있는지 — 칸을 떠나면 맞춰질 값이다."""
+        if self.state != STATE_READY or not 0 <= row < len(self.rows):
+            return False
+        return self._clampFields(self.rows[row][column]) is not None
+
+    def _noteClamp(self, row: int, column: int, to_end: bool) -> None:
+        """그 행의 값을 맞췄다고 적어 둔다 — 안내 줄에 한 줄로 보인다(``noticeText``)."""
+        self._clamped = row
+        self._clampedToEnd = to_end
+        self._clampedColumn = column
+        self.endClamped.emit(row)
 
     # ---- 끝을 영상 끝으로 맞추기 ----
 
@@ -597,47 +708,54 @@ class SectionEditViewModel(QObject):
         return frame_index(end, self.fps) > last and frame_index(start, self.fps) < last
 
     def _clampEnd(self, row: int) -> bool:
+        """끝만 영상의 끝을 넘은 행의 끝을 영상 끝으로 고친다. 고쳤으면 True — 알리지는 않는다."""
         if not self._endOverflows(row):
             return False
         self.rows[row][END] = self.endTimecodeText()
-        self._clamped = row
         self._evaluate()  # 맞춘 뒤에 생기는 중복 등은 지금 판정 그대로 오류다
-        self.endClamped.emit(row)
-        return True
-
-    def clampEnd(self, row: int) -> bool:
-        """그 행의 끝이 영상의 끝을 넘었으면 영상 끝으로 맞춘다. 맞췄으면 True.
-
-        붙여넣은 값처럼 한 번에 들어온 값에 창이 부른다. 영상의 끝을 모르면(조회 전 · 실패)
-        맞추지 않는다.
-        """
-        if not self._clampEnd(row):
-            return False
-        self.validated.emit()
         return True
 
     def clampedRow(self) -> int | None:
-        """끝을 방금 영상 끝으로 맞춘 행. 없으면 None."""
+        """값을 방금 맞춘 행(영상 끝 · 칸의 최대값). 없으면 None."""
         return self._clamped
 
     def clearClampNotice(self) -> None:
-        """끝을 맞췄다는 안내를 내린다 — 창이 맞춘 뒤의 다음 조작에서 부른다."""
+        """값을 맞췄다는 안내를 내린다 — 창이 맞춘 뒤의 다음 조작에서 부른다."""
         if self._clamped is None:
             return
         self._clamped = None
         self.validated.emit()
 
-    def noticeText(self, row: int, typing: tuple[int, int] | None = None) -> str:
-        """행의 안내 줄에 흐리게 적을 글 — 끝이 영상 끝을 넘는 중이거나 방금 맞췄을 때. 없으면 빈 글.
+    def noticeText(
+        self,
+        row: int,
+        typing: tuple[int, int] | None = None,
+        full_parts: frozenset[str] = frozenset(),
+    ) -> str:
+        """행의 안내 줄에 흐리게 적을 글 — 값이 넘는 중이거나 방금 맞췄을 때. 없으면 빈 글.
+
+        한 번에 하나만 나간다. 칸의 최대값과 영상 끝을 함께 맞췄으면 영상 끝으로 맞췄다는 글
+        하나다 — 칸에 남은 값이 영상 끝이다.
+
+        최대를 넘는다는 안내는 넘은 칸의 자리를 **다 채웠을 때만** 나간다. 숫자가 오른쪽부터
+        채워져, 덜 채운 동안의 넘침은 치는 도중에 거쳐 가는 값이다("1900"의 "190"은 초 90이다).
+        영상 끝을 넘는다는 안내는 그 규칙을 따르지 않는다 — 숫자를 더 칠수록 값이 커지기만 하므로
+        치는 도중에 영상 끝을 넘었으면 다 쳐도 넘는다.
 
         Args:
-            typing: 숫자를 치고 있는 (행, 칸). 그 행의 끝 칸을 치는 중에 끝이 영상 끝을 넘으면
-                오류 대신 이 안내가 나간다
+            typing: 숫자를 치고 있는 (행, 칸). 그 칸의 분 · 초 · 프레임이 최대를 넘거나 끝 칸이
+                영상 끝을 넘으면 오류 대신 이 안내가 나간다
+            full_parts: 치고 있는 시각에서 자리를 다 채운 칸(``PART_CLOCK`` · ``PART_FRAME``)
         """
+        if typing is not None and typing[0] == row:
+            if self._overflowParts(self.rows[row][typing[1]]) & full_parts:
+                return self.tr("Above the maximum — leaving the field sets it to the maximum")
         if typing == (row, END) and self._endOverflows(row):
             return self.tr("Past the end of the video — leaving the field sets it to the end")
         if row == self._clamped:
-            return self.tr("Set to the end of the video ({0})").format(self.endTimecodeText())
+            if self._clampedToEnd:
+                return self.tr("Set to the end of the video ({0})").format(self.endTimecodeText())
+            return self.tr("Set to the maximum ({0})").format(self.rows[row][self._clampedColumn])
         return ""
 
     # ---- 검증 ----
@@ -684,7 +802,8 @@ class SectionEditViewModel(QObject):
         1. 완전히 빈 행을 걸러 낸다(``_blankRows``)
         2. 남은 행이 영상 전체를 가리키는 한 행뿐이면 구간 없음이다(``selections``) — 그 행은
            아래 단계에서 걸릴 것이 없다
-        3. 칸 오류 — 초 · 분 60 이상, 프레임 ≥ 프레임률
+        3. 칸 오류 — 초 · 분 60 이상, 프레임 ≥ 프레임률. 편집을 끝낸 칸은 ``setText``가 최대값으로
+           맞춰 두므로 여기 걸리는 것은 치는 도중의 값이다(치는 칸의 것은 안내로 보인다)
         4. 시각 오류 — 빈 시각을 처음 · 끝의 값으로 바꾼 뒤 시작 ≥ 끝, 길이 초과
         5. 행 사이 오류 — 중복 · 개수
 
@@ -717,21 +836,14 @@ class SectionEditViewModel(QObject):
             self._errors[parsed[position]] = keys[0]
             self._allErrors[parsed[position]] = tuple(keys)
 
-    def shownErrorKey(
-        self, row: int, typing: tuple[int, int] | None = None, frame_full: bool = False
-    ) -> str:
+    def shownErrorKey(self, row: int, typing: tuple[int, int] | None = None) -> str:
         """행에 지금 띄울 오류 키. 띄울 것이 없으면 빈 문자열.
 
         치고 있는 행이 아니면 그 행의 첫 오류다. 치고 있는 행이면 ``ERROR_TIMING``이 바로
         띄우라고 한 오류 가운데 첫 것이다 — 떠날 때 띄울 오류만 있으면 아직 띄우지 않는다.
 
-        프레임 칸에 두 자리를 다 친 뒤의 프레임 넘침(프레임 ≥ 프레임률)은 표와 달리 바로
-        띄운다 — 세 자리째를 받지 않으므로 더 쳐도 값이 바뀌지 않는다. 한 자리일 때는 표대로
-        떠날 때 띄운다(6을 치고 0을 더 치려는 중일 수 있다).
-
         Args:
             typing: 숫자를 치고 있는 (행, 칸). 없으면 None — 모든 오류를 바로 띄운다
-            frame_full: 치고 있는 칸이 프레임 칸이고 두 자리가 다 찼는지
         """
         keys = self._allErrors.get(row, ())
         if typing is None or typing[0] != row:
@@ -742,19 +854,15 @@ class SectionEditViewModel(QObject):
                 continue  # 끝 칸을 치는 중 끝만 넘었다 — 오류가 아니라 안내다(noticeText)
             if ERROR_TIMING.get(key, (SHOW_NOW, SHOW_NOW))[column] == SHOW_NOW:
                 return key
-            if key == TIMECODE_FRAME_OUT_OF_RANGE and frame_full:
-                return key
         return ""
 
-    def shownErrorText(
-        self, row: int, typing: tuple[int, int] | None = None, frame_full: bool = False
-    ) -> str:
+    def shownErrorText(self, row: int, typing: tuple[int, int] | None = None) -> str:
         """행에 지금 띄울 오류 문구(번역된 것). 띄울 것이 없으면 빈 문자열."""
-        key = self.shownErrorKey(row, typing, frame_full)
+        key = self.shownErrorKey(row, typing)
         return self._translate(key) if key else ""
 
     def shownErrorParts(
-        self, row: int, typing: tuple[int, int] | None = None, frame_full: bool = False
+        self, row: int, typing: tuple[int, int] | None = None
     ) -> frozenset[tuple[int, str]]:
         """지금 띄운 오류로 붉게 칠할 칸들 — (칸 번호 START · END, ``PART_CLOCK`` · ``PART_FRAME``).
 
@@ -764,7 +872,7 @@ class SectionEditViewModel(QObject):
         - 길이 초과: 영상의 끝을 넘은 시각의 두 칸. 가리지 못하면 시작과 끝 모두
         띄울 오류가 없으면 빈 집합이다.
         """
-        key = self.shownErrorKey(row, typing, frame_full)
+        key = self.shownErrorKey(row, typing)
         if not key:
             return frozenset()
         own = self._columnErrors.get(row)
@@ -823,6 +931,31 @@ class SectionEditViewModel(QObject):
         start, end = self._pairs[row]
         return format_milliseconds(end - start)
 
+    def totalNoticeText(self) -> str:
+        """구간 길이의 합이 영상 길이보다 길 때의 알림. 그렇지 않으면 빈 글 — 오류가 아니다.
+
+        오류가 없는 행의 길이만 더한다 — 행마다의 길이 표시(``lengthText``)와 같은 기준이다.
+        빈 시각은 처음 · 끝으로 푼 값이다. 오류인 행(영상 밖 · 중복 · 개수 초과)은 확인할 수 없는
+        구간이라 세지 않는다.
+        구간이 겹치면 합이 영상보다 길어질 수 있다 — 겹치는 부분을 구간마다 따로 만든다는 뜻이라
+        확인은 막지 않고 알리기만 한다. 견주는 단위는 프레임이다(초로 더하면 끝자리가 흔들린다).
+        영상 길이를 모르면(조회 전 · 실패) 알리지 않는다.
+        """
+        if self.state != STATE_READY or self.fps is None or self.duration <= 0:
+            return ""
+        total_frames = sum(
+            frame_index(end, self.fps) - frame_index(start, self.fps)
+            for row, (start, end) in self._pairs.items()
+            if row not in self._errors
+        )
+        video_frames = round(self.duration * frame_rate(self.fps))
+        if total_frames <= video_frames:
+            return ""
+        total_seconds = float(total_frames / frame_rate(self.fps))
+        return self.tr("Sections add up to {0} — longer than the video ({1})").format(
+            format_milliseconds(total_seconds), format_milliseconds(self.duration)
+        )
+
     def millisecondsText(self, row: int, column: int) -> str:
         """칸의 시각을 밀리초 표기로 — 표시만 한다. 해석되지 않는 칸 · 걸러 낸 행은 빈 문자열."""
         if row in self._ignored:
@@ -831,6 +964,17 @@ class SectionEditViewModel(QObject):
             return format_milliseconds(self._seconds(column, self.rows[row][column]))
         except TimecodeError:
             return ""
+
+    def topFrame(self) -> int | None:
+        """프레임 칸에 넣을 수 있는 가장 큰 값 — 프레임률 − 1. 프레임률을 모르면 None."""
+        if self.state != STATE_READY or self.fps is None:
+            return None
+        return frames_per_second(self.fps) - 1
+
+    @staticmethod
+    def maxSections() -> int:
+        """구간을 넣을 수 있는 최대 개수."""
+        return MAX_SELECTIONS
 
     def headerText(self) -> str:
         """머리줄 — 구간 수 · 프레임률 · 영상의 끝 타임코드. 조회가 끝나기 전에는 빈 문자열."""
@@ -867,16 +1011,22 @@ class SectionEditViewModel(QObject):
         """확인할 수 있는지 — 조회가 끝났고 오류가 없다.
 
         Args:
-            typing: 숫자를 치고 있는 (행, 칸). 그 행의 끝 칸을 치는 중에 끝만 영상 끝을 넘은
-                것은 오류로 세지 않는다 — 확인을 누르면 그 칸의 편집이 끝나며 영상 끝으로
-                맞춰진다
+            typing: 숫자를 치고 있는 (행, 칸). 그 칸의 분 · 초 · 프레임이 최대를 넘었거나 끝
+                칸이 끝만 영상 끝을 넘은 것은 오류로 세지 않는다 — 확인을 누르면 그 칸의
+                편집이 끝나며 맞춰진다(맞춘 뒤에 남는 오류는 그때 확인을 막는다)
         """
         if self.state != STATE_READY:
             return False
         blocking = set(self._errors)
-        if typing is not None and typing[1] == END and self._endOverflows(typing[0]):
-            if self._allErrors.get(typing[0]) == (SELECTION_OUT_OF_RANGE,):
-                blocking.discard(typing[0])
+        if typing is not None:
+            row, column = typing
+            if self._fieldOverflows(row, column) and set(self._columnErrors.get(row, ())) == {
+                column
+            }:
+                blocking.discard(row)
+            elif column == END and self._endOverflows(row):
+                if self._allErrors.get(row) == (SELECTION_OUT_OF_RANGE,):
+                    blocking.discard(row)
         return not blocking
 
     def selections(self) -> tuple[TimeRange, ...]:
@@ -957,6 +1107,8 @@ class SectionSizeJob(QObject):
         self._moov = moov
         self._selections = selections
         self._token = token
+        # 파일의 머리 길이 — 결과를 받는 쪽이 done 뒤에 읽는다(일의 참조를 들고 있다)
+        self.head_bytes: int | None = None
 
     def run(self) -> None:
         """색인을 만들고 크기를 세어 done을 emit한다. 실패하면 값 자리에 None을 싣는다."""
@@ -966,6 +1118,7 @@ class SectionSizeJob(QObject):
             moov = self._moov
             head = moov.get() if isinstance(moov, PendingMp4Head) else moov
             size = section_bytes_of(head, self._selections)
+            self.head_bytes = section_head_bytes_of(head)
         except Exception:
             logger.exception("받을 구간의 크기를 세지 못했다")
             head = None
@@ -1035,7 +1188,7 @@ class SectionSizer(QObject):
 
     def _onDone(self, token, head, size) -> None:
         """결과를 받는다 — 아직 유효하면 크기를 적고, 카드가 쥔 것을 만든 색인으로 바꾼다."""
-        _job, moov, selections = self._jobs.pop(token)
+        job, moov, selections = self._jobs.pop(token)
         item, generation = token
         if self._model.getRow(item) is None:
             self._generation.pop(item, None)  # 카드가 지워졌다
@@ -1054,6 +1207,7 @@ class SectionSizer(QObject):
         ):
             return
         item.section_bytes = size
+        item.section_head_bytes = job.head_bytes
         if head is not moov:
             watch_section_head(head)
             keep_section_head(item, kept[0], head)  # 바이트를 놓고 만든 색인을 든다

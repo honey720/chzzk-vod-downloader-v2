@@ -264,7 +264,7 @@ class TestControlsFollowTheState:
         if widget.directoryLabel.isVisible():
             assert widget.directoryLabel.cursor().shape() == Qt.CursorShape.PointingHandCursor
         else:
-            assert widget.pathIconButton.isVisible()
+            assert widget.pathButton.isVisible()  # 글자가 숨어도 진입점은 1행에 있다 (#309)
 
     def test_pills_are_clickable_again_after_the_revert(self, tmp_path, started, qtbot):
         """대기 카드의 pill은 눌러서 해상도를 고를 수 있다 — 호버 강조와 클릭 반응."""
