@@ -267,6 +267,8 @@ class SectionEditDialog(QDialog):
         right = max(margins.right(), bar.sizeHint().width())
         self._rowLayout.setContentsMargins(margins.left(), margins.top(), right, margins.bottom())
         self._scrollPadding = ScrollBarPadding(self.scrollArea, self._rowLayout, right)
+        # 행의 양옆에 드는 폭(px) — 왼쪽 여백 + 오른쪽 여백(스크롤바가 보이면 바가 그 자리에 든다)
+        self._rowSideWidth = margins.left() + right
         layout.addWidget(self.scrollArea, 1)
 
         # 받는 중인 배치가 이 카드를 기다릴 때만 보인다 — 창을 닫아야 이어 간다는 것을 알린다
@@ -441,10 +443,14 @@ class SectionEditDialog(QDialog):
         """스크롤 영역의 최소 폭을 행 하나가 다 들어가는 폭으로 둔다 — 창이 그보다 좁아지지 않는다.
 
         스크롤 영역은 안에 든 위젯의 최소 폭을 밖으로 알리지 않는다. 가로 스크롤이 없어 그대로
-        두면 창을 가장 좁게 줄였을 때 행의 오른쪽 끝(✕ 버튼)이 잘린다 (#309).
+        두면 창을 가장 좁게 줄였을 때 행의 오른쪽 끝(✕ 버튼)이 잘린다 (#309). 행 컨테이너가
+        아니라 행에 묻는다 — 방금 만든 행은 아직 보이기 전이라 컨테이너의 최소 폭에 들지 않는다.
         """
+        if not self._rows:
+            return
         frame = 2 * self.scrollArea.frameWidth()
-        self.scrollArea.setMinimumWidth(self._rowContainer.minimumSizeHint().width() + frame)
+        row = self._rows[0].minimumSizeHint().width()
+        self.scrollArea.setMinimumWidth(row + self._rowSideWidth + frame)
 
     def _isCurrent(self, row: int, column: int, edit: TimePointEdit) -> bool:
         """그 시각 입력이 지금 그 (행, 칸)에 놓인 것인지.

@@ -4059,13 +4059,25 @@ def test_no_total_is_noted_before_the_length_of_the_video_is_known(qtbot, tmp_pa
 def test_rows_fit_inside_the_dialog_at_its_narrowest(qtbot, tmp_path, basis, row_count):
     """편집 창을 가장 좁게 줄여도 각 행의 ✕ 버튼이 스크롤 영역의 보이는 부분 안에 있어야 한다.
 
-    행 row_count개, 창의 폭을 1로 요청(창의 최소 폭으로 맞춰진다), 높이 300
-    -> 보이는 행마다 ✕ 버튼의 오른쪽 끝 <= 보이는 부분의 오른쪽 끝, ✕ 버튼의 폭 == 넓은 창(1200)에서의 폭
+    행 row_count개, 머리줄 · 버튼 줄의 글을 한 글자로 줄여 행보다 좁게 둠,
+    창의 폭을 1로 요청(창의 최소 폭으로 맞춰진다), 높이 300
+    -> 행마다 ✕ 버튼의 오른쪽 끝 <= 보이는 부분의 오른쪽 끝, ✕ 버튼의 폭 == 넓은 창(1200)에서의 폭
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
     dialog = open_editor(qtbot, win, item)
     set_rows(dialog, [("", "")] * row_count)
+    # 글이 긴 언어에서는 머리줄이 행보다 넓어 창의 최소 폭을 대신 정한다 — 그 줄들을 좁혀 둔다
+    dialog.headerLabel.setText("")
+    for button in (dialog.addButton, dialog.cancelButton, dialog.okButton):
+        button.setText("+")
+    _pump()
+    layout = dialog.layout()
+    lines = [layout.itemAt(at) for at in range(layout.count())]
+    others = max(
+        line.minimumSize().width() for line in lines if line.widget() is not dialog.scrollArea
+    )
+    assert others < dialog._rows[0].minimumSizeHint().width(), "전제: 다른 줄이 행보다 좁다"
     dialog.resize(1200, 300)
     _pump()
     wide = [row.deleteButton.width() for row in dialog._rows]
