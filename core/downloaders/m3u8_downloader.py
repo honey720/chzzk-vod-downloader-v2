@@ -194,7 +194,6 @@ class M3U8Downloader(BaseDownloader):
         """
         개별 세그먼트 다운로드(재시도 포함)
         """
-        slow_count = 0
         downloaded_size = 0
         segment_url = urljoin(self.s.base_url, segment)
         while not self.state == DownloadState.WAITING:
@@ -204,7 +203,10 @@ class M3U8Downloader(BaseDownloader):
                     segment_url, stream=True, timeout=REQUEST_TIMEOUT
                 )
                 response.raise_for_status()
-                part_start_time = tm.time()
+                part_start_time = self._now()
+                slow_watch = self._watch_slow(
+                    part_num, integrity.declared_length(getattr(response, "headers", None))
+                )
                 # 디스크 쓰기 누적 시간 — 저속 판정에는 더 이상 반영하지 않는다(#191).
                 # f.write()는 OS 페이지 캐시에 즉시 반환되는 버퍼드 쓰기라 실기
                 # 로그(write=0.000s/0.494s=0%)로 기여도가 정확히 0%임을 확인했다 —
@@ -217,36 +219,32 @@ class M3U8Downloader(BaseDownloader):
                     for chunk in response.iter_content(chunk_size=8192):
                         if self.state == DownloadState.WAITING:
                             return part_num
-                        if self.state == DownloadState.PAUSED:
-                            self.s._pause_event.wait()
+                        part_start_time += self._wait_while_paused()
 
                         if chunk:
                             write_start = tm.perf_counter()
                             f.write(chunk)
                             write_elapsed += tm.perf_counter() - write_start
                             downloaded_size += len(chunk)
-                            elapsed = tm.time() - part_start_time
+                            elapsed = self._now() - part_start_time
 
                             if elapsed > 0:
                                 speed_kb_s = downloaded_size / elapsed / 1024
                                 self._check_speed_and_update_progress(
                                     part_num, downloaded_size, total_ranges, speed_kb_s
                                 )
-                                if speed_kb_s < self._slow_speed_threshold_kb_s:
-                                    slow_count += 1
-                                    if slow_count > 5:
-                                        # 속도가 너무 느리면 스레드 재시작
-                                        ratio = (
-                                            write_elapsed / elapsed * 100 if elapsed > 0 else 0.0
+                                if slow_watch.is_slow(elapsed, downloaded_size):
+                                    # 속도가 너무 느리면 스레드 재시작
+                                    ratio = write_elapsed / elapsed * 100 if elapsed > 0 else 0.0
+                                    diagnostic = (
+                                        f"write={write_elapsed:.3f}s/{elapsed:.3f}s={ratio:.0f}%"
+                                    )
+                                    with self.lock:
+                                        self._requeue_slow(
+                                            (index, segment), part_num, diagnostic=diagnostic
                                         )
-                                        diagnostic = f"write={write_elapsed:.3f}s/{elapsed:.3f}s={ratio:.0f}%"
-                                        with self.lock:
-                                            self._requeue_slow(
-                                                (index, segment), part_num, diagnostic=diagnostic
-                                            )
-                                        return part_num
-                                else:
-                                    slow_count = 0
+                                    self._abandon_response(part_num, response)
+                                    return part_num
 
                 # 받은 세그먼트가 온전한지 내용으로 확인한다 (#321) — 잘린 본문이
                 # 200과 맞는 Content-Length로 올 수 있어 상태 코드로는 알 수 없다.
