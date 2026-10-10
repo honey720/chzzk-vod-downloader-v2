@@ -500,7 +500,6 @@ class FileDownloader(BaseDownloader):
         서버가 이어받기 Range를 존중하지 않으면(206이 아니면) 파트 처음부터
         다시 받는 폴백을 탄다. 판정 규칙(저속·실패 재큐잉)은 무변경이다.
         """
-        slow_count = 0
         resume_offset = self._resume_offset(start, end)
         downloaded_size = 0
         if resume_offset > 0:
@@ -531,7 +530,10 @@ class FileDownloader(BaseDownloader):
                 self._require_whole_file_on_200(
                     response, total_size if self._layout is None else None, range_start
                 )
-                part_start_time = tm.time()
+                part_start_time = self._now()
+                slow_watch = self._watch_slow(
+                    part_num, expected=end - range_start + 1, resumes=True
+                )
                 # 디스크 쓰기 누적 시간 — 저속 판정에는 더 이상 반영하지 않는다(#191).
                 # f.write()는 OS 페이지 캐시에 즉시 반환되는 버퍼드 쓰기라 실기
                 # 로그(write=0.000s/0.494s=0%)로 기여도가 정확히 0%임을 확인했다 —
@@ -546,16 +548,15 @@ class FileDownloader(BaseDownloader):
                     for chunk in response.iter_content(chunk_size=8192):
                         if self.state == DownloadState.WAITING:
                             return part_num
-                        if self.state == DownloadState.PAUSED:
-                            # 일시정지한 시간은 이 파트의 속도 판정에서 뺀다 — 재개 직후 느린 속도로 끊기지 않게
-                            part_start_time += self._wait_while_paused()
+                        # 일시정지한 시간은 이 파트의 속도 판정에서 뺀다 — 재개 직후 느린 속도로 끊기지 않게
+                        part_start_time += self._wait_while_paused()
 
                         if chunk:
                             write_start = tm.perf_counter()
                             f.write(chunk)
                             write_elapsed += tm.perf_counter() - write_start
                             downloaded_size += len(chunk)
-                            elapsed = tm.time() - part_start_time
+                            elapsed = self._now() - part_start_time
 
                             if elapsed > 0:
                                 # 속도 판정은 이번 시도가 받은 바이트 기준,
@@ -567,24 +568,21 @@ class FileDownloader(BaseDownloader):
                                     total_size,
                                     speed_kb_s,
                                 )
-                                if speed_kb_s < self._slow_speed_threshold_kb_s:
-                                    slow_count += 1
-                                    if slow_count > 5:
-                                        # 속도가 너무 느리면 스레드 재시작
-                                        ratio = (
-                                            write_elapsed / elapsed * 100 if elapsed > 0 else 0.0
+                                if slow_watch.is_slow(elapsed, downloaded_size):
+                                    # 속도가 너무 느리면 스레드 재시작
+                                    ratio = write_elapsed / elapsed * 100 if elapsed > 0 else 0.0
+                                    diagnostic = (
+                                        f"write={write_elapsed:.3f}s/{elapsed:.3f}s={ratio:.0f}%"
+                                    )
+                                    with self.lock:
+                                        self._record_partial(
+                                            start, end, resume_offset + downloaded_size
                                         )
-                                        diagnostic = f"write={write_elapsed:.3f}s/{elapsed:.3f}s={ratio:.0f}%"
-                                        with self.lock:
-                                            self._record_partial(
-                                                start, end, resume_offset + downloaded_size
-                                            )
-                                            self._requeue_slow(
-                                                (start, end), part_num, diagnostic=diagnostic
-                                            )
-                                        return part_num
-                                else:
-                                    slow_count = 0
+                                        self._requeue_slow(
+                                            (start, end), part_num, diagnostic=diagnostic
+                                        )
+                                    self._abandon_response(part_num, response)
+                                    return part_num
 
                             if downloaded_size >= (end - range_start + 1):
                                 break

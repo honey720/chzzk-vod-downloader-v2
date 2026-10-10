@@ -49,7 +49,6 @@ base_url 해석(#75)과 같은 주입 방식이다.
 import dataclasses
 import os
 import shutil
-import time as tm
 from fractions import Fraction
 from urllib.parse import urljoin
 
@@ -621,7 +620,6 @@ class HlsAesDownloader(BaseDownloader):
         세그먼트 전체를 메모리에 모은 뒤 CBC 복호화해서 쓴다는 점이다 —
         CBC는 앞 블록에 의존하므로 스트리밍 중 부분 기록을 할 수 없다.
         """
-        slow_count = 0
         downloaded_size = 0
         segment_url = urljoin(self.s.base_url, segment)
         while not self.state == DownloadState.WAITING:
@@ -631,35 +629,34 @@ class HlsAesDownloader(BaseDownloader):
                     segment_url, stream=True, timeout=REQUEST_TIMEOUT
                 )
                 response.raise_for_status()
-                part_start_time = tm.time()
+                part_start_time = self._now()
+                slow_watch = self._watch_slow(
+                    part_num, integrity.declared_length(getattr(response, "headers", None))
+                )
 
                 buffer = bytearray()
                 for chunk in response.iter_content(chunk_size=8192):
                     if self.state == DownloadState.WAITING:
                         return part_num
-                    if self.state == DownloadState.PAUSED:
-                        # 일시정지한 시간은 이 파트의 속도 판정에서 뺀다 — 재개 직후 느린 속도로 끊기지 않게
-                        part_start_time += self._wait_while_paused()
+                    # 일시정지한 시간은 이 파트의 속도 판정에서 뺀다 — 재개 직후 느린 속도로 끊기지 않게
+                    part_start_time += self._wait_while_paused()
 
                     if chunk:
                         buffer.extend(chunk)
                         downloaded_size += len(chunk)
-                        elapsed = tm.time() - part_start_time
+                        elapsed = self._now() - part_start_time
 
                         if elapsed > 0:
                             speed_kb_s = downloaded_size / elapsed / 1024
                             self._check_speed_and_update_progress(
                                 part_num, downloaded_size, total_ranges, speed_kb_s
                             )
-                            if speed_kb_s < self._slow_speed_threshold_kb_s:
-                                slow_count += 1
-                                if slow_count > 5:
-                                    # 속도가 너무 느리면 스레드 재시작
-                                    with self.lock:
-                                        self._requeue_slow((index, segment), part_num)
-                                    return part_num
-                            else:
-                                slow_count = 0
+                            if slow_watch.is_slow(elapsed, downloaded_size):
+                                # 속도가 너무 느리면 스레드 재시작
+                                with self.lock:
+                                    self._requeue_slow((index, segment), part_num)
+                                self._abandon_response(part_num, response)
+                                return part_num
 
                 # 받은 세그먼트가 온전한지 확인하고 복호화한다 (#321) — 잘린 본문이 200과
                 # 맞는 Content-Length로 올 수 있다. 블록 중간에서 잘린 암호문은 복호화가

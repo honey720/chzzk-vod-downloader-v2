@@ -11,8 +11,10 @@
   adjust_count < -4이면 adjust_threads를 절반으로 (하한 1), 카운터 리셋
 - 중간 대역(2~4 MB/s)에서는 adjust_count가 0을 향해 1씩 감쇠
 - 속도 계산: 직전 틱 대비 바이트 증가량을 MB/s로 환산, prev_size 갱신
-- 느린 파트: 청크 속도 < 100 KB/s가 연속 6회(slow_count > 5) 누적되면
-  해당 파트를 중단하고 구간을 재큐잉(restart_threads += 1), 빠른 청크가 오면 리셋
+- 느린 파트 (#347로 바뀜): 응답 시작 뒤 3초가 지나고, 최근 3초의 속도가 100 KB/s 미만이고,
+  다른 연결들보다 뚜렷이 느려 끊고 다시 받는 쪽이 빠르면
+  해당 파트를 중단하고 구간을 재큐잉(restart_threads += 1). 구 규칙은 누적 평균이
+  연속 6회 미만일 때였다 — 응답 직후의 48KB로 판정해 잠깐 멎은 연결까지 끊었다
 - 파트 실패: 요청 예외 시 구간 재큐잉(failed_threads += 1)
 """
 
@@ -105,9 +107,40 @@ def _engine_module():
 
 
 def _tick(scaler, data, speed: float) -> None:
-    """1초 관측 틱을 흉내 낸다 — 측정된 총 처리량 반영 후 조정 1회."""
+    """1초 관측 틱을 흉내 낸다 — 시계를 1초 옮기고, 측정된 총 처리량 반영 후 조정 1회."""
+    scaler._tick_clock = getattr(scaler, "_tick_clock", 0.0) + 1.0
+    scaler._now = lambda: scaler._tick_clock
     data.speed_mb = speed
     scaler._adjust_threads()
+
+
+def _ticks(scaler, data, speed: float, count: int) -> None:
+    for _ in range(count):
+        _tick(scaler, data, speed)
+
+
+def _hold_at_4(scaler, data) -> None:
+    """속도 5.0 고정으로 4→8 인상이 되물려 4에서 정체하게 한다 (기준 5.0).
+
+    틱 1에 4→8, 표본 둘이 뚜렷이 늘지 않아 4로 돌아가 묶음(10초)을 채우고, 다시 8로 올려
+    10초를 재도 늘지 않아 되물린다 — 29틱. 그 뒤 2틱은 되물린 직후라 재지 않는다
+    """
+    _ticks(scaler, data, 5.0, 29)
+    assert data.adjust_threads == 4, "전제: 되물려 4에 머문다"
+    _ticks(scaler, data, 5.0, 2)
+
+
+def _hold_at_8(scaler, data) -> None:
+    """4→8은 유효(5.0→9.0), 8→12는 무효(9.0→9.2)여서 8에서 정체하게 한다 (기준 9.0).
+
+    틱 5에 12로 올리고, 뚜렷이 늘지 않아 8로 돌아가 묶음을 채운 뒤 다시 12로 올려 10초를
+    재도 요구치(9.0×1.0625)에 못 미쳐 되물린다 — 33틱. 그 뒤 2틱은 재지 않는다
+    """
+    speeds = {4: 5.0, 8: 9.0, 12: 9.2}
+    for _ in range(33):
+        _tick(scaler, data, speeds[data.adjust_threads])
+    assert data.adjust_threads == 8, "전제: 되물려 8에 머문다"
+    _ticks(scaler, data, 9.0, 2)
 
 
 def test_warmup_without_measurement_does_nothing():
@@ -151,13 +184,13 @@ def test_reverts_and_holds_when_raise_does_not_increase_throughput():
     data.max_threads = 32
     scaler = _make_scaler(data, logger)
 
-    _tick(scaler, data, 5.0)  # 4→8 (기준 5.0)
-    _tick(scaler, data, 5.0)  # settle 1
-    _tick(scaler, data, 5.0)  # settle 2
-    _tick(scaler, data, 5.2)  # 요구치(5.0×1.125=5.625) 미달 → 8→4 되물림 + 정체
+    for _ in range(29):
+        # 틱 1: 4→8 (기준 5.0) · 틱 5: 표본 둘이 뚜렷이 늘지 않아 8→4, 묶음을 채운다
+        # 틱 17: 다시 4→8 · 틱 29: 10초를 재도 요구치(5.0×1.125=5.625) 미달 → 8→4 되물림 + 정체
+        _tick(scaler, data, 5.0 if data.adjust_threads == 4 else 5.2)
 
     assert data.adjust_threads == 4
-    assert logger.adjust_calls == [(8, 5.0), (4, 5.2)]
+    assert logger.adjust_calls == [(8, 5.0), (4, 5.2), (8, 5.0), (4, 5.2)]
 
 
 def test_sustained_collapse_halves_after_five_ticks():
@@ -166,16 +199,9 @@ def test_sustained_collapse_halves_after_five_ticks():
     data.max_threads = 32
     scaler = _make_scaler(data, logger)
 
-    _tick(scaler, data, 5.0)  # 4→8
-    _tick(scaler, data, 9.0)  # settle 1
-    _tick(scaler, data, 9.0)  # settle 2
-    _tick(scaler, data, 9.0)  # 요구치(5.0×1.125) 초과 → 8→12 (기준 9.0)
-    _tick(scaler, data, 9.2)  # settle 1
-    _tick(scaler, data, 9.2)  # settle 2
-    _tick(scaler, data, 9.2)  # 요구치(9.0×1.0417=9.375) 미달 → 12→8 되물림 + 정체 (기준 9.2)
-    assert data.adjust_threads == 8
+    _hold_at_8(scaler, data)
 
-    for _ in range(4):  # 기준의 절반(4.6) 미만 4틱 — 아직 불변
+    for _ in range(4):  # 기준의 절반(4.5) 미만 4틱 — 아직 불변
         _tick(scaler, data, 4.0)
     assert data.adjust_threads == 8
 
@@ -189,13 +215,9 @@ def test_halving_floor_is_one_thread():
     data.max_threads = 32
     scaler = _make_scaler(data, logger)
 
-    _tick(scaler, data, 5.0)  # 4→8
-    _tick(scaler, data, 5.0)  # settle 1
-    _tick(scaler, data, 5.0)  # settle 2
-    _tick(scaler, data, 5.0)  # 요구치 미달 → 되물림 → 4 정체 (기준 5.0)
-    assert data.adjust_threads == 4
+    _hold_at_4(scaler, data)
 
-    for _ in range(7):  # 기준(5.0)의 절반 미만 지속 → 4→2 (새 기준 2.0)
+    for _ in range(5):  # 기준(5.0)의 절반 미만 지속 → 4→2 (새 기준 2.0)
         _tick(scaler, data, 2.0)
     assert data.adjust_threads == 2
 
@@ -283,7 +305,10 @@ class FakeSession:
 
 
 class TickingClock:
-    """time.time 대체 — 호출마다 지정 간격으로 흐르는 가짜 시계."""
+    """엔진의 단조 시계(`_now`) 대체 — 읽을 때마다 지정 간격으로 흐르는 가짜 시계.
+
+    받기 루프는 청크마다 시계를 두 번 읽는다(경과 시간 · 저속 판정).
+    """
 
     def __init__(self, step: float):
         self.now = 1_000_000.0
@@ -297,8 +322,8 @@ class TickingClock:
 def _prepare_running_engine(tmp_path, monkeypatch, chunks=None, exception=None, clock_step=1.0):
     """RUNNING 상태의 엔진과 부속(데이터·로거)을 준비한다.
 
-    clock_step=1.0이면 청크당 1초가 흘러 항상 저속(<100 KB/s) 판정,
-    아주 작은 값이면 항상 고속 판정이 난다.
+    clock_step=1.0이면 시계를 읽을 때마다 1초가 흘러 최근 3초의 속도가 항상 저속(<100 KB/s)이고,
+    아주 작은 값이면 판정 창(3초)에 닿지 않아 저속 판정이 나지 않는다.
     """
     output = tmp_path / "part.bin"
     output.write_bytes(b"")
@@ -315,16 +340,18 @@ def _prepare_running_engine(tmp_path, monkeypatch, chunks=None, exception=None, 
     monkeypatch.setattr(
         mod, "get_thread_session", lambda: FakeSession(FakeResponse(chunks or []), exception)
     )
-    monkeypatch.setattr(mod.tm, "time", TickingClock(clock_step))
+    monkeypatch.setattr(engine, "_now", TickingClock(clock_step))
     return engine, data, logger
 
 
-def test_slow_part_restarts_after_six_slow_chunks(tmp_path, monkeypatch):
-    """청크 속도 < 100 KB/s 연속 6회(slow_count > 5)면 파트를 중단·재큐잉한다."""
-    chunks = [b"x" * 8192] * 10  # 1초/청크 → 8 KB/s로 항상 저속
+def test_slow_part_restarts_when_the_recent_window_is_slow(tmp_path, monkeypatch):
+    """응답 시작 뒤 3초가 지났고 최근 3초의 속도가 100 KB/s 미만이면 파트를 중단·재큐잉한다 (#347)."""
+    chunks = [b"x" * 8192] * 10  # 시계 읽기마다 1초 → 청크당 2초, 4 KB/s로 항상 저속
     engine, data, logger = _prepare_running_engine(
         tmp_path, monkeypatch, chunks=chunks, clock_step=1.0
     )
+    # 다른 연결 셋은 빠르다 — 이 연결만 느려야 끊는다 (#347 재시작 이득 판정)
+    monkeypatch.setattr(engine, "_peer_speeds", lambda part_num, now: [800.0, 900.0, 1000.0])
 
     returned = engine._download_part(0, 40 * MB - 1, 0, 40 * MB)
 
@@ -415,7 +442,7 @@ def _prepare_resume_engine(tmp_path, monkeypatch, responses, prewritten: bytes =
     mod = _engine_module()
     session = RecordingSession(responses)
     monkeypatch.setattr(mod, "get_thread_session", lambda: session)
-    monkeypatch.setattr(mod.tm, "time", TickingClock(1e-6))  # 항상 고속 판정
+    monkeypatch.setattr(engine, "_now", TickingClock(1e-6))  # 판정 창에 닿지 않는다
     return engine, data, logger, session, output
 
 
@@ -492,15 +519,17 @@ def test_resume_integrity_mismatch_restarts_from_start(tmp_path, monkeypatch):
 def test_slow_requeue_records_partial_progress(tmp_path, monkeypatch):
     """저속 재큐잉 시 받아 쓴 바이트가 기록된다 — 다음 시도의 이어받기 근거 (#78).
 
-    저속 판정 규칙(연속 6회 < 100 KB/s) 자체는 무변경이다 — 박제는
-    test_slow_part_restarts_after_six_slow_chunks가 그대로 유지한다.
+    저속 판정 규칙의 박제는 test_slow_part_restarts_when_the_recent_window_is_slow가 맡는다.
     """
-    chunks = [b"x" * CHUNK] * 10  # 1초/청크 → 항상 저속
+    chunks = [b"x" * CHUNK] * 10  # 시계 읽기마다 1초 → 청크당 2초, 항상 저속
     engine, data, logger = _prepare_running_engine(
         tmp_path, monkeypatch, chunks=chunks, clock_step=1.0
     )
+    # 다른 연결 셋은 빠르다 — 이 연결만 느려야 끊는다 (#347 재시작 이득 판정)
+    monkeypatch.setattr(engine, "_peer_speeds", lambda part_num, now: [800.0, 900.0, 1000.0])
 
     engine._download_part(0, 40 * MB - 1, 0, 40 * MB)
 
-    # 저속 판정은 6청크째에 나므로 그때까지 받은 바이트가 기록된다
-    assert engine._part_progress[(0, 40 * MB - 1)] == 6 * CHUNK
+    # 둘째 청크에서 경과 3초(시작 1번 + 청크마다 2번 읽는다)에 닿아 판정이 난다 —
+    # 그때까지 받은 바이트가 기록된다
+    assert engine._part_progress[(0, 40 * MB - 1)] == 2 * CHUNK
