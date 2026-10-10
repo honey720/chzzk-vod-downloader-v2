@@ -4114,3 +4114,58 @@ def test_elided_total_notice_keeps_the_whole_text_in_its_tooltip(qtbot, tmp_path
     visible = shown(dialog.totalLabel)
     assert visible.endswith("…") and len(visible) < len(whole), "전제: 가장 좁은 창에서 말줄임된다"
     assert dialog.totalLabel.toolTip() == whole
+
+
+# ================================================================ 합 알림은 오류가 없는 행만 더한다 (#309)
+
+
+def test_duplicate_rows_are_left_out_of_the_total(qtbot, tmp_path, basis):
+    """같은 구간을 두 행에 넣어 중복 오류가 나면, 그 행들은 합에 들지 않아 합 알림이 없어야 한다.
+
+    60fps · 3600초. 두 행 모두 00:10:00:00~00:50:00:00(40분씩 — 더하면 80분으로 영상보다 길다)
+    -> 두 행 모두 "Duplicate selection", 합 알림 없음
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+
+    set_rows(dialog, [("00:10:00:00", "00:50:00:00"), ("00:10:00:00", "00:50:00:00")])
+    _pump()
+
+    assert [error_shown(row) for row in dialog._rows] == ["Duplicate selection"] * 2
+    assert total_shown(dialog) == ""
+
+
+def test_a_row_outside_the_video_is_left_out_of_the_total(qtbot, tmp_path, basis):
+    """영상 밖이라 오류인 행은 합에 들지 않아야 한다.
+
+    60fps · 3600초. 행 처음~00:55:00:00(55분), 행 01:10:00:00~01:20:00:00(영상 밖 — 10분)
+    -> 둘째 행 "Selection is outside the video", 합 알림 없음(둘째 행을 더하면 65분으로 알림이 뜬다)
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+
+    set_rows(dialog, [("", "00:55:00:00"), ("01:10:00:00", "01:20:00:00")])
+    _pump()
+
+    assert error_shown(dialog._rows[1]) == "Selection is outside the video"
+    assert dialog.viewModel().lengthText(1) == ""  # 행의 길이 표시도 이 행을 세지 않는다
+    assert total_shown(dialog) == ""
+
+
+def test_overlapping_rows_without_errors_both_count_in_the_total(qtbot, tmp_path, basis):
+    """겹치지만 오류가 아닌 두 행은 둘 다 합에 들어야 한다.
+
+    60fps · 3600초. 행 처음~00:40:00:00(40분), 행 00:20:00:00~끝(40분) — 20분이 겹친다
+    -> 오류 없음, 알림 == "Sections add up to 01:20:00.000 — longer than the video (01:00:00.000)"
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+
+    set_rows(dialog, [("", "00:40:00:00"), ("00:20:00:00", "")])
+    _pump()
+
+    assert [error_shown(row) for row in dialog._rows] == ["", ""]
+    assert total_shown(dialog) == TOTAL_OVER.format("01:20:00.000", "01:00:00.000")

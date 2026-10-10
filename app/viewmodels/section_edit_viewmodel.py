@@ -934,7 +934,9 @@ class SectionEditViewModel(QObject):
     def totalNoticeText(self) -> str:
         """구간 길이의 합이 영상 길이보다 길 때의 알림. 그렇지 않으면 빈 글 — 오류가 아니다.
 
-        걸러 내지 않은 행 가운데 해석된 행의 길이를 더한다(빈 시각은 처음 · 끝으로 푼 값이다).
+        오류가 없는 행의 길이만 더한다 — 행마다의 길이 표시(``lengthText``)와 같은 기준이다.
+        빈 시각은 처음 · 끝으로 푼 값이다. 오류인 행(영상 밖 · 중복 · 개수 초과)은 확인할 수 없는
+        구간이라 세지 않는다.
         구간이 겹치면 합이 영상보다 길어질 수 있다 — 겹치는 부분을 구간마다 따로 만든다는 뜻이라
         확인은 막지 않고 알리기만 한다. 견주는 단위는 프레임이다(초로 더하면 끝자리가 흔들린다).
         영상 길이를 모르면(조회 전 · 실패) 알리지 않는다.
@@ -943,8 +945,8 @@ class SectionEditViewModel(QObject):
             return ""
         total_frames = sum(
             frame_index(end, self.fps) - frame_index(start, self.fps)
-            for start, end in self._pairs.values()
-            if end > start
+            for row, (start, end) in self._pairs.items()
+            if row not in self._errors
         )
         video_frames = round(self.duration * frame_rate(self.fps))
         if total_frames <= video_frames:
