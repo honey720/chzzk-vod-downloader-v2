@@ -174,15 +174,13 @@ def test_slow_watch_never_judges_when_the_threshold_is_zero(engine):
         ((20.0, 25.0, 30.0), 15.0, False),  # 중앙 25의 0.3배(7.5) 이상 — 회선 전체가 느리다
         ((20.0, 25.0, 30.0), 2.0, True),  # 중앙의 0.3배 미만 — 이 연결만 유독 느리다
         ((800.0, 900.0, 1000.0), 50.0, True),  # 다른 연결은 빠르다
-        ((20.0, 25.0), 2.0, False),  # 견줄 연결이 3개 미만 — 끊지 않는다
-        ((), 2.0, False),
+        ((20.0, 25.0), 15.0, True),  # 견줄 연결이 3개 미만 — 임계만으로 판정
+        ((), 15.0, True),
     ],
     ids=["모두 느림", "유독 느림", "다른 연결은 빠름", "견줄 연결 둘", "견줄 연결 없음"],
 )
 def test_slow_watch_compares_with_the_other_connections(engine, peer_speeds, own_speed, slow):
     """임계 미만인 연결은 다른 연결들의 중앙 속도의 0.3배보다도 느릴 때만 저속이어야 한다.
-
-    견줄 연결이 3개 미만이면 저속이 아니다 — 다시 받는 쪽이 얼마나 빠를지 알 수 없다.
 
     다른 연결들이 방금 알린 속도 peer_speeds(KB/s), 이 연결은 3초 동안 own_speed(KB/s), 받을 양 100 MB
     -> 경과 3.0초의 판정 == slow
@@ -196,13 +194,13 @@ def test_slow_watch_compares_with_the_other_connections(engine, peer_speeds, own
 def test_slow_watch_does_not_compare_with_connections_that_went_quiet(engine):
     """한참 전에 속도를 알린 연결과는 견주지 않아야 한다.
 
-    다른 연결 셋이 5초 전에 800 · 900 · 1000 KB/s를 알림, 이 연결은 3초 동안 15 KB/s, 받을 양 100 MB
-    -> False — 견줄 연결이 없다 (방금 알린 것이었다면 True다)
+    다른 연결 셋이 5초 전에 20 · 25 · 30 KB/s를 알림, 이 연결은 3초 동안 15 KB/s
+    -> True (방금 알린 것이었다면 False다)
     """
-    _peers(engine, FAST_PEERS, age=5.0)
-    watch = engine._watch_slow(0, expected=BIG)
+    _peers(engine, (20.0, 25.0, 30.0), age=5.0)
+    watch = engine._watch_slow(0)
 
-    assert watch.is_slow(3.0, int(15.0 * KB * 3)) is False
+    assert watch.is_slow(3.0, int(15.0 * KB * 3)) is True
 
 
 def test_slow_watch_publishes_its_speed_for_the_other_connections(engine):
@@ -259,15 +257,45 @@ def test_slow_connection_is_cut_only_when_restarting_finishes_clearly_sooner(
     assert watch.is_slow(10.0, received) is slow
 
 
-def test_slow_connection_is_not_cut_when_the_remaining_size_is_unknown(engine):
-    """받을 양을 모르는 응답은 아무리 느려도 저속으로 끊지 않아야 한다.
+@pytest.mark.parametrize(
+    ("peer_speeds", "own_speed", "slow"),
+    [
+        ((400.0, 400.0, 400.0), 90.0, True),  # 중앙 400의 0.3배(120) 미만 — 이 연결만 느리다
+        ((200.0, 200.0, 200.0), 90.0, False),  # 중앙 200의 0.3배(60) 이상 — 회선 전체가 느리다
+    ],
+    ids=["유독 느림", "모두 느림"],
+)
+def test_unknown_size_is_judged_by_the_threshold_and_the_other_connections_alone(
+    engine, peer_speeds, own_speed, slow
+):
+    """받을 양을 모르는 응답은 재시작 이득을 셈하지 않고 임계와 다른 연결과의 비교만으로 판정해야 한다.
 
-    다른 연결 셋은 빠름, 받을 양 미상, 3초 동안 1 KB/s -> False
+    다른 연결 셋은 peer_speeds(KB/s), 받을 양 미상, 3초 동안 own_speed(KB/s)
+    -> 판정 == slow
     """
-    _peers(engine, FAST_PEERS)
+    _peers(engine, peer_speeds)
     watch = engine._watch_slow(0)
 
-    assert watch.is_slow(3.0, 3 * KB) is False
+    assert watch.is_slow(3.0, int(own_speed * KB * 3)) is slow
+
+
+@pytest.mark.parametrize(
+    "peer_speeds", [(), (400.0, 400.0)], ids=["견줄 연결 없음", "견줄 연결 둘"]
+)
+def test_too_few_peers_are_judged_by_the_threshold_alone_even_when_restarting_would_not_pay(
+    engine, peer_speeds
+):
+    """견줄 연결이 3개 미만이면 재시작 이득을 셈하지 않고 임계만으로 저속이어야 한다.
+
+    처음부터 다시 받는 경로, 10 MB 가운데 7 MB를 받았고 최근 3초는 90 KB/s
+    -> True (다른 연결 셋이 400 KB/s였다면 끊는 쪽이 더 늦어 False다)
+    """
+    _peers(engine, peer_speeds)
+    watch = engine._watch_slow(0, expected=10 * MB)
+    received = 7 * MB
+    watch.is_slow(7.0, received - int(90.0 * KB * 3))
+
+    assert watch.is_slow(10.0, received) is True
 
 
 def test_restart_cost_counts_one_second_for_the_new_request(engine):
