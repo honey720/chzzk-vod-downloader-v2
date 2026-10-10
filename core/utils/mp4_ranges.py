@@ -47,6 +47,24 @@ def sections_download_size(index: Mp4Index, selections: Iterable[TimeRange]) -> 
     return plan_partial(index, spans).download_size
 
 
+def sections_sizes(index: Mp4Index, selections: Iterable[TimeRange]) -> tuple[int, int]:
+    """(받을 바이트의 합, 파일의 머리 길이) — 두 값을 배치 한 번으로 구한다 (#309).
+
+    ``sections_download_size`` · ``sections_head_size``를 따로 부른 것과 값이 같다. 두 함수는
+    저마다 배치를 만들어(``plan_partial``) 샘플 위치 열 전체를 한 번씩 훑는다 — 둘 다 필요한
+    쪽(카드의 크기 세기)은 이 함수로 한 번만 훑는다.
+
+    Raises:
+        ValueError: 구간이 영상 밖인 경우(``selection_byte_ranges``)
+        Mp4Error: moov가 샘플보다 뒤에 있는 등 부분 파일을 만들 수 없는 경우
+    """
+    spans = [
+        span for selection in selections for span in selection_byte_ranges(index, selection).ranges
+    ]
+    layout = plan_partial(index, spans)
+    return layout.download_size, layout.head_size
+
+
 def sections_head_size(index: Mp4Index) -> int:
     """구간 다운로드가 만드는 파일의 머리 길이(바이트) — ftyp · moov 등 첫 샘플 앞의 것이다 (#309).
 

@@ -28,6 +28,7 @@ from dataclasses import dataclass
 
 from core.api.mp4 import MP4_INVALID, MP4_UNSUPPORTED, Mp4Error, _boxes, _entry_count, _leaf_boxes
 from core.models.mp4_index import Mp4Index
+from core.models.sample_column import in_chunks
 
 _BOX_HEADER_BYTES = 8  # 상자 머리 — 크기(4) + 종류(4)
 # 32비트 크기 칸에 적을 수 있는 가장 큰 상자 크기. 이보다 큰 mdat는 크기를 0("파일
@@ -81,7 +82,9 @@ def plan_partial(index: Mp4Index, ranges: Iterable[tuple[int, int]]) -> PartialL
             자리가 없는 경우(``MP4_UNSUPPORTED``)
     """
     tracks = [index.video] + ([index.audio] if index.audio is not None else [])
-    first_sample = min(min(track.offsets) for track in tracks if track.offsets)
+    # 위치 열 전체를 한 번에 훑지 않는다 — 긴 영상은 샘플이 백만 개를 넘어, 통째로 도는 동안
+    # 다른 스레드가 멈춘다(core.models.sample_column.CHUNK_ITEMS)
+    first_sample = min(min(map(min, in_chunks(track.offsets))) for track in tracks if track.offsets)
     if index.moov_range is None or index.moov_range[1] >= first_sample:
         raise Mp4Error(MP4_UNSUPPORTED, "moov가 샘플보다 뒤에 있다")
     if first_sample - (index.moov_range[1] + 1) < _BOX_HEADER_BYTES:

@@ -18,6 +18,8 @@ import array
 from collections.abc import Iterable, Iterator
 from itertools import islice
 
+from core.utils.stop import check_stop
+
 # 긴 표를 한 번에 채우거나 훑는 C 반복을 이 개수씩 잘라 돈다. C 안에서 도는 반복은 끝날 때까지
 # GIL을 놓지 않는다 — 샘플이 180만 개인 표 하나를 통째로 돌면 0.1~0.3초 동안 다른 스레드(GUI)가
 # 멈춘다(#309 실기: 백그라운드에서 색인을 만드는 2초 남짓 앱이 클릭을 받지 못했다). 조각 사이에서는
@@ -26,6 +28,9 @@ from itertools import islice
 # 크기는 잰 값으로 정했다(약 184만 프레임의 합성 moov, 10ms 간격의 GUI 틱): 2**15 · 2**16개에서
 # 틱의 최대 간격이 50ms 아래이고(한 번에 돌면 약 340ms), 2**17개부터 50ms를 넘는다. 더 잘게
 # 잘라도 간격은 더 줄지 않는다. 잘라 도는 데 드는 시간은 크기와 거의 무관하다(해석 전체의 약 4%)
+#
+# 조각 사이는 일을 그만둘 수 있는 틈이기도 하다 — 그만두라는 답을 받았으면 여기서 멈춘다
+# (``core.utils.stop``). 그만둘지 묻는 값을 걸어 두지 않은 스레드에서는 아무 일도 없다
 CHUNK_ITEMS = 1 << 15
 
 _FLOAT = "d"  # C double — 파이썬 float와 같은 표현
@@ -75,6 +80,7 @@ def fill_in_chunks(target: array.array, values: Iterable) -> array.array:
     source = iter(values)
     extend = array.array.extend  # SampleColumn은 스스로의 extend를 막아 둔다 — 기본 클래스의 것
     while True:
+        check_stop()
         before = len(target)
         extend(target, islice(source, CHUNK_ITEMS))
         if len(target) - before < CHUNK_ITEMS:
@@ -89,6 +95,7 @@ def array_in_chunks(typecode: str, values: Iterable) -> array.array:
 def in_chunks(values: array.array) -> Iterator[array.array]:
     """배열을 ``CHUNK_ITEMS``개씩의 조각으로 낸다 — 최솟값 · 최댓값 · 세기처럼 훑기만 하는 일에 쓴다."""
     for start in range(0, len(values), CHUNK_ITEMS):
+        check_stop()
         yield values[start : start + CHUNK_ITEMS]
 
 

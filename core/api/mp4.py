@@ -41,6 +41,7 @@ from core.models.mp4_index import (
     Mp4Track,
     PendingMp4Head,
 )
+from core.utils.stop import check_stop, stoppable
 from core.models.sample_column import (
     CHUNK_ITEMS,
     array_in_chunks,
@@ -225,14 +226,21 @@ def read_mp4_raw(read: Callable[[int, int], bytes]) -> Mp4Raw:
     raise Mp4Error(MP4_MOOV_NOT_FOUND)
 
 
-def index_mp4(raw: Mp4Raw) -> Mp4Head:
+def index_mp4(raw: Mp4Raw, should_stop: Callable[[], bool] | None = None) -> Mp4Head:
     """받아 둔 moov를 해석해 색인과 파일 앞부분의 바이트를 돌려준다 (#309).
+
+    Args:
+        should_stop: 참을 돌려주면 해석을 그만둔다 — 조각 하나를 끝낼 때마다 묻는다.
+            None이면 이 스레드에 걸려 있는 값(``core.utils.stop.stoppable``)을 따른다
 
     Raises:
         Mp4Error: 조각난 mp4이거나 색인이 손상된 경우
+        StopRequested: 그만두라는 답을 받은 경우 — 만들던 것은 버린다
     """
     parse_started = time.perf_counter()
-    parsed = parse_moov(raw.moov)
+    with stoppable(should_stop):
+        check_stop()
+        parsed = parse_moov(raw.moov)
     parse_seconds = time.perf_counter() - parse_started
     return Mp4Head(
         index=replace(parsed, moov_range=raw.moov_range),
@@ -291,6 +299,7 @@ def _range_reader(url: str) -> Callable[[int, int], bytes]:
             expected = _granted_length(response.headers.get("Content-Range"), offset, last)
             body = bytearray()
             for chunk in response.iter_content(chunk_size=_READ_CHUNK_BYTES):
+                check_stop()  # 받다가 그만둔다 — 응답은 with가 닫는다
                 body += chunk
                 if len(body) > expected:
                     raise Mp4Error(MP4_RANGE_MISMATCH, f"본문이 {expected}바이트를 넘는다")
@@ -816,6 +825,7 @@ def _presentation_order(
         return order
     start = 0
     while start < total:
+        check_stop()
         end = min(start + CHUNK_ITEMS, total)
         # 이 조각의 가장 늦은 표시 시각 — 앞 조각들의 것은 볼 필요가 없다. 앞 조각은 그 뒤의 어느
         # 표시 시각보다도 늦지 않은 자리에서 끊겼으므로 이 조각의 어느 값도 그보다 이르지 않다
@@ -833,6 +843,7 @@ def _largest(values: Iterator[float]) -> float:
     """값들의 최댓값 — ``max(values)``와 같다. 잘라서 훑는다(``CHUNK_ITEMS``). 값이 하나는 있어야 한다."""
     largest = max(islice(values, CHUNK_ITEMS))
     while True:
+        check_stop()
         further = max(islice(values, CHUNK_ITEMS), default=None)
         if further is None:
             return largest
@@ -847,6 +858,7 @@ def _positions_in(samples: array.array, wanted: frozenset) -> array.array:
     """
     positions = array.array("Q")
     for start in range(0, len(samples), CHUNK_ITEMS):
+        check_stop()
         chunk = samples[start : start + CHUNK_ITEMS]
         positions.extend(
             compress(range(start, start + len(chunk)), map(wanted.__contains__, chunk))
