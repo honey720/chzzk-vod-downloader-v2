@@ -4050,3 +4050,55 @@ def test_no_total_is_noted_before_the_length_of_the_video_is_known(qtbot, tmp_pa
         assert total_shown(dialog) == ""
     finally:
         basis.gate.set()
+
+
+# ================================================================ 가장 좁은 창에서도 행이 다 보인다 (#309)
+
+
+@pytest.mark.parametrize("row_count", [3, 20], ids=["스크롤 없음", "스크롤 있음"])
+def test_rows_fit_inside_the_dialog_at_its_narrowest(qtbot, tmp_path, basis, row_count):
+    """편집 창을 가장 좁게 줄여도 각 행의 ✕ 버튼이 스크롤 영역의 보이는 부분 안에 있어야 한다.
+
+    행 row_count개, 창의 폭을 1로 요청(창의 최소 폭으로 맞춰진다), 높이 300
+    -> 보이는 행마다 ✕ 버튼의 오른쪽 끝 <= 보이는 부분의 오른쪽 끝, ✕ 버튼의 폭 == 넓은 창(1200)에서의 폭
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    set_rows(dialog, [("", "")] * row_count)
+    dialog.resize(1200, 300)
+    _pump()
+    wide = [row.deleteButton.width() for row in dialog._rows]
+
+    dialog.resize(1, 300)
+    _pump()
+
+    viewport = dialog.scrollArea.viewport()
+    assert dialog.width() == dialog.minimumSizeHint().width()  # 요청한 1이 아니라 최소 폭이다
+    assert dialog._rows[0].deleteButton.isVisible()
+    for index, row in enumerate(dialog._rows):
+        button = row.deleteButton
+        right = button.mapTo(viewport, button.rect().topRight()).x()
+        assert right <= viewport.rect().right(), f"{index + 1}행의 ✕가 잘린다"
+        assert button.width() == wide[index]
+
+
+def test_elided_total_notice_keeps_the_whole_text_in_its_tooltip(qtbot, tmp_path, basis):
+    """합 알림이 좁아 말줄임되면 툴팁에 전문이 있어야 한다.
+
+    60fps · 3600초. 세 행: 처음~10분 / 4분~끝 / 1분~끝, 창을 가장 좁게 줄임
+    -> 보이는 글이 "…"로 끝나고 전문보다 짧다, 툴팁 == 전문
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    set_rows(dialog, [("", "00:10:00:00"), ("00:04:00:00", ""), ("00:01:00:00", "")])
+    whole = TOTAL_OVER.format("02:05:00.000", "01:00:00.000")
+
+    dialog.resize(1, 300)
+    _pump()
+
+    assert dialog.totalLabel.isVisible()
+    visible = shown(dialog.totalLabel)
+    assert visible.endswith("…") and len(visible) < len(whole), "전제: 가장 좁은 창에서 말줄임된다"
+    assert dialog.totalLabel.toolTip() == whole

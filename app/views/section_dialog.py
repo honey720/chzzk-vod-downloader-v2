@@ -435,6 +435,16 @@ class SectionEditDialog(QDialog):
         # 목록의 값은 _refresh가 칸에 넣는다 — 빈 시각(빈 글)이 아닌 값은 새 칸의 값과 달라
         # 언제나 들어가고, 넣은 값은 0이어도 전부 밝게 보인다
         self._refresh()
+        self._fitRowWidth()
+
+    def _fitRowWidth(self) -> None:
+        """스크롤 영역의 최소 폭을 행 하나가 다 들어가는 폭으로 둔다 — 창이 그보다 좁아지지 않는다.
+
+        스크롤 영역은 안에 든 위젯의 최소 폭을 밖으로 알리지 않는다. 가로 스크롤이 없어 그대로
+        두면 창을 가장 좁게 줄였을 때 행의 오른쪽 끝(✕ 버튼)이 잘린다 (#309).
+        """
+        frame = 2 * self.scrollArea.frameWidth()
+        self.scrollArea.setMinimumWidth(self._rowContainer.minimumSizeHint().width() + frame)
 
     def _isCurrent(self, row: int, column: int, edit: TimePointEdit) -> bool:
         """그 시각 입력이 지금 그 (행, 칸)에 놓인 것인지.
