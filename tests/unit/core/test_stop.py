@@ -350,3 +350,41 @@ def test_sections_sizes_equals_the_two_separate_sizes_with_one_layout(monkeypatc
 
     assert sections_sizes(index, selections) == expected
     assert len(calls) == 1
+
+
+# ================================================================ 조각을 스스로 자르는 세 자리
+
+
+def test_presentation_order_stops_between_chunks(tiny_chunks):
+    """표시 순서의 정렬은 조각 사이에서 그만둘 수 있어야 한다.
+
+    샘플 12개 · 조각 2개씩, 그만두라는 답을 걸고 부름 -> StopRequested
+    """
+    presented = column_module.array.array("q", range(12))
+    decoded = column_module.array.array("q", range(12))
+
+    with stoppable(lambda: True):
+        with pytest.raises(StopRequested):
+            mp4_module._presentation_order(presented, decoded, 0)
+
+
+def test_largest_stops_between_chunks(tiny_chunks):
+    """최댓값 훑기는 조각 사이에서 그만둘 수 있어야 한다.
+
+    값 12개 · 조각 2개씩, 그만두라는 답을 걸고 부름 -> StopRequested
+    """
+    with stoppable(lambda: True):
+        with pytest.raises(StopRequested):
+            mp4_module._largest(iter([float(n) for n in range(12)]))
+
+
+def test_positions_in_stops_between_chunks(tiny_chunks):
+    """자리 찾기는 조각 사이에서 그만둘 수 있어야 한다.
+
+    샘플 12개 · 조각 2개씩, 그만두라는 답을 걸고 부름 -> StopRequested
+    """
+    samples = column_module.array.array("Q", range(12))
+
+    with stoppable(lambda: True):
+        with pytest.raises(StopRequested):
+            mp4_module._positions_in(samples, frozenset({3, 7}))
