@@ -1532,3 +1532,29 @@ def test_stopped_download_is_no_longer_background_work(qtbot, window, work_marks
     _pump()
 
     assert work_marks == ["시작", "끝"]
+
+
+def test_changing_resolution_stops_the_previous_count_without_waiting_for_the_lookup(
+    qtbot, window, probe, watched_index
+):
+    """해상도를 바꾸면, 새 해상도의 조회가 끝나기를 기다리지 않고 곧바로 앞 크기 세기를 그만두게 해야 한다.
+
+    색인 만들기를 막아 둔 채 1080p에서 구간을 확인. 조회도 막아 둔 채 480p를 고름
+    -> 조회가 아직 도는 동안(결과를 기다리는 조회 1건): 앞 크기 세기가 그만두라는 표시를 받았다
+    """
+    win, item, _engine = window
+    _give_section(qtbot, win, item, wait_size=False)
+    qtbot.waitUntil(lambda: watched_index.calls == 1, timeout=3000)
+    sizer = win.contentManager._sectionSizer
+    ((first_job, _moov, _selections),) = sizer._jobs.values()
+    probe.gate.clear()
+
+    _pick(win, item, 480)
+    lookups_running = win.contentManager._sectionRefitter.pendingCount()
+    stopped = first_job.cancelled()
+    probe.gate.set()
+    watched_index.gate.set()
+    _settle(qtbot, win)
+
+    assert lookups_running == 1
+    assert stopped is True

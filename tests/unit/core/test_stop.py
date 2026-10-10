@@ -109,17 +109,20 @@ def test_value_set_on_one_thread_does_not_reach_another():
 # ================================================================ 색인 해석의 그만두기
 
 
-def test_index_mp4_does_not_start_when_told_to_stop_from_the_beginning():
+def test_index_mp4_does_not_start_when_told_to_stop_from_the_beginning(monkeypatch):
     """처음부터 그만두라는 답이면 index_mp4는 해석을 시작하지 않고 StopRequested를 던져야 한다.
 
-    should_stop = 늘 참 -> StopRequested, 물은 횟수 == 1
+    should_stop = 늘 참 -> StopRequested, 물은 횟수 == 1, 해석 함수(parse_moov) 0번
     """
     asked = _After(1)
+    parsed = []
+    monkeypatch.setattr(mp4_module, "parse_moov", parsed.append)
 
     with pytest.raises(StopRequested):
         index_mp4(_raw(), asked)
 
     assert asked.asked == 1
+    assert parsed == []
 
 
 def test_index_mp4_stops_between_chunks(tiny_chunks):
@@ -388,3 +391,38 @@ def test_positions_in_stops_between_chunks(tiny_chunks):
     with stoppable(lambda: True):
         with pytest.raises(StopRequested):
             mp4_module._positions_in(samples, frozenset({3, 7}))
+
+
+# ================================================================ 조각을 자르는 두 함수
+
+
+def test_fill_in_chunks_stops_between_chunks(tiny_chunks):
+    """채우는 반복은 조각 사이에서 그만둘 수 있어야 한다 — 그만두지 않으면 값은 한 번에 채운 것과 같다.
+
+    값 12개 · 조각 2개씩, 셋째 물음부터 그만두라고 답함 -> StopRequested, 그때까지 채운 값 4개
+    그만두라는 답 없이 -> 12개가 그대로 들어 있다
+    """
+    target = column_module.array.array("q")
+
+    with stoppable(_After(3)):
+        with pytest.raises(StopRequested):
+            column_module.fill_in_chunks(target, range(12))
+
+    assert list(target) == [0, 1, 2, 3]
+    assert list(column_module.array_in_chunks("q", range(12))) == list(range(12))
+
+
+def test_in_chunks_stops_between_chunks(tiny_chunks):
+    """훑는 반복은 조각 사이에서 그만둘 수 있어야 한다.
+
+    값 12개 · 조각 2개씩, 셋째 물음부터 그만두라고 답함 -> 조각 2개를 낸 뒤 StopRequested
+    """
+    values = column_module.array.array("q", range(12))
+    seen = []
+
+    with stoppable(_After(3)):
+        with pytest.raises(StopRequested):
+            for chunk in column_module.in_chunks(values):
+                seen.append(list(chunk))
+
+    assert seen == [[0, 1], [2, 3]]
