@@ -52,13 +52,23 @@ def check_content_length(headers: Mapping[str, str] | None, received: int) -> No
     Raises:
         TruncatedSegmentError: 선언된 길이와 받은 길이가 다를 때
     """
+    declared = declared_length(headers)
+    if declared is not None and declared != received:
+        raise TruncatedSegmentError(f"Content-Length {declared}인데 받은 본문은 {received}바이트다")
+
+
+def declared_length(headers: Mapping[str, str] | None) -> int | None:
+    """응답이 선언한 본문 길이(바이트). 받을 본문의 길이로 믿을 수 없으면 None이다.
+
+    선언이 없거나 숫자가 아닐 때, 그리고 본문이 압축돼 올 때(``Content-Encoding`` — 선언된
+    길이는 압축된 길이다)가 그렇다.
+    """
     if not headers or headers.get("Content-Encoding"):
-        return
+        return None
     declared = headers.get("Content-Length")
     if declared is None or not str(declared).strip().isdigit():
-        return
-    if int(declared) != received:
-        raise TruncatedSegmentError(f"Content-Length {declared}인데 받은 본문은 {received}바이트다")
+        return None
+    return int(declared)
 
 
 def _top_level_boxes(stream: BinaryIO, length: int) -> Iterator[str]:

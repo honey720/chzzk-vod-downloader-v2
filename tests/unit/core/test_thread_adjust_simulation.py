@@ -50,17 +50,24 @@ def calibrated(rng: random.Random) -> float:
     return rng.uniform(low, high)
 
 
+def symmetric(rng: random.Random) -> float:
+    """평균 1 · 표준편차 15%의 대칭 흔들림 — 대역을 고정한 회선에서 틱 측정값이 흔들리는 모양."""
+    return min(1.6, max(0.4, rng.gauss(1.0, 0.15)))
+
+
 def simulate(
     band: Callable[[int], float],
     jitter: Callable[[random.Random], float],
     ticks: int,
     seed: int = 1,
+    cap: float = CAP,
 ) -> tuple[list[int], list[float]]:
     """ticks틱 동안 조정 규칙을 돌려 (틱마다의 목표 스레드 수, 틱마다의 처리량)을 돌려준다.
 
     Args:
         band: 틱 번호 → 그 틱의 대역(MB/s)
         jitter: 난수 → 그 틱의 배율
+        cap: 연결당 상한(MB/s)
     """
     data = DownloadData(
         base_url="https://example.invalid/video.mp4",
@@ -71,10 +78,13 @@ def simulate(
     )
     data.max_threads = 6996
     scaler = FileDownloader(data, QuietLogger())
+    clock = [0.0]
+    scaler._now = lambda: clock[0]
     rng = random.Random(seed)
     targets, speeds = [], []
     for tick in range(ticks):
-        speed = min(data.adjust_threads * CAP, band(tick) * jitter(rng))
+        clock[0] = float(tick + 1)  # 틱은 1초 간격이다
+        speed = min(data.adjust_threads * cap, band(tick) * jitter(rng))
         data.speed_mb = speed
         scaler._adjust_threads()
         targets.append(data.adjust_threads)
@@ -123,6 +133,49 @@ def test_target_is_not_stuck_far_below_the_fill_point_on_a_noisy_line(seed):
     targets, _speeds = simulate(lambda tick: 20.0, calibrated, 600, seed)
 
     assert mean(targets[WARMUP:]) >= 12
+
+
+@pytest.mark.parametrize("seed", SEEDS)
+def test_target_stays_near_the_fill_point_on_a_noisy_line(seed):
+    """출렁이는 회선에서도 목표가 회선이 찬 지점 근처에 머물고, 뒤로 갈수록 오르지 않아야 한다.
+
+    대역 20 MB/s(스레드 20개에서 참), 보정한 출렁임, 1800틱
+    -> 80틱 뒤의 틱 가운데 90% 이상에서 목표 <= 28
+    -> 마지막 1/3의 평균 목표 <= 가운데 1/3의 평균 목표 + 4
+    """
+    targets, _speeds = simulate(lambda tick: 20.0, calibrated, 1800, seed)
+    settled = targets[WARMUP:]
+    third = len(settled) // 3
+
+    assert sum(target <= 28 for target in settled) / len(settled) >= 0.9
+    assert mean(settled[2 * third :]) <= mean(settled[third : 2 * third]) + 4
+
+
+@pytest.mark.parametrize("seed", SEEDS)
+def test_target_stays_low_when_a_few_connections_fill_a_fixed_line(seed):
+    """연결 몇 개로 차는 고정 대역에서는, 틱 속도가 흔들려도 목표가 찬 지점 근처에 머물러야 한다.
+
+    대역 22 MB/s · 연결당 2.75 MB/s(스레드 8개에서 참), 틱 ±15% 흔들림, 1800틱
+    -> 80틱 뒤의 틱 가운데 90% 이상에서 목표 <= 16
+    -> 80틱 뒤의 평균 목표 <= 14
+    """
+    targets, _speeds = simulate(lambda tick: 22.0, symmetric, 1800, seed, cap=2.75)
+    settled = targets[WARMUP:]
+
+    assert sum(target <= 16 for target in settled) / len(settled) >= 0.9
+    assert mean(settled) <= 14
+
+
+def test_target_stays_at_the_fill_point_when_a_few_connections_fill_a_steady_line():
+    """연결 몇 개로 차는 일정한 대역에서는 목표가 찬 지점(8)과 그 위 한 칸(12) 사이에 머물러야 한다.
+
+    대역 22 MB/s · 연결당 2.75 MB/s(스레드 8개에서 참), 출렁임 없음, 600틱
+    -> 80틱 뒤의 목표가 모두 8 ~ 12
+    """
+    targets, _speeds = simulate(lambda tick: 22.0, steady, 600, cap=2.75)
+
+    assert min(targets[WARMUP:]) >= 8
+    assert max(targets[WARMUP:]) <= 12
 
 
 # ================================================================ 4 · 5. 대역이 바뀌는 회선

@@ -50,6 +50,19 @@ def _short_slow_window(monkeypatch):
     monkeypatch.setattr(base_module, "_SLOW_WINDOW_SECONDS", 0.5)
 
 
+@pytest.fixture(autouse=True)
+def _only_this_connection_is_slow(monkeypatch):
+    """다른 연결 셋은 아주 빠르고 새 요청의 시작 비용은 없는 것으로 둔다 (#347 재시작 이득 판정).
+
+    이 파일의 본문은 몇십 KB라, 제품의 값(시작 비용 1초)으로는 끊는 쪽이 이득일 수 없다 — 그 셈은
+    이 파일이 재는 것이 아니다(test_slow_judgement.py가 잰다).
+    """
+    monkeypatch.setattr(
+        base_module.BaseDownloader, "_peer_speeds", lambda self, part_num, now: [1e9, 1e9, 1e9]
+    )
+    monkeypatch.setattr(base_module, "_RESTART_CONNECT_SECONDS", 0.0)
+
+
 class _SlowWriteFile:
     """실제 파일을 감싸 write()마다 인위적 지연을 주는 래퍼 — 느린 디스크 흉내."""
 
@@ -87,6 +100,7 @@ class _InstantResponse:
 
     def __init__(self, body: bytes):
         self._body = body
+        self.headers = {"Content-Length": str(len(body))}
 
     def raise_for_status(self):
         pass

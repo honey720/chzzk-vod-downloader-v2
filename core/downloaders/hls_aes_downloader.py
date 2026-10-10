@@ -213,7 +213,9 @@ class HlsAesDownloader(BaseDownloader):
                 )
                 response.raise_for_status()
                 part_start_time = self._now()
-                slow_watch = self._watch_slow(part_num)
+                slow_watch = self._watch_slow(
+                    part_num, integrity.declared_length(getattr(response, "headers", None))
+                )
 
                 buffer = bytearray()
                 for chunk in response.iter_content(chunk_size=8192):

@@ -60,8 +60,10 @@ class RecordingLogger:
 class FakeResponse:
     """스트리밍 응답 흉내 — 지정한 청크 목록을 그대로 흘린다."""
 
-    def __init__(self, chunks):
+    def __init__(self, chunks, content_length: int | None = None):
         self._chunks = chunks
+        if content_length is not None:
+            self.headers = {"Content-Length": str(content_length)}
 
     def raise_for_status(self):
         pass
@@ -254,8 +256,14 @@ def test_slow_requeues_are_unlimited_and_download_still_completes(tmp_path, monk
     engine, data, logger, failures, mod = _prepare_m3u8_engine(tmp_path)
 
     slow_chunks = [b"x" * CHUNK] * 10  # 시계 읽기마다 1초 → 청크당 2초, 항상 저속
-    monkeypatch.setattr(mod, "get_thread_session", lambda: FakeSession(FakeResponse(slow_chunks)))
+    monkeypatch.setattr(
+        mod,
+        "get_thread_session",
+        lambda: FakeSession(FakeResponse(slow_chunks, content_length=40 * 1024 * 1024)),
+    )
     monkeypatch.setattr(engine, "_now", TickingClock(1.0))
+    # 다른 연결 셋은 빠르다 — 이 연결만 느려야 끊는다 (#347 재시작 이득 판정)
+    monkeypatch.setattr(engine, "_peer_speeds", lambda part_num, now: [800.0, 900.0, 1000.0])
 
     for _ in range(12):  # 영구(2)·일시(10) 상한 모두 초과
         data.remaining_ranges = []

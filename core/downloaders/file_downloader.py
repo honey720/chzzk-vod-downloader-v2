@@ -138,7 +138,9 @@ class FileDownloader(BaseDownloader):
                     resume_offset = 0
                     continue
                 part_start_time = self._now()
-                slow_watch = self._watch_slow(part_num)
+                slow_watch = self._watch_slow(
+                    part_num, expected=end - range_start + 1, resumes=True
+                )
                 # 디스크 쓰기 누적 시간 — 저속 판정에는 더 이상 반영하지 않는다(#191).
                 # f.write()는 OS 페이지 캐시에 즉시 반환되는 버퍼드 쓰기라 실기
                 # 로그(write=0.000s/0.494s=0%)로 기여도가 정확히 0%임을 확인했다 —
