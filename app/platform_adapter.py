@@ -23,6 +23,10 @@ Qt에도 대응 API가 없어서, `content/widget.py`의 `requestOpenDir`가 이
 import os
 import platform
 import subprocess
+import sys
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 import platformdirs
 
@@ -98,3 +102,116 @@ def reveal_in_file_manager(path: str) -> bool:
     if system == "Linux":
         return _start_detached(["nautilus", native_path])
     return False
+
+
+# ================================================================ 화면이 굼떠지지 않게 — GIL 넘김 · 타이머 (#309)
+#
+# 다른 스레드가 CPU를 쓰는 동안(색인 해석 · 다운로드) 메인 스레드는 파이썬으로 들어올 때마다
+# GIL을 다시 받아야 한다. 받으려는 쪽은 넘김 간격만큼 기다렸다가 넘겨 달라고 하는데, Windows에서는
+# 그 기다림이 타이머 한 틱(약 15.6ms)으로 올림된다 — 화면 일 한 번이 파이썬을 수십 번 드나들어
+# 8ms짜리 일이 0.8초가 됐다(실측). 타이머 단위를 1ms로 청하면 기다림이 넘김 간격만큼만 든다.
+#
+# - 넘김 간격은 Windows에서만 1ms로 줄인다. 0.5ms는 쓰지 않는다 — 기다리지 않고 되풀이해 묻게 되어
+#   다운로드 중 CPU가 2~4배가 된다(실측)
+# - 타이머 단위는 백그라운드 일이 도는 동안에만 청한다. 청하는 동안 깨어나는 횟수가 늘어 전력을 더 쓴다
+# - Windows는 창이 앞에 보일 때만 그 청을 들어준다(가려지거나 최소화되면 무시한다 — 실측)
+# - GUI가 시작할 때 켠 뒤에만 움직인다(``enable_responsive_timing``). 헤드리스는 켜지 않는다
+# - 다른 OS에서는 아무것도 하지 않는다
+
+_GIL_SWITCH_SECONDS = 0.001  # Windows에서 쓰는 GIL 넘김 간격(초) — 파이썬 기본은 0.005
+_TIMER_PERIOD_MS = 1  # 백그라운드 일이 도는 동안 청하는 타이머 단위(ms)
+
+_timing_enabled = False  # GUI가 켰는지 — 꺼져 있으면 아래 함수들은 아무것도 하지 않는다
+_work_lock = threading.Lock()  # 아래 두 값을 지킨다 — 일은 여러 스레드에서 시작하고 끝난다
+_work_count = 0  # 지금 도는 백그라운드 일의 수
+_timer_requested = False  # 타이머 단위를 청해 둔 상태인지 — 청이 받아들여졌을 때만 참이다
+_winmm = None  # winmm.dll — 한 번만 연다
+
+
+def enable_responsive_timing() -> None:
+    """GUI 앱이 시작할 때 한 번 부른다 — Windows에서 GIL 넘김 간격을 줄이고 타이머 청을 켠다.
+
+    다른 OS에서는 아무것도 하지 않는다. 헤드리스 실행은 부르지 않는다 — 화면이 없다.
+    """
+    global _timing_enabled
+    if platform.system() != "Windows":
+        return
+    sys.setswitchinterval(_GIL_SWITCH_SECONDS)
+    _timing_enabled = True
+
+
+def begin_background_work() -> None:
+    """CPU를 쓰는 백그라운드 일 하나가 시작한다 — 첫 일이면 타이머 단위를 청한다.
+
+    ``end_background_work``와 짝을 맞춰 부른다(``background_work``가 맞춰 준다). 어느 스레드에서
+    불러도 된다. 켜지 않았거나(``enable_responsive_timing``) Windows가 아니면 수만 센다.
+    """
+    global _work_count, _timer_requested
+    with _work_lock:
+        _work_count += 1
+        if _work_count == 1 and _timing_enabled:
+            # 모듈 전역을 호출 시점에 조회한다 — 테스트의 monkeypatch 지점
+            _timer_requested = _request_timer_resolution(_TIMER_PERIOD_MS)
+
+
+def end_background_work() -> None:
+    """백그라운드 일 하나가 끝났다 — 마지막 일이면 청해 둔 타이머 단위를 푼다."""
+    global _work_count, _timer_requested
+    with _work_lock:
+        if _work_count == 0:
+            return  # 짝이 맞지 않는 호출 — 0 아래로 내려가지 않는다
+        _work_count -= 1
+        if _work_count == 0 and _timer_requested:
+            _timer_requested = False
+            _release_timer_resolution(_TIMER_PERIOD_MS)
+
+
+@contextmanager
+def background_work() -> Iterator[None]:
+    """블록이 도는 동안을 백그라운드 일 하나로 센다 — 예외로 나가도 끝을 알린다."""
+    begin_background_work()
+    try:
+        yield
+    finally:
+        end_background_work()
+
+
+def _timer_library():
+    """winmm.dll을 한 번만 연다. Windows가 아니거나 열 수 없으면 None."""
+    global _winmm
+    if _winmm is None:
+        import ctypes
+
+        loader = getattr(ctypes, "WinDLL", None)  # Windows에만 있다
+        if loader is None:
+            return None
+        try:
+            _winmm = loader("winmm")
+        except OSError:
+            return None
+    return _winmm
+
+
+def _request_timer_resolution(period_ms: int) -> bool:
+    """타이머 단위를 period_ms로 청한다(``timeBeginPeriod``). 받아들여졌으면 참.
+
+    이 프로세스의 청이다 — 시스템 설정을 바꾸지 않고, 프로세스가 끝나면 함께 풀린다.
+    """
+    library = _timer_library()
+    if library is None:
+        return False
+    try:
+        return library.timeBeginPeriod(period_ms) == 0  # TIMERR_NOERROR
+    except OSError:
+        return False
+
+
+def _release_timer_resolution(period_ms: int) -> None:
+    """청해 둔 타이머 단위를 푼다(``timeEndPeriod``) — 청할 때와 같은 값으로 부른다."""
+    library = _timer_library()
+    if library is None:
+        return
+    try:
+        library.timeEndPeriod(period_ms)
+    except OSError:
+        return
