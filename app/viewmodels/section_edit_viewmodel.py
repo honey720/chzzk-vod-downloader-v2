@@ -1294,9 +1294,9 @@ class SectionRefitJob(QObject):
     def run(self) -> None:
         """기준값을 조회해 done을 emit한다. 실패했거나 그만뒀으면 값 자리에 None을 싣는다."""
         try:
-            # 그만둘지는 조회를 시작하기 전 · 받는 동안 · 단계 사이에 묻는다(core.utils.stop)
+            # 그만둘지는 조회 함수가 묻는다 — 시작하기 전 · 받는 동안 · 단계 사이에(core.utils.stop).
+            # 여기서는 그 물음에 답할 값만 이 스레드에 걸어 둔다
             with stoppable(self._stop.is_set):
-                check_stop()
                 # 모듈 전역을 호출 시점에 조회한다 — 테스트의 monkeypatch 지점
                 basis = section_basis.probe_section_basis(self._snapshot)
         except StopRequested:

@@ -102,6 +102,7 @@ def probe_section_basis(item) -> SectionBasis:
         Exception: 조회 · 해석 실패(네트워크 · 권한 · 형식). 호출자가 사용자 문구로 바꾼다 —
             원시 문자열에는 주소가 섞여 있어 그대로 보이지 않는다
     """
+    check_stop()  # 시작하기 전 — 그사이 그만두라는 답이 왔으면(해상도를 또 바꿨다) 받지 않는다
     kind = item.content_type
     if kind == "video":
         return probe_mp4(item.base_url, held=_held_moov(item)).basis

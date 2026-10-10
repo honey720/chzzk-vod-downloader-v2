@@ -15,6 +15,7 @@ import contextlib
 import dataclasses
 import logging
 import threading
+from types import SimpleNamespace
 
 import pytest
 from PySide6.QtCore import Qt
@@ -42,7 +43,7 @@ from core.models.mp4_index import Mp4Head, Mp4Raw, PendingMp4Head
 from core.models.plan import TimeRange
 from core.utils.mp4_ranges import sections_download_size
 from core.utils.paths import release_output_paths
-from core.utils.stop import StopRequested, stoppable
+from core.utils.stop import StopRequested, check_stop, stop_requested, stoppable
 from tests.unit.section_input import enter_time
 from tests.unit.card_helpers import drop_new_top_levels, hold_style, shown, snapshot_top_levels
 from tests.unit.core.mp4_builder import audio_spec, build_mp4, video_spec
@@ -1354,13 +1355,19 @@ def test_changing_resolution_again_stops_the_previous_lookup(qtbot, window, prob
     assert item.section_head[0] == "u1"
 
 
-def test_lookup_told_to_stop_before_it_starts_does_not_look_up(qtbot, monkeypatch):
-    """시작하기 전에 그만두라는 표시를 받은 조회는 조회 함수를 부르지 않고 끝을 알려야 한다.
+def test_lookup_job_lets_the_lookup_see_that_it_was_told_to_stop(qtbot, monkeypatch):
+    """그만두라는 표시를 받은 조회 일은, 조회 함수가 도는 스레드에서 그 표시가 보이게 해야 한다.
 
-    조회 대역을 끼우고, 일을 만들자마자 그만두게 한 뒤 돌림 -> 조회 대역 0번, done (token, None) 1번
+    조회 대역(그만두라는 답이 보이는지 적고, 보이면 제품처럼 그만둔다)을 끼우고 일을 그만두게 한 뒤 돌림
+    -> 대역이 본 답 == [True], done (token, None) 1번
     """
-    calls = []
-    monkeypatch.setattr(section_basis, "probe_section_basis", calls.append)
+    seen = []
+
+    def lookup(snapshot):
+        seen.append(stop_requested())
+        check_stop()
+
+    monkeypatch.setattr(section_basis, "probe_section_basis", lookup)
     job = sev.SectionRefitJob(object(), "token")
     done = []
     job.done.connect(lambda token, basis: done.append((token, basis)))
@@ -1368,8 +1375,25 @@ def test_lookup_told_to_stop_before_it_starts_does_not_look_up(qtbot, monkeypatc
     job.cancel()
     job.run()
 
-    assert calls == []
+    assert seen == [True]
     assert done == [("token", None)]
+
+
+def test_lookup_does_not_receive_anything_when_told_to_stop_from_the_start(monkeypatch):
+    """처음부터 그만두라는 답이면 조회는 moov를 받으러 가지 않아야 한다.
+
+    받기 대역(부른 것을 적는다), 그만두라는 답을 걸고 인코딩 완료 VOD를 조회
+    -> StopRequested, 받기 대역 0번
+    """
+    fetched = []
+    monkeypatch.setattr(section_basis, "fetch_mp4_raw", fetched.append)
+    item = SimpleNamespace(content_type="video", base_url="https://example.invalid/v.mp4")
+
+    with stoppable(lambda: True):
+        with pytest.raises(StopRequested):
+            REAL_PROBE(item)
+
+    assert fetched == []
 
 
 def test_lookup_stops_between_receiving_the_moov_and_reading_it(monkeypatch):
