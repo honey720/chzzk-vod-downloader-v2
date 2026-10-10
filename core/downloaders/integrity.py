@@ -74,6 +74,15 @@ def check_content_length(headers: Mapping[str, str] | None, received: int) -> No
         raise TruncatedSegmentError(f"Content-Length {declared}인데 받은 본문은 {received}바이트다")
 
 
+def declared_length(headers: Mapping[str, str] | None) -> int | None:
+    """응답이 선언한 본문 길이(바이트). 받을 본문의 길이로 믿을 수 없으면 None이다 (#347).
+
+    저속 판정이 받을 양으로 쓴다. 믿을 수 있는지는 받은 길이와 견줄 때와 같은 기준으로
+    본다(``declared_content_length``).
+    """
+    return declared_content_length(headers)
+
+
 def _top_level_boxes(stream: BinaryIO, length: int) -> Iterator[str]:
     """최상위 상자의 종류를 차례로 낸다. 상자들이 본문을 정확히 채우지 않으면 실패한다.
 
