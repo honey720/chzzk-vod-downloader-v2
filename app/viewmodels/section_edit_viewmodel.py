@@ -14,6 +14,7 @@
 """
 
 import logging
+import threading
 import weakref
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -23,6 +24,7 @@ from types import SimpleNamespace
 from PySide6.QtCore import QObject, Qt, QThreadPool, QTimer, Signal
 
 import app.section_basis as section_basis
+from app.platform_adapter import background_work
 from app.process_memory import log_process_memory
 from app.section_basis import SectionBasis
 from app.viewmodels.data import (
@@ -34,7 +36,8 @@ from core.api.mp4 import Mp4Error
 from core.models.download_state import DownloadState
 from core.models.mp4_index import PendingMp4Head
 from core.models.plan import TimeRange
-from core.utils.mp4_ranges import sections_download_size, sections_head_size
+from core.utils.mp4_ranges import sections_download_size, sections_head_size, sections_sizes
+from core.utils.stop import StopRequested, check_stop, stoppable
 from core.utils.selections import (
     MAX_SELECTIONS,
     SELECTION_DUPLICATE,
@@ -207,6 +210,24 @@ def section_head_bytes_of(head) -> int | None:
         return sections_head_size(index)
     except (ValueError, Mp4Error):
         return None
+
+
+def section_sizes_of(head, selections) -> tuple[int | None, int | None]:
+    """(받을 바이트의 합, 파일의 머리 길이) — ``section_bytes_of`` · ``section_head_bytes_of``와 같은 값 (#309).
+
+    둘을 따로 부르면 샘플 위치 열 전체를 두 번 훑는다. 둘 다 필요한 쪽(카드의 크기 세기)은
+    이 함수로 한 번만 훑는다. 알 수 없는 값의 자리는 None이다.
+    """
+    index = getattr(head, "index", None)
+    if index is None:
+        return None, None
+    wanted = list(selections)
+    if wanted:
+        try:
+            return sections_sizes(index, wanted)
+        except (ValueError, Mp4Error):
+            pass  # 구간이 그 영상에 맞지 않는다 — 받을 양은 모르고, 머리 길이는 따로 구한다
+    return None, section_head_bytes_of(head)
 
 
 def keep_section_head(item: ContentItem, base_url: str, head) -> None:
@@ -1098,6 +1119,10 @@ class SectionSizeJob(QObject):
     """받을 구간의 합을 세는 일 한 건 — 풀 스레드에서 색인을 만들고(필요하면) 크기를 센다.
 
     긴 영상은 색인을 만드는 데 몇 초가 걸린다. 메인 스레드에서 하지 않는다.
+
+    결과를 쓸 곳이 사라지면(카드의 해상도가 바뀌었다 · 카드가 지워졌다) ``cancel()``로 그만두게
+    한다 — 아직 시작하지 않았으면 시작하지 않고, 도는 중이면 조각 하나를 끝낸 자리에서 멈춘다.
+    그만둔 일도 done을 emit한다(값 자리는 None) — 받는 쪽이 참조를 놓는다.
     """
 
     done = Signal(object, object, object)  # (token, 색인(Mp4Head) 또는 None, 크기 또는 None)
@@ -1109,16 +1134,30 @@ class SectionSizeJob(QObject):
         self._token = token
         # 파일의 머리 길이 — 결과를 받는 쪽이 done 뒤에 읽는다(일의 참조를 들고 있다)
         self.head_bytes: int | None = None
+        self._stop = threading.Event()  # 그만두라는 표시 — 메인이 켜고 풀 스레드가 읽는다
+
+    def cancel(self) -> None:
+        """이 일을 그만두게 한다 — 어느 스레드에서 불러도 된다. 다시 켤 수 없다."""
+        self._stop.set()
+
+    def cancelled(self) -> bool:
+        """그만두라는 표시가 켜졌는지."""
+        return self._stop.is_set()
 
     def run(self) -> None:
         """색인을 만들고 크기를 세어 done을 emit한다. 실패하면 값 자리에 None을 싣는다."""
         head = size = None
         try:
-            # 아직 해석하지 않은 moov면 여기서 해석한다 — 엔진이 먼저 해석하는 중이면 기다린다
-            moov = self._moov
-            head = moov.get() if isinstance(moov, PendingMp4Head) else moov
-            size = section_bytes_of(head, self._selections)
-            self.head_bytes = section_head_bytes_of(head)
+            # 그만둘지는 해석을 시작하기 전 · 조각마다 · 단계 사이에 묻는다(core.utils.stop)
+            with background_work(), stoppable(self._stop.is_set):
+                check_stop()
+                # 아직 해석하지 않은 moov면 여기서 해석한다 — 다른 해석이 돌고 있으면 기다린다
+                moov = self._moov
+                head = moov.get() if isinstance(moov, PendingMp4Head) else moov
+                check_stop()
+                size, self.head_bytes = section_sizes_of(head, self._selections)
+        except StopRequested:
+            head = size = None  # 그만뒀다 — 실패가 아니다. 적지 않는다
         except Exception:
             logger.exception("받을 구간의 크기를 세지 못했다")
             head = None
@@ -1175,12 +1214,29 @@ class SectionSizer(QObject):
         generation = self._generation.get(item, 0) + 1
         self._generation[item] = generation
         token = (item, generation)
+        # 이 카드의 앞 요청이 다른 moov를 세고 있으면 그만두게 한다 — 그 결과는 버려진다.
+        # 같은 moov를 세고 있으면 둔다: 해석은 한 번만 돌고 이 요청이 그 색인을 함께 쓴다
+        self._cancelJobs(item, keep=kept[1])
         job = SectionSizeJob(kept[1], wanted, token)
         job.done.connect(self._onDone)
         self._jobs[token] = (job, kept[1], item.selections)
         item.section_sizing = True  # 카드가 크기 자리에 "확인 중..."을 적는다
         self._model.notifyChanged(item)
         self._pool.start(lambda: job.run())
+
+    def cancel(self, item: ContentItem) -> None:
+        """그 카드의 크기 세기를 그만두게 한다 — 해상도가 바뀌었거나 카드가 지워졌다 (#309).
+
+        도는 해석은 조각 하나를 끝낸 자리에서 멈추고, 아직 시작하지 않은 일은 시작하지 않는다.
+        결과를 기다리는 일의 참조는 그 일이 done을 알릴 때 놓는다.
+        """
+        self._cancelJobs(item, keep=None)
+
+    def _cancelJobs(self, item: ContentItem, keep) -> None:
+        """그 카드의 일 가운데 keep이 아닌 moov를 세는 것을 그만두게 한다."""
+        for (owner, _generation), (job, moov, _selections) in self._jobs.items():
+            if owner is item and moov is not keep:
+                job.cancel()
 
     def pendingCount(self) -> int:
         """결과를 기다리는 일의 수."""
@@ -1229,12 +1285,22 @@ class SectionRefitJob(QObject):
         super().__init__()
         self._snapshot = snapshot
         self._token = token
+        self._stop = threading.Event()  # 그만두라는 표시 — 메인이 켜고 풀 스레드가 읽는다
+
+    def cancel(self) -> None:
+        """이 조회를 그만두게 한다 — 어느 스레드에서 불러도 된다. 그사이 해상도를 또 바꿨다."""
+        self._stop.set()
 
     def run(self) -> None:
-        """기준값을 조회해 done을 emit한다. 실패하면 값 자리에 None을 싣는다."""
+        """기준값을 조회해 done을 emit한다. 실패했거나 그만뒀으면 값 자리에 None을 싣는다."""
         try:
-            # 모듈 전역을 호출 시점에 조회한다 — 테스트의 monkeypatch 지점
-            basis = section_basis.probe_section_basis(self._snapshot)
+            # 그만둘지는 조회를 시작하기 전 · 받는 동안 · 단계 사이에 묻는다(core.utils.stop)
+            with stoppable(self._stop.is_set):
+                check_stop()
+                # 모듈 전역을 호출 시점에 조회한다 — 테스트의 monkeypatch 지점
+                basis = section_basis.probe_section_basis(self._snapshot)
+        except StopRequested:
+            basis = None  # 그만뒀다 — 받는 쪽은 요청 번호로 이 결과를 버린다
         except Exception:
             logger.exception("해상도 변경 뒤 구간 기준값 조회 실패: %s", self._snapshot.vod_url)
             basis = None
@@ -1305,6 +1371,7 @@ class SectionRefitter(QObject):
         item.section_head = None  # 앞 해상도의 moov다 — 새 해상도의 조회가 끝나면 새로 둔다
         item.section_bytes = None  # 앞 해상도의 크기다 — 새 moov로 다시 센다
 
+        self.cancel(item)  # 앞 해상도의 조회가 아직 돌고 있으면 그만두게 한다 — 결과는 버려진다
         generation = self._generation.get(item, 0) + 1
         self._generation[item] = generation
         token = (item, generation)
@@ -1320,6 +1387,15 @@ class SectionRefitter(QObject):
         self._jobs[token] = job
         self._pool.start(lambda: job.run())
         self._model.notifyChanged(item)
+
+    def cancel(self, item: ContentItem) -> None:
+        """그 카드의 돌고 있는 조회를 그만두게 한다 — 해상도를 또 바꿨거나 카드가 지워졌다 (#309).
+
+        참조는 그 조회가 done을 알릴 때 놓는다.
+        """
+        for (owner, _generation), job in self._jobs.items():
+            if owner is item:
+                job.cancel()
 
     def pendingCount(self) -> int:
         """결과를 기다리는 조회의 수."""

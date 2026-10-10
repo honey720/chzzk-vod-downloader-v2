@@ -11,6 +11,7 @@
 크기의 기대값은 제품의 표시 함수를 부르지 않고 글자 그대로 적는다.
 """
 
+import contextlib
 import dataclasses
 import logging
 import threading
@@ -21,6 +22,8 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 
 import app.process_memory as process_memory
+import app.viewmodels.download_viewmodel as download_viewmodel
+import app.viewmodels.section_edit_viewmodel as sev
 import app.section_basis as section_basis
 import app.theme as theme
 import main as main_module
@@ -35,10 +38,11 @@ from core.api.mp4 import index_mp4, pending_mp4_head, read_mp4_raw
 from core.api.representations import StreamEntry
 from core.models.download_state import DownloadState
 from core.models.events import ProgressEvent
-from core.models.mp4_index import Mp4Head, Mp4Raw
+from core.models.mp4_index import Mp4Head, Mp4Raw, PendingMp4Head
 from core.models.plan import TimeRange
 from core.utils.mp4_ranges import sections_download_size
 from core.utils.paths import release_output_paths
+from core.utils.stop import StopRequested, stoppable
 from tests.unit.section_input import enter_time
 from tests.unit.card_helpers import drop_new_top_levels, hold_style, shown, snapshot_top_levels
 from tests.unit.core.mp4_builder import audio_spec, build_mp4, video_spec
@@ -1219,3 +1223,312 @@ def test_prepare_timer_is_stopped_when_the_work_is_cleaned_up(qtbot, window):
 
     assert stopped
     assert not item.preparing
+
+
+# ================================================================ 버려질 일은 돌리지 않는다 (#309)
+
+
+class _WatchedIndex:
+    """색인 만들기 대역 — 문을 열 때까지 기다렸다가 제품의 것을 부른다. 끝까지 간 것과 그만둔 것을 센다."""
+
+    def __init__(self):
+        self.gate = threading.Event()
+        self.calls = 0
+        self.finished = 0
+        self.stopped = 0
+
+    def __call__(self, raw):
+        self.calls += 1
+        assert self.gate.wait(10), "색인 만들기 대역의 문이 열리지 않았다"
+        try:
+            head = index_mp4(raw)
+        except StopRequested:
+            self.stopped += 1
+            raise
+        self.finished += 1
+        return head
+
+
+@pytest.fixture
+def watched_index(monkeypatch):
+    watched = _WatchedIndex()
+    monkeypatch.setattr(mp4_module, "index_mp4", watched)
+    yield watched
+    watched.gate.set()
+
+
+def test_changing_resolution_stops_the_count_of_the_previous_moov(
+    qtbot, window, probe, watched_index
+):
+    """크기를 세는 동안 해상도가 바뀌면 앞 해상도의 색인 해석은 끝까지 돌지 않아야 한다.
+
+    색인 만들기를 막아 둔 채 1080p에서 구간을 확인, 480p를 고르고 그 조회가 끝난 뒤 문을 엶
+    -> 문을 열기 전: 색인 만들기에 들어온 것은 1건뿐이다(480p의 해석은 앞 해석이 나가기를 기다린다)
+    -> 문을 연 뒤: 그만둔 해석 1건 · 끝까지 간 해석 1건, section_bytes == 480p의 색인으로 센 값
+    """
+    win, item, _engine = window
+    _give_section(qtbot, win, item, wait_size=False)
+    qtbot.waitUntil(lambda: watched_index.calls == 1, timeout=3000)
+
+    _pick(win, item, 480)
+    refitter = win.contentManager._sectionRefitter
+    qtbot.waitUntil(lambda: refitter.pendingCount() == 0, timeout=5000)
+    _pump()
+    entered_before_opening = watched_index.calls
+    watched_index.gate.set()
+    _wait_size(qtbot, win)
+
+    assert entered_before_opening == 1
+    assert (watched_index.stopped, watched_index.finished) == (1, 1)
+    assert item.section_bytes == sections_download_size(probe.heads[480].index, item.selections)
+
+
+def test_removing_the_card_stops_its_count(qtbot, window, probe, watched_index):
+    """크기를 세는 동안 카드가 지워지면 그 색인 해석은 끝까지 돌지 않아야 한다.
+
+    색인 만들기를 막아 둔 채 구간을 확인, 카드를 지운 뒤 문을 엶
+    -> 그만둔 해석 1건 · 끝까지 간 해석 0건
+    """
+    win, item, _engine = window
+    _give_section(qtbot, win, item, wait_size=False)
+    qtbot.waitUntil(lambda: watched_index.calls == 1, timeout=3000)
+
+    win.contentManager.removeItem(item)
+    _pump()
+    watched_index.gate.set()
+    _wait_size(qtbot, win)
+
+    assert (watched_index.stopped, watched_index.finished) == (1, 0)
+
+
+@pytest.mark.parametrize(
+    ("same_moov", "first_is_stopped"),
+    [(True, False), (False, True)],
+    ids=["같은 moov", "다른 moov"],
+)
+def test_a_new_count_stops_the_previous_one_only_when_the_moov_differs(
+    qtbot, window, probe, watched_index, same_moov, first_is_stopped
+):
+    """같은 카드의 크기 세기를 다시 청하면, 앞 요청이 다른 moov를 세고 있을 때만 그만두게 해야 한다.
+
+    색인 만들기를 막아 둔 채 구간을 확인(첫 요청). 카드가 쥔 moov를 그대로 두거나(같은 moov)
+    새로 싼 것으로 바꾼 뒤(다른 moov) 크기 세기를 다시 청함
+    -> 첫 요청의 일이 그만두라는 표시를 받았는지 == first_is_stopped
+    """
+    win, item, _engine = window
+    _give_section(qtbot, win, item, wait_size=False)
+    qtbot.waitUntil(lambda: watched_index.calls == 1, timeout=3000)
+    sizer = win.contentManager._sectionSizer
+    ((first_job, _moov, _selections),) = sizer._jobs.values()
+    if not same_moov:
+        item.section_head = (item.base_url, pending_mp4_head(probe.raws[1080]))
+
+    sizer.request(item)
+    stopped = first_job.cancelled()
+    watched_index.gate.set()
+    _wait_size(qtbot, win)
+
+    assert stopped is first_is_stopped
+
+
+def test_changing_resolution_again_stops_the_previous_lookup(qtbot, window, probe):
+    """조회가 도는 동안 해상도를 또 바꾸면 앞 조회는 그만두라는 표시를 받아야 한다.
+
+    조회를 막아 둔 채 480p를 고르고(첫 조회), 다시 1080p를 고름(둘째 조회)
+    -> 첫 조회만 그만두라는 표시를 받았다. 문을 연 뒤 카드는 1080p의 것을 쥔다
+    """
+    win, item, _engine = window
+    _give_section(qtbot, win, item)
+    refitter = win.contentManager._sectionRefitter
+    probe.gate.clear()
+
+    _pick(win, item, 480)
+    (first_job,) = refitter._jobs.values()
+    _pick(win, item, 1080)
+    second_job = next(job for job in refitter._jobs.values() if job is not first_job)
+    stopped = (first_job._stop.is_set(), second_job._stop.is_set())
+    probe.gate.set()
+    _settle(qtbot, win)
+
+    assert stopped == (True, False)
+    assert item.section_head[0] == "u1"
+
+
+def test_lookup_told_to_stop_before_it_starts_does_not_look_up(qtbot, monkeypatch):
+    """시작하기 전에 그만두라는 표시를 받은 조회는 조회 함수를 부르지 않고 끝을 알려야 한다.
+
+    조회 대역을 끼우고, 일을 만들자마자 그만두게 한 뒤 돌림 -> 조회 대역 0번, done (token, None) 1번
+    """
+    calls = []
+    monkeypatch.setattr(section_basis, "probe_section_basis", calls.append)
+    job = sev.SectionRefitJob(object(), "token")
+    done = []
+    job.done.connect(lambda token, basis: done.append((token, basis)))
+
+    job.cancel()
+    job.run()
+
+    assert calls == []
+    assert done == [("token", None)]
+
+
+def test_lookup_stops_between_receiving_the_moov_and_reading_it(monkeypatch):
+    """moov를 받은 뒤 읽기 전에 그만두라는 답이 오면 조회는 읽지 않고 그만둬야 한다.
+
+    받기 대역(받은 것을 그대로 돌려준다), 받은 직후부터 그만두라고 답함
+    -> StopRequested, 가벼운 해석 0번
+    """
+    raw = _mp4_raw(1)
+    received = threading.Event()
+
+    def fetch(url):
+        received.set()
+        return raw
+
+    read = []
+    monkeypatch.setattr(section_basis, "fetch_mp4_raw", fetch)
+    monkeypatch.setattr(section_basis, "summarize_mp4", read.append)
+
+    with stoppable(received.is_set):
+        with pytest.raises(StopRequested):
+            section_basis.probe_mp4("https://example.invalid/v.mp4")
+
+    assert read == []
+
+
+def test_count_told_to_stop_before_it_starts_does_not_build_the_index(qtbot):
+    """시작하기 전에 그만두라는 표시를 받은 크기 세기는 색인을 만들지 않고 끝을 알려야 한다.
+
+    해석 대역을 품은 moov, 일을 만들자마자 그만두게 한 뒤 돌림
+    -> 해석 대역 0번, done (token, None, None) 1번
+    """
+    built = []
+    moov = PendingMp4Head(object(), built.append)
+    job = sev.SectionSizeJob(moov, (TimeRange(0.2, 0.5),), "token")
+    done = []
+    job.done.connect(lambda token, head, size: done.append((token, head, size)))
+
+    job.cancel()
+    job.run()
+
+    assert built == []
+    assert done == [("token", None, None)]
+
+
+def test_count_runs_as_one_background_work(qtbot, monkeypatch):
+    """크기 세기 한 건은 도는 동안 백그라운드 일 하나로 세어져야 한다.
+
+    세는 대역(들어감 · 나감을 적는다)을 끼우고 일을 한 번 돌림 -> [들어감, 나감]
+    """
+    marks = []
+
+    @contextlib.contextmanager
+    def counted():
+        marks.append("들어감")
+        try:
+            yield
+        finally:
+            marks.append("나감")
+
+    monkeypatch.setattr(sev, "background_work", counted)
+    job = sev.SectionSizeJob(index_mp4(_mp4_raw(1)), (TimeRange(0.2, 0.5),), "token")
+
+    job.run()
+
+    assert marks == ["들어감", "나감"]
+
+
+def test_section_sizes_of_equals_the_two_separate_sizes():
+    """section_sizes_of는 받을 양 · 머리 길이를 따로 구한 것과 같은 값을 돌려줘야 한다.
+
+    구간 0.2~0.5초 -> (section_bytes_of, section_head_bytes_of)와 같다
+    """
+    head = index_mp4(_mp4_raw(1))
+    selections = (TimeRange(0.2, 0.5),)
+
+    assert sev.section_sizes_of(head, selections) == (
+        sev.section_bytes_of(head, selections),
+        sev.section_head_bytes_of(head),
+    )
+
+
+def test_section_sizes_of_still_gives_the_head_when_the_sections_cannot_be_counted(monkeypatch):
+    """받을 양을 셀 수 없는 구간이어도 머리 길이는 돌려줘야 한다.
+
+    한 번에 세는 함수가 ValueError를 내게 함(구간이 그 영상에 맞지 않을 때의 예외)
+    -> (None, 머리 길이 1026)
+    """
+
+    def unfit(index, selections):
+        raise ValueError("구간이 영상 밖이다(대역)")
+
+    monkeypatch.setattr(sev, "sections_sizes", unfit)
+    head = index_mp4(_mp4_raw(1))
+
+    assert sev.section_sizes_of(head, (TimeRange(0.2, 0.5),)) == (None, FILE_HEAD)
+
+
+# ================================================================ 도는 다운로드는 백그라운드 일이다 (#309)
+
+
+@pytest.fixture
+def work_marks(monkeypatch):
+    """다운로드 뷰모델이 백그라운드 일의 시작 · 끝을 알릴 때마다 적는다."""
+    marks: list[str] = []
+    monkeypatch.setattr(download_viewmodel, "begin_background_work", lambda: marks.append("시작"))
+    monkeypatch.setattr(download_viewmodel, "end_background_work", lambda: marks.append("끝"))
+    return marks
+
+
+def test_download_counts_as_background_work_until_it_finishes(qtbot, window, work_marks):
+    """다운로드는 시작할 때 백그라운드 일로 세어지고, 끝나면 한 번만 내려져야 한다.
+
+    받기 시작 → 엔진이 완료를 알림 → 참조 정리를 한 번 더 부름
+    -> 시작 직후: [시작], 완료 뒤: [시작, 끝], 한 번 더 정리해도 그대로
+    """
+    win, item, engine = window
+    win.downloadButton.click()
+    _pump()
+    started = list(work_marks)
+
+    item.downloadState = DownloadState.FINISHED  # 배치가 이 카드를 다시 고르지 않게 한다
+    engine.submissions[0]["on_finished"]()
+    qtbot.waitUntil(lambda: win.downloadViewModel.handle is None, timeout=3000)
+    _pump()
+    finished = list(work_marks)
+    win.downloadViewModel.removeThreads()
+
+    assert started == ["시작"]
+    assert finished == ["시작", "끝"]
+    assert work_marks == ["시작", "끝"]
+
+
+def test_failed_download_is_no_longer_background_work(qtbot, window, work_marks):
+    """다운로드가 실패로 끝나도 백그라운드 일에서 내려져야 한다.
+
+    받기 시작 → 엔진이 실패를 알림 -> [시작, 끝]
+    """
+    win, item, engine = window
+    win.downloadButton.click()
+    _pump()
+
+    engine.submissions[0]["on_failed"](RuntimeError("실패(대역)"))
+    qtbot.waitUntil(lambda: item.downloadState == DownloadState.FAILED, timeout=3000)
+    _pump()
+
+    assert work_marks == ["시작", "끝"]
+
+
+def test_stopped_download_is_no_longer_background_work(qtbot, window, work_marks):
+    """유저가 다운로드를 멈춰도 백그라운드 일에서 내려져야 한다.
+
+    받기 시작 → 창의 정지 처리(stopDownload) -> [시작, 끝]
+    """
+    win, _item, _engine = window
+    win.downloadButton.click()
+    _pump()
+
+    win.stopDownload()
+    _pump()
+
+    assert work_marks == ["시작", "끝"]

@@ -33,6 +33,7 @@ from time import gmtime, strftime
 import requests
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
 
+from app.platform_adapter import begin_background_work, end_background_work
 from app.process_memory import log_process_memory
 from app.viewmodels.data import ContentItem
 from app.viewmodels.section_edit_viewmodel import take_section_head
@@ -179,6 +180,8 @@ class DownloadViewModel(QObject):
         # 실행 중인 다운로드에서 엔진에 넘기지 않고 뺀 구간 수 (#309) — 새 영상의 끝 이후에서
         # 시작해 받을 수 없는 구간이다. 실패한 구간 수에 더해 카드에 보인다
         self._excluded = 0
+        # 도는 다운로드를 백그라운드 일로 세어 두었는지 (#309) — 끝을 한 번만 알린다
+        self._working = False
         self._content = content
         # 준비가 길어지면 카드에 "준비 중"을 켜는 타이머 — 엔진의 첫 진행 통지가 끈다
         self._prepareTimer = QTimer(self)
@@ -300,6 +303,7 @@ class DownloadViewModel(QObject):
             on_failed=self._relay_failed,
             on_merge_start=self._relay_merge_start,
         )
+        self._beginWork()
 
     def prepareRetry(self, item: ContentItem) -> None:
         """실패 카드의 재시도를 누른 순간에 한 번, 끝낸 구간의 파일이 그대로 있는지 확인한다 (#309).
@@ -347,6 +351,18 @@ class DownloadViewModel(QObject):
             # 구 DownloadM3U8Thread가 run 종료 후 수행하던 WAITING 정리와 동일
             self.item.post_process = False
         self.stopped.emit(self.item)
+
+    def _beginWork(self) -> None:
+        """도는 다운로드를 백그라운드 일 하나로 센다 (#309) — 도는 동안 화면이 굼떠지지 않게 한다."""
+        if not self._working:
+            self._working = True
+            begin_background_work()
+
+    def _endWork(self) -> None:
+        """다운로드가 끝났다(완료 · 실패 · 정지) — 세어 둔 것을 내린다. 두 번 불러도 한 번만 내린다."""
+        if self._working:
+            self._working = False
+            end_background_work()
 
     def _dropHead(self) -> None:
         """엔진에 넘겼던 moov를 놓는다 (#309) — 다운로드가 끝났다(완료 · 실패 · 정지).
@@ -412,6 +428,7 @@ class DownloadViewModel(QObject):
             self._service.abandon(self.handle)
         self.handle = None
         self.task = None
+        self._endWork()
 
     # ============ 워커 스레드 콜백 (emit까지만 수행) ============
 
@@ -546,6 +563,7 @@ class DownloadViewModel(QObject):
             self.task.stop()
         self.handle = None
         self.task = None
+        self._endWork()
         self.failed.emit(item, self._failure_message(exc))
 
     def _failure_message(self, exc: BaseException) -> str:
