@@ -948,15 +948,15 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         return self._shortRemain(f"{whole // 3600:02d}:{whole % 3600 // 60:02d}:{whole % 60:02d}")
 
     def _sectionOverlapDetail(self) -> list[str]:
-        """겹침이 있는 구간 카드의 툴팁에 더하는 줄 — 받을 양 · 구간 길이의 합 · 한 번만 받는다."""
+        """겹침이 있는 구간 카드의 툴팁에 더하는 줄 — 받을 양(길이) · 구간 길이의 합 · 한 번만 받는다.
+
+        받을 양은 길이로만 적는다. 카드의 크기는 구간 파일 크기의 합(겹치는 자리를 구간마다
+        센다)이라 받을 양의 크기가 아니다.
+        """
         if not self._sectionsOverlap():
             return []
-        amount = self._clock(self._sectionSpan())
-        size = self._sectionSizeText()
-        if size:
-            amount = f"{amount} · {size}"
         return [
-            self.tr("To receive: {0}").format(amount),
+            self.tr("To receive: {0}").format(self._clock(self._sectionSpan())),
             self.tr("Sections add up to {0}").format(self._clock(self._sectionTotal())),
             self.tr("Overlapping parts are received once"),
         ]
@@ -974,20 +974,30 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         return self.tr("Checking...")
 
     def _sectionSizeText(self) -> str:
-        """구간 다운로드의 크기 — 인코딩 완료 VOD에서 그 값을 알 때만. 모르면 빈 글이다.
+        """구간 카드의 크기 — 저장소에 생길 구간 파일 크기의 합(추정). 모르면 빈 글이다 (#309).
 
-        **파일 기준이다**: 받을 구간의 합에 조회 때 이미 받아 둔 머리(ftyp · moov 등)를 더한다.
-        구간이 영상 전체를 덮으면 구간 없는 카드의 크기와 같은 숫자다. 대기 · 준비 중 · 받는 중 ·
-        일시정지에서 같은 값을 적는다 — 받기 시작했다고 숫자가 바뀌지 않는다 (#309). 진행률은
-        이 값이 아니라 엔진이 세는 전송량으로 계산한다(``download_viewmodel``).
+        인코딩 완료 VOD에서 그 값을 알 때만 적는다. 겹치는 자리는 구간마다 센 값이다 — 구간마다
+        파일이 하나씩 생긴다. 대기 · 준비 중 · 받는 중 · 일시정지 · 자르기에서 같은 값을 적는다.
+        완료하면 실제 값으로 바뀐다(``_finishedSizeText``). 진행률은 이 값이 아니라 엔진이 세는
+        전송량으로 계산한다(``download_viewmodel``).
 
-        세그먼트 방식(fMP4 · TS)은 받기 전에 크기를 모른다. 영상 전체 크기를 대신 적지 않는다 —
-        구간 카드가 받는 양이 아니다.
+        세그먼트 방식(fMP4 · TS)은 받기 전에 크기를 모른다. 영상 전체 크기를 대신 적지 않는다.
         """
         size = getattr(self.item, "section_bytes", None)
         if self.item.is_segment_based or not size:
             return ""
-        return self.setSize(size + (getattr(self.item, "section_head_bytes", None) or 0))
+        return self.setSize(size)
+
+    def _finishedSizeText(self, item: ContentItem) -> str:
+        """완료 카드의 크기 — 구간 다운로드는 실제로 만든 구간 파일 크기의 합이다 (#309).
+
+        엔진이 세어 준 값(``output_bytes``)을 적는다. 그 값이 없으면(구간이 없는 다운로드 ·
+        세그먼트 방식 · 값을 모르는 카드) 마지막으로 통지받은 받은 양이다.
+        """
+        made = getattr(item, "output_bytes", None)
+        if self._sectionCount() and not item.is_segment_based and made:
+            return self.setSize(made)
+        return self.setSize(item.download_size)
 
     def _pathEditable(self) -> bool:
         """이 카드의 저장 위치를 바꿀 수 있는 상태인지 — 대기 상태만이다 (#245).
@@ -1149,7 +1159,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             completed = f"{STATE_ICON['finished']} " + self.tr("Completed") + self._sectionTally()
             elapsed = self._shortRemain(item.download_time) if item.download_time else ""
             self.statusLabel.setText(f"{completed} · {elapsed}" if elapsed else completed)
-            self.fileSizeLabel.setText(self._withResolution(self.setSize(item.download_size)))
+            self.fileSizeLabel.setText(self._withResolution(self._finishedSizeText(item)))
 
         elif self.item.downloadState == DownloadState.FAILED:
             # 사유(stateMessage)는 키 기반 매핑을 거친 번역 문자열만 온다.
@@ -1181,12 +1191,11 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
 
         - 세그먼트 기반(fMP4 · TS): 받은 크기만 — 받을 크기를 미리 알 수 없다
         - 인코딩 완료 VOD 전체: 받은 크기 / 파일 크기
-        - 인코딩 완료 VOD 구간 (#309): 받은 크기 / 완성 파일 크기(받을 구간의 합 + 머리 —
-          대기 카드가 적던 값 그대로다). 영상 전체 크기를 적지 않는다.
-          받은 크기에도 머리를 더한다 — 머리는 조회 때 이미 받아 임시 원본의 맨 앞에 쓰인다.
-          처음부터 머리만큼에서 시작하고, 전송이 끝나면 두 숫자가 같아진다. 머리 길이를
-          모르면(대기 중에 크기를 세지 못했다) 더하지 않는다.
-          자르는 동안에는 받은 크기를 완성 파일 크기로 적는다 — 전송은 끝났다
+        - 인코딩 완료 VOD 구간 (#309): 진행률 × 크기 / 크기. 크기는 대기 카드가 적던 값
+          그대로다(구간 파일 크기의 합의 추정 — ``_sectionSizeText``). 왼쪽은 받은 바이트가
+          아니라 그 크기에 전송의 진행(받은 바이트 ÷ 엔진이 받을 바이트)을 곱한 값이다 —
+          0에서 시작해 전송이 끝나면 두 숫자가 같아진다. 엔진이 받을 바이트를 아직 모르면
+          (준비 중) 0이다. 자르는 동안에는 왼쪽도 그 크기다 — 전송은 끝났다
         받을 크기를 모르면 받은 크기만 적는다.
 
         Args:
@@ -1198,11 +1207,11 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             return received
         if self._sectionCount():
             total = self._sectionSizeText()
-            head = getattr(item, "section_head_bytes", None) or 0
             if total and item.post_process:
                 received = total
-            elif total and head:
-                received = self.setSize(self._receivedBytes(item) + head)
+            elif total:
+                shown = item.section_bytes * self._transferFraction(item)
+                received = self.setSize(shown) if shown > 0 else self.setSize("")
         else:
             total = self._wholeSizeText(item)
         if not with_total:
@@ -1210,12 +1219,16 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         return f"{received} / {total}" if total else received
 
     @staticmethod
-    def _receivedBytes(item: ContentItem) -> float:
-        """카드에 적힌 받은 바이트 — 아직 없으면(준비 중) 0이다."""
+    def _transferFraction(item: ContentItem) -> float:
+        """전송의 진행(0~1) — 받은 바이트 ÷ 엔진이 받을 바이트. 아직 모르면 0이다."""
+        total = getattr(item, "transfer_bytes", None)
         try:
-            return float(item.download_size)
+            received = float(item.download_size)
         except (ValueError, TypeError):
             return 0.0
+        if not total or total <= 0:
+            return 0.0
+        return min(max(received / total, 0.0), 1.0)
 
     def _wholeSizeText(self, item: ContentItem) -> str:
         """인코딩 완료 VOD 전체의 크기 글 — 모르면 빈 글이다.

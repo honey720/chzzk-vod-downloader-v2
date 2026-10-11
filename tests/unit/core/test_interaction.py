@@ -28,7 +28,11 @@ from core.utils.interaction import (
     resting_while,
 )
 from core.utils.mp4_ranges import sections_head_size, sections_sizes
-from core.utils.mp4_section_sizes import moov_head_size, moov_sections_sizes
+from core.utils.mp4_section_sizes import (
+    moov_head_size,
+    moov_sections_file_size,
+    moov_sections_sizes,
+)
 from tests.unit.core.mp4_builder import audio_spec, build_mp4, video_spec
 from tests.unit.core.test_mp4_chunks import _columns
 
@@ -337,6 +341,7 @@ _WANTED = [TimeRange(10.0, 60.0), TimeRange(200.0, 320.0)]  # 영상 길이 약 
 _LIGHT_READS = {
     "프레임률 · 길이": lambda raw: summarize_moov(raw.moov),
     "구간의 크기": lambda raw: moov_sections_sizes(raw, _WANTED),
+    "구간 파일 크기의 합": lambda raw: moov_sections_file_size(raw, _WANTED),
     "머리 길이": lambda raw: moov_head_size(raw),
 }
 _light_read = pytest.mark.parametrize("read", _LIGHT_READS.values(), ids=_LIGHT_READS)

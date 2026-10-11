@@ -41,8 +41,8 @@ from core.models.download_state import DownloadState
 from core.models.events import ProgressEvent
 from core.models.mp4_index import Mp4Raw, PendingMp4Head
 from core.models.plan import TimeRange
-from core.utils.mp4_ranges import sections_download_size
-from core.utils.mp4_section_sizes import moov_sections_sizes
+from core.utils.mp4_ranges import sections_download_size, sections_file_size
+from core.utils.mp4_section_sizes import moov_sections_file_size
 from core.utils.paths import release_output_paths
 from core.utils.stop import StopRequested, check_stop, stop_requested, stoppable
 from tests.unit.section_input import enter_time
@@ -96,6 +96,8 @@ def _card(
     section_bytes: int | None = None,
     cutting: bool = False,
     preparing: bool = False,
+    transfer: int | None = None,
+    made: int | None = None,
     width: int = 1400,
 ):
     """상태를 정한 카드 하나를 보이는 창 안에 놓는다. 영상 전체 크기는 28.99 GB다."""
@@ -129,6 +131,8 @@ def _card(
     item.download_size = received
     item.post_process = cutting
     item.preparing = preparing
+    item.transfer_bytes = transfer  # 엔진이 받을 바이트
+    item.output_bytes = made  # 엔진이 센, 만든 구간 파일 크기의 합
     widget.setData(item, 0)
     window = QWidget()
     column = QVBoxLayout(window)
@@ -189,10 +193,10 @@ def test_encoded_vod_card_never_shows_the_lookup_placeholder_as_a_size(
 
 
 def test_section_card_shows_received_over_the_section_total_not_the_whole_video(qtbot):
-    """인코딩 완료 VOD의 구간 카드는 받는 동안 "받은 크기 / 받을 구간의 합"을 적어야 한다.
+    """인코딩 완료 VOD의 구간 카드는 받는 동안 "전송의 진행 × 크기 / 크기"를 적어야 한다.
 
-    구간 둘, 받을 합 200 MiB, 받은 50 MiB, 영상 전체 28.99 GB
-    -> "1080p · 50.00 MB / 200.00 MB" (전체 크기는 어디에도 없다)
+    구간 둘, 크기(구간 파일 크기의 합) 200 MiB, 엔진이 받을 바이트 200 MiB 가운데 50 MiB를 받음,
+    영상 전체 28.99 GB -> "1080p · 50.00 MB / 200.00 MB" (전체 크기는 어디에도 없다)
     """
     window, widget = _card(
         "video",
@@ -200,6 +204,7 @@ def test_section_card_shows_received_over_the_section_total_not_the_whole_video(
         selections=TWO_SECTIONS,
         received=50 * MB,
         section_bytes=200 * MB,
+        transfer=200 * MB,
     )
     qtbot.addWidget(window)
 
@@ -298,7 +303,6 @@ def test_waiting_section_card_of_an_encoded_vod_shows_the_section_total(qtbot):
 
 
 GB = 1024 * MB
-HEAD_12MB = 12 * MB  # 조회 때 받아 둔 머리(ftyp · moov)의 길이로 둔 값
 
 
 @pytest.mark.parametrize(
@@ -329,11 +333,12 @@ def test_waiting_section_card_marks_overlap_only_when_sections_overlap(qtbot, se
 
 
 def test_waiting_section_card_with_overlap_explains_it_in_the_tooltip(qtbot):
-    """겹침이 있는 대기 구간 카드의 툴팁은 받을 양 · 구간 길이의 합 · 한 번만 받는다는 말을 적어야 한다.
+    """겹침이 있는 대기 구간 카드의 툴팁은 받을 양(길이) · 구간 길이의 합 · 한 번만 받는다는 말을 적어야 한다.
 
-    처음~10분 · 4분~20분 · 1분~20분(합 45분 · 합친 범위 20분), 받을 합 200 MiB
-    -> 툴팁의 줄에 "To receive: 20:00 · 200.00 MB", "Sections add up to 45:00",
-       "Overlapping parts are received once"가 이 순서로 있다
+    처음~10분 · 4분~20분 · 1분~20분(합 45분 · 합친 범위 20분), 크기 200 MiB
+    -> 툴팁의 줄에 "To receive: 20:00", "Sections add up to 45:00",
+       "Overlapping parts are received once"가 이 순서로 있다. 받을 양의 줄에 크기는 없다 —
+       카드의 크기는 구간 파일 크기의 합이라 받을 양의 크기가 아니다
     """
     selections = (TimeRange(0.0, 600.0), TimeRange(240.0, 1200.0), TimeRange(60.0, 1200.0))
     window, widget = _card(
@@ -344,11 +349,12 @@ def test_waiting_section_card_with_overlap_explains_it_in_the_tooltip(qtbot):
     assert widget.fileSizeLabel.isVisible()
     lines = widget.fileSizeLabel.toolTip().split("\n")
     wanted = [
-        "To receive: 20:00 · 200.00 MB",
+        "To receive: 20:00",
         "Sections add up to 45:00",
         "Overlapping parts are received once",
     ]
     assert [line for line in lines if line in wanted] == wanted
+    assert not any(line.startswith("To receive") and "MB" in line for line in lines)
 
 
 def test_waiting_section_card_without_overlap_says_nothing_of_overlap_in_the_tooltip(qtbot):
@@ -407,57 +413,32 @@ def test_waiting_segment_section_card_keeps_the_total_time_and_its_tooltip(qtbot
     ]
 
 
-def test_section_card_covering_the_whole_video_shows_the_size_of_the_card_without_sections(qtbot):
-    """구간이 영상 전체를 덮는 대기 카드의 크기는 구간 없는 카드의 크기와 같은 숫자여야 한다.
-
-    파일 31127792353바이트(28.99 GB). 머리 12 MiB는 조회 때 받아 두어 받을 양에서 빠진다
-    구간 카드: section_bytes = 파일 − 머리, section_head_bytes = 머리(받을 양만 적으면 28.98 GB)
-    -> 구간 없는 카드 == "28.99 GB", 구간 카드의 요약이 "· 28.99 GB"로 끝난다
-    """
-    file_bytes = 31127792353  # 28.99 GiB를 반올림 없이 넘는 바이트 수
-    plain_window, plain = _card("video", DownloadState.WAITING)
-    qtbot.addWidget(plain_window)
-    window, widget = _card(
-        "video",
-        DownloadState.WAITING,
-        selections=(TimeRange(0.0, 28800.0),),
-        section_bytes=file_bytes - HEAD_12MB,
-    )
-    qtbot.addWidget(window)
-    widget.item.section_head_bytes = HEAD_12MB
-    widget.setData(widget.item, 0)
-    _pump()
-
-    assert shown(plain.fileSizeLabel) == "28.99 GB"
-    assert shown(widget.fileSizeLabel) == "Sections 1 · 28.99 GB"
-
-
 @pytest.mark.parametrize(
-    ("state", "preparing", "received", "expected"),
+    ("state", "preparing", "received", "transfer", "expected"),
     [
-        (DownloadState.RUNNING, False, 50 * MB, "62.00 MB / 212.00 MB"),
-        (DownloadState.PAUSED, False, 50 * MB, "62.00 MB / 212.00 MB"),
-        (DownloadState.RUNNING, True, "", "12.00 MB / 212.00 MB"),
-        (DownloadState.RUNNING, False, 200 * MB, "212.00 MB / 212.00 MB"),
+        (DownloadState.RUNNING, False, 25 * MB, 100 * MB, "50.00 MB / 200.00 MB"),
+        (DownloadState.PAUSED, False, 25 * MB, 100 * MB, "50.00 MB / 200.00 MB"),
+        (DownloadState.RUNNING, True, "", None, "0 B / 200.00 MB"),
+        (DownloadState.RUNNING, False, 0, 100 * MB, "0 B / 200.00 MB"),
+        (DownloadState.RUNNING, False, 100 * MB, 100 * MB, "200.00 MB / 200.00 MB"),
     ],
-    ids=["받는 중", "일시정지", "준비 중", "전송이 끝나는 순간"],
+    ids=["받는 중", "일시정지", "준비 중", "받기 직전", "전송이 끝나는 순간"],
 )
-def test_started_section_card_keeps_the_file_size_the_waiting_card_showed(
-    qtbot, state, preparing, received, expected
+def test_started_section_card_shows_progress_times_the_size_over_the_size(
+    qtbot, state, preparing, received, transfer, expected
 ):
-    """받기 시작한 구간 카드는 "받은 바이트 + 머리 / 완성 파일 크기"를 적어야 한다 — 크기는 대기 카드의 것 그대로다.
+    """받기 시작한 구간 카드는 "전송의 진행 × 크기 / 크기"를 적어야 한다 — 크기는 대기 카드의 것 그대로다.
 
-    받을 합 200 MiB · 머리 12 MiB. 대기 카드의 요약은 "· 212.00 MB"로 끝난다
-    -> 받는 중 · 일시정지(받은 것 50 MiB): "62.00 MB / 212.00 MB"로 끝난다
-    -> 준비 중(받은 것 없음): "12.00 MB / 212.00 MB"로 끝난다
-    -> 전송이 끝나는 순간(받은 것 200 MiB, 아직 자르기 전): "212.00 MB / 212.00 MB"로 끝난다
+    카드의 크기(구간 파일 크기의 합의 추정) 200 MiB. 대기 카드의 요약은 "· 200.00 MB"로 끝난다.
+    엔진이 받을 바이트 100 MiB
+    -> 받는 중 · 일시정지(받은 것 25 MiB — 진행 1/4): "50.00 MB / 200.00 MB"로 끝난다
+    -> 준비 중(엔진이 받을 바이트를 아직 모른다) · 받기 직전(받은 것 0): "0 B / 200.00 MB"
+    -> 전송이 끝나는 순간(받은 것 100 MiB, 아직 자르기 전): "200.00 MB / 200.00 MB"
     """
     waiting_window, waiting = _card(
         "video", DownloadState.WAITING, selections=TWO_SECTIONS, section_bytes=200 * MB
     )
     qtbot.addWidget(waiting_window)
-    waiting.item.section_head_bytes = HEAD_12MB
-    waiting.setData(waiting.item, 0)
     window, widget = _card(
         "video",
         state,
@@ -465,36 +446,95 @@ def test_started_section_card_keeps_the_file_size_the_waiting_card_showed(
         received=received,
         section_bytes=200 * MB,
         preparing=preparing,
+        transfer=transfer,
     )
     qtbot.addWidget(window)
-    widget.item.section_head_bytes = HEAD_12MB
-    widget.setData(widget.item, 0)
-    _pump()
 
-    assert shown(waiting.fileSizeLabel).endswith("· 212.00 MB")
+    assert shown(waiting.fileSizeLabel).endswith("· 200.00 MB")
     assert shown(widget.fileSizeLabel).endswith(expected)
 
 
-def test_cutting_section_card_shows_the_file_size_on_both_sides(qtbot):
-    """자르는 동안 구간 카드는 받은 크기 자리에도 완성 파일 크기를 적어야 한다.
+def test_received_side_never_passes_the_size(qtbot):
+    """받은 바이트가 엔진이 받을 바이트를 넘게 통지돼도 왼쪽 숫자는 크기를 넘지 않아야 한다.
 
-    받을 합 200 MiB · 머리 12 MiB, 컷 단계(마지막 통지의 받은 크기 199 MiB)
-    -> "212.00 MB / 212.00 MB"로 끝난다
+    크기 200 MiB · 엔진이 받을 바이트 100 MiB · 받은 것 130 MiB -> "200.00 MB / 200.00 MB"로 끝난다
     """
     window, widget = _card(
         "video",
         DownloadState.RUNNING,
         selections=TWO_SECTIONS,
-        received=199 * MB,
+        received=130 * MB,
         section_bytes=200 * MB,
-        cutting=True,
+        transfer=100 * MB,
     )
     qtbot.addWidget(window)
-    widget.item.section_head_bytes = HEAD_12MB
-    widget.setData(widget.item, 0)
-    _pump()
 
-    assert shown(widget.fileSizeLabel).endswith("212.00 MB / 212.00 MB")
+    assert shown(widget.fileSizeLabel).endswith("200.00 MB / 200.00 MB")
+
+
+@pytest.mark.parametrize(
+    ("made", "expected"),
+    [(180 * MB, "1080p · 180.00 MB"), (None, "1080p · 120.00 MB")],
+    ids=["엔진이 센 값이 있다", "값을 모른다"],
+)
+def test_finished_section_card_shows_the_size_of_the_files_it_made(qtbot, made, expected):
+    """완료한 구간 카드는 실제로 만든 구간 파일 크기의 합을 적고, 그 값을 모르면 받은 양을 적어야 한다.
+
+    추정 200 MiB · 받은 양 120 MiB · 만든 구간 파일의 합 180 MiB / 모름(None)
+    -> "1080p · 180.00 MB" / "1080p · 120.00 MB"
+    """
+    window, widget = _card(
+        "video",
+        DownloadState.FINISHED,
+        selections=TWO_SECTIONS,
+        received=120 * MB,
+        section_bytes=200 * MB,
+        made=made,
+    )
+    qtbot.addWidget(window)
+
+    assert shown(widget.fileSizeLabel) == expected
+
+
+@pytest.mark.parametrize(
+    ("content_type", "selections", "state", "expected"),
+    [
+        ("video", (), DownloadState.RUNNING, "1080p · 50.00 MB / 28.99 GB"),
+        ("video", (), DownloadState.FINISHED, "1080p · 50.00 MB"),
+        ("m3u8", TWO_SECTIONS, DownloadState.RUNNING, "1080p · 50.00 MB"),
+        ("m3u8", TWO_SECTIONS, DownloadState.FINISHED, "1080p · 50.00 MB"),
+        ("m3u8", (), DownloadState.RUNNING, "1080p · 50.00 MB"),
+        ("m3u8", (), DownloadState.FINISHED, "1080p · 50.00 MB"),
+    ],
+    ids=[
+        "구간 없는 mp4 · 받는 중",
+        "구간 없는 mp4 · 완료",
+        "m3u8 구간 · 받는 중",
+        "m3u8 구간 · 완료",
+        "m3u8 전체 · 받는 중",
+        "m3u8 전체 · 완료",
+    ],
+)
+def test_cards_other_than_mp4_section_cards_keep_showing_what_they_received(
+    qtbot, content_type, selections, state, expected
+):
+    """구간 없는 카드와 세그먼트 방식의 카드는 구간 카드의 값들이 적혀 있어도 받은 양을 그대로 적어야 한다.
+
+    받은 것 50 MiB. 카드에 section_bytes 200 MiB · transfer_bytes 100 MiB · output_bytes 180 MiB를
+    적어 둠 -> 크기 == expected (진행을 곱하지 않고, 만든 파일의 합을 적지 않는다)
+    """
+    window, widget = _card(
+        content_type,
+        state,
+        selections=selections,
+        received=50 * MB,
+        section_bytes=200 * MB,
+        transfer=100 * MB,
+        made=180 * MB,
+    )
+    qtbot.addWidget(window)
+
+    assert shown(widget.fileSizeLabel) == expected
 
 
 @pytest.mark.parametrize("content_type", ["m3u8", "hls_aes"])
@@ -554,7 +594,7 @@ def test_total_size_is_the_first_thing_to_give_way_when_the_card_narrows(qtbot, 
 def test_section_card_keeps_what_it_received_when_the_card_narrows(qtbot):
     """구간 카드도 좁아지면 받을 구간의 합이 빠지고 받은 크기가 남아야 한다.
 
-    구간 둘, 받을 합 200 MiB, 받은 50 MiB, 넓은 창에서 4px씩 좁힘
+    구간 둘, 크기 200 MiB, 엔진이 받을 바이트 200 MiB 가운데 50 MiB를 받음, 넓은 창에서 4px씩 좁힘
     -> 처음 글이 바뀐 폭에서: 크기 == "1080p · 50.00 MB"
     """
     window, widget = _card(
@@ -563,6 +603,7 @@ def test_section_card_keeps_what_it_received_when_the_card_narrows(qtbot):
         selections=TWO_SECTIONS,
         received=50 * MB,
         section_bytes=200 * MB,
+        transfer=200 * MB,
     )
     qtbot.addWidget(window)
     full = "1080p · 50.00 MB / 200.00 MB"
@@ -571,92 +612,6 @@ def test_section_card_keeps_what_it_received_when_the_card_narrows(qtbot):
     _narrow_until(window, widget, lambda: widget.fileSizeLabel.text() != full)
 
     assert shown(widget.fileSizeLabel) == "1080p · 50.00 MB"
-
-
-def test_started_section_card_adds_no_head_to_what_it_received_when_the_head_is_unknown(qtbot):
-    """머리 길이를 모르는 구간 카드는 받은 크기에 아무것도 더하지 않아야 한다.
-
-    받을 합 200 MiB · 머리 모름(None) · 받은 것 50 MiB -> "1080p · 50.00 MB / 200.00 MB"
-    """
-    window, widget = _card(
-        "video",
-        DownloadState.RUNNING,
-        selections=TWO_SECTIONS,
-        received=50 * MB,
-        section_bytes=200 * MB,
-    )
-    qtbot.addWidget(window)
-    assert widget.item.section_head_bytes is None
-
-    assert shown(widget.fileSizeLabel) == "1080p · 50.00 MB / 200.00 MB"
-
-
-def test_preparing_section_card_without_a_known_head_shows_nothing_received(qtbot):
-    """머리 길이를 모르는 구간 카드는 준비 중에 받은 크기를 "0 B"로 적어야 한다.
-
-    받을 합 200 MiB · 머리 모름(None) · 준비 중(받은 것 없음) -> "1080p · 0 B / 200.00 MB"
-    """
-    window, widget = _card(
-        "video",
-        DownloadState.RUNNING,
-        selections=TWO_SECTIONS,
-        received="",
-        section_bytes=200 * MB,
-        preparing=True,
-    )
-    qtbot.addWidget(window)
-
-    assert shown(widget.fileSizeLabel) == "1080p · 0 B / 200.00 MB"
-
-
-def test_narrow_section_card_keeps_the_head_in_what_it_received(qtbot):
-    """좁아져 크기가 빠진 구간 카드의 받은 크기에도 머리가 들어 있어야 한다.
-
-    받을 합 200 MiB · 머리 12 MiB · 받은 것 50 MiB, 넓은 창에서 4px씩 좁힘
-    -> 처음 글이 바뀐 폭에서: 크기 == "1080p · 62.00 MB"
-    """
-    window, widget = _card(
-        "video",
-        DownloadState.RUNNING,
-        selections=TWO_SECTIONS,
-        received=50 * MB,
-        section_bytes=200 * MB,
-    )
-    qtbot.addWidget(window)
-    widget.item.section_head_bytes = HEAD_12MB
-    widget.setData(widget.item, 0)
-    _pump()
-    full = "1080p · 62.00 MB / 212.00 MB"
-    assert shown(widget.fileSizeLabel) == full, "전제: 넓은 창에서는 다 적는다"
-
-    _narrow_until(window, widget, lambda: widget.fileSizeLabel.text() != full)
-
-    assert shown(widget.fileSizeLabel) == "1080p · 62.00 MB"
-
-
-@pytest.mark.parametrize(
-    ("content_type", "selections", "expected"),
-    [
-        ("video", (), "1080p · 50.00 MB / 28.99 GB"),
-        ("m3u8", TWO_SECTIONS, "1080p · 50.00 MB"),
-        ("m3u8", (), "1080p · 50.00 MB"),
-    ],
-    ids=["구간 없는 mp4", "m3u8 구간", "m3u8 전체"],
-)
-def test_cards_other_than_mp4_section_cards_add_no_head(qtbot, content_type, selections, expected):
-    """구간 없는 카드와 세그먼트 방식의 카드는 머리 길이가 적혀 있어도 받은 크기에 더하지 않아야 한다.
-
-    받은 것 50 MiB, 카드에 section_head_bytes = 12 MiB를 적어 둠 -> 크기 == expected
-    """
-    window, widget = _card(
-        content_type, DownloadState.RUNNING, selections=selections, received=50 * MB
-    )
-    qtbot.addWidget(window)
-    widget.item.section_head_bytes = HEAD_12MB
-    widget.setData(widget.item, 0)
-    _pump()
-
-    assert shown(widget.fileSizeLabel) == expected
 
 
 def test_preparing_card_shows_the_text_and_a_bar_without_a_value(qtbot):
@@ -690,9 +645,6 @@ def _mp4_raw(scale: int) -> Mp4Raw:
     data = build_mp4([spec, audio_spec()]).data
     return read_mp4_raw(lambda offset, size: data[offset : offset + size])
 
-
-# 합성 mp4의 머리 길이(바이트) — ftyp 24 + moov 994 + mdat 머리 8. 샘플 크기와 무관하다
-FILE_HEAD = 1026
 
 REAL_PROBE = section_basis.probe_section_basis  # 대역으로 바꾸기 전의 제품 조회 함수
 
@@ -830,27 +782,25 @@ def test_confirming_sections_computes_the_bytes_the_engine_will_receive(qtbot, w
     """구간을 확인하고 백그라운드 계산이 끝나면 카드에 받을 구간의 합이 있어야 하고, 대기 카드가 그것을 적어야 한다.
 
     1080p에서 구간 0.2~1.0초를 확인, 크기를 세는 일이 끝나기를 기다림
-    -> section_bytes == sections_download_size(1080p의 색인, 그 구간), section_head_bytes == 1026,
-       요약이 둘을 더한 크기(KB)로 끝난다
+    -> section_bytes == sections_file_size(1080p의 색인, 그 구간)(구간 파일 크기의 합의 추정),
+       요약이 그 크기(KB)로 끝난다. 엔진이 받을 바이트(sections_download_size)와는 다른 값이다
     """
     win, item, _engine = window
 
     _give_section(qtbot, win, item)
 
-    expected = sections_download_size(probe.heads[1080].index, item.selections)
+    expected = sections_file_size(probe.heads[1080].index, item.selections)
     assert 1024 < expected < 1024 * 1024, "전제: KB 단위로 적히는 크기다"
+    assert expected != sections_download_size(probe.heads[1080].index, item.selections)
     assert item.section_bytes == expected
-    assert item.section_head_bytes == FILE_HEAD
-    assert shown(win.listView.widgetFor(item).fileSizeLabel).endswith(
-        f"· {(expected + FILE_HEAD) / 1024:.2f} KB"
-    )
+    assert shown(win.listView.widgetFor(item).fileSizeLabel).endswith(f"· {expected / 1024:.2f} KB")
 
 
 class _GatedCount:
     """크기 세기 대역 — 문을 열 때까지 기다렸다가 제품의 것을 부른다. 부른 횟수를 센다.
 
     대기 카드의 크기 세기는 색인을 만들지 않는다 — 받아 둔 moov의 표에서 센다. 막는 자리는
-    그 함수다(``core.utils.mp4_section_sizes.moov_sections_sizes``).
+    그 함수다(``core.utils.mp4_section_sizes.moov_sections_file_size``).
     """
 
     def __init__(self):
@@ -860,13 +810,13 @@ class _GatedCount:
     def __call__(self, raw, selections):
         self.calls += 1
         assert self.gate.wait(10), "크기 세기 대역의 문이 열리지 않았다"
-        return moov_sections_sizes(raw, selections)
+        return moov_sections_file_size(raw, selections)
 
 
 @pytest.fixture
 def gated_count(monkeypatch):
     gated = _GatedCount()
-    monkeypatch.setattr(sev, "moov_sections_sizes", gated)
+    monkeypatch.setattr(sev, "moov_sections_file_size", gated)
     yield gated
     gated.gate.set()
 
@@ -912,11 +862,9 @@ def test_card_says_checking_while_the_section_total_is_counted_in_the_background
     assert during[0] is None
     assert during[1] is probe.raws[1080]
     assert label == "Sections 1 · Checking..."
-    expected = sections_download_size(probe.heads[1080].index, item.selections)
+    expected = sections_file_size(probe.heads[1080].index, item.selections)
     assert item.section_bytes == expected
-    assert shown(win.listView.widgetFor(item).fileSizeLabel).endswith(
-        f"· {(expected + FILE_HEAD) / 1024:.2f} KB"
-    )
+    assert shown(win.listView.widgetFor(item).fileSizeLabel).endswith(f"· {expected / 1024:.2f} KB")
     assert item.section_head[1].raw is probe.raws[1080]
     assert item.section_head[1].peek() is None
     assert item.section_head[0] == "u1"
@@ -937,7 +885,7 @@ def test_card_stops_saying_checking_when_counting_fails_and_takes_the_engine_tot
     def broken(raw, selections):
         raise RuntimeError("크기 세기 실패(대역)")
 
-    monkeypatch.setattr(sev, "moov_sections_sizes", broken)
+    monkeypatch.setattr(sev, "moov_sections_file_size", broken)
     _give_section(qtbot, win, item)
 
     assert item.section_bytes is None and item.section_sizing is False
@@ -973,8 +921,8 @@ def test_a_late_section_total_is_dropped_when_the_resolution_changed_meanwhile(
     gated_count.gate.set()
     _wait_size(qtbot, win)
 
-    expected = sections_download_size(probe.heads[480].index, item.selections)
-    assert expected != sections_download_size(probe.heads[1080].index, item.selections)
+    expected = sections_file_size(probe.heads[480].index, item.selections)
+    assert expected != sections_file_size(probe.heads[1080].index, item.selections)
     assert item.section_bytes == expected
     assert item.section_head[0] == "u2"
 
@@ -1059,7 +1007,7 @@ def test_confirming_edited_sections_recomputes_the_total(qtbot, window, probe):
 
     _give_section(qtbot, win, item, end=0.5)
 
-    expected = sections_download_size(probe.heads[1080].index, (TimeRange(0.2, 0.5),))
+    expected = sections_file_size(probe.heads[1080].index, (TimeRange(0.2, 0.5),))
     assert expected != before
     assert item.section_bytes == expected
 
@@ -1108,7 +1056,7 @@ def test_counting_the_section_total_builds_no_index(qtbot, window, probe, counte
 
     assert before == (
         0,
-        sections_download_size(probe.heads[480].index, item.selections),
+        sections_file_size(probe.heads[480].index, item.selections),
         None,
     )
     assert counted_index.calls == 1
@@ -1182,7 +1130,7 @@ def test_changing_resolution_recomputes_the_section_total_from_the_new_moov(qtbo
         probe.gate.set()
     _settle(qtbot, win)
 
-    expected = sections_download_size(probe.heads[480].index, item.selections)
+    expected = sections_file_size(probe.heads[480].index, item.selections)
     assert cleared is None
     assert item.section_bytes == expected
     assert expected != before
@@ -1433,7 +1381,7 @@ class _WatchedCount:
         self.calls += 1
         assert self.gate.wait(10), "크기 세기 대역의 문이 열리지 않았다"
         try:
-            sizes = moov_sections_sizes(raw, selections)
+            sizes = moov_sections_file_size(raw, selections)
         except StopRequested:
             self.stopped += 1
             raise
@@ -1444,7 +1392,7 @@ class _WatchedCount:
 @pytest.fixture
 def watched_count(monkeypatch):
     watched = _WatchedCount()
-    monkeypatch.setattr(sev, "moov_sections_sizes", watched)
+    monkeypatch.setattr(sev, "moov_sections_file_size", watched)
     yield watched
     watched.gate.set()
 
@@ -1469,7 +1417,7 @@ def test_changing_resolution_stops_the_count_of_the_previous_moov(
     _wait_size(qtbot, win)
 
     assert (watched_count.stopped, watched_count.finished) == (1, 1)
-    assert item.section_bytes == sections_download_size(probe.heads[480].index, item.selections)
+    assert item.section_bytes == sections_file_size(probe.heads[480].index, item.selections)
 
 
 def test_removing_the_card_stops_its_count(qtbot, window, probe, watched_count):
@@ -1615,7 +1563,7 @@ def test_count_told_to_stop_before_it_starts_counts_nothing(qtbot, monkeypatch):
     -> 세는 대역 0번, 해석 대역 0번, done (token, False, None) 1번
     """
     counted, built = [], []
-    monkeypatch.setattr(sev, "section_sizes_of", lambda *args: counted.append(args))
+    monkeypatch.setattr(sev, "section_file_bytes_of", lambda *args: counted.append(args))
     moov = PendingMp4Head(_mp4_raw(1), built.append)
     job = sev.SectionSizeJob(moov, (TimeRange(0.2, 0.5),), "token")
     done = []
@@ -1651,34 +1599,40 @@ def test_count_runs_as_one_background_work(qtbot, monkeypatch):
     assert marks == ["들어감", "나감"]
 
 
-def test_section_sizes_of_equals_the_two_separate_sizes():
-    """section_sizes_of는 받을 양 · 머리 길이를 따로 구한 것과 같은 값을 돌려줘야 한다.
+def test_section_file_bytes_of_equals_the_size_counted_from_the_index():
+    """section_file_bytes_of는 색인으로 센 구간 파일 크기의 합을 돌려줘야 한다.
 
-    구간 0.2~0.5초 -> (section_bytes_of, section_head_bytes_of)와 같다
+    구간 0.2~0.5초 -> sections_file_size(색인, 구간)과 같고 0보다 크다
     """
     head = index_mp4(_mp4_raw(1))
     selections = (TimeRange(0.2, 0.5),)
 
-    assert sev.section_sizes_of(head, selections) == (
-        sev.section_bytes_of(head, selections),
-        sev.section_head_bytes_of(head),
-    )
+    size = sev.section_file_bytes_of(head, selections)
+
+    assert size == sections_file_size(head.index, selections)
+    assert size > 0
 
 
-def test_section_sizes_of_still_gives_the_head_when_the_sections_cannot_be_counted(monkeypatch):
-    """받을 양을 셀 수 없는 구간이어도 머리 길이는 돌려줘야 한다.
+@pytest.mark.parametrize(
+    "error", [ValueError("구간이 영상 밖이다(대역)"), None], ids=["맞지 않는 구간", "구간 없음"]
+)
+def test_section_file_bytes_of_gives_nothing_when_the_sections_cannot_be_counted(
+    monkeypatch, error
+):
+    """셀 수 없는 구간(영상에 맞지 않는다)이거나 구간이 없으면 None이어야 한다.
 
-    한 번에 세는 함수가 ValueError를 내게 함(구간이 그 영상에 맞지 않을 때의 예외)
-    -> (None, 머리 길이 1026)
+    색인으로 세는 함수가 ValueError를 내게 함 / 구간 목록이 비어 있음 -> None
     """
 
     def unfit(index, selections):
-        raise ValueError("구간이 영상 밖이다(대역)")
+        raise error
 
-    monkeypatch.setattr(sev, "sections_sizes", unfit)
     head = index_mp4(_mp4_raw(1))
+    if error is not None:
+        monkeypatch.setattr(sev, "sections_file_size", unfit)
+    selections = (TimeRange(0.2, 0.5),) if error is not None else ()
 
-    assert sev.section_sizes_of(head, (TimeRange(0.2, 0.5),)) == (None, FILE_HEAD)
+    assert sev.section_file_bytes_of(head, selections) is None
 
 
 # ================================================================ 도는 다운로드는 백그라운드 일이다 (#309)
@@ -1776,24 +1730,24 @@ def test_changing_resolution_stops_the_previous_count_without_waiting_for_the_lo
 # ================================================================ 색인 없이 센다 (#309)
 
 
-def test_section_sizes_of_counts_unparsed_bytes_like_the_index(monkeypatch):
+def test_section_file_bytes_of_counts_unparsed_bytes_like_the_index(monkeypatch):
     """아직 해석하지 않은 moov로 센 값은 색인으로 센 값과 같아야 하고, 세는 동안 색인을 만들지 않아야 한다.
 
     구간 0.2~0.5초, 색인 만들기를 부르면 적는 대역
-    -> section_sizes_of(받은 바이트) == section_sizes_of(그 바이트를 해석한 색인), 색인 만들기 0번
+    -> section_file_bytes_of(받은 바이트) == section_file_bytes_of(그 바이트를 해석한 색인), 색인 만들기 0번
     """
     raw = _mp4_raw(1)
     selections = (TimeRange(0.2, 0.5),)
-    expected = sev.section_sizes_of(index_mp4(raw), selections)
+    expected = sev.section_file_bytes_of(index_mp4(raw), selections)
     built = []
     monkeypatch.setattr(mp4_module, "index_mp4", built.append)
 
-    assert sev.section_sizes_of(pending_mp4_head(raw), selections) == expected
-    assert expected[0] is not None and expected[1] == FILE_HEAD
+    assert sev.section_file_bytes_of(pending_mp4_head(raw), selections) == expected
+    assert expected is not None and expected > 0
     assert built == []
 
 
-def test_section_sizes_of_uses_the_index_once_the_bytes_were_parsed():
+def test_section_file_bytes_of_uses_the_index_once_the_bytes_were_parsed():
     """그사이 다른 쪽이 색인을 만든 moov는 그 색인으로 세어야 한다 — 바이트는 이미 놓였다.
 
     받은 바이트를 싼 것에 get()을 한 번 부른 뒤(raw is None) 구간 0.2~0.5초를 셈
@@ -1804,38 +1758,36 @@ def test_section_sizes_of_uses_the_index_once_the_bytes_were_parsed():
     selections = (TimeRange(0.2, 0.5),)
 
     assert pending.raw is None, "전제: 해석이 끝나 바이트를 놓았다"
-    assert sev.section_sizes_of(pending, selections) == sev.section_sizes_of(head, selections)
+    assert sev.section_file_bytes_of(pending, selections) == sev.section_file_bytes_of(
+        head, selections
+    )
 
 
-def test_section_sizes_of_still_gives_the_head_when_unparsed_sections_cannot_be_counted(
+def test_section_file_bytes_of_gives_nothing_when_unparsed_sections_cannot_be_counted(
     monkeypatch,
 ):
-    """아직 해석하지 않은 moov에서 받을 양을 셀 수 없는 구간이어도 머리 길이는 돌려줘야 한다.
+    """아직 해석하지 않은 moov에서 셀 수 없는 구간이면 None이어야 한다.
 
-    표에서 세는 함수가 ValueError를 내게 함(구간이 그 영상에 맞지 않을 때의 예외)
-    -> (None, 머리 길이 1026)
+    표에서 세는 함수가 ValueError를 내게 함(구간이 그 영상에 맞지 않을 때의 예외) -> None
     """
 
     def unfit(raw, selections):
         raise ValueError("구간이 영상 밖이다(대역)")
 
-    monkeypatch.setattr(sev, "moov_sections_sizes", unfit)
+    monkeypatch.setattr(sev, "moov_sections_file_size", unfit)
 
-    assert sev.section_sizes_of(pending_mp4_head(_mp4_raw(1)), (TimeRange(0.2, 0.5),)) == (
-        None,
-        FILE_HEAD,
-    )
+    assert sev.section_file_bytes_of(pending_mp4_head(_mp4_raw(1)), (TimeRange(0.2, 0.5),)) is None
 
 
-def test_section_sizes_of_gives_nothing_when_the_unparsed_moov_cannot_be_read():
-    """읽을 수 없는 moov(바이트)면 받을 양도 머리 길이도 None이어야 한다.
+def test_section_file_bytes_of_gives_nothing_when_the_unparsed_moov_cannot_be_read():
+    """읽을 수 없는 moov(바이트)면 None이어야 한다.
 
-    moov 자리에 moov가 아닌 상자를 둔 바이트, 구간 0.2~0.5초 -> (None, None)
+    moov 자리에 moov가 아닌 상자를 둔 바이트, 구간 0.2~0.5초 -> None
     """
     raw = _mp4_raw(1)
     broken = dataclasses.replace(raw, moov=raw.moov[:4] + b"free" + raw.moov[8:])
 
-    assert sev.section_sizes_of(pending_mp4_head(broken), (TimeRange(0.2, 0.5),)) == (None, None)
+    assert sev.section_file_bytes_of(pending_mp4_head(broken), (TimeRange(0.2, 0.5),)) is None
 
 
 @pytest.fixture
@@ -1901,22 +1853,22 @@ def _engine_decides(submission, total: int) -> None:
     )
 
 
-def test_section_card_shows_one_file_size_from_waiting_through_pause_and_restart(
-    qtbot, window, probe
-):
+def test_section_card_shows_one_size_from_waiting_through_pause_and_restart(qtbot, window, probe):
     """구간 카드의 크기는 대기 · 준비 중 · 받는 중 · 일시정지 · 다시 시작에서 같은 숫자여야 한다.
 
-    1080p에서 구간 0.2~1.0초. 완성 파일 크기 = sections_download_size(색인, 구간) + 머리 1026바이트.
-    전역 다운로드 → (준비 중) → 엔진이 받을 크기(머리를 뺀 값)를 알림 → 일시정지 → 다시 시작
-    -> 대기 카드의 요약과 그 뒤 네 시점의 크기 글이 모두 "<완성 파일 크기> KB"로 끝난다
+    1080p에서 구간 0.2~1.0초. 크기 = sections_file_size(색인, 구간)(구간 파일 크기의 합의 추정).
+    전역 다운로드 → (준비 중) → 엔진이 받을 바이트(sections_download_size — 다른 값)를 알림 →
+    일시정지 → 다시 시작
+    -> 대기 카드의 요약과 그 뒤 네 시점의 크기 글이 모두 "<크기> KB"로 끝난다
     """
     win, item, engine = window
     win.downloadViewModel._prepareTimer.setInterval(0)
     _give_section(qtbot, win, item)
     widget = win.listView.widgetFor(item)
     transfer = sections_download_size(probe.heads[1080].index, item.selections)
-    file_size = f"{(transfer + FILE_HEAD) / 1024:.2f} KB"
-    assert f"{transfer / 1024:.2f} KB" != file_size, "전제: 머리를 더하면 글이 달라진다"
+    estimate = sections_file_size(probe.heads[1080].index, item.selections)
+    size = f"{estimate / 1024:.2f} KB"
+    assert f"{transfer / 1024:.2f} KB" != size, "전제: 엔진이 받을 바이트와 글이 다르다"
     seen = {"대기": shown(widget.fileSizeLabel)}
 
     win.downloadButton.click()
@@ -1936,23 +1888,60 @@ def test_section_card_shows_one_file_size_from_waiting_through_pause_and_restart
     assert item.downloadState == DownloadState.RUNNING, "전제: 다시 받는다"
     seen["다시 시작"] = shown(widget.fileSizeLabel)
 
-    assert {name: text.endswith(file_size) for name, text in seen.items()} == dict.fromkeys(
+    assert {name: text.endswith(size) for name, text in seen.items()} == dict.fromkeys(
         seen, True
     ), seen
 
 
-def test_section_card_keeps_its_file_size_when_a_retry_receives_less(qtbot, window, probe):
-    """다시 받는 실행에서 엔진이 더 적은 양을 받겠다고 해도 카드의 크기는 완성 파일 크기 그대로여야 한다.
+def test_received_side_follows_the_transfer_and_meets_the_size_at_its_end(qtbot, window, probe):
+    """받는 동안 왼쪽 숫자는 전송의 진행 × 크기여야 하고, 전송이 끝나면 크기와 같아야 한다.
 
-    1080p에서 구간 0.2~1.0초. 첫 실행: 엔진이 받을 크기 T를 알림 → 중단. 둘째 실행: 엔진이 T의
-    절반을 알림(끝낸 구간을 빼고 받는 재시도처럼)
-    -> 둘째 실행의 통지 뒤: section_bytes == T, section_head_bytes == 1026, transfer_bytes == T // 2,
-       크기 글이 "<T + 1026> KB"로 끝난다
+    1080p에서 구간 0.2~1.0초. 크기 E = sections_file_size(색인, 구간), 엔진이 받을 바이트 T = 1000
+    진행 통지 250/1000 -> 크기 글 == "1080p · <E/4> / <E>"
+    진행 통지 1000/1000 -> 크기 글 == "1080p · <E> / <E>"
+    """
+    win, item, engine = window
+    win.downloadViewModel._prepareTimer.setInterval(60_000)
+    _give_section(qtbot, win, item)
+    widget = win.listView.widgetFor(item)
+    estimate = sections_file_size(probe.heads[1080].index, item.selections)
+
+    def text(size: float) -> str:
+        """카드의 크기 표기 — 1024로 나눠 가며 단위를 올리고 소수 둘째 자리까지 적는다."""
+        for unit in ("B", "KB", "MB"):
+            if size < 1024:
+                return f"{size:.2f} {unit}"
+            size /= 1024
+        return f"{size:.2f} GB"
+
+    win.downloadButton.click()
+    _engine_decides(engine.submissions[0], 1000)
+    qtbot.waitUntil(lambda: item.transfer_bytes == 1000, timeout=3000)
+
+    _progress(engine.submissions[0], 250, 1000)
+    qtbot.waitUntil(lambda: item.download_size == "250", timeout=3000)
+    _pump()
+    quarter = shown(widget.fileSizeLabel)
+    _progress(engine.submissions[0], 1000, 1000)
+    qtbot.waitUntil(lambda: item.download_size == "1000", timeout=3000)
+    _pump()
+
+    assert quarter == f"1080p · {text(estimate / 4)} / {text(estimate)}"
+    assert shown(widget.fileSizeLabel) == f"1080p · {text(estimate)} / {text(estimate)}"
+
+
+def test_section_card_keeps_its_size_when_a_retry_receives_less(qtbot, window, probe):
+    """다시 받는 실행에서 엔진이 더 적은 양을 받겠다고 해도 카드의 크기는 그대로여야 한다.
+
+    1080p에서 구간 0.2~1.0초. 크기 E = sections_file_size(색인, 구간). 첫 실행: 엔진이 받을 바이트
+    T를 알림 → 중단. 둘째 실행: 엔진이 T의 절반을 알림(끝낸 구간을 빼고 받는 재시도처럼)
+    -> 둘째 실행의 통지 뒤: section_bytes == E, transfer_bytes == T // 2, 크기 글이 "/ <E> KB"로 끝난다
     """
     win, item, engine = window
     _give_section(qtbot, win, item)
     widget = win.listView.widgetFor(item)
     transfer = sections_download_size(probe.heads[1080].index, item.selections)
+    estimate = sections_file_size(probe.heads[1080].index, item.selections)
     win.downloadButton.click()
     _engine_decides(engine.submissions[0], transfer)
     qtbot.waitUntil(lambda: item.transfer_bytes == transfer, timeout=3000)
@@ -1965,8 +1954,52 @@ def test_section_card_keeps_its_file_size_when_a_retry_receives_less(qtbot, wind
     qtbot.waitUntil(lambda: item.transfer_bytes == transfer // 2, timeout=3000)
     _pump()
 
-    assert (item.section_bytes, item.section_head_bytes) == (transfer, FILE_HEAD)
-    assert shown(widget.fileSizeLabel).endswith(f"/ {(transfer + FILE_HEAD) / 1024:.2f} KB")
+    assert item.section_bytes == estimate
+    assert shown(widget.fileSizeLabel).endswith(f"/ {estimate / 1024:.2f} KB")
+
+
+def test_finished_section_card_takes_the_size_the_engine_counted(qtbot, window, probe):
+    """완료한 구간 카드는 엔진이 세어 준 구간 파일 크기의 합을 적어야 한다 — 받은 양이 아니다.
+
+    1080p에서 구간 0.2~1.0초. 엔진이 받을 바이트 1000을 알리고 1000/1000까지 받은 뒤,
+    만든 구간 파일의 합 5000바이트를 적고 완료를 알림
+    -> output_bytes == 5000, 크기 글 == "1080p · 4.88 KB" (받은 양 1000바이트면 "1000.00 B"다)
+    """
+    win, item, engine = window
+    _give_section(qtbot, win, item)
+    widget = win.listView.widgetFor(item)
+    win.downloadButton.click()
+    submission = engine.submissions[0]
+    _engine_decides(submission, 1000)
+    _progress(submission, 1000, 1000)
+    qtbot.waitUntil(lambda: item.download_size == "1000", timeout=3000)
+
+    submission["data"].sections_done = 1
+    submission["data"].sections_output_size = 5000
+    item.downloadState = DownloadState.FINISHED  # 배치가 이 카드를 다시 고르지 않게 한다
+    submission["on_finished"]()
+    qtbot.waitUntil(lambda: win.downloadViewModel.handle is None, timeout=3000)
+    _pump()
+
+    assert item.output_bytes == 5000
+    assert shown(widget.fileSizeLabel) == "1080p · 4.88 KB"
+
+
+def test_restarted_card_forgets_the_size_the_last_run_made(qtbot, window, probe):
+    """다시 시작한 카드는 지난 실행이 만든 구간 파일의 합을 들고 있지 않아야 한다.
+
+    1080p에서 구간 0.2~1.0초. 카드에 output_bytes = 5000을 적어 두고 전역 다운로드
+    -> 시작한 뒤 output_bytes is None
+    """
+    win, item, engine = window
+    _give_section(qtbot, win, item)
+    item.output_bytes = 5000
+
+    win.downloadButton.click()
+    _pump()
+
+    assert len(engine.submissions) == 1
+    assert item.output_bytes is None
 
 
 class _Fraction:
@@ -1980,15 +2013,13 @@ class _Fraction:
         return int(transfer * 100)
 
 
-def test_section_progress_is_counted_against_the_bytes_to_receive_not_the_file_size():
-    """구간 카드의 진행률은 카드가 적는 완성 파일 크기가 아니라 엔진이 받을 바이트로 계산해야 한다.
+def test_section_progress_is_counted_against_the_bytes_to_receive_not_the_size_shown():
+    """구간 카드의 진행률은 카드가 적는 크기가 아니라 엔진이 받을 바이트로 계산해야 한다.
 
-    카드: 받을 합 1000 · 머리 1000(적는 크기 2000). 진행 통지: 받은 것 500 / 받을 것 1000
-    -> 막대에 넘긴 전송의 진행 == 0.5, 진행률 == 50 (2000으로 나누면 25다)
+    카드가 적는 크기 2000. 진행 통지: 받은 것 500 / 받을 것 1000
+    -> 막대에 넘긴 전송의 진행 == 0.5, 진행률 == 50 (2000으로 나누면 25다), 받은 양 == "500"
     """
-    item = SimpleNamespace(
-        is_segment_based=False, post_process=False, section_bytes=1000, section_head_bytes=1000
-    )
+    item = SimpleNamespace(is_segment_based=False, post_process=False, section_bytes=2000)
     data = SimpleNamespace(sections_total=1, sections_resumed=0, sections_done=0, sections_failed=0)
     bar = _Fraction()
 
@@ -2003,19 +2034,21 @@ def test_section_progress_is_counted_against_the_bytes_to_receive_not_the_file_s
     assert (percent, size) == (50, "500")
 
 
-def test_engine_total_taken_at_start_is_shown_without_a_head_of_another_moov(qtbot, window, probe):
-    """대기 중에 크기를 세지 못한 카드는 엔진이 정한 크기만 적어야 한다 — 앞 해상도의 머리를 더하지 않는다.
+def test_engine_total_is_taken_as_the_size_only_when_the_card_could_not_count_it(
+    qtbot, window, probe
+):
+    """대기 중에 크기를 세지 못한 카드는 엔진이 받을 바이트를 크기로 삼아야 한다.
 
-    1080p에서 구간을 확인(머리 1026바이트가 적힌다) → 480p를 고르되 조회가 실패 → 전역 다운로드.
-    엔진이 구간 수 1 · 받을 크기 4321바이트를 알림
-    -> section_bytes == 4321, section_head_bytes is None, 크기 글이 "/ 4.22 KB"로 끝난다
+    1080p에서 구간을 확인 → 480p를 고르되 조회가 실패(크기 모름) → 전역 다운로드.
+    엔진이 구간 수 1 · 받을 바이트 4321을 알림
+    -> section_bytes == 4321, 크기 글이 "/ 4.22 KB"로 끝난다
     """
     win, item, engine = window
     _give_section(qtbot, win, item)
-    assert item.section_head_bytes == FILE_HEAD, "전제: 앞 해상도의 머리 길이가 카드에 있다"
     probe.fail.add(480)
     _pick(win, item, 480)
     _settle(qtbot, win)
+    assert item.section_bytes is None, "전제: 크기를 모른다"
     win.downloadButton.click()
     _pump()
 
@@ -2023,5 +2056,5 @@ def test_engine_total_taken_at_start_is_shown_without_a_head_of_another_moov(qtb
     qtbot.waitUntil(lambda: item.transfer_bytes == 4321, timeout=3000)
     _pump()
 
-    assert (item.section_bytes, item.section_head_bytes) == (4321, None)
+    assert item.section_bytes == 4321
     assert shown(win.listView.widgetFor(item).fileSizeLabel).endswith("/ 4.22 KB")

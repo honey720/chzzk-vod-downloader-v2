@@ -283,6 +283,7 @@ class DownloadViewModel(QObject):
                 data.content.mp4_head = moov
         self._data = data
         item.transfer_bytes = None
+        item.output_bytes = None
         item.preparing = False
         item.prepare_pending = True
         # 지난 실행의 진행 표시를 지운다 (#309) — 중단한 카드를 다시 시작하면 엔진의 첫 통지가
@@ -410,11 +411,10 @@ class DownloadViewModel(QObject):
         엔진은 준비가 끝나면 받기 전에 진행을 한 번 알린다. "준비 중"을 끄고, 인코딩 완료
         VOD면 엔진이 정한 받을 크기를 카드에 옮긴다(``transfer_bytes``).
 
-        구간 카드가 적는 크기(``section_bytes`` + ``section_head_bytes`` — 완성 파일 크기)는
-        **이미 알면 바꾸지 않는다.** 대기 카드가 적던 값이 받는 중 · 일시정지 · 다시 시작 ·
-        실패 구간의 재시도 동안 그대로 보인다. 엔진의 값은 이어받기에서는 남은 구간만의
-        양이라 완성 파일 크기가 아니다. 대기 중에 세지 못했을 때만 엔진의 값을 쓴다 — 그때는
-        머리 길이를 몰라 더하지 않는다.
+        구간 카드가 적는 크기(``section_bytes`` — 구간 파일 크기의 합의 추정)는 **이미 알면
+        바꾸지 않는다.** 대기 카드가 적던 값이 받는 중 · 일시정지 · 다시 시작 · 실패 구간의
+        재시도 동안 그대로 보인다. 엔진의 값은 받을 양(전송량)이라 뜻이 다르다. 대기 중에 세지
+        못했을 때만 엔진의 값을 대신 쓴다.
         """
         self._endPreparing()
         item, data = self.item, self._data
@@ -423,7 +423,6 @@ class DownloadViewModel(QObject):
         item.transfer_bytes = data.total_size
         if data.sections_total and not item.section_bytes:
             item.section_bytes = data.total_size
-            item.section_head_bytes = None  # 이 값에 맞는 머리 길이를 모른다 — 더하지 않는다
 
     def removeThreads(self) -> None:
         """실행 중인 워커의 종료를 상한을 두고 기다린 뒤 참조를 정리한다 (구 removeThreads).
@@ -491,6 +490,8 @@ class DownloadViewModel(QObject):
         if self.item is None or self._data is None or not self._data.sections_total:
             return
         self.item.sections_done = self._data.sections_done
+        # 엔진이 컷을 마치며 센, 만든 구간 파일 크기의 합 — 완료 카드가 크기로 적는다
+        self.item.output_bytes = self._data.sections_output_size
         # 엔진에 넘기지 않고 뺀 구간도 받지 못한 구간이다
         self.item.sections_failed = self._data.sections_failed + self._excluded
 

@@ -13,6 +13,7 @@ from itertools import accumulate
 
 import pytest
 
+import core.utils.mp4_ranges as mp4_ranges
 import core.utils.mp4_section_sizes as light
 from core.api.mp4 import MP4_UNSUPPORTED, Mp4Error, index_mp4, read_mp4_raw
 from core.models.mp4_index import Mp4Raw, parse_gate
@@ -22,6 +23,7 @@ from core.utils.mp4_section_sizes import (
     LightTables,
     NeedsFullIndex,
     moov_head_size,
+    moov_sections_file_size,
     moov_sections_sizes,
 )
 from core.utils.stop import StopRequested, stoppable
@@ -509,3 +511,157 @@ def test_no_room_for_the_mdat_header_is_refused_like_the_index():
 
     assert expected.value.message_key == MP4_UNSUPPORTED
     assert sizes.value.message_key == head.value.message_key == MP4_UNSUPPORTED
+
+
+# ================================================================ 구간 파일 크기의 합(추정) (#309)
+
+
+@pytest.mark.parametrize("shape", list(SHAPES), ids=list(SHAPES))
+def test_light_file_size_equals_the_index_file_size_for_random_selections(shape):
+    """색인 없이 센 구간 파일 크기의 합은 무작위 구간마다 색인으로 센 값과 같아야 한다.
+
+    모양마다 구간 300개(프레임 시각 그대로 · 프레임 사이 · 영상 밖을 섞음), 씨앗 고정
+    -> LightTables.sections_file_size([구간]) == mp4_ranges.sections_file_size(색인, [구간])
+       (예외로 끝나면 예외의 종류가 같다)
+    """
+    tracks, options = SHAPES[shape]()
+    raw = _raw_of(tracks, options)
+    index = index_mp4(raw).index
+    tables = LightTables(raw)
+    rng = random.Random(f"file-size:{shape}")
+
+    different = []
+    for selection in _random_selections(index, rng, SELECTIONS_PER_SHAPE):
+        expected = _outcome(lambda: mp4_ranges.sections_file_size(index, [selection]))
+        actual = _outcome(lambda: tables.sections_file_size([selection]))
+        if actual != expected:
+            different.append((selection, expected, actual))
+
+    assert different == []
+
+
+@pytest.mark.parametrize("shape", list(SHAPES), ids=list(SHAPES))
+def test_light_file_size_equals_the_index_file_size_for_several_selections_at_once(shape):
+    """구간 여럿을 함께 세도(겹치는 자리를 구간마다) 색인으로 센 값과 같아야 한다.
+
+    모양마다 구간 1~6개짜리 묶음 60개, 씨앗 고정
+    -> LightTables.sections_file_size(묶음) == mp4_ranges.sections_file_size(색인, 묶음)
+    """
+    tracks, options = SHAPES[shape]()
+    raw = _raw_of(tracks, options)
+    index = index_mp4(raw).index
+    tables = LightTables(raw)
+    rng = random.Random(f"file-size-groups:{shape}")
+
+    different = []
+    for _ in range(60):
+        group = _random_selections(index, rng, rng.randint(1, 6))
+        expected = _outcome(lambda: mp4_ranges.sections_file_size(index, group))
+        actual = _outcome(lambda: tables.sections_file_size(group))
+        if actual != expected:
+            different.append((group, expected, actual))
+
+    assert different == []
+
+
+def _long_tracks():
+    """영상 70,000샘플(B프레임 재배열) · 오디오 40,000샘플 — 크기 표가 묶음(8192개) 여럿에 걸친다."""
+    return [
+        _video(70_000, seed=11, per_chunk=7, b_frames=True),
+        _audio(40_000, seed=12, per_chunk=5),
+    ]
+
+
+def test_light_file_size_equals_the_index_file_size_when_sections_span_many_blocks():
+    """구간이 크기 표의 묶음 여럿에 걸쳐도(묶음의 합 + 양 끝의 자투리) 색인으로 센 값과 같아야 한다.
+
+    영상 70,000샘플 · 오디오 40,000샘플(약 1166초). 구간: 거의 전체 · 묶음 경계에 걸친 것 · 묶음 하나
+    안의 것 · 짧은 것, 그리고 넷을 함께
+    -> moov_sections_file_size == mp4_ranges.sections_file_size(색인, …)
+    """
+    raw = _head_only(_long_tracks())
+    index = index_mp4(raw).index
+    cases = [
+        [TimeRange(3.0, 1160.0)],
+        [TimeRange(130.0, 410.0)],  # 프레임 7800~24600 — 묶음 경계(8192 · 16384 · 24576)를 넘는다
+        [TimeRange(140.0, 250.0)],  # 프레임 8400~15000 — 묶음 하나 안
+        [TimeRange(500.0, 500.5)],
+    ]
+    cases.append([selection for case in cases for selection in case])
+
+    for selections in cases:
+        expected = mp4_ranges.sections_file_size(index, selections)
+        assert moov_sections_file_size(raw, selections) == expected, selections
+
+
+def test_light_file_size_reads_the_size_table_once_however_many_sections():
+    """구간이 많아도 크기 표는 한 번만 훑어야 한다 — 구간마다 다시 훑지 않는다.
+
+    영상 70,000샘플 · 오디오 40,000샘플. 크기 표를 묶음(8192칸) 단위로 통째로 읽은 횟수를 센다 —
+    표를 훑을 때만 그렇게 읽는다(구간의 양 끝 자투리는 묶음 하나보다 짧다).
+    거의 전체인 구간 하나 / 거의 전체인 구간 스무 개(시작 · 끝을 1초씩 민다)
+    -> 두 경우의 횟수가 같고 0보다 크다 (구간마다 훑으면 20배다)
+    """
+    raw = _head_only(_long_tracks())
+    one = [TimeRange(3.0, 1160.0)]
+    twenty = [TimeRange(3.0 + n, 1160.0 - n) for n in range(20)]
+    block = light._SIZE_BLOCK
+
+    def whole_blocks_read(selections) -> int:
+        tables = LightTables(raw)
+        read = []
+        for track in (tables._video, tables._audio):
+            real = track._sizes_sum
+            track._sizes_sum = lambda first, end, real=real: (
+                read.append((first, end)) or real(first, end)
+            )
+        tables.sections_file_size(selections)
+        return sum(first % block == 0 and end - first == block for first, end in read)
+
+    assert block == 8192
+    assert whole_blocks_read(one) == whole_blocks_read(twenty) > 0
+
+
+def test_light_file_size_does_not_build_an_index(monkeypatch):
+    """표에서 셀 수 있는 모양이면 moov_sections_file_size는 색인을 만들지 않아야 한다.
+
+    청크 묶음 모양, 구간 1.0~5.0초. 색인 만들기를 부르면 적는 대역 -> 색인으로 미리 센 값과 같고 만들기 0번
+    """
+    tracks, options = SHAPES["grouped-chunks"]()
+    raw = _raw_of(tracks, options)
+    expected = mp4_ranges.sections_file_size(index_mp4(raw).index, [TimeRange(1.0, 5.0)])
+    built = []
+    monkeypatch.setattr(light.mp4, "index_mp4", built.append)
+    monkeypatch.setattr(light.mp4, "parse_moov", built.append)
+
+    assert moov_sections_file_size(raw, [TimeRange(1.0, 5.0)]) == expected
+    assert built == []
+
+
+def test_file_size_of_a_shape_that_cannot_be_read_from_tables_is_counted_with_an_index():
+    """표에서 셀 수 없는 모양이면 moov_sections_file_size는 색인을 만들어 같은 값을 내야 한다.
+
+    오디오 트랙에 ctts가 있는 mp4(LightTables는 NeedsFullIndex), 구간 1.0~3.0초
+    -> moov_sections_file_size == mp4_ranges.sections_file_size(색인, …)
+    """
+    raw = _raw_of(_with_audio_composition(), {})
+    with pytest.raises(NeedsFullIndex):
+        LightTables(raw)
+    selections = [TimeRange(1.0, 3.0)]
+
+    assert moov_sections_file_size(raw, selections) == mp4_ranges.sections_file_size(
+        index_mp4(raw).index, selections
+    )
+
+
+def test_file_size_of_a_moov_behind_the_samples_is_refused_like_the_index():
+    """moov가 샘플 뒤에 있는 파일은 구간 파일 크기도 세지 않고 색인 쪽과 같은 실패를 내야 한다.
+
+    ftyp · mdat · moov 순서의 mp4, 구간 0.2~0.5초 -> Mp4Error(MP4_UNSUPPORTED)
+    """
+    raw = _raw_of([video_spec(), audio_spec()], {"moov_first": False})
+
+    with pytest.raises(Mp4Error) as caught:
+        moov_sections_file_size(raw, [TimeRange(0.2, 0.5)])
+
+    assert caught.value.message_key == MP4_UNSUPPORTED

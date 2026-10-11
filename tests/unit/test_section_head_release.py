@@ -300,7 +300,7 @@ def test_download_started_while_the_total_is_counted_parses_once_and_frees_the_i
     -> 해석 1회, 구간 파일이 만들어짐, 준비 로그에 "moov reused", 그 색인의 약한 참조 == None
     """
     win, item = window
-    real = section_edit_module.moov_sections_sizes
+    real = section_edit_module.moov_sections_file_size
     gate = threading.Event()
     calls = []
 
@@ -309,7 +309,7 @@ def test_download_started_while_the_total_is_counted_parses_once_and_frees_the_i
         assert gate.wait(30), "문이 열리지 않았다"
         return real(raw, selections)
 
-    monkeypatch.setattr(section_edit_module, "moov_sections_sizes", gated)
+    monkeypatch.setattr(section_edit_module, "moov_sections_file_size", gated)
     notes = []
     real_note = fd_module.FileDownloader._prepare_note
     monkeypatch.setattr(

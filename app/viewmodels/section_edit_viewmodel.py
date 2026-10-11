@@ -38,8 +38,8 @@ from core.models.download_state import DownloadState
 from core.models.mp4_index import PendingMp4Head
 from core.models.plan import TimeRange
 from core.utils.interaction import resting_while
-from core.utils.mp4_ranges import sections_download_size, sections_head_size, sections_sizes
-from core.utils.mp4_section_sizes import moov_head_size, moov_sections_sizes
+from core.utils.mp4_ranges import sections_file_size
+from core.utils.mp4_section_sizes import moov_sections_file_size
 from core.utils.stop import StopRequested, check_stop, stoppable
 from core.utils.selections import (
     MAX_SELECTIONS,
@@ -182,77 +182,32 @@ def watch_section_head(head) -> None:
     _index_release_reporter.watch(head)
 
 
-def section_bytes_of(head, selections, skip: frozenset = frozenset()) -> int | None:
-    """그 moov로 본, 구간들을 받는 데 드는 바이트의 합 (#309). 알 수 없으면 None.
+def section_file_bytes_of(head, selections) -> int | None:
+    """그 moov로 본, 구간마다 만들어질 파일 크기의 합(추정) (#309). 알 수 없으면 None.
 
-    엔진이 받는 양과 같은 core 함수로 센다(``sections_download_size``). moov가 없거나(인코딩
-    완료 VOD가 아니다 · 조회 실패) 구간이 그 영상에 맞지 않으면 None이다.
-
-    Args:
-        skip: 세지 않을 구간 번호 — 받을 수 없어 엔진에 넘기지 않는 구간
-    """
-    index = getattr(head, "index", None)
-    wanted = [selection for number, selection in enumerate(selections) if number not in skip]
-    if index is None or not wanted:
-        return None
-    try:
-        return sections_download_size(index, wanted)
-    except (ValueError, Mp4Error):
-        return None
-
-
-def section_head_bytes_of(head) -> int | None:
-    """그 moov로 본, 구간 다운로드가 만드는 파일의 머리 길이 (#309). 알 수 없으면 None.
-
-    머리(ftyp · moov 등)는 조회 때 이미 받아 두어 ``section_bytes_of``에 들지 않는다.
-    """
-    index = getattr(head, "index", None)
-    if index is None:
-        return None
-    try:
-        return sections_head_size(index)
-    except (ValueError, Mp4Error):
-        return None
-
-
-def section_sizes_of(head, selections) -> tuple[int | None, int | None]:
-    """(받을 바이트의 합, 파일의 머리 길이) — ``section_bytes_of`` · ``section_head_bytes_of``와 같은 값 (#309).
-
-    둘을 따로 부르면 샘플 위치 열 전체를 두 번 훑는다. 둘 다 필요한 쪽(카드의 크기 세기)은
-    이 함수로 한 번만 훑는다. 알 수 없는 값의 자리는 None이다.
+    카드가 크기로 적는 값이다 — 저장소에 생길 구간 파일 크기의 합. 겹치는 자리는 구간마다
+    센다(``core.utils.mp4_ranges.sections_file_size``). 받을 양(전송량)과는 다른 값이다.
 
     head가 아직 해석하지 않은 moov(``PendingMp4Head``)면 **색인을 만들지 않고** 표에서 구간에
     닿는 샘플만 찾아 센다(``core.utils.mp4_section_sizes``) — 긴 영상의 색인은 만드는 데만 몇 초가
-    걸린다. 값은 색인으로 센 것과 같다.
+    걸린다. 값은 색인으로 센 것과 같다. moov가 없거나 구간이 그 영상에 맞지 않거나 부분 파일을
+    만들 수 없는 배치면 None이다.
     """
     wanted = list(selections)
-    if isinstance(head, PendingMp4Head):
-        raw = head.raw
-        if raw is not None:
-            return _moov_sizes_of(raw, wanted)
-        head = head.peek()  # 그사이 다른 쪽(엔진)이 색인을 만들었다 — 그것으로 센다
-    index = getattr(head, "index", None)
-    if index is None:
-        return None, None
-    if wanted:
-        try:
-            return sections_sizes(index, wanted)
-        except (ValueError, Mp4Error):
-            pass  # 구간이 그 영상에 맞지 않는다 — 받을 양은 모르고, 머리 길이는 따로 구한다
-    return None, section_head_bytes_of(head)
-
-
-def _moov_sizes_of(raw, wanted: list) -> tuple[int | None, int | None]:
-    """받아 둔 moov의 바이트로 (받을 바이트의 합, 파일의 머리 길이)를 센다 — 색인을 만들지 않는다."""
-    if wanted:
-        try:
-            return moov_sections_sizes(raw, wanted)
-        except (ValueError, Mp4Error):
-            pass  # 구간이 그 영상에 맞지 않는다 — 받을 양은 모르고, 머리 길이는 따로 구한다
+    if not wanted:
+        return None
     try:
-        return None, moov_head_size(raw)
+        if isinstance(head, PendingMp4Head):
+            raw = head.raw
+            if raw is not None:
+                return moov_sections_file_size(raw, wanted)
+            head = head.peek()  # 그사이 다른 쪽(엔진)이 색인을 만들었다 — 그것으로 센다
+        index = getattr(head, "index", None)
+        if index is None:
+            return None
+        return sections_file_size(index, wanted)
     except (ValueError, Mp4Error):
-        return None, None
+        return None  # 구간이 그 영상에 맞지 않는다 · 부분 파일을 만들 수 없다
 
 
 def keep_section_head(item: ContentItem, base_url: str, head) -> None:
@@ -1162,9 +1117,9 @@ class SectionEditViewModel(QObject):
 
 
 class SectionSizeJob(QObject):
-    """받을 구간의 합을 세는 일 한 건 — 풀 스레드에서 받아 둔 moov의 표를 읽어 크기를 센다.
+    """구간 파일 크기의 합을 세는 일 한 건 — 풀 스레드에서 받아 둔 moov의 표를 읽어 크기를 센다.
 
-    색인은 만들지 않는다(``section_sizes_of``). 그래도 긴 영상의 표는 읽는 데 0.1~0.3초가
+    색인은 만들지 않는다(``section_file_bytes_of``). 그래도 긴 영상의 표는 읽는 데 0.1~0.3초가
     걸린다 — 메인 스레드에서 하지 않는다.
 
     결과를 쓸 곳이 사라지면(카드의 해상도가 바뀌었다 · 카드가 지워졌다) ``cancel()``로 그만두게
@@ -1179,8 +1134,6 @@ class SectionSizeJob(QObject):
         self._moov = moov
         self._selections = selections
         self._token = token
-        # 파일의 머리 길이 — 결과를 받는 쪽이 done 뒤에 읽는다(일의 참조를 들고 있다)
-        self.head_bytes: int | None = None
         self._stop = threading.Event()  # 그만두라는 표시 — 메인이 켜고 풀 스레드가 읽는다
 
     def cancel(self) -> None:
@@ -1201,7 +1154,7 @@ class SectionSizeJob(QObject):
             with background_work(), stoppable(self._stop.is_set), resting_while(user_interacting):
                 check_stop()
                 # 모듈 전역을 호출 시점에 조회한다 — 테스트의 monkeypatch 지점
-                size, self.head_bytes = section_sizes_of(self._moov, self._selections)
+                size = section_file_bytes_of(self._moov, self._selections)
                 counted = True
         except StopRequested:
             size = None  # 그만뒀다 — 실패가 아니다. 적지 않는다
@@ -1213,7 +1166,7 @@ class SectionSizeJob(QObject):
 
 
 class SectionSizer(QObject):
-    """구간 카드가 받을 크기(구간의 합)를 백그라운드에서 센다 (#309).
+    """구간 카드가 적을 크기(구간 파일 크기의 합)를 백그라운드에서 센다 (#309).
 
     편집 창의 조회는 moov의 바이트만 받는다. 구간을 확인했거나 해상도 변경의 조회가 끝나면
     여기서 그 바이트의 표를 읽어 크기를 센다 — **색인은 만들지 않는다.** 긴 영상의 색인은 만드는
@@ -1310,7 +1263,6 @@ class SectionSizer(QObject):
         ):
             return
         item.section_bytes = size
-        item.section_head_bytes = job.head_bytes
         self._model.notifyChanged(item)
 
 

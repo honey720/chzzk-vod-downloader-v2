@@ -65,6 +65,92 @@ def sections_sizes(index: Mp4Index, selections: Iterable[TimeRange]) -> tuple[in
     return layout.download_size, layout.head_size
 
 
+# ---- 구간 파일의 크기 추정 (#309) — 카드가 "저장소에 생길 구간 파일 크기의 합"으로 적는 값
+#
+# 컷(``core.utils.hybrid_cut``)이 만드는 구간 파일은 ffmpeg가 새로 쓴 mp4다. 머리(moov)는 원본의
+# 것이 아니라 그 구간의 샘플 수로 정해진다 — 잰 값(인코딩 완료 VOD 두 개의 구간 파일 20개):
+# moov ≈ 1.3KB + 영상 프레임당 약 30바이트 + 오디오 샘플당 4바이트. ffmpeg는 영상 프레임 하나를
+# 청크 하나로 쓰고 오디오를 그 사이에 끼운다.
+SECTION_FILE_FIXED_BYTES = 1400  # ftyp · moov의 고정 부분(mvhd · tkhd · stsd …)의 어림
+# 영상 프레임 하나에 드는 표의 바이트 — stsz 4 + stco 4 + ctts 8(B프레임이 없으면 안 쓰이지만
+# 넣어 센다 — 파일 크기의 0.1%가 안 된다)
+SECTION_FILE_BYTES_PER_FRAME = 16
+SECTION_FILE_BYTES_PER_AUDIO_SAMPLE = 4  # 오디오 샘플 하나의 stsz 칸
+# 오디오 청크 하나에 드는 표의 바이트 — stco 4 + stsc 12. 청크 수는 영상 프레임 수와 오디오
+# 샘플 수 가운데 작은 쪽으로 센다
+SECTION_FILE_BYTES_PER_AUDIO_CHUNK = 16
+_OFFSET_32_BIT_LIMIT = 0xFFFFFFFF  # 이보다 큰 파일은 청크 위치를 64비트(co64)로 적는다
+
+
+def estimated_section_file_size(
+    frames: int, video_bytes: int, audio_samples: int, audio_bytes: int
+) -> int:
+    """구간 파일 하나의 크기 추정 — 그 구간에 드는 샘플의 바이트 + 샘플 수로 어림한 머리 (#309).
+
+    샘플의 바이트는 원본의 것을 그대로 센다. 컷은 구간의 양 끝(키프레임 사이의 조각)과 오디오를
+    다시 인코딩하므로 실제 파일은 이 값과 조금 다르다 — 구간이 짧을수록 그 몫이 크다.
+
+    Args:
+        frames: 구간에 든 영상 프레임 수
+        video_bytes: 그 프레임들의 샘플 크기의 합
+        audio_samples: 구간과 겹치는 오디오 샘플 수 — 오디오가 없으면 0
+        audio_bytes: 그 오디오 샘플 크기의 합
+    """
+    audio_chunks = min(frames, audio_samples)
+    tables = (
+        frames * SECTION_FILE_BYTES_PER_FRAME
+        + audio_samples * SECTION_FILE_BYTES_PER_AUDIO_SAMPLE
+        + audio_chunks * SECTION_FILE_BYTES_PER_AUDIO_CHUNK
+    )
+    size = SECTION_FILE_FIXED_BYTES + tables + video_bytes + audio_bytes
+    if size > _OFFSET_32_BIT_LIMIT:
+        size += 4 * (frames + audio_chunks)  # 청크 위치가 4바이트씩 늘어난다(co64)
+    return size
+
+
+def sections_file_size(index: Mp4Index, selections: Iterable[TimeRange]) -> int:
+    """구간마다 만들어질 파일 크기의 합(추정) — 겹치는 자리는 구간마다 센다 (#309).
+
+    구간 하나의 크기는 ``estimated_section_file_size``다. 영상은 구간의 첫 프레임의 샘플부터,
+    구간의 프레임 가운데 디코드 순서로 가장 뒤인 샘플까지를 센다. 오디오는 첫 프레임의 시각부터
+    끝 프레임이 끝나는 시각까지와 겹치는 샘플이다.
+
+    받을 양(``sections_download_size``)과는 다른 값이다 — 받을 때는 겹치는 자리를 한 번만 받고,
+    구간의 앞 키프레임부터 청크 단위로 받는다.
+
+    Raises:
+        ValueError: 구간이 영상 밖인 경우(``selection_byte_ranges``)
+        Mp4Error: moov가 샘플보다 뒤에 있는 등 부분 파일을 만들 수 없는 경우 — 받을 수 없는
+            구간의 크기를 적지 않는다
+    """
+    wanted = list(selections)
+    video, audio = index.video, index.audio
+    total = 0
+    for selection in wanted:
+        picked = selection_byte_ranges(index, selection)
+        first, last = picked.first_frame, picked.last_frame
+        low = index.frame_samples[first]
+        high = max(index.frame_samples[first : last + 1])
+        video_bytes = sum(video.sizes[low : high + 1])
+        audio_samples = audio_bytes = 0
+        if audio is not None:
+            time_from = index.frame_pts[first]
+            time_to = index.frame_pts[last] + video.durations[index.frame_samples[last]]
+            needed = [
+                sample
+                for sample, start in enumerate(audio.times)
+                if start < time_to and start + audio.durations[sample] > time_from
+            ]
+            if needed:
+                audio_samples = needed[-1] - needed[0] + 1
+                audio_bytes = sum(audio.sizes[needed[0] : needed[-1] + 1])
+        total += estimated_section_file_size(
+            last - first + 1, video_bytes, audio_samples, audio_bytes
+        )
+    sections_head_size(index)  # 부분 파일을 만들 수 없는 배치면 여기서 Mp4Error
+    return total
+
+
 def sections_head_size(index: Mp4Index) -> int:
     """구간 다운로드가 만드는 파일의 머리 길이(바이트) — ftyp · moov 등 첫 샘플 앞의 것이다 (#309).
 

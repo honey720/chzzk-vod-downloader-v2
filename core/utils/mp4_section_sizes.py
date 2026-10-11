@@ -48,10 +48,16 @@ from core.api.mp4 import (
 )
 from core.models.mp4_index import Mp4Index, Mp4Raw, parse_gate
 from core.models.plan import TimeRange
-from core.models.sample_column import CHUNK_ITEMS, in_chunks, reading_tables
+from core.models.sample_column import CHUNK_ITEMS, between_chunks, in_chunks, reading_tables
 from core.utils.hybrid_cut import SOURCE_LEAD_SECONDS
 from core.utils.mp4_partial import _BOX_HEADER_BYTES, merge_ranges
-from core.utils.mp4_ranges import _AUDIO_SEEK_SLACK, sections_head_size, sections_sizes
+from core.utils.mp4_ranges import (
+    _AUDIO_SEEK_SLACK,
+    estimated_section_file_size,
+    sections_file_size,
+    sections_head_size,
+    sections_sizes,
+)
 from core.utils.stop import check_stop
 from core.utils.timecode import snap_to_frame
 
@@ -62,6 +68,9 @@ _MAX_RUNS = 50_000
 # B프레임의 재배열은 몇 프레임 안에서 끝난다 — 이만큼 넓으면 표가 이상한 것이다
 _MAX_WINDOW = 512
 _MAX_SIGNED_64 = (1 << 63) - 1  # 색인의 위치 열(64비트 부호 있는 정수)에 드는 가장 큰 값
+# 샘플 크기 표(stsz)를 이 개수씩 묶어 묶음마다의 합을 한 번 세어 둔다 — 구간이 몇 개든 표는 한 번만
+# 훑고, 구간마다는 묶음의 합과 양 끝의 자투리만 더한다
+_SIZE_BLOCK = 1 << 13
 
 
 class NeedsFullIndex(Exception):
@@ -93,6 +102,7 @@ class _Track:
         self.width = self.highest - self.lowest
         # 시각(초) = (shift + 틱 × step) ÷ scale — origin을 정한 뒤 채운다(set_origin)
         self._shift = self._step = self._scale = 0
+        self._block_sums: list[int] | None = None  # 묶음마다의 크기 합의 누적 — 필요할 때 센다
         self._read_positions(boxes)
         self._read_sync(boxes)
 
@@ -248,6 +258,32 @@ class _Track:
         if self._uniform_size:
             return self._uniform_size * (end - first)
         return sum(_read_table(self._data, self._size_table + first * 4, end - first, "I"))
+
+    def sizes_between(self, first: int, end: int) -> int:
+        """샘플 first부터 end 앞까지의 크기의 합 — 긴 범위도 표를 다시 훑지 않는다.
+
+        처음 불릴 때 표를 ``_SIZE_BLOCK``개씩 묶어 묶음마다의 합을 한 번 세어 둔다(조각 사이에서
+        그만둘지 묻고, 조작 중이면 쉰다). 그 뒤로는 범위에 온전히 든 묶음의 합과 양 끝의
+        자투리(묶음 하나보다 적다)만 더한다.
+        """
+        if self._uniform_size or end - first <= _SIZE_BLOCK:
+            return self._sizes_sum(first, end)
+        if self._block_sums is None:
+            sums = [0]
+            for start in range(0, self.count, _SIZE_BLOCK):
+                between_chunks()
+                sums.append(sums[-1] + self._sizes_sum(start, min(start + _SIZE_BLOCK, self.count)))
+            self._block_sums = sums
+        first_block = -(-first // _SIZE_BLOCK)  # first가 든 묶음의 다음 경계
+        end_block = end // _SIZE_BLOCK
+        if first_block >= end_block:
+            return self._sizes_sum(first, end)
+        return (
+            self._sizes_sum(first, first_block * _SIZE_BLOCK)
+            + self._block_sums[end_block]
+            - self._block_sums[first_block]
+            + self._sizes_sum(end_block * _SIZE_BLOCK, end)
+        )
 
     def chunk_span(self, first_sample: int, last_sample: int) -> tuple[int, int]:
         """샘플 first~last가 든 청크들의 (첫 바이트, 마지막 바이트 + 1) — ``mp4_ranges._chunk_span``."""
@@ -455,6 +491,43 @@ class LightTables:
         merged = merge_ranges(spans)
         return sum(last - first + 1 for first, last in merged), head_size
 
+    def sections_file_size(self, selections: Iterable[TimeRange]) -> int:
+        """구간마다 만들어질 파일 크기의 합(추정) — ``mp4_ranges.sections_file_size``와 같은 값.
+
+        Raises:
+            NeedsFullIndex: 색인 없이 셀 수 없는 모양인 경우
+            ValueError: 구간이 영상 밖인 경우
+            Mp4Error: moov가 샘플보다 뒤에 있는 등 부분 파일을 만들 수 없는 경우
+        """
+        total = 0
+        for selection in selections:
+            check_stop()
+            with _translated():
+                self._byte_range(selection)  # 받을 수 있는 구간인지 — 색인 쪽과 같은 판정
+                total += self._file_size(selection)
+        self.head_size()  # 부분 파일을 만들 수 없는 배치면 여기서 Mp4Error
+        return total
+
+    def _file_size(self, selection: TimeRange) -> int:
+        """구간 하나의 파일 크기 추정 — 그 구간에 드는 샘플의 바이트 + 샘플 수로 어림한 머리."""
+        frames, video = self._frames, self._video
+        first_frame = snap_to_frame(selection.start, frames, self._fps, "start")
+        last_frame = max(first_frame, snap_to_frame(selection.end, frames, self._fps, "end"))
+        low = frames.sample(first_frame)
+        end_sample = frames.sample(last_frame)
+        high = self._last_decoded(low, end_sample)
+        video_bytes = video.sizes_between(low, high + 1)
+        audio_samples = audio_bytes = 0
+        if self._audio is not None:
+            time_to = frames[last_frame] + video.delta(end_sample) / video.timescale
+            needed = self._audio_samples(frames[first_frame], time_to)
+            if needed is not None:
+                audio_samples = needed[1] - needed[0] + 1
+                audio_bytes = self._audio.sizes_between(needed[0], needed[1] + 1)
+        return estimated_section_file_size(
+            last_frame - first_frame + 1, video_bytes, audio_samples, audio_bytes
+        )
+
     def _byte_range(self, selection: TimeRange) -> tuple[int, int]:
         """구간 하나의 (첫 바이트, 마지막 바이트) — ``mp4_ranges.selection_byte_ranges``와 같은 범위."""
         frames, video = self._frames, self._video
@@ -589,6 +662,25 @@ def moov_sections_sizes(raw: Mp4Raw, selections: Iterable[TimeRange]) -> tuple[i
             return LightTables(raw).sections_sizes(wanted)
     except NeedsFullIndex:
         return sections_sizes(_full_index(raw), wanted)
+
+
+def moov_sections_file_size(raw: Mp4Raw, selections: Iterable[TimeRange]) -> int:
+    """받아 둔 moov로 구간마다 만들어질 파일 크기의 합(추정)을 센다 — 색인을 남기지 않는다 (#309).
+
+    색인으로 센 값(``mp4_ranges.sections_file_size``)과 같다. 표에서 구간에 닿는 샘플만 찾아
+    세고, 그렇게 셀 수 없는 모양이면 색인을 만들어 세고 버린다.
+
+    Raises:
+        ValueError: 구간이 영상 밖인 경우
+        Mp4Error: 색인을 만들 수 없거나 부분 파일을 만들 수 없는 경우
+        StopRequested: 그만두라는 답을 받은 경우(``core.utils.stop``)
+    """
+    wanted = list(selections)
+    try:
+        with reading_tables():  # 이 스레드의 조각을 잘게 — 조작 중이면 조각 사이에서 쉰다
+            return LightTables(raw).sections_file_size(wanted)
+    except NeedsFullIndex:
+        return sections_file_size(_full_index(raw), wanted)
 
 
 def moov_head_size(raw: Mp4Raw) -> int:

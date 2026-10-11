@@ -507,6 +507,67 @@ def test_cut_failure_of_one_section_still_cuts_the_sections_after_it(server, tmp
     assert (data.sections_total, data.sections_done, data.sections_failed) == (3, 2, 1)
 
 
+def _sizes(paths) -> int:
+    return sum(os.path.getsize(path) for path in paths)
+
+
+def test_engine_reports_the_size_of_the_section_files_it_made(server, tmp_path):
+    """구간을 모두 만든 실행은 만든 구간 파일 크기의 합을 공유 데이터에 적어야 한다.
+
+    기본 입력, 구간 셋 -> 완료 1회, sections_output_size == 세 파일 크기의 합 > 0,
+    로그의 Output size도 같은 값
+    """
+    run = _Run(server, "plain", tmp_path, _three())
+    assert run.data.sections_output_size is None, "전제: 컷을 마치기 전에는 값이 없다"
+
+    run.start()
+
+    assert (run.finished, run.failures) == (1, [])
+    expected = _sizes(run.paths)
+    assert expected > 0
+    assert run.data.sections_output_size == expected
+    ((_elapsed, logged),) = _logged(run, "log_postprocess_complete")
+    assert logged == expected
+
+
+def test_engine_reports_only_the_files_it_made_when_a_section_fails(server, tmp_path, monkeypatch):
+    """일부 구간이 실패한 실행은 만든 구간 파일만의 합을 적어야 한다 — 실패한 구간은 들지 않는다.
+
+    기본 입력, 구간 셋, 둘째 컷이 도중에 실패 -> 실패 1건,
+    sections_output_size == `_1` · `_3` 파일 크기의 합(`_2` 파일은 없다)
+    """
+    cuts = CutCalls(monkeypatch, fd_module, "hybrid_cut", source_arg=0)
+    cuts.fail_on = (2,)
+
+    run = _Run(server, "plain", tmp_path, _three()).start()
+
+    assert len(run.failures) == 1
+    assert not os.path.exists(run.paths[1])
+    assert run.data.sections_output_size == _sizes([run.paths[0], run.paths[2]]) > 0
+
+
+def test_retry_reports_the_size_of_every_section_file_not_only_the_ones_it_made(
+    server, tmp_path, monkeypatch
+):
+    """이어받은 실행은 이전 실행이 만든 구간 파일까지 더한 합을 적어야 한다.
+
+    첫 실행: 구간 셋, 둘째 컷이 도중에 실패. 이어받은 실행이 둘째만 만든다
+    -> 완료 1회, sections_output_size == 세 파일 크기의 합 > 둘째 파일의 크기
+    """
+    cuts = CutCalls(monkeypatch, fd_module, "hybrid_cut", source_arg=0)
+    cuts.fail_on = (2,)
+    failed = _Run(server, "plain", tmp_path, _three()).start()
+    assert len(failed.failures) == 1
+    cuts.restart()
+
+    again = hand_over(failed, _Run(server, "plain", tmp_path, _three())).start()
+
+    assert (again.finished, again.failures) == (1, [])
+    assert cuts.outputs == [THREE_FILES[1]]
+    assert again.data.sections_output_size == _sizes(again.paths)
+    assert again.data.sections_output_size > os.path.getsize(again.paths[1])
+
+
 def test_transfer_failure_removes_partial_source(server, tmp_path, monkeypatch):
     """받는 도중 실패하면 임시 원본을 남기지 않아야 한다.
 

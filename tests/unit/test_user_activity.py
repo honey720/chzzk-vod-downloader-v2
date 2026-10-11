@@ -356,9 +356,15 @@ def rests(monkeypatch):
 
 
 def _gap(*_args):
-    """조회 · 크기 세기의 대역 — 조각 사이의 틈을 한 번 흉내 낸다."""
+    """조회의 대역 — 조각 사이의 틈을 한 번 흉내 낸다."""
     interaction.rest_if_user_interacting()
     return 7, 3
+
+
+def _size_gap(*_args) -> int:
+    """크기 세기의 대역 — 조각 사이의 틈을 한 번 흉내 내고 크기 7을 돌려준다."""
+    interaction.rest_if_user_interacting()
+    return 7
 
 
 def _snapshot() -> SimpleNamespace:
@@ -393,11 +399,11 @@ def test_size_job_rests_at_a_gap_only_while_the_user_is_interacting(
 ):
     """크기 세기는 조작 중이라고 답할 때만 틈에서 쉬어야 한다.
 
-    section_sizes_of를 틈을 한 번 흉내 내고 (7, 3)을 돌려주는 대역으로, user_interacting을
+    section_file_bytes_of를 틈을 한 번 흉내 내고 7을 돌려주는 대역으로, user_interacting을
     늘 참 / 늘 거짓으로 바꾸고 SectionSizeJob.run()
-    -> 쉰 횟수 == 1 / 0, done == [("요청", True, 7)], head_bytes는 대역이 준 3
+    -> 쉰 횟수 == 1 / 0, done == [("요청", True, 7)]
     """
-    monkeypatch.setattr(sev, "section_sizes_of", _gap)
+    monkeypatch.setattr(sev, "section_file_bytes_of", _size_gap)
     monkeypatch.setattr(sev, "user_interacting", lambda: answer)
 
     done = _run_size_job()
@@ -430,7 +436,7 @@ def test_section_jobs_leave_nothing_set_on_the_thread_after_they_run(qapp, monke
     user_interacting = 늘 참. 두 일을 차례로 돌린 뒤(쉰 횟수 2) 같은 스레드에서 틈을 한 번 흉내 냄
     -> 쉰 횟수 == 2 그대로
     """
-    monkeypatch.setattr(sev, "section_sizes_of", _gap)
+    monkeypatch.setattr(sev, "section_file_bytes_of", _size_gap)
     monkeypatch.setattr(section_basis, "probe_section_basis", _gap)
     monkeypatch.setattr(sev, "user_interacting", lambda: True)
     _run_size_job()
@@ -466,7 +472,7 @@ def test_size_counted_while_resting_equals_the_size_counted_without_resting(qapp
 
     영상 20,000샘플의 moov(해석하지 않은 것), 구간 10~60초 · 200~320초. 실제로 잔다(1ms).
     user_interacting = 늘 참 / 늘 거짓으로 SectionSizeJob.run()
-    -> 두 결과의 (셌는지, 크기, 머리 길이)가 같고 셌는지 == True, 크기 > 0.
+    -> 두 결과의 (셌는지, 크기)가 같고 셌는지 == True, 크기 > 0.
        늘 참일 때 쉰 횟수 > 0, 늘 거짓일 때 0
     """
     from tests.unit.core.test_mp4_section_sizes import _audio, _head_only, _video
@@ -484,7 +490,7 @@ def test_size_counted_while_resting_equals_the_size_counted_without_resting(qapp
         job.run()
         rested.append(interaction.rest_totals()[0] - before)
         ((_token, counted, size),) = done
-        results.append((counted, size, job.head_bytes))
+        results.append((counted, size))
 
     assert results[0] == results[1]
     assert results[0][0] is True and results[0][1] > 0
