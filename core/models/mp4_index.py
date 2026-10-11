@@ -11,7 +11,8 @@
 
 import copy
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from fractions import Fraction
 
@@ -113,6 +114,23 @@ def _acquire(lock: threading.Lock) -> None:
     """
     while not lock.acquire(timeout=_STOP_POLL_SECONDS):
         check_stop()
+
+
+@contextmanager
+def parse_gate() -> Iterator[None]:
+    """블록이 도는 동안 색인 해석의 차례를 쥔다 — 앱 전체에서 한 번에 하나만 돈다 (#309).
+
+    ``PendingMp4Head`` 밖에서 색인을 만드는 쪽이 쓴다. 기다리는 동안 그만두라는 답이 오면
+    차례를 얻지 않고 그만둔다.
+
+    Raises:
+        StopRequested: 기다리는 동안 그만두라는 답을 받은 경우
+    """
+    _acquire(_PARSE_GATE)
+    try:
+        yield
+    finally:
+        _PARSE_GATE.release()
 
 
 class PendingMp4Head:
