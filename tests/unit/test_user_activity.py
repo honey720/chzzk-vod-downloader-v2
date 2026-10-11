@@ -177,14 +177,15 @@ def test_each_input_event_alone_makes_the_user_interacting(window, kind):
 def test_interaction_ends_after_the_interaction_time(window, clock):
     """마지막 입력 뒤 INTERACTION_SECONDS(0.2초)가 지나면 조작 중이 아니어야 한다.
 
-    시계 1000.0에서 키 입력 -> 시계 1000.19: True, 1000.2: False
+    시계 0.0에서 키 입력 -> 시계 0.19: True, 0.2: False
     """
     assert activity.INTERACTION_SECONDS == 0.2
+    clock.value = 0.0  # 0에서 재면 지난 시간이 시계의 값 그대로다 — 꼭 0.2초인 때를 잰다
     QTest.keyClick(window, Qt.Key.Key_A)
 
-    clock.value = 1000.19
+    clock.value = 0.19
     still = activity.user_interacting()
-    clock.value = 1000.2
+    clock.value = 0.2
     after = activity.user_interacting()
 
     assert (still, after) == (True, False)
