@@ -53,6 +53,7 @@ from core.models.sample_column import (
     float_column,
     in_chunks,
     offset_column,
+    reading_tables,
 )
 
 # 실패 키 — 번역하지 않은 i18n 키 원문
@@ -449,7 +450,8 @@ def summarize_moov(moov: bytes) -> Mp4Summary:
         Mp4Error: ``parse_moov``와 같다(샘플 위치 표의 손상은 빼고)
     """
     try:
-        return _summarize(moov)
+        with reading_tables():  # 이 스레드의 조각을 잘게 — 조작 중이면 조각 사이에서 쉰다
+            return _summarize(moov)
     except _NeedsFullParse:
         index = parse_moov(moov)
         return Mp4Summary(fps=index.fps, duration=index.duration, frames=len(index.video.sizes))

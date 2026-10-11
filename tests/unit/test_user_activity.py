@@ -4,14 +4,21 @@
 정한 값을 돌려주는 대역으로 바꾼다. 필터는 테스트마다 걷는다 — 앱에 남기지 않는다.
 """
 
+from types import SimpleNamespace
+
 import pytest
 from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, Qt
 from PySide6.QtGui import QKeyEvent, QMouseEvent, QWheelEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QWidget
 
+import app.section_basis as section_basis
 import app.user_activity as activity
 import app.viewmodels.download_viewmodel as download_viewmodel
+import app.viewmodels.section_edit_viewmodel as sev
+import core.utils.interaction as interaction
+from core.api.mp4 import pending_mp4_head
+from core.models.plan import TimeRange
 
 
 class _Clock:
@@ -293,3 +300,150 @@ def test_download_viewmodel_hands_the_question_to_the_service(qapp, monkeypatch)
     download_viewmodel.DownloadViewModel(Content())
 
     assert given["user_interacting"] is activity.user_interacting
+
+
+# ================================================================ 카드의 조회 · 크기 세기 (#309)
+
+
+@pytest.fixture
+def rests(monkeypatch):
+    """쉰 횟수를 담는 리스트 — 쉬는 일을 자지 않고 세기만 하는 대역으로 바꾼다."""
+    counted: list[int] = []
+    monkeypatch.setattr(interaction, "_rest", lambda: counted.append(1))
+    return counted
+
+
+def _gap(*_args):
+    """조회 · 크기 세기의 대역 — 조각 사이의 틈을 한 번 흉내 낸다."""
+    interaction.rest_if_user_interacting()
+    return 7, 3
+
+
+def _snapshot() -> SimpleNamespace:
+    return SimpleNamespace(content_type="video", base_url="", vod_url="", resolution=1080)
+
+
+def _run_size_job() -> list[tuple]:
+    job, done = sev.SectionSizeJob(object(), (), "요청"), []
+    job.done.connect(lambda *args: done.append(args))
+    job.run()
+    return done
+
+
+def _run_refit_job() -> list[tuple]:
+    job, done = sev.SectionRefitJob(_snapshot(), "요청"), []
+    job.done.connect(lambda *args: done.append(args))
+    job.run()
+    return done
+
+
+def test_section_jobs_ask_the_question_of_user_activity():
+    """카드의 조회 · 크기 세기가 조작 중인지 묻는 값은 app.user_activity.user_interacting이어야 한다.
+
+    -> section_edit_viewmodel.user_interacting is app.user_activity.user_interacting
+    """
+    assert sev.user_interacting is activity.user_interacting
+
+
+@pytest.mark.parametrize(("answer", "expected"), [(True, 1), (False, 0)], ids=["조작 중", "아님"])
+def test_size_job_rests_at_a_gap_only_while_the_user_is_interacting(
+    qapp, monkeypatch, rests, answer, expected
+):
+    """크기 세기는 조작 중이라고 답할 때만 틈에서 쉬어야 한다.
+
+    section_sizes_of를 틈을 한 번 흉내 내고 (7, 3)을 돌려주는 대역으로, user_interacting을
+    늘 참 / 늘 거짓으로 바꾸고 SectionSizeJob.run()
+    -> 쉰 횟수 == 1 / 0, done == [("요청", True, 7)], head_bytes는 대역이 준 3
+    """
+    monkeypatch.setattr(sev, "section_sizes_of", _gap)
+    monkeypatch.setattr(sev, "user_interacting", lambda: answer)
+
+    done = _run_size_job()
+
+    assert len(rests) == expected
+    assert done == [("요청", True, 7)]
+
+
+@pytest.mark.parametrize(("answer", "expected"), [(True, 1), (False, 0)], ids=["조작 중", "아님"])
+def test_refit_job_rests_at_a_gap_only_while_the_user_is_interacting(
+    qapp, monkeypatch, rests, answer, expected
+):
+    """해상도 변경 뒤의 조회는 조작 중이라고 답할 때만 틈에서 쉬어야 한다.
+
+    probe_section_basis를 틈을 한 번 흉내 내는 대역으로, user_interacting을 늘 참 / 늘 거짓으로
+    바꾸고 SectionRefitJob.run() -> 쉰 횟수 == 1 / 0, done == [("요청", 대역이 준 값)]
+    """
+    monkeypatch.setattr(section_basis, "probe_section_basis", _gap)
+    monkeypatch.setattr(sev, "user_interacting", lambda: answer)
+
+    done = _run_refit_job()
+
+    assert len(rests) == expected
+    assert done == [("요청", (7, 3))]
+
+
+def test_section_jobs_leave_nothing_set_on_the_thread_after_they_run(qapp, monkeypatch, rests):
+    """카드의 조회 · 크기 세기가 끝나면 그 스레드에 조작 중인지 묻는 값이 남지 않아야 한다.
+
+    user_interacting = 늘 참. 두 일을 차례로 돌린 뒤(쉰 횟수 2) 같은 스레드에서 틈을 한 번 흉내 냄
+    -> 쉰 횟수 == 2 그대로
+    """
+    monkeypatch.setattr(sev, "section_sizes_of", _gap)
+    monkeypatch.setattr(section_basis, "probe_section_basis", _gap)
+    monkeypatch.setattr(sev, "user_interacting", lambda: True)
+    _run_size_job()
+    _run_refit_job()
+    assert len(rests) == 2
+
+    interaction.rest_if_user_interacting()
+
+    assert len(rests) == 2
+
+
+def test_edit_window_lookup_does_not_rest(qapp, monkeypatch, rests):
+    """편집 창의 조회는 조작 중이어도 쉬지 않아야 한다 — 쉬는 것은 카드의 조회 · 크기 세기뿐이다.
+
+    user_interacting = 늘 참, probe_section_basis는 틈을 한 번 흉내 내는 대역. SectionBasisJob.run()
+    -> finished 1회, 쉰 횟수 == 0. 같은 대역으로 SectionRefitJob.run()을 돌리면 1(대역이 살아 있음)
+    """
+    monkeypatch.setattr(section_basis, "probe_section_basis", _gap)
+    monkeypatch.setattr(sev, "user_interacting", lambda: True)
+    job, finished = sev.SectionBasisJob(_snapshot()), []
+    job.finished.connect(finished.append)
+
+    job.run()
+
+    assert finished == [(7, 3)]
+    assert rests == []
+    _run_refit_job()
+    assert len(rests) == 1
+
+
+def test_size_counted_while_resting_equals_the_size_counted_without_resting(qapp, monkeypatch):
+    """조작 중에 쉬어 가며 센 카드의 크기는 쉬지 않고 센 크기와 같아야 한다.
+
+    영상 20,000샘플의 moov(해석하지 않은 것), 구간 10~60초 · 200~320초. 실제로 잔다(1ms).
+    user_interacting = 늘 참 / 늘 거짓으로 SectionSizeJob.run()
+    -> 두 결과의 (셌는지, 크기, 머리 길이)가 같고 셌는지 == True, 크기 > 0.
+       늘 참일 때 쉰 횟수 > 0, 늘 거짓일 때 0
+    """
+    from tests.unit.core.test_mp4_section_sizes import _audio, _head_only, _video
+
+    raw = _head_only(
+        [_video(20_000, seed=3, per_chunk=7, b_frames=True), _audio(9_000, seed=4, per_chunk=5)]
+    )
+    wanted = (TimeRange(10.0, 60.0), TimeRange(200.0, 320.0))
+    results, rested = [], []
+    for answer in (True, False):
+        monkeypatch.setattr(sev, "user_interacting", lambda answer=answer: answer)
+        job, done = sev.SectionSizeJob(pending_mp4_head(raw), wanted, "요청"), []
+        job.done.connect(lambda *args, done=done: done.append(args))
+        before = interaction.rest_totals()[0]
+        job.run()
+        rested.append(interaction.rest_totals()[0] - before)
+        ((_token, counted, size),) = done
+        results.append((counted, size, job.head_bytes))
+
+    assert results[0] == results[1]
+    assert results[0][0] is True and results[0][1] > 0
+    assert rested[0] > 0 and rested[1] == 0

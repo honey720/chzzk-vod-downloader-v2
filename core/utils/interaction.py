@@ -20,7 +20,8 @@ from contextlib import contextmanager
 # 해석이 1.5배 더 걸린다
 REST_SECONDS = 0.001
 
-# 스레드마다 걸어 둔 "조작 중인가?" 값 — 걸지 않았으면 속성이 없다
+# 스레드마다 걸어 둔 "조작 중인가?" 값과, 그 스레드가 쉰 횟수 · 시간 — 걸지 않았거나 쉰 적이
+# 없으면 속성이 없다
 _local = threading.local()
 
 
@@ -49,7 +50,20 @@ def rest_if_user_interacting() -> None:
     """이 스레드에 걸어 둔 값이 조작 중이라고 답하면 ``REST_SECONDS`` 쉰다. 없으면 쉬지 않는다."""
     user_interacting = getattr(_local, "user_interacting", None)
     if user_interacting is not None and user_interacting():
+        began = time.perf_counter()
         _rest()
+        _local.rests = getattr(_local, "rests", 0) + 1
+        _local.rested_seconds = getattr(_local, "rested_seconds", 0.0) + time.perf_counter() - began
+
+
+def rest_totals() -> tuple[int, float]:
+    """이 스레드가 지금까지 쉰 (횟수, 시간의 합(초)).
+
+    일의 앞뒤에서 불러 그 차로 "이 일이 조작 때문에 얼마나 쉬었나"를 구한다 — 준비 단계의
+    로그가 쓴다(``core.downloaders.base``). 시간은 잠든 시간이 아니라 쉬고 돌아오기까지 실제로
+    흐른 시간이다(1ms를 청해도 1ms보다 길다).
+    """
+    return getattr(_local, "rests", 0), getattr(_local, "rested_seconds", 0.0)
 
 
 def _rest() -> None:

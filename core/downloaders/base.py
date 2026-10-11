@@ -75,6 +75,7 @@ from core.models.events import (
 )
 from core.models.plan import DownloadPlan
 from core.utils.ffmpeg import FFmpegError, read_in_chunks, remux_stream
+from core.utils.interaction import rest_totals
 
 
 # ============ 저속 판정 (#347) ============
@@ -142,6 +143,23 @@ class PostprocessError(Exception):
     산출물은 후처리 단계가 이미 삭제했다. run()이 이 예외를 일반 실패와
     구분해 처리한다.
     """
+
+
+def _with_rests(note: str, before: tuple[int, float], after: tuple[int, float]) -> str:
+    """준비 줄에 덧붙일 말 뒤에, 준비하는 동안 조작 때문에 쉰 횟수 · 시간을 잇는다 (#309).
+
+    사용자가 조작하는 동안 색인 해석은 조각 사이에서 쉰다(``core.utils.interaction``) — 준비가
+    길었을 때 그 쉼 때문인지를 로그로 가른다. 쉰 적이 없으면 note 그대로다.
+
+    Args:
+        before: 준비를 시작할 때의 ``rest_totals()``
+        after: 준비를 끝냈을 때의 ``rest_totals()``
+    """
+    rests = after[0] - before[0]
+    if rests <= 0:
+        return note
+    rested = f"rested {rests} times for {after[1] - before[1]:.2f}s"
+    return f"{note} - {rested}" if note else rested
 
 
 class _PostprocessAborted(Exception):
@@ -697,12 +715,17 @@ class BaseDownloader(ABC):
             # 모델이 세는 일시정지 시간은 모델이 사는 동안의 합이다 — 같은 모델로 다시 실행하면
             # 앞 실행의 것이 들어 있다. 이번 실행의 것만 쓰도록 시작할 때의 값을 적어 둔다
             paused_before = self.s.model.paused_seconds
+            rested_before = rest_totals()
             plan = self.prepare(self.s.content)
             # 준비(받을 것을 정하는 단계 — 구간 다운로드는 여기서 moov · 플레이리스트를 받는다)에
             # 걸린 시간. 전송 시간(Transfer)은 이것을 포함한 채로 둔다 — 그 줄의 뜻을 바꾸지
             # 않고, 준비를 뺀 값을 따로 한 줄 남긴다 (#309)
             prepare_elapsed = tm.time() - self.s.start_time
-            self._log_if_supported("log_prepare_complete", prepare_elapsed, self._prepare_note())
+            self._log_if_supported(
+                "log_prepare_complete",
+                prepare_elapsed,
+                _with_rests(self._prepare_note(), rested_before, rest_totals()),
+            )
             if plan.selections and not self.supports_selections:
                 # 구간을 해석하지 못하는 다운로더는 명시적으로 거부한다 (#83, #309)
                 raise NotImplementedError(

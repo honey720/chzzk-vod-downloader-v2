@@ -48,7 +48,7 @@ from core.api.mp4 import (
 )
 from core.models.mp4_index import Mp4Index, Mp4Raw, parse_gate
 from core.models.plan import TimeRange
-from core.models.sample_column import CHUNK_ITEMS, in_chunks
+from core.models.sample_column import CHUNK_ITEMS, in_chunks, reading_tables
 from core.utils.hybrid_cut import SOURCE_LEAD_SECONDS
 from core.utils.mp4_partial import _BOX_HEADER_BYTES, merge_ranges
 from core.utils.mp4_ranges import _AUDIO_SEEK_SLACK, sections_head_size, sections_sizes
@@ -585,7 +585,8 @@ def moov_sections_sizes(raw: Mp4Raw, selections: Iterable[TimeRange]) -> tuple[i
     """
     wanted = list(selections)
     try:
-        return LightTables(raw).sections_sizes(wanted)
+        with reading_tables():  # 이 스레드의 조각을 잘게 — 조작 중이면 조각 사이에서 쉰다
+            return LightTables(raw).sections_sizes(wanted)
     except NeedsFullIndex:
         return sections_sizes(_full_index(raw), wanted)
 
@@ -600,6 +601,7 @@ def moov_head_size(raw: Mp4Raw) -> int:
         StopRequested: 그만두라는 답을 받은 경우(``core.utils.stop``)
     """
     try:
-        return LightTables(raw).head_size()
+        with reading_tables():  # 이 스레드의 조각을 잘게 — 조작 중이면 조각 사이에서 쉰다
+            return LightTables(raw).head_size()
     except NeedsFullIndex:
         return sections_head_size(_full_index(raw))

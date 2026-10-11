@@ -27,6 +27,7 @@ import app.section_basis as section_basis
 from app.platform_adapter import background_work
 from app.process_memory import log_process_memory
 from app.section_basis import SectionBasis
+from app.user_activity import user_interacting
 from app.viewmodels.data import (
     SECTION_CHECK_PENDING,
     SECTION_CHECK_UNVERIFIED,
@@ -36,6 +37,7 @@ from core.api.mp4 import Mp4Error
 from core.models.download_state import DownloadState
 from core.models.mp4_index import PendingMp4Head
 from core.models.plan import TimeRange
+from core.utils.interaction import resting_while
 from core.utils.mp4_ranges import sections_download_size, sections_head_size, sections_sizes
 from core.utils.mp4_section_sizes import moov_head_size, moov_sections_sizes
 from core.utils.stop import StopRequested, check_stop, stoppable
@@ -1175,8 +1177,10 @@ class SectionSizeJob(QObject):
         """크기를 세어 done을 emit한다. 그만뒀거나 실패하면 셌는지 자리에 False를 싣는다."""
         counted, size = False, None
         try:
-            # 그만둘지는 시작하기 전 · 표를 읽는 단계 사이에 묻는다(core.utils.stop)
-            with background_work(), stoppable(self._stop.is_set):
+            # 그만둘지는 시작하기 전 · 표를 읽는 단계 사이에 묻는다(core.utils.stop).
+            # 표를 읽는 조각 사이에서, 사용자가 조작하는 동안에는 잠깐 쉰다(core.utils.interaction)
+            # — 모듈 전역을 호출 시점에 조회한다(테스트의 monkeypatch 지점)
+            with background_work(), stoppable(self._stop.is_set), resting_while(user_interacting):
                 check_stop()
                 # 모듈 전역을 호출 시점에 조회한다 — 테스트의 monkeypatch 지점
                 size, self.head_bytes = section_sizes_of(self._moov, self._selections)
@@ -1317,8 +1321,9 @@ class SectionRefitJob(QObject):
         try:
             # 그만둘지는 조회 함수가 묻는다 — 시작하기 전 · 받는 동안 · 단계 사이에(core.utils.stop).
             # 여기서는 그 물음에 답할 값만 이 스레드에 걸어 둔다. 조회는 moov를 읽느라 CPU를
-            # 쓴다 — 도는 동안 화면이 굼떠지지 않게 백그라운드 일로 센다
-            with background_work(), stoppable(self._stop.is_set):
+            # 쓴다 — 도는 동안 화면이 굼떠지지 않게 백그라운드 일로 세고, 사용자가 조작하는
+            # 동안에는 표를 읽는 조각 사이에서 잠깐 쉰다(core.utils.interaction)
+            with background_work(), stoppable(self._stop.is_set), resting_while(user_interacting):
                 # 모듈 전역을 호출 시점에 조회한다 — 테스트의 monkeypatch 지점
                 basis = section_basis.probe_section_basis(self._snapshot)
         except StopRequested:

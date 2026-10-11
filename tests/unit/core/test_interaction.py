@@ -1,4 +1,4 @@
-"""사용자가 조작하는 동안에만 색인 해석이 조각 사이에서 쉬는지 잰다 (#309).
+"""사용자가 조작하는 동안에만 색인 해석과 색인 없는 읽기가 조각 사이에서 쉬는지 잰다 (#309).
 
 쉬는 일(``core.utils.interaction._rest``)은 횟수만 세는 대역으로 바꾼다 — 실제로 자지 않는다.
 """
@@ -19,9 +19,16 @@ from core.models.sample_column import (
     array_in_chunks,
     building_index,
     in_chunks,
+    reading_tables,
 )
-from core.utils.interaction import REST_SECONDS, rest_if_user_interacting, resting_while
-from core.utils.mp4_section_sizes import moov_sections_sizes
+from core.utils.interaction import (
+    REST_SECONDS,
+    rest_if_user_interacting,
+    rest_totals,
+    resting_while,
+)
+from core.utils.mp4_ranges import sections_head_size, sections_sizes
+from core.utils.mp4_section_sizes import moov_head_size, moov_sections_sizes
 from tests.unit.core.mp4_builder import audio_spec, build_mp4, video_spec
 from tests.unit.core.test_mp4_chunks import _columns
 
@@ -310,18 +317,211 @@ def test_index_cut_at_the_index_chunk_size_equals_one_cut_at_the_usual_size(monk
     assert cut == whole
 
 
-def test_reading_without_an_index_does_not_rest(tiny_chunks, rests):
-    """색인을 만들지 않는 읽기(프레임률 · 길이, 받을 크기)는 조작 중이어도 쉬지 않아야 한다.
+# ================================================================ 색인 없이 읽기 (요약 · 구간의 크기)
 
-    조각 2개씩. resting_while(늘 참) 안에서 summarize_moov · moov_sections_sizes(구간 0.2~0.8초)
-    -> 쉰 횟수 == 0. 같은 블록에서 index_mp4를 부르면 쉰 횟수 > 0(대역이 살아 있음)
+
+def _long_raw():
+    """영상 20,000샘플(B프레임 재배열 있음) · 오디오 9,000샘플의 moov — 표마다 8192개 조각이 셋이다."""
+    from tests.unit.core.test_mp4_section_sizes import _audio, _head_only, _video
+
+    return _head_only(
+        [
+            _video(20_000, seed=3, per_chunk=7, b_frames=True),
+            _audio(9_000, seed=4, per_chunk=5),
+        ]
+    )
+
+
+_WANTED = [TimeRange(10.0, 60.0), TimeRange(200.0, 320.0)]  # 영상 길이 약 333초 안의 두 구간
+# 이름 → 색인을 만들지 않고 moov의 표를 읽는 일
+_LIGHT_READS = {
+    "프레임률 · 길이": lambda raw: summarize_moov(raw.moov),
+    "구간의 크기": lambda raw: moov_sections_sizes(raw, _WANTED),
+    "머리 길이": lambda raw: moov_head_size(raw),
+}
+_light_read = pytest.mark.parametrize("read", _LIGHT_READS.values(), ids=_LIGHT_READS)
+
+
+def test_chunks_are_smaller_while_reading_tables_and_back_to_usual_after():
+    """reading_tables() 안에서는 조각이 8192개여야 하고 나오면 그대로여야 한다.
+
+    값 20,000개의 배열을 in_chunks로 자름 -> 안: 조각 길이 [8192, 8192, 3616], 나온 뒤: [20000]
     """
-    raw = _raw()
+    values = array.array("q", range(20_000))
+
+    with reading_tables():
+        inside = [len(chunk) for chunk in in_chunks(values)]
+    outside = [len(chunk) for chunk in in_chunks(values)]
+
+    assert inside == [8192, 8192, 3616]
+    assert outside == [20_000]
+
+
+@_light_read
+def test_light_read_rests_at_every_gap_while_the_user_is_interacting(rests, read):
+    """조작 중이라고 답하는 동안 색인 없이 읽는 일은 조각 사이마다 쉬어야 한다.
+
+    영상 20,000샘플. resting_while(늘 참) 안에서 읽음 -> 쉰 횟수 == 조작 중인지 물은 횟수 >= 3
+    """
+    asked = _First(10**9)
+
+    with resting_while(asked):
+        read(_long_raw())
+
+    assert asked.asked >= 3, "전제: 조각 사이에서 여러 번 묻는다"
+    assert len(rests) == asked.asked
+
+
+@_light_read
+def test_light_read_does_not_rest_while_the_user_is_not_interacting(rests, read):
+    """조작 중이 아니라고 답하면 색인 없이 읽는 일은 쉬지 않아야 한다.
+
+    영상 20,000샘플. resting_while(늘 거짓 — 물은 횟수를 셈) 안에서 읽음
+    -> 물은 횟수 >= 3, 쉰 횟수 == 0
+    """
+    asked = _First(0)
+
+    with resting_while(asked):
+        read(_long_raw())
+
+    assert asked.asked >= 3
+    assert rests == []
+
+
+@_light_read
+def test_light_read_rests_only_for_the_gaps_where_the_user_is_interacting(rests, read):
+    """조작 중이라는 답이 끊기면 그 뒤의 조각 사이에서는 쉬지 않아야 한다.
+
+    영상 20,000샘플. 처음 2번의 물음에만 조작 중이라고 답함 -> 쉰 횟수 == 2, 물은 횟수 >= 3
+    """
+    asked = _First(2)
+
+    with resting_while(asked):
+        read(_long_raw())
+
+    assert asked.asked >= 3
+    assert len(rests) == 2
+
+
+@_light_read
+def test_light_read_does_not_rest_when_no_value_is_given(rests, read):
+    """조작 중인지 묻는 값을 주지 않으면 색인 없이 읽는 일은 쉬지 않아야 한다(헤드리스).
+
+    영상 20,000샘플. 값을 걸지 않고 읽음 -> 쉰 횟수 == 0.
+    같은 moov를 resting_while(늘 참)으로 다시 읽으면 쉰 횟수 > 0(대역이 살아 있음)
+    """
+    read(_long_raw())
+    assert rests == []
 
     with resting_while(lambda: True):
-        summarize_moov(raw.moov)
-        moov_sections_sizes(raw, [TimeRange(0.2, 0.8)])
-        assert rests == []
-        index_mp4(raw)
+        read(_long_raw())
 
     assert len(rests) > 0
+
+
+@_light_read
+def test_light_read_gives_the_same_value_whether_or_not_it_rests(read):
+    """쉬어 가며 읽은 값은 쉬지 않고 읽은 값과 같아야 한다.
+
+    영상 20,000샘플. 실제로 잔다(1ms). resting_while(늘 참)으로 읽은 값 == 값을 걸지 않고 읽은 값
+    """
+    plain = read(_long_raw())
+
+    with resting_while(lambda: True):
+        rested = read(_long_raw())
+
+    assert rested == plain
+
+
+def test_section_sizes_read_while_resting_equal_the_ones_counted_from_the_index():
+    """쉬어 가며 센 구간의 크기 · 머리 길이는 색인으로 센 값과 같아야 한다.
+
+    영상 20,000샘플, 구간 10~60초 · 200~320초. 실제로 잔다(1ms).
+    resting_while(늘 참)으로 moov_sections_sizes · moov_head_size
+    -> mp4_ranges.sections_sizes(색인) · sections_head_size(색인)과 같다. 받을 크기 > 0
+    """
+    raw = _long_raw()
+    index = index_mp4(raw).index
+    expected = sections_sizes(index, _WANTED)
+
+    with resting_while(lambda: True):
+        sizes = moov_sections_sizes(raw, _WANTED)
+        head = moov_head_size(raw)
+
+    assert sizes == expected
+    assert head == sections_head_size(index) == expected[1]
+    assert sizes[0] > 0
+
+
+def test_summary_read_while_resting_equals_the_one_in_the_index():
+    """쉬어 가며 읽은 프레임률 · 길이는 색인의 값과 같아야 한다.
+
+    영상 20,000샘플. 실제로 잔다(1ms). resting_while(늘 참)으로 summarize_moov
+    -> (fps, duration, frames) == (색인의 fps, 색인의 duration, 20000)
+    """
+    raw = _long_raw()
+    index = index_mp4(raw).index
+
+    with resting_while(lambda: True):
+        summary = summarize_moov(raw.moov)
+
+    assert (summary.fps, summary.duration, summary.frames) == (index.fps, index.duration, 20_000)
+
+
+# ================================================================ 쉰 횟수 · 시간
+
+
+class _Ticking:
+    """time 모듈의 대역 — sleep을 부르면 시계가 그만큼이 아니라 정한 값만큼 간다."""
+
+    def __init__(self, step: float):
+        self.now = 50.0
+        self.step = step
+
+    def perf_counter(self) -> float:
+        return self.now
+
+    def sleep(self, _seconds: float) -> None:
+        self.now += self.step
+
+
+def test_rest_totals_count_the_rests_and_the_time_they_took(monkeypatch):
+    """rest_totals()는 이 스레드가 쉰 횟수와 쉬는 데 실제로 흐른 시간의 합을 돌려줘야 한다.
+
+    쉴 때마다 시계가 0.25초 가는 대역. resting_while(늘 참) 안에서 3번 쉼
+    -> 앞뒤의 차 == (3, 0.75). 조작 중이 아니라고 답한 틈 2번은 세지 않는다
+    """
+    monkeypatch.setattr(interaction, "time", _Ticking(0.25))
+    before = rest_totals()
+
+    with resting_while(lambda: True):
+        for _ in range(3):
+            rest_if_user_interacting()
+    with resting_while(lambda: False):
+        for _ in range(2):
+            rest_if_user_interacting()
+    after = rest_totals()
+
+    assert (after[0] - before[0], after[1] - before[1]) == (3, 0.75)
+
+
+def test_rest_totals_belong_to_the_thread_that_rested(rests):
+    """다른 스레드가 쉰 것은 이 스레드의 rest_totals()에 들지 않아야 한다.
+
+    다른 스레드가 resting_while(늘 참)으로 2번 쉼 -> 그 스레드의 횟수 == 2, 이 스레드의 횟수는 그대로
+    """
+    before = rest_totals()
+    seen: list[int] = []
+
+    def other() -> None:
+        with resting_while(lambda: True):
+            rest_if_user_interacting()
+            rest_if_user_interacting()
+        seen.append(rest_totals()[0])
+
+    thread = threading.Thread(target=other)
+    thread.start()
+    thread.join()
+
+    assert seen == [2]
+    assert rest_totals() == before

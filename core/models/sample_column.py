@@ -59,6 +59,19 @@ def building_index() -> Iterator[None]:
         _local.building_index = outer
 
 
+@contextmanager
+def reading_tables() -> Iterator[None]:
+    """블록이 도는 동안 ``building_index``와 같이 조각을 줄이고 조각 사이에서 쉴 수 있게 한다 (#309).
+
+    색인을 만들지 않고 moov의 표를 읽는 일이 쓴다 — 프레임률 · 길이만 읽기
+    (``core.api.mp4.summarize_moov``)와 구간의 크기 세기(``core.utils.mp4_section_sizes``).
+    긴 영상에서는 이 일도 0.1~0.3초 동안 CPU를 쓰고, 그동안 창을 끄는 한 걸음이 100ms를
+    넘는다(잰 값: 6시간 60fps에서 110~210ms).
+    """
+    with building_index():
+        yield
+
+
 def chunk_items(items: int) -> int:
     """지금 이 스레드에서 쓸 조각의 크기 — 색인을 만드는 중이면 ``INDEX_CHUNK_ITEMS``를 넘지 않는다.
 
