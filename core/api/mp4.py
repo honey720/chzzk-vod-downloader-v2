@@ -45,6 +45,9 @@ from core.utils.stop import check_stop, stoppable
 from core.models.sample_column import (
     CHUNK_ITEMS,
     array_in_chunks,
+    between_chunks,
+    building_index,
+    chunk_items,
     count_column,
     fill_in_chunks,
     float_column,
@@ -372,7 +375,8 @@ def parse_moov(moov: bytes) -> Mp4Index:
             경우(``MP4_TOO_LONG``)
     """
     try:
-        return _parse_moov(moov)
+        with building_index():  # 이 스레드의 조각을 잘게 — 조작 중이면 조각 사이에서 쉰다
+            return _parse_moov(moov)
     except (struct.error, IndexError, ValueError, OverflowError) as e:
         raise Mp4Error(MP4_INVALID, str(e)) from e
 
@@ -820,13 +824,14 @@ def _presentation_order(
     """
     total = len(presented)
     order = array.array("Q")
-    if total <= CHUNK_ITEMS:
+    items = chunk_items(CHUNK_ITEMS)
+    if total <= items:
         order.extend(sorted(range(total), key=presented.__getitem__))
         return order
     start = 0
     while start < total:
-        check_stop()
-        end = min(start + CHUNK_ITEMS, total)
+        between_chunks()
+        end = min(start + items, total)
         # 이 조각의 가장 늦은 표시 시각 — 앞 조각들의 것은 볼 필요가 없다. 앞 조각은 그 뒤의 어느
         # 표시 시각보다도 늦지 않은 자리에서 끊겼으므로 이 조각의 어느 값도 그보다 이르지 않다
         latest = max(presented[start:end])
@@ -841,10 +846,11 @@ def _presentation_order(
 
 def _largest(values: Iterator[float]) -> float:
     """값들의 최댓값 — ``max(values)``와 같다. 잘라서 훑는다(``CHUNK_ITEMS``). 값이 하나는 있어야 한다."""
-    largest = max(islice(values, CHUNK_ITEMS))
+    items = chunk_items(CHUNK_ITEMS)
+    largest = max(islice(values, items))
     while True:
-        check_stop()
-        further = max(islice(values, CHUNK_ITEMS), default=None)
+        between_chunks()
+        further = max(islice(values, items), default=None)
         if further is None:
             return largest
         largest = max(largest, further)
@@ -857,9 +863,10 @@ def _positions_in(samples: array.array, wanted: frozenset) -> array.array:
     하나다) 나오는 쪽을 ``CHUNK_ITEMS``개씩 잘라도 조각 하나가 표 전체를 훑는다.
     """
     positions = array.array("Q")
-    for start in range(0, len(samples), CHUNK_ITEMS):
-        check_stop()
-        chunk = samples[start : start + CHUNK_ITEMS]
+    items = chunk_items(CHUNK_ITEMS)
+    for start in range(0, len(samples), items):
+        between_chunks()
+        chunk = samples[start : start + items]
         positions.extend(
             compress(range(start, start + len(chunk)), map(wanted.__contains__, chunk))
         )
