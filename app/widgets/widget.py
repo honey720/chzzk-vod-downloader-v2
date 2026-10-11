@@ -1183,7 +1183,10 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         - 인코딩 완료 VOD 전체: 받은 크기 / 파일 크기
         - 인코딩 완료 VOD 구간 (#309): 받은 크기 / 완성 파일 크기(받을 구간의 합 + 머리 —
           대기 카드가 적던 값 그대로다). 영상 전체 크기를 적지 않는다.
-          자르는 동안에는 받은 크기를 그 크기로 적는다 — 전송은 끝났다
+          받은 크기에도 머리를 더한다 — 머리는 조회 때 이미 받아 임시 원본의 맨 앞에 쓰인다.
+          처음부터 머리만큼에서 시작하고, 전송이 끝나면 두 숫자가 같아진다. 머리 길이를
+          모르면(대기 중에 크기를 세지 못했다) 더하지 않는다.
+          자르는 동안에는 받은 크기를 완성 파일 크기로 적는다 — 전송은 끝났다
         받을 크기를 모르면 받은 크기만 적는다.
 
         Args:
@@ -1195,13 +1198,24 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             return received
         if self._sectionCount():
             total = self._sectionSizeText()
+            head = getattr(item, "section_head_bytes", None) or 0
             if total and item.post_process:
                 received = total
+            elif total and head:
+                received = self.setSize(self._receivedBytes(item) + head)
         else:
             total = self._wholeSizeText(item)
         if not with_total:
             return received
         return f"{received} / {total}" if total else received
+
+    @staticmethod
+    def _receivedBytes(item: ContentItem) -> float:
+        """카드에 적힌 받은 바이트 — 아직 없으면(준비 중) 0이다."""
+        try:
+            return float(item.download_size)
+        except (ValueError, TypeError):
+            return 0.0
 
     def _wholeSizeText(self, item: ContentItem) -> str:
         """인코딩 완료 VOD 전체의 크기 글 — 모르면 빈 글이다.

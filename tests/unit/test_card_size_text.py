@@ -435,20 +435,22 @@ def test_section_card_covering_the_whole_video_shows_the_size_of_the_card_withou
 @pytest.mark.parametrize(
     ("state", "preparing", "received", "expected"),
     [
-        (DownloadState.RUNNING, False, 50 * MB, "50.00 MB / 212.00 MB"),
-        (DownloadState.PAUSED, False, 50 * MB, "50.00 MB / 212.00 MB"),
-        (DownloadState.RUNNING, True, "", "0 B / 212.00 MB"),
+        (DownloadState.RUNNING, False, 50 * MB, "62.00 MB / 212.00 MB"),
+        (DownloadState.PAUSED, False, 50 * MB, "62.00 MB / 212.00 MB"),
+        (DownloadState.RUNNING, True, "", "12.00 MB / 212.00 MB"),
+        (DownloadState.RUNNING, False, 200 * MB, "212.00 MB / 212.00 MB"),
     ],
-    ids=["받는 중", "일시정지", "준비 중"],
+    ids=["받는 중", "일시정지", "준비 중", "전송이 끝나는 순간"],
 )
 def test_started_section_card_keeps_the_file_size_the_waiting_card_showed(
     qtbot, state, preparing, received, expected
 ):
-    """받기 시작한 구간 카드의 "받은 크기 / 크기"의 크기는 대기 카드가 적던 완성 파일 크기여야 한다.
+    """받기 시작한 구간 카드는 "받은 바이트 + 머리 / 완성 파일 크기"를 적어야 한다 — 크기는 대기 카드의 것 그대로다.
 
     받을 합 200 MiB · 머리 12 MiB. 대기 카드의 요약은 "· 212.00 MB"로 끝난다
-    -> 받는 중 · 일시정지(받은 것 50 MiB): "50.00 MB / 212.00 MB"로 끝난다
-    -> 준비 중(받은 것 없음): "0 B / 212.00 MB"로 끝난다
+    -> 받는 중 · 일시정지(받은 것 50 MiB): "62.00 MB / 212.00 MB"로 끝난다
+    -> 준비 중(받은 것 없음): "12.00 MB / 212.00 MB"로 끝난다
+    -> 전송이 끝나는 순간(받은 것 200 MiB, 아직 자르기 전): "212.00 MB / 212.00 MB"로 끝난다
     """
     waiting_window, waiting = _card(
         "video", DownloadState.WAITING, selections=TWO_SECTIONS, section_bytes=200 * MB
@@ -569,6 +571,92 @@ def test_section_card_keeps_what_it_received_when_the_card_narrows(qtbot):
     _narrow_until(window, widget, lambda: widget.fileSizeLabel.text() != full)
 
     assert shown(widget.fileSizeLabel) == "1080p · 50.00 MB"
+
+
+def test_started_section_card_adds_no_head_to_what_it_received_when_the_head_is_unknown(qtbot):
+    """머리 길이를 모르는 구간 카드는 받은 크기에 아무것도 더하지 않아야 한다.
+
+    받을 합 200 MiB · 머리 모름(None) · 받은 것 50 MiB -> "1080p · 50.00 MB / 200.00 MB"
+    """
+    window, widget = _card(
+        "video",
+        DownloadState.RUNNING,
+        selections=TWO_SECTIONS,
+        received=50 * MB,
+        section_bytes=200 * MB,
+    )
+    qtbot.addWidget(window)
+    assert widget.item.section_head_bytes is None
+
+    assert shown(widget.fileSizeLabel) == "1080p · 50.00 MB / 200.00 MB"
+
+
+def test_preparing_section_card_without_a_known_head_shows_nothing_received(qtbot):
+    """머리 길이를 모르는 구간 카드는 준비 중에 받은 크기를 "0 B"로 적어야 한다.
+
+    받을 합 200 MiB · 머리 모름(None) · 준비 중(받은 것 없음) -> "1080p · 0 B / 200.00 MB"
+    """
+    window, widget = _card(
+        "video",
+        DownloadState.RUNNING,
+        selections=TWO_SECTIONS,
+        received="",
+        section_bytes=200 * MB,
+        preparing=True,
+    )
+    qtbot.addWidget(window)
+
+    assert shown(widget.fileSizeLabel) == "1080p · 0 B / 200.00 MB"
+
+
+def test_narrow_section_card_keeps_the_head_in_what_it_received(qtbot):
+    """좁아져 크기가 빠진 구간 카드의 받은 크기에도 머리가 들어 있어야 한다.
+
+    받을 합 200 MiB · 머리 12 MiB · 받은 것 50 MiB, 넓은 창에서 4px씩 좁힘
+    -> 처음 글이 바뀐 폭에서: 크기 == "1080p · 62.00 MB"
+    """
+    window, widget = _card(
+        "video",
+        DownloadState.RUNNING,
+        selections=TWO_SECTIONS,
+        received=50 * MB,
+        section_bytes=200 * MB,
+    )
+    qtbot.addWidget(window)
+    widget.item.section_head_bytes = HEAD_12MB
+    widget.setData(widget.item, 0)
+    _pump()
+    full = "1080p · 62.00 MB / 212.00 MB"
+    assert shown(widget.fileSizeLabel) == full, "전제: 넓은 창에서는 다 적는다"
+
+    _narrow_until(window, widget, lambda: widget.fileSizeLabel.text() != full)
+
+    assert shown(widget.fileSizeLabel) == "1080p · 62.00 MB"
+
+
+@pytest.mark.parametrize(
+    ("content_type", "selections", "expected"),
+    [
+        ("video", (), "1080p · 50.00 MB / 28.99 GB"),
+        ("m3u8", TWO_SECTIONS, "1080p · 50.00 MB"),
+        ("m3u8", (), "1080p · 50.00 MB"),
+    ],
+    ids=["구간 없는 mp4", "m3u8 구간", "m3u8 전체"],
+)
+def test_cards_other_than_mp4_section_cards_add_no_head(qtbot, content_type, selections, expected):
+    """구간 없는 카드와 세그먼트 방식의 카드는 머리 길이가 적혀 있어도 받은 크기에 더하지 않아야 한다.
+
+    받은 것 50 MiB, 카드에 section_head_bytes = 12 MiB를 적어 둠 -> 크기 == expected
+    """
+    window, widget = _card(
+        content_type, DownloadState.RUNNING, selections=selections, received=50 * MB
+    )
+    qtbot.addWidget(window)
+    widget.item.section_head_bytes = HEAD_12MB
+    widget.setData(widget.item, 0)
+    _pump()
+
+    assert shown(widget.fileSizeLabel) == expected
 
 
 def test_preparing_card_shows_the_text_and_a_bar_without_a_value(qtbot):
