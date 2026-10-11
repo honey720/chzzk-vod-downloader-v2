@@ -136,7 +136,8 @@ def _key(kind: QEvent.Type) -> QEvent:
 
 
 def _mouse(kind: QEvent.Type) -> QEvent:
-    held = Qt.MouseButton.NoButton if kind == QEvent.Type.MouseMove else Qt.MouseButton.LeftButton
+    moves = (QEvent.Type.MouseMove, QEvent.Type.NonClientAreaMouseMove)
+    held = Qt.MouseButton.NoButton if kind in moves else Qt.MouseButton.LeftButton
     return QMouseEvent(
         kind, QPointF(5, 5), QPointF(5, 5), held, held, Qt.KeyboardModifier.NoModifier
     )
@@ -149,6 +150,12 @@ SINGLE_EVENTS = {
     "MouseButtonRelease": lambda: _mouse(QEvent.Type.MouseButtonRelease),
     "MouseButtonDblClick": lambda: _mouse(QEvent.Type.MouseButtonDblClick),
     "MouseMove": lambda: _mouse(QEvent.Type.MouseMove),
+    "NonClientAreaMouseButtonPress": lambda: _mouse(QEvent.Type.NonClientAreaMouseButtonPress),
+    "NonClientAreaMouseButtonRelease": lambda: _mouse(QEvent.Type.NonClientAreaMouseButtonRelease),
+    "NonClientAreaMouseButtonDblClick": lambda: _mouse(
+        QEvent.Type.NonClientAreaMouseButtonDblClick
+    ),
+    "NonClientAreaMouseMove": lambda: _mouse(QEvent.Type.NonClientAreaMouseMove),
 }
 
 
@@ -157,7 +164,8 @@ def test_each_input_event_alone_makes_the_user_interacting(window, kind):
     """입력 이벤트는 종류마다 하나만 와도 조작 중이어야 한다.
 
     창 안의 위젯에 KeyPress · KeyRelease · MouseButtonPress · MouseButtonRelease ·
-    MouseButtonDblClick · MouseMove 가운데 하나만 보냄 -> 보내기 전 False, 보낸 뒤 True
+    MouseButtonDblClick · MouseMove · 창 테두리의 같은 네 가지(NonClientArea…) 가운데 하나만 보냄
+    -> 보내기 전 False, 보낸 뒤 True
     """
     assert activity.user_interacting() is False
 

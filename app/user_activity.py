@@ -18,13 +18,19 @@ from PySide6.QtCore import QCoreApplication, QEvent, QObject
 # 간격으로 이어지므로 그 사이가 끊기지 않고, 손을 떼면 이 시간 뒤에 해석이 제 속도로 돌아간다
 INTERACTION_SECONDS = 0.2
 
-# 어느 객체에 오든 입력으로 치는 이벤트 — 마우스 버튼 · 이동 · 휠 · 키
+# 어느 객체에 오든 입력으로 치는 이벤트 — 마우스 버튼 · 이동 · 휠 · 키. 창의 테두리 · 제목 줄 위의
+# 마우스(NonClientArea…)도 친다 — 창 크기를 끌려고 테두리에 다가갈 때부터 조작 중이 되어, 끌기의
+# 첫 걸음부터 해석이 쉰다(테두리를 잡고 끄는 동안에는 창 크기 변경만 온다)
 _INPUT_EVENTS = frozenset(
     {
         QEvent.Type.MouseButtonPress,
         QEvent.Type.MouseButtonRelease,
         QEvent.Type.MouseButtonDblClick,
         QEvent.Type.MouseMove,
+        QEvent.Type.NonClientAreaMouseButtonPress,
+        QEvent.Type.NonClientAreaMouseButtonRelease,
+        QEvent.Type.NonClientAreaMouseButtonDblClick,
+        QEvent.Type.NonClientAreaMouseMove,
         QEvent.Type.Wheel,
         QEvent.Type.KeyPress,
         QEvent.Type.KeyRelease,
