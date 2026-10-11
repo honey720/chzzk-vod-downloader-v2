@@ -408,16 +408,22 @@ class DownloadViewModel(QObject):
         """진행 통지가 왔다 — 엔진의 준비가 끝났다 (#309). 메인 스레드에서 돈다.
 
         엔진은 준비가 끝나면 받기 전에 진행을 한 번 알린다. "준비 중"을 끄고, 인코딩 완료
-        VOD면 엔진이 정한 받을 크기를 카드에 옮긴다. 구간 다운로드에서는 그 값이 받을 구간의
-        합이다 — 이어받기와 뺀 구간이 반영된 값이다.
+        VOD면 엔진이 정한 받을 크기를 카드에 옮긴다(``transfer_bytes``).
+
+        구간 카드가 적는 크기(``section_bytes`` + ``section_head_bytes`` — 완성 파일 크기)는
+        **이미 알면 바꾸지 않는다.** 대기 카드가 적던 값이 받는 중 · 일시정지 · 다시 시작 ·
+        실패 구간의 재시도 동안 그대로 보인다. 엔진의 값은 이어받기에서는 남은 구간만의
+        양이라 완성 파일 크기가 아니다. 대기 중에 세지 못했을 때만 엔진의 값을 쓴다 — 그때는
+        머리 길이를 몰라 더하지 않는다.
         """
         self._endPreparing()
         item, data = self.item, self._data
         if item is None or data is None or item.is_segment_based or not data.total_size:
             return
         item.transfer_bytes = data.total_size
-        if data.sections_total:
+        if data.sections_total and not item.section_bytes:
             item.section_bytes = data.total_size
+            item.section_head_bytes = None  # 이 값에 맞는 머리 길이를 모른다 — 더하지 않는다
 
     def removeThreads(self) -> None:
         """실행 중인 워커의 종료를 상한을 두고 기다린 뒤 참조를 정리한다 (구 removeThreads).

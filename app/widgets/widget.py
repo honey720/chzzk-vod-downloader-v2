@@ -943,7 +943,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         if not self._sectionsOverlap():
             return []
         amount = self._clock(self._sectionSpan())
-        size = self._sectionSizeText(with_head=True)
+        size = self._sectionSizeText()
         if size:
             amount = f"{amount} · {size}"
         return [
@@ -959,29 +959,26 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         비워 두지 않고 카드의 크기 조회가 쓰는 문구를 그대로 쓴다. 세지 못했으면 빈 글이다 —
         받기 시작 때 엔진이 정한 값이 들어온다.
         """
-        size = self._sectionSizeText(with_head=True)
+        size = self._sectionSizeText()
         if size or not getattr(self.item, "section_sizing", False):
             return size
         return self.tr("Checking...")
 
-    def _sectionSizeText(self, with_head: bool = False) -> str:
-        """구간 다운로드가 받을 크기 — 인코딩 완료 VOD에서 그 값을 알 때만. 모르면 빈 글이다.
+    def _sectionSizeText(self) -> str:
+        """구간 다운로드의 크기 — 인코딩 완료 VOD에서 그 값을 알 때만. 모르면 빈 글이다.
+
+        **파일 기준이다**: 받을 구간의 합에 조회 때 이미 받아 둔 머리(ftyp · moov 등)를 더한다.
+        구간이 영상 전체를 덮으면 구간 없는 카드의 크기와 같은 숫자다. 대기 · 준비 중 · 받는 중 ·
+        일시정지에서 같은 값을 적는다 — 받기 시작했다고 숫자가 바뀌지 않는다 (#309). 진행률은
+        이 값이 아니라 엔진이 세는 전송량으로 계산한다(``download_viewmodel``).
 
         세그먼트 방식(fMP4 · TS)은 받기 전에 크기를 모른다. 영상 전체 크기를 대신 적지 않는다 —
         구간 카드가 받는 양이 아니다.
-
-        Args:
-            with_head: True면 조회 때 이미 받아 둔 머리(ftyp · moov 등)를 더해 파일 기준으로
-                적는다 — 대기 카드의 요약이 쓴다. 구간이 영상 전체를 덮으면 구간 없는 카드의
-                크기와 같은 숫자가 된다. 받는 동안의 "받은 크기 / 받을 크기"는 엔진이 세는
-                전송량 기준이라 더하지 않는다
         """
         size = getattr(self.item, "section_bytes", None)
         if self.item.is_segment_based or not size:
             return ""
-        if with_head:
-            size += getattr(self.item, "section_head_bytes", None) or 0
-        return self.setSize(size)
+        return self.setSize(size + (getattr(self.item, "section_head_bytes", None) or 0))
 
     def _pathEditable(self) -> bool:
         """이 카드의 저장 위치를 바꿀 수 있는 상태인지 — 대기 상태만이다 (#245).
@@ -1168,8 +1165,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
 
         - 세그먼트 기반(fMP4 · TS): 받은 크기만 — 받을 크기를 미리 알 수 없다
         - 인코딩 완료 VOD 전체: 받은 크기 / 파일 크기
-        - 인코딩 완료 VOD 구간 (#309): 받은 크기 / 받을 구간의 합. 영상 전체 크기를 적지 않는다.
-          자르는 동안에는 받은 크기를 받을 크기로 적는다 — 전송은 끝났다
+        - 인코딩 완료 VOD 구간 (#309): 받은 크기 / 완성 파일 크기(받을 구간의 합 + 머리 —
+          대기 카드가 적던 값 그대로다). 영상 전체 크기를 적지 않는다.
+          자르는 동안에는 받은 크기를 그 크기로 적는다 — 전송은 끝났다
         받을 크기를 모르면 받은 크기만 적는다.
 
         Args:

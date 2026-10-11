@@ -392,24 +392,67 @@ def test_section_card_covering_the_whole_video_shows_the_size_of_the_card_withou
     assert shown(widget.fileSizeLabel) == "Sections 1 · 8:00:00 · 28.99 GB"
 
 
-def test_downloading_section_card_keeps_the_transfer_total_without_the_head(qtbot):
-    """받는 중인 구간 카드의 "받은 크기 / 받을 크기"는 머리를 더하지 않은 전송량이어야 한다.
+@pytest.mark.parametrize(
+    ("state", "preparing", "received", "expected"),
+    [
+        (DownloadState.RUNNING, False, 50 * MB, "50.00 MB / 212.00 MB"),
+        (DownloadState.PAUSED, False, 50 * MB, "50.00 MB / 212.00 MB"),
+        (DownloadState.RUNNING, True, "", "0 B / 212.00 MB"),
+    ],
+    ids=["받는 중", "일시정지", "준비 중"],
+)
+def test_started_section_card_keeps_the_file_size_the_waiting_card_showed(
+    qtbot, state, preparing, received, expected
+):
+    """받기 시작한 구간 카드의 "받은 크기 / 크기"의 크기는 대기 카드가 적던 완성 파일 크기여야 한다.
 
-    받을 합 200 MiB · 머리 12 MiB · 받은 것 50 MiB -> "50.00 MB / 200.00 MB"로 끝난다
+    받을 합 200 MiB · 머리 12 MiB. 대기 카드의 요약은 "· 212.00 MB"로 끝난다
+    -> 받는 중 · 일시정지(받은 것 50 MiB): "50.00 MB / 212.00 MB"로 끝난다
+    -> 준비 중(받은 것 없음): "0 B / 212.00 MB"로 끝난다
     """
+    waiting_window, waiting = _card(
+        "video", DownloadState.WAITING, selections=TWO_SECTIONS, section_bytes=200 * MB
+    )
+    qtbot.addWidget(waiting_window)
+    waiting.item.section_head_bytes = HEAD_12MB
+    waiting.setData(waiting.item, 0)
     window, widget = _card(
         "video",
-        DownloadState.RUNNING,
+        state,
         selections=TWO_SECTIONS,
-        received=50 * MB,
+        received=received,
         section_bytes=200 * MB,
+        preparing=preparing,
     )
     qtbot.addWidget(window)
     widget.item.section_head_bytes = HEAD_12MB
     widget.setData(widget.item, 0)
     _pump()
 
-    assert shown(widget.fileSizeLabel).endswith("50.00 MB / 200.00 MB")
+    assert shown(waiting.fileSizeLabel).endswith("· 212.00 MB")
+    assert shown(widget.fileSizeLabel).endswith(expected)
+
+
+def test_cutting_section_card_shows_the_file_size_on_both_sides(qtbot):
+    """자르는 동안 구간 카드는 받은 크기 자리에도 완성 파일 크기를 적어야 한다.
+
+    받을 합 200 MiB · 머리 12 MiB, 컷 단계(마지막 통지의 받은 크기 199 MiB)
+    -> "212.00 MB / 212.00 MB"로 끝난다
+    """
+    window, widget = _card(
+        "video",
+        DownloadState.RUNNING,
+        selections=TWO_SECTIONS,
+        received=199 * MB,
+        section_bytes=200 * MB,
+        cutting=True,
+    )
+    qtbot.addWidget(window)
+    widget.item.section_head_bytes = HEAD_12MB
+    widget.setData(widget.item, 0)
+    _pump()
+
+    assert shown(widget.fileSizeLabel).endswith("212.00 MB / 212.00 MB")
 
 
 @pytest.mark.parametrize("content_type", ["m3u8", "hls_aes"])
@@ -1716,3 +1759,141 @@ def test_editor_lookup_runs_as_one_background_work(qtbot, monkeypatch, work_bloc
 
     assert seen == [["들어감"]]
     assert work_blocks == ["들어감", "나감"]
+
+
+# ================================================================ 받기 시작한 뒤의 크기 (#309)
+
+
+def _engine_decides(submission, total: int) -> None:
+    """엔진처럼 구간 수 1 · 받을 크기 total을 적고, 준비가 끝났다는 첫 진행 통지를 보낸다."""
+    submission["data"].sections_total = 1
+    submission["data"].total_size = total
+    submission["on_progress"](
+        ProgressEvent(downloaded_size=0, total_size=total, speed=0.0, active_threads=0)
+    )
+
+
+def test_section_card_shows_one_file_size_from_waiting_through_pause_and_restart(
+    qtbot, window, probe
+):
+    """구간 카드의 크기는 대기 · 준비 중 · 받는 중 · 일시정지 · 다시 시작에서 같은 숫자여야 한다.
+
+    1080p에서 구간 0.2~1.0초. 완성 파일 크기 = sections_download_size(색인, 구간) + 머리 1026바이트.
+    전역 다운로드 → (준비 중) → 엔진이 받을 크기(머리를 뺀 값)를 알림 → 일시정지 → 다시 시작
+    -> 대기 카드의 요약과 그 뒤 네 시점의 크기 글이 모두 "<완성 파일 크기> KB"로 끝난다
+    """
+    win, item, engine = window
+    win.downloadViewModel._prepareTimer.setInterval(0)
+    _give_section(qtbot, win, item)
+    widget = win.listView.widgetFor(item)
+    transfer = sections_download_size(probe.heads[1080].index, item.selections)
+    file_size = f"{(transfer + FILE_HEAD) / 1024:.2f} KB"
+    assert f"{transfer / 1024:.2f} KB" != file_size, "전제: 머리를 더하면 글이 달라진다"
+    seen = {"대기": shown(widget.fileSizeLabel)}
+
+    win.downloadButton.click()
+    qtbot.waitUntil(lambda: item.preparing, timeout=3000)
+    _pump()
+    seen["준비 중"] = shown(widget.fileSizeLabel)
+    _engine_decides(engine.submissions[0], transfer)
+    qtbot.waitUntil(lambda: item.transfer_bytes == transfer, timeout=3000)
+    _pump()
+    seen["받는 중"] = shown(widget.fileSizeLabel)
+    win.downloadButton.click()  # 일시정지
+    _pump()
+    assert item.downloadState == DownloadState.PAUSED, "전제: 일시정지됐다"
+    seen["일시정지"] = shown(widget.fileSizeLabel)
+    win.downloadButton.click()  # 다시 시작
+    _pump()
+    assert item.downloadState == DownloadState.RUNNING, "전제: 다시 받는다"
+    seen["다시 시작"] = shown(widget.fileSizeLabel)
+
+    assert {name: text.endswith(file_size) for name, text in seen.items()} == dict.fromkeys(
+        seen, True
+    ), seen
+
+
+def test_section_card_keeps_its_file_size_when_a_retry_receives_less(qtbot, window, probe):
+    """다시 받는 실행에서 엔진이 더 적은 양을 받겠다고 해도 카드의 크기는 완성 파일 크기 그대로여야 한다.
+
+    1080p에서 구간 0.2~1.0초. 첫 실행: 엔진이 받을 크기 T를 알림 → 중단. 둘째 실행: 엔진이 T의
+    절반을 알림(끝낸 구간을 빼고 받는 재시도처럼)
+    -> 둘째 실행의 통지 뒤: section_bytes == T, section_head_bytes == 1026, transfer_bytes == T // 2,
+       크기 글이 "<T + 1026> KB"로 끝난다
+    """
+    win, item, engine = window
+    _give_section(qtbot, win, item)
+    widget = win.listView.widgetFor(item)
+    transfer = sections_download_size(probe.heads[1080].index, item.selections)
+    win.downloadButton.click()
+    _engine_decides(engine.submissions[0], transfer)
+    qtbot.waitUntil(lambda: item.transfer_bytes == transfer, timeout=3000)
+    win.stopDownload()
+    _pump()
+    assert item.downloadState == DownloadState.WAITING, "전제: 중단됐다"
+
+    win.downloadButton.click()
+    _engine_decides(engine.submissions[1], transfer // 2)
+    qtbot.waitUntil(lambda: item.transfer_bytes == transfer // 2, timeout=3000)
+    _pump()
+
+    assert (item.section_bytes, item.section_head_bytes) == (transfer, FILE_HEAD)
+    assert shown(widget.fileSizeLabel).endswith(f"/ {(transfer + FILE_HEAD) / 1024:.2f} KB")
+
+
+class _Fraction:
+    """구간 진행 막대의 대역 — 받은 전송의 진행(0~1)을 적고 그 백분율을 돌려준다."""
+
+    def __init__(self):
+        self.transfers: list[float] = []
+
+    def percent(self, transfer: float, cutting: bool, cut: float) -> int:
+        self.transfers.append(transfer)
+        return int(transfer * 100)
+
+
+def test_section_progress_is_counted_against_the_bytes_to_receive_not_the_file_size():
+    """구간 카드의 진행률은 카드가 적는 완성 파일 크기가 아니라 엔진이 받을 바이트로 계산해야 한다.
+
+    카드: 받을 합 1000 · 머리 1000(적는 크기 2000). 진행 통지: 받은 것 500 / 받을 것 1000
+    -> 막대에 넘긴 전송의 진행 == 0.5, 진행률 == 50 (2000으로 나누면 25다)
+    """
+    item = SimpleNamespace(
+        is_segment_based=False, post_process=False, section_bytes=1000, section_head_bytes=1000
+    )
+    data = SimpleNamespace(sections_total=1, sections_resumed=0, sections_done=0, sections_failed=0)
+    bar = _Fraction()
+
+    _remain, size, _speed, percent = download_viewmodel._section_progress_args(
+        ProgressEvent(downloaded_size=500, total_size=1000, speed=1.0, active_threads=1),
+        data,
+        item,
+        bar,
+    )
+
+    assert bar.transfers == [0.5]
+    assert (percent, size) == (50, "500")
+
+
+def test_engine_total_taken_at_start_is_shown_without_a_head_of_another_moov(qtbot, window, probe):
+    """대기 중에 크기를 세지 못한 카드는 엔진이 정한 크기만 적어야 한다 — 앞 해상도의 머리를 더하지 않는다.
+
+    1080p에서 구간을 확인(머리 1026바이트가 적힌다) → 480p를 고르되 조회가 실패 → 전역 다운로드.
+    엔진이 구간 수 1 · 받을 크기 4321바이트를 알림
+    -> section_bytes == 4321, section_head_bytes is None, 크기 글이 "/ 4.22 KB"로 끝난다
+    """
+    win, item, engine = window
+    _give_section(qtbot, win, item)
+    assert item.section_head_bytes == FILE_HEAD, "전제: 앞 해상도의 머리 길이가 카드에 있다"
+    probe.fail.add(480)
+    _pick(win, item, 480)
+    _settle(qtbot, win)
+    win.downloadButton.click()
+    _pump()
+
+    _engine_decides(engine.submissions[0], 4321)
+    qtbot.waitUntil(lambda: item.transfer_bytes == 4321, timeout=3000)
+    _pump()
+
+    assert (item.section_bytes, item.section_head_bytes) == (4321, None)
+    assert shown(win.listView.widgetFor(item).fileSizeLabel).endswith("/ 4.22 KB")
