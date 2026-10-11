@@ -72,6 +72,10 @@
         <translation>overlap</translation>
     </message>
     <message>
+        <source>Sections {0}</source>
+        <translation>Sections {0}</translation>
+    </message>
+    <message>
         <source>To receive: {0}</source>
         <translation>To receive: {0}</translation>
     </message>
@@ -375,6 +379,10 @@ Part of the video kept arriving incomplete from the server. Try again later.</tr
         <translation>Add a section (up to {0})</translation>
     </message>
     <message>
+        <source>Sum of the section lengths</source>
+        <translation>Sum of the section lengths</translation>
+    </message>
+    <message>
         <source>Digits fill from the right, up to {0} (0100 = 1 minute) · &apos;.&apos; moves to the frame field</source>
         <translation>Digits fill from the right, up to {0} (0100 = 1 minute) · &apos;.&apos; moves to the frame field</translation>
     </message>
@@ -410,6 +418,10 @@ Check your connection and cookies, then open this window again.</translation>
     <message>
         <source>Set to the maximum ({0})</source>
         <translation>Set to the maximum ({0})</translation>
+    </message>
+    <message>
+        <source>Total {0}</source>
+        <translation>Total {0}</translation>
     </message>
     <message>
         <source>Sections add up to {0} — longer than the video ({1})</source>

@@ -287,14 +287,14 @@ def test_segment_cards_show_only_what_they_received(qtbot, content_type, selecti
 def test_waiting_section_card_of_an_encoded_vod_shows_the_section_total(qtbot):
     """대기 중인 인코딩 완료 VOD의 구간 카드는 구간 요약 뒤에 받을 구간의 합을 적어야 한다.
 
-    구간 둘(합 20분), 받을 합 200 MiB -> "Sections 2 · 20:00 · 200.00 MB"
+    구간 둘(합 20분), 받을 합 200 MiB -> "Sections 2 · 200.00 MB"
     """
     window, widget = _card(
         "video", DownloadState.WAITING, selections=TWO_SECTIONS, section_bytes=200 * MB
     )
     qtbot.addWidget(window)
 
-    assert shown(widget.fileSizeLabel) == "Sections 2 · 20:00 · 200.00 MB"
+    assert shown(widget.fileSizeLabel) == "Sections 2 · 200.00 MB"
 
 
 GB = 1024 * MB
@@ -307,16 +307,16 @@ HEAD_12MB = 12 * MB  # 조회 때 받아 둔 머리(ftyp · moov)의 길이로 �
         # 처음~10분 · 4분~20분 · 1분~20분: 합 10 + 16 + 19 = 45분, 합친 범위 0~20분
         (
             (TimeRange(0.0, 600.0), TimeRange(240.0, 1200.0), TimeRange(60.0, 1200.0)),
-            "Sections 3 · overlap · 20:00 · 200.00 MB",
+            "Sections 3 · overlap · 200.00 MB",
         ),
         # 맞닿기만 한 둘(0~10분 · 10~20분): 합 20분 == 합친 범위 20분
-        ((TimeRange(0.0, 600.0), TimeRange(600.0, 1200.0)), "Sections 2 · 20:00 · 200.00 MB"),
-        ((TimeRange(600.0, 1200.0), TimeRange(1800.0, 2400.0)), "Sections 2 · 20:00 · 200.00 MB"),
+        ((TimeRange(0.0, 600.0), TimeRange(600.0, 1200.0)), "Sections 2 · 200.00 MB"),
+        ((TimeRange(600.0, 1200.0), TimeRange(1800.0, 2400.0)), "Sections 2 · 200.00 MB"),
     ],
     ids=["겹친다", "맞닿는다", "떨어져 있다"],
 )
 def test_waiting_section_card_marks_overlap_only_when_sections_overlap(qtbot, selections, summary):
-    """대기 구간 카드의 요약은 구간끼리 겹칠 때만 "overlap"을 붙이고, 길이는 합친 범위로 적어야 한다.
+    """대기 mp4 구간 카드의 요약은 구간끼리 겹칠 때만 "overlap"을 붙여야 한다 — 길이는 적지 않는다.
 
     받을 합 200 MiB(머리 없음). selections -> 요약 == summary
     """
@@ -352,19 +352,59 @@ def test_waiting_section_card_with_overlap_explains_it_in_the_tooltip(qtbot):
 
 
 def test_waiting_section_card_without_overlap_says_nothing_of_overlap_in_the_tooltip(qtbot):
-    """겹침이 없는 대기 구간 카드의 툴팁에는 겹침에 관한 줄이 없어야 한다.
+    """겹침이 없는 대기 mp4 구간 카드의 툴팁은 요약 · 구간 길이의 합 · 누르라는 말뿐이어야 한다.
 
-    구간 둘(10~20분 · 30~40분), 받을 합 200 MiB
-    -> 툴팁에 요약 줄은 있고(툴팁이 살아 있다), "received once" · "add up to" · "To receive"는 없다
+    구간 둘(10~20분 · 30~40분 — 합 20분), 받을 합 200 MiB
+    -> 툴팁의 줄 == ["Sections 2 · 200.00 MB", "Sections add up to 20:00", "Click to edit sections"]
+       ("received once" · "To receive"는 없다)
     """
     window, widget = _card(
         "video", DownloadState.WAITING, selections=TWO_SECTIONS, section_bytes=200 * MB
     )
     qtbot.addWidget(window)
 
-    tooltip = widget.fileSizeLabel.toolTip()
-    assert "Sections 2 · 20:00 · 200.00 MB" in tooltip
-    assert all(text not in tooltip for text in ("received once", "add up to", "To receive"))
+    assert widget.fileSizeLabel.isVisible()
+    assert widget.fileSizeLabel.toolTip().split("\n") == [
+        "Sections 2 · 200.00 MB",
+        "Sections add up to 20:00",
+        "Click to edit sections",
+    ]
+
+
+def test_waiting_mp4_section_card_leaves_the_total_time_out_of_its_summary(qtbot):
+    """대기 중인 mp4 구간 카드의 요약에는 구간 길이가 없어야 한다 — 크기를 몰라도 그렇다.
+
+    구간 둘(합 20분). 받을 합 200 MiB / 모름(None)
+    -> 요약 == "Sections 2 · 200.00 MB" / "Sections 2"
+    """
+    texts = []
+    for section_bytes in (200 * MB, None):
+        window, widget = _card(
+            "video", DownloadState.WAITING, selections=TWO_SECTIONS, section_bytes=section_bytes
+        )
+        qtbot.addWidget(window)
+        assert widget.fileSizeLabel.isVisible()
+        texts.append(shown(widget.fileSizeLabel))
+
+    assert texts == ["Sections 2 · 200.00 MB", "Sections 2"]
+
+
+@pytest.mark.parametrize("content_type", ["m3u8", "hls_aes"])
+def test_waiting_segment_section_card_keeps_the_total_time_and_its_tooltip(qtbot, content_type):
+    """대기 중인 세그먼트 방식의 구간 카드는 요약에 구간 길이를 적고, 툴팁에 길이의 줄을 더하지 않아야 한다.
+
+    구간 둘(10~20분 · 30~40분 — 합 20분)
+    -> 요약 == "Sections 2 · 20:00", 툴팁의 줄 == ["Sections 2 · 20:00", "Click to edit sections"]
+    """
+    window, widget = _card(content_type, DownloadState.WAITING, selections=TWO_SECTIONS)
+    qtbot.addWidget(window)
+
+    assert widget.fileSizeLabel.isVisible()
+    assert shown(widget.fileSizeLabel) == "Sections 2 · 20:00"
+    assert widget.fileSizeLabel.toolTip().split("\n") == [
+        "Sections 2 · 20:00",
+        "Click to edit sections",
+    ]
 
 
 def test_section_card_covering_the_whole_video_shows_the_size_of_the_card_without_sections(qtbot):
@@ -389,7 +429,7 @@ def test_section_card_covering_the_whole_video_shows_the_size_of_the_card_withou
     _pump()
 
     assert shown(plain.fileSizeLabel) == "28.99 GB"
-    assert shown(widget.fileSizeLabel) == "Sections 1 · 8:00:00 · 28.99 GB"
+    assert shown(widget.fileSizeLabel) == "Sections 1 · 28.99 GB"
 
 
 @pytest.mark.parametrize(
@@ -767,7 +807,7 @@ def test_card_says_checking_while_the_section_total_is_counted_in_the_background
     """받을 크기를 세는 동안 카드는 크기 자리에 "Checking..."을 적고, 다 세면 크기로 바꿔야 한다.
 
     크기 세기를 문으로 막아 둔 채 1080p에서 구간을 확인 → 문을 엶
-    -> 막힌 동안: section_bytes is None, 요약 == "Sections 1 · 0:00 · Checking...", 카드는 받은 바이트를 쥔다
+    -> 막힌 동안: section_bytes is None, 요약 == "Sections 1 · Checking...", 카드는 받은 바이트를 쥔다
     -> 연 뒤: section_bytes == 1080p의 색인으로 센 값, 요약이 머리(1026)를 더한 크기(KB)로 끝난다,
        카드는 받은 바이트를 그대로 쥔다(색인으로 바꾸지 않는다)
     """
@@ -783,7 +823,7 @@ def test_card_says_checking_while_the_section_total_is_counted_in_the_background
 
     assert during[0] is None
     assert during[1] is probe.raws[1080]
-    assert label == "Sections 1 · 0:00 · Checking..."
+    assert label == "Sections 1 · Checking..."
     expected = sections_download_size(probe.heads[1080].index, item.selections)
     assert item.section_bytes == expected
     assert shown(win.listView.widgetFor(item).fileSizeLabel).endswith(
@@ -801,7 +841,7 @@ def test_card_stops_saying_checking_when_counting_fails_and_takes_the_engine_tot
 
     크기 세기가 예외를 던지게 바꾸고 구간을 확인. 전역 다운로드 뒤 엔진처럼 구간 수 1 ·
     전체 크기 4321바이트를 적고 진행을 한 번 알림
-    -> 센 뒤: section_bytes is None, section_sizing이 꺼짐, 요약 == "Sections 1 · 0:00"
+    -> 센 뒤: section_bytes is None, section_sizing이 꺼짐, 요약 == "Sections 1"
     -> 진행 통지 뒤: section_bytes == 4321
     """
     win, item, engine = window
@@ -813,7 +853,7 @@ def test_card_stops_saying_checking_when_counting_fails_and_takes_the_engine_tot
     _give_section(qtbot, win, item)
 
     assert item.section_bytes is None and item.section_sizing is False
-    assert shown(win.listView.widgetFor(item).fileSizeLabel) == "Sections 1 · 0:00"
+    assert shown(win.listView.widgetFor(item).fileSizeLabel) == "Sections 1"
 
     win.downloadButton.click()
     _pump()

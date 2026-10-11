@@ -980,6 +980,28 @@ class SectionEditViewModel(QObject):
         start, end = self._pairs[row]
         return format_milliseconds(end - start)
 
+    def _totalFrames(self) -> int:
+        """오류가 없는 행의 길이의 합(프레임) — 걸러 낸 행 · 오류인 행은 세지 않는다."""
+        return sum(
+            frame_index(end, self.fps) - frame_index(start, self.fps)
+            for row, (start, end) in self._pairs.items()
+            if row not in self._errors
+        )
+
+    def totalText(self) -> str:
+        """구간 길이의 합 — "Total HH:MM:SS.mmm". 조회가 끝나기 전에는 빈 글이다 (#309).
+
+        행마다의 길이 표시(``lengthText``)와 같은 기준으로 더한다: 길이가 적히는 행만 센다.
+        오류인 행(시작 ≥ 끝 · 영상 밖 · 중복 · 개수 초과)과 걸러 낸 빈 행은 길이가 적히지 않고
+        합에도 들지 않는다. 빈 시각은 처음 · 끝으로 푼 값이다. 겹치는 자리는 구간마다 센다.
+        더하는 단위는 프레임이다 — 행마다 밀리초로 반올림한 값을 더하면 끝자리가 어긋난다.
+        셀 행이 없으면 0이다.
+        """
+        if self.state != STATE_READY or self.fps is None:
+            return ""
+        seconds = float(self._totalFrames() / frame_rate(self.fps))
+        return self.tr("Total {0}").format(format_milliseconds(seconds))
+
     def totalNoticeText(self) -> str:
         """구간 길이의 합이 영상 길이보다 길 때의 알림. 그렇지 않으면 빈 글 — 오류가 아니다.
 
@@ -992,11 +1014,7 @@ class SectionEditViewModel(QObject):
         """
         if self.state != STATE_READY or self.fps is None or self.duration <= 0:
             return ""
-        total_frames = sum(
-            frame_index(end, self.fps) - frame_index(start, self.fps)
-            for row, (start, end) in self._pairs.items()
-            if row not in self._errors
-        )
+        total_frames = self._totalFrames()
         video_frames = round(self.duration * frame_rate(self.fps))
         if total_frames <= video_frames:
             return ""

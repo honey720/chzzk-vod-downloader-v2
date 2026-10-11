@@ -890,20 +890,29 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     def _sectionSummary(
         self, with_notice: bool = True, warnings_only: bool = False, with_size: bool = True
     ) -> str:
-        """대기 카드의 재생 시간 자리에 적는 구간 요약 — 구간 수와 길이의 합 (#309).
+        """대기 카드의 재생 시간 자리에 적는 구간 요약 (#309).
 
-        길이는 남은 시간과 같은 짧은 표기("3:12" · "1:02:03")로 적는다. 받을 크기를 알면
-        (인코딩 완료 VOD) 그 뒤에 적고, 구간을 다시 맞춘 알림이 있으면 그 뒤에 붙인다 —
-        좁은 폭에서는 ``_fitSectionNotice``가 알림과 크기를 뗀다.
+        - 세그먼트 방식(fMP4 · TS): 구간 수와 길이 — "구간 2개 · 20:00". 받을 크기를 미리 알 수
+          없어 길이로 양을 알린다. 길이는 남은 시간과 같은 짧은 표기("3:12" · "1:02:03")다
+        - 인코딩 완료 VOD(mp4): 구간 수와 크기 — "구간 2개 · 200.00 MB". 길이는 적지 않는다 —
+          툴팁(``_applySectionHint``)과 편집 창의 합계에 있다
+
+        구간을 다시 맞춘 알림이 있으면 그 뒤에 붙인다 — 좁은 폭에서는 ``_fitSectionNotice``가
+        알림과 크기를 뗀다.
         """
         selections = self.item.selections
-        # 길이는 받을 양이다 — 겹치는 자리는 한 번만 받으므로 합친 범위의 길이를 적는다.
-        # 겹침이 없으면 구간 길이의 합과 같다
-        clock = self._clock(self._sectionSpan())
-        if self._sectionsOverlap():
-            marker = self.tr("overlap")  # f-string 안의 tr은 lupdate가 줍지 못한다
-            clock = f"{marker} · {clock}"
-        summary = self.tr("Sections {0} · {1}").format(len(selections), clock)
+        marker = self.tr("overlap") if self._sectionsOverlap() else ""
+        if self.item.is_segment_based:
+            # 길이는 받을 양이다 — 겹치는 자리는 한 번만 받으므로 합친 범위의 길이를 적는다.
+            # 겹침이 없으면 구간 길이의 합과 같다
+            clock = self._clock(self._sectionSpan())
+            if marker:
+                clock = f"{marker} · {clock}"  # f-string 안의 tr은 lupdate가 줍지 못한다
+            summary = self.tr("Sections {0} · {1}").format(len(selections), clock)
+        else:
+            summary = self.tr("Sections {0}").format(len(selections))
+            if marker:
+                summary = f"{summary} · {marker}"
         size = self._sectionSizeNote() if with_size else ""
         if size:
             summary = f"{summary} · {size}"
@@ -1015,7 +1024,14 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         if editable:
             lines = [label.text()]
             if self._sectionCount():
-                lines.extend(self._sectionOverlapDetail())
+                detail = self._sectionOverlapDetail()
+                if not detail and not self.item.is_segment_based:
+                    # mp4 구간 카드는 요약에 길이를 적지 않는다 — 여기서 알린다. 겹침이 있으면
+                    # 겹침의 설명이 같은 줄을 이미 담고 있다
+                    detail = [
+                        self.tr("Sections add up to {0}").format(self._clock(self._sectionTotal()))
+                    ]
+                lines.extend(detail)
                 lines.extend(self._sectionNoticeDetail())
             lines.append(self.tr("Click to edit sections"))
             label.setToolTip("\n".join(lines))

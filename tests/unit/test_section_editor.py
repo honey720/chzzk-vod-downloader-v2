@@ -354,7 +354,7 @@ def test_confirming_three_sections_writes_them_to_the_card_in_row_order(qtbot, t
     """구간 셋을 넣고 확인하면 카드에 행 순서대로 쓰이고 요약이 바뀌어야 한다.
 
     60fps. 행: 00:10:00:00~00:20:00:00, 00:30:00:30~00:31:00:00, 00:00:05:00~00:00:06:00
-    -> selections == ((600, 1200), (1800.5, 1860), (5, 6)), 요약 "Sections 3 · 20:00"
+    -> selections == ((600, 1200), (1800.5, 1860), (5, 6)), 요약 "Sections 3"
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -378,7 +378,7 @@ def test_confirming_three_sections_writes_them_to_the_card_in_row_order(qtbot, t
     )
     assert item.section_frame_rate == Fraction(60)
     # 길이의 합 600 + 59.5 + 1 = 660.5초 → "11:00"(초 아래 버림)
-    assert summary_text(win, item) == "Sections 3 · 11:00"
+    assert summary_text(win, item) == "Sections 3"
 
 
 def test_confirming_the_single_whole_row_keeps_the_card_a_whole_download(qtbot, tmp_path, basis):
@@ -1334,7 +1334,7 @@ def test_same_frame_rate_and_length_change_nothing(qtbot, tmp_path, basis):
     """프레임률 · 길이가 같은 해상도로 바꾸면 구간이 그대로이고 알림이 남지 않아야 한다.
 
     1080p · 720p 모두 60fps · 3600초인 카드에서 10.5167~20.0167초를 정한 뒤 720p를 고름
-    -> 조회가 끝난 뒤 selections가 같은 객체, 요약 == "Sections 1 · 0:09"
+    -> 조회가 끝난 뒤 selections가 같은 객체, 요약 == "Sections 1"
     """
     item = _make_item(str(tmp_path))
     item.unique_reps = [
@@ -1349,7 +1349,7 @@ def test_same_frame_rate_and_length_change_nothing(qtbot, tmp_path, basis):
 
     assert item.selections is before
     assert item.section_refit_fps is None and item.section_check == ""
-    assert summary_text(win, item) == "Sections 1 · 0:09"
+    assert summary_text(win, item) == "Sections 1"
 
 
 def tooltip_of(win: VodDownloader, item: ContentItem) -> str:
@@ -1478,7 +1478,7 @@ def test_a_late_result_for_an_earlier_resolution_is_dropped(qtbot, tmp_path, bas
 
     1080p(60) · 720p(60) · 480p(선언 30) 카드. 480p를 고르고(조회 붙잡음) 곧 720p를 고름.
     720p의 조회(60fps · 3600초)를 먼저 끝내고, 그 뒤에 480p의 조회(25fps · 3000초)를 끝냄
-    -> 끝까지 selections == 처음 정한 구간, section_frame_rate == 60, 요약 == "Sections 1 · 0:09"
+    -> 끝까지 selections == 처음 정한 구간, section_frame_rate == 60, 요약 == "Sections 1"
     """
     item = _make_item(str(tmp_path))
     item.unique_reps = [
@@ -1508,7 +1508,7 @@ def test_a_late_result_for_an_earlier_resolution_is_dropped(qtbot, tmp_path, bas
     assert basis.returned[-2:] == [720, 480], "전제: 480p의 결과가 나중에 와야 한다"
     assert item.selections == before
     assert item.section_frame_rate == Fraction(60)
-    assert summary_text(win, item) == "Sections 1 · 0:09"
+    assert summary_text(win, item) == "Sections 1"
 
 
 def test_an_earlier_result_that_arrives_first_is_dropped_and_the_newer_one_settles(
@@ -1549,7 +1549,7 @@ def test_an_earlier_result_that_arrives_first_is_dropped_and_the_newer_one_settl
 
     assert item.selections == before
     assert item.section_frame_rate == Fraction(60) and item.section_check == ""
-    assert summary_text(win, item) == "Sections 1 · 0:09"
+    assert summary_text(win, item) == "Sections 1"
 
 
 def test_a_result_that_arrives_after_the_download_started_is_dropped(qtbot, tmp_path, basis):
@@ -1606,7 +1606,7 @@ def test_editing_again_clears_the_refit_notice(qtbot, tmp_path, basis):
     """다시 맞춘 알림은 구간을 다시 편집해 확인하면 사라져야 한다.
 
     60fps에서 정한 구간을 480p(30fps)로 옮겨 알림이 뜬 뒤, 편집 창을 열어 확인
-    -> 요약 == "Sections 1 · 0:09"
+    -> 요약 == "Sections 1"
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -1619,7 +1619,7 @@ def test_editing_again_clears_the_refit_notice(qtbot, tmp_path, basis):
     dialog = open_editor(qtbot, win, item)
     press_ok(dialog)
 
-    assert summary_text(win, item) == "Sections 1 · 0:09"
+    assert summary_text(win, item) == "Sections 1"
     assert len(item.selections) == 1
 
 
@@ -1682,7 +1682,7 @@ def test_notice_gives_way_when_it_does_not_fit_in_the_row(qtbot, tmp_path, basis
     """알림까지 붙인 요약이 3행에 안 들어가면 알림을 떼고 요약만 적어야 한다.
 
     구간 하나인 대기 카드의 알림을 어떤 창 폭보다도 긴 글(프레임률 숫자 400자리)로 둠
-    -> 요약 자리의 글 == "Sections 1 · 0:09"(알림 없음), 툴팁에는 알림 문장이 남는다
+    -> 요약 자리의 글 == "Sections 1"(알림 없음), 툴팁에는 알림 문장이 남는다
     -> 고른 해상도 버튼이 제 폭보다 좁게 눌리지 않고, 카드가 목록 폭을 넘지 않는다
     """
     item = _make_item(str(tmp_path))
@@ -1694,7 +1694,7 @@ def test_notice_gives_way_when_it_does_not_fit_in_the_row(qtbot, tmp_path, basis
     win.contentManager.model.notifyChanged(item)
     _pump()
 
-    assert summary_text(win, item) == "Sections 1 · 0:09"
+    assert summary_text(win, item) == "Sections 1"
     tooltip = widget.fileSizeLabel.toolTip()
     assert "Sections were moved to the frames of the new frame rate." in tooltip
     selected = widget._selectedButton
@@ -4169,3 +4169,215 @@ def test_overlapping_rows_without_errors_both_count_in_the_total(qtbot, tmp_path
 
     assert [error_shown(row) for row in dialog._rows] == ["", ""]
     assert total_shown(dialog) == TOTAL_OVER.format("01:20:00.000", "01:00:00.000")
+
+
+# ================================================================ 구간 길이의 합을 버튼 줄 왼쪽에 적는다 (#309)
+
+
+def sum_shown(dialog) -> str:
+    """버튼 줄 왼쪽 끝에 지금 보이는 합계. 없으면 빈 문자열."""
+    return dialog.sumLabel.text() if dialog.sumLabel.isVisible() else ""
+
+
+def test_sum_of_the_row_lengths_is_shown_left_of_the_buttons(qtbot, tmp_path, basis):
+    """편집 창은 버튼 줄 왼쪽에 행 길이의 합을 행 길이와 같은 표기로 적어야 한다.
+
+    60fps · 3600초. 두 행: 00:10:00:00~00:20:00:30(10분 0.5초) / 00:30:00:00~00:31:00:00(1분)
+    -> 행 길이 == ["00:10:00.500", "00:01:00.000"], 합계 == "Total 00:11:00.500"
+    -> 합계가 취소 버튼의 왼쪽, 취소 버튼과 같은 줄에 있다
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+
+    set_rows(dialog, [("00:10:00:00", "00:20:00:30"), ("00:30:00:00", "00:31:00:00")])
+    _pump()
+
+    assert [row.infoLabel.text() for row in dialog._rows] == ["00:10:00.500", "00:01:00.000"]
+    assert sum_shown(dialog) == "Total 00:11:00.500"
+    label, cancel = dialog.sumLabel.geometry(), dialog.cancelButton.geometry()
+    assert label.right() < cancel.left()
+    assert cancel.top() <= label.center().y() <= cancel.bottom()
+
+
+def test_sum_follows_every_change_of_the_rows(qtbot, tmp_path, basis):
+    """칸의 값 · 구간 추가 · 삭제 · 순서 바꿈이 있을 때마다 합계가 바로 바뀌어야 한다.
+
+    60fps · 3600초. 처음: 00:10:00:00~00:20:00:00(10분) / 00:30:00:00~00:31:00:00(1분) -> 11분
+    -> 첫 행의 끝을 00:25:00:00으로(15분): "Total 00:16:00.000"
+    -> 셋째 행 00:40:00:00~00:40:30:00(30초)을 더함: "Total 00:16:30.000"
+    -> 첫 행을 아래로 옮김: 그대로 "Total 00:16:30.000"
+    -> 맨 위 행(1분짜리)을 지움: "Total 00:15:30.000"
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    set_rows(dialog, [("00:10:00:00", "00:20:00:00"), ("00:30:00:00", "00:31:00:00")])
+    _pump()
+    seen = [sum_shown(dialog)]
+
+    type_into(dialog._rows[0].endEdit, "00:25:00:00")
+    leave(dialog._rows[0].endEdit)
+    _pump()
+    seen.append(sum_shown(dialog))
+    set_rows(
+        dialog,
+        [
+            ("00:10:00:00", "00:25:00:00"),
+            ("00:30:00:00", "00:31:00:00"),
+            ("00:40:00:00", "00:40:30:00"),
+        ],
+    )
+    _pump()
+    seen.append(sum_shown(dialog))
+    dialog._rows[0].downButton.click()
+    _pump()
+    seen.append(sum_shown(dialog))
+    dialog._rows[0].deleteButton.click()
+    _pump()
+    seen.append(sum_shown(dialog))
+
+    assert seen == [
+        "Total 00:11:00.000",
+        "Total 00:16:00.000",
+        "Total 00:16:30.000",
+        "Total 00:16:30.000",
+        "Total 00:15:30.000",
+    ]
+
+
+def test_sum_changes_while_a_value_is_being_typed(qtbot, tmp_path, basis):
+    """칸을 떠나지 않아도 친 값이 합계에 바로 반영돼야 한다.
+
+    60fps · 3600초. 행 00:10:00:00~00:20:00:00(10분). 끝 칸에 00:21:00:00을 치고 떠나지 않음
+    -> 합계 == "Total 00:11:00.000"
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    set_rows(dialog, [("00:10:00:00", "00:20:00:00")])
+    _pump()
+    assert sum_shown(dialog) == "Total 00:10:00.000"
+
+    type_into(dialog._rows[0].endEdit, "00:21:00:00")
+    _pump()
+
+    assert sum_shown(dialog) == "Total 00:11:00.000"
+
+
+def test_rows_with_an_error_and_empty_rows_are_left_out_of_the_sum(qtbot, tmp_path, basis):
+    """오류인 행과 완전히 빈 행은 합계에 들지 않아야 한다 — 길이가 적히는 행만 센다.
+
+    60fps · 3600초. 네 행: 00:10:00:00~00:20:00:00(10분) / 00:30:00:00~00:25:00:00(시작이 끝보다
+    늦다) / 01:10:00:00~01:20:00:00(영상 밖) / 완전히 빈 행
+    -> 행 길이 == ["00:10:00.000", "", "", ""], 합계 == "Total 00:10:00.000"
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+
+    set_rows(
+        dialog,
+        [
+            ("00:10:00:00", "00:20:00:00"),
+            ("00:30:00:00", "00:25:00:00"),
+            ("01:10:00:00", "01:20:00:00"),
+            ("", ""),
+        ],
+    )
+    _pump()
+
+    assert [error_shown(row) != "" for row in dialog._rows] == [False, True, True, False]
+    assert [row.infoLabel.text() for row in dialog._rows] == ["00:10:00.000", "", "", ""]
+    assert sum_shown(dialog) == "Total 00:10:00.000"
+
+
+def test_sum_is_added_in_frames_not_in_rounded_row_lengths(qtbot, tmp_path, basis):
+    """합계는 프레임으로 더한 값이어야 한다 — 행마다 밀리초로 반올림한 길이를 더한 값이 아니다.
+
+    60fps · 3600초. 한 프레임짜리 행 셋(00:00:01:00~00:00:01:01 등) — 행 길이는 저마다 "00:00:00.017"
+    -> 합계 == "Total 00:00:00.050" (3프레임 = 0.05초. 0.017을 세 번 더하면 0.051이다)
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+
+    set_rows(
+        dialog,
+        [
+            ("00:00:01:00", "00:00:01:01"),
+            ("00:00:02:00", "00:00:02:01"),
+            ("00:00:03:00", "00:00:03:01"),
+        ],
+    )
+    _pump()
+
+    assert [row.infoLabel.text() for row in dialog._rows] == ["00:00:00.017"] * 3
+    assert sum_shown(dialog) == "Total 00:00:00.050"
+
+
+def test_sum_gives_way_to_the_notice_that_already_carries_it(qtbot, tmp_path, basis):
+    """합이 영상보다 길어 알림이 뜨면 합계 글은 숨고 알림이 그 합을 적어야 한다.
+
+    60fps · 3600초. 행 처음~00:40:00:00, 행 00:20:00:00~끝 (합 80분 > 60분)
+    -> 합계 없음, 알림 == "Sections add up to 01:20:00.000 — longer than the video (01:00:00.000)"
+    -> 둘째 행의 시작을 00:50:00:00으로(합 50분): 알림 없음, 합계 == "Total 00:50:00.000"
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    set_rows(dialog, [("", "00:40:00:00"), ("00:20:00:00", "")])
+    _pump()
+    over = (sum_shown(dialog), total_shown(dialog))
+
+    type_into(dialog._rows[1].startEdit, "00:50:00:00")
+    leave(dialog._rows[1].startEdit)
+    _pump()
+
+    assert over == ("", TOTAL_OVER.format("01:20:00.000", "01:00:00.000"))
+    assert (sum_shown(dialog), total_shown(dialog)) == ("Total 00:50:00.000", "")
+
+
+def test_sum_is_not_shown_until_the_lookup_ends(qtbot, tmp_path, basis):
+    """조회가 끝나기 전에는 합계를 적지 않아야 하고, 끝나면 적어야 한다.
+
+    조회를 막아 둔 채 편집 창을 엶 -> 합계 없음
+    조회를 풂 -> 행 길이 == "01:00:00.000"(하나뿐인 빈 행은 처음~끝이다), 합계 == "Total 01:00:00.000"
+    """
+    basis.gate.clear()
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    click_summary(win, item)
+    dialog = win._sectionDialog
+    _pump()
+    before = sum_shown(dialog)
+
+    basis.gate.set()
+    qtbot.waitUntil(lambda: dialog.viewModel().state != "loading", timeout=3000)
+    _pump()
+
+    assert before == ""
+    assert dialog._rows[0].infoLabel.text() == "01:00:00.000"
+    assert sum_shown(dialog) == "Total 01:00:00.000"
+
+
+def test_dialog_at_its_narrowest_keeps_the_sum_and_both_buttons_inside(qtbot, tmp_path, basis):
+    """창을 가장 좁게 줄여도 합계 · 취소 · 확인이 창 안에 다 보여야 한다.
+
+    60fps · 3600초, 행 00:10:00:00~00:20:00:00. 창 폭을 1로 청함(최소 폭으로 선다)
+    -> 합계의 왼쪽 끝 >= 0, 합계의 폭 >= 그 글의 폭, 취소가 합계의 오른쪽, 확인의 오른쪽 끝 <= 창의 폭
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    set_rows(dialog, [("00:10:00:00", "00:20:00:00")])
+
+    dialog.resize(1, 300)
+    _pump()
+
+    label = dialog.sumLabel
+    assert label.isVisible() and label.text() == "Total 00:10:00.000"
+    assert label.geometry().left() >= 0
+    assert label.width() >= label.fontMetrics().horizontalAdvance(label.text())
+    assert dialog.cancelButton.geometry().left() > label.geometry().right()
+    assert dialog.okButton.geometry().right() <= dialog.width()
