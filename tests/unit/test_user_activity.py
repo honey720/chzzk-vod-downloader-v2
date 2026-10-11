@@ -103,8 +103,6 @@ def _move_window(window: QWidget) -> None:
 INPUTS = {
     "키": lambda w: QTest.keyClick(w, Qt.Key.Key_A),
     "마우스 버튼": lambda w: QTest.mouseClick(w.child, Qt.MouseButton.LeftButton),
-    # 창(QWindow)에 합성 이벤트를 보낸다 — 위젯에 보내면 진짜 커서가 움직인다
-    "마우스 이동": lambda w: QTest.mouseMove(w.windowHandle(), QPoint(30, 30)),
     "휠": lambda w: _wheel(w.child),
     "창 크기 바꾸기": _resize_window,
     "창 옮기기": _move_window,
@@ -128,7 +126,7 @@ def test_user_is_not_interacting_before_any_input(window):
 def test_each_kind_of_input_makes_the_user_interacting(window, kind):
     """앱 창에 입력이 들어오면 조작 중이어야 한다.
 
-    키 · 마우스 버튼 · 마우스 이동 · 휠 · 창 크기 바꾸기 · 창 옮기기를 하나씩 보냄
+    키 · 마우스 버튼 · 휠 · 창 크기 바꾸기 · 창 옮기기를 하나씩 보냄
     -> 보내기 전 user_interacting() is False, 보낸 뒤 True
     """
     assert activity.user_interacting() is False
@@ -142,11 +140,14 @@ def _key(kind: QEvent.Type) -> QEvent:
     return QKeyEvent(kind, Qt.Key.Key_A, Qt.KeyboardModifier.NoModifier)
 
 
-def _mouse(kind: QEvent.Type) -> QEvent:
-    moves = (QEvent.Type.MouseMove, QEvent.Type.NonClientAreaMouseMove)
-    held = Qt.MouseButton.NoButton if kind in moves else Qt.MouseButton.LeftButton
+MOVES = (QEvent.Type.MouseMove, QEvent.Type.NonClientAreaMouseMove)
+
+
+def _mouse(kind: QEvent.Type, held: Qt.MouseButton = Qt.MouseButton.LeftButton) -> QEvent:
+    """마우스 이벤트 하나. 이동 이벤트는 누른 버튼(held)만 싣고, 그 밖의 것은 그 버튼의 이벤트다."""
+    button = Qt.MouseButton.NoButton if kind in MOVES else held
     return QMouseEvent(
-        kind, QPointF(5, 5), QPointF(5, 5), held, held, Qt.KeyboardModifier.NoModifier
+        kind, QPointF(5, 5), QPointF(5, 5), button, held, Qt.KeyboardModifier.NoModifier
     )
 
 
@@ -156,13 +157,11 @@ SINGLE_EVENTS = {
     "MouseButtonPress": lambda: _mouse(QEvent.Type.MouseButtonPress),
     "MouseButtonRelease": lambda: _mouse(QEvent.Type.MouseButtonRelease),
     "MouseButtonDblClick": lambda: _mouse(QEvent.Type.MouseButtonDblClick),
-    "MouseMove": lambda: _mouse(QEvent.Type.MouseMove),
     "NonClientAreaMouseButtonPress": lambda: _mouse(QEvent.Type.NonClientAreaMouseButtonPress),
     "NonClientAreaMouseButtonRelease": lambda: _mouse(QEvent.Type.NonClientAreaMouseButtonRelease),
     "NonClientAreaMouseButtonDblClick": lambda: _mouse(
         QEvent.Type.NonClientAreaMouseButtonDblClick
     ),
-    "NonClientAreaMouseMove": lambda: _mouse(QEvent.Type.NonClientAreaMouseMove),
 }
 
 
@@ -171,12 +170,55 @@ def test_each_input_event_alone_makes_the_user_interacting(window, kind):
     """입력 이벤트는 종류마다 하나만 와도 조작 중이어야 한다.
 
     창 안의 위젯에 KeyPress · KeyRelease · MouseButtonPress · MouseButtonRelease ·
-    MouseButtonDblClick · MouseMove · 창 테두리의 같은 네 가지(NonClientArea…) 가운데 하나만 보냄
+    MouseButtonDblClick · 창 테두리의 같은 세 가지(NonClientArea…) 가운데 하나만 보냄
     -> 보내기 전 False, 보낸 뒤 True
     """
     assert activity.user_interacting() is False
 
     QApplication.sendEvent(window.child, SINGLE_EVENTS[kind]())
+
+    assert activity.user_interacting() is True
+
+
+@pytest.mark.parametrize("kind", MOVES, ids=["창 안", "창 테두리 · 제목 줄"])
+def test_mouse_move_without_a_button_is_not_interaction(window, kind):
+    """버튼을 누르지 않은 마우스 이동은 조작으로 치지 않아야 한다.
+
+    창 안의 위젯에 MouseMove / NonClientAreaMouseMove(누른 버튼 없음)를 20번 보냄
+    -> user_interacting() is False. 그 뒤 키를 하나 누르면 True(필터가 살아 있음)
+    """
+    for _ in range(20):
+        QApplication.sendEvent(window.child, _mouse(kind, Qt.MouseButton.NoButton))
+
+    assert activity.user_interacting() is False
+    QTest.keyClick(window, Qt.Key.Key_A)
+    assert activity.user_interacting() is True
+
+
+def test_mouse_move_over_the_window_without_a_button_is_not_interaction(window):
+    """창(QWindow)에 온 버튼 없는 마우스 이동도 조작으로 치지 않아야 한다.
+
+    창에 합성 마우스 이동을 보냄(진짜 커서는 그대로다) -> user_interacting() is False.
+    그 뒤 창 안의 위젯을 누르면 True
+    """
+    QTest.mouseMove(window.windowHandle(), QPoint(30, 30))
+    QApplication.processEvents()
+
+    assert activity.user_interacting() is False
+    QTest.mouseClick(window.child, Qt.MouseButton.LeftButton)
+    assert activity.user_interacting() is True
+
+
+@pytest.mark.parametrize("kind", MOVES, ids=["창 안", "창 테두리 · 제목 줄"])
+def test_mouse_move_with_a_button_held_is_interaction(window, kind):
+    """버튼을 누른 채 움직이는 마우스는 조작이어야 한다(끌기).
+
+    창 안의 위젯에 MouseMove / NonClientAreaMouseMove(왼쪽 버튼을 누른 채)를 하나 보냄
+    -> 보내기 전 False, 보낸 뒤 True
+    """
+    assert activity.user_interacting() is False
+
+    QApplication.sendEvent(window.child, _mouse(kind, Qt.MouseButton.LeftButton))
 
     assert activity.user_interacting() is True
 

@@ -4,6 +4,10 @@
 3~4배 걸린다. 그래서 **조작하는 동안에만** 쉰다(``core.utils.interaction``). 이 모듈은 그
 "조작하는 동안"을 정한다: 앱 창에 입력이 들어온 뒤 ``INTERACTION_SECONDS`` 동안이다.
 
+입력으로 치는 것은 마우스 버튼 · 휠 · 키 · 창 크기 바꾸기 · 창 옮기기다. **버튼을 누르지 않은
+마우스 이동은 치지 않는다** — 창 위에서 마우스가 지나가기만 해도 해석이 쉬어, 다운로드 준비가
+두 배 넘게 길어졌다(실기: 약 4초 → 12초).
+
 입력은 앱 전체의 이벤트 필터 하나로 본다 — 창이 여럿이어도(메인 창 · 대화상자 · 팝업) 한 곳에서
 알아챈다. 필터는 이벤트를 막지 않는다(늘 거짓을 돌려준다).
 
@@ -12,25 +16,23 @@
 
 import time
 
-from PySide6.QtCore import QCoreApplication, QEvent, QObject
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, Qt
 
 # 마지막 입력 뒤 이 시간(초) 동안을 조작 중으로 본다. 창을 끄는 동안의 입력은 수 ms~수십 ms
 # 간격으로 이어지므로 그 사이가 끊기지 않고, 손을 떼면 이 시간 뒤에 해석이 제 속도로 돌아간다
 INTERACTION_SECONDS = 0.2
 
-# 어느 객체에 오든 입력으로 치는 이벤트 — 마우스 버튼 · 이동 · 휠 · 키. 창의 테두리 · 제목 줄 위의
-# 마우스(NonClientArea…)도 친다 — 창 크기를 끌려고 테두리에 다가갈 때부터 조작 중이 되어, 끌기의
-# 첫 걸음부터 해석이 쉰다(테두리를 잡고 끄는 동안에는 창 크기 변경만 온다)
+# 어느 객체에 오든 입력으로 치는 이벤트 — 마우스 버튼 · 휠 · 키. 창의 테두리 · 제목 줄을 누르는
+# 것(NonClientArea…)도 친다 — 테두리를 잡는 순간부터 조작 중이 되어, 끌기의 첫 걸음부터 해석이
+# 쉰다(테두리를 잡고 끄는 동안에는 창 크기 변경만 온다)
 _INPUT_EVENTS = frozenset(
     {
         QEvent.Type.MouseButtonPress,
         QEvent.Type.MouseButtonRelease,
         QEvent.Type.MouseButtonDblClick,
-        QEvent.Type.MouseMove,
         QEvent.Type.NonClientAreaMouseButtonPress,
         QEvent.Type.NonClientAreaMouseButtonRelease,
         QEvent.Type.NonClientAreaMouseButtonDblClick,
-        QEvent.Type.NonClientAreaMouseMove,
         QEvent.Type.Wheel,
         QEvent.Type.KeyPress,
         QEvent.Type.KeyRelease,
@@ -39,6 +41,9 @@ _INPUT_EVENTS = frozenset(
 # 창(QWindow)에 올 때만 입력으로 치는 이벤트 — 창 크기 바꾸기 · 창 옮기기. 창 안의 위젯도 배치가
 # 바뀔 때마다 같은 이벤트를 받는데(카드가 늘 때 등), 그것은 조작이 아니다
 _WINDOW_EVENTS = frozenset({QEvent.Type.Resize, QEvent.Type.Move})
+# 버튼을 누른 채일 때만 입력으로 치는 이벤트 — 마우스 이동. 누른 채 움직이는 것은 끌기다
+# (스크롤 막대 · 글자 고르기). 누르지 않고 지나가는 것은 조작이 아니다
+_MOVE_EVENTS = frozenset({QEvent.Type.MouseMove, QEvent.Type.NonClientAreaMouseMove})
 
 _last_input = float("-inf")  # 마지막 입력의 시각(``_now``) — 아직 없으면 -inf
 _watch: "_InputWatch | None" = None  # 걸어 둔 필터 — 한 번만 건다
@@ -55,7 +60,11 @@ class _InputWatch(QObject):
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 — Qt의 이름
         global _last_input
         kind = event.type()
-        if kind in _INPUT_EVENTS or (kind in _WINDOW_EVENTS and watched.isWindowType()):
+        if (
+            kind in _INPUT_EVENTS
+            or (kind in _WINDOW_EVENTS and watched.isWindowType())
+            or (kind in _MOVE_EVENTS and event.buttons() != Qt.MouseButton.NoButton)
+        ):
             _last_input = _now()
         return False
 
