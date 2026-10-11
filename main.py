@@ -10,6 +10,7 @@ import config.config as config
 import app.theme as theme
 from app.log_setup import setup_logging
 from app.platform_adapter import enable_responsive_timing
+from app.user_activity import watch_user_input
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +154,8 @@ if __name__ == '__main__':
     enable_responsive_timing()
 
     app = QApplication(sys.argv)
+    # 사용자가 조작하는 동안에는 색인 해석이 조각 사이에서 쉰다 (#309) — 그 "조작 중"을 지켜본다
+    watch_user_input(app)
 
     # 전역 스타일시트 — 위젯이 만들어지기 전에 적용해야 첫 렌더부터 반영된다 (#227)
     # 실행 중 OS 테마 전환 추종은 apply_theme() 안에서 함께 건다 — #227 때는

@@ -35,6 +35,7 @@ from PySide6.QtCore import QObject, Qt, QTimer, Signal
 
 from app.platform_adapter import begin_background_work, end_background_work
 from app.process_memory import log_process_memory
+from app.user_activity import user_interacting
 from app.viewmodels.data import ContentItem
 from app.viewmodels.section_edit_viewmodel import take_section_head, watch_section_head
 from core.api.playback_tracks import StreamSelectionError
@@ -167,7 +168,10 @@ class DownloadViewModel(QObject):
         같이 resolver를 끼운 실제 서비스를 만든다."""
         super().__init__(parent)
         self._service = service or DownloadService(
-            base_url_resolver=resolve_m3u8_base_url, key_resolver=resolve_aes_key
+            base_url_resolver=resolve_m3u8_base_url,
+            key_resolver=resolve_aes_key,
+            # 조작하는 동안에는 색인 해석이 조각 사이에서 쉰다 (#309)
+            user_interacting=user_interacting,
         )
         self.handle = None
         self.task: DownloadTask | None = None
