@@ -178,6 +178,32 @@ SHAPES = {
         ],
         {},
     ),
+    # 키프레임이 가려진 첫 샘플 하나뿐이다 · 청크당 샘플 하나 — 범위가 0번 프레임(표시되는 첫
+    # 프레임)의 샘플에서 시작한다. 가려진 샘플의 수를 잘못 세면 다른 청크에서 시작한다
+    "only-keyframe-is-hidden": lambda: (
+        [
+            TrackSpec(
+                handler=b"vide",
+                timescale=30000,
+                deltas=[1001] * 240,
+                sizes=[300 + (n * 41) % 500 for n in range(240)],
+                chunks=[1] * 240,
+                composition=[1001, 3003, 0, 0] * 60,
+                sync=[1],
+                edits=[(8000, 5005)],
+            ),
+            _audio(380, seed=15, per_chunk=1, edits=[(8000, 2048)]),
+        ],
+        {},
+    ),
+    # 오디오 청크가 파일에서 먼저 놓인다 — 첫 샘플의 위치(머리 길이)가 오디오의 것이다
+    "audio-chunk-first": lambda: (
+        [
+            _audio(940, seed=16, per_chunk=23),
+            _video(1200, seed=17, per_chunk=30, b_frames=True, edits=[(20000, 1000)]),
+        ],
+        {},
+    ),
     # 조립기의 표준 재료 — I B B P 재정렬 · 편집 목록 · 고정 크기 오디오
     "builder-standard": lambda: ([video_spec(), audio_spec()], {}),
 }
@@ -460,3 +486,26 @@ def test_counting_with_an_index_waits_for_its_turn_to_parse():
 
     assert waiting
     assert got == [expected]
+
+
+def test_no_room_for_the_mdat_header_is_refused_like_the_index():
+    """moov와 첫 샘플 사이에 mdat 머리가 들어갈 자리가 없으면 색인으로 셀 때와 같은 실패 키의 Mp4Error여야 한다.
+
+    moov의 끝을 4바이트 뒤로 적은 moov(첫 샘플까지 4바이트 — 머리는 8바이트다), 구간 0.2~0.5초
+    -> 색인으로 셀 때와 같은 실패 키(MP4_UNSUPPORTED) — 크기 · 머리 모두
+    """
+    data = build_mp4([video_spec(), audio_spec()]).data
+    raw = read_mp4_raw(lambda offset, size: data[offset : offset + size])
+    tight = Mp4Raw(
+        moov=raw.moov, moov_range=(raw.moov_range[0], raw.moov_range[1] + 4), prefix=raw.prefix
+    )
+    with pytest.raises(Mp4Error) as expected:
+        sections_sizes(index_mp4(tight).index, [TimeRange(0.2, 0.5)])
+
+    with pytest.raises(Mp4Error) as sizes:
+        moov_sections_sizes(tight, [TimeRange(0.2, 0.5)])
+    with pytest.raises(Mp4Error) as head:
+        moov_head_size(tight)
+
+    assert expected.value.message_key == MP4_UNSUPPORTED
+    assert sizes.value.message_key == head.value.message_key == MP4_UNSUPPORTED
