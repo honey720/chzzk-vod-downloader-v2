@@ -7,6 +7,7 @@
 띄우지 않는다 — subprocess.Popen/os.startfile을 스파이로 바꿔 인자만 본다.
 """
 
+import logging
 import sys
 from pathlib import Path
 
@@ -296,6 +297,53 @@ class TestResponsiveTiming:
             pass
 
         assert calls == [("청함", 1), ("풂", 1), ("청함", 1), ("풂", 1)]
+
+    def test_enabling_on_windows_records_the_switch_interval(self, monkeypatch, timing, caplog):
+        """Windows에서 켜면 그때의 넘김 간격을 기록 한 줄로 남겨야 한다.
+
+        platform.system() == "Windows", 넘김 간격 5ms에서 켬
+        -> app.platform_adapter 로거의 INFO 한 줄 == "화면 반응 설정: GIL 넘김 간격 1ms"
+        """
+        monkeypatch.setattr(adapter.platform, "system", lambda: "Windows")
+        sys.setswitchinterval(0.005)
+
+        with caplog.at_level(logging.DEBUG):
+            adapter.enable_responsive_timing()
+
+        records = [r for r in caplog.records if r.name == "app.platform_adapter"]
+        assert [(r.levelno, r.getMessage()) for r in records] == [
+            (logging.INFO, "화면 반응 설정: GIL 넘김 간격 1ms")
+        ]
+
+    @pytest.mark.parametrize(
+        ("granted", "expected"),
+        [
+            (True, ["타이머 단위 1ms 청함: 받아들여짐", "타이머 단위 1ms 청을 풂"]),
+            (False, ["타이머 단위 1ms 청함: 받아들여지지 않음"]),
+        ],
+        ids=["받아들여짐", "거절됨"],
+    )
+    def test_timer_request_and_release_are_recorded(
+        self, monkeypatch, timing, caplog, granted, expected
+    ):
+        """타이머를 청한 결과와 푼 것을 기록으로 남겨야 한다 — 거절된 청은 풀지 않으므로 푼 줄이 없다.
+
+        Windows에서 켠 뒤 일을 하나 돌림. 청이 받아들여짐 / 거절됨
+        -> 켠 뒤의 app.platform_adapter 로거의 DEBUG 줄 == expected
+        """
+        _calls, answer = timing
+        answer["value"] = granted
+        monkeypatch.setattr(adapter.platform, "system", lambda: "Windows")
+        adapter.enable_responsive_timing()
+
+        with caplog.at_level(logging.DEBUG):
+            with adapter.background_work():
+                pass
+
+        records = [r for r in caplog.records if r.name == "app.platform_adapter"]
+        assert [(r.levelno, r.getMessage()) for r in records] == [
+            (logging.DEBUG, message) for message in expected
+        ]
 
     def test_a_refused_request_is_not_released(self, monkeypatch, timing):
         """타이머의 청이 받아들여지지 않았으면 풀지 않아야 한다.

@@ -20,6 +20,7 @@ Qt에도 대응 API가 없어서, `content/widget.py`의 `requestOpenDir`가 이
 판단했다(#211에서 결정, 여기서 구현하지 않음).
 """
 
+import logging
 import os
 import platform
 import subprocess
@@ -29,6 +30,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 
 import platformdirs
+
+logger = logging.getLogger(__name__)
 
 
 def get_default_download_dir() -> str:
@@ -138,6 +141,7 @@ def enable_responsive_timing() -> None:
         return
     sys.setswitchinterval(_GIL_SWITCH_SECONDS)
     _timing_enabled = True
+    logger.info("화면 반응 설정: GIL 넘김 간격 %gms", sys.getswitchinterval() * 1000)
 
 
 def begin_background_work() -> None:
@@ -152,6 +156,11 @@ def begin_background_work() -> None:
         if _work_count == 1 and _timing_enabled:
             # 모듈 전역을 호출 시점에 조회한다 — 테스트의 monkeypatch 지점
             _timer_requested = _request_timer_resolution(_TIMER_PERIOD_MS)
+            logger.debug(
+                "타이머 단위 %dms 청함: %s",
+                _TIMER_PERIOD_MS,
+                "받아들여짐" if _timer_requested else "받아들여지지 않음",
+            )
 
 
 def end_background_work() -> None:
@@ -164,6 +173,7 @@ def end_background_work() -> None:
         if _work_count == 0 and _timer_requested:
             _timer_requested = False
             _release_timer_resolution(_TIMER_PERIOD_MS)
+            logger.debug("타이머 단위 %dms 청을 풂", _TIMER_PERIOD_MS)
 
 
 @contextmanager

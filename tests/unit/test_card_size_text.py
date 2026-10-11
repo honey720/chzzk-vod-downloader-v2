@@ -39,9 +39,10 @@ from core.api.mp4 import index_mp4, pending_mp4_head, read_mp4_raw
 from core.api.representations import StreamEntry
 from core.models.download_state import DownloadState
 from core.models.events import ProgressEvent
-from core.models.mp4_index import Mp4Head, Mp4Raw, PendingMp4Head
+from core.models.mp4_index import Mp4Raw, PendingMp4Head
 from core.models.plan import TimeRange
 from core.utils.mp4_ranges import sections_download_size
+from core.utils.mp4_section_sizes import moov_sections_sizes
 from core.utils.paths import release_output_paths
 from core.utils.stop import StopRequested, check_stop, stop_requested, stoppable
 from tests.unit.section_input import enter_time
@@ -674,45 +675,67 @@ def test_confirming_sections_computes_the_bytes_the_engine_will_receive(qtbot, w
     )
 
 
-class _GatedIndex:
-    """색인 만들기 대역 — 문을 열 때까지 기다렸다가 제품의 것을 부른다. 부른 횟수를 센다."""
+class _GatedCount:
+    """크기 세기 대역 — 문을 열 때까지 기다렸다가 제품의 것을 부른다. 부른 횟수를 센다.
+
+    대기 카드의 크기 세기는 색인을 만들지 않는다 — 받아 둔 moov의 표에서 센다. 막는 자리는
+    그 함수다(``core.utils.mp4_section_sizes.moov_sections_sizes``).
+    """
 
     def __init__(self):
         self.gate = threading.Event()
         self.calls = 0
 
-    def __call__(self, raw):
+    def __call__(self, raw, selections):
         self.calls += 1
-        assert self.gate.wait(10), "색인 만들기 대역의 문이 열리지 않았다"
-        return index_mp4(raw)
+        assert self.gate.wait(10), "크기 세기 대역의 문이 열리지 않았다"
+        return moov_sections_sizes(raw, selections)
 
 
 @pytest.fixture
-def gated_index(monkeypatch):
-    gated = _GatedIndex()
-    monkeypatch.setattr(mp4_module, "index_mp4", gated)
+def gated_count(monkeypatch):
+    gated = _GatedCount()
+    monkeypatch.setattr(sev, "moov_sections_sizes", gated)
     yield gated
     gated.gate.set()
 
 
+class _CountedIndex:
+    """색인 만들기 대역 — 부른 횟수를 세고 제품의 것을 부른다."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def __call__(self, raw):
+        self.calls += 1
+        return index_mp4(raw)
+
+
+@pytest.fixture
+def counted_index(monkeypatch):
+    counted = _CountedIndex()
+    monkeypatch.setattr(mp4_module, "index_mp4", counted)
+    return counted
+
+
 def test_card_says_checking_while_the_section_total_is_counted_in_the_background(
-    qtbot, window, probe, gated_index
+    qtbot, window, probe, gated_count
 ):
     """받을 크기를 세는 동안 카드는 크기 자리에 "Checking..."을 적고, 다 세면 크기로 바꿔야 한다.
 
-    색인 만들기를 문으로 막아 둔 채 1080p에서 구간을 확인 → 문을 엶
+    크기 세기를 문으로 막아 둔 채 1080p에서 구간을 확인 → 문을 엶
     -> 막힌 동안: section_bytes is None, 요약 == "Sections 1 · 0:00 · Checking...", 카드는 받은 바이트를 쥔다
     -> 연 뒤: section_bytes == 1080p의 색인으로 센 값, 요약이 머리(1026)를 더한 크기(KB)로 끝난다,
-       카드가 쥔 것이 Mp4Head로 바뀐다
+       카드는 받은 바이트를 그대로 쥔다(색인으로 바꾸지 않는다)
     """
     win, item, _engine = window
 
     _give_section(qtbot, win, item, wait_size=False)
-    qtbot.waitUntil(lambda: gated_index.calls == 1, timeout=3000)
+    qtbot.waitUntil(lambda: gated_count.calls == 1, timeout=3000)
     _pump()
     during = (item.section_bytes, item.section_head[1].raw)
     label = shown(win.listView.widgetFor(item).fileSizeLabel)
-    gated_index.gate.set()
+    gated_count.gate.set()
     _wait_size(qtbot, win)
 
     assert during[0] is None
@@ -723,7 +746,8 @@ def test_card_says_checking_while_the_section_total_is_counted_in_the_background
     assert shown(win.listView.widgetFor(item).fileSizeLabel).endswith(
         f"· {(expected + FILE_HEAD) / 1024:.2f} KB"
     )
-    assert isinstance(item.section_head[1], Mp4Head)
+    assert item.section_head[1].raw is probe.raws[1080]
+    assert item.section_head[1].peek() is None
     assert item.section_head[0] == "u1"
 
 
@@ -732,17 +756,17 @@ def test_card_stops_saying_checking_when_counting_fails_and_takes_the_engine_tot
 ):
     """받을 크기를 세다 실패하면 "Checking..."을 내리고, 받기 시작 때 엔진이 정한 값을 적어야 한다.
 
-    색인 만들기가 예외를 던지게 바꾸고 구간을 확인. 전역 다운로드 뒤 엔진처럼 구간 수 1 ·
+    크기 세기가 예외를 던지게 바꾸고 구간을 확인. 전역 다운로드 뒤 엔진처럼 구간 수 1 ·
     전체 크기 4321바이트를 적고 진행을 한 번 알림
     -> 센 뒤: section_bytes is None, section_sizing이 꺼짐, 요약 == "Sections 1 · 0:00"
     -> 진행 통지 뒤: section_bytes == 4321
     """
     win, item, engine = window
 
-    def broken(raw):
-        raise RuntimeError("색인 만들기 실패(대역)")
+    def broken(raw, selections):
+        raise RuntimeError("크기 세기 실패(대역)")
 
-    monkeypatch.setattr(mp4_module, "index_mp4", broken)
+    monkeypatch.setattr(sev, "moov_sections_sizes", broken)
     _give_section(qtbot, win, item)
 
     assert item.section_bytes is None and item.section_sizing is False
@@ -760,22 +784,22 @@ def test_card_stops_saying_checking_when_counting_fails_and_takes_the_engine_tot
 
 
 def test_a_late_section_total_is_dropped_when_the_resolution_changed_meanwhile(
-    qtbot, window, probe, gated_index
+    qtbot, window, probe, gated_count
 ):
     """크기를 세는 동안 해상도가 바뀌면 늦게 온 앞 해상도의 크기를 적지 않아야 한다.
 
-    색인 만들기를 막아 둔 채 1080p에서 구간을 확인, 480p를 고르고 그 조회가 끝난 뒤 문을 엶
+    크기 세기를 막아 둔 채 1080p에서 구간을 확인, 480p를 고르고 그 조회가 끝난 뒤 문을 엶
     -> section_bytes == 480p의 색인으로 센 값(1080p의 값이 아니다), 카드가 쥔 것은 480p의 주소의 것
     """
     win, item, _engine = window
     _give_section(qtbot, win, item, wait_size=False)
-    qtbot.waitUntil(lambda: gated_index.calls == 1, timeout=3000)
+    qtbot.waitUntil(lambda: gated_count.calls == 1, timeout=3000)
 
     _pick(win, item, 480)
     refitter = win.contentManager._sectionRefitter
     qtbot.waitUntil(lambda: refitter.pendingCount() == 0, timeout=5000)
     _pump()
-    gated_index.gate.set()
+    gated_count.gate.set()
     _wait_size(qtbot, win)
 
     expected = sections_download_size(probe.heads[480].index, item.selections)
@@ -785,44 +809,44 @@ def test_a_late_section_total_is_dropped_when_the_resolution_changed_meanwhile(
 
 
 def test_a_late_section_total_is_dropped_when_the_card_was_removed(
-    qtbot, window, probe, gated_index
+    qtbot, window, probe, gated_count
 ):
     """크기를 세는 동안 카드가 지워지면 늦게 온 결과가 카드에 아무것도 쓰지 않아야 한다.
 
-    색인 만들기를 막아 둔 채 구간을 확인, 카드를 지운 뒤 문을 엶
+    크기 세기를 막아 둔 채 구간을 확인, 카드를 지운 뒤 문을 엶
     -> section_bytes is None, section_head is None
     """
     win, item, _engine = window
     _give_section(qtbot, win, item, wait_size=False)
-    qtbot.waitUntil(lambda: gated_index.calls == 1, timeout=3000)
+    qtbot.waitUntil(lambda: gated_count.calls == 1, timeout=3000)
 
     win.contentManager.removeItem(item)
     _pump()
-    gated_index.gate.set()
+    gated_count.gate.set()
     _wait_size(qtbot, win)
 
     assert item.section_bytes is None
     assert item.section_head is None
 
 
-def test_download_started_before_the_index_is_built_hands_the_bytes_to_the_engine(
-    qtbot, window, probe, gated_index
+def test_download_started_before_the_count_ends_hands_the_bytes_to_the_engine(
+    qtbot, window, probe, gated_count
 ):
-    """색인을 만들기 전에 다운로드를 시작하면 받은 바이트가 엔진에 넘어가고, 늦은 크기는 적히지 않아야 한다.
+    """크기를 다 세기 전에 다운로드를 시작하면 받은 바이트가 엔진에 넘어가고, 늦은 크기는 적히지 않아야 한다.
 
-    색인 만들기를 막아 둔 채 구간을 확인, 전역 다운로드, 문을 엶
+    크기 세기를 막아 둔 채 구간을 확인, 전역 다운로드, 문을 엶
     -> content.mp4_pending이 조회가 받은 바이트를 쥔다, content.mp4_head is None, 카드에는 남지 않음,
        section_bytes is None(엔진이 정한 크기를 기다린다)
     """
     win, item, engine = window
     _give_section(qtbot, win, item, wait_size=False)
-    qtbot.waitUntil(lambda: gated_index.calls == 1, timeout=3000)
+    qtbot.waitUntil(lambda: gated_count.calls == 1, timeout=3000)
 
     win.downloadButton.click()
     _pump()
     content = engine.submissions[0]["content"]
     handed = content.mp4_pending.raw
-    gated_index.gate.set()
+    gated_count.gate.set()
     _wait_size(qtbot, win)
 
     assert handed is probe.raws[1080]
@@ -832,20 +856,20 @@ def test_download_started_before_the_index_is_built_hands_the_bytes_to_the_engin
 
 
 def test_a_late_section_total_is_dropped_when_the_card_holds_another_moov(
-    qtbot, window, probe, gated_index
+    qtbot, window, probe, gated_count
 ):
     """크기를 세는 동안 카드가 쥔 moov가 다른 것으로 바뀌면 늦게 온 결과를 적지 않아야 한다.
 
-    색인 만들기를 막아 둔 채 구간을 확인, 카드의 section_head를 같은 주소의 다른 바이트로 바꾼 뒤 문을 엶
-    -> section_bytes is None, 카드가 쥔 것 is 바꿔 둔 바이트(만든 색인으로 바뀌지 않는다)
+    크기 세기를 막아 둔 채 구간을 확인, 카드의 section_head를 같은 주소의 다른 바이트로 바꾼 뒤 문을 엶
+    -> section_bytes is None, 카드가 쥔 것 is 바꿔 둔 바이트
     """
     win, item, _engine = window
     _give_section(qtbot, win, item, wait_size=False)
-    qtbot.waitUntil(lambda: gated_index.calls == 1, timeout=3000)
+    qtbot.waitUntil(lambda: gated_count.calls == 1, timeout=3000)
     other = pending_mp4_head(_mp4_raw(2))
 
     item.section_head = ("u1", other)
-    gated_index.gate.set()
+    gated_count.gate.set()
     _wait_size(qtbot, win)
 
     assert item.section_bytes is None
@@ -870,16 +894,16 @@ def test_confirming_edited_sections_recomputes_the_total(qtbot, window, probe):
 
 
 def test_bytes_handed_to_the_engine_are_dropped_when_the_download_ends(
-    qtbot, window, probe, gated_index
+    qtbot, window, probe, gated_count
 ):
     """엔진에 넘긴, 아직 해석하지 않은 moov는 다운로드가 끝나면 Content에 남지 않아야 한다.
 
-    색인 만들기를 막아 둔 채 구간을 확인, 전역 다운로드(받아 둔 moov가 넘어간다), 완료 통지
+    크기 세기를 막아 둔 채 구간을 확인, 전역 다운로드(받아 둔 moov가 넘어간다), 완료 통지
     -> 통지 전 content.mp4_pending이 조회가 받은 바이트를 쥔다, 끝난 뒤 content.mp4_pending is None
     """
     win, item, engine = window
     _give_section(qtbot, win, item, wait_size=False)
-    qtbot.waitUntil(lambda: gated_index.calls == 1, timeout=3000)
+    qtbot.waitUntil(lambda: gated_count.calls == 1, timeout=3000)
     win.downloadButton.click()
     _pump()
     content = engine.submissions[0]["content"]
@@ -893,42 +917,38 @@ def test_bytes_handed_to_the_engine_are_dropped_when_the_download_ends(
     assert content.mp4_pending is None
 
 
-def test_engine_and_the_background_count_share_one_parse(qtbot, window, probe, gated_index):
-    """확인 직후 받기 시작해 엔진과 크기 계산이 같은 moov를 함께 필요로 해도 해석은 한 번만 돌아야 한다.
+def test_counting_the_section_total_builds_no_index(qtbot, window, probe, counted_index):
+    """대기 카드의 크기를 세는 일은 색인을 만들지 않아야 한다 — 색인은 엔진이 받기 시작할 때 만든다.
 
-    색인 만들기를 막아 둔 채 구간을 확인(크기 계산이 해석 안에 들어가 선다), 전역 다운로드.
-    엔진처럼 다른 스레드에서 넘겨받은 content.mp4_pending.get()을 부르고, 그 스레드가 기다리는
-    동안 문을 엶
-    -> 색인 만들기 호출 1회, 엔진 쪽이 받은 색인 == 1080p의 색인(테스트가 따로 해석한 것과 같은 값)
+    색인 만들기를 세는 대역. 구간을 확인하고 크기를 다 셈 → 480p로 바꿔 다시 셈 → 전역 다운로드.
+    엔진처럼 넘겨받은 content.mp4_pending.get()을 부름
+    -> 다운로드 전: 색인 만들기 0회, 카드에 크기가 있다, 카드가 쥔 moov는 해석되지 않았다
+    -> 엔진이 청한 뒤: 색인 만들기 1회, 받은 색인 == 480p의 색인(테스트가 따로 해석한 것과 같은 값)
     """
     win, item, engine = window
-    _give_section(qtbot, win, item, wait_size=False)
-    qtbot.waitUntil(lambda: gated_index.calls == 1, timeout=3000)
+    _give_section(qtbot, win, item)
+    _pick(win, item, 480)
+    _settle(qtbot, win)
+    before = (counted_index.calls, item.section_bytes, item.section_head[1].peek())
+
     win.downloadButton.click()
     _pump()
-    pending = engine.submissions[0]["content"].mp4_pending
-    got: list = []
-    worker = threading.Thread(target=lambda: got.append(pending.get()))
+    head = engine.submissions[0]["content"].mp4_pending.get()
 
-    worker.start()
-    worker.join(0.3)  # 엔진 쪽이 기다리는 구간을 넓힌다 — 해석이 끝나기 전에는 돌아오지 않는다
-    waiting = worker.is_alive()
-    gated_index.gate.set()
-    worker.join(10)
-    _wait_size(qtbot, win)
-
-    assert waiting, "전제: 엔진 쪽이 해석이 끝나기를 기다렸다"
-    assert gated_index.calls == 1
-    assert got[0].index == probe.heads[1080].index
+    assert before == (
+        0,
+        sections_download_size(probe.heads[480].index, item.selections),
+        None,
+    )
+    assert counted_index.calls == 1
+    assert head.index == probe.heads[480].index
 
 
-def test_download_started_after_the_index_is_built_hands_the_index_to_the_engine(
-    qtbot, window, probe
-):
-    """색인을 만든 뒤에 다운로드를 시작하면 그 색인이 엔진에 넘어가야 한다.
+def test_download_started_after_the_count_ends_hands_the_bytes_to_the_engine(qtbot, window, probe):
+    """크기를 다 센 뒤에 다운로드를 시작해도 엔진에는 받은 바이트가 넘어가야 한다 — 만들어 둔 색인은 없다.
 
     구간을 확인하고 크기를 세는 일이 끝난 뒤 전역 다운로드
-    -> content.mp4_head는 Mp4Head, content.mp4_pending is None
+    -> content.mp4_pending이 조회가 받은 바이트를 쥔다, content.mp4_head is None, 카드에는 남지 않음
     """
     win, item, engine = window
     _give_section(qtbot, win, item)
@@ -937,8 +957,9 @@ def test_download_started_after_the_index_is_built_hands_the_index_to_the_engine
     _pump()
 
     content = engine.submissions[0]["content"]
-    assert isinstance(content.mp4_head, Mp4Head)
-    assert content.mp4_pending is None
+    assert content.mp4_pending.raw is probe.raws[1080]
+    assert content.mp4_head is None
+    assert item.section_head is None
 
 
 def test_reopening_the_editor_hands_the_held_moov_to_the_lookup(qtbot, window, probe, monkeypatch):
@@ -946,7 +967,7 @@ def test_reopening_the_editor_hands_the_held_moov_to_the_lookup(qtbot, window, p
 
     실제 조회 함수를 쓰되 moov 받기를 세는 대역으로 바꿈. 구간을 확인(크기 계산까지 끝남) →
     같은 카드의 편집 창을 다시 엶 → 닫음
-    -> moov 받기 1회(첫 조회뿐), 다시 연 창이 ready가 되고 카드가 쥔 색인은 그대로다
+    -> moov 받기 1회(첫 조회뿐), 다시 연 창이 ready가 되고 카드가 쥔 moov는 그대로다
     """
     win, item, _engine = window
     fetched = []
@@ -959,7 +980,7 @@ def test_reopening_the_editor_hands_the_held_moov_to_the_lookup(qtbot, window, p
     monkeypatch.setattr(section_basis, "fetch_mp4_raw", fetch)
     _give_section(qtbot, win, item)
     held = item.section_head[1]
-    assert isinstance(held, Mp4Head), "전제: 크기를 센 뒤 카드가 색인을 쥔다"
+    assert held.raw is probe.raws[1080], "전제: 크기를 센 뒤에도 카드가 받은 바이트를 쥔다"
 
     QTest.mouseClick(win.listView.widgetFor(item).fileSizeLabel, Qt.MouseButton.LeftButton)
     _pump()
@@ -1106,7 +1127,7 @@ def test_memory_is_logged_at_each_point_of_the_section_download(qtbot, window, m
     """구간을 정해 받는 동안 정해진 시점마다 프로세스 메모리 줄을 순서대로 남겨야 한다.
 
     메모리 읽기를 고정값으로 바꿈. 편집 창에서 구간을 확인 → 전역 다운로드 → 완료 통지
-    -> app.process_memory 로거의 시점 == [조회 끝, 편집 창 닫힘, 색인 해석 끝, 다운로드 시작, 다운로드 끝].
+    -> app.process_memory 로거의 시점 == [조회 끝, 편집 창 닫힘, 다운로드 시작, 다운로드 끝].
     "색인을 놓은 뒤" 줄은 여기서 세지 않는다 — 색인이 사라진 뒤 따로 남는 줄이라 다른 줄과의
     순서가 정해져 있지 않다(tests/unit/test_section_head_release.py가 잰다)
     """
@@ -1129,7 +1150,6 @@ def test_memory_is_logged_at_each_point_of_the_section_download(qtbot, window, m
     assert [r.getMessage() for r in records] == [
         "프로세스 메모리 [조회 끝] RSS 512.0MB",
         "프로세스 메모리 [편집 창 닫힘] RSS 512.0MB",
-        "프로세스 메모리 [색인 해석 끝] RSS 512.0MB",  # 확인 뒤 백그라운드에서 색인을 만들었다
         "프로세스 메모리 [다운로드 시작] RSS 512.0MB",
         "프로세스 메모리 [다운로드 끝] RSS 512.0MB",
     ]
@@ -1229,8 +1249,8 @@ def test_prepare_timer_is_stopped_when_the_work_is_cleaned_up(qtbot, window):
 # ================================================================ 버려질 일은 돌리지 않는다 (#309)
 
 
-class _WatchedIndex:
-    """색인 만들기 대역 — 문을 열 때까지 기다렸다가 제품의 것을 부른다. 끝까지 간 것과 그만둔 것을 센다."""
+class _WatchedCount:
+    """크기 세기 대역 — 문을 열 때까지 기다렸다가 제품의 것을 부른다. 끝까지 간 것과 그만둔 것을 센다."""
 
     def __init__(self):
         self.gate = threading.Event()
@@ -1238,68 +1258,65 @@ class _WatchedIndex:
         self.finished = 0
         self.stopped = 0
 
-    def __call__(self, raw):
+    def __call__(self, raw, selections):
         self.calls += 1
-        assert self.gate.wait(10), "색인 만들기 대역의 문이 열리지 않았다"
+        assert self.gate.wait(10), "크기 세기 대역의 문이 열리지 않았다"
         try:
-            head = index_mp4(raw)
+            sizes = moov_sections_sizes(raw, selections)
         except StopRequested:
             self.stopped += 1
             raise
         self.finished += 1
-        return head
+        return sizes
 
 
 @pytest.fixture
-def watched_index(monkeypatch):
-    watched = _WatchedIndex()
-    monkeypatch.setattr(mp4_module, "index_mp4", watched)
+def watched_count(monkeypatch):
+    watched = _WatchedCount()
+    monkeypatch.setattr(sev, "moov_sections_sizes", watched)
     yield watched
     watched.gate.set()
 
 
 def test_changing_resolution_stops_the_count_of_the_previous_moov(
-    qtbot, window, probe, watched_index
+    qtbot, window, probe, watched_count
 ):
-    """크기를 세는 동안 해상도가 바뀌면 앞 해상도의 색인 해석은 끝까지 돌지 않아야 한다.
+    """크기를 세는 동안 해상도가 바뀌면 앞 해상도의 크기 세기는 끝까지 돌지 않아야 한다.
 
-    색인 만들기를 막아 둔 채 1080p에서 구간을 확인, 480p를 고르고 그 조회가 끝난 뒤 문을 엶
-    -> 문을 열기 전: 색인 만들기에 들어온 것은 1건뿐이다(480p의 해석은 앞 해석이 나가기를 기다린다)
-    -> 문을 연 뒤: 그만둔 해석 1건 · 끝까지 간 해석 1건, section_bytes == 480p의 색인으로 센 값
+    크기 세기를 막아 둔 채 1080p에서 구간을 확인, 480p를 고르고 그 조회가 끝난 뒤 문을 엶
+    -> 그만둔 세기 1건 · 끝까지 간 세기 1건, section_bytes == 480p의 색인으로 센 값
     """
     win, item, _engine = window
     _give_section(qtbot, win, item, wait_size=False)
-    qtbot.waitUntil(lambda: watched_index.calls == 1, timeout=3000)
+    qtbot.waitUntil(lambda: watched_count.calls == 1, timeout=3000)
 
     _pick(win, item, 480)
     refitter = win.contentManager._sectionRefitter
     qtbot.waitUntil(lambda: refitter.pendingCount() == 0, timeout=5000)
     _pump()
-    entered_before_opening = watched_index.calls
-    watched_index.gate.set()
+    watched_count.gate.set()
     _wait_size(qtbot, win)
 
-    assert entered_before_opening == 1
-    assert (watched_index.stopped, watched_index.finished) == (1, 1)
+    assert (watched_count.stopped, watched_count.finished) == (1, 1)
     assert item.section_bytes == sections_download_size(probe.heads[480].index, item.selections)
 
 
-def test_removing_the_card_stops_its_count(qtbot, window, probe, watched_index):
-    """크기를 세는 동안 카드가 지워지면 그 색인 해석은 끝까지 돌지 않아야 한다.
+def test_removing_the_card_stops_its_count(qtbot, window, probe, watched_count):
+    """크기를 세는 동안 카드가 지워지면 그 크기 세기는 끝까지 돌지 않아야 한다.
 
-    색인 만들기를 막아 둔 채 구간을 확인, 카드를 지운 뒤 문을 엶
-    -> 그만둔 해석 1건 · 끝까지 간 해석 0건
+    크기 세기를 막아 둔 채 구간을 확인, 카드를 지운 뒤 문을 엶
+    -> 그만둔 세기 1건 · 끝까지 간 세기 0건
     """
     win, item, _engine = window
     _give_section(qtbot, win, item, wait_size=False)
-    qtbot.waitUntil(lambda: watched_index.calls == 1, timeout=3000)
+    qtbot.waitUntil(lambda: watched_count.calls == 1, timeout=3000)
 
     win.contentManager.removeItem(item)
     _pump()
-    watched_index.gate.set()
+    watched_count.gate.set()
     _wait_size(qtbot, win)
 
-    assert (watched_index.stopped, watched_index.finished) == (1, 0)
+    assert (watched_count.stopped, watched_count.finished) == (1, 0)
 
 
 @pytest.mark.parametrize(
@@ -1308,17 +1325,17 @@ def test_removing_the_card_stops_its_count(qtbot, window, probe, watched_index):
     ids=["같은 moov", "다른 moov"],
 )
 def test_a_new_count_stops_the_previous_one_only_when_the_moov_differs(
-    qtbot, window, probe, watched_index, same_moov, first_is_stopped
+    qtbot, window, probe, watched_count, same_moov, first_is_stopped
 ):
     """같은 카드의 크기 세기를 다시 청하면, 앞 요청이 다른 moov를 세고 있을 때만 그만두게 해야 한다.
 
-    색인 만들기를 막아 둔 채 구간을 확인(첫 요청). 카드가 쥔 moov를 그대로 두거나(같은 moov)
+    크기 세기를 막아 둔 채 구간을 확인(첫 요청). 카드가 쥔 moov를 그대로 두거나(같은 moov)
     새로 싼 것으로 바꾼 뒤(다른 moov) 크기 세기를 다시 청함
     -> 첫 요청의 일이 그만두라는 표시를 받았는지 == first_is_stopped
     """
     win, item, _engine = window
     _give_section(qtbot, win, item, wait_size=False)
-    qtbot.waitUntil(lambda: watched_index.calls == 1, timeout=3000)
+    qtbot.waitUntil(lambda: watched_count.calls == 1, timeout=3000)
     sizer = win.contentManager._sectionSizer
     ((first_job, _moov, _selections),) = sizer._jobs.values()
     if not same_moov:
@@ -1326,7 +1343,7 @@ def test_a_new_count_stops_the_previous_one_only_when_the_moov_differs(
 
     sizer.request(item)
     stopped = first_job.cancelled()
-    watched_index.gate.set()
+    watched_count.gate.set()
     _wait_size(qtbot, win)
 
     assert stopped is first_is_stopped
@@ -1420,23 +1437,24 @@ def test_lookup_stops_between_receiving_the_moov_and_reading_it(monkeypatch):
     assert read == []
 
 
-def test_count_told_to_stop_before_it_starts_does_not_build_the_index(qtbot):
-    """시작하기 전에 그만두라는 표시를 받은 크기 세기는 색인을 만들지 않고 끝을 알려야 한다.
+def test_count_told_to_stop_before_it_starts_counts_nothing(qtbot, monkeypatch):
+    """시작하기 전에 그만두라는 표시를 받은 크기 세기는 세지 않고 끝을 알려야 한다.
 
-    해석 대역을 품은 moov, 일을 만들자마자 그만두게 한 뒤 돌림
-    -> 해석 대역 0번, done (token, None, None) 1번
+    세는 대역 · 해석 대역(부른 것을 적는다), 일을 만들자마자 그만두게 한 뒤 돌림
+    -> 세는 대역 0번, 해석 대역 0번, done (token, False, None) 1번
     """
-    built = []
-    moov = PendingMp4Head(object(), built.append)
+    counted, built = [], []
+    monkeypatch.setattr(sev, "section_sizes_of", lambda *args: counted.append(args))
+    moov = PendingMp4Head(_mp4_raw(1), built.append)
     job = sev.SectionSizeJob(moov, (TimeRange(0.2, 0.5),), "token")
     done = []
-    job.done.connect(lambda token, head, size: done.append((token, head, size)))
+    job.done.connect(lambda token, was_counted, size: done.append((token, was_counted, size)))
 
     job.cancel()
     job.run()
 
-    assert built == []
-    assert done == [("token", None, None)]
+    assert (counted, built) == ([], [])
+    assert done == [("token", False, None)]
 
 
 def test_count_runs_as_one_background_work(qtbot, monkeypatch):
@@ -1559,16 +1577,16 @@ def test_stopped_download_is_no_longer_background_work(qtbot, window, work_marks
 
 
 def test_changing_resolution_stops_the_previous_count_without_waiting_for_the_lookup(
-    qtbot, window, probe, watched_index
+    qtbot, window, probe, watched_count
 ):
     """해상도를 바꾸면, 새 해상도의 조회가 끝나기를 기다리지 않고 곧바로 앞 크기 세기를 그만두게 해야 한다.
 
-    색인 만들기를 막아 둔 채 1080p에서 구간을 확인. 조회도 막아 둔 채 480p를 고름
+    크기 세기를 막아 둔 채 1080p에서 구간을 확인. 조회도 막아 둔 채 480p를 고름
     -> 조회가 아직 도는 동안(결과를 기다리는 조회 1건): 앞 크기 세기가 그만두라는 표시를 받았다
     """
     win, item, _engine = window
     _give_section(qtbot, win, item, wait_size=False)
-    qtbot.waitUntil(lambda: watched_index.calls == 1, timeout=3000)
+    qtbot.waitUntil(lambda: watched_count.calls == 1, timeout=3000)
     sizer = win.contentManager._sectionSizer
     ((first_job, _moov, _selections),) = sizer._jobs.values()
     probe.gate.clear()
@@ -1577,8 +1595,124 @@ def test_changing_resolution_stops_the_previous_count_without_waiting_for_the_lo
     lookups_running = win.contentManager._sectionRefitter.pendingCount()
     stopped = first_job.cancelled()
     probe.gate.set()
-    watched_index.gate.set()
+    watched_count.gate.set()
     _settle(qtbot, win)
 
     assert lookups_running == 1
     assert stopped is True
+
+
+# ================================================================ 색인 없이 센다 (#309)
+
+
+def test_section_sizes_of_counts_unparsed_bytes_like_the_index(monkeypatch):
+    """아직 해석하지 않은 moov로 센 값은 색인으로 센 값과 같아야 하고, 세는 동안 색인을 만들지 않아야 한다.
+
+    구간 0.2~0.5초, 색인 만들기를 부르면 적는 대역
+    -> section_sizes_of(받은 바이트) == section_sizes_of(그 바이트를 해석한 색인), 색인 만들기 0번
+    """
+    raw = _mp4_raw(1)
+    selections = (TimeRange(0.2, 0.5),)
+    expected = sev.section_sizes_of(index_mp4(raw), selections)
+    built = []
+    monkeypatch.setattr(mp4_module, "index_mp4", built.append)
+
+    assert sev.section_sizes_of(pending_mp4_head(raw), selections) == expected
+    assert expected[0] is not None and expected[1] == FILE_HEAD
+    assert built == []
+
+
+def test_section_sizes_of_uses_the_index_once_the_bytes_were_parsed():
+    """그사이 다른 쪽이 색인을 만든 moov는 그 색인으로 세어야 한다 — 바이트는 이미 놓였다.
+
+    받은 바이트를 싼 것에 get()을 한 번 부른 뒤(raw is None) 구간 0.2~0.5초를 셈
+    -> 그 색인으로 센 값과 같다
+    """
+    pending = pending_mp4_head(_mp4_raw(1))
+    head = pending.get()
+    selections = (TimeRange(0.2, 0.5),)
+
+    assert pending.raw is None, "전제: 해석이 끝나 바이트를 놓았다"
+    assert sev.section_sizes_of(pending, selections) == sev.section_sizes_of(head, selections)
+
+
+def test_section_sizes_of_still_gives_the_head_when_unparsed_sections_cannot_be_counted(
+    monkeypatch,
+):
+    """아직 해석하지 않은 moov에서 받을 양을 셀 수 없는 구간이어도 머리 길이는 돌려줘야 한다.
+
+    표에서 세는 함수가 ValueError를 내게 함(구간이 그 영상에 맞지 않을 때의 예외)
+    -> (None, 머리 길이 1026)
+    """
+
+    def unfit(raw, selections):
+        raise ValueError("구간이 영상 밖이다(대역)")
+
+    monkeypatch.setattr(sev, "moov_sections_sizes", unfit)
+
+    assert sev.section_sizes_of(pending_mp4_head(_mp4_raw(1)), (TimeRange(0.2, 0.5),)) == (
+        None,
+        FILE_HEAD,
+    )
+
+
+def test_section_sizes_of_gives_nothing_when_the_unparsed_moov_cannot_be_read():
+    """읽을 수 없는 moov(바이트)면 받을 양도 머리 길이도 None이어야 한다.
+
+    moov 자리에 moov가 아닌 상자를 둔 바이트, 구간 0.2~0.5초 -> (None, None)
+    """
+    raw = _mp4_raw(1)
+    broken = dataclasses.replace(raw, moov=raw.moov[:4] + b"free" + raw.moov[8:])
+
+    assert sev.section_sizes_of(pending_mp4_head(broken), (TimeRange(0.2, 0.5),)) == (None, None)
+
+
+@pytest.fixture
+def work_blocks(monkeypatch):
+    """구간 뷰모델이 백그라운드 일로 세는 블록에 들어가고 나갈 때마다 적는다."""
+    marks: list[str] = []
+
+    @contextlib.contextmanager
+    def counted():
+        marks.append("들어감")
+        try:
+            yield
+        finally:
+            marks.append("나감")
+
+    monkeypatch.setattr(sev, "background_work", counted)
+    return marks
+
+
+def test_refit_lookup_runs_as_one_background_work(qtbot, monkeypatch, work_blocks):
+    """해상도 변경 뒤의 조회 한 건은 도는 동안 백그라운드 일 하나로 세어져야 한다.
+
+    조회 대역(불릴 때 지금까지의 기록을 적어 둔다)을 끼우고 일을 한 번 돌림
+    -> 조회가 불린 순간의 기록 == [들어감], 끝난 뒤 == [들어감, 나감]
+    """
+    seen = []
+    monkeypatch.setattr(
+        section_basis, "probe_section_basis", lambda snapshot: seen.append(list(work_blocks))
+    )
+
+    sev.SectionRefitJob(object(), "token").run()
+
+    assert seen == [["들어감"]]
+    assert work_blocks == ["들어감", "나감"]
+
+
+def test_editor_lookup_runs_as_one_background_work(qtbot, monkeypatch, work_blocks):
+    """편집 창의 조회 한 건은 도는 동안 백그라운드 일 하나로 세어져야 한다.
+
+    조회 대역(불릴 때 지금까지의 기록을 적어 둔다)을 끼우고 일을 한 번 돌림
+    -> 조회가 불린 순간의 기록 == [들어감], 끝난 뒤 == [들어감, 나감]
+    """
+    seen = []
+    monkeypatch.setattr(
+        section_basis, "probe_section_basis", lambda item: seen.append(list(work_blocks))
+    )
+
+    sev.SectionBasisJob(SimpleNamespace(vod_url="https://example.invalid/video/1")).run()
+
+    assert seen == [["들어감"]]
+    assert work_blocks == ["들어감", "나감"]

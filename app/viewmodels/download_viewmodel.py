@@ -36,7 +36,7 @@ from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from app.platform_adapter import begin_background_work, end_background_work
 from app.process_memory import log_process_memory
 from app.viewmodels.data import ContentItem
-from app.viewmodels.section_edit_viewmodel import take_section_head
+from app.viewmodels.section_edit_viewmodel import take_section_head, watch_section_head
 from core.api.playback_tracks import StreamSelectionError
 from core.downloaders.base import PostprocessError
 from core.downloaders.hls_aes_downloader import DecryptionError
@@ -272,8 +272,8 @@ class DownloadViewModel(QObject):
             # 카드에서는 비운다 — 이제 엔진이 들고, 다운로드가 끝나면 함께 사라진다
             moov = take_section_head(item)
             if isinstance(moov, PendingMp4Head):
-                # 아직 색인을 만들지 않았다 — 받아 둔 것을 넘긴다. 엔진이 다시 받지 않고, 받을
-                # 크기를 세는 쪽이 해석하는 중이면 기다려 그 색인을 쓴다(해석은 한 번만 돈다)
+                # 받아 둔 moov의 바이트를 넘긴다 — 엔진이 다시 받지 않고, 준비하면서 색인을
+                # 만든다. 대기 카드는 색인을 만들어 두지 않는다(받을 크기는 표에서 센다)
                 data.content.mp4_pending = moov
             else:
                 data.content.mp4_head = moov
@@ -372,8 +372,15 @@ class DownloadViewModel(QObject):
         실패해 엔진이 남긴 이어받기 기록(``section_retry``)의 moov는 그대로 둔다 — 재시도가 쓴다.
         """
         if self._data is not None:
-            self._data.content.mp4_head = None
-            self._data.content.mp4_pending = None
+            content = self._data.content
+            # 엔진이 준비하며 만든 색인이 실제로 사라지면 프로세스 메모리를 적게 한다 — 대기 카드는
+            # 색인을 만들어 두지 않으므로, 색인은 엔진에 넘긴 moov에서만 생긴다
+            pending = content.mp4_pending
+            watch_section_head(
+                content.mp4_head or (pending.peek() if pending is not None else None)
+            )
+            content.mp4_head = None
+            content.mp4_pending = None
 
     def _showPreparing(self) -> None:
         """준비가 길어지고 있다 — 카드에 "준비 중"을 켠다 (#309). 타이머가 부른다."""
