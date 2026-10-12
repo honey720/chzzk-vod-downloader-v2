@@ -31,6 +31,8 @@ class TrackSpec:
     sync: list[int] | None = None  # stss 샘플 번호(1부터). None이면 상자를 쓰지 않는다
     edits: list[tuple[int, int]] | None = None  # elst (길이[무비 틱], media_time). None이면 없음
     uniform_size: bool = False  # stsz를 고정 크기 칸으로 쓴다(sizes가 모두 같아야 한다)
+    stsd: bytes | None = None  # stsd 상자의 본문. None이면 항목이 없는 표를 쓴다
+    media_duration: int | None = None  # mdhd에 적을 길이(틱). None이면 샘플 길이의 합
 
 
 @dataclass
@@ -68,7 +70,8 @@ def _runs(values: list[int]) -> list[tuple[int, int]]:
 def _trak(spec: TrackSpec, chunk_offsets: list[int], co64: bool) -> bytes:
     stts = full_box(b"stts", struct.pack(">I", len(_runs(spec.deltas)))
                     + b"".join(struct.pack(">II", n, v) for n, v in _runs(spec.deltas)))  # fmt: skip
-    tables = [full_box(b"stsd", struct.pack(">I", 0)), stts]
+    stsd = full_box(b"stsd", struct.pack(">I", 0)) if spec.stsd is None else box(b"stsd", spec.stsd)
+    tables = [stsd, stts]
     if spec.composition is not None:
         runs = _runs(spec.composition)
         tables.append(full_box(b"ctts", struct.pack(">I", len(runs))
@@ -106,7 +109,15 @@ def _trak(spec: TrackSpec, chunk_offsets: list[int], co64: bool) -> bytes:
         )
 
     mdhd = full_box(
-        b"mdhd", struct.pack(">IIII", 0, 0, spec.timescale, sum(spec.deltas)) + bytes(4)
+        b"mdhd",
+        struct.pack(
+            ">IIII",
+            0,
+            0,
+            spec.timescale,
+            sum(spec.deltas) if spec.media_duration is None else spec.media_duration,
+        )
+        + bytes(4),
     )
     hdlr = full_box(b"hdlr", bytes(4) + spec.handler + bytes(12) + b"\x00")
     mdia = box(b"mdia", mdhd + hdlr + box(b"minf", box(b"stbl", b"".join(tables))))
