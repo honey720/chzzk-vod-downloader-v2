@@ -678,6 +678,18 @@ def _copy_command(source_path: str, frames: CutFrames, piece: CutPiece, name: st
     ]  # fmt: skip
 
 
+def _copy_rest_command(source_path: str, frames: CutFrames, first: int, name: str) -> list[str]:
+    """복사 조각 — first(키프레임)부터 입력의 끝까지. 세그먼트 하나짜리 입력의 뒤쪽 GOP에 쓴다."""
+    seek = _start_of(frames, first)  # 여유 없이 키프레임 시각 그대로
+    return [
+        *(["-ss", _seconds(seek)] if seek > 0 else []),
+        "-i", source_path,
+        "-map", "0:v:0", "-an", "-c:v", "copy",
+        "-video_track_timescale", str(frames.timescale),
+        "-f", "mp4", name,
+    ]  # fmt: skip
+
+
 def _audio_command(
     source_path: str, frames: CutFrames, plan: CutPlan, bitrate: int | None
 ) -> list[str]:

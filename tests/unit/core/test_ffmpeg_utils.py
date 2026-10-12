@@ -908,3 +908,37 @@ def test_remux_through_fails_when_the_join_side_fails_after_the_convert_side_end
 
     assert (tmp_path / "out.mp4.made").exists(), "전제: 잇는 쪽이 산출물을 만들었다"
     assert not out.exists()
+
+
+def test_remux_through_returns_the_warnings_of_the_join_side_and_asks_it_for_them(
+    tmp_path, monkeypatch
+):
+    """remux_through는 잇는 ffmpeg를 경고까지 내게 띄우고, 그것이 stderr에 쓴 글을 돌려줘야 한다.
+
+    변환 대역 0 · 잇기 대역 0, 잇기 대역이 stderr에 "DTS mark"를 쓴다
+    -> 돌려준 글에 "DTS mark"가 있다, 잇는 쪽 명령의 -loglevel 값 == "warning"
+    """
+    out = tmp_path / "out.mp4"
+    real = subprocess.Popen
+    commands = []
+    join = (
+        "import sys\n"
+        "open(sys.argv[1], 'wb').write(b'made')\n"
+        "sys.stdin.buffer.read()\n"
+        "sys.stderr.write('DTS mark')\n"
+    )
+    convert = "import shutil, sys\nshutil.copyfileobj(sys.stdin.buffer, sys.stdout.buffer)\n"
+
+    def fake(command, **kwargs):
+        commands.append(list(command))
+        if "-nostdin" in command:
+            return real([sys.executable, "-c", join, str(out)], **kwargs)
+        return real([sys.executable, "-c", convert], **kwargs)
+
+    monkeypatch.setattr(ffmpeg_module.subprocess, "Popen", fake)
+
+    warnings = ffmpeg_module.remux_through(iter([b"abc" * 1000]), [], [], str(out))
+
+    assert "DTS mark" in warnings
+    joined = next(command for command in commands if "-nostdin" in command)
+    assert joined[joined.index("-loglevel") + 1] == "warning"

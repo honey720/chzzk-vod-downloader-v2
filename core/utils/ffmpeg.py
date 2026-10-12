@@ -392,6 +392,24 @@ def remux_stream(chunks: Iterable[bytes], dst_path: str) -> None:
         FFmpegNotFoundError: ffmpeg 실행 파일을 찾지 못한 경우
         RemuxError: ffmpeg가 0이 아닌 코드로 종료했거나 실행 자체가 실패한 경우
     """
+    _copy_piped(chunks, dst_path, ())
+
+
+def extract_audio_stream(chunks: Iterable[bytes], dst_path: str) -> None:
+    """바이트 스트림을 stdin으로 받아 오디오만 재인코딩 없이 mp4로 뽑는다 (#309).
+
+    세그먼트 방식의 구간 다운로드가 쓴다 — 구간의 세그먼트를 한 번 흘려 오디오를 작은 파일로
+    뽑아 두고, 구간 파일을 쓸 때 영상과 합친다. 공급 · 실패 처리는 ``remux_stream``과 같다.
+
+    Raises:
+        FFmpegNotFoundError: ffmpeg 실행 파일을 찾지 못한 경우
+        RemuxError: ffmpeg가 0이 아닌 코드로 종료했거나 실행 자체가 실패한 경우
+    """
+    _copy_piped(chunks, dst_path, ("-vn",))
+
+
+def _copy_piped(chunks: Iterable[bytes], dst_path: str, selection: Sequence[str]) -> None:
+    """stdin의 바이트 스트림을 스트림 복사로 dst_path에 mp4로 쓴다. selection은 스트림을 고르는 옵션이다."""
     exe = get_ffmpeg_exe()
     cmd = [
         exe,
@@ -401,6 +419,7 @@ def remux_stream(chunks: Iterable[bytes], dst_path: str) -> None:
         "-y",
         "-i",
         "pipe:0",
+        *selection,
         "-c",
         "copy",
         "-f",
@@ -463,7 +482,7 @@ def remux_through(
     dst_path: str,
     *,
     cwd: str | None = None,
-) -> None:
+) -> str:
     """바이트 스트림을 변환 ffmpeg에 넣고, 그 출력을 잇는 ffmpeg의 표준 입력으로 이어 dst_path를 만든다 (#309).
 
     세그먼트 방식의 구간 다운로드가 쓴다 — 가운데 세그먼트의 원본 바이트를 그대로 잇는
@@ -483,6 +502,9 @@ def remux_through(
         dst_path: 잇는 ffmpeg가 쓰는 산출물 — 실패하면 지운다
         cwd: 잇는 ffmpeg의 작업 디렉토리(concat 목록의 상대 경로 기준)
 
+    Returns:
+        잇는 ffmpeg가 낸 경고(stderr) — 조각을 잇는 곳의 시각이 어긋났는지 부르는 쪽이 본다
+
     Raises:
         FFmpegNotFoundError: ffmpeg 실행 파일을 찾지 못한 경우
         RemuxError: 두 ffmpeg 가운데 하나가 0이 아닌 코드로 끝났거나 실행 자체가 실패한 경우
@@ -492,7 +514,8 @@ def remux_through(
     head = [exe, "-hide_banner", "-loglevel", "error"]
     try:
         join = subprocess.Popen(
-            [*head, "-nostdin", "-y", *join_args],
+            # 잇는 쪽은 경고까지 받는다 — DTS가 뒤로 가도 ffmpeg는 0으로 끝난다
+            [exe, "-hide_banner", "-loglevel", "warning", "-nostdin", "-y", *join_args],
             stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
@@ -564,6 +587,7 @@ def remux_through(
             f"ffmpeg remux 실패 (변환 exit {codes[0]} · 잇기 exit {codes[1]}): "
             f"{tail.decode(errors='replace').strip()}"
         )
+    return errors.get("join", b"").decode(errors="replace")
 
 
 def run_ffmpeg(

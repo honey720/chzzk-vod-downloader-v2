@@ -121,6 +121,9 @@ class CutResult:
     source: SourceInfo  # 입력에서 읽은 정보
     # 조각을 들여다본 결과 — hybrid_cut(inspect=True)일 때만 채운다
     pieces: tuple[PieceInfo, ...] = ()
+    # 오디오가 구간 끝을 넘어갈 수 있는 길이(초). 오디오를 다시 인코딩하지 않고 복사한 컷은
+    # 구간 끝에 걸친 덩어리를 통째로 넣으므로 그 덩어리 하나의 길이다. 다시 인코딩한 컷은 0
+    audio_overhang: float = 0.0
 
 
 @dataclass(frozen=True)
