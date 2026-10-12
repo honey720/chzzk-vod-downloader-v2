@@ -1727,6 +1727,42 @@ def test_pausing_while_a_section_is_being_cut_holds_the_cut_until_resumed(
         end_all(processes)
 
 
+def test_postprocess_log_time_leaves_out_the_time_paused_during_the_cut(
+    server, tmp_path, monkeypatch
+):
+    """후처리 종료 로그의 시간은 컷 도중 일시정지한 시간을 뺀 값이어야 하고, 그 시간은 따로 넘어와야 한다.
+
+    기본 입력, 구간 하나(프레임 35~80). 머리 재인코딩의 ffmpeg가 뜬 직후 일시정지하고 1초 뒤 재개
+    -> log_postprocess_complete(시간, 크기, 일시정지): 일시정지 >= 0.9초,
+       시간 + 일시정지 <= 후처리를 감싼 실제 시간, 시간 == 시간 구분 줄의 후처리 값,
+       시간 구분 줄의 일시정지 == 같은 값
+    """
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))])
+    paused = []
+
+    def on_launch(command, process) -> None:
+        if command[-1] == "0_head.mp4" and not paused:
+            paused.append(run.data.model.pause())
+            threading.Timer(1.0, run.data.model.resume).start()
+
+    processes = record_processes(monkeypatch, on_launch)
+    try:
+        began = time.perf_counter()
+        run.start()
+        wall = time.perf_counter() - began
+
+        assert paused == [True], "전제: 컷 도중에 일시정지됐다"
+        assert (run.finished, run.failures) == (1, [])
+        ((elapsed, _size, held),) = _logged(run, "log_postprocess_complete")
+        ((_transfer, cut, all_held),) = _logged(run, "log_total_breakdown")
+        assert held >= 0.9
+        assert elapsed + held <= wall
+        assert elapsed == cut
+        assert all_held == held
+    finally:
+        end_all(processes)
+
+
 # ================================================================ 구간 파일을 바로 쓴다
 
 

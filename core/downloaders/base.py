@@ -1006,9 +1006,18 @@ class BaseDownloader(ABC):
                     postprocess_started = tm.time()
                     self.postprocess()
                     if self.state != DownloadState.WAITING:
-                        postprocess_elapsed = tm.time() - postprocess_started
+                        # 후처리 중 일시정지한 시간은 후처리에 든 시간이 아니다 — 빼고, 있었으면
+                        # 따로 넘긴다. 전송 줄 · 시간 구분 줄과 같은 기준이다 (#309)
+                        postprocess_paused = (
+                            self.s.model.paused_seconds - paused_before - transfer_paused
+                        )
+                        postprocess_elapsed = max(
+                            tm.time() - postprocess_started - postprocess_paused, 0.0
+                        )
                         self.logger.log_postprocess_complete(
-                            postprocess_elapsed, self._postprocess_output_size()
+                            postprocess_elapsed,
+                            self._postprocess_output_size(),
+                            *((postprocess_paused,) if postprocess_paused > 0 else ()),
                         )
                 # 후처리 중 중단(stop)됐다면 완료 통지를 생략한다 (#92) —
                 # WAITING → FINISHED는 허용되지 않는 전이라, 무조건 완료
@@ -1021,12 +1030,8 @@ class BaseDownloader(ABC):
                     self.logger.log_download_complete(total_time)
                     # 전체 = 전송 + 후처리 구분 (#110) — 위 완료 줄(형식 불변)이
                     # 전체 시간임을 새 줄이 드러낸다
-                    # 구분의 두 값도 일시정지한 시간을 뺀 것이다 — 전송 줄과 같은 기준이다
+                    # 구분의 두 값도 일시정지한 시간을 뺀 것이다 — 전송 줄 · 후처리 줄에 적은 값 그대로다
                     all_paused = self.s.model.paused_seconds - paused_before
-                    if postprocess_elapsed is not None:
-                        postprocess_elapsed = max(
-                            postprocess_elapsed - (all_paused - transfer_paused), 0.0
-                        )
                     self.logger.log_total_breakdown(
                         transfer_elapsed,
                         postprocess_elapsed,

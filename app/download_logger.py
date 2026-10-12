@@ -253,9 +253,16 @@ class DownloadLogger:
         """후처리 시작을 로깅합니다 (kind: remux 등)."""
         self.info(f"Postprocess started - {kind}")
 
-    def log_postprocess_complete(self, elapsed: float, output_size: int):
-        """후처리 종료를 로깅합니다 — 소요 시간과 최종 산출물 크기."""
-        self.info(f"Postprocess completed in {elapsed:.2f} seconds - Output size: {output_size} bytes")
+    def log_postprocess_complete(self, elapsed: float, output_size: int, paused: float = 0.0):
+        """후처리 종료를 로깅합니다 — 소요 시간과 최종 산출물 크기.
+
+        소요에는 일시정지한 시간이 들어 있지 않다 — 일시정지가 있었으면 그 합을 줄 끝에 따로
+        적는다("(paused: 12.30s)", #309). 앞부분의 형식은 그대로다.
+        """
+        tail = f" (paused: {paused:.2f}s)" if paused > 0 else ""
+        self.info(
+            f"Postprocess completed in {elapsed:.2f} seconds - Output size: {output_size} bytes{tail}"
+        )
 
     def log_total_breakdown(
         self,

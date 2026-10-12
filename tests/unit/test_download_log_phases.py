@@ -330,3 +330,30 @@ def test_failure_stop_line_names_the_phase_and_does_not_blame_the_user(tmp_path,
     written = log_file.read_text(encoding="utf-8")
     assert "Download stopped after a failure during transfer" in written
     assert "by user" not in written
+
+
+def test_postprocess_line_adds_the_paused_time_only_when_there_was_a_pause(tmp_path, monkeypatch):
+    """후처리 종료 줄은 일시정지한 시간이 있으면 끝에 따로 적고, 없으면 이전과 같아야 하며, 요약은 둘 다 읽어야 한다 (#309).
+
+    후처리 5.67초 · 987바이트. 일시정지 3.2초를 넘긴 것과 넘기지 않은 것
+    -> "... - Output size: 987 bytes (paused: 3.20s)" 한 줄과 "... - Output size: 987 bytes"로 끝나는 한 줄
+    -> 일시정지를 적은 줄만 든 로그의 요약: postprocess_seconds == 5.67, postprocess_output_bytes == 987
+    """
+    logger = _make_logger(tmp_path, monkeypatch)
+    logger.log_postprocess_complete(5.67, 987)
+    logger.log_postprocess_complete(5.67, 987, 3.2)
+    log_file = Path(logger.log_file)
+    logger.save_and_close()
+
+    lines = [
+        line
+        for line in log_file.read_text(encoding="utf-8").splitlines()
+        if "Postprocess completed" in line
+    ]
+    base_line = "Postprocess completed in 5.67 seconds - Output size: 987 bytes"
+    assert lines[0].endswith(base_line)
+    assert lines[1].endswith(base_line + " (paused: 3.20s)")
+    only_paused = tmp_path / "paused_only.log"
+    only_paused.write_text(lines[1] + "\n", encoding="utf-8")
+    summary = summarize(only_paused)
+    assert (summary["postprocess_seconds"], summary["postprocess_output_bytes"]) == (5.67, 987)
