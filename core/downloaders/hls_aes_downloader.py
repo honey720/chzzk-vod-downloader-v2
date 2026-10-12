@@ -35,12 +35,13 @@ base_url 해석(#75)과 같은 주입 방식이다.
 - **키는 받을 세그먼트가 있을 때만, 한 번 받는다.** 키가 맞는지 확인하려고 세그먼트를 따로
   받지 않는다 — 엔진이 처음 받는 세그먼트의 복호화 · TS 검사가 그 확인이다. 받을 세그먼트가
   모두 받아 둔 것이면 키를 받지 않는다
-- postprocess: 구간마다 그 구간의 세그먼트를 mp4로 다시 싸 잘라 파일로 만든다
-  (core/utils/ts_cut.py). 하나라도 실패하면 다운로드 전체가 실패다. 다시 싼 파일은 임시
-  폴더에 두고 그 구간을 자르면 바로 지운다
+- postprocess: 구간마다 받은 세그먼트에서 바로 구간 파일을 쓴다(core/utils/ts_cut.py) — 경계
+  GOP만 다시 인코딩하고 가운데 세그먼트는 그대로 흘린다. 긴 구간부터 만들고, 구간 파일로 넘긴
+  세그먼트는 남은 구간이 쓰지 않으면 그 자리에서 지운다. 하나라도 실패하면 다운로드 전체가
+  실패다. 구간마다의 작업 폴더(section_<번호>)는 임시 폴더 안에 두고 그 구간이 끝나면 지운다
 - 쓰는 쪽은 한 번에 하나다 — 구간을 정하는 일(prepare)이 끝난 뒤에 작업자가 시작하고,
   작업자는 세그먼트마다 다른 이름의 파일에 쓴다. 잠금을 두지 않는다
-- 임시 폴더(받은 세그먼트 · 다시 싼 파일)는 구간을 모두 만들면 지운다. 컷이 실패하면
+- 임시 폴더(남은 세그먼트)는 구간을 모두 만들면 지운다. 컷이 실패하면
   남긴다(#92 · #185). 사용자가 중단하면 전체 다운로드와 같이 지운다. 이전 실행이 남긴
   파일은 쓰지 않는다(#190) — ``TsHead.stored``에 적혀 있고 검사를 통과한 것만 쓴다
 - 전체 다운로드(구간 없음)의 경로는 그대로다
@@ -49,11 +50,13 @@ base_url 해석(#75)과 같은 주입 방식이다.
 import dataclasses
 import os
 import shutil
+from collections import Counter
 from fractions import Fraction
 from urllib.parse import urljoin
 
 import requests
 
+import core.downloaders.base as base_module
 import core.downloaders.integrity as integrity
 from core.api.hls import parse_media_playlist
 from core.api.hls_ts import (
@@ -147,7 +150,7 @@ class HlsAesDownloader(BaseDownloader):
         self._resumed: bool = False
         self._wanted: list[int] = []  # 이번 실행이 구간을 자르는 데 쓰는 세그먼트의 인덱스
         self.cut_results: list[CutResult] = []  # 구간마다의 컷 결과 — sections와 같은 순서
-        # 구간마다 컷이 원본으로 삼은(다시 싼 mp4의) 프레임 정보 — 판정이 쓴다
+        # 구간마다 컷에 쓴 프레임 정보(구간의 세그먼트에서 읽은 것) — 판정이 쓴다
         self.cut_frames: list[CutFrames] = []
 
     @property
@@ -500,20 +503,26 @@ class HlsAesDownloader(BaseDownloader):
         return os.path.join(self.temp_dir, name)
 
     def _cut_sections(self) -> None:
-        """구간마다 그 구간의 세그먼트를 mp4로 다시 싸 자른다 (core/utils/ts_cut.py).
+        """구간마다 받은 세그먼트에서 구간 파일을 쓴다 — 넘긴 세그먼트는 곧바로 지운다 (core/utils/ts_cut.py).
 
-        구간 목록 순서대로 자른다. 자르지 못한 구간이 있어도 나머지 구간을 끝까지 자르고,
-        그 뒤에 PostprocessError로 끝낸다 — 임시 폴더(받은 세그먼트)와 만든 구간 파일은
-        남는다. 구간마다의 결과는 공유 데이터의 sections_done · sections_failed에 센다.
-        다시 싼 mp4는 임시 폴더에 두고,
-        그 구간의 컷이 끝나면(성공이든 실패든) 바로 지운다 — 구간이 여럿이어도 쌓이지 않는다.
-        구간 사이에서 중단·일시정지를 확인한다(컷 하나는 중간에 멈추지 않는다).
+        규칙은 fMP4 구간(M3U8Downloader._cut_sections)과 같다. 긴 구간부터 만든다 — 세그먼트를
+        가장 많이 쥔 구간이 먼저 디스크를 비운다. 구간 파일로 넘긴 세그먼트는 남은 구간이 쓰지
+        않으면 그 자리에서 지우고, 경계 조각으로만 읽힌 세그먼트는 그 구간이 만들어진 뒤에
+        지운다. 만들지 못한 구간이 쓰는 세그먼트는 그 구간이 넘긴 것 말고는 지우지 않는다 —
+        다음 실행이 쓴다.
 
-        이전 실행이 끝낸 구간(Content.section_resume)은 자르지 않는다. 자르지 못한 구간이
-        있으면 끝낸 구간과 받아 둔 세그먼트를 공유 데이터의 section_resume에 남긴다.
+        만들지 못한 구간이 있어도 나머지 구간을 끝까지 만들고, 그 뒤에 PostprocessError로
+        끝낸다 — 임시 폴더(남은 세그먼트)와 만든 구간 파일은 남는다. 구간마다의 결과는 공유
+        데이터의 sections_done · sections_failed에 센다. 중단 · 일시정지는 구간 사이에서,
+        그리고 컷이 도는 동안(세그먼트를 넘기는 사이 · 도는 ffmpeg)에 따른다.
+
+        이전 실행이 끝낸 구간(Content.section_resume)은 만들지 않는다. 만들지 못한 구간이
+        있으면 끝낸 구간과 남아 있는 세그먼트를 공유 데이터의 section_resume에 남긴다 — 다음
+        실행은 없는 세그먼트만 다시 받는다.
 
         프레임 정보는 구간을 정할 때 읽어 둔 것을 쓰고, 전송 단계가 받은 세그먼트는 그 파일을
-        읽는다. 넘겨받은 ``TsHead``에는 적지 않는다 — 그 객체에 쓰는 일은 prepare에서 끝난다.
+        읽는다(읽은 것은 들고 있는다 — 파일은 지워질 수 있다). 넘겨받은 ``TsHead``에는 적지
+        않는다 — 그 객체에 쓰는 일은 prepare에서 끝난다.
         """
         head = self._head
         paths = self.s.content.selection_paths
@@ -531,33 +540,44 @@ class HlsAesDownloader(BaseDownloader):
         source = TsSectionSource(head.playlist, segment_at, self._frame_rate)
         failures: list[Exception] = []
         done = set(self._done_before)
-        progress = self._track_cuts(
-            {
-                number: section.last_pts - section.first_pts
-                for number, section in enumerate(self._sections, start=1)
-                if number - 1 not in self._done_before
-            }
+        todo = [n for n in range(len(self._sections)) if n not in self._done_before]
+        lengths = {n: self._sections[n].last_pts - self._sections[n].first_pts for n in todo}
+        progress = self._track_cuts({n + 1: lengths[n] for n in todo})
+        # 세그먼트마다 그것을 쓰는, 아직 만들어지지 않은 구간의 수
+        uses = Counter(
+            index
+            for n in todo
+            for index in range(self._sections[n].first_segment, self._sections[n].last_segment + 1)
         )
-        for number, (section, output_path) in enumerate(zip(self._sections, paths), start=1):
-            if number - 1 in self._done_before:
-                continue  # 이전 실행이 만든 구간 — 다시 만들지 않는다
+        finished: dict[int, tuple[CutResult, CutFrames]] = {}
+        for turn, position in enumerate(sorted(todo, key=lambda n: (-lengths[n], n)), start=1):
+            number = position + 1  # 구간 번호(1부터 — 구간 목록의 순서)
+            section, output_path = self._sections[position], paths[position]
             if self.state == DownloadState.PAUSED:
                 self.s._pause_event.wait()
             if self.state == DownloadState.WAITING:
                 return  # 정리(임시 폴더·만든 구간 파일 삭제)는 run()의 중단 경로가 한다
+            indexes = range(section.first_segment, section.last_segment + 1)
             stages: list[tuple[str, float]] = []
+
+            def drop_fed(place: int, first: int = section.first_segment) -> None:
+                # 구간 파일로 다 넘어간 세그먼트 — 다른 구간이 쓰지 않으면 더 읽을 일이 없다
+                if uses[first + place] == 1:
+                    base_module._remove_fed_segment(self._segment_path(first + place))
+
             try:
-                indexes = range(section.first_segment, section.last_segment + 1)
                 ts_frames = source.frames_of(
                     section.first_segment, section.last_segment, section.origin
                 )
                 result, frames = cut_ts_section(
-                    [self._segment_path(index) for index in indexes],
+                    os.path.join(self.temp_dir, f"section_{number}"),
+                    [segment_at(index) for index in indexes],
                     ts_frames,
+                    [self._segment_path(index) for index in indexes],
+                    output_path,
                     section.first_pts,
                     section.last_pts,
-                    output_path,
-                    os.path.join(self.temp_dir, f"section_{number}.mp4"),
+                    on_fed=drop_fed,
                     inspect=self._inspect_cuts,
                     on_stage=self._stage_recorder(stages),
                     on_progress=progress.section(number),
@@ -567,20 +587,28 @@ class HlsAesDownloader(BaseDownloader):
             except CutCancelled:
                 return  # 컷이 도는 동안 중단됐다 — 정리는 run()의 중단 경로가 한다
             except (CutError, TsError) as e:
-                # 이 구간은 자르지 못했다 — 나머지 구간은 끝까지 자른다
-                self.logger.log_error("Cut failed — segments preserved for retry", e)
+                # 이 구간은 만들지 못했다 — 나머지 구간은 끝까지 만든다
+                self.logger.log_error("Cut failed — remaining segments preserved for retry", e)
                 failures.append(e)
                 self.s.sections_failed += 1
             else:
-                self.cut_results.append(result)
-                self.cut_frames.append(frames)
+                finished[position] = (result, frames)
+                # 판정이 구간 목록의 순서로 읽는다 — 만든 순서가 아니다
+                self.cut_results[:] = [finished[n][0] for n in sorted(finished)]
+                self.cut_frames[:] = [finished[n][1] for n in sorted(finished)]
                 self._made_sections.append(output_path)
                 self.s.sections_done += 1
-                done.add(number - 1)
+                done.add(position)
+                for index in indexes:
+                    uses[index] -= 1
+                    if not uses[index]:  # 경계 조각으로만 읽힌 것까지 — 이제 쓰는 구간이 없다
+                        base_module._remove_fed_segment(self._segment_path(index))
             self._log_cut_stages(number, stages)
             # 병합 진행(세그먼트 수 기반)을 구간 수에 비례해 올린다 — 어댑터의 분모는
             # 받은 세그먼트 수다(TS 경로에는 초기화 세그먼트가 없다)
-            self.s.merged_segments = self.s.max_threads * number // len(self._sections)
+            self.s.merged_segments = (
+                self.s.max_threads * (len(self._done_before) + turn) // len(self._sections)
+            )
             progress.finish(number)
             self._on_progress(
                 ProgressEvent(
@@ -597,15 +625,19 @@ class HlsAesDownloader(BaseDownloader):
             if os.path.exists(paths[number])
         )
         if failures:
+            kept = {
+                index
+                for index in set(head.stored) | set(self._wanted)
+                if os.path.exists(self._segment_path(index))
+            }
             self.s.section_resume = SectionResume(
                 selections=tuple(self.s.content.selections),
                 paths=tuple(paths),
                 done=frozenset(done),
-                # 넘겨받은 것에 적지 않고 새로 만든다 — 전송 단계가 받은 세그먼트를 더한다.
-                # 다음 실행은 쓰기 전에 파일마다 다시 확인한다. 키는 들어 있지 않다
-                ts_head=dataclasses.replace(
-                    head, segment_dir=self.temp_dir, stored=set(head.stored) | set(self._wanted)
-                ),
+                # 넘겨받은 것에 적지 않고 새로 만든다. 남아 있는 세그먼트만 적는다 — 구간
+                # 파일로 넘긴 것은 지워졌다. 다음 실행은 쓰기 전에 파일마다 다시 확인한다.
+                # 키는 들어 있지 않다
+                ts_head=dataclasses.replace(head, segment_dir=self.temp_dir, stored=kept),
             )
             raise PostprocessError(
                 f"후처리(cut) 실패: 구간 {len(failures)}개 — {failures[0]}"

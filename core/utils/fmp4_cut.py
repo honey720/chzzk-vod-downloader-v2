@@ -23,6 +23,11 @@
 
 세그먼트는 통째로 메모리에 올리지 않는다 — 프레임 정보는 moof만 골라 읽고, 본문은 고정 크기
 조각으로 옮긴다.
+
+절차(``cut_from_segments``)는 세그먼트의 형식을 모른다. 형식에 따라 다른 것 — 프레임 정보를
+읽는 법 · 경계 세그먼트를 ffmpeg가 탐색할 수 있는 입력으로 만드는 법 · 뽑아 둔 오디오의
+기준 시각 — 은 ``SegmentSource``로 받는다. TS(암호화 VOD)의 구간도 같은 절차를 쓴다
+(``core/utils/ts_cut.py``).
 """
 
 import os
@@ -30,6 +35,7 @@ import shutil
 import time
 from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Iterator, Sequence
+from dataclasses import dataclass
 from itertools import accumulate
 
 from core.api.fmp4 import build_fmp4_index, fmp4_origin
@@ -65,6 +71,22 @@ def frame_at(frames: CutFrames, pts: float) -> int:
     if position < len(frames.frame_pts) and abs(frames.frame_pts[position] - pts) <= _PTS_TOLERANCE:
         return position
     raise CutError(CUT_FAILED, f"받은 세그먼트에 PTS {pts:.6f}초인 프레임이 없다")
+
+
+@dataclass(frozen=True)
+class SegmentSource:
+    """구간의 세그먼트에서 읽은 것 — 세그먼트의 형식(fMP4 · TS)에 따라 만드는 법이 다르다."""
+
+    frames: CutFrames  # 구간의 세그먼트 전체의 프레임 정보 — 번호는 넘긴 세그먼트들 기준이다
+    frame_counts: Sequence[int]  # 세그먼트마다의 영상 프레임 수
+    key_starts: Sequence[bool]  # 세그먼트마다 — 키프레임으로 시작하는가(영상이 없으면 참)
+    prefix: bytes  # 세그먼트들 앞에 한 번 넘기는 바이트 — fMP4의 초기화 세그먼트. 없으면 빈 것
+    # (만들 파일 이름, 세그먼트의 자리) → (ffmpeg가 탐색할 수 있는 입력 파일, 그 파일의 프레임 정보).
+    # 경계 조각을 만들 세그먼트에만 부른다. 파일은 작업 폴더에 만든다
+    boundary: Callable[[str, int], tuple[str, CutFrames]]
+    # 세그먼트를 흘려 뽑은 오디오 파일의 0초가 frames의 시각으로 언제인가. 오디오가 없으면 None
+    audio_origin: float | None
+    audio_overhang: float  # 오디오 덩어리 하나의 길이(초) — 구간 끝에 걸친 덩어리가 넘어가는 만큼
 
 
 def cut_fmp4_section(
@@ -105,6 +127,90 @@ def cut_fmp4_section(
         CutCancelled: should_stop이 참을 돌려줘 그만둔 경우
         Mp4Error: 세그먼트의 moof를 해석하지 못한 경우(``core.api.mp4``)
     """
+    paths = list(segment_paths)
+    init = head.init
+
+    def load() -> SegmentSource:
+        # 프레임 정보는 moof만 골라 읽는다 — 본문은 읽지 않는다
+        parsed = [read_segment_file(path, init) for path in paths]
+        index = build_fmp4_index(init, parsed, section.origin)
+        input_start = float(fmp4_origin(init, parsed[0]) - section.origin)
+        frames = cut_frames_from_fmp4(init, parsed, index, input_start)
+        has_audio = init.audio is not None and frames.audio_start is not None
+        # 구간 끝에 걸친 오디오 덩어리는 통째로 들어간다 — 그 하나의 길이
+        ticks = (
+            next((s.audio.durations[-1] for s in reversed(parsed) if s.audio.durations), 0)
+            if has_audio
+            else 0
+        )
+        return SegmentSource(
+            frames=frames,
+            frame_counts=tuple(len(segment.video.sizes) for segment in parsed),
+            key_starts=tuple(
+                not segment.video.sizes
+                or bool(segment.video.sync_samples and segment.video.sync_samples[0] == 0)
+                for segment in parsed
+            ),
+            prefix=head.init_data,
+            boundary=lambda name, position: (
+                _joined(work_dir, name, head, paths[position]),
+                _segment_frames(head, parsed[position], section),
+            ),
+            # 뽑아 둔 오디오는 입력의 시작부터 센다
+            audio_origin=frames.input_start if has_audio else None,
+            audio_overhang=ticks / init.audio.timescale if has_audio else 0.0,
+        )
+
+    return cut_from_segments(
+        work_dir,
+        load,
+        section.first_pts,
+        section.last_pts,
+        paths,
+        output_path,
+        on_fed=on_fed,
+        inspect=inspect,
+        on_stage=on_stage,
+        on_progress=on_progress,
+        should_stop=should_stop,
+        should_pause=should_pause,
+    )
+
+
+def cut_from_segments(
+    work_dir: str,
+    load: Callable[[], SegmentSource],
+    first_pts: float,
+    last_pts: float,
+    segment_paths: Sequence[str],
+    output_path: str,
+    *,
+    on_fed: Callable[[int], None] | None = None,
+    inspect: bool = False,
+    on_stage: Callable[[str, float], None] | None = None,
+    on_progress: Callable[[float], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
+    should_pause: Callable[[], bool] | None = None,
+) -> tuple[CutResult, CutFrames]:
+    """받아 둔 세그먼트에서 구간 하나를 output_path에 mp4로 쓴다 — 형식과 무관한 절차다.
+
+    Args:
+        work_dir: 조각 파일 · 오디오 임시 파일을 둘 폴더. 비우고 쓰고, 끝나면 지운다
+        load: 세그먼트에서 프레임 정보 등을 읽어 돌려주는 함수 — ``read`` 단계로 잰다.
+            작업 폴더가 만들어진 뒤에 한 번 부른다
+        first_pts: 구간 첫 프레임의 PTS — ``load``가 준 프레임 정보의 시각
+        last_pts: 구간 끝 프레임의 PTS
+        segment_paths: 구간의 세그먼트 파일 — 이어지는 순서대로
+        output_path: 만들 구간 파일. 실패하면 남기지 않는다
+        on_fed · inspect · on_stage · on_progress · should_stop · should_pause:
+            ``cut_fmp4_section``과 같다
+
+    Returns:
+        (컷 결과, ``load``가 준 프레임 정보)
+
+    Raises:
+        CutError · CutCancelled: ``cut_fmp4_section``과 같다. ``load``가 던진 예외는 그대로 나간다
+    """
     token = hc._stop_check.set(should_stop)
     pause_token = hc._pause_check.set(should_pause)
     output_path = os.path.abspath(output_path)
@@ -112,8 +218,8 @@ def cut_fmp4_section(
     os.makedirs(work_dir)
     try:
         return _cut(
-            work_dir, head, section, list(segment_paths), output_path, on_fed, inspect, on_stage,
-            on_progress,
+            work_dir, load, first_pts, last_pts, list(segment_paths), output_path, on_fed,
+            inspect, on_stage, on_progress,
         )  # fmt: skip
     except BaseException:
         if os.path.exists(output_path):
@@ -139,8 +245,9 @@ def _hold() -> None:
 def _feed(
     init_data: bytes, paths: Sequence[str], on_each: Callable[[int], None] | None = None
 ) -> Iterator[bytes]:
-    """초기화 세그먼트와 그 세그먼트들의 바이트를 고정 크기 조각으로 낸다."""
-    yield init_data
+    """앞에 넘길 바이트(초기화 세그먼트)와 그 세그먼트들의 바이트를 고정 크기 조각으로 낸다."""
+    if init_data:
+        yield init_data
     for number, path in enumerate(paths):
         for chunk in read_in_chunks(path, _COPY_CHUNK_BYTES):
             _hold()
@@ -168,8 +275,9 @@ def _joined(work_dir: str, name: str, head: Fmp4Head, segment_path: str) -> str:
 
 def _cut(
     work_dir: str,
-    head: Fmp4Head,
-    section: Fmp4Section,
+    load: Callable[[], SegmentSource],
+    first_pts: float,
+    last_pts: float,
     paths: list[str],
     output_path: str,
     on_fed: Callable[[int], None] | None,
@@ -177,48 +285,44 @@ def _cut(
     on_stage: Callable[[str, float], None] | None,
     on_progress: Callable[[float], None] | None,
 ) -> tuple[CutResult, CutFrames]:
-    init = head.init
     started = time.perf_counter()
     try:
-        # 프레임 정보는 moof만 골라 읽는다 — 본문은 읽지 않는다
-        parsed = [read_segment_file(path, init) for path in paths]
-        index = build_fmp4_index(init, parsed, section.origin)
-        input_start = float(fmp4_origin(init, parsed[0]) - section.origin)
-        frames = cut_frames_from_fmp4(init, parsed, index, input_start)
+        given = load()
     finally:
         if on_stage is not None:
             on_stage("read", time.perf_counter() - started)
-    first, last = frame_at(frames, section.first_pts), frame_at(frames, section.last_pts)
-    offsets = [0, *accumulate(len(segment.video.sizes) for segment in parsed)]
+    frames = given.frames
+    first, last = frame_at(frames, first_pts), frame_at(frames, last_pts)
+    offsets = [0, *accumulate(given.frame_counts)]
     if offsets[-1] != len(frames.frame_pts):
         raise CutError(CUT_UNSUPPORTED, "세그먼트의 영상 샘플 수와 표시되는 프레임 수가 다르다")
-    for number, segment in enumerate(parsed):
-        if segment.video.sizes and (
-            not segment.video.sync_samples or segment.video.sync_samples[0]
-        ):
+    for number, starts_with_key in enumerate(given.key_starts):
+        if not starts_with_key:
             raise CutError(CUT_UNSUPPORTED, f"세그먼트 {number}가 키프레임으로 시작하지 않는다")
 
     # 프레임이 든 세그먼트 — 영상 샘플이 없는 세그먼트는 건너뛴다(같은 자리가 겹치면 뒤의 것)
     head_segment = bisect_right(offsets, first) - 1
     tail_segment = bisect_right(offsets, last) - 1
-    start = hc._start_of(frames, first)
-    length = hc._end_of(frames, last + 1) - start
-    has_audio = init.audio is not None and frames.audio_start is not None
+    length = hc._end_of(frames, last + 1) - hc._start_of(frames, first)
+    has_audio = given.audio_origin is not None
+    # 뽑아 둔 오디오 파일에서 구간이 시작하는 자리(초)
+    start = frames.frame_pts[first] - given.audio_origin if has_audio else 0.0
 
     # ---- 조각의 계획: (종류, 파일 이름 또는 None(파이프), 전체에서의 첫 프레임, 끝 프레임 다음,
     #      그 조각을 만드는 명령의 재료)
-    head_frames = _segment_frames(head, parsed[head_segment], section)
-    tail_frames = (
-        head_frames
-        if tail_segment == head_segment
-        else _segment_frames(head, parsed[tail_segment], section)
-    )
     base_head, base_tail = offsets[head_segment], offsets[tail_segment]
     local_first, local_last = first - base_head, last - base_tail
     pieces: list[tuple[str, str | None, int, int, tuple]] = []
     piped: list[int] = []
     one_segment = head_segment == tail_segment
-    ends_with_segment = local_last == len(tail_frames.frame_pts) - 1
+    ends_with_segment = local_last == given.frame_counts[tail_segment] - 1
+    # 경계 세그먼트의 입력 — 머리는 늘 만든다(원본의 영상 파라미터를 여기서 읽는다). 꼬리는
+    # 꼬리 조각을 만들 때만 만든다
+    inputs = {"head": given.boundary("head_source.mp4", head_segment)}
+    head_frames = inputs["head"][1]
+    if not one_segment and not ends_with_segment:
+        inputs["tail"] = given.boundary("tail_source.mp4", tail_segment)
+    tail_frames = inputs.get("tail", inputs["head"])[1]
     if one_segment and not ends_with_segment:
         # 세그먼트 하나 안에서 끝난다 — 그 세그먼트만 입력으로 한 하이브리드 컷의 조각 그대로
         for number, piece in enumerate(hc.plan_cut(head_frames, local_first, local_last).pieces):
@@ -267,17 +371,12 @@ def _cut(
         with hc._stage(on_stage, "audio", progress):
             try:
                 extract_audio_stream(
-                    _feed(head.init_data, paths), os.path.join(work_dir, _AUDIO_FILE)
+                    _feed(given.prefix, paths), os.path.join(work_dir, _AUDIO_FILE)
                 )
             except FFmpegError as e:
                 raise CutError(CUT_FAILED, str(e)) from e
 
     # ---- 2. 경계 조각 (영상만)
-    inputs = {
-        "head": (_joined(work_dir, "head_source.mp4", head, paths[head_segment]), head_frames)
-    }
-    if tail_segment != head_segment and any(made and made[0] == "tail" for *_rest, made in pieces):
-        inputs["tail"] = (_joined(work_dir, "tail_source.mp4", head, paths[tail_segment]), tail_frames)  # fmt: skip
     source = hc._probe_source(inputs["head"][0], head_frames, CutPlan(local_first, local_first, ()))
     inspected: list[PieceInfo] = []
     for kind, name, piece_first, piece_end, made in pieces:
@@ -349,7 +448,7 @@ def _cut(
             ]  # fmt: skip
             try:
                 warnings = remux_through(
-                    _feed(head.init_data, [paths[n] for n in piped], fed),
+                    _feed(given.prefix, [paths[n] for n in piped], fed),
                     convert,
                     join,
                     output_path,
@@ -363,11 +462,7 @@ def _cut(
         raise CutError(CUT_FAILED, "조각을 잇는 곳에서 DTS가 뒤로 간다")
     progress.finish("join")
     plan = CutPlan(first, last, tuple(CutPiece(kind, a, b) for kind, _name, a, b, _made in pieces))
-    overhang = 0.0
-    if has_audio:
-        # 구간 끝에 걸친 오디오 덩어리는 통째로 들어간다 — 그 하나의 길이
-        ticks = next(s.audio.durations[-1] for s in reversed(parsed) if s.audio.durations)
-        overhang = ticks / init.audio.timescale
+    overhang = given.audio_overhang if has_audio else 0.0
     result = CutResult(
         output_path=output_path,
         plan=plan,
