@@ -110,7 +110,7 @@ class TestKorean:
             calls += len(re.findall(r"QMessageBox\.(warning|information|critical|question)\(", text))
             if re.search(r"setButtonText\(|\.addButton\(\s*[\"']", text):
                 custom.append(path.relative_to(root).as_posix())
-        assert calls == 13, f"정적 QMessageBox 호출이 {calls}곳 — 13곳 전제가 바뀌었다(게이트 갱신)"
+        assert calls == 14, f"정적 QMessageBox 호출이 {calls}곳 — 14곳 전제가 바뀌었다(게이트 갱신)"
         assert custom == [], f"문구를 직접 준 버튼이 있다 — 카탈로그가 덮지 못한다: {custom}"
 
 

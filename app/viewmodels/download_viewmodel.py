@@ -40,6 +40,8 @@ from core.api.playback_tracks import StreamSelectionError
 from core.downloaders.base import PostprocessError
 from core.downloaders.hls_aes_downloader import DecryptionError
 from core.downloaders.integrity import TruncatedSegmentError
+from core.downloaders.resume import ResumeMismatchError
+from core.utils.persistence import StorageBusyError
 from core.models.events import ProgressEvent
 from core.services.download_service import DownloadService
 from core.models.download_data import DownloadData
@@ -153,6 +155,7 @@ class DownloadViewModel(QObject):
     # 내부 전용: 워커 스레드 콜백 → 메인 스레드 후처리 슬롯 전환용 큐 연결.
     # ⚠️ 이 둘을 직접 호출로 바꾸면 참조 정리·content 통지가 워커 스레드에서
     # 일어난다 — 스레드 축 게이트가 잡는다
+    _taskEvent = Signal(object, str, object)
     _engineFinished = Signal()
     _engineFailed = Signal(object)
     # 내부 전용: 받을 구간이 하나도 없는 카드 — 엔진에 넘기지 않고 실패로 끝낸다. 큐로 돌려
@@ -168,6 +171,8 @@ class DownloadViewModel(QObject):
         self._service = service or DownloadService(
             base_url_resolver=resolve_m3u8_base_url, key_resolver=resolve_aes_key
         )
+        self._generation = object()
+        self._taskEvent.connect(self._dispatchTaskEvent)
         self.handle = None
         self.task: DownloadTask | None = None
         self.item: ContentItem | None = None
@@ -214,6 +219,8 @@ class DownloadViewModel(QObject):
         RUNNING 전이+다운로드 정보 로깅(task.start) → 실행(서비스 제출).
         """
         self.item = item
+        item.resume_summary = ""
+        token = self._generation = object()
         data = DownloadData(
             item.base_url, item.vod_url, item.output_path, item.resolution, item.content_type
         )
@@ -296,9 +303,9 @@ class DownloadViewModel(QObject):
             data=data,
             task_logger=task_logger,
             on_progress=self._make_progress_relay(data, item),
-            on_finished=self._engineFinished.emit,
-            on_failed=self._relay_failed,
-            on_merge_start=self._relay_merge_start,
+            on_finished=lambda: self._taskEvent.emit(token, "finished", None),
+            on_failed=lambda exc: self._taskCallback(token, item, "failed", exc),
+            on_merge_start=lambda: self._taskCallback(token, item, "merge", None),
         )
 
     def prepareRetry(self, item: ContentItem) -> None:
@@ -346,6 +353,9 @@ class DownloadViewModel(QObject):
         if self.item is not None:
             # 구 DownloadM3U8Thread가 run 종료 후 수행하던 WAITING 정리와 동일
             self.item.post_process = False
+        if self.item is not None and self.item.content_type == "m3u8" and not self.item.selections:
+            from app.resume_actions import resume_store
+            self.item.resume_available = resume_store(self.item).path.is_file()
         self.stopped.emit(self.item)
 
     def _dropHead(self) -> None:
@@ -404,6 +414,7 @@ class DownloadViewModel(QObject):
         "준비 중" 타이머도 여기서 멈춘다 (#309) — 정리된 작업이나 지운 카드에 타이머가 닿지 않게.
         """
         self._endPreparing()
+        self._generation = object()
         if self.handle is not None and not self.handle.wait(_HANDLE_WAIT_TIMEOUT_S):
             logger.warning(
                 "워커가 %.0f초 안에 끝나지 않아 대기를 포기한다 — 슬롯 방출 (#137)",
@@ -415,6 +426,27 @@ class DownloadViewModel(QObject):
 
     # ============ 워커 스레드 콜백 (emit까지만 수행) ============
 
+    def _taskCallback(self, token, item, event, value):
+        """진행 계산 플래그만 즉시 바꾸고 GUI 처리는 메인 스레드에 넘긴다."""
+        if token is not self._generation:
+            return
+        item.post_process = event == "merge"
+        self._taskEvent.emit(token, event, value)
+
+    def _dispatchTaskEvent(self, token, event, value):
+        """중지한 예전 워커의 늦은 통지는 새 작업에 적용하지 않는다."""
+        if token is not self._generation:
+            return
+        if event == "merge":
+            self._relay_merge_start()
+        elif event == "resume_info":
+            self.item.resume_available = True
+            self.item.resume_summary = value
+        elif event == "failed":
+            self._relay_failed(value)
+        else:
+            self._onEngineFinished()
+
     def _make_progress_relay(self, data: DownloadData, item: ContentItem):
         """ProgressEvent를 기존 progress Signal 인자로 변환해 emit하는 콜백을 만든다.
 
@@ -424,7 +456,16 @@ class DownloadViewModel(QObject):
         is_segment_based = item.is_segment_based
         sections = _SectionProgress(_cut_seconds(data.content))
 
+        token = self._generation
+        reported = False
+
         def relay(event: ProgressEvent) -> None:
+            nonlocal reported
+            if token is not self._generation:
+                return
+            if not reported and hasattr(data, "resume_reused"):
+                reported = True
+                self._taskEvent.emit(token, "resume_info", f"보존 {data.resume_reused}개 · 누락 {data.resume_missing}개 · 직전 재수신 {data.resume_preceding}개")
             if data.sections_total:
                 args = _section_progress_args(event, data, item, sections)
             elif is_segment_based:
@@ -546,7 +587,14 @@ class DownloadViewModel(QObject):
             self.task.stop()
         self.handle = None
         self.task = None
-        self.failed.emit(item, self._failure_message(exc))
+        if item.content_type == "m3u8" and not item.selections:
+            from app.resume_actions import resume_store
+            item.resume_available = resume_store(item).path.is_file()
+            item.merge_only = isinstance(exc, PostprocessError)
+        message = self._failure_message(exc)
+        if item.content_type == "m3u8" and item.resume_available:
+            message = self.tr("Failed · saved fragments retained\n{0}").format(message)
+        self.failed.emit(item, message)
 
     def _failure_message(self, exc: BaseException) -> str:
         """실패 사유를 유저 표시용 번역 문자열로 바꾼다. 매핑에 없으면 빈 문자열.
@@ -606,6 +654,10 @@ class DownloadViewModel(QObject):
                 "Try again later."
             ),
         }
+        if isinstance(exc, ResumeMismatchError):
+            return self.tr("Video changed · saved fragments retained\nThe video or its recovery record does not match the saved fragments.")
+        if isinstance(exc, StorageBusyError):
+            return self.tr("Previous task still active · retry shortly\nAnother task is using the saved fragments for this video.")
         key = _failure_message_key(exc)
         return translated.get(key, "") if key is not None else ""
 

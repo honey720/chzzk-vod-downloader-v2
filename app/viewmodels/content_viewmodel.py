@@ -31,6 +31,8 @@ import os
 import tempfile
 import threading
 
+import config.config as config
+
 from PySide6.QtCore import QObject, QThreadPool, Signal
 
 from app.viewmodels.item_state import ItemState
@@ -41,8 +43,9 @@ from app.viewmodels.section_edit_viewmodel import SectionRefitter, SectionSizer
 from app.network import NetworkManager
 from core.services import metadata_service
 from core.services.metadata_service import MetadataError
-from core.utils.paths import build_output_path, ensure_unique_path
+from core.utils.paths import build_output_path
 from core.models.download_state import DownloadState
+from core.downloaders.resume import ResumeMismatchError
 
 logger = logging.getLogger(__name__)
 # 조회 실패 트레이스백(구 content.worker) — 이름을 박은 테스트가 없어 모듈 경로 유도
@@ -226,6 +229,7 @@ class ContentViewModel(QObject):
         self._sectionRefitter.settled.connect(self._onSectionSettled)
         # 구간 카드가 받을 크기를 백그라운드에서 센다 — 구간을 확인했을 때와 해상도 변경의 조회가 끝났을 때
         self._sectionSizer = SectionSizer(self.model, self.threadpool, self)
+        self._refreshing = {}
 
     def fetchContent(self, vod_url: str, cookies: dict, downloadPath: str) -> None:
         # 조회가 끝나기 전에도 카드가 보이도록 LOADING 상태의 자리표시 아이템을
@@ -257,6 +261,11 @@ class ContentViewModel(QObject):
 
     def _workerFinished(self, worker, result, content_type):
         # result는 (vod_url, metadata, unique_reps, resolution, base_url, downloadPath, liveRewindPlaybackJson) 형식
+        refreshing = self._refreshing.pop(worker, None)
+        if refreshing is not None:
+            self._relays.pop(worker, None)
+            self._refreshFinished(refreshing, result, content_type)
+            return
         placeholder = self._pendingPlaceholders.pop(worker, None)
         self._relays.pop(worker, None)
         if placeholder is None:
@@ -291,6 +300,12 @@ class ContentViewModel(QObject):
         self.model.addItem(item, row)
 
     def _workerError(self, worker, error_message):
+        refreshing = self._refreshing.pop(worker, None)
+        if refreshing is not None:
+            self._relays.pop(worker, None)
+            if self.model.getRow(refreshing) is not None:
+                self.fail(refreshing, error_message)
+            return
         placeholder = self._pendingPlaceholders.pop(worker, None)
         self._relays.pop(worker, None)
         if placeholder is not None:
@@ -332,8 +347,10 @@ class ContentViewModel(QObject):
             index = self.model.rowCount()
             self.deleteItemRequested.emit(item, index)
 
-    def downloadItem(self):
-        found, item, index = self.findItem()
+    def downloadItem(self, selected=None):
+        if self._refreshing:
+            return
+        found, item, index = self.findItem() if selected is None else (True, selected, 0)
         if found:
             try:
                 # 사전 검사 (#137): 존재+쓰기 프로브. 판정은 path_gates가 단일
@@ -355,6 +372,8 @@ class ContentViewModel(QObject):
                     self.fail(item, self._saveFailedMessage())
                     return
                 self.onDownload(item)
+            except ResumeMismatchError:
+                self.fail(item, self.tr("Saved data unavailable · check the drive\nSaved fragments could not be checked. Reconnect the original drive."))
             except ValueError as e:
                 # 위에서 직접 던진 번역된 안내 — 그대로 카드에 표시한다.
                 # 이 거부는 지금까지 로그가 전혀 없어 제보 진단이 불가능했다 (#148)
@@ -457,19 +476,69 @@ class ContentViewModel(QObject):
         return False
 
     def onDownload(self, item: ContentItem):
-        """해상도가 정해진 아이템의 산출물 경로를 조립하고 다운로드를 요청한다."""
-        if item:
-            # 조립·중복 회피는 core가 단일 지점으로 담당한다 — 같은 제목이
-            # 이미 있으면 " (n)"이 붙은 새 경로를 받는다 (#105)
+        """복원된 주소를 갱신하고 기존 복구 파일명을 유지해 다운로드한다."""
+        if item.needs_refresh:
+            worker = FetchJob(item.vod_url, config.load_cookies(), item.download_path)
+            relay = _WorkerRelay(self, worker)
+            self._refreshing[worker] = item
+            self._relays[worker] = relay
+            item.downloadState = ItemState.LOADING
+            self.model.notifyChanged(item)
+            worker.finished.connect(relay.onFinished)
+            worker.error.connect(relay.onError)
+            self.threadpool.start(lambda: worker.run())
+            return
+        from app.resume_actions import restore_output_path
+
+        if not item.output_path or item.content_type != "m3u8":
             item.output_path = build_output_path(
                 item.download_path, item.title, item.resolution, item.resolution_tag
             )
-        else:
-            item.output_path = ensure_unique_path(os.path.join(item.download_path, "video.mp4"))
+        restore_output_path(item)
+        item.retry_pending = False
+        self.model.notifyChanged(item)
+        self.downloadRequested.emit(item)
 
-        if item.output_path:
-            # 다운로드 요청 시그널 발행
-            self.downloadRequested.emit(item)
+    def _refreshFinished(self, item, result, content_type):
+        """선택 화질과 사용자 편집을 유지하며 최신 주소만 반영한다."""
+        if self.model.getRow(item) is None:
+            return
+        _, metadata, reps, resolution, base_url, _, playback = result
+        selected_resolution = item.resolution if item.resolution is not None else resolution
+        candidates = [rep for rep in reps if str(rep[0]) == str(selected_resolution)
+                      and (item.stream is None or getattr(rep, "stream", None) == item.stream)]
+        if (item.resolution is not None and not candidates) or (
+            item.resume_available and item.content_type != content_type
+        ):
+            self.fail(item, self.tr("Video changed · saved fragments retained\nThe selected stream no longer matches the saved video."))
+            return
+        if item.title == item.vod_url:
+            item.title = item.default_title = metadata.get("title", item.title)
+        item.channel_name = metadata.get("channelName", item.channel_name)
+        item.duration = metadata.get("duration", item.duration)
+        item.unique_reps = reps
+        item.content_type = content_type
+        item.liveRewindPlaybackJson = playback
+        if candidates:
+            item.select_rep(candidates[0])
+        else:
+            item.base_url = base_url
+        item.keep_selection = True
+        item.needs_refresh = False
+        item.downloadState = DownloadState.WAITING
+        item.stateMessage = ""
+        row = self.model.getRow(item)
+        self.model.removeRows(row, 1)
+        self.model.addItem(item, row)
+        self.downloadItem(item)
+
+    def cancelRefresh(self):
+        """중지 또는 종료 후 늦게 도착하는 주소 갱신 결과를 버린다."""
+        for item in self._refreshing.values():
+            item.downloadState = DownloadState.WAITING
+            item.retry_pending = False
+            self.model.notifyChanged(item)
+        self._refreshing.clear()
 
     def update_progress(self, rem, size, spd, prog, item: ContentItem):
         item.download_remain_time = rem
@@ -481,19 +550,28 @@ class ContentViewModel(QObject):
 
     def start(self, item):
         self.itemStarted.emit(item)
+        if item is not None:
+            self.model.notifyChanged(item)
 
     def stop(self, item):
         self.itemStopped.emit(item)
+        if item is not None:
+            self.model.notifyChanged(item)
 
     def pause(self, item):
         self.itemPaused.emit(item)
+        if item is not None:
+            self.model.notifyChanged(item)
 
     def resume(self, item):
         self.itemResumed.emit(item)
+        if item is not None:
+            self.model.notifyChanged(item)
 
     def finish(self, item: ContentItem, download_time):
         item.download_time = download_time
         self.itemFinished.emit(item, True)
+        self.model.notifyChanged(item)
         self.emitFinishedRequest(item)
 
     def fail(self, item: ContentItem, message: str = ""):
@@ -503,9 +581,11 @@ class ContentViewModel(QObject):
         문자열만 넣는다 (원시 예외 문자열 금지). emitFinishedRequest가 완료
         경로와 동일하게 다음 항목의 다운로드를 이어 간다.
         """
+        item.retry_pending = False
         item.stateMessage = message
         item.downloadState = DownloadState.FAILED
         self.itemFinished.emit(item, False)
+        self.model.notifyChanged(item)
         self.emitFinishedRequest(item)
 
     def emitStopRequested(self, item: ContentItem):
@@ -516,6 +596,9 @@ class ContentViewModel(QObject):
         self.downloadItem()
 
     def findItem(self):
+        for row, item in enumerate(self.model.items):
+            if item.retry_pending and item.downloadState == DownloadState.WAITING:
+                return True, item, row
         row_count = self.model.rowCount()
         for row in range(row_count):
             item = self.model.itemAt(row)

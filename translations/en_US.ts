@@ -187,6 +187,38 @@
         <source>Retry</source>
         <translation>Retry</translation>
     </message>
+    <message>
+        <source>Keep fragments and start over</source>
+        <translation>Keep fragments and start over</translation>
+    </message>
+    <message>
+        <source>Delete saved fragments…</source>
+        <translation>Delete saved fragments…</translation>
+    </message>
+    <message>
+        <source>Checking saved fragments…</source>
+        <translation>Checking saved fragments…</translation>
+    </message>
+    <message>
+        <source>Resume queued</source>
+        <translation>Resume queued</translation>
+    </message>
+    <message>
+        <source>Retry merge</source>
+        <translation>Retry merge</translation>
+    </message>
+    <message>
+        <source>Resume download</source>
+        <translation>Resume download</translation>
+    </message>
+    <message>
+        <source>Download again</source>
+        <translation>Download again</translation>
+    </message>
+    <message>
+        <source>Check saved fragments and resume. Right-click for saved data options.</source>
+        <translation>Check saved fragments and resume. Right-click for saved data options.</translation>
+    </message>
 </context>
 <context>
     <name>ContentListView</name>
@@ -210,6 +242,18 @@
 The file could not be saved. Check the download path and free disk space.</source>
         <translation>Failed to save file · check the path and disk space
 The file could not be saved. Check the download path and free disk space.</translation>
+    </message>
+    <message>
+        <source>Saved data unavailable · check the drive
+Saved fragments could not be checked. Reconnect the original drive.</source>
+        <translation>Saved data unavailable · check the drive
+Saved fragments could not be checked. Reconnect the original drive.</translation>
+    </message>
+    <message>
+        <source>Video changed · saved fragments retained
+The selected stream no longer matches the saved video.</source>
+        <translation>Video changed · saved fragments retained
+The selected stream no longer matches the saved video.</translation>
     </message>
 </context>
 <context>
@@ -279,6 +323,24 @@ Cutting the section failed. Retry processes only the failed sections.</translati
 Part of the video kept arriving incomplete from the server. Try again later.</source>
         <translation>Video data arrived corrupted · try again later
 Part of the video kept arriving incomplete from the server. Try again later.</translation>
+    </message>
+    <message>
+        <source>Failed · saved fragments retained
+{0}</source>
+        <translation>Failed · saved fragments retained
+{0}</translation>
+    </message>
+    <message>
+        <source>Video changed · saved fragments retained
+The video or its recovery record does not match the saved fragments.</source>
+        <translation>Video changed · saved fragments retained
+The video or its recovery record does not match the saved fragments.</translation>
+    </message>
+    <message>
+        <source>Previous task still active · retry shortly
+Another task is using the saved fragments for this video.</source>
+        <translation>Previous task still active · retry shortly
+Another task is using the saved fragments for this video.</translation>
     </message>
 </context>
 <context>
@@ -655,6 +717,22 @@ Check your connection and cookies, then open this window again.</translation>
     <message>
         <source>Stop</source>
         <translation>Stop</translation>
+    </message>
+    <message>
+        <source>Delete saved fragments</source>
+        <translation>Delete saved fragments</translation>
+    </message>
+    <message>
+        <source>Delete saved fragments for this video? The next download will start over.</source>
+        <translation>Delete saved fragments for this video? The next download will start over.</translation>
+    </message>
+    <message>
+        <source>Saved fragments are in use or could not be deleted.</source>
+        <translation>Saved fragments are in use or could not be deleted.</translation>
+    </message>
+    <message>
+        <source>Could not archive saved fragments. Check the drive.</source>
+        <translation>Could not archive saved fragments. Check the drive.</translation>
     </message>
 </context>
 </TS>

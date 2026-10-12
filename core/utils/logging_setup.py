@@ -11,6 +11,7 @@ log_dir 인자로 주입받는다 — 기존 진입점인 app/log_setup.py가 �
 import logging
 import logging.handlers
 import os
+import re
 
 # 포맷: 시간·레벨·모듈·메시지
 LOG_FORMAT = "%(asctime)s - %(levelname)s - [%(name)s] - %(message)s"
@@ -22,6 +23,14 @@ BACKUP_COUNT = 5
 
 # 중복 초기화 방지 플래그
 _configured = False
+
+
+class RedactingFormatter(logging.Formatter):
+    """예외 추적을 포함한 로그에서 재생 주소의 인증 쿼리를 제거한다."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        text = super().format(record)
+        return re.sub(r"(https?://[^\s?]+)\?[^\s]+", r"\1?[redacted]", text)
 
 
 def setup_logging(log_dir: str, log_level: int = logging.DEBUG) -> None:
@@ -39,7 +48,7 @@ def setup_logging(log_dir: str, log_level: int = logging.DEBUG) -> None:
 
     os.makedirs(log_dir, exist_ok=True)
 
-    formatter = logging.Formatter(LOG_FORMAT)
+    formatter = RedactingFormatter(LOG_FORMAT)
 
     file_handler = logging.handlers.RotatingFileHandler(
         os.path.join(log_dir, LOG_FILE_NAME),

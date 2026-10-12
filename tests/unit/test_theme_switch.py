@@ -82,6 +82,9 @@ def theme_sandbox(qapp):
 
 @pytest.fixture
 def _theme_sandbox(qapp, monkeypatch):
+    # 서로 다른 테마 장면은 각각 빈 목록에서 시작해야 같은 그림을 비교한다.
+    monkeypatch.setattr("app.queue_store.QueueStore.load", lambda self: [])
+    monkeypatch.setattr("app.queue_store.QueueStore.save", lambda self, records: None)
     class _FailingSession:
         def head(self, *a, **k):
             raise RuntimeError("network disabled in tests")

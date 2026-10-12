@@ -9,6 +9,7 @@
 """
 
 import os
+from pathlib import Path
 
 import core.downloaders.hls_aes_downloader as hls_aes_module
 import core.downloaders.m3u8_downloader as m3u8_module
@@ -276,7 +277,7 @@ def test_m3u8_downloader_uses_scratch_temp_dir_when_conditions_are_met(tmp_path,
     )
     engine = m3u8_module.M3U8Downloader(data, logger=None)
 
-    assert engine.temp_dir == paths_module.temp_dir_for(output_path, base_dir=scratch_str)
+    assert Path(engine.temp_dir).parent == output_dir / ".cvdv2-resume"
     assert engine.temp_dir != paths_module.temp_dir_for(output_path)
 
 
@@ -292,4 +293,4 @@ def test_m3u8_downloader_keeps_output_adjacent_temp_dir_by_default(tmp_path):
     )
     engine = m3u8_module.M3U8Downloader(data, logger=None)
 
-    assert engine.temp_dir == paths_module.temp_dir_for(output_path)
+    assert Path(engine.temp_dir).parent == tmp_path / ".cvdv2-resume"

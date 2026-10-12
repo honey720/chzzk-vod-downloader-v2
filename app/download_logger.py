@@ -3,6 +3,7 @@ import logging
 from datetime import datetime
 from typing import Optional
 import config.config as config
+from core.utils.logging_setup import RedactingFormatter
 from app.viewmodels.data import ContentItem
 
 class DownloadLogger:
@@ -44,7 +45,7 @@ class DownloadLogger:
         file_handler.setLevel(self.log_level)
 
         # 포맷터 설정
-        formatter = logging.Formatter(
+        formatter = RedactingFormatter(
             '%(asctime)s - %(levelname)s - [%(threadName)s] - %(message)s'
         )
         file_handler.setFormatter(formatter)

@@ -11,6 +11,7 @@
 """
 
 import os
+from pathlib import Path
 import threading
 import time
 
@@ -253,9 +254,9 @@ def test_remux_failure_fails_explicitly_and_preserves_segments(tmp_path, monkeyp
     assert any(isinstance(e, base_module.PostprocessError) for e in failures)  # 명시적 실패
     assert logger.errors  # 원인 로그 존재
     # 세그먼트(임시 폴더)는 보존된다 — 후처리 실패로 재다운로드를 강요하지 않는다
-    temp_dir = tmp_path / "CVDv2_temp_out"
+    temp_dir = Path(engine.temp_dir)
     assert temp_dir.exists()
-    assert len(list(temp_dir.iterdir())) == SEGMENT_COUNT + 1  # 초기화 세그먼트 포함
+    assert len(list(temp_dir.glob("*.m4*"))) == SEGMENT_COUNT + 1  # 초기화 세그먼트 포함
     assert merge_starts == [True]
 
 
@@ -462,7 +463,7 @@ def test_forced_slow_requeue_does_not_corrupt_output(tmp_path, monkeypatch):
     세그먼트를 이어붙인 것과 바이트 단위로 같은지 확인한다.
     """
     engine, data, logger, output, finished, failures, merge_starts = _make_engine(
-        tmp_path, monkeypatch, chunks_per_segment=20
+        tmp_path, monkeypatch, chunks_per_segment=20, throttle=0.002
     )
     # 극단적으로 높은 임계로 모든 청크를 "저속"으로 오판시켜 강제 재큐를 유발한다.
     # 판정 창을 아주 짧게 하고, 다른 연결은 한없이 빠르며 끊는 쪽이 늘 이득인 것으로 둔다 (#347) —
@@ -573,8 +574,8 @@ def test_downstream_stop_after_postprocess_failure_preserves_segments(tmp_path, 
     assert not thread.is_alive()
 
     assert any(isinstance(e, base_module.PostprocessError) for e in failures)
-    temp_dir = tmp_path / "CVDv2_temp_out"
+    temp_dir = Path(engine.temp_dir)
     # #92 정책: 후처리 실패는 세그먼트를 보존해야 한다 — 실패 콜백이 상태를
     # WAITING으로 돌리더라도(비동기 stop()) 이 정책은 지켜져야 한다.
     assert temp_dir.exists(), "후처리 실패 시 세그먼트가 보존돼야 하는데 지워졌다"
-    assert len(list(temp_dir.iterdir())) == SEGMENT_COUNT + 1  # 초기화 세그먼트 포함
+    assert len(list(temp_dir.glob("*.m4*"))) == SEGMENT_COUNT + 1  # 초기화 세그먼트 포함

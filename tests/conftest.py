@@ -209,7 +209,7 @@ def _isolate_choose_temp_dir(monkeypatch):
 # 건드리지 않는다. autouse 픽스처는 가장 먼저 세워져 가장 나중에 걷히므로,
 # 테스트 자신의 정리(qtbot·파일별 픽스처)가 끝난 뒤의 잔여만 여기로 온다.
 @pytest.fixture(autouse=True)
-def _destroy_top_level_widgets(request):
+def _destroy_top_level_widgets(request, _isolate_real_config):
     """테스트가 끝나면 살아 있는 최상위 위젯을 닫고 실제로 파괴한 뒤, 하나도 안 남았음을 단언한다."""
     yield
     from PySide6.QtCore import QCoreApplication, QEvent

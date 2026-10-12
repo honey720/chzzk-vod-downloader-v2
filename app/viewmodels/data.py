@@ -2,6 +2,7 @@
 
 from core.api.representations import file_tag, is_original, shown_frame_rate
 from core.models.download_state import DownloadState
+from uuid import uuid4
 
 # ContentItem.section_check의 값 — 해상도를 바꾼 뒤 새 해상도의 길이를 확인하는 조회의 상태
 SECTION_CHECK_PENDING = "pending"  # 조회 중 — 구간은 선언 프레임률로만 맞춰져 있다
@@ -31,8 +32,15 @@ class ContentItem:
         liveRewindPlaybackJson,
     ):
         self.vod_url = vod_url
+        self.queue_id = uuid4().hex
+        self.needs_refresh = False
+        self.resume_available = False
+        self.merge_only = False
+        self.retry_pending = False
+        self.last_state = "WAITING"
+        self.resume_summary = ""
 
-        self.default_title = metadata.get("title", "Unknown Title")
+        self.default_title = metadata.get('title', 'Unknown Title')
         self.title = self.default_title
         self.thumbnail_url = metadata.get("thumbnailImageUrl", "")
         self.category = metadata.get("category", "Unknown Category")

@@ -48,6 +48,9 @@ class ContentListView(QScrollArea):
     retryRequested = Signal(object)
     sectionEditRequested = Signal(object)  # 대기 카드의 구간 요약 클릭 (#309)
     sectionRefitRequested = Signal(object)  # 구간이 있는 카드의 해상도가 바뀌었다 (#309)
+    freshRequested = Signal(object)
+    resumeRequested = Signal(object)
+    discardResumeRequested = Signal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -137,6 +140,10 @@ class ContentListView(QScrollArea):
         widget.retryRequest.connect(lambda it=item: self.retryRequested.emit(it))
         widget.sectionEditRequest.connect(lambda it=item: self.sectionEditRequested.emit(it))
         widget.sectionRefitRequest.connect(lambda it=item: self.sectionRefitRequested.emit(it))
+        widget.textChanged.connect(lambda _text, it=item: self._model.notifyChanged(it))
+        widget.freshRequest.connect(lambda it=item: self.freshRequested.emit(it))
+        widget.resumeRequest.connect(lambda it=item: self.resumeRequested.emit(it))
+        widget.discardResumeRequest.connect(lambda it=item: self.discardResumeRequested.emit(it))
         # 해상도 펼침은 한 번에 하나 — 다른 카드가 펼쳐지면 앞의 것을 접는다 (#244 3행 정리)
         widget.expandedChanged.connect(lambda expanded, w=widget: self._onCardExpanded(w, expanded))
         widget.addRepresentationButtons()

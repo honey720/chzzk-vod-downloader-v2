@@ -187,6 +187,38 @@
         <source>Retry</source>
         <translation>재시도</translation>
     </message>
+    <message>
+        <source>Keep fragments and start over</source>
+        <translation>기존 조각을 보관하고 새로 받기</translation>
+    </message>
+    <message>
+        <source>Delete saved fragments…</source>
+        <translation>이어받기 데이터 삭제…</translation>
+    </message>
+    <message>
+        <source>Checking saved fragments…</source>
+        <translation>저장된 데이터 확인 중</translation>
+    </message>
+    <message>
+        <source>Resume queued</source>
+        <translation>이어받기 대기</translation>
+    </message>
+    <message>
+        <source>Retry merge</source>
+        <translation>병합 다시 시도</translation>
+    </message>
+    <message>
+        <source>Resume download</source>
+        <translation>이어받기</translation>
+    </message>
+    <message>
+        <source>Download again</source>
+        <translation>다시 받기</translation>
+    </message>
+    <message>
+        <source>Check saved fragments and resume. Right-click for saved data options.</source>
+        <translation>저장된 조각을 확인한 뒤 이어받습니다. 우클릭: 이어받기 데이터 삭제</translation>
+    </message>
 </context>
 <context>
     <name>ContentListView</name>
@@ -209,6 +241,16 @@
         <source>Failed to save file · check the path and disk space
 The file could not be saved. Check the download path and free disk space.</source>
         <translation>파일 저장에 실패했습니다. 저장 경로와 디스크 공간을 확인해 주세요.</translation>
+    </message>
+    <message>
+        <source>Saved data unavailable · check the drive
+Saved fragments could not be checked. Reconnect the original drive.</source>
+        <translation>보존된 데이터를 확인할 수 없습니다. 저장소를 확인해 주세요.</translation>
+    </message>
+    <message>
+        <source>Video changed · saved fragments retained
+The selected stream no longer matches the saved video.</source>
+        <translation>영상 구성이 변경되었습니다. 기존 조각은 보존됩니다.</translation>
     </message>
 </context>
 <context>
@@ -274,6 +316,24 @@ Cutting the section failed. Retry processes only the failed sections.</source>
 Part of the video kept arriving incomplete from the server. Try again later.</source>
         <translation>영상 일부가 잘려 받아졌습니다 · 잠시 뒤 다시 시도해 주세요
 서버에서 영상 일부가 계속 잘린 채로 왔습니다. 잠시 뒤 다시 받아 주세요.</translation>
+    </message>
+    <message>
+        <source>Failed · saved fragments retained
+{0}</source>
+        <translation>실패 · 받은 데이터 보존
+{0}</translation>
+    </message>
+    <message>
+        <source>Video changed · saved fragments retained
+The video or its recovery record does not match the saved fragments.</source>
+        <translation>영상 구성 확인 필요 · 기존 조각 보존됨
+기존 조각과 새 영상 구성이 다르거나 복구 기록을 확인할 수 없습니다.</translation>
+    </message>
+    <message>
+        <source>Previous task still active · retry shortly
+Another task is using the saved fragments for this video.</source>
+        <translation>이전 작업 종료 대기 · 잠시 후 재시도
+다른 실행이 같은 이어받기 데이터를 사용하고 있습니다.</translation>
     </message>
 </context>
 <context>
@@ -650,6 +710,22 @@ Check your connection and cookies, then open this window again.</source>
     <message>
         <source>Stop</source>
         <translation>중지</translation>
+    </message>
+    <message>
+        <source>Delete saved fragments</source>
+        <translation>이어받기 데이터 삭제</translation>
+    </message>
+    <message>
+        <source>Delete saved fragments for this video? The next download will start over.</source>
+        <translation>받아 둔 조각을 삭제할까요? 다음에는 처음부터 받습니다.</translation>
+    </message>
+    <message>
+        <source>Saved fragments are in use or could not be deleted.</source>
+        <translation>복구 데이터가 사용 중이거나 삭제할 수 없습니다.</translation>
+    </message>
+    <message>
+        <source>Could not archive saved fragments. Check the drive.</source>
+        <translation>이전 조각을 보관할 수 없습니다. 저장소를 확인해 주세요.</translation>
     </message>
 </context>
 </TS>

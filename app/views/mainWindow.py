@@ -8,6 +8,7 @@ from PySide6.QtCore import QPoint, QRect, QStandardPaths, QTimer
 
 from app.process_memory import log_process_memory
 from app.viewmodels.download_viewmodel import DownloadViewModel
+from app.viewmodels.queue_viewmodel import QueueViewModel
 from app.viewmodels.path_gates import check_fetch_path, check_remember_path, normalize_path
 from app.views.dialog import SettingDialog
 from app.views.section_dialog import SectionEditDialog
@@ -122,6 +123,11 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         self._sectionEditItem: ContentItem | None = None
         self.setupThreadSignals()
         self.setupSignals()
+        self.queueViewModel = QueueViewModel(self.contentManager, parent=self)
+        self.queueViewModel.warning.connect(lambda text: self._setLinkStatus(text, "error"))
+        if self.queueViewModel.store.warning:
+            self._setLinkStatus(self.queueViewModel.store.warning, "error")
+        self.onInsertItem(self.contentManager.model.rowCount())
         
         if self._startMaximized:
             self.showMaximized()
@@ -345,6 +351,9 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         self.listView.retryRequested.connect(self.onCardRetry)
         self.listView.sectionEditRequested.connect(self.onCardSectionEdit)
         self.listView.sectionRefitRequested.connect(self.contentManager.refitSections)
+        self.listView.resumeRequested.connect(self.onCardResume)
+        self.listView.freshRequested.connect(self.onCardFresh)
+        self.listView.discardResumeRequested.connect(self.onDiscardResume)
 
     def onCardPause(self, item: ContentItem) -> None:
         """진행 카드의 ⏸ — 전역 일시정지/재개 토글과 같은 경로를 탄다 (#245).
@@ -427,6 +436,44 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
             dialog.deleteLater()
         if item is not None:
             self.contentManager.endSectionEdit(item)
+    def onCardResume(self, item: ContentItem) -> None:
+        """선택한 카드만 재시도 대기에 넣고 빈 실행 슬롯에서는 바로 시작한다."""
+        if item.retry_pending:
+            return
+        item.retry_pending = True
+        item.needs_refresh = True
+        item.stateMessage = ""
+        item.downloadState = DownloadState.WAITING
+        self.contentManager.model.notifyChanged(item)
+        if not self.downloadViewModel.isDownloading() and not self.contentManager._refreshing:
+            self.downloadButton.setText(self.tr("Pause"))
+            self.setStopButtonEnable(True)
+            self.contentManager.downloadItem(item)
+
+    def onCardFresh(self, item):
+        """목록 변경 등으로 호환되지 않는 작업은 보존한 채 새로 받는다."""
+        from app.resume_actions import archive_resume
+        if item.retry_pending or item.downloadState in (DownloadState.RUNNING, DownloadState.PAUSED):
+            return
+        try:
+            archive_resume(item)
+        except OSError:
+            self._setLinkStatus(self.tr("Could not archive saved fragments. Check the drive."), "error")
+            return
+        self.onCardResume(item)
+
+    def onDiscardResume(self, item: ContentItem) -> None:
+        """목록 삭제와 별도로 복구 데이터를 명시적으로 지운다."""
+        from app.resume_actions import discard_resume
+        if item.downloadState in (DownloadState.RUNNING, DownloadState.PAUSED) or item.retry_pending:
+            return
+        if QMessageBox.question(self, self.tr("Delete saved fragments"), self.tr("Delete saved fragments for this video? The next download will start over.")) != QMessageBox.Yes:
+            return
+        try:
+            discard_resume(item)
+            self.contentManager.model.notifyChanged(item)
+        except OSError:
+            self._setLinkStatus(self.tr("Saved fragments are in use or could not be deleted."), "error")
 
     def fetchContents(self, urls: str):
         # URL 목록을 미리 준비합니다.
@@ -514,6 +561,7 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
                     QMessageBox.warning(self, self.tr("Warning"), self.tr("No VODs added."))
                 return
             self.downloadButton.setText(self.tr('Pause'))
+            self.setStopButtonEnable(True)
             self.contentManager.downloadItem()
     
     def onSetting(self):
@@ -561,6 +609,9 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         """
         중지 버튼 콜백.
         """
+        if self.contentManager._refreshing:
+            self.stopDownload()
+            return
         if self.downloadViewModel.task:
             reply = QMessageBox.warning(
                 self,
@@ -574,6 +625,7 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
                 self.stopDownload()
 
     def stopDownload(self):
+        self.contentManager.cancelRefresh()
         self.downloadViewModel.stop()
         self.downloadButton.setText(self.tr('Download'))
         self.setStopButtonEnable(False)
@@ -659,6 +711,8 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         """
         self.contentManager.start(item)
         self.downloadViewModel.start(item)
+        self.contentManager.model.notifyChanged(item)
+        self.queueViewModel.save()
         self.setStopButtonEnable(True)
 
     def updateDownloadCountLabel(self):
@@ -686,6 +740,8 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
             else:
                 self.stopDownload()
         # 확정(포커스 이탈) 없이 바로 닫는 경우의 보존 (#165)
+        self.contentManager.cancelRefresh()
         self._rememberPathIfValid()
         self._rememberWindowState()  # 다음 실행의 창 크기·위치 (#253)
+        self.queueViewModel.close()
         event.accept()  # 창 닫기 진행

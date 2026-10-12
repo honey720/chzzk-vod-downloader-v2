@@ -240,6 +240,9 @@ def cut_temp_dir_for(output_path: str) -> str:
     """
     stem = os.path.splitext(os.path.basename(output_path))[0]
     return os.path.join(os.path.dirname(output_path), f"CVDv2_cut_{stem}")
+def resume_dir_for(output_path: str, identity: str) -> str:
+    """출력 폴더 안에 제목과 무관한 영구 복구 폴더 경로를 만든다."""
+    return os.path.join(os.path.dirname(os.path.abspath(output_path)), ".cvdv2-resume", identity)
 
 
 # 임시 폴더를 분리할 스크래치 볼륨에 요구하는 최소 여유 공간 (#192).
