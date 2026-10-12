@@ -17,6 +17,7 @@ from core.utils.paths import (
     build_section_output_paths,
     ensure_unique_path,
     partial_source_path_for,
+    section_body_path_for,
     release_output_paths,
     reserve_section_output_paths,
     sanitize_filename,
@@ -474,3 +475,27 @@ def test_reserved_section_paths_are_avoided_by_other_downloads(tmp_path):
         "방송 1080p_1 (1).mp4",
         "방송 1080p_2 (1).mp4",
     ]
+
+
+def test_section_body_path_derives_from_section_output(tmp_path):
+    """section_body_path_for는 산출물과 같은 폴더에 산출물 이름 앞에 접두사를 붙인 mp4 경로를 돌려줘야 한다.
+
+    "방송 1080p_1 (1).mp4" -> "CVDv2_body_방송 1080p_1 (1).mp4" — 경계 원본의 이름과 다르다
+    """
+    output = str(tmp_path / "방송 1080p_1 (1).mp4")
+
+    assert section_body_path_for(output) == str(tmp_path / "CVDv2_body_방송 1080p_1 (1).mp4")
+    assert section_body_path_for(output) != partial_source_path_for(output)
+
+
+def test_section_body_path_is_cut_to_the_name_limit(tmp_path):
+    """section_body_path_for는 접두사를 붙인 이름이 255바이트를 넘으면 잘라서 255바이트 안에 맞춰야 한다.
+
+    한글 80자(240바이트) 이름 -> 파일명의 바이트 수 <= 255, 접두사와 확장자는 그대로
+    """
+    output = str(tmp_path / ("가" * 80 + ".mp4"))
+
+    name = os.path.basename(section_body_path_for(output))
+
+    assert len(name.encode("utf-8")) <= 255
+    assert name.startswith("CVDv2_body_") and name.endswith(".mp4")

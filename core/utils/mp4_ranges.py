@@ -181,6 +181,24 @@ def selection_byte_ranges(index: Mp4Index, selection: TimeRange) -> SelectionByt
     """
     first_frame = snap_to_frame(selection.start, index.frame_pts, index.fps, "start")
     last_frame = max(first_frame, snap_to_frame(selection.end, index.frame_pts, index.fps, "end"))
+    begin, end, keyframe = frames_byte_range(index, first_frame, last_frame)
+    return SelectionBytes(
+        ranges=((begin, end - 1),),
+        total_size=end - begin,
+        keyframe=keyframe,
+        first_frame=first_frame,
+        last_frame=last_frame,
+    )
+
+
+def frames_byte_range(index: Mp4Index, first_frame: int, last_frame: int) -> tuple[int, int, int]:
+    """프레임 [first_frame, last_frame]을 잘라 내는 데 필요한 바이트 범위를 구한다.
+
+    구간 파일을 직접 쓰는 경로는 다시 인코딩할 경계 GOP마다 이 범위만 따로 받아 둔다 (#309).
+
+    Returns:
+        (첫 바이트, 마지막 바이트 + 1, 범위가 시작하는 키프레임의 프레임 번호)
+    """
     keyframe = _keyframe_covering(index, index.frame_pts[first_frame] - SOURCE_LEAD_SECONDS)
 
     video = index.video
@@ -204,15 +222,7 @@ def selection_byte_ranges(index: Mp4Index, selection: TimeRange) -> SelectionByt
         if needed:
             spans.append(_chunk_span(audio, needed[0], needed[-1]))
 
-    begin = min(span[0] for span in spans)
-    end = max(span[1] for span in spans)
-    return SelectionBytes(
-        ranges=((begin, end - 1),),
-        total_size=end - begin,
-        keyframe=keyframe,
-        first_frame=first_frame,
-        last_frame=last_frame,
-    )
+    return min(span[0] for span in spans), max(span[1] for span in spans), keyframe
 
 
 def _keyframe_covering(index: Mp4Index, seconds: float) -> int:

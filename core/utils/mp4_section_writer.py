@@ -26,6 +26,10 @@
 같은 구간을 하이브리드 컷으로 자른 것과 영상 패킷 수 · PTS · DTS · 디코드한 프레임이 같음을
 실제 파일로 확인했다(#309).
 
+긴 영상은 샘플이 수백만 개다. 표를 통째로 도는 C 반복은 끝날 때까지 다른 스레드(화면)를
+멈추므로 조각으로 잘라 돌고, 사용자가 조작하는 동안에는 조각 사이에서 쉰다 — 색인 만들기와
+같은 방식이다(``core.models.sample_column``).
+
 이 모듈은 위치 계산과 bytes 만들기만 한다. 파일 입출력 · 받기 · 인코딩은 다운로더가 한다.
 """
 
@@ -35,7 +39,7 @@ import sys
 from bisect import bisect_left, bisect_right
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
-from itertools import accumulate, compress, groupby, repeat
+from itertools import accumulate, compress, groupby, islice, repeat
 from operator import add, le, mul, ne, sub
 
 from core.api.mp4 import (
@@ -52,6 +56,15 @@ from core.api.mp4 import (
 )
 from core.models.cut import CutPiece
 from core.models.mp4_index import Mp4Index, Mp4Track
+from core.models.sample_column import (
+    CHUNK_ITEMS,
+    array_in_chunks,
+    between_chunks,
+    chunk_items,
+    fill_in_chunks,
+    in_chunks,
+    reading_tables,
+)
 
 # 구간 파일의 ftyp — ffmpeg가 mp4에 쓰는 것과 같은 상표다
 SECTION_FILE_FTYP = struct.pack(">I4s4sI", 32, b"ftyp", b"isom", 0x200) + b"isomiso2avc1mp41"
@@ -218,9 +231,34 @@ def plan_section_file(
     """
     pieces = section_pieces(index, first_frame, last_frame)
     try:
-        return _plan(index, moov, first_frame, last_frame, pieces)
+        with reading_tables():  # 이 스레드의 조각을 잘게 — 조작 중이면 조각 사이에서 쉰다
+            return _plan(index, moov, first_frame, last_frame, pieces)
     except (struct.error, IndexError) as e:
         raise Mp4Error(MP4_INVALID, str(e)) from e
+
+
+def _batches(values):
+    """값들을 조각으로 낸다 — 합 · 모두 · 하나라도처럼 훑기만 하는 일을 잘라 돈다."""
+    source = iter(values)
+    items = chunk_items(CHUNK_ITEMS)
+    while True:
+        between_chunks()
+        batch = tuple(islice(source, items))
+        if not batch:
+            return
+        yield batch
+
+
+def _total(values) -> int:
+    return sum(map(sum, _batches(values)))
+
+
+def _all(values) -> bool:
+    return all(map(all, _batches(values)))
+
+
+def _any(values) -> bool:
+    return any(map(any, _batches(values)))
 
 
 def _plan(
@@ -233,7 +271,8 @@ def _plan(
     low = high = 0
     if mid is not None:
         moved = samples[mid.first : mid.end]
-        low, high = min(moved), max(moved) + 1
+        low = min(map(min, in_chunks(moved)))
+        high = max(map(max, in_chunks(moved))) + 1
         if high - low != len(moved) or samples[mid.first] != low:
             # 표시 순서의 프레임 묶음이 디코드 순서의 이어진 샘플 묶음이 아니다 — 다음 GOP의
             # 프레임이 이 GOP의 프레임보다 먼저 표시된다(열린 GOP). 옮긴 것만으로 디코드할 수 없다
@@ -368,15 +407,15 @@ def _minf_other(moov: bytes, start: int, end: int) -> bytes:
     return b""
 
 
-def _run_table(data: bytes, span: tuple[int, int], *, signed: bool) -> tuple[array.array, array.array, list[int]]:  # fmt: skip
+def _run_table(data: bytes, span: tuple[int, int], *, signed: bool) -> tuple[array.array, array.array, array.array]:  # fmt: skip
     """stts · ctts — (개수들, 값들, 개수의 누적합). 값은 signed면 부호 있는 32비트로 읽는다."""
     runs = _entry_count(data, span, 8)
     counts = _read_table(data, span[0] + 8, 2 * runs, "I")[0::2]
     values = _read_table(data, span[0] + 8, 2 * runs, "i" if signed else "I")[1::2]
-    return counts, values, list(accumulate(counts))
+    return counts, values, array_in_chunks("Q", accumulate(counts))
 
 
-def _run_at(table: tuple[array.array, array.array, list[int]], sample: int) -> int:
+def _run_at(table: tuple[array.array, array.array, array.array], sample: int) -> int:
     """sample이 든 구간의 번호."""
     run = bisect_right(table[2], sample)
     if run >= len(table[0]):
@@ -384,22 +423,22 @@ def _run_at(table: tuple[array.array, array.array, list[int]], sample: int) -> i
     return run
 
 
-def _value_at(table: tuple[array.array, array.array, list[int]], sample: int) -> int:
+def _value_at(table: tuple[array.array, array.array, array.array], sample: int) -> int:
     return table[1][_run_at(table, sample)]
 
 
-def _ticks_before(table: tuple[array.array, array.array, list[int]], sample: int) -> int:
+def _ticks_before(table: tuple[array.array, array.array, array.array], sample: int) -> int:
     """sample 앞의 샘플들의 길이를 더한 값 — 그 샘플의 DTS(틱)."""
     counts, values, ends = table
     if sample == 0:
         return 0
     run = _run_at(table, sample)
     start = ends[run - 1] if run else 0
-    return sum(map(mul, counts[:run], values[:run])) + (sample - start) * values[run]
+    return _total(map(mul, counts[:run], values[:run])) + (sample - start) * values[run]
 
 
 def _slice_runs(
-    table: tuple[array.array, array.array, list[int]], low: int, high: int
+    table: tuple[array.array, array.array, array.array], low: int, high: int
 ) -> tuple[array.array, array.array]:
     """샘플 [low, high)의 (개수, 값) 구간."""
     counts, values, ends = table
@@ -407,8 +446,8 @@ def _slice_runs(
     if high <= low:
         return out_counts, out_values
     first, last = _run_at(table, low), _run_at(table, high - 1)
-    out_counts.extend(array.array("Q", counts[first : last + 1]))
-    out_values.extend(array.array("q", values[first : last + 1]))
+    fill_in_chunks(out_counts, counts[first : last + 1])
+    fill_in_chunks(out_values, values[first : last + 1])
     out_counts[0] -= low - (ends[first - 1] if first else 0)
     out_counts[-1] -= ends[last] - high
     return out_counts, out_values
@@ -420,8 +459,8 @@ def _track_part(
     track: Mp4Track,
     low: int,
     high: int,
-    stts: tuple[array.array, array.array, list[int]],
-    ctts: tuple[array.array, array.array, list[int]] | None,
+    stts: tuple[array.array, array.array, array.array],
+    ctts: tuple[array.array, array.array, array.array] | None,
     *,
     with_sync: bool,
 ) -> _TrackPart:
@@ -435,9 +474,9 @@ def _track_part(
         if b"stss" in leaf:
             source = track.sync_samples
             picked = source[bisect_left(source, low) : bisect_left(source, high)]
-            sync = array.array("Q", map(add, picked, repeat(-low)))
+            sync = array_in_chunks("Q", map(add, picked, repeat(-low)))
         else:
-            sync = array.array("Q", range(high - low))
+            sync = array_in_chunks("Q", range(high - low))
     return _TrackPart(
         timescale=_timescale(moov, leaf[b"mdhd"][0]),
         tkhd=moov[slice(*leaf[b"tkhd"])],
@@ -450,7 +489,7 @@ def _track_part(
         delta_values=delta_values,
         composition_counts=composition_counts,
         composition_values=composition_values,
-        sizes=array.array("I", track.sizes[low:high]),
+        sizes=array_in_chunks("I", track.sizes[low:high]),
         sync_samples=sync,
         chunk_positions=array.array("Q"),
         chunk_counts=array.array("I"),
@@ -469,27 +508,28 @@ def _chunk_pieces(
     last = bisect_left(starts, high)
     if last - first == high - low:
         # 청크마다 샘플 하나 — 샘플의 위치와 크기가 곧 청크의 것이다. 샘플마다 돌지 않는다
-        offsets.extend(array.array("Q", track.offsets[low:high]))
-        lengths.extend(array.array("Q", track.sizes[low:high]))
+        fill_in_chunks(offsets, track.offsets[low:high])
+        fill_in_chunks(lengths, track.sizes[low:high])
         counts.extend(array.array("I", [1]) * (high - low))
         return offsets, lengths, counts
     # 청크마다 그 안에서 옮기는 샘플의 [처음, 끝) — 양 끝의 청크는 구간에 든 부분만이다.
     # 청크마다 파이썬 코드를 돌지 않는다: 크기의 누적합에서 두 자리의 차로 바이트 수를 낸다
-    begins = array.array("q", starts[first:last])
+    begins = array_in_chunks("q", starts[first:last])
     begins[0] = low
     ends = begins[1:]
     ends.append(high)
-    sums = array.array("Q", accumulate(track.sizes[low:high], initial=0))
+    sums = array_in_chunks("Q", accumulate(track.sizes[low:high], initial=0))
     piece_offsets = track.offsets[low:high]
-    offsets.extend(map(piece_offsets.__getitem__, map(sub, begins, repeat(low))))
-    lengths.extend(
+    fill_in_chunks(offsets, map(piece_offsets.__getitem__, map(sub, begins, repeat(low))))
+    fill_in_chunks(
+        lengths,
         map(
             sub,
             map(sums.__getitem__, map(sub, ends, repeat(low))),
             map(sums.__getitem__, map(sub, begins, repeat(low))),
-        )
+        ),
     )
-    counts.extend(map(sub, ends, begins))
+    fill_in_chunks(counts, map(sub, ends, begins))
     return offsets, lengths, counts
 
 
@@ -511,10 +551,10 @@ def _place(*tracks: tuple[Mp4Track | None, int, int, _TrackPart | None]):
         if not offsets:
             continue
         ends = map(add, offsets, lengths)
-        if not all(map(le, ends, offsets[1:])):
+        if not _all(map(le, ends, offsets[1:])):
             raise Mp4Error(MP4_INVALID, "청크가 원본 위치 순서가 아니거나 겹친다")
-        part.chunk_counts.extend(counts)
-        feeds.append((offsets, array.array("Q", accumulate(lengths, initial=0)), part))
+        fill_in_chunks(part.chunk_counts, counts)
+        feeds.append((offsets, array_in_chunks("Q", accumulate(lengths, initial=0)), part))
     if not feeds:
         return [], 0
 
@@ -568,8 +608,8 @@ def _place(*tracks: tuple[Mp4Track | None, int, int, _TrackPart | None]):
         for begin, size, target in runs:
             first, last = bisect_left(offsets, begin), bisect_left(offsets, begin + size)
             if last > first:
-                part.chunk_positions.extend(
-                    array.array("Q", map(add, offsets[first:last], repeat(target - begin)))
+                fill_in_chunks(
+                    part.chunk_positions, map(add, offsets[first:last], repeat(target - begin))
                 )
     return [tuple(run) for run in runs], position
 
@@ -664,7 +704,8 @@ def build_section_head(plan: SectionFilePlan, encoded: Sequence[EncodedPiece]) -
         if made.timescale != plan._video.timescale:
             raise Mp4Error(MP4_INVALID, f"{piece.kind} 조각의 timescale이 원본과 다르다")
     try:
-        moov = _moov(plan, tuple(encoded))
+        with reading_tables():  # 이 스레드의 조각을 잘게 — 조작 중이면 조각 사이에서 쉰다
+            moov = _moov(plan, tuple(encoded))
     except (struct.error, IndexError) as e:
         raise Mp4Error(MP4_INVALID, str(e)) from e
     spare = plan.moov_reserved - len(moov)
@@ -687,7 +728,7 @@ def _box(kind: bytes, payload: bytes) -> bytes:
 
 def _packed(typecode: str, values) -> bytes:
     """정수들을 빅엔디언으로 이어 쓴다."""
-    table = array.array(typecode, values)
+    table = array_in_chunks(typecode, values)
     if sys.byteorder == "little":
         table.byteswap()
     return table.tobytes()
@@ -706,8 +747,8 @@ class _Runs:
         if self.counts and self.values[-1] == values[0]:
             self.counts[-1] += counts[0]
             counts, values = counts[1:], values[1:]
-        self.counts.extend(array.array("Q", counts))
-        self.values.extend(array.array("q", values))
+        fill_in_chunks(self.counts, counts)
+        fill_in_chunks(self.values, values)
 
     def extend_values(self, values: Sequence[int]) -> None:
         for value, group in groupby(values):
@@ -715,10 +756,12 @@ class _Runs:
 
     def table(self, kind: bytes) -> bytes:
         """stts · ctts 상자. 음수가 있으면 버전 1(부호 있는 값)로 쓴다."""
-        negative = bool(self.values) and min(self.values) < 0
+        negative = bool(self.values) and min(map(min, in_chunks(self.values))) < 0
         cells = array.array("I", bytes(8 * len(self.counts)))
-        cells[0::2] = array.array("I", self.counts)
-        cells[1::2] = array.array("I", (value & 0xFFFFFFFF for value in self.values) if negative else self.values)  # fmt: skip
+        cells[0::2] = array_in_chunks("I", self.counts)
+        cells[1::2] = array_in_chunks(
+            "I", (value & 0xFFFFFFFF for value in self.values) if negative else self.values
+        )
         head = struct.pack(">BxxxI", 1 if negative else 0, len(self.counts))
         return _box(kind, head + _packed("I", cells))
 
@@ -786,15 +829,15 @@ def _chunk_tables(positions, counts, body_offset: int) -> bytes:
     """stsc · co64 — 청크마다의 샘플 수와 위치."""
     # stsc는 샘플 수가 바뀌는 청크만 적는다(청크 번호는 1부터). 바뀌는 자리를 청크마다 파이썬
     # 코드를 돌지 않고 찾는다
-    counts = array.array("I", counts)
+    counts = array_in_chunks("I", counts)
     changes = array.array("I", [0] if counts else [])
-    changes.extend(compress(range(1, len(counts)), map(ne, counts[1:], counts)))
+    fill_in_chunks(changes, compress(range(1, len(counts)), map(ne, counts[1:], counts)))
     cells = array.array("I", bytes(12 * len(changes)))
-    cells[0::3] = array.array("I", map(add, changes, repeat(1)))
-    cells[1::3] = array.array("I", map(counts.__getitem__, changes))
+    cells[0::3] = array_in_chunks("I", map(add, changes, repeat(1)))
+    cells[1::3] = array_in_chunks("I", map(counts.__getitem__, changes))
     cells[2::3] = array.array("I", [1]) * len(changes)  # 샘플 설명은 늘 첫 번째 것이다
     stsc = struct.pack(">II", 0, len(changes)) + _packed("I", cells)
-    offsets = array.array("Q", map(add, positions, repeat(body_offset)))
+    offsets = array_in_chunks("Q", map(add, positions, repeat(body_offset)))
     return _box(b"stsc", stsc) + _box(
         b"co64", struct.pack(">II", 0, len(offsets)) + _packed("Q", offsets)
     )
@@ -850,7 +893,7 @@ def _video_trak(plan: SectionFilePlan, encoded: tuple[EncodedPiece, ...], movie_
         # 옮긴 샘플의 길이 — 마지막 샘플의 것은 다음에 오는 것(꼬리 조각)에 따라 다시 정한다
         moved_counts, moved_values = array.array("Q", part.delta_counts), part.delta_values
         last_delta = moved_values[-1]
-        span = sum(map(mul, moved_counts, moved_values)) - last_delta
+        span = _total(map(mul, moved_counts, moved_values)) - last_delta
         moved_counts[-1] -= 1
         if moved_counts[-1] == 0:
             moved_counts, moved_values = moved_counts[:-1], moved_values[:-1]
@@ -860,7 +903,7 @@ def _video_trak(plan: SectionFilePlan, encoded: tuple[EncodedPiece, ...], movie_
         else:
             composition.extend([moved], [0])
         if part.sync_samples is not None:
-            sync.extend(map(add, part.sync_samples, repeat(len(sizes))))
+            fill_in_chunks(sync, map(add, part.sync_samples, repeat(len(sizes))))
         sizes.extend(part.sizes)
         positions.extend(part.chunk_positions)
         counts.extend(part.chunk_counts)
@@ -880,7 +923,7 @@ def _video_trak(plan: SectionFilePlan, encoded: tuple[EncodedPiece, ...], movie_
 
     stsd = merged_sample_description(part.stsd, [made.stsd for made in encoded]) if encoded else part.stsd  # fmt: skip
     tables = deltas.table(b"stts")
-    if any(composition.values):
+    if _any(composition.values):
         tables += composition.table(b"ctts")
     tables += _box(
         b"stss", struct.pack(">II", 0, len(sync)) + _packed("I", map(add, sync, repeat(1)))
@@ -897,12 +940,12 @@ def _audio_trak(plan: SectionFilePlan, movie_duration: int) -> bytes:
     deltas, composition = _Runs(), _Runs()
     deltas.extend(part.delta_counts, part.delta_values)
     tables = deltas.table(b"stts")
-    if part.composition_counts and any(part.composition_values):
+    if part.composition_counts and _any(part.composition_values):
         composition.extend(part.composition_counts, part.composition_values)
         tables += composition.table(b"ctts")
     tables += _chunk_tables(part.chunk_positions, part.chunk_counts, plan.body_offset)
     tables += _box(b"stsz", struct.pack(">III", 0, 0, len(part.sizes)) + _packed("I", part.sizes))
-    media_duration = sum(map(mul, part.delta_counts, part.delta_values))
+    media_duration = _total(map(mul, part.delta_counts, part.delta_values))
     lead = plan._audio_lead
     if lead >= 0:
         edits = _edit_list(movie_duration, lead)
