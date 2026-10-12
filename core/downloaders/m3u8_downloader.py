@@ -46,7 +46,7 @@ import os
 import shutil
 import time as tm
 from bisect import bisect_left
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 import requests
 
@@ -98,6 +98,23 @@ _INIT_TRUNCATION_ERRORS = (
 )
 
 
+def _cache_recovery_url(url: str) -> str:
+    """실측된 네이버 CDN에서 손상 캐시를 피하도록 파일 앞 구분자를 중복한다.
+
+    2026-10-12 실측: 일반 요청·Range·no-cache·쿼리 변경 모두 같은 손상 본문을
+    반환했지만 이 경로는 정상 본문을 반환했다. 호스트·파일·인증 정보는 유지한다.
+    다른 서버의 경로 의미는 알 수 없으므로 이 CDN에만 적용한다. 수신 후 구조 검사는
+    그대로 수행하며 반복 실패해도 구분자를 계속 늘리지 않는다.
+    """
+    parsed = urlsplit(url)
+    if parsed.scheme != "https" or parsed.hostname != "ex-nlive-slitvod-streaming.navercdn.com":
+        return url
+    directory, separator, filename = parsed.path.rpartition("/")
+    if not separator or not filename or directory.endswith("/"):
+        return url
+    return parsed._replace(path=directory + "//" + filename).geturl()
+
+
 class M3U8Downloader(BaseDownloader):
     """m3u8 VOD를 세그먼트 단위 멀티스레드로 다운로드·병합하는 엔진.
 
@@ -118,6 +135,7 @@ class M3U8Downloader(BaseDownloader):
 
     def __init__(self, data, logger, **callbacks):
         super().__init__(data, logger, **callbacks)
+        self._cache_recovery: set[int] = set()
         # 세그먼트 저장용 임시 폴더 경로 (실패 정리 경로가 참조하므로 실행 전에 확정).
         # 산출물 파일명에서 파생해 다운로드 간 폴더 공유·상호 삭제를 막는다 (#105).
         # 조건이 맞으면 시스템 임시 폴더(로컬 매체)로 보낸다 — 산출물 폴더가
@@ -568,6 +586,8 @@ class M3U8Downloader(BaseDownloader):
 
         downloaded_size = 0
         segment_url = urljoin(self.s.base_url, segment)
+        if index in self._cache_recovery:
+            segment_url = _cache_recovery_url(segment_url)
         while not self.state == DownloadState.WAITING:
             try:
                 # 스레드로컬 세션으로 같은 워커의 세그먼트 요청 간 연결을 재사용한다 (#31)
@@ -639,9 +659,18 @@ class M3U8Downloader(BaseDownloader):
                 requests.Timeout,
                 integrity.TruncatedSegmentError,
             ) as e:
+                if isinstance(e, integrity.TruncatedSegmentError):
+                    if (
+                        index not in self._cache_recovery
+                        and _cache_recovery_url(segment_url) != segment_url
+                    ):
+                        self._cache_recovery.add(index)
+                        self.logger.warning(
+                            f"Segment {index + 1}: invalid cached body; retrying alternate resource path"
+                        )
                 with self.lock:
                     self._requeue_failed((index, segment), part_num, e)
-                self.logger.log_error(f"Part {part_num} download failed", e)
+                self.logger.log_error(f"Part {part_num} download failed (segment {index + 1})", e)
                 return part_num
 
 
