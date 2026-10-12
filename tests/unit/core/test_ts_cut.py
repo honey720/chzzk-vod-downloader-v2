@@ -374,6 +374,40 @@ def test_cut_fails_when_the_frames_of_a_boundary_segment_differ_from_the_ts_fram
     assert not os.path.exists(work)
 
 
+def test_boundary_segment_is_checked_against_its_own_frames_not_the_first_segments(
+    vod, host, tmp_path
+):
+    """경계 세그먼트가 넘긴 첫 세그먼트가 아닐 때도, 다시 싼 mp4는 그 세그먼트의 프레임 정보와 견줘야 한다.
+
+    구간 프레임 35 ~ 70(넘기는 세그먼트 0 ~ 2, 머리 조각은 세그먼트 1에서 만든다). TS 쪽 프레임
+    정보에서 세그먼트 1의 키프레임 45를 46으로 바꿔 넘김(세그먼트 0의 것은 그대로다)
+    -> CutError(CUT_FAILED), 산출물 · 작업 폴더 없음
+    """
+    selection = TimeRange(_frame_time(35) - 0.001, _frame_time(70) - 0.001)
+    planned = _Planned(host, tmp_path / "segments", selection)
+    assert (planned.section.first_segment, planned.section.last_segment) == (0, 2)
+    keys = list(planned.ts_frames.keyframes)
+    assert keys[:4] == [0, 15, 30, 45]
+    keys[3] += 1
+    ts_frames = replace(planned.ts_frames, keyframes=tuple(keys))
+    output, work = str(tmp_path / "out.mp4"), tmp_path / "work"
+
+    with pytest.raises(CutError) as info:
+        cut_ts_section(
+            str(work),
+            planned.segments,
+            ts_frames,
+            planned.paths,
+            output,
+            planned.section.first_pts,
+            planned.section.last_pts,
+        )
+
+    assert info.value.message_key == CUT_FAILED
+    assert not os.path.exists(output)
+    assert not os.path.exists(work)
+
+
 def test_segment_that_does_not_start_with_a_keyframe_is_unsupported(vod, host, tmp_path):
     """이어지는 세그먼트가 키프레임으로 시작하지 않으면 자르지 않고 CUT_UNSUPPORTED로 실패해야 한다.
 

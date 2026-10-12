@@ -40,6 +40,7 @@ import core.api.hls_ts as hls_ts_module
 import core.downloaders.hls_aes_downloader as aes_module
 from core.api.hls import parse_media_playlist
 from core.api.hls_ts import fetch_ts_head, segment_streams
+from core.api.mpegts import parse_ts
 from core.downloaders.base import PostprocessError
 from core.downloaders.decrypt import DecryptionError, sequence_iv
 from core.downloaders.hls_aes_downloader import HlsAesDownloader
@@ -538,18 +539,22 @@ def test_work_folder_of_a_section_is_in_the_temp_folder_and_gone_before_the_next
     """구간마다의 작업 폴더는 엔진 임시 폴더에 놓이고, 다음 구간의 컷이 시작할 때는 없어야 하며, 긴 구간부터 만들어야 한다.
 
     구간 0.8 ~ 2.3초(1.5초) · 3.4 ~ 5.2초(1.8초). 컷이 불릴 때마다 작업 폴더의 경로와, 그때 임시
-    폴더에 있는 세그먼트가 아닌 이름을 적음
+    폴더에 있는 세그먼트가 아닌 이름과, 넘겨받은 세그먼트 정보가 넘겨받은 파일을 읽은 것과 같은지를 적음
     -> 작업 폴더 == 임시 폴더의 "section_2" · "section_1"(긴 둘째 구간이 먼저),
-       컷이 시작할 때마다 임시 폴더에 세그먼트가 아닌 것 없음, 저장 폴더에 구간 파일 둘뿐
+       컷이 시작할 때마다 임시 폴더에 세그먼트가 아닌 것 없음,
+       세그먼트 정보가 파일과 같은 순서다(파일마다 읽은 PTS가 같다), 저장 폴더에 구간 파일 둘뿐
     """
     real_cut = aes_module.cut_ts_section
-    seen = []
+    seen, in_order = [], []
 
-    def cut(work_dir, *args, **kwargs):
+    def cut(work_dir, segments, ts_frames, segment_paths, *args, **kwargs):
         folder = os.path.dirname(work_dir)
         others = sorted(name for name in os.listdir(folder) if not name.endswith(".ts"))
         seen.append((work_dir, others))
-        return real_cut(work_dir, *args, **kwargs)
+        for streams, segment_path in zip(segments, segment_paths, strict=True):
+            with open(segment_path, "rb") as f:
+                in_order.append(streams.video_pts == parse_ts(f.read()).video_pts)
+        return real_cut(work_dir, segments, ts_frames, segment_paths, *args, **kwargs)
 
     monkeypatch.setattr(aes_module, "cut_ts_section", cut)
 
@@ -561,6 +566,8 @@ def test_work_folder_of_a_section_is_in_the_temp_folder_and_gone_before_the_next
         (os.path.join(temp, "section_2"), []),
         (os.path.join(temp, "section_1"), []),
     ]
+    assert len(in_order) == 3 + 4  # 구간마다의 세그먼트 수
+    assert all(in_order)
     assert run.listing() == SECTION_FILES
 
 
