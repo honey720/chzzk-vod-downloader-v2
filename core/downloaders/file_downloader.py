@@ -57,6 +57,7 @@ from core.api.session import get_thread_session
 from core.downloaders.base import (
     REQUEST_TIMEOUT,
     BaseDownloader,
+    DiskSpaceError,
     PostprocessError,
     TruncatedBodyError,
 )
@@ -142,6 +143,11 @@ class _MapWriter:
                     opened.write(view[low - begin : high - begin])
                 at += 1
         self._position = end
+
+
+def _free_bytes(folder: str) -> int:
+    """그 폴더가 놓인 볼륨의 여유 공간(바이트)."""
+    return shutil.disk_usage(folder).free
 
 
 def _pieces_of(plan: SectionFilePlan | None, section: CutSection) -> tuple[CutPiece, ...]:
@@ -417,6 +423,8 @@ class FileDownloader(BaseDownloader):
             number: section_body_path_for(content.selection_paths[number]) for number in pending
         }
         self._outlets = self._make_outlets(head, index, source_path, layout, plans)
+        if not self._reuses_source:
+            self._require_free_space(source_path, layout)
         received = merge_ranges(
             (source, source + length - 1)
             for outlet in self._outlets
@@ -509,6 +517,33 @@ class FileDownloader(BaseDownloader):
                 )
             placed.append((self._bodies[number], runs))
         return tuple(_Outlet(path, runs, tuple(run[0] for run in runs)) for path, runs in placed)
+
+    def _require_free_space(self, source_path: str, layout: PartialLayout) -> None:
+        """구간 파일들과 경계 원본이 저장 폴더의 여유 공간에 들어가는지 받기 전에 확인한다 (#309).
+
+        필요한 크기는 가는 곳마다 받은 바이트가 놓이는 끝 위치의 합이다 — 구간 파일은 머리 자리 +
+        옮기는 바이트(영상 전체 구간은 원본의 크기), 경계 원본은 머리 + 경계 GOP의 원본 샘플이다.
+        다시 인코딩한 경계 GOP는 그 원본 샘플보다 크지 않은 것으로 본다(경계 원본의 크기만큼을
+        한 번 더 센다). 여유 공간을 알 수 없으면 확인하지 않는다.
+
+        Raises:
+            DiskSpaceError: 여유 공간이 모자란 경우
+        """
+        needed = layout.size + layout.download_size
+        for outlet in self._outlets[1:]:
+            needed += max(
+                (target + length for _source, length, target in outlet.runs),
+                default=0,
+            )
+        needed += sum(
+            plan.body_offset for plan in self._plans.values() if plan is not None and not plan.runs
+        )
+        try:
+            free = _free_bytes(os.path.dirname(os.path.abspath(source_path)))
+        except OSError:
+            return
+        if needed > free:
+            raise DiskSpaceError(needed, free)
 
     def _prepare_output(self) -> None:
         """빈 파일 생성(사이즈: 0). 구간 다운로드는 경계 원본과 본문 파일들을 만들어 둔다.

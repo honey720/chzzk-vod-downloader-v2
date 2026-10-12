@@ -11,7 +11,7 @@ import requests
 
 from app.viewmodels.download_viewmodel import _failure_message_key
 from core.api.playback_tracks import STREAM_NOT_FOUND, StreamSelectionError
-from core.downloaders.base import PostprocessError
+from core.downloaders.base import DISK_SPACE_SHORT, DiskSpaceError, PostprocessError
 from core.downloaders.hls_aes_downloader import DecryptionError
 from core.utils.ffmpeg import FFmpegNotFoundError, RemuxError
 from core.utils.hybrid_cut import CUT_FAILED, CUT_TIMEOUT, CUT_UNSUPPORTED, CutError
@@ -68,6 +68,14 @@ class TestFailureMessageKey:
         assert _failure_message_key(OSError(28, "No space left", "C:\\full\\path.mp4")) == (
             "Failed to save file"
         )
+
+    def test_disk_space_error_maps_to_its_own_key_not_the_save_failure(self):
+        """DiskSpaceError는 OSError의 하위지만 저장 실패가 아니라 제 키로 매핑돼야 한다 (#309).
+
+        DiskSpaceError(필요 10, 여유 5) -> "Not enough disk space"
+        """
+        assert _failure_message_key(DiskSpaceError(10, 5)) == DISK_SPACE_SHORT
+        assert DISK_SPACE_SHORT == "Not enough disk space"
 
     def test_stream_selection_error_maps_to_its_own_key(self):
         """StreamSelectionError는 그 예외가 든 키로 매핑돼야 한다 (#318).

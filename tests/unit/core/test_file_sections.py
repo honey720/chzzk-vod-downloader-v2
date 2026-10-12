@@ -44,7 +44,12 @@ from core.api.mp4 import (
     pending_mp4_head,
     read_mp4_index,
 )
-from core.downloaders.base import PostprocessError, TruncatedBodyError
+from core.downloaders.base import (
+    DISK_SPACE_SHORT,
+    DiskSpaceError,
+    PostprocessError,
+    TruncatedBodyError,
+)
 from core.downloaders.file_downloader import FileDownloader
 from core.downloaders.ranges import split_span
 from core.models.download_data import DownloadData
@@ -1901,3 +1906,114 @@ def test_map_writer_leaves_files_it_has_nothing_for_unopened(tmp_path):
 
     with open(a, "rb") as f:
         assert f.read() == b"0123456789"
+
+
+# ================================================================ 시작 전 여유 공간 검사
+
+
+def _needed_space(server, tmp_path, monkeypatch, selections) -> int:
+    """여유 공간이 0일 때 엔진이 알린 필요한 크기 — 받기 전에 실패한 실행에서 읽는다."""
+    monkeypatch.setattr(fd_module, "_free_bytes", lambda folder: 0)
+    folder = tmp_path / "probe"
+    folder.mkdir()
+    run = _Run(server, "plain", folder, selections).start()
+    (error,) = run.failures
+    assert isinstance(error, DiskSpaceError)
+    return error.needed
+
+
+def test_section_download_does_not_start_when_the_folder_lacks_space(
+    server, sources, tmp_path, monkeypatch
+):
+    """저장 폴더의 여유 공간이 구간 파일들보다 적으면 받기를 시작하지 않고 실패해야 한다.
+
+    기본 입력, 구간 프레임 35~80, 여유 공간 1000바이트
+    -> 실패 1건(DiskSpaceError, 키 "Not enough disk space", free == 1000),
+       moov 뒤의 범위 요청 0건, 저장 폴더가 비어 있다
+    """
+    monkeypatch.setattr(fd_module, "_free_bytes", lambda folder: 1000)
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))])
+    server.forget()
+
+    run.start()
+
+    assert run.finished == 0
+    (error,) = run.failures
+    assert isinstance(error, DiskSpaceError)
+    assert (error.message_key, error.free) == (DISK_SPACE_SHORT, 1000)
+    moov_last = _index(sources["plain"]).moov_range[1]
+    assert _spans_after_moov(server.requests, moov_last) == []
+    assert run.listing() == []
+
+
+def test_needed_space_covers_the_section_files_and_one_byte_less_is_refused(
+    server, tmp_path, monkeypatch
+):
+    """필요한 크기만큼의 여유 공간이면 받고, 1바이트 모자라면 받지 않아야 한다 — 그 크기는 만든 구간 파일들보다 작지 않다.
+
+    기본 입력, 구간 셋. 필요한 크기 N을 여유 공간 0인 실행에서 읽음
+    -> 여유 N − 1: 실패(DiskSpaceError) / 여유 N: 완료 1회, N >= 만든 구간 파일 크기의 합
+    """
+    needed = _needed_space(server, tmp_path, monkeypatch, _three())
+    short, enough = tmp_path / "short", tmp_path / "enough"
+    short.mkdir()
+    enough.mkdir()
+
+    monkeypatch.setattr(fd_module, "_free_bytes", lambda folder: needed - 1)
+    refused = _Run(server, "plain", short, _three()).start()
+    monkeypatch.setattr(fd_module, "_free_bytes", lambda folder: needed)
+    run = _Run(server, "plain", enough, _three()).start()
+
+    assert [type(error) for error in refused.failures] == [DiskSpaceError]
+    assert (run.finished, run.failures) == (1, [])
+    assert needed >= _sizes(run.paths) > 0
+
+
+def test_needed_space_of_a_whole_video_section_is_at_least_the_source_file(
+    server, sources, tmp_path, monkeypatch
+):
+    """영상 전체를 덮는 구간에 필요한 크기는 원본 파일의 크기 이상이어야 한다.
+
+    기본 입력, 구간 0초 ~ 영상 길이 -> 필요한 크기 >= 원본 파일의 바이트 수
+    """
+    duration = _index(sources["plain"]).duration
+
+    needed = _needed_space(server, tmp_path, monkeypatch, [TimeRange(0.0, duration)])
+
+    assert needed >= os.path.getsize(sources["plain"])
+
+
+def test_section_download_starts_when_the_free_space_is_unknown(server, tmp_path, monkeypatch):
+    """여유 공간을 알 수 없으면(OSError) 검사하지 않고 받아야 한다.
+
+    기본 입력, 구간 프레임 35~80, 여유 공간을 묻는 함수가 OSError를 냄 -> 완료 1회 · 실패 0건
+    """
+
+    def unknown(folder):
+        raise OSError("시험")
+
+    monkeypatch.setattr(fd_module, "_free_bytes", unknown)
+
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))]).start()
+
+    assert (run.finished, run.failures) == (1, [])
+
+
+def test_retry_from_kept_files_does_not_ask_for_space_again(server, tmp_path, monkeypatch):
+    """남긴 것을 그대로 쓰는 이어받은 실행은 여유 공간을 다시 요구하지 않아야 한다 — 받을 것이 없다.
+
+    첫 실행: 구간 셋, 둘째가 도중에 실패. 이어받은 실행은 여유 공간 0
+    -> 완료 1회 · 실패 0건, 요청 0건
+    """
+    cuts = CutCalls(monkeypatch, fd_module, "finish_section_file", source_arg=0)
+    cuts.fail_on = (2,)
+    failed = _Run(server, "plain", tmp_path, _three()).start()
+    assert len(failed.failures) == 1
+    requests_before = len(server.requests)
+    cuts.restart()
+    monkeypatch.setattr(fd_module, "_free_bytes", lambda folder: 0)
+
+    again = hand_over(failed, _Run(server, "plain", tmp_path, _three())).start()
+
+    assert (again.finished, again.failures) == (1, [])
+    assert server.requests[requests_before:] == []

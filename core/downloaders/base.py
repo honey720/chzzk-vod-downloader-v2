@@ -114,6 +114,23 @@ _TRANSIENT_ERROR_REQUEUE_LIMIT = 10  # 항목별 최대 재큐 횟수 — 총 11
 _TRANSIENT_HTTP_STATUSES = frozenset({408, 429})
 
 
+DISK_SPACE_SHORT = "Not enough disk space"  # 저장 폴더의 여유 공간이 만들 파일보다 적다
+
+
+class DiskSpaceError(OSError):
+    """저장 폴더의 여유 공간이 만들 파일보다 적어 받기를 시작하지 않았다 (#309).
+
+    ``message_key``는 번역하지 않은 i18n 키 원문이다. 표시 계층이 번역한다. OSError의 하위라
+    파일을 쓰다 난 오류와 같은 실패 처리(통지 · 정리)를 탄다.
+    """
+
+    def __init__(self, needed: int, free: int):
+        super().__init__(f"필요 {needed}바이트 · 여유 {free}바이트")
+        self.message_key = DISK_SPACE_SHORT
+        self.needed = needed  # 만들 파일들의 크기(바이트)
+        self.free = free  # 저장 폴더의 여유 공간(바이트)
+
+
 class TruncatedBodyError(requests.RequestException):
     """받은 본문이 잘렸다 — 서버가 말한 길이나 파일이 스스로 말하는 크기보다 짧다 (#309).
 

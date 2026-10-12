@@ -274,6 +274,12 @@ Cutting the section failed. Retry processes only the failed sections.</source>
 구간을 자르는 데 실패했습니다. 재시도하면 실패한 구간만 다시 처리합니다.</translation>
     </message>
     <message>
+        <source>Not enough disk space · free up space or pick another folder
+The download folder does not have enough free space for the section files.</source>
+        <translation>디스크 공간이 부족합니다 · 공간을 비우거나 다른 폴더를 골라 주세요
+다운로드 폴더에 구간 파일을 저장할 공간이 모자랍니다.</translation>
+    </message>
+    <message>
         <source>Video data arrived corrupted · try again later
 Part of the video kept arriving incomplete from the server. Try again later.</source>
         <translation>영상 일부가 잘려 받아졌습니다 · 잠시 뒤 다시 시도해 주세요

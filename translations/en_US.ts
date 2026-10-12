@@ -279,6 +279,12 @@ Cutting the section failed. Retry processes only the failed sections.</source>
 Cutting the section failed. Retry processes only the failed sections.</translation>
     </message>
     <message>
+        <source>Not enough disk space · free up space or pick another folder
+The download folder does not have enough free space for the section files.</source>
+        <translation>Not enough disk space · free up space or pick another folder
+The download folder does not have enough free space for the section files.</translation>
+    </message>
+    <message>
         <source>Video data arrived corrupted · try again later
 Part of the video kept arriving incomplete from the server. Try again later.</source>
         <translation>Video data arrived corrupted · try again later

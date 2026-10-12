@@ -39,7 +39,7 @@ from app.user_activity import user_interacting
 from app.viewmodels.data import ContentItem
 from app.viewmodels.section_edit_viewmodel import take_section_head, watch_section_head
 from core.api.playback_tracks import StreamSelectionError
-from core.downloaders.base import PostprocessError
+from core.downloaders.base import DiskSpaceError, PostprocessError
 from core.downloaders.hls_aes_downloader import DecryptionError
 from core.downloaders.integrity import TruncatedSegmentError
 from core.models.events import ProgressEvent
@@ -131,6 +131,9 @@ def _failure_message_key(exc: BaseException) -> str | None:
         return "Network connection error"
     if isinstance(exc, requests.RequestException):
         return "Network connection error"
+    if isinstance(exc, DiskSpaceError):
+        # 받기 전에 저장 폴더의 여유 공간이 만들 파일보다 적었다 (#309)
+        return exc.message_key
     if isinstance(exc, OSError):
         return "Failed to save file"
     return None
@@ -635,6 +638,10 @@ class DownloadViewModel(QObject):
             "Section cut failed": self.tr(
                 "Could not cut the section · press retry\n"
                 "Cutting the section failed. Retry processes only the failed sections."
+            ),
+            "Not enough disk space": self.tr(
+                "Not enough disk space · free up space or pick another folder\n"
+                "The download folder does not have enough free space for the section files."
             ),
             "Segment was received truncated": self.tr(
                 "Video data arrived corrupted · try again later\n"
