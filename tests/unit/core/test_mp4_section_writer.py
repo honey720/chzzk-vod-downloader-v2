@@ -522,11 +522,12 @@ class TestBuildRejects:
     def test_a_piece_with_another_frame_count_is_rejected(self):
         """조각의 프레임 수가 계획과 다르면 MP4_INVALID여야 한다.
 
-        머리는 프레임 3개여야 하는데 4개짜리 조각
+        머리는 프레임 3개여야 하는데 2개짜리 조각 — 프레임이 모자란 조각은 이음매의 DTS 확인에
+        걸리지 않는다(마지막 DTS가 옮긴 영상의 첫 DTS보다 앞이다)
         """
         plan = self._plan()
         encoded = _pieces_for(plan)
-        encoded[0] = _piece(4, 1, 0xE1)
+        encoded[0] = _piece(2, 1, 0xE1)
 
         with pytest.raises(Mp4Error) as caught:
             build_section_head(plan, encoded)

@@ -20,7 +20,7 @@
   (인코더에 번호를 준다). 영상 샘플 설명 하나의 avcC에 원본 것과 조각의 것을 함께 넣는다.
   번호가 겹치면 원본 샘플이 조각의 설정으로 디코드돼 깨지므로 거부한다
 - **오디오**: 다시 인코딩하지 않는다. 구간 시작에 걸친 샘플부터 넣고, 앞의 남는 부분은
-  편집 목록이 가린다. 0초에서 시작하는 구간은 원본이 가린 첫 샘플(프라이밍)을 넣지 않는다
+  편집 목록이 가린다. 오디오가 구간 시작보다 늦게 시작하면 그만큼을 빈 편집으로 둔다
 - 영상 트랙의 편집 목록이 구간의 첫 프레임을 0에 놓는다
 
 같은 구간을 하이브리드 컷으로 자른 것과 영상 패킷 수 · PTS · DTS · 디코드한 프레임이 같음을
@@ -267,9 +267,6 @@ def _plan(
     if index.audio is not None and audio_boxes is not None:
         times = index.audio.times
         audio_low = max(bisect_right(times, start_time + _TIME_SLACK) - 1, 0)
-        # 원본이 가린 샘플(프라이밍)은 넣지 않는다 — 0초에서 시작하는 구간이 여기에 걸린다
-        while audio_low + 1 < len(times) and times[audio_low] < 0:
-            audio_low += 1
         audio_high = max(bisect_left(times, end_time - _TIME_SLACK), audio_low)
         if audio_high > audio_low:
             audio_stts = _run_table(moov, audio_boxes.leaf[b"stts"], signed=False)
