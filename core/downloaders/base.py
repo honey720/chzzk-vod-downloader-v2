@@ -182,6 +182,18 @@ class TruncatedBodyError(requests.RequestException):
     """
 
 
+def _remove_fed_segment(path: str) -> None:
+    """ffmpeg에 다 넘긴 세그먼트 파일을 지운다. 지우지 못해도 후처리는 이어 간다.
+
+    지우지 못한 파일은 끝난 뒤 임시 폴더와 함께 지워진다 — 디스크를 덜 쓰는 일이
+    실패했을 뿐 산출물은 그대로다.
+    """
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
 def _is_permanent_error(exc: BaseException) -> bool:
     """재시도해도 결과가 같은 오류인지 판정한다 (#131).
 
@@ -715,8 +727,13 @@ class BaseDownloader(ABC):
 
         중간 병합 파일을 만들지 않는 단일 패스다 — fMP4·TS는 바이트 연결이
         곧 유효한 스트림이라 파이프 공급이 병합 의미를 정확히 보존한다.
-        세그먼트 파일은 여기서 지우지 않는다(#92 — 후처리 실패로 재다운로드를
-        강요하지 않기 위함). 성공 후 정리는 run()의 _cleanup_after_run이 한다.
+
+        **넘긴 세그먼트는 곧바로 지운다 (#309).** 세그먼트 하나를 ffmpeg에 다 넘기면 그 파일을
+        지운다 — 산출물이 커지는 만큼 세그먼트가 줄어, 후처리 동안의 디스크 사용량이
+        세그먼트 + 산출물(약 2배)이 아니라 약 1배다. 예전에는 후처리가 실패해도 다시 받지
+        않게 세그먼트를 모두 남겼다(#92). 지금은 실패하면 이미 넘긴 세그먼트는 없고, 그
+        범위는 다시 받는다(오너 결정 2026-10-12) — 아직 넘기지 않은 세그먼트와 임시 폴더는
+        건드리지 않는다. 빈 폴더의 정리는 run()의 _cleanup_after_run이 한다.
 
         remux가 실패하면 폴백 없이 PostprocessError로 명확히 실패한다 —
         바이트 연결본은 #88이 고치려던 결함품이라 조용히 대체하지 않는다.
@@ -739,7 +756,14 @@ class BaseDownloader(ABC):
                     # 일시정지 상태라면 대기 (ffmpeg는 stdin을 기다리며 멈춘다)
                     if self.state == DownloadState.PAUSED:
                         self.s._pause_event.wait()
+                        # 일시정지한 채로 중단됐다 — 깨어나서 조각을 더 넘기지 않는다. 넘기면 그
+                        # 세그먼트가 "다 넘긴 것"이 되어 지워진다 (#309)
+                        if self.state == DownloadState.WAITING:
+                            raise _PostprocessAborted
                     yield chunk
+                # 여기 왔으면 이 세그먼트의 마지막 조각까지 ffmpeg에 넘어갔다(공급받는 쪽이
+                # 그것을 쓰고 나서야 다음 조각을 청한다) — 더 읽을 일이 없으니 지운다
+                _remove_fed_segment(path)
                 self.s.merged_segments += 1
                 # 어댑터가 표시하는 정수 %(분모 = 병합 대상 수 = 이 목록 길이)가
                 # 바뀔 때만 통지한다 — 세그먼트 수천 개짜리 VOD에서도 통지가
@@ -763,7 +787,7 @@ class BaseDownloader(ABC):
             # 중단 정리(임시 폴더·산출물 삭제)는 run()의 중단 경로가 수행한다
             return
         except FFmpegError as e:
-            self.logger.log_error("Remux failed — segments preserved for retry", e)
+            self.logger.log_error("Remux failed — fed segments are gone, retry receives again", e)
             raise PostprocessError(f"후처리(remux) 실패: {e}") from e
 
     def _initial_queue(self, items: list) -> list:

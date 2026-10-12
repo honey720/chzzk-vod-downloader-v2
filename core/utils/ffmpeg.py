@@ -456,6 +456,116 @@ def remux_stream(chunks: Iterable[bytes], dst_path: str) -> None:
         raise RemuxError(f"ffmpeg remux 실패 (exit {returncode}): {stderr_tail}")
 
 
+def remux_through(
+    chunks: Iterable[bytes],
+    convert_args: Sequence[str],
+    join_args: Sequence[str],
+    dst_path: str,
+    *,
+    cwd: str | None = None,
+) -> None:
+    """바이트 스트림을 변환 ffmpeg에 넣고, 그 출력을 잇는 ffmpeg의 표준 입력으로 이어 dst_path를 만든다 (#309).
+
+    세그먼트 방식의 구간 다운로드가 쓴다 — 가운데 세그먼트의 원본 바이트를 그대로 잇는
+    ffmpeg(concat의 ``pipe:0``)에 넣으면 시각이 어긋나므로, 변환 ffmpeg가 먼저 조각난 mp4로
+    바꾼다. 두 프로세스는 파이프로 바로 이어져 파이썬을 거치지 않는다.
+
+    공급 · 실패 처리는 ``remux_stream``과 같다: 공급 이터레이터가 예외를 던지면 두 프로세스를
+    끝내고 산출물을 지운 뒤 그 예외를 그대로 올린다. 어느 한쪽이라도 0이 아닌 코드로 끝나면
+    산출물을 지우고 ``RemuxError``를 낸다 — 변환 쪽이 죽었는데 잇는 쪽이 받은 데까지만으로
+    정상 종료한 경우도 실패다.
+
+    Args:
+        chunks: 변환 ffmpeg의 표준 입력으로 넣을 바이트
+        convert_args: 변환 ffmpeg의 인자 — 입력은 ``pipe:0``, 출력은 ``pipe:1``이어야 한다
+        join_args: 잇는 ffmpeg의 인자 — 출력 경로까지 든 것. ``-nostdin``은 붙여 준다(없으면
+            ffmpeg가 표준 입력에서 키 입력을 읽으며 파이프의 바이트를 집어 간다)
+        dst_path: 잇는 ffmpeg가 쓰는 산출물 — 실패하면 지운다
+        cwd: 잇는 ffmpeg의 작업 디렉토리(concat 목록의 상대 경로 기준)
+
+    Raises:
+        FFmpegNotFoundError: ffmpeg 실행 파일을 찾지 못한 경우
+        RemuxError: 두 ffmpeg 가운데 하나가 0이 아닌 코드로 끝났거나 실행 자체가 실패한 경우
+    """
+    exe = get_ffmpeg_exe()
+    creationflags = _CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    head = [exe, "-hide_banner", "-loglevel", "error"]
+    try:
+        join = subprocess.Popen(
+            [*head, "-nostdin", "-y", *join_args],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            cwd=cwd,
+            creationflags=creationflags,
+            env=_subprocess_env(exe),
+        )
+    except OSError as e:
+        raise RemuxError(f"ffmpeg 실행 실패: {e}") from e
+    _end_with_parent(join)
+    try:
+        convert = subprocess.Popen(
+            [*head, *convert_args],
+            stdin=subprocess.PIPE,
+            stdout=join.stdin,
+            stderr=subprocess.PIPE,
+            creationflags=creationflags,
+            env=_subprocess_env(exe),
+        )
+    except OSError as e:
+        join.kill()
+        join.wait()
+        _close_quietly(join.stdin, join.stderr)
+        raise RemuxError(f"ffmpeg 실행 실패: {e}") from e
+    _end_with_parent(convert)
+    # 잇는 쪽의 입력은 이제 변환 쪽만 쥔다 — 이쪽에서 닫아야 변환이 끝날 때 잇는 쪽이 끝을 본다
+    _close_quietly(join.stdin)
+
+    # stderr는 별도 스레드로 계속 비운다 — 파이프 버퍼가 차면 ffmpeg가 멈춘다
+    errors: dict[str, bytes] = {}
+    readers = [
+        threading.Thread(
+            target=lambda n=name, p=process: errors.update({n: p.stderr.read()}), daemon=True
+        )
+        for name, process in (("convert", convert), ("join", join))
+    ]
+    for reader in readers:
+        reader.start()
+
+    def end_both() -> None:
+        for process in (convert, join):
+            process.kill()
+        for process in (convert, join):
+            process.wait()
+        for reader in readers:
+            reader.join(timeout=5)
+        _close_quietly(convert.stdin, convert.stderr, join.stderr)
+
+    try:
+        for chunk in chunks:
+            try:
+                convert.stdin.write(chunk)
+            except OSError:
+                break  # 변환 쪽이 먼저 끝났다 — 아래에서 종료 코드로 실패를 알린다
+    except BaseException:
+        end_both()
+        _remove_quietly(dst_path)
+        raise
+
+    _close_quietly(convert.stdin)
+    codes = (convert.wait(), join.wait())
+    for reader in readers:
+        reader.join(timeout=5)
+    _close_quietly(convert.stderr, join.stderr)
+    if any(codes):
+        _remove_quietly(dst_path)
+        tail = b" | ".join(errors.get(name, b"")[-250:] for name in ("convert", "join"))
+        raise RemuxError(
+            f"ffmpeg remux 실패 (변환 exit {codes[0]} · 잇기 exit {codes[1]}): "
+            f"{tail.decode(errors='replace').strip()}"
+        )
+
+
 def run_ffmpeg(
     args: Sequence[str],
     *,

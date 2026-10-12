@@ -228,10 +228,13 @@ def test_run_merges_segments_in_index_order_byte_exact(tmp_path, monkeypatch):
 
 
 def test_remux_failure_fails_explicitly_and_preserves_segments(tmp_path, monkeypatch):
-    """remux 실패는 폴백 없이 명시적 실패다 — 산출물 없음·세그먼트 보존 (#92).
+    """remux 실패는 폴백 없이 명시적 실패다 — 산출물 없음, 넘기지 않은 세그먼트는 남는다 (#92).
 
     바이트 연결본은 #88이 고치려던 결함품이므로 대신 내주지 않는다.
-    세그먼트는 재다운로드를 강요하지 않기 위해 보존한다.
+    여기의 가짜 remux는 세그먼트를 하나도 받지 않고 실패한다 — 넘긴 것이 없어 모두 남는다.
+    #309부터 넘긴 세그먼트는 곧바로 지운다(오너 결정 2026-10-12: 넘기자마자 지우고, 후처리가
+    실패하면 그 범위는 다시 받는다). 도중에 실패한 경우는
+    test_remux_failure_midway_leaves_only_the_segments_not_yet_fed가 잰다.
     """
     engine, data, logger, output, finished, failures, merge_starts = _make_engine(
         tmp_path, monkeypatch
@@ -252,11 +255,44 @@ def test_remux_failure_fails_explicitly_and_preserves_segments(tmp_path, monkeyp
     assert not output.exists()  # 결함품 산출물을 내주지 않는다
     assert any(isinstance(e, base_module.PostprocessError) for e in failures)  # 명시적 실패
     assert logger.errors  # 원인 로그 존재
-    # 세그먼트(임시 폴더)는 보존된다 — 후처리 실패로 재다운로드를 강요하지 않는다
+    # 넘기지 않은 세그먼트(임시 폴더)는 그대로다 — 실패한 실행이 스스로 지우지 않는다
     temp_dir = tmp_path / "CVDv2_temp_out"
     assert temp_dir.exists()
     assert len(list(temp_dir.iterdir())) == SEGMENT_COUNT + 1  # 초기화 세그먼트 포함
     assert merge_starts == [True]
+
+
+def test_remux_failure_midway_leaves_only_the_segments_not_yet_fed(tmp_path, monkeypatch):
+    """remux가 도중에 실패하면 이미 넘긴 세그먼트는 지워져 있고 나머지만 임시 폴더에 남아야 한다 (#309).
+
+    가짜 remux가 조각 둘(초기화 세그먼트 · 첫 세그먼트)을 받고 셋째를 청한 뒤 실패
+    -> 실패 1건(PostprocessError), 산출물 없음, 임시 폴더에 남은 파일 == 전체 − 2.
+    예전(#92)에는 전부 남았다 — 오너 결정(2026-10-12)으로 바꿨다: 넘기자마자 지우고,
+    후처리가 실패하면 그 범위는 다시 받는다
+    """
+    engine, data, logger, output, finished, failures, merge_starts = _make_engine(
+        tmp_path, monkeypatch
+    )
+
+    def fails_after_two(chunks, dst_path):
+        feed = iter(chunks)
+        next(feed)
+        next(feed)
+        next(feed)  # 셋째를 청한다 — 둘째 세그먼트의 마지막 조각까지 넘어갔다
+        raise base_module.FFmpegError("가짜 remux 실패")
+
+    monkeypatch.setattr(base_module, "remux_stream", fails_after_two)
+
+    data.model.start()
+    thread = _run_in_thread(engine)
+    thread.join(timeout=30)
+    assert not thread.is_alive()
+
+    assert not finished.is_set()
+    assert not output.exists()
+    assert any(isinstance(e, base_module.PostprocessError) for e in failures)
+    temp_dir = tmp_path / "CVDv2_temp_out"
+    assert len(list(temp_dir.iterdir())) == SEGMENT_COUNT + 1 - 2
 
 
 def test_stop_during_postprocess_cleans_up_without_failure(tmp_path, monkeypatch):
@@ -530,7 +566,11 @@ def test_stray_dotfile_in_temp_dir_is_excluded_from_merge(tmp_path, monkeypatch)
 
 
 def test_downstream_stop_after_postprocess_failure_preserves_segments(tmp_path, monkeypatch):
-    """실패 콜백이 비동기로 상태를 WAITING으로 돌려도 세그먼트는 보존된다 (#185).
+    """실패 콜백이 비동기로 상태를 WAITING으로 돌려도 넘기지 않은 세그먼트는 남는다 (#185).
+
+    (#309: 넘긴 세그먼트는 곧바로 지운다 — 오너 결정 2026-10-12. 여기의 가짜 remux는 하나도
+    받지 않고 실패하므로 모두 남는다. 이 테스트가 재는 것은 그대로다: 실패 뒤의 비동기
+    WAITING 전이가 남은 세그먼트를 지우지 않는다.)
 
     base.py의 PostprocessError 분기는 _cleanup_partial()을 부르지 않아 세그먼트를
     보존하도록 설계됐다(#92 — 재다운로드 강요 방지). 그런데 실제 프로덕션 배선
