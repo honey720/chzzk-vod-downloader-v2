@@ -38,6 +38,7 @@ import struct
 import sys
 from bisect import bisect_left, bisect_right
 from collections.abc import Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from itertools import accumulate, compress, groupby, islice, repeat
 from operator import add, le, mul, ne, sub
@@ -75,6 +76,11 @@ RESERVE_PER_ENCODED_FRAME = 24  # 다시 인코딩한 프레임 하나 — stts 
 RESERVE_PER_ENCODED_PIECE = 276  # 조각 하나 — 청크 하나(stsc 12 + co64 8) + SPS · PPS 256
 RESERVE_SLACK = 64  # 표의 이음매에서 늘 수 있는 줄
 _FREE_HEADER_BYTES = 8  # free 상자의 머리 — 남는 자리가 이보다 작으면 상자를 쓸 수 없다
+
+# 지금 머리의 길이만 재는 중인지 — 그때는 긴 표의 내용을 만들지 않고 같은 길이의 0으로 둔다.
+# 배치를 정할 때 옮기는 샘플만으로 쓴 머리의 길이가 필요한데, 긴 영상에서는 표의 내용을
+# 채우는 데 배치 계산의 절반이 든다 (#309)
+_measuring: ContextVar[bool] = ContextVar("_measuring", default=False)
 
 _TIME_SLACK = 1e-9  # 초 — 구간 경계와 오디오 샘플 시각을 견줄 때의 float 오차
 _U32_LIMIT = 1 << 32
@@ -344,7 +350,11 @@ def _plan(
         _first_pts=source_pts(first_frame),
     )
     # 옮기는 샘플만으로 쓴 moov의 길이는 정확하다 — 위치 값은 폭이 고정이라 길이를 바꾸지 않는다
-    exact = len(_moov(draft, ()))
+    token = _measuring.set(True)
+    try:
+        exact = len(_moov(draft, ()))
+    finally:
+        _measuring.reset(token)
     encoded_frames = sum(piece.end - piece.first for piece in encoded)
     reserved = (
         exact
@@ -489,7 +499,7 @@ def _track_part(
         delta_values=delta_values,
         composition_counts=composition_counts,
         composition_values=composition_values,
-        sizes=array_in_chunks("I", track.sizes[low:high]),
+        sizes=_as_array("I", track.sizes[low:high]),
         sync_samples=sync,
         chunk_positions=array.array("Q"),
         chunk_counts=array.array("I"),
@@ -500,7 +510,7 @@ def _chunk_pieces(
     track: Mp4Track, low: int, high: int
 ) -> tuple[array.array, array.array, array.array]:
     """샘플 [low, high)가 걸친 청크마다의 (원본 위치, 바이트 수, 샘플 수) — 배열 셋."""
-    offsets, lengths, counts = array.array("Q"), array.array("Q"), array.array("I")
+    offsets, lengths, counts = array.array("q"), array.array("Q"), array.array("I")
     if high <= low:
         return offsets, lengths, counts
     starts = track.chunk_starts
@@ -508,10 +518,8 @@ def _chunk_pieces(
     last = bisect_left(starts, high)
     if last - first == high - low:
         # 청크마다 샘플 하나 — 샘플의 위치와 크기가 곧 청크의 것이다. 샘플마다 돌지 않는다
-        fill_in_chunks(offsets, track.offsets[low:high])
-        fill_in_chunks(lengths, track.sizes[low:high])
         counts.extend(array.array("I", [1]) * (high - low))
-        return offsets, lengths, counts
+        return _as_array("q", track.offsets[low:high]), track.sizes[low:high], counts
     # 청크마다 그 안에서 옮기는 샘플의 [처음, 끝) — 양 끝의 청크는 구간에 든 부분만이다.
     # 청크마다 파이썬 코드를 돌지 않는다: 크기의 누적합에서 두 자리의 차로 바이트 수를 낸다
     begins = array_in_chunks("q", starts[first:last])
@@ -726,8 +734,17 @@ def _box(kind: bytes, payload: bytes) -> bytes:
     return struct.pack(">I4s", len(payload) + 8, kind) + payload
 
 
-def _packed(typecode: str, values) -> bytes:
-    """정수들을 빅엔디언으로 이어 쓴다."""
+def _as_array(typecode: str, values) -> array.array:
+    """그 종류의 배열로 — 이미 그 종류의 배열이면 그대로 쓴다(값마다 바꾸는 반복을 돌지 않는다)."""
+    if type(values) is array.array and values.typecode == typecode:
+        return values
+    return array_in_chunks(typecode, values)
+
+
+def _packed(typecode: str, values, count: int) -> bytes:
+    """정수 count개를 빅엔디언으로 이어 쓴다. 길이만 재는 중이면 같은 길이의 0을 돌려준다."""
+    if _measuring.get():
+        return bytes(count * array.array(typecode).itemsize)
     table = array_in_chunks(typecode, values)
     if sys.byteorder == "little":
         table.byteswap()
@@ -756,6 +773,11 @@ class _Runs:
 
     def table(self, kind: bytes) -> bytes:
         """stts · ctts 상자. 음수가 있으면 버전 1(부호 있는 값)로 쓴다."""
+        if _measuring.get():
+            # 버전은 길이를 바꾸지 않는다
+            return _box(
+                kind, struct.pack(">BxxxI", 0, len(self.counts)) + bytes(8 * len(self.counts))
+            )
         negative = bool(self.values) and min(map(min, in_chunks(self.values))) < 0
         cells = array.array("I", bytes(8 * len(self.counts)))
         cells[0::2] = array_in_chunks("I", self.counts)
@@ -763,7 +785,7 @@ class _Runs:
             "I", (value & 0xFFFFFFFF for value in self.values) if negative else self.values
         )
         head = struct.pack(">BxxxI", 1 if negative else 0, len(self.counts))
-        return _box(kind, head + _packed("I", cells))
+        return _box(kind, head + _packed("I", cells, len(cells)))
 
 
 def _moov(plan: SectionFilePlan, encoded: tuple[EncodedPiece, ...]) -> bytes:
@@ -836,10 +858,10 @@ def _chunk_tables(positions, counts, body_offset: int) -> bytes:
     cells[0::3] = array_in_chunks("I", map(add, changes, repeat(1)))
     cells[1::3] = array_in_chunks("I", map(counts.__getitem__, changes))
     cells[2::3] = array.array("I", [1]) * len(changes)  # 샘플 설명은 늘 첫 번째 것이다
-    stsc = struct.pack(">II", 0, len(changes)) + _packed("I", cells)
-    offsets = array_in_chunks("Q", map(add, positions, repeat(body_offset)))
+    stsc = struct.pack(">II", 0, len(changes)) + _packed("I", cells, len(cells))
+    offsets = map(add, positions, repeat(body_offset))
     return _box(b"stsc", stsc) + _box(
-        b"co64", struct.pack(">II", 0, len(offsets)) + _packed("Q", offsets)
+        b"co64", struct.pack(">II", 0, len(positions)) + _packed("Q", offsets, len(positions))
     )
 
 
@@ -926,10 +948,11 @@ def _video_trak(plan: SectionFilePlan, encoded: tuple[EncodedPiece, ...], movie_
     if _any(composition.values):
         tables += composition.table(b"ctts")
     tables += _box(
-        b"stss", struct.pack(">II", 0, len(sync)) + _packed("I", map(add, sync, repeat(1)))
+        b"stss",
+        struct.pack(">II", 0, len(sync)) + _packed("I", map(add, sync, repeat(1)), len(sync)),
     )
     tables += _chunk_tables(positions, counts, plan.body_offset)
-    tables += _box(b"stsz", struct.pack(">III", 0, 0, len(sizes)) + _packed("I", sizes))
+    tables += _box(b"stsz", struct.pack(">III", 0, 0, len(sizes)) + _packed("I", sizes, len(sizes)))
     media_duration = clock + last_delta - base
     edits = _edit_list(movie_duration, plan._first_pts - base)
     return _trak(part, stsd, tables, media_duration, movie_duration, edits)
@@ -944,7 +967,10 @@ def _audio_trak(plan: SectionFilePlan, movie_duration: int) -> bytes:
         composition.extend(part.composition_counts, part.composition_values)
         tables += composition.table(b"ctts")
     tables += _chunk_tables(part.chunk_positions, part.chunk_counts, plan.body_offset)
-    tables += _box(b"stsz", struct.pack(">III", 0, 0, len(part.sizes)) + _packed("I", part.sizes))
+    tables += _box(
+        b"stsz",
+        struct.pack(">III", 0, 0, len(part.sizes)) + _packed("I", part.sizes, len(part.sizes)),
+    )
     media_duration = _total(map(mul, part.delta_counts, part.delta_values))
     lead = plan._audio_lead
     if lead >= 0:
