@@ -1798,6 +1798,44 @@ def test_retry_receives_the_failed_section_again_when_its_body_is_gone(
     assert again.listing() == THREE_FILES
 
 
+def test_retry_of_a_section_that_moves_no_bytes_receives_nothing(server, tmp_path, monkeypatch):
+    """원본에서 옮기는 바이트가 없는 구간도, 실패한 뒤 이어받은 실행은 다시 받지 않고 끝내야 한다.
+
+    오디오 없는 영상(기본 입력과 같은 영상 트랙)의 구간 프레임 100~110 — 한 GOP 안이라 구간 전체를
+    다시 인코딩하고, 오디오가 없어 본문에 옮길 것이 없다. 첫 실행: 첫 ffmpeg 실행 자리에서 실패.
+    이어받은 실행
+    -> 첫 실행이 남긴 본문 파일은 비워 둔 머리 자리뿐이다(0이 아닌 바이트가 없다),
+       이어받은 실행: 완료 1회 · 실패 0건, 요청 0건, 구간 파일의 프레임 11개
+    """
+    silent = str(tmp_path / "silent.mp4")
+    _ffmpeg(
+        "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30:duration=6",
+        "-an", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "veryfast",
+        "-bf", "2", "-force_key_frames", "0,1,1.4,2.4,3,4,5",
+        "-x264-params", "b-pyramid=none:keyint=300:min-keyint=1:scenecut=0",
+        "-movflags", "+faststart", silent,
+    )  # fmt: skip
+    with open(silent, "rb") as f:
+        monkeypatch.setitem(server.files, "silent", f.read())
+    selections = [TimeRange(_seconds(100), _seconds(110))]
+    cuts = CutCalls(monkeypatch, fd_module, "finish_section_file", source_arg=0)
+    cuts.fail_on = (1,)
+    failed = _Run(server, "silent", tmp_path, selections).start()
+    assert len(failed.failures) == 1
+    body = section_body_path_for(failed.paths[0])
+    with open(body, "rb") as f:
+        kept = f.read()
+    assert kept and not any(kept), "전제: 본문에는 비워 둔 머리 자리뿐이다(받은 바이트가 없다)"
+    requests_before = len(server.requests)
+    cuts.restart()
+
+    again = hand_over(failed, _Run(server, "silent", tmp_path, selections)).start()
+
+    assert (again.finished, again.failures) == (1, [])
+    assert server.requests[requests_before:] == []
+    assert len(_decoded_frames(again.paths[0])) == 11
+
+
 def test_a_failed_section_leaves_nothing_under_its_final_name(server, tmp_path, monkeypatch):
     """끝내지 못한 구간은 산출물의 이름으로 아무것도 남기지 않고, 받은 바이트는 본문 파일에 남겨야 한다.
 
