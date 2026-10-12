@@ -584,6 +584,23 @@ def test_engine_reports_the_size_of_the_section_files_it_made(server, tmp_path):
     assert logged == expected
 
 
+def test_finished_section_run_reports_the_saved_size_as_the_sum_of_its_section_files(
+    server, tmp_path
+):
+    """구간을 모두 만든 mp4 실행은 저장된 크기로 구간 파일 크기의 합을 적어야 한다.
+
+    기본 입력, 구간 셋 -> 완료 1회, output_size == 세 파일 크기의 합 == 로그의 Output size
+    """
+    run = _Run(server, "plain", tmp_path, _three())
+    assert run.data.output_size is None
+
+    run.start()
+
+    assert (run.finished, run.failures) == (1, [])
+    ((_elapsed, logged),) = _logged(run, "log_postprocess_complete")
+    assert run.data.output_size == _sizes(run.paths) == logged > 0
+
+
 def test_engine_reports_only_the_files_it_made_when_a_section_fails(server, tmp_path, monkeypatch):
     """일부 구간이 실패한 실행은 만든 구간 파일만의 합을 적어야 한다 — 실패한 구간은 들지 않는다.
 

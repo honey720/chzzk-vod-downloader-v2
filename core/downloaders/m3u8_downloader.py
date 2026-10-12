@@ -515,6 +515,12 @@ class M3U8Downloader(BaseDownloader):
                     active_threads=0,
                 )
             )
+        # 지금 있는 구간 파일 크기의 합 — 이전 실행이 끝낸 구간의 것도 센다. 완료 카드가 적는다
+        self.s.sections_output_size = sum(
+            os.path.getsize(paths[number])
+            for number in sorted(done)
+            if os.path.exists(paths[number])
+        )
         if failures:
             kept = {
                 index

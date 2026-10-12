@@ -956,6 +956,26 @@ def test_section_log_reports_cut_and_total_size_of_section_files(host, sources, 
     assert calls["log_postprocess_complete"][1] == sum(os.path.getsize(p) for p in run.paths)
 
 
+def test_finished_section_run_reports_the_saved_size_as_the_sum_of_its_section_files(
+    host, sources, tmp_path
+):
+    """구간을 모두 만든 fMP4 실행은 저장된 크기로 구간 파일 크기의 합을 적어야 한다 — 받은 양이 아니다.
+
+    plain, 구간 둘 -> 완료 1회, output_size == 두 파일 크기의 합 == 로그의 Output size,
+    받은 양(total_downloaded_size)과 다르다
+    """
+    source = sources["plain"]
+    run = _Run(host, tmp_path, [source.selection(5, 20), source.selection(40, 70)])
+    assert run.data.output_size is None
+
+    run.start()
+
+    assert (run.finished, run.failures) == (1, [])
+    expected = sum(os.path.getsize(p) for p in run.paths)
+    assert run.data.output_size == expected == dict(run.logger.calls)["log_postprocess_complete"][1]
+    assert expected not in (0, run.data.total_downloaded_size)
+
+
 @pytest.mark.parametrize("how", ["failure", "stop"])
 def test_section_run_that_fails_or_stops_leaves_the_file_at_output_path_alone(
     host, sources, tmp_path, monkeypatch, how

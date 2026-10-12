@@ -856,6 +856,20 @@ class BaseDownloader(ABC):
         """후처리 종료 로그에 남길 산출물 크기(바이트) (기본: output_path의 크기)."""
         return os.path.getsize(self.s.output_path)
 
+    def _saved_size(self) -> int | None:
+        """완료한 다운로드가 저장한 파일의 크기(바이트) — 구간 다운로드는 구간 파일 크기의 합.
+
+        완료를 알리기 직전에 부른다. 구간 다운로드는 컷을 마치며 센 값(sections_output_size)
+        이고, 그 밖에는 산출물 파일의 크기다. 파일을 읽지 못하면 None이다 — 크기를 모른다고
+        완료한 다운로드를 실패로 바꾸지 않는다.
+        """
+        if self.s.sections_output_size is not None:
+            return self.s.sections_output_size
+        try:
+            return os.path.getsize(self.s.output_path)
+        except OSError:
+            return None
+
     # ============ 실행 파이프라인 (구 file/m3u8 run의 공통 골격) ============
 
     def run(self) -> None:
@@ -1001,6 +1015,7 @@ class BaseDownloader(ABC):
                 # 처리하면 전이 예외가 실패 콜백으로 둔갑한다 (구 병합 코드의
                 # 잠재 결함이 중단 테스트로 드러난 것)
                 if self.state != DownloadState.WAITING:
+                    self.s.output_size = self._saved_size()
                     self.s.end_time = tm.time()
                     total_time = self.s.end_time - self.s.start_time
                     self.logger.log_download_complete(total_time)

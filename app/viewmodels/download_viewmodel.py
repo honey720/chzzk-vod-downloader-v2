@@ -517,6 +517,10 @@ class DownloadViewModel(QObject):
             return
         item = self.item
         self._syncSections()
+        saved = getattr(self._data, "output_size", None)
+        if saved is not None:
+            # 저장된 파일의 크기 — 엔진이 완료를 알리기 직전에 읽었다. 완료 카드가 크기로 적는다
+            item.output_bytes = saved
         self._endPreparing()
         log_process_memory("다운로드 끝")
         self._dropHead()
