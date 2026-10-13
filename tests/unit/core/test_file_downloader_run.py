@@ -21,7 +21,9 @@ import core.downloaders.base as base_module
 import core.downloaders.file_downloader as fd_module
 from core.downloaders.base import (
     DISK_SPACE_SHORT,
+    DISK_SPACE_SHORT_WHOLE,
     FILE_TOO_LARGE_FOR_FAT,
+    DiskSpaceError,
     FileSizeLimitError,
     PostprocessError,
 )
@@ -458,3 +460,97 @@ def test_failure_that_is_not_about_space_carries_no_key(tmp_path, monkeypatch):
     engine._notify_failed(sent)
 
     assert failures == [sent] and not hasattr(sent, "space_key")
+
+
+# ================================================================ 시작 전 여유 공간 검사 (#309)
+
+
+class _CountingSession(RangeSession):
+    """받은 범위 요청의 수를 세는 가짜 세션."""
+
+    def __init__(self):
+        super().__init__(CONTENT)
+        self.gets = 0
+
+    def get(self, url, headers=None, **kwargs):
+        self.gets += 1
+        return super().get(url, headers=headers, **kwargs)
+
+
+def _run_with_free_space(tmp_path, monkeypatch, free):
+    """여유 공간을 정해 두고 엔진을 끝까지 돌린다 — free가 예외면 여유 공간을 알 수 없는 것이다.
+
+    Returns:
+        (출력 경로, 실패 목록, 완료했는지, 받은 범위 요청 수, 여유 공간 줄, 여유 공간을 물은 폴더)
+    """
+    engine, data, logger, output, finished, failures = _make_engine(tmp_path, monkeypatch)
+    session = _CountingSession()
+    monkeypatch.setattr(fd_module, "get_thread_session", lambda: session)
+    asked: list[str] = []
+
+    def free_bytes(folder):
+        asked.append(folder)
+        if isinstance(free, Exception):
+            raise free
+        return free
+
+    monkeypatch.setattr(fd_module, "_free_bytes", free_bytes)
+    lines: list[tuple] = []
+    logger.log_space_check = lambda *args: lines.append(args)
+
+    data.model.start()
+    thread = _run_in_thread(engine)
+    thread.join(timeout=30)
+    assert not thread.is_alive(), "엔진이 끝나지 않았다"
+    return output, failures, finished.is_set(), session.gets, lines, asked
+
+
+def test_download_without_sections_does_not_start_when_the_file_does_not_fit(tmp_path, monkeypatch):
+    """구간 없는 mp4는 파일 크기가 저장 폴더의 여유 공간보다 1바이트라도 크면 받지 않고 실패해야 한다.
+
+    파일 4MiB, 여유 4MiB − 1
+    -> 실패 1건(DiskSpaceError, 키 "Not enough disk space for the download", needed 4MiB,
+       free 4MiB − 1), 받은 범위 요청 0번, 완료 안 함, 산출물 없음,
+       줄 ("start", 0, 4MiB, (("output", 4MiB, 4MiB − 1),)), 물은 폴더 == 산출물의 폴더
+    """
+    output, failures, finished, gets, lines, asked = _run_with_free_space(
+        tmp_path, monkeypatch, TOTAL_SIZE - 1
+    )
+
+    assert [type(e) for e in failures] == [DiskSpaceError]
+    error = failures[0]
+    assert (error.message_key, error.needed, error.free) == (
+        DISK_SPACE_SHORT_WHOLE,
+        TOTAL_SIZE,
+        TOTAL_SIZE - 1,
+    )
+    assert (gets, finished, output.exists()) == (0, False, False)
+    assert lines == [("start", 0, TOTAL_SIZE, (("output", TOTAL_SIZE, TOTAL_SIZE - 1),))]
+    assert asked == [str(tmp_path)]
+
+
+def test_download_without_sections_starts_when_the_file_exactly_fits(tmp_path, monkeypatch):
+    """여유 공간이 파일 크기와 같으면 받기를 시작해 끝까지 가야 한다.
+
+    파일 4MiB, 여유 4MiB
+    -> 완료, 실패 0건, 산출물 == 원본, 줄 ("start", 0, 4MiB, (("output", 4MiB, 4MiB),))
+    """
+    output, failures, finished, _gets, lines, _asked = _run_with_free_space(
+        tmp_path, monkeypatch, TOTAL_SIZE
+    )
+
+    assert (finished, failures) == (True, [])
+    assert output.read_bytes() == CONTENT
+    assert lines == [("start", 0, TOTAL_SIZE, (("output", TOTAL_SIZE, TOTAL_SIZE),))]
+
+
+def test_download_without_sections_starts_when_the_free_space_is_unknown(tmp_path, monkeypatch):
+    """여유 공간을 알 수 없으면 확인하지 않고 받아야 한다 — 여유 공간 줄도 남기지 않는다.
+
+    여유 공간을 묻는 함수가 OSError -> 완료, 실패 0건, 줄 없음
+    """
+    _output, failures, finished, _gets, lines, _asked = _run_with_free_space(
+        tmp_path, monkeypatch, OSError("알 수 없음")
+    )
+
+    assert (finished, failures, lines) == (True, [], [])

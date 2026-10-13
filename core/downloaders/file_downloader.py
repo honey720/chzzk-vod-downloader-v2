@@ -55,6 +55,7 @@ import requests
 from core.api.mp4 import MP4_UNSUPPORTED, Mp4Error, fetch_mp4_head
 from core.api.session import get_thread_session
 from core.downloaders.base import (
+    DISK_SPACE_SHORT_WHOLE,
     REQUEST_TIMEOUT,
     BaseDownloader,
     DiskSpaceError,
@@ -329,13 +330,18 @@ class FileDownloader(BaseDownloader):
     def prepare(self, content: Content) -> DownloadPlan:
         """총 크기를 조회하고 해상도별 part_size의 바이트 범위 계획을 만든다.
 
-        구간이 있으면 moov를 받아 구간에 필요한 범위만 담은 계획을 만든다 (#309).
+        구간이 있으면 moov를 받아 구간에 필요한 범위만 담은 계획을 만든다 (#309). 구간이 없으면
+        파일 크기가 저장 폴더의 여유 공간에 들어가는지 확인하고, 모자라면 받기를 시작하지 않는다.
+
+        Raises:
+            DiskSpaceError: 파일 크기가 저장 폴더의 여유 공간보다 큰 경우
         """
         if content.selections:
             return self._prepare_sections(content)
         total_size = self._get_total_size()
         # 저장 폴더가 FAT 계열이면 4GiB를 넘는 파일을 담지 못한다 — 받기 전에 알린다
         self._require_file_size_fits(total_size)
+        self._require_whole_file_space(total_size)
 
         # part_size 결정(해상도별 가중 적용)
         self._part_size = decide_part_size(self.s.content_type, self.s.resolution)
@@ -522,6 +528,27 @@ class FileDownloader(BaseDownloader):
                 )
             placed.append((self._bodies[number], runs))
         return tuple(_Outlet(path, runs, tuple(run[0] for run in runs)) for path, runs in placed)
+
+    def _require_whole_file_space(self, total_size: int) -> None:
+        """구간 없는 다운로드의 파일이 저장 폴더의 여유 공간에 들어가는지 받기 전에 확인한다 (#309).
+
+        필요한 크기는 파일 크기 그대로다 — 받은 파트를 산출물의 제자리에 쓰고 후처리가 없어
+        그 밖에 드는 것이 없다. 임시 폴더를 쓰지 않으므로 저장 폴더만 본다. 여유 공간을 알 수
+        없으면 확인하지 않는다. 결과는 세그먼트 다운로드와 같은 모양의 로그 한 줄로 남긴다.
+
+        Raises:
+            DiskSpaceError: 여유 공간이 모자란 경우 — 구간 없는 다운로드의 키
+                (``DISK_SPACE_SHORT_WHOLE``)
+        """
+        try:
+            free = _free_bytes(os.path.dirname(os.path.abspath(self.s.output_path)))
+        except OSError:
+            return
+        self._log_if_supported(
+            "log_space_check", "start", 0, total_size, (("output", total_size, free),)
+        )
+        if total_size > free:
+            raise DiskSpaceError(total_size, free, DISK_SPACE_SHORT_WHOLE)
 
     def _require_free_space(
         self, source_path: str, layout: PartialLayout, index: Mp4Index, picked: list

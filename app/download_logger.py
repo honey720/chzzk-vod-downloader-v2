@@ -211,7 +211,11 @@ class DownloadLogger:
         )
 
     def log_space_check(self, stage: str, segments: int, output: int, checks):
-        """세그먼트 다운로드의 크기 어림과 여유 공간을 견준 결과를 로깅합니다 (#309).
+        """받을 크기와 여유 공간을 견준 결과를 로깅합니다 — 세그먼트 다운로드와 구간 없는 mp4 (#309).
+
+        구간 없는 mp4는 받기 전에 한 번 남긴다 — segments는 0(세그먼트가 없다), output은 파일
+        크기, 본 곳은 output(저장 폴더) 하나다. 아래는 세그먼트 다운로드의 것이다.
+
 
         stage는 start(받기 전 — 선언된 비트레이트로 어림) · transfer(세그먼트를 몇 개 받은 뒤 —
         실제 평균으로 어림)다. segments는 받을 세그먼트 전체, output은 산출물의 어림 크기다.
