@@ -501,6 +501,7 @@ class DownloadViewModel(QObject):
         if self.item is None or self._data is None or not self._data.sections_total:
             return
         self.item.sections_done = self._data.sections_done
+        self.item.cut_preparing = bool(getattr(self._data, "cut_preparing", False))
         # 엔진이 컷을 마치며 센, 만든 구간 파일 크기의 합 — 완료 카드가 크기로 적는다
         self.item.output_bytes = self._data.sections_output_size
         # 엔진에 넘기지 않고 뺀 구간도 받지 못한 구간이다

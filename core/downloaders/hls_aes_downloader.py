@@ -50,6 +50,7 @@ base_url 해석(#75)과 같은 주입 방식이다.
 import dataclasses
 import os
 import shutil
+import time as tm
 from collections import Counter
 from fractions import Fraction
 from urllib.parse import urljoin
@@ -103,6 +104,9 @@ class HlsAesDownloader(BaseDownloader):
     # 확정되어 Content에 실려 온다 — m3u8(라이브 다시보기)처럼 재해석하지 않는다
     requires_base_url_resolution = False
     requires_key_resolution = True
+    # 구간의 컷 진행에서 프레임 정보 읽기의 몫 — 세그먼트를 통째로 읽어 길다(세그먼트 400개
+    # 표본에서 읽기 6.5초 · 그 뒤의 단계 5.2초)
+    _cut_read_share = 0.5
     supports_selections = True  # 복호화한 TS의 PES 머리로 구간의 프레임을 정할 수 있다 (#309)
     # m3u8 경로와 동일하게 모든 예외를 실패로 처리한다 (플레이리스트·키 취득 실패 포함)
     _failure_exceptions = (Exception,)
@@ -588,13 +592,29 @@ class HlsAesDownloader(BaseDownloader):
                 if uses[first + place] == 1:
                     base_module._remove_fed_segment(self._segment_path(first + place))
 
+            on_read, on_cut = self._cut_reporters(progress.section(number))
+            read_seconds = 0.0
+            self._begin_cut_reading()  # 컷의 read 단계가 끝나면 내려간다(_cut_stage_recorder)
             try:
+                # 프레임 정보는 세그먼트를 하나씩 통째로 읽어 뽑는다 — 세그먼트 수에 비례해 걸린다
+                # (400개에 몇 초). 세그먼트마다 중단 · 일시정지를 따르고 읽은 비율을 알린다
+                read_began = tm.perf_counter()
+                streams = []
+                for count, index in enumerate(indexes, start=1):
+                    # 일시정지한 시간은 읽은 시간이 아니다
+                    read_seconds -= self._wait_while_paused()
+                    if self.state == DownloadState.WAITING:
+                        self._end_cut_reading()
+                        return  # 정리는 run()의 중단 경로가 한다
+                    streams.append(segment_at(index))
+                    on_read(count / len(indexes))
                 ts_frames = source.frames_of(
                     section.first_segment, section.last_segment, section.origin
                 )
+                read_seconds += tm.perf_counter() - read_began
                 result, frames = cut_ts_section(
                     os.path.join(self.temp_dir, f"section_{number}"),
-                    [segment_at(index) for index in indexes],
+                    streams,
                     ts_frames,
                     [self._segment_path(index) for index in indexes],
                     output_path,
@@ -602,12 +622,13 @@ class HlsAesDownloader(BaseDownloader):
                     section.last_pts,
                     on_fed=drop_fed,
                     inspect=self._inspect_cuts,
-                    on_stage=self._stage_recorder(stages),
-                    on_progress=progress.section(number),
+                    on_stage=self._cut_stage_recorder(stages, lambda: read_seconds),
+                    on_progress=on_cut,
                     should_stop=self._stop_requested,
                     should_pause=self._pause_requested,
                 )
             except CutCancelled:
+                self._end_cut_reading()
                 return  # 컷이 도는 동안 중단됐다 — 정리는 run()의 중단 경로가 한다
             except (CutError, TsError) as e:
                 # 이 구간은 만들지 못했다 — 나머지 구간은 끝까지 만든다
@@ -626,6 +647,7 @@ class HlsAesDownloader(BaseDownloader):
                     uses[index] -= 1
                     if not uses[index]:  # 경계 조각으로만 읽힌 것까지 — 이제 쓰는 구간이 없다
                         base_module._remove_fed_segment(self._segment_path(index))
+            self._end_cut_reading()  # 읽다가 실패한 구간에서도 준비 중 표시가 남지 않게
             self._log_cut_stages(number, stages)
             # 병합 진행(세그먼트 수 기반)을 구간 수에 비례해 올린다 — 어댑터의 분모는
             # 받은 세그먼트 수다(TS 경로에는 초기화 세그먼트가 없다)

@@ -32,6 +32,7 @@ import logging
 import os
 import subprocess
 import threading
+import types
 
 import pytest
 from Crypto.Cipher import AES
@@ -1338,3 +1339,111 @@ def test_retry_makes_a_finished_section_again_when_its_file_changed_size(
         assert f.read() == b"0123456789"
     assert snapshot(kept) == kept
     assert again.data.sections_resumed == 1
+
+
+# ================================================================ 자르기 전 프레임 정보 읽기
+
+
+def _watch_cut(run: _Run, each=None) -> list[tuple[bool, float | None]]:
+    """컷 단계의 진행 통지마다 (준비 중인지, 컷 진행)을 적는 목록 — each는 적은 뒤에 부른다."""
+    seen: list[tuple[bool, float | None]] = []
+
+    def on_progress(_event) -> None:
+        if run.data.cut_preparing or run.data.cut_progress is not None:
+            seen.append((run.data.cut_preparing, run.data.cut_progress))
+            if each is not None:
+                each(seen)
+
+    run.engine.set_on_progress(on_progress)
+    return seen
+
+
+def test_reading_before_the_cut_raises_the_cut_progress_and_is_marked_as_preparing(
+    vod, host, tmp_path
+):
+    """구간을 자르기 전 세그먼트를 읽는 동안 준비 중으로 적히고 컷 진행이 세그먼트마다 올라야 한다.
+
+    구간 하나(3.4 ~ 5.2초 — 세그먼트 2~5, 넷). 읽기 몫 0.5
+    -> 준비 중인 통지의 컷 진행 == [없음, 0.125, 0.25, 0.375, 0.5], 준비 중이 아닌 통지의 컷 진행은
+       모두 0.5 이상이고 마지막이 1, 끝난 뒤 준비 중이 아니다, 완료 1회
+    """
+    run = _Run(host, tmp_path, [SECOND])
+    seen = _watch_cut(run)
+
+    run.start()
+
+    assert (run.finished, run.failures) == (1, [])
+    preparing = [progress for marked, progress in seen if marked]
+    cutting = [progress for marked, progress in seen if not marked]
+    assert preparing == [None, 0.125, 0.25, 0.375, 0.5]
+    assert min(cutting) >= 0.5 and cutting[-1] == 1.0
+    assert run.data.cut_preparing is False
+
+
+def test_cut_stage_log_counts_the_time_the_engine_spent_reading_as_read(
+    vod, host, tmp_path, monkeypatch
+):
+    """컷 단계 로그의 read에는 엔진이 컷 전에 세그먼트를 읽은 시간이 들어 있어야 한다.
+
+    구간 하나. 엔진의 시계가 읽을 때마다 10초씩 간다(읽기의 시작과 끝 — 두 번 읽는다)
+    -> log_cut_stages의 read가 10초 이상 11초 미만
+    """
+    ticks = iter(range(0, 1000, 10))
+    monkeypatch.setattr(aes_module, "tm", types.SimpleNamespace(perf_counter=lambda: next(ticks)))
+
+    run = _Run(host, tmp_path, [SECOND]).start()
+
+    assert (run.finished, run.failures) == (1, [])
+    _number, _total, stages = dict(run.logger.calls)["log_cut_stages"]
+    assert 10 <= dict(stages)["read"] < 11
+
+
+def test_stop_while_reading_ends_the_run_without_cutting(vod, host, tmp_path):
+    """세그먼트를 읽는 도중 중단하면 남은 세그먼트를 읽지 않고 컷을 시작하지 않아야 한다.
+
+    구간 하나(세그먼트 넷). 첫 세그먼트를 읽었다는 통지에서 중단을 청함
+    -> 준비 중인 통지의 컷 진행 == [없음, 0.125], 완료 0회 · 실패 0건, 구간 파일 없음,
+       끝난 뒤 준비 중이 아니다
+    """
+    run = _Run(host, tmp_path, [SECOND])
+
+    def stop_after_the_first(seen) -> None:
+        if seen[-1] == (True, 0.125):
+            run.data.model.stop()
+
+    seen = _watch_cut(run, stop_after_the_first)
+
+    run.start()
+
+    assert [progress for marked, progress in seen if marked] == [None, 0.125]
+    assert (run.finished, run.failures) == (0, [])
+    assert not [name for name in run.listing() if name.endswith(".mp4")]
+    assert run.data.cut_preparing is False
+
+
+def test_pause_while_reading_holds_the_reading_until_resumed(vod, host, tmp_path):
+    """세그먼트를 읽는 도중 일시정지하면 재개할 때까지 다음 세그먼트를 읽지 않아야 한다.
+
+    구간 하나(세그먼트 넷). 첫 세그먼트를 읽었다는 통지에서 일시정지하고, 다른 스레드가 0.3초 뒤
+    그때까지 온 통지 수를 적고 재개함
+    -> 재개하기 직전까지 온 통지 == 일시정지한 순간까지 온 통지(둘), 재개한 뒤 완료 1회 · 실패 0건
+    """
+    run = _Run(host, tmp_path, [SECOND])
+    counts = {}
+
+    def resume() -> None:
+        counts["before_resume"] = len(seen)
+        run.data.model.resume()
+
+    def pause_after_the_first(seen_now) -> None:
+        if seen_now[-1] == (True, 0.125):
+            counts["at_pause"] = len(seen_now)
+            run.data.model.pause()
+            threading.Timer(0.3, resume).start()
+
+    seen = _watch_cut(run, pause_after_the_first)
+
+    run.start()
+
+    assert counts == {"at_pause": 2, "before_resume": 2}
+    assert (run.finished, run.failures) == (1, [])

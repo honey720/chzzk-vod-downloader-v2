@@ -96,6 +96,10 @@
         <translation>준비 중</translation>
     </message>
     <message>
+        <source>Preparing to cut</source>
+        <translation>자르기 준비 중</translation>
+    </message>
+    <message>
         <source>Cutting</source>
         <translation>자르는 중</translation>
     </message>

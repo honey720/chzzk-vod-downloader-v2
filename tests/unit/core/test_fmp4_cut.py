@@ -355,3 +355,37 @@ def test_check_accepts_copied_audio_ending_up_to_one_chunk_late_and_no_later(mad
     assert 0.001 < late <= result.audio_overhang
     assert with_overhang.av_sync, with_overhang.notes
     assert not without.av_sync, without.notes
+
+
+# ================================================================ 읽기 · 오디오 통과의 진행
+
+
+def test_reading_the_segments_reports_the_share_read_after_each_segment(made, tmp_path):
+    """프레임 정보를 읽는 동안 on_read는 세그먼트를 하나 읽을 때마다 읽은 비율로 불려야 한다.
+
+    plain, 구간 프레임 40~100, 세그먼트 0~3(넷)
+    -> on_read == [0.25, 0.5, 0.75, 1.0], 그 호출은 모두 read 단계가 끝나기 전이다
+    """
+    cut = _Cut(made["plain"], tmp_path, 40, 100, (0, 3))
+    events = []
+
+    cut.run(on_read=events.append, on_stage=lambda name, _s: events.append(name))
+
+    assert events[: events.index("read")] == [0.25, 0.5, 0.75, 1.0]
+    assert not [event for event in events[events.index("read") :] if isinstance(event, float)]
+
+
+def test_audio_pass_raises_the_progress_once_per_segment_before_it_ends(made, tmp_path):
+    """오디오 통과는 세그먼트를 하나 넘길 때마다 진행을 올려야 한다 — 단계가 끝날 때 한 번이 아니다.
+
+    plain, 구간 프레임 40~100, 세그먼트 0~3(넷)
+    -> read 단계와 audio 단계의 끝 사이에 온 진행이 다섯(세그먼트 넷 + 단계의 끝), 값이 오르기만 한다
+    """
+    cut = _Cut(made["plain"], tmp_path, 40, 100, (0, 3))
+    events = []
+
+    cut.run(on_progress=events.append, on_stage=lambda name, _s: events.append(name))
+
+    during = events[events.index("read") + 1 : events.index("audio")]
+    assert len(during) == len(cut.paths) + 1
+    assert during == sorted(set(during))

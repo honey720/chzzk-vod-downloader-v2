@@ -1507,3 +1507,36 @@ def test_retry_makes_a_finished_section_again_when_its_file_changed_size(
         assert f.read() == b"0123456789"
     assert snapshot(kept) == kept
     assert again.data.sections_resumed == 1
+
+
+# ================================================================ 자르기 전 프레임 정보 읽기
+
+
+def test_reading_before_the_cut_raises_the_cut_progress_and_is_marked_as_preparing(
+    host, sources, tmp_path
+):
+    """구간을 자르기 전 세그먼트를 읽는 동안 준비 중으로 적히고 컷 진행이 읽기 몫 안에서 올라야 한다.
+
+    plain, 구간 하나(프레임 40~100 — 엔진이 읽는 세그먼트 0~3, 넷). 읽기 몫 0.1
+    -> 준비 중인 통지의 컷 진행 == [없음, 0.025, 0.05, 0.075, 0.1], 준비 중이 아닌 통지의 컷 진행은
+       모두 0.1 이상이고 마지막이 1, 끝난 뒤 준비 중이 아니다, 완료 1회
+    """
+    run = _Run(host, tmp_path, [sources["plain"].selection(40, 100)])
+    seen = []
+
+    def on_progress(_event) -> None:
+        if run.data.cut_preparing or run.data.cut_progress is not None:
+            seen.append((run.data.cut_preparing, run.data.cut_progress))
+
+    run.engine.set_on_progress(on_progress)
+
+    run.start()
+
+    assert (run.finished, run.failures) == (1, [])
+    preparing = [progress for marked, progress in seen if marked]
+    cutting = [progress for marked, progress in seen if not marked]
+    section = run.engine.sections[0]
+    assert (section.first_segment, section.last_segment) == (0, 3)
+    assert preparing == [None, *(pytest.approx(0.1 * count / 4) for count in (1, 2, 3, 4))]
+    assert min(cutting) >= preparing[-1] and cutting[-1] == 1.0
+    assert run.data.cut_preparing is False

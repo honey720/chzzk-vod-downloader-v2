@@ -93,6 +93,9 @@ class M3U8Downloader(BaseDownloader):
     worker_pool_prefix = "DownloadM3U8Worker"
     requires_base_url_resolution = True
     supports_selections = True  # fMP4는 세그먼트의 moof로 구간의 프레임을 정할 수 있다 (#309)
+    # 구간의 컷 진행에서 프레임 정보 읽기의 몫 — moof만 읽어 짧다(세그먼트 400개 표본에서 컷의
+    # 14%쯤)
+    _cut_read_share = 0.1
     # 구 코드와 동일하게 모든 예외를 실패로 처리한다 (플레이리스트 파싱 실패 포함)
     _failure_exceptions = (Exception,)
     # 구간을 자를 때 조각마다 파라미터·패킷 수를 읽어 둘지 — 기본은 읽지 않는다.
@@ -502,6 +505,8 @@ class M3U8Downloader(BaseDownloader):
                 if uses[first + place] == 1:
                     base_module._remove_fed_segment(self._segment_path(first + place))
 
+            on_read, on_cut = self._cut_reporters(progress.section(number))
+            self._begin_cut_reading()  # 컷의 read 단계가 끝나면 내려간다(_cut_stage_recorder)
             try:
                 result, frames = cut_fmp4_section(
                     os.path.join(self.temp_dir, f"section_{number}"),
@@ -511,12 +516,14 @@ class M3U8Downloader(BaseDownloader):
                     output_path,
                     on_fed=drop_fed,
                     inspect=self._inspect_cuts,
-                    on_stage=self._stage_recorder(stages),
-                    on_progress=progress.section(number),
+                    on_stage=self._cut_stage_recorder(stages),
+                    on_progress=on_cut,
                     should_stop=self._stop_requested,
                     should_pause=self._pause_requested,
+                    on_read=on_read,
                 )
             except CutCancelled:
+                self._end_cut_reading()
                 return  # 컷이 도는 동안 중단됐다 — 정리는 run()의 중단 경로가 한다
             except (CutError, Mp4Error) as e:
                 # 이 구간은 만들지 못했다 — 나머지 구간은 끝까지 만든다
@@ -535,6 +542,7 @@ class M3U8Downloader(BaseDownloader):
                     uses[index] -= 1
                     if not uses[index]:  # 경계 조각으로만 읽힌 것까지 — 이제 쓰는 구간이 없다
                         base_module._remove_fed_segment(self._segment_path(index))
+            self._end_cut_reading()  # 읽다가 실패한 구간에서도 준비 중 표시가 남지 않게
             self._log_cut_stages(number, stages)
             # 병합 진행(세그먼트 수 기반)을 구간 수에 비례해 올린다 — 어댑터의 분모는
             # 받은 세그먼트 수 + 초기화 세그먼트다

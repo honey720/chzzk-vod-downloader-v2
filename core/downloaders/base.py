@@ -432,6 +432,9 @@ class BaseDownloader(ABC):
     # 구간 다운로드(비어 있지 않은 selections)를 받는지 (#309). 받지 않는 다운로더는
     # run()이 NotImplementedError로 거부한다 — 조용히 전체를 받지 않는다
     supports_selections: bool = False
+    # 구간 하나의 컷 진행 가운데 프레임 정보 읽기가 차지하는 몫(0~1) — 막대가 고르게 오르게
+    # 하는 데만 쓴다(틀려도 진행은 거꾸로 가지 않는다). 세그먼트 다운로더가 형식에 맞게 정한다
+    _cut_read_share: float = 0.0
     # 후처리 시작 로그(#110)에 남길 작업 이름 — 현행 세그먼트 경로는 모두 remux다
     postprocess_kind: str = "remux"
     # run()이 실패 콜백으로 환원할 예외 타입 — 그 외 예외는 전파한다
@@ -945,6 +948,64 @@ class BaseDownloader(ABC):
                 이번 실행이 자를 구간만 담는다
         """
         return SectionCutProgress(lengths, self._publish_cut_progress)
+
+    def _begin_cut_reading(self) -> None:
+        """구간 하나의 세그먼트에서 프레임 정보를 읽기 시작한다 — 준비 중임을 적고 알린다 (#309)."""
+        self.s.cut_preparing = True
+        self._notify_cut_state()
+
+    def _end_cut_reading(self) -> None:
+        """프레임 정보를 다 읽었다(또는 그 구간의 일이 끝났다) — 준비 중 표시를 내리고 알린다."""
+        if self.s.cut_preparing:
+            self.s.cut_preparing = False
+            self._notify_cut_state()
+
+    def _notify_cut_state(self) -> None:
+        self._on_progress(
+            ProgressEvent(
+                downloaded_size=self.s.total_downloaded_size,
+                total_size=self._progress_total_size(),
+                speed=0.0,
+                active_threads=0,
+            )
+        )
+
+    def _cut_reporters(
+        self, report: Callable[[float], None]
+    ) -> tuple[Callable[[float], None], Callable[[float], None]]:
+        """구간 하나의 진행(0~1)을 읽기 몫과 자르기 몫으로 나눠 받는 함수 둘 — (읽기, 자르기).
+
+        읽기는 그 구간의 진행의 앞 ``_cut_read_share``만큼을, 자르기는 나머지를 채운다. 읽기에
+        진행 신호가 없으면 세그먼트가 많은 구간에서 막대가 그동안 멈췄다가 건너뛴다.
+        """
+        share = self._cut_read_share
+
+        def on_read(fraction: float) -> None:
+            report(share * min(max(fraction, 0.0), 1.0))
+
+        def on_cut(fraction: float) -> None:
+            report(share + (1.0 - share) * min(max(fraction, 0.0), 1.0))
+
+        return on_read, on_cut
+
+    def _cut_stage_recorder(
+        self, stages: list, read_seconds: Callable[[], float] = lambda: 0.0
+    ) -> Callable[[str, float], None]:
+        """세그먼트 구간 컷의 on_stage — ``_stage_recorder``에 읽기의 끝을 알아채는 일을 더한다.
+
+        컷의 ``read`` 단계가 끝나면 준비 중 표시를 내린다. 엔진이 컷을 부르기 전에 스스로 읽은
+        시간(read_seconds — 암호화 VOD는 세그먼트를 엔진이 읽는다)은 그 단계의 시간에 더한다 —
+        로그의 ``read``가 프레임 정보를 읽는 데 든 시간 전부가 된다.
+        """
+        record = self._stage_recorder(stages)
+
+        def on_stage(name: str, seconds: float) -> None:
+            if name == "read":
+                seconds += read_seconds()
+                self._end_cut_reading()
+            record(name, seconds)
+
+        return on_stage
 
     def _publish_cut_progress(self, value: float) -> None:
         """컷 진행을 공유 데이터에 적고 진행 통지를 보낸다 — 구간을 자르는 스레드에서 돈다."""

@@ -96,6 +96,10 @@
         <translation>Preparing</translation>
     </message>
     <message>
+        <source>Preparing to cut</source>
+        <translation>Preparing to cut</translation>
+    </message>
+    <message>
         <source>Cutting</source>
         <translation>Cutting</translation>
     </message>

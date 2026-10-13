@@ -1115,7 +1115,12 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             elif self._sectionCount() and self.item.post_process:
                 # 구간을 자르는 단계 (#309) — 속도 · 남은 시간은 뜻이 없어 적지 않고 단계
                 # 문구를 적는다. 막대는 전송과 컷을 합친 하나다
-                cutting_text = self.tr("Cutting")
+                # 자르기 전에 받은 세그먼트의 프레임 정보를 읽는 동안은 준비 중임을 적는다 —
+                # 세그먼트가 많으면 그 시간이 길다
+                if getattr(self.item, "cut_preparing", False):
+                    cutting_text = self.tr("Preparing to cut")
+                else:
+                    cutting_text = self.tr("Cutting")
                 self.statusLabel.setText(
                     f"{item.download_progress}% · {cutting_text}{self._sectionTally()}"
                 )

@@ -102,6 +102,7 @@ def cut_fmp4_section(
     on_progress: Callable[[float], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
     should_pause: Callable[[], bool] | None = None,
+    on_read: Callable[[float], None] | None = None,
 ) -> tuple[CutResult, CutFrames]:
     """받아 둔 fMP4 세그먼트에서 구간 하나를 output_path에 mp4로 쓴다.
 
@@ -119,6 +120,8 @@ def cut_fmp4_section(
             파일을 다 쓴 뒤에만 나온다
         on_stage: 단계는 ``read``(프레임 읽기) · ``audio``(오디오 통과) · 조각마다의
             ``<번호>_<종류>`` · ``join``(구간 파일 쓰기)이다
+        on_read: 프레임 정보를 읽는 동안(``read`` 단계) 읽은 세그먼트의 비율(0~1)로 부른다.
+            on_progress는 그 단계가 끝난 뒤부터 오른다 — 부르는 쪽이 둘을 한 진행으로 합친다
 
     Returns:
         (컷 결과, 구간의 세그먼트 전체에서 읽은 프레임 정보)
@@ -133,8 +136,14 @@ def cut_fmp4_section(
     init = head.init
 
     def load() -> SegmentSource:
-        # 프레임 정보는 moof만 골라 읽는다 — 본문은 읽지 않는다
-        parsed = [read_segment_file(path, init) for path in paths]
+        # 프레임 정보는 moof만 골라 읽는다 — 본문은 읽지 않는다. 세그먼트마다 멈춤 · 일시정지를
+        # 따르고 읽은 비율을 알린다(세그먼트가 수천 개면 이 단계만 몇 초다)
+        parsed = []
+        for count, path in enumerate(paths, start=1):
+            _hold()
+            parsed.append(read_segment_file(path, init))
+            if on_read is not None:
+                on_read(count / len(paths))
         index = build_fmp4_index(init, parsed, section.origin)
         input_start = float(fmp4_origin(init, parsed[0]) - section.origin)
         frames = cut_frames_from_fmp4(init, parsed, index, input_start)
@@ -360,7 +369,8 @@ def _cut(
 
     work: dict[str, tuple[float, float]] = {}
     if has_audio:
-        work["audio"] = (hc._WORK_CALL + length * _WORK_AUDIO_PER_SECOND, 0.0)
+        # 둘째 값은 그 단계 안의 진행의 분모 — 오디오 통과는 넘긴 세그먼트 수로 센다
+        work["audio"] = (hc._WORK_CALL + length * _WORK_AUDIO_PER_SECOND, float(len(paths)))
     for kind, name, _first, _end, _made in pieces:
         if name is not None:
             stage = os.path.splitext(name)[0]
@@ -371,9 +381,15 @@ def _cut(
     # ---- 1. 오디오 통과 — 구간의 세그먼트를 한 번 흘려 오디오만 복사로 뽑는다. 지우지 않는다
     if has_audio:
         with hc._stage(on_stage, "audio", progress):
+            passed = progress.sink("audio")  # 세그먼트를 하나 넘길 때마다 그 수를 알린다
             try:
                 extract_audio_stream(
-                    _feed(given.prefix, paths), os.path.join(work_dir, _AUDIO_FILE)
+                    _feed(
+                        given.prefix,
+                        paths,
+                        (lambda number: passed(number + 1)) if passed is not None else None,
+                    ),
+                    os.path.join(work_dir, _AUDIO_FILE),
                 )
             except FFmpegError as e:
                 raise CutError(CUT_FAILED, str(e)) from e

@@ -48,6 +48,8 @@ class ContentItem:
         self.selections = ()
         self.sections_done = 0  # 잘라서 파일로 만든 구간 수 — 엔진의 구간 상태에서 옮긴 값
         self.sections_failed = 0  # 자르지 못한 구간 수
+        # 구간을 자르기 전에 프레임 정보를 읽는 중인지 — 엔진의 값에서 옮긴다. 카드의 단계 문구가 갈린다
+        self.cut_preparing = False
         # 일부 구간의 컷만 실패하고 끝난 다운로드가 남긴 것 (#309) — (그때의 스트림 · 저장 폴더 ·
         # 제목을 가리키는 값, core.models.section_resume.SectionResume). 다음 다운로드가 끝나지
         # 않은 구간만 다시 처리하는 데 쓴다. 없으면 None이다
