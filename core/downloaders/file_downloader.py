@@ -429,7 +429,7 @@ class FileDownloader(BaseDownloader):
         }
         self._outlets = self._make_outlets(head, index, source_path, layout, plans)
         if not self._reuses_source:
-            self._require_free_space(source_path, layout)
+            self._require_free_space(source_path, layout, index, picked)
         received = merge_ranges(
             (source, source + length - 1)
             for outlet in self._outlets
@@ -523,31 +523,44 @@ class FileDownloader(BaseDownloader):
             placed.append((self._bodies[number], runs))
         return tuple(_Outlet(path, runs, tuple(run[0] for run in runs)) for path, runs in placed)
 
-    def _require_free_space(self, source_path: str, layout: PartialLayout) -> None:
+    def _require_free_space(
+        self, source_path: str, layout: PartialLayout, index: Mp4Index, picked: list
+    ) -> None:
         """구간 파일들과 경계 원본이 저장 폴더의 여유 공간에 들어가는지 받기 전에 확인한다 (#309).
 
-        필요한 크기는 가는 곳마다 받은 바이트가 놓이는 끝 위치의 합이다 — 구간 파일은 머리 자리 +
-        옮기는 바이트(영상 전체 구간은 원본의 크기), 경계 원본은 머리 + 경계 GOP의 원본 샘플이다.
-        다시 인코딩한 경계 GOP는 그 원본 샘플보다 크지 않은 것으로 본다(경계 원본의 크기만큼을
-        한 번 더 센다). 여유 공간을 알 수 없으면 확인하지 않는다.
+        필요한 크기는 후처리 중 저장 폴더에 함께 놓이는 것의 합이다.
+
+        - 경계 원본: 머리 + 경계 GOP의 원본 샘플. 모든 구간을 끝낼 때까지 남는다. 두 구간이 같은
+          GOP를 함께 쓰면 한 번만 담긴다
+        - 구간 파일마다: 머리 자리 + 옮기는 바이트 + 다시 인코딩한 경계 GOP. 영상 전체 구간은
+          원본의 크기다. 다시 인코딩한 조각은 구간마다 따로 생긴다 — 같은 GOP를 함께 쓰는 구간도
+          저마다 센다
+        - 끝내는 중인 구간 하나의 조각 파일: 구간 파일에 붙이는 동안 작업 폴더에도 있다 — 가장 큰
+          구간의 몫을 한 번 센다
+
+        다시 인코딩한 경계 GOP는 그것을 만드는 데 받는 원본 범위보다 크지 않은 것으로 본다 —
+        받기 전에는 그 크기를 알 수 없다. 조각 파일의 머리(몇 KB)는 세지 않는다. 여유 공간을
+        알 수 없으면 확인하지 않는다.
 
         Raises:
             DiskSpaceError: 여유 공간이 모자란 경우
             FileSizeLimitError: 저장 폴더가 FAT 계열이고 만들 파일 하나가 그 한계를 넘는 경우
         """
-        # 만드는 파일마다의 크기 — 경계 원본, 받은 바이트가 놓이는 구간 파일, 옮기는 바이트가 없는
-        # 구간 파일(머리 자리만)
-        sizes = [layout.size + layout.download_size]
-        sizes.extend(
-            max((target + length for _source, length, target in outlet.runs), default=0)
-            for outlet in self._outlets[1:]
-        )
-        sizes.extend(
-            plan.body_offset for plan in self._plans.values() if plan is not None and not plan.runs
-        )
+        files = []  # 구간 파일마다의 크기
+        encoded = []  # 구간마다, 다시 인코딩한 경계 GOP의 크기(상한)
+        for (number, plan), outlet in zip(self._plans.items(), self._outlets[1:]):
+            if plan is None:
+                # 영상 전체 구간 — 받은 것이 곧 원본이다. 받은 바이트가 놓이는 끝이 원본의 크기다
+                files.append(max((at + length for _source, length, at in outlet.runs), default=0))
+                continue
+            pieces = sum(
+                last - first + 1 for first, last in self._boundary_ranges(index, picked, [number])
+            )
+            encoded.append(pieces)
+            files.append(plan.encoded_offset + pieces)
         # 저장 폴더가 FAT 계열이면 4GiB를 넘는 파일을 담지 못한다 — 가장 큰 것으로 본다
-        self._require_file_size_fits(max(sizes))
-        needed = sum(sizes)
+        self._require_file_size_fits(max(layout.size, *files))
+        needed = layout.size + sum(files) + max(encoded, default=0)
         try:
             free = _free_bytes(os.path.dirname(os.path.abspath(source_path)))
         except OSError:

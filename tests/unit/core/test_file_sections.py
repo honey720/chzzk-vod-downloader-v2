@@ -59,7 +59,12 @@ from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
 from core.utils.cut_check import check_cut
 from core.utils.ffmpeg import get_ffmpeg_exe
-from core.utils.mp4_ranges import selection_byte_ranges, sections_download_size
+from core.utils.mp4_ranges import (
+    frames_byte_range,
+    selection_byte_ranges,
+    sections_download_size,
+)
+from core.utils.mp4_section_writer import section_pieces
 from core.utils.interaction import resting_while
 from core.utils.hybrid_cut import CUT_FAILED, CutError, cut_frames_from_mp4, hybrid_cut
 from core.utils.paths import (
@@ -1969,6 +1974,60 @@ def test_needed_space_covers_the_section_files_and_one_byte_less_is_refused(
     assert [type(error) for error in refused.failures] == [DiskSpaceError]
     assert (run.finished, run.failures) == (1, [])
     assert needed >= _sizes(run.paths) > 0
+
+
+def _folder_bytes(folder) -> int:
+    """folder 아래(하위 폴더까지)에 있는 파일 크기의 합."""
+    return sum(
+        os.path.getsize(os.path.join(root, name))
+        for root, _folders, names in os.walk(folder)
+        for name in names
+    )
+
+
+def test_needed_space_counts_a_boundary_gop_two_sections_share_for_each_section(
+    server, sources, tmp_path, monkeypatch
+):
+    """같은 경계 GOP를 함께 쓰는 두 구간에 필요한 크기는 그 GOP를 다시 인코딩한 몫을 구간마다 세야 한다.
+
+    기본 입력(키프레임 0 · 30 · 42 · 72 · 90 …), 구간 프레임 35~50 · 60~100 — 첫 구간의 꼬리와
+    둘째 구간의 머리가 GOP 42~71에 있다. 구간마다 다시 인코딩하는 조각의 원본 바이트 범위의 합을
+    R1 · R2라 함. 필요한 크기 N은 여유 공간 0인 실행에서 읽고, 여유가 넉넉한 실행에서 구간 파일을
+    끝내기 직전의 경계 원본 · 본문의 크기와 조각을 붙인 직후 저장 폴더에 놓인 바이트를 읽음
+    -> N == 경계 원본의 크기 + (본문 1 + R1) + (본문 2 + R2) + max(R1, R2),
+       조각을 붙인 직후 저장 폴더에 놓인 바이트의 최대 <= N, 완료 1회
+    """
+    selections = [TimeRange(_seconds(35), _seconds(50)), TimeRange(_seconds(60), _seconds(100))]
+    index = _index(sources["plain"])
+    ranges = []
+    for first, last in ((35, 50), (60, 100)):
+        pieces = [piece for piece in section_pieces(index, first, last) if piece.reencoded]
+        spans = [frames_byte_range(index, piece.first, piece.end - 1) for piece in pieces]
+        ranges.append(sum(end - begin for begin, end, _keyframe in spans))
+    needed = _needed_space(server, tmp_path, monkeypatch, selections)
+    monkeypatch.setattr(fd_module, "_free_bytes", lambda folder: 10**13)
+    run = _Run(server, "plain", tmp_path, selections)
+    real_finish, real_write = fd_module.finish_section_file, fd_module._write_section_file
+    before, placed = {}, []
+
+    def finish(source_path, *args, body_path, **kwargs):
+        before.setdefault("source", os.path.getsize(source_path))
+        before.setdefault("bodies", []).append(os.path.getsize(body_path))
+        return real_finish(source_path, *args, body_path=body_path, **kwargs)
+
+    def write_file(*args):
+        real_write(*args)
+        placed.append(_folder_bytes(run.folder))
+
+    monkeypatch.setattr(fd_module, "finish_section_file", finish)
+    monkeypatch.setattr(fd_module, "_write_section_file", write_file)
+
+    run.start()
+
+    assert (run.finished, run.failures) == (1, [])
+    assert len(before["bodies"]) == 2 and len(placed) == 2
+    assert needed == before["source"] + sum(before["bodies"]) + sum(ranges) + max(ranges)
+    assert 0 < max(placed) <= needed
 
 
 def test_needed_space_of_a_whole_video_section_is_at_least_the_source_file(
