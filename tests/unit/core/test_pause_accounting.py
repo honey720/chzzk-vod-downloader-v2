@@ -100,6 +100,7 @@ class _Recording(RunLogger):
         super().__init__()
         self.speed_lines: list[float] = []  # 스레드 수 · 속도 로그를 남긴 시각
         self.stopped: list[str] = []
+        self.stopped_after_failure: list[str] = []
         self.started_at: list[float] = []  # 받기 시작 로그(log_download_start)의 시각
 
     def log_download_start(self, *args):
@@ -113,6 +114,9 @@ class _Recording(RunLogger):
 
     def log_stopped(self, phase):
         self.stopped.append(phase)
+
+    def log_stopped_after_failure(self, phase):
+        self.stopped_after_failure.append(phase)
 
 
 def _recording_engine(tmp_path, monkeypatch, throttle: float):
@@ -226,6 +230,55 @@ def test_stopping_while_receiving_tells_the_logger_it_stopped_during_transfer(
 
     assert logger.stopped == ["transfer"]
     assert not finished.is_set() and failures == []
+
+
+def test_engine_that_stops_itself_after_a_failure_does_not_log_a_stop_by_the_user(
+    tmp_path, monkeypatch
+):
+    """받는 도중 엔진이 실패로 스스로 멈추면 사용자가 멈췄다는 줄이 아니라 실패로 멈췄다는 줄을 남겨야 한다.
+
+    청크마다 5ms 쉬는 가짜 세션으로 받는 도중 0.25초에 회복할 수 없는 실패를 알림(_fail_fatally)
+    -> log_stopped 0회, log_stopped_after_failure("transfer") 1회, 실패 통지 1건(그 예외), 완료 통지 없음
+    """
+    engine, data, logger, _output, finished, failures = _recording_engine(
+        tmp_path, monkeypatch, throttle=0.005
+    )
+    error = RuntimeError("part failed")
+
+    data.model.start()
+    thread = _run_in_thread(engine)
+    time.sleep(0.25)
+    engine._fail_fatally(error, "Thread failed — failing download")
+    thread.join(timeout=10)
+
+    assert (logger.stopped, logger.stopped_after_failure) == ([], ["transfer"])
+    assert failures == [error] and not finished.is_set()
+
+
+def test_user_stop_of_a_run_after_a_failed_run_is_logged_as_a_stop_by_the_user(
+    tmp_path, monkeypatch
+):
+    """실패로 멈춘 엔진을 다시 돌려 사용자가 멈추면 사용자가 멈췄다는 줄을 남겨야 한다.
+
+    같은 엔진. 첫 실행: 받는 도중 실패로 멈춤. 둘째 실행: 받는 도중 0.25초에 중단
+    -> log_stopped_after_failure == ["transfer"](첫 실행), log_stopped == ["transfer"](둘째 실행)
+    """
+    engine, data, logger, _output, _finished, _failures = _recording_engine(
+        tmp_path, monkeypatch, throttle=0.005
+    )
+    data.model.start()
+    thread = _run_in_thread(engine)
+    time.sleep(0.25)
+    engine._fail_fatally(RuntimeError("part failed"), "Thread failed — failing download")
+    thread.join(timeout=10)
+
+    data.model.start()
+    thread = _run_in_thread(engine)
+    time.sleep(0.25)
+    data.model.stop()
+    thread.join(timeout=10)
+
+    assert (logger.stopped, logger.stopped_after_failure) == (["transfer"], ["transfer"])
 
 
 def test_stopping_while_preparing_tells_the_logger_it_stopped_during_prepare(tmp_path, monkeypatch):

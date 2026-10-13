@@ -440,6 +440,8 @@ class BaseDownloader(ABC):
         self._monitor_stop = threading.Event()
         self._pause_clock = _PauseClock()  # 컷이 도는 동안의 일시정지 시간
         self._cut_paused = 0.0  # 지금 자르는 구간에서 일시정지한 시간의 합(초)
+        # 이번 실행이 실패를 알렸는지 — 실패로 멈춘 것과 사용자가 멈춘 것을 로그에서 가른다
+        self._failure_notified = False
         self._measured_paused = 0.0  # 속도를 마지막으로 잰 때까지 일시정지한 시간의 합(초)
         # 전송 중 관측된 정점 동시 스레드 수 — 전송 종료 요약 로그용 (#110)
         self._peak_threads = 0
@@ -598,6 +600,7 @@ class BaseDownloader(ABC):
         엔진이 실패를 알리는 자리는 모두 이 메서드를 거친다. 콜백을 감싸 두지 않는 까닭: 엔진을
         붙잡는 함수를 엔진이 들면 서로를 가리켜, 다운로드가 끝나도 엔진이 바로 풀리지 않는다.
         """
+        self._failure_notified = True
         self._on_failed(self._marked(exc))
 
     def _marked(self, exc: BaseException) -> BaseException:
@@ -835,6 +838,7 @@ class BaseDownloader(ABC):
         """다운로드 파이프라인을 실행한다. 관측 스레드도 여기서 소유·시작한다."""
         monitor = threading.Thread(target=self._monitor_loop, name="DownloadMonitor", daemon=True)
         stopped_in = None  # 중단을 처음 본 단계 — prepare · transfer · postprocess
+        self._failure_notified = False
         try:
             self.s.start_time = tm.time()
             # 모델이 세는 일시정지 시간은 모델이 사는 동안의 합이다 — 같은 모델로 다시 실행하면
@@ -1006,9 +1010,13 @@ class BaseDownloader(ABC):
             # 중단을 같은 신호(WAITING)로 뭉뚱그려 구분하지 못한 게 뿌리였다
             # (#135와 같은 자리: 엔진 종료 신호와 실패 처리를 분리해야 한다).
             if self.state == DownloadState.WAITING:
-                # 사용자가 중단했다 — 어느 단계였는지 한 줄 남긴다 (#309). 로그가 완료도 실패도
-                # 없이 끊기면 중단인지 죽은 것인지 가릴 수 없다
-                self._log_if_supported("log_stopped", stopped_in or "postprocess")
+                # 중단됐다 — 어느 단계였는지 한 줄 남긴다 (#309). 로그가 완료도 실패도 없이
+                # 끊기면 중단인지 죽은 것인지 가릴 수 없다. 실패를 알린 뒤의 중단은 엔진이
+                # 스스로 멈춘 것이다(``_fail_fatally``) — 사용자가 멈춘 것과 다른 줄을 남긴다
+                self._log_if_supported(
+                    "log_stopped_after_failure" if self._failure_notified else "log_stopped",
+                    stopped_in or "postprocess",
+                )
                 self._cleanup_partial()
 
         except PostprocessError as e:

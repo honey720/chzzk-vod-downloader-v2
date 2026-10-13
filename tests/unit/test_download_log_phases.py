@@ -314,3 +314,19 @@ def test_transfer_and_breakdown_lines_add_the_paused_time_only_when_there_was_a_
     assert breakdown[0].endswith(
         "Total time breakdown - Transfer: 12.50s (no postprocess) (paused: 3.20s)"
     )
+
+
+def test_failure_stop_line_names_the_phase_and_does_not_blame_the_user(tmp_path, monkeypatch):
+    """실패로 멈춘 줄은 어느 단계였는지 적고, 사용자가 멈췄다고 적지 않아야 한다 (#309).
+
+    log_stopped_after_failure("transfer") -> "Download stopped after a failure during transfer",
+    로그에 "by user" 없음
+    """
+    logger = _make_logger(tmp_path, monkeypatch)
+    logger.log_stopped_after_failure("transfer")
+    log_file = Path(logger.log_file)
+    logger.save_and_close()
+
+    written = log_file.read_text(encoding="utf-8")
+    assert "Download stopped after a failure during transfer" in written
+    assert "by user" not in written

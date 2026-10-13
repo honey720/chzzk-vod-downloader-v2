@@ -242,6 +242,13 @@ class DownloadLogger:
         """
         self.info(f"Download stopped by user during {phase}")
 
+    def log_stopped_after_failure(self, phase: str):
+        """실패를 알린 뒤 엔진이 스스로 멈췄음을 로깅합니다 — 어느 단계였는지와 함께 (#309).
+
+        사용자가 멈춘 것(``log_stopped``)과 가른다. 실패의 내용은 그 앞의 오류 줄에 있다.
+        """
+        self.info(f"Download stopped after a failure during {phase}")
+
     def log_postprocess_start(self, kind: str):
         """후처리 시작을 로깅합니다 (kind: remux 등)."""
         self.info(f"Postprocess started - {kind}")
