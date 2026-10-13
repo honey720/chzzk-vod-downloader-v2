@@ -25,7 +25,6 @@ MonitorM3U8Thread의 계산과 동일하며 모듈 수준 함수로 둔다.
 
 import dataclasses
 import logging
-import os
 import threading
 import time
 from time import gmtime, strftime
@@ -317,15 +316,16 @@ class DownloadViewModel(QObject):
         """실패 카드의 재시도를 누른 순간에 한 번, 끝낸 구간의 파일이 그대로 있는지 확인한다 (#309).
 
         일부 구간만 실패한 구간 다운로드에만 할 일이 있다. 끝낸 것으로 적힌 구간 가운데
-        파일이 없어진 것은 끝나지 않은 구간으로 돌린다 — 다음 다운로드가 그 구간도 다시
-        만든다. 확인은 여기서만 한다. 다운로드를 시작하지 않는다.
+        파일이 없어졌거나 크기가 달라진 것은 끝나지 않은 구간으로 돌린다 — 다음 다운로드가 그
+        구간도 다시 만든다(``SectionResume.with_files_checked``). 다운로드를 시작하지 않는다.
+        같은 확인을 다운로드를 시작할 때(``_usable_resume``)와 엔진이 준비할 때도 한다 —
+        재시도 버튼을 거치지 않은 시작과, 누른 뒤 시작하기까지의 사이를 덮는다.
         """
         retry = getattr(item, "section_retry", None)
         if retry is None:
             return
         resume_key, resume = retry
-        done = frozenset(number for number in resume.done if os.path.isfile(resume.paths[number]))
-        item.section_retry = (resume_key, dataclasses.replace(resume, done=done))
+        item.section_retry = (resume_key, resume.with_files_checked())
 
     def isPaused(self) -> bool:
         """지금의 다운로드가 일시정지 상태인지 — 엔진의 상태로 답한다."""
@@ -694,9 +694,11 @@ def _usable_resume(item: ContentItem, selections: tuple):
     resume_key, resume = retry
     if resume_key != _resume_key(item):
         return None
-    if resume.selections == selections:
-        return resume
-    return _resume_for_edited_sections(item, resume, selections)
+    if resume.selections != selections:
+        resume = _resume_for_edited_sections(item, resume, selections)
+    # 끝낸 구간의 파일이 그사이 지워졌거나 바뀌었으면 끝낸 것으로 치지 않는다 — 구간 파일
+    # 이름을 예약하기 전에 가려야, 바뀐 파일을 덮어쓰지 않고 그 구간이 새 이름을 받는다
+    return resume.with_files_checked() if resume is not None else None
 
 
 def _resume_for_edited_sections(item: ContentItem, resume: SectionResume, selections: tuple):

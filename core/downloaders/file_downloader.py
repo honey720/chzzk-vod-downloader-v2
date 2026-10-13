@@ -389,6 +389,9 @@ class FileDownloader(BaseDownloader):
         resume = content.section_resume
         if resume is not None and not resume.fits(content.selections, content.selection_paths):
             resume = None
+        if resume is not None:
+            # 끝낸 구간의 파일이 지워졌거나 바뀌었으면 그 구간은 다시 만든다
+            resume = resume.with_files_checked()
         self._done_before = resume.done if resume is not None else frozenset()
         handed = (resume.mp4_head if resume is not None else None) or content.mp4_head
         if handed is None and content.mp4_pending is not None:
@@ -681,6 +684,7 @@ class FileDownloader(BaseDownloader):
                 selections=tuple(self.s.content.selections),
                 paths=tuple(self.s.content.selection_paths),
                 done=frozenset(done),
+                done_sizes=SectionResume.sizes_of(self.s.content.selection_paths, done),
                 mp4_head=self._mp4_head,
                 source_path=self._source_path,
                 source_size=os.path.getsize(self._source_path),
