@@ -53,6 +53,7 @@ data·logger는 DownloadData/DownloadLogger 호환 객체를 주입받는다.
 """
 
 import errno
+import math
 import os
 import re
 import shutil
@@ -622,6 +623,9 @@ class BaseDownloader(ABC):
         저장 폴더가 FAT 계열이고 그 크기가 4GiB − 1바이트를 넘으면 받지 않는다. 파일 시스템
         이름을 읽지 못하면 확인하지 않는다. 읽은 이름과 크기는 로그 한 줄로 남긴다.
 
+        어림은 소수일 수 있다 — 바이트로 올림한 한 값을 한계와 견주고, 로그와 예외에도 그 값을
+        적는다. 견주는 값과 적는 값이 다르면, 적힌 값이 한계와 같은데도 거부되는 일이 생긴다.
+
         Args:
             largest: 만들 파일 가운데 가장 큰 것의 크기(바이트) — 어림이어도 된다
 
@@ -629,9 +633,10 @@ class BaseDownloader(ABC):
             FileSizeLimitError: 저장 폴더가 FAT 계열이고 largest가 한계를 넘는 경우
         """
         name = filesystem_name(self._output_folder())
-        self._log_if_supported("log_file_size_check", name, int(largest))
+        largest = math.ceil(largest)
+        self._log_if_supported("log_file_size_check", name, largest)
         if is_fat(name) and largest > FAT_MAX_FILE_BYTES:
-            raise FileSizeLimitError(int(largest), name)
+            raise FileSizeLimitError(largest, name)
 
     def _notify_failed(self, exc: BaseException) -> None:
         """실패를 알린다 — 쓰다가 공간이 없어 난 실패면 그 사실을 예외에 적은 뒤에(``_marked``).

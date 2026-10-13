@@ -418,3 +418,27 @@ def test_encrypted_vod_transfer_check_stops_when_the_output_is_over_the_fat_limi
     assert not thread.is_alive(), "엔진이 끝나지 않았다"
     assert [(type(e), e.largest) for e in failures] == [(FileSizeLimitError, COUNT * 376)]
     assert not finished.is_set()
+
+
+def test_file_size_check_compares_the_size_it_reports_when_the_estimate_is_a_fraction(
+    tmp_path, monkeypatch
+):
+    """어림이 소수여도 파일 크기 검사는 예외 · 로그에 적는 그 값을 한계와 견줘야 한다.
+
+    파일 시스템 "FAT32", 어림 1000.5바이트. 한계 1000으로 검사한 뒤, 한계를 예외에 적힌 크기로
+    두고 다시 검사함
+    -> 한계 1000: FileSizeLimitError(largest == 1001 — 바이트로 올림),
+       한계 1001: 통과, 파일 크기 줄이 두 번 다 ("FAT32", 1001)
+    """
+    run = _Run(tmp_path, monkeypatch, free=10**13, bandwidth=BANDWIDTH, hold=False)
+    _on_fat(monkeypatch, "FAT32", 1000)
+    sizes = []
+    run.logger.log_file_size_check = lambda name, largest: sizes.append((name, largest))
+
+    with pytest.raises(FileSizeLimitError) as refused:
+        run.engine._require_file_size_fits(1000.5)
+    monkeypatch.setattr(base_module, "FAT_MAX_FILE_BYTES", refused.value.largest)
+    run.engine._require_file_size_fits(1000.5)
+
+    assert refused.value.largest == 1001
+    assert sizes == [("FAT32", 1001), ("FAT32", 1001)]
