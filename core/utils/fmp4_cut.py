@@ -398,7 +398,14 @@ def _cut(
                         (lambda number: passed(number + 1)) if passed is not None else None,
                     ),
                     os.path.join(work_dir, _AUDIO_FILE),
+                    timeout=hc._COPY_TIMEOUT,
+                    should_stop=hc._stop_check.get(),
+                    should_pause=hc._pause_check.get(),
                 )
+            except FFmpegCancelledError as e:
+                raise CutCancelled(str(e)) from e
+            except FFmpegTimeoutError as e:
+                raise CutError(CUT_TIMEOUT, str(e)) from e
             except FFmpegError as e:
                 raise CutError(CUT_FAILED, str(e)) from e
 

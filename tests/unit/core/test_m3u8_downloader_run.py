@@ -94,7 +94,7 @@ def _expected_output(chunks_per_segment: int) -> bytes:
     )
 
 
-def _passthrough_remux_stream(chunks, dst_path):
+def _passthrough_remux_stream(chunks, dst_path, **_wait):
     """받은 스트림을 그대로 파일에 쓰는 remux_stream 스텁 (공급 순서·바이트 검증용)."""
     with open(dst_path, "wb") as f:
         for chunk in chunks:
@@ -240,7 +240,7 @@ def test_remux_failure_fails_explicitly_and_preserves_segments(tmp_path, monkeyp
         tmp_path, monkeypatch
     )
 
-    def broken_remux_stream(chunks, dst_path):
+    def broken_remux_stream(chunks, dst_path, **_wait):
         # 실제 remux_stream처럼 불완전 산출물을 지우고 실패를 알린다
         raise base_module.FFmpegError("가짜 remux 실패")
 
@@ -274,7 +274,7 @@ def test_remux_failure_midway_leaves_only_the_segments_not_yet_fed(tmp_path, mon
         tmp_path, monkeypatch
     )
 
-    def fails_after_two(chunks, dst_path):
+    def fails_after_two(chunks, dst_path, **_wait):
         feed = iter(chunks)
         next(feed)
         next(feed)
@@ -303,7 +303,7 @@ def test_stop_during_postprocess_cleans_up_without_failure(tmp_path, monkeypatch
 
     fed_once = threading.Event()
 
-    def slow_remux_stream(chunks, dst_path):
+    def slow_remux_stream(chunks, dst_path, **_wait):
         # 천천히 소비한다 — 그 사이 stop이 들어오면 공급측(feed)이 중단
         # 신호를 던지고, 그 예외는 실제 remux_stream처럼 그대로 전파된다
         for _ in chunks:
@@ -397,7 +397,7 @@ def test_monitor_thread_is_stopped_before_postprocess(tmp_path, monkeypatch):
 
     monitor_alive_during_remux = []
 
-    def checking_remux_stream(chunks, dst_path):
+    def checking_remux_stream(chunks, dst_path, **_wait):
         monitor_alive_during_remux.append(
             any(t.name == "DownloadMonitor" and t.is_alive() for t in threading.enumerate())
         )
@@ -593,7 +593,7 @@ def test_downstream_stop_after_postprocess_failure_preserves_segments(tmp_path, 
         tmp_path, monkeypatch
     )
 
-    def broken_remux_stream(chunks, dst_path):
+    def broken_remux_stream(chunks, dst_path, **_wait):
         raise base_module.FFmpegError("가짜 remux 실패")
 
     monkeypatch.setattr(base_module, "remux_stream", broken_remux_stream)

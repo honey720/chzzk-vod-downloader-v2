@@ -33,10 +33,17 @@ from core.api.mp4 import Mp4Error, read_mp4_index
 from core.models.cut import CutFrames, CutResult
 from core.models.ts_index import TsStreams
 from core.utils import hybrid_cut as hc
-from core.utils.ffmpeg import FFmpegError, read_in_chunks, remux_stream
+from core.utils.ffmpeg import (
+    FFmpegCancelledError,
+    FFmpegError,
+    FFmpegTimeoutError,
+    read_in_chunks,
+    remux_stream,
+)
 from core.utils.fmp4_cut import SegmentSource, cut_from_segments
 from core.utils.hybrid_cut import (
     CUT_FAILED,
+    CUT_TIMEOUT,
     CutCancelled,
     CutError,
     cut_frames_from_mp4,
@@ -180,7 +187,17 @@ def _remux(
                 yield chunk
 
     try:
-        remux_stream(feed(), joined_path)
+        remux_stream(
+            feed(),
+            joined_path,
+            timeout=hc._COPY_TIMEOUT,
+            should_stop=should_stop,
+            should_pause=should_pause,
+        )
+    except FFmpegCancelledError as e:
+        raise CutCancelled(str(e)) from e
+    except FFmpegTimeoutError as e:
+        raise CutError(CUT_TIMEOUT, str(e)) from e
     except (FFmpegError, OSError) as e:
         raise CutError(CUT_FAILED, f"세그먼트를 mp4로 다시 싸지 못했다: {e}") from e
 

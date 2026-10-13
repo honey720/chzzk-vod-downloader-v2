@@ -368,7 +368,14 @@ def _empty_gconv_dir() -> str:
     return path
 
 
-def remux_stream(chunks: Iterable[bytes], dst_path: str) -> None:
+def remux_stream(
+    chunks: Iterable[bytes],
+    dst_path: str,
+    *,
+    timeout: float | None = None,
+    should_stop: Callable[[], bool] | None = None,
+    should_pause: Callable[[], bool] | None = None,
+) -> None:
     """바이트 스트림을 stdin으로 받아 재인코딩 없이(스트림 복사) mp4로 재포장한다.
 
     옵션 근거 (#88·#92 실측 — 치지직 실스트림으로 확인):
@@ -388,28 +395,101 @@ def remux_stream(chunks: Iterable[bytes], dst_path: str) -> None:
     공급 이터레이터가 예외를 던지면(다운로드 중단 등) 프로세스를 종료하고
     산출물을 지운 뒤 그 예외를 그대로 전파한다.
 
+    Args:
+        timeout: 바이트를 다 넣은 뒤 ffmpeg가 끝나기를 기다리는 제한 시간(초). 일시정지로 서
+            있던 시간은 세지 않는다. 주지 않으면 끝날 때까지 기다린다 (#309)
+        should_stop: 주면 그 기다림 동안 짧은 간격으로 부른다. 참이면 ffmpeg를 끝내고 산출물을
+            지운 뒤 ``FFmpegCancelledError``를 낸다. 넣는 동안의 멈춤은 공급 이터레이터가 맡는다
+        should_pause: 주면 같은 간격으로 부른다. 참인 동안 ffmpeg를 멈춰 둔다
+
     Raises:
         FFmpegNotFoundError: ffmpeg 실행 파일을 찾지 못한 경우
         RemuxError: ffmpeg가 0이 아닌 코드로 종료했거나 실행 자체가 실패한 경우
+        FFmpegTimeoutError: 바이트를 다 넣은 뒤 timeout 안에 끝나지 않은 경우
+        FFmpegCancelledError: 그 기다림 동안 should_stop이 참을 돌려줘 끝낸 경우
     """
-    _copy_piped(chunks, dst_path, ())
+    _copy_piped(chunks, dst_path, (), timeout, should_stop, should_pause)
 
 
-def extract_audio_stream(chunks: Iterable[bytes], dst_path: str) -> None:
+def extract_audio_stream(
+    chunks: Iterable[bytes],
+    dst_path: str,
+    *,
+    timeout: float | None = None,
+    should_stop: Callable[[], bool] | None = None,
+    should_pause: Callable[[], bool] | None = None,
+) -> None:
     """바이트 스트림을 stdin으로 받아 오디오만 재인코딩 없이 mp4로 뽑는다 (#309).
 
     세그먼트 방식의 구간 다운로드가 쓴다 — 구간의 세그먼트를 한 번 흘려 오디오를 작은 파일로
-    뽑아 두고, 구간 파일을 쓸 때 영상과 합친다. 공급 · 실패 처리는 ``remux_stream``과 같다.
+    뽑아 두고, 구간 파일을 쓸 때 영상과 합친다. 공급 · 실패 처리와 timeout · should_stop ·
+    should_pause는 ``remux_stream``과 같다.
 
     Raises:
         FFmpegNotFoundError: ffmpeg 실행 파일을 찾지 못한 경우
         RemuxError: ffmpeg가 0이 아닌 코드로 종료했거나 실행 자체가 실패한 경우
+        FFmpegTimeoutError · FFmpegCancelledError: ``remux_stream``과 같다
     """
-    _copy_piped(chunks, dst_path, ("-vn",))
+    _copy_piped(chunks, dst_path, ("-vn",), timeout, should_stop, should_pause)
 
 
-def _copy_piped(chunks: Iterable[bytes], dst_path: str, selection: Sequence[str]) -> None:
-    """stdin의 바이트 스트림을 스트림 복사로 dst_path에 mp4로 쓴다. selection은 스트림을 고르는 옵션이다."""
+def _await_end(
+    processes: Sequence[subprocess.Popen],
+    timeout: float | None,
+    should_stop: Callable[[], bool] | None,
+    should_pause: Callable[[], bool] | None,
+) -> Exception | None:
+    """입력을 다 넣은 ffmpeg들이 끝나기를 기다린다 — 멈춤 · 일시정지 · 제한 시간을 본다 (#309).
+
+    파이프로 바이트를 넣는 실행(``remux_stream`` · ``remux_through``)은 넣는 동안의 멈춤 ·
+    일시정지를 공급 이터레이터가 맡는다. 다 넣은 뒤에는 이터레이터가 불리지 않으므로 여기서
+    본다 — ``run_ffmpeg``와 같은 규칙이다. 셋 다 주지 않으면 바로 돌아간다(부르는 쪽이 기다린다).
+
+    일시정지 동안은 프로세스들을 함께 멈춰 두고, 서 있던 시간은 제한 시간에 세지 않는다. 먼저
+    끝난 프로세스가 있어도 시간은 한 곳에서 센다.
+
+    Returns:
+        모두 끝났으면 None. 끝내야 하면 낼 예외 — 멈추라는 요청이면 ``FFmpegCancelledError``,
+        제한 시간을 넘겼으면 ``FFmpegTimeoutError``. 프로세스를 끝내고 산출물을 지우는 것은
+        부르는 쪽이 한다(멈춰 있는 프로세스도 ``Popen.kill``로 끝난다)
+    """
+    if timeout is None and should_stop is None and should_pause is None:
+        return None
+    deadline = time.monotonic() + (timeout if timeout is not None else float("inf"))
+    suspended_at: float | None = None  # 멈춰 둔 시각. 돌고 있으면 None
+    while any(process.poll() is None for process in processes):
+        now = time.monotonic()
+        stopped = should_stop is not None and should_stop()
+        paused = not stopped and should_pause is not None and should_pause()
+        if paused and suspended_at is None:
+            for process in processes:
+                _set_suspended(process, True)  # 이미 끝난 쪽에는 아무 일도 없다
+            suspended_at = now
+        elif not paused and suspended_at is not None:
+            for process in processes:
+                _set_suspended(process, False)
+            deadline += now - suspended_at  # 서 있던 시간은 제한 시간에 세지 않는다
+            suspended_at = None
+        if stopped:
+            return FFmpegCancelledError("멈추라는 요청으로 ffmpeg를 끝냈다")
+        if suspended_at is None and now >= deadline:
+            return FFmpegTimeoutError(f"ffmpeg가 {timeout:g}초 안에 끝나지 않았다")
+        time.sleep(_STOP_POLL_SECONDS)
+    return None
+
+
+def _copy_piped(
+    chunks: Iterable[bytes],
+    dst_path: str,
+    selection: Sequence[str],
+    timeout: float | None = None,
+    should_stop: Callable[[], bool] | None = None,
+    should_pause: Callable[[], bool] | None = None,
+) -> None:
+    """stdin의 바이트 스트림을 스트림 복사로 dst_path에 mp4로 쓴다. selection은 스트림을 고르는 옵션이다.
+
+    timeout · should_stop · should_pause는 바이트를 다 넣은 뒤의 기다림에 건다(``_await_end``).
+    """
     exe = get_ffmpeg_exe()
     cmd = [
         exe,
@@ -464,6 +544,15 @@ def _copy_piped(chunks: Iterable[bytes], dst_path: str, selection: Sequence[str]
         raise
 
     _close_quietly(proc.stdin)
+    # 넣을 것은 다 넣었다 — ffmpeg가 남은 것(mp4의 moov)을 쓰고 끝나기를 기다린다
+    outcome = _await_end((proc,), timeout, should_stop, should_pause)
+    if outcome is not None:
+        proc.kill()  # 멈춰 있어도 끝난다
+        proc.wait()
+        reader.join(timeout=5)
+        _close_quietly(proc.stderr)
+        _remove_quietly(dst_path)
+        raise outcome
     returncode = proc.wait()
     reader.join(timeout=5)
     _close_quietly(proc.stderr)
@@ -589,29 +678,11 @@ def remux_through(
     _close_quietly(convert.stdin)
     # 넣을 것은 다 넣었다 — 두 ffmpeg가 남은 것을 쓰고 끝나기를 기다린다. 이때부터는 공급
     # 이터레이터가 불리지 않으므로 멈춤 · 일시정지 · 제한 시간을 여기서 본다(run_ffmpeg와 같은 규칙)
-    if timeout is not None or should_stop is not None or should_pause is not None:
-        deadline = time.monotonic() + (timeout if timeout is not None else float("inf"))
-        suspended_at: float | None = None  # 둘을 멈춰 둔 시각. 돌고 있으면 None
-        while convert.poll() is None or join.poll() is None:
-            now = time.monotonic()
-            stopped = should_stop is not None and should_stop()
-            paused = not stopped and should_pause is not None and should_pause()
-            if paused and suspended_at is None:
-                for process in (convert, join):
-                    _set_suspended(process, True)  # 이미 끝난 쪽에는 아무 일도 없다
-                suspended_at = now
-            elif not paused and suspended_at is not None:
-                for process in (convert, join):
-                    _set_suspended(process, False)
-                deadline += now - suspended_at  # 서 있던 시간은 제한 시간에 세지 않는다
-                suspended_at = None
-            if stopped or (suspended_at is None and now >= deadline):
-                end_both()  # 멈춰 있어도 끝난다
-                _remove_quietly(dst_path)
-                if stopped:
-                    raise FFmpegCancelledError("멈추라는 요청으로 ffmpeg를 끝냈다")
-                raise FFmpegTimeoutError(f"ffmpeg가 {timeout:g}초 안에 끝나지 않았다")
-            time.sleep(_STOP_POLL_SECONDS)
+    outcome = _await_end((convert, join), timeout, should_stop, should_pause)
+    if outcome is not None:
+        end_both()  # 멈춰 있어도 끝난다
+        _remove_quietly(dst_path)
+        raise outcome
     codes = (convert.wait(), join.wait())
     for reader in readers:
         reader.join(timeout=5)

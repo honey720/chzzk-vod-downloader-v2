@@ -78,7 +78,7 @@ from core.models.events import (
     ProgressEvent,
 )
 from core.models.plan import DownloadPlan
-from core.utils.ffmpeg import FFmpegError, read_in_chunks, remux_stream
+from core.utils.ffmpeg import FFmpegCancelledError, FFmpegError, read_in_chunks, remux_stream
 from core.utils.filesystem import FAT_MAX_FILE_BYTES, filesystem_name, is_fat
 from core.utils.interaction import rest_totals
 
@@ -258,6 +258,11 @@ def _with_rests(note: str, before: tuple[int, float], after: tuple[int, float]) 
 
 class _PostprocessAborted(Exception):
     """후처리 공급 루프의 사용자 중단 신호 — 실패가 아니라 중단 경로로 보낸다."""
+
+
+# 구간 없는 후처리에서 세그먼트를 다 넘긴 뒤 ffmpeg가 끝나기를 기다리는 제한 시간(초) — 남은
+# 일은 받은 것을 마저 쓰고 mp4의 moov를 쓰는 것이다. 구간 컷의 복사 단계와 같은 한 시간
+_REMUX_END_TIMEOUT = 3600
 
 
 # 컷 진행을 이만큼 오를 때마다 알린다 — 막대의 1%보다 잘게, ffmpeg가 알리는 횟수보다는 드물게
@@ -928,8 +933,15 @@ class BaseDownloader(ABC):
                     )
 
         try:
-            remux_stream(feed(), self.s.output_path)
-        except _PostprocessAborted:
+            remux_stream(
+                feed(),
+                self.s.output_path,
+                # 세그먼트를 다 넘긴 뒤 ffmpeg가 끝나기를 기다리는 동안에도 중단 · 일시정지를 따른다
+                timeout=_REMUX_END_TIMEOUT,
+                should_stop=lambda: self.state == DownloadState.WAITING,
+                should_pause=lambda: self.state == DownloadState.PAUSED,
+            )
+        except (_PostprocessAborted, FFmpegCancelledError):
             # 중단 정리(임시 폴더·산출물 삭제)는 run()의 중단 경로가 수행한다
             return
         except FFmpegError as e:

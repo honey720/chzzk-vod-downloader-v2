@@ -23,7 +23,7 @@ def _run_to_the_end(engine, data, finished) -> None:
     thread.join(timeout=10)
 
 
-def _padded_remux_stream(chunks, dst_path):
+def _padded_remux_stream(chunks, dst_path, **_wait):
     """받은 스트림 뒤에 PADDING을 덧붙여 쓴다 — 파일 크기가 받은 양과 달라진다."""
     with open(dst_path, "wb") as f:
         for chunk in chunks:

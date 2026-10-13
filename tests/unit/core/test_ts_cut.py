@@ -32,8 +32,19 @@ from core.api.hls_ts import fetch_ts_head, segment_streams, ts_segment_file_name
 from core.downloaders.decrypt import sequence_iv
 from core.models.plan import TimeRange
 from core.utils.cut_check import check_cut
-from core.utils.ffmpeg import get_ffmpeg_exe, run_ffmpeg
-from core.utils.hybrid_cut import CUT_FAILED, CUT_UNSUPPORTED, CutCancelled, CutError
+from core.utils.ffmpeg import (
+    FFmpegCancelledError,
+    FFmpegTimeoutError,
+    get_ffmpeg_exe,
+    run_ffmpeg,
+)
+from core.utils.hybrid_cut import (
+    CUT_FAILED,
+    CUT_TIMEOUT,
+    CUT_UNSUPPORTED,
+    CutCancelled,
+    CutError,
+)
 from core.utils.fmp4_cut import frame_at
 from core.utils.ts_cut import cut_ts_section
 from core.utils.ts_sections import TsSectionSource, choose_ts_frame_rate, plan_ts_sections
@@ -468,3 +479,62 @@ def test_frame_number_of_a_pts_that_is_not_a_frame_is_an_error(vod, host, tmp_pa
     with pytest.raises(CutError) as info:
         frame_at(ts_frames, ts_frames.frame_pts[23] + 0.5 / FPS)
     assert info.value.message_key == CUT_FAILED
+
+
+# ================================================================ 다시 싸기의 마지막 대기
+
+
+def test_remuxing_a_boundary_segment_waits_under_the_stop_pause_and_time_limit(
+    vod, host, tmp_path, monkeypatch
+):
+    """경계 세그먼트를 다시 쌀 때 remux에 한 시간의 제한 시간과 넘겨받은 멈춤 · 일시정지 확인을 넘겨야 한다.
+
+    세그먼트 0 ~ 2, should_stop · should_pause를 줌. remux_stream이 받은 인자를 적음
+    -> timeout == 3600, should_stop · should_pause가 넘긴 그 함수다
+    """
+    planned = _Planned(host, tmp_path / "segments")
+    real = ts_cut_module.remux_stream
+    given = {}
+
+    def records(chunks, dst_path, **wait):
+        given.update(wait)
+        return real(chunks, dst_path, **wait)
+
+    def stop() -> bool:
+        return False
+
+    def pause() -> bool:
+        return False
+
+    monkeypatch.setattr(ts_cut_module, "remux_stream", records)
+
+    ts_cut_module._remux(planned.paths, str(tmp_path / "joined.mp4"), stop, pause)
+
+    assert (given["timeout"], given["should_stop"], given["should_pause"]) == (3600, stop, pause)
+
+
+@pytest.mark.parametrize(
+    ("raised", "expected"),
+    [(FFmpegCancelledError("stopped"), CutCancelled), (FFmpegTimeoutError("late"), CutError)],
+    ids=["cancelled", "timed-out"],
+)
+def test_stop_and_timeout_while_remuxing_are_not_reported_as_a_cut_failure(
+    vod, host, tmp_path, monkeypatch, raised, expected
+):
+    """다시 싸다 멈춤 요청으로 끝난 것은 중단으로, 제한 시간을 넘긴 것은 시간 초과로 알려야 한다.
+
+    세그먼트 0 ~ 2. remux_stream이 FFmpegCancelledError 또는 FFmpegTimeoutError를 냄
+    -> 멈춤: CutCancelled / 시간 초과: CutError(CUT_TIMEOUT)
+    """
+    planned = _Planned(host, tmp_path / "segments")
+
+    def fails(chunks, dst_path, **_wait):
+        raise raised
+
+    monkeypatch.setattr(ts_cut_module, "remux_stream", fails)
+
+    with pytest.raises(expected) as caught:
+        ts_cut_module._remux(planned.paths, str(tmp_path / "joined.mp4"))
+
+    if expected is CutError:
+        assert caught.value.message_key == CUT_TIMEOUT

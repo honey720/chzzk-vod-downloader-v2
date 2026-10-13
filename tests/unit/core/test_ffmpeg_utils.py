@@ -312,7 +312,7 @@ def test_streamed_failure_raises_postprocess_error_and_preserves_segments(tmp_pa
     for s in segs:
         s.write_bytes(b"seg-bytes")
 
-    def broken_remux_stream(chunks, dst_path):
+    def broken_remux_stream(chunks, dst_path, **_wait):
         raise RemuxError("가짜 실패")
 
     monkeypatch.setattr(base_module, "remux_stream", broken_remux_stream)
@@ -339,7 +339,7 @@ def test_streamed_success_feeds_in_order_and_counts_segments(tmp_path, monkeypat
         p.write_bytes(bytes([i + 1]) * 10)
         segs.append(str(p))
 
-    def passthrough(chunks, dst_path):
+    def passthrough(chunks, dst_path, **_wait):
         with open(dst_path, "wb") as f:
             for chunk in chunks:
                 f.write(chunk)
@@ -366,7 +366,7 @@ def test_streamed_feed_removes_each_segment_once_the_next_one_is_asked_for(tmp_p
         segs.append(str(p))
     seen = []
 
-    def watching(chunks, dst_path):
+    def watching(chunks, dst_path, **_wait):
         for _chunk in chunks:
             seen.append([os.path.exists(s) for s in segs])
 
@@ -401,7 +401,7 @@ def test_streamed_feed_removes_a_segment_only_after_its_last_chunk(tmp_path, mon
         removed.append((os.path.basename(path), len(received)))
         real_remove(path)
 
-    def watching(chunks, dst_path):
+    def watching(chunks, dst_path, **_wait):
         for chunk in chunks:
             received.append(os.path.exists(segs[chunk[0] - 1]))
 
@@ -431,7 +431,7 @@ def test_streamed_failure_midway_leaves_only_the_segments_not_yet_fed(tmp_path, 
         p.write_bytes(bytes([i + 1]) * 10)
         segs.append(str(p))
 
-    def fails_after_two(chunks, dst_path):
+    def fails_after_two(chunks, dst_path, **_wait):
         feed = iter(chunks)
         next(feed)
         next(feed)
@@ -458,7 +458,7 @@ def test_streamed_feed_goes_on_when_a_fed_segment_cannot_be_removed(tmp_path, mo
         p.write_bytes(bytes([i + 1]) * 10)
         segs.append(str(p))
 
-    def passthrough(chunks, dst_path):
+    def passthrough(chunks, dst_path, **_wait):
         with open(dst_path, "wb") as f:
             for chunk in chunks:
                 f.write(chunk)
@@ -1044,3 +1044,141 @@ def test_remux_through_holds_the_processes_while_paused_and_does_not_count_that_
 
     assert time.monotonic() - began >= 2.0
     assert out.exists() and (tmp_path / "out.mp4.done").exists()
+
+
+def _lingering_one(monkeypatch, linger: float) -> list:
+    """remux_stream이 띄우는 ffmpeg를 대역으로 바꾼다 — 입력을 다 읽은 뒤 linger초 더 돈다.
+
+    대역은 산출물(명령의 마지막 인자)을 만들고, 입력을 끝까지 읽고, linger초 뒤 "<산출물>.done"을
+    만들고 0으로 끝난다. 띄운 프로세스를 적는 목록을 돌려준다.
+    """
+    ffmpeg_module.get_ffmpeg_exe()  # ffmpeg를 찾는 실행이 대역으로 바뀌지 않게 먼저 끝내 둔다
+    real = subprocess.Popen
+    python = getattr(sys, "_base_executable", None) or sys.executable
+    started = []
+    script = (
+        "import sys, time\n"
+        "open(sys.argv[1], 'wb').write(b'partial')\n"
+        "sys.stdin.buffer.read()\n"
+        "time.sleep(float(sys.argv[2]))\n"
+        "open(sys.argv[1] + '.done', 'wb').close()\n"
+    )
+
+    def fake(command, **kwargs):
+        assert not started, f"프로세스를 하나 더 띄웠다: {command}"
+        started.append(real([python, "-c", script, command[-1], str(linger)], **kwargs))
+        return started[0]
+
+    monkeypatch.setattr(ffmpeg_module.subprocess, "Popen", fake)
+    return started
+
+
+def test_remux_stream_stops_waiting_when_asked_to_stop_after_the_input_ended(tmp_path, monkeypatch):
+    """입력을 다 넣은 뒤 ffmpeg를 기다리는 동안 멈추라고 하면 끝내고 산출물을 지워야 한다.
+
+    대역이 입력을 다 읽은 뒤 8초 더 돈다. should_stop이 늘 참
+    -> FFmpegCancelledError, 프로세스가 끝나 있다, 산출물 없음, 대역이 끝까지 가지 않았다
+    """
+    out = tmp_path / "out.mp4"
+    started = _lingering_one(monkeypatch, linger=8)
+
+    with pytest.raises(ffmpeg_module.FFmpegCancelledError):
+        ffmpeg_module.remux_stream(iter([b"abc" * 1000]), str(out), should_stop=lambda: True)
+
+    assert len(started) == 1 and started[0].poll() is not None
+    assert not out.exists() and not (tmp_path / "out.mp4.done").exists()
+
+
+def test_remux_stream_gives_up_when_ffmpeg_outlives_the_timeout_after_the_input_ended(
+    tmp_path, monkeypatch
+):
+    """입력을 다 넣은 뒤 ffmpeg가 제한 시간 안에 끝나지 않으면 끝내고 산출물을 지워야 한다.
+
+    대역이 입력을 다 읽은 뒤 8초 더 돈다. timeout 0.5초
+    -> FFmpegTimeoutError, 프로세스가 끝나 있다, 산출물 없음
+    """
+    out = tmp_path / "out.mp4"
+    started = _lingering_one(monkeypatch, linger=8)
+
+    with pytest.raises(ffmpeg_module.FFmpegTimeoutError):
+        ffmpeg_module.remux_stream(iter([b"abc" * 1000]), str(out), timeout=0.5)
+
+    assert len(started) == 1 and started[0].poll() is not None
+    assert not out.exists()
+
+
+def test_remux_stream_holds_ffmpeg_while_paused_and_does_not_count_that_time(tmp_path, monkeypatch):
+    """기다리는 동안 일시정지면 ffmpeg가 서 있어야 하고, 서 있던 시간은 제한 시간에 세지 않아야 한다.
+
+    대역이 입력을 다 읽은 뒤 1초 더 돈다. should_pause가 처음 불린 뒤 2초 동안 참, timeout 1.5초
+    -> 예외 없이 끝난다(산출물과 끝 표식이 있다), 걸린 시간 >= 2초(서 있는 동안 끝나지 못했다)
+    """
+    out = tmp_path / "out.mp4"
+    _lingering_one(monkeypatch, linger=1.0)
+    asked = []
+
+    def should_pause() -> bool:
+        asked.append(time.monotonic())
+        return asked[-1] - asked[0] < 2.0
+
+    began = time.monotonic()
+    ffmpeg_module.remux_stream(
+        iter([b"abc" * 1000]), str(out), timeout=1.5, should_pause=should_pause
+    )
+
+    assert time.monotonic() - began >= 2.0
+    assert out.exists() and (tmp_path / "out.mp4.done").exists()
+
+
+def test_streamed_remux_waits_under_the_stop_pause_and_time_limit_of_the_download(
+    tmp_path, monkeypatch
+):
+    """구간 없는 후처리는 remux에 한 시간의 제한 시간과 다운로드의 중단 · 일시정지 확인을 넘겨야 한다.
+
+    세그먼트 하나. 대역 remux가 받은 인자로 상태를 RUNNING · PAUSED · WAITING으로 바꿔 가며 물어봄
+    -> timeout == 3600, (should_stop, should_pause) == RUNNING (거짓, 거짓) · PAUSED (거짓, 참) ·
+       WAITING (참, 거짓)
+    """
+    fake = _FakeEngine(tmp_path)
+    segment = tmp_path / "0000.ts"
+    segment.write_bytes(b"seg-bytes")
+    seen = {}
+
+    def asking(chunks, dst_path, **wait):
+        for _chunk in chunks:
+            pass
+        seen["timeout"] = wait["timeout"]
+        for state in (DownloadState.RUNNING, DownloadState.PAUSED, DownloadState.WAITING):
+            fake.state = state
+            seen[state] = (wait["should_stop"](), wait["should_pause"]())
+        fake.state = DownloadState.RUNNING
+
+    monkeypatch.setattr(base_module, "remux_stream", asking)
+
+    BaseDownloader._remux_streamed(fake, [str(segment)])
+
+    assert seen == {
+        "timeout": 3600,
+        DownloadState.RUNNING: (False, False),
+        DownloadState.PAUSED: (False, True),
+        DownloadState.WAITING: (True, False),
+    }
+
+
+def test_streamed_remux_stopped_while_waiting_ends_without_a_failure(tmp_path, monkeypatch):
+    """remux가 기다리다 중단 요청으로 끝났으면 구간 없는 후처리는 실패가 아니라 중단으로 끝나야 한다.
+
+    세그먼트 하나. 대역 remux가 FFmpegCancelledError를 냄 -> 예외 없이 돌아온다, 오류 로그 없음
+    """
+    fake = _FakeEngine(tmp_path)
+    segment = tmp_path / "0000.ts"
+    segment.write_bytes(b"seg-bytes")
+
+    def cancelled(chunks, dst_path, **_wait):
+        raise ffmpeg_module.FFmpegCancelledError("stopped")
+
+    monkeypatch.setattr(base_module, "remux_stream", cancelled)
+
+    BaseDownloader._remux_streamed(fake, [str(segment)])
+
+    assert fake.errors == []

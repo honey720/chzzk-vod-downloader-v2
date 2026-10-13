@@ -461,3 +461,60 @@ def test_stop_and_timeout_while_writing_the_section_file_are_not_reported_as_a_c
     if expected is CutError:
         assert caught.value.message_key == CUT_TIMEOUT
     assert not os.path.exists(cut.output)
+
+
+def test_audio_pass_waits_under_the_stop_pause_and_time_limit_of_the_cut(
+    made, tmp_path, monkeypatch
+):
+    """오디오 통과에도 컷의 멈춤 · 일시정지 확인과 한 시간의 제한 시간이 넘어가야 한다.
+
+    plain, 구간 프레임 40~100. should_stop · should_pause를 주고 extract_audio_stream이 받은 인자를 적음
+    -> timeout == 3600, should_stop · should_pause가 넘긴 그 함수다
+    """
+    cut = _Cut(made["plain"], tmp_path, 40, 100, (0, 3))
+    real = fmp4_cut_module.extract_audio_stream
+    given = {}
+
+    def records(chunks, dst_path, **wait):
+        given.update(wait)
+        return real(chunks, dst_path, **wait)
+
+    def stop() -> bool:
+        return False
+
+    def pause() -> bool:
+        return False
+
+    monkeypatch.setattr(fmp4_cut_module, "extract_audio_stream", records)
+
+    cut.run(should_stop=stop, should_pause=pause)
+
+    assert (given["timeout"], given["should_stop"], given["should_pause"]) == (3600, stop, pause)
+
+
+@pytest.mark.parametrize(
+    ("raised", "expected"),
+    [(FFmpegCancelledError("stopped"), CutCancelled), (FFmpegTimeoutError("late"), CutError)],
+    ids=["cancelled", "timed-out"],
+)
+def test_stop_and_timeout_during_the_audio_pass_are_not_reported_as_a_cut_failure(
+    made, tmp_path, monkeypatch, raised, expected
+):
+    """오디오 통과가 멈춤 요청으로 끝난 것은 중단으로, 제한 시간을 넘긴 것은 시간 초과로 알려야 한다.
+
+    plain, 구간 프레임 40~100. extract_audio_stream이 FFmpegCancelledError 또는 FFmpegTimeoutError를 냄
+    -> 멈춤: CutCancelled / 시간 초과: CutError(CUT_TIMEOUT). 구간 파일 없음
+    """
+    cut = _Cut(made["plain"], tmp_path, 40, 100, (0, 3))
+
+    def fails(chunks, dst_path, **_wait):
+        raise raised
+
+    monkeypatch.setattr(fmp4_cut_module, "extract_audio_stream", fails)
+
+    with pytest.raises(expected) as caught:
+        cut.run()
+
+    if expected is CutError:
+        assert caught.value.message_key == CUT_TIMEOUT
+    assert not os.path.exists(cut.output)
