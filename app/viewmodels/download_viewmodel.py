@@ -38,7 +38,7 @@ from app.user_activity import user_interacting
 from app.viewmodels.data import ContentItem
 from app.viewmodels.section_edit_viewmodel import take_section_head, watch_section_head
 from core.api.playback_tracks import StreamSelectionError
-from core.downloaders.base import DiskSpaceError, PostprocessError
+from core.downloaders.base import DiskSpaceError, FileSizeLimitError, PostprocessError
 from core.downloaders.hls_aes_downloader import DecryptionError
 from core.downloaders.integrity import TruncatedSegmentError
 from core.models.events import ProgressEvent
@@ -97,6 +97,14 @@ def _failure_message_key(exc: BaseException) -> str | None:
     stderr·실행 경로를, OSError는 전체 파일 경로를 품는다. 상세는 다운로드
     로그가 이미 담당한다. 매핑에 없는 예외는 None(사유 생략)으로 둔다.
     """
+    space_key = getattr(exc, "space_key", None)
+    if space_key:
+        # 쓰다가 공간이 없어 난 실패 (#309) — 엔진이 적어 둔 키를 다른 판정보다 먼저 쓴다.
+        # 자르다 난 실패여도 원인이 공간 부족(또는 FAT의 파일 크기 한계)이면 그것으로 알린다
+        return space_key
+    if isinstance(exc, FileSizeLimitError):
+        # 저장 폴더의 파일 시스템(FAT 계열)이 담을 수 없는 크기의 파일이다 (#309)
+        return exc.message_key
     if isinstance(exc, PostprocessError):
         # PostprocessError는 항상 FFmpegError를 원인으로 체인한다(base.py의
         # 유일한 raise 지점, `raise PostprocessError(...) from e`). 원인
@@ -642,6 +650,11 @@ class DownloadViewModel(QObject):
             "Not enough disk space": self.tr(
                 "Not enough disk space · free up space or pick another folder\n"
                 "The download folder does not have enough free space for the section files."
+            ),
+            "File too large for a FAT32 drive": self.tr(
+                "FAT32 drive can't hold files over 4 GB · pick another folder\n"
+                "This drive (FAT32) cannot store a file larger than 4 GB. Pick another folder, "
+                "or format the drive as exFAT or NTFS."
             ),
             "Segment was received truncated": self.tr(
                 "Video data arrived corrupted · try again later\n"

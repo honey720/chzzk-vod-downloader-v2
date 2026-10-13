@@ -334,6 +334,8 @@ class FileDownloader(BaseDownloader):
         if content.selections:
             return self._prepare_sections(content)
         total_size = self._get_total_size()
+        # 저장 폴더가 FAT 계열이면 4GiB를 넘는 파일을 담지 못한다 — 받기 전에 알린다
+        self._require_file_size_fits(total_size)
 
         # part_size 결정(해상도별 가중 적용)
         self._part_size = decide_part_size(self.s.content_type, self.s.resolution)
@@ -531,16 +533,21 @@ class FileDownloader(BaseDownloader):
 
         Raises:
             DiskSpaceError: 여유 공간이 모자란 경우
+            FileSizeLimitError: 저장 폴더가 FAT 계열이고 만들 파일 하나가 그 한계를 넘는 경우
         """
-        needed = layout.size + layout.download_size
-        for outlet in self._outlets[1:]:
-            needed += max(
-                (target + length for _source, length, target in outlet.runs),
-                default=0,
-            )
-        needed += sum(
+        # 만드는 파일마다의 크기 — 경계 원본, 받은 바이트가 놓이는 구간 파일, 옮기는 바이트가 없는
+        # 구간 파일(머리 자리만)
+        sizes = [layout.size + layout.download_size]
+        sizes.extend(
+            max((target + length for _source, length, target in outlet.runs), default=0)
+            for outlet in self._outlets[1:]
+        )
+        sizes.extend(
             plan.body_offset for plan in self._plans.values() if plan is not None and not plan.runs
         )
+        # 저장 폴더가 FAT 계열이면 4GiB를 넘는 파일을 담지 못한다 — 가장 큰 것으로 본다
+        self._require_file_size_fits(max(sizes))
+        needed = sum(sizes)
         try:
             free = _free_bytes(os.path.dirname(os.path.abspath(source_path)))
         except OSError:

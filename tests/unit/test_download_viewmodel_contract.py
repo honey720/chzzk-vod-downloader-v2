@@ -33,7 +33,7 @@ from PySide6.QtCore import QObject
 from app.viewmodels.data import ContentItem
 from app.viewmodels.download_viewmodel import DownloadViewModel
 from core.api.playback_tracks import StreamSelectionError
-from core.downloaders.base import DiskSpaceError, PostprocessError
+from core.downloaders.base import DiskSpaceError, FileSizeLimitError, PostprocessError
 from core.downloaders.hls_aes_downloader import DecryptionError
 from core.models.content import StreamKey
 from core.models.download_state import DownloadState
@@ -510,6 +510,10 @@ class TestFailure:
             (
                 DiskSpaceError(10, 5),
                 "Not enough disk space · free up space or pick another folder",
+            ),
+            (
+                FileSizeLimitError(5 * 1024**3, "FAT32"),
+                "FAT32 drive can't hold files over 4 GB · pick another folder",
             ),
         ],
         ids=lambda v: v if isinstance(v, str) else type(v).__name__,

@@ -46,7 +46,9 @@ from core.api.mp4 import (
 )
 from core.downloaders.base import (
     DISK_SPACE_SHORT,
+    FILE_TOO_LARGE_FOR_FAT,
     DiskSpaceError,
+    FileSizeLimitError,
     PostprocessError,
     TruncatedBodyError,
 )
@@ -1981,6 +1983,43 @@ def test_needed_space_of_a_whole_video_section_is_at_least_the_source_file(
     needed = _needed_space(server, tmp_path, monkeypatch, [TimeRange(0.0, duration)])
 
     assert needed >= os.path.getsize(sources["plain"])
+
+
+def test_section_download_does_not_start_when_a_file_is_over_the_fat_limit(
+    server, sources, tmp_path, monkeypatch
+):
+    """저장 폴더가 FAT 계열이고 만들 파일 하나가 그 한계를 넘으면 구간 다운로드를 받지 않고 실패해야 한다.
+
+    기본 입력, 구간 셋, 파일 시스템 "FAT32". 한계를 1000바이트로 두고 돌려 가장 큰 파일의 크기 L을
+    읽은 뒤, 한계 L − 1과 L로 다시 돌림
+    -> 한계 1000 · L − 1: 실패 1건(FileSizeLimitError, 키 "File too large for a FAT32 drive"),
+       moov 뒤의 범위 요청 0건, 저장 폴더가 비어 있다 / 한계 L: 완료 1회
+       L은 만든 구간 파일 가운데 가장 큰 것보다 작지 않고, 파일 크기 줄에 ("FAT32", L)이 남는다
+    """
+    monkeypatch.setattr(base_module, "filesystem_name", lambda folder: "FAT32")
+    folders = [tmp_path / name for name in ("probe", "short", "enough")]
+    for folder in folders:
+        folder.mkdir()
+
+    monkeypatch.setattr(base_module, "FAT_MAX_FILE_BYTES", 1000)
+    server.forget()
+    probe = _Run(server, "plain", folders[0], _three()).start()
+    (error,) = probe.failures
+    assert isinstance(error, FileSizeLimitError)
+    largest = error.largest
+    moov_last = _index(sources["plain"]).moov_range[1]
+    requested = _spans_after_moov(server.requests, moov_last)
+    monkeypatch.setattr(base_module, "FAT_MAX_FILE_BYTES", largest - 1)
+    refused = _Run(server, "plain", folders[1], _three()).start()
+    monkeypatch.setattr(base_module, "FAT_MAX_FILE_BYTES", largest)
+    run = _Run(server, "plain", folders[2], _three()).start()
+
+    assert (error.message_key, error.filesystem) == (FILE_TOO_LARGE_FOR_FAT, "FAT32")
+    assert (requested, probe.listing(), probe.finished) == ([], [], 0)
+    assert [type(e) for e in refused.failures] == [FileSizeLimitError]
+    assert (run.finished, run.failures) == (1, [])
+    assert largest >= max(os.path.getsize(path) for path in run.paths) > 0
+    assert ("log_file_size_check", ("FAT32", largest)) in run.logger.calls
 
 
 def test_section_download_starts_when_the_free_space_is_unknown(server, tmp_path, monkeypatch):

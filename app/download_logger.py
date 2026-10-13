@@ -199,6 +199,17 @@ class DownloadLogger:
         """
         self.info(f"Prepare completed in {elapsed:.2f} seconds" + (f" - {note}" if note else ""))
 
+    def log_file_size_check(self, filesystem, largest: int):
+        """저장 폴더의 파일 시스템과 만들 파일 가운데 가장 큰 것의 크기를 로깅합니다 (#309).
+
+        FAT 계열(FAT · FAT32)은 파일 하나가 4GiB를 넘지 못한다 — 받기 전에 이 둘로 가린다.
+        filesystem은 OS가 준 이름이고, 읽지 못했으면 None이다(그때는 가리지 않는다).
+        """
+        self.info(
+            f"File size check - Filesystem: {filesystem or 'unknown'}"
+            f" - Largest file: {largest} bytes"
+        )
+
     def log_transfer_net(self, elapsed: float):
         """준비를 뺀 실제 전송 시간을 로깅합니다 (#309).
 
