@@ -61,11 +61,12 @@ import threading
 import time as tm
 from abc import ABC, abstractmethod
 from collections import deque
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
+from core.downloaders.segment_space import SectionUse, SegmentSpace, check_space
 from core.downloaders.thread_control import TARGET_CAP, TICK_SECONDS, ThreadController
 from core.models.content import Content
 from core.models.download_state import DownloadState
@@ -121,7 +122,11 @@ DISK_SPACE_SHORT = "Not enough disk space"  # 저장 폴더의 여유 공간이 
 
 
 class DiskSpaceError(OSError):
-    """저장 폴더의 여유 공간이 만들 파일보다 적어 받기를 시작하지 않았다 (#309).
+    """여유 공간이 만들 파일보다 적어 받기를 시작하지 않았거나 받다가 멈췄다 (#309).
+
+    mp4 구간 다운로드는 받기 전에 저장 폴더를 본다. 세그먼트 다운로드(m3u8 · 암호화 VOD)는
+    받기 전과, 세그먼트를 몇 개 받아 크기를 다시 어림한 뒤에 임시 폴더와 저장 폴더를 본다
+    (core/downloaders/segment_space.py).
 
     ``message_key``는 번역하지 않은 i18n 키 원문이다. 표시 계층이 번역한다. OSError의 하위라
     파일을 쓰다 난 오류와 같은 실패 처리(통지 · 정리)를 탄다.
@@ -130,8 +135,8 @@ class DiskSpaceError(OSError):
     def __init__(self, needed: int, free: int):
         super().__init__(f"필요 {needed}바이트 · 여유 {free}바이트")
         self.message_key = DISK_SPACE_SHORT
-        self.needed = needed  # 만들 파일들의 크기(바이트)
-        self.free = free  # 저장 폴더의 여유 공간(바이트)
+        self.needed = needed  # 그 볼륨에 비어 있어야 하는 양(바이트)
+        self.free = free  # 그 볼륨의 여유 공간(바이트)
 
 
 # 저장 폴더의 파일 시스템(FAT · FAT32)이 파일 하나에 담을 수 있는 크기보다 만들 파일이 크다
@@ -180,6 +185,18 @@ class TruncatedBodyError(requests.RequestException):
     요청 예외의 하위라 워커의 실패 처리(재큐)가 그대로 받는다. 4xx가 아니므로 일시 오류로
     세어 여러 번 다시 받아 보고, 계속 잘려 오면 다운로드가 실패로 끝난다.
     """
+
+
+def cut_order(lengths: Mapping[int, float]) -> list[int]:
+    """구간을 만드는 순서 — 긴 구간부터, 길이가 같으면 번호순 (#309).
+
+    세그먼트를 가장 많이 쥔 구간이 먼저 디스크를 비운다. 구간을 자르는 쪽(_cut_sections)과
+    디스크 사용량을 어림하는 쪽(segment_space)이 같은 순서를 써야 어림이 맞는다.
+
+    Args:
+        lengths: 구간 번호 → 그 구간의 길이
+    """
+    return sorted(lengths, key=lambda number: (-lengths[number], number))
 
 
 def _remove_fed_segment(path: str) -> None:
@@ -468,6 +485,9 @@ class BaseDownloader(ABC):
         self._on_merge_start: Callable[[], None] = on_merge_start or (lambda: None)
         # requires_key_resolution인 다운로더에 서비스가 주입한다 (#57)
         self._key_resolver = None
+        # 세그먼트 다운로더가 prepare에서 채운다 — 받을 양의 어림과 여유 공간 검사 (#309).
+        # None이면 검사하지 않는다(mp4는 제 방식으로 본다)
+        self._space: SegmentSpace | None = None
 
     @property
     def state(self) -> DownloadState:
@@ -646,6 +666,106 @@ class BaseDownloader(ABC):
             if roomy:
                 return FILE_TOO_LARGE_FOR_FAT
         return DISK_SPACE_SHORT if self.s.content.selections else None
+
+    # ============ 세그먼트 다운로드의 여유 공간 검사 (#309) ============
+
+    def _space_folders(self) -> tuple[str, str]:
+        """(세그먼트를 두는 임시 폴더, 산출물을 쓰는 폴더) — 여유 공간을 볼 두 곳.
+
+        ``_space``를 채우는 다운로더(임시 폴더 ``temp_dir``가 있는 세그먼트 다운로더)만 불린다.
+        구간 다운로드의 산출물 폴더는 첫 구간 파일이 놓이는 곳이다.
+        """
+        paths = self.s.content.selection_paths
+        output = paths[0] if paths else self.s.output_path
+        return self.temp_dir, os.path.dirname(os.path.abspath(output))
+
+    def _whole_space(self, durations: Sequence[float], segment_count: int) -> SegmentSpace | None:
+        """구간 없는 세그먼트 다운로드의 크기 어림 — 세그먼트 길이(#EXTINF)를 모르면 None이다.
+
+        Args:
+            durations: 세그먼트마다의 길이(초) — 받을 세그먼트 목록과 같은 순서
+            segment_count: 받을 세그먼트 수. 길이의 수와 다르면 짝을 지을 수 없어 어림하지 않는다
+        """
+        if len(durations) != segment_count or sum(durations) <= 0:
+            return None
+        return SegmentSpace(dict(enumerate(durations)), bandwidth=self._declared_bandwidth())
+
+    def _section_space(
+        self,
+        durations: Sequence[float],
+        segment_count: int,
+        wanted: Sequence[int],
+        spans: Mapping[int, tuple[int, int, float]],
+        on_disk: Mapping[int, int],
+    ) -> SegmentSpace | None:
+        """구간 다운로드의 크기 어림 — 세그먼트 길이(#EXTINF)를 모르면 None이다.
+
+        Args:
+            durations: 플레이리스트의 세그먼트마다의 길이(초)
+            segment_count: 플레이리스트의 세그먼트 수
+            wanted: 이번 실행이 쓰는 세그먼트의 인덱스
+            spans: 이번 실행이 만들 구간의 번호 → (첫 세그먼트, 마지막 세그먼트, 구간 길이[초])
+            on_disk: 이미 받아 둔 세그먼트의 인덱스 → 크기(바이트)
+        """
+        if len(durations) != segment_count or sum(durations[index] for index in wanted) <= 0:
+            return None
+        order = cut_order({number: span[2] for number, span in spans.items()})
+        return SegmentSpace(
+            {index: durations[index] for index in wanted},
+            bandwidth=self._declared_bandwidth(),
+            sections=[SectionUse(*spans[number]) for number in order],
+            on_disk=on_disk,
+        )
+
+    def _declared_bandwidth(self) -> int | None:
+        """고른 변형의 선언된 비트레이트(bit/s, BANDWIDTH). 변형의 정체를 넘겨받지 못했으면 None."""
+        stream = self.s.content.stream
+        return stream.bandwidth if stream is not None else None
+
+    def _require_space(self, stage: str) -> None:
+        """받을 양을 어림해 여유 공간에 들어가는지 확인한다.
+
+        시작 전(``start``)에는 선언된 비트레이트로, 전송 중(``transfer``)에는 받은 세그먼트의
+        실제 평균으로 어림한다. 어림할 수 없으면 확인하지 않는다. 어림한 값과 결과는 로그 한
+        줄로 남긴다 — 어림이 실제와 얼마나 다른지 로그로 견줄 수 있다.
+
+        Raises:
+            DiskSpaceError: 여유 공간이 모자란 경우
+        """
+        if self._space is None:
+            return
+        need = self._space.need(measured=stage == "transfer")
+        if need is None:
+            return
+        checks = check_space(need, *self._space_folders())
+        self._log_if_supported(
+            "log_space_check",
+            stage,
+            int(need.temp),
+            int(need.output),
+            tuple((check.where, check.needed, check.free) for check in checks),
+        )
+        for check in checks:
+            if check.short:
+                raise DiskSpaceError(check.needed, check.free)
+
+    def _note_received(self, index: int, size: int) -> None:
+        """세그먼트 하나를 다 받아 디스크에 썼다 — 크기 어림에 실제 크기를 알린다."""
+        if self._space is not None:
+            self._space.received(index, size)
+
+    def _watch_space(self) -> None:
+        """전송 중 한 번, 받은 세그먼트의 실제 평균으로 다시 어림해 여유 공간을 본다.
+
+        실행 루프가 돌 때마다 부른다. 모자라면 전송을 멈추고 실패로 알린다 — 받던 세그먼트의
+        정리는 run()의 중단 경로가 한다.
+        """
+        if self._space is None or not self._space.reestimate_due():
+            return
+        try:
+            self._require_space("transfer")
+        except DiskSpaceError as e:
+            self._fail_fatally(e, "Not enough disk space — transfer stopped")
 
     def _stop_requested(self) -> bool:
         """다운로드를 중단하라는 요청이 왔는지 — 컷이 도는 ffmpeg를 끝낼지 묻는 데 쓴다 (#309).
@@ -967,6 +1087,8 @@ class BaseDownloader(ABC):
 
                     # (2) 주기적으로 상태 확인 (non-blocking)
                     tm.sleep(0.1)
+                    # 세그먼트를 몇 개 받았으면 크기를 다시 어림해 여유 공간을 본다 (#309)
+                    self._watch_space()
 
                     # (3) 남은 작업이 없고 스레드도 없으면 종료
                     if not self.s.remaining_ranges and not self.future_dict:

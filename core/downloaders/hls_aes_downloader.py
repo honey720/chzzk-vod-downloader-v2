@@ -175,8 +175,13 @@ class HlsAesDownloader(BaseDownloader):
     def prepare(self, content: Content) -> DownloadPlan:
         """플레이리스트를 받아 세그먼트 목록을 만들고 복호화 키를 취득한다.
 
-        구간이 있으면 구간에 필요한 세그먼트만 담은 계획을 만든다 (#309).
+        구간이 있으면 구간에 필요한 세그먼트만 담은 계획을 만든다 (#309). 받을 양을 어림할 수
+        있으면 여유 공간을 확인하고, 모자라면 받기를 시작하지 않는다.
+
+        Raises:
+            DiskSpaceError: 어림한 크기가 임시 폴더 · 저장 폴더의 여유 공간에 들어가지 않는 경우
         """
+        self._space = None  # 실행마다 다시 만든다
         # 구간 다운로드의 상태는 실행마다 다시 채운다 — 같은 엔진을 다시 돌려도 남지 않는다
         self._sections = ()
         self._head = None
@@ -207,6 +212,9 @@ class HlsAesDownloader(BaseDownloader):
         # 파일을 만들지 않는다 (풀 안에서 터지면 정리 경로가 복잡해진다)
         if playlist.segments:
             self._verify_key(playlist)
+
+        self._space = self._whole_space(playlist.durations, len(playlist.segments))
+        self._require_space("start")
 
         # 전체 바이트 크기는 미리 알 수 없고(total_size=None), 병합 후처리가 필요하다
         return DownloadPlan(
@@ -325,6 +333,18 @@ class HlsAesDownloader(BaseDownloader):
             self._key_unconfirmed = not confirmed
         self.postprocess_kind = "cut"  # 구간마다 자른다 — 전체 다운로드의 remux와 구분한다
         self.s.merged_segments = 0
+        self._space = self._section_space(
+            head.playlist.durations,
+            len(head.playlist.segments),
+            wanted,
+            {
+                n: (s.first_segment, s.last_segment, s.last_pts - s.first_pts)
+                for n, s in enumerate(sections)
+                if n not in self._done_before
+            },
+            self._prefetched,
+        )
+        self._require_space("start")
         return DownloadPlan(
             items=tuple((index, head.playlist.segments[index]) for index in wanted),
             total_size=None,
@@ -550,7 +570,7 @@ class HlsAesDownloader(BaseDownloader):
             for index in range(self._sections[n].first_segment, self._sections[n].last_segment + 1)
         )
         finished: dict[int, tuple[CutResult, CutFrames]] = {}
-        for turn, position in enumerate(sorted(todo, key=lambda n: (-lengths[n], n)), start=1):
+        for turn, position in enumerate(base_module.cut_order(lengths), start=1):
             number = position + 1  # 구간 번호(1부터 — 구간 목록의 순서)
             section, output_path = self._sections[position], paths[position]
             if self.state == DownloadState.PAUSED:
@@ -728,6 +748,7 @@ class HlsAesDownloader(BaseDownloader):
                 temp_file = os.path.join(self.temp_dir, f"{index:0{self.width}d}.ts")
                 with open(temp_file, "wb") as f:
                     f.write(plain)
+                self._note_received(index, len(plain))
 
                 # 성공적으로 마무리된 경우
                 with self.lock:

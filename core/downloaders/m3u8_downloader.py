@@ -53,6 +53,7 @@ import requests
 
 import core.downloaders.base as base_module
 import core.downloaders.integrity as integrity
+from core.api.hls import parse_media_playlist
 from core.api.hls_fmp4 import fetch_fmp4_head, segment_file_name, segment_frames
 from core.api.mp4 import Mp4Error
 from core.api.session import get_thread_session
@@ -153,8 +154,13 @@ class M3U8Downloader(BaseDownloader):
     def prepare(self, content: Content) -> DownloadPlan:
         """플레이리스트를 받아 (index, 세그먼트) 목록의 계획을 만든다.
 
-        구간이 있으면 구간에 필요한 세그먼트만 담은 계획을 만든다 (#309).
+        구간이 있으면 구간에 필요한 세그먼트만 담은 계획을 만든다 (#309). 받을 양을 어림할 수
+        있으면 여유 공간을 확인하고, 모자라면 받기를 시작하지 않는다.
+
+        Raises:
+            DiskSpaceError: 어림한 크기가 임시 폴더 · 저장 폴더의 여유 공간에 들어가지 않는 경우
         """
+        self._space = None  # 실행마다 다시 만든다
         if content.selections:
             return self._prepare_sections(content)
         response = get_thread_session().get(self.s.base_url, timeout=REQUEST_TIMEOUT)
@@ -166,12 +172,26 @@ class M3U8Downloader(BaseDownloader):
         self.s.merged_segments = 0
         # 세그먼트 임시 파일명 0채움 자릿수 — sorted() 병합 순서의 전제
         self.width = len(str(len(segments)))
+        self._space = self._whole_space(self._durations_of(response.text), len(segments))
+        self._require_space("start")
         # 총 바이트 크기는 미리 알 수 없고(total_size=None), 병합 후처리가 필요하다
         return DownloadPlan(
             items=tuple(enumerate(segments)),
             total_size=None,
             requires_postprocess=True,
         )
+
+    @staticmethod
+    def _durations_of(playlist_text: str) -> tuple[float, ...]:
+        """플레이리스트의 세그먼트 길이(#EXTINF) — 크기 어림에만 쓴다. 읽지 못하면 빈 것이다.
+
+        세그먼트 목록은 prepare가 읽은 것을 그대로 쓴다. 여기서 읽지 못해도 다운로드는 그대로
+        가고 크기 어림만 하지 않는다.
+        """
+        try:
+            return parse_media_playlist(playlist_text).durations
+        except ValueError:
+            return ()
 
     def _prepare_sections(self, content: Content) -> DownloadPlan:
         """구간 다운로드의 계획 — 구간들의 세그먼트를 합친 것을 받는다 (#309).
@@ -242,6 +262,18 @@ class M3U8Downloader(BaseDownloader):
         self.postprocess_kind = "cut"  # 구간마다 자른다 — 전체 다운로드의 remux와 구분한다
         self.s.merged_segments = 0
         self.width = len(str(len(head.playlist.segments)))
+        self._space = self._section_space(
+            head.playlist.durations,
+            len(head.playlist.segments),
+            wanted,
+            {
+                n: (s.first_segment, s.last_segment, s.last_pts - s.first_pts)
+                for n, s in enumerate(sections)
+                if n not in self._done_before
+            },
+            self._prefetched,
+        )
+        self._require_space("start")
         return DownloadPlan(
             items=tuple((index, head.playlist.segments[index]) for index in wanted),
             total_size=None,
@@ -452,7 +484,7 @@ class M3U8Downloader(BaseDownloader):
             for index in range(self._sections[n].first_segment, self._sections[n].last_segment + 1)
         )
         finished: dict[int, tuple[CutResult, CutFrames]] = {}
-        for turn, position in enumerate(sorted(todo, key=lambda n: (-lengths[n], n)), start=1):
+        for turn, position in enumerate(base_module.cut_order(lengths), start=1):
             number = position + 1  # 구간 번호(1부터 — 구간 목록의 순서)
             section, output_path = self._sections[position], paths[position]
             if self.state == DownloadState.PAUSED:
@@ -626,6 +658,7 @@ class M3U8Downloader(BaseDownloader):
                     self.s.completed_threads += 1
                     self.s.completed_progress += downloaded_size
                     self.s.threads_progress[part_num] = 0
+                self._note_received(index, downloaded_size)
                 self.logger.log_thread_complete(part_num, downloaded_size)
                 return part_num
 

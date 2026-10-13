@@ -210,6 +210,23 @@ class DownloadLogger:
             f" - Largest file: {largest} bytes"
         )
 
+    def log_space_check(self, stage: str, segments: int, output: int, checks):
+        """세그먼트 다운로드의 크기 어림과 여유 공간을 견준 결과를 로깅합니다 (#309).
+
+        stage는 start(받기 전 — 선언된 비트레이트로 어림) · transfer(세그먼트를 몇 개 받은 뒤 —
+        실제 평균으로 어림)다. segments는 받을 세그먼트 전체, output은 산출물의 어림 크기다.
+        checks는 본 볼륨마다의 (본 곳, 필요한 여유, 여유 공간) — 본 곳은 both(임시 폴더와 저장
+        폴더가 같은 볼륨) · temp · output이다. 어림이 실제와 얼마나 다른지는 이 줄의 segments를
+        "Transfer completed"의 Bytes와 견주면 된다.
+        """
+        volumes = ", ".join(
+            f"{where}: need {needed} / free {free}" for where, needed, free in checks
+        )
+        self.info(
+            f"Space check ({stage}) - Segments: {segments} bytes - Output: {output} bytes"
+            f" - {volumes or 'free space unknown'}"
+        )
+
     def log_transfer_net(self, elapsed: float):
         """준비를 뺀 실제 전송 시간을 로깅합니다 (#309).
 

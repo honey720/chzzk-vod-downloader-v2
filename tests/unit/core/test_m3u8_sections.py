@@ -51,14 +51,16 @@ import pytest
 
 import core.api.hls_fmp4 as hls_fmp4_module
 import core.downloaders.m3u8_downloader as m3u8_module
+import core.downloaders.segment_space as space_module
 import core.utils.ffmpeg as ffmpeg_module
 import core.utils.fmp4_cut as fmp4_cut_module
 from core.api.fmp4 import build_fmp4_index, fmp4_origin, parse_init_segment, parse_media_segment
 from core.api.hls import parse_media_playlist
 from core.api.hls_fmp4 import fetch_fmp4_head, segment_file_name, segment_frames
-from core.downloaders.base import PostprocessError
+from core.downloaders.base import DiskSpaceError, PostprocessError
 from core.downloaders.integrity import TruncatedSegmentError
 from core.downloaders.m3u8_downloader import M3U8Downloader
+from core.models.content import StreamKey
 from core.models.download_data import DownloadData
 from core.models.plan import TimeRange
 from core.utils.cut_check import check_cut
@@ -939,6 +941,39 @@ def test_section_outside_the_playlist_fails_with_selection_key(host, tmp_path):
     assert isinstance(run.failures[0], SelectionError)
     assert run.failures[0].message_key == SELECTION_OUT_OF_RANGE
     assert run.listing() == []
+
+
+def test_section_download_checks_the_free_space_before_the_transfer(
+    host, sources, tmp_path, monkeypatch
+):
+    """구간 다운로드도 선언된 비트레이트로 어림한 크기가 여유 공간에 안 들어가면 받기 전에 실패해야 한다.
+
+    plain, 구간 프레임 40~100(세그먼트 0~3), 선언 800,000 bit/s(100,000바이트/초), 여유 0
+    -> 실패 1건(DiskSpaceError), 완료 0회, 구간 파일 없음, 임시 폴더 없음.
+       시작 줄의 세그먼트 어림 = 받아 둔 세그먼트는 실제 크기 + 나머지는 100,000 x #EXTINF,
+       산출물 어림 = 세그먼트 어림 x (구간 길이 / 세그먼트 0~3의 #EXTINF 합)
+    """
+    source = sources["plain"]
+    run = _Run(host, tmp_path, [source.selection(40, 100)])
+    run.data.content.stream = StreamKey(256, 144, 30.0, 800_000)
+    monkeypatch.setattr(space_module, "same_volume", lambda a, b: True)
+    monkeypatch.setattr(space_module, "free_bytes", lambda folder: 0)
+
+    run.start()
+
+    assert ([type(e) for e in run.failures], run.finished) == ([DiskSpaceError], 0)
+    assert run.listing() == []
+    assert not os.path.exists(run.engine.temp_dir)
+    on_disk = run.engine._prefetched  # 구간을 정하며 받아 둔 세그먼트 — 인덱스 → 크기
+    durations = source.playlist.durations[:4]
+    segments = sum(on_disk.get(index, 100_000 * durations[index]) for index in range(4))
+    covered = (source.time_of(100) - source.time_of(40)) / sum(durations)
+    stage, logged_segments, logged_output, checks = dict(run.logger.calls)["log_space_check"]
+    assert stage == "start"
+    assert logged_segments == pytest.approx(segments, abs=1)
+    assert logged_output == pytest.approx(segments * covered, abs=1)
+    assert 0 < covered < 1
+    assert [(where, free) for where, _needed, free in checks] == [("both", 0)]
 
 
 def test_section_log_reports_cut_and_total_size_of_section_files(host, sources, tmp_path):
