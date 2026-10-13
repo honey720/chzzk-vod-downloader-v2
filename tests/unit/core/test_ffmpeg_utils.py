@@ -944,14 +944,20 @@ def test_remux_through_returns_the_warnings_of_the_join_side_and_asks_it_for_the
     assert joined[joined.index("-loglevel") + 1] == "warning"
 
 
-def _lingering_pair(monkeypatch, dst, linger: float) -> list:
+def _lingering_pair(monkeypatch, dst, linger: float) -> dict:
     """remux_through의 두 프로세스를 대역으로 바꾼다 — 잇기 대역이 입력을 다 읽은 뒤 linger초 더 돈다.
 
     잇기 대역은 산출물을 만들고, 입력을 끝까지 읽고, linger초 뒤 "<산출물>.done"을 만들고 0으로
-    끝난다. 띄운 프로세스를 적는 목록을 돌려준다.
+    끝난다. 띄운 프로세스를 구실("join" · "convert")로 적는 사전을 돌려준다.
     """
+    # ffmpeg를 찾는 일이 프로세스를 띄울 수 있다 — 대역으로 바꾸기 전에 끝내 둔다(그 실행이 변환
+    # 대역으로 바뀌면 표준 입력을 읽으며 서 있는다)
+    ffmpeg_module.get_ffmpeg_exe()
     real = subprocess.Popen
-    started = []
+    # 가상 환경의 파이썬은 Windows에서 진짜 인터프리터를 자식으로 띄우는 실행기다 — 실행기를 멈춰도
+    # 자식은 돈다. 멈춤을 재려면 진짜 인터프리터를 바로 띄운다
+    python = getattr(sys, "_base_executable", None) or sys.executable
+    started = {}
     convert = "import shutil, sys\nshutil.copyfileobj(sys.stdin.buffer, sys.stdout.buffer)\n"
     join = (
         "import sys, time\n"
@@ -963,10 +969,10 @@ def _lingering_pair(monkeypatch, dst, linger: float) -> list:
 
     def fake(command, **kwargs):
         if "-nostdin" in command:
-            process = real([sys.executable, "-c", join, str(dst), str(linger)], **kwargs)
+            process = started["join"] = real([python, "-c", join, str(dst), str(linger)], **kwargs)
         else:
-            process = real([sys.executable, "-c", convert], **kwargs)
-        started.append(process)
+            assert "convert" not in started, f"두 프로세스 말고 더 띄웠다: {command}"
+            process = started["convert"] = real([python, "-c", convert], **kwargs)
         return process
 
     monkeypatch.setattr(ffmpeg_module.subprocess, "Popen", fake)
@@ -978,18 +984,19 @@ def test_remux_through_stops_waiting_when_asked_to_stop_after_the_input_ended(
 ):
     """입력을 다 넣은 뒤 두 ffmpeg를 기다리는 동안 멈추라고 하면 둘을 끝내고 산출물을 지워야 한다.
 
-    잇기 대역이 입력을 다 읽은 뒤 60초 더 돈다. should_stop이 늘 참
+    잇기 대역이 입력을 다 읽은 뒤 8초 더 돈다. should_stop이 늘 참
     -> FFmpegCancelledError, 두 프로세스가 끝나 있다, 산출물 없음, 잇기 대역이 끝까지 가지 않았다
     """
     out = tmp_path / "out.mp4"
-    started = _lingering_pair(monkeypatch, out, linger=60)
+    started = _lingering_pair(monkeypatch, out, linger=8)
 
     with pytest.raises(ffmpeg_module.FFmpegCancelledError):
         ffmpeg_module.remux_through(
             iter([b"abc" * 1000]), [], [], str(out), should_stop=lambda: True
         )
 
-    assert len(started) == 2 and all(process.poll() is not None for process in started)
+    assert sorted(started) == ["convert", "join"]
+    assert all(process.poll() is not None for process in started.values())
     assert not out.exists() and not (tmp_path / "out.mp4.done").exists()
 
 
@@ -998,16 +1005,17 @@ def test_remux_through_gives_up_when_the_processes_outlive_the_timeout_after_the
 ):
     """입력을 다 넣은 뒤 두 ffmpeg가 제한 시간 안에 끝나지 않으면 둘을 끝내고 산출물을 지워야 한다.
 
-    잇기 대역이 입력을 다 읽은 뒤 60초 더 돈다. timeout 0.5초
+    잇기 대역이 입력을 다 읽은 뒤 8초 더 돈다. timeout 0.5초
     -> FFmpegTimeoutError, 두 프로세스가 끝나 있다, 산출물 없음
     """
     out = tmp_path / "out.mp4"
-    started = _lingering_pair(monkeypatch, out, linger=60)
+    started = _lingering_pair(monkeypatch, out, linger=8)
 
     with pytest.raises(ffmpeg_module.FFmpegTimeoutError):
         ffmpeg_module.remux_through(iter([b"abc" * 1000]), [], [], str(out), timeout=0.5)
 
-    assert len(started) == 2 and all(process.poll() is not None for process in started)
+    assert sorted(started) == ["convert", "join"]
+    assert all(process.poll() is not None for process in started.values())
     assert not out.exists()
 
 
@@ -1016,16 +1024,18 @@ def test_remux_through_holds_the_processes_while_paused_and_does_not_count_that_
 ):
     """기다리는 동안 일시정지면 두 ffmpeg가 서 있어야 하고, 서 있던 시간은 제한 시간에 세지 않아야 한다.
 
-    잇기 대역이 입력을 다 읽은 뒤 0.3초 더 돈다. should_pause가 처음 불린 뒤 2초 동안 참, timeout 1.5초
+    잇기 대역이 입력을 다 읽은 뒤 1초 더 돈다. 변환 대역이 끝난 것을 본 때부터 2초 동안
+    should_pause가 참(그때 도는 것은 잇기 대역뿐이다), timeout 1.5초
     -> 예외 없이 끝난다(산출물과 끝 표식이 있다), 걸린 시간 >= 2초(서 있는 동안 끝나지 못했다)
     """
     out = tmp_path / "out.mp4"
-    _lingering_pair(monkeypatch, out, linger=0.3)
-    asked = []
+    started = _lingering_pair(monkeypatch, out, linger=1.0)
+    paused_at = []
 
     def should_pause() -> bool:
-        asked.append(time.monotonic())
-        return asked[-1] - asked[0] < 2.0
+        if not paused_at and started["convert"].poll() is not None:
+            paused_at.append(time.monotonic())
+        return bool(paused_at) and time.monotonic() - paused_at[0] < 2.0
 
     began = time.monotonic()
     ffmpeg_module.remux_through(

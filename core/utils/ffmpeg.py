@@ -590,16 +590,25 @@ def remux_through(
     # 넣을 것은 다 넣었다 — 두 ffmpeg가 남은 것을 쓰고 끝나기를 기다린다. 이때부터는 공급
     # 이터레이터가 불리지 않으므로 멈춤 · 일시정지 · 제한 시간을 여기서 본다(run_ffmpeg와 같은 규칙)
     if timeout is not None or should_stop is not None or should_pause is not None:
-        limit = timeout if timeout is not None else float("inf")
-        controls = [
-            _Control(process, limit, should_stop, should_pause) for process in (convert, join)
-        ]
+        deadline = time.monotonic() + (timeout if timeout is not None else float("inf"))
+        suspended_at: float | None = None  # 둘을 멈춰 둔 시각. 돌고 있으면 None
         while convert.poll() is None or join.poll() is None:
-            outcomes = {control.poll() for control in controls}
-            if _Control.CANCELLED in outcomes or _Control.TIMED_OUT in outcomes:
-                end_both()
+            now = time.monotonic()
+            stopped = should_stop is not None and should_stop()
+            paused = not stopped and should_pause is not None and should_pause()
+            if paused and suspended_at is None:
+                for process in (convert, join):
+                    _set_suspended(process, True)  # 이미 끝난 쪽에는 아무 일도 없다
+                suspended_at = now
+            elif not paused and suspended_at is not None:
+                for process in (convert, join):
+                    _set_suspended(process, False)
+                deadline += now - suspended_at  # 서 있던 시간은 제한 시간에 세지 않는다
+                suspended_at = None
+            if stopped or (suspended_at is None and now >= deadline):
+                end_both()  # 멈춰 있어도 끝난다
                 _remove_quietly(dst_path)
-                if _Control.CANCELLED in outcomes:
+                if stopped:
                     raise FFmpegCancelledError("멈추라는 요청으로 ffmpeg를 끝냈다")
                 raise FFmpegTimeoutError(f"ffmpeg가 {timeout:g}초 안에 끝나지 않았다")
             time.sleep(_STOP_POLL_SECONDS)
