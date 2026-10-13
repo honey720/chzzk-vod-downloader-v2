@@ -52,12 +52,11 @@ Grab the latest build from the [Releases](https://github.com/honey720/chzzk-vod-
    - To download only part of a video, click **Edit sections** on the card and set the sections you want. You can add up to 20, and each one is saved as its own file. Clips don't have this option.
    - Just type digits for a time — they fill in from the right, starting with seconds (`0100` = 1 minute). The frame box next to it takes a frame number.
    - Leave the start or end empty to use the start or end of the video.
-   - Click **Change save location** on the card to choose a different folder for that video.
+   - Click **Change save location** on the card to change that card's folder. All section files are saved there.
    - Sections and the save location can only be changed before the download starts.
 
 4. **Download**
    - The **Download/Pause** button starts or pauses the queue; **Stop** cancels it.
-   - If there isn't enough disk space, or a file would be over 4 GB on a FAT32 drive, the card tells you when the download starts. Free up some space or pick another folder.
 
 5. **Settings & cookies**
    - Age-restricted and members-only videos can only be downloaded with the cookies of an account that can watch them. Register your cookies in **Settings**.
