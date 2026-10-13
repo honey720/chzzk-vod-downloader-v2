@@ -1540,3 +1540,28 @@ def test_reading_before_the_cut_raises_the_cut_progress_and_is_marked_as_prepari
     assert preparing == [None, *(pytest.approx(0.1 * count / 4) for count in (1, 2, 3, 4))]
     assert min(cutting) >= preparing[-1] and cutting[-1] == 1.0
     assert run.data.cut_preparing is False
+
+
+def test_progress_the_cut_reports_is_placed_after_the_share_of_the_reading(
+    host, sources, tmp_path, monkeypatch
+):
+    """컷이 알린 진행은 읽기 몫 뒤의 구간으로 옮겨 적혀야 한다.
+
+    plain, 구간 하나, 읽기 몫 0.1. 컷 함수가 일을 시작하기 전에 진행 0.5를 알리게 함
+    -> 그 직후의 컷 진행 == 0.55 (0.1 + 0.9 x 0.5), 완료 1회
+    """
+    run = _Run(host, tmp_path, [sources["plain"].selection(40, 100)])
+    real_cut = m3u8_module.cut_fmp4_section
+    seen = []
+
+    def cut(*args, **kwargs):
+        kwargs["on_progress"](0.5)
+        seen.append(run.data.cut_progress)
+        return real_cut(*args, **kwargs)
+
+    monkeypatch.setattr(m3u8_module, "cut_fmp4_section", cut)
+
+    run.start()
+
+    assert seen == [pytest.approx(0.55)]
+    assert (run.finished, run.failures) == (1, [])

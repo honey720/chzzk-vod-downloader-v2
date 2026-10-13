@@ -1447,3 +1447,28 @@ def test_pause_while_reading_holds_the_reading_until_resumed(vod, host, tmp_path
 
     assert counts == {"at_pause": 2, "before_resume": 2}
     assert (run.finished, run.failures) == (1, [])
+
+
+def test_progress_the_cut_reports_is_placed_after_the_share_of_the_reading(
+    vod, host, tmp_path, monkeypatch
+):
+    """컷이 알린 진행은 읽기 몫 뒤의 구간으로 옮겨 적혀야 한다.
+
+    구간 하나, 읽기 몫 0.5. 컷 함수가 일을 시작하기 전에 진행 0.2를 알리게 함
+    -> 그 직후의 컷 진행 == 0.6 (0.5 + 0.5 x 0.2), 완료 1회
+    """
+    run = _Run(host, tmp_path, [SECOND])
+    real_cut = aes_module.cut_ts_section
+    seen = []
+
+    def cut(*args, **kwargs):
+        kwargs["on_progress"](0.2)
+        seen.append(run.data.cut_progress)
+        return real_cut(*args, **kwargs)
+
+    monkeypatch.setattr(aes_module, "cut_ts_section", cut)
+
+    run.start()
+
+    assert seen == [pytest.approx(0.6)]
+    assert (run.finished, run.failures) == (1, [])
