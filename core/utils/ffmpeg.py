@@ -482,6 +482,9 @@ def remux_through(
     dst_path: str,
     *,
     cwd: str | None = None,
+    timeout: float | None = None,
+    should_stop: Callable[[], bool] | None = None,
+    should_pause: Callable[[], bool] | None = None,
 ) -> str:
     """바이트 스트림을 변환 ffmpeg에 넣고, 그 출력을 잇는 ffmpeg의 표준 입력으로 이어 dst_path를 만든다 (#309).
 
@@ -501,6 +504,12 @@ def remux_through(
             ffmpeg가 표준 입력에서 키 입력을 읽으며 파이프의 바이트를 집어 간다)
         dst_path: 잇는 ffmpeg가 쓰는 산출물 — 실패하면 지운다
         cwd: 잇는 ffmpeg의 작업 디렉토리(concat 목록의 상대 경로 기준)
+        timeout: 바이트를 다 넣은 뒤 두 ffmpeg가 끝나기를 기다리는 제한 시간(초). 일시정지로
+            서 있던 시간은 세지 않는다. 주지 않으면 끝날 때까지 기다린다
+        should_stop: 주면 그 기다림 동안 짧은 간격으로 부른다. 참을 돌려주면 두 프로세스를
+            끝내고 산출물을 지운 뒤 ``FFmpegCancelledError``를 낸다. 바이트를 넣는 동안의 멈춤은
+            공급 이터레이터가 맡는다(예외를 던진다)
+        should_pause: 주면 같은 간격으로 부른다. 참인 동안 두 프로세스를 멈춰 둔다
 
     Returns:
         잇는 ffmpeg가 낸 경고(stderr) — 조각을 잇는 곳의 시각이 어긋났는지 부르는 쪽이 본다
@@ -508,6 +517,8 @@ def remux_through(
     Raises:
         FFmpegNotFoundError: ffmpeg 실행 파일을 찾지 못한 경우
         RemuxError: 두 ffmpeg 가운데 하나가 0이 아닌 코드로 끝났거나 실행 자체가 실패한 경우
+        FFmpegTimeoutError: 바이트를 다 넣은 뒤 timeout 안에 끝나지 않은 경우
+        FFmpegCancelledError: 그 기다림 동안 should_stop이 참을 돌려줘 끝낸 경우
     """
     exe = get_ffmpeg_exe()
     creationflags = _CREATE_NO_WINDOW if sys.platform == "win32" else 0
@@ -576,6 +587,22 @@ def remux_through(
         raise
 
     _close_quietly(convert.stdin)
+    # 넣을 것은 다 넣었다 — 두 ffmpeg가 남은 것을 쓰고 끝나기를 기다린다. 이때부터는 공급
+    # 이터레이터가 불리지 않으므로 멈춤 · 일시정지 · 제한 시간을 여기서 본다(run_ffmpeg와 같은 규칙)
+    if timeout is not None or should_stop is not None or should_pause is not None:
+        limit = timeout if timeout is not None else float("inf")
+        controls = [
+            _Control(process, limit, should_stop, should_pause) for process in (convert, join)
+        ]
+        while convert.poll() is None or join.poll() is None:
+            outcomes = {control.poll() for control in controls}
+            if _Control.CANCELLED in outcomes or _Control.TIMED_OUT in outcomes:
+                end_both()
+                _remove_quietly(dst_path)
+                if _Control.CANCELLED in outcomes:
+                    raise FFmpegCancelledError("멈추라는 요청으로 ffmpeg를 끝냈다")
+                raise FFmpegTimeoutError(f"ffmpeg가 {timeout:g}초 안에 끝나지 않았다")
+            time.sleep(_STOP_POLL_SECONDS)
     codes = (convert.wait(), join.wait())
     for reader in readers:
         reader.join(timeout=5)

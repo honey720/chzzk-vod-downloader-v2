@@ -942,3 +942,95 @@ def test_remux_through_returns_the_warnings_of_the_join_side_and_asks_it_for_the
     assert "DTS mark" in warnings
     joined = next(command for command in commands if "-nostdin" in command)
     assert joined[joined.index("-loglevel") + 1] == "warning"
+
+
+def _lingering_pair(monkeypatch, dst, linger: float) -> list:
+    """remux_through의 두 프로세스를 대역으로 바꾼다 — 잇기 대역이 입력을 다 읽은 뒤 linger초 더 돈다.
+
+    잇기 대역은 산출물을 만들고, 입력을 끝까지 읽고, linger초 뒤 "<산출물>.done"을 만들고 0으로
+    끝난다. 띄운 프로세스를 적는 목록을 돌려준다.
+    """
+    real = subprocess.Popen
+    started = []
+    convert = "import shutil, sys\nshutil.copyfileobj(sys.stdin.buffer, sys.stdout.buffer)\n"
+    join = (
+        "import sys, time\n"
+        "open(sys.argv[1], 'wb').write(b'partial')\n"
+        "sys.stdin.buffer.read()\n"
+        "time.sleep(float(sys.argv[2]))\n"
+        "open(sys.argv[1] + '.done', 'wb').close()\n"
+    )
+
+    def fake(command, **kwargs):
+        if "-nostdin" in command:
+            process = real([sys.executable, "-c", join, str(dst), str(linger)], **kwargs)
+        else:
+            process = real([sys.executable, "-c", convert], **kwargs)
+        started.append(process)
+        return process
+
+    monkeypatch.setattr(ffmpeg_module.subprocess, "Popen", fake)
+    return started
+
+
+def test_remux_through_stops_waiting_when_asked_to_stop_after_the_input_ended(
+    tmp_path, monkeypatch
+):
+    """입력을 다 넣은 뒤 두 ffmpeg를 기다리는 동안 멈추라고 하면 둘을 끝내고 산출물을 지워야 한다.
+
+    잇기 대역이 입력을 다 읽은 뒤 60초 더 돈다. should_stop이 늘 참
+    -> FFmpegCancelledError, 두 프로세스가 끝나 있다, 산출물 없음, 잇기 대역이 끝까지 가지 않았다
+    """
+    out = tmp_path / "out.mp4"
+    started = _lingering_pair(monkeypatch, out, linger=60)
+
+    with pytest.raises(ffmpeg_module.FFmpegCancelledError):
+        ffmpeg_module.remux_through(
+            iter([b"abc" * 1000]), [], [], str(out), should_stop=lambda: True
+        )
+
+    assert len(started) == 2 and all(process.poll() is not None for process in started)
+    assert not out.exists() and not (tmp_path / "out.mp4.done").exists()
+
+
+def test_remux_through_gives_up_when_the_processes_outlive_the_timeout_after_the_input_ended(
+    tmp_path, monkeypatch
+):
+    """입력을 다 넣은 뒤 두 ffmpeg가 제한 시간 안에 끝나지 않으면 둘을 끝내고 산출물을 지워야 한다.
+
+    잇기 대역이 입력을 다 읽은 뒤 60초 더 돈다. timeout 0.5초
+    -> FFmpegTimeoutError, 두 프로세스가 끝나 있다, 산출물 없음
+    """
+    out = tmp_path / "out.mp4"
+    started = _lingering_pair(monkeypatch, out, linger=60)
+
+    with pytest.raises(ffmpeg_module.FFmpegTimeoutError):
+        ffmpeg_module.remux_through(iter([b"abc" * 1000]), [], [], str(out), timeout=0.5)
+
+    assert len(started) == 2 and all(process.poll() is not None for process in started)
+    assert not out.exists()
+
+
+def test_remux_through_holds_the_processes_while_paused_and_does_not_count_that_time(
+    tmp_path, monkeypatch
+):
+    """기다리는 동안 일시정지면 두 ffmpeg가 서 있어야 하고, 서 있던 시간은 제한 시간에 세지 않아야 한다.
+
+    잇기 대역이 입력을 다 읽은 뒤 0.3초 더 돈다. should_pause가 처음 불린 뒤 2초 동안 참, timeout 1.5초
+    -> 예외 없이 끝난다(산출물과 끝 표식이 있다), 걸린 시간 >= 2초(서 있는 동안 끝나지 못했다)
+    """
+    out = tmp_path / "out.mp4"
+    _lingering_pair(monkeypatch, out, linger=0.3)
+    asked = []
+
+    def should_pause() -> bool:
+        asked.append(time.monotonic())
+        return asked[-1] - asked[0] < 2.0
+
+    began = time.monotonic()
+    ffmpeg_module.remux_through(
+        iter([b"abc" * 1000]), [], [], str(out), timeout=1.5, should_pause=should_pause
+    )
+
+    assert time.monotonic() - began >= 2.0
+    assert out.exists() and (tmp_path / "out.mp4.done").exists()

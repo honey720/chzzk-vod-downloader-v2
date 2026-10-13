@@ -43,10 +43,18 @@ from core.api.hls_fmp4 import read_segment_file
 from core.models.cut import CutFrames, CutPiece, CutPlan, CutResult, PieceInfo
 from core.models.fmp4_index import Fmp4Head, Fmp4Segment
 from core.utils import hybrid_cut as hc
-from core.utils.ffmpeg import FFmpegError, extract_audio_stream, read_in_chunks, remux_through
+from core.utils.ffmpeg import (
+    FFmpegCancelledError,
+    FFmpegError,
+    FFmpegTimeoutError,
+    extract_audio_stream,
+    read_in_chunks,
+    remux_through,
+)
 from core.utils.fmp4_sections import Fmp4Section
 from core.utils.hybrid_cut import (
     CUT_FAILED,
+    CUT_TIMEOUT,
     CUT_UNSUPPORTED,
     CutCancelled,
     CutError,
@@ -471,7 +479,15 @@ def _cut(
                     join,
                     output_path,
                     cwd=work_dir,
+                    # 세그먼트를 다 넘긴 뒤의 기다림도 다른 단계와 같은 제한 시간 · 멈춤 · 일시정지를 따른다
+                    timeout=hc._COPY_TIMEOUT,
+                    should_stop=hc._stop_check.get(),
+                    should_pause=hc._pause_check.get(),
                 )
+            except FFmpegCancelledError as e:
+                raise CutCancelled(str(e)) from e
+            except FFmpegTimeoutError as e:
+                raise CutError(CUT_TIMEOUT, str(e)) from e
             except FFmpegError as e:
                 raise CutError(CUT_FAILED, str(e)) from e
         else:

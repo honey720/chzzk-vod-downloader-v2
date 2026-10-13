@@ -22,10 +22,22 @@ from core.models.cut import CutPiece
 from core.models.fmp4_index import Fmp4Head
 from core.models.plan import TimeRange
 from core.utils.cut_check import check_cut
-from core.utils.ffmpeg import extract_audio_stream, get_ffmpeg_exe, read_in_chunks
+from core.utils.ffmpeg import (
+    FFmpegCancelledError,
+    FFmpegTimeoutError,
+    extract_audio_stream,
+    get_ffmpeg_exe,
+    read_in_chunks,
+)
 from core.utils.fmp4_cut import cut_fmp4_section, frame_at
 from core.utils.fmp4_sections import Fmp4Section
-from core.utils.hybrid_cut import CUT_FAILED, CUT_UNSUPPORTED, CutCancelled, CutError
+from core.utils.hybrid_cut import (
+    CUT_FAILED,
+    CUT_TIMEOUT,
+    CUT_UNSUPPORTED,
+    CutCancelled,
+    CutError,
+)
 from tests.unit.core.test_m3u8_sections import _contents, _make_hls, _packets, _Source
 
 SEGMENT_FRAMES = 30  # 세그먼트 하나의 프레임 수 (1초 · 30fps)
@@ -389,3 +401,63 @@ def test_audio_pass_raises_the_progress_once_per_segment_before_it_ends(made, tm
     during = events[events.index("read") + 1 : events.index("audio")]
     assert len(during) == len(cut.paths) + 1
     assert during == sorted(set(during))
+
+
+# ================================================================ 구간 파일 쓰기의 마지막 대기
+
+
+def test_writing_the_section_file_waits_under_the_stop_pause_and_time_limit_of_the_cut(
+    made, tmp_path, monkeypatch
+):
+    """구간 파일을 쓰는 실행에는 컷의 멈춤 · 일시정지 확인과 한 시간의 제한 시간이 넘어가야 한다.
+
+    plain, 구간 프레임 40~100. should_stop · should_pause를 주고 remux_through가 받은 인자를 적음
+    -> timeout == 3600, should_stop · should_pause가 넘긴 그 함수다
+    """
+    cut = _Cut(made["plain"], tmp_path, 40, 100, (0, 3))
+    real = fmp4_cut_module.remux_through
+    given = {}
+
+    def records(*args, **kwargs):
+        given.update(kwargs)
+        return real(*args, **kwargs)
+
+    def stop() -> bool:
+        return False
+
+    def pause() -> bool:
+        return False
+
+    monkeypatch.setattr(fmp4_cut_module, "remux_through", records)
+
+    cut.run(should_stop=stop, should_pause=pause)
+
+    assert (given["timeout"], given["should_stop"], given["should_pause"]) == (3600, stop, pause)
+
+
+@pytest.mark.parametrize(
+    ("raised", "expected"),
+    [(FFmpegCancelledError("stopped"), CutCancelled), (FFmpegTimeoutError("late"), CutError)],
+    ids=["cancelled", "timed-out"],
+)
+def test_stop_and_timeout_while_writing_the_section_file_are_not_reported_as_a_cut_failure(
+    made, tmp_path, monkeypatch, raised, expected
+):
+    """구간 파일을 쓰다 멈춤 요청으로 끝난 것은 중단으로, 제한 시간을 넘긴 것은 시간 초과로 알려야 한다.
+
+    plain, 구간 프레임 40~100. remux_through가 FFmpegCancelledError 또는 FFmpegTimeoutError를 냄
+    -> 멈춤: CutCancelled / 시간 초과: CutError(CUT_TIMEOUT). 구간 파일 없음
+    """
+    cut = _Cut(made["plain"], tmp_path, 40, 100, (0, 3))
+
+    def fails(*args, **kwargs):
+        raise raised
+
+    monkeypatch.setattr(fmp4_cut_module, "remux_through", fails)
+
+    with pytest.raises(expected) as caught:
+        cut.run()
+
+    if expected is CutError:
+        assert caught.value.message_key == CUT_TIMEOUT
+    assert not os.path.exists(cut.output)
