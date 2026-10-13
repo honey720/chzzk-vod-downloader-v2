@@ -204,6 +204,26 @@ def test_prepare_and_net_transfer_lines_are_added_without_changing_the_transfer_
     assert summarize(log_file)["transfer_seconds"] == 12.34
 
 
+def test_prepare_line_keeps_its_front_when_rests_are_appended(tmp_path, monkeypatch):
+    """쉰 횟수 · 시간이 붙은 준비 줄도 앞부분은 그대로이고 요약 지표를 바꾸지 않아야 한다 (#309).
+
+    준비 11.55초, 덧붙인 말 "moov reused - rested 3210 times for 6.42s" · Transfer 12.34초
+    -> 줄이 "Prepare completed in 11.55 seconds - moov reused - rested 3210 times for 6.42s"로 끝남,
+       요약의 transfer_seconds == 12.34
+    """
+    logger = _make_logger(tmp_path, monkeypatch)
+    logger.log_prepare_complete(11.55, "moov reused - rested 3210 times for 6.42s")
+    logger.log_transfer_complete(12.34, 987654321, 3, 40)
+    log_file = Path(logger.log_file)
+    logger.save_and_close()
+
+    lines = log_file.read_text(encoding="utf-8").splitlines()
+    assert [line for line in lines if "Prepare completed" in line][0].endswith(
+        "Prepare completed in 11.55 seconds - moov reused - rested 3210 times for 6.42s"
+    )
+    assert summarize(log_file)["transfer_seconds"] == 12.34
+
+
 def test_prepare_line_without_a_note_ends_at_the_seconds(tmp_path, monkeypatch):
     """덧붙일 말이 없는 준비 줄은 시간에서 끝나야 한다 (#309).
 

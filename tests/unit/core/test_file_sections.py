@@ -30,8 +30,10 @@ from types import SimpleNamespace
 import pytest
 
 import core.api.mp4 as mp4_module
+import core.downloaders.base as base_module
 import core.downloaders.file_downloader as fd_module
 import core.utils.hybrid_cut as cut_module
+import core.utils.interaction as interaction
 import core.utils.mp4_partial as partial_module
 from core.api.mp4 import (
     MP4_UNSUPPORTED,
@@ -50,6 +52,7 @@ from core.models.plan import TimeRange
 from core.utils.cut_check import check_cut
 from core.utils.ffmpeg import get_ffmpeg_exe
 from core.utils.mp4_ranges import selection_byte_ranges, sections_download_size
+from core.utils.interaction import resting_while
 from core.utils.hybrid_cut import CUT_FAILED, CutError, cut_frames_from_mp4, hybrid_cut
 from core.utils.paths import build_section_output_paths, partial_source_path_for
 from core.utils.selections import SELECTION_OUT_OF_RANGE, SelectionError
@@ -502,6 +505,67 @@ def test_cut_failure_of_one_section_still_cuts_the_sections_after_it(server, tmp
     ]
     data = run.data
     assert (data.sections_total, data.sections_done, data.sections_failed) == (3, 2, 1)
+
+
+def _sizes(paths) -> int:
+    return sum(os.path.getsize(path) for path in paths)
+
+
+def test_engine_reports_the_size_of_the_section_files_it_made(server, tmp_path):
+    """구간을 모두 만든 실행은 만든 구간 파일 크기의 합을 공유 데이터에 적어야 한다.
+
+    기본 입력, 구간 셋 -> 완료 1회, sections_output_size == 세 파일 크기의 합 > 0,
+    로그의 Output size도 같은 값
+    """
+    run = _Run(server, "plain", tmp_path, _three())
+    assert run.data.sections_output_size is None, "전제: 컷을 마치기 전에는 값이 없다"
+
+    run.start()
+
+    assert (run.finished, run.failures) == (1, [])
+    expected = _sizes(run.paths)
+    assert expected > 0
+    assert run.data.sections_output_size == expected
+    ((_elapsed, logged),) = _logged(run, "log_postprocess_complete")
+    assert logged == expected
+
+
+def test_engine_reports_only_the_files_it_made_when_a_section_fails(server, tmp_path, monkeypatch):
+    """일부 구간이 실패한 실행은 만든 구간 파일만의 합을 적어야 한다 — 실패한 구간은 들지 않는다.
+
+    기본 입력, 구간 셋, 둘째 컷이 도중에 실패 -> 실패 1건,
+    sections_output_size == `_1` · `_3` 파일 크기의 합(`_2` 파일은 없다)
+    """
+    cuts = CutCalls(monkeypatch, fd_module, "hybrid_cut", source_arg=0)
+    cuts.fail_on = (2,)
+
+    run = _Run(server, "plain", tmp_path, _three()).start()
+
+    assert len(run.failures) == 1
+    assert not os.path.exists(run.paths[1])
+    assert run.data.sections_output_size == _sizes([run.paths[0], run.paths[2]]) > 0
+
+
+def test_retry_reports_the_size_of_every_section_file_not_only_the_ones_it_made(
+    server, tmp_path, monkeypatch
+):
+    """이어받은 실행은 이전 실행이 만든 구간 파일까지 더한 합을 적어야 한다.
+
+    첫 실행: 구간 셋, 둘째 컷이 도중에 실패. 이어받은 실행이 둘째만 만든다
+    -> 완료 1회, sections_output_size == 세 파일 크기의 합 > 둘째 파일의 크기
+    """
+    cuts = CutCalls(monkeypatch, fd_module, "hybrid_cut", source_arg=0)
+    cuts.fail_on = (2,)
+    failed = _Run(server, "plain", tmp_path, _three()).start()
+    assert len(failed.failures) == 1
+    cuts.restart()
+
+    again = hand_over(failed, _Run(server, "plain", tmp_path, _three())).start()
+
+    assert (again.finished, again.failures) == (1, [])
+    assert cuts.outputs == [THREE_FILES[1]]
+    assert again.data.sections_output_size == _sizes(again.paths)
+    assert again.data.sections_output_size > os.path.getsize(again.paths[1])
 
 
 def test_transfer_failure_removes_partial_source(server, tmp_path, monkeypatch):
@@ -1050,6 +1114,101 @@ def test_prepare_log_says_the_moov_was_reused_when_one_was_handed_in(server, tmp
 
     ((_elapsed, note),) = _logged(run, "log_prepare_complete")
     assert note == "moov reused"
+
+
+class _RestClock:
+    """time 모듈의 대역 — sleep을 부를 때마다 시계가 0.25초 간다. 부른 횟수를 센다."""
+
+    def __init__(self):
+        self.now = 10.0
+        self.slept = 0
+
+    def perf_counter(self) -> float:
+        return self.now
+
+    def sleep(self, _seconds: float) -> None:
+        self.slept += 1
+        self.now += 0.25
+
+
+def test_prepare_log_adds_the_rests_taken_while_the_user_was_interacting(
+    server, tmp_path, monkeypatch
+):
+    """조작 중이라 쉬어 가며 준비했으면 준비 로그의 덧붙인 말 끝에 쉰 횟수 · 시간이 붙어야 한다.
+
+    기본 입력, 구간 프레임 35~80. 쉴 때마다 시계가 0.25초 가는 대역. resting_while(늘 참) 안에서 실행
+    -> 덧붙인 말 == "moov fetched - rested N times for S s", N == 대역이 센 쉰 횟수 > 0, S == N × 0.25
+    """
+    clock = _RestClock()
+    monkeypatch.setattr(interaction, "time", clock)
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))])
+
+    with resting_while(lambda: True):
+        run.start()
+
+    ((_elapsed, note),) = _logged(run, "log_prepare_complete")
+    assert clock.slept > 0
+    assert note == f"moov fetched - rested {clock.slept} times for {clock.slept * 0.25:.2f}s"
+    assert (run.finished, run.failures) == (1, [])
+
+
+def test_prepare_log_counts_only_the_rests_of_this_prepare(server, tmp_path, monkeypatch):
+    """준비 로그의 쉰 횟수에는 그 준비보다 앞서 같은 스레드가 쉰 것이 들지 않아야 한다.
+
+    기본 입력, 구간 프레임 35~80. resting_while(늘 참) 안에서 먼저 틈을 5번 흉내 낸 뒤 실행
+    -> 덧붙인 말의 횟수 == 실행하는 동안 대역이 센 횟수(앞의 5번을 뺀 값)
+    """
+    clock = _RestClock()
+    monkeypatch.setattr(interaction, "time", clock)
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))])
+
+    with resting_while(lambda: True):
+        for _ in range(5):
+            interaction.rest_if_user_interacting()
+        run.start()
+
+    ((_elapsed, note),) = _logged(run, "log_prepare_complete")
+    rested = clock.slept - 5
+    assert rested > 0
+    assert note == f"moov fetched - rested {rested} times for {rested * 0.25:.2f}s"
+
+
+def test_prepare_log_says_nothing_of_rests_when_the_user_was_not_interacting(
+    server, tmp_path, monkeypatch
+):
+    """조작 중이 아니어서 쉬지 않았으면 준비 로그의 덧붙인 말은 그대로여야 한다.
+
+    기본 입력, 구간 프레임 35~80. resting_while(늘 거짓) 안에서 실행
+    -> 덧붙인 말 == "moov fetched", 대역이 센 쉰 횟수 == 0
+    """
+    clock = _RestClock()
+    monkeypatch.setattr(interaction, "time", clock)
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))])
+
+    with resting_while(lambda: False):
+        run.start()
+
+    ((_elapsed, note),) = _logged(run, "log_prepare_complete")
+    assert (note, clock.slept) == ("moov fetched", 0)
+
+
+@pytest.mark.parametrize(
+    ("note", "before", "after", "expected"),
+    [
+        ("moov reused", (2, 0.5), (5, 1.75), "moov reused - rested 3 times for 1.25s"),
+        ("", (0, 0.0), (1, 0.004), "rested 1 times for 0.00s"),
+        ("moov reused", (4, 2.0), (4, 2.0), "moov reused"),
+        ("", (0, 0.0), (0, 0.0), ""),
+    ],
+    ids=["말 뒤에 잇는다", "말이 없으면 쉼만", "쉬지 않았으면 그대로", "둘 다 없음"],
+)
+def test_with_rests_appends_the_rests_between_two_totals(note, before, after, expected):
+    """_with_rests는 앞뒤 값의 차(쉰 횟수 · 시간)를 덧붙인 말 뒤에 이어야 한다.
+
+    (note, 앞의 (횟수, 초), 뒤의 (횟수, 초)) -> 횟수의 차가 0이면 note 그대로, 아니면
+    "rested <차> times for <초의 차, 소수 둘째 자리>s"를 " - "로 잇는다
+    """
+    assert base_module._with_rests(note, before, after) == expected
 
 
 def test_engine_parses_handed_moov_bytes_without_fetching_again(server, tmp_path, monkeypatch):

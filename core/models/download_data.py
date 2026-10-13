@@ -64,6 +64,10 @@ class DownloadData:
         # (core.models.section_resume.SectionResume). 다음 실행의 Content.section_resume으로
         # 넘기면 끝나지 않은 구간만 다시 처리한다. 그렇게 끝나지 않았으면 None이다
         self.section_resume = None
+        # 지금까지 만든 구간 파일 크기의 합(바이트) — 이전 실행이 끝낸 구간의 파일도 센다.
+        # 엔진이 컷을 마칠 때(모두 만들었든 일부만 만들었든) 적는다. 완료 카드가 이 값을 크기로
+        # 적는다 — 화면 쪽은 파일을 다시 세지 않는다. 컷을 마치기 전과 구간이 없는 다운로드는 None이다
+        self.sections_output_size = None
 
         # 진행도/실패/재시작/스레드 관련 변수
         self.completed_threads = 0

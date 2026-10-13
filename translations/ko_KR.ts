@@ -72,6 +72,10 @@
         <translation>겹침</translation>
     </message>
     <message>
+        <source>Sections {0}</source>
+        <translation>구간 {0}개</translation>
+    </message>
+    <message>
         <source>To receive: {0}</source>
         <translation>받을 양: {0}</translation>
     </message>
@@ -370,6 +374,10 @@ Part of the video kept arriving incomplete from the server. Try again later.</so
         <translation>구간 추가(최대 {0}개)</translation>
     </message>
     <message>
+        <source>Sum of the section lengths</source>
+        <translation>구간 길이의 합</translation>
+    </message>
+    <message>
         <source>Digits fill from the right, up to {0} (0100 = 1 minute) · &apos;.&apos; moves to the frame field</source>
         <translation>숫자를 치면 오른쪽부터 채웁니다(최대 {0}자리, 0100 = 1분) · &apos;.&apos;을 치면 프레임 칸으로</translation>
     </message>
@@ -407,8 +415,16 @@ Check your connection and cookies, then open this window again.</source>
         <translation>최대값({0})으로 맞췄습니다</translation>
     </message>
     <message>
-        <source>Sections add up to {0} — longer than the video ({1})</source>
-        <translation>구간 합 {0} · 영상 길이({1})보다 깁니다</translation>
+        <source>Total {0}</source>
+        <translation>합계 {0}</translation>
+    </message>
+    <message>
+        <source>Sections add up to more than the video</source>
+        <translation>구간 합이 영상보다 깁니다</translation>
+    </message>
+    <message>
+        <source>Sections {0} · Video {1}</source>
+        <translation>구간 합 {0} · 영상 {1}</translation>
     </message>
     <message>
         <source>Sections {0} / {1} · {2}fps · video ends at {3}</source>

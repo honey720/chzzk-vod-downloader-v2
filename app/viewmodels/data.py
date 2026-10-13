@@ -71,20 +71,20 @@ class ContentItem:
         # 카드에 경고를 붙이며, 받을 때 이 구간만 엔진에 넘기지 않는다
         self.section_unfit = frozenset()
         # 구간을 정하며 받은 moov — (그때의 주소, 받은 것). 받은 것은 moov의 바이트
-        # (core.models.mp4_index.PendingMp4Head)이고, 구간을 확인한 뒤 받을 크기를 세면서 해석한 색인
-        # (Mp4Head)으로 바뀐다. 다운로드를 시작할 때 주소가 같으면 엔진에 넘겨 다시 받지 않게
-        # 하고, 같은 카드의 편집 창을 다시 열 때도 다시 받지 않는다. 긴 영상의 색인은 100MB를
-        # 넘어 앱 전체에서 한 카드의 것만 든다(section_edit_viewmodel.keep_section_head).
+        # (core.models.mp4_index.PendingMp4Head)다 — 받을 크기는 그 바이트의 표에서 세고, 색인은
+        # 다운로드를 시작할 때 엔진이 만든다. 다운로드를 시작할 때 주소가 같으면 엔진에 넘겨 다시
+        # 받지 않게 하고, 같은 카드의 편집 창을 다시 열 때도 다시 받지 않는다. 긴 영상의 moov는
+        # 수십 MB라 앱 전체에서 한 카드의 것만 든다(section_edit_viewmodel.keep_section_head).
         # 인코딩 완료 VOD에만 있다. 없으면 None
         self.section_head = None
-        # 구간 다운로드가 받을 바이트의 합 — 인코딩 완료 VOD(mp4)만. 구간을 확인할 때 moov로
-        # 계산하고, 받기 시작하면 엔진이 정한 값(이어받기 · 뺀 구간이 반영된다)으로 바뀐다.
-        # 모르면 None — 카드는 크기를 적지 않는다
+        # 구간 카드가 적는 크기 — 저장소에 생길 구간 파일 크기의 합(추정, 바이트). 인코딩 완료
+        # VOD(mp4)만. 구간을 확인할 때 moov로 센다(겹치는 자리는 구간마다). 받기 시작해도 바뀌지
+        # 않는다 — 그때까지 세지 못했을 때만 엔진이 정한 받을 양이 들어온다. 모르면 None — 카드는
+        # 크기를 적지 않는다
         self.section_bytes = None
-        # 구간 다운로드가 만드는 파일의 머리 길이(ftyp · moov 등) — 조회 때 이미 받아 두어
-        # section_bytes에는 들지 않는다. 대기 카드는 둘을 더해 파일 기준의 크기를 적는다 —
-        # 구간이 영상 전체를 덮으면 구간 없는 카드와 같은 숫자다. 모르면 None
-        self.section_head_bytes = None
+        # 완료한 구간 다운로드가 실제로 만든 구간 파일 크기의 합(바이트) — 엔진이 세어 준 값이다.
+        # 완료 카드가 크기로 적는다. 모르면(받기 전 · 구간이 없는 다운로드) None
+        self.output_bytes = None
         # 받을 구간의 합을 백그라운드에서 세는 중이다(SectionSizer) — 대기 카드가 크기 자리에
         # "확인 중..."을 적는다. 다 세면(성공 · 실패 모두) False로 돌아간다
         self.section_sizing = False

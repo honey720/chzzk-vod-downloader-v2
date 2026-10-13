@@ -33,9 +33,11 @@ from time import gmtime, strftime
 import requests
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
 
+from app.platform_adapter import begin_background_work, end_background_work
 from app.process_memory import log_process_memory
+from app.user_activity import user_interacting
 from app.viewmodels.data import ContentItem
-from app.viewmodels.section_edit_viewmodel import take_section_head
+from app.viewmodels.section_edit_viewmodel import take_section_head, watch_section_head
 from core.api.playback_tracks import StreamSelectionError
 from core.downloaders.base import PostprocessError
 from core.downloaders.hls_aes_downloader import DecryptionError
@@ -166,7 +168,10 @@ class DownloadViewModel(QObject):
         같이 resolver를 끼운 실제 서비스를 만든다."""
         super().__init__(parent)
         self._service = service or DownloadService(
-            base_url_resolver=resolve_m3u8_base_url, key_resolver=resolve_aes_key
+            base_url_resolver=resolve_m3u8_base_url,
+            key_resolver=resolve_aes_key,
+            # 조작하는 동안에는 색인 해석이 조각 사이에서 쉰다 (#309)
+            user_interacting=user_interacting,
         )
         self.handle = None
         self.task: DownloadTask | None = None
@@ -179,6 +184,8 @@ class DownloadViewModel(QObject):
         # 실행 중인 다운로드에서 엔진에 넘기지 않고 뺀 구간 수 (#309) — 새 영상의 끝 이후에서
         # 시작해 받을 수 없는 구간이다. 실패한 구간 수에 더해 카드에 보인다
         self._excluded = 0
+        # 도는 다운로드를 백그라운드 일로 세어 두었는지 (#309) — 끝을 한 번만 알린다
+        self._working = False
         self._content = content
         # 준비가 길어지면 카드에 "준비 중"을 켜는 타이머 — 엔진의 첫 진행 통지가 끈다
         self._prepareTimer = QTimer(self)
@@ -269,13 +276,14 @@ class DownloadViewModel(QObject):
             # 카드에서는 비운다 — 이제 엔진이 들고, 다운로드가 끝나면 함께 사라진다
             moov = take_section_head(item)
             if isinstance(moov, PendingMp4Head):
-                # 아직 색인을 만들지 않았다 — 받아 둔 것을 넘긴다. 엔진이 다시 받지 않고, 받을
-                # 크기를 세는 쪽이 해석하는 중이면 기다려 그 색인을 쓴다(해석은 한 번만 돈다)
+                # 받아 둔 moov의 바이트를 넘긴다 — 엔진이 다시 받지 않고, 준비하면서 색인을
+                # 만든다. 대기 카드는 색인을 만들어 두지 않는다(받을 크기는 표에서 센다)
                 data.content.mp4_pending = moov
             else:
                 data.content.mp4_head = moov
         self._data = data
         item.transfer_bytes = None
+        item.output_bytes = None
         item.preparing = False
         item.prepare_pending = True
         # 지난 실행의 진행 표시를 지운다 (#309) — 중단한 카드를 다시 시작하면 엔진의 첫 통지가
@@ -300,6 +308,7 @@ class DownloadViewModel(QObject):
             on_failed=self._relay_failed,
             on_merge_start=self._relay_merge_start,
         )
+        self._beginWork()
 
     def prepareRetry(self, item: ContentItem) -> None:
         """실패 카드의 재시도를 누른 순간에 한 번, 끝낸 구간의 파일이 그대로 있는지 확인한다 (#309).
@@ -348,6 +357,18 @@ class DownloadViewModel(QObject):
             self.item.post_process = False
         self.stopped.emit(self.item)
 
+    def _beginWork(self) -> None:
+        """도는 다운로드를 백그라운드 일 하나로 센다 (#309) — 도는 동안 화면이 굼떠지지 않게 한다."""
+        if not self._working:
+            self._working = True
+            begin_background_work()
+
+    def _endWork(self) -> None:
+        """다운로드가 끝났다(완료 · 실패 · 정지) — 세어 둔 것을 내린다. 두 번 불러도 한 번만 내린다."""
+        if self._working:
+            self._working = False
+            end_background_work()
+
     def _dropHead(self) -> None:
         """엔진에 넘겼던 moov를 놓는다 (#309) — 다운로드가 끝났다(완료 · 실패 · 정지).
 
@@ -356,8 +377,15 @@ class DownloadViewModel(QObject):
         실패해 엔진이 남긴 이어받기 기록(``section_retry``)의 moov는 그대로 둔다 — 재시도가 쓴다.
         """
         if self._data is not None:
-            self._data.content.mp4_head = None
-            self._data.content.mp4_pending = None
+            content = self._data.content
+            # 엔진이 준비하며 만든 색인이 실제로 사라지면 프로세스 메모리를 적게 한다 — 대기 카드는
+            # 색인을 만들어 두지 않으므로, 색인은 엔진에 넘긴 moov에서만 생긴다
+            pending = content.mp4_pending
+            watch_section_head(
+                content.mp4_head or (pending.peek() if pending is not None else None)
+            )
+            content.mp4_head = None
+            content.mp4_pending = None
 
     def _showPreparing(self) -> None:
         """준비가 길어지고 있다 — 카드에 "준비 중"을 켠다 (#309). 타이머가 부른다."""
@@ -381,15 +409,19 @@ class DownloadViewModel(QObject):
         """진행 통지가 왔다 — 엔진의 준비가 끝났다 (#309). 메인 스레드에서 돈다.
 
         엔진은 준비가 끝나면 받기 전에 진행을 한 번 알린다. "준비 중"을 끄고, 인코딩 완료
-        VOD면 엔진이 정한 받을 크기를 카드에 옮긴다. 구간 다운로드에서는 그 값이 받을 구간의
-        합이다 — 이어받기와 뺀 구간이 반영된 값이다.
+        VOD면 엔진이 정한 받을 크기를 카드에 옮긴다(``transfer_bytes``).
+
+        구간 카드가 적는 크기(``section_bytes`` — 구간 파일 크기의 합의 추정)는 **이미 알면
+        바꾸지 않는다.** 대기 카드가 적던 값이 받는 중 · 일시정지 · 다시 시작 · 실패 구간의
+        재시도 동안 그대로 보인다. 엔진의 값은 받을 양(전송량)이라 뜻이 다르다. 대기 중에 세지
+        못했을 때만 엔진의 값을 대신 쓴다.
         """
         self._endPreparing()
         item, data = self.item, self._data
         if item is None or data is None or item.is_segment_based or not data.total_size:
             return
         item.transfer_bytes = data.total_size
-        if data.sections_total:
+        if data.sections_total and not item.section_bytes:
             item.section_bytes = data.total_size
 
     def removeThreads(self) -> None:
@@ -412,6 +444,7 @@ class DownloadViewModel(QObject):
             self._service.abandon(self.handle)
         self.handle = None
         self.task = None
+        self._endWork()
 
     # ============ 워커 스레드 콜백 (emit까지만 수행) ============
 
@@ -457,6 +490,8 @@ class DownloadViewModel(QObject):
         if self.item is None or self._data is None or not self._data.sections_total:
             return
         self.item.sections_done = self._data.sections_done
+        # 엔진이 컷을 마치며 센, 만든 구간 파일 크기의 합 — 완료 카드가 크기로 적는다
+        self.item.output_bytes = self._data.sections_output_size
         # 엔진에 넘기지 않고 뺀 구간도 받지 못한 구간이다
         self.item.sections_failed = self._data.sections_failed + self._excluded
 
@@ -546,6 +581,7 @@ class DownloadViewModel(QObject):
             self.task.stop()
         self.handle = None
         self.task = None
+        self._endWork()
         self.failed.emit(item, self._failure_message(exc))
 
     def _failure_message(self, exc: BaseException) -> str:

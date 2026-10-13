@@ -148,3 +148,72 @@ class PathLabel(ElidingLabel):
             shown = self._prefix + metrics.elidedText(self._last, Qt.TextElideMode.ElideMiddle, room)  # ③
         if shown != QLabel.text(self):
             QLabel.setText(self, shown)
+
+
+class TwoLineLabel(ElidingLabel):
+    """두 문장(핵심 · 덧붙이는 글)을 한 줄에 잇거나 두 줄로 나눠 보이는 라벨 (#309).
+
+    편집 창의 "구간 합이 영상보다 길다"는 알림에 쓴다. 첫 문장이 무슨 일인지를 말하고 둘째
+    문장이 숫자(합 · 영상 길이)를 적는다. 한 문장이던 때에는 창을 좁히면 한 줄 말줄임이 뒤의
+    숫자를 잘랐다.
+
+    보이는 순서는 ① 한 줄 — 두 문장을 ``JOINER``로 잇는다 → ② 두 줄 — 문장마다 한 줄 →
+    ③ 둘째 줄만 말줄임이다. 첫 줄은 어느 단계에서도 줄이지 않는다. 툴팁은 어느 단계에서나
+    두 문장을 이은 전체 글이다(``ElidingLabel``과 같다).
+
+    높이는 글이 없어도 늘 두 줄만큼을 청한다 — 글이 생기고 사라져도, 한 줄에서 두 줄로 바뀌어도
+    줄의 높이가 움직이지 않는다. 폭은 ``ElidingLabel``과 같다(최소는 작게, 바라는 폭은 한 줄로
+    이은 글의 폭) — 여유가 생기면 한 줄로 돌아온다.
+    """
+
+    JOINER = " · "  # 한 줄일 때 두 문장을 잇는 글
+    LINES = 2  # 청하는 높이의 줄 수
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._head = ""
+        self._tail = ""
+        self.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+    def setLines(self, head: str, tail: str) -> None:
+        """두 문장을 넣는다 — head는 줄이지 않는 첫 문장, tail은 덧붙이는 글. 둘 다 비면 빈 라벨이다."""
+        self._head = head
+        self._tail = tail
+        super().setText(self.JOINER.join(part for part in (head, tail) if part))
+
+    def setText(self, text: str) -> None:
+        """문장 하나만 넣으면 기본 ``ElidingLabel``로 동작한다."""
+        self._head = text
+        self._tail = ""
+        super().setText(text)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(super().minimumSizeHint().width(), self._linesHeight())
+
+    def sizeHint(self) -> QSize:
+        return QSize(super().sizeHint().width(), self._linesHeight())
+
+    def _linesHeight(self) -> int:
+        return QFontMetrics(self.font()).lineSpacing() * self.LINES
+
+    def _applyElide(self, force: bool = False) -> None:
+        width = self.width()
+        if not force and width == self._last_elide_width:
+            return
+        self._last_elide_width = width
+        metrics = QFontMetrics(self.font())
+        whole = self._full_text
+        if not self._tail:
+            shown = metrics.elidedText(whole, self._elide_mode, width)  # 문장 하나 — 기본 말줄임
+        elif metrics.horizontalAdvance(whole) <= width:
+            shown = whole  # ① 한 줄
+        else:
+            # ② 두 줄 — 둘째 줄이 넘치면 ③ 그 줄만 줄인다. 첫 줄은 그대로 둔다.
+            # 들어가는지는 한 줄로 이을지를 정할 때와 같은 잣대(글의 폭)로 직접 견준다 —
+            # elidedText에 맡기면 폭이 글의 폭과 꼭 같을 때도 줄이는 플랫폼이 있다(macOS)
+            tail = self._tail
+            if metrics.horizontalAdvance(tail) > width:
+                tail = metrics.elidedText(tail, self._elide_mode, width)
+            shown = self._head + "\n" + tail
+        if shown != QLabel.text(self):
+            QLabel.setText(self, shown)

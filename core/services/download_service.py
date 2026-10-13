@@ -41,6 +41,7 @@ from core.models.download_data import DownloadData
 from core.models.download_state import DownloadState
 from core.models.download_task import InvalidStateTransitionError
 from core.models.events import FailedCallback, FinishedCallback, ProgressCallback
+from core.utils.interaction import resting_while
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +166,7 @@ class DownloadService:
         max_concurrent: int = DEFAULT_MAX_CONCURRENT,
         base_url_resolver: BaseUrlResolver | None = None,
         key_resolver: KeyResolver | None = None,
+        user_interacting: Callable[[], bool] | None = None,
     ):
         """서비스를 생성한다.
 
@@ -172,12 +174,16 @@ class DownloadService:
             max_concurrent: 동시 실행 수 상한 (1 이상)
             base_url_resolver: m3u8 플레이리스트 URL 해석 콜러블 (m3u8 다운로드 시 필수)
             key_resolver: 세그먼트 복호화 키 취득 콜러블 (암호화 VOD 다운로드 시 필수, #57)
+            user_interacting: 지금 사용자가 화면을 조작 중인지 답하는 콜러블 (#309). 참인 동안
+                색인 해석이 조각 사이에서 잠깐 쉰다(``core.utils.interaction``). 워커 스레드에서
+                불린다. 주지 않으면 쉬지 않는다(헤드리스)
         """
         if max_concurrent < 1:
             raise ValueError("max_concurrent는 1 이상이어야 한다")
         self._max_concurrent = max_concurrent
         self._base_url_resolver = base_url_resolver
         self._key_resolver = key_resolver
+        self._user_interacting = user_interacting
         self._lock = threading.Lock()
         self._pending: deque[DownloadHandle] = deque()
         self._active: set[DownloadHandle] = set()
@@ -335,7 +341,8 @@ class DownloadService:
                     return
 
             try:
-                engine.run()
+                with resting_while(self._user_interacting):
+                    engine.run()
             except Exception as e:
                 # 엔진이 스스로 실패 처리하지 못한 예외의 최후 방어선 (#147 E1).
                 # 여기서 잡지 않으면 이 워커 스레드만 죽고 통지·로그가 모두

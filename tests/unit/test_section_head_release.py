@@ -7,6 +7,8 @@
 
 판정은 색인(``Mp4Head``)에 건 약한 참조다. 다운로드가 끝난 뒤(완료 · 실패 · 정지 · 일부 실패
 뒤 기록을 지움) **순환 쓰레기 수집 없이** 죽어 있어야 한다 — 테스트 동안 수집기를 꺼 둔다.
+색인은 대기 카드가 아니라 엔진이 받기 시작할 때 만든다 — 만들어지는 색인마다 약한 참조를 걸어
+둔다(``built``).
 서로를 가리키는 객체들(핸들 ↔ 엔진)에 색인이 매달려 있으면 참조가 다 끊겨도 수집기가 돌
 때까지 남는데, 오래 사는 객체가 수백만 개인 프로세스에서는 전체 수집이 드물게 돈다 —
 실기에서 "놓았다"고 적은 뒤에도 메모리가 줄지 않던 까닭이다. 살아 있으면 누가 쥐고
@@ -41,7 +43,6 @@ from app.views import mainWindow as mw_mod
 from app.views.mainWindow import VodDownloader
 from core.api.representations import StreamEntry
 from core.models.download_state import DownloadState
-from core.models.mp4_index import Mp4Head
 from core.utils.ffmpeg import get_ffmpeg_exe
 from tests.unit.section_input import enter_time
 from tests.unit.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
@@ -133,6 +134,21 @@ def _pump():
 
 
 @pytest.fixture
+def built(monkeypatch) -> list[weakref.ref]:
+    """만들어진 색인마다 약한 참조를 걸어 둔다 — 강한 참조는 들지 않는다."""
+    refs: list[weakref.ref] = []
+    real = mp4_module.index_mp4
+
+    def watched(raw):
+        head = real(raw)
+        refs.append(weakref.ref(head))
+        return head
+
+    monkeypatch.setattr(mp4_module, "index_mp4", watched)
+    return refs
+
+
+@pytest.fixture
 def window(server, tmp_path):
     """실제 메인 창과 대기 카드 하나 — 서비스와 엔진은 제품의 것 그대로다."""
     item = ContentItem(
@@ -172,17 +188,10 @@ def _give_section(
     assert len(item.selections) == 1, "전제: 구간이 쓰여야 한다"
     if not wait_size:
         return
-    # 받을 크기를 세는 백그라운드 일이 끝나면 카드가 받은 바이트 대신 만든 색인을 쥔다
+    # 받을 크기를 세는 백그라운드 일이 끝나기를 기다린다 — 카드는 받은 바이트를 그대로 쥔다
     sizer = win.contentManager._sectionSizer
     qtbot.waitUntil(lambda: sizer.pendingCount() == 0, timeout=10_000)
     _pump()
-
-
-def _held_head(item) -> weakref.ref:
-    """카드가 든 moov에 약한 참조를 건다 — 강한 참조를 이 함수 밖으로 내보내지 않는다."""
-    kept = item.section_head
-    assert kept is not None and isinstance(kept[1], Mp4Head), "전제: 카드가 실제 moov를 들고 있다"
-    return weakref.ref(kept[1])
 
 
 def _collect() -> None:
@@ -265,46 +274,42 @@ def _wait_for_engine_threads() -> None:
             thread.join(10)
 
 
-def test_index_is_freed_after_a_section_download_finishes(qtbot, window):
+def test_index_is_freed_after_a_section_download_finishes(qtbot, window, built):
     """구간 다운로드가 끝나면 moov 색인을 아무도 쥐고 있지 않아야 한다.
 
     편집 창에서 구간(프레임 35~80)을 확인 → 전역 다운로드 → 완료
-    -> 카드는 완료, 구간 파일이 만들어짐, 색인의 약한 참조 == None
+    -> 카드는 완료, 구간 파일이 만들어짐, 색인은 1번 만들어졌고 그 약한 참조 == None
     """
     win, item = window
     _give_section(qtbot, win, item)
-    head = _held_head(item)
 
     _download(qtbot, win, item)
 
     assert item.section_paths and all(map(os.path.isfile, item.section_paths))
-    _assert_released(head)
+    assert len(built) == 1
+    _assert_released(built[0])
 
 
 def test_download_started_while_the_total_is_counted_parses_once_and_frees_the_index(
-    qtbot, window, monkeypatch
+    qtbot, window, monkeypatch, built
 ):
     """확인 직후(받을 크기를 세는 중) 받기 시작해도 해석은 한 번만 돌고, 끝나면 색인이 풀려야 한다.
 
-    해석 함수를 문으로 막고 호출을 세는 대역으로 바꿈. 구간을 확인(크기 계산이 해석 안에 들어가
-    선다) → 전역 다운로드(실제 엔진이 준비 단계에서 같은 moov를 청한다) → 엔진이 기다리도록
-    잠깐 둔 뒤 문을 엶 → 완료
+    크기 세기를 문으로 막아 둠. 구간을 확인(크기 세기가 문 앞에 선다) → 전역 다운로드(실제 엔진이
+    준비 단계에서 넘겨받은 moov를 해석한다) → 문을 엶 → 완료
     -> 해석 1회, 구간 파일이 만들어짐, 준비 로그에 "moov reused", 그 색인의 약한 참조 == None
     """
     win, item = window
-    real = mp4_module.index_mp4
+    real = section_edit_module.moov_sections_file_size
     gate = threading.Event()
-    built: list[weakref.ref] = []
     calls = []
 
-    def gated(raw):
+    def gated(raw, selections):
         calls.append(1)
         assert gate.wait(30), "문이 열리지 않았다"
-        head = real(raw)
-        built.append(weakref.ref(head))
-        return head
+        return real(raw, selections)
 
-    monkeypatch.setattr(mp4_module, "index_mp4", gated)
+    monkeypatch.setattr(section_edit_module, "moov_sections_file_size", gated)
     notes = []
     real_note = fd_module.FileDownloader._prepare_note
     monkeypatch.setattr(
@@ -317,7 +322,6 @@ def test_download_started_while_the_total_is_counted_parses_once_and_frees_the_i
 
     win.downloadButton.click()
     qtbot.waitUntil(lambda: item.downloadState == DownloadState.RUNNING, timeout=10_000)
-    qtbot.wait(300)  # 엔진이 준비 단계에서 같은 moov를 청하고 기다리는 구간을 넓힌다
     gate.set()
     qtbot.waitUntil(lambda: item.downloadState == DownloadState.FINISHED, timeout=FINISH_TIMEOUT)
     qtbot.waitUntil(lambda: win.downloadViewModel.handle is None, timeout=FINISH_TIMEOUT)
@@ -325,21 +329,20 @@ def test_download_started_while_the_total_is_counted_parses_once_and_frees_the_i
     sizer = win.contentManager._sectionSizer
     qtbot.waitUntil(lambda: sizer.pendingCount() == 0, timeout=10_000)
 
-    assert len(calls) == 1
+    assert len(built) == 1
     assert item.section_paths and all(map(os.path.isfile, item.section_paths))
     assert notes == ["moov reused"]
     _assert_released(built[0])
 
 
-def test_index_is_freed_after_the_same_card_is_downloaded_twice(qtbot, window):
+def test_index_is_freed_after_the_same_card_is_downloaded_twice(qtbot, window, built):
     """같은 카드를 두 번 받아도 앞의 색인과 뒤의 색인이 모두 풀려야 한다.
 
     구간을 확인해 받고 → 완료 카드를 대기로 되돌려 구간을 다시 확인해 받음
-    -> 두 번의 조회가 받은 색인의 약한 참조가 모두 None
+    -> 색인은 2번 만들어졌고 그 약한 참조가 모두 None
     """
     win, item = window
     _give_section(qtbot, win, item)
-    first = _held_head(item)
     _download(qtbot, win, item)
 
     item.downloadState = DownloadState.WAITING
@@ -347,22 +350,21 @@ def test_index_is_freed_after_the_same_card_is_downloaded_twice(qtbot, window):
     win.contentManager.model.notifyChanged(item)
     _pump()
     _give_section(qtbot, win, item, "00000200", "00000310")
-    second = _held_head(item)
     _download(qtbot, win, item)
 
-    _assert_released(first)
-    _assert_released(second)
+    assert len(built) == 2
+    _assert_released(built[0])
+    _assert_released(built[1])
 
 
-def test_index_is_freed_after_the_download_fails(qtbot, window, monkeypatch):
+def test_index_is_freed_after_the_download_fails(qtbot, window, monkeypatch, built):
     """다운로드가 준비 뒤에 실패해도(이어받기 기록 없이) moov 색인이 풀려야 한다.
 
     받는 요청이 예외를 내게 함 → 구간을 확인해 전역 다운로드 → 실패
-    -> 카드는 실패, 이어받기 기록 없음, 색인의 약한 참조 == None
+    -> 카드는 실패, 이어받기 기록 없음, 색인은 1번 만들어졌고 그 약한 참조 == None
     """
     win, item = window
     _give_section(qtbot, win, item)
-    head = _held_head(item)
 
     def broken(self, *args, **kwargs):
         raise OSError("전송 실패(대역)")
@@ -372,10 +374,13 @@ def test_index_is_freed_after_the_download_fails(qtbot, window, monkeypatch):
     _download(qtbot, win, item, until=DownloadState.FAILED)
 
     assert item.section_retry is None
-    _assert_released(head)
+    assert len(built) == 1
+    _assert_released(built[0])
 
 
-def test_index_is_kept_only_by_the_retry_record_after_a_partial_failure(qtbot, window, monkeypatch):
+def test_index_is_kept_only_by_the_retry_record_after_a_partial_failure(
+    qtbot, window, monkeypatch, built
+):
     """컷이 실패해 이어받기 기록이 남으면 색인은 그 기록만 쥐고, 기록을 지우면 풀려야 한다.
 
     ffmpeg 실행이 모두 실패하게 함 → 구간을 확인해 전역 다운로드 → 실패(기록 남음)
@@ -383,7 +388,6 @@ def test_index_is_kept_only_by_the_retry_record_after_a_partial_failure(qtbot, w
     """
     win, item = window
     _give_section(qtbot, win, item)
-    head = _held_head(item)
 
     def failing(args, **kwargs):
         return subprocess.CompletedProcess(args, 1, "", "boom")
@@ -394,22 +398,22 @@ def test_index_is_kept_only_by_the_retry_record_after_a_partial_failure(qtbot, w
     _collect()
 
     assert item.section_retry is not None, "전제: 이어받기 기록이 남았다"
-    assert head() is not None, "전제: 재시도가 쓸 색인은 기록이 쥐고 있다"
+    assert len(built) == 1
+    assert built[0]() is not None, "전제: 재시도가 쓸 색인은 기록이 쥐고 있다"
 
     item.section_retry = None
 
-    _assert_released(head)
+    _assert_released(built[0])
 
 
-def test_index_is_freed_after_the_download_is_stopped(qtbot, window, monkeypatch):
+def test_index_is_freed_after_the_download_is_stopped(qtbot, window, monkeypatch, built):
     """받는 도중 정지해도 moov 색인이 풀려야 한다.
 
     받는 요청을 문으로 붙잡아 둠 → 구간을 확인해 전역 다운로드 → 받는 중에 정지 → 문을 연다
-    -> 카드는 대기, 색인의 약한 참조 == None
+    -> 카드는 대기, 색인은 1번 만들어졌고 그 약한 참조 == None
     """
     win, item = window
     _give_section(qtbot, win, item)
-    head = _held_head(item)
     entered, gate = threading.Event(), threading.Event()
     real = fd_module.FileDownloader._download_part
 
@@ -430,7 +434,8 @@ def test_index_is_freed_after_the_download_is_stopped(qtbot, window, monkeypatch
     qtbot.waitUntil(lambda: win.downloadViewModel.handle is None, timeout=FINISH_TIMEOUT)
     _wait_for_engine_threads()
 
-    _assert_released(head)
+    assert len(built) == 1
+    _assert_released(built[0])
 
 
 def test_stopping_during_the_cut_does_not_make_the_app_give_up_waiting_for_the_worker(
@@ -603,15 +608,16 @@ def test_stopping_a_cut_that_is_paused_ends_the_suspended_ffmpeg(
         end_all(processes)
 
 
-def test_index_is_freed_when_the_card_is_deleted_while_downloading(qtbot, window, monkeypatch):
+def test_index_is_freed_when_the_card_is_deleted_while_downloading(
+    qtbot, window, monkeypatch, built
+):
     """받는 도중 카드를 지워(취소) 다운로드가 끝나도 moov 색인이 풀려야 한다.
 
     받는 요청을 문으로 붙잡아 둠 → 구간을 확인해 전역 다운로드 → 받는 중에 정지하고 카드를 지움
-    -> 카드가 목록에 없다, 색인의 약한 참조 == None
+    -> 카드가 목록에 없다, 색인은 1번 만들어졌고 그 약한 참조 == None
     """
     win, item = window
     _give_section(qtbot, win, item)
-    head = _held_head(item)
     entered, gate = threading.Event(), threading.Event()
     real = fd_module.FileDownloader._download_part
 
@@ -635,7 +641,8 @@ def test_index_is_freed_when_the_card_is_deleted_while_downloading(qtbot, window
     _wait_for_engine_threads()
 
     assert win.contentManager.model.getRow(item) is None
-    _assert_released(head)
+    assert len(built) == 1
+    _assert_released(built[0])
 
 
 def test_engine_is_freed_after_the_download_finishes(qtbot, window, monkeypatch):
@@ -667,8 +674,8 @@ def test_released_line_is_logged_only_after_the_last_reference_is_gone(
 ):
     """ "색인을 놓은 뒤" 줄은 앱이 참조를 놓았을 때가 아니라 색인이 실제로 사라진 뒤에만 남아야 한다.
 
-    메모리 읽기를 고정값으로 둠(적기까지의 틈은 이 파일에서 0이다). 테스트가 색인을 따로 붙든 채 구간을 확인해
-    받고 완료까지 감 → 붙든 것을 놓음
+    메모리 읽기를 고정값으로 둠(적기까지의 틈은 이 파일에서 0이다). 엔진이 만든 색인을 테스트가 따로
+    붙든 채 구간을 확인해 받고 완료까지 감 → 붙든 것을 놓음
     -> 붙들고 있는 동안: "다운로드 끝" 줄은 있고 "색인을 놓은 뒤" 줄은 없다
     -> 놓은 뒤: "프로세스 메모리 [색인을 놓은 뒤] RSS 512.0MB" 한 줄이 남는다
     """
@@ -681,12 +688,20 @@ def test_released_line_is_logged_only_after_the_last_reference_is_gone(
     def lines() -> list[str]:
         return [r.getMessage() for r in caplog.records if r.name == "app.process_memory"]
 
+    held = []  # 엔진 밖의 누군가가 색인을 쥐고 있다
+    real = mp4_module.index_mp4
+
+    def kept(raw):
+        held.append(real(raw))
+        return held[-1]
+
+    monkeypatch.setattr(mp4_module, "index_mp4", kept)
     _give_section(qtbot, win, item)
-    held = [item.section_head[1]]  # 엔진 밖의 누군가가 색인을 쥐고 있다
 
     _download(qtbot, win, item)
     _collect()
 
+    assert len(held) == 1, "전제: 엔진이 색인을 한 번 만들었다"
     assert "프로세스 메모리 [다운로드 끝] RSS 512.0MB" in lines()
     assert not any("색인을 놓은 뒤" in line for line in lines())
 

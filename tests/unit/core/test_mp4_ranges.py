@@ -18,7 +18,9 @@ from core.api.mp4 import index_mp4, parse_moov, read_mp4_raw
 from core.models.plan import TimeRange
 from core.utils.hybrid_cut import SOURCE_LEAD_SECONDS
 from core.utils.mp4_ranges import (
+    estimated_section_file_size,
     sections_download_size,
+    sections_file_size,
     sections_head_size,
     selection_byte_ranges,
 )
@@ -273,3 +275,78 @@ def test_head_is_left_out_of_the_download_of_a_part_of_the_video():
 
     assert sections_head_size(index) == built.mdat_body[0]
     assert 0 < part and sections_head_size(index) + part < len(built.data)
+
+
+# ================================================================ 구간 파일 크기의 합(추정) (#309)
+#
+# 합성 mp4의 프레임 → 샘플: [0, 2, 3, 1, 4, 6, 7, 5, 8, 10, 11, 9] (디코드 순서 I P B B).
+# 영상 샘플 n의 크기는 40 + 3n, 오디오 샘플은 7바이트이고 샘플 n의 표시 시각은 (n − 1) × 0.128초다.
+# 머리의 어림: 1400 + 프레임 × 16 + 오디오 샘플 × 4 + min(프레임, 오디오 샘플) × 16
+
+
+@pytest.mark.parametrize(
+    ("counts", "expected"),
+    [
+        ((2, 119, 3, 21), 1400 + 32 + 12 + 32 + 119 + 21),
+        ((5, 1000, 0, 0), 1400 + 80 + 1000),  # 오디오가 없다 — 오디오의 표도 없다
+        ((3, 300, 2, 14), 1400 + 48 + 8 + 32 + 300 + 14),  # 오디오 청크는 오디오 샘플 수만큼
+        # 4GiB를 넘는 파일 — 청크 위치가 4바이트씩 는다: (프레임 10 + 오디오 청크 4) × 4
+        ((10, 1 << 32, 4, 0), 1400 + 160 + 16 + 64 + (1 << 32) + 56),
+    ],
+    ids=["영상과 오디오", "영상만", "오디오가 프레임보다 적다", "4GiB를 넘는다"],
+)
+def test_estimated_section_file_size_adds_the_samples_and_a_head_by_their_counts(counts, expected):
+    """구간 파일 하나의 추정은 샘플의 바이트에 샘플 수로 어림한 머리를 더한 값이어야 한다.
+
+    (프레임 수, 영상 바이트, 오디오 샘플 수, 오디오 바이트)
+    -> 1400 + 프레임 × 16 + 오디오 샘플 × 4 + min(프레임, 오디오 샘플) × 16 + 영상 바이트 + 오디오 바이트,
+       그 합이 4GiB를 넘으면 (프레임 + 오디오 청크) × 4를 더한다
+    """
+    assert estimated_section_file_size(*counts) == expected
+
+
+@pytest.mark.parametrize(
+    ("selection", "expected"),
+    [
+        # 프레임 5~6 = 샘플 6 · 7(58 + 61 = 119바이트). 오디오는 0.5~0.7초와 겹치는 샘플 4 · 5 · 6
+        (TimeRange(0.5, 0.6), 1400 + 32 + 12 + 32 + 119 + 21),
+        # 프레임 3~4 = 샘플 1 · 4. 디코드 순서로 그 사이의 샘플 2 · 3도 센다(43 + 46 + 49 + 52 = 190).
+        # 오디오는 0.3~0.5초와 겹치는 샘플 3 · 4
+        (TimeRange(0.3, 0.4), 1400 + 32 + 8 + 32 + 190 + 14),
+    ],
+    ids=["샘플이 이어진 구간", "디코드 순서가 엇갈린 구간"],
+)
+def test_sections_file_size_counts_the_samples_of_the_section_and_its_head(selection, expected):
+    """구간 파일 크기의 합은 그 구간의 영상 · 오디오 샘플 바이트에 머리의 어림을 더한 값이어야 한다.
+
+    영상 + 오디오, 구간 하나 -> expected (받을 양 sections_download_size와는 다른 값이다)
+    """
+    index = _file_index(build_mp4([video_spec(), audio_spec()]).data)
+
+    assert sections_file_size(index, [selection]) == expected
+    assert sections_download_size(index, [selection]) != expected
+
+
+def test_sections_file_size_counts_overlapping_sections_once_each():
+    """겹치는 구간은 구간마다 세어야 한다 — 구간마다 파일이 하나씩 생긴다.
+
+    영상 + 오디오. 구간 0.5~0.6초 하나의 크기 1616. 같은 구간 둘, 그리고 0.5~0.6초와 0.3~0.4초(1676)
+    -> 3232, 3292. 받을 양(sections_download_size)은 같은 구간 둘이어도 하나일 때와 같다
+    """
+    index = _file_index(build_mp4([video_spec(), audio_spec()]).data)
+    one = TimeRange(0.5, 0.6)
+
+    assert sections_file_size(index, [one]) == 1616
+    assert sections_file_size(index, [one, one]) == 3232
+    assert sections_file_size(index, [one, TimeRange(0.3, 0.4)]) == 1616 + 1676
+    assert sections_download_size(index, [one, one]) == sections_download_size(index, [one])
+
+
+def test_sections_file_size_of_a_video_without_audio_counts_no_audio():
+    """오디오가 없는 영상의 구간 파일 크기에는 오디오의 몫이 없어야 한다.
+
+    영상만, 구간 0.5~0.6초(샘플 6 · 7 — 119바이트) -> 1400 + 32 + 119
+    """
+    index = _file_index(build_mp4([video_spec()]).data)
+
+    assert sections_file_size(index, [TimeRange(0.5, 0.6)]) == 1400 + 32 + 119

@@ -11,9 +11,12 @@
 
 import copy
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from fractions import Fraction
+
+from core.utils.stop import check_stop, stoppable
 
 
 @dataclass(frozen=True)
@@ -95,13 +98,53 @@ class Mp4Raw:
     prefix: bytes | None = field(default=None, repr=False)
 
 
+# 색인 해석은 앱 전체에서 한 번에 하나만 돈다 (#309). 해석은 CPU를 몇 초씩 쓰고 그동안 다른
+# 스레드(GUI)가 느려진다 — 둘이 함께 돌면 그 시간이 겹쳐 늘어나고 메모리도 두 배로 든다.
+# 기다리는 쪽은 여기서 선다
+_PARSE_GATE = threading.Lock()
+# 잠금을 기다리며 그만둘지 묻는 간격(초) — 그만두라는 답을 이 시간 안에 알아챈다
+_STOP_POLL_SECONDS = 0.05
+
+
+def _acquire(lock: threading.Lock) -> None:
+    """잠금을 얻는다 — 기다리는 동안 그만두라는 답이 오면 얻지 않고 그만둔다.
+
+    Raises:
+        StopRequested: 기다리는 동안 그만두라는 답을 받은 경우 — 잠금은 얻지 않았다
+    """
+    while not lock.acquire(timeout=_STOP_POLL_SECONDS):
+        check_stop()
+
+
+@contextmanager
+def parse_gate() -> Iterator[None]:
+    """블록이 도는 동안 색인 해석의 차례를 쥔다 — 앱 전체에서 한 번에 하나만 돈다 (#309).
+
+    ``PendingMp4Head`` 밖에서 색인을 만드는 쪽이 쓴다. 기다리는 동안 그만두라는 답이 오면
+    차례를 얻지 않고 그만둔다.
+
+    Raises:
+        StopRequested: 기다리는 동안 그만두라는 답을 받은 경우
+    """
+    _acquire(_PARSE_GATE)
+    try:
+        yield
+    finally:
+        _PARSE_GATE.release()
+
+
 class PendingMp4Head:
     """받아 둔 moov를 필요할 때 **한 번만** 해석해 여럿이 함께 쓰게 한다 (#309).
 
     긴 영상의 moov는 해석에 몇 초가 걸리고 그동안 수백 MB를 쓴다. 받을 크기를 세는 쪽과
     다운로드 엔진이 같은 moov를 거의 같은 때에 필요로 할 수 있다 — 각자 해석하면 그 몇 초
     동안 해석이 둘 돈다. 이 객체를 함께 쥐면 먼저 ``get()``을 부른 쪽이 해석하고, 다른 쪽은
-    끝나기를 기다렸다가 같은 색인을 받는다. 도는 해석을 멈출 방법이 없어, 멈추는 대신 기다린다.
+    끝나기를 기다렸다가 같은 색인을 받는다.
+
+    해석은 앱 전체에서 한 번에 하나만 돈다(``_PARSE_GATE``) — 다른 moov의 해석이 돌고 있으면
+    그것이 끝나기를 기다린다. 청하는 쪽이 그만둘지 묻는 값(``should_stop``)을 주면 기다리는
+    동안과 해석하는 동안 그 값에 묻고, 참이면 그만둔다 — 그 청만 ``StopRequested``로 끝나고
+    바이트는 그대로 남아, 다음에 청한 쪽이 해석을 처음부터 돌린다.
 
     해석이 끝나면 바이트를 놓는다 — 색인(``Mp4Head.data``)이 같은 바이트를 들고 있다.
 
@@ -145,26 +188,43 @@ class PendingMp4Head:
         """이미 해석한 색인. 아직이면 None — 기다리지 않는다."""
         return self._head
 
-    def get(self) -> Mp4Head:
+    def get(self, should_stop: Callable[[], bool] | None = None) -> Mp4Head:
         """색인을 돌려준다. 아직이면 해석하고, 다른 쪽이 해석하는 중이면 끝나기를 기다린다.
+
+        Args:
+            should_stop: 참을 돌려주면 그만둔다 — 기다리는 동안과 해석하는 동안 묻는다.
+                None이면 이 스레드에 걸려 있는 값을 따른다(없으면 끝까지 한다)
 
         Raises:
             Exception: 해석이 던진 예외. 기억하는 종류(``permanent``)면 그 뒤로 부를 때마다
                 같은 종류 · 같은 글의 예외를 던진다
+            StopRequested: 그만두라는 답을 받은 경우 — 기억하지 않는다
         """
-        with self._lock:
+        with stoppable(should_stop):
+            return self._get()
+
+    def _get(self) -> Mp4Head:
+        if self._head is not None:
+            return self._head  # 이미 해석했다 — 기다릴 것이 없다
+        _acquire(self._lock)
+        try:
             if self._error is not None:
                 # 앞의 청이 남긴 traceback(그 청의 호출 자리들)을 떼고 던진다
                 raise self._error.with_traceback(None)
             if self._head is None:
+                _acquire(_PARSE_GATE)
                 try:
                     self._head = self._build(self._raw)
                 except self._permanent as e:
                     self._error = _without_traceback(e)
                     self._raw = None
                     raise  # 처음 실패한 청 — 원래의 예외를 해석 자리까지의 traceback과 함께 낸다
+                finally:
+                    _PARSE_GATE.release()
                 self._raw = None
             return self._head
+        finally:
+            self._lock.release()
 
 
 def _without_traceback(error: Exception) -> Exception:
