@@ -285,6 +285,10 @@ class _Track:
             + self._sizes_sum(end_block * _SIZE_BLOCK, end)
         )
 
+    def chunks_between(self, first_sample: int, last_sample: int) -> int:
+        """샘플 first~last가 걸친 청크 수 — ``mp4_ranges._chunks_between``."""
+        return self._chunk_of(last_sample)[0] - self._chunk_of(first_sample)[0] + 1
+
     def chunk_span(self, first_sample: int, last_sample: int) -> tuple[int, int]:
         """샘플 first~last가 든 청크들의 (첫 바이트, 마지막 바이트 + 1) — ``mp4_ranges._chunk_span``."""
         first_chunk, _start, _end = self._chunk_of(first_sample)
@@ -513,19 +517,32 @@ class LightTables:
         frames, video = self._frames, self._video
         first_frame = snap_to_frame(selection.start, frames, self._fps, "start")
         last_frame = max(first_frame, snap_to_frame(selection.end, frames, self._fps, "end"))
+        if first_frame == 0 and last_frame == len(frames) - 1:
+            # 영상 전체 — 받은 것이 곧 원본이다. 가장 뒤 샘플이 끝나는 위치가 파일의 크기다
+            return max(
+                track.chunk_span(0, track.count - 1)[1]
+                for track in (video, self._audio)
+                if track is not None and track.count
+            )
         low = frames.sample(first_frame)
         end_sample = frames.sample(last_frame)
         high = self._last_decoded(low, end_sample)
         video_bytes = video.sizes_between(low, high + 1)
-        audio_samples = audio_bytes = 0
+        audio_samples = audio_bytes = audio_chunks = 0
         if self._audio is not None:
             time_to = frames[last_frame] + video.delta(end_sample) / video.timescale
             needed = self._audio_samples(frames[first_frame], time_to)
             if needed is not None:
                 audio_samples = needed[1] - needed[0] + 1
                 audio_bytes = self._audio.sizes_between(needed[0], needed[1] + 1)
+                audio_chunks = self._audio.chunks_between(needed[0], needed[1])
         return estimated_section_file_size(
-            last_frame - first_frame + 1, video_bytes, audio_samples, audio_bytes
+            last_frame - first_frame + 1,
+            video_bytes,
+            audio_samples,
+            audio_bytes,
+            video.chunks_between(low, high),
+            audio_chunks,
         )
 
     def _byte_range(self, selection: TimeRange) -> tuple[int, int]:

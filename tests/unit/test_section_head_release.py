@@ -443,7 +443,7 @@ def test_stopping_during_the_cut_does_not_make_the_app_give_up_waiting_for_the_w
 ):
     """구간을 자르는 도중 정지해도 앱이 워커를 기다리다 포기하지 않아야 한다 — ffmpeg가 바로 끝난다.
 
-    컷의 오디오 단계를 10분 도는 명령으로 바꿔 띄움. 그 ffmpeg가 뜬 뒤 정지 버튼을 누름
+    경계 GOP를 다시 인코딩하는 단계를 10분 도는 명령으로 바꿔 띄움. 그 ffmpeg가 뜬 뒤 정지 버튼을 누름
     (정지는 워커가 끝나기를 2초까지 기다린다 — 그동안 앱이 선다)
     -> 정지 버튼의 처리가 1.5초 안에 끝난다, "대기를 포기한다" 경고가 없다(같은 로거의 표식은 잡힌다)
     -> 카드는 대기, 핸들 없음, 띄운 ffmpeg가 모두 끝났다, 저장 폴더에 mp4가 남지 않았다
@@ -455,7 +455,7 @@ def test_stopping_during_the_cut_does_not_make_the_app_give_up_waiting_for_the_w
     real = cut_module.run_ffmpeg
 
     def slowed(args, **kwargs):
-        if "audio.m4a" in args:
+        if str(args[-1]).endswith(("_head.mp4", "_tail.mp4", "_whole.mp4")):
             kwargs.pop("on_out_time", None)
             threading.Timer(0.3, launched.set).start()  # 프로세스가 뜬 뒤에 알린다
             # 제품이 멈추지 못하면 10분을 돈다 — 띄운 프로세스를 직접 끝내 워커가 끝나게 한다
@@ -497,7 +497,7 @@ def test_pausing_during_the_cut_shows_paused_and_resuming_goes_back_to_cutting(
 ):
     """구간을 자르는 도중 일시정지하면 카드가 "Paused"로 서 있고, 재개하면 "Cutting"으로 돌아가 끝나야 한다.
 
-    컷의 오디오 단계의 ffmpeg를 띄우는 순간에 전역 버튼으로 일시정지(버튼이 눌릴 때까지 테스트가
+    경계 GOP를 다시 인코딩하는 ffmpeg를 띄우는 순간에 전역 버튼으로 일시정지(버튼이 눌릴 때까지 테스트가
     그 ffmpeg를 세워 둔다) → 진행률이 선 뒤 0.8초 지켜봄 → 다시 눌러 재개
     -> 일시정지 중: 카드 PAUSED, 상태 문구가 "% · Paused"로 끝난다, 진행률이 0.8초 동안 그대로다,
        그 ffmpeg가 살아 있다, 카드가 완료되지 않았다
@@ -510,7 +510,7 @@ def test_pausing_during_the_cut_shows_paused_and_resuming_goes_back_to_cutting(
     audio = []
 
     def on_launch(command, process) -> None:
-        if command[-1] == "audio.m4a":
+        if str(command[-1]).endswith(("_head.mp4", "_tail.mp4", "_whole.mp4")):
             audio.append(process)
             # 버튼이 눌릴 때까지 막 뜬 ffmpeg를 세워 둔다 — 짧은 단계가 그사이 끝나지 않게.
             # 풀고 돌아가면 제품이 띄운 직후의 확인에서 일시정지를 보고 멈춘다
@@ -558,7 +558,7 @@ def test_stopping_a_cut_that_is_paused_ends_the_suspended_ffmpeg(
 ):
     """컷 도중 일시정지한 채 정지하면(앱을 닫을 때도 이 길이다) 멈춰 있던 ffmpeg가 끝나고 아무것도 남지 않아야 한다.
 
-    컷의 오디오 단계를 10분 도는 명령으로 바꿔 띄움. 그 ffmpeg가 뜬 뒤 일시정지 → 0.4초 뒤 정지 버튼
+    경계 GOP를 다시 인코딩하는 단계를 10분 도는 명령으로 바꿔 띄움. 그 ffmpeg가 뜬 뒤 일시정지 → 0.4초 뒤 정지 버튼
     -> 정지 버튼의 처리가 1.5초 안에 끝난다, "대기를 포기한다" 경고가 없다(같은 로거의 표식은 잡힌다)
     -> 카드는 대기, 핸들 없음, 띄운 ffmpeg가 모두 끝났다, 저장 폴더에 mp4가 남지 않았다
     """
@@ -569,7 +569,7 @@ def test_stopping_a_cut_that_is_paused_ends_the_suspended_ffmpeg(
     real = cut_module.run_ffmpeg
 
     def slowed(args, **kwargs):
-        if args[-1] == "audio.m4a":
+        if str(args[-1]).endswith(("_head.mp4", "_tail.mp4", "_whole.mp4")):
             kwargs.pop("on_out_time", None)
             threading.Timer(0.3, launched.set).start()  # 프로세스가 뜬 뒤에 알린다
             guard = threading.Timer(8.0, end_all, [processes])  # 제품이 못 끝내면 테스트가 끝낸다

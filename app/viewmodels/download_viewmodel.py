@@ -25,7 +25,6 @@ MonitorM3U8Thread의 계산과 동일하며 모듈 수준 함수로 둔다.
 
 import dataclasses
 import logging
-import os
 import threading
 import time
 from time import gmtime, strftime
@@ -39,7 +38,7 @@ from app.user_activity import user_interacting
 from app.viewmodels.data import ContentItem
 from app.viewmodels.section_edit_viewmodel import take_section_head, watch_section_head
 from core.api.playback_tracks import StreamSelectionError
-from core.downloaders.base import PostprocessError
+from core.downloaders.base import DiskSpaceError, FileSizeLimitError, PostprocessError
 from core.downloaders.hls_aes_downloader import DecryptionError
 from core.downloaders.integrity import TruncatedSegmentError
 from core.models.events import ProgressEvent
@@ -98,6 +97,14 @@ def _failure_message_key(exc: BaseException) -> str | None:
     stderr·실행 경로를, OSError는 전체 파일 경로를 품는다. 상세는 다운로드
     로그가 이미 담당한다. 매핑에 없는 예외는 None(사유 생략)으로 둔다.
     """
+    space_key = getattr(exc, "space_key", None)
+    if space_key:
+        # 쓰다가 공간이 없어 난 실패 (#309) — 엔진이 적어 둔 키를 다른 판정보다 먼저 쓴다.
+        # 자르다 난 실패여도 원인이 공간 부족(또는 FAT의 파일 크기 한계)이면 그것으로 알린다
+        return space_key
+    if isinstance(exc, FileSizeLimitError):
+        # 저장 폴더의 파일 시스템(FAT 계열)이 담을 수 없는 크기의 파일이다 (#309)
+        return exc.message_key
     if isinstance(exc, PostprocessError):
         # PostprocessError는 항상 FFmpegError를 원인으로 체인한다(base.py의
         # 유일한 raise 지점, `raise PostprocessError(...) from e`). 원인
@@ -131,6 +138,9 @@ def _failure_message_key(exc: BaseException) -> str | None:
         return "Network connection error"
     if isinstance(exc, requests.RequestException):
         return "Network connection error"
+    if isinstance(exc, DiskSpaceError):
+        # 받기 전에 저장 폴더의 여유 공간이 만들 파일보다 적었다 (#309)
+        return exc.message_key
     if isinstance(exc, OSError):
         return "Failed to save file"
     return None
@@ -314,15 +324,16 @@ class DownloadViewModel(QObject):
         """실패 카드의 재시도를 누른 순간에 한 번, 끝낸 구간의 파일이 그대로 있는지 확인한다 (#309).
 
         일부 구간만 실패한 구간 다운로드에만 할 일이 있다. 끝낸 것으로 적힌 구간 가운데
-        파일이 없어진 것은 끝나지 않은 구간으로 돌린다 — 다음 다운로드가 그 구간도 다시
-        만든다. 확인은 여기서만 한다. 다운로드를 시작하지 않는다.
+        파일이 없어졌거나 크기가 달라진 것은 끝나지 않은 구간으로 돌린다 — 다음 다운로드가 그
+        구간도 다시 만든다(``SectionResume.with_files_checked``). 다운로드를 시작하지 않는다.
+        같은 확인을 다운로드를 시작할 때(``_usable_resume``)와 엔진이 준비할 때도 한다 —
+        재시도 버튼을 거치지 않은 시작과, 누른 뒤 시작하기까지의 사이를 덮는다.
         """
         retry = getattr(item, "section_retry", None)
         if retry is None:
             return
         resume_key, resume = retry
-        done = frozenset(number for number in resume.done if os.path.isfile(resume.paths[number]))
-        item.section_retry = (resume_key, dataclasses.replace(resume, done=done))
+        item.section_retry = (resume_key, resume.with_files_checked())
 
     def isPaused(self) -> bool:
         """지금의 다운로드가 일시정지 상태인지 — 엔진의 상태로 답한다."""
@@ -636,6 +647,15 @@ class DownloadViewModel(QObject):
                 "Could not cut the section · press retry\n"
                 "Cutting the section failed. Retry processes only the failed sections."
             ),
+            "Not enough disk space": self.tr(
+                "Not enough disk space · free up space or pick another folder\n"
+                "The download folder does not have enough free space for the section files."
+            ),
+            "File too large for a FAT32 drive": self.tr(
+                "FAT32 drive can't hold files over 4 GB · pick another folder\n"
+                "This drive (FAT32) cannot store a file larger than 4 GB. Pick another folder, "
+                "or format the drive as exFAT or NTFS."
+            ),
             "Segment was received truncated": self.tr(
                 "Video data arrived corrupted · try again later\n"
                 "Part of the video kept arriving incomplete from the server. "
@@ -687,9 +707,11 @@ def _usable_resume(item: ContentItem, selections: tuple):
     resume_key, resume = retry
     if resume_key != _resume_key(item):
         return None
-    if resume.selections == selections:
-        return resume
-    return _resume_for_edited_sections(item, resume, selections)
+    if resume.selections != selections:
+        resume = _resume_for_edited_sections(item, resume, selections)
+    # 끝낸 구간의 파일이 그사이 지워졌거나 바뀌었으면 끝낸 것으로 치지 않는다 — 구간 파일
+    # 이름을 예약하기 전에 가려야, 바뀐 파일을 덮어쓰지 않고 그 구간이 새 이름을 받는다
+    return resume.with_files_checked() if resume is not None else None
 
 
 def _resume_for_edited_sections(item: ContentItem, resume: SectionResume, selections: tuple):

@@ -665,3 +665,14 @@ def test_file_size_of_a_moov_behind_the_samples_is_refused_like_the_index():
         moov_sections_file_size(raw, [TimeRange(0.2, 0.5)])
 
     assert caught.value.message_key == MP4_UNSUPPORTED
+
+
+def test_light_tables_count_the_whole_video_as_the_size_of_the_source_file():
+    """색인 없이 세어도 영상 전체를 덮는 구간의 크기는 원본 파일의 크기여야 한다.
+
+    표준 영상 + 오디오, 구간 0초 ~ 1.2초(프레임 0~11) -> moov_sections_file_size == 파일의 바이트 수
+    """
+    built = build_mp4([video_spec(), audio_spec()])
+    raw = read_mp4_raw(lambda offset, size: built.data[offset : offset + size])
+
+    assert moov_sections_file_size(raw, [TimeRange(0.0, 1.2)]) == len(built.data)

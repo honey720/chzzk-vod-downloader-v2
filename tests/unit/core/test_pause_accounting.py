@@ -100,6 +100,7 @@ class _Recording(RunLogger):
         super().__init__()
         self.speed_lines: list[float] = []  # 스레드 수 · 속도 로그를 남긴 시각
         self.stopped: list[str] = []
+        self.stopped_after_failure: list[str] = []
         self.started_at: list[float] = []  # 받기 시작 로그(log_download_start)의 시각
 
     def log_download_start(self, *args):
@@ -113,6 +114,9 @@ class _Recording(RunLogger):
 
     def log_stopped(self, phase):
         self.stopped.append(phase)
+
+    def log_stopped_after_failure(self, phase):
+        self.stopped_after_failure.append(phase)
 
 
 def _recording_engine(tmp_path, monkeypatch, throttle: float):
@@ -228,6 +232,55 @@ def test_stopping_while_receiving_tells_the_logger_it_stopped_during_transfer(
     assert not finished.is_set() and failures == []
 
 
+def test_engine_that_stops_itself_after_a_failure_does_not_log_a_stop_by_the_user(
+    tmp_path, monkeypatch
+):
+    """받는 도중 엔진이 실패로 스스로 멈추면 사용자가 멈췄다는 줄이 아니라 실패로 멈췄다는 줄을 남겨야 한다.
+
+    청크마다 5ms 쉬는 가짜 세션으로 받는 도중 0.25초에 회복할 수 없는 실패를 알림(_fail_fatally)
+    -> log_stopped 0회, log_stopped_after_failure("transfer") 1회, 실패 통지 1건(그 예외), 완료 통지 없음
+    """
+    engine, data, logger, _output, finished, failures = _recording_engine(
+        tmp_path, monkeypatch, throttle=0.005
+    )
+    error = RuntimeError("part failed")
+
+    data.model.start()
+    thread = _run_in_thread(engine)
+    time.sleep(0.25)
+    engine._fail_fatally(error, "Thread failed — failing download")
+    thread.join(timeout=10)
+
+    assert (logger.stopped, logger.stopped_after_failure) == ([], ["transfer"])
+    assert failures == [error] and not finished.is_set()
+
+
+def test_user_stop_of_a_run_after_a_failed_run_is_logged_as_a_stop_by_the_user(
+    tmp_path, monkeypatch
+):
+    """실패로 멈춘 엔진을 다시 돌려 사용자가 멈추면 사용자가 멈췄다는 줄을 남겨야 한다.
+
+    같은 엔진. 첫 실행: 받는 도중 실패로 멈춤. 둘째 실행: 받는 도중 0.25초에 중단
+    -> log_stopped_after_failure == ["transfer"](첫 실행), log_stopped == ["transfer"](둘째 실행)
+    """
+    engine, data, logger, _output, _finished, _failures = _recording_engine(
+        tmp_path, monkeypatch, throttle=0.005
+    )
+    data.model.start()
+    thread = _run_in_thread(engine)
+    time.sleep(0.25)
+    engine._fail_fatally(RuntimeError("part failed"), "Thread failed — failing download")
+    thread.join(timeout=10)
+
+    data.model.start()
+    thread = _run_in_thread(engine)
+    time.sleep(0.25)
+    data.model.stop()
+    thread.join(timeout=10)
+
+    assert (logger.stopped, logger.stopped_after_failure) == (["transfer"], ["transfer"])
+
+
 def test_stopping_while_preparing_tells_the_logger_it_stopped_during_prepare(tmp_path, monkeypatch):
     """준비하는 동안 중단하면 로거에 준비 단계에서 중단됐다고 알려야 하고, 받기를 띄우지 않아야 한다.
 
@@ -261,16 +314,16 @@ def test_cut_stage_times_leave_out_the_pause_and_the_pause_is_reported_apart(
 ):
     """컷의 단계 시간에는 일시정지한 시간이 들지 않아야 하고, 그 합은 따로 넘겨야 한다.
 
-    구간 하나(프레임 35~80). 오디오 단계의 ffmpeg가 뜬 직후 일시정지하고 1.5초 뒤 재개
+    구간 하나(프레임 35~80). 머리 재인코딩의 ffmpeg가 뜬 직후 일시정지하고 1.5초 뒤 재개
     -> log_cut_stages의 넷째 인자(일시정지한 시간) 1.2초 이상 1.5초 + 0.5초 이하
     -> 단계 시간의 합 + 일시정지한 시간 <= 컷에 걸린 실제 시간 + 0.3초,
-       오디오 단계의 시간 < 1.2초(일시정지가 빠졌다)
+       머리 재인코딩 단계의 시간 < 1.2초(일시정지가 빠졌다)
     """
     run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))])
     marks: list[float] = []
 
     def on_launch(command, process) -> None:
-        if command[-1] == "audio.m4a" and not marks:
+        if command[-1] == "0_head.mp4" and not marks:
             marks.append(time.perf_counter())
             assert run.data.model.pause() is True, "전제: 컷 도중에 일시정지됐다"
             threading.Timer(1.5, run.data.model.resume).start()
@@ -288,7 +341,7 @@ def test_cut_stage_times_leave_out_the_pause_and_the_pause_is_reported_apart(
     _number, _total, stages, paused = logged[0]
     by_name = dict(stages)
     assert 1.2 <= paused <= 2.0
-    assert by_name["audio"] < 1.2
+    assert by_name["0_head"] < 1.2
     assert sum(by_name.values()) + paused <= took + 0.3
     assert (run.finished, run.failures) == (1, [])
 
@@ -312,13 +365,13 @@ def test_stopping_during_the_cut_tells_the_logger_it_stopped_during_postprocess(
 ):
     """구간을 자르는 도중 중단하면 로거에 후처리 단계에서 중단됐다고 알려야 한다.
 
-    구간 하나(프레임 35~80). 오디오 단계의 ffmpeg가 뜬 직후 중단
+    구간 하나(프레임 35~80). 머리 재인코딩의 ffmpeg가 뜬 직후 중단
     -> log_stopped("postprocess") 1회, 완료 통지 없음
     """
     run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))])
 
     def on_launch(command, process) -> None:
-        if command[-1] == "audio.m4a":
+        if command[-1] == "0_head.mp4":
             run.data.model.stop()
 
     processes = record_processes(monkeypatch, on_launch)

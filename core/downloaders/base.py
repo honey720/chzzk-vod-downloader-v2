@@ -52,8 +52,10 @@ file(#73)·m3u8(#74) 엔진이 평행 중복으로 갖고 있던 실행 엔진�
 data·logger는 DownloadData/DownloadLogger 호환 객체를 주입받는다.
 """
 
+import errno
 import os
 import re
+import shutil
 import statistics
 import threading
 import time as tm
@@ -75,6 +77,7 @@ from core.models.events import (
 )
 from core.models.plan import DownloadPlan
 from core.utils.ffmpeg import FFmpegError, read_in_chunks, remux_stream
+from core.utils.filesystem import FAT_MAX_FILE_BYTES, filesystem_name, is_fat
 from core.utils.interaction import rest_totals
 
 
@@ -112,6 +115,63 @@ _PERMANENT_ERROR_REQUEUE_LIMIT = 2  # 항목별 최대 재큐 횟수 — 총 3�
 _TRANSIENT_ERROR_REQUEUE_LIMIT = 10  # 항목별 최대 재큐 횟수 — 총 11회 시도
 # 4xx 중 일시적일 수 있는 상태 — 요청 타임아웃(408)·과요청(429)은 재시도가 유효하다
 _TRANSIENT_HTTP_STATUSES = frozenset({408, 429})
+
+
+DISK_SPACE_SHORT = "Not enough disk space"  # 저장 폴더의 여유 공간이 만들 파일보다 적다
+
+
+class DiskSpaceError(OSError):
+    """저장 폴더의 여유 공간이 만들 파일보다 적어 받기를 시작하지 않았다 (#309).
+
+    ``message_key``는 번역하지 않은 i18n 키 원문이다. 표시 계층이 번역한다. OSError의 하위라
+    파일을 쓰다 난 오류와 같은 실패 처리(통지 · 정리)를 탄다.
+    """
+
+    def __init__(self, needed: int, free: int):
+        super().__init__(f"필요 {needed}바이트 · 여유 {free}바이트")
+        self.message_key = DISK_SPACE_SHORT
+        self.needed = needed  # 만들 파일들의 크기(바이트)
+        self.free = free  # 저장 폴더의 여유 공간(바이트)
+
+
+# 저장 폴더의 파일 시스템(FAT · FAT32)이 파일 하나에 담을 수 있는 크기보다 만들 파일이 크다
+FILE_TOO_LARGE_FOR_FAT = "File too large for a FAT32 drive"
+
+# 쓰기가 "남은 공간이 없다"로 실패했을 때 ffmpeg가 stderr에 적는 글 — ffmpeg가 쓰다 실패하면
+# OSError가 아니라 이 글이 든 실패로 온다
+_NO_SPACE_TEXT = "No space left on device"
+
+
+class FileSizeLimitError(OSError):
+    """저장 폴더의 파일 시스템이 담을 수 없는 크기의 파일을 만들게 되어 받지 않았다 (#309).
+
+    FAT 계열(FAT · FAT32)은 파일 하나가 4GiB − 1바이트를 넘을 수 없다. 넘는 순간의 쓰기는
+    공간이 넉넉해도 "남은 공간이 없다"로 실패한다 — 받기 전에 알린다. ``message_key``는
+    번역하지 않은 i18n 키 원문이다. OSError의 하위라 파일을 쓰다 난 오류와 같은 실패 처리를 탄다.
+    """
+
+    def __init__(self, largest: int, filesystem: str):
+        super().__init__(f"파일 {largest}바이트 · 파일 시스템 {filesystem}")
+        self.message_key = FILE_TOO_LARGE_FOR_FAT
+        self.largest = largest  # 만들 파일 가운데 가장 큰 것의 크기(바이트, 어림일 수 있다)
+        self.filesystem = filesystem  # 저장 폴더의 파일 시스템 이름(OS가 준 그대로)
+
+
+def _ran_out_of_space(exc: BaseException) -> bool:
+    """그 실패의 원인 사슬에 "남은 공간이 없다"(ENOSPC)가 있는지.
+
+    파이썬이 쓰다 실패하면 errno가 ENOSPC인 OSError로, ffmpeg가 쓰다 실패하면 stderr의 글이 든
+    실패로 온다. 원인(``__cause__``)을 따라 올라가며 둘 다 본다.
+    """
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if isinstance(exc, OSError) and exc.errno == errno.ENOSPC:
+            return True
+        if _NO_SPACE_TEXT in str(exc):
+            return True
+        exc = exc.__cause__
+    return False
 
 
 class TruncatedBodyError(requests.RequestException):
@@ -380,6 +440,8 @@ class BaseDownloader(ABC):
         self._monitor_stop = threading.Event()
         self._pause_clock = _PauseClock()  # 컷이 도는 동안의 일시정지 시간
         self._cut_paused = 0.0  # 지금 자르는 구간에서 일시정지한 시간의 합(초)
+        # 이번 실행이 실패를 알렸는지 — 실패로 멈춘 것과 사용자가 멈춘 것을 로그에서 가른다
+        self._failure_notified = False
         self._measured_paused = 0.0  # 속도를 마지막으로 잰 때까지 일시정지한 시간의 합(초)
         # 전송 중 관측된 정점 동시 스레드 수 — 전송 종료 요약 로그용 (#110)
         self._peak_threads = 0
@@ -506,6 +568,72 @@ class BaseDownloader(ABC):
     @abstractmethod
     def _cleanup_partial(self) -> None:
         """실패·중단 시 부분 산출물을 정리한다."""
+
+    # ============ 저장 폴더가 담을 수 있는 파일 크기 · 쓰다가 난 공간 부족 (#309) ============
+
+    def _output_folder(self) -> str:
+        """산출물을 쓰는 폴더 — 구간 다운로드는 첫 구간 파일이 놓이는 곳이다."""
+        paths = self.s.content.selection_paths
+        output = paths[0] if paths else self.s.output_path
+        return os.path.dirname(os.path.abspath(output))
+
+    def _require_file_size_fits(self, largest: int) -> None:
+        """만들 파일 가운데 가장 큰 것이 저장 폴더의 파일 시스템에 담기는지 받기 전에 확인한다.
+
+        저장 폴더가 FAT 계열이고 그 크기가 4GiB − 1바이트를 넘으면 받지 않는다. 파일 시스템
+        이름을 읽지 못하면 확인하지 않는다. 읽은 이름과 크기는 로그 한 줄로 남긴다.
+
+        Args:
+            largest: 만들 파일 가운데 가장 큰 것의 크기(바이트) — 어림이어도 된다
+
+        Raises:
+            FileSizeLimitError: 저장 폴더가 FAT 계열이고 largest가 한계를 넘는 경우
+        """
+        name = filesystem_name(self._output_folder())
+        self._log_if_supported("log_file_size_check", name, int(largest))
+        if is_fat(name) and largest > FAT_MAX_FILE_BYTES:
+            raise FileSizeLimitError(int(largest), name)
+
+    def _notify_failed(self, exc: BaseException) -> None:
+        """실패를 알린다 — 쓰다가 공간이 없어 난 실패면 그 사실을 예외에 적은 뒤에(``_marked``).
+
+        엔진이 실패를 알리는 자리는 모두 이 메서드를 거친다. 콜백을 감싸 두지 않는 까닭: 엔진을
+        붙잡는 함수를 엔진이 들면 서로를 가리켜, 다운로드가 끝나도 엔진이 바로 풀리지 않는다.
+        """
+        self._failure_notified = True
+        self._on_failed(self._marked(exc))
+
+    def _marked(self, exc: BaseException) -> BaseException:
+        """쓰다가 공간이 없어 난 실패면 안내 키를 예외의 ``space_key``에 적어 돌려준다.
+
+        표시 계층은 그 키가 있으면 다른 판정보다 먼저 쓴다 — 자르다 난 실패여도 원인이 공간
+        부족이면 공간 부족으로 알린다. 예외의 종류와 글은 바꾸지 않는다.
+        """
+        if getattr(exc, "space_key", None) is None and _ran_out_of_space(exc):
+            key = self._space_failure_key()
+            if key is not None:
+                try:
+                    exc.space_key = key
+                except AttributeError:
+                    pass  # 속성을 받지 않는 예외 — 적지 못해도 실패는 그대로 알린다
+        return exc
+
+    def _space_failure_key(self) -> str | None:
+        """쓰다가 "남은 공간이 없다"로 실패했을 때의 안내 키. 따로 알릴 것이 없으면 None이다.
+
+        저장 폴더가 FAT 계열이고 지금도 파일 하나의 한계만큼은 비어 있으면, 공간이 아니라 그
+        한계에 닿은 것이다 — FAT 안내를 준다. 그 밖에는 구간 다운로드면 공간 부족 안내를 준다.
+        구간 없는 다운로드는 None이다(표시 계층의 저장 실패 안내가 디스크 공간을 말한다).
+        """
+        folder = self._output_folder()
+        if is_fat(filesystem_name(folder)):
+            try:
+                roomy = shutil.disk_usage(folder).free >= FAT_MAX_FILE_BYTES
+            except OSError:
+                roomy = True  # 여유를 모른다 — FAT인 것은 알므로 그 한계로 알린다
+            if roomy:
+                return FILE_TOO_LARGE_FOR_FAT
+        return DISK_SPACE_SHORT if self.s.content.selections else None
 
     def _stop_requested(self) -> bool:
         """다운로드를 중단하라는 요청이 왔는지 — 컷이 도는 ffmpeg를 끝낼지 묻는 데 쓴다 (#309).
@@ -710,6 +838,7 @@ class BaseDownloader(ABC):
         """다운로드 파이프라인을 실행한다. 관측 스레드도 여기서 소유·시작한다."""
         monitor = threading.Thread(target=self._monitor_loop, name="DownloadMonitor", daemon=True)
         stopped_in = None  # 중단을 처음 본 단계 — prepare · transfer · postprocess
+        self._failure_notified = False
         try:
             self.s.start_time = tm.time()
             # 모델이 세는 일시정지 시간은 모델이 사는 동안의 합이다 — 같은 모델로 다시 실행하면
@@ -881,23 +1010,27 @@ class BaseDownloader(ABC):
             # 중단을 같은 신호(WAITING)로 뭉뚱그려 구분하지 못한 게 뿌리였다
             # (#135와 같은 자리: 엔진 종료 신호와 실패 처리를 분리해야 한다).
             if self.state == DownloadState.WAITING:
-                # 사용자가 중단했다 — 어느 단계였는지 한 줄 남긴다 (#309). 로그가 완료도 실패도
-                # 없이 끊기면 중단인지 죽은 것인지 가릴 수 없다
-                self._log_if_supported("log_stopped", stopped_in or "postprocess")
+                # 중단됐다 — 어느 단계였는지 한 줄 남긴다 (#309). 로그가 완료도 실패도 없이
+                # 끊기면 중단인지 죽은 것인지 가릴 수 없다. 실패를 알린 뒤의 중단은 엔진이
+                # 스스로 멈춘 것이다(``_fail_fatally``) — 사용자가 멈춘 것과 다른 줄을 남긴다
+                self._log_if_supported(
+                    "log_stopped_after_failure" if self._failure_notified else "log_stopped",
+                    stopped_in or "postprocess",
+                )
                 self._cleanup_partial()
 
         except PostprocessError as e:
             # 후처리 실패 (#92) — 다운로드는 완결됐으므로 세그먼트(임시 폴더)를
             # 보존한다. 불완전한 산출물은 후처리 단계가 이미 삭제했다.
             # _cleanup_partial()을 부르지 않는 것이 이 분기의 존재 이유다
-            self._on_failed(e)
+            self._notify_failed(e)
             self.logger.log_exception("Postprocess failed", e)
             self.logger.save_and_close()
 
         except self._failure_exceptions as e:
             # 오류 발생 시 부분 산출물 삭제
             self._cleanup_partial()
-            self._on_failed(e)
+            self._notify_failed(e)
             self.logger.log_exception("Download failed", e)
             self.logger.save_and_close()
 
@@ -979,7 +1112,7 @@ class BaseDownloader(ABC):
         (hls_aes 복호화 실패 경로에서 승격 — #131부터 재큐 상한 도달도 쓴다)
         """
         self.logger.log_error(log_message, exc)
-        self._on_failed(exc)
+        self._notify_failed(exc)
         self.model.stop()
 
     def _requeue_slow(self, item, part_num: int, diagnostic: str = "") -> None:

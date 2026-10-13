@@ -582,20 +582,22 @@ def test_retry_bar_starts_from_zero_and_the_count_continues_from_the_finished_se
     assert card.item.section_retry is None
 
 
-def test_retry_press_is_the_only_moment_the_finished_files_are_checked(card):
-    """끝낸 구간의 파일이 있는지는 재시도를 누른 순간에만 보고, 그때 없는 구간만 다시 만들 것으로 돌려야 한다.
+def test_finished_files_are_checked_at_the_retry_press_and_again_at_the_start(card):
+    """끝낸 구간의 파일은 재시도를 누를 때와 다운로드를 시작할 때 모두 확인해, 없는 구간을 다시 만들 것으로 돌려야 한다.
 
     구간 셋, 둘째만 실패. `_3` 파일을 지움 → ↻ → `_1` 파일을 지움 → 다운로드 시작
-    -> 넘겨진 section_resume의 끝낸 구간 == {0}
+    -> ↻ 직후 카드의 기록의 끝낸 구간 == {0}, 넘겨진 section_resume의 끝낸 구간 == 빈 것
     """
     paths = _fail_second_section(card)
     os.remove(paths[2])
 
     card.retry()
+    after_press = card.item.section_retry[1].done
     os.remove(paths[0])
     card.restart()
 
-    assert card.submission["content"].section_resume.done == frozenset({0})
+    assert after_press == frozenset({0})
+    assert card.submission["content"].section_resume.done == frozenset()
 
 
 def test_global_download_does_not_start_a_card_left_failed(card):

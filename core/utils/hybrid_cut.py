@@ -420,6 +420,75 @@ def _hybrid_cut(
     return CutResult(output_path=output_path, plan=plan, source=source, pieces=tuple(inspected))
 
 
+def encode_boundary_pieces(
+    source_path: str,
+    frames: CutFrames,
+    plan: CutPlan,
+    work_dir: str,
+    *,
+    inspect: bool = False,
+    on_stage: Callable[[str, float], None] | None = None,
+    on_progress: Callable[[float], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
+    should_pause: Callable[[], bool] | None = None,
+) -> tuple[SourceInfo, tuple[str, ...], tuple[PieceInfo, ...]]:
+    """구간의 경계 GOP만 다시 인코딩해 work_dir에 조각 파일로 쓴다 (#309).
+
+    구간 파일을 직접 쓰는 경로(``core.utils.mp4_section_writer``)가 쓴다 — 가운데는 받으면서
+    구간 파일에 이미 옮겼으므로 복사 · 오디오 · 잇기가 없다. 조각마다 SPS · PPS 번호를
+    1부터 차례로 준다(원본은 0번).
+
+    Args:
+        source_path: 경계 GOP의 원본 샘플이 든 mp4 — 부분 mp4여도 된다
+        plan: 구간의 조각. 다시 인코딩하는 조각(mid가 아닌 것)만 만든다
+        work_dir: 조각 파일을 둘 폴더. 없으면 만든다. 지우는 것은 부르는 쪽이 한다
+        inspect · on_stage · should_stop · should_pause: ``hybrid_cut``과 같다. 단계는
+            ``probe``와 조각마다의 ``<번호>_<종류>``다
+        on_progress: 0~1. 조각을 모두 만들어도 1은 알리지 않는다 — 구간 파일을 마저 쓴
+            부르는 쪽이 끝을 알린다
+
+    Returns:
+        (입력에서 읽은 정보, 다시 인코딩한 조각 파일의 경로 — plan의 순서대로, 조각을
+        들여다본 결과 — inspect일 때만)
+
+    Raises:
+        CutError · CutCancelled: ``hybrid_cut``과 같다
+    """
+    token = _stop_check.set(should_stop)
+    pause_token = _pause_check.set(should_pause)
+    try:
+        _reject_transport_stream(source_path)
+        work: dict[str, tuple[float, float]] = {"probe": (_WORK_CALL, 0.0)}
+        for number, piece in enumerate(plan.pieces):
+            if piece.reencoded:
+                span = _end_of(frames, piece.end) - _start_of(frames, piece.first)
+                work[f"{number}_{piece.kind}"] = (_WORK_ENCODE_PIECE, span)
+        work["write"] = (_WORK_CALL, 0.0)  # 구간 파일을 마저 쓰는 몫 — 부르는 쪽의 일이다
+        progress = _CutProgress(on_progress, work)
+        with _stage(on_stage, "probe", progress):
+            source = _probe_source(source_path, frames, plan)
+        source_path = os.path.abspath(source_path)
+        os.makedirs(work_dir, exist_ok=True)
+        paths: list[str] = []
+        inspected: list[PieceInfo] = []
+        for number, piece in enumerate(plan.pieces):
+            if not piece.reencoded:
+                continue
+            name = f"{number}_{piece.kind}.mp4"
+            with _stage(on_stage, f"{number}_{piece.kind}", progress):
+                command = _encode_command(
+                    source_path, frames, piece, source.video, name, len(paths) + 1
+                )
+                _run(command, _ENCODE_TIMEOUT, work_dir)
+            paths.append(os.path.join(work_dir, name))
+            if inspect:
+                inspected.append(_inspect_piece(paths[-1], piece, frames))
+        return source, tuple(paths), tuple(inspected)
+    finally:
+        _pause_check.reset(pause_token)
+        _stop_check.reset(token)
+
+
 def _stage_work(
     frames: CutFrames, plan: CutPlan, has_audio: bool
 ) -> dict[str, tuple[float, float]]:
@@ -542,9 +611,18 @@ def _end_of(frames: CutFrames, end: int) -> float:
 
 
 def _encode_command(
-    source_path: str, frames: CutFrames, piece: CutPiece, video: VideoParams, name: str
+    source_path: str,
+    frames: CutFrames,
+    piece: CutPiece,
+    video: VideoParams,
+    name: str,
+    parameter_set_id: int | None = None,
 ) -> list[str]:
-    """재인코딩 조각 — 앞 키프레임부터 디코드해 piece.first 이전을 버리고 piece.end 직전까지."""
+    """재인코딩 조각 — 앞 키프레임부터 디코드해 piece.first 이전을 버리고 piece.end 직전까지.
+
+    parameter_set_id를 주면 조각의 SPS · PPS가 그 번호를 쓴다 — 원본(0번)과 같은 샘플 설명에
+    함께 넣으려면 번호가 달라야 한다(``core.utils.mp4_section_writer``).
+    """
     margin = _margin(frames)
     seek = max(_start_of(frames, piece.first) - margin, 0.0)
     length = _end_of(frames, piece.end) - seek - margin
@@ -553,7 +631,7 @@ def _encode_command(
         "-i", source_path,
         "-t", _seconds(length),
         "-map", "0:v:0", "-an",
-        *_x264_args(video, frames.timescale),
+        *_x264_args(video, frames.timescale, parameter_set_id),
         *_reorder_delay_args(frames, piece),
         "-f", "mp4", name,
     ]  # fmt: skip
@@ -646,11 +724,15 @@ def _mux_command(
     ]  # fmt: skip
 
 
-def _x264_args(video: VideoParams, timescale: int) -> list[str]:
+def _x264_args(
+    video: VideoParams, timescale: int, parameter_set_id: int | None = None
+) -> list[str]:
     """원본 SPS에 맞춘 libx264 인코딩 옵션."""
     display_width = video.coded_width - video.crop[2]
     display_height = video.coded_height - video.crop[3]
     params = ["b-pyramid=" + ("normal" if video.reorder_delay == 2 else "none")]
+    if parameter_set_id is not None:
+        params.append(f"sps-id={parameter_set_id}")  # SPS와 PPS의 번호를 함께 정한다
     filters: list[str] = []
     if (video.coded_width, video.coded_height) != (_ceil16(display_width), _ceil16(display_height)):
         # x264는 화면 크기를 16의 배수로만 올림한다. 원본이 그보다 크게 부호화했으면

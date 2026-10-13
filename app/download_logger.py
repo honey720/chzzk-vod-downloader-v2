@@ -199,6 +199,17 @@ class DownloadLogger:
         """
         self.info(f"Prepare completed in {elapsed:.2f} seconds" + (f" - {note}" if note else ""))
 
+    def log_file_size_check(self, filesystem, largest: int):
+        """저장 폴더의 파일 시스템과 만들 파일 가운데 가장 큰 것의 크기를 로깅합니다 (#309).
+
+        FAT 계열(FAT · FAT32)은 파일 하나가 4GiB를 넘지 못한다 — 받기 전에 이 둘로 가린다.
+        filesystem은 OS가 준 이름이고, 읽지 못했으면 None이다(그때는 가리지 않는다).
+        """
+        self.info(
+            f"File size check - Filesystem: {filesystem or 'unknown'}"
+            f" - Largest file: {largest} bytes"
+        )
+
     def log_transfer_net(self, elapsed: float):
         """준비를 뺀 실제 전송 시간을 로깅합니다 (#309).
 
@@ -230,6 +241,13 @@ class DownloadLogger:
         phase는 prepare(준비) · transfer(전송) · postprocess(후처리 — 구간 다운로드는 컷)다.
         """
         self.info(f"Download stopped by user during {phase}")
+
+    def log_stopped_after_failure(self, phase: str):
+        """실패를 알린 뒤 엔진이 스스로 멈췄음을 로깅합니다 — 어느 단계였는지와 함께 (#309).
+
+        사용자가 멈춘 것(``log_stopped``)과 가른다. 실패의 내용은 그 앞의 오류 줄에 있다.
+        """
+        self.info(f"Download stopped after a failure during {phase}")
 
     def log_postprocess_start(self, kind: str):
         """후처리 시작을 로깅합니다 (kind: remux 등)."""

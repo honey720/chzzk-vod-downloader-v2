@@ -47,13 +47,20 @@ class CutCalls:
         self.after = None
 
 
-def hand_over(failed, again):
+def hand_over(failed, again, check_files: bool = True):
     """실패한 실행(failed)이 남긴 것을 새 실행(again)에 넘기고 again을 돌려준다.
 
     구간 파일 경로는 실패한 실행의 것을 그대로 다시 예약한다 — 다운로드를 시작하는 쪽이
-    하는 일이다. again을 만들 때 배정된 새 이름의 예약은 푼다.
+    하는 일이다. again을 만들 때 배정된 새 이름의 예약은 푼다. 예약하기 전에 끝낸 구간의
+    파일이 그대로인지 가리는 것도 시작하는 쪽이 하는 일이다(``with_files_checked``).
+
+    Args:
+        check_files: False면 시작하는 쪽의 그 확인을 건너뛴다 — 기록을 받은 그대로 넘겨
+            엔진이 스스로 확인하는지를 잴 때 쓴다
     """
     resume = failed.data.section_resume
+    if check_files:
+        resume = resume.with_files_checked()
     release_output_paths(again.paths)
     again.data.content.section_resume = resume
     again.paths = reserve_section_output_paths(resume.paths, resume.done)

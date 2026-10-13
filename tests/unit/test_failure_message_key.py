@@ -7,11 +7,17 @@
 계약 게이트의 `test_failure_reason_headline_by_exception`이 본다.
 """
 
+import pytest
 import requests
 
 from app.viewmodels.download_viewmodel import _failure_message_key
 from core.api.playback_tracks import STREAM_NOT_FOUND, StreamSelectionError
-from core.downloaders.base import PostprocessError
+from core.downloaders.base import (
+    DISK_SPACE_SHORT,
+    DiskSpaceError,
+    FileSizeLimitError,
+    PostprocessError,
+)
 from core.downloaders.hls_aes_downloader import DecryptionError
 from core.utils.ffmpeg import FFmpegNotFoundError, RemuxError
 from core.utils.hybrid_cut import CUT_FAILED, CUT_TIMEOUT, CUT_UNSUPPORTED, CutError
@@ -26,6 +32,13 @@ class _FakeHttpResponse:
 
 def _http_error(status: int) -> requests.HTTPError:
     return requests.HTTPError(f"HTTP {status}", response=_FakeHttpResponse(status))
+
+
+def _postprocess_with(cause: BaseException) -> PostprocessError:
+    """그 원인을 체인한 후처리 실패."""
+    error = PostprocessError("후처리(cut) 실패")
+    error.__cause__ = cause
+    return error
 
 
 class TestFailureMessageKey:
@@ -68,6 +81,42 @@ class TestFailureMessageKey:
         assert _failure_message_key(OSError(28, "No space left", "C:\\full\\path.mp4")) == (
             "Failed to save file"
         )
+
+    def test_disk_space_error_maps_to_its_own_key_not_the_save_failure(self):
+        """DiskSpaceError는 OSError의 하위지만 저장 실패가 아니라 제 키로 매핑돼야 한다 (#309).
+
+        DiskSpaceError(필요 10, 여유 5) -> "Not enough disk space"
+        """
+        assert _failure_message_key(DiskSpaceError(10, 5)) == DISK_SPACE_SHORT
+        assert DISK_SPACE_SHORT == "Not enough disk space"
+
+    def test_file_size_limit_error_maps_to_its_own_key(self):
+        """FileSizeLimitError는 OSError의 하위지만 저장 실패가 아니라 제 키로 매핑돼야 한다 (#309).
+
+        FileSizeLimitError(5GiB, "FAT32") -> "File too large for a FAT32 drive"
+        """
+        error = FileSizeLimitError(5 * 1024**3, "FAT32")
+
+        assert _failure_message_key(error) == "File too large for a FAT32 drive"
+
+    @pytest.mark.parametrize(
+        "make",
+        [
+            lambda: _postprocess_with(CutError(CUT_FAILED, "exit 1")),
+            lambda: OSError(28, "No space left on device"),
+        ],
+        ids=["cut-failure", "oserror"],
+    )
+    def test_space_key_written_by_the_engine_wins_over_the_kind_of_the_error(self, make):
+        """엔진이 space_key를 적어 둔 실패는 예외의 종류와 무관하게 그 키로 매핑돼야 한다 (#309).
+
+        컷 실패(PostprocessError ← CutError)와 OSError에 space_key = "File too large for a FAT32 drive"
+        -> 둘 다 그 키("Section cut failed" · "Failed to save file"이 아니다)
+        """
+        error = make()
+        error.space_key = "File too large for a FAT32 drive"
+
+        assert _failure_message_key(error) == "File too large for a FAT32 drive"
 
     def test_stream_selection_error_maps_to_its_own_key(self):
         """StreamSelectionError는 그 예외가 든 키로 매핑돼야 한다 (#318).
