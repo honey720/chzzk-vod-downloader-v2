@@ -21,6 +21,7 @@
 - Queue up multiple videos and download them in one go.
 - Pick the quality you want before downloading.
 - Register your cookies to download age-restricted and members-only videos.
+- Download only the parts of a video you want.
 
 ---
 
@@ -47,10 +48,18 @@ Grab the latest build from the [Releases](https://github.com/honey720/chzzk-vod-
 2. **Pick a quality**
    - Click a resolution button on the card. If you don't pick one, the highest quality is used.
 
-3. **Download**
-   - The **Download/Pause** button starts or pauses the queue; **Stop** cancels it.
+3. **Sections & save location (optional)**
+   - To download only part of a video, click **Edit sections** on the card and set the sections you want. You can add up to 20, and each one is saved as its own file. Clips don't have this option.
+   - Just type digits for a time — they fill in from the right, starting with seconds (`0100` = 1 minute). The frame box next to it takes a frame number.
+   - Leave the start or end empty to use the start or end of the video.
+   - Click **Change save location** on the card to choose a different folder for that video.
+   - Sections and the save location can only be changed before the download starts.
 
-4. **Settings & cookies**
+4. **Download**
+   - The **Download/Pause** button starts or pauses the queue; **Stop** cancels it.
+   - If there isn't enough disk space, or a file would be over 4 GB on a FAT32 drive, the card tells you when the download starts. Free up some space or pick another folder.
+
+5. **Settings & cookies**
    - Age-restricted and members-only videos can only be downloaded with the cookies of an account that can watch them. Register your cookies in **Settings**.
    - If you change the language, restart the app after applying.
 
@@ -103,12 +112,13 @@ uv run python main.py    # run the app
 #### Dev scripts
 
 - When reporting a download problem, capture the server responses with `uv run python scripts/capture_playback_debug.py <VOD URL>` and attach the output — cookies and tokens are stripped automatically.
-- To download without the GUI: `uv run python scripts/headless_download.py <VOD/clip URL> [--resolution N] [--output PATH] [--timeout SEC]`
+- To download without the GUI: `uv run python scripts/headless_download.py <VOD/clip URL> [--resolution N] [--output PATH] [--timeout SEC] [--section START-END]`
+  - Write a section as `HH:MM:SS:FF-HH:MM:SS:FF` (hours:minutes:seconds:frames). You can pass `--section` more than once.
 
 #### License
 
 - This program is distributed under the [GPL-3.0](LICENSE) license.
-- Releases bundle an [FFmpeg](https://ffmpeg.org) executable used to remux the merged output
+- Releases bundle an [FFmpeg](https://ffmpeg.org) executable used to remux downloads and cut sections
   — a GPL build shipped with the pip package [imageio-ffmpeg](https://github.com/imageio/imageio-ffmpeg) (BSD-2-Clause).
   FFmpeg is a product of the FFmpeg project; its source code is available from the
   [official FFmpeg repository](https://github.com/FFmpeg/FFmpeg) and the respective build providers.
