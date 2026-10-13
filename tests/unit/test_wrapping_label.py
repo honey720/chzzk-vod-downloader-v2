@@ -76,6 +76,21 @@ def test_text_that_needs_more_than_two_lines_is_elided_on_one_line(label):
     assert (label.toolTip(), label.text()) == (TEXT, TEXT)
 
 
+def test_word_wider_than_the_label_is_elided_not_wrapped(label):
+    """나눌 곳이 없는 낱말 하나가 폭보다 넓으면 두 줄로 두지 않고 말줄임해야 한다.
+
+    글 = "W" 40개(빈칸 없음), 폭 = 그 글의 한 줄 폭 − 1
+    -> 보이는 글이 "…"로 끝난다, wordWrap 거짓
+    """
+    word = "W" * 40
+    label.setText(word)
+
+    _set_width(label, QFontMetrics(label.font()).horizontalAdvance(word) - 1)
+
+    assert shown(label).endswith("…")
+    assert label.wordWrap() is False
+
+
 def test_widening_brings_the_text_back_to_one_line(label):
     """말줄임된 뒤 폭을 넓히면 다시 한 줄의 전문이어야 한다.
 
