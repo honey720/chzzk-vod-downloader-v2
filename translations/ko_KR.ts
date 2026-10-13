@@ -286,6 +286,12 @@ This drive (FAT32) cannot store a file larger than 4 GB. Pick another folder, or
 이 드라이브(FAT32)는 4GB가 넘는 파일을 저장할 수 없습니다. 다른 폴더를 고르거나 드라이브를 exFAT · NTFS로 포맷해 주세요.</translation>
     </message>
     <message>
+        <source>Not enough disk space · free up space or pick another folder
+The download folder or the temporary folder does not have enough free space for the download.</source>
+        <translation>디스크 공간이 부족합니다 · 공간을 비우거나 다른 폴더를 골라 주세요
+저장 폴더나 임시 폴더에 받을 공간이 모자랍니다.</translation>
+    </message>
+    <message>
         <source>Video data arrived corrupted · try again later
 Part of the video kept arriving incomplete from the server. Try again later.</source>
         <translation>영상 일부가 잘려 받아졌습니다 · 잠시 뒤 다시 시도해 주세요

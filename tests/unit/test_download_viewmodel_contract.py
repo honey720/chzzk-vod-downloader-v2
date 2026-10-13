@@ -515,6 +515,10 @@ class TestFailure:
                 FileSizeLimitError(5 * 1024**3, "FAT32"),
                 "FAT32 drive can't hold files over 4 GB · pick another folder",
             ),
+            (
+                DiskSpaceError(10, 5, "Not enough disk space for the download"),
+                "Not enough disk space · free up space or pick another folder",
+            ),
         ],
         ids=lambda v: v if isinstance(v, str) else type(v).__name__,
     )
@@ -530,6 +534,38 @@ class TestFailure:
         first_line, _, detail = message.partition("\n")
         assert first_line == headline
         assert detail.strip()  # 둘째 줄=상세 (#245 규약)
+
+    @pytest.mark.parametrize(
+        ("exc", "detail"),
+        [
+            (
+                DiskSpaceError(10, 5),
+                "The download folder does not have enough free space for the section files.",
+            ),
+            (
+                DiskSpaceError(10, 5, "Not enough disk space for the download"),
+                "The download folder or the temporary folder does not have enough free space "
+                "for the download.",
+            ),
+        ],
+        ids=["sections", "whole"],
+    )
+    def test_disk_space_detail_names_section_files_only_for_a_section_download(
+        self, wired, exc, detail
+    ):
+        """공간 부족 사유의 둘째 줄은 구간 다운로드일 때만 구간 파일을 말해야 한다 (#309).
+
+        DiskSpaceError(구간 다운로드의 키) -> 둘째 줄이 "…for the section files."
+        DiskSpaceError(구간 없는 다운로드의 키) -> 둘째 줄이 "…the temporary folder…for the download."
+        """
+        item = _make_item()
+        wired.start(item)
+
+        wired.submission["on_failed"](exc)
+        wired.pump()
+
+        [(_, (_, message), _, _)] = wired.content.calls
+        assert message.partition("\n")[2] == detail
 
 
 # ============ 정리 규칙 — 갇힌 워커 ============

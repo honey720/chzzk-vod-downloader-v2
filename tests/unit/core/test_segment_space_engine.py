@@ -17,7 +17,7 @@ import core.downloaders.base as base_module
 import core.downloaders.hls_aes_downloader as aes_module
 import core.downloaders.m3u8_downloader as m3u8_module
 import core.downloaders.segment_space as space_module
-from core.downloaders.base import DISK_SPACE_SHORT, DiskSpaceError
+from core.downloaders.base import DISK_SPACE_SHORT_WHOLE, DiskSpaceError
 from core.downloaders.m3u8_downloader import M3U8Downloader
 from core.models.content import StreamKey
 from core.models.download_data import DownloadData
@@ -138,7 +138,8 @@ def test_start_check_fails_before_any_segment_is_requested(tmp_path, monkeypatch
 
     선언 8,000,000 bit/s, 2초 세그먼트 24개 -> 어림 48,000,000, 필요 52,800,000 + 256MiB
     여유 = 필요 − 1
-    -> 실패 1건(DiskSpaceError, 키 "Not enough disk space", needed · free 그대로),
+    -> 실패 1건(DiskSpaceError, 키 "Not enough disk space for the download" — 구간 없는
+       다운로드의 키, needed · free 그대로),
        청한 세그먼트 0개, 완료 0회, 산출물 · 임시 폴더 없음
     """
     run = _Run(tmp_path, monkeypatch, free=START_NEEDED - 1, bandwidth=BANDWIDTH, hold=False)
@@ -148,7 +149,7 @@ def test_start_check_fails_before_any_segment_is_requested(tmp_path, monkeypatch
     assert [type(e) for e in run.failures] == [DiskSpaceError]
     error = run.failures[0]
     assert (error.message_key, error.needed, error.free) == (
-        DISK_SPACE_SHORT,
+        DISK_SPACE_SHORT_WHOLE,
         START_NEEDED,
         START_NEEDED - 1,
     )
@@ -202,7 +203,11 @@ def test_transfer_check_stops_the_transfer_when_the_real_sizes_do_not_fit(tmp_pa
 
     assert [type(e) for e in run.failures] == [DiskSpaceError]
     error = run.failures[0]
-    assert (error.message_key, error.needed, error.free) == (DISK_SPACE_SHORT, TRANSFER_NEEDED, 5)
+    assert (error.message_key, error.needed, error.free) == (
+        DISK_SPACE_SHORT_WHOLE,
+        TRANSFER_NEEDED,
+        5,
+    )
     assert run.finished == 0
     assert not run.output.exists() and not (tmp_path / "CVDv2_temp_out").exists()
     assert run.logger.space == [

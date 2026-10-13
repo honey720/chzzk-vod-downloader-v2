@@ -57,7 +57,7 @@ import core.utils.fmp4_cut as fmp4_cut_module
 from core.api.fmp4 import build_fmp4_index, fmp4_origin, parse_init_segment, parse_media_segment
 from core.api.hls import parse_media_playlist
 from core.api.hls_fmp4 import fetch_fmp4_head, segment_file_name, segment_frames
-from core.downloaders.base import DiskSpaceError, PostprocessError
+from core.downloaders.base import DISK_SPACE_SHORT, DiskSpaceError, PostprocessError
 from core.downloaders.integrity import TruncatedSegmentError
 from core.downloaders.m3u8_downloader import M3U8Downloader
 from core.models.content import StreamKey
@@ -950,7 +950,8 @@ def test_section_download_checks_the_free_space_before_the_transfer(
     """구간 다운로드도 선언된 비트레이트로 어림한 크기가 여유 공간에 안 들어가면 받기 전에 실패해야 한다.
 
     plain, 구간 프레임 40~100(세그먼트 0~3), 선언 800,000 bit/s(100,000바이트/초), 여유 0
-    -> 실패 1건(DiskSpaceError), 완료 0회, 구간 파일 없음, 임시 폴더 없음.
+    -> 실패 1건(DiskSpaceError, 키 "Not enough disk space" — 구간 다운로드의 키), 완료 0회,
+       구간 파일 없음, 임시 폴더 없음.
        시작 줄의 세그먼트 어림 = 받아 둔 세그먼트는 실제 크기 + 나머지는 100,000 x #EXTINF,
        산출물 어림 = 세그먼트 어림 x (구간 길이 / 세그먼트 0~3의 #EXTINF 합)
     """
@@ -963,6 +964,7 @@ def test_section_download_checks_the_free_space_before_the_transfer(
     run.start()
 
     assert ([type(e) for e in run.failures], run.finished) == ([DiskSpaceError], 0)
+    assert run.failures[0].message_key == DISK_SPACE_SHORT
     assert run.listing() == []
     assert not os.path.exists(run.engine.temp_dir)
     on_disk = run.engine._prefetched  # 구간을 정하며 받아 둔 세그먼트 — 인덱스 → 크기

@@ -291,6 +291,12 @@ This drive (FAT32) cannot store a file larger than 4 GB. Pick another folder, or
 This drive (FAT32) cannot store a file larger than 4 GB. Pick another folder, or format the drive as exFAT or NTFS.</translation>
     </message>
     <message>
+        <source>Not enough disk space · free up space or pick another folder
+The download folder or the temporary folder does not have enough free space for the download.</source>
+        <translation>Not enough disk space · free up space or pick another folder
+The download folder or the temporary folder does not have enough free space for the download.</translation>
+    </message>
+    <message>
         <source>Video data arrived corrupted · try again later
 Part of the video kept arriving incomplete from the server. Try again later.</source>
         <translation>Video data arrived corrupted · try again later

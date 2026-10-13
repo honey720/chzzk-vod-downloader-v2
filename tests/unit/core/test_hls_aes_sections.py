@@ -42,7 +42,12 @@ import core.downloaders.segment_space as space_module
 from core.api.hls import parse_media_playlist
 from core.api.hls_ts import fetch_ts_head, segment_streams
 from core.api.mpegts import parse_ts
-from core.downloaders.base import DiskSpaceError, PostprocessError
+from core.downloaders.base import (
+    DISK_SPACE_SHORT,
+    DISK_SPACE_SHORT_WHOLE,
+    DiskSpaceError,
+    PostprocessError,
+)
 from core.downloaders.decrypt import DecryptionError, sequence_iv
 from core.downloaders.hls_aes_downloader import HlsAesDownloader
 from core.models.content import StreamKey
@@ -841,7 +846,8 @@ def test_encrypted_vod_checks_the_free_space_before_the_transfer(
     """암호화 VOD도 비트레이트를 넘겨받았으면 어림한 크기가 여유 공간에 안 들어갈 때 받기 전에 실패해야 한다.
 
     구간 둘 또는 구간 없음, 선언 800,000 bit/s, 여유 0
-    -> 실패 1건(DiskSpaceError), 완료 0회, 저장 폴더에 파일 없음, 임시 폴더 없음,
+    -> 실패 1건(DiskSpaceError — 키는 구간이 있으면 "Not enough disk space", 없으면
+       "Not enough disk space for the download"), 완료 0회, 저장 폴더에 파일 없음, 임시 폴더 없음,
        시작 줄 1개(본 곳 both, 여유 0, 세그먼트 어림 > 0)
     """
     run = _Run(host, tmp_path, [FIRST, SECOND] if sections else [])
@@ -852,6 +858,8 @@ def test_encrypted_vod_checks_the_free_space_before_the_transfer(
     run.start()
 
     assert ([type(e) for e in run.failures], run.finished) == ([DiskSpaceError], 0)
+    expected_key = DISK_SPACE_SHORT if sections else DISK_SPACE_SHORT_WHOLE
+    assert run.failures[0].message_key == expected_key
     assert run.listing() == []
     assert not os.path.exists(run.engine.temp_dir)
     lines = [args for name, args in run.logger.calls if name == "log_space_check"]

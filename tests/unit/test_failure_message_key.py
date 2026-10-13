@@ -14,6 +14,7 @@ from app.viewmodels.download_viewmodel import _failure_message_key
 from core.api.playback_tracks import STREAM_NOT_FOUND, StreamSelectionError
 from core.downloaders.base import (
     DISK_SPACE_SHORT,
+    DISK_SPACE_SHORT_WHOLE,
     DiskSpaceError,
     FileSizeLimitError,
     PostprocessError,
@@ -117,6 +118,17 @@ class TestFailureMessageKey:
         error.space_key = "File too large for a FAT32 drive"
 
         assert _failure_message_key(error) == "File too large for a FAT32 drive"
+
+    def test_disk_space_error_of_a_download_without_sections_maps_to_its_own_key(self):
+        """구간 없는 다운로드의 DiskSpaceError는 구간 파일을 말하지 않는 키로 매핑돼야 한다 (#309).
+
+        DiskSpaceError(필요 10, 여유 5, 구간 없는 다운로드의 키)
+        -> "Not enough disk space for the download"
+        """
+        error = DiskSpaceError(10, 5, DISK_SPACE_SHORT_WHOLE)
+
+        assert _failure_message_key(error) == DISK_SPACE_SHORT_WHOLE
+        assert DISK_SPACE_SHORT_WHOLE == "Not enough disk space for the download"
 
     def test_stream_selection_error_maps_to_its_own_key(self):
         """StreamSelectionError는 그 예외가 든 키로 매핑돼야 한다 (#318).

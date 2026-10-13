@@ -118,7 +118,10 @@ _TRANSIENT_ERROR_REQUEUE_LIMIT = 10  # 항목별 최대 재큐 횟수 — 총 11
 _TRANSIENT_HTTP_STATUSES = frozenset({408, 429})
 
 
-DISK_SPACE_SHORT = "Not enough disk space"  # 저장 폴더의 여유 공간이 만들 파일보다 적다
+DISK_SPACE_SHORT = "Not enough disk space"  # 저장 폴더의 여유 공간이 만들 구간 파일보다 적다
+# 구간 없는 세그먼트 다운로드 — 저장 폴더나 임시 폴더의 여유 공간이 받을 양보다 적다.
+# 구간 파일을 만들지 않는 다운로드라 안내가 구간 파일을 말하지 않는다
+DISK_SPACE_SHORT_WHOLE = "Not enough disk space for the download"
 
 
 class DiskSpaceError(OSError):
@@ -128,13 +131,14 @@ class DiskSpaceError(OSError):
     받기 전과, 세그먼트를 몇 개 받아 크기를 다시 어림한 뒤에 임시 폴더와 저장 폴더를 본다
     (core/downloaders/segment_space.py).
 
-    ``message_key``는 번역하지 않은 i18n 키 원문이다. 표시 계층이 번역한다. OSError의 하위라
-    파일을 쓰다 난 오류와 같은 실패 처리(통지 · 정리)를 탄다.
+    ``message_key``는 번역하지 않은 i18n 키 원문이다. 표시 계층이 번역한다. 구간 다운로드는
+    ``DISK_SPACE_SHORT``, 구간 없는 세그먼트 다운로드는 ``DISK_SPACE_SHORT_WHOLE``다. OSError의
+    하위라 파일을 쓰다 난 오류와 같은 실패 처리(통지 · 정리)를 탄다.
     """
 
-    def __init__(self, needed: int, free: int):
+    def __init__(self, needed: int, free: int, message_key: str = DISK_SPACE_SHORT):
         super().__init__(f"필요 {needed}바이트 · 여유 {free}바이트")
-        self.message_key = DISK_SPACE_SHORT
+        self.message_key = message_key
         self.needed = needed  # 그 볼륨에 비어 있어야 하는 양(바이트)
         self.free = free  # 그 볼륨의 여유 공간(바이트)
 
@@ -745,9 +749,11 @@ class BaseDownloader(ABC):
             int(need.output),
             tuple((check.where, check.needed, check.free) for check in checks),
         )
+        # 구간 파일을 만들지 않는 다운로드는 안내가 구간 파일을 말하지 않는 키를 쓴다
+        key = DISK_SPACE_SHORT if self.s.content.selections else DISK_SPACE_SHORT_WHOLE
         for check in checks:
             if check.short:
-                raise DiskSpaceError(check.needed, check.free)
+                raise DiskSpaceError(check.needed, check.free, key)
 
     def _note_received(self, index: int, size: int) -> None:
         """세그먼트 하나를 다 받아 디스크에 썼다 — 크기 어림에 실제 크기를 알린다."""
