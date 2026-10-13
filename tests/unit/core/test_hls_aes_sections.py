@@ -38,12 +38,14 @@ from Crypto.Cipher import AES
 
 import core.api.hls_ts as hls_ts_module
 import core.downloaders.hls_aes_downloader as aes_module
+import core.downloaders.segment_space as space_module
 from core.api.hls import parse_media_playlist
 from core.api.hls_ts import fetch_ts_head, segment_streams
 from core.api.mpegts import parse_ts
-from core.downloaders.base import PostprocessError
+from core.downloaders.base import DiskSpaceError, PostprocessError
 from core.downloaders.decrypt import DecryptionError, sequence_iv
 from core.downloaders.hls_aes_downloader import HlsAesDownloader
+from core.models.content import StreamKey
 from core.models.download_data import DownloadData
 from core.models.plan import TimeRange
 from core.utils.cut_check import check_cut
@@ -830,6 +832,34 @@ def test_workers_write_each_segment_to_its_own_file(vod, host, tmp_path, monkeyp
 
 
 # ================================================================ 그 밖의 계약
+
+
+@pytest.mark.parametrize("sections", [True, False], ids=["sections", "whole"])
+def test_encrypted_vod_checks_the_free_space_before_the_transfer(
+    vod, host, tmp_path, monkeypatch, sections
+):
+    """암호화 VOD도 비트레이트를 넘겨받았으면 어림한 크기가 여유 공간에 안 들어갈 때 받기 전에 실패해야 한다.
+
+    구간 둘 또는 구간 없음, 선언 800,000 bit/s, 여유 0
+    -> 실패 1건(DiskSpaceError), 완료 0회, 저장 폴더에 파일 없음, 임시 폴더 없음,
+       시작 줄 1개(본 곳 both, 여유 0, 세그먼트 어림 > 0)
+    """
+    run = _Run(host, tmp_path, [FIRST, SECOND] if sections else [])
+    run.data.content.stream = StreamKey(256, 144, 30.0, 800_000)
+    monkeypatch.setattr(space_module, "same_volume", lambda a, b: True)
+    monkeypatch.setattr(space_module, "free_bytes", lambda folder: 0)
+
+    run.start()
+
+    assert ([type(e) for e in run.failures], run.finished) == ([DiskSpaceError], 0)
+    assert run.listing() == []
+    assert not os.path.exists(run.engine.temp_dir)
+    lines = [args for name, args in run.logger.calls if name == "log_space_check"]
+    assert [
+        (stage, [(where, free) for where, _needed, free in checks])
+        for stage, _s, _o, checks in lines
+    ] == [("start", [("both", 0)])]
+    assert lines[0][1] > 0
 
 
 def test_section_log_reports_cut_and_total_size_of_section_files(vod, host, tmp_path):
