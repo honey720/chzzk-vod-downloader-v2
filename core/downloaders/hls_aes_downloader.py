@@ -260,6 +260,9 @@ class HlsAesDownloader(BaseDownloader):
             resume.ts_head is None or not resume.fits(content.selections, content.selection_paths)
         ):
             resume = None
+        if resume is not None:
+            # 끝낸 구간의 파일이 지워졌거나 바뀌었으면 그 구간은 다시 만든다
+            resume = resume.with_files_checked()
 
         # 이전 실행이 받아 둔 것(플레이리스트 · 프레임 정보 · 세그먼트)이 있으면 그것을 쓴다
         head = resume.ts_head if resume is not None else content.ts_head
@@ -654,6 +657,7 @@ class HlsAesDownloader(BaseDownloader):
                 selections=tuple(self.s.content.selections),
                 paths=tuple(paths),
                 done=frozenset(done),
+                done_sizes=SectionResume.sizes_of(paths, done),
                 # 넘겨받은 것에 적지 않고 새로 만든다. 남아 있는 세그먼트만 적는다 — 구간
                 # 파일로 넘긴 것은 지워졌다. 다음 실행은 쓰기 전에 파일마다 다시 확인한다.
                 # 키는 들어 있지 않다

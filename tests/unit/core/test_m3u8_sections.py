@@ -1382,3 +1382,86 @@ def test_retry_after_a_failed_section_file_receives_only_the_segments_that_were_
     assert host.requests[requests_before:] == [("GET", "plain/seg-002.m4s", None)]
     assert (again.finished, again.failures) == (1, [])
     _assert_section_matches(source, again.paths[0], 40, 100, tmp_path)
+
+
+# ================================================================ 끝낸 구간의 파일이 없거나 바뀐 재시도 (#309)
+
+
+def _fail_the_second_of_three(host, sources, tmp_path, monkeypatch):
+    """구간 셋 가운데 둘째 구간의 컷만 실패한 실행과, 컷 호출을 적는 도구(다음 실행을 위해 비운 것)."""
+    cuts = CutCalls(monkeypatch, m3u8_module, "cut_fmp4_section", source_arg=0)
+    cuts.fail_on = (1,)
+    failed = _Run(host, tmp_path, _three(sources["plain"])).start()
+    assert len(failed.failures) == 1
+    cuts.restart()
+    return failed, cuts
+
+
+def test_failed_run_records_the_size_of_each_section_file_it_finished(
+    host, sources, tmp_path, monkeypatch
+):
+    """일부 구간만 실패한 실행은 끝낸 구간 파일의 크기를 재시도 기록에 적어야 한다.
+
+    구간 셋, 둘째 구간의 컷이 실패 -> 기록의 크기 == ((0, `_1`의 크기), (2, `_3`의 크기))
+    """
+    failed, _cuts = _fail_the_second_of_three(host, sources, tmp_path, monkeypatch)
+
+    assert failed.data.section_resume.done_sizes == (
+        (0, os.path.getsize(failed.paths[0])),
+        (2, os.path.getsize(failed.paths[2])),
+    )
+
+
+@pytest.mark.parametrize("check_files", [True, False], ids=["starter-checks", "engine-checks"])
+def test_retry_makes_a_finished_section_again_when_its_file_was_removed(
+    host, sources, tmp_path, monkeypatch, check_files
+):
+    """끝낸 구간의 파일을 지운 뒤 재시도하면 그 구간도 다시 만들어야 한다.
+
+    첫 실행: 구간 셋, 둘째 구간의 컷이 실패. `_1`을 지움. 이어받은 실행(시작하는 쪽이 파일을
+    확인한 경우와, 기록을 그대로 넘겨 엔진이 확인하는 경우)
+    -> 완료 1회 · 실패 0건, 컷 호출은 `_1` · `_2`, `_3`의 수정 시각 · 내용이 그대로,
+       저장 폴더에 `_1` · `_2` · `_3`뿐, 다시 만든 두 구간이 판정 통과, 이어받은 구간 수 1
+    """
+    failed, cuts = _fail_the_second_of_three(host, sources, tmp_path, monkeypatch)
+    kept = snapshot([failed.paths[2]])
+    os.remove(failed.paths[0])
+
+    again = hand_over(
+        failed, _Run(host, tmp_path, _three(sources["plain"])), check_files=check_files
+    ).start()
+
+    assert (again.finished, again.failures) == (1, [])
+    assert sorted(cuts.outputs) == THREE_FILES[:2]
+    assert snapshot(kept) == kept
+    assert again.listing() == THREE_FILES
+    checks = again.checks()
+    assert len(checks) == 2
+    assert all(check.ok for check in checks), [check.notes for check in checks]
+    assert again.data.sections_resumed == 1
+
+
+def test_retry_makes_a_finished_section_again_when_its_file_changed_size(
+    host, sources, tmp_path, monkeypatch
+):
+    """끝낸 구간의 파일 크기가 달라졌으면 재시도는 그 구간을 다시 만들고, 바뀐 파일은 건드리지 않아야 한다.
+
+    첫 실행: 구간 셋, 둘째 구간의 컷이 실패. `_3`의 자리에 10바이트짜리 다른 파일을 둠. 이어받은 실행
+    -> 완료 1회 · 실패 0건, 셋째 구간은 새 이름(`_3`이 아닌 경로)으로 만들어지고 크기가 0보다 크다,
+       `_3` 자리의 파일은 10바이트 그대로, `_1`의 수정 시각 · 내용이 그대로, 이어받은 구간 수 1
+    """
+    failed, cuts = _fail_the_second_of_three(host, sources, tmp_path, monkeypatch)
+    kept = snapshot([failed.paths[0]])
+    with open(failed.paths[2], "wb") as f:
+        f.write(b"0123456789")
+
+    again = hand_over(failed, _Run(host, tmp_path, _three(sources["plain"]))).start()
+
+    assert (again.finished, again.failures) == (1, [])
+    assert again.paths[2] != failed.paths[2]
+    assert os.path.getsize(again.paths[2]) > 0
+    assert os.path.basename(again.paths[2]) in cuts.outputs
+    with open(failed.paths[2], "rb") as f:
+        assert f.read() == b"0123456789"
+    assert snapshot(kept) == kept
+    assert again.data.sections_resumed == 1
