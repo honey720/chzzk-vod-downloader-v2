@@ -84,13 +84,26 @@ class _Pause:
             threading.Timer(after + lasting - 0.1, lambda: observe("late")).start()
         threading.Timer(after + lasting, self._event.clear).start()
 
+    def schedule_from_launch(
+        self, launch_hooks: list, output: str, after: float, lasting: float, observe=None
+    ) -> None:
+        """output을 쓰는 프로세스가 뜬 것을 확인한 때부터 ``schedule``을 센다 — 처음 뜬 하나에만."""
+        seen: list = []
+
+        def on_launch(command, process) -> None:
+            if output in command and not seen:
+                seen.append(process)
+                self.schedule(after, lasting, observe)
+
+        launch_hooks.append(on_launch)
+
     def __call__(self) -> bool:
         return self._event.is_set()
 
 
 @pytest.mark.parametrize("reporting", [False, True], ids=["출력을 모으는 실행", "진행을 받는 실행"])
 def test_a_paused_ffmpeg_stands_still_and_writes_the_same_file_when_resumed(
-    tmp_path, launched, reporting
+    tmp_path, launched, launch_hooks, reporting
 ):
     """일시정지 중인 ffmpeg는 살아 있되 아무것도 쓰지 않고, 재개하면 일시정지 없이 돈 것과 같은 파일을 내야 한다.
 
@@ -115,7 +128,7 @@ def test_a_paused_ffmpeg_stands_still_and_writes_the_same_file_when_resumed(
         )
 
     started = time.perf_counter()
-    pause.schedule(PAUSE_AFTER, PAUSE_FOR, observe)
+    pause.schedule_from_launch(launch_hooks, paused_output, PAUSE_AFTER, PAUSE_FOR, observe)
     # 제한 시간은 일하는 시간만 센다(멈춰 있던 시간은 빼고) — 재개가 듣지 않으면 여기서 끝난다
     done = run_ffmpeg(_work(paused_output), timeout=90, should_pause=pause, **extra)
     took = time.perf_counter() - started
@@ -135,7 +148,9 @@ def test_a_paused_ffmpeg_stands_still_and_writes_the_same_file_when_resumed(
 
 
 @pytest.mark.parametrize("reporting", [False, True], ids=["출력을 모으는 실행", "진행을 받는 실행"])
-def test_time_spent_paused_does_not_count_towards_the_timeout(tmp_path, launched, reporting):
+def test_time_spent_paused_does_not_count_towards_the_timeout(
+    tmp_path, launched, launch_hooks, reporting
+):
     """일시정지해 둔 시간은 제한 시간에 세지 않아야 한다 — 일시정지가 길었다고 시간 초과가 되지 않는다.
 
     일하는 명령이 혼자 도는 시간 D를 먼저 잼. 제한 시간을 3 × D + 3초로 주고, 띄운 지 0.5초
@@ -152,7 +167,8 @@ def test_time_spent_paused_does_not_count_towards_the_timeout(tmp_path, launched
     extra = {"on_out_time": lambda seconds: None} if reporting else {}
 
     started = time.perf_counter()
-    pause.schedule(PAUSE_AFTER, timeout)
+    # 혼자 돌린 것은 이미 끝났다 — 이제부터 뜨는 것만 본다
+    pause.schedule_from_launch(launch_hooks, output, PAUSE_AFTER, timeout)
     done = run_ffmpeg(_work(output), timeout=timeout, should_pause=pause, **extra)
     took = time.perf_counter() - started
 
