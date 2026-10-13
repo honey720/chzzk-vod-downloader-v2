@@ -1358,25 +1358,47 @@ def _watch_cut(run: _Run, each=None) -> list[tuple[bool, float | None]]:
     return seen
 
 
+# 세그먼트 0 ~ 5에 걸친다 — 구간을 정할 때 읽지 않는 세그먼트가 여럿이다
+ACROSS_SIX = TimeRange(0.8, 5.2)
+
+
+def _read_share(run: _Run, number: int = 0) -> tuple[int, float]:
+    """(그 구간이 컷 전에 새로 읽는 세그먼트 수 F, 그 구간의 읽기 몫) — 실행이 끝난 뒤 부른다.
+
+    구간을 정하며 읽어 둔 세그먼트(머리에 든 것)는 다시 읽지 않는다. 읽기 몫은 모두 새로 읽을
+    때의 0.5에서 읽는 일만 F ÷ N으로 줄인 것 — 0.5F ÷ (0.5F + 0.5N) = F ÷ (F + N)이다.
+    """
+    section = run.engine.sections[number]
+    indexes = range(section.first_segment, section.last_segment + 1)
+    fresh = len([index for index in indexes if index not in run.engine._head.segments])
+    return fresh, fresh / (fresh + len(indexes))
+
+
 def test_reading_before_the_cut_raises_the_cut_progress_and_is_marked_as_preparing(
     vod, host, tmp_path
 ):
-    """구간을 자르기 전 세그먼트를 읽는 동안 준비 중으로 적히고 컷 진행이 세그먼트마다 올라야 한다.
+    """구간을 자르기 전 세그먼트를 읽는 동안 준비 중으로 적히고 컷 진행이 새로 읽는 세그먼트마다 올라야 한다.
 
-    구간 하나(3.4 ~ 5.2초 — 세그먼트 2~5, 넷). 읽기 몫 0.5
-    -> 준비 중인 통지의 컷 진행 == [없음, 0.125, 0.25, 0.375, 0.5], 준비 중이 아닌 통지의 컷 진행은
-       모두 0.5 이상이고 마지막이 1, 끝난 뒤 준비 중이 아니다, 완료 1회
+    구간 하나(0.8 ~ 5.2초 — 세그먼트 0~5, 여섯). 그 가운데 구간을 정하며 읽지 않은 것이 F개
+    -> F >= 2, 준비 중인 통지의 컷 진행 == [없음, 읽기 몫 x 1/F, …, 읽기 몫](읽기 몫 = F ÷ (F + 6)),
+       준비 중이 아닌 통지의 컷 진행은 모두 읽기 몫 이상이고 마지막이 1, 끝난 뒤 준비 중이 아니다,
+       완료 1회
     """
-    run = _Run(host, tmp_path, [SECOND])
+    run = _Run(host, tmp_path, [ACROSS_SIX])
     seen = _watch_cut(run)
 
     run.start()
 
     assert (run.finished, run.failures) == (1, [])
+    fresh, share = _read_share(run)
+    assert fresh >= 2
     preparing = [progress for marked, progress in seen if marked]
     cutting = [progress for marked, progress in seen if not marked]
-    assert preparing == [None, 0.125, 0.25, 0.375, 0.5]
-    assert min(cutting) >= 0.5 and cutting[-1] == 1.0
+    assert preparing == [
+        None,
+        *(pytest.approx(share * count / fresh) for count in range(1, fresh + 1)),
+    ]
+    assert min(cutting) >= preparing[-1] and cutting[-1] == 1.0
     assert run.data.cut_preparing is False
 
 
@@ -1401,21 +1423,24 @@ def test_cut_stage_log_counts_the_time_the_engine_spent_reading_as_read(
 def test_stop_while_reading_ends_the_run_without_cutting(vod, host, tmp_path):
     """세그먼트를 읽는 도중 중단하면 남은 세그먼트를 읽지 않고 컷을 시작하지 않아야 한다.
 
-    구간 하나(세그먼트 넷). 첫 세그먼트를 읽었다는 통지에서 중단을 청함
-    -> 준비 중인 통지의 컷 진행 == [없음, 0.125], 완료 0회 · 실패 0건, 구간 파일 없음,
+    구간 하나(세그먼트 여섯, 새로 읽을 것 F >= 2). 첫 세그먼트를 읽었다는 통지에서 중단을 청함
+    -> 준비 중인 통지의 컷 진행 == [없음, 읽기 몫 x 1/F] 둘뿐, 완료 0회 · 실패 0건, 구간 파일 없음,
        끝난 뒤 준비 중이 아니다
     """
-    run = _Run(host, tmp_path, [SECOND])
+    run = _Run(host, tmp_path, [ACROSS_SIX])
 
     def stop_after_the_first(seen) -> None:
-        if seen[-1] == (True, 0.125):
+        if len(seen) == 2:  # 읽기 시작 통지 + 첫 세그먼트를 읽은 통지
             run.data.model.stop()
 
     seen = _watch_cut(run, stop_after_the_first)
 
     run.start()
 
-    assert [progress for marked, progress in seen if marked] == [None, 0.125]
+    fresh, share = _read_share(run)
+    assert fresh >= 2
+    preparing = [entry for entry in seen if entry[0]]
+    assert preparing == [(True, None), (True, pytest.approx(share / fresh))]
     assert (run.finished, run.failures) == (0, [])
     assert not [name for name in run.listing() if name.endswith(".mp4")]
     assert run.data.cut_preparing is False
@@ -1424,11 +1449,11 @@ def test_stop_while_reading_ends_the_run_without_cutting(vod, host, tmp_path):
 def test_pause_while_reading_holds_the_reading_until_resumed(vod, host, tmp_path):
     """세그먼트를 읽는 도중 일시정지하면 재개할 때까지 다음 세그먼트를 읽지 않아야 한다.
 
-    구간 하나(세그먼트 넷). 첫 세그먼트를 읽었다는 통지에서 일시정지하고, 다른 스레드가 0.3초 뒤
-    그때까지 온 통지 수를 적고 재개함
+    구간 하나(세그먼트 여섯, 새로 읽을 것 F >= 2). 첫 세그먼트를 읽었다는 통지에서 일시정지하고,
+    다른 스레드가 0.3초 뒤 그때까지 온 통지 수를 적고 재개함
     -> 재개하기 직전까지 온 통지 == 일시정지한 순간까지 온 통지(둘), 재개한 뒤 완료 1회 · 실패 0건
     """
-    run = _Run(host, tmp_path, [SECOND])
+    run = _Run(host, tmp_path, [ACROSS_SIX])
     counts = {}
 
     def resume() -> None:
@@ -1436,7 +1461,7 @@ def test_pause_while_reading_holds_the_reading_until_resumed(vod, host, tmp_path
         run.data.model.resume()
 
     def pause_after_the_first(seen_now) -> None:
-        if seen_now[-1] == (True, 0.125):
+        if len(seen_now) == 2 and not counts:  # 읽기 시작 통지 + 첫 세그먼트를 읽은 통지
             counts["at_pause"] = len(seen_now)
             run.data.model.pause()
             threading.Timer(0.3, resume).start()
@@ -1445,6 +1470,7 @@ def test_pause_while_reading_holds_the_reading_until_resumed(vod, host, tmp_path
 
     run.start()
 
+    assert _read_share(run)[0] >= 2
     assert counts == {"at_pause": 2, "before_resume": 2}
     assert (run.finished, run.failures) == (1, [])
 
@@ -1454,10 +1480,10 @@ def test_progress_the_cut_reports_is_placed_after_the_share_of_the_reading(
 ):
     """컷이 알린 진행은 읽기 몫 뒤의 구간으로 옮겨 적혀야 한다.
 
-    구간 하나, 읽기 몫 0.5. 컷 함수가 일을 시작하기 전에 진행 0.2를 알리게 함
-    -> 그 직후의 컷 진행 == 0.6 (0.5 + 0.5 x 0.2), 완료 1회
+    구간 하나(세그먼트 여섯, 읽기 몫 = F ÷ (F + 6)). 컷 함수가 일을 시작하기 전에 진행 0.2를 알리게 함
+    -> 그 직후의 컷 진행 == 읽기 몫 + (1 − 읽기 몫) x 0.2, 완료 1회
     """
-    run = _Run(host, tmp_path, [SECOND])
+    run = _Run(host, tmp_path, [ACROSS_SIX])
     real_cut = aes_module.cut_ts_section
     seen = []
 
@@ -1470,5 +1496,44 @@ def test_progress_the_cut_reports_is_placed_after_the_share_of_the_reading(
 
     run.start()
 
-    assert seen == [pytest.approx(0.6)]
+    fresh, share = _read_share(run)
+    assert fresh >= 2
+    assert seen == [pytest.approx(share + (1 - share) * 0.2)]
     assert (run.finished, run.failures) == (1, [])
+
+
+def test_section_whose_segments_an_earlier_section_read_gives_the_reading_no_share(
+    vod, host, tmp_path, monkeypatch
+):
+    """앞 구간이 이미 읽은 세그먼트만 쓰는 구간은 읽기 몫 없이 컷의 진행을 그대로 받아야 한다.
+
+    구간 둘: 0.8 ~ 5.2초(세그먼트 0~5 — 긴 것이 먼저 잘린다) · 3.4 ~ 5.2초(세그먼트 2~5 — 모두 앞
+    구간이 읽었다). 구간의 길이(끝 PTS − 시작 PTS)를 L1 · L2라 함. 컷 함수가 일을 시작하기 전에
+    진행 0.2를 알리게 함
+    -> 컷이 긴 구간 · 짧은 구간 순서로 불린다, 둘째로 불린 컷 직후의 컷 진행 ==
+       (L1 + 0.2 x L2) ÷ (L1 + L2), 그 구간을 읽는 동안(준비 중) 컷 진행이 오르지 않는다, 완료 1회
+    """
+    run = _Run(host, tmp_path, [ACROSS_SIX, SECOND])
+    watched = _watch_cut(run)
+    real_cut = aes_module.cut_ts_section
+    seen = []
+
+    def cut(*args, **kwargs):
+        kwargs["on_progress"](0.2)
+        seen.append((os.path.basename(args[4]), run.data.cut_progress, len(watched)))
+        return real_cut(*args, **kwargs)
+
+    monkeypatch.setattr(aes_module, "cut_ts_section", cut)
+
+    run.start()
+
+    assert (run.finished, run.failures) == (1, [])
+    first, second = (s.last_pts - s.first_pts for s in run.engine.sections)
+    assert [name for name, _progress, _count in seen] == [
+        os.path.basename(path) for path in run.paths
+    ]
+    assert seen[1][1] == pytest.approx((first + 0.2 * second) / (first + second))
+    # 둘째 컷이 불리기 직전의 통지는 그 구간의 읽기 시작 하나뿐이고, 그 값은 첫 구간이 끝난 값이다
+    before_second = watched[: seen[1][2] - 1]
+    assert before_second[-1] == (True, pytest.approx(first / (first + second)))
+    assert before_second[-2][0] is False

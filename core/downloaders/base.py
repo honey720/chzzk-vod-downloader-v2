@@ -971,14 +971,26 @@ class BaseDownloader(ABC):
         )
 
     def _cut_reporters(
-        self, report: Callable[[float], None]
+        self, report: Callable[[float], None], fresh: int | None = None, total: int | None = None
     ) -> tuple[Callable[[float], None], Callable[[float], None]]:
         """구간 하나의 진행(0~1)을 읽기 몫과 자르기 몫으로 나눠 받는 함수 둘 — (읽기, 자르기).
 
-        읽기는 그 구간의 진행의 앞 ``_cut_read_share``만큼을, 자르기는 나머지를 채운다. 읽기에
-        진행 신호가 없으면 세그먼트가 많은 구간에서 막대가 그동안 멈췄다가 건너뛴다.
+        읽기는 그 구간의 진행의 앞 몫을, 자르기는 나머지를 채운다. 읽기에 진행 신호가 없으면
+        세그먼트가 많은 구간에서 막대가 그동안 멈췄다가 건너뛴다.
+
+        Args:
+            fresh: 그 구간에서 새로 읽을 세그먼트 수. 앞 구간이 이미 읽은 세그먼트는 다시 읽지
+                않는다 — 겹치는 구간은 읽는 시간이 그만큼 짧다. 주지 않으면 모두 새로 읽는
+                것으로 본다
+            total: 그 구간이 쓰는 세그먼트 수. fresh와 함께 준다
+
+        읽기 몫은 ``_cut_read_share``(모두 새로 읽을 때의 몫 s)에서 읽는 일만 fresh ÷ total로
+        줄인 것이다 — s x fresh ÷ (s x fresh + (1 − s) x total). 새로 읽을 것이 없으면 0이다.
         """
         share = self._cut_read_share
+        if fresh is not None and total:
+            reading = share * fresh
+            share = reading / (reading + (1.0 - share) * total) if reading > 0 else 0.0
 
         def on_read(fraction: float) -> None:
             report(share * min(max(fraction, 0.0), 1.0))

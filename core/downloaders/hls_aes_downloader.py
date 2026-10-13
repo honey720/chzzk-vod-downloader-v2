@@ -104,8 +104,9 @@ class HlsAesDownloader(BaseDownloader):
     # 확정되어 Content에 실려 온다 — m3u8(라이브 다시보기)처럼 재해석하지 않는다
     requires_base_url_resolution = False
     requires_key_resolution = True
-    # 구간의 컷 진행에서 프레임 정보 읽기의 몫 — 세그먼트를 통째로 읽어 길다(세그먼트 400개
-    # 표본에서 읽기 6.5초 · 그 뒤의 단계 5.2초)
+    # 구간의 컷 진행에서 프레임 정보 읽기의 몫 — 구간의 세그먼트를 모두 새로 읽을 때의 값이다.
+    # 세그먼트를 통째로 읽어 길다: 실기의 70분 구간에서 읽기와 그 뒤의 단계가 반반이었다.
+    # 앞 구간이 읽은 세그먼트는 다시 읽지 않으므로 겹치는 구간은 그만큼 줄여 쓴다(_cut_reporters)
     _cut_read_share = 0.5
     supports_selections = True  # 복호화한 TS의 PES 머리로 구간의 프레임을 정할 수 있다 (#309)
     # m3u8 경로와 동일하게 모든 예외를 실패로 처리한다 (플레이리스트·키 취득 실패 포함)
@@ -592,7 +593,12 @@ class HlsAesDownloader(BaseDownloader):
                 if uses[first + place] == 1:
                     base_module._remove_fed_segment(self._segment_path(first + place))
 
-            on_read, on_cut = self._cut_reporters(progress.section(number))
+            # 앞 구간이 읽어 둔 세그먼트는 다시 읽지 않는다 — 읽기 몫과 그 안의 진행은 새로 읽을
+            # 것만으로 센다
+            fresh = {i for i in indexes if head.segments.get(i) is None and i not in read}
+            on_read, on_cut = self._cut_reporters(
+                progress.section(number), len(fresh), len(indexes)
+            )
             read_seconds = 0.0
             self._begin_cut_reading()  # 컷의 read 단계가 끝나면 내려간다(_cut_stage_recorder)
             try:
@@ -600,14 +606,17 @@ class HlsAesDownloader(BaseDownloader):
                 # (400개에 몇 초). 세그먼트마다 중단 · 일시정지를 따르고 읽은 비율을 알린다
                 read_began = tm.perf_counter()
                 streams = []
-                for count, index in enumerate(indexes, start=1):
+                fresh_read = 0
+                for index in indexes:
                     # 일시정지한 시간은 읽은 시간이 아니다
                     read_seconds -= self._wait_while_paused()
                     if self.state == DownloadState.WAITING:
                         self._end_cut_reading()
                         return  # 정리는 run()의 중단 경로가 한다
                     streams.append(segment_at(index))
-                    on_read(count / len(indexes))
+                    if index in fresh:
+                        fresh_read += 1
+                        on_read(fresh_read / len(fresh))
                 ts_frames = source.frames_of(
                     section.first_segment, section.last_segment, section.origin
                 )
