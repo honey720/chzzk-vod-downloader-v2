@@ -22,7 +22,12 @@ from core.utils.ffmpeg import FFmpegCancelledError, run_ffmpeg
 import core.utils.ts_cut as ts_cut_module
 from core.utils.hybrid_cut import CutCancelled, CutError
 from core.utils.paths import cut_temp_dir_for
-from tests.unit.core.long_ffmpeg import LONG_RUNNING, end_all, record_processes
+from tests.unit.core.long_ffmpeg import (
+    LONG_RUNNING,
+    end_all,
+    is_long_running,
+    record_processes,
+)
 from tests.unit.core.reference_cut import hybrid_cut
 from tests.unit.core.test_hybrid_cut import mp4_source  # noqa: F401 — 모듈 범위 픽스처
 
@@ -46,9 +51,20 @@ def _size(path: str) -> int:
 
 
 @pytest.fixture
-def launched(monkeypatch):
+def launch_hooks() -> list:
+    """프로세스가 뜰 때마다 ``(명령, 프로세스)``로 불릴 함수들 — 테스트가 넣는다."""
+    return []
+
+
+@pytest.fixture
+def launched(monkeypatch, launch_hooks):
     """ffmpeg 모듈이 띄운 프로세스들 — 끝날 때 살아 있는 것은 다시 돌린 뒤 그 객체로 끝낸다."""
-    processes = record_processes(monkeypatch)
+
+    def on_launch(command, process) -> None:
+        for hook in list(launch_hooks):
+            hook(command, process)
+
+    processes = record_processes(monkeypatch, on_launch)
     yield processes
     end_all(processes)
 
@@ -145,20 +161,27 @@ def test_time_spent_paused_does_not_count_towards_the_timeout(tmp_path, launched
 
 
 @pytest.mark.parametrize("reporting", [False, True], ids=["출력을 모으는 실행", "진행을 받는 실행"])
-def test_a_paused_ffmpeg_ends_when_told_to_stop(launched, reporting):
+def test_a_paused_ffmpeg_ends_when_told_to_stop(launched, launch_hooks, reporting):
     """일시정지로 멈춰 있는 ffmpeg도 멈추라는 요청이 오면 바로 끝나야 한다 — 멈춘 채로 남지 않는다.
 
-    10분 도는 명령을 띄우고 0.3초 뒤 일시정지, 0.8초 뒤 멈추라고 함
+    10분 도는 명령을 띄우고, 그 프로세스가 뜬 0.3초 뒤 일시정지, 0.8초 뒤 멈추라고 함
     -> FFmpegCancelledError, 요청 뒤 1.5초 안에 돌아온다, 띄운 프로세스가 모두 끝났다
     """
     pause, stop = threading.Event(), threading.Event()
     stopped_at = []
     extra = {"on_out_time": lambda seconds: None} if reporting else {}
-    threading.Timer(0.3, pause.set).start()
-    threading.Timer(0.8, lambda: (stopped_at.append(time.perf_counter()), stop.set())).start()
-    guard = threading.Timer(6.0, end_all, [launched])  # 제품이 못 끝내면 테스트가 끝낸다
-    guard.daemon = True
-    guard.start()
+
+    def on_launch(command, process) -> None:
+        if is_long_running(command):  # 그 프로세스가 떴다 — 이때부터 센다
+            threading.Timer(0.3, pause.set).start()
+            threading.Timer(
+                0.8, lambda: (stopped_at.append(time.perf_counter()), stop.set())
+            ).start()
+            guard = threading.Timer(6.0, end_all, [launched])  # 제품이 못 끝내면 테스트가 끝낸다
+            guard.daemon = True
+            guard.start()
+
+    launch_hooks.append(on_launch)
 
     with pytest.raises(FFmpegCancelledError):
         run_ffmpeg(

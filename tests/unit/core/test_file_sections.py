@@ -73,7 +73,12 @@ from core.utils.paths import (
     section_body_path_for,
 )
 from core.utils.selections import SELECTION_OUT_OF_RANGE, SelectionError
-from tests.unit.core.long_ffmpeg import LONG_RUNNING, end_all, record_processes
+from tests.unit.core.long_ffmpeg import (
+    LONG_RUNNING,
+    end_all,
+    is_long_running,
+    record_processes,
+)
 from tests.unit.core.reference_cut import hybrid_cut
 from tests.unit.core.midway_cut_failure import MidwayCutFailure
 from tests.unit.core.range_host import RangeHost
@@ -1637,12 +1642,17 @@ def test_stopping_while_a_section_is_being_cut_ends_ffmpeg_and_the_run_at_once(
     """구간을 자르는 도중 중단하면 도는 ffmpeg가 바로 끝나고, 실행도 곧 끝나며 이번 실행의 것이 남지 않아야 한다.
 
     기본 입력, 구간 둘(프레임 5~25 · 35~80). 둘째 구간의 머리 재인코딩을 10분 도는 명령으로 바꿔
-    띄우고 0.4초 뒤 중단(model.stop()) — 첫 구간은 한 GOP 안이라 머리 조각이 없다
+    띄우고, 그 프로세스가 뜬 0.4초 뒤 중단(model.stop()) — 첫 구간은 한 GOP 안이라 머리 조각이 없다
     -> 중단 뒤 1.5초 안에 run()이 돌아온다, 중단할 때 그 ffmpeg는 돌고 있었고 지금은 모두 끝났다
     -> 완료 · 실패 통지 없음, 실패한 구간 0, 폴더에 남은 것 없음(경계 원본 · 본문 파일 · 이번
        실행이 만든 구간 파일 — 끝낸 첫 구간의 파일까지 — 을 지운다: 중단의 지금 규칙이다)
     """
-    processes = record_processes(monkeypatch)
+
+    def on_launch(command, process) -> None:
+        if is_long_running(command):  # 바꿔 띄운 명령의 프로세스가 떴다 — 이때부터 센다
+            threading.Timer(0.4, stop).start()
+
+    processes = record_processes(monkeypatch, on_launch)
     run = _Run(
         server,
         "plain",
@@ -1665,7 +1675,6 @@ def test_stopping_while_a_section_is_being_cut_ends_ffmpeg_and_the_run_at_once(
     def slowed(args, **kwargs):
         if args[-1] == "0_head.mp4":  # 둘째 구간의 머리 재인코딩 — 첫 구간에는 이 조각이 없다
             kwargs.pop("on_out_time", None)
-            threading.Timer(0.4, stop).start()
             return real(LONG_RUNNING, **kwargs)
         return real(args, **kwargs)
 
