@@ -50,6 +50,7 @@ from fractions import Fraction
 import pytest
 
 import core.api.hls_fmp4 as hls_fmp4_module
+import core.downloaders.base as base_module
 import core.downloaders.m3u8_downloader as m3u8_module
 import core.downloaders.segment_space as space_module
 import core.utils.ffmpeg as ffmpeg_module
@@ -57,7 +58,12 @@ import core.utils.fmp4_cut as fmp4_cut_module
 from core.api.fmp4 import build_fmp4_index, fmp4_origin, parse_init_segment, parse_media_segment
 from core.api.hls import parse_media_playlist
 from core.api.hls_fmp4 import fetch_fmp4_head, segment_file_name, segment_frames
-from core.downloaders.base import DISK_SPACE_SHORT, DiskSpaceError, PostprocessError
+from core.downloaders.base import (
+    DISK_SPACE_SHORT,
+    DiskSpaceError,
+    FileSizeLimitError,
+    PostprocessError,
+)
 from core.downloaders.integrity import TruncatedSegmentError
 from core.downloaders.m3u8_downloader import M3U8Downloader
 from core.models.content import StreamKey
@@ -977,6 +983,42 @@ def test_section_download_checks_the_free_space_before_the_transfer(
     assert logged_output == pytest.approx(segments * covered, abs=1)
     assert 0 < covered < 1
     assert [(where, free) for where, _needed, free in checks] == [("both", 0)]
+
+
+def test_section_download_does_not_start_when_a_section_file_is_over_the_fat_limit(
+    host, sources, tmp_path, monkeypatch
+):
+    """구간 다운로드는 저장 폴더가 FAT 계열이고 가장 큰 구간 파일의 어림이 한계를 넘으면 받기 전에 실패해야 한다.
+
+    plain, 구간 둘(프레임 5~20 · 40~100), 선언 800,000 bit/s, 파일 시스템 "FAT32", 한계 1,000바이트,
+    여유 공간 넉넉함
+    -> 실패 1건(FileSizeLimitError), 완료 0회, 구간 파일 없음.
+       가장 큰 파일의 어림은 산출물 어림의 합보다 작다(구간 하나의 것이다) — 파일 크기 줄과
+       여유 공간 줄을 견준다. 한계를 그 어림과 같게 두면 받는다
+    """
+    source = sources["plain"]
+    selections = [source.selection(5, 20), source.selection(40, 100)]
+    monkeypatch.setattr(space_module, "same_volume", lambda a, b: True)
+    monkeypatch.setattr(space_module, "free_bytes", lambda folder: 10**13)
+    monkeypatch.setattr(base_module, "filesystem_name", lambda folder: "FAT32")
+    for name in ("a", "b"):
+        (tmp_path / name).mkdir()
+
+    monkeypatch.setattr(base_module, "FAT_MAX_FILE_BYTES", 1000)
+    refused = _Run(host, tmp_path / "a", selections)
+    refused.data.content.stream = StreamKey(256, 144, 30.0, 800_000)
+    refused.start()
+    (error,) = refused.failures
+    monkeypatch.setattr(base_module, "FAT_MAX_FILE_BYTES", error.largest)
+    allowed = _Run(host, tmp_path / "b", selections)
+    allowed.data.content.stream = StreamKey(256, 144, 30.0, 800_000)
+    allowed.start()
+
+    assert isinstance(error, FileSizeLimitError)
+    assert (refused.finished, refused.listing()) == (0, [])
+    _stage, _segments, output, _checks = dict(allowed.logger.calls)["log_space_check"]
+    assert 1000 < error.largest < output
+    assert (allowed.finished, allowed.failures) == (1, [])
 
 
 def test_section_log_reports_cut_and_total_size_of_section_files(host, sources, tmp_path):

@@ -423,7 +423,7 @@ def test_running_out_of_space_is_found_in_the_error_or_its_cause(make, expected)
         ("FAT32", FAT_LIMIT, False, FILE_TOO_LARGE_FOR_FAT),
         ("FAT32", FAT_LIMIT - 1, True, DISK_SPACE_SHORT),  # 정말 공간이 모자라다
         ("NTFS", 10**13, True, DISK_SPACE_SHORT),
-        ("NTFS", 10**13, False, None),  # 구간 없는 다운로드 — 저장 실패 안내가 그대로 나간다
+        ("NTFS", 10**13, False, DISK_SPACE_SHORT_WHOLE),  # 구간 없는 다운로드의 공간 부족 안내
         (None, 10**13, True, DISK_SPACE_SHORT),  # 파일 시스템을 읽지 못했다
     ],
 )
@@ -433,7 +433,7 @@ def test_failure_from_running_out_of_space_carries_the_key_to_show(
     """쓰다가 공간이 없어 난 실패를 알릴 때, 예외에 보일 안내의 키(space_key)가 적혀 있어야 한다.
 
     파일 시스템 · 저장 폴더의 여유 · 구간이 있는지는 표의 것. 엔진의 실패 통지로 ENOSPC인 OSError를 보냄
-    -> 받은 예외는 보낸 그 객체이고 space_key == 표의 기대값(None이면 속성이 없다)
+    -> 받은 예외는 보낸 그 객체이고 space_key == 표의 기대값
     """
     engine, data, _logger, _output, _finished, failures = _make_engine(tmp_path, monkeypatch)
     _on_filesystem(monkeypatch, name, free)

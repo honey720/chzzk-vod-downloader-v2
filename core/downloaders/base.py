@@ -655,11 +655,11 @@ class BaseDownloader(ABC):
         return exc
 
     def _space_failure_key(self) -> str | None:
-        """쓰다가 "남은 공간이 없다"로 실패했을 때의 안내 키. 따로 알릴 것이 없으면 None이다.
+        """쓰다가 "남은 공간이 없다"로 실패했을 때의 안내 키.
 
         저장 폴더가 FAT 계열이고 지금도 파일 하나의 한계만큼은 비어 있으면, 공간이 아니라 그
-        한계에 닿은 것이다 — FAT 안내를 준다. 그 밖에는 구간 다운로드면 공간 부족 안내를 준다.
-        구간 없는 다운로드는 None이다(표시 계층의 저장 실패 안내가 디스크 공간을 말한다).
+        한계에 닿은 것이다 — FAT 안내를 준다. 그 밖에는 공간 부족 안내를 준다(구간이 있는지에
+        따라 키가 다르다).
         """
         folder = self._output_folder()
         if is_fat(filesystem_name(folder)):
@@ -669,7 +669,7 @@ class BaseDownloader(ABC):
                 roomy = True  # 여유를 모른다 — FAT인 것은 알므로 그 한계로 알린다
             if roomy:
                 return FILE_TOO_LARGE_FOR_FAT
-        return DISK_SPACE_SHORT if self.s.content.selections else None
+        return DISK_SPACE_SHORT if self.s.content.selections else DISK_SPACE_SHORT_WHOLE
 
     # ============ 세그먼트 다운로드의 여유 공간 검사 (#309) ============
 
@@ -735,12 +735,16 @@ class BaseDownloader(ABC):
 
         Raises:
             DiskSpaceError: 여유 공간이 모자란 경우
+            FileSizeLimitError: 저장 폴더가 FAT 계열이고 만들 파일 하나가 그 한계를 넘는 경우
         """
         if self._space is None:
             return
         need = self._space.need(measured=stage == "transfer")
         if need is None:
             return
+        # 저장 폴더가 FAT 계열이면 4GiB를 넘는 파일을 담지 못한다 — 공간보다 먼저 본다(공간이
+        # 넉넉해도 그 파일은 만들 수 없다). 받기 전 어림이 없는 다운로드는 전송 중 어림에서 걸린다
+        self._require_file_size_fits(need.largest)
         checks = check_space(need, *self._space_folders())
         self._log_if_supported(
             "log_space_check",
@@ -772,6 +776,8 @@ class BaseDownloader(ABC):
             self._require_space("transfer")
         except DiskSpaceError as e:
             self._fail_fatally(e, "Not enough disk space — transfer stopped")
+        except FileSizeLimitError as e:
+            self._fail_fatally(e, "File too large for the drive — transfer stopped")
 
     def _stop_requested(self) -> bool:
         """다운로드를 중단하라는 요청이 왔는지 — 컷이 도는 ffmpeg를 끝낼지 묻는 데 쓴다 (#309).

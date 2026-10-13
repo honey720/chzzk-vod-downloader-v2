@@ -47,12 +47,12 @@ def test_start_estimate_is_declared_bitrate_times_total_length():
     """시작 전 어림은 선언된 비트레이트 × 받을 세그먼트 길이의 합이어야 한다.
 
     8,000,000 bit/s, 2초 세그먼트 10개 (20초)
-    -> 세그먼트 20,000,000바이트. 구간이 없으면 산출물 · 같은 볼륨의 최대도 같은 값
+    -> 세그먼트 20,000,000바이트. 구간이 없으면 산출물 · 같은 볼륨의 최대 · 가장 큰 파일도 같은 값
     """
     space = SegmentSpace(_two_seconds(10), bandwidth=8 * MEGA)
 
     assert space.need(measured=False) == SpaceNeed(
-        temp=20 * MEGA, output=20 * MEGA, together=20 * MEGA, on_disk=0
+        temp=20 * MEGA, output=20 * MEGA, together=20 * MEGA, largest=20 * MEGA, on_disk=0
     )
 
 
@@ -218,6 +218,23 @@ def test_section_file_is_the_share_of_its_segments_that_the_section_covers():
     assert (need.output, need.together) == (5 * MEGA, 10 * MEGA)
 
 
+def test_largest_file_of_a_section_download_is_its_biggest_section_file():
+    """구간 다운로드의 가장 큰 파일은 구간 파일 어림 가운데 가장 큰 것이어야 한다 — 합이 아니다.
+
+    1,000,000바이트/초, 2초 세그먼트 10개. 구간 A = 세그먼트 0~7(16초), B = 6~9(8초)
+    -> 구간 파일 16,000,000 · 8,000,000 -> 가장 큰 파일 16,000,000 (산출물의 합은 24,000,000)
+    """
+    space = SegmentSpace(
+        _two_seconds(10),
+        bandwidth=8 * MEGA,
+        sections=[SectionUse(0, 7, 16.0), SectionUse(6, 9, 8.0)],
+    )
+
+    need = space.need(measured=False)
+
+    assert (need.largest, need.output) == (16 * MEGA, 24 * MEGA)
+
+
 def test_cut_order_is_longest_first_then_by_number():
     """구간을 만드는 순서는 긴 구간부터, 길이가 같으면 번호순이어야 한다.
 
@@ -239,7 +256,9 @@ def test_same_volume_is_checked_once_against_the_combined_peak(monkeypatch):
     -> 결과 1건: both, 필요 (150 − 30) x 1.1 + 256MiB = 132,000,000 + 268,435,456, 모자라지 않음
     """
     _volumes(monkeypatch, same=True, free={"out": 500 * MIB})
-    need = SpaceNeed(temp=100 * MEGA, output=70 * MEGA, together=150 * MEGA, on_disk=30 * MEGA)
+    need = SpaceNeed(
+        temp=100 * MEGA, output=70 * MEGA, together=150 * MEGA, largest=70 * MEGA, on_disk=30 * MEGA
+    )
 
     checks = check_space(need, "temp", "out")
 
@@ -255,7 +274,9 @@ def test_different_volumes_are_checked_separately(monkeypatch):
     -> temp: (100 − 30) x 1.1 + 256MiB, output: 70 x 1.1 + 256MiB
     """
     _volumes(monkeypatch, same=False, free={"temp": 10**12, "out": 10**12})
-    need = SpaceNeed(temp=100 * MEGA, output=70 * MEGA, together=150 * MEGA, on_disk=30 * MEGA)
+    need = SpaceNeed(
+        temp=100 * MEGA, output=70 * MEGA, together=150 * MEGA, largest=70 * MEGA, on_disk=30 * MEGA
+    )
 
     checks = check_space(need, "temp", "out")
 
@@ -270,7 +291,7 @@ def test_check_is_short_only_below_the_needed_bytes(monkeypatch):
 
     필요 = 1,000,000 x 1.1 + 256MiB. 여유가 그 값 -> 모자라지 않음, 그 값 − 1 -> 모자람
     """
-    need = SpaceNeed(temp=MEGA, output=MEGA, together=MEGA, on_disk=0)
+    need = SpaceNeed(temp=MEGA, output=MEGA, together=MEGA, largest=MEGA, on_disk=0)
     needed = 1_100_000 + 256 * MIB
 
     _volumes(monkeypatch, same=True, free={"out": needed})
@@ -292,7 +313,7 @@ def test_volume_whose_free_space_is_unknown_is_not_checked(monkeypatch):
 
     monkeypatch.setattr(space_module, "same_volume", lambda a, b: True)
     monkeypatch.setattr(space_module, "free_bytes", unknown)
-    need = SpaceNeed(temp=MEGA, output=MEGA, together=MEGA, on_disk=0)
+    need = SpaceNeed(temp=MEGA, output=MEGA, together=MEGA, largest=MEGA, on_disk=0)
 
     assert check_space(need, "temp", "out") == ()
 

@@ -50,6 +50,9 @@ class SpaceNeed:
     temp: float  # 임시 폴더 — 받는 세그먼트 전부
     output: float  # 산출물 폴더 — 산출물(구간 다운로드는 구간 파일의 합)
     together: float  # 두 폴더가 같은 볼륨일 때 — 세그먼트와 산출물의 합이 가장 큰 순간
+    # 만들 파일 가운데 가장 큰 것 — 구간 없는 다운로드는 산출물, 구간 다운로드는 가장 큰 구간
+    # 파일. 저장 폴더의 파일 시스템이 파일 하나에 담을 수 있는 크기와 견준다
+    largest: float
     on_disk: int  # 그 가운데 이미 임시 폴더에 놓인 세그먼트(바이트) — 여유 공간에서 이미 빠져 있다
 
 
@@ -164,7 +167,9 @@ class SegmentSpace:
         on_disk = sum(known.values())
         if not self._sections:
             # 넘긴 세그먼트를 곧바로 지운다 — 산출물이 커지는 만큼 세그먼트가 준다
-            return SpaceNeed(temp=segments, output=segments, together=segments, on_disk=on_disk)
+            return SpaceNeed(
+                temp=segments, output=segments, together=segments, largest=segments, on_disk=on_disk
+            )
 
         uses = Counter(
             index
@@ -173,18 +178,23 @@ class SegmentSpace:
             if index in sizes
         )
         files = 0.0
+        largest = 0.0
         peak = segments  # 후처리를 시작할 때 — 세그먼트 전부, 구간 파일 없음
         for section in self._sections:
             indexes = [i for i in range(section.first, section.last + 1) if i in sizes]
             held = sum(sizes[i] for i in indexes)
             seconds = sum(self._durations[i] for i in indexes)
             # 구간 파일은 그 구간이 쓰는 세그먼트 가운데 구간 길이만큼의 몫이다
-            files += held * min(section.seconds / seconds, 1.0) if seconds > 0 else held
+            made = held * min(section.seconds / seconds, 1.0) if seconds > 0 else held
+            files += made
+            largest = max(largest, made)
             for index in indexes:
                 uses[index] -= 1
             left = sum(sizes[index] for index, count in uses.items() if count > 0)
             peak = max(peak, left + files)
-        return SpaceNeed(temp=segments, output=files, together=peak, on_disk=on_disk)
+        return SpaceNeed(
+            temp=segments, output=files, together=peak, largest=largest, on_disk=on_disk
+        )
 
     def _rate(self, known: Mapping[int, int]) -> float | None:
         """받은 세그먼트의 실제 평균(바이트/초). 받은 것이 없거나 그 길이를 모르면 None."""

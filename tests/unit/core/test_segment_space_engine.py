@@ -17,7 +17,12 @@ import core.downloaders.base as base_module
 import core.downloaders.hls_aes_downloader as aes_module
 import core.downloaders.m3u8_downloader as m3u8_module
 import core.downloaders.segment_space as space_module
-from core.downloaders.base import DISK_SPACE_SHORT_WHOLE, DiskSpaceError
+from core.downloaders.base import (
+    DISK_SPACE_SHORT_WHOLE,
+    FILE_TOO_LARGE_FOR_FAT,
+    DiskSpaceError,
+    FileSizeLimitError,
+)
 from core.downloaders.m3u8_downloader import M3U8Downloader
 from core.models.content import StreamKey
 from core.models.download_data import DownloadData
@@ -260,6 +265,64 @@ def test_volumes_apart_are_checked_one_by_one(tmp_path, monkeypatch):
     ]
 
 
+# ================================================================ FAT 계열의 파일 크기 한계
+
+
+def _on_fat(monkeypatch, name: str, limit: int) -> list[tuple]:
+    """저장 폴더의 파일 시스템 이름과 파일 하나의 한계를 정해 둔다 — 파일 크기 줄을 적을 목록을 돌려준다."""
+    monkeypatch.setattr(base_module, "filesystem_name", lambda folder: name)
+    monkeypatch.setattr(base_module, "FAT_MAX_FILE_BYTES", limit)
+    return []
+
+
+@pytest.mark.parametrize(
+    ("name", "over", "refused"),
+    [("FAT32", 1, True), ("FAT32", 0, False), ("exFAT", 1, False), (None, 1, False)],
+    ids=["fat-over", "fat-at-limit", "exfat-over", "unknown-over"],
+)
+def test_start_check_refuses_an_output_over_the_fat_limit(
+    tmp_path, monkeypatch, name, over, refused
+):
+    """구간 없는 m3u8은 저장 폴더가 FAT 계열이고 어림한 산출물이 한계를 넘을 때만 받지 않고 실패해야 한다.
+
+    선언 8,000,000 bit/s, 2초 세그먼트 24개 -> 어림 48,000,000. 한계를 어림 − 1(넘는다) 또는
+    어림(꼭 맞는다)으로 둠. 파일 시스템은 표의 것, 여유 공간은 넉넉함
+    -> 거부면: 실패 1건(FileSizeLimitError, 키 "File too large for a FAT32 drive", largest 48,000,000),
+       청한 세그먼트 0개, 완료 0회 / 아니면: 완료 1회, 실패 0건
+    """
+    run = _Run(tmp_path, monkeypatch, free=10**13, bandwidth=BANDWIDTH, hold=False)
+    _on_fat(monkeypatch, name, START_ESTIMATE - over)
+
+    run.start()
+
+    if refused:
+        assert [(type(e), e.message_key, e.largest) for e in run.failures] == [
+            (FileSizeLimitError, FILE_TOO_LARGE_FOR_FAT, START_ESTIMATE)
+        ]
+        assert (run.session.segments, run.finished) == ([], 0)
+    else:
+        assert (run.finished, run.failures) == (1, [])
+
+
+def test_transfer_check_stops_the_transfer_when_the_output_is_over_the_fat_limit(
+    tmp_path, monkeypatch
+):
+    """받기 전 어림이 없는 다운로드는 20개를 받은 뒤의 어림이 FAT의 한계를 넘으면 전송을 멈추고 실패해야 한다.
+
+    변형의 정체 없음(시작 전 검사 없음), 세그먼트 24개 x 24,576바이트(어림 589,824), 파일 시스템
+    "FAT32", 한계 589,823, 여유 공간 넉넉함
+    -> 실패 1건(FileSizeLimitError, largest 589,824), 완료 0회, 산출물 · 임시 폴더 없음
+    """
+    run = _Run(tmp_path, monkeypatch, free=10**13, bandwidth=None, hold=True)
+    _on_fat(monkeypatch, "FAT32", TRANSFER_ESTIMATE - 1)
+
+    run.start()
+
+    assert [(type(e), e.largest) for e in run.failures] == [(FileSizeLimitError, TRANSFER_ESTIMATE)]
+    assert run.finished == 0
+    assert not run.output.exists() and not (tmp_path / "CVDv2_temp_out").exists()
+
+
 # ================================================================ 암호화 VOD (TS)
 
 
@@ -326,3 +389,32 @@ def test_encrypted_vod_transfer_check_counts_the_decrypted_segments(tmp_path, mo
         assert not finished.is_set()
     else:
         assert failures == [] and finished.is_set()
+
+
+def test_encrypted_vod_transfer_check_stops_when_the_output_is_over_the_fat_limit(
+    tmp_path, monkeypatch
+):
+    """암호화 VOD(받기 전 어림 없음)도 20개를 받은 뒤의 어림이 FAT의 한계를 넘으면 전송을 멈추고 실패해야 한다.
+
+    세그먼트 24개, 복호화한 크기 376바이트(어림 9,024), 파일 시스템 "FAT32", 한계 9,023
+    -> 실패 1건(FileSizeLimitError, largest 9,024), 완료 안 함
+    """
+    engine, data, _logger, finished, failures, _merges = aes_tests._make_engine(
+        tmp_path, monkeypatch, playlist=_aes_playlist(), key_resolver=lambda c, u: aes_tests.KEY
+    )
+    session = _GatedAesSession(_aes_playlist(), HOLD_FROM)
+    monkeypatch.setattr(aes_module, "get_thread_session", lambda: session)
+    monkeypatch.setattr(space_module, "same_volume", lambda a, b: True)
+    monkeypatch.setattr(space_module, "free_bytes", lambda folder: 10**13)
+    _on_fat(monkeypatch, "FAT32", COUNT * 376 - 1)
+    engine._slow_speed_threshold_kb_s = 0
+    engine._on_failed = lambda exc: (failures.append(exc), session.release.set())
+
+    data.model.start()
+    thread = threading.Thread(target=engine.run, daemon=True)
+    thread.start()
+    thread.join(timeout=60)
+
+    assert not thread.is_alive(), "엔진이 끝나지 않았다"
+    assert [(type(e), e.largest) for e in failures] == [(FileSizeLimitError, COUNT * 376)]
+    assert not finished.is_set()
