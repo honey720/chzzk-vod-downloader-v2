@@ -66,14 +66,20 @@ from core.utils.mp4_ranges import (
 )
 from core.utils.mp4_section_writer import section_pieces
 from core.utils.interaction import resting_while
-from core.utils.hybrid_cut import CUT_FAILED, CutError, cut_frames_from_mp4, hybrid_cut
+from core.utils.hybrid_cut import CUT_FAILED, CutError, cut_frames_from_mp4
 from core.utils.paths import (
     build_section_output_paths,
     partial_source_path_for,
     section_body_path_for,
 )
 from core.utils.selections import SELECTION_OUT_OF_RANGE, SelectionError
-from tests.unit.core.long_ffmpeg import LONG_RUNNING, end_all, record_processes
+from tests.unit.core.long_ffmpeg import (
+    LONG_RUNNING,
+    end_all,
+    is_long_running,
+    record_processes,
+)
+from tests.unit.core.reference_cut import hybrid_cut
 from tests.unit.core.midway_cut_failure import MidwayCutFailure
 from tests.unit.core.range_host import RangeHost
 from tests.unit.core.section_retry import CutCalls, hand_over, snapshot
@@ -582,6 +588,23 @@ def test_engine_reports_the_size_of_the_section_files_it_made(server, tmp_path):
     assert run.data.sections_output_size == expected
     ((_elapsed, logged),) = _logged(run, "log_postprocess_complete")
     assert logged == expected
+
+
+def test_finished_section_run_reports_the_saved_size_as_the_sum_of_its_section_files(
+    server, tmp_path
+):
+    """구간을 모두 만든 mp4 실행은 저장된 크기로 구간 파일 크기의 합을 적어야 한다.
+
+    기본 입력, 구간 셋 -> 완료 1회, output_size == 세 파일 크기의 합 == 로그의 Output size
+    """
+    run = _Run(server, "plain", tmp_path, _three())
+    assert run.data.output_size is None
+
+    run.start()
+
+    assert (run.finished, run.failures) == (1, [])
+    ((_elapsed, logged),) = _logged(run, "log_postprocess_complete")
+    assert run.data.output_size == _sizes(run.paths) == logged > 0
 
 
 def test_engine_reports_only_the_files_it_made_when_a_section_fails(server, tmp_path, monkeypatch):
@@ -1619,12 +1642,17 @@ def test_stopping_while_a_section_is_being_cut_ends_ffmpeg_and_the_run_at_once(
     """구간을 자르는 도중 중단하면 도는 ffmpeg가 바로 끝나고, 실행도 곧 끝나며 이번 실행의 것이 남지 않아야 한다.
 
     기본 입력, 구간 둘(프레임 5~25 · 35~80). 둘째 구간의 머리 재인코딩을 10분 도는 명령으로 바꿔
-    띄우고 0.4초 뒤 중단(model.stop()) — 첫 구간은 한 GOP 안이라 머리 조각이 없다
+    띄우고, 그 프로세스가 뜬 0.4초 뒤 중단(model.stop()) — 첫 구간은 한 GOP 안이라 머리 조각이 없다
     -> 중단 뒤 1.5초 안에 run()이 돌아온다, 중단할 때 그 ffmpeg는 돌고 있었고 지금은 모두 끝났다
     -> 완료 · 실패 통지 없음, 실패한 구간 0, 폴더에 남은 것 없음(경계 원본 · 본문 파일 · 이번
        실행이 만든 구간 파일 — 끝낸 첫 구간의 파일까지 — 을 지운다: 중단의 지금 규칙이다)
     """
-    processes = record_processes(monkeypatch)
+
+    def on_launch(command, process) -> None:
+        if is_long_running(command):  # 바꿔 띄운 명령의 프로세스가 떴다 — 이때부터 센다
+            threading.Timer(0.4, stop).start()
+
+    processes = record_processes(monkeypatch, on_launch)
     run = _Run(
         server,
         "plain",
@@ -1647,7 +1675,6 @@ def test_stopping_while_a_section_is_being_cut_ends_ffmpeg_and_the_run_at_once(
     def slowed(args, **kwargs):
         if args[-1] == "0_head.mp4":  # 둘째 구간의 머리 재인코딩 — 첫 구간에는 이 조각이 없다
             kwargs.pop("on_out_time", None)
-            threading.Timer(0.4, stop).start()
             return real(LONG_RUNNING, **kwargs)
         return real(args, **kwargs)
 
@@ -1706,6 +1733,42 @@ def test_pausing_while_a_section_is_being_cut_holds_the_cut_until_resumed(
         assert (run.finished, run.failures) == (1, [])
         assert run.listing() == ["구간 시험 144p_1.mp4"]
         assert all(process.returncode == 0 for process in processes)
+    finally:
+        end_all(processes)
+
+
+def test_postprocess_log_time_leaves_out_the_time_paused_during_the_cut(
+    server, tmp_path, monkeypatch
+):
+    """후처리 종료 로그의 시간은 컷 도중 일시정지한 시간을 뺀 값이어야 하고, 그 시간은 따로 넘어와야 한다.
+
+    기본 입력, 구간 하나(프레임 35~80). 머리 재인코딩의 ffmpeg가 뜬 직후 일시정지하고 1초 뒤 재개
+    -> log_postprocess_complete(시간, 크기, 일시정지): 일시정지 >= 0.9초,
+       시간 + 일시정지 <= 후처리를 감싼 실제 시간, 시간 == 시간 구분 줄의 후처리 값,
+       시간 구분 줄의 일시정지 == 같은 값
+    """
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))])
+    paused = []
+
+    def on_launch(command, process) -> None:
+        if command[-1] == "0_head.mp4" and not paused:
+            paused.append(run.data.model.pause())
+            threading.Timer(1.0, run.data.model.resume).start()
+
+    processes = record_processes(monkeypatch, on_launch)
+    try:
+        began = time.perf_counter()
+        run.start()
+        wall = time.perf_counter() - began
+
+        assert paused == [True], "전제: 컷 도중에 일시정지됐다"
+        assert (run.finished, run.failures) == (1, [])
+        ((elapsed, _size, held),) = _logged(run, "log_postprocess_complete")
+        ((_transfer, cut, all_held),) = _logged(run, "log_total_breakdown")
+        assert held >= 0.9
+        assert elapsed + held <= wall
+        assert elapsed == cut
+        assert all_held == held
     finally:
         end_all(processes)
 

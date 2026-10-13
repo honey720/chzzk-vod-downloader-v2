@@ -18,39 +18,45 @@ import pytest
 import core.utils.hybrid_cut as cut_module
 from core.utils.ffmpeg import FFmpegCancelledError, run_ffmpeg
 import core.utils.ts_cut as ts_cut_module
-from core.utils.hybrid_cut import CutCancelled, hybrid_cut
+from core.utils.hybrid_cut import CutCancelled
 from core.utils.paths import cut_temp_dir_for
 from tests.unit.core.long_ffmpeg import LONG_RUNNING, end_all, record_processes
+from tests.unit.core.reference_cut import hybrid_cut
 from tests.unit.core.test_hybrid_cut import mp4_source  # noqa: F401 — 모듈 범위 픽스처
 
-STOP_AFTER = 0.4  # 프로세스를 띄운 뒤 멈추라고 하기까지(초) — 프로세스가 돌고 있는 동안이다
+# 오래 도는 프로세스가 뜬 것을 확인한 뒤 멈추라고 하기까지(초) — 제품이 그 프로세스를 지켜보는 동안이다
+STOP_AFTER = 0.4
 # 멈추라고 한 뒤 호출이 돌아오기까지의 상한(초). 제품의 확인 간격은 0.05초다 — 프로세스를 끝내고
 # 파이프를 닫는 시간과 느린 러너를 넉넉히 본 값이고, 앱이 워커를 기다리는 2초보다 짧다
 RETURN_WITHIN = 1.5
 
 
-@pytest.fixture
-def launched(monkeypatch):
-    """ffmpeg 모듈이 띄운 프로세스들 — 테스트가 끝날 때 살아 있는 것이 있으면 그 객체로 끝낸다."""
-    processes = record_processes(monkeypatch)
-    yield processes
-    end_all(processes)
-
-
 class _Stop:
-    """멈추라는 요청 — 켠 시각과, 켤 때 마지막 프로세스가 돌고 있었는지를 적는다."""
+    """멈추라는 요청 — 켠 시각과, 켤 때 오래 도는 프로세스가 돌고 있었는지를 적는다.
 
-    def __init__(self, processes: list):
-        self._processes = processes
+    오래 도는 명령(``LONG_RUNNING``)의 프로세스가 뜨면 그때부터 ``STOP_AFTER``초 뒤에 켜진다.
+    뜨기 전에는 켜지지 않는다 — 실행 파일을 처음 찾는 확인 실행이 얼마나 걸리든 같다.
+    """
+
+    def __init__(self):
+        self._processes: list = []
+        self._long_running = None
         self._event = threading.Event()
         self.at = 0.0
         self.running_then = False
 
-    def arm(self) -> None:
-        threading.Timer(STOP_AFTER, self._set).start()
+    def watch(self, processes: list) -> None:
+        """제품이 멈추지 못했을 때 끝낼 프로세스 목록을 받는다."""
+        self._processes = processes
+
+    def on_launch(self, command, process) -> None:
+        """막 뜬 프로세스가 오래 도는 명령의 것이면 그 프로세스를 쥐고 멈춤을 예약한다."""
+        if self._long_running is None and all(part in command for part in LONG_RUNNING):
+            self._long_running = process
+            threading.Timer(STOP_AFTER, self._set).start()
 
     def _set(self) -> None:
-        self.running_then = bool(self._processes) and self._processes[-1].poll() is None
+        self.running_then = self._long_running.poll() is None
         self.at = time.perf_counter()
         self._event.set()
         # 제품이 멈추지 못하면 10분을 돈다 — 상한을 넘기면 테스트가 띄운 프로세스를 직접 끝내
@@ -63,17 +69,30 @@ class _Stop:
         return self._event.is_set()
 
 
+@pytest.fixture
+def stop() -> _Stop:
+    """오래 도는 프로세스가 뜬 뒤에 켜지는 멈춤 요청."""
+    return _Stop()
+
+
+@pytest.fixture
+def launched(monkeypatch, stop):
+    """ffmpeg 모듈이 띄운 프로세스들 — 테스트가 끝날 때 살아 있는 것이 있으면 그 객체로 끝낸다."""
+    processes = record_processes(monkeypatch, stop.on_launch)
+    stop.watch(processes)
+    yield processes
+    end_all(processes)
+
+
 @pytest.mark.parametrize("reporting", [False, True], ids=["출력을 모으는 실행", "진행을 받는 실행"])
-def test_run_ffmpeg_ends_the_process_when_told_to_stop(launched, reporting):
+def test_run_ffmpeg_ends_the_process_when_told_to_stop(launched, stop, reporting):
     """도는 ffmpeg는 멈추라는 요청이 오면 바로 끝나고, 호출은 취소 예외로 돌아와야 한다.
 
-    멈추지 않으면 10분을 도는 명령을 띄우고 0.4초 뒤 should_stop이 참을 돌려주게 함
+    멈추지 않으면 10분을 도는 명령을 띄우고, 그 프로세스가 뜬 0.4초 뒤 should_stop이 참을 돌려주게 함
     (출력을 모으는 실행 / 진행을 받는 실행)
     -> FFmpegCancelledError, 요청 뒤 1.5초 안에 돌아온다, 요청 때 프로세스는 돌고 있었고 지금은 끝났다
     """
-    stop = _Stop(launched)
     extra = {"on_out_time": lambda seconds: None} if reporting else {}
-    stop.arm()
 
     with pytest.raises(FFmpegCancelledError):
         run_ffmpeg(LONG_RUNNING, timeout=120, should_stop=stop, **extra)
@@ -116,17 +135,23 @@ STAGES = {
 
 
 @pytest.mark.parametrize("stage", list(STAGES))
-def test_cut_stops_in_the_middle_of_any_stage(mp4_source, tmp_path, monkeypatch, launched, stage):  # noqa: F811
+def test_cut_stops_in_the_middle_of_any_stage(
+    mp4_source,  # noqa: F811
+    tmp_path,
+    monkeypatch,
+    launched,
+    stop,
+    stage,
+):
     """컷의 어느 단계가 도는 도중에 멈추라고 해도 그 ffmpeg가 바로 끝나고 아무것도 남지 않아야 한다.
 
     mp4, 프레임 35~80. 표의 단계(입력 읽기 · 머리 · 가운데 · 끝 · 오디오 · 잇기)의 명령을 10분 도는
-    명령으로 바꿔 띄우고 0.4초 뒤 멈추라고 함
+    명령으로 바꿔 띄우고, 그 프로세스가 뜬 0.4초 뒤 멈추라고 함
     -> CutCancelled, 요청 뒤 1.5초 안에 돌아온다, 요청 때 그 단계의 프로세스는 돌고 있었다
     -> 띄운 프로세스가 모두 끝났다, 산출물 자리에 쓰다 만 파일이 없다, 중간 파일 폴더 없음
     """
     path, frames = mp4_source
     output = str(tmp_path / "out.mp4")
-    stop = _Stop(launched)
     marker = STAGES[stage]
     real = cut_module.run_ffmpeg
     swapped = []
@@ -138,7 +163,6 @@ def test_cut_stops_in_the_middle_of_any_stage(mp4_source, tmp_path, monkeypatch,
             if stage != "probe":  # 입력 읽기는 산출물 자리를 건드리기 전이다
                 with open(output, "wb") as partial:
                     partial.write(b"partial")  # 쓰다 만 산출물 — 바꿔 띄운 명령은 쓰지 않는다
-            stop.arm()
             return real(LONG_RUNNING, **kwargs)
         return real(args, **kwargs)
 

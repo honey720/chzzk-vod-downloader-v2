@@ -139,7 +139,7 @@ def _failure_message_key(exc: BaseException) -> str | None:
     if isinstance(exc, requests.RequestException):
         return "Network connection error"
     if isinstance(exc, DiskSpaceError):
-        # 받기 전에 저장 폴더의 여유 공간이 만들 파일보다 적었다 (#309)
+        # 여유 공간이 만들 파일 · 받을 양보다 적었다 (#309) — 구간이 있는지에 따라 키가 다르다
         return exc.message_key
     if isinstance(exc, OSError):
         return "Failed to save file"
@@ -501,6 +501,7 @@ class DownloadViewModel(QObject):
         if self.item is None or self._data is None or not self._data.sections_total:
             return
         self.item.sections_done = self._data.sections_done
+        self.item.cut_preparing = bool(getattr(self._data, "cut_preparing", False))
         # 엔진이 컷을 마치며 센, 만든 구간 파일 크기의 합 — 완료 카드가 크기로 적는다
         self.item.output_bytes = self._data.sections_output_size
         # 엔진에 넘기지 않고 뺀 구간도 받지 못한 구간이다
@@ -517,6 +518,10 @@ class DownloadViewModel(QObject):
             return
         item = self.item
         self._syncSections()
+        saved = getattr(self._data, "output_size", None)
+        if saved is not None:
+            # 저장된 파일의 크기 — 엔진이 완료를 알리기 직전에 읽었다. 완료 카드가 크기로 적는다
+            item.output_bytes = saved
         self._endPreparing()
         log_process_memory("다운로드 끝")
         self._dropHead()
@@ -655,6 +660,11 @@ class DownloadViewModel(QObject):
                 "FAT32 drive can't hold files over 4 GB · pick another folder\n"
                 "This drive (FAT32) cannot store a file larger than 4 GB. Pick another folder, "
                 "or format the drive as exFAT or NTFS."
+            ),
+            "Not enough disk space for the download": self.tr(
+                "Not enough disk space · free up space or pick another folder\n"
+                "The download folder or the temporary folder does not have enough free space "
+                "for the download."
             ),
             "Segment was received truncated": self.tr(
                 "Video data arrived corrupted · try again later\n"

@@ -96,6 +96,10 @@
         <translation>Preparing</translation>
     </message>
     <message>
+        <source>Preparing to cut</source>
+        <translation>Preparing to cut</translation>
+    </message>
+    <message>
         <source>Cutting</source>
         <translation>Cutting</translation>
     </message>
@@ -289,6 +293,12 @@ The download folder does not have enough free space for the section files.</tran
 This drive (FAT32) cannot store a file larger than 4 GB. Pick another folder, or format the drive as exFAT or NTFS.</source>
         <translation>FAT32 drive can&apos;t hold files over 4 GB · pick another folder
 This drive (FAT32) cannot store a file larger than 4 GB. Pick another folder, or format the drive as exFAT or NTFS.</translation>
+    </message>
+    <message>
+        <source>Not enough disk space · free up space or pick another folder
+The download folder or the temporary folder does not have enough free space for the download.</source>
+        <translation>Not enough disk space · free up space or pick another folder
+The download folder or the temporary folder does not have enough free space for the download.</translation>
     </message>
     <message>
         <source>Video data arrived corrupted · try again later

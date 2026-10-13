@@ -41,6 +41,9 @@ class StreamKey:
     height: int  # RESOLUTION의 세로 픽셀
     frame_rate: float | None  # FRAME-RATE. 선언이 없으면 None
     bandwidth: int | None  # BANDWIDTH(bps). 선언이 없으면 None
+    # AVERAGE-BANDWIDTH(bps) — 평균 비트레이트. 선언이 없으면 None이다. 받을 양을 어림하는 데만
+    # 쓴다(BANDWIDTH는 최대값이라 어림이 크게 나온다). 변형을 다시 찾는 데는 쓰지 않는다
+    average_bandwidth: int | None = None
 
 
 @dataclass

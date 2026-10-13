@@ -22,6 +22,9 @@ HlsAesDownloader를 구간과 함께 실제로 돌려 구간 파일이 나오는
 - 구간을 정하는 일은 작업자가 시작하기 전에 끝나고, 작업자는 서로 다른 파일에 쓴다
 - 받은 세그먼트는 완료 · 사용자 중단이면 지우고 후처리 실패면 남긴다. 끝난 뒤 저장 폴더에는
   구간 결과 파일만 남는다
+- 구간 파일은 받은 세그먼트에서 바로 쓴다 — 영상 패킷은 전부 이어 다시 싼 뒤 자른 것과 같고
+  오디오 패킷은 원본 그대로다. 긴 구간부터 만들고, 구간 파일로 넘긴 세그먼트는 남은 구간이
+  쓰지 않으면 그 자리에서 지운다. 만들지 못한 구간이 있으면 남아 있는 세그먼트만 남긴 것에 적는다
 - 전체 다운로드(구간 없음)의 경로는 그대로다
 """
 
@@ -29,27 +32,38 @@ import logging
 import os
 import subprocess
 import threading
+import types
 
 import pytest
 from Crypto.Cipher import AES
 
 import core.api.hls_ts as hls_ts_module
 import core.downloaders.hls_aes_downloader as aes_module
+import core.downloaders.segment_space as space_module
 from core.api.hls import parse_media_playlist
 from core.api.hls_ts import fetch_ts_head, segment_streams
-from core.downloaders.base import PostprocessError
+from core.api.mpegts import parse_ts
+from core.downloaders.base import (
+    DISK_SPACE_SHORT,
+    DISK_SPACE_SHORT_WHOLE,
+    DiskSpaceError,
+    PostprocessError,
+)
 from core.downloaders.decrypt import DecryptionError, sequence_iv
 from core.downloaders.hls_aes_downloader import HlsAesDownloader
+from core.models.content import StreamKey
 from core.models.download_data import DownloadData
 from core.models.plan import TimeRange
 from core.utils.cut_check import check_cut
-from core.utils.ffmpeg import get_ffmpeg_exe
+import core.utils.fmp4_cut as fmp4_cut_module
+from core.utils.ffmpeg import RemuxError, get_ffmpeg_exe
 from core.utils.hybrid_cut import CUT_FAILED, CutError
 from core.utils.paths import build_section_output_paths
 from core.utils.ts_sections import choose_ts_frame_rate, plan_ts_sections
 from tests.unit.core.midway_cut_failure import MidwayCutFailure
 from tests.unit.core.range_host import RangeHost
-from tests.unit.core.section_retry import CutCalls, hand_over, snapshot
+from tests.unit.core.section_packets import JoinedSource, assert_section_matches
+from tests.unit.core.section_retry import OUTPUT_ARG, CutCalls, hand_over, snapshot
 
 KEY = bytes.fromhex("7c1d9e42a05b63f8817e2c4d6a9b0f35")  # 테스트용 키 — 실제 키가 아니다
 WRONG_KEY = bytes.fromhex("0f1e2d3c4b5a69788796a5b4c3d2e1f0")  # 테스트용 — 복호화가 틀어진다
@@ -100,6 +114,7 @@ class _Vod:
             "#EXTINF", f'#EXT-X-KEY:METHOD=AES-128,URI="{KEY_URI}"\n#EXTINF', 1
         ).encode("utf-8")
         self.files = {}
+        self.plain = [(folder / name).read_bytes() for name in self.playlist.segments]  # 복호화 전
         for prefix in ("vod", "low"):
             self.files[f"{prefix}/media.m3u8"] = keyed
             for number, name in enumerate(self.playlist.segments):
@@ -423,11 +438,11 @@ def test_received_segments_are_removed_unless_the_cut_failed(vod, host, tmp_path
     """받은 세그먼트는 완료 · 사용자 중단이면 지워지고, 후처리 실패면 남아야 한다.
 
     구간 0.8 ~ 2.3초 · 3.4 ~ 5.2초, 해석이 일부를 받아 둔 채 넘김. output_path 자리에 b"keep" 파일을 미리 둠.
-    finished: 그대로 / cut-failure: 둘째 컷이 CutError / stop-in-cut: 첫 컷 도중 model.stop() /
+    finished: 그대로 / cut-failure: 둘째 구간(`_2`)의 컷이 CutError / stop-in-cut: 첫 컷 도중 model.stop() /
     stop-in-transfer: 첫 작업 항목에서 model.stop()
     -> finished: 임시 폴더 없음, 저장 폴더에 구간 파일 둘 + 미리 둔 파일
-       cut-failure: 실패 1건(PostprocessError, 원인 CutError), 임시 폴더에 세그먼트 0 ~ 5만(다시 싼 파일 없음),
-                    `_1` 파일이 남는다
+       cut-failure: 실패 1건(PostprocessError, 원인 CutError), 임시 폴더에 둘째 구간의 세그먼트 2 ~ 5만
+                    (첫째 구간만 쓰는 0 · 1은 지워졌다 · 작업 폴더 없음), `_1` 파일이 남는다
        stop-*: 완료 0회 · 실패 0건, 임시 폴더 없음, 저장 폴더에 미리 둔 파일뿐
     """
     head = _resolve(host, tmp_path, [FIRST, SECOND])
@@ -440,7 +455,7 @@ def test_received_segments_are_removed_unless_the_cut_failed(vod, host, tmp_path
 
     def cut(*args, **kwargs):
         cuts.append(args)
-        if how == "cut-failure" and len(cuts) == 2:
+        if how == "cut-failure" and args[OUTPUT_ARG].endswith("_2.mp4"):
             raise CutError(CUT_FAILED, "시험")
         if how == "stop-in-cut":
             run.data.model.stop()
@@ -465,7 +480,7 @@ def test_received_segments_are_removed_unless_the_cut_failed(vod, host, tmp_path
         assert len(run.failures) == 1
         assert isinstance(run.failures[0], PostprocessError)
         assert isinstance(run.failures[0].__cause__, CutError)
-        assert _temp_names(run) == [f"{index}.ts" for index in range(6)]
+        assert _temp_names(run) == [f"{index}.ts" for index in range(2, 6)]
         assert run.listing() == sorted([SECTION_FILES[0], "unused.mp4"])
     else:
         assert (run.finished, run.failures) == (0, [])
@@ -480,11 +495,11 @@ def test_cut_failure_of_one_section_still_cuts_the_sections_after_it(
 ):
     """구간 셋 가운데 둘째의 컷이 실패해도 셋째는 잘라야 하고, 다운로드는 그 뒤에 한 번 실패해야 한다.
 
-    구간 0.8 ~ 2.3초 · 2.2 ~ 3.6초 · 3.4 ~ 5.2초, 둘째 컷이 첫 ffmpeg 실행 자리에서 출력 파일을
-    반쯤 쓰고 CutError를 냄
+    구간 0.8 ~ 2.3초 · 2.2 ~ 3.6초 · 3.4 ~ 5.2초, 둘째 구간(`_2`)의 컷이 첫 조각의 ffmpeg 실행
+    자리에서 출력 파일을 반쯤 쓰고 CutError를 냄
     -> 컷 호출 3회, 완료 0회, 실패 1건(PostprocessError, 원인 CutError),
        저장 폴더의 mp4는 `_1` · `_3`뿐(`_2` 파일 없음), 컷 작업 폴더 없음,
-       임시 폴더는 남고 그 안에 다시 싼 mp4(section_*.mp4) 없음,
+       임시 폴더는 남고 그 안에 구간의 작업 폴더(section_*) 없음,
        공유 데이터의 구간 상태 == (전체 3, 완료 2, 실패 1),
        병합 진행 == 받은 세그먼트 수(끝까지 올랐다)
     """
@@ -494,8 +509,8 @@ def test_cut_failure_of_one_section_still_cuts_the_sections_after_it(
 
     def second_fails(*args, **kwargs):
         cuts.append(args)
-        if len(cuts) == 2:
-            failure.arm(source_path=args[5], output_path=args[4])  # 다시 쌀 경로 · 출력 경로
+        if args[OUTPUT_ARG].endswith("_2.mp4"):
+            failure.arm(source_path=args[0], output_path=args[OUTPUT_ARG])  # args[0]은 작업 폴더
         return real_cut(*args, **kwargs)
 
     monkeypatch.setattr(aes_module, "cut_ts_section", second_fails)
@@ -509,7 +524,7 @@ def test_cut_failure_of_one_section_still_cuts_the_sections_after_it(
     assert isinstance(run.failures[0].__cause__, CutError)
     # 실패시킨 순간에는 있었다 — 아래의 "없다"가 정리의 결과임을 먼저 확인한다
     assert (failure.fired, failure.source_existed, failure.work_dir_existed) == (1, True, True)
-    assert os.path.basename(failure.source_path) == "section_2.mp4"
+    assert os.path.basename(failure.source_path) == "section_2"
     assert os.path.basename(failure.output_path) == "구간 시험 144p_2.mp4"
     assert not os.path.exists(failure.source_path)
     assert not os.path.exists(failure.output_path)
@@ -526,25 +541,28 @@ def test_cut_failure_of_one_section_still_cuts_the_sections_after_it(
     assert data.merged_segments == len(run.wanted())
 
 
-def test_remuxed_file_of_a_section_is_in_the_temp_folder_and_gone_before_the_next_cut(
+def test_work_folder_of_a_section_is_in_the_temp_folder_and_gone_before_the_next_cut(
     vod, host, tmp_path, monkeypatch
 ):
-    """구간마다 다시 싼 mp4는 엔진 임시 폴더에 놓이고, 다음 구간의 컷이 시작할 때는 없어야 한다.
+    """구간마다의 작업 폴더는 엔진 임시 폴더에 놓이고, 다음 구간의 컷이 시작할 때는 없어야 하며, 긴 구간부터 만들어야 한다.
 
-    구간 둘. 컷이 불릴 때마다 다시 쌀 경로와, 그때 임시 폴더에 있는 세그먼트가 아닌 이름을 적음
-    -> 다시 쌀 경로 == 임시 폴더의 "section_1.mp4" · "section_2.mp4",
-       컷이 시작할 때마다 임시 폴더에 세그먼트가 아닌 파일 없음, 저장 폴더에 구간 파일 둘뿐
+    구간 0.8 ~ 2.3초(1.5초) · 3.4 ~ 5.2초(1.8초). 컷이 불릴 때마다 작업 폴더의 경로와, 그때 임시
+    폴더에 있는 세그먼트가 아닌 이름과, 넘겨받은 세그먼트 정보가 넘겨받은 파일을 읽은 것과 같은지를 적음
+    -> 작업 폴더 == 임시 폴더의 "section_2" · "section_1"(긴 둘째 구간이 먼저),
+       컷이 시작할 때마다 임시 폴더에 세그먼트가 아닌 것 없음,
+       세그먼트 정보가 파일과 같은 순서다(파일마다 읽은 PTS가 같다), 저장 폴더에 구간 파일 둘뿐
     """
     real_cut = aes_module.cut_ts_section
-    seen = []
+    seen, in_order = [], []
 
-    def cut(segment_paths, ts_frames, first_pts, last_pts, output_path, joined_path, **kwargs):
-        folder = os.path.dirname(joined_path)
+    def cut(work_dir, segments, ts_frames, segment_paths, *args, **kwargs):
+        folder = os.path.dirname(work_dir)
         others = sorted(name for name in os.listdir(folder) if not name.endswith(".ts"))
-        seen.append((joined_path, others))
-        return real_cut(
-            segment_paths, ts_frames, first_pts, last_pts, output_path, joined_path, **kwargs
-        )
+        seen.append((work_dir, others))
+        for streams, segment_path in zip(segments, segment_paths, strict=True):
+            with open(segment_path, "rb") as f:
+                in_order.append(streams.video_pts == parse_ts(f.read()).video_pts)
+        return real_cut(work_dir, segments, ts_frames, segment_paths, *args, **kwargs)
 
     monkeypatch.setattr(aes_module, "cut_ts_section", cut)
 
@@ -553,9 +571,11 @@ def test_remuxed_file_of_a_section_is_in_the_temp_folder_and_gone_before_the_nex
     assert run.failures == []
     temp = run.engine.temp_dir
     assert seen == [
-        (os.path.join(temp, "section_1.mp4"), []),
-        (os.path.join(temp, "section_2.mp4"), []),
+        (os.path.join(temp, "section_2"), []),
+        (os.path.join(temp, "section_1"), []),
     ]
+    assert len(in_order) == 3 + 4  # 구간마다의 세그먼트 수
+    assert all(in_order)
     assert run.listing() == SECTION_FILES
 
 
@@ -820,6 +840,37 @@ def test_workers_write_each_segment_to_its_own_file(vod, host, tmp_path, monkeyp
 # ================================================================ 그 밖의 계약
 
 
+@pytest.mark.parametrize("sections", [True, False], ids=["sections", "whole"])
+def test_encrypted_vod_checks_the_free_space_before_the_transfer(
+    vod, host, tmp_path, monkeypatch, sections
+):
+    """암호화 VOD도 비트레이트를 넘겨받았으면 어림한 크기가 여유 공간에 안 들어갈 때 받기 전에 실패해야 한다.
+
+    구간 둘 또는 구간 없음, 선언 800,000 bit/s, 여유 0
+    -> 실패 1건(DiskSpaceError — 키는 구간이 있으면 "Not enough disk space", 없으면
+       "Not enough disk space for the download"), 완료 0회, 저장 폴더에 파일 없음, 임시 폴더 없음,
+       시작 줄 1개(본 곳 both, 여유 0, 세그먼트 어림 > 0)
+    """
+    run = _Run(host, tmp_path, [FIRST, SECOND] if sections else [])
+    run.data.content.stream = StreamKey(256, 144, 30.0, 800_000)
+    monkeypatch.setattr(space_module, "same_volume", lambda a, b: True)
+    monkeypatch.setattr(space_module, "free_bytes", lambda folder: 0)
+
+    run.start()
+
+    assert ([type(e) for e in run.failures], run.finished) == ([DiskSpaceError], 0)
+    expected_key = DISK_SPACE_SHORT if sections else DISK_SPACE_SHORT_WHOLE
+    assert run.failures[0].message_key == expected_key
+    assert run.listing() == []
+    assert not os.path.exists(run.engine.temp_dir)
+    lines = [args for name, args in run.logger.calls if name == "log_space_check"]
+    assert [
+        (stage, [(where, free) for where, _needed, free in checks])
+        for stage, _s, _o, checks in lines
+    ] == [("start", [("both", 0)])]
+    assert lines[0][1] > 0
+
+
 def test_section_log_reports_cut_and_total_size_of_section_files(vod, host, tmp_path):
     """구간 다운로드의 후처리 로그는 종류 "cut"으로 시작하고, 끝 로그의 크기는 구간 파일 크기의 합이어야 한다.
 
@@ -831,6 +882,25 @@ def test_section_log_reports_cut_and_total_size_of_section_files(vod, host, tmp_
     calls = dict(run.logger.calls)
     assert calls["log_postprocess_start"] == ("cut",)
     assert calls["log_postprocess_complete"][1] == sum(os.path.getsize(p) for p in run.paths)
+
+
+def test_finished_section_run_reports_the_saved_size_as_the_sum_of_its_section_files(
+    vod, host, tmp_path
+):
+    """구간을 모두 만든 암호화 VOD 실행은 저장된 크기로 구간 파일 크기의 합을 적어야 한다 — 받은 양이 아니다.
+
+    구간 둘 -> 완료 1회, output_size == 두 파일 크기의 합 == 로그의 Output size,
+    받은 양(total_downloaded_size)과 다르다
+    """
+    run = _Run(host, tmp_path, [FIRST, SECOND])
+    assert run.data.output_size is None
+
+    run.start()
+
+    assert (run.finished, run.failures) == (1, [])
+    expected = sum(os.path.getsize(p) for p in run.paths)
+    assert run.data.output_size == expected == dict(run.logger.calls)["log_postprocess_complete"][1]
+    assert expected not in (0, run.data.total_downloaded_size)
 
 
 def test_section_count_that_differs_from_the_path_count_fails(vod, host, tmp_path):
@@ -898,7 +968,10 @@ def test_download_without_sections_keeps_the_remux_path(vod, host, tmp_path):
 # 둘째 구간(SECOND)은 세그먼트 2 ~ 5에 걸친다 — 세그먼트 4는 구간을 정할 때 받지 않고 전송 단계가 받는다
 THREE = [FIRST, SECOND, MIDDLE]
 THREE_FILES = ["구간 시험 144p_1.mp4", "구간 시험 144p_2.mp4", "구간 시험 144p_3.mp4"]
-JOINED_ARG = 5  # cut_ts_section의 여섯째 위치 인자 — 다시 싼 mp4를 둘 경로
+WORK_ARG = 0  # cut_ts_section의 첫 위치 인자 — 그 구간의 작업 폴더
+# 긴 구간부터 만든다 — 구간 셋(1.5 · 1.8 · 1.4초)의 컷은 `_2` · `_1` · `_3`의 순서로 불린다
+SECOND_SECTION_CALL = 1  # 둘째 구간(`_2`)의 컷이 불리는 차례
+THIRD_SECTION_CALL = 3  # 셋째 구간(`_3`)의 컷이 불리는 차례
 
 
 def test_retry_cuts_only_the_failed_section_from_the_kept_segments_without_requests(
@@ -912,8 +985,8 @@ def test_retry_cuts_only_the_failed_section_from_the_kept_segments_without_reque
        저장 폴더에 `_1` · `_2` · `_3`뿐(임시 폴더 없음), `_2`가 판정 통과,
        구간 상태 == (전체 3, 완료 3, 실패 0, 이어받음 2)
     """
-    cuts = CutCalls(monkeypatch, aes_module, "cut_ts_section", source_arg=JOINED_ARG)
-    cuts.fail_on = (2,)
+    cuts = CutCalls(monkeypatch, aes_module, "cut_ts_section", source_arg=WORK_ARG)
+    cuts.fail_on = (SECOND_SECTION_CALL,)
     failed = _Run(host, tmp_path, THREE).start()
     assert len(failed.failures) == 1
     kept = snapshot([failed.paths[0], failed.paths[2]])
@@ -948,8 +1021,8 @@ def test_stop_during_retry_removes_only_what_the_retry_made(vod, host, tmp_path,
     -> 중단한 순간 `_2`가 있었다, 컷 호출 1회(`_2`), 완료 0회, 실패는 첫 실행의 1건뿐,
        `_1`의 수정 시각 · 내용이 그대로, 저장 폴더의 mp4는 `_1`뿐, 임시 폴더에 세그먼트가 남는다
     """
-    cuts = CutCalls(monkeypatch, aes_module, "cut_ts_section", source_arg=JOINED_ARG)
-    cuts.fail_on = (2, 3)
+    cuts = CutCalls(monkeypatch, aes_module, "cut_ts_section", source_arg=WORK_ARG)
+    cuts.fail_on = (SECOND_SECTION_CALL, THIRD_SECTION_CALL)
     run = _Run(host, tmp_path, THREE).start()
     assert len(run.failures) == 1
     kept = snapshot([run.paths[0]])
@@ -980,8 +1053,8 @@ def test_retry_receives_only_the_segment_that_is_gone(vod, host, tmp_path, monke
     -> 완료 1회 · 실패 0건, 이어받은 실행의 호스트 요청 == 그 세그먼트 하나(범위 요청 아님),
        키 요청 1회, 컷 호출 1회(`_2`), `_1` · `_3`의 수정 시각 · 내용이 그대로
     """
-    cuts = CutCalls(monkeypatch, aes_module, "cut_ts_section", source_arg=JOINED_ARG)
-    cuts.fail_on = (2,)
+    cuts = CutCalls(monkeypatch, aes_module, "cut_ts_section", source_arg=WORK_ARG)
+    cuts.fail_on = (SECOND_SECTION_CALL,)
     failed = _Run(host, tmp_path, THREE).start()
     assert len(failed.failures) == 1
     kept = snapshot([failed.paths[0], failed.paths[2]])
@@ -1012,8 +1085,8 @@ def test_key_is_not_left_in_the_log_or_in_what_a_failed_run_leaves(
        캡처한 로그 · 두 실행의 엔진 로거 호출 · repr(남긴 것) · repr(이어받은 Content) ·
        실패 예외의 str · repr에 두 키의 16진 · bytes 표기 없음 (캡처가 살아 있는지 표식 레코드로 먼저 확인)
     """
-    cuts = CutCalls(monkeypatch, aes_module, "cut_ts_section", source_arg=JOINED_ARG)
-    cuts.fail_on = (2,)
+    cuts = CutCalls(monkeypatch, aes_module, "cut_ts_section", source_arg=WORK_ARG)
+    cuts.fail_on = (SECOND_SECTION_CALL,)
     with caplog.at_level(logging.DEBUG):
         logging.getLogger("core.downloaders.hls_aes_downloader").debug("표식")
         failed = _Run(host, tmp_path, THREE).start()
@@ -1040,3 +1113,427 @@ def test_key_is_not_left_in_the_log_or_in_what_a_failed_run_leaves(
     assert "구간 시험 144p_1.mp4" in texts[3]  # 남긴 것의 repr이 비어 있지 않다
     for text in texts:
         assert not any(form in text for key in (KEY, WRONG_KEY) for form in _key_forms(key))
+
+
+# ================================================================ 구간 파일을 바로 쓴다 (#309)
+
+
+@pytest.fixture(scope="module")
+def joined(vod, tmp_path_factory) -> JoinedSource:
+    """복호화 전의 세그먼트 전부를 이어 다시 싼 mp4 — 패킷 대조의 원본."""
+    return JoinedSource(vod.plain, tmp_path_factory.mktemp("aes_joined"))
+
+
+VIDEO_START = (
+    1024 / 48000
+)  # 첫 영상 프레임의 VOD 시각(초) — LEAD에서 AAC 인코더 지연 1024표본을 뺀 값
+
+
+def _frame_time(number: int) -> float:
+    """영상 전체에서 number번째 프레임의 VOD 시각(초) — 입력을 만든 값으로 센다."""
+    return VIDEO_START + number / FPS
+
+
+def _frames_between(first: int, last: int) -> TimeRange:
+    """구간 계획이 프레임 first ~ last를 고르는 구간 — 그 프레임들의 시각 바로 앞이다."""
+    return TimeRange(_frame_time(first) - 0.001, _frame_time(last) - 0.001)
+
+
+def test_section_files_have_the_video_packets_of_the_hybrid_cut_and_the_original_audio_packets(
+    vod, host, joined, tmp_path
+):
+    """엔진이 만든 구간 파일의 영상 패킷은 전부 이어 다시 싼 파일에서 자른 것과 같고, 오디오 패킷은 원본 그대로여야 한다.
+
+    구간 프레임 23 ~ 68(세그먼트 0 ~ 2, 양 끝이 세그먼트 중간) · 60 ~ 149(세그먼트 2 ~ 4, 양 끝이 세그먼트 경계)
+    -> 완료 1회 · 실패 0건, 첫 파일의 영상 패킷(시각 · 내용) == 하이브리드 컷 대조,
+       둘째 파일은 마지막 GOP 앞까지 대조와 같고 마지막 GOP는 원본 패킷 그대로,
+       두 파일의 오디오 패킷 == 원본에서 구간 시작에 걸친 덩어리 ~ 끝에 걸친 덩어리
+    """
+    spans = [(23, 68, False), (60, 149, True)]
+
+    run = _Run(host, tmp_path, [_frames_between(a, b) for a, b, _tail in spans]).start()
+
+    assert (run.finished, run.failures) == (1, [])
+    for (first, last, original_tail), section, result, output in zip(
+        spans, run.engine.sections, run.engine.cut_results, run.paths
+    ):
+        base = section.first_segment * SEGMENT_FRAMES
+        assert (result.plan.first + base, result.plan.last + base) == (first, last)
+        assert_section_matches(
+            joined, output, first, last, _frame_time(first), _frame_time(last + 1), original_tail
+        )
+
+
+class _JoinSpy:
+    """구간 파일을 쓰는 실행(remux_through)을 감싸, 그것이 끝난 순간 임시 폴더에 남은 세그먼트를 적는다.
+
+    그 순간은 구간이 만들어졌다고 엔진이 알기 전이다 — 그때 이미 없는 세그먼트는 넘기는
+    도중에 지워진 것이다. ``fail``이 참이면 다 쓴 뒤에 RemuxError를 낸다.
+    """
+
+    def __init__(self, monkeypatch, run: _Run) -> None:
+        self.left: list[list[str]] = []  # 호출마다, 끝난 순간 남아 있던 세그먼트 파일 이름
+        self.fail = False
+        self._run = run
+        self._real = fmp4_cut_module.remux_through
+        monkeypatch.setattr(fmp4_cut_module, "remux_through", self._call)
+
+    def _call(self, *args, **kwargs):
+        result = self._real(*args, **kwargs)
+        names = sorted(os.listdir(self._run.engine.temp_dir))
+        self.left.append([name for name in names if name.endswith(".ts")])
+        if self.fail:
+            raise RemuxError("시험")
+        return result
+
+
+def test_segment_fed_to_the_section_file_is_removed_before_the_section_is_done(
+    vod, host, tmp_path, monkeypatch
+):
+    """구간 파일로 넘긴 세그먼트는 그 구간 파일을 다 쓰기 전에 지워져 있어야 한다.
+
+    구간 프레임 40 ~ 100(세그먼트 0 ~ 3 — 프레임 40은 세그먼트 1, 100은 세그먼트 3에 있다.
+    통째로 넘기는 것은 세그먼트 2뿐이고 1 · 3은 경계 조각으로만, 0은 오디오 통과로만 읽힌다)
+    -> 구간 파일 쓰기가 끝난 순간 임시 폴더의 세그먼트 == "0.ts" · "1.ts" · "3.ts",
+       실패 0건, 끝난 뒤 임시 폴더 없음
+    """
+    run = _Run(host, tmp_path, [_frames_between(40, 100)])
+    spy = _JoinSpy(monkeypatch, run)
+
+    run.start()
+
+    assert run.failures == []
+    assert [(s.first_segment, s.last_segment) for s in run.engine.sections] == [(0, 3)]
+    assert spy.left == [["0.ts", "1.ts", "3.ts"]]
+    assert not os.path.exists(run.engine.temp_dir)
+
+
+def test_segment_another_section_still_needs_is_kept_until_that_section_is_made(
+    vod, host, tmp_path, monkeypatch
+):
+    """남은 구간이 쓰는 세그먼트는 넘긴 뒤에도 남아 있다가 마지막으로 쓰는 구간이 넘길 때 지워져야 한다.
+
+    구간 프레임 5 ~ 130(세그먼트 0 ~ 4) · 35 ~ 170(세그먼트 0 ~ 5). 긴 둘째 구간을 먼저 만든다 —
+    둘째가 통째로 넘기는 세그먼트 2 · 3 · 4는 첫째도 쓴다. 첫째는 1 · 2 · 3을 통째로 넘긴다
+    -> 둘째 구간 파일 쓰기가 끝난 순간 세그먼트 0 ~ 5가 모두 남아 있다,
+       첫째 구간 파일 쓰기가 끝난 순간 남은 것은 첫째의 경계 세그먼트 0 · 4뿐,
+       구간마다 check.ok
+    """
+    run = _Run(host, tmp_path, [_frames_between(5, 130), _frames_between(35, 170)])
+    spy = _JoinSpy(monkeypatch, run)
+
+    run.start()
+
+    assert run.failures == []
+    assert [(s.first_segment, s.last_segment) for s in run.engine.sections] == [(0, 4), (0, 5)]
+    assert spy.left == [[f"{n}.ts" for n in range(6)], ["0.ts", "4.ts"]]
+    for check in run.checks():
+        assert check.ok, check.notes
+
+
+def test_retry_after_a_failed_section_file_receives_only_the_segments_that_were_fed(
+    vod, host, joined, tmp_path, monkeypatch
+):
+    """구간 파일을 쓰다 실패한 실행을 이어받은 실행은 넘기면서 지운 세그먼트만 다시 받아야 한다.
+
+    첫 실행: 구간 프레임 40 ~ 100(세그먼트 0 ~ 3, 통째로 넘기는 것은 세그먼트 2),
+    구간 파일 쓰기가 끝에서 RemuxError. 이어받은 실행: 새 엔진에 첫 실행이 남긴 것을 넘김
+    -> 첫 실행: 실패 1건(PostprocessError), 구간 파일 없음, 남긴 것의 stored == {0, 1, 3}.
+       이어받은 실행: 요청 == 세그먼트 2 하나(범위 요청 아님), 완료 1회 · 실패 0건, 구간 파일이 대조와 맞는다
+    """
+    selections = [_frames_between(40, 100)]
+    failed = _Run(host, tmp_path, selections)
+    spy = _JoinSpy(monkeypatch, failed)
+    spy.fail = True
+    failed.start()
+    assert len(failed.failures) == 1
+    assert isinstance(failed.failures[0], PostprocessError)
+    assert not os.path.exists(failed.paths[0])
+    assert failed.data.section_resume.ts_head.stored == {0, 1, 3}
+    requests_before = len(host.requests)
+    spy.fail = False
+
+    again = hand_over(failed, _Run(host, tmp_path, selections)).start()
+
+    assert host.requests[requests_before:] == [("GET", _names({2})[0], None)]
+    assert (again.finished, again.failures) == (1, [])
+    assert_section_matches(joined, again.paths[0], 40, 100, _frame_time(40), _frame_time(101))
+
+
+# ================================================================ 끝낸 구간의 파일이 없거나 바뀐 재시도 (#309)
+
+
+def _fail_the_second_of_three(vod, host, tmp_path, monkeypatch):
+    """구간 셋 가운데 둘째 구간의 컷만 실패한 실행과, 컷 호출을 적는 도구(다음 실행을 위해 비운 것)."""
+    cuts = CutCalls(monkeypatch, aes_module, "cut_ts_section", source_arg=WORK_ARG)
+    cuts.fail_on = (SECOND_SECTION_CALL,)
+    failed = _Run(host, tmp_path, THREE).start()
+    assert len(failed.failures) == 1
+    cuts.restart()
+    return failed, cuts
+
+
+def test_failed_run_records_the_size_of_each_section_file_it_finished(
+    vod, host, tmp_path, monkeypatch
+):
+    """일부 구간만 실패한 실행은 끝낸 구간 파일의 크기를 재시도 기록에 적어야 한다.
+
+    구간 셋, 둘째 구간의 컷이 실패 -> 기록의 크기 == ((0, `_1`의 크기), (2, `_3`의 크기))
+    """
+    failed, _cuts = _fail_the_second_of_three(vod, host, tmp_path, monkeypatch)
+
+    assert failed.data.section_resume.done_sizes == (
+        (0, os.path.getsize(failed.paths[0])),
+        (2, os.path.getsize(failed.paths[2])),
+    )
+
+
+@pytest.mark.parametrize("check_files", [True, False], ids=["starter-checks", "engine-checks"])
+def test_retry_makes_a_finished_section_again_when_its_file_was_removed(
+    vod, host, tmp_path, monkeypatch, check_files
+):
+    """끝낸 구간의 파일을 지운 뒤 재시도하면 그 구간도 다시 만들어야 한다.
+
+    첫 실행: 구간 셋, 둘째 구간의 컷이 실패. `_1`을 지움. 이어받은 실행(시작하는 쪽이 파일을
+    확인한 경우와, 기록을 그대로 넘겨 엔진이 확인하는 경우)
+    -> 완료 1회 · 실패 0건, 컷 호출은 `_1` · `_2`, `_3`의 수정 시각 · 내용이 그대로,
+       저장 폴더에 `_1` · `_2` · `_3`뿐, 다시 만든 두 구간이 판정 통과, 이어받은 구간 수 1
+    """
+    failed, cuts = _fail_the_second_of_three(vod, host, tmp_path, monkeypatch)
+    kept = snapshot([failed.paths[2]])
+    os.remove(failed.paths[0])
+
+    again = hand_over(failed, _Run(host, tmp_path, THREE), check_files=check_files).start()
+
+    assert (again.finished, again.failures) == (1, [])
+    assert sorted(cuts.outputs) == THREE_FILES[:2]
+    assert snapshot(kept) == kept
+    assert again.listing() == THREE_FILES
+    checks = again.checks()
+    assert len(checks) == 2
+    assert all(check.ok for check in checks), [check.notes for check in checks]
+    assert again.data.sections_resumed == 1
+
+
+def test_retry_makes_a_finished_section_again_when_its_file_changed_size(
+    vod, host, tmp_path, monkeypatch
+):
+    """끝낸 구간의 파일 크기가 달라졌으면 재시도는 그 구간을 다시 만들고, 바뀐 파일은 건드리지 않아야 한다.
+
+    첫 실행: 구간 셋, 둘째 구간의 컷이 실패. `_3`의 자리에 10바이트짜리 다른 파일을 둠. 이어받은 실행
+    -> 완료 1회 · 실패 0건, 셋째 구간은 새 이름(`_3`이 아닌 경로)으로 만들어지고 크기가 0보다 크다,
+       `_3` 자리의 파일은 10바이트 그대로, `_1`의 수정 시각 · 내용이 그대로, 이어받은 구간 수 1
+    """
+    failed, cuts = _fail_the_second_of_three(vod, host, tmp_path, monkeypatch)
+    kept = snapshot([failed.paths[0]])
+    with open(failed.paths[2], "wb") as f:
+        f.write(b"0123456789")
+
+    again = hand_over(failed, _Run(host, tmp_path, THREE)).start()
+
+    assert (again.finished, again.failures) == (1, [])
+    assert again.paths[2] != failed.paths[2]
+    assert os.path.getsize(again.paths[2]) > 0
+    assert os.path.basename(again.paths[2]) in cuts.outputs
+    with open(failed.paths[2], "rb") as f:
+        assert f.read() == b"0123456789"
+    assert snapshot(kept) == kept
+    assert again.data.sections_resumed == 1
+
+
+# ================================================================ 자르기 전 프레임 정보 읽기
+
+
+def _watch_cut(run: _Run, each=None) -> list[tuple[bool, float | None]]:
+    """컷 단계의 진행 통지마다 (준비 중인지, 컷 진행)을 적는 목록 — each는 적은 뒤에 부른다."""
+    seen: list[tuple[bool, float | None]] = []
+
+    def on_progress(_event) -> None:
+        if run.data.cut_preparing or run.data.cut_progress is not None:
+            seen.append((run.data.cut_preparing, run.data.cut_progress))
+            if each is not None:
+                each(seen)
+
+    run.engine.set_on_progress(on_progress)
+    return seen
+
+
+# 세그먼트 0 ~ 5에 걸친다 — 구간을 정할 때 읽지 않는 세그먼트가 여럿이다
+ACROSS_SIX = TimeRange(0.8, 5.2)
+
+
+def _read_share(run: _Run, number: int = 0) -> tuple[int, float]:
+    """(그 구간이 컷 전에 새로 읽는 세그먼트 수 F, 그 구간의 읽기 몫) — 실행이 끝난 뒤 부른다.
+
+    구간을 정하며 읽어 둔 세그먼트(머리에 든 것)는 다시 읽지 않는다. 읽기 몫은 모두 새로 읽을
+    때의 0.5에서 읽는 일만 F ÷ N으로 줄인 것 — 0.5F ÷ (0.5F + 0.5N) = F ÷ (F + N)이다.
+    """
+    section = run.engine.sections[number]
+    indexes = range(section.first_segment, section.last_segment + 1)
+    fresh = len([index for index in indexes if index not in run.engine._head.segments])
+    return fresh, fresh / (fresh + len(indexes))
+
+
+def test_reading_before_the_cut_raises_the_cut_progress_and_is_marked_as_preparing(
+    vod, host, tmp_path
+):
+    """구간을 자르기 전 세그먼트를 읽는 동안 준비 중으로 적히고 컷 진행이 새로 읽는 세그먼트마다 올라야 한다.
+
+    구간 하나(0.8 ~ 5.2초 — 세그먼트 0~5, 여섯). 그 가운데 구간을 정하며 읽지 않은 것이 F개
+    -> F >= 2, 준비 중인 통지의 컷 진행 == [없음, 읽기 몫 x 1/F, …, 읽기 몫](읽기 몫 = F ÷ (F + 6)),
+       준비 중이 아닌 통지의 컷 진행은 모두 읽기 몫 이상이고 마지막이 1, 끝난 뒤 준비 중이 아니다,
+       완료 1회
+    """
+    run = _Run(host, tmp_path, [ACROSS_SIX])
+    seen = _watch_cut(run)
+
+    run.start()
+
+    assert (run.finished, run.failures) == (1, [])
+    fresh, share = _read_share(run)
+    assert fresh >= 2
+    preparing = [progress for marked, progress in seen if marked]
+    cutting = [progress for marked, progress in seen if not marked]
+    assert preparing == [
+        None,
+        *(pytest.approx(share * count / fresh) for count in range(1, fresh + 1)),
+    ]
+    assert min(cutting) >= preparing[-1] and cutting[-1] == 1.0
+    assert run.data.cut_preparing is False
+
+
+def test_cut_stage_log_counts_the_time_the_engine_spent_reading_as_read(
+    vod, host, tmp_path, monkeypatch
+):
+    """컷 단계 로그의 read에는 엔진이 컷 전에 세그먼트를 읽은 시간이 들어 있어야 한다.
+
+    구간 하나. 엔진의 시계가 읽을 때마다 10초씩 간다(읽기의 시작과 끝 — 두 번 읽는다)
+    -> log_cut_stages의 read가 10초 이상 11초 미만
+    """
+    ticks = iter(range(0, 1000, 10))
+    monkeypatch.setattr(aes_module, "tm", types.SimpleNamespace(perf_counter=lambda: next(ticks)))
+
+    run = _Run(host, tmp_path, [SECOND]).start()
+
+    assert (run.finished, run.failures) == (1, [])
+    _number, _total, stages = dict(run.logger.calls)["log_cut_stages"]
+    assert 10 <= dict(stages)["read"] < 11
+
+
+def test_stop_while_reading_ends_the_run_without_cutting(vod, host, tmp_path):
+    """세그먼트를 읽는 도중 중단하면 남은 세그먼트를 읽지 않고 컷을 시작하지 않아야 한다.
+
+    구간 하나(세그먼트 여섯, 새로 읽을 것 F >= 2). 첫 세그먼트를 읽었다는 통지에서 중단을 청함
+    -> 준비 중인 통지의 컷 진행 == [없음, 읽기 몫 x 1/F] 둘뿐, 완료 0회 · 실패 0건, 구간 파일 없음,
+       끝난 뒤 준비 중이 아니다
+    """
+    run = _Run(host, tmp_path, [ACROSS_SIX])
+
+    def stop_after_the_first(seen) -> None:
+        if len(seen) == 2:  # 읽기 시작 통지 + 첫 세그먼트를 읽은 통지
+            run.data.model.stop()
+
+    seen = _watch_cut(run, stop_after_the_first)
+
+    run.start()
+
+    fresh, share = _read_share(run)
+    assert fresh >= 2
+    preparing = [entry for entry in seen if entry[0]]
+    assert preparing == [(True, None), (True, pytest.approx(share / fresh))]
+    assert (run.finished, run.failures) == (0, [])
+    assert not [name for name in run.listing() if name.endswith(".mp4")]
+    assert run.data.cut_preparing is False
+
+
+def test_pause_while_reading_holds_the_reading_until_resumed(vod, host, tmp_path):
+    """세그먼트를 읽는 도중 일시정지하면 재개할 때까지 다음 세그먼트를 읽지 않아야 한다.
+
+    구간 하나(세그먼트 여섯, 새로 읽을 것 F >= 2). 첫 세그먼트를 읽었다는 통지에서 일시정지하고,
+    다른 스레드가 0.3초 뒤 그때까지 온 통지 수를 적고 재개함
+    -> 재개하기 직전까지 온 통지 == 일시정지한 순간까지 온 통지(둘), 재개한 뒤 완료 1회 · 실패 0건
+    """
+    run = _Run(host, tmp_path, [ACROSS_SIX])
+    counts = {}
+
+    def resume() -> None:
+        counts["before_resume"] = len(seen)
+        run.data.model.resume()
+
+    def pause_after_the_first(seen_now) -> None:
+        if len(seen_now) == 2 and not counts:  # 읽기 시작 통지 + 첫 세그먼트를 읽은 통지
+            counts["at_pause"] = len(seen_now)
+            run.data.model.pause()
+            threading.Timer(0.3, resume).start()
+
+    seen = _watch_cut(run, pause_after_the_first)
+
+    run.start()
+
+    assert _read_share(run)[0] >= 2
+    assert counts == {"at_pause": 2, "before_resume": 2}
+    assert (run.finished, run.failures) == (1, [])
+
+
+def test_progress_the_cut_reports_is_placed_after_the_share_of_the_reading(
+    vod, host, tmp_path, monkeypatch
+):
+    """컷이 알린 진행은 읽기 몫 뒤의 구간으로 옮겨 적혀야 한다.
+
+    구간 하나(세그먼트 여섯, 읽기 몫 = F ÷ (F + 6)). 컷 함수가 일을 시작하기 전에 진행 0.2를 알리게 함
+    -> 그 직후의 컷 진행 == 읽기 몫 + (1 − 읽기 몫) x 0.2, 완료 1회
+    """
+    run = _Run(host, tmp_path, [ACROSS_SIX])
+    real_cut = aes_module.cut_ts_section
+    seen = []
+
+    def cut(*args, **kwargs):
+        kwargs["on_progress"](0.2)
+        seen.append(run.data.cut_progress)
+        return real_cut(*args, **kwargs)
+
+    monkeypatch.setattr(aes_module, "cut_ts_section", cut)
+
+    run.start()
+
+    fresh, share = _read_share(run)
+    assert fresh >= 2
+    assert seen == [pytest.approx(share + (1 - share) * 0.2)]
+    assert (run.finished, run.failures) == (1, [])
+
+
+def test_section_whose_segments_an_earlier_section_read_gives_the_reading_no_share(
+    vod, host, tmp_path, monkeypatch
+):
+    """앞 구간이 이미 읽은 세그먼트만 쓰는 구간은 읽기 몫 없이 컷의 진행을 그대로 받아야 한다.
+
+    구간 둘: 0.8 ~ 5.2초(세그먼트 0~5 — 긴 것이 먼저 잘린다) · 3.4 ~ 5.2초(세그먼트 2~5 — 모두 앞
+    구간이 읽었다). 구간의 길이(끝 PTS − 시작 PTS)를 L1 · L2라 함. 컷 함수가 일을 시작하기 전에
+    진행 0.2를 알리게 함
+    -> 컷이 긴 구간 · 짧은 구간 순서로 불린다, 둘째로 불린 컷 직후의 컷 진행 ==
+       (L1 + 0.2 x L2) ÷ (L1 + L2), 그 구간을 읽는 동안(준비 중) 컷 진행이 오르지 않는다, 완료 1회
+    """
+    run = _Run(host, tmp_path, [ACROSS_SIX, SECOND])
+    watched = _watch_cut(run)
+    real_cut = aes_module.cut_ts_section
+    seen = []
+
+    def cut(*args, **kwargs):
+        kwargs["on_progress"](0.2)
+        seen.append((os.path.basename(args[4]), run.data.cut_progress, len(watched)))
+        return real_cut(*args, **kwargs)
+
+    monkeypatch.setattr(aes_module, "cut_ts_section", cut)
+
+    run.start()
+
+    assert (run.finished, run.failures) == (1, [])
+    first, second = (s.last_pts - s.first_pts for s in run.engine.sections)
+    assert [name for name, _progress, _count in seen] == [
+        os.path.basename(path) for path in run.paths
+    ]
+    assert seen[1][1] == pytest.approx((first + 0.2 * second) / (first + second))
+    # 둘째 컷이 불리기 직전의 통지는 그 구간의 읽기 시작 하나뿐이고, 그 값은 첫 구간이 끝난 값이다
+    before_second = watched[: seen[1][2] - 1]
+    assert before_second[-1] == (True, pytest.approx(first / (first + second)))
+    assert before_second[-2][0] is False

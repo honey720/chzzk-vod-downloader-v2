@@ -40,12 +40,23 @@ PAUSE_SECONDS = 1.0  # 받는 도중 일시정지해 두는 시간
 
 
 class _PausingResponse:
-    """청크를 곧바로 흘리다가 정해 둔 청크 앞에서 일시정지를 걸고 PAUSE_SECONDS 뒤 재개한다."""
+    """청크를 곧바로 흘리다가 정해 둔 청크 앞에서 일시정지를 걸고 PAUSE_SECONDS 뒤 재개한다.
 
-    def __init__(self, body: bytes, model, pause_before_chunk: int):
+    건 시각과 푼 시각을 ``marks``에 적는다. 푸는 쪽은 건 시각에서 PAUSE_SECONDS가 지났는지를
+    같은 시계로 확인한 뒤에 푼다 — 타이머의 길이에 기대지 않는다.
+    """
+
+    def __init__(self, body: bytes, model, pause_before_chunk: int, marks: dict[str, float]):
         self._body = body
         self._model = model
         self._pause_before_chunk = pause_before_chunk
+        self._marks = marks
+
+    def _resume_when_due(self) -> None:
+        while time.perf_counter() - self._marks["paused_at"] < PAUSE_SECONDS:
+            time.sleep(0.01)
+        self._marks["resumed_at"] = time.perf_counter()
+        self._model.resume()
 
     def raise_for_status(self):
         pass
@@ -54,13 +65,15 @@ class _PausingResponse:
         for number, start in enumerate(range(0, len(self._body), chunk_size)):
             if number == self._pause_before_chunk:
                 assert self._model.pause() is True, "전제: 받는 도중에 일시정지됐다"
-                threading.Timer(PAUSE_SECONDS, self._model.resume).start()
+                self._marks["paused_at"] = time.perf_counter()
+                threading.Thread(target=self._resume_when_due, daemon=True).start()
             yield self._body[start : start + chunk_size]
 
 
 class _PausingSession:
     def __init__(self, body: bytes, model, pause_before_chunk: int):
-        self._args = (body, model, pause_before_chunk)
+        self.marks: dict[str, float] = {}  # 일시정지를 건 시각(paused_at) · 푼 시각(resumed_at)
+        self._args = (body, model, pause_before_chunk, self.marks)
 
     def get(self, *args, **kwargs):
         return _PausingResponse(*self._args)
@@ -79,14 +92,15 @@ def test_time_spent_paused_is_left_out_of_a_parts_speed(tmp_path, monkeypatch):
     data = _make_data(str(output))
     logger = _RecordingLogger()
     engine = FileDownloader(data, logger)
-    monkeypatch.setattr(
-        fd_module, "get_thread_session", lambda: _PausingSession(body, data.model, 2)
-    )
+    session = _PausingSession(body, data.model, 2)
+    monkeypatch.setattr(fd_module, "get_thread_session", lambda: session)
 
     started = time.perf_counter()
     engine._download_part(0, len(body) - 1, 0, len(body))
     took = time.perf_counter() - started
 
+    stood = session.marks["resumed_at"] - session.marks["paused_at"]
+    assert stood >= PAUSE_SECONDS, "전제: 일시정지를 건 때부터 푼 때까지 1초 넘게 서 있었다"
     assert took >= PAUSE_SECONDS, "전제: 받는 도중 1초 동안 서 있었다"
     assert (data.completed_threads, data.restart_threads) == (1, 0)
     assert [w for w in logger.warnings if "slow speed" in w] == []

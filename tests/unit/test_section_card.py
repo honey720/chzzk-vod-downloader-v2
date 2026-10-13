@@ -365,6 +365,27 @@ def test_cut_stage_shows_the_stage_text_instead_of_speed_and_remaining_time(card
     assert not any(text in card.status for text in ("MB/s", "N/A", "left"))
 
 
+def test_cut_stage_says_preparing_while_the_engine_reads_the_segments(card):
+    """컷 단계에서 엔진이 프레임 정보를 읽는 동안에는 카드가 자르기 준비 중이라고 적어야 한다.
+
+    구간 셋. 컷 단계에서 엔진이 준비 중(cut_preparing)이라 적고 컷 진행 0.3을 알림 → 준비 중을
+    내리고 같은 진행을 다시 알림
+    -> 준비 중 == "<진행률>% · Preparing to cut · 0/3", 내린 뒤 == "<같은 진행률>% · Cutting · 0/3",
+       아이템의 값이 엔진의 값을 따라간다
+    """
+    card.start()
+    card.begin_cut()
+    card.data.cut_preparing = True
+    card.cut_inside(0.3)
+    preparing = (card.item.cut_preparing, card.status)
+    card.data.cut_preparing = False
+    card.notify_cut()
+
+    percent = card.item.download_progress
+    assert preparing == (True, f"{percent}% · Preparing to cut · 0/3")
+    assert (card.item.cut_preparing, card.status) == (False, f"{percent}% · Cutting · 0/3")
+
+
 # ================================================================ 일부 실패
 
 

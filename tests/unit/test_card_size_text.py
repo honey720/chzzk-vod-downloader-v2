@@ -500,25 +500,25 @@ def test_finished_section_card_shows_the_size_of_the_files_it_made(qtbot, made, 
     ("content_type", "selections", "state", "expected"),
     [
         ("video", (), DownloadState.RUNNING, "1080p · 50.00 MB / 28.99 GB"),
-        ("video", (), DownloadState.FINISHED, "1080p · 50.00 MB"),
+        ("video", (), DownloadState.PAUSED, "1080p · 50.00 MB / 28.99 GB"),
         ("m3u8", TWO_SECTIONS, DownloadState.RUNNING, "1080p · 50.00 MB"),
-        ("m3u8", TWO_SECTIONS, DownloadState.FINISHED, "1080p · 50.00 MB"),
+        ("m3u8", TWO_SECTIONS, DownloadState.PAUSED, "1080p · 50.00 MB"),
         ("m3u8", (), DownloadState.RUNNING, "1080p · 50.00 MB"),
-        ("m3u8", (), DownloadState.FINISHED, "1080p · 50.00 MB"),
+        ("m3u8", (), DownloadState.PAUSED, "1080p · 50.00 MB"),
     ],
     ids=[
         "구간 없는 mp4 · 받는 중",
-        "구간 없는 mp4 · 완료",
+        "구간 없는 mp4 · 일시정지",
         "m3u8 구간 · 받는 중",
-        "m3u8 구간 · 완료",
+        "m3u8 구간 · 일시정지",
         "m3u8 전체 · 받는 중",
-        "m3u8 전체 · 완료",
+        "m3u8 전체 · 일시정지",
     ],
 )
 def test_cards_other_than_mp4_section_cards_keep_showing_what_they_received(
     qtbot, content_type, selections, state, expected
 ):
-    """구간 없는 카드와 세그먼트 방식의 카드는 구간 카드의 값들이 적혀 있어도 받은 양을 그대로 적어야 한다.
+    """받는 중 · 일시정지한 구간 없는 카드와 세그먼트 방식의 카드는 구간 카드의 값들이 적혀 있어도 받은 양을 그대로 적어야 한다.
 
     받은 것 50 MiB. 카드에 section_bytes 200 MiB · transfer_bytes 100 MiB · output_bytes 180 MiB를
     적어 둠 -> 크기 == expected (진행을 곱하지 않고, 만든 파일의 합을 적지 않는다)
@@ -535,6 +535,65 @@ def test_cards_other_than_mp4_section_cards_keep_showing_what_they_received(
     qtbot.addWidget(window)
 
     assert shown(widget.fileSizeLabel) == expected
+
+
+FINISHED_FORMATS = [
+    ("video", ()),
+    ("video", TWO_SECTIONS),
+    ("m3u8", ()),
+    ("m3u8", TWO_SECTIONS),
+    ("hls_aes", ()),
+    ("hls_aes", TWO_SECTIONS),
+]
+FINISHED_IDS = [
+    "mp4 전체",
+    "mp4 구간",
+    "m3u8 전체",
+    "m3u8 구간",
+    "암호화 VOD 전체",
+    "암호화 VOD 구간",
+]
+
+
+@pytest.mark.parametrize(("content_type", "selections"), FINISHED_FORMATS, ids=FINISHED_IDS)
+def test_finished_card_shows_the_size_of_the_saved_files(qtbot, content_type, selections):
+    """완료 카드는 형식 · 구간 유무와 상관없이 저장된 파일 크기(구간이면 합)를 적어야 한다 — 받은 양이 아니다.
+
+    받은 것 50 MiB, 저장된 파일 크기(합) 180 MiB(output_bytes) -> "1080p · 180.00 MB"
+    """
+    window, widget = _card(
+        content_type,
+        DownloadState.FINISHED,
+        selections=selections,
+        received=50 * MB,
+        section_bytes=200 * MB,
+        transfer=100 * MB,
+        made=180 * MB,
+    )
+    qtbot.addWidget(window)
+
+    assert widget.fileSizeLabel.isVisibleTo(window)
+    assert shown(widget.fileSizeLabel) == "1080p · 180.00 MB"
+
+
+@pytest.mark.parametrize(("content_type", "selections"), FINISHED_FORMATS, ids=FINISHED_IDS)
+def test_finished_card_without_a_saved_size_shows_what_it_received(qtbot, content_type, selections):
+    """저장된 파일 크기를 모르는 완료 카드는 받은 양을 적어야 한다.
+
+    받은 것 50 MiB, output_bytes None -> "1080p · 50.00 MB"
+    """
+    window, widget = _card(
+        content_type,
+        DownloadState.FINISHED,
+        selections=selections,
+        received=50 * MB,
+        section_bytes=200 * MB,
+        transfer=100 * MB,
+    )
+    qtbot.addWidget(window)
+
+    assert widget.fileSizeLabel.isVisibleTo(window)
+    assert shown(widget.fileSizeLabel) == "1080p · 50.00 MB"
 
 
 @pytest.mark.parametrize("content_type", ["m3u8", "hls_aes"])
@@ -2005,6 +2064,30 @@ def test_finished_section_card_takes_the_size_the_engine_counted(qtbot, window, 
     _pump()
 
     assert item.output_bytes == 5000
+    assert shown(widget.fileSizeLabel) == "1080p · 4.88 KB"
+
+
+def test_finished_whole_card_takes_the_saved_size_the_engine_read(qtbot, window):
+    """구간 없는 완료 카드는 엔진이 읽어 준 저장된 파일 크기를 적어야 한다 — 받은 양이 아니다.
+
+    1080p 전체. 1000/1000까지 받은 뒤 엔진이 output_size = 5000을 적고 완료를 알림
+    -> output_bytes == 5000, 크기 글 == "1080p · 4.88 KB" (받은 양 1000바이트면 "1000.00 B"다)
+    """
+    win, item, engine = window
+    widget = win.listView.widgetFor(item)
+    win.downloadButton.click()
+    submission = engine.submissions[0]
+    _progress(submission, 1000, 1000)
+    qtbot.waitUntil(lambda: item.download_size == "1000", timeout=3000)
+
+    submission["data"].output_size = 5000
+    item.downloadState = DownloadState.FINISHED  # 배치가 이 카드를 다시 고르지 않게 한다
+    submission["on_finished"]()
+    qtbot.waitUntil(lambda: win.downloadViewModel.handle is None, timeout=3000)
+    _pump()
+
+    assert item.output_bytes == 5000
+    assert widget.fileSizeLabel.isVisibleTo(win)
     assert shown(widget.fileSizeLabel) == "1080p · 4.88 KB"
 
 

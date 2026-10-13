@@ -46,7 +46,12 @@ from core.models.download_state import DownloadState
 from core.utils.ffmpeg import get_ffmpeg_exe
 from tests.unit.section_input import enter_time
 from tests.unit.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
-from tests.unit.core.long_ffmpeg import LONG_RUNNING, end_all, record_processes
+from tests.unit.core.long_ffmpeg import (
+    LONG_RUNNING,
+    end_all,
+    is_long_running,
+    record_processes,
+)
 from tests.unit.core.range_host import RangeHost
 
 FINISH_TIMEOUT = 60_000  # ms — 실제 ffmpeg로 구간 하나를 자른다
@@ -450,18 +455,22 @@ def test_stopping_during_the_cut_does_not_make_the_app_give_up_waiting_for_the_w
     """
     win, item = window
     _give_section(qtbot, win, item)
-    processes = record_processes(monkeypatch)
     launched = threading.Event()
     real = cut_module.run_ffmpeg
 
-    def slowed(args, **kwargs):
-        if str(args[-1]).endswith(("_head.mp4", "_tail.mp4", "_whole.mp4")):
-            kwargs.pop("on_out_time", None)
-            threading.Timer(0.3, launched.set).start()  # 프로세스가 뜬 뒤에 알린다
+    def on_launch(command, process) -> None:
+        if is_long_running(command):  # 바꿔 띄운 명령의 프로세스가 떴다 — 이때부터 센다
+            threading.Timer(0.3, launched.set).start()
             # 제품이 멈추지 못하면 10분을 돈다 — 띄운 프로세스를 직접 끝내 워커가 끝나게 한다
             guard = threading.Timer(8.0, end_all, [processes])
             guard.daemon = True
             guard.start()
+
+    processes = record_processes(monkeypatch, on_launch)
+
+    def slowed(args, **kwargs):
+        if str(args[-1]).endswith(("_head.mp4", "_tail.mp4", "_whole.mp4")):
+            kwargs.pop("on_out_time", None)
             return real(LONG_RUNNING, **kwargs)
         return real(args, **kwargs)
 
@@ -564,17 +573,21 @@ def test_stopping_a_cut_that_is_paused_ends_the_suspended_ffmpeg(
     """
     win, item = window
     _give_section(qtbot, win, item)
-    processes = record_processes(monkeypatch)
     launched = threading.Event()
     real = cut_module.run_ffmpeg
+
+    def on_launch(command, process) -> None:
+        if is_long_running(command):  # 바꿔 띄운 명령의 프로세스가 떴다 — 이때부터 센다
+            threading.Timer(0.3, launched.set).start()
+            guard = threading.Timer(8.0, end_all, [processes])  # 제품이 못 끝내면 테스트가 끝낸다
+            guard.daemon = True
+            guard.start()
+
+    processes = record_processes(monkeypatch, on_launch)
 
     def slowed(args, **kwargs):
         if str(args[-1]).endswith(("_head.mp4", "_tail.mp4", "_whole.mp4")):
             kwargs.pop("on_out_time", None)
-            threading.Timer(0.3, launched.set).start()  # 프로세스가 뜬 뒤에 알린다
-            guard = threading.Timer(8.0, end_all, [processes])  # 제품이 못 끝내면 테스트가 끝낸다
-            guard.daemon = True
-            guard.start()
             return real(LONG_RUNNING, **kwargs)
         return real(args, **kwargs)
 

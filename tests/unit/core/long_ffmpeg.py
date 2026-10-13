@@ -18,6 +18,11 @@ LONG_RUNNING = [
 ]  # fmt: skip
 
 
+def is_long_running(command) -> bool:
+    """막 띄운 프로세스의 명령이 ``LONG_RUNNING``의 것인지 — 실행 파일과 덧붙은 인자는 보지 않는다."""
+    return all(part in command for part in LONG_RUNNING)
+
+
 def record_processes(monkeypatch, on_launch=None) -> list[subprocess.Popen]:
     """ffmpeg 모듈이 띄우는 프로세스를 적는 목록을 돌려준다 — 띄울 때마다 그 객체가 들어간다.
 

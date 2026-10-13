@@ -15,6 +15,8 @@
 끝의 기대값: 컷은 오디오를 끝 프레임 **다음 프레임의 PTS**까지 넣고(원본의 오디오가 먼저
 끝나면 거기까지), 결과 파일에서 영상은 끝 프레임의 PTS + 한 프레임에서 끝난다. 끝 프레임
 바로 뒤에 프레임이 빠진 자리가 있으면 두 시각이 다르다 — 기대값도 그 둘의 차이로 잡는다.
+오디오를 복사한 컷(``CutResult.audio_overhang``)은 구간 끝에 걸친 덩어리를 통째로 넣는다 —
+끝이 그 덩어리 하나만큼 늦는 것까지 받아들인다. 이른 쪽은 그대로 1프레임이다.
 
 A/V는 컨테이너에 적힌 시각으로 잰다. 디코드한 샘플 수로 재면 AAC 마지막 프레임의
 채움(최대 1024샘플)이 섞인다.
@@ -36,14 +38,15 @@ def check_cut(frames: CutFrames, result: CutResult) -> CutCheck:
 
     Args:
         frames: 컷에 쓴 원본의 프레임 정보
-        result: ``hybrid_cut(..., inspect=True)``의 결과 — 조각 정보가 들어 있어야 한다
+        result: ``inspect=True``로 자른 컷의 결과 — 조각 정보가 들어 있어야 한다
 
     Raises:
-        ValueError: result에 조각 정보가 없는 경우(inspect 없이 자른 결과)
+        ValueError: 계획에 재인코딩 조각이 있는데 result에 조각 정보가 없는 경우(inspect 없이
+            자른 결과). 다시 만든 조각이 하나도 없는 컷은 조각 정보 없이 판정한다
         CutError: 결과 파일을 읽지 못한 경우
     """
-    if not result.pieces:
-        raise ValueError("조각 정보가 없다 — hybrid_cut(inspect=True)로 자른 결과가 필요하다")
+    if not result.pieces and any(piece.reencoded for piece in result.plan.pieces):
+        raise ValueError("조각 정보가 없다 — inspect=True로 자른 결과가 필요하다")
     plan = result.plan
     notes: dict[str, str] = {}
 
@@ -138,7 +141,10 @@ def check_cut(frames: CutFrames, result: CutResult) -> CutCheck:
         want_end = min(frames.audio_end, end) - video_end
         start_diff = (audio_first - video_first) - want_start
         end_diff = (audio_last - video_last) - want_end
-        av_ok = abs(start_diff) <= frames.frame_duration and abs(end_diff) <= frames.frame_duration
+        late = frames.frame_duration + result.audio_overhang  # 끝이 늦는 쪽의 허용
+        av_ok = (
+            abs(start_diff) <= frames.frame_duration and -frames.frame_duration <= end_diff <= late
+        )
         notes["av_sync"] = (
             f"시작 (오디오−영상) {(audio_first - video_first) * 1000:+.3f}ms (원본 {want_start * 1000:+.3f})"
             f" · 끝 {(audio_last - video_last) * 1000:+.3f}ms (원본 {want_end * 1000:+.3f})"

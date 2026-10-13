@@ -295,6 +295,15 @@ def _same_volume(a: str, b: str) -> bool:
         return True
 
 
+def same_volume(a: str, b: str) -> bool:
+    """두 경로가 같은 볼륨(장치)에 있는지 — 확인할 수 없으면 "같다"로 본다.
+
+    여유 공간을 볼륨마다 따로 볼지 정하는 쪽(core.downloaders.segment_space)이 쓴다. 임시
+    폴더를 정할 때와 같은 판정이다.
+    """
+    return _same_volume(a, b)
+
+
 def choose_temp_dir(output_path: str) -> str:
     """세그먼트 임시 폴더 위치를 정한다 (#192).
 

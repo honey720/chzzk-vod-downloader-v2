@@ -19,11 +19,22 @@
   그린다. 한 버튼 안에서 색이 다른 글자 둘은 QSS만으로 낼 수 없다. 색은 본 글자보다
   한 단계 흐린 토큰이다(평소 textDisabled / 호버 textMuted / 선택은 onAccent를 조금
   투명하게).
+- 폭이 자연 폭보다 좁으면(접힌 pill이 크기 글에 밀릴 때) 글자를 줄인다 — 먼저 보조
+  글자를 그리지 않고, 그래도 모자라면 본 글자를 말줄임(…)한다(shownTexts). 줄였으면
+  툴팁의 첫 줄에 전체 글자를 적는다. 최소 폭이 1px이라 레이아웃이 pill을 얼마든지
+  누를 수 있다 — 글자를 폭에 맞추지 않으면 보조 글자가 본 글자 위에 겹쳐 그려진다.
 """
 
-from PySide6.QtCore import QPointF, QSize, Qt
+from PySide6.QtCore import QEvent, QPointF, QSize, Qt
 from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPolygonF
-from PySide6.QtWidgets import QPushButton, QSizePolicy
+from PySide6.QtWidgets import (
+    QPushButton,
+    QSizePolicy,
+    QStyle,
+    QStyleOptionButton,
+    QStylePainter,
+    QToolTip,
+)
 
 import app.theme as theme
 
@@ -107,6 +118,52 @@ class ResolutionPill(QPushButton):
     def _secondaryWidth(self) -> int:
         return QFontMetrics(self.font()).horizontalAdvance(self._secondary)
 
+    def fullText(self) -> str:
+        """본 글자와 보조 글자 전부 — "1080p(원본) 60fps". 줄인 pill의 툴팁에 적는다."""
+        return f"{self.text()} {self._secondary}" if self._secondary else self.text()
+
+    def shownTexts(self) -> tuple[str, str]:
+        """지금 폭에서 그리는 (본 글자, 보조 글자) — 겹치지 않게 폭에 맞춘 것이다.
+
+        글자에 쓸 수 있는 폭은 지금 폭에서 여백(▾ 몫 포함)을 뺀 값이다. 둘 다 들어가면
+        그대로, 본 글자만 들어가면 보조 글자를 뺀다. 본 글자도 안 들어가면 말줄임(…)한다.
+        자연 폭(sizeHint) 이상이면 늘 둘 다 그린다.
+        """
+        metrics = QFontMetrics(self.font())
+        main = metrics.horizontalAdvance(self.text())
+        # 여백 = 스타일이 정한 자연 폭 − 본 글자 폭 (QSS의 padding을 여기 다시 적지 않는다)
+        room = self.width() - (super().sizeHint().width() - main)
+        if self._secondary and main + SECONDARY_GAP + self._secondaryWidth() <= room:
+            return self.text(), self._secondary
+        if main <= room:
+            return self.text(), ""
+        return metrics.elidedText(self.text(), Qt.TextElideMode.ElideRight, max(room, 0)), ""
+
+    def isTruncated(self) -> bool:
+        """지금 폭에서 글자를 줄여(보조 글자 숨김 · 말줄임) 그리는가."""
+        return self.shownTexts() != (self.text(), self._secondary)
+
+    def shownToolTip(self) -> str:
+        """마우스를 올리면 뜨는 글 — 글자를 줄였으면 첫 줄이 전체 글자다.
+
+        setToolTip으로 받은 글(파일 크기 등)은 그대로 두고 그 앞줄에 붙인다.
+        """
+        tip = self.toolTip()
+        if not self.isTruncated():
+            return tip
+        return f"{self.fullText()}\n{tip}" if tip else self.fullText()
+
+    def event(self, event) -> bool:
+        if event.type() == QEvent.Type.ToolTip:
+            tip = self.shownToolTip()
+            if tip:
+                QToolTip.showText(event.globalPos(), tip, self)
+            else:
+                QToolTip.hideText()
+                event.ignore()
+            return True
+        return super().event(event)
+
     def naturalWidth(self) -> int:
         """▾ 없이 텍스트+padding만의 자연 폭 — "들어가는가" 판정은 이 값으로 한다.
 
@@ -151,8 +208,15 @@ class ResolutionPill(QPushButton):
         return "textMuted"
 
     def paintEvent(self, event) -> None:
-        super().paintEvent(event)
-        if not self._caret and not self._secondary:
+        main, secondary = self.shownTexts()
+        # 버튼은 스타일이 그대로 그린다 — 글자만 지금 폭에 맞춘 것으로 바꿔 넘긴다
+        option = QStyleOptionButton()
+        self.initStyleOption(option)
+        option.text = main
+        style_painter = QStylePainter(self)
+        style_painter.drawControl(QStyle.ControlElement.CE_PushButton, option)
+        style_painter.end()
+        if not self._caret and not secondary:
             return
         tokens = theme.current_tokens()
         right = self.width() - EDGE_PADDING  # 오른쪽 가장자리 여백 안쪽
@@ -176,12 +240,12 @@ class ResolutionPill(QPushButton):
             )
             painter.restore()
             right = left - CARET_GAP
-        if self._secondary:
+        if secondary:
             # 본 글자와 같은 글꼴 · 같은 밑줄(baseline)에 그린다 — 본 글자는 스타일이 세로
             # 가운데로 그리므로 같은 식으로 밑줄을 구한다
             metrics = QFontMetrics(self.font())
             baseline = (self.height() - metrics.height()) // 2 + metrics.ascent()
             painter.setFont(self.font())
             painter.setPen(self.secondaryColor())
-            painter.drawText(right - self._secondaryWidth(), baseline, self._secondary)
+            painter.drawText(right - self._secondaryWidth(), baseline, secondary)
         painter.end()

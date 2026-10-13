@@ -989,13 +989,14 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         return self.setSize(size)
 
     def _finishedSizeText(self, item: ContentItem) -> str:
-        """완료 카드의 크기 — 구간 다운로드는 실제로 만든 구간 파일 크기의 합이다 (#309).
+        """완료 카드의 크기 — 저장된 파일의 크기다. 구간 다운로드는 구간 파일 크기의 합 (#309).
 
-        엔진이 세어 준 값(``output_bytes``)을 적는다. 그 값이 없으면(구간이 없는 다운로드 ·
-        세그먼트 방식 · 값을 모르는 카드) 마지막으로 통지받은 받은 양이다.
+        엔진이 완료하며 실제 파일에서 읽어 준 값(``output_bytes``)을 적는다 — 받은 양이 아니다.
+        세그먼트를 다시 포장하거나 구간으로 자른 파일은 받은 양과 크기가 다르다. 그 값이
+        없으면(앱을 다시 띄운 카드 등) 마지막으로 통지받은 받은 양이다.
         """
         made = getattr(item, "output_bytes", None)
-        if self._sectionCount() and not item.is_segment_based and made:
+        if made:
             return self.setSize(made)
         return self.setSize(item.download_size)
 
@@ -1114,7 +1115,12 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             elif self._sectionCount() and self.item.post_process:
                 # 구간을 자르는 단계 (#309) — 속도 · 남은 시간은 뜻이 없어 적지 않고 단계
                 # 문구를 적는다. 막대는 전송과 컷을 합친 하나다
-                cutting_text = self.tr("Cutting")
+                # 자르기 전에 받은 세그먼트의 프레임 정보를 읽는 동안은 준비 중임을 적는다 —
+                # 세그먼트가 많으면 그 시간이 길다
+                if getattr(self.item, "cut_preparing", False):
+                    cutting_text = self.tr("Preparing to cut")
+                else:
+                    cutting_text = self.tr("Cutting")
                 self.statusLabel.setText(
                     f"{item.download_progress}% · {cutting_text}{self._sectionTally()}"
                 )
