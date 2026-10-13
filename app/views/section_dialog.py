@@ -56,7 +56,7 @@ from app.viewmodels.section_edit_viewmodel import (
     STATE_READY,
     SectionEditViewModel,
 )
-from app.widgets.eliding_label import ElidingLabel
+from app.widgets.eliding_label import ElidingLabel, WrappingLabel
 from app.widgets.scroll_padding import ScrollBarPadding
 from app.widgets.timecode_edit import TimecodeEdit, TimePointEdit
 
@@ -287,8 +287,9 @@ class SectionEditDialog(QDialog):
         buttons.addWidget(self.sumLabel)
         # 구간 길이의 합이 영상보다 길다는 알림 — 버튼 줄의 왼쪽 남는 자리를 쓴다. 글이 없어도
         # 그 자리를 차지해, 알림이 생기고 사라져도 행 영역과 버튼이 움직이지 않는다. 좁으면
-        # 말줄임하고 전문은 툴팁이다(ElidingLabel)
-        self.totalLabel = ElidingLabel(self)
+        # 두 줄로 나눠 적는다 — 한 줄 말줄임은 뒤의 숫자(영상 길이)를 잘랐다. 두 줄에도 안
+        # 들어갈 때만 말줄임하고, 전문은 늘 툴팁에 있다(WrappingLabel)
+        self.totalLabel = WrappingLabel(self)
         self.totalLabel.setObjectName("sectionTotalLabel")
         buttons.addWidget(self.totalLabel, 1)
         self.cancelButton = QPushButton(self)

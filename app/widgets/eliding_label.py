@@ -17,7 +17,7 @@ import하므로, 거꾸로 `contentItemWidget.py`가 `app/widgets/widget.py`를 
 독립 모듈에 두는 것과 같은 이유).
 """
 
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import QRect, QSize, Qt
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import QLabel, QSizePolicy
 
@@ -146,5 +146,66 @@ class PathLabel(ElidingLabel):
         else:
             room = max(width - metrics.horizontalAdvance(self._prefix), 0)
             shown = self._prefix + metrics.elidedText(self._last, Qt.TextElideMode.ElideMiddle, room)  # ③
+        if shown != QLabel.text(self):
+            QLabel.setText(self, shown)
+
+
+class WrappingLabel(ElidingLabel):
+    """한 줄에 안 들어가면 두 줄로 나눠 보이는 라벨 — 두 줄에도 안 들어갈 때만 말줄임한다 (#309).
+
+    편집 창의 "구간 합이 영상보다 길다"는 알림에 쓴다. 그 글은 숫자 둘(합 · 영상 길이)이 뜻의
+    전부인데, 창을 좁히면 한 줄 말줄임이 뒤의 숫자를 잘랐다. 버튼 줄의 높이는 두 줄이 들어가는
+    높이라 나눠 적으면 창을 가장 좁게 줄여도 전문이 보인다.
+
+    줄이는 순서는 ① 한 줄 → ② 두 줄(낱말 사이에서 나눈다) → ③ 한 줄 말줄임이다. 툴팁은 어느
+    단계에서나 전문이다(``ElidingLabel``과 같다). 높이는 글이 없어도 늘 두 줄만큼을 청한다 —
+    글이 생기고 사라져도, 한 줄에서 두 줄로 바뀌어도 줄의 높이가 움직이지 않는다. 폭에 따라
+    높이가 달라지는 라벨로 다루지 않는다(``hasHeightForWidth``가 거짓) — 그렇게 다루면 창의
+    최소 크기가 폭에 묶인다.
+    """
+
+    LINES = 2  # 나눠 적는 줄 수의 한도
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+    def hasHeightForWidth(self) -> bool:
+        return False
+
+    def heightForWidth(self, width: int) -> int:
+        return -1
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(super().minimumSizeHint().width(), self._linesHeight())
+
+    def sizeHint(self) -> QSize:
+        # 폭은 전문을 한 줄로 적는 폭 — 여유가 있으면 한 줄로 돌아온다(ElidingLabel과 같다)
+        return QSize(super().sizeHint().width(), self._linesHeight())
+
+    def _linesHeight(self) -> int:
+        return QFontMetrics(self.font()).lineSpacing() * self.LINES
+
+    def _applyElide(self, force: bool = False) -> None:
+        width = self.width()
+        if not force and width == self._last_elide_width:
+            return
+        self._last_elide_width = width
+        metrics = QFontMetrics(self.font())
+        whole = self._full_text
+        wrapped = False
+        shown = whole
+        if metrics.horizontalAdvance(whole) > width:
+            # 그 폭에서 낱말 사이로 나눠 적은 크기 — 두 줄 안이고 폭을 넘는 낱말이 없어야 한다
+            box = metrics.boundingRect(
+                QRect(0, 0, max(width, 1), metrics.lineSpacing() * self.LINES * 8),
+                int(Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignLeft),
+                whole,
+            )
+            wrapped = box.height() <= metrics.lineSpacing() * self.LINES and box.width() <= width
+            if not wrapped:
+                shown = metrics.elidedText(whole, self._elide_mode, width)
+        if self.wordWrap() != wrapped:
+            self.setWordWrap(wrapped)
         if shown != QLabel.text(self):
             QLabel.setText(self, shown)

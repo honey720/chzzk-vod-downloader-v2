@@ -17,6 +17,7 @@ from fractions import Fraction
 
 import pytest
 from PySide6.QtCore import QPoint, Qt
+from PySide6.QtGui import QFontMetrics
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication
 
@@ -4095,25 +4096,70 @@ def test_rows_fit_inside_the_dialog_at_its_narrowest(qtbot, tmp_path, basis, row
         assert button.width() == wide[index]
 
 
-def test_elided_total_notice_keeps_the_whole_text_in_its_tooltip(qtbot, tmp_path, basis):
-    """합 알림이 좁아 말줄임되면 툴팁에 전문이 있어야 한다.
+def _narrow_until_the_notice_is_one_pixel_short(dialog, whole: str) -> None:
+    """합 알림의 폭이 전문의 한 줄 폭보다 1px 좁아지도록 창을 줄인다 — 폭은 글꼴에서 유도한다.
 
-    60fps · 3600초. 세 행: 처음~10분 / 4분~끝 / 1분~끝, 창을 가장 좁게 줄임
-    -> 보이는 글이 "…"로 끝나고 전문보다 짧다, 툴팁 == 전문
+    알림 라벨은 버튼 줄의 남는 자리를 받으므로 창을 줄인 만큼 좁아진다. 줄인 뒤 라벨의 실제
+    폭을 확인한다(창의 최소 폭에 걸리면 이 폭에서는 아무것도 재지 않는다).
+    """
+    label = dialog.totalLabel
+    target = QFontMetrics(label.font()).horizontalAdvance(whole) - 1
+    dialog.resize(dialog.width() - (label.width() - target), 300)
+    _pump()
+    assert label.width() == target, (
+        f"알림 라벨 {label.width()}px — 요청 {target}px "
+        f"(창의 최소 폭 {dialog.minimumSizeHint().width()}px)"
+    )
+
+
+def test_total_notice_too_wide_for_one_line_is_split_over_two_lines(qtbot, tmp_path, basis):
+    """합 알림이 한 줄에 안 들어가면 말줄임하지 않고 두 줄로 나눠 전문을 보여야 한다.
+
+    60fps · 3600초. 세 행: 처음~10분 / 4분~끝 / 1분~끝. 알림 라벨이 전문의 한 줄 폭 − 1px이
+    되도록 창을 줄임
+    -> 보이는 글 == 전문("…" 없음), 두 줄로 나눔(wordWrap), 툴팁 == 전문
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
     dialog = open_editor(qtbot, win, item)
     set_rows(dialog, [("", "00:10:00:00"), ("00:04:00:00", ""), ("00:01:00:00", "")])
     whole = TOTAL_OVER.format("02:05:00.000", "01:00:00.000")
+    dialog.resize(1200, 300)
+    _pump()
+    # 넓으면 한 줄이다
+    assert (shown(dialog.totalLabel), dialog.totalLabel.wordWrap()) == (whole, False)
 
-    dialog.resize(1, 300)
+    _narrow_until_the_notice_is_one_pixel_short(dialog, whole)
+
+    assert (shown(dialog.totalLabel), dialog.totalLabel.wordWrap()) == (whole, True)
+    assert dialog.totalLabel.toolTip() == whole
+
+
+def test_buttons_stay_where_they_are_when_the_total_notice_takes_two_lines(qtbot, tmp_path, basis):
+    """합 알림이 두 줄이 되어도 버튼 줄과 행 영역의 자리 · 높이가 그대로여야 한다.
+
+    60fps · 3600초, 같은 창 폭(알림이 두 줄이 되는 폭)에서
+    겹치지 않는 세 행(알림 없음) -> 겹치는 세 행(알림 두 줄)
+    -> 확인 · 취소 버튼의 위치와 크기, 행 영역(스크롤 영역)의 위치와 크기가 같다
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    dialog = open_editor(qtbot, win, item)
+    overlapping = [("", "00:10:00:00"), ("00:04:00:00", ""), ("00:01:00:00", "")]
+    set_rows(dialog, overlapping)
+    whole = TOTAL_OVER.format("02:05:00.000", "01:00:00.000")
+    dialog.resize(1200, 300)
+    _pump()
+    _narrow_until_the_notice_is_one_pixel_short(dialog, whole)
+    assert dialog.totalLabel.wordWrap()  # 전제: 이 폭에서 알림은 두 줄이다
+    parts = (dialog.okButton, dialog.cancelButton, dialog.scrollArea)
+    with_notice = [part.geometry() for part in parts]
+
+    set_rows(dialog, [("", "00:10:00:00"), ("00:20:00:00", "00:30:00:00"), ("00:40:00:00", "")])
     _pump()
 
-    assert dialog.totalLabel.isVisible()
-    visible = shown(dialog.totalLabel)
-    assert visible.endswith("…") and len(visible) < len(whole), "전제: 가장 좁은 창에서 말줄임된다"
-    assert dialog.totalLabel.toolTip() == whole
+    assert total_shown(dialog) == ""  # 전제: 알림이 사라졌다
+    assert [part.geometry() for part in parts] == with_notice
 
 
 # ================================================================ 합 알림은 오류가 없는 행만 더한다 (#309)
