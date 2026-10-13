@@ -3920,7 +3920,10 @@ def test_frame_field_tooltip_follows_the_frame_rate(qtbot, tmp_path, basis):
 
 # ================================================================ 구간 길이의 합이 영상보다 길면 알린다 (#309)
 
-TOTAL_OVER = "Sections add up to {0} — longer than the video ({1})"
+TOTAL_HEAD = "Sections add up to more than the video"  # 알림의 첫 문장 — 무슨 일인지
+TOTAL_NUMBERS = "Sections {0} · Video {1}"  # 알림의 둘째 문장 — 합과 영상 길이
+# 알림 전체 — 두 문장을 " · "로 이은 글(한 줄일 때 보이는 글 · 툴팁)
+TOTAL_OVER = TOTAL_HEAD + " · " + TOTAL_NUMBERS
 
 
 def total_shown(dialog) -> str:
@@ -3933,7 +3936,7 @@ def test_total_longer_than_the_video_is_noted_and_does_not_block_ok(qtbot, tmp_p
 
     60fps · 3600초. 세 행: 처음~10분 / 4분~끝 / 1분~끝(빈 끝 = 3600초)
     -> 합 = 10분 + 56분 + 59분 = 02:05:00.000 > 영상 01:00:00.000
-    -> 알림 == "Sections add up to 02:05:00.000 — longer than the video (01:00:00.000)", 오류 없음, 확인 켜짐
+    -> 알림 == "Sections add up to more than the video · Sections 02:05:00.000 · Video 01:00:00.000", 오류 없음, 확인 켜짐
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -4096,14 +4099,13 @@ def test_rows_fit_inside_the_dialog_at_its_narrowest(qtbot, tmp_path, basis, row
         assert button.width() == wide[index]
 
 
-def _narrow_until_the_notice_is_one_pixel_short(dialog, whole: str) -> None:
-    """합 알림의 폭이 전문의 한 줄 폭보다 1px 좁아지도록 창을 줄인다 — 폭은 글꼴에서 유도한다.
+def _set_notice_width(dialog, target: int) -> None:
+    """합 알림 라벨의 폭이 target(px)이 되도록 창의 폭을 바꾼다 — target은 글꼴에서 유도한 값이다.
 
-    알림 라벨은 버튼 줄의 남는 자리를 받으므로 창을 줄인 만큼 좁아진다. 줄인 뒤 라벨의 실제
-    폭을 확인한다(창의 최소 폭에 걸리면 이 폭에서는 아무것도 재지 않는다).
+    알림 라벨은 버튼 줄의 남는 자리를 받으므로 창의 폭을 바꾼 만큼 달라진다. 바꾼 뒤 라벨의
+    실제 폭을 확인한다(창의 최소 폭에 걸리면 이 폭에서는 아무것도 재지 않는다).
     """
     label = dialog.totalLabel
-    target = QFontMetrics(label.font()).horizontalAdvance(whole) - 1
     dialog.resize(dialog.width() - (label.width() - target), 300)
     _pump()
     assert label.width() == target, (
@@ -4112,26 +4114,32 @@ def _narrow_until_the_notice_is_one_pixel_short(dialog, whole: str) -> None:
     )
 
 
-def test_total_notice_too_wide_for_one_line_is_split_over_two_lines(qtbot, tmp_path, basis):
-    """합 알림이 한 줄에 안 들어가면 말줄임하지 않고 두 줄로 나눠 전문을 보여야 한다.
+def _notice_width(dialog, text: str) -> int:
+    """그 글을 알림 라벨의 글꼴로 한 줄에 적는 폭(px)."""
+    return QFontMetrics(dialog.totalLabel.font()).horizontalAdvance(text)
 
-    60fps · 3600초. 세 행: 처음~10분 / 4분~끝 / 1분~끝. 알림 라벨이 전문의 한 줄 폭 − 1px이
-    되도록 창을 줄임
-    -> 보이는 글 == 전문("…" 없음), 두 줄로 나눔(wordWrap), 툴팁 == 전문
+
+def test_total_notice_too_wide_for_one_line_is_split_into_its_two_sentences(qtbot, tmp_path, basis):
+    """합 알림이 한 줄에 안 들어가면 말줄임하지 않고 두 문장을 한 줄씩 보여야 한다.
+
+    60fps · 3600초. 세 행: 처음~10분 / 4분~끝 / 1분~끝. 알림 라벨의 폭을 전체 글의 한 줄 폭으로
+    맞춘 뒤 1px 줄임
+    -> 한 줄 폭일 때: 보이는 글 == 두 문장을 " · "로 이은 한 줄
+    -> 1px 줄인 뒤: 보이는 글 == 첫 문장 + 줄바꿈 + 둘째 문장("…" 없음), 툴팁 == 전체 글
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
     dialog = open_editor(qtbot, win, item)
     set_rows(dialog, [("", "00:10:00:00"), ("00:04:00:00", ""), ("00:01:00:00", "")])
-    whole = TOTAL_OVER.format("02:05:00.000", "01:00:00.000")
-    dialog.resize(1200, 300)
-    _pump()
-    # 넓으면 한 줄이다
-    assert (shown(dialog.totalLabel), dialog.totalLabel.wordWrap()) == (whole, False)
+    numbers = TOTAL_NUMBERS.format("02:05:00.000", "01:00:00.000")
+    whole = TOTAL_HEAD + " · " + numbers
+    _set_notice_width(dialog, _notice_width(dialog, whole))
+    fitting = shown(dialog.totalLabel)
 
-    _narrow_until_the_notice_is_one_pixel_short(dialog, whole)
+    _set_notice_width(dialog, _notice_width(dialog, whole) - 1)
 
-    assert (shown(dialog.totalLabel), dialog.totalLabel.wordWrap()) == (whole, True)
+    assert fitting == whole
+    assert shown(dialog.totalLabel) == TOTAL_HEAD + "\n" + numbers
     assert dialog.totalLabel.toolTip() == whole
 
 
@@ -4139,19 +4147,16 @@ def test_buttons_stay_where_they_are_when_the_total_notice_takes_two_lines(qtbot
     """합 알림이 두 줄이 되어도 버튼 줄과 행 영역의 자리 · 높이가 그대로여야 한다.
 
     60fps · 3600초, 같은 창 폭(알림이 두 줄이 되는 폭)에서
-    겹치지 않는 세 행(알림 없음) -> 겹치는 세 행(알림 두 줄)
+    겹치는 세 행(알림 두 줄) -> 겹치지 않는 세 행(알림 없음)
     -> 확인 · 취소 버튼의 위치와 크기, 행 영역(스크롤 영역)의 위치와 크기가 같다
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
     dialog = open_editor(qtbot, win, item)
-    overlapping = [("", "00:10:00:00"), ("00:04:00:00", ""), ("00:01:00:00", "")]
-    set_rows(dialog, overlapping)
+    set_rows(dialog, [("", "00:10:00:00"), ("00:04:00:00", ""), ("00:01:00:00", "")])
     whole = TOTAL_OVER.format("02:05:00.000", "01:00:00.000")
-    dialog.resize(1200, 300)
-    _pump()
-    _narrow_until_the_notice_is_one_pixel_short(dialog, whole)
-    assert dialog.totalLabel.wordWrap()  # 전제: 이 폭에서 알림은 두 줄이다
+    _set_notice_width(dialog, _notice_width(dialog, whole) - 1)
+    assert "\n" in shown(dialog.totalLabel)  # 전제: 이 폭에서 알림은 두 줄이다
     parts = (dialog.okButton, dialog.cancelButton, dialog.scrollArea)
     with_notice = [part.geometry() for part in parts]
 
@@ -4204,7 +4209,7 @@ def test_overlapping_rows_without_errors_both_count_in_the_total(qtbot, tmp_path
     """겹치지만 오류가 아닌 두 행은 둘 다 합에 들어야 한다.
 
     60fps · 3600초. 행 처음~00:40:00:00(40분), 행 00:20:00:00~끝(40분) — 20분이 겹친다
-    -> 오류 없음, 알림 == "Sections add up to 01:20:00.000 — longer than the video (01:00:00.000)"
+    -> 오류 없음, 알림 == "Sections add up to more than the video · Sections 01:20:00.000 · Video 01:00:00.000"
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -4366,7 +4371,7 @@ def test_sum_gives_way_to_the_notice_that_already_carries_it(qtbot, tmp_path, ba
     """합이 영상보다 길어 알림이 뜨면 합계 글은 숨고 알림이 그 합을 적어야 한다.
 
     60fps · 3600초. 행 처음~00:40:00:00, 행 00:20:00:00~끝 (합 80분 > 60분)
-    -> 합계 없음, 알림 == "Sections add up to 01:20:00.000 — longer than the video (01:00:00.000)"
+    -> 합계 없음, 알림 == "Sections add up to more than the video · Sections 01:20:00.000 · Video 01:00:00.000"
     -> 둘째 행의 시작을 00:50:00:00으로(합 50분): 알림 없음, 합계 == "Total 00:50:00.000"
     """
     item = _make_item(str(tmp_path))

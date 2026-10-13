@@ -958,7 +958,14 @@ class SectionEditViewModel(QObject):
         return self.tr("Total {0}").format(format_milliseconds(seconds))
 
     def totalNoticeText(self) -> str:
-        """구간 길이의 합이 영상 길이보다 길 때의 알림. 그렇지 않으면 빈 글 — 오류가 아니다.
+        """구간 길이의 합이 영상 길이보다 길 때의 알림 전체 — 두 문장을 " · "로 이은 글. 없으면 빈 글."""
+        return " · ".join(line for line in self.totalNoticeLines() if line)
+
+    def totalNoticeLines(self) -> tuple[str, str]:
+        """구간 길이의 합이 영상 길이보다 길 때의 알림 — (무슨 일인지, 숫자). 없으면 빈 글 둘.
+
+        첫 문장은 "구간 합이 영상보다 깁니다", 둘째 문장은 합과 영상 길이다("구간 합 … · 영상 …").
+        창은 들어가면 한 줄로 잇고, 좁으면 두 줄로 나눠 숫자 쪽만 줄인다. 오류가 아니다.
 
         오류가 없는 행의 길이만 더한다 — 행마다의 길이 표시(``lengthText``)와 같은 기준이다.
         빈 시각은 처음 · 끝으로 푼 값이다. 오류인 행(영상 밖 · 중복 · 개수 초과)은 확인할 수 없는
@@ -968,14 +975,17 @@ class SectionEditViewModel(QObject):
         영상 길이를 모르면(조회 전 · 실패) 알리지 않는다.
         """
         if self.state != STATE_READY or self.fps is None or self.duration <= 0:
-            return ""
+            return "", ""
         total_frames = self._totalFrames()
         video_frames = round(self.duration * frame_rate(self.fps))
         if total_frames <= video_frames:
-            return ""
+            return "", ""
         total_seconds = float(total_frames / frame_rate(self.fps))
-        return self.tr("Sections add up to {0} — longer than the video ({1})").format(
-            format_milliseconds(total_seconds), format_milliseconds(self.duration)
+        return (
+            self.tr("Sections add up to more than the video"),
+            self.tr("Sections {0} · Video {1}").format(
+                format_milliseconds(total_seconds), format_milliseconds(self.duration)
+            ),
         )
 
     def millisecondsText(self, row: int, column: int) -> str:
