@@ -442,3 +442,25 @@ def test_file_size_check_compares_the_size_it_reports_when_the_estimate_is_a_fra
 
     assert refused.value.largest == 1001
     assert sizes == [("FAT32", 1001), ("FAT32", 1001)]
+
+
+@pytest.mark.parametrize(
+    ("average", "expected"),
+    [(BANDWIDTH, START_ESTIMATE), (None, 2 * START_ESTIMATE)],
+    ids=["average-declared", "average-missing"],
+)
+def test_start_estimate_uses_the_average_bandwidth_when_it_is_declared(
+    tmp_path, monkeypatch, average, expected
+):
+    """받기 전 어림은 AVERAGE-BANDWIDTH가 선언돼 있으면 그 값으로, 없으면 BANDWIDTH로 해야 한다.
+
+    BANDWIDTH 16,000,000 bit/s, 2초 세그먼트 24개. AVERAGE-BANDWIDTH 8,000,000 또는 선언 없음
+    -> 시작 줄의 세그먼트 어림 == 48,000,000(평균으로) / 96,000,000(최대로)
+    """
+    run = _Run(tmp_path, monkeypatch, free=10**13, bandwidth=2 * BANDWIDTH, hold=False)
+    run.data.content.stream = StreamKey(1920, 1080, 60.0, 2 * BANDWIDTH, average)
+
+    run.start()
+
+    assert (run.finished, run.failures) == (1, [])
+    assert [(line[0], line[1]) for line in run.logger.space][0] == ("start", expected)

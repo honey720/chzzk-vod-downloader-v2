@@ -730,9 +730,15 @@ class BaseDownloader(ABC):
         )
 
     def _declared_bandwidth(self) -> int | None:
-        """고른 변형의 선언된 비트레이트(bit/s, BANDWIDTH). 변형의 정체를 넘겨받지 못했으면 None."""
+        """고른 변형의 선언된 비트레이트(bit/s). 변형의 정체를 넘겨받지 못했으면 None.
+
+        평균(AVERAGE-BANDWIDTH)이 선언돼 있으면 그 값을, 없으면 최대(BANDWIDTH)를 쓴다 — 받을
+        양의 어림에는 평균이 맞고, 최대로 어림하면 크게 나온다.
+        """
         stream = self.s.content.stream
-        return stream.bandwidth if stream is not None else None
+        if stream is None:
+            return None
+        return stream.average_bandwidth or stream.bandwidth
 
     def _require_space(self, stage: str) -> None:
         """받을 양을 어림해 여유 공간에 들어가는지 확인한다.
