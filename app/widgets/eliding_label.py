@@ -173,7 +173,6 @@ class TwoLineLabel(ElidingLabel):
         super().__init__(parent)
         self._head = ""
         self._tail = ""
-        self.setTextFormat(Qt.TextFormat.PlainText)
         self.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
     def setLines(self, head: str, tail: str) -> None:

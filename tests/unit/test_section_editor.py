@@ -3949,6 +3949,8 @@ def test_total_longer_than_the_video_is_noted_and_does_not_block_ok(qtbot, tmp_p
     _pump()
 
     assert total_shown(dialog) == TOTAL_OVER.format("02:05:00.000", "01:00:00.000")
+    # 뷰모델이 주는 전체 글도 같은 글이다 — 두 문장을 같은 글자로 잇는다
+    assert dialog.viewModel().totalNoticeText() == total_shown(dialog)
     assert [error_shown(row) for row in dialog._rows] == ["", "", ""]
     assert dialog.okButton.isEnabled()
 
