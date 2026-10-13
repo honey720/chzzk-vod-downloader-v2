@@ -1468,6 +1468,29 @@ def test_a_new_count_stops_the_previous_one_only_when_the_moov_differs(
     assert stopped is first_is_stopped
 
 
+def test_starting_the_download_stops_the_count_of_that_card(qtbot, window, probe, watched_count):
+    """크기를 세는 동안 그 카드를 받기 시작하면 크기 세기는 그만두라는 표시를 받아야 한다.
+
+    크기 세기를 막아 둔 채 구간을 확인하고 다운로드 버튼을 누름
+    -> 누르기 전: 그만두라는 표시 없음 / 누른 뒤: 표시 있음, 서비스에 제출 1건
+    """
+    win, item, engine = window
+    _give_section(qtbot, win, item, wait_size=False)
+    qtbot.waitUntil(lambda: watched_count.calls == 1, timeout=3000)
+    sizer = win.contentManager._sectionSizer
+    ((job, _moov, _selections),) = sizer._jobs.values()
+    before = job.cancelled()
+
+    win.downloadButton.click()
+    _pump()
+    after = job.cancelled()
+    watched_count.gate.set()
+    _wait_size(qtbot, win)
+
+    assert (before, after) == (False, True)
+    assert len(engine.submissions) == 1
+
+
 def test_changing_resolution_again_stops_the_previous_lookup(qtbot, window, probe):
     """조회가 도는 동안 해상도를 또 바꾸면 앞 조회는 그만두라는 표시를 받아야 한다.
 

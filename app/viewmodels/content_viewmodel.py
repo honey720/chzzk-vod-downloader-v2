@@ -474,6 +474,10 @@ class ContentViewModel(QObject):
             item.output_path = ensure_unique_path(os.path.join(item.download_path, "video.mp4"))
 
         if item.output_path:
+            # 받기 시작하면 대기 카드의 크기 세기는 쓸 곳이 없다 — 결과는 어차피 버려진다.
+            # 그만두게 해 해석의 차례를 엔진에 넘긴다: 표에서 셀 수 없는 모양의 moov는 크기
+            # 세기가 색인을 만들며 차례를 쥐고, 엔진은 그동안 기다린 뒤 같은 moov를 다시 해석했다
+            self._sectionSizer.cancel(item)
             # 다운로드 요청 시그널 발행
             self.downloadRequested.emit(item)
 

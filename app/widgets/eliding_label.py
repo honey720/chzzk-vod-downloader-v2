@@ -208,8 +208,12 @@ class TwoLineLabel(ElidingLabel):
         elif metrics.horizontalAdvance(whole) <= width:
             shown = whole  # ① 한 줄
         else:
-            # ② 두 줄 — 둘째 줄이 넘치면 ③ 그 줄만 줄인다. 첫 줄은 그대로 둔다
-            tail = metrics.elidedText(self._tail, self._elide_mode, width)
+            # ② 두 줄 — 둘째 줄이 넘치면 ③ 그 줄만 줄인다. 첫 줄은 그대로 둔다.
+            # 들어가는지는 한 줄로 이을지를 정할 때와 같은 잣대(글의 폭)로 직접 견준다 —
+            # elidedText에 맡기면 폭이 글의 폭과 꼭 같을 때도 줄이는 플랫폼이 있다(macOS)
+            tail = self._tail
+            if metrics.horizontalAdvance(tail) > width:
+                tail = metrics.elidedText(tail, self._elide_mode, width)
             shown = self._head + "\n" + tail
         if shown != QLabel.text(self):
             QLabel.setText(self, shown)
