@@ -99,12 +99,12 @@ def _files(tmp_path, sizes: dict[int, int]) -> tuple[str, ...]:
 def test_sizes_of_reads_the_size_of_each_finished_file_that_exists(tmp_path):
     """sizes_of는 끝낸 구간 가운데 파일이 있는 것의 (번호, 크기)를 번호순으로 돌려줘야 한다.
 
-    파일 0번 5바이트 · 2번 7바이트(1번 없음), 끝낸 구간 {2, 1, 0}
+    파일 0번 5바이트 · 2번 7바이트(1번 없음), 끝낸 구간을 [2, 1, 0]의 순서로 줌
     -> ((0, 5), (2, 7))
     """
     paths = _files(tmp_path, {0: 5, 2: 7})
 
-    assert SectionResume.sizes_of(paths, {2, 1, 0}) == ((0, 5), (2, 7))
+    assert SectionResume.sizes_of(paths, [2, 1, 0]) == ((0, 5), (2, 7))
 
 
 def test_checked_record_is_the_same_object_when_every_finished_file_is_as_recorded(tmp_path):
