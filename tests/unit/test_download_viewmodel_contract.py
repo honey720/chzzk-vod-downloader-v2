@@ -28,7 +28,7 @@ import threading
 
 import pytest
 import requests
-from PySide6.QtCore import QObject
+from PySide6.QtCore import QObject, QTimer
 
 from app.viewmodels.data import ContentItem
 from app.viewmodels.download_viewmodel import DownloadViewModel
@@ -220,6 +220,7 @@ class Wired:
         self.service = FakeService(log_calls, handle_factory)
         self.vm = DownloadViewModel(self.content, service=self.service)
         self.log_calls = log_calls
+        _WIRED.append(self)
 
     @property
     def submission(self) -> dict:
@@ -254,6 +255,24 @@ def log_calls(monkeypatch) -> list:
         lambda self, item: calls.append(("log_download_info", item)),
     )
     return calls
+
+
+_WIRED: list[Wired] = []  # 이 파일의 테스트가 만든 배선 묶음 — 끝나면 타이머를 세운다
+
+
+@pytest.fixture(autouse=True)
+def _stop_viewmodel_timers():
+    """테스트가 만든 viewmodel의 타이머를 테스트가 끝날 때 모두 세운다.
+
+    다운로드를 끝내지 않고 끝나는 테스트는 viewmodel의 "준비 중" 타이머를 켜 둔 채 끝난다. 그
+    타이머는 뒤이은 테스트(다른 파일이어도)가 이벤트 루프를 돌리는 동안 울려, 이 파일의 content
+    대역에 없는 속성을 읽다 그 테스트를 실패시킨다.
+    """
+    yield
+    for made in _WIRED:
+        for timer in made.vm.findChildren(QTimer):
+            timer.stop()
+    _WIRED.clear()
 
 
 @pytest.fixture
