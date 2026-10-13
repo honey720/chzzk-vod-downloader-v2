@@ -1995,7 +1995,8 @@ def test_needed_space_counts_a_boundary_gop_two_sections_share_for_each_section(
     R1 · R2라 함. 필요한 크기 N은 여유 공간 0인 실행에서 읽고, 여유가 넉넉한 실행에서 구간 파일을
     끝내기 직전의 경계 원본 · 본문의 크기와 조각을 붙인 직후 저장 폴더에 놓인 바이트를 읽음
     -> N == 경계 원본의 크기 + (본문 1 + R1) + (본문 2 + R2) + max(R1, R2),
-       조각을 붙인 직후 저장 폴더에 놓인 바이트의 최대 <= N, 완료 1회
+       조각을 붙인 직후 저장 폴더에 놓인 바이트의 최대 <= N, 완료 1회,
+       파일 크기 줄의 가장 큰 파일 == max(경계 원본의 크기, 본문 1 + R1, 본문 2 + R2)
     """
     selections = [TimeRange(_seconds(35), _seconds(50)), TimeRange(_seconds(60), _seconds(100))]
     index = _index(sources["plain"])
@@ -2012,7 +2013,7 @@ def test_needed_space_counts_a_boundary_gop_two_sections_share_for_each_section(
 
     def finish(source_path, *args, body_path, **kwargs):
         before.setdefault("source", os.path.getsize(source_path))
-        before.setdefault("bodies", []).append(os.path.getsize(body_path))
+        before.setdefault("bodies", {})[body_path] = os.path.getsize(body_path)
         return real_finish(source_path, *args, body_path=body_path, **kwargs)
 
     def write_file(*args):
@@ -2026,8 +2027,12 @@ def test_needed_space_counts_a_boundary_gop_two_sections_share_for_each_section(
 
     assert (run.finished, run.failures) == (1, [])
     assert len(before["bodies"]) == 2 and len(placed) == 2
-    assert needed == before["source"] + sum(before["bodies"]) + sum(ranges) + max(ranges)
+    bodies = [before["bodies"][path] for path in sorted(before["bodies"])]  # 구간 번호순
+    assert needed == before["source"] + sum(bodies) + sum(ranges) + max(ranges)
     assert 0 < max(placed) <= needed
+    files = [body + pieces for body, pieces in zip(bodies, ranges)]
+    (largest,) = [args[1] for name, args in run.logger.calls if name == "log_file_size_check"]
+    assert largest == max(before["source"], *files)
 
 
 def test_needed_space_of_a_whole_video_section_is_at_least_the_source_file(
