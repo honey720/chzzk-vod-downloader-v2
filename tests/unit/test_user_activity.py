@@ -123,17 +123,20 @@ def test_user_is_not_interacting_before_any_input(window):
 
 
 @pytest.mark.parametrize("kind", list(INPUTS))
-def test_each_kind_of_input_makes_the_user_interacting(window, kind):
+def test_each_kind_of_input_makes_the_user_interacting(qtbot, window, kind):
     """앱 창에 입력이 들어오면 조작 중이어야 한다.
 
     키 · 마우스 버튼 · 휠 · 창 크기 바꾸기 · 창 옮기기를 하나씩 보냄
-    -> 보내기 전 user_interacting() is False, 보낸 뒤 True
+    -> 보내기 전 user_interacting() is False, 보낸 뒤 True가 된다
     """
     assert activity.user_interacting() is False
 
     INPUTS[kind](window)
 
-    assert activity.user_interacting() is True
+    # 창을 옮긴 것은 플랫폼이 알려 줘야 창에 이벤트로 온다 — xcb에서는 창 시스템을 한 번
+    # 다녀온 뒤라 processEvents 한 번 안에 오지 않는다. 올 때까지 조건으로 기다린다.
+    # 시계는 대역이라 한 번 조작 중이 되면 기다리는 동안 풀리지 않는다
+    qtbot.waitUntil(activity.user_interacting, timeout=3000)
 
 
 def _key(kind: QEvent.Type) -> QEvent:
