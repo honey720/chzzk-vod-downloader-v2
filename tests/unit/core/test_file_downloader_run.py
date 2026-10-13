@@ -401,16 +401,25 @@ def _cut_failure_from_ffmpeg() -> PostprocessError:
     ("make", "expected"),
     [
         (_no_space, True),  # 파이썬이 쓰다 실패
+        # 오류의 글은 OS의 언어를 따른다 — 그 영어 문구가 없어도 번호(errno)로 알아봐야 한다
+        (lambda: OSError(errno.ENOSPC, "디스크 공간이 부족합니다"), True),
         (_cut_failure_from_ffmpeg, True),  # ffmpeg가 쓰다 실패 — 원인의 글
         (lambda: OSError(errno.EACCES, "Permission denied"), False),
         (lambda: PostprocessError("후처리(cut) 실패: 조각을 잇는 곳에서 DTS가 뒤로 간다"), False),
     ],
-    ids=["oserror-enospc", "ffmpeg-text-in-cause", "other-oserror", "other-cut-failure"],
+    ids=[
+        "oserror-enospc",
+        "oserror-enospc-other-text",
+        "ffmpeg-text-in-cause",
+        "other-oserror",
+        "other-cut-failure",
+    ],
 )
 def test_running_out_of_space_is_found_in_the_error_or_its_cause(make, expected):
     """쓰다가 공간이 없어 난 실패는 예외 자신이나 원인에서 알아봐야 한다.
 
-    ENOSPC인 OSError · 원인의 글에 "No space left on device"가 든 실패 -> 참
+    ENOSPC인 OSError(글이 "No space left on device"인 것 · 다른 말인 것) · 원인의 글에
+    "No space left on device"가 든 실패 -> 참
     권한 오류 · 그 글이 없는 컷 실패 -> 거짓
     """
     assert base_module._ran_out_of_space(make()) is expected
