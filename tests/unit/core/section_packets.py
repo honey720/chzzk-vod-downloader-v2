@@ -9,7 +9,8 @@ from fractions import Fraction
 
 from core.api.mp4 import read_mp4_index
 from core.utils.ffmpeg import remux_stream, run_ffmpeg
-from core.utils.hybrid_cut import cut_frames_from_mp4, hybrid_cut
+from core.utils.hybrid_cut import cut_frames_from_mp4
+from tests.unit.core.reference_cut import hybrid_cut
 
 
 def packets(path: str) -> dict[str, list[str]]:

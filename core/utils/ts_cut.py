@@ -26,7 +26,6 @@ ffmpeg로 넘긴다. 오디오는 구간의 세그먼트를 한 번 흘려 복�
 import dataclasses
 import os
 import time
-from bisect import bisect_left
 from collections.abc import Callable, Sequence
 from itertools import accumulate
 
@@ -43,9 +42,6 @@ from core.utils.hybrid_cut import (
     cut_frames_from_mp4,
 )
 
-# 구간 계획이 정한 PTS를 같은 세그먼트에서 다시 읽은 PTS와 견줄 때 허용하는 차이(초) — 같은
-# 계산을 두 번 한 값이라 같아야 하고, float 오차만 흡수한다
-_PTS_TOLERANCE = 1e-6
 
 # 다시 싼 mp4와 TS의 프레임마다 시각 차이가 서로 벗어나도 되는 폭(초) — 90kHz 2틱.
 # 두 쪽 모두 틱 단위라 차이는 프레임마다 같아야 한다
@@ -56,21 +52,6 @@ _OFFSET_SPREAD = 2 / 90_000
 _PAUSE_POLL_SECONDS = 0.05
 
 _AAC_FRAME_SAMPLES = 1024  # AAC 프레임 하나의 표본 수 — 오디오 덩어리 하나의 길이를 센다
-
-
-def ts_frame_number(frames: CutFrames, pts: float) -> int:
-    """PTS가 pts인 프레임의 번호(``frames.frame_pts``의 인덱스)를 찾는다.
-
-    구간 계획이 정한 첫·끝 프레임의 PTS를, 같은 세그먼트를 읽은 프레임 정보에서 번호로
-    바꾼다. 두 값은 같은 TS에서 읽은 것이라 같아야 한다.
-
-    Raises:
-        CutError: 그 PTS의 프레임이 없는 경우(``CUT_FAILED``)
-    """
-    position = bisect_left(frames.frame_pts, pts - _PTS_TOLERANCE)
-    if position < len(frames.frame_pts) and abs(frames.frame_pts[position] - pts) <= _PTS_TOLERANCE:
-        return position
-    raise CutError(CUT_FAILED, f"받은 세그먼트에 PTS {pts:.6f}초인 프레임이 없다")
 
 
 def cut_ts_section(

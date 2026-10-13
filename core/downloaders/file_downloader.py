@@ -187,7 +187,7 @@ def finish_section_file(
         output_path: 구간 파일의 최종 경로
         body_path: 받은 바이트가 쓰여 있는 본문 파일
         on_stage: 단계는 ``probe`` · 조각마다의 ``<번호>_<종류>`` · ``write``(조각을 붙이고 머리를
-            쓰는 일)다. 나머지 인자는 ``hybrid_cut``과 같다
+            쓰는 일)다. 나머지 인자는 ``encode_boundary_pieces``와 같다
 
     Raises:
         CutError · Mp4Error: 인코딩이 실패했거나 조각이 계획과 맞지 않는 경우

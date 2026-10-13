@@ -34,7 +34,8 @@ from core.models.plan import TimeRange
 from core.utils.cut_check import check_cut
 from core.utils.ffmpeg import get_ffmpeg_exe, run_ffmpeg
 from core.utils.hybrid_cut import CUT_FAILED, CUT_UNSUPPORTED, CutCancelled, CutError
-from core.utils.ts_cut import cut_ts_section, ts_frame_number
+from core.utils.fmp4_cut import frame_at
+from core.utils.ts_cut import cut_ts_section
 from core.utils.ts_sections import TsSectionSource, choose_ts_frame_rate, plan_ts_sections
 from tests.unit.core.range_host import RangeHost
 from tests.unit.core.section_packets import JoinedSource, assert_section_matches
@@ -463,7 +464,7 @@ def test_frame_number_of_a_pts_that_is_not_a_frame_is_an_error(vod, host, tmp_pa
     """
     ts_frames = _Planned(host, tmp_path / "segments").ts_frames
 
-    assert ts_frame_number(ts_frames, ts_frames.frame_pts[23]) == 23
+    assert frame_at(ts_frames, ts_frames.frame_pts[23]) == 23
     with pytest.raises(CutError) as info:
-        ts_frame_number(ts_frames, ts_frames.frame_pts[23] + 0.5 / FPS)
+        frame_at(ts_frames, ts_frames.frame_pts[23] + 0.5 / FPS)
     assert info.value.message_key == CUT_FAILED

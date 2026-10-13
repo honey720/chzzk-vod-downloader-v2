@@ -98,7 +98,6 @@ class SourceInfo:
     """컷 입력 파일에서 읽은 정보를 담는다."""
 
     video: VideoParams  # 영상 파라미터
-    audio_bitrate: int | None  # 오디오를 다시 인코딩하는 비트레이트(kb/s). 오디오가 없으면 None
 
 
 @dataclass(frozen=True)
@@ -119,7 +118,7 @@ class CutResult:
     output_path: str  # 만들어진 파일
     plan: CutPlan  # 실행한 계획
     source: SourceInfo  # 입력에서 읽은 정보
-    # 조각을 들여다본 결과 — hybrid_cut(inspect=True)일 때만 채운다
+    # 조각을 들여다본 결과 — 컷을 inspect=True로 돌렸을 때만 채운다
     pieces: tuple[PieceInfo, ...] = ()
     # 오디오가 구간 끝을 넘어갈 수 있는 길이(초). 오디오를 다시 인코딩하지 않고 복사한 컷은
     # 구간 끝에 걸친 덩어리를 통째로 넣으므로 그 덩어리 하나의 길이다. 다시 인코딩한 컷은 0

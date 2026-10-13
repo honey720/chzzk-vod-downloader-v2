@@ -66,7 +66,7 @@ from core.utils.mp4_ranges import (
 )
 from core.utils.mp4_section_writer import section_pieces
 from core.utils.interaction import resting_while
-from core.utils.hybrid_cut import CUT_FAILED, CutError, cut_frames_from_mp4, hybrid_cut
+from core.utils.hybrid_cut import CUT_FAILED, CutError, cut_frames_from_mp4
 from core.utils.paths import (
     build_section_output_paths,
     partial_source_path_for,
@@ -74,6 +74,7 @@ from core.utils.paths import (
 )
 from core.utils.selections import SELECTION_OUT_OF_RANGE, SelectionError
 from tests.unit.core.long_ffmpeg import LONG_RUNNING, end_all, record_processes
+from tests.unit.core.reference_cut import hybrid_cut
 from tests.unit.core.midway_cut_failure import MidwayCutFailure
 from tests.unit.core.range_host import RangeHost
 from tests.unit.core.section_retry import CutCalls, hand_over, snapshot

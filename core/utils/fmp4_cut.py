@@ -114,7 +114,9 @@ def cut_fmp4_section(
         on_fed: 영상을 잇는 통과에서 세그먼트 하나를 다 넘길 때마다 그 자리(segment_paths의
             번호)로 부른다 — 부르는 쪽이 더 쓰이지 않는 세그먼트를 지운다. 오디오 통과와 경계
             조각으로만 읽힌 세그먼트에는 부르지 않는다
-        inspect · on_progress · should_stop · should_pause: ``hybrid_cut``과 같다
+        inspect · on_progress · should_stop · should_pause:
+            ``core.utils.hybrid_cut.encode_boundary_pieces``와 같다. on_progress의 1은 구간
+            파일을 다 쓴 뒤에만 나온다
         on_stage: 단계는 ``read``(프레임 읽기) · ``audio``(오디오 통과) · 조각마다의
             ``<번호>_<종류>`` · ``join``(구간 파일 쓰기)이다
 

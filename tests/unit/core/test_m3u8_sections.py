@@ -66,7 +66,7 @@ from core.models.plan import TimeRange
 from core.utils.cut_check import check_cut
 from core.utils.ffmpeg import RemuxError, get_ffmpeg_exe, run_ffmpeg
 from core.utils.fmp4_sections import plan_fmp4_sections
-from core.utils.hybrid_cut import CUT_FAILED, CutError, cut_frames_from_fmp4, hybrid_cut
+from core.utils.hybrid_cut import CUT_FAILED, CutError, cut_frames_from_fmp4
 from core.utils.paths import build_section_output_paths, temp_dir_for
 from core.utils.selections import (
     SELECTION_CROSSES_BREAK,
@@ -76,6 +76,7 @@ from core.utils.selections import (
 )
 from tests.unit.core.midway_cut_failure import MidwayCutFailure
 from tests.unit.core.range_host import RangeHost
+from tests.unit.core.reference_cut import hybrid_cut
 from tests.unit.core.section_retry import OUTPUT_ARG, CutCalls, hand_over, snapshot
 
 KEYFRAMES = (0, 30, 36, 60, 90, 120, 150)  # -force_key_frames 0,1,1.2,2,3,4,5 (30fps)

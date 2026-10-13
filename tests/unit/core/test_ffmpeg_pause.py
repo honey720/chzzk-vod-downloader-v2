@@ -20,9 +20,10 @@ import core.utils.ffmpeg as ffmpeg_module
 import core.utils.hybrid_cut as cut_module
 from core.utils.ffmpeg import FFmpegCancelledError, run_ffmpeg
 import core.utils.ts_cut as ts_cut_module
-from core.utils.hybrid_cut import CutCancelled, CutError, hybrid_cut
+from core.utils.hybrid_cut import CutCancelled, CutError
 from core.utils.paths import cut_temp_dir_for
 from tests.unit.core.long_ffmpeg import LONG_RUNNING, end_all, record_processes
+from tests.unit.core.reference_cut import hybrid_cut
 from tests.unit.core.test_hybrid_cut import mp4_source  # noqa: F401 — 모듈 범위 픽스처
 
 PAUSE_AFTER = 0.5  # 프로세스를 띄운 뒤 일시정지하기까지(초) — 일하는 명령이 도는 동안이다

@@ -275,7 +275,7 @@ class SectionCutProgress:
         self._published = 0.0
 
     def section(self, number: int) -> Callable[[float], None]:
-        """그 구간의 컷이 진행(0~1)을 알릴 함수 — ``hybrid_cut``의 on_progress로 넘긴다."""
+        """그 구간의 컷이 진행(0~1)을 알릴 함수 — 컷 함수의 on_progress로 넘긴다."""
 
         def on_progress(fraction: float) -> None:
             inside = min(max(fraction, 0.0), 1.0)
@@ -951,7 +951,7 @@ class BaseDownloader(ABC):
 
         Args:
             number: 구간 번호(1부터 — 구간 목록의 순서)
-            stages: ``hybrid_cut``의 on_stage가 알린 (단계 이름, 걸린 초) — 알린 순서대로.
+            stages: 컷 함수의 on_stage가 알린 (단계 이름, 걸린 초) — 알린 순서대로.
                 ``_stage_recorder``로 모은 것이면 일시정지한 시간이 빠져 있다
 
         그 구간을 자르는 동안 일시정지한 시간이 있으면 그 합을 함께 넘긴다(없으면 넘기지 않는다 —

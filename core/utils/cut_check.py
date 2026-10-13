@@ -38,7 +38,7 @@ def check_cut(frames: CutFrames, result: CutResult) -> CutCheck:
 
     Args:
         frames: 컷에 쓴 원본의 프레임 정보
-        result: ``hybrid_cut(..., inspect=True)``의 결과 — 조각 정보가 들어 있어야 한다
+        result: ``inspect=True``로 자른 컷의 결과 — 조각 정보가 들어 있어야 한다
 
     Raises:
         ValueError: 계획에 재인코딩 조각이 있는데 result에 조각 정보가 없는 경우(inspect 없이
@@ -46,7 +46,7 @@ def check_cut(frames: CutFrames, result: CutResult) -> CutCheck:
         CutError: 결과 파일을 읽지 못한 경우
     """
     if not result.pieces and any(piece.reencoded for piece in result.plan.pieces):
-        raise ValueError("조각 정보가 없다 — hybrid_cut(inspect=True)로 자른 결과가 필요하다")
+        raise ValueError("조각 정보가 없다 — inspect=True로 자른 결과가 필요하다")
     plan = result.plan
     notes: dict[str, str] = {}
 

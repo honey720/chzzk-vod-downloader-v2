@@ -18,9 +18,10 @@ import pytest
 import core.utils.hybrid_cut as cut_module
 from core.utils.ffmpeg import FFmpegCancelledError, run_ffmpeg
 import core.utils.ts_cut as ts_cut_module
-from core.utils.hybrid_cut import CutCancelled, hybrid_cut
+from core.utils.hybrid_cut import CutCancelled
 from core.utils.paths import cut_temp_dir_for
 from tests.unit.core.long_ffmpeg import LONG_RUNNING, end_all, record_processes
+from tests.unit.core.reference_cut import hybrid_cut
 from tests.unit.core.test_hybrid_cut import mp4_source  # noqa: F401 — 모듈 범위 픽스처
 
 STOP_AFTER = 0.4  # 프로세스를 띄운 뒤 멈추라고 하기까지(초) — 프로세스가 돌고 있는 동안이다
