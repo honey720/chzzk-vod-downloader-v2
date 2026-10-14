@@ -673,14 +673,15 @@ def test_section_write_that_hits_the_file_size_limit_carries_the_fat_key(
     """받은 바이트를 구간 파일에 쓰다 EFBIG으로 실패하면 실패에 FAT 안내 키가 적혀야 한다.
 
     기본 입력, 구간 프레임 35~80. 받은 바이트를 파일에 쓰는 곳(_MapWriter.write)이
-    OSError(EFBIG, "File too large")를 냄
+    OSError(EFBIG, "파일이 너무 큽니다")를 냄
     -> 실패 1건 이상, 첫 실패의 space_key == "File too large for a FAT32 drive",
        완료 0회, 저장 폴더가 비어 있다
     """
     run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))])
 
     def too_large(self, chunk):
-        raise OSError(errno.EFBIG, "File too large")
+        # 오류의 글은 OS의 언어를 따른다 — 영어 문구 없이 번호(errno)로 알아봐야 한다
+        raise OSError(errno.EFBIG, "파일이 너무 큽니다")
 
     monkeypatch.setattr(fd_module._MapWriter, "write", too_large)
 
