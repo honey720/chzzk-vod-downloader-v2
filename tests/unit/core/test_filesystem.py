@@ -160,9 +160,14 @@ def _attached_image(tmp_path: Path, filesystem: str):
         yield mount_point
     finally:
         detach = [hdiutil, "detach", str(mount_point)]
-        if subprocess.run(detach, capture_output=True, timeout=_HDIUTIL_SECONDS).returncode != 0:
-            subprocess.run([*detach, "-force"], capture_output=True, timeout=_HDIUTIL_SECONDS)
-        image.unlink(missing_ok=True)
+        try:
+            if subprocess.run(detach, capture_output=True, timeout=_HDIUTIL_SECONDS).returncode:
+                # 강제로도 떼지 못하면 볼륨이 붙은 채 남는다 — 테스트를 실패시켜 드러낸다
+                subprocess.run(
+                    [*detach, "-force"], check=True, capture_output=True, timeout=_HDIUTIL_SECONDS
+                )
+        finally:
+            image.unlink(missing_ok=True)
 
 
 _HDIUTIL_SECONDS = 120  # hdiutil 한 번을 기다리는 시간(초) — 러너가 바쁠 때도 넉넉하게
