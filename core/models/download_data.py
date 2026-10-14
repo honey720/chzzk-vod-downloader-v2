@@ -49,6 +49,33 @@ class DownloadData:
         self.speed_mb = 0
         self.merged_segments = 0
 
+        # 구간 다운로드의 구간 상태 (#309) — 엔진이 채우고 표시 계층이 읽는다. 구간이 없는
+        # 다운로드는 모두 0이다. 완료 · 실패한 구간 수는 통지 횟수가 아니라 이 값으로 센다
+        self.sections_total = 0  # 구간 수
+        self.sections_done = 0  # 잘라서 파일로 만든 구간 수
+        self.sections_failed = 0  # 자르지 못한 구간 수
+        # 이전 실행이 끝내 이번 실행이 건너뛴 구간 수 — sections_done에 들어 있다
+        self.sections_resumed = 0
+        # 컷 단계의 진행(0~1) — 이번 실행이 자를 구간들을 길이로 가중해 합친 값이다. 구간
+        # 하나를 자르는 동안에도 오른다. 줄지 않고, 1은 마지막 구간의 일이 끝났을 때만 된다.
+        # 컷을 시작하기 전과 구간이 없는 다운로드는 None이다
+        self.cut_progress = None
+        # 구간을 자르기 전에 받은 세그먼트의 프레임 정보를 읽는 중인지 (#309) — 세그먼트 수에
+        # 비례해 걸린다. 카드가 "자르는 중" 대신 준비 중임을 적는다
+        self.cut_preparing = False
+        # 일부 구간의 컷만 실패하고 끝났을 때 엔진이 남기는 것 — 끝낸 구간과 받아 둔 데이터
+        # (core.models.section_resume.SectionResume). 다음 실행의 Content.section_resume으로
+        # 넘기면 끝나지 않은 구간만 다시 처리한다. 그렇게 끝나지 않았으면 None이다
+        self.section_resume = None
+        # 지금까지 만든 구간 파일 크기의 합(바이트) — 이전 실행이 끝낸 구간의 파일도 센다.
+        # 엔진이 컷을 마칠 때(모두 만들었든 일부만 만들었든) 적는다. 완료 카드가 이 값을 크기로
+        # 적는다 — 화면 쪽은 파일을 다시 세지 않는다. 컷을 마치기 전과 구간이 없는 다운로드는 None이다
+        self.sections_output_size = None
+        # 저장된 파일의 크기(바이트) — 구간 다운로드는 구간 파일 크기의 합이다. 엔진이 완료를
+        # 알리기 직전에 실제 파일에서 읽어 적는다. 완료 카드가 이 값을 크기로 적는다(받은 양은
+        # 세그먼트를 다시 포장하거나 구간으로 자르면 파일 크기와 다르다). 완료하기 전에는 None이다
+        self.output_size = None
+
         # 진행도/실패/재시작/스레드 관련 변수
         self.completed_threads = 0
         self.failed_threads = 0

@@ -8,6 +8,102 @@
         <translation>(원본)</translation>
     </message>
     <message>
+        <source>refit to {0}fps</source>
+        <translation>{0}fps에 맞춤</translation>
+    </message>
+    <message>
+        <source>end pulled to the video length</source>
+        <translation>끝을 영상 길이에 맞춰 당김</translation>
+    </message>
+    <message>
+        <source>end extended to the video length</source>
+        <translation>끝을 영상 길이에 맞춰 늘림</translation>
+    </message>
+    <message>
+        <source>{0} outside the video</source>
+        <translation>받을 수 없는 구간 {0}개</translation>
+    </message>
+    <message>
+        <source>This resolution is shorter. Sections now end at the end of the video.</source>
+        <translation>이 해상도는 영상이 더 짧습니다. 영상 길이를 넘는 구간의 끝을 영상 끝으로 당겼습니다.</translation>
+    </message>
+    <message>
+        <source>This resolution is longer. Sections that reached the end now reach it.</source>
+        <translation>이 해상도는 영상이 더 깁니다. 영상 끝까지 받던 구간을 새 끝까지 늘렸습니다.</translation>
+    </message>
+    <message>
+        <source>Some sections start after the end of this resolution. They will be skipped. Edit the sections to fix them.</source>
+        <translation>이 해상도의 영상이 끝난 뒤에서 시작하는 구간이 있습니다. 그 구간은 받지 않습니다. 구간을 고쳐 주세요.</translation>
+    </message>
+    <message>
+        <source>Sections {0} · {1}</source>
+        <translation>구간 {0}개 · {1}</translation>
+    </message>
+    <message>
+        <source>Sections were moved to the frames of the new frame rate.</source>
+        <translation>해상도를 바꿔 프레임률이 달라져, 구간을 새 프레임에 맞게 옮겼습니다.</translation>
+    </message>
+    <message>
+        <source>Edit sections</source>
+        <translation>구간 편집</translation>
+    </message>
+    <message>
+        <source>Change save location</source>
+        <translation>저장 위치 변경</translation>
+    </message>
+    <message>
+        <source>checking length</source>
+        <translation>길이 확인 중</translation>
+    </message>
+    <message>
+        <source>length not checked</source>
+        <translation>길이 미확인</translation>
+    </message>
+    <message>
+        <source>Checking the length of this resolution...</source>
+        <translation>이 해상도의 영상 길이를 확인하는 중...</translation>
+    </message>
+    <message>
+        <source>Could not check the length of this resolution. Open the section editor to check again.</source>
+        <translation>이 해상도의 영상 길이를 확인하지 못했습니다. 구간 편집 창을 열면 다시 확인합니다.</translation>
+    </message>
+    <message>
+        <source>overlap</source>
+        <translation>겹침</translation>
+    </message>
+    <message>
+        <source>Sections {0}</source>
+        <translation>구간 {0}개</translation>
+    </message>
+    <message>
+        <source>To receive: {0}</source>
+        <translation>받을 양: {0}</translation>
+    </message>
+    <message>
+        <source>Sections add up to {0}</source>
+        <translation>구간 길이의 합: {0}</translation>
+    </message>
+    <message>
+        <source>Overlapping parts are received once</source>
+        <translation>겹치는 구간은 한 번만 받습니다</translation>
+    </message>
+    <message>
+        <source>Click to edit sections</source>
+        <translation>누르면 구간을 편집합니다</translation>
+    </message>
+    <message>
+        <source>Preparing</source>
+        <translation>준비 중</translation>
+    </message>
+    <message>
+        <source>Preparing to cut</source>
+        <translation>자르기 준비 중</translation>
+    </message>
+    <message>
+        <source>Cutting</source>
+        <translation>자르는 중</translation>
+    </message>
+    <message>
         <source>Post-processing</source>
         <translation>후처리 중</translation>
     </message>
@@ -26,6 +122,10 @@
     <message>
         <source>Unknown error - check the log</source>
         <translation>알 수 없는 오류 · 로그를 확인해 주세요</translation>
+    </message>
+    <message>
+        <source>{0} failed</source>
+        <translation>{0}개 실패</translation>
     </message>
     <message>
         <source>Select download folder</source>
@@ -122,6 +222,12 @@ The file could not be saved. Check the download path and free disk space.</sourc
 <context>
     <name>DownloadViewModel</name>
     <message>
+        <source>Section is outside the video · edit the sections
+Sections that start after the end of this resolution were skipped. Edit the sections or pick another resolution.</source>
+        <translation>구간이 영상 길이를 벗어났습니다 · 구간을 고쳐 주세요
+이 해상도의 영상이 끝난 뒤에서 시작하는 구간은 받지 않았습니다. 구간을 고치거나 다른 해상도를 골라 주세요.</translation>
+    </message>
+    <message>
         <source>ffmpeg not found · check the installation
 Postprocessing failed: the ffmpeg executable could not be found.</source>
         <translation>ffmpeg를 찾을 수 없습니다 · 설치 상태를 확인해 주세요
@@ -164,6 +270,30 @@ The file could not be saved. Check the download path and free disk space.</sourc
 The stream for the selected resolution could not be found. Try another resolution.</source>
         <translation>선택한 해상도를 받을 수 없습니다 · 다른 해상도를 골라 주세요
 선택한 해상도의 영상을 찾지 못했습니다. 다른 해상도로 다시 시도해 주세요.</translation>
+    </message>
+    <message>
+        <source>Could not cut the section · press retry
+Cutting the section failed. Retry processes only the failed sections.</source>
+        <translation>구간을 자르지 못했습니다 · 재시도해 주세요
+구간을 자르는 데 실패했습니다. 재시도하면 실패한 구간만 다시 처리합니다.</translation>
+    </message>
+    <message>
+        <source>Not enough disk space · free up space or pick another folder
+The download folder does not have enough free space for the section files.</source>
+        <translation>디스크 공간이 부족합니다 · 공간을 비우거나 다른 폴더를 골라 주세요
+다운로드 폴더에 구간 파일을 저장할 공간이 모자랍니다.</translation>
+    </message>
+    <message>
+        <source>FAT32 drive can&apos;t hold files over 4 GB · pick another folder
+This drive (FAT32) cannot store a file larger than 4 GB. Pick another folder, or format the drive as exFAT or NTFS.</source>
+        <translation>FAT32는 4GB 넘는 파일을 못 담습니다 · 다른 폴더를 골라 주세요
+이 드라이브(FAT32)는 4GB가 넘는 파일을 저장할 수 없습니다. 다른 폴더를 고르거나 드라이브를 exFAT · NTFS로 포맷해 주세요.</translation>
+    </message>
+    <message>
+        <source>Not enough disk space · free up space or pick another folder
+The download folder or the temporary folder does not have enough free space for the download.</source>
+        <translation>디스크 공간이 부족합니다 · 공간을 비우거나 다른 폴더를 골라 주세요
+저장 폴더나 임시 폴더에 받을 공간이 모자랍니다.</translation>
     </message>
     <message>
         <source>Video data arrived corrupted · try again later
@@ -213,6 +343,158 @@ Part of the video kept arriving incomplete from the server. Try again later.</so
     <message>
         <source>Failed to fetch video information</source>
         <translation>영상 정보를 가져오지 못했습니다.</translation>
+    </message>
+</context>
+<context>
+    <name>SectionEditDialog</name>
+    <message>
+        <source>Edit sections</source>
+        <translation>구간 편집</translation>
+    </message>
+    <message>
+        <source>+ Add section</source>
+        <translation>+ 구간 추가</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>취소</translation>
+    </message>
+    <message>
+        <source>OK</source>
+        <translation>확인</translation>
+    </message>
+    <message>
+        <source>A download is waiting for this card — it continues when you close this window</source>
+        <translation>이 카드를 기다리는 다운로드가 있습니다 — 창을 닫으면 이어서 받습니다</translation>
+    </message>
+    <message>
+        <source>The order is the file number (_N)</source>
+        <translation>순서가 파일 번호(_N)입니다</translation>
+    </message>
+    <message>
+        <source>Move up</source>
+        <translation>위로</translation>
+    </message>
+    <message>
+        <source>Move down</source>
+        <translation>아래로</translation>
+    </message>
+    <message>
+        <source>Delete section</source>
+        <translation>구간 삭제</translation>
+    </message>
+    <message>
+        <source>Clear values</source>
+        <translation>값 비우기</translation>
+    </message>
+    <message>
+        <source>Sections / maximum · frame rate · end of the video</source>
+        <translation>구간 수 / 최대 · 프레임률 · 영상 끝</translation>
+    </message>
+    <message>
+        <source>Add a section (up to {0})</source>
+        <translation>구간 추가(최대 {0}개)</translation>
+    </message>
+    <message>
+        <source>Sum of the section lengths</source>
+        <translation>구간 길이의 합</translation>
+    </message>
+    <message>
+        <source>Digits fill from the right, up to {0} (0100 = 1 minute) · &apos;.&apos; moves to the frame field</source>
+        <translation>숫자를 치면 오른쪽부터 채웁니다(최대 {0}자리, 0100 = 1분) · &apos;.&apos;을 치면 프레임 칸으로</translation>
+    </message>
+    <message>
+        <source>Frame number, 0 to {0}</source>
+        <translation>프레임 번호 · 0~{0}</translation>
+    </message>
+    <message>
+        <source>Empty = start of the video</source>
+        <translation>비워 두면 영상 처음</translation>
+    </message>
+    <message>
+        <source>Empty = end of the video</source>
+        <translation>비워 두면 영상 끝</translation>
+    </message>
+</context>
+<context>
+    <name>SectionEditViewModel</name>
+    <message>
+        <source>Could not read the video information.
+Check your connection and cookies, then open this window again.</source>
+        <translation>영상 정보를 읽지 못했습니다.
+연결 상태와 쿠키를 확인한 뒤 이 창을 다시 열어 주세요.</translation>
+    </message>
+    <message>
+        <source>Reading the video information...</source>
+        <translation>영상 정보를 읽는 중...</translation>
+    </message>
+    <message>
+        <source>Above the maximum — leaving the field sets it to the maximum</source>
+        <translation>최대값을 넘습니다 · 칸을 떠나면 최대값으로 맞춥니다</translation>
+    </message>
+    <message>
+        <source>Set to the maximum ({0})</source>
+        <translation>최대값({0})으로 맞췄습니다</translation>
+    </message>
+    <message>
+        <source>Total {0}</source>
+        <translation>합계 {0}</translation>
+    </message>
+    <message>
+        <source>Sections add up to more than the video</source>
+        <translation>구간 합이 영상보다 깁니다</translation>
+    </message>
+    <message>
+        <source>Sections {0} · Video {1}</source>
+        <translation>구간 합 {0} · 영상 {1}</translation>
+    </message>
+    <message>
+        <source>Sections {0} / {1} · {2}fps · video ends at {3}</source>
+        <translation>구간 {0} / {1} · {2}fps · 영상 끝 {3}</translation>
+    </message>
+    <message>
+        <source>Invalid timecode format</source>
+        <translation>시:분:초:프레임으로 입력해 주세요 (예: 01:05:03:00)</translation>
+    </message>
+    <message>
+        <source>Minutes and seconds must be below 60</source>
+        <translation>분과 초는 59까지 입력할 수 있습니다</translation>
+    </message>
+    <message>
+        <source>Frame number must be below the frame rate</source>
+        <translation>프레임 번호가 이 영상의 프레임률보다 큽니다</translation>
+    </message>
+    <message>
+        <source>Start must be before end</source>
+        <translation>시작이 끝보다 앞이어야 합니다</translation>
+    </message>
+    <message>
+        <source>Selection is outside the video</source>
+        <translation>구간이 영상 길이를 벗어났습니다</translation>
+    </message>
+    <message>
+        <source>Selection is shorter than one frame</source>
+        <translation>구간이 한 프레임보다 짧습니다</translation>
+    </message>
+    <message>
+        <source>Duplicate selection</source>
+        <translation>같은 구간이 이미 있습니다</translation>
+    </message>
+    <message>
+        <source>Too many selections</source>
+        <translation>구간은 20개까지 넣을 수 있습니다</translation>
+    </message>
+    <message>
+        <source>Empty — this row is ignored</source>
+        <translation>비어 있어 무시됩니다</translation>
+    </message>
+    <message>
+        <source>Past the end of the video — leaving the field sets it to the end</source>
+        <translation>영상 끝을 넘습니다 · 칸을 떠나면 끝으로 맞춥니다</translation>
+    </message>
+    <message>
+        <source>Set to the end of the video ({0})</source>
+        <translation>영상 끝({0})으로 맞췄습니다</translation>
     </message>
 </context>
 <context>
@@ -284,6 +566,17 @@ Part of the video kept arriving incomplete from the server. Try again later.</so
     <message>
         <source>Common</source>
         <translation>일반</translation>
+    </message>
+</context>
+<context>
+    <name>TimecodeEdit</name>
+    <message>
+        <source>Copy</source>
+        <translation>복사</translation>
+    </message>
+    <message>
+        <source>Paste</source>
+        <translation>붙여넣기</translation>
     </message>
 </context>
 <context>

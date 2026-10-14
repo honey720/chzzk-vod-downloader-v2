@@ -1,9 +1,16 @@
 import json
+from fractions import Fraction
 from urllib.parse import urljoin, urlsplit
 
 import requests
 
-from core.api.dash import is_supported_sea, parse_dash_manifest, parse_sea_manifest
+from core.api.dash import (
+    is_supported_sea,
+    parse_dash_manifest,
+    parse_frame_rates,
+    parse_sea_manifest,
+)
+from core.api.hls import variant_frame_rate
 from core.api.playback_tracks import (
     StreamSelectionError,
     list_streams,
@@ -166,6 +173,29 @@ class NetworkManager:
         return parse_dash_manifest(response.text)
 
     @staticmethod
+    def get_video_frame_rates(
+        video_id: str, in_key: str, cookies: dict | None = None
+    ) -> dict[str, Fraction]:
+        """DASH 매니페스트를 요청해 Representation마다 선언된 프레임률을 읽는다 (#309).
+
+        요청은 ``get_video_dash_manifest``와 같다. 파싱은 core/api/dash.py의
+        ``parse_frame_rates``에 위임한다.
+
+        Returns:
+            ``{base_url: 프레임률}`` — ``get_video_dash_manifest`` ·
+            ``get_video_sea_manifest``가 돌려주는 base_url로 찾는다. 프레임률을 선언하지
+            않은 Representation은 들어 있지 않다
+        """
+        manifest_url = f"{NAVER_API}/neonplayer/vodplay/v2/playback/{video_id}?key={in_key}"
+        headers = {"Accept": "application/dash+xml"}
+        response = _session.get(
+            manifest_url, cookies=cookies, headers=headers, timeout=REQUEST_TIMEOUT
+        )
+        response.raise_for_status()
+
+        return parse_frame_rates(response.text)
+
+    @staticmethod
     def get_video_sea_manifest(video_id: str, in_key: str, cookies: dict | None = None):
         """AES(SEA) 암호화 VOD의 매니페스트를 요청해 비디오 Representation을 파싱한다 (#57).
 
@@ -272,29 +302,61 @@ class NetworkManager:
         Raises:
             StreamSelectionError: 맞는 변형이 없거나 하나로 정해지지 않는 경우
         """
+        return NetworkManager.get_video_m3u8_variant(json_str, resolution, cookies, stream)[0]
+
+    @staticmethod
+    def get_video_m3u8_variant(
+        json_str: str,
+        resolution: int,
+        cookies: dict | None = None,
+        stream: StreamKey | None = None,
+    ) -> tuple[str, Fraction | None]:
+        """마스터 플레이리스트에서 고른 변형의 (base_url, 선언된 프레임률)을 읽는다 (#309).
+
+        요청과 변형을 고르는 규칙은 ``get_video_m3u8_base_url``의 것이다(그 메서드가 이것을
+        부른다, #318) — 구간 다운로드도 목록에서 고른 변형과 같은 변형을 받는다. 프레임률은
+        고른 변형의 ``#EXT-X-STREAM-INF``에 FRAME-RATE가 있을 때만 있고, 없으면 None이다.
+
+        Raises:
+            StreamSelectionError: 맞는 변형이 없거나 하나로 정해지지 않는 경우
+        """
         data = json.loads(json_str)
         media = data.get("media", [])
         path = media[0].get("path")
         response = _get_with_cookies_trusted(path, cookies, None, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
 
+        relative_path = NetworkManager._select_m3u8_variant(
+            response.text, json_str, resolution, stream
+        )
+        return urljoin(path, relative_path), variant_frame_rate(response.text, relative_path)
+
+    @staticmethod
+    def _select_m3u8_variant(
+        master_text: str, json_str: str, resolution: int, stream: StreamKey | None
+    ) -> str:
+        """마스터 플레이리스트에서 받을 변형의 주소(태그 다음 줄)를 고른다 (#318).
+
+        규칙은 ``get_video_m3u8_base_url``의 docstring에 있다.
+
+        Raises:
+            StreamSelectionError: 맞는 변형이 없거나 하나로 정해지지 않는 경우
+        """
         if stream is not None:
-            return urljoin(path, select_stream(response.text, stream))
+            return select_stream(master_text, stream)
 
         track = track_for_resolution(playback_tracks(json_str), resolution)
         if track is None:
             # playback 정보에 그 해상도의 트랙이 없다 — 정체를 모르므로 전처럼 세로값으로 찾는다
-            relative_path = select_variant_by_height(response.text, resolution)
-        else:
+            return select_variant_by_height(master_text, resolution)
+        try:
+            return select_variant(master_text, track)
+        except StreamSelectionError as selection_error:
+            # 트랙과 맞는 변형이 없다 — 트랙이 이 영상의 것이 아닐 수 있다. 세로값으로 찾는다
             try:
-                relative_path = select_variant(response.text, track)
-            except StreamSelectionError as selection_error:
-                # 트랙과 맞는 변형이 없다 — 트랙이 이 영상의 것이 아닐 수 있다. 세로값으로 찾는다
-                try:
-                    relative_path = select_variant_by_height(response.text, resolution)
-                except StreamSelectionError:
-                    raise selection_error from None
-        return urljoin(path, relative_path)
+                return select_variant_by_height(master_text, resolution)
+            except StreamSelectionError:
+                raise selection_error from None
     
     @staticmethod
     def get_clip_info(clip_no: str, cookies: dict):

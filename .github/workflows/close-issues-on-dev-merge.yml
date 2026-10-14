@@ -1,7 +1,8 @@
 name: Close linked issues on dev merge
 
 # GitHub는 base가 기본 브랜치(main)인 PR에서만 닫기 키워드를 처리한다.
-# dev-* 로 머지된 PR의 본문에서 닫기 키워드를 읽어 이슈를 닫는다.
+# dev-* 로 머지된 PR의 본문에서 닫기 키워드를 읽는다.
+# 소유자가 올린 이슈는 닫고, 그 밖의 이슈는 코멘트만 남긴다(릴리즈 때 닫는다).
 on:
   pull_request:
     types: [closed]
@@ -22,14 +23,21 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           BASE: ${{ github.base_ref }}
           REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
         run: |
           VERSION="${BASE#dev-}"
           for n in $(printf '%s' "$BODY" \
               | grep -oiE '\b(close[sd]?|fix(e[sd])?|resolve[sd]?) #[0-9]+' \
               | grep -oE '[0-9]+' | sort -un); do
-            state=$(gh issue view "$n" -R "$REPO" --json state -q .state)
+            read -r state author < <(gh issue view "$n" -R "$REPO" \
+                --json state,author -q '.state + " " + .author.login')
             if [ "$state" != "OPEN" ]; then
               echo "#$n: $state — 건너뜀"
+              continue
+            fi
+            if [ "$author" != "$OWNER" ]; then
+              gh issue comment "$n" -R "$REPO" \
+                --body "#$PR 머지로 $BASE 에 반영됨 — v$VERSION 릴리즈 때 닫습니다"
               continue
             fi
             gh issue close "$n" -R "$REPO" --reason completed \

@@ -269,9 +269,9 @@ def test_resolution_buttons_get_their_own_row_not_the_title_row(qapp):
     # 가운데 스트레치, 경로 라벨, 파일 크기]. pill은 왼쪽부터 순서대로,
     # 스트레치가 없으면 넓은 창에서 흩어지고(오너 실기 확인), 파일 크기는
     # 우측 끝 — 간격·기준선은 tests/unit/test_card_layout.py가 폭 3종으로
-    # 게이트한다. (경로 편집 QLineEdit은 폴더 선택으로 교체돼 빠졌고, 경로가
-    # 아이콘으로 접힐 때의 클릭 대상 pathIconButton이 경로 라벨 뒤에 들어왔다)
-    assert widget.resolutionLayout.count() == len(widget.buttons) + 5
+    # 게이트한다. (경로 편집 QLineEdit은 폴더 선택으로 교체돼 빠졌고, 경로 라벨 뒤에
+    # 있던 경로 아이콘은 1행의 저장 위치 버튼으로 옮겨 갔다 #309)
+    assert widget.resolutionLayout.count() == len(widget.buttons) + 4
     for position, button in enumerate(widget.buttons):
         assert widget.resolutionLayout.indexOf(button) == position, (
             "해상도 버튼이 왼쪽부터 순서대로 놓이지 않았다"

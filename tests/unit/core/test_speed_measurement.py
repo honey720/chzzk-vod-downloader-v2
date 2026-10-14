@@ -60,14 +60,21 @@ def test_measure_speed_divides_by_the_time_since_the_last_measurement(measured):
     assert data.prev_size == 5 * MB
 
 
-def test_measure_speed_after_a_pause_is_not_divided_and_restarts_the_clock(measured):
-    """재개 직후의 측정은 시간으로 나누지 않고, 다음 측정의 기준 시각을 지금으로 잡아야 한다.
+def test_measure_speed_after_a_pause_divides_by_the_time_spent_receiving_and_restarts_the_clock(
+    measured, monkeypatch
+):
+    """재개 직후의 측정은 일시정지한 시간을 뺀 시간으로 나누고, 다음 측정의 기준 시각을 지금으로 잡아야 한다.
 
-    직전 측정 뒤 300초(일시정지 포함) 동안 5 MB → since_pause 측정 -> 5.0 MB/s
+    직전 측정 뒤 300초(그 가운데 298초는 일시정지) 동안 5 MB → since_pause 측정 -> 2.5 MB/s
     그 뒤 2초 동안 6 MB를 더 받고 보통 측정 -> 3.0 MB/s
     """
     scaler, data, clock = measured
+    paused_seconds = [0.0]
+    monkeypatch.setattr(
+        type(data.model), "paused_seconds", property(lambda model: paused_seconds[0])
+    )
     clock.now += 300.0
+    paused_seconds[0] = 298.0
     data.total_downloaded_size = 5 * MB
 
     scaler.measure_speed(since_pause=True)
@@ -76,7 +83,7 @@ def test_measure_speed_after_a_pause_is_not_divided_and_restarts_the_clock(measu
     data.total_downloaded_size = 11 * MB
     scaler.measure_speed()
 
-    assert after_pause == pytest.approx(5.0)
+    assert after_pause == pytest.approx(2.5)
     assert data.speed_mb == pytest.approx(3.0)
 
 

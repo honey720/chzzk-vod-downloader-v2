@@ -10,6 +10,7 @@ import pytest
 import core.downloaders.file_downloader as file_module
 import core.downloaders.hls_aes_downloader as hls_module
 import core.downloaders.m3u8_downloader as m3u8_module
+from core.api.hls import HlsKey, HlsPlaylist
 from core.downloaders.file_downloader import FileDownloader
 from core.downloaders.hls_aes_downloader import HlsAesDownloader
 from core.downloaders.m3u8_downloader import M3U8Downloader
@@ -49,6 +50,15 @@ def _make_data(output_path: str = "unused.part", content_type: str = "video") ->
     data.threads_progress = [0] * 8
     data.remaining_ranges = []
     return data
+
+
+def _make_segment_engine(engine_class, data: DownloadData):
+    """세그먼트를 받는 엔진을 만든다 — 암호화 경로에는 IV를 읽을 플레이리스트를 끼운다."""
+    made = engine_class(data, QuietLogger())
+    if engine_class is HlsAesDownloader:
+        key = HlsKey(method="AES-128", uri="key", iv=bytes(16))
+        made._playlist = HlsPlaylist(segments=("seg_0", "seg_1", "seg_2", "seg_3"), key=key)
+    return made
 
 
 @pytest.fixture
@@ -409,7 +419,7 @@ def test_segment_tells_the_watch_the_declared_length_and_that_it_starts_over(
 
     Content-Length 5 MB인 응답 -> (5 MB, False)
     """
-    made = engine_class(_make_data(str(tmp_path / "out.mp4"), content_type), QuietLogger())
+    made = _make_segment_engine(engine_class, _make_data(str(tmp_path / "out.mp4"), content_type))
     made.temp_dir = str(tmp_path)
     made.width = 4
 
@@ -523,7 +533,7 @@ def test_segment_is_not_restarted_for_the_time_it_was_paused(
     -> 저속 재시작 0건
     """
     data = _make_data(str(tmp_path / "out.mp4"), content_type=content_type)
-    made = engine_class(data, QuietLogger())
+    made = _make_segment_engine(engine_class, data)
     made.temp_dir = str(tmp_path)
     made.width = 4
     made.clock = ManualClock()

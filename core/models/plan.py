@@ -18,8 +18,10 @@ _download_item에 되돌려줄 뿐 내용을 해석하지 않는다. 아이템 �
 selections는 처음부터 튜플(리스트 형태)로 모델링한다 — 단일 구간으로
 두면 다중 구간 지원 시 데이터 모델부터 소비자까지 다시 뜯어야 하지만,
 튜플이면 다중 구간이 자연히 따라온다. 빈 튜플 = 전체 다운로드가 기본
-케이스다. 구간 해석(비어 있지 않은 selections)은 아직 구현하지 않으며,
-베이스 엔진이 명시적 미지원 예외(NotImplementedError)로 거부한다 (#83).
+케이스다. 구간은 ``Content.selections``에서 오고 prepare()가 계획에 싣는다.
+구간을 해석하는 것은 file 다운로더(mp4)뿐이다 — 그 밖의 다운로더가 낸 계획에
+구간이 있으면 베이스 엔진이 명시적 미지원 예외(NotImplementedError)로
+거부한다 (#83, #309).
 """
 
 from dataclasses import dataclass
@@ -27,10 +29,25 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class TimeRange:
-    """영상 내 시간 구간(초). start ≤ end를 전제한다."""
+    """영상 내 시간 구간(초)을 담는다.
 
-    start: float
-    end: float
+    생성할 때 start < end를 검사한다 — 길이가 0이거나 뒤집힌 구간은 받을 것이
+    없으므로 계획에 들어오기 전에 막는다 (#178). 사용자 입력을 규칙별로
+    판정해 알려야 하는 쪽은 객체를 만들기 전에 (시작, 끝) 쌍으로
+    ``core.utils.selections.validate_selections``를 부른다.
+
+    Raises:
+        ValueError: start < end가 아닌 경우 (같은 값, 역순, NaN 포함)
+    """
+
+    start: float  # 구간 시작 시각(초)
+    end: float  # 구간 끝 시각(초)
+
+    def __post_init__(self) -> None:
+        if not self.start < self.end:
+            raise ValueError(
+                f"TimeRange는 start < end여야 한다: start={self.start}, end={self.end}"
+            )
 
 
 @dataclass(frozen=True)
@@ -47,7 +64,7 @@ class DownloadPlan:
     total_size: int | None = None
     # 다운로드 완료 후 후처리(postprocess — m3u8 병합)가 필요한지
     requires_postprocess: bool = False
-    # 선택 다운로드 구간 목록. 빈 튜플 = 전체 다운로드 (#83에서는 빈 값만 지원)
+    # 선택 다운로드 구간 목록. 빈 튜플 = 전체 다운로드
     selections: tuple[TimeRange, ...] = ()
 
     @property

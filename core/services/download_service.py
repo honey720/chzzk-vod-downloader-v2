@@ -29,6 +29,7 @@ logger 매개변수: DownloadLogger 호환 객체를 건별로 주입받는다(�
 
 import logging
 import threading
+import weakref
 from collections import deque
 from collections.abc import Callable
 
@@ -40,6 +41,7 @@ from core.models.download_data import DownloadData
 from core.models.download_state import DownloadState
 from core.models.download_task import InvalidStateTransitionError
 from core.models.events import FailedCallback, FinishedCallback, ProgressCallback
+from core.utils.interaction import resting_while
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +166,7 @@ class DownloadService:
         max_concurrent: int = DEFAULT_MAX_CONCURRENT,
         base_url_resolver: BaseUrlResolver | None = None,
         key_resolver: KeyResolver | None = None,
+        user_interacting: Callable[[], bool] | None = None,
     ):
         """서비스를 생성한다.
 
@@ -171,12 +174,16 @@ class DownloadService:
             max_concurrent: 동시 실행 수 상한 (1 이상)
             base_url_resolver: m3u8 플레이리스트 URL 해석 콜러블 (m3u8 다운로드 시 필수)
             key_resolver: 세그먼트 복호화 키 취득 콜러블 (암호화 VOD 다운로드 시 필수, #57)
+            user_interacting: 지금 사용자가 화면을 조작 중인지 답하는 콜러블 (#309). 참인 동안
+                색인 해석이 조각 사이에서 잠깐 쉰다(``core.utils.interaction``). 워커 스레드에서
+                불린다. 주지 않으면 쉬지 않는다(헤드리스)
         """
         if max_concurrent < 1:
             raise ValueError("max_concurrent는 1 이상이어야 한다")
         self._max_concurrent = max_concurrent
         self._base_url_resolver = base_url_resolver
         self._key_resolver = key_resolver
+        self._user_interacting = user_interacting
         self._lock = threading.Lock()
         self._pending: deque[DownloadHandle] = deque()
         self._active: set[DownloadHandle] = set()
@@ -334,7 +341,8 @@ class DownloadService:
                     return
 
             try:
-                engine.run()
+                with resting_while(self._user_interacting):
+                    engine.run()
             except Exception as e:
                 # 엔진이 스스로 실패 처리하지 못한 예외의 최후 방어선 (#147 E1).
                 # 여기서 잡지 않으면 이 워커 스레드만 죽고 통지·로그가 모두
@@ -357,13 +365,32 @@ class DownloadService:
         클래스를 구분하지 않는다. 후처리(병합) 콜백은 후처리가 없는
         다운로더에서는 호출되지 않을 뿐 배선은 동일하다.
         """
+        # 엔진은 핸들을 약하게만 가리킨다 (#309). 핸들이 엔진을 들고(handle.engine) 엔진의
+        # 콜백이 핸들을 들면 둘이 서로를 붙잡아, 바깥의 참조가 다 끊겨도 순환 수집기가 돌 때까지
+        # 엔진과 엔진이 든 것(긴 영상의 moov 색인은 1GB를 넘는다)이 남는다. 실행 중에는 실행
+        # 스레드와 _active가 핸들을 붙들고 있다
+        target = weakref.ref(handle)
+
+        def relay(name: str):
+            def call(*args):
+                alive = target()
+                if alive is not None:
+                    getattr(alive, name)(*args)
+
+            return call
+
+        def finished() -> None:
+            alive = target()
+            if alive is not None:
+                self._handle_finished(alive)
+
         return handle.engine_cls(
             data=handle.data,
             logger=handle.logger,
-            on_progress=handle._relay_progress,
-            on_finished=lambda: self._handle_finished(handle),
-            on_failed=handle._relay_failed,
-            on_merge_start=handle._relay_merge_start,
+            on_progress=relay("_relay_progress"),
+            on_finished=finished,
+            on_failed=relay("_relay_failed"),
+            on_merge_start=relay("_relay_merge_start"),
         )
 
     def _resolve_base_url(self, content: Content) -> str:

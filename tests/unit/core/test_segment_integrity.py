@@ -16,6 +16,7 @@ from core.downloaders.integrity import (
     check_fmp4_init_segment,
     check_fmp4_media_segment,
     check_ts_segment,
+    declared_content_length,
 )
 from tests.unit.fmp4_samples import box, real_shaped_media_segment, ts_segment
 
@@ -199,3 +200,37 @@ def test_content_length_that_differs_is_rejected():
     """
     with pytest.raises(TruncatedSegmentError):
         check_content_length({"Content-Length": "1000"}, 600)
+
+
+def test_content_length_of_an_identity_encoded_body_is_compared():
+    """Content-Encoding이 identity인 응답의 Content-Length는 받은 본문 길이와 견줘야 한다.
+
+    Content-Length 1000 · Content-Encoding identity, 받은 본문 600바이트 · 1000바이트
+    -> 600: TruncatedSegmentError / 1000: 예외 없음
+    """
+    headers = {"Content-Length": "1000", "Content-Encoding": "identity"}
+
+    check_content_length(headers, 1000)
+    with pytest.raises(TruncatedSegmentError):
+        check_content_length(headers, 600)
+
+
+@pytest.mark.parametrize(
+    ("headers", "expected"),
+    [
+        ({"Content-Length": "65536"}, 65536),
+        ({}, None),
+        (None, None),
+        ({"Content-Length": "100", "Content-Encoding": "gzip"}, None),  # 압축된 본문의 길이다
+        ({"Content-Length": "100", "Content-Encoding": "identity"}, 100),
+        ({"Content-Length": "abc"}, None),
+    ],
+    ids=["plain", "missing", "no-headers", "compressed", "identity", "not-a-number"],
+)
+def test_declared_content_length_is_given_only_when_it_can_be_compared(headers, expected):
+    """declared_content_length는 받은 길이와 견줄 수 있는 Content-Length만 돌려주고, 아니면 None을 돌려줘야 한다.
+
+    주석의 경우마다 응답 머리
+    -> 기대값
+    """
+    assert declared_content_length(headers) == expected

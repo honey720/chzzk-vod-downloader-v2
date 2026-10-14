@@ -190,7 +190,8 @@ class Scene:
             parts[f"{prefix}.title"] = card.titleLabel
             parts[f"{prefix}.status"] = card.statusLabel
             parts[f"{prefix}.pathLabel"] = card.directoryLabel
-            parts[f"{prefix}.pathIcon"] = card.pathIconButton
+            parts[f"{prefix}.pathButton"] = card.pathButton
+            parts[f"{prefix}.sectionEditButton"] = card.sectionEditButton
             parts[f"{prefix}.fileSize"] = card.fileSizeLabel
             parts[f"{prefix}.progressBar"] = card.progressBar
             parts[f"{prefix}.pauseButton"] = card.pauseButton

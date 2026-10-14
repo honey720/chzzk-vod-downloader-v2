@@ -1,0 +1,30 @@
+name: uv cache
+
+# PR CI는 uv 캐시를 복원만 한다. PR은 base 브랜치의 캐시를 읽을 수 있으므로
+# main·dev-* 에서 저장해 둔다. 입력은 ci.yml의 setup-uv와 같게 둔다(캐시 키 일치).
+on:
+  push:
+    branches: [main, 'dev-*']
+  workflow_dispatch:
+
+jobs:
+  warm:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          prune-cache: false
+          save-cache: true
+
+      - name: Sync dependencies
+        shell: bash
+        run: uv sync || uv sync

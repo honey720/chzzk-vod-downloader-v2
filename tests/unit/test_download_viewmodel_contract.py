@@ -28,12 +28,12 @@ import threading
 
 import pytest
 import requests
-from PySide6.QtCore import QObject
+from PySide6.QtCore import QObject, QTimer
 
 from app.viewmodels.data import ContentItem
 from app.viewmodels.download_viewmodel import DownloadViewModel
 from core.api.playback_tracks import StreamSelectionError
-from core.downloaders.base import PostprocessError
+from core.downloaders.base import DiskSpaceError, FileSizeLimitError, PostprocessError
 from core.downloaders.hls_aes_downloader import DecryptionError
 from core.models.content import StreamKey
 from core.models.download_state import DownloadState
@@ -220,6 +220,7 @@ class Wired:
         self.service = FakeService(log_calls, handle_factory)
         self.vm = DownloadViewModel(self.content, service=self.service)
         self.log_calls = log_calls
+        _WIRED.append(self)
 
     @property
     def submission(self) -> dict:
@@ -254,6 +255,24 @@ def log_calls(monkeypatch) -> list:
         lambda self, item: calls.append(("log_download_info", item)),
     )
     return calls
+
+
+_WIRED: list[Wired] = []  # 이 파일의 테스트가 만든 배선 묶음 — 끝나면 타이머를 세운다
+
+
+@pytest.fixture(autouse=True)
+def _stop_viewmodel_timers():
+    """테스트가 만든 viewmodel의 타이머를 테스트가 끝날 때 모두 세운다.
+
+    다운로드를 끝내지 않고 끝나는 테스트는 viewmodel의 "준비 중" 타이머를 켜 둔 채 끝난다. 그
+    타이머는 뒤이은 테스트(다른 파일이어도)가 이벤트 루프를 돌리는 동안 울려, 이 파일의 content
+    대역에 없는 속성을 읽다 그 테스트를 실패시킨다.
+    """
+    yield
+    for made in _WIRED:
+        for timer in made.vm.findChildren(QTimer):
+            timer.stop()
+    _WIRED.clear()
 
 
 @pytest.fixture
@@ -507,6 +526,18 @@ class TestFailure:
                 StreamSelectionError("720 해상도 스트림을 찾을 수 없습니다."),
                 "Stream not found · pick another resolution",
             ),
+            (
+                DiskSpaceError(10, 5),
+                "Not enough disk space · free up space or pick another folder",
+            ),
+            (
+                FileSizeLimitError(5 * 1024**3, "FAT32"),
+                "FAT32 drive can't hold files over 4 GB · pick another folder",
+            ),
+            (
+                DiskSpaceError(10, 5, "Not enough disk space for the download"),
+                "Not enough disk space · free up space or pick another folder",
+            ),
         ],
         ids=lambda v: v if isinstance(v, str) else type(v).__name__,
     )
@@ -522,6 +553,38 @@ class TestFailure:
         first_line, _, detail = message.partition("\n")
         assert first_line == headline
         assert detail.strip()  # 둘째 줄=상세 (#245 규약)
+
+    @pytest.mark.parametrize(
+        ("exc", "detail"),
+        [
+            (
+                DiskSpaceError(10, 5),
+                "The download folder does not have enough free space for the section files.",
+            ),
+            (
+                DiskSpaceError(10, 5, "Not enough disk space for the download"),
+                "The download folder or the temporary folder does not have enough free space "
+                "for the download.",
+            ),
+        ],
+        ids=["sections", "whole"],
+    )
+    def test_disk_space_detail_names_section_files_only_for_a_section_download(
+        self, wired, exc, detail
+    ):
+        """공간 부족 사유의 둘째 줄은 구간 다운로드일 때만 구간 파일을 말해야 한다 (#309).
+
+        DiskSpaceError(구간 다운로드의 키) -> 둘째 줄이 "…for the section files."
+        DiskSpaceError(구간 없는 다운로드의 키) -> 둘째 줄이 "…the temporary folder…for the download."
+        """
+        item = _make_item()
+        wired.start(item)
+
+        wired.submission["on_failed"](exc)
+        wired.pump()
+
+        [(_, (_, message), _, _)] = wired.content.calls
+        assert message.partition("\n")[2] == detail
 
 
 # ============ 정리 규칙 — 갇힌 워커 ============

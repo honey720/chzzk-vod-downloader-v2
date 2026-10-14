@@ -143,3 +143,217 @@ def test_breakdown_line_shows_transfer_plus_postprocess_sum(tmp_path, monkeypatc
 
     text = log_file.read_text(encoding="utf-8")
     assert "Total time breakdown - Transfer: 10.00s + Postprocess: 2.50s = 12.50s" in text
+
+
+def test_download_info_logs_section_paths_instead_of_output_path(tmp_path, monkeypatch):
+    """구간 경로를 넘기면 시작 정보 블록은 output_path 줄 대신 구간 파일마다 한 줄씩 적어야 한다 (#309).
+
+    output_path "out.mp4"인 아이템, 구간 경로 ("a 1080p_1.mp4", "a 1080p_2.mp4")
+    -> "output_path_1: 'a 1080p_1.mp4'" · "output_path_2: 'a 1080p_2.mp4'" 줄이 있고 "output_path: " 줄은 없다
+    """
+    logger = _make_logger(tmp_path, monkeypatch)
+    logger.log_download_info(_stub_item(), ("a 1080p_1.mp4", "a 1080p_2.mp4"))
+    log_file = Path(logger.log_file)
+    logger.save_and_close()
+
+    text = log_file.read_text(encoding="utf-8")
+    assert "output_path_1: 'a 1080p_1.mp4'" in text
+    assert "output_path_2: 'a 1080p_2.mp4'" in text
+    assert "output_path: " not in text
+    assert "download_path: 'downloads'" in text  # 같은 블록의 다른 줄은 그대로 찍힌다
+
+
+def test_download_info_logs_output_path_without_sections(tmp_path, monkeypatch):
+    """구간 경로를 넘기지 않으면 시작 정보 블록은 지금처럼 output_path 줄을 적어야 한다.
+
+    output_path "out.mp4"인 아이템, 구간 경로 없음
+    -> "output_path: 'out.mp4'" 줄이 있고 "output_path_1" 줄은 없다
+    """
+    logger = _make_logger(tmp_path, monkeypatch)
+    logger.log_download_info(_stub_item())
+    log_file = Path(logger.log_file)
+    logger.save_and_close()
+
+    text = log_file.read_text(encoding="utf-8")
+    assert "output_path: 'out.mp4'" in text
+    assert "output_path_1" not in text
+
+
+def test_prepare_and_net_transfer_lines_are_added_without_changing_the_transfer_line(
+    tmp_path, monkeypatch
+):
+    """준비 줄과 준비를 뺀 전송 줄을 더해도 Transfer 줄과 요약 지표는 그대로여야 한다 (#309).
+
+    준비 6.90초(moov reused) · Transfer 12.34초 · 준비를 뺀 전송 5.44초를 차례로 로깅
+    -> 로그에 세 줄이 그 글자 그대로, 요약의 transfer_seconds == 12.34
+    """
+    logger = _make_logger(tmp_path, monkeypatch)
+    logger.log_prepare_complete(6.9, "moov reused")
+    logger.log_transfer_complete(12.34, 987654321, 3, 40)
+    logger.log_transfer_net(5.44)
+    log_file = Path(logger.log_file)
+    logger.save_and_close()
+
+    text = log_file.read_text(encoding="utf-8")
+    assert "Prepare completed in 6.90 seconds - moov reused" in text
+    assert (
+        "Transfer completed in 12.34 seconds - Bytes: 987654321 - Retries: 3 - Peak threads: 40"
+        in text
+    )
+    assert "Transfer without prepare: 5.44 seconds" in text
+    assert summarize(log_file)["transfer_seconds"] == 12.34
+
+
+def test_prepare_line_keeps_its_front_when_rests_are_appended(tmp_path, monkeypatch):
+    """쉰 횟수 · 시간이 붙은 준비 줄도 앞부분은 그대로이고 요약 지표를 바꾸지 않아야 한다 (#309).
+
+    준비 11.55초, 덧붙인 말 "moov reused - rested 3210 times for 6.42s" · Transfer 12.34초
+    -> 줄이 "Prepare completed in 11.55 seconds - moov reused - rested 3210 times for 6.42s"로 끝남,
+       요약의 transfer_seconds == 12.34
+    """
+    logger = _make_logger(tmp_path, monkeypatch)
+    logger.log_prepare_complete(11.55, "moov reused - rested 3210 times for 6.42s")
+    logger.log_transfer_complete(12.34, 987654321, 3, 40)
+    log_file = Path(logger.log_file)
+    logger.save_and_close()
+
+    lines = log_file.read_text(encoding="utf-8").splitlines()
+    assert [line for line in lines if "Prepare completed" in line][0].endswith(
+        "Prepare completed in 11.55 seconds - moov reused - rested 3210 times for 6.42s"
+    )
+    assert summarize(log_file)["transfer_seconds"] == 12.34
+
+
+def test_prepare_line_without_a_note_ends_at_the_seconds(tmp_path, monkeypatch):
+    """덧붙일 말이 없는 준비 줄은 시간에서 끝나야 한다 (#309).
+
+    준비 0.02초, 덧붙인 말 없음 -> 줄이 "Prepare completed in 0.02 seconds"로 끝남
+    """
+    logger = _make_logger(tmp_path, monkeypatch)
+    logger.log_prepare_complete(0.02)
+    log_file = Path(logger.log_file)
+    logger.save_and_close()
+
+    lines = log_file.read_text(encoding="utf-8").splitlines()
+    assert [line for line in lines if "Prepare completed" in line][0].endswith(
+        "Prepare completed in 0.02 seconds"
+    )
+
+
+def test_cut_stage_line_lists_each_stage_and_their_sum(tmp_path, monkeypatch):
+    """컷 단계 줄은 구간 번호 · 단계마다의 시간 · 그 합을 한 줄에 적어야 한다 (#309).
+
+    구간 2/3, 단계 probe 0.41초 · 0_head 1.20초 · audio 2.00초 · mux 0.30초
+    -> "Cut 2/3 stages - probe: 0.41s, 0_head: 1.20s, audio: 2.00s, mux: 0.30s = 3.91s"
+    """
+    logger = _make_logger(tmp_path, monkeypatch)
+    logger.log_cut_setup(0.52)
+    logger.log_cut_stages(2, 3, (("probe", 0.41), ("0_head", 1.2), ("audio", 2.0), ("mux", 0.3)))
+    log_file = Path(logger.log_file)
+    logger.save_and_close()
+
+    text = log_file.read_text(encoding="utf-8")
+    assert "Cut frames prepared in 0.52 seconds" in text
+    assert "Cut 2/3 stages - probe: 0.41s, 0_head: 1.20s, audio: 2.00s, mux: 0.30s = 3.91s" in text
+
+
+def test_cut_stage_line_adds_the_paused_time_only_when_there_was_a_pause(tmp_path, monkeypatch):
+    """컷 단계 줄은 일시정지한 시간이 있으면 끝에 따로 적고, 없으면 적지 않아야 한다 (#309).
+
+    구간 1/1, 단계 audio 2.00초 · mux 0.30초. 한 번은 일시정지 12.3초, 한 번은 일시정지 없이
+    -> "Cut 1/1 stages - audio: 2.00s, mux: 0.30s = 2.30s (paused: 12.30s)"
+    -> "Cut 1/1 stages - audio: 2.00s, mux: 0.30s = 2.30s"로 끝나는 줄이 하나 더 있다
+    """
+    logger = _make_logger(tmp_path, monkeypatch)
+    logger.log_cut_stages(1, 1, (("audio", 2.0), ("mux", 0.3)), 12.3)
+    logger.log_cut_stages(1, 1, (("audio", 2.0), ("mux", 0.3)))
+    log_file = Path(logger.log_file)
+    logger.save_and_close()
+
+    lines = [line for line in log_file.read_text(encoding="utf-8").splitlines() if "stages" in line]
+    assert len(lines) == 2
+    assert lines[0].endswith("Cut 1/1 stages - audio: 2.00s, mux: 0.30s = 2.30s (paused: 12.30s)")
+    assert lines[1].endswith("Cut 1/1 stages - audio: 2.00s, mux: 0.30s = 2.30s")
+
+
+def test_stopped_line_names_the_phase(tmp_path, monkeypatch):
+    """중단 줄은 어느 단계에서 중단됐는지 적어야 한다 (#309).
+
+    log_stopped("transfer") -> "Download stopped by user during transfer"
+    """
+    logger = _make_logger(tmp_path, monkeypatch)
+    logger.log_stopped("transfer")
+    log_file = Path(logger.log_file)
+    logger.save_and_close()
+
+    assert "Download stopped by user during transfer" in log_file.read_text(encoding="utf-8")
+
+
+def test_transfer_and_breakdown_lines_add_the_paused_time_only_when_there_was_a_pause(
+    tmp_path, monkeypatch
+):
+    """전송 줄과 시간 구분 줄은 일시정지한 시간이 있으면 끝에 따로 적고, 없으면 이전과 같아야 한다 (#309).
+
+    전송 12.5초 · 1000바이트 · 재시도 0 · 정점 4. 일시정지 3.2초를 넘긴 것과 넘기지 않은 것
+    -> "... - Peak threads: 4 (paused: 3.20s)" 한 줄과 "... - Peak threads: 4"로 끝나는 한 줄
+    -> "Total time breakdown - Transfer: 12.50s (no postprocess) (paused: 3.20s)" 한 줄
+    """
+    logger = _make_logger(tmp_path, monkeypatch)
+    logger.log_transfer_complete(12.5, 1000, 0, 4, 3.2)
+    logger.log_transfer_complete(12.5, 1000, 0, 4)
+    logger.log_total_breakdown(12.5, None, 3.2)
+    log_file = Path(logger.log_file)
+    logger.save_and_close()
+
+    lines = log_file.read_text(encoding="utf-8").splitlines()
+    transfer = [line for line in lines if "Transfer completed" in line]
+    base_line = "Transfer completed in 12.50 seconds - Bytes: 1000 - Retries: 0 - Peak threads: 4"
+    assert transfer[0].endswith(base_line + " (paused: 3.20s)")
+    assert transfer[1].endswith(base_line)
+    breakdown = [line for line in lines if "breakdown" in line]
+    assert breakdown[0].endswith(
+        "Total time breakdown - Transfer: 12.50s (no postprocess) (paused: 3.20s)"
+    )
+
+
+def test_failure_stop_line_names_the_phase_and_does_not_blame_the_user(tmp_path, monkeypatch):
+    """실패로 멈춘 줄은 어느 단계였는지 적고, 사용자가 멈췄다고 적지 않아야 한다 (#309).
+
+    log_stopped_after_failure("transfer") -> "Download stopped after a failure during transfer",
+    로그에 "by user" 없음
+    """
+    logger = _make_logger(tmp_path, monkeypatch)
+    logger.log_stopped_after_failure("transfer")
+    log_file = Path(logger.log_file)
+    logger.save_and_close()
+
+    written = log_file.read_text(encoding="utf-8")
+    assert "Download stopped after a failure during transfer" in written
+    assert "by user" not in written
+
+
+def test_postprocess_line_adds_the_paused_time_only_when_there_was_a_pause(tmp_path, monkeypatch):
+    """후처리 종료 줄은 일시정지한 시간이 있으면 끝에 따로 적고, 없으면 이전과 같아야 하며, 요약은 둘 다 읽어야 한다 (#309).
+
+    후처리 5.67초 · 987바이트. 일시정지 3.2초를 넘긴 것과 넘기지 않은 것
+    -> "... - Output size: 987 bytes (paused: 3.20s)" 한 줄과 "... - Output size: 987 bytes"로 끝나는 한 줄
+    -> 일시정지를 적은 줄만 든 로그의 요약: postprocess_seconds == 5.67, postprocess_output_bytes == 987
+    """
+    logger = _make_logger(tmp_path, monkeypatch)
+    logger.log_postprocess_complete(5.67, 987)
+    logger.log_postprocess_complete(5.67, 987, 3.2)
+    log_file = Path(logger.log_file)
+    logger.save_and_close()
+
+    lines = [
+        line
+        for line in log_file.read_text(encoding="utf-8").splitlines()
+        if "Postprocess completed" in line
+    ]
+    base_line = "Postprocess completed in 5.67 seconds - Output size: 987 bytes"
+    assert lines[0].endswith(base_line)
+    assert lines[1].endswith(base_line + " (paused: 3.20s)")
+    only_paused = tmp_path / "paused_only.log"
+    only_paused.write_text(lines[1] + "\n", encoding="utf-8")
+    summary = summarize(only_paused)
+    assert (summary["postprocess_seconds"], summary["postprocess_output_bytes"]) == (5.67, 987)

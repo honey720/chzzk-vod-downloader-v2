@@ -23,21 +23,38 @@ viewmodel(이 클래스)이 mainWindow의 릴레이 슬롯 6개를 흡수했다.
 MonitorM3U8Thread의 계산과 동일하며 모듈 수준 함수로 둔다.
 """
 
+import dataclasses
 import logging
+import threading
+import time
 from time import gmtime, strftime
 
 import requests
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 
+from app.platform_adapter import begin_background_work, end_background_work
+from app.process_memory import log_process_memory
+from app.user_activity import user_interacting
 from app.viewmodels.data import ContentItem
+from app.viewmodels.section_edit_viewmodel import take_section_head, watch_section_head
 from core.api.playback_tracks import StreamSelectionError
-from core.downloaders.base import PostprocessError
+from core.downloaders.base import DiskSpaceError, FileSizeLimitError, PostprocessError
 from core.downloaders.hls_aes_downloader import DecryptionError
 from core.downloaders.integrity import TruncatedSegmentError
 from core.models.events import ProgressEvent
 from core.services.download_service import DownloadService
 from core.models.download_data import DownloadData
+from core.models.download_state import DownloadState
+from core.models.mp4_index import PendingMp4Head
+from core.models.section_resume import SectionResume
+from core.utils.hybrid_cut import CutError
+from core.utils.paths import (
+    build_section_output_paths,
+    release_output_paths,
+    reserve_section_output_paths,
+)
 from core.utils.ffmpeg import FFmpegNotFoundError
+from core.utils.timecode import frame_index
 from app.download_logger import DownloadLogger
 from app.download_resolvers import resolve_aes_key, resolve_m3u8_base_url
 from app.download_task import DownloadTask
@@ -51,6 +68,27 @@ logger = logging.getLogger(__name__)
 # 없어 짧게 둔다
 _HANDLE_WAIT_TIMEOUT_S = 2.0
 
+# 구간 다운로드의 진행 막대는 "지난 시간 ÷ 예상 전체 시간"이다 (#309). 전송에 걸리는 시간은
+# 재면서 알고, 컷에 걸릴 시간은 아래 두 값으로 어림한다:
+#
+#     컷 예상 시간(초) = 자를 구간 수 × CUT_SECONDS_PER_SECTION
+#                      + 자를 구간 길이의 합(초) × CUT_SECONDS_PER_MEDIA_SECOND
+#
+# 전송과 컷의 몫을 고정하지 않는다 — 회선이 빠르면 컷이, 느리면 전송이 대부분이다(실측:
+# 8시간 영상에서 구간 2개 678MB는 전송 6.8초 · 컷 13.9초, 구간 3개 73MB는 전송 1.3초 · 컷 5.5초).
+# 값은 그 두 실측과 합성 영상의 단계별 측정에서 정했다 — 구간마다 ffmpeg를 다섯 번쯤 띄우는
+# 고정비가 약 1초, 길이에 비례하는 몫(대부분 오디오 재인코딩)이 1초에 약 0.018초다.
+# 어림이 틀려도 막대는 거꾸로 가지 않고, 100은 마지막 구간을 다 잘랐을 때만 된다
+CUT_SECONDS_PER_SECTION = 1.0  # 구간 하나의 고정비(초)
+CUT_SECONDS_PER_MEDIA_SECOND = 0.018  # 구간 길이 1초에 드는 시간(초)
+
+_clock = time.monotonic  # 진행 막대가 지난 시간을 재는 시계 — 테스트가 바꿔 끼운다
+
+# 다운로드 준비(엔진이 받을 것을 정하는 단계 — 구간 다운로드는 moov · 플레이리스트를 받는다)가
+# 이보다 오래 걸릴 때만 카드에 "준비 중"을 보인다(ms). moov를 다시 쓰는 카드의 준비는 0.2초
+# 안팎이라, 바로 보이면 문구가 깜빡이기만 한다
+PREPARE_NOTICE_DELAY_MS = 500
+
 
 def _failure_message_key(exc: BaseException) -> str | None:
     """다운로드 실패 예외를 안내 키로 매핑한다 (#134, #127의 조회 경로 방식).
@@ -59,6 +97,14 @@ def _failure_message_key(exc: BaseException) -> str | None:
     stderr·실행 경로를, OSError는 전체 파일 경로를 품는다. 상세는 다운로드
     로그가 이미 담당한다. 매핑에 없는 예외는 None(사유 생략)으로 둔다.
     """
+    space_key = getattr(exc, "space_key", None)
+    if space_key:
+        # 쓰다가 공간이 없어 난 실패 (#309) — 엔진이 적어 둔 키를 다른 판정보다 먼저 쓴다.
+        # 자르다 난 실패여도 원인이 공간 부족(또는 FAT의 파일 크기 한계)이면 그것으로 알린다
+        return space_key
+    if isinstance(exc, FileSizeLimitError):
+        # 저장 폴더의 파일 시스템(FAT 계열)이 담을 수 없는 크기의 파일이다 (#309)
+        return exc.message_key
     if isinstance(exc, PostprocessError):
         # PostprocessError는 항상 FFmpegError를 원인으로 체인한다(base.py의
         # 유일한 raise 지점, `raise PostprocessError(...) from e`). 원인
@@ -68,6 +114,12 @@ def _failure_message_key(exc: BaseException) -> str | None:
         # ffmpeg 설치 문제로 잘못 쏠렸다)
         if isinstance(exc.__cause__, FFmpegNotFoundError):
             return "Postprocessing failed - ffmpeg not found"
+        if isinstance(exc.__cause__, CutError):
+            # 구간을 자르다 실패했다 (#309) — 받은 데이터가 손상된 것이 아니다. 컷은 ffmpeg의
+            # 실패를 CutError로 바꿔 올리므로 그 원인이 "실행 파일 없음"이면 그 안내를 준다
+            if isinstance(exc.__cause__.__cause__, FFmpegNotFoundError):
+                return "Postprocessing failed - ffmpeg not found"
+            return "Section cut failed"
         return "Postprocessing failed - invalid segments"
     if isinstance(exc, DecryptionError):
         return "Decryption failed"
@@ -86,6 +138,9 @@ def _failure_message_key(exc: BaseException) -> str | None:
         return "Network connection error"
     if isinstance(exc, requests.RequestException):
         return "Network connection error"
+    if isinstance(exc, DiskSpaceError):
+        # 여유 공간이 만들 파일 · 받을 양보다 적었다 (#309) — 구간이 있는지에 따라 키가 다르다
+        return exc.message_key
     if isinstance(exc, OSError):
         return "Failed to save file"
     return None
@@ -112,6 +167,9 @@ class DownloadViewModel(QObject):
     # 일어난다 — 스레드 축 게이트가 잡는다
     _engineFinished = Signal()
     _engineFailed = Signal(object)
+    # 내부 전용: 받을 구간이 하나도 없는 카드 — 엔진에 넘기지 않고 실패로 끝낸다. 큐로 돌려
+    # start()가 돌아간 뒤에 끝낸다(끝내는 통지가 다음 카드의 start()를 부른다)
+    _nothingToReceive = Signal(object)
 
     def __init__(self, content, service: DownloadService | None = None, parent=None):
         """content: 다운로드 이벤트를 반영할 상대 — update_progress/pause/resume/
@@ -120,13 +178,37 @@ class DownloadViewModel(QObject):
         같이 resolver를 끼운 실제 서비스를 만든다."""
         super().__init__(parent)
         self._service = service or DownloadService(
-            base_url_resolver=resolve_m3u8_base_url, key_resolver=resolve_aes_key
+            base_url_resolver=resolve_m3u8_base_url,
+            key_resolver=resolve_aes_key,
+            # 조작하는 동안에는 색인 해석이 조각 사이에서 쉰다 (#309)
+            user_interacting=user_interacting,
         )
         self.handle = None
         self.task: DownloadTask | None = None
         self.item: ContentItem | None = None
+        # 실행 중인 다운로드의 엔진 공유 데이터 — 구간 상태(완료 · 실패 수)를 여기서 읽는다
+        self._data: DownloadData | None = None
+        # 실행 중인 다운로드가 무엇을 받아 어디에 쓰는지를 가리키는 값 — 일부 구간 실패로 끝나면
+        # 남긴 것과 함께 아이템에 적어, 다음 다운로드가 같은 값일 때만 이어받게 한다
+        self._resume_key: tuple | None = None
+        # 실행 중인 다운로드에서 엔진에 넘기지 않고 뺀 구간 수 (#309) — 새 영상의 끝 이후에서
+        # 시작해 받을 수 없는 구간이다. 실패한 구간 수에 더해 카드에 보인다
+        self._excluded = 0
+        # 도는 다운로드를 백그라운드 일로 세어 두었는지 (#309) — 끝을 한 번만 알린다
+        self._working = False
+        self._content = content
+        # 준비가 길어지면 카드에 "준비 중"을 켜는 타이머 — 엔진의 첫 진행 통지가 끈다
+        self._prepareTimer = QTimer(self)
+        self._prepareTimer.setSingleShot(True)
+        self._prepareTimer.setInterval(PREPARE_NOTICE_DELAY_MS)
+        self._prepareTimer.timeout.connect(self._showPreparing)
+        # 진행 통지가 메인 스레드에 닿으면 구간 상태를 아이템에 먼저 옮긴다 — content보다
+        # 먼저 연결해, content가 카드를 다시 그릴 때 값이 이미 들어 있게 한다
+        self.progress.connect(self._onPrepared)
+        self.progress.connect(self._syncSections)
         self._engineFinished.connect(self._onEngineFinished)
         self._engineFailed.connect(self._onEngineFailed)
+        self._nothingToReceive.connect(self._onNothingToReceive, Qt.ConnectionType.QueuedConnection)
         # 구 mainWindow.setupThreadSignals의 다운로드 릴레이 6개 — 위임 없이 직결.
         # 워커 스레드에서 emit되는 progress도 이 연결이 큐로 메인 스레드에 배달한다
         self.progress.connect(content.update_progress)
@@ -154,6 +236,74 @@ class DownloadViewModel(QObject):
         )
         # 해상도가 같은 두 스트림을 가르는 값 — 다운로드 시작 때 그 변형을 다시 찾는다 (#318)
         data.content.stream = getattr(item, "stream", None)
+        selections = tuple(getattr(item, "selections", ()) or ())
+        self._excluded = 0
+        if selections:
+            # 구간 다운로드 (#309) — 구간 파일명은 시작할 때 한꺼번에 배정한다. 예약은 엔진이
+            # 끝날 때 푼다.
+            # 받을 수 없는 구간(새 영상의 끝 이후에서 시작한다)은 엔진에 넘기지 않는다 — 엔진의
+            # 길이 검사는 위반 구간이 하나라도 있으면 다운로드 전체를 실패시킨다. 그 구간만
+            # 빼고 나머지를 받은 뒤, 뺀 수를 실패한 구간 수에 더해 일부 실패로 끝낸다
+            unfit = _unfit_sections(item, len(selections))
+            kept = [number for number in range(len(selections)) if number not in unfit]
+            self._excluded = len(unfit)
+            received = tuple(selections[number] for number in kept)
+            self._resume_key = _resume_key(item)
+            resume = _usable_resume(item, received)
+            if resume is not None:
+                # 일부 구간만 실패한 다운로드를 이어서 처리한다 — 구간 파일 이름을 새로 배정하지
+                # 않고 그때의 경로를 그대로 쓴다. 새로 배정하면 남아 있는 구간 파일 때문에
+                # 모든 구간이 새 이름(" (n)")을 받는다
+                paths = reserve_section_output_paths(resume.paths, resume.done)
+                if paths != resume.paths:
+                    # 끝내지 않은 구간의 이름이 그사이 다른 것에 차지돼 바뀌었다 — 기록도 맞춘다
+                    resume = dataclasses.replace(resume, paths=paths)
+                item.sections_done = len(resume.done)
+            else:
+                item.section_retry = None
+                # 파일 번호는 구간 목록의 순서다 — 뺀 구간의 번호는 비운다(3개 중 2번을 빼면
+                # _1 · _3). 번호를 당기면 유저가 정한 순서와 파일 이름이 어긋난다
+                numbered = build_section_output_paths(
+                    item.download_path, item.title, item.resolution, len(selections)
+                )
+                release_output_paths(numbered[number] for number in unfit)
+                paths = tuple(numbered[number] for number in kept)
+                item.sections_done = 0
+            item.sections_failed = 0
+            if self._excluded and item.sections_done == len(kept):
+                # 받을 구간이 없다 — 전부 빠졌거나, 남은 구간은 이전 실행이 이미 끝냈다.
+                # 엔진에 넘기지 않고 실패로 끝낸다
+                release_output_paths(paths)
+                item.sections_failed = self._excluded
+                self._data = None
+                self._nothingToReceive.emit(item)
+                return
+            data.content.selections = received
+            data.content.section_resume = resume
+            data.content.selection_paths = paths
+            item.section_paths = tuple(paths)  # 완료 카드의 폴더 열기가 여기서 구간 파일을 찾는다
+            # 구간을 정하며 받은 moov를 넘긴다 (#309) — 주소가 같을 때만. 엔진이 다시 받지 않는다.
+            # 카드에서는 비운다 — 이제 엔진이 들고, 다운로드가 끝나면 함께 사라진다
+            moov = take_section_head(item)
+            if isinstance(moov, PendingMp4Head):
+                # 받아 둔 moov의 바이트를 넘긴다 — 엔진이 다시 받지 않고, 준비하면서 색인을
+                # 만든다. 대기 카드는 색인을 만들어 두지 않는다(받을 크기는 표에서 센다)
+                data.content.mp4_pending = moov
+            else:
+                data.content.mp4_head = moov
+        self._data = data
+        item.transfer_bytes = None
+        item.output_bytes = None
+        item.preparing = False
+        item.prepare_pending = True
+        # 지난 실행의 진행 표시를 지운다 (#309) — 중단한 카드를 다시 시작하면 엔진의 첫 통지가
+        # 올 때까지(준비 중) 지난 실행의 진행률 · 크기가 그대로 보였다
+        item.download_progress = 0
+        item.download_size = ""
+        item.download_speed = ""
+        item.download_remain_time = ""
+        self._prepareTimer.start()
+        log_process_memory("다운로드 시작")
         task_logger = DownloadLogger()
         # DownloadTask가 상태 전이 흡수와 모델↔카드(item) 상태 연결을 담당한다
         self.task = DownloadTask(data, item, task_logger)
@@ -168,25 +318,122 @@ class DownloadViewModel(QObject):
             on_failed=self._relay_failed,
             on_merge_start=self._relay_merge_start,
         )
+        self._beginWork()
 
-    def pause(self) -> None:
-        """다운로드 일시정지 (구 DownloadManager.pause)."""
-        self.task.pause()
+    def prepareRetry(self, item: ContentItem) -> None:
+        """실패 카드의 재시도를 누른 순간에 한 번, 끝낸 구간의 파일이 그대로 있는지 확인한다 (#309).
+
+        일부 구간만 실패한 구간 다운로드에만 할 일이 있다. 끝낸 것으로 적힌 구간 가운데
+        파일이 없어졌거나 크기가 달라진 것은 끝나지 않은 구간으로 돌린다 — 다음 다운로드가 그
+        구간도 다시 만든다(``SectionResume.with_files_checked``). 다운로드를 시작하지 않는다.
+        같은 확인을 다운로드를 시작할 때(``_usable_resume``)와 엔진이 준비할 때도 한다 —
+        재시도 버튼을 거치지 않은 시작과, 누른 뒤 시작하기까지의 사이를 덮는다.
+        """
+        retry = getattr(item, "section_retry", None)
+        if retry is None:
+            return
+        resume_key, resume = retry
+        item.section_retry = (resume_key, resume.with_files_checked())
+
+    def isPaused(self) -> bool:
+        """지금의 다운로드가 일시정지 상태인지 — 엔진의 상태로 답한다."""
+        return self.task is not None and self.task.state == DownloadState.PAUSED
+
+    def pause(self) -> bool:
+        """다운로드 일시정지 (구 DownloadManager.pause). 일시정지로 바뀌었으면 True.
+
+        엔진이 받는 중이 아니면 아무것도 알리지 않는다 — 엔진이 막 끝났는데 그 알림이 아직
+        처리되지 않은 틈에 눌린 경우다. 알리면 카드와 버튼이 엔진과 어긋난다.
+        """
+        if self.task is None or not self.task.pause():
+            return False
         self.paused.emit(self.item)
+        return True
 
-    def resume(self) -> None:
-        """다운로드 재개 (구 DownloadManager.resume)."""
-        self.task.resume()
+    def resume(self) -> bool:
+        """다운로드 재개 (구 DownloadManager.resume). 받는 중으로 돌아왔으면 True."""
+        if self.task is None or not self.task.resume():
+            return False
         self.resumed.emit(self.item)
+        return True
 
     def stop(self) -> None:
         """다운로드 중지 (구 DownloadManager.stop). 병합 표시도 함께 해제한다."""
         if self.task is not None:
             self.task.stop()
+        self._endPreparing()
+        self._dropHead()
         if self.item is not None:
             # 구 DownloadM3U8Thread가 run 종료 후 수행하던 WAITING 정리와 동일
             self.item.post_process = False
         self.stopped.emit(self.item)
+
+    def _beginWork(self) -> None:
+        """도는 다운로드를 백그라운드 일 하나로 센다 (#309) — 도는 동안 화면이 굼떠지지 않게 한다."""
+        if not self._working:
+            self._working = True
+            begin_background_work()
+
+    def _endWork(self) -> None:
+        """다운로드가 끝났다(완료 · 실패 · 정지) — 세어 둔 것을 내린다. 두 번 불러도 한 번만 내린다."""
+        if self._working:
+            self._working = False
+            end_background_work()
+
+    def _dropHead(self) -> None:
+        """엔진에 넘겼던 moov를 놓는다 (#309) — 다운로드가 끝났다(완료 · 실패 · 정지).
+
+        긴 영상의 해석된 색인은 수백 MB다. 이 뷰모델은 다음 다운로드를 시작할 때까지 마지막
+        다운로드의 데이터를 들고 있으므로 여기서 놓지 않으면 그때까지 남는다. 일부 구간만
+        실패해 엔진이 남긴 이어받기 기록(``section_retry``)의 moov는 그대로 둔다 — 재시도가 쓴다.
+        """
+        if self._data is not None:
+            content = self._data.content
+            # 엔진이 준비하며 만든 색인이 실제로 사라지면 프로세스 메모리를 적게 한다 — 대기 카드는
+            # 색인을 만들어 두지 않으므로, 색인은 엔진에 넘긴 moov에서만 생긴다
+            pending = content.mp4_pending
+            watch_section_head(
+                content.mp4_head or (pending.peek() if pending is not None else None)
+            )
+            content.mp4_head = None
+            content.mp4_pending = None
+
+    def _showPreparing(self) -> None:
+        """준비가 길어지고 있다 — 카드에 "준비 중"을 켠다 (#309). 타이머가 부른다."""
+        item = self.item
+        if item is None or self.handle is None or self.task is None:
+            return  # 그사이 작업이 끝났거나 정리됐다
+        item.preparing = True
+        self._content.model.notifyChanged(item)
+
+    def _endPreparing(self) -> None:
+        """준비가 끝났다(또는 다운로드가 끝났다) — "준비 중"을 끄고 타이머를 멈춘다.
+
+        카드를 다시 그리지는 않는다 — 부르는 쪽의 통지(진행 · 완료 · 실패 · 정지)가 그린다.
+        """
+        self._prepareTimer.stop()
+        if self.item is not None:
+            self.item.preparing = False
+            self.item.prepare_pending = False
+
+    def _onPrepared(self, *_args) -> None:
+        """진행 통지가 왔다 — 엔진의 준비가 끝났다 (#309). 메인 스레드에서 돈다.
+
+        엔진은 준비가 끝나면 받기 전에 진행을 한 번 알린다. "준비 중"을 끄고, 인코딩 완료
+        VOD면 엔진이 정한 받을 크기를 카드에 옮긴다(``transfer_bytes``).
+
+        구간 카드가 적는 크기(``section_bytes`` — 구간 파일 크기의 합의 추정)는 **이미 알면
+        바꾸지 않는다.** 대기 카드가 적던 값이 받는 중 · 일시정지 · 다시 시작 · 실패 구간의
+        재시도 동안 그대로 보인다. 엔진의 값은 받을 양(전송량)이라 뜻이 다르다. 대기 중에 세지
+        못했을 때만 엔진의 값을 대신 쓴다.
+        """
+        self._endPreparing()
+        item, data = self.item, self._data
+        if item is None or data is None or item.is_segment_based or not data.total_size:
+            return
+        item.transfer_bytes = data.total_size
+        if data.sections_total and not item.section_bytes:
+            item.section_bytes = data.total_size
 
     def removeThreads(self) -> None:
         """실행 중인 워커의 종료를 상한을 두고 기다린 뒤 참조를 정리한다 (구 removeThreads).
@@ -196,7 +443,10 @@ class DownloadViewModel(QObject):
         정리는 wait가 아니라 엔진 스레드(run 꼬리의 _cleanup_partial)가
         수행하므로, 포기해도 정리는 늦어질 뿐이며 갇힌 스레드가 깨어나면
         그때 수행된다. 재시작 충돌은 산출물 경로 유일화(#105)가 막는다.
+
+        "준비 중" 타이머도 여기서 멈춘다 (#309) — 정리된 작업이나 지운 카드에 타이머가 닿지 않게.
         """
+        self._endPreparing()
         if self.handle is not None and not self.handle.wait(_HANDLE_WAIT_TIMEOUT_S):
             logger.warning(
                 "워커가 %.0f초 안에 끝나지 않아 대기를 포기한다 — 슬롯 방출 (#137)",
@@ -205,6 +455,7 @@ class DownloadViewModel(QObject):
             self._service.abandon(self.handle)
         self.handle = None
         self.task = None
+        self._endWork()
 
     # ============ 워커 스레드 콜백 (emit까지만 수행) ============
 
@@ -215,9 +466,12 @@ class DownloadViewModel(QObject):
         엔진 관측 스레드에서 호출되므로 계산과 Signal emit까지만 수행한다.
         """
         is_segment_based = item.is_segment_based
+        sections = _SectionProgress(_cut_seconds(data.content))
 
         def relay(event: ProgressEvent) -> None:
-            if is_segment_based:
+            if data.sections_total:
+                args = _section_progress_args(event, data, item, sections)
+            elif is_segment_based:
                 args = _segment_progress_args(event, data, item)
             else:
                 args = _file_progress_args(event)
@@ -238,6 +492,21 @@ class DownloadViewModel(QObject):
 
     # ============ 메인 스레드 후처리 슬롯 ============
 
+    def _syncSections(self, *_args) -> None:
+        """엔진의 구간 상태(완료 · 실패한 구간 수)를 아이템에 옮긴다 (#309). 메인 스레드에서 돈다.
+
+        수는 통지가 몇 번 왔는지로 세지 않는다 — 같은 진행 통지가 두 번 올 수 있다(서비스는
+        완료 뒤에 진행을 한 번 더 알린다). 엔진이 공유 데이터에 적어 둔 값을 그대로 읽는다.
+        """
+        if self.item is None or self._data is None or not self._data.sections_total:
+            return
+        self.item.sections_done = self._data.sections_done
+        self.item.cut_preparing = bool(getattr(self._data, "cut_preparing", False))
+        # 엔진이 컷을 마치며 센, 만든 구간 파일 크기의 합 — 완료 카드가 크기로 적는다
+        self.item.output_bytes = self._data.sections_output_size
+        # 엔진에 넘기지 않고 뺀 구간도 받지 못한 구간이다
+        self.item.sections_failed = self._data.sections_failed + self._excluded
+
     def _onEngineFinished(self) -> None:
         """정상 완료 후처리 (구 DownloadManager.finish의 잔여분).
 
@@ -248,9 +517,46 @@ class DownloadViewModel(QObject):
             # 완료 직후 사용자가 중지·정리를 마친 경우 (구 finish의 task None 가드와 동일)
             return
         item = self.item
+        self._syncSections()
+        saved = getattr(self._data, "output_size", None)
+        if saved is not None:
+            # 저장된 파일의 크기 — 엔진이 완료를 알리기 직전에 읽었다. 완료 카드가 크기로 적는다
+            item.output_bytes = saved
+        self._endPreparing()
+        log_process_memory("다운로드 끝")
+        self._dropHead()
+        if self._excluded:
+            # 넘긴 구간은 모두 만들었지만 뺀 구간이 있다 (#309) — 일부 실패로 끝낸다. 넘긴
+            # 구간을 모두 끝낸 것으로 적어 둔다: 재시도해도 뺀 구간은 다시 빠지고, 만든 파일은
+            # 다시 받지 않는다
+            content = self._data.content
+            item.section_retry = (
+                self._resume_key,
+                SectionResume(
+                    selections=tuple(content.selections),
+                    paths=tuple(content.selection_paths),
+                    done=frozenset(range(len(content.selections))),
+                ),
+            )
+            self.removeThreads()
+            self.failed.emit(item, self._outsideVideoMessage())
+            return
+        item.section_retry = None  # 모든 구간을 만들었다 — 이어받을 것이 없다
         download_time = strftime("%H:%M:%S", gmtime(self.handle.elapsed_seconds()))
         self.removeThreads()
         self.finished.emit(item, download_time)
+
+    def _onNothingToReceive(self, item: ContentItem) -> None:
+        """받을 구간이 하나도 없는 카드를 실패로 끝낸다 (#309). 엔진은 돌지 않았다."""
+        self.failed.emit(item, self._outsideVideoMessage())
+
+    def _outsideVideoMessage(self) -> str:
+        """받을 수 없어 뺀 구간이 있는 카드의 실패 사유 — 첫 줄이 카드에 오르고 전문은 툴팁이다."""
+        return self.tr(
+            "Section is outside the video · edit the sections\n"
+            "Sections that start after the end of this resolution were skipped. "
+            "Edit the sections or pick another resolution."
+        )
 
     def _onEngineFailed(self, exc: BaseException) -> None:
         """실패 후처리 (#134) — 엔진 종료 신호 후 참조를 정리하고 failed Signal로 사유를 알린다.
@@ -275,10 +581,23 @@ class DownloadViewModel(QObject):
             # 실패 도착 전에 사용자가 중지·정리를 마친 경우 (완료 경로의 가드와 동일)
             return
         item = self.item
+        self._syncSections()  # 일부 구간만 실패했을 때 카드가 완료 · 실패 수를 보인다
+        resume = self._data.section_resume if self._data is not None else None
+        if resume is not None:
+            # 엔진이 끝낸 구간과 받아 둔 데이터를 남겼다 — 다음 다운로드가 실패한 구간만 다시
+            # 처리한다. 남기지 않은 실패(전송 실패 등)는 아이템에 있던 것을 그대로 둔다
+            item.section_retry = (self._resume_key, resume)
+            # 기록은 이제 카드가 든다 — 공유 데이터에 남겨 두면 다음 다운로드를 시작할 때까지
+            # 이 뷰모델이 moov 색인을 하나 더 쥔다(카드가 기록을 지워도 풀리지 않는다)
+            self._data.section_resume = None
+        self._endPreparing()
+        log_process_memory("다운로드 끝")
+        self._dropHead()
         if self.task is not None:
             self.task.stop()
         self.handle = None
         self.task = None
+        self._endWork()
         self.failed.emit(item, self._failure_message(exc))
 
     def _failure_message(self, exc: BaseException) -> str:
@@ -329,6 +648,24 @@ class DownloadViewModel(QObject):
                 "The stream for the selected resolution could not be found. "
                 "Try another resolution."
             ),
+            "Section cut failed": self.tr(
+                "Could not cut the section · press retry\n"
+                "Cutting the section failed. Retry processes only the failed sections."
+            ),
+            "Not enough disk space": self.tr(
+                "Not enough disk space · free up space or pick another folder\n"
+                "The download folder does not have enough free space for the section files."
+            ),
+            "File too large for a FAT32 drive": self.tr(
+                "FAT32 drive can't hold files over 4 GB · pick another folder\n"
+                "This drive (FAT32) cannot store a file larger than 4 GB. Pick another folder, "
+                "or format the drive as exFAT or NTFS."
+            ),
+            "Not enough disk space for the download": self.tr(
+                "Not enough disk space · free up space or pick another folder\n"
+                "The download folder or the temporary folder does not have enough free space "
+                "for the download."
+            ),
             "Segment was received truncated": self.tr(
                 "Video data arrived corrupted · try again later\n"
                 "Part of the video kept arriving incomplete from the server. "
@@ -337,6 +674,107 @@ class DownloadViewModel(QObject):
         }
         key = _failure_message_key(exc)
         return translated.get(key, "") if key is not None else ""
+
+
+def _resume_key(item: ContentItem) -> tuple:
+    """아이템이 지금 무엇을 받아 어디에 쓰려는지를 가리키는 값 (#309).
+
+    받을 스트림(종류 · 주소 · 해상도 · 변형)과, 구간 파일이 놓일 자리(저장 폴더 · 파일명의
+    바탕인 제목)다. 해상도 · 저장 폴더 · 제목 가운데 하나라도 바꾸면 달라진다.
+    """
+    return (
+        item.content_type,
+        item.base_url,
+        item.resolution,
+        getattr(item, "stream", None),
+        item.download_path,
+        item.title,
+    )
+
+
+def _unfit_sections(item: ContentItem, count: int) -> frozenset[int]:
+    """엔진에 넘기지 않을 구간의 번호(0부터) — 카드에 받을 수 없다고 표시된 구간이다 (#309).
+
+    조회로 확인된 길이를 기준으로 표시된 것만 뺀다. 길이를 확인하는 중이거나 확인하지 못한
+    카드는 아무것도 빼지 않는다 — 그대로 넘기고 엔진이 실제 길이로 검사한다.
+    """
+    if getattr(item, "section_check", ""):
+        return frozenset()
+    return frozenset(n for n in getattr(item, "section_unfit", ()) if 0 <= n < count)
+
+
+def _usable_resume(item: ContentItem, selections: tuple):
+    """아이템에 남아 있는, 지금 시작하는 다운로드가 이어받을 수 있는 것을 돌려준다. 없으면 None.
+
+    그때와 같은 스트림 · 같은 저장 폴더 · 같은 제목 · 같은 구간 목록일 때만 이어받는다.
+    해상도를 바꿨으면 받아 둔 데이터와 만든 구간 파일이 다른 영상의 것이다. 저장 폴더나
+    제목을 바꿨으면 남겨 둔 경로는 지금 고른 자리가 아니다 — 이어받으면 시작 전 쓰기 검사를
+    거친 폴더가 아닌 곳에 쓰게 된다. 그때는 새 자리에 새 이름으로 처음부터 받는다.
+    """
+    retry = getattr(item, "section_retry", None)
+    if retry is None:
+        return None
+    resume_key, resume = retry
+    if resume_key != _resume_key(item):
+        return None
+    if resume.selections != selections:
+        resume = _resume_for_edited_sections(item, resume, selections)
+    # 끝낸 구간의 파일이 그사이 지워졌거나 바뀌었으면 끝낸 것으로 치지 않는다 — 구간 파일
+    # 이름을 예약하기 전에 가려야, 바뀐 파일을 덮어쓰지 않고 그 구간이 새 이름을 받는다
+    return resume.with_files_checked() if resume is not None else None
+
+
+def _resume_for_edited_sections(item: ContentItem, resume: SectionResume, selections: tuple):
+    """구간을 편집한 카드가 이어받을 수 있는 것을 만든다. 이어받을 구간이 없으면 None (#309).
+
+    **같은 번호에 같은 값(시작 · 끝 프레임)인 구간만** 끝낸 것으로 이어받는다 — 그 구간의 파일은
+    다시 받지 않는다. 값이 바뀐 구간과 새로 생긴 구간은 새로 받는다. 번호와 값이 함께 맞는
+    끝낸 구간이 하나도 없으면(순서를 바꾼 경우 등) None이다 — 기록을 버리고 처음부터 받는다.
+
+    파일 이름은 번호를 따른다. 그때 있던 번호는 그때의 경로를 그대로 후보로 두고, 새로 생긴
+    번호만 새로 배정한다. 후보 자리에 이미 파일이 있으면(값이 바뀐 구간의 옛 파일) 시작할 때
+    ``reserve_section_output_paths``가 피한다 — 덮어쓰지 않는다.
+
+    받아 둔 것 가운데 구간 목록에 묶인 것은 넘기지 않는다 — mp4의 임시 원본은 그때의 구간
+    범위만 담고 있다. 구간과 무관한 것(moov · 플레이리스트 · 받아 둔 세그먼트)은 그대로 넘긴다.
+
+    받을 수 없어 뺀 구간이 있는 카드는 대상이 아니다 — 뺀 뒤의 순서와 파일 번호가 어긋난다.
+    """
+    if _unfit_sections(item, len(item.selections)):
+        return None
+    fps = getattr(item, "section_frame_rate", None)
+
+    def frames(selection) -> tuple:
+        if fps is None:
+            return (selection.start, selection.end)
+        return (frame_index(selection.start, fps), frame_index(selection.end, fps))
+
+    kept = frozenset(
+        number
+        for number in resume.done
+        if number < len(selections)
+        and frames(resume.selections[number]) == frames(selections[number])
+    )
+    if not kept:
+        return None
+    # 새로 생긴 번호의 이름만 얻는다 — 배정은 예약까지 하므로 곧바로 풀고, 시작할 때 다시 예약한다
+    numbered = build_section_output_paths(
+        item.download_path, item.title, item.resolution, len(selections)
+    )
+    release_output_paths(numbered)
+    paths = tuple(
+        resume.paths[number] if number < len(resume.paths) else numbered[number]
+        for number in range(len(selections))
+    )
+    return dataclasses.replace(
+        resume,
+        selections=tuple(selections),
+        paths=paths,
+        done=kept,
+        source_path=None,
+        source_size=None,
+        source_sections=None,
+    )
 
 
 # ============ 진행 이벤트 변환식 (구 MonitorThread / MonitorM3U8Thread) ============
@@ -356,6 +794,103 @@ def _file_progress_args(event: ProgressEvent) -> tuple[str, str, str, int]:
         remaining_time_str = "N/A"
 
     return remaining_time_str, str(event.downloaded_size), f"{speed_mb:.1f} MB/s", progress
+
+
+def _cut_seconds(content) -> float:
+    """이번 다운로드가 자를 구간들의 컷에 걸릴 시간의 어림(초). 구간이 없으면 0.
+
+    이전 실행이 끝낸 구간(``section_resume.done``)은 자르지 않으므로 세지 않는다.
+    """
+    resume = getattr(content, "section_resume", None)
+    done = resume.done if resume is not None else frozenset()
+    todo = [
+        selection
+        for number, selection in enumerate(getattr(content, "selections", ()) or ())
+        if number not in done
+    ]
+    length = sum(selection.end - selection.start for selection in todo)
+    return len(todo) * CUT_SECONDS_PER_SECTION + length * CUT_SECONDS_PER_MEDIA_SECOND
+
+
+class _SectionProgress:
+    """구간 다운로드 하나의 진행 막대(%) — 지난 시간 ÷ 예상 전체 시간 (#309).
+
+    전송 중에는 지금까지의 속도로 전송이 끝날 때를 어림하고, 그 뒤에 컷의 어림을 더한 것이
+    전체다. 컷 단계에서는 전송에 실제로 걸린 시간과 컷의 어림이 전체이고, 컷의 진행만큼
+    찬다. 내는 값은 줄지 않고, 100은 컷이 다 끝났을 때만 낸다. 엔진의 관측 스레드와 컷을
+    돌리는 스레드가 함께 부른다.
+    """
+
+    def __init__(self, cut_seconds: float):
+        self._cut_seconds = cut_seconds
+        self._started = _clock()
+        self._transfer_seconds: float | None = None  # 컷이 시작된 때까지 걸린 시간
+        self._shown = 0
+        self._lock = threading.Lock()
+
+    def percent(self, transfer: float, cutting: bool, cut: float) -> int:
+        """지금 막대에 보일 값(0~100).
+
+        Args:
+            transfer: 전송의 진행(0~1)
+            cutting: 컷 단계에 들어갔는지
+            cut: 컷의 진행(0~1) — 컷 단계에서만 쓴다
+        """
+        with self._lock:
+            elapsed = _clock() - self._started
+            if cutting:
+                if self._transfer_seconds is None:
+                    self._transfer_seconds = elapsed
+                total = self._transfer_seconds + self._cut_seconds
+                spent = self._transfer_seconds + self._cut_seconds * min(max(cut, 0.0), 1.0)
+                value = 100 if cut >= 1.0 else min(int(100 * spent / total) if total else 0, 99)
+            elif transfer > 0:
+                # 전송 예상 시간 = 지난 시간 ÷ 전송의 진행. 지난 시간 ÷ (전송 예상 + 컷 예상)
+                total = elapsed / transfer + self._cut_seconds
+                value = min(int(100 * elapsed / total) if total else 0, 99)
+            else:
+                value = 0
+            self._shown = max(self._shown, value)
+            return self._shown
+
+
+def _section_progress_args(
+    event: ProgressEvent, data: DownloadData, item: ContentItem, sections: _SectionProgress
+) -> tuple[str, str, str, int]:
+    """구간 다운로드의 진행 변환 — 전송과 컷을 하나의 막대로 합친다 (#309).
+
+    막대는 지난 시간 ÷ 예상 전체 시간이다(``_SectionProgress``). 전송의 진행은 전달 방식의
+    단위 그대로다(파일은 받은 바이트 ÷ 받을 바이트, 세그먼트 기반은 받은 세그먼트 수 ÷ 받을
+    세그먼트 수). 컷의 진행은 엔진이 적어 둔 값(``cut_progress`` — 구간 안에서도 오른다)이고,
+    그 값이 없으면 (끝난 구간 수 ÷ 구간 수)다. 끝난 구간에는 자르지 못한 구간도 센다 — 그
+    구간의 일은 끝났다.
+
+    이전 실행이 끝낸 구간을 이어받은 다운로드는 이번에 처리할 구간만으로 센다 — 막대는 0에서
+    다시 찬다. 카드의 완료 구간 수는 전체 기준 그대로다(2/3에서 이어진다).
+
+    남은 시간 · 크기 · 속도는 전달 방식의 변환식 그대로다. 컷 단계에서는 카드가 그 값을
+    쓰지 않고 단계 문구를 보인다.
+    """
+    if item.is_segment_based:
+        remaining, size, speed, _percent = _segment_progress_args(event, data, item)
+        transfer = data.completed_threads / data.max_threads if data.max_threads > 0 else 0.0
+    else:
+        remaining, size, speed, _percent = _file_progress_args(event)
+        total_size = event.total_size or 0
+        transfer = event.downloaded_size / total_size if total_size > 0 else 0.0
+    cut = 0.0
+    if item.post_process:
+        todo = data.sections_total - data.sections_resumed
+        handled = data.sections_done + data.sections_failed - data.sections_resumed
+        cut = handled / todo if todo > 0 else 1.0
+        reported = getattr(data, "cut_progress", None)
+        if reported is not None and handled < todo:
+            # 구간 안에서도 오르는 값. 다 찼다고 적혀 있어도 끝나지 않은 구간이 있으면 1로
+            # 보지 않는다 — 100은 마지막 구간의 일이 끝났을 때(위의 1.0)만이다
+            cut = min(reported, 0.999)
+    transfer = min(max(transfer, 0.0), 1.0)
+    progress = sections.percent(transfer, bool(item.post_process), cut)
+    return remaining, size, speed, progress
 
 
 def _segment_progress_args(

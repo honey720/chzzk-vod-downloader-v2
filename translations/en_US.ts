@@ -8,6 +8,102 @@
         <translation>(source)</translation>
     </message>
     <message>
+        <source>refit to {0}fps</source>
+        <translation>refit to {0}fps</translation>
+    </message>
+    <message>
+        <source>end pulled to the video length</source>
+        <translation>end pulled to the video length</translation>
+    </message>
+    <message>
+        <source>end extended to the video length</source>
+        <translation>end extended to the video length</translation>
+    </message>
+    <message>
+        <source>{0} outside the video</source>
+        <translation>{0} outside the video</translation>
+    </message>
+    <message>
+        <source>This resolution is shorter. Sections now end at the end of the video.</source>
+        <translation>This resolution is shorter. Sections now end at the end of the video.</translation>
+    </message>
+    <message>
+        <source>This resolution is longer. Sections that reached the end now reach it.</source>
+        <translation>This resolution is longer. Sections that reached the end now reach it.</translation>
+    </message>
+    <message>
+        <source>Some sections start after the end of this resolution. They will be skipped. Edit the sections to fix them.</source>
+        <translation>Some sections start after the end of this resolution. They will be skipped. Edit the sections to fix them.</translation>
+    </message>
+    <message>
+        <source>Sections {0} · {1}</source>
+        <translation>Sections {0} · {1}</translation>
+    </message>
+    <message>
+        <source>Sections were moved to the frames of the new frame rate.</source>
+        <translation>Sections were moved to the frames of the new frame rate.</translation>
+    </message>
+    <message>
+        <source>Edit sections</source>
+        <translation>Edit sections</translation>
+    </message>
+    <message>
+        <source>Change save location</source>
+        <translation>Change save location</translation>
+    </message>
+    <message>
+        <source>checking length</source>
+        <translation>checking length</translation>
+    </message>
+    <message>
+        <source>length not checked</source>
+        <translation>length not checked</translation>
+    </message>
+    <message>
+        <source>Checking the length of this resolution...</source>
+        <translation>Checking the length of this resolution...</translation>
+    </message>
+    <message>
+        <source>Could not check the length of this resolution. Open the section editor to check again.</source>
+        <translation>Could not check the length of this resolution. Open the section editor to check again.</translation>
+    </message>
+    <message>
+        <source>overlap</source>
+        <translation>overlap</translation>
+    </message>
+    <message>
+        <source>Sections {0}</source>
+        <translation>Sections {0}</translation>
+    </message>
+    <message>
+        <source>To receive: {0}</source>
+        <translation>To receive: {0}</translation>
+    </message>
+    <message>
+        <source>Sections add up to {0}</source>
+        <translation>Sections add up to {0}</translation>
+    </message>
+    <message>
+        <source>Overlapping parts are received once</source>
+        <translation>Overlapping parts are received once</translation>
+    </message>
+    <message>
+        <source>Click to edit sections</source>
+        <translation>Click to edit sections</translation>
+    </message>
+    <message>
+        <source>Preparing</source>
+        <translation>Preparing</translation>
+    </message>
+    <message>
+        <source>Preparing to cut</source>
+        <translation>Preparing to cut</translation>
+    </message>
+    <message>
+        <source>Cutting</source>
+        <translation>Cutting</translation>
+    </message>
+    <message>
         <source>Post-processing</source>
         <translation>Post-processing</translation>
     </message>
@@ -26,6 +122,10 @@
     <message>
         <source>Unknown error - check the log</source>
         <translation>Unknown error · check the log</translation>
+    </message>
+    <message>
+        <source>{0} failed</source>
+        <translation>{0} failed</translation>
     </message>
     <message>
         <source>Select download folder</source>
@@ -123,6 +223,12 @@ The file could not be saved. Check the download path and free disk space.</trans
 <context>
     <name>DownloadViewModel</name>
     <message>
+        <source>Section is outside the video · edit the sections
+Sections that start after the end of this resolution were skipped. Edit the sections or pick another resolution.</source>
+        <translation>Section is outside the video · edit the sections
+Sections that start after the end of this resolution were skipped. Edit the sections or pick another resolution.</translation>
+    </message>
+    <message>
         <source>ffmpeg not found · check the installation
 Postprocessing failed: the ffmpeg executable could not be found.</source>
         <translation>ffmpeg not found · check the installation
@@ -169,6 +275,30 @@ The file could not be saved. Check the download path and free disk space.</trans
 The stream for the selected resolution could not be found. Try another resolution.</source>
         <translation>Stream not found · pick another resolution
 The stream for the selected resolution could not be found. Try another resolution.</translation>
+    </message>
+    <message>
+        <source>Could not cut the section · press retry
+Cutting the section failed. Retry processes only the failed sections.</source>
+        <translation>Could not cut the section · press retry
+Cutting the section failed. Retry processes only the failed sections.</translation>
+    </message>
+    <message>
+        <source>Not enough disk space · free up space or pick another folder
+The download folder does not have enough free space for the section files.</source>
+        <translation>Not enough disk space · free up space or pick another folder
+The download folder does not have enough free space for the section files.</translation>
+    </message>
+    <message>
+        <source>FAT32 drive can&apos;t hold files over 4 GB · pick another folder
+This drive (FAT32) cannot store a file larger than 4 GB. Pick another folder, or format the drive as exFAT or NTFS.</source>
+        <translation>FAT32 drive can&apos;t hold files over 4 GB · pick another folder
+This drive (FAT32) cannot store a file larger than 4 GB. Pick another folder, or format the drive as exFAT or NTFS.</translation>
+    </message>
+    <message>
+        <source>Not enough disk space · free up space or pick another folder
+The download folder or the temporary folder does not have enough free space for the download.</source>
+        <translation>Not enough disk space · free up space or pick another folder
+The download folder or the temporary folder does not have enough free space for the download.</translation>
     </message>
     <message>
         <source>Video data arrived corrupted · try again later
@@ -218,6 +348,158 @@ Part of the video kept arriving incomplete from the server. Try again later.</tr
     <message>
         <source>Failed to fetch video information</source>
         <translation>Could not fetch the video information.</translation>
+    </message>
+</context>
+<context>
+    <name>SectionEditDialog</name>
+    <message>
+        <source>Edit sections</source>
+        <translation>Edit sections</translation>
+    </message>
+    <message>
+        <source>+ Add section</source>
+        <translation>+ Add section</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Cancel</translation>
+    </message>
+    <message>
+        <source>OK</source>
+        <translation>OK</translation>
+    </message>
+    <message>
+        <source>A download is waiting for this card — it continues when you close this window</source>
+        <translation>A download is waiting for this card — it continues when you close this window</translation>
+    </message>
+    <message>
+        <source>The order is the file number (_N)</source>
+        <translation>The order is the file number (_N)</translation>
+    </message>
+    <message>
+        <source>Move up</source>
+        <translation>Move up</translation>
+    </message>
+    <message>
+        <source>Move down</source>
+        <translation>Move down</translation>
+    </message>
+    <message>
+        <source>Delete section</source>
+        <translation>Delete section</translation>
+    </message>
+    <message>
+        <source>Clear values</source>
+        <translation>Clear values</translation>
+    </message>
+    <message>
+        <source>Sections / maximum · frame rate · end of the video</source>
+        <translation>Sections / maximum · frame rate · end of the video</translation>
+    </message>
+    <message>
+        <source>Add a section (up to {0})</source>
+        <translation>Add a section (up to {0})</translation>
+    </message>
+    <message>
+        <source>Sum of the section lengths</source>
+        <translation>Sum of the section lengths</translation>
+    </message>
+    <message>
+        <source>Digits fill from the right, up to {0} (0100 = 1 minute) · &apos;.&apos; moves to the frame field</source>
+        <translation>Digits fill from the right, up to {0} (0100 = 1 minute) · &apos;.&apos; moves to the frame field</translation>
+    </message>
+    <message>
+        <source>Frame number, 0 to {0}</source>
+        <translation>Frame number, 0 to {0}</translation>
+    </message>
+    <message>
+        <source>Empty = start of the video</source>
+        <translation>Empty = start of the video</translation>
+    </message>
+    <message>
+        <source>Empty = end of the video</source>
+        <translation>Empty = end of the video</translation>
+    </message>
+</context>
+<context>
+    <name>SectionEditViewModel</name>
+    <message>
+        <source>Could not read the video information.
+Check your connection and cookies, then open this window again.</source>
+        <translation>Could not read the video information.
+Check your connection and cookies, then open this window again.</translation>
+    </message>
+    <message>
+        <source>Reading the video information...</source>
+        <translation>Reading the video information...</translation>
+    </message>
+    <message>
+        <source>Above the maximum — leaving the field sets it to the maximum</source>
+        <translation>Above the maximum — leaving the field sets it to the maximum</translation>
+    </message>
+    <message>
+        <source>Set to the maximum ({0})</source>
+        <translation>Set to the maximum ({0})</translation>
+    </message>
+    <message>
+        <source>Total {0}</source>
+        <translation>Total {0}</translation>
+    </message>
+    <message>
+        <source>Sections add up to more than the video</source>
+        <translation>Sections add up to more than the video</translation>
+    </message>
+    <message>
+        <source>Sections {0} · Video {1}</source>
+        <translation>Sections {0} · Video {1}</translation>
+    </message>
+    <message>
+        <source>Sections {0} / {1} · {2}fps · video ends at {3}</source>
+        <translation>Sections {0} / {1} · {2}fps · video ends at {3}</translation>
+    </message>
+    <message>
+        <source>Invalid timecode format</source>
+        <translation>Invalid timecode format</translation>
+    </message>
+    <message>
+        <source>Minutes and seconds must be below 60</source>
+        <translation>Minutes and seconds must be below 60</translation>
+    </message>
+    <message>
+        <source>Frame number must be below the frame rate</source>
+        <translation>Frame number must be below the frame rate</translation>
+    </message>
+    <message>
+        <source>Start must be before end</source>
+        <translation>Start must be before end</translation>
+    </message>
+    <message>
+        <source>Selection is outside the video</source>
+        <translation>Selection is outside the video</translation>
+    </message>
+    <message>
+        <source>Selection is shorter than one frame</source>
+        <translation>Selection is shorter than one frame</translation>
+    </message>
+    <message>
+        <source>Duplicate selection</source>
+        <translation>Duplicate selection</translation>
+    </message>
+    <message>
+        <source>Too many selections</source>
+        <translation>Too many selections</translation>
+    </message>
+    <message>
+        <source>Empty — this row is ignored</source>
+        <translation>Empty — this row is ignored</translation>
+    </message>
+    <message>
+        <source>Past the end of the video — leaving the field sets it to the end</source>
+        <translation>Past the end of the video — leaving the field sets it to the end</translation>
+    </message>
+    <message>
+        <source>Set to the end of the video ({0})</source>
+        <translation>Set to the end of the video ({0})</translation>
     </message>
 </context>
 <context>
@@ -289,6 +571,17 @@ Part of the video kept arriving incomplete from the server. Try again later.</tr
     <message>
         <source>Open</source>
         <translation>Open</translation>
+    </message>
+</context>
+<context>
+    <name>TimecodeEdit</name>
+    <message>
+        <source>Copy</source>
+        <translation>Copy</translation>
+    </message>
+    <message>
+        <source>Paste</source>
+        <translation>Paste</translation>
     </message>
 </context>
 <context>

@@ -1,0 +1,1088 @@
+"""하이브리드 컷(core/utils/hybrid_cut.py)과 정합 판정(core/utils/cut_check.py) 테스트 (#309).
+
+실제 ffmpeg(imageio-ffmpeg 동봉 — 기존 remux 테스트와 같은 바이너리)를 실행한다. 입력
+영상은 lavfi 소스로 테스트 안에서 몇 초짜리를 만든다. 저장소에 영상 파일을 두지 않는다.
+
+입력 세 가지:
+- mp4: 320x240 · 30fps · 4초(120프레임) · B프레임(재정렬 지연 1) · 키프레임 0·30·42·72·90
+  (GOP 길이가 30 · 12 · 30 · 18 · 30프레임으로 고르지 않다)
+- 간격이 고르지 않은 mp4: 위와 같되 7프레임마다 한 프레임이 200틱(timescale 15360) 늦다
+- fMP4: 부호화 1280x736 + 아래 16줄 크롭 · 30fps · 4초(120프레임) · 재정렬 지연 2 ·
+  키프레임 0·30·60·90 · 1초 세그먼트 넷을 초기화 세그먼트 뒤에 이어 붙인 파일
+
+핵심 계약:
+- 잘라 낸 파일이 정합 판정 다섯 항목을 모두 통과한다
+- 시작이 키프레임이면 머리를 재인코딩하지 않고, 한 GOP 안의 구간은 통째로 재인코딩한다
+- MPEG-TS 입력은 거부하고, 중간 파일은 성공·실패 모두 지운다
+"""
+
+import os
+import struct
+import subprocess
+from dataclasses import replace
+from fractions import Fraction
+
+import pytest
+
+import core.utils.hybrid_cut as cut_module
+from core.api.fmp4 import build_fmp4_index, fmp4_origin, parse_init_segment, parse_media_segment
+from core.api.hls import parse_media_playlist
+from core.api.mp4 import parse_moov, read_mp4_index
+from core.models.cut import CutFrames, CutPiece
+from core.utils.cut_check import check_cut
+from core.utils.ffmpeg import FFmpegTimeoutError, get_ffmpeg_exe, parse_out_time, run_ffmpeg
+from core.utils.hybrid_cut import (
+    CUT_FAILED,
+    CUT_TIMEOUT,
+    CUT_UNSUPPORTED,
+    CutError,
+    cut_frames_from_fmp4,
+    cut_frames_from_mp4,
+    plan_cut,
+)
+from core.utils.paths import cut_temp_dir_for
+from tests.unit.core import reference_cut
+from tests.unit.core.reference_cut import hybrid_cut
+from tests.unit.core.mp4_builder import audio_spec, build_mp4, video_spec
+from tests.unit.core.ts_builder import Frame, build_ts
+
+MP4_KEYFRAMES = (0, 30, 42, 72, 90)  # mp4 입력의 키프레임 — -force_key_frames 0,1,1.4,2.4,3 (30fps)
+FMP4_KEYFRAMES = (0, 30, 60, 90)  # fMP4 입력의 키프레임 — keyint 30
+
+
+def _ffmpeg(*args: str, cwd=None) -> None:
+    """테스트 입력을 만드는 ffmpeg 실행 — 실패하면 stderr와 함께 테스트를 실패시킨다."""
+    done = subprocess.run(
+        [get_ffmpeg_exe(), "-hide_banner", "-v", "error", "-y", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert done.returncode == 0, done.stderr
+
+
+def _lavfi(size: str, seconds: int) -> list[str]:
+    return [
+        "-f", "lavfi", "-i", f"testsrc2=size={size}:rate=30:duration={seconds}",
+        "-f", "lavfi", "-i", f"sine=frequency=440:sample_rate=48000:duration={seconds}",
+        "-c:a", "aac", "-ac", "2", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "veryfast",
+    ]  # fmt: skip
+
+
+@pytest.fixture(scope="module")
+def mp4_source(tmp_path_factory) -> tuple[str, CutFrames]:
+    """mp4 입력과 그 프레임 정보."""
+    path = str(tmp_path_factory.mktemp("cut_mp4") / "source.mp4")
+    _ffmpeg(
+        *_lavfi("320x240", 4),
+        "-bf", "2", "-force_key_frames", "0,1,1.4,2.4,3",
+        "-x264-params", "b-pyramid=none:keyint=300:min-keyint=1:scenecut=0",
+        path,
+    )  # fmt: skip
+    return path, _mp4_frames(path)
+
+
+@pytest.fixture(scope="module")
+def uneven_source(tmp_path_factory) -> tuple[str, CutFrames]:
+    """프레임 간격이 고르지 않은 mp4 입력과 그 프레임 정보."""
+    path = str(tmp_path_factory.mktemp("cut_uneven") / "source.mp4")
+    _ffmpeg(
+        *_lavfi("320x240", 4),
+        # 30fps 격자(512틱)에서 7프레임마다 한 프레임(N % 7 == 3)을 200틱 늦춘다
+        "-vf", "settb=1/15360,setpts='N*512+if(eq(mod(N,7),3),200,0)'",
+        "-fps_mode", "passthrough", "-enc_time_base:v", "1:15360", "-video_track_timescale", "15360",
+        "-bf", "2", "-force_key_frames", "0,1,1.4,2.4,3",
+        "-x264-params", "b-pyramid=none:keyint=300:min-keyint=1:scenecut=0",
+        path,
+    )  # fmt: skip
+    return path, _mp4_frames(path)
+
+
+@pytest.fixture(scope="module")
+def gappy_source(tmp_path_factory) -> tuple[str, CutFrames]:
+    """프레임 20~22가 빠진 mp4 입력과 그 프레임 정보 — 프레임 19 뒤에 3프레임만큼 빈 자리가 있다."""
+    path = str(tmp_path_factory.mktemp("cut_gappy") / "source.mp4")
+    _ffmpeg(
+        *_lavfi("320x240", 4),
+        "-vf", "settb=1/15360,setpts=N*512,select='not(between(n,20,22))'",
+        "-fps_mode", "passthrough", "-enc_time_base:v", "1:15360", "-video_track_timescale", "15360",
+        "-bf", "2", "-force_key_frames", "0,1,1.4,2.4,3",
+        "-x264-params", "b-pyramid=none:keyint=300:min-keyint=1:scenecut=0",
+        path,
+    )  # fmt: skip
+    return path, _mp4_frames(path)
+
+
+def _mp4_frames(path: str) -> CutFrames:
+    def read(offset: int, size: int) -> bytes:
+        with open(path, "rb") as f:
+            f.seek(offset)
+            return f.read(size)
+
+    return cut_frames_from_mp4(read_mp4_index(read))
+
+
+@pytest.fixture(scope="module")
+def fmp4_parts(tmp_path_factory):
+    """fMP4 입력의 재료 — (폴더, 초기화 세그먼트 bytes, 세그먼트 bytes 목록)."""
+    folder = tmp_path_factory.mktemp("cut_fmp4")
+    _ffmpeg(
+        *_lavfi("1280x736", 4),
+        "-bf", "3", "-x264-params", "b-pyramid=normal:crop-rect=0,0,0,16:keyint=30:min-keyint=30:scenecut=0",
+        "-f", "hls", "-hls_time", "1", "-hls_list_size", "0", "-hls_segment_type", "fmp4",
+        "-hls_fmp4_init_filename", "init.mp4", "-hls_segment_filename", "seg-%03d.m4s", "media.m3u8",
+        cwd=str(folder),
+    )  # fmt: skip
+    playlist = parse_media_playlist((folder / "media.m3u8").read_text(encoding="utf-8"))
+    init_bytes = (folder / playlist.init_uri).read_bytes()
+    return folder, init_bytes, [(folder / name).read_bytes() for name in playlist.segments]
+
+
+def _fmp4_input(
+    folder, name: str, init_bytes: bytes, media: list[bytes], skip: int
+) -> tuple[str, CutFrames]:
+    """초기화 세그먼트 + media[skip:]를 이어 붙인 입력 파일과 그 프레임 정보."""
+    init = parse_init_segment(init_bytes)
+    parsed = [parse_media_segment(data, init) for data in media]
+    origin = fmp4_origin(init, parsed[0])  # VOD 시작은 언제나 첫 세그먼트에서 구한다
+    path = str(folder / name)
+    with open(path, "wb") as f:
+        f.write(init_bytes + b"".join(media[skip:]))
+    index = build_fmp4_index(init, parsed[skip:], origin)
+    input_start = float(fmp4_origin(init, parsed[skip]) - origin)
+    return path, cut_frames_from_fmp4(init, parsed[skip:], index, input_start)
+
+
+@pytest.fixture(scope="module")
+def fmp4_source(fmp4_parts) -> tuple[str, CutFrames]:
+    """세그먼트 전부를 이은 fMP4 입력."""
+    folder, init_bytes, media = fmp4_parts
+    return _fmp4_input(folder, "joined.mp4", init_bytes, media, skip=0)
+
+
+def _cut(source: tuple[str, CutFrames], first: int, last: int, tmp_path):
+    path, frames = source
+    result = hybrid_cut(path, frames, first, last, str(tmp_path / "out.mp4"), inspect=True)
+    return result, check_cut(frames, result)
+
+
+def _kinds(result) -> tuple[str, ...]:
+    return tuple(piece.kind for piece in result.plan.pieces)
+
+
+def _synthetic_frames(count: int = 12, keyframes=(0, 4, 8), delay: float = 0.1) -> CutFrames:
+    """ffmpeg 없이 계획·명령을 볼 때 쓰는 프레임 정보 — 10fps, DTS는 PTS보다 delay초 앞선다."""
+    return CutFrames(
+        frame_pts=tuple(n / 10 for n in range(count)),
+        frame_dts=tuple(n / 10 - delay for n in range(count)),
+        keyframes=tuple(keyframes),
+        timescale=1000,
+        frame_duration=0.1,
+        audio_start=0.0,
+        audio_end=count / 10,
+    )
+
+
+# ================================================================ 입력의 전제
+
+
+def test_generated_mp4_has_uneven_gops_and_b_frames(mp4_source):
+    """만든 mp4 입력은 고르지 않은 GOP와 B프레임 재정렬 지연을 가져야 한다.
+
+    -force_key_frames 0,1,1.4,2.4,3 · -bf 2 · b-pyramid=none
+    -> 키프레임 (0, 30, 42, 72, 90), 프레임 120개, 키프레임의 PTS − DTS = 1프레임
+    """
+    _path, frames = mp4_source
+
+    assert frames.keyframes == MP4_KEYFRAMES
+    assert len(frames.frame_pts) == 120
+    assert frames.frame_pts[30] - frames.frame_dts[30] == pytest.approx(frames.frame_duration)
+
+
+def test_generated_fmp4_is_coded_larger_than_displayed(fmp4_source, tmp_path):
+    """만든 fMP4 입력은 1280x736으로 부호화되고 아래 16줄을 크롭하며 재정렬 지연이 2프레임이어야 한다.
+
+    testsrc2 1280x736 · crop-rect=0,0,0,16 · b-pyramid=normal
+    -> coded (1280, 736), crop (0, 0, 0, 16), reorder_delay 2, 키프레임 (0, 30, 60, 90)
+    """
+    path, frames = fmp4_source
+
+    video = hybrid_cut(path, frames, 0, 5, str(tmp_path / "probe.mp4")).source.video
+
+    assert (video.coded_width, video.coded_height, video.crop) == (1280, 736, (0, 0, 0, 16))
+    assert video.reorder_delay == 2
+    assert frames.keyframes == FMP4_KEYFRAMES
+
+
+def test_generated_uneven_mp4_has_three_frame_intervals(uneven_source):
+    """만든 간격이 고르지 않은 mp4 입력은 프레임 간격이 세 가지여야 한다.
+
+    setpts로 7프레임마다 한 프레임을 200틱 늦춤 (timescale 15360, 한 프레임 512틱)
+    -> 간격 {312, 512, 712}틱, 키프레임 (0, 30, 42, 72, 90)
+    """
+    _path, frames = uneven_source
+
+    gaps = {round((b - a) * 15360) for a, b in zip(frames.frame_pts, frames.frame_pts[1:])}
+
+    assert gaps == {312, 512, 712}
+    assert frames.keyframes == MP4_KEYFRAMES
+
+
+# ================================================================ 컷 — mp4
+
+
+def test_cut_between_non_keyframes_passes_every_check(mp4_source, tmp_path):
+    """시작과 끝이 키프레임이 아닌 구간을 자르면 머리·가운데·꼬리로 나뉘고 판정 다섯 항목을 모두 통과해야 한다.
+
+    mp4, 프레임 35~80 (키프레임 30 · 42 · 72 사이)
+    -> 조각 (head 35~41, mid 42~71, tail 72~80), check.ok
+    """
+    result, check = _cut(mp4_source, 35, 80, tmp_path)
+
+    assert [(p.kind, p.first, p.end) for p in result.plan.pieces] == [
+        ("head", 35, 42),
+        ("mid", 42, 72),
+        ("tail", 72, 81),
+    ]
+    assert check.ok, check.notes
+
+
+def test_cut_starting_on_keyframe_does_not_reencode_the_head(mp4_source, tmp_path):
+    """구간의 시작이 키프레임이면 머리 조각 없이 그 프레임부터 복사해야 한다.
+
+    mp4, 프레임 42~80 (42는 키프레임)
+    -> 조각 (mid, tail), 첫 조각이 프레임 42부터, check.ok
+    """
+    result, check = _cut(mp4_source, 42, 80, tmp_path)
+
+    assert _kinds(result) == ("mid", "tail")
+    assert result.plan.pieces[0].first == 42
+    assert check.ok, check.notes
+
+
+@pytest.mark.parametrize(
+    ("first", "last"), [(45, 60), (42, 50)], ids=["inside-gop", "from-keyframe"]
+)
+def test_cut_inside_one_gop_reencodes_the_whole_range(mp4_source, tmp_path, first, last):
+    """시작과 끝이 같은 GOP 안이면 구간 전체를 조각 하나로 재인코딩해야 한다.
+
+    mp4, 프레임 45~60 · 42~50 (둘 다 키프레임 42와 72 사이)
+    -> 조각 (whole,), check.ok
+    """
+    result, check = _cut(mp4_source, first, last, tmp_path)
+
+    assert _kinds(result) == ("whole",)
+    assert check.ok, check.notes
+
+
+def test_cut_up_to_last_frame_passes_every_check(mp4_source, tmp_path):
+    """구간의 끝이 파일의 마지막 프레임이면 꼬리를 끝까지 재인코딩하고 판정을 통과해야 한다.
+
+    mp4, 프레임 75~119 (마지막 키프레임 90, 가운데 없음)
+    -> 조각 (head 75~89, tail 90~119), check.ok
+    """
+    result, check = _cut(mp4_source, 75, 119, tmp_path)
+
+    assert [(p.kind, p.first, p.end) for p in result.plan.pieces] == [
+        ("head", 75, 90),
+        ("tail", 90, 120),
+    ]
+    assert check.ok, check.notes
+
+
+def test_cut_from_first_frame_passes_every_check(mp4_source, tmp_path):
+    """구간이 파일의 첫 프레임에서 시작하면 탐색 없이 복사부터 시작하고 판정을 통과해야 한다.
+
+    mp4, 프레임 0~50
+    -> 조각 (mid 0~41, tail 42~50), check.ok
+    """
+    result, check = _cut(mp4_source, 0, 50, tmp_path)
+
+    assert [(p.kind, p.first, p.end) for p in result.plan.pieces] == [
+        ("mid", 0, 42),
+        ("tail", 42, 51),
+    ]
+    assert check.ok, check.notes
+
+
+def test_cut_keeps_uneven_frame_intervals(uneven_source, tmp_path):
+    """프레임 간격이 고르지 않은 입력을 자르면 재인코딩 조각의 프레임 시각도 원본과 같아야 한다.
+
+    간격 {312, 512, 712}틱인 mp4, 프레임 33~80 (머리 33~41과 꼬리 72~80에 늦춘 프레임이 든다)
+    -> 조각 (head, mid, tail), check.ok
+    """
+    result, check = _cut(uneven_source, 33, 80, tmp_path)
+
+    assert _kinds(result) == ("head", "mid", "tail")
+    assert check.ok, check.notes
+
+
+def test_cut_ending_before_a_missing_frame_passes_every_check(gappy_source, tmp_path):
+    """끝 프레임 바로 뒤에 프레임이 빠진 자리가 있는 구간도 판정 다섯 항목을 통과해야 한다.
+
+    프레임 20~22가 빠진 mp4, 구간 프레임 5~19 (끝 프레임 19의 다음 프레임은 4프레임 뒤에 있다)
+    -> 다음 프레임의 PTS − 끝 프레임의 PTS == 4프레임, check.ok
+       (오디오는 다음 프레임의 PTS까지 들고, 영상은 끝 프레임 + 한 프레임에서 끝난다)
+    """
+    _path, frames = gappy_source
+
+    result, check = _cut(gappy_source, 5, 19, tmp_path)
+
+    gap = frames.frame_pts[20] - frames.frame_pts[19]
+    assert round(gap / frames.frame_duration) == 4
+    assert result.plan.last == 19
+    assert check.ok, check.notes
+
+
+def test_cut_reads_and_keeps_non_square_pixel_ratio(tmp_path):
+    """화소 가로세로비가 1:1이 아닌 입력을 자르면 그 비율을 읽고 재인코딩 조각에도 같은 비율이 남아야 한다.
+
+    setsar=12/11로 만든 mp4(SPS의 aspect_ratio_idc 2), 프레임 10~40 (키프레임은 0뿐)
+    -> 원본 sar (12, 11), 조각 (whole,), check.ok
+    """
+    path = str(tmp_path / "source.mp4")
+    _ffmpeg(*_lavfi("320x240", 2), "-vf", "setsar=12/11", "-bf", "0", path)
+
+    result, check = _cut((path, _mp4_frames(path)), 10, 40, tmp_path)
+
+    assert result.source.video.sar == (12, 11)
+    assert _kinds(result) == ("whole",)
+    assert check.ok, check.notes
+
+
+@pytest.mark.parametrize(
+    ("setsar", "container_aspect", "sar"),
+    [
+        # SPS는 화소 가로세로비를 밝히지 않고 컨테이너(pasp)만 1:1을 적는다 —
+        # 세로 방송 다시보기의 원본 변형이 이 모양이다. 320x240에 4:3이면 화소는 1:1이다
+        ("0", "4:3", (0, 0)),
+        ("0", None, (0, 0)),
+        ("4/3", None, (4, 3)),
+        ("4/3", "4:3", (4, 3)),  # 컨테이너는 1:1을 적는다 — SPS의 4:3과 다르다
+        ("1", None, (1, 1)),
+    ],
+    ids=[
+        "unspecified-container-square",
+        "unspecified",
+        "4:3",
+        "4:3-container-square",
+        "square",
+    ],
+)
+def test_reencoded_head_and_tail_carry_the_pixel_ratio_of_the_source(
+    tmp_path, setsar, container_aspect, sar
+):
+    """머리·꼬리를 재인코딩한 조각의 화소 가로세로비는 원본 SPS가 적은 그대로여야 한다 — 밝히지 않았으면 밝히지 않은 채로.
+
+    setsar=<주석의 값>으로 만든 320x240 mp4(키프레임 0·30·42·72·90). container_aspect가
+    있으면 스트림을 그대로 둔 채 컨테이너에만 그 화면 비율을 적는다. 프레임 10~80
+    -> 원본 sar == 주석의 값, 조각 (head, mid, tail), 재인코딩한 두 조각의 sar == 원본 sar, check.ok
+    """
+    path = str(tmp_path / "source.mp4")
+    _ffmpeg(
+        *_lavfi("320x240", 4),
+        "-vf", f"setsar={setsar}",
+        "-bf", "2", "-force_key_frames", "0,1,1.4,2.4,3",
+        "-x264-params", "b-pyramid=none:keyint=300:min-keyint=1:scenecut=0",
+        path,
+    )  # fmt: skip
+    if container_aspect is not None:
+        encoded, path = path, str(tmp_path / "tagged.mp4")
+        _ffmpeg("-i", encoded, "-c", "copy", "-aspect", container_aspect, path)
+        with open(path, "rb") as f:
+            assert b"pasp" in f.read()  # 컨테이너가 화소 가로세로비를 적었다
+
+    result, check = _cut((path, _mp4_frames(path)), 10, 80, tmp_path)
+
+    assert result.source.video.sar == sar
+    assert _kinds(result) == ("head", "mid", "tail")
+    reencoded = {info.piece.kind: info.video.sar for info in result.pieces if info.piece.reencoded}
+    assert reencoded == {"head": sar, "tail": sar}
+    assert check.ok, check.notes
+
+
+# ================================================================ 컷 — fMP4
+
+
+def test_cut_matches_coded_size_and_reorder_delay_of_fmp4_source(fmp4_source, tmp_path):
+    """부호화 크기가 화면보다 큰 fMP4를 자르면 재인코딩 조각의 부호화 크기·크롭·재정렬 지연이 원본과 같아야 한다.
+
+    fMP4(부호화 1280x736, 크롭 16, 지연 2), 프레임 10~75
+    -> 머리·꼬리 조각의 coded (1280, 736) · crop (0, 0, 0, 16) · reorder_delay 2, check.ok
+    """
+    result, check = _cut(fmp4_source, 10, 75, tmp_path)
+
+    assert _kinds(result) == ("head", "mid", "tail")
+    for info in result.pieces:
+        if info.piece.reencoded:
+            assert (info.video.coded_width, info.video.coded_height) == (1280, 736)
+            assert info.video.crop == (0, 0, 0, 16)
+            assert info.video.reorder_delay == 2
+    assert check.ok, check.notes
+
+
+def test_cut_reads_input_that_starts_mid_vod(fmp4_parts, tmp_path):
+    """VOD의 뒤쪽 세그먼트만 이어 붙인 입력에서도 요청한 프레임을 잘라 판정을 통과해야 한다.
+
+    초기화 세그먼트 + 둘째~넷째 세그먼트(VOD의 1초부터), 프레임 5~70 (이 입력 안의 번호)
+    -> input_start가 0보다 크고, check.ok
+    """
+    folder, init_bytes, media = fmp4_parts
+    source = _fmp4_input(folder, "partial.mp4", init_bytes, media, skip=1)
+
+    result, check = _cut(source, 5, 70, tmp_path)
+
+    assert source[1].input_start > 0.9
+    assert _kinds(result) == ("head", "mid", "tail")
+    assert check.ok, check.notes
+
+
+# ================================================================ 실패·정리
+
+
+def test_cut_rejects_transport_stream(tmp_path):
+    """입력이 MPEG-TS면 미지원 키로 CutError를 내야 한다.
+
+    188바이트 패킷으로 된 TS 파일
+    -> message_key == CUT_UNSUPPORTED
+    """
+    path = tmp_path / "segment.ts"
+    path.write_bytes(build_ts([Frame(pts=3000, idr=True), Frame(pts=6000)]))
+
+    with pytest.raises(CutError) as info:
+        hybrid_cut(str(path), _synthetic_frames(), 0, 1, str(tmp_path / "out.mp4"))
+
+    assert info.value.message_key == CUT_UNSUPPORTED
+
+
+def test_cut_removes_temp_folder_after_success(mp4_source, tmp_path):
+    """컷이 성공하면 중간 파일 폴더가 남지 않아야 한다.
+
+    mp4, 프레임 35~80
+    -> 산출물은 있고 cut_temp_dir_for(산출물) 폴더는 없음
+    """
+    result, _check = _cut(mp4_source, 35, 80, tmp_path)
+
+    assert os.path.isfile(result.output_path)
+    assert not os.path.exists(cut_temp_dir_for(result.output_path))
+
+
+def test_cut_removes_temp_folder_and_output_after_failure(mp4_source, tmp_path, monkeypatch):
+    """컷 도중 ffmpeg가 실패하면 실패 키로 CutError를 내고 중간 파일 폴더와 산출물을 남기지 않아야 한다.
+
+    둘째 ffmpeg 실행(가운데 복사)이 종료 코드 1로 끝나도록 바꿈
+    -> message_key == CUT_FAILED, 임시 폴더 없음, 산출물 없음
+    """
+    path, frames = mp4_source
+    output = str(tmp_path / "out.mp4")
+    real = cut_module.run_ffmpeg
+    calls = []
+
+    def flaky(args, **kwargs):
+        calls.append(args)
+        # 0번은 입력 읽기, 1번은 머리, 2번이 가운데 복사다
+        if len(calls) == 3:
+            return subprocess.CompletedProcess(args, 1, "", "boom")
+        return real(args, **kwargs)
+
+    monkeypatch.setattr(cut_module, "run_ffmpeg", flaky)
+
+    with pytest.raises(CutError) as info:
+        hybrid_cut(path, frames, 35, 80, output)
+
+    assert info.value.message_key == CUT_FAILED
+    assert not os.path.exists(cut_temp_dir_for(output))
+    assert not os.path.exists(output)
+
+
+def test_cut_removes_written_output_when_joining_fails(mp4_source, tmp_path, monkeypatch):
+    """조각을 합치는 실행이 산출물을 쓴 뒤 실패하면 그 산출물을 남기지 않아야 한다.
+
+    합치기(마지막 인자가 산출물 경로인 실행)를 실제로 돌린 뒤 종료 코드 1로 바꿈
+    -> 합치기가 산출물을 썼고, CutError 뒤에는 산출물 없음
+    """
+    path, frames = mp4_source
+    output = str(tmp_path / "out.mp4")
+    real = cut_module.run_ffmpeg
+    written = []
+
+    def fails_after_writing(args, **kwargs):
+        done = real(args, **kwargs)
+        if args[-1] == output:
+            written.append(os.path.isfile(output))
+            return subprocess.CompletedProcess(args, 1, "", "boom")
+        return done
+
+    monkeypatch.setattr(cut_module, "run_ffmpeg", fails_after_writing)
+
+    with pytest.raises(CutError) as info:
+        hybrid_cut(path, frames, 35, 80, output)
+
+    assert written == [True]
+    assert info.value.message_key == CUT_FAILED
+    assert not os.path.exists(output)
+
+
+def test_cut_reports_timeout_with_its_own_key(mp4_source, tmp_path, monkeypatch):
+    """ffmpeg가 제한 시간을 넘기면 시간 초과 키로 CutError를 내야 한다.
+
+    ffmpeg 실행이 FFmpegTimeoutError를 내도록 바꿈
+    -> message_key == CUT_TIMEOUT
+    """
+    path, frames = mp4_source
+
+    def slow(args, **kwargs):
+        raise FFmpegTimeoutError("너무 오래 걸렸다")
+
+    monkeypatch.setattr(cut_module, "run_ffmpeg", slow)
+
+    with pytest.raises(CutError) as info:
+        hybrid_cut(path, frames, 35, 80, str(tmp_path / "out.mp4"))
+
+    assert info.value.message_key == CUT_TIMEOUT
+
+
+def test_check_cut_needs_inspected_result(mp4_source, tmp_path):
+    """check_cut은 조각 정보 없이 자른 결과를 받으면 ValueError를 내야 한다.
+
+    hybrid_cut(inspect=False)의 결과
+    -> ValueError
+    """
+    path, frames = mp4_source
+    result = hybrid_cut(path, frames, 45, 60, str(tmp_path / "out.mp4"))
+
+    with pytest.raises(ValueError):
+        check_cut(frames, result)
+
+
+# ================================================================ 계획 (ffmpeg 없음)
+
+
+@pytest.mark.parametrize(
+    ("first", "last", "expected"),
+    [
+        (1, 9, [("head", 1, 4), ("mid", 4, 8), ("tail", 8, 10)]),  # 양 끝이 키프레임이 아니다
+        (4, 9, [("mid", 4, 8), ("tail", 8, 10)]),  # 시작이 키프레임
+        (1, 6, [("head", 1, 4), ("tail", 4, 7)]),  # 복사할 GOP가 없다
+        (5, 7, [("whole", 5, 8)]),  # 한 GOP 안
+        (4, 6, [("whole", 4, 7)]),  # 키프레임에서 시작해 같은 GOP 안에서 끝난다
+        (9, 11, [("whole", 9, 12)]),  # 뒤에 키프레임이 없다
+        (4, 8, [("mid", 4, 8), ("tail", 8, 9)]),  # 끝이 키프레임 — 그 한 프레임이 꼬리다
+    ],
+)
+def test_plan_cut_splits_range_at_keyframes(first, last, expected):
+    """plan_cut은 구간을 키프레임 위치에 따라 머리·가운데·꼬리 또는 통째 조각으로 나눠야 한다.
+
+    프레임 12개, 키프레임 (0, 4, 8)
+    -> 주석의 경우마다 (종류, 첫 프레임, 끝 + 1) 목록
+    """
+    plan = plan_cut(_synthetic_frames(), first, last)
+
+    assert [(p.kind, p.first, p.end) for p in plan.pieces] == expected
+
+
+@pytest.mark.parametrize(("first", "last"), [(-1, 3), (5, 4), (0, 12)])
+def test_plan_cut_rejects_range_outside_frames(first, last):
+    """plan_cut은 프레임 번호가 범위를 벗어나거나 뒤집혔으면 ValueError를 내야 한다.
+
+    프레임 12개, 구간 (−1, 3) · (5, 4) · (0, 12)
+    -> ValueError
+    """
+    with pytest.raises(ValueError):
+        plan_cut(_synthetic_frames(), first, last)
+
+
+def test_plan_cut_rejects_range_before_first_keyframe():
+    """plan_cut은 구간 시작보다 앞(또는 같은) 키프레임이 없으면 ValueError를 내야 한다.
+
+    키프레임 (4, 8), 구간 1~6
+    -> ValueError
+    """
+    with pytest.raises(ValueError):
+        plan_cut(_synthetic_frames(keyframes=(4, 8)), 1, 6)
+
+
+# ================================================================ 명령 (ffmpeg 없음)
+
+
+def _option(args: list[str], name: str, nth: int = 0) -> str:
+    """args에서 nth번째 name 옵션의 값."""
+    positions = [i for i, arg in enumerate(args) if arg == name]
+    return args[positions[nth] + 1]
+
+
+def test_audio_command_starts_decoding_before_the_range():
+    """오디오 명령은 구간 시작보다 50ms 앞에서 디코드를 시작하고 그 50ms를 버려야 한다.
+
+    10fps 프레임 정보, 구간 프레임 5~9 (0.5~1.0초)
+    -> 입력측 -ss 0.45, 출력측 -ss 0.05, -t 0.5
+    """
+    frames = _synthetic_frames()
+
+    args = reference_cut._audio_command("in.mp4", frames, plan_cut(frames, 5, 9), 192)
+
+    assert float(_option(args, "-ss", 0)) == pytest.approx(0.45)
+    assert args.index("-ss") < args.index("-i") < len(args) - args[::-1].index("-ss") - 1
+    assert float(_option(args, "-ss", 1)) == pytest.approx(0.05)
+    assert float(_option(args, "-t")) == pytest.approx(0.5)
+    assert _option(args, "-b:a") == "192k"
+
+
+def test_audio_command_does_not_seek_before_file_start():
+    """오디오 명령은 구간이 파일의 시작이면 탐색하지 않아야 한다.
+
+    구간 프레임 0~3 (0.0~0.4초)
+    -> -ss 없음, -t 0.4
+    """
+    frames = _synthetic_frames()
+
+    args = reference_cut._audio_command("in.mp4", frames, plan_cut(frames, 0, 3), None)
+
+    assert "-ss" not in args
+    assert "-b:a" not in args
+    assert float(_option(args, "-t")) == pytest.approx(0.4)
+
+
+def test_copy_command_seeks_exactly_to_keyframe_and_stops_by_dts():
+    """복사 명령은 키프레임 시각 그대로 탐색하고, 길이를 끝 키프레임의 DTS와 그 직전 DTS의 중간으로 줘야 한다.
+
+    10fps, DTS = PTS − 0.1, 조각 mid 프레임 4~7 (끝 키프레임 8의 DTS 0.7, 직전 DTS 0.6)
+    -> -ss 0.4, -t 0.25 (= 0.65 − 0.4)
+    """
+    frames = _synthetic_frames()
+    piece = plan_cut(frames, 1, 9).pieces[1]
+
+    args = cut_module._copy_command("in.mp4", frames, piece, "mid.mp4")
+
+    assert float(_option(args, "-ss")) == pytest.approx(0.4)
+    assert float(_option(args, "-t")) == pytest.approx(0.25)
+    assert "-to" not in args
+
+
+def test_encode_command_pads_to_coded_size_and_writes_crop(fmp4_source, tmp_path):
+    """재인코딩 명령은 원본의 부호화 크기까지 화면을 늘리고 늘린 만큼 크롭을 적어야 한다.
+
+    원본 부호화 1280x736 · 크롭 아래 16 · 재정렬 지연 2
+    -> -vf pad=1280:736:0:0,fillborders=bottom=16:mode=smear,setsar=1/1(원본 SPS의 비율) · x264-params에 crop-rect=0,0,0,16과 b-pyramid=normal
+    """
+    path, frames = fmp4_source
+    video = hybrid_cut(path, frames, 0, 5, str(tmp_path / "probe.mp4")).source.video
+
+    args = cut_module._x264_args(video, frames.timescale)
+
+    assert video.sar == (1, 1)
+    assert _option(args, "-vf") == "pad=1280:736:0:0,fillborders=bottom=16:mode=smear,setsar=1/1"
+    assert _option(args, "-x264-params") == "b-pyramid=normal:crop-rect=0,0,0,16"
+
+
+def test_encode_command_passes_timestamps_through(fmp4_source, tmp_path):
+    """재인코딩 명령은 타임스탬프를 원본 그대로 넘기고 원본의 timescale로 부호화해야 한다.
+
+    fMP4 입력의 영상 파라미터, timescale = 입력의 timescale
+    -> -fps_mode passthrough, -enc_time_base 1:<timescale>, -video_track_timescale <timescale>
+    """
+    path, frames = fmp4_source
+    video = hybrid_cut(path, frames, 0, 5, str(tmp_path / "probe.mp4")).source.video
+
+    args = cut_module._x264_args(video, frames.timescale)
+
+    assert _option(args, "-fps_mode") == "passthrough"
+    assert _option(args, "-enc_time_base") == f"1:{frames.timescale}"
+    assert _option(args, "-video_track_timescale") == str(frames.timescale)
+
+
+@pytest.mark.parametrize(
+    ("measured", "expected"),
+    [(192, 192), (191, 192), (193, 192), (127, 128), (128, 128), (121, 128), (137, 144), (3, 16)],
+)
+def test_nominal_bitrate_snaps_to_the_nearest_step(measured, expected):
+    """_nominal_bitrate는 오디오 비트레이트를 가장 가까운 16kb/s의 배수로 맞춰야 한다.
+
+    주석의 경우마다 값(kb/s)
+    -> 16의 배수, 0이 되지 않는다
+    """
+    assert reference_cut._nominal_bitrate(measured) == expected
+
+
+@pytest.mark.parametrize(
+    ("stream_bitrate", "expected"),
+    [(192, 192), (191, 192), (128, 128), (None, 192), (0, 192), (7, 192), (513, 192), (512, 512)],
+)
+def test_audio_bitrate_uses_the_stream_value_or_the_default(stream_bitrate, expected):
+    """_audio_bitrate는 CutFrames에 실린 원본 스트림의 값을 16kb/s 단위로 맞춰 쓰고, 값이 없거나 8~512 밖이면 192를 써야 한다.
+
+    오디오가 있는 프레임 정보, audio_bitrate는 주석의 값(kb/s)
+    -> 기대값
+    """
+    frames = replace(_synthetic_frames(), audio_bitrate=stream_bitrate)
+
+    assert reference_cut._audio_bitrate(frames) == expected
+
+
+def test_audio_bitrate_is_none_without_audio():
+    """_audio_bitrate는 오디오가 없는 입력에 None을 돌려줘야 한다.
+
+    audio_start = None, audio_bitrate = 192
+    -> None
+    """
+    frames = replace(_synthetic_frames(), audio_start=None, audio_end=None, audio_bitrate=192)
+
+    assert reference_cut._audio_bitrate(frames) is None
+
+
+def test_generated_inputs_carry_the_declared_audio_bitrate(mp4_source, fmp4_source):
+    """만든 mp4와 fMP4의 프레임 정보에는 컨테이너에 적힌 오디오 비트레이트가 실려야 한다.
+
+    ffmpeg aac 기본값(스테레오 128kb/s)으로 만든 입력
+    -> 둘 다 audio_bitrate == 128
+    """
+    assert (mp4_source[1].audio_bitrate, fmp4_source[1].audio_bitrate) == (128, 128)
+
+
+def test_cut_frames_from_mp4_measures_the_whole_audio_track_when_nothing_is_declared():
+    """cut_frames_from_mp4는 샘플 엔트리에 비트레이트가 없으면 오디오 트랙 전체의 샘플 크기 합 ÷ 길이를 실어야 한다.
+
+    합성 mp4: 샘플 엔트리 없음, 오디오 16샘플 × 2048바이트, 샘플 길이 1024틱(timescale 8000)
+    -> 2048 × 8 ÷ 0.128초 = 128,000bit/s -> audio_bitrate == 128
+    """
+    built = build_mp4([video_spec(), audio_spec(sizes=[2048] * 16)])
+
+    frames = cut_frames_from_mp4(parse_moov(built.moov))
+
+    assert frames.audio_bitrate == 128
+
+
+def _audio_bits_per_second(path: str) -> float:
+    """파일의 오디오 패킷 크기 합 × 8 ÷ 패킷 길이 합 — framecrc의 길이·크기 칸으로 잰다."""
+    done = run_ffmpeg(
+        ["-v", "error", "-i", path, "-map", "0:a:0", "-c", "copy", "-f", "framecrc", "-"],
+        timeout=60,
+    )
+    assert done.returncode == 0, done.stderr
+    rows = [line.split(",") for line in done.stdout.splitlines() if not line.startswith("#")]
+    samples = sum(int(row[3]) for row in rows)
+    assert samples  # 오디오가 없는 파일을 0으로 재고 통과하지 않게
+    return sum(int(row[4]) for row in rows) * 8 * 48000 / samples
+
+
+def test_cut_encodes_audio_at_the_declared_bitrate_not_the_one_ffmpeg_shows(fmp4_parts, tmp_path):
+    """컷은 입력 파일에서 ffmpeg가 보여 주는 값이 아니라 초기화 세그먼트에 적힌 비트레이트로 오디오를 인코딩해야 한다.
+
+    fMP4 입력(오디오 실제 약 128kb/s — ffmpeg가 보여 주는 값도 그렇다)의 초기화 세그먼트에서
+    esds · btrt의 128000을 64000으로 고쳐 씀, 프레임 10~100
+    -> 고친 입력: source.audio_bitrate == 64, 결과 오디오 < 96kb/s
+       그대로 둔 입력: source.audio_bitrate == 128, 결과 오디오 > 96kb/s
+    """
+    folder, init_bytes, media = fmp4_parts
+    declared = struct.pack(">II", 128_000, 128_000)
+    assert init_bytes.count(declared) >= 1  # 고칠 자리가 있다
+    lowered = init_bytes.replace(declared, struct.pack(">II", 64_000, 64_000))
+    results = {}
+    for name, head in (("kept", init_bytes), ("lowered", lowered)):
+        path, frames = _fmp4_input(folder, f"declared_{name}.mp4", head, media, skip=0)
+        output = str(tmp_path / f"{name}.mp4")
+        result = hybrid_cut(path, frames, 10, 100, output)
+        results[name] = (result.source.audio_bitrate, _audio_bits_per_second(output))
+
+    assert results["kept"][0] == 128
+    assert results["lowered"][0] == 64
+    assert results["kept"][1] > 96_000 > results["lowered"][1]
+
+
+def test_encode_command_restores_reorder_delay_the_encoder_left_out():
+    """재인코딩 명령은 인코더가 지연을 주지 않은 조각의 DTS를 원본의 지연만큼 밀고 PTS는 그대로 둬야 한다.
+
+    10fps, timescale 1000, DTS = PTS − 0.1초(100틱), 조각 프레임 3 (키프레임 0의 GOP)
+    -> -bsf:v setts=pts=PTS:dts=DTS-not(STARTPTS-STARTDTS)*100
+    """
+    frames = _synthetic_frames()
+
+    args = cut_module._reorder_delay_args(frames, CutPiece("head", 3, 4))
+
+    assert args == ["-bsf:v", "setts=pts=PTS:dts=DTS-not(STARTPTS-STARTDTS)*100"]
+
+
+def test_encode_command_leaves_timestamps_alone_without_reorder_delay():
+    """재인코딩 명령은 원본에 재정렬 지연이 없으면 DTS를 고치는 옵션을 넣지 않아야 한다.
+
+    10fps, DTS == PTS (B프레임 없는 원본)
+    -> 옵션 없음
+    """
+    frames = _synthetic_frames(delay=0.0)
+
+    assert cut_module._reorder_delay_args(frames, CutPiece("head", 3, 4)) == []
+
+
+# ================================================================ 주변 함수
+
+
+def test_cut_frames_from_mp4_reads_dts_per_frame():
+    """cut_frames_from_mp4는 프레임마다 그 프레임의 DTS를 표시 순서로 돌려줘야 한다.
+
+    합성 mp4: 디코드 순서 I P B B, DTS = 0 · 100 · 200 · 300틱, media_time 100, timescale 1000
+    -> 표시 순서(샘플 0, 2, 3, 1)의 frame_dts = −0.1, 0.1, 0.2, 0.0초
+    """
+    frames = cut_frames_from_mp4(parse_moov(build_mp4([video_spec(), audio_spec()]).moov))
+
+    assert frames.frame_dts[:4] == pytest.approx([-0.1, 0.1, 0.2, 0.0])
+    assert frames.frame_duration == pytest.approx(0.1)
+    assert (frames.audio_start, frames.audio_end) == pytest.approx((0.0, 1.92))
+
+
+def test_cut_temp_dir_sits_next_to_the_output():
+    """cut_temp_dir_for는 산출물과 같은 폴더에 산출물 이름에서 파생한 경로를 돌려줘야 한다.
+
+    산출물 "<폴더>/방송 1080p_1.mp4"
+    -> "<폴더>/CVDv2_cut_방송 1080p_1"
+    """
+    output = os.path.join("folder", "방송 1080p_1.mp4")
+
+    assert cut_temp_dir_for(output) == os.path.join("folder", "CVDv2_cut_방송 1080p_1")
+
+
+def test_run_ffmpeg_returns_exit_code_and_output():
+    """run_ffmpeg는 ffmpeg가 끝나면 종료 코드와 출력을 돌려줘야 한다.
+
+    인자 -version
+    -> returncode 0, stdout이 "ffmpeg version"으로 시작
+    """
+    done = run_ffmpeg(["-version"], timeout=30)
+
+    assert done.returncode == 0
+    assert done.stdout.startswith("ffmpeg version")
+
+
+def test_run_ffmpeg_raises_timeout_error_when_time_runs_out():
+    """run_ffmpeg는 제한 시간을 넘기면 FFmpegTimeoutError를 내야 한다.
+
+    1시간짜리 lavfi 입력을 실시간 속도(-re)로 읽기, 제한 0.5초
+    -> FFmpegTimeoutError
+    """
+    with pytest.raises(FFmpegTimeoutError):
+        run_ffmpeg(
+            ["-re", "-f", "lavfi", "-i", "testsrc2=duration=3600", "-f", "null", "-"], timeout=0.5
+        )
+
+
+def test_mp4_source_frame_rate_is_thirty(mp4_source):
+    """만든 mp4 입력의 프레임 길이는 1/30초여야 한다.
+
+    testsrc2 rate=30
+    -> frame_duration == 1/30
+    """
+    assert Fraction(mp4_source[1].frame_duration).limit_denominator(1000) == Fraction(1, 30)
+
+
+# ================================================================ 단계마다 걸린 시간
+
+
+def test_cut_reports_every_stage_in_the_order_it_ran(mp4_source, tmp_path):
+    """컷은 단계가 끝날 때마다 on_stage를 돈 순서대로 한 번씩 불러야 한다.
+
+    mp4, 프레임 35~80 (머리 · 가운데 · 꼬리 세 조각, 오디오 있음)
+    -> 단계 이름 == [probe, 0_head, 1_mid, 2_tail, audio, mux], 걸린 시간은 모두 0 이상
+    """
+    path, frames = mp4_source
+    stages = []
+
+    hybrid_cut(
+        path,
+        frames,
+        35,
+        80,
+        str(tmp_path / "out.mp4"),
+        on_stage=lambda name, seconds: stages.append((name, seconds)),
+    )
+
+    assert [name for name, _seconds in stages] == [
+        "probe",
+        "0_head",
+        "1_mid",
+        "2_tail",
+        "audio",
+        "mux",
+    ]
+    assert all(seconds >= 0 for _name, seconds in stages)
+
+
+def test_cut_reports_the_stage_that_failed_and_nothing_after_it(mp4_source, tmp_path, monkeypatch):
+    """컷이 도중에 실패하면 실패한 단계까지만 on_stage로 알려야 한다.
+
+    셋째 ffmpeg 실행(가운데 복사)이 종료 코드 1로 끝나도록 바꿈, 프레임 35~80
+    -> CutError, 단계 이름 == [probe, 0_head, 1_mid]
+    """
+    path, frames = mp4_source
+    real = cut_module.run_ffmpeg
+    calls = []
+
+    def flaky(args, **kwargs):
+        calls.append(args)
+        if len(calls) == 3:  # 0번은 입력 읽기, 1번은 머리, 2번이 가운데 복사다
+            return subprocess.CompletedProcess(args, 1, "", "boom")
+        return real(args, **kwargs)
+
+    monkeypatch.setattr(cut_module, "run_ffmpeg", flaky)
+    stages = []
+
+    with pytest.raises(CutError):
+        hybrid_cut(
+            path,
+            frames,
+            35,
+            80,
+            str(tmp_path / "out.mp4"),
+            on_stage=lambda name, seconds: stages.append(name),
+        )
+
+    assert stages == ["probe", "0_head", "1_mid"]
+
+
+# ================================================================ 컷의 진행
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("out_time_us=1500000\n", 1.5),
+        ("out_time_us=0\n", 0.0),
+        ("out_time_us=N/A\n", None),  # 첫 패킷을 쓰기 전
+        ("out_time_ms=1500000\n", None),  # 이름과 달리 마이크로초인 줄 — 읽지 않는다
+        ("out_time=00:00:01.500000\n", None),
+        ("progress=end\n", None),
+        ("\n", None),
+    ],
+)
+def test_parse_out_time_reads_only_the_microsecond_line(line, expected):
+    """parse_out_time은 out_time_us 줄의 값을 초로 돌려주고 그 밖의 줄은 None이어야 한다."""
+    assert parse_out_time(line) == expected
+
+
+def test_run_ffmpeg_reports_the_output_time_while_it_runs():
+    """run_ffmpeg에 on_out_time을 주면 도는 동안 출력 시각을 여러 번, 줄지 않게 알려야 한다.
+
+    10fps 1.5초짜리 lavfi 입력을 실시간 속도(-re)로 읽기
+    -> 종료 코드 0, 알린 값이 서로 다른 것 2개 이상, 오름차순, 마지막 값은 1.3~1.6초
+    """
+    seen = []
+
+    done = run_ffmpeg(
+        ["-re", "-f", "lavfi", "-i", "testsrc2=duration=1.5:rate=10", "-f", "null", "-"],
+        timeout=30,
+        on_out_time=seen.append,
+    )
+
+    assert done.returncode == 0
+    assert len(set(seen)) >= 2
+    assert seen == sorted(seen)
+    assert 1.3 <= seen[-1] <= 1.6
+
+
+def test_run_ffmpeg_reporting_progress_still_times_out():
+    """on_out_time을 준 run_ffmpeg도 제한 시간을 넘기면 FFmpegTimeoutError를 내야 한다.
+
+    1시간짜리 lavfi 입력을 실시간 속도(-re)로 읽기, 제한 0.5초
+    -> FFmpegTimeoutError
+    """
+    with pytest.raises(FFmpegTimeoutError):
+        run_ffmpeg(
+            ["-re", "-f", "lavfi", "-i", "testsrc2=duration=3600", "-f", "null", "-"],
+            timeout=0.5,
+            on_out_time=lambda seconds: None,
+        )
+
+
+def test_cut_progress_rises_at_every_stage_and_ends_at_one(mp4_source, tmp_path):
+    """컷은 단계가 끝날 때마다 진행을 올려 알리고, 산출물을 다 쓴 뒤에 1을 알려야 한다.
+
+    mp4, 프레임 35~80 (입력 읽기 · 조각 셋 · 오디오 · 잇기 — 단계 여섯)
+    -> 알린 값이 6개 이상, 모두 앞의 값보다 크다, 마지막 값 == 1.0, 그 앞의 값은 모두 1 미만
+    """
+    path, frames = mp4_source
+    seen = []
+
+    hybrid_cut(path, frames, 35, 80, str(tmp_path / "out.mp4"), on_progress=seen.append)
+
+    assert len(seen) >= 6
+    assert all(later > earlier for earlier, later in zip(seen, seen[1:]))
+    assert seen[-1] == 1.0
+    assert all(value < 1.0 for value in seen[:-1])
+
+
+def test_cut_writes_the_same_file_whether_or_not_progress_is_reported(mp4_source, tmp_path):
+    """진행을 받으며 자른 파일은 받지 않고 자른 파일과 바이트가 같아야 한다.
+
+    mp4, 프레임 35~80을 on_progress 없이 한 번, 주고 한 번
+    -> 두 산출물의 bytes가 같다
+    """
+    path, frames = mp4_source
+    plain, reported = str(tmp_path / "plain.mp4"), str(tmp_path / "reported.mp4")
+
+    hybrid_cut(path, frames, 35, 80, plain)
+    hybrid_cut(path, frames, 35, 80, reported, on_progress=lambda value: None)
+
+    with open(plain, "rb") as first, open(reported, "rb") as second:
+        assert first.read() == second.read()
+
+
+def test_cut_progress_rises_inside_a_stage_as_ffmpeg_reports_its_output_time(
+    mp4_source, tmp_path, monkeypatch
+):
+    """한 단계가 도는 동안 ffmpeg가 출력 시각을 알리면 그 단계 안에서도 진행이 올라야 한다.
+
+    mp4, 프레임 35~80. 가운데 복사(42~71, 1초 분량)가 도는 동안 출력 시각 0.25 · 0.5 · 0.75초를 알림
+    -> 머리 조각이 끝난 뒤부터 가운데 조각이 끝나기까지 진행이 4번 오른다(안에서 3번 + 끝에서 1번)
+    """
+    path, frames = mp4_source
+    real = cut_module.run_ffmpeg
+    events = []
+
+    def feeding(args, **kwargs):
+        sink = kwargs.pop("on_out_time", None)
+        if sink is not None and "copy" in args and "-an" in args:  # 가운데 복사
+            for seconds in (0.25, 0.5, 0.75):
+                sink(seconds)
+        return real(args, **kwargs)
+
+    monkeypatch.setattr(cut_module, "run_ffmpeg", feeding)
+
+    hybrid_cut(
+        path,
+        frames,
+        35,
+        80,
+        str(tmp_path / "out.mp4"),
+        on_stage=lambda name, seconds: events.append(name),
+        on_progress=events.append,
+    )
+
+    inside = events[events.index("0_head") + 1 : events.index("1_mid")]
+    assert len(inside) == 4
+    assert inside == sorted(set(inside))
+
+
+def test_failed_cut_never_reports_full_progress(mp4_source, tmp_path, monkeypatch):
+    """도중에 실패한 컷은 진행 1을 알리지 않아야 한다.
+
+    조각을 잇는 실행(마지막)이 종료 코드 1로 끝나도록 바꿈, 프레임 35~80
+    -> CutError, 알린 값은 모두 1 미만
+    """
+    path, frames = mp4_source
+    real = cut_module.run_ffmpeg
+    calls = []
+
+    def flaky(args, **kwargs):
+        calls.append(args)
+        if len(calls) == 6:  # 입력 읽기 · 조각 셋 · 오디오 다음이 잇기다
+            return subprocess.CompletedProcess(args, 1, "", "boom")
+        return real(args, **kwargs)
+
+    monkeypatch.setattr(cut_module, "run_ffmpeg", flaky)
+    seen = []
+
+    with pytest.raises(CutError):
+        hybrid_cut(path, frames, 35, 80, str(tmp_path / "out.mp4"), on_progress=seen.append)
+
+    assert seen
+    assert all(value < 1.0 for value in seen)

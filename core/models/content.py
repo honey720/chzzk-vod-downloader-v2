@@ -10,6 +10,12 @@ from dataclasses import dataclass, field
 from enum import Enum
 from uuid import uuid4
 
+from core.models.fmp4_index import Fmp4Head
+from core.models.mp4_index import Mp4Head, PendingMp4Head
+from core.models.plan import TimeRange
+from core.models.section_resume import SectionResume
+from core.models.ts_index import TsHead
+
 
 class ContentType(Enum):
     """컨텐츠 타입 (SPEC §4.1). 값은 현행 코드가 쓰는 문자열과 동일하다."""
@@ -35,6 +41,9 @@ class StreamKey:
     height: int  # RESOLUTION의 세로 픽셀
     frame_rate: float | None  # FRAME-RATE. 선언이 없으면 None
     bandwidth: int | None  # BANDWIDTH(bps). 선언이 없으면 None
+    # AVERAGE-BANDWIDTH(bps) — 평균 비트레이트. 선언이 없으면 None이다. 받을 양을 어림하는 데만
+    # 쓴다(BANDWIDTH는 최대값이라 어림이 크게 나온다). 변형을 다시 찾는 데는 쓰지 않는다
+    average_bandwidth: int | None = None
 
 
 @dataclass
@@ -59,6 +68,32 @@ class Content:
     in_key: str | None = None
     encryption_type: str | None = None
     live_rewind_playback_json: str | None = None
+    # 받을 구간 목록 (#309). 빈 튜플 = 전체 다운로드(기존 동작). 순서가 구간 번호다
+    selections: tuple[TimeRange, ...] = ()
+    # 구간마다의 산출물 경로 — selections와 같은 순서·같은 길이. 다운로드를 시작하는 쪽이
+    # core.utils.paths.build_section_output_paths로 배정한다. 구간이 있으면 output_path는
+    # 쓰지 않는다
+    selection_paths: tuple[str, ...] = ()
+    # 구간을 정하면서 이미 받은 moov (core.api.mp4.fetch_mp4_head의 결과). 넘기면 엔진이
+    # moov를 다시 받지 않는다. base_url의 파일에서 읽은 것이어야 한다. None이면 엔진이 받는다
+    mp4_head: Mp4Head | None = None
+    # 구간을 정하면서 이미 받았지만 아직 해석하지 않은 moov(core.api.mp4.pending_mp4_head의
+    # 결과). 넘기면 엔진이 다시 받지 않는다 — 해석은 한 번만 돈다(다른 쪽이 해석하는 중이면
+    # 엔진이 기다려 그 색인을 쓴다). mp4_head가 있으면 그것을 쓴다
+    mp4_pending: PendingMp4Head | None = None
+    # 구간을 정하면서 이미 받은 플레이리스트·초기화 세그먼트·moof
+    # (core.api.hls_fmp4.fetch_fmp4_head의 결과). 넘기면 엔진이 다시 받지 않는다.
+    # 인코딩 전 다시보기(m3u8)에 쓴다. None이면 엔진이 받는다
+    fmp4_head: Fmp4Head | None = None
+    # 구간을 정하면서 이미 받은 플레이리스트·세그먼트의 프레임 정보
+    # (core.api.hls_ts.fetch_ts_head의 결과). 넘기면 엔진이 받아 둔 세그먼트를 다시 받지
+    # 않는다. 암호화 VOD(hls_aes)에 쓴다. 복호화 키는 들어 있지 않다 — 엔진이 다시 받는다.
+    # None이면 엔진이 받는다
+    ts_head: TsHead | None = None
+    # 이전 실행이 끝낸 구간과 받아 둔 데이터 (#309). 넘기면 엔진이 끝나지 않은 구간만 다시
+    # 처리하고, 받아 둔 데이터가 온전하면 다시 받지 않는다. 구간 목록이 다르거나 끝낸 구간의
+    # 경로가 다르면 쓰지 않는다. None이면 모든 구간을 처음부터 처리한다
+    section_resume: SectionResume | None = None
     # 인코딩 전 다시보기에서 고른 변형의 정체 (#318). 없으면 해상도로 찾는다
     stream: StreamKey | None = None
 

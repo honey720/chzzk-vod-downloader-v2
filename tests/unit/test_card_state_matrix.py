@@ -374,13 +374,17 @@ class TestProgressBarColumn:
 
 class TestRightColumnResolutionAndSize:
     """3행 우측 — 확정 해상도를 파일 크기 옆에 붙인다("1080p · 595.34 MB").
-    한 자리라 행이 늘지 않는다. 대기에서는 pill이 선택을 보여주므로 안 붙인다."""
+    한 자리라 행이 늘지 않는다. 대기에서는 pill이 선택을 보여주므로 안 붙인다.
+    받는 중 · 일시정지의 인코딩 완료 VOD는 "받은 크기 / 전체 크기"다 (#309 — v2.9.6의
+    표기를 되살렸다. 폭이 모자라면 받은 크기만 남는다 — tests/unit/test_card_size_text.py)."""
 
     @pytest.mark.parametrize("state", (DownloadState.RUNNING, DownloadState.PAUSED))
     def test_running_and_paused_show_resolution_with_total_size(self, qapp, state):
         widget = _make_widget(qapp, state, PROGRESS[state])
         assert widget.fileSizeLabel.isVisible()
-        assert widget.fileSizeLabel.text() == "1080p · 595.34 MB", widget.fileSizeLabel.text()
+        assert widget.fileSizeLabel.text() == "1080p · 595.09 MB / 595.34 MB", (
+            widget.fileSizeLabel.text()
+        )
 
     def test_finished_shows_resolution_with_downloaded_size(self, qapp):
         widget = _make_widget(qapp, DownloadState.FINISHED, 100)
@@ -437,6 +441,41 @@ class TestDrawnIconsAreSharedAndFontFree:
                 if image.pixelColor(x, y).alpha() > 0
             )
             assert painted > 0, f"{name} 도형이 비어 있다"
+
+    @pytest.mark.parametrize("scheme", ["DARK", "LIGHT"])
+    def test_change_location_icon_is_drawn_apart_from_open_folder(self, qapp, scheme):
+        """저장 위치 변경 아이콘은 폴더 열기 아이콘과 다른 그림이어야 하고, 폴더 몸통은 함께 가져야 한다.
+
+        같은 색 · 16px로 그린 "folder"와 "folder_edit"
+        -> 불투명도가 다른 픽셀이 있다(연필 둘레를 파냈다)
+        -> 폴더 몸통의 왼쪽 가운데(4, 8)는 둘 다 꽉 칠해져 있다(가장자리가 아니다)
+        """
+        color = getattr(theme, scheme)["text"]
+        folder = icons.action_pixmap("folder", color, 16).toImage()
+        change = icons.action_pixmap("folder_edit", color, 16).toImage()
+
+        differing = sum(
+            1
+            for x in range(16)
+            for y in range(16)
+            if folder.pixelColor(x, y).alpha() != change.pixelColor(x, y).alpha()
+        )
+        assert differing > 0
+        assert folder.pixelColor(4, 8).alpha() == 255 and change.pixelColor(4, 8).alpha() == 255
+
+    def test_waiting_and_finished_cards_use_different_folder_icons(self, qapp):
+        """대기 카드의 저장 위치 버튼과 완료 카드의 폴더 열기 버튼은 다른 아이콘을 써야 한다.
+
+        대기 카드 -> 보이는 pathButton의 아이콘 == "folder_edit" 또는 "folder_edit_dot"
+        완료 카드 -> 보이는 openDirectoryButton의 아이콘 == "folder"
+        """
+        waiting = _make_widget(qapp, DownloadState.WAITING)
+        finished = _make_widget(qapp, DownloadState.FINISHED)
+
+        assert waiting.pathButton.isVisibleTo(waiting)
+        assert finished.openDirectoryButton.isVisibleTo(finished)
+        assert waiting.pathButton.iconName() in ("folder_edit", "folder_edit_dot")
+        assert finished.openDirectoryButton.iconName() == "folder"
 
     def test_icon_pixmaps_are_shared_across_cards(self, qapp):
         before = icons.cache_size()

@@ -100,7 +100,15 @@ class DownloadLogger:
         if self.logger:
             self.logger.critical(message)
     
-    def log_download_info(self, item: ContentItem):
+    def log_download_info(self, item: ContentItem, section_paths: tuple[str, ...] = ()):
+        """다운로드 시작 정보 블록을 로깅합니다.
+
+        Args:
+            item: 다운로드할 컨텐츠
+            section_paths: 구간 다운로드의 구간 파일 경로(구간 목록 순서). 비어 있으면
+                전체 다운로드다. 구간 다운로드는 output_path에 파일을 만들지 않으므로
+                output_path 대신 이 경로들을 적는다 (#309)
+        """
         # 앱 버전을 시작 정보 블록 첫 줄에 남긴다 (#110 — 제보 분석·버전 간 비교용)
         self.info(f"app_version: {config.get_app_version()}")
         self.info(f"content_type: {item.content_type}")
@@ -114,7 +122,11 @@ class DownloadLogger:
         self.info(f"total_size: {item.total_size}")
         # 경로는 repr로 남긴다 (#148) — U+00A0 같은 공백 유사 문자가 그냥
         # 찍으면 U+0020과 육안 구분되지 않아 제보 진단이 불가능하다(#144 실측)
-        self.info(f"output_path: {item.output_path!r}")
+        if section_paths:
+            for number, path in enumerate(section_paths, start=1):
+                self.info(f"output_path_{number}: {path!r}")
+        else:
+            self.info(f"output_path: {item.output_path!r}")
         self.info(f"download_path: {item.download_path!r}")
 
     def log_download_start(self, total_size: int, part_size: int, segments: int, initial_threads: int):
@@ -161,35 +173,140 @@ class DownloadLogger:
         self.info(f"Part {part_num} resuming from byte {offset}/{part_size}")
 
     def log_transfer_complete(
-        self, elapsed: float, downloaded_bytes: int, retries: int, peak_threads: int
+        self,
+        elapsed: float,
+        downloaded_bytes: int,
+        retries: int,
+        peak_threads: int,
+        paused: float = 0.0,
     ):
-        """전송 단계 종료를 한 줄로 로깅합니다 — 소요·총 바이트·재시도·정점 스레드."""
+        """전송 단계 종료를 한 줄로 로깅합니다 — 소요·총 바이트·재시도·정점 스레드.
+
+        소요에는 일시정지한 시간이 들어 있지 않다 — 일시정지가 있었으면 그 합을 줄 끝에 따로
+        적는다("(paused: 12.30s)", #309). 앞부분의 형식은 그대로다.
+        """
+        tail = f" (paused: {paused:.2f}s)" if paused > 0 else ""
         self.info(
             f"Transfer completed in {elapsed:.2f} seconds - Bytes: {downloaded_bytes}"
-            f" - Retries: {retries} - Peak threads: {peak_threads}"
+            f" - Retries: {retries} - Peak threads: {peak_threads}{tail}"
         )
+
+    def log_prepare_complete(self, elapsed: float, note: str = ""):
+        """준비 단계 종료를 로깅합니다 — 받을 것을 정하는 데 걸린 시간 (#309).
+
+        구간 다운로드는 준비에서 moov · 플레이리스트를 받는다. note는 엔진이 덧붙이는 말이다
+        ("moov reused" — 넘겨받은 moov를 다시 썼다 / "moov fetched" — 새로 받았다).
+        """
+        self.info(f"Prepare completed in {elapsed:.2f} seconds" + (f" - {note}" if note else ""))
+
+    def log_file_size_check(self, filesystem, largest: int):
+        """저장 폴더의 파일 시스템과 만들 파일 가운데 가장 큰 것의 크기를 로깅합니다 (#309).
+
+        FAT 계열(FAT · FAT32)은 파일 하나가 4GiB를 넘지 못한다 — 받기 전에 이 둘로 가린다.
+        filesystem은 OS가 준 이름이고, 읽지 못했으면 None이다(그때는 가리지 않는다).
+        """
+        self.info(
+            f"File size check - Filesystem: {filesystem or 'unknown'}"
+            f" - Largest file: {largest} bytes"
+        )
+
+    def log_space_check(self, stage: str, segments: int, output: int, checks):
+        """받을 크기와 여유 공간을 견준 결과를 로깅합니다 — 세그먼트 다운로드와 구간 없는 mp4 (#309).
+
+        구간 없는 mp4는 받기 전에 한 번 남긴다 — segments는 0(세그먼트가 없다), output은 파일
+        크기, 본 곳은 output(저장 폴더) 하나다. 아래는 세그먼트 다운로드의 것이다.
+
+
+        stage는 start(받기 전 — 선언된 비트레이트로 어림) · transfer(세그먼트를 몇 개 받은 뒤 —
+        실제 평균으로 어림)다. segments는 받을 세그먼트 전체, output은 산출물의 어림 크기다.
+        checks는 본 볼륨마다의 (본 곳, 필요한 여유, 여유 공간) — 본 곳은 both(임시 폴더와 저장
+        폴더가 같은 볼륨) · temp · output이다. 어림이 실제와 얼마나 다른지는 이 줄의 segments를
+        "Transfer completed"의 Bytes와 견주면 된다.
+        """
+        volumes = ", ".join(
+            f"{where}: need {needed} / free {free}" for where, needed, free in checks
+        )
+        self.info(
+            f"Space check ({stage}) - Segments: {segments} bytes - Output: {output} bytes"
+            f" - {volumes or 'free space unknown'}"
+        )
+
+    def log_transfer_net(self, elapsed: float):
+        """준비를 뺀 실제 전송 시간을 로깅합니다 (#309).
+
+        "Transfer completed in"의 시간은 준비를 포함한다 — 그 줄의 뜻은 바꾸지 않고, 준비를 뺀
+        값을 이 줄에 따로 남긴다. 두 줄 모두 일시정지한 시간은 들어 있지 않다.
+        """
+        self.info(f"Transfer without prepare: {elapsed:.2f} seconds")
+
+    def log_cut_setup(self, elapsed: float):
+        """컷을 시작하기 전 색인에서 프레임 정보를 뽑는 데 걸린 시간을 로깅합니다 (#309)."""
+        self.info(f"Cut frames prepared in {elapsed:.2f} seconds")
+
+    def log_cut_stages(self, number: int, total: int, stages, paused: float = 0.0):
+        """구간 하나의 컷이 단계마다 걸린 시간을 한 줄로 로깅합니다 (#309).
+
+        단계는 probe(입력 읽기) · 조각마다 <번호>_<종류>(재인코딩 또는 복사) · audio · mux이고,
+        세그먼트 방식은 앞에 join(세그먼트 잇기)이 붙는다. 실패한 컷은 실패한 단계까지 남는다.
+        단계 시간에는 일시정지한 시간이 들어 있지 않다 — 일시정지가 있었으면 그 합을 끝에 따로
+        적는다("paused: 12.30s").
+        """
+        parts = ", ".join(f"{name}: {seconds:.2f}s" for name, seconds in stages)
+        total_seconds = sum(seconds for _name, seconds in stages)
+        tail = f" (paused: {paused:.2f}s)" if paused > 0 else ""
+        self.info(f"Cut {number}/{total} stages - {parts} = {total_seconds:.2f}s{tail}")
+
+    def log_stopped(self, phase: str):
+        """사용자가 다운로드를 중단했음을 로깅합니다 — 어느 단계였는지와 함께 (#309).
+
+        phase는 prepare(준비) · transfer(전송) · postprocess(후처리 — 구간 다운로드는 컷)다.
+        """
+        self.info(f"Download stopped by user during {phase}")
+
+    def log_stopped_after_failure(self, phase: str):
+        """실패를 알린 뒤 엔진이 스스로 멈췄음을 로깅합니다 — 어느 단계였는지와 함께 (#309).
+
+        사용자가 멈춘 것(``log_stopped``)과 가른다. 실패의 내용은 그 앞의 오류 줄에 있다.
+        """
+        self.info(f"Download stopped after a failure during {phase}")
 
     def log_postprocess_start(self, kind: str):
         """후처리 시작을 로깅합니다 (kind: remux 등)."""
         self.info(f"Postprocess started - {kind}")
 
-    def log_postprocess_complete(self, elapsed: float, output_size: int):
-        """후처리 종료를 로깅합니다 — 소요 시간과 최종 산출물 크기."""
-        self.info(f"Postprocess completed in {elapsed:.2f} seconds - Output size: {output_size} bytes")
+    def log_postprocess_complete(self, elapsed: float, output_size: int, paused: float = 0.0):
+        """후처리 종료를 로깅합니다 — 소요 시간과 최종 산출물 크기.
 
-    def log_total_breakdown(self, transfer_elapsed: float, postprocess_elapsed: Optional[float]):
+        소요에는 일시정지한 시간이 들어 있지 않다 — 일시정지가 있었으면 그 합을 줄 끝에 따로
+        적는다("(paused: 12.30s)", #309). 앞부분의 형식은 그대로다.
+        """
+        tail = f" (paused: {paused:.2f}s)" if paused > 0 else ""
+        self.info(
+            f"Postprocess completed in {elapsed:.2f} seconds - Output size: {output_size} bytes{tail}"
+        )
+
+    def log_total_breakdown(
+        self,
+        transfer_elapsed: float,
+        postprocess_elapsed: Optional[float],
+        paused: float = 0.0,
+    ):
         """전체 시간의 전송/후처리 구분을 로깅합니다.
 
         후처리가 없는 경로(file)는 "(no postprocess)"로 표기해 세 다운로더의
-        로그가 같은 위치에서 같은 형태로 끝나게 한다 (#110).
+        로그가 같은 위치에서 같은 형태로 끝나게 한다 (#110). 두 값에는 일시정지한 시간이 들어
+        있지 않다 — 일시정지가 있었으면 그 합을 줄 끝에 따로 적는다 (#309).
         """
+        tail = f" (paused: {paused:.2f}s)" if paused > 0 else ""
         if postprocess_elapsed is None:
-            self.info(f"Total time breakdown - Transfer: {transfer_elapsed:.2f}s (no postprocess)")
+            self.info(
+                f"Total time breakdown - Transfer: {transfer_elapsed:.2f}s (no postprocess){tail}"
+            )
         else:
             total = transfer_elapsed + postprocess_elapsed
             self.info(
                 f"Total time breakdown - Transfer: {transfer_elapsed:.2f}s"
-                f" + Postprocess: {postprocess_elapsed:.2f}s = {total:.2f}s"
+                f" + Postprocess: {postprocess_elapsed:.2f}s = {total:.2f}s{tail}"
             )
 
     def log_error(self, error_message: str, exception: Optional[Exception] = None):

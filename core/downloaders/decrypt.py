@@ -21,6 +21,15 @@ TS_SYNC_BYTE = 0x47
 TS_PACKET_SIZE = 188
 
 
+class DecryptionError(Exception):
+    """복호화 결과가 유효한 미디어가 아닐 때 — 키·IV 규칙 불일치 신호.
+
+    암호화 정보가 없거나 지원하지 않는 방식인 플레이리스트에도 쓴다. 메시지에 키 값을
+    싣지 않는다. hls_aes 다운로더와 구간 해석(``core/api/hls_ts.py``)이 같이 쓴다 —
+    ``core.downloaders.hls_aes_downloader.DecryptionError``로도 import된다.
+    """
+
+
 def sequence_iv(sequence_number: int) -> bytes:
     """미디어 시퀀스 번호를 IV로 변환한다 (RFC 8216 §5.2).
 

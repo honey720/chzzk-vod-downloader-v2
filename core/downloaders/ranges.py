@@ -33,3 +33,13 @@ def split_ranges(total_size: int, part_size: int) -> list[tuple[int, int]]:
         (i * part_size, min((i + 1) * part_size - 1, total_size - 1))
         for i in range((total_size + part_size - 1) // part_size)
     ]
+
+
+def split_span(first: int, last: int, part_size: int) -> list[tuple[int, int]]:
+    """바이트 범위 first~last(양 끝 포함)를 part_size 단위의 (start, end) 목록으로 나눈다 (#309).
+
+    ``split_ranges``가 0부터 시작하는 범위만 나누는 것과 달리 파일 중간의 범위를 나눈다.
+    """
+    return [
+        (start, min(start + part_size - 1, last)) for start in range(first, last + 1, part_size)
+    ]

@@ -30,13 +30,17 @@ distro·BtbN 빌드는 정상임을 CI 교차 실측으로 확인했다. pip 방
 동작한다. 상세는 _subprocess_env 참조.
 """
 
+import ctypes
+import functools
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 import threading
-from collections.abc import Iterable, Iterator
+import time
+from collections.abc import Callable, Iterable, Iterator, Sequence
 
 # GUI 앱의 서브프로세스가 콘솔 창을 띄우지 않게 한다 (Windows 전용 플래그)
 _CREATE_NO_WINDOW = 0x08000000
@@ -56,6 +60,221 @@ class FFmpegNotFoundError(FFmpegError):
 
 class RemuxError(FFmpegError):
     """remux 실행이 실패했다 — 입력 손상·디스크 부족 등."""
+
+
+class FFmpegTimeoutError(FFmpegError):
+    """ffmpeg가 제한 시간 안에 끝나지 않아 종료시켰다."""
+
+
+class FFmpegCancelledError(Exception):
+    """부르는 쪽이 멈추라고 해(``should_stop``) ffmpeg를 끝냈다 — 실패가 아니다 (#309).
+
+    ``FFmpegError``를 잇지 않는다 — ffmpeg의 실패를 한꺼번에 잡는 자리에서 실패로 오인되지 않게.
+    """
+
+
+# 멈추라는 요청 · 일시정지를 확인하는 간격(초) — 중단을 누른 뒤 ffmpeg가 끝나기까지,
+# 일시정지를 누른 뒤 ffmpeg가 서기까지의 상한이다. 앱은 워커가 끝나기를 2초까지 기다리므로
+# (그동안 GUI가 선다) 그보다 훨씬 짧아야 한다
+_STOP_POLL_SECONDS = 0.05
+
+
+@functools.lru_cache(maxsize=1)
+def _windows_process_api() -> tuple:
+    """Windows의 (NtSuspendProcess, NtResumeProcess) — 한 번만 만든다. Windows에서만 부른다.
+
+    두 함수 모두 프로세스 핸들 하나를 받고 NTSTATUS를 돌려준다. 핸들은 포인터 크기라
+    ``c_void_p``로, NTSTATUS는 32비트 부호 있는 정수라 ``c_long``으로 적는다 — 적지 않으면
+    ctypes가 인자를 C int로 넘겨 64비트 핸들의 윗부분이 잘릴 수 있다.
+
+    ⚠️ 부를 때마다 ``ctypes.WinDLL``을 새로 만들지 않는다. 그렇게 만들었더니 멈춤을 몇 번 거친
+    프로세스가 한참 뒤 Qt의 이벤트 처리 안에서 접근 위반으로 죽었다(#309). 재현으로 가른 것:
+    부를 때마다 만들면 죽고(핸들을 따로 열고 닫지 않아도 죽는다), 한 번만 만들면 안 죽는다.
+    """
+    ntdll = ctypes.WinDLL("ntdll")
+    for function in (ntdll.NtSuspendProcess, ntdll.NtResumeProcess):
+        function.argtypes = (ctypes.c_void_p,)
+        function.restype = ctypes.c_long
+    return ntdll.NtSuspendProcess, ntdll.NtResumeProcess
+
+
+_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000  # 잡의 마지막 핸들이 닫히면 잡 안의 프로세스를 끝낸다
+_JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9  # SetInformationJobObject의 정보 종류 번호
+
+
+@functools.lru_cache(maxsize=1)
+def _windows_child_job() -> tuple | None:
+    """Windows의 (잡 핸들, AssignProcessToJobObject) — 한 번만 만든다. 만들지 못하면 None.
+
+    잡(Job Object)은 프로세스 묶음이다. "마지막 핸들이 닫히면 안의 프로세스를 끝낸다"로 설정해
+    두고 이 프로세스만 그 핸들을 쥔다 — 이 프로세스가 **어떻게 끝나든**(정상 종료 · 강제 종료 ·
+    충돌) OS가 핸들을 닫으므로 잡에 넣은 ffmpeg가 함께 끝난다. 일시정지로 멈춰 있는 것도 끝난다.
+
+    핸들은 닫지 않는다 — 닫는 순간이 곧 자식을 끝내는 순간이다. 자식에게 물려주지도 않는다
+    (기본 보안 속성은 상속 불가다).
+
+    ⚠️ DLL · 함수 객체는 여기서 한 번만 만들고 인자 · 돌려주는 값의 형식을 적는다
+    (``_windows_process_api``의 주의와 같다).
+    """
+
+    class _BasicLimits(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", ctypes.c_int64),
+            ("PerJobUserTimeLimit", ctypes.c_int64),
+            ("LimitFlags", ctypes.c_uint32),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", ctypes.c_uint32),
+            ("Affinity", ctypes.c_size_t),
+            ("PriorityClass", ctypes.c_uint32),
+            ("SchedulingClass", ctypes.c_uint32),
+        ]
+
+    class _IoCounters(ctypes.Structure):
+        _fields_ = [(name, ctypes.c_uint64) for name in ("r", "w", "o", "rb", "wb", "ob")]
+
+    class _ExtendedLimits(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", _BasicLimits),
+            ("IoInfo", _IoCounters),
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32")
+    create = kernel32.CreateJobObjectW
+    create.argtypes = (ctypes.c_void_p, ctypes.c_wchar_p)
+    create.restype = ctypes.c_void_p  # HANDLE — 포인터 크기
+    configure = kernel32.SetInformationJobObject
+    configure.argtypes = (ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32)
+    configure.restype = ctypes.c_int  # BOOL
+    assign = kernel32.AssignProcessToJobObject
+    assign.argtypes = (ctypes.c_void_p, ctypes.c_void_p)
+    assign.restype = ctypes.c_int  # BOOL
+
+    job = create(None, None)
+    if not job:
+        return None
+    limits = _ExtendedLimits()
+    limits.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    configured = configure(
+        job, _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION, ctypes.byref(limits), ctypes.sizeof(limits)
+    )
+    return (job, assign) if configured else None
+
+
+def _end_with_parent(process: subprocess.Popen) -> bool:
+    """우리가 띄운 프로세스가 이 프로세스와 함께 끝나게 한다 (#309). 걸었으면 True.
+
+    컷 도중 일시정지한 채 앱이 정상 종료가 아닌 길로 끝나면(작업 관리자로 끝냄 · 충돌) 멈춘
+    ffmpeg가 멈춘 채 남았다. 정상 종료는 중단을 거쳐 끝내지만 그 길을 타지 못하는 종료가 있다.
+
+    - Windows: 프로세스를 잡에 넣는다(``_windows_child_job``)
+    - 그 밖: 아직 하지 않는다 — False를 돌려준다
+
+    걸지 못해도(잡을 만들지 못했거나 이미 끝난 프로세스) 실행은 그대로 간다. 띄운 직후에
+    부른다 — 띄우기와 넣기 사이의 짧은 틈에 이 프로세스가 죽으면 그 자식은 남는다.
+    """
+    if sys.platform != "win32":
+        return False
+    handle = getattr(process, "_handle", None)  # Popen이 띄울 때 받아 쥔 핸들
+    job = _windows_child_job()
+    if handle is None or job is None:
+        return False
+    job_handle, assign = job
+    return bool(assign(job_handle, int(handle)))
+
+
+def _set_suspended(process: subprocess.Popen, suspended: bool) -> bool:
+    """우리가 띄운 프로세스를 OS 수준에서 멈추거나(True) 다시 돌린다(False) (#309). 됐으면 True.
+
+    멈춘 프로세스는 CPU를 쓰지 않고 파일도 쓰지 않는다 — 다시 돌리면 멈춘 자리에서 이어 간다.
+    일시정지를 ffmpeg에 그대로 옮기는 데 쓴다. 새 의존성 없이 OS가 주는 것만 쓴다:
+
+    - Windows: ``NtSuspendProcess`` · ``NtResumeProcess``(ntdll)
+    - 그 밖(리눅스 · macOS): ``SIGSTOP`` · ``SIGCONT``
+
+    멈춘 프로세스도 끝낼 수 있다(``Popen.kill`` — Windows의 TerminateProcess · POSIX의 SIGKILL은
+    멈춘 프로세스에도 듣는다). 이미 끝난 프로세스에는 아무것도 하지 않는다.
+
+    프로세스는 **그 ``Popen`` 객체가 쥔 것**으로만 가리킨다. Windows에서는 ``Popen``이 프로세스를
+    띄울 때 받은 핸들을 그대로 쓴다 — PID로 다시 열지 않으므로 다른 프로세스를 잡을 일이 없고
+    따로 닫을 핸들도 없다. 그 밖에서는 ``Popen``이 아직 거두지 않은 자식의 PID에 신호를 보낸다.
+    """
+    if process.poll() is not None:
+        return False
+    if sys.platform == "win32":
+        # Popen이 프로세스를 띄울 때 받아 쥐고 있는 핸들(모든 권한) — Popen이 살아 있는 동안 유효하다
+        handle = getattr(process, "_handle", None)
+        if handle is None:
+            return False
+        suspend, resume = _windows_process_api()
+        return (suspend if suspended else resume)(int(handle)) == 0  # NTSTATUS — 0이 성공이다
+    try:
+        os.kill(process.pid, signal.SIGSTOP if suspended else signal.SIGCONT)
+    except OSError:
+        return False
+    return True
+
+
+class _Control:
+    """도는 ffmpeg 하나에 멈춤 · 일시정지 · 제한 시간을 건다 — ``_STOP_POLL_SECONDS``마다 ``poll``을 부른다.
+
+    일시정지 중에는 프로세스가 서 있으므로 그 시간을 제한 시간에 세지 않는다 — 일시정지가
+    길었다고 컷이 시간 초과로 실패하지 않는다.
+    """
+
+    CANCELLED = "cancelled"
+    TIMED_OUT = "timed out"
+
+    def __init__(
+        self,
+        process: subprocess.Popen,
+        timeout: float,
+        should_stop: Callable[[], bool] | None,
+        should_pause: Callable[[], bool] | None,
+    ):
+        self._process = process
+        self._should_stop = should_stop
+        self._should_pause = should_pause
+        self._deadline = time.monotonic() + timeout
+        self._suspended_at: float | None = None  # 멈춘 시각. 돌고 있으면 None
+
+    def poll(self) -> str | None:
+        """요청을 확인해 프로세스에 옮긴다. 끝내야 하면 그 까닭(``CANCELLED`` · ``TIMED_OUT``)을 돌려준다.
+
+        끝내는 것은 부르는 쪽이 한다(``Popen.kill``) — 멈춰 있는 프로세스도 그대로 끝난다.
+        """
+        now = time.monotonic()
+        if self._should_stop is not None and self._should_stop():
+            return self.CANCELLED
+        paused = self._should_pause is not None and self._should_pause()
+        if paused and self._suspended_at is None:
+            if _set_suspended(self._process, True):
+                self._suspended_at = now
+        elif not paused and self._suspended_at is not None:
+            _set_suspended(self._process, False)
+            self._deadline += now - self._suspended_at  # 서 있던 시간은 제한 시간에 세지 않는다
+            self._suspended_at = None
+        if self._suspended_at is None and now >= self._deadline:
+            return self.TIMED_OUT
+        return None
+
+
+def _hold_while_paused(
+    should_pause: Callable[[], bool] | None, should_stop: Callable[[], bool] | None
+) -> None:
+    """일시정지 중이면 풀릴 때까지 기다린다 — 일시정지 중에는 새 ffmpeg를 띄우지 않는다.
+
+    Raises:
+        FFmpegCancelledError: 기다리는 동안 멈추라는 요청이 온 경우
+    """
+    while should_pause is not None and should_pause():
+        if should_stop is not None and should_stop():
+            raise FFmpegCancelledError("일시정지 중에 멈추라는 요청이 왔다")
+        time.sleep(_STOP_POLL_SECONDS)
 
 
 def get_ffmpeg_exe() -> str:
@@ -149,7 +368,14 @@ def _empty_gconv_dir() -> str:
     return path
 
 
-def remux_stream(chunks: Iterable[bytes], dst_path: str) -> None:
+def remux_stream(
+    chunks: Iterable[bytes],
+    dst_path: str,
+    *,
+    timeout: float | None = None,
+    should_stop: Callable[[], bool] | None = None,
+    should_pause: Callable[[], bool] | None = None,
+) -> None:
     """바이트 스트림을 stdin으로 받아 재인코딩 없이(스트림 복사) mp4로 재포장한다.
 
     옵션 근거 (#88·#92 실측 — 치지직 실스트림으로 확인):
@@ -169,9 +395,100 @@ def remux_stream(chunks: Iterable[bytes], dst_path: str) -> None:
     공급 이터레이터가 예외를 던지면(다운로드 중단 등) 프로세스를 종료하고
     산출물을 지운 뒤 그 예외를 그대로 전파한다.
 
+    Args:
+        timeout: 바이트를 다 넣은 뒤 ffmpeg가 끝나기를 기다리는 제한 시간(초). 일시정지로 서
+            있던 시간은 세지 않는다. 주지 않으면 끝날 때까지 기다린다 (#309)
+        should_stop: 주면 그 기다림 동안 짧은 간격으로 부른다. 참이면 ffmpeg를 끝내고 산출물을
+            지운 뒤 ``FFmpegCancelledError``를 낸다. 넣는 동안의 멈춤은 공급 이터레이터가 맡는다
+        should_pause: 주면 같은 간격으로 부른다. 참인 동안 ffmpeg를 멈춰 둔다
+
     Raises:
         FFmpegNotFoundError: ffmpeg 실행 파일을 찾지 못한 경우
         RemuxError: ffmpeg가 0이 아닌 코드로 종료했거나 실행 자체가 실패한 경우
+        FFmpegTimeoutError: 바이트를 다 넣은 뒤 timeout 안에 끝나지 않은 경우
+        FFmpegCancelledError: 그 기다림 동안 should_stop이 참을 돌려줘 끝낸 경우
+    """
+    _copy_piped(chunks, dst_path, (), timeout, should_stop, should_pause)
+
+
+def extract_audio_stream(
+    chunks: Iterable[bytes],
+    dst_path: str,
+    *,
+    timeout: float | None = None,
+    should_stop: Callable[[], bool] | None = None,
+    should_pause: Callable[[], bool] | None = None,
+) -> None:
+    """바이트 스트림을 stdin으로 받아 오디오만 재인코딩 없이 mp4로 뽑는다 (#309).
+
+    세그먼트 방식의 구간 다운로드가 쓴다 — 구간의 세그먼트를 한 번 흘려 오디오를 작은 파일로
+    뽑아 두고, 구간 파일을 쓸 때 영상과 합친다. 공급 · 실패 처리와 timeout · should_stop ·
+    should_pause는 ``remux_stream``과 같다.
+
+    Raises:
+        FFmpegNotFoundError: ffmpeg 실행 파일을 찾지 못한 경우
+        RemuxError: ffmpeg가 0이 아닌 코드로 종료했거나 실행 자체가 실패한 경우
+        FFmpegTimeoutError · FFmpegCancelledError: ``remux_stream``과 같다
+    """
+    _copy_piped(chunks, dst_path, ("-vn",), timeout, should_stop, should_pause)
+
+
+def _await_end(
+    processes: Sequence[subprocess.Popen],
+    timeout: float | None,
+    should_stop: Callable[[], bool] | None,
+    should_pause: Callable[[], bool] | None,
+) -> Exception | None:
+    """입력을 다 넣은 ffmpeg들이 끝나기를 기다린다 — 멈춤 · 일시정지 · 제한 시간을 본다 (#309).
+
+    파이프로 바이트를 넣는 실행(``remux_stream`` · ``remux_through``)은 넣는 동안의 멈춤 ·
+    일시정지를 공급 이터레이터가 맡는다. 다 넣은 뒤에는 이터레이터가 불리지 않으므로 여기서
+    본다 — ``run_ffmpeg``와 같은 규칙이다. 셋 다 주지 않으면 바로 돌아간다(부르는 쪽이 기다린다).
+
+    일시정지 동안은 프로세스들을 함께 멈춰 두고, 서 있던 시간은 제한 시간에 세지 않는다. 먼저
+    끝난 프로세스가 있어도 시간은 한 곳에서 센다.
+
+    Returns:
+        모두 끝났으면 None. 끝내야 하면 낼 예외 — 멈추라는 요청이면 ``FFmpegCancelledError``,
+        제한 시간을 넘겼으면 ``FFmpegTimeoutError``. 프로세스를 끝내고 산출물을 지우는 것은
+        부르는 쪽이 한다(멈춰 있는 프로세스도 ``Popen.kill``로 끝난다)
+    """
+    if timeout is None and should_stop is None and should_pause is None:
+        return None
+    deadline = time.monotonic() + (timeout if timeout is not None else float("inf"))
+    suspended_at: float | None = None  # 멈춰 둔 시각. 돌고 있으면 None
+    while any(process.poll() is None for process in processes):
+        now = time.monotonic()
+        stopped = should_stop is not None and should_stop()
+        paused = not stopped and should_pause is not None and should_pause()
+        if paused and suspended_at is None:
+            for process in processes:
+                _set_suspended(process, True)  # 이미 끝난 쪽에는 아무 일도 없다
+            suspended_at = now
+        elif not paused and suspended_at is not None:
+            for process in processes:
+                _set_suspended(process, False)
+            deadline += now - suspended_at  # 서 있던 시간은 제한 시간에 세지 않는다
+            suspended_at = None
+        if stopped:
+            return FFmpegCancelledError("멈추라는 요청으로 ffmpeg를 끝냈다")
+        if suspended_at is None and now >= deadline:
+            return FFmpegTimeoutError(f"ffmpeg가 {timeout:g}초 안에 끝나지 않았다")
+        time.sleep(_STOP_POLL_SECONDS)
+    return None
+
+
+def _copy_piped(
+    chunks: Iterable[bytes],
+    dst_path: str,
+    selection: Sequence[str],
+    timeout: float | None = None,
+    should_stop: Callable[[], bool] | None = None,
+    should_pause: Callable[[], bool] | None = None,
+) -> None:
+    """stdin의 바이트 스트림을 스트림 복사로 dst_path에 mp4로 쓴다. selection은 스트림을 고르는 옵션이다.
+
+    timeout · should_stop · should_pause는 바이트를 다 넣은 뒤의 기다림에 건다(``_await_end``).
     """
     exe = get_ffmpeg_exe()
     cmd = [
@@ -182,6 +499,7 @@ def remux_stream(chunks: Iterable[bytes], dst_path: str) -> None:
         "-y",
         "-i",
         "pipe:0",
+        *selection,
         "-c",
         "copy",
         "-f",
@@ -200,6 +518,7 @@ def remux_stream(chunks: Iterable[bytes], dst_path: str) -> None:
         )
     except OSError as e:
         raise RemuxError(f"ffmpeg 실행 실패: {e}") from e
+    _end_with_parent(proc)
 
     # stderr는 별도 스레드로 계속 비운다 — 파이프 버퍼가 차면 ffmpeg가 멈춘다
     stderr_parts: list[bytes] = []
@@ -225,6 +544,15 @@ def remux_stream(chunks: Iterable[bytes], dst_path: str) -> None:
         raise
 
     _close_quietly(proc.stdin)
+    # 넣을 것은 다 넣었다 — ffmpeg가 남은 것(mp4의 moov)을 쓰고 끝나기를 기다린다
+    outcome = _await_end((proc,), timeout, should_stop, should_pause)
+    if outcome is not None:
+        proc.kill()  # 멈춰 있어도 끝난다
+        proc.wait()
+        reader.join(timeout=5)
+        _close_quietly(proc.stderr)
+        _remove_quietly(dst_path)
+        raise outcome
     returncode = proc.wait()
     reader.join(timeout=5)
     _close_quietly(proc.stderr)
@@ -234,6 +562,365 @@ def remux_stream(chunks: Iterable[bytes], dst_path: str) -> None:
         _remove_quietly(dst_path)
         stderr_tail = b"".join(stderr_parts).decode(errors="replace").strip()[-500:]
         raise RemuxError(f"ffmpeg remux 실패 (exit {returncode}): {stderr_tail}")
+
+
+def remux_through(
+    chunks: Iterable[bytes],
+    convert_args: Sequence[str],
+    join_args: Sequence[str],
+    dst_path: str,
+    *,
+    cwd: str | None = None,
+    timeout: float | None = None,
+    should_stop: Callable[[], bool] | None = None,
+    should_pause: Callable[[], bool] | None = None,
+) -> str:
+    """바이트 스트림을 변환 ffmpeg에 넣고, 그 출력을 잇는 ffmpeg의 표준 입력으로 이어 dst_path를 만든다 (#309).
+
+    세그먼트 방식의 구간 다운로드가 쓴다 — 가운데 세그먼트의 원본 바이트를 그대로 잇는
+    ffmpeg(concat의 ``pipe:0``)에 넣으면 시각이 어긋나므로, 변환 ffmpeg가 먼저 조각난 mp4로
+    바꾼다. 두 프로세스는 파이프로 바로 이어져 파이썬을 거치지 않는다.
+
+    공급 · 실패 처리는 ``remux_stream``과 같다: 공급 이터레이터가 예외를 던지면 두 프로세스를
+    끝내고 산출물을 지운 뒤 그 예외를 그대로 올린다. 어느 한쪽이라도 0이 아닌 코드로 끝나면
+    산출물을 지우고 ``RemuxError``를 낸다 — 변환 쪽이 죽었는데 잇는 쪽이 받은 데까지만으로
+    정상 종료한 경우도 실패다.
+
+    Args:
+        chunks: 변환 ffmpeg의 표준 입력으로 넣을 바이트
+        convert_args: 변환 ffmpeg의 인자 — 입력은 ``pipe:0``, 출력은 ``pipe:1``이어야 한다
+        join_args: 잇는 ffmpeg의 인자 — 출력 경로까지 든 것. ``-nostdin``은 붙여 준다(없으면
+            ffmpeg가 표준 입력에서 키 입력을 읽으며 파이프의 바이트를 집어 간다)
+        dst_path: 잇는 ffmpeg가 쓰는 산출물 — 실패하면 지운다
+        cwd: 잇는 ffmpeg의 작업 디렉토리(concat 목록의 상대 경로 기준)
+        timeout: 바이트를 다 넣은 뒤 두 ffmpeg가 끝나기를 기다리는 제한 시간(초). 일시정지로
+            서 있던 시간은 세지 않는다. 주지 않으면 끝날 때까지 기다린다
+        should_stop: 주면 그 기다림 동안 짧은 간격으로 부른다. 참을 돌려주면 두 프로세스를
+            끝내고 산출물을 지운 뒤 ``FFmpegCancelledError``를 낸다. 바이트를 넣는 동안의 멈춤은
+            공급 이터레이터가 맡는다(예외를 던진다)
+        should_pause: 주면 같은 간격으로 부른다. 참인 동안 두 프로세스를 멈춰 둔다
+
+    Returns:
+        잇는 ffmpeg가 낸 경고(stderr) — 조각을 잇는 곳의 시각이 어긋났는지 부르는 쪽이 본다
+
+    Raises:
+        FFmpegNotFoundError: ffmpeg 실행 파일을 찾지 못한 경우
+        RemuxError: 두 ffmpeg 가운데 하나가 0이 아닌 코드로 끝났거나 실행 자체가 실패한 경우
+        FFmpegTimeoutError: 바이트를 다 넣은 뒤 timeout 안에 끝나지 않은 경우
+        FFmpegCancelledError: 그 기다림 동안 should_stop이 참을 돌려줘 끝낸 경우
+    """
+    exe = get_ffmpeg_exe()
+    creationflags = _CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    head = [exe, "-hide_banner", "-loglevel", "error"]
+    try:
+        join = subprocess.Popen(
+            # 잇는 쪽은 경고까지 받는다 — DTS가 뒤로 가도 ffmpeg는 0으로 끝난다
+            [exe, "-hide_banner", "-loglevel", "warning", "-nostdin", "-y", *join_args],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            cwd=cwd,
+            creationflags=creationflags,
+            env=_subprocess_env(exe),
+        )
+    except OSError as e:
+        raise RemuxError(f"ffmpeg 실행 실패: {e}") from e
+    _end_with_parent(join)
+    try:
+        convert = subprocess.Popen(
+            [*head, *convert_args],
+            stdin=subprocess.PIPE,
+            stdout=join.stdin,
+            stderr=subprocess.PIPE,
+            creationflags=creationflags,
+            env=_subprocess_env(exe),
+        )
+    except OSError as e:
+        join.kill()
+        join.wait()
+        _close_quietly(join.stdin, join.stderr)
+        raise RemuxError(f"ffmpeg 실행 실패: {e}") from e
+    _end_with_parent(convert)
+    # 잇는 쪽의 입력은 이제 변환 쪽만 쥔다 — 이쪽에서 닫아야 변환이 끝날 때 잇는 쪽이 끝을 본다
+    _close_quietly(join.stdin)
+
+    # stderr는 별도 스레드로 계속 비운다 — 파이프 버퍼가 차면 ffmpeg가 멈춘다
+    errors: dict[str, bytes] = {}
+    readers = [
+        threading.Thread(
+            target=lambda n=name, p=process: errors.update({n: p.stderr.read()}), daemon=True
+        )
+        for name, process in (("convert", convert), ("join", join))
+    ]
+    for reader in readers:
+        reader.start()
+
+    def end_both() -> None:
+        for process in (convert, join):
+            process.kill()
+        for process in (convert, join):
+            process.wait()
+        for reader in readers:
+            reader.join(timeout=5)
+        _close_quietly(convert.stdin, convert.stderr, join.stderr)
+
+    try:
+        for chunk in chunks:
+            try:
+                convert.stdin.write(chunk)
+            except OSError:
+                break  # 변환 쪽이 먼저 끝났다 — 아래에서 종료 코드로 실패를 알린다
+    except BaseException:
+        end_both()
+        _remove_quietly(dst_path)
+        raise
+
+    _close_quietly(convert.stdin)
+    # 넣을 것은 다 넣었다 — 두 ffmpeg가 남은 것을 쓰고 끝나기를 기다린다. 이때부터는 공급
+    # 이터레이터가 불리지 않으므로 멈춤 · 일시정지 · 제한 시간을 여기서 본다(run_ffmpeg와 같은 규칙)
+    outcome = _await_end((convert, join), timeout, should_stop, should_pause)
+    if outcome is not None:
+        end_both()  # 멈춰 있어도 끝난다
+        _remove_quietly(dst_path)
+        raise outcome
+    codes = (convert.wait(), join.wait())
+    for reader in readers:
+        reader.join(timeout=5)
+    _close_quietly(convert.stderr, join.stderr)
+    if any(codes):
+        _remove_quietly(dst_path)
+        tail = b" | ".join(errors.get(name, b"")[-250:] for name in ("convert", "join"))
+        raise RemuxError(
+            f"ffmpeg remux 실패 (변환 exit {codes[0]} · 잇기 exit {codes[1]}): "
+            f"{tail.decode(errors='replace').strip()}"
+        )
+    return errors.get("join", b"").decode(errors="replace")
+
+
+def run_ffmpeg(
+    args: Sequence[str],
+    *,
+    timeout: float,
+    cwd: str | None = None,
+    on_out_time: Callable[[float], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
+    should_pause: Callable[[], bool] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """ffmpeg를 끝날 때까지 실행하고 종료 코드와 출력을 돌려준다 (#309).
+
+    실행 파일 경로·콘솔 창 억제·리눅스 동봉본 가드(#97)를 한 곳에서 붙인다 —
+    ffmpeg를 직접 부르는 코드가 이것들을 빠뜨리지 않게 한다. 종료 코드가 0이
+    아니어도 예외를 내지 않는다. 판정은 호출자가 한다.
+
+    Args:
+        args: ffmpeg 인자(실행 파일 이름 제외). ``-hide_banner``는 붙여 준다
+        timeout: 제한 시간(초). 넘으면 프로세스를 종료한다
+        cwd: 작업 디렉토리. 상대 경로 인자의 기준이다
+        on_out_time: 주면 ffmpeg가 진행을 알릴 때마다(``-progress``) 그때까지 쓴 출력의
+            시각(초)으로 부른다 — 부르는 스레드에서 돈다. 이때 돌려주는 값의 stdout은
+            비어 있다(진행 글자가 그 자리로 나온다)
+        should_stop: 주면 도는 동안 ``_STOP_POLL_SECONDS``마다 부른다. 참을 돌려주면
+            프로세스를 바로 끝내고 ``FFmpegCancelledError``를 낸다 — 다운로드를 중단했을 때
+            도는 ffmpeg가 끝까지 돌지 않게 한다. 다른 스레드에서 불릴 수 있다
+        should_pause: 주면 같은 간격으로 부른다. 참인 동안 프로세스를 OS 수준에서 멈춰 두고
+            (``_set_suspended``), 거짓이 되면 멈춘 자리에서 다시 돌린다. 시작할 때 참이면
+            프로세스를 띄우지 않고 기다린다. 멈춰 있던 시간은 제한 시간에 세지 않는다.
+            다른 스레드에서 불릴 수 있다
+
+    Raises:
+        FFmpegNotFoundError: ffmpeg 실행 파일을 찾지 못한 경우
+        FFmpegTimeoutError: 제한 시간을 넘긴 경우
+        FFmpegCancelledError: should_stop이 참을 돌려줘 끝낸 경우
+        FFmpegError: 프로세스를 시작하지 못한 경우
+    """
+    exe = get_ffmpeg_exe()
+    _hold_while_paused(should_pause, should_stop)
+    if on_out_time is not None:
+        return _run_reporting(exe, args, timeout, cwd, on_out_time, should_stop, should_pause)
+    if should_stop is not None or should_pause is not None:
+        return _run_controlled(exe, args, timeout, cwd, should_stop, should_pause)
+    command = [exe, "-hide_banner", *args]
+    try:
+        # subprocess.run과 같은 일을 한다 — 띄운 프로세스를 쥐어야 앱과 함께 끝나게 걸 수 있다
+        with subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdin=subprocess.DEVNULL,
+            cwd=cwd,
+            creationflags=_CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+            env=_subprocess_env(exe),
+        ) as process:
+            _end_with_parent(process)
+            try:
+                output, errors = process.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.communicate()  # 끝난 프로세스의 파이프를 비우고 거둔다
+                raise
+            except BaseException:
+                process.kill()  # 기다리는 도중의 예외(인터럽트 등) — 프로세스를 남기지 않는다
+                raise
+        return subprocess.CompletedProcess(command, process.returncode, output, errors)
+    except subprocess.TimeoutExpired as e:
+        raise FFmpegTimeoutError(f"ffmpeg가 {timeout:g}초 안에 끝나지 않았다") from e
+    except OSError as e:
+        raise FFmpegError(f"ffmpeg 실행 실패: {e}") from e
+
+
+def parse_out_time(line: str) -> float | None:
+    """``-progress``가 낸 한 줄에서 출력 시각(초)을 읽는다. 그 줄이 아니거나 값이 없으면 None.
+
+    ``out_time_us=<마이크로초>`` 줄만 읽는다. 첫 패킷을 쓰기 전에는 값이 ``N/A``다.
+    """
+    key, _, value = line.strip().partition("=")
+    if key != "out_time_us":
+        return None
+    try:
+        return int(value) / 1_000_000
+    except ValueError:
+        return None
+
+
+def _run_controlled(
+    exe: str,
+    args: Sequence[str],
+    timeout: float,
+    cwd: str | None,
+    should_stop: Callable[[], bool] | None,
+    should_pause: Callable[[], bool] | None,
+) -> subprocess.CompletedProcess[str]:
+    """ffmpeg를 실행해 출력을 모으되, 멈춤 · 일시정지 요청을 따른다. ``run_ffmpeg``가 부른다.
+
+    출력을 모으는 일(``communicate``)을 짧은 간격으로 끊어 그 사이에 요청을 확인한다
+    (``_Control``). 돌려주는 값은 그런 확인이 없는 경로(``subprocess.run``)와 같다.
+    """
+    command = [exe, "-hide_banner", *args]
+    try:
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=cwd,
+            creationflags=_CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+            env=_subprocess_env(exe),
+        )
+    except OSError as e:
+        raise FFmpegError(f"ffmpeg 실행 실패: {e}") from e
+    _end_with_parent(process)
+    control = _Control(process, timeout, should_stop, should_pause)
+    # 띄우자마자 한 번 확인한다 — 띄우는 사이에 온 일시정지 · 중단이 첫 간격만큼 늦지 않게
+    outcome = control.poll()
+    while True:
+        try:
+            if outcome is None:
+                output, errors = process.communicate(timeout=_STOP_POLL_SECONDS)
+                return subprocess.CompletedProcess(command, process.returncode, output, errors)
+        except subprocess.TimeoutExpired:
+            outcome = control.poll()
+        if outcome is not None:
+            process.kill()  # 멈춰 있는 프로세스도 그대로 끝난다
+            process.communicate()  # 파이프를 비우고 닫는다 — 프로세스가 끝난 것까지 기다린다
+            if outcome == _Control.CANCELLED:
+                raise FFmpegCancelledError("멈추라는 요청으로 ffmpeg를 끝냈다")
+            raise FFmpegTimeoutError(f"ffmpeg가 {timeout:g}초 안에 끝나지 않았다")
+
+
+def _run_reporting(
+    exe: str,
+    args: Sequence[str],
+    timeout: float,
+    cwd: str | None,
+    on_out_time: Callable[[float], None],
+    should_stop: Callable[[], bool] | None = None,
+    should_pause: Callable[[], bool] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """ffmpeg를 실행하면서 진행(출력 시각)을 on_out_time에 알린다. ``run_ffmpeg``가 부른다.
+
+    진행은 stdout으로 받는다(``-progress pipe:1``). stderr는 따로 읽어 둔다 — 한쪽 파이프만
+    읽으면 다른 쪽이 차서 ffmpeg가 멈춘다. 제한 시간은 타이머가 프로세스를 끝내는 것으로
+    지킨다. on_out_time이 예외를 내면 프로세스를 끝내고 그 예외를 그대로 올린다. 멈춤 · 일시정지
+    요청은 지켜보는 스레드가 짧은 간격으로 확인한다(``_Control``) — 진행 줄을 기다리는 동안에도
+    듣는다. 그때는 제한 시간도 그 스레드가 지킨다(멈춰 있던 시간을 빼고 센다). 프로세스가 멈춰
+    있는 동안 진행 줄을 읽는 쪽은 다음 줄을 기다리며 서 있을 뿐이다.
+    """
+    command = [exe, "-hide_banner", "-nostats", "-progress", "pipe:1", *args]
+    try:
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=cwd,
+            creationflags=_CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+            env=_subprocess_env(exe),
+        )
+    except OSError as e:
+        raise FFmpegError(f"ffmpeg 실행 실패: {e}") from e
+    _end_with_parent(process)
+    errors: list[str] = []
+    reader = threading.Thread(target=lambda: errors.append(process.stderr.read()), daemon=True)
+    reader.start()
+    timed_out = threading.Event()
+
+    def expire() -> None:
+        timed_out.set()
+        process.kill()
+
+    finished, cancelled = threading.Event(), threading.Event()
+    controlled = should_stop is not None or should_pause is not None
+
+    def watch() -> None:
+        control = _Control(process, timeout, should_stop, should_pause)
+        while True:
+            # 띄우자마자 한 번, 그 뒤로는 간격마다 확인한다
+            outcome = control.poll()
+            if outcome is not None:
+                (cancelled if outcome == _Control.CANCELLED else timed_out).set()
+                process.kill()  # 멈춰 있어도 끝난다. stdout이 닫혀 아래의 읽기가 끝난다
+                return
+            if finished.wait(_STOP_POLL_SECONDS):
+                return
+
+    watcher = threading.Thread(target=watch, daemon=True) if controlled else None
+    # 지켜보는 스레드가 있으면 제한 시간도 그쪽이 지킨다 — 멈춰 있던 시간을 빼야 한다
+    timer = threading.Timer(timeout, expire)
+    if watcher is None:
+        timer.start()
+    else:
+        watcher.start()
+    try:
+        for line in process.stdout:
+            seconds = parse_out_time(line)
+            if seconds is not None:
+                on_out_time(seconds)
+        returncode = process.wait()
+    finally:
+        timer.cancel()
+        finished.set()
+        if watcher is not None:
+            watcher.join()
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        reader.join()
+        process.stdout.close()
+        process.stderr.close()
+    if cancelled.is_set():
+        raise FFmpegCancelledError("멈추라는 요청으로 ffmpeg를 끝냈다")
+    if timed_out.is_set():
+        raise FFmpegTimeoutError(f"ffmpeg가 {timeout:g}초 안에 끝나지 않았다")
+    return subprocess.CompletedProcess(command, returncode, "", "".join(errors))
 
 
 def read_in_chunks(path: str, chunk_size: int = 1024 * 1024) -> Iterator[bytes]:

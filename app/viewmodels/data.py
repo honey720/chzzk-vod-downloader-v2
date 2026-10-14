@@ -1,5 +1,11 @@
+"""목록 카드 하나의 데이터(ContentItem)를 정의한다."""
+
 from core.api.representations import file_tag, is_original, shown_frame_rate
 from core.models.download_state import DownloadState
+
+# ContentItem.section_check의 값 — 해상도를 바꾼 뒤 새 해상도의 길이를 확인하는 조회의 상태
+SECTION_CHECK_PENDING = "pending"  # 조회 중 — 구간은 선언 프레임률로만 맞춰져 있다
+SECTION_CHECK_UNVERIFIED = "unverified"  # 조회 실패 — 길이를 확인하지 못했다
 
 # 세그먼트 단위로 받는 타입 — 전체 크기를 미리 알 수 없어 진행률·표시가
 # 세그먼트 수 기반이다 (m3u8: 라이브 다시보기, hls_aes: AES 암호화 VOD #57)
@@ -7,26 +13,102 @@ SEGMENT_BASED_TYPES = ("m3u8", "hls_aes")
 
 
 class ContentItem:
-    # 메타데이터 카드 리스트 아이템 데이터(DTO)
+    """목록 카드 하나가 보여 주는 영상의 메타데이터와 다운로드 표시 상태를 담는다.
 
-    def __init__(self, vod_url, metadata, unique_reps, resolution, base_url, download_path, content_type, liveRewindPlaybackJson):
+    조회 결과로 만들고, 다운로드가 도는 동안 뷰모델이 진행 값을 옮겨 적는다. 구간
+    다운로드의 구간 목록과 완료 · 실패 구간 수도 여기에 둔다 (#309).
+    """
+
+    def __init__(
+        self,
+        vod_url,
+        metadata,
+        unique_reps,
+        resolution,
+        base_url,
+        download_path,
+        content_type,
+        liveRewindPlaybackJson,
+    ):
         self.vod_url = vod_url
-        
-        self.default_title = metadata.get('title', 'Unknown Title')
+
+        self.default_title = metadata.get("title", "Unknown Title")
         self.title = self.default_title
-        self.thumbnail_url = metadata.get('thumbnailImageUrl', '')
-        self.category = metadata.get('category', 'Unknown Category')
-        self.channel_name = metadata.get('channelName', 'Unknown Channel')
-        self.channel_image_url = metadata.get('channelImageUrl', '')
-        self.live_open_date = metadata.get('createdDate', 'Unknown Date')
-        self.duration = metadata.get('duration', 0)
+        self.thumbnail_url = metadata.get("thumbnailImageUrl", "")
+        self.category = metadata.get("category", "Unknown Category")
+        self.channel_name = metadata.get("channelName", "Unknown Channel")
+        self.channel_image_url = metadata.get("channelImageUrl", "")
+        self.live_open_date = metadata.get("createdDate", "Unknown Date")
+        self.duration = metadata.get("duration", 0)
 
         self.content_type = content_type
         self.liveRewindPlaybackJson = liveRewindPlaybackJson
         self.post_process = False
+        # 받을 구간 목록 (#309) — core.models.plan.TimeRange의 튜플. 비어 있으면 전체 다운로드다
+        self.selections = ()
+        self.sections_done = 0  # 잘라서 파일로 만든 구간 수 — 엔진의 구간 상태에서 옮긴 값
+        self.sections_failed = 0  # 자르지 못한 구간 수
+        # 구간을 자르기 전에 프레임 정보를 읽는 중인지 — 엔진의 값에서 옮긴다. 카드의 단계 문구가 갈린다
+        self.cut_preparing = False
+        # 일부 구간의 컷만 실패하고 끝난 다운로드가 남긴 것 (#309) — (그때의 스트림 · 저장 폴더 ·
+        # 제목을 가리키는 값, core.models.section_resume.SectionResume). 다음 다운로드가 끝나지
+        # 않은 구간만 다시 처리하는 데 쓴다. 없으면 None이다
+        self.section_retry = None
+        # 지금의 구간이 맞춰져 있는 프레임률(Fraction). 조회한 값이거나, 해상도를 바꾼 직후
+        # 조회가 끝나기 전에는 목록 항목의 선언값이다. 구간이 없으면 None
+        self.section_frame_rate = None
+        # 사용자가 마지막으로 확정한 (구간 목록, 그때의 app.section_basis.SectionBasis) — 원래 값.
+        # 구간 편집 창이 확인할 때만 바뀐다. 해상도를 바꿀 때마다 이 값을 새 프레임률 · 길이에
+        # 다시 맞춘다(맞춘 것을 또 맞추지 않는다 — 원래 프레임률로 돌아오면 이 값이 그대로 나온다).
+        # 저장 · 다운로드에는 쓰지 않는다 — 엔진에 넘기는 것은 맞춘 값(selections)이다. 구간이 없으면 None
+        self.section_verified = None
+        # 해상도를 바꾼 뒤 새 해상도의 길이를 확인했는지 — ""(확인함 · 바꾼 적 없음) ·
+        # SECTION_CHECK_PENDING(조회 중) · SECTION_CHECK_UNVERIFIED(조회 실패)
+        self.section_check = ""
+        # 구간 요약 뒤에 붙이는 알림의 재료 — 문구는 카드가 만든다. 구간을 다시 편집하면 비운다
+        self.section_refit_fps = None  # 구간을 이 프레임률(Fraction)의 프레임에 다시 맞췄다
+        self.section_end_pulled = False  # 새 길이를 넘는 구간의 끝을 새 영상의 끝으로 당겼다
+        self.section_end_extended = False  # 영상 끝에 닿아 있던 구간의 끝을 더 긴 새 끝으로 늘렸다
+        # 새 영상의 끝 이후에서 시작해 당길 수 없는 구간의 번호(0부터). 구간은 그대로 두고
+        # 카드에 경고를 붙이며, 받을 때 이 구간만 엔진에 넘기지 않는다
+        self.section_unfit = frozenset()
+        # 구간을 정하며 받은 moov — (그때의 주소, 받은 것). 받은 것은 moov의 바이트
+        # (core.models.mp4_index.PendingMp4Head)다 — 받을 크기는 그 바이트의 표에서 세고, 색인은
+        # 다운로드를 시작할 때 엔진이 만든다. 다운로드를 시작할 때 주소가 같으면 엔진에 넘겨 다시
+        # 받지 않게 하고, 같은 카드의 편집 창을 다시 열 때도 다시 받지 않는다. 긴 영상의 moov는
+        # 수십 MB라 앱 전체에서 한 카드의 것만 든다(section_edit_viewmodel.keep_section_head).
+        # 인코딩 완료 VOD에만 있다. 없으면 None
+        self.section_head = None
+        # 구간 카드가 적는 크기 — 저장소에 생길 구간 파일 크기의 합(추정, 바이트). 인코딩 완료
+        # VOD(mp4)만. 구간을 확인할 때 moov로 센다(겹치는 자리는 구간마다). 받기 시작해도 바뀌지
+        # 않는다 — 그때까지 세지 못했을 때만 엔진이 정한 받을 양이 들어온다. 모르면 None — 카드는
+        # 크기를 적지 않는다
+        self.section_bytes = None
+        # 완료한 다운로드가 저장한 파일의 크기(바이트) — 구간 다운로드는 구간 파일 크기의 합이다.
+        # 엔진이 실제 파일에서 읽어 준 값이고 완료 카드가 크기로 적는다. 모르면(받기 전 · 앱을
+        # 다시 띄워 값이 없는 카드) None
+        self.output_bytes = None
+        # 받을 구간의 합을 백그라운드에서 세는 중이다(SectionSizer) — 대기 카드가 크기 자리에
+        # "확인 중..."을 적는다. 다 세면(성공 · 실패 모두) False로 돌아간다
+        self.section_sizing = False
+        # 받기 시작 때 엔진이 정한 받을 크기(바이트) — 인코딩 완료 VOD만. 카드의 크기 조회가
+        # 끝나지 않아 파일 크기를 모를 때 "받은 크기 / 받을 크기"의 분모로 쓴다. 받기 전에는 None
+        self.transfer_bytes = None
+        # 다운로드 준비 중(엔진이 받을 것을 정하는 중)임을 카드에 보일지 — 준비가 잠깐이면
+        # 켜지 않는다(DownloadViewModel)
+        self.preparing = False
+        # 엔진이 아직 준비 중이다(받을 것을 정하는 중 — 진행률이 없다). 받기를 시작하면 켜지고
+        # 준비가 끝났다는 통지나 종료(완료 · 실패 · 정지)에서 꺼진다. 이때 일시정지한 카드는
+        # 진행률 없이 "일시정지됨"만 적는다 (#309)
+        self.prepare_pending = False
+        # 마지막 다운로드가 엔진에 넘긴 구간 파일 경로 — 번호가 작은 것부터. 완료 카드의 폴더
+        # 열기가 실제로 만들어진 구간 파일을 찾는 데 쓴다. 구간 다운로드를 한 적이 없으면 빈 튜플
+        self.section_paths = ()
+        # 고른 해상도 항목의 선언 프레임률(소수). 선언이 없으면 None
+        self.selected_frame_rate = None
 
         self.unique_reps = unique_reps
-        
+
         self.resolution = resolution
         self.total_size = ""
         self.base_url = base_url
@@ -65,6 +147,7 @@ class ContentItem:
         self.resolution = rep[0]
         self.base_url = rep[1]
         self.stream = getattr(rep, "stream", None)
+        self.selected_frame_rate = getattr(rep, "frame_rate", None)
         self.resolution_tag = file_tag(self.unique_reps, rep)
 
     @staticmethod
