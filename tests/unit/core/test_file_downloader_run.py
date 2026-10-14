@@ -464,18 +464,29 @@ def test_hitting_the_file_size_limit_is_found_in_the_error_or_its_cause(make, ex
     assert base_module._hit_file_size_limit(make()) is expected
 
 
-@pytest.mark.parametrize("name", ["msdos", "NTFS", None], ids=["fat", "not-fat", "unknown"])
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("msdos", FILE_TOO_LARGE_FOR_FAT),
+        (None, FILE_TOO_LARGE_FOR_FAT),  # 읽지 못함
+        ("NTFS", "Failed to save file"),
+        ("apfs", "Failed to save file"),
+    ],
+    ids=["fat", "unknown", "ntfs", "apfs"],
+)
 @pytest.mark.parametrize(
     "make",
     [lambda: OSError(errno.EFBIG, "File too large"), _too_large_from_ffmpeg],
     ids=["oserror-efbig", "ffmpeg-text"],
 )
-def test_failure_from_the_file_size_limit_carries_the_fat_key(tmp_path, monkeypatch, name, make):
-    """파일 하나의 한계에 닿아 난 실패를 알릴 때는 파일 시스템 이름과 상관없이 FAT 안내 키가 적혀야 한다.
+def test_failure_from_the_file_size_limit_carries_a_key_by_the_filesystem(
+    tmp_path, monkeypatch, name, expected, make
+):
+    """파일 하나의 한계에 닿아 난 실패는 FAT 계열 · 이름 모름이면 FAT 안내, 그 밖이면 저장 실패 키여야 한다.
 
-    파일 시스템 이름 "msdos" · "NTFS" · 읽지 못함(None), 여유 넉넉. 엔진의 실패 통지로
-    EFBIG인 OSError 또는 원인의 글에 "File too large"가 든 실패를 보냄
-    -> 받은 예외는 보낸 그 객체이고 space_key == "File too large for a FAT32 drive"
+    여유 넉넉. 엔진의 실패 통지로 EFBIG인 OSError 또는 원인의 글에 "File too large"가 든
+    실패를 보냄 -> 받은 예외는 보낸 그 객체이고 space_key가
+    "msdos" · 읽지 못함(None): "File too large for a FAT32 drive" / "NTFS" · "apfs": "Failed to save file"
     """
     engine, _data, _logger, _output, _finished, failures = _make_engine(tmp_path, monkeypatch)
     _on_filesystem(monkeypatch, name)
@@ -484,7 +495,7 @@ def test_failure_from_the_file_size_limit_carries_the_fat_key(tmp_path, monkeypa
     engine._notify_failed(sent)
 
     assert failures == [sent]
-    assert getattr(sent, "space_key", None) == FILE_TOO_LARGE_FOR_FAT
+    assert getattr(sent, "space_key", None) == expected
 
 
 @pytest.mark.parametrize(
