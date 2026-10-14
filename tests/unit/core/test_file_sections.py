@@ -21,6 +21,7 @@ requests 세션으로 요청하고 진짜 응답 객체를 받으며, 전송 어
   것과 같다
 """
 
+import errno
 import os
 import re
 import subprocess
@@ -663,6 +664,31 @@ def test_transfer_failure_removes_partial_source(server, tmp_path, monkeypatch):
     assert run.finished == 0
     assert run.failures
     assert run.data.model.state == DownloadState.WAITING
+    assert run.listing() == []
+
+
+def test_section_write_that_hits_the_file_size_limit_carries_the_fat_key(
+    server, tmp_path, monkeypatch
+):
+    """받은 바이트를 구간 파일에 쓰다 EFBIG으로 실패하면 실패에 FAT 안내 키가 적혀야 한다.
+
+    기본 입력, 구간 프레임 35~80. 받은 바이트를 파일에 쓰는 곳(_MapWriter.write)이
+    OSError(EFBIG, "File too large")를 냄
+    -> 실패 1건 이상, 첫 실패의 space_key == "File too large for a FAT32 drive",
+       완료 0회, 저장 폴더가 비어 있다
+    """
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))])
+
+    def too_large(self, chunk):
+        raise OSError(errno.EFBIG, "File too large")
+
+    monkeypatch.setattr(fd_module._MapWriter, "write", too_large)
+
+    run.start()
+
+    assert run.finished == 0
+    assert run.failures
+    assert getattr(run.failures[0], "space_key", None) == FILE_TOO_LARGE_FOR_FAT
     assert run.listing() == []
 
 

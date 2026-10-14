@@ -104,15 +104,18 @@ class TestFailureMessageKey:
         "make",
         [
             lambda: _postprocess_with(CutError(CUT_FAILED, "exit 1")),
+            lambda: _postprocess_with(RemuxError("exit 1: File too large")),
             lambda: OSError(28, "No space left on device"),
         ],
-        ids=["cut-failure", "oserror"],
+        ids=["cut-failure", "remux-failure", "oserror"],
     )
     def test_space_key_written_by_the_engine_wins_over_the_kind_of_the_error(self, make):
         """엔진이 space_key를 적어 둔 실패는 예외의 종류와 무관하게 그 키로 매핑돼야 한다 (#309).
 
-        컷 실패(PostprocessError ← CutError)와 OSError에 space_key = "File too large for a FAT32 drive"
-        -> 둘 다 그 키("Section cut failed" · "Failed to save file"이 아니다)
+        컷 실패(PostprocessError ← CutError) · 재포장 실패(PostprocessError ← RemuxError) · OSError에
+        space_key = "File too large for a FAT32 drive"
+        -> 셋 다 그 키("Section cut failed" · "Postprocessing failed - invalid segments" ·
+           "Failed to save file"이 아니다)
         """
         error = make()
         error.space_key = "File too large for a FAT32 drive"

@@ -122,14 +122,6 @@ def test_filesystem_name_is_none_when_it_cannot_be_read(tmp_path, monkeypatch, e
     assert filesystem_name(str(tmp_path)) is None
 
 
-# 고치기 전의 macOS 읽기(stat -f %T)는 파일 종류 "/"를 낸다 — 단언이 실패하는 것을 먼저 보인다.
-# 고치는 커밋이 이 표시를 뗀다. 단언 밖의 실패(hdiutil 등)는 xfail로 가리지 않는다
-_FAILS_ON_MACOS_BEFORE_THE_FIX = pytest.mark.xfail(
-    sys.platform == "darwin", reason="#309 macOS 읽기 결함", raises=AssertionError, strict=True
-)
-
-
-@_FAILS_ON_MACOS_BEFORE_THE_FIX
 def test_filesystem_name_of_a_real_folder_is_a_name_or_none(tmp_path):
     """실제 폴더에 물으면 예외 없이 파일 시스템 이름이나 None을 돌려줘야 한다.
 
@@ -177,7 +169,6 @@ _HDIUTIL_SECONDS = 120  # hdiutil 한 번을 기다리는 시간(초) — 러너
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="macOS의 디스크 이미지(hdiutil)로 잰다")
-@_FAILS_ON_MACOS_BEFORE_THE_FIX
 @pytest.mark.parametrize(
     ("filesystem", "expected", "fat"),
     [("MS-DOS FAT32", "msdos", True), ("ExFAT", "exfat", False)],

@@ -150,6 +150,8 @@ FILE_TOO_LARGE_FOR_FAT = "File too large for a FAT32 drive"
 # 쓰기가 "남은 공간이 없다"로 실패했을 때 ffmpeg가 stderr에 적는 글 — ffmpeg가 쓰다 실패하면
 # OSError가 아니라 이 글이 든 실패로 온다
 _NO_SPACE_TEXT = "No space left on device"
+# 파일이 파일 시스템의 파일 하나의 한계를 넘었을 때(EFBIG) ffmpeg가 stderr에 적는 글
+_FILE_TOO_LARGE_TEXT = "File too large"
 
 
 class FileSizeLimitError(OSError):
@@ -179,6 +181,25 @@ def _ran_out_of_space(exc: BaseException) -> bool:
         if isinstance(exc, OSError) and exc.errno == errno.ENOSPC:
             return True
         if _NO_SPACE_TEXT in str(exc):
+            return True
+        exc = exc.__cause__
+    return False
+
+
+def _hit_file_size_limit(exc: BaseException) -> bool:
+    """그 실패의 원인 사슬에 "파일이 너무 크다"(EFBIG)가 있는지 — 파일 시스템의 파일 하나의 한계.
+
+    FAT32는 파일 하나가 4GiB − 1바이트를 넘으면 쓰기가 실패한다. macOS · Linux는 EFBIG을 낸다
+    (Windows는 ENOSPC — ``_ran_out_of_space``가 본다). 파이썬이 쓰다 실패하면 errno가 EFBIG인
+    OSError로, ffmpeg가 쓰다 실패하면 stderr의 글("File too large")이 든 실패로 온다. 원인
+    (``__cause__``)을 따라 올라가며 둘 다 본다 — ``_ran_out_of_space``와 같은 방식이다.
+    """
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if isinstance(exc, OSError) and exc.errno == errno.EFBIG:
+            return True
+        if _FILE_TOO_LARGE_TEXT in str(exc):
             return True
         exc = exc.__cause__
     return False
@@ -657,7 +678,15 @@ class BaseDownloader(ABC):
 
         표시 계층은 그 키가 있으면 다른 판정보다 먼저 쓴다 — 자르다 난 실패여도 원인이 공간
         부족이면 공간 부족으로 알린다. 예외의 종류와 글은 바꾸지 않는다.
+
+        파일 하나의 한계에 닿은 실패(EFBIG · "File too large")는 공간 부족보다 먼저 보고 FAT
+        안내를 준다 — 공간이 아니라 파일 크기의 문제이고, 그 한계를 두는 것은 FAT 계열이다.
         """
+        if getattr(exc, "space_key", None) is None and _hit_file_size_limit(exc):
+            try:
+                exc.space_key = FILE_TOO_LARGE_FOR_FAT
+            except AttributeError:
+                pass  # 속성을 받지 않는 예외 — 적지 못해도 실패는 그대로 알린다
         if getattr(exc, "space_key", None) is None and _ran_out_of_space(exc):
             key = self._space_failure_key()
             if key is not None:
