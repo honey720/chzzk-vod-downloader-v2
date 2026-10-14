@@ -425,6 +425,79 @@ def test_running_out_of_space_is_found_in_the_error_or_its_cause(make, expected)
     assert base_module._ran_out_of_space(make()) is expected
 
 
+def _too_large_from_ffmpeg() -> PostprocessError:
+    """ffmpeg가 파일 하나의 한계에 닿아 실패한 재포장 — 원인의 글에 ffmpeg의 stderr가 들어 있다."""
+    error = PostprocessError("후처리(remux) 실패")
+    error.__cause__ = RuntimeError(
+        "ffmpeg remux 실패 (exit 1): Error submitting a packet to the muxer: File too large"
+    )
+    return error
+
+
+@pytest.mark.parametrize(
+    ("make", "expected"),
+    [
+        (lambda: OSError(errno.EFBIG, "File too large"), True),  # 파이썬이 쓰다 실패
+        # 오류의 글은 OS의 언어를 따른다 — 그 영어 문구가 없어도 번호(errno)로 알아봐야 한다
+        (lambda: OSError(errno.EFBIG, "파일이 너무 큽니다"), True),
+        (_too_large_from_ffmpeg, True),  # ffmpeg가 쓰다 실패 — 원인의 글
+        (_no_space, False),  # 공간 부족은 이 판정의 것이 아니다
+        (lambda: OSError(errno.EACCES, "Permission denied"), False),
+        (lambda: PostprocessError("후처리(remux) 실패: Invalid data found"), False),
+    ],
+    ids=[
+        "oserror-efbig",
+        "oserror-efbig-other-text",
+        "ffmpeg-text-in-cause",
+        "oserror-enospc",
+        "other-oserror",
+        "other-remux-failure",
+    ],
+)
+def test_hitting_the_file_size_limit_is_found_in_the_error_or_its_cause(make, expected):
+    """파일 하나의 한계에 닿아 난 실패(EFBIG)는 예외 자신이나 원인에서 알아봐야 한다.
+
+    EFBIG인 OSError(글이 "File too large"인 것 · 다른 말인 것) · 원인의 글에
+    "File too large"가 든 실패 -> 참
+    ENOSPC인 OSError · 권한 오류 · 그 글이 없는 재포장 실패 -> 거짓
+    """
+    assert base_module._hit_file_size_limit(make()) is expected
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("msdos", FILE_TOO_LARGE_FOR_FAT),
+        (None, FILE_TOO_LARGE_FOR_FAT),  # 읽지 못함
+        ("NTFS", "Failed to save file"),
+        ("apfs", "Failed to save file"),
+    ],
+    ids=["fat", "unknown", "ntfs", "apfs"],
+)
+@pytest.mark.parametrize(
+    "make",
+    [lambda: OSError(errno.EFBIG, "File too large"), _too_large_from_ffmpeg],
+    ids=["oserror-efbig", "ffmpeg-text"],
+)
+def test_failure_from_the_file_size_limit_carries_a_key_by_the_filesystem(
+    tmp_path, monkeypatch, name, expected, make
+):
+    """파일 하나의 한계에 닿아 난 실패는 FAT 계열 · 이름 모름이면 FAT 안내, 그 밖이면 저장 실패 키여야 한다.
+
+    여유 넉넉. 엔진의 실패 통지로 EFBIG인 OSError 또는 원인의 글에 "File too large"가 든
+    실패를 보냄 -> 받은 예외는 보낸 그 객체이고 space_key가
+    "msdos" · 읽지 못함(None): "File too large for a FAT32 drive" / "NTFS" · "apfs": "Failed to save file"
+    """
+    engine, _data, _logger, _output, _finished, failures = _make_engine(tmp_path, monkeypatch)
+    _on_filesystem(monkeypatch, name)
+    sent = make()
+
+    engine._notify_failed(sent)
+
+    assert failures == [sent]
+    assert getattr(sent, "space_key", None) == expected
+
+
 @pytest.mark.parametrize(
     ("name", "free", "sections", "expected"),
     [

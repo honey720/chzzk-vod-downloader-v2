@@ -4,7 +4,11 @@ OS의 호출은 바꿔치기한다 — 러너의 디스크가 무엇인지에 �
 이름이나 None을 돌려준다"까지만 잰다.
 """
 
+import re
+import subprocess
 import sys
+from contextlib import contextmanager
+from pathlib import Path
 
 import pytest
 
@@ -119,10 +123,72 @@ def test_filesystem_name_is_none_when_it_cannot_be_read(tmp_path, monkeypatch, e
 
 
 def test_filesystem_name_of_a_real_folder_is_a_name_or_none(tmp_path):
-    """실제 폴더에 물으면 예외 없이 이름(빈 글이 아닌 것)이나 None을 돌려줘야 한다.
+    """실제 폴더에 물으면 예외 없이 파일 시스템 이름이나 None을 돌려줘야 한다.
 
-    tmp_path -> None이거나 길이가 1 이상인 글
+    tmp_path -> None이거나, 영숫자로 시작하고 영숫자 · "_" · "." · "-"만 든 글
+    ("NTFS" · "ext4" · "apfs" · "fuse.sshfs" 같은 것. 파일 종류 표기 "/" · "@"는 아니다)
     """
     name = filesystem_name(str(tmp_path))
 
-    assert name is None or (isinstance(name, str) and name)
+    assert name is None or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", name), name
+
+
+@contextmanager
+def _attached_image(tmp_path: Path, filesystem: str):
+    """tmp_path에 작은 디스크 이미지를 만들어 붙이고 그 마운트 지점을 준다 — 끝나면 떼고 지운다.
+
+    macOS의 hdiutil로 만든다(root가 필요 없다). 붙이지 못하면 건너뛰지 않고 실패한다.
+    """
+    image = tmp_path / "volume.dmg"
+    mount_point = tmp_path / "mounted"
+    mount_point.mkdir()
+    hdiutil = "/usr/bin/hdiutil"
+    # FAT32는 클러스터 수의 바닥 때문에 수십 MB가 있어야 만들어진다
+    subprocess.run(
+        [hdiutil, "create", "-size", "64m", "-fs", filesystem, "-volname", "CVDTEST", str(image)],
+        check=True,
+        capture_output=True,
+        timeout=_HDIUTIL_SECONDS,
+    )
+    subprocess.run(
+        [hdiutil, "attach", "-nobrowse", "-mountpoint", str(mount_point), str(image)],
+        check=True,
+        capture_output=True,
+        timeout=_HDIUTIL_SECONDS,
+    )
+    try:
+        yield mount_point
+    finally:
+        detach = [hdiutil, "detach", str(mount_point)]
+        try:
+            if subprocess.run(detach, capture_output=True, timeout=_HDIUTIL_SECONDS).returncode:
+                # 강제로도 떼지 못하면 볼륨이 붙은 채 남는다 — 테스트를 실패시켜 드러낸다
+                subprocess.run(
+                    [*detach, "-force"], check=True, capture_output=True, timeout=_HDIUTIL_SECONDS
+                )
+        finally:
+            image.unlink(missing_ok=True)
+
+
+_HDIUTIL_SECONDS = 120  # hdiutil 한 번을 기다리는 시간(초) — 러너가 바쁠 때도 넉넉하게
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS의 디스크 이미지(hdiutil)로 잰다")
+@pytest.mark.parametrize(
+    ("filesystem", "expected", "fat"),
+    [("MS-DOS FAT32", "msdos", True), ("ExFAT", "exfat", False)],
+    ids=["fat32", "exfat"],
+)
+def test_macos_reads_the_filesystem_of_a_mounted_volume(tmp_path, filesystem, expected, fat):
+    """macOS에서 붙인 볼륨 안의 폴더에 물으면 그 볼륨의 파일 시스템 이름이 나와야 한다.
+
+    hdiutil로 tmp_path에 만든 64MB 이미지(FAT32 · exFAT)를 붙이고, 그 안의 폴더를 물음
+    -> FAT32: "msdos", is_fat 참 / exFAT: "exfat", is_fat 거짓
+    """
+    with _attached_image(tmp_path, filesystem) as mounted:
+        folder = mounted / "저장"
+        folder.mkdir()
+
+        name = filesystem_name(str(folder))
+
+    assert (name, is_fat(name)) == (expected, fat)

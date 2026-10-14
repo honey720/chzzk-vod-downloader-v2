@@ -60,6 +60,7 @@ from core.api.hls import parse_media_playlist
 from core.api.hls_fmp4 import fetch_fmp4_head, segment_file_name, segment_frames
 from core.downloaders.base import (
     DISK_SPACE_SHORT,
+    FILE_TOO_LARGE_FOR_FAT,
     DiskSpaceError,
     FileSizeLimitError,
     PostprocessError,
@@ -1565,3 +1566,76 @@ def test_progress_the_cut_reports_is_placed_after_the_share_of_the_reading(
 
     assert seen == [pytest.approx(0.55)]
     assert (run.finished, run.failures) == (1, [])
+
+
+# ================================================================ 파일 하나의 한계(FAT32)에 닿은 쓰기 (#309)
+
+# ffmpeg가 FAT32에 4GiB를 넘겨 쓰다 낸 글(rc1 macOS 실기의 stderr 꼴)
+_FFMPEG_FILE_TOO_LARGE = "Error submitting a packet to the muxer: File too large"
+
+# 저장 폴더의 파일 시스템 이름과 그때 파일 하나의 한계에 닿은 실패에 적혀야 할 키
+_SIZE_LIMIT_KEYS = pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("msdos", FILE_TOO_LARGE_FOR_FAT),
+        (None, FILE_TOO_LARGE_FOR_FAT),  # 파일 시스템 이름을 읽지 못함
+        ("NTFS", "Failed to save file"),
+    ],
+    ids=["fat", "unknown", "not-fat"],
+)
+
+
+@_SIZE_LIMIT_KEYS
+def test_section_cut_that_hits_the_file_size_limit_carries_a_key_by_the_filesystem(
+    host, sources, tmp_path, monkeypatch, name, expected
+):
+    """구간 파일을 쓰는 ffmpeg가 "File too large"로 실패하면 저장 폴더의 파일 시스템에 맞는 키가 적혀야 한다.
+
+    plain, 구간 프레임 40~100. 구간 파일을 쓰는 실행(remux_through)이 stderr에
+    "Error submitting a packet to the muxer: File too large"가 든 RemuxError를 냄
+    -> 실패 1건(PostprocessError), space_key가 "msdos" · 읽지 못함(None)이면
+       "File too large for a FAT32 drive", "NTFS"면 "Failed to save file",
+       저장 폴더에 구간 파일이 없다
+    """
+    run = _Run(host, tmp_path, [sources["plain"].selection(40, 100)])
+    monkeypatch.setattr(base_module, "filesystem_name", lambda folder: name)
+
+    def too_large(*args, **kwargs):
+        raise RemuxError(f"ffmpeg remux 실패 (변환 exit 0 · 잇기 exit 1): {_FFMPEG_FILE_TOO_LARGE}")
+
+    monkeypatch.setattr(fmp4_cut_module, "remux_through", too_large)
+
+    run.start()
+
+    assert [type(e) for e in run.failures] == [PostprocessError]
+    assert getattr(run.failures[0], "space_key", None) == expected
+    assert not os.path.exists(run.paths[0])
+
+
+@_SIZE_LIMIT_KEYS
+def test_remux_that_hits_the_file_size_limit_carries_a_key_by_the_filesystem(
+    host, tmp_path, monkeypatch, name, expected
+):
+    """구간 없는 다운로드의 재포장이 "File too large"로 실패하면 저장 폴더의 파일 시스템에 맞는 키가 적혀야 한다.
+
+    plain, selections 빈 튜플. 재포장(remux_stream)이 세그먼트를 다 받아 넘긴 뒤 stderr에
+    "Error submitting a packet to the muxer: File too large"가 든 RemuxError를 냄
+    -> 실패 1건(PostprocessError), space_key가 "msdos" · 읽지 못함(None)이면
+       "File too large for a FAT32 drive", "NTFS"면 "Failed to save file",
+       output_path가 없다, 완료 0회
+    """
+    run = _Run(host, tmp_path, [])
+    monkeypatch.setattr(base_module, "filesystem_name", lambda folder: name)
+
+    def too_large(chunks, dst_path, **kwargs):
+        for _chunk in chunks:  # 제품의 재포장처럼 세그먼트를 끝까지 넘긴다(넘긴 것은 지워진다)
+            pass
+        raise RemuxError(f"ffmpeg remux 실패 (exit 1): {_FFMPEG_FILE_TOO_LARGE}")
+
+    monkeypatch.setattr(base_module, "remux_stream", too_large)
+
+    run.start()
+
+    assert [type(e) for e in run.failures] == [PostprocessError]
+    assert getattr(run.failures[0], "space_key", None) == expected
+    assert (run.finished, os.path.exists(run.data.output_path)) == (0, False)

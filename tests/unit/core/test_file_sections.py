@@ -21,6 +21,7 @@ requests 세션으로 요청하고 진짜 응답 객체를 받으며, 전송 어
   것과 같다
 """
 
+import errno
 import os
 import re
 import subprocess
@@ -663,6 +664,43 @@ def test_transfer_failure_removes_partial_source(server, tmp_path, monkeypatch):
     assert run.finished == 0
     assert run.failures
     assert run.data.model.state == DownloadState.WAITING
+    assert run.listing() == []
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("msdos", FILE_TOO_LARGE_FOR_FAT),
+        (None, FILE_TOO_LARGE_FOR_FAT),  # 파일 시스템 이름을 읽지 못함
+        ("NTFS", "Failed to save file"),
+    ],
+    ids=["fat", "unknown", "not-fat"],
+)
+def test_section_write_that_hits_the_file_size_limit_carries_a_key_by_the_filesystem(
+    server, tmp_path, monkeypatch, name, expected
+):
+    """받은 바이트를 구간 파일에 쓰다 EFBIG으로 실패하면 저장 폴더의 파일 시스템에 맞는 키가 적혀야 한다.
+
+    기본 입력, 구간 프레임 35~80. 받은 바이트를 파일에 쓰는 곳(_MapWriter.write)이
+    OSError(EFBIG, "파일이 너무 큽니다")를 냄
+    -> 실패 1건 이상, 첫 실패의 space_key가 "msdos" · 읽지 못함(None)이면
+       "File too large for a FAT32 drive", "NTFS"면 "Failed to save file",
+       완료 0회, 저장 폴더가 비어 있다
+    """
+    run = _Run(server, "plain", tmp_path, [TimeRange(_seconds(35), _seconds(80))])
+    monkeypatch.setattr(base_module, "filesystem_name", lambda folder: name)
+
+    def too_large(self, chunk):
+        # 오류의 글은 OS의 언어를 따른다 — 영어 문구 없이 번호(errno)로 알아봐야 한다
+        raise OSError(errno.EFBIG, "파일이 너무 큽니다")
+
+    monkeypatch.setattr(fd_module._MapWriter, "write", too_large)
+
+    run.start()
+
+    assert run.finished == 0
+    assert run.failures
+    assert getattr(run.failures[0], "space_key", None) == expected
     assert run.listing() == []
 
 

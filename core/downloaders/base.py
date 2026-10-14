@@ -146,10 +146,14 @@ class DiskSpaceError(OSError):
 
 # 저장 폴더의 파일 시스템(FAT · FAT32)이 파일 하나에 담을 수 있는 크기보다 만들 파일이 크다
 FILE_TOO_LARGE_FOR_FAT = "File too large for a FAT32 drive"
+# 파일을 쓰지 못했다 — 표시 계층이 OSError에 주는 것과 같은 이미 있는 키다
+FILE_SAVE_FAILED = "Failed to save file"
 
 # 쓰기가 "남은 공간이 없다"로 실패했을 때 ffmpeg가 stderr에 적는 글 — ffmpeg가 쓰다 실패하면
 # OSError가 아니라 이 글이 든 실패로 온다
 _NO_SPACE_TEXT = "No space left on device"
+# 파일이 파일 시스템의 파일 하나의 한계를 넘었을 때(EFBIG) ffmpeg가 stderr에 적는 글
+_FILE_TOO_LARGE_TEXT = "File too large"
 
 
 class FileSizeLimitError(OSError):
@@ -179,6 +183,25 @@ def _ran_out_of_space(exc: BaseException) -> bool:
         if isinstance(exc, OSError) and exc.errno == errno.ENOSPC:
             return True
         if _NO_SPACE_TEXT in str(exc):
+            return True
+        exc = exc.__cause__
+    return False
+
+
+def _hit_file_size_limit(exc: BaseException) -> bool:
+    """그 실패의 원인 사슬에 "파일이 너무 크다"(EFBIG)가 있는지 — 파일 시스템의 파일 하나의 한계.
+
+    FAT32는 파일 하나가 4GiB − 1바이트를 넘으면 쓰기가 실패한다. macOS · Linux는 EFBIG을 낸다
+    (Windows는 ENOSPC — ``_ran_out_of_space``가 본다). 파이썬이 쓰다 실패하면 errno가 EFBIG인
+    OSError로, ffmpeg가 쓰다 실패하면 stderr의 글("File too large")이 든 실패로 온다. 원인
+    (``__cause__``)을 따라 올라가며 둘 다 본다 — ``_ran_out_of_space``와 같은 방식이다.
+    """
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if isinstance(exc, OSError) and exc.errno == errno.EFBIG:
+            return True
+        if _FILE_TOO_LARGE_TEXT in str(exc):
             return True
         exc = exc.__cause__
     return False
@@ -657,7 +680,15 @@ class BaseDownloader(ABC):
 
         표시 계층은 그 키가 있으면 다른 판정보다 먼저 쓴다 — 자르다 난 실패여도 원인이 공간
         부족이면 공간 부족으로 알린다. 예외의 종류와 글은 바꾸지 않는다.
+
+        파일 하나의 한계에 닿은 실패(EFBIG · "File too large")는 공간 부족보다 먼저 본다 — 공간이
+        아니라 파일 크기의 문제다. 키는 ``_size_limit_failure_key``가 고른다.
         """
+        if getattr(exc, "space_key", None) is None and _hit_file_size_limit(exc):
+            try:
+                exc.space_key = self._size_limit_failure_key()
+            except AttributeError:
+                pass  # 속성을 받지 않는 예외 — 적지 못해도 실패는 그대로 알린다
         if getattr(exc, "space_key", None) is None and _ran_out_of_space(exc):
             key = self._space_failure_key()
             if key is not None:
@@ -666,6 +697,17 @@ class BaseDownloader(ABC):
                 except AttributeError:
                     pass  # 속성을 받지 않는 예외 — 적지 못해도 실패는 그대로 알린다
         return exc
+
+    def _size_limit_failure_key(self) -> str:
+        """쓰다가 "파일이 너무 크다"(EFBIG)로 실패했을 때의 안내 키.
+
+        그 한계를 두는 것은 FAT 계열이다 — 저장 폴더가 FAT 계열이거나 파일 시스템 이름을 읽지
+        못했으면 FAT 안내를 준다(읽지 못하는 경우를 빼면 FAT32에서 안내가 빠진다). FAT이 아닌
+        이름이 확인되면 FAT32라고 말하지 않고 파일 저장 실패로 알린다 — 손상 · 컷 실패로 가지
+        않게 키는 적는다.
+        """
+        name = filesystem_name(self._output_folder())
+        return FILE_TOO_LARGE_FOR_FAT if name is None or is_fat(name) else FILE_SAVE_FAILED
 
     def _space_failure_key(self) -> str | None:
         """쓰다가 "남은 공간이 없다"로 실패했을 때의 안내 키.
