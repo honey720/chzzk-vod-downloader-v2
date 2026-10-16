@@ -28,8 +28,11 @@ import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QDialogButtonBox, QFormLayout, QGroupBox, QLabel, QLayout, QWidget
 
+import app.theme as theme
 import config.config as config
+import main as main_module
 from app.views.dialog import SettingDialog
+from tests.unit.card_helpers import hold_style
 
 #: 각 그룹 상자의 (라벨, 필드) 짝 — objectName. 도움말 버튼은 라벨 열에 홀로 있다.
 ROWS = {
@@ -45,6 +48,18 @@ def _seed_config() -> None:
     path = Path(config.CONFIG_FILE)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(config.default_config()), encoding="utf-8")
+
+
+@pytest.fixture(autouse=True)
+def _apply_production_qss(qapp):
+    """실제 전역 QSS·스타일을 태운다 — 라벨 높이·창 최소폭은 QSS에 좌우된다(#369).
+
+    앞서 돈 파일이 남긴 전역 스타일에 기대지 않는다. ⚠️ function scope 유지.
+    """
+    theme.set_color_scheme("dark")
+    qapp.setStyle(hold_style(theme.build_style()))  # 참조 보관 — 이중 해제 우회 (#243)
+    qapp.setPalette(theme.build_palette())
+    qapp.setStyleSheet(theme.load_stylesheet(main_module.resource_path(theme.QSS_RELATIVE_PATH)))
 
 
 @pytest.fixture
