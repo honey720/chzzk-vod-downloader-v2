@@ -212,6 +212,22 @@ def test_the_module_index_actually_sees_the_tree():
     assert all(_resolve_project_module(m) == m for m in index)
 
 
+def test_import_analysis_finds_a_view_module_outside_the_view_layer_directories():
+    """뷰 계층 위치 밖에서 import 내용으로 Qt 위젯에 닿는 모듈이 하나 이상 있어야 한다.
+
+    위치(views·widgets·theme)로 잡히는 뷰 모듈은 import 분석이 빈 결과를 내도 잡힌다(#369).
+    프로젝트 모듈 색인 전체 -> `is_view_layer`가 거짓이고 `qt_widget_chain`이 None이 아닌 모듈 ≥ 1
+    """
+    reached_by_content = sorted(
+        m
+        for m, path in project_modules().items()
+        if not is_view_layer(path) and qt_widget_chain(m) is not None
+    )
+    assert reached_by_content, (
+        "뷰 계층 위치 밖에서 Qt 위젯에 닿는 모듈이 하나도 없다 — import 분석이 헛돌고 있다"
+    )
+
+
 def test_viewmodel_layer_does_not_reach_qt_widgets_or_view_modules():
     """뷰모델 계층(`app/` 중 views·widgets 밖)의 모든 `.py`는 Qt 위젯도 뷰 계층 모듈도 import하지 않는다."""
     files = viewmodel_layer_files()
