@@ -8,7 +8,9 @@ from core.api.playback_tracks import (
     STREAM_NOT_FOUND,
     PlaybackTrack,
     StreamSelectionError,
+    list_streams,
     playback_tracks,
+    select_stream,
     select_variant,
     select_variant_by_height,
     track_for_resolution,
@@ -311,3 +313,41 @@ def test_select_variant_by_height_fails_when_no_variant_has_that_height():
         select_variant_by_height(master, 720)
 
     assert caught.value.message_key == STREAM_NOT_FOUND
+
+
+# ================================================================ AVERAGE-BANDWIDTH
+
+
+def test_listed_stream_carries_the_average_bandwidth_only_when_the_master_declares_it():
+    """목록의 변형은 마스터가 AVERAGE-BANDWIDTH를 선언했을 때만 그 값을 싣고, 없으면 None이어야 한다.
+
+    변형 1280x720(BANDWIDTH 3192000 · AVERAGE-BANDWIDTH 2500000) · 852x480(BANDWIDTH 1692000뿐)
+    -> 480: (bandwidth 1692000, average None), 720: (bandwidth 3192000, average 2500000)
+    """
+    master = _master(
+        ("BANDWIDTH=3192000,AVERAGE-BANDWIDTH=2500000,RESOLUTION=1280x720", "720.m3u8"),
+        ("BANDWIDTH=1692000,RESOLUTION=852x480", "480.m3u8"),
+    )
+
+    entries = list_streams(master, [])
+
+    assert [(e.stream.height, e.stream.bandwidth, e.stream.average_bandwidth) for e in entries] == [
+        (480, 1692000, None),
+        (720, 3192000, 2500000),
+    ]
+
+
+def test_stream_with_an_average_bandwidth_is_found_again_in_the_master():
+    """AVERAGE-BANDWIDTH를 실은 변형도 마스터에서 다시 찾을 수 있어야 한다 — 그 값은 찾는 데 쓰지 않는다.
+
+    크기가 같은 변형 둘(BANDWIDTH 3192000 · 2692000, 둘 다 AVERAGE-BANDWIDTH 2500000).
+    목록의 둘째(BANDWIDTH가 큰 쪽)를 다시 찾음 -> "high.m3u8"
+    """
+    master = _master(
+        ("BANDWIDTH=3192000,AVERAGE-BANDWIDTH=2500000,RESOLUTION=1280x720", "high.m3u8"),
+        ("BANDWIDTH=2692000,AVERAGE-BANDWIDTH=2500000,RESOLUTION=1280x720", "low.m3u8"),
+    )
+    entries = list_streams(master, [])
+
+    assert [e.stream.bandwidth for e in entries] == [2692000, 3192000]
+    assert select_stream(master, entries[1].stream) == "high.m3u8"

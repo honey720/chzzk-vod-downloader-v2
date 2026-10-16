@@ -370,6 +370,7 @@ QLineEdit[invalid="true"]:focus {
 #sectionNumberLabel,
 #sectionNoticeLabel,
 #sectionNoteLabel,
+#sectionSumLabel,
 #sectionInfoLabel {
     font-size: @fontSizeMeta;
     color: @textMuted;

@@ -15,8 +15,13 @@ float · int다 — double은 파이썬 float와 같은 표현이라 값이 한 
 """
 
 import array
+import threading
 from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from itertools import islice
+
+from core.utils.interaction import rest_if_user_interacting
+from core.utils.stop import check_stop
 
 # 긴 표를 한 번에 채우거나 훑는 C 반복을 이 개수씩 잘라 돈다. C 안에서 도는 반복은 끝날 때까지
 # GIL을 놓지 않는다 — 샘플이 180만 개인 표 하나를 통째로 돌면 0.1~0.3초 동안 다른 스레드(GUI)가
@@ -26,7 +31,68 @@ from itertools import islice
 # 크기는 잰 값으로 정했다(약 184만 프레임의 합성 moov, 10ms 간격의 GUI 틱): 2**15 · 2**16개에서
 # 틱의 최대 간격이 50ms 아래이고(한 번에 돌면 약 340ms), 2**17개부터 50ms를 넘는다. 더 잘게
 # 잘라도 간격은 더 줄지 않는다. 잘라 도는 데 드는 시간은 크기와 거의 무관하다(해석 전체의 약 4%)
+#
+# 조각 사이는 일을 그만둘 수 있는 틈이기도 하다 — 그만두라는 답을 받았으면 여기서 멈춘다
+# (``core.utils.stop``). 그만둘지 묻는 값을 걸어 두지 않은 스레드에서는 아무 일도 없다
 CHUNK_ITEMS = 1 << 15
+# 색인을 만드는 동안에는 더 잘게 자른다 (#309). 사용자가 조작하는 동안 조각 사이에서 쉬는데
+# (``core.utils.interaction``), 조각이 길면 쉬는 틈이 드물어 화면 일이 그 사이에 걸린다 — 잰 값:
+# 2**15개 · 1ms 쉼이면 화면 일의 95백분위가 약 32ms, 2**13개면 약 14ms다(쉴 때 약 7ms).
+# 쉬지 않을 때의 해석 시간은 두 크기에서 같다
+INDEX_CHUNK_ITEMS = 1 << 13
+
+# 스레드마다 — 지금 색인을 만드는 중인지. 그 스레드에서만 잘게 자르고 조각 사이에서 쉰다
+_local = threading.local()
+
+
+@contextmanager
+def building_index() -> Iterator[None]:
+    """블록이 도는 동안 이 스레드의 조각을 ``INDEX_CHUNK_ITEMS``개로 줄이고 조각 사이에서 쉴 수 있게 한다.
+
+    색인 해석(``core.api.mp4.parse_moov``)이 쓴다. 다른 곳의 조각 단위는 그대로다.
+    """
+    outer = getattr(_local, "building_index", False)
+    _local.building_index = True
+    try:
+        yield
+    finally:
+        _local.building_index = outer
+
+
+@contextmanager
+def reading_tables() -> Iterator[None]:
+    """블록이 도는 동안 ``building_index``와 같이 조각을 줄이고 조각 사이에서 쉴 수 있게 한다 (#309).
+
+    색인을 만들지 않고 moov의 표를 읽는 일이 쓴다 — 프레임률 · 길이만 읽기
+    (``core.api.mp4.summarize_moov``)와 구간의 크기 세기(``core.utils.mp4_section_sizes``).
+    긴 영상에서는 이 일도 0.1~0.3초 동안 CPU를 쓰고, 그동안 창을 끄는 한 걸음이 100ms를
+    넘는다(잰 값: 6시간 60fps에서 110~210ms).
+    """
+    with building_index():
+        yield
+
+
+def chunk_items(items: int) -> int:
+    """지금 이 스레드에서 쓸 조각의 크기 — 색인을 만드는 중이면 ``INDEX_CHUNK_ITEMS``를 넘지 않는다.
+
+    Args:
+        items: 부르는 모듈의 ``CHUNK_ITEMS`` — 모듈마다 호출 시점에 조회한 값을 넘긴다
+    """
+    if getattr(_local, "building_index", False):
+        return min(items, INDEX_CHUNK_ITEMS)
+    return items
+
+
+def between_chunks() -> None:
+    """조각 사이의 틈 — 그만둘지 묻고, 색인을 만드는 중이면 사용자가 조작하는 동안 잠깐 쉰다.
+
+    Raises:
+        StopRequested: 이 스레드에 걸어 둔 값이 그만두라고 답한 경우
+    """
+    check_stop()
+    if getattr(_local, "building_index", False):
+        rest_if_user_interacting()
+
 
 _FLOAT = "d"  # C double — 파이썬 float와 같은 표현
 _WIDE = "q"  # 64비트 정수 — 파일 안의 위치(co64는 64비트다)
@@ -74,10 +140,12 @@ def fill_in_chunks(target: array.array, values: Iterable) -> array.array:
     """
     source = iter(values)
     extend = array.array.extend  # SampleColumn은 스스로의 extend를 막아 둔다 — 기본 클래스의 것
+    items = chunk_items(CHUNK_ITEMS)
     while True:
+        between_chunks()
         before = len(target)
-        extend(target, islice(source, CHUNK_ITEMS))
-        if len(target) - before < CHUNK_ITEMS:
+        extend(target, islice(source, items))
+        if len(target) - before < items:
             return target
 
 
@@ -88,8 +156,10 @@ def array_in_chunks(typecode: str, values: Iterable) -> array.array:
 
 def in_chunks(values: array.array) -> Iterator[array.array]:
     """배열을 ``CHUNK_ITEMS``개씩의 조각으로 낸다 — 최솟값 · 최댓값 · 세기처럼 훑기만 하는 일에 쓴다."""
-    for start in range(0, len(values), CHUNK_ITEMS):
-        yield values[start : start + CHUNK_ITEMS]
+    items = chunk_items(CHUNK_ITEMS)
+    for start in range(0, len(values), items):
+        between_chunks()
+        yield values[start : start + items]
 
 
 def float_column(values: Iterable[float]) -> SampleColumn:

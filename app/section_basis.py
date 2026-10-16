@@ -41,6 +41,7 @@ from core.models.fmp4_index import Fmp4Head
 from core.models.mp4_index import Mp4Head, PendingMp4Head
 from core.models.ts_index import TsHead
 from core.utils.fmp4_sections import FPS_DECLARED, choose_frame_rate, fmp4_timeline
+from core.utils.stop import check_stop
 from core.utils.ts_sections import choose_ts_frame_rate, ts_timeline
 
 logger = logging.getLogger(__name__)
@@ -101,6 +102,7 @@ def probe_section_basis(item) -> SectionBasis:
         Exception: 조회 · 해석 실패(네트워크 · 권한 · 형식). 호출자가 사용자 문구로 바꾼다 —
             원시 문자열에는 주소가 섞여 있어 그대로 보이지 않는다
     """
+    check_stop()  # 시작하기 전 — 그사이 그만두라는 답이 왔으면(해상도를 또 바꿨다) 받지 않는다
     kind = item.content_type
     if kind == "video":
         return probe_mp4(item.base_url, held=_held_moov(item)).basis
@@ -170,6 +172,7 @@ def probe_mp4(base_url: str, held=None, index: bool = False) -> SectionProbe:
             with timing.stage("moov 받기"):
                 raw = fetch_mp4_raw(base_url)
             pending = pending_mp4_head(raw)
+        check_stop()  # 받은 뒤 · 읽기 전 — 그사이 그만두라는 답이 왔으면 읽지 않는다
         with timing.stage("가벼운 해석"):
             summary = summarize_mp4(raw)
         timing.note("moov 크기", lambda: f"{len(raw.moov):,}바이트")

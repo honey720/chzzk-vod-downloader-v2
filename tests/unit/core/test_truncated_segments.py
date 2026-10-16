@@ -126,7 +126,7 @@ class _Logger:
         return lambda *args, **kwargs: None
 
 
-def _passthrough_remux_stream(chunks, dst_path):
+def _passthrough_remux_stream(chunks, dst_path, **_wait):
     """받은 스트림을 그대로 파일에 쓰는 remux_stream 스텁 — 공급된 바이트를 잰다."""
     with open(dst_path, "wb") as f:
         for chunk in chunks:

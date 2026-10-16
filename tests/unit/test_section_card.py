@@ -365,6 +365,27 @@ def test_cut_stage_shows_the_stage_text_instead_of_speed_and_remaining_time(card
     assert not any(text in card.status for text in ("MB/s", "N/A", "left"))
 
 
+def test_cut_stage_says_preparing_while_the_engine_reads_the_segments(card):
+    """컷 단계에서 엔진이 프레임 정보를 읽는 동안에는 카드가 자르기 준비 중이라고 적어야 한다.
+
+    구간 셋. 컷 단계에서 엔진이 준비 중(cut_preparing)이라 적고 컷 진행 0.3을 알림 → 준비 중을
+    내리고 같은 진행을 다시 알림
+    -> 준비 중 == "<진행률>% · Preparing to cut · 0/3", 내린 뒤 == "<같은 진행률>% · Cutting · 0/3",
+       아이템의 값이 엔진의 값을 따라간다
+    """
+    card.start()
+    card.begin_cut()
+    card.data.cut_preparing = True
+    card.cut_inside(0.3)
+    preparing = (card.item.cut_preparing, card.status)
+    card.data.cut_preparing = False
+    card.notify_cut()
+
+    percent = card.item.download_progress
+    assert preparing == (True, f"{percent}% · Preparing to cut · 0/3")
+    assert (card.item.cut_preparing, card.status) == (False, f"{percent}% · Cutting · 0/3")
+
+
 # ================================================================ 일부 실패
 
 
@@ -582,20 +603,22 @@ def test_retry_bar_starts_from_zero_and_the_count_continues_from_the_finished_se
     assert card.item.section_retry is None
 
 
-def test_retry_press_is_the_only_moment_the_finished_files_are_checked(card):
-    """끝낸 구간의 파일이 있는지는 재시도를 누른 순간에만 보고, 그때 없는 구간만 다시 만들 것으로 돌려야 한다.
+def test_finished_files_are_checked_at_the_retry_press_and_again_at_the_start(card):
+    """끝낸 구간의 파일은 재시도를 누를 때와 다운로드를 시작할 때 모두 확인해, 없는 구간을 다시 만들 것으로 돌려야 한다.
 
     구간 셋, 둘째만 실패. `_3` 파일을 지움 → ↻ → `_1` 파일을 지움 → 다운로드 시작
-    -> 넘겨진 section_resume의 끝낸 구간 == {0}
+    -> ↻ 직후 카드의 기록의 끝낸 구간 == {0}, 넘겨진 section_resume의 끝낸 구간 == 빈 것
     """
     paths = _fail_second_section(card)
     os.remove(paths[2])
 
     card.retry()
+    after_press = card.item.section_retry[1].done
     os.remove(paths[0])
     card.restart()
 
-    assert card.submission["content"].section_resume.done == frozenset({0})
+    assert after_press == frozenset({0})
+    assert card.submission["content"].section_resume.done == frozenset()
 
 
 def test_global_download_does_not_start_a_card_left_failed(card):

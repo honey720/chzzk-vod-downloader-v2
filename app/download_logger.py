@@ -199,6 +199,38 @@ class DownloadLogger:
         """
         self.info(f"Prepare completed in {elapsed:.2f} seconds" + (f" - {note}" if note else ""))
 
+    def log_file_size_check(self, filesystem, largest: int):
+        """저장 폴더의 파일 시스템과 만들 파일 가운데 가장 큰 것의 크기를 로깅합니다 (#309).
+
+        FAT 계열(FAT · FAT32)은 파일 하나가 4GiB를 넘지 못한다 — 받기 전에 이 둘로 가린다.
+        filesystem은 OS가 준 이름이고, 읽지 못했으면 None이다(그때는 가리지 않는다).
+        """
+        self.info(
+            f"File size check - Filesystem: {filesystem or 'unknown'}"
+            f" - Largest file: {largest} bytes"
+        )
+
+    def log_space_check(self, stage: str, segments: int, output: int, checks):
+        """받을 크기와 여유 공간을 견준 결과를 로깅합니다 — 세그먼트 다운로드와 구간 없는 mp4 (#309).
+
+        구간 없는 mp4는 받기 전에 한 번 남긴다 — segments는 0(세그먼트가 없다), output은 파일
+        크기, 본 곳은 output(저장 폴더) 하나다. 아래는 세그먼트 다운로드의 것이다.
+
+
+        stage는 start(받기 전 — 선언된 비트레이트로 어림) · transfer(세그먼트를 몇 개 받은 뒤 —
+        실제 평균으로 어림)다. segments는 받을 세그먼트 전체, output은 산출물의 어림 크기다.
+        checks는 본 볼륨마다의 (본 곳, 필요한 여유, 여유 공간) — 본 곳은 both(임시 폴더와 저장
+        폴더가 같은 볼륨) · temp · output이다. 어림이 실제와 얼마나 다른지는 이 줄의 segments를
+        "Transfer completed"의 Bytes와 견주면 된다.
+        """
+        volumes = ", ".join(
+            f"{where}: need {needed} / free {free}" for where, needed, free in checks
+        )
+        self.info(
+            f"Space check ({stage}) - Segments: {segments} bytes - Output: {output} bytes"
+            f" - {volumes or 'free space unknown'}"
+        )
+
     def log_transfer_net(self, elapsed: float):
         """준비를 뺀 실제 전송 시간을 로깅합니다 (#309).
 
@@ -231,13 +263,27 @@ class DownloadLogger:
         """
         self.info(f"Download stopped by user during {phase}")
 
+    def log_stopped_after_failure(self, phase: str):
+        """실패를 알린 뒤 엔진이 스스로 멈췄음을 로깅합니다 — 어느 단계였는지와 함께 (#309).
+
+        사용자가 멈춘 것(``log_stopped``)과 가른다. 실패의 내용은 그 앞의 오류 줄에 있다.
+        """
+        self.info(f"Download stopped after a failure during {phase}")
+
     def log_postprocess_start(self, kind: str):
         """후처리 시작을 로깅합니다 (kind: remux 등)."""
         self.info(f"Postprocess started - {kind}")
 
-    def log_postprocess_complete(self, elapsed: float, output_size: int):
-        """후처리 종료를 로깅합니다 — 소요 시간과 최종 산출물 크기."""
-        self.info(f"Postprocess completed in {elapsed:.2f} seconds - Output size: {output_size} bytes")
+    def log_postprocess_complete(self, elapsed: float, output_size: int, paused: float = 0.0):
+        """후처리 종료를 로깅합니다 — 소요 시간과 최종 산출물 크기.
+
+        소요에는 일시정지한 시간이 들어 있지 않다 — 일시정지가 있었으면 그 합을 줄 끝에 따로
+        적는다("(paused: 12.30s)", #309). 앞부분의 형식은 그대로다.
+        """
+        tail = f" (paused: {paused:.2f}s)" if paused > 0 else ""
+        self.info(
+            f"Postprocess completed in {elapsed:.2f} seconds - Output size: {output_size} bytes{tail}"
+        )
 
     def log_total_breakdown(
         self,

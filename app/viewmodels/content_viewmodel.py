@@ -328,6 +328,9 @@ class ContentViewModel(QObject):
         if row is not None:
             self.model.removeRows(row, 1)
             item.section_head = None  # 구간을 정하며 받아 둔 moov를 버린다 (#309)
+            # 이 카드의 조회 · 크기 세기가 돌고 있으면 그만두게 한다 — 결과를 쓸 카드가 없다
+            self._sectionRefitter.cancel(item)
+            self._sectionSizer.cancel(item)
             self._resumeHeldBatch()  # 기다리던 카드가 지워졌을 수 있다
             index = self.model.rowCount()
             self.deleteItemRequested.emit(item, index)
@@ -385,6 +388,9 @@ class ContentViewModel(QObject):
         곧바로 선언 프레임률로 맞추고, 새 해상도의 프레임률 · 길이를 백그라운드에서 조회해
         그 값으로 다시 맞춘다(``SectionRefitter``). 구간이 없는 카드는 조회하지 않는다.
         """
+        # 앞 해상도의 moov로 크기를 세고 있으면 그만두게 한다 — 긴 영상의 색인 해석은 몇 초를
+        # 돌고, 그 결과는 어차피 버려진다
+        self._sectionSizer.cancel(item)
         self._sectionRefitter.request(item)
 
     def beginSectionEdit(self, item: ContentItem) -> None:
@@ -468,6 +474,10 @@ class ContentViewModel(QObject):
             item.output_path = ensure_unique_path(os.path.join(item.download_path, "video.mp4"))
 
         if item.output_path:
+            # 받기 시작하면 대기 카드의 크기 세기는 쓸 곳이 없다 — 결과는 어차피 버려진다.
+            # 그만두게 해 해석의 차례를 엔진에 넘긴다: 표에서 셀 수 없는 모양의 moov는 크기
+            # 세기가 색인을 만들며 차례를 쥐고, 엔진은 그동안 기다린 뒤 같은 moov를 다시 해석했다
+            self._sectionSizer.cancel(item)
             # 다운로드 요청 시그널 발행
             self.downloadRequested.emit(item)
 

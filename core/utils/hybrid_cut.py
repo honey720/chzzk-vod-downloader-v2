@@ -1,12 +1,21 @@
-"""하이브리드 컷 — 로컬 파일에서 구간 하나를 프레임 단위로 잘라 파일 하나로 만든다 (#309).
+"""하이브리드 컷의 재료 — 구간의 조각 계획, 경계 조각의 재인코딩 · 복사 명령, 입력 읽기 (#309).
 
 키프레임이 아닌 프레임에서 시작하거나 끝나는 구간은 복사만으로 자를 수 없다.
 그렇다고 전체를 재인코딩하면 느리고 화질이 떨어진다. 그래서 양 끝만 재인코딩한다.
 
 - 머리: 구간 시작부터 다음 키프레임 직전까지 — 재인코딩(libx264)
-- 가운데: 그 키프레임부터 마지막 키프레임 직전까지 — 원본 복사
+- 가운데: 그 키프레임부터 마지막 키프레임 직전까지 — 원본 그대로
 - 꼬리: 마지막 키프레임부터 구간 끝까지 — 재인코딩
-- 오디오: 구간 전체를 한 번에 재인코딩해 영상과 합친다
+- 오디오: 다시 인코딩하지 않는다 — 원본 샘플을 그대로 옮긴다
+
+이 모듈은 구간 파일을 스스로 만들지 않는다. 조각을 어떻게 나눌지(``plan_cut``)와 경계 조각을
+만드는 명령 · 입력의 SPS 읽기 · ffmpeg 실행 · 진행 합치기를 내주고, 구간 파일을 쓰는 것은
+부르는 쪽이다 — mp4는 받으면서 구간 파일을 채운 뒤 경계 GOP만 붙이고
+(``encode_boundary_pieces`` → ``core.utils.mp4_section_writer``), 세그먼트(fMP4 · TS)는
+세그먼트에서 바로 구간 파일을 쓴다(``core.utils.fmp4_cut`` · ``core.utils.ts_cut``).
+입력 파일 하나에서 가운데를 복사 조각으로 뜨고 오디오를 다시 인코딩해 잇던 예전 절차는
+제품에 없다 — 새 방식의 결과를 견주는 대조로 테스트에만 남아 있다
+(``tests/unit/core/reference_cut.py``).
 
 조각을 이어 붙였을 때 플레이어가 끊김 없이 재생하려면 재인코딩 조각이 원본과
 같은 모양이어야 한다. 실제 VOD로 확인한 조건이다.
@@ -23,8 +32,9 @@
 - 타임스탬프는 원본 그대로 넘긴다(passthrough). 프레임 간격이 고르지 않은 원본이 있다
 
 프레임 시각·키프레임·DTS는 계산하지 않고 색인에서 읽은 값(``CutFrames``)을 쓴다.
-입력은 mp4와 fMP4(초기화 세그먼트 + 미디어 세그먼트를 이은 파일)다. MPEG-TS는
-아직 다루지 않으며 ``CutError``로 거부한다.
+조각 명령의 입력은 mp4와 fMP4(초기화 세그먼트 + 미디어 세그먼트를 이은 파일)다. MPEG-TS는
+ffmpeg의 탐색이 정확하지 않아 그대로 넣지 않는다 — ``encode_boundary_pieces``는 TS 입력을
+``CutError``로 거부하고, TS 구간은 경계 세그먼트를 mp4로 다시 싸서 넣는다(``core.utils.ts_cut``).
 
 실패 키는 번역하지 않은 i18n 키 원문이며 번역은 앱 계층이 한다
 (``MetadataError``와 같은 방식).
@@ -32,7 +42,6 @@
 
 import os
 import re
-import shutil
 import subprocess
 import time
 from bisect import bisect_left, bisect_right
@@ -47,7 +56,6 @@ from core.models.cut import (
     CutFrames,
     CutPiece,
     CutPlan,
-    CutResult,
     PieceInfo,
     SourceInfo,
     VideoParams,
@@ -61,7 +69,6 @@ from core.utils.ffmpeg import (
     FFmpegTimeoutError,
     run_ffmpeg,
 )
-from core.utils.paths import cut_temp_dir_for
 
 # 실패 키 — 번역하지 않은 i18n 키 원문
 CUT_FAILED = "Failed to cut the video"  # ffmpeg가 실패했거나 결과가 어긋났다
@@ -88,17 +95,6 @@ SOURCE_LEAD_SECONDS = _AUDIO_PREROLL_SECONDS + 0.001
 # 재인코딩 화질 — libx264 CRF. 18은 눈으로 구분하기 어려운 수준이다
 _CRF = "18"
 
-# 오디오 비트레이트를 맞추는 단위(kb/s). 컨테이너에 적힌 값은 인코더의 설정값이 아니라
-# 잰 평균일 수 있다(표본에 191,999bit/s가 있었다). AAC가 흔히 쓰는 값은 이 단위의 배수다
-_AUDIO_BITRATE_STEP = 16
-
-# 원본의 오디오 비트레이트를 알 수 없을 때 쓰는 값(kb/s). 표본(인코딩 완료 VOD · 다시보기)의
-# 오디오가 모두 192kb/s였다 — 그보다 낮게 잡으면 다시 인코딩하면서 음질이 떨어진다.
-# ffmpeg의 기본값에 맡기지 않고 적는다 — 결과가 ffmpeg 버전에 따라 달라지지 않게 한다
-_DEFAULT_AUDIO_BITRATE = 192
-
-# 컨테이너에 적힌 값으로 받아들이는 범위(kb/s). 벗어나면 손상된 값으로 보고 위 기본값을 쓴다
-_AUDIO_BITRATE_RANGE = (8, 512)
 
 # 서브프로세스 제한 시간(초)
 _PROBE_TIMEOUT = 60  # 머리만 읽는다
@@ -109,11 +105,9 @@ _COPY_TIMEOUT = 3600  # 가운데 복사·오디오·합치기 — 구간 길이
 # 어림이다. 막대가 고르게 오르게 하는 데만 쓴다 — 틀려도 진행은 거꾸로 가지 않고 끝에서
 # 1이 된다. 8시간 영상의 구간 1 · 10 · 60분을 잘라 잰 값에서 정했다(#309):
 # ffmpeg를 한 번 띄워 입력을 여는 데 약 0.2초, 재인코딩 조각(GOP 하나 이내)은 화면 크기에
-# 따라 그 몇 배, 오디오 재인코딩이 구간 길이 1초에 0.01~0.02초로 가장 크다
-_WORK_CALL = 0.2  # ffmpeg 실행 한 번 — 입력 읽기, 그리고 복사 · 오디오 · 잇기의 바탕
+# 따라 그 몇 배다
+_WORK_CALL = 0.2  # ffmpeg 실행 한 번 — 입력 읽기, 그리고 복사 · 잇기의 바탕
 _WORK_ENCODE_PIECE = 0.5  # 재인코딩 조각 하나 — 길이와 거의 무관하다(길어야 GOP 하나)
-_WORK_COPY_PER_SECOND = 0.002  # 복사 조각 — 구간 길이 1초에
-_WORK_AUDIO_PER_SECOND = 0.015  # 오디오 재인코딩 — 구간 길이 1초에
 _WORK_MUX_PER_SECOND = 0.002  # 조각 잇기 · 오디오 합치기 — 구간 길이 1초에
 
 # 지금 도는 단계가 ffmpeg의 출력 시각을 받는 곳 — ``_run``이 읽는다. 없으면 진행을 받지 않는다
@@ -160,16 +154,16 @@ class CutCancelled(Exception):
     """
 
 
-# 지금 도는 컷이 받은 멈춤 확인(``hybrid_cut``의 should_stop) — ffmpeg를 부르는 자리들이 읽는다
+# 지금 도는 컷이 받은 멈춤 확인(컷 함수의 should_stop) — ffmpeg를 부르는 자리들이 읽는다
 _stop_check: ContextVar[Callable[[], bool] | None] = ContextVar("_stop_check", default=None)
-# 지금 도는 컷이 받은 일시정지 확인(``hybrid_cut``의 should_pause)
+# 지금 도는 컷이 받은 일시정지 확인(컷 함수의 should_pause)
 _pause_check: ContextVar[Callable[[], bool] | None] = ContextVar("_pause_check", default=None)
 
 
 def _ffmpeg(args: Sequence[str], **kwargs) -> subprocess.CompletedProcess[str]:
     """``run_ffmpeg``를 부른다 — 컷이 멈춤 · 일시정지 확인을 받았으면 그것을 넘긴다.
 
-    컷의 모든 단계(입력 읽기 · 조각 · 오디오 · 잇기 · 조각 검사)가 이 함수로 ffmpeg를 부른다.
+    이 모듈로 도는 컷의 단계(입력 읽기 · 조각 · 잇기 · 조각 검사)가 이 함수로 ffmpeg를 부른다.
     한 단계라도 건너뛰면 그 단계가 도는 동안에는 중단 · 일시정지가 닿지 않는다. 일시정지 중에는
     도는 ffmpeg가 서고, 다음 단계의 ffmpeg는 뜨지 않는다.
 
@@ -301,145 +295,85 @@ def plan_cut(frames: CutFrames, first: int, last: int) -> CutPlan:
 # ================================================================ 실행
 
 
-def hybrid_cut(
+def encode_boundary_pieces(
     source_path: str,
     frames: CutFrames,
-    first: int,
-    last: int,
-    output_path: str,
+    plan: CutPlan,
+    work_dir: str,
     *,
     inspect: bool = False,
     on_stage: Callable[[str, float], None] | None = None,
     on_progress: Callable[[float], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
     should_pause: Callable[[], bool] | None = None,
-) -> CutResult:
-    """입력 파일에서 프레임 [first, last]를 잘라 output_path에 mp4로 쓴다.
+) -> tuple[SourceInfo, tuple[str, ...], tuple[PieceInfo, ...]]:
+    """구간의 경계 GOP만 다시 인코딩해 work_dir에 조각 파일로 쓴다 (#309).
 
-    중간 파일은 산출물 옆의 임시 폴더에 두고, 성공하든 실패하든 지운다. 실패하면
-    쓰다 만 산출물도 지운다.
+    구간 파일을 직접 쓰는 경로(``core.utils.mp4_section_writer``)가 쓴다 — 가운데는 받으면서
+    구간 파일에 이미 옮겼으므로 복사 · 오디오 · 잇기가 없다. 조각마다 SPS · PPS 번호를
+    1부터 차례로 준다(원본은 0번).
 
     Args:
-        source_path: ffmpeg가 읽을 수 있는 로컬 mp4 또는 fMP4 파일
-        frames: 그 파일의 프레임 정보 — ``cut_frames_from_mp4`` · ``cut_frames_from_fmp4``
-        first: 구간의 첫 프레임 번호(``frames.frame_pts``의 인덱스)
-        last: 구간의 끝 프레임 번호(포함)
-        output_path: 만들 파일. 이미 있으면 덮어쓴다
+        source_path: 경계 GOP의 원본 샘플이 든 mp4 — 부분 mp4여도 된다
+        plan: 구간의 조각. 다시 인코딩하는 조각(mid가 아닌 것)만 만든다
+        work_dir: 조각 파일을 둘 폴더. 없으면 만든다. 지우는 것은 부르는 쪽이 한다
         inspect: True면 조각마다 파라미터·패킷 수를 읽어 결과에 싣는다 —
             ``core.utils.cut_check.check_cut``이 쓴다. 조각을 한 번씩 더 읽으므로 느리다
         on_stage: 단계 하나가 끝날 때마다(실패로 끝나도) ``(단계 이름, 걸린 초)``로 부른다.
-            단계는 순서대로 ``probe``(입력의 SPS 읽기) · 조각마다 ``<번호>_<종류>``(재인코딩
-            또는 복사) · ``audio`` · ``mux``다. 걸린 시간에는 명령을 만드는 계산도 든다
-        on_progress: 이 컷의 진행을 0~1로 알린다 — 단계가 끝날 때와, 단계가 도는 동안
-            ffmpeg가 진행을 알릴 때마다. 값은 줄지 않고, 1은 산출물을 다 쓴 뒤에만 나온다.
-            실패한 컷은 1을 알리지 않는다
+            단계는 ``probe``(입력의 SPS 읽기)와 조각마다의 ``<번호>_<종류>``다. 걸린 시간에는
+            명령을 만드는 계산도 든다
+        on_progress: 0~1. 단계가 끝날 때와, 단계가 도는 동안 ffmpeg가 진행을 알릴 때마다
+            알린다. 값은 줄지 않는다. 조각을 모두 만들어도 1은 알리지 않는다 — 구간 파일을
+            마저 쓴 부르는 쪽이 끝을 알린다
         should_stop: 주면 컷이 도는 동안 짧은 간격으로 부른다. 참을 돌려주면 도는 ffmpeg를
-            바로 끝내고 중간 파일 · 쓰다 만 산출물을 지운 뒤 ``CutCancelled``를 낸다 —
-            어느 단계에서든 닿는다. 다른 스레드에서 불릴 수 있다
+            바로 끝내고 ``CutCancelled``를 낸다 — 어느 단계에서든 닿는다. 다른 스레드에서
+            불릴 수 있다
         should_pause: 주면 같은 간격으로 부른다. 참인 동안 도는 ffmpeg를 멈춰 두고 다음 단계의
-            ffmpeg를 띄우지 않는다. 거짓이 되면 멈춘 자리에서 이어 간다 — 산출물은 일시정지
-            없이 자른 것과 같다. 다른 스레드에서 불릴 수 있다
+            ffmpeg를 띄우지 않는다. 거짓이 되면 멈춘 자리에서 이어 간다 — 조각은 일시정지
+            없이 만든 것과 같다. 다른 스레드에서 불릴 수 있다
+
+    Returns:
+        (입력에서 읽은 정보, 다시 인코딩한 조각 파일의 경로 — plan의 순서대로, 조각을
+        들여다본 결과 — inspect일 때만)
 
     Raises:
         CutError: 입력을 다룰 수 없는 경우(``CUT_UNSUPPORTED``), ffmpeg가 실패한
             경우(``CUT_FAILED``), 제한 시간을 넘긴 경우(``CUT_TIMEOUT``)
         CutCancelled: should_stop이 참을 돌려줘 그만둔 경우
-        ValueError: 프레임 번호가 범위를 벗어난 경우
     """
     token = _stop_check.set(should_stop)
     pause_token = _pause_check.set(should_pause)
     try:
-        return _hybrid_cut(
-            source_path, frames, first, last, output_path, inspect, on_stage, on_progress
-        )
+        _reject_transport_stream(source_path)
+        work: dict[str, tuple[float, float]] = {"probe": (_WORK_CALL, 0.0)}
+        for number, piece in enumerate(plan.pieces):
+            if piece.reencoded:
+                span = _end_of(frames, piece.end) - _start_of(frames, piece.first)
+                work[f"{number}_{piece.kind}"] = (_WORK_ENCODE_PIECE, span)
+        work["write"] = (_WORK_CALL, 0.0)  # 구간 파일을 마저 쓰는 몫 — 부르는 쪽의 일이다
+        progress = _CutProgress(on_progress, work)
+        with _stage(on_stage, "probe", progress):
+            source = _probe_source(source_path, frames, plan)
+        source_path = os.path.abspath(source_path)
+        os.makedirs(work_dir, exist_ok=True)
+        paths: list[str] = []
+        inspected: list[PieceInfo] = []
+        for number, piece in enumerate(plan.pieces):
+            if not piece.reencoded:
+                continue
+            name = f"{number}_{piece.kind}.mp4"
+            with _stage(on_stage, f"{number}_{piece.kind}", progress):
+                command = _encode_command(
+                    source_path, frames, piece, source.video, name, len(paths) + 1
+                )
+                _run(command, _ENCODE_TIMEOUT, work_dir)
+            paths.append(os.path.join(work_dir, name))
+            if inspect:
+                inspected.append(_inspect_piece(paths[-1], piece, frames))
+        return source, tuple(paths), tuple(inspected)
     finally:
         _pause_check.reset(pause_token)
         _stop_check.reset(token)
-
-
-def _hybrid_cut(
-    source_path: str,
-    frames: CutFrames,
-    first: int,
-    last: int,
-    output_path: str,
-    inspect: bool,
-    on_stage: Callable[[str, float], None] | None,
-    on_progress: Callable[[float], None] | None,
-) -> CutResult:
-    _reject_transport_stream(source_path)
-    plan = plan_cut(frames, first, last)
-    has_audio = frames.audio_start is not None
-    progress = _CutProgress(on_progress, _stage_work(frames, plan, has_audio))
-    with _stage(on_stage, "probe", progress):
-        source = _probe_source(source_path, frames, plan)
-    source_path = os.path.abspath(source_path)
-    output_path = os.path.abspath(output_path)
-
-    work = cut_temp_dir_for(output_path)
-    shutil.rmtree(work, ignore_errors=True)  # 이전 실행이 죽으면서 남긴 것
-    os.makedirs(work)
-    try:
-        names = []
-        inspected = []
-        for number, piece in enumerate(plan.pieces):
-            name = f"{number}_{piece.kind}.mp4"
-            with _stage(on_stage, f"{number}_{piece.kind}", progress):
-                if piece.reencoded:
-                    _run(
-                        _encode_command(source_path, frames, piece, source.video, name),
-                        _ENCODE_TIMEOUT,
-                        work,
-                    )
-                else:
-                    _run(_copy_command(source_path, frames, piece, name), _COPY_TIMEOUT, work)
-            names.append(name)
-            if inspect:
-                inspected.append(_inspect_piece(os.path.join(work, name), piece, frames))
-
-        if has_audio:
-            with _stage(on_stage, "audio", progress):
-                _run(
-                    _audio_command(source_path, frames, plan, source.audio_bitrate),
-                    _COPY_TIMEOUT,
-                    work,
-                )
-        with _stage(on_stage, "mux", progress, last=False):
-            stderr = _run(
-                _mux_command(frames, plan, names, has_audio, output_path, work), _COPY_TIMEOUT, work
-            )
-        if "Non-monotonic DTS" in stderr:
-            raise CutError(CUT_FAILED, "조각을 잇는 곳에서 DTS가 뒤로 간다")
-        progress.finish("mux")
-    except BaseException:
-        if os.path.exists(output_path):
-            os.remove(output_path)
-        raise
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
-    return CutResult(output_path=output_path, plan=plan, source=source, pieces=tuple(inspected))
-
-
-def _stage_work(
-    frames: CutFrames, plan: CutPlan, has_audio: bool
-) -> dict[str, tuple[float, float]]:
-    """단계 이름 → (그 단계의 일의 양, 그 단계가 쓰는 출력의 길이[초]). 도는 순서대로 담는다.
-
-    일의 양은 구간 길이에서 어림한 시간이다(``_WORK_*``). 출력의 길이는 ffmpeg가 알리는
-    출력 시각을 그 단계 안의 진행으로 바꾸는 분모다 — 0이면 단계가 끝날 때만 오른다.
-    """
-    length = _end_of(frames, plan.last + 1) - _start_of(frames, plan.first)
-    work: dict[str, tuple[float, float]] = {"probe": (_WORK_CALL, 0.0)}
-    for number, piece in enumerate(plan.pieces):
-        span = _end_of(frames, piece.end) - _start_of(frames, piece.first)
-        if piece.reencoded:
-            work[f"{number}_{piece.kind}"] = (_WORK_ENCODE_PIECE, span)
-        else:
-            work[f"{number}_{piece.kind}"] = (_WORK_CALL + span * _WORK_COPY_PER_SECOND, span)
-    if has_audio:
-        work["audio"] = (_WORK_CALL + length * _WORK_AUDIO_PER_SECOND, length)
-    work["mux"] = (_WORK_CALL + length * _WORK_MUX_PER_SECOND, length)
-    return work
 
 
 class _CutProgress:
@@ -542,9 +476,18 @@ def _end_of(frames: CutFrames, end: int) -> float:
 
 
 def _encode_command(
-    source_path: str, frames: CutFrames, piece: CutPiece, video: VideoParams, name: str
+    source_path: str,
+    frames: CutFrames,
+    piece: CutPiece,
+    video: VideoParams,
+    name: str,
+    parameter_set_id: int | None = None,
 ) -> list[str]:
-    """재인코딩 조각 — 앞 키프레임부터 디코드해 piece.first 이전을 버리고 piece.end 직전까지."""
+    """재인코딩 조각 — 앞 키프레임부터 디코드해 piece.first 이전을 버리고 piece.end 직전까지.
+
+    parameter_set_id를 주면 조각의 SPS · PPS가 그 번호를 쓴다 — 원본(0번)과 같은 샘플 설명에
+    함께 넣으려면 번호가 달라야 한다(``core.utils.mp4_section_writer``).
+    """
     margin = _margin(frames)
     seek = max(_start_of(frames, piece.first) - margin, 0.0)
     length = _end_of(frames, piece.end) - seek - margin
@@ -553,7 +496,7 @@ def _encode_command(
         "-i", source_path,
         "-t", _seconds(length),
         "-map", "0:v:0", "-an",
-        *_x264_args(video, frames.timescale),
+        *_x264_args(video, frames.timescale, parameter_set_id),
         *_reorder_delay_args(frames, piece),
         "-f", "mp4", name,
     ]  # fmt: skip
@@ -600,57 +543,27 @@ def _copy_command(source_path: str, frames: CutFrames, piece: CutPiece, name: st
     ]  # fmt: skip
 
 
-def _audio_command(
-    source_path: str, frames: CutFrames, plan: CutPlan, bitrate: int | None
-) -> list[str]:
-    """오디오 — 구간 전체를 한 번에 재인코딩한다. 디코드는 구간 시작보다 조금 앞에서 시작한다."""
-    start = _start_of(frames, plan.first)
-    length = _end_of(frames, plan.last + 1) - start
-    preroll = min(_AUDIO_PREROLL_SECONDS, max(start, 0.0))
-    seek = start - preroll
+def _copy_rest_command(source_path: str, frames: CutFrames, first: int, name: str) -> list[str]:
+    """복사 조각 — first(키프레임)부터 입력의 끝까지. 세그먼트 하나짜리 입력의 뒤쪽 GOP에 쓴다."""
+    seek = _start_of(frames, first)  # 여유 없이 키프레임 시각 그대로
     return [
         *(["-ss", _seconds(seek)] if seek > 0 else []),
         "-i", source_path,
-        *(["-ss", _seconds(preroll)] if preroll > 0 else []),  # 앞 여유는 디코드만 하고 버린다
-        "-t", _seconds(length),
-        "-map", "0:a:0", "-vn", "-c:a", "aac",
-        *(["-b:a", f"{bitrate}k"] if bitrate else []),
-        "-f", "mp4", "audio.m4a",
-    ]  # fmt: skip
-
-
-def _mux_command(
-    frames: CutFrames, plan: CutPlan, names: list[str], has_audio: bool, output_path: str, work: str
-) -> list[str]:
-    """조각을 잇고 오디오를 합친다. 조각의 길이는 원본 시각의 차이로 명시한다."""
-    if len(names) == 1:
-        video_input = ["-i", names[0]]
-    else:
-        lines = ["ffconcat version 1.0"]
-        for number, (name, piece) in enumerate(zip(names, plan.pieces)):
-            lines.append(f"file {name}")
-            if number + 1 < len(names):
-                span = frames.frame_pts[piece.end] - frames.frame_pts[piece.first]
-                lines.append(f"duration {_seconds(span)}")
-        with open(os.path.join(work, "list.txt"), "w", encoding="utf-8", newline="\n") as f:
-            f.write("\n".join(lines) + "\n")
-        video_input = ["-f", "concat", "-safe", "0", "-i", "list.txt"]
-    return [
-        *video_input,
-        *(["-i", "audio.m4a"] if has_audio else []),
-        "-map", "0:v:0",
-        *(["-map", "1:a:0"] if has_audio else []),
-        "-c", "copy",
+        "-map", "0:v:0", "-an", "-c:v", "copy",
         "-video_track_timescale", str(frames.timescale),
-        "-f", "mp4", output_path,
+        "-f", "mp4", name,
     ]  # fmt: skip
 
 
-def _x264_args(video: VideoParams, timescale: int) -> list[str]:
+def _x264_args(
+    video: VideoParams, timescale: int, parameter_set_id: int | None = None
+) -> list[str]:
     """원본 SPS에 맞춘 libx264 인코딩 옵션."""
     display_width = video.coded_width - video.crop[2]
     display_height = video.coded_height - video.crop[3]
     params = ["b-pyramid=" + ("normal" if video.reorder_delay == 2 else "none")]
+    if parameter_set_id is not None:
+        params.append(f"sps-id={parameter_set_id}")  # SPS와 PPS의 번호를 함께 정한다
     filters: list[str] = []
     if (video.coded_width, video.coded_height) != (_ceil16(display_width), _ceil16(display_height)):
         # x264는 화면 크기를 16의 배수로만 올림한다. 원본이 그보다 크게 부호화했으면
@@ -715,7 +628,7 @@ def _reject_transport_stream(path: str) -> None:
 
 
 def _probe_source(path: str, frames: CutFrames, plan: CutPlan) -> SourceInfo:
-    """입력의 SPS를 읽고, 재인코딩으로 맞출 수 있는 모양인지 확인한다. 오디오 비트레이트도 정한다."""
+    """입력의 SPS를 읽고, 재인코딩으로 맞출 수 있는 모양인지 확인한다."""
     key = frames.keyframes[bisect_right(frames.keyframes, plan.first) - 1]
     delay = round((frames.frame_pts[key] - frames.frame_dts[key]) / frames.frame_duration)
     video = _read_params(path, delay)
@@ -730,7 +643,7 @@ def _probe_source(path: str, frames: CutFrames, plan: CutPlan) -> SourceInfo:
         problems.append(f"재정렬 지연 {delay}프레임")
     if problems:
         raise CutError(CUT_UNSUPPORTED, "맞출 수 없는 영상: " + ", ".join(problems))
-    return SourceInfo(video=video, audio_bitrate=_audio_bitrate(frames))
+    return SourceInfo(video=video)
 
 
 def _read_params(path: str, reorder_delay: int) -> VideoParams:
@@ -796,29 +709,6 @@ def _read_params(path: str, reorder_delay: int) -> VideoParams:
         sar=sar,
         reorder_delay=reorder_delay,
     )
-
-
-def _audio_bitrate(frames: CutFrames) -> int | None:
-    """오디오를 다시 인코딩할 비트레이트(kb/s)를 정한다. 오디오가 없으면 None이다.
-
-    원본 스트림 전체에 대해 하나로 정해지는 값(``CutFrames.audio_bitrate``)만 쓴다. 입력
-    파일에서 ffmpeg가 보여 주는 값은 쓰지 않는다 — 받은 패킷으로 추정한 값이라 원본의
-    일부만 든 입력에서는 원본과 다르고, 다른 정도가 ffmpeg 버전마다 다르다(7.0.2는
-    중간에서 시작하는 fMP4에서 128을 51 · 65로 보여 줬다).
-
-    값을 알 수 없거나 받아들이는 범위를 벗어나면 ``_DEFAULT_AUDIO_BITRATE``를 쓴다.
-    """
-    if frames.audio_start is None:
-        return None
-    low, high = _AUDIO_BITRATE_RANGE
-    if frames.audio_bitrate is None or not low <= frames.audio_bitrate <= high:
-        return _DEFAULT_AUDIO_BITRATE
-    return _nominal_bitrate(frames.audio_bitrate)
-
-
-def _nominal_bitrate(declared: int) -> int:
-    """오디오 비트레이트(kb/s)를 가장 가까운 _AUDIO_BITRATE_STEP의 배수로 맞춘다."""
-    return max(round(declared / _AUDIO_BITRATE_STEP), 1) * _AUDIO_BITRATE_STEP
 
 
 def read_packets(

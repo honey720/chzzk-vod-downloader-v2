@@ -117,6 +117,7 @@ class _Variant:
     size: str  # RESOLUTION 값 그대로("가로x세로"). 없으면 빈 문자열
     frame_rate: float | None  # FRAME-RATE. 없으면 None
     bandwidth: int | None  # BANDWIDTH(bps). 없으면 None
+    average_bandwidth: int | None = None  # AVERAGE-BANDWIDTH(bps). 없으면 None
 
 
 def _variants(master_text: str) -> list[_Variant]:
@@ -128,12 +129,14 @@ def _variants(master_text: str) -> list[_Variant]:
             continue
         attributes = _parse_attributes(line.split(":", 1)[1])
         bandwidth = attributes.get("BANDWIDTH", "")
+        average = attributes.get("AVERAGE-BANDWIDTH", "")
         variants.append(
             _Variant(
                 uri=lines[number + 1].strip(),
                 size=attributes.get("RESOLUTION", "").strip(),
                 frame_rate=_float_or_none(attributes.get("FRAME-RATE")),
                 bandwidth=int(bandwidth) if bandwidth.isdigit() else None,
+                average_bandwidth=int(average) if average.isdigit() else None,
             )
         )
     return variants
@@ -263,7 +266,13 @@ def list_streams(master_text: str, tracks: list[PlaybackTrack]) -> list[StreamEn
                 None,
                 frame_rate=variant.frame_rate,
                 original=variant is original,
-                stream=StreamKey(width, height, variant.frame_rate, variant.bandwidth),
+                stream=StreamKey(
+                    width,
+                    height,
+                    variant.frame_rate,
+                    variant.bandwidth,
+                    variant.average_bandwidth,
+                ),
             )
         )
     entries.sort(key=lambda entry: (entry[0], entry.original, entry.stream.bandwidth or 0))

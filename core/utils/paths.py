@@ -160,8 +160,23 @@ def partial_source_path_for(output_path: str) -> str:
     접두사를 붙인 이름이 파일명 상한(255바이트)을 넘으면 산출물 이름을 잘라 맞추고
     자르기 전 이름의 해시 6자리를 붙인다 — 잘린 뒤 같아지는 이름끼리도 구분된다.
     """
+    return _prefixed_sibling(output_path, "CVDv2_part_")
+
+
+def section_body_path_for(output_path: str) -> str:
+    """구간 파일을 다 쓰기 전까지 그 바이트를 둘 파일의 경로를 산출물 파일명에서 파생한다 (#309).
+
+    구간 파일은 받으면서 채우고 머리(moov)를 마지막에 쓴다. 그 전의 파일은 mp4로 열리지
+    않으므로 산출물의 이름으로 두지 않는다 — 다 쓰면 산출물의 이름으로 바꾼다. 같은
+    디렉토리에 두어 이름 바꾸기가 같은 볼륨 안에서 끝난다.
+    """
+    return _prefixed_sibling(output_path, "CVDv2_body_")
+
+
+def _prefixed_sibling(output_path: str, prefix: str) -> str:
+    """산출물과 같은 폴더의, 산출물 이름 앞에 prefix를 붙인 mp4 경로 — 파일명 상한을 넘기지 않는다."""
     stem = os.path.splitext(os.path.basename(output_path))[0]
-    prefix, extension = "CVDv2_part_", ".mp4"
+    extension = ".mp4"
     budget = _MAX_COMPONENT_BYTES - len((prefix + extension).encode("utf-8"))
     if len(stem.encode("utf-8")) > budget:
         marker = f" ~{hashlib.sha1(stem.encode('utf-8')).hexdigest()[:6]}"
@@ -278,6 +293,15 @@ def _same_volume(a: str, b: str) -> bool:
         return os.stat(a).st_dev == os.stat(b).st_dev
     except OSError:
         return True
+
+
+def same_volume(a: str, b: str) -> bool:
+    """두 경로가 같은 볼륨(장치)에 있는지 — 확인할 수 없으면 "같다"로 본다.
+
+    여유 공간을 볼륨마다 따로 볼지 정하는 쪽(core.downloaders.segment_space)이 쓴다. 임시
+    폴더를 정할 때와 같은 판정이다.
+    """
+    return _same_volume(a, b)
 
 
 def choose_temp_dir(output_path: str) -> str:

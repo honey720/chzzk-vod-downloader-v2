@@ -47,6 +47,132 @@ def sections_download_size(index: Mp4Index, selections: Iterable[TimeRange]) -> 
     return plan_partial(index, spans).download_size
 
 
+def sections_sizes(index: Mp4Index, selections: Iterable[TimeRange]) -> tuple[int, int]:
+    """(받을 바이트의 합, 파일의 머리 길이) — 두 값을 배치 한 번으로 구한다 (#309).
+
+    ``sections_download_size`` · ``sections_head_size``를 따로 부른 것과 값이 같다. 두 함수는
+    저마다 배치를 만들어(``plan_partial``) 샘플 위치 열 전체를 한 번씩 훑는다 — 둘 다 필요한
+    쪽(카드의 크기 세기)은 이 함수로 한 번만 훑는다.
+
+    Raises:
+        ValueError: 구간이 영상 밖인 경우(``selection_byte_ranges``)
+        Mp4Error: moov가 샘플보다 뒤에 있는 등 부분 파일을 만들 수 없는 경우
+    """
+    spans = [
+        span for selection in selections for span in selection_byte_ranges(index, selection).ranges
+    ]
+    layout = plan_partial(index, spans)
+    return layout.download_size, layout.head_size
+
+
+# ---- 구간 파일의 크기 추정 (#309) — 카드가 "저장소에 생길 구간 파일 크기의 합"으로 적는 값
+#
+# 구간 파일은 받은 원본 샘플을 그대로 담고 머리(moov)를 직접 쓴 mp4다
+# (``core.utils.mp4_section_writer``). 머리는 그 구간의 샘플 · 청크 수로 정해진다.
+# ftyp 32 + mdat 머리 16 + moov의 고정 부분(mvhd · tkhd · mdhd · hdlr · stsd · 편집 목록 · 표의
+# 머리)과 경계 GOP 몫으로 잡아 두는 자리의 어림
+SECTION_FILE_FIXED_BYTES = 2400
+# 영상 프레임 하나에 드는 표의 바이트 — stsz 4 + ctts 8(B프레임이 없으면 안 쓰이지만 넣어 센다 —
+# 파일 크기의 0.1%가 안 된다)
+SECTION_FILE_BYTES_PER_FRAME = 12
+SECTION_FILE_BYTES_PER_AUDIO_SAMPLE = 4  # 오디오 샘플 하나의 stsz 칸
+SECTION_FILE_BYTES_PER_CHUNK = 8  # 청크 하나의 위치(co64) — 원본의 청크 묶음을 그대로 따른다
+
+
+def estimated_section_file_size(
+    frames: int,
+    video_bytes: int,
+    audio_samples: int,
+    audio_bytes: int,
+    video_chunks: int,
+    audio_chunks: int,
+) -> int:
+    """구간 파일 하나의 크기 추정 — 그 구간에 드는 샘플의 바이트 + 샘플 · 청크 수로 어림한 머리 (#309).
+
+    샘플의 바이트는 원본의 것을 그대로 센다 — 구간 파일은 원본 샘플을 그대로 담는다. 다시
+    인코딩하는 것은 구간 경계의 GOP뿐이라 실제 파일과의 차이는 그 GOP의 바이트 몫이다 —
+    구간이 짧을수록 그 몫이 크다. 영상 전체를 덮는 구간은 이 식으로 세지 않는다(원본 그대로다).
+
+    Args:
+        frames: 구간에 든 영상 프레임 수
+        video_bytes: 그 프레임들의 샘플 크기의 합
+        audio_samples: 구간과 겹치는 오디오 샘플 수 — 오디오가 없으면 0
+        audio_bytes: 그 오디오 샘플 크기의 합
+        video_chunks: 그 영상 샘플들이 걸친 원본 청크 수
+        audio_chunks: 그 오디오 샘플들이 걸친 원본 청크 수 — 오디오가 없으면 0
+    """
+    tables = (
+        frames * SECTION_FILE_BYTES_PER_FRAME
+        + audio_samples * SECTION_FILE_BYTES_PER_AUDIO_SAMPLE
+        + (video_chunks + audio_chunks) * SECTION_FILE_BYTES_PER_CHUNK
+    )
+    return SECTION_FILE_FIXED_BYTES + tables + video_bytes + audio_bytes
+
+
+def _chunks_between(track: Mp4Track, first_sample: int, last_sample: int) -> int:
+    """샘플 first~last가 걸친 청크 수."""
+    starts = track.chunk_starts
+    return bisect_right(starts, last_sample) - bisect_right(starts, first_sample) + 1
+
+
+def sections_file_size(index: Mp4Index, selections: Iterable[TimeRange]) -> int:
+    """구간마다 만들어질 파일 크기의 합(추정) — 겹치는 자리는 구간마다 센다 (#309).
+
+    구간 하나의 크기는 ``estimated_section_file_size``다. 영상은 구간의 첫 프레임의 샘플부터,
+    구간의 프레임 가운데 디코드 순서로 가장 뒤인 샘플까지를 센다. 오디오는 첫 프레임의 시각부터
+    끝 프레임이 끝나는 시각까지와 겹치는 샘플이다. 영상 전체를 덮는 구간(첫 프레임 ~ 마지막
+    프레임)은 원본 파일의 크기다 — 가장 뒤 샘플이 끝나는 위치.
+
+    받을 양(``sections_download_size``)과는 다른 값이다 — 받을 때는 겹치는 자리를 한 번만 받고,
+    구간의 앞 키프레임부터 청크 단위로 받는다.
+
+    Raises:
+        ValueError: 구간이 영상 밖인 경우(``selection_byte_ranges``)
+        Mp4Error: moov가 샘플보다 뒤에 있는 등 부분 파일을 만들 수 없는 경우 — 받을 수 없는
+            구간의 크기를 적지 않는다
+    """
+    wanted = list(selections)
+    video, audio = index.video, index.audio
+    total = 0
+    for selection in wanted:
+        picked = selection_byte_ranges(index, selection)
+        first, last = picked.first_frame, picked.last_frame
+        if first == 0 and last == len(index.frame_pts) - 1:
+            # 영상 전체 — 받은 것이 곧 원본이다. 가장 뒤 샘플이 끝나는 위치가 파일의 크기다
+            total += max(
+                _chunk_span(track, 0, len(track.sizes) - 1)[1]
+                for track in (video, audio)
+                if track is not None and track.sizes
+            )
+            continue
+        low = index.frame_samples[first]
+        high = max(index.frame_samples[first : last + 1])
+        video_bytes = sum(video.sizes[low : high + 1])
+        audio_samples = audio_bytes = audio_chunks = 0
+        if audio is not None:
+            time_from = index.frame_pts[first]
+            time_to = index.frame_pts[last] + video.durations[index.frame_samples[last]]
+            needed = [
+                sample
+                for sample, start in enumerate(audio.times)
+                if start < time_to and start + audio.durations[sample] > time_from
+            ]
+            if needed:
+                audio_samples = needed[-1] - needed[0] + 1
+                audio_bytes = sum(audio.sizes[needed[0] : needed[-1] + 1])
+                audio_chunks = _chunks_between(audio, needed[0], needed[-1])
+        total += estimated_section_file_size(
+            last - first + 1,
+            video_bytes,
+            audio_samples,
+            audio_bytes,
+            _chunks_between(video, low, high),
+            audio_chunks,
+        )
+    sections_head_size(index)  # 부분 파일을 만들 수 없는 배치면 여기서 Mp4Error
+    return total
+
+
 def sections_head_size(index: Mp4Index) -> int:
     """구간 다운로드가 만드는 파일의 머리 길이(바이트) — ftyp · moov 등 첫 샘플 앞의 것이다 (#309).
 
@@ -77,6 +203,24 @@ def selection_byte_ranges(index: Mp4Index, selection: TimeRange) -> SelectionByt
     """
     first_frame = snap_to_frame(selection.start, index.frame_pts, index.fps, "start")
     last_frame = max(first_frame, snap_to_frame(selection.end, index.frame_pts, index.fps, "end"))
+    begin, end, keyframe = frames_byte_range(index, first_frame, last_frame)
+    return SelectionBytes(
+        ranges=((begin, end - 1),),
+        total_size=end - begin,
+        keyframe=keyframe,
+        first_frame=first_frame,
+        last_frame=last_frame,
+    )
+
+
+def frames_byte_range(index: Mp4Index, first_frame: int, last_frame: int) -> tuple[int, int, int]:
+    """프레임 [first_frame, last_frame]을 잘라 내는 데 필요한 바이트 범위를 구한다.
+
+    구간 파일을 직접 쓰는 경로는 다시 인코딩할 경계 GOP마다 이 범위만 따로 받아 둔다 (#309).
+
+    Returns:
+        (첫 바이트, 마지막 바이트 + 1, 범위가 시작하는 키프레임의 프레임 번호)
+    """
     keyframe = _keyframe_covering(index, index.frame_pts[first_frame] - SOURCE_LEAD_SECONDS)
 
     video = index.video
@@ -100,15 +244,7 @@ def selection_byte_ranges(index: Mp4Index, selection: TimeRange) -> SelectionByt
         if needed:
             spans.append(_chunk_span(audio, needed[0], needed[-1]))
 
-    begin = min(span[0] for span in spans)
-    end = max(span[1] for span in spans)
-    return SelectionBytes(
-        ranges=((begin, end - 1),),
-        total_size=end - begin,
-        keyframe=keyframe,
-        first_frame=first_frame,
-        last_frame=last_frame,
-    )
+    return min(span[0] for span in spans), max(span[1] for span in spans), keyframe
 
 
 def _keyframe_covering(index: Mp4Index, seconds: float) -> int:

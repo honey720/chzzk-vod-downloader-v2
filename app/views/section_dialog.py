@@ -13,7 +13,7 @@
 |---|---|---|
 | 조회 중 | "영상 정보를 읽는 중" 한 줄 | 꺼짐 |
 | 조회 실패 | 실패 안내 | 꺼짐 |
-| 준비됨 | 머리줄(구간 수 · 프레임률) · 구간 행 · 구간 추가 | 오류가 없을 때만 켜짐 |
+| 준비됨 | 머리줄(구간 수 · 프레임률) · 구간 행 · 구간 추가 · 구간 길이의 합 | 오류가 없을 때만 켜짐 |
 
 오류는 팝업으로 띄우지 않는다 — 틀린 칸의 테두리와 그 행의 문구로 보인다. 값이 바뀔 때마다
 검사하고, 치고 있는 행의 오류를 바로 띄울지 칸을 떠날 때 띄울지는 뷰모델의 표
@@ -56,7 +56,7 @@ from app.viewmodels.section_edit_viewmodel import (
     STATE_READY,
     SectionEditViewModel,
 )
-from app.widgets.eliding_label import ElidingLabel
+from app.widgets.eliding_label import ElidingLabel, TwoLineLabel
 from app.widgets.scroll_padding import ScrollBarPadding
 from app.widgets.timecode_edit import TimecodeEdit, TimePointEdit
 
@@ -279,10 +279,17 @@ class SectionEditDialog(QDialog):
         layout.addWidget(self.waitHintLabel)
 
         buttons = QHBoxLayout()
+        # 구간 길이의 합("합계 11:20:16.000") — 버튼 줄의 왼쪽 끝. 행의 길이 표기와 같은 형식이다.
+        # 합이 영상보다 길면 아래의 알림이 그 합을 함께 적으므로 이 글은 숨는다(같은 값을 두 번
+        # 적지 않는다)
+        self.sumLabel = QLabel(self)
+        self.sumLabel.setObjectName("sectionSumLabel")
+        buttons.addWidget(self.sumLabel)
         # 구간 길이의 합이 영상보다 길다는 알림 — 버튼 줄의 왼쪽 남는 자리를 쓴다. 글이 없어도
-        # 그 자리를 차지해, 알림이 생기고 사라져도 행 영역과 버튼이 움직이지 않는다. 좁으면
-        # 말줄임하고 전문은 툴팁이다(ElidingLabel)
-        self.totalLabel = ElidingLabel(self)
+        # 그 자리를 차지해, 알림이 생기고 사라져도 행 영역과 버튼이 움직이지 않는다. 알림은
+        # 두 문장이다(무슨 일인지 · 숫자) — 들어가면 한 줄로 잇고, 좁으면 두 줄로 나눠 숫자
+        # 쪽만 줄인다. 전체 글은 늘 툴팁에 있다(TwoLineLabel)
+        self.totalLabel = TwoLineLabel(self)
         self.totalLabel.setObjectName("sectionTotalLabel")
         buttons.addWidget(self.totalLabel, 1)
         self.cancelButton = QPushButton(self)
@@ -576,7 +583,12 @@ class SectionEditDialog(QDialog):
             self.tr("Add a section (up to {0})").format(viewmodel.maxSections())
         )
         self.addButton.setEnabled(viewmodel.canAdd())
-        self.totalLabel.setText(viewmodel.totalNoticeText())
+        notice = viewmodel.totalNoticeText()
+        self.totalLabel.setLines(*viewmodel.totalNoticeLines())
+        total = "" if notice else viewmodel.totalText()
+        self.sumLabel.setText(total)
+        self.sumLabel.setVisible(bool(total))
+        self.sumLabel.setToolTip(self.tr("Sum of the section lengths") if total else "")
         # 끝 칸을 치는 중 끝만 영상 끝을 넘은 것은 확인을 막지 않는다 — 확인이 그 칸을 맞춘다
         self.okButton.setEnabled(viewmodel.canCommit(self._typing))
 

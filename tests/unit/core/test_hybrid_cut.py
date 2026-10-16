@@ -38,10 +38,11 @@ from core.utils.hybrid_cut import (
     CutError,
     cut_frames_from_fmp4,
     cut_frames_from_mp4,
-    hybrid_cut,
     plan_cut,
 )
 from core.utils.paths import cut_temp_dir_for
+from tests.unit.core import reference_cut
+from tests.unit.core.reference_cut import hybrid_cut
 from tests.unit.core.mp4_builder import audio_spec, build_mp4, video_spec
 from tests.unit.core.ts_builder import Frame, build_ts
 
@@ -620,7 +621,7 @@ def test_audio_command_starts_decoding_before_the_range():
     """
     frames = _synthetic_frames()
 
-    args = cut_module._audio_command("in.mp4", frames, plan_cut(frames, 5, 9), 192)
+    args = reference_cut._audio_command("in.mp4", frames, plan_cut(frames, 5, 9), 192)
 
     assert float(_option(args, "-ss", 0)) == pytest.approx(0.45)
     assert args.index("-ss") < args.index("-i") < len(args) - args[::-1].index("-ss") - 1
@@ -637,7 +638,7 @@ def test_audio_command_does_not_seek_before_file_start():
     """
     frames = _synthetic_frames()
 
-    args = cut_module._audio_command("in.mp4", frames, plan_cut(frames, 0, 3), None)
+    args = reference_cut._audio_command("in.mp4", frames, plan_cut(frames, 0, 3), None)
 
     assert "-ss" not in args
     assert "-b:a" not in args
@@ -702,7 +703,7 @@ def test_nominal_bitrate_snaps_to_the_nearest_step(measured, expected):
     주석의 경우마다 값(kb/s)
     -> 16의 배수, 0이 되지 않는다
     """
-    assert cut_module._nominal_bitrate(measured) == expected
+    assert reference_cut._nominal_bitrate(measured) == expected
 
 
 @pytest.mark.parametrize(
@@ -717,7 +718,7 @@ def test_audio_bitrate_uses_the_stream_value_or_the_default(stream_bitrate, expe
     """
     frames = replace(_synthetic_frames(), audio_bitrate=stream_bitrate)
 
-    assert cut_module._audio_bitrate(frames) == expected
+    assert reference_cut._audio_bitrate(frames) == expected
 
 
 def test_audio_bitrate_is_none_without_audio():
@@ -728,7 +729,7 @@ def test_audio_bitrate_is_none_without_audio():
     """
     frames = replace(_synthetic_frames(), audio_start=None, audio_end=None, audio_bitrate=192)
 
-    assert cut_module._audio_bitrate(frames) is None
+    assert reference_cut._audio_bitrate(frames) is None
 
 
 def test_generated_inputs_carry_the_declared_audio_bitrate(mp4_source, fmp4_source):

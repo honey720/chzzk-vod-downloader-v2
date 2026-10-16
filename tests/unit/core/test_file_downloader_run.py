@@ -11,7 +11,22 @@ import threading
 import time
 
 
+import errno
+import os
+from types import SimpleNamespace
+
+import pytest
+
+import core.downloaders.base as base_module
 import core.downloaders.file_downloader as fd_module
+from core.downloaders.base import (
+    DISK_SPACE_SHORT,
+    DISK_SPACE_SHORT_WHOLE,
+    FILE_TOO_LARGE_FOR_FAT,
+    DiskSpaceError,
+    FileSizeLimitError,
+    PostprocessError,
+)
 from core.downloaders.file_downloader import FileDownloader
 from core.models.download_state import DownloadState
 from core.models.download_data import DownloadData
@@ -268,3 +283,356 @@ def test_stop_removes_partial_file(tmp_path, monkeypatch):
     assert not output.exists()  # 부분 파일 삭제
     assert not finished.is_set()
     assert failures == []
+
+
+# ================================================================ FAT 계열의 파일 크기 한계 (#309)
+
+FAT_LIMIT = 4 * 1024**3 - 1  # 4GiB − 1
+
+
+def _on_filesystem(monkeypatch, name, free: int = 10**13) -> list[str]:
+    """저장 폴더의 파일 시스템 이름과 여유 공간을 정해 둔다 — 이름을 물은 폴더를 적어 돌려준다."""
+    asked: list[str] = []
+
+    def filesystem_name(folder):
+        asked.append(folder)
+        return name
+
+    monkeypatch.setattr(base_module, "filesystem_name", filesystem_name)
+    monkeypatch.setattr(base_module.shutil, "disk_usage", lambda folder: SimpleNamespace(free=free))
+    return asked
+
+
+@pytest.mark.parametrize(
+    ("name", "largest", "refused"),
+    [
+        ("FAT32", FAT_LIMIT, False),  # 한계와 같다 — 담긴다
+        ("FAT32", FAT_LIMIT + 1, True),  # 한계를 1바이트 넘는다
+        ("vfat", FAT_LIMIT + 1, True),
+        ("exFAT", FAT_LIMIT + 1, False),
+        ("NTFS", FAT_LIMIT + 1, False),
+        (None, FAT_LIMIT + 1, False),  # 이름을 읽지 못했다 — 검사하지 않는다
+    ],
+)
+def test_file_size_is_refused_only_over_the_limit_on_a_fat_drive(
+    tmp_path, monkeypatch, name, largest, refused
+):
+    """만들 파일은 저장 폴더가 FAT 계열이고 크기가 4GiB − 1바이트를 넘을 때만 거부돼야 한다.
+
+    파일 시스템 이름과 크기는 표의 것
+    -> 거부면 FileSizeLimitError(키 "File too large for a FAT32 drive", largest · filesystem 그대로),
+       아니면 예외 없음. 이름을 물은 폴더 == 산출물의 폴더
+    """
+    engine, _data, _logger, _output, _finished, _failures = _make_engine(tmp_path, monkeypatch)
+    asked = _on_filesystem(monkeypatch, name)
+
+    if refused:
+        with pytest.raises(FileSizeLimitError) as info:
+            engine._require_file_size_fits(largest)
+        error = info.value
+        assert (error.message_key, error.largest, error.filesystem) == (
+            FILE_TOO_LARGE_FOR_FAT,
+            largest,
+            name,
+        )
+    else:
+        engine._require_file_size_fits(largest)
+    assert asked == [str(tmp_path)]
+
+
+def test_file_size_check_logs_the_filesystem_and_the_largest_file(tmp_path, monkeypatch):
+    """파일 크기 검사는 읽은 파일 시스템 이름과 가장 큰 파일의 크기를 로그로 남겨야 한다.
+
+    이름 "exFAT", 크기 123 -> 줄 ("exFAT", 123). 이름을 읽지 못하면 (None, 123)
+    """
+    engine, _data, logger, _output, _finished, _failures = _make_engine(tmp_path, monkeypatch)
+    lines: list[tuple] = []
+    logger.log_file_size_check = lambda *args: lines.append(args)
+
+    _on_filesystem(monkeypatch, "exFAT")
+    engine._require_file_size_fits(123)
+    _on_filesystem(monkeypatch, None)
+    engine._require_file_size_fits(123)
+
+    assert lines == [("exFAT", 123), (None, 123)]
+
+
+@pytest.mark.parametrize(("over", "starts"), [(1, False), (0, True)], ids=["over", "at-limit"])
+def test_download_without_sections_does_not_start_when_the_file_is_over_the_fat_limit(
+    tmp_path, monkeypatch, over, starts
+):
+    """구간 없는 mp4는 저장 폴더가 FAT 계열이고 파일이 한계를 넘으면 받지 않고 실패해야 한다.
+
+    파일 4MiB, 파일 시스템 "FAT32", 한계를 4MiB − 1(파일이 1바이트 넘는다) 또는 4MiB(꼭 맞는다)로 둠
+    -> 넘으면: 실패 1건(FileSizeLimitError, largest 4MiB), 완료 안 함, 산출물 없음
+       꼭 맞으면: 완료, 실패 0건
+    """
+    engine, data, _logger, output, finished, failures = _make_engine(tmp_path, monkeypatch)
+    _on_filesystem(monkeypatch, "FAT32")
+    monkeypatch.setattr(base_module, "FAT_MAX_FILE_BYTES", TOTAL_SIZE - over)
+
+    data.model.start()
+    thread = _run_in_thread(engine)
+    thread.join(timeout=30)
+
+    assert not thread.is_alive(), "엔진이 끝나지 않았다"
+    if starts:
+        assert (finished.is_set(), failures) == (True, [])
+    else:
+        assert [(type(e), e.largest) for e in failures] == [(FileSizeLimitError, TOTAL_SIZE)]
+        assert (finished.is_set(), output.exists()) == (False, False)
+
+
+# ================================================================ 쓰다가 난 공간 부족 (#309)
+
+
+def _no_space() -> OSError:
+    return OSError(errno.ENOSPC, "No space left on device")
+
+
+def _cut_failure_from_ffmpeg() -> PostprocessError:
+    """ffmpeg가 쓰다 실패한 컷 — 원인의 글에 ffmpeg의 stderr가 들어 있다."""
+    error = PostprocessError("후처리(cut) 실패: 구간 1개")
+    error.__cause__ = RuntimeError("exit 1: av_interleaved_write_frame(): No space left on device")
+    return error
+
+
+@pytest.mark.parametrize(
+    ("make", "expected"),
+    [
+        (_no_space, True),  # 파이썬이 쓰다 실패
+        # 오류의 글은 OS의 언어를 따른다 — 그 영어 문구가 없어도 번호(errno)로 알아봐야 한다
+        (lambda: OSError(errno.ENOSPC, "디스크 공간이 부족합니다"), True),
+        (_cut_failure_from_ffmpeg, True),  # ffmpeg가 쓰다 실패 — 원인의 글
+        (lambda: OSError(errno.EACCES, "Permission denied"), False),
+        (lambda: PostprocessError("후처리(cut) 실패: 조각을 잇는 곳에서 DTS가 뒤로 간다"), False),
+    ],
+    ids=[
+        "oserror-enospc",
+        "oserror-enospc-other-text",
+        "ffmpeg-text-in-cause",
+        "other-oserror",
+        "other-cut-failure",
+    ],
+)
+def test_running_out_of_space_is_found_in_the_error_or_its_cause(make, expected):
+    """쓰다가 공간이 없어 난 실패는 예외 자신이나 원인에서 알아봐야 한다.
+
+    ENOSPC인 OSError(글이 "No space left on device"인 것 · 다른 말인 것) · 원인의 글에
+    "No space left on device"가 든 실패 -> 참
+    권한 오류 · 그 글이 없는 컷 실패 -> 거짓
+    """
+    assert base_module._ran_out_of_space(make()) is expected
+
+
+def _too_large_from_ffmpeg() -> PostprocessError:
+    """ffmpeg가 파일 하나의 한계에 닿아 실패한 재포장 — 원인의 글에 ffmpeg의 stderr가 들어 있다."""
+    error = PostprocessError("후처리(remux) 실패")
+    error.__cause__ = RuntimeError(
+        "ffmpeg remux 실패 (exit 1): Error submitting a packet to the muxer: File too large"
+    )
+    return error
+
+
+@pytest.mark.parametrize(
+    ("make", "expected"),
+    [
+        (lambda: OSError(errno.EFBIG, "File too large"), True),  # 파이썬이 쓰다 실패
+        # 오류의 글은 OS의 언어를 따른다 — 그 영어 문구가 없어도 번호(errno)로 알아봐야 한다
+        (lambda: OSError(errno.EFBIG, "파일이 너무 큽니다"), True),
+        (_too_large_from_ffmpeg, True),  # ffmpeg가 쓰다 실패 — 원인의 글
+        (_no_space, False),  # 공간 부족은 이 판정의 것이 아니다
+        (lambda: OSError(errno.EACCES, "Permission denied"), False),
+        (lambda: PostprocessError("후처리(remux) 실패: Invalid data found"), False),
+    ],
+    ids=[
+        "oserror-efbig",
+        "oserror-efbig-other-text",
+        "ffmpeg-text-in-cause",
+        "oserror-enospc",
+        "other-oserror",
+        "other-remux-failure",
+    ],
+)
+def test_hitting_the_file_size_limit_is_found_in_the_error_or_its_cause(make, expected):
+    """파일 하나의 한계에 닿아 난 실패(EFBIG)는 예외 자신이나 원인에서 알아봐야 한다.
+
+    EFBIG인 OSError(글이 "File too large"인 것 · 다른 말인 것) · 원인의 글에
+    "File too large"가 든 실패 -> 참
+    ENOSPC인 OSError · 권한 오류 · 그 글이 없는 재포장 실패 -> 거짓
+    """
+    assert base_module._hit_file_size_limit(make()) is expected
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("msdos", FILE_TOO_LARGE_FOR_FAT),
+        (None, FILE_TOO_LARGE_FOR_FAT),  # 읽지 못함
+        ("NTFS", "Failed to save file"),
+        ("apfs", "Failed to save file"),
+    ],
+    ids=["fat", "unknown", "ntfs", "apfs"],
+)
+@pytest.mark.parametrize(
+    "make",
+    [lambda: OSError(errno.EFBIG, "File too large"), _too_large_from_ffmpeg],
+    ids=["oserror-efbig", "ffmpeg-text"],
+)
+def test_failure_from_the_file_size_limit_carries_a_key_by_the_filesystem(
+    tmp_path, monkeypatch, name, expected, make
+):
+    """파일 하나의 한계에 닿아 난 실패는 FAT 계열 · 이름 모름이면 FAT 안내, 그 밖이면 저장 실패 키여야 한다.
+
+    여유 넉넉. 엔진의 실패 통지로 EFBIG인 OSError 또는 원인의 글에 "File too large"가 든
+    실패를 보냄 -> 받은 예외는 보낸 그 객체이고 space_key가
+    "msdos" · 읽지 못함(None): "File too large for a FAT32 drive" / "NTFS" · "apfs": "Failed to save file"
+    """
+    engine, _data, _logger, _output, _finished, failures = _make_engine(tmp_path, monkeypatch)
+    _on_filesystem(monkeypatch, name)
+    sent = make()
+
+    engine._notify_failed(sent)
+
+    assert failures == [sent]
+    assert getattr(sent, "space_key", None) == expected
+
+
+@pytest.mark.parametrize(
+    ("name", "free", "sections", "expected"),
+    [
+        ("FAT32", FAT_LIMIT, True, FILE_TOO_LARGE_FOR_FAT),  # 공간은 있는데 실패 — 한계에 닿았다
+        ("FAT32", FAT_LIMIT, False, FILE_TOO_LARGE_FOR_FAT),
+        ("FAT32", FAT_LIMIT - 1, True, DISK_SPACE_SHORT),  # 정말 공간이 모자라다
+        ("NTFS", 10**13, True, DISK_SPACE_SHORT),
+        ("NTFS", 10**13, False, DISK_SPACE_SHORT_WHOLE),  # 구간 없는 다운로드의 공간 부족 안내
+        (None, 10**13, True, DISK_SPACE_SHORT),  # 파일 시스템을 읽지 못했다
+    ],
+)
+def test_failure_from_running_out_of_space_carries_the_key_to_show(
+    tmp_path, monkeypatch, name, free, sections, expected
+):
+    """쓰다가 공간이 없어 난 실패를 알릴 때, 예외에 보일 안내의 키(space_key)가 적혀 있어야 한다.
+
+    파일 시스템 · 저장 폴더의 여유 · 구간이 있는지는 표의 것. 엔진의 실패 통지로 ENOSPC인 OSError를 보냄
+    -> 받은 예외는 보낸 그 객체이고 space_key == 표의 기대값
+    """
+    engine, data, _logger, _output, _finished, failures = _make_engine(tmp_path, monkeypatch)
+    _on_filesystem(monkeypatch, name, free)
+    if sections:
+        data.content.selection_paths = (os.path.join(str(tmp_path), "구간_1.mp4"),)
+        data.content.selections = (object(),)
+    sent = _no_space()
+
+    engine._notify_failed(sent)
+
+    assert failures == [sent]
+    assert getattr(sent, "space_key", None) == expected
+
+
+def test_failure_that_is_not_about_space_carries_no_key(tmp_path, monkeypatch):
+    """공간과 무관한 실패에는 space_key를 적지 않아야 한다.
+
+    파일 시스템 "FAT32"(여유 넉넉), 권한 오류인 OSError를 실패로 통지 -> space_key 속성 없음
+    """
+    engine, _data, _logger, _output, _finished, failures = _make_engine(tmp_path, monkeypatch)
+    _on_filesystem(monkeypatch, "FAT32")
+    sent = OSError(errno.EACCES, "Permission denied")
+
+    engine._notify_failed(sent)
+
+    assert failures == [sent] and not hasattr(sent, "space_key")
+
+
+# ================================================================ 시작 전 여유 공간 검사 (#309)
+
+
+class _CountingSession(RangeSession):
+    """받은 범위 요청의 수를 세는 가짜 세션."""
+
+    def __init__(self):
+        super().__init__(CONTENT)
+        self.gets = 0
+
+    def get(self, url, headers=None, **kwargs):
+        self.gets += 1
+        return super().get(url, headers=headers, **kwargs)
+
+
+def _run_with_free_space(tmp_path, monkeypatch, free):
+    """여유 공간을 정해 두고 엔진을 끝까지 돌린다 — free가 예외면 여유 공간을 알 수 없는 것이다.
+
+    Returns:
+        (출력 경로, 실패 목록, 완료했는지, 받은 범위 요청 수, 여유 공간 줄, 여유 공간을 물은 폴더)
+    """
+    engine, data, logger, output, finished, failures = _make_engine(tmp_path, monkeypatch)
+    session = _CountingSession()
+    monkeypatch.setattr(fd_module, "get_thread_session", lambda: session)
+    asked: list[str] = []
+
+    def free_bytes(folder):
+        asked.append(folder)
+        if isinstance(free, Exception):
+            raise free
+        return free
+
+    monkeypatch.setattr(fd_module, "_free_bytes", free_bytes)
+    lines: list[tuple] = []
+    logger.log_space_check = lambda *args: lines.append(args)
+
+    data.model.start()
+    thread = _run_in_thread(engine)
+    thread.join(timeout=30)
+    assert not thread.is_alive(), "엔진이 끝나지 않았다"
+    return output, failures, finished.is_set(), session.gets, lines, asked
+
+
+def test_download_without_sections_does_not_start_when_the_file_does_not_fit(tmp_path, monkeypatch):
+    """구간 없는 mp4는 파일 크기가 저장 폴더의 여유 공간보다 1바이트라도 크면 받지 않고 실패해야 한다.
+
+    파일 4MiB, 여유 4MiB − 1
+    -> 실패 1건(DiskSpaceError, 키 "Not enough disk space for the download", needed 4MiB,
+       free 4MiB − 1), 받은 범위 요청 0번, 완료 안 함, 산출물 없음,
+       줄 ("start", 0, 4MiB, (("output", 4MiB, 4MiB − 1),)), 물은 폴더 == 산출물의 폴더
+    """
+    output, failures, finished, gets, lines, asked = _run_with_free_space(
+        tmp_path, monkeypatch, TOTAL_SIZE - 1
+    )
+
+    assert [type(e) for e in failures] == [DiskSpaceError]
+    error = failures[0]
+    assert (error.message_key, error.needed, error.free) == (
+        DISK_SPACE_SHORT_WHOLE,
+        TOTAL_SIZE,
+        TOTAL_SIZE - 1,
+    )
+    assert (gets, finished, output.exists()) == (0, False, False)
+    assert lines == [("start", 0, TOTAL_SIZE, (("output", TOTAL_SIZE, TOTAL_SIZE - 1),))]
+    assert asked == [str(tmp_path)]
+
+
+def test_download_without_sections_starts_when_the_file_exactly_fits(tmp_path, monkeypatch):
+    """여유 공간이 파일 크기와 같으면 받기를 시작해 끝까지 가야 한다.
+
+    파일 4MiB, 여유 4MiB
+    -> 완료, 실패 0건, 산출물 == 원본, 줄 ("start", 0, 4MiB, (("output", 4MiB, 4MiB),))
+    """
+    output, failures, finished, _gets, lines, _asked = _run_with_free_space(
+        tmp_path, monkeypatch, TOTAL_SIZE
+    )
+
+    assert (finished, failures) == (True, [])
+    assert output.read_bytes() == CONTENT
+    assert lines == [("start", 0, TOTAL_SIZE, (("output", TOTAL_SIZE, TOTAL_SIZE),))]
+
+
+def test_download_without_sections_starts_when_the_free_space_is_unknown(tmp_path, monkeypatch):
+    """여유 공간을 알 수 없으면 확인하지 않고 받아야 한다 — 여유 공간 줄도 남기지 않는다.
+
+    여유 공간을 묻는 함수가 OSError -> 완료, 실패 0건, 줄 없음
+    """
+    _output, failures, finished, _gets, lines, _asked = _run_with_free_space(
+        tmp_path, monkeypatch, OSError("알 수 없음")
+    )
+
+    assert (finished, failures, lines) == (True, [], [])

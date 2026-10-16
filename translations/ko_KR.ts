@@ -72,6 +72,10 @@
         <translation>겹침</translation>
     </message>
     <message>
+        <source>Sections {0}</source>
+        <translation>구간 {0}개</translation>
+    </message>
+    <message>
         <source>To receive: {0}</source>
         <translation>받을 양: {0}</translation>
     </message>
@@ -90,6 +94,10 @@
     <message>
         <source>Preparing</source>
         <translation>준비 중</translation>
+    </message>
+    <message>
+        <source>Preparing to cut</source>
+        <translation>자르기 준비 중</translation>
     </message>
     <message>
         <source>Cutting</source>
@@ -270,6 +278,24 @@ Cutting the section failed. Retry processes only the failed sections.</source>
 구간을 자르는 데 실패했습니다. 재시도하면 실패한 구간만 다시 처리합니다.</translation>
     </message>
     <message>
+        <source>Not enough disk space · free up space or pick another folder
+The download folder does not have enough free space for the section files.</source>
+        <translation>디스크 공간이 부족합니다 · 공간을 비우거나 다른 폴더를 골라 주세요
+다운로드 폴더에 구간 파일을 저장할 공간이 모자랍니다.</translation>
+    </message>
+    <message>
+        <source>FAT32 drive can&apos;t hold files over 4 GB · pick another folder
+This drive (FAT32) cannot store a file larger than 4 GB. Pick another folder, or format the drive as exFAT or NTFS.</source>
+        <translation>FAT32는 4GB 넘는 파일을 못 담습니다 · 다른 폴더를 골라 주세요
+이 드라이브(FAT32)는 4GB가 넘는 파일을 저장할 수 없습니다. 다른 폴더를 고르거나 드라이브를 exFAT · NTFS로 포맷해 주세요.</translation>
+    </message>
+    <message>
+        <source>Not enough disk space · free up space or pick another folder
+The download folder or the temporary folder does not have enough free space for the download.</source>
+        <translation>디스크 공간이 부족합니다 · 공간을 비우거나 다른 폴더를 골라 주세요
+저장 폴더나 임시 폴더에 받을 공간이 모자랍니다.</translation>
+    </message>
+    <message>
         <source>Video data arrived corrupted · try again later
 Part of the video kept arriving incomplete from the server. Try again later.</source>
         <translation>영상 일부가 잘려 받아졌습니다 · 잠시 뒤 다시 시도해 주세요
@@ -370,6 +396,10 @@ Part of the video kept arriving incomplete from the server. Try again later.</so
         <translation>구간 추가(최대 {0}개)</translation>
     </message>
     <message>
+        <source>Sum of the section lengths</source>
+        <translation>구간 길이의 합</translation>
+    </message>
+    <message>
         <source>Digits fill from the right, up to {0} (0100 = 1 minute) · &apos;.&apos; moves to the frame field</source>
         <translation>숫자를 치면 오른쪽부터 채웁니다(최대 {0}자리, 0100 = 1분) · &apos;.&apos;을 치면 프레임 칸으로</translation>
     </message>
@@ -407,8 +437,16 @@ Check your connection and cookies, then open this window again.</source>
         <translation>최대값({0})으로 맞췄습니다</translation>
     </message>
     <message>
-        <source>Sections add up to {0} — longer than the video ({1})</source>
-        <translation>구간 합 {0} · 영상 길이({1})보다 깁니다</translation>
+        <source>Total {0}</source>
+        <translation>합계 {0}</translation>
+    </message>
+    <message>
+        <source>Sections add up to more than the video</source>
+        <translation>구간 합이 영상보다 깁니다</translation>
+    </message>
+    <message>
+        <source>Sections {0} · Video {1}</source>
+        <translation>구간 합 {0} · 영상 {1}</translation>
     </message>
     <message>
         <source>Sections {0} / {1} · {2}fps · video ends at {3}</source>

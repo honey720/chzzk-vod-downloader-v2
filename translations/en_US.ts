@@ -72,6 +72,10 @@
         <translation>overlap</translation>
     </message>
     <message>
+        <source>Sections {0}</source>
+        <translation>Sections {0}</translation>
+    </message>
+    <message>
         <source>To receive: {0}</source>
         <translation>To receive: {0}</translation>
     </message>
@@ -90,6 +94,10 @@
     <message>
         <source>Preparing</source>
         <translation>Preparing</translation>
+    </message>
+    <message>
+        <source>Preparing to cut</source>
+        <translation>Preparing to cut</translation>
     </message>
     <message>
         <source>Cutting</source>
@@ -275,6 +283,24 @@ Cutting the section failed. Retry processes only the failed sections.</source>
 Cutting the section failed. Retry processes only the failed sections.</translation>
     </message>
     <message>
+        <source>Not enough disk space · free up space or pick another folder
+The download folder does not have enough free space for the section files.</source>
+        <translation>Not enough disk space · free up space or pick another folder
+The download folder does not have enough free space for the section files.</translation>
+    </message>
+    <message>
+        <source>FAT32 drive can&apos;t hold files over 4 GB · pick another folder
+This drive (FAT32) cannot store a file larger than 4 GB. Pick another folder, or format the drive as exFAT or NTFS.</source>
+        <translation>FAT32 drive can&apos;t hold files over 4 GB · pick another folder
+This drive (FAT32) cannot store a file larger than 4 GB. Pick another folder, or format the drive as exFAT or NTFS.</translation>
+    </message>
+    <message>
+        <source>Not enough disk space · free up space or pick another folder
+The download folder or the temporary folder does not have enough free space for the download.</source>
+        <translation>Not enough disk space · free up space or pick another folder
+The download folder or the temporary folder does not have enough free space for the download.</translation>
+    </message>
+    <message>
         <source>Video data arrived corrupted · try again later
 Part of the video kept arriving incomplete from the server. Try again later.</source>
         <translation>Video data arrived corrupted · try again later
@@ -375,6 +401,10 @@ Part of the video kept arriving incomplete from the server. Try again later.</tr
         <translation>Add a section (up to {0})</translation>
     </message>
     <message>
+        <source>Sum of the section lengths</source>
+        <translation>Sum of the section lengths</translation>
+    </message>
+    <message>
         <source>Digits fill from the right, up to {0} (0100 = 1 minute) · &apos;.&apos; moves to the frame field</source>
         <translation>Digits fill from the right, up to {0} (0100 = 1 minute) · &apos;.&apos; moves to the frame field</translation>
     </message>
@@ -412,8 +442,16 @@ Check your connection and cookies, then open this window again.</translation>
         <translation>Set to the maximum ({0})</translation>
     </message>
     <message>
-        <source>Sections add up to {0} — longer than the video ({1})</source>
-        <translation>Sections add up to {0} — longer than the video ({1})</translation>
+        <source>Total {0}</source>
+        <translation>Total {0}</translation>
+    </message>
+    <message>
+        <source>Sections add up to more than the video</source>
+        <translation>Sections add up to more than the video</translation>
+    </message>
+    <message>
+        <source>Sections {0} · Video {1}</source>
+        <translation>Sections {0} · Video {1}</translation>
     </message>
     <message>
         <source>Sections {0} / {1} · {2}fps · video ends at {3}</source>

@@ -52,18 +52,22 @@ file(#73)·m3u8(#74) 엔진이 평행 중복으로 갖고 있던 실행 엔진�
 data·logger는 DownloadData/DownloadLogger 호환 객체를 주입받는다.
 """
 
+import errno
+import math
 import os
 import re
+import shutil
 import statistics
 import threading
 import time as tm
 from abc import ABC, abstractmethod
 from collections import deque
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
+from core.downloaders.segment_space import SectionUse, SegmentSpace, check_space
 from core.downloaders.thread_control import TARGET_CAP, TICK_SECONDS, ThreadController
 from core.models.content import Content
 from core.models.download_state import DownloadState
@@ -74,7 +78,9 @@ from core.models.events import (
     ProgressEvent,
 )
 from core.models.plan import DownloadPlan
-from core.utils.ffmpeg import FFmpegError, read_in_chunks, remux_stream
+from core.utils.ffmpeg import FFmpegCancelledError, FFmpegError, read_in_chunks, remux_stream
+from core.utils.filesystem import FAT_MAX_FILE_BYTES, filesystem_name, is_fat
+from core.utils.interaction import rest_totals
 
 
 # ============ 저속 판정 (#347) ============
@@ -113,12 +119,124 @@ _TRANSIENT_ERROR_REQUEUE_LIMIT = 10  # 항목별 최대 재큐 횟수 — 총 11
 _TRANSIENT_HTTP_STATUSES = frozenset({408, 429})
 
 
+DISK_SPACE_SHORT = "Not enough disk space"  # 저장 폴더의 여유 공간이 만들 구간 파일보다 적다
+# 구간 없는 세그먼트 다운로드 — 저장 폴더나 임시 폴더의 여유 공간이 받을 양보다 적다.
+# 구간 파일을 만들지 않는 다운로드라 안내가 구간 파일을 말하지 않는다
+DISK_SPACE_SHORT_WHOLE = "Not enough disk space for the download"
+
+
+class DiskSpaceError(OSError):
+    """여유 공간이 만들 파일보다 적어 받기를 시작하지 않았거나 받다가 멈췄다 (#309).
+
+    mp4 구간 다운로드는 받기 전에 저장 폴더를 본다. 세그먼트 다운로드(m3u8 · 암호화 VOD)는
+    받기 전과, 세그먼트를 몇 개 받아 크기를 다시 어림한 뒤에 임시 폴더와 저장 폴더를 본다
+    (core/downloaders/segment_space.py).
+
+    ``message_key``는 번역하지 않은 i18n 키 원문이다. 표시 계층이 번역한다. 구간 다운로드는
+    ``DISK_SPACE_SHORT``, 구간 없는 세그먼트 다운로드는 ``DISK_SPACE_SHORT_WHOLE``다. OSError의
+    하위라 파일을 쓰다 난 오류와 같은 실패 처리(통지 · 정리)를 탄다.
+    """
+
+    def __init__(self, needed: int, free: int, message_key: str = DISK_SPACE_SHORT):
+        super().__init__(f"필요 {needed}바이트 · 여유 {free}바이트")
+        self.message_key = message_key
+        self.needed = needed  # 그 볼륨에 비어 있어야 하는 양(바이트)
+        self.free = free  # 그 볼륨의 여유 공간(바이트)
+
+
+# 저장 폴더의 파일 시스템(FAT · FAT32)이 파일 하나에 담을 수 있는 크기보다 만들 파일이 크다
+FILE_TOO_LARGE_FOR_FAT = "File too large for a FAT32 drive"
+# 파일을 쓰지 못했다 — 표시 계층이 OSError에 주는 것과 같은 이미 있는 키다
+FILE_SAVE_FAILED = "Failed to save file"
+
+# 쓰기가 "남은 공간이 없다"로 실패했을 때 ffmpeg가 stderr에 적는 글 — ffmpeg가 쓰다 실패하면
+# OSError가 아니라 이 글이 든 실패로 온다
+_NO_SPACE_TEXT = "No space left on device"
+# 파일이 파일 시스템의 파일 하나의 한계를 넘었을 때(EFBIG) ffmpeg가 stderr에 적는 글
+_FILE_TOO_LARGE_TEXT = "File too large"
+
+
+class FileSizeLimitError(OSError):
+    """저장 폴더의 파일 시스템이 담을 수 없는 크기의 파일을 만들게 되어 받지 않았다 (#309).
+
+    FAT 계열(FAT · FAT32)은 파일 하나가 4GiB − 1바이트를 넘을 수 없다. 넘는 순간의 쓰기는
+    공간이 넉넉해도 "남은 공간이 없다"로 실패한다 — 받기 전에 알린다. ``message_key``는
+    번역하지 않은 i18n 키 원문이다. OSError의 하위라 파일을 쓰다 난 오류와 같은 실패 처리를 탄다.
+    """
+
+    def __init__(self, largest: int, filesystem: str):
+        super().__init__(f"파일 {largest}바이트 · 파일 시스템 {filesystem}")
+        self.message_key = FILE_TOO_LARGE_FOR_FAT
+        self.largest = largest  # 만들 파일 가운데 가장 큰 것의 크기(바이트, 어림일 수 있다)
+        self.filesystem = filesystem  # 저장 폴더의 파일 시스템 이름(OS가 준 그대로)
+
+
+def _ran_out_of_space(exc: BaseException) -> bool:
+    """그 실패의 원인 사슬에 "남은 공간이 없다"(ENOSPC)가 있는지.
+
+    파이썬이 쓰다 실패하면 errno가 ENOSPC인 OSError로, ffmpeg가 쓰다 실패하면 stderr의 글이 든
+    실패로 온다. 원인(``__cause__``)을 따라 올라가며 둘 다 본다.
+    """
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if isinstance(exc, OSError) and exc.errno == errno.ENOSPC:
+            return True
+        if _NO_SPACE_TEXT in str(exc):
+            return True
+        exc = exc.__cause__
+    return False
+
+
+def _hit_file_size_limit(exc: BaseException) -> bool:
+    """그 실패의 원인 사슬에 "파일이 너무 크다"(EFBIG)가 있는지 — 파일 시스템의 파일 하나의 한계.
+
+    FAT32는 파일 하나가 4GiB − 1바이트를 넘으면 쓰기가 실패한다. macOS · Linux는 EFBIG을 낸다
+    (Windows는 ENOSPC — ``_ran_out_of_space``가 본다). 파이썬이 쓰다 실패하면 errno가 EFBIG인
+    OSError로, ffmpeg가 쓰다 실패하면 stderr의 글("File too large")이 든 실패로 온다. 원인
+    (``__cause__``)을 따라 올라가며 둘 다 본다 — ``_ran_out_of_space``와 같은 방식이다.
+    """
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if isinstance(exc, OSError) and exc.errno == errno.EFBIG:
+            return True
+        if _FILE_TOO_LARGE_TEXT in str(exc):
+            return True
+        exc = exc.__cause__
+    return False
+
+
 class TruncatedBodyError(requests.RequestException):
     """받은 본문이 잘렸다 — 서버가 말한 길이나 파일이 스스로 말하는 크기보다 짧다 (#309).
 
     요청 예외의 하위라 워커의 실패 처리(재큐)가 그대로 받는다. 4xx가 아니므로 일시 오류로
     세어 여러 번 다시 받아 보고, 계속 잘려 오면 다운로드가 실패로 끝난다.
     """
+
+
+def cut_order(lengths: Mapping[int, float]) -> list[int]:
+    """구간을 만드는 순서 — 긴 구간부터, 길이가 같으면 번호순 (#309).
+
+    세그먼트를 가장 많이 쥔 구간이 먼저 디스크를 비운다. 구간을 자르는 쪽(_cut_sections)과
+    디스크 사용량을 어림하는 쪽(segment_space)이 같은 순서를 써야 어림이 맞는다.
+
+    Args:
+        lengths: 구간 번호 → 그 구간의 길이
+    """
+    return sorted(lengths, key=lambda number: (-lengths[number], number))
+
+
+def _remove_fed_segment(path: str) -> None:
+    """ffmpeg에 다 넘긴 세그먼트 파일을 지운다. 지우지 못해도 후처리는 이어 간다.
+
+    지우지 못한 파일은 끝난 뒤 임시 폴더와 함께 지워진다 — 디스크를 덜 쓰는 일이
+    실패했을 뿐 산출물은 그대로다.
+    """
+    try:
+        os.remove(path)
+    except OSError:
+        pass
 
 
 def _is_permanent_error(exc: BaseException) -> bool:
@@ -144,8 +262,30 @@ class PostprocessError(Exception):
     """
 
 
+def _with_rests(note: str, before: tuple[int, float], after: tuple[int, float]) -> str:
+    """준비 줄에 덧붙일 말 뒤에, 준비하는 동안 조작 때문에 쉰 횟수 · 시간을 잇는다 (#309).
+
+    사용자가 조작하는 동안 색인 해석은 조각 사이에서 쉰다(``core.utils.interaction``) — 준비가
+    길었을 때 그 쉼 때문인지를 로그로 가른다. 쉰 적이 없으면 note 그대로다.
+
+    Args:
+        before: 준비를 시작할 때의 ``rest_totals()``
+        after: 준비를 끝냈을 때의 ``rest_totals()``
+    """
+    rests = after[0] - before[0]
+    if rests <= 0:
+        return note
+    rested = f"rested {rests} times for {after[1] - before[1]:.2f}s"
+    return f"{note} - {rested}" if note else rested
+
+
 class _PostprocessAborted(Exception):
     """후처리 공급 루프의 사용자 중단 신호 — 실패가 아니라 중단 경로로 보낸다."""
+
+
+# 구간 없는 후처리에서 세그먼트를 다 넘긴 뒤 ffmpeg가 끝나기를 기다리는 제한 시간(초) — 남은
+# 일은 받은 것을 마저 쓰고 mp4의 moov를 쓰는 것이다. 구간 컷의 복사 단계와 같은 한 시간
+_REMUX_END_TIMEOUT = 3600
 
 
 # 컷 진행을 이만큼 오를 때마다 알린다 — 막대의 1%보다 잘게, ffmpeg가 알리는 횟수보다는 드물게
@@ -168,7 +308,7 @@ class SectionCutProgress:
         self._published = 0.0
 
     def section(self, number: int) -> Callable[[float], None]:
-        """그 구간의 컷이 진행(0~1)을 알릴 함수 — ``hybrid_cut``의 on_progress로 넘긴다."""
+        """그 구간의 컷이 진행(0~1)을 알릴 함수 — 컷 함수의 on_progress로 넘긴다."""
 
         def on_progress(fraction: float) -> None:
             inside = min(max(fraction, 0.0), 1.0)
@@ -321,6 +461,9 @@ class BaseDownloader(ABC):
     # 구간 다운로드(비어 있지 않은 selections)를 받는지 (#309). 받지 않는 다운로더는
     # run()이 NotImplementedError로 거부한다 — 조용히 전체를 받지 않는다
     supports_selections: bool = False
+    # 구간 하나의 컷 진행 가운데 프레임 정보 읽기가 차지하는 몫(0~1) — 막대가 고르게 오르게
+    # 하는 데만 쓴다(틀려도 진행은 거꾸로 가지 않는다). 세그먼트 다운로더가 형식에 맞게 정한다
+    _cut_read_share: float = 0.0
     # 후처리 시작 로그(#110)에 남길 작업 이름 — 현행 세그먼트 경로는 모두 remux다
     postprocess_kind: str = "remux"
     # run()이 실패 콜백으로 환원할 예외 타입 — 그 외 예외는 전파한다
@@ -362,6 +505,8 @@ class BaseDownloader(ABC):
         self._monitor_stop = threading.Event()
         self._pause_clock = _PauseClock()  # 컷이 도는 동안의 일시정지 시간
         self._cut_paused = 0.0  # 지금 자르는 구간에서 일시정지한 시간의 합(초)
+        # 이번 실행이 실패를 알렸는지 — 실패로 멈춘 것과 사용자가 멈춘 것을 로그에서 가른다
+        self._failure_notified = False
         self._measured_paused = 0.0  # 속도를 마지막으로 잰 때까지 일시정지한 시간의 합(초)
         # 전송 중 관측된 정점 동시 스레드 수 — 전송 종료 요약 로그용 (#110)
         self._peak_threads = 0
@@ -376,6 +521,9 @@ class BaseDownloader(ABC):
         self._on_merge_start: Callable[[], None] = on_merge_start or (lambda: None)
         # requires_key_resolution인 다운로더에 서비스가 주입한다 (#57)
         self._key_resolver = None
+        # 세그먼트 다운로더가 prepare에서 채운다 — 받을 양의 어림과 여유 공간 검사 (#309).
+        # None이면 검사하지 않는다(mp4는 제 방식으로 본다)
+        self._space: SegmentSpace | None = None
 
     @property
     def state(self) -> DownloadState:
@@ -489,6 +637,209 @@ class BaseDownloader(ABC):
     def _cleanup_partial(self) -> None:
         """실패·중단 시 부분 산출물을 정리한다."""
 
+    # ============ 저장 폴더가 담을 수 있는 파일 크기 · 쓰다가 난 공간 부족 (#309) ============
+
+    def _output_folder(self) -> str:
+        """산출물을 쓰는 폴더 — 구간 다운로드는 첫 구간 파일이 놓이는 곳이다."""
+        paths = self.s.content.selection_paths
+        output = paths[0] if paths else self.s.output_path
+        return os.path.dirname(os.path.abspath(output))
+
+    def _require_file_size_fits(self, largest: int) -> None:
+        """만들 파일 가운데 가장 큰 것이 저장 폴더의 파일 시스템에 담기는지 받기 전에 확인한다.
+
+        저장 폴더가 FAT 계열이고 그 크기가 4GiB − 1바이트를 넘으면 받지 않는다. 파일 시스템
+        이름을 읽지 못하면 확인하지 않는다. 읽은 이름과 크기는 로그 한 줄로 남긴다.
+
+        어림은 소수일 수 있다 — 바이트로 올림한 한 값을 한계와 견주고, 로그와 예외에도 그 값을
+        적는다. 견주는 값과 적는 값이 다르면, 적힌 값이 한계와 같은데도 거부되는 일이 생긴다.
+
+        Args:
+            largest: 만들 파일 가운데 가장 큰 것의 크기(바이트) — 어림이어도 된다
+
+        Raises:
+            FileSizeLimitError: 저장 폴더가 FAT 계열이고 largest가 한계를 넘는 경우
+        """
+        name = filesystem_name(self._output_folder())
+        largest = math.ceil(largest)
+        self._log_if_supported("log_file_size_check", name, largest)
+        if is_fat(name) and largest > FAT_MAX_FILE_BYTES:
+            raise FileSizeLimitError(largest, name)
+
+    def _notify_failed(self, exc: BaseException) -> None:
+        """실패를 알린다 — 쓰다가 공간이 없어 난 실패면 그 사실을 예외에 적은 뒤에(``_marked``).
+
+        엔진이 실패를 알리는 자리는 모두 이 메서드를 거친다. 콜백을 감싸 두지 않는 까닭: 엔진을
+        붙잡는 함수를 엔진이 들면 서로를 가리켜, 다운로드가 끝나도 엔진이 바로 풀리지 않는다.
+        """
+        self._failure_notified = True
+        self._on_failed(self._marked(exc))
+
+    def _marked(self, exc: BaseException) -> BaseException:
+        """쓰다가 공간이 없어 난 실패면 안내 키를 예외의 ``space_key``에 적어 돌려준다.
+
+        표시 계층은 그 키가 있으면 다른 판정보다 먼저 쓴다 — 자르다 난 실패여도 원인이 공간
+        부족이면 공간 부족으로 알린다. 예외의 종류와 글은 바꾸지 않는다.
+
+        파일 하나의 한계에 닿은 실패(EFBIG · "File too large")는 공간 부족보다 먼저 본다 — 공간이
+        아니라 파일 크기의 문제다. 키는 ``_size_limit_failure_key``가 고른다.
+        """
+        if getattr(exc, "space_key", None) is None and _hit_file_size_limit(exc):
+            try:
+                exc.space_key = self._size_limit_failure_key()
+            except AttributeError:
+                pass  # 속성을 받지 않는 예외 — 적지 못해도 실패는 그대로 알린다
+        if getattr(exc, "space_key", None) is None and _ran_out_of_space(exc):
+            key = self._space_failure_key()
+            if key is not None:
+                try:
+                    exc.space_key = key
+                except AttributeError:
+                    pass  # 속성을 받지 않는 예외 — 적지 못해도 실패는 그대로 알린다
+        return exc
+
+    def _size_limit_failure_key(self) -> str:
+        """쓰다가 "파일이 너무 크다"(EFBIG)로 실패했을 때의 안내 키.
+
+        그 한계를 두는 것은 FAT 계열이다 — 저장 폴더가 FAT 계열이거나 파일 시스템 이름을 읽지
+        못했으면 FAT 안내를 준다(읽지 못하는 경우를 빼면 FAT32에서 안내가 빠진다). FAT이 아닌
+        이름이 확인되면 FAT32라고 말하지 않고 파일 저장 실패로 알린다 — 손상 · 컷 실패로 가지
+        않게 키는 적는다.
+        """
+        name = filesystem_name(self._output_folder())
+        return FILE_TOO_LARGE_FOR_FAT if name is None or is_fat(name) else FILE_SAVE_FAILED
+
+    def _space_failure_key(self) -> str | None:
+        """쓰다가 "남은 공간이 없다"로 실패했을 때의 안내 키.
+
+        저장 폴더가 FAT 계열이고 지금도 파일 하나의 한계만큼은 비어 있으면, 공간이 아니라 그
+        한계에 닿은 것이다 — FAT 안내를 준다. 그 밖에는 공간 부족 안내를 준다(구간이 있는지에
+        따라 키가 다르다).
+        """
+        folder = self._output_folder()
+        if is_fat(filesystem_name(folder)):
+            try:
+                roomy = shutil.disk_usage(folder).free >= FAT_MAX_FILE_BYTES
+            except OSError:
+                roomy = True  # 여유를 모른다 — FAT인 것은 알므로 그 한계로 알린다
+            if roomy:
+                return FILE_TOO_LARGE_FOR_FAT
+        return DISK_SPACE_SHORT if self.s.content.selections else DISK_SPACE_SHORT_WHOLE
+
+    # ============ 세그먼트 다운로드의 여유 공간 검사 (#309) ============
+
+    def _space_folders(self) -> tuple[str, str]:
+        """(세그먼트를 두는 임시 폴더, 산출물을 쓰는 폴더) — 여유 공간을 볼 두 곳.
+
+        ``_space``를 채우는 다운로더(임시 폴더 ``temp_dir``가 있는 세그먼트 다운로더)만 불린다.
+        구간 다운로드의 산출물 폴더는 첫 구간 파일이 놓이는 곳이다.
+        """
+        paths = self.s.content.selection_paths
+        output = paths[0] if paths else self.s.output_path
+        return self.temp_dir, os.path.dirname(os.path.abspath(output))
+
+    def _whole_space(self, durations: Sequence[float], segment_count: int) -> SegmentSpace | None:
+        """구간 없는 세그먼트 다운로드의 크기 어림 — 세그먼트 길이(#EXTINF)를 모르면 None이다.
+
+        Args:
+            durations: 세그먼트마다의 길이(초) — 받을 세그먼트 목록과 같은 순서
+            segment_count: 받을 세그먼트 수. 길이의 수와 다르면 짝을 지을 수 없어 어림하지 않는다
+        """
+        if len(durations) != segment_count or sum(durations) <= 0:
+            return None
+        return SegmentSpace(dict(enumerate(durations)), bandwidth=self._declared_bandwidth())
+
+    def _section_space(
+        self,
+        durations: Sequence[float],
+        segment_count: int,
+        wanted: Sequence[int],
+        spans: Mapping[int, tuple[int, int, float]],
+        on_disk: Mapping[int, int],
+    ) -> SegmentSpace | None:
+        """구간 다운로드의 크기 어림 — 세그먼트 길이(#EXTINF)를 모르면 None이다.
+
+        Args:
+            durations: 플레이리스트의 세그먼트마다의 길이(초)
+            segment_count: 플레이리스트의 세그먼트 수
+            wanted: 이번 실행이 쓰는 세그먼트의 인덱스
+            spans: 이번 실행이 만들 구간의 번호 → (첫 세그먼트, 마지막 세그먼트, 구간 길이[초])
+            on_disk: 이미 받아 둔 세그먼트의 인덱스 → 크기(바이트)
+        """
+        if len(durations) != segment_count or sum(durations[index] for index in wanted) <= 0:
+            return None
+        order = cut_order({number: span[2] for number, span in spans.items()})
+        return SegmentSpace(
+            {index: durations[index] for index in wanted},
+            bandwidth=self._declared_bandwidth(),
+            sections=[SectionUse(*spans[number]) for number in order],
+            on_disk=on_disk,
+        )
+
+    def _declared_bandwidth(self) -> int | None:
+        """고른 변형의 선언된 비트레이트(bit/s). 변형의 정체를 넘겨받지 못했으면 None.
+
+        평균(AVERAGE-BANDWIDTH)이 선언돼 있으면 그 값을, 없으면 최대(BANDWIDTH)를 쓴다 — 받을
+        양의 어림에는 평균이 맞고, 최대로 어림하면 크게 나온다.
+        """
+        stream = self.s.content.stream
+        if stream is None:
+            return None
+        return stream.average_bandwidth or stream.bandwidth
+
+    def _require_space(self, stage: str) -> None:
+        """받을 양을 어림해 여유 공간에 들어가는지 확인한다.
+
+        시작 전(``start``)에는 선언된 비트레이트로, 전송 중(``transfer``)에는 받은 세그먼트의
+        실제 평균으로 어림한다. 어림할 수 없으면 확인하지 않는다. 어림한 값과 결과는 로그 한
+        줄로 남긴다 — 어림이 실제와 얼마나 다른지 로그로 견줄 수 있다.
+
+        Raises:
+            DiskSpaceError: 여유 공간이 모자란 경우
+            FileSizeLimitError: 저장 폴더가 FAT 계열이고 만들 파일 하나가 그 한계를 넘는 경우
+        """
+        if self._space is None:
+            return
+        need = self._space.need(measured=stage == "transfer")
+        if need is None:
+            return
+        # 저장 폴더가 FAT 계열이면 4GiB를 넘는 파일을 담지 못한다 — 공간보다 먼저 본다(공간이
+        # 넉넉해도 그 파일은 만들 수 없다). 받기 전 어림이 없는 다운로드는 전송 중 어림에서 걸린다
+        self._require_file_size_fits(need.largest)
+        checks = check_space(need, *self._space_folders())
+        self._log_if_supported(
+            "log_space_check",
+            stage,
+            int(need.temp),
+            int(need.output),
+            tuple((check.where, check.needed, check.free) for check in checks),
+        )
+        # 구간 파일을 만들지 않는 다운로드는 안내가 구간 파일을 말하지 않는 키를 쓴다
+        key = DISK_SPACE_SHORT if self.s.content.selections else DISK_SPACE_SHORT_WHOLE
+        for check in checks:
+            if check.short:
+                raise DiskSpaceError(check.needed, check.free, key)
+
+    def _note_received(self, index: int, size: int) -> None:
+        """세그먼트 하나를 다 받아 디스크에 썼다 — 크기 어림에 실제 크기를 알린다."""
+        if self._space is not None:
+            self._space.received(index, size)
+
+    def _watch_space(self) -> None:
+        """전송 중 한 번, 받은 세그먼트의 실제 평균으로 다시 어림해 여유 공간을 본다.
+
+        실행 루프가 돌 때마다 부른다. 모자라면 전송을 멈추고 실패로 알린다 — 받던 세그먼트의
+        정리는 run()의 중단 경로가 한다.
+        """
+        if self._space is None or not self._space.reestimate_due():
+            return
+        try:
+            self._require_space("transfer")
+        except DiskSpaceError as e:
+            self._fail_fatally(e, "Not enough disk space — transfer stopped")
+        except FileSizeLimitError as e:
+            self._fail_fatally(e, "File too large for the drive — transfer stopped")
+
     def _stop_requested(self) -> bool:
         """다운로드를 중단하라는 요청이 왔는지 — 컷이 도는 ffmpeg를 끝낼지 묻는 데 쓴다 (#309).
 
@@ -569,8 +920,13 @@ class BaseDownloader(ABC):
 
         중간 병합 파일을 만들지 않는 단일 패스다 — fMP4·TS는 바이트 연결이
         곧 유효한 스트림이라 파이프 공급이 병합 의미를 정확히 보존한다.
-        세그먼트 파일은 여기서 지우지 않는다(#92 — 후처리 실패로 재다운로드를
-        강요하지 않기 위함). 성공 후 정리는 run()의 _cleanup_after_run이 한다.
+
+        **넘긴 세그먼트는 곧바로 지운다 (#309).** 세그먼트 하나를 ffmpeg에 다 넘기면 그 파일을
+        지운다 — 산출물이 커지는 만큼 세그먼트가 줄어, 후처리 동안의 디스크 사용량이
+        세그먼트 + 산출물(약 2배)이 아니라 약 1배다. 예전에는 후처리가 실패해도 다시 받지
+        않게 세그먼트를 모두 남겼다(#92). 지금은 실패하면 이미 넘긴 세그먼트는 없고, 그
+        범위는 다시 받는다(오너 결정 2026-10-12) — 아직 넘기지 않은 세그먼트와 임시 폴더는
+        건드리지 않는다. 빈 폴더의 정리는 run()의 _cleanup_after_run이 한다.
 
         remux가 실패하면 폴백 없이 PostprocessError로 명확히 실패한다 —
         바이트 연결본은 #88이 고치려던 결함품이라 조용히 대체하지 않는다.
@@ -593,7 +949,14 @@ class BaseDownloader(ABC):
                     # 일시정지 상태라면 대기 (ffmpeg는 stdin을 기다리며 멈춘다)
                     if self.state == DownloadState.PAUSED:
                         self.s._pause_event.wait()
+                        # 일시정지한 채로 중단됐다 — 깨어나서 조각을 더 넘기지 않는다. 넘기면 그
+                        # 세그먼트가 "다 넘긴 것"이 되어 지워진다 (#309)
+                        if self.state == DownloadState.WAITING:
+                            raise _PostprocessAborted
                     yield chunk
+                # 여기 왔으면 이 세그먼트의 마지막 조각까지 ffmpeg에 넘어갔다(공급받는 쪽이
+                # 그것을 쓰고 나서야 다음 조각을 청한다) — 더 읽을 일이 없으니 지운다
+                _remove_fed_segment(path)
                 self.s.merged_segments += 1
                 # 어댑터가 표시하는 정수 %(분모 = 병합 대상 수 = 이 목록 길이)가
                 # 바뀔 때만 통지한다 — 세그먼트 수천 개짜리 VOD에서도 통지가
@@ -612,12 +975,19 @@ class BaseDownloader(ABC):
                     )
 
         try:
-            remux_stream(feed(), self.s.output_path)
-        except _PostprocessAborted:
+            remux_stream(
+                feed(),
+                self.s.output_path,
+                # 세그먼트를 다 넘긴 뒤 ffmpeg가 끝나기를 기다리는 동안에도 중단 · 일시정지를 따른다
+                timeout=_REMUX_END_TIMEOUT,
+                should_stop=lambda: self.state == DownloadState.WAITING,
+                should_pause=lambda: self.state == DownloadState.PAUSED,
+            )
+        except (_PostprocessAborted, FFmpegCancelledError):
             # 중단 정리(임시 폴더·산출물 삭제)는 run()의 중단 경로가 수행한다
             return
         except FFmpegError as e:
-            self.logger.log_error("Remux failed — segments preserved for retry", e)
+            self.logger.log_error("Remux failed — fed segments are gone, retry receives again", e)
             raise PostprocessError(f"후처리(remux) 실패: {e}") from e
 
     def _initial_queue(self, items: list) -> list:
@@ -644,6 +1014,76 @@ class BaseDownloader(ABC):
         """
         return SectionCutProgress(lengths, self._publish_cut_progress)
 
+    def _begin_cut_reading(self) -> None:
+        """구간 하나의 세그먼트에서 프레임 정보를 읽기 시작한다 — 준비 중임을 적고 알린다 (#309)."""
+        self.s.cut_preparing = True
+        self._notify_cut_state()
+
+    def _end_cut_reading(self) -> None:
+        """프레임 정보를 다 읽었다(또는 그 구간의 일이 끝났다) — 준비 중 표시를 내리고 알린다."""
+        if self.s.cut_preparing:
+            self.s.cut_preparing = False
+            self._notify_cut_state()
+
+    def _notify_cut_state(self) -> None:
+        self._on_progress(
+            ProgressEvent(
+                downloaded_size=self.s.total_downloaded_size,
+                total_size=self._progress_total_size(),
+                speed=0.0,
+                active_threads=0,
+            )
+        )
+
+    def _cut_reporters(
+        self, report: Callable[[float], None], fresh: int | None = None, total: int | None = None
+    ) -> tuple[Callable[[float], None], Callable[[float], None]]:
+        """구간 하나의 진행(0~1)을 읽기 몫과 자르기 몫으로 나눠 받는 함수 둘 — (읽기, 자르기).
+
+        읽기는 그 구간의 진행의 앞 몫을, 자르기는 나머지를 채운다. 읽기에 진행 신호가 없으면
+        세그먼트가 많은 구간에서 막대가 그동안 멈췄다가 건너뛴다.
+
+        Args:
+            fresh: 그 구간에서 새로 읽을 세그먼트 수. 앞 구간이 이미 읽은 세그먼트는 다시 읽지
+                않는다 — 겹치는 구간은 읽는 시간이 그만큼 짧다. 주지 않으면 모두 새로 읽는
+                것으로 본다
+            total: 그 구간이 쓰는 세그먼트 수. fresh와 함께 준다
+
+        읽기 몫은 ``_cut_read_share``(모두 새로 읽을 때의 몫 s)에서 읽는 일만 fresh ÷ total로
+        줄인 것이다 — s x fresh ÷ (s x fresh + (1 − s) x total). 새로 읽을 것이 없으면 0이다.
+        """
+        share = self._cut_read_share
+        if fresh is not None and total:
+            reading = share * fresh
+            share = reading / (reading + (1.0 - share) * total) if reading > 0 else 0.0
+
+        def on_read(fraction: float) -> None:
+            report(share * min(max(fraction, 0.0), 1.0))
+
+        def on_cut(fraction: float) -> None:
+            report(share + (1.0 - share) * min(max(fraction, 0.0), 1.0))
+
+        return on_read, on_cut
+
+    def _cut_stage_recorder(
+        self, stages: list, read_seconds: Callable[[], float] = lambda: 0.0
+    ) -> Callable[[str, float], None]:
+        """세그먼트 구간 컷의 on_stage — ``_stage_recorder``에 읽기의 끝을 알아채는 일을 더한다.
+
+        컷의 ``read`` 단계가 끝나면 준비 중 표시를 내린다. 엔진이 컷을 부르기 전에 스스로 읽은
+        시간(read_seconds — 암호화 VOD는 세그먼트를 엔진이 읽는다)은 그 단계의 시간에 더한다 —
+        로그의 ``read``가 프레임 정보를 읽는 데 든 시간 전부가 된다.
+        """
+        record = self._stage_recorder(stages)
+
+        def on_stage(name: str, seconds: float) -> None:
+            if name == "read":
+                seconds += read_seconds()
+                self._end_cut_reading()
+            record(name, seconds)
+
+        return on_stage
+
     def _publish_cut_progress(self, value: float) -> None:
         """컷 진행을 공유 데이터에 적고 진행 통지를 보낸다 — 구간을 자르는 스레드에서 돈다."""
         self.s.cut_progress = value
@@ -661,7 +1101,7 @@ class BaseDownloader(ABC):
 
         Args:
             number: 구간 번호(1부터 — 구간 목록의 순서)
-            stages: ``hybrid_cut``의 on_stage가 알린 (단계 이름, 걸린 초) — 알린 순서대로.
+            stages: 컷 함수의 on_stage가 알린 (단계 이름, 걸린 초) — 알린 순서대로.
                 ``_stage_recorder``로 모은 것이면 일시정지한 시간이 빠져 있다
 
         그 구간을 자르는 동안 일시정지한 시간이 있으면 그 합을 함께 넘긴다(없으면 넘기지 않는다 —
@@ -686,23 +1126,43 @@ class BaseDownloader(ABC):
         """후처리 종료 로그에 남길 산출물 크기(바이트) (기본: output_path의 크기)."""
         return os.path.getsize(self.s.output_path)
 
+    def _saved_size(self) -> int | None:
+        """완료한 다운로드가 저장한 파일의 크기(바이트) — 구간 다운로드는 구간 파일 크기의 합.
+
+        완료를 알리기 직전에 부른다. 구간 다운로드는 컷을 마치며 센 값(sections_output_size)
+        이고, 그 밖에는 산출물 파일의 크기다. 파일을 읽지 못하면 None이다 — 크기를 모른다고
+        완료한 다운로드를 실패로 바꾸지 않는다.
+        """
+        if self.s.sections_output_size is not None:
+            return self.s.sections_output_size
+        try:
+            return os.path.getsize(self.s.output_path)
+        except OSError:
+            return None
+
     # ============ 실행 파이프라인 (구 file/m3u8 run의 공통 골격) ============
 
     def run(self) -> None:
         """다운로드 파이프라인을 실행한다. 관측 스레드도 여기서 소유·시작한다."""
         monitor = threading.Thread(target=self._monitor_loop, name="DownloadMonitor", daemon=True)
         stopped_in = None  # 중단을 처음 본 단계 — prepare · transfer · postprocess
+        self._failure_notified = False
         try:
             self.s.start_time = tm.time()
             # 모델이 세는 일시정지 시간은 모델이 사는 동안의 합이다 — 같은 모델로 다시 실행하면
             # 앞 실행의 것이 들어 있다. 이번 실행의 것만 쓰도록 시작할 때의 값을 적어 둔다
             paused_before = self.s.model.paused_seconds
+            rested_before = rest_totals()
             plan = self.prepare(self.s.content)
             # 준비(받을 것을 정하는 단계 — 구간 다운로드는 여기서 moov · 플레이리스트를 받는다)에
             # 걸린 시간. 전송 시간(Transfer)은 이것을 포함한 채로 둔다 — 그 줄의 뜻을 바꾸지
             # 않고, 준비를 뺀 값을 따로 한 줄 남긴다 (#309)
             prepare_elapsed = tm.time() - self.s.start_time
-            self._log_if_supported("log_prepare_complete", prepare_elapsed, self._prepare_note())
+            self._log_if_supported(
+                "log_prepare_complete",
+                prepare_elapsed,
+                _with_rests(self._prepare_note(), rested_before, rest_totals()),
+            )
             if plan.selections and not self.supports_selections:
                 # 구간을 해석하지 못하는 다운로더는 명시적으로 거부한다 (#83, #309)
                 raise NotImplementedError(
@@ -777,6 +1237,8 @@ class BaseDownloader(ABC):
 
                     # (2) 주기적으로 상태 확인 (non-blocking)
                     tm.sleep(0.1)
+                    # 세그먼트를 몇 개 받았으면 크기를 다시 어림해 여유 공간을 본다 (#309)
+                    self._watch_space()
 
                     # (3) 남은 작업이 없고 스레드도 없으면 종료
                     if not self.s.remaining_ranges and not self.future_dict:
@@ -816,26 +1278,32 @@ class BaseDownloader(ABC):
                     postprocess_started = tm.time()
                     self.postprocess()
                     if self.state != DownloadState.WAITING:
-                        postprocess_elapsed = tm.time() - postprocess_started
+                        # 후처리 중 일시정지한 시간은 후처리에 든 시간이 아니다 — 빼고, 있었으면
+                        # 따로 넘긴다. 전송 줄 · 시간 구분 줄과 같은 기준이다 (#309)
+                        postprocess_paused = (
+                            self.s.model.paused_seconds - paused_before - transfer_paused
+                        )
+                        postprocess_elapsed = max(
+                            tm.time() - postprocess_started - postprocess_paused, 0.0
+                        )
                         self.logger.log_postprocess_complete(
-                            postprocess_elapsed, self._postprocess_output_size()
+                            postprocess_elapsed,
+                            self._postprocess_output_size(),
+                            *((postprocess_paused,) if postprocess_paused > 0 else ()),
                         )
                 # 후처리 중 중단(stop)됐다면 완료 통지를 생략한다 (#92) —
                 # WAITING → FINISHED는 허용되지 않는 전이라, 무조건 완료
                 # 처리하면 전이 예외가 실패 콜백으로 둔갑한다 (구 병합 코드의
                 # 잠재 결함이 중단 테스트로 드러난 것)
                 if self.state != DownloadState.WAITING:
+                    self.s.output_size = self._saved_size()
                     self.s.end_time = tm.time()
                     total_time = self.s.end_time - self.s.start_time
                     self.logger.log_download_complete(total_time)
                     # 전체 = 전송 + 후처리 구분 (#110) — 위 완료 줄(형식 불변)이
                     # 전체 시간임을 새 줄이 드러낸다
-                    # 구분의 두 값도 일시정지한 시간을 뺀 것이다 — 전송 줄과 같은 기준이다
+                    # 구분의 두 값도 일시정지한 시간을 뺀 것이다 — 전송 줄 · 후처리 줄에 적은 값 그대로다
                     all_paused = self.s.model.paused_seconds - paused_before
-                    if postprocess_elapsed is not None:
-                        postprocess_elapsed = max(
-                            postprocess_elapsed - (all_paused - transfer_paused), 0.0
-                        )
                     self.logger.log_total_breakdown(
                         transfer_elapsed,
                         postprocess_elapsed,
@@ -858,23 +1326,27 @@ class BaseDownloader(ABC):
             # 중단을 같은 신호(WAITING)로 뭉뚱그려 구분하지 못한 게 뿌리였다
             # (#135와 같은 자리: 엔진 종료 신호와 실패 처리를 분리해야 한다).
             if self.state == DownloadState.WAITING:
-                # 사용자가 중단했다 — 어느 단계였는지 한 줄 남긴다 (#309). 로그가 완료도 실패도
-                # 없이 끊기면 중단인지 죽은 것인지 가릴 수 없다
-                self._log_if_supported("log_stopped", stopped_in or "postprocess")
+                # 중단됐다 — 어느 단계였는지 한 줄 남긴다 (#309). 로그가 완료도 실패도 없이
+                # 끊기면 중단인지 죽은 것인지 가릴 수 없다. 실패를 알린 뒤의 중단은 엔진이
+                # 스스로 멈춘 것이다(``_fail_fatally``) — 사용자가 멈춘 것과 다른 줄을 남긴다
+                self._log_if_supported(
+                    "log_stopped_after_failure" if self._failure_notified else "log_stopped",
+                    stopped_in or "postprocess",
+                )
                 self._cleanup_partial()
 
         except PostprocessError as e:
             # 후처리 실패 (#92) — 다운로드는 완결됐으므로 세그먼트(임시 폴더)를
             # 보존한다. 불완전한 산출물은 후처리 단계가 이미 삭제했다.
             # _cleanup_partial()을 부르지 않는 것이 이 분기의 존재 이유다
-            self._on_failed(e)
+            self._notify_failed(e)
             self.logger.log_exception("Postprocess failed", e)
             self.logger.save_and_close()
 
         except self._failure_exceptions as e:
             # 오류 발생 시 부분 산출물 삭제
             self._cleanup_partial()
-            self._on_failed(e)
+            self._notify_failed(e)
             self.logger.log_exception("Download failed", e)
             self.logger.save_and_close()
 
@@ -956,7 +1428,7 @@ class BaseDownloader(ABC):
         (hls_aes 복호화 실패 경로에서 승격 — #131부터 재큐 상한 도달도 쓴다)
         """
         self.logger.log_error(log_message, exc)
-        self._on_failed(exc)
+        self._notify_failed(exc)
         self.model.stop()
 
     def _requeue_slow(self, item, part_num: int, diagnostic: str = "") -> None:

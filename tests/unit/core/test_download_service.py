@@ -577,3 +577,59 @@ class TestHandleOutlivesItsCaller:
             assert _wait_until(lambda: handle() is None)
         finally:
             gc.enable()
+
+
+class TestUserInteracting:
+    """조작 중인지 묻는 값이 엔진을 돌리는 스레드에 걸리는지 (#309)."""
+
+    @pytest.fixture
+    def rests(self, monkeypatch):
+        """쉰 스레드의 이름을 담는 리스트 — 쉬는 일을 자지 않고 적기만 하는 대역으로 바꾼다."""
+        import core.utils.interaction as interaction
+
+        rested: list[str] = []
+        monkeypatch.setattr(
+            interaction, "_rest", lambda: rested.append(threading.current_thread().name)
+        )
+        return rested
+
+    @staticmethod
+    def _run_resting(engine):
+        """엔진의 run 대역 — 조각 사이의 틈을 한 번 흉내 내고 끝낸다."""
+        from core.utils.interaction import rest_if_user_interacting
+
+        rest_if_user_interacting()
+        engine.started.set()
+        engine.on_finished()
+
+    def test_engine_thread_rests_while_the_given_value_says_interacting(
+        self, file_factory, monkeypatch, rests
+    ):
+        """서비스에 준 값이 조작 중이라고 답하면 엔진을 돌리는 스레드의 틈에서 쉬어야 한다.
+
+        DownloadService(user_interacting=늘 참). 엔진의 run이 틈을 한 번 흉내 냄
+        -> 쉰 스레드 == ["DownloadThread"]
+        """
+        monkeypatch.setattr(FakeEngine, "run", self._run_resting)
+        service = DownloadService(user_interacting=lambda: True)
+
+        handle = service.submit(_make_content())
+
+        assert handle.wait(WAIT)
+        assert rests == ["DownloadThread"]
+
+    def test_engine_thread_does_not_rest_when_no_value_is_given(
+        self, file_factory, monkeypatch, rests
+    ):
+        """서비스에 값을 주지 않으면 엔진을 돌리는 스레드는 쉬지 않아야 한다(헤드리스).
+
+        DownloadService(). 엔진의 run이 틈을 한 번 흉내 냄 -> 엔진은 돌았고 쉰 스레드 == []
+        """
+        monkeypatch.setattr(FakeEngine, "run", self._run_resting)
+        service = DownloadService()
+
+        handle = service.submit(_make_content())
+
+        assert handle.wait(WAIT)
+        assert _first(file_factory).started.is_set()
+        assert rests == []

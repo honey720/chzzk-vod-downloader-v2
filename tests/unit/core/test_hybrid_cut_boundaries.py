@@ -21,7 +21,8 @@ from core.api.mp4 import read_mp4_index
 from core.models.cut import CutFrames
 from core.utils.cut_check import check_cut
 from core.utils.ffmpeg import get_ffmpeg_exe
-from core.utils.hybrid_cut import CutError, cut_frames_from_mp4, hybrid_cut, plan_cut
+from core.utils.hybrid_cut import CutError, cut_frames_from_mp4, plan_cut
+from tests.unit.core.reference_cut import hybrid_cut
 
 KEYFRAMES = (0, 30, 36, 60, 90)  # -force_key_frames 0,1,1.2,2,3 (30fps)
 START_KEY = 30  # 구간의 시작을 이 키프레임 둘레에 둔다

@@ -204,6 +204,26 @@ def test_prepare_and_net_transfer_lines_are_added_without_changing_the_transfer_
     assert summarize(log_file)["transfer_seconds"] == 12.34
 
 
+def test_prepare_line_keeps_its_front_when_rests_are_appended(tmp_path, monkeypatch):
+    """쉰 횟수 · 시간이 붙은 준비 줄도 앞부분은 그대로이고 요약 지표를 바꾸지 않아야 한다 (#309).
+
+    준비 11.55초, 덧붙인 말 "moov reused - rested 3210 times for 6.42s" · Transfer 12.34초
+    -> 줄이 "Prepare completed in 11.55 seconds - moov reused - rested 3210 times for 6.42s"로 끝남,
+       요약의 transfer_seconds == 12.34
+    """
+    logger = _make_logger(tmp_path, monkeypatch)
+    logger.log_prepare_complete(11.55, "moov reused - rested 3210 times for 6.42s")
+    logger.log_transfer_complete(12.34, 987654321, 3, 40)
+    log_file = Path(logger.log_file)
+    logger.save_and_close()
+
+    lines = log_file.read_text(encoding="utf-8").splitlines()
+    assert [line for line in lines if "Prepare completed" in line][0].endswith(
+        "Prepare completed in 11.55 seconds - moov reused - rested 3210 times for 6.42s"
+    )
+    assert summarize(log_file)["transfer_seconds"] == 12.34
+
+
 def test_prepare_line_without_a_note_ends_at_the_seconds(tmp_path, monkeypatch):
     """덧붙일 말이 없는 준비 줄은 시간에서 끝나야 한다 (#309).
 
@@ -294,3 +314,46 @@ def test_transfer_and_breakdown_lines_add_the_paused_time_only_when_there_was_a_
     assert breakdown[0].endswith(
         "Total time breakdown - Transfer: 12.50s (no postprocess) (paused: 3.20s)"
     )
+
+
+def test_failure_stop_line_names_the_phase_and_does_not_blame_the_user(tmp_path, monkeypatch):
+    """실패로 멈춘 줄은 어느 단계였는지 적고, 사용자가 멈췄다고 적지 않아야 한다 (#309).
+
+    log_stopped_after_failure("transfer") -> "Download stopped after a failure during transfer",
+    로그에 "by user" 없음
+    """
+    logger = _make_logger(tmp_path, monkeypatch)
+    logger.log_stopped_after_failure("transfer")
+    log_file = Path(logger.log_file)
+    logger.save_and_close()
+
+    written = log_file.read_text(encoding="utf-8")
+    assert "Download stopped after a failure during transfer" in written
+    assert "by user" not in written
+
+
+def test_postprocess_line_adds_the_paused_time_only_when_there_was_a_pause(tmp_path, monkeypatch):
+    """후처리 종료 줄은 일시정지한 시간이 있으면 끝에 따로 적고, 없으면 이전과 같아야 하며, 요약은 둘 다 읽어야 한다 (#309).
+
+    후처리 5.67초 · 987바이트. 일시정지 3.2초를 넘긴 것과 넘기지 않은 것
+    -> "... - Output size: 987 bytes (paused: 3.20s)" 한 줄과 "... - Output size: 987 bytes"로 끝나는 한 줄
+    -> 일시정지를 적은 줄만 든 로그의 요약: postprocess_seconds == 5.67, postprocess_output_bytes == 987
+    """
+    logger = _make_logger(tmp_path, monkeypatch)
+    logger.log_postprocess_complete(5.67, 987)
+    logger.log_postprocess_complete(5.67, 987, 3.2)
+    log_file = Path(logger.log_file)
+    logger.save_and_close()
+
+    lines = [
+        line
+        for line in log_file.read_text(encoding="utf-8").splitlines()
+        if "Postprocess completed" in line
+    ]
+    base_line = "Postprocess completed in 5.67 seconds - Output size: 987 bytes"
+    assert lines[0].endswith(base_line)
+    assert lines[1].endswith(base_line + " (paused: 3.20s)")
+    only_paused = tmp_path / "paused_only.log"
+    only_paused.write_text(lines[1] + "\n", encoding="utf-8")
+    summary = summarize(only_paused)
+    assert (summary["postprocess_seconds"], summary["postprocess_output_bytes"]) == (5.67, 987)

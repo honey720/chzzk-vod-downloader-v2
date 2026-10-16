@@ -7,6 +7,10 @@
 띄우지 않는다 — subprocess.Popen/os.startfile을 스파이로 바꿔 인자만 본다.
 """
 
+import logging
+import sys
+from pathlib import Path
+
 import pytest
 
 import app.platform_adapter as adapter
@@ -177,3 +181,237 @@ class TestStartDetachedIsNonBlocking:
         adapter.open_folder("/some/path")
 
         assert run_calls == []  # subprocess.run은 한 번도 안 불렸다
+
+
+# ================================================================ GIL 넘김 · 타이머 (#309)
+
+
+@pytest.fixture
+def timing(monkeypatch):
+    """타이머 쪽의 모듈 상태를 깨끗이 하고, 타이머를 청하고 푸는 자리를 적는 대역으로 바꾼다.
+
+    끝나면 넘김 간격과 모듈 상태를 되돌린다 — 다른 테스트가 바뀐 넘김 간격으로 돌지 않는다.
+    """
+    interval = sys.getswitchinterval()
+    monkeypatch.setattr(adapter, "_timing_enabled", False)
+    monkeypatch.setattr(adapter, "_work_count", 0)
+    monkeypatch.setattr(adapter, "_timer_requested", False)
+    calls: list[tuple[str, int]] = []
+    granted = {"value": True}
+
+    def request(period_ms: int) -> bool:
+        calls.append(("청함", period_ms))
+        return granted["value"]
+
+    monkeypatch.setattr(adapter, "_request_timer_resolution", request)
+    monkeypatch.setattr(
+        adapter, "_release_timer_resolution", lambda period_ms: calls.append(("풂", period_ms))
+    )
+    yield calls, granted
+    sys.setswitchinterval(interval)
+
+
+class TestResponsiveTiming:
+    def test_enabling_on_windows_sets_the_switch_interval_to_one_millisecond(
+        self, monkeypatch, timing
+    ):
+        """Windows에서 켜면 GIL 넘김 간격이 1ms가 돼야 한다.
+
+        platform.system() == "Windows", 넘김 간격 5ms에서 켬 -> 넘김 간격 == 0.001초
+        """
+        monkeypatch.setattr(adapter.platform, "system", lambda: "Windows")
+        sys.setswitchinterval(0.005)
+
+        adapter.enable_responsive_timing()
+
+        assert sys.getswitchinterval() == pytest.approx(0.001)
+
+    @pytest.mark.parametrize("system", ["Darwin", "Linux"])
+    def test_other_systems_change_nothing(self, monkeypatch, timing, system):
+        """Windows가 아니면 켜도 넘김 간격이 그대로이고, 일이 돌아도 타이머를 청하지 않아야 한다.
+
+        platform.system() == system, 넘김 간격 5ms에서 켜고 일을 하나 돌림
+        -> 넘김 간격 == 0.005초, 타이머를 청하거나 푼 적 없음
+        """
+        calls, _granted = timing
+        monkeypatch.setattr(adapter.platform, "system", lambda: system)
+        sys.setswitchinterval(0.005)
+
+        adapter.enable_responsive_timing()
+        with adapter.background_work():
+            pass
+
+        assert sys.getswitchinterval() == pytest.approx(0.005)
+        assert calls == []
+
+    def test_nothing_is_requested_before_it_is_enabled(self, monkeypatch, timing):
+        """켜지 않았으면(헤드리스) Windows에서도 일이 돌 때 타이머를 청하지 않아야 한다.
+
+        platform.system() == "Windows", 켜지 않고 일을 하나 돌림 -> 타이머를 청하거나 푼 적 없음
+        """
+        calls, _granted = timing
+        monkeypatch.setattr(adapter.platform, "system", lambda: "Windows")
+
+        with adapter.background_work():
+            pass
+
+        assert calls == []
+
+    def test_timer_is_requested_for_the_first_work_and_released_after_the_last(
+        self, monkeypatch, timing
+    ):
+        """겹치는 일은 수를 세어, 첫 일에서 타이머를 청하고 마지막 일이 끝날 때 한 번만 풀어야 한다.
+
+        Windows에서 켬. 일 A 시작 → 일 B 시작 → A 끝 → B 끝
+        -> B가 시작한 뒤: [청함 1], A가 끝난 뒤: [청함 1], B가 끝난 뒤: [청함 1, 풂 1]
+        """
+        calls, _granted = timing
+        monkeypatch.setattr(adapter.platform, "system", lambda: "Windows")
+        adapter.enable_responsive_timing()
+
+        adapter.begin_background_work()
+        adapter.begin_background_work()
+        both_running = list(calls)
+        adapter.end_background_work()
+        one_left = list(calls)
+        adapter.end_background_work()
+
+        assert both_running == [("청함", 1)]
+        assert one_left == [("청함", 1)]
+        assert calls == [("청함", 1), ("풂", 1)]
+
+    def test_timer_is_requested_again_for_work_that_starts_after_the_release(
+        self, monkeypatch, timing
+    ):
+        """마지막 일이 끝나 타이머를 푼 뒤 새 일이 시작하면 다시 청해야 한다.
+
+        Windows에서 켬. 일 하나를 돌리고, 끝난 뒤 하나를 더 돌림 -> [청함 1, 풂 1, 청함 1, 풂 1]
+        """
+        calls, _granted = timing
+        monkeypatch.setattr(adapter.platform, "system", lambda: "Windows")
+        adapter.enable_responsive_timing()
+
+        with adapter.background_work():
+            pass
+        with adapter.background_work():
+            pass
+
+        assert calls == [("청함", 1), ("풂", 1), ("청함", 1), ("풂", 1)]
+
+    def test_enabling_on_windows_records_the_switch_interval(self, monkeypatch, timing, caplog):
+        """Windows에서 켜면 그때의 넘김 간격을 기록 한 줄로 남겨야 한다.
+
+        platform.system() == "Windows", 넘김 간격 5ms에서 켬
+        -> app.platform_adapter 로거의 INFO 한 줄 == "화면 반응 설정: GIL 넘김 간격 1ms"
+        """
+        monkeypatch.setattr(adapter.platform, "system", lambda: "Windows")
+        sys.setswitchinterval(0.005)
+
+        with caplog.at_level(logging.DEBUG):
+            adapter.enable_responsive_timing()
+
+        records = [r for r in caplog.records if r.name == "app.platform_adapter"]
+        assert [(r.levelno, r.getMessage()) for r in records] == [
+            (logging.INFO, "화면 반응 설정: GIL 넘김 간격 1ms")
+        ]
+
+    @pytest.mark.parametrize(
+        ("granted", "expected"),
+        [
+            (True, ["타이머 단위 1ms 청함: 받아들여짐", "타이머 단위 1ms 청을 풂"]),
+            (False, ["타이머 단위 1ms 청함: 받아들여지지 않음"]),
+        ],
+        ids=["받아들여짐", "거절됨"],
+    )
+    def test_timer_request_and_release_are_recorded(
+        self, monkeypatch, timing, caplog, granted, expected
+    ):
+        """타이머를 청한 결과와 푼 것을 기록으로 남겨야 한다 — 거절된 청은 풀지 않으므로 푼 줄이 없다.
+
+        Windows에서 켠 뒤 일을 하나 돌림. 청이 받아들여짐 / 거절됨
+        -> 켠 뒤의 app.platform_adapter 로거의 DEBUG 줄 == expected
+        """
+        _calls, answer = timing
+        answer["value"] = granted
+        monkeypatch.setattr(adapter.platform, "system", lambda: "Windows")
+        adapter.enable_responsive_timing()
+
+        with caplog.at_level(logging.DEBUG):
+            with adapter.background_work():
+                pass
+
+        records = [r for r in caplog.records if r.name == "app.platform_adapter"]
+        assert [(r.levelno, r.getMessage()) for r in records] == [
+            (logging.DEBUG, message) for message in expected
+        ]
+
+    def test_a_refused_request_is_not_released(self, monkeypatch, timing):
+        """타이머의 청이 받아들여지지 않았으면 풀지 않아야 한다.
+
+        Windows에서 켬. 청이 거절되게 하고 일을 하나 돌림 -> [청함 1]
+        """
+        calls, granted = timing
+        granted["value"] = False
+        monkeypatch.setattr(adapter.platform, "system", lambda: "Windows")
+        adapter.enable_responsive_timing()
+
+        with adapter.background_work():
+            pass
+
+        assert calls == [("청함", 1)]
+
+    def test_work_that_raises_still_releases_the_timer(self, monkeypatch, timing):
+        """일이 예외로 끝나도 타이머를 풀어야 한다.
+
+        Windows에서 켬. 일 안에서 예외를 던짐 -> 예외가 그대로 나온다, [청함 1, 풂 1]
+        """
+        calls, _granted = timing
+        monkeypatch.setattr(adapter.platform, "system", lambda: "Windows")
+        adapter.enable_responsive_timing()
+
+        with pytest.raises(RuntimeError):
+            with adapter.background_work():
+                raise RuntimeError("일이 실패했다(대역)")
+
+        assert calls == [("청함", 1), ("풂", 1)]
+
+    def test_an_end_without_a_begin_is_ignored(self, monkeypatch, timing):
+        """짝이 없는 끝은 무시해야 한다 — 그 뒤의 일이 정상으로 세어진다.
+
+        Windows에서 켬. 끝을 먼저 한 번 부르고 일을 하나 돌림 -> [청함 1, 풂 1]
+        """
+        calls, _granted = timing
+        monkeypatch.setattr(adapter.platform, "system", lambda: "Windows")
+        adapter.enable_responsive_timing()
+
+        adapter.end_background_work()
+        with adapter.background_work():
+            pass
+
+        assert calls == [("청함", 1), ("풂", 1)]
+
+    def test_timer_library_is_absent_where_the_loader_does_not_exist(self, monkeypatch):
+        """winmm을 여는 길이 없는 OS에서는 타이머를 청해도 거짓을 돌려주고 예외가 없어야 한다.
+
+        ctypes에 WinDLL이 없는 것으로 만들고 청함 · 풂을 부름 -> 청함 == False, 풂은 조용히 돌아온다
+        """
+        import ctypes
+
+        monkeypatch.setattr(adapter, "_winmm", None)
+        monkeypatch.delattr(ctypes, "WinDLL", raising=False)
+
+        assert adapter._request_timer_resolution(1) is False
+        adapter._release_timer_resolution(1)
+
+
+def _source(relative: str) -> str:
+    return (Path(__file__).resolve().parents[2] / relative).read_text(encoding="utf-8")
+
+
+def test_gui_entry_enables_responsive_timing_and_headless_does_not():
+    """GUI 진입점은 타이머 청을 켜고, 헤드리스 스크립트는 켜지 않아야 한다.
+
+    main.py · scripts/headless_download.py의 소스 -> 앞의 것에만 enable_responsive_timing() 호출이 있다
+    """
+    assert "enable_responsive_timing()" in _source("main.py")
+    assert "enable_responsive_timing" not in _source("scripts/headless_download.py")
