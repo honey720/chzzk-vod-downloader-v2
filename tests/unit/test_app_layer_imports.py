@@ -97,11 +97,16 @@ def _absolute_base(py_file: Path, level: int, module: str | None) -> str | None:
     return ".".join(base)
 
 
-def _imported_names(py_file: Path) -> list[tuple[int, str]]:
+@lru_cache(maxsize=None)
+def _imported_names(py_file: Path) -> tuple[tuple[int, str], ...]:
     """파일 하나의 import 대상(줄 번호, 절대 점 구분 이름).
 
     `from a import b`는 `a.b`가 프로젝트 모듈(또는 Qt 위젯 모듈)이면 그것으로, 아니면 `a`로.
     상대 import는 파일의 패키지 경로를 기준으로 절대 이름으로 푼다.
+
+    파일 단위로 캐시한다 — `_chain`은 같은 모듈을 경로마다 다시 걸으므로, 캐시가 없으면
+    같은 파일을 수십만 번 다시 읽고 파싱한다(#369). 세션 중 소스는 바뀌지 않는다는 전제다.
+    캐시된 값을 호출자가 바꾸지 못하게 튜플로 돌려준다.
     """
     tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
     names: list[tuple[int, str]] = []
@@ -121,7 +126,7 @@ def _imported_names(py_file: Path) -> list[tuple[int, str]]:
                     names.append((node.lineno, candidate))
                 else:
                     names.append((node.lineno, base))
-    return names
+    return tuple(names)
 
 
 def _resolve_project_module(name: str) -> str | None:
