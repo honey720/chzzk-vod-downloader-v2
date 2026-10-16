@@ -659,16 +659,16 @@ class M3U8Downloader(BaseDownloader):
                 requests.Timeout,
                 integrity.TruncatedSegmentError,
             ) as e:
-                if isinstance(e, integrity.TruncatedSegmentError):
+                with self.lock:
                     if (
-                        index not in self._cache_recovery
+                        isinstance(e, integrity.TruncatedSegmentError)
+                        and index not in self._cache_recovery
                         and _cache_recovery_url(segment_url) != segment_url
                     ):
                         self._cache_recovery.add(index)
                         self.logger.warning(
                             f"Segment {index + 1}: invalid cached body; retrying alternate resource path"
                         )
-                with self.lock:
                     self._requeue_failed((index, segment), part_num, e)
                 self.logger.log_error(f"Part {part_num} download failed (segment {index + 1})", e)
                 return part_num
