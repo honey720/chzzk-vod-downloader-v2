@@ -18,11 +18,13 @@
 test_m3u8_downloader_rules.py, 34건)는 이 파일과 별개로 무수정이다 —
 elapsed 계산 자체가 원래 식으로 돌아왔으므로 애초에 영향이 없다.
 
-시계는 실제 `time.time()`/`time.perf_counter()`를 그대로 쓴다(가짜
-시계 미사용) — 디스크 지연은 `time.sleep()`으로 실제로 준다.
+디스크 지연을 재는 테스트는 실제 `time.perf_counter()`를 그대로 쓴다 — 디스크 지연은
+`time.sleep()`으로 실제로 준다. 네트워크 지연 대조군은 테스트가 흘리는 시계로 잰다 — 실제
+디스크 속도가 쓰기 시간에 들어오지 않게 한다(#369).
 """
 
 import time as real_time
+import types
 
 import pytest
 
@@ -175,8 +177,41 @@ def test_disk_write_delay_still_triggers_requeue_but_diagnostic_shows_high_ratio
     assert _diag_ratio(logger) >= 90.0, "디스크가 원인인데 write 비율이 낮게 찍힘"
 
 
+class _TestClock:
+    """테스트가 흘리는 시계 — 읽어서는 흐르지 않고 ``advance()``로만 흐른다."""
+
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def _make_clocked_open(clock: _TestClock, write_seconds: float):
+    """write()마다 시계를 write_seconds만큼 흘리는 open() — 쓰기 시간을 테스트가 정한다."""
+    real_open = open
+
+    class _ClockedWriteFile(_SlowWriteFile):
+        def write(self, data):
+            clock.advance(write_seconds)
+            return self._real_file.write(data)
+
+    def _clocked_open(path, mode, *args, **kwargs):
+        return _ClockedWriteFile(real_open(path, mode, *args, **kwargs), 0.0)
+
+    return _clocked_open
+
+
 def test_slow_network_still_triggers_requeue_for_file_part(tmp_path, monkeypatch):
-    """대조군: 네트워크 자체가 느리면(수신 사이 지연) 여전히 저속 재큐가 발동해야 한다."""
+    """대조군: 네트워크 자체가 느리면(수신 사이 지연) 여전히 저속 재큐가 발동해야 한다.
+
+    수신 0.15초 · 쓰기 0.001초인 청크 8개, 판정 시계와 쓰기 시계는 테스트가 흘린다
+    -> 재큐 1회, 진단 로그의 write 비율 5% 이하(0.001 ÷ 0.151 ≈ 1%)
+    """
+    clock = _TestClock()
 
     class _SlowNetworkResponse:
         def raise_for_status(self):
@@ -184,7 +219,7 @@ def test_slow_network_still_triggers_requeue_for_file_part(tmp_path, monkeypatch
 
         def iter_content(self, chunk_size=CHUNK):
             for _ in range(CHUNK_COUNT):
-                real_time.sleep(SLOW_WRITE_DELAY_S)  # 수신 자체가 느리다(디스크 아님)
+                clock.advance(SLOW_WRITE_DELAY_S)  # 수신 자체가 느리다(디스크 아님)
                 yield b"x" * chunk_size
 
     class _SlowNetworkSession:
@@ -198,6 +233,10 @@ def test_slow_network_still_triggers_requeue_for_file_part(tmp_path, monkeypatch
     engine = FileDownloader(data, logger)
 
     monkeypatch.setattr(fd_module, "get_thread_session", lambda: _SlowNetworkSession())
+    monkeypatch.setattr(engine, "_now", clock)
+    monkeypatch.setattr(fd_module, "tm", types.SimpleNamespace(perf_counter=clock))
+    # 청크당 쓰기 시간 — 실제 디스크 속도에 맡기지 않는다(#369)
+    monkeypatch.setattr(fd_module, "open", _make_clocked_open(clock, 0.001), raising=False)
 
     engine._download_part(0, CHUNK * CHUNK_COUNT - 1, 0, CHUNK * CHUNK_COUNT)
 
