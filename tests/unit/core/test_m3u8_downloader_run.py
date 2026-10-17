@@ -486,6 +486,48 @@ def test_stop_removes_partial_file_and_temp_dir(tmp_path, monkeypatch):
     assert failures == []
 
 
+class _ShiftedClock:
+    """실제 단조 시계에 테스트가 흘린 시간을 더한 시계 — ``advance()``로만 앞당겨진다."""
+
+    def __init__(self):
+        self.shift = 0.0
+
+    def __call__(self) -> float:
+        return time.perf_counter() + self.shift
+
+    def advance(self, seconds: float) -> None:
+        self.shift += seconds
+
+
+class _ClockedResponse(StreamResponse):
+    """조각을 하나 흘릴 때마다 시계를 정해진 만큼 흘리는 가짜 응답 — 받는 속도를 테스트가 정한다."""
+
+    def __init__(self, body: bytes, clock: _ShiftedClock, seconds_per_chunk: float):
+        super().__init__(body, throttle=0.0)
+        self._clock = clock
+        self._seconds_per_chunk = seconds_per_chunk
+
+    def iter_content(self, chunk_size=CHUNK):
+        for chunk in super().iter_content(chunk_size):
+            self._clock.advance(self._seconds_per_chunk)
+            yield chunk
+
+
+class _ClockedSession(M3U8Session):
+    """세그먼트 응답만 ``_ClockedResponse``로 주는 가짜 세션."""
+
+    def __init__(self, chunks_per_segment: int, clock: _ShiftedClock, seconds_per_chunk: float):
+        super().__init__(chunks_per_segment)
+        self._clock = clock
+        self._seconds_per_chunk = seconds_per_chunk
+
+    def get(self, url, **kwargs):
+        response = super().get(url, **kwargs)
+        if isinstance(response, StreamResponse):
+            return _ClockedResponse(response._body, self._clock, self._seconds_per_chunk)
+        return response
+
+
 def test_forced_slow_requeue_does_not_corrupt_output(tmp_path, monkeypatch):
     """저속 재큐가 여러 번 발동해도 최종 산출물은 손상되지 않는다 (#180 조사).
 
@@ -499,6 +541,16 @@ def test_forced_slow_requeue_does_not_corrupt_output(tmp_path, monkeypatch):
     """
     engine, data, logger, output, finished, failures, merge_starts = _make_engine(
         tmp_path, monkeypatch, chunks_per_segment=20
+    )
+    # 판정 시계는 테스트가 흘린다 (#379) — 실제 시간만 보면 빠른 러너에서는 세그먼트가 판정 창이
+    # 차기 전에 다 와서 저속 판정이 한 번도 나지 않는다. 조각마다 판정 창보다 긴 시간을 흘려
+    # 첫 조각부터 판정이 나게 한다. 실제 시간에 더하므로 엔진의 다른 쓰임(관측 틱)도 흐르는 시계를 본다
+    clock = _ShiftedClock()
+    monkeypatch.setattr(engine, "_now", clock)
+    monkeypatch.setattr(
+        m3u8_module,
+        "get_thread_session",
+        lambda: _ClockedSession(chunks_per_segment=20, clock=clock, seconds_per_chunk=0.01),
     )
     # 극단적으로 높은 임계로 모든 청크를 "저속"으로 오판시켜 강제 재큐를 유발한다.
     # 판정 창을 아주 짧게 하고, 다른 연결은 한없이 빠르며 끊는 쪽이 늘 이득인 것으로 둔다 (#347) —
