@@ -1,0 +1,261 @@
+"""로그에 요청 주소의 서명 · 토큰 값이 남지 않는다 (#328).
+
+앱 로그 · 콘솔(루트 로거의 핸들러)과 다운로드 로그(DownloadLogger의 파일 핸들러)가 실제로 쓴 글을
+읽어 잰다 — caplog는 자기 포매터로 받으므로 핸들러의 가리기를 재지 못한다. 주소는 모두 쓰지 않는
+호스트(.invalid)이고 연결은 하지 않는다.
+"""
+
+import io
+import logging
+import re
+import threading
+
+import pytest
+import requests
+import urllib3
+
+import core.downloaders.base as base_module
+import core.downloaders.m3u8_downloader as m3u8_module
+import core.utils.logging_setup as logging_setup
+from app.download_logger import DownloadLogger
+from core.downloaders.m3u8_downloader import M3U8Downloader
+from core.models.download_data import DownloadData
+from tests.unit.core.test_m3u8_downloader_run import (
+    CHUNK,
+    INIT_CONTENT,
+    SEGMENT_COUNT,
+    _passthrough_remux_stream,
+    _segment_content,
+)
+
+# 가려야 하는 값 — 로그 어디에도 이 글자가 남으면 안 된다
+PATH_TOKEN = "PATHSECRET"  # 경로에 든 인증 토큰(CDN의 hdntl=…)
+QUERY_TOKEN = "QUERYSECRET"  # 플레이리스트 주소의 쿼리 서명
+SEGMENT_TOKEN = "SEGSECRET"  # 플레이리스트가 적은 세그먼트 주소의 쿼리
+SECRETS = (PATH_TOKEN, QUERY_TOKEN, SEGMENT_TOKEN)
+
+BASE_URL = f"https://cdn.invalid/video/hdntl=exp~{PATH_TOKEN}/chunklist.m3u8?sig={QUERY_TOKEN}"
+SEGMENT_URL = f"https://cdn.invalid/video/hdntl=exp~{PATH_TOKEN}/seg_0.m4v?token={SEGMENT_TOKEN}"
+# 가린 뒤에 남아야 하는 모양 — 호스트와 경로는 읽힌다
+SEGMENT_URL_REDACTED = "https://cdn.invalid/video/hdntl=***/seg_0.m4v?token=***"
+
+
+@pytest.fixture
+def app_log(monkeypatch, tmp_path):
+    """앱의 setup_logging으로 루트 로거에 파일 · 콘솔 핸들러를 걸고, 끝나면 되돌린다.
+
+    콘솔 핸들러의 스트림만 메모리로 바꾼다 — 핸들러와 포매터는 앱이 만든 그대로다. pytest의
+    출력 캡처는 단계가 끝나면 닫히므로 그 스트림을 붙잡게 두지 않는다.
+
+    Returns:
+        (앱 로그 파일의 글, 콘솔에 나간 글)을 돌려주는 함수
+    """
+    root = logging.getLogger()
+    saved_handlers = root.handlers[:]
+    saved_level = root.level
+    monkeypatch.setattr(logging_setup, "_configured", False)
+    for handler in root.handlers[:]:
+        root.removeHandler(handler)
+
+    log_dir = tmp_path / "logs"
+    logging_setup.setup_logging(str(log_dir))
+    console = io.StringIO()
+    (console_handler,) = [
+        handler
+        for handler in root.handlers
+        if isinstance(handler, logging.StreamHandler)
+        and not isinstance(handler, logging.FileHandler)
+    ]
+    console_handler.setStream(console)
+
+    def read() -> tuple[str, str]:
+        for handler in logging.getLogger().handlers:
+            handler.flush()
+        written = (log_dir / logging_setup.LOG_FILE_NAME).read_text(encoding="utf-8")
+        return written, console.getvalue()
+
+    yield read
+
+    for handler in root.handlers[:]:
+        handler.close()
+        root.removeHandler(handler)
+    for handler in saved_handlers:
+        root.addHandler(handler)
+    root.setLevel(saved_level)
+
+
+def _http_error(url: str) -> requests.HTTPError:
+    """requests가 403 응답에서 내는 HTTPError — 글은 requests가 만든다(주소가 쿼리까지 들어간다)."""
+    response = requests.Response()
+    response.status_code = 403
+    response.reason = "Forbidden"
+    response.url = url
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as error:
+        return error
+    raise AssertionError("raise_for_status가 예외를 내지 않았다")
+
+
+def _connection_error(url: str) -> requests.ConnectionError:
+    """연결 실패 때 requests가 내는 예외 — 글은 urllib3가 만든다(스킴 없이 "url: /경로?쿼리")."""
+    path = url.split("cdn.invalid", 1)[1]
+    pool = urllib3.HTTPSConnectionPool("cdn.invalid", 443)  # 만들기만 한다 — 연결하지 않는다
+    reason = urllib3.exceptions.NewConnectionError(None, "Failed to establish a new connection")
+    return requests.ConnectionError(urllib3.exceptions.MaxRetryError(pool, path, reason))
+
+
+def _assert_no_secret(text: str) -> None:
+    for secret in SECRETS:
+        assert secret not in text
+
+
+# ================================================================ 앱 로그 · 콘솔
+
+
+def test_app_log_and_console_hide_signatures_in_messages_exceptions_and_tracebacks(app_log):
+    """앱 로그 파일과 콘솔에는 주소의 서명 · 토큰 값이 남지 않고 호스트 · 경로는 남아야 한다.
+
+    모듈 로거로 주소를 적은 줄 · requests의 HTTPError 글 · 연결 실패 글 · HTTPError의 트레이스백을 남김
+    -> 앱 로그와 콘솔 어디에도 세 토큰이 없다, 가린 세그먼트 주소("…/hdntl=***/seg_0.m4v?token=***")와
+       연결 실패의 경로("url: /video/hdntl=***/seg_0.m4v?token=***")가 있다
+    """
+    log = logging.getLogger("test.redaction")
+
+    log.info("요청: %s", SEGMENT_URL)
+    log.error("실패: %s", _http_error(SEGMENT_URL))
+    log.error("실패: %s", _connection_error(SEGMENT_URL))
+    try:
+        raise _http_error(SEGMENT_URL)
+    except requests.HTTPError:
+        log.exception("트레이스백")
+
+    for text in app_log():
+        _assert_no_secret(text)
+        assert text.count(SEGMENT_URL_REDACTED) == 3  # 요청 줄 · HTTPError 줄 · 트레이스백
+        assert "url: /video/hdntl=***/seg_0.m4v?token=***" in text
+        assert "Traceback (most recent call last)" in text
+
+
+# ================================================================ 다운로드 로그 — 엔진 끝까지
+
+
+class _Response:
+    """가짜 응답 — 본문을 조각으로 흘리고, 상태가 오류면 raise_for_status가 requests의 예외를 낸다."""
+
+    def __init__(self, url: str, body: bytes = b"", text: str = "", status: int = 200):
+        self.url = url
+        self.content = body
+        self.text = text
+        self._status = status
+        self.headers = {}
+
+    def raise_for_status(self):
+        if self._status >= 400:
+            raise _http_error(self.url)
+
+    def iter_content(self, chunk_size=CHUNK):
+        for i in range(0, len(self.content), chunk_size):
+            yield self.content[i : i + chunk_size]
+
+
+class _Session:
+    """플레이리스트 · 초기화 · 세그먼트 요청을 주소로 가르는 가짜 세션.
+
+    플레이리스트의 세그먼트 · 초기화 주소에는 쿼리 토큰이 붙어 있다. fail_playlist면 플레이리스트가
+    403이다. 그 밖에는 첫 세그먼트의 첫 요청만 403이고 다시 받으면 온다.
+    """
+
+    def __init__(self, fail_playlist: bool = False):
+        self._fail_playlist = fail_playlist
+        self._first_segment_failed = False
+        self._lock = threading.Lock()
+
+    def get(self, url, **kwargs):
+        if "chunklist.m3u8" in url:
+            lines = [
+                "#EXTM3U",
+                "#EXT-X-VERSION:7",
+                f'#EXT-X-MAP:URI="init.m4s?token={SEGMENT_TOKEN}"',
+            ]
+            for index in range(SEGMENT_COUNT):
+                lines += ["#EXTINF:2.000,", f"seg_{index}.m4v?token={SEGMENT_TOKEN}"]
+            lines.append("#EXT-X-ENDLIST")
+            return _Response(url, text="\n".join(lines), status=403 if self._fail_playlist else 200)
+        if "init.m4s" in url:
+            return _Response(url, body=INIT_CONTENT)
+        index = int(re.search(r"seg_(\d+)\.m4v", url).group(1))
+        with self._lock:
+            fail = index == 0 and not self._first_segment_failed
+            self._first_segment_failed = self._first_segment_failed or index == 0
+        if fail:
+            return _Response(url, status=403)
+        return _Response(url, body=_segment_content(index, chunks_per_segment=3))
+
+
+def _run_engine(tmp_path, monkeypatch, session: _Session) -> tuple[str, list]:
+    """DEBUG 레벨의 DownloadLogger로 m3u8 엔진을 끝까지 돌리고 다운로드 로그 파일의 글을 돌려준다."""
+    monkeypatch.setattr(m3u8_module, "get_thread_session", lambda: session)
+    monkeypatch.setattr(base_module, "remux_stream", _passthrough_remux_stream)
+    data = DownloadData(
+        base_url=BASE_URL,
+        vod_url="https://chzzk.naver.com/video/1",
+        output_path=str(tmp_path / "out.mp4"),
+        resolution=1080,
+        content_type="m3u8",
+    )
+    logger = DownloadLogger(logging.DEBUG)
+    log_file = logger.log_file
+    failures: list = []
+    finished = threading.Event()
+
+    def on_finished():
+        data.model.finish()
+        finished.set()
+
+    engine = M3U8Downloader(data, logger, on_finished=on_finished, on_failed=failures.append)
+    data.model.start()
+    engine.run()
+    with open(log_file, encoding="utf-8") as f:
+        return f.read(), failures
+
+
+def test_download_log_hides_signatures_on_a_retried_segment_and_on_success(
+    app_log, tmp_path, monkeypatch
+):
+    """세그먼트가 403으로 한 번 실패해도 다운로드 로그 · 앱 로그에 서명 · 토큰 값이 남지 않아야 한다.
+
+    플레이리스트 주소: 경로 토큰 · 쿼리 서명, 세그먼트 · 초기화 주소: 쿼리 토큰, 첫 세그먼트의 첫 요청만 403,
+    DownloadLogger는 DEBUG(세그먼트마다 주소 줄을 적는다)
+    -> 다운로드가 끝난다, 두 로그 어디에도 세 토큰이 없다, 실패 줄에 가린 세그먼트 주소가 있다,
+       세그먼트 주소 줄은 "Segment URL: seg_N.m4v?token=***", 요약 스크립트가 읽는 완료 줄은 그대로다
+    """
+    written, failures = _run_engine(tmp_path, monkeypatch, _Session())
+
+    assert failures == []
+    for text in (written, *app_log()):
+        _assert_no_secret(text)
+    assert (
+        f"download failed (segment 1) - Exception: 403 Client Error: Forbidden for url: {SEGMENT_URL_REDACTED}"
+        in written
+    )
+    assert "Segment URL: seg_1.m4v?token=***" in written
+    assert re.search(r"Download completed in [\d.]+ seconds", written)
+    assert re.search(r"Transfer completed in [\d.]+ seconds - Bytes: \d+ - Retries: \d+", written)
+
+
+def test_download_log_hides_signatures_in_the_traceback_of_a_failed_download(
+    app_log, tmp_path, monkeypatch
+):
+    """플레이리스트 요청이 403으로 실패하면 남는 트레이스백에도 서명 · 토큰 값이 없어야 한다.
+
+    플레이리스트 403 → 엔진이 "Download failed"를 트레이스백과 함께 적음
+    -> 실패 콜백 1회, 두 로그 어디에도 세 토큰이 없다, 트레이스백 안의 주소는 호스트 · 경로가 남은 채 가려져 있다
+    """
+    written, failures = _run_engine(tmp_path, monkeypatch, _Session(fail_playlist=True))
+
+    assert len(failures) == 1
+    for text in (written, *app_log()):
+        _assert_no_secret(text)
+    assert "Traceback (most recent call last)" in written
+    assert "for url: https://cdn.invalid/video/hdntl=***/chunklist.m3u8?sig=***" in written
