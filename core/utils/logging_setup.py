@@ -8,6 +8,7 @@
 log_dir 인자로 주입받는다 — 기존 진입점인 app/log_setup.py가 주입한다.
 """
 
+import functools
 import logging
 import logging.handlers
 import os
@@ -84,15 +85,48 @@ def redact_urls(text: str) -> str:
     return _BARE_QUERY.sub(_redact_bare_query_match, text)
 
 
+def _home_dir() -> str:
+    """지금 사용자의 홈 폴더 경로 — 로그에서 ``~``로 바꿀 대상이다."""
+    return os.path.expanduser("~")
+
+
+@functools.lru_cache(maxsize=4)
+def _home_pattern(home: str) -> re.Pattern | None:
+    """홈 폴더 경로가 글에 적히는 모양들을 찾는 패턴 — 바꿀 수 없는 홈이면 None.
+
+    구분자는 ``\\`` · ``/``와, repr이 이스케이프한 ``\\\\``를 모두 받는다. 드라이브 문자로 시작하는
+    Windows 경로면 대소문자를 가리지 않는다. 뒤에 이름 글자가 이어지면(다른 사용자의 홈 등) 같은
+    경로로 보지 않는다. 조각이 둘 미만인 홈(``/`` 등)은 바꾸지 않는다 — 모든 경로가 걸린다.
+    """
+    parts = [part for part in re.split(r"[\\/]+", home) if part]
+    if len(parts) < 2:
+        return None
+    separator = r"(?:\\\\|\\|/)"
+    leading = separator if home[:1] in ("\\", "/") else ""
+    body = leading + separator.join(re.escape(part) for part in parts)
+    flags = re.IGNORECASE if re.match(r"[A-Za-z]:", home) else 0
+    return re.compile(r"(?<![\w.-])" + body + r"(?![\w.-])", flags)
+
+
+def redact_home(text: str, home: str | None = None) -> str:
+    """글 속 사용자 홈 폴더 경로를 ``~``로 바꾼다 — 홈 뒤의 경로는 그대로 둔다 (#328).
+
+    로그를 제보에 붙일 때 사용자 폴더 이름(대개 계정 이름)이 함께 나가지 않게 한다. 경로 repr의
+    나머지(공백 비슷한 글자의 이스케이프 등, #148)는 바꾸지 않는다.
+    """
+    pattern = _home_pattern(home if home is not None else _home_dir())
+    return pattern.sub("~", text) if pattern is not None else text
+
+
 class RedactingFormatter(logging.Formatter):
-    """완성된 로그 줄(메시지 · 예외 · 스택)에서 주소의 서명 · 토큰 값을 가리는 포매터 (#328).
+    """완성된 로그 줄(메시지 · 예외 · 스택)에서 주소의 서명 · 토큰 값과 홈 폴더 경로를 가리는 포매터 (#328).
 
     줄을 적는 곳마다 가리지 않고 핸들러의 포매터 한 곳에서 가린다 — 새로 생기는 로그 줄에도
-    그대로 적용된다. 가리는 것은 주소의 값뿐이라 다른 줄의 형식은 바뀌지 않는다.
+    그대로 적용된다. 가리는 것은 주소의 값과 홈 폴더 부분뿐이라 다른 줄의 형식은 바뀌지 않는다.
     """
 
     def format(self, record: logging.LogRecord) -> str:
-        return redact_urls(super().format(record))
+        return redact_home(redact_urls(super().format(record)))
 
 
 LOG_FILE_NAME = "app.log"
