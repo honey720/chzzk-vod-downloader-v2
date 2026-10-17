@@ -41,9 +41,10 @@ jobs:
 
       - name: Install Qt system deps (Linux)
         if: runner.os == 'Linux'
+        timeout-minutes: 5
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
             xvfb libegl1 libgl1 libxkbcommon-x11-0 libxcb-icccm4 \
             libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 \
             libxcb-shape0 libxcb-xinerama0 libxcb-cursor0 libdbus-1-3 \
@@ -63,7 +64,7 @@ jobs:
         if: runner.os == 'Linux'
         env:
           CVDV2_SHOT_DIR: test-screenshots
-        run: xvfb-run -a uv run pytest --maxfail=5 -q
+        run: xvfb-run -a uv run pytest --maxfail=5 -q -n auto --dist loadfile --durations=30
 
       # Windows·macOS: offscreen — release.yml 기동 스모크와 같은 방식.
       # QT_QPA_FONTDIR 지정 필수: offscreen은 시스템 폰트를 자동으로 쓰지
@@ -74,7 +75,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           QT_QPA_FONTDIR: ${{ runner.os == 'Windows' && 'C:\Windows\Fonts' || '/System/Library/Fonts' }}
           CVDV2_SHOT_DIR: test-screenshots
-        run: uv run pytest --maxfail=5 -q
+        run: uv run pytest --maxfail=5 -q -n auto --dist loadfile --durations=30
 
       # 실패한 GUI 테스트의 위젯 캡처(conftest 훅)를 OS별 아티팩트로.
       # 실패가 없으면 업로드 자체가 생략된다
