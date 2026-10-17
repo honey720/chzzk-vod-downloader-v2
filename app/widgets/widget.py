@@ -335,8 +335,16 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         # ⚠️ 순서는 고정이다 — 클릭해도 pill을 앞으로 옮기지 않는다(옮기면
         # 연속으로 눌러볼 수 없다). 선택만 바뀐다.
         # 해상도가 같은 두 항목은 원본이 앞이다 — 기본 선택(첫 pill)이 원본이 된다 (#318)
+        # 해상도와 원본 여부가 같은 두 항목은 대역폭이 높은 쪽이 앞이다 (#336). 조회 목록은 그런
+        # 항목을 대역폭 오름차순으로 둔다(core/api/dash.py · playback_tracks.list_streams) —
+        # DASH 항목은 대역폭 값을 들지 않으므로 조회 목록의 자리로 정한다
+        listed_at = {id(rep): number for number, rep in enumerate(self.item.unique_reps)}
         self.item.unique_reps.sort(
-            key=lambda rep: (_resolution_key(rep[0]), ContentItem.rep_is_original(rep)),
+            key=lambda rep: (
+                _resolution_key(rep[0]),
+                ContentItem.rep_is_original(rep),
+                listed_at[id(rep)],
+            ),
             reverse=True,
         )
         for unique_rep in self.item.unique_reps:

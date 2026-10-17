@@ -286,11 +286,11 @@ _TWO_720 = """<?xml version="1.0" encoding="UTF-8"?>
 </MPD>"""
 
 
-def test_card_keeps_the_lookup_default_when_two_non_original_entries_share_the_short_side(qapp):
-    """짧은 변이 같은 원본 아닌 항목이 둘이면 카드를 만들어도 조회의 기본 선택(대역폭 높은 쪽)이 남아야 한다 (#336).
+def test_higher_bandwidth_of_the_same_short_side_is_the_first_and_default_button(qapp):
+    """해상도와 원본 여부가 같은 두 항목이면 대역폭이 높은 쪽이 첫 버튼이고 기본 선택이어야 한다 (#336).
 
-    _TWO_720(720 60fps 3200000 · 720 30fps 1600000 · 144)
-    -> 버튼 순서 720 · 720(60fps) · 144 그대로, 둘째 버튼만 선택, 아이템의 주소는 60fps 쪽
+    _TWO_720(720 60fps 3200000 · 720 30fps 1600000 · 144, 모두 원본 아님)
+    -> 버튼 순서 720(60fps) · 720 · 144, 첫 버튼만 선택, 아이템의 주소는 60fps 쪽(조회의 기본 선택)
     """
     reps = parse_dash_manifest(_TWO_720)[0]
     assert reps[-1][1] == "https://v.invalid/720-60.mp4"  # 조회의 기본 선택(목록의 마지막)
@@ -298,27 +298,27 @@ def test_card_keeps_the_lookup_default_when_two_non_original_entries_share_the_s
     widget = _card(reps, content_type="video")
 
     assert [(button.text(), button.secondaryText()) for button in widget.buttons] == [
-        ("720p", ""),
         ("720p", "60fps"),
+        ("720p", ""),
         ("144p", ""),
     ]
-    assert [button.isSelected() for button in widget.buttons] == [False, True, False]
+    assert [button.isSelected() for button in widget.buttons] == [True, False, False]
     assert (widget.item.resolution, widget.item.base_url) == (720, "https://v.invalid/720-60.mp4")
 
 
-def test_late_size_of_the_first_button_does_not_move_the_lookup_default(qapp):
-    """첫 버튼의 크기 조회가 끝나도 기본 선택이 첫 버튼으로 옮겨 가지 않아야 한다 (#336).
+def test_late_size_of_another_button_does_not_move_the_default(qapp):
+    """다른 버튼의 크기 조회가 먼저 끝나도 기본 선택이 옮겨 가지 않아야 한다 (#336).
 
-    _TWO_720, 첫 버튼(720 30fps)의 크기 "1.00 GB"가 도착 → 다음 둘째 버튼(720 60fps)의 "2.00 GB"
-    -> 둘째 버튼만 선택, 아이템의 주소는 60fps 쪽, 아이템의 크기는 "2.00 GB"
+    _TWO_720, 둘째 버튼(720 30fps)의 크기 "1.00 GB"가 도착 → 다음 첫 버튼(720 60fps)의 "2.00 GB"
+    -> 첫 버튼만 선택, 아이템의 주소는 60fps 쪽, 아이템의 크기는 "2.00 GB"
     """
     widget = _card(parse_dash_manifest(_TWO_720)[0], content_type="video")
 
-    widget._repSizeFetched.emit(0, "1.00 GB")
-    widget._repSizeFetched.emit(1, "2.00 GB")
+    widget._repSizeFetched.emit(1, "1.00 GB")
+    widget._repSizeFetched.emit(0, "2.00 GB")
     QApplication.processEvents()
 
-    assert [button.isSelected() for button in widget.buttons] == [False, True, False]
+    assert [button.isSelected() for button in widget.buttons] == [True, False, False]
     assert widget.item.base_url == "https://v.invalid/720-60.mp4"
     assert widget.item.total_size == "2.00 GB"
 
