@@ -402,9 +402,12 @@ class M3U8Downloader(BaseDownloader):
                 init_segment = line.split("URI=")[1].strip('"')
         init_url = urljoin(self.s.base_url, init_segment)
         init_segment_path = os.path.join(self.temp_dir, f"{0:0{self.width}d}.m4s")
-        # 초기화 세그먼트 다운로드
+        response = get_thread_session().get(init_url, timeout=REQUEST_TIMEOUT)
+        # HTTP 오류는 그 오류로 실패시킨다 (#334) — 오류 본문을 쓰면 구조 검사가 잘림으로 보고
+        # 다시 받다가 잘림 사유로 실패한다. HTTPError는 다시 받는 예외(_INIT_TRUNCATION_ERRORS)가 아니다
+        response.raise_for_status()
         with open(init_segment_path, "wb") as f:
-            f.write(get_thread_session().get(init_url, timeout=REQUEST_TIMEOUT).content)
+            f.write(response.content)
 
     def _log_item_start(self, part_num: int, item) -> None:
         _index, segment = item
