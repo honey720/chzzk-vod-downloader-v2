@@ -346,15 +346,36 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         for index, (resolution, base_url, _) in enumerate(self.item.unique_reps):
             self.addRepresentationButton(resolution, base_url, index)
 
-        # 기본 선택 = 최고 해상도 = 내림차순의 첫 pill. 버튼을 넘겨 선택
-        # 표시(비활성=채움)까지 바로 건다 — 크기 조회가 끝나기 전에도 무엇이
+        # 기본 선택 = 조회가 정한 항목(최고 해상도 — 내림차순이라 대개 첫 pill). 버튼을 넘겨
+        # 선택 표시(비활성=채움)까지 바로 건다 — 크기 조회가 끝나기 전에도 무엇이
         # 골라져 있는지 보여야 하고, 그래야 카드마다 선택 x가 한 줄로 선다.
-        self.setresolutionUrlSize(self.item.unique_reps[0][0], self.item.unique_reps[0][1], 0, self.buttons[0])
+        default = self._lookupDefaultIndex()
+        self.setresolutionUrlSize(
+            self.item.unique_reps[default][0],
+            self.item.unique_reps[default][1],
+            default,
+            self.buttons[default],
+        )
 
         # pill(높이 pillHeight)이 3행에 꽂히면 컨텐츠 열이 몇 px 자랄 수
         # 있다 — 썸네일이 그 높이를 계속 가득 채우도록 다시 맞춘다(#244).
         self._sizeThumbnail()
         self._layoutRowThree()
+
+    def _lookupDefaultIndex(self) -> int:
+        """조회가 정한 기본 선택(아이템이 지금 고른 항목)이 몇째 pill인지 답한다 (#336).
+
+        pill 순서의 정렬 키는 (해상도, 원본 여부)뿐이라, 짧은 변이 같고 둘 다 원본이 아닌 두
+        항목은 조회 목록의 순서(대역폭이 낮은 쪽이 앞)로 남는다. 첫 pill을 고르면 조회가 고른
+        것(대역폭이 높은 쪽)을 덮는다 — 버튼 순서는 그대로 두고 고른 항목의 pill을 찾는다.
+        아이템이 목록의 어느 항목도 고르지 않았으면 첫 pill이다(전과 같다).
+        """
+        item = self.item
+        picked = (item.resolution, item.base_url, item.stream)
+        for index, rep in enumerate(item.unique_reps):
+            if (rep[0], rep[1], getattr(rep, "stream", None)) == picked:
+                return index
+        return 0
 
     def _reserveFileSizeWidth(self) -> None:
         """3행 우측 군집(파일 크기 또는 재생 시간)의 폭을 **먼저** 확보한다 (#245).
@@ -642,9 +663,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             if self.buttons[index] is self._selectedButton:
                 self.setresolutionUrlSize(resolution, base_url, index, self.buttons[index])
             return
-        if index == 0:
-            # 기본 선택(최고 해상도 = 내림차순 첫 항목)의 크기가 도착하면 그 값으로
-            # 파일 크기 표시를 채운다 — 아무것도 안 골랐을 때 최고화질이 잡히는 것은 의도다
+        if self.buttons[index] is self._selectedButton:
+            # 기본 선택(조회가 정한 항목 — _lookupDefaultIndex)의 크기가 도착하면 그 값으로
+            # 파일 크기 표시를 채운다. 다른 pill의 크기로 선택을 옮기지 않는다 (#336)
             self.setresolutionUrlSize(resolution, base_url, index, self.buttons[index])
 
     def setresolutionUrlSize(self, resolution, base_url, index=None, button:QPushButton = None):

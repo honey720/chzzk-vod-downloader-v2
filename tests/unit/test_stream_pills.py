@@ -275,6 +275,54 @@ def test_clicking_the_other_button_of_the_same_short_side_selects_that_stream(qa
     assert (widget.item.resolution, widget.item.resolution_tag) == (720, "")
 
 
+# 짧은 변이 720인 Representation 둘(화질 이름이 다르다, 둘 다 원본 아님)과 144 하나 (#336)
+_TWO_720 = """<?xml version="1.0" encoding="UTF-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" xmlns:nvod="urn:naver:vod:2020">
+  <Period><AdaptationSet mimeType="video/mp4">
+    <Representation id="a" width="1280" height="720" bandwidth="3200000" frameRate="60"><nvod:Label kind="qualityId">720P_A</nvod:Label><BaseURL>https://v.invalid/720-60.mp4</BaseURL></Representation>
+    <Representation id="b" width="1280" height="720" bandwidth="1600000" frameRate="30"><nvod:Label kind="qualityId">720P_B</nvod:Label><BaseURL>https://v.invalid/720-30.mp4</BaseURL></Representation>
+    <Representation id="c" width="256" height="144" bandwidth="160000" frameRate="30"><nvod:Label kind="qualityId">144P</nvod:Label><BaseURL>https://v.invalid/144.mp4</BaseURL></Representation>
+  </AdaptationSet></Period>
+</MPD>"""
+
+
+def test_card_keeps_the_lookup_default_when_two_non_original_entries_share_the_short_side(qapp):
+    """짧은 변이 같은 원본 아닌 항목이 둘이면 카드를 만들어도 조회의 기본 선택(대역폭 높은 쪽)이 남아야 한다 (#336).
+
+    _TWO_720(720 60fps 3200000 · 720 30fps 1600000 · 144)
+    -> 버튼 순서 720 · 720(60fps) · 144 그대로, 둘째 버튼만 선택, 아이템의 주소는 60fps 쪽
+    """
+    reps = parse_dash_manifest(_TWO_720)[0]
+    assert reps[-1][1] == "https://v.invalid/720-60.mp4"  # 조회의 기본 선택(목록의 마지막)
+
+    widget = _card(reps, content_type="video")
+
+    assert [(button.text(), button.secondaryText()) for button in widget.buttons] == [
+        ("720p", ""),
+        ("720p", "60fps"),
+        ("144p", ""),
+    ]
+    assert [button.isSelected() for button in widget.buttons] == [False, True, False]
+    assert (widget.item.resolution, widget.item.base_url) == (720, "https://v.invalid/720-60.mp4")
+
+
+def test_late_size_of_the_first_button_does_not_move_the_lookup_default(qapp):
+    """첫 버튼의 크기 조회가 끝나도 기본 선택이 첫 버튼으로 옮겨 가지 않아야 한다 (#336).
+
+    _TWO_720, 첫 버튼(720 30fps)의 크기 "1.00 GB"가 도착 → 다음 둘째 버튼(720 60fps)의 "2.00 GB"
+    -> 둘째 버튼만 선택, 아이템의 주소는 60fps 쪽, 아이템의 크기는 "2.00 GB"
+    """
+    widget = _card(parse_dash_manifest(_TWO_720)[0], content_type="video")
+
+    widget._repSizeFetched.emit(0, "1.00 GB")
+    widget._repSizeFetched.emit(1, "2.00 GB")
+    QApplication.processEvents()
+
+    assert [button.isSelected() for button in widget.buttons] == [False, True, False]
+    assert widget.item.base_url == "https://v.invalid/720-60.mp4"
+    assert widget.item.total_size == "2.00 GB"
+
+
 def _start(widget: ContentItemWidget) -> None:
     """고른 그대로 다운로드 중 상태로 넘긴다 — 크기 1.20 GB."""
     item = widget.item
