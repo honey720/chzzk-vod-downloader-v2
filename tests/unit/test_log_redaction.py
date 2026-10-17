@@ -9,6 +9,7 @@ import io
 import logging
 import re
 import threading
+import types
 
 import pytest
 import requests
@@ -259,3 +260,87 @@ def test_download_log_hides_signatures_in_the_traceback_of_a_failed_download(
         _assert_no_secret(text)
     assert "Traceback (most recent call last)" in written
     assert "for url: https://cdn.invalid/video/hdntl=***/chunklist.m3u8?sig=***" in written
+
+
+# ================================================================ 홈 폴더
+
+
+WINDOWS_HOME = r"C:\Users\Tester"  # 가짜 Windows 홈 — 사용자 이름 "Tester"가 로그에 남으면 안 된다
+# 홈 아래의 저장 경로 — 폴더 이름에 U+00A0(공백 비슷한 글자)이 있다. repr은 이를 \xa0로 적는다 (#148)
+SAVED = WINDOWS_HOME + "\\Videos\\영상\u00a0폴더\\제목 1080p.mp4"
+
+
+def test_app_log_and_console_replace_the_windows_home_with_a_tilde(app_log, monkeypatch):
+    r"""앱 로그와 콘솔은 Windows 홈 폴더 경로를 ~로 바꾸고 그 뒤의 경로 repr은 그대로 둬야 한다.
+
+    홈 C:\Users\Tester. 경로 repr 한 줄 · 소문자와 / 구분자로 적은 경로 한 줄 · 다른 사용자(Tester2)의
+    경로 한 줄 · 홈 아래 파일의 FileNotFoundError 트레이스백을 남김
+    -> 홈 경로가 남지 않는다, repr은 '~\\Videos\\영상\xa0폴더\\제목 1080p.mp4',
+       / 경로는 ~/Downloads/a.mp4, Tester2의 경로는 그대로, 트레이스백의 경로도 ~로 시작한다
+    """
+    monkeypatch.setattr(logging_setup, "_home_dir", lambda: WINDOWS_HOME)
+    log = logging.getLogger("test.redaction")
+
+    log.info("저장 경로: %r", SAVED)
+    log.info("소문자 경로: %s", "c:/users/tester/Downloads/a.mp4")
+    log.info("다른 사용자: %s", r"C:\Users\Tester2\a.mp4")
+    try:
+        raise FileNotFoundError(2, "No such file or directory", WINDOWS_HOME + r"\Downloads\b.mp4")
+    except FileNotFoundError:
+        log.exception("파일 없음")
+
+    for text in app_log():
+        assert r"Tester\\" not in text and "Tester'" not in text and "tester/" not in text
+        assert r"저장 경로: '~\\Videos\\영상\xa0폴더\\제목 1080p.mp4'" in text
+        assert "소문자 경로: ~/Downloads/a.mp4" in text
+        assert r"다른 사용자: C:\Users\Tester2\a.mp4" in text
+        assert r"'~\\Downloads\\b.mp4'" in text  # 트레이스백 끝줄의 예외 글(경로는 repr)
+
+
+def test_posix_home_is_replaced_case_sensitively_and_only_as_a_whole_folder(app_log, monkeypatch):
+    """macOS · Linux 홈은 대소문자를 가려 바꾸고, 이름이 이어지는 다른 폴더는 바꾸지 않아야 한다.
+
+    홈 /Users/tester. /Users/tester/Movies/a.mp4 · /Users/tester2/x · /Users/TESTER/Movies를 적음
+    -> ~/Movies/a.mp4, /Users/tester2/x와 /Users/TESTER/Movies는 그대로
+    """
+    monkeypatch.setattr(logging_setup, "_home_dir", lambda: "/Users/tester")
+
+    logging.getLogger("test.redaction").info(
+        "경로: %s %s %s", "/Users/tester/Movies/a.mp4", "/Users/tester2/x", "/Users/TESTER/Movies"
+    )
+
+    for text in app_log():
+        assert "경로: ~/Movies/a.mp4 /Users/tester2/x /Users/TESTER/Movies" in text
+
+
+def test_download_log_header_keeps_title_and_channel_and_hides_the_home(app_log, monkeypatch):
+    r"""다운로드 로그의 시작 정보는 제목 · 채널 줄을 그대로 두고 경로 줄의 홈 폴더만 ~로 바꿔야 한다.
+
+    홈 C:\Users\Tester, 제목 "제목" · 채널 "채널", 산출물 SAVED, 저장 폴더 홈\Videos
+    -> "title: 제목" · "channel_name: 채널"이 있다, output_path · download_path 줄은 ~로 시작하고 repr 그대로,
+       다운로드 로그와 앱 로그 어디에도 "Tester"가 없다
+    """
+    monkeypatch.setattr(logging_setup, "_home_dir", lambda: WINDOWS_HOME)
+    logger = DownloadLogger()
+    item = types.SimpleNamespace(
+        content_type="video",
+        title="제목",
+        channel_name="채널",
+        live_open_date="",
+        duration=60,
+        resolution=1080,
+        total_size=0,
+        output_path=SAVED,
+        download_path=WINDOWS_HOME + r"\Videos",
+    )
+
+    logger.log_download_info(item)
+    with open(logger.log_file, encoding="utf-8") as f:
+        written = f.read()
+    logger.save_and_close()
+
+    assert "title: 제목" in written and "channel_name: 채널" in written
+    assert r"output_path: '~\\Videos\\영상\xa0폴더\\제목 1080p.mp4'" in written
+    assert r"download_path: '~\\Videos'" in written
+    for text in (written, *app_log()):
+        assert "Tester" not in text
