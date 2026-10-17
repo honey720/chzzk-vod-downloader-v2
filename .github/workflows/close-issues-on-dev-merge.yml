@@ -3,8 +3,9 @@ name: Close linked issues on dev merge
 # GitHub는 base가 기본 브랜치(main)인 PR에서만 닫기 키워드를 처리한다.
 # dev-* 로 머지된 PR의 본문에서 닫기 키워드를 읽는다.
 # 소유자가 올린 이슈는 닫고, 그 밖의 이슈는 코멘트만 남긴다(릴리즈 때 닫는다).
+# 포크 PR은 pull_request 토큰이 읽기 전용이라 pull_request_target을 쓴다(PR 코드를 체크아웃하지 않는다).
 on:
-  pull_request:
+  pull_request_target:
     types: [closed]
     branches: ['dev-*']
 
