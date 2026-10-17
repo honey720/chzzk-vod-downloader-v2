@@ -14,6 +14,7 @@ from Crypto.Cipher import AES
 import core.downloaders.base as base_module
 import core.downloaders.hls_aes_downloader as aes_module
 import core.downloaders.m3u8_downloader as m3u8_module
+from app.viewmodels.download_viewmodel import _failure_message_key
 from core.downloaders.decrypt import sequence_iv
 from core.downloaders.hls_aes_downloader import HlsAesDownloader
 from core.downloaders.integrity import SEGMENT_TRUNCATED, TruncatedSegmentError
@@ -86,6 +87,21 @@ class _NoResponse:
         self.error = error
 
 
+class _HttpStatus:
+    """HTTP 오류 상태로 온 응답 — 본문은 짧은 오류 글이고 raise_for_status가 requests의 예외를 낸다."""
+
+    def __init__(self, status: int):
+        self.status = status
+        self.content = b"<html>error</html>"
+        self.headers = {"Content-Length": str(len(self.content))}
+
+    def raise_for_status(self):
+        response = requests.Response()
+        response.status_code = self.status
+        response.url = "https://example.invalid/hls/init.m4s"
+        response.raise_for_status()
+
+
 class _Response:
     """본문과 Content-Length를 가진 가짜 응답 — 따로 정하지 않으면 본문의 길이를 선언한다."""
 
@@ -118,7 +134,7 @@ class _Session:
         body = queue[min(served, len(queue) - 1)]
         if isinstance(body, _NoResponse):
             raise body.error
-        return body if isinstance(body, _BrokenRead) else _Response(body)
+        return body if isinstance(body, (_BrokenRead, _HttpStatus)) else _Response(body)
 
 
 class _Logger:
@@ -375,6 +391,34 @@ def test_network_error_on_the_init_segment_fails_without_fetching_again(
 
     assert session.requests["init.m4s"] == 1
     assert failures == [NETWORK_ERRORS[error]]
+    assert finished == []
+
+
+HTTP_ERRORS = {403: "Viewing permission required", 404: "Video not found"}  # 상태 → 카드 안내 키
+
+
+@pytest.mark.parametrize("status", HTTP_ERRORS)
+@pytest.mark.parametrize("segments_fail", [False, True], ids=["init-only", "init-and-segments"])
+def test_http_error_on_the_init_segment_fails_as_that_http_error(
+    status, segments_fail, tmp_path, monkeypatch
+):
+    """초기화 세그먼트가 HTTP 오류로 오면 잘림으로 다시 받지 않고 그 HTTP 오류로 실패해야 한다 (#334).
+
+    init.m4s가 주석의 상태(403 · 404)와 짧은 오류 본문으로 온다. 세그먼트는 정상 · 같은 상태
+    -> init.m4s 요청 1회, 세그먼트 요청 없음, 실패 콜백이 HTTPError(그 상태) 하나를 받음,
+       카드 안내 키는 403이면 권한, 404면 영상 없음, 완료 없음
+    """
+    overrides = {"init.m4s": [_HttpStatus(status)]}
+    if segments_fail:
+        overrides.update({f"seg_{i}.m4v": [_HttpStatus(status)] for i in range(SEGMENTS)})
+
+    session, _data, failures, finished = _run_m3u8(tmp_path, monkeypatch, **overrides)
+
+    assert session.requests["init.m4s"] == 1
+    assert not any(name.startswith("seg_") for name in session.requests)
+    assert len(failures) == 1 and isinstance(failures[0], requests.HTTPError)
+    assert failures[0].response.status_code == status
+    assert _failure_message_key(failures[0]) == HTTP_ERRORS[status]
     assert finished == []
 
 
