@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Optional
 import config.config as config
 from app.viewmodels.data import ContentItem
+from core.utils.logging_setup import RedactingFormatter
 
 class DownloadLogger:
     """
@@ -43,8 +44,8 @@ class DownloadLogger:
         file_handler = logging.FileHandler(self.log_file, encoding='utf-8')
         file_handler.setLevel(self.log_level)
 
-        # 포맷터 설정
-        formatter = logging.Formatter(
+        # 포맷터 설정 — 주소의 서명 · 토큰 값은 가린다(앱 로그와 같은 포매터, #328)
+        formatter = RedactingFormatter(
             '%(asctime)s - %(levelname)s - [%(threadName)s] - %(message)s'
         )
         file_handler.setFormatter(formatter)
