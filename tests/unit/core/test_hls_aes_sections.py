@@ -1076,7 +1076,7 @@ def test_retry_receives_only_the_segment_that_is_gone(vod, host, tmp_path, monke
 # ================================================================ 다시 쓴 세그먼트는 받은 양이 아니다 (#376)
 
 
-def _logged(run: _Run, name: str) -> list[tuple]:
+def _calls(run: _Run, name: str) -> list[tuple]:
     """그 로그 메서드가 불린 인자들(부른 순서)."""
     return [args for called, args in run.logger.calls if called == name]
 
@@ -1135,9 +1135,9 @@ def test_retry_counts_only_the_segment_it_received_as_received_bytes(
 
     assert reused  # 다시 쓴 것이 있어야 이 단언이 뜻이 있다
     assert again.data.total_downloaded_size == received
-    assert [args[1] for args in _logged(again, "log_transfer_complete")] == [received]
+    assert [args[1] for args in _calls(again, "log_transfer_complete")] == [received]
     assert max(event.downloaded_size for event in again.progress) <= received
-    assert _logged(again, "log_transfer_reused") == [(len(reused), sum(reused))]
+    assert _calls(again, "log_transfer_reused") == [(len(reused), sum(reused))]
 
 
 def test_retry_speed_comes_only_from_the_segment_it_received(vod, host, tmp_path, monkeypatch):
@@ -1179,9 +1179,9 @@ def test_download_without_sections_counts_every_segment_as_received_bytes(vod, h
 
     assert (run.finished, run.failures) == (1, [])
     assert run.data.total_downloaded_size == every
-    assert [args[1] for args in _logged(run, "log_transfer_complete")] == [every]
+    assert [args[1] for args in _calls(run, "log_transfer_complete")] == [every]
     assert _speed_over_one_second(run) == every / (1024 * 1024)
-    assert _logged(run, "log_transfer_reused") == []
+    assert _calls(run, "log_transfer_reused") == []
     assert run.data.reused_threads == 0
 
 
