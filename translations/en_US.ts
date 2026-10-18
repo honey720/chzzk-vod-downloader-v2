@@ -265,6 +265,12 @@ A network error occurred while downloading. Check your connection and try again.
 A network error occurred while downloading. Check your connection and try again.</translation>
     </message>
     <message>
+        <source>Network connection lost · check it and try again
+Nothing arrived for a while because the network connection was lost. Check your connection and try again.</source>
+        <translation>Network connection lost · check it and try again
+Nothing arrived for a while because the network connection was lost. Check your connection and try again.</translation>
+    </message>
+    <message>
         <source>Failed to save file · check the path and disk space
 The file could not be saved. Check the download path and free disk space.</source>
         <translation>Failed to save file · check the path and disk space

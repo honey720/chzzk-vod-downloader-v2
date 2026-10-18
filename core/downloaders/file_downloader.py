@@ -950,8 +950,9 @@ class FileDownloader(BaseDownloader):
             except (requests.RequestException, requests.Timeout) as e:
                 with self.lock:
                     self._record_partial(start, end, resume_offset + downloaded_size)
-                    self._requeue_failed((start, end), part_num, e)
-                self.logger.log_error(f"Part {part_num} download failed", e)
+                    requeue = self._requeue_failed((start, end), part_num, e)
+                # 로그 · 실패 통지는 락을 놓은 뒤에 한다 (#329)
+                self._settle_requeue(requeue, f"Part {part_num} download failed", e)
                 return part_num
 
     def _writer_at(self, offset: int):

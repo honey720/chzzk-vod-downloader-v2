@@ -719,6 +719,9 @@ class M3U8Downloader(BaseDownloader):
                         self.logger.warning(
                             f"Segment {index + 1}: invalid cached body; retrying alternate resource path"
                         )
-                    self._requeue_failed((index, segment), part_num, e)
-                self.logger.log_error(f"Part {part_num} download failed (segment {index + 1})", e)
+                    requeue = self._requeue_failed((index, segment), part_num, e)
+                # 로그 · 실패 통지는 락을 놓은 뒤에 한다 (#329)
+                self._settle_requeue(
+                    requeue, f"Part {part_num} download failed (segment {index + 1})", e
+                )
                 return part_num
