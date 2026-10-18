@@ -80,7 +80,11 @@ class DownloadData:
         self.completed_threads = 0
         self.failed_threads = 0
         self.restart_threads = 0
-        self.completed_progress = 0
+        self.completed_progress = 0  # 끝낸 항목의 받은 바이트 합 — 다시 쓴 항목은 넣지 않는다
+        # 전송 단계 전에 받아 둔 것(구간을 정할 때 받았거나 이전 실행이 남긴 세그먼트)을 받지 않고
+        # 쓴 항목의 수와 크기 (#376) — completed_threads에는 들어 있고 completed_progress에는 없다
+        self.reused_threads = 0
+        self.reused_bytes = 0
 
         # MonitorThread 내부 변수
         self.prev_size = 0

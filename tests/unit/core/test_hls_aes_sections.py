@@ -1073,6 +1073,118 @@ def test_retry_receives_only_the_segment_that_is_gone(vod, host, tmp_path, monke
     assert again.listing() == THREE_FILES
 
 
+# ================================================================ 다시 쓴 세그먼트는 받은 양이 아니다 (#376)
+
+
+def _logged(run: _Run, name: str) -> list[tuple]:
+    """그 로그 메서드가 불린 인자들(부른 순서)."""
+    return [args for called, args in run.logger.calls if called == name]
+
+
+def _speed_over_one_second(run: _Run) -> float:
+    """실행이 끝난 엔진이 1초 전부터 받은 양으로 낸 속도(MB/s) — 관측 틱 하나와 같은 길을 탄다."""
+    engine = run.engine
+    engine.s.prev_size = 0
+    engine._now = lambda: 101.0
+    engine._measured_at = 100.0
+    engine._measured_paused = engine.s.model.paused_seconds
+    engine.emit_progress()
+    engine.measure_speed()
+    return engine.s.speed_mb
+
+
+def _retry_with_one_segment_gone(vod, host, tmp_path, monkeypatch):
+    """둘째 구간의 컷이 실패한 실행과, 그 구간의 마지막 세그먼트를 지운 뒤 이어받은 실행.
+
+    Returns:
+        (이어받은 실행, 다시 받은 세그먼트의 받은 크기(암호문), 다시 쓴 세그먼트들의 파일 크기(복호화한 것))
+    """
+    cuts = CutCalls(monkeypatch, aes_module, "cut_ts_section", source_arg=WORK_ARG)
+    cuts.fail_on = (SECOND_SECTION_CALL,)
+    failed = _Run(host, tmp_path, THREE).start()
+    assert len(failed.failures) == 1
+    second = failed.engine.sections[1]
+    gone = second.last_segment
+    os.remove(failed.engine._segment_path(gone))
+    cuts.restart()
+    progress = []
+    again = hand_over(failed, _Run(host, tmp_path, THREE))
+    again.engine.set_on_progress(progress.append)
+    again.start()
+    assert (again.finished, again.failures) == (1, [])
+    again.progress = progress
+    reused = [
+        len(vod.plain[index])
+        for index in range(second.first_segment, second.last_segment + 1)
+        if index != gone
+    ]
+    return again, len(host.files[_names({gone})[0]]), reused
+
+
+def test_retry_counts_only_the_segment_it_received_as_received_bytes(
+    vod, host, tmp_path, monkeypatch
+):
+    """이어받은 실행의 받은 양 · 전송 줄의 Bytes · 진행 통지의 받은 양은 다시 받은 세그먼트 하나의 크기여야 한다.
+
+    `test_retry_receives_only_the_segment_that_is_gone`의 실행. 둘째 구간의 세그먼트 중 하나를 다시 받음
+    -> total_downloaded_size == 그 세그먼트의 받은 크기(암호문), log_transfer_complete의 Bytes == 같은 값,
+       진행 통지의 downloaded_size 최댓값 <= 같은 값,
+       log_transfer_reused == (둘째 구간의 나머지 세그먼트 수, 그 파일 크기의 합)
+    """
+    again, received, reused = _retry_with_one_segment_gone(vod, host, tmp_path, monkeypatch)
+
+    assert reused  # 다시 쓴 것이 있어야 이 단언이 뜻이 있다
+    assert again.data.total_downloaded_size == received
+    assert [args[1] for args in _logged(again, "log_transfer_complete")] == [received]
+    assert max(event.downloaded_size for event in again.progress) <= received
+    assert _logged(again, "log_transfer_reused") == [(len(reused), sum(reused))]
+
+
+def test_retry_speed_comes_only_from_the_segment_it_received(vod, host, tmp_path, monkeypatch):
+    """이어받은 실행이 1초 동안 받은 양으로 낸 속도는 다시 받은 세그먼트 하나의 크기여야 한다.
+
+    `test_retry_receives_only_the_segment_that_is_gone`의 실행이 끝난 엔진, 직전 측정 0바이트 · 1초 전
+    -> speed_mb == 그 세그먼트의 받은 크기(암호문) / 1 MiB
+    """
+    again, received, _reused = _retry_with_one_segment_gone(vod, host, tmp_path, monkeypatch)
+
+    assert _speed_over_one_second(again) == received / (1024 * 1024)
+
+
+def test_retry_counts_every_segment_as_done_so_the_progress_reaches_the_end(
+    vod, host, tmp_path, monkeypatch
+):
+    """이어받은 실행은 다시 쓴 세그먼트도 끝낸 세그먼트로 세어야 한다.
+
+    `test_retry_receives_only_the_segment_that_is_gone`의 실행. 둘째 구간의 세그먼트 중 하나를 다시 받음
+    -> completed_threads == max_threads == 둘째 구간의 세그먼트 수, reused_threads == 그보다 1 작다
+    """
+    again, _received, reused = _retry_with_one_segment_gone(vod, host, tmp_path, monkeypatch)
+
+    data = again.data
+    assert (data.completed_threads, data.max_threads) == (len(reused) + 1, len(reused) + 1)
+    assert data.reused_threads == len(reused)
+
+
+def test_download_without_sections_counts_every_segment_as_received_bytes(vod, host, tmp_path):
+    """받아 둔 것이 없는 실행의 받은 양 · 전송 줄의 Bytes · 속도는 세그먼트 전부의 받은 크기여야 한다.
+
+    selections 빈 튜플
+    -> total_downloaded_size == 세그먼트 전부의 암호문 크기 합, log_transfer_complete의 Bytes == 같은 값,
+       speed_mb == 같은 값 / 1 MiB, log_transfer_reused 0회, reused_threads == 0
+    """
+    every = sum(len(host.files[name]) for name in _names(range(vod.last + 1)))
+
+    run = _Run(host, tmp_path, []).start()
+
+    assert (run.finished, run.failures) == (1, [])
+    assert run.data.total_downloaded_size == every
+    assert [args[1] for args in _logged(run, "log_transfer_complete")] == [every]
+    assert _speed_over_one_second(run) == every / (1024 * 1024)
+    assert _logged(run, "log_transfer_reused") == []
+    assert run.data.reused_threads == 0
+
+
 @pytest.mark.parametrize("how", ["success", "failure"])
 def test_key_is_not_left_in_the_log_or_in_what_a_failed_run_leaves(
     vod, host, tmp_path, monkeypatch, caplog, how

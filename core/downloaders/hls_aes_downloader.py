@@ -421,12 +421,7 @@ class HlsAesDownloader(BaseDownloader):
         index, segment = item
         if index in self._prefetched:
             # 구간을 정하면서 이미 온전하게 받아 둔 세그먼트 — 다시 받지 않는다 (#309)
-            size = self._prefetched[index]
-            with self.lock:
-                self.s.completed_threads += 1
-                self.s.completed_progress += size
-                self.s.threads_progress[part_num] = 0
-            self.logger.log_thread_complete(part_num, size)
+            self._complete_reused(part_num, self._prefetched[index])
             return part_num
         return self._download_segment(
             index=index, segment=segment, part_num=part_num, total_ranges=self.s.total_ranges

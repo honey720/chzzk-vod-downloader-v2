@@ -1328,6 +1328,166 @@ def test_retry_receives_only_the_segment_that_is_gone(host, sources, tmp_path, m
     assert again.listing() == THREE_FILES
 
 
+# ================================================================ 다시 쓴 세그먼트는 받은 양이 아니다 (#376)
+
+
+def _logged(run: _Run, name: str) -> list[tuple]:
+    """그 로그 메서드가 불린 인자들(부른 순서)."""
+    return [args for called, args in run.logger.calls if called == name]
+
+
+def _speed_over_one_second(run: _Run) -> float:
+    """실행이 끝난 엔진이 1초 전부터 받은 양으로 낸 속도(MB/s) — 관측 틱 하나와 같은 길을 탄다."""
+    engine = run.engine
+    engine.s.prev_size = 0
+    engine._now = lambda: 101.0
+    engine._measured_at = 100.0
+    engine._measured_paused = engine.s.model.paused_seconds
+    engine.emit_progress()
+    engine.measure_speed()
+    return engine.s.speed_mb
+
+
+def _retry_with_one_segment_gone(host, sources, tmp_path, monkeypatch):
+    """둘째 구간의 컷이 실패한 실행과, 그 구간의 첫 세그먼트를 지운 뒤 이어받은 실행.
+
+    Returns:
+        (첫 실행, 이어받은 실행, 다시 받은 세그먼트의 크기, 다시 쓴 세그먼트들의 크기)
+    """
+    source = sources["plain"]
+    selections = _three(source)
+    cuts = CutCalls(monkeypatch, m3u8_module, "cut_fmp4_section", source_arg=0)
+    cuts.fail_on = (1,)  # 첫 호출이 둘째 구간이다
+    failed = _Run(host, tmp_path, selections).start()
+    assert len(failed.failures) == 1
+    second = failed.engine.sections[1]
+    gone = second.first_segment
+    count = len(source.playlist.segments)
+    os.remove(os.path.join(failed.engine.temp_dir, segment_file_name(count, gone)))
+    cuts.restart()
+    progress = []
+    again = hand_over(failed, _Run(host, tmp_path, selections))
+    again.engine.set_on_progress(progress.append)
+    again.start()
+    assert (again.finished, again.failures) == (1, [])
+    again.progress = progress
+    received = len(host.files[f"plain/{source.playlist.segments[gone]}"])
+    reused = [
+        len(host.files[f"plain/{source.playlist.segments[index]}"])
+        for index in range(second.first_segment, second.last_segment + 1)
+        if index != gone
+    ]
+    return failed, again, received, reused
+
+
+def test_retry_counts_only_the_segment_it_received_as_received_bytes(
+    host, sources, tmp_path, monkeypatch
+):
+    """이어받은 실행의 받은 양 · 전송 줄의 Bytes · 진행 통지의 받은 양은 다시 받은 세그먼트 하나의 크기여야 한다.
+
+    `test_retry_receives_only_the_segment_that_is_gone`의 실행. 둘째 구간의 세그먼트 중 하나를 다시 받음
+    -> total_downloaded_size == 그 세그먼트 크기, log_transfer_complete의 Bytes == 같은 값,
+       진행 통지의 downloaded_size 최댓값 <= 같은 값,
+       log_transfer_reused == (둘째 구간의 나머지 세그먼트 수, 그 크기의 합)
+    """
+    _failed, again, received, reused = _retry_with_one_segment_gone(
+        host, sources, tmp_path, monkeypatch
+    )
+
+    assert reused  # 다시 쓴 것이 있어야 이 단언이 뜻이 있다
+    assert again.data.total_downloaded_size == received
+    assert [args[1] for args in _logged(again, "log_transfer_complete")] == [received]
+    assert max(event.downloaded_size for event in again.progress) <= received
+    assert _logged(again, "log_transfer_reused") == [(len(reused), sum(reused))]
+
+
+def test_retry_speed_comes_only_from_the_segment_it_received(host, sources, tmp_path, monkeypatch):
+    """이어받은 실행이 1초 동안 받은 양으로 낸 속도는 다시 받은 세그먼트 하나의 크기여야 한다.
+
+    `test_retry_receives_only_the_segment_that_is_gone`의 실행이 끝난 엔진, 직전 측정 0바이트 · 1초 전
+    -> speed_mb == 그 세그먼트 크기 / 1 MiB
+    """
+    _failed, again, received, _reused = _retry_with_one_segment_gone(
+        host, sources, tmp_path, monkeypatch
+    )
+
+    assert _speed_over_one_second(again) == received / (1024 * 1024)
+
+
+def test_retry_counts_every_segment_as_done_so_the_progress_reaches_the_end(
+    host, sources, tmp_path, monkeypatch
+):
+    """이어받은 실행은 다시 쓴 세그먼트도 끝낸 세그먼트로 세어야 한다.
+
+    `test_retry_receives_only_the_segment_that_is_gone`의 실행. 둘째 구간의 세그먼트 중 하나를 다시 받음
+    -> completed_threads == max_threads == 둘째 구간의 세그먼트 수, reused_threads == 그보다 1 작다
+    """
+    _failed, again, _received, reused = _retry_with_one_segment_gone(
+        host, sources, tmp_path, monkeypatch
+    )
+
+    data = again.data
+    assert (data.completed_threads, data.max_threads) == (len(reused) + 1, len(reused) + 1)
+    assert data.reused_threads == len(reused)
+
+
+def test_download_without_sections_counts_every_segment_as_received_bytes(host, sources, tmp_path):
+    """받아 둔 것이 없는 실행의 받은 양 · 전송 줄의 Bytes · 속도는 세그먼트 전부의 크기여야 한다.
+
+    plain, selections 빈 튜플
+    -> total_downloaded_size == 세그먼트 6개 크기의 합, log_transfer_complete의 Bytes == 같은 값,
+       speed_mb == 같은 값 / 1 MiB, log_transfer_reused 0회, reused_threads == 0
+    """
+    source = sources["plain"]
+    every = sum(len(host.files[f"plain/{name}"]) for name in source.playlist.segments)
+
+    run = _Run(host, tmp_path, []).start()
+
+    assert (run.finished, run.failures) == (1, [])
+    assert run.data.total_downloaded_size == every
+    assert [args[1] for args in _logged(run, "log_transfer_complete")] == [every]
+    assert _speed_over_one_second(run) == every / (1024 * 1024)
+    assert _logged(run, "log_transfer_reused") == []
+    assert run.data.reused_threads == 0
+
+
+def test_first_section_run_counts_the_segments_read_to_place_the_sections_as_stored(
+    host, sources, tmp_path
+):
+    """구간을 정할 때 받아 둔 세그먼트는 첫 실행에서도 받은 양이 아니라 받아 둔 것으로 세어야 한다.
+
+    plain, 구간 셋(`_three`). 받기 전 첫 진행 통지 시점의 호스트 요청 수로 그 전(구간을 정하며 받음) ·
+    그 뒤(전송 단계가 받음)의 세그먼트 요청을 가름
+    -> total_downloaded_size == 그 뒤 세그먼트 크기의 합, log_transfer_complete의 Bytes == 같은 값,
+       log_transfer_reused == (그 전 세그먼트 중 구간들이 쓰는 것의 수, 그 크기의 합),
+       그 전 · 그 뒤 모두 1개 이상
+    """
+    source = sources["plain"]
+    marks = []
+    run = _Run(host, tmp_path, _three(source))
+    run.engine.set_on_progress(lambda _event: marks.append(len(host.requests)))
+
+    run.start()
+
+    assert (run.finished, run.failures) == (1, [])
+    used = {
+        f"plain/{source.playlist.segments[index]}"
+        for section in run.engine.sections
+        for index in range(section.first_segment, section.last_segment + 1)
+    }
+    segments = [name for _method, name, _range in host.requests if name.endswith(".m4s")]
+    before = [name for _m, name, _r in host.requests[: marks[0]] if name.endswith(".m4s")]
+    after = segments[len(before) :]
+    stored = [name for name in before if name in used]
+    assert stored and after
+    received = sum(len(host.files[name]) for name in after)
+    assert run.data.total_downloaded_size == received
+    assert [args[1] for args in _logged(run, "log_transfer_complete")] == [received]
+    assert _logged(run, "log_transfer_reused") == [
+        (len(stored), sum(len(host.files[name]) for name in stored))
+    ]
+
+
 # ================================================================ 넘긴 세그먼트를 곧바로 지운다 (#309)
 
 
