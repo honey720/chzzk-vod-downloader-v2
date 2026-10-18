@@ -568,6 +568,48 @@ def test_every_request_failing_to_connect_ends_as_network_lost_within_the_quiet_
 
 
 @pytest.mark.parametrize("kind", KINDS)
+def test_a_request_waiting_for_its_answer_in_a_slot_that_failed_holds_off_network_lost(
+    kind, tmp_path, monkeypatch
+):
+    """실패했던 슬롯이 새로 보낸 요청이 답을 기다리는 동안은 회선 끊김으로 판정하지 않아야 한다.
+
+    모든 항목 요청이 연결 오류. 다만 첫 항목의 둘째 요청(앞서 연결 오류로 실패한 슬롯이 받음)은
+    답 없이 서 있다가, 테스트가 풀면 연결 타임아웃으로 실패함. 시계를 1초씩 돌림
+    -> 시작 뒤 20초까지(다른 항목은 11초 뒤에도 실패) 실패 통지 없음. 서 있던 요청을 풀면
+       실패 통지 1회(NetworkLostError), 그 시각은 푼 시각
+    """
+    waiting = threading.Event()
+    release = threading.Event()
+
+    def fail(key, attempt):
+        if key == 0 and attempt == 2:
+            waiting.set()
+            assert release.wait(timeout=30)
+            return requests.ConnectTimeout("응답 없음")
+        return requests.ConnectionError("끊김")
+
+    rig = _rig(kind, tmp_path, monkeypatch, fail)
+    thread = _start(rig)
+    try:
+        _drive(rig, waiting.is_set, step=1.0)
+        _drive(rig, lambda: rig.clock.now >= START + 2 * QUIET, step=1.0)
+        failures_while_waiting = list(rig.failures)
+        late_failures = [
+            at for key, times in rig.faults.requests.items() if key != 0 for at in times
+        ]
+        released_at = rig.clock.now
+    finally:
+        release.set()
+    _drive(rig, lambda: bool(rig.failures), step=1.0)
+    thread.join(timeout=10)
+
+    assert failures_while_waiting == []
+    assert max(late_failures) >= START + QUIET + 1  # 무수신 10초 뒤에도 다른 항목이 실패했다
+    assert len(rig.failures) == 1 and isinstance(rig.failures[0], NetworkLostError)
+    assert rig.failures[0].quiet_seconds >= released_at - START - 1.0
+
+
+@pytest.mark.parametrize("kind", KINDS)
 def test_failures_while_another_item_is_still_arriving_are_not_network_lost(
     kind, tmp_path, monkeypatch
 ):

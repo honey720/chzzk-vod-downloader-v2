@@ -1308,6 +1308,9 @@ class BaseDownloader(ABC):
                                     item = self._take_ready_item()
                                     if item is None:
                                         break  # 지금 꺼낼 수 있는 항목이 없다
+                                    # 새 요청은 아직 실패하지 않았다 — 응답을 기다리는 동안 전체
+                                    # 실패 판정에서 실패한 작업자로 세지 않는다 (#329)
+                                    self._failing_slots.discard(part_num)
                                     self.s.future_count += 1
                                     # 전송 종료 요약(#110)용 정점 동시 스레드 수
                                     self._peak_threads = max(
