@@ -84,6 +84,11 @@ class _WindowEvents(QObject):
         return False
 
 
+# 창을 띄운 뒤 첫 Expose 이벤트를 기다리는 마감(초) — 리눅스 xcb에서 CPU 부하를 걸고 잰 최댓값의
+# 수십 배다 (#379). 넘기면 그 테스트를 실패로 끝낸다
+_FIRST_EXPOSE_LIMIT = 1.0
+
+
 @pytest.fixture
 def window(qtbot, watching):
     """보이는 창 하나(안에 자식 위젯 하나) — 띄우며 생긴 이벤트는 잊고 시작한다.
@@ -102,7 +107,13 @@ def window(qtbot, watching):
     window.windowHandle().installEventFilter(window.events)
     window.show()
     qtbot.waitExposed(window)
-    qtbot.waitUntil(lambda: window.events.exposes > 0, timeout=3000)
+    # 타이머로 기다리지 않는다 — 입력 필터가 이벤트를 삼키는 고장에서는 타이머 이벤트도 삼켜져
+    # waitUntil이 끝나지 않는다. 이벤트를 직접 돌리며 단조 시계로 마감을 본다
+    deadline = time.monotonic() + _FIRST_EXPOSE_LIMIT
+    while window.events.exposes == 0:
+        if time.monotonic() > deadline:
+            pytest.fail("창이 첫 Expose 이벤트를 받지 못했다")
+        QApplication.processEvents()
     QApplication.processEvents()
     activity._last_input = float("-inf")
     assert window.isVisible()
