@@ -8,7 +8,15 @@ from types import SimpleNamespace
 
 import pytest
 from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, Qt
-from PySide6.QtGui import QKeyEvent, QMouseEvent, QWheelEvent
+from PySide6.QtGui import (
+    QExposeEvent,
+    QFocusEvent,
+    QKeyEvent,
+    QMouseEvent,
+    QRegion,
+    QWheelEvent,
+    QWindowStateChangeEvent,
+)
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QWidget
 
@@ -214,6 +222,28 @@ def test_mouse_move_without_a_button_is_not_interaction(window, kind):
     """
     for _ in range(20):
         QApplication.sendEvent(window.child, _mouse(kind, Qt.MouseButton.NoButton))
+
+    assert activity.user_interacting() is False
+    QTest.keyClick(window, Qt.Key.Key_A)
+    assert activity.user_interacting() is True
+
+
+# 창 시스템이 창(QWindow)에 보내는, 사용자의 입력이 아닌 이벤트 (#379)
+WINDOW_SYSTEM_EVENTS = {
+    "Expose": lambda: QExposeEvent(QRegion(0, 0, 300, 200)),
+    "FocusIn": lambda: QFocusEvent(QEvent.Type.FocusIn),
+    "WindowStateChange": lambda: QWindowStateChangeEvent(Qt.WindowState.WindowNoState),
+}
+
+
+@pytest.mark.parametrize("kind", list(WINDOW_SYSTEM_EVENTS))
+def test_window_system_event_to_the_window_is_not_interaction(window, kind):
+    """창 시스템이 창에 보내는 노출 · 포커스 · 상태 이벤트는 조작으로 치지 않아야 한다.
+
+    창(QWindow)에 Expose / FocusIn / WindowStateChange를 하나 보냄
+    -> user_interacting() is False. 그 뒤 키를 하나 누르면 True(필터가 살아 있음)
+    """
+    QApplication.sendEvent(window.windowHandle(), WINDOW_SYSTEM_EVENTS[kind]())
 
     assert activity.user_interacting() is False
     QTest.keyClick(window, Qt.Key.Key_A)
