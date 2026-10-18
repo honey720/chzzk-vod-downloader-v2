@@ -4,11 +4,20 @@
 정한 값을 돌려주는 대역으로 바꾼다. 필터는 테스트마다 걷는다 — 앱에 남기지 않는다.
 """
 
+import time
 from types import SimpleNamespace
 
 import pytest
 from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, Qt
-from PySide6.QtGui import QKeyEvent, QMouseEvent, QWheelEvent
+from PySide6.QtGui import (
+    QExposeEvent,
+    QFocusEvent,
+    QKeyEvent,
+    QMouseEvent,
+    QRegion,
+    QWheelEvent,
+    QWindowStateChangeEvent,
+)
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QWidget
 
@@ -59,16 +68,52 @@ def watching(qapp, clock):
     activity.stop_watching_user_input()
 
 
+class _WindowEvents(QObject):
+    """창(QWindow) 하나가 받은 Expose · Resize 이벤트를 센다 — 그 창에만 건다."""
+
+    def __init__(self, parent: QObject):
+        super().__init__(parent)
+        self.exposes = 0
+        self.resizes = 0
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 — Qt의 이름
+        if event.type() == QEvent.Type.Expose:
+            self.exposes += 1
+        elif event.type() == QEvent.Type.Resize:
+            self.resizes += 1
+        return False
+
+
+# 창을 띄운 뒤 첫 Expose 이벤트를 기다리는 마감(초) — 리눅스 xcb에서 CPU 부하를 걸고 잰 최댓값의
+# 수십 배다 (#379). 넘기면 그 테스트를 실패로 끝낸다
+_FIRST_EXPOSE_LIMIT = 1.0
+
+
 @pytest.fixture
 def window(qtbot, watching):
-    """보이는 창 하나(안에 자식 위젯 하나) — 띄우며 생긴 이벤트는 잊고 시작한다."""
+    """보이는 창 하나(안에 자식 위젯 하나) — 띄우며 생긴 이벤트는 잊고 시작한다.
+
+    창 시스템이 띄운 창의 크기 · 위치(Resize · Move)는 그 창의 첫 Expose 이벤트보다 먼저 온다.
+    첫 Expose 이벤트가 올 때까지 기다린 뒤 잊는다 (#379) — waitExposed는 창이 드러났다는 표시만
+    보고 그 이벤트들이 배달되기 전에 돌아올 수 있다.
+    """
     window = _Keys()
     window.child = QWidget(window)
     window.child.setGeometry(10, 10, 50, 50)
     qtbot.addWidget(window)
     window.resize(300, 200)
+    window.winId()  # 창(QWindow)을 먼저 만든다 — 첫 Expose 이벤트를 세기 시작한 뒤에 띄운다
+    window.events = _WindowEvents(window)
+    window.windowHandle().installEventFilter(window.events)
     window.show()
     qtbot.waitExposed(window)
+    # 타이머로 기다리지 않는다 — 입력 필터가 이벤트를 삼키는 고장에서는 타이머 이벤트도 삼켜져
+    # waitUntil이 끝나지 않는다. 이벤트를 직접 돌리며 단조 시계로 마감을 본다
+    deadline = time.monotonic() + _FIRST_EXPOSE_LIMIT
+    while window.events.exposes == 0:
+        if time.monotonic() > deadline:
+            pytest.fail("창이 첫 Expose 이벤트를 받지 못했다")
+        QApplication.processEvents()
     QApplication.processEvents()
     activity._last_input = float("-inf")
     assert window.isVisible()
@@ -91,7 +136,16 @@ def _wheel(widget: QWidget) -> None:
 
 
 def _resize_window(window: QWidget) -> None:
+    """창의 크기를 바꾸고, 창 시스템이 바뀐 크기를 창(QWindow)에 알릴 때까지(최대 3초) 기다린다.
+
+    xcb에서는 그 알림이 창 시스템을 한 번 다녀온 뒤라 processEvents 한 번 안에 오지 않을 수 있다
+    (#379). 기다려도 오지 않으면 그대로 돌아온다 — 판정은 부른 쪽의 단언이 한다.
+    """
+    before = window.events.resizes
     window.resize(window.width() + 40, window.height())
+    deadline = time.monotonic() + 3.0
+    while window.events.resizes == before and time.monotonic() < deadline:
+        QTest.qWait(5)
     QApplication.processEvents()
 
 
@@ -192,6 +246,28 @@ def test_mouse_move_without_a_button_is_not_interaction(window, kind):
     """
     for _ in range(20):
         QApplication.sendEvent(window.child, _mouse(kind, Qt.MouseButton.NoButton))
+
+    assert activity.user_interacting() is False
+    QTest.keyClick(window, Qt.Key.Key_A)
+    assert activity.user_interacting() is True
+
+
+# 창 시스템이 창(QWindow)에 보내는, 사용자의 입력이 아닌 이벤트 (#379)
+WINDOW_SYSTEM_EVENTS = {
+    "Expose": lambda: QExposeEvent(QRegion(0, 0, 300, 200)),
+    "FocusIn": lambda: QFocusEvent(QEvent.Type.FocusIn),
+    "WindowStateChange": lambda: QWindowStateChangeEvent(Qt.WindowState.WindowNoState),
+}
+
+
+@pytest.mark.parametrize("kind", list(WINDOW_SYSTEM_EVENTS))
+def test_window_system_event_to_the_window_is_not_interaction(window, kind):
+    """창 시스템이 창에 보내는 노출 · 포커스 · 상태 이벤트는 조작으로 치지 않아야 한다.
+
+    창(QWindow)에 Expose / FocusIn / WindowStateChange를 하나 보냄
+    -> user_interacting() is False. 그 뒤 키를 하나 누르면 True(필터가 살아 있음)
+    """
+    QApplication.sendEvent(window.windowHandle(), WINDOW_SYSTEM_EVENTS[kind]())
 
     assert activity.user_interacting() is False
     QTest.keyClick(window, Qt.Key.Key_A)
