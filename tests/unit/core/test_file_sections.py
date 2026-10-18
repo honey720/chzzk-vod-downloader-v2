@@ -82,6 +82,7 @@ from tests.unit.core.long_ffmpeg import (
 )
 from tests.unit.core.reference_cut import hybrid_cut
 from tests.unit.core.midway_cut_failure import MidwayCutFailure
+from core.utils.retry import RETRY_MAX_DELAY
 from tests.unit.core.range_host import RangeHost
 from tests.unit.core.section_retry import CutCalls, hand_over, snapshot
 
@@ -176,6 +177,17 @@ class _Logger:
         return record
 
 
+class _LeapingClock:
+    """엔진의 재요청 시계(`_retry_now`) 대체 — 읽을 때마다 재요청 대기의 상한만큼 흐른다."""
+
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        self.now += RETRY_MAX_DELAY
+        return self.now
+
+
 class _Run:
     """엔진 한 번의 실행과 그 결과."""
 
@@ -204,6 +216,8 @@ class _Run:
             on_failed=self.failures.append,
         )
         self.engine._inspect_cuts = True
+        # 재요청 대기(#329)를 실제 시간으로 기다리지 않는다 — 읽을 때마다 대기의 상한만큼 흐르는 시계
+        self.engine._retry_now = _LeapingClock()
 
     def _on_finished(self) -> None:
         self.finished += 1

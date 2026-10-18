@@ -261,6 +261,12 @@ A network error occurred while downloading. Check your connection and try again.
         <translation>네트워크 연결을 확인해 주세요.</translation>
     </message>
     <message>
+        <source>Network connection lost · check it and try again
+Nothing arrived for a while because the network connection was lost. Check your connection and try again.</source>
+        <translation>네트워크 연결이 끊겼습니다 · 연결을 확인하고 다시 시도해 주세요
+네트워크 연결이 끊겨 한동안 아무것도 받지 못했습니다. 연결을 확인한 뒤 다시 받아 주세요.</translation>
+    </message>
+    <message>
         <source>Failed to save file · check the path and disk space
 The file could not be saved. Check the download path and free disk space.</source>
         <translation>파일 저장에 실패했습니다. 저장 경로와 디스크 공간을 확인해 주세요.</translation>

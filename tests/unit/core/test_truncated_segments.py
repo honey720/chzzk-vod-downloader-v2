@@ -20,6 +20,7 @@ from core.downloaders.hls_aes_downloader import HlsAesDownloader
 from core.downloaders.integrity import SEGMENT_TRUNCATED, TruncatedSegmentError
 from core.downloaders.m3u8_downloader import M3U8Downloader
 from core.models.download_data import DownloadData
+from core.utils.retry import RETRY_MAX_DELAY
 from tests.unit.fmp4_samples import box, real_shaped_media_segment, ts_segment
 
 ATTEMPTS = 11  # 첫 시도 1 + 일시 오류로 다시 받는 횟수 10 (#131의 상한)
@@ -149,6 +150,17 @@ def _passthrough_remux_stream(chunks, dst_path, **_wait):
             f.write(chunk)
 
 
+class _LeapingClock:
+    """엔진의 재요청 시계(`_retry_now`) 대체 — 읽을 때마다 재요청 대기의 상한만큼 흐른다."""
+
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        self.now += RETRY_MAX_DELAY
+        return self.now
+
+
 def _run(cls, module, url, content_type, session, tmp_path, monkeypatch):
     """가짜 세션으로 run()을 끝까지 돌리고 (데이터, 실패 콜백이 받은 것, 완료 횟수)를 돌려준다."""
     monkeypatch.setattr(module, "get_thread_session", lambda: session)
@@ -168,6 +180,8 @@ def _run(cls, module, url, content_type, session, tmp_path, monkeypatch):
         finished.append(True)
 
     engine = cls(data, _Logger(), on_finished=on_finished, on_failed=failures.append)
+    # 재요청 대기(#329)를 실제 시간으로 기다리지 않는다 — 읽을 때마다 대기의 상한만큼 흐르는 시계
+    engine._retry_now = _LeapingClock()
     if cls is HlsAesDownloader:
         engine.set_key_resolver(lambda content, key_uri: KEY)
     data.model.start()

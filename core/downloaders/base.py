@@ -53,6 +53,7 @@ data·logger는 DownloadData/DownloadLogger 호환 객체를 주입받는다.
 """
 
 import errno
+import heapq
 import math
 import os
 import re
@@ -64,6 +65,7 @@ from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 
 import requests
 
@@ -81,6 +83,7 @@ from core.models.plan import DownloadPlan
 from core.utils.ffmpeg import FFmpegCancelledError, FFmpegError, read_in_chunks, remux_stream
 from core.utils.filesystem import FAT_MAX_FILE_BYTES, filesystem_name, is_fat
 from core.utils.interaction import rest_totals
+from core.utils.retry import retry_delay
 
 
 # ============ 저속 판정 (#347) ============
@@ -118,6 +121,17 @@ _TRANSIENT_ERROR_REQUEUE_LIMIT = 10  # 항목별 최대 재큐 횟수 — 총 11
 # 4xx 중 일시적일 수 있는 상태 — 요청 타임아웃(408)·과요청(429)은 재시도가 유효하다
 _TRANSIENT_HTTP_STATUSES = frozenset({408, 429})
 
+# ============ 전체 실패 판정 (#329) ============
+# 받는 중인 모든 작업자가 연결 오류로 실패했고 이 시간(초) 동안 한 바이트도 받지 못했으면
+# 회선이 끊긴 것으로 보고 다운로드를 끝낸다. 세 값 사이에 둔다:
+# - 저속 판정 창(_SLOW_WINDOW_SECONDS, 3초)보다 길다 — 그 안에 같은 항목을 세 번 넘게 다시
+#   요청한다(대기 0.5 · 1 · 2 · 4초). 몇 초짜리 끊김은 버틴다
+# - 요청 타임아웃(REQUEST_TIMEOUT, 30초)보다 짧다 — 응답을 기다리며 서 있는 작업자는 실패로
+#   세지 않으므로, 그런 작업자가 있으면 판정은 그 요청이 타임아웃으로 끝날 때까지 미뤄진다
+# - 항목 하나가 일시 오류 상한(재큐 10회)에 닿는 데 드는 대기의 합(흔들림을 넣어 약 28초)보다
+#   짧다 — 곧바로 실패하는 연결 오류에서 상한보다 이 판정이 먼저 와 사유가 회선 끊김으로 나간다
+_ALL_FAILED_QUIET_SECONDS = 10.0
+
 
 DISK_SPACE_SHORT = "Not enough disk space"  # 저장 폴더의 여유 공간이 만들 구간 파일보다 적다
 # 구간 없는 세그먼트 다운로드 — 저장 폴더나 임시 폴더의 여유 공간이 받을 양보다 적다.
@@ -142,6 +156,54 @@ class DiskSpaceError(OSError):
         self.message_key = message_key
         self.needed = needed  # 그 볼륨에 비어 있어야 하는 양(바이트)
         self.free = free  # 그 볼륨의 여유 공간(바이트)
+
+
+# 받는 중인 모든 작업자가 연결 오류로 실패했고 한동안 아무것도 받지 못했다 — 회선이 끊겼다
+NETWORK_LOST = "Network connection lost"
+
+
+class NetworkLostError(requests.ConnectionError):
+    """받는 중인 모든 작업자가 연결 오류로 실패했고 한동안 아무것도 받지 못해 끝냈다 (#329).
+
+    항목마다의 재큐 상한까지 끌지 않고 끝낸다(``_ALL_FAILED_QUIET_SECONDS``). 회선이 돌아오기를
+    기다려 이어 받지 않는다. 마지막 연결 오류를 원인(``__cause__``)으로 잇는다.
+
+    ``message_key``는 번역하지 않은 i18n 키 원문이다. 표시 계층이 번역한다. 연결 오류의
+    하위라 연결 오류를 받는 처리는 그대로 받는다.
+    """
+
+    def __init__(self, quiet_seconds: float):
+        super().__init__(
+            f"{quiet_seconds:.1f}초 동안 받은 데이터 없음 · 받는 작업자 모두 연결 오류"
+        )
+        self.message_key = NETWORK_LOST
+        self.quiet_seconds = quiet_seconds  # 마지막으로 받은 뒤 지난 시간(초, 일시정지 제외)
+
+
+def _is_network_error(exc: BaseException) -> bool:
+    """서버의 답이 아니라 회선에서 난 오류인지 — 연결 실패 · 타임아웃 · 받다 끊김 (#329).
+
+    HTTP 오류(서버가 답했다)와 잘린 본문(받기는 했다)은 회선이 살아 있다는 뜻이라 넣지 않는다.
+    """
+    return isinstance(
+        exc,
+        (
+            requests.ConnectionError,
+            requests.Timeout,
+            requests.exceptions.ChunkedEncodingError,
+        ),
+    )
+
+
+@dataclass(frozen=True)
+class _Requeue:
+    """오류 재큐 한 번의 결정 — 락 안에서 정하고, 로그 · 실패 통지는 락 밖에서 한다 (#329)."""
+
+    part_num: int  # 실패한 작업자의 슬롯
+    attempt: int = 0  # 이 항목의 몇 번째 오류 재큐인가. 재큐하지 않았으면 0
+    retry_in: float | None = None  # 다시 꺼낼 수 있을 때까지의 대기(초). 재큐하지 않았으면 None
+    failure: BaseException | None = None  # 다운로드를 실패로 끝낼 때 알릴 예외
+    reason: str = ""  # 실패로 끝낼 때 로그에 남길 사유
 
 
 # 저장 폴더의 파일 시스템(FAT · FAT32)이 파일 하나에 담을 수 있는 크기보다 만들 파일이 크다
@@ -501,6 +563,18 @@ class BaseDownloader(ABC):
         self.future_dict: dict = {}
         # 항목별 오류 재큐 횟수 (#131) — 상한 판정용. 저속 재큐는 세지 않는다
         self._error_requeues: dict = {}
+        # 오류로 재큐해 대기 중인 항목 → 다시 꺼낼 수 있는 시각(_retry_now 기준) (#329).
+        # 항목은 remaining_ranges에 그대로 있고, 이 시각 전에는 실행 루프가 꺼내지 않는다
+        self._retry_at: dict = {}
+        self._retry_heap: list = []  # (시각, 순번, 항목) — 가장 먼저 풀리는 항목을 찾는다
+        self._retry_seq = 0  # 힙에서 시각이 같은 항목끼리 비교하지 않게 붙이는 순번
+        # 마지막으로 바이트를 받은 시각(_retry_now 기준). 전송을 시작할 때 채운다 (#329)
+        self._received_at: float | None = None
+        # 마지막으로 받은 뒤 연결 오류로 실패한 작업자의 슬롯 — 전체 실패 판정용 (#329)
+        self._failing_slots: set[int] = set()
+        # 이번 실행을 실패로 끝내기로 정했는가 — 락 안에서 한 번만 정하고, 정한 뒤에는 새로
+        # 꺼내지도 다시 알리지도 않는다 (#329)
+        self._fatal_claimed = False
         # 전송 종료 시 관측 스레드를 깨워 끝내는 신호 — 후처리는 관측 대상이 아니다 (#89)
         self._monitor_stop = threading.Event()
         self._pause_clock = _PauseClock()  # 컷이 도는 동안의 일시정지 시간
@@ -552,6 +626,14 @@ class BaseDownloader(ABC):
     def _now(self) -> float:
         """단조 시계(초). 속도 측정과 저속 판정이 쓴다 — 벽시계는 시각 보정에 흔들린다."""
         return tm.perf_counter()
+
+    def _retry_now(self) -> float:
+        """일시정지한 시간을 뺀 단조 시계(초) — 재요청 대기와 전체 실패 판정이 쓴다 (#329).
+
+        일시정지해 있는 동안은 흐르지 않는다 — 일시정지한 시간은 대기에도, 아무것도 받지 못한
+        시간에도 넣지 않는다. 재개하면 남은 대기를 이어 간다.
+        """
+        return self._now() - self.s.model.paused_seconds
 
     def _wait_while_paused(self) -> float:
         """일시정지 중이면 풀릴 때까지(재개 · 중단) 기다리고, 기다린 시간(초)을 돌려준다.
@@ -1209,17 +1291,26 @@ class BaseDownloader(ABC):
                     self.s.future_count = 0
                     self.future_dict = {}
                     self._error_requeues = {}
+                    self._retry_at = {}
+                    self._retry_heap = []
+                    self._failing_slots = set()
+                    self._fatal_claimed = False
+                    self._received_at = self._retry_now()
 
                 while not self.state == DownloadState.WAITING:
-                    # (1) 현재 활성 스레드 수보다 적으면 -> 추가 스레드 할당
-                    while self.s.future_count < self.s.adjust_threads and self.s.remaining_ranges:
+                    # (1) 현재 활성 스레드 수보다 적으면 -> 추가 스레드 할당.
+                    # 오류로 재큐한 항목은 대기가 끝나야 꺼낸다 — 그동안 다른 항목을 받는다 (#329)
+                    while self.s.future_count < self.s.adjust_threads and self._has_ready_item():
                         for part_num in range(self.s.adjust_threads):
-                            if not self.s.remaining_ranges:
-                                break
                             submitted = None
                             with self.lock:
                                 if part_num not in self.future_dict:
-                                    item = self.s.remaining_ranges.pop(0)
+                                    item = self._take_ready_item()
+                                    if item is None:
+                                        break  # 지금 꺼낼 수 있는 항목이 없다
+                                    # 새 요청은 아직 실패하지 않았다 — 응답을 기다리는 동안 전체
+                                    # 실패 판정에서 실패한 작업자로 세지 않는다 (#329)
+                                    self._failing_slots.discard(part_num)
                                     self.s.future_count += 1
                                     # 전송 종료 요약(#110)용 정점 동시 스레드 수
                                     self._peak_threads = max(
@@ -1396,29 +1487,133 @@ class BaseDownloader(ABC):
         if part_num is not None:
             self.update_progress()  # 즉각적 진행도 반영
 
-    def _requeue_failed(self, item, part_num: int, exc: BaseException) -> None:
-        """예외 발생 시 작업을 다시 다운로드할 수 있도록 remaining_ranges에 등록.
+    def _requeue_failed(self, item, part_num: int, exc: BaseException) -> _Requeue:
+        """예외 발생 시 작업을 다시 다운로드할 수 있도록 remaining_ranges에 등록할지 정한다.
+
+        **호출자가 self.lock을 쥔 채 부른다.** 여기서는 정하기만 하고, 로그와 실패 통지는
+        호출자가 락을 놓은 뒤 ``_settle_requeue``에 결정을 넘겨 한다 (#329) — 실패 콜백이
+        엔진 락을 다시 잡아도 교착하지 않는다.
 
         항목별 재큐 횟수에 상한을 둔다 (#131) — 영구 오류(4xx)는 짧게,
         일시 오류(5xx·타임아웃·연결 끊김)는 길게 허용한다. 상한 도달 시
-        재큐 대신 원인을 로그에 남기고 다운로드 전체를 실패로 끝낸다.
+        재큐 대신 다운로드 전체를 실패로 끝낸다.
         저속 재큐(_requeue_slow)는 이 상한에 세지 않는다.
+
+        재큐한 항목은 곧바로 다시 꺼내지 않는다 (#329) — 이 항목의 재큐 횟수에 따라
+        ``retry_delay``만큼(0.5 · 1 · 2 · 4 · 4 …초) 지나야 실행 루프가 꺼낸다.
+
+        받는 중인 모든 작업자가 연결 오류로 실패했고 ``_ALL_FAILED_QUIET_SECONDS`` 동안
+        아무것도 받지 못했으면, 상한까지 끌지 않고 회선 끊김(NetworkLostError)으로 끝낸다.
+
+        이미 실패로 끝내기로 정한 뒤에 온 실패는 재큐하지도 알리지도 않는다.
         """
+        if self._fatal_claimed:
+            return _Requeue(part_num)
+        now = self._retry_now()
+        if _is_network_error(exc):
+            self._failing_slots.add(part_num)
+        else:
+            self._failing_slots.discard(part_num)  # 서버가 답했다 — 회선은 살아 있다
+        quiet = now - self._received_at if self._received_at is not None else 0.0
+        if (
+            part_num in self._failing_slots
+            and quiet >= _ALL_FAILED_QUIET_SECONDS
+            and self._failing_slots.issuperset(self.future_dict)
+        ):
+            lost = NetworkLostError(quiet)
+            lost.__cause__ = exc
+            self._fatal_claimed = True
+            return _Requeue(
+                part_num,
+                failure=lost,
+                reason=f"Part {part_num}: every worker failing with no data for "
+                f"{quiet:.1f}s — network connection lost",
+            )
         count = self._error_requeues.get(item, 0)
         permanent = _is_permanent_error(exc)
         limit = _PERMANENT_ERROR_REQUEUE_LIMIT if permanent else _TRANSIENT_ERROR_REQUEUE_LIMIT
         if count >= limit:
             kind = "permanent" if permanent else "transient"
-            self._fail_fatally(
-                exc,
-                f"Part {part_num} requeue limit reached "
+            self._fatal_claimed = True
+            return _Requeue(
+                part_num,
+                failure=exc,
+                reason=f"Part {part_num} requeue limit reached "
                 f"({count} requeues, {kind} error) — giving up",
             )
-            return
         self._error_requeues[item] = count + 1
         self.s.failed_threads += 1
         self.s.threads_progress[part_num] = 0
         self.s.remaining_ranges.append(item)
+        delay = retry_delay(count + 1)
+        self._retry_seq += 1
+        self._retry_at[item] = now + delay
+        heapq.heappush(self._retry_heap, (now + delay, self._retry_seq, item))
+        return _Requeue(part_num, attempt=count + 1, retry_in=delay)
+
+    def _settle_requeue(self, requeue: _Requeue, message: str, exc: BaseException) -> None:
+        """오류 재큐의 결정을 로그와 실패 통지로 옮긴다 — 락을 놓은 뒤 부른다 (#329).
+
+        실패로 끝내기로 정했으면 그 사유를 남기고 알린 뒤 멈춘다(``_announce_failure``). 그다음
+        호출자의 실패 줄(message)을 남기고, 재큐했으면 몇 번째 재요청을 몇 초 뒤에 하는지 남긴다.
+        워커는 이 메서드가 돌아온 뒤에 끝나야 한다 — 실행 루프는 워커가 남아 있는 동안 끝나지
+        않으므로, 멈춤(WAITING)이 완료 판정보다 먼저 온다.
+
+        Args:
+            message: 이 실패를 남길 줄 — 요약 스크립트가 읽는 형식("Part N download failed")
+            exc: 이 작업자가 만난 예외
+        """
+        if requeue.failure is not None:
+            self._announce_failure(requeue.failure, requeue.reason)
+        self.logger.log_error(message, exc)
+        if requeue.retry_in is not None:
+            self.logger.warning(
+                f"Part {requeue.part_num} retry {requeue.attempt} in {requeue.retry_in:.2f}s"
+            )
+
+    def _has_ready_item(self) -> bool:
+        """지금 꺼낼 수 있는 항목이 있는지 (#329)."""
+        with self.lock:
+            return self._ready_position() is not None
+
+    def _take_ready_item(self):
+        """지금 꺼낼 수 있는 항목 하나를 remaining_ranges에서 꺼낸다. 없으면 None (#329).
+
+        **호출자가 self.lock을 쥔 채 부른다.** 대기가 끝난 재큐 항목을 먼저 꺼낸다 — 같은 항목의
+        재요청 간격이 정한 대기와 같아진다. 없으면 대기 중이 아닌 항목을 앞에서부터 꺼낸다.
+        """
+        position = self._ready_position()
+        if position is None:
+            return None
+        item = self.s.remaining_ranges.pop(position)
+        if self._retry_at.pop(item, None) is not None:
+            heapq.heappop(self._retry_heap)  # 꺼낸 항목은 _ready_position이 본 힙의 맨 앞이다
+        return item
+
+    def _ready_position(self) -> int | None:
+        """지금 꺼낼 항목의 remaining_ranges 안 위치. 없으면 None. self.lock 안에서 부른다.
+
+        실패로 끝내기로 정한 뒤에는 꺼내지 않는다 — 멈추기 전에 새 요청을 내보내지 않는다.
+        """
+        queue = self.s.remaining_ranges
+        if self._fatal_claimed or not queue:
+            return None
+        if not self._retry_at:
+            return 0
+        heap = self._retry_heap
+        while heap:
+            at, _seq, item = heap[0]
+            if self._retry_at.get(item) == at and item in queue:
+                break
+            heapq.heappop(heap)  # 이미 꺼냈거나 다시 재큐되어 시각이 바뀐 항목의 자취
+            if self._retry_at.get(item) == at:
+                del self._retry_at[item]  # 대기열에서 사라진 항목 — 기다릴 것이 없다
+        if heap and heap[0][0] <= self._retry_now():
+            return queue.index(heap[0][2])
+        for position, item in enumerate(queue):
+            if item not in self._retry_at:
+                return position
+        return None
 
     def _fail_fatally(self, exc: BaseException, log_message: str) -> None:
         """워커에서 회복 불가능한 오류가 났을 때 다운로드 전체를 중단시킨다.
@@ -1426,13 +1621,29 @@ class BaseDownloader(ABC):
         상태를 중단으로 돌려 실행 루프·관측 루프가 빠져나오게 하고, 실패를
         통지한다. 부분 산출물 정리는 run()의 중단 경로가 수행한다.
         (hls_aes 복호화 실패 경로에서 승격 — #131부터 재큐 상한 도달도 쓴다)
+
+        **self.lock을 쥐지 않은 채 부른다** (#329) — 실패로 끝낼지는 락 안에서 한 번만 정하고,
+        통지는 락 밖에서 한다. 이미 실패로 끝내기로 정했으면 로그만 남기고 다시 알리지 않는다.
         """
+        with self.lock:
+            first = not self._fatal_claimed
+            self._fatal_claimed = True
+        if first:
+            self._announce_failure(exc, log_message)
+        else:
+            self.logger.log_error(log_message, exc)
+
+    def _announce_failure(self, exc: BaseException, log_message: str) -> None:
+        """실패 사유를 남기고 알린 뒤 멈춘다 — self.lock 밖에서, 실패로 끝내기로 정한 쪽만 부른다."""
         self.logger.log_error(log_message, exc)
         self._notify_failed(exc)
         self.model.stop()
 
     def _requeue_slow(self, item, part_num: int, diagnostic: str = "") -> None:
         """저속으로 중도 중단한 작업을 재시작하도록 등록.
+
+        오류 재큐와 달리 대기 없이 곧바로 다시 꺼낼 수 있다 (#329) — 서버는 답하고 있고, 느린
+        연결을 바꾸려는 것이다.
 
         diagnostic — 임시 진단용(#191 실기 확인). write_elapsed/total_elapsed
         비율을 문자열로 받아 경고 로그에 덧붙인다. 디스크 쓰기 시간을 뺀
@@ -1452,10 +1663,17 @@ class BaseDownloader(ABC):
     ):
         """
         스레드가 다운로드 중일 때 속도 체크 및 진행 상황 업데이트.
+
+        바이트를 받았다는 기록도 여기서 한다 (#329) — 전체 실패 판정은 이 시각부터 센다.
         """
+        received_at = self._retry_now()
         with self.lock:
             self.s.threads_progress[part_num] = downloaded_size
             self.update_progress()
+            # 락 밖에서 잰 시각이라 늦게 잰 쪽이 먼저 들어올 수 있다 — 뒤로 가지 않게 한다
+            if self._received_at is None or received_at > self._received_at:
+                self._received_at = received_at
+            self._failing_slots.clear()
 
     # ============ 관측 루프 (구 Monitor 스레드 — 엔진이 흡수) ============
 

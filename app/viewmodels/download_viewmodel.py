@@ -38,7 +38,12 @@ from app.user_activity import user_interacting
 from app.viewmodels.data import ContentItem
 from app.viewmodels.section_edit_viewmodel import take_section_head, watch_section_head
 from core.api.playback_tracks import StreamSelectionError
-from core.downloaders.base import DiskSpaceError, FileSizeLimitError, PostprocessError
+from core.downloaders.base import (
+    DiskSpaceError,
+    FileSizeLimitError,
+    NetworkLostError,
+    PostprocessError,
+)
 from core.downloaders.hls_aes_downloader import DecryptionError
 from core.downloaders.integrity import TruncatedSegmentError
 from core.models.events import ProgressEvent
@@ -125,6 +130,9 @@ def _failure_message_key(exc: BaseException) -> str | None:
         return "Decryption failed"
     if isinstance(exc, StreamSelectionError):
         # 고른 해상도의 스트림을 마스터 플레이리스트에서 하나로 정하지 못했다 (#318)
+        return exc.message_key
+    if isinstance(exc, NetworkLostError):
+        # 받는 중인 작업자가 모두 연결 오류로 실패했고 한동안 아무것도 받지 못했다 (#329)
         return exc.message_key
     if isinstance(exc, TruncatedSegmentError):
         # 다시 받아도 세그먼트가 계속 잘려 왔다 (#321)
@@ -638,6 +646,11 @@ class DownloadViewModel(QObject):
             "Network connection error": self.tr(
                 "Network connection error · check your connection\n"
                 "A network error occurred while downloading. Check your connection and try again."
+            ),
+            "Network connection lost": self.tr(
+                "Network connection lost · check it and try again\n"
+                "Nothing arrived for a while because the network connection was lost. "
+                "Check your connection and try again."
             ),
             "Failed to save file": self.tr(
                 "Failed to save file · check the path and disk space\n"
