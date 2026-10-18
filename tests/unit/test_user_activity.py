@@ -59,16 +59,38 @@ def watching(qapp, clock):
     activity.stop_watching_user_input()
 
 
+class _Exposes(QObject):
+    """창(QWindow) 하나가 받은 Expose 이벤트를 센다 — 그 창에만 건다."""
+
+    def __init__(self, parent: QObject):
+        super().__init__(parent)
+        self.count = 0
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 — Qt의 이름
+        if event.type() == QEvent.Type.Expose:
+            self.count += 1
+        return False
+
+
 @pytest.fixture
 def window(qtbot, watching):
-    """보이는 창 하나(안에 자식 위젯 하나) — 띄우며 생긴 이벤트는 잊고 시작한다."""
+    """보이는 창 하나(안에 자식 위젯 하나) — 띄우며 생긴 이벤트는 잊고 시작한다.
+
+    창 시스템이 띄운 창의 크기 · 위치(Resize · Move)는 그 창의 첫 Expose 이벤트보다 먼저 온다.
+    첫 Expose 이벤트가 올 때까지 기다린 뒤 잊는다 (#379) — waitExposed는 창이 드러났다는 표시만
+    보고 그 이벤트들이 배달되기 전에 돌아올 수 있다.
+    """
     window = _Keys()
     window.child = QWidget(window)
     window.child.setGeometry(10, 10, 50, 50)
     qtbot.addWidget(window)
     window.resize(300, 200)
+    window.winId()  # 창(QWindow)을 먼저 만든다 — 첫 Expose 이벤트를 세기 시작한 뒤에 띄운다
+    exposes = _Exposes(window)
+    window.windowHandle().installEventFilter(exposes)
     window.show()
     qtbot.waitExposed(window)
+    qtbot.waitUntil(lambda: exposes.count > 0, timeout=3000)
     QApplication.processEvents()
     activity._last_input = float("-inf")
     assert window.isVisible()
