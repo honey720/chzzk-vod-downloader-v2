@@ -757,3 +757,44 @@ def test_cleanup_error_after_a_failure_does_not_replace_the_failure(tmp_path, mo
         "Cleanup after failure failed — partial files may remain",
     ]
     assert logger.closed == 1
+
+
+def test_failure_callback_that_raises_still_lets_the_cleanup_run(tmp_path, monkeypatch):
+    """실패 콜백이 예외를 내도 부분 산출물 정리와 로그 닫기는 해야 한다 (#389).
+
+    준비 단계가 RuntimeError("준비 실패"), 실패 콜백이 ValueError("콜백 고장")
+    -> 정리 1회(콜백 뒤), 로그 닫기 1회, run() 밖으로 나간 예외 == [그 ValueError]
+    """
+    engine, data, logger, output, finished, failures, merge_starts = _make_engine(
+        tmp_path, monkeypatch
+    )
+    order = []
+    broken = ValueError("콜백 고장")
+
+    def prepare(_content):
+        raise RuntimeError("준비 실패")
+
+    def on_failed(_exc):
+        order.append("failed")
+        raise broken
+
+    monkeypatch.setattr(engine, "prepare", prepare)
+    monkeypatch.setattr(engine, "_cleanup_partial", lambda: order.append("cleanup"))
+    engine._on_failed = on_failed
+    escaped = []
+
+    def run() -> None:
+        try:
+            engine.run()
+        except BaseException as e:
+            escaped.append(e)
+
+    data.model.start()
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    thread.join(timeout=30)
+    assert not thread.is_alive()
+
+    assert order == ["failed", "cleanup"]
+    assert logger.closed == 1
+    assert escaped == [broken]

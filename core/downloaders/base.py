@@ -1441,11 +1441,14 @@ class BaseDownloader(ABC):
 
         except self._failure_exceptions as e:
             # 실패를 먼저 알리고 남긴 뒤 부분 산출물을 지운다 (#389) — 정리가 예외를 내면 예전에는
-            # 알림 · 로그가 돌지 않고 그 예외가 run() 밖으로 나가 실패 사유를 대신했다
-            self._notify_failed(e)
-            self.logger.log_exception("Download failed", e)
-            self._cleanup_after_failure()
-            self.logger.save_and_close()
+            # 알림 · 로그가 돌지 않고 그 예외가 run() 밖으로 나가 실패 사유를 대신했다. 정리가 죽은
+            # 마운트에 갇혀도 실패는 이미 알려져 있다. 실패 콜백이 예외를 내도 정리는 한다(finally)
+            try:
+                self._notify_failed(e)
+                self.logger.log_exception("Download failed", e)
+            finally:
+                self._cleanup_after_failure()
+                self.logger.save_and_close()
 
         finally:
             # 실패·전파 예외 경로에서도 관측 스레드를 남기지 않는다 (#89).
