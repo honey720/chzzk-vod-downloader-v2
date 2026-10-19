@@ -64,6 +64,7 @@ from tests.unit.core.midway_cut_failure import MidwayCutFailure
 from tests.unit.core.range_host import RangeHost
 from tests.unit.core.section_packets import JoinedSource, assert_section_matches
 from tests.unit.core.section_retry import OUTPUT_ARG, CutCalls, hand_over, snapshot
+from tests.unit.core.undeletable import Undeletable
 
 KEY = bytes.fromhex("7c1d9e42a05b63f8817e2c4d6a9b0f35")  # 테스트용 키 — 실제 키가 아니다
 WRONG_KEY = bytes.fromhex("0f1e2d3c4b5a69788796a5b4c3d2e1f0")  # 테스트용 — 복호화가 틀어진다
@@ -1012,6 +1013,91 @@ def test_retry_cuts_only_the_failed_section_from_the_kept_segments_without_reque
         data.sections_failed,
         data.sections_resumed,
     ) == (3, 3, 0, 2)
+
+
+@pytest.mark.parametrize("undeletable", [False, True], ids=["지울 수 있음", "지울 수 없음"])
+def test_cut_failure_whose_output_cannot_be_removed_still_ends_as_a_partial_failure(
+    vod, host, tmp_path, monkeypatch, undeletable
+):
+    """구간의 컷이 실패하면 그 출력을 지울 수 없어도 일부 실패로 끝나고, 이어받은 실행은 그 구간만 다시 잘라야 한다 (#389).
+
+    구간 셋, 둘째 구간의 컷이 출력 파일을 반쯤 쓰고 CutError. 그 출력의 os.remove가
+    PermissionError(대조: 지울 수 있음)
+    -> 실패 1건(PostprocessError, 원인 CutError), 구간 상태 == (전체 3, 완료 2, 실패 1), 이어받기 기록이
+       있다, `_1` · `_3` 파일과 임시 폴더가 남는다, 지울 수 없을 때만 `_2`가 남고 지우기 거절이 1번 이상
+    -> 이어받은 실행: 컷 호출 1회(`_2`로 시작하는 이름), 완료 1회 · 실패 0건, 요청 0건
+    """
+    blocker = Undeletable(monkeypatch)
+    cuts = CutCalls(monkeypatch, aes_module, "cut_ts_section", source_arg=WORK_ARG)
+    cuts.fail_on = (SECOND_SECTION_CALL,)
+    failed = _Run(host, tmp_path, THREE)
+    if undeletable:
+        blocker.block(failed.paths[1])
+
+    failed.start()
+
+    assert len(failed.failures) == 1
+    assert isinstance(failed.failures[0], PostprocessError)
+    assert isinstance(failed.failures[0].__cause__, CutError)
+    data = failed.data
+    assert (data.sections_total, data.sections_done, data.sections_failed) == (3, 2, 1)
+    assert data.section_resume is not None
+    assert os.path.isfile(failed.paths[0]) and os.path.isfile(failed.paths[2])
+    assert os.path.isdir(failed.engine.temp_dir)
+    assert os.path.exists(failed.paths[1]) == undeletable
+    assert bool(blocker.refused) == undeletable
+
+    blocker.release()
+    requests_before = len(host.requests)
+    cuts.restart()
+    again = hand_over(failed, _Run(host, tmp_path, THREE)).start()
+
+    assert (again.finished, again.failures) == (1, [])
+    assert len(cuts.outputs) == 1 and cuts.outputs[0].startswith("구간 시험 144p_2")
+    assert host.requests[requests_before:] == []
+
+
+def test_section_whose_output_ffmpeg_cannot_write_or_remove_fails_alone(
+    vod, host, tmp_path, monkeypatch
+):
+    """세그먼트를 흘려 잇는 구간의 출력을 ffmpeg가 쓰지 못하고 지울 수도 없으면 그 구간만 실패해야 한다 (#389).
+
+    구간 셋. 둘째 구간(세그먼트 2 ~ 5, 가운데 둘을 흘린다)의 출력 경로에 폴더가 있고 그 경로의
+    os.remove가 PermissionError
+    -> 실패 1건(PostprocessError, 원인 CutError, 그 원인 RemuxError), 구간 상태 == (3, 2, 1), 이어받기
+       기록이 있다, `_1` · `_3` 파일과 임시 폴더가 남는다, 지우기 거절이 1번 이상
+    -> 폴더를 치우고 이어받은 실행: 완료 1회 · 실패 0건, 요청 == 둘째 구간의 세그먼트 가운데 기록에
+       남지 않은 것(넘기면서 지운 것)뿐
+    """
+    blocker = Undeletable(monkeypatch)
+    failed = _Run(host, tmp_path, THREE)
+    os.makedirs(failed.paths[1])  # ffmpeg가 이 자리에 파일을 쓰지 못한다
+    blocker.block(failed.paths[1])
+
+    failed.start()
+
+    assert len(failed.failures) == 1
+    assert isinstance(failed.failures[0], PostprocessError)
+    assert isinstance(failed.failures[0].__cause__, CutError)
+    assert isinstance(failed.failures[0].__cause__.__cause__, RemuxError)
+    data = failed.data
+    assert (data.sections_total, data.sections_done, data.sections_failed) == (3, 2, 1)
+    assert data.section_resume is not None
+    assert os.path.isfile(failed.paths[0]) and os.path.isfile(failed.paths[2])
+    assert os.path.isdir(failed.engine.temp_dir)
+    assert blocker.refused
+
+    second = failed.engine.sections[1]
+    gone = set(range(second.first_segment, second.last_segment + 1)) - (
+        data.section_resume.ts_head.stored
+    )
+    blocker.release()
+    os.rmdir(failed.paths[1])
+    requests_before = len(host.requests)
+    again = hand_over(failed, _Run(host, tmp_path, THREE)).start()
+
+    assert (again.finished, again.failures) == (1, [])
+    assert host.requests[requests_before:] == [("GET", name, None) for name in _names(gone)]
 
 
 def test_stop_during_retry_removes_only_what_the_retry_made(vod, host, tmp_path, monkeypatch):

@@ -12,6 +12,7 @@ ffmpeg 내장 lavfi 소스로 즉석 생성한 초소형 파일이라 네트워�
 """
 
 import functools
+import inspect
 import os
 import struct
 import subprocess
@@ -19,12 +20,14 @@ import sys
 import tempfile
 import threading
 import time
+import weakref
 from types import SimpleNamespace
 
 import pytest
 
 import core.downloaders.base as base_module
 import core.utils.ffmpeg as ffmpeg_module
+import core.utils.fmp4_cut as fmp4_cut_module
 from core.downloaders.base import BaseDownloader, PostprocessError
 from core.models.download_state import DownloadState
 from core.utils.ffmpeg import (
@@ -34,6 +37,7 @@ from core.utils.ffmpeg import (
     read_in_chunks,
     remux_stream,
 )
+from tests.unit.core.undeletable import Undeletable
 
 
 def _top_level_boxes(path) -> list[str]:
@@ -828,6 +832,114 @@ def test_remux_through_fails_when_only_the_join_side_fails(tmp_path):
         )
 
     assert not out.exists()
+
+
+_NOT_MEDIA = b"not media " * 6554  # 미디어가 아닌 바이트 약 64KB — ffmpeg가 읽다가 실패하고 끝난다
+
+
+def _remux_in_one_step(chunks, out, work) -> None:
+    remux_stream(chunks, str(out))
+
+
+def _remux_in_two_steps(chunks, out, work) -> None:
+    ffmpeg_module.remux_through(chunks, _CONVERT, _join_args(work, out), str(out), cwd=str(work))
+
+
+_REMUXERS = pytest.mark.parametrize(
+    "remux", [_remux_in_one_step, _remux_in_two_steps], ids=["remux_stream", "remux_through"]
+)
+
+
+@_REMUXERS
+def test_feed_left_midway_because_ffmpeg_ended_is_closed_with_the_file_it_opened(tmp_path, remux):
+    """ffmpeg가 먼저 끝나 공급이 중간에 멈추면, 실패가 올라간 뒤 공급 제너레이터와 그것이 연 파일이 닫혀 있어야 한다 (#389).
+
+    공급: 미디어가 아닌 파일 하나를 연 채 그 내용을 끝없이 내는 제너레이터
+    -> RemuxError, 그 예외의 트레이스백이 살아 있는 동안 제너레이터 상태 == GEN_CLOSED, 연 파일이 닫혀 있다
+    """
+    source = tmp_path / "not_media.bin"
+    source.write_bytes(_NOT_MEDIA)
+    opened = []
+
+    def endless():
+        with open(source, "rb") as f:
+            opened.append(f)
+            while True:
+                f.seek(0)
+                yield f.read()
+
+    feed = endless()
+
+    with pytest.raises(RemuxError) as raised:
+        remux(feed, tmp_path / "out.mp4", tmp_path)
+
+    assert raised.value.__traceback__ is not None  # 공급을 부른 프레임이 아직 살아 있다
+    assert len(opened) == 1  # 끝없는 공급이 중간에 멈췄다 — 끝까지 돌아 닫힌 것이 아니다
+    assert inspect.getgeneratorstate(feed) == inspect.GEN_CLOSED
+    assert opened[0].closed
+
+
+def test_segment_feed_left_midway_closes_the_reader_of_every_segment_it_opened(
+    tmp_path, monkeypatch
+):
+    """구간 컷의 공급(fmp4_cut._feed)이 중간에 멈추면 세그먼트마다 연 읽기 제너레이터가 모두 닫혀 있어야 한다 (#389).
+
+    공급: 미디어가 아닌 약 64KB 파일 200개를 _feed로 잇는다. 변환 ffmpeg는 그것을 읽지 못하고 끝난다
+    -> RemuxError, 트레이스백이 살아 있는 동안 연 읽기 제너레이터가 1개 이상 200개 미만이고 모두
+       닫혔거나 사라졌다
+    """
+    source = tmp_path / "not_media.bin"
+    source.write_bytes(_NOT_MEDIA)
+    # 약한 참조로 적는다 — 강한 참조를 들면 이 목록이 제너레이터를 살려 둔다
+    readers: list[weakref.ref] = []
+    real = fmp4_cut_module.read_in_chunks
+
+    def recording(path, chunk_size):
+        reader = real(path, chunk_size)
+        readers.append(weakref.ref(reader))
+        return reader
+
+    monkeypatch.setattr(fmp4_cut_module, "read_in_chunks", recording)
+    out = tmp_path / "out.mp4"
+
+    with pytest.raises(RemuxError) as raised:
+        ffmpeg_module.remux_through(
+            fmp4_cut_module._feed(b"", [str(source)] * 200),
+            _CONVERT,
+            _join_args(tmp_path, out),
+            str(out),
+            cwd=str(tmp_path),
+        )
+
+    assert raised.value.__traceback__ is not None
+    assert 1 <= len(readers) < 200  # 공급이 중간에 멈췄다
+    left_open = [
+        ref
+        for ref in readers
+        if ref() is not None and inspect.getgeneratorstate(ref()) != inspect.GEN_CLOSED
+    ]
+    assert left_open == []
+
+
+@_REMUXERS
+def test_output_that_cannot_be_removed_does_not_replace_the_remux_failure(
+    tmp_path, monkeypatch, remux
+):
+    """실패한 산출물을 지울 수 없어도 재포장의 실패(RemuxError)가 그대로 올라가야 한다 (#389).
+
+    출력 경로에 파일이 있고 그 os.remove가 PermissionError. 공급: 미디어가 아닌 바이트
+    -> RemuxError, 지우기를 거절한 경로 == [출력 경로], 출력 파일이 남아 있다
+    """
+    out = tmp_path / "out.mp4"
+    out.write_bytes(b"left over")
+    blocker = Undeletable(monkeypatch)
+    blocker.block(out)
+
+    with pytest.raises(RemuxError):
+        remux(iter([_NOT_MEDIA]), out, tmp_path)
+
+    assert blocker.refused == [str(out)]
+    assert out.exists()
 
 
 def _fake_pair(monkeypatch, dst, convert_code: int, join_code: int) -> None:

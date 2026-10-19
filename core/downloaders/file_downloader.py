@@ -44,6 +44,7 @@ core/downloaders/base.py의 BaseDownloader로 이주했다(#82). 이 클래스�
 그대로 쓴다.
 """
 
+import logging
 import os
 import shutil
 import time as tm
@@ -72,6 +73,7 @@ from core.models.mp4_index import Mp4Index
 from core.models.plan import DownloadPlan
 from core.models.section_resume import SectionResume
 from core.utils.hybrid_cut import (
+    CUT_FAILED,
     CutCancelled,
     CutError,
     cut_frames_from_mp4,
@@ -94,6 +96,8 @@ from core.utils.paths import (
     section_body_path_for,
 )
 from core.utils.selections import SelectionError, validate_selections
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -191,7 +195,8 @@ def finish_section_file(
             쓰는 일)다. 나머지 인자는 ``encode_boundary_pieces``와 같다
 
     Raises:
-        CutError · Mp4Error: 인코딩이 실패했거나 조각이 계획과 맞지 않는 경우
+        CutError · Mp4Error: 인코딩이 실패했거나, 조각이 계획과 맞지 않거나, 다 쓴 본문을 구간
+            파일의 이름으로 바꾸지 못한 경우
         CutCancelled: 중단 요청으로 그만둔 경우
     """
     work = cut_temp_dir_for(output_path)
@@ -215,10 +220,19 @@ def finish_section_file(
             finally:
                 if on_stage is not None:
                     on_stage("write", tm.perf_counter() - started)
-        os.replace(body_path, output_path)
+        try:
+            os.replace(body_path, output_path)
+        except OSError as e:
+            # 구간 파일의 자리에 둘 수 없다 — 이 구간만 만들지 못한 것이다 (#389). 본문은 남는다
+            raise CutError(CUT_FAILED, f"구간 파일을 제자리에 두지 못했다: {e}") from e
     except BaseException:
-        if os.path.exists(output_path):
-            os.remove(output_path)
+        # 지우지 못해도 원래 예외를 올린다 (#389) — 여기서 난 OSError가 CutError를 대신하면 구간
+        # 하나의 실패가 다운로드 전체의 실패가 된다
+        try:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+        except OSError as e:
+            logger.warning("실패한 구간 파일을 지우지 못했다: %s", e)
         raise
     finally:
         shutil.rmtree(work, ignore_errors=True)

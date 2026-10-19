@@ -30,6 +30,7 @@
 (``core/utils/ts_cut.py``).
 """
 
+import logging
 import os
 import shutil
 import time
@@ -60,6 +61,8 @@ from core.utils.hybrid_cut import (
     CutError,
     cut_frames_from_fmp4,
 )
+
+logger = logging.getLogger(__name__)
 
 # 구간 계획이 정한 PTS를 받은 세그먼트에서 다시 읽은 PTS와 견줄 때 허용하는 차이(초) — 같은
 # 계산을 두 번 한 값이라 같아야 하고, float 오차만 흡수한다
@@ -241,8 +244,13 @@ def cut_from_segments(
             inspect, on_stage, on_progress,
         )  # fmt: skip
     except BaseException:
-        if os.path.exists(output_path):
-            os.remove(output_path)
+        # 지우지 못해도 원래 예외를 올린다 (#389) — 여기서 난 OSError가 CutError를 대신하면 구간
+        # 하나의 실패가 다운로드 전체의 실패가 된다
+        try:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+        except OSError as e:
+            logger.warning("실패한 구간 파일을 지우지 못했다: %s", e)
         raise
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)

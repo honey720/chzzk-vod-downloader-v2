@@ -16,9 +16,11 @@ import time
 
 import core.downloaders.base as base_module
 import core.downloaders.m3u8_downloader as m3u8_module
+import core.utils.ffmpeg as ffmpeg_module
 from core.downloaders.m3u8_downloader import M3U8Downloader
 from core.models.download_state import DownloadState
 from core.models.download_data import DownloadData
+from tests.unit.core.undeletable import Undeletable
 from tests.unit.fmp4_samples import init_segment, media_segment
 
 CHUNK = 8192
@@ -670,3 +672,129 @@ def test_downstream_stop_after_postprocess_failure_preserves_segments(tmp_path, 
     # WAITING으로 돌리더라도(비동기 stop()) 이 정책은 지켜져야 한다.
     assert temp_dir.exists(), "후처리 실패 시 세그먼트가 보존돼야 하는데 지워졌다"
     assert len(list(temp_dir.iterdir())) == SEGMENT_COUNT + 1  # 초기화 세그먼트 포함
+
+
+def test_remux_failure_whose_output_cannot_be_removed_still_fails_as_a_postprocess_failure(
+    tmp_path, monkeypatch
+):
+    """재포장이 실패하고 그 산출물을 지울 수 없어도 후처리 실패로 끝나고 넘기지 않은 세그먼트가 남아야 한다 (#389).
+
+    실제 remux_stream. 산출물 경로에 폴더가 있고(ffmpeg가 쓰지 못한다) 그 경로의 os.remove가 PermissionError
+    -> run()이 예외 없이 끝난다, 실패 1건(PostprocessError, 원인 RemuxError), 지우기 거절이 1번 이상,
+       임시 폴더가 남는다
+    """
+    engine, data, logger, output, finished, failures, merge_starts = _make_engine(
+        tmp_path, monkeypatch
+    )
+    monkeypatch.setattr(base_module, "remux_stream", ffmpeg_module.remux_stream)
+    os.makedirs(output)
+    blocker = Undeletable(monkeypatch)
+    blocker.block(output)
+    escaped = []
+
+    def run() -> None:
+        try:
+            engine.run()
+        except BaseException as e:
+            escaped.append(e)
+
+    data.model.start()
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    thread.join(timeout=60)
+    assert not thread.is_alive()
+
+    assert escaped == []
+    assert len(failures) == 1
+    assert isinstance(failures[0], base_module.PostprocessError)
+    assert isinstance(failures[0].__cause__, ffmpeg_module.RemuxError)
+    assert blocker.refused
+    assert (tmp_path / "CVDv2_temp_out").is_dir()
+
+
+def test_cleanup_error_after_a_failure_does_not_replace_the_failure(tmp_path, monkeypatch):
+    """실패 뒤 정리가 예외를 내도 실패는 원래 예외로 한 번 알려지고, 정리 예외는 로그로만 남아야 한다 (#389).
+
+    준비 단계가 RuntimeError("준비 실패"), 부분 산출물 정리가 PermissionError
+    -> run()이 예외 없이 끝난다, 실패 == [그 RuntimeError], 실패 알림이 정리보다 먼저,
+       오류 로그 == ["Download failed", 정리 실패 줄], 로그 닫기 1회
+    """
+    engine, data, logger, output, finished, failures, merge_starts = _make_engine(
+        tmp_path, monkeypatch
+    )
+    cause = RuntimeError("준비 실패")
+    order = []
+
+    def prepare(_content):
+        raise cause
+
+    def cleanup() -> None:
+        order.append("cleanup")
+        raise PermissionError(13, "시험 — 지울 수 없다")
+
+    monkeypatch.setattr(engine, "prepare", prepare)
+    monkeypatch.setattr(engine, "_cleanup_partial", cleanup)
+    engine._on_failed = lambda exc: (order.append("failed"), failures.append(exc))
+    escaped = []
+
+    def run() -> None:
+        try:
+            engine.run()
+        except BaseException as e:
+            escaped.append(e)
+
+    data.model.start()
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    thread.join(timeout=30)
+    assert not thread.is_alive()
+
+    assert escaped == []
+    assert failures == [cause]
+    assert order == ["failed", "cleanup"]
+    assert logger.errors == [
+        "Download failed",
+        "Cleanup after failure failed — partial files may remain",
+    ]
+    assert logger.closed == 1
+
+
+def test_failure_callback_that_raises_still_lets_the_cleanup_run(tmp_path, monkeypatch):
+    """실패 콜백이 예외를 내도 부분 산출물 정리와 로그 닫기는 해야 한다 (#389).
+
+    준비 단계가 RuntimeError("준비 실패"), 실패 콜백이 ValueError("콜백 고장")
+    -> 정리 1회(콜백 뒤), 로그 닫기 1회, run() 밖으로 나간 예외 == [그 ValueError]
+    """
+    engine, data, logger, output, finished, failures, merge_starts = _make_engine(
+        tmp_path, monkeypatch
+    )
+    order = []
+    broken = ValueError("콜백 고장")
+
+    def prepare(_content):
+        raise RuntimeError("준비 실패")
+
+    def on_failed(_exc):
+        order.append("failed")
+        raise broken
+
+    monkeypatch.setattr(engine, "prepare", prepare)
+    monkeypatch.setattr(engine, "_cleanup_partial", lambda: order.append("cleanup"))
+    engine._on_failed = on_failed
+    escaped = []
+
+    def run() -> None:
+        try:
+            engine.run()
+        except BaseException as e:
+            escaped.append(e)
+
+    data.model.start()
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    thread.join(timeout=30)
+    assert not thread.is_alive()
+
+    assert order == ["failed", "cleanup"]
+    assert logger.closed == 1
+    assert escaped == [broken]

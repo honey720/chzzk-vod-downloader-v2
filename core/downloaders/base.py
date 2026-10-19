@@ -1440,11 +1440,15 @@ class BaseDownloader(ABC):
             self.logger.save_and_close()
 
         except self._failure_exceptions as e:
-            # 오류 발생 시 부분 산출물 삭제
-            self._cleanup_partial()
-            self._notify_failed(e)
-            self.logger.log_exception("Download failed", e)
-            self.logger.save_and_close()
+            # 실패를 먼저 알리고 남긴 뒤 부분 산출물을 지운다 (#389) — 정리가 예외를 내면 예전에는
+            # 알림 · 로그가 돌지 않고 그 예외가 run() 밖으로 나가 실패 사유를 대신했다. 정리가 죽은
+            # 마운트에 갇혀도 실패는 이미 알려져 있다. 실패 콜백이 예외를 내도 정리는 한다(finally)
+            try:
+                self._notify_failed(e)
+                self.logger.log_exception("Download failed", e)
+            finally:
+                self._cleanup_after_failure()
+                self.logger.save_and_close()
 
         finally:
             # 실패·전파 예외 경로에서도 관측 스레드를 남기지 않는다 (#89).
@@ -1452,6 +1456,17 @@ class BaseDownloader(ABC):
             # 관측 루프가 상태 변화만 기다리며 영원히 돌았다
             self._stop_monitor(monitor)
             self._release_after_run()
+
+    def _cleanup_after_failure(self) -> None:
+        """실패한 실행의 부분 산출물을 지운다. 지우다 난 예외는 로그로만 남긴다 (#389).
+
+        실패를 알리고 남긴 뒤에 부른다. 정리의 예외가 실패 사유를 바꾸거나 run() 밖으로 나가지
+        않게 한다 — 남은 것은 다음 정리(같은 이름의 다음 실행 · 유저)의 몫이다.
+        """
+        try:
+            self._cleanup_partial()
+        except Exception as e:
+            self.logger.log_error("Cleanup after failure failed — partial files may remain", e)
 
     def _release_after_run(self) -> None:
         """실행이 끝난 뒤(완료 · 실패 · 중단 모두) 실행 동안만 쓰는 큰 데이터를 놓는다 (기본: 없음).
