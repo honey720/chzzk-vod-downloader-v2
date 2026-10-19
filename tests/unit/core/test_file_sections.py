@@ -1103,7 +1103,8 @@ def test_cut_failure_whose_output_cannot_be_removed_still_ends_as_a_partial_fail
 
     blocker.release()
     if undeletable:
-        # 남은 것이 이름을 차지하면 이어받은 실행은 둘째 구간에 새 이름을 준다 — 그 경우는 따로 잰다
+        # 남은 것이 이름을 차지하면 이어받은 실행은 둘째 구간에 새 이름을 준다 — 이 테스트는 그
+        # 경우(이름이 바뀐 mp4 재시도)를 재지 않는다
         os.remove(failed.paths[1])
     requests_before = len(server.requests)
     cuts.restart()
