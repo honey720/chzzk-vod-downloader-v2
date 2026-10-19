@@ -85,6 +85,7 @@ from tests.unit.core.midway_cut_failure import MidwayCutFailure
 from core.utils.retry import RETRY_MAX_DELAY
 from tests.unit.core.range_host import RangeHost
 from tests.unit.core.section_retry import CutCalls, hand_over, snapshot
+from tests.unit.core.undeletable import Undeletable
 
 FPS = 30
 KEYFRAMES = (0, 30, 42, 72, 90, 120, 150)  # -force_key_frames 0,1,1.4,2.4,3,4,5 (30fps)
@@ -1064,6 +1065,87 @@ def test_retry_cuts_only_the_failed_section_from_the_kept_source_without_request
         data.sections_failed,
         data.sections_resumed,
     ) == (3, 3, 0, 2)
+
+
+@pytest.mark.parametrize("undeletable", [False, True], ids=["지울 수 있음", "지울 수 없음"])
+def test_cut_failure_whose_output_cannot_be_removed_still_ends_as_a_partial_failure(
+    server, tmp_path, monkeypatch, undeletable
+):
+    """구간의 컷이 실패하면 그 출력을 지울 수 없어도 일부 실패로 끝나고, 이어받은 실행은 그 구간만 다시 잘라야 한다 (#389).
+
+    구간 셋, 둘째 구간의 컷이 출력 파일을 반쯤 쓰고 CutError. 그 출력의 os.remove가
+    PermissionError(대조: 지울 수 있음)
+    -> 실패 1건(PostprocessError, 원인 CutError), 구간 상태 == (전체 3, 완료 2, 실패 1), 이어받기 기록이
+       있다, `_1` · `_3` 파일과 경계 원본 · 둘째 구간의 본문이 남는다, 지울 수 없을 때만 `_2`가 남고
+       지우기 거절이 1번 이상
+    -> 남은 `_2`를 치우고 이어받은 실행: 컷 호출 1회(`_2`), 완료 1회 · 실패 0건, 요청 0건
+    """
+    blocker = Undeletable(monkeypatch)
+    cuts = CutCalls(monkeypatch, fd_module, "finish_section_file", source_arg=0)
+    cuts.fail_on = (2,)
+    failed = _Run(server, "plain", tmp_path, _three())
+    if undeletable:
+        blocker.block(failed.paths[1])
+
+    failed.start()
+
+    assert len(failed.failures) == 1
+    assert isinstance(failed.failures[0], PostprocessError)
+    assert isinstance(failed.failures[0].__cause__, CutError)
+    data = failed.data
+    assert (data.sections_total, data.sections_done, data.sections_failed) == (3, 2, 1)
+    assert data.section_resume is not None
+    assert os.path.isfile(failed.paths[0]) and os.path.isfile(failed.paths[2])
+    assert os.path.isfile(failed.source_path)
+    assert os.path.isfile(section_body_path_for(failed.paths[1]))
+    assert os.path.exists(failed.paths[1]) == undeletable
+    assert bool(blocker.refused) == undeletable
+
+    blocker.release()
+    if undeletable:
+        # 남은 것이 이름을 차지하면 이어받은 실행은 둘째 구간에 새 이름을 준다 — 그 경우는 따로 잰다
+        os.remove(failed.paths[1])
+    requests_before = len(server.requests)
+    cuts.restart()
+    again = hand_over(failed, _Run(server, "plain", tmp_path, _three())).start()
+
+    assert (again.finished, again.failures) == (1, [])
+    assert cuts.outputs == [THREE_FILES[1]]
+    assert server.requests[requests_before:] == []
+
+
+def test_section_file_that_cannot_be_put_in_place_fails_alone(server, tmp_path, monkeypatch):
+    """다 쓴 본문을 구간 파일의 이름으로 바꾸지 못하면 그 구간만 실패하고 본문이 남아야 한다 (#389).
+
+    구간 셋, 둘째 구간의 출력 경로로 옮기는 os.replace가 PermissionError
+    -> 실패 1건(PostprocessError, 원인 CutError, 그 원인 PermissionError), 구간 상태 == (3, 2, 1), 이어받기
+       기록이 있다, `_1` · `_3` 파일과 경계 원본 · 둘째 구간의 본문이 남는다, 옮기기 거절이 1번
+    -> 막은 것을 풀고 이어받은 실행: 완료 1회 · 실패 0건, 요청 0건
+    """
+    blocker = Undeletable(monkeypatch)
+    failed = _Run(server, "plain", tmp_path, _three())
+    blocker.block_replace_into(failed.paths[1])
+
+    failed.start()
+
+    assert len(failed.failures) == 1
+    assert isinstance(failed.failures[0], PostprocessError)
+    assert isinstance(failed.failures[0].__cause__, CutError)
+    assert isinstance(failed.failures[0].__cause__.__cause__, PermissionError)
+    data = failed.data
+    assert (data.sections_total, data.sections_done, data.sections_failed) == (3, 2, 1)
+    assert data.section_resume is not None
+    assert os.path.isfile(failed.paths[0]) and os.path.isfile(failed.paths[2])
+    assert os.path.isfile(failed.source_path)
+    assert os.path.isfile(section_body_path_for(failed.paths[1]))
+    assert blocker.replace_refused == [failed.paths[1]]
+
+    blocker.release()
+    requests_before = len(server.requests)
+    again = hand_over(failed, _Run(server, "plain", tmp_path, _three())).start()
+
+    assert (again.finished, again.failures) == (1, [])
+    assert server.requests[requests_before:] == []
 
 
 def test_stop_during_retry_removes_only_what_the_retry_made(server, tmp_path, monkeypatch):

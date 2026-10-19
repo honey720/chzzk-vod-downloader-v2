@@ -32,6 +32,7 @@ distro·BtbN 빌드는 정상임을 CI 교차 실측으로 확인했다. pip 방
 
 import ctypes
 import functools
+import logging
 import os
 import shutil
 import signal
@@ -41,6 +42,8 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable, Iterable, Iterator, Sequence
+
+logger = logging.getLogger(__name__)
 
 # GUI 앱의 서브프로세스가 콘솔 창을 띄우지 않게 한다 (Windows 전용 플래그)
 _CREATE_NO_WINDOW = 0x08000000
@@ -542,6 +545,8 @@ def _copy_piped(
         _close_quietly(proc.stdin, proc.stderr)
         _remove_quietly(dst_path)
         raise
+    finally:
+        _close_feed(chunks)
 
     _close_quietly(proc.stdin)
     # 넣을 것은 다 넣었다 — ffmpeg가 남은 것(mp4의 moov)을 쓰고 끝나기를 기다린다
@@ -674,6 +679,8 @@ def remux_through(
         end_both()
         _remove_quietly(dst_path)
         raise
+    finally:
+        _close_feed(chunks)
 
     _close_quietly(convert.stdin)
     # 넣을 것은 다 넣었다 — 두 ffmpeg가 남은 것을 쓰고 끝나기를 기다린다. 이때부터는 공급
@@ -934,9 +941,29 @@ def read_in_chunks(path: str, chunk_size: int = 1024 * 1024) -> Iterator[bytes]:
 
 
 def _remove_quietly(path: str) -> None:
-    """존재하면 삭제한다 (실패 정리 경로 전용 — 없어도 오류가 아니다)."""
-    if os.path.exists(path):
-        os.remove(path)
+    """존재하면 삭제한다 (실패 정리 경로 전용 — 없어도, 지우지 못해도 오류가 아니다).
+
+    지우지 못하면(``OSError``) 경고 로그만 남긴다 (#389). 이 함수는 실패를 알리는 길에서만
+    불린다 — 여기서 예외를 내면 그 예외가 알리려던 실패(``RemuxError`` 등)를 대신해, 구간의 컷
+    실패가 다운로드 전체의 실패가 됐다.
+    """
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except OSError as e:
+        logger.warning("실패한 산출물을 지우지 못했다: %s", e)
+
+
+def _close_feed(chunks: Iterable[bytes]) -> None:
+    """공급 이터레이터가 제너레이터면 닫는다 — 읽던 파일을 놓게 한다 (#389).
+
+    ffmpeg가 먼저 끝나 공급 루프가 중간에 빠지면 제너레이터는 파일을 연 채 멈춰 있다. 그것을
+    가리키는 프레임을 예외의 트레이스백이 붙잡아, 실패 뒤 정리가 임시 폴더를 지울 때 그 파일이
+    열려 있었다(Windows에서는 지우지 못한다). 끝까지 돈 제너레이터 · 리스트에는 할 일이 없다.
+    """
+    close = getattr(chunks, "close", None)
+    if close is not None:
+        close()
 
 
 def _close_quietly(*streams) -> None:
