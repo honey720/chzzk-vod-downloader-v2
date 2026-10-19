@@ -6,10 +6,12 @@ mainWindow와 같은 배선(ContentViewModel ↔ ContentListView ↔ DownloadVie
 위젯까지 실제 시그널로 지나가게 한다. 실제 다운로드 · 네트워크는 없다.
 
 핵심 계약:
-- 진행 막대는 전송과 컷을 합친 하나다 — 지난 시간 ÷ 예상 전체 시간이고, 컷의 예상 시간은
-  구간 수와 구간 길이에서 어림한다. 여기서는 시계를 고정해 전송이 컷 예상 시간의 4.02배
-  걸리게 한다(전송이 막대의 약 80%). 전달 방식(파일 · 세그먼트)이 달라도 같은 진행에는
-  같은 값이 나온다
+- 진행 막대는 전송과 컷을 합친 하나다 — 한 일만큼 차고(#390), 두 단계가 함께 남은 동안의 몫은
+  받던 시간으로 본 전송 예상 시간과 컷 예상 시간(구간 수와 구간 길이에서 어림)으로 나눈다.
+  여기서는 시계를 고정해 전송이 컷 예상 시간의 4.02배 걸리게 한다(전송이 막대의 약 80%).
+  전달 방식(파일 · 세그먼트)이 달라도 같은 진행에는 같은 값이 나온다
+- 받기가 멈춘 동안(정체 · 일시정지) 막대는 서 있고, 재개해도 뛰지 않는다. 받아 둔 것을 다시
+  쓰는 재시도의 막대도 0에서 찬다
 - 완료 구간 수는 엔진이 적어 둔 구간 상태에서 읽는다 — 같은 통지가 두 번 와도 늘지 않는다
 - 컷 단계의 카드에는 속도 · 남은 시간 대신 단계 문구가 나온다
 - 일부 구간만 자르지 못하면 나머지가 끝난 뒤에 카드가 실패가 되고, 실패한 구간 수와 완료
@@ -34,6 +36,7 @@ from app.viewmodels.download_viewmodel import DownloadViewModel
 from app.widgets.view import ContentListView
 from core.downloaders.base import PostprocessError
 from core.models.download_state import DownloadState
+from core.models.download_task import DownloadTaskModel
 from core.models.events import ProgressEvent
 from core.models.plan import TimeRange
 from core.models.section_resume import SectionResume
@@ -58,16 +61,25 @@ TRANSFER_SECONDS = 4.02 * cut_estimate(6, 11, 29)
 
 
 class _Clock:
-    """진행 막대의 시계 대역 — 테스트가 시각을 정한다."""
+    """진행 막대의 시계 대역 — 테스트가 시각과 일시정지해 있던 시간의 합을 정한다."""
 
     now = 0.0
+    paused = 0.0  # 일시정지해 있던 시간의 합(초) — `paused_clock` 픽스처가 모델에 건다
 
 
 @pytest.fixture(autouse=True)
 def clock(monkeypatch):
     """진행 막대가 재는 시간을 고정한다 — `_Card.transfer`가 전송의 진행만큼 시계를 돌린다."""
     _Clock.now = 0.0
+    _Clock.paused = 0.0
     monkeypatch.setattr(download_viewmodel_module, "_clock", lambda: _Clock.now)
+    return _Clock
+
+
+@pytest.fixture
+def paused_clock(monkeypatch):
+    """다운로드 모델이 알리는 일시정지 시간의 합을 시계 대역의 값으로 바꾼다."""
+    monkeypatch.setattr(DownloadTaskModel, "paused_seconds", property(lambda self: _Clock.paused))
     return _Clock
 
 
@@ -175,6 +187,7 @@ class _Card:
         self.item.total_size = "595.34 MB"
         self.item.selections = tuple(selections)
         self.transfer_seconds = TRANSFER_SECONDS  # 전송이 끝나기까지 시계가 가는 양
+        self.fraction = 0.0  # 마지막으로 알린 전송의 진행
         self._started_at = _Clock.now  # 다운로드를 시작한 때의 시계
         self.manager.model.addItem(self.item)
         qapp.processEvents()
@@ -201,6 +214,7 @@ class _Card:
     def transfer(self, fraction: float, speed: float = 3.1) -> None:
         """전송이 fraction만큼 진행됐다고 엔진처럼 알린다 — 파일은 바이트, 세그먼트 기반은 세그먼트 수."""
         total = 100 * MB
+        self.fraction = fraction
         _Clock.now = self._started_at + self.transfer_seconds * fraction
         self.data.completed_threads = round(self.data.max_threads * fraction)
         self.submission["on_progress"](
@@ -212,6 +226,26 @@ class _Card:
             )
         )
         self.qapp.processEvents()
+
+    def wait(self, seconds: float, notifications: int = 0) -> None:
+        """받는 것 없이 seconds가 지나게 한다 — 그동안 진행 통지를 notifications번 보낸다(정체).
+
+        뒤의 `transfer`가 그만큼 늦은 시각에 오도록 시작 시각도 옮긴다.
+        """
+        for _ in range(notifications):
+            _Clock.now += seconds / notifications
+            self.submission["on_progress"](
+                ProgressEvent(
+                    downloaded_size=round(100 * MB * self.fraction),
+                    total_size=None if self.item.is_segment_based else 100 * MB,
+                    speed=0.0,
+                    active_threads=4,
+                )
+            )
+            self.qapp.processEvents()
+        if not notifications:
+            _Clock.now += seconds
+        self._started_at += seconds
 
     def begin_cut(self) -> None:
         """전송이 끝나고 컷 단계에 들어갔다고 알린다."""
@@ -810,3 +844,128 @@ def test_bar_during_transfer_is_the_time_spent_over_the_expected_total(card):
     card.transfer(0.5)
 
     assert card.item.download_progress == 40
+
+
+# ================================================================ 받기가 멈출 때 · 재시도 (#390)
+
+
+@pytest.mark.parametrize("card", ["video", "m3u8", "hls_aes"], indirect=True)
+def test_bar_stands_still_while_nothing_is_received_and_then_goes_on_as_if_it_had_not_stopped(card):
+    """받는 것 없이 시간이 지나는 동안 막대는 서 있고, 다시 받기 시작하면 멈추지 않았을 때와 같은 값이어야 한다 (#390).
+
+    구간 셋, 전송이 막대의 80.08%. 전송 30% → 진행이 그대로인 통지 30번이 30초에 걸쳐 옴 → 전송 70%
+    -> 진행률: 30%에서 24, 정체 동안 내내 24, 70%에서 56 (멈추지 않았을 때의 값과 같다)
+    """
+    card.start()
+    card.transfer(0.3)
+    before = card.item.download_progress
+    during = []
+
+    for _ in range(3):
+        card.wait(10, notifications=10)
+        during.append(card.item.download_progress)
+    card.transfer(0.7)
+
+    assert before == 24
+    assert during == [24, 24, 24]
+    assert card.item.download_progress == 56
+
+
+def test_bar_does_not_jump_after_a_pause(card, paused_clock):
+    """60초 일시정지한 뒤 재개해도 막대가 뛰지 않고, 멈추지 않았을 때와 같은 값이어야 한다 (#390).
+
+    구간 셋, 전송이 막대의 80.08%. 전송 30% → 60초 일시정지(그동안 통지 없음) → 재개 뒤 첫 통지에서
+    전송 40% → 전송 70%
+    -> 진행률 == [24, 32, 56] (멈추지 않았을 때와 같다)
+    """
+    card.start()
+    card.transfer(0.3)
+    seen = [card.item.download_progress]
+
+    paused_clock.paused += 60
+    card.wait(60)
+    for fraction in (0.4, 0.7):
+        card.transfer(fraction)
+        seen.append(card.item.download_progress)
+
+    assert seen == [24, 32, 56]
+
+
+@pytest.mark.parametrize("card", ["m3u8", "hls_aes"], indirect=True)
+def test_retry_that_reuses_stored_segments_fills_the_bar_from_zero_to_100(card):
+    """받아 둔 세그먼트를 다시 쓰는 재시도도 막대가 0에서 시작해 100에서 끝나야 한다 (#390).
+
+    세그먼트 10개 가운데 6개는 받지 않고 다시 씀(엔진이 준비 끝에 reusable_threads = 6을 적음).
+    다시 쓴 6개가 한꺼번에 끝난 통지 → 받은 것 2개 · 4개 → 컷 단계 → 구간 셋이 차례로 끝남.
+    받기가 컷 예상 시간의 4.02배
+    -> 진행률 == [0, 40, 80, 80, 86, 93, 100] (컷 단계에 들어선 통지는 받기가 끝난 80 그대로)
+    """
+    card.start(segments=10)
+    card.data.reusable_threads = 6
+    seen = []
+
+    card.data.completed_threads = card.data.reused_threads = 6
+    card.wait(0.0, notifications=1)
+    seen.append(card.item.download_progress)
+    for received in (2, 4):
+        _Clock.now = card._started_at + card.transfer_seconds * received / 4
+        card.data.completed_threads = 6 + received
+        card.wait(0.0, notifications=1)
+        seen.append(card.item.download_progress)
+    card.submission["on_merge_start"]()
+    card.notify_cut()
+    seen.append(card.item.download_progress)
+    for done in (1, 2, 3):
+        card.cut(done)
+        seen.append(card.item.download_progress)
+
+    assert seen == [0, 40, 80, 80, 86, 93, 100]
+
+
+@pytest.mark.parametrize("card", ["video"], indirect=True)
+def test_retry_that_receives_nothing_fills_the_bar_with_the_cut_alone(card):
+    """받을 것이 없는 재시도(남긴 원본을 그대로 쓴다)는 막대가 0에서 시작해 컷만으로 100까지 차야 한다 (#390).
+
+    구간 셋, 엔진이 받을 바이트 0을 알림 → 컷 단계 → 컷 진행 0.5 → 구간 셋이 끝남
+    -> 진행률 == [0, 0, 50, 100]
+    """
+    card.start(segments=0)
+    seen = []
+
+    card.submission["on_progress"](
+        ProgressEvent(downloaded_size=0, total_size=0, speed=0.0, active_threads=0)
+    )
+    card.qapp.processEvents()
+    seen.append(card.item.download_progress)
+    card.submission["on_merge_start"]()
+    card.notify_cut()
+    seen.append(card.item.download_progress)
+    card.cut_inside(0.5)
+    seen.append(card.item.download_progress)
+    card.cut(3)
+    seen.append(card.item.download_progress)
+
+    assert seen == [0, 0, 50, 100]
+
+
+@pytest.mark.parametrize("cut_takes", [3.0, 1 / 3], ids=["three-times", "a-third"])
+def test_cut_longer_or_shorter_than_its_estimate_neither_lowers_nor_jumps_the_bar(card, cut_takes):
+    """컷이 예상보다 3배 길거나 1/3이어도 막대는 컷의 한 일만큼만 올라 줄거나 뛰지 않아야 한다 (#390).
+
+    구간 셋, 전송이 막대의 80.08%. 컷 단계에서 컷 진행 0.25 · 0.5 · 0.75가 예상 시간의
+    cut_takes배에 걸쳐 고르게 옴 → 구간 셋이 끝남
+    -> 진행률 == [80, 85, 90, 95, 100] (예상과 같을 때와 같다)
+    """
+    card.start()
+    card.begin_cut()
+    card.notify_cut()
+    seen = [card.item.download_progress]
+
+    for progress in (0.25, 0.5, 0.75):
+        _Clock.now += cut_estimate(6, 11, 29) * cut_takes / 4
+        card.cut_inside(progress)
+        seen.append(card.item.download_progress)
+    card.cut(3)
+    seen.append(card.item.download_progress)
+
+    assert seen == [80, 85, 90, 95, 100]
