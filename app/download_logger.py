@@ -240,6 +240,15 @@ class DownloadLogger:
         """
         self.info(f"Transfer without prepare: {elapsed:.2f} seconds")
 
+    def log_transfer_reused(self, segments: int, size: int):
+        """전송 단계 전에 받아 둔 것을 받지 않고 쓴 세그먼트의 수와 크기를 로깅합니다 (#376).
+
+        받아 둔 것은 구간을 정할 때 받은 세그먼트와 이전 실행이 남긴 세그먼트다.
+        "Transfer completed"의 Bytes는 전송 단계가 받은 것만이다 — 받아 둔 것은 이 줄에 따로
+        남긴다. "Segments:"의 수에는 받아 둔 세그먼트가 들어 있다.
+        """
+        self.info(f"Stored segments used - Segments: {segments} - Bytes: {size}")
+
     def log_cut_setup(self, elapsed: float):
         """컷을 시작하기 전 색인에서 프레임 정보를 뽑는 데 걸린 시간을 로깅합니다 (#309)."""
         self.info(f"Cut frames prepared in {elapsed:.2f} seconds")

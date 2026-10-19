@@ -204,6 +204,24 @@ def test_prepare_and_net_transfer_lines_are_added_without_changing_the_transfer_
     assert summarize(log_file)["transfer_seconds"] == 12.34
 
 
+def test_stored_segments_line_is_added_without_changing_the_transfer_line(tmp_path, monkeypatch):
+    """받아 둔 세그먼트 줄을 더해도 Transfer 줄과 요약 지표는 그대로여야 한다 (#376).
+
+    Transfer 12.34초 · 1000바이트, 받아 둔 세그먼트 900개 · 234567890바이트를 차례로 로깅
+    -> 로그에 "Stored segments used - Segments: 900 - Bytes: 234567890"이 그 글자 그대로,
+       요약의 transfer_bytes == 1000
+    """
+    logger = _make_logger(tmp_path, monkeypatch)
+    logger.log_transfer_complete(12.34, 1000, 0, 4)
+    logger.log_transfer_reused(900, 234567890)
+    log_file = Path(logger.log_file)
+    logger.save_and_close()
+
+    text = log_file.read_text(encoding="utf-8")
+    assert "Stored segments used - Segments: 900 - Bytes: 234567890" in text
+    assert summarize(log_file)["transfer_bytes"] == 1000
+
+
 def test_prepare_line_keeps_its_front_when_rests_are_appended(tmp_path, monkeypatch):
     """쉰 횟수 · 시간이 붙은 준비 줄도 앞부분은 그대로이고 요약 지표를 바꾸지 않아야 한다 (#309).
 

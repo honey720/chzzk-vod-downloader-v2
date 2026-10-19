@@ -1361,6 +1361,11 @@ class BaseDownloader(ABC):
                 self._log_if_supported(
                     "log_transfer_net", max(transfer_elapsed - prepare_elapsed, 0.0)
                 )
+                if self.s.reused_threads:
+                    # 위 줄의 Bytes는 전송 단계가 받은 것만이다 — 받아 둔 것은 따로 적는다 (#376)
+                    self._log_if_supported(
+                        "log_transfer_reused", self.s.reused_threads, self.s.reused_bytes
+                    )
                 # (4) 다운로드 완료 후 타입별 마무리(병합 등) 후 완료 통지 —
                 # 후처리 필요 여부는 실행 중 추측하지 않고 계획이 답한다 (#83)
                 postprocess_elapsed = None
@@ -1674,6 +1679,22 @@ class BaseDownloader(ABC):
             if self._received_at is None or received_at > self._received_at:
                 self._received_at = received_at
             self._failing_slots.clear()
+
+    def _complete_reused(self, part_num: int, size: int) -> None:
+        """전송 단계 전에 받아 둔 항목을 받지 않고 끝낸 것으로 센다 (#376).
+
+        받아 둔 것은 구간을 정할 때 받은 세그먼트와 이전 실행이 남긴 세그먼트다.
+        완료 수(진행률 · 완료 판정)에는 넣고 받은 바이트(completed_progress)에는 넣지 않는다 —
+        받은 바이트는 속도 · 스레드 조정 · 전송 줄의 Bytes가 되므로 이번 실행이 받은 것만이어야
+        한다. 다시 쓴 수와 크기는 따로 센다. 항목마다의 완료 줄은 그대로 남긴다 — 로그 요약이
+        완료 줄 수를 세그먼트 수와 견준다.
+        """
+        with self.lock:
+            self.s.completed_threads += 1
+            self.s.reused_threads += 1
+            self.s.reused_bytes += size
+            self.s.threads_progress[part_num] = 0
+        self.logger.log_thread_complete(part_num, size)
 
     # ============ 관측 루프 (구 Monitor 스레드 — 엔진이 흡수) ============
 

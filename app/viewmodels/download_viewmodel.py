@@ -928,8 +928,10 @@ def _segment_progress_args(
             int((data.completed_threads / data.max_threads) * 100) if data.max_threads > 0 else 0
         )
 
-    if speed_mb > 0 and data.completed_threads > 0:
-        avg_segment_size = event.downloaded_size / data.completed_threads
+    # 받은 크기에는 받아 두었던 세그먼트가 들어 있지 않다 — 평균도 받은 것만으로 낸다 (#376)
+    received_segments = data.completed_threads - data.reused_threads
+    if speed_mb > 0 and received_segments > 0:
+        avg_segment_size = event.downloaded_size / received_segments
         remaining_segments = data.max_threads - data.completed_threads
         remaining_time = (avg_segment_size * remaining_segments) / (speed_mb * 1024 * 1024)
         remaining_time_str = strftime("%H:%M:%S", gmtime(remaining_time))
