@@ -577,6 +577,9 @@ class BaseDownloader(ABC):
         self._fatal_claimed = False
         # 전송 종료 시 관측 스레드를 깨워 끝내는 신호 — 후처리는 관측 대상이 아니다 (#89)
         self._monitor_stop = threading.Event()
+        # 작업이 끝나 슬롯이 빈 것을 실행 루프에 알리는 신호 — 루프는 이것을 최대 0.1초 기다린다.
+        # 고정 0.1초를 쉬면 처리량이 작업자 수 × 초당 10개로 묶였다 (#376)
+        self._slot_freed = threading.Event()
         self._pause_clock = _PauseClock()  # 컷이 도는 동안의 일시정지 시간
         self._cut_paused = 0.0  # 지금 자르는 구간에서 일시정지한 시간의 합(초)
         # 이번 실행이 실패를 알렸는지 — 실패로 멈춘 것과 사용자가 멈춘 것을 로그에서 가른다
@@ -1298,6 +1301,8 @@ class BaseDownloader(ABC):
                     self._received_at = self._retry_now()
 
                 while not self.state == DownloadState.WAITING:
+                    # 이 뒤에 끝난 작업만 (2)의 대기를 깨운다 — 그 앞에 끝난 것은 (1)이 이미 채웠다
+                    self._slot_freed.clear()
                     # (1) 현재 활성 스레드 수보다 적으면 -> 추가 스레드 할당.
                     # 오류로 재큐한 항목은 대기가 끝나야 꺼낸다 — 그동안 다른 항목을 받는다 (#329)
                     while self.s.future_count < self.s.adjust_threads and self._has_ready_item():
@@ -1326,8 +1331,9 @@ class BaseDownloader(ABC):
                                 # 락 안에서 등록하면 즉시 실패하는 작업에서 교착한다
                                 submitted.add_done_callback(self._download_completed_callback)
 
-                    # (2) 주기적으로 상태 확인 (non-blocking)
-                    tm.sleep(0.1)
+                    # (2) 작업이 끝나 슬롯이 비면 바로, 아니면 0.1초마다 상태 확인 (#376) — 중단 ·
+                    # 일시정지 · 스레드 수 조정 · 재요청 대기가 끝난 항목은 길어야 0.1초 뒤에 본다
+                    self._slot_freed.wait(0.1)
                     # 세그먼트를 몇 개 받았으면 크기를 다시 어림해 여유 공간을 본다 (#309)
                     self._watch_space()
 
@@ -1506,6 +1512,9 @@ class BaseDownloader(ABC):
                         break
         if part_num is not None:
             self.update_progress()  # 즉각적 진행도 반영
+        # 실행 루프를 깨운다 — 받은 양을 반영한 뒤에 깨워야 전송이 끝났다고 본 루프가 마지막
+        # 작업의 바이트까지 센다 (#376)
+        self._slot_freed.set()
 
     def _requeue_failed(self, item, part_num: int, exc: BaseException) -> _Requeue:
         """예외 발생 시 작업을 다시 다운로드할 수 있도록 remaining_ranges에 등록할지 정한다.
