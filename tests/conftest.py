@@ -9,6 +9,7 @@ import gc
 import os
 import re
 import socket
+import subprocess
 import sys
 import threading
 from pathlib import Path
@@ -35,6 +36,11 @@ import config.config as config_module  # noqa: E402 — sys.path 삽입 후에 �
 import core.downloaders.hls_aes_downloader as hls_aes_module  # noqa: E402
 import core.downloaders.m3u8_downloader as m3u8_module  # noqa: E402
 from core.utils.paths import temp_dir_for  # noqa: E402
+from tests.console_window import install as hide_console_windows  # noqa: E402
+
+# Windows에서 테스트가 띄우는 자식 프로세스가 콘솔 창을 띄우지 않게 한다 (#399) — 수집 중의
+# 호출도 덮도록 모듈을 읽을 때 건다. creationflags를 직접 준 호출(제품의 ffmpeg 등)은 그대로다
+hide_console_windows(subprocess, sys.platform)
 
 # 외부 API 응답을 흉내 내는 픽스처 파일 저장 위치
 MOCK_RESPONSES_DIR = Path(__file__).resolve().parent / "fixtures" / "mock_responses"
