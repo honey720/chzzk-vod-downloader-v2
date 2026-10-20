@@ -1325,10 +1325,10 @@ def test_error_tail_that_starts_at_a_line_head_is_the_character_tail():
 def test_error_tail_treats_a_carriage_return_as_a_line_break():
     """줄 바꿈이 \\r뿐인 글(ffmpeg의 진행 줄)에서도 줄 머리에서 시작해야 한다 (#397).
 
-    "progress 1\\rprogress 2\\rend", limit=8 (글자 수 꼬리 "ss 2\\rend")
-    -> "progress 2\\rend"
+    "progress 1\\rframe 22 end", limit=6 (글자 수 꼬리 "22 end", \\r 다음 줄 머리는 6글자 앞)
+    -> "frame 22 end" (낱말 머리 "22 end"가 아니라 줄 머리)
     """
-    assert ffmpeg_module.error_tail("progress 1\rprogress 2\rend", 8) == "progress 2\rend"
+    assert ffmpeg_module.error_tail("progress 1\rframe 22 end", 6) == "frame 22 end"
 
 
 def test_error_tail_of_a_short_text_is_the_whole_stripped_text():
