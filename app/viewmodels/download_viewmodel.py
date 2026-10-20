@@ -836,7 +836,9 @@ class _SectionProgress:
 
     두 단계가 함께 남은 동안 남은 몫을 나누는 받기의 예상 시간은 **실제로 받던 시간** ÷ 받기의
     진행이다. 받던 시간은 통지 사이에 받기가 나아간 때만 그 사이의 시간을 더하고, 그 사이에
-    일시정지해 있던 시간은 뺀다 — 정체 · 일시정지가 예상을 부풀리지 않는다. 컷의 예상 시간은
+    일시정지해 있던 시간은 뺀다 — 정체 · 일시정지가 예상을 부풀리지 않는다. 나아갔는지는 받기의
+    진행과 받은 바이트 둘 다로 본다 — 세그먼트 기반의 진행은 세그먼트가 끝날 때만 올라, 세그먼트
+    하나를 받는 데 통지 여럿이 걸리면 그 사이의 통지를 정체로 볼 것이다. 컷의 예상 시간은
     ``_cut_seconds``의 어림이다. 엔진의 관측 스레드와 컷을 돌리는 스레드가 함께 부른다.
     """
 
@@ -854,24 +856,31 @@ class _SectionProgress:
         self._seen_at = _clock()  # 직전 통지의 시각
         self._seen_paused = paused_seconds()  # 직전 통지 때까지 일시정지해 있던 시간
         self._seen_transfer = 0.0  # 직전 통지 때의 받기의 진행
+        self._seen_received = 0  # 직전 통지 때의 받은 바이트
         self._lock = threading.Lock()
 
-    def percent(self, transfer: float, cutting: bool, cut: float) -> int:
+    def percent(self, transfer: float, cutting: bool, cut: float, received: int = 0) -> int:
         """지금 막대에 보일 값(0~100).
 
         Args:
             transfer: 받기의 진행(0~1) — 이번 실행이 받을 것 가운데 받은 몫. 받을 것이 없으면 1
             cutting: 컷 단계에 들어갔는지 — 들어갔으면 받기는 끝난 것으로 본다
             cut: 컷의 진행(0~1) — 컷 단계에서만 쓴다
+            received: 이번 실행이 받은 바이트 — 받기의 진행이 그대로여도 이것이 늘었으면 그
+                사이에 받고 있었던 것이다. 줄면(다시 요청한 항목의 바이트를 버림) 나아가지 않은 것이다
         """
         with self._lock:
             now, paused = _clock(), self._paused_seconds()
             if cutting:
                 transfer = 1.0
-            if transfer > self._seen_transfer:
+            moved = transfer > self._seen_transfer or (
+                not cutting and received > self._seen_received
+            )
+            if moved:
                 spent = (now - self._seen_at) - (paused - self._seen_paused)
                 self._received_seconds += max(spent, 0.0)
-                self._seen_transfer = transfer
+            self._seen_transfer = max(self._seen_transfer, transfer)
+            self._seen_received = received
             self._seen_at, self._seen_paused = now, paused
             # 받기를 다 하기까지 걸릴 시간 = 받던 시간 ÷ 받기의 진행. 아직 받은 것이 없으면 그
             # 단계의 일이 0이라 예상이 막대를 움직이지 않는다
@@ -923,7 +932,7 @@ def _section_progress_args(
             # 보지 않는다 — 100은 마지막 구간의 일이 끝났을 때(위의 1.0)만이다
             cut = min(reported, 0.999)
     transfer = min(max(transfer, 0.0), 1.0)
-    progress = sections.percent(transfer, bool(item.post_process), cut)
+    progress = sections.percent(transfer, bool(item.post_process), cut, event.downloaded_size)
     return remaining, size, speed, progress
 
 

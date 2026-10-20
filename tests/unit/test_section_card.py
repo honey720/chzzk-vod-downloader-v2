@@ -871,6 +871,35 @@ def test_bar_stands_still_while_nothing_is_received_and_then_goes_on_as_if_it_ha
     assert card.item.download_progress == 56
 
 
+@pytest.mark.parametrize("card", ["m3u8", "hls_aes"], indirect=True)
+def test_notifications_that_only_received_bytes_count_as_receiving_time(card):
+    """세그먼트가 끝나지 않고 바이트만 늘어난 통지 사이도 받던 시간이어야 한다 (#390).
+
+    구간 셋, 전송이 막대의 80.08%. 전송 10%마다 그 사이 한가운데에 받은 바이트만 늘어난 통지
+    (완료 세그먼트 수는 그대로)가 옴 → 전송 30% · 70%
+    -> 진행률: 30%에서 24, 70%에서 56 (세그먼트가 통지마다 끝날 때와 같다)
+    """
+    card.start()
+    seen = {}
+
+    for step in range(1, 8):
+        fraction = step / 10
+        _Clock.now = card._started_at + card.transfer_seconds * (fraction - 0.05)
+        card.submission["on_progress"](
+            ProgressEvent(
+                downloaded_size=round(100 * MB * (fraction - 0.05)),
+                total_size=None,
+                speed=3.1,
+                active_threads=4,
+            )
+        )
+        card.qapp.processEvents()
+        card.transfer(fraction)
+        seen[step] = card.item.download_progress
+
+    assert (seen[3], seen[7]) == (24, 56)
+
+
 def test_bar_does_not_jump_after_a_pause(card, paused_clock):
     """60초 일시정지한 뒤 재개해도 막대가 뛰지 않고, 멈추지 않았을 때와 같은 값이어야 한다 (#390).
 
