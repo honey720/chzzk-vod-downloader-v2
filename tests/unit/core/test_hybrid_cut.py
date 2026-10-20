@@ -24,6 +24,7 @@ from fractions import Fraction
 
 import pytest
 
+import core.utils.cut_check as cut_check_module
 import core.utils.hybrid_cut as cut_module
 from core.api.fmp4 import build_fmp4_index, fmp4_origin, parse_init_segment, parse_media_segment
 from core.api.hls import parse_media_playlist
@@ -1086,3 +1087,30 @@ def test_failed_cut_never_reports_full_progress(mp4_source, tmp_path, monkeypatc
 
     assert seen
     assert all(value < 1.0 for value in seen)
+
+
+def test_decode_note_cut_inside_a_path_piece_ends_at_the_end_of_that_piece(
+    mp4_source, tmp_path, monkeypatch
+):
+    r"""디코드 판정의 근거 글이 오류 첫 줄을 경로 조각 한가운데서 자르지 않고 그 조각 끝까지 담아야 한다 (#397).
+
+    mp4, 프레임 35~80을 자름. 결과를 디코드하는 ffmpeg만 대역으로 바꿔 exit 1과 오류 한 줄
+    "<패딩> C:\Users\Tester\Videos\a.mp4"를 냄 — 앞 120글자가 "Tester"의 셋째 글자에서 끝난다
+    -> check.decode는 거짓, 근거 글이 "… C:\Users\Tester"로 끝난다
+    """
+    real = cut_check_module.run_ffmpeg
+    home_piece = r"C:\Users\Tester"
+    line = "x" * (120 - len(r"C:\Users\Tes") - 1) + " " + home_piece + r"\Videos\a.mp4"
+    assert line[:120].endswith(r"C:\Users\Tes")  # 글자 수 자리가 이름 안이다
+
+    def decode_fails(args, **kwargs):
+        if "null" in args:
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr=line + "\n")
+        return real(args, **kwargs)
+
+    monkeypatch.setattr(cut_check_module, "run_ffmpeg", decode_fails)
+
+    _result, check = _cut(mp4_source, 35, 80, tmp_path)
+
+    assert not check.decode
+    assert check.notes["decode"].endswith(" " + home_piece)

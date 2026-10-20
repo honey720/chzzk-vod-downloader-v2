@@ -1294,3 +1294,134 @@ def test_streamed_remux_stopped_while_waiting_ends_without_a_failure(tmp_path, m
     BaseDownloader._remux_streamed(fake, [str(segment)])
 
     assert fake.errors == []
+
+
+# ============ 오류 글의 꼬리 (#397)
+
+
+def test_error_tail_that_would_start_mid_line_starts_at_the_head_of_that_line():
+    """끝 limit 글자가 줄 중간에서 시작하면 꼬리는 그 줄의 머리에서 시작하고 글자 수 꼬리를 다 담아야 한다 (#397).
+
+    "first line\\nsecond line\\nthird", limit=10 (글자 수 꼬리 "line\\nthird")
+    -> "second line\\nthird"
+    """
+    text = "first line\nsecond line\nthird"
+
+    tail = ffmpeg_module.error_tail(text, 10)
+
+    assert tail == "second line\nthird"
+    assert tail.endswith(text[-10:])
+
+
+def test_error_tail_that_starts_at_a_line_head_is_the_character_tail():
+    """끝 limit 글자가 줄 머리에서 시작하면 꼬리는 글자 수 꼬리 그대로여야 한다 (#397).
+
+    "first line\\nthird", limit=5
+    -> "third"
+    """
+    assert ffmpeg_module.error_tail("first line\nthird", 5) == "third"
+
+
+def test_error_tail_treats_a_carriage_return_as_a_line_break():
+    """줄 바꿈이 \\r뿐인 글(ffmpeg의 진행 줄)에서도 줄 머리에서 시작해야 한다 (#397).
+
+    "progress 1\\rframe 22 end", limit=6 (글자 수 꼬리 "22 end", \\r 다음 줄 머리는 6글자 앞)
+    -> "frame 22 end" (낱말 머리 "22 end"가 아니라 줄 머리)
+    """
+    assert ffmpeg_module.error_tail("progress 1\rframe 22 end", 6) == "frame 22 end"
+
+
+def test_error_tail_of_a_short_text_is_the_whole_stripped_text():
+    """글이 limit보다 짧으면 앞뒤 공백을 걷은 글 전체여야 한다 (#397).
+
+    "  short\\n", limit=500
+    -> "short"
+    """
+    assert ffmpeg_module.error_tail("  short\n", 500) == "short"
+
+
+def test_error_tail_of_one_word_longer_than_limit_from_its_line_head_is_the_character_tail():
+    """줄 머리가 limit보다 멀고 그 줄이 끝까지 한 낱말이면 글자 수 꼬리여야 한다 (#397).
+
+    "head\\n" + "a" * 30 + "end", limit=10 (줄 머리가 꼬리 시작에서 23글자 앞, 공백 없음)
+    -> 끝 10글자
+    """
+    text = "head\n" + "a" * 30 + "end"
+
+    assert ffmpeg_module.error_tail(text, 10) == text[-10:]
+
+
+def test_error_tail_in_a_long_line_starts_at_the_head_of_the_word_it_would_cut():
+    """줄 머리가 limit보다 멀면 자른 자리가 든 낱말의 머리(앞 공백 다음)에서 시작해야 한다 (#397).
+
+    "w " * 20 + "C:/aa/bbbb/c.mp4 end", limit=12 (글자 수 꼬리 "bb/c.mp4 end", 낱말 머리는 8글자 앞)
+    -> "C:/aa/bbbb/c.mp4 end"
+    """
+    assert (
+        ffmpeg_module.error_tail("w " * 20 + "C:/aa/bbbb/c.mp4 end", 12) == "C:/aa/bbbb/c.mp4 end"
+    )
+
+
+def test_error_tail_in_a_long_line_drops_the_rest_of_a_word_whose_head_is_too_far():
+    """줄 머리도 낱말 머리도 limit보다 멀면 자른 자리가 든 낱말의 남은 부분을 버려야 한다 (#397).
+
+    "w " * 20 + "C:/" + "a" * 30 + "/b.mp4 end tail", limit=12 (낱말 머리가 꼬리 시작에서 36글자 앞)
+    -> "end tail"
+    """
+    text = "w " * 20 + "C:/" + "a" * 30 + "/b.mp4 end tail"
+
+    assert ffmpeg_module.error_tail(text, 12) == "end tail"
+
+
+# ============ 오류 글의 머리 (#397)
+
+
+@pytest.mark.parametrize(
+    ("text", "limit", "expected"),
+    [
+        ("open C:/aa/bbbb/c failed", 13, "open C:/aa/bbbb"),  # "bb|bb" — 다음 구분자까지
+        ("open C:\\aa\\bbbb failed", 13, "open C:\\aa\\bbbb"),  # \\ 구분자 · 다음 공백까지
+        ("open C:/aa/bbbb", 13, "open C:/aa/bbbb"),  # 조각이 글 끝까지 — 글 끝까지
+    ],
+)
+def test_error_head_that_would_end_inside_a_piece_ends_at_the_end_of_that_piece(
+    text, limit, expected
+):
+    """앞 limit 글자가 경로 조각 안에서 끝나면 그 조각의 끝(공백 · 경로 구분자 · 글 끝)까지 늘려야 한다 (#397).
+
+    글, limit -> expected
+    """
+    assert ffmpeg_module.error_head(text, limit) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "limit", "expected"),
+    [
+        ("open C:/aa/bbbb", 11, "open C:/aa/"),  # 자른 자리 앞이 구분자
+        ("open C:/aa/bbbb", 10, "open C:/aa"),  # 자른 자리 뒤가 구분자
+        ("short", 50, "short"),  # limit보다 짧다
+    ],
+)
+def test_error_head_on_a_piece_boundary_is_the_character_head(text, limit, expected):
+    """자른 자리가 조각 경계이거나 글이 limit보다 짧으면 앞 limit 글자 그대로여야 한다 (#397).
+
+    글, limit -> expected
+    """
+    assert ffmpeg_module.error_head(text, limit) == expected
+
+
+def test_error_head_whose_piece_end_is_farther_than_limit_ends_before_that_piece():
+    """조각 끝이 limit보다 멀면 그 조각 앞에서 잘라야 한다 (#397).
+
+    "open " + "a" * 30, limit=10 (조각 끝이 자른 자리에서 25글자 뒤)
+    -> "open"
+    """
+    assert ffmpeg_module.error_head("open " + "a" * 30, 10) == "open"
+
+
+def test_error_head_of_one_long_piece_is_the_character_head():
+    """글 전체가 limit보다 긴 한 조각이면 앞 limit 글자여야 한다 (#397).
+
+    "a" * 30, limit=10 -> "a" * 10
+    """
+    assert ffmpeg_module.error_head("a" * 30, 10) == "a" * 10

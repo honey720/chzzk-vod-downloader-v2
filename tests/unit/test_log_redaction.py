@@ -8,6 +8,8 @@
 import io
 import logging
 import re
+import subprocess
+import sys
 import threading
 import types
 
@@ -17,6 +19,7 @@ import urllib3
 
 import core.downloaders.base as base_module
 import core.downloaders.m3u8_downloader as m3u8_module
+import core.utils.ffmpeg as ffmpeg_module
 import core.utils.logging_setup as logging_setup
 from app.download_logger import DownloadLogger
 from core.downloaders.m3u8_downloader import M3U8Downloader
@@ -344,3 +347,256 @@ def test_download_log_header_keeps_title_and_channel_and_hides_the_home(app_log,
     assert r"download_path: '~\\Videos'" in written
     for text in (written, *app_log()):
         assert "Tester" not in text
+
+
+# ================================================================ 홈 경로 조각 (#397)
+
+
+@pytest.mark.parametrize(
+    ("home", "text", "expected"),
+    [
+        # 드라이브 문자가 잘린 조각
+        (WINDOWS_HOME, r":\Users\Tester\Videos\a.mp4", r"~\Videos\a.mp4"),
+        (WINDOWS_HOME, r"\Users\Tester\Videos\a.mp4", r"~\Videos\a.mp4"),
+        (WINDOWS_HOME, r"Users\Tester\Videos\a.mp4", r"~\Videos\a.mp4"),
+        # 구분자 방향 · repr의 이스케이프 · 대소문자
+        (WINDOWS_HOME, ":/Users/Tester/a.mp4", "~/a.mp4"),
+        (WINDOWS_HOME, r"\Users\Tester\a.mp4", r"~\a.mp4"),
+        (WINDOWS_HOME, "users/tester/a.mp4", "~/a.mp4"),
+        # 다른 드라이브
+        (WINDOWS_HOME, r"D:\Users\Tester\a.mp4", r"~\a.mp4"),
+        # macOS · Linux — 앞 폴더가 붙은 조각 · 앞의 /가 빠진 조각
+        ("/home/tester", "x/home/tester/a.mp4", "x/~/a.mp4"),
+        ("/home/tester", "home/tester/a.mp4", "~/a.mp4"),
+        ("/Users/tester", "Users/tester/a.mp4", "~/a.mp4"),
+    ],
+)
+def test_home_fragment_without_the_drive_or_the_leading_folders_is_replaced(home, text, expected):
+    r"""홈의 끝 두 조각(Users\<이름> · home/<이름>)이 경로 조각으로 나오면 앞에 무엇이 있든 ~로 바뀌어야 한다 (#397).
+
+    홈과 글 -> 바꾼 글 == expected
+    """
+    assert logging_setup.redact_home(text, home) == expected
+
+
+@pytest.mark.parametrize(
+    ("home", "text"),
+    [
+        (WINDOWS_HOME, r"\Users\Tester2\a.mp4"),  # 다른 사용자(이름이 이어진다)
+        (WINDOWS_HOME, r"MyUsers\Tester\a.mp4"),  # 앞 조각이 Users가 아니다
+        (WINDOWS_HOME, r"\Users\Testers"),  # 다른 사용자(끝에서 이어진다)
+        (WINDOWS_HOME, "Users Tester"),  # 경로가 아닌 곳의 같은 글자
+        (WINDOWS_HOME, "Tester"),  # 이름만
+        ("/home/tester", "/home/TESTER/a.mp4"),  # POSIX는 대소문자를 가린다
+        ("/home/tester", "home tester"),  # 경로가 아닌 곳의 같은 글자
+        ("/home/tester", "/home/tester2/a.mp4"),  # 다른 사용자
+    ],
+)
+def test_same_letters_outside_a_home_fragment_are_kept(home, text):
+    """홈 조각이 아닌 곳의 같은 글자 · 다른 사용자의 경로는 그대로여야 한다 (#397).
+
+    홈과 글 -> 바꾼 글 == 원래 글
+    """
+    assert logging_setup.redact_home(text, home) == text
+
+
+_FAKE_FFMPEG_FAILING = (  # 표준 입력을 다 읽고, 파일의 글을 표준 오류에 쓰고 1로 끝나는 ffmpeg 대역
+    "import sys\n"
+    "sys.stdin.buffer.read()\n"
+    "sys.stderr.buffer.write(open(sys.argv[1], 'rb').read())\n"
+    "sys.exit(1)\n"
+)
+
+
+@pytest.mark.parametrize("cut_at", range(len(WINDOWS_HOME) + 1))
+def test_ffmpeg_error_whose_tail_starts_inside_the_home_leaves_no_part_of_the_name_in_the_log(
+    app_log, tmp_path, monkeypatch, cut_at
+):
+    r"""ffmpeg 오류 글의 끝 500글자가 홈 경로의 어느 글자에서 시작해도 로그에 이름의 일부가 남지 않아야 한다 (#397).
+
+    홈 C:\Users\Tester. remux_stream의 ffmpeg 대역이 3줄을 쓰고 1로 끝남 — 가운데 줄
+    "Error opening output file C:\Users\Tester\Videos\…mp4"의 cut_at번째 글자에서 끝 500글자가 시작한다.
+    그 RemuxError를 앱 로그에 적음
+    -> 적힌 오류 글에 "~\Videos\"가 있고, "Tester"의 끝 세 글자 이상인 조각이 없다
+    """
+    monkeypatch.setattr(logging_setup, "_home_dir", lambda: WINDOWS_HOME)
+    after = r"\Videos" + "\\"
+    last = "\nConversion failed!"
+    filler = 500 - len(WINDOWS_HOME[cut_at:]) - len(after) - len(".mp4") - len(last)
+    stderr = (
+        "[mp4 @ 0x1] header\n"
+        f"Error opening output file {WINDOWS_HOME}{after}{'a' * filler}.mp4{last}\n"
+    )
+    stderr_file = tmp_path / "stderr.txt"
+    stderr_file.write_bytes(stderr.encode())
+    real = subprocess.Popen
+
+    def fake(command, **kwargs):
+        return real([sys.executable, "-c", _FAKE_FFMPEG_FAILING, str(stderr_file)], **kwargs)
+
+    monkeypatch.setattr(ffmpeg_module, "get_ffmpeg_exe", lambda: "ffmpeg")  # 찾기도 대역을 띄운다
+    monkeypatch.setattr(ffmpeg_module.subprocess, "Popen", fake)
+    with pytest.raises(ffmpeg_module.RemuxError) as raised:
+        ffmpeg_module.remux_stream(iter([b"x"]), str(tmp_path / "out.mp4"))
+    assert stderr.strip()[-500:].startswith(WINDOWS_HOME[cut_at:])  # 글자 수 자리가 맞다
+
+    logging.getLogger("test.redaction").error("BEGIN397 %s END397", raised.value)
+
+    for text in app_log():
+        written = text[text.index("BEGIN397") : text.index("END397")]
+        assert "~" + after in written
+        assert not any("Tester"[i:] in written for i in range(len("Tester") - 2))
+
+
+_LONG_LINE_PATH = WINDOWS_HOME + r"\Videos\clip.mp4"  # 한 줄짜리 긴 오류 글에 든 경로
+_LONG_LINE = "w " * 600 + _LONG_LINE_PATH + " end"  # 줄 머리가 꼬리의 두 배보다 먼 한 줄
+
+
+@pytest.mark.parametrize("cut_at", range(len(_LONG_LINE_PATH)))
+def test_long_one_line_error_whose_tail_starts_inside_the_path_leaves_no_part_of_the_name(
+    app_log, monkeypatch, cut_at
+):
+    r"""한 줄이 매우 긴 오류 글에서 끝 글자 수 꼬리가 경로의 어느 글자에서 시작해도 로그에 이름의 일부가 남지 않아야 한다 (#397).
+
+    홈 C:\Users\Tester. "w " × 600 + "C:\Users\Tester\Videos\clip.mp4 end"(줄 바꿈 없음)를 error_tail로
+    자름 — 글자 수 꼬리가 경로의 cut_at번째 글자에서 시작한다. 그 꼬리를 앱 로그에 적음
+    -> 적힌 글에 "Tester"의 앞 · 끝 세 글자 이상인 조각이 없다, 꼬리는 원래 글의 끝부분이다
+    """
+    monkeypatch.setattr(logging_setup, "_home_dir", lambda: WINDOWS_HOME)
+    limit = len(_LONG_LINE) - _LONG_LINE.index(_LONG_LINE_PATH) - cut_at
+    tail = ffmpeg_module.error_tail(_LONG_LINE, limit)
+    assert _LONG_LINE[-limit:].startswith(_LONG_LINE_PATH[cut_at:])  # 글자 수 자리가 맞다
+
+    logging.getLogger("test.redaction").error("BEGIN397 %s END397", tail)
+
+    assert _LONG_LINE.endswith(tail)
+    for text in app_log():
+        written = text[text.index("BEGIN397") : text.index("END397")]
+        pieces = ["Tester"[i:] for i in range(len("Tester") - 2)]
+        pieces += ["Tester"[:i] for i in range(3, len("Tester"))]
+        assert not any(piece in written for piece in pieces)
+
+
+_DECODE_ERROR_LINE = (
+    r"[h264 @ 0x1] error while decoding C:\Users\Tester\Videos\a.mp4 at 1"  # 홈 경로가 든 오류 줄
+)
+_HOME_AT = _DECODE_ERROR_LINE.index("C:")  # 줄에서 홈 경로가 시작하는 자리
+
+
+@pytest.mark.parametrize("cut_at", range(_HOME_AT + 1, _HOME_AT + len(WINDOWS_HOME) + 1))
+def test_error_line_cut_from_the_front_inside_the_home_leaves_no_part_of_the_name_in_the_log(
+    app_log, monkeypatch, cut_at
+):
+    r"""오류 줄의 앞을 남기는 자리가 홈 경로의 어느 글자여도 로그에 이름의 앞부분이 남지 않아야 한다 (#397).
+
+    홈 C:\Users\Tester. 오류 줄 "[h264 @ 0x1] error while decoding C:\Users\Tester\Videos\a.mp4 at 1"을
+    error_head로 cut_at글자 남기고 앱 로그에 적음 (cut_at은 홈 경로의 둘째 글자 ~ 끝 다음 글자)
+    -> 적힌 글에 "Tester"의 앞 세 글자 이상인 조각이 없다, 남긴 글은 원래 줄의 앞부분이다
+    """
+    monkeypatch.setattr(logging_setup, "_home_dir", lambda: WINDOWS_HOME)
+    head = ffmpeg_module.error_head(_DECODE_ERROR_LINE, cut_at)
+
+    logging.getLogger("test.redaction").error("BEGIN397 %s END397", head)
+
+    assert _DECODE_ERROR_LINE.startswith(head)
+    for text in app_log():
+        written = text[text.index("BEGIN397") : text.index("END397")]
+        assert not any("Tester"[:i] in written for i in range(3, len("Tester") + 1))
+
+
+@pytest.mark.parametrize(
+    ("line", "cut_at", "expected"),
+    [
+        # 다른 사용자 — 글자 수 자리는 "…\Tes"
+        (r"error in C:\Users\Tester2\a.mp4", 21, r"error in C:\Users\Tester2"),
+        # 경로가 아닌 곳의 같은 글자 — 글자 수 자리는 "… Test"
+        ("error in Tester at 1", 13, "error in Tester"),
+    ],
+)
+def test_error_line_cut_from_the_front_keeps_what_is_not_this_home(
+    app_log, monkeypatch, line, cut_at, expected
+):
+    r"""홈이 아닌 경로 · 경로가 아닌 같은 글자는 조각 안에서 앞을 잘라도 그 조각 끝까지 그대로 적혀야 한다 (#397).
+
+    홈 C:\Users\Tester. 오류 줄을 error_head로 cut_at글자(조각 안) 남겨 앱 로그에 적음
+    -> 적힌 글 == expected (그 조각의 끝까지, 가리지 않음)
+    """
+    monkeypatch.setattr(logging_setup, "_home_dir", lambda: WINDOWS_HOME)
+
+    logging.getLogger("test.redaction").error(
+        "BEGIN397 %s END397", ffmpeg_module.error_head(line, cut_at)
+    )
+
+    for text in app_log():
+        assert f"BEGIN397 {expected} END397" in text
+
+
+SPACED_HOME = r"C:\Users\Jo Doe"  # 가짜 홈 — 사용자 이름에 공백이 있다
+_SPACED_PATH = SPACED_HOME + r"\Videos\a.mp4"  # 그 홈 아래의 파일
+_SPACED_NAME_PIECES = ("Jo", "Doe", "oe")  # 로그에 남으면 안 되는 이름 조각
+
+
+def _written(app_log) -> list[str]:
+    """앱 로그 · 콘솔에 BEGIN397 ~ END397 사이로 적힌 글."""
+    return [text[text.index("BEGIN397") : text.index("END397")] for text in app_log()]
+
+
+@pytest.mark.parametrize("cut_at", range(len(_SPACED_PATH)))
+@pytest.mark.parametrize(
+    "shape",
+    [
+        "\nError opening {path}\nConversion failed!",  # 줄 머리가 꼬리의 limit 안팎
+        "w " * 600 + "{path} end",  # 줄 바꿈 없는 긴 한 줄
+    ],
+    ids=["lines", "one-long-line"],
+)
+def test_error_tail_never_starts_inside_a_home_whose_name_has_a_space(
+    app_log, monkeypatch, shape, cut_at
+):
+    r"""사용자 이름에 공백이 있는 홈이어도 꼬리가 경로의 어느 글자에서 시작하든 로그에 이름 조각이 남지 않아야 한다 (#397).
+
+    홈 C:\Users\Jo Doe. 오류 글(여러 줄 · 긴 한 줄)에 "C:\Users\Jo Doe\Videos\a.mp4"가 있고, 글자 수
+    꼬리가 경로의 cut_at번째 글자에서 시작하게 error_tail로 자름. 그 꼬리를 앱 로그에 적음
+    -> 적힌 글에 "Jo" · "Doe" · "oe"가 없다, 꼬리는 원래 글의 끝부분이다
+    """
+    monkeypatch.setattr(logging_setup, "_home_dir", lambda: SPACED_HOME)
+    text = ("first" + shape).format(path=_SPACED_PATH)
+    limit = len(text) - text.index(_SPACED_PATH) - cut_at
+    tail = ffmpeg_module.error_tail(text, limit)
+
+    logging.getLogger("test.redaction").error("BEGIN397 %s END397", tail)
+
+    assert text.endswith(tail)
+    for written in _written(app_log):
+        assert not any(piece in written for piece in _SPACED_NAME_PIECES)
+
+
+@pytest.mark.parametrize("cut_at", range(1, len(SPACED_HOME) + 1))
+def test_error_head_never_ends_inside_a_home_whose_name_has_a_space(app_log, monkeypatch, cut_at):
+    r"""사용자 이름에 공백이 있는 홈이어도 머리가 홈 경로의 어느 글자에서 끝나든 로그에 이름 조각이 남지 않아야 한다 (#397).
+
+    홈 C:\Users\Jo Doe. 오류 줄 "error while decoding C:\Users\Jo Doe\Videos\a.mp4 at 1"을 홈 경로의
+    cut_at번째 글자에서 끝나게 error_head로 자름. 그 머리를 앱 로그에 적음
+    -> 적힌 글에 "Jo" · "Doe" · "oe"가 없다, 머리는 원래 줄의 앞부분이다
+    """
+    monkeypatch.setattr(logging_setup, "_home_dir", lambda: SPACED_HOME)
+    line = f"error while decoding {_SPACED_PATH} at 1"
+    head = ffmpeg_module.error_head(line, line.index(SPACED_HOME) + cut_at)
+
+    logging.getLogger("test.redaction").error("BEGIN397 %s END397", head)
+
+    assert line.startswith(head)
+    for written in _written(app_log):
+        assert not any(piece in written for piece in _SPACED_NAME_PIECES)
+
+
+def test_cut_inside_another_users_path_with_a_space_is_not_moved(monkeypatch):
+    r"""홈이 아닌 경로(이름이 이어지는 다른 사용자) 안에서는 자르는 자리가 홈 때문에 옮겨지지 않아야 한다 (#397).
+
+    홈 C:\Users\Jo Doe. "error in C:\Users\Jo Doe2\a.mp4"를 "Jo" 다음(공백)에서 끝나게 error_head로 자름
+    -> "error in C:\Users\Jo" (공백 경계 그대로)
+    """
+    monkeypatch.setattr(logging_setup, "_home_dir", lambda: SPACED_HOME)
+    line = r"error in C:\Users\Jo Doe2\a.mp4"
+
+    assert ffmpeg_module.error_head(line, line.index("Jo") + 2) == r"error in C:\Users\Jo"
