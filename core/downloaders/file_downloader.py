@@ -866,7 +866,12 @@ class FileDownloader(BaseDownloader):
         서버가 이어받기 Range를 존중하지 않으면(206이 아니면) 파트 처음부터
         다시 받는 폴백을 탄다. 판정 규칙(저속·실패 재큐잉)은 무변경이다.
         """
+        parked = self._part_progress.get((start, end), 0)
         resume_offset = self._resume_offset(start, end)
+        with self.lock:
+            # 앞 요청이 남겨 둔 바이트는 받은 양에 그대로 있다 — 이어받는 만큼 이 슬롯으로 옮기고,
+            # 이어받지 못하면(산출물이 기록만큼 자라 있지 않음) 버린 바이트로 센다 (#395)
+            self._resume_slot(part_num, parked, resume_offset)
         downloaded_size = 0
         if resume_offset > 0:
             # 이어받기 발생 사실과 오프셋을 남긴다 (#78 스모크 확인 수단) —
@@ -890,6 +895,9 @@ class FileDownloader(BaseDownloader):
                     )
                     response.close()
                     self._part_progress.pop((start, end), None)
+                    with self.lock:
+                        # 이어받지 못한 앞부분은 처음부터 다시 받아 덮어쓴다 — 버린 바이트다 (#395)
+                        self._discard_slot(part_num)
                     resume_offset = 0
                     continue
                 # 구간 다운로드의 total_size는 받을 바이트의 합이지 파일 크기가 아니다
@@ -980,6 +988,10 @@ class FileDownloader(BaseDownloader):
             opened.close()
             raise
         return opened
+
+    def _kept_on_requeue(self, item) -> int:
+        """파트는 받아 쓴 바이트를 산출물에 남기고 다음 요청이 그 뒤에서 이어받는다 (#78 · #395)."""
+        return self._part_progress.get(item, 0)
 
     def _record_partial(self, start: int, end: int, downloaded: int) -> None:
         """재큐잉 직전까지 산출물에 받아 쓴 바이트 수를 기록한다 (#78)."""

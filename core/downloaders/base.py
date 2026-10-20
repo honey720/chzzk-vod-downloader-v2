@@ -1378,6 +1378,9 @@ class BaseDownloader(ABC):
                     self._log_if_supported(
                         "log_transfer_reused", self.s.reused_threads, self.s.reused_bytes
                     )
+                if self.s.discarded_bytes:
+                    # 위 줄의 Bytes는 산출물에 남은 것만이다 — 다시 요청하며 버린 것은 따로 적는다 (#395)
+                    self._log_if_supported("log_transfer_discarded", self.s.discarded_bytes)
                 # (4) 다운로드 완료 후 타입별 마무리(병합 등) 후 완료 통지 —
                 # 후처리 필요 여부는 실행 중 추측하지 않고 계획이 답한다 (#83)
                 postprocess_elapsed = None
@@ -1517,7 +1520,8 @@ class BaseDownloader(ABC):
                         self.s.future_count -= 1
                         break
         if part_num is not None:
-            self.update_progress()  # 즉각적 진행도 반영
+            with self.lock:  # 받은 양은 락 안에서만 고친다 — 반쯤 고친 값을 속도가 읽지 않게 (#395)
+                self.update_progress()  # 즉각적 진행도 반영
         # 실행 루프를 깨운다 — 받은 양을 반영한 뒤에 깨워야 전송이 끝났다고 본 루프가 마지막
         # 작업의 바이트까지 센다 (#376)
         self._slot_freed.set()
@@ -1578,7 +1582,7 @@ class BaseDownloader(ABC):
             )
         self._error_requeues[item] = count + 1
         self.s.failed_threads += 1
-        self.s.threads_progress[part_num] = 0
+        self._release_slot(item, part_num)
         self.s.remaining_ranges.append(item)
         delay = retry_delay(count + 1)
         self._retry_seq += 1
@@ -1688,7 +1692,7 @@ class BaseDownloader(ABC):
         가리기 위함 — 최종 커밋에 남길지는 실기 결과를 보고 판단한다.
         """
         self.s.restart_threads += 1
-        self.s.threads_progress[part_num] = 0
+        self._release_slot(item, part_num)
         self.s.remaining_ranges.append(item)
         suffix = f" ({diagnostic})" if diagnostic else ""
         self.logger.warning(f"Part {part_num} stopped due to slow speed, will retry{suffix}")
@@ -1725,6 +1729,47 @@ class BaseDownloader(ABC):
             self.s.reused_bytes += size
             self.s.threads_progress[part_num] = 0
         self.logger.log_thread_complete(part_num, size)
+
+    def _kept_on_requeue(self, item) -> int:
+        """다시 요청할 항목이 산출물에 남겨 두어 다음 요청이 이어받을 바이트 — self.lock 안에서 부른다 (#395).
+
+        기본은 0이다 — 세그먼트는 받다 만 것을 버리고 처음부터 다시 받는다. 이어받는 다운로더가
+        덮어쓴다.
+        """
+        return 0
+
+    def _release_slot(self, item, part_num: int) -> None:
+        """다시 요청할 항목의 받던 바이트를 슬롯에서 내린다 — self.lock 안에서 부른다 (#395).
+
+        이어받을 바이트(``_kept_on_requeue``)는 대기열에 둔 몫(``parked_progress``)으로 옮겨 받은
+        양에 그대로 두고, 나머지는 버린 바이트로 센다. 받은 양은 실제로 버린 만큼만 줄고, 받은 양 +
+        버린 바이트(속도를 재는 값)는 줄지 않는다.
+        """
+        held = self.s.threads_progress[part_num]
+        kept = self._kept_on_requeue(item)
+        self.s.threads_progress[part_num] = 0
+        self.s.parked_progress += kept
+        # 마지막 진행 기록 뒤에 받은 바이트가 이어받을 몫에 들어 있으면 kept가 더 크다
+        self.s.discarded_bytes += max(held - kept, 0)
+        self._recount()
+
+    def _resume_slot(self, part_num: int, parked: int, resumed: int) -> None:
+        """대기열에 둔 몫을 다시 받기 시작한 슬롯으로 옮긴다 — self.lock 안에서 부른다 (#395).
+
+        Args:
+            parked: 이 항목을 대기열에 돌려 놓을 때 남겨 둔 바이트(``_kept_on_requeue``의 값)
+            resumed: 그 가운데 이번 요청이 이어받는 바이트 — 나머지는 버린 바이트로 센다
+        """
+        self.s.parked_progress -= parked
+        self.s.discarded_bytes += parked - resumed
+        self.s.threads_progress[part_num] = resumed
+        self._recount()
+
+    def _discard_slot(self, part_num: int) -> None:
+        """슬롯의 받던 바이트를 버린 바이트로 옮긴다 — self.lock 안에서 부른다 (#395)."""
+        self.s.discarded_bytes += self.s.threads_progress[part_num]
+        self.s.threads_progress[part_num] = 0
+        self._recount()
 
     # ============ 관측 루프 (구 Monitor 스레드 — 엔진이 흡수) ============
 
@@ -1832,7 +1877,10 @@ class BaseDownloader(ABC):
                 시간을 뺀 것)으로 나눈다 (#309). 받던 시간이 너무 짧거나(0.1초 미만) 직전 측정
                 시각이 없으면 직전 값을 그대로 둔다. 이 측정으로는 조정 판단을 하지 않는다
         """
-        current_size = self.s.total_downloaded_size
+        # 받은 양이 아니라 회선으로 받은 바이트로 잰다 (#395) — 다시 요청하며 버린 바이트는 받은
+        # 양에서 빠지지만 받는 데 쓴 시간은 그대로 들었다. 받은 양으로 재면 버린 틱에 속도가 음수다
+        with self.lock:
+            current_size = self.s.total_downloaded_size + self.s.discarded_bytes
         speed = current_size - self.s.prev_size
         self.s.prev_size = current_size
         now, paused = self._now(), self.s.model.paused_seconds
@@ -1864,15 +1912,19 @@ class BaseDownloader(ABC):
         if self.state in [DownloadState.PAUSED, DownloadState.WAITING]:  # 중단 플래그 확인
             return
 
+        self._recount()
+
+    def _recount(self) -> None:
+        """받은 양을 끝낸 항목 · 받는 중인 슬롯 · 대기열에 둔 몫의 합으로 다시 센다. self.lock 안에서."""
         active_downloaded_size = sum(self.s.threads_progress)
-        self.s.total_downloaded_size = self.s.completed_progress + active_downloaded_size
+        self.s.total_downloaded_size = (
+            self.s.completed_progress + active_downloaded_size + self.s.parked_progress
+        )
 
     def emit_progress(self):
         """진행 상태를 집계해 ProgressEvent 콜백으로 통지한다 (구 Monitor.update_progress)."""
-        active_downloaded_size = sum(self.s.threads_progress)
-        self.s.total_downloaded_size = self.s.completed_progress + active_downloaded_size
-
         with self.lock:
+            self._recount()
             future_count = self.s.future_count
 
         self._on_progress(
