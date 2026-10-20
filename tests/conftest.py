@@ -32,6 +32,13 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+from tests.qt_platform import apply as apply_qt_platform_defaults  # noqa: E402
+
+# 로컬 테스트가 Qt 창을 실제 화면에 띄우지 않게 한다 (#399) — 값을 정하지 않은 로컬 실행만
+# offscreen으로(CVDV2_TEST_NATIVE=1이면 실제 플랫폼, CI · 이미 정한 값은 그대로). Qt는 앱을 만들 때
+# 이 값을 읽으므로 어느 테스트 모듈이 앱을 만들기 전, 여기서 정한다
+apply_qt_platform_defaults(os.environ, sys.platform)
+
 import config.config as config_module  # noqa: E402 — sys.path 삽입 후에 와야 한다
 import core.downloaders.hls_aes_downloader as hls_aes_module  # noqa: E402
 import core.downloaders.m3u8_downloader as m3u8_module  # noqa: E402
