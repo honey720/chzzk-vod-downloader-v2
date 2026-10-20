@@ -23,7 +23,7 @@ uv sync                        # 의존성 설치
 uv run python main.py          # 진입점
 uv run ruff check .            # 린트
 uv run ruff format .           # 포맷
-uv run pytest                  # 전체 테스트
+uv run pytest                  # 전체 테스트 — Qt는 화면 없이(offscreen). 실제 화면: CVDV2_TEST_NATIVE=1
 uv run pytest tests/unit       # 단위 테스트만
 ```
 
