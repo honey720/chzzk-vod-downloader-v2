@@ -8,6 +8,8 @@
 import io
 import logging
 import re
+import subprocess
+import sys
 import threading
 import types
 
@@ -17,6 +19,7 @@ import urllib3
 
 import core.downloaders.base as base_module
 import core.downloaders.m3u8_downloader as m3u8_module
+import core.utils.ffmpeg as ffmpeg_module
 import core.utils.logging_setup as logging_setup
 from app.download_logger import DownloadLogger
 from core.downloaders.m3u8_downloader import M3U8Downloader
@@ -344,3 +347,102 @@ def test_download_log_header_keeps_title_and_channel_and_hides_the_home(app_log,
     assert r"download_path: '~\\Videos'" in written
     for text in (written, *app_log()):
         assert "Tester" not in text
+
+
+# ================================================================ 홈 경로 조각 (#397)
+
+
+@pytest.mark.parametrize(
+    ("home", "text", "expected"),
+    [
+        # 드라이브 문자가 잘린 조각
+        (WINDOWS_HOME, r":\Users\Tester\Videos\a.mp4", r"~\Videos\a.mp4"),
+        (WINDOWS_HOME, r"\Users\Tester\Videos\a.mp4", r"~\Videos\a.mp4"),
+        (WINDOWS_HOME, r"Users\Tester\Videos\a.mp4", r"~\Videos\a.mp4"),
+        # 구분자 방향 · repr의 이스케이프 · 대소문자
+        (WINDOWS_HOME, ":/Users/Tester/a.mp4", "~/a.mp4"),
+        (WINDOWS_HOME, r"\Users\Tester\a.mp4", r"~\a.mp4"),
+        (WINDOWS_HOME, "users/tester/a.mp4", "~/a.mp4"),
+        # 다른 드라이브
+        (WINDOWS_HOME, r"D:\Users\Tester\a.mp4", r"~\a.mp4"),
+        # macOS · Linux — 앞 폴더가 붙은 조각 · 앞의 /가 빠진 조각
+        ("/home/tester", "x/home/tester/a.mp4", "x/~/a.mp4"),
+        ("/home/tester", "home/tester/a.mp4", "~/a.mp4"),
+        ("/Users/tester", "Users/tester/a.mp4", "~/a.mp4"),
+    ],
+)
+def test_home_fragment_without_the_drive_or_the_leading_folders_is_replaced(home, text, expected):
+    r"""홈의 끝 두 조각(Users\<이름> · home/<이름>)이 경로 조각으로 나오면 앞에 무엇이 있든 ~로 바뀌어야 한다 (#397).
+
+    홈과 글 -> 바꾼 글 == expected
+    """
+    assert logging_setup.redact_home(text, home) == expected
+
+
+@pytest.mark.parametrize(
+    ("home", "text"),
+    [
+        (WINDOWS_HOME, r"\Users\Tester2\a.mp4"),  # 다른 사용자(이름이 이어진다)
+        (WINDOWS_HOME, r"MyUsers\Tester\a.mp4"),  # 앞 조각이 Users가 아니다
+        (WINDOWS_HOME, r"\Users\Testers"),  # 다른 사용자(끝에서 이어진다)
+        (WINDOWS_HOME, "Users Tester"),  # 경로가 아닌 곳의 같은 글자
+        (WINDOWS_HOME, "Tester"),  # 이름만
+        ("/home/tester", "/home/TESTER/a.mp4"),  # POSIX는 대소문자를 가린다
+        ("/home/tester", "home tester"),  # 경로가 아닌 곳의 같은 글자
+        ("/home/tester", "/home/tester2/a.mp4"),  # 다른 사용자
+    ],
+)
+def test_same_letters_outside_a_home_fragment_are_kept(home, text):
+    """홈 조각이 아닌 곳의 같은 글자 · 다른 사용자의 경로는 그대로여야 한다 (#397).
+
+    홈과 글 -> 바꾼 글 == 원래 글
+    """
+    assert logging_setup.redact_home(text, home) == text
+
+
+_FAKE_FFMPEG_FAILING = (  # 표준 입력을 다 읽고, 파일의 글을 표준 오류에 쓰고 1로 끝나는 ffmpeg 대역
+    "import sys\n"
+    "sys.stdin.buffer.read()\n"
+    "sys.stderr.buffer.write(open(sys.argv[1], 'rb').read())\n"
+    "sys.exit(1)\n"
+)
+
+
+@pytest.mark.parametrize("cut_at", range(len(WINDOWS_HOME) + 1))
+def test_ffmpeg_error_whose_tail_starts_inside_the_home_leaves_no_part_of_the_name_in_the_log(
+    app_log, tmp_path, monkeypatch, cut_at
+):
+    r"""ffmpeg 오류 글의 끝 500글자가 홈 경로의 어느 글자에서 시작해도 로그에 이름의 일부가 남지 않아야 한다 (#397).
+
+    홈 C:\Users\Tester. remux_stream의 ffmpeg 대역이 3줄을 쓰고 1로 끝남 — 가운데 줄
+    "Error opening output file C:\Users\Tester\Videos\…mp4"의 cut_at번째 글자에서 끝 500글자가 시작한다.
+    그 RemuxError를 앱 로그에 적음
+    -> 적힌 오류 글에 "~\Videos\"가 있고, "Tester"의 끝 세 글자 이상인 조각이 없다
+    """
+    monkeypatch.setattr(logging_setup, "_home_dir", lambda: WINDOWS_HOME)
+    after = r"\Videos" + "\\"
+    last = "\nConversion failed!"
+    filler = 500 - len(WINDOWS_HOME[cut_at:]) - len(after) - len(".mp4") - len(last)
+    stderr = (
+        "[mp4 @ 0x1] header\n"
+        f"Error opening output file {WINDOWS_HOME}{after}{'a' * filler}.mp4{last}\n"
+    )
+    stderr_file = tmp_path / "stderr.txt"
+    stderr_file.write_bytes(stderr.encode())
+    real = subprocess.Popen
+
+    def fake(command, **kwargs):
+        return real([sys.executable, "-c", _FAKE_FFMPEG_FAILING, str(stderr_file)], **kwargs)
+
+    monkeypatch.setattr(ffmpeg_module, "get_ffmpeg_exe", lambda: "ffmpeg")  # 찾기도 대역을 띄운다
+    monkeypatch.setattr(ffmpeg_module.subprocess, "Popen", fake)
+    with pytest.raises(ffmpeg_module.RemuxError) as raised:
+        ffmpeg_module.remux_stream(iter([b"x"]), str(tmp_path / "out.mp4"))
+    assert stderr.strip()[-500:].startswith(WINDOWS_HOME[cut_at:])  # 글자 수 자리가 맞다
+
+    logging.getLogger("test.redaction").error("BEGIN397 %s END397", raised.value)
+
+    for text in app_log():
+        written = text[text.index("BEGIN397") : text.index("END397")]
+        assert "~" + after in written
+        assert not any("Tester"[i:] in written for i in range(len("Tester") - 2))

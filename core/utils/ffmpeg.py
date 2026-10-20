@@ -565,7 +565,7 @@ def _copy_piped(
     if returncode != 0:
         # 실패한 부분 산출물을 남기지 않는다 (#92 — 정상 파일로 오인 방지)
         _remove_quietly(dst_path)
-        stderr_tail = b"".join(stderr_parts).decode(errors="replace").strip()[-500:]
+        stderr_tail = error_tail(b"".join(stderr_parts).decode(errors="replace"), 500)
         raise RemuxError(f"ffmpeg remux 실패 (exit {returncode}): {stderr_tail}")
 
 
@@ -696,11 +696,11 @@ def remux_through(
     _close_quietly(convert.stderr, join.stderr)
     if any(codes):
         _remove_quietly(dst_path)
-        tail = b" | ".join(errors.get(name, b"")[-250:] for name in ("convert", "join"))
-        raise RemuxError(
-            f"ffmpeg remux 실패 (변환 exit {codes[0]} · 잇기 exit {codes[1]}): "
-            f"{tail.decode(errors='replace').strip()}"
+        tail = " | ".join(
+            error_tail(errors.get(name, b"").decode(errors="replace"), 250)
+            for name in ("convert", "join")
         )
+        raise RemuxError(f"ffmpeg remux 실패 (변환 exit {codes[0]} · 잇기 exit {codes[1]}): {tail}")
     return errors.get("join", b"").decode(errors="replace")
 
 
@@ -790,6 +790,25 @@ def parse_out_time(line: str) -> float | None:
         return int(value) / 1_000_000
     except ValueError:
         return None
+
+
+def error_tail(text: str, limit: int) -> str:
+    """오류 글(ffmpeg의 stderr)의 끝 ``limit`` 글자쯤을 줄 경계에서 잘라 돌려준다 (#397).
+
+    글자 수로만 자르면 경로 한가운데(홈 폴더의 사용자 이름 안 등)에서 시작해, 로그가 홈 경로를
+    가리는 규칙(``redact_home``)을 빠져나간다. 자른 자리가 줄 중간이면 그 줄의 머리까지 늘린다 —
+    줄을 버리지 않으므로 글자 수로 자를 때 들어 있던 글(공간 부족 판정이 찾는 "File too large" 등)은
+    모두 남는다. 줄 머리가 ``limit``보다 더 멀면(한 줄이 매우 길다) 글자 수로 자른다.
+
+    Args:
+        limit: 남길 글자 수(줄 머리까지 늘리면 최대 그 두 배)
+    """
+    text = text.strip()
+    start = len(text) - limit
+    if start <= 0:
+        return text
+    line_head = max(text.rfind("\n", 0, start), text.rfind("\r", 0, start)) + 1
+    return text[line_head:] if start - line_head <= limit else text[start:]
 
 
 def _run_controlled(

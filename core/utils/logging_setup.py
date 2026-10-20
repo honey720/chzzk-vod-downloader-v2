@@ -97,15 +97,24 @@ def _home_pattern(home: str) -> re.Pattern | None:
     구분자는 ``\\`` · ``/``와, repr이 이스케이프한 ``\\\\``를 모두 받는다. 드라이브 문자로 시작하는
     Windows 경로면 대소문자를 가리지 않는다. 뒤에 이름 글자가 이어지면(다른 사용자의 홈 등) 같은
     경로로 보지 않는다. 조각이 둘 미만인 홈(``/`` 등)은 바꾸지 않는다 — 모든 경로가 걸린다.
+
+    홈의 끝 두 조각(``Users\\<이름>`` · ``/home/<이름>``)만 있어도 찾는다 — 앞에 무엇이 있든(드라이브
+    문자가 잘린 ``:\\Users\\<이름>``, 다른 드라이브, 앞 폴더) 그 앞의 드라이브 문자 · 구분자까지 함께
+    바꾼다 (#397). 글자 수로 꼬리를 자른 오류 글이 홈 경로 중간에서 시작해도 이름이 남지 않게 한다.
     """
     parts = [part for part in re.split(r"[\\/]+", home) if part]
     if len(parts) < 2:
         return None
     separator = r"(?:\\\\|\\|/)"
     leading = separator if home[:1] in ("\\", "/") else ""
-    body = leading + separator.join(re.escape(part) for part in parts)
+    whole = leading + separator.join(re.escape(part) for part in parts)
+    shapes = [whole]
+    if not re.fullmatch(r"[A-Za-z]:", parts[-2]):
+        # 드라이브 바로 아래의 홈(C:\Tester)은 끝 두 조각이 곧 전체라 더하지 않는다
+        last_two = separator.join(re.escape(part) for part in parts[-2:])
+        shapes.append(rf"(?:(?:[A-Za-z]?:)?{separator})?{last_two}")
     flags = re.IGNORECASE if re.match(r"[A-Za-z]:", home) else 0
-    return re.compile(r"(?<![\w.-])" + body + r"(?![\w.-])", flags)
+    return re.compile(r"(?<![\w.-])(?:" + "|".join(shapes) + r")(?![\w.-])", flags)
 
 
 def redact_home(text: str, home: str | None = None) -> str:
