@@ -127,6 +127,17 @@ def redact_home(text: str, home: str | None = None) -> str:
     return pattern.sub("~", text) if pattern is not None else text
 
 
+def home_spans(text: str, home: str | None = None) -> list[tuple[int, int]]:
+    """글 속에서 ``redact_home``이 ``~``로 바꿀 자리들을 (시작, 끝)으로 돌려준다 (#397).
+
+    오류 글을 잘라 붙이는 곳이 홈 경로를 가르지 않게 쓴다 — 이름에 공백이 있으면(``John Doe``)
+    공백 · 경로 구분자를 경계로 자르는 규칙만으로는 이름 한가운데서 자를 수 있다. 가리는 일은
+    여기서 하지 않는다(가리기는 포매터 한 곳 — #328).
+    """
+    pattern = _home_pattern(home if home is not None else _home_dir())
+    return [match.span() for match in pattern.finditer(text)] if pattern is not None else []
+
+
 class RedactingFormatter(logging.Formatter):
     """완성된 로그 줄(메시지 · 예외 · 스택)에서 주소의 서명 · 토큰 값과 홈 폴더 경로를 가리는 포매터 (#328).
 

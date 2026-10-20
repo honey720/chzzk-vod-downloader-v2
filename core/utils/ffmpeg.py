@@ -44,6 +44,8 @@ import threading
 import time
 from collections.abc import Callable, Iterable, Iterator, Sequence
 
+from core.utils.logging_setup import home_spans
+
 logger = logging.getLogger(__name__)
 
 # GUI 앱의 서브프로세스가 콘솔 창을 띄우지 않게 한다 (Windows 전용 플래그)
@@ -806,23 +808,37 @@ def error_tail(text: str, limit: int) -> str:
     경로 구분자에서 자르지 않는 것은 홈 뒤의 폴더에서 자를 때 그 앞 조각(사용자 이름)이 맨 앞에
     드러나기 때문이다. 버릴 수 없으면(끝까지 한 낱말) 글자 수로 자른다.
 
+    마지막으로 홈 경로(``home_spans``)는 가르지 않는다 — 시작이 그 안이면 그 머리로 옮긴다. 이름에
+    공백이 있으면(``John Doe``) 위의 경계만으로는 이름 한가운데서 시작할 수 있다.
+
     Args:
-        limit: 남길 글자 수(줄 · 낱말 머리까지 늘리면 최대 그 두 배)
+        limit: 남길 글자 수(줄 · 낱말 머리까지 늘리면 최대 그 두 배, 홈 경로를 품으면 그만큼 더)
     """
     text = text.strip()
+    head = _tail_head(text, limit)
+    for span_start, span_end in home_spans(text):
+        if span_start < head < span_end:
+            head = span_start
+    return text[head:]
+
+
+def _tail_head(text: str, limit: int) -> int:
+    """``error_tail``이 홈 경로를 보기 전에 정한 꼬리의 시작 자리."""
     start = len(text) - limit
     if start <= 0:
-        return text
+        return 0
     line_head = max(text.rfind("\n", 0, start), text.rfind("\r", 0, start)) + 1
     if start - line_head <= limit:
-        return text[line_head:]
+        return line_head
     word_head = max(
         (space.end() for space in _SPACE.finditer(text, line_head, start)), default=line_head
     )
     if start - word_head <= limit:
-        return text[word_head:]
+        return word_head
     word_end = _SPACE.search(text, start)
-    return text[word_end.end() :].lstrip() if word_end else text[start:]
+    if word_end is None:
+        return start
+    return len(text) - len(text[word_end.end() :].lstrip())
 
 
 _SPACE = re.compile(r"\s")  # 낱말의 경계
@@ -837,19 +853,30 @@ def error_head(text: str, limit: int) -> str:
     조각의 끝(다음 공백 · 경로 구분자)까지 늘린다. 늘릴 길이가 ``limit``보다 길면 그 조각 앞에서
     자른다 — 조각 앞이 없으면(글 전체가 한 조각) 글자 수로 자른다.
 
+    마지막으로 홈 경로(``home_spans``)는 가르지 않는다 — 끝이 그 안이면 그 끝으로 옮긴다.
+
     Args:
-        limit: 남길 글자 수(조각 끝까지 늘리면 최대 그 두 배)
+        limit: 남길 글자 수(조각 끝까지 늘리면 최대 그 두 배, 홈 경로를 품으면 그만큼 더)
     """
     text = text.strip()
+    end = _head_end(text, limit)
+    for span_start, span_end in home_spans(text):
+        if span_start < end < span_end:
+            end = span_end
+    return text[:end]
+
+
+def _head_end(text: str, limit: int) -> int:
+    """``error_head``가 홈 경로를 보기 전에 정한 머리의 끝 자리."""
     # 자른 자리의 앞이나 뒤가 경계면 조각을 가르지 않는다
     if len(text) <= limit or _PIECE_BREAK.match(text, limit - 1) or _PIECE_BREAK.match(text, limit):
-        return text[:limit]
+        return min(limit, len(text))
     piece_end = _PIECE_BREAK.search(text, limit)
     end = piece_end.start() if piece_end else len(text)
     if end - limit <= limit:
-        return text[:end]
+        return end
     piece_head = max((match.start() for match in _PIECE_BREAK.finditer(text, 0, limit)), default=0)
-    return text[:piece_head] if piece_head > 0 else text[:limit]
+    return piece_head if piece_head > 0 else limit
 
 
 def _run_controlled(
