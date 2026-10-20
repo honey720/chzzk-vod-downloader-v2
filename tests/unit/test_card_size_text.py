@@ -2114,7 +2114,7 @@ class _Fraction:
     def __init__(self):
         self.transfers: list[float] = []
 
-    def percent(self, transfer: float, cutting: bool, cut: float) -> int:
+    def percent(self, transfer: float, cutting: bool, cut: float, received: int = 0) -> int:
         self.transfers.append(transfer)
         return int(transfer * 100)
 
