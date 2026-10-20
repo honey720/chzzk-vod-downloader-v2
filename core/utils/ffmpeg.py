@@ -799,19 +799,33 @@ def error_tail(text: str, limit: int) -> str:
     글자 수로만 자르면 경로 한가운데(홈 폴더의 사용자 이름 안 등)에서 시작해, 로그가 홈 경로를
     가리는 규칙(``redact_home``)을 빠져나간다. 자른 자리가 줄 중간이면 그 줄의 머리까지 늘린다 —
     줄을 버리지 않으므로 글자 수로 자를 때 들어 있던 글(공간 부족 판정이 찾는 "File too large" 등)은
-    모두 남는다. 줄 머리가 ``limit``보다 더 멀면(한 줄이 매우 길다) 글자 수로 자른다.
+    모두 남는다.
+
+    줄 머리가 ``limit``보다 더 멀면(한 줄이 매우 길다) 자른 자리가 든 낱말(공백 사이 — 경로 하나)을
+    가르지 않는다: 낱말 머리가 ``limit`` 안이면 거기까지 늘리고, 아니면 그 낱말의 남은 부분을 버린다.
+    경로 구분자에서 자르지 않는 것은 홈 뒤의 폴더에서 자를 때 그 앞 조각(사용자 이름)이 맨 앞에
+    드러나기 때문이다. 버릴 수 없으면(끝까지 한 낱말) 글자 수로 자른다.
 
     Args:
-        limit: 남길 글자 수(줄 머리까지 늘리면 최대 그 두 배)
+        limit: 남길 글자 수(줄 · 낱말 머리까지 늘리면 최대 그 두 배)
     """
     text = text.strip()
     start = len(text) - limit
     if start <= 0:
         return text
     line_head = max(text.rfind("\n", 0, start), text.rfind("\r", 0, start)) + 1
-    return text[line_head:] if start - line_head <= limit else text[start:]
+    if start - line_head <= limit:
+        return text[line_head:]
+    word_head = max(
+        (space.end() for space in _SPACE.finditer(text, line_head, start)), default=line_head
+    )
+    if start - word_head <= limit:
+        return text[word_head:]
+    word_end = _SPACE.search(text, start)
+    return text[word_end.end() :].lstrip() if word_end else text[start:]
 
 
+_SPACE = re.compile(r"\s")  # 낱말의 경계
 _PIECE_BREAK = re.compile(r"[\s\\/]")  # 경로 조각의 경계 — 공백 · 경로 구분자
 
 

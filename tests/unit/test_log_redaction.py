@@ -448,6 +448,35 @@ def test_ffmpeg_error_whose_tail_starts_inside_the_home_leaves_no_part_of_the_na
         assert not any("Tester"[i:] in written for i in range(len("Tester") - 2))
 
 
+_LONG_LINE_PATH = WINDOWS_HOME + r"\Videos\clip.mp4"  # 한 줄짜리 긴 오류 글에 든 경로
+_LONG_LINE = "w " * 600 + _LONG_LINE_PATH + " end"  # 줄 머리가 꼬리의 두 배보다 먼 한 줄
+
+
+@pytest.mark.parametrize("cut_at", range(len(_LONG_LINE_PATH)))
+def test_long_one_line_error_whose_tail_starts_inside_the_path_leaves_no_part_of_the_name(
+    app_log, monkeypatch, cut_at
+):
+    r"""한 줄이 매우 긴 오류 글에서 끝 글자 수 꼬리가 경로의 어느 글자에서 시작해도 로그에 이름의 일부가 남지 않아야 한다 (#397).
+
+    홈 C:\Users\Tester. "w " × 600 + "C:\Users\Tester\Videos\clip.mp4 end"(줄 바꿈 없음)를 error_tail로
+    자름 — 글자 수 꼬리가 경로의 cut_at번째 글자에서 시작한다. 그 꼬리를 앱 로그에 적음
+    -> 적힌 글에 "Tester"의 앞 · 끝 세 글자 이상인 조각이 없다, 꼬리는 원래 글의 끝부분이다
+    """
+    monkeypatch.setattr(logging_setup, "_home_dir", lambda: WINDOWS_HOME)
+    limit = len(_LONG_LINE) - _LONG_LINE.index(_LONG_LINE_PATH) - cut_at
+    tail = ffmpeg_module.error_tail(_LONG_LINE, limit)
+    assert _LONG_LINE[-limit:].startswith(_LONG_LINE_PATH[cut_at:])  # 글자 수 자리가 맞다
+
+    logging.getLogger("test.redaction").error("BEGIN397 %s END397", tail)
+
+    assert _LONG_LINE.endswith(tail)
+    for text in app_log():
+        written = text[text.index("BEGIN397") : text.index("END397")]
+        pieces = ["Tester"[i:] for i in range(len("Tester") - 2)]
+        pieces += ["Tester"[:i] for i in range(3, len("Tester"))]
+        assert not any(piece in written for piece in pieces)
+
+
 _DECODE_ERROR_LINE = (
     r"[h264 @ 0x1] error while decoding C:\Users\Tester\Videos\a.mp4 at 1"  # 홈 경로가 든 오류 줄
 )

@@ -1340,15 +1340,37 @@ def test_error_tail_of_a_short_text_is_the_whole_stripped_text():
     assert ffmpeg_module.error_tail("  short\n", 500) == "short"
 
 
-def test_error_tail_whose_line_head_is_farther_than_limit_is_the_character_tail():
-    """줄 머리가 limit보다 멀면(한 줄이 매우 길다) 글자 수 꼬리여야 한다 (#397).
+def test_error_tail_of_one_word_longer_than_limit_from_its_line_head_is_the_character_tail():
+    """줄 머리가 limit보다 멀고 그 줄이 끝까지 한 낱말이면 글자 수 꼬리여야 한다 (#397).
 
-    "head\\n" + "a" * 30 + "end", limit=10 (줄 머리가 꼬리 시작에서 23글자 앞)
+    "head\\n" + "a" * 30 + "end", limit=10 (줄 머리가 꼬리 시작에서 23글자 앞, 공백 없음)
     -> 끝 10글자
     """
     text = "head\n" + "a" * 30 + "end"
 
     assert ffmpeg_module.error_tail(text, 10) == text[-10:]
+
+
+def test_error_tail_in_a_long_line_starts_at_the_head_of_the_word_it_would_cut():
+    """줄 머리가 limit보다 멀면 자른 자리가 든 낱말의 머리(앞 공백 다음)에서 시작해야 한다 (#397).
+
+    "w " * 20 + "C:/aa/bbbb/c.mp4 end", limit=12 (글자 수 꼬리 "bb/c.mp4 end", 낱말 머리는 8글자 앞)
+    -> "C:/aa/bbbb/c.mp4 end"
+    """
+    assert (
+        ffmpeg_module.error_tail("w " * 20 + "C:/aa/bbbb/c.mp4 end", 12) == "C:/aa/bbbb/c.mp4 end"
+    )
+
+
+def test_error_tail_in_a_long_line_drops_the_rest_of_a_word_whose_head_is_too_far():
+    """줄 머리도 낱말 머리도 limit보다 멀면 자른 자리가 든 낱말의 남은 부분을 버려야 한다 (#397).
+
+    "w " * 20 + "C:/" + "a" * 30 + "/b.mp4 end tail", limit=12 (낱말 머리가 꼬리 시작에서 36글자 앞)
+    -> "end tail"
+    """
+    text = "w " * 20 + "C:/" + "a" * 30 + "/b.mp4 end tail"
+
+    assert ffmpeg_module.error_tail(text, 12) == "end tail"
 
 
 # ============ 오류 글의 머리 (#397)
