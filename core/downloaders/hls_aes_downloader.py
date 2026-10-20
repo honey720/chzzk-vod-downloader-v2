@@ -520,6 +520,10 @@ class HlsAesDownloader(BaseDownloader):
 
     # ============ 구간 다운로드의 후처리 (#309) ============
 
+    def _reusable_item_count(self) -> int:
+        # 구간을 정하며 온전한 것으로 확인한 세그먼트는 받지 않고 다시 쓴다 (_download_segment)
+        return len(self._prefetched)
+
     def _segment_path(self, index: int) -> str:
         """임시 폴더 안 index번째 세그먼트의 경로 — _download_segment가 쓰는 이름과 같다."""
         name = ts_segment_file_name(len(self._playlist.segments), index)

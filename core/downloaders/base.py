@@ -1086,6 +1086,10 @@ class BaseDownloader(ABC):
         """ProgressEvent에 실을 전체 크기. 미리 알 수 없는 다운로더는 None."""
         return self.s.total_size
 
+    def _reusable_item_count(self) -> int:
+        """계획의 항목 가운데 받지 않고 다시 쓸 항목의 수 (기본: 0) — prepare가 끝난 뒤 부른다 (#390)."""
+        return 0
+
     def _prepare_note(self) -> str:
         """준비 단계의 로그 줄에 덧붙일 말 (기본: 없음). 무엇을 받았고 무엇을 다시 썼는지 등."""
         return ""
@@ -1259,6 +1263,8 @@ class BaseDownloader(ABC):
             items = list(plan.items)
 
             self.s.max_threads = self.s.total_ranges = plan.part_count
+            # 진행 막대가 받기의 일에서 뺄 수 — 아래의 준비 끝 통지보다 먼저 적는다 (#390)
+            self.s.reusable_threads = self._reusable_item_count()
             self.s.adjust_threads = min(self.s.adjust_threads, self.s.max_threads)
             self.s.threads_progress = [0] * self.s.total_ranges
             self.logger.log_download_start(*self._download_start_log_args())

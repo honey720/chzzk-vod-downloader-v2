@@ -1252,6 +1252,19 @@ def test_retry_counts_every_segment_as_done_so_the_progress_reaches_the_end(
     assert data.reused_threads == len(reused)
 
 
+def test_retry_tells_how_many_segments_it_will_use_without_receiving(
+    vod, host, tmp_path, monkeypatch
+):
+    """이어받은 실행은 받지 않고 다시 쓸 세그먼트의 수를 적어 두고, 다시 쓴 수가 그와 같아야 한다 (#390).
+
+    `test_retry_receives_only_the_segment_that_is_gone`의 실행. 둘째 구간의 세그먼트 중 하나를 다시 받음
+    -> reusable_threads == reused_threads == 둘째 구간의 세그먼트 수 − 1
+    """
+    again, _received, reused = _retry_with_one_segment_gone(vod, host, tmp_path, monkeypatch)
+
+    assert (again.data.reusable_threads, again.data.reused_threads) == (len(reused), len(reused))
+
+
 def test_download_without_sections_counts_every_segment_as_received_bytes(vod, host, tmp_path):
     """받아 둔 것이 없는 실행의 받은 양 · 전송 줄의 Bytes · 속도는 세그먼트 전부의 받은 크기여야 한다.
 

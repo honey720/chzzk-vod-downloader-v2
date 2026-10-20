@@ -483,6 +483,10 @@ class M3U8Downloader(BaseDownloader):
         """임시 폴더 안 초기화 세그먼트의 경로."""
         return os.path.join(self.temp_dir, f"{0:0{self.width}d}.m4s")
 
+    def _reusable_item_count(self) -> int:
+        # 구간을 정하며 온전한 것으로 확인한 세그먼트는 받지 않고 다시 쓴다 (_download_segment)
+        return len(self._prefetched)
+
     def _segment_path(self, index: int) -> str:
         """임시 폴더 안 index번째 세그먼트의 경로 — _download_segment가 쓰는 이름과 같다."""
         return os.path.join(self.temp_dir, f"{index + 1:0{self.width}d}.m4v")

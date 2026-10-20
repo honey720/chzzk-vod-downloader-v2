@@ -85,6 +85,9 @@ class DownloadData:
         # 쓴 항목의 수와 크기 (#376) — completed_threads에는 들어 있고 completed_progress에는 없다
         self.reused_threads = 0
         self.reused_bytes = 0
+        # 이번 실행이 받지 않고 다시 쓸 항목의 수 — 준비가 끝날 때 엔진이 정한다 (#390). 진행 막대가
+        # 받기의 일에서 뺀다(reused_threads는 다시 쓴 만큼 오르고, 이것은 처음부터 다 안다)
+        self.reusable_threads = 0
 
         # MonitorThread 내부 변수
         self.prev_size = 0
