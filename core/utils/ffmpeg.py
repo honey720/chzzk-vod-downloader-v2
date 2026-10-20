@@ -34,6 +34,7 @@ import ctypes
 import functools
 import logging
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -809,6 +810,32 @@ def error_tail(text: str, limit: int) -> str:
         return text
     line_head = max(text.rfind("\n", 0, start), text.rfind("\r", 0, start)) + 1
     return text[line_head:] if start - line_head <= limit else text[start:]
+
+
+_PIECE_BREAK = re.compile(r"[\s\\/]")  # 경로 조각의 경계 — 공백 · 경로 구분자
+
+
+def error_head(text: str, limit: int) -> str:
+    """오류 글의 앞 ``limit`` 글자쯤을 경로 조각의 경계에서 잘라 돌려준다 (#397).
+
+    ``error_tail``의 앞쪽판이다. 글자 수로만 자르면 경로 조각(홈 폴더의 사용자 이름 등) 한가운데서
+    끝나, 이름의 앞부분이 로그의 홈 가리기(``redact_home``)를 빠져나간다. 자른 자리가 조각 안이면 그
+    조각의 끝(다음 공백 · 경로 구분자)까지 늘린다. 늘릴 길이가 ``limit``보다 길면 그 조각 앞에서
+    자른다 — 조각 앞이 없으면(글 전체가 한 조각) 글자 수로 자른다.
+
+    Args:
+        limit: 남길 글자 수(조각 끝까지 늘리면 최대 그 두 배)
+    """
+    text = text.strip()
+    # 자른 자리의 앞이나 뒤가 경계면 조각을 가르지 않는다
+    if len(text) <= limit or _PIECE_BREAK.match(text, limit - 1) or _PIECE_BREAK.match(text, limit):
+        return text[:limit]
+    piece_end = _PIECE_BREAK.search(text, limit)
+    end = piece_end.start() if piece_end else len(text)
+    if end - limit <= limit:
+        return text[:end]
+    piece_head = max((match.start() for match in _PIECE_BREAK.finditer(text, 0, limit)), default=0)
+    return text[:piece_head] if piece_head > 0 else text[:limit]
 
 
 def _run_controlled(

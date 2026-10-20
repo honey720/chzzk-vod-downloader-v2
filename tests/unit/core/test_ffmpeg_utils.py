@@ -1349,3 +1349,57 @@ def test_error_tail_whose_line_head_is_farther_than_limit_is_the_character_tail(
     text = "head\n" + "a" * 30 + "end"
 
     assert ffmpeg_module.error_tail(text, 10) == text[-10:]
+
+
+# ============ 오류 글의 머리 (#397)
+
+
+@pytest.mark.parametrize(
+    ("text", "limit", "expected"),
+    [
+        ("open C:/aa/bbbb/c failed", 13, "open C:/aa/bbbb"),  # "bb|bb" — 다음 구분자까지
+        ("open C:\\aa\\bbbb failed", 13, "open C:\\aa\\bbbb"),  # \\ 구분자 · 다음 공백까지
+        ("open C:/aa/bbbb", 13, "open C:/aa/bbbb"),  # 조각이 글 끝까지 — 글 끝까지
+    ],
+)
+def test_error_head_that_would_end_inside_a_piece_ends_at_the_end_of_that_piece(
+    text, limit, expected
+):
+    """앞 limit 글자가 경로 조각 안에서 끝나면 그 조각의 끝(공백 · 경로 구분자 · 글 끝)까지 늘려야 한다 (#397).
+
+    글, limit -> expected
+    """
+    assert ffmpeg_module.error_head(text, limit) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "limit", "expected"),
+    [
+        ("open C:/aa/bbbb", 11, "open C:/aa/"),  # 자른 자리 앞이 구분자
+        ("open C:/aa/bbbb", 10, "open C:/aa"),  # 자른 자리 뒤가 구분자
+        ("short", 50, "short"),  # limit보다 짧다
+    ],
+)
+def test_error_head_on_a_piece_boundary_is_the_character_head(text, limit, expected):
+    """자른 자리가 조각 경계이거나 글이 limit보다 짧으면 앞 limit 글자 그대로여야 한다 (#397).
+
+    글, limit -> expected
+    """
+    assert ffmpeg_module.error_head(text, limit) == expected
+
+
+def test_error_head_whose_piece_end_is_farther_than_limit_ends_before_that_piece():
+    """조각 끝이 limit보다 멀면 그 조각 앞에서 잘라야 한다 (#397).
+
+    "open " + "a" * 30, limit=10 (조각 끝이 자른 자리에서 25글자 뒤)
+    -> "open"
+    """
+    assert ffmpeg_module.error_head("open " + "a" * 30, 10) == "open"
+
+
+def test_error_head_of_one_long_piece_is_the_character_head():
+    """글 전체가 limit보다 긴 한 조각이면 앞 limit 글자여야 한다 (#397).
+
+    "a" * 30, limit=10 -> "a" * 10
+    """
+    assert ffmpeg_module.error_head("a" * 30, 10) == "a" * 10

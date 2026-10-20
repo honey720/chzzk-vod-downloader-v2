@@ -446,3 +446,57 @@ def test_ffmpeg_error_whose_tail_starts_inside_the_home_leaves_no_part_of_the_na
         written = text[text.index("BEGIN397") : text.index("END397")]
         assert "~" + after in written
         assert not any("Tester"[i:] in written for i in range(len("Tester") - 2))
+
+
+_DECODE_ERROR_LINE = (
+    r"[h264 @ 0x1] error while decoding C:\Users\Tester\Videos\a.mp4 at 1"  # 홈 경로가 든 오류 줄
+)
+_HOME_AT = _DECODE_ERROR_LINE.index("C:")  # 줄에서 홈 경로가 시작하는 자리
+
+
+@pytest.mark.parametrize("cut_at", range(_HOME_AT + 1, _HOME_AT + len(WINDOWS_HOME) + 1))
+def test_error_line_cut_from_the_front_inside_the_home_leaves_no_part_of_the_name_in_the_log(
+    app_log, monkeypatch, cut_at
+):
+    r"""오류 줄의 앞을 남기는 자리가 홈 경로의 어느 글자여도 로그에 이름의 앞부분이 남지 않아야 한다 (#397).
+
+    홈 C:\Users\Tester. 오류 줄 "[h264 @ 0x1] error while decoding C:\Users\Tester\Videos\a.mp4 at 1"을
+    error_head로 cut_at글자 남기고 앱 로그에 적음 (cut_at은 홈 경로의 둘째 글자 ~ 끝 다음 글자)
+    -> 적힌 글에 "Tester"의 앞 세 글자 이상인 조각이 없다, 남긴 글은 원래 줄의 앞부분이다
+    """
+    monkeypatch.setattr(logging_setup, "_home_dir", lambda: WINDOWS_HOME)
+    head = ffmpeg_module.error_head(_DECODE_ERROR_LINE, cut_at)
+
+    logging.getLogger("test.redaction").error("BEGIN397 %s END397", head)
+
+    assert _DECODE_ERROR_LINE.startswith(head)
+    for text in app_log():
+        written = text[text.index("BEGIN397") : text.index("END397")]
+        assert not any("Tester"[:i] in written for i in range(3, len("Tester") + 1))
+
+
+@pytest.mark.parametrize(
+    ("line", "cut_at", "expected"),
+    [
+        # 다른 사용자 — 글자 수 자리는 "…\Tes"
+        (r"error in C:\Users\Tester2\a.mp4", 21, r"error in C:\Users\Tester2"),
+        # 경로가 아닌 곳의 같은 글자 — 글자 수 자리는 "… Test"
+        ("error in Tester at 1", 13, "error in Tester"),
+    ],
+)
+def test_error_line_cut_from_the_front_keeps_what_is_not_this_home(
+    app_log, monkeypatch, line, cut_at, expected
+):
+    r"""홈이 아닌 경로 · 경로가 아닌 같은 글자는 조각 안에서 앞을 잘라도 그 조각 끝까지 그대로 적혀야 한다 (#397).
+
+    홈 C:\Users\Tester. 오류 줄을 error_head로 cut_at글자(조각 안) 남겨 앱 로그에 적음
+    -> 적힌 글 == expected (그 조각의 끝까지, 가리지 않음)
+    """
+    monkeypatch.setattr(logging_setup, "_home_dir", lambda: WINDOWS_HOME)
+
+    logging.getLogger("test.redaction").error(
+        "BEGIN397 %s END397", ffmpeg_module.error_head(line, cut_at)
+    )
+
+    for text in app_log():
+        assert f"BEGIN397 {expected} END397" in text
