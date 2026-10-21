@@ -4,6 +4,7 @@
 """
 
 import array
+import sys
 import threading
 
 import pytest
@@ -280,6 +281,46 @@ def test_index_does_not_rest_when_no_value_is_given(tiny_chunks, rests):
         index_mp4(_raw())
 
     assert len(rests) > 0
+
+
+def test_sample_positions_rest_at_least_once_per_index_chunk_of_samples(monkeypatch):
+    """청크마다 샘플이 여럿인 표에서 샘플 위치를 만드는 동안 쉼 사이에 놓이는 샘플 수가 조각 하나 남짓이어야 한다.
+
+    영상 20,000샘플 · 청크당 7 + 오디오 9,000샘플 · 청크당 5. resting_while(늘 참)으로 parse_moov.
+    쉴 때마다 그때까지 _sample_offsets가 만든 위치의 수를 적음(시작 0 · 끝 = 샘플 수 포함)
+    -> 트랙마다 이웃한 두 값의 차 <= INDEX_CHUNK_ITEMS + 청크당 샘플 수
+    """
+    from tests.unit.core.test_mp4_section_sizes import _audio, _head_only, _video
+
+    raw = _head_only(
+        [_video(20_000, seed=3, per_chunk=7, b_frames=True), _audio(9_000, seed=4, per_chunk=5)]
+    )
+    placed: list[list[int]] = []  # 트랙마다 쉴 때의 위치 수
+    original = mp4_module._sample_offsets
+
+    def recording(data, boxes, sizes):
+        placed.append([0])
+        offsets, chunk_starts = original(data, boxes, sizes)
+        placed[-1].append(len(offsets))
+        return offsets, chunk_starts
+
+    def rest():
+        frame = sys._getframe(1)
+        while frame is not None and frame.f_code is not original.__code__:
+            frame = frame.f_back
+        if frame is not None:  # _sample_offsets 안에서 쉰 것만 — 그때까지 만든 위치의 수
+            placed[-1].append(len(frame.f_locals["offsets"]))
+
+    monkeypatch.setattr(mp4_module, "_sample_offsets", recording)
+    monkeypatch.setattr(interaction, "_rest", rest)
+
+    with resting_while(lambda: True):
+        parse_moov(raw.moov)
+
+    assert [track[-1] for track in placed] == [20_000, 9_000]  # 전제: 두 트랙의 위치를 다 만들었다
+    gaps = [max(b - a for a, b in zip(track, track[1:])) for track in placed]
+    assert gaps[0] <= INDEX_CHUNK_ITEMS + 7
+    assert gaps[1] <= INDEX_CHUNK_ITEMS + 5
 
 
 @pytest.mark.parametrize("items", [2, 3, 5])

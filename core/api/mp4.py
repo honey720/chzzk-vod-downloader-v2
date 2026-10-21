@@ -1127,6 +1127,10 @@ def _sample_offsets(
     offsets = array.array("q")
     chunk_starts = array.array("q")
     sample = 0
+    # 청크마다 도는 반복도 조각만큼(샘플 수) 지날 때마다 틈을 둔다 — 청크가 수만 개인 표에서는
+    # 이 반복이 0.1~0.2초를 쉬지 않고 돌아, 조작 중인 화면이 그동안 멈춘다
+    items = chunk_items(CHUNK_ITEMS)
+    since_gap = 0
     for run_index, (first_chunk, samples_per_chunk, _description) in enumerate(runs):
         # first_chunk는 1부터다. 구간은 다음 구간의 first_chunk 직전 청크까지다
         last_chunk = runs[run_index + 1][0] - 1 if run_index + 1 < len(runs) else len(chunk_offsets)
@@ -1154,6 +1158,10 @@ def _sample_offsets(
             # 샘플마다 파이썬 루프를 돌지 않고 청크 단위로 누적한다(긴 영상의 해석 시간 #309)
             offsets.extend(accumulate(sizes[sample : last - 1], initial=chunk_offsets[chunk]))
             sample = last
+            since_gap += samples_per_chunk
+            if since_gap >= items:
+                between_chunks()
+                since_gap = 0
     if sample != len(sizes):
         raise Mp4Error(MP4_INVALID, f"stsc {sample}개 · stsz {len(sizes)}개")
     return offsets, chunk_starts
