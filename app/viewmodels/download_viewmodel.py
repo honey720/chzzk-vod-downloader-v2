@@ -478,6 +478,7 @@ class DownloadViewModel(QObject):
         """
         is_segment_based = item.is_segment_based
         sections = _SectionProgress(_cut_seconds(data.content), lambda: data.model.paused_seconds)
+        shown = _ShownSize()
 
         def relay(event: ProgressEvent) -> None:
             if data.sections_total:
@@ -486,7 +487,10 @@ class DownloadViewModel(QObject):
                 args = _segment_progress_args(event, data, item)
             else:
                 args = _file_progress_args(event)
-            self.progress.emit(*args, item)
+            remaining, _size, speed, progress = args
+            self.progress.emit(
+                remaining, shown.update(event.downloaded_size), speed, progress, item
+            )
 
         return relay
 
@@ -810,6 +814,25 @@ def _file_progress_args(event: ProgressEvent) -> tuple[str, str, str, int]:
         remaining_time_str = "N/A"
 
     return remaining_time_str, str(event.downloaded_size), f"{speed_mb:.1f} MB/s", progress
+
+
+class _ShownSize:
+    """카드에 보일 받은 크기 — 전에 보인 값 아래로 내리지 않는다 (#395).
+
+    엔진의 받은 양은 다시 요청하며 받다 만 세그먼트를 버리면 그만큼 준다. 버린 것은 다시 받으므로
+    카드는 그동안 전에 보인 값에 서 있다가, 다시 받은 양이 그 값을 넘으면 따라 오른다. 다운로드를
+    시작할 때마다 새로 만든다. 엔진의 관측 스레드와 컷을 돌리는 스레드가 함께 부른다.
+    """
+
+    def __init__(self):
+        self._shown = 0  # 지금까지 보인 가장 큰 받은 양(바이트)
+        self._lock = threading.Lock()
+
+    def update(self, downloaded_size: int) -> str:
+        """이번 통지의 받은 양으로 카드에 보일 크기(바이트 수의 문자열)를 낸다."""
+        with self._lock:
+            self._shown = max(self._shown, downloaded_size)
+            return str(self._shown)
 
 
 def _cut_seconds(content) -> float:

@@ -249,6 +249,14 @@ class DownloadLogger:
         """
         self.info(f"Stored segments used - Segments: {segments} - Bytes: {size}")
 
+    def log_transfer_discarded(self, size: int):
+        """다시 요청하며 받았다가 버린 바이트의 합을 로깅합니다 (#395).
+
+        받다 만 세그먼트와 이어받지 못한 파트의 앞부분이다. "Transfer completed"의 Bytes는
+        산출물에 남은 것만이다 — 버린 것은 이 줄에 따로 남긴다. 버린 것이 없으면 이 줄이 없다.
+        """
+        self.info(f"Discarded on retry - Bytes: {size}")
+
     def log_cut_setup(self, elapsed: float):
         """컷을 시작하기 전 색인에서 프레임 정보를 뽑는 데 걸린 시간을 로깅합니다 (#309)."""
         self.info(f"Cut frames prepared in {elapsed:.2f} seconds")

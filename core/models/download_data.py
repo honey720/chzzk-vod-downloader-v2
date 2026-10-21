@@ -88,6 +88,12 @@ class DownloadData:
         # 이번 실행이 받지 않고 다시 쓸 항목의 수 — 준비가 끝날 때 엔진이 정한다 (#390). 진행 막대가
         # 받기의 일에서 뺀다(reused_threads는 다시 쓴 만큼 오르고, 이것은 처음부터 다 안다)
         self.reusable_threads = 0
+        # 다시 요청하려고 대기열에 돌려 놓은 항목이 산출물에 남겨 두어 이어받을 바이트 (#395) — 받은 양
+        # (total_downloaded_size)에 들어 있다. 파일 다운로드의 파트만 남긴다(#78)
+        self.parked_progress = 0
+        # 받았다가 버린 바이트의 합 (#395) — 받다 만 세그먼트, 이어받지 못한 파트의 앞부분. 받은 양에는
+        # 없다. 받은 양 + 이것 = 회선으로 받은 바이트(줄지 않음)로 속도를 잰다
+        self.discarded_bytes = 0
 
         # MonitorThread 내부 변수
         self.prev_size = 0
