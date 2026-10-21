@@ -136,8 +136,13 @@ class TestRoundTrip:
         assert "window" in config_module.default_config()
 
     def test_unchanged_state_does_not_rewrite_the_file(self):
-        """같은 값이면 다시 쓰지 않는다 — 닫을 때마다 파일이 바뀌는 일이 없다."""
+        """같은 값이면 다시 쓰지 않는다 — 닫을 때마다 파일이 바뀌는 일이 없다.
+
+        첫 창 위치를 OS에 맡기지 않는다 — 다중 모니터에서 주입한 작업 영역 밖에 뜰 수 있다 (#403).
+        """
         first = _open()
+        first.move(QPoint(120, 90))
+        QApplication.processEvents()
         first.close()
         QApplication.processEvents()
         import os
