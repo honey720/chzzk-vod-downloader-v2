@@ -5,11 +5,12 @@ xcb)을 써서, 테스트가 만드는 창이 화면에 떴다 사라진다. CI�
 ``offscreen``, Linux는 정하지 않고 ``xvfb``의 가상 화면에서 xcb). ``conftest.py``가 Qt 앱을 만들기
 전에 ``apply``를 부른다 — Qt는 ``QGuiApplication``을 만들 때 이 값을 읽는다.
 
-- 이미 정한 값은 그대로 둔다.
 - CI(``CI`` 환경 변수)에서는 아무것도 바꾸지 않는다 — Linux CI는 값을 정하지 않은 채 xvfb로 돈다.
 - ``CVDV2_TEST_NATIVE=1``이면 실제 플랫폼을 쓴다(값을 정하지 않는다).
-- 그 밖에는 ``offscreen``으로 두고, 폰트 폴더(``QT_QPA_FONTDIR``)가 없으면 CI와 같은 폴더를 준다
-  — offscreen은 시스템 폰트를 스스로 찾지 않아 한글이 □로 그려진다(#154).
+- 이미 정한 플랫폼은 그대로 둔다. 값이 없으면 ``offscreen``으로 둔다.
+- 플랫폼이 ``offscreen``이면(직접 정했든 기본값이든) 폰트 폴더(``QT_QPA_FONTDIR``) 변수가 없을 때
+  CI와 같은 폴더를 준다 — offscreen은 시스템 폰트를 스스로 찾지 않아 한글이 □로 그려지고(#154),
+  대체 폰트로는 창 최소폭이 달라진다(#405). 이미 있는 값은 빈 문자열 · 빈 폴더라도 그대로 둔다.
 """
 
 from collections.abc import MutableMapping
@@ -26,9 +27,11 @@ def defaults(environ: MutableMapping[str, str], platform: str) -> dict[str, str]
         environ: 지금의 환경 변수
         platform: ``sys.platform`` 값
     """
-    if "QT_QPA_PLATFORM" in environ or environ.get("CI") or environ.get(NATIVE_SWITCH) == "1":
+    if environ.get("CI") or environ.get(NATIVE_SWITCH) == "1":
         return {}
-    added = {"QT_QPA_PLATFORM": "offscreen"}
+    added = {} if "QT_QPA_PLATFORM" in environ else {"QT_QPA_PLATFORM": "offscreen"}
+    if environ.get("QT_QPA_PLATFORM", "offscreen") != "offscreen":
+        return added
     if "QT_QPA_FONTDIR" not in environ and platform in CI_FONT_DIRS:
         added["QT_QPA_FONTDIR"] = CI_FONT_DIRS[platform]
     return added
