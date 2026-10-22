@@ -42,6 +42,7 @@ from core.models.download_state import DownloadState
 from core.models.download_task import InvalidStateTransitionError
 from core.models.events import FailedCallback, FinishedCallback, ProgressCallback
 from core.utils.interaction import resting_while
+from core.utils.stop import stoppable
 
 logger = logging.getLogger(__name__)
 
@@ -341,7 +342,13 @@ class DownloadService:
                     return
 
             try:
-                with resting_while(self._user_interacting):
+                # 중단되면 실행 스레드의 해석 · moov 받기가 조각 사이에서 그만둔다 (#410). 걸지 않으면
+                # 준비 중에 중단해도 해석이 끝까지 돌고, 그동안 이 실행이 잡은 구간 파일 이름이
+                # 풀리지 않는다. 그만둔 일은 엔진이 중단으로 끝낸다
+                with (
+                    stoppable(lambda: handle.state is DownloadState.WAITING),
+                    resting_while(self._user_interacting),
+                ):
                     engine.run()
             except Exception as e:
                 # 엔진이 스스로 실패 처리하지 못한 예외의 최후 방어선 (#147 E1).

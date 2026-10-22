@@ -84,6 +84,7 @@ from core.utils.ffmpeg import FFmpegCancelledError, FFmpegError, read_in_chunks,
 from core.utils.filesystem import FAT_MAX_FILE_BYTES, filesystem_name, is_fat
 from core.utils.interaction import rest_totals
 from core.utils.retry import retry_delay
+from core.utils.stop import StopRequested
 
 
 # ============ 저속 판정 (#347) ============
@@ -1235,6 +1236,7 @@ class BaseDownloader(ABC):
         """다운로드 파이프라인을 실행한다. 관측 스레드도 여기서 소유·시작한다."""
         monitor = threading.Thread(target=self._monitor_loop, name="DownloadMonitor", daemon=True)
         stopped_in = None  # 중단을 처음 본 단계 — prepare · transfer · postprocess
+        phase = "prepare"  # 지금 도는 단계 — 일이 그만두라는 답을 받아 멈췄을 때 적는다 (#410)
         self._failure_notified = False
         try:
             self.s.start_time = tm.time()
@@ -1243,6 +1245,7 @@ class BaseDownloader(ABC):
             paused_before = self.s.model.paused_seconds
             rested_before = rest_totals()
             plan = self.prepare(self.s.content)
+            phase = "transfer"
             # 준비(받을 것을 정하는 단계 — 구간 다운로드는 여기서 moov · 플레이리스트를 받는다)에
             # 걸린 시간. 전송 시간(Transfer)은 이것을 포함한 채로 둔다 — 그 줄의 뜻을 바꾸지
             # 않고, 준비를 뺀 값을 따로 한 줄 남긴다 (#309)
@@ -1386,6 +1389,7 @@ class BaseDownloader(ABC):
                 postprocess_elapsed = None
                 if plan.requires_postprocess:
                     self.logger.log_postprocess_start(self.postprocess_kind)
+                    phase = "postprocess"
                     postprocess_started = tm.time()
                     self.postprocess()
                     if self.state != DownloadState.WAITING:
@@ -1444,6 +1448,18 @@ class BaseDownloader(ABC):
                     "log_stopped_after_failure" if self._failure_notified else "log_stopped",
                     stopped_in or "postprocess",
                 )
+                self._cleanup_partial()
+
+        except StopRequested:
+            # 이 실행의 스레드에 걸린 "중단됐는가"(서비스가 건다)에 답을 받아 해석 · moov 받기 등이
+            # 조각 사이에서 멈췄다 (#410). 실패가 아니다 — 위의 중단 경로와 같은 줄을 남긴다.
+            # 준비 안에서 멈췄으면 시작 줄 · 산출물 파일 만들기로 가지 않았다 — 지울 것이 없다.
+            # 정리하지 않는다: 준비가 끝나기 전에는 지울 자리(``_target_path``)가 산출물의 이름이다
+            self._log_if_supported(
+                "log_stopped_after_failure" if self._failure_notified else "log_stopped",
+                stopped_in or phase,
+            )
+            if phase != "prepare":
                 self._cleanup_partial()
 
         except PostprocessError as e:
