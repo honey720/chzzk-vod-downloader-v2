@@ -437,25 +437,34 @@ def test_one_chunk_larger_than_a_piece_rests_inside_the_chunk(monkeypatch):
     assert offsets == [start + before for before in accumulate(video.sizes[:-1], initial=0)]
 
 
-@pytest.mark.parametrize("site", ["_sample_offsets", "_u32_table", "_composition_offsets"])
-def test_index_stops_at_each_rest_point_added_for_408(site):
-    """색인을 만드는 도중 그만두라는 답이 site 안에서만 나오면 parse_moov가 StopRequested로 멈춰야 한다.
+@pytest.mark.parametrize(
+    ("site", "per_chunk"),
+    [
+        ("_sample_offsets", 7),
+        ("_extend_in_pieces", 20_000),  # 청크 하나 — 샘플이 조각보다 많다
+        ("_u32_table", 7),
+        ("_composition_offsets", 7),
+    ],
+)
+def test_index_stops_at_each_rest_point_added_for_408(site, per_chunk):
+    """색인을 만드는 도중 그만두라는 답이 site의 틈에서만 나오면 parse_moov가 StopRequested로 멈춰야 한다.
 
-    영상 20,000샘플 · 청크당 7 · B프레임(#408). 그만둘지 묻는 값이 core/api/mp4.py에서 가장 안쪽
+    영상 20,000샘플 · 청크당 per_chunk · B프레임(#408). 그만둘지 묻는 값이 between_chunks를 바로 부른
     함수가 site일 때만 참
-    -> StopRequested · 참을 낸 것이 site 안에서 한 번
+    -> StopRequested · 참을 낸 것이 site의 틈에서 한 번
     """
     from tests.unit.core.test_mp4_section_sizes import _head_only, _video
 
-    raw = _head_only([_video(20_000, seed=8, per_chunk=7, b_frames=True)])
+    raw = _head_only([_video(20_000, seed=8, per_chunk=per_chunk, b_frames=True)])
     target = getattr(mp4_module, site).__code__
+    gap = column_module.between_chunks.__code__
     answered: list[str] = []
 
     def should_stop() -> bool:
         frame = sys._getframe(1)
-        while frame is not None and frame.f_globals is not vars(mp4_module):
+        while frame is not None and frame.f_code is not gap:
             frame = frame.f_back
-        if frame is not None and frame.f_code is target:
+        if frame is not None and frame.f_back.f_code is target:
             answered.append(site)
             return True
         return False
