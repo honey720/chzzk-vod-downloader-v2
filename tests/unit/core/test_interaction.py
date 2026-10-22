@@ -48,6 +48,15 @@ def _raw():
     return read_mp4_raw(lambda offset, size: data[offset : offset + size])
 
 
+@pytest.fixture(autouse=True)
+def rest_at_every_gap(monkeypatch):
+    """조작 중이면 틈마다 쉬게 한다(쉼 사이 시간 판정 0) — 이 파일은 쉬는 자리를 잰다 (#408).
+
+    쉼을 일한 시간으로 묶는 동작은 ``tests/unit/core/test_interaction.py``의 가짜 시계 테스트가 잰다.
+    """
+    monkeypatch.setattr(interaction, "REST_AFTER_SECONDS", 0.0)
+
+
 @pytest.fixture
 def rests(monkeypatch):
     """쉰 횟수를 담는 리스트 — 쉬는 일을 자지 않고 세기만 하는 대역으로 바꾼다."""
@@ -723,3 +732,102 @@ def test_rest_totals_belong_to_the_thread_that_rested(rests):
 
     assert seen == [2]
     assert rest_totals() == before
+
+
+# ---- 쉼을 일한 시간으로 묶는다 (#408) — 가짜 시계로 잰다 ----
+
+REST_AFTER = 0.008  # 제품 값(REST_AFTER_SECONDS)을 따로 적는다 — 테스트가 그 값을 다시 세운다
+# 모듈을 읽을 때의 제품 값 — 이 파일의 자동 픽스처(rest_at_every_gap)가 0으로 바꾸기 전이다
+PRODUCT_REST_AFTER = interaction.REST_AFTER_SECONDS
+
+
+class _WorkClock:
+    """가짜 시계 — 틈 하나마다 work초(조각 하나의 일)가 가고, 쉬면 REST_SECONDS만큼 간다.
+
+    쉰 때마다 (쉬기 시작한 시각, 돌아온 시각)을 적는다. 물은 틈의 수를 센다.
+    """
+
+    def __init__(self, work: float):
+        self.now = 0.0
+        self.work = work
+        self.asks = 0
+        self.rests: list[tuple[float, float]] = []
+
+    def __call__(self) -> float:
+        return self.now
+
+    def gap(self) -> None:
+        self.asks += 1
+        self.now += self.work
+
+    def rest(self) -> None:
+        began = self.now
+        self.now += REST_SECONDS
+        self.rests.append((began, self.now))
+
+    def longest_work(self) -> float:
+        """시작 · 쉼 · 끝 사이에 쉬지 않고 일한 시간 가운데 가장 긴 것."""
+        edges = [(0.0, 0.0), *self.rests, (self.now, self.now)]
+        return max(began - ended for (_, ended), (began, _) in zip(edges, edges[1:]))
+
+
+@pytest.fixture
+def work_clock(monkeypatch):
+    """가짜 시계를 쉬기 판정 · 쉬는 일에 건다. 쉼 사이 시간 판정은 제품 값(8ms)으로 되돌린다."""
+
+    def make(work: float) -> _WorkClock:
+        clock = _WorkClock(work)
+        monkeypatch.setattr(interaction, "REST_AFTER_SECONDS", REST_AFTER)
+        monkeypatch.setattr(interaction, "_clock", clock)
+        monkeypatch.setattr(interaction, "_rest", clock.rest)
+        return clock
+
+    return make
+
+
+def test_product_rests_after_eight_ms_of_work():
+    """제품의 쉼 사이 시간 판정은 8ms여야 한다 (#408)."""
+    assert PRODUCT_REST_AFTER == REST_AFTER
+
+
+def test_continuous_interaction_rests_once_per_eight_ms_of_work(work_clock):
+    """계속 조작하는 동안 쉰 횟수는 일한 시간 ÷ 8ms 근처이고 쉬지 않고 일한 시간은 8ms + 조각 하나 이하여야 한다.
+
+    틈 1,000개 · 틈마다 일 0.3ms(일한 시간 300ms). resting_while(늘 참)
+    -> 쉰 횟수와 300ms ÷ 8ms의 차 <= 1 · 가장 긴 일 <= 8ms + 0.3ms
+    """
+    clock = work_clock(0.0003)
+
+    with resting_while(lambda: True):
+        for _ in range(1000):
+            clock.gap()
+            rest_if_user_interacting()
+
+    worked = 1000 * clock.work
+    assert abs(len(clock.rests) - worked / REST_AFTER) <= 1
+    assert clock.longest_work() <= REST_AFTER + clock.work + 1e-9
+
+
+def test_dense_gaps_of_one_sample_chunks_rest_by_time_not_by_gap(monkeypatch, work_clock):
+    """청크당 1샘플 구간이 많은 표를 계속 조작 중에 해석하면 쉰 횟수는 물은 틈의 수가 아니라 일한 시간으로 묶여야 한다.
+
+    영상 30,000샘플 · 청크당 1과 2가 번갈아(stsc 20,000항목, 청크당 1샘플 구간 10,000개).
+    틈마다 일 0.15ms. resting_while(늘 참)으로 parse_moov
+    -> 물은 틈 >= 쉰 횟수 × 20 · 쉰 횟수와 (틈 수 × 0.15ms ÷ 8ms)의 차 <= 5% + 1 ·
+       가장 긴 일 <= 8ms + 0.15ms
+    """
+    from tests.unit.core.test_mp4_section_sizes import _head_only, _video
+
+    video = _video(30_000, seed=9, per_chunk=1, b_frames=False)
+    raw = _head_only([replace(video, chunks=[1, 2] * 10_000)])
+    clock = work_clock(0.00015)
+    monkeypatch.setattr(column_module, "check_stop", clock.gap)  # 틈마다 조각 하나의 일이 간다
+
+    with resting_while(lambda: True):
+        parse_moov(raw.moov)
+
+    expected = clock.asks * clock.work / REST_AFTER
+    assert clock.asks >= 10_000  # 전제: 청크당 1샘플 구간마다 틈을 물었다
+    assert clock.asks >= len(clock.rests) * 20
+    assert abs(len(clock.rests) - expected) <= expected * 0.05 + 1
+    assert clock.longest_work() <= REST_AFTER + clock.work + 1e-9
