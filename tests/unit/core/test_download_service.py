@@ -633,3 +633,20 @@ class TestUserInteracting:
         assert handle.wait(WAIT)
         assert _first(file_factory).started.is_set()
         assert rests == []
+
+
+def test_run_that_ends_without_closing_the_log_has_it_closed_by_the_service(
+    monkeypatch, file_factory
+):
+    """엔진이 로그를 닫지 않고 끝나면(중단으로 끝난 실행) 서비스가 그 시도의 로그를 닫아야 한다 (#410).
+
+    엔진의 run이 아무 통지 없이 돌아오게 바꿈
+    -> 실행이 끝난 뒤 로거가 받은 호출 == ["save_and_close"]
+    """
+    monkeypatch.setattr(FakeEngine, "run", lambda self: None)
+    recording = RecordingLogger()
+
+    handle = DownloadService().submit(_make_content(), task_logger=recording)
+
+    assert handle.wait(WAIT)
+    assert recording.calls == ["save_and_close"]

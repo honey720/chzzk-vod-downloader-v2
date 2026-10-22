@@ -28,6 +28,7 @@ import logging
 import threading
 import time
 from collections.abc import Callable
+from functools import partial
 from time import gmtime, strftime
 
 import requests
@@ -176,8 +177,10 @@ class DownloadViewModel(QObject):
     # 내부 전용: 워커 스레드 콜백 → 메인 스레드 후처리 슬롯 전환용 큐 연결.
     # ⚠️ 이 둘을 직접 호출로 바꾸면 참조 정리·content 통지가 워커 스레드에서
     # 일어난다 — 스레드 축 게이트가 잡는다
-    _engineFinished = Signal()
-    _engineFailed = Signal(object)
+    # 셋 다 시도 번호(start()마다 하나씩 오른다)를 싣는다 — 지금 시도의 것만 카드에 닿는다 (#410)
+    _engineProgress = Signal(int, str, str, str, int, object)
+    _engineFinished = Signal(int)
+    _engineFailed = Signal(int, object)
     # 내부 전용: 받을 구간이 하나도 없는 카드 — 엔진에 넘기지 않고 실패로 끝낸다. 큐로 돌려
     # start()가 돌아간 뒤에 끝낸다(끝내는 통지가 다음 카드의 start()를 부른다)
     _nothingToReceive = Signal(object)
@@ -207,6 +210,9 @@ class DownloadViewModel(QObject):
         self._excluded = 0
         # 도는 다운로드를 백그라운드 일로 세어 두었는지 (#309) — 끝을 한 번만 알린다
         self._working = False
+        # 지금 시도의 번호 — start()마다 오른다. 엔진의 통지는 제출할 때의 번호를 싣고, 번호가
+        # 다르면(중지한 뒤 다시 시작해 앞 시도의 엔진이 아직 돈다) 버린다 (#410)
+        self._attempt = 0
         self._content = content
         # 준비가 길어지면 카드에 "준비 중"을 켜는 타이머 — 엔진의 첫 진행 통지가 끈다
         self._prepareTimer = QTimer(self)
@@ -217,6 +223,7 @@ class DownloadViewModel(QObject):
         # 먼저 연결해, content가 카드를 다시 그릴 때 값이 이미 들어 있게 한다
         self.progress.connect(self._onPrepared)
         self.progress.connect(self._syncSections)
+        self._engineProgress.connect(self._onEngineProgress)
         self._engineFinished.connect(self._onEngineFinished)
         self._engineFailed.connect(self._onEngineFailed)
         self._nothingToReceive.connect(self._onNothingToReceive, Qt.ConnectionType.QueuedConnection)
@@ -320,14 +327,16 @@ class DownloadViewModel(QObject):
         self.task = DownloadTask(data, item, task_logger)
         self.task.start()
 
+        self._attempt += 1
+        attempt = self._attempt
         self.handle = self._service.submit(
             data.content,
             data=data,
             task_logger=task_logger,
-            on_progress=self._make_progress_relay(data, item),
-            on_finished=self._engineFinished.emit,
-            on_failed=self._relay_failed,
-            on_merge_start=self._relay_merge_start,
+            on_progress=self._make_progress_relay(data, item, attempt),
+            on_finished=partial(self._engineFinished.emit, attempt),
+            on_failed=partial(self._relay_failed, attempt),
+            on_merge_start=partial(self._relay_merge_start, attempt),
         )
         self._beginWork()
 
@@ -470,11 +479,12 @@ class DownloadViewModel(QObject):
 
     # ============ 워커 스레드 콜백 (emit까지만 수행) ============
 
-    def _make_progress_relay(self, data: DownloadData, item: ContentItem):
+    def _make_progress_relay(self, data: DownloadData, item: ContentItem, attempt: int):
         """ProgressEvent를 기존 progress Signal 인자로 변환해 emit하는 콜백을 만든다.
 
         데이터·아이템을 클로저로 캡처해 제출 직후 첫 콜백과의 레이스를 없앤다.
-        엔진 관측 스레드에서 호출되므로 계산과 Signal emit까지만 수행한다.
+        엔진 관측 스레드에서 호출되므로 계산과 Signal emit까지만 수행한다. 시도 번호를 실어
+        내부 Signal로 넘기고, 메인 스레드에서 지금 시도의 것일 때만 progress로 내보낸다 (#410).
         """
         is_segment_based = item.is_segment_based
         sections = _SectionProgress(_cut_seconds(data.content), lambda: data.model.paused_seconds)
@@ -488,24 +498,32 @@ class DownloadViewModel(QObject):
             else:
                 args = _file_progress_args(event)
             remaining, _size, speed, progress = args
-            self.progress.emit(
-                remaining, shown.update(event.downloaded_size), speed, progress, item
+            self._engineProgress.emit(
+                attempt, remaining, shown.update(event.downloaded_size), speed, progress, item
             )
 
         return relay
 
-    def _relay_failed(self, exc: BaseException) -> None:
-        """엔진 실패 콜백 — 병합 표시 해제 후 내부 Signal로 메인 스레드에 넘긴다."""
-        if self.item is not None:
-            self.item.post_process = False
-        self._engineFailed.emit(exc)
+    def _relay_failed(self, attempt: int, exc: BaseException) -> None:
+        """엔진 실패 콜백 — 병합 표시 해제 후 내부 Signal로 메인 스레드에 넘긴다.
 
-    def _relay_merge_start(self) -> None:
-        """엔진 병합 시작 콜백 — UI 병합 단계 플래그 (구 post_process = True)."""
-        if self.item is not None:
+        앞 시도의 실패면 카드의 병합 표시를 건드리지 않는다 — 카드는 지금 시도의 것이다 (#410).
+        """
+        if attempt == self._attempt and self.item is not None:
+            self.item.post_process = False
+        self._engineFailed.emit(attempt, exc)
+
+    def _relay_merge_start(self, attempt: int) -> None:
+        """엔진 병합 시작 콜백 — UI 병합 단계 플래그 (구 post_process = True). 앞 시도의 것은 버린다."""
+        if attempt == self._attempt and self.item is not None:
             self.item.post_process = True
 
     # ============ 메인 스레드 후처리 슬롯 ============
+
+    def _onEngineProgress(self, attempt: int, *args) -> None:
+        """엔진의 진행 통지를 지금 시도의 것일 때만 progress로 내보낸다 (#410). 메인 스레드에서 돈다."""
+        if attempt == self._attempt:
+            self.progress.emit(*args)
 
     def _syncSections(self, *_args) -> None:
         """엔진의 구간 상태(완료 · 실패한 구간 수)를 아이템에 옮긴다 (#309). 메인 스레드에서 돈다.
@@ -522,12 +540,15 @@ class DownloadViewModel(QObject):
         # 엔진에 넘기지 않고 뺀 구간도 받지 못한 구간이다
         self.item.sections_failed = self._data.sections_failed + self._excluded
 
-    def _onEngineFinished(self) -> None:
+    def _onEngineFinished(self, attempt: int) -> None:
         """정상 완료 후처리 (구 DownloadManager.finish의 잔여분).
 
         완료 전이·최종 진행 통지는 서비스가 이미 수행했다. 여기서는 소요 시간
-        계산, 워커 종료 대기·참조 정리, 완료 Signal emit만 한다.
+        계산, 워커 종료 대기·참조 정리, 완료 Signal emit만 한다. 앞 시도의 완료는 버린다 —
+        지금 시도의 핸들 · 카드를 끝내 버린다 (#410).
         """
+        if attempt != self._attempt:
+            return
         if self.handle is None:
             # 완료 직후 사용자가 중지·정리를 마친 경우 (구 finish의 task None 가드와 동일)
             return
@@ -573,7 +594,7 @@ class DownloadViewModel(QObject):
             "Edit the sections or pick another resolution."
         )
 
-    def _onEngineFailed(self, exc: BaseException) -> None:
+    def _onEngineFailed(self, attempt: int, exc: BaseException) -> None:
         """실패 후처리 (#134) — 엔진 종료 신호 후 참조를 정리하고 failed Signal로 사유를 알린다.
 
         이전에는 exc를 읽지 않고 버려서 실패가 유저의 정지와 구분되지 않았다
@@ -591,7 +612,11 @@ class DownloadViewModel(QObject):
         정리(_cleanup_partial)가 죽은 마운트 I/O에 갇힐 수 있어, 메인 스레드가
         기다리면 UI가 얼어붙는다. 엔진 스레드는 stop 신호로 스스로 끝난다
         (v2.9.0·main도 실패 시 기다리지 않았다).
+
+        앞 시도의 실패는 버린다 — 지금 시도를 실패로 끝내 버린다 (#410).
         """
+        if attempt != self._attempt:
+            return
         if self.handle is None:
             # 실패 도착 전에 사용자가 중지·정리를 마친 경우 (완료 경로의 가드와 동일)
             return

@@ -359,6 +359,10 @@ class DownloadService:
                 handle._relay_failed(e)
                 handle.logger.log_exception("Download failed", e)
                 handle.logger.save_and_close()
+            else:
+                # 엔진은 완료 · 실패에서 로그를 닫지만 중단에서는 닫지 않는다 — 여기서 닫는다 (#410).
+                # 닫지 않으면 이 시도의 파일 핸들러가 열린 채 남는다. 이미 닫았으면 아무 일도 없다
+                handle.logger.save_and_close()
         finally:
             handle._done.set()
             with self._lock:
