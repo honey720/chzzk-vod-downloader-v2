@@ -53,6 +53,15 @@ class _Keys(QWidget):
         self.pressed.append(event.key())
 
 
+@pytest.fixture(autouse=True)
+def rest_at_every_gap(monkeypatch):
+    """조작 중이면 틈마다 쉬게 한다(쉼 사이 시간 판정 0) — 이 파일은 쉬는 자리를 잰다 (#408).
+
+    쉼을 일한 시간으로 묶는 동작은 ``tests/unit/core/test_interaction.py``의 가짜 시계 테스트가 잰다.
+    """
+    monkeypatch.setattr(interaction, "REST_AFTER_SECONDS", 0.0)
+
+
 @pytest.fixture
 def clock(monkeypatch):
     clock = _Clock()

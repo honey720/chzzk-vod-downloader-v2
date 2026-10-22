@@ -676,10 +676,20 @@ def _u32_table(data: bytes, span: tuple[int, int], columns: int) -> list[tuple[i
     """버전·플래그(4) + 항목 수(4) 뒤에 32비트 열이 columns개씩 놓인 표를 읽는다.
 
     항목이 적은 표(stsc)에 쓴다. 샘플 수만큼 긴 표는 ``_read_table``로 배열에 읽는다.
+
+    항목 ``CHUNK_ITEMS``개마다 틈을 둔다 — 청크마다 샘플 수가 다른 파일은 stsc 항목이 청크 수만큼
+    많아, 한 번에 풀면 긴 영상에서 이 읽기만 0.1초 가까이 쉬지 않고 돈다 (#408).
     """
     count_ = _entry_count(data, span, columns * 4)
-    values = struct.unpack_from(f">{count_ * columns}I", data, span[0] + 8)
-    return [values[i : i + columns] for i in range(0, len(values), columns)]
+    items = chunk_items(CHUNK_ITEMS)
+    rows: list[tuple[int, ...]] = []
+    for first in range(0, count_, items):
+        between_chunks()
+        values = struct.unpack_from(
+            f">{min(items, count_ - first) * columns}I", data, span[0] + 8 + first * columns * 4
+        )
+        rows.extend(values[i : i + columns] for i in range(0, len(values), columns))
+    return rows
 
 
 def _read_table(data: bytes, start: int, values: int, typecode: str) -> array.array:
@@ -1066,16 +1076,29 @@ def _sample_sizes(data: bytes, span: tuple[int, int], count: int) -> array.array
 
 
 def _composition_offsets(data: bytes, span: tuple[int, int] | None, count: int) -> array.array:
-    """ctts — 샘플별 (PTS − DTS). 상자가 없으면 전부 0이다."""
+    """ctts — 샘플별 (PTS − DTS). 상자가 없으면 전부 0이다.
+
+    항목 ``CHUNK_ITEMS``개마다 틈을 둔다 — B프레임이 있는 긴 영상은 ctts 항목이 샘플 수에 가까워,
+    한 번에 읽으면 이 읽기만 수십 ms를 쉬지 않고 돈다 (#408).
+    """
     if span is None:
         return array.array("q", bytes(8 * count))
     runs = _entry_count(data, span, 8)
     # 버전 0은 부호 없는 값이지만 음수를 넣는 파일이 있어 버전과 무관하게 부호 있는 값으로 읽는다.
     # 개수(부호 없음)와 값(부호 있음)을 같은 바이트에서 따로 읽는다 — 칸마다 형식 글자를 늘어놓은
     # 형식 문자열("IiIi…")은 struct가 캐시에 붙들어 긴 영상에서 수십 MB가 남는다 (#309)
-    counts = _read_table(data, span[0] + 8, 2 * runs, "I")[0::2]
-    offsets = _read_table(data, span[0] + 8, 2 * runs, "i")[1::2]
-    declared = sum(counts)
+    items = chunk_items(CHUNK_ITEMS)
+    counts = array.array("I")
+    offsets = array.array("i")
+    declared = 0
+    for first in range(0, runs, items):
+        between_chunks()
+        start = span[0] + 8 + first * 8
+        values = 2 * min(items, runs - first)
+        piece = _read_table(data, start, values, "I")[0::2]
+        counts.extend(piece)
+        declared += sum(piece)
+        offsets.extend(_read_table(data, start, values, "i")[1::2])
     if declared != count:
         raise Mp4Error(MP4_INVALID, f"ctts {declared}개 · stsz {count}개")
     return _expand_runs(counts, offsets, "q")
@@ -1127,6 +1150,10 @@ def _sample_offsets(
     offsets = array.array("q")
     chunk_starts = array.array("q")
     sample = 0
+    # 청크마다 도는 반복도 조각만큼(샘플 수) 지날 때마다 틈을 둔다 — 청크가 수만 개인 표에서는
+    # 이 반복이 0.1~0.2초를 쉬지 않고 돌아, 조작 중인 화면이 그동안 멈춘다
+    items = chunk_items(CHUNK_ITEMS)
+    since_gap = 0
     for run_index, (first_chunk, samples_per_chunk, _description) in enumerate(runs):
         # first_chunk는 1부터다. 구간은 다음 구간의 first_chunk 직전 청크까지다
         last_chunk = runs[run_index + 1][0] - 1 if run_index + 1 < len(runs) else len(chunk_offsets)
@@ -1150,10 +1177,35 @@ def _sample_offsets(
             last = sample + samples_per_chunk
             if last > len(sizes):
                 raise Mp4Error(MP4_INVALID, "stsc의 샘플 수가 stsz보다 많다")
+            if samples_per_chunk > items:
+                _extend_in_pieces(offsets, sizes, sample, last, chunk_offsets[chunk], items)
+                sample = last
+                # 청크 안의 마지막 틈 뒤에 처리한 샘플 수 — 마지막 조각의 크기다
+                since_gap = (samples_per_chunk - 1) % items + 1
+                continue
             # 청크 안의 샘플은 이어 붙어 있다 — 청크 위치에서 앞 샘플들의 크기를 누적한 자리다.
             # 샘플마다 파이썬 루프를 돌지 않고 청크 단위로 누적한다(긴 영상의 해석 시간 #309)
             offsets.extend(accumulate(sizes[sample : last - 1], initial=chunk_offsets[chunk]))
             sample = last
+            since_gap += samples_per_chunk
+            if since_gap >= items:
+                between_chunks()
+                since_gap = 0
     if sample != len(sizes):
         raise Mp4Error(MP4_INVALID, f"stsc {sample}개 · stsz {len(sizes)}개")
     return offsets, chunk_starts
+
+
+def _extend_in_pieces(
+    offsets: array.array, sizes: array.array, start: int, stop: int, position: int, items: int
+) -> None:
+    """청크 하나(샘플 start~stop−1, 시작 위치 position)의 샘플 위치를 items개씩 잘라 잇는다.
+
+    샘플이 조각보다 많은 청크에 쓴다 — 청크 하나를 통째로 누적하면 그 청크가 쉼 없이 도는 한 틈이
+    된다 (#408).
+    """
+    for begin in range(start, stop, items):
+        between_chunks()
+        end = min(begin + items, stop)
+        offsets.extend(accumulate(sizes[begin : end - 1], initial=position))
+        position += sum(sizes[begin:end])
