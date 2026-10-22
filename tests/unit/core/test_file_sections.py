@@ -778,6 +778,30 @@ def test_section_run_that_fails_in_prepare_leaves_the_file_at_output_path_alone(
         assert f.read() == b"keep"
 
 
+def test_section_run_that_fails_opening_a_body_file_removes_only_the_files_it_opened(
+    server, tmp_path
+):
+    """본문 파일을 열다 실패한 구간 다운로드는 그 실행이 연 파일만 지우고, 아직 열지 않은 자리의 파일은 남겨야 한다.
+
+    기본 입력, 구간 셋. 둘째 구간의 본문 파일 자리에 폴더를 두어 열기가 OSError, 셋째 구간의 본문
+    파일 자리에 b"keep" 파일을 미리 둠
+    -> 실패 1건, 경계 원본 · 첫 본문 파일 없음, 셋째 자리의 파일이 b"keep" 그대로 있다
+    """
+    run = _Run(server, "plain", tmp_path, _three())
+    bodies = [section_body_path_for(path) for path in run.paths]
+    os.mkdir(bodies[1])
+    with open(bodies[2], "wb") as f:
+        f.write(b"keep")
+
+    run.start()
+
+    assert len(run.failures) == 1
+    assert not os.path.exists(run.source_path)
+    assert not os.path.exists(bodies[0])
+    with open(bodies[2], "rb") as f:
+        assert f.read() == b"keep"
+
+
 def test_finished_run_releases_reserved_names(server, tmp_path, monkeypatch):
     """다운로드가 끝나면(실패 포함) 배정받은 구간 파일명의 예약이 풀려야 한다.
 
