@@ -676,10 +676,20 @@ def _u32_table(data: bytes, span: tuple[int, int], columns: int) -> list[tuple[i
     """버전·플래그(4) + 항목 수(4) 뒤에 32비트 열이 columns개씩 놓인 표를 읽는다.
 
     항목이 적은 표(stsc)에 쓴다. 샘플 수만큼 긴 표는 ``_read_table``로 배열에 읽는다.
+
+    항목 ``CHUNK_ITEMS``개마다 틈을 둔다 — 청크마다 샘플 수가 다른 파일은 stsc 항목이 청크 수만큼
+    많아, 한 번에 풀면 긴 영상에서 이 읽기만 0.1초 가까이 쉬지 않고 돈다 (#408).
     """
     count_ = _entry_count(data, span, columns * 4)
-    values = struct.unpack_from(f">{count_ * columns}I", data, span[0] + 8)
-    return [values[i : i + columns] for i in range(0, len(values), columns)]
+    items = chunk_items(CHUNK_ITEMS)
+    rows: list[tuple[int, ...]] = []
+    for first in range(0, count_, items):
+        between_chunks()
+        values = struct.unpack_from(
+            f">{min(items, count_ - first) * columns}I", data, span[0] + 8 + first * columns * 4
+        )
+        rows.extend(values[i : i + columns] for i in range(0, len(values), columns))
+    return rows
 
 
 def _read_table(data: bytes, start: int, values: int, typecode: str) -> array.array:

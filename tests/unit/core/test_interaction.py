@@ -6,6 +6,7 @@
 import array
 import sys
 import threading
+from dataclasses import replace
 
 import pytest
 
@@ -308,7 +309,9 @@ def test_sample_positions_rest_at_least_once_per_index_chunk_of_samples(monkeypa
         frame = sys._getframe(1)
         while frame is not None and frame.f_code is not original.__code__:
             frame = frame.f_back
-        if frame is not None:  # _sample_offsets 안에서 쉰 것만 — 그때까지 만든 위치의 수
+        # _sample_offsets 안에서 위치를 만들기 시작한 뒤에 쉰 것만 — 그때까지 만든 위치의 수.
+        # 그 앞의 stsc 읽기(_u32_table)에서 쉰 것은 다음 테스트가 잰다
+        if frame is not None and "offsets" in frame.f_locals:
             placed[-1].append(len(frame.f_locals["offsets"]))
 
     monkeypatch.setattr(mp4_module, "_sample_offsets", recording)
@@ -321,6 +324,43 @@ def test_sample_positions_rest_at_least_once_per_index_chunk_of_samples(monkeypa
     gaps = [max(b - a for a, b in zip(track, track[1:])) for track in placed]
     assert gaps[0] <= INDEX_CHUNK_ITEMS + 7
     assert gaps[1] <= INDEX_CHUNK_ITEMS + 5
+
+
+def test_stsc_read_rests_at_least_once_per_index_chunk_of_entries(monkeypatch):
+    """stsc 항목이 많은 표를 읽는 동안 쉼 사이에 놓이는 항목 수가 조각 하나 이하여야 한다 (#408).
+
+    영상 30,000샘플 · 청크당 1과 2가 번갈아(stsc 20,000항목). resting_while(늘 참)으로 parse_moov.
+    쉴 때마다 그때까지 _u32_table이 읽은 항목의 수를 적음(시작 0 · 끝 = 항목 수 포함)
+    -> 이웃한 두 값의 차 <= INDEX_CHUNK_ITEMS
+    """
+    from tests.unit.core.test_mp4_section_sizes import _head_only, _video
+
+    video = _video(30_000, seed=5, per_chunk=1, b_frames=False)
+    raw = _head_only([replace(video, chunks=[1, 2] * 10_000)])
+    read: list[list[int]] = []  # 표마다 쉴 때의 항목 수
+    original = mp4_module._u32_table
+
+    def recording(data, span, columns):
+        read.append([0])
+        rows = original(data, span, columns)
+        read[-1].append(len(rows))
+        return rows
+
+    def rest():
+        frame = sys._getframe(1)
+        while frame is not None and frame.f_code is not original.__code__:
+            frame = frame.f_back
+        if frame is not None:  # _u32_table 안에서 쉰 것만 — 그때까지 읽은 항목의 수
+            read[-1].append(len(frame.f_locals["rows"]))
+
+    monkeypatch.setattr(mp4_module, "_u32_table", recording)
+    monkeypatch.setattr(interaction, "_rest", rest)
+
+    with resting_while(lambda: True):
+        parse_moov(raw.moov)
+
+    assert [table[-1] for table in read] == [20_000]  # 전제: stsc 항목을 다 읽었다
+    assert max(b - a for a, b in zip(read[0], read[0][1:])) <= INDEX_CHUNK_ITEMS
 
 
 @pytest.mark.parametrize("items", [2, 3, 5])
