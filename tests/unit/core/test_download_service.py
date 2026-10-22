@@ -650,3 +650,26 @@ def test_run_that_ends_without_closing_the_log_has_it_closed_by_the_service(
 
     assert handle.wait(WAIT)
     assert recording.calls == ["save_and_close"]
+
+
+def test_handle_cancelled_while_waiting_has_its_log_closed(file_factory):
+    """대기 중에 취소한 다운로드도 실행되지 않은 채 끝날 때 그 시도의 로그가 닫혀야 한다 (#410).
+
+    max_concurrent=1, 첫 건이 슬롯을 쥔 동안 둘째 건을 제출해 stop() → 첫 건을 끝냄
+    -> 둘째 엔진은 만들어지지 않는다, 둘째 로거가 받은 호출 == ["save_and_close"]
+    """
+    service = DownloadService()
+    first = service.submit(_make_content())
+    assert file_factory.created.wait(WAIT)
+    assert file_factory.instances[0].started.wait(WAIT)
+    recording = RecordingLogger()
+    second = service.submit(_make_content(), task_logger=recording)
+    assert service.pending_count == 1
+
+    second.stop()
+    _finish(file_factory.instances[0])
+
+    assert first.wait(WAIT)
+    assert second.wait(WAIT)
+    assert len(file_factory.instances) == 1
+    assert recording.calls == ["save_and_close"]
