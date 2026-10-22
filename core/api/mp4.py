@@ -1076,16 +1076,29 @@ def _sample_sizes(data: bytes, span: tuple[int, int], count: int) -> array.array
 
 
 def _composition_offsets(data: bytes, span: tuple[int, int] | None, count: int) -> array.array:
-    """ctts — 샘플별 (PTS − DTS). 상자가 없으면 전부 0이다."""
+    """ctts — 샘플별 (PTS − DTS). 상자가 없으면 전부 0이다.
+
+    항목 ``CHUNK_ITEMS``개마다 틈을 둔다 — B프레임이 있는 긴 영상은 ctts 항목이 샘플 수에 가까워,
+    한 번에 읽으면 이 읽기만 수십 ms를 쉬지 않고 돈다 (#408).
+    """
     if span is None:
         return array.array("q", bytes(8 * count))
     runs = _entry_count(data, span, 8)
     # 버전 0은 부호 없는 값이지만 음수를 넣는 파일이 있어 버전과 무관하게 부호 있는 값으로 읽는다.
     # 개수(부호 없음)와 값(부호 있음)을 같은 바이트에서 따로 읽는다 — 칸마다 형식 글자를 늘어놓은
     # 형식 문자열("IiIi…")은 struct가 캐시에 붙들어 긴 영상에서 수십 MB가 남는다 (#309)
-    counts = _read_table(data, span[0] + 8, 2 * runs, "I")[0::2]
-    offsets = _read_table(data, span[0] + 8, 2 * runs, "i")[1::2]
-    declared = sum(counts)
+    items = chunk_items(CHUNK_ITEMS)
+    counts = array.array("I")
+    offsets = array.array("i")
+    declared = 0
+    for first in range(0, runs, items):
+        between_chunks()
+        start = span[0] + 8 + first * 8
+        values = 2 * min(items, runs - first)
+        piece = _read_table(data, start, values, "I")[0::2]
+        counts.extend(piece)
+        declared += sum(piece)
+        offsets.extend(_read_table(data, start, values, "i")[1::2])
     if declared != count:
         raise Mp4Error(MP4_INVALID, f"ctts {declared}개 · stsz {count}개")
     return _expand_runs(counts, offsets, "q")

@@ -4,6 +4,7 @@
 """
 
 import array
+import struct
 import sys
 import threading
 from dataclasses import replace
@@ -360,6 +361,43 @@ def test_stsc_read_rests_at_least_once_per_index_chunk_of_entries(monkeypatch):
         parse_moov(raw.moov)
 
     assert [table[-1] for table in read] == [20_000]  # 전제: stsc 항목을 다 읽었다
+    assert max(b - a for a, b in zip(read[0], read[0][1:])) <= INDEX_CHUNK_ITEMS
+
+
+def test_ctts_read_rests_at_least_once_per_index_chunk_of_entries(monkeypatch):
+    """ctts 항목이 많은 표를 읽는 동안 쉼 사이에 놓이는 항목 수가 조각 하나 이하여야 한다 (#408).
+
+    영상 20,000샘플 · ctts 값이 2000과 0으로 번갈아(ctts 20,000항목). resting_while(늘 참)으로
+    parse_moov. 쉴 때마다 그때까지 _composition_offsets가 읽은 항목의 수를 적음(시작 0 · 끝 포함)
+    -> 이웃한 두 값의 차 <= INDEX_CHUNK_ITEMS
+    """
+    from tests.unit.core.test_mp4_section_sizes import _head_only, _video
+
+    video = _video(20_000, seed=6, per_chunk=4, b_frames=False)
+    raw = _head_only([replace(video, composition=[2000, 0] * 10_000)])
+    read: list[list[int]] = []  # 표마다 쉴 때의 항목 수
+    original = mp4_module._composition_offsets
+
+    def recording(data, span, count):
+        read.append([0])
+        offsets = original(data, span, count)
+        read[-1].append(struct.unpack_from(">I", data, span[0] + 4)[0])  # 끝 = 상자의 항목 수
+        return offsets
+
+    def rest():
+        frame = sys._getframe(1)
+        while frame is not None and frame.f_code is not original.__code__:
+            frame = frame.f_back
+        if frame is not None:  # _composition_offsets 안에서 쉰 것만 — 그때까지 읽은 항목의 수
+            read[-1].append(len(frame.f_locals["counts"]))
+
+    monkeypatch.setattr(mp4_module, "_composition_offsets", recording)
+    monkeypatch.setattr(interaction, "_rest", rest)
+
+    with resting_while(lambda: True):
+        parse_moov(raw.moov)
+
+    assert [table[-1] for table in read] == [20_000]  # 전제: ctts 표 하나 · 항목 20,000개
     assert max(b - a for a, b in zip(read[0], read[0][1:])) <= INDEX_CHUNK_ITEMS
 
 
