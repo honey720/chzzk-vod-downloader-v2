@@ -360,10 +360,17 @@ class DownloadService:
                 handle.logger.log_exception("Download failed", e)
                 handle.logger.save_and_close()
         finally:
-            handle._done.set()
-            with self._lock:
-                self._active.discard(handle)
-                self._dispatch_locked()
+            try:
+                # 어느 길로 끝나든 이 시도의 로그를 닫는다 (#410) — 엔진은 완료 · 실패에서 닫지만
+                # 중단에서는 닫지 않고, 대기 중 취소 · 시작 전이 실패 등은 엔진에 닿지도 않는다.
+                # 시도마다 로거가 달라 닫지 않으면 그 파일 핸들러가 열린 채 남는다. 이미 닫았으면
+                # 아무 일도 없다
+                handle.logger.save_and_close()
+            finally:
+                handle._done.set()
+                with self._lock:
+                    self._active.discard(handle)
+                    self._dispatch_locked()
 
     def _create_engine(self, handle: DownloadHandle):
         """선택된 다운로더 클래스로 엔진을 만들고 콜백을 배선한다.
