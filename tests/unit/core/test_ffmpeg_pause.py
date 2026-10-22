@@ -423,21 +423,38 @@ def test_cut_stopped_while_paused_ends_its_ffmpeg_and_leaves_nothing(
     assert not os.path.exists(output) and not os.path.exists(cut_temp_dir_for(output))
 
 
-def test_rewrapping_ts_segments_waits_while_paused(tmp_path, launched):
+def test_rewrapping_ts_segments_waits_while_paused(tmp_path, launched, monkeypatch):
     """TS 세그먼트를 mp4로 다시 싸는 동안 일시정지 중이면 세그먼트를 흘려 넣지 않고 기다려야 한다.
 
-    세그먼트 파일 하나(내용은 아무 바이트 — 다시 싸기는 결국 실패한다). 처음부터 일시정지 상태로
-    두고 0.6초 뒤 풂. 0.4초 시점에 띄운 ffmpeg가 살아 있는지 적음
-    -> 0.4초 시점: ffmpeg가 살아 있다(입력을 기다린다)
-    -> 풀린 뒤에야 끝난다: 걸린 시간 >= 0.6초(끝은 입력이 틀려 CutError다)
+    조각 넷(188바이트씩)으로 읽히는 세그먼트 파일 하나(내용은 아무 바이트 — 다시 싸기는 결국
+    실패한다). 처음부터 일시정지 상태로 두고 0.6초 뒤 풂. 0.4초 시점에 띄운 ffmpeg가 살아
+    있는지와, ffmpeg에 넣으려고 흘려 넣기에서 꺼낸 조각 수를 적음
+    -> 0.4초 시점: ffmpeg가 살아 있다(입력을 기다린다), 꺼낸 조각 0개
+    -> 풀린 뒤: 조각 넷을 다 꺼냈다, 걸린 시간 >= 0.6초(끝은 입력이 틀려 CutError다)
     """
     segment = tmp_path / "0.ts"
     segment.write_bytes(bytes(188) * 4)
+    monkeypatch.setattr(
+        ts_cut_module, "read_in_chunks", lambda path: ffmpeg_module.read_in_chunks(path, 188)
+    )
+    taken = []  # remux_stream이 흘려 넣기에서 꺼낸 조각
+    real_remux_stream = ts_cut_module.remux_stream
+
+    def counting_remux_stream(chunks, *args, **kwargs):
+        def counted():
+            for chunk in chunks:
+                taken.append(chunk)
+                yield chunk
+
+        real_remux_stream(counted(), *args, **kwargs)
+
+    monkeypatch.setattr(ts_cut_module, "remux_stream", counting_remux_stream)
     pause = threading.Event()
     pause.set()
     seen = []
     threading.Timer(
-        0.4, lambda: seen.append(bool(launched) and launched[-1].poll() is None)
+        0.4,
+        lambda: seen.append((bool(launched) and launched[-1].poll() is None, len(taken))),
     ).start()
     threading.Timer(0.6, pause.clear).start()
 
@@ -446,5 +463,6 @@ def test_rewrapping_ts_segments_waits_while_paused(tmp_path, launched):
         ts_cut_module._remux([str(segment)], str(tmp_path / "joined.mp4"), None, pause.is_set)
     took = time.perf_counter() - started
 
-    assert seen == [True]
+    assert seen == [(True, 0)]
+    assert len(taken) == 4
     assert took >= 0.6
