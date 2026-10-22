@@ -798,3 +798,122 @@ def test_failure_callback_that_raises_still_lets_the_cleanup_run(tmp_path, monke
     assert order == ["failed", "cleanup"]
     assert logger.closed == 1
     assert escaped == [broken]
+
+
+# ================================================================ 이 시도가 쓰지 않은 산출물 (#412)
+
+
+def test_failure_in_prepare_leaves_the_file_already_at_output_path_alone(tmp_path, monkeypatch):
+    """준비에서 실패한 전체 다운로드는 output_path에 이미 있던 파일을 지우지 않아야 한다.
+
+    output_path에 b"keep" 파일을 미리 둠, 준비(prepare)가 RuntimeError
+    -> 실패 1건, 그 파일이 b"keep" 그대로 있다
+    """
+    engine, data, logger, output, finished, failures, merge_starts = _make_engine(
+        tmp_path, monkeypatch
+    )
+    output.write_bytes(b"keep")
+
+    def prepare(_content):
+        raise RuntimeError("준비 실패")
+
+    monkeypatch.setattr(engine, "prepare", prepare)
+
+    data.model.start()
+    engine.run()
+
+    assert len(failures) == 1
+    assert output.read_bytes() == b"keep"
+
+
+def test_stop_during_transfer_leaves_the_file_already_at_output_path_alone(tmp_path, monkeypatch):
+    """전송 중에 중단한 전체 다운로드는 output_path에 이미 있던 파일을 지우지 않아야 한다.
+
+    output_path에 b"keep" 파일을 미리 둠, 세그먼트 40조각 · 조각마다 0.005초, 0.25초 뒤 model.stop()
+    -> 후처리 시작 통지 없음, 실패 없음, 그 파일이 b"keep" 그대로 있다, 임시 폴더 없음
+    """
+    engine, data, logger, output, finished, failures, merge_starts = _make_engine(
+        tmp_path, monkeypatch, chunks_per_segment=40, throttle=0.005
+    )
+    output.write_bytes(b"keep")
+
+    data.model.start()
+    thread = _run_in_thread(engine)
+    time.sleep(0.25)
+    data.model.stop()
+    thread.join(timeout=30)
+    assert not thread.is_alive()
+
+    assert merge_starts == [], "전제: 전송 중에 중단했다"
+    assert failures == []
+    assert output.read_bytes() == b"keep"
+    assert not (tmp_path / "CVDv2_temp_out").exists()
+
+
+def test_stop_after_the_remux_wrote_part_of_the_output_removes_it(tmp_path, monkeypatch):
+    """후처리가 산출물을 쓰기 시작한 뒤 중단하면 정리가 그 산출물을 지워야 한다.
+
+    가짜 remux가 받은 조각을 output_path에 쓰며 조각마다 0.05초 쉼, 첫 조각을 쓴 뒤 model.stop()
+    -> 중단할 때 산출물이 있었다, 실패 없음, 끝난 뒤 산출물 없음
+    """
+    engine, data, logger, output, finished, failures, merge_starts = _make_engine(
+        tmp_path, monkeypatch
+    )
+    wrote_once = threading.Event()
+
+    def writing_remux_stream(chunks, dst_path, **_wait):
+        with open(dst_path, "wb") as f:
+            for chunk in chunks:
+                f.write(chunk)
+                f.flush()
+                wrote_once.set()
+                time.sleep(0.05)
+
+    monkeypatch.setattr(base_module, "remux_stream", writing_remux_stream)
+
+    data.model.start()
+    thread = _run_in_thread(engine)
+    assert wrote_once.wait(timeout=30), "후처리가 산출물을 쓰지 않았다"
+    existed = output.exists()
+    data.model.stop()
+    thread.join(timeout=30)
+    assert not thread.is_alive()
+
+    assert existed, "전제: 중단할 때 산출물이 있었다"
+    assert failures == []
+    assert not output.exists()
+
+
+def test_rerun_of_the_same_engine_that_fails_in_prepare_keeps_the_file_at_output_path(
+    tmp_path, monkeypatch
+):
+    """후처리까지 간 엔진을 다시 돌려 준비에서 실패하면 output_path에 있던 파일을 지우지 않아야 한다.
+
+    같은 엔진. 첫 실행: remux가 FFmpegError(후처리 실패). 그 뒤 output_path에 b"keep" 파일을 둠,
+    플레이리스트 요청이 RuntimeError를 내는 세션으로 바꿔 다시 실행(준비가 실패)
+    -> 둘째 실행의 실패가 그 RuntimeError, 그 파일이 b"keep" 그대로 있다
+    """
+    engine, data, logger, output, finished, failures, merge_starts = _make_engine(
+        tmp_path, monkeypatch
+    )
+
+    def broken_remux_stream(chunks, dst_path, **_wait):
+        raise base_module.FFmpegError("가짜 remux 실패")
+
+    monkeypatch.setattr(base_module, "remux_stream", broken_remux_stream)
+    data.model.start()
+    engine.run()
+    assert merge_starts == [True], "전제: 첫 실행이 후처리까지 갔다"
+    output.write_bytes(b"keep")
+    cause = RuntimeError("플레이리스트를 받지 못했다")
+
+    class _FailingSession:
+        def get(self, url, **kwargs):
+            raise cause
+
+    monkeypatch.setattr(m3u8_module, "get_thread_session", lambda: _FailingSession())
+
+    engine.run()
+
+    assert failures[-1] is cause
+    assert output.read_bytes() == b"keep"

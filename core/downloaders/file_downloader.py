@@ -307,6 +307,9 @@ class FileDownloader(BaseDownloader):
         self._mp4_head = None  # 구간을 정할 때 쓴 moov — 일부 실패로 끝나면 다음 실행에 넘긴다
         # 이전 실행이 전송을 끝낸 임시 원본을 그대로 쓰는지 — 쓰면 받지 않고 지우지도 않는다
         self._reuses_source: bool = False
+        # 이번 실행이 연 받는 파일(전체 다운로드의 산출물 · 구간 다운로드의 경계 원본과 본문 파일)
+        # — 연 차례대로. 정리는 연 것만 지운다 (#412)
+        self._opened_files: list[str] = []
         # 임시 원본이 범위를 담고 있는 구간의 번호 — 일부 실패로 끝나면 다음 실행에 넘긴다
         self._source_sections: frozenset[int] = frozenset()
         self.cut_results: list[CutResult] = []  # 이번 실행이 자른 구간의 컷 결과 — 자른 순서
@@ -350,6 +353,7 @@ class FileDownloader(BaseDownloader):
         Raises:
             DiskSpaceError: 파일 크기가 저장 폴더의 여유 공간보다 큰 경우
         """
+        self._opened_files = []  # 같은 엔진을 다시 돌려도 앞 실행의 것이 남지 않게 (#412)
         if content.selections:
             return self._prepare_sections(content)
         total_size = self._get_total_size()
@@ -618,11 +622,15 @@ class FileDownloader(BaseDownloader):
         """
         if self._reuses_source:
             return
+        # 연 파일마다 적는다 — 그 자리는 이제 이번 실행의 것이다. 다음 파일을 열다 실패하면 정리는
+        # 연 것만 지운다(아직 열지 않은 자리의 파일은 이전 실행이 남긴 것일 수 있다)
         with open(self._target_path, "wb") as f:
+            self._opened_files.append(self._target_path)
             f.write(self._head)
         for number, path in self._bodies.items():
             plan = self._plans[number]
             with open(path, "wb") as f:
+                self._opened_files.append(path)
                 if plan is None:
                     f.write(self._whole_prefix)
                 else:
@@ -650,11 +658,16 @@ class FileDownloader(BaseDownloader):
 
         이전 실행이 전송을 끝낸 경계 원본과 본문을 그대로 쓴 실행은 그것들을 지우지 않는다 —
         이번 실행이 만든 것만 지운다 (#309).
+
+        받는 파일은 이번 실행이 연 것만 지운다 (#412). 준비 안에서 끝났으면 연 것이 없다 — 그때
+        ``_target_path``는 ``output_path``다(구간 다운로드는 그 자리에 쓰지 않고, 전체 다운로드도
+        아직 쓰지 않았다). 그 자리의 파일은 이 실행의 것이 아니다(같은 이름을 받은 다른 카드의
+        산출물일 수 있다).
         """
-        targets = [] if self._reuses_source else [self._target_path, *self._bodies.values()]
-        for path in (*targets, *self._made_sections):
+        for path in (*self._opened_files, *self._made_sections):
             if os.path.exists(path):
                 os.remove(path)
+        self._opened_files.clear()
         self._made_sections.clear()
 
     # ============ 구간 다운로드의 후처리 (#309) ============
