@@ -585,6 +585,9 @@ class BaseDownloader(ABC):
         # 이번 실행이 실패를 알렸는지 — 실패로 멈춘 것과 사용자가 멈춘 것을 로그에서 가른다
         self._failure_notified = False
         self._measured_paused = 0.0  # 속도를 마지막으로 잰 때까지 일시정지한 시간의 합(초)
+        # 이번 실행의 후처리(remux)가 산출물(output_path)을 쓰기 시작했는지 — 세그먼트를 받는
+        # 다운로더의 정리는 그 뒤에만 산출물을 지운다 (#412)
+        self._remux_started = False
         # 전송 중 관측된 정점 동시 스레드 수 — 전송 종료 요약 로그용 (#110)
         self._peak_threads = 0
         # 목표 스레드 조정기 (#112 · #347) — 첫 관측 틱에 만든다(_adjust_threads)
@@ -1059,6 +1062,8 @@ class BaseDownloader(ABC):
                         )
                     )
 
+        # 이제부터 output_path는 이번 실행이 쓰는 자리다 — 중단 · 실패하면 정리가 지운다 (#412)
+        self._remux_started = True
         try:
             remux_stream(
                 feed(),

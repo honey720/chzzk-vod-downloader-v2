@@ -187,6 +187,7 @@ class HlsAesDownloader(BaseDownloader):
             DiskSpaceError: 어림한 크기가 임시 폴더 · 저장 폴더의 여유 공간에 들어가지 않는 경우
         """
         self._space = None  # 실행마다 다시 만든다
+        self._remux_started = False  # 같은 엔진을 다시 돌려도 앞 실행의 것이 남지 않게 (#412)
         # 구간 다운로드의 상태는 실행마다 다시 채운다 — 같은 엔진을 다시 돌려도 남지 않는다
         self._sections = ()
         self._head = None
@@ -434,12 +435,18 @@ class HlsAesDownloader(BaseDownloader):
         아니므로(같은 영상의 전체 다운로드일 수 있다) 지우지 않고, 이번에 만든 구간 파일만
         지운다 (#309). 이전 실행을 이어받은 실행(Content.section_resume)은 임시
         폴더도 지우지 않는다 — 이전 실행의 구간 파일과 받아 둔 세그먼트가 남는다.
+
+        전체 다운로드의 산출물은 후처리(remux)가 처음 쓴다 — 그 전(준비 · 전송)에 끝났으면
+        output_path를 지우지 않는다. 그 자리의 파일은 이 실행의 것이 아니다 (#412).
         """
         if not self._resumed and os.path.exists(self.temp_dir):
             # 이전 실행을 이어받은 실행은 임시 폴더를 남긴다 — 받아 둔 세그먼트는 이전 실행의
             # 것이다. 이번 실행이 만든 구간 파일만 지운다
             shutil.rmtree(self.temp_dir)
-        made = self._made_sections if self.s.content.selections else [self.s.output_path]
+        if self.s.content.selections:
+            made = self._made_sections
+        else:
+            made = [self.s.output_path] if self._remux_started else []
         for path in made:
             if os.path.exists(path):
                 os.remove(path)
