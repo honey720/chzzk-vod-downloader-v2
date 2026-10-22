@@ -1177,6 +1177,11 @@ def _sample_offsets(
             last = sample + samples_per_chunk
             if last > len(sizes):
                 raise Mp4Error(MP4_INVALID, "stsc의 샘플 수가 stsz보다 많다")
+            if samples_per_chunk > items:
+                _extend_in_pieces(offsets, sizes, sample, last, chunk_offsets[chunk], items)
+                sample = last
+                since_gap = 0
+                continue
             # 청크 안의 샘플은 이어 붙어 있다 — 청크 위치에서 앞 샘플들의 크기를 누적한 자리다.
             # 샘플마다 파이썬 루프를 돌지 않고 청크 단위로 누적한다(긴 영상의 해석 시간 #309)
             offsets.extend(accumulate(sizes[sample : last - 1], initial=chunk_offsets[chunk]))
@@ -1188,3 +1193,18 @@ def _sample_offsets(
     if sample != len(sizes):
         raise Mp4Error(MP4_INVALID, f"stsc {sample}개 · stsz {len(sizes)}개")
     return offsets, chunk_starts
+
+
+def _extend_in_pieces(
+    offsets: array.array, sizes: array.array, start: int, stop: int, position: int, items: int
+) -> None:
+    """청크 하나(샘플 start~stop−1, 시작 위치 position)의 샘플 위치를 items개씩 잘라 잇는다.
+
+    샘플이 조각보다 많은 청크에 쓴다 — 청크 하나를 통째로 누적하면 그 청크가 쉼 없이 도는 한 틈이
+    된다 (#408).
+    """
+    for begin in range(start, stop, items):
+        between_chunks()
+        end = min(begin + items, stop)
+        offsets.extend(accumulate(sizes[begin : end - 1], initial=position))
+        position += sum(sizes[begin:end])

@@ -8,6 +8,7 @@ import struct
 import sys
 import threading
 from dataclasses import replace
+from itertools import accumulate
 
 import pytest
 
@@ -36,6 +37,7 @@ from core.utils.mp4_section_sizes import (
     moov_sections_file_size,
     moov_sections_sizes,
 )
+from core.utils.stop import StopRequested, stoppable
 from tests.unit.core.mp4_builder import audio_spec, build_mp4, video_spec
 from tests.unit.core.test_mp4_chunks import _columns
 
@@ -399,6 +401,69 @@ def test_ctts_read_rests_at_least_once_per_index_chunk_of_entries(monkeypatch):
 
     assert [table[-1] for table in read] == [20_000]  # 전제: ctts 표 하나 · 항목 20,000개
     assert max(b - a for a, b in zip(read[0], read[0][1:])) <= INDEX_CHUNK_ITEMS
+
+
+def test_one_chunk_larger_than_a_piece_rests_inside_the_chunk(monkeypatch):
+    """청크 하나의 샘플이 조각보다 많으면 그 청크 안에서도 쉼 사이의 샘플 수가 조각 하나 이하여야 한다 (#408).
+
+    영상 20,000샘플 · 청크 하나. resting_while(늘 참)으로 parse_moov.
+    쉴 때마다 그때까지 _sample_offsets가 만든 위치의 수를 적음(시작 0 · 끝 = 샘플 수 포함)
+    -> 이웃한 두 값의 차 <= INDEX_CHUNK_ITEMS · 위치 = 청크 위치 + 앞 샘플들의 크기 합
+    """
+    from tests.unit.core.test_mp4_section_sizes import _head_only, _video
+
+    video = _video(20_000, seed=7, per_chunk=20_000, b_frames=False)
+    raw = _head_only([video])
+    placed: list[int] = [0]  # 쉴 때의 위치 수
+    original = mp4_module._sample_offsets
+
+    def rest():
+        frame = sys._getframe(1)
+        while frame is not None and frame.f_code is not original.__code__:
+            frame = frame.f_back
+        if frame is not None and "offsets" in frame.f_locals:
+            placed.append(len(frame.f_locals["offsets"]))
+
+    monkeypatch.setattr(interaction, "_rest", rest)
+
+    with resting_while(lambda: True):
+        index = parse_moov(raw.moov)
+
+    offsets = list(index.video.offsets)
+    placed.append(len(offsets))
+    assert len(offsets) == 20_000  # 전제: 샘플마다 위치가 있다
+    assert max(b - a for a, b in zip(placed, placed[1:])) <= INDEX_CHUNK_ITEMS
+    start = offsets[0]
+    assert offsets == [start + before for before in accumulate(video.sizes[:-1], initial=0)]
+
+
+@pytest.mark.parametrize("site", ["_sample_offsets", "_u32_table", "_composition_offsets"])
+def test_index_stops_at_each_rest_point_added_for_408(site):
+    """색인을 만드는 도중 그만두라는 답이 site 안에서만 나오면 parse_moov가 StopRequested로 멈춰야 한다.
+
+    영상 20,000샘플 · 청크당 7 · B프레임(#408). 그만둘지 묻는 값이 core/api/mp4.py에서 가장 안쪽
+    함수가 site일 때만 참
+    -> StopRequested · 참을 낸 것이 site 안에서 한 번
+    """
+    from tests.unit.core.test_mp4_section_sizes import _head_only, _video
+
+    raw = _head_only([_video(20_000, seed=8, per_chunk=7, b_frames=True)])
+    target = getattr(mp4_module, site).__code__
+    answered: list[str] = []
+
+    def should_stop() -> bool:
+        frame = sys._getframe(1)
+        while frame is not None and frame.f_globals is not vars(mp4_module):
+            frame = frame.f_back
+        if frame is not None and frame.f_code is target:
+            answered.append(site)
+            return True
+        return False
+
+    with stoppable(should_stop), pytest.raises(StopRequested):
+        parse_moov(raw.moov)
+
+    assert answered == [site]
 
 
 @pytest.mark.parametrize("items", [2, 3, 5])
