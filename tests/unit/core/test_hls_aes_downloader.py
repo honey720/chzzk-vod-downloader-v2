@@ -420,3 +420,34 @@ def test_failure_in_prepare_leaves_the_file_already_at_output_path_alone(tmp_pat
     assert [type(e) for e in failures] == [DecryptionError]
     with open(data.output_path, "rb") as f:
         assert f.read() == b"keep"
+
+
+def test_rerun_of_the_same_engine_that_fails_in_prepare_keeps_the_file_at_output_path(
+    tmp_path, monkeypatch
+):
+    """후처리까지 간 엔진을 다시 돌려 준비에서 실패하면 output_path에 있던 파일을 지우지 않아야 한다.
+
+    같은 엔진, 키 리졸버 있음. 첫 실행: remux가 FFmpegError(후처리 실패). 그 뒤 output_path에
+    b"keep" 파일을 둠, 키 리졸버를 떼고 다시 실행(준비가 DecryptionError)
+    -> 둘째 실행의 마지막 실패가 DecryptionError, 그 파일이 b"keep" 그대로 있다
+    """
+    engine, data, logger, finished, failures, merge_starts = _make_engine(
+        tmp_path, monkeypatch, key_resolver=lambda c, u: KEY
+    )
+
+    def broken_remux_stream(chunks, dst_path, **_wait):
+        raise base_module.FFmpegError("가짜 remux 실패")
+
+    monkeypatch.setattr(base_module, "remux_stream", broken_remux_stream)
+    data.model.start()
+    engine.run()
+    assert merge_starts == [True], "전제: 첫 실행이 후처리까지 갔다"
+    with open(data.output_path, "wb") as f:
+        f.write(b"keep")
+    engine.set_key_resolver(None)
+
+    engine.run()
+
+    assert isinstance(failures[-1], DecryptionError)
+    with open(data.output_path, "rb") as f:
+        assert f.read() == b"keep"
