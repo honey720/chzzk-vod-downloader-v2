@@ -1180,7 +1180,8 @@ def _sample_offsets(
             if samples_per_chunk > items:
                 _extend_in_pieces(offsets, sizes, sample, last, chunk_offsets[chunk], items)
                 sample = last
-                since_gap = 0
+                # 청크 안의 마지막 틈 뒤에 처리한 샘플 수 — 마지막 조각의 크기다
+                since_gap = (samples_per_chunk - 1) % items + 1
                 continue
             # 청크 안의 샘플은 이어 붙어 있다 — 청크 위치에서 앞 샘플들의 크기를 누적한 자리다.
             # 샘플마다 파이썬 루프를 돌지 않고 청크 단위로 누적한다(긴 영상의 해석 시간 #309)

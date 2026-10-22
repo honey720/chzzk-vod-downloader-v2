@@ -446,6 +446,37 @@ def test_one_chunk_larger_than_a_piece_rests_inside_the_chunk(monkeypatch):
     assert offsets == [start + before for before in accumulate(video.sizes[:-1], initial=0)]
 
 
+def test_chunks_after_a_large_chunk_count_the_samples_after_its_last_rest(monkeypatch):
+    """큰 청크 뒤에 작은 청크가 오면 쉼 사이의 샘플 수가 조각 하나 + 작은 청크 하나 이하여야 한다 (#408).
+
+    영상 32,765샘플 · 청크 16,383 · 8,191 · 8,191(큰 청크의 마지막 조각 8,191 뒤에 작은 청크 둘).
+    resting_while(늘 참)으로 parse_moov. 쉴 때마다 그때까지 만든 위치의 수를 적음(시작 0 · 끝 포함)
+    -> 이웃한 두 값의 차 <= INDEX_CHUNK_ITEMS + 8,191
+    """
+    from tests.unit.core.test_mp4_section_sizes import _head_only, _video
+
+    video = _video(32_765, seed=10, per_chunk=1, b_frames=False)
+    raw = _head_only([replace(video, chunks=[16_383, 8_191, 8_191])])
+    placed: list[int] = [0]  # 쉴 때의 위치 수
+    original = mp4_module._sample_offsets
+
+    def rest():
+        frame = sys._getframe(1)
+        while frame is not None and frame.f_code is not original.__code__:
+            frame = frame.f_back
+        if frame is not None and "offsets" in frame.f_locals:
+            placed.append(len(frame.f_locals["offsets"]))
+
+    monkeypatch.setattr(interaction, "_rest", rest)
+
+    with resting_while(lambda: True):
+        index = parse_moov(raw.moov)
+
+    placed.append(len(index.video.offsets))
+    assert placed[-1] == 32_765  # 전제: 샘플마다 위치가 있다
+    assert max(b - a for a, b in zip(placed, placed[1:])) <= INDEX_CHUNK_ITEMS + 8_191
+
+
 @pytest.mark.parametrize(
     ("site", "per_chunk"),
     [
