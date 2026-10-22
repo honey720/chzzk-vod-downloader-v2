@@ -2482,13 +2482,21 @@ class _StopAtFirstGap:
         self.released.wait(_RUN_LIMIT_SECONDS)
 
 
-def _stop_while_parsing(server, tmp_path, monkeypatch) -> SimpleNamespace:
+def _stop_while_parsing(
+    server, tmp_path, monkeypatch, *, at_output_path: bytes | None = None
+) -> SimpleNamespace:
     """받아 둔 moov를 넘긴 구간 다운로드를 서비스로 돌리고, 엔진의 색인 해석 첫 틈에서 중단한다.
 
     중단한 실행이 끝나기를 ``_STOPPED_RUN_SECONDS`` 기다린 바로 그때 같은 폴더 · 제목으로 구간
     파일 이름을 다시 배정해 본다(곧바로 다시 시작). 그 뒤 붙잡힌 틈을 놓아 실행을 끝낸다.
+
+    Args:
+        at_output_path: 주면 제출하기 전에 공유 데이터의 output_path에 이 바이트의 파일을 둔다
     """
     run = _ServiceRun(server, tmp_path, [TimeRange(_seconds(35), _seconds(80))])
+    if at_output_path is not None:
+        with open(run.data.output_path, "wb") as f:
+            f.write(at_output_path)
     pending = pending_mp4_head(fetch_mp4_raw(server.url("plain")))
     run.data.content.mp4_pending = pending
     gap = _StopAtFirstGap(run.data.model.stop)
@@ -2571,6 +2579,21 @@ def test_stopping_while_the_engine_parses_the_moov_makes_no_output_file(
 
     assert stopped.made == []
     assert stopped.run.listing() == []
+
+
+def test_stopping_while_the_engine_parses_the_moov_leaves_the_file_at_output_path_alone(
+    server, tmp_path, monkeypatch
+):
+    """색인 해석 도중 중단한 실행은 공유 데이터의 output_path에 있던 파일을 지우지 않아야 한다.
+
+    위와 같은 실행. 제출 전에 output_path("unused.mp4")에 10바이트 파일을 둠
+    -> 끝난 뒤 그 파일이 10바이트 그대로 있다
+    """
+    stopped = _stop_while_parsing(server, tmp_path, monkeypatch, at_output_path=b"0123456789")
+
+    assert stopped.run.listing() == ["unused.mp4"]
+    with open(stopped.run.data.output_path, "rb") as f:
+        assert f.read() == b"0123456789"
 
 
 def test_starting_again_right_after_stopping_during_the_parse_gets_the_same_names(
