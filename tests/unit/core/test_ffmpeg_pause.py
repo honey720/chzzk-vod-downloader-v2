@@ -452,11 +452,15 @@ def test_rewrapping_ts_segments_waits_while_paused(tmp_path, launched, monkeypat
     pause = threading.Event()
     pause.set()
     seen = []
-    threading.Timer(
-        0.4,
-        lambda: seen.append((bool(launched) and launched[-1].poll() is None, len(taken))),
-    ).start()
-    threading.Timer(0.6, pause.clear).start()
+
+    def look_then_resume():
+        # 적고 나서 푼다 — 한 스레드라 적는 쪽이 늦어도 푼 뒤의 조각이 섞이지 않는다
+        time.sleep(0.4)
+        seen.append((bool(launched) and launched[-1].poll() is None, len(taken)))
+        time.sleep(0.2)
+        pause.clear()
+
+    threading.Thread(target=look_then_resume, daemon=True).start()
 
     started = time.perf_counter()
     with pytest.raises(CutError):
