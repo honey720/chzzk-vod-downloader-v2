@@ -636,3 +636,27 @@ def test_download_without_sections_starts_when_the_free_space_is_unknown(tmp_pat
     )
 
     assert (finished, failures, lines) == (True, [], [])
+
+
+# ================================================================ 이 시도가 쓰지 않은 산출물 (#412)
+
+
+def test_failure_in_prepare_leaves_the_file_already_at_output_path_alone(tmp_path, monkeypatch):
+    """준비에서 실패한 전체 다운로드는 output_path에 이미 있던 파일을 지우지 않아야 한다.
+
+    output_path에 b"keep" 파일을 미리 둠, 크기 조회(_get_total_size)가 OSError(EIO)
+    -> 실패 1건, 그 파일이 b"keep" 그대로 있다
+    """
+    engine, data, _logger, output, _finished, failures = _make_engine(tmp_path, monkeypatch)
+    output.write_bytes(b"keep")
+
+    def broken() -> int:
+        raise OSError(errno.EIO, "시험 — 크기를 읽지 못했다")
+
+    monkeypatch.setattr(engine, "_get_total_size", broken)
+
+    data.model.start()
+    engine.run()
+
+    assert len(failures) == 1
+    assert output.read_bytes() == b"keep"

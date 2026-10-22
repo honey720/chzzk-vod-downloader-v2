@@ -205,6 +205,7 @@ def _make_engine(tmp_path, monkeypatch, playlist=None, key_resolver=None):
     monkeypatch.setattr(
         aes_module, "get_thread_session", lambda: FakeSession(playlist or _playlist_text())
     )
+
     # remux(#88·#92)는 성공 시 스트림 복사 재포장이다 — 이 파일의 검증 대상은
     # 복호화·공급 순서·바이트이므로 받은 스트림을 그대로 쓰는 스텁으로 대체한다.
     # 실제 ffmpeg 실행은 test_ffmpeg_utils.py가 검증한다
@@ -398,3 +399,24 @@ def test_stray_dotfile_in_temp_dir_is_excluded_from_merge(tmp_path, monkeypatch)
     assert "._0.ts" in logger.warnings[0]
     assert ".DS_Store" in logger.warnings[0]
     assert "notes.txt" in logger.warnings[0]
+
+
+# ================================================================ 이 시도가 쓰지 않은 산출물 (#412)
+
+
+def test_failure_in_prepare_leaves_the_file_already_at_output_path_alone(tmp_path, monkeypatch):
+    """준비에서 실패한 전체 다운로드는 output_path에 이미 있던 파일을 지우지 않아야 한다.
+
+    output_path에 b"keep" 파일을 미리 둠, 키 리졸버 없음(준비가 DecryptionError)
+    -> 실패 1건(DecryptionError), 그 파일이 b"keep" 그대로 있다
+    """
+    engine, data, logger, finished, failures, _ = _make_engine(tmp_path, monkeypatch)
+    with open(data.output_path, "wb") as f:
+        f.write(b"keep")
+
+    data.model.start()
+    engine.run()
+
+    assert [type(e) for e in failures] == [DecryptionError]
+    with open(data.output_path, "rb") as f:
+        assert f.read() == b"keep"

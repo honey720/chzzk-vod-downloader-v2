@@ -2409,3 +2409,24 @@ def test_retry_makes_a_finished_section_again_when_its_file_changed_size(
         assert f.read() == b"0123456789"
     assert snapshot(kept) == kept
     assert again.data.sections_resumed == 1
+
+
+# ============ 이 시도가 쓰지 않은 산출물 (#412) ============
+
+
+def test_section_run_that_fails_in_prepare_leaves_the_file_at_output_path_alone(server, tmp_path):
+    """준비에서 실패한 구간 다운로드는 output_path 자리에 있던 파일을 지우지 않아야 한다.
+
+    기본 입력(6초), 구간 5~7초(영상 밖 — 준비가 SelectionError), output_path 자리에 b"keep" 파일
+    -> 실패 1건(SelectionError), 저장 폴더에 그 파일 하나뿐이고 내용이 b"keep"
+    """
+    run = _Run(server, "plain", tmp_path, [TimeRange(5.0, 7.0)])
+    with open(run.data.output_path, "wb") as f:
+        f.write(b"keep")
+
+    run.start()
+
+    assert [type(e) for e in run.failures] == [SelectionError]
+    assert run.listing() == ["unused.mp4"]
+    with open(run.data.output_path, "rb") as f:
+        assert f.read() == b"keep"

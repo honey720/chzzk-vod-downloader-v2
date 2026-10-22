@@ -798,3 +798,53 @@ def test_failure_callback_that_raises_still_lets_the_cleanup_run(tmp_path, monke
     assert order == ["failed", "cleanup"]
     assert logger.closed == 1
     assert escaped == [broken]
+
+
+# ================================================================ 이 시도가 쓰지 않은 산출물 (#412)
+
+
+def test_failure_in_prepare_leaves_the_file_already_at_output_path_alone(tmp_path, monkeypatch):
+    """준비에서 실패한 전체 다운로드는 output_path에 이미 있던 파일을 지우지 않아야 한다.
+
+    output_path에 b"keep" 파일을 미리 둠, 준비(prepare)가 RuntimeError
+    -> 실패 1건, 그 파일이 b"keep" 그대로 있다
+    """
+    engine, data, logger, output, finished, failures, merge_starts = _make_engine(
+        tmp_path, monkeypatch
+    )
+    output.write_bytes(b"keep")
+
+    def prepare(_content):
+        raise RuntimeError("준비 실패")
+
+    monkeypatch.setattr(engine, "prepare", prepare)
+
+    data.model.start()
+    engine.run()
+
+    assert len(failures) == 1
+    assert output.read_bytes() == b"keep"
+
+
+def test_stop_during_transfer_leaves_the_file_already_at_output_path_alone(tmp_path, monkeypatch):
+    """전송 중에 중단한 전체 다운로드는 output_path에 이미 있던 파일을 지우지 않아야 한다.
+
+    output_path에 b"keep" 파일을 미리 둠, 세그먼트 40조각 · 조각마다 0.005초, 0.25초 뒤 model.stop()
+    -> 후처리 시작 통지 없음, 실패 없음, 그 파일이 b"keep" 그대로 있다, 임시 폴더 없음
+    """
+    engine, data, logger, output, finished, failures, merge_starts = _make_engine(
+        tmp_path, monkeypatch, chunks_per_segment=40, throttle=0.005
+    )
+    output.write_bytes(b"keep")
+
+    data.model.start()
+    thread = _run_in_thread(engine)
+    time.sleep(0.25)
+    data.model.stop()
+    thread.join(timeout=30)
+    assert not thread.is_alive()
+
+    assert merge_starts == [], "전제: 전송 중에 중단했다"
+    assert failures == []
+    assert output.read_bytes() == b"keep"
+    assert not (tmp_path / "CVDv2_temp_out").exists()
