@@ -293,6 +293,34 @@ def _drive(rig: _Rig, until, step: float = 0.5, limit: float = 60.0) -> None:
         _polls(rig, 1, until)
 
 
+def _settled(rig: _Rig) -> bool:
+    """엔진이 지금 테스트 시각의 일을 다 했는가 — 도는 요청이 없고 지금 꺼낼 항목도 없다.
+
+    실패로 끝내기로 정했으면 그 통지가 닿았을 때 다 한 것이다.
+    """
+    engine = rig.engine
+    with engine.lock:
+        if engine._fatal_claimed:
+            return bool(rig.failures)
+        return not engine.future_dict and engine._ready_position() is None
+
+
+def _drive_settled(rig: _Rig, until, step: float = 1.0, limit: float = 60.0) -> None:
+    """until()이 참이 될 때까지 테스트 시계를 step씩 돌린다 — 돌릴 때마다 엔진이 그 시각의 일을 다 할 때까지 기다린다.
+
+    ``_drive``는 실행 루프가 한 번 돌기만 기다린다 — 요청이 실패하기까지 실제 시간이 걸리면(부하가 큰
+    러너) 작업자가 그 시각의 요청 · 실패를 마치기 전에 시계가 앞서 나가, 판정이 그만큼 늦은 시각에
+    난다 (#433). 시계를 돌리기 전에 실행 루프가 돌기 시작했는지부터 본다 — 그 전에는 대기열이 비어
+    할 일이 없어 보인다.
+    """
+    _wait(lambda: rig.turns > 0)
+    _wait(lambda: until() or _settled(rig), timeout=30.0)
+    while not until():
+        assert rig.clock.now - START <= limit, f"테스트 시계 {limit}초 안에 끝나지 않았다"
+        rig.clock.now += step
+        _wait(lambda: until() or _settled(rig), timeout=30.0)
+
+
 def _others_done(rig: _Rig, target: int):
     """target 말고 모든 항목을 한 번씩 요청해 받았다."""
     others = [key for key in rig.keys if key != target]
@@ -546,14 +574,14 @@ def test_every_request_failing_to_connect_ends_as_network_lost_within_the_quiet_
 ):
     """모든 요청이 연결 오류면 무수신 10초를 넘긴 뒤 곧 회선 끊김으로 실패하고 상한까지 끌지 않아야 한다.
 
-    모든 항목 요청이 연결 오류. 시계를 1초씩 돌림
+    모든 항목 요청이 연결 오류. 시계를 1초씩 돌리고, 돌릴 때마다 엔진이 그 시각의 일을 다 할 때까지 기다림
     -> 실패 통지 1회(NetworkLostError, 원인은 연결 오류), 실패 시각은 시작 뒤 10~15초,
        항목마다 요청은 상한(11회)보다 적고 상한 도달 줄이 없다, 완료 없음
     """
     cause = requests.ConnectionError("끊김")
     rig = _rig(kind, tmp_path, monkeypatch, lambda key, attempt: cause)
     thread = _start(rig)
-    _drive(rig, lambda: bool(rig.failures), step=1.0)
+    _drive_settled(rig, lambda: bool(rig.failures))
     failed_after = rig.clock.now - START
     thread.join(timeout=10)
 
