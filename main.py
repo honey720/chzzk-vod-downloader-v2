@@ -8,6 +8,7 @@ from PySide6.QtCore import QTranslator, QLocale
 from app.views.mainWindow import VodDownloader
 import config.config as config
 import app.theme as theme
+from app.crash_diagnostics import install_crash_diagnostics
 from app.log_setup import setup_logging
 from app.platform_adapter import enable_responsive_timing
 from app.user_activity import watch_user_input
@@ -150,6 +151,8 @@ def set_language(app_config, translator):
 if __name__ == '__main__':
     # 공통 로깅 설정 (콘솔 + logs/ 회전 파일)
     setup_logging()
+    # 충돌 순간의 스택 · 처리되지 않은 예외를 로그 폴더에 남긴다 (#427) — 앱 로그 설정 뒤에 건다
+    install_crash_diagnostics(os.path.join(config.CONFIG_DIR, "logs"))
     # 백그라운드 일이 도는 동안 화면이 굼떠지지 않게 한다 (#309) — Windows에서만 움직인다
     enable_responsive_timing()
 
