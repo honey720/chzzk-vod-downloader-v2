@@ -673,6 +673,42 @@ def test_emoji_temp_path_over_in_utf16_units_is_shortened(tmp_path, kind):
     assert "�" not in name
 
 
+OUTPUT_LIMIT = (
+    240  # 산출물 전체 경로의 상한(UTF-16 단위) — 중복 회피 " (n)"과 임시 접두사의 여유를 뺀 값
+)
+
+
+def test_emoji_output_path_that_just_fits_in_utf16_units_keeps_the_title(tmp_path):
+    """이모지가 든 산출물 경로가 UTF-16 단위로 딱 240이면 제목을 자르지 않아야 한다.
+
+    폴더 180자, 제목 "a" + 이모지 24개(UTF-16 49단위), 1080p
+    -> 폴더/제목 1080p.mp4 그대로, 경로 == 240단위
+    """
+    folder = _folder(tmp_path)
+    title = "a" + EMOJI * 24
+
+    path = build_output_path(folder, title, 1080)
+
+    assert path == os.path.join(folder, f"{title} 1080p.mp4")
+    assert _deepest_length(path, "") == OUTPUT_LIMIT
+
+
+def test_emoji_output_path_over_in_utf16_units_is_shortened(tmp_path):
+    """글자 수로는 240 안이어도 UTF-16 단위로 넘는 이모지 산출물 경로는 제목을 줄여 240단위 안에 맞춰야 한다.
+
+    폴더 180자, 제목 "aa" + 이모지 24개(UTF-16 50단위 · 26글자), 1080p
+    -> "~<16진수 6자리> 1080p.mp4"로 끝남, 경로 <= 240단위, 이모지가 반쪽으로 잘리지 않음
+    """
+    folder = _folder(tmp_path)
+
+    path = build_output_path(folder, "aa" + EMOJI * 24, 1080)
+
+    name = os.path.basename(path)
+    assert re.fullmatch(r"aa(" + EMOJI + r")* ~[0-9a-f]{6} 1080p\.mp4", name)
+    assert _deepest_length(path, "") <= OUTPUT_LIMIT
+    assert "�" not in name
+
+
 def test_short_temp_names_are_unchanged(tmp_path):
     """짧은 산출물 이름의 임시 경로는 접두사 + 산출물 이름 그대로여야 한다.
 

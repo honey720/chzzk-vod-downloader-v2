@@ -269,9 +269,9 @@ def _candidate_path(directory: str, title: str, resolution: int, tail: str = "")
         safe_title = "_" + safe_title
     suffix = f" {resolution}p{tail}.mp4"
     candidate = os.path.join(directory, safe_title + suffix)
-    # 상한 둘을 함께 지킨다: 전체 경로 문자 수(Windows MAX_PATH 대비)와
-    # 파일명 구성요소의 UTF-8 바이트 수(POSIX 255바이트 대비)
-    over_chars = len(candidate) - _MAX_FULLPATH
+    # 상한 둘을 함께 지킨다: 전체 경로 문자 수(Windows MAX_PATH 대비 — Windows처럼 UTF-16
+    # 단위로 센다, #323)와 파일명 구성요소의 UTF-8 바이트 수(POSIX 255바이트 대비)
+    over_chars = _utf16_units(candidate) - _MAX_FULLPATH
     over_bytes = len((safe_title + suffix).encode("utf-8")) - _MAX_FILENAME_BYTES
     if over_chars > 0 or over_bytes > 0:
         # 절단 표식 " ~{해시6}" — 같은 원제목이면 같은 이름(결정적),
@@ -279,8 +279,10 @@ def _candidate_path(directory: str, title: str, resolution: int, tail: str = "")
         # 문자·바이트 어느 쪽 절단이든 동일하게 붙는다
         digest = hashlib.sha1(safe_title.encode("utf-8")).hexdigest()[:6]
         marker = f" ~{digest}"
-        keep = max(1, len(safe_title) - over_chars - len(marker))
-        clipped = safe_title[:keep]
+        # 보조 평면 문자가 없으면 UTF-16 단위가 곧 글자 수라 예전과 같은 자리에서 자른다
+        clipped = _head_within_units(
+            safe_title, _utf16_units(safe_title) - over_chars - len(marker)
+        )
         # 바이트 예산으로 한 번 더 자른다 — UTF-8 바이트열을 자른 뒤 디코드에서
         # 깨진 꼬리 시퀀스를 버리는 방식이라 문자 경계(한글 3바이트·이모지
         # 4바이트)가 깨지지 않는다. 문자 절단만 일어난 경우엔 no-op이다
