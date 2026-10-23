@@ -400,6 +400,44 @@ def test_same_letters_outside_a_home_fragment_are_kept(home, text):
     assert logging_setup.redact_home(text, home) == text
 
 
+@pytest.mark.parametrize(
+    ("home", "text", "expected"),
+    [
+        # faulthandler의 파일 이름 줄 — 이름의 비ASCII 글자가 \uNNNN으로 적힌다
+        (
+            "C:\\Users\\이동",
+            r'  File "C:\Users\\uc774\ub3d9\crash.py", line 4',
+            r'  File "~\crash.py", line 4',
+        ),
+        ("C:\\Users\\이동", r"D:\Users\\uc774\ub3d9\a.py", r"~\a.py"),  # 끝 두 조각
+        ("/home/테스터", r'  File "/home/\ud14c\uc2a4\ud130/a.py"', r'  File "~/a.py"'),
+        ("/home/josé", r'  File "/home/jos\xe9/a.py"', r'  File "~/a.py"'),  # \xNN
+        ("/home/a😀", r'  File "/home/a\U0001f600/a.py"', r'  File "~/a.py"'),  # \UNNNNNNNN
+    ],
+)
+def test_home_written_with_faulthandler_escapes_is_replaced(home, text, expected):
+    r"""비ASCII 홈 이름이 faulthandler의 이스케이프(\xNN · \uNNNN · \UNNNNNNNN)로 적혀 있어도 ~로 바뀌어야 한다 (#427).
+
+    홈과 글 -> 바꾼 글 == expected
+    """
+    assert logging_setup.redact_home(text, home) == expected
+
+
+@pytest.mark.parametrize(
+    ("home", "text"),
+    [
+        ("/home/테스터", r"/home/\ud14c\uc2a4/a.py"),  # 다른 사용자(이름의 앞부분만 같다)
+        ("/home/테스터", r"/home/\ud14c\uc2a4\ud130x/a.py"),  # 다른 사용자(이름이 이어진다)
+    ],
+)
+def test_escaped_name_of_another_user_is_kept(home, text):
+    """이스케이프로 적힌 다른 사용자의 홈은 그대로여야 한다 (#427).
+
+    홈과 글 -> 바꾼 글 == 원래 글
+    """
+    assert logging_setup.redact_home(text, home) == text
+
+
 _FAKE_FFMPEG_FAILING = (  # 표준 입력을 다 읽고, 파일의 글을 표준 오류에 쓰고 1로 끝나는 ffmpeg 대역
     "import sys\n"
     "sys.stdin.buffer.read()\n"
