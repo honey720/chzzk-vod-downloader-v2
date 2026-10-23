@@ -24,6 +24,8 @@ from types import TracebackType
 logger = logging.getLogger(__name__)
 
 CRASH_FILE_NAME = "crash.log"  # 로그 폴더 안의 충돌 기록 파일 — 실행마다 비운다
+# 이 환경 변수가 "1"이면 시작 직후 일부러 충돌한다 — 실행 파일에서 충돌 기록을 확인하는 시험 경로
+DEBUG_CRASH_VARIABLE = "CVDV2_DEBUG_CRASH"
 
 # 앞 실행의 충돌 기록에서 앱 로그로 옮길 최대 글자 수 — faulthandler의 덤프는 스레드 100개 ·
 # 스레드마다 프레임 100개까지라 이보다 짧다. 다른 것이 파일에 쓰였을 때 앱 로그가 불어나지 않게
@@ -90,6 +92,17 @@ def carry_over_previous_crash(path: str) -> bool:
     if dump.strip():
         logger.error("Previous run ended abnormally — crash record:\n%s", dump.rstrip())
     return True
+
+
+def crash_if_requested() -> None:
+    """환경 변수 ``CVDV2_DEBUG_CRASH``가 ``"1"``이면 일부러 네이티브 충돌을 일으킨다 (#427).
+
+    실행 파일(릴리즈 빌드)에서 충돌 기록에 무엇이 남는지 보는 시험 경로다. ``install_crash_diagnostics``
+    바로 뒤에 부른다. 변수가 없거나 다른 값이면 아무것도 하지 않는다.
+    """
+    if os.environ.get(DEBUG_CRASH_VARIABLE) == "1":
+        logger.warning("%s=1 — crashing on purpose to test the crash record", DEBUG_CRASH_VARIABLE)
+        faulthandler._sigsegv()
 
 
 def install_exception_hooks() -> None:

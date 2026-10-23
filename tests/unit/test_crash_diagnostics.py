@@ -87,7 +87,7 @@ def _fake_home(tmp_path) -> str:
     return str(home)
 
 
-def _run(tmp_path, body: str) -> subprocess.CompletedProcess:
+def _run(tmp_path, body: str, env: dict | None = None) -> subprocess.CompletedProcess:
     """body를 별도 프로세스로 돌린다 — 홈 폴더(HOME · USERPROFILE)를 _fake_home으로 바꾸고, 스크립트를 그 안에 둔다."""
     log_dir = str(tmp_path / "logs")
     home = _fake_home(tmp_path)
@@ -102,8 +102,26 @@ def _run(tmp_path, body: str) -> subprocess.CompletedProcess:
         errors="replace",
         timeout=60,
         cwd=ROOT,
-        env={**os.environ, "PYTHONIOENCODING": "utf-8", "HOME": home, "USERPROFILE": home},
+        env={
+            **os.environ,
+            "PYTHONIOENCODING": "utf-8",
+            "HOME": home,
+            "USERPROFILE": home,
+            **(env or {}),
+        },
     )
+
+
+_DEBUG_CRASH = textwrap.dedent(
+    """
+    import os
+    from app.crash_diagnostics import crash_if_requested, install_crash_diagnostics
+
+    install_crash_diagnostics({log_dir!r})
+    crash_if_requested()
+    print("still running")
+    """
+)
 
 
 def _read(path) -> str:
@@ -315,3 +333,33 @@ def test_exception_in_a_qt_slot_reaches_the_main_hook(hooked, qtbot):
     qtbot.waitUntil(lambda: "LookupError" in hooked.getvalue(), timeout=5000)
 
     assert "Unhandled exception" in hooked.getvalue()
+
+
+@pytest.mark.parametrize("value", [None, "0", "true"], ids=["unset", "zero", "true"])
+def test_debug_crash_does_nothing_unless_the_variable_is_one(tmp_path, monkeypatch, value):
+    """CVDV2_DEBUG_CRASH가 없거나 "1"이 아니면 시험용 충돌 경로는 아무것도 하지 않아야 한다.
+
+    별도 프로세스: install_crash_diagnostics → crash_if_requested → "still running" 출력. 변수는 주석의 값
+    -> 종료 코드 0, "still running" 출력, crash.log는 빈 파일
+    """
+    monkeypatch.delenv("CVDV2_DEBUG_CRASH", raising=False)
+    env = {} if value is None else {"CVDV2_DEBUG_CRASH": value}
+
+    done = _run(tmp_path, _DEBUG_CRASH, env)
+
+    assert done.returncode == 0, done.stderr
+    assert "still running" in done.stdout
+    assert _read(tmp_path / "logs" / CRASH_FILE_NAME) == ""
+
+
+def test_debug_crash_with_the_variable_set_leaves_a_crash_record(tmp_path):
+    """CVDV2_DEBUG_CRASH=1이면 시험용 충돌 경로가 충돌하고 crash.log에 그 스택이 남아야 한다.
+
+    별도 프로세스: install_crash_diagnostics → crash_if_requested, CVDV2_DEBUG_CRASH=1
+    -> 0 아닌 종료, "still running" 출력 없음, crash.log에 "crash_if_requested"
+    """
+    done = _run(tmp_path, _DEBUG_CRASH, {"CVDV2_DEBUG_CRASH": "1"})
+
+    assert done.returncode != 0
+    assert "still running" not in done.stdout
+    assert "crash_if_requested" in _read(tmp_path / "logs" / CRASH_FILE_NAME)
