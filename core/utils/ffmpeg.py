@@ -314,7 +314,24 @@ def get_ffmpeg_exe() -> str:
         # imageio_ffmpeg은 휠에 동봉된 바이너리를 찾지 못하면 RuntimeError를 던진다
         return imageio_ffmpeg.get_ffmpeg_exe()
     except Exception as e:
+        _forget_failed_lookup(imageio_ffmpeg)
         raise FFmpegNotFoundError(_not_found_message(str(e))) from e
+
+
+def _forget_failed_lookup(imageio_ffmpeg) -> None:
+    """imageio-ffmpeg이 기억한 "못 찾음"을 지운다 — 다음 조회가 처음부터 다시 찾는다 (#423).
+
+    imageio-ffmpeg 0.6.0의 ``_get_ffmpeg_exe``는 ``lru_cache``라 못 찾은 결과(None)도
+    기억한다. 그대로 두면 ffmpeg를 고친 뒤에도 앱을 다시 켤 때까지 못 찾는다. 지우는 것은
+    못 찾았을 때뿐이다 — 찾은 경로는 그 캐시가 계속 기억해 매번 찾지 않는다.
+
+    비공개 이름이라 라이브러리 버전이 바뀌어 없으면 아무것도 하지 않는다 — 그때는
+    ``tests/unit/core/test_ffmpeg_utils.py``가 실패해 알린다.
+    """
+    lookup = getattr(getattr(imageio_ffmpeg, "_utils", None), "_get_ffmpeg_exe", None)
+    clear = getattr(lookup, "cache_clear", None)
+    if clear is not None:
+        clear()
 
 
 def _not_found_message(reason: str) -> str:
