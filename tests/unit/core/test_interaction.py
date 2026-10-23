@@ -839,6 +839,28 @@ def test_continuous_interaction_rests_once_per_eight_ms_of_work(work_clock):
     assert clock.longest_work() <= REST_AFTER + clock.work + 1e-9
 
 
+def test_inner_block_rests_at_its_first_gap_even_right_after_the_outer_block_rested(work_clock):
+    """바깥 블록이 막 쉰 뒤 안쪽 resting_while 블록에 들어가면 조작 중인 첫 틈에서 바로 쉬어야 한다 (#408).
+
+    가짜 시계, 틈마다 일 0.3ms. 바깥 블록(늘 참)에서 처음 쉴 때까지 틈을 지나고, 곧바로 안쪽
+    블록(늘 참)에 들어가 틈 하나 — 바깥의 마지막 쉼 뒤 0.3ms(8ms 미만)
+    -> 안쪽 블록의 첫 틈에서 쉰 횟수가 하나 는다
+    """
+    clock = work_clock(0.0003)
+
+    with resting_while(lambda: True):
+        while not clock.rests:
+            clock.gap()
+            rest_if_user_interacting()
+        rested_before = len(clock.rests)
+        with resting_while(lambda: True):
+            clock.gap()
+            rest_if_user_interacting()
+            rested_in_inner = len(clock.rests) - rested_before
+
+    assert rested_in_inner == 1
+
+
 def test_dense_gaps_of_one_sample_chunks_rest_by_time_not_by_gap(monkeypatch, work_clock):
     """청크당 1샘플 구간이 많은 표를 계속 조작 중에 해석하면 쉰 횟수는 물은 틈의 수가 아니라 일한 시간으로 묶여야 한다.
 

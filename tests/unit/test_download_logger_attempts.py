@@ -87,6 +87,22 @@ def test_attempts_started_in_the_same_second_get_different_files(tmp_path, monke
     assert later.log_file == str(tmp_path / "logs" / "download_20261022_180000_2.log")
 
 
+def test_closing_leaves_no_handler_on_the_attempts_logger():
+    """시도의 로거를 닫으면 logging 모듈에 남는 그 시도의 로거에 핸들러가 없어야 한다.
+
+    로거를 만들고 한 줄 쓴 뒤 save_and_close, 그 로거의 이름으로 logging.getLogger를 조회
+    -> 닫기 전 핸들러 1개, 닫은 뒤 0개
+    """
+    attempt = DownloadLogger()
+    name = attempt.logger.name
+    attempt.info("한 줄")
+    assert len(logging.getLogger(name).handlers) == 1  # 전제: 이 시도의 파일 핸들러가 붙어 있었다
+
+    attempt.save_and_close()
+
+    assert logging.getLogger(name).handlers == []
+
+
 def test_closing_twice_does_nothing_the_second_time():
     """save_and_close를 두 번 불러도 두 번째는 아무 일도 하지 않아야 한다.
 
