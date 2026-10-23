@@ -157,6 +157,7 @@ class FetchJob(QObject):
             "Video not found": self.tr("Video not found"),
             "Viewing permission required": self.tr("Viewing permission required"),
             "Network connection error": self.tr("Network connection error"),
+            "Server response is slow": self.tr("Server response is slow"),
             "Failed to fetch video information": self.tr("Failed to fetch video information"),
         }
         return translated.get(message_key, message_key)
