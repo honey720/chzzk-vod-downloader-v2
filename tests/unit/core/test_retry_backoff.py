@@ -602,7 +602,8 @@ def test_a_request_waiting_for_its_answer_in_a_slot_that_failed_holds_off_networ
     """실패했던 슬롯이 새로 보낸 요청이 답을 기다리는 동안은 회선 끊김으로 판정하지 않아야 한다.
 
     모든 항목 요청이 연결 오류. 다만 첫 항목의 둘째 요청(앞서 연결 오류로 실패한 슬롯이 받음)은
-    답 없이 서 있다가, 테스트가 풀면 연결 타임아웃으로 실패함. 시계를 1초씩 돌림
+    답 없이 서 있다가, 테스트가 풀면 연결 타임아웃으로 실패함. 시계를 1초씩 돌리고, 푼 뒤로는
+    돌릴 때마다 엔진이 그 시각의 일을 다 할 때까지 기다림
     -> 시작 뒤 20초까지(다른 항목은 11초 뒤에도 실패) 실패 통지 없음. 서 있던 요청을 풀면
        실패 통지 1회(NetworkLostError), 그 시각은 푼 시각
     """
@@ -628,7 +629,7 @@ def test_a_request_waiting_for_its_answer_in_a_slot_that_failed_holds_off_networ
         released_at = rig.clock.now
     finally:
         release.set()
-    _drive(rig, lambda: bool(rig.failures), step=1.0)
+    _drive_settled(rig, lambda: bool(rig.failures))
     thread.join(timeout=10)
 
     assert failures_while_waiting == []
