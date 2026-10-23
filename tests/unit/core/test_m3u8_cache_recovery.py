@@ -246,6 +246,30 @@ def test_repeated_corrupt_responses_of_a_segment_are_grouped(tmp_path, monkeypat
     assert "Segment 4: giving up after 4 corrupt responses (2 not detailed)" in logger.warnings
 
 
+@pytest.mark.parametrize(
+    ("limit", "expected"),
+    [
+        (0, ["1, path original, recovery not retried"]),  # 첫 손상 응답에서 상한
+        (1, ["1, path original, recovery switching", "2, path alternate, recovery not retried"]),
+    ],
+)
+def test_corrupt_response_that_is_not_retried_says_so_instead_of_a_recovery(
+    tmp_path, monkeypatch, limit, expected
+):
+    """손상 응답으로 재큐 상한에 닿아 다시 받지 않으면 그 자세한 줄의 복구는 not retried여야 한다 (#375).
+
+    seg_3의 원래 경로 · // 경로 모두 손상, 일시 오류 재큐 상한 0 · 1
+    -> 자세한 줄의 시도 · 경로 · 복구 == expected, 완료 없음
+    """
+    logger, finished = _run_with_corrupt_seg3(
+        tmp_path, monkeypatch, alternate_ok=False, headers=CORRUPT_HEADERS, limit=limit
+    )
+
+    assert not finished.is_set()
+    lines = _corrupt_lines(logger)
+    assert [line.rsplit(", attempt ", 1)[1] for line in lines] == expected
+
+
 def test_corrupt_response_without_headers_marks_each_missing_fact(tmp_path, monkeypatch):
     """헤더가 없는 손상 응답이면 빠진 항목을 "-"로 적어야 한다.
 

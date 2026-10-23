@@ -116,7 +116,7 @@ def _corrupt_response_line(
         number: 세그먼트 번호(1부터 — 기존 줄과 같다)
         path: ``original``(원래 경로) · ``alternate``(복구 경로)
         recovery: ``switching``(이 응답으로 복구 경로로 바꾼다) · ``already``(이미 복구 경로다) ·
-            ``unavailable``(복구 경로가 없는 서버다)
+            ``unavailable``(복구 경로가 없는 서버다) · ``not retried``(이 세그먼트를 다시 받지 않는다)
     """
     cache = [
         f"{name}={_header_for_log(headers, name)}"
@@ -684,16 +684,24 @@ class M3U8Downloader(BaseDownloader):
     # ============ 다운로드 동작 관련 메서드들 ============
 
     def _note_corrupt_response(
-        self, index: int, segment: str, segment_url: str, received: int, headers
+        self, index: int, segment_url: str, received: int, headers, attempt: int, retried: bool
     ) -> str | None:
         """손상 응답 하나를 세고, 자세히 남길 차례면 그 줄을 돌려준다 (#375). self.lock 안에서 부른다.
 
         한 세그먼트의 되풀이를 묶는다 — 자세한 줄은 그 세그먼트의 첫 손상 응답과 복구 경로에서의
         첫 손상 응답에만 남긴다. 그 밖의 것은 세었다가 세그먼트가 끝날 때(온전한 본문 · 포기) 한
         줄에 수를 적는다. 복구 경로로 바꿀지의 판정은 이 뒤에 따로 한다 — 같은 조건을 본다.
+
+        재큐 결정 뒤에 부른다 — 다시 받지 않으면(상한 · 이미 실패로 끝내기로 함) 복구는 ``not retried``다.
+
+        Args:
+            attempt: 이 세그먼트의 몇 번째 요청인가(재큐 결정 전의 오류 재큐 수 + 1)
+            retried: 이 실패로 다시 받기로 했는가
         """
         on_alternate = index in self._cache_recovery
-        if on_alternate:
+        if not retried:
+            recovery = "not retried"
+        elif on_alternate:
             recovery = "already"
         elif _cache_recovery_url(segment_url) != segment_url:
             recovery = "switching"
@@ -705,7 +713,6 @@ class M3U8Downloader(BaseDownloader):
             trail.unlogged += 1
             return None
         trail.logged_on_alternate = trail.logged_on_alternate or on_alternate
-        attempt = self._error_requeues.get((index, segment), 0) + 1
         return _corrupt_response_line(
             index + 1,
             received,
@@ -813,9 +820,16 @@ class M3U8Downloader(BaseDownloader):
             ) as e:
                 corrupt_line = None
                 with self.lock:
+                    attempt = self._error_requeues.get((index, segment), 0) + 1
+                    requeue = self._requeue_failed((index, segment), part_num, e)
                     if isinstance(e, integrity.TruncatedSegmentError):
                         corrupt_line = self._note_corrupt_response(
-                            index, segment, segment_url, downloaded_size, headers
+                            index,
+                            segment_url,
+                            downloaded_size,
+                            headers,
+                            attempt,
+                            retried=requeue.retry_in is not None,
                         )
                     if (
                         isinstance(e, integrity.TruncatedSegmentError)
@@ -826,7 +840,6 @@ class M3U8Downloader(BaseDownloader):
                         self.logger.warning(
                             f"Segment {index + 1}: invalid cached body; retrying alternate resource path"
                         )
-                    requeue = self._requeue_failed((index, segment), part_num, e)
                     trail = self._corrupt_trails.get(index)
                 # 로그 · 실패 통지는 락을 놓은 뒤에 한다 (#329)
                 if corrupt_line is not None:
