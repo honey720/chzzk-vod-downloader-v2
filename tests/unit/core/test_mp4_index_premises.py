@@ -132,6 +132,36 @@ def test_audio_start_with_ctts_is_its_earliest_sample_not_a_bisected_one():
     assert index.frame_pts[0] == float(Fraction(1) - Fraction(1024, 8000))
 
 
+def test_audio_start_with_ctts_whose_earliest_sample_is_past_the_first_chunk_equals_one_pass(
+    monkeypatch,
+):
+    """ctts 오디오의 가장 이른 표시 샘플이 둘째 조각 이후에 있으면 오디오의 시작은 한 번에 훑은 것과 같아야 한다.
+
+    영상은 빈 편집 1초 뒤에 시작한다. 오디오 6샘플(8000Hz, 길이 1024틱), ctts [9000, 9000, 9000, 9000, 0, 0],
+    조각 4샘플
+    -> 표시 시각(틱) [9000, 10024, 11048, 12072, 4096, 5120], 가장 이른 것은 둘째 조각의 4096
+    -> frame_pts[0] == 1 − 4096/8000초 == 조각 없이 해석한 frame_pts[0]
+    """
+    video = _video(deltas=[100] * 4, edits=[(1000, -1), (400, 0)])
+    audio = TrackSpec(
+        handler=b"soun",
+        timescale=8000,
+        deltas=[1024] * 6,
+        sizes=[7] * 6,
+        chunks=[2, 2, 2],
+        composition=[9000, 9000, 9000, 9000, 0, 0],  # 첫 조각(샘플 0~3)은 모두 둘째 조각보다 늦다
+    )
+    moov = build_mp4([video, audio]).moov
+
+    chunked = parse_moov(moov).frame_pts[0]
+    monkeypatch.setattr(column_module, "CHUNK_ITEMS", 1 << 15)
+    monkeypatch.setattr(mp4_module, "CHUNK_ITEMS", 1 << 15)
+    one_pass = parse_moov(moov).frame_pts[0]
+
+    assert chunked == float(Fraction(1) - Fraction(4096, 8000))
+    assert chunked == one_pass
+
+
 def test_audio_hidden_entirely_by_the_edit_list_leaves_the_start_to_video():
     """편집 목록이 오디오의 모든 샘플을 가리면 시각의 0은 영상의 첫 프레임이어야 한다.
 
