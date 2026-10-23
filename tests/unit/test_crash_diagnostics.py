@@ -77,18 +77,32 @@ _UNHANDLED = textwrap.dedent(
 )
 
 
+def _fake_home(tmp_path) -> str:
+    """별도 프로세스의 홈 폴더 — 충돌 기록에 홈 폴더 경로가 늘 들어가게 스크립트를 이 아래에 둔다.
+
+    CI 러너는 저장소 · 파이썬이 홈 폴더 밖에 있어 진짜 홈으로는 기록에 홈 경로가 들어가지 않는다.
+    """
+    home = tmp_path / "home" / "tester"
+    home.mkdir(parents=True, exist_ok=True)
+    return str(home)
+
+
 def _run(tmp_path, body: str) -> subprocess.CompletedProcess:
+    """body를 별도 프로세스로 돌린다 — 홈 폴더(HOME · USERPROFILE)를 _fake_home으로 바꾸고, 스크립트를 그 안에 둔다."""
     log_dir = str(tmp_path / "logs")
-    script = _PRELUDE.format(root=ROOT) + body.format(log_dir=log_dir)
+    home = _fake_home(tmp_path)
+    script = os.path.join(home, "crash_case.py")
+    with open(script, "w", encoding="utf-8") as f:
+        f.write(_PRELUDE.format(root=ROOT) + body.format(log_dir=log_dir))
     return subprocess.run(
-        [sys.executable, "-c", script],
+        [sys.executable, script],
         capture_output=True,
         text=True,
         encoding="utf-8",
         errors="replace",
         timeout=60,
         cwd=ROOT,
-        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+        env={**os.environ, "PYTHONIOENCODING": "utf-8", "HOME": home, "USERPROFILE": home},
     )
 
 
@@ -129,7 +143,8 @@ def test_next_start_moves_the_crash_record_to_the_app_log_with_the_home_folder_h
     -> app.log에 "Previous run ended abnormally"와 "crash_here_for_test", 홈 폴더 경로 없음,
        crash.log는 빈 파일
     """
-    assert HOME in _read(crashed / CRASH_FILE_NAME)  # 전제: 원본 기록에 홈 폴더 경로가 있다
+    home = _fake_home(tmp_path)
+    assert home in _read(crashed / CRASH_FILE_NAME)  # 전제: 원본 기록에 홈 폴더 경로가 있다
 
     done = _run(tmp_path, _NEXT_START)
 
@@ -137,7 +152,7 @@ def test_next_start_moves_the_crash_record_to_the_app_log_with_the_home_folder_h
     app_log = _read(crashed / "app.log")
     assert "Previous run ended abnormally" in app_log
     assert "crash_here_for_test" in app_log
-    assert HOME not in app_log
+    assert home not in app_log
     assert _read(crashed / CRASH_FILE_NAME) == ""
 
 
@@ -155,7 +170,7 @@ def test_app_start_logs_an_unhandled_exception_to_the_app_log_with_the_home_fold
     app_log = _read(tmp_path / "logs" / "app.log")
     assert "Unhandled exception" in app_log
     assert "unhandled-marker.mp4" in app_log
-    assert HOME not in app_log
+    assert _fake_home(tmp_path) not in app_log
 
 
 def test_empty_crash_record_leaves_nothing_in_the_app_log(tmp_path, caplog):
