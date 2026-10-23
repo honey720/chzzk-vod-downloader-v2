@@ -28,6 +28,7 @@ import threading
 from collections.abc import Collection, Iterable
 
 from core.utils.disk_speed import measure_write_speed
+from core.utils.selections import MAX_SELECTIONS
 
 # Windows에서 파일명에 쓸 수 없는 문자 + ASCII 제어 문자 전체(0x00–0x1F, 개행 포함).
 # Windows는 제어 문자가 든 파일명 생성을 거부한다(EINVAL). 조회 단계
@@ -56,6 +57,22 @@ _MAX_FILENAME_BYTES = 240
 # _MAX_FILENAME_BYTES의 여유는 " (9)"까지만 덮는다 — 그보다 긴 중복 접미사가 붙은
 # 이름에서 파생하는 임시 원본 이름은 이 값으로 다시 맞춘다
 _MAX_COMPONENT_BYTES = 255
+
+# 경로 하나에 쓸 수 있는 글자 수 — Windows 기본 MAX_PATH(260)에서 끝의 NUL을 뺀 값. 긴 경로
+# 설정을 켜지 않은 PC에서는 이보다 긴 경로의 파일을 만들지 못하고, 설정과 무관하게 이보다 긴
+# 폴더를 작업 폴더로 ffmpeg를 띄우지 못한다(WinError 267). 임시 폴더 · 임시 파일의 이름은 그
+# 안에 만들 가장 깊은 파일까지 이 안에 들게 줄인다 (#323)
+_MAX_PATH_CHARS = 259
+
+# 세그먼트 임시 폴더(temp_dir_for) 안에서 가장 긴 상대 경로 — 구간 컷의 작업 폴더
+# section_<구간 번호>(0 … MAX_SELECTIONS − 1, m3u8 · 암호화 엔진)와 그 안의 경계 원본
+# (head_source.mp4 · tail_source.mp4, core/utils/fmp4_cut.py). 세그먼트 파일(<번호>.m4v ·
+# .ts)은 이보다 짧다 (#323)
+_TEMP_DIR_DEEPEST = os.path.join(f"section_{MAX_SELECTIONS - 1}", "head_source.mp4")
+
+# 구간 컷 임시 폴더(cut_temp_dir_for) 안에서 가장 긴 이름 — 다시 인코딩한 조각
+# <조각 번호>_<종류>.mp4(core/utils/hybrid_cut.py — 조각은 셋까지, 가장 긴 종류는 whole) (#323)
+_CUT_DIR_DEEPEST = "0_whole.mp4"
 
 # 배정했지만 아직 디스크에 없을 수 있는 구간 파일 경로 — 프로세스 안의 예약 (#309).
 # 값은 비교용으로 정규화한 절대 경로다
@@ -174,16 +191,41 @@ def section_body_path_for(output_path: str) -> str:
 
 
 def _prefixed_sibling(output_path: str, prefix: str) -> str:
-    """산출물과 같은 폴더의, 산출물 이름 앞에 prefix를 붙인 mp4 경로 — 파일명 상한을 넘기지 않는다."""
+    """산출물과 같은 폴더의, 산출물 이름 앞에 prefix를 붙인 mp4 경로 — 길이 상한을 넘기지 않는다."""
     stem = os.path.splitext(os.path.basename(output_path))[0]
-    extension = ".mp4"
-    budget = _MAX_COMPONENT_BYTES - len((prefix + extension).encode("utf-8"))
-    if len(stem.encode("utf-8")) > budget:
-        marker = f" ~{hashlib.sha1(stem.encode('utf-8')).hexdigest()[:6]}"
-        # 바이트열을 자른 뒤 깨진 꼬리 시퀀스를 버려 문자 경계를 지킨다
-        kept = stem.encode("utf-8")[: budget - len(marker)].decode("utf-8", "ignore")
-        stem = kept.rstrip() + marker
-    return os.path.join(os.path.dirname(output_path), f"{prefix}{stem}{extension}")
+    return _fitted_path(os.path.dirname(output_path), prefix, stem, ".mp4")
+
+
+def _fitted_path(
+    directory: str, prefix: str, stem: str, extension: str = "", deepest: str = ""
+) -> str:
+    """directory 안의 ``prefix + stem + extension`` 경로 — 상한을 넘으면 stem을 줄이고 해시를 붙인다.
+
+    두 상한을 지킨다: 이 경로 아래 가장 깊이 만들 것(``deepest``, 없으면 이 경로 자체)의 전체
+    경로가 ``_MAX_PATH_CHARS``자 안에 들고 (#323), 이 이름 하나가 ``_MAX_COMPONENT_BYTES``바이트
+    안에 든다 (#309). 넘지 않으면 지금까지의 이름 그대로다.
+
+    줄인 이름은 ``prefix + <stem의 앞부분> ~<stem의 해시 6자리> + extension``이다 — 같은 stem이면
+    늘 같은 이름이고(재시도 · 이어받기가 이 이름으로 앞 실행의 것을 찾는다), 앞부분이 같은 다른
+    stem과도 갈린다. 폴더가 너무 깊어 해시만 남겨도 넘으면 앞부분 한 글자와 해시로 둔다 — 그
+    경로는 긴 경로 설정이 없으면 만들지 못한다.
+    """
+    name = prefix + stem + extension
+    path = os.path.join(directory, name)
+    measured = os.path.abspath(path)
+    if deepest:
+        measured = os.path.join(measured, deepest)
+    over_chars = len(measured) - _MAX_PATH_CHARS
+    over_bytes = len(name.encode("utf-8")) - _MAX_COMPONENT_BYTES
+    if over_chars <= 0 and over_bytes <= 0:
+        return path
+    marker = f" ~{hashlib.sha1(stem.encode('utf-8')).hexdigest()[:6]}"
+    # 글자 수가 넘을 때만 글자로 자른다 — 바이트만 넘는 이름은 예전(#309)과 같은 이름이 나온다
+    keep = max(1, len(stem) - over_chars - len(marker)) if over_chars > 0 else len(stem)
+    byte_budget = _MAX_COMPONENT_BYTES - len((prefix + marker + extension).encode("utf-8"))
+    # 바이트열을 자른 뒤 깨진 꼬리 시퀀스를 버려 문자 경계를 지킨다
+    kept = stem[:keep].encode("utf-8")[:byte_budget].decode("utf-8", "ignore")
+    return os.path.join(directory, prefix + kept.rstrip() + marker + extension)
 
 
 def _path_key(path: str) -> str:
@@ -240,10 +282,13 @@ def temp_dir_for(output_path: str, base_dir: str | None = None) -> str:
 
     base_dir을 주면 그 디렉토리 아래에 만든다(#192 — 임시 폴더를 산출물과
     다른 매체로 보낼 때). 기본은 산출물과 같은 디렉토리(기존 동작 무변경).
+
+    폴더 안에 만들 가장 깊은 파일(``_TEMP_DIR_DEEPEST``)까지 경로 길이 상한에 들지 않으면
+    이름을 줄이고 해시를 붙인다(``_fitted_path``) — 같은 산출물 경로면 늘 같은 폴더다 (#323).
     """
     directory = base_dir if base_dir is not None else os.path.dirname(output_path)
     stem = os.path.splitext(os.path.basename(output_path))[0]
-    return os.path.join(directory, f"CVDv2_temp_{stem}")
+    return _fitted_path(directory, "CVDv2_temp_", stem, deepest=_TEMP_DIR_DEEPEST)
 
 
 def cut_temp_dir_for(output_path: str) -> str:
@@ -252,9 +297,12 @@ def cut_temp_dir_for(output_path: str) -> str:
     산출물과 같은 디렉토리에 둔다 — 가운데(복사) 조각은 구간 길이만큼 커질 수 있어
     시스템 임시 폴더가 아니라 유저가 고른 저장 위치의 공간을 쓴다. 세그먼트 임시
     폴더(``temp_dir_for``)와 이름이 겹치지 않는다.
+
+    폴더 안의 가장 긴 조각 이름(``_CUT_DIR_DEEPEST``)까지 경로 길이 상한에 들지 않으면 이름을
+    줄이고 해시를 붙인다(``_fitted_path``) — 같은 산출물 경로면 늘 같은 폴더다 (#323).
     """
     stem = os.path.splitext(os.path.basename(output_path))[0]
-    return os.path.join(os.path.dirname(output_path), f"CVDv2_cut_{stem}")
+    return _fitted_path(os.path.dirname(output_path), "CVDv2_cut_", stem, deepest=_CUT_DIR_DEEPEST)
 
 
 # 임시 폴더를 분리할 스크래치 볼륨에 요구하는 최소 여유 공간 (#192).
