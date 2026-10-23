@@ -158,3 +158,190 @@ def test_a_second_run_of_the_same_engine_starts_each_segment_on_its_normal_path(
     assert requested == ["/hls/seg_3.m4v"]
     assert finished.is_set()
     assert output.read_bytes() == _expected_output(3)
+
+
+# ================================================================ 손상 응답의 판단 근거 로그 (#375 ④)
+
+CORRUPT_BODY = b"damaged cached payload"  # 22바이트 — 길이는 맞지만 fMP4 구조가 아니다
+CORRUPT_HEADERS = {
+    "Content-Length": "22",
+    "ETag": '"etag-1"',
+    "Age": "30",
+    "X-Cache": "HIT",
+}
+
+
+class _HeaderedResponse(StreamResponse):
+    """헤더를 가진 손상 응답."""
+
+    def __init__(self, body: bytes, headers: dict):
+        super().__init__(body, 0)
+        self.headers = headers
+
+
+def _run_with_corrupt_seg3(tmp_path, monkeypatch, *, alternate_ok: bool, headers: dict, limit: int):
+    """seg_3(복구 대상 CDN)의 원래 경로가 손상 응답을 주는 실행 — // 경로는 alternate_ok면 정상."""
+    engine, data, logger, output, finished, errors, _merges = _make_engine(tmp_path, monkeypatch)
+    data.base_url = HOST + "/hls/video.m3u8"
+
+    class Session(M3U8Session):
+        def get(self, url, **kwargs):
+            if "seg_3" in url and not (alternate_ok and "//seg_3" in url):
+                return _HeaderedResponse(CORRUPT_BODY, headers)
+            return super().get(url, **kwargs)
+
+    monkeypatch.setattr(module, "get_thread_session", lambda: Session(3))
+    monkeypatch.setattr(base, "_TRANSIENT_ERROR_REQUEUE_LIMIT", limit)
+    data.adjust_threads = 1
+    data.model.start()
+    engine.run()
+    return logger, finished
+
+
+def _corrupt_lines(logger) -> list[str]:
+    return [w for w in logger.warnings if "corrupt response -" in w]
+
+
+def test_corrupt_response_line_carries_the_response_facts_and_the_recovery(tmp_path, monkeypatch):
+    """손상 응답을 받으면 받은 길이 · Content-Length · ETag · Age · 캐시 상태 · 시도 · 경로 · 복구를 한 줄에 남겨야 한다.
+
+    seg_3의 원래 경로가 22바이트 손상 본문(Content-Length 22 · ETag "etag-1" · Age 30 · X-Cache HIT),
+    // 경로는 정상
+    -> 줄 하나: "Segment 4: corrupt response - received 22 bytes, Content-Length 22, ETag "etag-1",
+       Age 30, cache X-Cache=HIT, attempt 1, path original, recovery switching",
+       그 뒤 "Segment 4: valid body after 1 corrupt responses (0 not detailed), path alternate"
+    """
+    logger, finished = _run_with_corrupt_seg3(
+        tmp_path, monkeypatch, alternate_ok=True, headers=CORRUPT_HEADERS, limit=2
+    )
+
+    assert finished.is_set()
+    assert _corrupt_lines(logger) == [
+        'Segment 4: corrupt response - received 22 bytes, Content-Length 22, ETag "etag-1", '
+        "Age 30, cache X-Cache=HIT, attempt 1, path original, recovery switching"
+    ]
+    assert (
+        "Segment 4: valid body after 1 corrupt responses (0 not detailed), path alternate"
+        in logger.warnings
+    )
+
+
+def test_repeated_corrupt_responses_of_a_segment_are_grouped(tmp_path, monkeypatch):
+    """한 세그먼트의 손상 응답이 되풀이되면 자세한 줄은 원래 경로 · 복구 경로의 첫 것만이고 나머지는 끝 줄에 수로 적혀야 한다.
+
+    seg_3의 원래 경로 · // 경로 모두 손상, 일시 오류 재큐 상한 3(요청 4번)
+    -> 자세한 줄 2개(attempt 1 path original recovery switching · attempt 2 path alternate recovery
+       already), "Segment 4: giving up after 4 corrupt responses (2 not detailed)"
+    """
+    logger, finished = _run_with_corrupt_seg3(
+        tmp_path, monkeypatch, alternate_ok=False, headers=CORRUPT_HEADERS, limit=3
+    )
+
+    assert not finished.is_set()
+    lines = _corrupt_lines(logger)
+    assert [line.rsplit(", attempt ", 1)[1] for line in lines] == [
+        "1, path original, recovery switching",
+        "2, path alternate, recovery already",
+    ]
+    assert "Segment 4: giving up after 4 corrupt responses (2 not detailed)" in logger.warnings
+
+
+@pytest.mark.parametrize(
+    ("limit", "expected"),
+    [
+        (0, ["1, path original, recovery not retried"]),  # 첫 손상 응답에서 상한
+        (1, ["1, path original, recovery switching", "2, path alternate, recovery not retried"]),
+    ],
+)
+def test_corrupt_response_that_is_not_retried_says_so_instead_of_a_recovery(
+    tmp_path, monkeypatch, limit, expected
+):
+    """손상 응답으로 재큐 상한에 닿아 다시 받지 않으면 그 자세한 줄의 복구는 not retried여야 한다 (#375).
+
+    seg_3의 원래 경로 · // 경로 모두 손상, 일시 오류 재큐 상한 0 · 1
+    -> 자세한 줄의 시도 · 경로 · 복구 == expected, 완료 없음
+    """
+    logger, finished = _run_with_corrupt_seg3(
+        tmp_path, monkeypatch, alternate_ok=False, headers=CORRUPT_HEADERS, limit=limit
+    )
+
+    assert not finished.is_set()
+    lines = _corrupt_lines(logger)
+    assert [line.rsplit(", attempt ", 1)[1] for line in lines] == expected
+
+
+def test_corrupt_response_without_headers_marks_each_missing_fact(tmp_path, monkeypatch):
+    """헤더가 없는 손상 응답이면 빠진 항목을 "-"로 적어야 한다.
+
+    seg_3의 원래 경로가 헤더 없는 22바이트 손상 본문, // 경로는 정상
+    -> "... received 22 bytes, Content-Length -, ETag -, Age -, cache -, attempt 1, ..."
+    """
+    logger, _finished = _run_with_corrupt_seg3(
+        tmp_path, monkeypatch, alternate_ok=True, headers={}, limit=2
+    )
+
+    assert _corrupt_lines(logger)[0].startswith(
+        "Segment 4: corrupt response - received 22 bytes, Content-Length -, ETag -, Age -, "
+        "cache -, attempt 1,"
+    )
+
+
+def test_corrupt_response_line_has_no_address_and_its_header_tokens_are_redacted_in_the_log_file(
+    tmp_path, monkeypatch
+):
+    """손상 응답의 줄에는 세그먼트 주소가 없어야 하고, 헤더 값에 섞인 주소의 토큰은 로그 파일에서 가려져야 한다.
+
+    seg_3의 X-Cache 헤더가 "HIT from https://edge.invalid/x?token=SECRET123", // 경로는 정상.
+    그 줄을 실제 다운로드 로거(DownloadLogger)로 파일에 씀
+    -> 줄에 "seg_3" · CDN 호스트가 없다, 로그 파일에 "SECRET123"이 없고 "edge.invalid"는 있다
+    """
+    from app.download_logger import DownloadLogger
+
+    headers = {**CORRUPT_HEADERS, "X-Cache": "HIT from https://edge.invalid/x?token=SECRET123"}
+    logger, _finished = _run_with_corrupt_seg3(
+        tmp_path, monkeypatch, alternate_ok=True, headers=headers, limit=2
+    )
+    (line,) = _corrupt_lines(logger)
+    assert "SECRET123" in line  # 전제: 헤더 값이 줄에 들어갔다 — 가리는 것은 포매터다
+
+    file_logger = DownloadLogger()
+    file_logger.warning(line)
+    file_logger.save_and_close()
+    with open(file_logger.log_file, encoding="utf-8") as f:
+        written = f.read()
+
+    assert "seg_3" not in line and "navercdn" not in line
+    assert "edge.invalid" in written
+    assert "SECRET123" not in written
+
+
+def test_corrupt_header_value_with_a_line_break_stays_on_one_line(tmp_path, monkeypatch):
+    """헤더 값에 줄바꿈 · 제어 문자가 섞여 와도 손상 응답의 줄은 한 줄이어야 한다.
+
+    seg_3의 ETag 헤더가 '"a"\r\nInjected: 1', // 경로는 정상
+    -> 줄에 "\r" · "\n"이 없다, ETag 칸은 '"a"Injected: 1'
+    """
+    headers = {**CORRUPT_HEADERS, "ETag": '"a"\r\nInjected: 1'}
+    logger, _finished = _run_with_corrupt_seg3(
+        tmp_path, monkeypatch, alternate_ok=True, headers=headers, limit=2
+    )
+    (line,) = _corrupt_lines(logger)
+
+    assert "\r" not in line and "\n" not in line
+    assert 'ETag "a"Injected: 1, ' in line
+
+
+def test_normal_responses_leave_no_corrupt_response_line(tmp_path, monkeypatch):
+    """세그먼트가 모두 온전하게 오면 손상 응답의 줄도 묶음의 끝 줄도 없어야 한다.
+
+    복구 대상 CDN, 세그먼트 3개 모두 정상
+    -> "corrupt response" · "corrupt responses"가 든 줄 0개, 완료
+    """
+    engine, data, logger, output, finished, _errors, _merges = _make_engine(tmp_path, monkeypatch)
+    data.base_url = HOST + "/hls/video.m3u8"
+    monkeypatch.setattr(module, "get_thread_session", lambda: M3U8Session(3))
+    data.model.start()
+    engine.run()
+
+    assert finished.is_set()
+    assert [w for w in logger.warnings if "corrupt response" in w] == []

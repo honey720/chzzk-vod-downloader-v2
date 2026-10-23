@@ -81,6 +81,56 @@ _INIT_TRUNCATION_ERRORS = (
 )
 
 
+# 손상 응답의 로그에 적는 캐시 상태 헤더 — CDN마다 이름이 다르다. 온 것만 적는다 (#375)
+_CACHE_STATUS_HEADERS = ("X-Cache", "X-Cache-Status", "Cache-Status", "CF-Cache-Status")
+# 헤더 값을 로그에 적을 때의 최대 글자 수 — 긴 값이 줄을 채우지 않게 자른다
+_LOGGED_HEADER_CHARS = 80
+
+
+@dataclasses.dataclass
+class _CorruptTrail:
+    """세그먼트 하나가 이 실행에서 받은 손상 응답 — 로그 줄을 묶는 데 쓴다 (#375)."""
+
+    count: int = 0  # 받은 손상 응답 수
+    unlogged: int = 0  # 자세한 줄 없이 센 손상 응답 수
+    logged_on_alternate: bool = False  # 복구 경로에서 받은 손상을 자세히 남겼는가
+
+
+def _header_for_log(headers, name: str) -> str:
+    """로그에 적을 응답 헤더 값 — 없으면 "-". 제어 문자는 빼고 길면 자른다 (#375)."""
+    value = headers.get(name) if headers is not None else None
+    text = "".join(character for character in str(value) if character.isprintable())
+    return text[:_LOGGED_HEADER_CHARS] if value is not None and text else "-"
+
+
+def _corrupt_response_line(
+    number: int, received: int, headers, attempt: int, path: str, recovery: str
+) -> str:
+    """손상 응답 한 번의 판단 근거 한 줄 (#375).
+
+    받은 길이 · 선언한 길이 · 캐시 판단 근거(ETag · Age · 캐시 상태 헤더)와, 이 세그먼트의 몇 번째
+    요청인지 · 어느 경로로 받았는지 · 복구 경로로 바꾸는지를 적는다. 주소는 적지 않는다 — 헤더
+    값에 섞인 주소의 토큰은 로그 포매터가 가린다(``RedactingFormatter``).
+
+    Args:
+        number: 세그먼트 번호(1부터 — 기존 줄과 같다)
+        path: ``original``(원래 경로) · ``alternate``(복구 경로)
+        recovery: ``switching``(이 응답으로 복구 경로로 바꾼다) · ``already``(이미 복구 경로다) ·
+            ``unavailable``(복구 경로가 없는 서버다) · ``not retried``(이 세그먼트를 다시 받지 않는다)
+    """
+    cache = [
+        f"{name}={_header_for_log(headers, name)}"
+        for name in _CACHE_STATUS_HEADERS
+        if _header_for_log(headers, name) != "-"
+    ]
+    return (
+        f"Segment {number}: corrupt response - received {received} bytes, "
+        f"Content-Length {_header_for_log(headers, 'Content-Length')}, "
+        f"ETag {_header_for_log(headers, 'ETag')}, Age {_header_for_log(headers, 'Age')}, "
+        f"cache {'; '.join(cache) or '-'}, attempt {attempt}, path {path}, recovery {recovery}"
+    )
+
+
 def _cache_recovery_url(url: str) -> str:
     """실측된 네이버 CDN에서 손상 캐시를 피하도록 파일 앞 구분자를 중복한다.
 
@@ -122,6 +172,8 @@ class M3U8Downloader(BaseDownloader):
     def __init__(self, data, logger, **callbacks):
         super().__init__(data, logger, **callbacks)
         self._cache_recovery: set[int] = set()
+        # 세그먼트마다 이 실행에서 받은 손상 응답 — 로그 줄을 묶는다 (#375)
+        self._corrupt_trails: dict[int, _CorruptTrail] = {}
         # 세그먼트 저장용 임시 폴더 경로 (실패 정리 경로가 참조하므로 실행 전에 확정).
         # 산출물 파일명에서 파생해 다운로드 간 폴더 공유·상호 삭제를 막는다 (#105).
         # 조건이 맞으면 시스템 임시 폴더(로컬 매체)로 보낸다 — 산출물 폴더가
@@ -174,6 +226,7 @@ class M3U8Downloader(BaseDownloader):
         """
         with self.lock:
             self._cache_recovery = set()
+            self._corrupt_trails = {}
         try:
             super().run()
         finally:
@@ -630,6 +683,45 @@ class M3U8Downloader(BaseDownloader):
 
     # ============ 다운로드 동작 관련 메서드들 ============
 
+    def _note_corrupt_response(
+        self, index: int, segment_url: str, received: int, headers, attempt: int, retried: bool
+    ) -> str | None:
+        """손상 응답 하나를 세고, 자세히 남길 차례면 그 줄을 돌려준다 (#375). self.lock 안에서 부른다.
+
+        한 세그먼트의 되풀이를 묶는다 — 자세한 줄은 그 세그먼트의 첫 손상 응답과 복구 경로에서의
+        첫 손상 응답에만 남긴다. 그 밖의 것은 세었다가 세그먼트가 끝날 때(온전한 본문 · 포기) 한
+        줄에 수를 적는다. 복구 경로로 바꿀지의 판정은 이 뒤에 따로 한다 — 같은 조건을 본다.
+
+        재큐 결정 뒤에 부른다 — 다시 받지 않으면(상한 · 이미 실패로 끝내기로 함) 복구는 ``not retried``다.
+
+        Args:
+            attempt: 이 세그먼트의 몇 번째 요청인가(재큐 결정 전의 오류 재큐 수 + 1)
+            retried: 이 실패로 다시 받기로 했는가
+        """
+        on_alternate = index in self._cache_recovery
+        if not retried:
+            recovery = "not retried"
+        elif on_alternate:
+            recovery = "already"
+        elif _cache_recovery_url(segment_url) != segment_url:
+            recovery = "switching"
+        else:
+            recovery = "unavailable"
+        trail = self._corrupt_trails.setdefault(index, _CorruptTrail())
+        trail.count += 1
+        if trail.count > 1 and not (on_alternate and not trail.logged_on_alternate):
+            trail.unlogged += 1
+            return None
+        trail.logged_on_alternate = trail.logged_on_alternate or on_alternate
+        return _corrupt_response_line(
+            index + 1,
+            received,
+            headers,
+            attempt,
+            "alternate" if on_alternate else "original",
+            recovery,
+        )
+
     def _download_segment(self, index: int, segment: str, part_num: int, total_ranges: int):
         """
         개별 세그먼트 다운로드(재시도 포함)
@@ -644,11 +736,13 @@ class M3U8Downloader(BaseDownloader):
         if index in self._cache_recovery:
             segment_url = _cache_recovery_url(segment_url)
         while not self.state == DownloadState.WAITING:
+            headers = None  # 이 요청의 응답 헤더 — 손상 응답의 로그에 쓴다 (#375)
             try:
                 # 스레드로컬 세션으로 같은 워커의 세그먼트 요청 간 연결을 재사용한다 (#31)
                 response = get_thread_session().get(
                     segment_url, stream=True, timeout=REQUEST_TIMEOUT
                 )
+                headers = getattr(response, "headers", None)
                 response.raise_for_status()
                 part_start_time = self._now()
                 slow_watch = self._watch_slow(
@@ -706,6 +800,15 @@ class M3U8Downloader(BaseDownloader):
                     self.s.completed_threads += 1
                     self.s.completed_progress += downloaded_size
                     self.s.threads_progress[part_num] = 0
+                    trail = self._corrupt_trails.pop(index, None)
+                    on_alternate = index in self._cache_recovery
+                if trail is not None:
+                    # 손상 응답 뒤에 온전한 본문을 받았다 — 어느 경로에서였는지가 복구의 결과다 (#375)
+                    self.logger.warning(
+                        f"Segment {index + 1}: valid body after {trail.count} corrupt "
+                        f"responses ({trail.unlogged} not detailed), "
+                        f"path {'alternate' if on_alternate else 'original'}"
+                    )
                 self._note_received(index, downloaded_size)
                 self.logger.log_thread_complete(part_num, downloaded_size)
                 return part_num
@@ -715,7 +818,19 @@ class M3U8Downloader(BaseDownloader):
                 requests.Timeout,
                 integrity.TruncatedSegmentError,
             ) as e:
+                corrupt_line = None
                 with self.lock:
+                    attempt = self._error_requeues.get((index, segment), 0) + 1
+                    requeue = self._requeue_failed((index, segment), part_num, e)
+                    if isinstance(e, integrity.TruncatedSegmentError):
+                        corrupt_line = self._note_corrupt_response(
+                            index,
+                            segment_url,
+                            downloaded_size,
+                            headers,
+                            attempt,
+                            retried=requeue.retry_in is not None,
+                        )
                     if (
                         isinstance(e, integrity.TruncatedSegmentError)
                         and index not in self._cache_recovery
@@ -725,8 +840,16 @@ class M3U8Downloader(BaseDownloader):
                         self.logger.warning(
                             f"Segment {index + 1}: invalid cached body; retrying alternate resource path"
                         )
-                    requeue = self._requeue_failed((index, segment), part_num, e)
+                    trail = self._corrupt_trails.get(index)
                 # 로그 · 실패 통지는 락을 놓은 뒤에 한다 (#329)
+                if corrupt_line is not None:
+                    self.logger.warning(corrupt_line)
+                if trail is not None and requeue.failure is not None:
+                    # 이 세그먼트 때문에 다운로드를 끝낸다 — 묶어 둔 손상 응답의 수를 남긴다 (#375)
+                    self.logger.warning(
+                        f"Segment {index + 1}: giving up after {trail.count} corrupt "
+                        f"responses ({trail.unlogged} not detailed)"
+                    )
                 self._settle_requeue(
                     requeue, f"Part {part_num} download failed (segment {index + 1})", e
                 )
