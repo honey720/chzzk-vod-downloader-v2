@@ -571,7 +571,11 @@ class TestDetectColorScheme:
         대상이다.
         """
         from PySide6.QtCore import Qt
+        from PySide6.QtGui import QGuiApplication
 
+        if QGuiApplication.platformName() != "offscreen":
+            # 실제 플랫폼(CVDV2_TEST_NATIVE=1)은 OS 테마를 읽어 Unknown이 아니다 — 이 테스트의 전제가 없다
+            pytest.skip("offscreen QPA에서만 성립한다 — 실제 플랫폼은 OS 테마를 읽는다 (#429)")
         assert qapp.styleHints().colorScheme() == Qt.ColorScheme.Unknown
         # 오프스크린 기본 팔레트 밝기로 결정된 값 — 어느 쪽이든 예외 없이 문자열로 나와야 한다
         assert theme.detect_color_scheme(qapp) in ("light", "dark")
