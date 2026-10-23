@@ -188,6 +188,75 @@ def test_not_found_error_guides_installation(monkeypatch):
     assert "설치" in message and "apt" in message and "IMAGEIO_FFMPEG_EXE" in message
 
 
+# ================================================================ 못 찾은 결과를 기억하지 않는다 (#423)
+
+
+@pytest.fixture
+def bundled_slot(tmp_path, monkeypatch):
+    """동봉본이 놓일 자리를 빈 폴더로 바꾸고, 실행 확인(-version)을 그 자리의 파일만 통과시킨다.
+
+    시스템 · conda의 ffmpeg는 확인을 통과하지 못한다. 확인한 경로를 ``checked``에 적는다.
+    imageio-ffmpeg의 탐색 캐시를 앞뒤로 비운다 — 다른 테스트가 실제 경로를 그대로 쓴다.
+    """
+    import imageio_ffmpeg
+    from imageio_ffmpeg._definitions import FNAME_PER_PLATFORM, get_platform
+
+    utils = imageio_ffmpeg._utils
+    checked: list[str] = []
+
+    def is_valid(exe: str) -> bool:
+        checked.append(exe)
+        return os.path.dirname(exe) == str(tmp_path) and os.path.isfile(exe)
+
+    monkeypatch.delenv("IMAGEIO_FFMPEG_EXE", raising=False)
+    monkeypatch.setattr(ffmpeg_module, "_IS_LINUX", False)
+    monkeypatch.setattr(utils, "_get_bin_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(utils, "_is_valid_exe", is_valid)
+    utils._get_ffmpeg_exe.cache_clear()
+    yield SimpleNamespace(path=str(tmp_path / FNAME_PER_PLATFORM[get_platform()]), checked=checked)
+    utils._get_ffmpeg_exe.cache_clear()
+
+
+def test_ffmpeg_that_appears_after_a_failed_lookup_is_found_on_the_next_lookup(bundled_slot):
+    """처음 조회에서 ffmpeg를 못 찾았어도 그 뒤 ffmpeg가 생기면 다음 조회에서 찾아야 한다.
+
+    동봉본 자리가 빈 상태로 get_ffmpeg_exe → 그 자리에 파일을 둠 → 다시 get_ffmpeg_exe
+    -> 처음은 FFmpegNotFoundError, 다음은 그 파일의 경로
+    """
+    with pytest.raises(FFmpegNotFoundError):
+        get_ffmpeg_exe()
+    with open(bundled_slot.path, "wb") as f:
+        f.write(b"ffmpeg")
+
+    assert get_ffmpeg_exe() == bundled_slot.path
+
+
+def test_found_ffmpeg_is_remembered_and_not_checked_again(bundled_slot):
+    """ffmpeg를 찾은 뒤의 조회는 실행 확인을 다시 하지 않고 같은 경로를 돌려줘야 한다.
+
+    동봉본 자리에 파일을 두고 get_ffmpeg_exe 세 번
+    -> 세 번 모두 그 경로, 실행 확인은 첫 조회의 한 번뿐
+    """
+    with open(bundled_slot.path, "wb") as f:
+        f.write(b"ffmpeg")
+
+    found = [get_ffmpeg_exe() for _ in range(3)]
+
+    assert found == [bundled_slot.path] * 3
+    assert bundled_slot.checked == [bundled_slot.path]
+
+
+def test_imageio_lookup_cache_can_be_cleared():
+    """imageio-ffmpeg의 자동 탐색 함수(_utils._get_ffmpeg_exe)는 cache_clear를 가져야 한다.
+
+    get_ffmpeg_exe가 못 찾은 결과를 지울 때 이 비공개 이름을 쓴다 (#423)
+    -> imageio_ffmpeg._utils._get_ffmpeg_exe.cache_clear가 있다
+    """
+    import imageio_ffmpeg
+
+    assert callable(imageio_ffmpeg._utils._get_ffmpeg_exe.cache_clear)
+
+
 # ================================================================ 스트림 remux
 
 
