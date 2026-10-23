@@ -90,6 +90,33 @@ def _home_dir() -> str:
     return os.path.expanduser("~")
 
 
+def _dumped_ascii(text: str) -> str:
+    """faulthandler가 충돌 기록에 파일 이름을 적는 모양 — 출력 가능한 ASCII 밖의 글자를 이스케이프한다.
+
+    CPython ``_Py_DumpASCII``와 같은 규칙이다(``\\xNN`` · ``\\uNNNN`` · ``\\UNNNNNNNN``, 소문자 16진).
+    """
+    shaped = []
+    for char in text:
+        code = ord(char)
+        if 0x20 <= code <= 0x7E:
+            shaped.append(char)
+        elif code <= 0xFF:
+            shaped.append(f"\\x{code:02x}")
+        elif code <= 0xFFFF:
+            shaped.append(f"\\u{code:04x}")
+        else:
+            shaped.append(f"\\U{code:08x}")
+    return "".join(shaped)
+
+
+def _part_pattern(part: str) -> str:
+    """경로 조각 하나를 찾는 패턴 — 비ASCII 조각이면 faulthandler가 이스케이프한 모양도 받는다 (#427)."""
+    dumped = _dumped_ascii(part)
+    if dumped == part:
+        return re.escape(part)
+    return f"(?:{re.escape(part)}|{re.escape(dumped)})"
+
+
 @functools.lru_cache(maxsize=4)
 def _home_pattern(home: str) -> re.Pattern | None:
     """홈 폴더 경로가 글에 적히는 모양들을 찾는 패턴 — 바꿀 수 없는 홈이면 None.
@@ -101,17 +128,20 @@ def _home_pattern(home: str) -> re.Pattern | None:
     홈의 끝 두 조각(``Users\\<이름>`` · ``/home/<이름>``)만 있어도 찾는다 — 앞에 무엇이 있든(드라이브
     문자가 잘린 ``:\\Users\\<이름>``, 다른 드라이브, 앞 폴더) 그 앞의 드라이브 문자 · 구분자까지 함께
     바꾼다 (#397). 글자 수로 꼬리를 자른 오류 글이 홈 경로 중간에서 시작해도 이름이 남지 않게 한다.
+
+    비ASCII 조각은 faulthandler가 충돌 기록에 적는 이스케이프 모양(``\\uc774``)으로도 찾는다 — 충돌
+    기록은 다음 시작 때 앱 로그로 옮겨진다 (#427).
     """
     parts = [part for part in re.split(r"[\\/]+", home) if part]
     if len(parts) < 2:
         return None
     separator = r"(?:\\\\|\\|/)"
     leading = separator if home[:1] in ("\\", "/") else ""
-    whole = leading + separator.join(re.escape(part) for part in parts)
+    whole = leading + separator.join(_part_pattern(part) for part in parts)
     shapes = [whole]
     if not re.fullmatch(r"[A-Za-z]:", parts[-2]):
         # 드라이브 바로 아래의 홈(C:\Tester)은 끝 두 조각이 곧 전체라 더하지 않는다
-        last_two = separator.join(re.escape(part) for part in parts[-2:])
+        last_two = separator.join(_part_pattern(part) for part in parts[-2:])
         shapes.append(rf"(?:(?:[A-Za-z]?:)?{separator})?{last_two}")
     flags = re.IGNORECASE if re.match(r"[A-Za-z]:", home) else 0
     return re.compile(r"(?<![\w.-])(?:" + "|".join(shapes) + r")(?![\w.-])", flags)

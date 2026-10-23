@@ -77,20 +77,22 @@ _UNHANDLED = textwrap.dedent(
 )
 
 
-def _fake_home(tmp_path) -> str:
+def _fake_home(tmp_path, name: str = "tester") -> str:
     """별도 프로세스의 홈 폴더 — 충돌 기록에 홈 폴더 경로가 늘 들어가게 스크립트를 이 아래에 둔다.
 
     CI 러너는 저장소 · 파이썬이 홈 폴더 밖에 있어 진짜 홈으로는 기록에 홈 경로가 들어가지 않는다.
     """
-    home = tmp_path / "home" / "tester"
+    home = tmp_path / "home" / name
     home.mkdir(parents=True, exist_ok=True)
     return str(home)
 
 
-def _run(tmp_path, body: str, env: dict | None = None) -> subprocess.CompletedProcess:
+def _run(
+    tmp_path, body: str, env: dict | None = None, home_name: str = "tester"
+) -> subprocess.CompletedProcess:
     """body를 별도 프로세스로 돌린다 — 홈 폴더(HOME · USERPROFILE)를 _fake_home으로 바꾸고, 스크립트를 그 안에 둔다."""
     log_dir = str(tmp_path / "logs")
-    home = _fake_home(tmp_path)
+    home = _fake_home(tmp_path, home_name)
     script = os.path.join(home, "crash_case.py")
     with open(script, "w", encoding="utf-8") as f:
         f.write(_PRELUDE.format(root=ROOT) + body.format(log_dir=log_dir))
@@ -172,6 +174,25 @@ def test_next_start_moves_the_crash_record_to_the_app_log_with_the_home_folder_h
     assert "crash_here_for_test" in app_log
     assert home not in app_log
     assert _read(crashed / CRASH_FILE_NAME) == ""
+
+
+def test_next_start_hides_an_escaped_non_ascii_home_in_the_crash_record(tmp_path):
+    r"""홈 폴더 이름이 비ASCII면 충돌 기록에 이스케이프로 적힌 홈 경로도 앱 로그에서 가려져야 한다.
+
+    홈 폴더 이름 "테스터"인 별도 프로세스가 충돌(crash.log에 \ud14c\uc2a4\ud130) → 같은 홈으로 다음 시작
+    -> app.log에 "crash_here_for_test", 이름 원문 · 이스케이프 모양 둘 다 없음
+    """
+    escaped = r"\ud14c\uc2a4\ud130"  # "테스터"를 faulthandler가 적는 모양
+    assert _run(tmp_path, _CRASH, home_name="테스터").returncode != 0, "전제: 충돌로 끝났다"
+    assert escaped in _read(tmp_path / "logs" / CRASH_FILE_NAME)  # 전제: 이스케이프로 적혔다
+
+    done = _run(tmp_path, _NEXT_START, home_name="테스터")
+
+    assert done.returncode == 0, done.stderr
+    app_log = _read(tmp_path / "logs" / "app.log")
+    assert "crash_here_for_test" in app_log
+    assert escaped not in app_log
+    assert "테스터" not in app_log
 
 
 def test_app_start_logs_an_unhandled_exception_to_the_app_log_with_the_home_folder_hidden(
