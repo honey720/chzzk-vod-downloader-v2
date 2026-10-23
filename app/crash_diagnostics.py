@@ -4,8 +4,8 @@
 
 - 네이티브 충돌(접근 위반 등): ``faulthandler``가 로그 폴더의 ``crash.log``에 모든 스레드의
   스택을 쓴다. 신호 처리기 안에서 쓰므로 로그 포매터를 거치지 않는다 — 다음 시작 때 그
-  내용을 가려(홈 폴더 · 주소의 토큰) 앱 로그로 옮기고 파일을 비운다. 파일에는 마지막
-  실행의 것만 남는다.
+  내용을 앱 로그로 옮기고(앱 로그의 포매터가 홈 폴더 · 주소의 토큰을 가린다) 파일을 비운다.
+  파일에는 마지막 실행의 것만 남는다.
 - 처리되지 않은 예외(메인 스레드 · 다른 스레드): ``sys.excepthook`` · ``threading.excepthook``이
   앱 로그에 남긴다 — 로그 포매터의 가리기를 거친다. Qt 이벤트 처리 중(시그널 · 슬롯 · 오버라이드한
   가상 메서드) 난 예외도 PySide6가 ``sys.excepthook``으로 넘긴다.
@@ -20,8 +20,6 @@ import os
 import sys
 import threading
 from types import TracebackType
-
-from core.utils.logging_setup import redact_home, redact_urls
 
 logger = logging.getLogger(__name__)
 
@@ -59,11 +57,12 @@ def install_crash_diagnostics(log_dir: str) -> None:
 
 
 def carry_over_previous_crash(path: str) -> bool:
-    """앞 실행의 충돌 기록이 비어 있지 않으면 가려서 앱 로그에 남긴다.
+    """앞 실행의 충돌 기록이 비어 있지 않으면 앱 로그에 한 레코드로 남긴다.
 
     faulthandler가 쓴 원본에는 소스 · 앱이 놓인 경로가 그대로 들어 있다 — 사용자 이름이 든 홈
-    폴더가 찍힐 수 있다. 앱 로그의 다른 줄과 같이 홈 폴더를 ``~``로, 주소의 토큰 값을 가린다.
-    파일은 지우지 않는다 — 이어서 ``install_crash_diagnostics``가 비우고 연다.
+    폴더가 찍힐 수 있다. 앱 로그의 다른 줄과 같이 그 핸들러의 포매터가 홈 폴더를 ``~``로, 주소의
+    토큰 값을 가린다(``RedactingFormatter`` — 가리는 곳은 그 한 곳이다, #328). 파일은 지우지
+    않는다 — 이어서 ``install_crash_diagnostics``가 비우고 연다.
 
     Returns:
         옮긴 것이 있으면 True
@@ -78,10 +77,7 @@ def carry_over_previous_crash(path: str) -> bool:
         return False
     if not dump.strip():
         return False
-    logger.error(
-        "Previous run ended abnormally — crash record:\n%s",
-        redact_home(redact_urls(dump.rstrip())),
-    )
+    logger.error("Previous run ended abnormally — crash record:\n%s", dump.rstrip())
     return True
 
 

@@ -64,6 +64,19 @@ _NEXT_START = textwrap.dedent(
 )
 
 
+_UNHANDLED = textwrap.dedent(
+    """
+    import os
+    from core.utils.logging_setup import setup_logging
+    from app.crash_diagnostics import install_crash_diagnostics
+
+    setup_logging({log_dir!r})
+    install_crash_diagnostics({log_dir!r})
+    raise ValueError(os.path.join(os.path.expanduser("~"), "unhandled-marker.mp4"))
+    """
+)
+
+
 def _run(tmp_path, body: str) -> subprocess.CompletedProcess:
     log_dir = str(tmp_path / "logs")
     script = _PRELUDE.format(root=ROOT) + body.format(log_dir=log_dir)
@@ -126,6 +139,23 @@ def test_next_start_moves_the_crash_record_to_the_app_log_with_the_home_folder_h
     assert "crash_here_for_test" in app_log
     assert HOME not in app_log
     assert _read(crashed / CRASH_FILE_NAME) == ""
+
+
+def test_app_start_logs_an_unhandled_exception_to_the_app_log_with_the_home_folder_hidden(
+    tmp_path,
+):
+    """앱 시작 경로(setup_logging → install_crash_diagnostics) 뒤 처리되지 않은 예외는 app.log에 가려져 남아야 한다.
+
+    별도 프로세스: 위 두 함수를 부른 뒤 최상위에서 ValueError("<홈 폴더>/unhandled-marker.mp4")
+    -> 0 아닌 종료, app.log에 "Unhandled exception"과 "unhandled-marker.mp4", 홈 폴더 경로는 없다
+    """
+    done = _run(tmp_path, _UNHANDLED)
+
+    assert done.returncode != 0
+    app_log = _read(tmp_path / "logs" / "app.log")
+    assert "Unhandled exception" in app_log
+    assert "unhandled-marker.mp4" in app_log
+    assert HOME not in app_log
 
 
 def test_empty_crash_record_leaves_nothing_in_the_app_log(tmp_path, caplog):
