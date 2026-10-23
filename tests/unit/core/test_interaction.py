@@ -840,7 +840,7 @@ def test_continuous_interaction_rests_once_per_eight_ms_of_work(work_clock):
 
 
 def test_inner_block_rests_at_its_first_gap_even_right_after_the_outer_block_rested(work_clock):
-    """바깥 블록이 막 쉰 뒤 안쪽 resting_while 블록에 들어가면 조작 중인 첫 틈에서 바로 쉬어야 한다.
+    """바깥 블록이 막 쉰 뒤 안쪽 resting_while 블록에 들어가면 조작 중인 첫 틈에서 바로 쉬어야 한다 (#408).
 
     가짜 시계, 틈마다 일 0.3ms. 바깥 블록(늘 참)에서 처음 쉴 때까지 틈을 지나고, 곧바로 안쪽
     블록(늘 참)에 들어가 틈 하나 — 바깥의 마지막 쉼 뒤 0.3ms(8ms 미만)
