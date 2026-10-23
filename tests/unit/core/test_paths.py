@@ -673,9 +673,50 @@ def test_emoji_temp_path_over_in_utf16_units_is_shortened(tmp_path, kind):
     assert "�" not in name
 
 
-OUTPUT_LIMIT = (
-    240  # 산출물 전체 경로의 상한(UTF-16 단위) — 중복 회피 " (n)"과 임시 접두사의 여유를 뺀 값
-)
+def test_emoji_temp_name_with_one_unit_left_drops_the_emoji_instead_of_going_over(tmp_path):
+    """줄인 앞부분에 1단위만 남았는데 첫 글자가 이모지(2단위)면 앞부분을 비워 259단위 안에 맞춰야 한다.
+
+    폴더 211자 — 세그먼트 임시 폴더 이름의 앞부분에 1단위만 남는 깊이, 이모지 20개의 산출물 이름
+    -> 이름 == "CVDv2_temp_~<16진수 6자리>", 가장 깊은 경로 <= 259단위
+    """
+    base = str(tmp_path)
+    folder = os.path.join(base, "d" * (211 - len(base) - 1))
+    deepest = os.path.join("section_19", "head_source.mp4")
+
+    path = temp_dir_for(os.path.join(folder, EMOJI * 20 + ".mp4"))
+
+    assert re.fullmatch(r"CVDv2_temp_~[0-9a-f]{6}", os.path.basename(path))
+    assert _deepest_length(path, deepest) <= PATH_LIMIT
+
+
+@pytest.mark.parametrize("kind", TEMP_PATHS)
+def test_temp_path_in_a_folder_with_an_undecodable_byte_is_measured(tmp_path, kind):
+    """디코드하지 못한 바이트(짝 없는 서로게이트)가 든 폴더에서도 임시 경로를 만들어야 한다.
+
+    폴더 이름에 "\\udc80"(POSIX가 디코드하지 못한 바이트를 담는 글자), 짧은 산출물 이름
+    -> 예외 없이 폴더/접두사 + 산출물 이름 + 확장자
+    """
+    make, prefix, extension, _deepest = TEMP_PATHS[kind]
+    folder = os.path.join(str(tmp_path), "x\udc80y")
+
+    path = make(os.path.join(folder, "방송 1080p_1.mp4"))
+
+    assert path == os.path.join(folder, prefix + "방송 1080p_1" + extension)
+
+
+def test_output_path_in_a_folder_with_an_undecodable_byte_is_measured(tmp_path):
+    """디코드하지 못한 바이트(짝 없는 서로게이트)가 든 폴더에서도 산출물 경로를 만들어야 한다.
+
+    폴더 이름에 "\\udc80", 제목 "방송"
+    -> 예외 없이 폴더/방송 1080p.mp4
+    """
+    folder = os.path.join(str(tmp_path), "x\udc80y")
+
+    assert build_output_path(folder, "방송", 1080) == os.path.join(folder, "방송 1080p.mp4")
+
+
+# 산출물 전체 경로의 상한(UTF-16 단위) — 중복 회피 " (n)"과 임시 접두사의 여유를 뺀 값
+OUTPUT_LIMIT = 240
 
 
 def test_emoji_output_path_that_just_fits_in_utf16_units_keeps_the_title(tmp_path):

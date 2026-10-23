@@ -228,22 +228,36 @@ def _fitted_path(
     byte_budget = _MAX_COMPONENT_BYTES - len((prefix + marker + extension).encode("utf-8"))
     # 바이트열을 자른 뒤 깨진 꼬리 시퀀스를 버려 문자 경계를 지킨다
     kept = kept.encode("utf-8")[:byte_budget].decode("utf-8", "ignore")
-    return os.path.join(directory, prefix + kept.rstrip() + marker + extension)
+    return os.path.join(directory, prefix + _joined_with_marker(kept, marker) + extension)
 
 
 def _utf16_units(text: str) -> int:
-    """Windows가 경로 길이로 세는 UTF-16 단위의 수 — 보조 평면 문자(이모지 등)는 둘이다."""
-    return len(text.encode("utf-16-le")) // 2
+    """Windows가 경로 길이로 세는 UTF-16 단위의 수 — 보조 평면 문자(이모지 등)는 둘이다.
+
+    POSIX에서 디코드하지 못한 바이트가 든 경로는 짝 없는 서로게이트로 온다 — 그 글자도
+    하나로 센다(``surrogatepass``). 그대로 인코드하면 예외가 난다.
+    """
+    return len(text.encode("utf-16-le", "surrogatepass")) // 2
 
 
 def _head_within_units(text: str, units: int) -> str:
-    """text의 앞부분 가운데 UTF-16 단위가 units를 넘지 않는 가장 긴 것 — 한 글자는 남긴다."""
+    """text의 앞부분 가운데 UTF-16 단위가 units를 넘지 않는 가장 긴 것.
+
+    units가 1 이상인데 첫 글자부터 넘으면(2단위 글자) 빈 문자열이다. units가 0 이하면 한 글자는
+    남긴다 — 줄여도 들지 않는 깊은 폴더에서 예전과 같은 이름이 나온다.
+    """
     total = 0
     for end, character in enumerate(text):
         total += 2 if ord(character) > 0xFFFF else 1
         if total > units:
-            return text[: max(end, 1)]
+            return text[: max(end, 1)] if units < 1 else text[:end]
     return text
+
+
+def _joined_with_marker(head: str, marker: str) -> str:
+    """줄인 앞부분 + 해시 표식 — 앞부분이 비면 표식의 앞 공백도 뺀다."""
+    head = head.rstrip()
+    return head + marker if head else marker.lstrip()
 
 
 def _path_key(path: str) -> str:
@@ -288,7 +302,7 @@ def _candidate_path(directory: str, title: str, resolution: int, tail: str = "")
         # 4바이트)가 깨지지 않는다. 문자 절단만 일어난 경우엔 no-op이다
         byte_budget = _MAX_FILENAME_BYTES - len((marker + suffix).encode("utf-8"))
         clipped = clipped.encode("utf-8")[:byte_budget].decode("utf-8", "ignore")
-        candidate = os.path.join(directory, clipped.rstrip() + marker + suffix)
+        candidate = os.path.join(directory, _joined_with_marker(clipped, marker) + suffix)
     return candidate
 
 
