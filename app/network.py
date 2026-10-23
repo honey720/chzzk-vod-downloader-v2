@@ -1,4 +1,5 @@
 import json
+from collections.abc import Callable
 from fractions import Fraction
 from urllib.parse import urljoin, urlsplit
 
@@ -40,6 +41,25 @@ VIDEOHUB_API = "https://api-videohub.naver.com"
 # 재시도보다 먼저 끊는다. read 15초: 응답이 작은 JSON/XML이라 평시 1초 미만 —
 # 느린 회선·서버 지연에 여유를 두되 OS 타임아웃보다 훨씬 먼저 포기한다.
 REQUEST_TIMEOUT = (5, 15)
+
+# 영상 정보 요청이 제한 시간(연결 · 읽기)에 걸렸을 때 다시 보내는 횟수 (#331). 한 번이면 순간
+# 지연은 넘기고, 서버가 계속 늦으면 기다림이 제한 시간의 두 배를 넘지 않는다
+VIDEO_INFO_TIMEOUT_RETRIES = 1
+
+
+def _get_retrying_timeout(send: Callable[[], requests.Response], retries: int) -> requests.Response:
+    """send()로 요청을 보낸다 — 제한 시간(연결 · 읽기)에 걸리면 retries번까지 다시 보낸다 (#331).
+
+    연결 실패(제한 시간이 아닌 ConnectionError)와 HTTP 상태 오류는 다시 보내지 않는다. 다시
+    보내도 제한 시간에 걸리면 마지막 Timeout을 그대로 올린다 — 조회 서비스가 응답 지연 문구로
+    바꾼다(core/services/metadata_service.py).
+    """
+    for _ in range(retries):
+        try:
+            return send()
+        except requests.Timeout:
+            continue
+    return send()
 
 
 # 서버 응답이 알려준 주소로 쿠키를 보내는 요청의 신뢰 검사.
@@ -130,10 +150,17 @@ class NetworkManager:
           호출부에서 membership_benefit_type으로 "멤버십 필요" 안내를 구분할 수 있다.
         - encryption_type이 null이 아니면(AES 등) 세그먼트가 암호화되어 있어
           현재 다운로더로는 조립할 수 없으므로 호출부에서 조기에 안내한다.
+
+        제한 시간에 걸리면 ``VIDEO_INFO_TIMEOUT_RETRIES``번 다시 보낸다 (#331).
         """
         api_url = f"{CHZZK_API}/service/v2/videos/{video_no}"
         headers = {"User-Agent": "Mozilla/5.0"}
-        response = _session.get(api_url, cookies=cookies, headers=headers, timeout=REQUEST_TIMEOUT)
+        response = _get_retrying_timeout(
+            lambda: _session.get(
+                api_url, cookies=cookies, headers=headers, timeout=REQUEST_TIMEOUT
+            ),
+            VIDEO_INFO_TIMEOUT_RETRIES,
+        )
         response.raise_for_status()
 
         content = response.json().get('content', {})

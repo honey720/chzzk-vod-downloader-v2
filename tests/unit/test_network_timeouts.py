@@ -8,6 +8,7 @@
 import json
 
 import pytest
+import requests
 
 import app.network as network
 from app.network import NetworkManager, REQUEST_TIMEOUT
@@ -123,3 +124,111 @@ def test_request_timeout_is_connect_read_pair():
     assert len(REQUEST_TIMEOUT) == 2
     connect, read = REQUEST_TIMEOUT
     assert 0 < connect <= read
+
+
+# ================================================================ 제한 시간에 걸리면 한 번 더 (#331)
+
+VIDEO_URL = "https://chzzk.naver.com/video/123"
+
+
+class ScriptedSession:
+    """정해 둔 순서대로 예외를 던지거나 응답을 돌려주는 가짜 세션 — 받은 요청 수를 센다."""
+
+    def __init__(self, *outcomes):
+        self._outcomes = list(outcomes)
+        self.calls = 0
+
+    def get(self, url, **kwargs):
+        self.calls += 1
+        outcome = self._outcomes.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+
+def _video_info_response(title: str = "다시 받은 제목") -> MockResponse:
+    return MockResponse(text=json.dumps({"content": {"videoTitle": title}}))
+
+
+@pytest.mark.parametrize(
+    "timeout",
+    [requests.ReadTimeout("read"), requests.ConnectTimeout("connect")],
+    ids=["read", "connect"],
+)
+def test_video_info_is_requested_again_after_a_timeout(monkeypatch, timeout):
+    """영상 정보 요청이 제한 시간(읽기 · 연결)에 걸리면 한 번 더 보내 그 응답을 써야 한다.
+
+    첫 요청은 ReadTimeout(또는 ConnectTimeout), 둘째 요청은 제목 "다시 받은 제목"인 응답
+    -> 요청 2번, 돌려준 정보의 제목 == "다시 받은 제목"
+    """
+    session = ScriptedSession(timeout, _video_info_response())
+    monkeypatch.setattr(network, "_session", session)
+
+    info = NetworkManager.get_video_info("123", COOKIES)
+
+    assert session.calls == 2
+    assert info.metadata["title"] == "다시 받은 제목"
+
+
+def test_video_info_gives_up_after_one_retry(monkeypatch):
+    """영상 정보 요청이 다시 보낸 뒤에도 제한 시간에 걸리면 더 보내지 않고 Timeout을 올려야 한다.
+
+    요청마다 ReadTimeout(세 번째 응답도 준비해 둠)
+    -> requests.Timeout, 요청 2번
+    """
+    session = ScriptedSession(
+        requests.ReadTimeout("1"), requests.ReadTimeout("2"), _video_info_response()
+    )
+    monkeypatch.setattr(network, "_session", session)
+
+    with pytest.raises(requests.Timeout):
+        NetworkManager.get_video_info("123", COOKIES)
+
+    assert session.calls == 2
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [requests.ConnectionError("refused"), MockResponse(status_code=500)],
+    ids=["connection-error", "http-500"],
+)
+def test_video_info_is_not_requested_again_after_a_non_timeout_failure(monkeypatch, outcome):
+    """영상 정보 요청이 제한 시간이 아닌 이유(연결 실패 · HTTP 오류)로 실패하면 다시 보내지 않아야 한다.
+
+    첫 요청이 ConnectionError(또는 500 응답), 둘째 응답은 정상으로 준비해 둠
+    -> requests.RequestException, 요청 1번
+    """
+    session = ScriptedSession(outcome, _video_info_response())
+    monkeypatch.setattr(network, "_session", session)
+
+    with pytest.raises(requests.RequestException):
+        NetworkManager.get_video_info("123", COOKIES)
+
+    assert session.calls == 1
+
+
+@pytest.mark.parametrize(
+    ("outcomes", "expected_key"),
+    [
+        ((requests.ReadTimeout("1"), requests.ReadTimeout("2")), "Server response is slow"),
+        ((requests.ConnectTimeout("1"), requests.ConnectTimeout("2")), "Server response is slow"),
+        ((requests.ConnectionError("refused"),), "Network connection error"),
+    ],
+    ids=["read-timeout-twice", "connect-timeout-twice", "connection-error"],
+)
+def test_lookup_tells_a_slow_response_apart_from_a_connection_failure(
+    monkeypatch, outcomes, expected_key
+):
+    """영상 정보 조회가 두 번 다 제한 시간에 걸리면 응답 지연 키, 연결 실패면 연결 오류 키로 실패해야 한다.
+
+    NetworkManager로 fetch_content — 세션이 outcomes 순서대로 실패
+    -> MetadataError.message_key == expected_key
+    """
+    from core.services.metadata_service import MetadataError, fetch_content
+
+    monkeypatch.setattr(network, "_session", ScriptedSession(*outcomes))
+
+    with pytest.raises(MetadataError) as info:
+        fetch_content(VIDEO_URL, COOKIES, "downloads", api=NetworkManager)
+
+    assert info.value.message_key == expected_key

@@ -16,6 +16,7 @@ import config.config as config_module
 import main as main_module
 import app.theme as theme
 from app.download_logger import DownloadLogger
+from app.network import NetworkManager
 from app.viewmodels.data import ContentItem
 from app.widgets.widget import ContentItemWidget
 from core.api.dash import parse_dash_manifest
@@ -155,6 +156,23 @@ def test_replay_button_secondary_text_is_the_frame_rate_from_50fps(qapp, sample,
     widget = _card(_streams(sample))
 
     assert _secondary_texts(widget) == secondary
+
+
+def test_fallback_list_buttons_show_the_same_resolutions_without_source_or_frame_rate(qapp):
+    """playback 정보로 돌아간 목록의 해상도 버튼은 정상 목록과 같은 해상도를 보이되 원본 표시 · fps는 없어야 한다 (#331).
+
+    S1 — 정상 목록(마스터 플레이리스트의 변형)과 대체 목록(playback 정보의 트랙,
+    NetworkManager.get_video_m3u8_manifest)으로 각각 카드
+    -> 정상: 본 글자 ["1080p(source)", "720p", "480p", "360p", "144p"], 보조 ["60fps", "60fps", "", "", ""]
+       대체: 본 글자 ["1080p", "720p", "480p", "360p", "144p"], 보조 모두 빈 문자열
+    """
+    normal = _card(_streams(S1))
+    fallback = _card(NetworkManager.get_video_m3u8_manifest(S1.playback)[0])
+
+    assert _texts(normal) == ["1080p(source)", "720p", "480p", "360p", "144p"]
+    assert _secondary_texts(normal) == ["60fps", "60fps", "", "", ""]
+    assert _texts(fallback) == ["1080p", "720p", "480p", "360p", "144p"]
+    assert _secondary_texts(fallback) == [""] * 5
 
 
 def test_encoded_vod_buttons_show_the_frame_rate_without_a_source_mark(qapp):

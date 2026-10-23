@@ -347,6 +347,10 @@ Part of the video kept arriving incomplete from the server. Try again later.</so
         <translation>네트워크 연결을 확인해 주세요.</translation>
     </message>
     <message>
+        <source>Server response is slow</source>
+        <translation>서버 응답이 늦습니다. 잠시 뒤 다시 시도해 주세요.</translation>
+    </message>
+    <message>
         <source>Failed to fetch video information</source>
         <translation>영상 정보를 가져오지 못했습니다.</translation>
     </message>

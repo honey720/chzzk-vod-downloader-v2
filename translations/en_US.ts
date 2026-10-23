@@ -352,6 +352,10 @@ Part of the video kept arriving incomplete from the server. Try again later.</tr
         <translation>Please check your network connection.</translation>
     </message>
     <message>
+        <source>Server response is slow</source>
+        <translation>The server is responding slowly. Please try again in a moment.</translation>
+    </message>
+    <message>
         <source>Failed to fetch video information</source>
         <translation>Could not fetch the video information.</translation>
     </message>

@@ -104,7 +104,12 @@ def fetch_content(
         status = e.response.status_code if e.response is not None else None
         key = _TRANSPORT_STATUS_KEYS.get(status, "Failed to fetch video information")
         raise MetadataError(key, vod_url) from e
-    except (requests.ConnectionError, requests.Timeout) as e:
+    except requests.Timeout as e:
+        # 제한 시간에 걸렸다 — 영상 정보 요청은 한 번 더 보낸 뒤다(app/network.py). 연결 실패와
+        # 다른 문구로 알린다 (#331). 연결 제한 시간(ConnectTimeout)은 ConnectionError이기도 해
+        # 아래 분기보다 먼저 본다
+        raise MetadataError("Server response is slow", vod_url) from e
+    except requests.ConnectionError as e:
         raise MetadataError("Network connection error", vod_url) from e
     except requests.RequestException as e:
         raise MetadataError("Failed to fetch video information", vod_url) from e
