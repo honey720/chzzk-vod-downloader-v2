@@ -8,6 +8,7 @@
 """
 
 import os
+import re
 import threading
 
 import pytest
@@ -15,6 +16,7 @@ import pytest
 from core.utils.paths import (
     build_output_path,
     build_section_output_paths,
+    cut_temp_dir_for,
     ensure_unique_path,
     partial_source_path_for,
     section_body_path_for,
@@ -499,3 +501,263 @@ def test_section_body_path_is_cut_to_the_name_limit(tmp_path):
 
     assert len(name.encode("utf-8")) <= 255
     assert name.startswith("CVDv2_body_") and name.endswith(".mp4")
+
+
+# ================================================================ 임시 경로의 길이 예산 (#323)
+
+PATH_LIMIT = 259  # Windows MAX_PATH(260)에서 끝의 NUL을 뺀 글자 수
+FOLDER_LENGTH = 180  # 산출물 폴더 경로의 글자 수 — 어느 OS의 tmp_path보다 길다
+
+# (만드는 함수, 이름 앞의 접두사, 이름 뒤의 확장자, 그 안에 만드는 가장 깊은 상대 경로)
+TEMP_PATHS = {
+    "segments": (temp_dir_for, "CVDv2_temp_", "", os.path.join("section_19", "head_source.mp4")),
+    "cut": (cut_temp_dir_for, "CVDv2_cut_", "", "0_whole.mp4"),
+    "body": (section_body_path_for, "CVDv2_body_", ".mp4", ""),
+    "part": (partial_source_path_for, "CVDv2_part_", ".mp4", ""),
+}
+
+
+def _folder(tmp_path) -> str:
+    """글자 수가 FOLDER_LENGTH인 폴더 경로 — 만들지 않는다(경로 계산만 본다)."""
+    base = str(tmp_path)
+    assert len(base) < FOLDER_LENGTH - 10, "전제: tmp_path가 FOLDER_LENGTH보다 짧다"
+    return os.path.join(base, "d" * (FOLDER_LENGTH - len(base) - 1))
+
+
+def _deepest_length(path: str, deepest: str) -> int:
+    """그 경로 아래 가장 깊이 만드는 것의 전체 경로 글자 수 — Windows처럼 UTF-16 단위로 센다."""
+    full = os.path.join(path, deepest) if deepest else path
+    return len(full.encode("utf-16-le")) // 2
+
+
+def _fitting_stem_length(prefix: str, extension: str, deepest: str) -> int:
+    """가장 깊은 경로가 딱 PATH_LIMIT자가 되는 산출물 이름(확장자 뺀)의 글자 수."""
+    reserve = len(os.sep) + len(deepest) if deepest else 0
+    return PATH_LIMIT - reserve - (FOLDER_LENGTH + len(os.sep) + len(prefix) + len(extension))
+
+
+@pytest.mark.parametrize("kind", TEMP_PATHS)
+def test_temp_path_that_just_fits_keeps_the_output_name(tmp_path, kind):
+    """임시 경로 아래 가장 깊은 경로가 딱 259자면 임시 이름은 접두사 + 산출물 이름 그대로여야 한다.
+
+    폴더 180자, 가장 깊은 경로가 259자가 되는 길이의 산출물 이름(ASCII)
+    -> 폴더/접두사 + 산출물 이름 + 확장자, 가장 깊은 경로 == 259자
+    """
+    make, prefix, extension, deepest = TEMP_PATHS[kind]
+    stem = "a" * _fitting_stem_length(prefix, extension, deepest)
+    folder = _folder(tmp_path)
+
+    path = make(os.path.join(folder, stem + ".mp4"))
+
+    assert path == os.path.join(folder, prefix + stem + extension)
+    assert _deepest_length(path, deepest) == PATH_LIMIT
+
+
+@pytest.mark.parametrize("kind", TEMP_PATHS)
+def test_temp_path_one_char_over_is_shortened_with_a_hash(tmp_path, kind):
+    """임시 경로 아래 가장 깊은 경로가 259자를 1자 넘으면 이름을 줄이고 해시 6자리를 붙여 259자 안에 맞춰야 한다.
+
+    폴더 180자, 딱 맞는 길이보다 1자 긴 산출물 이름(ASCII)
+    -> 같은 폴더, 접두사로 시작, " ~<16진수 6자리>" + 확장자로 끝남, 가장 깊은 경로 <= 259자
+    """
+    make, prefix, extension, deepest = TEMP_PATHS[kind]
+    stem = "a" * (_fitting_stem_length(prefix, extension, deepest) + 1)
+    folder = _folder(tmp_path)
+
+    path = make(os.path.join(folder, stem + ".mp4"))
+
+    assert os.path.dirname(path) == folder
+    name = os.path.basename(path)
+    assert name.startswith(prefix + "a")
+    assert re.fullmatch(re.escape(prefix) + r"a+ ~[0-9a-f]{6}" + re.escape(extension), name)
+    assert _deepest_length(path, deepest) <= PATH_LIMIT
+
+
+@pytest.mark.parametrize("kind", TEMP_PATHS)
+def test_shortened_temp_path_is_the_same_for_the_same_output(tmp_path, kind):
+    """같은 산출물 경로면 줄인 임시 경로도 매번 같아야 하고, 끝만 다른 산출물은 서로 달라야 한다.
+
+    폴더 180자, 예산을 넘는 산출물 이름 "…a (1)"과 "…a (2)"
+    -> 같은 입력으로 두 번 부른 결과가 같다, " (1)"과 " (2)"의 결과가 다르다
+    """
+    make, prefix, extension, deepest = TEMP_PATHS[kind]
+    stem = "a" * (_fitting_stem_length(prefix, extension, deepest) + 20)
+    folder = _folder(tmp_path)
+    first = os.path.join(folder, stem + " (1).mp4")
+    second = os.path.join(folder, stem + " (2).mp4")
+
+    assert make(first) == make(first)
+    assert make(first) != make(second)
+
+
+@pytest.mark.parametrize("kind", TEMP_PATHS)
+def test_shortened_hangul_temp_path_keeps_whole_characters(tmp_path, kind):
+    """한글 산출물 이름이 예산을 넘으면 줄인 이름은 문자 중간에서 잘리지 않고 길이 · 바이트 상한에 들어야 한다.
+
+    폴더 180자, 딱 맞는 길이보다 10자 긴 한글 산출물 이름
+    -> 가장 깊은 경로 <= 259자, 이름 <= 255바이트, 대체 문자(U+FFFD) 없음, 접두사 + "가"로 시작
+    """
+    make, prefix, extension, deepest = TEMP_PATHS[kind]
+    stem = "가" * (_fitting_stem_length(prefix, extension, deepest) + 10)
+    folder = _folder(tmp_path)
+
+    path = make(os.path.join(folder, stem + ".mp4"))
+
+    name = os.path.basename(path)
+    assert _deepest_length(path, deepest) <= PATH_LIMIT
+    assert len(name.encode("utf-8")) <= 255
+    assert "�" not in name
+    assert name.startswith(prefix + "가")
+
+
+@pytest.mark.parametrize("kind", TEMP_PATHS)
+@pytest.mark.parametrize("filler", [" ", "."], ids=["space", "dot"])
+def test_shortened_temp_name_does_not_end_in_a_space_or_dot_where_it_is_cut(tmp_path, kind, filler):
+    """줄이는 자리에 공백 · 점이 이어지면 줄인 이름의 해시 앞에 공백이 겹치지 않고 이름이 공백 · 점으로 끝나지 않아야 한다.
+
+    폴더 180자, "a" 다음에 공백(또는 점) 30개가 이어지고 끝에 "b" 하나 — 줄이는 자리가 공백(점) 사이
+    -> 이름에 "  ~"(공백 두 칸 + ~)가 없다, 이름이 공백 · 점으로 끝나지 않는다, 가장 깊은 경로 <= 259자
+    """
+    make, prefix, extension, deepest = TEMP_PATHS[kind]
+    length = _fitting_stem_length(prefix, extension, deepest)
+    stem = "a" * (length - 20) + filler * 30 + "b"  # 줄이면 앞의 공백(점) 사이에서 끊긴다
+    folder = _folder(tmp_path)
+
+    path = make(os.path.join(folder, stem + ".mp4"))
+
+    name = os.path.basename(path)
+    assert "  ~" not in name
+    assert not name.endswith((" ", "."))
+    assert _deepest_length(path, deepest) <= PATH_LIMIT
+
+
+EMOJI = "\U0001f600"  # 보조 평면 문자 — UTF-16 단위로 둘이다
+
+
+@pytest.mark.parametrize("kind", TEMP_PATHS)
+def test_emoji_temp_path_that_just_fits_in_utf16_units_keeps_the_output_name(tmp_path, kind):
+    """이모지가 든 임시 경로가 UTF-16 단위로 딱 259면 임시 이름은 접두사 + 산출물 이름 그대로여야 한다.
+
+    폴더 180자, 이모지(2단위)로 채워 가장 깊은 경로가 UTF-16 259단위가 되는 산출물 이름
+    -> 폴더/접두사 + 산출물 이름 + 확장자, 가장 깊은 경로 == 259단위
+    """
+    make, prefix, extension, deepest = TEMP_PATHS[kind]
+    units = _fitting_stem_length(prefix, extension, deepest)
+    stem = EMOJI * (units // 2) + "a" * (units % 2)
+    folder = _folder(tmp_path)
+
+    path = make(os.path.join(folder, stem + ".mp4"))
+
+    assert path == os.path.join(folder, prefix + stem + extension)
+    assert _deepest_length(path, deepest) == PATH_LIMIT
+
+
+@pytest.mark.parametrize("kind", TEMP_PATHS)
+def test_emoji_temp_path_over_in_utf16_units_is_shortened(tmp_path, kind):
+    """글자 수로는 259 안이어도 UTF-16 단위로 넘는 이모지 임시 경로는 줄여서 259단위 안에 맞춰야 한다.
+
+    폴더 180자, 딱 맞는 길이보다 1단위 긴 이모지 산출물 이름(글자 수로는 딱 맞는 길이의 절반 남짓)
+    -> " ~<16진수 6자리>" + 확장자로 끝남, 가장 깊은 경로 <= 259단위, 이모지가 반쪽으로 잘리지 않음
+    """
+    make, prefix, extension, deepest = TEMP_PATHS[kind]
+    units = _fitting_stem_length(prefix, extension, deepest) + 1
+    stem = EMOJI * (units // 2) + "a" * (units % 2)
+    folder = _folder(tmp_path)
+
+    path = make(os.path.join(folder, stem + ".mp4"))
+
+    name = os.path.basename(path)
+    assert re.search(r" ~[0-9a-f]{6}" + re.escape(extension) + "$", name)
+    assert _deepest_length(path, deepest) <= PATH_LIMIT
+    assert name.startswith(prefix + EMOJI)
+    assert "�" not in name
+
+
+def test_emoji_temp_name_with_one_unit_left_drops_the_emoji_instead_of_going_over(tmp_path):
+    """줄인 앞부분에 1단위만 남았는데 첫 글자가 이모지(2단위)면 앞부분을 비워 259단위 안에 맞춰야 한다.
+
+    폴더 211자 — 세그먼트 임시 폴더 이름의 앞부분에 1단위만 남는 깊이, 이모지 20개의 산출물 이름
+    -> 이름 == "CVDv2_temp_~<16진수 6자리>", 가장 깊은 경로 <= 259단위
+    """
+    base = str(tmp_path)
+    folder = os.path.join(base, "d" * (211 - len(base) - 1))
+    deepest = os.path.join("section_19", "head_source.mp4")
+
+    path = temp_dir_for(os.path.join(folder, EMOJI * 20 + ".mp4"))
+
+    assert re.fullmatch(r"CVDv2_temp_~[0-9a-f]{6}", os.path.basename(path))
+    assert _deepest_length(path, deepest) <= PATH_LIMIT
+
+
+@pytest.mark.parametrize("kind", TEMP_PATHS)
+def test_temp_path_in_a_folder_with_an_undecodable_byte_is_measured(tmp_path, kind):
+    """디코드하지 못한 바이트(짝 없는 서로게이트)가 든 폴더에서도 임시 경로를 만들어야 한다.
+
+    폴더 이름에 "\\udc80"(POSIX가 디코드하지 못한 바이트를 담는 글자), 짧은 산출물 이름
+    -> 예외 없이 폴더/접두사 + 산출물 이름 + 확장자
+    """
+    make, prefix, extension, _deepest = TEMP_PATHS[kind]
+    folder = os.path.join(str(tmp_path), "x\udc80y")
+
+    path = make(os.path.join(folder, "방송 1080p_1.mp4"))
+
+    assert path == os.path.join(folder, prefix + "방송 1080p_1" + extension)
+
+
+def test_output_path_in_a_folder_with_an_undecodable_byte_is_measured(tmp_path):
+    """디코드하지 못한 바이트(짝 없는 서로게이트)가 든 폴더에서도 산출물 경로를 만들어야 한다.
+
+    폴더 이름에 "\\udc80", 제목 "방송"
+    -> 예외 없이 폴더/방송 1080p.mp4
+    """
+    folder = os.path.join(str(tmp_path), "x\udc80y")
+
+    assert build_output_path(folder, "방송", 1080) == os.path.join(folder, "방송 1080p.mp4")
+
+
+# 산출물 전체 경로의 상한(UTF-16 단위) — 중복 회피 " (n)"과 임시 접두사의 여유를 뺀 값
+OUTPUT_LIMIT = 240
+
+
+def test_emoji_output_path_that_just_fits_in_utf16_units_keeps_the_title(tmp_path):
+    """이모지가 든 산출물 경로가 UTF-16 단위로 딱 240이면 제목을 자르지 않아야 한다.
+
+    폴더 180자, 제목 "a" + 이모지 24개(UTF-16 49단위), 1080p
+    -> 폴더/제목 1080p.mp4 그대로, 경로 == 240단위
+    """
+    folder = _folder(tmp_path)
+    title = "a" + EMOJI * 24
+
+    path = build_output_path(folder, title, 1080)
+
+    assert path == os.path.join(folder, f"{title} 1080p.mp4")
+    assert _deepest_length(path, "") == OUTPUT_LIMIT
+
+
+def test_emoji_output_path_over_in_utf16_units_is_shortened(tmp_path):
+    """글자 수로는 240 안이어도 UTF-16 단위로 넘는 이모지 산출물 경로는 제목을 줄여 240단위 안에 맞춰야 한다.
+
+    폴더 180자, 제목 "aa" + 이모지 24개(UTF-16 50단위 · 26글자), 1080p
+    -> "~<16진수 6자리> 1080p.mp4"로 끝남, 경로 <= 240단위, 이모지가 반쪽으로 잘리지 않음
+    """
+    folder = _folder(tmp_path)
+
+    path = build_output_path(folder, "aa" + EMOJI * 24, 1080)
+
+    name = os.path.basename(path)
+    assert re.fullmatch(r"aa(" + EMOJI + r")* ~[0-9a-f]{6} 1080p\.mp4", name)
+    assert _deepest_length(path, "") <= OUTPUT_LIMIT
+    assert "�" not in name
+
+
+def test_short_temp_names_are_unchanged(tmp_path):
+    """짧은 산출물 이름의 임시 경로는 접두사 + 산출물 이름 그대로여야 한다.
+
+    "방송 1080p_1 (1).mp4" -> CVDv2_temp_ · CVDv2_cut_ 폴더, CVDv2_body_ · CVDv2_part_ 파일이 그 이름 그대로
+    """
+    output = str(tmp_path / "방송 1080p_1 (1).mp4")
+
+    assert temp_dir_for(output) == str(tmp_path / "CVDv2_temp_방송 1080p_1 (1)")
+    assert cut_temp_dir_for(output) == str(tmp_path / "CVDv2_cut_방송 1080p_1 (1)")
+    assert section_body_path_for(output) == str(tmp_path / "CVDv2_body_방송 1080p_1 (1).mp4")
+    assert partial_source_path_for(output) == str(tmp_path / "CVDv2_part_방송 1080p_1 (1).mp4")
