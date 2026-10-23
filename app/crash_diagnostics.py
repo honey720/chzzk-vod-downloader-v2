@@ -37,8 +37,8 @@ _crash_file = None
 def install_crash_diagnostics(log_dir: str) -> None:
     """충돌 진단을 켠다 — 앞 실행의 충돌 기록을 앱 로그로 옮기고, faulthandler와 예외 훅을 건다.
 
-    앱 시작 때 앱 로그 설정(``setup_logging``) 뒤에 한 번 부른다. 다시 부르면 충돌 기록 파일을
-    새로 열어 그 파일로 옮긴다.
+    앱 시작 때 앱 로그 설정(``setup_logging``) 뒤에 한 번만 부른다 — 다시 부르면 예외 훅이 겹쳐
+    같은 예외가 두 번 남는다.
 
     Args:
         log_dir: 충돌 기록 파일을 둘 로그 폴더 (없으면 만든다)
