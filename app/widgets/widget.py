@@ -1694,13 +1694,14 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
                     success = QProcess.startDetached("nautilus", [nativePath])
 
                 if not success:
-                    raise OSError(f"'{path}'을(를) 찾을 수 없습니다.")
+                    raise OSError(self.tr("Could not find '{0}'.").format(path))
             else:
                 url = QUrl.fromLocalFile(path)
                 if not QDesktopServices.openUrl(url):  # openUrl이 False를 반환하면 실패
-                    raise OSError(f"'{path}'을(를) 열 수 없습니다.")
+                    raise OSError(self.tr("Could not open '{0}'.").format(path))
         except Exception as e:
-            QMessageBox.warning(self, "경고", str(e))
+            # 경고 창의 글은 화면 언어로 낸다 (#431)
+            QMessageBox.warning(self, self.tr("Warning"), str(e))
             return
             
 

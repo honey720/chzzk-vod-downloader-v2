@@ -132,6 +132,18 @@
         <translation>Select download folder</translation>
     </message>
     <message>
+        <source>Could not find &apos;{0}&apos;.</source>
+        <translation>Could not find &apos;{0}&apos;.</translation>
+    </message>
+    <message>
+        <source>Could not open &apos;{0}&apos;.</source>
+        <translation>Could not open &apos;{0}&apos;.</translation>
+    </message>
+    <message>
+        <source>Warning</source>
+        <translation>Warning</translation>
+    </message>
+    <message>
         <source>Download waiting</source>
         <translation>Download waiting</translation>
     </message>
