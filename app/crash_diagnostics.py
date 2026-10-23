@@ -46,13 +46,18 @@ def install_crash_diagnostics(log_dir: str) -> None:
     global _crash_file
     os.makedirs(log_dir, exist_ok=True)
     path = os.path.join(log_dir, CRASH_FILE_NAME)
-    carry_over_previous_crash(path)
-    previous = _crash_file
-    # 비우고 연다 — 정상으로 끝난 실행은 빈 파일을 남긴다
-    _crash_file = open(path, "w", encoding="ascii", errors="replace")
-    faulthandler.enable(file=_crash_file, all_threads=True)
-    if previous is not None:
-        previous.close()
+    # 앞 기록을 읽지 못했으면 비우지 않고 뒤에 잇는다 — 비우면 옮기지 못한 기록이 사라진다
+    mode = "w" if carry_over_previous_crash(path) else "a"
+    try:
+        crash_file = open(path, mode, encoding="ascii", errors="replace")
+    except OSError:
+        # 충돌 기록을 못 남겨도 앱은 켠다 — 예외 훅은 그대로 건다
+        logger.warning("Could not open the crash record — crash stacks are not kept", exc_info=True)
+    else:
+        faulthandler.enable(file=crash_file, all_threads=True)
+        previous, _crash_file = _crash_file, crash_file
+        if previous is not None:
+            previous.close()
     install_exception_hooks()
 
 
@@ -61,23 +66,29 @@ def carry_over_previous_crash(path: str) -> bool:
 
     faulthandler가 쓴 원본에는 소스 · 앱이 놓인 경로가 그대로 들어 있다 — 사용자 이름이 든 홈
     폴더가 찍힐 수 있다. 앱 로그의 다른 줄과 같이 그 핸들러의 포매터가 홈 폴더를 ``~``로, 주소의
-    토큰 값을 가린다(``RedactingFormatter`` — 가리는 곳은 그 한 곳이다, #328). 파일은 지우지
-    않는다 — 이어서 ``install_crash_diagnostics``가 비우고 연다.
+    토큰 값을 가린다(``RedactingFormatter`` — 가리는 곳은 그 한 곳이다, #328). 기록이
+    ``_CARRIED_CHARS``보다 길면 그 자리에서 잘린 끝 줄은 옮기지 않는다 — 가운데서 잘린 경로는
+    포매터가 홈 폴더로 알아보지 못한다. 파일은 지우지 않는다 — 이어서 ``install_crash_diagnostics``가
+    비우고 연다.
 
     Returns:
-        옮긴 것이 있으면 True
+        앞 기록을 비워도 되면 True(없었다 · 비었다 · 옮겼다). 읽지 못했으면 False
     """
     try:
         with open(path, encoding="ascii", errors="replace") as f:
-            dump = f.read(_CARRIED_CHARS)
+            dump = f.read(_CARRIED_CHARS + 1)
     except FileNotFoundError:
-        return False
+        return True
     except OSError:
         logger.warning("Could not read the previous crash record", exc_info=True)
         return False
-    if not dump.strip():
-        return False
-    logger.error("Previous run ended abnormally — crash record:\n%s", dump.rstrip())
+    if len(dump) > _CARRIED_CHARS:
+        dump = (
+            dump[: dump.rfind("\n", 0, _CARRIED_CHARS) + 1]
+            + f"... (cut at {_CARRIED_CHARS} characters)"
+        )
+    if dump.strip():
+        logger.error("Previous run ended abnormally — crash record:\n%s", dump.rstrip())
     return True
 
 

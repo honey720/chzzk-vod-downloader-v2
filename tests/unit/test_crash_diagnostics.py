@@ -176,18 +176,73 @@ def test_app_start_logs_an_unhandled_exception_to_the_app_log_with_the_home_fold
 def test_empty_crash_record_leaves_nothing_in_the_app_log(tmp_path, caplog):
     """앞 실행이 정상으로 끝나 충돌 기록이 비어 있으면 앱 로그에 아무것도 남기지 않아야 한다.
 
-    빈 crash.log -> carry_over_previous_crash가 False, 이 모듈의 로그 레코드 0개
+    빈 crash.log -> carry_over_previous_crash가 True(비워도 된다), 이 모듈의 로그 레코드 0개
     """
     path = tmp_path / CRASH_FILE_NAME
     path.write_text("", encoding="ascii")
     marker = logging.getLogger("app.crash_diagnostics")
     with caplog.at_level(logging.DEBUG, logger="app.crash_diagnostics"):
         marker.debug("캡처 확인")  # 음성 단언 전에 캡처가 살아 있음을 본다
-        moved = carry_over_previous_crash(str(path))
+        may_clear = carry_over_previous_crash(str(path))
 
     assert caplog.records[0].getMessage() == "캡처 확인"
-    assert moved is False
+    assert may_clear is True
     assert [r for r in caplog.records if r.name == "app.crash_diagnostics"][1:] == []
+
+
+def test_crash_record_longer_than_the_limit_drops_the_line_cut_at_the_limit(tmp_path, caplog):
+    """옮길 상한(64KiB)보다 긴 충돌 기록은 상한에서 잘린 끝 줄을 옮기지 않고 잘렸다고 적어야 한다.
+
+    crash.log = "a" 줄들로 상한 10자 앞까지 채우고, 그 뒤에 홈 폴더 경로가 든 줄이 상한을 넘어 이어짐
+    -> 옮긴 레코드에 그 줄의 어느 부분도 없다("File " 없음), 끝에 "(cut at 65536 characters)"
+    """
+    limit = 64 * 1024  # app.crash_diagnostics._CARRIED_CHARS — 테스트가 따로 적는다
+    filler = ("a" * 99 + "\n") * ((limit - 10) // 100)
+    filler += "b" * (limit - 10 - len(filler) - 1) + "\n"
+    cut_line = '  File "' + os.path.join(HOME, "project", "module.py") + '", line 1 in f\n'
+    path = tmp_path / CRASH_FILE_NAME
+    path.write_text(filler + cut_line, encoding="ascii", errors="replace")
+    assert len(filler) < limit < len(filler) + len(cut_line)  # 전제: 상한이 그 줄 가운데 있다
+
+    with caplog.at_level(logging.ERROR, logger="app.crash_diagnostics"):
+        carry_over_previous_crash(str(path))
+
+    (record,) = [r for r in caplog.records if r.name == "app.crash_diagnostics"]
+    message = record.getMessage()
+    assert "File " not in message
+    assert message.endswith(f"(cut at {limit} characters)")
+
+
+def test_unreadable_crash_record_is_kept_instead_of_cleared(tmp_path, monkeypatch):
+    """앞 충돌 기록을 읽지 못하면 그 기록을 비우지 않고 이번 실행의 기록을 그 뒤에 이어야 한다.
+
+    crash.log = "old record", 그 파일을 읽으려 하면 PermissionError(쓰기는 된다). faulthandler 연결은
+    대역으로 바꾼다(pytest의 것을 덮지 않게)
+    -> crash.log가 "old record"로 시작한다, 연결한 파일의 모드가 "a"
+    """
+    import app.crash_diagnostics as module
+
+    path = tmp_path / CRASH_FILE_NAME
+    path.write_text("old record", encoding="ascii")
+    real_open = open
+
+    def refusing_read(file, mode="r", *args, **kwargs):
+        if mode == "r" and os.fspath(file) == str(path):
+            raise PermissionError("시험 — 읽을 수 없다")
+        return real_open(file, mode, *args, **kwargs)
+
+    connected = []
+    monkeypatch.setattr(module, "open", refusing_read, raising=False)
+    monkeypatch.setattr(module.faulthandler, "enable", lambda file, **_: connected.append(file))
+    monkeypatch.setattr(module, "_crash_file", None)
+    monkeypatch.setattr(sys, "excepthook", sys.excepthook)
+    monkeypatch.setattr(threading, "excepthook", threading.excepthook)
+
+    module.install_crash_diagnostics(str(tmp_path))
+    connected[0].close()
+
+    assert connected[0].mode == "a"
+    assert _read(path).startswith("old record")
 
 
 @pytest.fixture
