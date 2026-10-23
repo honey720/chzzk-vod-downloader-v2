@@ -61,7 +61,8 @@ _MAX_COMPONENT_BYTES = 255
 # 경로 하나에 쓸 수 있는 글자 수 — Windows 기본 MAX_PATH(260)에서 끝의 NUL을 뺀 값. 긴 경로
 # 설정을 켜지 않은 PC에서는 이보다 긴 경로의 파일을 만들지 못하고, 설정과 무관하게 이보다 긴
 # 폴더를 작업 폴더로 ffmpeg를 띄우지 못한다(WinError 267). 임시 폴더 · 임시 파일의 이름은 그
-# 안에 만들 가장 깊은 파일까지 이 안에 들게 줄인다 (#323)
+# 안에 만들 가장 깊은 파일까지 이 안에 들게 줄인다 (#323). 글자는 Windows가 세는 UTF-16 단위로
+# 센다 — 이모지 같은 보조 평면 문자는 둘이다. 다른 OS도 같은 식으로 센다(그쪽 한도는 훨씬 길다)
 _MAX_PATH_CHARS = 259
 
 # 세그먼트 임시 폴더(temp_dir_for) 안에서 가장 긴 상대 경로 — 구간 컷의 작업 폴더
@@ -202,7 +203,7 @@ def _fitted_path(
     """directory 안의 ``prefix + stem + extension`` 경로 — 상한을 넘으면 stem을 줄이고 해시를 붙인다.
 
     두 상한을 지킨다: 이 경로 아래 가장 깊이 만들 것(``deepest``, 없으면 이 경로 자체)의 전체
-    경로가 ``_MAX_PATH_CHARS``자 안에 들고 (#323), 이 이름 하나가 ``_MAX_COMPONENT_BYTES``바이트
+    경로가 ``_MAX_PATH_CHARS``자(UTF-16 단위) 안에 들고 (#323), 이 이름 하나가 ``_MAX_COMPONENT_BYTES``바이트
     안에 든다 (#309). 넘지 않으면 지금까지의 이름 그대로다.
 
     줄인 이름은 ``prefix + <stem의 앞부분> ~<stem의 해시 6자리> + extension``이다 — 같은 stem이면
@@ -215,17 +216,34 @@ def _fitted_path(
     measured = os.path.abspath(path)
     if deepest:
         measured = os.path.join(measured, deepest)
-    over_chars = len(measured) - _MAX_PATH_CHARS
+    over_chars = _utf16_units(measured) - _MAX_PATH_CHARS
     over_bytes = len(name.encode("utf-8")) - _MAX_COMPONENT_BYTES
     if over_chars <= 0 and over_bytes <= 0:
         return path
     marker = f" ~{hashlib.sha1(stem.encode('utf-8')).hexdigest()[:6]}"
     # 글자 수가 넘을 때만 글자로 자른다 — 바이트만 넘는 이름은 예전(#309)과 같은 이름이 나온다
-    keep = max(1, len(stem) - over_chars - len(marker)) if over_chars > 0 else len(stem)
+    kept = stem
+    if over_chars > 0:
+        kept = _head_within_units(stem, _utf16_units(stem) - over_chars - len(marker))
     byte_budget = _MAX_COMPONENT_BYTES - len((prefix + marker + extension).encode("utf-8"))
     # 바이트열을 자른 뒤 깨진 꼬리 시퀀스를 버려 문자 경계를 지킨다
-    kept = stem[:keep].encode("utf-8")[:byte_budget].decode("utf-8", "ignore")
+    kept = kept.encode("utf-8")[:byte_budget].decode("utf-8", "ignore")
     return os.path.join(directory, prefix + kept.rstrip() + marker + extension)
+
+
+def _utf16_units(text: str) -> int:
+    """Windows가 경로 길이로 세는 UTF-16 단위의 수 — 보조 평면 문자(이모지 등)는 둘이다."""
+    return len(text.encode("utf-16-le")) // 2
+
+
+def _head_within_units(text: str, units: int) -> str:
+    """text의 앞부분 가운데 UTF-16 단위가 units를 넘지 않는 가장 긴 것 — 한 글자는 남긴다."""
+    total = 0
+    for end, character in enumerate(text):
+        total += 2 if ord(character) > 0xFFFF else 1
+        if total > units:
+            return text[: max(end, 1)]
+    return text
 
 
 def _path_key(path: str) -> str:

@@ -525,8 +525,9 @@ def _folder(tmp_path) -> str:
 
 
 def _deepest_length(path: str, deepest: str) -> int:
-    """그 경로 아래 가장 깊이 만드는 것의 전체 경로 글자 수."""
-    return len(os.path.join(path, deepest)) if deepest else len(path)
+    """그 경로 아래 가장 깊이 만드는 것의 전체 경로 글자 수 — Windows처럼 UTF-16 단위로 센다."""
+    full = os.path.join(path, deepest) if deepest else path
+    return len(full.encode("utf-16-le")) // 2
 
 
 def _fitting_stem_length(prefix: str, extension: str, deepest: str) -> int:
@@ -628,6 +629,48 @@ def test_shortened_temp_name_does_not_end_in_a_space_or_dot_where_it_is_cut(tmp_
     assert "  ~" not in name
     assert not name.endswith((" ", "."))
     assert _deepest_length(path, deepest) <= PATH_LIMIT
+
+
+EMOJI = "\U0001f600"  # 보조 평면 문자 — UTF-16 단위로 둘이다
+
+
+@pytest.mark.parametrize("kind", TEMP_PATHS)
+def test_emoji_temp_path_that_just_fits_in_utf16_units_keeps_the_output_name(tmp_path, kind):
+    """이모지가 든 임시 경로가 UTF-16 단위로 딱 259면 임시 이름은 접두사 + 산출물 이름 그대로여야 한다.
+
+    폴더 180자, 이모지(2단위)로 채워 가장 깊은 경로가 UTF-16 259단위가 되는 산출물 이름
+    -> 폴더/접두사 + 산출물 이름 + 확장자, 가장 깊은 경로 == 259단위
+    """
+    make, prefix, extension, deepest = TEMP_PATHS[kind]
+    units = _fitting_stem_length(prefix, extension, deepest)
+    stem = EMOJI * (units // 2) + "a" * (units % 2)
+    folder = _folder(tmp_path)
+
+    path = make(os.path.join(folder, stem + ".mp4"))
+
+    assert path == os.path.join(folder, prefix + stem + extension)
+    assert _deepest_length(path, deepest) == PATH_LIMIT
+
+
+@pytest.mark.parametrize("kind", TEMP_PATHS)
+def test_emoji_temp_path_over_in_utf16_units_is_shortened(tmp_path, kind):
+    """글자 수로는 259 안이어도 UTF-16 단위로 넘는 이모지 임시 경로는 줄여서 259단위 안에 맞춰야 한다.
+
+    폴더 180자, 딱 맞는 길이보다 1단위 긴 이모지 산출물 이름(글자 수로는 딱 맞는 길이의 절반 남짓)
+    -> " ~<16진수 6자리>" + 확장자로 끝남, 가장 깊은 경로 <= 259단위, 이모지가 반쪽으로 잘리지 않음
+    """
+    make, prefix, extension, deepest = TEMP_PATHS[kind]
+    units = _fitting_stem_length(prefix, extension, deepest) + 1
+    stem = EMOJI * (units // 2) + "a" * (units % 2)
+    folder = _folder(tmp_path)
+
+    path = make(os.path.join(folder, stem + ".mp4"))
+
+    name = os.path.basename(path)
+    assert re.search(r" ~[0-9a-f]{6}" + re.escape(extension) + "$", name)
+    assert _deepest_length(path, deepest) <= PATH_LIMIT
+    assert name.startswith(prefix + EMOJI)
+    assert "�" not in name
 
 
 def test_short_temp_names_are_unchanged(tmp_path):
