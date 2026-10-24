@@ -5,13 +5,30 @@ on:
     branches: [main, 'dev-*']
 
 jobs:
-  # .github/ 을 소유자 외의 주체(에이전트 포함)가 수정하면 실패
+  # .github/ 을 소유자 외의 주체(에이전트 포함)가 수정하면 실패.
+  # 테스트 실행 여부도 여기서 정한다 — chore/ 브랜치는 워크플로를 바꿨을 때만 테스트한다
   protected-paths:
     runs-on: ubuntu-latest
+    outputs:
+      run-tests: ${{ steps.scope.outputs.run-tests }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Decide test scope
+        id: scope
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+          if [[ "$HEAD_REF" != chore/* || "$HEAD_REF" == chore/version-* || "$HEAD_REPO" != "$GITHUB_REPOSITORY" ]] \
+             || echo "$CHANGED" | grep -qE '^\.github/workflows/'; then
+            echo "run-tests=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run-tests=false" >> "$GITHUB_OUTPUT"
+          fi
+          tail -1 "$GITHUB_OUTPUT"
       - name: Check protected paths
         if: github.actor != github.repository_owner
         run: |
@@ -23,6 +40,8 @@ jobs:
           fi
 
   test:
+    needs: protected-paths
+    if: needs.protected-paths.outputs.run-tests == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -88,15 +107,26 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
   # 룰셋(protect main branch)의 필수 체크 'lint-test'로 보고하는 집계 관문.
-  # 매트릭스 OS가 하나라도 실패·취소되면 실패한다
+  # 매트릭스 OS가 하나라도 실패·취소되면 실패한다. 테스트를 건너뛴 PR(chore/)은
+  # skipped도 통과로 보되, 테스트 범위를 정한 protected-paths가 성공했을 때만이다
   lint-test:
-    needs: test
+    needs: [protected-paths, test]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: All OS jobs passed
+        env:
+          TEST_RESULT: ${{ needs.test.result }}
+          SCOPE_RESULT: ${{ needs.protected-paths.result }}
         run: |
-          if [ "${{ needs.test.result }}" != "success" ]; then
-            echo "::error::매트릭스 결과: ${{ needs.test.result }}"
-            exit 1
-          fi
+          case "$TEST_RESULT" in
+            success) ;;
+            skipped)
+              if [ "$SCOPE_RESULT" != "success" ]; then
+                echo "::error::테스트 범위 판정 결과: $SCOPE_RESULT"
+                exit 1
+              fi ;;
+            *)
+              echo "::error::매트릭스 결과: $TEST_RESULT"
+              exit 1 ;;
+          esac
