@@ -25,6 +25,7 @@ uv run ruff check .            # 린트
 uv run ruff format .           # 포맷
 uv run pytest                  # 전체 테스트 — Qt는 화면 없이(offscreen). 실제 화면: CVDV2_TEST_NATIVE=1
 uv run pytest tests/unit       # 단위 테스트만
+uv run pytest -n 8 --dist loadfile   # 전체 테스트 병렬 — 로컬 전체 실행은 이것으로
 ```
 
 - 명령을 추측하지 않는다. 실패하면 임의로 우회하지 말고 실패 로그를 이슈·PR에 보고한다.

@@ -61,7 +61,8 @@ def test_split_ranges_last_part_is_truncated():
 - **타이머로 미룬 동작은 고정 대기가 아니라 `qtbot.waitUntil()` 조건 대기로 검증한다.**
 - **경쟁 조건은 GIL 때문에 드러나지 않을 수 있다.** read-write 사이에 `time.sleep()`을 넣어 경쟁 구간을 넓히면 재현 확률이 오른다. 실행 순서를 확정해야 하는 테스트는 `threading.Event`·`Barrier`로 순서를 제어한다. **우연히 안 깨진 것을 안 깨진다고 읽지 않는다.**
 - ⚠️ **offscreen에서 통과한 마우스·타이밍 테스트는 실기를 검증하지 않는다.** offscreen은 커서 이동을 합성 이벤트로 바꿔 주고 애니메이션이 없다. **실기 QPA로도 돌려 본다**(`CVDV2_TEST_NATIVE=1 uv run pytest …` — 로컬 기본값은 offscreen이다).
-- **UI를 바꾼 PR은 푸시 전에 `CVDV2_TEST_NATIVE=1`로 전체를 한 번 더 돌린다.** 실제 화면에 창이 뜨므로 오너가 PC를 쓰지 않을 때 한다.
+- **실제 화면 실행(`CVDV2_TEST_NATIVE=1`)은 밤 묶음에서 돌린다.** 실제 화면에 창이 뜨므로 오너가 PC를 쓰지 않을 때다.
+  **UI를 바꾼 PR의 푸시 전 확인은 오너 실기로 한다**(`workflow.md` — UI 작업은 확인받고 푸시한다).
 
 ## 로그를 재는 테스트
 
