@@ -170,6 +170,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self._pillRows: list[QHBoxLayout] = []  # 펼쳐서 넘친 pill을 받는 추가 행(0개가 기본)
         self._pillRowOf: dict[int, int] = {}    # id(pill) → 지금 놓인 행 번호(0 = 3행)
         self._rowStrut: QWidget | None = None       # 펼친 동안 3행 세로 정책을 지키는 0폭 버팀목
+        self._thumbnailSource: QPixmap | None = None  # 받은 썸네일 원본 — 칸 크기가 바뀌면 다시 그린다 (#288)
         self.buttons: list[ResolutionPill] = []
         self.setupUi(self)
         self._sizeThumbnail()  # 컨텐츠 열 높이가 정해진 뒤, 이미지 로드 전에
@@ -197,6 +198,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         쓰므로, 낮은 라벨에 맞추면 편집으로 들어갈 때 행이 자라 카드가 길어지고 3행이
         밀린다. 숨은 입력칸의 힌트는 레이아웃 캐시에 남았다 지워졌다 하므로 그것에 기대지
         않고 라벨의 최소 높이로 박는다.
+
+        칸 크기가 바뀌었고 받아 둔 그림이 있으면 새 크기로 다시 그린다 — 그림은 도착한
+        때의 칸 크기로 그려지므로, 표시 전에 도착하면 표시 뒤(showEvent)의 크기와 어긋난다.
         """
         if self._expanded:
             # 펼쳐서 늘어난 높이는 잠깐이다 — 썸네일은 접힌 높이를 유지한다
@@ -206,7 +210,11 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             label.ensurePolished()
         self.titleLabel.setMinimumHeight(self.titleEdit.sizeHint().height())
         height = self.contentLayout.sizeHint().height()
+        previous = self.thumbnailLabel.size()
         self.thumbnailLabel.setFixedSize(round(height * 16 / 9), height)
+        if self._thumbnailSource is not None and self.thumbnailLabel.size() != previous:
+            box = self.thumbnailLabel.size()
+            self.thumbnailLabel.setPixmap(self._composeThumbnail(self._thumbnailSource, box))
 
     def _placeProgressBar(self) -> None:
         """하단 진행바를 카드 바닥에 오버레이로 배치한다 (#245).
@@ -811,6 +819,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
                 # 도착 시점의 라벨 실제 크기(16:9 상자)에 맞춰 합성한다 —
                 # 라벨 크기는 pill 추가 등으로 요청 이후에도 재계산되므로
                 # (_sizeThumbnail) 요청 시점 값(maxHeight)을 쓰지 않는다.
+                # 원본은 남겨 둔다 — 도착 뒤에 칸 크기가 바뀌면 _sizeThumbnail이 다시 그린다 (#288)
+                self._thumbnailSource = image
                 label.setPixmap(self._composeThumbnail(image, label.size()))
                 return
             if type == "channel" and original_height > original_width:

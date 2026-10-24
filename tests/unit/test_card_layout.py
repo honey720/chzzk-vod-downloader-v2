@@ -24,7 +24,8 @@
 """
 
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QBuffer, QByteArray, QIODevice, Qt
+from PySide6.QtGui import QColor, QImage
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
@@ -162,6 +163,33 @@ class TestTwoLeftBaselines:
         )
         assert thumb.width() == round(thumb.height() * 16 / 9), (
             f"썸네일이 16:9가 아니다: {thumb.width()}x{thumb.height()}"
+        )
+
+    def test_a_picture_that_arrived_before_the_first_show_is_redrawn_to_the_shown_box(self, qapp):
+        """썸네일 그림이 카드 표시 전에 도착하면 표시 뒤 그려진 그림 크기가 썸네일 칸과 같아야 한다 (#288).
+
+        160x90 PNG를 표시 전 카드의 이미지 도착 신호(_imageFetched)로 넣는다 → 창 폭 900으로 표시
+        -> thumbnailLabel.pixmap().size() == thumbnailLabel.size()
+        """
+        widget = _make_widget(qapp)
+        assert not widget.isVisible(), "전제: 표시 전"
+        picture = QImage(160, 90, QImage.Format.Format_RGB32)
+        picture.fill(QColor(200, 40, 40))
+        data = QByteArray()
+        buffer = QBuffer(data)
+        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+        picture.save(buffer, "PNG")
+        widget._imageFetched.emit(widget.thumbnailLabel, bytes(data), "thumb", 0, "thumbnail")
+        box_on_arrival = widget.thumbnailLabel.size()
+
+        _at_width(widget, 900)
+
+        thumb = widget.thumbnailLabel
+        assert thumb.size() != box_on_arrival, (
+            f"전제: 표시 뒤 썸네일 칸 크기가 바뀐다 — 도착 때 {box_on_arrival.toTuple()}, 지금 {thumb.size().toTuple()}"
+        )
+        assert thumb.pixmap().size() == thumb.size(), (
+            f"그림 {thumb.pixmap().size().toTuple()} ≠ 썸네일 칸 {thumb.size().toTuple()}"
         )
 
 
