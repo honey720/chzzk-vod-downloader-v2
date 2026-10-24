@@ -24,6 +24,8 @@
 """
 
 import pytest
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 import main as main_module
@@ -883,6 +885,39 @@ class TestStateSwapKeepsCardHeight:
         _at_width(widget, 900)
         assert abs(widget.statusLabel.y() - pill_y) <= 4, (
             f"슬롯 교체로 3행 세로 위치가 흔들린다: pill y={pill_y}, 텍스트 y={widget.statusLabel.y()}"
+        )
+
+
+class TestTitleEditKeepsCardHeight:
+    """제목 편집 전 · 중 · 후의 카드 높이와 3행 위치 (#288)."""
+
+    @staticmethod
+    def _height_and_row3_y(widget) -> tuple[int, int]:
+        QApplication.processEvents()
+        return widget.sizeHint().height(), widget.buttons[0].y()
+
+    @pytest.mark.parametrize("width", WIDTHS)
+    def test_card_height_and_row3_y_stay_while_editing_the_title(self, qapp, width):
+        """대기 카드의 제목을 눌러 편집하고 Enter로 끝내면 카드 높이와 3행 세로 위치가 그대로여야 한다.
+
+        대기 카드, 창 폭 560 · 900 · 1600, 제목 라벨 클릭 → Enter
+        -> (sizeHint 높이, 첫 pill y)가 편집 전 == 편집 중 == 편집 후
+        """
+        widget = _make_widget(qapp)
+        _at_width(widget, width)
+        assert widget.titleLabel.isVisible(), "전제: 제목 라벨이 보인다"
+        before = self._height_and_row3_y(widget)
+
+        QTest.mouseClick(widget.titleLabel, Qt.MouseButton.LeftButton)
+        assert widget.titleEdit.isVisible() and widget.isEditing, "전제: 편집 중"
+        editing = self._height_and_row3_y(widget)
+
+        QTest.keyClick(widget.titleEdit, Qt.Key.Key_Return)
+        assert widget.titleLabel.isVisible() and not widget.isEditing, "전제: 편집이 끝났다"
+        after = self._height_and_row3_y(widget)
+
+        assert before == editing == after, (
+            f"(카드 높이, 3행 y) 편집 전 {before} · 편집 중 {editing} · 편집 후 {after}"
         )
 
 

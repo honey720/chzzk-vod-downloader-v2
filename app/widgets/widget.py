@@ -192,13 +192,19 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         `ensurePolished()`가 먼저다 — 전역 QSS의 위계 폰트(@fontSizeTitle
         등)는 polish 시점에 위젯 폰트로 병합되는데, 그 전에 sizeHint를
         읽으면 기본 폰트 기준의 틀린 높이가 나온다(실측 확인).
+
+        2행은 제목 입력칸의 높이로 잡는다(#288) — 라벨과 입력칸은 같은 자리를 번갈아
+        쓰므로, 낮은 라벨에 맞추면 편집으로 들어갈 때 행이 자라 카드가 길어지고 3행이
+        밀린다. 숨은 입력칸의 힌트는 레이아웃 캐시에 남았다 지워졌다 하므로 그것에 기대지
+        않고 라벨의 최소 높이로 박는다.
         """
         if self._expanded:
             # 펼쳐서 늘어난 높이는 잠깐이다 — 썸네일은 접힌 높이를 유지한다
             return
         for label in (self.channelNameLabel, self.titleLabel, self.statusLabel,
-                      self.fileSizeLabel, self.directoryLabel):
+                      self.fileSizeLabel, self.directoryLabel, self.titleEdit):
             label.ensurePolished()
+        self.titleLabel.setMinimumHeight(self.titleEdit.sizeHint().height())
         height = self.contentLayout.sizeHint().height()
         self.thumbnailLabel.setFixedSize(round(height * 16 / 9), height)
 
@@ -242,6 +248,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         offscreen 둘 다 재현). showEvent 시점엔 자식 레이아웃이 잡혀 있다.
         """
         super().showEvent(event)
+        # 생성 중에 잰 행 높이 힌트는 표시 전이라 작을 수 있다(1행 16 → 20px 실측) — 표시 뒤의
+        # 힌트로 썸네일을 다시 맞춘다. 숨은 제목 입력칸의 힌트가 이 차이를 가려 왔다 (#288)
+        self._sizeThumbnail()
         self._layoutRowThree()
 
     def _clampChannelMinWidth(self) -> None:
