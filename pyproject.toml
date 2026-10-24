@@ -34,3 +34,7 @@ target-version = "py313"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# 테스트 하나(셋업 · 정리 포함)가 이 초를 넘기면 모든 스레드의 스택을 출력에 남긴다 — CI가 출력 없이
+# 멈췄을 때 어느 테스트인지 알기 위함. 가장 긴 테스트의 세 배가 넘는 값이다.
+# faulthandler_exit_on_timeout은 켜지 않는다 — xdist가 같은 테스트를 새 워커에서 되풀이한다
+faulthandler_timeout = 120
