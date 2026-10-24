@@ -94,6 +94,17 @@ def _at_width(widget, width):
     QApplication.processEvents()
 
 
+def _send_thumbnail(widget) -> None:
+    # 실제 도착 경로(워커 → _imageFetched 시그널)로 160x90 PNG를 넣는다
+    picture = QImage(160, 90, QImage.Format.Format_RGB32)
+    picture.fill(QColor(200, 40, 40))
+    data = QByteArray()
+    buffer = QBuffer(data)
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    picture.save(buffer, "PNG")
+    widget._imageFetched.emit(widget.thumbnailLabel, bytes(data), "thumb", 0, "thumbnail")
+
+
 def _right(w) -> int:
     return w.x() + w.width()
 
@@ -173,13 +184,7 @@ class TestTwoLeftBaselines:
         """
         widget = _make_widget(qapp)
         assert not widget.isVisible(), "전제: 표시 전"
-        picture = QImage(160, 90, QImage.Format.Format_RGB32)
-        picture.fill(QColor(200, 40, 40))
-        data = QByteArray()
-        buffer = QBuffer(data)
-        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
-        picture.save(buffer, "PNG")
-        widget._imageFetched.emit(widget.thumbnailLabel, bytes(data), "thumb", 0, "thumbnail")
+        _send_thumbnail(widget)
         box_on_arrival = widget.thumbnailLabel.size()
 
         _at_width(widget, 900)
@@ -191,6 +196,38 @@ class TestTwoLeftBaselines:
         assert thumb.pixmap().size() == thumb.size(), (
             f"그림 {thumb.pixmap().size().toTuple()} ≠ 썸네일 칸 {thumb.size().toTuple()}"
         )
+
+    def test_a_picture_that_arrived_before_the_first_show_is_let_go_at_the_first_show(self, qapp):
+        """썸네일 그림이 카드 표시 전에 도착하면 첫 표시 뒤 카드가 원본 그림을 들고 있지 않아야 한다 (#288).
+
+        160x90 PNG를 표시 전 카드의 이미지 도착 신호(_imageFetched)로 넣는다 → 창 폭 900으로 표시
+        -> _thumbnailSource is None
+        """
+        widget = _make_widget(qapp)
+        assert not widget.isVisible(), "전제: 표시 전"
+        _send_thumbnail(widget)
+        assert widget._thumbnailSource is not None, "전제: 표시 전에는 원본을 들고 있다"
+
+        _at_width(widget, 900)
+
+        assert widget.isVisible(), "전제: 표시됨"
+        assert widget._thumbnailSource is None, "첫 표시 뒤에도 원본 그림을 들고 있다"
+
+    def test_a_picture_that_arrives_after_the_first_show_is_not_held(self, qapp):
+        """썸네일 그림이 카드 표시 뒤에 도착하면 카드가 원본 그림을 들고 있지 않아야 한다 (#288).
+
+        창 폭 900으로 표시 → 160x90 PNG를 이미지 도착 신호(_imageFetched)로 넣는다
+        -> _thumbnailSource is None
+        """
+        widget = _make_widget(qapp)
+        _at_width(widget, 900)
+        assert widget.isVisible(), "전제: 표시됨"
+
+        _send_thumbnail(widget)
+
+        thumb = widget.thumbnailLabel
+        assert thumb.pixmap().size() == thumb.size(), "전제: 그림이 지금 칸 크기로 그려졌다"
+        assert widget._thumbnailSource is None, "표시 뒤에 온 원본 그림을 들고 있다"
 
 
 class TestOneRightEdge:

@@ -170,7 +170,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self._pillRows: list[QHBoxLayout] = []  # 펼쳐서 넘친 pill을 받는 추가 행(0개가 기본)
         self._pillRowOf: dict[int, int] = {}    # id(pill) → 지금 놓인 행 번호(0 = 3행)
         self._rowStrut: QWidget | None = None       # 펼친 동안 3행 세로 정책을 지키는 0폭 버팀목
-        self._thumbnailSource: QPixmap | None = None  # 받은 썸네일 원본 — 칸 크기가 바뀌면 다시 그린다 (#288)
+        self._thumbnailSource: QPixmap | None = None  # 표시 전에 받은 썸네일 원본 — 첫 표시에서 다시 그리고 놓는다 (#288)
         self.buttons: list[ResolutionPill] = []
         self.setupUi(self)
         self._sizeThumbnail()  # 컨텐츠 열 높이가 정해진 뒤, 이미지 로드 전에
@@ -259,6 +259,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         # 생성 중에 잰 행 높이 힌트는 표시 전이라 작을 수 있다(1행 16 → 20px 실측) — 표시 뒤의
         # 힌트로 썸네일을 다시 맞춘다. 숨은 제목 입력칸의 힌트가 이 차이를 가려 왔다 (#288)
         self._sizeThumbnail()
+        self._thumbnailSource = None  # 다시 그렸으니 원본을 놓는다 — 카드마다 원본을 들고 있지 않는다
         self._layoutRowThree()
 
     def _clampChannelMinWidth(self) -> None:
@@ -819,8 +820,10 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
                 # 도착 시점의 라벨 실제 크기(16:9 상자)에 맞춰 합성한다 —
                 # 라벨 크기는 pill 추가 등으로 요청 이후에도 재계산되므로
                 # (_sizeThumbnail) 요청 시점 값(maxHeight)을 쓰지 않는다.
-                # 원본은 남겨 둔다 — 도착 뒤에 칸 크기가 바뀌면 _sizeThumbnail이 다시 그린다 (#288)
-                self._thumbnailSource = image
+                # 표시 전에 왔으면 원본을 남겨 둔다 — 첫 표시(showEvent)에서 칸 크기가 바뀌면
+                # _sizeThumbnail이 다시 그리고 놓는다. 표시 뒤에 온 그림은 지금 칸에 맞다 (#288)
+                if not self.isVisible():
+                    self._thumbnailSource = image
                 label.setPixmap(self._composeThumbnail(image, label.size()))
                 return
             if type == "channel" and original_height > original_width:
