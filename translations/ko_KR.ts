@@ -132,6 +132,18 @@
         <translation>저장 폴더 선택</translation>
     </message>
     <message>
+        <source>Could not find &apos;{0}&apos;.</source>
+        <translation>&apos;{0}&apos;을(를) 찾을 수 없습니다.</translation>
+    </message>
+    <message>
+        <source>Could not open &apos;{0}&apos;.</source>
+        <translation>&apos;{0}&apos;을(를) 열 수 없습니다.</translation>
+    </message>
+    <message>
+        <source>Warning</source>
+        <translation>경고</translation>
+    </message>
+    <message>
         <source>Download waiting</source>
         <translation>다운로드 대기</translation>
     </message>
