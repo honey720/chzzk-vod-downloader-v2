@@ -67,7 +67,12 @@ jobs:
             xvfb libegl1 libgl1 libxkbcommon-x11-0 libxcb-icccm4 \
             libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 \
             libxcb-shape0 libxcb-xinerama0 libxcb-cursor0 libdbus-1-3 \
-            fonts-nanum
+            fonts-dejavu-core
+          # 한글 폰트는 스크린샷 글자용이다 — 라틴 폰트(DejaVu)만 있어도 테스트 결과는 같다.
+          # 느린 미러에서 멈추면 건너뛴다
+          sudo timeout 120 apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
+            fonts-nanum || echo "::warning::fonts-nanum 설치를 건너뛰었다(느린 미러)"
+          fc-list : family | sort -u
 
       - name: Sync dependencies
         timeout-minutes: 5
