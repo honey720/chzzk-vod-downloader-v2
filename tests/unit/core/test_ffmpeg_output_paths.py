@@ -29,6 +29,7 @@ import os
 import subprocess
 import sys
 import unicodedata
+from pathlib import PurePath, PurePosixPath
 
 import pytest
 
@@ -118,6 +119,39 @@ def test_ffmpeg_remux_into_trailing_space_dir(tmp_path, fmp4_input):
 # ================================================================ 긴 디렉토리 프리픽스
 
 
+def _directory_of_length(base: PurePath, target: int) -> PurePath:
+    """base 아래에 "d" 폴더를 이어 붙여 경로 길이를 target 이상으로 만든다 (#439).
+
+    한 번에 구분자 1자와 이름 최대 50자를 붙인다. 남은 길이가 1자이면 구분자와
+    이름 1자를 붙여 target보다 1자 길게 끝난다 — 이름 0자는 경로를 늘리지 않는다.
+    한 번에 2자 이상 늘므로 반복은 target번 안에 끝난다. 그 안에 닿지 않으면
+    무한 반복 대신 실패한다.
+    """
+    directory = base
+    for _ in range(target):
+        if len(str(directory)) >= target:
+            return directory
+        name_length = max(1, min(50, target - len(str(directory)) - 1))
+        directory = directory / ("d" * name_length)
+    raise AssertionError(
+        f"{target}번 붙여도 경로가 {target}자에 닿지 않았다: {len(str(directory))}자"
+    )
+
+
+def test_directory_of_length_from_a_71_char_base_ends_one_past_the_target():
+    """기준 경로가 71자이면 길이 맞추기가 끝나고 목표보다 1자 긴 경로여야 한다 (#439).
+
+    base = "/" + "b" * 70 (71자), target=225
+    -> 71 → 122 → 173 → 224(남은 1자) → 226자
+    """
+    base = PurePosixPath("/" + "b" * 70)
+    assert len(str(base)) == 71
+
+    directory = _directory_of_length(base, 225)
+
+    assert len(str(directory)) == 226
+
+
 def test_ffmpeg_remux_into_long_directory_prefix(tmp_path, fmp4_input):
     """긴 폴더 경로에서 제목 절단(~해시) 경로로 remux가 완주한다 (#146 감사 확장).
 
@@ -126,16 +160,13 @@ def test_ffmpeg_remux_into_long_directory_prefix(tmp_path, fmp4_input):
     260자를 넘기지는 않는다: 그 구간은 OS 장경로 설정(레지스트리)에
     좌우되어 러너별 결과가 달라진다(문서화된 미커버 구간).
     """
-    # 목표 길이를 정확히 맞춘다 — 러너마다 tmp_path 베이스 길이가 달라,
+    # 목표 길이를 225~226자로 맞춘다 — 러너마다 tmp_path 베이스 길이가 달라,
     # 고정 폭 세그먼트를 쌓으면 총길이가 튀어 Windows 기본 상한(260)을
     # 장경로 설정 여부에 따라 넘나들 수 있다
     # 225 = 전체 경로가 상한(_MAX_FULLPATH=240)을 확실히 넘도록 하는 값
     # (파일명 "제목 스페이스 검증 1080p.mp4" ≈ 20자 → 총 246자 → 절단 발동).
     # 절단 후 임시 폴더까지 260자 미만이라 Windows 장경로 설정과 무관하다
-    target = 225
-    directory = tmp_path
-    while len(str(directory)) < target:
-        directory = directory / ("d" * min(50, target - len(str(directory)) - 1))
+    directory = _directory_of_length(tmp_path, 225)
     directory.mkdir(parents=True)
 
     out = _run_download_tail(str(directory), fmp4_input)
