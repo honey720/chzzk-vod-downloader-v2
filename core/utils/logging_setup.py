@@ -8,12 +8,177 @@
 log_dir 인자로 주입받는다 — 기존 진입점인 app/log_setup.py가 주입한다.
 """
 
+import functools
 import logging
 import logging.handlers
 import os
+import re
 
 # 포맷: 시간·레벨·모듈·메시지
 LOG_FORMAT = "%(asctime)s - %(levelname)s - [%(name)s] - %(message)s"
+REDACTED = "***"  # 로그에서 가린 값 자리에 남기는 글자
+
+# 주소로 읽는 토큰 — 스킴이 붙은 주소, 그리고 requests · urllib3 예외가 "url: " 뒤에 적는 경로
+# (연결 실패는 스킴 없이 "/경로?쿼리"만 적는다). 따옴표 · 괄호 · 공백에서 끝난다 (#328)
+_URL_TOKEN = re.compile(r"(?:[A-Za-z][A-Za-z0-9+.-]*://|(?<=url: )|(?<=URL: ))[^\s'\"<>()]+")
+_TRAILING_PUNCTUATION = ".,:;!"  # 주소 끝에 붙어 온 문장 부호 — 주소가 아니라 글의 것이다
+# 주소로 읽지 못한 토큰에 붙은 "?이름=값" 쿼리 — 플레이리스트의 상대 주소 등 (#328)
+_BARE_QUERY = re.compile(r"(?<=[^\s?])\?([^\s'\"<>()#]*=[^\s'\"<>()#]*)")
+
+
+def _redact_query(query: str) -> str:
+    """쿼리 문자열의 값을 가린다 — 이름은 남긴다. 이름 없는 조각은 통째로 가린다."""
+    parts = []
+    for part in re.split(r"([&;])", query):
+        if part in ("&", ";", ""):
+            parts.append(part)
+        elif "=" in part:
+            parts.append(part.split("=", 1)[0] + "=" + REDACTED)
+        else:
+            parts.append(REDACTED)
+    return "".join(parts)
+
+
+def _redact_url(url: str) -> str:
+    """주소 하나의 서명 · 토큰 값을 가린다 — 스킴 · 호스트 · 경로의 나머지는 남긴다.
+
+    경로 조각 가운데 ``이름=값`` 꼴(CDN의 경로 인증 토큰, 예: ``hdntl=…``)은 값을 가리고, 쿼리는
+    값마다 가린다. 조각(#) 뒤는 그대로 둔다.
+    """
+    head, hash_mark, fragment = url.partition("#")
+    path, question, query = head.partition("?")
+    scheme, sep, rest = path.partition("://")
+    if not sep:
+        scheme, rest = "", path
+    segments = [
+        segment.split("=", 1)[0] + "=" + REDACTED if "=" in segment else segment
+        for segment in rest.split("/")
+    ]
+    redacted = scheme + sep + "/".join(segments)
+    if question:
+        redacted += "?" + _redact_query(query)
+    return redacted + hash_mark + fragment
+
+
+def _redact_url_match(match: re.Match) -> str:
+    """찾은 주소 토큰을 가린다 — 끝에 붙어 온 문장 부호는 주소에서 떼어 그대로 둔다."""
+    token = match.group(0)
+    url = token.rstrip(_TRAILING_PUNCTUATION)
+    return _redact_url(url) + token[len(url) :]
+
+
+def _redact_bare_query_match(match: re.Match) -> str:
+    """찾은 ``?쿼리``를 가린다 — 끝에 붙어 온 문장 부호는 쿼리에서 떼어 그대로 둔다."""
+    token = match.group(1)
+    query = token.rstrip(_TRAILING_PUNCTUATION)
+    return "?" + _redact_query(query) + token[len(query) :]
+
+
+def redact_urls(text: str) -> str:
+    """글 속 주소의 서명 · 토큰 값을 가린다 (#328).
+
+    다운로드 로그와 앱 로그의 모든 줄이 이 함수를 거친다(``RedactingFormatter``) — 예외 문자열과
+    트레이스백도 같다. requests의 예외 글에는 요청 주소가 쿼리까지 들어 있다. 호스트와 경로는
+    남겨 어느 요청이었는지는 읽을 수 있게 한다.
+    """
+    text = _URL_TOKEN.sub(_redact_url_match, text)
+    return _BARE_QUERY.sub(_redact_bare_query_match, text)
+
+
+def _home_dir() -> str:
+    """지금 사용자의 홈 폴더 경로 — 로그에서 ``~``로 바꿀 대상이다."""
+    return os.path.expanduser("~")
+
+
+def _dumped_ascii(text: str) -> str:
+    """faulthandler가 충돌 기록에 파일 이름을 적는 모양 — 출력 가능한 ASCII 밖의 글자를 이스케이프한다.
+
+    CPython ``_Py_DumpASCII``와 같은 규칙이다(``\\xNN`` · ``\\uNNNN`` · ``\\UNNNNNNNN``, 소문자 16진).
+    """
+    shaped = []
+    for char in text:
+        code = ord(char)
+        if 0x20 <= code <= 0x7E:
+            shaped.append(char)
+        elif code <= 0xFF:
+            shaped.append(f"\\x{code:02x}")
+        elif code <= 0xFFFF:
+            shaped.append(f"\\u{code:04x}")
+        else:
+            shaped.append(f"\\U{code:08x}")
+    return "".join(shaped)
+
+
+def _part_pattern(part: str) -> str:
+    """경로 조각 하나를 찾는 패턴 — 비ASCII 조각이면 faulthandler가 이스케이프한 모양도 받는다 (#427)."""
+    dumped = _dumped_ascii(part)
+    if dumped == part:
+        return re.escape(part)
+    return f"(?:{re.escape(part)}|{re.escape(dumped)})"
+
+
+@functools.lru_cache(maxsize=4)
+def _home_pattern(home: str) -> re.Pattern | None:
+    """홈 폴더 경로가 글에 적히는 모양들을 찾는 패턴 — 바꿀 수 없는 홈이면 None.
+
+    구분자는 ``\\`` · ``/``와, repr이 이스케이프한 ``\\\\``를 모두 받는다. 드라이브 문자로 시작하는
+    Windows 경로면 대소문자를 가리지 않는다. 뒤에 이름 글자가 이어지면(다른 사용자의 홈 등) 같은
+    경로로 보지 않는다. 조각이 둘 미만인 홈(``/`` 등)은 바꾸지 않는다 — 모든 경로가 걸린다.
+
+    홈의 끝 두 조각(``Users\\<이름>`` · ``/home/<이름>``)만 있어도 찾는다 — 앞에 무엇이 있든(드라이브
+    문자가 잘린 ``:\\Users\\<이름>``, 다른 드라이브, 앞 폴더) 그 앞의 드라이브 문자 · 구분자까지 함께
+    바꾼다 (#397). 글자 수로 꼬리를 자른 오류 글이 홈 경로 중간에서 시작해도 이름이 남지 않게 한다.
+
+    비ASCII 조각은 faulthandler가 충돌 기록에 적는 이스케이프 모양(``\\uc774``)으로도 찾는다 — 충돌
+    기록은 다음 시작 때 앱 로그로 옮겨진다 (#427).
+    """
+    parts = [part for part in re.split(r"[\\/]+", home) if part]
+    if len(parts) < 2:
+        return None
+    separator = r"(?:\\\\|\\|/)"
+    leading = separator if home[:1] in ("\\", "/") else ""
+    whole = leading + separator.join(_part_pattern(part) for part in parts)
+    shapes = [whole]
+    if not re.fullmatch(r"[A-Za-z]:", parts[-2]):
+        # 드라이브 바로 아래의 홈(C:\Tester)은 끝 두 조각이 곧 전체라 더하지 않는다
+        last_two = separator.join(_part_pattern(part) for part in parts[-2:])
+        shapes.append(rf"(?:(?:[A-Za-z]?:)?{separator})?{last_two}")
+    flags = re.IGNORECASE if re.match(r"[A-Za-z]:", home) else 0
+    return re.compile(r"(?<![\w.-])(?:" + "|".join(shapes) + r")(?![\w.-])", flags)
+
+
+def redact_home(text: str, home: str | None = None) -> str:
+    """글 속 사용자 홈 폴더 경로를 ``~``로 바꾼다 — 홈 뒤의 경로는 그대로 둔다 (#328).
+
+    로그를 제보에 붙일 때 사용자 폴더 이름(대개 계정 이름)이 함께 나가지 않게 한다. 경로 repr의
+    나머지(공백 비슷한 글자의 이스케이프 등, #148)는 바꾸지 않는다.
+    """
+    pattern = _home_pattern(home if home is not None else _home_dir())
+    return pattern.sub("~", text) if pattern is not None else text
+
+
+def home_spans(text: str, home: str | None = None) -> list[tuple[int, int]]:
+    """글 속에서 ``redact_home``이 ``~``로 바꿀 자리들을 (시작, 끝)으로 돌려준다 (#397).
+
+    오류 글을 잘라 붙이는 곳이 홈 경로를 가르지 않게 쓴다 — 이름에 공백이 있으면(``John Doe``)
+    공백 · 경로 구분자를 경계로 자르는 규칙만으로는 이름 한가운데서 자를 수 있다. 가리는 일은
+    여기서 하지 않는다(가리기는 포매터 한 곳 — #328).
+    """
+    pattern = _home_pattern(home if home is not None else _home_dir())
+    return [match.span() for match in pattern.finditer(text)] if pattern is not None else []
+
+
+class RedactingFormatter(logging.Formatter):
+    """완성된 로그 줄(메시지 · 예외 · 스택)에서 주소의 서명 · 토큰 값과 홈 폴더 경로를 가리는 포매터 (#328).
+
+    줄을 적는 곳마다 가리지 않고 핸들러의 포매터 한 곳에서 가린다 — 새로 생기는 로그 줄에도
+    그대로 적용된다. 가리는 것은 주소의 값과 홈 폴더 부분뿐이라 다른 줄의 형식은 바뀌지 않는다.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        return redact_home(redact_urls(super().format(record)))
+
+
 LOG_FILE_NAME = "app.log"
 
 # 파일 회전 설정: 1MB × 5개 백업
@@ -39,7 +204,7 @@ def setup_logging(log_dir: str, log_level: int = logging.DEBUG) -> None:
 
     os.makedirs(log_dir, exist_ok=True)
 
-    formatter = logging.Formatter(LOG_FORMAT)
+    formatter = RedactingFormatter(LOG_FORMAT)
 
     file_handler = logging.handlers.RotatingFileHandler(
         os.path.join(log_dir, LOG_FILE_NAME),

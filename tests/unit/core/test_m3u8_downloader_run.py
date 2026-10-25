@@ -16,9 +16,11 @@ import time
 
 import core.downloaders.base as base_module
 import core.downloaders.m3u8_downloader as m3u8_module
+import core.utils.ffmpeg as ffmpeg_module
 from core.downloaders.m3u8_downloader import M3U8Downloader
 from core.models.download_state import DownloadState
 from core.models.download_data import DownloadData
+from tests.unit.core.undeletable import Undeletable
 from tests.unit.fmp4_samples import init_segment, media_segment
 
 CHUNK = 8192
@@ -486,6 +488,48 @@ def test_stop_removes_partial_file_and_temp_dir(tmp_path, monkeypatch):
     assert failures == []
 
 
+class _ShiftedClock:
+    """실제 단조 시계에 테스트가 흘린 시간을 더한 시계 — ``advance()``로만 앞당겨진다."""
+
+    def __init__(self):
+        self.shift = 0.0
+
+    def __call__(self) -> float:
+        return time.perf_counter() + self.shift
+
+    def advance(self, seconds: float) -> None:
+        self.shift += seconds
+
+
+class _ClockedResponse(StreamResponse):
+    """조각을 하나 흘릴 때마다 시계를 정해진 만큼 흘리는 가짜 응답 — 받는 속도를 테스트가 정한다."""
+
+    def __init__(self, body: bytes, clock: _ShiftedClock, seconds_per_chunk: float):
+        super().__init__(body, throttle=0.0)
+        self._clock = clock
+        self._seconds_per_chunk = seconds_per_chunk
+
+    def iter_content(self, chunk_size=CHUNK):
+        for chunk in super().iter_content(chunk_size):
+            self._clock.advance(self._seconds_per_chunk)
+            yield chunk
+
+
+class _ClockedSession(M3U8Session):
+    """세그먼트 응답만 ``_ClockedResponse``로 주는 가짜 세션."""
+
+    def __init__(self, chunks_per_segment: int, clock: _ShiftedClock, seconds_per_chunk: float):
+        super().__init__(chunks_per_segment)
+        self._clock = clock
+        self._seconds_per_chunk = seconds_per_chunk
+
+    def get(self, url, **kwargs):
+        response = super().get(url, **kwargs)
+        if isinstance(response, StreamResponse):
+            return _ClockedResponse(response._body, self._clock, self._seconds_per_chunk)
+        return response
+
+
 def test_forced_slow_requeue_does_not_corrupt_output(tmp_path, monkeypatch):
     """저속 재큐가 여러 번 발동해도 최종 산출물은 손상되지 않는다 (#180 조사).
 
@@ -499,6 +543,16 @@ def test_forced_slow_requeue_does_not_corrupt_output(tmp_path, monkeypatch):
     """
     engine, data, logger, output, finished, failures, merge_starts = _make_engine(
         tmp_path, monkeypatch, chunks_per_segment=20
+    )
+    # 판정 시계는 테스트가 흘린다 (#379) — 실제 시간만 보면 빠른 러너에서는 세그먼트가 판정 창이
+    # 차기 전에 다 와서 저속 판정이 한 번도 나지 않는다. 조각마다 판정 창보다 긴 시간을 흘려
+    # 첫 조각부터 판정이 나게 한다. 실제 시간에 더하므로 엔진의 다른 쓰임(관측 틱)도 흐르는 시계를 본다
+    clock = _ShiftedClock()
+    monkeypatch.setattr(engine, "_now", clock)
+    monkeypatch.setattr(
+        m3u8_module,
+        "get_thread_session",
+        lambda: _ClockedSession(chunks_per_segment=20, clock=clock, seconds_per_chunk=0.01),
     )
     # 극단적으로 높은 임계로 모든 청크를 "저속"으로 오판시켜 강제 재큐를 유발한다.
     # 판정 창을 아주 짧게 하고, 다른 연결은 한없이 빠르며 끊는 쪽이 늘 이득인 것으로 둔다 (#347) —
@@ -618,3 +672,248 @@ def test_downstream_stop_after_postprocess_failure_preserves_segments(tmp_path, 
     # WAITING으로 돌리더라도(비동기 stop()) 이 정책은 지켜져야 한다.
     assert temp_dir.exists(), "후처리 실패 시 세그먼트가 보존돼야 하는데 지워졌다"
     assert len(list(temp_dir.iterdir())) == SEGMENT_COUNT + 1  # 초기화 세그먼트 포함
+
+
+def test_remux_failure_whose_output_cannot_be_removed_still_fails_as_a_postprocess_failure(
+    tmp_path, monkeypatch
+):
+    """재포장이 실패하고 그 산출물을 지울 수 없어도 후처리 실패로 끝나고 넘기지 않은 세그먼트가 남아야 한다 (#389).
+
+    실제 remux_stream. 산출물 경로에 폴더가 있고(ffmpeg가 쓰지 못한다) 그 경로의 os.remove가 PermissionError
+    -> run()이 예외 없이 끝난다, 실패 1건(PostprocessError, 원인 RemuxError), 지우기 거절이 1번 이상,
+       임시 폴더가 남는다
+    """
+    engine, data, logger, output, finished, failures, merge_starts = _make_engine(
+        tmp_path, monkeypatch
+    )
+    monkeypatch.setattr(base_module, "remux_stream", ffmpeg_module.remux_stream)
+    os.makedirs(output)
+    blocker = Undeletable(monkeypatch)
+    blocker.block(output)
+    escaped = []
+
+    def run() -> None:
+        try:
+            engine.run()
+        except BaseException as e:
+            escaped.append(e)
+
+    data.model.start()
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    thread.join(timeout=60)
+    assert not thread.is_alive()
+
+    assert escaped == []
+    assert len(failures) == 1
+    assert isinstance(failures[0], base_module.PostprocessError)
+    assert isinstance(failures[0].__cause__, ffmpeg_module.RemuxError)
+    assert blocker.refused
+    assert (tmp_path / "CVDv2_temp_out").is_dir()
+
+
+def test_cleanup_error_after_a_failure_does_not_replace_the_failure(tmp_path, monkeypatch):
+    """실패 뒤 정리가 예외를 내도 실패는 원래 예외로 한 번 알려지고, 정리 예외는 로그로만 남아야 한다 (#389).
+
+    준비 단계가 RuntimeError("준비 실패"), 부분 산출물 정리가 PermissionError
+    -> run()이 예외 없이 끝난다, 실패 == [그 RuntimeError], 실패 알림이 정리보다 먼저,
+       오류 로그 == ["Download failed", 정리 실패 줄], 로그 닫기 1회
+    """
+    engine, data, logger, output, finished, failures, merge_starts = _make_engine(
+        tmp_path, monkeypatch
+    )
+    cause = RuntimeError("준비 실패")
+    order = []
+
+    def prepare(_content):
+        raise cause
+
+    def cleanup() -> None:
+        order.append("cleanup")
+        raise PermissionError(13, "시험 — 지울 수 없다")
+
+    monkeypatch.setattr(engine, "prepare", prepare)
+    monkeypatch.setattr(engine, "_cleanup_partial", cleanup)
+    engine._on_failed = lambda exc: (order.append("failed"), failures.append(exc))
+    escaped = []
+
+    def run() -> None:
+        try:
+            engine.run()
+        except BaseException as e:
+            escaped.append(e)
+
+    data.model.start()
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    thread.join(timeout=30)
+    assert not thread.is_alive()
+
+    assert escaped == []
+    assert failures == [cause]
+    assert order == ["failed", "cleanup"]
+    assert logger.errors == [
+        "Download failed",
+        "Cleanup after failure failed — partial files may remain",
+    ]
+    assert logger.closed == 1
+
+
+def test_failure_callback_that_raises_still_lets_the_cleanup_run(tmp_path, monkeypatch):
+    """실패 콜백이 예외를 내도 부분 산출물 정리와 로그 닫기는 해야 한다 (#389).
+
+    준비 단계가 RuntimeError("준비 실패"), 실패 콜백이 ValueError("콜백 고장")
+    -> 정리 1회(콜백 뒤), 로그 닫기 1회, run() 밖으로 나간 예외 == [그 ValueError]
+    """
+    engine, data, logger, output, finished, failures, merge_starts = _make_engine(
+        tmp_path, monkeypatch
+    )
+    order = []
+    broken = ValueError("콜백 고장")
+
+    def prepare(_content):
+        raise RuntimeError("준비 실패")
+
+    def on_failed(_exc):
+        order.append("failed")
+        raise broken
+
+    monkeypatch.setattr(engine, "prepare", prepare)
+    monkeypatch.setattr(engine, "_cleanup_partial", lambda: order.append("cleanup"))
+    engine._on_failed = on_failed
+    escaped = []
+
+    def run() -> None:
+        try:
+            engine.run()
+        except BaseException as e:
+            escaped.append(e)
+
+    data.model.start()
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    thread.join(timeout=30)
+    assert not thread.is_alive()
+
+    assert order == ["failed", "cleanup"]
+    assert logger.closed == 1
+    assert escaped == [broken]
+
+
+# ================================================================ 이 시도가 쓰지 않은 산출물 (#412)
+
+
+def test_failure_in_prepare_leaves_the_file_already_at_output_path_alone(tmp_path, monkeypatch):
+    """준비에서 실패한 전체 다운로드는 output_path에 이미 있던 파일을 지우지 않아야 한다.
+
+    output_path에 b"keep" 파일을 미리 둠, 준비(prepare)가 RuntimeError
+    -> 실패 1건, 그 파일이 b"keep" 그대로 있다
+    """
+    engine, data, logger, output, finished, failures, merge_starts = _make_engine(
+        tmp_path, monkeypatch
+    )
+    output.write_bytes(b"keep")
+
+    def prepare(_content):
+        raise RuntimeError("준비 실패")
+
+    monkeypatch.setattr(engine, "prepare", prepare)
+
+    data.model.start()
+    engine.run()
+
+    assert len(failures) == 1
+    assert output.read_bytes() == b"keep"
+
+
+def test_stop_during_transfer_leaves_the_file_already_at_output_path_alone(tmp_path, monkeypatch):
+    """전송 중에 중단한 전체 다운로드는 output_path에 이미 있던 파일을 지우지 않아야 한다.
+
+    output_path에 b"keep" 파일을 미리 둠, 세그먼트 40조각 · 조각마다 0.005초, 0.25초 뒤 model.stop()
+    -> 후처리 시작 통지 없음, 실패 없음, 그 파일이 b"keep" 그대로 있다, 임시 폴더 없음
+    """
+    engine, data, logger, output, finished, failures, merge_starts = _make_engine(
+        tmp_path, monkeypatch, chunks_per_segment=40, throttle=0.005
+    )
+    output.write_bytes(b"keep")
+
+    data.model.start()
+    thread = _run_in_thread(engine)
+    time.sleep(0.25)
+    data.model.stop()
+    thread.join(timeout=30)
+    assert not thread.is_alive()
+
+    assert merge_starts == [], "전제: 전송 중에 중단했다"
+    assert failures == []
+    assert output.read_bytes() == b"keep"
+    assert not (tmp_path / "CVDv2_temp_out").exists()
+
+
+def test_stop_after_the_remux_wrote_part_of_the_output_removes_it(tmp_path, monkeypatch):
+    """후처리가 산출물을 쓰기 시작한 뒤 중단하면 정리가 그 산출물을 지워야 한다.
+
+    가짜 remux가 받은 조각을 output_path에 쓰며 조각마다 0.05초 쉼, 첫 조각을 쓴 뒤 model.stop()
+    -> 중단할 때 산출물이 있었다, 실패 없음, 끝난 뒤 산출물 없음
+    """
+    engine, data, logger, output, finished, failures, merge_starts = _make_engine(
+        tmp_path, monkeypatch
+    )
+    wrote_once = threading.Event()
+
+    def writing_remux_stream(chunks, dst_path, **_wait):
+        with open(dst_path, "wb") as f:
+            for chunk in chunks:
+                f.write(chunk)
+                f.flush()
+                wrote_once.set()
+                time.sleep(0.05)
+
+    monkeypatch.setattr(base_module, "remux_stream", writing_remux_stream)
+
+    data.model.start()
+    thread = _run_in_thread(engine)
+    assert wrote_once.wait(timeout=30), "후처리가 산출물을 쓰지 않았다"
+    existed = output.exists()
+    data.model.stop()
+    thread.join(timeout=30)
+    assert not thread.is_alive()
+
+    assert existed, "전제: 중단할 때 산출물이 있었다"
+    assert failures == []
+    assert not output.exists()
+
+
+def test_rerun_of_the_same_engine_that_fails_in_prepare_keeps_the_file_at_output_path(
+    tmp_path, monkeypatch
+):
+    """후처리까지 간 엔진을 다시 돌려 준비에서 실패하면 output_path에 있던 파일을 지우지 않아야 한다.
+
+    같은 엔진. 첫 실행: remux가 FFmpegError(후처리 실패). 그 뒤 output_path에 b"keep" 파일을 둠,
+    플레이리스트 요청이 RuntimeError를 내는 세션으로 바꿔 다시 실행(준비가 실패)
+    -> 둘째 실행의 실패가 그 RuntimeError, 그 파일이 b"keep" 그대로 있다
+    """
+    engine, data, logger, output, finished, failures, merge_starts = _make_engine(
+        tmp_path, monkeypatch
+    )
+
+    def broken_remux_stream(chunks, dst_path, **_wait):
+        raise base_module.FFmpegError("가짜 remux 실패")
+
+    monkeypatch.setattr(base_module, "remux_stream", broken_remux_stream)
+    data.model.start()
+    engine.run()
+    assert merge_starts == [True], "전제: 첫 실행이 후처리까지 갔다"
+    output.write_bytes(b"keep")
+    cause = RuntimeError("플레이리스트를 받지 못했다")
+
+    class _FailingSession:
+        def get(self, url, **kwargs):
+            raise cause
+
+    monkeypatch.setattr(m3u8_module, "get_thread_session", lambda: _FailingSession())
+
+    engine.run()
+
+    assert failures[-1] is cause
+    assert output.read_bytes() == b"keep"

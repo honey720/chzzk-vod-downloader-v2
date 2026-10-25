@@ -67,6 +67,7 @@ from core.utils.ffmpeg import (
     FFmpegCancelledError,
     FFmpegError,
     FFmpegTimeoutError,
+    error_tail,
     run_ffmpeg,
 )
 
@@ -450,7 +451,7 @@ def _run(args: list[str], timeout: float, cwd: str) -> str:
     except FFmpegError as e:
         raise CutError(CUT_FAILED, str(e)) from e
     if done.returncode != 0:
-        raise CutError(CUT_FAILED, f"exit {done.returncode}: {done.stderr.strip()[-500:]}")
+        raise CutError(CUT_FAILED, f"exit {done.returncode}: {error_tail(done.stderr, 500)}")
     return done.stderr
 
 
@@ -665,7 +666,7 @@ def _read_params(path: str, reorder_delay: int) -> VideoParams:
     text = done.stderr
     codec = re.search(r"Stream #0:\d+.*?: Video: (\w+)", text)
     if done.returncode != 0 or codec is None:
-        raise CutError(CUT_FAILED, f"입력을 읽지 못했다: {text.strip()[-300:]}")
+        raise CutError(CUT_FAILED, f"입력을 읽지 못했다: {error_tail(text, 300)}")
     if codec.group(1) != "h264":
         raise CutError(CUT_UNSUPPORTED, f"코덱 {codec.group(1)}")
 
@@ -741,7 +742,7 @@ def read_packets(
             flags = next((int(cell[2:], 16) for cell in cells[6:] if cell.startswith("F=")), 1)
             packets.append((int(cells[1]), int(cells[2]), int(cells[3]), flags))
     if done.returncode != 0 or not denominator or not packets:
-        raise CutError(CUT_FAILED, f"패킷을 읽지 못했다: {done.stderr.strip()[-300:]}")
+        raise CutError(CUT_FAILED, f"패킷을 읽지 못했다: {error_tail(done.stderr, 300)}")
     return denominator, packets
 
 

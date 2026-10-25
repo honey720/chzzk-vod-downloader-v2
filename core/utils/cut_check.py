@@ -23,7 +23,7 @@ A/V는 컨테이너에 적힌 시각으로 잰다. 디코드한 샘플 수로 �
 """
 
 from core.models.cut import CutCheck, CutFrames, CutResult
-from core.utils.ffmpeg import FFmpegError, run_ffmpeg
+from core.utils.ffmpeg import FFmpegError, error_head, run_ffmpeg
 from core.utils.hybrid_cut import CUT_FAILED, CutError, expected_end, frame_ticks, read_packets
 
 # PTS를 틱으로 견줄 때 허용하는 차이(틱) — 초 단위 float를 틱으로 되돌릴 때의 반올림
@@ -85,7 +85,7 @@ def check_cut(frames: CutFrames, result: CutResult) -> CutCheck:
     errors = [line for line in done.stderr.splitlines() if line.strip()]
     decode_ok = done.returncode == 0 and not errors
     notes["decode"] = f"exit {done.returncode}, 오류 출력 {len(errors)}줄" + (
-        f" — {errors[0][:120]}" if errors else ""
+        f" — {error_head(errors[0], 120)}" if errors else ""
     )
 
     # ── seams

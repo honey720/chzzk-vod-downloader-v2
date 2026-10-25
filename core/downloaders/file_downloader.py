@@ -40,10 +40,11 @@ core/downloaders/base.py의 BaseDownloader로 이주했다(#82). 이 클래스�
   것(끝낸 구간 파일 · 다시 쓴 경계 원본과 본문)은 이 실행이 실패 · 중단해도 지우지 않는다
 - m3u8·hls_aes는 구간을 받지 않는다(베이스가 거부한다). clip도 받지 않는다
 
-스레드 스케일링 기준 속도는 베이스 기본값(4 MB/s — 구 고정 임계 4/2와 동일)을
-그대로 쓴다.
+스레드 수는 베이스의 공통 규칙(총 처리량으로 정하는 ``ThreadController``, #112 · #347)을
+그대로 쓴다. 절대값으로 된 속도 기준은 저속 판정 임계(100 KB/s) 하나뿐이다.
 """
 
+import logging
 import os
 import shutil
 import time as tm
@@ -72,6 +73,7 @@ from core.models.mp4_index import Mp4Index
 from core.models.plan import DownloadPlan
 from core.models.section_resume import SectionResume
 from core.utils.hybrid_cut import (
+    CUT_FAILED,
     CutCancelled,
     CutError,
     cut_frames_from_mp4,
@@ -94,6 +96,8 @@ from core.utils.paths import (
     section_body_path_for,
 )
 from core.utils.selections import SelectionError, validate_selections
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -191,7 +195,8 @@ def finish_section_file(
             쓰는 일)다. 나머지 인자는 ``encode_boundary_pieces``와 같다
 
     Raises:
-        CutError · Mp4Error: 인코딩이 실패했거나 조각이 계획과 맞지 않는 경우
+        CutError · Mp4Error: 인코딩이 실패했거나, 조각이 계획과 맞지 않거나, 다 쓴 본문을 구간
+            파일의 이름으로 바꾸지 못한 경우
         CutCancelled: 중단 요청으로 그만둔 경우
     """
     work = cut_temp_dir_for(output_path)
@@ -215,10 +220,19 @@ def finish_section_file(
             finally:
                 if on_stage is not None:
                     on_stage("write", tm.perf_counter() - started)
-        os.replace(body_path, output_path)
+        try:
+            os.replace(body_path, output_path)
+        except OSError as e:
+            # 구간 파일의 자리에 둘 수 없다 — 이 구간만 만들지 못한 것이다 (#389). 본문은 남는다
+            raise CutError(CUT_FAILED, f"구간 파일을 제자리에 두지 못했다: {e}") from e
     except BaseException:
-        if os.path.exists(output_path):
-            os.remove(output_path)
+        # 지우지 못해도 원래 예외를 올린다 (#389) — 여기서 난 OSError가 CutError를 대신하면 구간
+        # 하나의 실패가 다운로드 전체의 실패가 된다
+        try:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+        except OSError as e:
+            logger.warning("실패한 구간 파일을 지우지 못했다: %s", e)
         raise
     finally:
         shutil.rmtree(work, ignore_errors=True)
@@ -293,6 +307,9 @@ class FileDownloader(BaseDownloader):
         self._mp4_head = None  # 구간을 정할 때 쓴 moov — 일부 실패로 끝나면 다음 실행에 넘긴다
         # 이전 실행이 전송을 끝낸 임시 원본을 그대로 쓰는지 — 쓰면 받지 않고 지우지도 않는다
         self._reuses_source: bool = False
+        # 이번 실행이 연 받는 파일(전체 다운로드의 산출물 · 구간 다운로드의 경계 원본과 본문 파일)
+        # — 연 차례대로. 정리는 연 것만 지운다 (#412)
+        self._opened_files: list[str] = []
         # 임시 원본이 범위를 담고 있는 구간의 번호 — 일부 실패로 끝나면 다음 실행에 넘긴다
         self._source_sections: frozenset[int] = frozenset()
         self.cut_results: list[CutResult] = []  # 이번 실행이 자른 구간의 컷 결과 — 자른 순서
@@ -336,6 +353,7 @@ class FileDownloader(BaseDownloader):
         Raises:
             DiskSpaceError: 파일 크기가 저장 폴더의 여유 공간보다 큰 경우
         """
+        self._opened_files = []  # 같은 엔진을 다시 돌려도 앞 실행의 것이 남지 않게 (#412)
         if content.selections:
             return self._prepare_sections(content)
         total_size = self._get_total_size()
@@ -604,11 +622,15 @@ class FileDownloader(BaseDownloader):
         """
         if self._reuses_source:
             return
+        # 연 파일마다 적는다 — 그 자리는 이제 이번 실행의 것이다. 다음 파일을 열다 실패하면 정리는
+        # 연 것만 지운다(아직 열지 않은 자리의 파일은 이전 실행이 남긴 것일 수 있다)
         with open(self._target_path, "wb") as f:
+            self._opened_files.append(self._target_path)
             f.write(self._head)
         for number, path in self._bodies.items():
             plan = self._plans[number]
             with open(path, "wb") as f:
+                self._opened_files.append(path)
                 if plan is None:
                     f.write(self._whole_prefix)
                 else:
@@ -636,11 +658,16 @@ class FileDownloader(BaseDownloader):
 
         이전 실행이 전송을 끝낸 경계 원본과 본문을 그대로 쓴 실행은 그것들을 지우지 않는다 —
         이번 실행이 만든 것만 지운다 (#309).
+
+        받는 파일은 이번 실행이 연 것만 지운다 (#412). 준비 안에서 끝났으면 연 것이 없다 — 그때
+        ``_target_path``는 ``output_path``다(구간 다운로드는 그 자리에 쓰지 않고, 전체 다운로드도
+        아직 쓰지 않았다). 그 자리의 파일은 이 실행의 것이 아니다(같은 이름을 받은 다른 카드의
+        산출물일 수 있다).
         """
-        targets = [] if self._reuses_source else [self._target_path, *self._bodies.values()]
-        for path in (*targets, *self._made_sections):
+        for path in (*self._opened_files, *self._made_sections):
             if os.path.exists(path):
                 os.remove(path)
+        self._opened_files.clear()
         self._made_sections.clear()
 
     # ============ 구간 다운로드의 후처리 (#309) ============
@@ -852,7 +879,12 @@ class FileDownloader(BaseDownloader):
         서버가 이어받기 Range를 존중하지 않으면(206이 아니면) 파트 처음부터
         다시 받는 폴백을 탄다. 판정 규칙(저속·실패 재큐잉)은 무변경이다.
         """
+        parked = self._part_progress.get((start, end), 0)
         resume_offset = self._resume_offset(start, end)
+        with self.lock:
+            # 앞 요청이 남겨 둔 바이트는 받은 양에 그대로 있다 — 이어받는 만큼 이 슬롯으로 옮기고,
+            # 이어받지 못하면(산출물이 기록만큼 자라 있지 않음) 버린 바이트로 센다 (#395)
+            self._resume_slot(part_num, parked, resume_offset)
         downloaded_size = 0
         if resume_offset > 0:
             # 이어받기 발생 사실과 오프셋을 남긴다 (#78 스모크 확인 수단) —
@@ -876,6 +908,9 @@ class FileDownloader(BaseDownloader):
                     )
                     response.close()
                     self._part_progress.pop((start, end), None)
+                    with self.lock:
+                        # 이어받지 못한 앞부분은 처음부터 다시 받아 덮어쓴다 — 버린 바이트다 (#395)
+                        self._discard_slot(part_num)
                     resume_offset = 0
                     continue
                 # 구간 다운로드의 total_size는 받을 바이트의 합이지 파일 크기가 아니다
@@ -950,8 +985,9 @@ class FileDownloader(BaseDownloader):
             except (requests.RequestException, requests.Timeout) as e:
                 with self.lock:
                     self._record_partial(start, end, resume_offset + downloaded_size)
-                    self._requeue_failed((start, end), part_num, e)
-                self.logger.log_error(f"Part {part_num} download failed", e)
+                    requeue = self._requeue_failed((start, end), part_num, e)
+                # 로그 · 실패 통지는 락을 놓은 뒤에 한다 (#329)
+                self._settle_requeue(requeue, f"Part {part_num} download failed", e)
                 return part_num
 
     def _writer_at(self, offset: int):
@@ -965,6 +1001,10 @@ class FileDownloader(BaseDownloader):
             opened.close()
             raise
         return opened
+
+    def _kept_on_requeue(self, item) -> int:
+        """파트는 받아 쓴 바이트를 산출물에 남기고 다음 요청이 그 뒤에서 이어받는다 (#78 · #395)."""
+        return self._part_progress.get(item, 0)
 
     def _record_partial(self, start: int, end: int, downloaded: int) -> None:
         """재큐잉 직전까지 산출물에 받아 쓴 바이트 수를 기록한다 (#78)."""

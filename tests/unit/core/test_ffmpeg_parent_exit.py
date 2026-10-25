@@ -21,7 +21,8 @@ pytestmark = pytest.mark.skipif(
 )
 
 # 앱 대신 도는 프로세스 — 제품의 run_ffmpeg로 10분 도는 ffmpeg를 띄우고, 제품이 그 프로세스를
-# 지켜보기 시작하면(일시정지 확인이 불린다 — 잡에 넣은 뒤다) 그 PID를 한 줄 적는다
+# 지켜보기 시작하면(일시정지 확인이 불린다 — 잡에 넣은 뒤다) 그 PID와 잡 등록 결과(제품의
+# _end_with_parent가 돌려준 값)를 한 줄 적는다 (#445)
 _PARENT = """
 import subprocess
 import sys
@@ -30,8 +31,10 @@ import core.utils.ffmpeg as ffmpeg_module
 from tests.unit.core.long_ffmpeg import LONG_RUNNING
 
 launched = []
+assigned = []
 told = []
 real = subprocess.Popen
+real_end_with_parent = ffmpeg_module._end_with_parent
 
 
 class Recording(real):
@@ -40,15 +43,23 @@ class Recording(real):
         launched.append(self.pid)
 
 
+def recording_end_with_parent(process):
+    result = real_end_with_parent(process)
+    assigned.append(result)
+    return result
+
+
 ffmpeg_module.subprocess.Popen = Recording
+ffmpeg_module._end_with_parent = recording_end_with_parent
 ffmpeg_module.get_ffmpeg_exe()  # 실행 파일을 찾는 확인 실행을 미리 치른다
 launched.clear()
+assigned.clear()
 
 
 def should_pause() -> bool:
     if launched and not told:
         told.append(1)
-        print(launched[0], flush=True)
+        print(launched[0], assigned[-1] if assigned else None, flush=True)
     return sys.argv[1] == "paused" and bool(launched)
 
 
@@ -56,6 +67,8 @@ ffmpeg_module.run_ffmpeg(LONG_RUNNING, timeout=600, should_pause=should_pause)
 """
 
 _GONE_WITHIN_SECONDS = 10.0  # 부모가 사라진 뒤 ffmpeg가 끝나기를 기다려 주는 시간
+# 판정이 실패해도 더 기다리는 시간 — 늦게라도 사라지는지 실패 메시지에 남긴다 (#445)
+_RECORD_WITHIN_SECONDS = 60.0
 
 
 def _alive(pid: int) -> bool:
@@ -101,20 +114,35 @@ def test_ffmpeg_ends_when_the_process_that_launched_it_is_killed(tmp_path, mode)
     child = None
     try:
         line = parent.stdout.readline().strip()
-        assert line.isdigit(), f"전제: ffmpeg의 PID를 받았다 — {line!r} {parent.poll()}"
-        child = int(line)
+        fields = line.split()
+        assert len(fields) == 2 and fields[0].isdigit(), (
+            f"전제: ffmpeg의 PID와 잡 등록 결과를 받았다 — {line!r} {parent.poll()}"
+        )
+        child = int(fields[0])
+        assigned = fields[1]
         time.sleep(0.5)  # paused: 제품이 그 ffmpeg를 멈출 틈
         alive_before = _alive(child)
 
         parent.kill()
         parent.wait(10)
-        deadline = time.monotonic() + _GONE_WITHIN_SECONDS
-        while _alive(child) and time.monotonic() < deadline:
+        ended = time.monotonic()
+        gone_after = None
+        while time.monotonic() - ended < _RECORD_WITHIN_SECONDS:
+            if not _alive(child):
+                gone_after = time.monotonic() - ended
+                break
             time.sleep(0.1)
-        gone = not _alive(child)
 
         assert alive_before, "전제: 부모를 끝내기 전에 ffmpeg가 살아 있었다"
-        assert gone, "부모가 끝났는데 ffmpeg가 남았다"
+        assert gone_after is not None and gone_after <= _GONE_WITHIN_SECONDS, (
+            "부모가 끝났는데 ffmpeg가 남았다 — "
+            + (
+                f"{_RECORD_WITHIN_SECONDS:.0f}초 안에 사라지지 않았다"
+                if gone_after is None
+                else f"사라지기까지 {gone_after:.1f}초"
+            )
+            + f" · 잡 등록 결과 {assigned} · 부모 종료 코드 {parent.returncode}"
+        )
     finally:
         if parent.poll() is None:
             parent.kill()

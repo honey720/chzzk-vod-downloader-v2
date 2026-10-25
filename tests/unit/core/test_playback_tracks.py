@@ -315,6 +315,27 @@ def test_select_variant_by_height_fails_when_no_variant_has_that_height():
     assert caught.value.message_key == STREAM_NOT_FOUND
 
 
+@pytest.mark.parametrize("ending", ["", "\n"])
+def test_select_variant_by_height_fails_when_the_matching_tag_is_the_last_line(ending):
+    """세로값이 맞는 STREAM-INF 줄이 마지막 줄이라 주소 줄이 없으면 키 기반 오류로 실패해야 한다 (#333).
+
+    변형 852x480(주소 있음) 뒤에 주소 줄 없는 1280x720 태그로 끝나는 마스터(끝 줄바꿈 없음 · 있음),
+    해상도 720
+    -> StreamSelectionError, message_key == STREAM_NOT_FOUND
+    """
+    master = (
+        "#EXTM3U\n"
+        "#EXT-X-STREAM-INF:BANDWIDTH=1692000,RESOLUTION=852x480\n"
+        "480.m3u8\n"
+        "#EXT-X-STREAM-INF:BANDWIDTH=3192000,RESOLUTION=1280x720" + ending
+    )
+
+    with pytest.raises(StreamSelectionError) as caught:
+        select_variant_by_height(master, 720)
+
+    assert caught.value.message_key == STREAM_NOT_FOUND
+
+
 # ================================================================ AVERAGE-BANDWIDTH
 
 

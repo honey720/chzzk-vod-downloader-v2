@@ -64,6 +64,7 @@ from tests.unit.core.midway_cut_failure import MidwayCutFailure
 from tests.unit.core.range_host import RangeHost
 from tests.unit.core.section_packets import JoinedSource, assert_section_matches
 from tests.unit.core.section_retry import OUTPUT_ARG, CutCalls, hand_over, snapshot
+from tests.unit.core.undeletable import Undeletable
 
 KEY = bytes.fromhex("7c1d9e42a05b63f8817e2c4d6a9b0f35")  # 테스트용 키 — 실제 키가 아니다
 WRONG_KEY = bytes.fromhex("0f1e2d3c4b5a69788796a5b4c3d2e1f0")  # 테스트용 — 복호화가 틀어진다
@@ -1014,6 +1015,91 @@ def test_retry_cuts_only_the_failed_section_from_the_kept_segments_without_reque
     ) == (3, 3, 0, 2)
 
 
+@pytest.mark.parametrize("undeletable", [False, True], ids=["지울 수 있음", "지울 수 없음"])
+def test_cut_failure_whose_output_cannot_be_removed_still_ends_as_a_partial_failure(
+    vod, host, tmp_path, monkeypatch, undeletable
+):
+    """구간의 컷이 실패하면 그 출력을 지울 수 없어도 일부 실패로 끝나고, 이어받은 실행은 그 구간만 다시 잘라야 한다 (#389).
+
+    구간 셋, 둘째 구간의 컷이 출력 파일을 반쯤 쓰고 CutError. 그 출력의 os.remove가
+    PermissionError(대조: 지울 수 있음)
+    -> 실패 1건(PostprocessError, 원인 CutError), 구간 상태 == (전체 3, 완료 2, 실패 1), 이어받기 기록이
+       있다, `_1` · `_3` 파일과 임시 폴더가 남는다, 지울 수 없을 때만 `_2`가 남고 지우기 거절이 1번 이상
+    -> 이어받은 실행: 컷 호출 1회(`_2`로 시작하는 이름), 완료 1회 · 실패 0건, 요청 0건
+    """
+    blocker = Undeletable(monkeypatch)
+    cuts = CutCalls(monkeypatch, aes_module, "cut_ts_section", source_arg=WORK_ARG)
+    cuts.fail_on = (SECOND_SECTION_CALL,)
+    failed = _Run(host, tmp_path, THREE)
+    if undeletable:
+        blocker.block(failed.paths[1])
+
+    failed.start()
+
+    assert len(failed.failures) == 1
+    assert isinstance(failed.failures[0], PostprocessError)
+    assert isinstance(failed.failures[0].__cause__, CutError)
+    data = failed.data
+    assert (data.sections_total, data.sections_done, data.sections_failed) == (3, 2, 1)
+    assert data.section_resume is not None
+    assert os.path.isfile(failed.paths[0]) and os.path.isfile(failed.paths[2])
+    assert os.path.isdir(failed.engine.temp_dir)
+    assert os.path.exists(failed.paths[1]) == undeletable
+    assert bool(blocker.refused) == undeletable
+
+    blocker.release()
+    requests_before = len(host.requests)
+    cuts.restart()
+    again = hand_over(failed, _Run(host, tmp_path, THREE)).start()
+
+    assert (again.finished, again.failures) == (1, [])
+    assert len(cuts.outputs) == 1 and cuts.outputs[0].startswith("구간 시험 144p_2")
+    assert host.requests[requests_before:] == []
+
+
+def test_section_whose_output_ffmpeg_cannot_write_or_remove_fails_alone(
+    vod, host, tmp_path, monkeypatch
+):
+    """세그먼트를 흘려 잇는 구간의 출력을 ffmpeg가 쓰지 못하고 지울 수도 없으면 그 구간만 실패해야 한다 (#389).
+
+    구간 셋. 둘째 구간(세그먼트 2 ~ 5, 가운데 둘을 흘린다)의 출력 경로에 폴더가 있고 그 경로의
+    os.remove가 PermissionError
+    -> 실패 1건(PostprocessError, 원인 CutError, 그 원인 RemuxError), 구간 상태 == (3, 2, 1), 이어받기
+       기록이 있다, `_1` · `_3` 파일과 임시 폴더가 남는다, 지우기 거절이 1번 이상
+    -> 폴더를 치우고 이어받은 실행: 완료 1회 · 실패 0건, 요청 == 둘째 구간의 세그먼트 가운데 기록에
+       남지 않은 것(넘기면서 지운 것)뿐
+    """
+    blocker = Undeletable(monkeypatch)
+    failed = _Run(host, tmp_path, THREE)
+    os.makedirs(failed.paths[1])  # ffmpeg가 이 자리에 파일을 쓰지 못한다
+    blocker.block(failed.paths[1])
+
+    failed.start()
+
+    assert len(failed.failures) == 1
+    assert isinstance(failed.failures[0], PostprocessError)
+    assert isinstance(failed.failures[0].__cause__, CutError)
+    assert isinstance(failed.failures[0].__cause__.__cause__, RemuxError)
+    data = failed.data
+    assert (data.sections_total, data.sections_done, data.sections_failed) == (3, 2, 1)
+    assert data.section_resume is not None
+    assert os.path.isfile(failed.paths[0]) and os.path.isfile(failed.paths[2])
+    assert os.path.isdir(failed.engine.temp_dir)
+    assert blocker.refused
+
+    second = failed.engine.sections[1]
+    gone = set(range(second.first_segment, second.last_segment + 1)) - (
+        data.section_resume.ts_head.stored
+    )
+    blocker.release()
+    os.rmdir(failed.paths[1])
+    requests_before = len(host.requests)
+    again = hand_over(failed, _Run(host, tmp_path, THREE)).start()
+
+    assert (again.finished, again.failures) == (1, [])
+    assert host.requests[requests_before:] == [("GET", name, None) for name in _names(gone)]
+
+
 def test_stop_during_retry_removes_only_what_the_retry_made(vod, host, tmp_path, monkeypatch):
     """이어받은 실행을 컷 사이에서 중단하면 그 실행이 만든 구간 파일만 지워야 한다.
 
@@ -1071,6 +1157,131 @@ def test_retry_receives_only_the_segment_that_is_gone(vod, host, tmp_path, monke
     assert cuts.outputs == [THREE_FILES[1]]
     assert snapshot(kept) == kept
     assert again.listing() == THREE_FILES
+
+
+# ================================================================ 다시 쓴 세그먼트는 받은 양이 아니다 (#376)
+
+
+def _calls(run: _Run, name: str) -> list[tuple]:
+    """그 로그 메서드가 불린 인자들(부른 순서)."""
+    return [args for called, args in run.logger.calls if called == name]
+
+
+def _speed_over_one_second(run: _Run) -> float:
+    """실행이 끝난 엔진이 1초 전부터 받은 양으로 낸 속도(MB/s) — 관측 틱 하나와 같은 길을 탄다."""
+    engine = run.engine
+    engine.s.prev_size = 0
+    engine._now = lambda: 101.0
+    engine._measured_at = 100.0
+    engine._measured_paused = engine.s.model.paused_seconds
+    engine.emit_progress()
+    engine.measure_speed()
+    return engine.s.speed_mb
+
+
+def _retry_with_one_segment_gone(vod, host, tmp_path, monkeypatch):
+    """둘째 구간의 컷이 실패한 실행과, 그 구간의 마지막 세그먼트를 지운 뒤 이어받은 실행.
+
+    Returns:
+        (이어받은 실행, 다시 받은 세그먼트의 받은 크기(암호문), 다시 쓴 세그먼트들의 파일 크기(복호화한 것))
+    """
+    cuts = CutCalls(monkeypatch, aes_module, "cut_ts_section", source_arg=WORK_ARG)
+    cuts.fail_on = (SECOND_SECTION_CALL,)
+    failed = _Run(host, tmp_path, THREE).start()
+    assert len(failed.failures) == 1
+    second = failed.engine.sections[1]
+    gone = second.last_segment
+    os.remove(failed.engine._segment_path(gone))
+    cuts.restart()
+    progress = []
+    again = hand_over(failed, _Run(host, tmp_path, THREE))
+    again.engine.set_on_progress(progress.append)
+    again.start()
+    assert (again.finished, again.failures) == (1, [])
+    again.progress = progress
+    reused = [
+        len(vod.plain[index])
+        for index in range(second.first_segment, second.last_segment + 1)
+        if index != gone
+    ]
+    return again, len(host.files[_names({gone})[0]]), reused
+
+
+def test_retry_counts_only_the_segment_it_received_as_received_bytes(
+    vod, host, tmp_path, monkeypatch
+):
+    """이어받은 실행의 받은 양 · 전송 줄의 Bytes · 진행 통지의 받은 양은 다시 받은 세그먼트 하나의 크기여야 한다.
+
+    `test_retry_receives_only_the_segment_that_is_gone`의 실행. 둘째 구간의 세그먼트 중 하나를 다시 받음
+    -> total_downloaded_size == 그 세그먼트의 받은 크기(암호문), log_transfer_complete의 Bytes == 같은 값,
+       진행 통지의 downloaded_size 최댓값 <= 같은 값,
+       log_transfer_reused == (둘째 구간의 나머지 세그먼트 수, 그 파일 크기의 합)
+    """
+    again, received, reused = _retry_with_one_segment_gone(vod, host, tmp_path, monkeypatch)
+
+    assert reused  # 다시 쓴 것이 있어야 이 단언이 뜻이 있다
+    assert again.data.total_downloaded_size == received
+    assert [args[1] for args in _calls(again, "log_transfer_complete")] == [received]
+    assert max(event.downloaded_size for event in again.progress) <= received
+    assert _calls(again, "log_transfer_reused") == [(len(reused), sum(reused))]
+
+
+def test_retry_speed_comes_only_from_the_segment_it_received(vod, host, tmp_path, monkeypatch):
+    """이어받은 실행이 1초 동안 받은 양으로 낸 속도는 다시 받은 세그먼트 하나의 크기여야 한다.
+
+    `test_retry_receives_only_the_segment_that_is_gone`의 실행이 끝난 엔진, 직전 측정 0바이트 · 1초 전
+    -> speed_mb == 그 세그먼트의 받은 크기(암호문) / 1 MiB
+    """
+    again, received, _reused = _retry_with_one_segment_gone(vod, host, tmp_path, monkeypatch)
+
+    assert _speed_over_one_second(again) == received / (1024 * 1024)
+
+
+def test_retry_counts_every_segment_as_done_so_the_progress_reaches_the_end(
+    vod, host, tmp_path, monkeypatch
+):
+    """이어받은 실행은 다시 쓴 세그먼트도 끝낸 세그먼트로 세어야 한다.
+
+    `test_retry_receives_only_the_segment_that_is_gone`의 실행. 둘째 구간의 세그먼트 중 하나를 다시 받음
+    -> completed_threads == max_threads == 둘째 구간의 세그먼트 수, reused_threads == 그보다 1 작다
+    """
+    again, _received, reused = _retry_with_one_segment_gone(vod, host, tmp_path, monkeypatch)
+
+    data = again.data
+    assert (data.completed_threads, data.max_threads) == (len(reused) + 1, len(reused) + 1)
+    assert data.reused_threads == len(reused)
+
+
+def test_retry_tells_how_many_segments_it_will_use_without_receiving(
+    vod, host, tmp_path, monkeypatch
+):
+    """이어받은 실행은 받지 않고 다시 쓸 세그먼트의 수를 적어 두고, 다시 쓴 수가 그와 같아야 한다 (#390).
+
+    `test_retry_receives_only_the_segment_that_is_gone`의 실행. 둘째 구간의 세그먼트 중 하나를 다시 받음
+    -> reusable_threads == reused_threads == 둘째 구간의 세그먼트 수 − 1
+    """
+    again, _received, reused = _retry_with_one_segment_gone(vod, host, tmp_path, monkeypatch)
+
+    assert (again.data.reusable_threads, again.data.reused_threads) == (len(reused), len(reused))
+
+
+def test_download_without_sections_counts_every_segment_as_received_bytes(vod, host, tmp_path):
+    """받아 둔 것이 없는 실행의 받은 양 · 전송 줄의 Bytes · 속도는 세그먼트 전부의 받은 크기여야 한다.
+
+    selections 빈 튜플
+    -> total_downloaded_size == 세그먼트 전부의 암호문 크기 합, log_transfer_complete의 Bytes == 같은 값,
+       speed_mb == 같은 값 / 1 MiB, log_transfer_reused 0회, reused_threads == 0
+    """
+    every = sum(len(host.files[name]) for name in _names(range(vod.last + 1)))
+
+    run = _Run(host, tmp_path, []).start()
+
+    assert (run.finished, run.failures) == (1, [])
+    assert run.data.total_downloaded_size == every
+    assert [args[1] for args in _calls(run, "log_transfer_complete")] == [every]
+    assert _speed_over_one_second(run) == every / (1024 * 1024)
+    assert _calls(run, "log_transfer_reused") == []
+    assert run.data.reused_threads == 0
 
 
 @pytest.mark.parametrize("how", ["success", "failure"])

@@ -1,0 +1,8 @@
+# 적지 않은 설정은 웹 화면(Repository UI) 값을 그대로 쓴다
+inheritance: true
+reviews:
+  auto_review:
+    # chore PR은 자동 리뷰를 건너뛴다 — 필요하면 @coderabbitai review로 부른다
+    ignore_title_keywords:
+      - "chore:"
+      - "chore("

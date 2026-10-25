@@ -24,6 +24,9 @@
 """
 
 import pytest
+from PySide6.QtCore import QBuffer, QByteArray, QIODevice, Qt
+from PySide6.QtGui import QColor, QImage
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 import main as main_module
@@ -89,6 +92,17 @@ def _at_width(widget, width):
     widget.resize(width, widget.sizeHint().height())
     widget.show()
     QApplication.processEvents()
+
+
+def _send_thumbnail(widget) -> None:
+    # 실제 도착 경로(워커 → _imageFetched 시그널)로 160x90 PNG를 넣는다
+    picture = QImage(160, 90, QImage.Format.Format_RGB32)
+    picture.fill(QColor(200, 40, 40))
+    data = QByteArray()
+    buffer = QBuffer(data)
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    picture.save(buffer, "PNG")
+    widget._imageFetched.emit(widget.thumbnailLabel, bytes(data), "thumb", 0, "thumbnail")
 
 
 def _right(w) -> int:
@@ -161,6 +175,59 @@ class TestTwoLeftBaselines:
         assert thumb.width() == round(thumb.height() * 16 / 9), (
             f"썸네일이 16:9가 아니다: {thumb.width()}x{thumb.height()}"
         )
+
+    def test_a_picture_that_arrived_before_the_first_show_is_redrawn_to_the_shown_box(self, qapp):
+        """썸네일 그림이 카드 표시 전에 도착하면 표시 뒤 그려진 그림 크기가 썸네일 칸과 같아야 한다 (#288).
+
+        160x90 PNG를 표시 전 카드의 이미지 도착 신호(_imageFetched)로 넣는다 → 창 폭 900으로 표시
+        -> thumbnailLabel.pixmap().size() == thumbnailLabel.size()
+        """
+        widget = _make_widget(qapp)
+        assert not widget.isVisible(), "전제: 표시 전"
+        _send_thumbnail(widget)
+        box_on_arrival = widget.thumbnailLabel.size()
+
+        _at_width(widget, 900)
+
+        thumb = widget.thumbnailLabel
+        assert thumb.size() != box_on_arrival, (
+            f"전제: 표시 뒤 썸네일 칸 크기가 바뀐다 — 도착 때 {box_on_arrival.toTuple()}, 지금 {thumb.size().toTuple()}"
+        )
+        assert thumb.pixmap().size() == thumb.size(), (
+            f"그림 {thumb.pixmap().size().toTuple()} ≠ 썸네일 칸 {thumb.size().toTuple()}"
+        )
+
+    def test_a_picture_that_arrived_before_the_first_show_is_let_go_at_the_first_show(self, qapp):
+        """썸네일 그림이 카드 표시 전에 도착하면 첫 표시 뒤 카드가 원본 그림을 들고 있지 않아야 한다 (#288).
+
+        160x90 PNG를 표시 전 카드의 이미지 도착 신호(_imageFetched)로 넣는다 → 창 폭 900으로 표시
+        -> _thumbnailSource is None
+        """
+        widget = _make_widget(qapp)
+        assert not widget.isVisible(), "전제: 표시 전"
+        _send_thumbnail(widget)
+        assert widget._thumbnailSource is not None, "전제: 표시 전에는 원본을 들고 있다"
+
+        _at_width(widget, 900)
+
+        assert widget.isVisible(), "전제: 표시됨"
+        assert widget._thumbnailSource is None, "첫 표시 뒤에도 원본 그림을 들고 있다"
+
+    def test_a_picture_that_arrives_after_the_first_show_is_not_held(self, qapp):
+        """썸네일 그림이 카드 표시 뒤에 도착하면 카드가 원본 그림을 들고 있지 않아야 한다 (#288).
+
+        창 폭 900으로 표시 → 160x90 PNG를 이미지 도착 신호(_imageFetched)로 넣는다
+        -> _thumbnailSource is None
+        """
+        widget = _make_widget(qapp)
+        _at_width(widget, 900)
+        assert widget.isVisible(), "전제: 표시됨"
+
+        _send_thumbnail(widget)
+
+        thumb = widget.thumbnailLabel
+        assert thumb.pixmap().size() == thumb.size(), "전제: 그림이 지금 칸 크기로 그려졌다"
+        assert widget._thumbnailSource is None, "표시 뒤에 온 원본 그림을 들고 있다"
 
 
 class TestOneRightEdge:
@@ -883,6 +950,39 @@ class TestStateSwapKeepsCardHeight:
         _at_width(widget, 900)
         assert abs(widget.statusLabel.y() - pill_y) <= 4, (
             f"슬롯 교체로 3행 세로 위치가 흔들린다: pill y={pill_y}, 텍스트 y={widget.statusLabel.y()}"
+        )
+
+
+class TestTitleEditKeepsCardHeight:
+    """제목 편집 전 · 중 · 후의 카드 높이와 3행 위치 (#288)."""
+
+    @staticmethod
+    def _height_and_row3_y(widget) -> tuple[int, int]:
+        QApplication.processEvents()
+        return widget.sizeHint().height(), widget.buttons[0].y()
+
+    @pytest.mark.parametrize("width", WIDTHS)
+    def test_card_height_and_row3_y_stay_while_editing_the_title(self, qapp, width):
+        """대기 카드의 제목을 눌러 편집하고 Enter로 끝내면 카드 높이와 3행 세로 위치가 그대로여야 한다.
+
+        대기 카드, 창 폭 560 · 900 · 1600, 제목 라벨 클릭 → Enter
+        -> (sizeHint 높이, 첫 pill y)가 편집 전 == 편집 중 == 편집 후
+        """
+        widget = _make_widget(qapp)
+        _at_width(widget, width)
+        assert widget.titleLabel.isVisible(), "전제: 제목 라벨이 보인다"
+        before = self._height_and_row3_y(widget)
+
+        QTest.mouseClick(widget.titleLabel, Qt.MouseButton.LeftButton)
+        assert widget.titleEdit.isVisible() and widget.isEditing, "전제: 편집 중"
+        editing = self._height_and_row3_y(widget)
+
+        QTest.keyClick(widget.titleEdit, Qt.Key.Key_Return)
+        assert widget.titleLabel.isVisible() and not widget.isEditing, "전제: 편집이 끝났다"
+        after = self._height_and_row3_y(widget)
+
+        assert before == editing == after, (
+            f"(카드 높이, 3행 y) 편집 전 {before} · 편집 중 {editing} · 편집 후 {after}"
         )
 
 

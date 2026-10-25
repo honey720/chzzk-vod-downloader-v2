@@ -187,6 +187,7 @@ class HlsAesDownloader(BaseDownloader):
             DiskSpaceError: 어림한 크기가 임시 폴더 · 저장 폴더의 여유 공간에 들어가지 않는 경우
         """
         self._space = None  # 실행마다 다시 만든다
+        self._remux_started = False  # 같은 엔진을 다시 돌려도 앞 실행의 것이 남지 않게 (#412)
         # 구간 다운로드의 상태는 실행마다 다시 채운다 — 같은 엔진을 다시 돌려도 남지 않는다
         self._sections = ()
         self._head = None
@@ -421,12 +422,7 @@ class HlsAesDownloader(BaseDownloader):
         index, segment = item
         if index in self._prefetched:
             # 구간을 정하면서 이미 온전하게 받아 둔 세그먼트 — 다시 받지 않는다 (#309)
-            size = self._prefetched[index]
-            with self.lock:
-                self.s.completed_threads += 1
-                self.s.completed_progress += size
-                self.s.threads_progress[part_num] = 0
-            self.logger.log_thread_complete(part_num, size)
+            self._complete_reused(part_num, self._prefetched[index])
             return part_num
         return self._download_segment(
             index=index, segment=segment, part_num=part_num, total_ranges=self.s.total_ranges
@@ -439,12 +435,18 @@ class HlsAesDownloader(BaseDownloader):
         아니므로(같은 영상의 전체 다운로드일 수 있다) 지우지 않고, 이번에 만든 구간 파일만
         지운다 (#309). 이전 실행을 이어받은 실행(Content.section_resume)은 임시
         폴더도 지우지 않는다 — 이전 실행의 구간 파일과 받아 둔 세그먼트가 남는다.
+
+        전체 다운로드의 산출물은 후처리(remux)가 처음 쓴다 — 그 전(준비 · 전송)에 끝났으면
+        output_path를 지우지 않는다. 그 자리의 파일은 이 실행의 것이 아니다 (#412).
         """
         if not self._resumed and os.path.exists(self.temp_dir):
             # 이전 실행을 이어받은 실행은 임시 폴더를 남긴다 — 받아 둔 세그먼트는 이전 실행의
             # 것이다. 이번 실행이 만든 구간 파일만 지운다
             shutil.rmtree(self.temp_dir)
-        made = self._made_sections if self.s.content.selections else [self.s.output_path]
+        if self.s.content.selections:
+            made = self._made_sections
+        else:
+            made = [self.s.output_path] if self._remux_started else []
         for path in made:
             if os.path.exists(path):
                 os.remove(path)
@@ -524,6 +526,10 @@ class HlsAesDownloader(BaseDownloader):
         self._remux_streamed([os.path.join(self.temp_dir, f) for f in segment_files])
 
     # ============ 구간 다운로드의 후처리 (#309) ============
+
+    def _reusable_item_count(self) -> int:
+        # 구간을 정하며 온전한 것으로 확인한 세그먼트는 받지 않고 다시 쓴다 (_download_segment)
+        return len(self._prefetched)
 
     def _segment_path(self, index: int) -> str:
         """임시 폴더 안 index번째 세그먼트의 경로 — _download_segment가 쓰는 이름과 같다."""
@@ -799,6 +805,7 @@ class HlsAesDownloader(BaseDownloader):
                 integrity.TruncatedSegmentError,
             ) as e:
                 with self.lock:
-                    self._requeue_failed((index, segment), part_num, e)
-                self.logger.log_error(f"Part {part_num} download failed", e)
+                    requeue = self._requeue_failed((index, segment), part_num, e)
+                # 로그 · 실패 통지는 락을 놓은 뒤에 한다 (#329)
+                self._settle_requeue(requeue, f"Part {part_num} download failed", e)
                 return part_num

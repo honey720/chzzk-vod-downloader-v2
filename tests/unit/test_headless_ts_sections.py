@@ -467,9 +467,11 @@ def test_failure_between_ts_resolution_and_the_engine_removes_the_segment_folder
     """
     run = _Headless(monkeypatch, host, tmp_path)
     stored = []
+    raised_in = []  # 실패를 낸 스레드 — engine-not-created에서는 서비스의 워커다
 
     def failing(*_args, **_kwargs):
         stored.append(sorted(os.listdir(run.segment_dirs[0])))
+        raised_in.append(threading.current_thread())
         raise RuntimeError("시험")
 
     if where == "before-submit":
@@ -481,6 +483,12 @@ def test_failure_between_ts_resolution_and_the_engine_removes_the_segment_folder
         monkeypatch.setattr(threading, "excepthook", lambda args: died.append(args.exc_value))
         monkeypatch.setattr(HlsAesDownloader, "__init__", failing)
         assert run.main(["00:00:01:00-00:00:02:00"]) == 1
+        # 워커는 끝났다는 표시를 한 뒤에 예외를 스레드 밖으로 내보낸다 — main이 돌아온 때에는
+        # excepthook이 아직 불리지 않았을 수 있다. 스레드는 끝나기 전에 그 안에서 훅을 부르므로
+        # 스레드가 끝날 때까지 기다린 뒤 읽는다 (#369)
+        (worker,) = raised_in
+        worker.join(timeout=10)
+        assert not worker.is_alive()
         assert [type(error) for error in died] == [RuntimeError]
 
     assert len(stored) == 1 and stored[0]  # 실패할 때 받아 둔 세그먼트가 있었다

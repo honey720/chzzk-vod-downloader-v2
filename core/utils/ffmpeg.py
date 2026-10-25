@@ -32,7 +32,9 @@ distro·BtbN 빌드는 정상임을 CI 교차 실측으로 확인했다. pip 방
 
 import ctypes
 import functools
+import logging
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -41,6 +43,10 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable, Iterable, Iterator, Sequence
+
+from core.utils.logging_setup import home_spans
+
+logger = logging.getLogger(__name__)
 
 # GUI 앱의 서브프로세스가 콘솔 창을 띄우지 않게 한다 (Windows 전용 플래그)
 _CREATE_NO_WINDOW = 0x08000000
@@ -308,7 +314,24 @@ def get_ffmpeg_exe() -> str:
         # imageio_ffmpeg은 휠에 동봉된 바이너리를 찾지 못하면 RuntimeError를 던진다
         return imageio_ffmpeg.get_ffmpeg_exe()
     except Exception as e:
+        _forget_failed_lookup(imageio_ffmpeg)
         raise FFmpegNotFoundError(_not_found_message(str(e))) from e
+
+
+def _forget_failed_lookup(imageio_ffmpeg) -> None:
+    """imageio-ffmpeg이 기억한 "못 찾음"을 지운다 — 다음 조회가 처음부터 다시 찾는다 (#423).
+
+    imageio-ffmpeg 0.6.0의 ``_get_ffmpeg_exe``는 ``lru_cache``라 못 찾은 결과(None)도
+    기억한다. 그대로 두면 ffmpeg를 고친 뒤에도 앱을 다시 켤 때까지 못 찾는다. 지우는 것은
+    못 찾았을 때뿐이다 — 찾은 경로는 그 캐시가 계속 기억해 매번 찾지 않는다.
+
+    비공개 이름이라 라이브러리 버전이 바뀌어 없으면 아무것도 하지 않는다 — 그때는
+    ``tests/unit/core/test_ffmpeg_utils.py``가 실패해 알린다.
+    """
+    lookup = getattr(getattr(imageio_ffmpeg, "_utils", None), "_get_ffmpeg_exe", None)
+    clear = getattr(lookup, "cache_clear", None)
+    if clear is not None:
+        clear()
 
 
 def _not_found_message(reason: str) -> str:
@@ -542,6 +565,8 @@ def _copy_piped(
         _close_quietly(proc.stdin, proc.stderr)
         _remove_quietly(dst_path)
         raise
+    finally:
+        _close_feed(chunks)
 
     _close_quietly(proc.stdin)
     # 넣을 것은 다 넣었다 — ffmpeg가 남은 것(mp4의 moov)을 쓰고 끝나기를 기다린다
@@ -560,7 +585,7 @@ def _copy_piped(
     if returncode != 0:
         # 실패한 부분 산출물을 남기지 않는다 (#92 — 정상 파일로 오인 방지)
         _remove_quietly(dst_path)
-        stderr_tail = b"".join(stderr_parts).decode(errors="replace").strip()[-500:]
+        stderr_tail = error_tail(b"".join(stderr_parts).decode(errors="replace"), 500)
         raise RemuxError(f"ffmpeg remux 실패 (exit {returncode}): {stderr_tail}")
 
 
@@ -674,6 +699,8 @@ def remux_through(
         end_both()
         _remove_quietly(dst_path)
         raise
+    finally:
+        _close_feed(chunks)
 
     _close_quietly(convert.stdin)
     # 넣을 것은 다 넣었다 — 두 ffmpeg가 남은 것을 쓰고 끝나기를 기다린다. 이때부터는 공급
@@ -689,11 +716,11 @@ def remux_through(
     _close_quietly(convert.stderr, join.stderr)
     if any(codes):
         _remove_quietly(dst_path)
-        tail = b" | ".join(errors.get(name, b"")[-250:] for name in ("convert", "join"))
-        raise RemuxError(
-            f"ffmpeg remux 실패 (변환 exit {codes[0]} · 잇기 exit {codes[1]}): "
-            f"{tail.decode(errors='replace').strip()}"
+        tail = " | ".join(
+            error_tail(errors.get(name, b"").decode(errors="replace"), 250)
+            for name in ("convert", "join")
         )
+        raise RemuxError(f"ffmpeg remux 실패 (변환 exit {codes[0]} · 잇기 exit {codes[1]}): {tail}")
     return errors.get("join", b"").decode(errors="replace")
 
 
@@ -783,6 +810,90 @@ def parse_out_time(line: str) -> float | None:
         return int(value) / 1_000_000
     except ValueError:
         return None
+
+
+def error_tail(text: str, limit: int) -> str:
+    """오류 글(ffmpeg의 stderr)의 끝 ``limit`` 글자쯤을 줄 경계에서 잘라 돌려준다 (#397).
+
+    글자 수로만 자르면 경로 한가운데(홈 폴더의 사용자 이름 안 등)에서 시작해, 로그가 홈 경로를
+    가리는 규칙(``redact_home``)을 빠져나간다. 자른 자리가 줄 중간이면 그 줄의 머리까지 늘린다 —
+    줄을 버리지 않으므로 글자 수로 자를 때 들어 있던 글(공간 부족 판정이 찾는 "File too large" 등)은
+    모두 남는다.
+
+    줄 머리가 ``limit``보다 더 멀면(한 줄이 매우 길다) 자른 자리가 든 낱말(공백 사이 — 경로 하나)을
+    가르지 않는다: 낱말 머리가 ``limit`` 안이면 거기까지 늘리고, 아니면 그 낱말의 남은 부분을 버린다.
+    경로 구분자에서 자르지 않는 것은 홈 뒤의 폴더에서 자를 때 그 앞 조각(사용자 이름)이 맨 앞에
+    드러나기 때문이다. 버릴 수 없으면(끝까지 한 낱말) 글자 수로 자른다.
+
+    마지막으로 홈 경로(``home_spans``)는 가르지 않는다 — 시작이 그 안이면 그 머리로 옮긴다. 이름에
+    공백이 있으면(``John Doe``) 위의 경계만으로는 이름 한가운데서 시작할 수 있다.
+
+    Args:
+        limit: 남길 글자 수(줄 · 낱말 머리까지 늘리면 최대 그 두 배, 홈 경로를 품으면 그만큼 더)
+    """
+    text = text.strip()
+    head = _tail_head(text, limit)
+    for span_start, span_end in home_spans(text):
+        if span_start < head < span_end:
+            head = span_start
+    return text[head:]
+
+
+def _tail_head(text: str, limit: int) -> int:
+    """``error_tail``이 홈 경로를 보기 전에 정한 꼬리의 시작 자리."""
+    start = len(text) - limit
+    if start <= 0:
+        return 0
+    line_head = max(text.rfind("\n", 0, start), text.rfind("\r", 0, start)) + 1
+    if start - line_head <= limit:
+        return line_head
+    word_head = max(
+        (space.end() for space in _SPACE.finditer(text, line_head, start)), default=line_head
+    )
+    if start - word_head <= limit:
+        return word_head
+    word_end = _SPACE.search(text, start)
+    if word_end is None:
+        return start
+    return len(text) - len(text[word_end.end() :].lstrip())
+
+
+_SPACE = re.compile(r"\s")  # 낱말의 경계
+_PIECE_BREAK = re.compile(r"[\s\\/]")  # 경로 조각의 경계 — 공백 · 경로 구분자
+
+
+def error_head(text: str, limit: int) -> str:
+    """오류 글의 앞 ``limit`` 글자쯤을 경로 조각의 경계에서 잘라 돌려준다 (#397).
+
+    ``error_tail``의 앞쪽판이다. 글자 수로만 자르면 경로 조각(홈 폴더의 사용자 이름 등) 한가운데서
+    끝나, 이름의 앞부분이 로그의 홈 가리기(``redact_home``)를 빠져나간다. 자른 자리가 조각 안이면 그
+    조각의 끝(다음 공백 · 경로 구분자)까지 늘린다. 늘릴 길이가 ``limit``보다 길면 그 조각 앞에서
+    자른다 — 조각 앞이 없으면(글 전체가 한 조각) 글자 수로 자른다.
+
+    마지막으로 홈 경로(``home_spans``)는 가르지 않는다 — 끝이 그 안이면 그 끝으로 옮긴다.
+
+    Args:
+        limit: 남길 글자 수(조각 끝까지 늘리면 최대 그 두 배, 홈 경로를 품으면 그만큼 더)
+    """
+    text = text.strip()
+    end = _head_end(text, limit)
+    for span_start, span_end in home_spans(text):
+        if span_start < end < span_end:
+            end = span_end
+    return text[:end]
+
+
+def _head_end(text: str, limit: int) -> int:
+    """``error_head``가 홈 경로를 보기 전에 정한 머리의 끝 자리."""
+    # 자른 자리의 앞이나 뒤가 경계면 조각을 가르지 않는다
+    if len(text) <= limit or _PIECE_BREAK.match(text, limit - 1) or _PIECE_BREAK.match(text, limit):
+        return min(limit, len(text))
+    piece_end = _PIECE_BREAK.search(text, limit)
+    end = piece_end.start() if piece_end else len(text)
+    if end - limit <= limit:
+        return end
+    piece_head = max((match.start() for match in _PIECE_BREAK.finditer(text, 0, limit)), default=0)
+    return piece_head if piece_head > 0 else limit
 
 
 def _run_controlled(
@@ -934,9 +1045,29 @@ def read_in_chunks(path: str, chunk_size: int = 1024 * 1024) -> Iterator[bytes]:
 
 
 def _remove_quietly(path: str) -> None:
-    """존재하면 삭제한다 (실패 정리 경로 전용 — 없어도 오류가 아니다)."""
-    if os.path.exists(path):
-        os.remove(path)
+    """존재하면 삭제한다 (실패 정리 경로 전용 — 없어도, 지우지 못해도 오류가 아니다).
+
+    지우지 못하면(``OSError``) 경고 로그만 남긴다 (#389). 이 함수는 실패를 알리는 길에서만
+    불린다 — 여기서 예외를 내면 그 예외가 알리려던 실패(``RemuxError`` 등)를 대신해, 구간의 컷
+    실패가 다운로드 전체의 실패가 됐다.
+    """
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except OSError as e:
+        logger.warning("실패한 산출물을 지우지 못했다: %s", e)
+
+
+def _close_feed(chunks: Iterable[bytes]) -> None:
+    """공급 이터레이터가 제너레이터면 닫는다 — 읽던 파일을 놓게 한다 (#389).
+
+    ffmpeg가 먼저 끝나 공급 루프가 중간에 빠지면 제너레이터는 파일을 연 채 멈춰 있다. 그것을
+    가리키는 프레임을 예외의 트레이스백이 붙잡아, 실패 뒤 정리가 임시 폴더를 지울 때 그 파일이
+    열려 있었다(Windows에서는 지우지 못한다). 끝까지 돈 제너레이터 · 리스트에는 할 일이 없다.
+    """
+    close = getattr(chunks, "close", None)
+    if close is not None:
+        close()
 
 
 def _close_quietly(*streams) -> None:

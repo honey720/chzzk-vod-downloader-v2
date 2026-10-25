@@ -34,6 +34,7 @@ import pytest
 import core.api.mp4 as mp4_module
 import core.downloaders.base as base_module
 import core.downloaders.file_downloader as fd_module
+import core.models.sample_column as column_module
 import core.utils.hybrid_cut as cut_module
 import core.utils.interaction as interaction
 import core.utils.mp4_partial as partial_module
@@ -58,6 +59,7 @@ from core.downloaders.ranges import split_span
 from core.models.download_data import DownloadData
 from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
+from core.services.download_service import DownloadService
 from core.utils.cut_check import check_cut
 from core.utils.ffmpeg import get_ffmpeg_exe
 from core.utils.mp4_ranges import (
@@ -71,6 +73,7 @@ from core.utils.hybrid_cut import CUT_FAILED, CutError, cut_frames_from_mp4
 from core.utils.paths import (
     build_section_output_paths,
     partial_source_path_for,
+    release_output_paths,
     section_body_path_for,
 )
 from core.utils.selections import SELECTION_OUT_OF_RANGE, SelectionError
@@ -82,8 +85,10 @@ from tests.unit.core.long_ffmpeg import (
 )
 from tests.unit.core.reference_cut import hybrid_cut
 from tests.unit.core.midway_cut_failure import MidwayCutFailure
+from core.utils.retry import RETRY_MAX_DELAY
 from tests.unit.core.range_host import RangeHost
 from tests.unit.core.section_retry import CutCalls, hand_over, snapshot
+from tests.unit.core.undeletable import Undeletable
 
 FPS = 30
 KEYFRAMES = (0, 30, 42, 72, 90, 120, 150)  # -force_key_frames 0,1,1.4,2.4,3,4,5 (30fps)
@@ -128,6 +133,15 @@ def _index(path: str):
             return f.read(size)
 
     return read_mp4_index(read)
+
+
+@pytest.fixture(autouse=True)
+def rest_at_every_gap(monkeypatch):
+    """조작 중이면 틈마다 쉬게 한다(쉼 사이 시간 판정 0) — 이 파일은 쉬는 자리를 잰다 (#408).
+
+    쉼을 일한 시간으로 묶는 동작은 ``tests/unit/core/test_interaction.py``의 가짜 시계 테스트가 잰다.
+    """
+    monkeypatch.setattr(interaction, "REST_AFTER_SECONDS", 0.0)
 
 
 @pytest.fixture(scope="module")
@@ -176,6 +190,17 @@ class _Logger:
         return record
 
 
+class _LeapingClock:
+    """엔진의 재요청 시계(`_retry_now`) 대체 — 읽을 때마다 재요청 대기의 상한만큼 흐른다."""
+
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        self.now += RETRY_MAX_DELAY
+        return self.now
+
+
 class _Run:
     """엔진 한 번의 실행과 그 결과."""
 
@@ -204,6 +229,8 @@ class _Run:
             on_failed=self.failures.append,
         )
         self.engine._inspect_cuts = True
+        # 재요청 대기(#329)를 실제 시간으로 기다리지 않는다 — 읽을 때마다 대기의 상한만큼 흐르는 시계
+        self.engine._retry_now = _LeapingClock()
 
     def _on_finished(self) -> None:
         self.finished += 1
@@ -736,6 +763,54 @@ def test_section_run_that_fails_or_stops_leaves_the_file_at_output_path_alone(
         assert f.read() == b"keep"
 
 
+def test_section_run_that_fails_in_prepare_leaves_the_file_at_output_path_alone(server, tmp_path):
+    """준비에서 실패한 구간 다운로드는 output_path 자리에 있던 파일을 지우지 않아야 한다.
+
+    기본 입력(6초), 구간 5~7초(영상 밖 — 준비가 SelectionError), output_path 자리에 b"keep" 파일
+    -> 실패 1건(SelectionError), 저장 폴더에 그 파일 하나뿐이고 내용이 b"keep"
+    """
+    run = _Run(server, "plain", tmp_path, [TimeRange(5.0, 7.0)])
+    with open(run.data.output_path, "wb") as f:
+        f.write(b"keep")
+
+    run.start()
+
+    assert [type(e) for e in run.failures] == [SelectionError]
+    assert run.listing() == ["unused.mp4"]
+    with open(run.data.output_path, "rb") as f:
+        assert f.read() == b"keep"
+
+
+def test_section_run_that_fails_opening_a_body_file_removes_only_the_files_it_opened(
+    server, tmp_path, monkeypatch
+):
+    """본문 파일을 열다 실패한 구간 다운로드는 그 실행이 연 파일만 지우고, 아직 열지 않은 자리의 파일은 남겨야 한다.
+
+    기본 입력, 구간 셋. 엔진 모듈의 open이 둘째 구간의 본문 파일을 열 때만 OSError(EACCES) — 그
+    자리에는 아무것도 없다. 셋째 구간의 본문 파일 자리에 b"keep" 파일을 미리 둠
+    -> 실패 1건, 경계 원본 · 첫 본문 파일 없음, 셋째 자리의 파일이 b"keep" 그대로 있다
+    """
+    run = _Run(server, "plain", tmp_path, _three())
+    bodies = [section_body_path_for(path) for path in run.paths]
+    with open(bodies[2], "wb") as f:
+        f.write(b"keep")
+
+    def refusing_open(path, *args, **kwargs):
+        if path == bodies[1]:
+            raise OSError(errno.EACCES, "시험 — 열 수 없다")
+        return open(path, *args, **kwargs)
+
+    monkeypatch.setattr(fd_module, "open", refusing_open, raising=False)
+
+    run.start()
+
+    assert len(run.failures) == 1
+    assert not os.path.exists(run.source_path)
+    assert not os.path.exists(bodies[0])
+    with open(bodies[2], "rb") as f:
+        assert f.read() == b"keep"
+
+
 def test_finished_run_releases_reserved_names(server, tmp_path, monkeypatch):
     """다운로드가 끝나면(실패 포함) 배정받은 구간 파일명의 예약이 풀려야 한다.
 
@@ -1050,6 +1125,88 @@ def test_retry_cuts_only_the_failed_section_from_the_kept_source_without_request
         data.sections_failed,
         data.sections_resumed,
     ) == (3, 3, 0, 2)
+
+
+@pytest.mark.parametrize("undeletable", [False, True], ids=["지울 수 있음", "지울 수 없음"])
+def test_cut_failure_whose_output_cannot_be_removed_still_ends_as_a_partial_failure(
+    server, tmp_path, monkeypatch, undeletable
+):
+    """구간의 컷이 실패하면 그 출력을 지울 수 없어도 일부 실패로 끝나고, 이어받은 실행은 그 구간만 다시 잘라야 한다 (#389).
+
+    구간 셋, 둘째 구간의 컷이 출력 파일을 반쯤 쓰고 CutError. 그 출력의 os.remove가
+    PermissionError(대조: 지울 수 있음)
+    -> 실패 1건(PostprocessError, 원인 CutError), 구간 상태 == (전체 3, 완료 2, 실패 1), 이어받기 기록이
+       있다, `_1` · `_3` 파일과 경계 원본 · 둘째 구간의 본문이 남는다, 지울 수 없을 때만 `_2`가 남고
+       지우기 거절이 1번 이상
+    -> 남은 `_2`를 치우고 이어받은 실행: 컷 호출 1회(`_2`), 완료 1회 · 실패 0건, 요청 0건
+    """
+    blocker = Undeletable(monkeypatch)
+    cuts = CutCalls(monkeypatch, fd_module, "finish_section_file", source_arg=0)
+    cuts.fail_on = (2,)
+    failed = _Run(server, "plain", tmp_path, _three())
+    if undeletable:
+        blocker.block(failed.paths[1])
+
+    failed.start()
+
+    assert len(failed.failures) == 1
+    assert isinstance(failed.failures[0], PostprocessError)
+    assert isinstance(failed.failures[0].__cause__, CutError)
+    data = failed.data
+    assert (data.sections_total, data.sections_done, data.sections_failed) == (3, 2, 1)
+    assert data.section_resume is not None
+    assert os.path.isfile(failed.paths[0]) and os.path.isfile(failed.paths[2])
+    assert os.path.isfile(failed.source_path)
+    assert os.path.isfile(section_body_path_for(failed.paths[1]))
+    assert os.path.exists(failed.paths[1]) == undeletable
+    assert bool(blocker.refused) == undeletable
+
+    blocker.release()
+    if undeletable:
+        # 남은 것이 이름을 차지하면 이어받은 실행은 둘째 구간에 새 이름을 준다 — 이 테스트는 그
+        # 경우(이름이 바뀐 mp4 재시도)를 재지 않는다
+        os.remove(failed.paths[1])
+    requests_before = len(server.requests)
+    cuts.restart()
+    again = hand_over(failed, _Run(server, "plain", tmp_path, _three())).start()
+
+    assert (again.finished, again.failures) == (1, [])
+    assert cuts.outputs == [THREE_FILES[1]]
+    assert server.requests[requests_before:] == []
+
+
+def test_section_file_that_cannot_be_put_in_place_fails_alone(server, tmp_path, monkeypatch):
+    """다 쓴 본문을 구간 파일의 이름으로 바꾸지 못하면 그 구간만 실패하고 본문이 남아야 한다 (#389).
+
+    구간 셋, 둘째 구간의 출력 경로로 옮기는 os.replace가 PermissionError
+    -> 실패 1건(PostprocessError, 원인 CutError, 그 원인 PermissionError), 구간 상태 == (3, 2, 1), 이어받기
+       기록이 있다, `_1` · `_3` 파일과 경계 원본 · 둘째 구간의 본문이 남는다, 옮기기 거절이 1번
+    -> 막은 것을 풀고 이어받은 실행: 완료 1회 · 실패 0건, 요청 0건
+    """
+    blocker = Undeletable(monkeypatch)
+    failed = _Run(server, "plain", tmp_path, _three())
+    blocker.block_replace_into(failed.paths[1])
+
+    failed.start()
+
+    assert len(failed.failures) == 1
+    assert isinstance(failed.failures[0], PostprocessError)
+    assert isinstance(failed.failures[0].__cause__, CutError)
+    assert isinstance(failed.failures[0].__cause__.__cause__, PermissionError)
+    data = failed.data
+    assert (data.sections_total, data.sections_done, data.sections_failed) == (3, 2, 1)
+    assert data.section_resume is not None
+    assert os.path.isfile(failed.paths[0]) and os.path.isfile(failed.paths[2])
+    assert os.path.isfile(failed.source_path)
+    assert os.path.isfile(section_body_path_for(failed.paths[1]))
+    assert blocker.replace_refused == [failed.paths[1]]
+
+    blocker.release()
+    requests_before = len(server.requests)
+    again = hand_over(failed, _Run(server, "plain", tmp_path, _three())).start()
+
+    assert (again.finished, again.failures) == (1, [])
+    assert server.requests[requests_before:] == []
 
 
 def test_stop_during_retry_removes_only_what_the_retry_made(server, tmp_path, monkeypatch):
@@ -2303,3 +2460,230 @@ def test_retry_makes_a_finished_section_again_when_its_file_changed_size(
         assert f.read() == b"0123456789"
     assert snapshot(kept) == kept
     assert again.data.sections_resumed == 1
+
+
+# ============ 서비스로 돌린 실행의 중단 (#410) ============
+
+# 중단한 실행이 끝나기를 기다리는 시간(초). 해석이 조각 사이에서 그만두면 몇 ms 안에 끝난다 —
+# 그만두지 않으면 틈에서 붙잡혀(``_StopAtFirstGap``) 이 시간을 넘긴다
+_STOPPED_RUN_SECONDS = 5.0
+
+
+class _ServiceRun:
+    """서비스(``DownloadService``)에 제출한 구간 다운로드 한 번 — 엔진은 서비스가 만들어 돌린다."""
+
+    def __init__(self, server, tmp_path, selections):
+        self.folder = tmp_path / "out"
+        self.folder.mkdir(exist_ok=True)
+        self.data = DownloadData(
+            base_url=server.url("plain"),
+            vod_url="https://chzzk.naver.com/video/1",
+            output_path=str(self.folder / "unused.mp4"),
+            resolution=144,
+            content_type="video",
+        )
+        self.data.content.selections = tuple(selections)
+        self.data.content.selection_paths = build_section_output_paths(
+            str(self.folder), "구간 시험", 144, len(selections)
+        )
+        self.paths = self.data.content.selection_paths
+        self.finished = 0
+        self.failures: list[BaseException] = []
+        self.logger = _Logger()
+        self.handle = None
+
+    def submit(self) -> "_ServiceRun":
+        self.handle = DownloadService().submit(
+            self.data.content,
+            data=self.data,
+            task_logger=self.logger,
+            on_finished=self._on_finished,
+            on_failed=self.failures.append,
+        )
+        return self
+
+    def _on_finished(self) -> None:
+        self.finished += 1
+
+    def listing(self) -> list[str]:
+        return sorted(os.listdir(self.folder))
+
+
+class _StopAtFirstGap:
+    """색인 해석의 틈에서 쉬는 자리 대역 — 첫 틈에서 중단하고, 그 뒤에 닿은 틈은 세며 붙잡는다.
+
+    붙잡힌 틈은 ``released``가 설 때까지 기다린다 — 해석이 그만두지 않으면 실행이 끝나지 않는다.
+    """
+
+    def __init__(self, stop):
+        self._stop = stop
+        self.stopped = threading.Event()
+        self.released = threading.Event()
+        self.gaps_after_stop = 0
+
+    def __call__(self) -> None:
+        if not self.stopped.is_set():
+            self.stopped.set()
+            self._stop()
+            return
+        self.gaps_after_stop += 1
+        self.released.wait(_RUN_LIMIT_SECONDS)
+
+
+def _stop_while_parsing(
+    server, tmp_path, monkeypatch, *, at_output_path: bytes | None = None
+) -> SimpleNamespace:
+    """받아 둔 moov를 넘긴 구간 다운로드를 서비스로 돌리고, 엔진의 색인 해석 첫 틈에서 중단한다.
+
+    중단한 실행이 끝나기를 ``_STOPPED_RUN_SECONDS`` 기다린 바로 그때 같은 폴더 · 제목으로 구간
+    파일 이름을 다시 배정해 본다(곧바로 다시 시작). 그 뒤 붙잡힌 틈을 놓아 실행을 끝낸다.
+
+    Args:
+        at_output_path: 주면 제출하기 전에 공유 데이터의 output_path에 이 바이트의 파일을 둔다
+    """
+    run = _ServiceRun(server, tmp_path, [TimeRange(_seconds(35), _seconds(80))])
+    if at_output_path is not None:
+        with open(run.data.output_path, "wb") as f:
+            f.write(at_output_path)
+    pending = pending_mp4_head(fetch_mp4_raw(server.url("plain")))
+    run.data.content.mp4_pending = pending
+    gap = _StopAtFirstGap(run.data.model.stop)
+    monkeypatch.setattr(column_module, "rest_if_user_interacting", gap)
+    made = []
+    real_prepare_output = FileDownloader._prepare_output
+
+    def recording_prepare_output(engine) -> None:
+        real_prepare_output(engine)
+        made.append(sorted(os.listdir(run.folder)))
+
+    monkeypatch.setattr(FileDownloader, "_prepare_output", recording_prepare_output)
+    run.submit()
+    try:
+        ended = run.handle.wait(_STOPPED_RUN_SECONDS)
+        again = build_section_output_paths(str(run.folder), "구간 시험", 144, 1)
+        release_output_paths(again)
+    finally:
+        gap.released.set()
+        assert run.handle.wait(_RUN_LIMIT_SECONDS)
+    return SimpleNamespace(run=run, pending=pending, gap=gap, ended=ended, again=again, made=made)
+
+
+def test_stopping_while_the_engine_parses_the_moov_stops_the_parse_within_one_chunk(
+    server, tmp_path, monkeypatch
+):
+    """서비스로 돌린 구간 다운로드를 색인 해석 도중 중단하면 해석이 조각 하나 안에 그만둬야 한다.
+
+    기본 입력, 구간 프레임 35~80, 받아 둔 moov(pending_mp4_head)를 넘김. 해석의 첫 틈에서
+    model.stop()
+    -> 중단 뒤 다음 틈에 닿지 않는다, 실행이 끝난다, 해석한 색인 없음, 받아 둔 바이트는 남는다
+    """
+    stopped = _stop_while_parsing(server, tmp_path, monkeypatch)
+
+    assert stopped.gap.stopped.is_set(), "전제: 해석의 틈에서 중단했다"
+    assert stopped.gap.gaps_after_stop == 0
+    assert stopped.ended
+    assert stopped.pending.peek() is None
+    assert stopped.pending.raw is not None
+
+
+def test_stopping_while_the_engine_parses_the_moov_ends_as_stopped_during_prepare(
+    server, tmp_path, monkeypatch
+):
+    """색인 해석 도중 중단한 실행은 실패가 아니라 준비 중 중단으로 끝나야 한다.
+
+    위와 같은 실행
+    -> 실패 통지 없음, 완료 통지 없음, log_stopped == [("prepare",)], log_exception 없음
+    """
+    stopped = _stop_while_parsing(server, tmp_path, monkeypatch)
+
+    run = stopped.run
+    assert (run.failures, run.finished) == ([], 0)
+    assert _logged(run, "log_stopped") == [("prepare",)]
+    assert _logged(run, "log_exception") == []
+
+
+def test_stopping_while_the_engine_parses_the_moov_does_not_log_the_download_start(
+    server, tmp_path, monkeypatch
+):
+    """색인 해석 도중 중단한 실행은 "Download started" 줄(log_download_start)을 남기지 않아야 한다.
+
+    위와 같은 실행
+    -> log_download_start 0회
+    """
+    stopped = _stop_while_parsing(server, tmp_path, monkeypatch)
+
+    assert _logged(stopped.run, "log_download_start") == []
+
+
+def test_stopping_while_the_engine_parses_the_moov_makes_no_output_file(
+    server, tmp_path, monkeypatch
+):
+    """색인 해석 도중 중단한 실행은 산출물 파일(경계 원본 · 본문 파일)을 만들지 않아야 한다.
+
+    위와 같은 실행. 엔진의 _prepare_output이 불리면 그 뒤 폴더의 목록을 적음
+    -> _prepare_output 0회, 끝난 뒤 폴더에 남은 것 없음
+    """
+    stopped = _stop_while_parsing(server, tmp_path, monkeypatch)
+
+    assert stopped.made == []
+    assert stopped.run.listing() == []
+
+
+def test_stopping_while_the_engine_parses_the_moov_leaves_the_file_at_output_path_alone(
+    server, tmp_path, monkeypatch
+):
+    """색인 해석 도중 중단한 실행은 공유 데이터의 output_path에 있던 파일을 지우지 않아야 한다.
+
+    위와 같은 실행. 제출 전에 output_path("unused.mp4")에 10바이트 파일을 둠
+    -> 끝난 뒤 그 파일이 10바이트 그대로 있다
+    """
+    stopped = _stop_while_parsing(server, tmp_path, monkeypatch, at_output_path=b"0123456789")
+
+    assert stopped.run.listing() == ["unused.mp4"]
+    with open(stopped.run.data.output_path, "rb") as f:
+        assert f.read() == b"0123456789"
+
+
+def test_starting_again_right_after_stopping_during_the_parse_gets_the_same_names(
+    server, tmp_path, monkeypatch
+):
+    """색인 해석 도중 중단하고 곧바로 다시 시작하면 구간 파일 이름에 " (1)"이 붙지 않아야 한다.
+
+    위와 같은 실행. 중단한 실행이 끝나기를 5초 기다린 그때 같은 폴더 · 제목 · 해상도로 이름을
+    다시 배정
+    -> 다시 배정한 이름 == 처음 배정한 이름("구간 시험 144p_1.mp4")
+    """
+    stopped = _stop_while_parsing(server, tmp_path, monkeypatch)
+
+    assert stopped.again == stopped.run.paths
+    assert os.path.basename(stopped.again[0]) == "구간 시험 144p_1.mp4"
+
+
+def test_stopping_while_a_section_head_is_written_ends_as_stopped_during_postprocess(
+    server, tmp_path, monkeypatch
+):
+    """서비스로 돌린 실행을 구간 파일의 머리를 쓰는 도중 중단하면 실패가 아니라 후처리 중 중단으로 끝나야 한다.
+
+    기본 입력, 구간 프레임 35~80. 구간 파일을 쓰는 함수(_write_section_file)에 들어가자마자
+    model.stop() — 그 함수는 표를 조각으로 쓰며 조각 사이에서 그만둘지 묻는다
+    -> 실패 통지 없음, 완료 통지 없음, log_stopped == [("postprocess",)], log_exception 없음,
+       폴더에 남은 것 없음
+    """
+    run = _ServiceRun(server, tmp_path, [TimeRange(_seconds(35), _seconds(80))])
+    real = fd_module._write_section_file
+    entered = []
+
+    def stopping(*args, **kwargs):
+        entered.append(True)
+        run.data.model.stop()
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(fd_module, "_write_section_file", stopping)
+    run.submit()
+
+    assert run.handle.wait(_RUN_LIMIT_SECONDS)
+    assert entered, "전제: 구간 파일을 쓰기 시작했다"
+    assert (run.failures, run.finished) == ([], 0)
+    assert _logged(run, "log_stopped") == [("postprocess",)]
+    assert _logged(run, "log_exception") == []
+    assert run.listing() == []

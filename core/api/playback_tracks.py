@@ -178,12 +178,14 @@ def select_variant_by_height(master_text: str, resolution: int) -> str:
     playback 정보에 그 해상도의 트랙이 없으면 정체를 알 수 없다. 그때는 전과 같이
     ``RESOLUTION=가로x세로``의 세로값으로 찾는다.
 
+    마지막 줄은 보지 않는다 — 그 뒤에 주소 줄이 없다(``_variants``와 같다, #333).
+
     Raises:
         StreamSelectionError: 맞는 줄이 없는 경우
     """
     pattern = re.compile(_LEGACY_SIZE.format(resolution=resolution))
     lines = master_text.splitlines()
-    for number, line in enumerate(lines):
+    for number, line in enumerate(lines[:-1]):
         if pattern.search(line):
             return lines[number + 1].strip()
     raise StreamSelectionError(f"{resolution} 해상도 스트림을 찾을 수 없습니다.")

@@ -170,6 +170,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self._pillRows: list[QHBoxLayout] = []  # 펼쳐서 넘친 pill을 받는 추가 행(0개가 기본)
         self._pillRowOf: dict[int, int] = {}    # id(pill) → 지금 놓인 행 번호(0 = 3행)
         self._rowStrut: QWidget | None = None       # 펼친 동안 3행 세로 정책을 지키는 0폭 버팀목
+        self._thumbnailSource: QPixmap | None = None  # 표시 전에 받은 썸네일 원본 — 첫 표시에서 다시 그리고 놓는다 (#288)
         self.buttons: list[ResolutionPill] = []
         self.setupUi(self)
         self._sizeThumbnail()  # 컨텐츠 열 높이가 정해진 뒤, 이미지 로드 전에
@@ -192,15 +193,28 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         `ensurePolished()`가 먼저다 — 전역 QSS의 위계 폰트(@fontSizeTitle
         등)는 polish 시점에 위젯 폰트로 병합되는데, 그 전에 sizeHint를
         읽으면 기본 폰트 기준의 틀린 높이가 나온다(실측 확인).
+
+        2행은 제목 입력칸의 높이로 잡는다(#288) — 라벨과 입력칸은 같은 자리를 번갈아
+        쓰므로, 낮은 라벨에 맞추면 편집으로 들어갈 때 행이 자라 카드가 길어지고 3행이
+        밀린다. 숨은 입력칸의 힌트는 레이아웃 캐시에 남았다 지워졌다 하므로 그것에 기대지
+        않고 라벨의 최소 높이로 박는다.
+
+        칸 크기가 바뀌었고 받아 둔 그림이 있으면 새 크기로 다시 그린다 — 그림은 도착한
+        때의 칸 크기로 그려지므로, 표시 전에 도착하면 표시 뒤(showEvent)의 크기와 어긋난다.
         """
         if self._expanded:
             # 펼쳐서 늘어난 높이는 잠깐이다 — 썸네일은 접힌 높이를 유지한다
             return
         for label in (self.channelNameLabel, self.titleLabel, self.statusLabel,
-                      self.fileSizeLabel, self.directoryLabel):
+                      self.fileSizeLabel, self.directoryLabel, self.titleEdit):
             label.ensurePolished()
+        self.titleLabel.setMinimumHeight(self.titleEdit.sizeHint().height())
         height = self.contentLayout.sizeHint().height()
+        previous = self.thumbnailLabel.size()
         self.thumbnailLabel.setFixedSize(round(height * 16 / 9), height)
+        if self._thumbnailSource is not None and self.thumbnailLabel.size() != previous:
+            box = self.thumbnailLabel.size()
+            self.thumbnailLabel.setPixmap(self._composeThumbnail(self._thumbnailSource, box))
 
     def _placeProgressBar(self) -> None:
         """하단 진행바를 카드 바닥에 오버레이로 배치한다 (#245).
@@ -242,6 +256,10 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         offscreen 둘 다 재현). showEvent 시점엔 자식 레이아웃이 잡혀 있다.
         """
         super().showEvent(event)
+        # 생성 중에 잰 행 높이 힌트는 표시 전이라 작을 수 있다(1행 16 → 20px 실측) — 표시 뒤의
+        # 힌트로 썸네일을 다시 맞춘다. 숨은 제목 입력칸의 힌트가 이 차이를 가려 왔다 (#288)
+        self._sizeThumbnail()
+        self._thumbnailSource = None  # 다시 그렸으니 원본을 놓는다 — 카드마다 원본을 들고 있지 않는다
         self._layoutRowThree()
 
     def _clampChannelMinWidth(self) -> None:
@@ -335,8 +353,16 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         # ⚠️ 순서는 고정이다 — 클릭해도 pill을 앞으로 옮기지 않는다(옮기면
         # 연속으로 눌러볼 수 없다). 선택만 바뀐다.
         # 해상도가 같은 두 항목은 원본이 앞이다 — 기본 선택(첫 pill)이 원본이 된다 (#318)
+        # 해상도와 원본 여부가 같은 두 항목은 대역폭이 높은 쪽이 앞이다 (#336). 조회 목록은 그런
+        # 항목을 대역폭 오름차순으로 둔다(core/api/dash.py · playback_tracks.list_streams) —
+        # DASH 항목은 대역폭 값을 들지 않으므로 조회 목록의 자리로 정한다
+        listed_at = {id(rep): number for number, rep in enumerate(self.item.unique_reps)}
         self.item.unique_reps.sort(
-            key=lambda rep: (_resolution_key(rep[0]), ContentItem.rep_is_original(rep)),
+            key=lambda rep: (
+                _resolution_key(rep[0]),
+                ContentItem.rep_is_original(rep),
+                listed_at[id(rep)],
+            ),
             reverse=True,
         )
         for unique_rep in self.item.unique_reps:
@@ -794,6 +820,10 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
                 # 도착 시점의 라벨 실제 크기(16:9 상자)에 맞춰 합성한다 —
                 # 라벨 크기는 pill 추가 등으로 요청 이후에도 재계산되므로
                 # (_sizeThumbnail) 요청 시점 값(maxHeight)을 쓰지 않는다.
+                # 표시 전에 왔으면 원본을 남겨 둔다 — 첫 표시(showEvent)에서 칸 크기가 바뀌면
+                # _sizeThumbnail이 다시 그리고 놓는다. 표시 뒤에 온 그림은 지금 칸에 맞다 (#288)
+                if not self.isVisible():
+                    self._thumbnailSource = image
                 label.setPixmap(self._composeThumbnail(image, label.size()))
                 return
             if type == "channel" and original_height > original_width:
@@ -1686,13 +1716,14 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
                     success = QProcess.startDetached("nautilus", [nativePath])
 
                 if not success:
-                    raise OSError(f"'{path}'을(를) 찾을 수 없습니다.")
+                    raise OSError(self.tr("Could not find '{0}'.").format(path))
             else:
                 url = QUrl.fromLocalFile(path)
                 if not QDesktopServices.openUrl(url):  # openUrl이 False를 반환하면 실패
-                    raise OSError(f"'{path}'을(를) 열 수 없습니다.")
+                    raise OSError(self.tr("Could not open '{0}'.").format(path))
         except Exception as e:
-            QMessageBox.warning(self, "경고", str(e))
+            # 경고 창의 글은 화면 언어로 낸다 (#431)
+            QMessageBox.warning(self, self.tr("Warning"), str(e))
             return
             
 

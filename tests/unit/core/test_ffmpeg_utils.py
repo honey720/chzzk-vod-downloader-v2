@@ -12,6 +12,7 @@ ffmpeg 내장 lavfi 소스로 즉석 생성한 초소형 파일이라 네트워�
 """
 
 import functools
+import inspect
 import os
 import struct
 import subprocess
@@ -19,12 +20,14 @@ import sys
 import tempfile
 import threading
 import time
+import weakref
 from types import SimpleNamespace
 
 import pytest
 
 import core.downloaders.base as base_module
 import core.utils.ffmpeg as ffmpeg_module
+import core.utils.fmp4_cut as fmp4_cut_module
 from core.downloaders.base import BaseDownloader, PostprocessError
 from core.models.download_state import DownloadState
 from core.utils.ffmpeg import (
@@ -34,6 +37,7 @@ from core.utils.ffmpeg import (
     read_in_chunks,
     remux_stream,
 )
+from tests.unit.core.undeletable import Undeletable
 
 
 def _top_level_boxes(path) -> list[str]:
@@ -182,6 +186,75 @@ def test_not_found_error_guides_installation(monkeypatch):
         get_ffmpeg_exe()
     message = str(exc_info.value)
     assert "설치" in message and "apt" in message and "IMAGEIO_FFMPEG_EXE" in message
+
+
+# ================================================================ 못 찾은 결과를 기억하지 않는다 (#423)
+
+
+@pytest.fixture
+def bundled_slot(tmp_path, monkeypatch):
+    """동봉본이 놓일 자리를 빈 폴더로 바꾸고, 실행 확인(-version)을 그 자리의 파일만 통과시킨다.
+
+    시스템 · conda의 ffmpeg는 확인을 통과하지 못한다. 확인한 경로를 ``checked``에 적는다.
+    imageio-ffmpeg의 탐색 캐시를 앞뒤로 비운다 — 다른 테스트가 실제 경로를 그대로 쓴다.
+    """
+    import imageio_ffmpeg
+    from imageio_ffmpeg._definitions import FNAME_PER_PLATFORM, get_platform
+
+    utils = imageio_ffmpeg._utils
+    checked: list[str] = []
+
+    def is_valid(exe: str) -> bool:
+        checked.append(exe)
+        return os.path.dirname(exe) == str(tmp_path) and os.path.isfile(exe)
+
+    monkeypatch.delenv("IMAGEIO_FFMPEG_EXE", raising=False)
+    monkeypatch.setattr(ffmpeg_module, "_IS_LINUX", False)
+    monkeypatch.setattr(utils, "_get_bin_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(utils, "_is_valid_exe", is_valid)
+    utils._get_ffmpeg_exe.cache_clear()
+    yield SimpleNamespace(path=str(tmp_path / FNAME_PER_PLATFORM[get_platform()]), checked=checked)
+    utils._get_ffmpeg_exe.cache_clear()
+
+
+def test_ffmpeg_that_appears_after_a_failed_lookup_is_found_on_the_next_lookup(bundled_slot):
+    """처음 조회에서 ffmpeg를 못 찾았어도 그 뒤 ffmpeg가 생기면 다음 조회에서 찾아야 한다.
+
+    동봉본 자리가 빈 상태로 get_ffmpeg_exe → 그 자리에 파일을 둠 → 다시 get_ffmpeg_exe
+    -> 처음은 FFmpegNotFoundError, 다음은 그 파일의 경로
+    """
+    with pytest.raises(FFmpegNotFoundError):
+        get_ffmpeg_exe()
+    with open(bundled_slot.path, "wb") as f:
+        f.write(b"ffmpeg")
+
+    assert get_ffmpeg_exe() == bundled_slot.path
+
+
+def test_found_ffmpeg_is_remembered_and_not_checked_again(bundled_slot):
+    """ffmpeg를 찾은 뒤의 조회는 실행 확인을 다시 하지 않고 같은 경로를 돌려줘야 한다.
+
+    동봉본 자리에 파일을 두고 get_ffmpeg_exe 세 번
+    -> 세 번 모두 그 경로, 실행 확인은 첫 조회의 한 번뿐
+    """
+    with open(bundled_slot.path, "wb") as f:
+        f.write(b"ffmpeg")
+
+    found = [get_ffmpeg_exe() for _ in range(3)]
+
+    assert found == [bundled_slot.path] * 3
+    assert bundled_slot.checked == [bundled_slot.path]
+
+
+def test_imageio_lookup_cache_can_be_cleared():
+    """imageio-ffmpeg의 자동 탐색 함수(_utils._get_ffmpeg_exe)는 cache_clear를 가져야 한다.
+
+    get_ffmpeg_exe가 못 찾은 결과를 지울 때 이 비공개 이름을 쓴다 (#423)
+    -> imageio_ffmpeg._utils._get_ffmpeg_exe.cache_clear가 있다
+    """
+    import imageio_ffmpeg
+
+    assert callable(imageio_ffmpeg._utils._get_ffmpeg_exe.cache_clear)
 
 
 # ================================================================ 스트림 remux
@@ -830,6 +903,114 @@ def test_remux_through_fails_when_only_the_join_side_fails(tmp_path):
     assert not out.exists()
 
 
+_NOT_MEDIA = b"not media " * 6554  # 미디어가 아닌 바이트 약 64KB — ffmpeg가 읽다가 실패하고 끝난다
+
+
+def _remux_in_one_step(chunks, out, work) -> None:
+    remux_stream(chunks, str(out))
+
+
+def _remux_in_two_steps(chunks, out, work) -> None:
+    ffmpeg_module.remux_through(chunks, _CONVERT, _join_args(work, out), str(out), cwd=str(work))
+
+
+_REMUXERS = pytest.mark.parametrize(
+    "remux", [_remux_in_one_step, _remux_in_two_steps], ids=["remux_stream", "remux_through"]
+)
+
+
+@_REMUXERS
+def test_feed_left_midway_because_ffmpeg_ended_is_closed_with_the_file_it_opened(tmp_path, remux):
+    """ffmpeg가 먼저 끝나 공급이 중간에 멈추면, 실패가 올라간 뒤 공급 제너레이터와 그것이 연 파일이 닫혀 있어야 한다 (#389).
+
+    공급: 미디어가 아닌 파일 하나를 연 채 그 내용을 끝없이 내는 제너레이터
+    -> RemuxError, 그 예외의 트레이스백이 살아 있는 동안 제너레이터 상태 == GEN_CLOSED, 연 파일이 닫혀 있다
+    """
+    source = tmp_path / "not_media.bin"
+    source.write_bytes(_NOT_MEDIA)
+    opened = []
+
+    def endless():
+        with open(source, "rb") as f:
+            opened.append(f)
+            while True:
+                f.seek(0)
+                yield f.read()
+
+    feed = endless()
+
+    with pytest.raises(RemuxError) as raised:
+        remux(feed, tmp_path / "out.mp4", tmp_path)
+
+    assert raised.value.__traceback__ is not None  # 공급을 부른 프레임이 아직 살아 있다
+    assert len(opened) == 1  # 끝없는 공급이 중간에 멈췄다 — 끝까지 돌아 닫힌 것이 아니다
+    assert inspect.getgeneratorstate(feed) == inspect.GEN_CLOSED
+    assert opened[0].closed
+
+
+def test_segment_feed_left_midway_closes_the_reader_of_every_segment_it_opened(
+    tmp_path, monkeypatch
+):
+    """구간 컷의 공급(fmp4_cut._feed)이 중간에 멈추면 세그먼트마다 연 읽기 제너레이터가 모두 닫혀 있어야 한다 (#389).
+
+    공급: 미디어가 아닌 약 64KB 파일 200개를 _feed로 잇는다. 변환 ffmpeg는 그것을 읽지 못하고 끝난다
+    -> RemuxError, 트레이스백이 살아 있는 동안 연 읽기 제너레이터가 1개 이상 200개 미만이고 모두
+       닫혔거나 사라졌다
+    """
+    source = tmp_path / "not_media.bin"
+    source.write_bytes(_NOT_MEDIA)
+    # 약한 참조로 적는다 — 강한 참조를 들면 이 목록이 제너레이터를 살려 둔다
+    readers: list[weakref.ref] = []
+    real = fmp4_cut_module.read_in_chunks
+
+    def recording(path, chunk_size):
+        reader = real(path, chunk_size)
+        readers.append(weakref.ref(reader))
+        return reader
+
+    monkeypatch.setattr(fmp4_cut_module, "read_in_chunks", recording)
+    out = tmp_path / "out.mp4"
+
+    with pytest.raises(RemuxError) as raised:
+        ffmpeg_module.remux_through(
+            fmp4_cut_module._feed(b"", [str(source)] * 200),
+            _CONVERT,
+            _join_args(tmp_path, out),
+            str(out),
+            cwd=str(tmp_path),
+        )
+
+    assert raised.value.__traceback__ is not None
+    assert 1 <= len(readers) < 200  # 공급이 중간에 멈췄다
+    left_open = [
+        ref
+        for ref in readers
+        if ref() is not None and inspect.getgeneratorstate(ref()) != inspect.GEN_CLOSED
+    ]
+    assert left_open == []
+
+
+@_REMUXERS
+def test_output_that_cannot_be_removed_does_not_replace_the_remux_failure(
+    tmp_path, monkeypatch, remux
+):
+    """실패한 산출물을 지울 수 없어도 재포장의 실패(RemuxError)가 그대로 올라가야 한다 (#389).
+
+    출력 경로에 파일이 있고 그 os.remove가 PermissionError. 공급: 미디어가 아닌 바이트
+    -> RemuxError, 지우기를 거절한 경로 == [출력 경로], 출력 파일이 남아 있다
+    """
+    out = tmp_path / "out.mp4"
+    out.write_bytes(b"left over")
+    blocker = Undeletable(monkeypatch)
+    blocker.block(out)
+
+    with pytest.raises(RemuxError):
+        remux(iter([_NOT_MEDIA]), out, tmp_path)
+
+    assert blocker.refused == [str(out)]
+    assert out.exists()
+
+
 def _fake_pair(monkeypatch, dst, convert_code: int, join_code: int) -> None:
     """remux_through가 띄우는 두 프로세스를 파이썬 대역으로 바꾼다 — 종료 코드를 정할 수 있게.
 
@@ -1182,3 +1363,134 @@ def test_streamed_remux_stopped_while_waiting_ends_without_a_failure(tmp_path, m
     BaseDownloader._remux_streamed(fake, [str(segment)])
 
     assert fake.errors == []
+
+
+# ============ 오류 글의 꼬리 (#397)
+
+
+def test_error_tail_that_would_start_mid_line_starts_at_the_head_of_that_line():
+    """끝 limit 글자가 줄 중간에서 시작하면 꼬리는 그 줄의 머리에서 시작하고 글자 수 꼬리를 다 담아야 한다 (#397).
+
+    "first line\\nsecond line\\nthird", limit=10 (글자 수 꼬리 "line\\nthird")
+    -> "second line\\nthird"
+    """
+    text = "first line\nsecond line\nthird"
+
+    tail = ffmpeg_module.error_tail(text, 10)
+
+    assert tail == "second line\nthird"
+    assert tail.endswith(text[-10:])
+
+
+def test_error_tail_that_starts_at_a_line_head_is_the_character_tail():
+    """끝 limit 글자가 줄 머리에서 시작하면 꼬리는 글자 수 꼬리 그대로여야 한다 (#397).
+
+    "first line\\nthird", limit=5
+    -> "third"
+    """
+    assert ffmpeg_module.error_tail("first line\nthird", 5) == "third"
+
+
+def test_error_tail_treats_a_carriage_return_as_a_line_break():
+    """줄 바꿈이 \\r뿐인 글(ffmpeg의 진행 줄)에서도 줄 머리에서 시작해야 한다 (#397).
+
+    "progress 1\\rframe 22 end", limit=6 (글자 수 꼬리 "22 end", \\r 다음 줄 머리는 6글자 앞)
+    -> "frame 22 end" (낱말 머리 "22 end"가 아니라 줄 머리)
+    """
+    assert ffmpeg_module.error_tail("progress 1\rframe 22 end", 6) == "frame 22 end"
+
+
+def test_error_tail_of_a_short_text_is_the_whole_stripped_text():
+    """글이 limit보다 짧으면 앞뒤 공백을 걷은 글 전체여야 한다 (#397).
+
+    "  short\\n", limit=500
+    -> "short"
+    """
+    assert ffmpeg_module.error_tail("  short\n", 500) == "short"
+
+
+def test_error_tail_of_one_word_longer_than_limit_from_its_line_head_is_the_character_tail():
+    """줄 머리가 limit보다 멀고 그 줄이 끝까지 한 낱말이면 글자 수 꼬리여야 한다 (#397).
+
+    "head\\n" + "a" * 30 + "end", limit=10 (줄 머리가 꼬리 시작에서 23글자 앞, 공백 없음)
+    -> 끝 10글자
+    """
+    text = "head\n" + "a" * 30 + "end"
+
+    assert ffmpeg_module.error_tail(text, 10) == text[-10:]
+
+
+def test_error_tail_in_a_long_line_starts_at_the_head_of_the_word_it_would_cut():
+    """줄 머리가 limit보다 멀면 자른 자리가 든 낱말의 머리(앞 공백 다음)에서 시작해야 한다 (#397).
+
+    "w " * 20 + "C:/aa/bbbb/c.mp4 end", limit=12 (글자 수 꼬리 "bb/c.mp4 end", 낱말 머리는 8글자 앞)
+    -> "C:/aa/bbbb/c.mp4 end"
+    """
+    assert (
+        ffmpeg_module.error_tail("w " * 20 + "C:/aa/bbbb/c.mp4 end", 12) == "C:/aa/bbbb/c.mp4 end"
+    )
+
+
+def test_error_tail_in_a_long_line_drops_the_rest_of_a_word_whose_head_is_too_far():
+    """줄 머리도 낱말 머리도 limit보다 멀면 자른 자리가 든 낱말의 남은 부분을 버려야 한다 (#397).
+
+    "w " * 20 + "C:/" + "a" * 30 + "/b.mp4 end tail", limit=12 (낱말 머리가 꼬리 시작에서 36글자 앞)
+    -> "end tail"
+    """
+    text = "w " * 20 + "C:/" + "a" * 30 + "/b.mp4 end tail"
+
+    assert ffmpeg_module.error_tail(text, 12) == "end tail"
+
+
+# ============ 오류 글의 머리 (#397)
+
+
+@pytest.mark.parametrize(
+    ("text", "limit", "expected"),
+    [
+        ("open C:/aa/bbbb/c failed", 13, "open C:/aa/bbbb"),  # "bb|bb" — 다음 구분자까지
+        ("open C:\\aa\\bbbb failed", 13, "open C:\\aa\\bbbb"),  # \\ 구분자 · 다음 공백까지
+        ("open C:/aa/bbbb", 13, "open C:/aa/bbbb"),  # 조각이 글 끝까지 — 글 끝까지
+    ],
+)
+def test_error_head_that_would_end_inside_a_piece_ends_at_the_end_of_that_piece(
+    text, limit, expected
+):
+    """앞 limit 글자가 경로 조각 안에서 끝나면 그 조각의 끝(공백 · 경로 구분자 · 글 끝)까지 늘려야 한다 (#397).
+
+    글, limit -> expected
+    """
+    assert ffmpeg_module.error_head(text, limit) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "limit", "expected"),
+    [
+        ("open C:/aa/bbbb", 11, "open C:/aa/"),  # 자른 자리 앞이 구분자
+        ("open C:/aa/bbbb", 10, "open C:/aa"),  # 자른 자리 뒤가 구분자
+        ("short", 50, "short"),  # limit보다 짧다
+    ],
+)
+def test_error_head_on_a_piece_boundary_is_the_character_head(text, limit, expected):
+    """자른 자리가 조각 경계이거나 글이 limit보다 짧으면 앞 limit 글자 그대로여야 한다 (#397).
+
+    글, limit -> expected
+    """
+    assert ffmpeg_module.error_head(text, limit) == expected
+
+
+def test_error_head_whose_piece_end_is_farther_than_limit_ends_before_that_piece():
+    """조각 끝이 limit보다 멀면 그 조각 앞에서 잘라야 한다 (#397).
+
+    "open " + "a" * 30, limit=10 (조각 끝이 자른 자리에서 25글자 뒤)
+    -> "open"
+    """
+    assert ffmpeg_module.error_head("open " + "a" * 30, 10) == "open"
+
+
+def test_error_head_of_one_long_piece_is_the_character_head():
+    """글 전체가 limit보다 긴 한 조각이면 앞 limit 글자여야 한다 (#397).
+
+    "a" * 30, limit=10 -> "a" * 10
+    """
+    assert ffmpeg_module.error_head("a" * 30, 10) == "a" * 10

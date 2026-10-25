@@ -336,7 +336,10 @@ def _http_error(status: int) -> requests.HTTPError:
         (_http_error(403), "Viewing permission required"),
         (_http_error(500), "Failed to fetch video information"),
         (requests.ConnectionError("dns fail"), "Network connection error"),
-        (requests.Timeout("timed out"), "Network connection error"),
+        (requests.Timeout("timed out"), "Server response is slow"),  # #331 — 연결 실패와 가른다
+        (requests.ReadTimeout("read"), "Server response is slow"),
+        # ConnectTimeout은 ConnectionError이기도 하다
+        (requests.ConnectTimeout("connect"), "Server response is slow"),
         (requests.TooManyRedirects("redirect loop"), "Failed to fetch video information"),
     ],
 )

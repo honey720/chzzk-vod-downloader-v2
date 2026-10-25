@@ -132,6 +132,18 @@
         <translation>Select download folder</translation>
     </message>
     <message>
+        <source>Could not find &apos;{0}&apos;.</source>
+        <translation>Could not find &apos;{0}&apos;.</translation>
+    </message>
+    <message>
+        <source>Could not open &apos;{0}&apos;.</source>
+        <translation>Could not open &apos;{0}&apos;.</translation>
+    </message>
+    <message>
+        <source>Warning</source>
+        <translation>Warning</translation>
+    </message>
+    <message>
         <source>Download waiting</source>
         <translation>Download waiting</translation>
     </message>
@@ -265,6 +277,12 @@ A network error occurred while downloading. Check your connection and try again.
 A network error occurred while downloading. Check your connection and try again.</translation>
     </message>
     <message>
+        <source>Network connection lost · check it and try again
+Nothing arrived for a while because the network connection was lost. Check your connection and try again.</source>
+        <translation>Network connection lost · check it and try again
+Nothing arrived for a while because the network connection was lost. Check your connection and try again.</translation>
+    </message>
+    <message>
         <source>Failed to save file · check the path and disk space
 The file could not be saved. Check the download path and free disk space.</source>
         <translation>Failed to save file · check the path and disk space
@@ -344,6 +362,10 @@ Part of the video kept arriving incomplete from the server. Try again later.</tr
     <message>
         <source>Network connection error</source>
         <translation>Please check your network connection.</translation>
+    </message>
+    <message>
+        <source>Server response is slow</source>
+        <translation>The server is responding slowly. Please try again in a moment.</translation>
     </message>
     <message>
         <source>Failed to fetch video information</source>

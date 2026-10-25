@@ -16,6 +16,7 @@ import config.config as config_module
 import main as main_module
 import app.theme as theme
 from app.download_logger import DownloadLogger
+from app.network import NetworkManager
 from app.viewmodels.data import ContentItem
 from app.widgets.widget import ContentItemWidget
 from core.api.dash import parse_dash_manifest
@@ -157,6 +158,23 @@ def test_replay_button_secondary_text_is_the_frame_rate_from_50fps(qapp, sample,
     assert _secondary_texts(widget) == secondary
 
 
+def test_fallback_list_buttons_show_the_same_resolutions_without_source_or_frame_rate(qapp):
+    """playback 정보로 돌아간 목록의 해상도 버튼은 정상 목록과 같은 해상도를 보이되 원본 표시 · fps는 없어야 한다 (#331).
+
+    S1 — 정상 목록(마스터 플레이리스트의 변형)과 대체 목록(playback 정보의 트랙,
+    NetworkManager.get_video_m3u8_manifest)으로 각각 카드
+    -> 정상: 본 글자 ["1080p(source)", "720p", "480p", "360p", "144p"], 보조 ["60fps", "60fps", "", "", ""]
+       대체: 본 글자 ["1080p", "720p", "480p", "360p", "144p"], 보조 모두 빈 문자열
+    """
+    normal = _card(_streams(S1))
+    fallback = _card(NetworkManager.get_video_m3u8_manifest(S1.playback)[0])
+
+    assert _texts(normal) == ["1080p(source)", "720p", "480p", "360p", "144p"]
+    assert _secondary_texts(normal) == ["60fps", "60fps", "", "", ""]
+    assert _texts(fallback) == ["1080p", "720p", "480p", "360p", "144p"]
+    assert _secondary_texts(fallback) == [""] * 5
+
+
 def test_encoded_vod_buttons_show_the_frame_rate_without_a_source_mark(qapp):
     """인코딩 완료 VOD의 해상도 버튼은 보조 글자에 fps만 있고 원본 표시는 없어야 한다.
 
@@ -273,6 +291,54 @@ def test_clicking_the_other_button_of_the_same_short_side_selects_that_stream(qa
     assert [button.isSelected() for button in widget.buttons] == [False, True, False, False, False]
     assert widget.item.stream == StreamKey(720, 1280, 60.0, 3192000)
     assert (widget.item.resolution, widget.item.resolution_tag) == (720, "")
+
+
+# 짧은 변이 720인 Representation 둘(화질 이름이 다르다, 둘 다 원본 아님)과 144 하나 (#336)
+_TWO_720 = """<?xml version="1.0" encoding="UTF-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" xmlns:nvod="urn:naver:vod:2020">
+  <Period><AdaptationSet mimeType="video/mp4">
+    <Representation id="a" width="1280" height="720" bandwidth="3200000" frameRate="60"><nvod:Label kind="qualityId">720P_A</nvod:Label><BaseURL>https://v.invalid/720-60.mp4</BaseURL></Representation>
+    <Representation id="b" width="1280" height="720" bandwidth="1600000" frameRate="30"><nvod:Label kind="qualityId">720P_B</nvod:Label><BaseURL>https://v.invalid/720-30.mp4</BaseURL></Representation>
+    <Representation id="c" width="256" height="144" bandwidth="160000" frameRate="30"><nvod:Label kind="qualityId">144P</nvod:Label><BaseURL>https://v.invalid/144.mp4</BaseURL></Representation>
+  </AdaptationSet></Period>
+</MPD>"""
+
+
+def test_higher_bandwidth_of_the_same_short_side_is_the_first_and_default_button(qapp):
+    """해상도와 원본 여부가 같은 두 항목이면 대역폭이 높은 쪽이 첫 버튼이고 기본 선택이어야 한다 (#336).
+
+    _TWO_720(720 60fps 3200000 · 720 30fps 1600000 · 144, 모두 원본 아님)
+    -> 버튼 순서 720(60fps) · 720 · 144, 첫 버튼만 선택, 아이템의 주소는 60fps 쪽(조회의 기본 선택)
+    """
+    reps = parse_dash_manifest(_TWO_720)[0]
+    assert reps[-1][1] == "https://v.invalid/720-60.mp4"  # 조회의 기본 선택(목록의 마지막)
+
+    widget = _card(reps, content_type="video")
+
+    assert [(button.text(), button.secondaryText()) for button in widget.buttons] == [
+        ("720p", "60fps"),
+        ("720p", ""),
+        ("144p", ""),
+    ]
+    assert [button.isSelected() for button in widget.buttons] == [True, False, False]
+    assert (widget.item.resolution, widget.item.base_url) == (720, "https://v.invalid/720-60.mp4")
+
+
+def test_late_size_of_another_button_does_not_move_the_default(qapp):
+    """다른 버튼의 크기 조회가 먼저 끝나도 기본 선택이 옮겨 가지 않아야 한다 (#336).
+
+    _TWO_720, 둘째 버튼(720 30fps)의 크기 "1.00 GB"가 도착 → 다음 첫 버튼(720 60fps)의 "2.00 GB"
+    -> 첫 버튼만 선택, 아이템의 주소는 60fps 쪽, 아이템의 크기는 "2.00 GB"
+    """
+    widget = _card(parse_dash_manifest(_TWO_720)[0], content_type="video")
+
+    widget._repSizeFetched.emit(1, "1.00 GB")
+    widget._repSizeFetched.emit(0, "2.00 GB")
+    QApplication.processEvents()
+
+    assert [button.isSelected() for button in widget.buttons] == [True, False, False]
+    assert widget.item.base_url == "https://v.invalid/720-60.mp4"
+    assert widget.item.total_size == "2.00 GB"
 
 
 def _start(widget: ContentItemWidget) -> None:

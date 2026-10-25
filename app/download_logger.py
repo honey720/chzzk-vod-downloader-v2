@@ -1,9 +1,16 @@
+import itertools
 import os
 import logging
 from datetime import datetime
 from typing import Optional
 import config.config as config
 from app.viewmodels.data import ContentItem
+from core.utils.logging_setup import RedactingFormatter
+
+# 시도마다 다른 로거 이름을 주는 순번 (#410). 이름이 같으면 시도들이 한 로거를 나눠 써, 앞 시도의
+# 엔진이 남기는 줄이 새 시도의 파일에 들어가고 앞 시도가 닫으면 새 시도의 핸들러가 떨어졌다
+_attempts = itertools.count(1)
+
 
 class DownloadLogger:
     """
@@ -17,6 +24,7 @@ class DownloadLogger:
         self.log_level = log_level
         self.logger = None
         self.log_file = None
+        self._handler = None  # 이 시도의 파일 핸들러 — 닫을 때 이것만 뗀다 (#410)
         self._setup_logging()
 
     def _setup_logging(self):
@@ -27,24 +35,26 @@ class DownloadLogger:
         log_dir = os.path.join(config.CONFIG_DIR, 'logs')
         os.makedirs(log_dir, exist_ok=True)
         
-        # 로그 파일명 생성 (현재 시간 포함)
+        # 로그 파일명 생성 (현재 시간 포함). 같은 초에 시도가 또 시작되면(중지 → 곧바로 다시
+        # 시작) 뒤에 _2 · _3을 붙인다 — 두 시도가 한 파일에 쓰지 않게 (#410)
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        self.log_file = os.path.join(log_dir, f'download_{timestamp}.log')
-        
-        # 로거 설정
-        self.logger = logging.getLogger('DownloadLogger')
+        stem = os.path.join(log_dir, f'download_{timestamp}')
+        self.log_file = f'{stem}.log'
+        number = 2
+        while os.path.exists(self.log_file):
+            self.log_file = f'{stem}_{number}.log'
+            number += 1
+
+        # 로거 설정 — 시도마다 이름이 다른 로거다 (#410). 다른 시도의 핸들러는 건드리지 않는다
+        self.logger = logging.getLogger(f'DownloadLogger.{next(_attempts)}')
         self.logger.setLevel(self.log_level)
-        
-        # 기존 핸들러 제거 (중복 로깅 방지)
-        for handler in self.logger.handlers[:]:
-            self.logger.removeHandler(handler)
-        
+
         # 파일 핸들러 설정 (다운로드 전용 로그 파일)
         file_handler = logging.FileHandler(self.log_file, encoding='utf-8')
         file_handler.setLevel(self.log_level)
 
-        # 포맷터 설정
-        formatter = logging.Formatter(
+        # 포맷터 설정 — 주소의 서명 · 토큰 값은 가린다(앱 로그와 같은 포매터, #328)
+        formatter = RedactingFormatter(
             '%(asctime)s - %(levelname)s - [%(threadName)s] - %(message)s'
         )
         file_handler.setFormatter(formatter)
@@ -52,22 +62,23 @@ class DownloadLogger:
         # 핸들러 추가 — 콘솔 출력은 자체 핸들러 대신 공통 로깅 설정(루트 로거,
         # core/utils/logging_setup.py)으로 전파되어 처리된다 (#30, #62)
         self.logger.addHandler(file_handler)
+        self._handler = file_handler
 
     def save_and_close(self):
         """
         로그를 저장하고 로깅을 종료합니다.
+
+        이 시도의 파일 핸들러만 닫고 뗀다 — 다른 시도의 로그는 그대로 쓰인다 (#410).
+        다시 불러도 아무 일도 하지 않는다.
         """
         if self.logger:
-            # 모든 핸들러 닫기
-            for handler in self.logger.handlers[:]:
-                handler.close()
-                self.logger.removeHandler(handler)
-            
-            # 로그 파일 경로 로깅
+            if self._handler is not None:
+                self._handler.close()
+                self.logger.removeHandler(self._handler)
+                self._handler = None
+
+            # 로그 파일 경로 로깅 — 파일 핸들러를 뗀 뒤라 앱 로그 · 콘솔에만 남는다
             self.logger.info(f"Log saved to: {self.log_file}")
-            
-            # 로거 제거
-            logging.getLogger('DownloadLogger').handlers = []
             self.logger = None
 
     def debug(self, message: str):
@@ -238,6 +249,23 @@ class DownloadLogger:
         값을 이 줄에 따로 남긴다. 두 줄 모두 일시정지한 시간은 들어 있지 않다.
         """
         self.info(f"Transfer without prepare: {elapsed:.2f} seconds")
+
+    def log_transfer_reused(self, segments: int, size: int):
+        """전송 단계 전에 받아 둔 것을 받지 않고 쓴 세그먼트의 수와 크기를 로깅합니다 (#376).
+
+        받아 둔 것은 구간을 정할 때 받은 세그먼트와 이전 실행이 남긴 세그먼트다.
+        "Transfer completed"의 Bytes는 전송 단계가 받은 것만이다 — 받아 둔 것은 이 줄에 따로
+        남긴다. "Segments:"의 수에는 받아 둔 세그먼트가 들어 있다.
+        """
+        self.info(f"Stored segments used - Segments: {segments} - Bytes: {size}")
+
+    def log_transfer_discarded(self, size: int):
+        """다시 요청하며 받았다가 버린 바이트의 합을 로깅합니다 (#395).
+
+        받다 만 세그먼트와 이어받지 못한 파트의 앞부분이다. "Transfer completed"의 Bytes는
+        산출물에 남은 것만이다 — 버린 것은 이 줄에 따로 남긴다. 버린 것이 없으면 이 줄이 없다.
+        """
+        self.info(f"Discarded on retry - Bytes: {size}")
 
     def log_cut_setup(self, elapsed: float):
         """컷을 시작하기 전 색인에서 프레임 정보를 뽑는 데 걸린 시간을 로깅합니다 (#309)."""

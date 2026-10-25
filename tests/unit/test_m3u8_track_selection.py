@@ -11,6 +11,8 @@ import pytest
 
 import app.network as network
 from app.network import NetworkManager
+from app.viewmodels.download_viewmodel import _failure_message_key
+from core.api.playback_tracks import STREAM_NOT_FOUND, StreamSelectionError
 from core.utils.paths import build_output_path
 from tests.mocks.mock_http import MockResponse
 
@@ -131,3 +133,39 @@ class TestLandscapeBroadcastIsUnchanged:
             "방송 720p.mp4",
             "방송 1080p.mp4",
         ]
+
+
+class TestMasterEndingWithATagFailsWithAKey:
+    """맞는 STREAM-INF 줄이 마지막 줄이라 주소 줄이 없으면 키가 있는 선택 실패로 끝난다 (#333)."""
+
+    # 852x480 변형(주소 있음) 뒤에 주소 줄 없는 1280x720 태그로 끝나는 마스터
+    MASTER = (
+        "#EXTM3U\n"
+        "#EXT-X-STREAM-INF:BANDWIDTH=1692000,RESOLUTION=852x480,FRAME-RATE=30.00\n"
+        "v0/chunklist.m3u8\n"
+        "#EXT-X-STREAM-INF:BANDWIDTH=3192000,RESOLUTION=1280x720,FRAME-RATE=60.00"
+    )
+
+    @pytest.mark.parametrize(
+        "tracks",
+        [
+            [("480p", 852, 480, 1500000, 192000, "30.0")],  # 720 트랙 없음 — 세로값으로 찾는다
+            [  # 720 트랙은 있으나 맞는 변형이 없음 — 세로값으로 다시 찾는다
+                ("480p", 852, 480, 1500000, 192000, "30.0"),
+                ("720p", 1280, 720, 3000000, 192000, "60.0"),
+            ],
+        ],
+        ids=["no-track", "track-without-variant"],
+    )
+    def test_selecting_720_fails_with_the_stream_not_found_key(self, serve_master, tracks):
+        """마스터가 주소 줄 없는 720 태그로 끝나면 720을 고를 때 STREAM_NOT_FOUND 키의 선택 실패여야 한다.
+
+        MASTER, playback 트랙(480만 · 480과 720), 해상도 720
+        -> StreamSelectionError, 실패 안내 키 == STREAM_NOT_FOUND
+        """
+        serve_master(self.MASTER)
+
+        with pytest.raises(StreamSelectionError) as caught:
+            NetworkManager.get_video_m3u8_base_url(playback_json(tracks), 720, {})
+
+        assert _failure_message_key(caught.value) == STREAM_NOT_FOUND

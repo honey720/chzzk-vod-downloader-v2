@@ -14,6 +14,7 @@ import time
 
 import pytest
 
+import core.downloaders.base as base_module
 import core.downloaders.file_downloader as fd_module
 import tests.unit.core.test_hls_aes_downloader as aes_run
 import tests.unit.core.test_m3u8_downloader_run as m3u8_run
@@ -36,7 +37,8 @@ from tests.unit.core.test_file_sections import (  # noqa: F401 — 모듈 범위
 )
 from tests.unit.core.test_slow_requeue_disk_vs_network import CHUNK, _make_data, _RecordingLogger
 
-PAUSE_SECONDS = 1.0  # 받는 도중 일시정지해 두는 시간
+# 받는 도중 일시정지해 두는 시간 — 저속 판정이 시작되는 응답 시작 뒤 3초보다 길어야 판정이 돈다
+PAUSE_SECONDS = base_module._SLOW_WINDOW_SECONDS + 0.5
 
 
 class _PausingResponse:
@@ -82,8 +84,9 @@ class _PausingSession:
 def test_time_spent_paused_is_left_out_of_a_parts_speed(tmp_path, monkeypatch):
     """파트를 받는 도중 일시정지한 시간은 그 파트의 속도 판정에 들지 않아야 한다 — 재개 뒤 느린 속도로 끊기지 않는다.
 
-    12청크(8192바이트씩)를 곧바로 흘리는 응답. 둘째 청크 뒤에 일시정지하고 1초 뒤 재개
-    (일시정지한 1초를 넣어 재면 재개 뒤의 청크 여섯이 모두 100KB/s 아래다 — 느린 속도 재큐의 조건)
+    12청크(8192바이트씩)를 곧바로 흘리는 응답. 둘째 청크 뒤에 일시정지하고 3.5초 뒤 재개
+    (저속 판정은 응답 시작 3초 뒤부터다. 일시정지한 3.5초를 넣어 재면 재개 뒤 첫 청크에서
+    판정이 돌고, 최근 3초의 속도가 약 2KB/s로 임계 100KB/s 아래다 — 느린 속도 재큐의 조건)
     -> 파트가 끝까지 받아진다(completed_threads == 1), 느린 속도 재큐 0회, "slow speed" 경고 없음
     """
     body = b"x" * (CHUNK * 12)
@@ -100,8 +103,8 @@ def test_time_spent_paused_is_left_out_of_a_parts_speed(tmp_path, monkeypatch):
     took = time.perf_counter() - started
 
     stood = session.marks["resumed_at"] - session.marks["paused_at"]
-    assert stood >= PAUSE_SECONDS, "전제: 일시정지를 건 때부터 푼 때까지 1초 넘게 서 있었다"
-    assert took >= PAUSE_SECONDS, "전제: 받는 도중 1초 동안 서 있었다"
+    assert stood > base_module._SLOW_WINDOW_SECONDS, "전제: 판정 시작보다 오래 서 있었다"
+    assert took >= PAUSE_SECONDS, "전제: 받는 도중 3.5초 동안 서 있었다"
     assert (data.completed_threads, data.restart_threads) == (1, 0)
     assert [w for w in logger.warnings if "slow speed" in w] == []
     assert output.read_bytes() == body
