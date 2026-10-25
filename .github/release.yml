@@ -5,6 +5,7 @@ changelog:
     labels:
       - chore
       - documentation
+      - skip-release-notes
   categories:
     - title: 버그 수정
       labels:
