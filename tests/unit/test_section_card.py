@@ -26,7 +26,7 @@ import re
 import pytest
 from PySide6.QtCore import QObject
 
-import main as main_module
+import CVDv2 as main_module
 import app.theme as theme
 import app.viewmodels.download_viewmodel as download_viewmodel_module
 from app.download_logger import DownloadLogger

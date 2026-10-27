@@ -10,7 +10,7 @@ from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication
 
 import app.theme as theme
-import main as main_module
+import CVDv2 as main_module
 from app.download_logger import DownloadLogger
 from app.viewmodels.data import ContentItem
 from app.views import mainWindow as mw_mod

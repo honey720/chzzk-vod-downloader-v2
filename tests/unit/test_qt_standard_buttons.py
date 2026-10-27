@@ -2,11 +2,11 @@
 
 설정 창의 `QDialogButtonBox`와 메시지 상자(`QMessageBox` 정적 호출 13곳)의 버튼 문구는
 우리 `.ts`가 아니라 **Qt 자체 카탈로그**(`translations/qtbase_ko.qm`)가 번역한다.
-`main.set_language`가 앱 언어에 맞춰 그 카탈로그를 설치하고, 그 **뒤에** 우리 번역기를
+`CVDv2.set_language`가 앱 언어에 맞춰 그 카탈로그를 설치하고, 그 **뒤에** 우리 번역기를
 설치한다(Qt는 나중에 설치한 번역기를 먼저 검색한다 — 아래 대조군 테스트가 그 규칙을 직접 잰다).
 
 언어는 테스트가 config 값으로 **고정**한다 — 설정에 `language`가 있으면 시스템 로케일을
-보지 않는다(`main.set_language`). 표준 버튼 문구는 로케일이 아니라 설치된 번역기에만
+보지 않는다(`CVDv2.set_language`). 표준 버튼 문구는 로케일이 아니라 설치된 번역기에만
 달려 있다.
 
 고장 주입(확인됨):
@@ -24,7 +24,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox, QMessageBox
 
 import config.config as config
-import main
+import CVDv2 as main
 from app.views.dialog import SettingDialog
 
 KOREAN = {"ok": "확인", "cancel": "취소", "yes": "예(&Y)", "no": "아니요(&N)"}
@@ -43,7 +43,7 @@ def _seed_config(language: str) -> dict:
 
 @pytest.fixture
 def translators(qapp, monkeypatch):
-    """`main.set_language`를 실제 QApplication에 걸고, 끝나면 설치한 번역기를 전부 뗀다.
+    """`CVDv2.set_language`를 실제 QApplication에 걸고, 끝나면 설치한 번역기를 전부 뗀다.
 
     전역 상태(번역기)를 되돌리지 않으면 뒤 테스트가 한국어 버튼을 보게 된다.
     """

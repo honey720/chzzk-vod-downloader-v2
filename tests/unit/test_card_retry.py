@@ -29,7 +29,7 @@ from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-import main as main_module
+import CVDv2 as main_module
 import app.theme as theme
 from app.views import mainWindow as mw_mod
 from app.views.mainWindow import VodDownloader

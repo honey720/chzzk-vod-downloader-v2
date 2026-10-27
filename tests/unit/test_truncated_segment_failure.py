@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 from PySide6.QtCore import QTranslator
 
-import main as main_module
+import CVDv2 as main_module
 from app.viewmodels.download_viewmodel import DownloadViewModel, _failure_message_key
 from core.downloaders.integrity import SEGMENT_TRUNCATED, TruncatedSegmentError
 

@@ -30,7 +30,7 @@ from PySide6.QtWidgets import QApplication, QDialogButtonBox, QFormLayout, QGrou
 
 import app.theme as theme
 import config.config as config
-import main as main_module
+import CVDv2 as main_module
 from app.views.dialog import SettingDialog
 from tests.unit.card_helpers import hold_style
 

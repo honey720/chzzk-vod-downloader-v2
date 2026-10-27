@@ -14,7 +14,7 @@ from PySide6.QtGui import QFontMetrics, QHelpEvent
 from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
 
 import app.theme as theme
-import main as main_module
+import CVDv2 as main_module
 from app.viewmodels.data import ContentItem
 from app.widgets.pill import CARET_GAP, CARET_WIDTH, EDGE_PADDING, SECONDARY_GAP, ResolutionPill
 from app.widgets.widget import ContentItemWidget

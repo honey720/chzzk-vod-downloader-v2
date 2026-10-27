@@ -12,7 +12,7 @@ import pytest
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 
-import main as main_module
+import CVDv2 as main_module
 import app.theme as theme
 from app.viewmodels.data import ContentItem
 from app.viewmodels.model import ContentListModel

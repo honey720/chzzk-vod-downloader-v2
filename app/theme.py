@@ -17,9 +17,9 @@
 
 그래서 이제 `LIGHT = {...}` 딕셔너리가 `DARK` 옆에 있고, `current_tokens()`가
 `set_color_scheme()`으로 설정된 값을 보고 고른다. `resources/qss/style.qss`와
-호출부(`main.py`, `app/widgets/widget.py`)는 토큰 *이름*만 알기 때문에 이 변경에
+호출부(`CVDv2.py`, `app/widgets/widget.py`)는 토큰 *이름*만 알기 때문에 이 변경에
 손대지 않아도 됐다 — 설계했던 대로다. 실제 OS 감지는 `detect_color_scheme()`이
-한다(`main.py`가 시작 시점에 호출해 `set_color_scheme()`에 넘긴다). `current_tokens()`
+한다(`CVDv2.py`가 시작 시점에 호출해 `set_color_scheme()`에 넘긴다). `current_tokens()`
 자체는 감지를 하지 않고 마지막으로 설정된 값만 본다 — 그래야 테스트가 실제
 OS 설정에 기대지 않고 `set_color_scheme()`으로 원하는 테마를 주입할 수 있고,
 그 값을 아무도 설정하지 않은 채 호출되는 기존 테스트들(`test_theme.py`,
@@ -47,14 +47,14 @@ logger = logging.getLogger(__name__)
 # `{}`를 쓰는 str.format은 QSS 중괄호와 충돌해 전부 이스케이프해야 하므로 쓰지 않는다.
 _TOKEN_RE = re.compile(r"@([A-Za-z][A-Za-z0-9_]*)")
 
-# 앱 전역 스타일시트 위치 — 호출부(main.py)가 resource_path()로 절대경로를
+# 앱 전역 스타일시트 위치 — 호출부(CVDv2.py)가 resource_path()로 절대경로를
 # 만들어 넘긴다. resources/ 전체가 이미 Nuitka `--include-data-dir=resources=resources`로
 # 번들되므로 이 하위 경로는 배포 워크플로 수정 없이 그대로 따라 들어간다
 # (#216의 `.js` 누락은 `resources/` 밖의 별도 폴더였던 게 원인이다).
 QSS_RELATIVE_PATH = "resources/qss/style.qss"
 
 # ═══════════════ 오너 튜닝 구역 — 크기·간격·글자 위계 ═══════════════
-# 여기 숫자를 바꾸고 `uv run python main.py`로 바로 확인할 수 있다.
+# 여기 숫자를 바꾸고 `uv run python CVDv2.py`로 바로 확인할 수 있다.
 # 색은 아래 DARK/LIGHT 표에서 바꾼다(다크/라이트가 서로 달라야 해서 분리).
 # METRICS의 정수는 파이썬 코드가 직접 쓰고, 동시에 "이름+px" 문자열로
 # DARK/LIGHT 표에 자동 주입되어 .qss의 @토큰으로도 쓰인다(아래 주입 루프).
@@ -195,7 +195,7 @@ CARD_STATES = ("waiting", "running", "paused", "finished", "failed")
 #: 지금 활성 스킴("dark"/"light"). 기본값 "dark"는 의도적이다 — 아무도
 #: `set_color_scheme()`을 부르지 않은 환경(기존 테스트 스위트 전체,
 #: `theme.py`를 단독 임포트하는 스크립트)에서 예전과 똑같이 항상 DARK가
-#: 나오게 한다. 실제 OS 감지는 `main.py`가 시작 시점에
+#: 나오게 한다. 실제 OS 감지는 `CVDv2.py`가 시작 시점에
 #: `set_color_scheme(detect_color_scheme(app))`으로 흘려 넣는다.
 _current_scheme = "dark"
 
@@ -205,7 +205,7 @@ def set_color_scheme(scheme: str) -> None:
 
     `current_tokens()` 자체는 OS를 들여다보지 않는다(부수효과 없는 순수
     조회로 남긴다). 감지는 `detect_color_scheme()`이 따로 하고, 그 결과를
-    여기로 넘기는 건 호출부(`main.py`) 책임이다 — 그래야 테스트가 OS 설정에
+    여기로 넘기는 건 호출부(`CVDv2.py`) 책임이다 — 그래야 테스트가 OS 설정에
     기대지 않고 이 함수 하나로 원하는 스킴을 주입할 수 있다.
     """
     global _current_scheme
@@ -459,7 +459,7 @@ def apply_color_scheme(app, scheme: str, qss_path: str) -> None:
     — 있으면 좋아 보여도 효과가 없는 코드는 두지 않는다(같은 게이트에서
     빼 보고 확인).
 
-    예외는 그대로 올라온다 — 호출부(`main.apply_theme`)가 시작 시점의 폴백을
+    예외는 그대로 올라온다 — 호출부(`CVDv2.apply_theme`)가 시작 시점의 폴백을
     정하고, 실행 중 전환(`follow_os_color_scheme`)은 로그만 남기고 옛 테마를 지킨다.
     """
     tokens = tokens_for(scheme)
@@ -472,7 +472,7 @@ def apply_color_scheme(app, scheme: str, qss_path: str) -> None:
 
 
 #: `follow_os_color_scheme()`가 건 슬롯 — 앱당 하나. 파이썬 참조가 죽으면 연결도
-#: 사라지므로 붙들고, 다시 부르면 이전 것을 떼고 교체한다(테스트가 `main.apply_theme()`를
+#: 사라지므로 붙들고, 다시 부르면 이전 것을 떼고 교체한다(테스트가 `CVDv2.apply_theme()`를
 #: 여러 번 불러도 팔로워가 누적되지 않게 — 누적되면 후행 테스트의 신호 하나에 여러 번 반응한다).
 _SCHEME_FOLLOWERS: dict = {}
 

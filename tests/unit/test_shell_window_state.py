@@ -25,7 +25,7 @@ from PySide6.QtCore import QPoint, QRect
 from PySide6.QtWidgets import QApplication
 
 import config.config as config_module
-import main as main_module
+import CVDv2 as main_module
 import app.theme as theme
 from app.views.mainWindow import VodDownloader, clamp_to_available
 from tests.unit.card_helpers import drop_new_top_levels, hold_style, resize_to, snapshot_top_levels

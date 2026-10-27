@@ -13,7 +13,7 @@ from PySide6.QtGui import QColor, QFontMetrics
 from PySide6.QtWidgets import QApplication
 
 import config.config as config_module
-import main as main_module
+import CVDv2 as main_module
 import app.theme as theme
 from app.download_logger import DownloadLogger
 from app.network import NetworkManager

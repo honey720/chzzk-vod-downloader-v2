@@ -1,19 +1,19 @@
-"""main.resource_path의 경로 해석 단위 테스트 (#43).
+"""CVDv2.resource_path의 경로 해석 단위 테스트 (#43).
 
 Nuitka onefile 빌드에서는 CWD가 리소스 해제 경로와 무관하므로,
-리소스 경로는 CWD가 아닌 main.py(__file__) 위치 기준으로 해석되어야 한다.
+리소스 경로는 CWD가 아닌 CVDv2.py(__file__) 위치 기준으로 해석되어야 한다.
 """
 
 import os
 from pathlib import Path
 
-import main
+import CVDv2 as main
 
 ROOT_DIR = Path(main.__file__).resolve().parent
 
 
 def test_resource_path_is_anchored_to_main_file(monkeypatch, tmp_path):
-    """CWD를 바꿔도 main.py 위치 기준으로 해석되어야 한다 (Nuitka onefile 대응)."""
+    """CWD를 바꿔도 CVDv2.py 위치 기준으로 해석되어야 한다 (Nuitka onefile 대응)."""
     monkeypatch.chdir(tmp_path)
 
     result = Path(main.resource_path("translations/ko_KR.qm"))

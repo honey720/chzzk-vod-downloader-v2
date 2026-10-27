@@ -1,7 +1,7 @@
 """공통 logging 설정 진입점 — 구현은 core/utils/logging_setup.py로 이주 (#62, 원본 #30).
 
 로그 저장 위치(CONFIG_DIR/logs)는 app 영역 지식이므로 core에 두지 않고 여기서 주입한다.
-기존 호출부(main.py, scripts/headless_download.py)의 import 경로와 시그니처는 그대로다.
+기존 호출부(CVDv2.py, scripts/headless_download.py)의 import 경로와 시그니처는 그대로다.
 """
 
 import logging

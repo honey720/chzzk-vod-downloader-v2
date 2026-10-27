@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-import main
+import CVDv2 as main
 import app.theme as theme
 from tests.unit.card_helpers import hold_style
 from tests.unit.layers import is_theme
@@ -210,7 +210,7 @@ class TestColoursAreDefinedOnlyOnce:
         assert len(files) >= self.MIN_SCANNED_SOURCES, (
             f"색 스캔 대상이 {len(files)}개뿐이다(바닥 {self.MIN_SCANNED_SOURCES}) — 제외 목록이 잘못 넓어졌거나 소스가 사라졌다"
         )
-        assert "main.py" in names, "진입점이 스캔에 없다"
+        assert "CVDv2.py" in names, "진입점이 스캔에 없다"
         assert any(p.suffix == ".ui" for p in files), (
             ".ui 파일이 하나도 스캔되지 않았다 — 카드 배경이 새던 곳이다"
         )
@@ -452,7 +452,7 @@ class TestLightTokenTable:
     @pytest.mark.parametrize("state", theme.CARD_STATES)
     def test_light_state_colours_paint_light_cards(self, state):
         """LIGHT 토큰으로 치환한 실제 `.qss`(`theme.card_style()` 폐지 후속,
-        `main.apply_theme()`이 쓰는 것과 같은 `load_stylesheet()` 경로)에
+        `CVDv2.apply_theme()`이 쓰는 것과 같은 `load_stylesheet()` 경로)에
         LIGHT 상태색이 들어가는지."""
         loaded = theme.load_stylesheet(main.resource_path(theme.QSS_RELATIVE_PATH), theme.LIGHT)
         block = _rule_block(loaded, f'#statusLabel[state="{state}"]')
@@ -582,12 +582,12 @@ class TestDetectColorScheme:
 
 
 class TestApplyThemeWiring:
-    """`main.apply_theme()`이 감지 결과를 실제로 팔레트에 반영하는지.
+    """`CVDv2.apply_theme()`이 감지 결과를 실제로 팔레트에 반영하는지.
 
     #227 회귀의 정확한 모양이 이거였다 — Fusion 고정 자체가 문제가 아니라,
     감지와 무관하게 `theme.build_palette()`가 항상 DARK를 굳혀 썼던 게
     문제였다. `theme.py` 안의 배선(위 TestColorSchemeSelection)만으로는
-    `main.py`가 그 배선을 실제로 호출하는지까지는 못 잡는다 — 여기서 그
+    `CVDv2.py`가 그 배선을 실제로 호출하는지까지는 못 잡는다 — 여기서 그
     간극을 닫는다.
     """
 
@@ -611,7 +611,7 @@ class TestApplyThemeWiring:
     def test_apply_theme_falls_back_to_palette_only_when_qss_is_missing(self, qapp, monkeypatch):
         """시작 시점에 QSS 로드가 실패하면 예전과 같이 감지된 스킴의 팔레트만 건다
         (#216 정책 — 스타일이 없어도 앱은 뜬다). `apply_color_scheme()`이
-        원자적이라 실패 시 아무것도 안 바뀌므로, 이 폴백은 `main.apply_theme()`
+        원자적이라 실패 시 아무것도 안 바뀌므로, 이 폴백은 `CVDv2.apply_theme()`
         의 except 가지가 담당한다. 시작 시점의 동작은 원자화 전과 같다 —
         스킴 확정 + 팔레트, QSS는 그대로."""
         from PySide6.QtGui import QColor, QPalette

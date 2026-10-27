@@ -411,7 +411,7 @@ def _source(relative: str) -> str:
 def test_gui_entry_enables_responsive_timing_and_headless_does_not():
     """GUI 진입점은 타이머 청을 켜고, 헤드리스 스크립트는 켜지 않아야 한다.
 
-    main.py · scripts/headless_download.py의 소스 -> 앞의 것에만 enable_responsive_timing() 호출이 있다
+    CVDv2.py · scripts/headless_download.py의 소스 -> 앞의 것에만 enable_responsive_timing() 호출이 있다
     """
-    assert "enable_responsive_timing()" in _source("main.py")
+    assert "enable_responsive_timing()" in _source("CVDv2.py")
     assert "enable_responsive_timing" not in _source("scripts/headless_download.py")

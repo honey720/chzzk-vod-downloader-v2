@@ -22,7 +22,7 @@ progress·fileSize·delete)에 `Ignored` 정책 라벨이 둘 이상 + `Expandin
 import pytest
 from PySide6.QtWidgets import QLabel
 
-import main as main_module
+import CVDv2 as main_module
 import app.theme as theme
 from app.viewmodels.data import ContentItem
 from app.widgets.widget import ContentItemWidget

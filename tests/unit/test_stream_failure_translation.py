@@ -3,7 +3,7 @@
 import pytest
 from PySide6.QtCore import QTranslator
 
-import main as main_module
+import CVDv2 as main_module
 
 # DownloadViewModel._failure_message가 tr()에 넘기는 원문
 SOURCE = (
