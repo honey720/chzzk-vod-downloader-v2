@@ -274,7 +274,7 @@ jobs:
           ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          python3 .github/release-notes/make_notes.py --tag "$GITHUB_REF_NAME" --out notes.md \
+          python3 scripts/release_notes.py --tag "$GITHUB_REF_NAME" --out notes.md \
             || echo '> ⚠️ **초안 확인 필요**: 노트 스크립트가 실패했다 — 로그를 본다' > notes.md
 
       - name: Full change list

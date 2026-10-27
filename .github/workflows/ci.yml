@@ -34,8 +34,8 @@ jobs:
         run: |
           CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
           echo "$CHANGED"
-          if echo "$CHANGED" | grep -E '^\.github/' ; then
-            echo "::error::보호 경로(.github/)는 소유자만 수정할 수 있습니다."
+          if echo "$CHANGED" | grep -E '^(\.github/|scripts/release_notes\.py$)' ; then
+            echo "::error::보호 경로(.github/ · scripts/release_notes.py)는 소유자만 수정할 수 있습니다."
             exit 1
           fi
 
