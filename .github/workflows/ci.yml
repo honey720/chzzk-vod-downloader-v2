@@ -5,14 +5,14 @@ on:
     branches: [main, 'dev-*']
 
 jobs:
-  # .github/ 을 소유자 외의 주체(에이전트 포함)가 수정하면 실패.
+  # .github/ · scripts/release_notes.py 를 소유자 외의 주체(에이전트 포함)가 수정하면 실패.
   # 테스트 실행 여부도 여기서 정한다 — chore/ 브랜치는 워크플로를 바꿨을 때만 테스트한다
   protected-paths:
     runs-on: ubuntu-latest
     outputs:
       run-tests: ${{ steps.scope.outputs.run-tests }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
       - name: Decide test scope
@@ -23,7 +23,7 @@ jobs:
         run: |
           CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
           if [[ "$HEAD_REF" != chore/* || "$HEAD_REF" == chore/version-* || "$HEAD_REPO" != "$GITHUB_REPOSITORY" ]] \
-             || echo "$CHANGED" | grep -qE '^\.github/workflows/'; then
+             || echo "$CHANGED" | grep -qE '^(\.github/workflows/|scripts/release_notes\.py$)'; then
             echo "run-tests=true" >> "$GITHUB_OUTPUT"
           else
             echo "run-tests=false" >> "$GITHUB_OUTPUT"
@@ -49,10 +49,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v10.3.2
         with:
           enable-cache: true
           prune-cache: false
@@ -105,7 +105,7 @@ jobs:
       # 실패가 없으면 업로드 자체가 생략된다
       - name: Upload GUI screenshots
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: test-screenshots-${{ matrix.os }}
           path: test-screenshots/
