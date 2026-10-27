@@ -23,10 +23,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v10.3.2
         with:
           enable-cache: true
 
@@ -127,6 +127,7 @@ jobs:
         run: |
           cd build
           ls -la
+          # 앱 묶음 이름은 진입점 스크립트 이름에서 나온다 — CVDv2.py라 처음부터 CVDv2.app이다(#452)
           zip -qr "${{ matrix.artifact }}.zip" CVDv2.app
 
       - name: Build (Linux)
@@ -201,7 +202,7 @@ jobs:
           echo "기동 스모크 통과 (30초 생존)"
 
       - name: Upload smoke screenshot
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: smoke-screenshot-${{ matrix.os }}
           path: |
@@ -211,7 +212,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ matrix.artifact }}
           path: |
@@ -223,9 +224,16 @@ jobs:
     needs: build
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read   # 노트 스크립트가 머지된 PR의 라벨 · 본문을 읽는다
     steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0   # 직전 정식 태그부터의 이력 · .github/release-notes/
+
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8.0.2
         with:
           path: dist
           merge-multiple: true
@@ -237,53 +245,81 @@ jobs:
       # 릴리즈 생성 전에 스캔 → 링크를 본문에 직접 주입 (태그 이벤트에서도 확실히 동작)
       - name: VirusTotal scan
         id: vt
-        uses: crazy-max/ghaction-virustotal@v4
+        uses: crazy-max/ghaction-virustotal@v5.0.0
         with:
           vt_api_key: ${{ secrets.VT_API_KEY }}
           files: dist/*
 
       - name: Format VT links
-        id: vtmd
+        env:
+          ANALYSIS: ${{ steps.vt.outputs.analysis }}
         run: |
           {
-            echo 'body<<VTEOF'
             echo '### 🛡 VirusTotal 검사 결과'
             echo ''
-            IFS=',' read -ra items <<< "${{ steps.vt.outputs.analysis }}"
+            IFS=',' read -ra items <<< "$ANALYSIS"
             for i in "${items[@]}"; do
               name="${i%%=*}"; url="${i#*=}"
               echo "- \`${name##*/}\`: [분석 보기](${url})"
             done
             echo ''
             echo '> Windows Defender 등에서 경고가 뜰 수 있으나, 이는 Python 컴파일 실행파일에서 흔한 머신러닝 휴리스틱 오탐입니다. 위 링크에서 전체 엔진 검사 결과를 확인할 수 있습니다.'
-            echo 'VTEOF'
-          } >> "$GITHUB_OUTPUT"
+          } > vt.md
 
-      - name: Generate release notes
-        id: notes
+      # 직전 정식 태그 뒤 머지된 PR(제외 라벨 없는 것)로 Messages API를 한 번 부른다.
+      # 실패 · 빈 응답 · PR 번호 불일치는 notes.md 맨 위에 경고로 남고 초안은 그대로 만든다
+      - name: AI release notes
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          NOTES=$(gh api "repos/${{ github.repository }}/releases/generate-notes" \
-            -f tag_name="${{ github.ref_name }}" --jq '.body')
+          python3 scripts/release_notes.py --tag "$GITHUB_REF_NAME" --out notes.md \
+            || echo '> ⚠️ **초안 확인 필요**: 노트 스크립트가 실패했다 — 로그를 본다' > notes.md
+
+      - name: Full change list
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PREV=$(python3 -c "import json;print(json.load(open('notes.inputs.json')).get('prev') or '')" 2>/dev/null || true)
+          ARGS=(-f tag_name="$GITHUB_REF_NAME")
+          [ -n "$PREV" ] && ARGS+=(-f previous_tag_name="$PREV")
+          # 전체 변경 목록은 보조 정보다 — API가 실패해도 초안은 만든다(-e로 이 단계가 끝나지 않게)
+          NOTES=$(gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" "${ARGS[@]}" --jq '.body' \
+            || echo '> ⚠️ **초안 확인 필요**: 전체 변경 목록을 만들지 못했다 — 로그를 본다')
           {
-            echo 'body<<NOTESEOF'
             echo '<details>'
             echo '<summary>전체 변경 목록</summary>'
             echo ''
             echo "$NOTES"
             echo ''
             echo '</details>'
-            echo 'NOTESEOF'
-          } >> "$GITHUB_OUTPUT"
+          } > changes.md
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      # 본문 순서: rc 안내(rc만) → AI 노트 → VirusTotal → 전체 변경 목록(접기)
+      - name: Assemble release body
+        run: |
+          {
+            case "$GITHUB_REF_NAME" in
+              *-*)
+                echo '> 정식 출시 전에 확인하는 시험판(rc)입니다. 문제가 보이면 이슈로 알려 주세요.'
+                echo ''
+                ;;
+            esac
+            cat notes.md
+            echo ''
+            echo '---'
+            cat vt.md
+            echo ''
+            cat changes.md
+          } > body.md
+
+      # 초안으로 만든다 — 소유자가 노트를 읽고 고친 뒤 Publish한다. 초안은 쓰기 권한이 있는 사람만 본다
+      - name: Create draft release
+        uses: softprops/action-gh-release@v3.0.3
         with:
           files: dist/*
-          body: |
-            ${{ steps.vtmd.outputs.body }}
-
-            ${{ steps.notes.outputs.body }}
+          body_path: body.md
+          draft: true
           generate_release_notes: false
           prerelease: ${{ contains(github.ref_name, '-') }}
