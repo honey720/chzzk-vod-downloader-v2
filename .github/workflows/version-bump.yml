@@ -253,6 +253,9 @@ jobs:
             else echo "- ❌ $2" >> "$REPORT"; echo "::error::$2"; FAILED=1; fi
           }
           check "$(git merge-base --is-ancestor origin/main "$TARGET"; echo $?)" "origin/main이 $BRANCH 의 조상(동기화됨)"
+          # 범프 PR 머지 뒤 다른 PR이 dev-*에 들어왔으면 release PR의 head가 검증한 커밋보다 앞선다
+          check "$([ "$(git rev-parse HEAD)" = "$TARGET" ]; echo $?)" \
+            "$BRANCH 끝($(git rev-parse --short HEAD)) = 범프 대상 커밋($(git rev-parse --short "$TARGET"))"
           LAST_RC=$(git tag -l "v${VERSION}-rc*" --sort=-v:refname | head -n 1 || true)
           if [ -n "$LAST_RC" ]; then
             OTHER=$(git diff --name-only "$LAST_RC" "$TARGET" | grep -vxE 'pyproject\.toml|uv\.lock|config/config\.py' || true)

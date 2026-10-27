@@ -284,7 +284,9 @@ jobs:
           PREV=$(python3 -c "import json;print(json.load(open('notes.inputs.json')).get('prev') or '')" 2>/dev/null || true)
           ARGS=(-f tag_name="$GITHUB_REF_NAME")
           [ -n "$PREV" ] && ARGS+=(-f previous_tag_name="$PREV")
-          NOTES=$(gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" "${ARGS[@]}" --jq '.body')
+          # 전체 변경 목록은 보조 정보다 — API가 실패해도 초안은 만든다(-e로 이 단계가 끝나지 않게)
+          NOTES=$(gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" "${ARGS[@]}" --jq '.body' \
+            || echo '> ⚠️ **초안 확인 필요**: 전체 변경 목록을 만들지 못했다 — 로그를 본다')
           {
             echo '<details>'
             echo '<summary>전체 변경 목록</summary>'
