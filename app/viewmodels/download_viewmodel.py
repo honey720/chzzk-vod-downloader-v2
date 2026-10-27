@@ -12,7 +12,7 @@ viewmodel(이 클래스)이 mainWindow의 릴레이 슬롯 6개를 흡수했다.
 - 콜백은 **Signal emit까지만** 수행한다. emit은 스레드 세이프하며, content
   (ContentManager)의 반영은 큐 연결로 메인 스레드 슬롯에서 일어난다. 콜백
   안에서 content를 직접 부르거나 위젯을 만지는 것은 금지다 — 그러면 위젯이
-  워커 스레드에서 갱신된다. tests/unit/test_download_viewmodel_contract.py의
+  워커 스레드에서 갱신된다. tests/app/gui/test_download_viewmodel_contract.py의
   스레드 축 게이트가 이 경계를 잰다.
 - 예외적으로 item.post_process(진행 변환용 데이터 플래그, 위젯 아님)만
   구 어댑터와 같은 시점 보존을 위해 콜백에서 직접 기록한다.
@@ -651,7 +651,7 @@ class DownloadViewModel(QObject):
         # 문구 규약(#245): **첫 줄 = 핵심 한 줄(무엇을 해야 하는지 포함) /
         # 둘째 줄 = 상세.** 카드는 첫 줄만 3행에 올리고 전문을 툴팁으로 준다 —
         # 실패 사유는 마우스를 올려야 보이면 안 된다. 첫 줄 길이 상한은 언어별
-        # (en ≤ 60자, ko ≤ 40자 — 640px 실측, tests/unit/test_card_state_matrix.py).
+        # (en ≤ 60자, ko ≤ 40자 — 640px 실측, tests/app/gui/test_card_state_matrix.py).
         # 왼쪽 키(매핑 키)는 내부 식별자라 그대로 두고 표시 문자열만 바꿨다.
         translated = {
             "Postprocessing failed - ffmpeg not found": self.tr(

@@ -117,12 +117,12 @@ DARK = {
     "cardBg": "#2b2d33",
     # ---- 상태색 (상태 아이콘·상태 텍스트·진행바 공용) ----
     # running/failed는 기존 값을 그대로 승계한다 — 실패 빨강(#FF6969)은
-    # tests/unit/test_failure_display.py가 상태 표시에서 직접 확인한다.
+    # tests/app/gui/test_failure_display.py가 상태 표시에서 직접 확인한다.
     "stateWaiting": "#6b7078",   # 대기 — 회색
     "stateRunning": "#55B5FF",   # 진행 — 파랑
     # 일시정지 — 진행 파랑의 채도를 뺀 강철빛 회색. 진행바가 그대로 남되
     # "돌고 있지 않다"가 색으로 읽혀야 한다(#245). 대기 회색과는 달라야
-    # 한다(상태색은 정보를 나른다 — tests/unit/test_theme.py 상호 구별 게이트).
+    # 한다(상태색은 정보를 나른다 — tests/app/gui/test_theme.py 상호 구별 게이트).
     "statePaused": "#7f8ea3",
     "stateFinished": "#4CC38A",  # 완료 — 초록
     "stateFailed": "#FF6969",    # 실패 — 빨강
@@ -398,7 +398,7 @@ def _deferred_popup_hide_default() -> bool:
     """콤보 팝업의 지연 닫기(`_DropDownComboBoxStyle`)를 기본으로 켤 플랫폼인지 — macOS만.
 
     플랫폼 분기는 "어느 플랫폼에서도 같은 코드가 돈다"는 성질을 잃게 하므로
-    조건을 한 곳에 모으고, `tests/unit/test_theme.py`가 플랫폼 값을 바꿔 가며
+    조건을 한 곳에 모으고, `tests/app/gui/test_theme.py`가 플랫폼 값을 바꿔 가며
     이 분기를 명시적으로 잰다(호출 시점의 `sys.platform`을 읽는 이유).
     """
     return sys.platform == "darwin"
@@ -452,7 +452,7 @@ def apply_color_scheme(app, scheme: str, qss_path: str) -> None:
     않는다 — 스타일을 벗기면 반쪽보다 나쁘다.
 
     `app.setStyleSheet()`은 Qt가 모든 위젯을 다시 polish하게 만들므로(실측 —
-    `tests/unit/test_theme_switch.py`가 "시작부터 라이트"와 "다크에서 라이트로
+    `tests/app/gui/test_theme_switch.py`가 "시작부터 라이트"와 "다크에서 라이트로
     전환" 두 화면의 렌더 픽셀이 같은지로 잰다) 동적 속성 선택자
     (`[state="..."]`)도, 파이썬이 paint 시점에 토큰을 읽는 `IconButton`도 이
     한 번의 재로드로 함께 갈아입는다. 별도의 `repolish()` 순회는 필요 없었다

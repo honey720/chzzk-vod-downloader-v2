@@ -344,7 +344,7 @@ def _forget_failed_lookup(imageio_ffmpeg) -> None:
     못 찾았을 때뿐이다 — 찾은 경로는 그 캐시가 계속 기억해 매번 찾지 않는다.
 
     비공개 이름이라 라이브러리 버전이 바뀌어 없으면 아무것도 하지 않는다 — 그때는
-    ``tests/unit/core/test_ffmpeg_utils.py``가 실패해 알린다.
+    ``tests/ffmpeg/process/test_ffmpeg_utils.py``가 실패해 알린다.
     """
     lookup = getattr(getattr(imageio_ffmpeg, "_utils", None), "_get_ffmpeg_exe", None)
     clear = getattr(lookup, "cache_clear", None)

@@ -7,7 +7,7 @@ core DownloadState에 얹혀 있던 것을 여기로 분리했다.
 ContentItem.downloadState에는 core DownloadState와 ItemState가 병존한다.
 Enum 멤버는 클래스가 다르면 절대 같지 않으므로(==/in 비교 안전) 기존
 비교식은 타입이 섞여도 오동작하지 않는다 — 이 성질은
-tests/unit/test_item_state.py가 고정한다.
+tests/app/logic/test_item_state.py가 고정한다.
 """
 
 from enum import Enum

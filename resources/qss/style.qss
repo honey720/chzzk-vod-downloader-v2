@@ -185,7 +185,7 @@ QLabel#thumbnailLabel {
  * padding은 QSS가 아니라 카드 내부 레이아웃 마진(theme.METRICS["cardPadding"])
  * 이 준다 — 하단 진행바가 카드 가장자리에 딱 붙어야 해서(padding이 있으면
  * 바가 테두리에서 떨어진다) 프레임 자체는 0으로 둔다. 가로 0 규칙(#227
- * PR #234의 3-OS 폭 회귀)은 tests/unit/test_widget_theme.py::
+ * PR #234의 3-OS 폭 회귀)은 tests/app/gui/test_widget_theme.py::
  * TestCardInnerWidthIsUnchanged가 새 기준으로 계속 고정한다. */
 #contentFrame {
     background-color: @cardBg;

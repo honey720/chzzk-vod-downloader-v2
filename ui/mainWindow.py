@@ -115,7 +115,7 @@ class Ui_VodDownloader(object):
         # 하단으로 내리는 안은 채택하지 않는다 — 설정 안의 쿠키는 성인·멤버십
         # VOD를 받으려면 반드시 한 번은 찾아야 해서 하단 muted 묶음에 두면 못
         # 찾는다(설정 화면 .ui 재작성 때 재검토). 남는 공간은 각 행에서 입력창
-        # 하나만 흡수한다(버튼들은 고정 폭) — tests/unit/test_header_layout.py.
+        # 하나만 흡수한다(버튼들은 고정 폭) — tests/app/gui/test_header_layout.py.
         self.settingButton = IconButton(self.headerFrame)
         self.settingButton.setObjectName(u"settingButton")
         self.settingButton.setMinimumSize(QSize(32, 32))
