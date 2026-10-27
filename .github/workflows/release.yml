@@ -101,7 +101,7 @@ jobs:
             --include-data-dir=translations=translations \
             --output-filename="${{ matrix.artifact }}" \
             --output-dir=build \
-            main.py
+            CVDv2.py
 
       - name: Install macOS build deps
         if: runner.os == 'macOS'
@@ -120,14 +120,13 @@ jobs:
           --include-data-dir=resources=resources
           --include-data-dir=translations=translations
           --output-dir=build
-          main.py
+          CVDv2.py
 
       - name: Package app bundle (macOS)
         if: runner.os == 'macOS'
         run: |
           cd build
           ls -la
-          mv main.app CVDv2.app
           zip -qr "${{ matrix.artifact }}.zip" CVDv2.app
 
       - name: Build (Linux)
@@ -141,7 +140,7 @@ jobs:
           --include-data-dir=translations=translations
           --output-filename=${{ matrix.artifact }}
           --output-dir=build
-          main.py
+          CVDv2.py
 
       # ── 기동 스모크: 산출물을 실제로 실행해 30초 생존 확인 ──
       - name: Boot smoke (Windows)
