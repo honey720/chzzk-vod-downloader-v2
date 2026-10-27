@@ -24,7 +24,7 @@ uv run python CVDv2.py         # 진입점
 uv run ruff check .            # 린트
 uv run ruff format .           # 포맷
 uv run pytest                  # 전체 테스트 — Qt는 화면 없이(offscreen). 실제 화면: CVDV2_TEST_NATIVE=1
-uv run pytest tests/unit       # 단위 테스트만
+uv run pytest tests/core       # core 계층 테스트만
 uv run pytest -n 8 --dist loadfile   # 전체 테스트 병렬 — 로컬 전체 실행은 이것으로
 ```
 
@@ -34,8 +34,8 @@ uv run pytest -n 8 --dist loadfile   # 전체 테스트 병렬 — 로컬 전체
 ## 아키텍처 불변 규칙 (위반 시 PR 반려)
 
 - **단방향: app → core.** `core/`는 앱 계층(`app/`·`config/`·`ui/`)을 import하지 않는다.
-- `core/`는 UI 프레임워크를 모른다 — `tests/unit/core/test_no_qt_import.py`가 AST로 검사하는 CI 게이트다.
-- ⚠️ **방향 게이트는 금지 목록이 아니라 유도다**(`tests/unit/core/test_layer_direction.py`). *"`core/`는 저장소가 소유한 최상위 이름 중 `core` 이외의 것을 import하지 않는다."* 소유 이름은 저장소 루트에서 유도하고, 유도가 놓치면 메타 게이트가 실패한다. **새 최상위 디렉토리가 생겨도 자동으로 금지되고, 사라져도 목록만 비는 일이 없다.**
+- `core/`는 UI 프레임워크를 모른다 — `tests/meta/test_no_qt_import.py`가 AST로 검사하는 CI 게이트다.
+- ⚠️ **방향 게이트는 금지 목록이 아니라 유도다**(`tests/meta/test_layer_direction.py`). *"`core/`는 저장소가 소유한 최상위 이름 중 `core` 이외의 것을 import하지 않는다."* 소유 이름은 저장소 루트에서 유도하고, 유도가 놓치면 메타 게이트가 실패한다. **새 최상위 디렉토리가 생겨도 자동으로 금지되고, 사라져도 목록만 비는 일이 없다.**
 - 앱 경로·구현이 필요하면 **인자로 주입**받는다(`setup_logging(log_dir)`, `MetadataApi` Protocol, `base_url_resolver`, `requires_key_resolution`).
 - app ↔ core 통신은 **콜백·반환값**으로만. core에 이벤트 버스를 두지 않는다. `core/`는 언제든 CLI·웹·다른 UI로 교체 가능해야 한다.
 - 레이어: `views → viewmodels → core(services → downloaders/api)`. View에서 core 직접 호출 금지.
