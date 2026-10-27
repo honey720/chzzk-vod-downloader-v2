@@ -1,16 +1,18 @@
 name: Auto Tag
 
-# main·dev-* 의 pyproject.toml 버전이 바뀌면 v<버전> 태그를 만들어 푸시한다.
-#   dev-<버전> : rc 태그만 만든다. 버전의 X.Y.Z 가 브랜치 이름과 같아야 한다
-#   main       : 정식 태그만 만든다 (dev-* → main 머지 커밋에 붙는다)
+# main 의 pyproject.toml 버전이 바뀌면 정식 태그 v<버전>을 만들어 푸시한다(dev-* → main 머지 커밋에 붙는다).
+# rc 태그는 여기서 만들지 않는다 — Release 워크플로(version-bump.yml)가 범프 PR 머지 뒤 만든다.
 # 태그 푸시가 release.yml을 깨우려면 기본 GITHUB_TOKEN이 아닌 PAT가 필요하다
 # (기본 토큰으로 만든 이벤트는 다른 워크플로우를 트리거하지 않음 — 재귀 방지 정책).
-# → 저장소 Secrets에 RELEASE_PAT 등록 필요. 아래 안내 참조.
+# → 저장소 Secrets에 RELEASE_PAT 등록 필요.
+# 손으로 실행: Actions → Auto Tag → Run workflow → main — 릴리즈 PR이 머지됐는데 정식 태그가 안 생겼을 때.
+# main 끝 커밋의 pyproject 버전으로 같은 일을 한다(이미 있으면 건너뜀).
 
 on:
   push:
-    branches: [main, 'dev-*']
+    branches: [main]
     paths: ['pyproject.toml']
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -19,7 +21,7 @@ jobs:
   tag:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_PAT }}
@@ -29,22 +31,14 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
         run: |
           VERSION=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-          echo "pyproject version: $VERSION (branch: $GITHUB_REF_NAME)"
+          echo "pyproject version: $VERSION (branch: $GITHUB_REF_NAME · 이벤트: $GITHUB_EVENT_NAME)"
+          if [ "$GITHUB_REF_NAME" != main ]; then
+            echo "::error::main 에서만 실행합니다 (선택한 브랜치: $GITHUB_REF_NAME)"; exit 1
+          fi
 
-          # 브랜치별로 만들 수 있는 태그를 제한한다
-          case "$GITHUB_REF_NAME:$VERSION" in
-            main:*-*)
+          case "$VERSION" in
+            *-*)
               echo "main 에서는 프리릴리즈 태그를 만들지 않음 — 건너뜁니다."
-              exit 0
-              ;;
-            dev-*:*-*)
-              if [ "${GITHUB_REF_NAME#dev-}" != "${VERSION%%-*}" ]; then
-                echo "::error::브랜치($GITHUB_REF_NAME)와 버전($VERSION)이 맞지 않습니다."
-                exit 1
-              fi
-              ;;
-            dev-*:*)
-              echo "dev-* 에서는 정식 태그를 만들지 않음 — 건너뜁니다."
               exit 0
               ;;
           esac
@@ -54,24 +48,16 @@ jobs:
             exit 0
           fi
 
-          # ── 추가: 정식 버전이면 같은 버전의 프리릴리즈를 먼저 정리 ──
-          case "$VERSION" in
-            *-*)
-              echo "프리릴리즈($VERSION) — 정리 건너뜀"
-              ;;
-            *)
-              for tag in $(git tag -l "v${VERSION}-*"); do
-                echo "프리릴리즈 정리: $tag"
-                gh release delete "$tag" --yes --cleanup-tag 2>/dev/null \
-                  || git push origin ":refs/tags/$tag"
-                git tag -d "$tag" >/dev/null 2>&1 || true
-              done
-              ;;
-          esac
-          # ────────────────────────────────────────────────
+          # 정식 버전이면 같은 버전의 프리릴리즈를 먼저 정리한다
+          for tag in $(git tag -l "v${VERSION}-*"); do
+            echo "프리릴리즈 정리: $tag"
+            gh release delete "$tag" --yes --cleanup-tag 2>/dev/null \
+              || git push origin ":refs/tags/$tag"
+            git tag -d "$tag" >/dev/null 2>&1 || true
+          done
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "v$VERSION" -m "Release v$VERSION"
           git push origin "v$VERSION"
-          echo "태그 v$VERSION 생성·푸시 완료 → 릴리즈 빌드가 시작됩니다."
+          echo "태그 v$VERSION 생성·푸시 완료 → 릴리즈 빌드가 시작됩니다(초안 릴리즈로 만들어집니다)."

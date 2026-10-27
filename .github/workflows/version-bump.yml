@@ -1,63 +1,111 @@
-name: Version Bump
+name: Release
 
-# Actions 탭 → Version Bump → Run workflow → "Use workflow from"에서 dev-<버전> 선택 → 버전 입력
-# pyproject.toml 수정 + uv lock + 커밋 + 그 dev-* 로 PR 생성까지 자동.
-# rc 는 머지되면 Auto Tag 가 dev-* 커밋에 rc 태그를 만든다.
-# 정식은 dev-* 에 머지한 뒤 dev-* → main 을 머지하면 main 에서 정식 태그가 만들어진다.
+# 릴리즈를 한 번의 실행으로 시작한다. Actions 탭 → Release → Run workflow
+#   → "Use workflow from"에서 dev-<X.Y.Z> 선택 → kind(rc / 정식) → 단계 "1 범프 PR"
+# 1 범프 PR(자동): 버전을 정하고 확인한 뒤 버전 파일 셋만 바꾼 chore/version-<버전> → dev-* PR을 만든다
+# 승인 ①(소유자): 범프 PR 머지
+# 2 배포 준비(범프 PR 머지가 신호, 자동)
+#   rc  : 머지 커밋에 rc 태그 → release.yml(3-OS 빌드 → AI 노트 → 초안 프리릴리즈)
+#   정식: dev-* → main PR → 자동 머지(merge commit) — 필수 체크 통과 뒤 머지 → Auto Tag가 main에 정식 태그
+#         → release.yml(3-OS 빌드 → AI 노트 → 초안 릴리즈)
+# 2가 실패하면 범프 PR에 까닭을 코멘트로 남기고 멈춘다. 고친 뒤 같은 dev-* 에서 단계 "2 배포 준비만 다시"로 잇는다.
+# 푸시 · 태그 · PR · 자동 머지는 RELEASE_PAT로 한다 — 기본 GITHUB_TOKEN으로 만든 PR은 CI가 승인 대기로 서고,
+# 기본 토큰이 만든 푸시 · 태그는 다른 워크플로(release.yml · Auto Tag)를 깨우지 않는다.
 
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: '새 버전 (v 없이. 예: 2.8.4)'
+      kind:
+        description: '종류 (단계 1에서만 쓴다)'
         required: true
-        type: string
+        default: rc
+        type: choice
+        options: [rc, 정식]
+      stage:
+        description: '단계'
+        required: true
+        default: 1 범프 PR
+        type: choice
+        options: [1 범프 PR, 2 배포 준비만 다시]
+  pull_request:
+    types: [closed]
+    branches: ['dev-*']
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   bump:
+    if: github.event_name == 'workflow_dispatch' && inputs.stage == '1 범프 PR'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ github.ref_name }}
-          fetch-depth: 0   # 기존 태그 확인용
+          fetch-depth: 0   # 태그 · main과의 관계 확인용
+          token: ${{ secrets.RELEASE_PAT }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v10.3.2   # v8부터 메이저 태그(@v10)를 내지 않는다 — 정확한 판으로 고정
         with:
           enable-cache: true
 
-      - name: Validate input
+      - name: Decide version and check
+        id: plan
         env:
-          VERSION: ${{ inputs.version }}
-          BASE: ${{ github.ref_name }}
+          BRANCH: ${{ github.ref_name }}
+          KIND: ${{ inputs.kind }}
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
         run: |
-          case "$BASE" in
+          case "$BRANCH" in
             dev-*) ;;
-            *) echo "::error::dev-<버전> 브랜치에서만 실행합니다 (선택한 브랜치: $BASE)"; exit 1 ;;
+            *) echo "::error::dev-<버전> 브랜치에서만 실행합니다 (선택한 브랜치: $BRANCH)"; exit 1 ;;
           esac
-          if [ "${BASE#dev-}" != "${VERSION%%-*}" ]; then
-            echo "::error::브랜치($BASE)와 버전($VERSION)이 맞지 않습니다."
-            exit 1
+          BASE="${BRANCH#dev-}"
+          if ! [[ "$BASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::브랜치 이름이 dev-X.Y.Z가 아닙니다: $BRANCH"; exit 1
           fi
-          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
-            echo "::error::버전 형식이 올바르지 않습니다: $VERSION (예: 2.8.4 또는 2.9.0-rc1)"
-            exit 1
+          if [ "$KIND" = rc ]; then
+            LAST_N=$(git tag -l "v${BASE}-rc*" | sed "s/^v${BASE}-rc//" | grep -xE '[0-9]+' | sort -n | tail -n 1 || true)
+            VERSION="${BASE}-rc$(( ${LAST_N:-0} + 1 ))"
+          else
+            VERSION="$BASE"
           fi
-          if git rev-parse "v$VERSION" >/dev/null 2>&1; then
-            echo "::error::태그 v$VERSION 가 이미 존재합니다."
-            exit 1
-          fi
-          if git ls-remote --exit-code --heads origin "chore/version-$VERSION" >/dev/null 2>&1; then
-            echo "::error::브랜치 chore/version-$VERSION 가 이미 존재합니다."
-            exit 1
-          fi
+          echo "버전: $VERSION (브랜치 $BRANCH · 종류 $KIND)"
 
-      - name: Bump pyproject.toml + uv lock
+          FAILED=0
+          REPORT="$RUNNER_TEMP/checks.md"
+          : > "$REPORT"
+          check() {  # check <통과 여부 0/1> <설명>
+            if [ "$1" = 0 ]; then echo "- ✅ $2" >> "$REPORT"
+            else echo "- ❌ $2" >> "$REPORT"; echo "::error::$2"; FAILED=1; fi
+          }
+          # Actions의 bash는 -e로 돈다 — 실패가 답인 명령은 || 로 받는다
+          HAS_BRANCH=0
+          git ls-remote --exit-code --heads origin "chore/version-$VERSION" >/dev/null 2>&1 || HAS_BRANCH=$?
+          check "$([ $HAS_BRANCH -ne 0 ]; echo $?)" "브랜치 chore/version-$VERSION 없음"
+          PRS=$(gh pr list --head "chore/version-$VERSION" --state all --json number --jq 'length')
+          check "$([ "$PRS" = 0 ]; echo $?)" "chore/version-$VERSION 의 PR 없음(상태 무관)"
+          check "$(git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; [ $? -ne 0 ]; echo $?)" "태그 v$VERSION 없음"
+          if [ "$KIND" = 정식 ]; then
+            check "$(git merge-base --is-ancestor origin/main HEAD; echo $?)" "origin/main이 $BRANCH 의 조상(동기화됨)"
+            LAST_RC=$(git tag -l "v${BASE}-rc*" --sort=-v:refname | head -n 1 || true)
+            if [ -n "$LAST_RC" ]; then
+              check "$([ "$(git rev-list -n 1 "$LAST_RC")" = "$(git rev-parse HEAD)" ]; echo $?)" \
+                "$BRANCH 끝($(git rev-parse --short HEAD)) = 마지막 rc $LAST_RC 커밋($(git rev-parse --short "$LAST_RC^{commit}"))"
+            else
+              echo "- ⏭ rc 태그 없음 — 마지막 rc 확인 건너뜀" >> "$REPORT"
+            fi
+          fi
+          cat "$REPORT"
+          if [ "$FAILED" = 1 ]; then
+            echo "확인 실패 — 범프 PR을 만들지 않습니다."; exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Bump version files
+        env:
+          NEW_VERSION: ${{ steps.plan.outputs.version }}
         run: |
           python - <<'PYEOF'
           import os, pathlib, re
@@ -82,29 +130,25 @@ jobs:
           c.write_text(cnew, encoding="utf-8")
           PYEOF
           uv lock
-        env:
-          NEW_VERSION: ${{ inputs.version }}
-
-      - name: Verify bump applied
-        env:
-          VERSION: ${{ inputs.version }}
-        run: |
           ACTUAL=$(uv run python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-          if [ "$ACTUAL" != "$VERSION" ]; then
-            echo "::error::버전 반영 실패 (pyproject=$ACTUAL)"
-            exit 1
+          if [ "$ACTUAL" != "$NEW_VERSION" ]; then
+            echo "::error::버전 반영 실패 (pyproject=$ACTUAL)"; exit 1
+          fi
+          CHANGED=$(git status --porcelain | awk '{print $2}' | sort | tr '\n' ' ')
+          if [ "$CHANGED" != "config/config.py pyproject.toml uv.lock " ]; then
+            echo "::error::버전 파일 셋 밖이 바뀌었습니다: $CHANGED"; exit 1
           fi
 
-      - name: Create pull request
+      - name: Create bump pull request
         env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          VERSION: ${{ steps.plan.outputs.version }}
           BASE: ${{ github.ref_name }}
         run: |
           BRANCH="chore/version-$VERSION"
           case "$VERSION" in
-            *-*) NEXT="**이 PR을 머지하면 \`$BASE\` 커밋에 태그 \`v$VERSION\`이 자동 생성되고 프리릴리즈 빌드가 시작됩니다.**" ;;
-            *)   NEXT="**정식 버전입니다. 이 PR을 머지한 뒤 \`$BASE\` → \`main\` 을 merge commit으로 머지하면 \`main\`에서 태그 \`v$VERSION\`이 생성됩니다.**" ;;
+            *-*) NEXT="머지하면 그 머지 커밋에 rc 태그 \`v$VERSION\`이 붙고 프리릴리즈 **초안** 빌드가 자동으로 시작됩니다." ;;
+            *)   NEXT="머지하면 \`$BASE\` → \`main\` PR이 자동으로 만들어지고, 필수 체크가 통과하면 merge commit으로 자동 머지됩니다. 그 뒤 \`main\`에 태그 \`v$VERSION\`이 붙고 정식 릴리즈 **초안** 빌드가 시작됩니다." ;;
           esac
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -112,16 +156,161 @@ jobs:
           git add pyproject.toml uv.lock config/config.py
           git commit -m "chore: 버전 $VERSION"
           git push origin "$BRANCH"
+          {
+            echo '## 요약'
+            echo ''
+            echo "버전을 \`$VERSION\`으로 올립니다. 버전 파일 셋(\`pyproject.toml\` · \`uv.lock\` · \`config/config.py\`의 \`APP_VERSION\`)만 바뀝니다."
+            echo ''
+            echo "**$NEXT**"
+            echo ''
+            echo '## 확인 결과'
+            echo ''
+            cat "$RUNNER_TEMP/checks.md"
+            echo ''
+            echo "Release 워크플로가 자동 생성했습니다 — [실행 기록]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)"
+          } > "$RUNNER_TEMP/body.md"
           gh pr create --base "$BASE" --head "$BRANCH" \
             --title "chore: v$VERSION" \
-            --body "$(cat <<EOF
-          ## 요약
+            --label chore \
+            --body-file "$RUNNER_TEMP/body.md"
 
-          버전을 \`$VERSION\`으로 올립니다. 코드 변경은 없습니다.
+  deploy:
+    if: >-
+      (github.event_name == 'pull_request'
+        && github.event.pull_request.merged == true
+        && startsWith(github.event.pull_request.head.ref, 'chore/version-')
+        && github.event.pull_request.head.repo.full_name == github.repository)
+      || (github.event_name == 'workflow_dispatch' && inputs.stage == '2 배포 준비만 다시')
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+      REASON_FILE: /tmp/release-reason.txt   # 멈춘 까닭 — 마지막 단계가 범프 PR 코멘트로 옮긴다
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.ref || github.ref_name }}
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PAT }}
 
-          - \`pyproject.toml\` version + \`uv.lock\` 동반 갱신
-          - $NEXT
+      # 범프 PR 머지면 그 PR의 머지 커밋, 손으로 다시 돌리면 dev-* 끝을 대상으로 한다
+      - name: Resolve version and target
+        id: resolve
+        env:
+          EVENT: ${{ github.event_name }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_BASE: ${{ github.event.pull_request.base.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          fail() { echo "$1" > "$REASON_FILE"; echo "::error::$1"; exit 1; }
+          if [ "$EVENT" = pull_request ]; then
+            BRANCH="$PR_BASE"; VERSION="${HEAD_REF#chore/version-}"; TARGET="$MERGE_SHA"; PR="$PR_NUMBER"
+          else
+            BRANCH="$REF_NAME"; TARGET=$(git rev-parse HEAD)
+            case "$BRANCH" in dev-*) ;; *) echo "::error::dev-<버전> 브랜치에서만 실행합니다"; exit 1 ;; esac
+            VERSION=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+            PR=$(gh pr list --head "chore/version-$VERSION" --base "$BRANCH" --state merged --json number --jq '.[0].number // empty')
+          fi
+          echo "pr=$PR" >> "$GITHUB_OUTPUT"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "target=$TARGET" >> "$GITHUB_OUTPUT"
+          echo "브랜치 $BRANCH · 버전 $VERSION · 대상 $TARGET · 범프 PR #${PR:-없음}"
+          [ "${BRANCH#dev-}" = "${VERSION%%-*}" ] || fail "브랜치($BRANCH)와 버전($VERSION)이 맞지 않습니다."
+          AT_TARGET=$(git show "$TARGET:pyproject.toml" | python -c "import sys,tomllib;print(tomllib.loads(sys.stdin.read())['project']['version'])")
+          [ "$AT_TARGET" = "$VERSION" ] || fail "대상 커밋의 pyproject 버전($AT_TARGET)이 $VERSION 이 아닙니다."
+          git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null && fail "태그 v$VERSION 가 이미 있습니다."
+          true
 
-          Version Bump 워크플로우가 자동 생성했습니다.
-          EOF
-          )"
+      - name: Tag rc
+        if: contains(steps.resolve.outputs.version, '-')
+        env:
+          VERSION: ${{ steps.resolve.outputs.version }}
+          TARGET: ${{ steps.resolve.outputs.target }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v$VERSION" -m "Release v$VERSION" "$TARGET"
+          if ! git push origin "v$VERSION"; then
+            echo "rc 태그 v$VERSION 푸시 실패" > "$REASON_FILE"; exit 1
+          fi
+          echo "태그 v$VERSION ($(git rev-parse --short "$TARGET")) → 프리릴리즈 초안 빌드가 시작됩니다."
+
+      - name: Check and open release PR
+        id: release_pr
+        if: ${{ !contains(steps.resolve.outputs.version, '-') }}
+        env:
+          VERSION: ${{ steps.resolve.outputs.version }}
+          BRANCH: ${{ steps.resolve.outputs.branch }}
+          TARGET: ${{ steps.resolve.outputs.target }}
+        run: |
+          FAILED=0
+          REPORT="$RUNNER_TEMP/checks.md"
+          : > "$REPORT"
+          check() {
+            if [ "$1" = 0 ]; then echo "- ✅ $2" >> "$REPORT"
+            else echo "- ❌ $2" >> "$REPORT"; echo "::error::$2"; FAILED=1; fi
+          }
+          check "$(git merge-base --is-ancestor origin/main "$TARGET"; echo $?)" "origin/main이 $BRANCH 의 조상(동기화됨)"
+          LAST_RC=$(git tag -l "v${VERSION}-rc*" --sort=-v:refname | head -n 1 || true)
+          if [ -n "$LAST_RC" ]; then
+            OTHER=$(git diff --name-only "$LAST_RC" "$TARGET" | grep -vxE 'pyproject\.toml|uv\.lock|config/config\.py' || true)
+            check "$([ -z "$OTHER" ]; echo $?)" "마지막 rc $LAST_RC 뒤 바뀐 것이 버전 파일 셋뿐${OTHER:+ — 그 밖: $(echo $OTHER)}"
+          else
+            echo "- ⏭ rc 태그 없음 — 마지막 rc 확인 건너뜀" >> "$REPORT"
+          fi
+          OPEN=$(gh pr list --base main --head "$BRANCH" --state open --json number --jq 'length')
+          check "$([ "$OPEN" = 0 ]; echo $?)" "$BRANCH → main PR이 열려 있지 않음"
+          cat "$REPORT"
+          if [ "$FAILED" = 1 ]; then
+            { echo "정식 릴리즈 PR 전 확인 실패:"; cat "$REPORT"; } > "$REASON_FILE"; exit 1
+          fi
+          {
+            echo '## 요약'
+            echo ''
+            echo "\`$BRANCH\`를 \`main\`에 넣어 v$VERSION을 정식 릴리즈합니다."
+            echo ''
+            echo '- 필수 체크가 통과하면 **merge commit으로 자동 머지**됩니다 — rc 태그가 가리키는 커밋이 `main` 이력에 남습니다'
+            echo "- 머지되면 Auto Tag가 \`main\`에 \`v$VERSION\` 태그를 만들고, 3-OS 빌드 뒤 정식 릴리즈 **초안**이 만들어집니다. 노트를 읽고 고친 뒤 Publish합니다"
+            echo "- 머지됐는데 태그 \`v$VERSION\`이 안 생기면: Actions → Auto Tag → Run workflow → \`main\`"
+            echo ''
+            echo '## 확인 결과'
+            echo ''
+            cat "$REPORT"
+            echo ''
+            echo "Release 워크플로가 자동 생성했습니다 — [실행 기록]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)"
+          } > "$RUNNER_TEMP/body.md"
+          if ! URL=$(gh pr create --base main --head "$BRANCH" --title "chore: v$VERSION 릴리즈" \
+                --label chore --body-file "$RUNNER_TEMP/body.md"); then
+            echo "$BRANCH → main PR을 만들지 못했다" > "$REASON_FILE"; exit 1
+          fi
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "릴리즈 PR: $URL"
+          # 자동 머지 — 저장소 설정 "Allow auto-merge"가 켜져 있어야 한다. 방식은 merge commit
+          if ! gh pr merge "$URL" --auto --merge; then
+            echo "릴리즈 PR($URL)의 자동 머지를 켜지 못했다 — 저장소 설정 Allow auto-merge를 확인하고 그 PR을 손으로 merge commit 머지한다" > "$REASON_FILE"
+            exit 1
+          fi
+
+      - name: Report failure on the bump PR
+        if: failure()
+        env:
+          PR: ${{ steps.resolve.outputs.pr }}
+          BRANCH: ${{ steps.resolve.outputs.branch }}
+        run: |
+          REASON=$(cat "$REASON_FILE" 2>/dev/null || echo "까닭을 적지 못하고 끝났다 — 실행 기록을 본다")
+          {
+            echo '🤖 **Release 워크플로** — 2단계(배포 준비)가 멈췄습니다.'
+            echo ''
+            echo "$REASON"
+            echo ''
+            echo "- 실행 기록: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "- 고친 뒤: Actions → Release → Run workflow → \`${BRANCH:-dev-*}\` → 단계 **2 배포 준비만 다시**"
+            echo "- 정식: 릴리즈 PR이 main에 머지됐는데 정식 태그가 안 생기면 Actions → Auto Tag → Run workflow → \`main\`(2를 다시 돌리지 않는다)"
+          } > "$RUNNER_TEMP/comment.md"
+          if [ -n "$PR" ]; then
+            gh pr comment "$PR" --body-file "$RUNNER_TEMP/comment.md"
+          else
+            echo "::error::범프 PR을 찾지 못해 코멘트를 남기지 못했다"; cat "$RUNNER_TEMP/comment.md"
+          fi
