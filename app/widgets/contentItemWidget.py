@@ -19,8 +19,8 @@
 ##
 ## 상태는 넷이 아니라 다섯이다(DownloadState.PAUSED 포함). 상태가 바뀌면
 ## 3행 내용·조작 버튼이 바뀌지만 행 높이·카드 높이는 불변이다
-## (목록이 들썩이면 안 된다 — tests/unit/test_card_layout.py·
-## tests/unit/test_card_state_matrix.py 게이트).
+## (목록이 들썩이면 안 된다 — tests/app/gui/test_card_layout.py·
+## tests/app/gui/test_card_state_matrix.py 게이트).
 ## 조작·삭제 아이콘은 폰트 글리프가 아니라 app/widgets/icons.py가 그리는 도형이다.
 ## 좌측 기준선은 둘: 썸네일 왼쪽(=cardPadding), 컨텐츠 열 왼쪽(3행 공통).
 ## 우측 끝은 하나: 삭제(1행)·파일 크기(3행) — 조작이 3개로 늘어도 유지

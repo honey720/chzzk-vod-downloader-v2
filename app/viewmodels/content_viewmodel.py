@@ -15,14 +15,14 @@ content/worker.py(조회 콜백 본체·풀→메인 Signal)를 여기로 흡수
 - 다운로드 관문 문구 tr() 2건은 이 클래스가 소유한다(컨텍스트 `ContentViewModel`).
 
 번역 컨텍스트가 둘인 것은 사실에 맞다 — 조회 오류는 대화상자에, 관문 문구는
-카드 3행에 뜬다. tests/unit/test_card_state_matrix.py가 컨텍스트를 "카드에 뜨는
+카드 3행에 뜬다. tests/app/gui/test_card_state_matrix.py가 컨텍스트를 "카드에 뜨는
 문구"의 경계로 쓰므로, 둘을 한 컨텍스트에 두면 대화상자 문구에 카드 길이
 규약이 적용된다. 제외 목록으로 푸는 것은 새 문구가 생길 때마다 누군가 추가해야
 하고 잊으면 조용히 잘못 재므로 쓰지 않는다.
 
 스레드 경계: 조회는 QThreadPool 워커에서 돌고, 반영(자리표시 교체·통지)은
 `_WorkerRelay`(메인 스레드 QObject)가 큐 연결로 받아 메인 스레드에서 한다.
-tests/unit/test_fetch_thread_boundary.py가 이 경계를 잰다 — 풀에서 끝났다고
+tests/app/gui/test_fetch_thread_boundary.py가 이 경계를 잰다 — 풀에서 끝났다고
 슬롯을 직접 부르면 모델·위젯이 풀 스레드에서 갱신된다.
 """
 

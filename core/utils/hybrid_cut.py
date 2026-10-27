@@ -15,7 +15,7 @@
 세그먼트에서 바로 구간 파일을 쓴다(``core.utils.fmp4_cut`` · ``core.utils.ts_cut``).
 입력 파일 하나에서 가운데를 복사 조각으로 뜨고 오디오를 다시 인코딩해 잇던 예전 절차는
 제품에 없다 — 새 방식의 결과를 견주는 대조로 테스트에만 남아 있다
-(``tests/unit/core/reference_cut.py``).
+(``tests/ffmpeg/reference_cut.py``).
 
 조각을 이어 붙였을 때 플레이어가 끊김 없이 재생하려면 재인코딩 조각이 원본과
 같은 모양이어야 한다. 실제 VOD로 확인한 조건이다.

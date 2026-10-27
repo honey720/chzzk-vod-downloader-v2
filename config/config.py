@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 # pyproject.toml [project].version의 미러 상수 (#116). **정본은 pyproject.toml이다.**
 # Nuitka 번들에는 pyproject.toml도 배포 메타데이터(dist-info)도 포함되지 않아
 # 빌드 실행 파일은 이 상수를 쓴다. 정본과의 불일치는 단위 테스트
-# (tests/unit/test_download_log_phases.py)가 잡는다 — 버전을 올릴 때는
+# (tests/app/scripts/test_download_log_phases.py)가 잡는다 — 버전을 올릴 때는
 # pyproject.toml과 이 상수를 함께 갱신할 것.
 APP_VERSION = "2.11.1"
 
@@ -166,7 +166,7 @@ CONFIG_VERSION = 2
 # 전부 이 표에서 나온다 — 하드코딩된 기본값 dict를 표와 따로 두지 않는다. 두 출처가 되는
 # 순간 "등재를 빠뜨렸는데 조용하다"(#159·#253 전례 — 미등재 키를 정규화가 소리 없이
 # 지웠다)가 다시 가능해진다. 새 키를 넣을 때 손댈 곳은 **표 한 줄 + 그 값을 쓰는 곳**뿐이다.
-# 게이트: tests/unit/test_config_schema.py — 표에 임시 줄을 붙이고 다른 코드를 안 건드린 채
+# 게이트: tests/app/logic/test_config_schema.py — 표에 임시 줄을 붙이고 다른 코드를 안 건드린 채
 # 등재·기본값·검증·보존이 전부 되는지 잰다.
 #
 # ⚠️ 저장 형식·위치·키 이름은 이 표가 바꾸지 않는다. 마이그레이션은 MIGRATIONS의 몫이고,

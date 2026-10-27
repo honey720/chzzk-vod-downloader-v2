@@ -190,7 +190,7 @@ class SettingDialog(QDialog):
     Designer를 쓰지 않으므로 `.ui`를 정본으로 둘 이유가 없었다. 구 `ui/settingDialog.py`
     (uic 생성물)의 `setupUi`·`retranslateUi`를 그대로 옮긴 것이며 구조·objectName·
     번역 원문은 바꾸지 않았다 — ⚠️ objectName 넷(`nidaut`·`nidses`·`afterDownload`·
-    `language`)은 계약 게이트(tests/unit/test_setting_dialog_contract.py)의 일부이고,
+    `language`)은 계약 게이트(tests/app/gui/test_setting_dialog_contract.py)의 일부이고,
     번역 컨텍스트는 클래스 이름(`SettingDialog`)이라 원문 11개를 글자 하나 바꾸면
     `.ts`에 항목이 새로 생기고 옛 항목이 지워진다(`.qm` 재컴파일 = rc 대상).
     """

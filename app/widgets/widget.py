@@ -615,7 +615,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         # (그 뒤로 [가운데 스트레치, 파일 크기 라벨]이 이어진다). 스트레치
         # 뒤에 addWidget하면 버튼이 오른쪽으로 밀리고, 스트레치가 없으면
         # 넓은 창에서 버튼 사이가 균등 분배로 벌어진다(오너 실기 확인,
-        # 1600px에서 간격 335px 실측 — tests/unit/test_card_layout.py 게이트).
+        # 1600px에서 간격 335px 실측 — tests/app/gui/test_card_layout.py 게이트).
         self.resolutionLayout.insertWidget(len(self.buttons), button)
         # 소형 pill — 높이만 토큰으로 고정하고 폭은 텍스트에 맞긴다(가로
         # 여백은 전역 QSS [role="resolution"]의 padding이 준다).
@@ -1512,7 +1512,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         저장됐고, 실패의 복구 수단은 재시도다(§7.1 시작 전 쓰기 검사가 경로 문제를 걸러
         실패 카드까지 온 것은 대개 네트워크·서버 쪽 — 예외 없는 규칙이 낫다, 오너 확정).
         그런데 호버 강조·커서는 상태와 무관해 "누르면 뭔가 된다"고 거짓말을 했다(실기에서
-        하나씩 발견 — 전수 감사 표는 tests/unit/test_card_surfaces.py).
+        하나씩 발견 — 전수 감사 표는 tests/app/gui/test_card_surfaces.py).
 
         - 제목: `editable` 동적 속성(QSS `#titleLabel[editable="true"]:hover`) + IBeam↔화살표
         - 경로 라벨: 손가락↔화살표 커서(호버 강조는 원래 없다)

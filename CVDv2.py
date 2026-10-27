@@ -166,7 +166,7 @@ if __name__ == '__main__':
     # 실행 중 OS 테마 전환 추종은 apply_theme() 안에서 함께 건다 — #227 때는
     # 카드가 위젯별 setStyleSheet이라 반쪽만 갈아입어 뺐고(SPEC §8.5), #242로
     # 카드가 전역 .qss로 옮겨 온 뒤 "시작부터 라이트"와 "다크→라이트 전환"의
-    # 렌더가 같은지를 게이트(tests/unit/test_theme_switch.py)로 재고 재도입했다.
+    # 렌더가 같은지를 게이트(tests/app/gui/test_theme_switch.py)로 재고 재도입했다.
     apply_theme(app)
 
     # 설정 파일 로드

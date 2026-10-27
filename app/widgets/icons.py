@@ -13,7 +13,7 @@
 
 색은 `theme.py` 토큰 이름으로만 고른다(평소 `textMuted` / 호버 `text` 또는
 버튼별 지정 / 비활성 `textDisabled`) — 이 파일에는 색 리터럴이 없다
-(`tests/unit/test_theme.py`의 단일 정의 게이트). 배경·테두리(호버 표면)는
+(`tests/app/gui/test_theme.py`의 단일 정의 게이트). 배경·테두리(호버 표면)는
 전역 QSS의 `QPushButton[role="icon"]` 규칙이 그대로 담당한다.
 """
 

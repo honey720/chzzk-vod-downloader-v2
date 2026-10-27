@@ -4,7 +4,7 @@ file(#73)·m3u8(#74) 엔진이 평행 중복으로 갖고 있던 실행 엔진�
 한 곳으로 흡수했다: 워커 풀 관리·작업 큐잉·실패/저속 재큐잉, 적응형 스레드
 스케일링과 관측 스레드, 일시정지/재개 처리, 진행률 집계 → ProgressEvent 통지.
 로직·수식은 두 엔진에서 식 그대로 옮겼다 — 규칙은 기존 박제 테스트
-(tests/unit/core/test_file_downloader_rules.py / test_m3u8_downloader_rules.py)가
+(tests/core/downloaders/test_file_downloader_rules.py / test_m3u8_downloader_rules.py)가
 시나리오·단언 무수정으로 고정한다.
 
 하위 다운로더가 구현·오버라이드하는 것 (새 다운로더를 추가할 때 보는 목록):

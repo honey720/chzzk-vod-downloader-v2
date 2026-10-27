@@ -10,7 +10,7 @@ core/downloaders/base.py의 BaseDownloader로 이주했다(#82). 이 클래스�
 - _download_part: 파트(바이트 구간) 단위 다운로드 — 저속 재시도·일시정지·
   중단 핸들링 포함. 재큐잉된 파트는 이미 받은 바이트 뒤에서 Range로
   이어받는다(#78 — 206이 아니면 처음부터 폴백). 규칙은
-  tests/unit/core/test_file_downloader_rules.py가 박제한다
+  tests/core/downloaders/test_file_downloader_rules.py가 박제한다
 - postprocess: 전체 다운로드에는 없다 (베이스 기본 no-op). 구간 다운로드에서는
   받은 부분 파일을 구간마다 잘라 파일로 만든다
 

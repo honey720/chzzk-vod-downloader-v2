@@ -12,7 +12,7 @@ m3u8 고유 부분만 남는다:
   시점에 실행한다 (쿠키·치지직 API 조회는 아직 앱 영역)
 - _prepare_output: 임시 폴더 재생성 + EXT-X-MAP 초기화 세그먼트 다운로드
 - _download_segment: 세그먼트 단위 다운로드 — 저속 재시도·일시정지·중단
-  핸들링 포함. 규칙은 tests/unit/core/test_m3u8_downloader_rules.py가 박제한다
+  핸들링 포함. 규칙은 tests/core/downloaders/test_m3u8_downloader_rules.py가 박제한다
 - postprocess: 세그먼트를 인덱스 순서로 ffmpeg stdin에 흘리는 단일 패스
   재포장 (#88·#92) — 시작은 on_merge_start 콜백으로 알리고, 실패 시 폴백
   없이 명확히 실패한다. 넘긴 세그먼트는 곧바로 지운다 — 실패하면 다시 받는다 (#309)
