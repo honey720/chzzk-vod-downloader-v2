@@ -37,10 +37,14 @@ from tests.unit.core.test_hybrid_cut import mp4_source  # noqa: F401 — 모듈 
 
 PAUSE_AFTER = 0.5  # 프로세스를 띄운 뒤 일시정지하기까지(초) — 일하는 명령이 도는 동안이다
 PAUSE_FOR = 1.5  # 일시정지해 두는 시간(초)
-# 감시 시간 = WATCH_FACTOR × 혼자 돈 시간 D + WATCH_SLACK. 테스트의 정상 경로는 일시정지 · 일 ·
-# 바쁜 러너의 느려짐을 합쳐도 4 × D + 4초 안팎이다 — 넘기면 멈춘 것으로 보고 단서를 남긴다 (#458)
-WATCH_FACTOR = 5
+# 감시 시간 = max(WATCH_FLOOR, WATCH_FACTOR × 혼자 돈 시간 D + WATCH_SLACK) — 넘기면 멈춘 것으로 보고
+# 단서를 남긴다 (#458). 정상 경로가 가장 긴 것은 일시정지 시간 테스트다: 띄운 뒤 0.5초 + 일시정지
+# (3 × D + 3초) + 일. 바쁜 러너에서 일이 2 × D 걸리면 0.5 + (3 × D + 3) + 2 × D ≈ 5 × D + 3.5초 —
+# 감시 시간은 거기서 D + 6.5초 이상 남는다. D가 짧아도 120초 아래로 두지 않는다(오탐이면 멈춤과
+# 가를 수 없다)
+WATCH_FACTOR = 6
 WATCH_SLACK = 10.0  # 초
+WATCH_FLOOR = 120.0  # 감시 시간의 바닥(초)
 WATCH_EVERY = 60.0  # 감시 동안 모든 스레드 스택을 남기는 주기(초)
 
 
@@ -155,6 +159,11 @@ def _process_state(processes: list[subprocess.Popen]) -> str:
     return "\n".join(lines) or "(띄운 프로세스 없음)"
 
 
+def _watch_limit(alone: float) -> float:
+    """혼자 돈 시간 alone(초)에서 감시 시간을 낸다 — max(``WATCH_FLOOR``, ``WATCH_FACTOR`` × alone + ``WATCH_SLACK``)."""
+    return max(WATCH_FLOOR, WATCH_FACTOR * alone + WATCH_SLACK)
+
+
 def _run_watched(
     limit: float, launched: list[subprocess.Popen], *args: Any, **kwargs: Any
 ) -> subprocess.CompletedProcess[str]:
@@ -210,7 +219,7 @@ def test_a_paused_ffmpeg_stands_still_and_writes_the_same_file_when_resumed(
     -> 일시정지 중 두 시점(0.4초 뒤 · 끝나기 0.1초 전)에 프로세스가 살아 있고 출력 파일 크기가 같다
     -> 진행을 받는 실행: 그 두 시점 사이에 진행 알림이 없다
     -> 종료 코드 0, 걸린 시간 >= 1.5초, 결과 파일의 바이트 == 기준 파일의 바이트
-    -> 일시정지하는 실행이 기준이 걸린 시간 D의 5배 + 10초 안에 돌아온다(넘기면 스택 · ffmpeg 상태를 남기고 실패, #458)
+    -> 일시정지하는 실행이 max(120초, 6 × D + 10초) 안에 돌아온다 — D는 기준이 걸린 시간(넘기면 스택 · ffmpeg 상태를 남기고 실패, #458)
     """
     plain, paused_output = str(tmp_path / "plain.mp4"), str(tmp_path / "paused.mp4")
     began = time.perf_counter()
@@ -233,7 +242,7 @@ def test_a_paused_ffmpeg_stands_still_and_writes_the_same_file_when_resumed(
     pause.schedule_from_launch(launch_hooks, paused_output, PAUSE_AFTER, PAUSE_FOR, observe)
     # 제한 시간은 일하는 시간만 센다(멈춰 있던 시간은 빼고) — 재개가 듣지 않으면 여기서 끝난다
     done = _run_watched(
-        WATCH_FACTOR * alone + WATCH_SLACK,
+        _watch_limit(alone),
         launched,
         _work(paused_output),
         timeout=90,
@@ -265,7 +274,7 @@ def test_time_spent_paused_does_not_count_towards_the_timeout(
     일하는 명령이 혼자 도는 시간 D를 먼저 잼. 제한 시간을 3 × D + 3초로 주고, 띄운 지 0.5초
     뒤부터 그 제한 시간만큼 일시정지(일시정지를 합친 전체 시간은 제한 시간을 넘는다)
     -> 종료 코드 0(시간 초과 예외 없음), 걸린 시간 > 제한 시간
-    -> 일시정지하는 실행이 5 × D + 10초 안에 돌아온다(넘기면 스택 · ffmpeg 상태를 남기고 실패, #458)
+    -> 일시정지하는 실행이 max(120초, 6 × D + 10초) 안에 돌아온다(넘기면 스택 · ffmpeg 상태를 남기고 실패, #458)
     """
     output = str(tmp_path / "out.mp4")
     started = time.perf_counter()
@@ -280,7 +289,7 @@ def test_time_spent_paused_does_not_count_towards_the_timeout(
     # 혼자 돌린 것은 이미 끝났다 — 이제부터 뜨는 것만 본다
     pause.schedule_from_launch(launch_hooks, output, PAUSE_AFTER, timeout)
     done = _run_watched(
-        WATCH_FACTOR * alone + WATCH_SLACK,
+        _watch_limit(alone),
         launched,
         _work(output),
         timeout=timeout,
