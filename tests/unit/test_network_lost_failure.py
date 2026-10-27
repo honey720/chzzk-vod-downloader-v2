@@ -6,7 +6,7 @@ import pytest
 import requests
 from PySide6.QtCore import QTranslator
 
-import main as main_module
+import CVDv2 as main_module
 from app.viewmodels.download_viewmodel import DownloadViewModel, _failure_message_key
 from core.downloaders.base import NETWORK_LOST, NetworkLostError
 

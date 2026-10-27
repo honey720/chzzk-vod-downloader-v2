@@ -9,7 +9,7 @@ from PySide6.QtCore import QTranslator
 from PySide6.QtWidgets import QApplication
 
 import app.widgets.widget as widget_module
-import main as main_module
+import CVDv2 as main_module
 from app.viewmodels.data import ContentItem
 from app.widgets.widget import ContentItemWidget
 from core.models.download_state import DownloadState

@@ -17,7 +17,7 @@ import time
 import pytest
 from PySide6.QtCore import QObject
 
-import main as main_module
+import CVDv2 as main_module
 import app.theme as theme
 from app.viewmodels.data import ContentItem
 from app.viewmodels.download_viewmodel import DownloadViewModel

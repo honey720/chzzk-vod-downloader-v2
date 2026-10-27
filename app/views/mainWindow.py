@@ -146,7 +146,7 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
 
         `.ui`(uic 재생성 대상)에는 theme를 연결할 수 없어 여백을 여기서
         런타임에 건다 — 오너가 theme.py의 outerMargin/framePadding 숫자만
-        바꾸고 `uv run python main.py`로 바로 확인할 수 있게 하기 위해서다.
+        바꾸고 `uv run python CVDv2.py`로 바로 확인할 수 있게 하기 위해서다.
         상단바·카드 목록·하단바가 같은 outerMargin에서 시작하고, 바 안쪽
         여백(framePadding)이 카드 안쪽 여백(cardPadding)과 같으면 입력창·
         썸네일·하단 요약의 왼쪽 끝이 한 선에 놓인다.

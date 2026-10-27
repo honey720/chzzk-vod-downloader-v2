@@ -23,7 +23,7 @@ from PySide6.QtWidgets import QApplication
 
 import app.section_basis as section_basis
 import app.theme as theme
-import main as main_module
+import CVDv2 as main_module
 from app.download_logger import DownloadLogger
 from app.section_basis import SectionBasis
 from app.viewmodels.data import ContentItem

@@ -33,7 +33,7 @@ import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
-import main as main_module
+import CVDv2 as main_module
 import app.theme as theme
 from app.views.mainWindow import VodDownloader
 from tests.unit.card_helpers import hold_style
@@ -166,7 +166,7 @@ class TestButtonsStayEqualInEveryLanguage:
 
     폭은 런타임 sizeHint로 맞추므로 텍스트 길이가 다른 언어에서도 같은 폭이
     나와야 한다. 언어 설정은 `config['language']`로 저장되고 번역기는
-    `main.set_language`가 **시작 시 한 번** 로드한다(런타임 전환 경로 없음,
+    `CVDv2.set_language`가 **시작 시 한 번** 로드한다(런타임 전환 경로 없음,
     #245 확인) — 그래서 각 언어를 새 창으로 만들어 잰다(재시작과 같은 조건).
     """
 

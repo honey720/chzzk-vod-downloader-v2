@@ -36,7 +36,7 @@ import core.api.mp4 as mp4_module
 import core.downloaders.file_downloader as fd_module
 import core.utils.ffmpeg as ffmpeg_module
 import core.utils.hybrid_cut as cut_module
-import main as main_module
+import CVDv2 as main_module
 from app.download_logger import DownloadLogger
 from app.viewmodels.data import ContentItem
 from app.views import mainWindow as mw_mod

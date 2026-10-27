@@ -105,7 +105,7 @@ Dependencies are managed with [uv](https://docs.astral.sh/uv/); Python 3.13 or n
 
 ```bash
 uv sync                  # install dependencies
-uv run python main.py    # run the app
+uv run python CVDv2.py    # run the app
 ```
 
 #### Dev scripts

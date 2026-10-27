@@ -15,7 +15,7 @@ pill, 진행=%·속도·남은시간, 완료=✓ 완료, 실패=✕ 사유. 슬�
 import pytest
 from PySide6.QtGui import QColor
 
-import main as main_module
+import CVDv2 as main_module
 import app.theme as theme
 from app.viewmodels.item_state import ItemState
 from app.viewmodels.data import ContentItem
@@ -64,7 +64,7 @@ def _apply_dark_card_qss(qapp):
     Linux에서는 재현 안 됨 — macOS의 Qt/shiboken 오브젝트 수명 처리가
     더 엄격하거나 다른 것으로 추정.
 
-    `main.apply_theme()`을 그대로 안 쓰는 이유: 그 함수의
+    `CVDv2.apply_theme()`을 그대로 안 쓰는 이유: 그 함수의
     `theme.detect_color_scheme(app)`이 오프스크린 QPA 팔레트 폴백에서
     "light"로 나온다(실측 확인) — 그대로 쓰면 이 파일의 `theme.DARK[...]`
     기대값이 전부 깨진다. 스킴 감지는 건너뛰고 "dark"만 명시 고정한다.

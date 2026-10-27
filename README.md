@@ -105,7 +105,7 @@ Nuitka로 컴파일한 실행 파일은 코드 서명과 평판 정보가 없어
 
 ```bash
 uv sync                  # 의존성 설치
-uv run python main.py    # 앱 실행
+uv run python CVDv2.py    # 앱 실행
 ```
 
 #### 개발용 스크립트

@@ -30,7 +30,7 @@ from PySide6.QtCore import QMimeData, QPoint, QRect, QSize, Qt
 from PySide6.QtGui import QDragEnterEvent
 from PySide6.QtWidgets import QApplication, QScrollArea
 
-import main as main_module
+import CVDv2 as main_module
 import app.theme as theme
 from app.views.mainWindow import VodDownloader
 from app.viewmodels.data import ContentItem

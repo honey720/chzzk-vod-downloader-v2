@@ -1,10 +1,10 @@
-"""main.set_language의 en_US 폴백 동작 단위 테스트 (PR #44 리뷰 반영).
+"""CVDv2.set_language의 en_US 폴백 동작 단위 테스트 (PR #44 리뷰 반영).
 
 번역 로드 실패 시 en_US는 이번 실행에만 적용되고,
 유저가 저장한 language 설정(config)은 보존되어야 한다.
 """
 
-import main
+import CVDv2 as main
 
 
 class _StubTranslator:
