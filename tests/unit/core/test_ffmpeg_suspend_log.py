@@ -8,6 +8,7 @@ warning으로 남긴다. 로그 이름은 ``record.name``으로 잰다(``caplog.
 import logging
 import subprocess
 import sys
+from collections.abc import Iterator
 
 import pytest
 
@@ -18,7 +19,7 @@ LOGGER = "core.utils.ffmpeg"
 
 
 @pytest.fixture
-def sleeper():
+def sleeper() -> Iterator[subprocess.Popen]:
     """30초 자는 파이썬 자식 프로세스 — 끝날 때 살아 있으면 다시 돌린 뒤 끝낸다."""
     process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
     yield process
@@ -28,7 +29,7 @@ def sleeper():
         process.wait(10)
 
 
-def _messages(caplog, level: int) -> list[str]:
+def _messages(caplog: pytest.LogCaptureFixture, level: int) -> list[str]:
     return [r.getMessage() for r in caplog.records if r.name == LOGGER and r.levelno == level]
 
 
@@ -71,13 +72,13 @@ class _LiveProcess:
     """끝나지 않은 프로세스처럼 보이는 대역 — poll()이 returncode를 돌려준다(None이면 살아 있음)."""
 
     pid = 4242  # 로그에 찍힐 값을 알아보기 위한 임의의 번호
-    returncode = None
+    returncode: int | None = None
 
-    def poll(self):
+    def poll(self) -> int | None:
         return self.returncode
 
 
-def _toggle_and_fail_resume(monkeypatch, process) -> None:
+def _toggle_and_fail_resume(monkeypatch: pytest.MonkeyPatch, process: _LiveProcess) -> None:
     """멈추기는 되고 다시 시작은 실패하는 _set_suspended로 일시정지 → 해제를 한 번 거친다."""
     monkeypatch.setattr(ffmpeg_module, "_set_suspended", lambda proc, suspended: suspended)
     paused = [True]

@@ -16,6 +16,7 @@ import sys
 import threading
 import time
 import traceback
+from typing import Any
 
 import pytest
 
@@ -142,7 +143,7 @@ def _suspended_threads(pid: int) -> str:
         return f"(읽지 못함: {e})"
 
 
-def _process_state(processes: list) -> str:
+def _process_state(processes: list[subprocess.Popen]) -> str:
     """띄운 프로세스마다 PID · 살아 있는지 · 일시중단 상태."""
     lines = []
     for process in processes:
@@ -154,7 +155,9 @@ def _process_state(processes: list) -> str:
     return "\n".join(lines) or "(띄운 프로세스 없음)"
 
 
-def _run_watched(limit: float, launched: list, *args, **kwargs):
+def _run_watched(
+    limit: float, launched: list[subprocess.Popen], *args: Any, **kwargs: Any
+) -> subprocess.CompletedProcess[str]:
     """``run_ffmpeg``를 다른 스레드로 돌리고 limit초 안에 돌아오는지 지킨다 (#458).
 
     그동안 ``WATCH_EVERY``초마다 모든 스레드 스택을 표준 오류에 남긴다(실패하면 캡처된 출력으로
@@ -162,7 +165,7 @@ def _run_watched(limit: float, launched: list, *args, **kwargs):
     끝낸 뒤 실패한다 — CI 잡 시간 제한까지 아무 말 없이 서 있지 않게 한다. 돌아오면 그 결과를
     돌려주고, 예외로 끝났으면 그 예외를 그대로 낸다.
     """
-    outcome: dict = {}
+    outcome: dict[str, subprocess.CompletedProcess[str] | BaseException] = {}
 
     def work() -> None:
         try:
