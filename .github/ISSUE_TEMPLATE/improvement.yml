@@ -29,5 +29,5 @@ body:
     attributes:
       label: 착수 조건
       options:
-        - label: 이 작업은 소유자가 `approved` 라벨을 달기 전에는 시작하지 않는다.
+        - label: 이 작업은 소유자가 착수를 지시하기 전에는 시작하지 않는다.
           required: true

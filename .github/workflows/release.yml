@@ -64,7 +64,7 @@ jobs:
             libxcb-shape0 libxcb-xinerama0 libxcb-cursor0 libdbus-1-3 imagemagick
 
       - name: Verify ffmpeg (3-OS)
-        run: uv run pytest -q -k ffmpeg
+        run: uv run pytest -q -k "ffmpeg_ or _ffmpeg or ffmpeg- or -ffmpeg"
         env:
           QT_QPA_PLATFORM: offscreen
 
