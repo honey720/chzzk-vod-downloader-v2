@@ -208,20 +208,31 @@ def _set_suspended(process: subprocess.Popen, suspended: bool) -> bool:
     프로세스는 **그 ``Popen`` 객체가 쥔 것**으로만 가리킨다. Windows에서는 ``Popen``이 프로세스를
     띄울 때 받은 핸들을 그대로 쓴다 — PID로 다시 열지 않으므로 다른 프로세스를 잡을 일이 없고
     따로 닫을 핸들도 없다. 그 밖에서는 ``Popen``이 아직 거두지 않은 자식의 PID에 신호를 보낸다.
+
+    결과는 부를 때마다 debug 로그로 남긴다 — Windows는 NTSTATUS, 그 밖은 신호를 보냈는지 ·
+    실패한 까닭. 일시정지 뒤 끝나지 않는 실행에서 멈추기 · 다시 시작이 들었는지 가르려고 둔다 (#458).
     """
+    action = "멈추기" if suspended else "다시 시작"
     if process.poll() is not None:
+        logger.debug("ffmpeg %s pid=%s — 이미 끝난 프로세스라 하지 않았다", action, process.pid)
         return False
     if sys.platform == "win32":
         # Popen이 프로세스를 띄울 때 받아 쥐고 있는 핸들(모든 권한) — Popen이 살아 있는 동안 유효하다
         handle = getattr(process, "_handle", None)
         if handle is None:
+            logger.debug("ffmpeg %s pid=%s — 핸들이 없어 하지 않았다", action, process.pid)
             return False
         suspend, resume = _windows_process_api()
-        return (suspend if suspended else resume)(int(handle)) == 0  # NTSTATUS — 0이 성공이다
+        status = (suspend if suspended else resume)(int(handle))
+        # NTSTATUS — 0이 성공이다. 음수로 오는 실패 코드는 익숙한 0xC... 꼴로 적는다
+        logger.debug("ffmpeg %s pid=%s NTSTATUS=0x%08X", action, process.pid, status & 0xFFFFFFFF)
+        return status == 0
     try:
         os.kill(process.pid, signal.SIGSTOP if suspended else signal.SIGCONT)
-    except OSError:
+    except OSError as e:
+        logger.debug("ffmpeg %s pid=%s — 신호 실패: %s", action, process.pid, e)
         return False
+    logger.debug("ffmpeg %s pid=%s — 신호를 보냈다", action, process.pid)
     return True
 
 
@@ -258,10 +269,17 @@ class _Control:
             return self.CANCELLED
         paused = self._should_pause is not None and self._should_pause()
         if paused and self._suspended_at is None:
+            # 멈추지 못하면 다음 poll(_STOP_POLL_SECONDS 뒤)에 다시 부른다. 그동안 프로세스는 돌고
+            # 제한 시간도 센다 — 계속 실패해도 제한 시간에서 끝난다(#458에서 그대로 두기로 했다)
             if _set_suspended(self._process, True):
                 self._suspended_at = now
         elif not paused and self._suspended_at is not None:
-            _set_suspended(self._process, False)
+            if not _set_suspended(self._process, False) and self._process.poll() is None:
+                # 살아 있는데 다시 돌리지 못했다 — 멈춘 채 남아 제한 시간까지 기다리게 된다 (#458)
+                logger.warning(
+                    "ffmpeg를 다시 돌리지 못했다(pid=%s) — 멈춘 채 남았을 수 있다",
+                    self._process.pid,
+                )
             self._deadline += now - self._suspended_at  # 서 있던 시간은 제한 시간에 세지 않는다
             self._suspended_at = None
         if self._suspended_at is None and now >= self._deadline:

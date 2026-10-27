@@ -11,8 +11,11 @@
 """
 
 import os
+import subprocess
+import sys
 import threading
 import time
+import traceback
 
 import pytest
 
@@ -33,6 +36,11 @@ from tests.unit.core.test_hybrid_cut import mp4_source  # noqa: F401 — 모듈 
 
 PAUSE_AFTER = 0.5  # 프로세스를 띄운 뒤 일시정지하기까지(초) — 일하는 명령이 도는 동안이다
 PAUSE_FOR = 1.5  # 일시정지해 두는 시간(초)
+# 감시 시간 = WATCH_FACTOR × 혼자 돈 시간 D + WATCH_SLACK. 테스트의 정상 경로는 일시정지 · 일 ·
+# 바쁜 러너의 느려짐을 합쳐도 4 × D + 4초 안팎이다 — 넘기면 멈춘 것으로 보고 단서를 남긴다 (#458)
+WATCH_FACTOR = 5
+WATCH_SLACK = 10.0  # 초
+WATCH_EVERY = 60.0  # 감시 동안 모든 스레드 스택을 남기는 주기(초)
 
 
 def _work(output: str) -> list[str]:
@@ -101,6 +109,94 @@ class _Pause:
         return self._event.is_set()
 
 
+def _all_stacks() -> str:
+    """지금 모든 스레드의 이름과 스택 — faulthandler와 달리 캡처된 출력 · 실패 메시지에 넣을 수 있다."""
+    names = {thread.ident: thread.name for thread in threading.enumerate()}
+    return "\n".join(
+        f"--- 스레드 {names.get(ident, '?')} ({ident})\n" + "".join(traceback.format_stack(frame))
+        for ident, frame in sys._current_frames().items()
+    )
+
+
+def _suspended_threads(pid: int) -> str:
+    """그 프로세스의 일시중단 상태 — Windows는 Suspended 스레드 수, 리눅스는 멈춘(T) 스레드 수, macOS는 상태 글."""
+    try:
+        if sys.platform == "win32":
+            script = (
+                f"$t = (Get-Process -Id {pid} -ErrorAction Stop).Threads; "
+                "\"suspended=$(@($t | Where-Object { $_.WaitReason -eq 'Suspended' }).Count)/$($t.Count)\""
+            )
+            command = ["powershell", "-NoProfile", "-Command", script]
+        elif sys.platform.startswith("linux"):
+            tasks = os.listdir(f"/proc/{pid}/task")
+            stopped = 0
+            for task in tasks:
+                with open(f"/proc/{pid}/task/{task}/stat", encoding="utf-8") as stat:
+                    stopped += stat.read().rsplit(")", 1)[1].split()[0] in ("T", "t")
+            return f"stopped={stopped}/{len(tasks)}"
+        else:
+            command = ["ps", "-o", "stat=", "-p", str(pid)]
+        done = subprocess.run(command, capture_output=True, text=True, timeout=20)
+        return (done.stdout.strip() or done.stderr.strip()) or "(빈 출력)"
+    except (OSError, subprocess.SubprocessError, IndexError) as e:
+        return f"(읽지 못함: {e})"
+
+
+def _process_state(processes: list) -> str:
+    """띄운 프로세스마다 PID · 살아 있는지 · 일시중단 상태."""
+    lines = []
+    for process in processes:
+        alive = process.poll() is None
+        line = f"pid={process.pid} alive={alive} returncode={process.returncode}"
+        if alive:
+            line += f" {_suspended_threads(process.pid)}"
+        lines.append(line)
+    return "\n".join(lines) or "(띄운 프로세스 없음)"
+
+
+def _run_watched(limit: float, launched: list, *args, **kwargs):
+    """``run_ffmpeg``를 다른 스레드로 돌리고 limit초 안에 돌아오는지 지킨다 (#458).
+
+    그동안 ``WATCH_EVERY``초마다 모든 스레드 스택을 표준 오류에 남긴다(실패하면 캡처된 출력으로
+    보인다). limit을 넘기면 모든 스레드 스택과 띄운 ffmpeg의 상태를 실패 메시지에 담고, ffmpeg를
+    끝낸 뒤 실패한다 — CI 잡 시간 제한까지 아무 말 없이 서 있지 않게 한다. 돌아오면 그 결과를
+    돌려주고, 예외로 끝났으면 그 예외를 그대로 낸다.
+    """
+    outcome: dict = {}
+
+    def work() -> None:
+        try:
+            outcome["done"] = run_ffmpeg(*args, **kwargs)
+        except BaseException as e:  # noqa: BLE001 — 테스트 스레드에서 그대로 다시 낸다
+            outcome["error"] = e
+
+    worker = threading.Thread(target=work, name="감시 대상 run_ffmpeg", daemon=True)
+    started = time.monotonic()
+    worker.start()
+    while True:
+        elapsed = time.monotonic() - started
+        worker.join(max(0.0, min(WATCH_EVERY, limit - elapsed)))
+        elapsed = time.monotonic() - started
+        if not worker.is_alive():
+            break
+        if elapsed >= limit:
+            stacks, state = _all_stacks(), _process_state(launched)
+            end_all(launched)  # 멈춘 것은 다시 돌린 뒤 끝낸다 — 감시 대상이 풀려 돌아올 수 있게
+            worker.join(10.0)
+            pytest.fail(
+                f"run_ffmpeg가 {limit:.1f}초 안에 돌아오지 않았다(멈춤으로 본다)\n"
+                f"## 띄운 ffmpeg(끝내기 전)\n{state}\n## 모든 스레드(끝내기 전)\n{stacks}",
+                pytrace=False,
+            )
+        print(
+            f"[감시] {elapsed:.0f}초 / {limit:.0f}초 — 모든 스레드\n{_all_stacks()}",
+            file=sys.stderr,
+        )
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["done"]
+
+
 @pytest.mark.parametrize("reporting", [False, True], ids=["출력을 모으는 실행", "진행을 받는 실행"])
 def test_a_paused_ffmpeg_stands_still_and_writes_the_same_file_when_resumed(
     tmp_path, launched, launch_hooks, reporting
@@ -111,9 +207,12 @@ def test_a_paused_ffmpeg_stands_still_and_writes_the_same_file_when_resumed(
     -> 일시정지 중 두 시점(0.4초 뒤 · 끝나기 0.1초 전)에 프로세스가 살아 있고 출력 파일 크기가 같다
     -> 진행을 받는 실행: 그 두 시점 사이에 진행 알림이 없다
     -> 종료 코드 0, 걸린 시간 >= 1.5초, 결과 파일의 바이트 == 기준 파일의 바이트
+    -> 일시정지하는 실행이 기준이 걸린 시간 D의 5배 + 10초 안에 돌아온다(넘기면 스택 · ffmpeg 상태를 남기고 실패, #458)
     """
     plain, paused_output = str(tmp_path / "plain.mp4"), str(tmp_path / "paused.mp4")
+    began = time.perf_counter()
     assert run_ffmpeg(_work(plain), timeout=300).returncode == 0
+    alone = time.perf_counter() - began
     pause = _Pause()
     reports: list[float] = []
     extra = (
@@ -130,7 +229,14 @@ def test_a_paused_ffmpeg_stands_still_and_writes_the_same_file_when_resumed(
     started = time.perf_counter()
     pause.schedule_from_launch(launch_hooks, paused_output, PAUSE_AFTER, PAUSE_FOR, observe)
     # 제한 시간은 일하는 시간만 센다(멈춰 있던 시간은 빼고) — 재개가 듣지 않으면 여기서 끝난다
-    done = run_ffmpeg(_work(paused_output), timeout=90, should_pause=pause, **extra)
+    done = _run_watched(
+        WATCH_FACTOR * alone + WATCH_SLACK,
+        launched,
+        _work(paused_output),
+        timeout=90,
+        should_pause=pause,
+        **extra,
+    )
     took = time.perf_counter() - started
 
     (alive_early, size_early, at_early), (alive_late, size_late, at_late) = (
@@ -156,6 +262,7 @@ def test_time_spent_paused_does_not_count_towards_the_timeout(
     일하는 명령이 혼자 도는 시간 D를 먼저 잼. 제한 시간을 3 × D + 3초로 주고, 띄운 지 0.5초
     뒤부터 그 제한 시간만큼 일시정지(일시정지를 합친 전체 시간은 제한 시간을 넘는다)
     -> 종료 코드 0(시간 초과 예외 없음), 걸린 시간 > 제한 시간
+    -> 일시정지하는 실행이 5 × D + 10초 안에 돌아온다(넘기면 스택 · ffmpeg 상태를 남기고 실패, #458)
     """
     output = str(tmp_path / "out.mp4")
     started = time.perf_counter()
@@ -169,7 +276,14 @@ def test_time_spent_paused_does_not_count_towards_the_timeout(
     started = time.perf_counter()
     # 혼자 돌린 것은 이미 끝났다 — 이제부터 뜨는 것만 본다
     pause.schedule_from_launch(launch_hooks, output, PAUSE_AFTER, timeout)
-    done = run_ffmpeg(_work(output), timeout=timeout, should_pause=pause, **extra)
+    done = _run_watched(
+        WATCH_FACTOR * alone + WATCH_SLACK,
+        launched,
+        _work(output),
+        timeout=timeout,
+        should_pause=pause,
+        **extra,
+    )
     took = time.perf_counter() - started
 
     assert done.returncode == 0
