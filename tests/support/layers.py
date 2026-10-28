@@ -63,11 +63,11 @@ def is_skipped_dir(name: str) -> bool:
     )
 
 
-def _contains_py(directory: Path) -> bool:
+def contains_py(directory: Path) -> bool:
     """디렉토리(걷지 않는 하위 제외) 어딘가에 `.py`가 하나라도 있는가."""
     for entry in directory.iterdir():
         if entry.is_dir():
-            if not is_skipped_dir(entry.name) and _contains_py(entry):
+            if not is_skipped_dir(entry.name) and contains_py(entry):
                 return True
         elif entry.suffix == ".py":
             return True
@@ -85,7 +85,7 @@ def owned_top_level_names() -> frozenset[str]:
     names: set[str] = set()
     for entry in sorted(ROOT_DIR.iterdir()):
         if entry.is_dir():
-            if not is_skipped_dir(entry.name) and _contains_py(entry):
+            if not is_skipped_dir(entry.name) and contains_py(entry):
                 names.add(entry.name)
         elif entry.suffix == ".py":
             names.add(entry.stem)
