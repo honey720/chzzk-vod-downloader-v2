@@ -46,6 +46,15 @@ uv run pytest -n 8 --dist loadfile   # 전체 테스트 병렬 — 로컬 전체
 - 다운로더 확장은 `core/engine/base.py` 상속으로만. 실행 엔진을 다시 구현하지 않는다.
 - **앱은 접근 권한을 만들어내지 않는다.** 유저가 자신의 쿠키로 받을 수 있는 것만 지원한다(SPEC §8.1).
 
+## 파일 배치
+
+- core 패키지 역할: chzzk(치지직 전용 해석 — 서비스마다 core/<서비스>/) · media(서비스와 무관한 형식 해석 · 색인 모델) · engine(받기 엔진과 엔진 도움) · sources(받기 방식 — engine/base.py를 상속한 하위 엔진) · sections(구간 계획 · 컷 · 구간용 받기) · models(엔진 · 앱이 공유하는 계약) · services(조율) · utils(어느 한 역할에 묶이지 않는 공용 — 경로 · 파일 시스템 이름 · 디스크 속도 · ffmpeg · 로깅 · 정지 · 쉬기)
+- app 패키지 역할: download · section_input · system · viewmodels · views · widgets. app/ 바로 아래는 network · theme만
+- 새 모듈은 역할이 맞는 패키지에 둔다. core/ · app/ 바로 아래에는 새 모듈을 만들지 않는다
+- 맞는 패키지가 없으면 새 패키지를 만들지 않고 제안한다(디렉토리 구조 변경 — 제안 구역)
+- 새 모듈 · 패키지 이름은 저장소 안의 다른 모듈과 끝 이름이 겹치지 않게 짓는다. 예외: 서비스 폴더(core/<서비스>/) 사이에서는 같은 역할의 모듈 이름이 같아도 된다(예: chzzk/metadata_service · youtube/metadata_service)
+- 바로 아래 파일 · 끝 이름 겹침은 `tests/meta/test_file_layout.py`가 잰다(`.py` 없는 폴더는 세지 않는다). 역할이 맞는지는 리뷰가 본다
+
 ## 코드 스타일
 
 - **PEP 8.** 줄 길이 100, `target-version = py313`. `uv run ruff check .` 와 `uv run ruff format .` 를 통과해야 한다.
