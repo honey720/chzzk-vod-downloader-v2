@@ -16,11 +16,8 @@ import math
 from collections.abc import Sequence
 from fractions import Fraction
 
-from core.models.plan import TimeRange
+from core.models.plan import MAX_SELECTIONS, TimeRange
 from core.sections.timecode import FrameRate, frame_index, frame_rate
-
-# 한 번에 받을 수 있는 구간 수의 상한
-MAX_SELECTIONS = 20
 
 # 위반 키 — 번역하지 않은 i18n 키 원문
 SELECTION_ORDER = "Start must be before end"  # 시작이 끝과 같거나 뒤다

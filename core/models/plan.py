@@ -26,6 +26,10 @@ selections는 처음부터 튜플(리스트 형태)로 모델링한다 — 단�
 
 from dataclasses import dataclass
 
+# 한 번에 받을 수 있는 구간 수의 상한 — 구간 검증(core.sections.selections)과 임시 폴더 이름의
+# 길이 예산(core.utils.paths)이 함께 쓴다 (#468)
+MAX_SELECTIONS = 20
+
 
 @dataclass(frozen=True)
 class TimeRange:
