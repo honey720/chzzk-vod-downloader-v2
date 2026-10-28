@@ -6,7 +6,7 @@
   크기를 줄이고 위치를 안으로 민다. 모니터가 바뀌어 창이 화면 밖으로 나가는 결함 방지.
 - 키가 없는 config(업데이트 전 유저)·깨진 값은 첫 실행으로 취급해 초기 크기 규칙으로 뜬다.
 - 스키마 표 등재 — 정규화가 미등재 키를 지우는 함정(#159 전례). 화이트리스트(`parse_saved_window`)
-  게이트는 #257에서 config 계층으로 옮겨져 tests/unit/test_config_schema.py에 있다.
+  게이트는 #257에서 config 계층으로 옮겨져 tests/app/logic/test_config_schema.py에 있다.
 
 config는 conftest의 autouse 픽스처가 테스트마다 임시 폴더로 격리한다. 화면은 이음새로
 주입한다(절대 px는 주입한 화면과 그 파생값뿐).

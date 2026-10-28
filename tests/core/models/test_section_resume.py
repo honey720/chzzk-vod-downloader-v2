@@ -7,12 +7,12 @@
 
 import pytest
 
-from core.api.hls import HlsKey, HlsPlaylist
+from core.media.hls import HlsKey, HlsPlaylist
 from core.models.content import Content, ContentType
-from core.models.mp4_index import Mp4Head
+from core.media.mp4_index import Mp4Head
 from core.models.plan import TimeRange
 from core.models.section_resume import SectionResume
-from core.models.ts_index import TsHead
+from core.media.ts_index import TsHead
 
 SELECTIONS = (TimeRange(1.0, 2.0), TimeRange(3.0, 4.0), TimeRange(5.0, 6.0))
 PATHS = ("out/방송 1080p_1.mp4", "out/방송 1080p_2.mp4", "out/방송 1080p_3.mp4")

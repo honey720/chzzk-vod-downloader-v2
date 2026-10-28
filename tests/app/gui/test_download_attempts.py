@@ -1,6 +1,6 @@
 """앞 시도의 통지 (#410) — 중지한 뒤 다시 시작하면 앞 시도의 엔진이 낸 통지는 카드에 닿지 않는다.
 
-배선은 viewmodel 계약 게이트(tests/unit/test_download_viewmodel_contract.py)의 대역을 그대로 쓴다.
+배선은 viewmodel 계약 게이트(tests/app/gui/test_download_viewmodel_contract.py)의 대역을 그대로 쓴다.
 같은 카드를 시작 → 중지 → 정리 → 다시 시작한 뒤, 첫 제출의 콜백(앞 시도의 엔진이 통지하는 입구)을
 워커 스레드에서 부르고 content 대역의 기록 · 아이템 상태로 잰다.
 """

@@ -12,7 +12,7 @@
 대조로 테스트에 남긴다. 함수의 몸은 옮겨 온 그대로다.
 
 재인코딩 명령 · 복사 명령 · 입력의 SPS 읽기 · ffmpeg 실행 · 진행 합치기는 제품의 것
-(``core.utils.hybrid_cut``)을 그대로 부른다 — 여기 있는 것은 조각을 나누어 만들고 잇는 절차와
+(``core.sections.hybrid``)을 그대로 부른다 — 여기 있는 것은 조각을 나누어 만들고 잇는 절차와
 오디오를 다시 인코딩하는 부분이다.
 """
 
@@ -21,9 +21,9 @@ import shutil
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from core.models.cut import CutFrames, CutPlan, CutResult, SourceInfo
-from core.utils import hybrid_cut as hc
-from core.utils.hybrid_cut import CUT_FAILED, CutError, plan_cut
+from core.sections.cut import CutFrames, CutPlan, CutResult, SourceInfo
+from core.sections import hybrid as hc
+from core.sections.hybrid import CUT_FAILED, CutError, plan_cut
 from core.utils.paths import cut_temp_dir_for
 
 # 오디오 디코드를 구간 시작보다 이만큼 앞에서 시작한다(초) — 제품의 받을 범위 계산이 쓰는 값과 같다
@@ -77,7 +77,7 @@ def hybrid_cut(
         last: 구간의 끝 프레임 번호(포함)
         output_path: 만들 파일. 이미 있으면 덮어쓴다
         inspect: True면 조각마다 파라미터·패킷 수를 읽어 결과에 싣는다 —
-            ``core.utils.cut_check.check_cut``이 쓴다. 조각을 한 번씩 더 읽으므로 느리다
+            ``core.sections.check.check_cut``이 쓴다. 조각을 한 번씩 더 읽으므로 느리다
         on_stage: 단계 하나가 끝날 때마다(실패로 끝나도) ``(단계 이름, 걸린 초)``로 부른다.
             단계는 순서대로 ``probe``(입력의 SPS 읽기) · 조각마다 ``<번호>_<종류>``(재인코딩
             또는 복사) · ``audio`` · ``mux``다. 걸린 시간에는 명령을 만드는 계산도 든다

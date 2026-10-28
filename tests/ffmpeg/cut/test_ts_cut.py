@@ -1,7 +1,7 @@
 """암호화 TS 구간의 끝까지 경로 — 계획 → 받기·복호화·검사 → 구간 파일 쓰기 → 판정 (#309).
 
 실제 ffmpeg(imageio-ffmpeg 동봉)로 6초짜리 영상을 HLS MPEG-TS로 만들고, 세그먼트를
-AES-128-CBC로 암호화해 tests/unit/core/range_host.py로 내준다. 저장소에 영상 파일을 두지
+AES-128-CBC로 암호화해 tests/support/range_host.py로 내준다. 저장소에 영상 파일을 두지
 않는다. 엔진(다운로더)은 쓰지 않는다 — 모듈들을 엔진이 부를 순서대로 부른다.
 
 입력: 320x240 · 30fps · 6초 · 1초 세그먼트 · 키프레임 15프레임마다 · B프레임(재정렬 지연 1) ·
@@ -25,29 +25,29 @@ from dataclasses import replace
 import pytest
 from Crypto.Cipher import AES
 
-import core.api.hls_ts as hls_ts_module
-import core.utils.ts_cut as ts_cut_module
-from core.api.hls import parse_media_playlist
-from core.api.hls_ts import fetch_ts_head, segment_streams, ts_segment_file_name
-from core.downloaders.decrypt import sequence_iv
+import core.sections.hls_ts as hls_ts_module
+import core.sections.ts_cut as ts_cut_module
+from core.media.hls import parse_media_playlist
+from core.sections.hls_ts import fetch_ts_head, segment_streams, ts_segment_file_name
+from core.engine.decrypt import sequence_iv
 from core.models.plan import TimeRange
-from core.utils.cut_check import check_cut
+from core.sections.check import check_cut
 from core.utils.ffmpeg import (
     FFmpegCancelledError,
     FFmpegTimeoutError,
     get_ffmpeg_exe,
     run_ffmpeg,
 )
-from core.utils.hybrid_cut import (
+from core.sections.hybrid import (
     CUT_FAILED,
     CUT_TIMEOUT,
     CUT_UNSUPPORTED,
     CutCancelled,
     CutError,
 )
-from core.utils.fmp4_cut import frame_at
-from core.utils.ts_cut import cut_ts_section
-from core.utils.ts_sections import TsSectionSource, choose_ts_frame_rate, plan_ts_sections
+from core.sections.fmp4_cut import frame_at
+from core.sections.ts_cut import cut_ts_section
+from core.sections.ts_sections import TsSectionSource, choose_ts_frame_rate, plan_ts_sections
 from tests.support.range_host import RangeHost
 from tests.ffmpeg.section_packets import JoinedSource, assert_section_matches
 

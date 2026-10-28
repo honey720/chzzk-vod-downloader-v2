@@ -1,8 +1,8 @@
 """FetchJob(구 ContentWorker)의 권한·암호화 분기 검증 (#55) + 어댑터 계약 검증 (#72).
 
-조회 로직은 core/services/metadata_service.py로 이동했다(#72). 이 테스트는
+조회 로직은 core/chzzk/metadata_service.py로 이동했다(#72). 이 테스트는
 어댑터를 통과한 끝단 동작(시그널 페이로드·에러 메시지 형식)이 유지되는지 본다.
-분기 자체의 단위 테스트는 tests/unit/core/test_metadata_service.py에 있다.
+분기 자체의 단위 테스트는 tests/core/chzzk/test_metadata_service.py에 있다.
 
 죽은 동기 API(fetchVideo/fetchClip)가 제거되어(#168) 모든 경로가 프로덕션과
 동일한 run() → finished/error Signal로 검증된다 — 단언하는 메시지 키·result
@@ -198,7 +198,7 @@ def test_run_error_hides_raw_exception_details(monkeypatch):
     내부 API URL 등이 섞인 str(e) 대신 일반 안내 키가 실려야 하고,
     형식은 기존 "<url>\n<메시지>"를 유지한다.
     """
-    from core.services import metadata_service
+    from core.chzzk import metadata_service
 
     def boom(*args, **kwargs):
         raise RuntimeError("secret detail https://api.chzzk.naver.com/internal")
@@ -225,7 +225,7 @@ def test_run_failure_does_not_leak_cookie_values_to_log_or_error_signal(monkeypa
     """
     secret_cookies = {"NID_AUT": "SECRET-AUT-9f8e7d6c", "NID_SES": "SECRET-SES-1a2b3c4d"}
 
-    from core.services import metadata_service
+    from core.chzzk import metadata_service
 
     def boom(*args, **kwargs):
         raise RuntimeError("boom")

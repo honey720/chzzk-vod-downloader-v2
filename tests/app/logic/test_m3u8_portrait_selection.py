@@ -13,7 +13,7 @@ import pytest
 
 import app.network as network
 from app.network import NetworkManager
-from core.api.playback_tracks import STREAM_NOT_FOUND, StreamSelectionError
+from core.chzzk.playback_tracks import STREAM_NOT_FOUND, StreamSelectionError
 from core.utils.paths import build_output_path
 from tests.mocks.mock_http import MockResponse
 from tests.app.logic.test_m3u8_track_selection import (

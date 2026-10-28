@@ -1,6 +1,6 @@
 """core/ 게이트들이 함께 쓰는 import 순회 — AST 기반, 함수 안 지연 import까지.
 
-두 게이트(tests/unit/core/test_no_qt_import.py의 Qt 금지, test_layer_direction.py의 방향 금지)가
+두 게이트(tests/meta/test_no_qt_import.py의 Qt 금지, test_layer_direction.py의 방향 금지)가
 같은 순회를 쓰되 **금지 판정은 각자** 한다 — 둘은 서로 다른 사실을 잰다. grep 대신 AST를 쓰는
 이유: docstring·주석에 규칙 설명으로 등장하는 이름은 허용하고 실제 import 구문만 잡기 위함이다.
 `ast.walk`는 함수·클래스 본문까지 내려가므로 지연 import도 잡힌다.

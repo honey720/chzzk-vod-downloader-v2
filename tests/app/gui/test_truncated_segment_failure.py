@@ -7,7 +7,7 @@ from PySide6.QtCore import QTranslator
 
 import CVDv2 as main_module
 from app.viewmodels.download_viewmodel import DownloadViewModel, _failure_message_key
-from core.downloaders.integrity import SEGMENT_TRUNCATED, TruncatedSegmentError
+from core.engine.integrity import SEGMENT_TRUNCATED, TruncatedSegmentError
 
 # DownloadViewModel._failure_message가 tr()에 넘기는 원문
 SOURCE = (

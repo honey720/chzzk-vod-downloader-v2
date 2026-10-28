@@ -7,15 +7,15 @@ import threading
 
 import pytest
 
-import core.api.mp4 as mp4_module
-import core.models.mp4_index as index_module
-import core.models.sample_column as column_module
-import core.utils.mp4_ranges as ranges_module
-from core.api.mp4 import index_mp4, read_mp4_raw
-from core.models.mp4_index import PendingMp4Head
+import core.media.mp4 as mp4_module
+import core.media.mp4_index as index_module
+import core.media.sample_column as column_module
+import core.sections.mp4_ranges as ranges_module
+from core.media.mp4 import index_mp4, read_mp4_raw
+from core.media.mp4_index import PendingMp4Head
 from core.models.plan import TimeRange
-from core.utils.mp4_partial import plan_partial
-from core.utils.mp4_ranges import sections_download_size, sections_head_size, sections_sizes
+from core.sections.mp4_partial import plan_partial
+from core.sections.mp4_ranges import sections_download_size, sections_head_size, sections_sizes
 from core.utils.stop import StopRequested, check_stop, stop_requested, stoppable
 from tests.support.mp4_builder import audio_spec, build_mp4, video_spec
 

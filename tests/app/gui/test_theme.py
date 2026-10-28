@@ -117,7 +117,7 @@ class TestCardStateStyles:
 SCAN_EXCLUDED_DIRS = {
     "tests",  # 테스트 자신이 색 리터럴을 기대값으로 든다(이 파일 포함) — 어느 깊이의 tests/든
 }
-#: 색의 유일한 정의처(`app/theme`)는 계층 정의(tests/unit/layers.py — `is_theme`)에서 읽는다.
+#: 색의 유일한 정의처(`app/theme`)는 계층 정의(tests/support/layers.py — `is_theme`)에서 읽는다.
 #: 여기 파일명을 따로 적지 않는다 — 파일이 옮겨지면 한쪽만 따라가고 다른 쪽은 아무것도 안 재는
 #: 규칙으로 남는다(#259 A4: 루트 `theme.py`용 파일명 규칙이 그랬다).
 #: 디렉토리 이름으로 거르는 것 — 숨김(.venv·.git·.ruff_cache) · 바이트코드 · Nuitka/빌드 산출물.

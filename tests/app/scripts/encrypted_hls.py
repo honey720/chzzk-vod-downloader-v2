@@ -12,8 +12,8 @@ import subprocess
 
 from Crypto.Cipher import AES
 
-from core.api.hls import HlsPlaylist, parse_media_playlist
-from core.downloaders.decrypt import sequence_iv
+from core.media.hls import HlsPlaylist, parse_media_playlist
+from core.engine.decrypt import sequence_iv
 from core.utils.ffmpeg import get_ffmpeg_exe
 
 FPS = 30

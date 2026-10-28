@@ -2,7 +2,7 @@
 
 - URL 파싱(TestExtractContentNo): #33에서 허용 범위를 넓힌 **요구 동작 검증** 테스트다.
 - DASH 매니페스트(TestGetVideoDashManifest): HTTP 요청 구성·core 파서 위임 검증이다.
-  파싱 자체의 박제 테스트는 tests/unit/core/test_dash.py로 이전했다 (#51).
+  파싱 자체의 박제 테스트는 tests/core/media/test_dash.py로 이전했다 (#51).
 """
 
 import json
@@ -12,15 +12,15 @@ import pytest
 
 import app.network as network
 from app.network import REQUEST_TIMEOUT, NetworkManager
-from core.api.dash import parse_dash_manifest, parse_frame_rates
-from core.api.url_parser import extract_content_no
+from core.media.dash import parse_dash_manifest, parse_frame_rates
+from core.chzzk.url_parser import extract_content_no
 from tests.mocks.mock_http import MockResponse
 
 
 class TestExtractContentNo:
     """extract_content_no의 요구 동작 검증 (#33).
 
-    구현이 core/api/url_parser.py로 이동해 import 경로만 갱신 (#50).
+    구현이 core/chzzk/url_parser.py로 이동해 import 경로만 갱신 (#50).
 
     브라우저 주소창을 그대로 복사한 URL 변형(쿼리스트링·후행 슬래시·www)은 허용하고,
     live URL·다른 도메인·형식이 깨진 URL은 거부해야 한다.
@@ -111,7 +111,7 @@ class TestGetVideoFrameRates:
 class TestGetVideoDashManifest:
     """NetworkManager.get_video_dash_manifest의 HTTP 경로(요청 구성·위임) 검증.
 
-    XML 파싱 자체는 core/api/dash.py로 이동해 tests/unit/core/test_dash.py에서
+    XML 파싱 자체는 core/media/dash.py로 이동해 tests/core/media/test_dash.py에서
     픽스처로 검증한다 (#51). 여기서는 요청 URL·헤더와 core 파서 위임만 확인한다.
     """
 
@@ -263,7 +263,7 @@ class TestGetVideoM3u8BaseUrl:
 class TestSameHeightTracksAreMerged:
     """같은 높이 트랙이 여럿인 응답에서 Representation이 높이당 하나만 남는다 (#244 3행 정리).
 
-    규칙과 근거는 core/api/representations.py — 비트레이트 높은 쪽, 모르면 먼저 온 쪽.
+    규칙과 근거는 core/media/representations.py — 비트레이트 높은 쪽, 모르면 먼저 온 쪽.
     """
 
     def test_m3u8_encoding_tracks_with_the_same_height_become_one(self):

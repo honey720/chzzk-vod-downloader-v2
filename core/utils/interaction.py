@@ -82,7 +82,7 @@ def rest_totals() -> tuple[int, float]:
     """이 스레드가 지금까지 쉰 (횟수, 시간의 합(초)).
 
     일의 앞뒤에서 불러 그 차로 "이 일이 조작 때문에 얼마나 쉬었나"를 구한다 — 준비 단계의
-    로그가 쓴다(``core.downloaders.base``). 시간은 잠든 시간이 아니라 쉬고 돌아오기까지 실제로
+    로그가 쓴다(``core.engine.base``). 시간은 잠든 시간이 아니라 쉬고 돌아오기까지 실제로
     흐른 시간이다(1ms를 청해도 1ms보다 길다).
     """
     return getattr(_local, "rests", 0), getattr(_local, "rested_seconds", 0.0)

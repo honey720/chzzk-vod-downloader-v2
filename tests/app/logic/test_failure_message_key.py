@@ -2,7 +2,7 @@
 
 구 tests/unit/test_qt_bridge.py(#75)에서 남긴 부분이다. 브리지 배선을 재던
 나머지 11건은 B1(#259) 흡수로 대상 클래스가 사라졌고, 같은 계약을 클래스
-이름 없이 재는 tests/unit/test_download_viewmodel_contract.py(B0)와 전부
+이름 없이 재는 tests/app/gui/test_download_viewmodel_contract.py(B0)와 전부
 겹쳐 지웠다. 여기 4건은 매핑 함수를 직접 재며, 통지 경로를 거친 표시 문구는
 계약 게이트의 `test_failure_reason_headline_by_exception`이 본다.
 """
@@ -11,17 +11,17 @@ import pytest
 import requests
 
 from app.viewmodels.download_viewmodel import _failure_message_key
-from core.api.playback_tracks import STREAM_NOT_FOUND, StreamSelectionError
-from core.downloaders.base import (
+from core.chzzk.playback_tracks import STREAM_NOT_FOUND, StreamSelectionError
+from core.engine.base import (
     DISK_SPACE_SHORT,
     DISK_SPACE_SHORT_WHOLE,
     DiskSpaceError,
     FileSizeLimitError,
     PostprocessError,
 )
-from core.downloaders.hls_aes_downloader import DecryptionError
+from core.sources.hls_aes_downloader import DecryptionError
 from core.utils.ffmpeg import FFmpegNotFoundError, RemuxError
-from core.utils.hybrid_cut import CUT_FAILED, CUT_TIMEOUT, CUT_UNSUPPORTED, CutError
+from core.sections.hybrid import CUT_FAILED, CUT_TIMEOUT, CUT_UNSUPPORTED, CutError
 
 
 class _FakeHttpResponse:

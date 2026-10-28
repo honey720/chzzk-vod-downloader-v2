@@ -287,7 +287,7 @@ class TestDownloaderSelection:
 
     def test_real_hls_aes_downloader_declares_key_resolution(self):
         """실제 다운로더가 키 리졸버 주입 계약을 선언한다 — 서비스 배선의 근거."""
-        from core.downloaders.hls_aes_downloader import HlsAesDownloader
+        from core.sources.hls_aes_downloader import HlsAesDownloader
 
         assert HlsAesDownloader.supports(_make_content(ContentType.CHZZK_VIDEO_HLS_AES)) is True
         assert HlsAesDownloader.requires_key_resolution is True
@@ -307,8 +307,8 @@ class TestDownloaderSelection:
     )
     def test_real_downloader_supports_matrix(self, content_type, file_ok, m3u8_ok):
         """실제 다운로더의 supports() 판정 매트릭스 (#82) — 서비스 선택 규칙의 근거."""
-        from core.downloaders.file_downloader import FileDownloader
-        from core.downloaders.m3u8_downloader import M3U8Downloader
+        from core.sources.file_downloader import FileDownloader
+        from core.sources.m3u8_downloader import M3U8Downloader
 
         content = _make_content(content_type)
         assert FileDownloader.supports(content) is file_ok

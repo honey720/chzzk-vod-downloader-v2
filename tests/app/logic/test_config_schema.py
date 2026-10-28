@@ -12,7 +12,7 @@
 화이트리스트(`parse_saved_window`, #253에서 config 계층으로 옮겨 옴 — 순수 파이썬 값).
 
 config 경로는 conftest의 autouse 픽스처가 테스트마다 임시 폴더로 격리한다. 위젯을 만들지 않는다
-(순수 파일 게이트). #255가 넣은 원자적 저장·`.broken`·깊은 복사는 tests/unit/test_config_durability.py가
+(순수 파일 게이트). #255가 넣은 원자적 저장·`.broken`·깊은 복사는 tests/app/logic/test_config_durability.py가
 그대로 잰다(무변화).
 """
 

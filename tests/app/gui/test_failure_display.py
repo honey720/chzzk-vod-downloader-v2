@@ -23,7 +23,7 @@ from app.viewmodels.data import ContentItem
 from app.viewmodels.download_viewmodel import DownloadViewModel
 from app.viewmodels.content_viewmodel import ContentViewModel
 from app.widgets.view import ContentListView
-from core.downloaders.base import PostprocessError
+from core.engine.base import PostprocessError
 from core.models.download_state import DownloadState
 from core.services.download_service import DownloadService
 from app.download_logger import DownloadLogger
@@ -37,7 +37,7 @@ def _apply_dark_card_qss(qapp):
 
     ⚠️⚠️⚠️ **반드시 `scope="function"`(기본값)으로 유지할 것 — 넓히면
     macOS CI에서 프로세스 종료 시점 SIGSEGV가 재발한다.** 상세 근거·
-    실측 경계·크래시 스택은 `tests/unit/test_widget_theme.py`의 같은
+    실측 경계·크래시 스택은 `tests/app/gui/test_widget_theme.py`의 같은
     이름 픽스처 docstring 참고 — 요약: 범위(몇 개 테스트)가 아니라
     수명(만든 `theme.build_style()` 객체가 테스트 하나를 넘어 `qapp`에
     계속 걸려 있는가)이 경계다. `scope="function"`만 macOS 통과를
@@ -324,7 +324,7 @@ def test_dead_mount_worker_failure_does_not_freeze_app(qapp, tmp_path, monkeypat
     이 테스트는 실제 DownloadService·FileDownloader·실행 루프를 그대로 쓴다 —
     고장난 종점에서는 processEvents가 handle.wait()에 갇혀 테스트가 매달린다.
     """
-    import core.downloaders.file_downloader as fmod
+    import core.sources.file_downloader as fmod
 
     monkeypatch.setattr(fmod, "get_thread_session", lambda: _DeadMountSession())
 

@@ -15,7 +15,7 @@ from app.download_logger import DownloadLogger
 from app.viewmodels.data import ContentItem
 from app.views import mainWindow as mw_mod
 from app.views.mainWindow import VodDownloader
-from core.api.representations import StreamEntry
+from core.media.representations import StreamEntry
 from core.models.download_state import DownloadState
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
 

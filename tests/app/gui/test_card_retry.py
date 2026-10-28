@@ -12,7 +12,7 @@
    나온다 — 가시성·호버 강조·커서·툴팁.
 5. 대기로 되돌릴 때 후처리 실패로 보존된 세그먼트(#185)가 지워지지 않는다.
 
-core `DownloadState`의 `FAILED → WAITING` 불허(#135)는 tests/unit/core/test_download_task_model.py가
+core `DownloadState`의 `FAILED → WAITING` 불허(#135)는 tests/core/models/test_download_task_model.py가
 그대로 지킨다 — 여기서는 그 계약을 **건드리지 않았음**을 층 분리로 증명한다(실패한 core
 모델은 FAILED로 끝나고, 되돌린 카드가 시작될 때 새 모델이 WAITING부터 만들어진다).
 

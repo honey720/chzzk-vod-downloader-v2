@@ -23,10 +23,10 @@ import os
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 
-from core.models.fmp4_index import Fmp4Head
-from core.models.mp4_index import Mp4Head
+from core.media.fmp4_index import Fmp4Head
+from core.media.mp4_index import Mp4Head
 from core.models.plan import TimeRange
-from core.models.ts_index import TsHead
+from core.media.ts_index import TsHead
 
 
 @dataclass(frozen=True)

@@ -12,7 +12,7 @@ import pytest
 import app.network as network
 from app.network import NetworkManager
 from app.viewmodels.download_viewmodel import _failure_message_key
-from core.api.playback_tracks import STREAM_NOT_FOUND, StreamSelectionError
+from core.chzzk.playback_tracks import STREAM_NOT_FOUND, StreamSelectionError
 from core.utils.paths import build_output_path
 from tests.mocks.mock_http import MockResponse
 

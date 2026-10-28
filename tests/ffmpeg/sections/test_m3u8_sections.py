@@ -2,7 +2,7 @@
 
 실제 ffmpeg(imageio-ffmpeg 동봉)로 테스트 안에서 짧은 영상을 만들어 HLS fMP4(초기화
 세그먼트 + 세그먼트 + 플레이리스트)로 싸고, 범위 요청에 답하는 호스트
-(tests/unit/core/range_host.py — 소켓을 열지 않는다)로 내준다. M3U8Downloader를 구간과
+(tests/support/range_host.py — 소켓을 열지 않는다)로 내준다. M3U8Downloader를 구간과
 함께 실제로 돌려 구간 파일이 나오는지, 정합 판정(check_cut)을 통과하는지 본다.
 
 입력 (둘 다 320x240 · 30fps · 6초 · 1초 세그먼트 6개 · 키프레임 0·30·36·60·90·120·150 —
@@ -49,33 +49,33 @@ from fractions import Fraction
 
 import pytest
 
-import core.api.hls_fmp4 as hls_fmp4_module
-import core.downloaders.base as base_module
-import core.downloaders.m3u8_downloader as m3u8_module
-import core.downloaders.segment_space as space_module
+import core.sections.hls_fmp4 as hls_fmp4_module
+import core.engine.base as base_module
+import core.sources.m3u8_downloader as m3u8_module
+import core.engine.segment_space as space_module
 import core.utils.ffmpeg as ffmpeg_module
-import core.utils.fmp4_cut as fmp4_cut_module
-from core.api.fmp4 import build_fmp4_index, fmp4_origin, parse_init_segment, parse_media_segment
-from core.api.hls import parse_media_playlist
-from core.api.hls_fmp4 import fetch_fmp4_head, segment_file_name, segment_frames
-from core.downloaders.base import (
+import core.sections.fmp4_cut as fmp4_cut_module
+from core.media.fmp4 import build_fmp4_index, fmp4_origin, parse_init_segment, parse_media_segment
+from core.media.hls import parse_media_playlist
+from core.sections.hls_fmp4 import fetch_fmp4_head, segment_file_name, segment_frames
+from core.engine.base import (
     DISK_SPACE_SHORT,
     FILE_TOO_LARGE_FOR_FAT,
     DiskSpaceError,
     FileSizeLimitError,
     PostprocessError,
 )
-from core.downloaders.integrity import TruncatedSegmentError
-from core.downloaders.m3u8_downloader import M3U8Downloader
+from core.engine.integrity import TruncatedSegmentError
+from core.sources.m3u8_downloader import M3U8Downloader
 from core.models.content import StreamKey
 from core.models.download_data import DownloadData
 from core.models.plan import TimeRange
-from core.utils.cut_check import check_cut
+from core.sections.check import check_cut
 from core.utils.ffmpeg import RemuxError, get_ffmpeg_exe, run_ffmpeg
-from core.utils.fmp4_sections import plan_fmp4_sections
-from core.utils.hybrid_cut import CUT_FAILED, CutError, cut_frames_from_fmp4
+from core.sections.fmp4_sections import plan_fmp4_sections
+from core.sections.hybrid import CUT_FAILED, CutError, cut_frames_from_fmp4
 from core.utils.paths import build_section_output_paths, temp_dir_for
-from core.utils.selections import (
+from core.sections.selections import (
     SELECTION_CROSSES_BREAK,
     SELECTION_OUT_OF_RANGE,
     SELECTION_TOO_SHORT,

@@ -5,8 +5,8 @@ grep 대신 AST를 쓰는 이유: docstring·주석에 규칙 설명으로 등�
 문자열은 허용하고, 실제 import 구문만 위반으로 잡기 위함이다.
 이후 core에 Qt 의존이 스며들면 CI가 이 테스트로 잡는다.
 
-순회는 tests/unit/core/import_scan.py(방향 규칙 게이트와 공유)를 쓰고, 금지 판정은 여기서만 한다 —
-"core → app 방향"은 다른 사실이라 tests/unit/core/test_layer_direction.py가 따로 잰다(#193).
+순회는 tests/meta/import_scan.py(방향 규칙 게이트와 공유)를 쓰고, 금지 판정은 여기서만 한다 —
+"core → app 방향"은 다른 사실이라 tests/meta/test_layer_direction.py가 따로 잰다(#193).
 """
 
 from tests.meta.import_scan import core_source_files, describe, iter_imports

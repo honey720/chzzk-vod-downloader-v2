@@ -16,10 +16,10 @@ import threading
 
 import app.probe_timing as probe_timing
 import app.section_basis as section_basis
-import core.api.session as session_module
+import core.engine.session as session_module
 from app.probe_timing import LOG_PREFIX, ProbeTiming
 from app.section_basis import SectionBasis, probe_fmp4, probe_mp4, probe_ts
-from core.models.mp4_index import Mp4Summary
+from core.media.mp4_index import Mp4Summary
 
 LOGGER = "app.section_basis"
 # 로그에 나오면 안 되는 것 — 주소 · 쿼리의 토큰 · 영상 번호 · 쿠키 · 키 · 제목

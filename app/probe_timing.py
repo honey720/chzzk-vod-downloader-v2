@@ -12,7 +12,7 @@
 요청은 ``requests``의 응답 훅으로 센다. 훅은 **조회를 돌리는 스레드의 전용 세션 하나에만**,
 **조회 한 번 동안만** 건다(``watching``) — 끝나면 성공이든 예외든 뗀다.
 
-- 그 세션은 그 스레드만 쓴다(``core.api.session.get_thread_session``). 엔진의 다운로드 워커는
+- 그 세션은 그 스레드만 쓴다(``core.engine.session.get_thread_session``). 엔진의 다운로드 워커는
   저마다 다른 스레드라 다른 세션을 쓰고, 조회가 끝난 뒤에는 훅이 없으므로 **엔진의 요청에는
   걸리지 않는다.** 조회가 동시에 둘 돌아도 스레드가 달라 세션이 다르고 셈이 섞이지 않는다
 - **공유 세션에는 걸지 않는다.** 치지직 API 조회(변형 해석 · 키 · 선언 프레임률)는 모든 스레드가
@@ -26,7 +26,7 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
-from core.api.session import get_thread_session
+from core.engine.session import get_thread_session
 
 logger = logging.getLogger("app.section_basis")
 

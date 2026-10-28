@@ -28,7 +28,7 @@ import threading
 from collections.abc import Collection, Iterable
 
 from core.utils.disk_speed import measure_write_speed
-from core.utils.selections import MAX_SELECTIONS
+from core.sections.selections import MAX_SELECTIONS
 
 # Windows에서 파일명에 쓸 수 없는 문자 + ASCII 제어 문자 전체(0x00–0x1F, 개행 포함).
 # Windows는 제어 문자가 든 파일명 생성을 거부한다(EINVAL). 조회 단계
@@ -67,12 +67,12 @@ _MAX_PATH_CHARS = 259
 
 # 세그먼트 임시 폴더(temp_dir_for) 안에서 가장 긴 상대 경로 — 구간 컷의 작업 폴더
 # section_<구간 번호>(0 … MAX_SELECTIONS − 1, m3u8 · 암호화 엔진)와 그 안의 경계 원본
-# (head_source.mp4 · tail_source.mp4, core/utils/fmp4_cut.py). 세그먼트 파일(<번호>.m4v ·
+# (head_source.mp4 · tail_source.mp4, core/sections/fmp4_cut.py). 세그먼트 파일(<번호>.m4v ·
 # .ts)은 이보다 짧다 (#323)
 _TEMP_DIR_DEEPEST = os.path.join(f"section_{MAX_SELECTIONS - 1}", "head_source.mp4")
 
 # 구간 컷 임시 폴더(cut_temp_dir_for) 안에서 가장 긴 이름 — 다시 인코딩한 조각
-# <조각 번호>_<종류>.mp4(core/utils/hybrid_cut.py — 조각은 셋까지, 가장 긴 종류는 whole) (#323)
+# <조각 번호>_<종류>.mp4(core/sections/hybrid.py — 조각은 셋까지, 가장 긴 종류는 whole) (#323)
 _CUT_DIR_DEEPEST = "0_whole.mp4"
 
 # 배정했지만 아직 디스크에 없을 수 있는 구간 파일 경로 — 프로세스 안의 예약 (#309).
@@ -380,7 +380,7 @@ def _same_volume(a: str, b: str) -> bool:
 def same_volume(a: str, b: str) -> bool:
     """두 경로가 같은 볼륨(장치)에 있는지 — 확인할 수 없으면 "같다"로 본다.
 
-    여유 공간을 볼륨마다 따로 볼지 정하는 쪽(core.downloaders.segment_space)이 쓴다. 임시
+    여유 공간을 볼륨마다 따로 볼지 정하는 쪽(core.engine.segment_space)이 쓴다. 임시
     폴더를 정할 때와 같은 판정이다.
     """
     return _same_volume(a, b)

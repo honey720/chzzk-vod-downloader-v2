@@ -1,6 +1,6 @@
 """인코딩 전 다시보기 — 마스터 플레이리스트 기준의 목록부터 다운로드 주소 · 파일명까지 (#318).
 
-입력은 tests/unit/stream_samples.py의 합성 표본이다. 요청은 보내지 않는다 — 마스터
+입력은 tests/support/stream_samples.py의 합성 표본이다. 요청은 보내지 않는다 — 마스터
 플레이리스트 응답만 세션 대역으로 바꾼다.
 """
 
@@ -14,9 +14,9 @@ import app.download_resolvers as resolvers
 import app.network as network
 from app.network import REQUEST_TIMEOUT, NetworkManager
 from app.viewmodels.data import ContentItem
-from core.api.playback_tracks import STREAM_NOT_FOUND, StreamSelectionError
+from core.chzzk.playback_tracks import STREAM_NOT_FOUND, StreamSelectionError
 from core.models.content import Content, ContentType, StreamKey, VideoInfo
-from core.services.metadata_service import fetch_video
+from core.chzzk.metadata_service import fetch_video
 from core.utils.paths import build_output_path
 from tests.mocks.mock_http import MockResponse
 from tests.support.stream_samples import MASTER_URL, S1, S2, S4, S5, S9, S11, Sample, variant_url
@@ -175,7 +175,7 @@ def test_loading_falls_back_to_the_playback_tracks_when_the_master_cannot_be_fet
     assert reps == [[144, None], [360, None], [480, None], [720, None], [1080, None]]
     assert [getattr(rep, "stream", None) for rep in reps] == [None] * 5
     assert resolution == 1080
-    warnings = [r for r in caplog.records if r.name == "core.services.metadata_service"]
+    warnings = [r for r in caplog.records if r.name == "core.chzzk.metadata_service"]
     assert [r.levelno for r in warnings] == [logging.WARNING]
 
 
@@ -191,7 +191,7 @@ def test_loading_falls_back_when_the_master_has_no_variant(monkeypatch, caplog):
         reps, _resolution, _base_url = _fetch(S1)
 
     assert [rep[0] for rep in reps] == [144, 360, 480, 720, 1080]
-    warnings = [r for r in caplog.records if r.name == "core.services.metadata_service"]
+    warnings = [r for r in caplog.records if r.name == "core.chzzk.metadata_service"]
     assert [r.levelno for r in warnings] == [logging.WARNING]
 
 
