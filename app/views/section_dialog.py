@@ -4,7 +4,7 @@
 누르면 열린다. 타임라인 · 미리보기는 이 창의 위쪽에 나중에 붙는다 — 시간 입력 영역은 그때도
 항상 보인다.
 
-창은 뷰모델(``app/viewmodels/section_edit_viewmodel.py``)만 본다. 해석 · 검증 · 카드에
+창은 뷰모델(``app/viewmodels/section_edit.py``)만 본다. 해석 · 검증 · 카드에
 쓰기는 뷰모델이 하고, 창은 글자를 넘기고 결과를 그린다.
 
 화면은 조회 상태에 따라 셋이다.
@@ -46,7 +46,7 @@ from PySide6.QtWidgets import (
 from shiboken6 import isValid
 
 import app.theme as theme
-from app.viewmodels.section_edit_viewmodel import (
+from app.viewmodels.section_edit import (
     END,
     PART_CLOCK,
     PART_FRAME,

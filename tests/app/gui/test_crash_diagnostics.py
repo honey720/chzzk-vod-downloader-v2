@@ -14,7 +14,7 @@ import threading
 import pytest
 from PySide6.QtCore import QTimer
 
-from app.crash_diagnostics import (
+from app.system.crash_diagnostics import (
     CRASH_FILE_NAME,
     carry_over_previous_crash,
     install_exception_hooks,
@@ -40,7 +40,7 @@ _CRASH = textwrap.dedent(
     """
     import faulthandler
     import threading
-    from app.crash_diagnostics import install_crash_diagnostics
+    from app.system.crash_diagnostics import install_crash_diagnostics
 
     install_crash_diagnostics({log_dir!r})
     parked = threading.Event()
@@ -56,7 +56,7 @@ _CRASH = textwrap.dedent(
 _NEXT_START = textwrap.dedent(
     """
     from core.utils.logging_setup import setup_logging
-    from app.crash_diagnostics import install_crash_diagnostics
+    from app.system.crash_diagnostics import install_crash_diagnostics
 
     setup_logging({log_dir!r})
     install_crash_diagnostics({log_dir!r})
@@ -68,7 +68,7 @@ _UNHANDLED = textwrap.dedent(
     """
     import os
     from core.utils.logging_setup import setup_logging
-    from app.crash_diagnostics import install_crash_diagnostics
+    from app.system.crash_diagnostics import install_crash_diagnostics
 
     setup_logging({log_dir!r})
     install_crash_diagnostics({log_dir!r})
@@ -117,7 +117,7 @@ def _run(
 _DEBUG_CRASH = textwrap.dedent(
     """
     import os
-    from app.crash_diagnostics import crash_if_requested, install_crash_diagnostics
+    from app.system.crash_diagnostics import crash_if_requested, install_crash_diagnostics
 
     install_crash_diagnostics({log_dir!r})
     crash_if_requested()
@@ -219,14 +219,14 @@ def test_empty_crash_record_leaves_nothing_in_the_app_log(tmp_path, caplog):
     """
     path = tmp_path / CRASH_FILE_NAME
     path.write_text("", encoding="ascii")
-    marker = logging.getLogger("app.crash_diagnostics")
-    with caplog.at_level(logging.DEBUG, logger="app.crash_diagnostics"):
+    marker = logging.getLogger("app.system.crash_diagnostics")
+    with caplog.at_level(logging.DEBUG, logger="app.system.crash_diagnostics"):
         marker.debug("캡처 확인")  # 음성 단언 전에 캡처가 살아 있음을 본다
         may_clear = carry_over_previous_crash(str(path))
 
     assert caplog.records[0].getMessage() == "캡처 확인"
     assert may_clear is True
-    assert [r for r in caplog.records if r.name == "app.crash_diagnostics"][1:] == []
+    assert [r for r in caplog.records if r.name == "app.system.crash_diagnostics"][1:] == []
 
 
 def test_crash_record_longer_than_the_limit_drops_the_line_cut_at_the_limit(tmp_path, caplog):
@@ -235,7 +235,7 @@ def test_crash_record_longer_than_the_limit_drops_the_line_cut_at_the_limit(tmp_
     crash.log = "a" 줄들로 상한 10자 앞까지 채우고, 그 뒤에 홈 폴더 경로가 든 줄이 상한을 넘어 이어짐
     -> 옮긴 레코드에 그 줄의 어느 부분도 없다("File " 없음), 끝에 "(cut at 65536 characters)"
     """
-    limit = 64 * 1024  # app.crash_diagnostics._CARRIED_CHARS — 테스트가 따로 적는다
+    limit = 64 * 1024  # app.system.crash_diagnostics._CARRIED_CHARS — 테스트가 따로 적는다
     filler = ("a" * 99 + "\n") * ((limit - 10) // 100)
     filler += "b" * (limit - 10 - len(filler) - 1) + "\n"
     cut_line = '  File "' + os.path.join(HOME, "project", "module.py") + '", line 1 in f\n'
@@ -243,10 +243,10 @@ def test_crash_record_longer_than_the_limit_drops_the_line_cut_at_the_limit(tmp_
     path.write_text(filler + cut_line, encoding="ascii", errors="replace")
     assert len(filler) < limit < len(filler) + len(cut_line)  # 전제: 상한이 그 줄 가운데 있다
 
-    with caplog.at_level(logging.ERROR, logger="app.crash_diagnostics"):
+    with caplog.at_level(logging.ERROR, logger="app.system.crash_diagnostics"):
         carry_over_previous_crash(str(path))
 
-    (record,) = [r for r in caplog.records if r.name == "app.crash_diagnostics"]
+    (record,) = [r for r in caplog.records if r.name == "app.system.crash_diagnostics"]
     message = record.getMessage()
     assert "File " not in message
     assert message.endswith(f"(cut at {limit} characters)")
@@ -259,7 +259,7 @@ def test_unreadable_crash_record_is_kept_instead_of_cleared(tmp_path, monkeypatc
     대역으로 바꾼다(pytest의 것을 덮지 않게)
     -> crash.log가 "old record"로 시작한다, 연결한 파일의 모드가 "a"
     """
-    import app.crash_diagnostics as module
+    import app.system.crash_diagnostics as module
 
     path = tmp_path / CRASH_FILE_NAME
     path.write_text("old record", encoding="ascii")
@@ -292,7 +292,7 @@ def hooked(monkeypatch):
     stream = io.StringIO()
     handler = logging.StreamHandler(stream)
     handler.setFormatter(RedactingFormatter(LOG_FORMAT))
-    target = logging.getLogger("app.crash_diagnostics")
+    target = logging.getLogger("app.system.crash_diagnostics")
     target.addHandler(handler)
     install_exception_hooks()
     yield stream

@@ -8,10 +8,10 @@ from PySide6.QtCore import QTranslator, QLocale
 from app.views.mainWindow import VodDownloader
 import config.config as config
 import app.theme as theme
-from app.crash_diagnostics import crash_if_requested, install_crash_diagnostics
-from app.log_setup import setup_logging
-from app.platform_adapter import enable_responsive_timing
-from app.user_activity import watch_user_input
+from app.system.crash_diagnostics import crash_if_requested, install_crash_diagnostics
+from app.system.log_setup import setup_logging
+from app.system.platform_adapter import enable_responsive_timing
+from app.system.user_activity import watch_user_input
 
 logger = logging.getLogger(__name__)
 

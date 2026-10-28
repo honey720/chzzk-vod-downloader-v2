@@ -11,7 +11,7 @@ from PySide6.QtWidgets import QApplication
 
 import app.theme as theme
 import CVDv2 as main_module
-from app.download_logger import DownloadLogger
+from app.download.logger import DownloadLogger
 from app.viewmodels.data import ContentItem
 from app.views import mainWindow as mw_mod
 from app.views.mainWindow import VodDownloader

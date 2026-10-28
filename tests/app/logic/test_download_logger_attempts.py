@@ -8,9 +8,9 @@ import logging
 
 import pytest
 
-import app.download_logger as download_logger_module
+import app.download.logger as download_logger_module
 import config.config as config_module
-from app.download_logger import DownloadLogger
+from app.download.logger import DownloadLogger
 
 
 @pytest.fixture(autouse=True)

@@ -34,11 +34,11 @@ from time import gmtime, strftime
 import requests
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
 
-from app.platform_adapter import begin_background_work, end_background_work
-from app.process_memory import log_process_memory
-from app.user_activity import user_interacting
+from app.system.platform_adapter import begin_background_work, end_background_work
+from app.system.process_memory import log_process_memory
+from app.system.user_activity import user_interacting
 from app.viewmodels.data import ContentItem
-from app.viewmodels.section_edit_viewmodel import take_section_head, watch_section_head
+from app.viewmodels.section_edit import take_section_head, watch_section_head
 from app.viewmodels.staged_progress import StagedProgress
 from core.chzzk.playback_tracks import StreamSelectionError
 from core.engine.base import (
@@ -63,9 +63,9 @@ from core.utils.paths import (
 )
 from core.utils.ffmpeg import FFmpegNotFoundError
 from core.sections.timecode import frame_index
-from app.download_logger import DownloadLogger
-from app.download_resolvers import resolve_aes_key, resolve_m3u8_base_url
-from app.download_task import DownloadTask
+from app.download.logger import DownloadLogger
+from app.download.resolvers import resolve_aes_key, resolve_m3u8_base_url
+from app.download.task import DownloadTask
 
 logger = logging.getLogger(__name__)
 

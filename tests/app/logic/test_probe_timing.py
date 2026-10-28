@@ -1,6 +1,6 @@
 """구간 기준값 조회의 단계별 시간 기록 (#309).
 
-조회(`app.section_basis`)가 남기는 로그 한 줄에 무엇이 들어가고 무엇이 들어가지 않는지,
+조회(`app.section_input.basis`)가 남기는 로그 한 줄에 무엇이 들어가고 무엇이 들어가지 않는지,
 그리고 재는 일이 실패해도 조회가 그대로 끝나는지를 잰다. 네트워크는 타지 않는다.
 """
 
@@ -14,14 +14,14 @@ import pytest
 
 import threading
 
-import app.probe_timing as probe_timing
-import app.section_basis as section_basis
+import app.section_input.probe_timing as probe_timing
+import app.section_input.basis as section_basis
 import core.engine.session as session_module
-from app.probe_timing import LOG_PREFIX, ProbeTiming
-from app.section_basis import SectionBasis, probe_fmp4, probe_mp4, probe_ts
+from app.section_input.probe_timing import LOG_PREFIX, ProbeTiming
+from app.section_input.basis import SectionBasis, probe_fmp4, probe_mp4, probe_ts
 from core.media.mp4_index import Mp4Summary
 
-LOGGER = "app.section_basis"
+LOGGER = "app.section_input.basis"
 # 로그에 나오면 안 되는 것 — 주소 · 쿼리의 토큰 · 영상 번호 · 쿠키 · 키 · 제목
 SECRETS = {
     "host": "media-secret.invalid",

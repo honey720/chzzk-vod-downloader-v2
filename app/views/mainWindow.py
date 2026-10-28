@@ -6,12 +6,12 @@ import config.config as config
 from PySide6.QtWidgets import QMainWindow, QMessageBox, QFileDialog, QApplication, QSizePolicy, QWidget
 from PySide6.QtCore import QPoint, QRect, QStandardPaths, QTimer
 
-from app.process_memory import log_process_memory
+from app.system.process_memory import log_process_memory
 from app.viewmodels.download_viewmodel import DownloadViewModel
 from app.viewmodels.path_gates import check_fetch_path, check_remember_path, normalize_path
 from app.views.dialog import SettingDialog
 from app.views.section_dialog import SectionEditDialog
-from app.viewmodels.section_edit_viewmodel import SectionEditViewModel
+from app.viewmodels.section_edit import SectionEditViewModel
 from app.viewmodels.data import ContentItem
 from app.viewmodels.content_viewmodel import ContentViewModel
 from app.widgets import widget as content_widget

@@ -2,7 +2,7 @@
 
 **위치**(#259 A4): 뷰 계층은 실제로 셋이다: `app/views/`(화면) · `app/widgets/`(부품) · `app/theme`(색·토큰
 정의 — Qt를 아는 파일이므로 뷰 계층이다). 여기에 없는 `app/` 아래는 전부 뷰모델 계층이고 Qt 위젯을
-보면 안 된다(`app/platform_adapter.py` 포함 — "Qt 없는 부품 창고").
+보면 안 된다(`app/system/platform_adapter.py` 포함 — "Qt 없는 부품 창고").
 
 경로를 **접두사**로 잰다. `app/theme.py`(파일)든 `app/theme/…`(패키지로 승격)든 import 경로
 `app.theme`가 같으므로 같은 정의로 잡힌다 — 승격해도 게이트를 다시 고치지 않는다. 파일명을

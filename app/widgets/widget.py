@@ -11,9 +11,9 @@ from app.viewmodels.data import (
     SECTION_CHECK_UNVERIFIED,
     ContentItem,
 )
-from app.viewmodels.section_edit_viewmodel import format_fps
+from app.viewmodels.section_edit import format_fps
 from app.network import REQUEST_TIMEOUT
-from app.section_basis import SECTION_CONTENT_TYPES
+from app.section_input.basis import SECTION_CONTENT_TYPES
 from core.engine.session import get_thread_session
 from app.widgets.pill import CARET_GAP, CARET_WIDTH, ResolutionPill
 from core.models.download_state import DownloadState

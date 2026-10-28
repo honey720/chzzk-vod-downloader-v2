@@ -1,6 +1,6 @@
 """구간 입력의 기준값 조회 — 전달 방식마다 무엇을 받아 프레임률 · 길이를 정하는가 (#309).
 
-`app.section_basis.probe_section_basis`가 컨텐츠 타입마다 부르는 조회 함수를 대역으로 바꿔,
+`app.section_input.basis.probe_section_basis`가 컨텐츠 타입마다 부르는 조회 함수를 대역으로 바꿔,
 어떤 주소 · 어떤 값이 넘어가는지와 무엇을 돌려주는지를 잰다. 네트워크는 타지 않는다.
 """
 
@@ -9,9 +9,9 @@ from types import SimpleNamespace
 
 import pytest
 
-import app.section_basis as section_basis
+import app.section_input.basis as section_basis
 import core.media.mp4 as mp4_module
-from app.section_basis import SectionBasis, SectionBasisError, probe_section_basis
+from app.section_input.basis import SectionBasis, SectionBasisError, probe_section_basis
 from core.models.content import ContentType, StreamKey
 from core.media.mp4 import pending_mp4_head
 from core.media.mp4_index import Mp4Head, Mp4Summary

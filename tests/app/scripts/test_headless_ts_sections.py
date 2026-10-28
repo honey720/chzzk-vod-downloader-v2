@@ -25,7 +25,7 @@ import pytest
 import core.sections.hls_ts as hls_ts_module
 import core.sources.hls_aes_downloader as aes_module
 import core.utils.paths as paths_module
-import app.section_basis as section_basis
+import app.section_input.basis as section_basis
 import scripts.headless_download as headless
 from core.media.dash import parse_frame_rates, parse_sea_manifest
 from core.sources.hls_aes_downloader import HlsAesDownloader
@@ -112,7 +112,7 @@ class _Headless:
             lambda url, cookies, kind: dict(rates or {}),
         )
         # 키 리졸버는 두 곳이 쓴다 — 엔진(헤드리스가 서비스에 넘긴다)과 구간 조회
-        # (app/section_basis.py)
+        # (app/section_input/basis.py)
         monkeypatch.setattr(headless, "resolve_aes_key", resolve_key)
         monkeypatch.setattr(section_basis, "resolve_aes_key", resolve_key)
         monkeypatch.setattr(headless, "_resolve_ts_sections", observed_resolve)

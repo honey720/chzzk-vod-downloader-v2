@@ -11,9 +11,9 @@ from types import SimpleNamespace
 
 import pytest
 
-import app.download_resolvers as resolvers
+import app.download.resolvers as resolvers
 import app.network as network
-import app.section_basis as section_basis
+import app.section_input.basis as section_basis
 import scripts.headless_download as headless
 from app.network import NetworkManager
 from core.media.mp4 import MP4_INVALID, Mp4Error

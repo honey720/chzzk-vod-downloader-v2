@@ -29,7 +29,7 @@ from PySide6.QtCore import QObject
 import CVDv2 as main_module
 import app.theme as theme
 import app.viewmodels.download_viewmodel as download_viewmodel_module
-from app.download_logger import DownloadLogger
+from app.download.logger import DownloadLogger
 from app.viewmodels.content_viewmodel import ContentViewModel
 from app.viewmodels.data import ContentItem
 from app.viewmodels.download_viewmodel import DownloadViewModel

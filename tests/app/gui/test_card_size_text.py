@@ -22,14 +22,14 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 
-import app.process_memory as process_memory
+import app.system.process_memory as process_memory
 import app.viewmodels.download_viewmodel as download_viewmodel
-import app.viewmodels.section_edit_viewmodel as sev
-import app.section_basis as section_basis
+import app.viewmodels.section_edit as sev
+import app.section_input.basis as section_basis
 import app.theme as theme
 import CVDv2 as main_module
-from app.download_logger import DownloadLogger
-from app.section_basis import SectionBasis
+from app.download.logger import DownloadLogger
+from app.section_input.basis import SectionBasis
 from app.viewmodels.data import ContentItem
 from app.views import mainWindow as mw_mod
 from app.views.mainWindow import VodDownloader
@@ -1305,7 +1305,7 @@ def test_memory_is_logged_at_each_point_of_the_section_download(qtbot, window, m
     """구간을 정해 받는 동안 정해진 시점마다 프로세스 메모리 줄을 순서대로 남겨야 한다.
 
     메모리 읽기를 고정값으로 바꿈. 편집 창에서 구간을 확인 → 전역 다운로드 → 완료 통지
-    -> app.process_memory 로거의 시점 == [조회 끝, 편집 창 닫힘, 다운로드 시작, 다운로드 끝].
+    -> app.system.process_memory 로거의 시점 == [조회 끝, 편집 창 닫힘, 다운로드 시작, 다운로드 끝].
     "색인을 놓은 뒤" 줄은 여기서 세지 않는다 — 색인이 사라진 뒤 따로 남는 줄이라 다른 줄과의
     순서가 정해져 있지 않다(tests/app/gui/test_section_head_release.py가 잰다)
     """
@@ -1323,7 +1323,7 @@ def test_memory_is_logged_at_each_point_of_the_section_download(qtbot, window, m
     records = [
         r
         for r in caplog.records
-        if r.name == "app.process_memory" and "색인을 놓은 뒤" not in r.getMessage()
+        if r.name == "app.system.process_memory" and "색인을 놓은 뒤" not in r.getMessage()
     ]
     assert [r.getMessage() for r in records] == [
         "프로세스 메모리 [조회 끝] RSS 512.0MB",

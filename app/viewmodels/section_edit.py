@@ -23,11 +23,11 @@ from types import SimpleNamespace
 
 from PySide6.QtCore import QObject, Qt, QThreadPool, QTimer, Signal
 
-import app.section_basis as section_basis
-from app.platform_adapter import background_work
-from app.process_memory import log_process_memory
-from app.section_basis import SectionBasis
-from app.user_activity import user_interacting
+import app.section_input.basis as section_basis
+from app.system.platform_adapter import background_work
+from app.system.process_memory import log_process_memory
+from app.section_input.basis import SectionBasis
+from app.system.user_activity import user_interacting
 from app.viewmodels.data import (
     SECTION_CHECK_PENDING,
     SECTION_CHECK_UNVERIFIED,
