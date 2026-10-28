@@ -15,8 +15,8 @@
 쿠키 · 치지직 API 조회가 앱 계층에 있어 core로 들어갈 수 없다(``app/download_resolvers.py``와
 같은 이유). 워커 스레드에서 부른다 — 네트워크를 탄다.
 
-**HLS 세그먼트는 전체 요청으로만 받는다.** 받는 함수(``core/api/hls_fmp4.py`` ·
-``core/api/hls_ts.py``)가 그렇게 받는다.
+**HLS 세그먼트는 전체 요청으로만 받는다.** 받는 함수(``core/sections/hls_fmp4.py`` ·
+``core/sections/hls_ts.py``)가 그렇게 받는다.
 
 조회마다 단계별로 걸린 시간을 INFO 로그 한 줄로 남긴다(``app/probe_timing.py`` —
 "구간 기준값 조회"로 시작하는 줄). 주소 · 쿠키 · 키 · 영상 번호는 그 줄에 없다. 재는 일은
@@ -33,16 +33,16 @@ import config.config as config
 from app.download_resolvers import resolve_aes_key, resolve_m3u8_variant
 from app.network import NetworkManager
 from app.probe_timing import ProbeTiming
-from core.api.hls_fmp4 import fetch_fmp4_head, segment_frames
-from core.api.hls_ts import fetch_ts_head, segment_streams, ts_key_uri
-from core.api.mp4 import Mp4Error, fetch_mp4_raw, pending_mp4_head, summarize_mp4
+from core.sections.hls_fmp4 import fetch_fmp4_head, segment_frames
+from core.sections.hls_ts import fetch_ts_head, segment_streams, ts_key_uri
+from core.media.mp4 import Mp4Error, fetch_mp4_raw, pending_mp4_head, summarize_mp4
 from core.models.content import Content, ContentType
-from core.models.fmp4_index import Fmp4Head
-from core.models.mp4_index import Mp4Head, PendingMp4Head
-from core.models.ts_index import TsHead
-from core.utils.fmp4_sections import FPS_DECLARED, choose_frame_rate, fmp4_timeline
+from core.media.fmp4_index import Fmp4Head
+from core.media.mp4_index import Mp4Head, PendingMp4Head
+from core.media.ts_index import TsHead
+from core.sections.fmp4_sections import FPS_DECLARED, choose_frame_rate, fmp4_timeline
 from core.utils.stop import check_stop
-from core.utils.ts_sections import choose_ts_frame_rate, ts_timeline
+from core.sections.ts_sections import choose_ts_frame_rate, ts_timeline
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,7 @@ class SectionProbe:
     """
 
     basis: SectionBasis  # 프레임률 · 영상 길이
-    # 프레임률을 정한 경로 — core.utils.section_plan의 FPS_DECLARED · FPS_STANDARD · FPS_MEASURED.
+    # 프레임률을 정한 경로 — core.sections.section_plan의 FPS_DECLARED · FPS_STANDARD · FPS_MEASURED.
     # mp4는 샘플 표가 말한 값이라 FPS_DECLARED다
     fps_source: str
     # 받은 것 — 엔진에 넘길 수 있다. mp4는 색인까지 만들라고 했을 때만 있다(probe_mp4의 index)

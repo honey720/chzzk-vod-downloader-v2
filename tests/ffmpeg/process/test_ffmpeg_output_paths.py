@@ -21,7 +21,7 @@ pytest tmp_path 베이스에는 세 OS 모두 공백이 없어(리눅스 /tmp/..
 - Windows skip: 후행 공백 — Windows는 생성 시 조용히 절단한다(실측)
 - macOS 전용: NFC/NFD 정규화 무관 조회 단언
 - 다루지 않는 것: 실제 권한 거부(러너별 권한 구성이 달라 불안정 — 모의
-  방식의 tests/unit/test_write_probe.py가 담당), OS 장경로 설정 의존 구간
+  방식의 tests/app/logic/test_write_probe.py가 담당), OS 장경로 설정 의존 구간
   (전체 260자 초과는 러너 레지스트리 설정에 좌우된다)
 """
 
@@ -43,7 +43,7 @@ def fmp4_input(tmp_path_factory):
 
     fMP4를 쓰는 이유: 리눅스 동봉 빌드의 mpegts demux SIGSEGV(#94)를 타지
     않아 3-OS 전부에서 스킵 없이 돈다. libx264는 동봉 GPL 빌드 3-OS 공통
-    (tests/unit/core/test_ffmpeg_utils.py의 _generate와 같은 근거).
+    (tests/ffmpeg/process/test_ffmpeg_utils.py의 _generate와 같은 근거).
     """
     path = str(tmp_path_factory.mktemp("space-src") / "src.mp4")
     subprocess.run(

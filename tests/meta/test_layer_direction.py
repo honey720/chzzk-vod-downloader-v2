@@ -3,11 +3,11 @@
 규칙: **core/는 저장소가 소유한 최상위 이름 중 `core` 이외의 것을 import하지 않는다.** 표준
 라이브러리와 서드파티는 무관하다. 금지 목록(`{"app"}` 등)을 쓰지 않는 이유 둘 —
 ① 목록에 없는 새 최상위 디렉토리가 생기면 안 막는다 ② 디렉토리가 사라지면(B 단계의
-content·download) 목록만 조용히 빈다. 소유 이름은 tests/unit/layers.py가 저장소 루트에서
+content·download) 목록만 조용히 빈다. 소유 이름은 tests/support/layers.py가 저장소 루트에서
 **유도**한다(`tests` 포함). 유도가 무언가를 놓치면 이 파일의 메타 게이트가 git 추적 파일과
 대조해 시끄럽게 실패한다 — git이 없는 환경에서는 그 대조만 사유가 보이게 건너뛴다.
 
-순회는 tests/unit/core/import_scan.py(Qt 금지 게이트와 공유, 함수 안 지연 import 포함).
+순회는 tests/meta/import_scan.py(Qt 금지 게이트와 공유, 함수 안 지연 import 포함).
 금지 판정은 여기서만 한다 — Qt 금지와는 다른 사실을 잰다.
 """
 

@@ -1,4 +1,4 @@
-"""하이브리드 컷(core/utils/hybrid_cut.py)과 정합 판정(core/utils/cut_check.py) 테스트 (#309).
+"""하이브리드 컷(core/sections/hybrid.py)과 정합 판정(core/sections/check.py) 테스트 (#309).
 
 실제 ffmpeg(imageio-ffmpeg 동봉 — 기존 remux 테스트와 같은 바이너리)를 실행한다. 입력
 영상은 lavfi 소스로 테스트 안에서 몇 초짜리를 만든다. 저장소에 영상 파일을 두지 않는다.
@@ -24,15 +24,15 @@ from fractions import Fraction
 
 import pytest
 
-import core.utils.cut_check as cut_check_module
-import core.utils.hybrid_cut as cut_module
-from core.api.fmp4 import build_fmp4_index, fmp4_origin, parse_init_segment, parse_media_segment
-from core.api.hls import parse_media_playlist
-from core.api.mp4 import parse_moov, read_mp4_index
-from core.models.cut import CutFrames, CutPiece
-from core.utils.cut_check import check_cut
+import core.sections.check as cut_check_module
+import core.sections.hybrid as cut_module
+from core.media.fmp4 import build_fmp4_index, fmp4_origin, parse_init_segment, parse_media_segment
+from core.media.hls import parse_media_playlist
+from core.media.mp4 import parse_moov, read_mp4_index
+from core.sections.cut import CutFrames, CutPiece
+from core.sections.check import check_cut
 from core.utils.ffmpeg import FFmpegTimeoutError, get_ffmpeg_exe, parse_out_time, run_ffmpeg
-from core.utils.hybrid_cut import (
+from core.sections.hybrid import (
     CUT_FAILED,
     CUT_TIMEOUT,
     CUT_UNSUPPORTED,

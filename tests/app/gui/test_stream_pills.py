@@ -19,8 +19,8 @@ from app.download_logger import DownloadLogger
 from app.network import NetworkManager
 from app.viewmodels.data import ContentItem
 from app.widgets.widget import ContentItemWidget
-from core.api.dash import parse_dash_manifest
-from core.api.playback_tracks import list_streams, playback_tracks
+from core.media.dash import parse_dash_manifest
+from core.chzzk.playback_tracks import list_streams, playback_tracks
 from core.models.content import StreamKey
 from core.models.download_state import DownloadState
 from scripts.headless_download import _format_resolutions, _rep_label

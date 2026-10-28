@@ -29,7 +29,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config.config as config  # noqa: E402
-from core.api.url_parser import extract_content_no  # noqa: E402
+from core.chzzk.url_parser import extract_content_no  # noqa: E402
 
 CHZZK_API = "https://api.chzzk.naver.com"
 NAVER_API = "https://apis.naver.com"

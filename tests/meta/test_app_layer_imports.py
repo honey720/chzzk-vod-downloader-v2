@@ -3,7 +3,7 @@
 규칙은 **계층 관계**로 판정한다 — 모듈 이름을 문자열로 들지 않는다(#259 C0).
 
 - **뷰 계층**은 두 가지로 정한다. ① `app/views/`·`app/widgets/`·`app/theme`(위치 —
-  tests/unit/layers.py의 단일 정의. 아직 없어도 규칙은 서 있고 생기는 순간 적용된다.
+  tests/support/layers.py의 단일 정의. 아직 없어도 규칙은 서 있고 생기는 순간 적용된다.
   theme은 Qt를 아는 색·토큰 정의처라 뷰 계층이다). ② 프로젝트 import 그래프에서
   `PySide6.QtWidgets`·`PySide6.QtGui`에 **닿는** 모듈(내용 — 직접이든 다른 프로젝트 모듈을
   거쳐서든). `app.widgets.view`·`app.widgets.widget`·`ui/*`·`theme`는 이름이 아니라 ②로 잡히므로
@@ -14,7 +14,7 @@
 
 구 게이트가 `app/` 전체에 `content.view`·`content.widget` 이름을 금지하던 것은 이동 뒤
 그 이름이 사라지면 아무것도 막지 않았고, `app/views/`가 생기는 순간 실패했다. core의
-"PySide6 금지"(tests/unit/core/test_no_qt_import.py)와 같은 AST 방식이다.
+"PySide6 금지"(tests/meta/test_no_qt_import.py)와 같은 AST 방식이다.
 
 ⚠️ 메타 게이트 — 각 단언은 **실제로 검사한 파일 수**를 함께 단언한다. 대상이 비면 통과가
 아니라 실패다(#259 C0).

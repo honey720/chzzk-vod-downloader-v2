@@ -484,7 +484,7 @@ class TestHorizontalScrollIsOnlyASafetyNet:
                     f"{w.objectName()} {rect} — 창 {width}px"
                 )
             # 목록은 창 좌우 끝까지 간다(v2.10.1) — 세로 스크롤바가 창 끝에 붙기 위해서다.
-            # 카드 쪽 여백은 목록 안 컨테이너 패딩이 진다(tests/unit/test_list_scrollbar_layout.py).
+            # 카드 쪽 여백은 목록 안 컨테이너 패딩이 진다(tests/app/gui/test_list_scrollbar_layout.py).
             rect = _in_window(win, win.listView)
             assert (rect.left(), rect.width()) == (0, width), f"listView {rect} — 창 {width}px"
 

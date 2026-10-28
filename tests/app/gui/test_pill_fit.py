@@ -18,7 +18,7 @@ import CVDv2 as main_module
 from app.viewmodels.data import ContentItem
 from app.widgets.pill import CARET_GAP, CARET_WIDTH, EDGE_PADDING, SECONDARY_GAP, ResolutionPill
 from app.widgets.widget import ContentItemWidget
-from core.api.playback_tracks import list_streams, playback_tracks
+from core.chzzk.playback_tracks import list_streams, playback_tracks
 from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels

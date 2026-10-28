@@ -34,7 +34,7 @@ Qt 의존에 대하여:
     사라졌다 — 구 버전이 쓰던 QCoreApplication·QTimer·Signal 큐 연결이 필요
     없다. 완료·실패는 워커 스레드 콜백으로 받고, 메인 스레드는 핸들 대기
     (handle.wait)로 동기화한다. 조회도 ContentWorker(Qt) 대신
-    core/services/metadata_service.py를 직접 호출한다.
+    core/chzzk/metadata_service.py를 직접 호출한다.
 """
 
 import argparse
@@ -55,30 +55,30 @@ from app.viewmodels.data import ContentItem  # noqa: E402
 from app.network import NetworkManager  # noqa: E402
 from fractions import Fraction  # noqa: E402
 
-from core.api.mp4 import Mp4Error  # noqa: E402
-from core.models.fmp4_index import Fmp4Head  # noqa: E402
-from core.models.mp4_index import Mp4Head  # noqa: E402
-from core.models.ts_index import TsHead  # noqa: E402
+from core.media.mp4 import Mp4Error  # noqa: E402
+from core.media.fmp4_index import Fmp4Head  # noqa: E402
+from core.media.mp4_index import Mp4Head  # noqa: E402
+from core.media.ts_index import TsHead  # noqa: E402
 from core.models.events import ProgressEvent  # noqa: E402
 from core.models.plan import TimeRange  # noqa: E402
-from core.services import metadata_service  # noqa: E402
+from core.chzzk import metadata_service  # noqa: E402
 from core.services.download_service import DownloadService  # noqa: E402
-from core.services.metadata_service import MetadataError  # noqa: E402
-from core.utils.fmp4_sections import (  # noqa: E402
+from core.chzzk.metadata_service import MetadataError  # noqa: E402
+from core.sections.fmp4_sections import (  # noqa: E402
     FPS_DECLARED,
     FPS_STANDARD,
     plan_fmp4_sections,
 )
-from core.utils.mp4_ranges import selection_byte_ranges  # noqa: E402
+from core.sections.mp4_ranges import selection_byte_ranges  # noqa: E402
 from core.utils.paths import (  # noqa: E402
     build_output_path,
     build_section_output_paths,
     choose_temp_dir,
     release_output_paths,
 )
-from core.utils.selections import SelectionError, validate_selections  # noqa: E402
-from core.utils.ts_sections import plan_ts_sections  # noqa: E402
-from core.utils.timecode import (  # noqa: E402
+from core.sections.selections import SelectionError, validate_selections  # noqa: E402
+from core.sections.ts_sections import plan_ts_sections  # noqa: E402
+from core.sections.timecode import (  # noqa: E402
     TIMECODE_INVALID_FORMAT,
     TimecodeError,
     format_milliseconds,

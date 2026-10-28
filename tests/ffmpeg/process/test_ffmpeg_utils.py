@@ -25,10 +25,10 @@ from types import SimpleNamespace
 
 import pytest
 
-import core.downloaders.base as base_module
+import core.engine.base as base_module
 import core.utils.ffmpeg as ffmpeg_module
-import core.utils.fmp4_cut as fmp4_cut_module
-from core.downloaders.base import BaseDownloader, PostprocessError
+import core.sections.fmp4_cut as fmp4_cut_module
+from core.engine.base import BaseDownloader, PostprocessError
 from core.models.download_state import DownloadState
 from core.utils.ffmpeg import (
     FFmpegNotFoundError,

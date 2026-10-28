@@ -12,7 +12,7 @@
 
 **소유**(#193): "저장소가 소유한 최상위 이름"은 목록으로 적지 않고 저장소 루트에서 **유도**한다 —
 `.py`를 가진 최상위 디렉토리(`tests/` 포함)와 루트의 `.py` 모듈. `core/`는 이 중 `core` 이외의 것을
-import하지 않는다(방향 규칙, tests/unit/core/test_layer_direction.py). 목록이면 새 디렉토리가 생겨도
+import하지 않는다(방향 규칙, tests/meta/test_layer_direction.py). 목록이면 새 디렉토리가 생겨도
 안 막고, 디렉토리가 사라지면(B 단계의 content·download) 목록만 조용히 빈다. 유도의 독립 대조는
 git 추적 파일(같은 테스트의 메타 게이트).
 """

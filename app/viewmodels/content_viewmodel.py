@@ -39,8 +39,8 @@ from app.viewmodels.data import SECTION_CHECK_PENDING, ContentItem
 from app.viewmodels.model import ContentListModel
 from app.viewmodels.section_edit_viewmodel import SectionRefitter, SectionSizer
 from app.network import NetworkManager
-from core.services import metadata_service
-from core.services.metadata_service import MetadataError
+from core.chzzk import metadata_service
+from core.chzzk.metadata_service import MetadataError
 from core.utils.paths import build_output_path, ensure_unique_path
 from core.models.download_state import DownloadState
 
@@ -97,7 +97,7 @@ _NOT_DOWNLOADABLE = (DownloadState.FINISHED, DownloadState.FAILED, ItemState.LOA
 class FetchJob(QObject):
     """메타데이터 조회 한 건 — 풀 스레드에서 `run()`하고 결과를 Signal로 메인에 넘긴다 (구 ContentWorker, #72).
 
-    조회 로직(URL 파싱 → API 조회 → 에러 분기)은 core/services/metadata_service.py에
+    조회 로직(URL 파싱 → API 조회 → 에러 분기)은 core/chzzk/metadata_service.py에
     있다. 이 클래스는 다음만 담당한다:
     - core 호출 결과를 finished/error Signal로 emit (시그니처·페이로드 무변경).
       emit은 풀 스레드에서 일어나고, 수신자(`_WorkerRelay`)가 메인 스레드에 살아
@@ -144,7 +144,7 @@ class FetchJob(QObject):
 
         lupdate가 `-no-obsolete`로 .ts를 재생성하므로(compile_translations.py 참고)
         키가 소스에서 사라지면 번역 항목도 삭제된다 — 반드시 리터럴로 tr()을 호출해
-        추출 대상을 유지한다. 키 목록은 core/services/metadata_service.py가 던지는
+        추출 대상을 유지한다. 키 목록은 core/chzzk/metadata_service.py가 던지는
         message_key 전체와 1:1이다.
         """
         translated = {

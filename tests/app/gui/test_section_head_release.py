@@ -32,16 +32,16 @@ from PySide6.QtWidgets import QApplication
 import app.process_memory as process_memory
 import app.theme as theme
 import app.viewmodels.section_edit_viewmodel as section_edit_module
-import core.api.mp4 as mp4_module
-import core.downloaders.file_downloader as fd_module
+import core.media.mp4 as mp4_module
+import core.sources.file_downloader as fd_module
 import core.utils.ffmpeg as ffmpeg_module
-import core.utils.hybrid_cut as cut_module
+import core.sections.hybrid as cut_module
 import CVDv2 as main_module
 from app.download_logger import DownloadLogger
 from app.viewmodels.data import ContentItem
 from app.views import mainWindow as mw_mod
 from app.views.mainWindow import VodDownloader
-from core.api.representations import StreamEntry
+from core.media.representations import StreamEntry
 from core.models.download_state import DownloadState
 from core.utils.ffmpeg import get_ffmpeg_exe
 from tests.app.gui.section_input import enter_time

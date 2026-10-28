@@ -29,7 +29,7 @@ from app.section_basis import SectionBasis
 from app.viewmodels.data import ContentItem
 from app.views import mainWindow as mw_mod
 from app.views.mainWindow import VodDownloader
-from core.api.representations import StreamEntry
+from core.media.representations import StreamEntry
 from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
 from core.utils.paths import release_output_paths
@@ -183,7 +183,7 @@ def type_into(edit, text: str) -> None:
     """시각(시분초 칸 + 프레임 칸)을 비우고 키 입력으로 값을 넣는다 — 칸을 떠나지 않는다.
 
     text는 ``HH:MM:SS:FF`` 꼴이다(콜론은 읽기 좋으라고 적은 것 — 칸은 숫자만 받는다). 끝 두
-    자리를 프레임 칸에, 그 앞을 시분초 칸에 친다(tests/unit/section_input.py).
+    자리를 프레임 칸에, 그 앞을 시분초 칸에 친다(tests/app/gui/section_input.py).
     """
     type_time(edit, text)
 

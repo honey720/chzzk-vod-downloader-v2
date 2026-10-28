@@ -32,9 +32,9 @@ from PySide6.QtCore import QObject, QTimer
 
 from app.viewmodels.data import ContentItem
 from app.viewmodels.download_viewmodel import DownloadViewModel
-from core.api.playback_tracks import StreamSelectionError
-from core.downloaders.base import DiskSpaceError, FileSizeLimitError, PostprocessError
-from core.downloaders.hls_aes_downloader import DecryptionError
+from core.chzzk.playback_tracks import StreamSelectionError
+from core.engine.base import DiskSpaceError, FileSizeLimitError, PostprocessError
+from core.sources.hls_aes_downloader import DecryptionError
 from core.models.content import StreamKey
 from core.models.download_state import DownloadState
 from core.models.events import ProgressEvent

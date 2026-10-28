@@ -3,7 +3,7 @@
 구간 다운로드는 받기 전에 그 변형의 플레이리스트와 세그먼트를 읽어 구간을 정한다. 읽는
 변형이 다운로드가 받는 변형과 다르면 다른 영상의 프레임 시각으로 구간을 정하게 된다.
 
-입력은 tests/unit/stream_samples.py의 합성 표본이다. 요청은 보내지 않는다.
+입력은 tests/support/stream_samples.py의 합성 표본이다. 요청은 보내지 않는다.
 """
 
 from fractions import Fraction
@@ -16,7 +16,7 @@ import app.network as network
 import app.section_basis as section_basis
 import scripts.headless_download as headless
 from app.network import NetworkManager
-from core.api.mp4 import MP4_INVALID, Mp4Error
+from core.media.mp4 import MP4_INVALID, Mp4Error
 from core.models.content import Content, ContentType, StreamKey, VideoInfo
 from tests.mocks.mock_http import MockResponse
 from tests.support.stream_samples import S4, S5, Sample, variant_url

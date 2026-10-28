@@ -14,7 +14,7 @@ from app.viewmodels.data import (
 from app.viewmodels.section_edit_viewmodel import format_fps
 from app.network import REQUEST_TIMEOUT
 from app.section_basis import SECTION_CONTENT_TYPES
-from core.api.session import get_thread_session
+from core.engine.session import get_thread_session
 from app.widgets.pill import CARET_GAP, CARET_WIDTH, ResolutionPill
 from core.models.download_state import DownloadState
 from app.viewmodels.item_state import ItemState
@@ -348,13 +348,13 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         # ②pill은 어떤 폭에서도 전부 보인다(접지 않는다 — #245 확정). 3행에서
         # 줄어드는 것은 다운로드 경로 하나뿐이다(_layoutRowThree) — 단 pill 전부가
         # 크기와 함께 안 들어가는 폭에서는 pill이 선택 하나로 접힌다.
-        # core/api·app/network의 내부 정렬(오름차순, 마지막이 자동 선택)은
+        # core/media·core/chzzk·app/network의 내부 정렬(오름차순, 마지막이 자동 선택)은
         # 건드리지 않고 표시 계층에서만 뒤집는다.
         # ⚠️ 순서는 고정이다 — 클릭해도 pill을 앞으로 옮기지 않는다(옮기면
         # 연속으로 눌러볼 수 없다). 선택만 바뀐다.
         # 해상도가 같은 두 항목은 원본이 앞이다 — 기본 선택(첫 pill)이 원본이 된다 (#318)
         # 해상도와 원본 여부가 같은 두 항목은 대역폭이 높은 쪽이 앞이다 (#336). 조회 목록은 그런
-        # 항목을 대역폭 오름차순으로 둔다(core/api/dash.py · playback_tracks.list_streams) —
+        # 항목을 대역폭 오름차순으로 둔다(core/media/dash.py · playback_tracks.list_streams) —
         # DASH 항목은 대역폭 값을 들지 않으므로 조회 목록의 자리로 정한다
         listed_at = {id(rep): number for number, rep in enumerate(self.item.unique_reps)}
         self.item.unique_reps.sort(

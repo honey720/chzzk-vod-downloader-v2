@@ -224,7 +224,7 @@ def test_lookup_tells_a_slow_response_apart_from_a_connection_failure(
     NetworkManager로 fetch_content — 세션이 outcomes 순서대로 실패
     -> MetadataError.message_key == expected_key
     """
-    from core.services.metadata_service import MetadataError, fetch_content
+    from core.chzzk.metadata_service import MetadataError, fetch_content
 
     monkeypatch.setattr(network, "_session", ScriptedSession(*outcomes))
 

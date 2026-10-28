@@ -21,10 +21,10 @@ from typing import Any
 import pytest
 
 import core.utils.ffmpeg as ffmpeg_module
-import core.utils.hybrid_cut as cut_module
+import core.sections.hybrid as cut_module
 from core.utils.ffmpeg import FFmpegCancelledError, run_ffmpeg
-import core.utils.ts_cut as ts_cut_module
-from core.utils.hybrid_cut import CutCancelled, CutError
+import core.sections.ts_cut as ts_cut_module
+from core.sections.hybrid import CutCancelled, CutError
 from core.utils.paths import cut_temp_dir_for
 from tests.support.long_ffmpeg import (
     LONG_RUNNING,

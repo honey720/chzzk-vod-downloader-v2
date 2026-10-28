@@ -17,14 +17,14 @@ import pytest
 import requests
 import urllib3
 
-import core.downloaders.base as base_module
-import core.downloaders.m3u8_downloader as m3u8_module
+import core.engine.base as base_module
+import core.sources.m3u8_downloader as m3u8_module
 import core.utils.ffmpeg as ffmpeg_module
 import core.utils.logging_setup as logging_setup
 from app.download_logger import DownloadLogger
-from core.downloaders.m3u8_downloader import M3U8Downloader
+from core.sources.m3u8_downloader import M3U8Downloader
 from core.models.download_data import DownloadData
-from tests.core.downloaders.test_m3u8_downloader_run import (
+from tests.core.sources.test_m3u8_downloader_run import (
     CHUNK,
     INIT_CONTENT,
     SEGMENT_COUNT,

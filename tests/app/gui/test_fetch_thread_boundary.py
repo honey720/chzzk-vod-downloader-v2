@@ -8,7 +8,7 @@
 
 의존하는 이름은 둘뿐이다: 메인 창의 `contentManager` 속성(오너 확정 — 흡수
 뒤에도 뷰모델 인스턴스를 가리킨다)과 core의 조회 함수
-`core.services.metadata_service.fetch_content`(객체 패치). 조회를 수행하는
+`core.chzzk.metadata_service.fetch_content`(객체 패치). 조회를 수행하는
 클래스가 무엇이든 알지 않는다. **B2 흡수 뒤 이 파일이 한 줄도 바뀌지 않은 채
 통과하는 것이 B2의 성공 조건 중 하나다.**
 
@@ -29,8 +29,8 @@ import pytest
 from PySide6.QtCore import Qt
 
 import app.views.mainWindow as mw_mod
-from core.services import metadata_service
-from core.services.metadata_service import MetadataError
+from core.chzzk import metadata_service
+from core.chzzk.metadata_service import MetadataError
 
 MAIN_THREAD = threading.main_thread().ident
 URL = "https://chzzk.naver.com/video/1"

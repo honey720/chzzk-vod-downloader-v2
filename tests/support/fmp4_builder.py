@@ -1,6 +1,6 @@
 """테스트용 합성 fMP4 조립기 — 초기화 세그먼트와 미디어 세그먼트를 상자 단위로 만든다 (#309).
 
-제품 코드(core.api.fmp4)를 쓰지 않는다. 상자 조립은 mp4_builder의 것을 쓴다.
+제품 코드(core.media.fmp4)를 쓰지 않는다. 상자 조립은 mp4_builder의 것을 쓴다.
 """
 
 import struct

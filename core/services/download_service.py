@@ -33,9 +33,9 @@ import weakref
 from collections import deque
 from collections.abc import Callable
 
-from core.downloaders.file_downloader import FileDownloader
-from core.downloaders.hls_aes_downloader import HlsAesDownloader
-from core.downloaders.m3u8_downloader import M3U8Downloader
+from core.sources.file_downloader import FileDownloader
+from core.sources.hls_aes_downloader import HlsAesDownloader
+from core.sources.m3u8_downloader import M3U8Downloader
 from core.models.content import Content
 from core.models.download_data import DownloadData
 from core.models.download_state import DownloadState

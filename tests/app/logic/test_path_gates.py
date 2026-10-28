@@ -2,7 +2,7 @@
 
 절대화 자체의 계약(멱등·빈 문자열 예외·상대경로 해석)만 여기서 고정한다.
 실제 배선(mainWindow가 이 함수를 판정 전에 호출하는지)은
-tests/unit/test_default_download_path.py가 실물 윈도우로 검증한다.
+tests/app/logic/test_default_download_path.py가 실물 윈도우로 검증한다.
 """
 
 import os

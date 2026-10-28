@@ -34,15 +34,15 @@ from app.viewmodels.data import ContentItem
 from app.views import mainWindow as mw_mod
 from app.views.mainWindow import VodDownloader
 from app.widgets.widget import ContentItemWidget
-import core.api.mp4 as mp4_module
-from core.api.mp4 import index_mp4, pending_mp4_head, read_mp4_raw
-from core.api.representations import StreamEntry
+import core.media.mp4 as mp4_module
+from core.media.mp4 import index_mp4, pending_mp4_head, read_mp4_raw
+from core.media.representations import StreamEntry
 from core.models.download_state import DownloadState
 from core.models.events import ProgressEvent
-from core.models.mp4_index import Mp4Raw, PendingMp4Head
+from core.media.mp4_index import Mp4Raw, PendingMp4Head
 from core.models.plan import TimeRange
-from core.utils.mp4_ranges import sections_download_size, sections_file_size
-from core.utils.mp4_section_sizes import moov_sections_file_size
+from core.sections.mp4_ranges import sections_download_size, sections_file_size
+from core.sections.mp4_sizes import moov_sections_file_size
 from core.utils.paths import release_output_paths
 from core.utils.stop import StopRequested, check_stop, stop_requested, stoppable
 from tests.app.gui.section_input import enter_time
@@ -859,7 +859,7 @@ class _GatedCount:
     """크기 세기 대역 — 문을 열 때까지 기다렸다가 제품의 것을 부른다. 부른 횟수를 센다.
 
     대기 카드의 크기 세기는 색인을 만들지 않는다 — 받아 둔 moov의 표에서 센다. 막는 자리는
-    그 함수다(``core.utils.mp4_section_sizes.moov_sections_file_size``).
+    그 함수다(``core.sections.mp4_sizes.moov_sections_file_size``).
     """
 
     def __init__(self):
@@ -1307,7 +1307,7 @@ def test_memory_is_logged_at_each_point_of_the_section_download(qtbot, window, m
     메모리 읽기를 고정값으로 바꿈. 편집 창에서 구간을 확인 → 전역 다운로드 → 완료 통지
     -> app.process_memory 로거의 시점 == [조회 끝, 편집 창 닫힘, 다운로드 시작, 다운로드 끝].
     "색인을 놓은 뒤" 줄은 여기서 세지 않는다 — 색인이 사라진 뒤 따로 남는 줄이라 다른 줄과의
-    순서가 정해져 있지 않다(tests/unit/test_section_head_release.py가 잰다)
+    순서가 정해져 있지 않다(tests/app/gui/test_section_head_release.py가 잰다)
     """
     win, item, engine = window
     monkeypatch.setattr(process_memory, "read_process_memory", lambda: {"RSS": 512 * MB})

@@ -5,14 +5,14 @@ from urllib.parse import urljoin, urlsplit
 
 import requests
 
-from core.api.dash import (
+from core.media.dash import (
     is_supported_sea,
     parse_dash_manifest,
     parse_frame_rates,
     parse_sea_manifest,
 )
-from core.api.hls import variant_frame_rate
-from core.api.playback_tracks import (
+from core.media.hls import variant_frame_rate
+from core.chzzk.playback_tracks import (
     StreamSelectionError,
     list_streams,
     playback_tracks,
@@ -21,15 +21,15 @@ from core.api.playback_tracks import (
     select_variant_by_height,
     track_for_resolution,
 )
-from core.api.representations import dedupe_by_resolution
-from core.api.url_parser import extract_content_no
+from core.media.representations import dedupe_by_resolution
+from core.chzzk.url_parser import extract_content_no
 from core.models.content import StreamKey, VideoInfo
 from core.utils.paths import sanitize_filename
 
-# Session 관리는 core/api/session.py로 이주했다 (#62, 원본 #31).
+# Session 관리는 core/engine/session.py로 이주했다 (#62, 원본 #31).
 # _session은 아래 NetworkManager가 사용한다. 호환용 re-export(get_thread_session·
-# _make_session)는 #259 B3에서 제거했다 — 쓰는 쪽은 core.api.session에서 직접 import한다.
-from core.api.session import _session
+# _make_session)는 #259 B3에서 제거했다 — 쓰는 쪽은 core.engine.session에서 직접 import한다.
+from core.engine.session import _session
 
 NAVER_API = "https://apis.naver.com"
 CHZZK_API = "https://api.chzzk.naver.com"
@@ -52,7 +52,7 @@ def _get_retrying_timeout(send: Callable[[], requests.Response], retries: int) -
 
     연결 실패(제한 시간이 아닌 ConnectionError)와 HTTP 상태 오류는 다시 보내지 않는다. 다시
     보내도 제한 시간에 걸리면 마지막 Timeout을 그대로 올린다 — 조회 서비스가 응답 지연 문구로
-    바꾼다(core/services/metadata_service.py).
+    바꾼다(core/chzzk/metadata_service.py).
     """
     for _ in range(retries):
         try:
@@ -63,7 +63,7 @@ def _get_retrying_timeout(send: Callable[[], requests.Response], retries: int) -
 
 
 # 서버 응답이 알려준 주소로 쿠키를 보내는 요청의 신뢰 검사.
-# 인증 쿠키는 요청별 cookies= 인자로만 실리고(core/api/session.py — 응답 쿠키 저장
+# 인증 쿠키는 요청별 cookies= 인자로만 실리고(core/engine/session.py — 응답 쿠키 저장
 # 없음), 그것을 서버가 준 주소에 붙이는 지점은 둘뿐이다: 복호화 키(#EXT-X-KEY URI)와
 # m3u8 마스터 플레이리스트(playback JSON의 path). 주소는 스트림 응답에서 오므로
 # HTTP나 다른 호스트로 쿠키가 새어 나갈 수 있어, 요청 직전에 검사한다.
@@ -127,7 +127,7 @@ class NetworkManager:
         """
         치지직 VOD URL에서 type과 content_no를 추출한다.
 
-        구현은 core/api/url_parser.py로 이동했다 (#50).
+        구현은 core/chzzk/url_parser.py로 이동했다 (#50).
         기존 호출부 호환을 위해 시그니처를 유지하고 core 함수에 위임한다.
 
         Args:
@@ -189,7 +189,7 @@ class NetworkManager:
         """
         DASH 매니페스트를 요청하여 Representation 목록을 파싱한다.
 
-        HTTP 요청만 담당하고, XML 파싱은 core/api/dash.py의 순수 함수에 위임한다 (#51).
+        HTTP 요청만 담당하고, XML 파싱은 core/media/dash.py의 순수 함수에 위임한다 (#51).
         멤버십 전용 VOD 재생 검증을 위해 메타데이터 요청과 동일하게 쿠키를 실어 보낸다 (#55).
         """
         manifest_url = f"{NAVER_API}/neonplayer/vodplay/v2/playback/{video_id}?key={in_key}"
@@ -205,7 +205,7 @@ class NetworkManager:
     ) -> dict[str, Fraction]:
         """DASH 매니페스트를 요청해 Representation마다 선언된 프레임률을 읽는다 (#309).
 
-        요청은 ``get_video_dash_manifest``와 같다. 파싱은 core/api/dash.py의
+        요청은 ``get_video_dash_manifest``와 같다. 파싱은 core/media/dash.py의
         ``parse_frame_rates``에 위임한다.
 
         Returns:
@@ -266,12 +266,12 @@ class NetworkManager:
         m3u8 정보가 포함된 json형식의 문자열을 받아서 Representation 목록을 파싱한다.
 
         해상도는 트랙 이름(encodingTrackId, "1080p" → 1080)을 따르고, 이름이 그런 형식이
-        아니면 짧은 변이다(core/api/representations.py의 track_resolution, #318).
+        아니면 짧은 변이다(core/media/representations.py의 track_resolution, #318).
         """
         # 해상도가 같은 트랙(비트레이트·프레임레이트 변형)은 하나로 합친다 —
         # 이 경로는 트랙별 URL이 없어 다운로드 대상은 get_video_m3u8_base_url이
         # 같은 규칙으로 트랙을 골라 마스터 플레이리스트에서 찾는다.
-        # 규칙·근거는 core/api/representations.py.
+        # 규칙·근거는 core/media/representations.py.
         reps = [
             (track.resolution, None, track.video_bitrate) for track in playback_tracks(json_str)
         ]
@@ -287,7 +287,7 @@ class NetworkManager:
 
         playback 정보의 트랙은 영상과 어긋날 수 있다(원본 트랙의 값이 0이거나, 다른 방송의
         트랙이 오는 경우가 있다). 받는 것은 마스터 플레이리스트의 변형이므로 목록도 거기서
-        만든다. playback 정보는 원본 여부를 아는 데만 쓴다(core/api/playback_tracks.py).
+        만든다. playback 정보는 원본 여부를 아는 데만 쓴다(core/chzzk/playback_tracks.py).
 
         요청은 get_video_m3u8_base_url과 같다(같은 주소 검사 · 쿠키 · 타임아웃).
 

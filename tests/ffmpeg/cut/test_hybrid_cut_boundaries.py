@@ -17,11 +17,11 @@ import subprocess
 
 import pytest
 
-from core.api.mp4 import read_mp4_index
-from core.models.cut import CutFrames
-from core.utils.cut_check import check_cut
+from core.media.mp4 import read_mp4_index
+from core.sections.cut import CutFrames
+from core.sections.check import check_cut
 from core.utils.ffmpeg import get_ffmpeg_exe
-from core.utils.hybrid_cut import CutError, cut_frames_from_mp4, plan_cut
+from core.sections.hybrid import CutError, cut_frames_from_mp4, plan_cut
 from tests.ffmpeg.reference_cut import hybrid_cut
 
 KEYFRAMES = (0, 30, 36, 60, 90)  # -force_key_frames 0,1,1.2,2,3 (30fps)

@@ -1,6 +1,6 @@
 """카드 3행 해상도 pill 게이트 (#244 3행 정리).
 
-- 같은 높이 트랙이 둘인 매니페스트 → pill은 높이당 하나 (core/api/representations.py)
+- 같은 높이 트랙이 둘인 매니페스트 → pill은 높이당 하나 (core/media/representations.py)
 - 해상도 인라인 확장 — 접힘/펼침, 고르면 접힘, 기하 복원, 줄바꿈 임계 T, 한 번에 하나
 - 3행 접힘 순서 한 방향(① 경로 줄임 → ② 경로 숨김 → ③ 해상도 접힘, 역방향 없음)
 - 늦게 온 크기 조회가 유저 선택을 덮지 않는다(자동 선택은 안 골랐을 때만)
@@ -18,7 +18,7 @@ from app.viewmodels.data import ContentItem
 from app.viewmodels.model import ContentListModel
 from app.widgets.view import ContentListView
 from app.widgets.widget import ContentItemWidget
-from core.api.dash import parse_dash_manifest
+from core.media.dash import parse_dash_manifest
 from core.models.download_state import DownloadState
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, shown, snapshot_top_levels
 

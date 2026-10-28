@@ -91,7 +91,7 @@ def _hover(qtbot, window: QWidget, target: QWidget, on: bool) -> None:
     """`target` 위(on) 또는 창의 빈 바닥(off)으로 합성 이동 — 실제 커서는 건드리지 않는다.
 
     이동을 두 번(한 점 옆 → 목표) 보낸다 — 직전 테스트가 남긴 좌표와 같으면 이동량
-    0으로 Enter/Leave가 안 난다(tests/unit/test_dialog.py의 같은 함정). 실기 QPA는
+    0으로 Enter/Leave가 안 난다(tests/app/gui/test_dialog.py의 같은 함정). 실기 QPA는
     이벤트가 비동기로 오므로 `underMouse()`가 바뀔 때까지 조건 대기한다.
     """
     if on:
