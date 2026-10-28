@@ -28,7 +28,7 @@ import threading
 from collections.abc import Collection, Iterable
 
 from core.utils.disk_speed import measure_write_speed
-from core.sections.selections import MAX_SELECTIONS
+from core.models.plan import MAX_SELECTIONS
 
 # Windows에서 파일명에 쓸 수 없는 문자 + ASCII 제어 문자 전체(0x00–0x1F, 개행 포함).
 # Windows는 제어 문자가 든 파일명 생성을 거부한다(EINVAL). 조회 단계
