@@ -2,7 +2,7 @@
 
 긴 영상의 해석된 색인은 수백 MB~1GB다. 앱이 "놓았다"고 적어도 어딘가가 쥐고 있으면
 프로세스 메모리는 줄지 않는다. 여기서는 대역 없이 실제 배선을 탄다 — 메인 창 · 편집 창 ·
-실제 조회(``app.section_basis``) · 실제 서비스(``DownloadService``) · 실제 엔진
+실제 조회(``app.section_input.basis``) · 실제 서비스(``DownloadService``) · 실제 엔진
 (``FileDownloader``) · 실제 ffmpeg. 요청만 소켓 없이 메모리의 mp4로 답하는 호스트로 보낸다.
 
 판정은 색인(``Mp4Head``)에 건 약한 참조다. 다운로드가 끝난 뒤(완료 · 실패 · 정지 · 일부 실패
@@ -29,15 +29,15 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-import app.process_memory as process_memory
+import app.system.process_memory as process_memory
 import app.theme as theme
-import app.viewmodels.section_edit_viewmodel as section_edit_module
+import app.viewmodels.section_edit as section_edit_module
 import core.media.mp4 as mp4_module
 import core.sources.file_downloader as fd_module
 import core.utils.ffmpeg as ffmpeg_module
 import core.sections.hybrid as cut_module
 import CVDv2 as main_module
-from app.download_logger import DownloadLogger
+from app.download.logger import DownloadLogger
 from app.viewmodels.data import ContentItem
 from app.views import mainWindow as mw_mod
 from app.views.mainWindow import VodDownloader
@@ -699,7 +699,7 @@ def test_released_line_is_logged_only_after_the_last_reference_is_gone(
     caplog.clear()
 
     def lines() -> list[str]:
-        return [r.getMessage() for r in caplog.records if r.name == "app.process_memory"]
+        return [r.getMessage() for r in caplog.records if r.name == "app.system.process_memory"]
 
     held = []  # 엔진 밖의 누군가가 색인을 쥐고 있다
     real = mp4_module.index_mp4

@@ -10,7 +10,7 @@ import os
 import pytest
 import requests
 
-import app.download_resolvers as resolvers
+import app.download.resolvers as resolvers
 import app.network as network
 from app.network import REQUEST_TIMEOUT, NetworkManager
 from app.viewmodels.data import ContentItem

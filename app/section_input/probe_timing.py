@@ -1,6 +1,6 @@
 """구간 기준값 조회의 단계별 시간 기록 (#309, Qt 무의존).
 
-조회(``app/section_basis.py``)가 어디서 시간을 쓰는지 로그 한 줄로 남긴다. 단계마다 걸린
+조회(``app/section_input/basis.py``)가 어디서 시간을 쓰는지 로그 한 줄로 남긴다. 단계마다 걸린
 시간과, 그 단계가 보낸 요청의 수 · 응답이 말한 바이트 수 · 응답 머리까지 걸린 시간을 적는다.
 
 **적지 않는 것**: 주소 · 쿼리(토큰) · 쿠키 · 키 · 영상 번호 · 제목. 줄에 들어가는 것은 이 모듈이
@@ -28,7 +28,7 @@ from contextlib import contextmanager
 
 from core.engine.session import get_thread_session
 
-logger = logging.getLogger("app.section_basis")
+logger = logging.getLogger("app.section_input.basis")
 
 LOG_PREFIX = "구간 기준값 조회"  # 로그에서 이 줄을 찾는 문자열
 

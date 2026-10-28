@@ -1,4 +1,4 @@
-"""app/download_task.py 어댑터 검증 (#60).
+"""app/download/task.py 어댑터 검증 (#60).
 
 상태 머신을 core/models로 이주한 뒤에도 기존 호출부 인터페이스
 (state 속성, lock, start/pause/resume/stop/finish/isRunning)가 유지되고,
@@ -15,7 +15,7 @@ import pytest
 
 from core.models.download_data import DownloadData
 from core.models.download_state import DownloadState
-from app.download_task import DownloadTask
+from app.download.task import DownloadTask
 
 
 class _FakeLogger:

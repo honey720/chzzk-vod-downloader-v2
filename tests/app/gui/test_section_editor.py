@@ -4,7 +4,7 @@
 `VodDownloader.onCardSectionEdit` → 편집 창 ↔ 뷰모델 → `ContentItem.selections` → 카드 표시.
 전역 다운로드는 버튼 클릭 → `onDownloadPause` → `downloadItem` → `startDownload`를 지난다.
 
-네트워크는 타지 않는다. 프레임률 · 영상 길이 조회(`app.section_basis.probe_section_basis`)는
+네트워크는 타지 않는다. 프레임률 · 영상 길이 조회(`app.section_input.basis.probe_section_basis`)는
 대역으로 바꾸고, 엔진 자리는 `DownloadViewModel.start` 기록 대역 또는 서비스 대역이 맡는다.
 config는 conftest가 격리한다.
 
@@ -21,11 +21,11 @@ from PySide6.QtGui import QFontMetrics
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication
 
-import app.section_basis as section_basis
+import app.section_input.basis as section_basis
 import app.theme as theme
 import CVDv2 as main_module
-from app.download_logger import DownloadLogger
-from app.section_basis import SectionBasis
+from app.download.logger import DownloadLogger
+from app.section_input.basis import SectionBasis
 from app.viewmodels.data import ContentItem
 from app.views import mainWindow as mw_mod
 from app.views.mainWindow import VodDownloader
@@ -33,7 +33,7 @@ from core.media.representations import StreamEntry
 from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
 from core.utils.paths import release_output_paths
-from app.viewmodels.section_edit_viewmodel import refit_selections
+from app.viewmodels.section_edit import refit_selections
 from tests.app.gui.section_input import leave_time, type_clock, type_frame, type_time
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, shown, snapshot_top_levels
 

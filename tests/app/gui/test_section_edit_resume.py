@@ -14,11 +14,11 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-import app.section_basis as section_basis
+import app.section_input.basis as section_basis
 import app.theme as theme
 import CVDv2 as main_module
-from app.download_logger import DownloadLogger
-from app.section_basis import SectionBasis
+from app.download.logger import DownloadLogger
+from app.section_input.basis import SectionBasis
 from app.viewmodels.data import ContentItem
 from app.views import mainWindow as mw_mod
 from app.views.mainWindow import VodDownloader

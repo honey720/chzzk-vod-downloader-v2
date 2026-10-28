@@ -9,7 +9,7 @@
         "app/views/dialog.py",
         "app/views/section_dialog.py",
         "app/widgets/timecode_edit.py",
-        "app/viewmodels/section_edit_viewmodel.py",
+        "app/viewmodels/section_edit.py",
         "ui/mainWindow.ui",
         "app/widgets/contentItemWidget.ui"
     ],

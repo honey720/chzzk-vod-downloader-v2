@@ -1,4 +1,4 @@
-"""app/platform_adapter.py 검증 (#211) — QStandardPaths·QDesktopServices 대체.
+"""app/system/platform_adapter.py 검증 (#211) — QStandardPaths·QDesktopServices 대체.
 
 회귀 캡처: `content/widget.py`의 `requestOpenDir`와 `config/dialog.py`의
 `openLogsFolder`를 읽어 확인한 기존 3-OS 분기(Windows explorer.exe /select,
@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-import app.platform_adapter as adapter
+import app.system.platform_adapter as adapter
 
 
 class FakePopenCall:
@@ -302,7 +302,7 @@ class TestResponsiveTiming:
         """Windows에서 켜면 그때의 넘김 간격을 기록 한 줄로 남겨야 한다.
 
         platform.system() == "Windows", 넘김 간격 5ms에서 켬
-        -> app.platform_adapter 로거의 INFO 한 줄 == "화면 반응 설정: GIL 넘김 간격 1ms"
+        -> app.system.platform_adapter 로거의 INFO 한 줄 == "화면 반응 설정: GIL 넘김 간격 1ms"
         """
         monkeypatch.setattr(adapter.platform, "system", lambda: "Windows")
         sys.setswitchinterval(0.005)
@@ -310,7 +310,7 @@ class TestResponsiveTiming:
         with caplog.at_level(logging.DEBUG):
             adapter.enable_responsive_timing()
 
-        records = [r for r in caplog.records if r.name == "app.platform_adapter"]
+        records = [r for r in caplog.records if r.name == "app.system.platform_adapter"]
         assert [(r.levelno, r.getMessage()) for r in records] == [
             (logging.INFO, "화면 반응 설정: GIL 넘김 간격 1ms")
         ]
@@ -329,7 +329,7 @@ class TestResponsiveTiming:
         """타이머를 청한 결과와 푼 것을 기록으로 남겨야 한다 — 거절된 청은 풀지 않으므로 푼 줄이 없다.
 
         Windows에서 켠 뒤 일을 하나 돌림. 청이 받아들여짐 / 거절됨
-        -> 켠 뒤의 app.platform_adapter 로거의 DEBUG 줄 == expected
+        -> 켠 뒤의 app.system.platform_adapter 로거의 DEBUG 줄 == expected
         """
         _calls, answer = timing
         answer["value"] = granted
@@ -340,7 +340,7 @@ class TestResponsiveTiming:
             with adapter.background_work():
                 pass
 
-        records = [r for r in caplog.records if r.name == "app.platform_adapter"]
+        records = [r for r in caplog.records if r.name == "app.system.platform_adapter"]
         assert [(r.levelno, r.getMessage()) for r in records] == [
             (logging.DEBUG, message) for message in expected
         ]

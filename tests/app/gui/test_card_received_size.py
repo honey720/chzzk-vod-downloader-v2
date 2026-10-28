@@ -8,7 +8,7 @@
 import pytest
 from PySide6.QtCore import QObject, QTimer
 
-from app.download_logger import DownloadLogger
+from app.download.logger import DownloadLogger
 from app.viewmodels.data import ContentItem
 from app.viewmodels.download_viewmodel import DownloadViewModel
 from core.models.events import ProgressEvent

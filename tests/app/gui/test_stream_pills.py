@@ -15,7 +15,7 @@ from PySide6.QtWidgets import QApplication
 import config.config as config_module
 import CVDv2 as main_module
 import app.theme as theme
-from app.download_logger import DownloadLogger
+from app.download.logger import DownloadLogger
 from app.network import NetworkManager
 from app.viewmodels.data import ContentItem
 from app.widgets.widget import ContentItemWidget

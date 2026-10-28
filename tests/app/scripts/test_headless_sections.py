@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import app.section_basis as section_basis
+import app.section_input.basis as section_basis
 import scripts.headless_download as headless
 from core.media.fmp4 import parse_init_segment, parse_media_segment
 from core.media.hls import parse_media_playlist
@@ -440,7 +440,7 @@ def test_fmp4_sections_log_the_frame_rate_and_hand_it_to_the_engine(
     -> head.frame_rate == 기대값, "프레임률:" 로그에 그 값과 경로 번호, 구간의 끝 == 1 + 59 ÷ 프레임률
     """
     head = _fmp4_head([17, 17, 16] * 80)
-    # 조회 순서는 app/section_basis.py에 있다 — 대역도 거기에 건다
+    # 조회 순서는 app/section_input/basis.py에 있다 — 대역도 거기에 건다
     monkeypatch.setattr(
         section_basis,
         "resolve_m3u8_variant",

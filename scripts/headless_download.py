@@ -49,8 +49,8 @@ from time import gmtime, strftime
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config.config as config  # noqa: E402
-import app.section_basis as section_basis  # noqa: E402
-from app.log_setup import setup_logging  # noqa: E402
+import app.section_input.basis as section_basis  # noqa: E402
+from app.system.log_setup import setup_logging  # noqa: E402
 from app.viewmodels.data import ContentItem  # noqa: E402
 from app.network import NetworkManager  # noqa: E402
 from fractions import Fraction  # noqa: E402
@@ -85,12 +85,12 @@ from core.sections.timecode import (  # noqa: E402
     parse_timecode,
 )
 from core.models.download_data import DownloadData  # noqa: E402
-from app.download_logger import DownloadLogger  # noqa: E402
-from app.download_resolvers import (  # noqa: E402
+from app.download.logger import DownloadLogger  # noqa: E402
+from app.download.resolvers import (  # noqa: E402
     resolve_aes_key,
     resolve_m3u8_base_url,
 )
-from app.download_task import DownloadTask  # noqa: E402
+from app.download.task import DownloadTask  # noqa: E402
 
 logger = logging.getLogger("headless")
 
@@ -219,7 +219,7 @@ def _resolve_sections(
         (구간 목록, 받은 moov). 형식·검증 오류나 moov를 읽지 못한 경우 None
     """
     try:
-        # 조회 순서는 app/section_basis.py 한 곳에 있다 — 구간 편집 창과 같은 함수다
+        # 조회 순서는 app/section_input/basis.py 한 곳에 있다 — 구간 편집 창과 같은 함수다
         head = section_basis.probe_mp4(item.base_url, index=True).head
         index = head.index
         pairs = _parse_sections(texts, index.fps)
@@ -293,7 +293,7 @@ def _resolve_fmp4_sections(
         (구간 목록, 받은 것). 형식·검증 오류나 읽지 못한 경우 None
     """
     try:
-        # 조회 순서는 app/section_basis.py 한 곳에 있다 — 구간 편집 창과 같은 함수다. 고른
+        # 조회 순서는 app/section_input/basis.py 한 곳에 있다 — 구간 편집 창과 같은 함수다. 고른
         # 변형(#318)에서 읽고, 정한 프레임률을 받은 것에 싣는다(엔진이 같은 값으로 검증한다)
         probe = section_basis.probe_fmp4(item, segment_dir)
         head, segment_at = probe.head, probe.segment_at
@@ -369,7 +369,7 @@ def _resolve_ts_sections(
         (구간 목록, 받은 것). 형식·검증 오류나 읽지 못한 경우 None
     """
     try:
-        # 조회 순서는 app/section_basis.py 한 곳에 있다 — 구간 편집 창과 같은 함수다. 키는 그
+        # 조회 순서는 app/section_input/basis.py 한 곳에 있다 — 구간 편집 창과 같은 함수다. 키는 그
         # 안에서 한 번 받아 쓰고, 정한 프레임률을 받은 것에 싣는다(엔진이 같은 값으로 계획한다).
         # probe는 키를 품고 있다(segment_at) — 이 함수 밖으로 내보내지 않는다
         probe = section_basis.probe_ts(item, segment_dir, declared)

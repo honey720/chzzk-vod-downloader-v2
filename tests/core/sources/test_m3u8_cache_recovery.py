@@ -295,7 +295,7 @@ def test_corrupt_response_line_has_no_address_and_its_header_tokens_are_redacted
     그 줄을 실제 다운로드 로거(DownloadLogger)로 파일에 씀
     -> 줄에 "seg_3" · CDN 호스트가 없다, 로그 파일에 "SECRET123"이 없고 "edge.invalid"는 있다
     """
-    from app.download_logger import DownloadLogger
+    from app.download.logger import DownloadLogger
 
     headers = {**CORRUPT_HEADERS, "X-Cache": "HIT from https://edge.invalid/x?token=SECRET123"}
     logger, _finished = _run_with_corrupt_seg3(

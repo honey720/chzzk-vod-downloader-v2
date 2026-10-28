@@ -12,13 +12,13 @@
 ``probe_fmp4`` · ``probe_ts``)를 부른다. 헤드리스는 받은 것을 엔진에 넘기려고 세그먼트를 둘
 폴더(segment_dir)를 주고, 편집 창은 주지 않는다 — 값만 읽고 받은 본문은 버린다.
 
-쿠키 · 치지직 API 조회가 앱 계층에 있어 core로 들어갈 수 없다(``app/download_resolvers.py``와
+쿠키 · 치지직 API 조회가 앱 계층에 있어 core로 들어갈 수 없다(``app/download/resolvers.py``와
 같은 이유). 워커 스레드에서 부른다 — 네트워크를 탄다.
 
 **HLS 세그먼트는 전체 요청으로만 받는다.** 받는 함수(``core/sections/hls_fmp4.py`` ·
 ``core/sections/hls_ts.py``)가 그렇게 받는다.
 
-조회마다 단계별로 걸린 시간을 INFO 로그 한 줄로 남긴다(``app/probe_timing.py`` —
+조회마다 단계별로 걸린 시간을 INFO 로그 한 줄로 남긴다(``app/section_input/probe_timing.py`` —
 "구간 기준값 조회"로 시작하는 줄). 주소 · 쿠키 · 키 · 영상 번호는 그 줄에 없다. 재는 일은
 조회의 동작을 바꾸지 않는다.
 """
@@ -30,9 +30,9 @@ from dataclasses import dataclass, field
 from fractions import Fraction
 
 import config.config as config
-from app.download_resolvers import resolve_aes_key, resolve_m3u8_variant
+from app.download.resolvers import resolve_aes_key, resolve_m3u8_variant
 from app.network import NetworkManager
-from app.probe_timing import ProbeTiming
+from app.section_input.probe_timing import ProbeTiming
 from core.sections.hls_fmp4 import fetch_fmp4_head, segment_frames
 from core.sections.hls_ts import fetch_ts_head, segment_streams, ts_key_uri
 from core.media.mp4 import Mp4Error, fetch_mp4_raw, pending_mp4_head, summarize_mp4

@@ -37,7 +37,7 @@ from app.viewmodels.item_state import ItemState
 from app.viewmodels.path_gates import check_download_path
 from app.viewmodels.data import SECTION_CHECK_PENDING, ContentItem
 from app.viewmodels.model import ContentListModel
-from app.viewmodels.section_edit_viewmodel import SectionRefitter, SectionSizer
+from app.viewmodels.section_edit import SectionRefitter, SectionSizer
 from app.network import NetworkManager
 from core.chzzk import metadata_service
 from core.chzzk.metadata_service import MetadataError

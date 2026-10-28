@@ -1,4 +1,4 @@
-"""app/user_activity.py 검증 (#309) — 앱 전체의 입력을 지켜보고 "조작 중"을 답한다.
+"""app/system/user_activity.py 검증 (#309) — 앱 전체의 입력을 지켜보고 "조작 중"을 답한다.
 
 실제 배선을 탄다: QApplication에 필터를 걸고, 위젯 · 창에 이벤트를 보내 본다. 시계는 테스트가
 정한 값을 돌려주는 대역으로 바꾼다. 필터는 테스트마다 걷는다 — 앱에 남기지 않는다.
@@ -21,10 +21,10 @@ from PySide6.QtGui import (
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QWidget
 
-import app.section_basis as section_basis
-import app.user_activity as activity
+import app.section_input.basis as section_basis
+import app.system.user_activity as activity
 import app.viewmodels.download_viewmodel as download_viewmodel
-import app.viewmodels.section_edit_viewmodel as sev
+import app.viewmodels.section_edit as sev
 import core.utils.interaction as interaction
 from core.media.mp4 import pending_mp4_head
 from core.models.plan import TimeRange
@@ -409,7 +409,7 @@ def test_download_viewmodel_hands_the_question_to_the_service(qapp, monkeypatch)
     """다운로드 뷰모델은 서비스를 만들 때 조작 중인지 묻는 값으로 user_interacting을 넘겨야 한다.
 
     DownloadService를 받은 인자를 적는 대역으로 바꾸고 DownloadViewModel(content)을 만듦
-    -> 적힌 user_interacting is app.user_activity.user_interacting
+    -> 적힌 user_interacting is app.system.user_activity.user_interacting
     """
     given: dict = {}
 
@@ -474,9 +474,9 @@ def _run_refit_job() -> list[tuple]:
 
 
 def test_section_jobs_ask_the_question_of_user_activity():
-    """카드의 조회 · 크기 세기가 조작 중인지 묻는 값은 app.user_activity.user_interacting이어야 한다.
+    """카드의 조회 · 크기 세기가 조작 중인지 묻는 값은 app.system.user_activity.user_interacting이어야 한다.
 
-    -> section_edit_viewmodel.user_interacting is app.user_activity.user_interacting
+    -> section_edit_viewmodel.user_interacting is app.system.user_activity.user_interacting
     """
     assert sev.user_interacting is activity.user_interacting
 

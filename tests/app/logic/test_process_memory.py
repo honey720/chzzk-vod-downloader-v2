@@ -1,10 +1,10 @@
-"""앱 프로세스의 메모리를 읽어 로그로 남기는 것 (#309) — ``app/process_memory.py``."""
+"""앱 프로세스의 메모리를 읽어 로그로 남기는 것 (#309) — ``app/system/process_memory.py``."""
 
 import logging
 import sys
 
-import app.process_memory as process_memory
-from app.process_memory import log_process_memory, read_process_memory
+import app.system.process_memory as process_memory
+from app.system.process_memory import log_process_memory, read_process_memory
 
 MB = 1024 * 1024
 
@@ -45,7 +45,7 @@ def test_reading_follows_memory_the_process_takes():
 
 
 def test_log_line_names_the_point_and_each_size_in_megabytes(monkeypatch, caplog):
-    """메모리 줄은 "프로세스 메모리 [시점] 이름 값MB · …" 형식이고 로거 이름은 app.process_memory여야 한다.
+    """메모리 줄은 "프로세스 메모리 [시점] 이름 값MB · …" 형식이고 로거 이름은 app.system.process_memory여야 한다.
 
     읽기를 {개인 작업 집합: 812.4 MiB, 커밋: 1536 MiB}로 고정, 시점 "조회 끝"
     -> "프로세스 메모리 [조회 끝] 개인 작업 집합 812.4MB · 커밋 1,536.0MB"
@@ -60,7 +60,7 @@ def test_log_line_names_the_point_and_each_size_in_megabytes(monkeypatch, caplog
     log_process_memory("조회 끝")
 
     (record,) = caplog.records
-    assert record.name == "app.process_memory"
+    assert record.name == "app.system.process_memory"
     assert (
         record.getMessage() == "프로세스 메모리 [조회 끝] 개인 작업 집합 812.4MB · 커밋 1,536.0MB"
     )
@@ -76,7 +76,7 @@ def test_nothing_is_logged_when_memory_cannot_be_read(monkeypatch, caplog):
         raise OSError("읽기 실패(대역)")
 
     caplog.set_level(logging.INFO)
-    logging.getLogger("app.process_memory").info("표식")  # 캡처가 살아 있음을 먼저 본다
+    logging.getLogger("app.system.process_memory").info("표식")  # 캡처가 살아 있음을 먼저 본다
 
     monkeypatch.setattr(process_memory, "read_process_memory", lambda: {})
     log_process_memory("다운로드 시작")

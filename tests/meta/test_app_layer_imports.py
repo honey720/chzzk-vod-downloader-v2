@@ -9,7 +9,7 @@
   거쳐서든). `app.widgets.view`·`app.widgets.widget`·`ui/*`·`theme`는 이름이 아니라 ②로 잡히므로
   파일을 옮기거나 이름을 바꿔도 계속 잡힌다.
 - **뷰모델 계층**은 `app/` 아래에서 뷰 계층 디렉토리 밖에 있는 모든 `.py`다
-  (`app/viewmodels/`·`app/platform_adapter.py` 등). 이 계층은 Qt 위젯 모듈을 직접 import해도,
+  (`app/viewmodels/`·`app/system/platform_adapter.py` 등). 이 계층은 Qt 위젯 모듈을 직접 import해도,
   뷰 계층 모듈을 import해도 안 된다. QtCore(QObject·Signal)는 쓸 수 있다.
 
 구 게이트가 `app/` 전체에 `content.view`·`content.widget` 이름을 금지하던 것은 이동 뒤
