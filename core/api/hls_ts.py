@@ -30,12 +30,12 @@ from collections.abc import Mapping
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from core.api.hls import HlsPlaylist, parse_media_playlist
-from core.api.mpegts import TS_UNSUPPORTED, TsError, parse_ts
+from core.container.mpegts import TS_UNSUPPORTED, TsError, parse_ts
 from core.api.session import get_thread_session
 from core.downloaders import integrity
 from core.downloaders.base import REQUEST_TIMEOUT
 from core.downloaders.decrypt import DecryptionError, decrypt_segment, looks_like_ts, sequence_iv
-from core.models.ts_index import TsHead, TsStreams
+from core.container.ts_index import TsHead, TsStreams
 
 # 세그먼트 하나로 받아들이는 최대 크기(바이트) — 256MB. 손상된 응답을 끝없이 받지 않게 한다
 _MAX_SEGMENT_BYTES = 256 * 1024 * 1024

@@ -6,7 +6,7 @@
   실행에 필요한 정보(items·total_size·requires_postprocess)를 담는다
 - 구간을 해석하지 못하는 다운로더가 낸 계획에 selections가 있으면 베이스 run()이 명시적
   미지원 예외를 낸다. file(mp4) · m3u8(HLS fMP4) · hls_aes(암호화 HLS TS)는 구간을 받는다 —
-  그 경로는 tests/unit/core/test_file_sections.py · test_m3u8_sections.py ·
+  그 경로는 tests/ffmpeg/sections/test_file_sections.py · test_m3u8_sections.py ·
   test_hls_aes_sections.py가 본다 (#309)
 
 selections가 빈 값일 때 현행과 동일 동작인 것은 기존 실행 테스트
@@ -24,7 +24,7 @@ from core.downloaders.base import BaseDownloader
 from core.downloaders.file_downloader import FileDownloader
 from core.downloaders.hls_aes_downloader import HlsAesDownloader
 from core.downloaders.m3u8_downloader import M3U8Downloader
-from core.downloaders.ranges import split_ranges
+from core.downloaders.part_ranges import split_ranges
 from core.models.plan import DownloadPlan, TimeRange
 from core.models.download_data import DownloadData
 

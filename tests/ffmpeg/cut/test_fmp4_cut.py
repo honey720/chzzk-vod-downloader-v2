@@ -1,7 +1,7 @@
 """cut_fmp4_section — 받아 둔 fMP4 세그먼트에서 구간 파일을 바로 쓴다 (#309).
 
 엔진을 거친 끝까지 경로(지금 방식과의 대조 · 재시도 · 세그먼트 지우기)는
-tests/unit/core/test_m3u8_sections.py가 잰다. 여기서는 함수 하나의 계약을 잰다.
+tests/ffmpeg/sections/test_m3u8_sections.py가 잰다. 여기서는 함수 하나의 계약을 잰다.
 
 입력은 test_m3u8_sections.py의 plain과 같은 HLS다 — 320x240 · 30fps · 6초 · 1초 세그먼트 6개
 (세그먼트마다 30프레임) · 키프레임 0·30·36·60·90·120·150.
@@ -16,12 +16,12 @@ import subprocess
 
 import pytest
 
-import core.utils.fmp4_cut as fmp4_cut_module
-from core.api.fmp4 import fmp4_origin, parse_media_segment
+import core.cutting.fmp4_cut as fmp4_cut_module
+from core.container.fmp4 import fmp4_origin, parse_media_segment
 from core.models.cut import CutPiece
-from core.models.fmp4_index import Fmp4Head
+from core.container.fmp4_index import Fmp4Head
 from core.models.plan import TimeRange
-from core.utils.cut_check import check_cut
+from core.cutting.check import check_cut
 from core.utils.ffmpeg import (
     FFmpegCancelledError,
     FFmpegTimeoutError,
@@ -29,9 +29,9 @@ from core.utils.ffmpeg import (
     get_ffmpeg_exe,
     read_in_chunks,
 )
-from core.utils.fmp4_cut import cut_fmp4_section, frame_at
-from core.utils.fmp4_sections import Fmp4Section
-from core.utils.hybrid_cut import (
+from core.cutting.fmp4_cut import cut_fmp4_section, frame_at
+from core.sections.fmp4_sections import Fmp4Section
+from core.cutting.hybrid import (
     CUT_FAILED,
     CUT_TIMEOUT,
     CUT_UNSUPPORTED,

@@ -3,8 +3,8 @@
 구간 하나를 파일 하나로 잘라 내는 일은 네 단계다 — 프레임 정보를 모으고
 (``CutFrames``), 어느 프레임을 재인코딩하고 어느 프레임을 복사할지 정하고
 (``CutPlan``), ffmpeg로 자르고(``CutResult``), 결과가 원본과 맞는지 판정한다
-(``CutCheck``). 계획·실행은 ``core.utils.hybrid_cut``, 판정은
-``core.utils.cut_check``가 한다.
+(``CutCheck``). 계획·실행은 ``core.cutting.hybrid``, 판정은
+``core.cutting.check``가 한다.
 """
 
 from collections.abc import Sequence

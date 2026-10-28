@@ -7,9 +7,9 @@
 
 from fractions import Fraction
 
-from core.api.mp4 import read_mp4_index
+from core.container.mp4 import read_mp4_index
 from core.utils.ffmpeg import remux_stream, run_ffmpeg
-from core.utils.hybrid_cut import cut_frames_from_mp4
+from core.cutting.hybrid import cut_frames_from_mp4
 from tests.ffmpeg.reference_cut import hybrid_cut
 
 

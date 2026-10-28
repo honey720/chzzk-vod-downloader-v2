@@ -10,11 +10,11 @@ from types import SimpleNamespace
 import pytest
 
 import app.section_basis as section_basis
-import core.api.mp4 as mp4_module
+import core.container.mp4 as mp4_module
 from app.section_basis import SectionBasis, SectionBasisError, probe_section_basis
 from core.models.content import ContentType, StreamKey
-from core.api.mp4 import pending_mp4_head
-from core.models.mp4_index import Mp4Head, Mp4Summary
+from core.container.mp4 import pending_mp4_head
+from core.container.mp4_index import Mp4Head, Mp4Summary
 
 
 def _item(content_type: str, **extra) -> SimpleNamespace:

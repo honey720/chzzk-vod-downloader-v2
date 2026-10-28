@@ -23,7 +23,7 @@ m3u8 고유 부분만 남는다:
 
 - prepare: 플레이리스트와 초기화 세그먼트, 그리고 구간의 양 끝이 든 세그먼트를 받아
   (core/api/hls_fmp4.py) 구간마다 받을 세그먼트와 첫·끝 프레임을 정한다
-  (core/utils/fmp4_sections.py). 받을 항목은 구간들의 세그먼트를 합친 것이다 — 두
+  (core/sections/fmp4_sections.py). 받을 항목은 구간들의 세그먼트를 합친 것이다 — 두
   구간이 같은 세그먼트를 쓰면 한 번만 받는다. ``Content.fmp4_head``로 이미 받은 것이
   오면 그것을 쓰고, 초기화 세그먼트는 다시 받지 않는다
 - **세그먼트에 범위 요청을 보내지 않는다.** 프레임 정보를 읽을 세그먼트도 통째로 받아
@@ -33,7 +33,7 @@ m3u8 고유 부분만 남는다:
 - 받은 세그먼트가 온전한지는 전체 다운로드와 같은 검사(core/downloaders/integrity.py,
   #321)로 확인한다. 구간을 정하면서 받아 둔 세그먼트도 같은 검사를 거치고, 온전하지
   않으면 전송 단계가 다시 받는다. 잘린 세그먼트로 컷을 하지 않는다
-- postprocess: 구간마다 받은 세그먼트에서 구간 파일을 바로 쓴다(core/utils/fmp4_cut.py) —
+- postprocess: 구간마다 받은 세그먼트에서 구간 파일을 바로 쓴다(core/cutting/fmp4_cut.py) —
   경계가 걸린 GOP만 다시 인코딩하고 가운데 세그먼트는 그대로 흘린다. 하나라도 실패하면
   다운로드 전체가 실패다. 세그먼트는 통째로 읽지 않는다
 - 구간 파일로 넘긴 세그먼트는, 남은 구간이 쓰지 않으면 곧바로 지운다 — 구간 길이만큼을
@@ -55,19 +55,19 @@ import core.downloaders.base as base_module
 import core.downloaders.integrity as integrity
 from core.api.hls import parse_media_playlist
 from core.api.hls_fmp4 import fetch_fmp4_head, segment_file_name, segment_frames
-from core.api.mp4 import Mp4Error
+from core.container.mp4 import Mp4Error
 from core.api.session import get_thread_session
 from core.downloaders.base import REQUEST_TIMEOUT, BaseDownloader, PostprocessError
 from core.models.content import Content, ContentType
 from core.models.cut import CutFrames, CutResult
 from core.models.download_state import DownloadState
 from core.models.events import ProgressEvent
-from core.models.fmp4_index import Fmp4Head
+from core.container.fmp4_index import Fmp4Head
 from core.models.plan import DownloadPlan
 from core.models.section_resume import SectionResume
-from core.utils.fmp4_cut import cut_fmp4_section
-from core.utils.fmp4_sections import Fmp4Section, plan_fmp4_sections
-from core.utils.hybrid_cut import CutCancelled, CutError
+from core.cutting.fmp4_cut import cut_fmp4_section
+from core.sections.fmp4_sections import Fmp4Section, plan_fmp4_sections
+from core.cutting.hybrid import CutCancelled, CutError
 from core.utils.paths import choose_temp_dir, release_output_paths
 
 

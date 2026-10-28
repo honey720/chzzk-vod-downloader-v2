@@ -27,7 +27,7 @@ import pytest
 
 import core.downloaders.base as base_module
 import core.utils.ffmpeg as ffmpeg_module
-import core.utils.fmp4_cut as fmp4_cut_module
+import core.cutting.fmp4_cut as fmp4_cut_module
 from core.downloaders.base import BaseDownloader, PostprocessError
 from core.models.download_state import DownloadState
 from core.utils.ffmpeg import (

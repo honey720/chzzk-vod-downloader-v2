@@ -1,6 +1,6 @@
 """config.log_setup 진입점(로그 위치 주입) 단위 테스트 (#62, 원본 #30).
 
-핸들러 구성 자체의 테스트는 tests/unit/core/test_logging_setup.py로 이주했다.
+핸들러 구성 자체의 테스트는 tests/core/utils/test_logging_setup.py로 이주했다.
 여기서는 기존 시그니처 유지와 로그 위치(CONFIG_DIR/logs) 주입만 검증한다.
 """
 

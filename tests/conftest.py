@@ -24,7 +24,7 @@ import requests.adapters
 # 스택을 한 번 잡았다 — pytest 자체의 세션 종료 강제 GC
 # (_pytest/unraisableexception.py::gc_collect_harder) 도중에 죽는다.
 # 상시 켜 둬서 다음에 재발해도 CI 로그만으로 실마리를 잡을 수 있게 한다.
-# 상세 경계·가설은 tests/unit/test_widget_theme.py의
+# 상세 경계·가설은 tests/app/gui/test_widget_theme.py의
 # `_apply_dark_card_qss` 픽스처 docstring 참고.
 faulthandler.enable()
 
@@ -168,7 +168,7 @@ def _no_network_attempts(network_guard, request):
 # 로깅 테스트가 그 배선을 탔는데, #166이 같은 지점("입력 확정"·"창 닫기")에
 # 실제 저장까지 발동하는 보존 로직을 얹으면서 오염이 시작됐다. #166은
 # 자기가 새로 만든 테스트만 메모리로 격리했고, 먼저 있던 테스트는 새는
-# 지점으로 남았다(tests/unit/test_path_action_logging.py::window). 개별
+# 지점으로 남았다(tests/app/logic/test_path_action_logging.py::window). 개별
 # 수정 대신 전역 autouse로 막아, 다음에 또 새 진입점이 생겨도 기본이
 # 안전하게 유지되게 한다. 개별 테스트가 이미 갖고 있는 자체 격리
 # (config_store 등, 저장 이력 검증 같은 자기 목적이 있다)는 그대로 둔다 —
@@ -188,7 +188,7 @@ def _isolate_real_config(tmp_path, monkeypatch):
 # 타 스위트가 느려지고, tmp_path와 시스템 임시 폴더가 우연히 같은
 # 볼륨이 아닌 CI 환경에서는 판정이 흔들려 임시 폴더 위치가 테스트마다
 # 달라질 수 있다(재현성 상실). #192 기능 자체를 검증하는 테스트
-# (tests/unit/core/test_choose_temp_dir.py)만 이 픽스처를 지역적으로
+# (tests/core/downloaders/test_choose_temp_dir.py)만 이 픽스처를 지역적으로
 # 되돌려(monkeypatch로 실제 choose_temp_dir를 복원) 실 프로브를 태운다.
 @pytest.fixture(autouse=True)
 def _isolate_choose_temp_dir(monkeypatch):

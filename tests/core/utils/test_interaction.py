@@ -12,12 +12,12 @@ from itertools import accumulate
 
 import pytest
 
-import core.api.mp4 as mp4_module
-import core.models.sample_column as column_module
+import core.container.mp4 as mp4_module
+import core.container.sample_column as column_module
 import core.utils.interaction as interaction
-from core.api.mp4 import index_mp4, parse_moov, read_mp4_raw, summarize_moov
+from core.container.mp4 import index_mp4, parse_moov, read_mp4_raw, summarize_moov
 from core.models.plan import TimeRange
-from core.models.sample_column import (
+from core.container.sample_column import (
     CHUNK_ITEMS,
     INDEX_CHUNK_ITEMS,
     array_in_chunks,
@@ -31,15 +31,15 @@ from core.utils.interaction import (
     rest_totals,
     resting_while,
 )
-from core.utils.mp4_ranges import sections_head_size, sections_sizes
-from core.utils.mp4_section_sizes import (
+from core.sections.mp4_ranges import sections_head_size, sections_sizes
+from core.sections.mp4_sizes import (
     moov_head_size,
     moov_sections_file_size,
     moov_sections_sizes,
 )
 from core.utils.stop import StopRequested, stoppable
 from tests.support.mp4_builder import audio_spec, build_mp4, video_spec
-from tests.core.api.test_mp4_chunks import _columns
+from tests.core.container.test_mp4_chunks import _columns
 
 
 def _raw():
@@ -52,7 +52,7 @@ def _raw():
 def rest_at_every_gap(monkeypatch):
     """조작 중이면 틈마다 쉬게 한다(쉼 사이 시간 판정 0) — 이 파일은 쉬는 자리를 잰다 (#408).
 
-    쉼을 일한 시간으로 묶는 동작은 ``tests/unit/core/test_interaction.py``의 가짜 시계 테스트가 잰다.
+    쉼을 일한 시간으로 묶는 동작은 ``tests/core/utils/test_interaction.py``의 가짜 시계 테스트가 잰다.
     """
     monkeypatch.setattr(interaction, "REST_AFTER_SECONDS", 0.0)
 
@@ -303,7 +303,7 @@ def test_sample_positions_rest_at_least_once_per_index_chunk_of_samples(monkeypa
     쉴 때마다 그때까지 _sample_offsets가 만든 위치의 수를 적음(시작 0 · 끝 = 샘플 수 포함)
     -> 트랙마다 이웃한 두 값의 차 <= INDEX_CHUNK_ITEMS + 청크당 샘플 수
     """
-    from tests.core.utils.test_mp4_section_sizes import _audio, _head_only, _video
+    from tests.core.sections.test_mp4_section_sizes import _audio, _head_only, _video
 
     raw = _head_only(
         [_video(20_000, seed=3, per_chunk=7, b_frames=True), _audio(9_000, seed=4, per_chunk=5)]
@@ -345,7 +345,7 @@ def test_stsc_read_rests_at_least_once_per_index_chunk_of_entries(monkeypatch):
     쉴 때마다 그때까지 _u32_table이 읽은 항목의 수를 적음(시작 0 · 끝 = 항목 수 포함)
     -> 이웃한 두 값의 차 <= INDEX_CHUNK_ITEMS
     """
-    from tests.core.utils.test_mp4_section_sizes import _head_only, _video
+    from tests.core.sections.test_mp4_section_sizes import _head_only, _video
 
     video = _video(30_000, seed=5, per_chunk=1, b_frames=False)
     raw = _head_only([replace(video, chunks=[1, 2] * 10_000)])
@@ -382,7 +382,7 @@ def test_ctts_read_rests_at_least_once_per_index_chunk_of_entries(monkeypatch):
     parse_moov. 쉴 때마다 그때까지 _composition_offsets가 읽은 항목의 수를 적음(시작 0 · 끝 포함)
     -> 이웃한 두 값의 차 <= INDEX_CHUNK_ITEMS
     """
-    from tests.core.utils.test_mp4_section_sizes import _head_only, _video
+    from tests.core.sections.test_mp4_section_sizes import _head_only, _video
 
     video = _video(20_000, seed=6, per_chunk=4, b_frames=False)
     raw = _head_only([replace(video, composition=[2000, 0] * 10_000)])
@@ -419,7 +419,7 @@ def test_one_chunk_larger_than_a_piece_rests_inside_the_chunk(monkeypatch):
     쉴 때마다 그때까지 _sample_offsets가 만든 위치의 수를 적음(시작 0 · 끝 = 샘플 수 포함)
     -> 이웃한 두 값의 차 <= INDEX_CHUNK_ITEMS · 위치 = 청크 위치 + 앞 샘플들의 크기 합
     """
-    from tests.core.utils.test_mp4_section_sizes import _head_only, _video
+    from tests.core.sections.test_mp4_section_sizes import _head_only, _video
 
     video = _video(20_000, seed=7, per_chunk=20_000, b_frames=False)
     raw = _head_only([video])
@@ -453,7 +453,7 @@ def test_chunks_after_a_large_chunk_count_the_samples_after_its_last_rest(monkey
     resting_while(늘 참)으로 parse_moov. 쉴 때마다 그때까지 만든 위치의 수를 적음(시작 0 · 끝 포함)
     -> 이웃한 두 값의 차 <= INDEX_CHUNK_ITEMS + 8,191
     """
-    from tests.core.utils.test_mp4_section_sizes import _head_only, _video
+    from tests.core.sections.test_mp4_section_sizes import _head_only, _video
 
     video = _video(32_765, seed=10, per_chunk=1, b_frames=False)
     raw = _head_only([replace(video, chunks=[16_383, 8_191, 8_191])])
@@ -493,7 +493,7 @@ def test_index_stops_at_each_rest_point_added_for_408(site, per_chunk):
     함수가 site일 때만 참
     -> StopRequested · 참을 낸 것이 site의 틈에서 한 번
     """
-    from tests.core.utils.test_mp4_section_sizes import _head_only, _video
+    from tests.core.sections.test_mp4_section_sizes import _head_only, _video
 
     raw = _head_only([_video(20_000, seed=8, per_chunk=per_chunk, b_frames=True)])
     target = getattr(mp4_module, site).__code__
@@ -538,7 +538,7 @@ def test_index_cut_at_the_index_chunk_size_equals_one_cut_at_the_usual_size(monk
     영상 20,000샘플(B프레임 재배열 있음). INDEX_CHUNK_ITEMS를 2**40으로 바꿔 한 조각으로 만든 색인
     -> 제품 값(8192 — 표마다 세 조각)으로 만든 색인과 모든 표가 같다
     """
-    from tests.core.utils.test_mp4_section_sizes import _audio, _head_only, _video
+    from tests.core.sections.test_mp4_section_sizes import _audio, _head_only, _video
 
     raw = _head_only(
         [
@@ -559,7 +559,7 @@ def test_index_cut_at_the_index_chunk_size_equals_one_cut_at_the_usual_size(monk
 
 def _long_raw():
     """영상 20,000샘플(B프레임 재배열 있음) · 오디오 9,000샘플의 moov — 표마다 8192개 조각이 셋이다."""
-    from tests.core.utils.test_mp4_section_sizes import _audio, _head_only, _video
+    from tests.core.sections.test_mp4_section_sizes import _audio, _head_only, _video
 
     return _head_only(
         [
@@ -869,7 +869,7 @@ def test_dense_gaps_of_one_sample_chunks_rest_by_time_not_by_gap(monkeypatch, wo
     -> 물은 틈 >= 쉰 횟수 × 20 · 쉰 횟수와 (틈 수 × 0.15ms ÷ 8ms)의 차 <= 5% + 1 ·
        가장 긴 일 <= 8ms + 0.15ms
     """
-    from tests.core.utils.test_mp4_section_sizes import _head_only, _video
+    from tests.core.sections.test_mp4_section_sizes import _head_only, _video
 
     video = _video(30_000, seed=9, per_chunk=1, b_frames=False)
     raw = _head_only([replace(video, chunks=[1, 2] * 10_000)])

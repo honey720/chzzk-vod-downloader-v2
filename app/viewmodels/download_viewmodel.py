@@ -53,16 +53,16 @@ from core.models.events import ProgressEvent
 from core.services.download_service import DownloadService
 from core.models.download_data import DownloadData
 from core.models.download_state import DownloadState
-from core.models.mp4_index import PendingMp4Head
+from core.container.mp4_index import PendingMp4Head
 from core.models.section_resume import SectionResume
-from core.utils.hybrid_cut import CutError
+from core.cutting.hybrid import CutError
 from core.utils.paths import (
     build_section_output_paths,
     release_output_paths,
     reserve_section_output_paths,
 )
 from core.utils.ffmpeg import FFmpegNotFoundError
-from core.utils.timecode import frame_index
+from core.sections.timecode import frame_index
 from app.download_logger import DownloadLogger
 from app.download_resolvers import resolve_aes_key, resolve_m3u8_base_url
 from app.download_task import DownloadTask

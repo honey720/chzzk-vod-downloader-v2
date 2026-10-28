@@ -41,7 +41,7 @@ from core.models.events import ProgressEvent
 from core.models.plan import TimeRange
 from core.models.section_resume import SectionResume
 from core.utils.ffmpeg import RemuxError
-from core.utils.hybrid_cut import CUT_FAILED, CutError
+from core.cutting.hybrid import CUT_FAILED, CutError
 from core.utils.paths import release_output_paths
 from tests.app.gui.card_helpers import hold_style
 
@@ -85,7 +85,7 @@ def paused_clock(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _apply_dark_card_qss(qapp):
-    """카드를 제품의 스타일로 그린다 — 테스트 하나의 수명 동안만 건다(tests/unit/test_failure_display.py와 같은 규칙)."""
+    """카드를 제품의 스타일로 그린다 — 테스트 하나의 수명 동안만 건다(tests/app/gui/test_failure_display.py와 같은 규칙)."""
     theme.set_color_scheme("dark")
     qapp.setStyle(hold_style(theme.build_style()))
     qapp.setPalette(theme.build_palette())

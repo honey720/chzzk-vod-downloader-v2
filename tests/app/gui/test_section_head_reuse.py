@@ -3,7 +3,7 @@
 실제 창에서 카드 클릭 → 편집 창 → 확인 → 전역 다운로드까지 지난다. 조회 자리는 대역이
 맡아 해상도마다 다른 표식 객체를 moov로 돌려준다. 엔진 자리는 서비스 대역이 맡아 넘어온
 ``Content``를 적어 둔다 — 엔진이 넘겨받은 moov를 다시 받지 않는 것은
-``tests/unit/core/test_file_sections.py``가 잰다.
+``tests/ffmpeg/sections/test_file_sections.py``가 잰다.
 """
 
 import gc

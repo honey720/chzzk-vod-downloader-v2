@@ -1,6 +1,6 @@
 """테스트용 합성 TS 조립기 — 188바이트 패킷을 직접 써서 작은 TS 바이트를 만든다 (#309).
 
-제품 코드(core.api.mpegts)를 쓰지 않는다.
+제품 코드(core.container.mpegts)를 쓰지 않는다.
 """
 
 from dataclasses import dataclass

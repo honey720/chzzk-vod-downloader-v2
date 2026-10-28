@@ -1,6 +1,6 @@
 """받은 세그먼트를 내용으로 확인하는 규칙 — fMP4 상자 · MPEG-TS 패킷 · 길이 (#321).
 
-입력은 상자 구조만 갖춘 합성 본문이다(tests/unit/fmp4_samples.py). 상자 순서
+입력은 상자 구조만 갖춘 합성 본문이다(tests/core/downloaders/fmp4_samples.py). 상자 순서
 ``styp moof mdat emsg moof mdat emsg``는 실제 세그먼트에서 본 것이다.
 """
 

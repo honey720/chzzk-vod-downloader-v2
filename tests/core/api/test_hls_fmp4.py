@@ -7,8 +7,8 @@
 - 받은 세그먼트는 segment_dir에 엔진과 같은 이름으로 두고, 잘린 것은 두지 않는다
 - 같은 세그먼트를 두 번 요청하지 않는다
 
-입력은 tests/unit/core/fmp4_builder.py가 조립한 합성 fMP4이고, 요청은 소켓 없는 호스트
-(tests/unit/core/range_host.py)가 답한다.
+입력은 tests/support/fmp4_builder.py가 조립한 합성 fMP4이고, 요청은 소켓 없는 호스트
+(tests/support/range_host.py)가 답한다.
 """
 
 import os
@@ -17,7 +17,7 @@ from types import SimpleNamespace
 import pytest
 
 import core.api.hls_fmp4 as hls_fmp4_module
-from core.api.fmp4 import parse_init_segment, parse_media_segment
+from core.container.fmp4 import parse_init_segment, parse_media_segment
 from core.api.hls_fmp4 import (
     HLS_NOT_FMP4,
     download_segment,
@@ -26,7 +26,7 @@ from core.api.hls_fmp4 import (
     segment_file_name,
     segment_frames,
 )
-from core.api.mp4 import Mp4Error
+from core.container.mp4 import Mp4Error
 from core.downloaders.integrity import TruncatedSegmentError
 from tests.support.fmp4_builder import (
     KEY,

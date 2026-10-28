@@ -22,7 +22,7 @@ base_url 해석(#75)과 같은 주입 방식이다.
 
 - prepare: 플레이리스트와, 시각 축을 재는 세그먼트 · 구간의 양 끝이 든 세그먼트를 받아
   복호화해 읽고(core/api/hls_ts.py) 구간마다 받을 세그먼트와 첫·끝 프레임을 정한다
-  (core/utils/ts_sections.py). 받을 항목은 구간들의 세그먼트를 합친 것이다 — 두 구간이
+  (core/sections/ts_sections.py). 받을 항목은 구간들의 세그먼트를 합친 것이다 — 두 구간이
   같은 세그먼트를 쓰면 한 번만 받는다. ``Content.ts_head``로 이미 받은 것이 오면 그것을 쓴다.
   여기서 받다가 실패한 세그먼트는 다시 받지 않고 다운로드가 실패한다
 - **세그먼트에 범위 요청을 보내지 않는다.** 구간을 정하면서 받은 세그먼트(복호화한 것)는
@@ -35,7 +35,7 @@ base_url 해석(#75)과 같은 주입 방식이다.
 - **키는 받을 세그먼트가 있을 때만, 한 번 받는다.** 키가 맞는지 확인하려고 세그먼트를 따로
   받지 않는다 — 엔진이 처음 받는 세그먼트의 복호화 · TS 검사가 그 확인이다. 받을 세그먼트가
   모두 받아 둔 것이면 키를 받지 않는다
-- postprocess: 구간마다 받은 세그먼트에서 바로 구간 파일을 쓴다(core/utils/ts_cut.py) — 경계
+- postprocess: 구간마다 받은 세그먼트에서 바로 구간 파일을 쓴다(core/cutting/ts_cut.py) — 경계
   GOP만 다시 인코딩하고 가운데 세그먼트는 그대로 흘린다. 긴 구간부터 만들고, 구간 파일로 넘긴
   세그먼트는 남은 구간이 쓰지 않으면 그 자리에서 지운다. 하나라도 실패하면 다운로드 전체가
   실패다. 구간마다의 작업 폴더(section_<번호>)는 임시 폴더 안에 두고 그 구간이 끝나면 지운다
@@ -69,7 +69,7 @@ from core.api.hls_ts import (
     ts_key_uri,
     ts_segment_file_name,
 )
-from core.api.mpegts import TsError, parse_ts
+from core.container.mpegts import TsError, parse_ts
 from core.api.session import get_thread_session
 from core.downloaders.base import REQUEST_TIMEOUT, BaseDownloader, PostprocessError
 from core.downloaders.decrypt import DecryptionError, decrypt_segment, looks_like_ts
@@ -79,12 +79,12 @@ from core.models.download_state import DownloadState
 from core.models.events import ProgressEvent
 from core.models.plan import DownloadPlan
 from core.models.section_resume import SectionResume
-from core.models.ts_index import TsHead, TsStreams
-from core.utils.hybrid_cut import CutCancelled, CutError
+from core.container.ts_index import TsHead, TsStreams
+from core.cutting.hybrid import CutCancelled, CutError
 from core.utils.paths import choose_temp_dir, release_output_paths
-from core.utils.section_plan import PlannedSection
-from core.utils.ts_cut import cut_ts_section
-from core.utils.ts_sections import TsSectionSource, choose_ts_frame_rate, plan_ts_sections
+from core.sections.section_plan import PlannedSection
+from core.cutting.ts_cut import cut_ts_section
+from core.sections.ts_sections import TsSectionSource, choose_ts_frame_rate, plan_ts_sections
 
 
 __all__ = ["DecryptionError", "HlsAesDownloader"]  # DecryptionError는 decrypt.py에 있다
@@ -537,7 +537,7 @@ class HlsAesDownloader(BaseDownloader):
         return os.path.join(self.temp_dir, name)
 
     def _cut_sections(self) -> None:
-        """구간마다 받은 세그먼트에서 구간 파일을 쓴다 — 넘긴 세그먼트는 곧바로 지운다 (core/utils/ts_cut.py).
+        """구간마다 받은 세그먼트에서 구간 파일을 쓴다 — 넘긴 세그먼트는 곧바로 지운다 (core/cutting/ts_cut.py).
 
         규칙은 fMP4 구간(M3U8Downloader._cut_sections)과 같다. 긴 구간부터 만든다 — 세그먼트를
         가장 많이 쥔 구간이 먼저 디스크를 비운다. 구간 파일로 넘긴 세그먼트는 남은 구간이 쓰지

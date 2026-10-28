@@ -169,7 +169,7 @@ def stream_frame_rate(line: str) -> Fraction | None:
     """마스터 플레이리스트의 ``#EXT-X-STREAM-INF`` 줄에서 FRAME-RATE를 정확한 비로 읽는다 (#309).
 
     선언한 글자 그대로의 유리수다("60.000" → 60, "59.940" → 2997/50) — 다른 값으로
-    바꾸지 않는다(``core.utils.timecode.frame_rate``와 같은 원칙).
+    바꾸지 않는다(``core.sections.timecode.frame_rate``와 같은 원칙).
 
     Returns:
         프레임률. 그 줄에 속성이 없거나 0 이하이거나 수가 아니면 None

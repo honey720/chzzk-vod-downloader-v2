@@ -8,8 +8,8 @@
 
 import os
 
-import core.utils.hybrid_cut as hybrid_cut_module
-from core.utils.hybrid_cut import CUT_FAILED, CutError
+import core.cutting.hybrid as hybrid_cut_module
+from core.cutting.hybrid import CUT_FAILED, CutError
 
 HALF_WRITTEN = b"\x00" * 64  # 반쯤 쓰인 출력 파일의 내용 — mp4가 아니면 된다
 

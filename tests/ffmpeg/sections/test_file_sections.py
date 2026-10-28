@@ -1,7 +1,7 @@
 """FileDownloader의 구간 다운로드 — 받기부터 구간 파일까지 (#309).
 
 실제 ffmpeg(imageio-ffmpeg 동봉)로 테스트 안에서 짧은 mp4를 만들고, 범위 요청에 답하는
-호스트(tests/unit/core/range_host.py)로 내준다. FileDownloader를 구간과 함께 실제로
+호스트(tests/support/range_host.py)로 내준다. FileDownloader를 구간과 함께 실제로
 돌려 구간 파일이 나오는지, 그 파일이 정합 판정(check_cut)을 통과하는지 본다.
 
 호스트는 소켓을 열지 않는다 — 테스트 네트워크 가드가 loopback도 막는다. 엔진은 진짜
@@ -31,14 +31,14 @@ from types import SimpleNamespace
 
 import pytest
 
-import core.api.mp4 as mp4_module
+import core.container.mp4 as mp4_module
 import core.downloaders.base as base_module
 import core.downloaders.file_downloader as fd_module
-import core.models.sample_column as column_module
-import core.utils.hybrid_cut as cut_module
+import core.container.sample_column as column_module
+import core.cutting.hybrid as cut_module
 import core.utils.interaction as interaction
-import core.utils.mp4_partial as partial_module
-from core.api.mp4 import (
+import core.cutting.mp4_partial as partial_module
+from core.container.mp4 import (
     MP4_UNSUPPORTED,
     Mp4Error,
     fetch_mp4_head,
@@ -55,28 +55,28 @@ from core.downloaders.base import (
     TruncatedBodyError,
 )
 from core.downloaders.file_downloader import FileDownloader
-from core.downloaders.ranges import split_span
+from core.downloaders.part_ranges import split_span
 from core.models.download_data import DownloadData
 from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
 from core.services.download_service import DownloadService
-from core.utils.cut_check import check_cut
+from core.cutting.check import check_cut
 from core.utils.ffmpeg import get_ffmpeg_exe
-from core.utils.mp4_ranges import (
+from core.sections.mp4_ranges import (
     frames_byte_range,
     selection_byte_ranges,
     sections_download_size,
 )
-from core.utils.mp4_section_writer import section_pieces
+from core.cutting.mp4_writer import section_pieces
 from core.utils.interaction import resting_while
-from core.utils.hybrid_cut import CUT_FAILED, CutError, cut_frames_from_mp4
+from core.cutting.hybrid import CUT_FAILED, CutError, cut_frames_from_mp4
 from core.utils.paths import (
     build_section_output_paths,
     partial_source_path_for,
     release_output_paths,
     section_body_path_for,
 )
-from core.utils.selections import SELECTION_OUT_OF_RANGE, SelectionError
+from core.sections.selections import SELECTION_OUT_OF_RANGE, SelectionError
 from tests.support.long_ffmpeg import (
     LONG_RUNNING,
     end_all,
@@ -139,7 +139,7 @@ def _index(path: str):
 def rest_at_every_gap(monkeypatch):
     """조작 중이면 틈마다 쉬게 한다(쉼 사이 시간 판정 0) — 이 파일은 쉬는 자리를 잰다 (#408).
 
-    쉼을 일한 시간으로 묶는 동작은 ``tests/unit/core/test_interaction.py``의 가짜 시계 테스트가 잰다.
+    쉼을 일한 시간으로 묶는 동작은 ``tests/core/utils/test_interaction.py``의 가짜 시계 테스트가 잰다.
     """
     monkeypatch.setattr(interaction, "REST_AFTER_SECONDS", 0.0)
 

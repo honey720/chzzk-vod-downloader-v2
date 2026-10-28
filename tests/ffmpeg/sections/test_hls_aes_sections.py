@@ -1,7 +1,7 @@
 """HlsAesDownloader의 구간 다운로드 — 암호화 VOD(HLS MPEG-TS), 받기부터 구간 파일까지 (#309).
 
 실제 ffmpeg(imageio-ffmpeg 동봉)로 6초짜리 영상을 HLS MPEG-TS로 만들고, 세그먼트를
-AES-128-CBC로 암호화해 tests/unit/core/range_host.py(소켓을 열지 않는다)로 내준다.
+AES-128-CBC로 암호화해 tests/support/range_host.py(소켓을 열지 않는다)로 내준다.
 HlsAesDownloader를 구간과 함께 실제로 돌려 구간 파일이 나오는지, 정합 판정(check_cut)을
 통과하는지 본다. 저장소에 영상 파일을 두지 않는다.
 
@@ -42,7 +42,7 @@ import core.downloaders.hls_aes_downloader as aes_module
 import core.downloaders.segment_space as space_module
 from core.api.hls import parse_media_playlist
 from core.api.hls_ts import fetch_ts_head, segment_streams
-from core.api.mpegts import parse_ts
+from core.container.mpegts import parse_ts
 from core.downloaders.base import (
     DISK_SPACE_SHORT,
     DISK_SPACE_SHORT_WHOLE,
@@ -54,12 +54,12 @@ from core.downloaders.hls_aes_downloader import HlsAesDownloader
 from core.models.content import StreamKey
 from core.models.download_data import DownloadData
 from core.models.plan import TimeRange
-from core.utils.cut_check import check_cut
-import core.utils.fmp4_cut as fmp4_cut_module
+from core.cutting.check import check_cut
+import core.cutting.fmp4_cut as fmp4_cut_module
 from core.utils.ffmpeg import RemuxError, get_ffmpeg_exe
-from core.utils.hybrid_cut import CUT_FAILED, CutError
+from core.cutting.hybrid import CUT_FAILED, CutError
 from core.utils.paths import build_section_output_paths
-from core.utils.ts_sections import choose_ts_frame_rate, plan_ts_sections
+from core.sections.ts_sections import choose_ts_frame_rate, plan_ts_sections
 from tests.ffmpeg.sections.midway_cut_failure import MidwayCutFailure
 from tests.support.range_host import RangeHost
 from tests.ffmpeg.section_packets import JoinedSource, assert_section_matches

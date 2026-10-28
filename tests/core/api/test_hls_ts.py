@@ -1,7 +1,7 @@
 """암호화 TS 세그먼트 받기 · 복호화 · 검사(core/api/hls_ts.py) 단위 테스트 (#309).
 
-입력은 tests/unit/core/ts_builder.py가 패킷을 직접 조립한 합성 TS를 AES-128-CBC로 암호화한
-것이다. 서버는 띄우지 않는다 — tests/unit/core/range_host.py가 requests 안에서 답한다.
+입력은 tests/support/ts_builder.py가 패킷을 직접 조립한 합성 TS를 AES-128-CBC로 암호화한
+것이다. 서버는 띄우지 않는다 — tests/support/range_host.py가 requests 안에서 답한다.
 
 핵심 계약:
 - 받은 세그먼트는 길이 → 16바이트 배수 → 복호화 → TS 검사 순서로 확인한다
@@ -28,12 +28,12 @@ from core.api.hls_ts import (
     ts_key_uri,
     ts_segment_file_name,
 )
-from core.api.mpegts import parse_ts
+from core.container.mpegts import parse_ts
 from core.downloaders.decrypt import DecryptionError, sequence_iv
 from core.downloaders.hls_aes_downloader import DecryptionError as AesDecryptionError
 from core.downloaders.integrity import TruncatedSegmentError
 from core.models.content import Content, ContentType
-from core.models.ts_index import TsHead
+from core.container.ts_index import TsHead
 from tests.support.range_host import RangeHost
 from tests.support.ts_builder import Frame, build_ts
 

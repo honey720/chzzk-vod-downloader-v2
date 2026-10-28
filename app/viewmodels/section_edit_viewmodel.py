@@ -1,7 +1,7 @@
 """구간 편집 창의 뷰모델 — 기준값 조회 · 행 해석 · 검증 · 카드에 쓰기 (#309).
 
 구간 편집 창(``app/views/section_dialog.py``)은 이 뷰모델만 본다. 타임코드 해석과 구간
-검증은 core의 기존 계약(``core/utils/timecode.py`` · ``core/utils/selections.py``)을 그대로
+검증은 core의 기존 계약(``core/sections/timecode.py`` · ``core/sections/selections.py``)을 그대로
 부른다 — 규칙을 여기서 다시 구현하지 않는다. 엔진이 다운로드를 시작할 때 같은 함수로 다시
 검증하므로, 여기서 통과한 구간은 같은 프레임률 · 같은 길이에서 엔진도 통과시킨다.
 
@@ -33,15 +33,15 @@ from app.viewmodels.data import (
     SECTION_CHECK_UNVERIFIED,
     ContentItem,
 )
-from core.api.mp4 import Mp4Error
+from core.container.mp4 import Mp4Error
 from core.models.download_state import DownloadState
-from core.models.mp4_index import PendingMp4Head
+from core.container.mp4_index import PendingMp4Head
 from core.models.plan import TimeRange
 from core.utils.interaction import resting_while
-from core.utils.mp4_ranges import sections_file_size
-from core.utils.mp4_section_sizes import moov_sections_file_size
+from core.sections.mp4_ranges import sections_file_size
+from core.sections.mp4_sizes import moov_sections_file_size
 from core.utils.stop import StopRequested, check_stop, stoppable
-from core.utils.selections import (
+from core.sections.selections import (
     MAX_SELECTIONS,
     SELECTION_DUPLICATE,
     SELECTION_ORDER,
@@ -51,7 +51,7 @@ from core.utils.selections import (
     reaches_end,
     validate_selections,
 )
-from core.utils.timecode import (
+from core.sections.timecode import (
     TIMECODE_FIELD_OUT_OF_RANGE,
     TIMECODE_FRAME_OUT_OF_RANGE,
     TIMECODE_INVALID_FORMAT,
@@ -186,10 +186,10 @@ def section_file_bytes_of(head, selections) -> int | None:
     """그 moov로 본, 구간마다 만들어질 파일 크기의 합(추정) (#309). 알 수 없으면 None.
 
     카드가 크기로 적는 값이다 — 저장소에 생길 구간 파일 크기의 합. 겹치는 자리는 구간마다
-    센다(``core.utils.mp4_ranges.sections_file_size``). 받을 양(전송량)과는 다른 값이다.
+    센다(``core.sections.mp4_ranges.sections_file_size``). 받을 양(전송량)과는 다른 값이다.
 
     head가 아직 해석하지 않은 moov(``PendingMp4Head``)면 **색인을 만들지 않고** 표에서 구간에
-    닿는 샘플만 찾아 센다(``core.utils.mp4_section_sizes``) — 긴 영상의 색인은 만드는 데만 몇 초가
+    닿는 샘플만 찾아 센다(``core.sections.mp4_sizes``) — 긴 영상의 색인은 만드는 데만 몇 초가
     걸린다. 값은 색인으로 센 것과 같다. moov가 없거나 구간이 그 영상에 맞지 않거나 부분 파일을
     만들 수 없는 배치면 None이다.
     """
@@ -271,7 +271,7 @@ def _refit_frame(seconds: float, rate: Fraction, edge: str) -> int:
 
     두 프레임의 정확히 가운데에 오는 시각(60fps의 홀수 프레임을 30fps로 옮길 때)은 시작이면
     앞 프레임, 끝이면 뒤 프레임이다 — 고른 장면이 잘리지 않는다. 엔진이 실제 프레임을 고르는
-    규칙(``core.utils.timecode.snap_to_frame``)과 같은 방향이다. ``frame_index``의 반올림은
+    규칙(``core.sections.timecode.snap_to_frame``)과 같은 방향이다. ``frame_index``의 반올림은
     가운데에서 짝수 쪽으로 가(31 → 16 · 33 → 16) 시작과 끝의 방향이 뒤섞였다.
 
     Args:
@@ -1110,7 +1110,7 @@ class SectionEditViewModel(QObject):
         """오류 키를 현재 언어로 번역한다.
 
         키는 core가 내는 원문이다. lupdate가 추출하도록 리터럴로 tr()을 부른다 — 키 목록은
-        ``core/utils/timecode.py``의 ``TIMECODE_*``와 ``core/utils/selections.py``의
+        ``core/sections/timecode.py``의 ``TIMECODE_*``와 ``core/sections/selections.py``의
         ``SELECTION_*`` 가운데 입력 검증이 내는 것 전부다.
         """
         translated = {

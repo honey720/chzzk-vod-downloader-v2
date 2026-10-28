@@ -27,13 +27,13 @@ from collections.abc import Callable
 from typing import BinaryIO
 from urllib.parse import urljoin
 
-from core.api.fmp4 import parse_init_segment, read_media_segment
+from core.container.fmp4 import parse_init_segment, read_media_segment
 from core.api.hls import parse_media_playlist
-from core.api.mp4 import MP4_UNSUPPORTED, Mp4Error
+from core.container.mp4 import MP4_UNSUPPORTED, Mp4Error
 from core.api.session import get_thread_session
 from core.downloaders import integrity
 from core.downloaders.base import REQUEST_TIMEOUT
-from core.models.fmp4_index import Fmp4Head, Fmp4Init, Fmp4Segment
+from core.container.fmp4_index import Fmp4Head, Fmp4Init, Fmp4Segment
 
 # 실패 키 — 번역하지 않은 i18n 키 원문
 HLS_NOT_FMP4 = "This recording cannot be downloaded in sections"  # EXT-X-MAP 없음 · MAP이 여럿

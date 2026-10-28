@@ -15,9 +15,9 @@ from types import SimpleNamespace
 import pytest
 
 import core.utils.ffmpeg as ffmpeg_module
-import core.utils.hybrid_cut as hybrid_cut
+import core.cutting.hybrid as hybrid_cut
 from core.utils.ffmpeg import RemuxError
-from core.utils.hybrid_cut import CutError
+from core.cutting.hybrid import CutError
 
 HOME_PATH = (
     r"C:\Users\Tester"  # 실패 글 속 경로의 홈 부분 — 글자 수 꼬리가 "Tester" 안에서 시작한다

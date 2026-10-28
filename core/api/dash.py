@@ -85,7 +85,7 @@ def parse_frame_rates(xml_text: str) -> dict[str, Fraction]:
     ``frameRate`` 속성은 정수("60")나 분수("30000/1001")다. 소수로 바꾸지 않고
     ``Fraction``으로 돌려준다 — 분수 표기를 float로 읽으면 100만 분의 1 단위의
     차이가 사라지고, 몇 시간 뒤의 프레임 번호가 어긋난다
-    (``core.utils.timecode.frame_rate``).
+    (``core.sections.timecode.frame_rate``).
 
     Representation에 속성이 없으면 그것을 감싼 AdaptationSet의 값을 쓴다.
 

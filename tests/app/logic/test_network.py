@@ -2,7 +2,7 @@
 
 - URL 파싱(TestExtractContentNo): #33에서 허용 범위를 넓힌 **요구 동작 검증** 테스트다.
 - DASH 매니페스트(TestGetVideoDashManifest): HTTP 요청 구성·core 파서 위임 검증이다.
-  파싱 자체의 박제 테스트는 tests/unit/core/test_dash.py로 이전했다 (#51).
+  파싱 자체의 박제 테스트는 tests/core/api/test_dash.py로 이전했다 (#51).
 """
 
 import json
@@ -111,7 +111,7 @@ class TestGetVideoFrameRates:
 class TestGetVideoDashManifest:
     """NetworkManager.get_video_dash_manifest의 HTTP 경로(요청 구성·위임) 검증.
 
-    XML 파싱 자체는 core/api/dash.py로 이동해 tests/unit/core/test_dash.py에서
+    XML 파싱 자체는 core/api/dash.py로 이동해 tests/core/api/test_dash.py에서
     픽스처로 검증한다 (#51). 여기서는 요청 URL·헤더와 core 파서 위임만 확인한다.
     """
 

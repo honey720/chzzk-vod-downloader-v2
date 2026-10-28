@@ -27,7 +27,7 @@ from core.downloaders.base import PostprocessError
 from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
 from core.models.section_resume import SectionResume
-from core.utils.hybrid_cut import CUT_FAILED, CutError
+from core.cutting.hybrid import CUT_FAILED, CutError
 from core.utils.paths import release_output_paths
 from tests.app.gui.section_input import enter_time
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels

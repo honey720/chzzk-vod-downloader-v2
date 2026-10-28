@@ -5,7 +5,7 @@ core/downloaders/base.py의 BaseDownloader로 이주했다(#82). 이 클래스�
 파일 경로 고유 부분만 남는다:
 
 - prepare: HEAD로 총 크기 조회 → 해상도별 part_size 결정 → 바이트 범위 분할
-  (ranges.py 사용)을 DownloadPlan으로 반환한다 (#83). 총 크기를 미리 알므로
+  (part_ranges.py 사용)을 DownloadPlan으로 반환한다 (#83). 총 크기를 미리 알므로
   계획의 total_size를 채우고, ProgressEvent.total_size로 이어진다
 - _download_part: 파트(바이트 구간) 단위 다운로드 — 저속 재시도·일시정지·
   중단 핸들링 포함. 재큐잉된 파트는 이미 받은 바이트 뒤에서 Range로
@@ -17,13 +17,13 @@ core/downloaders/base.py의 BaseDownloader로 이주했다(#82). 이 클래스�
 구간 다운로드 (#309) — ``Content.selections``가 비어 있지 않을 때:
 
 - prepare: moov를 받아(fetch_mp4_head) 구간을 검증하고, 구간마다 실제 프레임과 구간
-  파일의 배치 · 대응표를 정한다(core/utils/mp4_section_writer.py). 받을 항목은 구간들이
+  파일의 배치 · 대응표를 정한다(core/cutting/mp4_writer.py). 받을 항목은 구간들이
   옮기는 바이트와 경계 GOP의 원본 샘플이고, 겹치는 범위는 한 번만 받는다. moov는 한 번만
   받는다 — ``Content.mp4_head``로 이미 받은 것이 오면 받지 않는다
 - 받은 바이트는 **대응표대로 구간 파일의 제자리에 바로 쓴다.** 한 조각이 구간 파일 여럿에
   걸칠 수 있다(겹치는 구간). 구간 길이만큼의 임시 원본은 두지 않는다
 - 다시 인코딩할 경계 GOP의 원본 샘플만 따로 **경계 원본**에 모은다 — 받은 범위만 이어 붙인
-  작은 부분 mp4다(core/utils/mp4_partial.py). 모든 구간의 것을 한 파일에 둔다
+  작은 부분 mp4다(core/cutting/mp4_partial.py). 모든 구간의 것을 한 파일에 둔다
 - 구간 파일은 다 쓰기 전까지 본문 파일의 이름(``section_body_path_for``)으로 둔다. 머리(moov)가
   없어 mp4로 열리지 않는 파일이 산출물의 이름으로 남지 않게 한다
 - postprocess: 구간마다 경계 원본에서 경계 GOP를 다시 인코딩해 본문 끝에 붙이고, 머리를 써
@@ -53,7 +53,7 @@ from dataclasses import dataclass
 
 import requests
 
-from core.api.mp4 import MP4_UNSUPPORTED, Mp4Error, fetch_mp4_head
+from core.container.mp4 import MP4_UNSUPPORTED, Mp4Error, fetch_mp4_head
 from core.api.session import get_thread_session
 from core.downloaders.base import (
     DISK_SPACE_SHORT_WHOLE,
@@ -64,24 +64,24 @@ from core.downloaders.base import (
     TruncatedBodyError,
 )
 from core.downloaders.integrity import declared_content_length
-from core.downloaders.ranges import decide_part_size, split_ranges, split_span
+from core.downloaders.part_ranges import decide_part_size, split_ranges, split_span
 from core.models.content import Content, ContentType
 from core.models.cut import CutFrames, CutPiece, CutPlan, CutResult, CutSection
 from core.models.download_state import DownloadState
 from core.models.events import ProgressEvent
-from core.models.mp4_index import Mp4Index
+from core.container.mp4_index import Mp4Index
 from core.models.plan import DownloadPlan
 from core.models.section_resume import SectionResume
-from core.utils.hybrid_cut import (
+from core.cutting.hybrid import (
     CUT_FAILED,
     CutCancelled,
     CutError,
     cut_frames_from_mp4,
     encode_boundary_pieces,
 )
-from core.utils.mp4_partial import PartialLayout, build_head, merge_ranges, plan_partial
-from core.utils.mp4_ranges import frames_byte_range, selection_byte_ranges
-from core.utils.mp4_section_writer import (
+from core.cutting.mp4_partial import PartialLayout, build_head, merge_ranges, plan_partial
+from core.sections.mp4_ranges import frames_byte_range, selection_byte_ranges
+from core.cutting.mp4_writer import (
     SectionFilePlan,
     build_section_head,
     covers_whole_video,
@@ -95,7 +95,7 @@ from core.utils.paths import (
     release_output_paths,
     section_body_path_for,
 )
-from core.utils.selections import SelectionError, validate_selections
+from core.sections.selections import SelectionError, validate_selections
 
 logger = logging.getLogger(__name__)
 

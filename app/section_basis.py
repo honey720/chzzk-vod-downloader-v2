@@ -35,14 +35,14 @@ from app.network import NetworkManager
 from app.probe_timing import ProbeTiming
 from core.api.hls_fmp4 import fetch_fmp4_head, segment_frames
 from core.api.hls_ts import fetch_ts_head, segment_streams, ts_key_uri
-from core.api.mp4 import Mp4Error, fetch_mp4_raw, pending_mp4_head, summarize_mp4
+from core.container.mp4 import Mp4Error, fetch_mp4_raw, pending_mp4_head, summarize_mp4
 from core.models.content import Content, ContentType
-from core.models.fmp4_index import Fmp4Head
-from core.models.mp4_index import Mp4Head, PendingMp4Head
-from core.models.ts_index import TsHead
-from core.utils.fmp4_sections import FPS_DECLARED, choose_frame_rate, fmp4_timeline
+from core.container.fmp4_index import Fmp4Head
+from core.container.mp4_index import Mp4Head, PendingMp4Head
+from core.container.ts_index import TsHead
+from core.sections.fmp4_sections import FPS_DECLARED, choose_frame_rate, fmp4_timeline
 from core.utils.stop import check_stop
-from core.utils.ts_sections import choose_ts_frame_rate, ts_timeline
+from core.sections.ts_sections import choose_ts_frame_rate, ts_timeline
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,7 @@ class SectionProbe:
     """
 
     basis: SectionBasis  # 프레임률 · 영상 길이
-    # 프레임률을 정한 경로 — core.utils.section_plan의 FPS_DECLARED · FPS_STANDARD · FPS_MEASURED.
+    # 프레임률을 정한 경로 — core.sections.section_plan의 FPS_DECLARED · FPS_STANDARD · FPS_MEASURED.
     # mp4는 샘플 표가 말한 값이라 FPS_DECLARED다
     fps_source: str
     # 받은 것 — 엔진에 넘길 수 있다. mp4는 색인까지 만들라고 했을 때만 있다(probe_mp4의 index)

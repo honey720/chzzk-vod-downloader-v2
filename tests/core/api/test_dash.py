@@ -1,6 +1,6 @@
 """core.api.dash의 DASH 매니페스트 파싱 박제 테스트.
 
-tests/unit/test_network.py의 HTTP mock 기반 테스트를 core 파서 직접 호출로 전환 (#51).
+tests/app/logic/test_network.py의 HTTP mock 기반 테스트를 core 파서 직접 호출로 전환 (#51).
 파싱이 순수 함수가 되어 HTTP mock 없이 픽스처 XML만으로 검증한다. 기대값 무변경 (#27, #38).
 """
 

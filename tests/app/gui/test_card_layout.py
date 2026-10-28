@@ -314,7 +314,7 @@ class TestResolutionRow:
 
     세 폭 모두 pill 3개가 경로 아이콘·크기와 함께 들어가므로 pill 전부가 보이는
     모드다(#244 3행 정리 — 안 들어갈 때만 접힌다. 그 게이트는
-    tests/unit/test_resolution_pills.py)."""
+    tests/app/gui/test_resolution_pills.py)."""
 
     @pytest.mark.parametrize("width", WIDTHS)
     def test_pill_gaps_are_fixed(self, qapp, width):
@@ -428,7 +428,7 @@ class TestPillsCollapseOnlyWhenTheyDoNotFit:
 
     #245의 "어떤 폭에서도 전부 보인다(접지 않는다)"는 오너가 2026-08-31에
     뒤집었다(SPEC §9). 이 클래스는 넓은 폭의 "전부" 쪽만 고정한다 — 임계 폭 T
-    유도, T±ε 전환, 선택 유지, 펼침은 tests/unit/test_resolution_pills.py가 잰다.
+    유도, T±ε 전환, 선택 유지, 펼침은 tests/app/gui/test_resolution_pills.py가 잰다.
     """
 
     MANY = (2160, 1440, 1080, 720, 480, 360, 240, 144)

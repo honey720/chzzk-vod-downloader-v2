@@ -1,7 +1,7 @@
 """헤드리스 스크립트의 암호화 VOD 구간 다운로드(scripts/headless_download.py) (#309).
 
-실제 ffmpeg로 만든 6초짜리 암호화 HLS(MPEG-TS, tests/unit/core/encrypted_hls.py)를 소켓 없는
-호스트(tests/unit/core/range_host.py)로 내주고, 헤드리스의 main을 --section과 함께 실제로
+실제 ffmpeg로 만든 6초짜리 암호화 HLS(MPEG-TS, tests/app/scripts/encrypted_hls.py)를 소켓 없는
+호스트(tests/support/range_host.py)로 내주고, 헤드리스의 main을 --section과 함께 실제로
 돌린다. 조회(치지직 API)와 키 요청은 대역으로 바꾼다 — 엔진 · 구간 해석 · 컷은 실제 코드다.
 
 핵심 계약:
@@ -32,9 +32,9 @@ from core.downloaders.hls_aes_downloader import HlsAesDownloader
 from core.models.content import VideoInfo
 from core.models.download_data import DownloadData
 from core.models.plan import TimeRange
-from core.models.ts_index import TsHead
-from core.utils.cut_check import check_cut
-from core.utils.hybrid_cut import CUT_FAILED, CutError
+from core.container.ts_index import TsHead
+from core.cutting.check import check_cut
+from core.cutting.hybrid import CUT_FAILED, CutError
 from core.utils.paths import build_section_output_paths, release_output_paths, temp_dir_for
 from tests.app.scripts.encrypted_hls import FPS, KEY_EVERY, LEAD, SEGMENT_FRAMES, make_encrypted_hls
 from tests.support.range_host import RangeHost

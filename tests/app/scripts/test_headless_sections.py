@@ -12,13 +12,17 @@ import pytest
 
 import app.section_basis as section_basis
 import scripts.headless_download as headless
-from core.api.fmp4 import parse_init_segment, parse_media_segment
+from core.container.fmp4 import parse_init_segment, parse_media_segment
 from core.api.hls import parse_media_playlist
-from core.models.fmp4_index import Fmp4Head
+from core.container.fmp4_index import Fmp4Head
 from core.models.content import VideoInfo
 from core.models.plan import TimeRange
 from core.utils.paths import build_section_output_paths, release_output_paths
-from core.utils.timecode import TIMECODE_FRAME_OUT_OF_RANGE, TIMECODE_INVALID_FORMAT, TimecodeError
+from core.sections.timecode import (
+    TIMECODE_FRAME_OUT_OF_RANGE,
+    TIMECODE_INVALID_FORMAT,
+    TimecodeError,
+)
 from tests.support.fmp4_builder import (
     KEY,
     NON_KEY,

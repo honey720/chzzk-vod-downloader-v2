@@ -26,7 +26,7 @@ import app.user_activity as activity
 import app.viewmodels.download_viewmodel as download_viewmodel
 import app.viewmodels.section_edit_viewmodel as sev
 import core.utils.interaction as interaction
-from core.api.mp4 import pending_mp4_head
+from core.container.mp4 import pending_mp4_head
 from core.models.plan import TimeRange
 
 
@@ -57,7 +57,7 @@ class _Keys(QWidget):
 def rest_at_every_gap(monkeypatch):
     """조작 중이면 틈마다 쉬게 한다(쉼 사이 시간 판정 0) — 이 파일은 쉬는 자리를 잰다 (#408).
 
-    쉼을 일한 시간으로 묶는 동작은 ``tests/unit/core/test_interaction.py``의 가짜 시계 테스트가 잰다.
+    쉼을 일한 시간으로 묶는 동작은 ``tests/core/utils/test_interaction.py``의 가짜 시계 테스트가 잰다.
     """
     monkeypatch.setattr(interaction, "REST_AFTER_SECONDS", 0.0)
 
@@ -563,7 +563,7 @@ def test_size_counted_while_resting_equals_the_size_counted_without_resting(qapp
     -> 두 결과의 (셌는지, 크기)가 같고 셌는지 == True, 크기 > 0.
        늘 참일 때 쉰 횟수 > 0, 늘 거짓일 때 0
     """
-    from tests.core.utils.test_mp4_section_sizes import _audio, _head_only, _video
+    from tests.core.sections.test_mp4_section_sizes import _audio, _head_only, _video
 
     raw = _head_only(
         [_video(20_000, seed=3, per_chunk=7, b_frames=True), _audio(9_000, seed=4, per_chunk=5)]

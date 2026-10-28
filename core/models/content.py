@@ -10,11 +10,11 @@ from dataclasses import dataclass, field
 from enum import Enum
 from uuid import uuid4
 
-from core.models.fmp4_index import Fmp4Head
-from core.models.mp4_index import Mp4Head, PendingMp4Head
+from core.container.fmp4_index import Fmp4Head
+from core.container.mp4_index import Mp4Head, PendingMp4Head
 from core.models.plan import TimeRange
 from core.models.section_resume import SectionResume
-from core.models.ts_index import TsHead
+from core.container.ts_index import TsHead
 
 
 class ContentType(Enum):
@@ -74,10 +74,10 @@ class Content:
     # core.utils.paths.build_section_output_paths로 배정한다. 구간이 있으면 output_path는
     # 쓰지 않는다
     selection_paths: tuple[str, ...] = ()
-    # 구간을 정하면서 이미 받은 moov (core.api.mp4.fetch_mp4_head의 결과). 넘기면 엔진이
+    # 구간을 정하면서 이미 받은 moov (core.container.mp4.fetch_mp4_head의 결과). 넘기면 엔진이
     # moov를 다시 받지 않는다. base_url의 파일에서 읽은 것이어야 한다. None이면 엔진이 받는다
     mp4_head: Mp4Head | None = None
-    # 구간을 정하면서 이미 받았지만 아직 해석하지 않은 moov(core.api.mp4.pending_mp4_head의
+    # 구간을 정하면서 이미 받았지만 아직 해석하지 않은 moov(core.container.mp4.pending_mp4_head의
     # 결과). 넘기면 엔진이 다시 받지 않는다 — 해석은 한 번만 돈다(다른 쪽이 해석하는 중이면
     # 엔진이 기다려 그 색인을 쓴다). mp4_head가 있으면 그것을 쓴다
     mp4_pending: PendingMp4Head | None = None

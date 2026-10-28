@@ -37,7 +37,7 @@ def _apply_dark_card_qss(qapp):
 
     ⚠️⚠️⚠️ **반드시 `scope="function"`(기본값)으로 유지할 것 — 넓히면
     macOS CI에서 프로세스 종료 시점 SIGSEGV가 재발한다.** 상세 근거·
-    실측 경계·크래시 스택은 `tests/unit/test_widget_theme.py`의 같은
+    실측 경계·크래시 스택은 `tests/app/gui/test_widget_theme.py`의 같은
     이름 픽스처 docstring 참고 — 요약: 범위(몇 개 테스트)가 아니라
     수명(만든 `theme.build_style()` 객체가 테스트 하나를 넘어 `qapp`에
     계속 걸려 있는가)이 경계다. `scope="function"`만 macOS 통과를
