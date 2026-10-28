@@ -38,12 +38,12 @@ uv run pytest -n 8 --dist loadfile   # 전체 테스트 병렬 — 로컬 전체
 - ⚠️ **방향 게이트는 금지 목록이 아니라 유도다**(`tests/meta/test_layer_direction.py`). *"`core/`는 저장소가 소유한 최상위 이름 중 `core` 이외의 것을 import하지 않는다."* 소유 이름은 저장소 루트에서 유도하고, 유도가 놓치면 메타 게이트가 실패한다. **새 최상위 디렉토리가 생겨도 자동으로 금지되고, 사라져도 목록만 비는 일이 없다.**
 - 앱 경로·구현이 필요하면 **인자로 주입**받는다(`setup_logging(log_dir)`, `MetadataApi` Protocol, `base_url_resolver`, `requires_key_resolution`).
 - app ↔ core 통신은 **콜백·반환값**으로만. core에 이벤트 버스를 두지 않는다. `core/`는 언제든 CLI·웹·다른 UI로 교체 가능해야 한다.
-- 레이어: `views → viewmodels → core(services → downloaders/api)`. View에서 core 직접 호출 금지.
+- 레이어: `views → viewmodels → core` — core 안은 `services → sources → engine · sections · media`, `chzzk → media`. View에서 core 직접 호출 금지.
 - **다운로드 경로의 Qt Signal emit은 단일 모듈에만** 둔다. ⚠️ 규칙은 「한 모듈」이고 **파일 이름은 단계마다 다르다** — 금지 대상은 emit이 여러 모듈로 흩어지는 것이지 특정 파일이 아니다.
 - ⚠️ **워커 스레드 콜백을 메인 스레드로 넘기는 수단은 큐 연결 Signal뿐이다.** *"콜백에서 바로 부르면 되지 않나"*로 단순화하면 **위젯이 워커 스레드에서 갱신된다** — 예외가 나지 않고 재현이 산발적이다.
 - **QThreadPool 워커의 시그널은 바운드 메서드로 연결하고, 결과가 도착할 때까지 워커 참조를 보관한다.** 순수 콜러블(`functools.partial` 등)은 워커가 파괴되는 순간 전달이 **예외도 로그도 없이 유실된다.**
 - ⚠️ **서버가 알려준 주소에 인증 쿠키를 실어 보내기 전에 검사한다.** HTTPS 여부는 항상, 호스트는 **근거가 있을 때만** 잠근다. **첫 주소만 검사하는 것은 검사가 아니다** — 리다이렉트마다 다시 검사한다. **근거 없는 허용 목록을 만들지 않는다.**
-- 다운로더 확장은 `core/downloaders/base.py` 상속으로만. 실행 엔진을 다시 구현하지 않는다.
+- 다운로더 확장은 `core/engine/base.py` 상속으로만. 실행 엔진을 다시 구현하지 않는다.
 - **앱은 접근 권한을 만들어내지 않는다.** 유저가 자신의 쿠키로 받을 수 있는 것만 지원한다(SPEC §8.1).
 
 ## 코드 스타일
