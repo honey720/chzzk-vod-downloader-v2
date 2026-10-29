@@ -38,7 +38,8 @@ class DownloadData:
 
         self.total_downloaded_size = 0
 
-        # CPU 개수를 바탕으로 초깃값 지정
+        # 목표 동시 연결(스레드) 수의 시작값 — 고정 4. 받기를 시작할 때 작업 수로 깎이고(core/engine/base.py),
+        # 그 뒤 조정기(core/engine/thread_control.py, #112 · #347)가 총 처리량을 보고 오르내린다
         self.adjust_threads = 4
         self.max_threads = self.adjust_threads
 
