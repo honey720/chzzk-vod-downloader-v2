@@ -4,3 +4,18 @@
 # 참고: 일반 clone에서는 치환되지 않고 플레이스홀더($Format:%H$)가
 # 그대로 남는다 — 그 경로는 git이 있으므로 git describe가 우선 쓰인다.
 core/utils/_git_archive_commit.txt export-subst
+
+# 줄 끝 — 텍스트 파일은 저장소에도 작업 복사본에도 LF다. 클론마다의 git 설정(core.autocrlf)에
+# 맡기면 Windows 클론에서 내용은 같고 줄 끝만 다른 "수정됨"이 생긴다. text=auto는 git이 텍스트로
+# 판정한 파일에만 걸린다.
+* text=auto eol=lf
+
+# Windows 명령 파일은 CRLF여야 한다(cmd.exe가 LF 줄 끝에서 레이블 · 줄 이어짐을 잘못 읽는다)
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 바이너리 — 줄 끝을 바꾸지 않고 글자 diff를 하지 않는다
+*.png binary
+*.ico binary
+*.icns binary
+*.qm binary
