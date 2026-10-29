@@ -4,6 +4,7 @@ import logging
 from datetime import datetime
 from typing import Optional
 import config.config as config
+from app.system import settings
 from app.viewmodels.data import ContentItem
 from core.utils.logging_setup import RedactingFormatter
 
@@ -32,7 +33,7 @@ class DownloadLogger:
         로깅 설정을 초기화합니다.
         """
         # 로그 디렉토리 생성
-        log_dir = os.path.join(config.CONFIG_DIR, 'logs')
+        log_dir = settings.logs_dir()
         os.makedirs(log_dir, exist_ok=True)
         
         # 로그 파일명 생성 (현재 시간 포함). 같은 초에 시도가 또 시작되면(중지 → 곧바로 다시

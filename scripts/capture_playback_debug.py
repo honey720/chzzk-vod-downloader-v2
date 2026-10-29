@@ -6,7 +6,7 @@
     예) uv run python capture_playback_debug.py 13714380
 
 동작:
-- 앱 설정(config.json)에 등록된 쿠키를 그대로 사용해 앱과 동일한 요청을 보낸다.
+- 앱 설정에 등록된 쿠키를 그대로 사용해 앱과 동일한 요청을 보낸다.
 - 응답을 ./debug_captures/<videoNo>/ 아래 파일로 저장한다 (.gitignore 대상).
 - 쿠키·inKey류 값·URL 서명 토큰(__gda__, hdnts 등)은 저장 전에 자동 REDACTED 처리한다.
 - 저장 후 모든 파일을 재검사해 시크릿 원문이 남아 있으면 파일을 삭제하고 중단한다.
@@ -28,7 +28,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 # scripts/ 하위에서 실행해도 저장소 루트의 config·core를 import할 수 있게 한다
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import config.config as config  # noqa: E402
+from app.system import settings  # noqa: E402
 from core.chzzk.url_parser import extract_content_no  # noqa: E402
 
 CHZZK_API = "https://api.chzzk.naver.com"
@@ -139,10 +139,10 @@ def main() -> None:
         if content_type != "video" or not video_no:
             sys.exit(f"video URL이 아닙니다: {arg}")
 
-    data = config.load_config().get("cookies", {})
+    data = settings.load_cookies()
     cookies = {k: v for k, v in data.items() if v}
     if not cookies:
-        print("경고: config.json에 쿠키가 없습니다 — 비로그인 상태로 캡처합니다.")
+        print("경고: 설정에 쿠키가 없습니다 — 비로그인 상태로 캡처합니다.")
 
     out_dir = OUTPUT_ROOT / video_no
     out_dir.mkdir(parents=True, exist_ok=True)

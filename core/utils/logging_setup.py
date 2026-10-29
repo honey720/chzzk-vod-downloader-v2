@@ -4,7 +4,7 @@
 각 모듈은 `logging.getLogger(__name__)`로 로거를 얻어 쓰기만 하면 되고,
 핸들러·포맷 구성은 이 모듈에서만 관리한다.
 
-로그 저장 위치(CONFIG_DIR/logs)는 app 영역 지식이므로 core는 경로를 정하지 않고
+로그 저장 위치(앱 데이터 폴더의 logs/)는 app 영역 지식이므로 core는 경로를 정하지 않고
 log_dir 인자로 주입받는다 — 기존 진입점인 app/system/log_setup.py가 주입한다.
 """
 

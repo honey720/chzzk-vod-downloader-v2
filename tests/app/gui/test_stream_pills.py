@@ -12,7 +12,7 @@ from PySide6.QtCore import QTranslator
 from PySide6.QtGui import QColor, QFontMetrics
 from PySide6.QtWidgets import QApplication
 
-import config.config as config_module
+import app.system.settings as settings_module
 import CVDv2 as main_module
 import app.theme as theme
 from app.download.logger import DownloadLogger
@@ -427,7 +427,7 @@ def test_running_card_of_a_landscape_video_shows_only_the_number(
 
 def _logged_resolution(tmp_path, monkeypatch, item: ContentItem) -> list[str]:
     """아이템의 다운로드 정보를 로그 파일에 쓰고 resolution 줄의 메시지를 돌려준다."""
-    monkeypatch.setattr(config_module, "CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(settings_module, "DATA_DIR", str(tmp_path))
     logger = DownloadLogger(logging.INFO)
     logger.log_download_info(item)
     log_file = logger.log_file

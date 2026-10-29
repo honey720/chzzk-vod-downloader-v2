@@ -15,7 +15,6 @@
 - `en_US`인데 한국어 카탈로그 로드 → 영어 게이트 실패
 """
 
-import json
 from pathlib import Path
 
 import pytest
@@ -23,21 +22,20 @@ from PySide6.QtCore import QCoreApplication, Qt, QTranslator
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox, QMessageBox
 
-import config.config as config
+import app.system.settings as settings
 import CVDv2 as main
 from app.views.dialog import SettingDialog
+from tests.support.settings_db import write_settings
 
 KOREAN = {"ok": "확인", "cancel": "취소", "yes": "예(&Y)", "no": "아니요(&N)"}
 ENGLISH = {"ok": "OK", "cancel": "Cancel", "yes": "&Yes", "no": "&No"}
 
 
 def _seed_config(language: str) -> dict:
-    """격리된 config 파일에 언어를 박아 둔다 — 시스템 로케일이 답에 끼어들지 않게."""
-    cfg = config.default_config()
+    """격리된 설정에 언어를 박아 둔다 — 시스템 로케일이 답에 끼어들지 않게."""
+    cfg = settings.default_settings()
     cfg["language"] = language
-    path = Path(config.CONFIG_FILE)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(cfg), encoding="utf-8")
+    write_settings(cfg)
     return cfg
 
 

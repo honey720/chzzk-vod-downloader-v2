@@ -1,5 +1,4 @@
-import os
-import config.config as config
+from app.system import settings
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -198,7 +197,7 @@ class SettingDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        self.config = config.load_config()
+        self.config = settings.load_settings()
         self.worker = None
 
         self.setupUi(self)
@@ -335,7 +334,7 @@ class SettingDialog(QDialog):
         self.config['cookies'] = {"NID_AUT": self.nidaut.text(), "NID_SES": self.nidses.text()}
         self.config['afterDownload'] = self.afterDownload.currentData()
         self.config['language'] = self.language.currentData()  # 선택된 언어 코드 저장
-        config.save_config(self.config)
+        settings.save_settings(self.config)
         return super().accept()
     
     def reject(self):
@@ -358,6 +357,6 @@ class SettingDialog(QDialog):
     def openLogsFolder(self):
         # os.startfile은 Windows 전용이라 macOS·Linux에서 무조건 AttributeError였다
         # (#181). QDesktopServices.openUrl은 3-OS 공통으로 폴더를 연다.
-        path = os.path.join(config.CONFIG_DIR, "logs")
+        path = settings.logs_dir()
         if not QDesktopServices.openUrl(QUrl.fromLocalFile(path)):
             QMessageBox.warning(self, self.tr("Warning"), f"'{path}'을(를) 열 수 없습니다.")

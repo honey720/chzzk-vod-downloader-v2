@@ -11,7 +11,7 @@ Qt viewmodel(app/viewmodels/download_viewmodel.py)과 헤드리스 스크립트�
 
 from fractions import Fraction
 
-import config.config as config
+from app.system import settings
 from app.network import NetworkManager
 from core.models.content import Content
 
@@ -19,9 +19,9 @@ from core.models.content import Content
 def _load_cookies() -> dict:
     """설정에 저장된 유저 본인의 쿠키를 읽는다 (미설정이면 빈 값).
 
-    조립은 config.load_cookies가 단일 지점으로 담당한다 (#170).
+    조립은 settings.load_cookies가 단일 지점으로 담당한다 (#170).
     """
-    return config.load_cookies()
+    return settings.load_cookies()
 
 
 def resolve_aes_key(content: Content, key_uri: str) -> bytes:

@@ -1,14 +1,14 @@
 """config.log_setup 진입점(로그 위치 주입) 단위 테스트 (#62, 원본 #30).
 
 핸들러 구성 자체의 테스트는 tests/core/utils/test_logging_setup.py로 이주했다.
-여기서는 기존 시그니처 유지와 로그 위치(CONFIG_DIR/logs) 주입만 검증한다.
+여기서는 기존 시그니처 유지와 로그 위치(앱 데이터 폴더의 logs/) 주입만 검증한다.
 """
 
 import logging
 
 import pytest
 
-import config.config
+import app.system.settings as settings_module
 import app.system.log_setup as log_setup
 import core.utils.logging_setup as core_logging_setup
 
@@ -20,7 +20,7 @@ def isolated_logging(monkeypatch, tmp_path):
     saved_handlers = root.handlers[:]
     saved_level = root.level
 
-    monkeypatch.setattr(config.config, "CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(settings_module, "DATA_DIR", str(tmp_path))
     monkeypatch.setattr(core_logging_setup, "_configured", False)
     for handler in root.handlers[:]:
         root.removeHandler(handler)
@@ -37,7 +37,7 @@ def isolated_logging(monkeypatch, tmp_path):
 
 
 def test_setup_logging_writes_to_config_dir_logs(isolated_logging):
-    """기존 진입점 호출 시 CONFIG_DIR/logs/app.log에 기록된다 (동작 무변경)."""
+    """기존 진입점 호출 시 앱 데이터 폴더의 logs/app.log에 기록된다 (동작 무변경)."""
     log_setup.setup_logging()
 
     logging.getLogger("smoke.test").info("hello via entrypoint")
