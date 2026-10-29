@@ -33,7 +33,7 @@ def _patch_environment(monkeypatch):
     stub_app = _StubApp()
     saves = []
     monkeypatch.setattr(main, "app", stub_app, raising=False)
-    monkeypatch.setattr(main.config, "save_config", lambda cfg: saves.append(dict(cfg)))
+    monkeypatch.setattr(main.settings, "save_settings", lambda cfg: saves.append(dict(cfg)))
     return stub_app, saves
 
 

@@ -21,18 +21,17 @@ AlignVCenter로 되돌리거나 라벨을 평범한 QLabel(×7/4 없음)로 되�
 생성 순서를 바꾸면 ③이, QFormLayout으로 되돌리면 첫 게이트가 실패한다.
 """
 
-import json
-from pathlib import Path
 
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QDialogButtonBox, QFormLayout, QGroupBox, QLabel, QLayout, QWidget
 
 import app.theme as theme
-import config.config as config
+import app.system.settings as settings
 import CVDv2 as main_module
 from app.views.dialog import SettingDialog
 from tests.app.gui.card_helpers import hold_style
+from tests.support.settings_db import write_settings
 
 #: 각 그룹 상자의 (라벨, 필드) 짝 — objectName. 도움말 버튼은 라벨 열에 홀로 있다.
 ROWS = {
@@ -45,9 +44,7 @@ TAB_ORDER = ["nidaut", "nidses", "helpButton", "afterDownload", "language", "log
 
 
 def _seed_config() -> None:
-    path = Path(config.CONFIG_FILE)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(config.default_config()), encoding="utf-8")
+    write_settings(settings.default_settings())
 
 
 @pytest.fixture(autouse=True)

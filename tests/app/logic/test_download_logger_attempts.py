@@ -9,14 +9,14 @@ import logging
 import pytest
 
 import app.download.logger as download_logger_module
-import config.config as config_module
+import app.system.settings as settings_module
 from app.download.logger import DownloadLogger
 
 
 @pytest.fixture(autouse=True)
 def _logs_in_tmp(tmp_path, monkeypatch):
     """로그 폴더를 tmp_path 아래로 돌린다."""
-    monkeypatch.setattr(config_module, "CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(settings_module, "DATA_DIR", str(tmp_path))
 
 
 def _text(path: str) -> str:

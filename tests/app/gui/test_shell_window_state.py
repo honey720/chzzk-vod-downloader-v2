@@ -4,11 +4,11 @@
   (`_restoreWindowState`)다 — 실제 배선을 탄다(핸들러 직접 호출 없음).
 - 복원값은 그대로 쓰지 않는다: 기록된 위치가 놓인 화면의 작업 영역(`_availableGeometry`)으로
   크기를 줄이고 위치를 안으로 민다. 모니터가 바뀌어 창이 화면 밖으로 나가는 결함 방지.
-- 키가 없는 config(업데이트 전 유저)·깨진 값은 첫 실행으로 취급해 초기 크기 규칙으로 뜬다.
+- 행이 없는 설정(첫 실행 · config.json에서 넘어온 유저)·깨진 값은 첫 실행으로 취급해 초기 크기 규칙으로 뜬다.
 - 스키마 표 등재 — 정규화가 미등재 키를 지우는 함정(#159 전례). 화이트리스트(`parse_saved_window`)
   게이트는 #257에서 config 계층으로 옮겨져 tests/app/logic/test_config_schema.py에 있다.
 
-config는 conftest의 autouse 픽스처가 테스트마다 임시 폴더로 격리한다. 화면은 이음새로
+설정은 conftest의 autouse 픽스처가 테스트마다 임시 폴더로 격리한다. 화면은 이음새로
 주입한다(절대 px는 주입한 화면과 그 파생값뿐).
 
 ⚠️ 파일 이름이 `test_shell_`로 시작하는 이유 — 실행 순서다. Windows offscreen에서
@@ -18,13 +18,13 @@ config는 conftest의 autouse 픽스처가 테스트마다 임시 폴더로 격�
 같다(실측). 이 파일이 `test_t*`보다 앞에 놓이면 나지 않는다. 원인 수정은 #243 몫이다.
 """
 
-import json
+import os
 
 import pytest
 from PySide6.QtCore import QPoint, QRect
 from PySide6.QtWidgets import QApplication
 
-import config.config as config_module
+import app.system.settings as settings_module
 import CVDv2 as main_module
 import app.theme as theme
 from app.views.mainWindow import VodDownloader, clamp_to_available
@@ -34,6 +34,7 @@ from tests.app.gui.card_helpers import (
     resize_to,
     snapshot_top_levels,
 )
+from tests.support.settings_db import read_settings, write_settings
 
 #: 테스트가 주입하는 작업 영역 — 주 화면.
 AVAILABLE = QRect(0, 0, 1920, 1040)
@@ -70,22 +71,13 @@ def _initial_width() -> int:
 
 
 def _saved_window() -> dict:
-    """config.json에 기록된 창 상태를 파일에서 직접 읽는다(제품의 load_config 미사용)."""
-    with open(config_module.CONFIG_FILE, encoding="utf-8") as f:
-        return json.load(f).get("window")
+    """설정 DB에 기록된 창 상태를 직접 읽는다(제품의 load_settings 미사용)."""
+    return read_settings().get("window")
 
 
 def _write_window(state) -> None:
-    """config.json의 window 키를 직접 쓴다 — 기록이 있는 상태·깨진 상태·키 부재를 만든다."""
-    config_module.load_config()  # 파일이 없으면 기본값으로 만든다
-    with open(config_module.CONFIG_FILE, encoding="utf-8") as f:
-        cfg = json.load(f)
-    if state is None:
-        cfg.pop("window", None)
-    else:
-        cfg["window"] = state
-    with open(config_module.CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(cfg, f)
+    """설정 DB의 window 행을 직접 쓴다 — 기록이 있는 상태·깨진 상태·행 부재를 만든다."""
+    write_settings({} if state is None else {"window": state})
 
 
 def _open() -> VodDownloader:
@@ -128,17 +120,17 @@ class TestRoundTrip:
             f"복원값 {second.pos().toTuple()} {second.size().toTuple()} ≠ 기록값 {expected}"
         )
 
-    def test_the_key_survives_update_config(self):
-        """기록된 키는 시작 시 `update_config()`(정규화)를 거쳐도 남는다 — 스키마 표 등재의 이유."""
+    def test_the_key_survives_open_settings(self):
+        """기록된 키는 시작 시 `open_settings()`(정규화)를 거쳐도 남는다 — 스키마 표 등재의 이유."""
         first = _open()
         first.close()
         QApplication.processEvents()
         assert _saved_window() is not None
-        config_module.update_config()
+        settings_module.open_settings()
         assert _saved_window() is not None, (
             "정규화가 window 키를 지웠다 — 스키마 표에 등재되지 않았다"
         )
-        assert "window" in config_module.default_config()
+        assert "window" in settings_module.default_settings()
 
     def test_unchanged_state_does_not_rewrite_the_file(self):
         """같은 값이면 다시 쓰지 않는다 — 닫을 때마다 파일이 바뀌는 일이 없다.
@@ -150,13 +142,11 @@ class TestRoundTrip:
         QApplication.processEvents()
         first.close()
         QApplication.processEvents()
-        import os
-
-        stamp = os.stat(config_module.CONFIG_FILE).st_mtime_ns
+        stamp = os.stat(settings_module.database_path()).st_mtime_ns
         second = _open()
         second.close()
         QApplication.processEvents()
-        assert os.stat(config_module.CONFIG_FILE).st_mtime_ns == stamp
+        assert os.stat(settings_module.database_path()).st_mtime_ns == stamp
 
 
 class TestRestoreIsClampedToTheCurrentScreen:

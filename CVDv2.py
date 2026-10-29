@@ -6,7 +6,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtCore import QTranslator, QLocale
 
 from app.views.mainWindow import VodDownloader
-import config.config as config
+from app.system import settings
 import app.theme as theme
 from app.system.crash_diagnostics import crash_if_requested, install_crash_diagnostics
 from app.system.log_setup import setup_logging
@@ -135,7 +135,7 @@ def set_language(app_config, translator):
         # 설정 파일에 언어가 없었던 경우에만 저장
         if not is_language_in_config:
             app_config['language'] = language
-            config.save_config(app_config)
+            settings.save_settings(app_config)
     else:
         logger.warning("translation file load failed")
         # 번역 파일 로드 실패 -> 이번 실행에 한해 기본 언어(en_US) 사용.
@@ -152,7 +152,7 @@ if __name__ == '__main__':
     # 공통 로깅 설정 (콘솔 + logs/ 회전 파일)
     setup_logging()
     # 충돌 순간의 스택 · 처리되지 않은 예외를 로그 폴더에 남긴다 (#427) — 앱 로그 설정 뒤에 건다
-    install_crash_diagnostics(os.path.join(config.CONFIG_DIR, "logs"))
+    install_crash_diagnostics(settings.logs_dir())
     # CVDV2_DEBUG_CRASH=1일 때만 여기서 일부러 충돌한다 — 실행 파일에서 충돌 기록을 보는 시험 경로
     crash_if_requested()
     # 백그라운드 일이 도는 동안 화면이 굼떠지지 않게 한다 (#309) — Windows에서만 움직인다
@@ -169,8 +169,8 @@ if __name__ == '__main__':
     # 렌더가 같은지를 게이트(tests/app/gui/test_theme_switch.py)로 재고 재도입했다.
     apply_theme(app)
 
-    # 설정 파일 로드
-    app_config = config.update_config()
+    # 설정 열기 — DB 버전을 올리고(처음이면 옛 설정 파일을 가져온다) 깨진 행을 고친다 (#475)
+    app_config = settings.open_settings()
     
     # 번역 시스템 초기화
     translator = QTranslator()

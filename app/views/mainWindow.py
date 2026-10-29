@@ -1,7 +1,7 @@
 import logging
 import os
 import platform
-import config.config as config
+from app.system import settings
 
 from PySide6.QtWidgets import QMainWindow, QMessageBox, QFileDialog, QApplication, QSizePolicy, QWidget
 from PySide6.QtCore import QPoint, QRect, QStandardPaths, QTimer
@@ -32,7 +32,7 @@ def _default_download_path() -> str:
     ② 시스템 다운로드 폴더(실존할 때만)
     ③ cwd — 소스 실행(개발) 관례를 유지하는 최후 폴백
     """
-    saved = config.load_config().get("downloadPath", "")
+    saved = settings.load_settings().get("downloadPath", "")
     if saved and os.path.isdir(saved):
         return saved
     downloads = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation)
@@ -219,7 +219,7 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
     def _restoreWindowState(self) -> bool:
         """설정에 기록된 창 크기·위치를 되살린다 (#253). 반환값 = 최대화 상태로 띄울지.
 
-        기록이 없거나(첫 실행·구 config) 화이트리스트(`config.parse_saved_window`)를 못 넘으면 초기
+        기록이 없거나(첫 실행·옛 설정에서 넘어옴) 화이트리스트(`settings.parse_saved_window`)를 못 넘으면 초기
         크기 규칙(__init__)을 그대로 둔다. 기록값은 그대로 쓰지 않는다 — 모니터를 바꾸거나
         노트북을 분리하면 저장된 크기·위치가 현재 화면 밖이라 창이 안 보이거나 화면을
         넘는다. 기록 위치가 놓인 화면의 작업 영역으로 크기를 줄이고 위치를 안으로 민다.
@@ -230,12 +230,12 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         첫 표시 전에는 Qt 6 레이아웃 캐시가 polish 전 값을 들고 있어 시점에 따라 틀린다
         (#249). 최대화였다면 보통 크기를 먼저 복원해 두고(해제 시 돌아갈 크기) 최대화로 띄운다.
         """
-        parsed = config.parse_saved_window(config.load_config().get("window"))
+        parsed = settings.parse_saved_window(settings.load_settings().get("window"))
         if parsed is None:
             return False
         (x, y, width, height), maximized = parsed
         try:
-            rect = QRect(x, y, width, height)  # Qt 변환은 여기서 — config/는 Qt를 모른다 (#257)
+            rect = QRect(x, y, width, height)  # Qt 변환은 여기서 — 설정 모듈은 Qt를 모른다 (#257)
             available = self._availableGeometry(rect.topLeft())
             self.resize(min(rect.width(), available.width()), min(rect.height(), available.height()))
             placed = clamp_to_available(QRect(rect.topLeft(), self.size()), available)
@@ -261,10 +261,10 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         else:
             x, y, width, height = self.pos().x(), self.pos().y(), self.width(), self.height()
         state = {"x": x, "y": y, "width": width, "height": height, "maximized": maximized}
-        cfg = config.load_config()
+        cfg = settings.load_settings()
         if cfg.get("window") != state:
             cfg["window"] = state
-            config.save_config(cfg)
+            settings.save_settings(cfg)
 
     def _contentMinimumWidth(self) -> int:
         """콘텐츠 열이 실제로 요구하는 최소폭 — 레이아웃에 묻는다 (#244 목록/헤더).
@@ -456,7 +456,7 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
             QMessageBox.warning(self, self.tr("Warning"), self.tr("Please enter VOD URL."))
             return
         
-        cookies = config.load_cookies()  # 쿠키 조립의 단일 지점 (#170)
+        cookies = settings.load_cookies()  # 쿠키 조립의 단일 지점 (#170)
         self._setLinkStatus(self.tr('Fetching resolutions...'), "info")
 
         # 결과 처리 — 상대 경로 입력은 cwd 기준으로 조용히 저장되던 문제를
@@ -551,10 +551,10 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
 
     def _rememberDownloadPath(self, path: str) -> None:
         """실사용된 저장 경로를 설정에 보존한다 (#159) — _default_download_path의 ①."""
-        cfg = config.load_config()
+        cfg = settings.load_settings()
         if cfg.get("downloadPath") != path:
             cfg["downloadPath"] = path
-            config.save_config(cfg)
+            settings.save_settings(cfg)
             logger.info("저장 경로 보존: %r", path)
 
     def onStop(self):
@@ -609,7 +609,7 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         
         os_type = platform.system()
 
-        afterDownload = config.load_config().get('afterDownload')
+        afterDownload = settings.load_settings().get('afterDownload')
 
         if afterDownload == "sleep":
             if os_type == "Windows":

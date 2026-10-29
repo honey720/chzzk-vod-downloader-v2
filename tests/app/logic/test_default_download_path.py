@@ -13,7 +13,7 @@ import os
 import pytest
 
 import app.views.mainWindow as mw_mod
-import config.config as config_mod
+import app.system.settings as settings_mod
 
 
 @pytest.fixture(autouse=True)
@@ -37,14 +37,14 @@ def config_store(monkeypatch):
     store = {"cookies": {"NID_AUT": "", "NID_SES": ""}}
     saves: list[dict] = []
 
-    monkeypatch.setattr(config_mod, "load_config", lambda: dict(store))
+    monkeypatch.setattr(settings_mod, "load_settings", lambda: dict(store))
 
     def _save(cfg):
         saves.append(dict(cfg))
         store.clear()
         store.update(cfg)
 
-    monkeypatch.setattr(config_mod, "save_config", _save)
+    monkeypatch.setattr(settings_mod, "save_settings", _save)
     return store, saves
 
 
@@ -78,10 +78,10 @@ def window_factory(qapp, monkeypatch, config_store):
     qapp.processEvents()
 
 
-def test_downloadpath_key_registered_in_default_config():
-    """정규화(normalize_config)가 스키마 표 미등재 키를 삭제하므로 등재가 보존의 전제다."""
-    assert "downloadPath" in config_mod.default_config()
-    assert config_mod.default_config()["downloadPath"] == ""  # 빈 값 = 미설정
+def test_downloadpath_key_registered_in_default_settings():
+    """정규화(normalize_settings)가 키 표 미등재 키를 버리므로 등재가 보존의 전제다."""
+    assert "downloadPath" in settings_mod.default_settings()
+    assert settings_mod.default_settings()["downloadPath"] == ""  # 빈 값 = 미설정
 
 
 def test_saved_path_wins(window_factory, config_store, tmp_path):

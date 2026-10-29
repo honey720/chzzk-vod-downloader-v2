@@ -48,7 +48,7 @@ from time import gmtime, strftime
 # scripts/ 하위에서 실행해도 저장소 루트 모듈을 import할 수 있게 한다
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import config.config as config  # noqa: E402
+from app.system import settings  # noqa: E402
 import app.section_input.basis as section_basis  # noqa: E402
 from app.system.log_setup import setup_logging  # noqa: E402
 from app.viewmodels.data import ContentItem  # noqa: E402
@@ -99,12 +99,8 @@ TIMEOUT_MAX = 7200
 
 
 def _load_cookies() -> dict:
-    """앱과 동일하게 config.json에서 쿠키를 읽는다 (공개 컨텐츠는 빈 값이어도 무방)."""
-    data = config.load_config().get("cookies", {})
-    return {
-        "NID_AUT": data.get("NID_AUT", ""),
-        "NID_SES": data.get("NID_SES", ""),
-    }
+    """앱과 같은 설정 저장소에서 쿠키를 읽는다 (공개 컨텐츠는 빈 값이어도 무방)."""
+    return settings.load_cookies()
 
 
 def _fetch(vod_url: str, cookies: dict, download_path: str):

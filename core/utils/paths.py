@@ -354,8 +354,8 @@ _MIN_SCRATCH_FREE_BYTES = 10 * 1024**3  # 10 GiB
 # 낮은 문턱이지만, 절반 정도 차이 나는 애매한 경우까지 분리로 몰지 않는다
 _SEPARATION_SPEED_MARGIN = 2.0
 
-# 시스템 임시 폴더 아래 스크래치 전용 서브폴더 이름. config.APP_NAME과
-# 뜻은 같지만 core는 app(config)을 import할 수 없어(SPEC §3.1) 문자열을
+# 시스템 임시 폴더 아래 스크래치 전용 서브폴더 이름. app.system.settings.APP_NAME과
+# 뜻은 같지만 core는 app을 import할 수 없어(SPEC §3.1) 문자열을
 # 이 자리에서 그대로 쓴다 — 실제 폴더 구분은 이름이 아니라 위치(시스템
 # 임시 폴더 vs 산출물 폴더)가 하므로 문제되지 않는다
 _SCRATCH_SUBDIR = "CVDv2_scratch"

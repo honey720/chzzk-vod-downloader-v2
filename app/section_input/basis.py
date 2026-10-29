@@ -29,7 +29,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from fractions import Fraction
 
-import config.config as config
+from app.system import settings
 from app.download.resolvers import resolve_aes_key, resolve_m3u8_variant
 from app.network import NetworkManager
 from app.section_input.probe_timing import ProbeTiming
@@ -296,7 +296,7 @@ def _declared_ts_rate(item) -> Fraction | None:
     timing = ProbeTiming("ts 선언 프레임률")
     try:
         with timing.watching():
-            cookies = config.load_cookies()
+            cookies = settings.load_cookies()
             _kind, content_no = NetworkManager.extract_content_no(item.vod_url)
             with timing.stage("영상 정보 API"):
                 info = NetworkManager.get_video_info(content_no, cookies)

@@ -39,7 +39,7 @@ from tests.qt_platform import apply as apply_qt_platform_defaults  # noqa: E402
 # 이 값을 읽으므로 어느 테스트 모듈이 앱을 만들기 전, 여기서 정한다
 apply_qt_platform_defaults(os.environ, sys.platform)
 
-import config.config as config_module  # noqa: E402 — sys.path 삽입 후에 와야 한다
+import app.system.settings as settings_module  # noqa: E402 — sys.path 삽입 후에 와야 한다
 import core.sources.hls_aes_downloader as hls_aes_module  # noqa: E402
 import core.sources.m3u8_downloader as m3u8_module  # noqa: E402
 from core.utils.paths import temp_dir_for  # noqa: E402
@@ -161,10 +161,10 @@ def _no_network_attempts(network_guard, request):
     )
 
 
-# ============ 전역 config.json 격리 (#199) ============
-# 개별 테스트가 CONFIG_DIR/CONFIG_FILE을 각자 격리하지 않으면
+# ============ 전역 설정 격리 (#199 · #475) ============
+# 개별 테스트가 앱 데이터 폴더(설정 DB · logs/)를 각자 격리하지 않으면
 # app.views.mainWindow.VodDownloader 등 앱 계층을 실배선으로 태우는
-# 테스트가 실유저 config.json을 조용히 덮어쓴다 — #150이 만든 경로 찾기
+# 테스트가 실유저 설정을 조용히 덮어쓴다(#475 전에는 config.json, 지금은 설정 DB) — #150이 만든 경로 찾기
 # 로깅 테스트가 그 배선을 탔는데, #166이 같은 지점("입력 확정"·"창 닫기")에
 # 실제 저장까지 발동하는 보존 로직을 얹으면서 오염이 시작됐다. #166은
 # 자기가 새로 만든 테스트만 메모리로 격리했고, 먼저 있던 테스트는 새는
@@ -175,10 +175,14 @@ def _no_network_attempts(network_guard, request):
 # 같은 값으로 다시 monkeypatch되어도 무해하다.
 @pytest.fixture(autouse=True)
 def _isolate_real_config(tmp_path, monkeypatch):
-    """모든 테스트에서 config.json 읽기·쓰기(및 CONFIG_DIR/logs 로그 파일)를 임시 위치로 돌린다."""
+    """모든 테스트에서 앱 데이터 폴더(설정 DB · 옛 config.json · logs/)를 임시 위치로 돌린다.
+
+    메모리 모드(코드가 모르는 DB 버전)도 테스트마다 끈다 — 앞 테스트가 켠 채 남으면 뒤 테스트가
+    DB 대신 메모리를 잰다.
+    """
     isolated_dir = tmp_path / "_isolated_config"
-    monkeypatch.setattr(config_module, "CONFIG_DIR", str(isolated_dir))
-    monkeypatch.setattr(config_module, "CONFIG_FILE", str(isolated_dir / "config.json"))
+    monkeypatch.setattr(settings_module, "DATA_DIR", str(isolated_dir))
+    monkeypatch.setattr(settings_module, "_memory", None)
 
 
 # ============ 전역 choose_temp_dir 격리 (#192) ============

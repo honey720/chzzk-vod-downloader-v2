@@ -9,6 +9,7 @@ import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 
+import app.system.settings as settings_module
 import config.config as config_module
 from app.download.logger import DownloadLogger
 from scripts.summarize_download_log import summarize
@@ -16,7 +17,7 @@ from scripts.summarize_download_log import summarize
 
 def _make_logger(tmp_path, monkeypatch) -> DownloadLogger:
     """로그를 tmp_path 아래에 쓰는 DownloadLogger를 만든다."""
-    monkeypatch.setattr(config_module, "CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(settings_module, "DATA_DIR", str(tmp_path))
     return DownloadLogger()
 
 
