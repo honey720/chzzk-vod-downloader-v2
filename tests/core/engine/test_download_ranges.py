@@ -2,6 +2,7 @@
 
 목적은 "올바른 동작" 검증이 아니라 현재 동작의 보존이다 (#27).
 구현이 download/download.py에서 core/downloaders/ranges.py로 이동해 import 경로만 갱신 (#50).
+지금 자리는 core/engine/part_ranges.py다 (#466).
 """
 
 import pytest

@@ -116,6 +116,7 @@ class RunLogger:
         self.transfer_paused: list[float] = []  # 전송 줄에 함께 온 일시정지한 시간(초)
         self.postprocess_starts: list[str] = []
         self.postprocess_completes: list[tuple] = []
+        self.postprocess_paused: list[float] = []  # 후처리 종료 줄에 함께 온 일시정지한 시간(초)
         self.breakdowns: list[tuple] = []
 
     def log_download_start(self, total_size, part_size, segments, initial_threads):
@@ -131,8 +132,9 @@ class RunLogger:
     def log_postprocess_start(self, kind):
         self.postprocess_starts.append(kind)
 
-    def log_postprocess_complete(self, elapsed, output_size):
+    def log_postprocess_complete(self, elapsed, output_size, paused=0.0):
         self.postprocess_completes.append((elapsed, output_size))
+        self.postprocess_paused.append(paused)
 
     def log_total_breakdown(self, transfer_elapsed, postprocess_elapsed, paused=0.0):
         self.breakdowns.append((transfer_elapsed, postprocess_elapsed))

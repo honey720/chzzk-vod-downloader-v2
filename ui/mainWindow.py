@@ -36,7 +36,7 @@ class Ui_VodDownloader(object):
         #                         자식 위젯을 하나만 받으므로 셋을 스크롤 영역에 넣으려면
         #                         이 컨테이너가 필요하다. 그 밖의 역할(폭 제한·정렬)은 없다
         #                         — 창 폭을 그대로 채운다(오너 확정, #249).
-        #     여백 수치는 application/mainWindow.py::_applyLayoutMetrics가
+        #     여백 수치는 app/views/mainWindow.py::_applyLayoutMetrics가
         #     theme.METRICS로 런타임에 건다.
         self.windowScrollArea = QScrollArea(VodDownloader)
         self.windowScrollArea.setObjectName(u"windowScrollArea")
@@ -65,7 +65,7 @@ class Ui_VodDownloader(object):
         # 입력 블록(두 행)은 완결된 사각형이고 ⚙는 그 **밖**, 두 행 높이의
         # 세로 중앙에 하나다 — 설정은 입력과 성격이 달라 시각적으로도 갈린다.
         # 두 텍스트 버튼([VOD 추가]·[경로 찾기])은 같은 폭으로 좌우 끝을 맞춘다
-        # (application/mainWindow.py::_equalizeHeaderButtons — 번역·폰트에 따라
+        # (app/views/mainWindow.py::_equalizeHeaderButtons — 번역·폰트에 따라
         # 폭이 달라 런타임에 더 넓은 쪽으로 고정). ⚙를 어느 행에 붙이든 그 행의
         # 텍스트 버튼이 밀려 두 텍스트 버튼의 끝선이 어긋났다(실기 확인).
         self.headerRowsLayout = QHBoxLayout()
