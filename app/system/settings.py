@@ -10,8 +10,9 @@
 DB 버전은 파일 머리의 `PRAGMA user_version`이다(새 DB는 0). 열 때마다 목표(`DATABASE_VERSION`)까지
 단계를 차례로 돌린다 — 한 단계는 테이블 바꾸기 · 값 넣기 · `user_version` 쓰기를 한 트랜잭션으로
 하므로, 중간에 꺼지면 그 단계 전 버전으로 남고 다음 실행에서 다시 돈다. 코드가 모르는 버전(옛 판이
-새 판의 DB를 엶)이거나 DB 파일이 아닌 것이면 DB에 쓰지 않고 이번 실행 동안 메모리 안 기본값으로
-돈다(경고 한 번). 2.13.0의 카드 · 이력도 이 DB에 단계를 더해 넣는다.
+새 판의 DB를 엶)이면 그 파일에 쓰지 않고 이번 실행 동안 메모리 안 기본값으로 돈다(경고 한 번).
+DB가 아니거나 손상된 파일은 `cvdv2.db.broken`으로 비켜 두고 새 DB로 시작한다. 2.13.0의 카드 ·
+이력도 이 DB에 단계를 더해 넣는다.
 
 연결은 부를 때마다 열고 닫는다 — 쿠키는 다운로드 워커 스레드에서도 읽으므로(`load_cookies`)
 연결을 스레드 사이에 나누지 않는다. 쓰기는 메인 스레드뿐이다(설정 창 · 메인 창).
@@ -260,8 +261,8 @@ def normalize_settings(raw: dict) -> dict:
 
 # ============ DB ============
 
-#: 메모리 모드의 설정 — None이면 DB를 쓴다. 코드가 모르는 버전 · DB가 아닌 파일을 만나면 기본값으로
-#: 채워지고, 그 뒤 이번 실행의 읽기 · 쓰기는 전부 여기서 한다(DB는 열지 않는다).
+#: 메모리 모드의 설정 — None이면 DB를 쓴다. 코드가 모르는 버전을 만나거나 손상된 DB를 비켜 두지
+#: 못하면 기본값으로 채워지고, 그 뒤 이번 실행의 읽기 · 쓰기는 전부 여기서 한다(DB는 열지 않는다).
 _memory: dict | None = None
 
 
@@ -373,9 +374,8 @@ def _run_step(conn: sqlite3.Connection, version: int) -> int:
 def _open() -> sqlite3.Connection | None:
     """DB를 열고 목표 버전까지 올린 연결을 돌려준다. 메모리 모드면 None.
 
-    코드가 모르는 버전이거나 DB 파일이 아닌 것(깨진 파일 포함)이면 그 파일은 그대로 두고
-    메모리 모드로 바꾼다. 잠금 대기 초과(`OperationalError`)는 메모리 모드로 바꾸지 않고 올린다 —
-    순간의 경합으로 그 실행 내내 설정이 저장되지 않게 되면 안 된다.
+    코드가 모르는 버전이면 그 파일은 그대로 두고 메모리 모드로 바꾼다. 그 밖의 오류는 연결을
+    닫고 그대로 올린다 — 손상은 `_use`가 비켜 둔다.
     """
     if _memory is not None:
         return None
@@ -385,13 +385,6 @@ def _open() -> sqlite3.Connection | None:
         version = _user_version(conn)
         while version < DATABASE_VERSION:
             version = _run_step(conn, version)
-    except sqlite3.OperationalError:
-        conn.close()
-        raise
-    except sqlite3.DatabaseError as error:
-        conn.close()
-        _enter_memory_mode(f"cannot be read ({error})")
-        return None
     except BaseException:
         conn.close()
         raise
@@ -400,6 +393,79 @@ def _open() -> sqlite3.Connection | None:
         _enter_memory_mode(f"has version {version}, newer than this app ({DATABASE_VERSION})")
         return None
     return conn
+
+
+#: 손상된 DB를 비켜 둘 이름 — 같은 폴더, 하나만 유지(다음 손상이 덮어쓴다 — 더 최신이다).
+BROKEN_SUFFIX = ".broken"
+
+#: DB가 아니거나 손상됐다는 SQLite 오류 이름의 앞머리 — 확장 코드(SQLITE_CORRUPT_INDEX 등)까지.
+_DAMAGED_ERRORS = ("SQLITE_CORRUPT", "SQLITE_NOTADB")
+
+#: `_use`가 메모리 모드라 DB 일을 하지 않았다는 표시.
+_IN_MEMORY = object()
+
+
+def broken_database_path() -> str:
+    """손상된 DB를 옮겨 둘 경로 — DB 파일 옆의 `cvdv2.db.broken`."""
+    return database_path() + BROKEN_SUFFIX
+
+
+def _is_damaged(error: sqlite3.DatabaseError) -> bool:
+    """DB가 아니거나 손상된 파일이라는 오류인가 — 잠금 · 권한(`OperationalError`)은 아니다.
+
+    잠금 대기 초과를 손상으로 보면 다른 실행이 쓰는 멀쩡한 DB를 비켜 두게 된다. 그 밖의
+    `DatabaseError` 하위 오류(무결성 · 사용법)도 파일 탓이 아니므로 비켜 두지 않는다.
+    """
+    if isinstance(error, sqlite3.OperationalError):
+        return False
+    return getattr(error, "sqlite_errorname", "").startswith(_DAMAGED_ERRORS)
+
+
+def _set_aside(error: sqlite3.DatabaseError) -> None:
+    """손상된 DB를 `.broken`으로 옮긴다 — 다음 열기는 새 DB다. 못 옮기면 메모리 모드.
+
+    연결은 부르는 쪽이 이미 닫았다(Windows는 열린 파일을 옮기지 못한다).
+    """
+    path, broken = database_path(), broken_database_path()
+    try:
+        os.replace(path, broken)
+    except OSError as move_error:
+        _enter_memory_mode(f"is damaged ({error}) and could not be moved aside ({move_error})")
+        return
+    logger.error(
+        "Settings database is damaged (%s) — moved to %s and starting with a new database",
+        error,
+        broken,
+    )
+
+
+def _use(action: Callable[[sqlite3.Connection], object]) -> object:
+    """DB를 열어 `action(conn)`을 돌리고 그 결과를 돌려준다. 메모리 모드면 `_IN_MEMORY`.
+
+    열 때든 일하는 중이든 손상(`_is_damaged`)이 드러나면 파일을 비켜 두고 새 DB로 한 번 더 한다.
+    새 DB에서도 손상이 나면 그대로 올린다. 그 밖의 오류(잠금 대기 초과 포함)는 그대로 올라간다.
+    """
+    for attempt in range(2):
+        damaged = None
+        try:
+            conn = _open()
+        except sqlite3.DatabaseError as error:
+            if attempt or not _is_damaged(error):
+                raise
+            _set_aside(error)
+            continue
+        if conn is None:
+            return _IN_MEMORY
+        try:
+            return action(conn)
+        except sqlite3.DatabaseError as error:
+            if attempt or not _is_damaged(error):
+                raise
+            damaged = error
+        finally:
+            conn.close()
+        _set_aside(damaged)
+    raise AssertionError("두 번째 시도는 돌려주거나 올린다")  # 반복이 여기 닿지 않는다
 
 
 def _write_rows(conn: sqlite3.Connection, values: dict) -> None:
@@ -423,13 +489,9 @@ def load_settings() -> dict:
     키의 행만 있다), 깨진 행(JSON이 아님 · 검증에 걸림)은 그 키만 기본값 + 경고다. 읽기만으로는
     DB에 아무것도 쓰지 않는다(버전 올리기는 예외 — 열 때 돈다).
     """
-    conn = _open()
-    if conn is None:
+    rows = _use(_stored)
+    if rows is _IN_MEMORY:
         return copy.deepcopy(_memory)
-    try:
-        rows = _stored(conn)
-    finally:
-        conn.close()
     raw = {}
     for key, text in rows.items():
         try:
@@ -448,22 +510,22 @@ def save_settings(values: dict) -> None:
     다르므로 이 dict의 옛 값으로 다시 쓰인다(두 판을 함께 띄웠을 때 — config.json 때와 같다).
 
     표에 없는 키가 있으면 `KeyError` — 미등재 키가 조용히 버려지는 일(#159 전례)을 막는다.
-    메모리 모드면 메모리에만 쓴다. 잠금 대기 초과 등 DB 오류는 그대로 올라간다.
+    메모리 모드면 메모리에만 쓴다. 손상된 DB는 비켜 두고 새 DB에 쓴다(`_use`). 잠금 대기 초과 등
+    그 밖의 DB 오류는 그대로 올라간다.
     """
     unknown = set(values) - {setting.key for setting in SCHEMA}
     if unknown:
         raise KeyError(f"not in the settings table: {sorted(unknown)}")
-    conn = _open()
-    if conn is None:
-        _memory.update(copy.deepcopy(values))
-        return
-    try:
+
+    def write_changed(conn: sqlite3.Connection) -> None:
+        """잠금을 잡은 뒤 다시 읽은 행과 견줘 다른 키만 쓴다."""
         with _transaction(conn):
             stored = _stored(conn)
             changed = {key: value for key, value in values.items() if _differs(key, value, stored)}
             _write_rows(conn, changed)
-    finally:
-        conn.close()
+
+    if _use(write_changed) is _IN_MEMORY:
+        _memory.update(copy.deepcopy(values))
 
 
 def _differs(key: str, value: object, stored: dict[str, str]) -> bool:
@@ -484,13 +546,13 @@ def open_settings() -> dict:
     행은 쓰지 않고, 표에 없는 행도 지우지 않는다 — 키를 더해도 DB 버전이 오르지 않으므로 같은
     버전의 새 판이 더한 키일 수 있다.
     """
-    conn = _open()
-    if conn is not None:
-        try:
-            with _transaction(conn):
-                _repair_rows(conn)
-        finally:
-            conn.close()
+
+    def repair(conn: sqlite3.Connection) -> None:
+        """깨진 행 지우기 · 고친 행 다시 쓰기를 한 트랜잭션으로."""
+        with _transaction(conn):
+            _repair_rows(conn)
+
+    _use(repair)
     return load_settings()
 
 
@@ -530,21 +592,20 @@ def reset_settings(key: str | None = None) -> None:
     global _memory
     if key is not None:
         _setting_or_key_error(key)
-    conn = _open()
-    if conn is None:
-        if key is None:
-            _memory = default_settings()
-        else:
-            _memory[key] = _setting(key).fallback()
-        return
-    try:
+
+    def delete_rows(conn: sqlite3.Connection) -> None:
+        """그 키의 행(키가 없으면 전부)을 지운다."""
         with _transaction(conn):
             if key is None:
                 conn.execute("DELETE FROM settings")
             else:
                 conn.execute("DELETE FROM settings WHERE key = ?", (key,))
-    finally:
-        conn.close()
+
+    if _use(delete_rows) is _IN_MEMORY:
+        if key is None:
+            _memory = default_settings()
+        else:
+            _memory[key] = _setting(key).fallback()
 
 
 def _setting_or_key_error(key: str) -> Setting:

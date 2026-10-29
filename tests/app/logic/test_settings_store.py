@@ -215,18 +215,118 @@ class TestANewerDatabaseIsNeverWritten:
         memory = [r for r in caplog.records if "in memory only" in r.getMessage()]
         assert len(memory) == 1, caplog.text
 
-    def test_a_file_that_is_not_a_database_is_kept(self):
-        """DB가 아닌 파일이면 그 파일을 그대로 두고 메모리 안 기본값으로 돌아야 한다.
+    def test_a_newer_database_is_not_set_aside(self, newer):
+        """높은 버전 DB는 손상이 아니다 — 비켜 두지 않고 제자리에 그대로 있어야 한다.
 
-        DB 자리에 글자 파일 -> 읽은 설정 = 기본값 · 저장 뒤에도 파일 바이트 같음
+        user_version 2 DB -> open_settings · save_settings 뒤 cvdv2.db.broken 없음 · DB 바이트 같음
+        """
+        settings_module.open_settings()
+        settings_module.save_settings({"language": "en_US"})
+        assert not os.path.exists(settings_module.broken_database_path())
+        assert _database_bytes() == newer
+
+
+def _write_damaged(content: bytes = b"not a database " * 100) -> bytes:
+    """DB 자리에 DB가 아닌 바이트를 쓴다."""
+    os.makedirs(settings_module.data_dir(), exist_ok=True)
+    with open(settings_module.database_path(), "wb") as file:
+        file.write(content)
+    return content
+
+
+def _broken_bytes() -> bytes:
+    """비켜 둔 cvdv2.db.broken의 바이트."""
+    with open(settings_module.broken_database_path(), "rb") as file:
+        return file.read()
+
+
+class TestADamagedDatabaseIsSetAside:
+    """DB가 아니거나 손상된 파일은 cvdv2.db.broken으로 비켜 두고 새 DB로 시작한다."""
+
+    def test_a_file_that_is_not_a_database_is_moved_and_a_new_one_starts(self, caplog):
+        """DB가 아닌 파일이면 .broken으로 옮겨지고, 새 DB가 버전 1로 생겨 저장이 남아야 한다.
+
+        DB 자리에 글자 파일 -> .broken = 그 바이트 · 새 DB user_version 1 · 읽기 = 기본값
+        · 언어 ko_KR 저장 뒤 새 DB에 그 행 · 오류 로그에 .broken 경로
+        """
+        damaged = _write_damaged()
+        with caplog.at_level("ERROR", logger="app.system.settings"):
+            assert settings_module.load_settings() == settings_module.default_settings()
+        assert _broken_bytes() == damaged
+        assert user_version() == 1
+        settings_module.save_settings({"language": "ko_KR"})
+        assert read_settings() == {"language": "ko_KR"}
+        assert any(
+            settings_module.broken_database_path() in r.getMessage() for r in caplog.records
+        ), caplog.text
+
+    def test_damage_found_while_reading_rows_is_set_aside(self):
+        """머리는 멀쩡하고 표의 쪽이 깨진 DB(읽을 때 malformed)도 비켜 두고 새 DB로 읽어야 한다.
+
+        언어 행이 든 DB의 둘째 쪽(4096바이트부터 200바이트)을 0xFF로 -> 읽기 = 기본값 · .broken 있음
+        """
+        write_settings({"language": "ko_KR"})
+        with open(settings_module.database_path(), "r+b") as file:
+            file.seek(4096)  # 둘째 쪽 — 설정 테이블의 쪽(쪽 크기 4096)
+            file.write(b"\xff" * 200)
+        assert settings_module.load_settings() == settings_module.default_settings()
+        assert os.path.exists(settings_module.broken_database_path())
+        assert read_settings() == {}
+
+    def test_only_one_broken_file_is_kept(self):
+        """이미 .broken이 있으면 새로 깨진 파일이 그 자리를 덮어써야 한다 — 하나만 남는다.
+
+        옛 .broken(바이트 A) · DB 자리에 바이트 B -> .broken = B · 폴더의 .broken 하나
         """
         os.makedirs(settings_module.data_dir(), exist_ok=True)
-        with open(settings_module.database_path(), "wb") as file:
-            file.write(b"not a database " * 100)
-        before = _database_bytes()
-        assert settings_module.load_settings() == settings_module.default_settings()
-        settings_module.save_settings({"language": "ko_KR"})
-        assert _database_bytes() == before
+        with open(settings_module.broken_database_path(), "wb") as file:
+            file.write(b"older damage " * 10)
+        newer = _write_damaged(b"newer damage " * 100)
+        settings_module.load_settings()
+        assert _broken_bytes() == newer
+        names = os.listdir(settings_module.data_dir())
+        assert [n for n in names if n.endswith(settings_module.BROKEN_SUFFIX)] == [
+            os.path.basename(settings_module.broken_database_path())
+        ]
+
+    def test_a_lock_timeout_is_not_damage(self, monkeypatch):
+        """다른 연결이 쓰기 잠금을 쥐어 대기가 넘치면 예외가 올라오고 DB는 비켜지지 않아야 한다.
+
+        다른 연결의 BEGIN EXCLUSIVE · BUSY_TIMEOUT 0.1초 -> save_settings가 OperationalError
+        · .broken 없음 · 잠금을 푼 뒤 원래 행 그대로
+        """
+        write_settings({"language": "ko_KR"})
+        monkeypatch.setattr(settings_module, "BUSY_TIMEOUT", 0.1)
+        holder = sqlite3.connect(settings_module.database_path(), isolation_level=None)
+        try:
+            holder.execute("BEGIN EXCLUSIVE")
+            with pytest.raises(sqlite3.OperationalError):
+                settings_module.save_settings({"language": "en_US"})
+            holder.execute("ROLLBACK")
+        finally:
+            holder.close()
+        assert not os.path.exists(settings_module.broken_database_path())
+        assert read_settings() == {"language": "ko_KR"}
+
+    def test_a_file_that_cannot_be_moved_runs_in_memory(self, monkeypatch, caplog):
+        """깨진 파일을 옮기지 못하면 그 파일을 그대로 두고 메모리 안 기본값으로 돌아야 한다.
+
+        DB 자리에 글자 파일 · os.replace가 PermissionError -> 읽기 = 기본값 · 파일 바이트 같음
+        · 저장 뒤에도 같음 · 메모리 경고
+        """
+        damaged = _write_damaged()
+
+        def refuse(src, dst):
+            """옮기기를 거절한다 — 다른 프로그램이 파일을 쥔 상황."""
+            raise PermissionError("held by another program")
+
+        monkeypatch.setattr(settings_module.os, "replace", refuse)
+        with caplog.at_level("WARNING", logger="app.system.settings"):
+            assert settings_module.load_settings() == settings_module.default_settings()
+            settings_module.save_settings({"language": "ko_KR"})
+        assert _database_bytes() == damaged
+        assert settings_module.load_settings()["language"] == "ko_KR"
+        assert any("in memory only" in r.getMessage() for r in caplog.records), caplog.text
 
 
 class TestSaveAndReset:
