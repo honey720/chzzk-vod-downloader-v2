@@ -279,13 +279,21 @@ def _enter_memory_mode(reason: str) -> None:
 
 @contextlib.contextmanager
 def _transaction(conn: sqlite3.Connection):
-    """쓰기 잠금을 먼저 잡는 트랜잭션(`BEGIN IMMEDIATE`) — 예외면 되돌리고 그대로 올린다."""
+    """쓰기 잠금을 먼저 잡는 트랜잭션(`BEGIN IMMEDIATE`) — 예외면 되돌리고 그 예외를 그대로 올린다.
+
+    되돌리기(`ROLLBACK`)가 실패해도 로그만 남기고 **원래 예외**를 올린다 — 손상된 DB에서는
+    되돌리기도 실패할 수 있는데, 그 예외가 원래 예외(`SQLITE_CORRUPT`)를 가리면 `_use`가 손상을
+    알아보지 못해 비켜 두지 않는다(#476 CodeRabbit).
+    """
     conn.execute("BEGIN IMMEDIATE")
     try:
         yield
     except BaseException:
         if conn.in_transaction:
-            conn.execute("ROLLBACK")
+            try:
+                conn.execute("ROLLBACK")
+            except sqlite3.Error:
+                logger.warning("Settings rollback failed", exc_info=True)
         raise
     conn.execute("COMMIT")
 

@@ -273,6 +273,39 @@ class TestADamagedDatabaseIsSetAside:
         assert os.path.exists(settings_module.broken_database_path())
         assert read_settings() == {}
 
+    def test_damage_is_set_aside_even_when_the_rollback_fails(self, monkeypatch, caplog):
+        """트랜잭션 안에서 손상이 드러나고 되돌리기마저 다른 예외를 내도, 손상 DB는 비켜 둬야 한다.
+
+        저장 위치 행이 든 DB의 둘째 쪽을 0xFF로 · ROLLBACK이 OperationalError를 냄
+        -> save_settings(언어 ko_KR) 예외 없음 · .broken 있음 · 새 DB에 언어 ko_KR 행만 · 되돌리기 실패 경고
+        """
+        write_settings({"downloadPath": "D:/vod"})
+        with open(settings_module.database_path(), "r+b") as file:
+            file.seek(4096)  # 둘째 쪽 — 설정 테이블의 쪽(쪽 크기 4096)
+            file.write(b"\xff" * 200)
+
+        class RollbackFails(sqlite3.Connection):
+            """ROLLBACK만 다른 예외를 낸다 — 손상 DB에서 되돌리기도 실패하는 상황."""
+
+            def execute(self, sql, *args):
+                if sql == "ROLLBACK":
+                    raise sqlite3.OperationalError("injected rollback failure")
+                return super().execute(sql, *args)
+
+        real_connect = sqlite3.connect
+        # 이 패치만 되돌린다 — monkeypatch.undo()는 conftest의 앱 데이터 폴더 격리까지 되돌린다
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                settings_module.sqlite3,
+                "connect",
+                lambda *args, **kwargs: real_connect(*args, factory=RollbackFails, **kwargs),
+            )
+            with caplog.at_level("WARNING", logger="app.system.settings"):
+                settings_module.save_settings({"language": "ko_KR"})
+        assert os.path.exists(settings_module.broken_database_path())
+        assert read_settings() == {"language": "ko_KR"}
+        assert any("rollback failed" in r.getMessage() for r in caplog.records), caplog.text
+
     def test_only_one_broken_file_is_kept(self):
         """이미 .broken이 있으면 새로 깨진 파일이 그 자리를 덮어써야 한다 — 하나만 남는다.
 
