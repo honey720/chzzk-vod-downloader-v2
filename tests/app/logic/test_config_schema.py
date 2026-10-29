@@ -178,6 +178,20 @@ class TestBrokenValuesFallBackInsteadOfCrashing:
         assert "language" not in _read(), "JSON이 아닌 행이 지워지지 않았다"
         assert any("'language'" in m for m in _warnings(caplog)), _warnings(caplog)
 
+    def test_reading_without_startup_keeps_the_other_keys(self, caplog):
+        """시작 경로를 거치지 않은 읽기에서도 깨진 두 행만 기본값이고 나머지 키는 그대로여야 한다.
+
+        language 행 = JSON 아님 · downloadPath 행 = 숫자 3 · 나머지 VALID
+        -> load_settings: language "en_US" · downloadPath "" · 나머지 VALID · 경고 둘
+        """
+        rows = {key: json.dumps(value) for key, value in VALID.items()}
+        write_rows({**rows, "language": "{broken", "downloadPath": "3"})
+        with caplog.at_level("WARNING", logger="app.system.settings"):
+            cfg = settings_module.load_settings()
+        assert cfg == {**VALID, "language": "en_US", "downloadPath": ""}
+        assert any("'language'" in m for m in _warnings(caplog)), _warnings(caplog)
+        assert any("'downloadPath'" in m for m in _warnings(caplog)), _warnings(caplog)
+
     def test_a_valid_config_is_read_unchanged(self, caplog):
         """온전한 설정은 값 하나 안 바뀌고 경고도 없다."""
         _write(VALID)
