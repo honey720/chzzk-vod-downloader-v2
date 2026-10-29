@@ -132,6 +132,7 @@ dependencies = [
     { name = "pycryptodome" },
     { name = "pyside6" },
     { name = "requests" },
+    { name = "shiboken6" },
 ]
 
 [package.dev-dependencies]
@@ -142,6 +143,7 @@ dev = [
     { name = "pytest-qt" },
     { name = "pytest-xdist" },
     { name = "ruff" },
+    { name = "urllib3" },
 ]
 
 [package.metadata]
@@ -151,6 +153,7 @@ requires-dist = [
     { name = "pycryptodome", specifier = ">=3.20" },
     { name = "pyside6", specifier = ">=6.8.1.1" },
     { name = "requests", specifier = ">=2.32.5" },
+    { name = "shiboken6", specifier = ">=6.8.1.1" },
 ]
 
 [package.metadata.requires-dev]
@@ -161,6 +164,7 @@ dev = [
     { name = "pytest-qt" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },
     { name = "ruff" },
+    { name = "urllib3", specifier = ">=2.0" },
 ]
 
 [[package]]
