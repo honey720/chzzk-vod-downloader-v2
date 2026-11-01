@@ -34,6 +34,7 @@ from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
 from core.utils.paths import release_output_paths
 from app.viewmodels.section_edit import refit_selections
+from tests.mocks.engine_side import engine_side
 from tests.app.gui.section_input import leave_time, type_clock, type_frame, type_time
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, shown, snapshot_top_levels
 
@@ -1723,7 +1724,8 @@ class _Service:
         self.submissions: list[dict] = []
 
     def submit(self, content, **kwargs):
-        self.submissions.append({"content": content, **kwargs})
+        # 엔진 흉내 — 콜백 입구는 서비스 핸들의 중계(값 묶음 · 키를 싣는다, #484)
+        self.submissions.append(engine_side(content, kwargs))
         return _Handle()
 
     def finish(self, index: int = -1) -> None:

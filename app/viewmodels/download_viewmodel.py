@@ -14,8 +14,12 @@ viewmodel(이 클래스)이 mainWindow의 릴레이 슬롯 6개를 흡수했다.
   안에서 content를 직접 부르거나 위젯을 만지는 것은 금지다 — 그러면 위젯이
   워커 스레드에서 갱신된다. tests/app/gui/test_download_viewmodel_contract.py의
   스레드 축 게이트가 이 경계를 잰다.
-- 예외적으로 item.post_process(진행 변환용 데이터 플래그, 위젯 아님)만
-  구 어댑터와 같은 시점 보존을 위해 콜백에서 직접 기록한다.
+- 아이템(ContentItem)도 메인 스레드에서만 쓴다(#484) — 병합 표시(post_process)와
+  상태(downloadState)는 내부 Signal을 거쳐 메인 스레드 슬롯에서 적는다. 진행 변환이 보는
+  병합 단계는 아이템이 아니라 통지의 값 묶음(counters.merging)이다.
+- 엔진 공유 데이터(DownloadData)의 카운터는 직접 읽지 않는다(#484) — 서비스 핸들이 진행 ·
+  실패 통지에 싣는 값 묶음(DownloadCounters)만 읽는다. 실패도 예외 객체가 아니라 엔진 쪽이
+  고른 안내 키로 받는다.
 - 완료·실패의 후처리(상태 정리, 참조 정리)는 내부 Signal을 거쳐 메인
   스레드 슬롯에서 수행한다.
 
@@ -30,8 +34,9 @@ import time
 from collections.abc import Callable
 from functools import partial
 from time import gmtime, strftime
+from types import SimpleNamespace
+from typing import Protocol
 
-import requests
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
 
 from app.system.platform_adapter import begin_background_work, end_background_work
@@ -40,28 +45,18 @@ from app.system.user_activity import user_interacting
 from app.viewmodels.data import ContentItem
 from app.viewmodels.section_edit import take_section_head, watch_section_head
 from app.viewmodels.staged_progress import StagedProgress
-from core.chzzk.playback_tracks import StreamSelectionError
-from core.engine.base import (
-    DiskSpaceError,
-    FileSizeLimitError,
-    NetworkLostError,
-    PostprocessError,
-)
-from core.sources.hls_aes_downloader import DecryptionError
-from core.engine.integrity import TruncatedSegmentError
-from core.models.events import ProgressEvent
+from core.models.events import DownloadCounters, ProgressEvent
 from core.services.download_service import DownloadService
 from core.models.download_data import DownloadData
 from core.models.download_state import DownloadState
 from core.media.mp4_index import PendingMp4Head
 from core.models.section_resume import SectionResume
-from core.sections.hybrid import CutError
+from core.services.failure_keys import failure_message_key as _failure_message_key
 from core.utils.paths import (
     build_section_output_paths,
     release_output_paths,
     reserve_section_output_paths,
 )
-from core.utils.ffmpeg import FFmpegNotFoundError
 from core.sections.timecode import frame_index
 from app.download.logger import DownloadLogger
 from app.download.resolvers import resolve_aes_key, resolve_m3u8_base_url
@@ -99,65 +94,6 @@ _clock = time.monotonic  # 진행 막대가 받던 시간을 재는 시계 — �
 PREPARE_NOTICE_DELAY_MS = 500
 
 
-def _failure_message_key(exc: BaseException) -> str | None:
-    """다운로드 실패 예외를 안내 키로 매핑한다 (#134, #127의 조회 경로 방식).
-
-    원시 예외 문자열은 유저에게 보내지 않는다 — PostprocessError는 ffmpeg
-    stderr·실행 경로를, OSError는 전체 파일 경로를 품는다. 상세는 다운로드
-    로그가 이미 담당한다. 매핑에 없는 예외는 None(사유 생략)으로 둔다.
-    """
-    space_key = getattr(exc, "space_key", None)
-    if space_key:
-        # 쓰다가 공간이 없어 난 실패 (#309) — 엔진이 적어 둔 키를 다른 판정보다 먼저 쓴다.
-        # 자르다 난 실패여도 원인이 공간 부족(또는 FAT의 파일 크기 한계)이면 그것으로 알린다
-        return space_key
-    if isinstance(exc, FileSizeLimitError):
-        # 저장 폴더의 파일 시스템(FAT 계열)이 담을 수 없는 크기의 파일이다 (#309)
-        return exc.message_key
-    if isinstance(exc, PostprocessError):
-        # PostprocessError는 항상 FFmpegError를 원인으로 체인한다(base.py의
-        # 유일한 raise 지점, `raise PostprocessError(...) from e`). 원인
-        # 유형으로 안내를 가른다 — "ffmpeg 실행 파일을 못 찾음"과 "ffmpeg는
-        # 돌았지만 입력이 무효함"은 유저가 할 수 있는 조치가 다르다(#180
-        # 조사 — 이 둘을 하나의 문구로 뭉뚱그린 탓에 macOS 실기 진단이
-        # ffmpeg 설치 문제로 잘못 쏠렸다)
-        if isinstance(exc.__cause__, FFmpegNotFoundError):
-            return "Postprocessing failed - ffmpeg not found"
-        if isinstance(exc.__cause__, CutError):
-            # 구간을 자르다 실패했다 (#309) — 받은 데이터가 손상된 것이 아니다. 컷은 ffmpeg의
-            # 실패를 CutError로 바꿔 올리므로 그 원인이 "실행 파일 없음"이면 그 안내를 준다
-            if isinstance(exc.__cause__.__cause__, FFmpegNotFoundError):
-                return "Postprocessing failed - ffmpeg not found"
-            return "Section cut failed"
-        return "Postprocessing failed - invalid segments"
-    if isinstance(exc, DecryptionError):
-        return "Decryption failed"
-    if isinstance(exc, StreamSelectionError):
-        # 고른 해상도의 스트림을 마스터 플레이리스트에서 하나로 정하지 못했다 (#318)
-        return exc.message_key
-    if isinstance(exc, NetworkLostError):
-        # 받는 중인 작업자가 모두 연결 오류로 실패했고 한동안 아무것도 받지 못했다 (#329)
-        return exc.message_key
-    if isinstance(exc, TruncatedSegmentError):
-        # 다시 받아도 세그먼트가 계속 잘려 왔다 (#321)
-        return exc.message_key
-    if isinstance(exc, requests.HTTPError):
-        status = exc.response.status_code if exc.response is not None else None
-        if status in (401, 403):
-            return "Viewing permission required"
-        if status == 404:
-            return "Video not found"
-        return "Network connection error"
-    if isinstance(exc, requests.RequestException):
-        return "Network connection error"
-    if isinstance(exc, DiskSpaceError):
-        # 여유 공간이 만들 파일 · 받을 양보다 적었다 (#309) — 구간이 있는지에 따라 키가 다르다
-        return exc.message_key
-    if isinstance(exc, OSError):
-        return "Failed to save file"
-    return None
-
-
 class DownloadViewModel(QObject):
     """다운로드 한 건의 수명 주기를 소유하고 core 콜백을 content 반영 호출로 잇는 viewmodel.
 
@@ -178,9 +114,13 @@ class DownloadViewModel(QObject):
     # ⚠️ 이 둘을 직접 호출로 바꾸면 참조 정리·content 통지가 워커 스레드에서
     # 일어난다 — 스레드 축 게이트가 잡는다
     # 셋 다 시도 번호(start()마다 하나씩 오른다)를 싣는다 — 지금 시도의 것만 카드에 닿는다 (#410)
-    _engineProgress = Signal(int, str, str, str, int, object)
-    _engineFinished = Signal(int)
-    _engineFailed = Signal(int, object)
+    # 진행 · 실패는 엔진이 실은 값 묶음(DownloadCounters)을, 실패는 안내 키(str | None)를 싣는다 (#484)
+    _engineProgress = Signal(int, str, str, str, int, object, object)
+    _engineFinished = Signal(int, object)
+    _engineFailed = Signal(int, object, object)
+    # 내부 전용: 병합 시작 · 상태 전이 — 아이템은 메인 스레드에서만 적는다 (#484)
+    _engineMerge = Signal(int)
+    _engineState = Signal(int, object, object)
     # 내부 전용: 받을 구간이 하나도 없는 카드 — 엔진에 넘기지 않고 실패로 끝낸다. 큐로 돌려
     # start()가 돌아간 뒤에 끝낸다(끝내는 통지가 다음 카드의 start()를 부른다)
     _nothingToReceive = Signal(object)
@@ -200,8 +140,11 @@ class DownloadViewModel(QObject):
         self.handle = None
         self.task: DownloadTask | None = None
         self.item: ContentItem | None = None
-        # 실행 중인 다운로드의 엔진 공유 데이터 — 구간 상태(완료 · 실패 수)를 여기서 읽는다
+        # 실행 중인 다운로드의 엔진 공유 데이터 — 제출할 content를 들고, 이어받기 기록을 받는다.
+        # 카운터는 여기서 읽지 않는다 (#484)
         self._data: DownloadData | None = None
+        # 지금 시도의 마지막 값 묶음 — 엔진이 진행 · 실패 통지에 실어 보낸 카운터 (#484)
+        self._counters: DownloadCounters | None = None
         # 실행 중인 다운로드가 무엇을 받아 어디에 쓰는지를 가리키는 값 — 일부 구간 실패로 끝나면
         # 남긴 것과 함께 아이템에 적어, 다음 다운로드가 같은 값일 때만 이어받게 한다
         self._resume_key: tuple | None = None
@@ -214,6 +157,9 @@ class DownloadViewModel(QObject):
         # 다르면(중지한 뒤 다시 시작해 앞 시도의 엔진이 아직 돈다) 버린다 (#410)
         self._attempt = 0
         self._content = content
+        # 이 뷰모델이 사는 스레드(메인)의 id — 상태 콜백이 어느 스레드에서 불렸는지 가린다 (#484).
+        # 워커 스레드에서 Qt API(QThread.currentThread)를 부르지 않으려고 파이썬 스레드 id로 견준다
+        self._home_thread = threading.get_ident()
         # 준비가 길어지면 카드에 "준비 중"을 켜는 타이머 — 엔진의 첫 진행 통지가 끈다
         self._prepareTimer = QTimer(self)
         self._prepareTimer.setSingleShot(True)
@@ -226,6 +172,8 @@ class DownloadViewModel(QObject):
         self._engineProgress.connect(self._onEngineProgress)
         self._engineFinished.connect(self._onEngineFinished)
         self._engineFailed.connect(self._onEngineFailed)
+        self._engineMerge.connect(self._onEngineMerge)
+        self._engineState.connect(self._onEngineState)
         self._nothingToReceive.connect(self._onNothingToReceive, Qt.ConnectionType.QueuedConnection)
         # 구 mainWindow.setupThreadSignals의 다운로드 릴레이 6개 — 위임 없이 직결.
         # 워커 스레드에서 emit되는 progress도 이 연결이 큐로 메인 스레드에 배달한다
@@ -310,6 +258,7 @@ class DownloadViewModel(QObject):
             else:
                 data.content.mp4_head = moov
         self._data = data
+        self._counters = None
         item.transfer_bytes = None
         item.output_bytes = None
         item.preparing = False
@@ -323,20 +272,23 @@ class DownloadViewModel(QObject):
         self._prepareTimer.start()
         log_process_memory("다운로드 시작")
         task_logger = DownloadLogger()
-        # DownloadTask가 상태 전이 흡수와 모델↔카드(item) 상태 연결을 담당한다
-        self.task = DownloadTask(data, item, task_logger)
-        self.task.start()
-
+        # 시도 번호는 상태 연결보다 먼저 올린다 — 워커에서 온 상태 전이도 시도 번호를 싣는다 (#484)
         self._attempt += 1
         attempt = self._attempt
+        # DownloadTask가 상태 전이 흡수와 모델↔카드(item) 상태 연결을 담당한다. 카드 상태는
+        # 메인 스레드에서만 적는다 — 워커에서 일어난 전이(시작 · 완료)는 Signal로 넘긴다 (#484)
+        self.task = DownloadTask(
+            data, item, task_logger, on_state_change=self._make_state_relay(item, attempt)
+        )
+        self.task.start()
         self.handle = self._service.submit(
             data.content,
             data=data,
             task_logger=task_logger,
             on_progress=self._make_progress_relay(data, item, attempt),
-            on_finished=partial(self._engineFinished.emit, attempt),
-            on_failed=partial(self._relay_failed, attempt),
-            on_merge_start=partial(self._relay_merge_start, attempt),
+            on_finished_counters=partial(self._engineFinished.emit, attempt),
+            on_failed_key=partial(self._relay_failed, attempt),
+            on_merge_start=partial(self._engineMerge.emit, attempt),
         )
         self._beginWork()
 
@@ -448,12 +400,12 @@ class DownloadViewModel(QObject):
         못했을 때만 엔진의 값을 대신 쓴다.
         """
         self._endPreparing()
-        item, data = self.item, self._data
-        if item is None or data is None or item.is_segment_based or not data.total_size:
+        item, counters = self.item, self._counters
+        if item is None or counters is None or item.is_segment_based or not counters.total_size:
             return
-        item.transfer_bytes = data.total_size
-        if data.sections_total and not item.section_bytes:
-            item.section_bytes = data.total_size
+        item.transfer_bytes = counters.total_size
+        if counters.sections_total and not item.section_bytes:
+            item.section_bytes = counters.total_size
 
     def removeThreads(self) -> None:
         """실행 중인 워커의 종료를 상한을 두고 기다린 뒤 참조를 정리한다 (구 removeThreads).
@@ -482,65 +434,122 @@ class DownloadViewModel(QObject):
     def _make_progress_relay(self, data: DownloadData, item: ContentItem, attempt: int):
         """ProgressEvent를 기존 progress Signal 인자로 변환해 emit하는 콜백을 만든다.
 
-        데이터·아이템을 클로저로 캡처해 제출 직후 첫 콜백과의 레이스를 없앤다.
         엔진 관측 스레드에서 호출되므로 계산과 Signal emit까지만 수행한다. 시도 번호를 실어
         내부 Signal로 넘기고, 메인 스레드에서 지금 시도의 것일 때만 progress로 내보낸다 (#410).
+
+        카운터는 통지의 값 묶음에서만 읽는다 — 엔진 공유 데이터도 아이템도 이 스레드에서 읽지
+        않는다(#484). 아이템에서 쓰는 값(세그먼트 기반인지 · 종류)은 바뀌지 않는 값이라 여기
+        (메인 스레드)서 미리 떠 두고, 병합 단계는 값 묶음의 것을 쓴다.
         """
-        is_segment_based = item.is_segment_based
-        sections = _SectionProgress(_cut_seconds(data.content), lambda: data.model.paused_seconds)
+        is_segment_based, content_type = item.is_segment_based, item.content_type
+        # 이 스레드가 막 받은 통지의 일시정지 누적 — 막대가 그 통지를 셀 때 읽는다. 관측 스레드와 컷
+        # 스레드가 함께 부르므로 스레드마다 따로 둔다(한 통지가 다른 통지의 값을 읽지 않게)
+        snapshot = threading.local()
+        sections = _SectionProgress(
+            _cut_seconds(data.content), lambda: getattr(snapshot, "paused", 0.0)
+        )
         shown = _ShownSize()
 
         def relay(event: ProgressEvent) -> None:
-            if data.sections_total:
-                args = _section_progress_args(event, data, item, sections)
+            counters = event.counters or DownloadCounters()
+            snapshot.paused = counters.paused_seconds
+            stage = SimpleNamespace(
+                is_segment_based=is_segment_based,
+                content_type=content_type,
+                post_process=counters.merging,
+            )
+            if counters.sections_total:
+                args = _section_progress_args(event, counters, stage, sections)
             elif is_segment_based:
-                args = _segment_progress_args(event, data, item)
+                args = _segment_progress_args(event, counters, stage)
             else:
                 args = _file_progress_args(event)
             remaining, _size, speed, progress = args
             self._engineProgress.emit(
-                attempt, remaining, shown.update(event.downloaded_size), speed, progress, item
+                attempt,
+                remaining,
+                shown.update(event.downloaded_size),
+                speed,
+                progress,
+                item,
+                counters,
             )
 
         return relay
 
-    def _relay_failed(self, attempt: int, exc: BaseException) -> None:
-        """엔진 실패 콜백 — 병합 표시 해제 후 내부 Signal로 메인 스레드에 넘긴다.
+    def _make_state_relay(self, item: ContentItem, attempt: int):
+        """상태 기계의 전이를 카드 상태로 옮기는 콜백을 만든다 (#484).
 
-        앞 시도의 실패면 카드의 병합 표시를 건드리지 않는다 — 카드는 지금 시도의 것이다 (#410).
+        메인 스레드에서 일어난 전이(시작 · 일시정지 · 재개 · 중지)는 바로 적는다. 워커 스레드에서
+        일어난 전이(서비스의 시작 · 완료, 실패한 엔진이 스스로 대기로 돌아감)는 내부 Signal로 메인
+        스레드에 넘겨 거기서 적는다(_onEngineState — 그 시도의 작업이 아직 살아 있을 때만).
         """
-        if attempt == self._attempt and self.item is not None:
-            self.item.post_process = False
-        self._engineFailed.emit(attempt, exc)
 
-    def _relay_merge_start(self, attempt: int) -> None:
-        """엔진 병합 시작 콜백 — UI 병합 단계 플래그 (구 post_process = True). 앞 시도의 것은 버린다."""
-        if attempt == self._attempt and self.item is not None:
-            self.item.post_process = True
+        def relay(state: DownloadState) -> None:
+            if threading.get_ident() == self._home_thread:
+                item.setDownloadState(state)
+            else:
+                self._engineState.emit(attempt, item, state)
+
+        return relay
+
+    def _relay_failed(
+        self, attempt: int, key: str | None, counters: DownloadCounters | None = None
+    ) -> None:
+        """엔진 실패(키) 콜백 — 안내 키와 실패 때의 값 묶음을 내부 Signal로 메인 스레드에 넘긴다.
+
+        카드의 병합 표시는 메인 스레드 슬롯(_onEngineFailed)이 끈다 (#484).
+        """
+        self._engineFailed.emit(attempt, key, counters)
 
     # ============ 메인 스레드 후처리 슬롯 ============
 
     def _onEngineProgress(self, attempt: int, *args) -> None:
-        """엔진의 진행 통지를 지금 시도의 것일 때만 progress로 내보낸다 (#410). 메인 스레드에서 돈다."""
+        """엔진의 진행 통지를 지금 시도의 것일 때만 progress로 내보낸다 (#410). 메인 스레드에서 돈다.
+
+        통지가 실은 값 묶음을 먼저 받아 둔다 — progress에 이어진 슬롯(구간 상태 · 준비 끝)이 읽는다.
+        """
         if attempt == self._attempt:
-            self.progress.emit(*args)
+            *shown, counters = args
+            self._counters = counters
+            self.progress.emit(*shown)
+
+    def _onEngineMerge(self, attempt: int) -> None:
+        """병합 시작 — 카드의 병합 표시를 켠다(구 post_process = True). 앞 시도의 것은 버린다.
+
+        메인 스레드에서 돈다 (#484). 같은 시도의 실패가 뒤에 오면 그 슬롯이 다시 끈다.
+        """
+        if attempt == self._attempt and self.item is not None:
+            self.item.post_process = True
+
+    def _onEngineState(self, attempt: int, item: ContentItem, state: DownloadState) -> None:
+        """워커 스레드에서 일어난 상태 전이를 카드에 적는다 (#484). 메인 스레드에서 돈다.
+
+        지금 시도의 작업이 살아 있을 때만 적는다. 실패한 엔진은 스스로 대기로 돌아가는데, 그
+        전이가 실패 처리(카드를 실패로 적음) 뒤에 닿으면 실패 표시를 덮는다 — 워커가 바로 적던
+        때는 실패 처리가 늘 나중이었다. 앞 시도의 전이도 지금 카드에 닿지 않는다 (#410).
+        """
+        if attempt == self._attempt and self.task is not None:
+            item.setDownloadState(state)
 
     def _syncSections(self, *_args) -> None:
         """엔진의 구간 상태(완료 · 실패한 구간 수)를 아이템에 옮긴다 (#309). 메인 스레드에서 돈다.
 
         수는 통지가 몇 번 왔는지로 세지 않는다 — 같은 진행 통지가 두 번 올 수 있다(서비스는
-        완료 뒤에 진행을 한 번 더 알린다). 엔진이 공유 데이터에 적어 둔 값을 그대로 읽는다.
+        완료 뒤에 진행을 한 번 더 알린다). 엔진이 마지막 통지에 실어 보낸 값 묶음을
+        그대로 읽는다 (#484).
         """
-        if self.item is None or self._data is None or not self._data.sections_total:
+        counters = self._counters
+        if self.item is None or counters is None or not counters.sections_total:
             return
-        self.item.sections_done = self._data.sections_done
-        self.item.cut_preparing = bool(getattr(self._data, "cut_preparing", False))
+        self.item.sections_done = counters.sections_done
+        self.item.cut_preparing = counters.cut_preparing
         # 엔진이 컷을 마치며 센, 만든 구간 파일 크기의 합 — 완료 카드가 크기로 적는다
-        self.item.output_bytes = self._data.sections_output_size
+        self.item.output_bytes = counters.sections_output_size
         # 엔진에 넘기지 않고 뺀 구간도 받지 못한 구간이다
-        self.item.sections_failed = self._data.sections_failed + self._excluded
+        self.item.sections_failed = counters.sections_failed + self._excluded
 
-    def _onEngineFinished(self, attempt: int) -> None:
+    def _onEngineFinished(self, attempt: int, counters: DownloadCounters | None = None) -> None:
         """정상 완료 후처리 (구 DownloadManager.finish의 잔여분).
 
         완료 전이·최종 진행 통지는 서비스가 이미 수행했다. 여기서는 소요 시간
@@ -553,8 +562,10 @@ class DownloadViewModel(QObject):
             # 완료 직후 사용자가 중지·정리를 마친 경우 (구 finish의 task None 가드와 동일)
             return
         item = self.item
+        if counters is not None:
+            self._counters = counters  # 완료하던 때의 값 묶음 (#484)
         self._syncSections()
-        saved = getattr(self._data, "output_size", None)
+        saved = self._counters.output_size if self._counters is not None else None
         if saved is not None:
             # 저장된 파일의 크기 — 엔진이 완료를 알리기 직전에 읽었다. 완료 카드가 크기로 적는다
             item.output_bytes = saved
@@ -594,7 +605,9 @@ class DownloadViewModel(QObject):
             "Edit the sections or pick another resolution."
         )
 
-    def _onEngineFailed(self, attempt: int, exc: BaseException) -> None:
+    def _onEngineFailed(
+        self, attempt: int, key: str | None, counters: DownloadCounters | None
+    ) -> None:
         """실패 후처리 (#134) — 엔진 종료 신호 후 참조를 정리하고 failed Signal로 사유를 알린다.
 
         이전에는 exc를 읽지 않고 버려서 실패가 유저의 정지와 구분되지 않았다
@@ -613,14 +626,22 @@ class DownloadViewModel(QObject):
         기다리면 UI가 얼어붙는다. 엔진 스레드는 stop 신호로 스스로 끝난다
         (v2.9.0·main도 실패 시 기다리지 않았다).
 
-        앞 시도의 실패는 버린다 — 지금 시도를 실패로 끝내 버린다 (#410).
+        앞 시도의 실패는 버린다 — 지금 시도를 실패로 끝내 버린다 (#410). 앞 시도의 실패면 카드의
+        병합 표시도 건드리지 않는다 — 카드는 지금 시도의 것이다.
+
+        사유는 엔진 쪽이 고른 안내 키로, 구간 수는 실패 때의 값 묶음으로 받는다 (#484).
         """
+        if attempt == self._attempt and self.item is not None:
+            # 병합 표시는 실패면 끈다 — 같은 시도의 병합 시작보다 뒤에 와 그것을 덮는다 (#484)
+            self.item.post_process = False
         if attempt != self._attempt:
             return
         if self.handle is None:
             # 실패 도착 전에 사용자가 중지·정리를 마친 경우 (완료 경로의 가드와 동일)
             return
         item = self.item
+        if counters is not None:
+            self._counters = counters
         self._syncSections()  # 일부 구간만 실패했을 때 카드가 완료 · 실패 수를 보인다
         resume = self._data.section_resume if self._data is not None else None
         if resume is not None:
@@ -638,10 +659,13 @@ class DownloadViewModel(QObject):
         self.handle = None
         self.task = None
         self._endWork()
-        self.failed.emit(item, self._failure_message(exc))
+        self.failed.emit(item, self._failure_message(key))
 
-    def _failure_message(self, exc: BaseException) -> str:
+    def _failure_message(self, failure: str | BaseException | None) -> str:
         """실패 사유를 유저 표시용 번역 문자열로 바꾼다. 매핑에 없으면 빈 문자열.
+
+        실패 통지는 엔진 쪽이 고른 안내 키(str | None)로 온다 (#484). 예외를 받으면 core의
+        판정(``failure_message_key``)으로 키를 고른다 — 예외에서 번역까지를 한 번에 재는 입구다.
 
         lupdate가 `-no-obsolete`로 .ts를 재생성하므로 반드시 리터럴로 tr()을
         호출해 추출 대상을 유지한다 (content_viewmodel.py의 _translate_key와 동일).
@@ -717,7 +741,11 @@ class DownloadViewModel(QObject):
                 "Try again later."
             ),
         }
-        key = _failure_message_key(exc)
+        key = (
+            failure
+            if failure is None or isinstance(failure, str)
+            else _failure_message_key(failure)
+        )
         return translated.get(key, "") if key is not None else ""
 
 
@@ -823,6 +851,27 @@ def _resume_for_edited_sections(item: ContentItem, resume: SectionResume, select
 
 
 # ============ 진행 이벤트 변환식 (구 MonitorThread / MonitorM3U8Thread) ============
+
+
+class _CountersView(Protocol):
+    """진행 변환이 읽는 카운터 — 통지의 값 묶음(DownloadCounters)이 이 꼴이다 (#484)."""
+
+    max_threads: int
+    completed_threads: int
+    merged_segments: int
+    reused_threads: int
+    sections_total: int
+    sections_done: int
+    sections_failed: int
+    sections_resumed: int
+
+
+class _StageView(Protocol):
+    """진행 변환이 읽는 아이템 쪽 값 — 세그먼트 기반인지 · 종류 · 병합 단계(값 묶음의 merging) (#484)."""
+
+    is_segment_based: bool
+    content_type: str
+    post_process: bool
 
 
 def _file_progress_args(event: ProgressEvent) -> tuple[str, str, str, int]:
@@ -942,7 +991,7 @@ class _SectionProgress:
 
 
 def _section_progress_args(
-    event: ProgressEvent, data: DownloadData, item: ContentItem, sections: _SectionProgress
+    event: ProgressEvent, counters: _CountersView, stage: _StageView, sections: _SectionProgress
 ) -> tuple[str, str, str, int]:
     """구간 다운로드의 진행 변환 — 전송과 컷을 하나의 막대로 합친다 (#309).
 
@@ -960,57 +1009,59 @@ def _section_progress_args(
     남은 시간 · 크기 · 속도는 전달 방식의 변환식 그대로다. 컷 단계에서는 카드가 그 값을
     쓰지 않고 단계 문구를 보인다.
     """
-    if item.is_segment_based:
-        remaining, size, speed, _percent = _segment_progress_args(event, data, item)
-        reused = getattr(data, "reused_threads", 0)
-        to_receive = data.max_threads - getattr(data, "reusable_threads", 0)
-        transfer = (data.completed_threads - reused) / to_receive if to_receive > 0 else 1.0
+    if stage.is_segment_based:
+        remaining, size, speed, _percent = _segment_progress_args(event, counters, stage)
+        reused = getattr(counters, "reused_threads", 0)
+        to_receive = counters.max_threads - getattr(counters, "reusable_threads", 0)
+        transfer = (counters.completed_threads - reused) / to_receive if to_receive > 0 else 1.0
     else:
         remaining, size, speed, _percent = _file_progress_args(event)
         total_size = event.total_size or 0
         transfer = event.downloaded_size / total_size if total_size > 0 else 1.0
     cut = 0.0
-    if item.post_process:
-        todo = data.sections_total - data.sections_resumed
-        handled = data.sections_done + data.sections_failed - data.sections_resumed
+    if stage.post_process:
+        todo = counters.sections_total - counters.sections_resumed
+        handled = counters.sections_done + counters.sections_failed - counters.sections_resumed
         cut = handled / todo if todo > 0 else 1.0
-        reported = getattr(data, "cut_progress", None)
+        reported = getattr(counters, "cut_progress", None)
         if reported is not None and handled < todo:
             # 구간 안에서도 오르는 값. 다 찼다고 적혀 있어도 끝나지 않은 구간이 있으면 1로
             # 보지 않는다 — 100은 마지막 구간의 일이 끝났을 때(위의 1.0)만이다
             cut = min(reported, 0.999)
     transfer = min(max(transfer, 0.0), 1.0)
-    progress = sections.percent(transfer, bool(item.post_process), cut, event.downloaded_size)
+    progress = sections.percent(transfer, bool(stage.post_process), cut, event.downloaded_size)
     return remaining, size, speed, progress
 
 
 def _segment_progress_args(
-    event: ProgressEvent, data: DownloadData, item: ContentItem
+    event: ProgressEvent, counters: _CountersView, stage: _StageView
 ) -> tuple[str, str, str, int]:
     """세그먼트 기반(m3u8·hls_aes) 진행 변환 — 구 MonitorM3U8Thread.update_progress와 동일.
 
     전체 크기를 미리 알 수 없어 진행률은 세그먼트 수 기반이다. 병합 단계
-    (item.post_process)에서는 병합된 세그먼트 수, 그 전에는 완료된 세그먼트 수를
+    (stage.post_process)에서는 병합된 세그먼트 수, 그 전에는 완료된 세그먼트 수를
     쓰고, 남은 시간은 평균 세그먼트 크기로 추정한다.
 
     병합 분모는 m3u8이 초기화 세그먼트(EXT-X-MAP) 1개를 더 병합하므로 +1이고,
     hls_aes(TS)는 초기화 세그먼트가 없어 세그먼트 수 그대로다 (#57).
     """
     speed_mb = event.speed or 0.0
-    merge_total = data.max_threads + (1 if item.content_type == "m3u8" else 0)
+    merge_total = counters.max_threads + (1 if stage.content_type == "m3u8" else 0)
 
-    if item.post_process:
-        progress = int((data.merged_segments / merge_total) * 100) if merge_total > 0 else 0
+    if stage.post_process:
+        progress = int((counters.merged_segments / merge_total) * 100) if merge_total > 0 else 0
     else:
         progress = (
-            int((data.completed_threads / data.max_threads) * 100) if data.max_threads > 0 else 0
+            int((counters.completed_threads / counters.max_threads) * 100)
+            if counters.max_threads > 0
+            else 0
         )
 
     # 받은 크기에는 받아 두었던 세그먼트가 들어 있지 않다 — 평균도 받은 것만으로 낸다 (#376)
-    received_segments = data.completed_threads - data.reused_threads
+    received_segments = counters.completed_threads - counters.reused_threads
     if speed_mb > 0 and received_segments > 0:
         avg_segment_size = event.downloaded_size / received_segments
-        remaining_segments = data.max_threads - data.completed_threads
+        remaining_segments = counters.max_threads - counters.completed_threads
         remaining_time = (avg_segment_size * remaining_segments) / (speed_mb * 1024 * 1024)
         remaining_time_str = strftime("%H:%M:%S", gmtime(remaining_time))
     else:

@@ -45,6 +45,7 @@ from core.sections.mp4_ranges import sections_download_size, sections_file_size
 from core.sections.mp4_sizes import moov_sections_file_size
 from core.utils.paths import release_output_paths
 from core.utils.stop import StopRequested, check_stop, stop_requested, stoppable
+from tests.mocks.engine_side import engine_side
 from tests.app.gui.section_input import enter_time
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, shown, snapshot_top_levels
 from tests.support.mp4_builder import audio_spec, build_mp4, video_spec
@@ -742,7 +743,8 @@ class _Engine:
         self.submissions: list[dict] = []
 
     def submit(self, content, **kwargs):
-        self.submissions.append({"content": content, **kwargs})
+        # 엔진 흉내 — 콜백 입구는 서비스 핸들의 중계(값 묶음 · 키를 싣는다, #484)
+        self.submissions.append(engine_side(content, kwargs))
         return self
 
     def elapsed_seconds(self) -> float:

@@ -21,7 +21,9 @@ from tests.support.layers import CORE_DIR
 #: 패키지 → import해도 되는 다른 core 패키지. 패키지 셋이 고리를 이룬다(engine → models →
 #: media → engine — 계약 모델 · 색인 모델 · 요청 세션). 양방향 쌍은 아니라 그대로 적는다.
 ALLOWED: dict[str, frozenset[str]] = {
-    "services": frozenset({"sources", "models", "utils"}),
+    # services → engine · sections · chzzk: 실패 예외를 안내 키로 고르는 판정(failure_keys)이 그 예외들을
+    # 본다 (#484 — 키를 엔진 쪽에서 고른다)
+    "services": frozenset({"sources", "engine", "sections", "chzzk", "models", "utils"}),
     "sources": frozenset({"engine", "sections", "media", "models", "utils"}),
     "chzzk": frozenset({"media", "models"}),
     "sections": frozenset({"engine", "media", "models", "utils"}),

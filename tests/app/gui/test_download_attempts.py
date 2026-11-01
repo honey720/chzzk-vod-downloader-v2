@@ -99,12 +99,16 @@ def test_merge_start_of_the_earlier_attempt_does_not_mark_the_card(restarted):
 
     시작 → 중지 → 다시 시작. 앞 시도의 on_merge_start → 지금 시도의 on_merge_start
     -> 앞 시도 뒤: post_process 거짓, 지금 시도 뒤: 참
+
+    병합 표시는 메인 스레드에서 적는다(#484) — 통지마다 이벤트를 처리(pump)한 뒤에 읽는다.
     """
     wired, item, earlier, later = restarted
 
     _on_worker(earlier["on_merge_start"])
+    wired.pump()
     after_earlier = item.post_process
     _on_worker(later["on_merge_start"])
+    wired.pump()
 
     assert after_earlier is False
     assert item.post_process is True
