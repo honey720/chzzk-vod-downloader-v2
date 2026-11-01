@@ -36,7 +36,7 @@ from functools import partial
 from time import gmtime, strftime
 from types import SimpleNamespace
 
-from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 
 from app.system.platform_adapter import begin_background_work, end_background_work
 from app.system.process_memory import log_process_memory
@@ -156,6 +156,9 @@ class DownloadViewModel(QObject):
         # 다르면(중지한 뒤 다시 시작해 앞 시도의 엔진이 아직 돈다) 버린다 (#410)
         self._attempt = 0
         self._content = content
+        # 이 뷰모델이 사는 스레드(메인)의 id — 상태 콜백이 어느 스레드에서 불렸는지 가린다 (#484).
+        # 워커 스레드에서 Qt API(QThread.currentThread)를 부르지 않으려고 파이썬 스레드 id로 견준다
+        self._home_thread = threading.get_ident()
         # 준비가 길어지면 카드에 "준비 중"을 켜는 타이머 — 엔진의 첫 진행 통지가 끈다
         self._prepareTimer = QTimer(self)
         self._prepareTimer.setSingleShot(True)
@@ -478,7 +481,7 @@ class DownloadViewModel(QObject):
         """
 
         def relay(state: DownloadState) -> None:
-            if QThread.currentThread() is self.thread():
+            if threading.get_ident() == self._home_thread:
                 item.setDownloadState(state)
             else:
                 self._engineState.emit(attempt, item, state)
