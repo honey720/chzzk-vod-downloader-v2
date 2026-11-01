@@ -43,6 +43,7 @@ from core.models.section_resume import SectionResume
 from core.utils.ffmpeg import RemuxError
 from core.sections.hybrid import CUT_FAILED, CutError
 from core.utils.paths import release_output_paths
+from tests.mocks.engine_side import engine_side
 from tests.app.gui.card_helpers import hold_style
 
 MB = 1024 * 1024
@@ -135,7 +136,8 @@ class FakeService:
 
     def submit(self, content, **kwargs):
         """아무것도 돌리지 않고 받은 인자를 적어 둔 뒤 대역 핸들을 돌려준다."""
-        self.submissions.append({"content": content, **kwargs})
+        # 엔진 흉내 — 콜백 입구는 서비스 핸들의 중계(값 묶음 · 키를 싣는다, #484)
+        self.submissions.append(engine_side(content, kwargs))
         return FakeHandle(kwargs["data"])
 
 

@@ -19,6 +19,7 @@
 
 from core.models.content import Content, ContentType
 from core.models.download_task import DownloadTaskModel
+from core.models.events import DownloadCounters
 
 
 class DownloadData:
@@ -197,3 +198,30 @@ class DownloadData:
     @property
     def _pause_event(self):
         return self.model.pause_event
+
+    # ============ 진행 통지의 값 묶음 (#484) ============
+
+    def counters(self, merging: bool = False) -> DownloadCounters:
+        """지금 카운터를 값 묶음으로 뜬다 — 서비스 핸들이 진행 통지를 중계할 때 부른다.
+
+        Args:
+            merging: 후처리(병합 · 컷) 단계에 들어갔는지 — 병합 시작 통지를 받은 핸들이 안다
+        """
+        return DownloadCounters(
+            total_size=self.total_size,
+            max_threads=self.max_threads,
+            completed_threads=self.completed_threads,
+            merged_segments=self.merged_segments,
+            reused_threads=self.reused_threads,
+            reusable_threads=self.reusable_threads,
+            sections_total=self.sections_total,
+            sections_done=self.sections_done,
+            sections_failed=self.sections_failed,
+            sections_resumed=self.sections_resumed,
+            cut_progress=self.cut_progress,
+            cut_preparing=bool(self.cut_preparing),
+            sections_output_size=self.sections_output_size,
+            output_size=self.output_size,
+            paused_seconds=self.model.paused_seconds,
+            merging=merging,
+        )

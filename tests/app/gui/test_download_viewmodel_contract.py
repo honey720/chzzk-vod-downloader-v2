@@ -40,6 +40,7 @@ from core.models.download_state import DownloadState
 from core.models.events import ProgressEvent
 from core.utils.ffmpeg import FFmpegNotFoundError, RemuxError
 from app.download.logger import DownloadLogger
+from tests.mocks.engine_side import engine_side
 
 # ============ 대역 ============
 
@@ -112,7 +113,8 @@ class FakeService:
         """제출 시점 스냅샷을 먼저 뜨고, 인자를 보관한 뒤, 핸들 대역을 돌려준다."""
         self.state_at_submit = kwargs["data"].model.state
         self.log_calls_at_submit = len(self._log_calls)
-        self.submissions.append({"content": content, **kwargs})
+        # 엔진 흉내 — 콜백 입구는 서비스 핸들의 중계(값 묶음 · 키를 싣는다, #484)
+        self.submissions.append(engine_side(content, kwargs))
         handle = self._handle_factory(kwargs["data"])
         self.handles.append(handle)
         return handle
@@ -747,11 +749,10 @@ class TestThreadBoundary:
         assert wired.vm.isDownloading() is False
 
     def test_failed_from_worker_arrives_on_main_thread(self, wired):
-        """실패 통지 — 완료와 같은 후처리 경로. 단 병합 표시 해제만은 콜백에서 즉시 한다.
+        """실패 통지 — 완료와 같은 후처리 경로. 병합 표시 해제도 pump 뒤 메인 스레드에서 한다.
 
-        `post_process`는 위젯이 아니라 진행 변환용 데이터 플래그라 워커에서 바로
-        내려도 된다고 문서화돼 있다. 그래서 join 직후 이미 False이고, content
-        호출(fail)은 여전히 pump 뒤 메인 스레드다 — 둘을 같은 테스트에서 갈라 둔다.
+        #484 전에는 `post_process`를 워커에서 바로 내렸다(문서화된 예외). 이제 아이템은 메인
+        스레드에서만 적으므로 해제도 pump 뒤에 본다. content 호출(fail)도 pump 뒤 메인 스레드다.
         """
         item = _make_item("m3u8")
         wired.start(item)
@@ -760,21 +761,24 @@ class TestThreadBoundary:
         worker_ident = _call_on_worker(wired.submission["on_failed"], RuntimeError("boom"))
 
         assert worker_ident != MAIN_THREAD
-        # 병합 표시 해제(데이터 플래그)는 콜백에서 바로 — 문서화된 유일한 예외
-        assert item.post_process is False
         assert wired.content.calls == []
         assert wired.vm.isDownloading() is True
         wired.pump()
+        # 병합 표시 해제는 메인 스레드 슬롯에서 (#484)
+        assert item.post_process is False
         assert wired.content.calls == [("fail", (item, ""), MAIN_THREAD, DownloadState.WAITING)]
         assert wired.vm.isDownloading() is False
 
-    def test_merge_start_from_worker_sets_flag_synchronously(self, wired):
-        """병합 시작은 위젯이 아니라 데이터 플래그만 만지므로 워커 스레드에서 즉시 기록된다 — content 호출은 없다."""
+    def test_merge_start_from_worker_sets_flag_on_main_thread(self, wired):
+        """병합 시작은 pump 뒤 메인 스레드에서 병합 표시를 켠다 — content 호출은 없다.
+
+        #484 전에는 워커 스레드에서 즉시 기록했다. 이제 아이템은 메인 스레드에서만 적는다.
+        """
         item = _make_item("m3u8")
         wired.start(item)
 
         _call_on_worker(wired.submission["on_merge_start"])
 
-        assert item.post_process is True
         wired.pump()
+        assert item.post_process is True
         assert wired.content.calls == []

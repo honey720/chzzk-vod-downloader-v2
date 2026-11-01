@@ -7,6 +7,7 @@ core의 DownloadTaskModel에 위임한다. Qt 계층과의 연결(ContentItem �
 """
 
 import threading
+from collections.abc import Callable
 
 from app.viewmodels.data import ContentItem
 from core.models.download_state import DownloadState
@@ -18,7 +19,20 @@ from app.download.logger import DownloadLogger
 class DownloadTask:
     """core 상태 머신을 감싸 기존 다운로드 엔진과 UI 계층을 연결하는 어댑터."""
 
-    def __init__(self, data: DownloadData, item: ContentItem, logger: DownloadLogger):
+    def __init__(
+        self,
+        data: DownloadData,
+        item: ContentItem,
+        logger: DownloadLogger,
+        on_state_change: Callable[[DownloadState], None] | None = None,
+    ):
+        """어댑터를 만든다.
+
+        Args:
+            on_state_change: 상태 전이를 카드에 옮길 콜백. 주지 않으면 전이한 스레드에서 바로
+                ``item.setDownloadState``를 부른다. 뷰모델은 워커 스레드의 전이를 메인 스레드로
+                넘기는 콜백을 준다 (#484)
+        """
         self.data = data
         self.item = item
         self.logger = logger
@@ -28,7 +42,7 @@ class DownloadTask:
         # 상태·진행률의 소유처는 DownloadData가 가진 core 모델 하나다 (#61).
         # 별도 모델을 만들지 않고 같은 모델에 UI 반영 콜백만 연결한다
         self.model = data.model
-        self.model.set_on_state_change(item.setDownloadState)
+        self.model.set_on_state_change(on_state_change or item.setDownloadState)
         # core 다운로드 엔진(FileDownloader) 공유 슬롯 (#73).
         # DownloadThread 어댑터가 생성 시 채우고, MonitorThread 어댑터가
         # 진행 콜백을 연결할 때 읽는다 (manager의 생성 순서가 이를 보장한다)

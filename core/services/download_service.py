@@ -27,6 +27,7 @@ logger 매개변수: DownloadLogger 호환 객체를 건별로 주입받는다(�
 앱 설정에 묶여 있어 core가 직접 만들지 않는다). 생략하면 무동작 로거를 쓴다.
 """
 
+import dataclasses
 import logging
 import threading
 import weakref
@@ -40,7 +41,15 @@ from core.models.content import Content
 from core.models.download_data import DownloadData
 from core.models.download_state import DownloadState
 from core.models.download_task import InvalidStateTransitionError
-from core.models.events import FailedCallback, FinishedCallback, ProgressCallback
+from core.models.events import (
+    FailedCallback,
+    FailedKeyCallback,
+    FinishedCallback,
+    FinishedCountersCallback,
+    ProgressCallback,
+    ProgressEvent,
+)
+from core.services.failure_keys import failure_message_key
 from core.utils.interaction import resting_while
 from core.utils.stop import stoppable
 
@@ -66,9 +75,13 @@ class _NullDownloadLogger:
 class DownloadHandle:
     """제출된 다운로드 한 건의 제어·조회 핸들.
 
-    콜백(on_progress/on_finished/on_failed/on_merge_start)은 속성으로 보관하며
+    콜백(on_progress/on_finished/on_finished_counters/on_failed/on_failed_key/on_merge_start)은
+    속성으로 보관하며
     호출 시점에 읽는다 — 제출 후 교체도 반영된다. 콜백은 워커 스레드에서
     호출된다(스레드 규칙은 core/models/events.py 참고).
+
+    진행 · 완료 통지에는 엔진 카운터의 값 묶음을, 실패 통지에는 예외에서 고른 안내 키를 이 핸들이
+    붙인다(#484) — 받는 쪽(화면)이 엔진 공유 데이터와 예외 객체를 직접 만지지 않게 한다.
 
     상태 전이 메서드(pause/resume/stop)는 core 규칙대로 엄격하다 — 허용되지
     않는 전이는 InvalidStateTransitionError를 던진다. UI 타이밍 레이스 흡수는
@@ -84,6 +97,8 @@ class DownloadHandle:
         on_finished: FinishedCallback | None = None,
         on_failed: FailedCallback | None = None,
         on_merge_start: Callable[[], None] | None = None,
+        on_failed_key: FailedKeyCallback | None = None,
+        on_finished_counters: FinishedCountersCallback | None = None,
     ):
         self.content = content
         self.data = data
@@ -95,6 +110,10 @@ class DownloadHandle:
         self.on_finished = on_finished
         self.on_failed = on_failed
         self.on_merge_start = on_merge_start
+        self.on_failed_key = on_failed_key
+        self.on_finished_counters = on_finished_counters
+        # 병합 시작 통지를 받았는지 — 진행 통지의 값 묶음에 싣는다 (#484)
+        self._merging = False
         self._cancelled = False
         self._done = threading.Event()
 
@@ -131,25 +150,46 @@ class DownloadHandle:
     # ============ 엔진 콜백 중계 (워커 스레드에서 호출) ============
 
     def _relay_progress(self, event) -> None:
-        """엔진 진행 콜백 → 핸들에 등록된 진행 콜백 (미등록 시 무시)."""
+        """엔진 진행 콜백 → 핸들에 등록된 진행 콜백 (미등록 시 무시).
+
+        통지하는 이 순간의 엔진 카운터를 값 묶음으로 떠 싣는다 (#484).
+        """
         cb = self.on_progress
         if cb is not None:
+            if isinstance(event, ProgressEvent):
+                event = dataclasses.replace(
+                    event, counters=self.data.counters(merging=self._merging)
+                )
             cb(event)
 
     def _relay_finished(self) -> None:
-        """완료 통지 → 핸들에 등록된 완료 콜백 (미등록 시 무시)."""
+        """완료 통지 → 핸들에 등록된 완료 콜백 (미등록 시 무시).
+
+        값 묶음 콜백이 있으면 완료하던 때의 값 묶음도 넘긴다 (#484) — 완료 콜백 다음에 부른다.
+        """
         cb = self.on_finished
         if cb is not None:
             cb()
+        counters_cb = self.on_finished_counters
+        if counters_cb is not None:
+            counters_cb(self.data.counters(merging=self._merging))
 
     def _relay_failed(self, exc: BaseException) -> None:
-        """엔진 실패 콜백 → 핸들에 등록된 실패 콜백. 예외 객체를 그대로 전달한다."""
+        """엔진 실패 콜백 → 핸들에 등록된 실패 콜백. 예외 객체를 그대로 전달한다.
+
+        키 콜백이 있으면 예외에서 고른 안내 키와 지금 카운터의 값 묶음도 넘긴다 (#484) — 예외 콜백
+        다음에 부른다.
+        """
         cb = self.on_failed
         if cb is not None:
             cb(exc)
+        key_cb = self.on_failed_key
+        if key_cb is not None:
+            key_cb(failure_message_key(exc), self.data.counters(merging=self._merging))
 
     def _relay_merge_start(self) -> None:
         """엔진 병합 시작 콜백 → 핸들에 등록된 병합 시작 콜백 (m3u8 전용)."""
+        self._merging = True  # 다음 진행 통지부터 값 묶음에 싣는다 (#484)
         cb = self.on_merge_start
         if cb is not None:
             cb()
@@ -200,6 +240,8 @@ class DownloadService:
         on_finished: FinishedCallback | None = None,
         on_failed: FailedCallback | None = None,
         on_merge_start: Callable[[], None] | None = None,
+        on_failed_key: FailedKeyCallback | None = None,
+        on_finished_counters: FinishedCountersCallback | None = None,
     ) -> DownloadHandle:
         """다운로드를 제출한다. 빈 슬롯이 있으면 즉시, 없으면 큐 대기 후 시작된다.
 
@@ -213,6 +255,8 @@ class DownloadService:
             on_finished: 완료 콜백 (인자 없음)
             on_failed: 실패 콜백 (예외 객체 그대로)
             on_merge_start: m3u8 병합 시작 콜백
+            on_failed_key: 실패의 안내 키를 받을 콜백 (#484) — 예외 콜백과 함께 쓸 수 있다
+            on_finished_counters: 완료하던 때의 값 묶음을 받을 콜백 (#484) — 완료 콜백과 함께
 
         Raises:
             ValueError: 지원하는 다운로더가 없는 컨텐츠이거나 data가 content와 불일치
@@ -235,6 +279,8 @@ class DownloadService:
             on_finished=on_finished,
             on_failed=on_failed,
             on_merge_start=on_merge_start,
+            on_failed_key=on_failed_key,
+            on_finished_counters=on_finished_counters,
         )
         handle.engine_cls = engine_cls
         with self._lock:

@@ -12,6 +12,7 @@ from app.download.logger import DownloadLogger
 from app.viewmodels.data import ContentItem
 from app.viewmodels.download_viewmodel import DownloadViewModel
 from core.models.events import ProgressEvent
+from tests.mocks.engine_side import engine_side
 
 
 class Content(QObject):
@@ -57,7 +58,8 @@ class Service:
         self.on_progress = None
 
     def submit(self, content, **kwargs):
-        self.on_progress = kwargs["on_progress"]
+        # 엔진 흉내 — 콜백 입구는 서비스 핸들의 중계(값 묶음 · 키를 싣는다, #484)
+        self.on_progress = engine_side(content, kwargs)["on_progress"]
         return Handle(kwargs["data"])
 
     def abandon(self, handle):
