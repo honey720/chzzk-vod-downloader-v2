@@ -145,3 +145,46 @@ def test_late_worker_state_does_not_overwrite_the_failed_card(wired):
     wired.pump()
 
     assert item.downloadState is DownloadState.FAILED
+
+
+def test_each_progress_counts_the_bar_with_its_own_paused_time(wired, monkeypatch):
+    """두 스레드의 진행 통지가 겹쳐도 막대는 각 통지의 일시정지 누적으로 세어야 한다.
+
+    구간 3개 m3u8. 스레드 A가 일시정지 누적 5초인 통지를 내고 막대를 세기 직전에 멈춤 → 스레드 B가
+    누적 9초인 통지를 끝까지 냄 → A가 이어서 막대를 셈
+    -> A가 막대에서 읽은 일시정지 누적 == 5
+    """
+    from app.viewmodels import download_viewmodel
+
+    item = _make_item("m3u8")
+    wired.start(item)
+    data = wired.submission["data"]
+    data.sections_total = 3
+    read: dict[str, float] = {}
+    a_waits, b_done = threading.Event(), threading.Event()
+    original = download_viewmodel._SectionProgress.percent
+
+    def percent(self, *args, **kwargs):
+        if threading.current_thread().name == "A":
+            a_waits.set()
+            assert b_done.wait(5)  # B의 통지가 끝난 뒤에 센다
+        read[threading.current_thread().name] = self._paused_seconds()
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(download_viewmodel._SectionProgress, "percent", percent)
+
+    def notify(paused: float) -> None:
+        monkeypatch.setattr(type(data.model), "paused_seconds", property(lambda _m: paused))
+        wired.submission["on_progress"](ProgressEvent(downloaded_size=10))
+
+    a = threading.Thread(target=notify, args=(5.0,), name="A")
+    a.start()
+    assert a_waits.wait(5)
+    b = threading.Thread(target=notify, args=(9.0,), name="B")
+    b.start()
+    b.join()
+    b_done.set()
+    a.join()
+    wired.pump()
+
+    assert read == {"A": 5.0, "B": 9.0}

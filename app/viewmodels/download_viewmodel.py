@@ -35,6 +35,7 @@ from collections.abc import Callable
 from functools import partial
 from time import gmtime, strftime
 from types import SimpleNamespace
+from typing import Protocol
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
 
@@ -441,13 +442,17 @@ class DownloadViewModel(QObject):
         (메인 스레드)서 미리 떠 두고, 병합 단계는 값 묶음의 것을 쓴다.
         """
         is_segment_based, content_type = item.is_segment_based, item.content_type
-        latest = {"paused": 0.0}  # 마지막 값 묶음의 일시정지 누적 — 막대가 통지마다 읽는다
-        sections = _SectionProgress(_cut_seconds(data.content), lambda: latest["paused"])
+        # 이 스레드가 막 받은 통지의 일시정지 누적 — 막대가 그 통지를 셀 때 읽는다. 관측 스레드와 컷
+        # 스레드가 함께 부르므로 스레드마다 따로 둔다(한 통지가 다른 통지의 값을 읽지 않게)
+        snapshot = threading.local()
+        sections = _SectionProgress(
+            _cut_seconds(data.content), lambda: getattr(snapshot, "paused", 0.0)
+        )
         shown = _ShownSize()
 
         def relay(event: ProgressEvent) -> None:
             counters = event.counters or DownloadCounters()
-            latest["paused"] = counters.paused_seconds
+            snapshot.paused = counters.paused_seconds
             stage = SimpleNamespace(
                 is_segment_based=is_segment_based,
                 content_type=content_type,
@@ -848,6 +853,27 @@ def _resume_for_edited_sections(item: ContentItem, resume: SectionResume, select
 # ============ 진행 이벤트 변환식 (구 MonitorThread / MonitorM3U8Thread) ============
 
 
+class _CountersView(Protocol):
+    """진행 변환이 읽는 카운터 — 통지의 값 묶음(DownloadCounters)이 이 꼴이다 (#484)."""
+
+    max_threads: int
+    completed_threads: int
+    merged_segments: int
+    reused_threads: int
+    sections_total: int
+    sections_done: int
+    sections_failed: int
+    sections_resumed: int
+
+
+class _StageView(Protocol):
+    """진행 변환이 읽는 아이템 쪽 값 — 세그먼트 기반인지 · 종류 · 병합 단계(값 묶음의 merging) (#484)."""
+
+    is_segment_based: bool
+    content_type: str
+    post_process: bool
+
+
 def _file_progress_args(event: ProgressEvent) -> tuple[str, str, str, int]:
     """파일 다운로드 진행 변환 — 계산식은 구 MonitorThread.update_progress와 동일."""
     total_size = event.total_size or 0
@@ -965,7 +991,7 @@ class _SectionProgress:
 
 
 def _section_progress_args(
-    event: ProgressEvent, data: DownloadData, item: ContentItem, sections: _SectionProgress
+    event: ProgressEvent, counters: _CountersView, stage: _StageView, sections: _SectionProgress
 ) -> tuple[str, str, str, int]:
     """구간 다운로드의 진행 변환 — 전송과 컷을 하나의 막대로 합친다 (#309).
 
@@ -983,57 +1009,59 @@ def _section_progress_args(
     남은 시간 · 크기 · 속도는 전달 방식의 변환식 그대로다. 컷 단계에서는 카드가 그 값을
     쓰지 않고 단계 문구를 보인다.
     """
-    if item.is_segment_based:
-        remaining, size, speed, _percent = _segment_progress_args(event, data, item)
-        reused = getattr(data, "reused_threads", 0)
-        to_receive = data.max_threads - getattr(data, "reusable_threads", 0)
-        transfer = (data.completed_threads - reused) / to_receive if to_receive > 0 else 1.0
+    if stage.is_segment_based:
+        remaining, size, speed, _percent = _segment_progress_args(event, counters, stage)
+        reused = getattr(counters, "reused_threads", 0)
+        to_receive = counters.max_threads - getattr(counters, "reusable_threads", 0)
+        transfer = (counters.completed_threads - reused) / to_receive if to_receive > 0 else 1.0
     else:
         remaining, size, speed, _percent = _file_progress_args(event)
         total_size = event.total_size or 0
         transfer = event.downloaded_size / total_size if total_size > 0 else 1.0
     cut = 0.0
-    if item.post_process:
-        todo = data.sections_total - data.sections_resumed
-        handled = data.sections_done + data.sections_failed - data.sections_resumed
+    if stage.post_process:
+        todo = counters.sections_total - counters.sections_resumed
+        handled = counters.sections_done + counters.sections_failed - counters.sections_resumed
         cut = handled / todo if todo > 0 else 1.0
-        reported = getattr(data, "cut_progress", None)
+        reported = getattr(counters, "cut_progress", None)
         if reported is not None and handled < todo:
             # 구간 안에서도 오르는 값. 다 찼다고 적혀 있어도 끝나지 않은 구간이 있으면 1로
             # 보지 않는다 — 100은 마지막 구간의 일이 끝났을 때(위의 1.0)만이다
             cut = min(reported, 0.999)
     transfer = min(max(transfer, 0.0), 1.0)
-    progress = sections.percent(transfer, bool(item.post_process), cut, event.downloaded_size)
+    progress = sections.percent(transfer, bool(stage.post_process), cut, event.downloaded_size)
     return remaining, size, speed, progress
 
 
 def _segment_progress_args(
-    event: ProgressEvent, data: DownloadData, item: ContentItem
+    event: ProgressEvent, counters: _CountersView, stage: _StageView
 ) -> tuple[str, str, str, int]:
     """세그먼트 기반(m3u8·hls_aes) 진행 변환 — 구 MonitorM3U8Thread.update_progress와 동일.
 
     전체 크기를 미리 알 수 없어 진행률은 세그먼트 수 기반이다. 병합 단계
-    (item.post_process)에서는 병합된 세그먼트 수, 그 전에는 완료된 세그먼트 수를
+    (stage.post_process)에서는 병합된 세그먼트 수, 그 전에는 완료된 세그먼트 수를
     쓰고, 남은 시간은 평균 세그먼트 크기로 추정한다.
 
     병합 분모는 m3u8이 초기화 세그먼트(EXT-X-MAP) 1개를 더 병합하므로 +1이고,
     hls_aes(TS)는 초기화 세그먼트가 없어 세그먼트 수 그대로다 (#57).
     """
     speed_mb = event.speed or 0.0
-    merge_total = data.max_threads + (1 if item.content_type == "m3u8" else 0)
+    merge_total = counters.max_threads + (1 if stage.content_type == "m3u8" else 0)
 
-    if item.post_process:
-        progress = int((data.merged_segments / merge_total) * 100) if merge_total > 0 else 0
+    if stage.post_process:
+        progress = int((counters.merged_segments / merge_total) * 100) if merge_total > 0 else 0
     else:
         progress = (
-            int((data.completed_threads / data.max_threads) * 100) if data.max_threads > 0 else 0
+            int((counters.completed_threads / counters.max_threads) * 100)
+            if counters.max_threads > 0
+            else 0
         )
 
     # 받은 크기에는 받아 두었던 세그먼트가 들어 있지 않다 — 평균도 받은 것만으로 낸다 (#376)
-    received_segments = data.completed_threads - data.reused_threads
+    received_segments = counters.completed_threads - counters.reused_threads
     if speed_mb > 0 and received_segments > 0:
         avg_segment_size = event.downloaded_size / received_segments
-        remaining_segments = data.max_threads - data.completed_threads
+        remaining_segments = counters.max_threads - counters.completed_threads
         remaining_time = (avg_segment_size * remaining_segments) / (speed_mb * 1024 * 1024)
         remaining_time_str = strftime("%H:%M:%S", gmtime(remaining_time))
     else:
