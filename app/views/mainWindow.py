@@ -4,7 +4,7 @@ import platform
 from app.system import settings
 
 from PySide6.QtWidgets import QMainWindow, QMessageBox, QFileDialog, QApplication, QSizePolicy, QWidget
-from PySide6.QtCore import QPoint, QRect, QStandardPaths, QTimer
+from PySide6.QtCore import QMargins, QPoint, QRect, QSize, QStandardPaths, QTimer
 
 from app.system.process_memory import log_process_memory
 from app.viewmodels.download_viewmodel import DownloadViewModel
@@ -127,6 +127,7 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
             self.showMaximized()
         else:
             self.show()
+            self._clampFrameAfterShow()
 
     def setupDynamicUi(self):
         """
@@ -216,6 +217,18 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
             screen = QApplication.primaryScreen()
         return screen.availableGeometry()
 
+    def _frameMargins(self) -> QMargins:
+        """창 테두리 · 제목 표시줄 여백 — 띄우기 전에 네이티브 창을 만들어 OS에서 읽는다 (#487).
+
+        Qt는 창을 만들기 전에는 프레임 여백을 모른다(`frameGeometry()` == `geometry()`).
+        `winId()`로 네이티브 창만 만들면(보이지 않는다) Windows는 표시 전에도 실제 여백을 준다.
+        여백을 주지 않는 플랫폼은 0이 나오고, 그때는 `_clampFrameAfterShow`가 표시 뒤에 맞춘다.
+        테스트가 여백을 주입하는 이음새다.
+        """
+        self.winId()
+        handle = self.windowHandle()
+        return handle.frameMargins() if handle is not None else QMargins()
+
     def _restoreWindowState(self) -> bool:
         """설정에 기록된 창 크기·위치를 되살린다 (#253). 반환값 = 최대화 상태로 띄울지.
 
@@ -223,6 +236,10 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         크기 규칙(__init__)을 그대로 둔다. 기록값은 그대로 쓰지 않는다 — 모니터를 바꾸거나
         노트북을 분리하면 저장된 크기·위치가 현재 화면 밖이라 창이 안 보이거나 화면을
         넘는다. 기록 위치가 놓인 화면의 작업 영역으로 크기를 줄이고 위치를 안으로 민다.
+
+        위치는 프레임(제목 표시줄 포함) 기준이고 크기는 클라이언트 기준이다 — 프레임 여백
+        (`_frameMargins`)을 더한 사각형이 작업 영역에 들어가게 맞춘다 (#487). 여백이 0으로
+        나오면(표시 전에 알려 주지 않는 플랫폼) 표시 뒤에 한 번 다시 맞춘다(`_clampFrameAfterShow`).
 
         순서가 중요하다: **resize() 먼저, 그 뒤 실제 size()로 위치를 클램프**한다. 기록
         크기가 최소 크기보다 작으면 Qt가 resize()에서 최소로 올리는데, 그 전 크기로 위치를
@@ -237,13 +254,40 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
         try:
             rect = QRect(x, y, width, height)  # Qt 변환은 여기서 — 설정 모듈은 Qt를 모른다 (#257)
             available = self._availableGeometry(rect.topLeft())
-            self.resize(min(rect.width(), available.width()), min(rect.height(), available.height()))
-            placed = clamp_to_available(QRect(rect.topLeft(), self.size()), available)
+            margins = self._frameMargins()
+            frame_extra = QSize(margins.left() + margins.right(), margins.top() + margins.bottom())
+            self.resize(
+                min(rect.width(), available.width() - frame_extra.width()),
+                min(rect.height(), available.height() - frame_extra.height()),
+            )
+            placed = clamp_to_available(QRect(rect.topLeft(), self.size() + frame_extra), available)
             self.move(placed.topLeft())
+            self._clampAfterShow = available if margins.isNull() else None
         except (TypeError, ValueError, OverflowError):
             # 최후 방어선 — 화이트리스트가 이미 거른 뒤라 정상 경로에선 오지 않는다
             return False
         return maximized
+
+    def _clampFrameAfterShow(self) -> None:
+        """표시 전에 프레임 여백을 몰랐으면(0) 표시 뒤 실제 `frameGeometry()`로 한 번 다시 맞춘다 (#487).
+
+        복원한 창에만, 한 번만 한다. 표시 뒤에도 여백이 없으면(offscreen 등) 아무것도 하지 않는다.
+        """
+        available, self._clampAfterShow = getattr(self, "_clampAfterShow", None), None
+        if available is None:
+            return
+        frame, client = self.frameGeometry(), self.geometry()
+        if frame == client:
+            return
+        extra = frame.size() - client.size()
+        if frame.width() > available.width() or frame.height() > available.height():
+            self.resize(
+                min(client.width(), available.width() - extra.width()),
+                min(client.height(), available.height() - extra.height()),
+            )
+        placed = clamp_to_available(QRect(frame.topLeft(), self.size() + extra), available)
+        if placed.topLeft() != frame.topLeft():
+            self.move(placed.topLeft())
 
     def _rememberWindowState(self) -> None:
         """창 크기·위치·최대화 상태를 설정에 기록한다 (#253) — 창을 닫을 때 한 번.
