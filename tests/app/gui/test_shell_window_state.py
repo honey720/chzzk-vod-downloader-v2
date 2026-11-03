@@ -24,7 +24,7 @@
 import os
 
 import pytest
-from PySide6.QtCore import QPoint, QRect
+from PySide6.QtCore import QMargins, QPoint, QRect
 from PySide6.QtWidgets import QApplication
 
 import app.system.settings as settings_module
@@ -369,3 +369,14 @@ class TestMaximized:
         assert second.size().toTuple() == normal[1], (
             "최대화를 풀면 기록된 보통 크기로 돌아와야 한다"
         )
+
+
+@pytest.fixture(autouse=True)
+def _no_frame(monkeypatch: pytest.MonkeyPatch) -> None:
+    """이 파일은 프레임 없이 복원 계산만 잰다 — 프레임 여백은 0, 표시 뒤 다시 맞추기는 끈다.
+
+    프레임 여백(제목 표시줄)을 넣은 복원은 test_shell_window_frame.py가 잰다 (#487). offscreen도
+    창마다 테두리 여백을 주므로 막지 않으면 기록값이 그 여백만큼 줄어든다.
+    """
+    monkeypatch.setattr(VodDownloader, "_frameMargins", lambda self: QMargins())
+    monkeypatch.setattr(VodDownloader, "_clampFrameAfterShow", lambda self: None)
