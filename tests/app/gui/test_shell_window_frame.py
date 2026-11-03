@@ -168,8 +168,8 @@ class TestZeroMarginsAreCorrectedAfterShow:
         win = _open(_cases(self.area)["bottom-right edge"])
         if real(win) == win.geometry():  # 창 관리자가 없는 X 서버(CI의 xvfb)
             pytest.skip("이 플랫폼은 표시 뒤에도 프레임 여백을 주지 않는다 — 다시 맞출 것이 없다")
-        qtbot.waitUntil(lambda: self.area.contains(real(win)), timeout=2000)
-        assert calls["n"] >= 3, f"프레임을 다시 보지 않았다(본 횟수 {calls['n']})"
+        # 다시 본 뒤의 프레임을 잰다 — OS가 show() 안에서 창을 옮기면 첫 검사부터 안일 수 있다
+        qtbot.waitUntil(lambda: calls["n"] >= 3 and self.area.contains(real(win)), timeout=2000)
 
 
 @pytest.mark.skipif(not NATIVE, reason=f"실제 화면에서만 — {NATIVE_SWITCH}=1")
