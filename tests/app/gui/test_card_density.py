@@ -59,9 +59,27 @@ def _make_item(i: int) -> ContentItem:
     )
 
 
-def _visible_card_count(window: VodDownloader, window_height: int, require_fully_visible: bool) -> int:
+def _resize_or_skip(window: VodDownloader, window_height: int) -> None:
+    """창 높이를 window_height로 바꾸고, 실제 높이가 요청과 같은지 먼저 확인한다(#486).
+
+    `resize()`는 요청이다 — 화면이 그보다 낮으면 OS(macOS 실제 화면)가 창을 화면 높이로 줄인다.
+    요청한 높이(+ 제목 표시줄)가 작업 영역에 들어가지 않을 때만 skip하고, 들어가는데 높이가 다르면 실패한다.
+    """
     window.resize(900, window_height)
     QApplication.processEvents()
+    if window.height() == window_height:
+        return
+    title_bar = window.frameGeometry().height() - window.height()
+    available = window.screen().availableGeometry().height()
+    if window_height + title_bar > available:
+        pytest.skip(
+            f"창 높이 {window_height}px(+ 제목 표시줄 {title_bar}px)이 작업 영역 {available}px에 들어가지 않는다"
+        )
+    assert window.height() == window_height, f"resize({window_height}) 뒤 실제 높이가 {window.height()}px이다"
+
+
+def _visible_card_count(window: VodDownloader, window_height: int, require_fully_visible: bool) -> int:
+    _resize_or_skip(window, window_height)
 
     viewport = window.listView.viewport()
     viewport_height = viewport.height()

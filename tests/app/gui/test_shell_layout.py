@@ -132,6 +132,15 @@ def _in_window(win, w) -> QRect:
     return QRect(w.mapTo(win, QPoint(0, 0)), w.size())
 
 
+def _pixel(image, point: QPoint) -> int:
+    """창 좌표(논리 px)의 화소 값 — `grab()` 이미지는 장치 화소라 배율(devicePixelRatio)을 곱해 읽는다(#486).
+
+    논리 화소 한 칸의 가운데가 놓인 장치 화소를 읽는다 — 125% · 150% 같은 소수 배율에서도 같은 자리다.
+    """
+    ratio = image.devicePixelRatio()
+    return image.pixel(QPoint(int((point.x() + 0.5) * ratio), int((point.y() + 0.5) * ratio)))
+
+
 def _leaf_min(w) -> int:
     """레이아웃이 없는 leaf 위젯의 가로 최소 — 명시 minimumWidth가 있으면 그것, 없으면 힌트."""
     return w.minimumWidth() if w.minimumWidth() > 0 else w.minimumSizeHint().width()
@@ -541,10 +550,10 @@ class TestOverlaysLiveInTheContentArea:
         inside = QPoint(lst.center().x(), lst.top() + 3)  # 카드 사이 여백이 아닌 목록 위쪽 배경
         # 목록 바깥 = 상단바와 목록 사이의 열 배경(목록은 창 좌우 끝까지 가므로 옆에는 바깥이 없다, v2.10.1)
         margin = QPoint(lst.center().x(), lst.top() - 2)
-        assert before.pixel(inside) != after.pixel(inside), (
+        assert _pixel(before, inside) != _pixel(after, inside), (
             "드래그 중인데 목록 안 픽셀이 어두워지지 않았다"
         )
-        assert before.pixel(margin) == after.pixel(margin), (
+        assert _pixel(before, margin) == _pixel(after, margin), (
             "목록 바깥 여백까지 어두워졌다 — 오버레이가 창 기준으로 그려졌다"
         )
 
@@ -554,12 +563,12 @@ class TestOverlaysLiveInTheContentArea:
         _at_width(win, win.minimumWidth() + WIDE_EXTRA)
         image = win.grab().toImage()
         lst = _in_window(win, win.listView)
-        background = image.pixel(QPoint(lst.left() // 2, lst.center().y()))
+        background = _pixel(image, QPoint(lst.left() // 2, lst.center().y()))
         ink = [
             (x, y)
             for y in range(0, win.height())
             for x in range(0, win.width(), 2)
-            if image.pixel(QPoint(x, y)) != background
+            if _pixel(image, QPoint(x, y)) != background
             and not _in_window(win, win.headerFrame).contains(QPoint(x, y))
             and not _in_window(win, win.infoFrame).contains(QPoint(x, y))
         ]

@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import QCoreApplication, Qt, QTranslator
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox, QMessageBox
+from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox, QMessageBox, QStyle, QStyleOption
 
 import app.system.settings as settings
 import CVDv2 as main
@@ -29,6 +29,17 @@ from tests.support.settings_db import write_settings
 
 KOREAN = {"ok": "확인", "cancel": "취소", "yes": "예(&Y)", "no": "아니요(&N)"}
 ENGLISH = {"ok": "OK", "cancel": "Cancel", "yes": "&Yes", "no": "&No"}
+
+#: 스타일의 버튼 배치 힌트마다 확인(AcceptRole)이 취소(RejectRole)보다 앞인가 — Qt
+#: qplatformdialoghelper.cpp의 배치 표에서 이 두 역할의 차례만 옮겨 적는다(제품 코드를 부르지 않는다, #486).
+LAYOUT = QDialogButtonBox.ButtonLayout
+OK_FIRST = {
+    LAYOUT.WinLayout: True,
+    LAYOUT.MacLayout: False,
+    LAYOUT.KdeLayout: True,
+    LAYOUT.GnomeLayout: False,
+    LAYOUT.AndroidLayout: False,
+}
 
 
 def _seed_config(language: str) -> dict:
@@ -66,6 +77,15 @@ def _box_texts(box: QDialogButtonBox) -> dict:
         "ok": box.button(QDialogButtonBox.StandardButton.Ok).text(),
         "cancel": box.button(QDialogButtonBox.StandardButton.Cancel).text(),
     }
+
+
+def _layout_order(box: QDialogButtonBox) -> tuple:
+    """스타일의 버튼 배치 힌트가 정하는 (앞 버튼, 뒤 버튼) — OS 관례를 따른다(#486)."""
+    option = QStyleOption()
+    option.initFrom(box)
+    hint = LAYOUT(box.style().styleHint(QStyle.StyleHint.SH_DialogButtonLayout, option, box))
+    ok, cancel = box.button(QDialogButtonBox.StandardButton.Ok), box.button(QDialogButtonBox.StandardButton.Cancel)
+    return (ok, cancel) if OK_FIRST[hint] else (cancel, ok)
 
 
 def _message_box_texts() -> dict:
@@ -182,23 +202,25 @@ class TestPreserved:
 
     @pytest.mark.parametrize("language", ("ko_KR", "en_US"))
     def test_button_order_default_and_escape(self, qapp, qtbot, translators, language):
+        """버튼 차례가 스타일 배치 힌트와 같고, 기본 버튼은 OK, Esc는 취소여야 한다(#486)."""
         dialog = self._dialog(qapp, translators, language)
         qtbot.addWidget(dialog)
         box = dialog.dialogButtonBox
         ok, cancel = box.button(QDialogButtonBox.StandardButton.Ok), box.button(QDialogButtonBox.StandardButton.Cancel)
-        assert ok.x() < cancel.x(), "버튼 순서(OK 왼쪽, Cancel 오른쪽)가 바뀌었다"
+        first, second = _layout_order(box)
+        assert first.x() < second.x(), f"버튼 차례가 배치 힌트와 다르다(앞 {first.text()} · 뒤 {second.text()})"
         assert ok.isDefault() and not cancel.isDefault(), "기본 버튼(Enter)이 OK가 아니다"
         QTest.keyClick(dialog, Qt.Key.Key_Escape)
         QApplication.processEvents()
         assert dialog.result() == QDialog.DialogCode.Rejected and not dialog.isVisible(), "Esc가 취소하지 않는다"
 
     @pytest.mark.parametrize("language", ("ko_KR", "en_US"))
-    def test_tab_order_ends_with_ok_then_cancel(self, qapp, qtbot, translators, language):
+    def test_tab_order_follows_the_button_layout(self, qapp, qtbot, translators, language):
+        """탭 순서가 배치 힌트의 버튼 차례(앞 → 뒤)와 같아야 한다(#486)."""
         dialog = self._dialog(qapp, translators, language)
         qtbot.addWidget(dialog)
-        box = dialog.dialogButtonBox
-        ok, cancel = box.button(QDialogButtonBox.StandardButton.Ok), box.button(QDialogButtonBox.StandardButton.Cancel)
-        assert ok.nextInFocusChain() is cancel, "탭 순서가 OK → Cancel이 아니다"
+        first, second = _layout_order(dialog.dialogButtonBox)
+        assert first.nextInFocusChain() is second, f"탭 순서가 {first.text()} → {second.text()}가 아니다"
 
     def test_minimum_size_is_reported_for_both_languages(self, qapp, translators, monkeypatch):
         """최소 크기는 버튼 문구 폭에 따라 달라질 수 있다 — 세 조건을 같이 잰다(회귀 감시용).
