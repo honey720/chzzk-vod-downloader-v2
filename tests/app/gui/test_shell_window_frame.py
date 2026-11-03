@@ -25,12 +25,10 @@ from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, snapshot
 from tests.qt_platform import NATIVE_SWITCH
 from tests.support.settings_db import write_settings
 
-#: 테스트가 주입하는 작업 영역 — 주 화면.
-AVAILABLE = QRect(0, 0, 1920, 1040)
 #: 주입하는 프레임 여백(왼쪽 · 위 · 오른쪽 · 아래) — 위는 제목 표시줄.
 MARGINS = QMargins(1, 31, 1, 1)
-#: 기록 크기(클라이언트) — 작업 영역 높이의 절반(최소 높이)보다 작아 최소 높이로 커진다.
-RECORD = QSize(700, 600)
+#: 이슈 #487의 네 경우 + 맞는 기록.
+CASES = ("bottom-right edge", "overhang", "bigger than screen", "negative", "fits")
 
 NATIVE = os.environ.get(NATIVE_SWITCH) == "1"
 
@@ -52,10 +50,19 @@ def _destroy_windows():
     drop_new_top_levels(before)
 
 
+def _screen_area(qapp) -> QRect:
+    """주입할 작업 영역 — 실제 주 화면의 작업 영역 그대로(고정값을 두지 않는다, #487).
+
+    실제 화면보다 큰 영역을 주입하면 macOS가 `show()` 안에서 창을 화면 안으로 옮겨 앱의 계산이 아니라 OS의 보정을
+    재게 된다(#486과 같은 까닭). offscreen은 그 플랫폼의 가상 화면이다.
+    """
+    return QRect(qapp.primaryScreen().availableGeometry())
+
+
 def _cases(available: QRect) -> dict[str, dict]:
-    """이슈 #487의 네 경우 + 맞는 기록 — 작업 영역에서 유도한다."""
+    """이슈 #487의 네 경우 + 맞는 기록 — 작업 영역에서 유도한다(기록 크기 = 폭 60% · 높이 절반)."""
     right, bottom = available.x() + available.width(), available.y() + available.height()
-    w, h = RECORD.width(), RECORD.height()
+    w, h = available.width() * 6 // 10, available.height() // 2
     return {
         "bottom-right edge": {"x": right - w, "y": bottom - h, "width": w, "height": h},
         "overhang": {"x": right - 100, "y": bottom - 100, "width": w, "height": h},
@@ -83,33 +90,34 @@ class TestInjectedMargins:
     """offscreen — 프레임 여백을 주입하고 작업 영역도 주입한다."""
 
     @pytest.fixture(autouse=True)
-    def _inject(self, monkeypatch):
+    def _inject(self, qapp, monkeypatch):
+        self.area = _screen_area(qapp)
         monkeypatch.setattr(
-            VodDownloader, "_availableGeometry", lambda self, near=None: QRect(AVAILABLE)
+            VodDownloader, "_availableGeometry", lambda _self, near=None: QRect(self.area)
         )
-        monkeypatch.setattr(VodDownloader, "_frameMargins", lambda self: QMargins(MARGINS))
+        monkeypatch.setattr(VodDownloader, "_frameMargins", lambda _self: QMargins(MARGINS))
 
-    @pytest.mark.parametrize("case", list(_cases(AVAILABLE)))
+    @pytest.mark.parametrize("case", CASES)
     def test_the_frame_including_rect_is_inside_the_available_area(self, case):
         """복원한 창의 프레임 포함 사각형(위치 + 클라이언트 크기 + 주입한 여백)이 작업 영역 안이어야 한다.
 
-        작업 영역 (0, 0, 1920, 1040) · 여백 (1, 31, 1, 1)
+        작업 영역 = 실제 주 화면의 작업 영역 · 여백 (1, 31, 1, 1)
         -> QRect(pos(), size() + (2, 32))가 작업 영역 안
         """
-        win = _open(_cases(AVAILABLE)[case])
+        win = _open(_cases(self.area)[case])
         extra = QSize(MARGINS.left() + MARGINS.right(), MARGINS.top() + MARGINS.bottom())
         frame = QRect(win.pos(), win.size() + extra)
-        assert AVAILABLE.contains(frame), (
-            f"{case}: 프레임 {frame.getRect()}이 작업 영역 {AVAILABLE.getRect()} 밖이다"
+        assert self.area.contains(frame), (
+            f"{case}: 프레임 {frame.getRect()}이 작업 영역 {self.area.getRect()} 밖이다"
         )
 
     def test_a_record_touching_the_bottom_ends_one_title_bar_higher(self):
         """아래 · 오른쪽 끝에 붙은 기록이면 창 위치가 제목 표시줄 · 아래 테두리만큼 올라가야 한다.
 
-        기록 y = 1040 − 높이 -> 복원 y = 1040 − (높이 + 31 + 1)
+        기록 y = 작업 영역 아래 끝 − 높이 -> 복원 y = 아래 끝 − (높이 + 31 + 1)
         """
-        win = _open(_cases(AVAILABLE)["bottom-right edge"])
-        bottom = AVAILABLE.y() + AVAILABLE.height()
+        win = _open(_cases(self.area)["bottom-right edge"])
+        bottom = self.area.y() + self.area.height()
         assert win.pos().y() == bottom - (win.height() + MARGINS.top() + MARGINS.bottom())
 
 
@@ -117,23 +125,26 @@ class TestZeroMarginsAreCorrectedAfterShow:
     """표시 전에 여백이 0으로 나오는 플랫폼 — 표시 뒤 실제 `frameGeometry()`로 다시 맞춘다."""
 
     @pytest.fixture(autouse=True)
-    def _inject(self, monkeypatch):
+    def _inject(self, qapp, monkeypatch):
+        self.area = _screen_area(qapp)
         monkeypatch.setattr(
-            VodDownloader, "_availableGeometry", lambda self, near=None: QRect(AVAILABLE)
+            VodDownloader, "_availableGeometry", lambda _self, near=None: QRect(self.area)
         )
-        monkeypatch.setattr(VodDownloader, "_frameMargins", lambda self: QMargins())
+        monkeypatch.setattr(VodDownloader, "_frameMargins", lambda _self: QMargins())
 
     def test_the_frame_after_show_is_inside_the_available_area(self):
         """표시 전 여백이 0이고 표시 뒤 프레임 여백이 있으면 frameGeometry()가 작업 영역 안이어야 한다.
 
         여백 주입 0 · 아래 · 오른쪽 끝에 붙은 기록 -> 표시 뒤 frameGeometry() ⊂ 작업 영역
         """
-        win = _open(_cases(AVAILABLE)["bottom-right edge"])
+        win = _open(_cases(self.area)["bottom-right edge"])
         frame = win.frameGeometry()
-        if frame == win.geometry():  # 창 관리자가 없는 X 서버(CI의 xvfb)는 표시 뒤에도 여백을 주지 않는다
+        if (
+            frame == win.geometry()
+        ):  # 창 관리자가 없는 X 서버(CI의 xvfb)는 표시 뒤에도 여백을 주지 않는다
             pytest.skip("이 플랫폼은 표시 뒤에도 프레임 여백을 주지 않는다 — 다시 맞출 것이 없다")
-        assert AVAILABLE.contains(frame), (
-            f"프레임 {frame.getRect()}이 작업 영역 {AVAILABLE.getRect()} 밖이다"
+        assert self.area.contains(frame), (
+            f"프레임 {frame.getRect()}이 작업 영역 {self.area.getRect()} 밖이다"
         )
 
 
