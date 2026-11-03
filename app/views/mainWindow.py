@@ -21,6 +21,9 @@ import app.theme as theme
 
 logger = logging.getLogger(__name__)
 
+FRAME_RETRY_MS = 50  # 표시 뒤 프레임 여백을 다시 보는 간격(ms) — X11 창 관리자는 테두리를 표시 뒤 비동기로 붙인다 (#487)
+FRAME_RETRIES = 10  # 그만큼(약 0.5초) 기다려도 여백이 없으면 그만둔다 — 창 관리자가 없는 X 서버 등
+
 
 def _default_download_path() -> str:
     """시작 시 저장 경로 입력창의 초기값을 정한다 (#159 — #157 실측 근거).
@@ -268,17 +271,23 @@ class VodDownloader(QMainWindow, Ui_VodDownloader):
             return False
         return maximized
 
-    def _clampFrameAfterShow(self) -> None:
+    def _clampFrameAfterShow(self, retries: int = FRAME_RETRIES) -> None:
         """표시 전에 프레임 여백을 몰랐으면(0) 표시 뒤 실제 `frameGeometry()`로 한 번 다시 맞춘다 (#487).
 
-        복원한 창에만, 한 번만 한다. 표시 뒤에도 여백이 없으면(offscreen 등) 아무것도 하지 않는다.
+        복원한 창에만, 한 번만 한다. 표시 직후에 여백이 아직 없으면(X11 창 관리자는 테두리를 비동기로 붙인다)
+        `FRAME_RETRY_MS`마다 `retries`번까지 다시 보고, 그래도 없으면(창 관리자 없음) 그만둔다.
         """
-        available, self._clampAfterShow = getattr(self, "_clampAfterShow", None), None
+        available = getattr(self, "_clampAfterShow", None)
         if available is None:
             return
         frame, client = self.frameGeometry(), self.geometry()
         if frame == client:
+            if retries > 0:
+                QTimer.singleShot(FRAME_RETRY_MS, self, lambda: self._clampFrameAfterShow(retries - 1))
+            else:
+                self._clampAfterShow = None
             return
+        self._clampAfterShow = None
         extra = frame.size() - client.size()
         if frame.width() > available.width() or frame.height() > available.height():
             self.resize(

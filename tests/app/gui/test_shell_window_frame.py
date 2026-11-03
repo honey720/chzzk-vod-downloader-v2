@@ -13,10 +13,12 @@
 """
 
 import os
+from collections.abc import Iterator
 
 import pytest
 from PySide6.QtCore import QMargins, QRect, QSize
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMainWindow
+from pytestqt.qtbot import QtBot
 
 import CVDv2 as main_module
 import app.theme as theme
@@ -34,7 +36,7 @@ NATIVE = os.environ.get(NATIVE_SWITCH) == "1"
 
 
 @pytest.fixture(autouse=True)
-def _apply_production_qss(qapp):
+def _apply_production_qss(qapp: QApplication) -> None:
     """실제 전역 QSS·스타일을 태운다(최소폭이 QSS padding·폰트에 좌우된다). ⚠️ function scope 유지."""
     theme.set_color_scheme("dark")
     qapp.setStyle(hold_style(theme.build_style()))  # 참조 보관 — 이중 해제 우회 (#243)
@@ -43,14 +45,14 @@ def _apply_production_qss(qapp):
 
 
 @pytest.fixture(autouse=True)
-def _destroy_windows():
+def _destroy_windows() -> Iterator[None]:
     """테스트가 만든 최상위 창은 close()가 아니라 파괴한다(#248 CI)."""
     before = snapshot_top_levels()
     yield
     drop_new_top_levels(before)
 
 
-def _screen_area(qapp) -> QRect:
+def _screen_area(qapp: QApplication) -> QRect:
     """주입할 작업 영역 — 실제 주 화면의 작업 영역 그대로(고정값을 두지 않는다, #487).
 
     실제 화면보다 큰 영역을 주입하면 macOS가 `show()` 안에서 창을 화면 안으로 옮겨 앱의 계산이 아니라 OS의 보정을
@@ -90,7 +92,7 @@ class TestInjectedMargins:
     """offscreen — 프레임 여백을 주입하고 작업 영역도 주입한다."""
 
     @pytest.fixture(autouse=True)
-    def _inject(self, qapp, monkeypatch):
+    def _inject(self, qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> None:
         self.area = _screen_area(qapp)
         monkeypatch.setattr(
             VodDownloader, "_availableGeometry", lambda _self, near=None: QRect(self.area)
@@ -98,7 +100,7 @@ class TestInjectedMargins:
         monkeypatch.setattr(VodDownloader, "_frameMargins", lambda _self: QMargins(MARGINS))
 
     @pytest.mark.parametrize("case", CASES)
-    def test_the_frame_including_rect_is_inside_the_available_area(self, case):
+    def test_the_frame_including_rect_is_inside_the_available_area(self, case: str) -> None:
         """복원한 창의 프레임 포함 사각형(위치 + 클라이언트 크기 + 주입한 여백)이 작업 영역 안이어야 한다.
 
         작업 영역 = 실제 주 화면의 작업 영역 · 여백 (1, 31, 1, 1)
@@ -111,7 +113,7 @@ class TestInjectedMargins:
             f"{case}: 프레임 {frame.getRect()}이 작업 영역 {self.area.getRect()} 밖이다"
         )
 
-    def test_a_record_touching_the_bottom_ends_one_title_bar_higher(self):
+    def test_a_record_touching_the_bottom_ends_one_title_bar_higher(self) -> None:
         """아래 · 오른쪽 끝에 붙은 기록이면 창 위치가 제목 표시줄 · 아래 테두리만큼 올라가야 한다.
 
         기록 y = 작업 영역 아래 끝 − 높이 -> 복원 y = 아래 끝 − (높이 + 31 + 1)
@@ -125,14 +127,14 @@ class TestZeroMarginsAreCorrectedAfterShow:
     """표시 전에 여백이 0으로 나오는 플랫폼 — 표시 뒤 실제 `frameGeometry()`로 다시 맞춘다."""
 
     @pytest.fixture(autouse=True)
-    def _inject(self, qapp, monkeypatch):
+    def _inject(self, qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> None:
         self.area = _screen_area(qapp)
         monkeypatch.setattr(
             VodDownloader, "_availableGeometry", lambda _self, near=None: QRect(self.area)
         )
         monkeypatch.setattr(VodDownloader, "_frameMargins", lambda _self: QMargins())
 
-    def test_the_frame_after_show_is_inside_the_available_area(self):
+    def test_the_frame_after_show_is_inside_the_available_area(self) -> None:
         """표시 전 여백이 0이고 표시 뒤 프레임 여백이 있으면 frameGeometry()가 작업 영역 안이어야 한다.
 
         여백 주입 0 · 아래 · 오른쪽 끝에 붙은 기록 -> 표시 뒤 frameGeometry() ⊂ 작업 영역
@@ -147,6 +149,28 @@ class TestZeroMarginsAreCorrectedAfterShow:
             f"프레임 {frame.getRect()}이 작업 영역 {self.area.getRect()} 밖이다"
         )
 
+    def test_a_frame_that_appears_later_is_corrected_then(
+        self, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """표시 직후 프레임 여백이 없다가 나중에 생기면 그때 frameGeometry()가 작업 영역 안으로 맞춰져야 한다.
+
+        frameGeometry()가 처음 두 번은 클라이언트와 같음(창 관리자가 테두리를 늦게 붙임)
+        -> 다시 보기(FRAME_RETRY_MS 간격) 뒤 frameGeometry() ⊂ 작업 영역
+        """
+        real = QMainWindow.frameGeometry
+        calls = {"n": 0}
+
+        def late(win: VodDownloader) -> QRect:
+            calls["n"] += 1
+            return win.geometry() if calls["n"] <= 2 else real(win)
+
+        monkeypatch.setattr(VodDownloader, "frameGeometry", late)
+        win = _open(_cases(self.area)["bottom-right edge"])
+        if real(win) == win.geometry():  # 창 관리자가 없는 X 서버(CI의 xvfb)
+            pytest.skip("이 플랫폼은 표시 뒤에도 프레임 여백을 주지 않는다 — 다시 맞출 것이 없다")
+        qtbot.waitUntil(lambda: self.area.contains(real(win)), timeout=2000)
+        assert calls["n"] >= 3, f"프레임을 다시 보지 않았다(본 횟수 {calls['n']})"
+
 
 @pytest.mark.skipif(not NATIVE, reason=f"실제 화면에서만 — {NATIVE_SWITCH}=1")
 class TestNativeScreen:
@@ -155,7 +179,9 @@ class TestNativeScreen:
     @pytest.mark.parametrize(
         "case", ["bottom-right edge", "overhang", "bigger than screen", "fits"]
     )
-    def test_frame_geometry_after_show_is_inside_the_screen(self, qapp, case):
+    def test_frame_geometry_after_show_is_inside_the_screen(
+        self, qapp: QApplication, case: str
+    ) -> None:
         """실제 화면에서 복원한 창의 frameGeometry()가 그 화면의 availableGeometry() 안이어야 한다.
 
         기록 = 주 화면 작업 영역에서 유도한 경우 -> show() 뒤 frameGeometry() ⊂ availableGeometry()

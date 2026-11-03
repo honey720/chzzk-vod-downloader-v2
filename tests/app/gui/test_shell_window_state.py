@@ -372,7 +372,7 @@ class TestMaximized:
 
 
 @pytest.fixture(autouse=True)
-def _no_frame(monkeypatch):
+def _no_frame(monkeypatch: pytest.MonkeyPatch) -> None:
     """이 파일은 프레임 없이 복원 계산만 잰다 — 프레임 여백은 0, 표시 뒤 다시 맞추기는 끈다.
 
     프레임 여백(제목 표시줄)을 넣은 복원은 test_shell_window_frame.py가 잰다 (#487). offscreen도
