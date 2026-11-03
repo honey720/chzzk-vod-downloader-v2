@@ -11,6 +11,9 @@
 설정은 conftest의 autouse 픽스처가 테스트마다 임시 폴더로 격리한다. 화면은 이음새로
 주입한다(절대 px는 주입한 화면과 그 파생값뿐).
 
+복원 결과는 `show()` **전**에 앱이 요청한 위치 · 크기로 잰다(#486). 실제 화면에서는 주입한 화면이
+실제 화면보다 크면 OS(macOS)가 `show()` 안에서 창을 옮기거나 줄여, 앱의 계산이 아니라 OS의 보정을 재게 된다.
+
 ⚠️ 파일 이름이 `test_shell_`로 시작하는 이유 — 실행 순서다. Windows offscreen에서
 `test_theme.py`·`test_title_hover.py`·`test_widget.py`·`test_widget_theme.py`가 먼저 돈 뒤에
 메인 창(`VodDownloader`)을 만들고 파괴하면 teardown의 `gc.collect()`에서 힙 손상
@@ -65,6 +68,33 @@ def _fake_available(monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def _record_requested(monkeypatch):
+    """창이 `show()` · `showMaximized()`를 부르는 순간의 위치 · 크기(앱이 요청한 값)를 창마다 기록한다(#486)."""
+    requested.clear()
+    real_show, real_maximized = VodDownloader.show, VodDownloader.showMaximized
+
+    def show(self):
+        requested[id(self)] = QRect(self.pos(), self.size())
+        real_show(self)
+
+    def show_maximized(self):
+        requested[id(self)] = QRect(self.pos(), self.size())
+        real_maximized(self)
+
+    monkeypatch.setattr(VodDownloader, "show", show)
+    monkeypatch.setattr(VodDownloader, "showMaximized", show_maximized)
+
+
+#: 창 id → `show()` 직전에 앱이 요청한 사각형(프레임 위치 + 클라이언트 크기).
+requested: dict[int, QRect] = {}
+
+
+def _requested(win: VodDownloader) -> QRect:
+    """그 창이 `show()` 직전에 요청한 사각형 — OS가 보정하기 전 앱의 복원 계산 결과."""
+    return requested[id(win)]
+
+
 def _initial_width() -> int:
     """첫 실행 초기 폭 — 테스트가 토큰·주입 화면에서 직접 계산한다."""
     return min(int(AVAILABLE.width() * 0.45), theme.METRICS["initialWidthMax"])
@@ -89,9 +119,8 @@ def _open() -> VodDownloader:
 
 
 def _in_available(win: VodDownloader) -> bool:
-    """창(프레임 위치 + 클라이언트 크기)이 주입한 작업 영역 안에 완전히 들어가는가."""
-    rect = QRect(win.pos(), win.size())
-    return AVAILABLE.contains(rect)
+    """요청한 창(프레임 위치 + 클라이언트 크기)이 주입한 작업 영역 안에 완전히 들어가는가."""
+    return AVAILABLE.contains(_requested(win))
 
 
 class TestRoundTrip:
@@ -155,29 +184,35 @@ class TestRestoreIsClampedToTheCurrentScreen:
         _write_window({"x": 3000, "y": 2000, "width": 2500, "height": 1500, "maximized": False})
         win = _open()
         assert _in_available(win), (
-            f"복원된 창 {win.pos().toTuple()} {win.size().toTuple()}이 작업 영역 {AVAILABLE} 밖이다"
+            f"복원된 창 {_requested(win).topLeft().toTuple()} {_requested(win).size().toTuple()}이 작업 영역 {AVAILABLE} 밖이다"
         )
-        assert win.size().toTuple() == (AVAILABLE.width(), AVAILABLE.height())
+        assert _requested(win).size().toTuple() == (AVAILABLE.width(), AVAILABLE.height())
 
     def test_a_partly_offscreen_position_is_pushed_back_in(self):
         """크기는 맞는데 오른쪽·아래로 걸쳐 있으면 위치만 민다 — 크기는 그대로."""
         _write_window({"x": 1800, "y": 900, "width": 700, "height": 600, "maximized": False})
         win = _open()
-        assert win.size().toTuple() == (700, 600), "크기가 바뀔 이유가 없다"
-        assert win.pos().toTuple() == (AVAILABLE.width() - 700, AVAILABLE.height() - 600)
+        assert _requested(win).size().toTuple() == (700, 600), "크기가 바뀔 이유가 없다"
+        assert _requested(win).topLeft().toTuple() == (
+            AVAILABLE.width() - 700,
+            AVAILABLE.height() - 600,
+        )
         assert _in_available(win)
 
     def test_a_negative_position_is_pushed_to_the_edge(self):
         """왼쪽·위로 나간 기록은 작업 영역 가장자리(0, 0)로 민다."""
         _write_window({"x": -400, "y": -50, "width": 700, "height": 600, "maximized": False})
         win = _open()
-        assert win.pos().toTuple() == (0, 0)
+        assert _requested(win).topLeft().toTuple() == (0, 0)
 
     def test_a_saved_rect_that_fits_is_left_alone(self):
         """작업 영역 안에 있는 기록은 그대로 되살린다."""
         _write_window({"x": 200, "y": 150, "width": 700, "height": 600, "maximized": False})
         win = _open()
-        assert (win.pos().toTuple(), win.size().toTuple()) == ((200, 150), (700, 600))
+        assert (_requested(win).topLeft().toTuple(), _requested(win).size().toTuple()) == (
+            (200, 150),
+            (700, 600),
+        )
 
 
 class TestClampFunction:
@@ -285,14 +320,14 @@ class TestRestoreClampsAfterTheMinimumSizeIsApplied:
             }
         )
         win = _open()
-        assert win.width() == grown and win.height() == AVAILABLE.height() // 2, (
-            "전제: 최소 크기가 기록을 키웠어야 한다"
-        )
-        assert win.pos().toTuple() == (
+        assert (
+            _requested(win).width() == grown and _requested(win).height() == AVAILABLE.height() // 2
+        ), "전제: 최소 크기가 기록을 키웠어야 한다"
+        assert _requested(win).topLeft().toTuple() == (
             AVAILABLE.width() - grown,
             AVAILABLE.height() - AVAILABLE.height() // 2,
         ), (
-            f"커진 크기로 위치를 다시 잡지 않아 창이 걸친다: {win.pos().toTuple()} {win.size().toTuple()}"
+            f"커진 크기로 위치를 다시 잡지 않아 창이 걸친다: {_requested(win).topLeft().toTuple()} {_requested(win).size().toTuple()}"
         )
         assert _in_available(win)
 
@@ -302,8 +337,8 @@ class TestRestoreClampsAfterTheMinimumSizeIsApplied:
         monkeypatch.setattr(VodDownloader, "_contentMinimumWidth", lambda self: grown)
         _write_window({"x": 100, "y": 80, "width": 120, "height": 100, "maximized": False})
         win = _open()
-        assert win.size().toTuple() == (grown, AVAILABLE.height() // 2)
-        assert win.pos().toTuple() == (100, 80), "자리가 있으면 위치는 그대로다"
+        assert _requested(win).size().toTuple() == (grown, AVAILABLE.height() // 2)
+        assert _requested(win).topLeft().toTuple() == (100, 80), "자리가 있으면 위치는 그대로다"
 
 
 class TestMaximized:
