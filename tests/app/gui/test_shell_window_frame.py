@@ -130,7 +130,8 @@ class TestZeroMarginsAreCorrectedAfterShow:
         """
         win = _open(_cases(AVAILABLE)["bottom-right edge"])
         frame = win.frameGeometry()
-        assert frame != win.geometry(), "전제: 이 플랫폼은 표시 뒤 프레임 여백을 준다"
+        if frame == win.geometry():  # 창 관리자가 없는 X 서버(CI의 xvfb)는 표시 뒤에도 여백을 주지 않는다
+            pytest.skip("이 플랫폼은 표시 뒤에도 프레임 여백을 주지 않는다 — 다시 맞출 것이 없다")
         assert AVAILABLE.contains(frame), (
             f"프레임 {frame.getRect()}이 작업 영역 {AVAILABLE.getRect()} 밖이다"
         )
