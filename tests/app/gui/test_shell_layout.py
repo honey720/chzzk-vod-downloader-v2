@@ -27,7 +27,7 @@
 
 import pytest
 from PySide6.QtCore import QMimeData, QPoint, QRect, QSize, Qt
-from PySide6.QtGui import QDragEnterEvent
+from PySide6.QtGui import QDragEnterEvent, QImage
 from PySide6.QtWidgets import QApplication, QScrollArea
 
 import CVDv2 as main_module
@@ -132,7 +132,7 @@ def _in_window(win, w) -> QRect:
     return QRect(w.mapTo(win, QPoint(0, 0)), w.size())
 
 
-def _pixel(image, point: QPoint) -> int:
+def _pixel(image: QImage, point: QPoint) -> int:
     """창 좌표(논리 px)의 화소 값 — `grab()` 이미지는 장치 화소라 배율(devicePixelRatio)을 곱해 읽는다(#486).
 
     논리 화소 한 칸의 가운데가 놓인 장치 화소를 읽는다 — 125% · 150% 같은 소수 배율에서도 같은 자리다.

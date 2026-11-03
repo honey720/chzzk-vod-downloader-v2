@@ -65,6 +65,8 @@ def _resize_or_skip(window: VodDownloader, window_height: int) -> None:
     `resize()`는 요청이다 — 화면이 그보다 낮으면 OS(macOS 실제 화면)가 창을 화면 높이로 줄인다.
     요청한 높이(+ 제목 표시줄)가 작업 영역에 들어가지 않을 때만 skip하고, 들어가는데 높이가 다르면 실패한다.
     """
+    # 최소 높이는 작업 영역 높이의 절반이다 — 높은 화면에서는 요청보다 커 resize가 올려 버린다
+    window.setMinimumHeight(min(window.minimumHeight(), window_height))
     window.resize(900, window_height)
     QApplication.processEvents()
     if window.height() == window_height:
