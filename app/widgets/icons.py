@@ -37,6 +37,7 @@ import app.theme as theme
 #: folder_edit_dot = 거기에 우상단 점(강조색) — 카드 경로가 전역 설정과 다를 때
 #: 저장 위치 버튼이 "다르다"를 표시한다(#245, #309).
 #: scissors = 카드 위 줄의 구간 편집 버튼 — 가위(자를 구간을 정한다, #309).
+#: check = 하나만 고르는 메뉴의 고른 항목 표시(✓) — 헤더바 저장 위치 · 정렬 메뉴(#495).
 ICON_NAMES = (
     "pause",
     "resume",
@@ -46,6 +47,7 @@ ICON_NAMES = (
     "folder_edit_dot",
     "delete",
     "scissors",
+    "check",
 )
 
 _CACHE: dict[tuple[str, str, int, float, str], QPixmap] = {}
@@ -218,6 +220,14 @@ def _paint_delete(painter: QPainter, s: float, color: QColor, accent: QColor) ->
     painter.drawLine(QPointF(s * 0.78, s * 0.22), QPointF(s * 0.22, s * 0.78))
 
 
+def _paint_check(painter: QPainter, s: float, color: QColor, accent: QColor) -> None:
+    """고른 항목 — 꺾인 선 하나(✓). 삭제(✕)와 같은 굵기 계열의 선이다."""
+    _stroke(painter, color, s * 0.16)
+    painter.drawPolyline(
+        QPolygonF([QPointF(s * 0.16, s * 0.54), QPointF(s * 0.40, s * 0.78), QPointF(s * 0.86, s * 0.24)])
+    )
+
+
 _PAINTERS = {
     "pause": _paint_pause,
     "resume": _paint_resume,
@@ -227,6 +237,7 @@ _PAINTERS = {
     "folder_edit_dot": _paint_folder_edit_dot,
     "delete": _paint_delete,
     "scissors": _paint_scissors,
+    "check": _paint_check,
 }
 
 

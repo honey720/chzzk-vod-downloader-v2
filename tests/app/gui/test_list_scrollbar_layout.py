@@ -1,4 +1,4 @@
-"""카드 목록 스크롤바 재배치 + 카드 폭 고정 + 하단 카운트 라벨 자릿수 게이트 (v2.10.1).
+"""카드 목록 스크롤바 재배치 + 카드 폭 고정 + 칩 숫자 자릿수 게이트 (v2.10.1 · #495).
 
 오너가 정한 것:
   ① 세로 스크롤바 유무로 카드 폭이 변하지 않는다. 정책은 AsNeeded(필요할 때만 보인다 —
@@ -7,13 +7,12 @@
   ② 목록은 창 좌우 끝까지 가서 스크롤바가 창 우측 끝에 붙고, 창 쪽에 있던 좌우 여백
      (outerMargin)은 목록 안 카드 컨테이너의 패딩으로 옮긴다 — 카드의 보이는 왼쪽 위치는
      그대로다.
-  ③ 하단 바가 요구하는 폭을 카운트 라벨 자릿수 최대치(`999/999`) 기준으로 예약한다 —
-     `0/0` 기준으로 시작 때 고정된 창 최소폭을 `0/10`·`0/100`이 넘어서 좌우 스크롤 안전망이
-     뜨던 결함. 라벨은 자연 폭, 모자라는 몫은 스페이서 최소폭. 창 최소폭을 내용 따라 다시
-     재지 않는다.
+  ③ 칩 숫자가 늘어도 콘텐츠 최소폭이 그대로다 — 칩마다 숫자 세 자리(`999`) 폭을 미리 잡는다.
+     시작 때 고정된 창 최소폭을 숫자가 넘어 좌우 스크롤 안전망이 뜨던 결함(v2.10.1 하단 카운트)을
+     #495에서 카운트 대신 칩이 이어 받는다. 창 최소폭을 내용 따라 다시 재지 않는다.
 
 전부 폰트 무의존 기하 관계로 잰다. 고장 주입: 스크롤바 폭 보정을 빼면 ①이, 컨테이너
-패딩을 0으로 되돌리면 ②가, 예약 균형(스페이서 최소폭)을 빼면 ③이 실패한다.
+패딩을 0으로 되돌리면 ②가, 칩의 세 자리 예약을 빼면 ③이 실패한다.
 """
 
 import pytest
@@ -148,40 +147,35 @@ def test_card_left_edge_lines_up_with_the_bars(make_window):
     assert card_left == _in_window(win, win.headerFrame).left() == _in_window(win, win.infoFrame).left()
 
 
-# ================================================================ ③ 하단 카운트 라벨 자릿수
+# ================================================================ ③ 상태 칩 숫자 자릿수
 
 
-@pytest.mark.parametrize("total", [9, 10, 99, 100])
-def test_content_minimum_width_ignores_count_label_digits(make_window, total):
-    """총계가 한 자리→두 자리→세 자리가 돼도 콘텐츠 열 최소폭이 그대로고 좌우 스크롤이 안 뜬다."""
+def test_content_minimum_width_ignores_chip_count_digits(make_window):
+    """카드가 9 → 10 → 99 → 100장으로 늘어 칩 숫자가 한 자리 → 세 자리가 돼도 콘텐츠 열 최소폭이 그대로이고 좌우 스크롤이 안 떠야 한다."""
     win = make_window(cards=0, width_extra=0)
     base = win.contentColumn.minimumSizeHint().width()
-    win.completed_downloads = 0
-    win.total_downloads = total
-    win.updateDownloadCountLabel()
-    _pump()
-    assert win.contentColumn.minimumSizeHint().width() == base, (
-        f"총계 {total}에서 콘텐츠 열 최소폭이 {base} → {win.contentColumn.minimumSizeHint().width()}"
-    )
-    assert win.windowScrollArea.horizontalScrollBar().maximum() == 0, f"총계 {total}에서 좌우 스크롤이 생겼다"
+    added = 0
+    for total in (9, 10, 99, 100):
+        while added < total:
+            win.contentManager.model.addItem(_item(added))
+            added += 1
+        _pump()
+        assert win.filterChips["all"].text().endswith(str(total)), "전제: 전체 칩 숫자가 카드 수를 따라야 한다"
+        assert win.contentColumn.minimumSizeHint().width() == base, (
+            f"카드 {total}장에서 콘텐츠 열 최소폭이 {base} → {win.contentColumn.minimumSizeHint().width()}"
+        )
+        assert win.windowScrollArea.horizontalScrollBar().maximum() == 0, f"카드 {total}장에서 좌우 스크롤이 생겼다"
 
 
-def test_footer_reserves_three_digits_from_the_label_font(make_window):
-    """예약은 상수가 아니라 이 라벨의 글꼴로 잰 `999/999` 기준이다 — 글꼴·DPI·번역을 따라간다.
+def test_chips_reserve_three_digits_from_their_own_font(make_window):
+    """칩마다 폭은 그 칩의 글꼴로 잰 「이름 999」 폭이어야 한다 — 상수가 아니라 글꼴 · 번역을 따라간다."""
+    from app.widgets.header_controls import CHIP_COUNT_RESERVE
 
-    라벨은 자연 폭 그대로(`0/0`일 때 뒤 버튼이 안 밀린다)이고, 모자라는 몫은 하단 바 스페이서의
-    최소폭이 진다 — 라벨 + 스페이서 최소 = `999/999` 폭. 라벨 최대폭이 그 폭이라 1000+는 라벨
-    안에서 잘린다. 하단 바에 명시 최소폭을 박지 않는다(버튼이 넓어지면 바닥도 따라가야 한다).
-    """
     win = make_window(cards=0)
-    label, spacer, frame = win.downloadCountLabel, win.horizontalSpacer, win.infoFrame
-    shown = label.text()
-    label.setText(win.tr("Downloads: {}/{}").format(999, 999))
-    needed = label.sizeHint().width()
-    label.setText(shown)
-    assert label.maximumWidth() == needed, f"라벨 최대폭 {label.maximumWidth()} ≠ 999/999 폭 {needed}"
-    assert label.width() == label.sizeHint().width() < needed, "0/0일 때 라벨은 자연 폭이어야 한다(뒤 버튼이 안 밀림)"
-    assert label.sizeHint().width() + spacer.minimumSize().width() == needed, (
-        f"라벨 {label.sizeHint().width()} + 스페이서 최소 {spacer.minimumSize().width()} ≠ 예약 {needed}"
-    )
-    assert frame.minimumWidth() == 0, "하단 바에 명시 최소폭을 박으면 안 된다 — 내용 최소를 가린다"
+    names = win.filterChipBar.names()
+    for key, chip in win.filterChips.items():
+        shown = chip.text()
+        chip.setText(f"{names[key]} {CHIP_COUNT_RESERVE}")
+        needed = chip.sizeHint().width()
+        chip.setText(shown)
+        assert chip.width() == needed, f"{key} 칩 폭 {chip.width()} ≠ 세 자리 폭 {needed}"

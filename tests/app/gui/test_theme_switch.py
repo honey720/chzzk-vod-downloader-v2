@@ -26,6 +26,7 @@
 """
 
 import sys
+import tempfile
 import time
 from contextlib import contextmanager
 
@@ -104,6 +105,8 @@ STATES = (
     DownloadState.FAILED,
 )
 PROGRESS = {DownloadState.RUNNING: 42, DownloadState.PAUSED: 54, DownloadState.FINISHED: 100}
+# 두 장면이 고르는 저장 위치 — 실존 폴더여야 고를 수 있다(#495). 이름이 같아야 버튼 글이 같다
+DOWNLOAD_DIR = tempfile.mkdtemp(prefix="cvdv2-theme-")
 
 
 def _make_item(i: int) -> ContentItem:
@@ -124,10 +127,9 @@ class Scene:
 
     def __init__(self):
         self.window = VodDownloader()
-        # 두 장면이 config 상태에 기대지 않게 입력값을 고정한다 — 앞 장면의 창이
-        # 닫히며 경로를 저장(구분자 정규화)하고 뒤 장면이 그 값을 읽어 오면 글자만
-        # 달라져 테마와 무관한 차이가 난다(Windows 실기 실측: 슬래시가 역슬래시로).
-        self.window.downloadPathInput.setText("C:/dl")
+        # 두 장면이 설정 상태에 기대지 않게 저장 위치를 고정한다 — 버튼 글(폴더 이름)이 장면마다
+        # 다르면 테마와 무관한 차이가 난다(#495 전에는 경로 입력창의 글이었다).
+        assert self.window.saveLocations.choose(DOWNLOAD_DIR)
         self.window.urlInput.setText("")
         self.items = []
         for i, state in enumerate(STATES):
@@ -152,7 +154,6 @@ class Scene:
         # 입력창에 포커스가 남으면 캐럿 깜빡임 위상이 장면마다 달라 테마와 무관한
         # 픽셀 차이가 난다(전체 스위트 맥락에서 간헐 실측) — 포커스를 뺀다.
         self.window.urlInput.clearFocus()
-        self.window.downloadPathInput.clearFocus()
         QApplication.processEvents()
 
     def close(self) -> None:
@@ -173,16 +174,17 @@ class Scene:
             "header.frame": w.headerFrame,
             "header.urlInput": w.urlInput,
             "header.fetchButton": w.fetchButton,
-            "header.downloadPathInput": w.downloadPathInput,
-            "header.downloadPathButton": w.downloadPathButton,
-            "header.linkStatusLabel": w.linkStatusLabel,
+            "header.saveLocationButton": w.saveLocationButton,
+            "header.registerErrorLabel": w.registerErrorLabel,
+            "header.clearFinishedButton": w.clearFinishedButton,
+            "header.sortButton": w.sortButton,
             "list.viewport": w.listView.viewport(),
             "footer.frame": w.infoFrame,
-            "footer.downloadCountLabel": w.downloadCountLabel,
-            "footer.clearFinishedButton": w.clearFinishedButton,
             "footer.downloadButton": w.downloadButton,
             "footer.stopButton": w.stopButton,
         }
+        for key, chip in w.filterChips.items():  # 헤더바 2줄 상태 칩(#495) — 고른 칩 · 실패 강조 포함
+            parts[f"header.chip[{key}]"] = chip
         for state in STATES:
             card = self.card(state)
             prefix = f"card[{state.name.lower()}]"
@@ -345,8 +347,6 @@ class TestFaultInjection:
 
         stale = _differences(fresh, switched)
         # 글자색은 QSS가 아니라 팔레트(WindowText)가 칠한다 — 라벨들이 낡은 색으로 남는다
-        assert "header.linkStatusLabel" in stale
-        assert "footer.downloadCountLabel" in stale
         assert "card[waiting].title" in stale
         assert "card[waiting].pathLabel" in stale
 

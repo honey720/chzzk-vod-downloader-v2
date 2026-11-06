@@ -33,6 +33,7 @@ import threading
 
 from PySide6.QtCore import QObject, QThreadPool, Signal
 
+from app.viewmodels.card_order import CardOrder
 from app.viewmodels.item_state import ItemState
 from app.viewmodels.path_gates import check_download_path
 from app.viewmodels.data import SECTION_CHECK_PENDING, ContentItem
@@ -193,6 +194,8 @@ class ContentViewModel(QObject):
     finishedAllRequested = Signal()
     fetchRequested = Signal(str)
     contentError = Signal(str)
+    # 조회 중인 카드가 생겼다(True) · 다 끝났다(False) — 등록 버튼 안의 도는 표시(#495)
+    fetchingChanged = Signal(bool)
     # 배치가 구간 편집 중인 카드를 기다리기 시작했다(True) · 그만 기다린다(False) (#309) —
     # 편집 창이 아래쪽 안내를 켜고 끈다
     editWaitChanged = Signal(bool)
@@ -208,6 +211,18 @@ class ContentViewModel(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.model = ContentListModel()
+        # 필터 · 정렬 상태와 보이는 차례 = 다운로드 차례(#495). ⚠️ 목록 뷰가 모델에 잇기 전에 만든다 —
+        # 뷰가 카드를 넣을 때 이 객체에 자리를 묻는다(같은 시그널은 이은 차례로 돈다)
+        self.order = CardOrder(self.model, self)
+        # 카드 상태는 이 알림들 뒤에 바뀌어 있다 — 순서 뷰모델이 칩 숫자 · 자리를 그 차례 끝에 다시 본다
+        for signal in (
+            self.itemStarted,
+            self.itemStopped,
+            self.itemPaused,
+            self.itemResumed,
+            self.itemFinished,
+        ):
+            signal.connect(self.order.touch)
         self.downloadPath = ""
         self.threadpool = QThreadPool()
         # 조회 중인 워커 → 자리표시 아이템. 결과가 도착할 때까지 워커의 파이썬
@@ -250,6 +265,8 @@ class ContentViewModel(QObject):
         relay = _WorkerRelay(self, worker)
         self._pendingPlaceholders[worker] = placeholder
         self._relays[worker] = relay
+        if len(self._pendingPlaceholders) == 1:
+            self.fetchingChanged.emit(True)
 
         worker.finished.connect(relay.onFinished)
         worker.error.connect(relay.onError)
@@ -260,6 +277,7 @@ class ContentViewModel(QObject):
         # result는 (vod_url, metadata, unique_reps, resolution, base_url, downloadPath, liveRewindPlaybackJson) 형식
         placeholder = self._pendingPlaceholders.pop(worker, None)
         self._relays.pop(worker, None)
+        self._emitFetchingDone()
         if placeholder is None:
             return
         (
@@ -294,12 +312,22 @@ class ContentViewModel(QObject):
     def _workerError(self, worker, error_message):
         placeholder = self._pendingPlaceholders.pop(worker, None)
         self._relays.pop(worker, None)
+        self._emitFetchingDone()
         if placeholder is not None:
             row = self.model.getRow(placeholder)
             if row is not None:
                 self.model.removeRows(row, 1)
                 self.deleteItemRequested.emit(placeholder, self.model.rowCount())
         self.contentError.emit(error_message)
+
+    def isFetching(self) -> bool:
+        """조회가 끝나지 않은 등록이 있는지 — 등록 버튼의 도는 표시(#495)."""
+        return bool(self._pendingPlaceholders)
+
+    def _emitFetchingDone(self) -> None:
+        """마지막 조회가 끝났으면 알린다(결과를 쓰기 전 — 성공 · 실패 모두)."""
+        if not self._pendingPlaceholders:
+            self.fetchingChanged.emit(False)
 
     # ---- 다운로드 관문 문구 — 카드 3행에 뜨는 tr() 2건 (컨텍스트 ContentViewModel) ----
 
@@ -527,9 +555,13 @@ class ContentViewModel(QObject):
         self.downloadItem()
 
     def findItem(self):
-        row_count = self.model.rowCount()
-        for row in range(row_count):
-            item = self.model.itemAt(row)
+        """다음에 받을 카드를 고른다 — (찾음, 카드, 목록 행).
+
+        고르는 차례는 화면 순서(정렬 · 방향)다 — 받을 차례가 올 때마다 그 순서에서 위부터 첫
+        받을 수 있는 카드를 고른다(#495, 설계 §2). 필터로 가린 카드도 차례에 든다. 목록 자체는
+        추가된 순서 그대로이고, 돌려주는 행은 목록의 행이다.
+        """
+        for item in self.order.ordered():
             # LOADING은 메타데이터가 아직 없어 다운로드 대상이 아니다 (#124).
             # 구간 편집 창이 열린 카드는 건너뛴다 — 창을 닫으면 다시 대상이 된다 (#309)
             if item is self._editingItem:
@@ -538,7 +570,7 @@ class ContentViewModel(QObject):
             if self._awaitsSectionCheck(item):
                 continue
             if item.downloadState not in _NOT_DOWNLOADABLE:
-                return True, item, row
+                return True, item, self.model.getRow(item)
         return False, None, None
 
     def hasLoadingItems(self):

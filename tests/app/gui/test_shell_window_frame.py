@@ -79,6 +79,23 @@ def _cases(available: QRect) -> dict[str, dict]:
     }
 
 
+def _wide_enough(area: QRect) -> QRect:
+    """작업 영역이 창 최소폭(+ 여백)보다 좁으면 넓힌다 — offscreen 가상 화면(800px)에서만.
+
+    헤더바 2줄(#495) 뒤 최소폭이 폰트에 따라 800px대라, 800px 화면에는 창이 어떻게 놓아도 들어가지 않는다
+    (좁은 폭 모양은 셸 S3). 그 화면에서는 "프레임까지 안에 넣는다"를 잴 수 없으므로 최소폭에서 유도한
+    폭으로 넓혀 잰다. offscreen은 OS가 창을 옮기지 않아 넓혀도 앱의 계산을 잰다(`_screen_area`의 주의는
+    실제 화면 이야기다).
+    """
+    write_settings({})
+    probe = VodDownloader()
+    QApplication.processEvents()
+    need = probe.minimumWidth() + MARGINS.left() + MARGINS.right()
+    if NATIVE or area.width() >= need * 10 // 6 + 100:
+        return area
+    return QRect(area.x(), area.y(), need * 10 // 6 + 100, area.height())  # 기록 폭(60%)도 최소폭 위
+
+
 def _open(record: dict) -> VodDownloader:
     """기록을 쓰고 실제 메인 창을 만든다(복원은 생성 시점, 표시까지 생성자가 한다)."""
     write_settings({"window": {**record, "maximized": False}})
@@ -93,7 +110,7 @@ class TestInjectedMargins:
 
     @pytest.fixture(autouse=True)
     def _inject(self, qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> None:
-        self.area = _screen_area(qapp)
+        self.area = _wide_enough(_screen_area(qapp))
         monkeypatch.setattr(
             VodDownloader, "_availableGeometry", lambda _self, near=None: QRect(self.area)
         )
@@ -128,7 +145,7 @@ class TestZeroMarginsAreCorrectedAfterShow:
 
     @pytest.fixture(autouse=True)
     def _inject(self, qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> None:
-        self.area = _screen_area(qapp)
+        self.area = _wide_enough(_screen_area(qapp))
         monkeypatch.setattr(
             VodDownloader, "_availableGeometry", lambda _self, near=None: QRect(self.area)
         )

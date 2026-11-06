@@ -373,6 +373,95 @@ Part of the video kept arriving incomplete from the server. Try again later.</tr
     </message>
 </context>
 <context>
+    <name>FilterChips</name>
+    <message>
+        <source>All</source>
+        <translation>All</translation>
+    </message>
+    <message>
+        <source>Waiting</source>
+        <translation>Waiting</translation>
+    </message>
+    <message>
+        <source>In progress</source>
+        <translation>In progress</translation>
+    </message>
+    <message>
+        <source>Paused</source>
+        <translation>Paused</translation>
+    </message>
+    <message>
+        <source>Finished</source>
+        <translation>Finished</translation>
+    </message>
+    <message>
+        <source>Failed</source>
+        <translation>Failed</translation>
+    </message>
+</context>
+<context>
+    <name>SaveLocationButton</name>
+    <message>
+        <source>(missing)</source>
+        <translation>(missing)</translation>
+    </message>
+    <message>
+        <source>Favorites</source>
+        <translation>Favorites</translation>
+    </message>
+    <message>
+        <source>Recent</source>
+        <translation>Recent</translation>
+    </message>
+    <message>
+        <source>☆ Add current folder to favorites</source>
+        <translation>☆ Add current folder to favorites</translation>
+    </message>
+    <message>
+        <source>Find folder…</source>
+        <translation>Find folder…</translation>
+    </message>
+    <message>
+        <source>Default location</source>
+        <translation>Default location</translation>
+    </message>
+    <message>
+        <source>The folder does not exist.</source>
+        <translation>The folder does not exist.</translation>
+    </message>
+    <message>
+        <source>Find folder</source>
+        <translation>Find folder</translation>
+    </message>
+    <message>
+        <source>Add to favorites</source>
+        <translation>Add to favorites</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>Name</translation>
+    </message>
+</context>
+<context>
+    <name>SaveLocations</name>
+    <message>
+        <source>Enter a name for the favorite.</source>
+        <translation>Enter a name for the favorite.</translation>
+    </message>
+    <message>
+        <source>You can add up to {} favorites.</source>
+        <translation>You can add up to {} favorites.</translation>
+    </message>
+    <message>
+        <source>This folder is already a favorite.</source>
+        <translation>This folder is already a favorite.</translation>
+    </message>
+    <message>
+        <source>A favorite with this name already exists.</source>
+        <translation>A favorite with this name already exists.</translation>
+    </message>
+</context>
+<context>
     <name>SectionEditDialog</name>
     <message>
         <source>Edit sections</source>
@@ -596,6 +685,37 @@ Check your connection and cookies, then open this window again.</translation>
     </message>
 </context>
 <context>
+    <name>SortButton</name>
+    <message>
+        <source>Added order</source>
+        <translation>Added order</translation>
+    </message>
+    <message>
+        <source>Title</source>
+        <translation>Title</translation>
+    </message>
+    <message>
+        <source>Channel</source>
+        <translation>Channel</translation>
+    </message>
+    <message>
+        <source>Upload date</source>
+        <translation>Upload date</translation>
+    </message>
+    <message>
+        <source>Status</source>
+        <translation>Status</translation>
+    </message>
+    <message>
+        <source>Ascending</source>
+        <translation>Ascending</translation>
+    </message>
+    <message>
+        <source>Descending</source>
+        <translation>Descending</translation>
+    </message>
+</context>
+<context>
     <name>TimecodeEdit</name>
     <message>
         <source>Copy</source>
@@ -617,28 +737,8 @@ Check your connection and cookies, then open this window again.</translation>
         <translation>Please enter VOD URL.</translation>
     </message>
     <message>
-        <source>Fetching resolutions...</source>
-        <translation>Fetching resolutions...</translation>
-    </message>
-    <message>
         <source>Path does not exist.</source>
         <translation>Path does not exist.</translation>
-    </message>
-    <message>
-        <source>Resolutions fetched successfully.</source>
-        <translation>Resolutions fetched successfully.</translation>
-    </message>
-    <message>
-        <source>Error</source>
-        <translation>Error</translation>
-    </message>
-    <message>
-        <source>Error occurred during content request:</source>
-        <translation>Error occurred during content request:</translation>
-    </message>
-    <message>
-        <source>Failed to fetch resolutions.</source>
-        <translation>Failed to fetch resolutions.</translation>
     </message>
     <message>
         <source>Pause</source>
@@ -685,10 +785,6 @@ Check your connection and cookies, then open this window again.</translation>
         <translation>Download completed.</translation>
     </message>
     <message>
-        <source>Downloads: {}/{}</source>
-        <translation>Downloads: {}/{}</translation>
-    </message>
-    <message>
         <source>Settings</source>
         <translation>Settings</translation>
     </message>
@@ -697,16 +793,8 @@ Check your connection and cookies, then open this window again.</translation>
         <translation>Enter Chzzk URL</translation>
     </message>
     <message>
-        <source>Enter download path</source>
-        <translation>Enter download path</translation>
-    </message>
-    <message>
         <source>Add VOD</source>
         <translation>Add VOD</translation>
-    </message>
-    <message>
-        <source>Find path</source>
-        <translation>Find path</translation>
     </message>
     <message>
         <source>Clear Finished</source>

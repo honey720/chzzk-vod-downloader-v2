@@ -6,17 +6,14 @@ from app.system import settings
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
-    QFileDialog,
     QFrame,
     QHBoxLayout,
-    QLabel,
+    QLayout,
     QLineEdit,
     QMainWindow,
     QMessageBox,
     QPushButton,
     QScrollArea,
-    QSizePolicy,
-    QSpacerItem,
     QVBoxLayout,
     QWidget,
 )
@@ -24,7 +21,8 @@ from PySide6.QtCore import QMargins, QMetaObject, QPoint, QRect, QSize, QStandar
 
 from app.system.process_memory import log_process_memory
 from app.viewmodels.download_viewmodel import DownloadViewModel
-from app.viewmodels.path_gates import check_fetch_path, check_remember_path, normalize_path
+from app.viewmodels.path_gates import check_fetch_path
+from app.viewmodels.save_location import SaveLocations
 from app.views.dialog import SettingDialog
 from app.views.section_dialog import SectionEditDialog
 from app.viewmodels.section_edit import SectionEditViewModel
@@ -32,6 +30,8 @@ from app.viewmodels.data import ContentItem
 from app.viewmodels.content_viewmodel import ContentViewModel
 import config.config as config
 from app.widgets import widget as content_widget
+from app.widgets.eliding_label import ElidingLabel
+from app.widgets.header_controls import BusyButton, FilterChips, SaveLocationButton, SortButton
 from app.widgets.view import ContentListView
 from core.models.download_state import DownloadState
 import app.theme as theme
@@ -66,14 +66,17 @@ def window_title(version: str) -> str:
 
 
 def _default_download_path() -> str:
-    """시작 시 저장 경로 입력창의 초기값을 정한다 (#159 — #157 실측 근거).
+    """기본 저장 위치를 정한다 — 앱은 늘 이 위치로 시작한다 (#159 — #157 실측 근거, #495).
 
     cwd는 실행 방식에 따라 임의다 — macOS .app을 Finder/Dock으로 실행하면
     cwd가 '/'(쓰기 불가)임을 CI에서 실측했고(#157), Windows도 바로가기의
     '시작 위치' 설정에 좌우된다. 우선순위:
-    ① 유저가 마지막으로 쓴 경로(설정, 실존할 때만 — 외장 드라이브 분리 대비)
+    ① 설정의 기본 저장 위치 `downloadPath`(실존할 때만 — 외장 드라이브 분리 대비)
     ② 시스템 다운로드 폴더(실존할 때만)
     ③ cwd — 소스 실행(개발) 관례를 유지하는 최후 폴백
+
+    저장 위치를 골라도 `downloadPath`는 바뀌지 않는다(#495 — 바꾼 위치는 최근 목록). 2.11까지는
+    마지막으로 쓴 경로를 거기 적었으므로(#165) 올린 유저는 그 경로로 시작한다.
     """
     saved = settings.load_settings().get("downloadPath", "")
     if saved and os.path.isdir(saved):
@@ -107,9 +110,9 @@ class VodDownloader(QMainWindow):
     클래스 이름(`VodDownloader`)이다 — 클래스 이름이나 원문을 글자 하나 바꾸면 `lupdate -no-obsolete`가
     기존 번역을 지운다.
 
-    창은 위에서 아래로 네 칸이다(#492 — 2.12.0 셸 S0): 메뉴바(VOD 다운 · 설정) · 헤더바(URL 입력 ·
-    저장 위치 입력과 찾기 · 등록, 조회 상태 한 줄) · 목록 · 하단바(왼쪽 카운트 · 완료 지우기, 오른쪽 끝
-    다운로드 · 중지). 모양(색 · 간격 · 글자)은 셸 전과 같다.
+    창은 위에서 아래로 네 칸이다(#492 — 2.12.0 셸 S0): 메뉴바(VOD 다운 · 설정) · 헤더바(1줄 URL 입력 ·
+    저장 위치 버튼 · 등록, 조회 상태 한 줄, 2줄 상태 칩 · 정렬 — #495) · 목록 · 하단바(완료 지우기,
+    오른쪽 끝 다운로드 · 중지).
     """
 
     def __init__(self, parent=None):
@@ -160,6 +163,9 @@ class VodDownloader(QMainWindow):
 
         self.contentManager = ContentViewModel(parent=self)
         self.listView.bind(self.contentManager)
+        # 헤더바 2줄 — 칩 숫자 · 고른 칩 · 정렬을 순서 뷰모델에 잇는다(#495)
+        self.filterChipBar.bind(self.contentManager.order)
+        self.sortButton.bind(self.contentManager.order)
         # 다운로드 이벤트(진행·완료·실패)는 viewmodel이 content에 직결한다 (#170)
         # — 구 릴레이 슬롯 6개(_onProgress~_onFailed)는 함께 제거됐다
         self.downloadViewModel = DownloadViewModel(self.contentManager, parent=self)
@@ -242,35 +248,55 @@ class VodDownloader(QMainWindow):
         self.headerFrameLayout.setSpacing(8)
         self.headerFrameLayout.setObjectName("headerFrameLayout")
 
-        # 헤더바 1줄(#492 — 셸 S0):
-        #   ┌ [URL 입력                ][경로 입력      ✕][경로 찾기][VOD 추가] ┐
-        #   └ 조회 상태 메시지 한 줄                                           ┘
-        # 남는 폭은 두 입력창이 2 : 1로 나눈다 — URL이 주 입력이다(설계: URL 입력이 남는 폭).
-        # 저장 위치 입력은 셸 S1에서 고정 폭 저장 위치 버튼으로 바뀐다. 두 텍스트 버튼은
-        # 지금처럼 같은 폭이다(_equalizeHeaderButtons). 설정 톱니(#245)는 메뉴바 「설정」으로 옮겼다.
+        # 헤더바 1줄(#492 — 셸 S0, #495 — S1):
+        #   ┌ [URL 입력                         ][📁 폴더 이름 ▾][VOD 추가] ┐
+        #   │ 등록 오류 한 줄(빨강, 평소 빈 줄 — 자리는 늘 잡아 둔다)          │
+        #   └ [칩 여섯][정렬 ▾] ……………………………………………… [완료 지우기] ┘
+        # 남는 폭은 URL 입력이 다 받는다(설계: URL 입력이 남는 폭). 저장 위치 버튼은 고정 폭이다
+        # (SaveLocationButton.applyWidth). 설정 톱니(#245)는 메뉴바 「설정」으로 옮겼다.
         self.urlRowLayout = QHBoxLayout()
         self.urlRowLayout.setSpacing(8)
         self.urlRowLayout.setObjectName("urlRowLayout")
         self.urlInput = QLineEdit(self.headerFrame)
         self.urlInput.setObjectName("urlInput")
         self.urlInput.setClearButtonEnabled(True)
-        self.urlRowLayout.addWidget(self.urlInput, 2)
-        self.downloadPathInput = QLineEdit(self.headerFrame)
-        self.downloadPathInput.setObjectName("downloadPathInput")
-        self.downloadPathInput.setClearButtonEnabled(True)
-        self.urlRowLayout.addWidget(self.downloadPathInput, 1)
-        self.downloadPathButton = QPushButton(self.headerFrame)
-        self.downloadPathButton.setObjectName("downloadPathButton")
-        self.urlRowLayout.addWidget(self.downloadPathButton)
-        self.fetchButton = QPushButton(self.headerFrame)
+        self.urlRowLayout.addWidget(self.urlInput, 1)
+        self.saveLocationButton = SaveLocationButton(self.headerFrame)
+        self.saveLocationButton.setObjectName("saveLocationButton")
+        self.urlRowLayout.addWidget(self.saveLocationButton)
+        self.fetchButton = BusyButton(self.headerFrame)  # 불러오는 동안 글 옆에 도는 표시(#495)
         self.fetchButton.setObjectName("fetchButton")
         self.urlRowLayout.addWidget(self.fetchButton)
 
         self.headerFrameLayout.addLayout(self.urlRowLayout)
 
-        self.linkStatusLabel = QLabel(self.headerFrame)
-        self.linkStatusLabel.setObjectName("linkStatusLabel")
-        self.headerFrameLayout.addWidget(self.linkStatusLabel)
+        # 등록 오류 줄(#495 — 설계 알림 자리): 잘못된 URL · 조회 실패를 URL 칸 바로 아래 빨간 글 한 줄로.
+        # 입력을 고치면 사라진다. 줄 자리는 오류가 없어도 늘 잡아 둔다 — 오류가 떠도 목록이 움직이지
+        # 않는다(_reserveErrorLineHeight). 긴 글은 말줄임 + 툴팁(ElidingLabel — 헤더바를 넓히지 않는다).
+        # 「불러오는 중」 · 「가져왔다」는 글로 띄우지 않는다 — 등록 버튼의 도는 표시 · 카드의 조회 중 상태가 보인다
+        self.registerErrorLabel = ElidingLabel(self.headerFrame)
+        self.registerErrorLabel.setObjectName("registerErrorLabel")
+        self.headerFrameLayout.addWidget(self.registerErrorLabel)
+
+        # 헤더바 2줄(#495 — 셸 S1): [상태 칩 여섯][정렬 ▾] ……
+        # 칩 · 정렬 버튼은 고정 폭이다(숫자 세 자리 · 가장 긴 정렬 이름) — 남는 폭은 줄 끝 빈칸이 받는다
+        self.filterRowLayout = QHBoxLayout()
+        self.filterRowLayout.setSpacing(8)
+        self.filterRowLayout.setObjectName("filterRowLayout")
+        self.filterChipBar = FilterChips(self.headerFrame)
+        self.filterChipBar.setObjectName("filterChipBar")
+        self.filterChips = self.filterChipBar.chips
+        self.filterRowLayout.addWidget(self.filterChipBar)
+        self.sortButton = SortButton(self.headerFrame)
+        self.sortButton.setObjectName("sortButton")
+        self.filterRowLayout.addWidget(self.sortButton)
+        self.filterRowLayout.addStretch(1)
+        # 완료 지우기 — 선택 · 지우기 되돌리기(카드 단계)가 오기 전까지 헤더바 2줄 오른쪽 끝(#495)
+        self.clearFinishedButton = QPushButton(self.headerFrame)
+        self.clearFinishedButton.setObjectName("clearFinishedButton")
+        self.clearFinishedButton.setProperty("role", "subtle")
+        self.filterRowLayout.addWidget(self.clearFinishedButton)
+        self.headerFrameLayout.addLayout(self.filterRowLayout)
 
         # 상단·하단 바는 각자 행(headerRow·infoRow)에 담아 좌우 outerMargin을 그 행이
         # 지게 한다 — 열(centralWidgetLayout)은 좌우 여백이 0이라 사이의 카드 목록이
@@ -292,17 +318,8 @@ class VodDownloader(QMainWindow):
         self.infoLayout = QHBoxLayout(self.infoFrame)
         self.infoLayout.setSpacing(8)
         self.infoLayout.setObjectName("infoLayout")
-        self.downloadCountLabel = QLabel(self.infoFrame)
-        self.downloadCountLabel.setObjectName("downloadCountLabel")
-        self.infoLayout.addWidget(self.downloadCountLabel)
-        self.clearFinishedButton = QPushButton(self.infoFrame)
-        self.clearFinishedButton.setObjectName("clearFinishedButton")
-        self.clearFinishedButton.setProperty("role", "subtle")
-        self.infoLayout.addWidget(self.clearFinishedButton)
-        self.horizontalSpacer = QSpacerItem(
-            0, 0, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
-        )
-        self.infoLayout.addItem(self.horizontalSpacer)
+        # 하단 「Downloads: x/y」 카운트는 없앴다 — 헤더바 상태 칩의 숫자가 대신한다(#495)
+        self.infoLayout.addStretch(1)
         self.downloadButton = QPushButton(self.infoFrame)
         self.downloadButton.setObjectName("downloadButton")
         self.infoLayout.addWidget(self.downloadButton)
@@ -321,12 +338,16 @@ class VodDownloader(QMainWindow):
         # 탭 순서 = 화면 순서(위 → 아래, 왼쪽 → 오른쪽): 메뉴 · 헤더 1줄 · 목록 · 하단
         QWidget.setTabOrder(self.menuDownloadButton, self.menuSettingsButton)
         QWidget.setTabOrder(self.menuSettingsButton, self.urlInput)
-        QWidget.setTabOrder(self.urlInput, self.downloadPathInput)
-        QWidget.setTabOrder(self.downloadPathInput, self.downloadPathButton)
-        QWidget.setTabOrder(self.downloadPathButton, self.fetchButton)
-        QWidget.setTabOrder(self.fetchButton, self.listView)
-        QWidget.setTabOrder(self.listView, self.clearFinishedButton)
-        QWidget.setTabOrder(self.clearFinishedButton, self.downloadButton)
+        QWidget.setTabOrder(self.urlInput, self.saveLocationButton)
+        QWidget.setTabOrder(self.saveLocationButton, self.fetchButton)
+        QWidget.setTabOrder(self.fetchButton, self.filterChips["all"])
+        chips = list(self.filterChips.values())
+        for before, after in zip(chips, chips[1:]):
+            QWidget.setTabOrder(before, after)
+        QWidget.setTabOrder(chips[-1], self.sortButton)
+        QWidget.setTabOrder(self.sortButton, self.clearFinishedButton)
+        QWidget.setTabOrder(self.clearFinishedButton, self.listView)
+        QWidget.setTabOrder(self.listView, self.downloadButton)
         QWidget.setTabOrder(self.downloadButton, self.stopButton)
 
         self.retranslateUi(window)
@@ -342,9 +363,6 @@ class VodDownloader(QMainWindow):
         self.menuSettingsButton.setText(self.tr("Settings"))
         self.urlInput.setPlaceholderText(self.tr("Enter Chzzk URL"))
         self.fetchButton.setText(self.tr("Add VOD"))
-        self.downloadPathInput.setPlaceholderText(self.tr("Enter download path"))
-        self.downloadPathButton.setText(self.tr("Find path"))
-        self.downloadCountLabel.setText(self.tr("Downloads: {}/{}"))
         self.clearFinishedButton.setText(self.tr("Clear Finished"))
         self.downloadButton.setText(self.tr("Download"))
         self.stopButton.setText(self.tr("Stop"))
@@ -353,13 +371,13 @@ class VodDownloader(QMainWindow):
         """
         UI 동적 설정을 수행한다.
         """
-        self.total_downloads = 0
-        self.completed_downloads = 0
-        self.downloadPathInput.setText(_default_download_path())  # 초기 경로 (#159)
-        # 카드의 "경로는 전역 설정과 다를 때만 표시" 판단 기준(#245) —
-        # 시작 시와 경로 변경 시(_rememberPathIfValid)마다 밀어 넣는다
-        content_widget.set_global_download_path(self.downloadPathInput.text())
-        self.downloadCountLabel.setText(self.downloadCountLabel.text().format(self.completed_downloads, self.total_downloads))  # 초기값 설정
+
+        # 저장 위치 — 늘 기본 저장 위치로 시작한다(#495, 오너 2026-11-05). 고른 위치는 최근에 남는다
+        self.saveLocations = SaveLocations(_default_download_path(), self)
+        self.saveLocationButton.bind(self.saveLocations)
+        # 카드의 "경로는 전역 설정과 다를 때만 표시" 판단 기준(#245) — 시작 때와 위치를 고를 때마다
+        content_widget.set_global_download_path(self.saveLocations.current())
+        self.saveLocations.changed.connect(self._onSaveLocationChanged)
         self._applyLayoutMetrics()
 
     def _applyLayoutMetrics(self) -> None:
@@ -386,71 +404,29 @@ class VodDownloader(QMainWindow):
         self.headerFrameLayout.setContentsMargins(frame_pad, frame_pad, frame_pad, frame_pad)
         self.infoLayout.setContentsMargins(frame_pad, frame_pad, frame_pad, frame_pad)
         self._equalizeHeaderButtons()
-        self._reserveCountLabelWidth()
-        self._reserveStatusLineHeight()
+        # 헤더바 2줄의 칩 · 정렬 버튼 폭(숫자 세 자리 · 가장 긴 이름) — 창 최소폭 계산 전에 건다
+        self.filterChipBar.applyWidth()
+        self.sortButton.applyWidth()
+        self._reserveErrorLineHeight()
 
-    def _reserveStatusLineHeight(self) -> None:
-        """조회 상태 글 줄의 높이를 글 유무와 무관하게 고정한다 (#492 — #493 CI).
+    def _reserveErrorLineHeight(self) -> None:
+        """등록 오류 줄의 높이를 오류 유무와 무관하게 고정한다 (#492 — #493 CI, #495).
 
-        빈 라벨과 글이 든 라벨은 글꼴에 따라 높이 힌트가 다르다(대체 글꼴 offscreen 실측: 빈 14 ·
-        글 12). 그대로 두면 상태 글이 바뀔 때 헤더바가 몇 px 오르내리고, 창 최소 높이의 계산
-        (`_contentMinimumHeight`)도 지금 상태 글에 따라 달라진다. 빈 상태와 실제로 띄우는 글 셋을
-        이 라벨의 글꼴 · QSS로 재어 가장 높은 값을 최소 높이로 건다 — 글꼴 · 번역을 따라간다.
+        오류가 없을 때도 줄 자리를 비워 둔다 — 오류가 뜨고 사라질 때 목록이 움직이지 않는다(설계
+        알림 자리). 빈 라벨과 글이 든 라벨은 글꼴에 따라 높이 힌트가 다르므로(대체 글꼴 offscreen
+        실측: 빈 14 · 글 12) 빈 글과 이 줄에 띄우는 글을 이 라벨의 글꼴 · QSS로 재어 가장 높은 값을
+        최소 높이로 건다 — 글꼴 · 번역을 따라간다. 창 최소 높이(`_contentMinimumHeight`)도 오류
+        유무와 무관해진다.
         """
-        label = self.linkStatusLabel
+        label = self.registerErrorLabel
         shown = label.text()
         label.ensurePolished()
         heights = []
-        for text in (
-            "",
-            self.tr("Fetching resolutions..."),
-            self.tr("Resolutions fetched successfully."),
-            self.tr("Failed to fetch resolutions."),
-        ):
+        for text in ("", self.tr("Please enter VOD URL."), self.tr("Path does not exist.")):
             label.setText(text)
             heights.append(label.sizeHint().height())
         label.setText(shown)
         label.setMinimumHeight(max(heights))
-
-    def _reserveCountLabelWidth(self) -> None:
-        """하단 바 최소폭을 카운트 라벨 세 자리/세 자리(`999/999`) 기준으로 예약한다 (v2.10.1).
-
-        창 최소폭은 시작 때 `_contentMinimumWidth()`로 한 번 고정되는데, 라벨이
-        `0/0`에서 `0/10`이 되면 한 자리만큼(실측 8px) 넓어져 콘텐츠 열이 그 최소폭을
-        넘고 창 전체 좌우 스크롤 안전망이 뜬다(오너 실기 확인, 100에서 또 8px).
-        내용에 따라 창 최소폭을 다시 재지 않는다 — 유저가 줄여 둔 창이 멋대로
-        넓어진다. 대신 하단 바가 요구하는 폭을 `999/999` 기준으로 일정하게 유지한다:
-        라벨은 자연 폭 그대로 두고(고정폭이면 `0/0`일 때 뒤 버튼이 밀려 빈 틈이 보인다),
-        모자라는 몫(예약폭 − 지금 라벨 폭)을 하단 바의 스페이서 최소폭으로 넘긴다 —
-        라벨이 한 자리 커지면 스페이서가 그만큼 줄어 합은 그대로다
-        (`_balanceCountLabelReserve`, 라벨 갱신 때마다). 하단 바 자체에 최소폭을 박지
-        않는 이유: 위젯의 명시 최소폭은 레이아웃이 내용 최소 대신 그 값만 보게 만들어,
-        버튼이 넓어지거나 번역이 길어져도 바닥이 따라가지 못한다. 그 이상(1000+)은
-        라벨 최대폭에 걸려 라벨 안에서 잘려 그려지므로 창은 깨지지 않는다. 폭은 상수가
-        아니라 이 라벨의 실제 글꼴·QSS 여백으로 잰다(같은 원문을 번역한 문자열로) —
-        글꼴·DPI·번역을 따라간다.
-        """
-        label = self.downloadCountLabel
-        shown = label.text()
-        label.setText(self.tr('Downloads: {}/{}').format(999, 999))
-        label.ensurePolished()
-        self._countLabelReserve = label.sizeHint().width()
-        label.setText(shown)
-        label.setMaximumWidth(self._countLabelReserve)
-        self._balanceCountLabelReserve()
-
-    def _balanceCountLabelReserve(self) -> None:
-        """하단 바 스페이서에 (예약폭 − 지금 라벨 폭)을 최소폭으로 주어 라벨+스페이서 합을 예약폭에 고정한다."""
-        reserve = getattr(self, "_countLabelReserve", 0)
-        if not reserve:
-            return
-        balance = max(0, reserve - self.downloadCountLabel.sizeHint().width())
-        # MinimumExpanding — Expanding(Shrink 플래그 있음)이면 스페이서 최소가 0으로 읽혀
-        # 예약이 레이아웃 최소에 안 들어간다. 최소는 balance, 남는 공간은 여전히 흡수한다.
-        self.horizontalSpacer.changeSize(
-            balance, 0, QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Minimum
-        )
-        self.infoLayout.invalidate()
 
     def _availableGeometry(self, near: QPoint | None = None) -> QRect:
         """작업 영역(작업표시줄·독 제외) — 초기 크기·최소 높이·복원 클램프의 화면 기준 (#253).
@@ -578,6 +554,11 @@ class VodDownloader(QMainWindow):
         self.contentColumn.ensurePolished()
         for child in self.contentColumn.findChildren(QWidget):
             child.updateGeometry()
+        # 중첩 레이아웃(헤더바 1 · 2줄 행)의 계산 캐시도 비운다 — updateGeometry()는 위젯 항목의
+        # 캐시만 비우고, 위 레이아웃의 invalidate()는 안쪽 레이아웃으로 내려가지 않는다. 비우지 않으면
+        # 칩 폭을 걸기 전 값이 남아 최소폭이 칩 줄을 덜 센다(#495 — offscreen 실측 행 322 vs 항목 합 547)
+        for layout in self.contentColumn.findChildren(QLayout):
+            layout.invalidate()
         return self.contentColumn.minimumSizeHint().width()
 
     def _contentMinimumHeight(self) -> int:
@@ -633,32 +614,33 @@ class VodDownloader(QMainWindow):
         return height
 
     def _equalizeHeaderButtons(self) -> None:
-        """상단 두 텍스트 버튼([VOD 추가]·[경로 찾기])을 같은 폭으로 고정한다 (#245).
+        """헤더바 1줄의 저장 위치 버튼 폭을 기준 글에 맞춰 건다 (#495).
 
-        사람 눈은 **같은 종류끼리**(텍스트 버튼 둘) 끝이 맞는 것을 본다 —
-        폭이 다르면 오른쪽 끝을 맞춰도 왼쪽 끝이 어긋나 입력 블록이 사각형으로
-        읽히지 않는다. 폭은 번역·폰트에 따라 달라지므로 .ui 상수가 아니라
-        런타임에 더 넓은 쪽으로 맞춘다. `ensurePolished()`가 먼저다 — QSS
-        padding이 sizeHint에 들어오는 시점이 polish다.
+        [경로 찾기] 글 버튼은 저장 위치 버튼(📁 ▾)으로 바뀌어 [VOD 추가]와 폭을 맞출 짝이 없다
+        (#245의 같은 폭 규칙은 같은 종류의 글 버튼끼리였다). 폭은 글꼴 · QSS를 따라 polish 뒤에 잰다.
         """
-        buttons = (self.fetchButton, self.downloadPathButton)
-        for button in buttons:
-            button.ensurePolished()
-        width = max(button.sizeHint().width() for button in buttons)
-        for button in buttons:
-            button.setFixedWidth(width)
+        self.saveLocationButton.applyWidth()
+        # [VOD 추가]는 도는 표시 자리를 늘 잡아 둔 폭이다 — 돌기 시작해도 폭 · 글 자리가 그대로(#495)
+        self.fetchButton.setFixedWidth(self.fetchButton.reservedWidth())
 
-    def _setLinkStatus(self, text: str, kind: str = "info") -> None:
-        """조회 상태 메시지를 갱신한다 — 색은 전역 QSS가 `status` 속성으로 입힌다 (#244).
+    def _showRegisterError(self, text: str) -> None:
+        """등록 오류를 URL 칸 아래 줄에 띄우고 URL 칸 테두리를 빨강으로 한다 (#495 — 설계 §12.1).
 
-        kind: "info"(중립 회색) / "ok"(성공 초록) / "error"(실패 빨강).
-        속성만 바꾸면 이미 계산된 스타일이 안 갱신되므로 repolish가 함께
-        필요하다(카드 상태 표시와 같은 패턴).
+        줄 자리는 늘 잡혀 있어 글만 바뀐다 — 목록이 움직이지 않는다. 입력을 고치면 사라진다
+        (`_clearRegisterError`). 테두리는 전역 QSS의 `QLineEdit[invalid="true"]`가 칠한다.
         """
-        self.linkStatusLabel.setText(text)
-        if self.linkStatusLabel.property("status") != kind:
-            self.linkStatusLabel.setProperty("status", kind)
-            theme.repolish(self.linkStatusLabel)
+        self.registerErrorLabel.setText(text)
+        if self.urlInput.property("invalid") is not True:
+            self.urlInput.setProperty("invalid", True)
+            theme.repolish(self.urlInput)
+
+    def _clearRegisterError(self) -> None:
+        """등록 오류 줄을 비우고 URL 칸 테두리를 되돌린다 — URL 입력이 바뀔 때."""
+        if self.registerErrorLabel.text():
+            self.registerErrorLabel.setText("")
+        if self.urlInput.property("invalid"):
+            self.urlInput.setProperty("invalid", False)
+            theme.repolish(self.urlInput)
 
     def setupThreadSignals(self):
         """
@@ -667,13 +649,11 @@ class VodDownloader(QMainWindow):
         다운로드 이벤트 배선은 DownloadViewModel 내부로 이동했다 (#170).
         """
         # TODO 동시 다운로드 기능 추가시 로직 수정 필요
-        self.contentManager.contentError.connect(self.showErrorDialog)
+        self.contentManager.contentError.connect(self.onFetchError)
+        self.contentManager.fetchingChanged.connect(self.fetchButton.setBusy)
         self.contentManager.fetchRequested.connect(self.fetchContents)
-        self.contentManager.deleteItemRequested.connect(self.onDeleteItem)
-        self.contentManager.insertItemRequested.connect(self.onInsertItem)
         self.contentManager.downloadRequested.connect(self.startDownload)
         self.contentManager.stopRequested.connect(self.onStop)
-        self.contentManager.finishedRequested.connect(self.onFinishedItem)
         self.contentManager.finishedAllRequested.connect(self.onDownloadAllFinished)
 
     def setupSignals(self):
@@ -682,8 +662,8 @@ class VodDownloader(QMainWindow):
         """
         self.urlInput.returnPressed.connect(self.onFetch)
         self.fetchButton.clicked.connect(self.onFetch)
-        self.downloadPathButton.clicked.connect(self.onFindPath)
-        self.downloadPathInput.editingFinished.connect(self._rememberPathIfValid)
+        self.saveLocationButton.errorOccurred.connect(self._showRegisterError)
+        self.urlInput.textChanged.connect(self._clearRegisterError)
         self.menuSettingsButton.clicked.connect(self.onSetting)
         self.clearFinishedButton.clicked.connect(self.contentManager.clrearFinishedItems)
         self.downloadButton.clicked.connect(self.onDownloadPause)
@@ -801,43 +781,36 @@ class VodDownloader(QMainWindow):
             vod_url = self.urlInput.text().strip()
 
         if not vod_url:
-            QMessageBox.warning(self, self.tr("Warning"), self.tr("Please enter VOD URL."))
+            self._showRegisterError(self.tr("Please enter VOD URL."))
             return
-        
-        cookies = settings.load_cookies()  # 쿠키 조립의 단일 지점 (#170)
-        self._setLinkStatus(self.tr('Fetching resolutions...'), "info")
 
-        # 결과 처리 — 상대 경로 입력은 cwd 기준으로 조용히 저장되던 문제를
-        # 판정 전에 정규화해 막는다 (#146 ⓑ-4, #219). 화면 표시도 실제
-        # 사용값과 맞춘다 — onFindPath가 다이얼로그 결과를 setText하는 것과
-        # 같은 관례
-        downloadPath = normalize_path(self.downloadPathInput.text().strip() or os.getcwd())
-        self.downloadPathInput.setText(downloadPath)
+        cookies = settings.load_cookies()  # 쿠키 조립의 단일 지점 (#170)
+
+        # 저장 위치는 저장 위치 버튼의 지금 위치다(#495). 고를 때 실존 폴더만 받았지만(절대 경로로
+        # 정규화 — #146 ⓑ-4, #219) 그 뒤 폴더가 사라졌을 수 있다(외장 드라이브 분리)
+        downloadPath = self.saveLocations.current()
 
         # 판정은 path_gates가 단일 지점으로 담당한다 (#169 — #146 ⓑ1)
         if not check_fetch_path(downloadPath):
             # 유일한 안내가 팝업뿐이라 제보 진단이 불가능했다 (#146 감사) —
-            # 입력값을 repr로 남겨 공백 유사 문자·오염(따옴표 등)을 식별한다 (#148)
+            # 경로를 repr로 남겨 공백 유사 문자·오염(따옴표 등)을 식별한다 (#148)
             logger.warning("조회 거부 — 존재하지 않는 저장 경로: %r", downloadPath)
-            QMessageBox.warning(self, self.tr("Warning"), self.tr("Path does not exist."))
+            self._showRegisterError(self.tr("Path does not exist."))
             return
-        # TODO:  코드 수정 및 테스트 예정
-        # 검증을 통과해 실사용되는 경로만 보존한다 — 다음 실행의 초기값 ① (#159)
-        self._rememberDownloadPath(downloadPath)
 
         self.contentManager.fetchContent(vod_url, cookies, downloadPath)
 
-        self.urlInput.clear()
+        self.urlInput.clear()  # 입력이 바뀌어 앞 오류 줄도 비워진다
 
-        self._setLinkStatus(self.tr('Resolutions fetched successfully.'), "ok")
-    
-    def showErrorDialog(self, errorMessage):
-        errorTitle = self.tr("Error")
-        errorBody = self.tr("Error occurred during content request:") + "\n" + errorMessage
-        # 팝업을 닫은 뒤에도 실패했다는 사실이 남게 상태 줄도 빨갛게 바꾼다
-        # (#244 — 성공 메시지만 남아 "성공했는데 카드가 없다"로 읽히던 문제).
-        self._setLinkStatus(self.tr('Failed to fetch resolutions.'), "error")
-        QMessageBox.critical(self, errorTitle, errorBody)
+    def onFetchError(self, errorMessage: str) -> None:
+        """조회 실패를 등록 오류 줄에 띄운다 — 대화상자를 띄우지 않는다 (#495 — 설계 알림 자리).
+
+        뷰모델의 오류 글은 `"<주소>\n<까닭>"`이다(FetchJob). 줄 하나에 까닭을 앞에 두고 주소를 뒤에
+        붙인다 — 넘치면 뒤(주소)부터 줄이고 툴팁에 전문을 보인다(ElidingLabel). 여러 주소를 한꺼번에
+        등록했으면 마지막 실패가 남는다.
+        """
+        url, _newline, reason = errorMessage.partition("\n")
+        self._showRegisterError(f"{reason} · {url}" if reason else url)
 
     def onDownloadPause(self):
         """
@@ -871,39 +844,15 @@ class VodDownloader(QMainWindow):
         self.dialog = SettingDialog(parent=self)
         self.dialog.exec_()
 
-    def onFindPath(self):
-        """
-        다운로드 경로를 찾기위한 버튼.
-        """
-        downloadPath = QFileDialog.getExistingDirectory()
-        if downloadPath != '':
-            # 유저의 경로 지정 행위를 남긴다 (#148) — 제보 시 "무엇이 입력창에
-            # 들어갔는가"를 로그로 재구성할 수 있게 한다
-            logger.info("저장 경로 선택(경로 찾기): %r", downloadPath)
-            self.downloadPathInput.setText(downloadPath)
-            self._rememberPathIfValid()
+    def _onSaveLocationChanged(self) -> None:
+        """저장 위치를 골랐다 — 카드의 경로 표시 기준을 바꾸고 로그에 남긴다 (#245 · #148 · #495).
 
-    def _rememberPathIfValid(self) -> None:
-        """입력창의 경로가 실존 폴더면 보존한다 (#165).
-
-        보존 시점은 유저의 의사표시 세 곳 — 경로 찾기 선택, 입력 확정
-        (editingFinished), 창 닫기 — 이라 조회 없이 경로만 바꿔도 다음
-        실행의 초기값 ①이 된다. isdir 관문(판정은 path_gates 단일 지점,
-        #169)은 커밋된 미완성·오타 경로가 초기값을 오염시키지 않게 한다.
+        경로를 repr로 남긴다 — 제보 때 「어느 위치로 등록했는가」를 로그로 다시 짤 수 있게(#148).
         """
-        path = normalize_path(self.downloadPathInput.text().strip())
-        if check_remember_path(path):
-            self.downloadPathInput.setText(path)
-            self._rememberDownloadPath(path)
-            content_widget.set_global_download_path(path)  # 카드 경로 표시 기준 갱신 (#245)
+        path = self.saveLocations.current()
+        logger.info("저장 위치 고름: %r", path)
+        content_widget.set_global_download_path(path)
 
-    def _rememberDownloadPath(self, path: str) -> None:
-        """실사용된 저장 경로를 설정에 보존한다 (#159) — _default_download_path의 ①."""
-        cfg = settings.load_settings()
-        if cfg.get("downloadPath") != path:
-            cfg["downloadPath"] = path
-            settings.save_settings(cfg)
-            logger.info("저장 경로 보존: %r", path)
 
     def onStop(self):
         """
@@ -926,27 +875,6 @@ class VodDownloader(QMainWindow):
         self.downloadButton.setText(self.tr('Download'))
         self.setStopButtonEnable(False)
         self.downloadViewModel.removeThreads()
-
-    def onInsertItem(self, row):
-        self.total_downloads = row
-        self.updateDownloadCountLabel()
-
-    def onDeleteItem(self, item:ContentItem, index):
-        """
-        메타데이터 카드 삭제 버튼 콜백.
-        """
-        if item.downloadState == DownloadState.FINISHED:
-            self.completed_downloads -= 1
-        self.total_downloads = index
-        self.updateDownloadCountLabel()
-    
-    def onFinishedItem(self, item:ContentItem):
-        """
-        메타데이터 카드 다운로드 완료 콜백.
-        """
-        if item.downloadState == DownloadState.FINISHED:
-            self.completed_downloads += 1
-            self.updateDownloadCountLabel()
 
     def onDownloadAllFinished(self):
         """
@@ -1009,13 +937,6 @@ class VodDownloader(QMainWindow):
         self.downloadViewModel.start(item)
         self.setStopButtonEnable(True)
 
-    def updateDownloadCountLabel(self):
-        """
-        다운로드 갯수 라벨을 업데이트한다.
-        """
-        self.downloadCountLabel.setText(self.tr('Downloads: {}/{}').format(self.completed_downloads, self.total_downloads))
-        self._balanceCountLabelReserve()  # 자릿수가 바뀌어도 하단 바 요구 폭은 그대로(v2.10.1)
-
     def closeEvent(self, event):
         """
         창을 닫을 때 실행되는 이벤트
@@ -1033,7 +954,5 @@ class VodDownloader(QMainWindow):
                 return
             else:
                 self.stopDownload()
-        # 확정(포커스 이탈) 없이 바로 닫는 경우의 보존 (#165)
-        self._rememberPathIfValid()
         self._rememberWindowState()  # 다음 실행의 창 크기·위치 (#253)
         event.accept()  # 창 닫기 진행

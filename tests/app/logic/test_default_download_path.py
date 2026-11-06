@@ -90,7 +90,7 @@ def test_saved_path_wins(window_factory, config_store, tmp_path):
     store["downloadPath"] = str(tmp_path)
     make, _ = window_factory
 
-    assert make().downloadPathInput.text() == str(tmp_path)
+    assert make().saveLocations.current() == str(tmp_path)
 
 
 def test_missing_saved_falls_back_to_standard_downloads(
@@ -112,7 +112,7 @@ def test_missing_saved_falls_back_to_standard_downloads(
     monkeypatch.setattr(mw_mod, "QStandardPaths", _StubPaths)
     make, _ = window_factory
 
-    assert make().downloadPathInput.text() == str(downloads)
+    assert make().saveLocations.current() == str(downloads)
 
 
 def test_standard_missing_falls_back_to_cwd(window_factory, config_store, tmp_path, monkeypatch):
@@ -128,145 +128,128 @@ def test_standard_missing_falls_back_to_cwd(window_factory, config_store, tmp_pa
     monkeypatch.setattr(mw_mod, "QStandardPaths", _StubPaths)
     make, _ = window_factory
 
-    assert make().downloadPathInput.text() == os.getcwd()
+    assert make().saveLocations.current() == os.getcwd()
 
 
-def test_used_path_is_persisted_on_fetch(window_factory, config_store, tmp_path, qapp):
-    """조회 관문을 통과해 실사용된 경로가 설정에 저장된다 — 버튼 클릭 실배선."""
-    _store, saves = config_store
-    make, _warnings = window_factory
-    win = make()
-    used = tmp_path / "space dir"
-    used.mkdir()
-    win.downloadPathInput.setText(str(used))
-    win.urlInput.setText("https://chzzk.naver.com/video/1")
-
-    win.fetchButton.click()
-    win.contentManager.threadpool.waitForDone(8000)
-    qapp.processEvents()
-
-    assert saves and saves[-1]["downloadPath"] == str(used)
+def _menu_action(win, object_name: str):
+    """저장 위치 메뉴를 실제로 열고(aboutToShow 배선) 그 이름의 명령 항목을 돌려준다."""
+    menu = win.saveLocationButton.menuWidget
+    menu.popup(win.saveLocationButton.mapToGlobal(win.saveLocationButton.rect().bottomLeft()))
+    action = next(a for a in menu.actions() if a.objectName() == object_name)
+    return menu, action
 
 
-def test_rejected_path_is_not_persisted(window_factory, config_store, tmp_path, qapp):
-    """관문에서 거부된 경로는 저장되지 않는다."""
-    _store, saves = config_store
-    make, warnings = window_factory
-    win = make()
-    win.downloadPathInput.setText(str(tmp_path / "없는 폴더"))
-    win.urlInput.setText("https://chzzk.naver.com/video/1")
+def _find_folder(win, monkeypatch, folder) -> None:
+    """메뉴 「폴더 찾기…」로 그 폴더를 고른다 — 폴더 선택 창만 바꿔 끼운다."""
+    from PySide6.QtWidgets import QFileDialog
 
-    win.fetchButton.click()
-    qapp.processEvents()
-
-    assert "Path does not exist." in warnings
-    assert all("downloadPath" not in s or s["downloadPath"] == "" for s in saves)
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: str(folder)))
+    menu, action = _menu_action(win, "findFolderAction")
+    action.trigger()
+    menu.hide()
 
 
-def test_find_path_selection_is_persisted_without_fetch(
+def test_found_folder_goes_to_recent_and_leaves_the_default_alone(
     window_factory, config_store, tmp_path, monkeypatch
 ):
-    """경로 찾기로 폴더를 고르면 조회 없이도 저장된다 (#165).
-
-    다이얼로그 선택은 그 자체가 의사표시고 실존 폴더만 반환되므로,
-    조회 관문을 기다릴 이유가 없다 — "마지막으로 사용한 위치가
-    기억됩니다"(v2.9.3 릴리즈 노트)의 실체화.
-    """
-    _store, saves = config_store
+    """「폴더 찾기…」로 고른 폴더는 지금 위치 · 최근 맨 앞이 되고 downloadPath는 그대로여야 한다 (#495)."""
+    store, _saves = config_store
+    default = tmp_path / "기본"
+    default.mkdir()
+    store["downloadPath"] = str(default)
     make, _warnings = window_factory
     win = make()
     chosen = tmp_path / "고른 폴더"
     chosen.mkdir()
-    monkeypatch.setattr(
-        mw_mod.QFileDialog,
-        "getExistingDirectory",
-        staticmethod(lambda *a, **k: str(chosen)),
-    )
 
-    win.downloadPathButton.click()
+    _find_folder(win, monkeypatch, chosen)
 
-    assert saves and saves[-1]["downloadPath"] == str(chosen)
+    assert win.saveLocations.current() == str(chosen)
+    assert store["recentPaths"][0] == str(chosen)
+    assert store["downloadPath"] == str(default)
 
 
-def test_committed_valid_path_is_persisted(window_factory, config_store, tmp_path):
-    """입력 확정(editingFinished)된 실존 폴더는 조회 없이 저장된다 (#165)."""
-    _store, saves = config_store
-    make, _warnings = window_factory
-    win = make()
-    typed = tmp_path / "타이핑 폴더"
-    typed.mkdir()
-    win.downloadPathInput.setText(str(typed))
-
-    win.downloadPathInput.editingFinished.emit()
-
-    assert saves and saves[-1]["downloadPath"] == str(typed)
-
-
-def test_committed_missing_path_is_not_persisted(window_factory, config_store, tmp_path):
-    """미실존(입력 중·오타) 경로는 확정돼도 저장되지 않는다 — 초기값 오염 방지 (#165)."""
-    _store, saves = config_store
-    make, _warnings = window_factory
-    win = make()
-    win.downloadPathInput.setText(str(tmp_path / "입력 중"))
-
-    win.downloadPathInput.editingFinished.emit()
-
-    assert all("downloadPath" not in s or s["downloadPath"] == "" for s in saves)
-
-
-def test_relative_path_is_normalized_before_fetch(
+def test_fetch_uses_the_chosen_location_and_leaves_the_default_alone(
     window_factory, config_store, tmp_path, monkeypatch, qapp
 ):
-    """상대 경로 입력은 cwd 기준 절대 경로로 정규화된 뒤 판정·저장·표시된다 (#146 ⓑ-4, #219)."""
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "relative dir").mkdir()
-    expected = os.path.abspath("relative dir")
-    _store, saves = config_store
+    """고른 위치로 등록하면 그 카드의 저장 위치는 고른 위치이고 downloadPath는 그대로여야 한다 (#495)."""
+    store, _saves = config_store
+    default = tmp_path / "기본"
+    default.mkdir()
+    store["downloadPath"] = str(default)
     make, _warnings = window_factory
     win = make()
-    win.downloadPathInput.setText("relative dir")
+    chosen = tmp_path / "space dir"
+    chosen.mkdir()
+    _find_folder(win, monkeypatch, chosen)
     win.urlInput.setText("https://chzzk.naver.com/video/1")
 
     win.fetchButton.click()
+
+    item = win.contentManager.model.itemAt(0)
+    assert item is not None and item.download_path == str(chosen)
     win.contentManager.threadpool.waitForDone(8000)
     qapp.processEvents()
-
-    assert win.downloadPathInput.text() == expected
-    assert saves and saves[-1]["downloadPath"] == expected
+    assert store["downloadPath"] == str(default)
 
 
-def test_relative_path_is_normalized_on_editing_finished(
-    window_factory, config_store, tmp_path, monkeypatch
+def test_a_vanished_location_is_rejected_at_fetch_and_nothing_is_saved(
+    window_factory, config_store, tmp_path, monkeypatch, qapp
 ):
-    """입력 확정(editingFinished)에서도 상대 경로가 절대화된 뒤 저장된다 (#146 ⓑ-4, #219)."""
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "typed rel").mkdir()
-    expected = os.path.abspath("typed rel")
-    _store, saves = config_store
+    """고른 뒤 사라진 폴더로 등록하면 등록 오류 줄에 안내만 뜨고 카드 · downloadPath가 그대로여야 한다(#169 조회 관문)."""
+    store, _saves = config_store
+    make, warnings = window_factory
+    win = make()
+    gone = tmp_path / "분리된 드라이브"
+    gone.mkdir()
+    _find_folder(win, monkeypatch, gone)
+    gone.rmdir()
+    win.urlInput.setText("https://chzzk.naver.com/video/1")
+
+    win.fetchButton.click()
+
+    assert win.registerErrorLabel.text() == "Path does not exist."  # #495 — 대화상자 대신 오류 줄
+    assert warnings == []
+    assert win.contentManager.model.rowCount() == 0
+    assert store.get("downloadPath", "") == ""
+
+
+def test_closing_does_not_change_the_default_location(window_factory, config_store, tmp_path, monkeypatch):
+    """다른 위치를 고른 채 창을 닫아도 downloadPath는 그대로여야 한다 (#495 — #165의 닫기 보존을 걷었다)."""
+    store, _saves = config_store
+    default = tmp_path / "기본"
+    default.mkdir()
+    store["downloadPath"] = str(default)
     make, _warnings = window_factory
     win = make()
-    win.downloadPathInput.setText("typed rel")
-
-    win.downloadPathInput.editingFinished.emit()
-
-    assert win.downloadPathInput.text() == expected
-    assert saves and saves[-1]["downloadPath"] == expected
-
-
-def test_valid_path_is_persisted_on_close(window_factory, config_store, tmp_path):
-    """확정(포커스 이탈) 없이 창을 닫아도 실존 폴더면 저장된다 (#165).
-
-    "경로를 바꾸고 다운로드 없이 앱을 껐다 켠다"는 제보 시나리오 그대로 —
-    setText는 editingFinished를 발생시키지 않으므로 closeEvent 보존이
-    마지막 그물이다.
-    """
-    _store, saves = config_store
-    make, _warnings = window_factory
-    win = make()
-    typed = tmp_path / "닫기 전 폴더"
-    typed.mkdir()
-    win.downloadPathInput.setText(str(typed))
+    chosen = tmp_path / "닫기 전 폴더"
+    chosen.mkdir()
+    _find_folder(win, monkeypatch, chosen)
 
     win.close()
 
-    assert saves and saves[-1]["downloadPath"] == str(typed)
+    assert store["downloadPath"] == str(default)
+
+
+def test_a_restart_starts_at_the_default_and_keeps_the_recent_list(
+    window_factory, config_store, tmp_path, monkeypatch
+):
+    """고른 위치로 바꾼 뒤 창을 닫고 다시 띄우면 지금 위치는 기본 위치, 메뉴 「최근」에는 고른 위치가 있어야 한다."""
+    store, _saves = config_store
+    default = tmp_path / "기본"
+    default.mkdir()
+    store["downloadPath"] = str(default)
+    make, _warnings = window_factory
+    first = make()
+    chosen = tmp_path / "바꾼 폴더"
+    chosen.mkdir()
+    _find_folder(first, monkeypatch, chosen)
+    first.close()
+
+    second = make()
+    menu, _action = _menu_action(second, "findFolderAction")
+    recent = [a.data()[1] for a in menu.choices() if a.data()[0] == "recent"]
+    menu.hide()
+
+    assert second.saveLocations.current() == str(default)
+    assert recent == [str(chosen)]

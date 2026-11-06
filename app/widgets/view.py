@@ -83,6 +83,8 @@ class ContentListView(QScrollArea):
         self.setAcceptDrops(True)
 
         self._model = None
+        # 보이는 차례 · 필터(#495 — CardOrder). 없으면(모델만 건 대역) 목록 행 차례, 필터 없음
+        self._order = None
         self._widgets: dict[ContentItem, ContentItemWidget] = {}
         self._dragActive = False    # 드래그 상태 플래그 TODO: 대체 가능한 메서드 사용
         self._renumberPending = False  # 삭제 뒤 번호 재계산 배치 대기 플래그 (#235)
@@ -129,6 +131,68 @@ class ContentListView(QScrollArea):
         if row is not None:
             self._insertWidget(item, row)
 
+    def _placeOf(self, item: ContentItem, row: int) -> int:
+        """레이아웃에서 그 카드가 놓일 자리 — 보이는 차례(#495). 순서 객체가 없으면 목록 행."""
+        return self._order.indexOf(item) if self._order is not None else row
+
+    def _accepts(self, item: ContentItem) -> bool:
+        """그 카드가 지금 필터에서 보이는지 — 순서 객체가 없으면 늘 보인다."""
+        return self._order is None or self._order.accepts(item)
+
+    def bindOrder(self, order) -> None:
+        """필터 · 정렬 상태(`CardOrder`)와 잇는다 (#495).
+
+        정렬이 바뀌면 카드를 다시 놓고, 칩이 바뀌면 보임을 다시 정한다 — 둘 다 사용자 조작 한 번에
+        한 번이다. 카드 하나의 상태가 바뀌면 그 카드만 옮기고 그 카드의 보임만 고친다. 카드 위젯은
+        다시 만들지 않는다.
+        """
+        self._order = order
+        order.orderReset.connect(self._relayout)
+        order.filterChanged.connect(self._applyFilter)
+        order.itemMoved.connect(self._moveWidget)
+        order.itemStateChanged.connect(self._applyVisibility)
+        self._relayout()
+        self._applyFilter()
+
+    def _relayout(self) -> None:
+        """보이는 차례대로 카드를 다시 놓는다 — 레이아웃 항목만 옮기고 위젯은 그대로."""
+        if self._order is None:
+            return
+        for index, item in enumerate(self._order.ordered()):
+            widget = self._widgets.get(item)
+            if widget is not None and self._layout.indexOf(widget) != index:
+                self._layout.removeWidget(widget)
+                self._layout.insertWidget(index, widget)
+        self._overlay.update()
+
+    def _moveWidget(self, item: ContentItem) -> None:
+        """카드 하나를 보이는 차례의 새 자리로 옮긴다."""
+        widget = self._widgets.get(item)
+        if widget is None:
+            return
+        self._layout.removeWidget(widget)
+        self._layout.insertWidget(self._order.indexOf(item), widget)
+
+    def _applyFilter(self) -> None:
+        """고른 칩에 맞춰 모든 카드의 보임을 정한다.
+
+        카드 컨테이너를 잠깐 숨긴 채 바꾼 뒤 한 번에 다시 보인다 — 보이는 컨테이너 안에서 카드를
+        하나씩 보이면 그때마다 목록 레이아웃이 다시 계산돼, 숨었던 카드 800장을 다시 보이는 데
+        16초가 걸렸다(#495 offscreen 실측, 카드 1000장).
+        """
+        container = self._container
+        container.hide()
+        for item, widget in self._widgets.items():
+            widget.setVisible(self._accepts(item))
+        container.show()
+        self._overlay.update()
+
+    def _applyVisibility(self, item: ContentItem) -> None:
+        """카드 하나의 보임을 지금 칩에 맞춘다."""
+        widget = self._widgets.get(item)
+        if widget is not None:
+            widget.setVisible(self._accepts(item))
+
     def _insertWidget(self, item: ContentItem, row: int):
         widget = ContentItemWidget(item, row, self._container)
         widget.setData(item, row)
@@ -140,7 +204,8 @@ class ContentListView(QScrollArea):
         # 해상도 펼침은 한 번에 하나 — 다른 카드가 펼쳐지면 앞의 것을 접는다 (#244 3행 정리)
         widget.expandedChanged.connect(lambda expanded, w=widget: self._onCardExpanded(w, expanded))
         widget.addRepresentationButtons()
-        self._layout.insertWidget(row, widget)
+        self._layout.insertWidget(self._placeOf(item, row), widget)
+        widget.setVisible(self._accepts(item))
         self._widgets[item] = widget
         self._overlay.update()  # 빈 리스트 안내를 즉시 감춘다
 
@@ -268,6 +333,9 @@ class ContentListView(QScrollArea):
         스스로 안다 — 탭이 늘어도 배선을 복사하지 않는다.
         """
         self.setModel(viewmodel.model)
+        order = getattr(viewmodel, "order", None)  # 대역 뷰모델에는 없을 수 있다
+        if order is not None:
+            self.bindOrder(order)
         self.deleteRequest.connect(viewmodel.removeItem)
         self.fetchRequested.connect(viewmodel.fetchRequested)
         # 구 view 직접 호출 6곳의 반전 (#169): 뷰모델은 시그널로 말하고 뷰가 자기를 건다

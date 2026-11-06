@@ -68,23 +68,12 @@ QFrame#infoFrame {
     border-radius: @frameRadius;
 }
 
-/* 조회 상태 메시지 — 성공·실패를 색으로 구분한다(#244 상단 재설계).
- * `status` 동적 속성은 application/mainWindow.py::_setLinkStatus가 건다. */
-QLabel#linkStatusLabel {
+/* 등록 오류 줄(#495 — URL 칸 바로 아래, 잘못된 URL · 조회 실패). 오류만 띄우므로 늘 실패 색이다.
+ * 「불러오는 중」 · 「가져왔다」 글(#244 조회 상태 메시지)은 없앴다 — 등록 버튼의 도는 표시와
+ * 카드의 조회 중 상태가 보인다. URL 칸의 빨간 테두리는 아래 QLineEdit[invalid="true"] 규칙이다. */
+QLabel#registerErrorLabel {
     font-size: @fontSizeMeta;
-    color: @textMuted;
-}
-
-QLabel#linkStatusLabel[status="ok"] {
-    color: @stateFinished;
-}
-
-QLabel#linkStatusLabel[status="error"] {
     color: @stateFailed;
-}
-
-QLabel#downloadCountLabel {
-    color: @textMuted;
 }
 
 /* ---------- 카드 목록 ---------- */
@@ -272,6 +261,58 @@ QPushButton[role="icon"][interactive="false"]:hover,
 QPushButton[role="icon"][interactive="false"]:pressed {
     background-color: transparent;
     border-color: transparent;
+}
+
+/* 상태 필터 칩(#495 — 헤더바 2줄). 고른 칩만 채운다(채움 색 규칙 — 강조색 면 안 글은 @onAccent).
+ * 실패 카드가 있으면 실패 칩 글을 실패 색으로 강조한다. `role` · `alert`는
+ * app/widgets/header_controls.py::FilterChips가 심는다. */
+QPushButton[role="filter"] {
+    padding: 2px 10px;
+    font-size: @fontSizeMeta;
+    color: @textMuted;
+}
+
+QPushButton[role="filter"][alert="true"] {
+    color: @stateFailed;
+}
+
+QPushButton[role="filter"]:checked {
+    background-color: @accent;
+    border-color: @accent;
+    color: @onAccent;
+}
+
+/* 펼침 버튼(#495 — 헤더바 저장 위치 · 정렬) — QToolButton + QMenu. 바탕 · 테두리만 여기서
+ * 칠하고 도형 · 글 · ▾는 app/widgets/header_controls.py::DropButton.paintEvent가 그린다.
+ * `role`은 그 클래스가 심는다. 스타일의 펼침 표시(::menu-indicator)는 지운다 — 하나라도
+ * 빼면 그 부분만 네이티브로 남는다. */
+QToolButton[role="drop"] {
+    background-color: @surfaceAlt;
+    color: @text;
+    border: 1px solid @border;
+    border-radius: @radius;
+    padding: 0px;
+}
+
+QToolButton[role="drop"]:hover {
+    background-color: @surfaceHover;
+    border-color: @borderStrong;
+}
+
+QToolButton[role="drop"]:pressed,
+QToolButton[role="drop"]:open {
+    background-color: @surfacePressed;
+    border-color: @borderStrong;
+}
+
+QToolButton[role="drop"]:disabled {
+    background-color: @surface;
+    border-color: @border;
+}
+
+QToolButton[role="drop"]::menu-indicator {
+    image: none;
+    width: 0px;
 }
 
 /* 해상도(#244 재설계) — 선택된 것만 채워진 pill, 나머지는 배경·테두리

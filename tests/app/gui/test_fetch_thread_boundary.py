@@ -257,9 +257,11 @@ class TestArrivalOnTheMainThread:
         assert thread == MAIN_THREAD
         # 형식: "<url>\n<번역 메시지>" — 번역기 미설치 환경이라 키 원문이 온다
         assert message == f"{URL}\nVideo not found"
-        # 창은 오류를 팝업으로 보여준다(기록 대역) — 쿠키 값은 어디에도 새지 않는다
-        assert window.popups and "Video not found" in window.popups[-1]
-        assert "dummy-aut" not in window.popups[-1] and "dummy-ses" not in window.popups[-1]
+        # 창은 오류를 대화상자가 아니라 등록 오류 줄에 보인다(#495) — 쿠키 값은 어디에도 새지 않는다
+        shown = window.registerErrorLabel.text()
+        assert window.popups == []
+        assert "Video not found" in shown
+        assert "dummy-aut" not in shown and "dummy-ses" not in shown
 
     def test_unexpected_exception_is_reported_without_raw_details(
         self, window, fetch_spy, qapp, tmp_path
@@ -291,11 +293,12 @@ class TestArrivalOnTheMainThread:
         assert not cm.hasLoadingItems()
         for name in ("itemRemoved", "deleteItemRequested", "contentError"):
             assert rec.threads_of(name) == {MAIN_THREAD}, f"{name}이 메인 스레드 밖에서 발신됐다"
-        # 유저 표시(Signal 페이로드·팝업)에는 원시 예외 문자열도 쿠키 값도 없다.
+        # 유저 표시(Signal 페이로드·오류 줄)에는 원시 예외 문자열도 쿠키 값도 없다.
         # 로그는 검사하지 않는다 — 상세를 로그에 남기는 것이 설계다(#126)
         [message] = errors
         assert message.startswith(f"{URL}\n")
         assert "raw internal detail" not in message and "dummy-ses" not in message
-        assert window.popups, "오류 팝업(기록 대역)이 뜨지 않았다"
-        assert "raw internal detail" not in window.popups[-1]
-        assert "dummy-aut" not in window.popups[-1] and "dummy-ses" not in window.popups[-1]
+        shown = window.registerErrorLabel.text()  # 대화상자 대신 등록 오류 줄(#495)
+        assert shown, "등록 오류 줄이 비어 있다"
+        assert "raw internal detail" not in shown
+        assert "dummy-aut" not in shown and "dummy-ses" not in shown
