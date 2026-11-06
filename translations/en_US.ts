@@ -657,6 +657,10 @@ Check your connection and cookies, then open this window again.</translation>
         <translation>Still loading video information. Please try again in a moment.</translation>
     </message>
     <message>
+        <source>VOD Download</source>
+        <translation>VOD Download</translation>
+    </message>
+    <message>
         <source>Downloading</source>
         <translation>Downloading</translation>
     </message>
@@ -683,10 +687,6 @@ Check your connection and cookies, then open this window again.</translation>
     <message>
         <source>Downloads: {}/{}</source>
         <translation>Downloads: {}/{}</translation>
-    </message>
-    <message>
-        <source>Chzzk VOD Downloader</source>
-        <translation>Chzzk VOD Downloader</translation>
     </message>
     <message>
         <source>Settings</source>

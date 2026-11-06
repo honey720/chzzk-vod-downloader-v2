@@ -5,6 +5,7 @@ from app.system import settings
 
 from PySide6.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -29,8 +30,8 @@ from app.views.section_dialog import SectionEditDialog
 from app.viewmodels.section_edit import SectionEditViewModel
 from app.viewmodels.data import ContentItem
 from app.viewmodels.content_viewmodel import ContentViewModel
+import config.config as config
 from app.widgets import widget as content_widget
-from app.widgets.icons import IconButton
 from app.widgets.view import ContentListView
 from core.models.download_state import DownloadState
 import app.theme as theme
@@ -39,6 +40,29 @@ logger = logging.getLogger(__name__)
 
 FRAME_RETRY_MS = 50  # 표시 뒤 프레임 여백을 다시 보는 간격(ms) — X11 창 관리자는 테두리를 표시 뒤 비동기로 붙인다 (#487)
 FRAME_RETRIES = 10  # 그만큼(약 0.5초) 기다려도 여백이 없으면 그만둔다 — 창 관리자가 없는 X 서버 등
+# 창 제목의 앱 이름 — 번역하지 않는다. 앱 데이터 폴더 이름(app/system/settings.py APP_NAME)과 따로 둔다:
+# 표시 이름을 바꿔도 데이터 폴더가 그대로라 설정을 잃지 않는다 (#492)
+APP_DISPLAY_NAME = "Chzzk VOD Downloader"
+# 창 최소 높이를 셀 때 쓰는 견본 카드의 글 — 실제 목록 카드와 무관한 고정값이라 카드를 넣고 빼도
+# 최소 높이가 바뀌지 않는다 (#492). 썸네일 · 채널 그림 주소는 비워 네트워크를 타지 않는다
+REFERENCE_CARD_METADATA = {
+    "title": "Chzzk VOD",
+    "category": "",
+    "channelName": "Chzzk",
+    "createdDate": "",
+    "duration": 3600,
+}
+
+
+def window_title(version: str) -> str:
+    """창 제목을 만든다 — 표시 이름 + 버전 (#492).
+
+    정식 `2.12.0` · rc `2.12.0-rc1`은 버전 문자열 그대로 붙인다. 소스 실행 · 로컬 빌드의
+    `2.12.0+dev.<커밋>`은 커밋을 빼고 `2.12.0+dev`만 붙인다 — 커밋까지 담은 전체 문자열은
+    설정의 정보 화면에서 보인다.
+    """
+    base, dev, _commit = version.partition("+")
+    return f"{APP_DISPLAY_NAME} {base}+dev" if dev else f"{APP_DISPLAY_NAME} {version}"
 
 
 def _default_download_path() -> str:
@@ -79,18 +103,18 @@ class VodDownloader(QMainWindow):
     """치지직 VOD 다운로더 메인 창.
 
     위젯 · 레이아웃은 `.ui` 생성물 없이 이 파일이 직접 짠다(#492 — 설정 창 #292와 같은 방식).
-    구 `ui/mainWindow.py`(uic 생성물)의 `setupUi` · `retranslateUi`를 그대로 옮겼고 구조 · objectName ·
-    탭 순서 · 번역 원문은 바꾸지 않았다. ⚠️ 번역 컨텍스트는 클래스 이름(`VodDownloader`)이다 —
-    클래스 이름이나 원문을 글자 하나 바꾸면 `lupdate -no-obsolete`가 기존 번역을 지운다.
+    구 `ui/mainWindow.py`(uic 생성물)의 `setupUi` · `retranslateUi`를 옮긴 것이다. ⚠️ 번역 컨텍스트는
+    클래스 이름(`VodDownloader`)이다 — 클래스 이름이나 원문을 글자 하나 바꾸면 `lupdate -no-obsolete`가
+    기존 번역을 지운다.
+
+    창은 위에서 아래로 네 칸이다(#492 — 2.12.0 셸 S0): 메뉴바(VOD 다운 · 설정) · 헤더바(URL 입력 ·
+    저장 위치 입력과 찾기 · 등록, 조회 상태 한 줄) · 목록 · 하단바(왼쪽 카운트 · 완료 지우기, 오른쪽 끝
+    다운로드 · 중지). 모양(색 · 간격 · 글자)은 셸 전과 같다.
     """
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setupUi(self)
-        # 설정 톱니 — 아이콘 이름과 크기를 준다. 크기는 32px 버튼에 맞춘 값이며 카드 조작
-        # 아이콘(12px)과 다르다.
-        self.settingButton.setIconName("settings")
-        self.settingButton.setGlyphSize(theme.METRICS["headerGlyph"])
         self.setupDynamicUi()
 
         width_ratio = 0.45
@@ -121,18 +145,17 @@ class VodDownloader(QMainWindow):
         #            전파되지 않으므로(그래야 접근성 배율에서 좌우 스크롤 안전망이
         #            서므로) 명시한다. 작은 화면(800×600)에서 상단 버튼이 프레임 밖으로
         #            넘치던 #249의 결함은 이 바닥으로 그대로 막힌다.
-        # 최소 높이 = 화면 논리높이 × 비율 (그대로). ⚠️ 가로와 맞추지 말 것 — 가로가
-        #            모자라면 콘텐츠가 잘리지만 세로가 모자라면 카드 개수만 준다. 세로의
-        #            레이아웃 최소는 "카드 0장"이라 쓸모의 최소와 크게 달라 별도 판단이
-        #            필요하고, 그 판단은 하단바를 걷어낸 뒤로 미룬다(#251).
+        # 최소 높이 = 메뉴바 · 헤더바 · 하단바의 버튼이 모두 보이고 목록에 카드 한 장이 다 보이는
+        #            높이(_contentMinimumHeight, #492 — 설계 「창 최소 크기」, 오너 2026-11-06).
+        #            화면 비율(#251의 작업 영역 높이 × 0.5)은 최소에서 걷고 초기 높이에만 남긴다.
+        #            카드는 견본 하나로 재므로 목록의 카드를 넣고 빼도 바뀌지 않는다.
         #
-        # 초기 폭이 콘텐츠 최소보다 작은 화면에서는 Qt가 resize() 요청을 최소 크기로
+        # 초기 크기가 최소보다 작은 화면에서는 Qt가 resize() 요청을 최소 크기로
         # 클램프한다(offscreen·Windows 실기 확인).
         available = self._availableGeometry()
-        min_height = int(available.height() * height_ratio)
-        self.setMinimumSize(self._contentMinimumWidth(), min_height)
+        self.setMinimumSize(self._contentMinimumWidth(), self._contentMinimumHeight())
         initial_width = min(int(available.width() * width_ratio), theme.METRICS["initialWidthMax"])
-        self.resize(initial_width, min_height)
+        self.resize(initial_width, int(available.height() * height_ratio))
         self._startMaximized = self._restoreWindowState()
 
         self.contentManager = ContentViewModel(parent=self)
@@ -153,7 +176,10 @@ class VodDownloader(QMainWindow):
             self._clampFrameAfterShow()
 
     def setupUi(self, window: QMainWindow) -> None:
-        """위젯 · 레이아웃을 조립한다 — 구 uic 생성물의 setupUi와 같은 구조 · 순서 · objectName · 탭 순서."""
+        """위젯 · 레이아웃을 조립한다 — 메뉴바 · 헤더바 · 목록 · 하단바 네 칸(#492).
+
+        구 uic 생성물에서 옮긴 위젯의 objectName은 그대로다. 메뉴바는 이번에 새로 생긴 칸이다.
+        """
         if not window.objectName():
             window.setObjectName("VodDownloader")
         window.resize(600, 800)
@@ -162,8 +188,8 @@ class VodDownloader(QMainWindow):
         #   └ windowScrollArea  — 창 폭이 콘텐츠 최소폭보다 좁아졌을 때만 좌우 스크롤이
         #     │                   뜨는 안전망(접근성 배율). 세로 스크롤은 카드 목록 것
         #     │                   하나뿐이라 여기서는 항상 끈다.
-        #     └ contentColumn   — 상단바·카드 목록·하단바를 담는 컨테이너. QScrollArea는
-        #                         자식 위젯을 하나만 받으므로 셋을 스크롤 영역에 넣으려면
+        #     └ contentColumn   — 메뉴바·헤더바·카드 목록·하단바를 담는 컨테이너. QScrollArea는
+        #                         자식 위젯을 하나만 받으므로 넷을 스크롤 영역에 넣으려면
         #                         이 컨테이너가 필요하다. 그 밖의 역할(폭 제한·정렬)은 없다
         #                         — 창 폭을 그대로 채운다(오너 확정, #249).
         #     여백 수치는 _applyLayoutMetrics가 theme.METRICS로 런타임에 건다.
@@ -178,6 +204,36 @@ class VodDownloader(QMainWindow):
         self.contentColumn.setObjectName("contentColumn")
         self.centralWidgetLayout = QVBoxLayout(self.contentColumn)
         self.centralWidgetLayout.setObjectName("centralWidgetLayout")
+
+        # 메뉴바(#492) — 창 위 가로 줄, 메뉴 이름 글이 보인다. QMenuBar가 아니라 버튼 줄로 짠다:
+        # macOS는 QMenuBar를 화면 맨 위 시스템 메뉴 막대로 옮겨 창 안에 남지 않고, 메뉴는
+        # 펼치는 목록이지 고른 화면을 표시하지 않는다(「VOD 다운」이 눌린 채로 남아야 한다).
+        # 나중에 상태 버블이 메뉴 버튼의 오른쪽 안쪽 여백에 붙는다(셸 S3).
+        # 「VOD 다운」 = 지금 화면(목록). 「설정」 = 설정 창을 띄우고 선택은 「VOD 다운」에 남는다.
+        self.appMenuBar = QFrame(self.contentColumn)
+        self.appMenuBar.setObjectName("appMenuBar")
+        self.appMenuLayout = QHBoxLayout(self.appMenuBar)
+        self.appMenuLayout.setSpacing(8)
+        self.appMenuLayout.setObjectName("appMenuLayout")
+        self.menuDownloadButton = QPushButton(self.appMenuBar)
+        self.menuDownloadButton.setObjectName("menuDownloadButton")
+        self.menuDownloadButton.setCheckable(True)
+        self.menuDownloadButton.setChecked(True)
+        self.appMenuLayout.addWidget(self.menuDownloadButton)
+        self.menuSettingsButton = QPushButton(self.appMenuBar)
+        self.menuSettingsButton.setObjectName("menuSettingsButton")
+        self.appMenuLayout.addWidget(self.menuSettingsButton)
+        self.appMenuLayout.addStretch(1)
+        # 고른 화면 메뉴는 하나 — 그룹이 배타라 눌린 「VOD 다운」을 다시 눌러도 풀리지 않는다.
+        # 「설정」은 화면이 아니라 창을 여는 메뉴라 그룹에 넣지 않는다(설정 화면 개편 전까지)
+        self.appMenuGroup = QButtonGroup(window)
+        self.appMenuGroup.setExclusive(True)
+        self.appMenuGroup.addButton(self.menuDownloadButton)
+        self.menuRow = QHBoxLayout()
+        self.menuRow.setObjectName("menuRow")
+        self.menuRow.addWidget(self.appMenuBar)
+        self.centralWidgetLayout.addLayout(self.menuRow)
+
         self.headerFrame = QFrame(self.contentColumn)
         self.headerFrame.setObjectName("headerFrame")
         self.headerFrame.setFrameShape(QFrame.Shape.Box)
@@ -186,63 +242,31 @@ class VodDownloader(QMainWindow):
         self.headerFrameLayout.setSpacing(8)
         self.headerFrameLayout.setObjectName("headerFrameLayout")
 
-        # 상단 구조(#245 오너 확정):
-        #   ┌ [URL 입력            ][VOD 추가 ] ┐
-        #   │                                   │  ⚙
-        #   └ [경로 입력          ✕][경로 찾기 ] ┘
-        #   조회 상태 메시지 한 줄
-        # 입력 블록(두 행)은 완결된 사각형이고 ⚙는 그 **밖**, 두 행 높이의
-        # 세로 중앙에 하나다 — 설정은 입력과 성격이 달라 시각적으로도 갈린다.
-        # 두 텍스트 버튼([VOD 추가]·[경로 찾기])은 같은 폭으로 좌우 끝을 맞춘다
-        # (_equalizeHeaderButtons — 번역·폰트에 따라 폭이 달라 런타임에 더 넓은 쪽으로
-        # 고정). ⚙를 어느 행에 붙이든 그 행의 텍스트 버튼이 밀려 두 텍스트 버튼의
-        # 끝선이 어긋났다(실기 확인).
-        self.headerRowsLayout = QHBoxLayout()
-        self.headerRowsLayout.setSpacing(8)
-        self.headerRowsLayout.setObjectName("headerRowsLayout")
-        self.inputBlockLayout = QVBoxLayout()
-        self.inputBlockLayout.setSpacing(8)
-        self.inputBlockLayout.setObjectName("inputBlockLayout")
-
+        # 헤더바 1줄(#492 — 셸 S0):
+        #   ┌ [URL 입력                ][경로 입력      ✕][경로 찾기][VOD 추가] ┐
+        #   └ 조회 상태 메시지 한 줄                                           ┘
+        # 남는 폭은 두 입력창이 2 : 1로 나눈다 — URL이 주 입력이다(설계: URL 입력이 남는 폭).
+        # 저장 위치 입력은 셸 S1에서 고정 폭 저장 위치 버튼으로 바뀐다. 두 텍스트 버튼은
+        # 지금처럼 같은 폭이다(_equalizeHeaderButtons). 설정 톱니(#245)는 메뉴바 「설정」으로 옮겼다.
         self.urlRowLayout = QHBoxLayout()
         self.urlRowLayout.setSpacing(8)
         self.urlRowLayout.setObjectName("urlRowLayout")
         self.urlInput = QLineEdit(self.headerFrame)
         self.urlInput.setObjectName("urlInput")
         self.urlInput.setClearButtonEnabled(True)
-        self.urlRowLayout.addWidget(self.urlInput)
-        self.fetchButton = QPushButton(self.headerFrame)
-        self.fetchButton.setObjectName("fetchButton")
-        self.urlRowLayout.addWidget(self.fetchButton)
-        self.inputBlockLayout.addLayout(self.urlRowLayout)
-
-        self.pathRowLayout = QHBoxLayout()
-        self.pathRowLayout.setSpacing(8)
-        self.pathRowLayout.setObjectName("pathRowLayout")
+        self.urlRowLayout.addWidget(self.urlInput, 2)
         self.downloadPathInput = QLineEdit(self.headerFrame)
         self.downloadPathInput.setObjectName("downloadPathInput")
         self.downloadPathInput.setClearButtonEnabled(True)
-        self.pathRowLayout.addWidget(self.downloadPathInput)
+        self.urlRowLayout.addWidget(self.downloadPathInput, 1)
         self.downloadPathButton = QPushButton(self.headerFrame)
         self.downloadPathButton.setObjectName("downloadPathButton")
-        self.pathRowLayout.addWidget(self.downloadPathButton)
-        self.inputBlockLayout.addLayout(self.pathRowLayout)
+        self.urlRowLayout.addWidget(self.downloadPathButton)
+        self.fetchButton = QPushButton(self.headerFrame)
+        self.fetchButton.setObjectName("fetchButton")
+        self.urlRowLayout.addWidget(self.fetchButton)
 
-        self.headerRowsLayout.addLayout(self.inputBlockLayout, 1)
-
-        # 설정(톱니) — 입력 블록 밖, 두 행 높이의 세로 중앙(#245 오너 확정).
-        # 하단으로 내리는 안은 채택하지 않는다 — 설정 안의 쿠키는 성인·멤버십
-        # VOD를 받으려면 반드시 한 번은 찾아야 해서 하단 muted 묶음에 두면 못
-        # 찾는다. 남는 공간은 각 행에서 입력창 하나만 흡수한다(버튼들은 고정 폭)
-        # — tests/app/gui/test_header_layout.py.
-        self.settingButton = IconButton(self.headerFrame)
-        self.settingButton.setObjectName("settingButton")
-        self.settingButton.setMinimumSize(QSize(32, 32))
-        self.settingButton.setMaximumSize(QSize(32, 32))
-        self.settingButton.setProperty("role", "icon")
-        self.headerRowsLayout.addWidget(self.settingButton, 0, Qt.AlignmentFlag.AlignVCenter)
-
-        self.headerFrameLayout.addLayout(self.headerRowsLayout)
+        self.headerFrameLayout.addLayout(self.urlRowLayout)
 
         self.linkStatusLabel = QLabel(self.headerFrame)
         self.linkStatusLabel.setObjectName("linkStatusLabel")
@@ -294,11 +318,13 @@ class VodDownloader(QMainWindow):
 
         self.windowScrollArea.setWidget(self.contentColumn)
         window.setCentralWidget(self.windowScrollArea)
-        QWidget.setTabOrder(self.urlInput, self.fetchButton)
-        QWidget.setTabOrder(self.fetchButton, self.downloadPathInput)
+        # 탭 순서 = 화면 순서(위 → 아래, 왼쪽 → 오른쪽): 메뉴 · 헤더 1줄 · 목록 · 하단
+        QWidget.setTabOrder(self.menuDownloadButton, self.menuSettingsButton)
+        QWidget.setTabOrder(self.menuSettingsButton, self.urlInput)
+        QWidget.setTabOrder(self.urlInput, self.downloadPathInput)
         QWidget.setTabOrder(self.downloadPathInput, self.downloadPathButton)
-        QWidget.setTabOrder(self.downloadPathButton, self.settingButton)
-        QWidget.setTabOrder(self.settingButton, self.listView)
+        QWidget.setTabOrder(self.downloadPathButton, self.fetchButton)
+        QWidget.setTabOrder(self.fetchButton, self.listView)
         QWidget.setTabOrder(self.listView, self.clearFinishedButton)
         QWidget.setTabOrder(self.clearFinishedButton, self.downloadButton)
         QWidget.setTabOrder(self.downloadButton, self.stopButton)
@@ -307,12 +333,15 @@ class VodDownloader(QMainWindow):
         QMetaObject.connectSlotsByName(window)
 
     def retranslateUi(self, window: QMainWindow) -> None:
-        """표시 문자열 — 원문은 구 `.ui`와 글자 하나 다르지 않다(번역 컨텍스트 VodDownloader)."""
-        window.setWindowTitle(self.tr("Chzzk VOD Downloader"))
+        """표시 문자열 — 원문은 구 `.ui`와 같다(번역 컨텍스트 VodDownloader).
+
+        창 제목만 번역하지 않는다 — 앱 이름 + 버전(window_title, #492).
+        """
+        window.setWindowTitle(window_title(config.get_app_version()))
+        self.menuDownloadButton.setText(self.tr("VOD Download"))
+        self.menuSettingsButton.setText(self.tr("Settings"))
         self.urlInput.setPlaceholderText(self.tr("Enter Chzzk URL"))
         self.fetchButton.setText(self.tr("Add VOD"))
-        self.settingButton.setToolTip(self.tr("Settings"))
-        self.settingButton.setAccessibleName(self.tr("Settings"))
         self.downloadPathInput.setPlaceholderText(self.tr("Enter download path"))
         self.downloadPathButton.setText(self.tr("Find path"))
         self.downloadCountLabel.setText(self.tr("Downloads: {}/{}"))
@@ -350,6 +379,8 @@ class VodDownloader(QMainWindow):
         # 카드 쪽 여백은 목록의 컨테이너 패딩이 같은 값으로 진다(app/widgets/view.py).
         self.centralWidgetLayout.setContentsMargins(0, outer, 0, outer)
         self.centralWidgetLayout.setSpacing(8)
+        self.menuRow.setContentsMargins(outer, 0, outer, 0)
+        self.appMenuLayout.setContentsMargins(0, 0, 0, 0)
         self.headerRow.setContentsMargins(outer, 0, outer, 0)
         self.infoRow.setContentsMargins(outer, 0, outer, 0)
         self.headerFrameLayout.setContentsMargins(frame_pad, frame_pad, frame_pad, frame_pad)
@@ -525,6 +556,48 @@ class VodDownloader(QMainWindow):
             child.updateGeometry()
         return self.contentColumn.minimumSizeHint().width()
 
+    def _contentMinimumHeight(self) -> int:
+        """메뉴바 · 헤더바 · 하단바가 다 보이고 목록에 카드 한 장이 다 보이는 높이 (#492).
+
+        세 바는 레이아웃 최소 높이를 묻는다(버튼이 잘리지 않는 높이 — 폰트 · DPI · QSS를 따른다).
+        목록 몫은 견본 카드 한 장(`_referenceCardHeight`)과 목록 안쪽 여백 · 테두리다 — 목록에 있는
+        카드로 재지 않으므로 카드를 넣고 빼도 값이 같다. 열의 위아래 여백과 칸 사이 간격을 더한다.
+        첫 표시 전 캐시 문제는 `_contentMinimumWidth`와 같아 거기서 비운 뒤에 부른다.
+        """
+        column = self.centralWidgetLayout
+        margins = column.contentsMargins()
+        bars = sum(
+            frame.minimumSizeHint().height()
+            for frame in (self.appMenuBar, self.headerFrame, self.infoFrame)
+        )
+        container = self.listView.widget().layout().contentsMargins()
+        list_height = (
+            self._referenceCardHeight()
+            + container.top()
+            + container.bottom()
+            + 2 * self.listView.frameWidth()
+        )
+        gaps = column.spacing() * (column.count() - 1)
+        return margins.top() + bars + list_height + gaps + margins.bottom()
+
+    def _referenceCardHeight(self) -> int:
+        """견본 대기 카드 한 장의 높이 — 창 최소 높이의 목록 몫 (#492).
+
+        실제 카드 위젯을 고정 글(REFERENCE_CARD_METADATA)로 한 장 만들어 잰 뒤 바로 버린다.
+        썸네일 · 채널 그림 주소가 비어 있어 네트워크를 타지 않는다. 창에 붙이지 않고
+        전역 QSS로 polish해 실제 카드와 같은 여백 · 글꼴로 잰다.
+        """
+        item = ContentItem(
+            "", dict(REFERENCE_CARD_METADATA), [], None, "", "", "video", None
+        )
+        card = content_widget.ContentItemWidget(item)
+        card.ensurePolished()
+        for child in card.findChildren(QWidget):
+            child.updateGeometry()
+        height = card.sizeHint().height()
+        card.deleteLater()
+        return height
+
     def _equalizeHeaderButtons(self) -> None:
         """상단 두 텍스트 버튼([VOD 추가]·[경로 찾기])을 같은 폭으로 고정한다 (#245).
 
@@ -577,7 +650,7 @@ class VodDownloader(QMainWindow):
         self.fetchButton.clicked.connect(self.onFetch)
         self.downloadPathButton.clicked.connect(self.onFindPath)
         self.downloadPathInput.editingFinished.connect(self._rememberPathIfValid)
-        self.settingButton.clicked.connect(self.onSetting)
+        self.menuSettingsButton.clicked.connect(self.onSetting)
         self.clearFinishedButton.clicked.connect(self.contentManager.clrearFinishedItems)
         self.downloadButton.clicked.connect(self.onDownloadPause)
         self.stopButton.clicked.connect(self.onStop)

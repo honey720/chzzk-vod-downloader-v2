@@ -149,10 +149,11 @@ def _leaf_min(w) -> int:
 def _independent_content_minimum(win: VodDownloader) -> int:
     """콘텐츠 열 최소폭을 leaf 위젯 힌트로 **독립 합산**한다(제품의 `_contentMinimumWidth` 미사용).
 
-    상단바: 두 행 중 넓은 쪽(입력창 최소 + 간격 + 텍스트 버튼) + 간격 + ⚙ + 프레임 안쪽 여백·테두리.
+    메뉴바(#492): 「VOD 다운」 + 간격 + 「설정」(메뉴바 프레임은 테두리 · 안쪽 여백 0).
+    헤더바(#492 — 1줄): URL 입력 + 저장 위치 입력 + 경로 찾기 + VOD 추가 + 간격 3개 + 프레임 안쪽 여백·테두리.
     하단바: 라벨 + 완료 삭제 + 다운로드 + 중지 + 간격 3개 + 프레임 안쪽 여백·테두리.
-    열 = max(상단바 + 좌우 outerMargin, 하단바 + 좌우 outerMargin, 목록 최소).
-    좌우 outerMargin은 상단·하단 바의 행에만 붙고 목록은 창 끝까지 간다(v2.10.1).
+    열 = max(메뉴바 · 헤더바 · 하단바 각각 + 좌우 outerMargin, 목록 최소).
+    좌우 outerMargin은 세 바의 행에만 붙고 목록은 창 끝까지 간다(v2.10.1).
     하단 라벨 항은 지금 글자가 아니라 예약 기준(`999/999`)의 폭이다 — 자릿수가 늘어도
     하단 바 최소폭이 안 변하는 것이 규칙이므로, 라벨에 그 문자열을 직접 넣어 잰다.
     """
@@ -163,11 +164,14 @@ def _independent_content_minimum(win: VodDownloader) -> int:
     label_reserve = label.minimumSizeHint().width()
     label.setText(shown)
     border = win.headerFrame.frameWidth()
-    row_gap = win.urlRowLayout.spacing()
-    url_row = _leaf_min(win.urlInput) + row_gap + _leaf_min(win.fetchButton)
-    path_row = _leaf_min(win.downloadPathInput) + row_gap + _leaf_min(win.downloadPathButton)
-    header = max(url_row, path_row) + win.headerRowsLayout.spacing() + _leaf_min(win.settingButton)
+    line = (win.urlInput, win.downloadPathInput, win.downloadPathButton, win.fetchButton)
+    header = sum(_leaf_min(w) for w in line) + 3 * win.urlRowLayout.spacing()
     header += 2 * (pad + border)
+    menu = (
+        _leaf_min(win.menuDownloadButton)
+        + win.appMenuLayout.spacing()
+        + _leaf_min(win.menuSettingsButton)
+    )
     info_gap = win.infoLayout.spacing()
     info = label_reserve + sum(
         _leaf_min(w)
@@ -178,7 +182,9 @@ def _independent_content_minimum(win: VodDownloader) -> int:
         )
     )
     info += 3 * info_gap + 2 * (pad + border)
-    return max(header + 2 * outer, info + 2 * outer, win.listView.minimumSizeHint().width())
+    return max(
+        menu + 2 * outer, header + 2 * outer, info + 2 * outer, win.listView.minimumSizeHint().width()
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -238,8 +244,9 @@ class TestInitialSizeRule:
         expected = max(
             win.minimumWidth(), min(int(screen_w * 0.45), theme.METRICS["initialWidthMax"])
         )
-        assert (win.width(), win.height()) == (expected, 400), (
-            f"작업 영역 {screen_w}px: 초기 크기 {win.size().toTuple()} ≠ ({expected}, 400)"
+        height = max(win.minimumHeight(), 400)  # 최소 높이(#492 계산값)가 비율값보다 크면 클램프
+        assert (win.width(), win.height()) == (expected, height), (
+            f"작업 영역 {screen_w}px: 초기 크기 {win.size().toTuple()} ≠ ({expected}, {height})"
         )
 
     def test_the_cap_wins_on_a_large_screen(self, monkeypatch):
@@ -298,10 +305,15 @@ class TestInitialSizeRule:
         assert win.width() == win.minimumWidth(), (
             f"초기 폭이 최소폭으로 클램프되지 않았다: {win.width()} vs {win.minimumWidth()}"
         )
-        assert win.height() == 300, f"초기 높이는 비율(600×0.5) 그대로여야 한다: {win.height()}"
+        expected_h = max(300, win.minimumHeight())  # 비율(600×0.5)이 최소 높이(#492)보다 작으면 클램프
+        assert win.height() == expected_h, f"초기 높이는 비율(600×0.5)이어야 한다: {win.height()}"
 
-    def test_minimum_height_still_follows_the_screen_ratio(self, monkeypatch):
-        """최소 높이는 바꾸지 않았다 — 작업 영역 높이 × 0.5 그대로(가로만 바꾼 비대칭이 의도, #251)."""
+    def test_minimum_height_does_not_follow_the_screen(self, monkeypatch):
+        """작업 영역 높이를 600 · 1440으로 주입해도 창 최소 높이가 같아야 한다.
+
+        #251의 「최소 높이 = 작업 영역 높이 × 0.5」는 #492에서 계산값(세 바 + 카드 한 장)으로
+        바꿨다(오너 2026-11-06). 비율은 초기 높이에만 남는다 — 그 값은 위 초기 크기 테스트가 잰다.
+        """
         heights = {}
         for screen_h in (600, 1440):
             _fake_screen(monkeypatch, 3440, screen_h)
@@ -309,7 +321,8 @@ class TestInitialSizeRule:
             win.show()
             QApplication.processEvents()
             heights[screen_h] = win.minimumHeight()
-        assert heights == {600: 300, 1440: 720}, f"최소 높이가 화면 비율을 따르지 않는다: {heights}"
+        assert heights[600] == heights[1440], f"최소 높이가 화면 높이를 따라 움직인다: {heights}"
+        assert heights[1440] < 720, f"최소 높이가 아직 화면 비율(1440×0.5)이다: {heights}"
 
     def test_screen_basis_is_the_available_geometry_not_the_full_screen(self, monkeypatch):
         """화면 기준은 availableGeometry(작업표시줄·독 제외)다 — 전체 화면(size())이면 창이 화면 밖으로 나간다.
@@ -365,14 +378,14 @@ class TestWindowMinimumWidthHasAContentFloor:
         win = _window(cards=2)
         _at_width(win, win.minimumWidth())
         for frame, widgets in (
+            (win.appMenuBar, (win.menuDownloadButton, win.menuSettingsButton)),  # 메뉴바(#492)
             (
                 win.headerFrame,
                 (
                     win.urlInput,
-                    win.fetchButton,
                     win.downloadPathInput,
                     win.downloadPathButton,
-                    win.settingButton,
+                    win.fetchButton,
                 ),
             ),
             (
@@ -569,6 +582,7 @@ class TestOverlaysLiveInTheContentArea:
             for y in range(0, win.height())
             for x in range(0, win.width(), 2)
             if _pixel(image, QPoint(x, y)) != background
+            and not _in_window(win, win.appMenuBar).contains(QPoint(x, y))  # 메뉴바(#492)
             and not _in_window(win, win.headerFrame).contains(QPoint(x, y))
             and not _in_window(win, win.infoFrame).contains(QPoint(x, y))
         ]

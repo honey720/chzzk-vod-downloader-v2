@@ -1,4 +1,4 @@
-"""상단 바 설정 버튼의 톱니 아이콘 게이트.
+"""설정 톱니 아이콘(`icons` "settings") 게이트 — 메인 창 헤더의 톱니 버튼은 메뉴바 「설정」으로 옮겼다(#492).
 
 이전에는 `QPushButton.setText("⚙")`(U+2699)이었다 — 어느 폰트가 그 문자를 받느냐에
 따라 모양이 달라 Windows 11에서 설정 앱의 톱니와 다르게 보였다. 지금은
@@ -13,19 +13,9 @@ Segoe MDL2 Assets의 U+E713), 그 폰트가 없는 OS에서는 같은 자세의 
 """
 
 import pytest
-from PySide6.QtWidgets import QApplication
 
 import app.theme as theme
-from app.views.mainWindow import VodDownloader
 from app.widgets import icons
-
-
-@pytest.fixture
-def window(qapp):
-    win = VodDownloader()
-    yield win
-    win.deleteLater()
-    QApplication.processEvents()
 
 
 def _painted(name: str, size: int) -> int:
@@ -52,24 +42,8 @@ def force_family(monkeypatch):
 
 
 class TestButton:
-    def test_setting_button_is_a_drawn_icon_not_a_text_glyph(self, window):
-        button = window.settingButton
-        assert isinstance(button, icons.IconButton), "설정 버튼이 도형 버튼이 아니다"
-        assert button.text() == "", "설정 버튼에 텍스트 글리프가 남아 있다"
-        assert button.iconName() == "settings"
-        assert button.property("role") == "icon", "호버 표면 QSS 규칙이 안 붙는다"
-
-    def test_accessible_name_follows_the_tooltip_translation(self, window):
-        """텍스트 없는 버튼이라 접근성 이름이 있어야 하고, 툴팁과 같은 원문(Settings)을 번역해 쓴다."""
-        button = window.settingButton
-        assert button.accessibleName() != "", "접근성 이름이 비어 있다 — 스크린 리더에 안 잡힌다"
-        assert button.accessibleName() == button.toolTip()
-
-    def test_glyph_size_matches_the_header_metric(self, window):
-        """32px 버튼에 카드용 12px 도형을 그리면 작아서 안 읽힌다 — 상단 바 크기를 쓴다."""
-        assert window.settingButton.glyphSize() == theme.METRICS["headerGlyph"]
-        assert theme.METRICS["headerGlyph"] > theme.METRICS["actionGlyph"]
-        assert theme.METRICS["headerGlyph"] <= window.settingButton.minimumHeight()
+    # 메인 창 헤더의 설정 톱니 버튼을 재던 테스트 셋(도형 버튼 · 접근성 이름 · 헤더 도형 크기)은
+    # 메뉴바 「설정」 글 버튼으로 옮기며(#492) 대상이 없어져 뺐다. 메뉴바는 test_shell_skeleton.py가 잰다.
 
     def test_glyph_size_default_is_the_card_metric(self, qapp):
         """설정 버튼 때문에 카드 조작 아이콘 기본이 바뀌면 안 된다."""
