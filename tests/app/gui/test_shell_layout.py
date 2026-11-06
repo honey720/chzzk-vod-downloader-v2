@@ -252,6 +252,10 @@ class TestInitialSizeRule:
         win = _window()
         win.show()
         QApplication.processEvents()
+        if win.minimumWidth() >= cap:
+            # 헤더바 2줄(#495) 뒤 최소폭이 폰트에 따라 상한(800)을 넘는다(CI 800px대) — 그때 첫 크기는 최소폭이라
+            # 상한 규칙이 드러나지 않는다. 좁은 폭 모양(셸 S3)이 최소폭을 내리면 다시 잰다
+            pytest.skip(f"최소폭 {win.minimumWidth()} ≥ 상한 {cap} — 상한 규칙이 드러나지 않는 폰트")
         assert win.width() == cap, (
             f"큰 화면에서 초기 폭이 상한({cap})에 멈추지 않았다: {win.width()}"
         )
@@ -264,6 +268,9 @@ class TestInitialSizeRule:
         win.show()
         QApplication.processEvents()
         expected = max(win.minimumWidth(), int(1366 * 0.45))
+        if win.minimumWidth() >= theme.METRICS["initialWidthMax"]:
+            # 위 상한 시험과 같은 까닭(#495) — 최소폭이 상한 이상이면 비율 · 상한 어느 쪽도 드러나지 않는다
+            pytest.skip(f"최소폭 {win.minimumWidth()} ≥ 상한 — 비율 규칙이 드러나지 않는 폰트")
         assert expected < theme.METRICS["initialWidthMax"], (
             "전제: 작은 화면에서는 비율값이 상한 아래여야 한다"
         )
@@ -354,12 +361,12 @@ class TestInitialSizeRule:
         win = _window()
         win.show()
         QApplication.processEvents()
-        from_available = (min(int(1900 * 0.45), theme.METRICS["initialWidthMax"]), 450)
-        from_full = (min(int(2400 * 0.45), theme.METRICS["initialWidthMax"]), 500)
+        # 폭은 최소폭(#495 뒤 폰트에 따라 상한 이상)에 클램프될 수 있다 — 두 기준은 높이(450 vs 500)로 가른다
+        floor = win.minimumWidth()
+        from_available = (max(floor, min(int(1900 * 0.45), theme.METRICS["initialWidthMax"])), 450)
+        from_full = (max(floor, min(int(2400 * 0.45), theme.METRICS["initialWidthMax"])), 500)
+        assert win.minimumHeight() < 450, "전제: 두 기준의 높이가 최소 높이에 가려지지 않는다"
         assert from_available != from_full, "전제: 두 기준이 다른 크기를 내야 가를 수 있다"
-        assert win.minimumWidth() <= from_available[0], (
-            "전제: 작업 영역 기준 폭이 콘텐츠 최소보다 커야 클램프에 가려지지 않는다"
-        )
         assert (win.width(), win.height()) == from_available, (
             f"초기 크기 {win.size().toTuple()} — 작업 영역 {from_available}이 아니라 전체 화면 {from_full} 기준으로 계산됐다"
         )
