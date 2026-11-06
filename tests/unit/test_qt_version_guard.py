@@ -17,7 +17,7 @@ def _release(version: str) -> str:
     return ".".join(version.split(".")[:3])
 
 
-def test_running_pyside6_is_not_a_crashing_release():
+def test_running_pyside6_is_not_a_crashing_release() -> None:
     """실행 중인 PySide6가 6.11.0 · 6.11.1이면 실패해야 한다.
 
     PySide6.__version__ -> BROKEN에 없음
@@ -25,7 +25,7 @@ def test_running_pyside6_is_not_a_crashing_release():
     assert _release(PySide6.__version__) not in BROKEN, PySide6.__version__
 
 
-def test_running_qt_is_not_a_crashing_release():
+def test_running_qt_is_not_a_crashing_release() -> None:
     """실행 중인 Qt 라이브러리가 6.11.0 · 6.11.1이면 실패해야 한다.
 
     qVersion() -> BROKEN에 없음
