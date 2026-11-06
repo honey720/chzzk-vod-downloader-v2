@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 import app.theme as theme
 from app.viewmodels.card_order import FILTER_KEYS
 from app.viewmodels.save_location import SaveLocations, folder_name
+from app.widgets.widget import abbreviate_path, path_display_parts
 from app.widgets.icons import action_pixmap
 
 BUTTON_PADDING = 10  # 펼침 버튼 안쪽 좌우 여백(px) — 프로토 v8 저장 위치 버튼
@@ -33,6 +34,8 @@ CARET_GAP = 6  # 글 ↔ ▾(px)
 BUTTON_VPAD = 7  # 위아래(px) — QPushButton의 QSS padding 6 + 테두리 1과 같아 한 줄의 높이가 맞는다
 WIDTH_SAMPLE = "Downloads"  # 저장 위치 버튼 폭의 기준 글 — 이 이름이 줄지 않고 들어간다(프로토 11o)
 MENU_DETAIL_GAP = 16  # 메뉴 줄의 글 ↔ 흐린 글(px)
+MENU_WINDOW_MARGIN = 24  # 저장 위치 메뉴 폭의 상한 = 창 폭 − 이 값(px) — 프로토 PATH_MENU_MARGIN(inbox 71)
+MENU_MIN_LIMIT = 200  # 창이 아주 좁아도 메뉴 폭 상한은 이만큼은 둔다(px) — 프로토와 같다
 
 
 class ChoiceMenu(QMenu):
@@ -48,17 +51,23 @@ class ChoiceMenu(QMenu):
         super().__init__(parent)
         self.setToolTipsVisible(True)
 
-    def addChoice(self, text: str, key: object, detail: str = "") -> QAction:
-        """고르는 항목을 더한다 — `key`는 `mark`와 테스트가 항목을 찾는 값이다."""
+    def addChoice(self, text: str, key: object, detail: str = "", path: str = "") -> QAction:
+        """고르는 항목을 더한다 — `key`는 `mark`와 테스트가 항목을 찾는 값이다.
+
+        `path`를 주면 흐린 글은 그 경로를 카드와 같은 표기로 줄여 그린다(`fit_path` — #495 inbox 71).
+        `detail`은 그 표기의 ①(전체 축약형) — Qt가 단축키 칸으로 재어 메뉴 폭을 잡는다.
+        """
         action = self.addAction(f"{text}\t{detail}" if detail else text)
         action.setData(key)
         action.setIcon(_blankIcon())
+        action.setProperty("detailPath", path)
         return action
 
-    def addCommand(self, text: str) -> QAction:
-        """고르는 항목이 아닌 명령 — 같은 크기의 빈 아이콘으로 글 자리를 맞춘다."""
-        action = self.addAction(text)
+    def addCommand(self, text: str, detail: str = "", path: str = "") -> QAction:
+        """고르는 항목이 아닌 명령 — 같은 크기의 빈 아이콘으로 글 자리를 맞춘다. 흐린 글은 `addChoice`와 같다."""
+        action = self.addAction(f"{text}\t{detail}" if detail else text)
         action.setIcon(_blankIcon())
+        action.setProperty("detailPath", path)
         return action
 
     def addHeader(self, text: str) -> QAction:
@@ -107,6 +116,9 @@ class ChoiceMenu(QMenu):
                 painter.setFont(self.font())
             head, detail = text.split("\t", 1)
             rect = self.actionGeometry(action).adjusted(0, 0, -BUTTON_PADDING, 0)
+            # 메뉴 폭을 상한(setMaximumWidth)으로 잘라도 Qt는 줄 사각형을 잘리기 전 폭으로 둔다 — 그대로
+            # 오른쪽에 맞춰 그리면 흐린 글이 보이는 메뉴 밖으로 나간다(inbox 71 그림). 보이는 폭으로 자른다
+            rect.setRight(min(rect.right(), self.width() - 1 - BUTTON_PADDING))
             if action is self.activeAction() and action.isEnabled():
                 color = tokens["onAccent"]  # 강조색으로 채운 줄 안의 글
             elif action.isEnabled():
@@ -114,11 +126,32 @@ class ChoiceMenu(QMenu):
             else:
                 color = tokens["textDisabled"]
             painter.setPen(QColor(color))
-            room = rect.width() - metrics.horizontalAdvance(head) - 3 * MENU_DETAIL_GAP
-            shown = metrics.elidedText(detail, Qt.TextElideMode.ElideMiddle, max(20, room))
+            room = max(20, rect.width() - metrics.horizontalAdvance(head) - 3 * MENU_DETAIL_GAP)
+            path = action.property("detailPath")
+            if path:
+                # 「(없음)」 같은 꼬리는 줄이지 않고 남긴다 — 줄이는 것은 경로뿐(카드 표기 차례)
+                tail = detail[len(abbreviate_path(path)):]
+                shown = fit_path(metrics, path, room - metrics.horizontalAdvance(tail)) + tail
+            else:
+                shown = metrics.elidedText(detail, Qt.TextElideMode.ElideMiddle, room)
             painter.drawText(rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, shown)
         if painter is not None:
             painter.end()
+
+
+def fit_path(metrics, path: str, room: int) -> str:
+    """경로를 폭에 맞춘 글 — 카드 경로 라벨(PathLabel)과 같은 차례로 줄인다 (#495 inbox 71).
+
+    ① 전체 축약형(홈은 `~`, 중간 폴더 접기 — `abbreviate_path`) → ② `뿌리/…/마지막 폴더` → ③ 마지막
+    폴더만 가운데 말줄임. 조각은 카드와 같은 함수(`path_display_parts`)에서 받는다.
+    """
+    full, prefix, last = path_display_parts(path)
+    if metrics.horizontalAdvance(full) <= room or not last:
+        return metrics.elidedText(full, Qt.TextElideMode.ElideMiddle, room)
+    if metrics.horizontalAdvance(prefix + last) <= room:
+        return prefix + last
+    rest = max(room - metrics.horizontalAdvance(prefix), 0)
+    return prefix + metrics.elidedText(last, Qt.TextElideMode.ElideMiddle, rest)
 
 
 def _menuIconSize(menu: QMenu) -> int:
@@ -273,6 +306,9 @@ class SaveLocationButton(DropButton):
         locations = self._locations
         entries = locations.menu_entries()
         missing_text = self.tr("(missing)")
+        # 메뉴 폭 상한 = 창 폭 − 24 — 긴 경로가 메뉴를 창보다 넓히지 않는다(프로토 PATH_MENU_MARGIN, inbox 71)
+        limit = max(MENU_MIN_LIMIT, self.window().width() - MENU_WINDOW_MARGIN)
+        metrics = menu.fontMetrics()
         headed: set[str] = set()
         for entry in entries:
             if entry.kind == "favorite" and "favorite" not in headed:
@@ -281,12 +317,19 @@ class SaveLocationButton(DropButton):
             if entry.kind == "recent" and "recent" not in headed:
                 menu.addHeader(self.tr("Recent"))
                 headed.add("recent")
-            suffix = f"  {missing_text}" if entry.missing else ""
+            # 줄마다 「이름 + 흐린 경로」 — 이름은 즐겨찾기면 별칭(★), 아니면 폴더 이름(지금 위치가 즐겨찾기면
+            # 그 별칭). 경로는 카드와 같은 표기, 툴팁은 전체 경로
+            favorite = locations.favorite_for(entry.path)
             if entry.kind == "favorite":
-                action = menu.addChoice(f"★ {entry.name}", ("favorite", entry.path),
-                                        entry.path + suffix)
+                name = f"★ {entry.name}"
             else:
-                action = menu.addChoice(entry.path + suffix, (entry.kind, entry.path))
+                name = favorite["name"] if favorite else folder_name(entry.path)
+            name = metrics.elidedText(name, Qt.TextElideMode.ElideRight, limit // 2)
+            suffix = f"  {missing_text}" if entry.missing else ""
+            action = menu.addChoice(
+                name, (entry.kind, entry.path), abbreviate_path(entry.path) + suffix, entry.path
+            )
+            action.setToolTip(entry.path)
             action.setProperty("missing", entry.missing)
             action.setEnabled(not entry.missing or entry.kind == "current")
             action.triggered.connect(lambda _=False, p=entry.path: self._choose(p))
@@ -294,15 +337,18 @@ class SaveLocationButton(DropButton):
         menu.addSeparator()
         add = menu.addCommand(self.tr("☆ Add current folder to favorites"))
         add.setObjectName("addFavoriteAction")
-        add.setEnabled(locations.can_add_favorite())
+        add.setEnabled(locations.can_add_favorite())  # 이미 즐겨찾기 · 가득 차면 끔
         add.triggered.connect(self._addFavorite)
         find = menu.addCommand(self.tr("Find folder…"))
         find.setObjectName("findFolderAction")
         find.triggered.connect(self._findFolder)
-        reset = menu.addCommand(self.tr("Default location"))
+        default = locations.default()
+        reset = menu.addCommand(self.tr("Default location"), abbreviate_path(default), default)
         reset.setObjectName("defaultLocationAction")
-        reset.setToolTip(locations.default())
+        reset.setToolTip(default)
+        reset.setEnabled(not locations.is_default())  # 이미 기본 위치면 끔(inbox 71)
         reset.triggered.connect(locations.reset)
+        menu.setMaximumWidth(limit)
 
     def _choose(self, path: str) -> None:
         """그 위치를 고른다 — 그 사이 폴더가 사라졌으면 고르지 않고 알린다."""

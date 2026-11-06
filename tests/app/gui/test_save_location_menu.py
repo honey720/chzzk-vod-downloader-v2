@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QApplication, QFileDialog, QInputDialog
 import app.system.settings as settings
 import app.viewmodels.content_viewmodel as content_viewmodel_module
 from app.views.mainWindow import VodDownloader
+from app.widgets.widget import abbreviate_path
 
 
 class _IdleFetchJob:
@@ -137,12 +138,12 @@ class TestMenuRows:
         assert menu.markedKeys() == [("current", win.saveLocations.current())]
 
     def test_a_favorite_row_shows_its_name_and_its_path_after_a_tab(self, make_window, folders):
-        """즐겨찾기 줄의 글은 「★ 별칭」 다음 탭 뒤에 경로여야 한다(탭 뒤는 흐리게 그린다)."""
+        """즐겨찾기 줄의 글은 「★ 별칭」 다음 탭 뒤에 카드 표기 경로(abbreviate_path)여야 한다(탭 뒤는 흐리게 그린다)."""
         a = folders("즐1")
         _seed(favoritePaths=[{"name": "녹화", "path": a}])
         win = make_window()
         action = _choice(_open(win), "favorite", a)
-        assert action.text() == f"★ 녹화\t{a}"
+        assert action.text() == f"★ 녹화\t{abbreviate_path(a)}"
 
 
 class TestLimitsAndOverlap:
@@ -291,3 +292,114 @@ class TestChosenLocationAppliesToLaterCards:
 
         model = win.contentManager.model
         assert [model.itemAt(n).download_path for n in range(model.rowCount())] == [first, second]
+
+
+class TestRowsAndLimits:
+    """inbox 71 — 줄 글 · 툴팁 · 메뉴 폭 상한 · 끄는 조건(#495)."""
+
+    def test_the_current_row_is_its_folder_name_and_a_muted_path(self, make_window, folders):
+        """지금 위치 줄은 폴더 이름 다음 탭 뒤에 카드 표기 경로여야 하고 툴팁은 전체 경로여야 한다."""
+        chosen = folders("지금 폴더")
+        win = make_window()
+        assert win.saveLocations.choose(chosen)
+        action = _choice(_open(win), "current", chosen)
+        assert action.text() == f"지금 폴더\t{abbreviate_path(chosen)}"
+        assert action.toolTip() == chosen
+
+    def test_a_current_favorite_row_shows_its_name(self, make_window, folders):
+        """지금 위치가 즐겨찾기면 지금 위치 줄의 이름은 폴더 이름이 아니라 별칭이어야 한다."""
+        fav = folders("D_녹화")
+        _seed(favoritePaths=[{"name": "녹화함", "path": fav}])
+        win = make_window()
+        assert win.saveLocations.choose(fav)
+        assert _choice(_open(win), "current", fav).text().startswith("녹화함\t")
+
+    def test_paths_use_the_card_notation_with_a_home_tilde(self, make_window, folders):
+        """홈 아래 경로의 흐린 글은 ~로 시작하는 카드 표기여야 하고 툴팁은 전체 경로여야 한다."""
+        import os
+
+        recent = folders("최근")
+        assert os.path.normcase(recent).startswith(os.path.normcase(os.path.expanduser("~"))), "전제: 시험 폴더가 홈 아래"
+        _seed(recentPaths=[recent])
+        win = make_window()
+        action = _choice(_open(win), "recent", recent)
+        assert action.text().split("\t")[1].startswith("~/")
+        assert action.toolTip() == recent
+
+    def test_a_long_path_keeps_the_menu_within_the_window(self, make_window, tmp_path):
+        """마지막 폴더 이름이 창보다 긴 경로를 고르면 메뉴 폭이 창 폭 − 24 이하여야 한다."""
+        deep = tmp_path / ("가나다라마" * 30)  # 150자 — 카드 표기로 줄여도 마지막 폴더는 남아 창보다 넓다
+        deep.mkdir()
+        win = make_window()
+        win.resize(win.minimumWidth(), win.height())
+        win.show()
+        QApplication.processEvents()
+        assert win.saveLocations.choose(str(deep))
+        menu = _open(win)
+        metrics = menu.fontMetrics()
+        assert metrics.horizontalAdvance(abbreviate_path(str(deep))) > win.width(), "전제: 상한이 없으면 창을 넘는 글"
+        assert menu.isVisible()
+        assert menu.width() <= win.width() - 24
+
+    def test_muted_paths_stay_inside_a_capped_menu(self, make_window, folders, tmp_path):
+        """메뉴 폭이 상한에 걸려도 다른 줄(최근)의 흐린 경로가 보이는 메뉴 오른쪽 안쪽에 그려져야 한다."""
+        from PySide6.QtCore import QRect
+
+        deep = tmp_path / ("가나다라마" * 30)
+        deep.mkdir()
+        recent = folders("짧은 최근")
+        _seed(recentPaths=[recent])
+        win = make_window()
+        win.resize(win.minimumWidth(), win.height())
+        win.show()
+        QApplication.processEvents()
+        assert win.saveLocations.choose(str(deep))
+        menu = _open(win)
+        row = _choice(menu, "recent", recent)
+        image = menu.grab().toImage()
+        ratio = image.devicePixelRatio()
+        g = menu.actionGeometry(row)
+        zone = QRect(menu.width() * 2 // 3, g.top() + 2, menu.width() // 3 - 12, g.height() - 4)
+        face = image.pixelColor(int((zone.left() - 20) * ratio), int(g.center().y() * ratio))
+        inked = sum(
+            1
+            for y in range(int(zone.top() * ratio), int(zone.bottom() * ratio))
+            for x in range(int(zone.left() * ratio), int(zone.right() * ratio))
+            if sum(abs(a - b) for a, b in zip(image.pixelColor(x, y).getRgb()[:3], face.getRgb()[:3])) > 60
+        )
+        assert menu.width() <= win.width() - 24, "전제: 메뉴가 상한에 걸려 있다"
+        assert inked > 10, "흐린 경로가 보이는 메뉴 안에 그려지지 않았다"
+
+    def test_a_long_path_is_shortened_like_the_card(self, make_window, tmp_path):
+        """폭이 모자라면 경로는 뿌리/…/마지막 폴더로 접히고 그래도 모자라면 마지막 폴더 가운데가 줄어야 한다."""
+        from app.widgets.header_controls import fit_path
+
+        path = str(tmp_path / "중간" / ("마지막 폴더 이름이 아주 김 " * 6).strip())
+        win = make_window()
+        metrics = win.saveLocationButton.menuWidget.fontMetrics()
+        folded = fit_path(metrics, path, metrics.horizontalAdvance("~/…/" + path.split("\\")[-1]))
+        squeezed = fit_path(metrics, path, 120)
+        assert folded.endswith(path.split("\\")[-1]) and "/…/" in folded
+        assert "…" in squeezed[len(squeezed.split("/")[0]) + 3:] and metrics.horizontalAdvance(squeezed) <= 120
+
+    def test_default_location_row_is_off_at_the_default_and_on_elsewhere(self, make_window, folders):
+        """지금 위치가 기본 위치면 「기본 위치로」가 꺼지고, 다른 위치면 켜지며 줄에 기본 위치 흐린 경로가 있어야 한다."""
+        win = make_window()
+        menu = _open(win)
+        reset = _command(menu, "defaultLocationAction")
+        assert not reset.isEnabled()
+        assert reset.text() == f"Default location\t{abbreviate_path(win.saveLocations.default())}"
+        menu.hide()
+        assert win.saveLocations.choose(folders("다른"))
+        assert _command(_open(win), "defaultLocationAction").isEnabled()
+
+    def test_the_default_with_a_trailing_separator_counts_as_the_default(self, make_window, monkeypatch):
+        """「폴더 찾기…」로 끝 구분자만 붙은 기본 위치를 고르면 같은 위치로 보아 「기본 위치로」가 꺼져 있어야 한다."""
+        import os
+
+        win = make_window()
+        default = win.saveLocations.default()
+        monkeypatch.setattr(QFileDialog, "getExistingDirectory",
+                            staticmethod(lambda *a, **k: default + os.sep))
+        _command(_open(win), "findFolderAction").trigger()
+        assert not _command(_open(win), "defaultLocationAction").isEnabled()

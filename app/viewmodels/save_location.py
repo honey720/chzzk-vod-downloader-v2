@@ -62,6 +62,15 @@ class SaveLocations(QObject):
         """기본 저장 위치 — 시작 위치이자 「기본 위치로」가 돌아가는 곳."""
         return self._default
 
+    def is_default(self) -> bool:
+        """지금 위치가 기본 저장 위치인지 — 「기본 위치로」를 끌지 정한다(#495 inbox 71).
+
+        즐겨찾기 겹침 막음 · 고르기와 같은 비교다: 둘 다 `normalize_path`(절대 경로 — 상대 경로와 끝
+        구분자가 정리된다)를 거친 뒤 글자 그대로 견준다. 대소문자는 맞추지 않는다 — 지금 경로 비교
+        어디에서도 맞추지 않는다.
+        """
+        return normalize_path(self._current) == self._default
+
     def favorites(self) -> list[dict]:
         """즐겨찾기 `{"name", "path"}` 목록의 사본(더한 차례)."""
         return [dict(entry) for entry in self._favorites]
