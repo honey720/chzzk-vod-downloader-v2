@@ -387,6 +387,30 @@ class VodDownloader(QMainWindow):
         self.infoLayout.setContentsMargins(frame_pad, frame_pad, frame_pad, frame_pad)
         self._equalizeHeaderButtons()
         self._reserveCountLabelWidth()
+        self._reserveStatusLineHeight()
+
+    def _reserveStatusLineHeight(self) -> None:
+        """조회 상태 글 줄의 높이를 글 유무와 무관하게 고정한다 (#492 — #493 CI).
+
+        빈 라벨과 글이 든 라벨은 글꼴에 따라 높이 힌트가 다르다(대체 글꼴 offscreen 실측: 빈 14 ·
+        글 12). 그대로 두면 상태 글이 바뀔 때 헤더바가 몇 px 오르내리고, 창 최소 높이의 계산
+        (`_contentMinimumHeight`)도 지금 상태 글에 따라 달라진다. 빈 상태와 실제로 띄우는 글 셋을
+        이 라벨의 글꼴 · QSS로 재어 가장 높은 값을 최소 높이로 건다 — 글꼴 · 번역을 따라간다.
+        """
+        label = self.linkStatusLabel
+        shown = label.text()
+        label.ensurePolished()
+        heights = []
+        for text in (
+            "",
+            self.tr("Fetching resolutions..."),
+            self.tr("Resolutions fetched successfully."),
+            self.tr("Failed to fetch resolutions."),
+        ):
+            label.setText(text)
+            heights.append(label.sizeHint().height())
+        label.setText(shown)
+        label.setMinimumHeight(max(heights))
 
     def _reserveCountLabelWidth(self) -> None:
         """하단 바 최소폭을 카운트 라벨 세 자리/세 자리(`999/999`) 기준으로 예약한다 (v2.10.1).
