@@ -652,6 +652,10 @@ Check your connection and cookies, then open this window again.</source>
         <translation>영상 정보를 불러오는 중입니다. 잠시 후 다시 시도해 주세요.</translation>
     </message>
     <message>
+        <source>VOD Download</source>
+        <translation>VOD 다운</translation>
+    </message>
+    <message>
         <source>Downloading</source>
         <translation>다운로드 중</translation>
     </message>
@@ -678,10 +682,6 @@ Check your connection and cookies, then open this window again.</source>
     <message>
         <source>Downloads: {}/{}</source>
         <translation>다운로드: {}/{}</translation>
-    </message>
-    <message>
-        <source>Chzzk VOD Downloader</source>
-        <translation>치지직 VOD 다운로더</translation>
     </message>
     <message>
         <source>Settings</source>

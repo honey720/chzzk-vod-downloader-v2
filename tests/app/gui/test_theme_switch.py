@@ -167,12 +167,14 @@ class Scene:
         """비교 대상 위젯 — 이름 → 위젯. 화면 구성 요소를 하나씩 셀 수 있게 이름을 붙인다."""
         w = self.window
         parts = {
+            "menu.frame": w.appMenuBar,  # 메뉴바(#492) — 헤더의 설정 톱니가 메뉴 「설정」으로 옮겨 왔다
+            "menu.downloadButton": w.menuDownloadButton,
+            "menu.settingsButton": w.menuSettingsButton,
             "header.frame": w.headerFrame,
             "header.urlInput": w.urlInput,
             "header.fetchButton": w.fetchButton,
             "header.downloadPathInput": w.downloadPathInput,
             "header.downloadPathButton": w.downloadPathButton,
-            "header.settingButton": w.settingButton,
             "header.linkStatusLabel": w.linkStatusLabel,
             "list.viewport": w.listView.viewport(),
             "footer.frame": w.infoFrame,

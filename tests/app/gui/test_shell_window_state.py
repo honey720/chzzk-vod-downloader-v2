@@ -301,14 +301,16 @@ class TestFirstRunAndOldConfigs:
 class TestRestoreClampsAfterTheMinimumSizeIsApplied:
     """기록 크기가 최소 크기보다 작으면 Qt가 resize()에서 키운다 — 위치는 그 **뒤**의 실제 크기로 정해야 한다.
 
-    최소 크기는 이음새(`_contentMinimumWidth`, 작업 영역 높이 × 0.5)로 키운다 — DPI·글꼴·번역이
-    바뀌어 최소가 기록보다 커진 상황. 절대 px 대신 작업 영역에서 유도한다.
+    최소 크기는 이음새 둘(`_contentMinimumWidth` · `_contentMinimumHeight` — 최소 높이는 #492부터
+    계산값이라 작업 영역 높이 × 0.5를 이음새로 준다)로 키운다 — DPI·글꼴·번역이 바뀌어 최소가
+    기록보다 커진 상황. 절대 px 대신 작업 영역에서 유도한다.
     """
 
     def test_a_small_record_at_the_bottom_right_ends_inside_after_growing(self, monkeypatch):
         """오른쪽·아래 끝에 붙은 작은 기록이 최소 크기로 커져도 작업 영역 안에 남는다."""
         grown = AVAILABLE.width() // 2  # 기록 폭보다 훨씬 큰 최소폭
         monkeypatch.setattr(VodDownloader, "_contentMinimumWidth", lambda self: grown)
+        monkeypatch.setattr(VodDownloader, "_contentMinimumHeight", lambda self: AVAILABLE.height() // 2)
         small = (120, 100)
         _write_window(
             {
@@ -335,6 +337,7 @@ class TestRestoreClampsAfterTheMinimumSizeIsApplied:
         """커진 뒤에도 자리가 있으면 기록 위치를 옮기지 않는다."""
         grown = AVAILABLE.width() // 2
         monkeypatch.setattr(VodDownloader, "_contentMinimumWidth", lambda self: grown)
+        monkeypatch.setattr(VodDownloader, "_contentMinimumHeight", lambda self: AVAILABLE.height() // 2)
         _write_window({"x": 100, "y": 80, "width": 120, "height": 100, "maximized": False})
         win = _open()
         assert _requested(win).size().toTuple() == (grown, AVAILABLE.height() // 2)
