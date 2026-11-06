@@ -368,6 +368,68 @@ Part of the video kept arriving incomplete from the server. Try again later.</so
     </message>
 </context>
 <context>
+    <name>SaveLocationButton</name>
+    <message>
+        <source>(missing)</source>
+        <translation>(없음)</translation>
+    </message>
+    <message>
+        <source>Favorites</source>
+        <translation>즐겨찾기</translation>
+    </message>
+    <message>
+        <source>Recent</source>
+        <translation>최근</translation>
+    </message>
+    <message>
+        <source>☆ Add current folder to favorites</source>
+        <translation>☆ 지금 위치를 즐겨찾기에</translation>
+    </message>
+    <message>
+        <source>Find folder…</source>
+        <translation>폴더 찾기…</translation>
+    </message>
+    <message>
+        <source>Default location</source>
+        <translation>기본 위치로</translation>
+    </message>
+    <message>
+        <source>The folder does not exist.</source>
+        <translation>폴더가 없습니다.</translation>
+    </message>
+    <message>
+        <source>Find folder</source>
+        <translation>폴더 찾기</translation>
+    </message>
+    <message>
+        <source>Add to favorites</source>
+        <translation>즐겨찾기에 더하기</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>별칭</translation>
+    </message>
+</context>
+<context>
+    <name>SaveLocations</name>
+    <message>
+        <source>Enter a name for the favorite.</source>
+        <translation>즐겨찾기 별칭을 넣어 주세요.</translation>
+    </message>
+    <message>
+        <source>You can add up to {} favorites.</source>
+        <translation>즐겨찾기는 {}개까지 둘 수 있습니다.</translation>
+    </message>
+    <message>
+        <source>This folder is already a favorite.</source>
+        <translation>이미 즐겨찾기에 있는 폴더입니다.</translation>
+    </message>
+    <message>
+        <source>A favorite with this name already exists.</source>
+        <translation>같은 별칭의 즐겨찾기가 이미 있습니다.</translation>
+    </message>
+</context>
+<context>
     <name>SectionEditDialog</name>
     <message>
         <source>Edit sections</source>
@@ -692,16 +754,8 @@ Check your connection and cookies, then open this window again.</source>
         <translation>치지직 URL 입력</translation>
     </message>
     <message>
-        <source>Enter download path</source>
-        <translation>다운로드 경로 입력</translation>
-    </message>
-    <message>
         <source>Add VOD</source>
         <translation>VOD 추가</translation>
-    </message>
-    <message>
-        <source>Find path</source>
-        <translation>경로 찾기</translation>
     </message>
     <message>
         <source>Clear Finished</source>

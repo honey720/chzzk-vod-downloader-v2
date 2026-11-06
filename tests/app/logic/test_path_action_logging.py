@@ -179,10 +179,25 @@ class TestFetchGateLogging:
         win.deleteLater()
         qapp.processEvents()
 
-    def test_fetch_reject_logs_input_with_repr(self, window, qapp, tmp_path, caplog):
-        """조회 관문 거부가 WARNING으로 남는다 — 입력창 → 버튼 클릭 실배선."""
+    @staticmethod
+    def _find_folder(win, monkeypatch, folder) -> None:
+        """메뉴 「폴더 찾기…」로 그 폴더를 고른다 — 메뉴를 실제로 열고 폴더 선택 창만 바꿔 끼운다."""
+        from PySide6.QtWidgets import QFileDialog
+
+        monkeypatch.setattr(QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: str(folder)))
+        button = win.saveLocationButton
+        button.menuWidget.popup(button.mapToGlobal(button.rect().bottomLeft()))
+        action = next(a for a in button.menuWidget.actions() if a.objectName() == "findFolderAction")
+        action.trigger()
+        button.menuWidget.hide()
+
+    def test_fetch_reject_logs_input_with_repr(self, window, qapp, tmp_path, caplog, monkeypatch):
+        """조회 관문 거부가 경로 repr과 함께 WARNING으로 남는다 — 고른 뒤 사라진 폴더 → 버튼 클릭 실배선."""
         win, warnings = window
-        win.downloadPathInput.setText(str(tmp_path / NBSP_SUFFIX))
+        gone = tmp_path / NBSP_SUFFIX
+        gone.mkdir()
+        self._find_folder(win, monkeypatch, gone)
+        gone.rmdir()
         win.urlInput.setText("https://chzzk.naver.com/video/1")
 
         with caplog.at_level("WARNING", logger="app.views.mainWindow"):
@@ -192,19 +207,14 @@ class TestFetchGateLogging:
         assert "조회 거부" in caplog.text
         assert "\\xa0" in caplog.text
 
-    def test_find_path_selection_is_logged(self, window, qapp, tmp_path, caplog, monkeypatch):
-        """'경로 찾기' 선택값이 INFO로 남는다 — 버튼 클릭 실배선(다이얼로그만 대체)."""
-        import app.views.mainWindow as mw_mod
-
+    def test_chosen_location_is_logged(self, window, qapp, tmp_path, caplog, monkeypatch):
+        """저장 위치 메뉴 「폴더 찾기…」로 고른 위치가 INFO로 남는다 — 메뉴 항목 실배선(창만 대체)."""
         win, _warnings = window
         chosen = tmp_path / "선택한 폴더"
         chosen.mkdir()
-        monkeypatch.setattr(
-            mw_mod.QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: str(chosen))
-        )
 
         with caplog.at_level("INFO", logger="app.views.mainWindow"):
-            win.downloadPathButton.click()
+            self._find_folder(win, monkeypatch, chosen)
 
-        assert win.downloadPathInput.text() == str(chosen)
-        assert "저장 경로 선택(경로 찾기)" in caplog.text
+        assert win.saveLocations.current() == str(chosen)
+        assert "저장 위치 고름" in caplog.text

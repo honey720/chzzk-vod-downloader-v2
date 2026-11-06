@@ -220,7 +220,7 @@ class TestMinimumSize:
         window_rect = QRect(QPoint(0, 0), win.size())
         buttons = [b for b in win.findChildren(QAbstractButton) if b.isVisible() and b.window() is win]
         names = {b.objectName() for b in buttons}
-        assert {"menuDownloadButton", "menuSettingsButton", "fetchButton", "downloadPathButton",
+        assert {"menuDownloadButton", "menuSettingsButton", "fetchButton", "saveLocationButton",
                 "clearFinishedButton", "downloadButton", "stopButton"} <= names
         cut = [(b.objectName(), _in_window(win, b)) for b in buttons
                if b.width() <= 0 or b.height() <= 0 or not window_rect.contains(_in_window(win, b))]
@@ -279,7 +279,7 @@ class TestMinimumSize:
         """
         monkeypatch.setattr(content_viewmodel_module, "FetchJob", _IdleFetchJob)
         win = _window()
-        win.downloadPathInput.setText(str(tmp_path))
+        assert win.saveLocations.choose(str(tmp_path))
         win.show()
         QApplication.processEvents()
 
@@ -305,7 +305,7 @@ class TestRegistrationWiring:
         """조회 요청을 기록한다 — 창의 콘텐츠 뷰모델 `fetchContent`를 대역으로 바꾼다(네트워크 없음)."""
         calls = []
         win = _window()
-        win.downloadPathInput.setText(str(tmp_path))
+        assert win.saveLocations.choose(str(tmp_path))
         monkeypatch.setattr(
             win.contentManager, "fetchContent", lambda url, cookies, path: calls.append((url, path))
         )

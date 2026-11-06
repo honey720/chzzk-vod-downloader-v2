@@ -274,6 +274,39 @@ QPushButton[role="icon"][interactive="false"]:pressed {
     border-color: transparent;
 }
 
+/* 펼침 버튼(#495 — 헤더바 저장 위치 · 정렬) — QToolButton + QMenu. 바탕 · 테두리만 여기서
+ * 칠하고 도형 · 글 · ▾는 app/widgets/header_controls.py::DropButton.paintEvent가 그린다.
+ * `role`은 그 클래스가 심는다. 스타일의 펼침 표시(::menu-indicator)는 지운다 — 하나라도
+ * 빼면 그 부분만 네이티브로 남는다. */
+QToolButton[role="drop"] {
+    background-color: @surfaceAlt;
+    color: @text;
+    border: 1px solid @border;
+    border-radius: @radius;
+    padding: 0px;
+}
+
+QToolButton[role="drop"]:hover {
+    background-color: @surfaceHover;
+    border-color: @borderStrong;
+}
+
+QToolButton[role="drop"]:pressed,
+QToolButton[role="drop"]:open {
+    background-color: @surfacePressed;
+    border-color: @borderStrong;
+}
+
+QToolButton[role="drop"]:disabled {
+    background-color: @surface;
+    border-color: @border;
+}
+
+QToolButton[role="drop"]::menu-indicator {
+    image: none;
+    width: 0px;
+}
+
 /* 해상도(#244 재설계) — 선택된 것만 채워진 pill, 나머지는 배경·테두리
  * 없는 muted 텍스트다(전부 외곽선 pill이던 이전 모습은 줄 전체가
  * 버튼 무더기로 보였다). `role`·`selected`·`caret`는 content/pill.py가 심는다.

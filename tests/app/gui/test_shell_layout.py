@@ -150,7 +150,7 @@ def _independent_content_minimum(win: VodDownloader) -> int:
     """콘텐츠 열 최소폭을 leaf 위젯 힌트로 **독립 합산**한다(제품의 `_contentMinimumWidth` 미사용).
 
     메뉴바(#492): 「VOD 다운」 + 간격 + 「설정」(메뉴바 프레임은 테두리 · 안쪽 여백 0).
-    헤더바(#492 — 1줄): URL 입력 + 저장 위치 입력 + 경로 찾기 + VOD 추가 + 간격 3개 + 프레임 안쪽 여백·테두리.
+    헤더바(#492 · #495 — 1줄): URL 입력 + 저장 위치 버튼 + VOD 추가 + 간격 2개 + 프레임 안쪽 여백·테두리.
     하단바: 라벨 + 완료 삭제 + 다운로드 + 중지 + 간격 3개 + 프레임 안쪽 여백·테두리.
     열 = max(메뉴바 · 헤더바 · 하단바 각각 + 좌우 outerMargin, 목록 최소).
     좌우 outerMargin은 세 바의 행에만 붙고 목록은 창 끝까지 간다(v2.10.1).
@@ -164,8 +164,8 @@ def _independent_content_minimum(win: VodDownloader) -> int:
     label_reserve = label.minimumSizeHint().width()
     label.setText(shown)
     border = win.headerFrame.frameWidth()
-    line = (win.urlInput, win.downloadPathInput, win.downloadPathButton, win.fetchButton)
-    header = sum(_leaf_min(w) for w in line) + 3 * win.urlRowLayout.spacing()
+    line = (win.urlInput, win.saveLocationButton, win.fetchButton)
+    header = sum(_leaf_min(w) for w in line) + 2 * win.urlRowLayout.spacing()
     header += 2 * (pad + border)
     menu = (
         _leaf_min(win.menuDownloadButton)
@@ -383,8 +383,7 @@ class TestWindowMinimumWidthHasAContentFloor:
                 win.headerFrame,
                 (
                     win.urlInput,
-                    win.downloadPathInput,
-                    win.downloadPathButton,
+                    win.saveLocationButton,
                     win.fetchButton,
                 ),
             ),

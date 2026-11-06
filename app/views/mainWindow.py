@@ -6,7 +6,6 @@ from app.system import settings
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
-    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -24,7 +23,8 @@ from PySide6.QtCore import QMargins, QMetaObject, QPoint, QRect, QSize, QStandar
 
 from app.system.process_memory import log_process_memory
 from app.viewmodels.download_viewmodel import DownloadViewModel
-from app.viewmodels.path_gates import check_fetch_path, check_remember_path, normalize_path
+from app.viewmodels.path_gates import check_fetch_path
+from app.viewmodels.save_location import SaveLocations
 from app.views.dialog import SettingDialog
 from app.views.section_dialog import SectionEditDialog
 from app.viewmodels.section_edit import SectionEditViewModel
@@ -32,6 +32,7 @@ from app.viewmodels.data import ContentItem
 from app.viewmodels.content_viewmodel import ContentViewModel
 import config.config as config
 from app.widgets import widget as content_widget
+from app.widgets.header_controls import SaveLocationButton
 from app.widgets.view import ContentListView
 from core.models.download_state import DownloadState
 import app.theme as theme
@@ -66,14 +67,17 @@ def window_title(version: str) -> str:
 
 
 def _default_download_path() -> str:
-    """시작 시 저장 경로 입력창의 초기값을 정한다 (#159 — #157 실측 근거).
+    """기본 저장 위치를 정한다 — 앱은 늘 이 위치로 시작한다 (#159 — #157 실측 근거, #495).
 
     cwd는 실행 방식에 따라 임의다 — macOS .app을 Finder/Dock으로 실행하면
     cwd가 '/'(쓰기 불가)임을 CI에서 실측했고(#157), Windows도 바로가기의
     '시작 위치' 설정에 좌우된다. 우선순위:
-    ① 유저가 마지막으로 쓴 경로(설정, 실존할 때만 — 외장 드라이브 분리 대비)
+    ① 설정의 기본 저장 위치 `downloadPath`(실존할 때만 — 외장 드라이브 분리 대비)
     ② 시스템 다운로드 폴더(실존할 때만)
     ③ cwd — 소스 실행(개발) 관례를 유지하는 최후 폴백
+
+    저장 위치를 골라도 `downloadPath`는 바뀌지 않는다(#495 — 바꾼 위치는 최근 목록). 2.11까지는
+    마지막으로 쓴 경로를 거기 적었으므로(#165) 올린 유저는 그 경로로 시작한다.
     """
     saved = settings.load_settings().get("downloadPath", "")
     if saved and os.path.isdir(saved):
@@ -242,26 +246,21 @@ class VodDownloader(QMainWindow):
         self.headerFrameLayout.setSpacing(8)
         self.headerFrameLayout.setObjectName("headerFrameLayout")
 
-        # 헤더바 1줄(#492 — 셸 S0):
-        #   ┌ [URL 입력                ][경로 입력      ✕][경로 찾기][VOD 추가] ┐
-        #   └ 조회 상태 메시지 한 줄                                           ┘
-        # 남는 폭은 두 입력창이 2 : 1로 나눈다 — URL이 주 입력이다(설계: URL 입력이 남는 폭).
-        # 저장 위치 입력은 셸 S1에서 고정 폭 저장 위치 버튼으로 바뀐다. 두 텍스트 버튼은
-        # 지금처럼 같은 폭이다(_equalizeHeaderButtons). 설정 톱니(#245)는 메뉴바 「설정」으로 옮겼다.
+        # 헤더바 1줄(#492 — 셸 S0, #495 — S1):
+        #   ┌ [URL 입력                         ][📁 폴더 이름 ▾][VOD 추가] ┐
+        #   └ 조회 상태 메시지 한 줄                                         ┘
+        # 남는 폭은 URL 입력이 다 받는다(설계: URL 입력이 남는 폭). 저장 위치 버튼은 고정 폭이다
+        # (SaveLocationButton.applyWidth). 설정 톱니(#245)는 메뉴바 「설정」으로 옮겼다.
         self.urlRowLayout = QHBoxLayout()
         self.urlRowLayout.setSpacing(8)
         self.urlRowLayout.setObjectName("urlRowLayout")
         self.urlInput = QLineEdit(self.headerFrame)
         self.urlInput.setObjectName("urlInput")
         self.urlInput.setClearButtonEnabled(True)
-        self.urlRowLayout.addWidget(self.urlInput, 2)
-        self.downloadPathInput = QLineEdit(self.headerFrame)
-        self.downloadPathInput.setObjectName("downloadPathInput")
-        self.downloadPathInput.setClearButtonEnabled(True)
-        self.urlRowLayout.addWidget(self.downloadPathInput, 1)
-        self.downloadPathButton = QPushButton(self.headerFrame)
-        self.downloadPathButton.setObjectName("downloadPathButton")
-        self.urlRowLayout.addWidget(self.downloadPathButton)
+        self.urlRowLayout.addWidget(self.urlInput, 1)
+        self.saveLocationButton = SaveLocationButton(self.headerFrame)
+        self.saveLocationButton.setObjectName("saveLocationButton")
+        self.urlRowLayout.addWidget(self.saveLocationButton)
         self.fetchButton = QPushButton(self.headerFrame)
         self.fetchButton.setObjectName("fetchButton")
         self.urlRowLayout.addWidget(self.fetchButton)
@@ -321,9 +320,8 @@ class VodDownloader(QMainWindow):
         # 탭 순서 = 화면 순서(위 → 아래, 왼쪽 → 오른쪽): 메뉴 · 헤더 1줄 · 목록 · 하단
         QWidget.setTabOrder(self.menuDownloadButton, self.menuSettingsButton)
         QWidget.setTabOrder(self.menuSettingsButton, self.urlInput)
-        QWidget.setTabOrder(self.urlInput, self.downloadPathInput)
-        QWidget.setTabOrder(self.downloadPathInput, self.downloadPathButton)
-        QWidget.setTabOrder(self.downloadPathButton, self.fetchButton)
+        QWidget.setTabOrder(self.urlInput, self.saveLocationButton)
+        QWidget.setTabOrder(self.saveLocationButton, self.fetchButton)
         QWidget.setTabOrder(self.fetchButton, self.listView)
         QWidget.setTabOrder(self.listView, self.clearFinishedButton)
         QWidget.setTabOrder(self.clearFinishedButton, self.downloadButton)
@@ -342,8 +340,6 @@ class VodDownloader(QMainWindow):
         self.menuSettingsButton.setText(self.tr("Settings"))
         self.urlInput.setPlaceholderText(self.tr("Enter Chzzk URL"))
         self.fetchButton.setText(self.tr("Add VOD"))
-        self.downloadPathInput.setPlaceholderText(self.tr("Enter download path"))
-        self.downloadPathButton.setText(self.tr("Find path"))
         self.downloadCountLabel.setText(self.tr("Downloads: {}/{}"))
         self.clearFinishedButton.setText(self.tr("Clear Finished"))
         self.downloadButton.setText(self.tr("Download"))
@@ -355,10 +351,12 @@ class VodDownloader(QMainWindow):
         """
         self.total_downloads = 0
         self.completed_downloads = 0
-        self.downloadPathInput.setText(_default_download_path())  # 초기 경로 (#159)
-        # 카드의 "경로는 전역 설정과 다를 때만 표시" 판단 기준(#245) —
-        # 시작 시와 경로 변경 시(_rememberPathIfValid)마다 밀어 넣는다
-        content_widget.set_global_download_path(self.downloadPathInput.text())
+        # 저장 위치 — 늘 기본 저장 위치로 시작한다(#495, 오너 2026-11-05). 고른 위치는 최근에 남는다
+        self.saveLocations = SaveLocations(_default_download_path(), self)
+        self.saveLocationButton.bind(self.saveLocations)
+        # 카드의 "경로는 전역 설정과 다를 때만 표시" 판단 기준(#245) — 시작 때와 위치를 고를 때마다
+        content_widget.set_global_download_path(self.saveLocations.current())
+        self.saveLocations.changed.connect(self._onSaveLocationChanged)
         self.downloadCountLabel.setText(self.downloadCountLabel.text().format(self.completed_downloads, self.total_downloads))  # 초기값 설정
         self._applyLayoutMetrics()
 
@@ -633,20 +631,12 @@ class VodDownloader(QMainWindow):
         return height
 
     def _equalizeHeaderButtons(self) -> None:
-        """상단 두 텍스트 버튼([VOD 추가]·[경로 찾기])을 같은 폭으로 고정한다 (#245).
+        """헤더바 1줄의 저장 위치 버튼 폭을 기준 글에 맞춰 건다 (#495).
 
-        사람 눈은 **같은 종류끼리**(텍스트 버튼 둘) 끝이 맞는 것을 본다 —
-        폭이 다르면 오른쪽 끝을 맞춰도 왼쪽 끝이 어긋나 입력 블록이 사각형으로
-        읽히지 않는다. 폭은 번역·폰트에 따라 달라지므로 .ui 상수가 아니라
-        런타임에 더 넓은 쪽으로 맞춘다. `ensurePolished()`가 먼저다 — QSS
-        padding이 sizeHint에 들어오는 시점이 polish다.
+        [경로 찾기] 글 버튼은 저장 위치 버튼(📁 ▾)으로 바뀌어 [VOD 추가]와 폭을 맞출 짝이 없다
+        (#245의 같은 폭 규칙은 같은 종류의 글 버튼끼리였다). 폭은 글꼴 · QSS를 따라 polish 뒤에 잰다.
         """
-        buttons = (self.fetchButton, self.downloadPathButton)
-        for button in buttons:
-            button.ensurePolished()
-        width = max(button.sizeHint().width() for button in buttons)
-        for button in buttons:
-            button.setFixedWidth(width)
+        self.saveLocationButton.applyWidth()
 
     def _setLinkStatus(self, text: str, kind: str = "info") -> None:
         """조회 상태 메시지를 갱신한다 — 색은 전역 QSS가 `status` 속성으로 입힌다 (#244).
@@ -682,8 +672,7 @@ class VodDownloader(QMainWindow):
         """
         self.urlInput.returnPressed.connect(self.onFetch)
         self.fetchButton.clicked.connect(self.onFetch)
-        self.downloadPathButton.clicked.connect(self.onFindPath)
-        self.downloadPathInput.editingFinished.connect(self._rememberPathIfValid)
+        self.saveLocationButton.errorOccurred.connect(self._onSaveLocationError)
         self.menuSettingsButton.clicked.connect(self.onSetting)
         self.clearFinishedButton.clicked.connect(self.contentManager.clrearFinishedItems)
         self.downloadButton.clicked.connect(self.onDownloadPause)
@@ -807,23 +796,17 @@ class VodDownloader(QMainWindow):
         cookies = settings.load_cookies()  # 쿠키 조립의 단일 지점 (#170)
         self._setLinkStatus(self.tr('Fetching resolutions...'), "info")
 
-        # 결과 처리 — 상대 경로 입력은 cwd 기준으로 조용히 저장되던 문제를
-        # 판정 전에 정규화해 막는다 (#146 ⓑ-4, #219). 화면 표시도 실제
-        # 사용값과 맞춘다 — onFindPath가 다이얼로그 결과를 setText하는 것과
-        # 같은 관례
-        downloadPath = normalize_path(self.downloadPathInput.text().strip() or os.getcwd())
-        self.downloadPathInput.setText(downloadPath)
+        # 저장 위치는 저장 위치 버튼의 지금 위치다(#495). 고를 때 실존 폴더만 받았지만(절대 경로로
+        # 정규화 — #146 ⓑ-4, #219) 그 뒤 폴더가 사라졌을 수 있다(외장 드라이브 분리)
+        downloadPath = self.saveLocations.current()
 
         # 판정은 path_gates가 단일 지점으로 담당한다 (#169 — #146 ⓑ1)
         if not check_fetch_path(downloadPath):
             # 유일한 안내가 팝업뿐이라 제보 진단이 불가능했다 (#146 감사) —
-            # 입력값을 repr로 남겨 공백 유사 문자·오염(따옴표 등)을 식별한다 (#148)
+            # 경로를 repr로 남겨 공백 유사 문자·오염(따옴표 등)을 식별한다 (#148)
             logger.warning("조회 거부 — 존재하지 않는 저장 경로: %r", downloadPath)
             QMessageBox.warning(self, self.tr("Warning"), self.tr("Path does not exist."))
             return
-        # TODO:  코드 수정 및 테스트 예정
-        # 검증을 통과해 실사용되는 경로만 보존한다 — 다음 실행의 초기값 ① (#159)
-        self._rememberDownloadPath(downloadPath)
 
         self.contentManager.fetchContent(vod_url, cookies, downloadPath)
 
@@ -871,39 +854,18 @@ class VodDownloader(QMainWindow):
         self.dialog = SettingDialog(parent=self)
         self.dialog.exec_()
 
-    def onFindPath(self):
-        """
-        다운로드 경로를 찾기위한 버튼.
-        """
-        downloadPath = QFileDialog.getExistingDirectory()
-        if downloadPath != '':
-            # 유저의 경로 지정 행위를 남긴다 (#148) — 제보 시 "무엇이 입력창에
-            # 들어갔는가"를 로그로 재구성할 수 있게 한다
-            logger.info("저장 경로 선택(경로 찾기): %r", downloadPath)
-            self.downloadPathInput.setText(downloadPath)
-            self._rememberPathIfValid()
+    def _onSaveLocationChanged(self) -> None:
+        """저장 위치를 골랐다 — 카드의 경로 표시 기준을 바꾸고 로그에 남긴다 (#245 · #148 · #495).
 
-    def _rememberPathIfValid(self) -> None:
-        """입력창의 경로가 실존 폴더면 보존한다 (#165).
-
-        보존 시점은 유저의 의사표시 세 곳 — 경로 찾기 선택, 입력 확정
-        (editingFinished), 창 닫기 — 이라 조회 없이 경로만 바꿔도 다음
-        실행의 초기값 ①이 된다. isdir 관문(판정은 path_gates 단일 지점,
-        #169)은 커밋된 미완성·오타 경로가 초기값을 오염시키지 않게 한다.
+        경로를 repr로 남긴다 — 제보 때 「어느 위치로 등록했는가」를 로그로 다시 짤 수 있게(#148).
         """
-        path = normalize_path(self.downloadPathInput.text().strip())
-        if check_remember_path(path):
-            self.downloadPathInput.setText(path)
-            self._rememberDownloadPath(path)
-            content_widget.set_global_download_path(path)  # 카드 경로 표시 기준 갱신 (#245)
+        path = self.saveLocations.current()
+        logger.info("저장 위치 고름: %r", path)
+        content_widget.set_global_download_path(path)
 
-    def _rememberDownloadPath(self, path: str) -> None:
-        """실사용된 저장 경로를 설정에 보존한다 (#159) — _default_download_path의 ①."""
-        cfg = settings.load_settings()
-        if cfg.get("downloadPath") != path:
-            cfg["downloadPath"] = path
-            settings.save_settings(cfg)
-            logger.info("저장 경로 보존: %r", path)
+    def _onSaveLocationError(self, text: str) -> None:
+        """저장 위치를 고르거나 즐겨찾기에 더하지 못했다 — 까닭을 보인다."""
+        QMessageBox.warning(self, self.tr("Warning"), text)
 
     def onStop(self):
         """
@@ -1033,7 +995,5 @@ class VodDownloader(QMainWindow):
                 return
             else:
                 self.stopDownload()
-        # 확정(포커스 이탈) 없이 바로 닫는 경우의 보존 (#165)
-        self._rememberPathIfValid()
         self._rememberWindowState()  # 다음 실행의 창 크기·위치 (#253)
         event.accept()  # 창 닫기 진행

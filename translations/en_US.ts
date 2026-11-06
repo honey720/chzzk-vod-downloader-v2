@@ -373,6 +373,68 @@ Part of the video kept arriving incomplete from the server. Try again later.</tr
     </message>
 </context>
 <context>
+    <name>SaveLocationButton</name>
+    <message>
+        <source>(missing)</source>
+        <translation>(missing)</translation>
+    </message>
+    <message>
+        <source>Favorites</source>
+        <translation>Favorites</translation>
+    </message>
+    <message>
+        <source>Recent</source>
+        <translation>Recent</translation>
+    </message>
+    <message>
+        <source>☆ Add current folder to favorites</source>
+        <translation>☆ Add current folder to favorites</translation>
+    </message>
+    <message>
+        <source>Find folder…</source>
+        <translation>Find folder…</translation>
+    </message>
+    <message>
+        <source>Default location</source>
+        <translation>Default location</translation>
+    </message>
+    <message>
+        <source>The folder does not exist.</source>
+        <translation>The folder does not exist.</translation>
+    </message>
+    <message>
+        <source>Find folder</source>
+        <translation>Find folder</translation>
+    </message>
+    <message>
+        <source>Add to favorites</source>
+        <translation>Add to favorites</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>Name</translation>
+    </message>
+</context>
+<context>
+    <name>SaveLocations</name>
+    <message>
+        <source>Enter a name for the favorite.</source>
+        <translation>Enter a name for the favorite.</translation>
+    </message>
+    <message>
+        <source>You can add up to {} favorites.</source>
+        <translation>You can add up to {} favorites.</translation>
+    </message>
+    <message>
+        <source>This folder is already a favorite.</source>
+        <translation>This folder is already a favorite.</translation>
+    </message>
+    <message>
+        <source>A favorite with this name already exists.</source>
+        <translation>A favorite with this name already exists.</translation>
+    </message>
+</context>
+<context>
     <name>SectionEditDialog</name>
     <message>
         <source>Edit sections</source>
@@ -697,16 +759,8 @@ Check your connection and cookies, then open this window again.</translation>
         <translation>Enter Chzzk URL</translation>
     </message>
     <message>
-        <source>Enter download path</source>
-        <translation>Enter download path</translation>
-    </message>
-    <message>
         <source>Add VOD</source>
         <translation>Add VOD</translation>
-    </message>
-    <message>
-        <source>Find path</source>
-        <translation>Find path</translation>
     </message>
     <message>
         <source>Clear Finished</source>

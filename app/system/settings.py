@@ -210,6 +210,51 @@ def _window(value: object) -> dict:
     return dict(value)
 
 
+#: 저장 위치 즐겨찾기의 최대 수 (#495 — 설계 「저장 위치 버튼」).
+FAVORITES_MAX = 10
+#: 최근 저장 위치를 기억하는 수 — 메뉴에는 지금 위치 · 즐겨찾기를 뺀 앞 3개만 보인다(#495).
+RECENT_PATHS_MAX = 10
+
+
+def _path_list(limit: int) -> Callable[[object], list]:
+    """빈 문자열이 아닌 경로 문자열의 목록(최대 `limit`개, 겹침 없음) 검증기."""
+
+    def normalize(value: object) -> list:
+        """목록 · 개수 · 각 항목이 하나라도 어긋나면 거부한다."""
+        if not isinstance(value, list):
+            raise InvalidSetting(type(value).__name__)
+        if len(value) > limit:
+            raise InvalidSetting(f"more than {limit} entries")
+        if not all(isinstance(path, str) and path for path in value):
+            raise InvalidSetting("entry is not a non-empty string")
+        if len(set(value)) != len(value):
+            raise InvalidSetting("duplicate entries")
+        return list(value)
+
+    return normalize
+
+
+def _favorites(value: object) -> list:
+    """`favoritePaths` — `{"name", "path"}` 목록(최대 `FAVORITES_MAX`개). 별칭 · 경로가 겹치면 거부한다."""
+    if not isinstance(value, list):
+        raise InvalidSetting(type(value).__name__)
+    if len(value) > FAVORITES_MAX:
+        raise InvalidSetting(f"more than {FAVORITES_MAX} entries")
+    cleaned = []
+    for entry in value:
+        if not isinstance(entry, dict) or set(entry) != {"name", "path"}:
+            raise InvalidSetting("entry is not {name, path}")
+        name, path = entry["name"], entry["path"]
+        if not (isinstance(name, str) and name and isinstance(path, str) and path):
+            raise InvalidSetting("name or path is not a non-empty string")
+        cleaned.append({"name": name, "path": path})
+    if len({entry["name"] for entry in cleaned}) != len(cleaned):
+        raise InvalidSetting("duplicate names")
+    if len({entry["path"] for entry in cleaned}) != len(cleaned):
+        raise InvalidSetting("duplicate paths")
+    return cleaned
+
+
 #: 설정 키 표 — 새 키는 여기 한 줄로 끝난다. DB 버전은 키가 아니라 `PRAGMA user_version`이다.
 SCHEMA: tuple[Setting, ...] = (
     Setting("cookies", {name: "" for name in COOKIE_NAMES}, _cookies),
@@ -217,9 +262,15 @@ SCHEMA: tuple[Setting, ...] = (
     Setting("afterDownload", "none", _one_of(("none", "sleep", "shutdown"))),
     # UI 언어 — 설정 창의 두 항목이자 translations/*.qm의 이름
     Setting("language", "en_US", _one_of(("en_US", "ko_KR"))),
-    # 유저가 마지막으로 쓴 저장 경로 (#159). 빈 값 = 미설정 → 시스템 다운로드 폴더 폴백.
-    # 실존 여부는 사용처(_default_download_path)가 본다 — 외장 드라이브 분리 대비.
+    # 기본 저장 위치 — 앱은 늘 이 위치로 시작한다(#495). 빈 값 = 미설정 → 시스템 다운로드 폴더 폴백.
+    # 실존 여부는 사용처(_default_download_path)가 본다 — 외장 드라이브 분리 대비. 저장 위치를
+    # 골라도 이 값은 바뀌지 않는다(바꾼 위치는 recentPaths에 남는다). 2.11까지는 마지막으로 쓴
+    # 경로를 여기 적었으므로(#159 · #165) 올린 유저는 그 경로가 기본 위치가 된다.
     Setting("downloadPath", "", _string),
+    # 저장 위치 즐겨찾기 — [{"name": 별칭, "path": 경로}], 고른 순서(#495). 고치기 · 순서 화면은 설정 메뉴 단계
+    Setting("favoritePaths", [], _favorites),
+    # 최근 저장 위치 — 최근에 고른 것이 앞(#495). 즐겨찾기에 있는 경로는 넣지 않는다
+    Setting("recentPaths", [], _path_list(RECENT_PATHS_MAX)),
     # 마지막 창 크기·위치·최대화 상태 (#253). 빈 값 = 기록 없음(첫 실행) → 초기 크기 규칙
     # (app/views/mainWindow.py). 채워지면 {"x","y","width","height","maximized"}.
     Setting("window", {}, _window),
