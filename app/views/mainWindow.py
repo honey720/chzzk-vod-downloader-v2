@@ -43,8 +43,8 @@ FRAME_RETRIES = 10  # 그만큼(약 0.5초) 기다려도 여백이 없으면 그
 # 창 제목의 앱 이름 — 번역하지 않는다. 앱 데이터 폴더 이름(app/system/settings.py APP_NAME)과 따로 둔다:
 # 표시 이름을 바꿔도 데이터 폴더가 그대로라 설정을 잃지 않는다 (#492)
 APP_DISPLAY_NAME = "Chzzk VOD Downloader"
-# 창 최소 높이를 셀 때 쓰는 견본 카드의 글 — 실제 목록 카드와 무관한 고정값이라 카드를 넣고 빼도
-# 최소 높이가 바뀌지 않는다 (#492). 썸네일 · 채널 그림 주소는 비워 네트워크를 타지 않는다
+# 창 최소 높이를 셀 때 쓰는 견본 카드(완료 상태 — _referenceCardHeight)의 글 — 실제 목록 카드와 무관한
+# 고정값이라 카드를 넣고 빼도 최소 높이가 바뀌지 않는다 (#492). 썸네일 · 채널 그림 주소는 비워 네트워크를 타지 않는다
 REFERENCE_CARD_METADATA = {
     "title": "Chzzk VOD",
     "category": "",
@@ -581,20 +581,30 @@ class VodDownloader(QMainWindow):
         return margins.top() + bars + list_height + gaps + margins.bottom()
 
     def _referenceCardHeight(self) -> int:
-        """견본 대기 카드 한 장의 높이 — 창 최소 높이의 목록 몫 (#492).
+        """가장 높은 평소 카드 한 장의 높이 — 창 최소 높이의 목록 몫 (#492).
 
-        실제 카드 위젯을 고정 글(REFERENCE_CARD_METADATA)로 한 장 만들어 잰 뒤 바로 버린다.
-        썸네일 · 채널 그림 주소가 비어 있어 네트워크를 타지 않는다. 창에 붙이지 않고
-        전역 QSS로 polish해 실제 카드와 같은 여백 · 글꼴로 잰다.
+        평소(펼침이 아닌) 카드 높이는 상태와 무관하게 같다: 3행 상태 글의 최소 높이를 해상도
+        pill 높이에 맞춰 두었다(#245 — 상태가 바뀌어도 목록이 들썩이지 않게). 그 높이보다 낮은
+        카드는 해상도가 없는 대기 카드(조회 중 자리표시) 하나뿐이다 — 상태 글도 pill도 없다.
+        그래서 견본은 완료 카드다. 해상도 pill이 있는 대기 카드와 같은 높이이면서, pill을 만들 때
+        시작되는 크기 조회 스레드를 타지 않는다. 썸네일 · 채널 그림 주소가 비어 네트워크도 없다.
+
+        상태 글의 최소 높이는 카드가 표시된 뒤에야 레이아웃에 든다 — 화면에 그리지 않는 표시
+        (`WA_DontShowOnScreen`)로 한 번 띄워 잰 뒤 바로 버린다.
+
+        유저가 접힌 pill을 눌러 펼친 동안(좁은 폭에서 pill이 줄을 바꿈)은 카드가 더 높아진다.
+        그 높이는 유저가 일으킨 잠깐의 변화라(`ContentItemWidget.setExpanded`) 최소 높이에 넣지 않는다.
         """
         item = ContentItem(
             "", dict(REFERENCE_CARD_METADATA), [], None, "", "", "video", None
         )
+        item.downloadState = DownloadState.FINISHED
         card = content_widget.ContentItemWidget(item)
-        card.ensurePolished()
-        for child in card.findChildren(QWidget):
-            child.updateGeometry()
+        card.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
+        card.show()
+        card.layout().activate()
         height = card.sizeHint().height()
+        card.hide()
         card.deleteLater()
         return height
 

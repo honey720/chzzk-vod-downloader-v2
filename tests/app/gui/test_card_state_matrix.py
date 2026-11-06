@@ -442,21 +442,6 @@ class TestDrawnIconsAreSharedAndFontFree:
             )
             assert painted > 0, f"{name} 도형이 비어 있다"
 
-    def test_glyph_size_default_is_the_card_metric(self, qapp):
-        """IconButton 도형 크기는 지정하지 않으면 카드 조작 크기여야 하고, 0을 주면 그 기본으로 돌아가야 한다.
-
-        (옛 test_settings_icon.py에서 옮겼다 — 설정 톱니 아이콘은 #492에서 걷었다)
-        """
-        button = icons.IconButton()
-        try:
-            assert button.glyphSize() == theme.METRICS["actionGlyph"]
-            button.setGlyphSize(16)
-            assert button.glyphSize() == 16
-            button.setGlyphSize(0)
-            assert button.glyphSize() == theme.METRICS["actionGlyph"]
-        finally:
-            button.deleteLater()
-
     @pytest.mark.parametrize("scheme", ["DARK", "LIGHT"])
     def test_change_location_icon_is_drawn_apart_from_open_folder(self, qapp, scheme):
         """저장 위치 변경 아이콘은 폴더 열기 아이콘과 다른 그림이어야 하고, 폴더 몸통은 함께 가져야 한다.

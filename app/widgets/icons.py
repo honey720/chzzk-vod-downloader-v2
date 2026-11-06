@@ -245,7 +245,6 @@ class IconButton(QPushButton):
         self._idle_token = "textMuted"
         self._hover_token = "text"
         self._accent_token = ""
-        self._glyph_size = 0  # 0 = theme.METRICS["actionGlyph"]
         self._interactive = True
         self.setProperty("interactive", True)
         # 호버 진입·이탈에 다시 그리게 한다(QSS :hover 규칙이 없어도)
@@ -308,21 +307,6 @@ class IconButton(QPushButton):
         """강조색 토큰 이름(없으면 빈 문자열)."""
         return self._accent_token
 
-    def setGlyphSize(self, size: int) -> None:
-        """도형 한 변(px). 0이면 `theme.METRICS["actionGlyph"]`(카드 조작 아이콘 기본).
-
-        상단 바 설정 버튼(32px)처럼 카드 버튼(20px)보다 큰 버튼은 도형도 키워야
-        비율이 맞는다 — 버튼 크기에서 유도하지 않고 명시하는 것은 카드 쪽 기본을
-        건드리지 않기 위해서다.
-        """
-        if size != self._glyph_size:
-            self._glyph_size = size
-            self.update()
-
-    def glyphSize(self) -> int:
-        """지금 그리는 도형 한 변(px) — 0이 아니면 명시값, 0이면 테마 기본."""
-        return self._glyph_size or theme.METRICS["actionGlyph"]
-
     def colorToken(self) -> str:
         """지금 도형에 쓸 색 토큰 — 비활성 > 호버 > 평소 순으로 정한다."""
         if not self.isEnabled():
@@ -335,7 +319,7 @@ class IconButton(QPushButton):
         super().paintEvent(event)
         if not self._icon_name:
             return
-        size = self.glyphSize()
+        size = theme.METRICS["actionGlyph"]
         tokens = theme.current_tokens()
         color = tokens[self.colorToken()]
         accent = tokens[self._accent_token] if self._accent_token else ""

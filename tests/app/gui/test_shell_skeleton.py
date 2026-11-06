@@ -237,26 +237,66 @@ class TestMinimumSize:
         assert card.isVisible()
         assert viewport.rect().contains(rect), f"카드 {rect}가 목록 뷰포트 {viewport.rect()}에 다 들어가지 않는다"
 
+    def test_at_the_minimum_the_tallest_card_fits_without_the_bottom_padding(self):
+        """창 최소 크기에서 해상도 pill이 있는 대기 카드가 목록 아래 안쪽 여백을 뺀 자리 안에 다 보여야 한다.
+
+        pill이 있는 대기 카드가 평소 카드 가운데 가장 높다(상태 글 최소 높이 = pill 높이, #245 — 다른
+        상태도 같은 높이). 아래 안쪽 여백을 빼고 재므로 견본 카드가 그만큼 낮게 재어져 여백 덕에
+        들어가는 경우를 잡는다(#493 리뷰).
+        """
+        win = _window()
+        item = ContentItem(
+            "https://chzzk.naver.com/video/0",
+            {"title": "제목 0", "category": "", "channelName": "채널0", "createdDate": "", "duration": 3600},
+            [[r, f"https://v.invalid/{r}.mp4"] for r in (1080, 720, 480)],  # 해상도 셋 — pill 줄
+            None,
+            "",
+            "C:/dl",
+            "video",
+            None,
+        )
+        item.downloadState = DownloadState.WAITING
+        win.contentManager.model.addItem(item)
+        QApplication.processEvents()
+        _at_size(win, win.minimumWidth(), win.minimumHeight())
+        card = win.listView.widgetFor(item)
+        assert card.buttons and any(b.isVisible() for b in card.buttons), "전제: 해상도 pill이 보여야 한다"
+        viewport = win.listView.viewport()
+        bottom_padding = win.listView.widget().layout().contentsMargins().bottom()
+        room = QRect(0, 0, viewport.width(), viewport.height() - bottom_padding)
+        rect = QRect(card.mapTo(viewport, QPoint(0, 0)), card.size())
+        assert room.contains(rect), (
+            f"카드 {rect}가 아래 안쪽 여백({bottom_padding}px)을 뺀 목록 자리 {room}에 다 들어가지 않는다"
+        )
+
     def test_minimum_size_is_the_same_with_0_1_and_50_cards(self, monkeypatch, tmp_path):
-        """카드 0장 · 1장 · 50장일 때 창 최소 크기가 같아야 한다.
+        """카드 0장 · 1장 · 50장일 때 창에 걸린 최소 크기와 최소 크기 계산값이 모두 처음과 같아야 한다.
 
         1장째는 실제 등록 길(URL 칸 Enter → 조회 중 카드)로 넣어 등록 때 창이 받는 신호까지 타고,
         나머지 49장은 모델에 바로 넣는다. 조회 작업은 아무것도 하지 않는 대역이라 카드는 조회 중으로 남는다.
+        창에 걸린 값은 시작 때 한 번 정해지므로, 계산(`_contentMinimumWidth` · `_contentMinimumHeight`)이
+        카드를 읽게 바뀌어도 드러나도록 카드 수마다 계산을 다시 불러 비교한다(#493 리뷰).
         """
         monkeypatch.setattr(content_viewmodel_module, "FetchJob", _IdleFetchJob)
         win = _window()
         win.downloadPathInput.setText(str(tmp_path))
         win.show()
         QApplication.processEvents()
-        sizes = {0: win.minimumSize().toTuple()}
+
+        def measured() -> tuple:
+            """(창에 걸린 최소 폭 · 높이, 다시 계산한 최소 폭 · 높이)."""
+            return win.minimumSize().toTuple(), (win._contentMinimumWidth(), win._contentMinimumHeight())
+
+        sizes = {0: measured()}
         win.urlInput.setText("https://chzzk.naver.com/video/1")
         QTest.keyClick(win.urlInput, Qt.Key.Key_Return)
         QApplication.processEvents()
         assert win.contentManager.model.rowCount() == 1, "전제: 등록 길로 카드가 한 장 생겨야 한다"
-        sizes[1] = win.minimumSize().toTuple()
+        sizes[1] = measured()
         _add_cards(win, 1, 49)
-        sizes[50] = win.minimumSize().toTuple()
+        sizes[50] = measured()
         assert len(set(sizes.values())) == 1, f"카드 수에 따라 최소 크기가 바뀐다: {sizes}"
+        assert sizes[0][0] == sizes[0][1], f"창에 걸린 최소 크기가 계산값과 다르다: {sizes[0]}"
 
 
 class TestRegistrationWiring:
