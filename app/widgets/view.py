@@ -174,9 +174,17 @@ class ContentListView(QScrollArea):
         self._layout.insertWidget(self._order.indexOf(item), widget)
 
     def _applyFilter(self) -> None:
-        """고른 칩에 맞춰 모든 카드의 보임을 정한다."""
+        """고른 칩에 맞춰 모든 카드의 보임을 정한다.
+
+        카드 컨테이너를 잠깐 숨긴 채 바꾼 뒤 한 번에 다시 보인다 — 보이는 컨테이너 안에서 카드를
+        하나씩 보이면 그때마다 목록 레이아웃이 다시 계산돼, 숨었던 카드 800장을 다시 보이는 데
+        16초가 걸렸다(#495 offscreen 실측, 카드 1000장).
+        """
+        container = self._container
+        container.hide()
         for item, widget in self._widgets.items():
             widget.setVisible(self._accepts(item))
+        container.show()
         self._overlay.update()
 
     def _applyVisibility(self, item: ContentItem) -> None:
