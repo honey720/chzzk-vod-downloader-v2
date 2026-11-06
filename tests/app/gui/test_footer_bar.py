@@ -107,6 +107,8 @@ def _card(path: str, n: int = 1, size: str | None = "10.00 MB") -> ContentItem:
 def _window(tmp_path, cards: int = 1, size: str | None = "10.00 MB"):
     """실제 메인 창 · 서비스 대역 · 대기 카드 `cards`장."""
     win = VodDownloader()
+    # 1초 갱신은 테스트가 timeout 신호로 낸다(_tick) — 타이머가 스스로 돌면 갱신 횟수가 시간에 달린다
+    win.monitorTimer.stop()
     win.resize(1200, win.height())
     win.show()
     QTest.qWaitForWindowExposed(win)
@@ -282,7 +284,7 @@ def test_footer_drops_the_time_left_when_the_size_is_unknown(qtbot, tmp_path, an
     assert win.footerMonitor.shownKeys() == ["speed", "conn", "mem", "free"]
 
 
-def test_footer_while_paused_shows_only_free_space(qtbot, tmp_path):
+def test_footer_while_paused_shows_only_free_space(qtbot, tmp_path, answers):
     """모두 일시정지하면 받는 것이 없어 하단바 모니터링은 여유 공간만 보여야 한다."""
     win, _items, engine = _window(tmp_path)
     _free_measured(qtbot, win)
@@ -294,7 +296,7 @@ def test_footer_while_paused_shows_only_free_space(qtbot, tmp_path):
     assert win.footerMonitor.shownKeys() == ["free"]
 
 
-def test_a_tick_redraws_only_the_footer(qtbot, tmp_path):
+def test_a_tick_redraws_only_the_footer(qtbot, tmp_path, answers):
     """1초 갱신은 카드 1000장에서도 카드 갱신 통지 · 목록 배치를 내지 않아야 한다.
 
     카드 1000장 · 받는 중 · 통지 하나 -> 갱신 한 번 동안 itemChanged 0건 · 목록 다시 배치 0회
@@ -498,6 +500,29 @@ def test_footer_values_do_not_raise_the_window_minimum_width(qtbot, tmp_path, an
     assert win.runResultLabel.isVisible(), "전제: 결과가 보인다"
     finished = win._contentMinimumWidth()
     assert (receiving, finished) == (idle, idle)
+
+
+def test_footer_values_do_not_raise_the_footer_minimum_width(qtbot, tmp_path, answers):
+    """하단바 칸의 최소폭은 값을 보여도 글의 폭만큼 늘지 않아야 한다 — 칸마다 1px와 간격만 는다.
+
+    받는 것 없음(칸 0~1개) → 받는 중(긴 값, 칸 4~5개)
+    -> 하단바 최소폭이 는 양 == 는 칸 수 × (1 + 칸 사이 간격)
+    (하단바는 헤더바보다 좁아 창 최소폭으로는 이 차이가 드러나지 않는다)
+    """
+    win, _items, engine = _window(tmp_path)
+    win._contentMinimumWidth()  # 레이아웃 캐시를 비운다
+    before = win.infoFrame.minimumSizeHint().width()
+    shown_before = len(win.footerMonitor.shownKeys())
+    win.downloadButton.click()
+    _pump()
+    _progress(engine, 0, 10 * MIB, 987.6, 48)
+    _tick(win)
+    win._contentMinimumWidth()
+    after = win.infoFrame.minimumSizeHint().width()
+    added = len(win.footerMonitor.shownKeys()) - shown_before
+    assert added >= 3, "전제: 받는 중의 칸이 더 보인다"
+    gap = win.footerMonitor.layout().spacing()
+    assert after - before == added * (1 + gap), f"하단바 최소폭 {before} → {after}, 는 칸 {added}개"
 
 
 def test_window_minimum_width_does_not_depend_on_the_cards(tmp_path):
