@@ -68,18 +68,11 @@ QFrame#infoFrame {
     border-radius: @frameRadius;
 }
 
-/* 조회 상태 메시지 — 성공·실패를 색으로 구분한다(#244 상단 재설계).
- * `status` 동적 속성은 application/mainWindow.py::_setLinkStatus가 건다. */
-QLabel#linkStatusLabel {
+/* 등록 오류 줄(#495 — URL 칸 바로 아래, 잘못된 URL · 조회 실패). 오류만 띄우므로 늘 실패 색이다.
+ * 「불러오는 중」 · 「가져왔다」 글(#244 조회 상태 메시지)은 없앴다 — 등록 버튼의 도는 표시와
+ * 카드의 조회 중 상태가 보인다. URL 칸의 빨간 테두리는 아래 QLineEdit[invalid="true"] 규칙이다. */
+QLabel#registerErrorLabel {
     font-size: @fontSizeMeta;
-    color: @textMuted;
-}
-
-QLabel#linkStatusLabel[status="ok"] {
-    color: @stateFinished;
-}
-
-QLabel#linkStatusLabel[status="error"] {
     color: @stateFailed;
 }
 

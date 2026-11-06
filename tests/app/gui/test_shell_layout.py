@@ -151,8 +151,8 @@ def _independent_content_minimum(win: VodDownloader) -> int:
 
     메뉴바(#492): 「VOD 다운」 + 간격 + 「설정」(메뉴바 프레임은 테두리 · 안쪽 여백 0).
     헤더바(#492 · #495): max(1줄 URL 입력 + 저장 위치 버튼 + VOD 추가 + 간격 2개,
-    2줄 칩 여섯 + 칩 사이 간격 + 정렬 버튼 + 간격) + 프레임 안쪽 여백·테두리.
-    하단바: 완료 삭제 + 다운로드 + 중지 + 간격 2개 + 프레임 안쪽 여백·테두리(#495 — 카운트 없음).
+    2줄 칩 여섯 + 칩 사이 간격 + 정렬 버튼 + 완료 지우기 + 간격 2개) + 프레임 안쪽 여백·테두리.
+    하단바: 다운로드 + 중지 + 간격 + 프레임 안쪽 여백·테두리(#495 — 카운트 없음, 완료 지우기는 헤더바로).
     열 = max(메뉴바 · 헤더바 · 하단바 각각 + 좌우 outerMargin, 목록 최소).
     좌우 outerMargin은 세 바의 행에만 붙고 목록은 창 끝까지 간다(v2.10.1).
     """
@@ -164,8 +164,9 @@ def _independent_content_minimum(win: VodDownloader) -> int:
     second = (
         sum(_leaf_min(w) for w in chips)
         + (len(chips) - 1) * win.filterChipBar.layout().spacing()
-        + win.filterRowLayout.spacing()
+        + 2 * win.filterRowLayout.spacing()
         + _leaf_min(win.sortButton)
+        + _leaf_min(win.clearFinishedButton)
     )
     header = max(first, second) + 2 * (pad + border)
     menu = (
@@ -174,15 +175,8 @@ def _independent_content_minimum(win: VodDownloader) -> int:
         + _leaf_min(win.menuSettingsButton)
     )
     info_gap = win.infoLayout.spacing()
-    info = sum(
-        _leaf_min(w)
-        for w in (
-            win.clearFinishedButton,
-            win.downloadButton,
-            win.stopButton,
-        )
-    )
-    info += 2 * info_gap + 2 * (pad + border)  # 간격 둘 — 빈칸(크기 0)은 간격을 받지 않는다
+    info = _leaf_min(win.downloadButton) + _leaf_min(win.stopButton)
+    info += info_gap + 2 * (pad + border)  # 간격 하나 — 빈칸(크기 0)은 간격을 받지 않는다
     return max(
         menu + 2 * outer, header + 2 * outer, info + 2 * outer, win.listView.minimumSizeHint().width()
     )
@@ -338,9 +332,10 @@ class TestInitialSizeRule:
                 return QSize(2400, 1000)
 
             def availableGeometry(self):
-                """작업 영역 — 전체 화면보다 작다. 폭 × 0.45가 offscreen 글꼴의 콘텐츠 최소폭
-                (하단 바 999/999 예약 뒤 730 안팎, v2.10.1)보다 커야 클램프에 안 가려진다."""
-                return QRect(0, 0, 1750, 900)
+                """작업 영역 — 전체 화면보다 낮다. 폭 × 0.45가 초기 폭 상한(800)을 넘게 두어 초기 폭이
+                콘텐츠 최소폭(#495 헤더바 2줄 뒤 실제 화면 790 안팎)에 클램프되지 않게 한다 — 두 기준은
+                높이(900 vs 1000)로 가른다."""
+                return QRect(0, 0, 1900, 900)
 
         class _App:
             @staticmethod
@@ -359,10 +354,10 @@ class TestInitialSizeRule:
         win = _window()
         win.show()
         QApplication.processEvents()
-        from_available = (min(int(1750 * 0.45), theme.METRICS["initialWidthMax"]), 450)
+        from_available = (min(int(1900 * 0.45), theme.METRICS["initialWidthMax"]), 450)
         from_full = (min(int(2400 * 0.45), theme.METRICS["initialWidthMax"]), 500)
         assert from_available != from_full, "전제: 두 기준이 다른 크기를 내야 가를 수 있다"
-        assert win.minimumWidth() < from_available[0], (
+        assert win.minimumWidth() <= from_available[0], (
             "전제: 작업 영역 기준 폭이 콘텐츠 최소보다 커야 클램프에 가려지지 않는다"
         )
         assert (win.width(), win.height()) == from_available, (
@@ -388,12 +383,12 @@ class TestWindowMinimumWidthHasAContentFloor:
                     win.fetchButton,
                     *win.filterChips.values(),
                     win.sortButton,
+                    win.clearFinishedButton,
                 ),
             ),
             (
                 win.infoFrame,
                 (
-                    win.clearFinishedButton,
                     win.downloadButton,
                     win.stopButton,
                 ),

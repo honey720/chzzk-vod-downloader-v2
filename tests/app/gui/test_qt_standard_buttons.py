@@ -1,6 +1,6 @@
 """Qt 표준 버튼(OK/Cancel/Yes/No) 번역 게이트 (#240 2단계, v2.9.7).
 
-설정 창의 `QDialogButtonBox`와 메시지 상자(`QMessageBox` 정적 호출 14곳)의 버튼 문구는
+설정 창의 `QDialogButtonBox`와 메시지 상자(`QMessageBox` 정적 호출 10곳)의 버튼 문구는
 우리 `.ts`가 아니라 **Qt 자체 카탈로그**(`translations/qtbase_ko.qm`)가 번역한다.
 `CVDv2.set_language`가 앱 언어에 맞춰 그 카탈로그를 설치하고, 그 **뒤에** 우리 번역기를
 설치한다(Qt는 나중에 설치한 번역기를 먼저 검색한다 — 아래 대조군 테스트가 그 규칙을 직접 잰다).
@@ -117,7 +117,7 @@ class TestKorean:
         assert _message_box_texts() == {"ok": KOREAN["ok"], "yes": KOREAN["yes"], "no": KOREAN["no"]}
 
     def test_every_message_box_call_site_uses_standard_buttons_only(self):
-        """정적 QMessageBox 호출 14곳이 전부 표준 버튼이라 카탈로그 하나로 덮인다 — 문구를
+        """정적 QMessageBox 호출 10곳이 전부 표준 버튼이라 카탈로그 하나로 덮인다 — 문구를
         직접 준 버튼(addButton/setButtonText)이 생기면 이 가정이 깨진다."""
         import re
 
@@ -128,7 +128,7 @@ class TestKorean:
             calls += len(re.findall(r"QMessageBox\.(warning|information|critical|question)\(", text))
             if re.search(r"setButtonText\(|\.addButton\(\s*[\"']", text):
                 custom.append(path.relative_to(root).as_posix())
-        assert calls == 14, f"정적 QMessageBox 호출이 {calls}곳 — 14곳 전제가 바뀌었다(게이트 갱신)"
+        assert calls == 10, f"정적 QMessageBox 호출이 {calls}곳 — 10곳 전제가 바뀌었다(게이트 갱신)"
         assert custom == [], f"문구를 직접 준 버튼이 있다 — 카탈로그가 덮지 못한다: {custom}"
 
 

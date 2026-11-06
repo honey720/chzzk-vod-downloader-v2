@@ -1,4 +1,4 @@
-"""헤더바 부품 — 펼침 버튼 · 하나만 고르는 메뉴 · 저장 위치 버튼 · 정렬 버튼 · 상태 칩 (#495 — 셸 S1).
+"""헤더바 부품 — 펼침 버튼 · 하나만 고르는 메뉴 · 저장 위치 버튼 · 정렬 버튼 · 상태 칩 · 도는 표시 버튼 (#495 — 셸 S1).
 
 펼침 버튼은 `QToolButton` + `QMenu`다(설계 — `QComboBox` 아님). 글 · 도형 · ▾는 이 모듈이
 `paintEvent`에서 그린다: 바탕 · 테두리는 전역 QSS가 칠하고, 도형 색은 그릴 때마다 theme 토큰을
@@ -6,8 +6,8 @@
 도형 색이 늘 지금 값이다.
 """
 
-from PySide6.QtCore import QPointF, QRect, QSize, Qt, Signal
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPolygonF
+from PySide6.QtCore import QPointF, QRect, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -457,3 +457,64 @@ class FilterChips(QWidget):
         chosen = self._order.filterKey()
         for key, chip in self.chips.items():
             chip.setChecked(key == chosen)
+
+
+SPIN_INTERVAL_MS = 80  # 도는 표시 한 칸의 시간(ms) — 한 바퀴 약 1초(12칸)
+SPIN_STEP_DEGREES = 30  # 한 칸에 도는 각도
+
+
+class BusyButton(QPushButton):
+    """도는 표시가 있는 글 버튼 — 헤더바 「VOD 추가」(#495 — 설계 알림 자리).
+
+    영상 정보를 불러오는 동안 글 왼쪽에 도는 호를 그린다(「불러오는 중」 글은 띄우지 않는다).
+    호 자리는 늘 잡아 둔다(`reservedWidth`) — 돌기 시작해도 버튼 폭 · 글 자리가 그대로다. 호 색은
+    그릴 때마다 theme 토큰을 새로 읽는다(실행 중 테마 전환 #247).
+    """
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._busy = False
+        self._step = 0
+        self._timer = QTimer(self)
+        self._timer.setInterval(SPIN_INTERVAL_MS)
+        self._timer.timeout.connect(self._advance)
+
+    def isBusy(self) -> bool:
+        """도는 표시를 그리는 중인지."""
+        return self._busy
+
+    def setBusy(self, busy: bool) -> None:
+        """도는 표시를 켜고 끈다 — 폭은 바뀌지 않는다."""
+        if busy == self._busy:
+            return
+        self._busy = busy
+        if busy:
+            self._step = 0
+            self._timer.start()
+        else:
+            self._timer.stop()
+        self.update()
+
+    def reservedWidth(self) -> int:
+        """글 양옆에 호 자리(도형 + 간격)를 하나씩 더한 폭 — 글이 늘 가운데에 남는다."""
+        self.ensurePolished()
+        return self.sizeHint().width() + 2 * (theme.METRICS["actionGlyph"] + GLYPH_GAP)
+
+    def _advance(self) -> None:
+        self._step = (self._step + 1) % (360 // SPIN_STEP_DEGREES)
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        if not self._busy:
+            return
+        size = theme.METRICS["actionGlyph"]
+        text_left = (self.width() - self.fontMetrics().horizontalAdvance(self.text())) // 2
+        rect = QRect(text_left - GLYPH_GAP - size, (self.height() - size) // 2, size, size)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(QColor(theme.current_tokens()["text"]), 1.5)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.drawArc(rect.adjusted(1, 1, -1, -1), -self._step * SPIN_STEP_DEGREES * 16, 270 * 16)
+        painter.end()

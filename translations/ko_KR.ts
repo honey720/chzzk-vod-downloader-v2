@@ -732,28 +732,8 @@ Check your connection and cookies, then open this window again.</source>
         <translation>VOD URL을 입력하세요.</translation>
     </message>
     <message>
-        <source>Fetching resolutions...</source>
-        <translation>해상도 가져오는 중...</translation>
-    </message>
-    <message>
         <source>Path does not exist.</source>
         <translation>경로가 존재하지 않습니다.</translation>
-    </message>
-    <message>
-        <source>Resolutions fetched successfully.</source>
-        <translation>해상도 가져오기 성공.</translation>
-    </message>
-    <message>
-        <source>Error</source>
-        <translation>오류</translation>
-    </message>
-    <message>
-        <source>Error occurred during content request:</source>
-        <translation>컨텐츠 요청 중 오류가 발생했습니다:</translation>
-    </message>
-    <message>
-        <source>Failed to fetch resolutions.</source>
-        <translation>해상도를 가져오지 못했습니다.</translation>
     </message>
     <message>
         <source>Pause</source>

@@ -175,11 +175,11 @@ class Scene:
             "header.urlInput": w.urlInput,
             "header.fetchButton": w.fetchButton,
             "header.saveLocationButton": w.saveLocationButton,
-            "header.linkStatusLabel": w.linkStatusLabel,
+            "header.registerErrorLabel": w.registerErrorLabel,
+            "header.clearFinishedButton": w.clearFinishedButton,
             "header.sortButton": w.sortButton,
             "list.viewport": w.listView.viewport(),
             "footer.frame": w.infoFrame,
-            "footer.clearFinishedButton": w.clearFinishedButton,
             "footer.downloadButton": w.downloadButton,
             "footer.stopButton": w.stopButton,
         }
@@ -347,7 +347,6 @@ class TestFaultInjection:
 
         stale = _differences(fresh, switched)
         # 글자색은 QSS가 아니라 팔레트(WindowText)가 칠한다 — 라벨들이 낡은 색으로 남는다
-        assert "header.linkStatusLabel" in stale
         assert "card[waiting].title" in stale
         assert "card[waiting].pathLabel" in stale
 

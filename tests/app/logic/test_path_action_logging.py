@@ -203,7 +203,7 @@ class TestFetchGateLogging:
         with caplog.at_level("WARNING", logger="app.views.mainWindow"):
             win.fetchButton.click()
 
-        assert "Path does not exist." in warnings  # 기존 안내 유지
+        assert win.registerErrorLabel.text() == "Path does not exist."  # 안내 글은 그대로, 자리는 오류 줄(#495)
         assert "조회 거부" in caplog.text
         assert "\\xa0" in caplog.text
 

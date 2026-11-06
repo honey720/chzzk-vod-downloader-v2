@@ -196,7 +196,7 @@ def test_fetch_uses_the_chosen_location_and_leaves_the_default_alone(
 def test_a_vanished_location_is_rejected_at_fetch_and_nothing_is_saved(
     window_factory, config_store, tmp_path, monkeypatch, qapp
 ):
-    """고른 뒤 사라진 폴더로 등록하면 경고만 뜨고 카드 · downloadPath가 그대로여야 한다(#169 조회 관문)."""
+    """고른 뒤 사라진 폴더로 등록하면 등록 오류 줄에 안내만 뜨고 카드 · downloadPath가 그대로여야 한다(#169 조회 관문)."""
     store, _saves = config_store
     make, warnings = window_factory
     win = make()
@@ -208,7 +208,8 @@ def test_a_vanished_location_is_rejected_at_fetch_and_nothing_is_saved(
 
     win.fetchButton.click()
 
-    assert "Path does not exist." in warnings
+    assert win.registerErrorLabel.text() == "Path does not exist."  # #495 — 대화상자 대신 오류 줄
+    assert warnings == []
     assert win.contentManager.model.rowCount() == 0
     assert store.get("downloadPath", "") == ""
 

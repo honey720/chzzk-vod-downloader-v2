@@ -737,28 +737,8 @@ Check your connection and cookies, then open this window again.</translation>
         <translation>Please enter VOD URL.</translation>
     </message>
     <message>
-        <source>Fetching resolutions...</source>
-        <translation>Fetching resolutions...</translation>
-    </message>
-    <message>
         <source>Path does not exist.</source>
         <translation>Path does not exist.</translation>
-    </message>
-    <message>
-        <source>Resolutions fetched successfully.</source>
-        <translation>Resolutions fetched successfully.</translation>
-    </message>
-    <message>
-        <source>Error</source>
-        <translation>Error</translation>
-    </message>
-    <message>
-        <source>Error occurred during content request:</source>
-        <translation>Error occurred during content request:</translation>
-    </message>
-    <message>
-        <source>Failed to fetch resolutions.</source>
-        <translation>Failed to fetch resolutions.</translation>
     </message>
     <message>
         <source>Pause</source>

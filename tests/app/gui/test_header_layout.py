@@ -1,9 +1,10 @@
 """헤더바 1줄 가로 · 세로 배치 게이트 (#492 — 셸 S0, #495 — S1).
 
     ┌ [치지직 URL 입력                    ][📁 Downloads ▾][VOD 추가] ┐
-    └ 해상도 가져오기 성공.                                            ┘
+    │ (등록 오류 한 줄 — 평소 빈 줄)                                     │
+    └ [전체 3][대기 1] … [정렬 ▾]                         [완료 지우기] ┘
 
-- 한 줄에 왼쪽부터 URL 입력 · 저장 위치 버튼 · 등록(VOD 추가). 조회 상태 글은 그 아래 한 줄
+- 한 줄에 왼쪽부터 URL 입력 · 저장 위치 버튼 · 등록(VOD 추가). 그 아래 등록 오류 줄, 그 아래 2줄
 - 남는 폭은 URL 입력만 받는다. 저장 위치 버튼은 기준 글(`WIDTH_SAMPLE`)이 들어가는 고정 폭
   (#495 — 고른 위치에 따라 폭이 바뀌면 헤더바가 움직인다)
 - 저장 위치 입력 · [경로 찾기](#245의 같은 폭 짝)는 저장 위치 버튼으로 바뀌었다(#495)
@@ -85,21 +86,21 @@ class TestStructure:
         items = [line.itemAt(i).widget() for i in range(line.count())]
         assert items == _line_widgets(window)
 
-    def test_status_line_sits_between_the_two_lines(self, window):
-        """헤더 프레임 레이아웃은 1줄 · 조회 상태 글 한 줄 · 2줄(칩 · 정렬) 차례여야 한다."""
+    def test_error_line_sits_between_the_two_lines(self, window):
+        """헤더 프레임 레이아웃은 1줄 · 등록 오류 줄 · 2줄(칩 · 정렬 · 완료 지우기) 차례여야 한다."""
         frame = window.headerFrameLayout
         assert frame.count() == 3
         assert frame.itemAt(0).layout() is window.urlRowLayout
-        assert frame.itemAt(1).widget() is window.linkStatusLabel
+        assert frame.itemAt(1).widget() is window.registerErrorLabel
         assert frame.itemAt(2).layout() is window.filterRowLayout
 
-    def test_second_line_holds_the_chips_then_the_sort_button(self, window):
-        """헤더 2줄 레이아웃은 칩 줄 · 정렬 버튼 · 빈칸 차례여야 한다."""
+    def test_second_line_holds_chips_sort_and_clear_finished(self, window):
+        """헤더 2줄 레이아웃은 칩 줄 · 정렬 버튼 · 빈칸 · 완료 지우기 차례여야 한다."""
         line = window.filterRowLayout
-        assert [line.itemAt(i).widget() for i in range(line.count())] == [window.filterChipBar, window.sortButton, None]
+        assert [line.itemAt(i).widget() for i in range(line.count())] == [window.filterChipBar, window.sortButton, None, window.clearFinishedButton]
 
     def test_tab_order_follows_the_line_from_the_menu_to_the_list(self, window):
-        """탭 순서는 메뉴 둘 → URL 입력 → 저장 위치 버튼 → VOD 추가 → 칩 여섯 → 정렬 → 목록이어야 한다.
+        """탭 순서는 메뉴 둘 → URL 입력 → 저장 위치 버튼 → VOD 추가 → 칩 여섯 → 정렬 → 완료 지우기 → 목록이어야 한다.
 
         포커스 체인에는 포커스를 안 받는 위젯(입력창의 지우기 버튼 등)도 끼어 있어,
         포커스를 받는 다음 위젯까지 건너 뛰어 잰다.
@@ -116,7 +117,7 @@ class TestStructure:
         window.show()
         QApplication.processEvents()
         chain = [window.menuDownloadButton, window.menuSettingsButton, *_line_widgets(window),
-                 *window.filterChips.values(), window.sortButton, window.listView]
+                 *window.filterChips.values(), window.sortButton, window.clearFinishedButton, window.listView]
         got = [next_focusable(w) for w in chain[:-1]]
         assert got == chain[1:]
 

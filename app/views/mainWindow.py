@@ -8,7 +8,6 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
     QHBoxLayout,
-    QLabel,
     QLayout,
     QLineEdit,
     QMainWindow,
@@ -31,7 +30,8 @@ from app.viewmodels.data import ContentItem
 from app.viewmodels.content_viewmodel import ContentViewModel
 import config.config as config
 from app.widgets import widget as content_widget
-from app.widgets.header_controls import FilterChips, SaveLocationButton, SortButton
+from app.widgets.eliding_label import ElidingLabel
+from app.widgets.header_controls import BusyButton, FilterChips, SaveLocationButton, SortButton
 from app.widgets.view import ContentListView
 from core.models.download_state import DownloadState
 import app.theme as theme
@@ -250,7 +250,8 @@ class VodDownloader(QMainWindow):
 
         # 헤더바 1줄(#492 — 셸 S0, #495 — S1):
         #   ┌ [URL 입력                         ][📁 폴더 이름 ▾][VOD 추가] ┐
-        #   └ 조회 상태 메시지 한 줄                                         ┘
+        #   │ 등록 오류 한 줄(빨강, 평소 빈 줄 — 자리는 늘 잡아 둔다)          │
+        #   └ [칩 여섯][정렬 ▾] ……………………………………………… [완료 지우기] ┘
         # 남는 폭은 URL 입력이 다 받는다(설계: URL 입력이 남는 폭). 저장 위치 버튼은 고정 폭이다
         # (SaveLocationButton.applyWidth). 설정 톱니(#245)는 메뉴바 「설정」으로 옮겼다.
         self.urlRowLayout = QHBoxLayout()
@@ -263,15 +264,19 @@ class VodDownloader(QMainWindow):
         self.saveLocationButton = SaveLocationButton(self.headerFrame)
         self.saveLocationButton.setObjectName("saveLocationButton")
         self.urlRowLayout.addWidget(self.saveLocationButton)
-        self.fetchButton = QPushButton(self.headerFrame)
+        self.fetchButton = BusyButton(self.headerFrame)  # 불러오는 동안 글 옆에 도는 표시(#495)
         self.fetchButton.setObjectName("fetchButton")
         self.urlRowLayout.addWidget(self.fetchButton)
 
         self.headerFrameLayout.addLayout(self.urlRowLayout)
 
-        self.linkStatusLabel = QLabel(self.headerFrame)
-        self.linkStatusLabel.setObjectName("linkStatusLabel")
-        self.headerFrameLayout.addWidget(self.linkStatusLabel)
+        # 등록 오류 줄(#495 — 설계 알림 자리): 잘못된 URL · 조회 실패를 URL 칸 바로 아래 빨간 글 한 줄로.
+        # 입력을 고치면 사라진다. 줄 자리는 오류가 없어도 늘 잡아 둔다 — 오류가 떠도 목록이 움직이지
+        # 않는다(_reserveErrorLineHeight). 긴 글은 말줄임 + 툴팁(ElidingLabel — 헤더바를 넓히지 않는다).
+        # 「불러오는 중」 · 「가져왔다」는 글로 띄우지 않는다 — 등록 버튼의 도는 표시 · 카드의 조회 중 상태가 보인다
+        self.registerErrorLabel = ElidingLabel(self.headerFrame)
+        self.registerErrorLabel.setObjectName("registerErrorLabel")
+        self.headerFrameLayout.addWidget(self.registerErrorLabel)
 
         # 헤더바 2줄(#495 — 셸 S1): [상태 칩 여섯][정렬 ▾] ……
         # 칩 · 정렬 버튼은 고정 폭이다(숫자 세 자리 · 가장 긴 정렬 이름) — 남는 폭은 줄 끝 빈칸이 받는다
@@ -286,6 +291,11 @@ class VodDownloader(QMainWindow):
         self.sortButton.setObjectName("sortButton")
         self.filterRowLayout.addWidget(self.sortButton)
         self.filterRowLayout.addStretch(1)
+        # 완료 지우기 — 선택 · 지우기 되돌리기(카드 단계)가 오기 전까지 헤더바 2줄 오른쪽 끝(#495)
+        self.clearFinishedButton = QPushButton(self.headerFrame)
+        self.clearFinishedButton.setObjectName("clearFinishedButton")
+        self.clearFinishedButton.setProperty("role", "subtle")
+        self.filterRowLayout.addWidget(self.clearFinishedButton)
         self.headerFrameLayout.addLayout(self.filterRowLayout)
 
         # 상단·하단 바는 각자 행(headerRow·infoRow)에 담아 좌우 outerMargin을 그 행이
@@ -309,10 +319,6 @@ class VodDownloader(QMainWindow):
         self.infoLayout.setSpacing(8)
         self.infoLayout.setObjectName("infoLayout")
         # 하단 「Downloads: x/y」 카운트는 없앴다 — 헤더바 상태 칩의 숫자가 대신한다(#495)
-        self.clearFinishedButton = QPushButton(self.infoFrame)
-        self.clearFinishedButton.setObjectName("clearFinishedButton")
-        self.clearFinishedButton.setProperty("role", "subtle")
-        self.infoLayout.addWidget(self.clearFinishedButton)
         self.infoLayout.addStretch(1)
         self.downloadButton = QPushButton(self.infoFrame)
         self.downloadButton.setObjectName("downloadButton")
@@ -339,9 +345,9 @@ class VodDownloader(QMainWindow):
         for before, after in zip(chips, chips[1:]):
             QWidget.setTabOrder(before, after)
         QWidget.setTabOrder(chips[-1], self.sortButton)
-        QWidget.setTabOrder(self.sortButton, self.listView)
-        QWidget.setTabOrder(self.listView, self.clearFinishedButton)
-        QWidget.setTabOrder(self.clearFinishedButton, self.downloadButton)
+        QWidget.setTabOrder(self.sortButton, self.clearFinishedButton)
+        QWidget.setTabOrder(self.clearFinishedButton, self.listView)
+        QWidget.setTabOrder(self.listView, self.downloadButton)
         QWidget.setTabOrder(self.downloadButton, self.stopButton)
 
         self.retranslateUi(window)
@@ -401,26 +407,22 @@ class VodDownloader(QMainWindow):
         # 헤더바 2줄의 칩 · 정렬 버튼 폭(숫자 세 자리 · 가장 긴 이름) — 창 최소폭 계산 전에 건다
         self.filterChipBar.applyWidth()
         self.sortButton.applyWidth()
-        self._reserveStatusLineHeight()
+        self._reserveErrorLineHeight()
 
-    def _reserveStatusLineHeight(self) -> None:
-        """조회 상태 글 줄의 높이를 글 유무와 무관하게 고정한다 (#492 — #493 CI).
+    def _reserveErrorLineHeight(self) -> None:
+        """등록 오류 줄의 높이를 오류 유무와 무관하게 고정한다 (#492 — #493 CI, #495).
 
-        빈 라벨과 글이 든 라벨은 글꼴에 따라 높이 힌트가 다르다(대체 글꼴 offscreen 실측: 빈 14 ·
-        글 12). 그대로 두면 상태 글이 바뀔 때 헤더바가 몇 px 오르내리고, 창 최소 높이의 계산
-        (`_contentMinimumHeight`)도 지금 상태 글에 따라 달라진다. 빈 상태와 실제로 띄우는 글 셋을
-        이 라벨의 글꼴 · QSS로 재어 가장 높은 값을 최소 높이로 건다 — 글꼴 · 번역을 따라간다.
+        오류가 없을 때도 줄 자리를 비워 둔다 — 오류가 뜨고 사라질 때 목록이 움직이지 않는다(설계
+        알림 자리). 빈 라벨과 글이 든 라벨은 글꼴에 따라 높이 힌트가 다르므로(대체 글꼴 offscreen
+        실측: 빈 14 · 글 12) 빈 글과 이 줄에 띄우는 글을 이 라벨의 글꼴 · QSS로 재어 가장 높은 값을
+        최소 높이로 건다 — 글꼴 · 번역을 따라간다. 창 최소 높이(`_contentMinimumHeight`)도 오류
+        유무와 무관해진다.
         """
-        label = self.linkStatusLabel
+        label = self.registerErrorLabel
         shown = label.text()
         label.ensurePolished()
         heights = []
-        for text in (
-            "",
-            self.tr("Fetching resolutions..."),
-            self.tr("Resolutions fetched successfully."),
-            self.tr("Failed to fetch resolutions."),
-        ):
+        for text in ("", self.tr("Please enter VOD URL."), self.tr("Path does not exist.")):
             label.setText(text)
             heights.append(label.sizeHint().height())
         label.setText(shown)
@@ -618,18 +620,27 @@ class VodDownloader(QMainWindow):
         (#245의 같은 폭 규칙은 같은 종류의 글 버튼끼리였다). 폭은 글꼴 · QSS를 따라 polish 뒤에 잰다.
         """
         self.saveLocationButton.applyWidth()
+        # [VOD 추가]는 도는 표시 자리를 늘 잡아 둔 폭이다 — 돌기 시작해도 폭 · 글 자리가 그대로(#495)
+        self.fetchButton.setFixedWidth(self.fetchButton.reservedWidth())
 
-    def _setLinkStatus(self, text: str, kind: str = "info") -> None:
-        """조회 상태 메시지를 갱신한다 — 색은 전역 QSS가 `status` 속성으로 입힌다 (#244).
+    def _showRegisterError(self, text: str) -> None:
+        """등록 오류를 URL 칸 아래 줄에 띄우고 URL 칸 테두리를 빨강으로 한다 (#495 — 설계 §12.1).
 
-        kind: "info"(중립 회색) / "ok"(성공 초록) / "error"(실패 빨강).
-        속성만 바꾸면 이미 계산된 스타일이 안 갱신되므로 repolish가 함께
-        필요하다(카드 상태 표시와 같은 패턴).
+        줄 자리는 늘 잡혀 있어 글만 바뀐다 — 목록이 움직이지 않는다. 입력을 고치면 사라진다
+        (`_clearRegisterError`). 테두리는 전역 QSS의 `QLineEdit[invalid="true"]`가 칠한다.
         """
-        self.linkStatusLabel.setText(text)
-        if self.linkStatusLabel.property("status") != kind:
-            self.linkStatusLabel.setProperty("status", kind)
-            theme.repolish(self.linkStatusLabel)
+        self.registerErrorLabel.setText(text)
+        if self.urlInput.property("invalid") is not True:
+            self.urlInput.setProperty("invalid", True)
+            theme.repolish(self.urlInput)
+
+    def _clearRegisterError(self) -> None:
+        """등록 오류 줄을 비우고 URL 칸 테두리를 되돌린다 — URL 입력이 바뀔 때."""
+        if self.registerErrorLabel.text():
+            self.registerErrorLabel.setText("")
+        if self.urlInput.property("invalid"):
+            self.urlInput.setProperty("invalid", False)
+            theme.repolish(self.urlInput)
 
     def setupThreadSignals(self):
         """
@@ -638,7 +649,8 @@ class VodDownloader(QMainWindow):
         다운로드 이벤트 배선은 DownloadViewModel 내부로 이동했다 (#170).
         """
         # TODO 동시 다운로드 기능 추가시 로직 수정 필요
-        self.contentManager.contentError.connect(self.showErrorDialog)
+        self.contentManager.contentError.connect(self.onFetchError)
+        self.contentManager.fetchingChanged.connect(self.fetchButton.setBusy)
         self.contentManager.fetchRequested.connect(self.fetchContents)
         self.contentManager.downloadRequested.connect(self.startDownload)
         self.contentManager.stopRequested.connect(self.onStop)
@@ -650,7 +662,8 @@ class VodDownloader(QMainWindow):
         """
         self.urlInput.returnPressed.connect(self.onFetch)
         self.fetchButton.clicked.connect(self.onFetch)
-        self.saveLocationButton.errorOccurred.connect(self._onSaveLocationError)
+        self.saveLocationButton.errorOccurred.connect(self._showRegisterError)
+        self.urlInput.textChanged.connect(self._clearRegisterError)
         self.menuSettingsButton.clicked.connect(self.onSetting)
         self.clearFinishedButton.clicked.connect(self.contentManager.clrearFinishedItems)
         self.downloadButton.clicked.connect(self.onDownloadPause)
@@ -768,11 +781,10 @@ class VodDownloader(QMainWindow):
             vod_url = self.urlInput.text().strip()
 
         if not vod_url:
-            QMessageBox.warning(self, self.tr("Warning"), self.tr("Please enter VOD URL."))
+            self._showRegisterError(self.tr("Please enter VOD URL."))
             return
-        
+
         cookies = settings.load_cookies()  # 쿠키 조립의 단일 지점 (#170)
-        self._setLinkStatus(self.tr('Fetching resolutions...'), "info")
 
         # 저장 위치는 저장 위치 버튼의 지금 위치다(#495). 고를 때 실존 폴더만 받았지만(절대 경로로
         # 정규화 — #146 ⓑ-4, #219) 그 뒤 폴더가 사라졌을 수 있다(외장 드라이브 분리)
@@ -783,22 +795,22 @@ class VodDownloader(QMainWindow):
             # 유일한 안내가 팝업뿐이라 제보 진단이 불가능했다 (#146 감사) —
             # 경로를 repr로 남겨 공백 유사 문자·오염(따옴표 등)을 식별한다 (#148)
             logger.warning("조회 거부 — 존재하지 않는 저장 경로: %r", downloadPath)
-            QMessageBox.warning(self, self.tr("Warning"), self.tr("Path does not exist."))
+            self._showRegisterError(self.tr("Path does not exist."))
             return
 
         self.contentManager.fetchContent(vod_url, cookies, downloadPath)
 
-        self.urlInput.clear()
+        self.urlInput.clear()  # 입력이 바뀌어 앞 오류 줄도 비워진다
 
-        self._setLinkStatus(self.tr('Resolutions fetched successfully.'), "ok")
-    
-    def showErrorDialog(self, errorMessage):
-        errorTitle = self.tr("Error")
-        errorBody = self.tr("Error occurred during content request:") + "\n" + errorMessage
-        # 팝업을 닫은 뒤에도 실패했다는 사실이 남게 상태 줄도 빨갛게 바꾼다
-        # (#244 — 성공 메시지만 남아 "성공했는데 카드가 없다"로 읽히던 문제).
-        self._setLinkStatus(self.tr('Failed to fetch resolutions.'), "error")
-        QMessageBox.critical(self, errorTitle, errorBody)
+    def onFetchError(self, errorMessage: str) -> None:
+        """조회 실패를 등록 오류 줄에 띄운다 — 대화상자를 띄우지 않는다 (#495 — 설계 알림 자리).
+
+        뷰모델의 오류 글은 `"<주소>\n<까닭>"`이다(FetchJob). 줄 하나에 까닭을 앞에 두고 주소를 뒤에
+        붙인다 — 넘치면 뒤(주소)부터 줄이고 툴팁에 전문을 보인다(ElidingLabel). 여러 주소를 한꺼번에
+        등록했으면 마지막 실패가 남는다.
+        """
+        url, _newline, reason = errorMessage.partition("\n")
+        self._showRegisterError(f"{reason} · {url}" if reason else url)
 
     def onDownloadPause(self):
         """
@@ -841,9 +853,6 @@ class VodDownloader(QMainWindow):
         logger.info("저장 위치 고름: %r", path)
         content_widget.set_global_download_path(path)
 
-    def _onSaveLocationError(self, text: str) -> None:
-        """저장 위치를 고르거나 즐겨찾기에 더하지 못했다 — 까닭을 보인다."""
-        QMessageBox.warning(self, self.tr("Warning"), text)
 
     def onStop(self):
         """

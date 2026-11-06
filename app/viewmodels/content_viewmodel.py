@@ -194,6 +194,8 @@ class ContentViewModel(QObject):
     finishedAllRequested = Signal()
     fetchRequested = Signal(str)
     contentError = Signal(str)
+    # 조회 중인 카드가 생겼다(True) · 다 끝났다(False) — 등록 버튼 안의 도는 표시(#495)
+    fetchingChanged = Signal(bool)
     # 배치가 구간 편집 중인 카드를 기다리기 시작했다(True) · 그만 기다린다(False) (#309) —
     # 편집 창이 아래쪽 안내를 켜고 끈다
     editWaitChanged = Signal(bool)
@@ -263,6 +265,8 @@ class ContentViewModel(QObject):
         relay = _WorkerRelay(self, worker)
         self._pendingPlaceholders[worker] = placeholder
         self._relays[worker] = relay
+        if len(self._pendingPlaceholders) == 1:
+            self.fetchingChanged.emit(True)
 
         worker.finished.connect(relay.onFinished)
         worker.error.connect(relay.onError)
@@ -273,6 +277,7 @@ class ContentViewModel(QObject):
         # result는 (vod_url, metadata, unique_reps, resolution, base_url, downloadPath, liveRewindPlaybackJson) 형식
         placeholder = self._pendingPlaceholders.pop(worker, None)
         self._relays.pop(worker, None)
+        self._emitFetchingDone()
         if placeholder is None:
             return
         (
@@ -307,12 +312,22 @@ class ContentViewModel(QObject):
     def _workerError(self, worker, error_message):
         placeholder = self._pendingPlaceholders.pop(worker, None)
         self._relays.pop(worker, None)
+        self._emitFetchingDone()
         if placeholder is not None:
             row = self.model.getRow(placeholder)
             if row is not None:
                 self.model.removeRows(row, 1)
                 self.deleteItemRequested.emit(placeholder, self.model.rowCount())
         self.contentError.emit(error_message)
+
+    def isFetching(self) -> bool:
+        """조회가 끝나지 않은 등록이 있는지 — 등록 버튼의 도는 표시(#495)."""
+        return bool(self._pendingPlaceholders)
+
+    def _emitFetchingDone(self) -> None:
+        """마지막 조회가 끝났으면 알린다(결과를 쓰기 전 — 성공 · 실패 모두)."""
+        if not self._pendingPlaceholders:
+            self.fetchingChanged.emit(False)
 
     # ---- 다운로드 관문 문구 — 카드 3행에 뜨는 tr() 2건 (컨텍스트 ContentViewModel) ----
 
