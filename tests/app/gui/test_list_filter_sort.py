@@ -166,6 +166,18 @@ class TestFilter:
         assert mixed.filterChips["all"].isChecked()
         assert _visible_titles(mixed) == ["대기", "완료", "실패"]
 
+    def test_clicking_the_chosen_all_chip_again_keeps_it_pressed(self, mixed):
+        """전체 칩이 고른 상태에서 전체 칩을 다시 누르면 전체 칩만 눌린 채여야 한다(#503 리뷰).
+
+        처음 상태(전체) -> 전체 칩 click()
+        -> 전체 칩 눌림, 나머지 칩 안 눌림, 카드 셋 다 보임
+        """
+        assert mixed.filterChips["all"].isChecked(), "전제: 처음엔 전체"
+        mixed.filterChips["all"].click()
+        QApplication.processEvents()
+        assert [k for k, chip in mixed.filterChips.items() if chip.isChecked()] == ["all"]
+        assert _visible_titles(mixed) == ["대기", "완료", "실패"]
+
     def test_a_card_leaving_the_chosen_state_is_hidden(self, mixed):
         """실패 칩을 고른 채 실패 카드가 대기로 바뀌면 그 카드가 숨어야 한다."""
         mixed.filterChips["failed"].click()

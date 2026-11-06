@@ -453,9 +453,18 @@ class FilterChips(QWidget):
             chip.setProperty("alert", False)
             chip.setCheckable(True)
             chip.setCursor(Qt.CursorShape.PointingHandCursor)
-            chip.clicked.connect(lambda _=False, k=key: self._order.setFilter(k))
+            chip.clicked.connect(lambda _=False, k=key: self._choose(k))
             layout.addWidget(chip)
             self.chips[key] = chip
+
+    def _choose(self, key: str) -> None:
+        """칩을 누르면 필터를 고르고 눌림을 뷰모델 값으로 다시 맞춘다.
+
+        눌림은 Qt가 클릭 때 먼저 뒤집는다. 고른 「전체」를 다시 누르면 필터가 그대로라 바뀜 알림이
+        오지 않으므로, 알림을 기다리지 않고 여기서 맞춘다(#503 리뷰).
+        """
+        self._order.setFilter(key)
+        self._refreshChecked()
 
     def names(self) -> dict[str, str]:
         """칩 키 → 보이는 상태 이름(번역)."""

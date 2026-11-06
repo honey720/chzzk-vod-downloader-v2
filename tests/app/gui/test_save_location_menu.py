@@ -314,10 +314,18 @@ class TestRowsAndLimits:
         assert win.saveLocations.choose(fav)
         assert _choice(_open(win), "current", fav).text().startswith("녹화함\t")
 
-    def test_paths_use_the_card_notation_with_a_home_tilde(self, make_window, folders):
-        """홈 아래 경로의 흐린 글은 ~로 시작하는 카드 표기여야 하고 툴팁은 전체 경로여야 한다."""
+    def test_paths_use_the_card_notation_with_a_home_tilde(
+        self, make_window, folders, tmp_path, monkeypatch
+    ):
+        """홈 아래 경로의 흐린 글은 ~로 시작하는 카드 표기여야 하고 툴팁은 전체 경로여야 한다.
+
+        홈(HOME · USERPROFILE) = tmp_path, 최근 = tmp_path/최근
+        -> 흐린 글 "~/…", 툴팁 = 전체 경로
+        """
         import os
 
+        monkeypatch.setenv("HOME", str(tmp_path))  # 임시 폴더는 OS마다 홈 밖일 수 있어 홈을 정한다
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
         recent = folders("최근")
         assert os.path.normcase(recent).startswith(os.path.normcase(os.path.expanduser("~"))), "전제: 시험 폴더가 홈 아래"
         _seed(recentPaths=[recent])
@@ -328,7 +336,9 @@ class TestRowsAndLimits:
 
     def test_a_long_path_keeps_the_menu_within_the_window(self, make_window, tmp_path):
         """마지막 폴더 이름이 창보다 긴 경로를 고르면 메뉴 폭이 창 폭 − 24 이하여야 한다."""
-        deep = tmp_path / ("가나다라마" * 30)  # 150자 — 카드 표기로 줄여도 마지막 폴더는 남아 창보다 넓다
+        # 카드 표기로 줄여도 마지막 폴더는 남아 창보다 넓은 이름 — 글자당 폭이 넓은 「W」(1바이트)로
+        # 리눅스 · macOS 이름 한도(255바이트)와 Windows 경로 한도(260자) 안에서 길게 짓는다
+        deep = tmp_path / ("W" * min(150, 250 - len(str(tmp_path))))
         deep.mkdir()
         win = make_window()
         win.resize(win.minimumWidth(), win.height())
@@ -340,12 +350,15 @@ class TestRowsAndLimits:
         assert metrics.horizontalAdvance(abbreviate_path(str(deep))) > win.width(), "전제: 상한이 없으면 창을 넘는 글"
         assert menu.isVisible()
         assert menu.width() <= win.width() - 24
+        # 창이 offscreen 화면(800px)만큼 넓은 폰트에서는 Qt가 메뉴를 화면 폭으로도 자른다 — 상한이 없어도
+        # 위 단언이 통과하므로, 메뉴에 걸린 최대폭도 잰다
+        assert menu.maximumWidth() <= win.width() - 24
 
     def test_muted_paths_stay_inside_a_capped_menu(self, make_window, folders, tmp_path):
         """메뉴 폭이 상한에 걸려도 다른 줄(최근)의 흐린 경로가 보이는 메뉴 오른쪽 안쪽에 그려져야 한다."""
         from PySide6.QtCore import QRect
 
-        deep = tmp_path / ("가나다라마" * 30)
+        deep = tmp_path / ("W" * min(150, 250 - len(str(tmp_path))))  # 창보다 넓은 이름 — 위 테스트와 같은 한도
         deep.mkdir()
         recent = folders("짧은 최근")
         _seed(recentPaths=[recent])
@@ -372,14 +385,17 @@ class TestRowsAndLimits:
 
     def test_a_long_path_is_shortened_like_the_card(self, make_window, tmp_path):
         """폭이 모자라면 경로는 뿌리/…/마지막 폴더로 접히고 그래도 모자라면 마지막 폴더 가운데가 줄어야 한다."""
+        import os
+
         from app.widgets.header_controls import fit_path
 
         path = str(tmp_path / "중간" / ("마지막 폴더 이름이 아주 김 " * 6).strip())
         win = make_window()
         metrics = win.saveLocationButton.menuWidget.fontMetrics()
-        folded = fit_path(metrics, path, metrics.horizontalAdvance("~/…/" + path.split("\\")[-1]))
+        last = os.path.basename(path)  # 마지막 폴더 — 구분자는 OS마다 다르다
+        folded = fit_path(metrics, path, metrics.horizontalAdvance("~/…/" + last))
         squeezed = fit_path(metrics, path, 120)
-        assert folded.endswith(path.split("\\")[-1]) and "/…/" in folded
+        assert folded.endswith(last) and "/…/" in folded
         assert "…" in squeezed[len(squeezed.split("/")[0]) + 3:] and metrics.horizontalAdvance(squeezed) <= 120
 
     def test_default_location_row_is_off_at_the_default_and_on_elsewhere(self, make_window, folders):

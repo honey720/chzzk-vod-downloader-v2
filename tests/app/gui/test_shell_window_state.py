@@ -41,6 +41,9 @@ from tests.support.settings_db import read_settings, write_settings
 
 #: 테스트가 주입하는 작업 영역 — 주 화면.
 AVAILABLE = QRect(0, 0, 1920, 1040)
+#: 깨진 기록 표본의 폭 — 작업 영역 안이고 어느 폰트의 창 최소폭(800px대)과도 겹치지 않는다. 깨진 기록을
+#: 잘못 받아들이면 이 폭으로 떠 초기 규칙 폭과 갈린다(최소폭보다 좁으면 최소폭으로 늘어나 갈리지 않는다)
+BROKEN_WIDTH = 1500
 
 
 @pytest.fixture(autouse=True)
@@ -100,6 +103,18 @@ def _initial_width() -> int:
     return min(int(AVAILABLE.width() * 0.45), theme.METRICS["initialWidthMax"])
 
 
+def _floor_width() -> int:
+    """초기 규칙으로 뜬 창의 폭 — 규칙 폭과 창 최소폭 중 큰 쪽(최소폭은 폰트마다 다르다)."""
+    probe = VodDownloader()
+    QApplication.processEvents()
+    return max(_initial_width(), probe.minimumWidth())
+
+
+def _record_width() -> int:
+    """기록에 쓸 창 폭 — 최소폭보다 넓고 초기 규칙으로 뜬 폭과 다른 값. 폰트마다 최소폭이 달라 유도한다."""
+    return _floor_width() + 60
+
+
 def _saved_window() -> dict:
     """설정 DB에 기록된 창 상태를 직접 읽는다(제품의 load_settings 미사용)."""
     return read_settings().get("window")
@@ -127,7 +142,7 @@ class TestRoundTrip:
     def test_close_saves_and_the_next_window_restores_the_same_size_and_position(self):
         """실제 배선: 창을 옮기고 줄인 뒤 닫으면 기록되고, 다음 창이 같은 값으로 뜬다."""
         first = _open()
-        resize_to(first, _initial_width() - 100)  # 초기 규칙과 다른 값이어야 복원을 가를 수 있다
+        resize_to(first, _record_width())  # 초기 규칙과 다른 값이어야 복원을 가를 수 있다
         first.resize(first.width(), 650)
         first.move(QPoint(120, 90))
         QApplication.processEvents()
@@ -190,28 +205,31 @@ class TestRestoreIsClampedToTheCurrentScreen:
 
     def test_a_partly_offscreen_position_is_pushed_back_in(self):
         """크기는 맞는데 오른쪽·아래로 걸쳐 있으면 위치만 민다 — 크기는 그대로."""
-        _write_window({"x": 1800, "y": 900, "width": 700, "height": 600, "maximized": False})
+        width = _record_width()
+        _write_window({"x": 1800, "y": 900, "width": width, "height": 600, "maximized": False})
         win = _open()
-        assert _requested(win).size().toTuple() == (700, 600), "크기가 바뀔 이유가 없다"
+        assert _requested(win).size().toTuple() == (width, 600), "크기가 바뀔 이유가 없다"
         assert _requested(win).topLeft().toTuple() == (
-            AVAILABLE.width() - 700,
+            AVAILABLE.width() - width,
             AVAILABLE.height() - 600,
         )
         assert _in_available(win)
 
     def test_a_negative_position_is_pushed_to_the_edge(self):
         """왼쪽·위로 나간 기록은 작업 영역 가장자리(0, 0)로 민다."""
-        _write_window({"x": -400, "y": -50, "width": 700, "height": 600, "maximized": False})
+        width = _record_width()
+        _write_window({"x": -400, "y": -50, "width": width, "height": 600, "maximized": False})
         win = _open()
         assert _requested(win).topLeft().toTuple() == (0, 0)
 
     def test_a_saved_rect_that_fits_is_left_alone(self):
         """작업 영역 안에 있는 기록은 그대로 되살린다."""
-        _write_window({"x": 200, "y": 150, "width": 700, "height": 600, "maximized": False})
+        width = _record_width()
+        _write_window({"x": 200, "y": 150, "width": width, "height": 600, "maximized": False})
         win = _open()
         assert (_requested(win).topLeft().toTuple(), _requested(win).size().toTuple()) == (
             (200, 150),
-            (700, 600),
+            (width, 600),
         )
 
 
@@ -254,46 +272,49 @@ class TestFirstRunAndOldConfigs:
     def test_a_config_without_the_key_opens_at_the_initial_rule(self):
         """업데이트 전 유저의 config(키 없음): 초기 크기 규칙으로 뜨고 에러가 없다."""
         _write_window(None)
+        floor = _floor_width()
         win = _open()
-        assert win.width() == _initial_width()
+        assert win.width() == floor
         assert win.height() == AVAILABLE.height() // 2
 
     def test_an_empty_record_opens_at_the_initial_rule(self):
         """표의 기본값({}) — 파일이 새로 만들어진 첫 실행."""
         _write_window({})
+        floor = _floor_width()
         win = _open()
-        assert win.width() == _initial_width()
+        assert win.width() == floor
 
     @pytest.mark.parametrize(
         "broken",
         (
-            {"x": "a", "y": 0, "width": 700, "height": 600},
+            {"x": "a", "y": 0, "width": BROKEN_WIDTH, "height": 600},
             {"x": 0, "y": 0, "width": 0, "height": 600},
             {"x": 0, "y": 0, "width": -5, "height": 600},
-            {"width": 700},
+            {"width": BROKEN_WIDTH},
             "not a dict",
             None,
-            {"x": 1e1000, "y": 0, "width": 700, "height": 600},  # JSON 1e1000 → 무한대
+            {"x": 1e1000, "y": 0, "width": BROKEN_WIDTH, "height": 600},  # JSON 1e1000 → 무한대
             {"x": 0, "y": 0, "width": 1e1000, "height": 600},
-            {"x": 10**30, "y": 0, "width": 700, "height": 600},  # C++ int 범위 밖의 거대 정수
+            {"x": 10**30, "y": 0, "width": BROKEN_WIDTH, "height": 600},  # C++ int 범위 밖의 거대 정수
             {"x": 0, "y": 0, "width": 2**31, "height": 600},
-            {"x": float("nan"), "y": 0, "width": 700, "height": 600},
+            {"x": float("nan"), "y": 0, "width": BROKEN_WIDTH, "height": 600},
             {"x": 0, "y": 0, "width": float("nan"), "height": 600},
             {
                 "x": True,
                 "y": 0,
-                "width": 700,
+                "width": BROKEN_WIDTH,
                 "height": 600,
             },  # bool은 int의 하위 타입이지만 좌표가 아니다
-            {"x": 0.5, "y": 0, "width": 700, "height": 600},  # 정수값이 아닌 float
-            {"x": 0, "y": 0, "width": 700, "height": 600, "maximized": "yes"},
+            {"x": 0.5, "y": 0, "width": BROKEN_WIDTH, "height": 600},  # 정수값이 아닌 float
+            {"x": 0, "y": 0, "width": BROKEN_WIDTH, "height": 600, "maximized": "yes"},
         ),
     )
     def test_a_broken_record_falls_back_to_the_initial_rule(self, broken):
         """깨진 기록(문자열·0/음수·필드 누락·비-dict·null·무한대·거대 정수·NaN·bool·비정수 float·비-bool 최대화)은 첫 실행으로 뜬다."""
         _write_window(broken)
+        floor = _floor_width()
         win = _open()
-        assert win.width() == _initial_width(), (
+        assert win.width() == floor, (
             f"깨진 기록 {broken!r}에서 초기 규칙으로 뜨지 않았다: {win.width()}"
         )
 
