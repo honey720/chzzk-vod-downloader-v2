@@ -45,7 +45,7 @@ PAUSE_FOR = 1.5  # 일시정지해 두는 시간(초)
 WATCH_FACTOR = 6
 WATCH_SLACK = 10.0  # 초
 WATCH_FLOOR = 120.0  # 감시 시간의 바닥(초)
-WATCH_EVERY = 60.0  # 감시 동안 모든 스레드 스택을 남기는 주기(초)
+WATCH_EVERY = 30.0  # 감시 동안 poll 기록 · 모든 스레드 스택을 남기는 주기(초, #505)
 
 
 def _work(output: str) -> list[str]:
@@ -114,6 +114,88 @@ class _Pause:
         return self._event.is_set()
 
 
+class _PollRecord:
+    """``_Control.poll`` · ``_set_suspended``를 감싸 적은 값 — 멈춘 실행의 두 갈래를 가른다 (#505).
+
+    ① 루프가 ``communicate(timeout=0.05)`` 한 번에 묶였다: 호출 수가 더 늘지 않고 마지막 호출이 오래전이다.
+    ② 루프는 도는데 poll이 일시정지를 풀지 않는다: 호출 수가 계속 늘고 마지막 호출이 방금이다 — 그때의
+    일시정지 요청 · 일시중단 시각 · 멈추기 / 다시 시작 결과로 무엇이 남았는지 본다.
+    값은 가장 최근에 만든 ``_Control`` 하나의 것이다(먼저 돈 기준 실행의 것은 지운다).
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._control_id: int | None = None
+        self.calls = 0  # poll 호출 수 — 띄우자마자 한 번 + 루프 반복마다 한 번
+        self.last_at: float | None = None  # 마지막 poll 시각(monotonic)
+        self.pause_requested: bool | None = None  # 마지막 poll 직후의 일시정지 요청
+        self.suspended_at: float | None = None  # 마지막 poll 뒤의 일시중단 시각 — 돌면 None
+        self.deadline: float | None = None  # 마지막 poll 뒤의 제한 시각(monotonic)
+        self.outcome: str | None = None  # 마지막 poll이 돌려준 것
+        self.switches: list[tuple[float, bool, bool]] = []  # (시각, 멈추기인지, 됐는지)
+
+    def saw_poll(self, control, outcome: str | None) -> None:
+        """poll 한 번이 끝났다 — 그 control의 값을 적는다."""
+        pause = control._should_pause
+        with self._lock:
+            if id(control) != self._control_id:
+                self._control_id, self.calls, self.switches = id(control), 0, []
+            self.calls += 1
+            self.last_at = time.monotonic()
+            self.pause_requested = pause() if pause is not None else None
+            self.suspended_at = control._suspended_at
+            self.deadline = control._deadline
+            self.outcome = outcome
+
+    def saw_switch(self, suspended: bool, done: bool) -> None:
+        """멈추기(True) · 다시 시작(False)을 불렀다."""
+        with self._lock:
+            self.switches.append((time.monotonic(), suspended, done))
+
+    def describe(self) -> str:
+        """적은 값을 사람이 읽는 세 줄로 — 시각은 지금으로부터 몇 초 전 · 뒤."""
+        now = time.monotonic()
+
+        def ago(at: float | None) -> str:
+            return "없음" if at is None else f"{now - at:.2f}초 전"
+
+        with self._lock:
+            left = "없음" if self.deadline is None else f"{self.deadline - now:.2f}초 뒤"
+            switches = ", ".join(
+                f"{ago(at)} {'멈추기' if suspended else '다시 시작'}={'됨' if done else '실패'}"
+                for at, suspended, done in self.switches
+            )
+            lines = [
+                f"poll 호출 {self.calls}번 · 마지막 호출 {ago(self.last_at)} · "
+                f"그때 일시정지 요청 {self.pause_requested} · 결과 {self.outcome}",
+                f"일시중단 시각 {ago(self.suspended_at)} · 제한 시각 {left}",
+                f"멈추기 / 다시 시작: {switches or '없음'}",
+            ]
+        return "\n".join(lines)
+
+
+@pytest.fixture
+def poll_record(monkeypatch) -> _PollRecord:
+    """``_Control.poll`` · ``_set_suspended``를 감싸 값을 적는다 — 동작은 그대로다 (#505)."""
+    record = _PollRecord()
+    original_poll = ffmpeg_module._Control.poll
+    original_switch = ffmpeg_module._set_suspended
+
+    def poll(control):
+        outcome = original_poll(control)
+        record.saw_poll(control, outcome)
+        return outcome
+
+    def switch(process, suspended: bool) -> bool:
+        done = original_switch(process, suspended)
+        record.saw_switch(suspended, done)
+        return done
+
+    monkeypatch.setattr(ffmpeg_module._Control, "poll", poll)
+    monkeypatch.setattr(ffmpeg_module, "_set_suspended", switch)
+    return record
+
+
 def _all_stacks() -> str:
     """지금 모든 스레드의 이름과 스택 — faulthandler와 달리 캡처된 출력 · 실패 메시지에 넣을 수 있다."""
     names = {thread.ident: thread.name for thread in threading.enumerate()}
@@ -165,14 +247,18 @@ def _watch_limit(alone: float) -> float:
 
 
 def _run_watched(
-    limit: float, launched: list[subprocess.Popen], *args: Any, **kwargs: Any
+    limit: float,
+    launched: list[subprocess.Popen],
+    record: _PollRecord,
+    *args: Any,
+    **kwargs: Any,
 ) -> subprocess.CompletedProcess[str]:
     """``run_ffmpeg``를 다른 스레드로 돌리고 limit초 안에 돌아오는지 지킨다 (#458).
 
-    그동안 ``WATCH_EVERY``초마다 모든 스레드 스택을 표준 오류에 남긴다(실패하면 캡처된 출력으로
-    보인다). limit을 넘기면 모든 스레드 스택과 띄운 ffmpeg의 상태를 실패 메시지에 담고, ffmpeg를
-    끝낸 뒤 실패한다 — CI 잡 시간 제한까지 아무 말 없이 서 있지 않게 한다. 돌아오면 그 결과를
-    돌려주고, 예외로 끝났으면 그 예외를 그대로 낸다.
+    그동안 ``WATCH_EVERY``초마다 poll 기록(#505)과 모든 스레드 스택을 표준 오류에 남긴다(실패하면
+    캡처된 출력으로 보인다). limit을 넘기면 poll 기록 · 모든 스레드 스택 · 띄운 ffmpeg의 상태를
+    실패 메시지에 담고, ffmpeg를 끝낸 뒤 실패한다 — CI 잡 시간 제한까지 아무 말 없이 서 있지 않게
+    한다. 돌아오면 그 결과를 돌려주고, 예외로 끝났으면 그 예외를 그대로 낸다.
     """
     outcome: dict[str, subprocess.CompletedProcess[str] | BaseException] = {}
 
@@ -192,16 +278,18 @@ def _run_watched(
         if not worker.is_alive():
             break
         if elapsed >= limit:
-            stacks, state = _all_stacks(), _process_state(launched)
+            polls, stacks, state = record.describe(), _all_stacks(), _process_state(launched)
             end_all(launched)  # 멈춘 것은 다시 돌린 뒤 끝낸다 — 감시 대상이 풀려 돌아올 수 있게
             worker.join(10.0)
             pytest.fail(
                 f"run_ffmpeg가 {limit:.1f}초 안에 돌아오지 않았다(멈춤으로 본다)\n"
+                f"## poll 기록(끝내기 전)\n{polls}\n"
                 f"## 띄운 ffmpeg(끝내기 전)\n{state}\n## 모든 스레드(끝내기 전)\n{stacks}",
                 pytrace=False,
             )
         print(
-            f"[감시] {elapsed:.0f}초 / {limit:.0f}초 — 모든 스레드\n{_all_stacks()}",
+            f"[감시] {elapsed:.0f}초 / {limit:.0f}초 — poll 기록\n{record.describe()}\n"
+            f"모든 스레드\n{_all_stacks()}",
             file=sys.stderr,
         )
     if "error" in outcome:
@@ -211,7 +299,7 @@ def _run_watched(
 
 @pytest.mark.parametrize("reporting", [False, True], ids=["출력을 모으는 실행", "진행을 받는 실행"])
 def test_a_paused_ffmpeg_stands_still_and_writes_the_same_file_when_resumed(
-    tmp_path, launched, launch_hooks, reporting
+    tmp_path, launched, launch_hooks, poll_record, reporting
 ):
     """일시정지 중인 ffmpeg는 살아 있되 아무것도 쓰지 않고, 재개하면 일시정지 없이 돈 것과 같은 파일을 내야 한다.
 
@@ -219,7 +307,7 @@ def test_a_paused_ffmpeg_stands_still_and_writes_the_same_file_when_resumed(
     -> 일시정지 중 두 시점(0.4초 뒤 · 끝나기 0.1초 전)에 프로세스가 살아 있고 출력 파일 크기가 같다
     -> 진행을 받는 실행: 그 두 시점 사이에 진행 알림이 없다
     -> 종료 코드 0, 걸린 시간 >= 1.5초, 결과 파일의 바이트 == 기준 파일의 바이트
-    -> 일시정지하는 실행이 max(120초, 6 × D + 10초) 안에 돌아온다 — D는 기준이 걸린 시간(넘기면 스택 · ffmpeg 상태를 남기고 실패, #458)
+    -> 일시정지하는 실행이 max(120초, 6 × D + 10초) 안에 돌아온다 — D는 기준이 걸린 시간(넘기면 poll 기록 · 스택 · ffmpeg 상태를 남기고 실패, #458 · #505)
     """
     plain, paused_output = str(tmp_path / "plain.mp4"), str(tmp_path / "paused.mp4")
     began = time.perf_counter()
@@ -244,6 +332,7 @@ def test_a_paused_ffmpeg_stands_still_and_writes_the_same_file_when_resumed(
     done = _run_watched(
         _watch_limit(alone),
         launched,
+        poll_record,
         _work(paused_output),
         timeout=90,
         should_pause=pause,
@@ -267,14 +356,14 @@ def test_a_paused_ffmpeg_stands_still_and_writes_the_same_file_when_resumed(
 
 @pytest.mark.parametrize("reporting", [False, True], ids=["출력을 모으는 실행", "진행을 받는 실행"])
 def test_time_spent_paused_does_not_count_towards_the_timeout(
-    tmp_path, launched, launch_hooks, reporting
+    tmp_path, launched, launch_hooks, poll_record, reporting
 ):
     """일시정지해 둔 시간은 제한 시간에 세지 않아야 한다 — 일시정지가 길었다고 시간 초과가 되지 않는다.
 
     일하는 명령이 혼자 도는 시간 D를 먼저 잼. 제한 시간을 3 × D + 3초로 주고, 띄운 지 0.5초
     뒤부터 그 제한 시간만큼 일시정지(일시정지를 합친 전체 시간은 제한 시간을 넘는다)
     -> 종료 코드 0(시간 초과 예외 없음), 걸린 시간 > 제한 시간
-    -> 일시정지하는 실행이 max(120초, 6 × D + 10초) 안에 돌아온다(넘기면 스택 · ffmpeg 상태를 남기고 실패, #458)
+    -> 일시정지하는 실행이 max(120초, 6 × D + 10초) 안에 돌아온다(넘기면 poll 기록 · 스택 · ffmpeg 상태를 남기고 실패, #458 · #505)
     """
     output = str(tmp_path / "out.mp4")
     started = time.perf_counter()
@@ -291,6 +380,7 @@ def test_time_spent_paused_does_not_count_towards_the_timeout(
     done = _run_watched(
         _watch_limit(alone),
         launched,
+        poll_record,
         _work(output),
         timeout=timeout,
         should_pause=pause,

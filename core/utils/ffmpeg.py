@@ -211,6 +211,7 @@ def _set_suspended(process: subprocess.Popen, suspended: bool) -> bool:
 
     결과는 부를 때마다 debug 로그로 남긴다 — Windows는 NTSTATUS, 그 밖은 신호를 보냈는지 ·
     실패한 까닭. 일시정지 뒤 끝나지 않는 실행에서 멈추기 · 다시 시작이 들었는지 가르려고 둔다 (#458).
+    Windows에서 실패한 NTSTATUS(0이 아님)는 warning으로 남긴다 — CI 출력에는 debug가 남지 않는다 (#505).
     """
     action = "멈추기" if suspended else "다시 시작"
     if process.poll() is not None:
@@ -225,7 +226,10 @@ def _set_suspended(process: subprocess.Popen, suspended: bool) -> bool:
         suspend, resume = _windows_process_api()
         status = (suspend if suspended else resume)(int(handle))
         # NTSTATUS — 0이 성공이다. 음수로 오는 실패 코드는 익숙한 0xC... 꼴로 적는다
-        logger.debug("ffmpeg %s pid=%s NTSTATUS=0x%08X", action, process.pid, status & 0xFFFFFFFF)
+        level = logging.DEBUG if status == 0 else logging.WARNING
+        logger.log(
+            level, "ffmpeg %s pid=%s NTSTATUS=0x%08X", action, process.pid, status & 0xFFFFFFFF
+        )
         return status == 0
     try:
         os.kill(process.pid, signal.SIGSTOP if suspended else signal.SIGCONT)
