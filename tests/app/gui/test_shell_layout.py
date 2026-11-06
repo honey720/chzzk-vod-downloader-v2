@@ -1,6 +1,6 @@
 """창 셸(창 최소폭 바닥·창 전체 좌우 스크롤 안전망·오버레이 좌표) 게이트 (#249).
 
-구조(ui/mainWindow.py):
+구조(app/views/mainWindow.py · setupUi):
 
     VodDownloader
     └ windowScrollArea   창 폭이 콘텐츠 최소폭보다 좁을 때만 좌우 스크롤 — 평소엔 안 보인다

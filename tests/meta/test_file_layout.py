@@ -32,10 +32,6 @@ SERVICE_PACKAGES = frozenset({"chzzk"})
 #: 이미 겹친 끝 이름 → (그 이름의 주인 전부, 이유). 주인이 하나라도 빠지면 여기서 고친다(남아 있으면
 #: 실패한다). 주인이 늘어난 것은 새 겹침이다 — 끝 이름만 적으면 같은 이름의 새 모듈이 예외로 지나간다.
 KNOWN_OVERLAPS: dict[str, tuple[frozenset[str], str]] = {
-    "mainWindow": (
-        frozenset({"app.views.mainWindow", "ui.mainWindow"}),
-        "ui.mainWindow는 uic 생성물 — 셸 개편 때 .ui를 없애며 풀린다",
-    ),
     "config": (
         frozenset({"config", "config.config"}),
         "config 패키지와 그 안의 모듈 — 2.12.0-rc1 뒤 app/config.py로 옮기며 풀린다",
