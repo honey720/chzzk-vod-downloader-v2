@@ -43,6 +43,7 @@ from app.system.platform_adapter import begin_background_work, end_background_wo
 from app.system.process_memory import log_process_memory
 from app.system.user_activity import user_interacting
 from app.viewmodels.data import ContentItem
+from app.viewmodels.footer_monitor import TransferReading, transfer_reading
 from app.viewmodels.section_edit import take_section_head, watch_section_head
 from app.viewmodels.staged_progress import StagedProgress
 from core.models.events import DownloadCounters, ProgressEvent
@@ -115,7 +116,8 @@ class DownloadViewModel(QObject):
     # 일어난다 — 스레드 축 게이트가 잡는다
     # 셋 다 시도 번호(start()마다 하나씩 오른다)를 싣는다 — 지금 시도의 것만 카드에 닿는다 (#410)
     # 진행 · 실패는 엔진이 실은 값 묶음(DownloadCounters)을, 실패는 안내 키(str | None)를 싣는다 (#484)
-    _engineProgress = Signal(int, str, str, str, int, object, object)
+    # 진행은 끝에 하단바 모니터링 값(TransferReading)을 싣는다 (#504)
+    _engineProgress = Signal(int, str, str, str, int, object, object, object)
     _engineFinished = Signal(int, object)
     _engineFailed = Signal(int, object, object)
     # 내부 전용: 병합 시작 · 상태 전이 — 아이템은 메인 스레드에서만 적는다 (#484)
@@ -145,6 +147,8 @@ class DownloadViewModel(QObject):
         self._data: DownloadData | None = None
         # 지금 시도의 마지막 값 묶음 — 엔진이 진행 · 실패 통지에 실어 보낸 카운터 (#484)
         self._counters: DownloadCounters | None = None
+        # 지금 시도의 마지막 하단바 값 — 진행 통지에서 뜬 속도 · 연결 수 · 남은 바이트 (#504)
+        self._reading: TransferReading | None = None
         # 실행 중인 다운로드가 무엇을 받아 어디에 쓰는지를 가리키는 값 — 일부 구간 실패로 끝나면
         # 남긴 것과 함께 아이템에 적어, 다음 다운로드가 같은 값일 때만 이어받게 한다
         self._resume_key: tuple | None = None
@@ -259,6 +263,7 @@ class DownloadViewModel(QObject):
                 data.content.mp4_head = moov
         self._data = data
         self._counters = None
+        self._reading = None
         item.transfer_bytes = None
         item.output_bytes = None
         item.preparing = False
@@ -306,6 +311,16 @@ class DownloadViewModel(QObject):
             return
         resume_key, resume = retry
         item.section_retry = (resume_key, resume.with_files_checked())
+
+    def transferReadings(self) -> list[TransferReading]:
+        """받는 중인 다운로드들의 하단바 값 — 받는 중이 아니면(일시정지 · 없음) 빈 목록 (#504).
+
+        받기 시작해 아직 진행 통지가 오지 않았으면(준비 중) 속도 · 연결 0, 남은 바이트를 모르는 값이다.
+        동시 다운로드가 하나뿐이라 많아야 하나다.
+        """
+        if self.task is None or self.task.state != DownloadState.RUNNING:
+            return []
+        return [self._reading or TransferReading()]
 
     def isPaused(self) -> bool:
         """지금의 다운로드가 일시정지 상태인지 — 엔진의 상태로 답한다."""
@@ -473,6 +488,7 @@ class DownloadViewModel(QObject):
                 progress,
                 item,
                 counters,
+                transfer_reading(event, counters, is_segment_based),
             )
 
         return relay
@@ -510,8 +526,9 @@ class DownloadViewModel(QObject):
         통지가 실은 값 묶음을 먼저 받아 둔다 — progress에 이어진 슬롯(구간 상태 · 준비 끝)이 읽는다.
         """
         if attempt == self._attempt:
-            *shown, counters = args
+            *shown, counters, reading = args
             self._counters = counters
+            self._reading = reading
             self.progress.emit(*shown)
 
     def _onEngineMerge(self, attempt: int) -> None:

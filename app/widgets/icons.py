@@ -38,6 +38,7 @@ import app.theme as theme
 #: 저장 위치 버튼이 "다르다"를 표시한다(#245, #309).
 #: scissors = 카드 위 줄의 구간 편집 버튼 — 가위(자를 구간을 정한다, #309).
 #: check = 하나만 고르는 메뉴의 고른 항목 표시(✓) — 헤더바 저장 위치 · 정렬 메뉴(#495).
+#: stop = 하단바의 중지(■) — 받는 중 · 일시정지 카드를 대기로 되돌린다(#504).
 ICON_NAMES = (
     "pause",
     "resume",
@@ -48,6 +49,7 @@ ICON_NAMES = (
     "delete",
     "scissors",
     "check",
+    "stop",
 )
 
 _CACHE: dict[tuple[str, str, int, float, str], QPixmap] = {}
@@ -228,6 +230,13 @@ def _paint_check(painter: QPainter, s: float, color: QColor, accent: QColor) -> 
     )
 
 
+def _paint_stop(painter: QPainter, s: float, color: QColor, accent: QColor) -> None:
+    """중지 — 꽉 찬 정사각형(■). 일시정지 막대 둘과 같은 높이로 맞춘다."""
+    _fill(painter, color)
+    radius = s * 0.08
+    painter.drawRoundedRect(QRectF(s * 0.10, s * 0.10, s * 0.80, s * 0.80), radius, radius)
+
+
 _PAINTERS = {
     "pause": _paint_pause,
     "resume": _paint_resume,
@@ -238,6 +247,7 @@ _PAINTERS = {
     "delete": _paint_delete,
     "scissors": _paint_scissors,
     "check": _paint_check,
+    "stop": _paint_stop,
 }
 
 
@@ -256,6 +266,7 @@ class IconButton(QPushButton):
         self._idle_token = "textMuted"
         self._hover_token = "text"
         self._accent_token = ""
+        self._glyph_metric = "actionGlyph"  # 도형 한 변의 크기 토큰(theme.METRICS 키)
         self._interactive = True
         self.setProperty("interactive", True)
         # 호버 진입·이탈에 다시 그리게 한다(QSS :hover 규칙이 없어도)
@@ -318,6 +329,21 @@ class IconButton(QPushButton):
         """강조색 토큰 이름(없으면 빈 문자열)."""
         return self._accent_token
 
+    def setGlyphMetric(self, key: str) -> None:
+        """도형 한 변의 크기 토큰(theme.METRICS 키)을 정한다 — 기본은 카드 조작의 `actionGlyph`.
+
+        하단바 버튼(#504)은 카드 버튼보다 큰 `barGlyph`를 쓴다.
+        """
+        if key not in theme.METRICS:
+            raise ValueError(f"알 수 없는 크기 토큰: {key!r}")
+        if key != self._glyph_metric:
+            self._glyph_metric = key
+            self.update()
+
+    def glyphSize(self) -> int:
+        """지금 그리는 도형 한 변(px)."""
+        return theme.METRICS[self._glyph_metric]
+
     def colorToken(self) -> str:
         """지금 도형에 쓸 색 토큰 — 비활성 > 호버 > 평소 순으로 정한다."""
         if not self.isEnabled():
@@ -330,7 +356,7 @@ class IconButton(QPushButton):
         super().paintEvent(event)
         if not self._icon_name:
             return
-        size = theme.METRICS["actionGlyph"]
+        size = self.glyphSize()
         tokens = theme.current_tokens()
         color = tokens[self.colorToken()]
         accent = tokens[self._accent_token] if self._accent_token else ""

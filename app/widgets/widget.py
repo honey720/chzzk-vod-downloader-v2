@@ -126,6 +126,23 @@ def path_display_parts(path: str, home: str | None = None) -> tuple[str, str, st
     return full, prefix, segments[-1]
 
 
+def short_time(remain: str) -> str:
+    """"HH:MM:SS" 시간을 짧은 표시("3:12")로 줄인다 — 표시 정책.
+
+    카드의 진행 중 남은 시간 · 완료의 소요 시간(#245)과 하단바의 남은 시간(#504)이 같은 표기를
+    쓴다. 계산 자체는 viewmodel(app/viewmodels/download_viewmodel.py)이 ProgressEvent 값으로
+    이미 해 둔 것을 받는다(core 무관) — 여기서는 표기만 줄인다.
+    형식이 예상 밖이면("N/A" 등) 받은 그대로 보여준다.
+    """
+    parts = remain.split(":")
+    if len(parts) != 3 or not all(p.isdigit() for p in parts):
+        return remain
+    hours, minutes, seconds = (int(p) for p in parts)
+    if hours:
+        return f"{hours}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes}:{seconds:02d}"
+
+
 def _resolution_key(resolution) -> int:
     """해상도 값을 정렬용 정수로 — API는 int(min(w,h))를 주지만 문자열("1080")도 받는다."""
     try:
@@ -1086,21 +1103,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.sectionEditRequest.emit()
 
     def _shortRemain(self, remain: str) -> str:
-        """"HH:MM:SS" 시간을 짧은 표시("3:12")로 줄인다 — 표시 정책.
-
-        진행 중의 남은 시간과 완료의 소요 시간이 같은 포맷을 쓴다(#245).
-
-        계산 자체는 viewmodel(app/viewmodels/download_viewmodel.py)이 ProgressEvent 값으로
-        이미 해 둔 것을 받는다(core 무관) — 여기서는 표기만 줄인다.
-        형식이 예상 밖이면("N/A" 등) 받은 그대로 보여준다.
-        """
-        parts = remain.split(":")
-        if len(parts) != 3 or not all(p.isdigit() for p in parts):
-            return remain
-        hours, minutes, seconds = (int(p) for p in parts)
-        if hours:
-            return f"{hours}:{minutes:02d}:{seconds:02d}"
-        return f"{minutes}:{seconds:02d}"
+        """"HH:MM:SS" 시간을 짧은 표시("3:12")로 줄인다 — 표기는 `short_time`."""
+        return short_time(remain)
 
     def setData(self, item: ContentItem, index: int):
         """✅ 모델 데이터를 위젯에 반영 — 3행 슬롯 텍스트는 상태별로 다르다 (#245).

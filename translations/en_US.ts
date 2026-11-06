@@ -400,6 +400,48 @@ Part of the video kept arriving incomplete from the server. Try again later.</tr
     </message>
 </context>
 <context>
+    <name>FooterMonitor</name>
+    <message>
+        <source>Speed · {0}</source>
+        <translation>Speed · {0}</translation>
+    </message>
+    <message>
+        <source>Connections {0}</source>
+        <translation>Connections {0}</translation>
+    </message>
+    <message>
+        <source>Connections · {0}</source>
+        <translation>Connections · {0}</translation>
+    </message>
+    <message>
+        <source>Memory {0}</source>
+        <translation>Memory {0}</translation>
+    </message>
+    <message>
+        <source>Memory · {0}</source>
+        <translation>Memory · {0}</translation>
+    </message>
+    <message>
+        <source>Free {0}</source>
+        <translation>Free {0}</translation>
+    </message>
+    <message>
+        <source>Free space · {0}</source>
+        <translation>Free space · {0}</translation>
+    </message>
+</context>
+<context>
+    <name>RunResultLabel</name>
+    <message>
+        <source>Completed {0}</source>
+        <translation>Completed {0}</translation>
+    </message>
+    <message>
+        <source>Failed {0}</source>
+        <translation>Failed {0}</translation>
+    </message>
+</context>
+<context>
     <name>SaveLocationButton</name>
     <message>
         <source>(missing)</source>
@@ -741,10 +783,6 @@ Check your connection and cookies, then open this window again.</translation>
         <translation>Path does not exist.</translation>
     </message>
     <message>
-        <source>Pause</source>
-        <translation>Pause</translation>
-    </message>
-    <message>
         <source>Download</source>
         <translation>Download</translation>
     </message>
@@ -767,6 +805,14 @@ Check your connection and cookies, then open this window again.</translation>
     <message>
         <source>Download is in progress. Do you want to quit?</source>
         <translation>Download is in progress. Do you want to quit?</translation>
+    </message>
+    <message>
+        <source>Resume</source>
+        <translation>Resume</translation>
+    </message>
+    <message>
+        <source>Pause all</source>
+        <translation>Pause all</translation>
     </message>
     <message>
         <source>Completed</source>

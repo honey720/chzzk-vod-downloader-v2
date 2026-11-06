@@ -179,7 +179,7 @@ class TestRetryOnlyReturnsToWaiting:
         assert item.stateMessage == "" and item.download_progress == 0
         assert started == [], f"재시도가 다운로드를 시작했다: {started}"
         assert not win.downloadViewModel.isDownloading(), "재시도 뒤 다운로드 핸들이 생겼다"
-        assert win.downloadButton.text() != win.tr("Pause"), "전역 버튼이 진행 중 표기로 바뀌었다"
+        assert win.downloadButton.toolTip() == "Download", "전역 버튼이 진행 중 표기로 바뀌었다"
 
     def test_the_global_button_then_takes_the_reverted_card_through_the_normal_path(
         self, tmp_path, started

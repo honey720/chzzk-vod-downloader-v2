@@ -76,6 +76,14 @@ QLabel#registerErrorLabel {
     color: @stateFailed;
 }
 
+/* 하단바 모니터링 · 실행 결과(#504 — 셸 S2). 보조 글이라 카드의 메타 글과 같은 크기 · 색이다.
+ * 라벨은 app/widgets/footer_bar.py가 만든다. */
+QLabel#footerMonitor,
+QLabel#footerResult {
+    font-size: @fontSizeMeta;
+    color: @textMuted;
+}
+
 /* ---------- 카드 목록 ---------- */
 
 QScrollArea#listView {

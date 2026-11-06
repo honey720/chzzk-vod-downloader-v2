@@ -19,8 +19,10 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import QMargins, QMetaObject, QPoint, QRect, QSize, QStandardPaths, Qt, QTimer
 
-from app.system.process_memory import log_process_memory
+from app.system.free_space import FreeSpaceProbe
+from app.system.process_memory import log_process_memory, resident_bytes
 from app.viewmodels.download_viewmodel import DownloadViewModel
+from app.viewmodels.footer_monitor import RunResult, combine_readings
 from app.viewmodels.path_gates import check_fetch_path
 from app.viewmodels.save_location import SaveLocations
 from app.views.dialog import SettingDialog
@@ -31,7 +33,9 @@ from app.viewmodels.content_viewmodel import ContentViewModel
 import config.config as config
 from app.widgets import widget as content_widget
 from app.widgets.eliding_label import ElidingLabel
+from app.widgets.footer_bar import FooterMonitor, RunResultLabel
 from app.widgets.header_controls import BusyButton, FilterChips, SaveLocationButton, SortButton
+from app.widgets.icons import IconButton
 from app.widgets.view import ContentListView
 from core.models.download_state import DownloadState
 import app.theme as theme
@@ -40,6 +44,7 @@ logger = logging.getLogger(__name__)
 
 FRAME_RETRY_MS = 50  # 표시 뒤 프레임 여백을 다시 보는 간격(ms) — X11 창 관리자는 테두리를 표시 뒤 비동기로 붙인다 (#487)
 FRAME_RETRIES = 10  # 그만큼(약 0.5초) 기다려도 여백이 없으면 그만둔다 — 창 관리자가 없는 X 서버 등
+MONITOR_INTERVAL_MS = 1000  # 하단바 모니터링을 고치는 간격(ms) — 설계 §2 「1초마다」 (#504)
 # 창 제목의 앱 이름 — 번역하지 않는다. 앱 데이터 폴더 이름(app/system/settings.py APP_NAME)과 따로 둔다:
 # 표시 이름을 바꿔도 데이터 폴더가 그대로라 설정을 잃지 않는다 (#492)
 APP_DISPLAY_NAME = "Chzzk VOD Downloader"
@@ -169,6 +174,16 @@ class VodDownloader(QMainWindow):
         # 다운로드 이벤트(진행·완료·실패)는 viewmodel이 content에 직결한다 (#170)
         # — 구 릴레이 슬롯 6개(_onProgress~_onFailed)는 함께 제거됐다
         self.downloadViewModel = DownloadViewModel(self.contentManager, parent=self)
+        # 하단바(#504) — 실행 결과 · 여유 공간 측정 · 1초마다 모니터링
+        self.runResult = RunResult(self.contentManager.model, self.contentManager.order, self)
+        self.runResult.changed.connect(self._showRunResult)
+        self.freeSpace = FreeSpaceProbe(self)
+        self.freeSpace.measured.connect(self._onFreeSpaceMeasured)
+        self.monitorTimer = QTimer(self)
+        self.monitorTimer.setInterval(MONITOR_INTERVAL_MS)
+        self.monitorTimer.timeout.connect(self._tickFooter)
+        self.monitorTimer.start()
+        self._tickFooter()  # 첫 1초를 기다리지 않고 여유 공간을 잰다
         # 열려 있는 구간 편집 창과 그 카드 (#309) — 창은 한 번에 하나다
         self._sectionDialog: SectionEditDialog | None = None
         self._sectionEditItem: ContentItem | None = None
@@ -319,12 +334,26 @@ class VodDownloader(QMainWindow):
         self.infoLayout.setSpacing(8)
         self.infoLayout.setObjectName("infoLayout")
         # 하단 「Downloads: x/y」 카운트는 없앴다 — 헤더바 상태 칩의 숫자가 대신한다(#495)
+        # 하단바(#504 — 셸 S2): [모니터링 다섯 칸] …… [실행 결과][▶/‖][■]
+        self.footerMonitor = FooterMonitor(self.infoFrame)
+        self.footerMonitor.setObjectName("footerMonitor")
+        self.infoLayout.addWidget(self.footerMonitor)
         self.infoLayout.addStretch(1)
-        self.downloadButton = QPushButton(self.infoFrame)
+        # 실행 결과는 다운로드 버튼 바로 왼쪽 — 모니터링 글을 밀어내지 않는다(설계 §12.1)
+        self.runResultLabel = RunResultLabel(self.infoFrame)
+        self.infoLayout.addWidget(self.runResultLabel)
+        # 버튼은 아이콘만, 글은 툴팁(설계 §2). 다운로드는 강조색 채움이라 도형은 채움 안 글 색이다
+        self.downloadButton = IconButton(self.infoFrame)
         self.downloadButton.setObjectName("downloadButton")
+        self.downloadButton.setGlyphMetric("barGlyph")
+        self.downloadButton.setIdleToken("onAccent")
+        self.downloadButton.setHoverToken("onAccent")
+        self.downloadButton.setIconName("resume")
         self.infoLayout.addWidget(self.downloadButton)
-        self.stopButton = QPushButton(self.infoFrame)
+        self.stopButton = IconButton(self.infoFrame)
         self.stopButton.setObjectName("stopButton")
+        self.stopButton.setGlyphMetric("barGlyph")
+        self.stopButton.setIconName("stop")
         self.stopButton.setEnabled(False)
         self.infoLayout.addWidget(self.stopButton)
 
@@ -364,8 +393,9 @@ class VodDownloader(QMainWindow):
         self.urlInput.setPlaceholderText(self.tr("Enter Chzzk URL"))
         self.fetchButton.setText(self.tr("Add VOD"))
         self.clearFinishedButton.setText(self.tr("Clear Finished"))
-        self.downloadButton.setText(self.tr("Download"))
-        self.stopButton.setText(self.tr("Stop"))
+        # 하단 버튼은 아이콘만 — 이름은 툴팁이다(#504). 다운로드 버튼의 이름은 상태를 따른다
+        self.downloadButton.setToolTip(self.tr("Download"))
+        self.stopButton.setToolTip(self.tr("Stop"))
 
     def setupDynamicUi(self):
         """
@@ -404,6 +434,7 @@ class VodDownloader(QMainWindow):
         self.headerFrameLayout.setContentsMargins(frame_pad, frame_pad, frame_pad, frame_pad)
         self.infoLayout.setContentsMargins(frame_pad, frame_pad, frame_pad, frame_pad)
         self._equalizeHeaderButtons()
+        self._squareFooterButtons()
         # 헤더바 2줄의 칩 · 정렬 버튼 폭(숫자 세 자리 · 가장 긴 이름) — 창 최소폭 계산 전에 건다
         self.filterChipBar.applyWidth()
         self.sortButton.applyWidth()
@@ -623,6 +654,17 @@ class VodDownloader(QMainWindow):
         # [VOD 추가]는 도는 표시 자리를 늘 잡아 둔 폭이다 — 돌기 시작해도 폭 · 글 자리가 그대로(#495)
         self.fetchButton.setFixedWidth(self.fetchButton.reservedWidth())
 
+    def _squareFooterButtons(self) -> None:
+        """하단 아이콘 버튼 둘을 글 버튼의 높이인 정사각으로 건다 (#504).
+
+        높이는 같은 QSS의 글 버튼 높이(글꼴 · 안쪽 여백을 따른다)라 하단바 높이가 글 버튼일 때와 같다.
+        폭은 그 높이와 같다 — 글이 없어 폭 힌트가 안쪽 여백뿐이기 때문이다.
+        """
+        for button in (self.downloadButton, self.stopButton):
+            button.ensurePolished()
+            side = button.sizeHint().height()
+            button.setFixedSize(side, side)
+
     def _showRegisterError(self, text: str) -> None:
         """등록 오류를 URL 칸 아래 줄에 띄우고 URL 칸 테두리를 빨강으로 한다 (#495 — 설계 §12.1).
 
@@ -824,8 +866,7 @@ class VodDownloader(QMainWindow):
                 self.downloadViewModel.resume()
             else:
                 self.downloadViewModel.pause()
-            paused = self.downloadViewModel.isPaused()
-            self.downloadButton.setText(self.tr('Download') if paused else self.tr('Pause'))
+            self._syncDownloadButton()
         else:
             if not self.contentManager.findItem()[0]:
                 # 조회 중인 아이템만 있는 경우와 아무것도 없는 경우를 구분해 안내 (#124)
@@ -834,8 +875,8 @@ class VodDownloader(QMainWindow):
                 else:
                     QMessageBox.warning(self, self.tr("Warning"), self.tr("No VODs added."))
                 return
-            self.downloadButton.setText(self.tr('Pause'))
             self.contentManager.downloadItem()
+            self._syncDownloadButton()
     
     def onSetting(self):
         """
@@ -852,6 +893,9 @@ class VodDownloader(QMainWindow):
         path = self.saveLocations.current()
         logger.info("저장 위치 고름: %r", path)
         content_widget.set_global_download_path(path)
+        # 하단바 여유 공간은 새 위치의 것으로 — 다 재면 _onFreeSpaceMeasured가 보인다 (#504)
+        self.freeSpace.request(path)
+        self._showFooter()
 
 
     def onStop(self):
@@ -872,16 +916,62 @@ class VodDownloader(QMainWindow):
 
     def stopDownload(self):
         self.downloadViewModel.stop()
-        self.downloadButton.setText(self.tr('Download'))
         self.setStopButtonEnable(False)
         self.downloadViewModel.removeThreads()
+        self._syncDownloadButton()
+
+    def _syncDownloadButton(self) -> None:
+        """다운로드 버튼의 도형 · 이름(툴팁)을 엔진의 상태에 맞춘다 (#504 — 설계 §2 ▶ ↔ ‖).
+
+        받는 중이면 ‖ 「모두 일시정지」, 일시정지면 ▶ 「이어 받기」, 아니면 ▶ 「다운로드」. 버튼의 지금
+        모양이 아니라 엔진의 상태로 정한다(#309 — 쌓인 클릭에도 엔진이 바뀐 만큼만 따른다).
+        하단바 모니터링도 바로 고친다 — 받기 시작 · 일시정지가 다음 1초를 기다리지 않는다.
+        """
+        if self.downloadViewModel.isDownloading():
+            if self.downloadViewModel.isPaused():
+                icon, tip = "resume", self.tr("Resume")
+            else:
+                icon, tip = "pause", self.tr("Pause all")
+        else:
+            icon, tip = "resume", self.tr("Download")
+        self.downloadButton.setIconName(icon)
+        self.downloadButton.setToolTip(tip)
+        self._showFooter()
+
+    def _tickFooter(self) -> None:
+        """1초마다 — 여유 공간을 다시 재게 하고 하단바 모니터링을 고친다 (#504)."""
+        self.freeSpace.request(self.saveLocations.current())
+        self._showFooter()
+
+    def _showFooter(self) -> None:
+        """하단바 모니터링을 지금 값으로 고친다 — 하단바 라벨만 만지고 목록은 건드리지 않는다.
+
+        속도 · 남은 시간 · 연결 수는 엔진의 진행 통지에서 뜬 값(`transferReadings`), 메모리는 앱
+        프로세스의 메모리, 여유 공간은 저장 위치 버튼의 지금 위치를 마지막으로 잰 값이다.
+        """
+        readings = self.downloadViewModel.transferReadings()
+        memory = resident_bytes() if readings else None
+        free = self.freeSpace.value(self.saveLocations.current())
+        self.footerMonitor.setSnapshot(combine_readings(readings, memory, free))
+
+    def _onFreeSpaceMeasured(self, path: str, _free) -> None:
+        """여유 공간을 다 쟀다 — 지금 위치의 것이면 바로 보인다."""
+        if path == self.saveLocations.current():
+            self._showFooter()
+
+    def _showRunResult(self) -> None:
+        """실행 결과가 바뀌었다 — 하단바 결과 글을 고친다 (#504)."""
+        finished, failed = self.runResult.counts()
+        self.runResultLabel.showResult(self.runResult.isShown(), finished, failed)
 
     def onDownloadAllFinished(self):
         """
         모든 메타데이터 카드 다운로드 완료 콜백.
         """
-        self.downloadButton.setText(self.tr('Download'))
         self.setStopButtonEnable(False)
+        self._syncDownloadButton()
+        # 하단바 실행 결과 — 끝났다는 안내(대화상자)를 띄우기 전에 보인다 (#504)
+        self.runResult.finish()
         
         os_type = platform.system()
 
@@ -936,6 +1026,7 @@ class VodDownloader(QMainWindow):
         self.contentManager.start(item)
         self.downloadViewModel.start(item)
         self.setStopButtonEnable(True)
+        self._syncDownloadButton()
 
     def closeEvent(self, event):
         """
