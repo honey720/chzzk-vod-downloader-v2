@@ -150,30 +150,31 @@ def _independent_content_minimum(win: VodDownloader) -> int:
     """콘텐츠 열 최소폭을 leaf 위젯 힌트로 **독립 합산**한다(제품의 `_contentMinimumWidth` 미사용).
 
     메뉴바(#492): 「VOD 다운」 + 간격 + 「설정」(메뉴바 프레임은 테두리 · 안쪽 여백 0).
-    헤더바(#492 · #495 — 1줄): URL 입력 + 저장 위치 버튼 + VOD 추가 + 간격 2개 + 프레임 안쪽 여백·테두리.
-    하단바: 라벨 + 완료 삭제 + 다운로드 + 중지 + 간격 3개 + 프레임 안쪽 여백·테두리.
+    헤더바(#492 · #495): max(1줄 URL 입력 + 저장 위치 버튼 + VOD 추가 + 간격 2개,
+    2줄 칩 여섯 + 칩 사이 간격 + 정렬 버튼 + 간격) + 프레임 안쪽 여백·테두리.
+    하단바: 완료 삭제 + 다운로드 + 중지 + 간격 2개 + 프레임 안쪽 여백·테두리(#495 — 카운트 없음).
     열 = max(메뉴바 · 헤더바 · 하단바 각각 + 좌우 outerMargin, 목록 최소).
     좌우 outerMargin은 세 바의 행에만 붙고 목록은 창 끝까지 간다(v2.10.1).
-    하단 라벨 항은 지금 글자가 아니라 예약 기준(`999/999`)의 폭이다 — 자릿수가 늘어도
-    하단 바 최소폭이 안 변하는 것이 규칙이므로, 라벨에 그 문자열을 직접 넣어 잰다.
     """
     pad, outer = theme.METRICS["framePadding"], theme.METRICS["outerMargin"]
-    label = win.downloadCountLabel
-    shown = label.text()
-    label.setText(win.tr("Downloads: {}/{}").format(999, 999))
-    label_reserve = label.minimumSizeHint().width()
-    label.setText(shown)
     border = win.headerFrame.frameWidth()
     line = (win.urlInput, win.saveLocationButton, win.fetchButton)
-    header = sum(_leaf_min(w) for w in line) + 2 * win.urlRowLayout.spacing()
-    header += 2 * (pad + border)
+    first = sum(_leaf_min(w) for w in line) + 2 * win.urlRowLayout.spacing()
+    chips = list(win.filterChips.values())
+    second = (
+        sum(_leaf_min(w) for w in chips)
+        + (len(chips) - 1) * win.filterChipBar.layout().spacing()
+        + win.filterRowLayout.spacing()
+        + _leaf_min(win.sortButton)
+    )
+    header = max(first, second) + 2 * (pad + border)
     menu = (
         _leaf_min(win.menuDownloadButton)
         + win.appMenuLayout.spacing()
         + _leaf_min(win.menuSettingsButton)
     )
     info_gap = win.infoLayout.spacing()
-    info = label_reserve + sum(
+    info = sum(
         _leaf_min(w)
         for w in (
             win.clearFinishedButton,
@@ -181,7 +182,7 @@ def _independent_content_minimum(win: VodDownloader) -> int:
             win.stopButton,
         )
     )
-    info += 3 * info_gap + 2 * (pad + border)
+    info += 2 * info_gap + 2 * (pad + border)  # 간격 둘 — 빈칸(크기 0)은 간격을 받지 않는다
     return max(
         menu + 2 * outer, header + 2 * outer, info + 2 * outer, win.listView.minimumSizeHint().width()
     )
@@ -385,12 +386,13 @@ class TestWindowMinimumWidthHasAContentFloor:
                     win.urlInput,
                     win.saveLocationButton,
                     win.fetchButton,
+                    *win.filterChips.values(),
+                    win.sortButton,
                 ),
             ),
             (
                 win.infoFrame,
                 (
-                    win.downloadCountLabel,
                     win.clearFinishedButton,
                     win.downloadButton,
                     win.stopButton,
@@ -408,7 +410,10 @@ class TestWindowMinimumWidthHasAContentFloor:
         )
 
     def test_the_floor_is_asked_from_the_layout_not_a_constant(self, monkeypatch):
-        """콘텐츠가 넓어지면 바닥도 따라간다 — 하단 버튼을 300px 넓히면 콘텐츠 최소 계산이 그만큼 커져야 한다.
+        """콘텐츠가 넓어지면 바닥도 따라간다 — 하단 버튼을 (지금 바닥 + 300px)만큼 넓히면 콘텐츠 최소 계산이 바닥 + 300px 이상이어야 한다.
+
+        하단바는 가장 넓은 칸이 아닐 수 있다(#495 — 헤더바 2줄 칩 줄이 더 넓다). 지금 바닥만큼 더 넓혀
+        하단바가 확실히 가장 넓은 칸이 되게 한 뒤 잰다.
 
         창 최소 크기는 생성 시점에 한 번 정해지므로, 계산 자체(`_contentMinimumWidth`)가
         레이아웃을 읽는지를 본다. 상수를 박았다면 버튼을 넓혀도 움직이지 않는다.
@@ -418,7 +423,7 @@ class TestWindowMinimumWidthHasAContentFloor:
         win.show()
         QApplication.processEvents()
         base = win.minimumWidth()
-        win.stopButton.setMinimumWidth(win.stopButton.width() + 300)
+        win.stopButton.setMinimumWidth(win.stopButton.width() + base + 300)
         QApplication.processEvents()
         recomputed = win._contentMinimumWidth()
         assert recomputed >= base + 300, (

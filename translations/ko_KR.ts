@@ -368,6 +368,33 @@ Part of the video kept arriving incomplete from the server. Try again later.</so
     </message>
 </context>
 <context>
+    <name>FilterChips</name>
+    <message>
+        <source>All</source>
+        <translation>전체</translation>
+    </message>
+    <message>
+        <source>Waiting</source>
+        <translation>대기</translation>
+    </message>
+    <message>
+        <source>In progress</source>
+        <translation>진행</translation>
+    </message>
+    <message>
+        <source>Paused</source>
+        <translation>일시정지</translation>
+    </message>
+    <message>
+        <source>Finished</source>
+        <translation>완료</translation>
+    </message>
+    <message>
+        <source>Failed</source>
+        <translation>실패</translation>
+    </message>
+</context>
+<context>
     <name>SaveLocationButton</name>
     <message>
         <source>(missing)</source>
@@ -653,6 +680,37 @@ Check your connection and cookies, then open this window again.</source>
     </message>
 </context>
 <context>
+    <name>SortButton</name>
+    <message>
+        <source>Added order</source>
+        <translation>추가된 순서</translation>
+    </message>
+    <message>
+        <source>Title</source>
+        <translation>제목순</translation>
+    </message>
+    <message>
+        <source>Channel</source>
+        <translation>채널명순</translation>
+    </message>
+    <message>
+        <source>Upload date</source>
+        <translation>업로드순</translation>
+    </message>
+    <message>
+        <source>Status</source>
+        <translation>상태순</translation>
+    </message>
+    <message>
+        <source>Ascending</source>
+        <translation>오름차순</translation>
+    </message>
+    <message>
+        <source>Descending</source>
+        <translation>내림차순</translation>
+    </message>
+</context>
+<context>
     <name>TimecodeEdit</name>
     <message>
         <source>Copy</source>
@@ -740,10 +798,6 @@ Check your connection and cookies, then open this window again.</source>
     <message>
         <source>Download completed.</source>
         <translation>다운로드를 완료했습니다.</translation>
-    </message>
-    <message>
-        <source>Downloads: {}/{}</source>
-        <translation>다운로드: {}/{}</translation>
     </message>
     <message>
         <source>Settings</source>

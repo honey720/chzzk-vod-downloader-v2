@@ -373,6 +373,33 @@ Part of the video kept arriving incomplete from the server. Try again later.</tr
     </message>
 </context>
 <context>
+    <name>FilterChips</name>
+    <message>
+        <source>All</source>
+        <translation>All</translation>
+    </message>
+    <message>
+        <source>Waiting</source>
+        <translation>Waiting</translation>
+    </message>
+    <message>
+        <source>In progress</source>
+        <translation>In progress</translation>
+    </message>
+    <message>
+        <source>Paused</source>
+        <translation>Paused</translation>
+    </message>
+    <message>
+        <source>Finished</source>
+        <translation>Finished</translation>
+    </message>
+    <message>
+        <source>Failed</source>
+        <translation>Failed</translation>
+    </message>
+</context>
+<context>
     <name>SaveLocationButton</name>
     <message>
         <source>(missing)</source>
@@ -658,6 +685,37 @@ Check your connection and cookies, then open this window again.</translation>
     </message>
 </context>
 <context>
+    <name>SortButton</name>
+    <message>
+        <source>Added order</source>
+        <translation>Added order</translation>
+    </message>
+    <message>
+        <source>Title</source>
+        <translation>Title</translation>
+    </message>
+    <message>
+        <source>Channel</source>
+        <translation>Channel</translation>
+    </message>
+    <message>
+        <source>Upload date</source>
+        <translation>Upload date</translation>
+    </message>
+    <message>
+        <source>Status</source>
+        <translation>Status</translation>
+    </message>
+    <message>
+        <source>Ascending</source>
+        <translation>Ascending</translation>
+    </message>
+    <message>
+        <source>Descending</source>
+        <translation>Descending</translation>
+    </message>
+</context>
+<context>
     <name>TimecodeEdit</name>
     <message>
         <source>Copy</source>
@@ -745,10 +803,6 @@ Check your connection and cookies, then open this window again.</translation>
     <message>
         <source>Download completed.</source>
         <translation>Download completed.</translation>
-    </message>
-    <message>
-        <source>Downloads: {}/{}</source>
-        <translation>Downloads: {}/{}</translation>
     </message>
     <message>
         <source>Settings</source>

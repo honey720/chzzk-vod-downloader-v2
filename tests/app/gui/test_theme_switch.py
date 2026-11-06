@@ -176,13 +176,15 @@ class Scene:
             "header.fetchButton": w.fetchButton,
             "header.saveLocationButton": w.saveLocationButton,
             "header.linkStatusLabel": w.linkStatusLabel,
+            "header.sortButton": w.sortButton,
             "list.viewport": w.listView.viewport(),
             "footer.frame": w.infoFrame,
-            "footer.downloadCountLabel": w.downloadCountLabel,
             "footer.clearFinishedButton": w.clearFinishedButton,
             "footer.downloadButton": w.downloadButton,
             "footer.stopButton": w.stopButton,
         }
+        for key, chip in w.filterChips.items():  # 헤더바 2줄 상태 칩(#495) — 고른 칩 · 실패 강조 포함
+            parts[f"header.chip[{key}]"] = chip
         for state in STATES:
             card = self.card(state)
             prefix = f"card[{state.name.lower()}]"
@@ -346,7 +348,6 @@ class TestFaultInjection:
         stale = _differences(fresh, switched)
         # 글자색은 QSS가 아니라 팔레트(WindowText)가 칠한다 — 라벨들이 낡은 색으로 남는다
         assert "header.linkStatusLabel" in stale
-        assert "footer.downloadCountLabel" in stale
         assert "card[waiting].title" in stale
         assert "card[waiting].pathLabel" in stale
 

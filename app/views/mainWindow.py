@@ -9,13 +9,12 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QLineEdit,
     QMainWindow,
     QMessageBox,
     QPushButton,
     QScrollArea,
-    QSizePolicy,
-    QSpacerItem,
     QVBoxLayout,
     QWidget,
 )
@@ -32,7 +31,7 @@ from app.viewmodels.data import ContentItem
 from app.viewmodels.content_viewmodel import ContentViewModel
 import config.config as config
 from app.widgets import widget as content_widget
-from app.widgets.header_controls import SaveLocationButton
+from app.widgets.header_controls import FilterChips, SaveLocationButton, SortButton
 from app.widgets.view import ContentListView
 from core.models.download_state import DownloadState
 import app.theme as theme
@@ -111,9 +110,9 @@ class VodDownloader(QMainWindow):
     클래스 이름(`VodDownloader`)이다 — 클래스 이름이나 원문을 글자 하나 바꾸면 `lupdate -no-obsolete`가
     기존 번역을 지운다.
 
-    창은 위에서 아래로 네 칸이다(#492 — 2.12.0 셸 S0): 메뉴바(VOD 다운 · 설정) · 헤더바(URL 입력 ·
-    저장 위치 입력과 찾기 · 등록, 조회 상태 한 줄) · 목록 · 하단바(왼쪽 카운트 · 완료 지우기, 오른쪽 끝
-    다운로드 · 중지). 모양(색 · 간격 · 글자)은 셸 전과 같다.
+    창은 위에서 아래로 네 칸이다(#492 — 2.12.0 셸 S0): 메뉴바(VOD 다운 · 설정) · 헤더바(1줄 URL 입력 ·
+    저장 위치 버튼 · 등록, 조회 상태 한 줄, 2줄 상태 칩 · 정렬 — #495) · 목록 · 하단바(완료 지우기,
+    오른쪽 끝 다운로드 · 중지).
     """
 
     def __init__(self, parent=None):
@@ -164,6 +163,9 @@ class VodDownloader(QMainWindow):
 
         self.contentManager = ContentViewModel(parent=self)
         self.listView.bind(self.contentManager)
+        # 헤더바 2줄 — 칩 숫자 · 고른 칩 · 정렬을 순서 뷰모델에 잇는다(#495)
+        self.filterChipBar.bind(self.contentManager.order)
+        self.sortButton.bind(self.contentManager.order)
         # 다운로드 이벤트(진행·완료·실패)는 viewmodel이 content에 직결한다 (#170)
         # — 구 릴레이 슬롯 6개(_onProgress~_onFailed)는 함께 제거됐다
         self.downloadViewModel = DownloadViewModel(self.contentManager, parent=self)
@@ -271,6 +273,21 @@ class VodDownloader(QMainWindow):
         self.linkStatusLabel.setObjectName("linkStatusLabel")
         self.headerFrameLayout.addWidget(self.linkStatusLabel)
 
+        # 헤더바 2줄(#495 — 셸 S1): [상태 칩 여섯][정렬 ▾] ……
+        # 칩 · 정렬 버튼은 고정 폭이다(숫자 세 자리 · 가장 긴 정렬 이름) — 남는 폭은 줄 끝 빈칸이 받는다
+        self.filterRowLayout = QHBoxLayout()
+        self.filterRowLayout.setSpacing(8)
+        self.filterRowLayout.setObjectName("filterRowLayout")
+        self.filterChipBar = FilterChips(self.headerFrame)
+        self.filterChipBar.setObjectName("filterChipBar")
+        self.filterChips = self.filterChipBar.chips
+        self.filterRowLayout.addWidget(self.filterChipBar)
+        self.sortButton = SortButton(self.headerFrame)
+        self.sortButton.setObjectName("sortButton")
+        self.filterRowLayout.addWidget(self.sortButton)
+        self.filterRowLayout.addStretch(1)
+        self.headerFrameLayout.addLayout(self.filterRowLayout)
+
         # 상단·하단 바는 각자 행(headerRow·infoRow)에 담아 좌우 outerMargin을 그 행이
         # 지게 한다 — 열(centralWidgetLayout)은 좌우 여백이 0이라 사이의 카드 목록이
         # 창 끝까지 간다(v2.10.1). 여백 값은 _applyLayoutMetrics가 런타임에 건다.
@@ -291,17 +308,12 @@ class VodDownloader(QMainWindow):
         self.infoLayout = QHBoxLayout(self.infoFrame)
         self.infoLayout.setSpacing(8)
         self.infoLayout.setObjectName("infoLayout")
-        self.downloadCountLabel = QLabel(self.infoFrame)
-        self.downloadCountLabel.setObjectName("downloadCountLabel")
-        self.infoLayout.addWidget(self.downloadCountLabel)
+        # 하단 「Downloads: x/y」 카운트는 없앴다 — 헤더바 상태 칩의 숫자가 대신한다(#495)
         self.clearFinishedButton = QPushButton(self.infoFrame)
         self.clearFinishedButton.setObjectName("clearFinishedButton")
         self.clearFinishedButton.setProperty("role", "subtle")
         self.infoLayout.addWidget(self.clearFinishedButton)
-        self.horizontalSpacer = QSpacerItem(
-            0, 0, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
-        )
-        self.infoLayout.addItem(self.horizontalSpacer)
+        self.infoLayout.addStretch(1)
         self.downloadButton = QPushButton(self.infoFrame)
         self.downloadButton.setObjectName("downloadButton")
         self.infoLayout.addWidget(self.downloadButton)
@@ -322,7 +334,12 @@ class VodDownloader(QMainWindow):
         QWidget.setTabOrder(self.menuSettingsButton, self.urlInput)
         QWidget.setTabOrder(self.urlInput, self.saveLocationButton)
         QWidget.setTabOrder(self.saveLocationButton, self.fetchButton)
-        QWidget.setTabOrder(self.fetchButton, self.listView)
+        QWidget.setTabOrder(self.fetchButton, self.filterChips["all"])
+        chips = list(self.filterChips.values())
+        for before, after in zip(chips, chips[1:]):
+            QWidget.setTabOrder(before, after)
+        QWidget.setTabOrder(chips[-1], self.sortButton)
+        QWidget.setTabOrder(self.sortButton, self.listView)
         QWidget.setTabOrder(self.listView, self.clearFinishedButton)
         QWidget.setTabOrder(self.clearFinishedButton, self.downloadButton)
         QWidget.setTabOrder(self.downloadButton, self.stopButton)
@@ -340,7 +357,6 @@ class VodDownloader(QMainWindow):
         self.menuSettingsButton.setText(self.tr("Settings"))
         self.urlInput.setPlaceholderText(self.tr("Enter Chzzk URL"))
         self.fetchButton.setText(self.tr("Add VOD"))
-        self.downloadCountLabel.setText(self.tr("Downloads: {}/{}"))
         self.clearFinishedButton.setText(self.tr("Clear Finished"))
         self.downloadButton.setText(self.tr("Download"))
         self.stopButton.setText(self.tr("Stop"))
@@ -349,15 +365,13 @@ class VodDownloader(QMainWindow):
         """
         UI 동적 설정을 수행한다.
         """
-        self.total_downloads = 0
-        self.completed_downloads = 0
+
         # 저장 위치 — 늘 기본 저장 위치로 시작한다(#495, 오너 2026-11-05). 고른 위치는 최근에 남는다
         self.saveLocations = SaveLocations(_default_download_path(), self)
         self.saveLocationButton.bind(self.saveLocations)
         # 카드의 "경로는 전역 설정과 다를 때만 표시" 판단 기준(#245) — 시작 때와 위치를 고를 때마다
         content_widget.set_global_download_path(self.saveLocations.current())
         self.saveLocations.changed.connect(self._onSaveLocationChanged)
-        self.downloadCountLabel.setText(self.downloadCountLabel.text().format(self.completed_downloads, self.total_downloads))  # 초기값 설정
         self._applyLayoutMetrics()
 
     def _applyLayoutMetrics(self) -> None:
@@ -384,7 +398,9 @@ class VodDownloader(QMainWindow):
         self.headerFrameLayout.setContentsMargins(frame_pad, frame_pad, frame_pad, frame_pad)
         self.infoLayout.setContentsMargins(frame_pad, frame_pad, frame_pad, frame_pad)
         self._equalizeHeaderButtons()
-        self._reserveCountLabelWidth()
+        # 헤더바 2줄의 칩 · 정렬 버튼 폭(숫자 세 자리 · 가장 긴 이름) — 창 최소폭 계산 전에 건다
+        self.filterChipBar.applyWidth()
+        self.sortButton.applyWidth()
         self._reserveStatusLineHeight()
 
     def _reserveStatusLineHeight(self) -> None:
@@ -409,46 +425,6 @@ class VodDownloader(QMainWindow):
             heights.append(label.sizeHint().height())
         label.setText(shown)
         label.setMinimumHeight(max(heights))
-
-    def _reserveCountLabelWidth(self) -> None:
-        """하단 바 최소폭을 카운트 라벨 세 자리/세 자리(`999/999`) 기준으로 예약한다 (v2.10.1).
-
-        창 최소폭은 시작 때 `_contentMinimumWidth()`로 한 번 고정되는데, 라벨이
-        `0/0`에서 `0/10`이 되면 한 자리만큼(실측 8px) 넓어져 콘텐츠 열이 그 최소폭을
-        넘고 창 전체 좌우 스크롤 안전망이 뜬다(오너 실기 확인, 100에서 또 8px).
-        내용에 따라 창 최소폭을 다시 재지 않는다 — 유저가 줄여 둔 창이 멋대로
-        넓어진다. 대신 하단 바가 요구하는 폭을 `999/999` 기준으로 일정하게 유지한다:
-        라벨은 자연 폭 그대로 두고(고정폭이면 `0/0`일 때 뒤 버튼이 밀려 빈 틈이 보인다),
-        모자라는 몫(예약폭 − 지금 라벨 폭)을 하단 바의 스페이서 최소폭으로 넘긴다 —
-        라벨이 한 자리 커지면 스페이서가 그만큼 줄어 합은 그대로다
-        (`_balanceCountLabelReserve`, 라벨 갱신 때마다). 하단 바 자체에 최소폭을 박지
-        않는 이유: 위젯의 명시 최소폭은 레이아웃이 내용 최소 대신 그 값만 보게 만들어,
-        버튼이 넓어지거나 번역이 길어져도 바닥이 따라가지 못한다. 그 이상(1000+)은
-        라벨 최대폭에 걸려 라벨 안에서 잘려 그려지므로 창은 깨지지 않는다. 폭은 상수가
-        아니라 이 라벨의 실제 글꼴·QSS 여백으로 잰다(같은 원문을 번역한 문자열로) —
-        글꼴·DPI·번역을 따라간다.
-        """
-        label = self.downloadCountLabel
-        shown = label.text()
-        label.setText(self.tr('Downloads: {}/{}').format(999, 999))
-        label.ensurePolished()
-        self._countLabelReserve = label.sizeHint().width()
-        label.setText(shown)
-        label.setMaximumWidth(self._countLabelReserve)
-        self._balanceCountLabelReserve()
-
-    def _balanceCountLabelReserve(self) -> None:
-        """하단 바 스페이서에 (예약폭 − 지금 라벨 폭)을 최소폭으로 주어 라벨+스페이서 합을 예약폭에 고정한다."""
-        reserve = getattr(self, "_countLabelReserve", 0)
-        if not reserve:
-            return
-        balance = max(0, reserve - self.downloadCountLabel.sizeHint().width())
-        # MinimumExpanding — Expanding(Shrink 플래그 있음)이면 스페이서 최소가 0으로 읽혀
-        # 예약이 레이아웃 최소에 안 들어간다. 최소는 balance, 남는 공간은 여전히 흡수한다.
-        self.horizontalSpacer.changeSize(
-            balance, 0, QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Minimum
-        )
-        self.infoLayout.invalidate()
 
     def _availableGeometry(self, near: QPoint | None = None) -> QRect:
         """작업 영역(작업표시줄·독 제외) — 초기 크기·최소 높이·복원 클램프의 화면 기준 (#253).
@@ -576,6 +552,11 @@ class VodDownloader(QMainWindow):
         self.contentColumn.ensurePolished()
         for child in self.contentColumn.findChildren(QWidget):
             child.updateGeometry()
+        # 중첩 레이아웃(헤더바 1 · 2줄 행)의 계산 캐시도 비운다 — updateGeometry()는 위젯 항목의
+        # 캐시만 비우고, 위 레이아웃의 invalidate()는 안쪽 레이아웃으로 내려가지 않는다. 비우지 않으면
+        # 칩 폭을 걸기 전 값이 남아 최소폭이 칩 줄을 덜 센다(#495 — offscreen 실측 행 322 vs 항목 합 547)
+        for layout in self.contentColumn.findChildren(QLayout):
+            layout.invalidate()
         return self.contentColumn.minimumSizeHint().width()
 
     def _contentMinimumHeight(self) -> int:
@@ -659,11 +640,8 @@ class VodDownloader(QMainWindow):
         # TODO 동시 다운로드 기능 추가시 로직 수정 필요
         self.contentManager.contentError.connect(self.showErrorDialog)
         self.contentManager.fetchRequested.connect(self.fetchContents)
-        self.contentManager.deleteItemRequested.connect(self.onDeleteItem)
-        self.contentManager.insertItemRequested.connect(self.onInsertItem)
         self.contentManager.downloadRequested.connect(self.startDownload)
         self.contentManager.stopRequested.connect(self.onStop)
-        self.contentManager.finishedRequested.connect(self.onFinishedItem)
         self.contentManager.finishedAllRequested.connect(self.onDownloadAllFinished)
 
     def setupSignals(self):
@@ -889,27 +867,6 @@ class VodDownloader(QMainWindow):
         self.setStopButtonEnable(False)
         self.downloadViewModel.removeThreads()
 
-    def onInsertItem(self, row):
-        self.total_downloads = row
-        self.updateDownloadCountLabel()
-
-    def onDeleteItem(self, item:ContentItem, index):
-        """
-        메타데이터 카드 삭제 버튼 콜백.
-        """
-        if item.downloadState == DownloadState.FINISHED:
-            self.completed_downloads -= 1
-        self.total_downloads = index
-        self.updateDownloadCountLabel()
-    
-    def onFinishedItem(self, item:ContentItem):
-        """
-        메타데이터 카드 다운로드 완료 콜백.
-        """
-        if item.downloadState == DownloadState.FINISHED:
-            self.completed_downloads += 1
-            self.updateDownloadCountLabel()
-
     def onDownloadAllFinished(self):
         """
         모든 메타데이터 카드 다운로드 완료 콜백.
@@ -970,13 +927,6 @@ class VodDownloader(QMainWindow):
         self.contentManager.start(item)
         self.downloadViewModel.start(item)
         self.setStopButtonEnable(True)
-
-    def updateDownloadCountLabel(self):
-        """
-        다운로드 갯수 라벨을 업데이트한다.
-        """
-        self.downloadCountLabel.setText(self.tr('Downloads: {}/{}').format(self.completed_downloads, self.total_downloads))
-        self._balanceCountLabelReserve()  # 자릿수가 바뀌어도 하단 바 요구 폭은 그대로(v2.10.1)
 
     def closeEvent(self, event):
         """

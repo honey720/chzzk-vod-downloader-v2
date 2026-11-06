@@ -6,7 +6,7 @@
 (두 출처) 임시 키가 그 dict에 없어 여기서 실패한다 — 이 게이트가 없으면 "빠뜨려도 조용하다"
 (#159·#253 전례)를 아무것도 막지 못한다.
 
-그 밖: 기존 키 다섯과 #495의 두 키의 깨진 값이 전부 기본값 폴백 + 경고(시작 크래시 0, `open_settings` = 실제
+그 밖: 기존 키 다섯과 #495의 세 키의 깨진 값이 전부 기본값 폴백 + 경고(시작 크래시 0, `open_settings` = 실제
 시작 경로) · `window` 화이트리스트(`parse_saved_window` — 순수 파이썬 값).
 
 #475에서 저장소가 config.json에서 설정 DB로 바뀌었다 — 씨앗과 판정은 DB를 직접 읽고 쓴다
@@ -38,6 +38,7 @@ VALID = {
     "window": {"x": 10, "y": 20, "width": 700, "height": 600, "maximized": False},
     "favoritePaths": [{"name": "녹화", "path": "D:/rec"}],
     "recentPaths": ["E:/vod", "D:/old"],
+    "sortOrder": "title:desc",
 }
 
 
@@ -123,7 +124,7 @@ class TestTheTableIsTheSingleSource:
 
 
 class TestBrokenValuesFallBackInsteadOfCrashing:
-    """기존 키 다섯과 #495의 두 키의 깨진 값 — 시작 경로(`open_settings`)가 크래시하지 않고 기본값 + 경고."""
+    """기존 키 다섯과 #495의 세 키의 깨진 값 — 시작 경로(`open_settings`)가 크래시하지 않고 기본값 + 경고."""
 
     @pytest.mark.parametrize(
         "key, broken",
@@ -144,7 +145,7 @@ class TestBrokenValuesFallBackInsteadOfCrashing:
             ("window", "not a dict"),
             ("window", {"x": "a", "y": 0, "width": 700, "height": 600}),
             ("window", None),
-            # 저장 위치 즐겨찾기 · 최근(#495) — 모양이 어긋나면 키 전체가 기본값(빈 목록)
+            # 저장 위치 즐겨찾기 · 최근 · 정렬(#495) — 모양이 어긋나면 키 전체가 기본값
             ("favoritePaths", {"name": "a", "path": "D:/x"}),
             ("favoritePaths", [{"name": "a"}]),
             ("favoritePaths", [{"name": "", "path": "D:/x"}]),
@@ -156,6 +157,9 @@ class TestBrokenValuesFallBackInsteadOfCrashing:
             ("recentPaths", ["D:/x", "D:/x"]),
             ("recentPaths", [f"D:/{n}" for n in range(11)]),
             ("recentPaths", None),
+            ("sortOrder", "title"),
+            ("sortOrder", "size:asc"),
+            ("sortOrder", None),
         ),
     )
     def test_the_key_falls_back_and_the_rest_is_preserved(self, key, broken, caplog):

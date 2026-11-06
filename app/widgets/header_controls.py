@@ -1,4 +1,4 @@
-"""헤더바 부품 — 펼침 버튼 · 하나만 고르는 메뉴 · 저장 위치 버튼 (#495 — 셸 S1).
+"""헤더바 부품 — 펼침 버튼 · 하나만 고르는 메뉴 · 저장 위치 버튼 · 정렬 버튼 · 상태 칩 (#495 — 셸 S1).
 
 펼침 버튼은 `QToolButton` + `QMenu`다(설계 — `QComboBox` 아님). 글 · 도형 · ▾는 이 모듈이
 `paintEvent`에서 그린다: 바탕 · 테두리는 전역 QSS가 칠하고, 도형 색은 그릴 때마다 theme 토큰을
@@ -10,8 +10,10 @@ from PySide6.QtCore import QPointF, QRect, QSize, Qt, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPolygonF
 from PySide6.QtWidgets import (
     QFileDialog,
+    QHBoxLayout,
     QInputDialog,
     QMenu,
+    QPushButton,
     QStyle,
     QStyleOptionToolButton,
     QStylePainter,
@@ -20,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 import app.theme as theme
+from app.viewmodels.card_order import FILTER_KEYS
 from app.viewmodels.save_location import SaveLocations, folder_name
 from app.widgets.icons import action_pixmap
 
@@ -325,3 +328,132 @@ class SaveLocationButton(DropButton):
         error = self._locations.add_favorite(name, path)
         if error:
             self.errorOccurred.emit(error)
+
+
+class SortButton(DropButton):
+    """헤더바 2줄 정렬 버튼 — 고른 정렬 이름 ▾, 누르면 정렬 메뉴 (#495 — 설계 §2 「정렬 버튼」).
+
+    메뉴: 추가된 순서 · 제목순 · 채널명순 · 업로드순 · 상태순 · 구분선 · 오름차순 · 내림차순. 고른
+    기준 · 방향에만 ✓. 폭은 가장 긴 이름이 들어가는 고정 폭이다 — 고른 정렬과 무관하다(프로토 11k).
+    """
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__("", parent)
+        self._order = None
+        self.menuWidget = ChoiceMenu(self)
+        self.menuWidget.aboutToShow.connect(self._fillMenu)
+        self.setMenu(self.menuWidget)
+
+    def names(self) -> dict[str, str]:
+        """정렬 기준 키 → 보이는 이름(번역)."""
+        return {
+            "added": self.tr("Added order"),
+            "title": self.tr("Title"),
+            "channel": self.tr("Channel"),
+            "upload": self.tr("Upload date"),
+            "state": self.tr("Status"),
+        }
+
+    def bind(self, order) -> None:
+        """순서 뷰모델과 잇는다 — 정렬이 바뀌면 글을 다시 쓴다."""
+        self._order = order
+        order.orderReset.connect(self._refresh)
+        self.applyWidth()
+        self._refresh()
+
+    def applyWidth(self) -> None:
+        """가장 긴 이름이 들어가는 폭을 건다 — 글꼴 · 번역이 바뀌면 다시 부른다."""
+        self.setFixedWidth(max(self.widthFor(name) for name in self.names().values()))
+
+    def _refresh(self) -> None:
+        self.setFullText(self.names()[self._order.sortBy()])
+
+    def _fillMenu(self) -> None:
+        menu = self.menuWidget
+        menu.clear()
+        order = self._order
+        for key, name in self.names().items():
+            action = menu.addChoice(name, ("by", key))
+            action.triggered.connect(lambda _=False, k=key: order.setSort(k, order.isDescending()))
+        menu.addSeparator()
+        for descending, name in ((False, self.tr("Ascending")), (True, self.tr("Descending"))):
+            action = menu.addChoice(name, ("direction", "desc" if descending else "asc"))
+            action.triggered.connect(lambda _=False, d=descending: order.setSort(order.sortBy(), d))
+        menu.mark(("by", order.sortBy()), ("direction", "desc" if order.isDescending() else "asc"))
+
+
+CHIP_COUNT_RESERVE = 999  # 칩 폭을 잡는 숫자 — 세 자리까지 칩 · 헤더바 · 창 최소폭이 그대로다(옛 카운트의 999/999 예약)
+
+
+class FilterChips(QWidget):
+    """헤더바 2줄 상태 필터 — 상태별 숫자 칩(전체 · 대기 · 진행 · 일시정지 · 완료 · 실패) (#495).
+
+    고른 칩만 눌린 상태다. 고른 칩을 다시 누르면 전체로 돌아간다(설계 §2 — 뜻은 `CardOrder.setFilter`).
+    실패 칩은 실패 카드가 있을 때 강조한다(`alert` 속성 → 전역 QSS). 칩 폭은 숫자 세 자리
+    (`CHIP_COUNT_RESERVE`)가 들어가는 고정 폭이다 — 숫자가 바뀌어도 줄이 움직이지 않는다.
+    """
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._order = None
+        self.chips: dict[str, QPushButton] = {}
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        for key in FILTER_KEYS:
+            chip = QPushButton(self)
+            chip.setObjectName(f"filterChip_{key}")
+            chip.setProperty("role", "filter")
+            chip.setProperty("alert", False)
+            chip.setCheckable(True)
+            chip.setCursor(Qt.CursorShape.PointingHandCursor)
+            chip.clicked.connect(lambda _=False, k=key: self._order.setFilter(k))
+            layout.addWidget(chip)
+            self.chips[key] = chip
+
+    def names(self) -> dict[str, str]:
+        """칩 키 → 보이는 상태 이름(번역)."""
+        return {
+            "all": self.tr("All"),
+            "waiting": self.tr("Waiting"),
+            "running": self.tr("In progress"),
+            "paused": self.tr("Paused"),
+            "finished": self.tr("Finished"),
+            "failed": self.tr("Failed"),
+        }
+
+    def bind(self, order) -> None:
+        """순서 뷰모델과 잇는다 — 숫자 · 고른 칩이 바뀔 때마다 다시 쓴다."""
+        self._order = order
+        order.countsChanged.connect(self._refreshCounts)
+        order.filterChanged.connect(self._refreshChecked)
+        self.applyWidth()
+        self._refreshCounts()
+        self._refreshChecked()
+
+    def applyWidth(self) -> None:
+        """칩마다 「이름 999」가 들어가는 폭을 건다 — 글꼴 · 번역이 바뀌면 다시 부른다."""
+        for key, name in self.names().items():
+            chip = self.chips[key]
+            shown = chip.text()
+            chip.setText(f"{name} {CHIP_COUNT_RESERVE}")
+            chip.ensurePolished()
+            chip.setFixedWidth(chip.sizeHint().width())
+            chip.setText(shown)
+
+    def _refreshCounts(self) -> None:
+        counts = self._order.counts()
+        for key, name in self.names().items():
+            chip = self.chips[key]
+            chip.setText(f"{name} {counts[key]}")
+            chip.setProperty("count", counts[key])
+        failed = self.chips["failed"]
+        alert = counts["failed"] > 0
+        if failed.property("alert") != alert:
+            failed.setProperty("alert", alert)
+            theme.repolish(failed)
+
+    def _refreshChecked(self) -> None:
+        chosen = self._order.filterKey()
+        for key, chip in self.chips.items():
+            chip.setChecked(key == chosen)

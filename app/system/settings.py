@@ -214,6 +214,12 @@ def _window(value: object) -> dict:
 FAVORITES_MAX = 10
 #: 최근 저장 위치를 기억하는 수 — 메뉴에는 지금 위치 · 즐겨찾기를 뺀 앞 3개만 보인다(#495).
 RECENT_PATHS_MAX = 10
+#: 목록 정렬 — `<기준>:<방향>`. 기준은 추가된 순서 · 제목 · 채널명 · 업로드 · 상태(#495).
+SORT_ORDERS = tuple(
+    f"{by}:{direction}"
+    for by in ("added", "title", "channel", "upload", "state")
+    for direction in ("asc", "desc")
+)
 
 
 def _path_list(limit: int) -> Callable[[object], list]:
@@ -271,6 +277,8 @@ SCHEMA: tuple[Setting, ...] = (
     Setting("favoritePaths", [], _favorites),
     # 최근 저장 위치 — 최근에 고른 것이 앞(#495). 즐겨찾기에 있는 경로는 넣지 않는다
     Setting("recentPaths", [], _path_list(RECENT_PATHS_MAX)),
+    # 목록 정렬 — SORT_ORDERS 중 하나(#495). 보이는 순서이자 다운로드 차례다
+    Setting("sortOrder", "added:asc", _one_of(SORT_ORDERS)),
     # 마지막 창 크기·위치·최대화 상태 (#253). 빈 값 = 기록 없음(첫 실행) → 초기 크기 규칙
     # (app/views/mainWindow.py). 채워지면 {"x","y","width","height","maximized"}.
     Setting("window", {}, _window),

@@ -83,10 +83,6 @@ QLabel#linkStatusLabel[status="error"] {
     color: @stateFailed;
 }
 
-QLabel#downloadCountLabel {
-    color: @textMuted;
-}
-
 /* ---------- 카드 목록 ---------- */
 
 QScrollArea#listView {
@@ -272,6 +268,25 @@ QPushButton[role="icon"][interactive="false"]:hover,
 QPushButton[role="icon"][interactive="false"]:pressed {
     background-color: transparent;
     border-color: transparent;
+}
+
+/* 상태 필터 칩(#495 — 헤더바 2줄). 고른 칩만 채운다(채움 색 규칙 — 강조색 면 안 글은 @onAccent).
+ * 실패 카드가 있으면 실패 칩 글을 실패 색으로 강조한다. `role` · `alert`는
+ * app/widgets/header_controls.py::FilterChips가 심는다. */
+QPushButton[role="filter"] {
+    padding: 2px 10px;
+    font-size: @fontSizeMeta;
+    color: @textMuted;
+}
+
+QPushButton[role="filter"][alert="true"] {
+    color: @stateFailed;
+}
+
+QPushButton[role="filter"]:checked {
+    background-color: @accent;
+    border-color: @accent;
+    color: @onAccent;
 }
 
 /* 펼침 버튼(#495 — 헤더바 저장 위치 · 정렬) — QToolButton + QMenu. 바탕 · 테두리만 여기서
