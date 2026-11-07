@@ -194,15 +194,16 @@ class TestRetryOnlyReturnsToWaiting:
         assert os.path.dirname(item.output_path) == str(tmp_path)
 
     def test_a_card_left_failed_is_not_taken_by_the_global_button(self, tmp_path, started):
-        """실패인 채인 카드는 전역 버튼이 집어 가지 않는다 — 자동 포함 반대(정본)의 경계."""
+        """실패인 채인 카드는 전역 버튼이 집어 가지 않는다 — 자동 포함 반대(정본)의 경계.
+
+        실패 카드 1장뿐 -> 다운로드 버튼이 꺼져 있고(시작할 것이 없음 — #504), 눌러도 시작 · 안내 창 없음
+        """
         win, item, widget = open_window_with_a_failed_card(tmp_path)
+        assert not win.downloadButton.isEnabled()
         win.downloadButton.click()
         _pump()
         assert item.downloadState is DownloadState.FAILED
-        assert item not in started
-        assert any(isinstance(c, tuple) and c[0] == "warning" for c in started), (
-            "대기 카드가 없으면 안내 모달이 떠야 한다(기존 동작)"
-        )
+        assert started == []
 
     def test_retry_does_not_touch_preserved_segments(self, tmp_path, started):
         """후처리 실패로 보존된 세그먼트 폴더(#185)는 대기로 되돌려도 그대로 남는다."""

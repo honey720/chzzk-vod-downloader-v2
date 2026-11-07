@@ -95,7 +95,7 @@ class CardOrder(QObject):
         filterChanged: 고른 칩이 바뀌었다 — 모든 카드의 보임이 바뀌었을 수 있다
         itemMoved(item): 그 카드 하나의 자리가 바뀌었다(정렬 기준 값이 바뀜 — 상태순의 상태 등)
         itemStateChanged(item): 그 카드의 칩이 바뀌었다 — 보임이 바뀌었을 수 있다
-        countsChanged: 칩 숫자가 바뀌었다
+        countsChanged: 칩 숫자나 조회 중 카드 수가 바뀌었다
     """
 
     orderReset = Signal()
@@ -116,6 +116,8 @@ class CardOrder(QObject):
         self._nextSeq = 0.0
         self._shown: dict[ContentItem, str] = {}  # 마지막으로 센 칩 — 바뀐 것만 고친다
         self._counts = dict.fromkeys(FILTER_KEYS, 0)
+        # 조회 중 카드 — 대기 칩에 함께 세지만, 받을 수 있는 대기 카드와는 따로 센다(#504 다운로드 버튼)
+        self._loading: set[ContentItem] = set()
         self._ordered: list[ContentItem] = []
         self._dirty: dict[ContentItem, None] = {}  # 차례가 끝난 뒤 다시 볼 카드(넣은 차례 유지)
         self._flushPending = False
@@ -141,6 +143,10 @@ class CardOrder(QObject):
     def counts(self) -> dict[str, int]:
         """칩마다의 카드 수 — 「all」은 목록의 모든 카드."""
         return dict(self._counts)
+
+    def loadingCount(self) -> int:
+        """조회 중 카드 수 — 대기 칩 숫자에 들어 있다."""
+        return len(self._loading)
 
     def ordered(self) -> list[ContentItem]:
         """보이는 차례의 모든 카드(필터와 무관) — 다운로드 차례이기도 하다."""
@@ -236,6 +242,8 @@ class CardOrder(QObject):
         self._ordered.insert(bisect_left(self._ordered, key, key=self._key), item)
         chip = filter_key(item)
         self._shown[item] = chip
+        if item.downloadState == ItemState.LOADING:
+            self._loading.add(item)
         self._counts[chip] += 1
         self._counts["all"] += 1
         self.countsChanged.emit()
@@ -246,6 +254,7 @@ class CardOrder(QObject):
         if chip is None:
             return
         self._ordered.remove(item)
+        self._loading.discard(item)
         self._seq.pop(item, None)
         self._dirty.pop(item, None)
         self._counts[chip] -= 1
@@ -262,6 +271,10 @@ class CardOrder(QObject):
             if old is None:
                 continue  # 그 사이 지워졌다
             new = filter_key(item)
+            if (item.downloadState == ItemState.LOADING) != (item in self._loading):
+                # 조회 중 ↔ 대기 — 칩은 그대로 대기라 숫자는 같지만 받을 수 있는 카드 수가 바뀐다
+                self._loading.symmetric_difference_update({item})
+                changed = True
             if self._sortBy != "added":  # 상태순만이 아니다 — 대기 카드의 제목도 바뀐다(#288)
                 self._reposition(item)
             if new == old:

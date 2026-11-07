@@ -182,6 +182,9 @@ class VodDownloader(QMainWindow):
         self.monitorTimer = QTimer(self)
         self.monitorTimer.setInterval(MONITOR_INTERVAL_MS)
         self.monitorTimer.timeout.connect(self._tickFooter)
+        # 다운로드 버튼(▶)은 시작할 것이 있을 때만 켠다 — 카드 수 · 상태가 바뀔 때마다 다시 본다
+        self.contentManager.order.countsChanged.connect(self._syncDownloadEnabled)
+        self._syncDownloadEnabled()
         self.monitorTimer.start()
         self._tickFooter()  # 첫 1초를 기다리지 않고 여유 공간을 잰다
         # 열려 있는 구간 편집 창과 그 카드 (#309) — 창은 한 번에 하나다
@@ -936,7 +939,20 @@ class VodDownloader(QMainWindow):
             icon, tip = "resume", self.tr("Download")
         self.downloadButton.setIconName(icon)
         self.downloadButton.setToolTip(tip)
+        self._syncDownloadEnabled()
         self._showFooter()
+
+    def _syncDownloadEnabled(self) -> None:
+        """다운로드 버튼(▶)을 시작할 것이 있을 때만 켠다 (#504 — 오너 2026-11-07).
+
+        켜짐 = 다운로드 작업이 진행 중(일시정지 포함 — ‖ · ▶ 이어 받기가 뜻을 가진다)이거나 대기 카드가
+        하나 이상. 조회 중 카드는 대기 칩에 함께 세지만 받을 수 없어 뺀다. 숫자는 칩이 이미 센 값이라
+        목록을 훑지 않는다. 카드 더하기 · 지우기 · 상태 바뀜은 `countsChanged`가, 다운로드 시작 · 끝 ·
+        일시정지 · 중지는 `_syncDownloadButton`이 부른다.
+        """
+        order = self.contentManager.order
+        waiting = order.counts()["waiting"] - order.loadingCount()
+        self.downloadButton.setEnabled(self.downloadViewModel.isDownloading() or waiting > 0)
 
     def _tickFooter(self) -> None:
         """1초마다 — 여유 공간을 다시 재게 하고 하단바 모니터링을 고친다 (#504)."""

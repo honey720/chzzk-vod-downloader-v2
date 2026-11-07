@@ -12,6 +12,7 @@ import app.theme as theme
 import CVDv2 as main_module
 from app.download.logger import DownloadLogger
 from app.viewmodels.data import ContentItem
+from app.viewmodels.item_state import ItemState
 from app.viewmodels.footer_monitor import (
     TransferReading,
     combine_readings,
@@ -530,3 +531,85 @@ def test_window_minimum_width_does_not_depend_on_the_cards(tmp_path):
     empty, _items, _engine = _window(tmp_path, cards=0)
     full, _items, _engine = _window(tmp_path, cards=50)
     assert empty.minimumWidth() == full.minimumWidth() == full._contentMinimumWidth()
+
+
+# ---------------------------------------------------------------------------
+# ⑥ 다운로드 버튼(▶) 켜짐 — 시작할 것이 있을 때만 (#504, 오너 2026-11-07)
+# ---------------------------------------------------------------------------
+
+
+def test_download_button_is_off_for_an_empty_list(tmp_path):
+    """목록이 비면 다운로드 버튼은 꺼지고 도형은 비활성 색이어야 한다.
+
+    카드 0장 -> isEnabled 거짓, 도형 색 토큰 "textDisabled"
+    """
+    win, _items, _engine = _window(tmp_path, cards=0)
+    assert not win.downloadButton.isEnabled()
+    assert win.downloadButton.colorToken() == "textDisabled"
+
+
+def test_download_button_is_on_with_a_waiting_card(tmp_path):
+    """대기 카드가 한 장이라도 있으면 다운로드 버튼은 켜져야 한다."""
+    win, _items, _engine = _window(tmp_path, cards=1)
+    assert win.downloadButton.isEnabled()
+
+
+def test_download_button_waits_for_a_card_still_loading(tmp_path):
+    """조회 중 카드만 있으면 꺼지고, 그 카드가 대기가 되면 켜져야 한다.
+
+    조회 중 카드 1장 -> 꺼짐 / 그 카드를 대기로 바꿔 알림 -> 켜짐
+    """
+    win, _items, _engine = _window(tmp_path, cards=0)
+    card = _card(str(tmp_path), 5)
+    card.downloadState = ItemState.LOADING
+    win.contentManager.model.addItem(card)
+    _pump()
+    assert not win.downloadButton.isEnabled()
+    card.downloadState = DownloadState.WAITING
+    win.contentManager.model.notifyChanged(card)
+    _pump()
+    assert win.downloadButton.isEnabled()
+
+
+def test_download_button_stays_on_while_receiving_and_paused(tmp_path, answers):
+    """받는 중(‖)과 일시정지(▶ 이어 받기)에는 대기 카드가 없어도 켜져 있어야 한다.
+
+    카드 1장 → 다운로드(대기 카드 0) -> 켜짐 · ‖ → 일시정지 -> 켜짐 · ▶
+    """
+    win, _items, _engine = _window(tmp_path, cards=1)
+    win.downloadButton.click()
+    _pump()
+    assert (win.downloadButton.isEnabled(), win.downloadButton.iconName()) == (True, "pause")
+    win.downloadButton.click()
+    _pump()
+    assert (win.downloadButton.isEnabled(), win.downloadButton.iconName()) == (True, "resume")
+
+
+def test_download_button_is_off_when_only_finished_and_failed_cards_remain(tmp_path, answers):
+    """작업이 끝나 완료 · 실패 카드만 남으면 다운로드 버튼은 꺼져야 한다.
+
+    카드 2장 → 첫 장 완료 · 둘째 장 실패 -> 꺼짐
+    """
+    win, _items, engine = _window(tmp_path, cards=2)
+    win.downloadButton.click()
+    _pump()
+    _finish(engine)
+    _fail(engine)
+    assert win.runResultLabel.isVisible(), "전제: 작업이 끝났다"
+    assert not win.downloadButton.isEnabled()
+
+
+def test_download_button_turns_off_when_the_last_waiting_card_is_deleted(tmp_path):
+    """마지막 대기 카드를 지우면 다운로드 버튼은 꺼져야 한다.
+
+    대기 카드 1장 + 완료 카드 1장 → 대기 카드 지움 -> 꺼짐
+    """
+    win, items, _engine = _window(tmp_path, cards=1)
+    done = _card(str(tmp_path), 7)
+    done.downloadState = DownloadState.FINISHED
+    win.contentManager.model.addItem(done)
+    _pump()
+    assert win.downloadButton.isEnabled(), "전제: 대기 카드가 있다"
+    win.contentManager.removeItem(items[0])
+    _pump()
+    assert not win.downloadButton.isEnabled()
