@@ -519,6 +519,10 @@ def test_footer_values_do_not_raise_the_footer_minimum_width(qtbot, tmp_path, an
     (하단바는 헤더바보다 좁아 창 최소폭으로는 이 차이가 드러나지 않는다)
     """
     win, _items, engine = _window(tmp_path)
+    # 여유 공간 칸이 보인 뒤에 기준을 잡는다 — 칸 0개에서 시작하면 첫 칸은 간격을 받지 않아 한 칸만큼 어긋난다
+    _free_measured(qtbot, win)
+    _tick(win)
+    assert win.footerMonitor.shownKeys() == ["free"], "전제: 기준은 여유 공간 한 칸"
     win._contentMinimumWidth()  # 레이아웃 캐시를 비운다
     before = win.infoFrame.minimumSizeHint().width()
     shown_before = len(win.footerMonitor.shownKeys())
