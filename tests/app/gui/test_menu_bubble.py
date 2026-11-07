@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QObject, Signal
-from PySide6.QtGui import QCloseEvent, QIcon
+from PySide6.QtGui import QCloseEvent, QGuiApplication, QIcon
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QWidget
 
@@ -22,6 +22,9 @@ from app.widgets.icons import BUBBLE_STATES
 from core.models.download_state import DownloadState
 from tests.app.gui import test_footer_bar as footer
 from tests.app.gui.test_footer_bar import _environment, answers  # noqa: F401 — 같은 환경 · 확인 창 대역
+
+#: 창 활성이 자리를 잡을 때까지 기다리는 시간(ms) — 실제 화면(Windows)에서 활성 이벤트가 늦게 온다.
+ACTIVATION_SETTLE_MS = 300
 
 W, R, P, F, X = (
     DownloadState.WAITING,
@@ -104,21 +107,26 @@ def _bubble(win: VodDownloader) -> str:
     return bubble.state()
 
 
-def _deactivate(win: VodDownloader) -> QWidget:
-    """다른 창을 앞으로 띄워 메인 창을 뒤로 보낸다 — 그 창을 돌려준다(정리는 환경 픽스처)."""
-    other = QWidget()
-    other.show()
-    QTest.qWaitForWindowExposed(other)
-    other.activateWindow()
-    footer._pump()
-    assert not win.isActiveWindow(), "전제: 메인 창이 뒤에 있다"
-    return other
+def _send_behind(win: VodDownloader) -> None:
+    """메인 창을 최소화해 앞에 없게 한다 — 실제 화면에서도 결정적이다.
+
+    다른 창을 띄워 앞으로 보내는 방법은 실제 화면(Windows)에서 활성을 빼앗지 못한다 — Qt가 잠깐 다른 창을
+    활성으로 셌다가 OS가 메인 창에 돌려준다. 그래서 「다른 창이 앞」은 offscreen 전용 테스트 하나로만 본다.
+    """
+    win.showMinimized()
+    QTest.qWait(ACTIVATION_SETTLE_MS)
+    assert win.isMinimized() and not win._inFront(), "전제: 메인 창이 앞에 없다"
 
 
 def _activate(win: VodDownloader) -> None:
-    """메인 창을 앞으로 — 창이 포커스를 받는다."""
+    """메인 창을 앞으로 — 최소화를 풀고 포커스를 준다."""
+    if win.isMinimized():
+        win.showNormal()
     win.activateWindow()
-    footer._pump()
+    QTest.qWait(ACTIVATION_SETTLE_MS)
+    if not win.isActiveWindow() and QGuiApplication.platformName() != "offscreen":
+        # 실제 화면 병렬 실행에서는 다른 프로세스가 앞에 있으면 OS가 활성을 거절한다 — 전제를 만들 수 없다
+        pytest.skip("OS가 창 활성을 거절했다(다른 프로세스가 앞에 있음)")
     assert win.isActiveWindow(), "전제: 메인 창이 앞에 있다"
 
 
@@ -334,7 +342,7 @@ def test_blink_starts_when_the_run_ends_behind_other_windows(
     win, _items, engine = footer._window(tmp_path)
     win.downloadButton.click()
     footer._pump()
-    _deactivate(win)
+    _send_behind(win)
     footer._finish(engine)
     assert win.menuDownloadButton.isBlinking()
 
@@ -363,7 +371,7 @@ def test_blink_stops_when_the_window_gets_focus_on_the_vod_screen(
     win, _items, engine = footer._window(tmp_path)
     win.downloadButton.click()
     footer._pump()
-    _deactivate(win)
+    _send_behind(win)
     footer._finish(engine)
     assert win.menuDownloadButton.isBlinking(), "전제: 깜빡인다"
     _activate(win)
@@ -402,7 +410,7 @@ def test_blink_stops_when_the_result_bubble_goes(tmp_path: Path, notices: dict[s
     win, _items, engine = footer._window(tmp_path)
     win.downloadButton.click()
     footer._pump()
-    _deactivate(win)
+    _send_behind(win)
     footer._finish(engine)
     assert win.menuDownloadButton.isBlinking(), "전제: 깜빡인다"
     win.contentManager.model.addItem(footer._card(str(tmp_path), 9))
@@ -445,7 +453,7 @@ def test_os_notice_text_when_the_window_is_behind(
     win, _items, engine = footer._window(tmp_path, cards=2)
     win.downloadButton.click()
     footer._pump()
-    _deactivate(win)
+    _send_behind(win)
     for outcome in outcomes:
         outcome(engine)
     assert notices["alerts"] == [win]
@@ -481,6 +489,29 @@ def test_no_os_notice_when_the_window_is_in_front(tmp_path: Path, notices: dict[
 
 
 @pytest.mark.usefixtures("answers")
+def test_os_notice_when_another_window_is_in_front(
+    tmp_path: Path, notices: dict[str, list]
+) -> None:
+    """다른 창이 앞에 있으면(메인 창은 최소화 아님) 작업이 끝날 때 OS 알림을 띄워야 한다.
+
+    다른 창 활성 → 완료 -> 트레이 알림 1건 · 깜빡임 켜짐
+    """
+    if QGuiApplication.platformName() == "windows":
+        pytest.skip("실제 화면(Windows)에서는 다른 창이 활성을 빼앗지 못한다(OS가 돌려준다)")
+    win, _items, engine = footer._window(tmp_path)
+    win.downloadButton.click()
+    footer._pump()
+    other = QWidget()
+    other.show()
+    QTest.qWaitForWindowExposed(other)
+    other.activateWindow()
+    footer._pump()
+    assert not win.isMinimized() and not win.isActiveWindow(), "전제: 다른 창이 앞"
+    footer._finish(engine)
+    assert (len(notices["messages"]), win.menuDownloadButton.isBlinking()) == (1, True)
+
+
+@pytest.mark.usefixtures("answers")
 def test_os_notice_only_flashes_without_a_tray(
     tmp_path: Path, notices: dict[str, list], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -492,7 +523,7 @@ def test_os_notice_only_flashes_without_a_tray(
     win, _items, engine = footer._window(tmp_path)
     win.downloadButton.click()
     footer._pump()
-    _deactivate(win)
+    _send_behind(win)
     footer._finish(engine)
     assert (notices["alerts"], notices["messages"]) == ([win], [])
 
@@ -512,7 +543,7 @@ def test_clicking_the_notice_brings_the_window_back(
 ) -> None:
     """알림을 누르면 최소화된 창이 앞으로 오고 트레이 아이콘이 내려가야 한다.
 
-    최소화 → 완료(트레이 아이콘 뜸) → 알림 누름 -> 최소화 풀림 · 창 활성 · 트레이 아이콘 내림
+    최소화 → 완료(트레이 아이콘 뜸) → 알림 누름 -> 최소화 풀림 · (offscreen) 창 활성 · 트레이 아이콘 내림
     """
     win, _items, engine = footer._window(tmp_path)
     win.downloadButton.click()
@@ -523,11 +554,9 @@ def test_clicking_the_notice_brings_the_window_back(
     assert win.downloadEndNotice.trayShown(), "전제: 트레이 아이콘이 떠 있다"
     win.downloadEndNotice._tray.messageClicked.emit()
     footer._pump()
-    assert (win.isMinimized(), win.isActiveWindow(), win.downloadEndNotice.trayShown()) == (
-        False,
-        True,
-        False,
-    )
+    # 활성은 offscreen에서만 본다 — 실제 화면은 다른 프로세스가 앞이면 OS가 활성을 거절할 수 있다
+    active = win.isActiveWindow() or QGuiApplication.platformName() != "offscreen"
+    assert (win.isMinimized(), active, win.downloadEndNotice.trayShown()) == (False, True, False)
 
 
 # ---------------------------------------------------------------------------
@@ -548,24 +577,26 @@ def test_close_confirmation_restores_a_minimized_window_first(
 ) -> None:
     """받는 중에 최소화된 창을 닫으면 확인 창을 띄우기 전에 최소화가 풀리고 창이 앞에 와야 한다.
 
-    받는 중 · 최소화 → 닫기 -> 확인 창을 띄우는 순간 최소화 아님 · 창 활성
+    받는 중 · 최소화 → 닫기 -> 확인 창을 띄우는 순간 최소화 아님 · 창 보임 · (offscreen) 창 활성
+    실제 화면(Windows)은 다른 프로세스가 앞에 있으면 활성을 OS가 거절할 수 있어 활성은 offscreen에서만 본다
     """
     win, _items, _engine = footer._window(tmp_path)
     win.downloadButton.click()
     footer._pump()
     win.showMinimized()
     footer._pump()
-    seen: list[tuple[bool, bool]] = []
+    seen: list[tuple[bool, bool, bool]] = []
+    offscreen = QGuiApplication.platformName() == "offscreen"
 
     def warning(parent: QWidget, title: str, text: str, *args: object, **kwargs: object) -> object:
         footer._pump()
-        seen.append((win.isMinimized(), win.isActiveWindow()))
+        seen.append((win.isMinimized(), win.isVisible(), win.isActiveWindow() or not offscreen))
         return mw_mod.QMessageBox.No
 
     monkeypatch.setattr(mw_mod.QMessageBox, "warning", warning)
     event = _close(win)
     assert not event.isAccepted(), "전제: 아니요 — 닫지 않는다"
-    assert seen == [(False, True)]
+    assert seen == [(False, True, True)]
 
 
 @pytest.mark.usefixtures("answers")

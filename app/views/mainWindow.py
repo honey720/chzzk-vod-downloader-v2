@@ -1081,13 +1081,18 @@ class VodDownloader(QMainWindow):
         self.activateWindow()
 
     def changeEvent(self, event: QEvent) -> None:
-        """창이 포커스를 받았다 — VOD 다운 화면이면 결과를 본 것이라 깜빡임을 멈춘다(설정 화면이면 계속, #523)."""
+        """창이 포커스를 받았다 — VOD 다운 화면이면 결과를 본 것이라 깜빡임을 멈춘다(설정 화면이면 계속, #523).
+
+        포커스를 받은 때: 활성이 바뀌었거나, 최소화가 풀렸는데 이미 활성이다(활성이 그대로면 활성 변화가
+        오지 않는다 — offscreen이 그렇다).
+        """
         super().changeEvent(event)
         button = getattr(self, "menuDownloadButton", None)  # 창을 짜는 중에도 불린다
         if (
             button is not None
-            and event.type() == QEvent.Type.ActivationChange
+            and event.type() in (QEvent.Type.ActivationChange, QEvent.Type.WindowStateChange)
             and self.isActiveWindow()
+            and not self.isMinimized()
             and self._screen() == "vod"
             and button.isBlinking()
         ):
