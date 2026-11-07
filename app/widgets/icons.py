@@ -226,7 +226,9 @@ def _paint_check(painter: QPainter, s: float, color: QColor, accent: QColor) -> 
     """고른 항목 — 꺾인 선 하나(✓). 삭제(✕)와 같은 굵기 계열의 선이다."""
     _stroke(painter, color, s * 0.16)
     painter.drawPolyline(
-        QPolygonF([QPointF(s * 0.16, s * 0.54), QPointF(s * 0.40, s * 0.78), QPointF(s * 0.86, s * 0.24)])
+        QPolygonF(
+            [QPointF(s * 0.16, s * 0.54), QPointF(s * 0.40, s * 0.78), QPointF(s * 0.86, s * 0.24)]
+        )
     )
 
 

@@ -9,7 +9,9 @@ from core.media.representations import dedupe_by_resolution
 
 class TestDedupeByResolution:
     def test_keeps_one_entry_per_resolution(self) -> None:
-        reps = dedupe_by_resolution([(1080, "a", 5_000_000), (720, "b", 3_000_000), (1080, "c", 6_000_000)])
+        reps = dedupe_by_resolution(
+            [(1080, "a", 5_000_000), (720, "b", 3_000_000), (1080, "c", 6_000_000)]
+        )
         assert [r for r, _ in reps] == [720, 1080]
 
     def test_higher_bandwidth_wins(self) -> None:
@@ -21,12 +23,16 @@ class TestDedupeByResolution:
 
     def test_tie_or_unknown_bandwidth_keeps_the_first(self) -> None:
         assert dedupe_by_resolution([(1080, "first", 0), (1080, "second", 0)]) == [[1080, "first"]]
-        assert dedupe_by_resolution([(720, "first", 4_000), (720, "second", 4_000)]) == [[720, "first"]]
+        assert dedupe_by_resolution([(720, "first", 4_000), (720, "second", 4_000)]) == [
+            [720, "first"]
+        ]
 
     def test_result_is_ascending_and_keeps_the_list_shape(self) -> None:
         reps = dedupe_by_resolution([(1080, "u1080", 1), (144, "u144", 1), (720, "u720", 1)])
         assert reps == [[144, "u144"], [720, "u720"], [1080, "u1080"]]
-        assert all(isinstance(r, list) for r in reps), "파서 반환 형식(list) 유지 — 위젯이 뒤에 크기 텍스트를 append한다"
+        assert all(isinstance(r, list) for r in reps), (
+            "파서 반환 형식(list) 유지 — 위젯이 뒤에 크기 텍스트를 append한다"
+        )
 
     def test_empty_input(self) -> None:
         assert dedupe_by_resolution([]) == []

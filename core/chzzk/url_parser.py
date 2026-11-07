@@ -23,8 +23,8 @@ def extract_content_no(vod_url: str) -> tuple[str, str]:
     if not vod_url.startswith("http://") and not vod_url.startswith("https://"):
         vod_url = "https://" + vod_url
     match = re.fullmatch(
-        r'https?://(?:www\.)?chzzk\.naver\.com'
-        r'/(?P<content_type>video|clips)/(?P<content_no>\w+)/?(?:\?.*)?',
+        r"https?://(?:www\.)?chzzk\.naver\.com"
+        r"/(?P<content_type>video|clips)/(?P<content_no>\w+)/?(?:\?.*)?",
         vod_url,
     )
     if match:

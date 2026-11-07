@@ -153,7 +153,9 @@ def _find_folder(win, monkeypatch, folder) -> None:
     """메뉴 「폴더 찾기…」로 그 폴더를 고른다 — 폴더 선택 창만 바꿔 끼운다."""
     from PySide6.QtWidgets import QFileDialog
 
-    monkeypatch.setattr(QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: str(folder)))
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: str(folder))
+    )
     menu, action = _menu_action(win, "findFolderAction")
     action.trigger()
     menu.hide()

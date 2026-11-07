@@ -40,7 +40,10 @@ class TestExtractContentNo:
             # 쿼리스트링은 무시하고 파싱한다 (#33)
             ("https://chzzk.naver.com/video/1510760?t=120", ("video", "1510760")),
             ("https://chzzk.naver.com/video/1510760?t=120&utm_source=share", ("video", "1510760")),
-            ("https://chzzk.naver.com/clips/abcDEF12345?sharePlatform=web", ("clips", "abcDEF12345")),
+            (
+                "https://chzzk.naver.com/clips/abcDEF12345?sharePlatform=web",
+                ("clips", "abcDEF12345"),
+            ),
             ("chzzk.naver.com/video/1510760?t=120", ("video", "1510760")),  # 스킴 생략 + 쿼리
             # 후행 슬래시를 허용한다 (#33)
             ("https://chzzk.naver.com/video/1510760/", ("video", "1510760")),
@@ -67,9 +70,10 @@ class TestExtractContentNo:
 
     def test_network_manager_delegates_to_core(self) -> None:
         """NetworkManager.extract_content_no 시그니처가 유지되고 core 함수에 위임한다 (#50)."""
-        assert NetworkManager.extract_content_no(
-            "https://chzzk.naver.com/video/1510760"
-        ) == ("video", "1510760")
+        assert NetworkManager.extract_content_no("https://chzzk.naver.com/video/1510760") == (
+            "video",
+            "1510760",
+        )
 
 
 class TestGetVideoFrameRates:
@@ -222,9 +226,7 @@ class TestGetVideoInfo:
         """
         body = json.dumps({"content": {"videoTitle": "탭\t금지:문자*제어\r문자?"}})
 
-        monkeypatch.setattr(
-            network._session, "get", lambda url, **kwargs: MockResponse(text=body)
-        )
+        monkeypatch.setattr(network._session, "get", lambda url, **kwargs: MockResponse(text=body))
 
         info = NetworkManager.get_video_info("1", {})
 
@@ -239,7 +241,7 @@ class TestGetVideoM3u8BaseUrl:
         calls = []
         playlist = (
             "#EXTM3U\n"
-            '#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080\n'
+            "#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080\n"
             "1080/playlist.m3u8\n"
         )
         json_str = '{"media": [{"path": "https://example.invalid/master.m3u8"}]}'
@@ -271,32 +273,72 @@ class TestSameHeightTracksAreMerged:
     """
 
     def test_m3u8_encoding_tracks_with_the_same_height_become_one(self) -> None:
-        json_str = json.dumps({"media": [{"encodingTrack": [
-            {"videoWidth": 1920, "videoHeight": 1080, "videoBitRate": 6000000},
-            {"videoWidth": 1920, "videoHeight": 1080, "videoBitRate": 4000000},  # 저비트레이트 변형
-            {"videoWidth": 1280, "videoHeight": 720},  # 비트레이트 미상도 허용
-            {"videoWidth": 1280, "videoHeight": 720},
-        ]}]})
-        sorted_reps, auto_resolution, auto_base_url = NetworkManager.get_video_m3u8_manifest(json_str)
+        json_str = json.dumps(
+            {
+                "media": [
+                    {
+                        "encodingTrack": [
+                            {"videoWidth": 1920, "videoHeight": 1080, "videoBitRate": 6000000},
+                            {
+                                "videoWidth": 1920,
+                                "videoHeight": 1080,
+                                "videoBitRate": 4000000,
+                            },  # 저비트레이트 변형
+                            {"videoWidth": 1280, "videoHeight": 720},  # 비트레이트 미상도 허용
+                            {"videoWidth": 1280, "videoHeight": 720},
+                        ]
+                    }
+                ]
+            }
+        )
+        sorted_reps, auto_resolution, auto_base_url = NetworkManager.get_video_m3u8_manifest(
+            json_str
+        )
         assert sorted_reps == [[720, None], [1080, None]], "같은 높이가 pill 둘로 나타나던 결함"
         assert (auto_resolution, auto_base_url) == (1080, None)
 
     def test_clip_keeps_the_first_track_per_height(self, monkeypatch) -> None:
-        payload = {"card": {"content": {"vod": {"playback": {"videos": {"list": [
-            {"encodingOption": {"width": 1920, "height": 1080}, "source": "https://c.invalid/1080_first.mp4"},
-            {"encodingOption": {"width": 1920, "height": 1080}, "source": "https://c.invalid/1080_second.mp4"},
-            {"encodingOption": {"width": 1280, "height": 720}, "source": "https://c.invalid/720.mp4"},
-        ]}}}}}}
+        payload = {
+            "card": {
+                "content": {
+                    "vod": {
+                        "playback": {
+                            "videos": {
+                                "list": [
+                                    {
+                                        "encodingOption": {"width": 1920, "height": 1080},
+                                        "source": "https://c.invalid/1080_first.mp4",
+                                    },
+                                    {
+                                        "encodingOption": {"width": 1920, "height": 1080},
+                                        "source": "https://c.invalid/1080_second.mp4",
+                                    },
+                                    {
+                                        "encodingOption": {"width": 1280, "height": 720},
+                                        "source": "https://c.invalid/720.mp4",
+                                    },
+                                ]
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         class _JsonResponse(MockResponse):
             def json(self) -> dict:
                 return payload
 
         monkeypatch.setattr(network._session, "get", lambda url, **kwargs: _JsonResponse(text=""))
-        sorted_reps, auto_resolution, auto_base_url, error = NetworkManager.get_clip_manifest("clip-id", {})
+        sorted_reps, auto_resolution, auto_base_url, error = NetworkManager.get_clip_manifest(
+            "clip-id", {}
+        )
         assert error is None
         # 클립 응답에는 비트레이트가 없다 — 먼저 나온 트랙이 남는다(결정적)
-        assert sorted_reps == [[720, "https://c.invalid/720.mp4"], [1080, "https://c.invalid/1080_first.mp4"]]
+        assert sorted_reps == [
+            [720, "https://c.invalid/720.mp4"],
+            [1080, "https://c.invalid/1080_first.mp4"],
+        ]
         assert (auto_resolution, auto_base_url) == (1080, "https://c.invalid/1080_first.mp4")
 
 

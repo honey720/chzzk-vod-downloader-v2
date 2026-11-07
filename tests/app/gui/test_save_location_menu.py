@@ -105,7 +105,10 @@ class TestMenuRows:
     def test_rows_are_current_favorites_recent_then_commands(self, make_window, folders) -> None:
         """즐겨찾기 둘 · 최근 둘이 있으면 메뉴는 지금 위치 · 즐겨찾기 머리와 둘 · 최근 머리와 둘 · 구분선 · 명령 셋 차례여야 한다."""
         a, b, r1, r2 = folders("즐1"), folders("즐2"), folders("최1"), folders("최2")
-        _seed(favoritePaths=[{"name": "하나", "path": a}, {"name": "둘", "path": b}], recentPaths=[r1, r2])
+        _seed(
+            favoritePaths=[{"name": "하나", "path": a}, {"name": "둘", "path": b}],
+            recentPaths=[r1, r2],
+        )
         win = make_window()
         current = win.saveLocations.current()
 
@@ -174,11 +177,15 @@ class TestLimitsAndOverlap:
 
     def test_adding_a_favorite_is_off_when_the_list_is_full(self, make_window, folders) -> None:
         """즐겨찾기가 10개이면 「지금 위치를 즐겨찾기에」가 꺼져 있어야 한다."""
-        favorites = [{"name": f"즐{n}", "path": folders(f"즐{n}")} for n in range(settings.FAVORITES_MAX)]
+        favorites = [
+            {"name": f"즐{n}", "path": folders(f"즐{n}")} for n in range(settings.FAVORITES_MAX)
+        ]
         _seed(favoritePaths=favorites)
         win = make_window()
         menu = _open(win)
-        assert len([a for a in menu.choices() if a.data()[0] == "favorite"]) == settings.FAVORITES_MAX
+        assert (
+            len([a for a in menu.choices() if a.data()[0] == "favorite"]) == settings.FAVORITES_MAX
+        )
         assert not _command(menu, "addFavoriteAction").isEnabled()
 
     def test_adding_a_favorite_is_off_when_the_current_location_is_one(
@@ -281,7 +288,9 @@ class TestChoosing:
         win.saveLocationButton.errorOccurred.disconnect()
         win.saveLocationButton.errorOccurred.connect(errors.append)
         assert win.saveLocations.choose(other)
-        monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *a, **k: ("같은 이름", True)))
+        monkeypatch.setattr(
+            QInputDialog, "getText", staticmethod(lambda *a, **k: ("같은 이름", True))
+        )
 
         _command(_open(win), "addFavoriteAction").trigger()
 
@@ -301,7 +310,9 @@ class TestChosenLocationAppliesToLaterCards:
         win.urlInput.setText("https://chzzk.naver.com/video/1")
         win.fetchButton.click()
 
-        monkeypatch.setattr(QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: second))
+        monkeypatch.setattr(
+            QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: second)
+        )
         _command(_open(win), "findFolderAction").trigger()
         win.urlInput.setText("https://chzzk.naver.com/video/2")
         win.fetchButton.click()
@@ -345,7 +356,9 @@ class TestRowsAndLimits:
         monkeypatch.setenv("HOME", str(tmp_path))  # 임시 폴더는 OS마다 홈 밖일 수 있어 홈을 정한다
         monkeypatch.setenv("USERPROFILE", str(tmp_path))
         recent = folders("최근")
-        assert os.path.normcase(recent).startswith(os.path.normcase(os.path.expanduser("~"))), "전제: 시험 폴더가 홈 아래"
+        assert os.path.normcase(recent).startswith(os.path.normcase(os.path.expanduser("~"))), (
+            "전제: 시험 폴더가 홈 아래"
+        )
         _seed(recentPaths=[recent])
         win = make_window()
         action = _choice(_open(win), "recent", recent)
@@ -365,7 +378,9 @@ class TestRowsAndLimits:
         assert win.saveLocations.choose(str(deep))
         menu = _open(win)
         metrics = menu.fontMetrics()
-        assert metrics.horizontalAdvance(abbreviate_path(str(deep))) > win.width(), "전제: 상한이 없으면 창을 넘는 글"
+        assert metrics.horizontalAdvance(abbreviate_path(str(deep))) > win.width(), (
+            "전제: 상한이 없으면 창을 넘는 글"
+        )
         assert menu.isVisible()
         assert menu.width() <= win.width() - 24
         # 창이 offscreen 화면(800px)만큼 넓은 폰트에서는 Qt가 메뉴를 화면 폭으로도 자른다 — 상한이 없어도
@@ -376,7 +391,9 @@ class TestRowsAndLimits:
         """메뉴 폭이 상한에 걸려도 다른 줄(최근)의 흐린 경로가 보이는 메뉴 오른쪽 안쪽에 그려져야 한다."""
         from PySide6.QtCore import QRect
 
-        deep = tmp_path / ("W" * min(150, 250 - len(str(tmp_path))))  # 창보다 넓은 이름 — 위 테스트와 같은 한도
+        deep = tmp_path / (
+            "W" * min(150, 250 - len(str(tmp_path)))
+        )  # 창보다 넓은 이름 — 위 테스트와 같은 한도
         deep.mkdir()
         recent = folders("짧은 최근")
         _seed(recentPaths=[recent])
@@ -396,7 +413,10 @@ class TestRowsAndLimits:
             1
             for y in range(int(zone.top() * ratio), int(zone.bottom() * ratio))
             for x in range(int(zone.left() * ratio), int(zone.right() * ratio))
-            if sum(abs(a - b) for a, b in zip(image.pixelColor(x, y).getRgb()[:3], face.getRgb()[:3])) > 60
+            if sum(
+                abs(a - b) for a, b in zip(image.pixelColor(x, y).getRgb()[:3], face.getRgb()[:3])
+            )
+            > 60
         )
         assert menu.width() <= win.width() - 24, "전제: 메뉴가 상한에 걸려 있다"
         assert inked > 10, "흐린 경로가 보이는 메뉴 안에 그려지지 않았다"
@@ -414,7 +434,10 @@ class TestRowsAndLimits:
         folded = fit_path(metrics, path, metrics.horizontalAdvance("~/…/" + last))
         squeezed = fit_path(metrics, path, 120)
         assert folded.endswith(last) and "/…/" in folded
-        assert "…" in squeezed[len(squeezed.split("/")[0]) + 3:] and metrics.horizontalAdvance(squeezed) <= 120
+        assert (
+            "…" in squeezed[len(squeezed.split("/")[0]) + 3 :]
+            and metrics.horizontalAdvance(squeezed) <= 120
+        )
 
     def test_default_location_row_is_off_at_the_default_and_on_elsewhere(
         self, make_window, folders
@@ -437,7 +460,8 @@ class TestRowsAndLimits:
 
         win = make_window()
         default = win.saveLocations.default()
-        monkeypatch.setattr(QFileDialog, "getExistingDirectory",
-                            staticmethod(lambda *a, **k: default + os.sep))
+        monkeypatch.setattr(
+            QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: default + os.sep)
+        )
         _command(_open(win), "findFolderAction").trigger()
         assert not _command(_open(win), "defaultLocationAction").isEnabled()

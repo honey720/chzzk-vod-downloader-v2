@@ -44,9 +44,7 @@ def test_setup_adds_console_and_rotating_file_handlers(isolated_logging) -> None
     logging_setup.setup_logging(str(isolated_logging / "logs"))
 
     added = [h for h in logging.getLogger().handlers if h not in before]
-    rotating = [
-        h for h in added if isinstance(h, logging.handlers.RotatingFileHandler)
-    ]
+    rotating = [h for h in added if isinstance(h, logging.handlers.RotatingFileHandler)]
     consoles = [
         h
         for h in added

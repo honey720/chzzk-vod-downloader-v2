@@ -48,8 +48,16 @@ def window(qapp, tmp_path) -> Iterator[VodDownloader]:
 
 
 def _item(title: str, channel: str = "채널", date: str = "", path: str = "") -> ContentItem:
-    metadata = {"title": title, "category": "", "channelName": channel, "createdDate": date, "duration": 60}
-    return ContentItem("https://chzzk.naver.com/video/1", metadata, [], None, "", path, "video", None)
+    metadata = {
+        "title": title,
+        "category": "",
+        "channelName": channel,
+        "createdDate": date,
+        "duration": 60,
+    }
+    return ContentItem(
+        "https://chzzk.naver.com/video/1", metadata, [], None, "", path, "video", None
+    )
 
 
 def _add(win, *items, states=None) -> list:
@@ -76,7 +84,11 @@ def _screen_order(win) -> list:
 
 
 def _visible_titles(win) -> list[str]:
-    return [item.title for item in _screen_order(win) if win.listView.widgetFor(item).isVisibleTo(win.listView)]
+    return [
+        item.title
+        for item in _screen_order(win)
+        if win.listView.widgetFor(item).isVisibleTo(win.listView)
+    ]
 
 
 def _chip_counts(win) -> dict:
@@ -104,10 +116,21 @@ class TestChipCounts:
     def test_counts_follow_adding_cards(self, window) -> None:
         """대기 둘 · 완료 하나 · 실패 하나를 넣으면 칩 숫자는 전체 4 · 대기 2 · 완료 1 · 실패 1이어야 한다."""
         D = DownloadState
-        _add(window, _item("가"), _item("나"), _item("다"), _item("라"),
-             states=[D.WAITING, D.WAITING, D.FINISHED, D.FAILED])
+        _add(
+            window,
+            _item("가"),
+            _item("나"),
+            _item("다"),
+            _item("라"),
+            states=[D.WAITING, D.WAITING, D.FINISHED, D.FAILED],
+        )
         assert _chip_counts(window) == {
-            "all": 4, "waiting": 2, "running": 0, "paused": 0, "finished": 1, "failed": 1
+            "all": 4,
+            "waiting": 2,
+            "running": 0,
+            "paused": 0,
+            "finished": 1,
+            "failed": 1,
         }
 
     def test_counts_follow_a_state_change(self, window) -> None:
@@ -117,7 +140,9 @@ class TestChipCounts:
         counts = _chip_counts(window)
         assert (counts["waiting"], counts["running"]) == (0, 1)
 
-    @pytest.mark.parametrize("signal", ["itemStarted", "itemStopped", "itemPaused", "itemResumed", "itemFinished"])
+    @pytest.mark.parametrize(
+        "signal", ["itemStarted", "itemStopped", "itemPaused", "itemResumed", "itemFinished"]
+    )
     def test_counts_follow_a_download_notice(self, window, signal) -> None:
         """상태를 바꾼 뒤 다운로드 알림(itemStarted 등)만 오면 그 차례 끝에 칩 숫자가 따라가야 한다."""
         (item,) = _add(window, _item("가"))
@@ -153,7 +178,13 @@ class TestFilter:
     @pytest.fixture
     def mixed(self, window) -> VodDownloader:
         D = DownloadState
-        _add(window, _item("대기"), _item("완료"), _item("실패"), states=[D.WAITING, D.FINISHED, D.FAILED])
+        _add(
+            window,
+            _item("대기"),
+            _item("완료"),
+            _item("실패"),
+            states=[D.WAITING, D.FINISHED, D.FAILED],
+        )
         return window
 
     def test_a_chip_shows_only_its_state(self, mixed) -> None:
@@ -240,8 +271,12 @@ class TestSort:
 
     def test_unknown_upload_dates_go_last_in_both_directions(self, window) -> None:
         """날짜를 모르는 카드는 업로드순 오름 · 내림 모두 맨 끝이어야 한다."""
-        _add(window, _item("모름", date="Unknown Date"), _item("앞", date="2026-01-01 00:00:00"),
-             _item("뒤", date="2026-02-01 00:00:00"))
+        _add(
+            window,
+            _item("모름", date="Unknown Date"),
+            _item("앞", date="2026-01-01 00:00:00"),
+            _item("뒤", date="2026-02-01 00:00:00"),
+        )
         _pick_sort(window, "upload", "asc")
         assert [i.title for i in _screen_order(window)] == ["뒤", "앞", "모름"]
         _pick_sort(window, "upload", "desc")
@@ -295,7 +330,9 @@ class TestDownloadOrder:
     def test_changing_the_sort_while_downloading_is_seen_at_the_next_pick(self, window) -> None:
         """한 카드를 받는 중에 정렬을 바꾸면 그다음 고르는 카드는 바뀐 정렬의 첫 대기 카드여야 한다."""
         D = DownloadState
-        running, *_ = _add(window, _item("가"), _item("나"), _item("다"), states=[D.RUNNING, D.WAITING, D.WAITING])
+        running, *_ = _add(
+            window, _item("가"), _item("나"), _item("다"), states=[D.RUNNING, D.WAITING, D.WAITING]
+        )
         _pick_sort(window, "title", "desc")  # 받는 중에 바꾼다 — 추가된 순서라면 다음은 「나」
         _set_state(window, running, D.FINISHED)
         assert self._next(window).title == "다"

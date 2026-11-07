@@ -1,6 +1,13 @@
 from PySide6.QtWidgets import QScrollArea, QWidget, QVBoxLayout
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDragLeaveEvent, QDropEvent, QPainter, QColor
+from PySide6.QtGui import (
+    QDragEnterEvent,
+    QDragMoveEvent,
+    QDragLeaveEvent,
+    QDropEvent,
+    QPainter,
+    QColor,
+)
 import app.theme as theme
 from app.widgets.scroll_padding import ScrollBarPadding
 from app.widgets.widget import ContentItemWidget
@@ -86,7 +93,7 @@ class ContentListView(QScrollArea):
         # 보이는 차례 · 필터(#495 — CardOrder). 없으면(모델만 건 대역) 목록 행 차례, 필터 없음
         self._order = None
         self._widgets: dict[ContentItem, ContentItemWidget] = {}
-        self._dragActive = False    # 드래그 상태 플래그 TODO: 대체 가능한 메서드 사용
+        self._dragActive = False  # 드래그 상태 플래그 TODO: 대체 가능한 메서드 사용
         self._renumberPending = False  # 삭제 뒤 번호 재계산 배치 대기 플래그 (#235)
 
         self._overlay = _Overlay(self)
@@ -278,7 +285,7 @@ class ContentListView(QScrollArea):
         # 드래그된 데이터가 텍스트인지 확인
         if event.mimeData().hasText():
             self._dragActive = True  # 드래그 시작 플래그 활성화
-            self._overlay.update()            # 뷰 갱신(화면에 표시)
+            self._overlay.update()  # 뷰 갱신(화면에 표시)
             event.acceptProposedAction()
         else:
             event.ignore()
@@ -292,14 +299,14 @@ class ContentListView(QScrollArea):
 
     def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:
         self._dragActive = False  # 드래그 종료 플래그 비활성화
-        self._overlay.update()             # 화면 갱신
+        self._overlay.update()  # 화면 갱신
         event.accept()
 
     def dropEvent(self, event: QDropEvent) -> None:
         # 드롭된 데이터가 텍스트라면 처리
         if event.mimeData().hasText():
             self._dragActive = False  # 드래그 상태 해제
-            self._overlay.update()             # 뷰 갱신
+            self._overlay.update()  # 뷰 갱신
             dropped_text = event.mimeData().text()
             self.fetchRequested.emit(dropped_text)
             event.acceptProposedAction()
@@ -315,13 +322,19 @@ class ContentListView(QScrollArea):
             overlay_color = QColor(0, 0, 0, 128)  # (R, G, B, Alpha) Alpha=128은 50% 투명도
             painter.fillRect(viewport_widget.rect(), overlay_color)
             # 중앙에 흰색 텍스트를 그립니다.
-            painter.drawText(viewport_widget.rect(), Qt.AlignmentFlag.AlignCenter, self.tr("Drag the URL here."))
+            painter.drawText(
+                viewport_widget.rect(), Qt.AlignmentFlag.AlignCenter, self.tr("Drag the URL here.")
+            )
             painter.end()
         elif self._model is not None and self._model.isEmpty():
             painter = QPainter(viewport_widget)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             # 중앙에 흰색 텍스트를 그립니다.
-            painter.drawText(viewport_widget.rect(), Qt.AlignmentFlag.AlignCenter, self.tr("Add VOD or Drag the URL here."))
+            painter.drawText(
+                viewport_widget.rect(),
+                Qt.AlignmentFlag.AlignCenter,
+                self.tr("Add VOD or Drag the URL here."),
+            )
             painter.end()
 
     def bind(self, viewmodel) -> None:
@@ -378,4 +391,4 @@ class ContentListView(QScrollArea):
             # 갈라진다
             widget.setData(item, self._model.getRow(item))
 
-    #TODO: 중복되는 부분 통합
+    # TODO: 중복되는 부분 통합

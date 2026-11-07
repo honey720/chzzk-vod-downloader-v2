@@ -53,8 +53,13 @@ from core.utils.paths import build_output_path
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, shown, snapshot_top_levels
 from typing import Never
 
-STATES = (DownloadState.WAITING, DownloadState.RUNNING, DownloadState.PAUSED,
-          DownloadState.FINISHED, DownloadState.FAILED)
+STATES = (
+    DownloadState.WAITING,
+    DownloadState.RUNNING,
+    DownloadState.PAUSED,
+    DownloadState.FINISHED,
+    DownloadState.FAILED,
+)
 IDS = [s.name for s in STATES]
 
 OTHER_PATH = "D:/vod/archive/2026/summer/finals/T1-vs-GEN-full-set-highlights-and-interviews"
@@ -104,8 +109,19 @@ def make_card(
     """
     item = ContentItem(
         "https://chzzk.naver.com/video/1",
-        {"title": "제목", "category": "", "channelName": "채널", "createdDate": "", "duration": 3600},
-        [["1080", "u1"], ["720", "u2"]], None, "", path, "video", None,
+        {
+            "title": "제목",
+            "category": "",
+            "channelName": "채널",
+            "createdDate": "",
+            "duration": 3600,
+        },
+        [["1080", "u1"], ["720", "u2"]],
+        None,
+        "",
+        path,
+        "video",
+        None,
     )
     item.downloadState = DownloadState.WAITING
     item.total_size = "595.34 MB"
@@ -198,7 +214,9 @@ class TestTitleSurface:
         window, widget = make_card(state)
         qtbot.addWidget(window)
         expected = Qt.CursorShape.IBeamCursor if _clickable(state) else Qt.CursorShape.ArrowCursor
-        assert widget.titleLabel.cursor().shape() == expected, f"{state.name}: 제목 커서가 클릭 가능 여부와 다르다"
+        assert widget.titleLabel.cursor().shape() == expected, (
+            f"{state.name}: 제목 커서가 클릭 가능 여부와 다르다"
+        )
 
     @pytest.mark.parametrize("state", STATES, ids=IDS)
     def test_click_opens_the_editor_only_when_clickable(self, qapp, qtbot, state) -> None:
@@ -207,7 +225,9 @@ class TestTitleSurface:
         shown(widget.titleLabel)
         QTest.mouseClick(widget.titleLabel, Qt.MouseButton.LeftButton)
         _pump()
-        assert widget.titleEdit.isVisible() == _clickable(state), f"{state.name}: 제목 클릭의 편집창 표시가 상태와 다르다"
+        assert widget.titleEdit.isVisible() == _clickable(state), (
+            f"{state.name}: 제목 클릭의 편집창 표시가 상태와 다르다"
+        )
 
 
 # ============================ 경로 ============================
@@ -219,7 +239,9 @@ class TestPathLabelSurface:
         window, widget = make_card(state)
         qtbot.addWidget(window)
         assert widget.directoryLabel.isVisible(), "전제: 전역과 다른 경로라 라벨이 보인다"
-        expected = Qt.CursorShape.PointingHandCursor if _clickable(state) else Qt.CursorShape.ArrowCursor
+        expected = (
+            Qt.CursorShape.PointingHandCursor if _clickable(state) else Qt.CursorShape.ArrowCursor
+        )
         assert widget.directoryLabel.cursor().shape() == expected, (
             f"{state.name}: 경로 라벨 커서가 클릭 가능 여부와 다르다 — 결함 2"
         )
@@ -247,7 +269,9 @@ class TestPathLabelSurface:
         shown(widget.directoryLabel)
         QTest.mouseClick(widget.directoryLabel, Qt.MouseButton.LeftButton)
         _pump()
-        assert (len(calls) == 1) == _clickable(state), f"{state.name}: 경로 클릭의 폴더 선택 호출이 상태와 다르다"
+        assert (len(calls) == 1) == _clickable(state), (
+            f"{state.name}: 경로 클릭의 폴더 선택 호출이 상태와 다르다"
+        )
 
 
 class TestPathButtonSurface:
@@ -395,14 +419,21 @@ class TestRowOneAtTheNarrowestCard:
         window, widget = make_card(DownloadState.WAITING)
         qtbot.addWidget(window)
         resize_window(window, widget, widget.minimumSizeHint().width())
-        row = [widget.channelNameLabel, widget.sectionEditButton, widget.pathButton, widget.deleteButton]
+        row = [
+            widget.channelNameLabel,
+            widget.sectionEditButton,
+            widget.pathButton,
+            widget.deleteButton,
+        ]
         assert all(part.isVisible() for part in row), "전제: 네 가지가 모두 보인다"
 
         spans = [(part.mapTo(widget, part.rect().topLeft()).x(), part.width()) for part in row]
 
         for (left, width), (next_left, _next_width) in zip(spans, spans[1:]):
             assert left + width <= next_left, f"1행에서 겹친다: {spans}"
-        assert spans[0][0] >= 0 and spans[-1][0] + spans[-1][1] <= widget.width(), f"카드 밖으로 나갔다: {spans}"
+        assert spans[0][0] >= 0 and spans[-1][0] + spans[-1][1] <= widget.width(), (
+            f"카드 밖으로 나갔다: {spans}"
+        )
         assert all(width > 0 for _left, width in spans)
 
 
@@ -422,7 +453,9 @@ class TestPathDialogDuringTransition:
         widget.choosePath()
         _pump()
         assert calls == [OTHER_PATH]
-        assert widget.item.download_path == OTHER_PATH, "시작된 뒤에 고른 폴더가 적용됐다 — 부분 파일은 옛 경로에 있다"
+        assert widget.item.download_path == OTHER_PATH, (
+            "시작된 뒤에 고른 폴더가 적용됐다 — 부분 파일은 옛 경로에 있다"
+        )
 
 
 # ============================ 편집 중 상태 전이 ============================
@@ -461,8 +494,12 @@ class TestEditingIsCancelledOnStateChange:
         widget.item.downloadState = state
         widget.setData(widget.item, 0)
         _pump()
-        assert not widget.titleEdit.isVisible() and not widget.isEditing, f"{state.name}: 입력창이 남아 있다 — 결함 3"
-        assert shown(widget.titleLabel) == "제목" and widget.item.title == "제목", "편집 중이던 값이 확정됐다"
+        assert not widget.titleEdit.isVisible() and not widget.isEditing, (
+            f"{state.name}: 입력창이 남아 있다 — 결함 3"
+        )
+        assert shown(widget.titleLabel) == "제목" and widget.item.title == "제목", (
+            "편집 중이던 값이 확정됐다"
+        )
         assert emitted == [], "확정하지 않은 편집이 모델로 나갔다"
 
     def test_saved_filename_matches_the_label_after_the_revert(self, qapp, qtbot, tmp_path) -> None:
@@ -474,7 +511,9 @@ class TestEditingIsCancelledOnStateChange:
         window.setFocus()
         _pump()
         stem = os.path.splitext(os.path.basename(widget.item.output_path))[0]
-        assert stem.startswith(widget.item.title) and shown(widget.titleLabel) == widget.item.title, (
+        assert (
+            stem.startswith(widget.item.title) and shown(widget.titleLabel) == widget.item.title
+        ), (
             f"저장 파일명 {stem!r} ≠ 라벨 {shown(widget.titleLabel)!r} — 라벨만 바뀌고 파일은 옛 이름으로 저장된다"
         )
         assert "NewName" not in stem and emitted == []
@@ -496,4 +535,8 @@ class TestEditingIsCancelledOnStateChange:
         QTest.keyClick(widget.titleEdit, Qt.Key.Key_Return)
         _pump()
         assert not widget.titleEdit.isVisible()
-        assert shown(widget.titleLabel) == "NewName" and widget.item.title == "NewName" and emitted == ["NewName"]
+        assert (
+            shown(widget.titleLabel) == "NewName"
+            and widget.item.title == "NewName"
+            and emitted == ["NewName"]
+        )

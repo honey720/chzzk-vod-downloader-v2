@@ -21,7 +21,14 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import QCoreApplication, Qt, QTranslator
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox, QMessageBox, QStyle, QStyleOption
+from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QDialogButtonBox,
+    QMessageBox,
+    QStyle,
+    QStyleOption,
+)
 
 import app.system.settings as settings
 import CVDv2 as main
@@ -85,15 +92,22 @@ def _layout_order(box: QDialogButtonBox) -> tuple:
     option = QStyleOption()
     option.initFrom(box)
     hint = LAYOUT(box.style().styleHint(QStyle.StyleHint.SH_DialogButtonLayout, option, box))
-    ok, cancel = box.button(QDialogButtonBox.StandardButton.Ok), box.button(QDialogButtonBox.StandardButton.Cancel)
+    ok, cancel = (
+        box.button(QDialogButtonBox.StandardButton.Ok),
+        box.button(QDialogButtonBox.StandardButton.Cancel),
+    )
     return (ok, cancel) if OK_FIRST[hint] else (cancel, ok)
 
 
 def _message_box_texts() -> dict:
     """정적 QMessageBox.warning/information/critical(OK)과 warning(Yes|No)이 만드는 것과 같은 상자."""
     ok_box = QMessageBox(QMessageBox.Icon.Warning, "t", "m", QMessageBox.StandardButton.Ok)
-    yn_box = QMessageBox(QMessageBox.Icon.Warning, "t", "m",
-                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+    yn_box = QMessageBox(
+        QMessageBox.Icon.Warning,
+        "t",
+        "m",
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+    )
     texts = {
         "ok": ok_box.button(QMessageBox.StandardButton.Ok).text(),
         "yes": yn_box.button(QMessageBox.StandardButton.Yes).text(),
@@ -109,13 +123,20 @@ class TestKorean:
         translators("ko_KR")
         dialog = SettingDialog()
         try:
-            assert _box_texts(dialog.dialogButtonBox) == {"ok": KOREAN["ok"], "cancel": KOREAN["cancel"]}
+            assert _box_texts(dialog.dialogButtonBox) == {
+                "ok": KOREAN["ok"],
+                "cancel": KOREAN["cancel"],
+            }
         finally:
             dialog.deleteLater()
 
     def test_message_box_standard_buttons_are_korean(self, qapp, translators) -> None:
         translators("ko_KR")
-        assert _message_box_texts() == {"ok": KOREAN["ok"], "yes": KOREAN["yes"], "no": KOREAN["no"]}
+        assert _message_box_texts() == {
+            "ok": KOREAN["ok"],
+            "yes": KOREAN["yes"],
+            "no": KOREAN["no"],
+        }
 
     def test_every_message_box_call_site_uses_standard_buttons_only(self) -> None:
         """정적 QMessageBox 호출 10곳이 전부 표준 버튼이라 카탈로그 하나로 덮인다 — 문구를
@@ -126,7 +147,9 @@ class TestKorean:
         calls, custom = 0, []
         for path in sorted((root / "app").rglob("*.py")):
             text = path.read_text(encoding="utf-8")
-            calls += len(re.findall(r"QMessageBox\.(warning|information|critical|question)\(", text))
+            calls += len(
+                re.findall(r"QMessageBox\.(warning|information|critical|question)\(", text)
+            )
             if re.search(r"setButtonText\(|\.addButton\(\s*[\"']", text):
                 custom.append(path.relative_to(root).as_posix())
         assert calls == 10, f"정적 QMessageBox 호출이 {calls}곳 — 10곳 전제가 바뀌었다(게이트 갱신)"
@@ -140,10 +163,17 @@ class TestEnglish:
         assert len(result) == 1, "영어에는 Qt 카탈로그가 없어야 한다(원문)"
         dialog = SettingDialog()
         try:
-            assert _box_texts(dialog.dialogButtonBox) == {"ok": ENGLISH["ok"], "cancel": ENGLISH["cancel"]}
+            assert _box_texts(dialog.dialogButtonBox) == {
+                "ok": ENGLISH["ok"],
+                "cancel": ENGLISH["cancel"],
+            }
         finally:
             dialog.deleteLater()
-        assert _message_box_texts() == {"ok": ENGLISH["ok"], "yes": ENGLISH["yes"], "no": ENGLISH["no"]}
+        assert _message_box_texts() == {
+            "ok": ENGLISH["ok"],
+            "yes": ENGLISH["yes"],
+            "no": ENGLISH["no"],
+        }
 
 
 class TestInstallOrder:
@@ -209,13 +239,20 @@ class TestPreserved:
         dialog = self._dialog(qapp, translators, language)
         qtbot.addWidget(dialog)
         box = dialog.dialogButtonBox
-        ok, cancel = box.button(QDialogButtonBox.StandardButton.Ok), box.button(QDialogButtonBox.StandardButton.Cancel)
+        ok, cancel = (
+            box.button(QDialogButtonBox.StandardButton.Ok),
+            box.button(QDialogButtonBox.StandardButton.Cancel),
+        )
         first, second = _layout_order(box)
-        assert first.x() < second.x(), f"버튼 차례가 배치 힌트와 다르다(앞 {first.text()} · 뒤 {second.text()})"
+        assert first.x() < second.x(), (
+            f"버튼 차례가 배치 힌트와 다르다(앞 {first.text()} · 뒤 {second.text()})"
+        )
         assert ok.isDefault() and not cancel.isDefault(), "기본 버튼(Enter)이 OK가 아니다"
         QTest.keyClick(dialog, Qt.Key.Key_Escape)
         QApplication.processEvents()
-        assert dialog.result() == QDialog.DialogCode.Rejected and not dialog.isVisible(), "Esc가 취소하지 않는다"
+        assert dialog.result() == QDialog.DialogCode.Rejected and not dialog.isVisible(), (
+            "Esc가 취소하지 않는다"
+        )
 
     @pytest.mark.parametrize("language", ("ko_KR", "en_US"))
     def test_tab_order_follows_the_button_layout(self, qapp, qtbot, translators, language) -> None:
@@ -223,7 +260,9 @@ class TestPreserved:
         dialog = self._dialog(qapp, translators, language)
         qtbot.addWidget(dialog)
         first, second = _layout_order(dialog.dialogButtonBox)
-        assert first.nextInFocusChain() is second, f"탭 순서가 {first.text()} → {second.text()}가 아니다"
+        assert first.nextInFocusChain() is second, (
+            f"탭 순서가 {first.text()} → {second.text()}가 아니다"
+        )
 
     def test_minimum_size_is_reported_for_both_languages(
         self, qapp, translators, monkeypatch
@@ -235,8 +274,14 @@ class TestPreserved:
         """
         sizes = {}
         real = main.qt_catalog_path
-        for tag, language, catalog in (("en_US", "en_US", True), ("ko_KR", "ko_KR", True), ("ko_KR-no-catalog", "ko_KR", False)):
-            monkeypatch.setattr(main, "qt_catalog_path", real if catalog else (lambda lang: real(lang) + ".missing"))
+        for tag, language, catalog in (
+            ("en_US", "en_US", True),
+            ("ko_KR", "ko_KR", True),
+            ("ko_KR-no-catalog", "ko_KR", False),
+        ):
+            monkeypatch.setattr(
+                main, "qt_catalog_path", real if catalog else (lambda lang: real(lang) + ".missing")
+            )
             result = translators(language)
             dialog = SettingDialog()
             sizes[tag] = (dialog.minimumSizeHint().width(), dialog.minimumSizeHint().height())

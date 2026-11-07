@@ -114,7 +114,13 @@ DOWNLOAD_DIR = tempfile.mkdtemp(prefix="cvdv2-theme-")
 def _make_item(i: int) -> ContentItem:
     return ContentItem(
         f"https://chzzk.naver.com/video/{i}",
-        {"title": f"제목 {i}", "category": "", "channelName": f"채널{i}", "createdDate": "", "duration": 3600},
+        {
+            "title": f"제목 {i}",
+            "category": "",
+            "channelName": f"채널{i}",
+            "createdDate": "",
+            "duration": 3600,
+        },
         [["1080", "u1"], ["720", "u2"]],
         None,
         "",
@@ -139,7 +145,9 @@ class Scene:
             item.downloadState = DownloadState.WAITING
             self.window.contentManager.model.addItem(item)
             widget = self.window.listView.widgetFor(item)  # 뷰가 pill까지 만들어 둔 실제 배선
-            widget.setresolutionUrlSize("1080", "u1", 0, widget.buttons[0])  # 유저가 1080p를 고른 상태
+            widget.setresolutionUrlSize(
+                "1080", "u1", 0, widget.buttons[0]
+            )  # 유저가 1080p를 고른 상태
             item.total_size = "595.34 MB"
             item.downloadState = state
             item.download_progress = PROGRESS.get(state, 0)
@@ -185,7 +193,10 @@ class Scene:
             "footer.downloadButton": w.downloadButton,
             "footer.stopButton": w.stopButton,
         }
-        for key, chip in w.filterChips.items():  # 헤더바 2줄 상태 칩(#495) — 고른 칩 · 실패 강조 포함
+        for (
+            key,
+            chip,
+        ) in w.filterChips.items():  # 헤더바 2줄 상태 칩(#495) — 고른 칩 · 실패 강조 포함
             parts[f"header.chip[{key}]"] = chip
         for state in STATES:
             card = self.card(state)
@@ -280,7 +291,10 @@ def _assert_key_parts_shown(scene: Scene) -> None:
     assert scene.card(DownloadState.RUNNING).progressBar.isVisible()
     assert scene.card(DownloadState.PAUSED).progressBar.isVisible()
     shown(scene.card(DownloadState.FAILED).statusLabel)
-    assert scene.card(DownloadState.WAITING).buttons and scene.card(DownloadState.WAITING).buttons[0].isVisible()
+    assert (
+        scene.card(DownloadState.WAITING).buttons
+        and scene.card(DownloadState.WAITING).buttons[0].isVisible()
+    )
 
 
 def _differences(a: dict, b: dict) -> list[str]:
@@ -514,7 +528,9 @@ class TestGlobalStateRestored:
         before = _snapshot_global_state(qapp)
 
         with theme_sandbox(qapp):
-            theme.apply_color_scheme(qapp, "light" if before["scheme"] == "dark" else "dark", QSS_PATH)
+            theme.apply_color_scheme(
+                qapp, "light" if before["scheme"] == "dark" else "dark", QSS_PATH
+            )
             assert _snapshot_global_state(qapp) != before  # 안에서는 실제로 바뀌었다
 
         assert _snapshot_global_state(qapp) == before
@@ -522,10 +538,14 @@ class TestGlobalStateRestored:
     def test_fault_injection_without_restore_the_gate_catches_it(self, qapp, monkeypatch) -> None:
         """복구를 빼면 위 게이트가 실패해야 한다 — 복구 게이트가 진짜로 재는지."""
         before = _snapshot_global_state(qapp)
-        monkeypatch.setattr(sys.modules[__name__], "_restore_global_state", lambda qapp, snapshot: None)
+        monkeypatch.setattr(
+            sys.modules[__name__], "_restore_global_state", lambda qapp, snapshot: None
+        )
         try:
             with theme_sandbox(qapp):
-                theme.apply_color_scheme(qapp, "light" if before["scheme"] == "dark" else "dark", QSS_PATH)
+                theme.apply_color_scheme(
+                    qapp, "light" if before["scheme"] == "dark" else "dark", QSS_PATH
+                )
             assert _snapshot_global_state(qapp) != before
         finally:
             monkeypatch.undo()

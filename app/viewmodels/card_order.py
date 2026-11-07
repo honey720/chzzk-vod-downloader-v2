@@ -112,7 +112,9 @@ class CardOrder(QObject):
         self._sortBy = by if by in SORT_KEYS else "added"
         self._descending = direction == "desc"
         self._filter = "all"
-        self._seq: dict[ContentItem, float] = {}  # 추가된 차례 — 같은 자리 교체는 앞 카드의 값을 잇는다
+        self._seq: dict[
+            ContentItem, float
+        ] = {}  # 추가된 차례 — 같은 자리 교체는 앞 카드의 값을 잇는다
         self._nextSeq = 0.0
         self._shown: dict[ContentItem, str] = {}  # 마지막으로 센 칩 — 바뀐 것만 고친다
         self._counts = dict.fromkeys(FILTER_KEYS, 0)

@@ -39,7 +39,9 @@ def _apply_production_qss(qapp) -> None:
     """실제 전역 QSS를 태운다. ⚠️ `scope="function"` 유지(macOS 종료 크래시 —
     `test_widget_theme.py`의 `_apply_dark_card_qss` 문서 참고)."""
     theme.set_color_scheme("dark")
-    qapp.setStyle(hold_style(theme.build_style()))  # 참조 보관 — 이중 해제 우회 (#243, card_helpers.hold_style)
+    qapp.setStyle(
+        hold_style(theme.build_style())
+    )  # 참조 보관 — 이중 해제 우회 (#243, card_helpers.hold_style)
     qapp.setPalette(theme.build_palette())
     qapp.setStyleSheet(theme.load_stylesheet(main_module.resource_path(theme.QSS_RELATIVE_PATH)))
 
@@ -63,7 +65,9 @@ def _at_width(win, width) -> None:
     win.resize(width, 700)
     win.show()
     QApplication.processEvents()
-    assert win.width() == width, f"요청 폭 {width}px인데 실제 {win.width()}px — 최소폭({win.minimumWidth()})에 클램프됐다"
+    assert win.width() == width, (
+        f"요청 폭 {width}px인데 실제 {win.width()}px — 최소폭({win.minimumWidth()})에 클램프됐다"
+    )
 
 
 def _right(w) -> int:
@@ -99,7 +103,12 @@ class TestStructure:
     def test_second_line_holds_chips_sort_and_clear_finished(self, window) -> None:
         """헤더 2줄 레이아웃은 칩 줄 · 정렬 버튼 · 빈칸 · 완료 지우기 차례여야 한다."""
         line = window.filterRowLayout
-        assert [line.itemAt(i).widget() for i in range(line.count())] == [window.filterChipBar, window.sortButton, None, window.clearFinishedButton]
+        assert [line.itemAt(i).widget() for i in range(line.count())] == [
+            window.filterChipBar,
+            window.sortButton,
+            None,
+            window.clearFinishedButton,
+        ]
 
     def test_tab_order_follows_the_line_from_the_menu_to_the_list(self, window) -> None:
         """탭 순서는 메뉴 둘 → URL 입력 → 저장 위치 버튼 → VOD 추가 → 칩 여섯 → 정렬 → 완료 지우기 → 목록이어야 한다.
@@ -118,8 +127,15 @@ class TestStructure:
 
         window.show()
         QApplication.processEvents()
-        chain = [window.menuDownloadButton, window.menuSettingsButton, *_line_widgets(window),
-                 *window.filterChips.values(), window.sortButton, window.clearFinishedButton, window.listView]
+        chain = [
+            window.menuDownloadButton,
+            window.menuSettingsButton,
+            *_line_widgets(window),
+            *window.filterChips.values(),
+            window.sortButton,
+            window.clearFinishedButton,
+            window.listView,
+        ]
         got = [next_focusable(w) for w in chain[:-1]]
         assert got == chain[1:]
 
@@ -133,7 +149,9 @@ class TestOneLine:
         centres = [_centre_y(window, w) for w in widgets]
         assert max(centres) - min(centres) <= 1, f"폭 {width}: 세로 중심이 다르다 {centres}"
         for left, right in zip(widgets, widgets[1:]):
-            assert _right(left) <= right.x(), f"폭 {width}: {left.objectName()}와 {right.objectName()}가 겹친다"
+            assert _right(left) <= right.x(), (
+                f"폭 {width}: {left.objectName()}와 {right.objectName()}가 겹친다"
+            )
 
 
 class TestSaveLocationButtonWidth:
@@ -144,7 +162,9 @@ class TestSaveLocationButtonWidth:
         from PySide6.QtCore import QTranslator
 
         translator = QTranslator()
-        assert translator.load(main_module.resource_path("translations/ko_KR.qm")), "ko_KR.qm 로드 실패"
+        assert translator.load(main_module.resource_path("translations/ko_KR.qm")), (
+            "ko_KR.qm 로드 실패"
+        )
         qapp.installTranslator(translator)
         yield translator
         qapp.removeTranslator(translator)
@@ -209,4 +229,6 @@ class TestFreeSpaceGoesToTheUrlInputOnly:
         for width in WIDTHS:
             _at_width(window, width)
             url.append(window.urlInput.width())
-        assert url[1] - url[0] == 300 and url[2] - url[0] == 900, f"URL 입력이 남는 폭을 다 받지 않는다: {url}"
+        assert url[1] - url[0] == 300 and url[2] - url[0] == 900, (
+            f"URL 입력이 남는 폭을 다 받지 않는다: {url}"
+        )

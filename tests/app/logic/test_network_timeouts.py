@@ -46,7 +46,7 @@ def _install(monkeypatch, response) -> RecordingSession:
 M3U8_PLAYLIST = "\n".join(
     [
         "#EXTM3U",
-        '#EXT-X-STREAM-INF:BANDWIDTH=1,RESOLUTION=1920x1080',
+        "#EXT-X-STREAM-INF:BANDWIDTH=1,RESOLUTION=1920x1080",
         "1080/playlist.m3u8",
     ]
 )
@@ -68,9 +68,7 @@ M3U8_PLAYLIST = "\n".join(
         (
             "get_clip_manifest",
             lambda: NetworkManager.get_clip_manifest("clip-id", COOKIES),
-            MockResponse(
-                text=json.dumps({"card": {"content": {"error": {"errorCode": "X"}}}})
-            ),
+            MockResponse(text=json.dumps({"card": {"content": {"error": {"errorCode": "X"}}}})),
         ),
         (
             "get_video_m3u8_base_url",
@@ -111,7 +109,9 @@ def test_aes_key_keeps_dedicated_timeout(monkeypatch) -> None:
     """복호화 키 요청의 기존 timeout=30은 유지된다 (#57 경로, 이 이슈 범위 밖)."""
     session = _install(monkeypatch, BytesResponse())
 
-    NetworkManager.get_aes_key("https://api.chzzk.naver.com/service/v1/encryption/videos/VID/aes_key", COOKIES)
+    NetworkManager.get_aes_key(
+        "https://api.chzzk.naver.com/service/v1/encryption/videos/VID/aes_key", COOKIES
+    )
 
     assert session.calls
     _url, kwargs = session.calls[0]

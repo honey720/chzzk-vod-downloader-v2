@@ -47,7 +47,9 @@ def _apply_dark_card_qss(qapp) -> None:
     재현했다(session·module 스코프는 좁혀도 둘 다 크래시 재현됨).
     """
     theme.set_color_scheme("dark")
-    qapp.setStyle(hold_style(theme.build_style()))  # 참조 보관 — 이중 해제 우회 (#243, card_helpers.hold_style)
+    qapp.setStyle(
+        hold_style(theme.build_style())
+    )  # 참조 보관 — 이중 해제 우회 (#243, card_helpers.hold_style)
     qapp.setPalette(theme.build_palette())
     qapp.setStyleSheet(theme.load_stylesheet(main_module.resource_path(theme.QSS_RELATIVE_PATH)))
 

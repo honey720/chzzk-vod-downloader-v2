@@ -147,7 +147,9 @@ class PathLabel(ElidingLabel):
             shown = folded  # ② 중간 폴더 접기 — 마지막 폴더 온전
         else:
             room = max(width - metrics.horizontalAdvance(self._prefix), 0)
-            shown = self._prefix + metrics.elidedText(self._last, Qt.TextElideMode.ElideMiddle, room)  # ③
+            shown = self._prefix + metrics.elidedText(
+                self._last, Qt.TextElideMode.ElideMiddle, room
+            )  # ③
         if shown != QLabel.text(self):
             QLabel.setText(self, shown)
 

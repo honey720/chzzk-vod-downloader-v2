@@ -92,7 +92,6 @@ def _default_download_path() -> str:
     return os.getcwd()
 
 
-
 def clamp_to_available(rect: QRect, available: QRect) -> QRect:
     """창 사각형을 현재 작업 영역 안으로 맞춘다 (#253) — 순수 함수, 테스트가 직접 잰다.
 
@@ -192,7 +191,7 @@ class VodDownloader(QMainWindow):
         self._sectionEditItem: ContentItem | None = None
         self.setupThreadSignals()
         self.setupSignals()
-        
+
         if self._startMaximized:
             self.showMaximized()
         else:
@@ -536,7 +535,9 @@ class VodDownloader(QMainWindow):
         frame, client = self.frameGeometry(), self.geometry()
         if frame == client:
             if retries > 0:
-                QTimer.singleShot(FRAME_RETRY_MS, self, lambda: self._clampFrameAfterShow(retries - 1))
+                QTimer.singleShot(
+                    FRAME_RETRY_MS, self, lambda: self._clampFrameAfterShow(retries - 1)
+                )
             else:
                 self._clampAfterShow = None
             return
@@ -631,9 +632,7 @@ class VodDownloader(QMainWindow):
         유저가 접힌 pill을 눌러 펼친 동안(좁은 폭에서 pill이 줄을 바꿈)은 카드가 더 높아진다.
         그 높이는 유저가 일으킨 잠깐의 변화라(`ContentItemWidget.setExpanded`) 최소 높이에 넣지 않는다.
         """
-        item = ContentItem(
-            "", dict(REFERENCE_CARD_METADATA), [], None, "", "", "video", None
-        )
+        item = ContentItem("", dict(REFERENCE_CARD_METADATA), [], None, "", "", "video", None)
         item.downloadState = DownloadState.FINISHED
         card = content_widget.ContentItemWidget(item)
         card.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
@@ -800,7 +799,7 @@ class VodDownloader(QMainWindow):
 
     def fetchContents(self, urls: str) -> None:
         # URL 목록을 미리 준비합니다.
-        self.urlsToFetch = [url.strip() for url in urls.splitlines() if url.strip() != '']
+        self.urlsToFetch = [url.strip() for url in urls.splitlines() if url.strip() != ""]
         self.currentUrlIndex = 0
         self.scheduleNextFetch()
 
@@ -871,11 +870,17 @@ class VodDownloader(QMainWindow):
             if not self.contentManager.findItem()[0]:
                 # 조회 중인 아이템만 있는 경우와 아무것도 없는 경우를 구분해 안내 (#124)
                 if self.contentManager.hasLoadingItems():
-                    QMessageBox.warning(self, self.tr("Warning"), self.tr("Still loading video information. Please try again in a moment."))
+                    QMessageBox.warning(
+                        self,
+                        self.tr("Warning"),
+                        self.tr("Still loading video information. Please try again in a moment."),
+                    )
                 else:
                     # ▶는 시작할 것이 없으면 꺼진다(#504) — 여기 오는 것은 대기 카드가 있지만 차례로 고를 수
                     # 없을 때(구간 편집 창에 열림 · 해상도 확인 중)뿐이다. 목록에 VOD가 있으니 「없다」고 하지 않는다
-                    QMessageBox.warning(self, self.tr("Warning"), self.tr("No VOD can be started right now."))
+                    QMessageBox.warning(
+                        self, self.tr("Warning"), self.tr("No VOD can be started right now.")
+                    )
                 return
             self.contentManager.downloadItem()
             self._syncDownloadButton()
@@ -909,9 +914,9 @@ class VodDownloader(QMainWindow):
                 self.tr("Downloading"),
                 self.tr("Download is in progress. Do you want to quit?"),
                 QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
+                QMessageBox.No,
             )
-            #TODO: 메시지박스 중복 경고
+            # TODO: 메시지박스 중복 경고
             if reply == QMessageBox.Yes:
                 self.stopDownload()
 
@@ -986,7 +991,7 @@ class VodDownloader(QMainWindow):
         self._syncDownloadButton()
         # 하단바 실행 결과 — 끝났다는 안내(대화상자)를 띄우기 전에 보인다 (#504)
         self.runResult.finish()
-        
+
         os_type = platform.system()
 
         afterDownload = settings.load_setting("afterDownload")
@@ -1023,7 +1028,9 @@ class VodDownloader(QMainWindow):
             QMessageBox.warning(
                 self,
                 self.tr("Completed"),
-                self.tr("Download finished, but some items failed. Check the failed cards for the reason."),
+                self.tr(
+                    "Download finished, but some items failed. Check the failed cards for the reason."
+                ),
             )
         else:
             QMessageBox.information(self, self.tr("Completed"), self.tr("Download completed."))
@@ -1052,7 +1059,7 @@ class VodDownloader(QMainWindow):
                 self.tr("Downloading"),
                 self.tr("Download is in progress. Do you want to quit?"),
                 QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
+                QMessageBox.No,
             )
             if reply == QMessageBox.No:
                 event.ignore()  # 창 닫기 취소

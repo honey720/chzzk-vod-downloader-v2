@@ -181,7 +181,10 @@ def _independent_content_minimum(win: VodDownloader) -> int:
     info = _leaf_min(win.downloadButton) + _leaf_min(win.stopButton)
     info += info_gap + 2 * (pad + border)  # 간격 하나 — 빈칸(크기 0)은 간격을 받지 않는다
     return max(
-        menu + 2 * outer, header + 2 * outer, info + 2 * outer, win.listView.minimumSizeHint().width()
+        menu + 2 * outer,
+        header + 2 * outer,
+        info + 2 * outer,
+        win.listView.minimumSizeHint().width(),
     )
 
 
@@ -260,7 +263,9 @@ class TestInitialSizeRule:
         if win.minimumWidth() >= cap:
             # 헤더바 2줄(#495) 뒤 최소폭이 폰트에 따라 상한(800)을 넘는다(CI 800px대) — 그때 첫 크기는 최소폭이라
             # 상한 규칙이 드러나지 않는다. 좁은 폭 모양(셸 S3)이 최소폭을 내리면 다시 잰다
-            pytest.skip(f"최소폭 {win.minimumWidth()} ≥ 상한 {cap} — 상한 규칙이 드러나지 않는 폰트")
+            pytest.skip(
+                f"최소폭 {win.minimumWidth()} ≥ 상한 {cap} — 상한 규칙이 드러나지 않는 폰트"
+            )
         assert win.width() == cap, (
             f"큰 화면에서 초기 폭이 상한({cap})에 멈추지 않았다: {win.width()}"
         )
@@ -312,7 +317,9 @@ class TestInitialSizeRule:
         assert win.width() == win.minimumWidth(), (
             f"초기 폭이 최소폭으로 클램프되지 않았다: {win.width()} vs {win.minimumWidth()}"
         )
-        expected_h = max(300, win.minimumHeight())  # 비율(600×0.5)이 최소 높이(#492)보다 작으면 클램프
+        expected_h = max(
+            300, win.minimumHeight()
+        )  # 비율(600×0.5)이 최소 높이(#492)보다 작으면 클램프
         assert win.height() == expected_h, f"초기 높이는 비율(600×0.5)이어야 한다: {win.height()}"
 
     def test_minimum_height_does_not_follow_the_screen(self, monkeypatch) -> None:

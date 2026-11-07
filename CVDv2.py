@@ -15,6 +15,7 @@ from app.system.user_activity import watch_user_input
 
 logger = logging.getLogger(__name__)
 
+
 def resource_path(relative_path: str) -> str:
     """소스 실행과 Nuitka onefile 빌드 양쪽에서 동작하는 리소스 절대 경로를 반환한다.
 
@@ -23,6 +24,7 @@ def resource_path(relative_path: str) -> str:
     """
     base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
+
 
 def apply_theme(app) -> None:
     """OS 라이트/다크 설정을 감지해 앱 전역 팔레트·스타일시트를 적용한다 (#227).
@@ -107,7 +109,7 @@ def set_language(app_config, translator) -> list[QTranslator]:
     installed = []
 
     # 1. 설정 파일에서 언어 가져오기
-    language = app_config.get('language')
+    language = app_config.get("language")
     is_language_in_config = language is not None
     logger.debug("config_language : %s", language)
     logger.debug("is_language_in_config : %s", is_language_in_config)
@@ -134,7 +136,7 @@ def set_language(app_config, translator) -> list[QTranslator]:
 
         # 설정 파일에 언어가 없었던 경우에만 저장
         if not is_language_in_config:
-            app_config['language'] = language
+            app_config["language"] = language
             settings.update_settings({"language": language})
     else:
         logger.warning("translation file load failed")
@@ -148,7 +150,7 @@ def set_language(app_config, translator) -> list[QTranslator]:
     return installed
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # 공통 로깅 설정 (콘솔 + logs/ 회전 파일)
     setup_logging()
     # 충돌 순간의 스택 · 처리되지 않은 예외를 로그 폴더에 남긴다 (#427) — 앱 로그 설정 뒤에 건다
@@ -171,14 +173,14 @@ if __name__ == '__main__':
 
     # 설정 열기 — DB 버전을 올리고(처음이면 옛 설정 파일을 가져온다) 깨진 행을 고친다 (#475)
     app_config = settings.open_settings()
-    
+
     # 번역 시스템 초기화
     translator = QTranslator()
-    
+
     set_language(app_config, translator)
 
     # 아이콘도 번역과 같은 기준(__file__)으로 해석한다 (#43)
-    icon_path = resource_path('resources/icon.png')
+    icon_path = resource_path("resources/icon.png")
     app.setWindowIcon(QIcon(icon_path))
     # 메인 UI 실행
     ex = VodDownloader()

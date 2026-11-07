@@ -67,7 +67,13 @@ def _make_item(i: int) -> ContentItem:
     """대기 카드용 아이템 — 제목 · 채널만 다르고 해상도 목록은 비어 있다."""
     return ContentItem(
         f"https://chzzk.naver.com/video/{i}",
-        {"title": f"제목 {i}", "category": "", "channelName": f"채널{i}", "createdDate": "", "duration": 3600},
+        {
+            "title": f"제목 {i}",
+            "category": "",
+            "channelName": f"채널{i}",
+            "createdDate": "",
+            "duration": 3600,
+        },
         [],
         None,
         "",
@@ -223,12 +229,24 @@ class TestMinimumSize:
         win = _window()
         _at_size(win, win.minimumWidth(), win.minimumHeight())
         window_rect = QRect(QPoint(0, 0), win.size())
-        buttons = [b for b in win.findChildren(QAbstractButton) if b.isVisible() and b.window() is win]
+        buttons = [
+            b for b in win.findChildren(QAbstractButton) if b.isVisible() and b.window() is win
+        ]
         names = {b.objectName() for b in buttons}
-        assert {"menuDownloadButton", "menuSettingsButton", "fetchButton", "saveLocationButton",
-                "clearFinishedButton", "downloadButton", "stopButton"} <= names
-        cut = [(b.objectName(), _in_window(win, b)) for b in buttons
-               if b.width() <= 0 or b.height() <= 0 or not window_rect.contains(_in_window(win, b))]
+        assert {
+            "menuDownloadButton",
+            "menuSettingsButton",
+            "fetchButton",
+            "saveLocationButton",
+            "clearFinishedButton",
+            "downloadButton",
+            "stopButton",
+        } <= names
+        cut = [
+            (b.objectName(), _in_window(win, b))
+            for b in buttons
+            if b.width() <= 0 or b.height() <= 0 or not window_rect.contains(_in_window(win, b))
+        ]
         assert not cut, f"창 최소 크기 {win.size().toTuple()}에서 잘리거나 밖으로 나간 버튼: {cut}"
 
     def test_at_the_minimum_one_card_is_fully_visible_in_the_list(self) -> None:
@@ -240,7 +258,9 @@ class TestMinimumSize:
         viewport = win.listView.viewport()
         rect = QRect(card.mapTo(viewport, QPoint(0, 0)), card.size())
         assert card.isVisible()
-        assert viewport.rect().contains(rect), f"카드 {rect}가 목록 뷰포트 {viewport.rect()}에 다 들어가지 않는다"
+        assert viewport.rect().contains(rect), (
+            f"카드 {rect}가 목록 뷰포트 {viewport.rect()}에 다 들어가지 않는다"
+        )
 
     def test_at_the_minimum_the_tallest_card_fits_without_the_bottom_padding(self) -> None:
         """창 최소 크기에서 해상도 pill이 있는 대기 카드가 목록 아래 안쪽 여백을 뺀 자리 안에 다 보여야 한다.
@@ -252,7 +272,13 @@ class TestMinimumSize:
         win = _window()
         item = ContentItem(
             "https://chzzk.naver.com/video/0",
-            {"title": "제목 0", "category": "", "channelName": "채널0", "createdDate": "", "duration": 3600},
+            {
+                "title": "제목 0",
+                "category": "",
+                "channelName": "채널0",
+                "createdDate": "",
+                "duration": 3600,
+            },
             [[r, f"https://v.invalid/{r}.mp4"] for r in (1080, 720, 480)],  # 해상도 셋 — pill 줄
             None,
             "",
@@ -265,7 +291,9 @@ class TestMinimumSize:
         QApplication.processEvents()
         _at_size(win, win.minimumWidth(), win.minimumHeight())
         card = win.listView.widgetFor(item)
-        assert card.buttons and any(b.isVisible() for b in card.buttons), "전제: 해상도 pill이 보여야 한다"
+        assert card.buttons and any(b.isVisible() for b in card.buttons), (
+            "전제: 해상도 pill이 보여야 한다"
+        )
         viewport = win.listView.viewport()
         bottom_padding = win.listView.widget().layout().contentsMargins().bottom()
         room = QRect(0, 0, viewport.width(), viewport.height() - bottom_padding)
@@ -290,7 +318,10 @@ class TestMinimumSize:
 
         def measured() -> tuple:
             """(창에 걸린 최소 폭 · 높이, 다시 계산한 최소 폭 · 높이)."""
-            return win.minimumSize().toTuple(), (win._contentMinimumWidth(), win._contentMinimumHeight())
+            return win.minimumSize().toTuple(), (
+                win._contentMinimumWidth(),
+                win._contentMinimumHeight(),
+            )
 
         sizes = {0: measured()}
         win.urlInput.setText("https://chzzk.naver.com/video/1")
@@ -335,7 +366,11 @@ class TestRegistrationWiring:
         at = QPoint(viewport.width() // 2, viewport.height() // 2)
         # 실제 끌기처럼 들어오기부터 — Qt는 들어오기를 받아들인 위젯에만 놓기를 넘긴다
         enter = QDragEnterEvent(
-            at, Qt.DropAction.CopyAction, mime, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier
+            at,
+            Qt.DropAction.CopyAction,
+            mime,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
         )
         QApplication.sendEvent(viewport, enter)
         event = QDropEvent(

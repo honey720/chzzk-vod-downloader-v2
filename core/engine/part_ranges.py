@@ -11,7 +11,7 @@ def decide_part_size(content_type: str, resolution: int) -> int:
     테스트를 위해 DownloadThread._decide_part_size에서 분리한 순수 함수 (#27).
     """
     base_part_size = 1024 * 1024  # 1MB
-    if content_type == 'clips':
+    if content_type == "clips":
         return base_part_size * 1
     elif resolution == 144:
         return base_part_size * 1

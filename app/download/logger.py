@@ -36,28 +36,28 @@ class DownloadLogger:
         # 로그 디렉토리 생성
         log_dir = settings.logs_dir()
         os.makedirs(log_dir, exist_ok=True)
-        
+
         # 로그 파일명 생성 (현재 시간 포함). 같은 초에 시도가 또 시작되면(중지 → 곧바로 다시
         # 시작) 뒤에 _2 · _3을 붙인다 — 두 시도가 한 파일에 쓰지 않게 (#410)
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        stem = os.path.join(log_dir, f'download_{timestamp}')
-        self.log_file = f'{stem}.log'
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        stem = os.path.join(log_dir, f"download_{timestamp}")
+        self.log_file = f"{stem}.log"
         number = 2
         while os.path.exists(self.log_file):
-            self.log_file = f'{stem}_{number}.log'
+            self.log_file = f"{stem}_{number}.log"
             number += 1
 
         # 로거 설정 — 시도마다 이름이 다른 로거다 (#410). 다른 시도의 핸들러는 건드리지 않는다
-        self.logger = logging.getLogger(f'DownloadLogger.{next(_attempts)}')
+        self.logger = logging.getLogger(f"DownloadLogger.{next(_attempts)}")
         self.logger.setLevel(self.log_level)
 
         # 파일 핸들러 설정 (다운로드 전용 로그 파일)
-        file_handler = logging.FileHandler(self.log_file, encoding='utf-8')
+        file_handler = logging.FileHandler(self.log_file, encoding="utf-8")
         file_handler.setLevel(self.log_level)
 
         # 포맷터 설정 — 주소의 서명 · 토큰 값은 가린다(앱 로그와 같은 포매터, #328)
         formatter = RedactingFormatter(
-            '%(asctime)s - %(levelname)s - [%(threadName)s] - %(message)s'
+            "%(asctime)s - %(levelname)s - [%(threadName)s] - %(message)s"
         )
         file_handler.setFormatter(formatter)
 
@@ -166,7 +166,9 @@ class DownloadLogger:
     def log_download_progress(self, total_downloaded: int, total_size: int, speed: float) -> None:
         """다운로드 진행 상황을 로깅합니다."""
         progress = (total_downloaded / total_size) * 100
-        self.debug(f"Progress: {progress:.2f}% - {total_downloaded}/{total_size} bytes - Speed: {speed:.2f} MB/s")
+        self.debug(
+            f"Progress: {progress:.2f}% - {total_downloaded}/{total_size} bytes - Speed: {speed:.2f} MB/s"
+        )
 
     def log_download_complete(self, total_time: float) -> None:
         """다운로드 완료 정보를 로깅합니다.
@@ -362,4 +364,6 @@ class DownloadLogger:
         self, active_threads: int, download_speed: float, avg_speed: float
     ) -> None:
         """스레드 속도 정보를 로깅합니다."""
-        self.debug(f"Active threads: {active_threads} - Download speed: {download_speed:.2f} MB/s - Avg speed: {avg_speed:.2f} MB/s")
+        self.debug(
+            f"Active threads: {active_threads} - Download speed: {download_speed:.2f} MB/s - Avg speed: {avg_speed:.2f} MB/s"
+        )

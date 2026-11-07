@@ -50,8 +50,8 @@ def parse_dash_manifest(xml_text: str) -> tuple[list[list], int, str]:
     reps = []
     adaptation_rates = _adaptation_frame_rates(root)
     for rep in root.findall(".//mpd:Representation", namespaces=ns):
-        width = rep.get('width')
-        height = rep.get('height')
+        width = rep.get("width")
+        height = rep.get("height")
         # 오디오 전용 Representation(audio/mp4)은 width/height 속성이 없다.
         # 해상도를 계산할 수 없으므로 목록에서 제외한다 (#38)
         if width is None or height is None:
@@ -64,7 +64,7 @@ def parse_dash_manifest(xml_text: str) -> tuple[list[list], int, str]:
         if base_url_el is None or not base_url_el.text:
             continue
         base_url = base_url_el.text
-        if base_url.endswith('/hls/'):
+        if base_url.endswith("/hls/"):
             continue
         reps.append((resolution, base_url, rep, adaptation_rates.get(rep)))
 
