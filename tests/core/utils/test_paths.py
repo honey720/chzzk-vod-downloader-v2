@@ -10,6 +10,7 @@
 import os
 import re
 import threading
+from collections.abc import Iterator
 
 import pytest
 
@@ -263,7 +264,7 @@ def test_same_video_queued_twice_gets_distinct_temp_dirs(tmp_path) -> None:
 
 
 @pytest.fixture
-def reserved():
+def reserved() -> Iterator[list[str]]:
     """테스트가 배정한 구간 경로를 모아 두었다가 끝나면 예약을 푼다."""
     held: list[str] = []
     yield held

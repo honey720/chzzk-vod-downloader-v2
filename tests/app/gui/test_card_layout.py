@@ -32,6 +32,7 @@ from PySide6.QtWidgets import QApplication
 import CVDv2 as main_module
 import app.theme as theme
 from app.viewmodels.data import ContentItem
+from app.widgets.pill import ResolutionPill
 from app.widgets.widget import ContentItemWidget
 from core.models.download_state import DownloadState
 from tests.app.gui.card_helpers import resize_to, shown, hold_style
@@ -375,7 +376,7 @@ def _visible_pills(widget) -> list[str]:
     return [b.text() for b in widget.buttons if b.isVisible()]
 
 
-def _selected(widget):
+def _selected(widget) -> list[ResolutionPill]:
     return [b for b in widget.buttons if b.isSelected()]
 
 
@@ -462,7 +463,7 @@ class TestRowThreePriority:
     FIVE = (2160, 1440, 1080, 720, 480)
     LONG_PATH = "D:/vod/archive/2026/summer/finals/T1-vs-GEN-full-set-highlights-and-interviews"
 
-    def _tight(self, qapp, width, *, segment=False, path=LONG_PATH):
+    def _tight(self, qapp, width, *, segment=False, path=LONG_PATH) -> ContentItemWidget:
         """`width=None`이면 임계 폭 T(`_threshold_waiting`)까지 줄인다 — 그때 경로
         자리는 아이콘 하나 폭이라 아이콘 모드가 폰트와 무관하게 보장된다.
         `minimumSizeHint()`는 표시 모드(텍스트/아이콘)에 따라 몇 px 움직여 고정점이
@@ -625,7 +626,7 @@ class TestRowThreePriority:
             "첫 표시에서 경로 글자가 숨지 않았다 — 창을 흔들어야 고쳐지는 결함"
         )
 
-    def _running_widget(self, qapp):
+    def _running_widget(self, qapp) -> ContentItemWidget:
         """진행 중 + 전역과 다른 긴 경로 — 3행에 슬롯·경로·크기가 함께 있는 카드."""
         widget = _make_widget_with_reps(qapp, self.FIVE, 900)
         item = widget.item
@@ -757,7 +758,7 @@ class TestPathAbbreviationAndTooltip:
     HOME = "C:/Users/me"
 
     @staticmethod
-    def _abbr(path, home):
+    def _abbr(path, home) -> str:
         from app.widgets.widget import abbreviate_path
 
         return abbreviate_path(path, home=home)
@@ -806,7 +807,7 @@ class TestPathShrinkOrder:
 
     LAST = "chzzk-vod-downloader-v2"
 
-    def _rendered_while_narrowing(self, qapp, path):
+    def _rendered_while_narrowing(self, qapp, path) -> tuple[ContentItemWidget, list[str]]:
         """1400px에서 카드 최소폭까지 4px씩 좁히며 경로 라벨의 실제 표시 문자열을
         순서대로 모은다(연속 중복 제거). 아이콘 모드로 접히면 멈춘다."""
         from PySide6.QtWidgets import QLabel
@@ -877,11 +878,11 @@ class TestPathClickOpensFolderPicker:
     인라인 편집의 교체 — 대화상자는 monkeypatch로 막고 반환값을 주입한다
     (상단 [경로 찾기] 테스트와 같은 방식)."""
 
-    def _patch_dialog(self, monkeypatch, result):
+    def _patch_dialog(self, monkeypatch, result) -> list[tuple[str, str]]:
         calls = []
         from app.widgets import widget as widget_mod
 
-        def fake(parent, caption, start_dir, *a, **k):
+        def fake(parent, caption, start_dir, *a, **k) -> str:
             calls.append((caption, start_dir))
             return result
 

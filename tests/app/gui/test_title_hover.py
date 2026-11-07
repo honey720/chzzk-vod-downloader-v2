@@ -9,8 +9,11 @@
 보낸다 — `QTest.mouseMove(QWidget)`는 실기에서 `QCursor::setPos`로 오너의 마우스를 뺏는다.
 """
 
+from collections.abc import Iterator
+
 import pytest
 from PySide6.QtCore import QPoint, Qt
+from PySide6.QtGui import QImage
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
 
@@ -36,7 +39,7 @@ def _apply_production_qss(qapp) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _drop_windows(qapp):
+def _drop_windows(qapp) -> Iterator[None]:
     """이 파일의 테스트가 띄운 창을 테스트 끝에 확실히 파괴한다(card_helpers.drop_new_top_levels)."""
     before = snapshot_top_levels()
     yield
@@ -104,7 +107,7 @@ def _hover(qtbot, window: QWidget, target: QWidget, on: bool) -> None:
     qtbot.waitUntil(lambda: target.underMouse() == on, timeout=2000)
 
 
-def _title_pixels(widget: ContentItemWidget):
+def _title_pixels(widget: ContentItemWidget) -> QImage:
     shown(widget.titleLabel)  # 보이는 라벨의 렌더만 의미가 있다
     return widget.titleLabel.grab().toImage()
 

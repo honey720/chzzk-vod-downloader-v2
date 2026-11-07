@@ -8,6 +8,7 @@
 
 import gc
 import weakref
+from collections.abc import Iterator
 from fractions import Fraction
 
 import pytest
@@ -24,13 +25,14 @@ from app.viewmodels.data import ContentItem
 from app.viewmodels.section_edit import keep_section_head, take_section_head
 from app.views import mainWindow as mw_mod
 from app.views.mainWindow import VodDownloader
+from app.views.section_dialog import SectionEditDialog
 from core.media.representations import StreamEntry
 from core.models.download_state import DownloadState
 from core.utils.paths import release_output_paths
 from tests.mocks.engine_side import engine_side
 from tests.app.gui.section_input import enter_time
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
-from typing import Never
+from typing import Never, Self
 
 ROW = ("00100000", "00200000")
 
@@ -60,7 +62,7 @@ class _Engine:
     def __init__(self) -> None:
         self.submissions: list[dict] = []
 
-    def submit(self, content, **kwargs):
+    def submit(self, content, **kwargs) -> Self:
         # 엔진 흉내 — 콜백 입구는 서비스 핸들의 중계(값 묶음 · 키를 싣는다, #484)
         self.submissions.append(engine_side(content, kwargs))
         return self
@@ -73,7 +75,7 @@ class _Engine:
 
 
 @pytest.fixture
-def probe(qapp, monkeypatch):
+def probe(qapp, monkeypatch) -> Iterator[_Probe]:
     """실제 QSS · 조회 대역 · 네트워크와 안내 창 차단."""
     theme.set_color_scheme("dark")
     qapp.setStyle(hold_style(theme.build_style()))
@@ -122,7 +124,7 @@ def _item(tmp_path, title: str = "제목") -> ContentItem:
 
 
 @pytest.fixture
-def window(probe):
+def window(probe) -> Iterator[tuple[VodDownloader, _Engine]]:
     """실제 메인 창과 서비스 대역. 끝나면 예약한 파일 이름을 푼다."""
     win = VodDownloader()
     win.resize(1000, win.height())
@@ -140,7 +142,7 @@ def _add(win, item: ContentItem) -> None:
     _pump()
 
 
-def _give_section(qtbot, win, item: ContentItem):
+def _give_section(qtbot, win, item: ContentItem) -> SectionEditDialog:
     """편집 창으로 구간 하나(10분~20분)를 넣는다. 닫힌 그 편집 창을 돌려준다."""
     QTest.mouseClick(win.listView.widgetFor(item).fileSizeLabel, Qt.MouseButton.LeftButton)
     _pump()

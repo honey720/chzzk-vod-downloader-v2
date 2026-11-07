@@ -11,6 +11,7 @@
 
 import struct
 import tracemalloc
+from collections.abc import Callable, Iterator
 from fractions import Fraction
 
 import pytest
@@ -35,7 +36,7 @@ from core.sections.timecode import snap_to_frame
 from tests.support.mp4_builder import audio_spec, box, build_mp4, video_spec
 
 
-def _reader(data: bytes, log: list[tuple[int, int]] | None = None):
+def _reader(data: bytes, log: list[tuple[int, int]] | None = None) -> Callable[[int, int], bytes]:
     """bytes를 파일처럼 읽어 주는 읽기 함수 — 요청을 log에 남긴다."""
 
     def read(offset: int, size: int) -> bytes:
@@ -571,17 +572,17 @@ class FakeResponse:
         self._body = body
         self.bytes_handed = 0
 
-    def __enter__(self):
+    def __enter__(self) -> "FakeResponse":
         return self
 
-    def __exit__(self, *exc):
+    def __exit__(self, *exc) -> bool:
         return False
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
             raise requests.HTTPError(f"status {self.status_code}")
 
-    def iter_content(self, chunk_size: int):
+    def iter_content(self, chunk_size: int) -> Iterator[bytes]:
         for start in range(0, len(self._body), chunk_size):
             chunk = self._body[start : start + chunk_size]
             self.bytes_handed += len(chunk)

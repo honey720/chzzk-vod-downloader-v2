@@ -5,6 +5,7 @@
 """
 
 import time
+from collections.abc import Iterator
 from types import SimpleNamespace
 
 import pytest
@@ -63,14 +64,14 @@ def rest_at_every_gap(monkeypatch) -> None:
 
 
 @pytest.fixture
-def clock(monkeypatch):
+def clock(monkeypatch) -> _Clock:
     clock = _Clock()
     monkeypatch.setattr(activity, "_now", clock)
     return clock
 
 
 @pytest.fixture
-def watching(qapp, clock):
+def watching(qapp, clock) -> Iterator[None]:
     """앱 전체의 입력을 지켜보는 상태 — 끝나면 필터를 걷고 마지막 입력을 잊는다."""
     activity.watch_user_input(qapp)
     yield
@@ -99,7 +100,7 @@ _FIRST_EXPOSE_LIMIT = 1.0
 
 
 @pytest.fixture
-def window(qtbot, watching):
+def window(qtbot, watching) -> _Keys:
     """보이는 창 하나(안에 자식 위젯 하나) — 띄우며 생긴 이벤트는 잊고 시작한다.
 
     창 시스템이 띄운 창의 크기 · 위치(Resize · Move)는 그 창의 첫 Expose 이벤트보다 먼저 온다.
@@ -436,14 +437,14 @@ def test_download_viewmodel_hands_the_question_to_the_service(qapp, monkeypatch)
 
 
 @pytest.fixture
-def rests(monkeypatch):
+def rests(monkeypatch) -> list[int]:
     """쉰 횟수를 담는 리스트 — 쉬는 일을 자지 않고 세기만 하는 대역으로 바꾼다."""
     counted: list[int] = []
     monkeypatch.setattr(interaction, "_rest", lambda: counted.append(1))
     return counted
 
 
-def _gap(*_args):
+def _gap(*_args) -> tuple[int, int]:
     """조회의 대역 — 조각 사이의 틈을 한 번 흉내 낸다."""
     interaction.rest_if_user_interacting()
     return 7, 3

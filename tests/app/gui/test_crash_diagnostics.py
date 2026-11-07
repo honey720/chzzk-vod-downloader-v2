@@ -10,6 +10,9 @@ import subprocess
 import sys
 import textwrap
 import threading
+from collections.abc import Iterator
+from pathlib import Path
+from typing import IO, Any
 
 import pytest
 from PySide6.QtCore import QTimer
@@ -132,7 +135,7 @@ def _read(path) -> str:
 
 
 @pytest.fixture
-def crashed(tmp_path):
+def crashed(tmp_path) -> Path:
     """별도 프로세스에서 충돌 진단을 켠 뒤 일부러 충돌시킨다 — 그 로그 폴더."""
     done = _run(tmp_path, _CRASH)
     assert done.returncode != 0, "전제: 프로세스가 충돌로 끝났다"
@@ -267,7 +270,7 @@ def test_unreadable_crash_record_is_kept_instead_of_cleared(tmp_path, monkeypatc
     path.write_text("old record", encoding="ascii")
     real_open = open
 
-    def refusing_read(file, mode="r", *args, **kwargs):
+    def refusing_read(file, mode="r", *args, **kwargs) -> IO[Any]:
         if mode == "r" and os.fspath(file) == str(path):
             raise PermissionError("시험 — 읽을 수 없다")
         return real_open(file, mode, *args, **kwargs)
@@ -287,7 +290,7 @@ def test_unreadable_crash_record_is_kept_instead_of_cleared(tmp_path, monkeypatc
 
 
 @pytest.fixture
-def hooked(monkeypatch):
+def hooked(monkeypatch) -> Iterator[io.StringIO]:
     """예외 훅을 건다 — 테스트가 끝나면 원래 훅으로 되돌린다. 이 모듈의 로그를 가리는 포매터로 받는다."""
     monkeypatch.setattr(sys, "excepthook", sys.excepthook)
     monkeypatch.setattr(threading, "excepthook", threading.excepthook)

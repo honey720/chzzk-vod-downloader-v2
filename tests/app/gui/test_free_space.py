@@ -6,6 +6,7 @@
 
 import threading
 from collections import namedtuple
+from collections.abc import Iterator
 
 import pytest
 
@@ -19,11 +20,11 @@ FREE = {PATH_A: 111, PATH_B: 222}  # 경로마다 돌려줄 여유 공간(바이
 
 
 @pytest.fixture
-def held(monkeypatch):
+def held(monkeypatch) -> Iterator[threading.Event]:
     """경로 A의 측정을 붙잡아 두는 대역 — 돌려준 Event를 set하면 풀린다. 끝날 때 늘 푼다."""
     release = threading.Event()
 
-    def disk_usage(path):
+    def disk_usage(path) -> _Usage:
         if path == PATH_A:
             release.wait(20)
         return _Usage(0, 0, FREE[path])
@@ -34,7 +35,7 @@ def held(monkeypatch):
 
 
 @pytest.fixture
-def probe(qtbot, held):
+def probe(qtbot, held) -> Iterator[FreeSpaceProbe]:
     """측정기 — 정리할 때 붙잡은 측정을 풀고 측정 스레드가 끝나기를 기다린 뒤 메인 스레드에서 지운다.
 
     측정 스레드가 측정기의 마지막 참조를 쥔 채 끝나면 QObject가 그 워커 스레드에서 지워진다(실제 화면에서

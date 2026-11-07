@@ -36,7 +36,7 @@ CALIBRATED = (
 
 
 class QuietLogger:
-    def __getattr__(self, name):
+    def __getattr__(self, name) -> Callable[..., None]:
         return lambda *args, **kwargs: None
 
 

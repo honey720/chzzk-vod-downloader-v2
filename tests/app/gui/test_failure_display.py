@@ -13,6 +13,7 @@ ContentManager.fail → 뷰/위젯 갱신 → 배치 계속까지를 실제 시�
 """
 
 import time
+from collections.abc import Iterator
 
 import pytest
 from PySide6.QtCore import QObject
@@ -25,7 +26,7 @@ from app.viewmodels.content_viewmodel import ContentViewModel
 from app.widgets.view import ContentListView
 from core.engine.base import PostprocessError
 from core.models.download_state import DownloadState
-from core.services.download_service import DownloadService
+from core.services.download_service import DownloadHandle, DownloadService
 from app.download.logger import DownloadLogger
 from tests.mocks.engine_side import engine_side
 from tests.app.gui.card_helpers import hold_style
@@ -84,7 +85,7 @@ class FakeService:
     def __init__(self) -> None:
         self.submissions: list[dict] = []
 
-    def submit(self, content, **kwargs):
+    def submit(self, content, **kwargs) -> FakeHandle:
         # 엔진 흉내 — 콜백 입구는 서비스 핸들의 중계(값 묶음 · 키를 싣는다, #484)
         self.submissions.append(engine_side(content, kwargs))
         return FakeHandle(kwargs["data"])
@@ -100,7 +101,7 @@ class RecordingService:
         self._real = DownloadService()
         self.handles: list = []
 
-    def submit(self, content, **kwargs):
+    def submit(self, content, **kwargs) -> DownloadHandle:
         """실제 제출을 그대로 통과시키고 핸들만 붙잡는다 — 뒤에서 `handle.wait()`로 엔진 종료를 잰다."""
         handle = self._real.submit(content, **kwargs)
         self.handles.append(handle)
@@ -169,7 +170,13 @@ def _make_item(download_path: str, title: str) -> ContentItem:
 
 
 @pytest.fixture
-def wired(qapp, tmp_path):
+def wired(
+    qapp, tmp_path
+) -> Iterator[
+    tuple[
+        ContentViewModel, FakeService, DownloadViewModel, WindowHarness, list[bool], ContentListView
+    ]
+]:
     """실배선된 (manager, service, viewmodel, harness, finished_all 스파이, view)를 준비한다."""
     view = ContentListView()
     manager = ContentViewModel()
@@ -305,7 +312,7 @@ class _DeadMountSession:
     (_download_completed_callback → on_failed)다.
     """
 
-    def head(self, url, **kwargs):
+    def head(self, url, **kwargs) -> _HeadResponse:
         return _HeadResponse()
 
     def get(self, url, **kwargs) -> Never:

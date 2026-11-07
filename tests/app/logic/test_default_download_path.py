@@ -9,11 +9,14 @@ config 로드·저장은 메모리로 격리한다 — 실유저 config.json 무
 """
 
 import os
+from collections.abc import Callable, Iterator
 
 import pytest
+from PySide6.QtGui import QAction
 
 import app.views.mainWindow as mw_mod
 import app.system.settings as settings_mod
+from app.widgets.header_controls import ChoiceMenu
 from typing import Never
 
 
@@ -33,7 +36,7 @@ def no_network(monkeypatch) -> None:
 
 
 @pytest.fixture
-def config_store(monkeypatch):
+def config_store(monkeypatch) -> tuple[dict, list[dict]]:
     """config 로드·저장을 메모리 딕셔너리로 격리하고 저장 이력을 기록한다."""
     store = {"cookies": {"NID_AUT": "", "NID_SES": ""}}
     saves: list[dict] = []
@@ -50,7 +53,9 @@ def config_store(monkeypatch):
 
 
 @pytest.fixture
-def window_factory(qapp, monkeypatch, config_store):
+def window_factory(
+    qapp, monkeypatch, config_store
+) -> Iterator[tuple[Callable[[], mw_mod.VodDownloader], list[str]]]:
     """팝업을 기록으로 대체한 실물 메인 윈도우를 만든다 (offscreen 실배선)."""
     warnings = []
     monkeypatch.setattr(
@@ -67,7 +72,7 @@ def window_factory(qapp, monkeypatch, config_store):
     )
     made = []
 
-    def _make():
+    def _make() -> mw_mod.VodDownloader:
         win = mw_mod.VodDownloader()
         made.append(win)
         return win
@@ -107,7 +112,7 @@ def test_missing_saved_falls_back_to_standard_downloads(
         StandardLocation = mw_mod.QStandardPaths.StandardLocation
 
         @staticmethod
-        def writableLocation(kind):
+        def writableLocation(kind) -> str:
             return str(downloads)
 
     monkeypatch.setattr(mw_mod, "QStandardPaths", _StubPaths)
@@ -125,7 +130,7 @@ def test_standard_missing_falls_back_to_cwd(
         StandardLocation = mw_mod.QStandardPaths.StandardLocation
 
         @staticmethod
-        def writableLocation(kind):
+        def writableLocation(kind) -> str:
             return str(tmp_path / "없는 폴더")
 
     monkeypatch.setattr(mw_mod, "QStandardPaths", _StubPaths)
@@ -134,7 +139,7 @@ def test_standard_missing_falls_back_to_cwd(
     assert make().saveLocations.current() == os.getcwd()
 
 
-def _menu_action(win, object_name: str):
+def _menu_action(win, object_name: str) -> tuple[ChoiceMenu, QAction]:
     """저장 위치 메뉴를 실제로 열고(aboutToShow 배선) 그 이름의 명령 항목을 돌려준다."""
     menu = win.saveLocationButton.menuWidget
     menu.popup(win.saveLocationButton.mapToGlobal(win.saveLocationButton.rect().bottomLeft()))

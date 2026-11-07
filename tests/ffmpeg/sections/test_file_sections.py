@@ -27,6 +27,7 @@ import re
 import subprocess
 import threading
 import time
+from collections.abc import Callable
 from types import SimpleNamespace
 
 import pytest
@@ -46,6 +47,7 @@ from core.media.mp4 import (
     pending_mp4_head,
     read_mp4_index,
 )
+from core.media.mp4_index import Mp4Head, Mp4Index
 from core.engine.base import (
     DISK_SPACE_SHORT,
     FILE_TOO_LARGE_FOR_FAT,
@@ -61,6 +63,7 @@ from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
 from core.services.download_service import DownloadService
 from core.sections.check import check_cut
+from core.sections.cut import CutFrames, CutResult
 from core.utils.ffmpeg import get_ffmpeg_exe
 from core.sections.mp4_ranges import (
     frames_byte_range,
@@ -89,7 +92,7 @@ from core.engine.retry import RETRY_MAX_DELAY
 from tests.support.range_host import RangeHost
 from tests.ffmpeg.sections.section_retry import CutCalls, hand_over, snapshot
 from tests.support.undeletable import Undeletable
-from typing import Never
+from typing import IO, Any, Never
 
 FPS = 30
 KEYFRAMES = (0, 30, 42, 72, 90, 120, 150)  # -force_key_frames 0,1,1.4,2.4,3,4,5 (30fps)
@@ -127,7 +130,7 @@ def _make_source(path: str, *extra: str, faststart: bool = True) -> None:
     )  # fmt: skip
 
 
-def _index(path: str):
+def _index(path: str) -> Mp4Index:
     def read(offset: int, size: int) -> bytes:
         with open(path, "rb") as f:
             f.seek(offset)
@@ -162,7 +165,7 @@ def sources(tmp_path_factory) -> dict[str, str]:
 
 
 @pytest.fixture(scope="module")
-def server(sources):
+def server(sources) -> RangeHost:
     """만든 파일을 내주는 호스트."""
     files = {}
     for name, path in sources.items():
@@ -184,7 +187,7 @@ class _Logger:
     def __init__(self) -> None:
         self.calls: list[tuple[str, tuple]] = []
 
-    def __getattr__(self, name):
+    def __getattr__(self, name) -> Callable[..., None]:
         def record(*args, **kwargs) -> None:
             self.calls.append((name, args))
 
@@ -258,7 +261,7 @@ class _Run:
         return sorted(os.listdir(self.folder))
 
 
-def _frames(path: str):
+def _frames(path: str) -> CutFrames:
     return cut_frames_from_mp4(_index(path))
 
 
@@ -531,7 +534,7 @@ def test_cut_failure_keeps_partial_source_and_finished_sections(
     real = fd_module.finish_section_file
     calls = []
 
-    def second_fails(*args, **kwargs):
+    def second_fails(*args, **kwargs) -> CutResult:
         calls.append(args)
         if len(calls) == 2:
             raise CutError(CUT_FAILED, "시험")
@@ -567,7 +570,7 @@ def test_cut_failure_of_one_section_still_cuts_the_sections_after_it(
     failure = MidwayCutFailure(monkeypatch)
     calls = []
 
-    def second_fails(*args, **kwargs):
+    def second_fails(*args, **kwargs) -> CutResult:
         calls.append(args)
         if len(calls) == 2:
             failure.arm(source_path=args[0], output_path=args[4])
@@ -757,7 +760,7 @@ def test_section_run_that_fails_or_stops_leaves_the_file_at_output_path_alone(
         f.write(b"keep")
     real = fd_module.finish_section_file
 
-    def interrupted(*args, **kwargs):
+    def interrupted(*args, **kwargs) -> CutResult:
         if how == "failure":
             raise OSError("시험")
         run.data.model.stop()
@@ -808,7 +811,7 @@ def test_section_run_that_fails_opening_a_body_file_removes_only_the_files_it_op
     with open(bodies[2], "wb") as f:
         f.write(b"keep")
 
-    def refusing_open(path, *args, **kwargs):
+    def refusing_open(path, *args, **kwargs) -> IO[Any]:
         if path == bodies[1]:
             raise OSError(errno.EACCES, "시험 — 열 수 없다")
         return open(path, *args, **kwargs)
@@ -967,7 +970,7 @@ def test_split_span_splits_a_range_in_the_middle_of_the_file(
 # ================================================================ 범위 요청에 200이 왔을 때 (#309)
 
 
-def _response(status: int, length: int | None, closed: list):
+def _response(status: int, length: int | None, closed: list) -> SimpleNamespace:
     headers = {} if length is None else {"Content-Length": str(length)}
     return SimpleNamespace(status_code=status, headers=headers, close=lambda: closed.append(True))
 
@@ -1029,7 +1032,7 @@ def test_section_download_fails_when_the_server_answers_a_range_with_a_cut_200(
     class CutSession:
         """파트 요청에 200과 잘린 본문으로 답하는 세션."""
 
-        def get(self, url, **kwargs):
+        def get(self, url, **kwargs) -> SimpleNamespace:
             return SimpleNamespace(
                 status_code=200,
                 headers={"Content-Length": "100"},
@@ -1567,7 +1570,7 @@ def test_engine_uses_the_index_someone_else_already_parsed(server, tmp_path, mon
     calls = []
     real = mp4_module.index_mp4
 
-    def counting(raw):
+    def counting(raw) -> Mp4Head:
         calls.append(raw)
         return real(raw)
 
@@ -1607,7 +1610,7 @@ def test_transfer_without_prepare_is_the_transfer_time_minus_the_prepare_time(
     slow = 0.3  # 초 — 시계 해상도보다 충분히 길다
     real_fetch = fd_module.fetch_mp4_head
 
-    def slow_fetch(url):
+    def slow_fetch(url) -> Mp4Head:
         time.sleep(slow)
         return real_fetch(url)
 
@@ -1658,7 +1661,7 @@ def test_cut_stages_of_a_failed_section_are_logged_up_to_the_failure(
     real = cut_module.run_ffmpeg
     calls = []
 
-    def flaky(args, **kwargs):
+    def flaky(args, **kwargs) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         if len(calls) == 3:  # 0번은 입력 읽기, 1번은 머리, 2번이 꼬리다
             return subprocess.CompletedProcess(args, 1, "", "boom")
@@ -1740,7 +1743,7 @@ def test_failed_section_still_fills_its_share_of_the_cut_progress(
     real = cut_module.run_ffmpeg
     calls = []
 
-    def flaky(args, **kwargs):
+    def flaky(args, **kwargs) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         if len(calls) == 3:
             return subprocess.CompletedProcess(args, 1, "", "boom")
@@ -1835,7 +1838,7 @@ def test_engine_drops_the_index_after_a_cut_failure_and_the_resume_record_keeps_
     real = cut_module.run_ffmpeg
     calls = []
 
-    def flaky(args, **kwargs):
+    def flaky(args, **kwargs) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         if len(calls) == 3:
             return subprocess.CompletedProcess(args, 1, "", "boom")
@@ -1892,7 +1895,7 @@ def test_stopping_while_a_section_is_being_cut_ends_ffmpeg_and_the_run_at_once(
         guard.daemon = True
         guard.start()
 
-    def slowed(args, **kwargs):
+    def slowed(args, **kwargs) -> subprocess.CompletedProcess[str]:
         if args[-1] == "0_head.mp4":  # 둘째 구간의 머리 재인코딩 — 첫 구간에는 이 조각이 없다
             kwargs.pop("on_out_time", None)
             return real(LONG_RUNNING, **kwargs)
@@ -2302,7 +2305,7 @@ def test_needed_space_counts_a_boundary_gop_two_sections_share_for_each_section(
     real_finish, real_write = fd_module.finish_section_file, fd_module._write_section_file
     before, placed = {}, []
 
-    def finish(source_path, *args, body_path, **kwargs):
+    def finish(source_path, *args, body_path, **kwargs) -> CutResult:
         before.setdefault("source", os.path.getsize(source_path))
         before.setdefault("bodies", {})[body_path] = os.path.getsize(body_path)
         return real_finish(source_path, *args, body_path=body_path, **kwargs)
@@ -2418,7 +2421,7 @@ def test_retry_from_kept_files_does_not_ask_for_space_again(server, tmp_path, mo
 # ================================================================ 끝낸 구간의 파일이 없거나 바뀐 재시도 (#309)
 
 
-def _fail_the_second_of_three(server, tmp_path, monkeypatch):
+def _fail_the_second_of_three(server, tmp_path, monkeypatch) -> tuple[_Run, CutCalls]:
     """구간 셋 가운데 둘째 컷만 실패한 실행과, 컷 호출을 적는 도구(다음 실행을 위해 비운 것)."""
     cuts = CutCalls(monkeypatch, fd_module, "finish_section_file", source_arg=0)
     cuts.fail_on = (2,)
@@ -2708,7 +2711,7 @@ def test_stopping_while_a_section_head_is_written_ends_as_stopped_during_postpro
     real = fd_module._write_section_file
     entered = []
 
-    def stopping(*args, **kwargs):
+    def stopping(*args, **kwargs) -> None:
         entered.append(True)
         run.data.model.stop()
         return real(*args, **kwargs)

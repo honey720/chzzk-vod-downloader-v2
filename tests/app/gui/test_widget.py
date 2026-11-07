@@ -20,11 +20,12 @@ progress·fileSize·delete)에 `Ignored` 정책 라벨이 둘 이상 + `Expandin
 """
 
 import pytest
-from PySide6.QtWidgets import QLabel
+from PySide6.QtWidgets import QLabel, QWidget
 
 import CVDv2 as main_module
 import app.theme as theme
 from app.viewmodels.data import ContentItem
+from app.widgets.eliding_label import ElidingLabel
 from app.widgets.widget import ContentItemWidget
 from core.models.download_state import DownloadState
 from app.viewmodels.item_state import ItemState
@@ -67,7 +68,7 @@ def no_network(monkeypatch) -> None:
     monkeypatch.setattr("app.widgets.widget._global_download_path", "C:/Users/LeeDH/Downloads")
 
 
-def _make_item(content_type="video", title="제목", channel="채널"):
+def _make_item(content_type="video", title="제목", channel="채널") -> ContentItem:
     return ContentItem(
         "https://chzzk.naver.com/video/1",
         {"title": title, "category": "", "channelName": channel, "createdDate": "", "duration": 3600},
@@ -271,7 +272,7 @@ class TestRecoversFullTextAfterWidthIncreases:
     다시는 더 넓은 폭을 받지 못하는 되먹임 루프에 갇힌다.
     """
 
-    def _narrow_then_wide(self, qapp, text: str):
+    def _narrow_then_wide(self, qapp, text: str) -> tuple[QWidget, ElidingLabel]:
         """ElidingLabel을 좁은 컨테이너에서 잘리게 만든 뒤 넓힌다.
 
         (#244 카드 재설계 후속) 카드 안에서는 이 전제를 더는 만들 수 없다 —

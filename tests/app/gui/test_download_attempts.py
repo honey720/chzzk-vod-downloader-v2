@@ -9,6 +9,7 @@ import threading
 
 import pytest
 
+from app.viewmodels.data import ContentItem
 from core.models.download_state import DownloadState
 from core.models.events import ProgressEvent
 from tests.app.gui.test_download_viewmodel_contract import Wired, _make_item
@@ -26,7 +27,7 @@ def _on_worker(call) -> None:
 
 
 @pytest.fixture
-def restarted(qapp, log_calls):  # noqa: F811
+def restarted(qapp, log_calls) -> tuple[Wired, ContentItem, dict, dict]:  # noqa: F811
     """같은 카드를 시작 → 중지 → 정리 → 다시 시작한 배선. 기록은 다시 시작한 뒤부터다."""
     wired = Wired(qapp, log_calls)
     item = _make_item()

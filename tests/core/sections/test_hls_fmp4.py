@@ -12,6 +12,8 @@
 """
 
 import os
+from collections.abc import Iterator
+from typing import Self
 from types import SimpleNamespace
 
 import pytest
@@ -328,16 +330,16 @@ def test_download_segment_rejects_a_body_shorter_than_content_length(monkeypatch
     class Short:
         headers = {"Content-Length": "100"}
 
-        def __enter__(self):
+        def __enter__(self) -> Self:
             return self
 
-        def __exit__(self, *args):
+        def __exit__(self, *args) -> bool:
             return False
 
         def raise_for_status(self) -> None:
             pass
 
-        def iter_content(self, chunk_size):
+        def iter_content(self, chunk_size) -> Iterator[bytes]:
             yield bytes(60)
 
     session = SimpleNamespace(get=lambda url, **kwargs: Short())

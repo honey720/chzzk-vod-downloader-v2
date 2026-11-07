@@ -10,12 +10,15 @@
 누른다(`click` · 메뉴 `trigger`). 화면 순서는 목록 레이아웃의 위젯 차례로 잰다.
 """
 
+from collections.abc import Iterator
+
 import pytest
 from PySide6.QtWidgets import QApplication
 
 import app.system.settings as settings
 from app.viewmodels.data import ContentItem
 from app.views.mainWindow import VodDownloader
+from app.widgets.header_controls import ChoiceMenu
 from core.models.download_state import DownloadState
 from typing import Never
 
@@ -35,7 +38,7 @@ def no_network(monkeypatch) -> None:
 
 
 @pytest.fixture
-def window(qapp, tmp_path):
+def window(qapp, tmp_path) -> Iterator[VodDownloader]:
     win = VodDownloader()
     assert win.saveLocations.choose(str(tmp_path))
     yield win
@@ -80,7 +83,7 @@ def _chip_counts(win) -> dict:
     return {key: chip.property("count") for key, chip in win.filterChips.items()}
 
 
-def _sort_menu(win):
+def _sort_menu(win) -> ChoiceMenu:
     button = win.sortButton
     menu = button.menuWidget
     menu.popup(button.mapToGlobal(button.rect().bottomLeft()))
@@ -148,7 +151,7 @@ class TestChipCounts:
 
 class TestFilter:
     @pytest.fixture
-    def mixed(self, window):
+    def mixed(self, window) -> VodDownloader:
         D = DownloadState
         _add(window, _item("대기"), _item("완료"), _item("실패"), states=[D.WAITING, D.FINISHED, D.FAILED])
         return window
@@ -191,7 +194,7 @@ ADDED = ["다", "가", "나"]  # 추가된 순서
 
 
 @pytest.fixture
-def sortable(window):
+def sortable(window) -> VodDownloader:
     """제목 · 채널 · 날짜 · 상태가 서로 다른 순서인 카드 셋(추가된 순서 다 · 가 · 나)."""
     D = DownloadState
     _add(
@@ -271,7 +274,7 @@ class TestSort:
 
 
 class TestDownloadOrder:
-    def _next(self, win):
+    def _next(self, win) -> ContentItem | None:
         found, item, _row = win.contentManager.findItem()
         return item if found else None
 

@@ -25,6 +25,7 @@ DownloadLogger는 클래스 메서드를 대역으로 바꿔 파일 생성을 �
 """
 
 import threading
+from collections.abc import Iterator
 
 import pytest
 import requests
@@ -109,7 +110,7 @@ class FakeService:
         self.state_at_submit: DownloadState | None = None
         self.log_calls_at_submit: int | None = None
 
-    def submit(self, content, **kwargs):
+    def submit(self, content, **kwargs) -> FakeHandle:
         """제출 시점 스냅샷을 먼저 뜨고, 인자를 보관한 뒤, 핸들 대역을 돌려준다."""
         self.state_at_submit = kwargs["data"].model.state
         self.log_calls_at_submit = len(self._log_calls)
@@ -263,7 +264,7 @@ _WIRED: list[Wired] = []  # 이 파일의 테스트가 만든 배선 묶음 — 
 
 
 @pytest.fixture(autouse=True)
-def _stop_viewmodel_timers():
+def _stop_viewmodel_timers() -> Iterator[None]:
     """테스트가 만든 viewmodel의 타이머를 테스트가 끝날 때 모두 세운다.
 
     다운로드를 끝내지 않고 끝나는 테스트는 viewmodel의 "준비 중" 타이머를 켜 둔 채 끝난다. 그

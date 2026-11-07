@@ -6,6 +6,7 @@
 """
 
 import logging
+from collections.abc import Iterator
 
 import pytest
 from PySide6.QtCore import QTranslator
@@ -41,7 +42,7 @@ def _apply_production_qss(qapp) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _drop_windows(qapp):
+def _drop_windows(qapp) -> Iterator[None]:
     """이 파일의 테스트가 띄운 창을 테스트 끝에 확실히 파괴한다(card_helpers.drop_new_top_levels)."""
     before = snapshot_top_levels()
     yield

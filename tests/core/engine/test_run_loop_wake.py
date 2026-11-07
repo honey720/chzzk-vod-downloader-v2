@@ -10,9 +10,12 @@
 
 import threading
 import time
+from typing import Any
 
 import core.engine.base as base_module
 import core.sources.m3u8_downloader as m3u8_module
+from core.models.download_data import DownloadData
+from core.sources.m3u8_downloader import M3U8Downloader
 from tests.core.sources import test_m3u8_downloader_run as m3u8_run
 
 # 신호를 실제로 기다리는 상한(초) — 받아 둔 세그먼트의 완료는 곧바로 온다. 이 안에 오지 않으면
@@ -40,7 +43,7 @@ class _TimeOnClock:
         self._clock.rest(seconds)
         time.sleep(0.001)  # 실제로 쉬지 않으면 루프가 다른 스레드에 차례를 넘기지 않는다
 
-    def __getattr__(self, name: str):
+    def __getattr__(self, name: str) -> Any:
         return getattr(time, name)
 
 
@@ -81,7 +84,7 @@ class _CountingSession(m3u8_run.M3U8Session):
         self.segment_requests = 0
         self.quick_first = False  # 첫 세그먼트만 곧바로 받게 할지
 
-    def get(self, url, **kwargs):
+    def get(self, url, **kwargs) -> m3u8_run.StreamResponse | m3u8_run.TextResponse:
         if url.endswith(".m4v"):
             self.segment_requests += 1
             if url.endswith("seg_0.m4v") and self.quick_first:
@@ -89,7 +92,16 @@ class _CountingSession(m3u8_run.M3U8Session):
         return super().get(url, **kwargs)
 
 
-def _engine_on_clock(tmp_path, monkeypatch, session: _CountingSession, workers: int):
+def _engine_on_clock(
+    tmp_path, monkeypatch, session: _CountingSession, workers: int
+) -> tuple[
+    M3U8Downloader,
+    DownloadData,
+    m3u8_run.RunLogger,
+    threading.Event,
+    list[BaseException],
+    _RestClock,
+]:
     """루프가 쉰 시간을 시계에 적는, 작업자 수가 고정된 m3u8 엔진을 준비한다."""
     engine, data, logger, _output, finished, failures, _merge = m3u8_run._make_engine(
         tmp_path, monkeypatch
@@ -146,7 +158,7 @@ def test_stop_while_every_worker_is_receiving_ends_the_loop_after_at_most_one_sh
     loop_ended_at: list[float] = []
     stop_monitor = engine._stop_monitor
 
-    def recorded_stop_monitor(monitor):
+    def recorded_stop_monitor(monitor) -> None:
         loop_ended_at.append(clock.rested)
         return stop_monitor(monitor)
 

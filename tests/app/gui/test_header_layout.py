@@ -13,9 +13,11 @@
 폭 3점은 절대 px가 아니라 창 최소폭에서 유도한다(#249).
 """
 
+from collections.abc import Iterator
+
 import pytest
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import Qt, QTranslator
+from PySide6.QtWidgets import QApplication, QWidget
 
 import CVDv2 as main_module
 import app.theme as theme
@@ -43,7 +45,7 @@ def _apply_production_qss(qapp) -> None:
 
 
 @pytest.fixture
-def window(qapp):
+def window(qapp) -> Iterator[VodDownloader]:
     win = VodDownloader()
     yield win
     win.deleteLater()
@@ -106,7 +108,7 @@ class TestStructure:
         포커스를 받는 다음 위젯까지 건너 뛰어 잰다.
         """
 
-        def next_focusable(widget):
+        def next_focusable(widget) -> QWidget | None:
             cursor = widget.nextInFocusChain()
             while cursor is not None and cursor is not widget:
                 if cursor.focusPolicy() != Qt.FocusPolicy.NoFocus and cursor.isVisibleTo(window):
@@ -138,7 +140,7 @@ class TestSaveLocationButtonWidth:
     """저장 위치 버튼은 기준 글이 들어가는 고정 폭이다 — 고른 위치 · 언어와 무관하다(#495)."""
 
     @pytest.fixture
-    def korean(self, qapp):
+    def korean(self, qapp) -> Iterator[QTranslator]:
         from PySide6.QtCore import QTranslator
 
         translator = QTranslator()

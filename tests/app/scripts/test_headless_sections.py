@@ -154,7 +154,7 @@ def test_fetch_frame_rates_reads_the_manifest_of_an_encoded_vod(monkeypatch) -> 
     cookies = {"NID_AUT": "", "NID_SES": ""}
     monkeypatch.setattr(headless.NetworkManager, "get_video_info", lambda no, c: _video_info())
 
-    def frame_rates(video_id, in_key, given):
+    def frame_rates(video_id, in_key, given) -> dict[str, Fraction]:
         calls.append((video_id, in_key, given))
         return {"u1080": Fraction(60)}
 
@@ -224,7 +224,7 @@ def test_runner_hands_sections_paths_and_moov_to_the_engine(monkeypatch, tmp_pat
         def __init__(self, **kwargs) -> None:
             pass
 
-        def submit(self, content, **kwargs):
+        def submit(self, content, **kwargs) -> SimpleNamespace:
             submitted.append(content)
             return SimpleNamespace(wait=lambda timeout=None: True)
 
@@ -263,7 +263,9 @@ def test_runner_hands_sections_paths_and_moov_to_the_engine(monkeypatch, tmp_pat
 # ================================================================ 구간 옵션을 받는 타입
 
 
-def _main_with(monkeypatch, tmp_path, content_type: str, calls: list):
+def _main_with(
+    monkeypatch, tmp_path, content_type: str, calls: list
+) -> tuple[int, tuple[TimeRange, ...]]:
     """main을 대역으로 감싼다 — 조회 결과는 content_type이고, 해석·러너 호출을 calls에 남긴다.
 
     암호화 VOD의 해석("ts")은 받은 선언 프레임률과 함께 남기고, 러너가 받은 ts_head는
@@ -282,15 +284,15 @@ def _main_with(monkeypatch, tmp_path, content_type: str, calls: list):
     monkeypatch.setattr(headless, "_fetch", lambda url, cookies, path: (result, content_type))
     selections = (TimeRange(1.0, 2.0),)
 
-    def mp4(item, texts):
+    def mp4(item, texts) -> tuple[tuple[TimeRange, ...], str]:
         calls.append(("mp4", tuple(texts)))
         return selections, "moov"
 
-    def fmp4(item, texts, segment_dir=None):
+    def fmp4(item, texts, segment_dir=None) -> tuple[tuple[TimeRange, ...], str]:
         calls.append(("fmp4", tuple(texts)))
         return selections, "fmp4"
 
-    def ts(item, texts, segment_dir=None, declared=None):
+    def ts(item, texts, segment_dir=None, declared=None) -> tuple[tuple[TimeRange, ...], str]:
         calls.append(("ts", tuple(texts), declared))
         return selections, "ts"
 
@@ -401,7 +403,7 @@ def test_section_option_is_refused_for_clip(monkeypatch, tmp_path) -> None:
 # ================================================================ 인코딩 전 다시보기의 프레임률
 
 
-def _fmp4_head(durations: list[int]):
+def _fmp4_head(durations: list[int]) -> Fmp4Head:
     """영상 샘플 길이가 durations(ms)인 세그먼트 하나짜리 다시보기 — (Fmp4Head, 그 세그먼트)."""
     init_data = init_segment([InitTrack(1, b"vide", 1000, trex=(0, 10, NON_KEY))])
     init = parse_init_segment(init_data)

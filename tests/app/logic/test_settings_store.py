@@ -180,7 +180,7 @@ class TestANewerDatabaseIsNeverWritten:
     """코드가 모르는 버전(옛 판이 새 판의 DB를 엶)이면 DB에 쓰지 않고 메모리 안 기본값으로 돈다."""
 
     @pytest.fixture
-    def newer(self):
+    def newer(self) -> bytes:
         """user_version 2(이 코드의 목표 + 1)에 언어 ko_KR이 든 DB."""
         write_settings({"language": "ko_KR"}, user_version=settings_module.DATABASE_VERSION + 1)
         return _database_bytes()
@@ -288,7 +288,7 @@ class TestADamagedDatabaseIsSetAside:
         class RollbackFails(sqlite3.Connection):
             """ROLLBACK만 다른 예외를 낸다 — 손상 DB에서 되돌리기도 실패하는 상황."""
 
-            def execute(self, sql, *args):
+            def execute(self, sql, *args) -> sqlite3.Cursor:
                 if sql == "ROLLBACK":
                     raise sqlite3.OperationalError("injected rollback failure")
                 return super().execute(sql, *args)

@@ -6,6 +6,7 @@ playback 정보의 트랙과 마스터 플레이리스트의 변형을 같은 �
 
 import json
 import os
+from collections.abc import Callable
 
 import pytest
 
@@ -71,7 +72,7 @@ def variant_url(number: int) -> str:
 
 
 @pytest.fixture
-def serve_master(monkeypatch):
+def serve_master(monkeypatch) -> Callable[[str], None]:
     """마스터 플레이리스트 요청에 주어진 본문으로 답하게 한다."""
 
     def install(text: str) -> None:

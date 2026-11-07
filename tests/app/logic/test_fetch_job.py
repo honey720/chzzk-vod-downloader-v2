@@ -99,7 +99,7 @@ def test_encrypted_vod_without_entitlement_raises_membership_error(
 def test_member_only_without_in_key_raises_membership_error(monkeypatch) -> None:
     """비암호화 멤버십 전용 VOD(inKey null)이면 멤버십 안내 에러가 발생해야 한다."""
 
-    def fake_get_video_info(video_no, cookies):
+    def fake_get_video_info(video_no, cookies) -> VideoInfo:
         return VideoInfo(
             video_id="video-id",
             in_key=None,
@@ -122,7 +122,7 @@ def test_member_only_without_in_key_raises_membership_error(monkeypatch) -> None
 def test_adult_without_video_id_keeps_invalid_cookies_error(monkeypatch) -> None:
     """성인 VOD(adult=True, videoId 없음)의 기존 에러 동작이 유지돼야 한다 (회귀 방지)."""
 
-    def fake_get_video_info(video_no, cookies):
+    def fake_get_video_info(video_no, cookies) -> VideoInfo:
         return VideoInfo(
             video_id=None,
             in_key=None,
@@ -146,7 +146,7 @@ def test_dash_path_passes_cookies_to_manifest_request(monkeypatch) -> None:
     """inKey가 있는 비암호화 정상 경로에서 쿠키가 매니페스트 요청까지 전달돼야 한다 (#55)."""
     manifest_calls = []
 
-    def fake_get_video_info(video_no, cookies):
+    def fake_get_video_info(video_no, cookies) -> VideoInfo:
         return VideoInfo(
             video_id="video-id",
             in_key="in-key",
@@ -158,7 +158,9 @@ def test_dash_path_passes_cookies_to_manifest_request(monkeypatch) -> None:
             metadata={"title": "t", "duration": 1},
         )
 
-    def fake_get_dash_manifest(video_id, in_key, cookies=None):
+    def fake_get_dash_manifest(
+        video_id, in_key, cookies=None
+    ) -> tuple[list[list[int | str]], int, str]:
         manifest_calls.append((video_id, in_key, cookies))
         return [[1080, "https://example.invalid/1080"]], 1080, "https://example.invalid/1080"
 
@@ -251,7 +253,7 @@ def test_run_success_does_not_leak_cookie_values_to_log(monkeypatch, caplog) -> 
     """정상 경로(쿠키가 실제로 매니페스트 요청까지 전달됨)에서도 로그에 쿠키 값이 남지 않는다."""
     secret_cookies = {"NID_AUT": "SECRET-AUT-9f8e7d6c", "NID_SES": "SECRET-SES-1a2b3c4d"}
 
-    def fake_get_video_info(video_no, cookies):
+    def fake_get_video_info(video_no, cookies) -> VideoInfo:
         return VideoInfo(
             video_id="video-id",
             in_key="in-key",
@@ -263,7 +265,9 @@ def test_run_success_does_not_leak_cookie_values_to_log(monkeypatch, caplog) -> 
             metadata={"title": "t", "duration": 1},
         )
 
-    def fake_get_dash_manifest(video_id, in_key, cookies=None):
+    def fake_get_dash_manifest(
+        video_id, in_key, cookies=None
+    ) -> tuple[list[list[int | str]], int, str]:
         return [[1080, "https://example.invalid/1080"]], 1080, "https://example.invalid/1080"
 
     monkeypatch.setattr(NetworkManager, "get_video_info", fake_get_video_info)

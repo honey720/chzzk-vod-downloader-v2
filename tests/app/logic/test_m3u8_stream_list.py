@@ -14,6 +14,7 @@ import app.download.resolvers as resolvers
 import app.network as network
 from app.network import REQUEST_TIMEOUT, NetworkManager
 from app.viewmodels.data import ContentItem
+from core.media.representations import StreamEntry
 from core.chzzk.playback_tracks import STREAM_NOT_FOUND, StreamSelectionError
 from core.models.content import Content, ContentType, StreamKey, VideoInfo
 from core.chzzk.metadata_service import fetch_video
@@ -34,7 +35,7 @@ class _Session:
         self._error = error
         monkeypatch.setattr(network._session, "get", self._get)
 
-    def _get(self, url, **kwargs):
+    def _get(self, url, **kwargs) -> MockResponse:
         self.calls.append((url, kwargs))
         if self._error is not None:
             raise self._error
@@ -50,7 +51,7 @@ class _Api:
     def __init__(self, sample: Sample) -> None:
         self._sample = sample
 
-    def get_video_info(self, video_no, cookies):
+    def get_video_info(self, video_no, cookies) -> VideoInfo:
         return VideoInfo(
             video_id="video-id",
             in_key=None,
@@ -63,7 +64,7 @@ class _Api:
         )
 
 
-def _fetch(sample: Sample):
+def _fetch(sample: Sample) -> tuple[list[StreamEntry], int | None, str | None]:
     """조회 서비스를 거쳐 (해상도 목록, 자동 해상도, 자동 주소)를 얻는다."""
     result, _encrypted = fetch_video(VOD_URL, "1", COOKIES, "downloads", _Api(sample))
     return result[2], result[3], result[4]

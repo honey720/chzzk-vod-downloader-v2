@@ -10,6 +10,8 @@
 폭 · 높이는 절대 px로 박지 않는다 — 창의 실제 최소 크기에서 유도한다.
 """
 
+from collections.abc import Iterator
+
 import pytest
 from PySide6.QtCore import QMimeData, QObject, QPoint, QRect, Qt, QTranslator, Signal
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
@@ -38,7 +40,7 @@ def _apply_production_qss(qapp) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _destroy_windows():
+def _destroy_windows() -> Iterator[None]:
     """테스트가 만든 최상위 창은 close()가 아니라 파괴한다 — close()는 창 크기를 기억한다(#253)."""
     before = snapshot_top_levels()
     yield
@@ -304,7 +306,7 @@ class TestMinimumSize:
 
 class TestRegistrationWiring:
     @pytest.fixture
-    def fetches(self, monkeypatch, tmp_path):
+    def fetches(self, monkeypatch, tmp_path) -> tuple[VodDownloader, list[tuple[str, str]], str]:
         """조회 요청을 기록한다 — 창의 콘텐츠 뷰모델 `fetchContent`를 대역으로 바꾼다(네트워크 없음)."""
         calls = []
         win = _window()

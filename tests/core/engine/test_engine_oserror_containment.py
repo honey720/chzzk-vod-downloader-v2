@@ -20,6 +20,7 @@
 import os
 import threading
 import time
+from collections.abc import Callable, Iterator
 
 from core.models.download_state import DownloadState
 from core.services.download_service import DownloadService
@@ -27,7 +28,7 @@ from core.services.download_service import DownloadService
 import core.sources.file_downloader as fd_module
 from core.sources.file_downloader import FileDownloader
 from core.models.download_data import DownloadData
-from typing import Never
+from typing import IO, Never, Self
 
 MB = 1024 * 1024
 TOTAL_SIZE = 4 * MB  # 해상도 144 → 파트 1MB → 4파트
@@ -57,7 +58,7 @@ class RecordingLogger:
     def save_and_close(self) -> None:
         self.closed += 1
 
-    def __getattr__(self, name):
+    def __getattr__(self, name) -> Callable[..., None]:
         return lambda *args, **kwargs: None
 
 
@@ -70,7 +71,7 @@ class RangeResponse:
     def raise_for_status(self) -> None:
         pass
 
-    def iter_content(self, chunk_size=8192):
+    def iter_content(self, chunk_size=8192) -> Iterator[bytes]:
         for i in range(0, len(self._body), chunk_size):
             yield self._body[i : i + chunk_size]
 
@@ -82,18 +83,20 @@ class RangeSession:
         self._content = content
         self.headers = {"content-length": str(len(content))}
 
-    def head(self, url, **kwargs):
+    def head(self, url, **kwargs) -> Self:
         return self
 
     def raise_for_status(self) -> None:
         pass
 
-    def get(self, url, headers=None, **kwargs):
+    def get(self, url, headers=None, **kwargs) -> RangeResponse:
         start, end = map(int, (headers or {})["Range"].removeprefix("bytes=").split("-"))
         return RangeResponse(self._content[start : end + 1])
 
 
-def _make_engine(tmp_path, monkeypatch):
+def _make_engine(
+    tmp_path, monkeypatch
+) -> tuple[FileDownloader, DownloadData, RecordingLogger, str, list[BaseException]]:
     """가짜 세션이 연결된 엔진과 (data, logger, output, failures)를 준비한다."""
     output = str(tmp_path / "out.mp4")
     data = DownloadData(
@@ -119,7 +122,7 @@ def _inject_output_oserror(monkeypatch, output: str, fail_from: int) -> None:
     calls = {"n": 0}
     real_open = open
 
-    def guarded_open(file, mode="r", *args, **kwargs):
+    def guarded_open(file, mode="r", *args, **kwargs) -> IO:
         if file == output and mode == "r+b":
             calls["n"] += 1
             if calls["n"] >= fail_from:

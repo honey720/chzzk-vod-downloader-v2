@@ -49,7 +49,9 @@ def _chunks(count: int, size: int) -> list[int]:
     return chunks
 
 
-def _video(count: int, *, seed: int, per_chunk: int, b_frames: bool, edits=None, sync=True):
+def _video(
+    count: int, *, seed: int, per_chunk: int, b_frames: bool, edits=None, sync=True
+) -> TrackSpec:
     """60fps 영상 — 샘플 크기는 고르지 않다. b_frames면 P 하나 + B 1~3개의 묶음이 섞인다."""
     rng = random.Random(seed)
     composition = None
@@ -76,7 +78,9 @@ def _video(count: int, *, seed: int, per_chunk: int, b_frames: bool, edits=None,
     )
 
 
-def _audio(count: int, *, seed: int, per_chunk: int, edits=None, uniform: bool = False):
+def _audio(
+    count: int, *, seed: int, per_chunk: int, edits=None, uniform: bool = False
+) -> TrackSpec:
     rng = random.Random(seed)
     return TrackSpec(
         handler=b"soun",
@@ -215,7 +219,7 @@ for _name, _make in SUMMARY_CASES.items():
     SHAPES[f"summary:{_name}"] = lambda make=_make: ([spec for spec in make() if spec], {})
 
 
-def _raw_of(tracks, options):
+def _raw_of(tracks, options) -> Mp4Raw:
     data = build_mp4(tracks, **options).data
     return read_mp4_raw(lambda offset, size: data[offset : offset + size])
 
@@ -271,7 +275,7 @@ def _random_selections(index, rng: random.Random, count: int) -> list[TimeRange]
     return selections
 
 
-def _outcome(function):
+def _outcome(function) -> object:
     """함수의 결과 — 값이거나, 던진 예외의 종류(와 Mp4Error의 실패 키)."""
     try:
         return function()
@@ -388,7 +392,7 @@ def test_light_sizes_do_not_build_an_index(monkeypatch) -> None:
     assert moov_head_size(raw) == expected[1]
 
 
-def _with_audio_composition():
+def _with_audio_composition() -> list[TrackSpec]:
     """오디오에 ctts가 있다 — 표에서 세지 않는 모양."""
     audio = _audio(300, seed=31, per_chunk=23)
     audio.composition = [0] * 300
@@ -565,7 +569,7 @@ def test_light_file_size_equals_the_index_file_size_for_several_selections_at_on
     assert different == []
 
 
-def _long_tracks():
+def _long_tracks() -> list[TrackSpec]:
     """영상 70,000샘플(B프레임 재배열) · 오디오 40,000샘플 — 크기 표가 묶음(8192개) 여럿에 걸친다."""
     return [
         _video(70_000, seed=11, per_chunk=7, b_frames=True),

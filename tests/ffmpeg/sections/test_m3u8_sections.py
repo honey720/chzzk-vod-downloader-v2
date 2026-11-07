@@ -45,7 +45,9 @@
 import os
 import struct
 import subprocess
+from collections.abc import Callable
 from fractions import Fraction
+from pathlib import Path
 
 import pytest
 
@@ -55,6 +57,7 @@ import core.sources.m3u8_downloader as m3u8_module
 import core.engine.segment_space as space_module
 import core.utils.ffmpeg as ffmpeg_module
 import core.sections.fmp4_cut as fmp4_cut_module
+from core.media.fmp4_index import Fmp4Head
 from core.media.fmp4 import build_fmp4_index, fmp4_origin, parse_init_segment, parse_media_segment
 from core.media.hls import parse_media_playlist
 from core.sections.hls_fmp4 import fetch_fmp4_head, segment_file_name, segment_frames
@@ -72,7 +75,8 @@ from core.models.download_data import DownloadData
 from core.models.plan import TimeRange
 from core.sections.check import check_cut
 from core.utils.ffmpeg import RemuxError, get_ffmpeg_exe, run_ffmpeg
-from core.sections.fmp4_sections import plan_fmp4_sections
+from core.sections.cut import CutFrames, CutResult
+from core.sections.fmp4_sections import Fmp4Section, plan_fmp4_sections
 from core.sections.hybrid import CUT_FAILED, CutError, cut_frames_from_fmp4
 from core.utils.paths import build_section_output_paths, temp_dir_for
 from core.sections.selections import (
@@ -86,7 +90,7 @@ from tests.support.range_host import RangeHost
 from tests.ffmpeg.reference_cut import hybrid_cut
 from tests.ffmpeg.sections.section_retry import OUTPUT_ARG, CutCalls, hand_over, snapshot
 from tests.support.undeletable import Undeletable
-from typing import Never
+from typing import IO, Never, Self
 
 KEYFRAMES = (0, 30, 36, 60, 90, 120, 150)  # -force_key_frames 0,1,1.2,2,3,4,5 (30fps)
 SEGMENTS = 6  # 1초 세그먼트 — 키프레임 0·30·60·90·120·150에서 갈린다
@@ -165,7 +169,7 @@ def sources(tmp_path_factory) -> dict[str, _Source]:
     }
 
 
-def _make_real(plain, folder):
+def _make_real(plain, folder) -> Path:
     """plain의 세그먼트를 둘씩 묶어 실제 다시보기의 모양으로 만든 HLS를 folder에 쓴다."""
     names = sorted(path.name for path in plain.glob("seg-*.m4s"))
     init = (plain / "init.mp4").read_bytes()
@@ -235,7 +239,7 @@ class _Logger:
     def __init__(self) -> None:
         self.calls: list[tuple[str, tuple]] = []
 
-    def __getattr__(self, name):
+    def __getattr__(self, name) -> Callable[..., None]:
         def record(*args, **kwargs) -> None:
             self.calls.append((name, args))
 
@@ -618,7 +622,9 @@ def test_engine_requests_playlist_init_and_each_segment_once(host, sources, tmp_
     assert [header for _m, _n, header in host.requests if header is not None] == []
 
 
-def _resolve(host, tmp_path, selection, playlist: str = "plain/media.m3u8"):
+def _resolve(
+    host, tmp_path, selection, playlist: str = "plain/media.m3u8"
+) -> tuple[Fmp4Head, tuple[Fmp4Section, ...]]:
     """헤드리스처럼 구간을 먼저 해석한다 — 받은 세그먼트는 tmp_path/segments에 둔다. (head, 구간 계획)"""
     url = host.url(playlist)
     head = fetch_fmp4_head(url, str(tmp_path / "segments"))
@@ -879,7 +885,7 @@ def test_cut_failure_keeps_segments_and_finished_sections(
     source = sources["plain"]
     real = m3u8_module.cut_fmp4_section
 
-    def second_fails(*args, **kwargs):
+    def second_fails(*args, **kwargs) -> tuple[CutResult, CutFrames]:
         if args[OUTPUT_ARG].endswith("_2.mp4"):
             raise CutError(CUT_FAILED, "시험")
         return real(*args, **kwargs)
@@ -914,7 +920,7 @@ def test_cut_failure_of_one_section_still_cuts_the_sections_after_it(
     failure = MidwayCutFailure(monkeypatch)
     calls = []
 
-    def second_fails(*args, **kwargs):
+    def second_fails(*args, **kwargs) -> tuple[CutResult, CutFrames]:
         calls.append(args)
         if args[OUTPUT_ARG].endswith("_2.mp4"):
             failure.arm(source_path=args[0], output_path=args[OUTPUT_ARG])  # args[0]은 작업 폴더
@@ -1084,7 +1090,7 @@ def test_section_run_that_fails_or_stops_leaves_the_file_at_output_path_alone(
         f.write(b"keep")
     real = m3u8_module.cut_fmp4_section
 
-    def interrupted(*args, **kwargs):
+    def interrupted(*args, **kwargs) -> tuple[CutResult, CutFrames]:
         if how == "failure":
             raise RuntimeError("시험")
         run.data.model.stop()
@@ -1141,21 +1147,21 @@ def test_section_postprocess_reads_segments_in_fixed_size_chunks(
         def __init__(self, file) -> None:
             self._file = file
 
-        def read(self, size=-1):
+        def read(self, size=-1) -> bytes:
             data = self._file.read(size)
             largest.append(len(data))
             return data
 
-        def seek(self, *args):
+        def seek(self, *args) -> int:
             return self._file.seek(*args)
 
-        def __enter__(self):
+        def __enter__(self) -> Self:
             return self
 
-        def __exit__(self, *args):
+        def __exit__(self, *args) -> None:
             self._file.close()
 
-    def recording_open(path, mode="r", *args, **kwargs):
+    def recording_open(path, mode="r", *args, **kwargs) -> Recording | IO:
         file = real_open(path, mode, *args, **kwargs)
         return Recording(file) if mode == "rb" and str(path).endswith(".m4v") else file
 
@@ -1452,7 +1458,9 @@ def _speed_over_one_second(run: _Run) -> float:
     return engine.s.speed_mb
 
 
-def _retry_with_one_segment_gone(host, sources, tmp_path, monkeypatch):
+def _retry_with_one_segment_gone(
+    host, sources, tmp_path, monkeypatch
+) -> tuple[_Run, _Run, int, list[int]]:
     """둘째 구간의 컷이 실패한 실행과, 그 구간의 첫 세그먼트를 지운 뒤 이어받은 실행.
 
     Returns:
@@ -1628,7 +1636,7 @@ class _JoinSpy:
         self._real = fmp4_cut_module.remux_through
         monkeypatch.setattr(fmp4_cut_module, "remux_through", self._call)
 
-    def _call(self, *args, **kwargs):
+    def _call(self, *args, **kwargs) -> str:
         result = self._real(*args, **kwargs)
         names = sorted(os.listdir(self._run.engine.temp_dir))
         self.left.append([name for name in names if name.endswith(".m4v")])
@@ -1713,7 +1721,7 @@ def test_retry_after_a_failed_section_file_receives_only_the_segments_that_were_
 # ================================================================ 끝낸 구간의 파일이 없거나 바뀐 재시도 (#309)
 
 
-def _fail_the_second_of_three(host, sources, tmp_path, monkeypatch):
+def _fail_the_second_of_three(host, sources, tmp_path, monkeypatch) -> tuple[_Run, CutCalls]:
     """구간 셋 가운데 둘째 구간의 컷만 실패한 실행과, 컷 호출을 적는 도구(다음 실행을 위해 비운 것)."""
     cuts = CutCalls(monkeypatch, m3u8_module, "cut_fmp4_section", source_arg=0)
     cuts.fail_on = (1,)
@@ -1838,7 +1846,7 @@ def test_progress_the_cut_reports_is_placed_after_the_share_of_the_reading(
     real_cut = m3u8_module.cut_fmp4_section
     seen = []
 
-    def cut(*args, **kwargs):
+    def cut(*args, **kwargs) -> tuple[CutResult, CutFrames]:
         kwargs["on_progress"](0.5)
         seen.append(run.data.cut_progress)
         return real_cut(*args, **kwargs)

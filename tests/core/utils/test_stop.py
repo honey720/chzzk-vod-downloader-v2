@@ -4,6 +4,8 @@
 """
 
 import threading
+from collections.abc import Iterator
+from typing import Self
 
 import pytest
 
@@ -12,15 +14,15 @@ import core.media.mp4_index as index_module
 import core.media.sample_column as column_module
 import core.sections.mp4_ranges as ranges_module
 from core.media.mp4 import index_mp4, read_mp4_raw
-from core.media.mp4_index import PendingMp4Head
+from core.media.mp4_index import Mp4Raw, PendingMp4Head
 from core.models.plan import TimeRange
-from core.sections.mp4_partial import plan_partial
+from core.sections.mp4_partial import PartialLayout, plan_partial
 from core.sections.mp4_ranges import sections_download_size, sections_head_size, sections_sizes
 from core.utils.stop import StopRequested, check_stop, stop_requested, stoppable
 from tests.support.mp4_builder import audio_spec, build_mp4, video_spec
 
 
-def _raw():
+def _raw() -> Mp4Raw:
     """실제 mp4 바이트(10fps 12프레임)에서 받은 moov."""
     data = build_mp4([video_spec(), audio_spec()]).data
     return read_mp4_raw(lambda offset, size: data[offset : offset + size])
@@ -165,16 +167,16 @@ def test_fetching_the_moov_stops_between_chunks(monkeypatch) -> None:
             self.given = 0
             self.closed = 0
 
-        def __enter__(self):
+        def __enter__(self) -> Self:
             return self
 
-        def __exit__(self, *exc):
+        def __exit__(self, *exc) -> None:
             self.closed += 1
 
         def raise_for_status(self) -> None:
             pass
 
-        def iter_content(self, chunk_size):
+        def iter_content(self, chunk_size) -> Iterator[bytes]:
             for _ in range(3):
                 self.given += 1
                 yield b"x" * 10
@@ -182,7 +184,7 @@ def test_fetching_the_moov_stops_between_chunks(monkeypatch) -> None:
     response = _Response()
 
     class _Session:
-        def get(self, url, **kwargs):
+        def get(self, url, **kwargs) -> _Response:
             return response
 
     monkeypatch.setattr(mp4_module, "get_thread_session", lambda: _Session())
@@ -225,7 +227,7 @@ class _Blocking:
         self.entered = threading.Event()
         self.release = threading.Event()
 
-    def __call__(self, raw):
+    def __call__(self, raw) -> str:
         self.order.append(f"{self.name} 들어옴")
         self.entered.set()
         assert self.release.wait(10), "해석 대역의 문이 열리지 않았다"
@@ -345,7 +347,7 @@ def test_sections_sizes_equals_the_two_separate_sizes_with_one_layout(monkeypatc
     calls = []
     real = ranges_module.plan_partial
 
-    def counting(*args):
+    def counting(*args) -> PartialLayout:
         calls.append(args)
         return real(*args)
 

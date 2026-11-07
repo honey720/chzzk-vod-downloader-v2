@@ -8,6 +8,7 @@
 """
 
 import os
+from collections.abc import Callable
 
 import pytest
 
@@ -34,7 +35,7 @@ PORTRAIT = [
 
 
 @pytest.fixture
-def serve_master(monkeypatch):
+def serve_master(monkeypatch) -> Callable[[str], None]:
     """마스터 플레이리스트 요청에 주어진 본문으로 답하게 한다."""
 
     def install(text: str) -> None:

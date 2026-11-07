@@ -7,6 +7,7 @@ OS의 호출은 바꿔치기한다 — 러너의 디스크가 무엇인지에 �
 import re
 import subprocess
 import sys
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -135,7 +136,7 @@ def test_filesystem_name_of_a_real_folder_is_a_name_or_none(tmp_path) -> None:
 
 
 @contextmanager
-def _attached_image(tmp_path: Path, filesystem: str):
+def _attached_image(tmp_path: Path, filesystem: str) -> Iterator[Path]:
     """tmp_path에 작은 디스크 이미지를 만들어 붙이고 그 마운트 지점을 준다 — 끝나면 떼고 지운다.
 
     macOS의 hdiutil로 만든다(root가 필요 없다). 붙이지 못하면 건너뛰지 않고 실패한다.

@@ -16,6 +16,7 @@ import sys
 import threading
 import time
 import traceback
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
@@ -70,7 +71,7 @@ def launch_hooks() -> list:
 
 
 @pytest.fixture
-def launched(monkeypatch, launch_hooks):
+def launched(monkeypatch, launch_hooks) -> Iterator[list[subprocess.Popen]]:
     """ffmpeg 모듈이 띄운 프로세스들 — 끝날 때 살아 있는 것은 다시 돌린 뒤 그 객체로 끝낸다."""
 
     def on_launch(command, process) -> None:
@@ -181,7 +182,7 @@ def poll_record(monkeypatch) -> _PollRecord:
     original_poll = ffmpeg_module._Control.poll
     original_switch = ffmpeg_module._set_suspended
 
-    def poll(control):
+    def poll(control) -> str | None:
         outcome = original_poll(control)
         record.saw_poll(control, outcome)
         return outcome
@@ -576,7 +577,7 @@ def test_cut_paused_between_stages_launches_the_next_stage_only_after_resuming(
     real = cut_module.run_ffmpeg
     before, during = [], []
 
-    def pausing(args, **kwargs):
+    def pausing(args, **kwargs) -> subprocess.CompletedProcess[str]:
         if args[-1] == "audio.m4a":
             pause.set()  # 띄우기 전에 켠다 — 단계 사이의 일시정지다
             before.append(len(launched))
@@ -615,7 +616,7 @@ def test_cut_stopped_while_paused_ends_its_ffmpeg_and_leaves_nothing(
     stopped_at = []
     real = cut_module.run_ffmpeg
 
-    def slowed(args, **kwargs):
+    def slowed(args, **kwargs) -> subprocess.CompletedProcess[str]:
         if args[-1] == "audio.m4a":
             kwargs.pop("on_out_time", None)
             threading.Timer(0.3, pause.set).start()
@@ -657,7 +658,7 @@ def test_rewrapping_ts_segments_waits_while_paused(tmp_path, launched, monkeypat
     real_remux_stream = ts_cut_module.remux_stream
 
     def counting_remux_stream(chunks, *args, **kwargs) -> None:
-        def counted():
+        def counted() -> Iterator[bytes]:
             for chunk in chunks:
                 taken.append(chunk)
                 yield chunk

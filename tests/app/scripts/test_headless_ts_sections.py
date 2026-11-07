@@ -28,6 +28,7 @@ import core.utils.paths as paths_module
 import app.section_input.basis as section_basis
 import scripts.headless_download as headless
 from core.media.dash import parse_frame_rates, parse_sea_manifest
+from core.media.hls import HlsPlaylist
 from core.sources.hls_aes_downloader import HlsAesDownloader
 from core.models.content import VideoInfo
 from core.models.download_data import DownloadData
@@ -54,7 +55,7 @@ NTSC = Fraction(30000, 1001)  # 잰 값(30)과 다른 선언값 — 선언값이
 
 
 @pytest.fixture(scope="module")
-def vod(tmp_path_factory):
+def vod(tmp_path_factory) -> tuple[HlsPlaylist, dict[str, bytes]]:
     """ffmpeg로 만든 6초짜리 암호화 HLS 하나 — (플레이리스트, 파일 이름 → bytes)."""
     return make_encrypted_hls(tmp_path_factory.mktemp("headless_ts"), KEY, KEY_URI)
 
@@ -84,13 +85,15 @@ class _Headless:
         result = (VOD_URL, {"title": TITLE}, [[144, self.base_url]], 144, self.base_url)
         result += (str(self.folder), None)
 
-        def resolve_key(_content, key_uri):
+        def resolve_key(_content, key_uri) -> bytes:
             self.key_requests.append(key_uri)
             return key
 
         resolve = headless._resolve_ts_sections
 
-        def observed_resolve(item, texts, segment_dir=None, declared=None):
+        def observed_resolve(
+            item, texts, segment_dir=None, declared=None
+        ) -> tuple[tuple[TimeRange, ...], TsHead] | None:
             self.segment_dirs.append(segment_dir)
             self.declared.append(declared)
             resolved = resolve(item, texts, segment_dir, declared)
@@ -298,7 +301,7 @@ def test_list_option_shows_the_declared_frame_rate_of_each_encrypted_resolution(
     )
     asked = []
 
-    def frame_rates(video_id, in_key, cookies):
+    def frame_rates(video_id, in_key, cookies) -> dict[str, Fraction]:
         asked.append((video_id, in_key))
         return parse_frame_rates(xml_text)
 
@@ -540,7 +543,7 @@ def test_key_is_not_left_in_the_log_or_in_what_the_resolver_returns(
     """
     asked = []
 
-    def resolve_key(_content, key_uri):
+    def resolve_key(_content, key_uri) -> bytes:
         asked.append(key_uri)
         return key
 
@@ -574,7 +577,7 @@ def test_runner_hands_the_ts_head_to_the_engine(monkeypatch, tmp_path) -> None:
         def __init__(self, **kwargs) -> None:
             pass
 
-        def submit(self, content, **kwargs):
+        def submit(self, content, **kwargs) -> SimpleNamespace:
             submitted.append(content)
             return SimpleNamespace(wait=lambda timeout=None: True)
 

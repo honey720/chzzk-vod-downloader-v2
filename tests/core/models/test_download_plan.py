@@ -15,6 +15,8 @@ selections가 빈 값일 때 현행과 동일 동작인 것은 기존 실행 테
 """
 
 import dataclasses
+from collections.abc import Callable
+from typing import Self
 
 import pytest
 
@@ -37,7 +39,7 @@ class RecordingLogger:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    def __getattr__(self, name):
+    def __getattr__(self, name) -> Callable[..., None]:
         def record(*args, **kwargs) -> None:
             self.calls.append(name)
 
@@ -75,7 +77,7 @@ class HeadSession:
     def __init__(self, size: int) -> None:
         self.headers = {"content-length": str(size)}
 
-    def head(self, url, **kwargs):
+    def head(self, url, **kwargs) -> Self:
         return self
 
     def raise_for_status(self) -> None:
@@ -118,7 +120,7 @@ class PlaylistSession:
     def __init__(self, text: str) -> None:
         self._text = text
 
-    def get(self, url, **kwargs):
+    def get(self, url, **kwargs) -> object:
         class _Response:
             text = self._text
 

@@ -4,12 +4,16 @@
 별칭 입력 창만 바꿔 끼운다. 설정은 `tests/conftest.py`가 임시 폴더로 돌린 DB에 직접 써서 시작한다.
 """
 
+from collections.abc import Callable, Iterator
+
 import pytest
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QApplication, QFileDialog, QInputDialog
 
 import app.system.settings as settings
 import app.viewmodels.content_viewmodel as content_viewmodel_module
 from app.views.mainWindow import VodDownloader
+from app.widgets.header_controls import ChoiceMenu
 from app.widgets.widget import abbreviate_path
 
 
@@ -32,7 +36,7 @@ class _IdleFetchJob:
 
 
 @pytest.fixture
-def folders(tmp_path):
+def folders(tmp_path) -> Callable[[str], str]:
     """이름 붙인 실존 폴더를 만든다 — `folders("가")` → 경로 문자열."""
 
     def make(name: str) -> str:
@@ -51,7 +55,7 @@ def _seed(**values) -> None:
 
 
 @pytest.fixture
-def make_window(qapp):
+def make_window(qapp) -> Iterator[Callable[[], VodDownloader]]:
     made = []
 
     def make() -> VodDownloader:
@@ -67,7 +71,7 @@ def make_window(qapp):
     QApplication.processEvents()
 
 
-def _open(win):
+def _open(win) -> ChoiceMenu:
     """저장 위치 메뉴를 실제로 연다 — 열 때 채운다(aboutToShow)."""
     button = win.saveLocationButton
     menu = button.menuWidget
@@ -91,11 +95,11 @@ def _rows(menu) -> list[tuple]:
     return rows
 
 
-def _choice(menu, kind: str, path: str):
+def _choice(menu, kind: str, path: str) -> QAction:
     return next(a for a in menu.choices() if tuple(a.data()) == (kind, path))
 
 
-def _command(menu, name: str):
+def _command(menu, name: str) -> QAction:
     return next(a for a in menu.actions() if a.objectName() == name)
 
 
@@ -192,7 +196,9 @@ class TestLimitsAndOverlap:
 
 class TestMissingFolders:
     @pytest.fixture
-    def menu_with_missing(self, make_window, folders, tmp_path):
+    def menu_with_missing(
+        self, make_window, folders, tmp_path
+    ) -> tuple[VodDownloader, ChoiceMenu, str, str]:
         fav, recent = folders("사라질 즐겨찾기"), folders("사라질 최근")
         _seed(favoritePaths=[{"name": "외장", "path": fav}], recentPaths=[recent])
         win = make_window()
@@ -253,7 +259,7 @@ class TestChoosing:
         assert win.saveLocations.choose(chosen)
         asked = []
 
-        def fake_get_text(parent, title, label, text=""):
+        def fake_get_text(parent, title, label, text="") -> tuple[str, bool]:
             asked.append(text)
             return "자주", True
 

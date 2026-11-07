@@ -8,6 +8,8 @@
 등록은 실제 배선(URL 칸 Enter · 등록 버튼 클릭)으로 하고, 조회 작업만 대역으로 바꾼다(네트워크 없음).
 """
 
+from collections.abc import Iterator
+
 import pytest
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtTest import QTest
@@ -35,7 +37,7 @@ class _ControlledFetchJob(QObject):
 
 
 @pytest.fixture
-def window(qapp, monkeypatch, tmp_path):
+def window(qapp, monkeypatch, tmp_path) -> Iterator[VodDownloader]:
     _ControlledFetchJob.made = []
     monkeypatch.setattr(content_viewmodel_module, "FetchJob", _ControlledFetchJob)
     popups = []

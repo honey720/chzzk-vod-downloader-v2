@@ -15,6 +15,7 @@ PTS보다 0.1초 앞선다), 영상 청크는 샘플 0~2 · 3~5 · 6~7 · 8~11. 
 import pytest
 
 from core.media.mp4 import index_mp4, parse_moov, read_mp4_raw
+from core.media.mp4_index import Mp4Index
 from core.models.plan import TimeRange
 from core.sections.hybrid import SOURCE_LEAD_SECONDS
 from core.sections.mp4_ranges import (
@@ -25,18 +26,18 @@ from core.sections.mp4_ranges import (
     selection_byte_ranges,
 )
 from core.sections.selections import reaches_end, validate_selections
-from tests.support.mp4_builder import audio_spec, build_mp4, video_spec
+from tests.support.mp4_builder import BuiltMp4, audio_spec, build_mp4, video_spec
 
 VIDEO_SIZES = [40 + 3 * n for n in range(12)]  # 조립기 video_spec의 샘플 크기
 AUDIO_SIZE = 7  # 조립기 audio_spec의 샘플 크기
 
 
-def _video_only():
+def _video_only() -> tuple[BuiltMp4, Mp4Index]:
     built = build_mp4([video_spec()])
     return built, parse_moov(built.moov)
 
 
-def _with_audio():
+def _with_audio() -> tuple[BuiltMp4, Mp4Index]:
     built = build_mp4([video_spec(), audio_spec()])
     return built, parse_moov(built.moov)
 
@@ -237,7 +238,7 @@ def test_selection_ending_at_a_duration_off_the_frame_grid_ends_on_the_last_fram
     assert selection_byte_ranges(index, selection).last_frame == 11
 
 
-def _file_index(data: bytes):
+def _file_index(data: bytes) -> Mp4Index:
     """파일의 바이트에서 읽은 색인 — moov의 위치가 들어 있다."""
     return index_mp4(read_mp4_raw(lambda offset, size: data[offset : offset + size])).index
 

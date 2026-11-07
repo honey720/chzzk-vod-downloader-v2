@@ -10,6 +10,7 @@ import os
 import stat
 import sys
 import textwrap
+from collections.abc import Callable
 from types import SimpleNamespace
 
 import pytest
@@ -39,10 +40,10 @@ def _stderr_cut_inside_the_name(limit: int) -> str:
     return text
 
 
-def _failed(stderr: str):
+def _failed(stderr: str) -> Callable[..., SimpleNamespace]:
     """returncode 1과 그 stderr를 돌려주는 ffmpeg 실행의 대역(hybrid_cut._ffmpeg 자리)."""
 
-    def fake(args, **kwargs):
+    def fake(args, **kwargs) -> SimpleNamespace:
         return SimpleNamespace(returncode=1, stderr=stderr, stdout="")
 
     return fake
@@ -87,7 +88,7 @@ _FAKE_FFMPEG = textwrap.dedent(
 
 
 @pytest.fixture
-def failing_ffmpeg(tmp_path, monkeypatch):
+def failing_ffmpeg(tmp_path, monkeypatch) -> Callable[[str], None]:
     """실패 글을 내고 1로 끝나는 ffmpeg 대역 실행 파일 — get_ffmpeg_exe가 그것을 돌려준다.
 
     글은 ``FAKE_FFMPEG_STDERR``가 가리키는 파일에서 읽는다. Windows는 .cmd, 그 밖은 실행 비트를 준

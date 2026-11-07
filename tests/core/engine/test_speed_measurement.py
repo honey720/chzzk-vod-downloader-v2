@@ -3,6 +3,8 @@
 시계는 엔진의 단조 시계(`_now`)를 가짜로 바꿔 끼운다. 실제 시간은 쓰지 않는다.
 """
 
+from collections.abc import Callable
+
 import pytest
 
 from core.sources.file_downloader import FileDownloader
@@ -14,7 +16,7 @@ MB = 1024 * 1024
 class QuietLogger:
     """엔진이 부르는 로그 메서드를 모두 받아 버린다."""
 
-    def __getattr__(self, name):
+    def __getattr__(self, name) -> Callable[..., None]:
         return lambda *args, **kwargs: None
 
 
@@ -29,7 +31,7 @@ class ManualClock:
 
 
 @pytest.fixture
-def measured():
+def measured() -> tuple[FileDownloader, DownloadData, ManualClock]:
     """가짜 시계를 끼우고 방금 한 번 잰 것으로 해 둔 엔진 — (엔진, 데이터, 시계)."""
     data = DownloadData(
         base_url="https://example.invalid/video.mp4",

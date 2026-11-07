@@ -16,6 +16,7 @@ from fractions import Fraction
 import pytest
 
 from core.media.mp4 import read_mp4_head
+from core.media.mp4_index import Mp4Head
 from core.sections.cut import CutPiece, CutPlan
 from core.models.plan import TimeRange
 from core.sections.hybrid import cut_frames_from_mp4, plan_cut
@@ -57,7 +58,7 @@ def _source() -> bytes:
 
 
 @pytest.fixture(scope="module")
-def head():
+def head() -> Mp4Head:
     data = _source()
     assert hashlib.sha256(data).hexdigest()[:16] == "670670fd6252e088", "전제: 입력이 그대로다"
     return read_mp4_head(lambda offset, size: data[offset : offset + size])

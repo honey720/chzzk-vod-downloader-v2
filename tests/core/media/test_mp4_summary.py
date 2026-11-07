@@ -30,6 +30,7 @@ from core.media.mp4 import (
     summarize_moov,
     summarize_mp4,
 )
+from core.media.mp4_index import Mp4Head, Mp4Raw
 from tests.support.mp4_builder import TrackSpec, audio_spec, box, build_mp4, video_spec
 from typing import Never
 
@@ -41,7 +42,9 @@ def _chunks(count: int, size: int) -> list[int]:
     return chunks
 
 
-def _video(count: int, timescale: int, deltas, composition=None, edits=None, sync_every=30):
+def _video(
+    count: int, timescale: int, deltas, composition=None, edits=None, sync_every=30
+) -> TrackSpec:
     return TrackSpec(
         handler=b"vide",
         timescale=timescale,
@@ -54,7 +57,7 @@ def _video(count: int, timescale: int, deltas, composition=None, edits=None, syn
     )
 
 
-def _audio(count: int, edits=None):
+def _audio(count: int, edits=None) -> TrackSpec:
     return TrackSpec(
         handler=b"soun",
         timescale=48000,
@@ -143,7 +146,7 @@ def test_summary_equals_the_full_parse(case) -> None:
     _same(build_mp4([video] + ([audio] if audio else [])).moov)
 
 
-def _random_tracks(seed: int):
+def _random_tracks(seed: int) -> tuple[TrackSpec, TrackSpec | None]:
     generator = random.Random(seed)
     count = generator.randrange(8, 120)
     timescale = generator.choice([1000, 600, 15360, 30000, 60000, 90000])
@@ -328,7 +331,7 @@ def test_raw_moov_gives_the_index_and_bytes_of_the_file() -> None:
 # ================================================================ 한 번만 해석하기
 
 
-def _raw_of_standard_mp4():
+def _raw_of_standard_mp4() -> Mp4Raw:
     data = build_mp4([video_spec(), audio_spec()]).data
     return read_mp4_raw(lambda offset, size: data[offset : offset + size])
 
@@ -347,7 +350,7 @@ def test_pending_head_parses_once_when_two_threads_ask_at_the_same_time(monkeypa
     inside, gate = threading.Event(), threading.Event()
     calls = []
 
-    def gated(held):
+    def gated(held) -> Mp4Head:
         calls.append(held)
         inside.set()
         assert gate.wait(10), "문이 열리지 않았다"
@@ -411,7 +414,7 @@ def test_pending_head_parses_again_after_a_failure_that_is_not_about_the_moov(mo
     real = mp4_module.index_mp4
     calls = []
 
-    def flaky(held):
+    def flaky(held) -> Mp4Head:
         calls.append(held)
         if len(calls) == 1:
             raise MemoryError("메모리가 모자라다(대역)")
@@ -444,7 +447,7 @@ def test_a_waiter_parses_by_itself_after_the_first_caller_failed_for_another_rea
     inside, gate = threading.Event(), threading.Event()
     calls = []
 
-    def gated(held):
+    def gated(held) -> Mp4Head:
         calls.append(held)
         if len(calls) == 1:
             inside.set()

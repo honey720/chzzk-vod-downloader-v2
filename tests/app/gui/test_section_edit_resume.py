@@ -7,6 +7,7 @@
 """
 
 import os
+from collections.abc import Iterator
 from fractions import Fraction
 
 import pytest
@@ -22,6 +23,7 @@ from app.section_input.basis import SectionBasis
 from app.viewmodels.data import ContentItem
 from app.views import mainWindow as mw_mod
 from app.views.mainWindow import VodDownloader
+from app.views.section_dialog import SectionEditDialog
 from core.media.representations import StreamEntry
 from core.engine.base import PostprocessError
 from core.models.download_state import DownloadState
@@ -43,7 +45,7 @@ ROWS = [("00100000", "00200000"), ("00300000", "00400000"), ("00500000", "005500
 
 
 @pytest.fixture(autouse=True)
-def _environment(qapp, monkeypatch):
+def _environment(qapp, monkeypatch) -> Iterator[None]:
     """실제 QSS · 조회 대역(60fps · 1시간) · 네트워크와 안내 창 차단."""
     theme.set_color_scheme("dark")
     qapp.setStyle(hold_style(theme.build_style()))
@@ -73,7 +75,7 @@ class _Engine:
     def __init__(self) -> None:
         self.submissions: list[dict] = []
 
-    def submit(self, content, **kwargs):
+    def submit(self, content, **kwargs) -> "_Engine":
         # 엔진 흉내 — 콜백 입구는 서비스 핸들의 중계(값 묶음 · 키를 싣는다, #484)
         self.submissions.append(engine_side(content, kwargs))
         return self
@@ -109,7 +111,7 @@ def _pump() -> None:
         QApplication.processEvents()
 
 
-def _edit(qtbot, win, item, rows) -> None:
+def _edit(qtbot, win, item, rows) -> SectionEditDialog:
     """편집 창을 열어 행을 rows로 만들고 확인한다. rows의 항목이 None이면 그 행은 건드리지 않는다."""
     QTest.mouseClick(win.listView.widgetFor(item).fileSizeLabel, Qt.MouseButton.LeftButton)
     _pump()
@@ -132,7 +134,9 @@ def _edit(qtbot, win, item, rows) -> None:
 
 
 @pytest.fixture
-def failed_card(qtbot, tmp_path):
+def failed_card(
+    qtbot, tmp_path
+) -> Iterator[tuple[VodDownloader, ContentItem, _Engine, tuple[str, ...]]]:
     """구간 셋 가운데 둘째 컷만 실패하고 끝난 뒤 ↻로 대기가 된 카드. `_1` · `_3` 파일이 디스크에 있다."""
     item = ContentItem(
         "https://chzzk.naver.com/video/1",

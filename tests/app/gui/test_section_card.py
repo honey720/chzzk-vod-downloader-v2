@@ -22,6 +22,7 @@ mainWindow와 같은 배선(ContentViewModel ↔ ContentListView ↔ DownloadVie
 
 import os
 import re
+from collections.abc import Iterator
 
 import pytest
 from PySide6.QtCore import QObject
@@ -34,6 +35,7 @@ from app.viewmodels.content_viewmodel import ContentViewModel
 from app.viewmodels.data import ContentItem
 from app.viewmodels.download_viewmodel import DownloadViewModel
 from app.widgets.view import ContentListView
+from app.widgets.widget import ContentItemWidget
 from core.engine.base import PostprocessError
 from core.models.download_state import DownloadState
 from core.models.download_task import DownloadTaskModel
@@ -70,7 +72,7 @@ class _Clock:
 
 
 @pytest.fixture(autouse=True)
-def clock(monkeypatch):
+def clock(monkeypatch) -> type[_Clock]:
     """진행 막대가 재는 시간을 고정한다 — `_Card.transfer`가 전송의 진행만큼 시계를 돌린다."""
     _Clock.now = 0.0
     _Clock.paused = 0.0
@@ -79,7 +81,7 @@ def clock(monkeypatch):
 
 
 @pytest.fixture
-def paused_clock(monkeypatch):
+def paused_clock(monkeypatch) -> type[_Clock]:
     """다운로드 모델이 알리는 일시정지 시간의 합을 시계 대역의 값으로 바꾼다."""
     monkeypatch.setattr(DownloadTaskModel, "paused_seconds", property(lambda self: _Clock.paused))
     return _Clock
@@ -135,7 +137,7 @@ class FakeService:
     def __init__(self) -> None:
         self.submissions: list[dict] = []
 
-    def submit(self, content, **kwargs):
+    def submit(self, content, **kwargs) -> FakeHandle:
         """아무것도 돌리지 않고 받은 인자를 적어 둔 뒤 대역 핸들을 돌려준다."""
         # 엔진 흉내 — 콜백 입구는 서비스 핸들의 중계(값 묶음 · 키를 싣는다, #484)
         self.submissions.append(engine_side(content, kwargs))
@@ -196,7 +198,7 @@ class _Card:
         qapp.processEvents()
 
     @property
-    def widget(self):
+    def widget(self) -> ContentItemWidget | None:
         return self.view.widgetFor(self.item)
 
     @property
@@ -295,7 +297,7 @@ class _Card:
 
 
 @pytest.fixture
-def card(qapp, tmp_path, request):
+def card(qapp, tmp_path, request) -> Iterator[_Card]:
     """실배선된 카드 하나 — 전달 방식은 테스트의 매개변수("video" · "m3u8" · "hls_aes")."""
     made = _Card(qapp, tmp_path, getattr(request, "param", "hls_aes"))
     yield made

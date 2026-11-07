@@ -15,6 +15,8 @@
 패딩을 0으로 되돌리면 ②가, 칩의 세 자리 예약을 빼면 ③이 실패한다.
 """
 
+from collections.abc import Callable, Iterator
+
 import pytest
 from PySide6.QtCore import QPoint, QRect, Qt
 from PySide6.QtWidgets import QApplication
@@ -23,6 +25,7 @@ import CVDv2 as main_module
 import app.theme as theme
 from app.viewmodels.data import ContentItem
 from app.views.mainWindow import VodDownloader
+from app.widgets.widget import ContentItemWidget
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
 
 #: 뷰포트 높이를 확실히 넘기는 카드 수(카드 하나가 100px 안팎, 창 높이 600)
@@ -40,7 +43,7 @@ def _apply_production_qss(qapp) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _destroy_windows():
+def _destroy_windows() -> Iterator[None]:
     """테스트가 만든 최상위 창은 close()가 아니라 파괴한다(#248 CI)."""
     before = snapshot_top_levels()
     yield
@@ -61,7 +64,7 @@ def _pump() -> None:
 
 
 @pytest.fixture
-def make_window(qapp):
+def make_window(qapp) -> Iterator[Callable[..., VodDownloader]]:
     made = []
 
     def build(cards: int, width_extra: int = 200, height: int = 600) -> VodDownloader:
@@ -86,7 +89,7 @@ def _in_window(win: VodDownloader, widget) -> QRect:
     return QRect(widget.mapTo(win, QPoint(0, 0)), widget.size())
 
 
-def _first_card(win: VodDownloader):
+def _first_card(win: VodDownloader) -> ContentItemWidget | None:
     return win.listView.widgetFor(win.contentManager.model.itemAt(0))
 
 

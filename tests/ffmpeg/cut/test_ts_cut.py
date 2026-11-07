@@ -28,10 +28,12 @@ from Crypto.Cipher import AES
 import core.sections.hls_ts as hls_ts_module
 import core.sections.ts_cut as ts_cut_module
 from core.media.hls import parse_media_playlist
+from core.media.ts_index import TsStreams
 from core.sections.hls_ts import fetch_ts_head, segment_streams, ts_segment_file_name
 from core.engine.decrypt import sequence_iv
 from core.models.plan import TimeRange
 from core.sections.check import check_cut
+from core.sections.cut import CutFrames, CutResult
 from core.utils.ffmpeg import (
     FFmpegCancelledError,
     FFmpegTimeoutError,
@@ -126,7 +128,7 @@ class _Planned:
         url = host.url("vod/media.m3u8")
         self.head = fetch_ts_head(url, str(folder))
 
-        def segment_at(index: int):
+        def segment_at(index: int) -> TsStreams:
             return segment_streams(self.head, url, index, KEY)
 
         self.fps = choose_ts_frame_rate([segment_at(0)]).rate
@@ -142,7 +144,7 @@ class _Planned:
             self.section.first_segment, self.section.last_segment, self.section.origin
         )
 
-    def cut(self, work_dir, output_path: str, **options):
+    def cut(self, work_dir, output_path: str, **options) -> tuple[CutResult, CutFrames]:
         """계획한 구간을 그대로 자른다 — 엔진이 부르는 것과 같은 인자다."""
         return cut_ts_section(
             str(work_dir),
@@ -497,7 +499,7 @@ def test_remuxing_a_boundary_segment_waits_under_the_stop_pause_and_time_limit(
     real = ts_cut_module.remux_stream
     given = {}
 
-    def records(chunks, dst_path, **wait):
+    def records(chunks, dst_path, **wait) -> None:
         given.update(wait)
         return real(chunks, dst_path, **wait)
 

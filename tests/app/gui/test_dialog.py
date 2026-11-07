@@ -9,9 +9,9 @@ from unittest.mock import patch
 
 import pytest
 from PySide6.QtCore import QEvent, QObject, Qt
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QGuiApplication, QWindow
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QDialog
+from PySide6.QtWidgets import QAbstractItemView, QComboBox, QDialog
 
 import app.views.dialog as dialog_module
 import app.theme as theme
@@ -39,7 +39,7 @@ def test_open_logs_folder_warns_on_failure(qapp) -> None:
     assert warn.called
 
 
-def _popup_window():
+def _popup_window() -> QWindow:
     """지금 떠 있는 콤보 팝업(컨테이너)의 `QWindow`.
 
     `view.window().windowHandle()`로 잡으면 PySide에서 그 래퍼가 먼저 죽어
@@ -82,7 +82,7 @@ def _hover_row(view, row) -> None:
         QTest.mouseMove(window, window.mapFromGlobal(viewport.mapToGlobal(point)))
 
 
-def _capture_current_index_before_resync_runs(window, view):
+def _capture_current_index_before_resync_runs(window, view) -> tuple[list[int], QObject]:
     """복원 필터의 `Show` 처리가 실행되기 *전* 시점의 `view.currentIndex()`를 기록한다.
 
     Qt는 이벤트 필터를 나중에 설치한 것부터 먼저 부른다(실측 확인) — 이
@@ -137,7 +137,7 @@ class TestComboBoxPopupHighlightResync:
         qapp.setStyle(hold_style(theme.build_style()))
         qapp.setStyleSheet("")
 
-    def _combo(self, dialog):
+    def _combo(self, dialog) -> QComboBox:
         combo = dialog.afterDownload
         combo.setCurrentIndex(2)  # "shutdown" — 임의의 눈에 띄는 값
         return combo
@@ -350,7 +350,7 @@ class TestComboBoxPopupEnterStaysInsideThePopup:
     (플랫폼 기본값 분기는 `test_theme.py`가 따로 잰다).
     """
 
-    def _show(self, qapp, qtbot):
+    def _show(self, qapp, qtbot) -> tuple[SettingDialog, QComboBox]:
         dialog = SettingDialog()
         qtbot.addWidget(dialog)
         dialog.show()
@@ -362,7 +362,7 @@ class TestComboBoxPopupEnterStaysInsideThePopup:
         combo.setFocus()
         return dialog, combo
 
-    def _open_popup_and_move_highlight(self, qtbot, combo, row):
+    def _open_popup_and_move_highlight(self, qtbot, combo, row) -> QAbstractItemView:
         combo.showPopup()
         view = combo.view()
         # Windows 실기 QPA는 `SH_ComboBox_Popup`이 꺼진 드롭다운을 롤 효과

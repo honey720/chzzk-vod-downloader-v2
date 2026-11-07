@@ -5,6 +5,8 @@
 """
 
 import logging
+from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
@@ -14,7 +16,7 @@ import core.utils.logging_setup as core_logging_setup
 
 
 @pytest.fixture
-def isolated_logging(monkeypatch, tmp_path):
+def isolated_logging(monkeypatch, tmp_path) -> Iterator[Path]:
     """로그 저장 위치를 임시 경로로 돌리고, 테스트 후 루트 로거 상태를 복원한다."""
     root = logging.getLogger()
     saved_handlers = root.handlers[:]

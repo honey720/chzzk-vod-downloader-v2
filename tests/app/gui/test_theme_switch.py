@@ -28,6 +28,7 @@
 import sys
 import tempfile
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 
 import pytest
@@ -64,7 +65,7 @@ def _restore_global_state(qapp, snapshot: dict) -> None:
 
 
 @contextmanager
-def theme_sandbox(qapp):
+def theme_sandbox(qapp) -> Iterator[None]:
     """팔레트·QSS·스킴을 건드린 뒤 **반드시 원상 복구**하는 구역.
 
     스타일(`qapp.setStyle`)은 복구 대상에 넣지 않는다 — 이전 스타일 객체를
@@ -83,7 +84,7 @@ def theme_sandbox(qapp):
 
 
 @pytest.fixture
-def _theme_sandbox(qapp, monkeypatch):
+def _theme_sandbox(qapp, monkeypatch) -> Iterator[None]:
     class _FailingSession:
         def head(self, *a, **k) -> Never:
             raise RuntimeError("network disabled in tests")

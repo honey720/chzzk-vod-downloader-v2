@@ -13,10 +13,11 @@ config는 conftest가 격리한다.
 
 import os
 import threading
+from collections.abc import Callable, Iterator
 from fractions import Fraction
 
 import pytest
-from PySide6.QtCore import QPoint, Qt
+from PySide6.QtCore import QPoint, QRect, Qt
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication
@@ -29,11 +30,12 @@ from app.section_input.basis import SectionBasis
 from app.viewmodels.data import ContentItem
 from app.views import mainWindow as mw_mod
 from app.views.mainWindow import VodDownloader
+from app.views.section_dialog import SectionEditDialog
 from core.media.representations import StreamEntry
 from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
 from core.utils.paths import release_output_paths
-from app.viewmodels.section_edit import refit_selections
+from app.viewmodels.section_edit import SectionRefitter, refit_selections
 from tests.mocks.engine_side import engine_side
 from tests.app.gui.section_input import leave_time, type_clock, type_frame, type_time
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, shown, snapshot_top_levels
@@ -52,7 +54,7 @@ def _apply_production_qss(qapp) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _destroy_windows():
+def _destroy_windows() -> Iterator[None]:
     """테스트가 만든 최상위 창은 숨긴 채 두지 않고 파괴한다."""
     before = snapshot_top_levels()
     yield
@@ -75,7 +77,7 @@ def _no_network(monkeypatch) -> None:
 
 
 @pytest.fixture
-def basis(monkeypatch):
+def basis(monkeypatch) -> type:
     """프레임률 · 영상 길이 조회 대역 — 기본 60fps · 1시간.
 
     해상도마다 다른 값을 돌려주거나(by_resolution) 실패시키고(fail_resolutions), 조회가 끝나는
@@ -93,7 +95,7 @@ def basis(monkeypatch):
         gate = threading.Event()  # 내려 두면 모든 조회가 기다린다
         gates: dict = {}  # 해상도 → Event. 내려 두면 그 해상도의 조회가 기다린다
 
-    def probe(item):
+    def probe(item) -> SectionBasis:
         _Basis.calls.append(item)
         resolution = getattr(item, "resolution", None)
         assert _Basis.gate.wait(5), "조회 대역의 문이 열리지 않았다"
@@ -115,7 +117,7 @@ def basis(monkeypatch):
 
 
 @pytest.fixture
-def started(monkeypatch):
+def started(monkeypatch) -> list[ContentItem]:
     """`DownloadViewModel.start` 기록 대역 — 시작된 카드를 순서대로 남긴다."""
     calls: list = []
     monkeypatch.setattr(mw_mod.DownloadViewModel, "start", lambda self, item: calls.append(item))
@@ -171,7 +173,7 @@ def click_summary(win: VodDownloader, item: ContentItem) -> None:
     _pump()
 
 
-def open_editor(qtbot, win: VodDownloader, item: ContentItem):
+def open_editor(qtbot, win: VodDownloader, item: ContentItem) -> SectionEditDialog:
     """카드를 눌러 편집 창을 열고 조회가 끝나기를 기다린다."""
     click_summary(win, item)
     dialog = win._sectionDialog
@@ -1030,7 +1032,7 @@ def test_moved_rows_reach_the_engine_in_the_new_order_with_matching_file_numbers
             return True
 
     class _Service:
-        def submit(self, content, **kwargs):
+        def submit(self, content, **kwargs) -> "_Handle":
             submissions.append(content)
             return _Handle()
 
@@ -1250,7 +1252,7 @@ def _pick(win: VodDownloader, item: ContentItem, resolution: int) -> None:
     assert item.resolution == resolution, "전제: 해상도가 바뀌어야 한다"
 
 
-def _refitter(win: VodDownloader):
+def _refitter(win: VodDownloader) -> SectionRefitter:
     return win.contentManager._sectionRefitter
 
 
@@ -1752,7 +1754,7 @@ class _Service:
     def __init__(self) -> None:
         self.submissions: list[dict] = []
 
-    def submit(self, content, **kwargs):
+    def submit(self, content, **kwargs) -> _Handle:
         # 엔진 흉내 — 콜백 입구는 서비스 핸들의 중계(값 묶음 · 키를 싣는다, #484)
         self.submissions.append(engine_side(content, kwargs))
         return _Handle()
@@ -1769,7 +1771,7 @@ class _Service:
 
 
 @pytest.fixture
-def service(monkeypatch):
+def service(monkeypatch) -> Iterator[Callable[[VodDownloader], _Service]]:
     """엔진 자리의 서비스 대역 — 창을 만든 뒤 `use(win)`으로 끼운다. 끝나면 파일명 예약을 푼다."""
     monkeypatch.setattr(mw_mod.QMessageBox, "warning", lambda *a, **k: None)
     monkeypatch.setattr(mw_mod.QMessageBox, "information", lambda *a, **k: None)
@@ -1796,7 +1798,9 @@ FIRST, SECOND, THIRD = (
 )
 
 
-def card_with_an_unfit_section(qtbot, tmp_path, basis, service, rows=THREE):
+def card_with_an_unfit_section(
+    qtbot, tmp_path, basis, service, rows=THREE
+) -> tuple[VodDownloader, ContentItem, _Service]:
     """구간을 정한 뒤 480p(30fps · 3590초)로 바꿔 둘째 구간이 받을 수 없게 된 대기 카드."""
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -2344,7 +2348,7 @@ def test_escape_cancels_the_window(qtbot, tmp_path, basis) -> None:
 
 
 @pytest.fixture
-def opened(monkeypatch):
+def opened(monkeypatch) -> list[tuple[str, str] | str]:
     """폴더 열기가 OS에 넘기는 것을 적어 둔다 — 탐색기 · 파일 관리자를 실제로 띄우지 않는다."""
     import app.widgets.widget as widget_module
 
@@ -2366,7 +2370,9 @@ def opened(monkeypatch):
     return calls
 
 
-def finished_section_card(qtbot, tmp_path, basis, service):
+def finished_section_card(
+    qtbot, tmp_path, basis, service
+) -> tuple[VodDownloader, ContentItem, tuple[str, ...]]:
     """구간 셋을 모두 받아 완료된 카드 — 구간 파일 `_1` · `_2` · `_3`이 디스크에 있다."""
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -3497,7 +3503,9 @@ def notice_shown(row) -> str:
     return shown(row.noticeLabel) if row.noticeLabel.isVisible() else ""
 
 
-def half_hour_editor(qtbot, tmp_path, basis, rows: int = 1, duration: float = HALF_HOUR):
+def half_hour_editor(
+    qtbot, tmp_path, basis, rows: int = 1, duration: float = HALF_HOUR
+) -> tuple[VodDownloader, ContentItem, SectionEditDialog]:
     """30분(60fps) 영상의 편집 창 — 행을 rows개로 늘려 둔다."""
     basis.duration = duration
     item = _make_item(str(tmp_path))
@@ -4077,7 +4085,7 @@ def test_the_total_note_coming_and_going_moves_neither_the_rows_nor_the_buttons(
     win = open_window(tmp_path, item)
     dialog = open_editor(qtbot, win, item)
 
-    def places():
+    def places() -> tuple[QRect, QRect, QRect]:
         return (
             dialog.scrollArea.geometry(),
             dialog.cancelButton.geometry(),

@@ -13,12 +13,20 @@
 (test_file_downloader_rules / test_m3u8_downloader_rules — 시나리오·단언 무수정).
 """
 
+from collections.abc import Iterator
+from types import ModuleType
+from typing import TYPE_CHECKING
+
 import requests
 
 from core.engine.base import _is_permanent_error
 from core.models.download_state import DownloadState
 from core.models.download_data import DownloadData
 from tests.core.engine.fmp4_samples import media_segment, split
+
+if TYPE_CHECKING:
+    from core.sources.file_downloader import FileDownloader
+    from core.sources.m3u8_downloader import M3U8Downloader
 
 MB = 1024 * 1024
 CHUNK = 8192
@@ -68,7 +76,7 @@ class FakeResponse:
     def raise_for_status(self) -> None:
         pass
 
-    def iter_content(self, chunk_size=8192):
+    def iter_content(self, chunk_size=8192) -> Iterator[bytes]:
         yield from self._chunks
 
 
@@ -79,7 +87,7 @@ class FakeSession:
         self._response = response
         self._exception = exception
 
-    def get(self, url, **kwargs):
+    def get(self, url, **kwargs) -> FakeResponse | None:
         if self._exception is not None:
             raise self._exception
         return self._response
@@ -147,7 +155,9 @@ def test_retryable_statuses_and_transport_errors_are_transient() -> None:
 # ================================================================ 파일 경로 (base 공통 규칙)
 
 
-def _prepare_file_engine(tmp_path, monkeypatch, exception=None, chunks=None, clock_step=1e-6):
+def _prepare_file_engine(
+    tmp_path, monkeypatch, exception=None, chunks=None, clock_step=1e-6
+) -> tuple["FileDownloader", DownloadData, RecordingLogger, list[BaseException]]:
     """RUNNING 상태의 FileDownloader와 부속(데이터·로거·실패 기록)을 준비한다."""
     import core.sources.file_downloader as mod
     from core.sources.file_downloader import FileDownloader
@@ -233,7 +243,9 @@ def test_requeue_counts_are_per_item(tmp_path, monkeypatch) -> None:
 # ================================================================ 저속 재큐 분리 (m3u8 경로)
 
 
-def _prepare_m3u8_engine(tmp_path):
+def _prepare_m3u8_engine(
+    tmp_path,
+) -> tuple["M3U8Downloader", DownloadData, RecordingLogger, list[BaseException], ModuleType]:
     """RUNNING 상태의 M3U8Downloader와 부속을 준비한다 (세그먼트 로직만 단위 검증)."""
     import core.sources.m3u8_downloader as mod
     from core.sources.m3u8_downloader import M3U8Downloader

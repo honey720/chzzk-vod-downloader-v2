@@ -4,6 +4,8 @@ OS가 열기를 거부하게 한 뒤 카드의 폴더 열기 버튼을 누르고
 제목 · 본문을 적는다. 동봉된 번역 카탈로그(ko_KR · en_US)를 앱에 건다.
 """
 
+from collections.abc import Iterator
+
 import pytest
 from PySide6.QtCore import QTranslator
 from PySide6.QtWidgets import QApplication
@@ -18,7 +20,7 @@ from typing import Never
 
 
 @pytest.fixture(autouse=True)
-def _drop_windows(qapp):
+def _drop_windows(qapp) -> Iterator[None]:
     """이 파일의 테스트가 띄운 창을 테스트 끝에 파괴한다(card_helpers.drop_new_top_levels)."""
     before = snapshot_top_levels()
     yield
@@ -40,7 +42,7 @@ def no_network(monkeypatch) -> None:
 
 
 @pytest.fixture
-def refused(monkeypatch):
+def refused(monkeypatch) -> list[tuple[str, str]]:
     """OS가 폴더 · 파일 열기를 거부하게 하고, 경고 창에 넘긴 (제목, 본문)을 적는다."""
     warnings: list[tuple[str, str]] = []
     monkeypatch.setattr(
@@ -56,7 +58,7 @@ def refused(monkeypatch):
 
 
 @pytest.fixture
-def language(qapp, request):
+def language(qapp, request) -> Iterator[str]:
     """동봉된 번역 카탈로그 하나를 앱에 건다 — 테스트가 끝나면 뗀다."""
     translator = QTranslator()
     assert translator.load(main_module.resource_path(f"translations/{request.param}.qm"))

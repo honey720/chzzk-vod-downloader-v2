@@ -13,6 +13,8 @@
 import os
 import threading
 import time
+from collections.abc import Iterator
+from pathlib import Path
 
 import core.engine.base as base_module
 import core.sources.m3u8_downloader as m3u8_module
@@ -56,7 +58,7 @@ class StreamResponse:
     def raise_for_status(self) -> None:
         pass
 
-    def iter_content(self, chunk_size=CHUNK):
+    def iter_content(self, chunk_size=CHUNK) -> Iterator[bytes]:
         for i in range(0, len(self._body), chunk_size):
             if self._throttle:
                 time.sleep(self._throttle)
@@ -81,7 +83,7 @@ class M3U8Session:
         self._chunks_per_segment = chunks_per_segment
         self._throttle = throttle
 
-    def get(self, url, **kwargs):
+    def get(self, url, **kwargs) -> TextResponse | StreamResponse:
         if url.endswith(".m3u8"):
             return TextResponse(text=_playlist_text())
         if url.endswith("init.m4s"):
@@ -167,7 +169,11 @@ class RunLogger:
         self.closed += 1
 
 
-def _make_engine(tmp_path, monkeypatch, chunks_per_segment: int = 3, throttle: float = 0.0):
+def _make_engine(
+    tmp_path, monkeypatch, chunks_per_segment: int = 3, throttle: float = 0.0
+) -> tuple[
+    M3U8Downloader, DownloadData, RunLogger, Path, threading.Event, list[BaseException], list[bool]
+]:
     """가짜 세션이 연결된 RUNNING 이전 상태의 엔진을 준비한다."""
     output = tmp_path / "out.mp4"
     data = DownloadData(
@@ -514,7 +520,7 @@ class _ClockedResponse(StreamResponse):
         self._clock = clock
         self._seconds_per_chunk = seconds_per_chunk
 
-    def iter_content(self, chunk_size=CHUNK):
+    def iter_content(self, chunk_size=CHUNK) -> Iterator[bytes]:
         for chunk in super().iter_content(chunk_size):
             self._clock.advance(self._seconds_per_chunk)
             yield chunk
@@ -530,7 +536,7 @@ class _ClockedSession(M3U8Session):
         self._clock = clock
         self._seconds_per_chunk = seconds_per_chunk
 
-    def get(self, url, **kwargs):
+    def get(self, url, **kwargs) -> _ClockedResponse | TextResponse:
         response = super().get(url, **kwargs)
         if isinstance(response, StreamResponse):
             return _ClockedResponse(response._body, self._clock, self._seconds_per_chunk)

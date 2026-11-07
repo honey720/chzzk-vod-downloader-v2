@@ -10,6 +10,8 @@
 외부 API 실호출은 하지 않는다 (가짜 워커 + 네트워크 차단).
 """
 
+from collections.abc import Iterator
+
 import pytest
 from PySide6.QtCore import QObject, Signal
 
@@ -66,7 +68,7 @@ class FakeWorker(QObject):
 
 
 @pytest.fixture
-def manager(qapp, monkeypatch):
+def manager(qapp, monkeypatch) -> Iterator[ContentViewModel]:
     monkeypatch.setattr(cvm_mod, "FetchJob", FakeWorker)
     monkeypatch.setattr(FakeWorker, "fail_message", None)
     view = ContentListView()
@@ -85,7 +87,7 @@ def _drain(manager, qapp) -> None:
         qapp.processEvents()
 
 
-def _metadata(title="테스트 제목"):
+def _metadata(title="테스트 제목") -> dict[str, str | int]:
     return {
         "title": title,
         "category": "게임",
@@ -95,7 +97,7 @@ def _metadata(title="테스트 제목"):
     }
 
 
-def _make_item(state, title="완성 아이템"):
+def _make_item(state, title="완성 아이템") -> ContentItem:
     """지정한 상태의 완성 ContentItem을 만든다."""
     item = ContentItem(
         "https://chzzk.naver.com/video/1",

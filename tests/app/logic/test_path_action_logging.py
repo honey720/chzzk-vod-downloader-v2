@@ -10,6 +10,8 @@ repr로 남긴다 — U+00A0(NBSP) 같은 공백 유사 문자는 그냥 찍으�
 시그널로, 조회 관문은 fetchButton.click()으로 진입한다.
 """
 
+from collections.abc import Iterator
+
 import pytest
 
 import app.viewmodels.content_viewmodel as cvm_mod
@@ -18,7 +20,10 @@ from app.viewmodels.data import ContentItem
 from app.viewmodels.content_viewmodel import ContentViewModel
 from app.widgets.view import ContentListView
 from core.models.download_state import DownloadState
-from typing import Never
+from typing import TYPE_CHECKING, Never
+
+if TYPE_CHECKING:
+    from app.views.mainWindow import VodDownloader
 
 NBSP_SUFFIX = "없는\u00a0폴더"  # 존재하지 않는 + 공백 유사 문자 포함
 
@@ -61,7 +66,7 @@ def _make_item(download_path: str, title: str = "경로 로깅 검증") -> Conte
 
 
 @pytest.fixture
-def manager(qapp):
+def manager(qapp) -> Iterator[tuple[ContentViewModel, ContentListView]]:
     view = ContentListView()
     m = ContentViewModel()
     view.bind(m)
@@ -119,7 +124,9 @@ class TestCardPathPickerFeedback:
     "변경이 INFO로 남는다"(#148의 살아있는 절반)만 폴더 선택 배선으로 잰다.
     """
 
-    def _widget(self, manager, qapp, path):
+    def _widget(
+        self, manager, qapp, path
+    ) -> tuple[ContentItem, widget_mod.ContentItemWidget | None]:
         m, view = manager
         item = _make_item(path)
         m.model.addItem(item)
@@ -168,7 +175,7 @@ class TestCardPathPickerFeedback:
 
 class TestFetchGateLogging:
     @pytest.fixture
-    def window(self, qapp, monkeypatch):
+    def window(self, qapp, monkeypatch) -> "Iterator[tuple[VodDownloader, list[str]]]":
         import app.views.mainWindow as mw_mod
 
         # 팝업은 기록으로 대체한다 — offscreen에서 모달은 테스트를 멈춘다

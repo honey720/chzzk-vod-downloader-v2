@@ -13,6 +13,7 @@
 import dataclasses
 import struct
 import tracemalloc
+from collections.abc import Callable
 from fractions import Fraction
 
 import pytest
@@ -52,7 +53,7 @@ AUDIO = 2  # 오디오 트랙 번호
 TICK = 100  # 영상 한 프레임의 틱 수 (timescale 1000, 10fps)
 
 
-def _init(video_edits=((1200, TICK),), video_trex=(TICK, 50, NON_KEY), audio=True):
+def _init(video_edits=((1200, TICK),), video_trex=(TICK, 50, NON_KEY), audio=True) -> Fmp4Init:
     """영상(timescale 1000) · 오디오(timescale 8000) 초기화 세그먼트의 해석 결과."""
     tracks = [
         InitTrack(
@@ -847,7 +848,7 @@ def test_parse_media_segment_rejects_init_whose_tracks_share_an_id() -> None:
 # ================================================================ 읽기 함수로 moof만 읽기 (#309)
 
 
-def _logged_reader(data: bytes, log: list[tuple[int, int]]):
+def _logged_reader(data: bytes, log: list[tuple[int, int]]) -> Callable[[int, int], bytes]:
     """bytes를 파일처럼 읽어 주는 읽기 함수 — 실제로 돌려준 (위치, 길이)를 log에 남긴다."""
 
     def read(offset: int, size: int) -> bytes:

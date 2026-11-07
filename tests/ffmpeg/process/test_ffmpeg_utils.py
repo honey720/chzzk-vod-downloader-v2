@@ -21,6 +21,7 @@ import tempfile
 import threading
 import time
 import weakref
+from collections.abc import Iterator
 from types import SimpleNamespace
 
 import pytest
@@ -193,7 +194,7 @@ def test_not_found_error_guides_installation(monkeypatch) -> None:
 
 
 @pytest.fixture
-def bundled_slot(tmp_path, monkeypatch):
+def bundled_slot(tmp_path, monkeypatch) -> Iterator[SimpleNamespace]:
     """동봉본이 놓일 자리를 빈 폴더로 바꾸고, 실행 확인(-version)을 그 자리의 파일만 통과시킨다.
 
     시스템 · conda의 ffmpeg는 확인을 통과하지 못한다. 확인한 경로를 ``checked``에 적는다.
@@ -342,7 +343,7 @@ def test_remux_stream_feed_exception_propagates_and_cleans_output(tmp_path) -> N
     class FeedAborted(Exception):
         pass
 
-    def feed():
+    def feed() -> Iterator[bytes]:
         yield src.read_bytes()[: 64 * 1024]
         raise FeedAborted
 
@@ -474,7 +475,7 @@ def test_streamed_feed_removes_a_segment_only_after_its_last_chunk(tmp_path, mon
     received = []  # 조각을 받는 순간, 그 조각이 든 세그먼트 파일이 있는가
     removed = []
 
-    def small_chunks(path):
+    def small_chunks(path) -> Iterator[bytes]:
         return real_read(path, 4)
 
     def recording_remove(path) -> None:
@@ -575,7 +576,7 @@ def _split_segments(src, outdir, parts: int) -> list[str]:
     return [p for p in paths if os.path.getsize(p)]
 
 
-def _run_streamed_in_thread(fake, paths):
+def _run_streamed_in_thread(fake, paths) -> tuple[threading.Thread, list[BaseException]]:
     """_remux_streamed를 스레드로 실행하고 (스레드, 예외 수집 리스트)를 반환한다."""
     raised: list[BaseException] = []
 
@@ -871,14 +872,14 @@ def test_remux_through_ends_both_processes_and_cleans_up_when_the_feed_raises(
     launched = []
     real = subprocess.Popen
 
-    def recording(*args, **kwargs):
+    def recording(*args, **kwargs) -> subprocess.Popen:
         process = real(*args, **kwargs)
         launched.append(process)
         return process
 
     monkeypatch.setattr(ffmpeg_module.subprocess, "Popen", recording)
 
-    def feed():
+    def feed() -> Iterator[bytes]:
         yield data[:1000]
         raise RuntimeError("공급 중단")
 
@@ -941,7 +942,7 @@ def test_feed_left_midway_because_ffmpeg_ended_is_closed_with_the_file_it_opened
     source.write_bytes(_NOT_MEDIA)
     opened = []
 
-    def endless():
+    def endless() -> Iterator[bytes]:
         with open(source, "rb") as f:
             opened.append(f)
             while True:
@@ -974,7 +975,7 @@ def test_segment_feed_left_midway_closes_the_reader_of_every_segment_it_opened(
     readers: list[weakref.ref] = []
     real = fmp4_cut_module.read_in_chunks
 
-    def recording(path, chunk_size):
+    def recording(path, chunk_size) -> Iterator[bytes]:
         reader = real(path, chunk_size)
         readers.append(weakref.ref(reader))
         return reader
@@ -1044,7 +1045,7 @@ def _fake_pair(monkeypatch, dst, convert_code: int, join_code: int) -> None:
         "sys.exit(int(sys.argv[2]))\n"
     )
 
-    def fake(command, **kwargs):
+    def fake(command, **kwargs) -> subprocess.Popen:
         if "-nostdin" in command:
             return real([sys.executable, "-c", join, str(dst), str(join_code)], **kwargs)
         return real([sys.executable, "-c", convert, str(convert_code)], **kwargs)
@@ -1121,7 +1122,7 @@ def test_remux_through_returns_the_warnings_of_the_join_side_and_asks_it_for_the
     )
     convert = "import shutil, sys\nshutil.copyfileobj(sys.stdin.buffer, sys.stdout.buffer)\n"
 
-    def fake(command, **kwargs):
+    def fake(command, **kwargs) -> subprocess.Popen:
         commands.append(list(command))
         if "-nostdin" in command:
             return real([sys.executable, "-c", join, str(out)], **kwargs)
@@ -1159,7 +1160,7 @@ def _lingering_pair(monkeypatch, dst, linger: float) -> dict:
         "open(sys.argv[1] + '.done', 'wb').close()\n"
     )
 
-    def fake(command, **kwargs):
+    def fake(command, **kwargs) -> subprocess.Popen:
         if "-nostdin" in command:
             process = started["join"] = real([python, "-c", join, str(dst), str(linger)], **kwargs)
         else:
@@ -1256,7 +1257,7 @@ def _lingering_one(monkeypatch, linger: float) -> list:
         "open(sys.argv[1] + '.done', 'wb').close()\n"
     )
 
-    def fake(command, **kwargs):
+    def fake(command, **kwargs) -> subprocess.Popen:
         assert not started, f"프로세스를 하나 더 띄웠다: {command}"
         started.append(real([python, "-c", script, command[-1], str(linger)], **kwargs))
         return started[0]

@@ -32,7 +32,9 @@ class _RangeAdapter(BaseAdapter):
         super().__init__()
         self._host = host
 
-    def send(self, request, stream=False, timeout=None, verify=True, cert=None, proxies=None):
+    def send(
+        self, request, stream=False, timeout=None, verify=True, cert=None, proxies=None
+    ) -> requests.Response:
         name = request.url[len(RangeHost.BASE) :]
         range_header = request.headers.get("Range")
         self._host._record(request.method, name, range_header)

@@ -13,7 +13,10 @@ import time
 
 import errno
 import os
+from collections.abc import Iterator
+from pathlib import Path
 from types import SimpleNamespace
+from typing import Self
 
 import pytest
 
@@ -123,7 +126,7 @@ class RangeResponse:
     def raise_for_status(self) -> None:
         pass
 
-    def iter_content(self, chunk_size=8192):
+    def iter_content(self, chunk_size=8192) -> Iterator[bytes]:
         for i in range(0, len(self._body), chunk_size):
             if self._throttle:
                 time.sleep(self._throttle)
@@ -138,7 +141,7 @@ class RangeSession:
         self._throttle = throttle
         self.headers = {"content-length": str(len(content))}
 
-    def head(self, url, **kwargs):
+    def head(self, url, **kwargs) -> Self:
         return self
 
     # head() 응답 겸용: raise_for_status/headers만 쓰인다
@@ -146,13 +149,15 @@ class RangeSession:
     def raise_for_status(self) -> None:
         pass
 
-    def get(self, url, headers=None, **kwargs):
+    def get(self, url, headers=None, **kwargs) -> RangeResponse:
         range_header = (headers or {})["Range"]  # "bytes=start-end"
         start, end = map(int, range_header.removeprefix("bytes=").split("-"))
         return RangeResponse(self._content[start : end + 1], self._throttle)
 
 
-def _make_engine(tmp_path, monkeypatch, throttle: float = 0.0):
+def _make_engine(
+    tmp_path, monkeypatch, throttle: float = 0.0
+) -> tuple[FileDownloader, DownloadData, RunLogger, Path, threading.Event, list[BaseException]]:
     """가짜 세션이 연결된 RUNNING 이전 상태의 엔진을 준비한다."""
     output = tmp_path / "out.mp4"
     data = DownloadData(
@@ -298,7 +303,7 @@ def _on_filesystem(monkeypatch, name, free: int = 10**13) -> list[str]:
     """저장 폴더의 파일 시스템 이름과 여유 공간을 정해 둔다 — 이름을 물은 폴더를 적어 돌려준다."""
     asked: list[str] = []
 
-    def filesystem_name(folder):
+    def filesystem_name(folder) -> str | None:
         asked.append(folder)
         return name
 
@@ -558,12 +563,14 @@ class _CountingSession(RangeSession):
         super().__init__(CONTENT)
         self.gets = 0
 
-    def get(self, url, headers=None, **kwargs):
+    def get(self, url, headers=None, **kwargs) -> RangeResponse:
         self.gets += 1
         return super().get(url, headers=headers, **kwargs)
 
 
-def _run_with_free_space(tmp_path, monkeypatch, free):
+def _run_with_free_space(
+    tmp_path, monkeypatch, free
+) -> tuple[Path, list[BaseException], bool, int, list[tuple], list[str]]:
     """여유 공간을 정해 두고 엔진을 끝까지 돌린다 — free가 예외면 여유 공간을 알 수 없는 것이다.
 
     Returns:
@@ -574,7 +581,7 @@ def _run_with_free_space(tmp_path, monkeypatch, free):
     monkeypatch.setattr(fd_module, "get_thread_session", lambda: session)
     asked: list[str] = []
 
-    def free_bytes(folder):
+    def free_bytes(folder) -> int:
         asked.append(folder)
         if isinstance(free, Exception):
             raise free

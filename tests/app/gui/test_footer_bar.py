@@ -4,6 +4,8 @@
 실패는 대역이 받은 콜백(제품이 넘긴 것)을 불러 낸다. 1초 갱신은 타이머의 timeout 신호로 낸다.
 """
 
+from collections.abc import Iterator
+
 import pytest
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
@@ -36,7 +38,7 @@ class _Engine:
     def __init__(self) -> None:
         self.submissions: list[dict] = []
 
-    def submit(self, content, **kwargs):
+    def submit(self, content, **kwargs) -> "_Engine":
         self.submissions.append({"content": content, **kwargs})
         return self
 
@@ -48,7 +50,7 @@ class _Engine:
 
 
 @pytest.fixture(autouse=True)
-def _environment(qapp, monkeypatch):
+def _environment(qapp, monkeypatch) -> Iterator[None]:
     """실제 QSS · 네트워크와 안내 창 차단 · 로그 파일 차단. 테스트가 띄운 창은 끝에 파괴한다."""
     theme.set_color_scheme("dark")
     qapp.setStyle(hold_style(theme.build_style()))
@@ -67,12 +69,12 @@ def _environment(qapp, monkeypatch):
 
 
 @pytest.fixture
-def answers(monkeypatch):
+def answers(monkeypatch) -> tuple[list[str], dict[str, QMessageBox.StandardButton]]:
     """중지 확인 창 대역 — 물은 횟수를 적고, 정해 둔 답을 돌려준다(기본 예)."""
     asked: list[str] = []
     reply = {"button": QMessageBox.Yes}
 
-    def warning(parent, title, text, *args, **kwargs):
+    def warning(parent, title, text, *args, **kwargs) -> QMessageBox.StandardButton:
         asked.append(text)
         return reply["button"]
 
@@ -106,7 +108,9 @@ def _card(path: str, n: int = 1, size: str | None = "10.00 MB") -> ContentItem:
     return item
 
 
-def _window(tmp_path, cards: int = 1, size: str | None = "10.00 MB"):
+def _window(
+    tmp_path, cards: int = 1, size: str | None = "10.00 MB"
+) -> tuple[VodDownloader, list[ContentItem], _Engine]:
     """실제 메인 창 · 서비스 대역 · 대기 카드 `cards`장."""
     win = VodDownloader()
     # 1초 갱신은 테스트가 timeout 신호로 낸다(_tick) — 타이머가 스스로 돌면 갱신 횟수가 시간에 달린다
@@ -310,7 +314,7 @@ def test_a_tick_redraws_only_the_footer(qtbot, tmp_path, answers, monkeypatch) -
     for name in ("_relayout", "_applyFilter"):
         original = getattr(ContentListView, name)
 
-        def counted(self, _original=original, _name=name):
+        def counted(self, _original=original, _name=name) -> None:
             whole_list.append(_name)
             return _original(self)
 

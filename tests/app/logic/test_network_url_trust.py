@@ -47,7 +47,7 @@ class RedirectingSession:
         #: 실패하지 않고 앱이 멈춘다. 그래서 따로 기록해 "모든 홉이 받았다"를 단언한다
         self.timeouts: list = []
 
-    def get(self, url, **kwargs):
+    def get(self, url, **kwargs) -> MockResponse:
         self.calls.append((url, kwargs.get("cookies")))
         self.timeouts.append(kwargs.get("timeout"))
         if url == self.first_url:

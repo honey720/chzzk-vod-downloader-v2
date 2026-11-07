@@ -10,8 +10,10 @@
 """
 
 import os
+import subprocess
 import threading
 import time
+from collections.abc import Iterator
 
 import pytest
 
@@ -76,7 +78,7 @@ def stop() -> _Stop:
 
 
 @pytest.fixture
-def launched(monkeypatch, stop):
+def launched(monkeypatch, stop) -> Iterator[list[subprocess.Popen]]:
     """ffmpeg 모듈이 띄운 프로세스들 — 테스트가 끝날 때 살아 있는 것이 있으면 그 객체로 끝낸다."""
     processes = record_processes(monkeypatch, stop.on_launch)
     stop.watch(processes)
@@ -156,7 +158,7 @@ def test_cut_stops_in_the_middle_of_any_stage(
     real = cut_module.run_ffmpeg
     swapped = []
 
-    def slowed(args, **kwargs):
+    def slowed(args, **kwargs) -> subprocess.CompletedProcess[str]:
         if any(marker in str(arg) for arg in args) and not swapped:
             swapped.append(stage)
             kwargs.pop("on_out_time", None)  # 바꿔 띄운 명령은 진행을 내지 않는다

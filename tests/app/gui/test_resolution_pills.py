@@ -7,6 +7,7 @@
 """
 
 import time
+from collections.abc import Iterator
 
 import pytest
 from PySide6.QtGui import QFontMetrics
@@ -34,7 +35,7 @@ def _apply_production_qss(qapp) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _drop_windows(qapp):
+def _drop_windows(qapp) -> Iterator[None]:
     """이 파일의 테스트가 띄운 창을 테스트 끝에 확실히 파괴한다(card_helpers.drop_new_top_levels)."""
     before = snapshot_top_levels()
     yield
@@ -117,7 +118,7 @@ FIXED_SPACING = 4
 LONG_PATH = "D:/vod/archive/2026/summer/finals/T1-vs-GEN-full-set-highlights-and-interviews"
 
 
-def _visible_pills(widget):
+def _visible_pills(widget) -> list[str]:
     return [b.text() for b in widget.buttons if b.isVisible()]
 
 
@@ -126,7 +127,7 @@ def _pump() -> None:
         QApplication.processEvents()
 
 
-def make_boxed(reps=FIVE, width=900, path=LONG_PATH):
+def make_boxed(reps=FIVE, width=900, path=LONG_PATH) -> tuple[QWidget, ContentItemWidget]:
     """카드를 목록처럼 세로 레이아웃 컨테이너에 넣는다 — 카드 높이는 컨테이너가 sizeHint대로 준다.
 
     최상위 카드를 직접 resize하면 접혀도 높이가 저절로 줄지 않아 "원래 높이로
@@ -316,7 +317,7 @@ class TestResponsiveMode:
 
 
 class TestCollapsedAndExpandedStates:
-    def _collapsed(self, qapp):
+    def _collapsed(self, qapp) -> tuple[QWidget, ContentItemWidget]:
         box, widget = make_boxed()
         resize_box(box, widget, fit_threshold(widget) - 1)
         assert widget.pillMode() == "collapsed"
@@ -387,7 +388,7 @@ class TestCollapsedAndExpandedStates:
 class TestGeometryRestoresAfterCollapse:
     """펼침 → 고름 → 접힘 뒤 3행 기하가 펼치기 전과 같다 — 한 줄로 펼쳐지는 폭과 줄바꿈 폭 둘 다."""
 
-    def _round_trip(self, qapp, width, pick):
+    def _round_trip(self, qapp, width, pick) -> tuple[dict, dict, int]:
         box, widget = make_boxed(width=900)
         target = width(fit_threshold(widget), expanded_threshold(widget))
         resize_box(box, widget, target)
@@ -542,7 +543,7 @@ class TestShrinkOrderIsMonotonic:
             assert shown(widget.fileSizeLabel) == widget.fileSizeLabel.text(), f"폭 {width}px: 파일 크기가 잘렸다"
         return seen
 
-    def _widths(self, widget):
+    def _widths(self, widget) -> list[int]:
         """경로 전문이 들어가는 폭에서 접힘 아래까지 FIXED_SPACING씩 — 절대 px 없음 (#280).
 
         시작: T(pill 전부 + 크기가 딱 들어가는 카드 폭) + 경로 ① 문자열의 표시 폭 + 간격 둘.
@@ -643,7 +644,7 @@ class _SlowSession:
         self.delay = delay
         self.sizes = {"u1080": 700_000_000, "u720": 400_000_000, "u480": 200_000_000, "u360": 100_000_000, "u144": 50_000_000}
 
-    def head(self, url, timeout=None):
+    def head(self, url, timeout=None) -> _SlowResponse:
         time.sleep(self.delay)
         return _SlowResponse(self.sizes[url])
 

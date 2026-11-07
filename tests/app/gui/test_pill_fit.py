@@ -8,9 +8,11 @@
 그림이 "그 글자만 가진 pill"의 그림과 같은지다.
 """
 
+from collections.abc import Iterator
+
 import pytest
 from PySide6.QtCore import QEvent, QPoint
-from PySide6.QtGui import QFontMetrics, QHelpEvent
+from PySide6.QtGui import QFontMetrics, QHelpEvent, QImage
 from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
 
 import app.theme as theme
@@ -40,7 +42,7 @@ def _apply_production_qss(qapp) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _drop_windows(qapp):
+def _drop_windows(qapp) -> Iterator[None]:
     """이 파일의 테스트가 띄운 창을 테스트 끝에 파괴한다."""
     before = snapshot_top_levels()
     yield
@@ -65,7 +67,9 @@ def _pump() -> None:
         QApplication.processEvents()
 
 
-def _pill(text: str, secondary: str = "", *, caret: bool = True, selected: bool = True):
+def _pill(
+    text: str, secondary: str = "", *, caret: bool = True, selected: bool = True
+) -> tuple[QWidget, ResolutionPill]:
     """레이아웃 없는 창 안의 pill 하나 — 폭은 테스트가 정한다."""
     window = QWidget()
     window.resize(400, 60)
@@ -151,7 +155,7 @@ def test_narrowing_hides_the_secondary_text_first_and_then_elides_the_main_text(
     assert set(stages) == {0, 1, 2}
 
 
-def _picture(pill: ResolutionPill):
+def _picture(pill: ResolutionPill) -> QImage:
     return pill.grab().toImage()
 
 
@@ -269,7 +273,7 @@ def test_tooltip_of_an_elided_pill_without_secondary_text_is_the_whole_text(
 # ================================================================ 카드 안에서
 
 
-def _card(sections=()):
+def _card(sections=()) -> tuple[QWidget, ContentItemWidget]:
     """원본 1080p 60fps가 든 대기 카드(인코딩 전 다시보기) — 보이는 창 안에 놓는다."""
     reps = list_streams(S1.master, playback_tracks(S1.playback))
     item = ContentItem(

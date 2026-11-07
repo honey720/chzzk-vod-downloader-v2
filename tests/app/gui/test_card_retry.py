@@ -23,6 +23,7 @@ config는 conftest가 격리한다. 호버는 실제 커서를 옮기지 않고 
 """
 
 import os
+from collections.abc import Iterator
 
 import pytest
 from PySide6.QtCore import QPoint, Qt
@@ -34,6 +35,7 @@ import app.theme as theme
 from app.views import mainWindow as mw_mod
 from app.views.mainWindow import VodDownloader
 from app.viewmodels.data import ContentItem
+from app.widgets.widget import ContentItemWidget
 from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
 from core.models.section_resume import SectionResume
@@ -58,7 +60,7 @@ def _apply_production_qss(qapp) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _destroy_windows():
+def _destroy_windows() -> Iterator[None]:
     """테스트가 만든 최상위 창은 close()가 아니라 파괴한다(#248 CI)."""
     before = snapshot_top_levels()
     yield
@@ -80,7 +82,7 @@ def _no_network(monkeypatch) -> None:
 
 
 @pytest.fixture
-def started(monkeypatch):
+def started(monkeypatch) -> list[ContentItem]:
     """`DownloadViewModel.start`를 기록 대역으로 — 핸들을 만들지 않고 호출만 남긴다.
 
     isDownloading()은 그대로 둔다(핸들이 안 생겼으니 False) — 시작 경로가 실제로 여기까지
@@ -122,7 +124,9 @@ def _make_item(download_path: str) -> ContentItem:
     return item
 
 
-def open_window_with_a_failed_card(tmp_path):
+def open_window_with_a_failed_card(
+    tmp_path,
+) -> tuple[VodDownloader, ContentItem, ContentItemWidget]:
     """실제 메인 창에 실패 카드 한 장 — 대기로 넣어 pill이 만들어진 뒤 실패로 바꾼다(제품 순서)."""
     win = VodDownloader()
     win.resize(900, win.height())

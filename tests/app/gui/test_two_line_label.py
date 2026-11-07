@@ -4,6 +4,8 @@
 위젯의 자식으로 둔다 — 최상위 창은 플랫폼의 최소 폭에 걸려 요청한 폭이 되지 않을 수 있다.
 """
 
+from collections.abc import Iterator
+
 import pytest
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import QApplication, QLabel, QWidget
@@ -17,7 +19,7 @@ WHOLE = HEAD + " · " + TAIL
 
 
 @pytest.fixture
-def label(qapp):
+def label(qapp) -> Iterator[TwoLineLabel]:
     """보이는 위젯 안에 놓인 라벨 — 두 문장은 HEAD · TAIL."""
     host = QWidget()
     host.resize(4000, 200)

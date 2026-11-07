@@ -15,7 +15,8 @@ import array
 import dataclasses
 import random
 import struct
-from itertools import accumulate
+from collections.abc import Callable
+from itertools import accumulate, islice
 
 import pytest
 
@@ -37,7 +38,7 @@ ONE_PASS = 1 << 40  # 어떤 표보다도 큰 조각 — 한 번에 도는 것�
 
 
 @pytest.fixture
-def chunk_items(monkeypatch):
+def chunk_items(monkeypatch) -> Callable[[int], None]:
     """조각 크기를 바꾸는 함수 — 해석기와 배열 모듈 양쪽에 건다."""
 
     def use(items: int) -> None:
@@ -64,7 +65,7 @@ def _columns(index) -> dict:
     return found
 
 
-def _parsed(moov: bytes):
+def _parsed(moov: bytes) -> dict | str:
     """해석 결과의 모든 값. 해석이 거부하면 그 실패 키."""
     try:
         return _columns(parse_moov(moov))
@@ -223,11 +224,11 @@ def test_parser_never_hands_more_than_a_chunk_to_one_pass(monkeypatch, chunk_ite
     counted_sizes: list[int] = []
     real_islice, real_counter = column_module.islice, mp4_module.Counter
 
-    def watching_islice(source, stop):
+    def watching_islice(source, stop) -> islice:
         asked.append(stop)
         return real_islice(source, stop)
 
-    def watching_sorted(values, **kwargs):
+    def watching_sorted(values, **kwargs) -> list[int]:
         sorted_sizes.append(len(values))
         return sorted(values, **kwargs)
 

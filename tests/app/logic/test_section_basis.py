@@ -42,12 +42,12 @@ def test_encoded_vod_reads_the_frame_rate_and_length_from_the_moov(monkeypatch) 
     asked = []
     raws = []
 
-    def fetch(url):
+    def fetch(url) -> SimpleNamespace:
         asked.append(url)
         raws.append(SimpleNamespace(moov=b"moov"))
         return raws[-1]
 
-    def summarize(raw):
+    def summarize(raw) -> Mp4Summary:
         assert raw is raws[0]
         return Mp4Summary(fps=Fraction(60000, 1001), duration=1234.5, frames=3)
 
@@ -120,7 +120,7 @@ def test_encoded_vod_lookup_fetches_again_when_the_held_moov_is_of_another_addre
     fresh = SimpleNamespace(moov=b"new")
     asked = []
 
-    def fetch(url):
+    def fetch(url) -> SimpleNamespace:
         asked.append(url)
         return fresh
 
@@ -187,11 +187,11 @@ def test_replay_uses_the_picked_variant_and_its_declared_frame_rate(monkeypatch)
     stream = StreamKey(1920, 1080, 60.0, 6336000)
     seen = {}
 
-    def resolve(content):
+    def resolve(content) -> tuple[str, Fraction]:
         seen["content"] = content
         return "https://media.invalid/1080.m3u8", Fraction(60)
 
-    def fetch_head(*args, **kwargs):
+    def fetch_head(*args, **kwargs) -> SimpleNamespace:
         seen["head_args"] = (args, kwargs)
         return SimpleNamespace(init="init", playlist="playlist")
 
@@ -199,11 +199,11 @@ def test_replay_uses_the_picked_variant_and_its_declared_frame_rate(monkeypatch)
         seen.setdefault("segments", []).append((url, index))
         return f"segment{index}"
 
-    def choose(init, segments, declared):
+    def choose(init, segments, declared) -> SimpleNamespace:
         seen["choose"] = (init, segments, declared)
         return SimpleNamespace(rate=Fraction(60), source="declared")
 
-    def timeline(playlist, init, segment_at):
+    def timeline(playlist, init, segment_at) -> SimpleNamespace:
         seen["last"] = segment_at(7)
         return SimpleNamespace(duration=3599.983)
 
@@ -241,7 +241,7 @@ def test_encrypted_vod_decrypts_with_the_resolved_key_and_keeps_it_out_of_the_re
     seen = {}
     base_url = "https://media.invalid/stream"
 
-    def fetch_head(*args, **kwargs):
+    def fetch_head(*args, **kwargs) -> SimpleNamespace:
         seen["head_args"] = (args, kwargs)
         return SimpleNamespace(playlist="playlist")
 
@@ -249,11 +249,11 @@ def test_encrypted_vod_decrypts_with_the_resolved_key_and_keeps_it_out_of_the_re
         seen.setdefault("keys", []).append(used_key)
         return f"segment{index}"
 
-    def choose(segments, declared):
+    def choose(segments, declared) -> SimpleNamespace:
         seen["choose"] = (segments, declared)
         return SimpleNamespace(rate=Fraction(30), source="declared")
 
-    def timeline(playlist, segment_at, fps):
+    def timeline(playlist, segment_at, fps) -> SimpleNamespace:
         segment_at(3)
         return SimpleNamespace(duration=100.0)
 
@@ -297,7 +297,7 @@ def test_encrypted_vod_measures_the_frame_rate_when_the_manifest_cannot_be_read(
     def broken(*args) -> Never:
         raise RuntimeError("조회 실패(대역)")
 
-    def choose(segments, declared):
+    def choose(segments, declared) -> SimpleNamespace:
         seen["declared"] = declared
         return SimpleNamespace(rate=Fraction(60), source="standard")
 

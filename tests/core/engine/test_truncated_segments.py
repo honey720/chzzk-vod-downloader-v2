@@ -7,6 +7,8 @@
 - hls_aes: AES-128-CBC로 암호화된 MPEG-TS 세그먼트
 """
 
+from collections.abc import Callable, Iterator
+
 import pytest
 import requests
 from Crypto.Cipher import AES
@@ -115,7 +117,7 @@ class _Response:
     def raise_for_status(self) -> None:
         pass
 
-    def iter_content(self, chunk_size=8192):
+    def iter_content(self, chunk_size=8192) -> Iterator[bytes]:
         for offset in range(0, len(self.content), chunk_size):
             yield self.content[offset : offset + chunk_size]
 
@@ -127,7 +129,7 @@ class _Session:
         self._bodies = bodies
         self.requests: dict[str, int] = {}
 
-    def get(self, url, **kwargs):
+    def get(self, url, **kwargs) -> _Response | _BrokenRead | _HttpStatus:
         name = url.rsplit("/", 1)[1]
         served = self.requests.get(name, 0)
         self.requests[name] = served + 1
@@ -139,7 +141,7 @@ class _Session:
 
 
 class _Logger:
-    def __getattr__(self, name):
+    def __getattr__(self, name) -> Callable[..., None]:
         return lambda *args, **kwargs: None
 
 
@@ -161,7 +163,9 @@ class _LeapingClock:
         return self.now
 
 
-def _run(cls, module, url, content_type, session, tmp_path, monkeypatch):
+def _run(
+    cls, module, url, content_type, session, tmp_path, monkeypatch
+) -> tuple[DownloadData, list[BaseException], list[bool]]:
     """가짜 세션으로 run()을 끝까지 돌리고 (데이터, 실패 콜백이 받은 것, 완료 횟수)를 돌려준다."""
     monkeypatch.setattr(module, "get_thread_session", lambda: session)
     monkeypatch.setattr(base_module, "remux_stream", _passthrough_remux_stream)
@@ -189,7 +193,9 @@ def _run(cls, module, url, content_type, session, tmp_path, monkeypatch):
     return data, failures, finished
 
 
-def _run_m3u8(tmp_path, monkeypatch, **overrides: list[bytes]):
+def _run_m3u8(
+    tmp_path, monkeypatch, **overrides: list[bytes]
+) -> tuple[_Session, DownloadData, list[BaseException], list[bool]]:
     bodies = {"video.m3u8": [M3U8_PLAYLIST.encode()], "init.m4s": [INIT]}
     bodies.update({f"seg_{i}.m4v": [_media(i)] for i in range(SEGMENTS)})
     bodies.update(overrides)
@@ -198,7 +204,9 @@ def _run_m3u8(tmp_path, monkeypatch, **overrides: list[bytes]):
     return session, *result
 
 
-def _run_aes(tmp_path, monkeypatch, **overrides: list[bytes]):
+def _run_aes(
+    tmp_path, monkeypatch, **overrides: list[bytes]
+) -> tuple[_Session, DownloadData, list[BaseException], list[bool]]:
     bodies = {"media.m3u8": [AES_PLAYLIST.encode()]}
     bodies.update({f"segment-{i}.ts": [_encrypted(i)] for i in range(SEGMENTS)})
     bodies.update(overrides)

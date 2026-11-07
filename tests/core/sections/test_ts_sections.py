@@ -16,11 +16,11 @@ from fractions import Fraction
 
 import pytest
 
-from core.media.hls import parse_media_playlist
+from core.media.hls import HlsPlaylist, parse_media_playlist
 from core.media.mpegts import TS_UNSUPPORTED, TsError, parse_ts
 from core.models.plan import TimeRange
 from core.media.ts_index import TsStreams
-from core.sections.section_plan import FPS_DECLARED, FPS_STANDARD
+from core.sections.section_plan import FPS_DECLARED, FPS_STANDARD, PlannedSection
 from core.sections.selections import SELECTION_CROSSES_BREAK, SelectionError
 from core.sections.ts_sections import (
     TsSectionSource,
@@ -82,7 +82,7 @@ def _recording(
     return segments
 
 
-def _playlist(durations: list[float], breaks: tuple[int, ...] = ()):
+def _playlist(durations: list[float], breaks: tuple[int, ...] = ()) -> HlsPlaylist:
     lines = ["#EXTM3U", "#EXT-X-VERSION:3"]
     for number, duration in enumerate(durations):
         if number in breaks:
@@ -107,7 +107,7 @@ def vod() -> list[TsStreams]:
     return _recording(LAYOUT)
 
 
-def _plan(segments: list[TsStreams], selection: TimeRange, playlist=None):
+def _plan(segments: list[TsStreams], selection: TimeRange, playlist=None) -> PlannedSection:
     playlist = playlist or _playlist(_durations(LAYOUT))
     return plan_ts_sections(playlist, [selection], segments.__getitem__, FPS)[0]
 
@@ -359,7 +359,7 @@ def test_plan_follows_timestamps_through_the_33bit_wraparound() -> None:
 
 
 @pytest.fixture(scope="module")
-def broken():
+def broken() -> tuple[HlsPlaylist, list[TsStreams]]:
     """세그먼트 셋짜리 녹화 둘을 끊긴 자리로 이은 VOD — 둘째 녹화의 타임스탬프는 첫째와 이어지지 않는다."""
     first = _recording([SEGMENT] * 3)
     second = _recording([SEGMENT] * 3, origin=5_000_000_000)

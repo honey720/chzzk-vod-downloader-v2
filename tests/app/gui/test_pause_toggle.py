@@ -4,6 +4,8 @@
 제출을 적어 둔다 — 상태 머신(``DownloadData.model``)은 제품의 것 그대로다.
 """
 
+from collections.abc import Iterator
+
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QSignalSpy, QTest
@@ -18,7 +20,7 @@ from app.views.mainWindow import VodDownloader
 from core.media.representations import StreamEntry
 from core.models.download_state import DownloadState
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
-from typing import Never
+from typing import Never, Self
 
 
 class _Engine:
@@ -27,7 +29,7 @@ class _Engine:
     def __init__(self) -> None:
         self.submissions: list[dict] = []
 
-    def submit(self, content, **kwargs):
+    def submit(self, content, **kwargs) -> Self:
         self.submissions.append({"content": content, **kwargs})
         return self
 
@@ -39,7 +41,7 @@ class _Engine:
 
 
 @pytest.fixture(autouse=True)
-def _environment(qapp, monkeypatch):
+def _environment(qapp, monkeypatch) -> Iterator[None]:
     """실제 QSS · 네트워크와 안내 창 차단 · 로그 파일 차단. 테스트가 띄운 창은 끝에 파괴한다."""
     theme.set_color_scheme("dark")
     qapp.setStyle(hold_style(theme.build_style()))
@@ -64,7 +66,7 @@ def _pump() -> None:
 
 
 @pytest.fixture
-def downloading(tmp_path):
+def downloading(tmp_path) -> tuple[VodDownloader, ContentItem, _Engine]:
     """받는 중인 카드 하나 — 실제 메인 창 · 서비스 대역. 전역 다운로드를 한 번 눌러 둔다."""
     item = ContentItem(
         "https://chzzk.naver.com/video/1",

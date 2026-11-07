@@ -12,6 +12,7 @@ import subprocess
 import sys
 import threading
 import types
+from collections.abc import Callable, Iterator
 
 import pytest
 import requests
@@ -45,7 +46,7 @@ SEGMENT_URL_REDACTED = "https://cdn.invalid/video/hdntl=***/seg_0.m4v?token=***"
 
 
 @pytest.fixture
-def app_log(monkeypatch, tmp_path):
+def app_log(monkeypatch, tmp_path) -> Iterator[Callable[[], tuple[str, str]]]:
     """앱의 setup_logging으로 루트 로거에 파일 · 콘솔 핸들러를 걸고, 끝나면 되돌린다.
 
     콘솔 핸들러의 스트림만 메모리로 바꾼다 — 핸들러와 포매터는 앱이 만든 그대로다. pytest의
@@ -158,7 +159,7 @@ class _Response:
         if self._status >= 400:
             raise _http_error(self.url)
 
-    def iter_content(self, chunk_size=CHUNK):
+    def iter_content(self, chunk_size=CHUNK) -> Iterator[bytes]:
         for i in range(0, len(self.content), chunk_size):
             yield self.content[i : i + chunk_size]
 
@@ -175,7 +176,7 @@ class _Session:
         self._first_segment_failed = False
         self._lock = threading.Lock()
 
-    def get(self, url, **kwargs):
+    def get(self, url, **kwargs) -> _Response:
         if "chunklist.m3u8" in url:
             lines = [
                 "#EXTM3U",
@@ -475,7 +476,7 @@ def test_ffmpeg_error_whose_tail_starts_inside_the_home_leaves_no_part_of_the_na
     stderr_file.write_bytes(stderr.encode())
     real = subprocess.Popen
 
-    def fake(command, **kwargs):
+    def fake(command, **kwargs) -> subprocess.Popen:
         return real([sys.executable, "-c", _FAKE_FFMPEG_FAILING, str(stderr_file)], **kwargs)
 
     monkeypatch.setattr(ffmpeg_module, "get_ffmpeg_exe", lambda: "ffmpeg")  # 찾기도 대역을 띄운다

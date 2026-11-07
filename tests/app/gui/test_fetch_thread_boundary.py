@@ -24,6 +24,7 @@
 """
 
 import threading
+from collections.abc import Callable, Iterator
 
 import pytest
 from PySide6.QtCore import Qt
@@ -58,7 +59,7 @@ def no_network(monkeypatch) -> None:
 
 
 @pytest.fixture
-def window(qapp, monkeypatch):
+def window(qapp, monkeypatch) -> Iterator[mw_mod.VodDownloader]:
     """실물 메인 창 — 팝업은 기록으로 대체한다(실모달이 뜨면 이벤트 루프가 멈춘다).
 
     config는 conftest의 autouse 픽스처가 임시 폴더로 격리한다.
@@ -91,7 +92,7 @@ class Recorder:
     def __init__(self) -> None:
         self.events: list[tuple[str, int]] = []
 
-    def hook(self, name: str):
+    def hook(self, name: str) -> Callable[..., None]:
         """`name` 지점에 붙일 슬롯을 만든다 — Signal 인자는 버리고 이름과 스레드 id만 남긴다."""
 
         def slot(*args) -> None:
@@ -143,12 +144,12 @@ def _result(download_path: str) -> tuple:
 
 
 @pytest.fixture
-def fetch_spy(monkeypatch):
+def fetch_spy(monkeypatch) -> tuple[list[dict], dict[str, object]]:
     """core 조회 함수를 대역으로 — 호출 스레드 id와 받은 인자를 기록하고, 지정한 결과/예외를 낸다."""
     calls: list[dict] = []
     outcome = {"raise": None, "download_path": ""}
 
-    def fake_fetch(vod_url, cookies, download_path, api):
+    def fake_fetch(vod_url, cookies, download_path, api) -> tuple[tuple, str]:
         """core 조회 함수 자리 — 풀 스레드에서 불리므로 여기서 잡은 id가 "조회 스레드"다."""
         calls.append(
             {

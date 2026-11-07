@@ -7,6 +7,7 @@ import array
 import struct
 import sys
 import threading
+from collections.abc import Callable
 from dataclasses import replace
 from itertools import accumulate
 
@@ -16,6 +17,7 @@ import core.media.mp4 as mp4_module
 import core.media.sample_column as column_module
 import core.utils.interaction as interaction
 from core.media.mp4 import index_mp4, parse_moov, read_mp4_raw, summarize_moov
+from core.media.mp4_index import Mp4Raw
 from core.models.plan import TimeRange
 from core.media.sample_column import (
     CHUNK_ITEMS,
@@ -42,7 +44,7 @@ from tests.support.mp4_builder import audio_spec, build_mp4, video_spec
 from tests.core.media.test_mp4_chunks import _columns
 
 
-def _raw():
+def _raw() -> Mp4Raw:
     """실제 mp4 바이트(10fps 12프레임)에서 받은 moov."""
     data = build_mp4([video_spec(), audio_spec()]).data
     return read_mp4_raw(lambda offset, size: data[offset : offset + size])
@@ -58,7 +60,7 @@ def rest_at_every_gap(monkeypatch) -> None:
 
 
 @pytest.fixture
-def rests(monkeypatch):
+def rests(monkeypatch) -> list[int]:
     """쉰 횟수를 담는 리스트 — 쉬는 일을 자지 않고 세기만 하는 대역으로 바꾼다."""
     counted: list[int] = []
     monkeypatch.setattr(interaction, "_rest", lambda: counted.append(1))
@@ -311,7 +313,7 @@ def test_sample_positions_rest_at_least_once_per_index_chunk_of_samples(monkeypa
     placed: list[list[int]] = []  # 트랙마다 쉴 때의 위치 수
     original = mp4_module._sample_offsets
 
-    def recording(data, boxes, sizes):
+    def recording(data, boxes, sizes) -> tuple[array.array, array.array]:
         placed.append([0])
         offsets, chunk_starts = original(data, boxes, sizes)
         placed[-1].append(len(offsets))
@@ -352,7 +354,7 @@ def test_stsc_read_rests_at_least_once_per_index_chunk_of_entries(monkeypatch) -
     read: list[list[int]] = []  # 표마다 쉴 때의 항목 수
     original = mp4_module._u32_table
 
-    def recording(data, span, columns):
+    def recording(data, span, columns) -> list[tuple[int, ...]]:
         read.append([0])
         rows = original(data, span, columns)
         read[-1].append(len(rows))
@@ -389,7 +391,7 @@ def test_ctts_read_rests_at_least_once_per_index_chunk_of_entries(monkeypatch) -
     read: list[list[int]] = []  # 표마다 쉴 때의 항목 수
     original = mp4_module._composition_offsets
 
-    def recording(data, span, count):
+    def recording(data, span, count) -> array.array:
         read.append([0])
         offsets = original(data, span, count)
         read[-1].append(struct.unpack_from(">I", data, span[0] + 4)[0])  # 끝 = 상자의 항목 수
@@ -557,7 +559,7 @@ def test_index_cut_at_the_index_chunk_size_equals_one_cut_at_the_usual_size(monk
 # ================================================================ 색인 없이 읽기 (요약 · 구간의 크기)
 
 
-def _long_raw():
+def _long_raw() -> Mp4Raw:
     """영상 20,000샘플(B프레임 재배열 있음) · 오디오 9,000샘플의 moov — 표마다 8192개 조각이 셋이다."""
     from tests.core.sections.test_mp4_section_sizes import _audio, _head_only, _video
 
@@ -803,7 +805,7 @@ class _WorkClock:
 
 
 @pytest.fixture
-def work_clock(monkeypatch):
+def work_clock(monkeypatch) -> Callable[[float], _WorkClock]:
     """가짜 시계를 쉬기 판정 · 쉬는 일에 건다. 쉼 사이 시간 판정은 제품 값(8ms)으로 되돌린다."""
 
     def make(work: float) -> _WorkClock:

@@ -3,6 +3,8 @@
 시계와 대기를 바꿔 끼워 루프를 그대로 돌린다 — 대기는 실제로 자지 않고 가짜 시계를 옮긴다.
 """
 
+from collections.abc import Callable
+
 import pytest
 
 from core.sources.file_downloader import FileDownloader
@@ -55,7 +57,7 @@ class PausedOnce:
 
 
 class QuietLogger:
-    def __getattr__(self, name):
+    def __getattr__(self, name) -> Callable[..., None]:
         return lambda *args, **kwargs: None
 
 

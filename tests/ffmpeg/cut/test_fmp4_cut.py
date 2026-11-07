@@ -18,7 +18,7 @@ import pytest
 
 import core.sections.fmp4_cut as fmp4_cut_module
 from core.media.fmp4 import fmp4_origin, parse_media_segment
-from core.sections.cut import CutPiece
+from core.sections.cut import CutFrames, CutPiece, CutResult
 from core.media.fmp4_index import Fmp4Head
 from core.models.plan import TimeRange
 from core.sections.check import check_cut
@@ -102,7 +102,7 @@ class _Cut:
         self.work = str(tmp_path / "work")
         self.output = str(tmp_path / "section.mp4")
 
-    def run(self, **kwargs):
+    def run(self, **kwargs) -> tuple[CutResult, CutFrames]:
         return cut_fmp4_section(
             self.work, self.head, self.section, self.paths, self.output, **kwargs
         )
@@ -429,7 +429,7 @@ def test_writing_the_section_file_waits_under_the_stop_pause_and_time_limit_of_t
     real = fmp4_cut_module.remux_through
     given = {}
 
-    def records(*args, **kwargs):
+    def records(*args, **kwargs) -> str:
         given.update(kwargs)
         return real(*args, **kwargs)
 
@@ -486,7 +486,7 @@ def test_audio_pass_waits_under_the_stop_pause_and_time_limit_of_the_cut(
     real = fmp4_cut_module.extract_audio_stream
     given = {}
 
-    def records(chunks, dst_path, **wait):
+    def records(chunks, dst_path, **wait) -> None:
         given.update(wait)
         return real(chunks, dst_path, **wait)
 

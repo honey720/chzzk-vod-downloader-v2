@@ -11,16 +11,23 @@
 
 import threading
 import time
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any
 
 import pytest
+from requests import Response
 
 import core.engine.base as base_module
 import core.sources.file_downloader as fd_module
 import tests.core.sources.test_hls_aes_downloader as aes_run
 import tests.core.sources.test_m3u8_downloader_run as m3u8_run
 from core.sources.file_downloader import FileDownloader
+from core.sources.hls_aes_downloader import HlsAesDownloader
+from core.sources.m3u8_downloader import M3U8Downloader
+from core.models.download_data import DownloadData
 from core.models.download_state import DownloadState
-from core.models.plan import TimeRange
+from core.models.plan import DownloadPlan, TimeRange
 from tests.support.long_ffmpeg import end_all, record_processes
 from tests.core.sources.test_file_downloader_run import (
     CONTENT,
@@ -69,7 +76,7 @@ class _PausingResponse:
     def raise_for_status(self) -> None:
         pass
 
-    def iter_content(self, chunk_size=CHUNK):
+    def iter_content(self, chunk_size=CHUNK) -> Iterator[bytes]:
         for number, start in enumerate(range(0, len(self._body), chunk_size)):
             if number == self._pause_before_chunk:
                 assert self._model.pause() is True, "전제: 받는 도중에 일시정지됐다"
@@ -83,7 +90,7 @@ class _PausingSession:
         self.marks: dict[str, float] = {}  # 일시정지를 건 시각(paused_at) · 푼 시각(resumed_at)
         self._args = (body, model, pause_before_chunk, self.marks)
 
-    def get(self, *args, **kwargs):
+    def get(self, *args, **kwargs) -> _PausingResponse:
         return _PausingResponse(*self._args)
 
 
@@ -166,7 +173,9 @@ def _wait_receiving(data, before: int = 0) -> None:
     )
 
 
-def _recording_engine(tmp_path, monkeypatch, throttle: float):
+def _recording_engine(
+    tmp_path, monkeypatch, throttle: float
+) -> tuple[FileDownloader, DownloadData, _Recording, Path, threading.Event, list[BaseException]]:
     engine, data, _logger, output, finished, failures = _make_engine(
         tmp_path, monkeypatch, throttle=throttle
     )
@@ -196,10 +205,10 @@ def test_engine_paused_while_preparing_starts_receiving_only_after_it_is_resumed
     class _Counting:
         headers = real_session.headers
 
-        def head(self, url, **kwargs):
+        def head(self, url, **kwargs) -> Response:
             return real_session.head(url, **kwargs)
 
-        def get(self, url, headers=None, **kwargs):
+        def get(self, url, headers=None, **kwargs) -> Response:
             requests.append((headers or {}).get("Range", ""))
             return real_session.get(url, headers=headers, **kwargs)
 
@@ -207,7 +216,7 @@ def test_engine_paused_while_preparing_starts_receiving_only_after_it_is_resumed
     real_prepare = engine.prepare
     prepared = threading.Event()
 
-    def pausing_prepare(content):
+    def pausing_prepare(content) -> DownloadPlan:
         plan = real_prepare(content)
         assert data.model.pause() is True, "전제: 준비하는 동안 일시정지됐다"
         prepared.set()
@@ -342,7 +351,7 @@ def test_stopping_while_preparing_tells_the_logger_it_stopped_during_prepare(
     )
     real_prepare = engine.prepare
 
-    def stopping_prepare(content):
+    def stopping_prepare(content) -> DownloadPlan:
         plan = real_prepare(content)
         data.model.stop()
         return plan
@@ -484,19 +493,19 @@ class _SpeedSpy:
     def log_stopped(self, phase) -> None:
         self.stopped.append(phase)
 
-    def __getattr__(self, name):
+    def __getattr__(self, name) -> Any:
         return getattr(self._inner, name)
 
 
-def _file_engine(tmp_path, monkeypatch):
+def _file_engine(tmp_path, monkeypatch) -> tuple[FileDownloader, DownloadData]:
     return _make_engine(tmp_path, monkeypatch)[:2]
 
 
-def _m3u8_engine(tmp_path, monkeypatch):
+def _m3u8_engine(tmp_path, monkeypatch) -> tuple[M3U8Downloader, DownloadData]:
     return m3u8_run._make_engine(tmp_path, monkeypatch)[:2]
 
 
-def _aes_engine(tmp_path, monkeypatch):
+def _aes_engine(tmp_path, monkeypatch) -> tuple[HlsAesDownloader, DownloadData]:
     return aes_run._make_engine(tmp_path, monkeypatch, key_resolver=lambda c, u: aes_run.KEY)[:2]
 
 
@@ -519,7 +528,7 @@ def test_stopping_a_paused_download_logs_no_thread_or_speed_line(
     entered = threading.Event()  # 받기(붙잡은 _download_item)에 들어섰다 — 준비가 끝났다 (#509)
     real_download = engine._download_item
 
-    def held(item, part_num):
+    def held(item, part_num) -> int:
         entered.set()
         release.wait(20)  # 중단할 때까지 받기를 붙잡아 둔다
         return real_download(item, part_num)

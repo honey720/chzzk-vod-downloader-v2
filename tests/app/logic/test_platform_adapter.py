@@ -9,6 +9,7 @@
 
 import logging
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -24,7 +25,7 @@ class FakePopenCall:
         self.calls: list[list[str]] = []
         self._raise = raise_oserror
 
-    def __call__(self, args, *a, **kw):
+    def __call__(self, args, *a, **kw) -> object:
         self.calls.append(args)
         if self._raise:
             raise OSError("실행 파일을 찾을 수 없음")
@@ -32,7 +33,7 @@ class FakePopenCall:
 
 
 @pytest.fixture
-def fake_popen(monkeypatch):
+def fake_popen(monkeypatch) -> FakePopenCall:
     fake = FakePopenCall()
     monkeypatch.setattr(adapter.subprocess, "Popen", fake)
     return fake
@@ -190,7 +191,7 @@ class TestStartDetachedIsNonBlocking:
 
 
 @pytest.fixture
-def timing(monkeypatch):
+def timing(monkeypatch) -> Iterator[tuple[list[tuple[str, int]], dict[str, bool]]]:
     """타이머 쪽의 모듈 상태를 깨끗이 하고, 타이머를 청하고 푸는 자리를 적는 대역으로 바꾼다.
 
     끝나면 넘김 간격과 모듈 상태를 되돌린다 — 다른 테스트가 바뀐 넘김 간격으로 돌지 않는다.
@@ -365,7 +366,7 @@ class TestResponsiveTiming:
 
         assert calls == [("청함", 1)]
 
-    def test_work_that_raises_still_releases_the_timer(self, monkeypatch, timing) -> Never:
+    def test_work_that_raises_still_releases_the_timer(self, monkeypatch, timing) -> None:
         """일이 예외로 끝나도 타이머를 풀어야 한다.
 
         Windows에서 켬. 일 안에서 예외를 던짐 -> 예외가 그대로 나온다, [청함 1, 풂 1]

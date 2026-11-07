@@ -5,6 +5,8 @@
 배선(서비스 콜백 → Signal → content)을 탄다.
 """
 
+from collections.abc import Callable, Iterator
+
 import pytest
 from PySide6.QtCore import QObject, QTimer
 
@@ -57,7 +59,7 @@ class Service:
     def __init__(self) -> None:
         self.on_progress = None
 
-    def submit(self, content, **kwargs):
+    def submit(self, content, **kwargs) -> Handle:
         # 엔진 흉내 — 콜백 입구는 서비스 핸들의 중계(값 묶음 · 키를 싣는다, #484)
         self.on_progress = engine_side(content, kwargs)["on_progress"]
         return Handle(kwargs["data"])
@@ -67,13 +69,13 @@ class Service:
 
 
 @pytest.fixture
-def started(qapp, monkeypatch):
+def started(qapp, monkeypatch) -> Iterator[Callable[[str], tuple[Content, Service]]]:
     """다운로드를 시작한 viewmodel과 content 대역 — 끝나면 viewmodel의 타이머를 세운다."""
     monkeypatch.setattr(DownloadLogger, "_setup_logging", lambda self: None)
     monkeypatch.setattr(DownloadLogger, "log_download_info", lambda self, item: None)
     made = []
 
-    def start(content_type: str):
+    def start(content_type: str) -> tuple[Content, Service]:
         content, service = Content(), Service()
         viewmodel = DownloadViewModel(content, service=service)
         made.append(viewmodel)

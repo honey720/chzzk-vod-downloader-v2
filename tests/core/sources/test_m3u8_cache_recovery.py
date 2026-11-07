@@ -1,6 +1,7 @@
 """손상된 CDN 캐시의 제한된 재시도와 기존 정상 조각 보존을 검증한다."""
 
 import threading
+from collections.abc import Iterator
 from urllib.parse import urlsplit
 
 import pytest
@@ -9,7 +10,9 @@ import core.engine.base as base
 import core.sources.m3u8_downloader as module
 from tests.core.sources.test_m3u8_downloader_run import (
     M3U8Session,
+    RunLogger,
     StreamResponse,
+    TextResponse,
     _make_engine,
     _expected_output,
 )
@@ -41,7 +44,7 @@ def test_invalid_cache_uses_validated_retry_and_keeps_limit(tmp_path, monkeypatc
     requested = []
 
     class Session(M3U8Session):
-        def get(self, url, **kwargs):
+        def get(self, url, **kwargs) -> StreamResponse | TextResponse:
             if "seg_3" in url:
                 requested.append(urlsplit(url).path)
                 if not recover or "//seg_3" not in url:
@@ -75,7 +78,7 @@ class _DamagedTogether(StreamResponse):
         super().__init__(b"damaged cached payload", 0)
         self._barrier = barrier
 
-    def iter_content(self, chunk_size=8192):
+    def iter_content(self, chunk_size=8192) -> Iterator[bytes]:
         yield from super().iter_content(chunk_size)
         self._barrier.wait(timeout=10)
 
@@ -93,7 +96,7 @@ def test_workers_failing_the_same_segment_together_mark_and_warn_once(
     barrier = threading.Barrier(WORKERS)
 
     class Session(M3U8Session):
-        def get(self, url, **kwargs):
+        def get(self, url, **kwargs) -> _DamagedTogether:
             return _DamagedTogether(barrier)
 
     monkeypatch.setattr(module, "get_thread_session", lambda: Session(3))
@@ -137,7 +140,7 @@ def test_a_second_run_of_the_same_engine_starts_each_segment_on_its_normal_path(
     requested = []
 
     class Session(M3U8Session):
-        def get(self, url, **kwargs):
+        def get(self, url, **kwargs) -> StreamResponse | TextResponse:
             if "seg_3" in url:
                 requested.append(urlsplit(url).path)
                 if damaged:
@@ -181,13 +184,15 @@ class _HeaderedResponse(StreamResponse):
         self.headers = headers
 
 
-def _run_with_corrupt_seg3(tmp_path, monkeypatch, *, alternate_ok: bool, headers: dict, limit: int):
+def _run_with_corrupt_seg3(
+    tmp_path, monkeypatch, *, alternate_ok: bool, headers: dict, limit: int
+) -> tuple[RunLogger, threading.Event]:
     """seg_3(복구 대상 CDN)의 원래 경로가 손상 응답을 주는 실행 — // 경로는 alternate_ok면 정상."""
     engine, data, logger, output, finished, errors, _merges = _make_engine(tmp_path, monkeypatch)
     data.base_url = HOST + "/hls/video.m3u8"
 
     class Session(M3U8Session):
-        def get(self, url, **kwargs):
+        def get(self, url, **kwargs) -> StreamResponse | TextResponse:
             if "seg_3" in url and not (alternate_ok and "//seg_3" in url):
                 return _HeaderedResponse(CORRUPT_BODY, headers)
             return super().get(url, **kwargs)

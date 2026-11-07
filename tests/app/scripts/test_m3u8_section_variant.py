@@ -6,6 +6,7 @@
 입력은 tests/support/stream_samples.py의 합성 표본이다. 요청은 보내지 않는다.
 """
 
+from collections.abc import Callable
 from fractions import Fraction
 from types import SimpleNamespace
 
@@ -40,7 +41,7 @@ def _stream_key(sample: Sample, number: int) -> StreamKey:
 
 
 @pytest.fixture
-def serve(monkeypatch):
+def serve(monkeypatch) -> Callable[[Sample], None]:
     """영상 정보 조회와 마스터 플레이리스트 요청에 표본으로 답하게 한다."""
 
     def install(sample: Sample) -> None:

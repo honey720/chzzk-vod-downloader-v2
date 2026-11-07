@@ -33,6 +33,7 @@ import os
 import subprocess
 import threading
 import types
+from collections.abc import Callable
 
 import pytest
 from Crypto.Cipher import AES
@@ -43,6 +44,7 @@ import core.engine.segment_space as space_module
 from core.media.hls import parse_media_playlist
 from core.sections.hls_ts import fetch_ts_head, segment_streams
 from core.media.mpegts import parse_ts
+from core.media.ts_index import TsHead, TsStreams
 from core.engine.base import (
     DISK_SPACE_SHORT,
     DISK_SPACE_SHORT_WHOLE,
@@ -55,6 +57,7 @@ from core.models.content import StreamKey
 from core.models.download_data import DownloadData
 from core.models.plan import TimeRange
 from core.sections.check import check_cut
+from core.sections.cut import CutFrames, CutResult
 import core.sections.fmp4_cut as fmp4_cut_module
 from core.utils.ffmpeg import RemuxError, get_ffmpeg_exe
 from core.sections.hybrid import CUT_FAILED, CutError
@@ -65,7 +68,7 @@ from tests.support.range_host import RangeHost
 from tests.ffmpeg.section_packets import JoinedSource, assert_section_matches
 from tests.ffmpeg.sections.section_retry import OUTPUT_ARG, CutCalls, hand_over, snapshot
 from tests.support.undeletable import Undeletable
-from typing import Never
+from typing import IO, Never
 
 KEY = bytes.fromhex("7c1d9e42a05b63f8817e2c4d6a9b0f35")  # 테스트용 키 — 실제 키가 아니다
 WRONG_KEY = bytes.fromhex("0f1e2d3c4b5a69788796a5b4c3d2e1f0")  # 테스트용 — 복호화가 틀어진다
@@ -150,7 +153,7 @@ class _Logger:
     def __init__(self) -> None:
         self.calls: list[tuple[str, tuple]] = []
 
-    def __getattr__(self, name):
+    def __getattr__(self, name) -> Callable[..., None]:
         def record(*args, **kwargs) -> None:
             self.calls.append((name, args))
 
@@ -225,7 +228,9 @@ class _Run:
         )
 
 
-def _resolve(host, tmp_path, selections, playlist: str = "vod/media.m3u8", everything=False):
+def _resolve(
+    host, tmp_path, selections, playlist: str = "vod/media.m3u8", everything=False
+) -> TsHead:
     """헤드리스처럼 구간을 먼저 해석한다 — 받은 세그먼트는 tmp_path/segments에 둔다.
 
     everything이면 구간의 세그먼트를 모두 받아 둔다. 아니면 계획이 읽은 것만 받아 둔다.
@@ -233,7 +238,7 @@ def _resolve(host, tmp_path, selections, playlist: str = "vod/media.m3u8", every
     url = host.url(playlist)
     head = fetch_ts_head(url, str(tmp_path / "segments"))
 
-    def segment_at(index: int):
+    def segment_at(index: int) -> TsStreams:
         return segment_streams(head, url, index, KEY)
 
     head.frame_rate = choose_ts_frame_rate([segment_at(0)]).rate
@@ -459,7 +464,7 @@ def test_received_segments_are_removed_unless_the_cut_failed(
     real_item = run.engine._download_item
     cuts = []
 
-    def cut(*args, **kwargs):
+    def cut(*args, **kwargs) -> tuple[CutResult, CutFrames]:
         cuts.append(args)
         if how == "cut-failure" and args[OUTPUT_ARG].endswith("_2.mp4"):
             raise CutError(CUT_FAILED, "시험")
@@ -467,7 +472,7 @@ def test_received_segments_are_removed_unless_the_cut_failed(
             run.data.model.stop()
         return real_cut(*args, **kwargs)
 
-    def item(*args, **kwargs):
+    def item(*args, **kwargs) -> int:
         if how == "stop-in-transfer":
             run.data.model.stop()
         return real_item(*args, **kwargs)
@@ -513,7 +518,7 @@ def test_cut_failure_of_one_section_still_cuts_the_sections_after_it(
     failure = MidwayCutFailure(monkeypatch)
     cuts = []
 
-    def second_fails(*args, **kwargs):
+    def second_fails(*args, **kwargs) -> tuple[CutResult, CutFrames]:
         cuts.append(args)
         if args[OUTPUT_ARG].endswith("_2.mp4"):
             failure.arm(source_path=args[0], output_path=args[OUTPUT_ARG])  # args[0]은 작업 폴더
@@ -561,7 +566,9 @@ def test_work_folder_of_a_section_is_in_the_temp_folder_and_gone_before_the_next
     real_cut = aes_module.cut_ts_section
     seen, in_order = [], []
 
-    def cut(work_dir, segments, ts_frames, segment_paths, *args, **kwargs):
+    def cut(
+        work_dir, segments, ts_frames, segment_paths, *args, **kwargs
+    ) -> tuple[CutResult, CutFrames]:
         folder = os.path.dirname(work_dir)
         others = sorted(name for name in os.listdir(folder) if not name.endswith(".ts"))
         seen.append((work_dir, others))
@@ -694,7 +701,7 @@ def test_wrong_key_met_by_several_workers_at_once_is_reported_once(
     reached: list[str] = []
     real_open = aes_module.open_ts_segment
 
-    def decrypt_together(*args, **kwargs):
+    def decrypt_together(*args, **kwargs) -> bytes:
         reached.append(threading.current_thread().name)
         together.wait(timeout=30)
         return real_open(*args, **kwargs)
@@ -782,12 +789,12 @@ def test_sections_are_resolved_on_the_run_thread_before_any_worker_starts(
     real_streams = aes_module.segment_streams
     real_item = run.engine._download_item
 
-    def streams(*args, **kwargs):
+    def streams(*args, **kwargs) -> TsStreams:
         with lock:
             events.append(("해석", threading.current_thread().name))
         return real_streams(*args, **kwargs)
 
-    def item(*args, **kwargs):
+    def item(*args, **kwargs) -> int:
         with lock:
             if not snapshots:
                 head = run.engine._head
@@ -831,7 +838,7 @@ def test_workers_write_each_segment_to_its_own_file(vod, host, tmp_path, monkeyp
     lock = threading.Lock()
     real_open = open
 
-    def recording_open(path, mode="r", *args, **kwargs):
+    def recording_open(path, mode="r", *args, **kwargs) -> IO:
         if "w" in mode:
             with lock:
                 written.append(os.path.basename(path))
@@ -1194,7 +1201,7 @@ def _speed_over_one_second(run: _Run) -> float:
     return engine.s.speed_mb
 
 
-def _retry_with_one_segment_gone(vod, host, tmp_path, monkeypatch):
+def _retry_with_one_segment_gone(vod, host, tmp_path, monkeypatch) -> tuple[_Run, int, list[int]]:
     """둘째 구간의 컷이 실패한 실행과, 그 구간의 마지막 세그먼트를 지운 뒤 이어받은 실행.
 
     Returns:
@@ -1408,7 +1415,7 @@ class _JoinSpy:
         self._real = fmp4_cut_module.remux_through
         monkeypatch.setattr(fmp4_cut_module, "remux_through", self._call)
 
-    def _call(self, *args, **kwargs):
+    def _call(self, *args, **kwargs) -> str:
         result = self._real(*args, **kwargs)
         names = sorted(os.listdir(self._run.engine.temp_dir))
         self.left.append([name for name in names if name.endswith(".ts")])
@@ -1493,7 +1500,7 @@ def test_retry_after_a_failed_section_file_receives_only_the_segments_that_were_
 # ================================================================ 끝낸 구간의 파일이 없거나 바뀐 재시도 (#309)
 
 
-def _fail_the_second_of_three(vod, host, tmp_path, monkeypatch):
+def _fail_the_second_of_three(vod, host, tmp_path, monkeypatch) -> tuple[_Run, CutCalls]:
     """구간 셋 가운데 둘째 구간의 컷만 실패한 실행과, 컷 호출을 적는 도구(다음 실행을 위해 비운 것)."""
     cuts = CutCalls(monkeypatch, aes_module, "cut_ts_section", source_arg=WORK_ARG)
     cuts.fail_on = (SECOND_SECTION_CALL,)
@@ -1717,7 +1724,7 @@ def test_progress_the_cut_reports_is_placed_after_the_share_of_the_reading(
     real_cut = aes_module.cut_ts_section
     seen = []
 
-    def cut(*args, **kwargs):
+    def cut(*args, **kwargs) -> tuple[CutResult, CutFrames]:
         kwargs["on_progress"](0.2)
         seen.append(run.data.cut_progress)
         return real_cut(*args, **kwargs)
@@ -1748,7 +1755,7 @@ def test_section_whose_segments_an_earlier_section_read_gives_the_reading_no_sha
     real_cut = aes_module.cut_ts_section
     seen = []
 
-    def cut(*args, **kwargs):
+    def cut(*args, **kwargs) -> tuple[CutResult, CutFrames]:
         kwargs["on_progress"](0.2)
         seen.append((os.path.basename(args[4]), run.data.cut_progress, len(watched)))
         return real_cut(*args, **kwargs)

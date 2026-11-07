@@ -64,24 +64,24 @@ class FakeApi:
         self.dash_calls: list[tuple] = []
         self.sea_calls: list[tuple] = []
 
-    def get_video_info(self, video_no, cookies):
+    def get_video_info(self, video_no, cookies) -> VideoInfo:
         return self._video_info
 
-    def get_video_dash_manifest(self, video_id, in_key, cookies=None):
+    def get_video_dash_manifest(self, video_id, in_key, cookies=None) -> tuple:
         self.dash_calls.append((video_id, in_key, cookies))
         return self._dash_manifest
 
-    def get_video_sea_manifest(self, video_id, in_key, cookies=None):
+    def get_video_sea_manifest(self, video_id, in_key, cookies=None) -> tuple:
         self.sea_calls.append((video_id, in_key, cookies))
         return self._sea_manifest
 
-    def get_video_m3u8_manifest(self, json_str):
+    def get_video_m3u8_manifest(self, json_str) -> tuple[list[list[int | None]], int, None]:
         return [[720, None]], 720, None
 
-    def get_clip_info(self, clip_no, cookies):
+    def get_clip_info(self, clip_no, cookies) -> tuple:
         return self._clip_info
 
-    def get_clip_manifest(self, clip_id, cookies):
+    def get_clip_manifest(self, clip_id, cookies) -> tuple:
         return self._clip_manifest
 
 

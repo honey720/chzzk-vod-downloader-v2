@@ -10,6 +10,7 @@ downloadItem 연동은 실제 모델·뷰·시그널 배선으로 검증한다 (
 """
 
 import threading
+from collections.abc import Iterator
 
 import pytest
 
@@ -99,7 +100,7 @@ def _make_item(download_path: str, title: str) -> ContentItem:
 
 
 @pytest.fixture
-def manager(qapp):
+def manager(qapp) -> Iterator[tuple[ContentViewModel, ContentListView]]:
     view = ContentListView()
     m = ContentViewModel()
     view.bind(m)

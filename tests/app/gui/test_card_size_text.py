@@ -15,6 +15,7 @@ import contextlib
 import dataclasses
 import logging
 import threading
+from collections.abc import Iterator
 from types import SimpleNamespace
 
 import pytest
@@ -39,7 +40,7 @@ from core.media.mp4 import index_mp4, pending_mp4_head, read_mp4_raw
 from core.media.representations import StreamEntry
 from core.models.download_state import DownloadState
 from core.models.events import ProgressEvent
-from core.media.mp4_index import Mp4Raw, PendingMp4Head
+from core.media.mp4_index import Mp4Head, Mp4Raw, PendingMp4Head
 from core.models.plan import TimeRange
 from core.sections.mp4_ranges import sections_download_size, sections_file_size
 from core.sections.mp4_sizes import moov_sections_file_size
@@ -49,7 +50,7 @@ from tests.mocks.engine_side import engine_side
 from tests.app.gui.section_input import enter_time
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, shown, snapshot_top_levels
 from tests.support.mp4_builder import audio_spec, build_mp4, video_spec
-from typing import Never
+from typing import Never, Self
 
 MB = 1024 * 1024
 OTHER_PATH = "D:/vod/archive/2026/summer/finals/T1-vs-GEN-full-set-highlights-and-interviews"
@@ -57,7 +58,7 @@ TWO_SECTIONS = (TimeRange(600.0, 1200.0), TimeRange(1800.0, 2400.0))  # 합 20�
 
 
 @pytest.fixture(autouse=True)
-def _environment(qapp, monkeypatch):
+def _environment(qapp, monkeypatch) -> Iterator[None]:
     """실제 QSS · 네트워크와 안내 창 차단 · 로그 파일 차단. 테스트가 띄운 창은 끝에 파괴한다."""
     theme.set_color_scheme("dark")
     qapp.setStyle(hold_style(theme.build_style()))
@@ -101,7 +102,7 @@ def _card(
     transfer: int | None = None,
     made: int | None = None,
     width: int = 1400,
-):
+) -> tuple[QWidget, ContentItemWidget]:
     """상태를 정한 카드 하나를 보이는 창 안에 놓는다. 영상 전체 크기는 28.99 GB다."""
     item = ContentItem(
         "https://chzzk.naver.com/video/1",
@@ -749,7 +750,7 @@ class _Engine:
     def __init__(self) -> None:
         self.submissions: list[dict] = []
 
-    def submit(self, content, **kwargs):
+    def submit(self, content, **kwargs) -> Self:
         # 엔진 흉내 — 콜백 입구는 서비스 핸들의 중계(값 묶음 · 키를 싣는다, #484)
         self.submissions.append(engine_side(content, kwargs))
         return self
@@ -762,14 +763,14 @@ class _Engine:
 
 
 @pytest.fixture
-def probe(monkeypatch):
+def probe(monkeypatch) -> _Probe:
     fake = _Probe()
     monkeypatch.setattr(section_basis, "probe_section_basis", fake)
     return fake
 
 
 @pytest.fixture
-def window(probe, tmp_path):
+def window(probe, tmp_path) -> Iterator[tuple[VodDownloader, ContentItem, _Engine]]:
     """실제 메인 창 · 대기 카드 하나(1080p · 480p, 10fps) · 서비스 대역."""
     item = ContentItem(
         "https://chzzk.naver.com/video/1",
@@ -877,14 +878,14 @@ class _GatedCount:
         self.gate = threading.Event()
         self.calls = 0
 
-    def __call__(self, raw, selections):
+    def __call__(self, raw, selections) -> int:
         self.calls += 1
         assert self.gate.wait(10), "크기 세기 대역의 문이 열리지 않았다"
         return moov_sections_file_size(raw, selections)
 
 
 @pytest.fixture
-def gated_count(monkeypatch):
+def gated_count(monkeypatch) -> Iterator[_GatedCount]:
     gated = _GatedCount()
     monkeypatch.setattr(sev, "moov_sections_file_size", gated)
     yield gated
@@ -897,13 +898,13 @@ class _CountedIndex:
     def __init__(self) -> None:
         self.calls = 0
 
-    def __call__(self, raw):
+    def __call__(self, raw) -> Mp4Head:
         self.calls += 1
         return index_mp4(raw)
 
 
 @pytest.fixture
-def counted_index(monkeypatch):
+def counted_index(monkeypatch) -> _CountedIndex:
     counted = _CountedIndex()
     monkeypatch.setattr(mp4_module, "index_mp4", counted)
     return counted
@@ -1165,7 +1166,7 @@ def test_reopening_the_editor_hands_the_held_moov_to_the_lookup(
     win, item, _engine = window
     fetched = []
 
-    def fetch(url):
+    def fetch(url) -> Mp4Raw:
         fetched.append(url)
         return probe.raws[1080]
 
@@ -1457,7 +1458,7 @@ class _WatchedCount:
         self.finished = 0
         self.stopped = 0
 
-    def __call__(self, raw, selections):
+    def __call__(self, raw, selections) -> int:
         self.calls += 1
         assert self.gate.wait(10), "크기 세기 대역의 문이 열리지 않았다"
         try:
@@ -1470,7 +1471,7 @@ class _WatchedCount:
 
 
 @pytest.fixture
-def watched_count(monkeypatch):
+def watched_count(monkeypatch) -> Iterator[_WatchedCount]:
     watched = _WatchedCount()
     monkeypatch.setattr(sev, "moov_sections_file_size", watched)
     yield watched
@@ -1646,7 +1647,7 @@ def test_lookup_stops_between_receiving_the_moov_and_reading_it(monkeypatch) -> 
     raw = _mp4_raw(1)
     received = threading.Event()
 
-    def fetch(url):
+    def fetch(url) -> Mp4Raw:
         received.set()
         return raw
 
@@ -1689,7 +1690,7 @@ def test_count_runs_as_one_background_work(qtbot, monkeypatch) -> None:
     marks = []
 
     @contextlib.contextmanager
-    def counted():
+    def counted() -> Iterator[None]:
         marks.append("들어감")
         try:
             yield
@@ -1744,7 +1745,7 @@ def test_section_file_bytes_of_gives_nothing_when_the_sections_cannot_be_counted
 
 
 @pytest.fixture
-def work_marks(monkeypatch):
+def work_marks(monkeypatch) -> list[str]:
     """다운로드 뷰모델이 백그라운드 일의 시작 · 끝을 알릴 때마다 적는다."""
     marks: list[str] = []
     monkeypatch.setattr(download_viewmodel, "begin_background_work", lambda: marks.append("시작"))
@@ -1896,12 +1897,12 @@ def test_section_file_bytes_of_gives_nothing_when_the_unparsed_moov_cannot_be_re
 
 
 @pytest.fixture
-def work_blocks(monkeypatch):
+def work_blocks(monkeypatch) -> list[str]:
     """구간 뷰모델이 백그라운드 일로 세는 블록에 들어가고 나갈 때마다 적는다."""
     marks: list[str] = []
 
     @contextlib.contextmanager
-    def counted():
+    def counted() -> Iterator[None]:
         marks.append("들어감")
         try:
             yield

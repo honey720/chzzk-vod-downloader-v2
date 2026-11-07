@@ -4,12 +4,14 @@
 """
 
 import threading
+from collections.abc import Callable, Iterator
 
 import pytest
 
 import core.sources.file_downloader as file_module
 import core.sources.hls_aes_downloader as hls_module
 import core.sources.m3u8_downloader as m3u8_module
+from core.engine.base import _SlowWatch
 from core.media.hls import HlsKey, HlsPlaylist
 from core.sources.file_downloader import FileDownloader
 from core.sources.hls_aes_downloader import HlsAesDownloader
@@ -34,7 +36,7 @@ class ManualClock:
 class QuietLogger:
     """엔진이 부르는 로그 메서드를 모두 받아 버린다."""
 
-    def __getattr__(self, name):
+    def __getattr__(self, name) -> Callable[..., None]:
         return lambda *args, **kwargs: None
 
 
@@ -52,7 +54,7 @@ def _make_data(output_path: str = "unused.part", content_type: str = "video") ->
     return data
 
 
-def _make_segment_engine(engine_class, data: DownloadData):
+def _make_segment_engine(engine_class, data: DownloadData) -> M3U8Downloader | HlsAesDownloader:
     """세그먼트를 받는 엔진을 만든다 — 암호화 경로에는 IV를 읽을 플레이리스트를 끼운다."""
     made = engine_class(data, QuietLogger())
     if engine_class is HlsAesDownloader:
@@ -62,7 +64,7 @@ def _make_segment_engine(engine_class, data: DownloadData):
 
 
 @pytest.fixture
-def engine():
+def engine() -> FileDownloader:
     """가짜 시계를 끼운 엔진 — 저속 판정 창만 따로 잰다."""
     made = FileDownloader(_make_data(), QuietLogger())
     made.clock = ManualClock()
@@ -350,7 +352,7 @@ class _OneChunkResponse:
     def close(self) -> None:
         pass
 
-    def iter_content(self, chunk_size=CHUNK):
+    def iter_content(self, chunk_size=CHUNK) -> Iterator[bytes]:
         yield b"x" * CHUNK
 
 
@@ -361,14 +363,14 @@ def _watch_arguments(monkeypatch, module, made, call) -> list[tuple]:
     seen: list[tuple] = []
     real = made._watch_slow
 
-    def spy(part_num, expected=None, resumes=False):
+    def spy(part_num, expected=None, resumes=False) -> _SlowWatch:
         seen.append((expected, resumes))
         return real(part_num, expected, resumes)
 
     made._watch_slow = spy
 
     class _Session:
-        def get(self, url, **kwargs):
+        def get(self, url, **kwargs) -> _OneChunkResponse:
             return _OneChunkResponse(declared=5 * MB)
 
     monkeypatch.setattr(module, "get_thread_session", lambda: _Session())
@@ -483,7 +485,7 @@ class _PausingResponse:
     def close(self) -> None:
         self.closed += 1
 
-    def iter_content(self, chunk_size=CHUNK):
+    def iter_content(self, chunk_size=CHUNK) -> Iterator[bytes]:
         engine = self._engine
         for number in range(self._chunks):
             engine.clock.now += self._seconds
@@ -515,7 +517,7 @@ def test_part_is_not_restarted_for_the_time_it_was_paused(tmp_path, monkeypatch)
     response = _PausingResponse(made, chunks=12, seconds_per_chunk=0.5)
 
     class _Session:
-        def get(self, url, **kwargs):
+        def get(self, url, **kwargs) -> _PausingResponse:
             return response
 
     monkeypatch.setattr(file_module, "get_thread_session", lambda: _Session())
@@ -552,7 +554,7 @@ def test_segment_is_not_restarted_for_the_time_it_was_paused(
     response = _PausingResponse(made, chunks=12, seconds_per_chunk=0.5, chunk_bytes=512 * KB + 1)
 
     class _Session:
-        def get(self, url, **kwargs):
+        def get(self, url, **kwargs) -> _PausingResponse:
             return response
 
     monkeypatch.setattr(module, "get_thread_session", lambda: _Session())
@@ -580,7 +582,7 @@ class _CrawlingResponse:
     def close(self) -> None:
         self.closed += 1
 
-    def iter_content(self, chunk_size=CHUNK):
+    def iter_content(self, chunk_size=CHUNK) -> Iterator[bytes]:
         for _ in range(10):
             self._clock.now += 2.0
             yield b"x" * CHUNK
@@ -593,7 +595,7 @@ def _crawl(monkeypatch, module, made, call) -> _CrawlingResponse:
     response = _CrawlingResponse(made.clock)
 
     class _Session:
-        def get(self, url, **kwargs):
+        def get(self, url, **kwargs) -> _CrawlingResponse:
             return response
 
     monkeypatch.setattr(module, "get_thread_session", lambda: _Session())

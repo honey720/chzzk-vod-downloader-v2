@@ -28,7 +28,7 @@ class _StubApp:
         self.installed.append(translator)
 
 
-def _patch_environment(monkeypatch):
+def _patch_environment(monkeypatch) -> tuple[_StubApp, list[dict]]:
     """set_language가 참조하는 전역 app과 config 저장 함수를 대역으로 바꾼다."""
     stub_app = _StubApp()
     saves = []

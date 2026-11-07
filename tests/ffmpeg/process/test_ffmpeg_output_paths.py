@@ -38,7 +38,7 @@ from core.utils.paths import build_output_path, temp_dir_for
 
 
 @pytest.fixture(scope="module")
-def fmp4_input(tmp_path_factory):
+def fmp4_input(tmp_path_factory) -> str:
     """1초짜리 h264 fMP4 — remux 공급용(모듈당 1회 생성).
 
     fMP4를 쓰는 이유: 리눅스 동봉 빌드의 mpegts demux SIGSEGV(#94)를 타지

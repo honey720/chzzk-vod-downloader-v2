@@ -6,6 +6,7 @@
 """
 
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -27,7 +28,7 @@ def get_app_version():
 
 
 @pytest.fixture
-def fake_config_path(tmp_path, monkeypatch):
+def fake_config_path(tmp_path, monkeypatch) -> Path:
     """CONFIG_PATH를 임시 파일로 바꿔치기한다 — 실제 저장소 파일은 무변경."""
     path = tmp_path / "config.py"
     path.write_text(FAKE_CONFIG, encoding="utf-8")

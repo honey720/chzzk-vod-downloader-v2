@@ -22,6 +22,7 @@
 """
 
 import os
+from collections.abc import Iterator
 
 import pytest
 from PySide6.QtCore import QMargins, QPoint, QRect
@@ -56,7 +57,7 @@ def _apply_production_qss(qapp) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _destroy_windows():
+def _destroy_windows() -> Iterator[None]:
     """테스트가 만든 최상위 창은 close()가 아니라 파괴한다 — 숨은 채 남으면 다음 setStyle이 죽는다(#248 CI)."""
     before = snapshot_top_levels()
     yield

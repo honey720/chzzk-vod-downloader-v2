@@ -13,11 +13,13 @@ import struct
 import pytest
 
 from core.media.mp4 import MP4_INVALID, MP4_UNSUPPORTED, Mp4Error, parse_moov, read_mp4_index
+from core.media.mp4_index import Mp4Index
 from core.sections.cut import CutPiece
 from core.sections.mp4_writer import (
     MDAT_HEADER_BYTES,
     SECTION_FILE_FTYP,
     EncodedPiece,
+    SectionFilePlan,
     build_section_head,
     covers_whole_video,
     merged_sample_description,
@@ -26,7 +28,7 @@ from core.sections.mp4_writer import (
     section_pieces,
 )
 
-from tests.support.mp4_builder import audio_spec, box, build_mp4, video_spec
+from tests.support.mp4_builder import BuiltMp4, audio_spec, box, build_mp4, video_spec
 
 # ue(v)로 적은 번호 0 · 1 · 2의 첫 바이트 — '1', '010', '011'
 _ID_BITS = {0: 0x80, 1: 0x40, 2: 0x60}
@@ -58,7 +60,9 @@ def _avc_stsd(sps: list[bytes], pps: list[bytes], kind: bytes = b"avc1") -> byte
 _SOURCE_STSD = _avc_stsd([_sps(0)], [_pps(0)])
 
 
-def _source(video_overrides: dict | None = None, audio: bool = True, **build):
+def _source(
+    video_overrides: dict | None = None, audio: bool = True, **build
+) -> tuple[BuiltMp4, Mp4Index]:
     """표준 영상(+오디오)의 합성 mp4와 그 색인."""
     tracks = [video_spec(stsd=_SOURCE_STSD, **(video_overrides or {}))]
     if audio:
@@ -106,7 +110,7 @@ def _assemble(source: bytes, plan, encoded) -> bytes:
     return bytes(out)
 
 
-def _read(data: bytes):
+def _read(data: bytes) -> Mp4Index:
     return read_mp4_index(lambda offset, size: data[offset : offset + size])
 
 
@@ -508,7 +512,7 @@ class TestSectionFile:
 
 
 class TestBuildRejects:
-    def _plan(self):
+    def _plan(self) -> SectionFilePlan:
         built, index = _source()
         return plan_section_file(index, built.moov, 1, 10)
 

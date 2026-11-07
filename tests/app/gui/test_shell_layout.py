@@ -25,6 +25,8 @@
 합산한다 — 제품이 틀리면 테스트도 같이 틀리기 때문이다.
 """
 
+from collections.abc import Iterator
+
 import pytest
 from PySide6.QtCore import QMimeData, QPoint, QRect, QSize, Qt
 from PySide6.QtGui import QDragEnterEvent, QImage
@@ -52,7 +54,7 @@ def _apply_production_qss(qapp) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _destroy_windows():
+def _destroy_windows() -> Iterator[None]:
     """테스트가 만든 최상위 창은 close()가 아니라 파괴한다 — 숨은 채 남으면 다음 setStyle이 죽는다(#248 CI)."""
     before = snapshot_top_levels()
     yield
@@ -337,11 +339,11 @@ class TestInitialSizeRule:
         """
 
         class _Screen:
-            def size(self):
+            def size(self) -> QSize:
                 """전체 화면 크기 — 작업 영역과 다르게 둔다."""
                 return QSize(2400, 1000)
 
-            def availableGeometry(self):
+            def availableGeometry(self) -> QRect:
                 """작업 영역 — 전체 화면보다 낮다. 폭 × 0.45가 초기 폭 상한(800)을 넘게 두어 초기 폭이
                 콘텐츠 최소폭(#495 헤더바 2줄 뒤 실제 화면 790 안팎)에 클램프되지 않게 한다 — 두 기준은
                 높이(900 vs 1000)로 가른다."""
@@ -349,7 +351,7 @@ class TestInitialSizeRule:
 
         class _App:
             @staticmethod
-            def primaryScreen():
+            def primaryScreen() -> "_Screen":
                 """주 화면은 위의 가짜 화면 하나."""
                 return _Screen()
 

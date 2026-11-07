@@ -103,7 +103,7 @@ def no_network(monkeypatch) -> None:
     monkeypatch.setattr("app.widgets.widget._global_download_path", "C:/Users/LeeDH/Downloads")
 
 
-def _make_item():
+def _make_item() -> ContentItem:
     return ContentItem(
         "https://chzzk.naver.com/video/1",
         {"title": "제목", "category": "", "channelName": "채널", "createdDate": "", "duration": 3600},
@@ -111,7 +111,7 @@ def _make_item():
     )
 
 
-def _widget(qapp, state, progress=0):
+def _widget(qapp, state, progress=0) -> ContentItemWidget:
     item = _make_item()
     item.downloadState = state
     item.download_progress = progress
@@ -318,7 +318,7 @@ class TestCardInnerWidthIsUnchanged:
     """
 
     @staticmethod
-    def _expected_inset():
+    def _expected_inset() -> int:
         return 2 + 2 * theme.METRICS["cardPadding"]  # 테두리 1×2 + 안쪽 여백×2
 
     @pytest.mark.parametrize("width", [460, 600, 900])

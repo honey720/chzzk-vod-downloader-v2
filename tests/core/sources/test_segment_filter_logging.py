@@ -10,7 +10,7 @@ import core.sources.m3u8_downloader as m3u8_module
 from core.models.download_data import DownloadData
 
 
-def _make_engine(tmp_path):
+def _make_engine(tmp_path) -> tuple[m3u8_module.M3U8Downloader, DownloadData]:
     data = DownloadData(
         base_url="https://example.invalid/hls/video.m3u8",
         vod_url="https://chzzk.naver.com/video/1",

@@ -10,6 +10,7 @@
 
 import os
 import threading
+from collections.abc import Callable, Iterator
 
 import pytest
 from Crypto.Cipher import AES
@@ -147,7 +148,7 @@ class _Response:
     def raise_for_status(self) -> None:
         pass
 
-    def iter_content(self, chunk_size=8192):
+    def iter_content(self, chunk_size=8192) -> Iterator[bytes]:
         for i in range(0, len(self._body), chunk_size):
             yield self._body[i : i + chunk_size]
 
@@ -158,7 +159,7 @@ class FakeSession:
     def __init__(self, playlist: str) -> None:
         self._playlist = playlist
 
-    def get(self, url, **kwargs):
+    def get(self, url, **kwargs) -> _Response:
         if url.endswith("media.m3u8"):
             return _Response(text=self._playlist)
         index = int(url.rsplit("segment-", 1)[1].removesuffix(".ts"))
@@ -174,7 +175,7 @@ class RunLogger:
         self.completed_times: list[float] = []
         self.closed = 0
 
-    def __getattr__(self, name):
+    def __getattr__(self, name) -> Callable[..., None]:
         return lambda *args, **kwargs: None
 
     def log_download_complete(self, total_time) -> None:
@@ -193,7 +194,11 @@ class RunLogger:
         self.closed += 1
 
 
-def _make_engine(tmp_path, monkeypatch, playlist=None, key_resolver=None):
+def _make_engine(
+    tmp_path, monkeypatch, playlist=None, key_resolver=None
+) -> tuple[
+    HlsAesDownloader, DownloadData, RunLogger, threading.Event, list[BaseException], list[bool]
+]:
     """가짜 세션이 연결된 RUNNING 이전 상태의 엔진을 준비한다."""
     data = DownloadData(
         base_url=BASE_URL,
@@ -244,7 +249,7 @@ def test_prepare_fetches_key_through_injected_resolver(tmp_path, monkeypatch) ->
     """키는 주입된 리졸버로 취득하고, 계획은 세그먼트 목록·후처리 필요를 담는다."""
     calls: list[tuple] = []
 
-    def resolver(content, key_uri):
+    def resolver(content, key_uri) -> bytes:
         calls.append((content, key_uri))
         return KEY
 

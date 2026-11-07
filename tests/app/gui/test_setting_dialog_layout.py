@@ -22,6 +22,8 @@ AlignVCenter로 되돌리거나 라벨을 평범한 QLabel(×7/4 없음)로 되�
 """
 
 
+from collections.abc import Iterator
+
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QDialogButtonBox, QFormLayout, QGroupBox, QLabel, QLayout, QWidget
@@ -60,7 +62,7 @@ def _apply_production_qss(qapp) -> None:
 
 
 @pytest.fixture
-def dialog(qapp):
+def dialog(qapp) -> Iterator[SettingDialog]:
     _seed_config()
     dlg = SettingDialog()
     dlg.show()
@@ -78,7 +80,7 @@ def _at_width(dlg: SettingDialog, extra: int) -> None:
     assert dlg.width() == dlg.minimumSizeHint().width() + extra, "폭이 요청대로 안 잡혔다 — 전제"
 
 
-def _widget(dlg: SettingDialog, name: str):
+def _widget(dlg: SettingDialog, name: str) -> QWidget:
     w = getattr(dlg, name)
     assert w.objectName() == name
     return w

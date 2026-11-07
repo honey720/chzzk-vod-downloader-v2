@@ -12,6 +12,8 @@
 "실제 창 실측"이라는 방법론은 그대로 유지할 것 — 계산값으로 대체하지 말 것).
 """
 
+from collections.abc import Iterator
+
 import pytest
 from PySide6.QtWidgets import QApplication
 
@@ -101,7 +103,7 @@ def _visible_card_count(window: VodDownloader, window_height: int, require_fully
 
 
 @pytest.fixture
-def window_with_cards(qapp):
+def window_with_cards(qapp) -> Iterator[VodDownloader]:
     window = VodDownloader()
     for i in range(30):  # 두 밀도 목표(6·4)를 넉넉히 넘는 카드 수
         item = _make_item(i)

@@ -40,7 +40,7 @@ def test_measure_write_speed_caches_per_volume(tmp_path, monkeypatch) -> None:
     calls = []
     real_mkstemp = disk_speed_module.tempfile.mkstemp
 
-    def counting_mkstemp(*args, **kwargs):
+    def counting_mkstemp(*args, **kwargs) -> tuple[int, str]:
         calls.append(1)
         return real_mkstemp(*args, **kwargs)
 
@@ -77,7 +77,7 @@ def test_measure_write_speed_calls_fsync(tmp_path, monkeypatch) -> None:
     calls = []
     real_fsync = disk_speed_module.os.fsync
 
-    def counting_fsync(fd):
+    def counting_fsync(fd) -> None:
         calls.append(fd)
         return real_fsync(fd)
 

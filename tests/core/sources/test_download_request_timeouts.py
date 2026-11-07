@@ -12,6 +12,7 @@
 """
 
 import os
+from collections.abc import Callable
 
 import pytest
 import requests
@@ -19,6 +20,7 @@ import requests
 import core.sources.file_downloader as file_module
 import core.sources.hls_aes_downloader as aes_module
 import core.sources.m3u8_downloader as m3u8_module
+from core.engine.base import BaseDownloader
 from core.sources.file_downloader import FileDownloader
 from core.sources.hls_aes_downloader import HlsAesDownloader
 from core.sources.m3u8_downloader import M3U8Downloader
@@ -95,21 +97,23 @@ class _Session:
             return _Response(content=INIT)
         return _Response(text=AES_PLAYLIST)
 
-    def head(self, url, **kwargs):
+    def head(self, url, **kwargs) -> _Response:
         return self._request("HEAD", url, **kwargs)
 
-    def get(self, url, **kwargs):
+    def get(self, url, **kwargs) -> _Response:
         return self._request("GET", url, **kwargs)
 
 
 class _Logger:
     """다운로더가 부르는 로거 메서드를 전부 받아 넘긴다."""
 
-    def __getattr__(self, name):
+    def __getattr__(self, name) -> Callable[..., None]:
         return lambda *args, **kwargs: None
 
 
-def _engine(kind: str, tmp_path, monkeypatch, session: _Session):
+def _engine(
+    kind: str, tmp_path, monkeypatch, session: _Session
+) -> tuple[BaseDownloader, DownloadData, list[BaseException], list[bool]]:
     """요청 종류에 맞는 다운로더와, 실패 · 완료 콜백이 받은 것을 준비한다."""
     family = kind.split("-")[0]
     module, cls, url, content_type = {

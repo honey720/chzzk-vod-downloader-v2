@@ -69,7 +69,7 @@ class GatedSession:
         self.release = threading.Event()
         self.segments: list[int] = []  # 청한 세그먼트의 인덱스
 
-    def get(self, url, **kwargs):
+    def get(self, url, **kwargs) -> TextResponse | StreamResponse:
         if url.endswith(".m3u8"):
             return TextResponse(text=_playlist_text())
         if url.endswith("init.m4s"):
@@ -340,7 +340,7 @@ class _GatedAesSession(aes_tests.FakeSession):
         self.hold_from = hold_from
         self.release = threading.Event()
 
-    def get(self, url, **kwargs):
+    def get(self, url, **kwargs) -> aes_tests._Response:
         if not url.endswith("media.m3u8"):
             index = int(url.rsplit("segment-", 1)[1].removesuffix(".ts"))
             if index >= self.hold_from:

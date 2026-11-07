@@ -11,26 +11,28 @@
 """
 
 import struct
+from collections.abc import Callable
 
 import pytest
 
 import core.media.mp4 as mp4_module
 import core.sections.mp4_partial as partial_module
 from core.media.mp4 import MP4_INVALID, MP4_UNSUPPORTED, Mp4Error, parse_moov, read_mp4_head
+from core.media.mp4_index import Mp4Head, Mp4Index
 from core.models.plan import TimeRange
 from core.sections.mp4_partial import build_head, merge_ranges, plan_partial
 from core.sections.mp4_ranges import selection_byte_ranges
-from tests.support.mp4_builder import audio_spec, build_mp4, video_spec
+from tests.support.mp4_builder import BuiltMp4, audio_spec, build_mp4, video_spec
 
 
-def _reader(data: bytes):
+def _reader(data: bytes) -> Callable[[int, int], bytes]:
     def read(offset: int, size: int) -> bytes:
         return data[offset : offset + size]
 
     return read
 
 
-def _built(**options):
+def _built(**options) -> tuple[BuiltMp4, Mp4Head]:
     """(조립 결과, Mp4Head)."""
     built = build_mp4([video_spec(), audio_spec()], **options)
     return built, read_mp4_head(_reader(built.data))
@@ -43,7 +45,7 @@ def _partial_bytes(built, head, layout) -> bytes:
     return b"".join(pieces)
 
 
-def _index_of(data: bytes):
+def _index_of(data: bytes) -> Mp4Index:
     return read_mp4_head(_reader(data)).index
 
 

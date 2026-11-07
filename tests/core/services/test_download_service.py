@@ -10,6 +10,7 @@ import gc
 import threading
 import time
 import weakref
+from collections.abc import Callable
 
 import pytest
 
@@ -89,7 +90,7 @@ class FakeEngineFactory:
     def supports(self, content: Content) -> bool:
         return content.content_type in self.supported
 
-    def __call__(self, **kwargs):
+    def __call__(self, **kwargs) -> FakeEngine:
         engine = FakeEngine(**kwargs)
         self.instances.append(engine)
         self.created.set()
@@ -102,7 +103,7 @@ class RecordingLogger:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    def __getattr__(self, name):
+    def __getattr__(self, name) -> Callable[..., None]:
         def record(*args, **kwargs) -> None:
             self.calls.append(name)
 
@@ -120,14 +121,14 @@ def _make_content(content_type: ContentType = ContentType.CHZZK_VIDEO) -> Conten
 
 
 @pytest.fixture
-def file_factory(monkeypatch):
+def file_factory(monkeypatch) -> FakeEngineFactory:
     factory = FakeEngineFactory({ContentType.CHZZK_VIDEO, ContentType.CHZZK_CLIP})
     monkeypatch.setattr(download_service_module, "FileDownloader", factory)
     return factory
 
 
 @pytest.fixture
-def m3u8_factory(monkeypatch):
+def m3u8_factory(monkeypatch) -> FakeEngineFactory:
     factory = FakeEngineFactory(
         {ContentType.CHZZK_VIDEO_M3U8},
         requires_base_url_resolution=True,
@@ -271,7 +272,7 @@ class TestDownloaderSelection:
         )
         monkeypatch.setattr(download_service_module, "HlsAesDownloader", factory)
 
-        def key_resolver(content, key_uri):
+        def key_resolver(content, key_uri) -> bytes:
             return bytes(16)
 
         service = DownloadService(key_resolver=key_resolver)
@@ -585,7 +586,7 @@ class TestUserInteracting:
     """조작 중인지 묻는 값이 엔진을 돌리는 스레드에 걸리는지 (#309)."""
 
     @pytest.fixture
-    def rests(self, monkeypatch):
+    def rests(self, monkeypatch) -> list[str]:
         """쉰 스레드의 이름을 담는 리스트 — 쉬는 일을 자지 않고 적기만 하는 대역으로 바꾼다."""
         import core.utils.interaction as interaction
 

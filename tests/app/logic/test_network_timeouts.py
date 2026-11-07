@@ -24,7 +24,7 @@ class RecordingSession:
         self._response = response
         self.calls: list[tuple[str, dict]] = []
 
-    def get(self, url, **kwargs):
+    def get(self, url, **kwargs) -> MockResponse:
         self.calls.append((url, kwargs))
         return self._response
 
@@ -37,7 +37,7 @@ class BytesResponse(MockResponse):
         self.content = content
 
 
-def _install(monkeypatch, response):
+def _install(monkeypatch, response) -> RecordingSession:
     session = RecordingSession(response)
     monkeypatch.setattr(network, "_session", session)
     return session
@@ -138,7 +138,7 @@ class ScriptedSession:
         self._outcomes = list(outcomes)
         self.calls = 0
 
-    def get(self, url, **kwargs):
+    def get(self, url, **kwargs) -> MockResponse:
         self.calls += 1
         outcome = self._outcomes.pop(0)
         if isinstance(outcome, BaseException):

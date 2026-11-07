@@ -63,7 +63,7 @@ class TestTheTableIsTheSingleSource:
     PROBE_DEFAULT = 7
 
     @pytest.fixture
-    def probe(self, monkeypatch):
+    def probe(self, monkeypatch) -> Setting:
         """표에 `_probe` 줄을 추가한다 — 정수만 받고 기본값 7. 다른 코드는 손대지 않는다."""
 
         def integer(value: object) -> int:

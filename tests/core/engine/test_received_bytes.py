@@ -10,6 +10,8 @@
 """
 
 import threading
+from collections.abc import Callable, Iterator
+from typing import Self
 
 import pytest
 import requests
@@ -62,7 +64,7 @@ class Body:
     def raise_for_status(self) -> None:
         pass
 
-    def iter_content(self, chunk_size=CHUNK):
+    def iter_content(self, chunk_size=CHUNK) -> Iterator[bytes]:
         for number, chunk in enumerate(self._chunks):
             if number == self._fail_after:
                 raise requests.ConnectionError("연결 끊김")
@@ -78,7 +80,7 @@ class QueuedSession:
     def __init__(self, responses) -> None:
         self._responses = list(responses)
 
-    def get(self, url, **kwargs):
+    def get(self, url, **kwargs) -> Body:
         return self._responses.pop(0)
 
 
@@ -100,13 +102,13 @@ class SlowAfter:
         self._calls = calls
         self._made = 0
 
-    def __call__(self, *args, **kwargs):
+    def __call__(self, *args, **kwargs) -> object:
         self._made += 1
         first = self._made == 1
         seen = [0]
 
         class Watch:
-            def is_slow(self_, elapsed, received):
+            def is_slow(self_, elapsed, received) -> bool:
                 seen[0] += 1
                 return first and seen[0] == self._calls
 
@@ -144,7 +146,9 @@ def _data(tmp_path, content_type: str) -> DownloadData:
     )
 
 
-def _segment_engine(tmp_path, monkeypatch, responses):
+def _segment_engine(
+    tmp_path, monkeypatch, responses
+) -> tuple[M3U8Downloader, DownloadData, Watched]:
     """RUNNING 상태의 세그먼트 엔진과 관측기 — 세그먼트 로직만 단위로 돌린다."""
     data = _data(tmp_path, "m3u8")
     engine = M3U8Downloader(data, StepLogger())
@@ -164,7 +168,7 @@ PART = bytes(range(256)) * (4 * CHUNK // 256)  # 파트 본문
 PART_CHUNKS = split(PART, CHUNK)
 
 
-def _part_engine(tmp_path, monkeypatch, responses):
+def _part_engine(tmp_path, monkeypatch, responses) -> tuple[FileDownloader, DownloadData, Watched]:
     """RUNNING 상태의 파일 엔진과 관측기 — 빈 산출물에 파트 하나를 받는다."""
     data = _data(tmp_path, "video")
     (tmp_path / "out.mp4").write_bytes(b"")
@@ -358,7 +362,7 @@ class RunLogger:
     def log_exception(self, message, exception=None) -> None:
         self.errors.append(message)
 
-    def __getattr__(self, name):
+    def __getattr__(self, name) -> Callable[..., None]:
         return lambda *args, **kwargs: None
 
 
@@ -373,13 +377,13 @@ class FileServer:
         self._fail = fail
         self.headers = {"content-length": str(TOTAL)}
 
-    def head(self, url, **kwargs):
+    def head(self, url, **kwargs) -> Self:
         return self
 
     def raise_for_status(self) -> None:
         pass
 
-    def get(self, url, headers=None, **kwargs):
+    def get(self, url, headers=None, **kwargs) -> Body:
         start, end = map(int, headers["Range"].removeprefix("bytes=").split("-"))
         chunks = split(FILE_BODY[start : end + 1], CHUNK)
         if self._fail and start == 1024 * 1024:
@@ -413,7 +417,7 @@ class SegmentServer:
     def __init__(self, fail: bool) -> None:
         self._fail = fail
 
-    def get(self, url, **kwargs):
+    def get(self, url, **kwargs) -> Text | Body:
         if url.endswith(".m3u8"):
             return Text(text=PLAYLIST)
         if url.endswith("init.m4s"):

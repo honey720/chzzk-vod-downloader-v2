@@ -15,6 +15,7 @@
 - `en_US`인데 한국어 카탈로그 로드 → 영어 게이트 실패
 """
 
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -51,7 +52,7 @@ def _seed_config(language: str) -> dict:
 
 
 @pytest.fixture
-def translators(qapp, monkeypatch):
+def translators(qapp, monkeypatch) -> Iterator[Callable[[str], list]]:
     """`CVDv2.set_language`를 실제 QApplication에 걸고, 끝나면 설치한 번역기를 전부 뗀다.
 
     전역 상태(번역기)를 되돌리지 않으면 뒤 테스트가 한국어 버튼을 보게 된다.
@@ -195,7 +196,7 @@ class TestMissingCatalogDoesNotCrash:
 class TestPreserved:
     """보존 목록 — 카탈로그가 바꾸는 것은 문구뿐이어야 한다."""
 
-    def _dialog(self, qapp, translators, language):
+    def _dialog(self, qapp, translators, language) -> SettingDialog:
         translators(language)
         dialog = SettingDialog()
         dialog.show()

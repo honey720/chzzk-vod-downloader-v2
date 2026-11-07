@@ -36,9 +36,11 @@
 """
 
 import os
+from collections.abc import Iterator
 
 import pytest
 from PySide6.QtCore import QPoint, Qt
+from PySide6.QtGui import QImage
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
 
@@ -68,7 +70,7 @@ def _apply_production_qss(qapp) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _drop_windows(qapp):
+def _drop_windows(qapp) -> Iterator[None]:
     """이 파일의 테스트가 띄운 창을 테스트 끝에 확실히 파괴한다(card_helpers.drop_new_top_levels)."""
     before = snapshot_top_levels()
     yield
@@ -93,7 +95,9 @@ def _pump() -> None:
         QApplication.processEvents()
 
 
-def make_card(state: DownloadState, path: str = OTHER_PATH, width: int = 900):
+def make_card(
+    state: DownloadState, path: str = OTHER_PATH, width: int = 900
+) -> tuple[QWidget, ContentItemWidget]:
     """상태별 카드를 보이는 최상위 창 안에 놓는다 — 호버는 창(QWindow)이 받아야 자식까지 간다.
 
     경로는 전역과 다르게 둔다 — 대기 밖 상태에서도 경로 표면(라벨/아이콘)이 보이게.
@@ -143,7 +147,7 @@ def hover(qtbot, window, target, on: bool) -> None:
     qtbot.waitUntil(lambda: target.underMouse() == on, timeout=2000)
 
 
-def pixels(target):
+def pixels(target) -> QImage:
     shown(target)
     return target.grab().toImage()
 
@@ -161,11 +165,11 @@ def _clickable(state: DownloadState) -> bool:
     return state == DownloadState.WAITING
 
 
-def _record_dialog(monkeypatch, result="", during=None):
+def _record_dialog(monkeypatch, result="", during=None) -> list[str]:
     """폴더 선택 대화상자를 가로챈다 — 호출 여부·인자를 기록하고 `result`를 돌려준다."""
     calls = []
 
-    def fake(parent, caption, start, *a, **k):
+    def fake(parent, caption, start, *a, **k) -> str:
         calls.append(start)
         if during is not None:
             during()
@@ -252,7 +256,7 @@ class TestPathButtonSurface:
     누를 수 없는 상태에서는 꺼 두지 않고 아예 숨긴다(1행의 다른 조작 버튼과 같다).
     """
 
-    def _card(self, qtbot, state):
+    def _card(self, qtbot, state) -> tuple[QWidget, ContentItemWidget]:
         window, widget = make_card(state)
         qtbot.addWidget(window)
         return window, widget
@@ -314,7 +318,7 @@ class TestPathButtonSurface:
 class TestSectionEditButtonSurface:
     """1행의 구간 편집 버튼 (#309) — 아래 줄의 구간 요약 글자를 누르는 것과 같은 일을 한다."""
 
-    def _card(self, qtbot, state, content_type: str = "video"):
+    def _card(self, qtbot, state, content_type: str = "video") -> tuple[QWidget, ContentItemWidget]:
         window, widget = make_card(state)
         qtbot.addWidget(window)
         if content_type != "video":
@@ -427,7 +431,7 @@ class TestPathDialogDuringTransition:
 class TestEditingIsCancelledOnStateChange:
     """편집 중에 상태가 바뀌면 입력창을 닫고 기존 값으로 되돌린다 — 그리고 실제 저장 파일명이 라벨과 같다."""
 
-    def _editing_card(self, qtbot, typed="NewName"):
+    def _editing_card(self, qtbot, typed="NewName") -> tuple[QWidget, ContentItemWidget, list[str]]:
         window, widget = make_card(DownloadState.WAITING, path="C:/dl")
         qtbot.addWidget(window)
         emitted = []

@@ -21,6 +21,7 @@ import struct
 import subprocess
 from dataclasses import replace
 from fractions import Fraction
+from pathlib import Path
 
 import pytest
 
@@ -29,7 +30,7 @@ import core.sections.hybrid as cut_module
 from core.media.fmp4 import build_fmp4_index, fmp4_origin, parse_init_segment, parse_media_segment
 from core.media.hls import parse_media_playlist
 from core.media.mp4 import parse_moov, read_mp4_index
-from core.sections.cut import CutFrames, CutPiece
+from core.sections.cut import CutCheck, CutFrames, CutPiece, CutResult
 from core.sections.check import check_cut
 from core.utils.ffmpeg import FFmpegTimeoutError, get_ffmpeg_exe, parse_out_time, run_ffmpeg
 from core.sections.hybrid import (
@@ -127,7 +128,7 @@ def _mp4_frames(path: str) -> CutFrames:
 
 
 @pytest.fixture(scope="module")
-def fmp4_parts(tmp_path_factory):
+def fmp4_parts(tmp_path_factory) -> tuple[Path, bytes, list[bytes]]:
     """fMP4 입력의 재료 — (폴더, 초기화 세그먼트 bytes, 세그먼트 bytes 목록)."""
     folder = tmp_path_factory.mktemp("cut_fmp4")
     _ffmpeg(
@@ -164,7 +165,9 @@ def fmp4_source(fmp4_parts) -> tuple[str, CutFrames]:
     return _fmp4_input(folder, "joined.mp4", init_bytes, media, skip=0)
 
 
-def _cut(source: tuple[str, CutFrames], first: int, last: int, tmp_path):
+def _cut(
+    source: tuple[str, CutFrames], first: int, last: int, tmp_path
+) -> tuple[CutResult, CutCheck]:
     path, frames = source
     result = hybrid_cut(path, frames, first, last, str(tmp_path / "out.mp4"), inspect=True)
     return result, check_cut(frames, result)
@@ -484,7 +487,7 @@ def test_cut_removes_temp_folder_and_output_after_failure(
     real = cut_module.run_ffmpeg
     calls = []
 
-    def flaky(args, **kwargs):
+    def flaky(args, **kwargs) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         # 0번은 입력 읽기, 1번은 머리, 2번이 가운데 복사다
         if len(calls) == 3:
@@ -512,7 +515,7 @@ def test_cut_removes_written_output_when_joining_fails(mp4_source, tmp_path, mon
     real = cut_module.run_ffmpeg
     written = []
 
-    def fails_after_writing(args, **kwargs):
+    def fails_after_writing(args, **kwargs) -> subprocess.CompletedProcess[str]:
         done = real(args, **kwargs)
         if args[-1] == output:
             written.append(os.path.isfile(output))
@@ -925,7 +928,7 @@ def test_cut_reports_the_stage_that_failed_and_nothing_after_it(
     real = cut_module.run_ffmpeg
     calls = []
 
-    def flaky(args, **kwargs):
+    def flaky(args, **kwargs) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         if len(calls) == 3:  # 0번은 입력 읽기, 1번은 머리, 2번이 가운데 복사다
             return subprocess.CompletedProcess(args, 1, "", "boom")
@@ -1046,7 +1049,7 @@ def test_cut_progress_rises_inside_a_stage_as_ffmpeg_reports_its_output_time(
     real = cut_module.run_ffmpeg
     events = []
 
-    def feeding(args, **kwargs):
+    def feeding(args, **kwargs) -> subprocess.CompletedProcess[str]:
         sink = kwargs.pop("on_out_time", None)
         if sink is not None and "copy" in args and "-an" in args:  # 가운데 복사
             for seconds in (0.25, 0.5, 0.75):
@@ -1080,7 +1083,7 @@ def test_failed_cut_never_reports_full_progress(mp4_source, tmp_path, monkeypatc
     real = cut_module.run_ffmpeg
     calls = []
 
-    def flaky(args, **kwargs):
+    def flaky(args, **kwargs) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         if len(calls) == 6:  # 입력 읽기 · 조각 셋 · 오디오 다음이 잇기다
             return subprocess.CompletedProcess(args, 1, "", "boom")
@@ -1110,7 +1113,7 @@ def test_decode_note_cut_inside_a_path_piece_ends_at_the_end_of_that_piece(
     line = "x" * (120 - len(r"C:\Users\Tes") - 1) + " " + home_piece + r"\Videos\a.mp4"
     assert line[:120].endswith(r"C:\Users\Tes")  # 글자 수 자리가 이름 안이다
 
-    def decode_fails(args, **kwargs):
+    def decode_fails(args, **kwargs) -> subprocess.CompletedProcess[str]:
         if "null" in args:
             return subprocess.CompletedProcess(args, 1, stdout="", stderr=line + "\n")
         return real(args, **kwargs)

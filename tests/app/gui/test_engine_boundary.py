@@ -21,7 +21,7 @@ from tests.app.gui.test_download_viewmodel_contract import (  # noqa: F401 — �
 
 
 @pytest.fixture
-def wired(qapp, log_calls):  # noqa: F811
+def wired(qapp, log_calls) -> Wired:  # noqa: F811
     """다운로드 한 건의 배선 — 계약 게이트의 대역 그대로."""
     return Wired(qapp, log_calls)
 
@@ -164,7 +164,7 @@ def test_each_progress_counts_the_bar_with_its_own_paused_time(wired, monkeypatc
     a_waits, b_done = threading.Event(), threading.Event()
     original = download_viewmodel._SectionProgress.percent
 
-    def percent(self, *args, **kwargs):
+    def percent(self, *args, **kwargs) -> int:
         if threading.current_thread().name == "A":
             a_waits.set()
             assert b_done.wait(5)  # B의 통지가 끝난 뒤에 센다

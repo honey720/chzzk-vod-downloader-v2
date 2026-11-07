@@ -12,8 +12,10 @@ import socket
 import subprocess
 import sys
 import threading
+from collections.abc import Callable, Generator, Iterator
 from pathlib import Path
 
+import pluggy
 import pytest
 import requests.adapters
 
@@ -54,7 +56,7 @@ MOCK_RESPONSES_DIR = Path(__file__).resolve().parent / "fixtures" / "mock_respon
 
 
 @pytest.fixture
-def load_mock_response():
+def load_mock_response() -> Callable[[str], str]:
     """mock_responses 디렉토리의 픽스처 파일 내용을 문자열로 읽어 오는 헬퍼를 반환한다."""
 
     def _load(name: str) -> str:
@@ -114,7 +116,7 @@ def _describe_socket_target(address) -> str:
 
 
 @pytest.fixture(scope="session", autouse=True)
-def network_guard():
+def network_guard() -> Iterator[_NetworkGuard]:
     """세션 내내 socket 연결과 requests 어댑터 전송을 막는다 — 요청은 외부로 나가지 않는다.
 
     차단은 **되돌리지 않는다.** 세션이 끝나면 프로세스도 끝나므로 복원할 이유가
@@ -150,7 +152,7 @@ def network_guard():
 
 
 @pytest.fixture(autouse=True)
-def _no_network_attempts(network_guard, request):
+def _no_network_attempts(network_guard, request) -> Iterator[None]:
     """테스트가 끝나면 그 사이의 연결 시도가 0건임을 단언한다 — 예외를 삼킨 스레드가 있어도 드러난다."""
     network_guard.current_test = request.node.nodeid
     yield
@@ -226,7 +228,7 @@ def _isolate_choose_temp_dir(monkeypatch) -> None:
 # 건드리지 않는다. autouse 픽스처는 가장 먼저 세워져 가장 나중에 걷히므로,
 # 테스트 자신의 정리(qtbot·파일별 픽스처)가 끝난 뒤의 잔여만 여기로 온다.
 @pytest.fixture(autouse=True)
-def _destroy_top_level_widgets(request, _isolate_real_config):
+def _destroy_top_level_widgets(request, _isolate_real_config) -> Iterator[None]:
     """테스트가 끝나면 살아 있는 최상위 위젯을 닫고 실제로 파괴한 뒤, 하나도 안 남았음을 단언한다."""
     yield
     from PySide6.QtCore import QCoreApplication, QEvent
@@ -282,7 +284,9 @@ def _capture_screenshots(nodeid: str, outcome: str) -> list[str]:
 
 
 @pytest.hookimpl(hookwrapper=True)
-def pytest_runtest_makereport(item, call):
+def pytest_runtest_makereport(
+    item, call
+) -> Generator[None, pluggy.Result[pytest.TestReport], None]:
     outcome = yield
     rep = outcome.get_result()
     if rep.when != "call":

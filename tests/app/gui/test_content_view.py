@@ -6,6 +6,8 @@
 여기서 고정한다.
 """
 
+from collections.abc import Iterator
+
 import pytest
 from PySide6.QtCore import Qt
 
@@ -29,7 +31,7 @@ def no_network(monkeypatch) -> None:
     monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
 
 
-def _make_item(title="제목", download_path="."):
+def _make_item(title="제목", download_path=".") -> ContentItem:
     return ContentItem(
         "https://chzzk.naver.com/video/1",
         {"title": title, "category": "", "channelName": "채널", "createdDate": "", "duration": 0},
@@ -38,7 +40,7 @@ def _make_item(title="제목", download_path="."):
 
 
 @pytest.fixture
-def view(qapp):
+def view(qapp) -> Iterator[tuple[ContentListView, ContentListModel]]:
     v = ContentListView()
     model = ContentListModel()
     v.setModel(model)
@@ -238,7 +240,7 @@ class TestCardNumberingFollowsPosition:
     조건이 참이 될 때까지 이벤트 루프를 계속 돌리는 조건 대기 — 로 기다린다.
     """
 
-    def _labels(self, v, model):
+    def _labels(self, v, model) -> list[int]:
         # #244 재설계로 "#0" 번호 라벨은 화면에서 사라졌다(오너 확정) —
         # 순번 자체는 setIndex가 widget.index로 계속 유지하며, 재번호매김
         # 불변식(#235)은 이 값으로 검증한다. 검증 시나리오(중간·첫·끝·일괄
@@ -361,7 +363,7 @@ class TestCardNumberingFollowsPosition:
         calls = []
         original_set_data = ContentItemWidget.setData
 
-        def _spy(self, item, index):
+        def _spy(self, item, index) -> None:
             calls.append(item)
             return original_set_data(self, item, index)
 

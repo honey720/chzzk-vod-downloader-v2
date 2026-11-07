@@ -10,7 +10,7 @@ from fractions import Fraction
 import pytest
 
 from core.media.fmp4 import parse_init_segment, parse_media_segment
-from core.media.hls import parse_media_playlist
+from core.media.hls import HlsPlaylist, parse_media_playlist
 from core.models.plan import TimeRange
 from core.media.fmp4_index import Fmp4Init, Fmp4Segment
 import core.sections.fmp4_sections as sections_module
@@ -67,7 +67,7 @@ def _segment(
     return media_segment([Fragment(trafs)])
 
 
-def _playlist(durations: list[float]):
+def _playlist(durations: list[float]) -> HlsPlaylist:
     lines = ["#EXTM3U", "#EXT-X-VERSION:7", '#EXT-X-MAP:URI="init.mp4"']
     for number, duration in enumerate(durations):
         lines += [f"#EXTINF:{duration:.6f},", f"seg-{number}.m4s"]

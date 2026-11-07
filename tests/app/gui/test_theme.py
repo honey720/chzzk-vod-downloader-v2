@@ -16,6 +16,8 @@ import re
 from pathlib import Path
 
 import pytest
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QPalette
 
 import CVDv2 as main
 import app.theme as theme
@@ -510,7 +512,7 @@ class _FakeStyleHints:
     def __init__(self, scheme) -> None:
         self._scheme = scheme
 
-    def colorScheme(self):
+    def colorScheme(self) -> Qt.ColorScheme:
         return self._scheme
 
 
@@ -521,10 +523,10 @@ class _FakeApp:
         self._hints = _FakeStyleHints(scheme)
         self._palette = palette
 
-    def styleHints(self):
+    def styleHints(self) -> _FakeStyleHints:
         return self._hints
 
-    def palette(self):
+    def palette(self) -> QPalette | None:
         return self._palette
 
 

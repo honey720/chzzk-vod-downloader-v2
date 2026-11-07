@@ -87,7 +87,7 @@ class TestGetVideoFrameRates:
         xml_text = load_mock_response("dash_manifest_audio_only_14158884.xml")
         cookies = {"NID_AUT": "REDACTED", "NID_SES": "REDACTED"}
 
-        def fake_get(url, **kwargs):
+        def fake_get(url, **kwargs) -> MockResponse:
             calls.append((url, kwargs))
             return MockResponse(text=xml_text)
 
@@ -125,7 +125,7 @@ class TestGetVideoDashManifest:
         xml_text = load_mock_response("dash_manifest.xml")
         cookies = {"NID_AUT": "REDACTED", "NID_SES": "REDACTED"}
 
-        def fake_get(url, **kwargs):
+        def fake_get(url, **kwargs) -> MockResponse:
             calls.append((url, kwargs))
             return MockResponse(text=xml_text)
 
@@ -158,7 +158,7 @@ class TestGetVideoDashManifest:
         calls = []
         xml_text = load_mock_response("dash_manifest.xml")
 
-        def fake_get(url, **kwargs):
+        def fake_get(url, **kwargs) -> MockResponse:
             calls.append((url, kwargs))
             return MockResponse(text=xml_text)
 
@@ -184,7 +184,7 @@ class TestGetVideoInfo:
         body = load_mock_response("video_member_only_13714380.json")
         cookies = {"NID_AUT": "REDACTED", "NID_SES": "REDACTED"}
 
-        def fake_get(url, **kwargs):
+        def fake_get(url, **kwargs) -> MockResponse:
             calls.append((url, kwargs))
             return MockResponse(text=body)
 
@@ -245,7 +245,7 @@ class TestGetVideoM3u8BaseUrl:
         json_str = '{"media": [{"path": "https://example.invalid/master.m3u8"}]}'
         cookies = {"NID_AUT": "REDACTED", "NID_SES": "REDACTED"}
 
-        def fake_get(url, **kwargs):
+        def fake_get(url, **kwargs) -> MockResponse:
             calls.append((url, kwargs))
             return MockResponse(text=playlist)
 
@@ -289,7 +289,7 @@ class TestSameHeightTracksAreMerged:
         ]}}}}}}
 
         class _JsonResponse(MockResponse):
-            def json(self):
+            def json(self) -> dict:
                 return payload
 
         monkeypatch.setattr(network._session, "get", lambda url, **kwargs: _JsonResponse(text=""))
@@ -342,7 +342,7 @@ class TestGetVideoM3u8Variant:
         """
         calls = []
 
-        def fake_get(url, **kwargs):
+        def fake_get(url, **kwargs) -> MockResponse:
             calls.append(url)
             return MockResponse(text=self.MASTER)
 

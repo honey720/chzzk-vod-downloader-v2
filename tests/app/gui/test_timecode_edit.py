@@ -6,6 +6,7 @@
 
 import random
 from fractions import Fraction
+from typing import Any
 
 import pytest
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
@@ -23,7 +24,7 @@ from app.widgets.timecode_edit import (
 
 
 @pytest.fixture
-def edit(qtbot):
+def edit(qtbot) -> TimecodeEdit:
     """보이는 입력 칸 하나."""
     widget = TimecodeEdit()
     qtbot.addWidget(widget)
@@ -33,7 +34,7 @@ def edit(qtbot):
 
 
 @pytest.fixture
-def clipboard(monkeypatch):
+def clipboard(monkeypatch) -> Any:
     """클립보드 대역 — 칸이 읽는 글을 정한다. 실제(OS) 클립보드를 읽거나 쓰지 않는다."""
 
     class _Clipboard:
@@ -395,7 +396,7 @@ def _focus_out() -> QFocusEvent:
 
 
 @pytest.fixture
-def clock(qtbot):
+def clock(qtbot) -> TimecodeEdit:
     """보이는 시분초 칸 하나(묶음 셋 — 숫자 여섯 자리)."""
     widget = TimecodeEdit(fields=CLOCK_FIELDS)
     qtbot.addWidget(widget)
@@ -405,7 +406,7 @@ def clock(qtbot):
 
 
 @pytest.fixture
-def point(qtbot):
+def point(qtbot) -> TimePointEdit:
     """보이는 시각 입력 하나 — 시분초 칸과 프레임 칸의 묶음."""
     widget = TimePointEdit()
     qtbot.addWidget(widget)

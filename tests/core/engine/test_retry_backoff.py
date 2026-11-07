@@ -7,9 +7,11 @@
 
 import threading
 import time
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 import requests
@@ -108,7 +110,7 @@ class _Faults:
         if error is not None:
             raise error
 
-    def wrap(self, key: int, response):
+    def wrap(self, key: int, response) -> object:
         return _Gated(response, self.gate) if key in self.gated else response
 
 
@@ -121,10 +123,10 @@ class _Gated:
         self._response = response
         self._gate = gate
 
-    def __getattr__(self, name):
+    def __getattr__(self, name) -> Any:
         return getattr(self._response, name)
 
-    def iter_content(self, chunk_size=8192):
+    def iter_content(self, chunk_size=8192) -> Iterator[bytes]:
         for chunk in self._response.iter_content(chunk_size):
             size = max(1, -(-len(chunk) // self.PIECES))
             for offset in range(0, len(chunk), size):
@@ -137,7 +139,7 @@ class _M3U8Session(m3u8_run.M3U8Session):
         super().__init__(chunks_per_segment=3)
         self.faults = faults
 
-    def get(self, url, **kwargs):
+    def get(self, url, **kwargs) -> object:
         if "seg_" not in url:
             return super().get(url, **kwargs)
         key = int(url.rsplit("seg_", 1)[1].removesuffix(".m4v"))
@@ -150,7 +152,7 @@ class _AesSession(aes_run.FakeSession):
         super().__init__(aes_run._playlist_text())
         self.faults = faults
 
-    def get(self, url, **kwargs):
+    def get(self, url, **kwargs) -> object:
         if "segment-" not in url or not kwargs.get("stream"):
             # 준비 단계의 키 확인(첫 세그먼트를 스트리밍 없이 받는다)은 전송이 아니다
             return super().get(url, **kwargs)
@@ -164,7 +166,7 @@ class _FileSession(file_run.RangeSession):
         super().__init__(file_run.CONTENT)
         self.faults = faults
 
-    def get(self, url, headers=None, **kwargs):
+    def get(self, url, headers=None, **kwargs) -> object:
         start = int(headers["Range"].removeprefix("bytes=").split("-")[0])
         key = start // file_run.MB  # 해상도 144의 파트는 1MB다
         self.faults.check(key)
@@ -178,7 +180,7 @@ class _Logger:
         self.errors: list[str] = []
         self.warnings: list[str] = []
 
-    def __getattr__(self, name):
+    def __getattr__(self, name) -> Callable[..., None]:
         return lambda *args, **kwargs: None
 
     def log_error(self, message, exception=None) -> None:
@@ -321,7 +323,7 @@ def _drive_settled(rig: _Rig, until, step: float = 1.0, limit: float = 60.0) -> 
         _wait(lambda: until() or _settled(rig), timeout=30.0)
 
 
-def _others_done(rig: _Rig, target: int):
+def _others_done(rig: _Rig, target: int) -> Callable[[], bool]:
     """target 말고 모든 항목을 한 번씩 요청해 받았다."""
     others = [key for key in rig.keys if key != target]
     return lambda: (
@@ -614,7 +616,7 @@ def test_a_request_waiting_for_its_answer_in_a_slot_that_failed_holds_off_networ
     waiting = threading.Event()
     release = threading.Event()
 
-    def fail(key, attempt):
+    def fail(key, attempt) -> requests.ConnectionError:
         if key == 0 and attempt == 2:
             waiting.set()
             assert release.wait(timeout=30)

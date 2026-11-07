@@ -6,6 +6,8 @@ tests/app/logic/test_log_setup.py에서 이주했다. 핸들러 구성·기대 �
 
 import logging
 import logging.handlers
+from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
@@ -13,7 +15,7 @@ import core.utils.logging_setup as logging_setup
 
 
 @pytest.fixture
-def isolated_logging(monkeypatch, tmp_path):
+def isolated_logging(monkeypatch, tmp_path) -> Iterator[Path]:
     """임시 로그 디렉토리를 제공하고, 테스트 후 루트 로거 상태를 복원한다."""
     root = logging.getLogger()
     saved_handlers = root.handlers[:]

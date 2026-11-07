@@ -26,10 +26,18 @@
 - 파트 실패: 요청 예외 시 구간 재큐잉(failed_threads += 1)
 """
 
+from collections.abc import Iterator
+from pathlib import Path
+from types import ModuleType
+from typing import TYPE_CHECKING
+
 import pytest
 import requests
 
 from core.models.download_data import DownloadData
+
+if TYPE_CHECKING:
+    from core.sources.file_downloader import FileDownloader
 
 MB = 1024 * 1024
 
@@ -78,7 +86,7 @@ def _make_data(output_path: str = "unused.part") -> DownloadData:
     )
 
 
-def _make_scaler(data: DownloadData, logger: RecordingLogger):
+def _make_scaler(data: DownloadData, logger: RecordingLogger) -> "FileDownloader":
     """스케일링 규칙(_adjust_threads/measure_speed) 보유 객체를 만든다.
 
     이주 전: download.monitor.MonitorThread / 이주 후: core FileDownloader.
@@ -89,7 +97,7 @@ def _make_scaler(data: DownloadData, logger: RecordingLogger):
     return FileDownloader(data, logger)
 
 
-def _make_engine(data: DownloadData, logger: RecordingLogger):
+def _make_engine(data: DownloadData, logger: RecordingLogger) -> tuple["FileDownloader", None]:
     """파트 다운로드 로직(_download_part) 보유 객체와 (엔진, 태스크)를 만든다.
 
     이주 전: download.download.DownloadThread / 이주 후: core FileDownloader
@@ -100,7 +108,7 @@ def _make_engine(data: DownloadData, logger: RecordingLogger):
     return FileDownloader(data, logger), None
 
 
-def _engine_module():
+def _engine_module() -> ModuleType:
     """_download_part가 사는 모듈 — 시간·세션 몽키패치 대상."""
     import core.sources.file_downloader as mod
 
@@ -295,7 +303,7 @@ class FakeResponse:
     def raise_for_status(self) -> None:
         pass
 
-    def iter_content(self, chunk_size=8192):
+    def iter_content(self, chunk_size=8192) -> Iterator[bytes]:
         yield from self._chunks
 
 
@@ -306,7 +314,7 @@ class FakeSession:
         self._response = response
         self._exception = exception
 
-    def get(self, url, **kwargs):
+    def get(self, url, **kwargs) -> FakeResponse | None:
         if self._exception is not None:
             raise self._exception
         return self._response
@@ -327,7 +335,9 @@ class TickingClock:
         return self.now
 
 
-def _prepare_running_engine(tmp_path, monkeypatch, chunks=None, exception=None, clock_step=1.0):
+def _prepare_running_engine(
+    tmp_path, monkeypatch, chunks=None, exception=None, clock_step=1.0
+) -> tuple["FileDownloader", DownloadData, RecordingLogger]:
     """RUNNING 상태의 엔진과 부속(데이터·로거)을 준비한다.
 
     clock_step=1.0이면 시계를 읽을 때마다 1초가 흘러 최근 3초의 속도가 항상 저속(<100 KB/s)이고,
@@ -425,7 +435,7 @@ class RecordingSession:
         self._responses = list(responses)
         self.range_headers: list[str] = []
 
-    def get(self, url, headers=None, **kwargs):
+    def get(self, url, headers=None, **kwargs) -> FakeResponse:
         self.range_headers.append(headers["Range"])
         return self._responses.pop(0)
 
@@ -434,7 +444,9 @@ CHUNK = 8192
 PART_END = 3 * CHUNK - 1  # 3청크짜리 파트 (0 ~ 24575)
 
 
-def _prepare_resume_engine(tmp_path, monkeypatch, responses, prewritten: bytes = b""):
+def _prepare_resume_engine(
+    tmp_path, monkeypatch, responses, prewritten: bytes = b""
+) -> tuple["FileDownloader", DownloadData, RecordingLogger, RecordingSession, Path]:
     """이어받기 시나리오용 엔진 — 산출물 선기록과 응답 시퀀스를 주입한다."""
     output = tmp_path / "part.bin"
     output.write_bytes(prewritten)

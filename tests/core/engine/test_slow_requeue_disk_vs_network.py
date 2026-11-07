@@ -25,6 +25,8 @@ elapsed 계산 자체가 원래 식으로 돌아왔으므로 애초에 영향이
 
 import time as real_time
 import types
+from collections.abc import Callable, Iterator
+from typing import Self
 
 import pytest
 
@@ -72,26 +74,26 @@ class _SlowWriteFile:
         self._real_file = real_file
         self._delay = delay
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
         self._real_file.close()
         return False
 
-    def seek(self, *args, **kwargs):
+    def seek(self, *args, **kwargs) -> int:
         return self._real_file.seek(*args, **kwargs)
 
-    def write(self, data):
+    def write(self, data) -> int:
         real_time.sleep(self._delay)
         return self._real_file.write(data)
 
 
-def _make_slow_open(delay: float):
+def _make_slow_open(delay: float) -> Callable[..., _SlowWriteFile]:
     """monkeypatch로 다운로더 모듈의 open()을 대체할 팩토리."""
     real_open = open
 
-    def _slow_open(path, mode, *args, **kwargs):
+    def _slow_open(path, mode, *args, **kwargs) -> _SlowWriteFile:
         return _SlowWriteFile(real_open(path, mode, *args, **kwargs), delay)
 
     return _slow_open
@@ -107,7 +109,7 @@ class _InstantResponse:
     def raise_for_status(self) -> None:
         pass
 
-    def iter_content(self, chunk_size=CHUNK):
+    def iter_content(self, chunk_size=CHUNK) -> Iterator[bytes]:
         for i in range(0, len(self._body), chunk_size):
             yield self._body[i : i + chunk_size]
 
@@ -117,10 +119,10 @@ class _InstantSession:
         self._body = body
         self.headers = {"content-length": str(len(body))}
 
-    def head(self, *args, **kwargs):
+    def head(self, *args, **kwargs) -> Self:
         return self
 
-    def get(self, *args, **kwargs):
+    def get(self, *args, **kwargs) -> _InstantResponse:
         return _InstantResponse(self._body)
 
 
@@ -131,7 +133,7 @@ class _RecordingLogger:
     def warning(self, message: str) -> None:
         self.warnings.append(message)
 
-    def __getattr__(self, name):
+    def __getattr__(self, name) -> Callable[..., None]:
         return lambda *args, **kwargs: None
 
 
@@ -190,16 +192,16 @@ class _TestClock:
         self.now += seconds
 
 
-def _make_clocked_open(clock: _TestClock, write_seconds: float):
+def _make_clocked_open(clock: _TestClock, write_seconds: float) -> Callable[..., _SlowWriteFile]:
     """write()마다 시계를 write_seconds만큼 흘리는 open() — 쓰기 시간을 테스트가 정한다."""
     real_open = open
 
     class _ClockedWriteFile(_SlowWriteFile):
-        def write(self, data):
+        def write(self, data) -> int:
             clock.advance(write_seconds)
             return self._real_file.write(data)
 
-    def _clocked_open(path, mode, *args, **kwargs):
+    def _clocked_open(path, mode, *args, **kwargs) -> _ClockedWriteFile:
         return _ClockedWriteFile(real_open(path, mode, *args, **kwargs), 0.0)
 
     return _clocked_open
@@ -217,13 +219,13 @@ def test_slow_network_still_triggers_requeue_for_file_part(tmp_path, monkeypatch
         def raise_for_status(self) -> None:
             pass
 
-        def iter_content(self, chunk_size=CHUNK):
+        def iter_content(self, chunk_size=CHUNK) -> Iterator[bytes]:
             for _ in range(CHUNK_COUNT):
                 clock.advance(SLOW_WRITE_DELAY_S)  # 수신 자체가 느리다(디스크 아님)
                 yield b"x" * chunk_size
 
     class _SlowNetworkSession:
-        def get(self, *args, **kwargs):
+        def get(self, *args, **kwargs) -> _SlowNetworkResponse:
             return _SlowNetworkResponse()
 
     output = tmp_path / "part.bin"

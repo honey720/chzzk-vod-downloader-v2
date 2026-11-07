@@ -23,6 +23,7 @@ import threading
 import time
 import types
 import weakref
+from collections.abc import Iterator
 
 import pytest
 from PySide6.QtCore import Qt
@@ -41,6 +42,7 @@ from app.download.logger import DownloadLogger
 from app.viewmodels.data import ContentItem
 from app.views import mainWindow as mw_mod
 from app.views.mainWindow import VodDownloader
+from core.media.mp4_index import Mp4Head
 from core.media.representations import StreamEntry
 from core.models.download_state import DownloadState
 from core.utils.ffmpeg import get_ffmpeg_exe
@@ -106,7 +108,7 @@ def server(tmp_path_factory) -> RangeHost:
 
 
 @pytest.fixture(autouse=True)
-def _environment(qapp, server, monkeypatch):
+def _environment(qapp, server, monkeypatch) -> Iterator[None]:
     """실제 QSS · 요청은 호스트로 · 카드의 크기 조회와 안내 창 차단 · 로그 파일 차단."""
     theme.set_color_scheme("dark")
     qapp.setStyle(hold_style(theme.build_style()))
@@ -145,7 +147,7 @@ def built(monkeypatch) -> list[weakref.ref]:
     refs: list[weakref.ref] = []
     real = mp4_module.index_mp4
 
-    def watched(raw):
+    def watched(raw) -> Mp4Head:
         head = real(raw)
         refs.append(weakref.ref(head))
         return head
@@ -155,7 +157,7 @@ def built(monkeypatch) -> list[weakref.ref]:
 
 
 @pytest.fixture
-def window(server, tmp_path):
+def window(server, tmp_path) -> tuple[VodDownloader, ContentItem]:
     """실제 메인 창과 대기 카드 하나 — 서비스와 엔진은 제품의 것 그대로다."""
     item = ContentItem(
         "https://chzzk.naver.com/video/1",
@@ -310,7 +312,7 @@ def test_download_started_while_the_total_is_counted_parses_once_and_frees_the_i
     gate = threading.Event()
     calls = []
 
-    def gated(raw, selections):
+    def gated(raw, selections) -> int:
         calls.append(1)
         assert gate.wait(30), "문이 열리지 않았다"
         return real(raw, selections)
@@ -395,7 +397,7 @@ def test_index_is_kept_only_by_the_retry_record_after_a_partial_failure(
     win, item = window
     _give_section(qtbot, win, item)
 
-    def failing(args, **kwargs):
+    def failing(args, **kwargs) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(args, 1, "", "boom")
 
     monkeypatch.setattr(cut_module, "run_ffmpeg", failing)
@@ -423,7 +425,7 @@ def test_index_is_freed_after_the_download_is_stopped(qtbot, window, monkeypatch
     entered, gate = threading.Event(), threading.Event()
     real = fd_module.FileDownloader._download_part
 
-    def held(self, *args, **kwargs):
+    def held(self, *args, **kwargs) -> int | None:
         entered.set()
         assert gate.wait(30), "문이 열리지 않았다"
         return real(self, *args, **kwargs)
@@ -469,7 +471,7 @@ def test_stopping_during_the_cut_does_not_make_the_app_give_up_waiting_for_the_w
 
     processes = record_processes(monkeypatch, on_launch)
 
-    def slowed(args, **kwargs):
+    def slowed(args, **kwargs) -> subprocess.CompletedProcess[str]:
         if str(args[-1]).endswith(("_head.mp4", "_tail.mp4", "_whole.mp4")):
             kwargs.pop("on_out_time", None)
             return real(LONG_RUNNING, **kwargs)
@@ -586,7 +588,7 @@ def test_stopping_a_cut_that_is_paused_ends_the_suspended_ffmpeg(
 
     processes = record_processes(monkeypatch, on_launch)
 
-    def slowed(args, **kwargs):
+    def slowed(args, **kwargs) -> subprocess.CompletedProcess[str]:
         if str(args[-1]).endswith(("_head.mp4", "_tail.mp4", "_whole.mp4")):
             kwargs.pop("on_out_time", None)
             return real(LONG_RUNNING, **kwargs)
@@ -635,7 +637,7 @@ def test_index_is_freed_when_the_card_is_deleted_while_downloading(
     entered, gate = threading.Event(), threading.Event()
     real = fd_module.FileDownloader._download_part
 
-    def held(self, *args, **kwargs):
+    def held(self, *args, **kwargs) -> int | None:
         entered.set()
         assert gate.wait(30), "문이 열리지 않았다"
         return real(self, *args, **kwargs)
@@ -670,7 +672,7 @@ def test_engine_is_freed_after_the_download_finishes(qtbot, window, monkeypatch)
     engines = []
     real = fd_module.FileDownloader.run
 
-    def watched(self):
+    def watched(self) -> None:
         engines.append(weakref.ref(self))
         return real(self)
 
@@ -705,7 +707,7 @@ def test_released_line_is_logged_only_after_the_last_reference_is_gone(
     held = []  # 엔진 밖의 누군가가 색인을 쥐고 있다
     real = mp4_module.index_mp4
 
-    def kept(raw):
+    def kept(raw) -> Mp4Head:
         held.append(real(raw))
         return held[-1]
 

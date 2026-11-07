@@ -5,6 +5,7 @@ DownloadLogger를 함께 열어 두고 각자 쓴 뒤, 실제 로그 파일의 �
 """
 
 import logging
+from datetime import datetime
 
 import pytest
 
@@ -71,7 +72,7 @@ def test_attempts_started_in_the_same_second_get_different_files(tmp_path, monke
 
     class _FixedClock:
         @staticmethod
-        def now():
+        def now() -> "datetime":
             from datetime import datetime
 
             return datetime(2026, 10, 22, 18, 0, 0)

@@ -67,7 +67,7 @@ def item() -> SimpleNamespace:
 
 
 @pytest.fixture
-def fake_fmp4(monkeypatch):
+def fake_fmp4(monkeypatch) -> list:
     """인코딩 전 다시보기의 조회 단계 대역 — 단계마다 응답 훅을 불러 요청을 흉내 낸다."""
     hooks: list = []
 
@@ -75,11 +75,11 @@ def fake_fmp4(monkeypatch):
         for hook in list(hooks):
             hook(_response(length, ms))
 
-    def resolve(content):
+    def resolve(content) -> tuple[str, Fraction]:
         request("1256", 210.0)
         return URL, Fraction(60)
 
-    def fetch_head(url, segment_dir):
+    def fetch_head(url, segment_dir) -> SimpleNamespace:
         request("2314962", 95.0)
         request(None, 40.0)  # Content-Length가 없는 응답
         playlist = SimpleNamespace(segments=["s"] * 19960)
@@ -89,7 +89,7 @@ def fake_fmp4(monkeypatch):
         request("1580043", 480.0)
         return f"segment{index}"
 
-    def timeline(playlist, init, segment_at):
+    def timeline(playlist, init, segment_at) -> SimpleNamespace:
         segment_at(19959)
         return SimpleNamespace(duration=39922.345, groups=("g",))
 
@@ -328,7 +328,7 @@ def test_the_shared_session_never_gets_a_hook(monkeypatch, item, fake_fmp4) -> N
     seen = []
     inner = section_basis.segment_frames
 
-    def watching_frames(head, url, index):
+    def watching_frames(head, url, index) -> str:
         seen.append(list(shared))
         return inner(head, url, index)
 
@@ -351,10 +351,10 @@ def test_two_lookups_running_at_once_do_not_mix_their_counts(caplog, monkeypatch
     sessions: dict[int, SimpleNamespace] = {}
     both_inside = threading.Barrier(2, timeout=5)
 
-    def thread_session():
+    def thread_session() -> SimpleNamespace:
         return sessions.setdefault(threading.get_ident(), SimpleNamespace(hooks={"response": []}))
 
-    def fetch(url):
+    def fetch(url) -> SimpleNamespace:
         count, size = (1, "100") if url == "one" else (3, "200")
         both_inside.wait()  # 둘 다 조회 안에 들어온 뒤에 요청을 흘린다
         for _ in range(count):
