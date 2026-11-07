@@ -1041,19 +1041,24 @@ class VodDownloader(QMainWindow):
             self.menuDownloadButton.startBlink()
         if not front:
             finished, failed = self.runResult.counts()
-            state = "all_failed" if failed and not finished else "some_failed" if failed else "done"
-            self.downloadEndNotice.notify(
-                APP_DISPLAY_NAME, self._runEndText(finished, failed), state
-            )
+            self.downloadEndNotice.notify(*self._runEndNotice(finished, failed))
 
-    def _runEndText(self, finished: int, failed: int) -> str:
-        """OS 알림 글 — 「다운로드를 마쳤습니다 · 완료 N(· 실패 N)」, 전부 실패면 「다운로드에 실패했습니다 · 실패 N」."""
+    def _runEndNotice(self, finished: int, failed: int) -> tuple[str, str, str]:
+        """OS 알림의 (제목, 글, 아이콘 상태) — 제목 「다운로드를 마쳤습니다」 · 글 「완료 N(· 실패 N)」.
+
+        전부 실패면 제목 「다운로드에 실패했습니다」 · 글 「실패 N」. 앱 이름은 넣지 않는다 — OS가 알림
+        머리줄에 앱 이름을 쓰므로 제목에 넣으면 두 번 나온다(오너 실기 2026-11-07).
+        """
         if failed and not finished:
-            return self.tr("Download failed · Failed {0}").format(failed)
-        text = self.tr("Download finished · Completed {0}").format(finished)
+            return (
+                self.tr("Download failed"),
+                self.tr("Failed {0}").format(failed),
+                "all_failed",
+            )
+        text = self.tr("Completed {0}").format(finished)
         if failed:
             text += " · " + self.tr("Failed {0}").format(failed)
-        return text
+        return self.tr("Download finished"), text, "some_failed" if failed else "done"
 
     def _screen(self) -> str:
         """지금 보이는 화면 — 설정 창이 떠 있으면 "settings", 아니면 "vod"(VOD 다운).

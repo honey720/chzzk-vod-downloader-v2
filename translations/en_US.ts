@@ -815,6 +815,18 @@ Check your connection and cookies, then open this window again.</translation>
         <translation>Pause all</translation>
     </message>
     <message>
+        <source>Download failed</source>
+        <translation>Download failed</translation>
+    </message>
+    <message>
+        <source>Completed {0}</source>
+        <translation>Completed {0}</translation>
+    </message>
+    <message>
+        <source>Download finished</source>
+        <translation>Download finished</translation>
+    </message>
+    <message>
         <source>Completed</source>
         <translation>Completed</translation>
     </message>
@@ -850,14 +862,6 @@ Check your connection and cookies, then open this window again.</translation>
     <message>
         <source>Failed {0}</source>
         <translation>Failed {0}</translation>
-    </message>
-    <message>
-        <source>Download failed · Failed {0}</source>
-        <translation>Download failed · Failed {0}</translation>
-    </message>
-    <message>
-        <source>Download finished · Completed {0}</source>
-        <translation>Download finished · Completed {0}</translation>
     </message>
     <message>
         <source>All downloads failed. Check the failed cards for the reason.</source>

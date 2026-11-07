@@ -454,21 +454,21 @@ def test_blink_period_is_slower_than_three_flashes_a_second() -> None:
 
 
 @pytest.mark.parametrize(
-    ("outcomes", "text"),
+    ("outcomes", "title", "text"),
     [
-        ([footer._finish, footer._finish], "Download finished · Completed 2"),
-        ([footer._finish, footer._fail], "Download finished · Completed 1 · Failed 1"),
-        ([footer._fail, footer._fail], "Download failed · Failed 2"),
+        ([footer._finish, footer._finish], "Download finished", "Completed 2"),
+        ([footer._finish, footer._fail], "Download finished", "Completed 1 · Failed 1"),
+        ([footer._fail, footer._fail], "Download failed", "Failed 2"),
     ],
     ids=["모두 완료", "일부 실패", "전부 실패"],
 )
 @pytest.mark.usefixtures("answers")
 def test_os_notice_text_when_the_window_is_behind(
-    tmp_path: Path, notices: dict[str, list], outcomes: list[Callable], text: str
+    tmp_path: Path, notices: dict[str, list], outcomes: list[Callable], title: str, text: str
 ) -> None:
-    """창이 뒤에 있을 때 작업이 끝나면 작업 표시줄을 깜빡이고 결과 문구로 트레이 알림을 띄워야 한다.
+    """창이 뒤에 있을 때 작업이 끝나면 작업 표시줄을 깜빡이고 결과 제목 · 글로 트레이 알림을 띄워야 한다.
 
-    대기 2장 → 다른 창이 앞 → 두 장 끝 -> 깜빡임 1번(메인 창) · 트레이 알림 (앱 이름, 그 문구)
+    대기 2장 → 창 최소화 → 두 장 끝 -> 깜빡임 1번(메인 창) · 트레이 알림 (그 제목, 그 글) · 제목에 앱 이름 없음
     """
     win, _items, engine = footer._window(tmp_path, cards=2)
     win.downloadButton.click()
@@ -477,7 +477,8 @@ def test_os_notice_text_when_the_window_is_behind(
     for outcome in outcomes:
         outcome(engine)
     assert notices["alerts"] == [win]
-    assert notices["messages"] == [(mw_mod.APP_DISPLAY_NAME, text)]
+    assert notices["messages"] == [(title, text)]
+    assert mw_mod.APP_DISPLAY_NAME not in notices["messages"][0][0]
 
 
 @pytest.mark.usefixtures("answers")

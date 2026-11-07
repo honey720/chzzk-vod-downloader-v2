@@ -810,6 +810,18 @@ Check your connection and cookies, then open this window again.</source>
         <translation>모두 일시정지</translation>
     </message>
     <message>
+        <source>Download failed</source>
+        <translation>다운로드에 실패했습니다</translation>
+    </message>
+    <message>
+        <source>Completed {0}</source>
+        <translation>완료 {0}</translation>
+    </message>
+    <message>
+        <source>Download finished</source>
+        <translation>다운로드를 마쳤습니다</translation>
+    </message>
+    <message>
         <source>Completed</source>
         <translation>완료</translation>
     </message>
@@ -845,14 +857,6 @@ Check your connection and cookies, then open this window again.</source>
     <message>
         <source>Failed {0}</source>
         <translation>실패 {0}</translation>
-    </message>
-    <message>
-        <source>Download failed · Failed {0}</source>
-        <translation>다운로드에 실패했습니다 · 실패 {0}</translation>
-    </message>
-    <message>
-        <source>Download finished · Completed {0}</source>
-        <translation>다운로드를 마쳤습니다 · 완료 {0}</translation>
     </message>
     <message>
         <source>All downloads failed. Check the failed cards for the reason.</source>
