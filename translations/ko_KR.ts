@@ -782,16 +782,16 @@ Check your connection and cookies, then open this window again.</source>
         <translation>다운로드</translation>
     </message>
     <message>
-        <source>No VODs added.</source>
-        <translation>추가된 VOD가 없습니다.</translation>
-    </message>
-    <message>
         <source>Still loading video information. Please try again in a moment.</source>
         <translation>영상 정보를 불러오는 중입니다. 잠시 후 다시 시도해 주세요.</translation>
     </message>
     <message>
         <source>VOD Download</source>
         <translation>VOD 다운</translation>
+    </message>
+    <message>
+        <source>No VOD can be started right now.</source>
+        <translation>지금 시작할 수 있는 VOD가 없습니다.</translation>
     </message>
     <message>
         <source>Downloading</source>

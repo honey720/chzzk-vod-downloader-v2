@@ -787,16 +787,16 @@ Check your connection and cookies, then open this window again.</translation>
         <translation>Download</translation>
     </message>
     <message>
-        <source>No VODs added.</source>
-        <translation>No VODs added.</translation>
-    </message>
-    <message>
         <source>Still loading video information. Please try again in a moment.</source>
         <translation>Still loading video information. Please try again in a moment.</translation>
     </message>
     <message>
         <source>VOD Download</source>
         <translation>VOD Download</translation>
+    </message>
+    <message>
+        <source>No VOD can be started right now.</source>
+        <translation>No VOD can be started right now.</translation>
     </message>
     <message>
         <source>Downloading</source>

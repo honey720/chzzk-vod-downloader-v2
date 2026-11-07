@@ -613,3 +613,21 @@ def test_download_button_turns_off_when_the_last_waiting_card_is_deleted(tmp_pat
     win.contentManager.removeItem(items[0])
     _pump()
     assert not win.downloadButton.isEnabled()
+
+
+def test_download_button_says_none_can_start_when_the_waiting_card_is_being_edited(
+    tmp_path, answers
+):
+    """대기 카드가 구간 편집 창에 열려 있으면 ▶는 켜져 있되 누르면 「지금 시작할 수 있는 VOD가 없다」 안내여야 한다.
+
+    대기 카드 1장, 그 카드의 구간 편집 시작 -> ▶ 켜짐, 누르면 안내 글 "No VOD can be started right now."
+    한 번 · 제출 0건
+    """
+    asked, _reply = answers
+    win, items, engine = _window(tmp_path, cards=1)
+    win.contentManager.beginSectionEdit(items[0])
+    assert win.downloadButton.isEnabled(), "전제: 대기 카드가 있어 켜져 있다"
+    win.downloadButton.click()
+    _pump()
+    assert asked == ["No VOD can be started right now."]
+    assert engine.submissions == []

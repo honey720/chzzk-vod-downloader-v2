@@ -876,7 +876,9 @@ class VodDownloader(QMainWindow):
                 if self.contentManager.hasLoadingItems():
                     QMessageBox.warning(self, self.tr("Warning"), self.tr("Still loading video information. Please try again in a moment."))
                 else:
-                    QMessageBox.warning(self, self.tr("Warning"), self.tr("No VODs added."))
+                    # ▶는 시작할 것이 없으면 꺼진다(#504) — 여기 오는 것은 대기 카드가 있지만 차례로 고를 수
+                    # 없을 때(구간 편집 창에 열림 · 해상도 확인 중)뿐이다. 목록에 VOD가 있으니 「없다」고 하지 않는다
+                    QMessageBox.warning(self, self.tr("Warning"), self.tr("No VOD can be started right now."))
                 return
             self.contentManager.downloadItem()
             self._syncDownloadButton()
