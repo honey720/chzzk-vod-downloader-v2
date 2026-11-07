@@ -1109,14 +1109,16 @@ class VodDownloader(QMainWindow):
         self.runResultLabel.showResult(self.runResult.isShown(), finished, failed)
 
     def onDownloadAllFinished(self) -> None:
-        """
-        모든 메타데이터 카드 다운로드 완료 콜백.
+        """다운로드 작업이 끝났다 — 결과를 보이고 알린 뒤 다운로드 뒤 동작(절전 · 종료)을 한다.
+
+        끝 소식은 하단바 실행 결과 · 메뉴 버블 · 깜빡임 · OS 알림이 맡는다 — 끝 안내 대화상자는 없다
+        (#523, 설계 §2 「알림 자리」: 확인이 필요한 것만 대화상자).
         """
         self.setStopButtonEnable(False)
         self._syncDownloadButton()
-        # 하단바 실행 결과 — 끝났다는 안내(대화상자)를 띄우기 전에 보인다 (#504)
+        # 하단바 실행 결과 (#504)
         self.runResult.finish()
-        # 결과 버블 강조 · OS 알림(#523) — 안내 대화상자가 창의 활성을 가져가기 전에 정한다
+        # 결과 버블 강조 · OS 알림(#523) — 절전 · 종료 전에 알린다
         self._announceRunEnd()
 
         os_type = platform.system()
@@ -1141,26 +1143,6 @@ class VodDownloader(QMainWindow):
                 os.system("shutdown -h now")
             else:
                 logger.warning(f"시스템 종료는 {os_type}에서 지원되지 않습니다.")
-
-        # 배치 종료 안내는 화면의 결과와 모순되지 않아야 한다 (#134 — #128 후속 ⑤).
-        # 실패 카드가 보이는데 "완료했습니다"만 뜨던 문구를 결과별로 나눈다
-        finished, failed = self.contentManager.downloadResultCounts()
-        if failed and not finished:
-            QMessageBox.warning(
-                self,
-                self.tr("Completed"),
-                self.tr("All downloads failed. Check the failed cards for the reason."),
-            )
-        elif failed:
-            QMessageBox.warning(
-                self,
-                self.tr("Completed"),
-                self.tr(
-                    "Download finished, but some items failed. Check the failed cards for the reason."
-                ),
-            )
-        else:
-            QMessageBox.information(self, self.tr("Completed"), self.tr("Download completed."))
 
     def setStopButtonEnable(self, bool) -> None:
         self.stopButton.setEnabled(bool)

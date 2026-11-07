@@ -822,10 +822,6 @@ Check your connection and cookies, then open this window again.</source>
         <translation>다운로드를 마쳤습니다</translation>
     </message>
     <message>
-        <source>Completed</source>
-        <translation>완료</translation>
-    </message>
-    <message>
         <source>Completed {0}/{1}</source>
         <translation>완료 {0}/{1}</translation>
     </message>
@@ -857,18 +853,6 @@ Check your connection and cookies, then open this window again.</source>
     <message>
         <source>Failed {0}</source>
         <translation>실패 {0}</translation>
-    </message>
-    <message>
-        <source>All downloads failed. Check the failed cards for the reason.</source>
-        <translation>다운로드에 모두 실패했습니다. 실패한 카드에서 사유를 확인해 주세요.</translation>
-    </message>
-    <message>
-        <source>Download finished, but some items failed. Check the failed cards for the reason.</source>
-        <translation>다운로드가 끝났지만 일부 항목은 실패했습니다. 실패한 카드에서 사유를 확인해 주세요.</translation>
-    </message>
-    <message>
-        <source>Download completed.</source>
-        <translation>다운로드를 완료했습니다.</translation>
     </message>
     <message>
         <source>Settings</source>

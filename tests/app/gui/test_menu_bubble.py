@@ -11,7 +11,7 @@ import pytest
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QCloseEvent, QGuiApplication, QIcon, QImage
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QMessageBox, QWidget
 
 import app.theme as theme
 import app.widgets.os_notice as os_notice
@@ -714,3 +714,86 @@ def test_closing_without_a_question_does_not_raise_the_window(
     monkeypatch.setattr(win, "_bringToFront", lambda: raised.append(True))
     event = _close(win)
     assert (event.isAccepted(), raised) == (True, [])
+
+
+# ---------------------------------------------------------------------------
+# ⑤ 다운로드 끝 안내 대화상자 없음 · 다운로드 뒤 동작은 그대로
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def popups(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """메인 창의 정적 안내 · 확인 창 대역 — 부른 종류를 적고 OK를 돌려준다."""
+    calls: list[str] = []
+    for name in ("information", "warning", "critical", "question"):
+        monkeypatch.setattr(
+            mw_mod.QMessageBox,
+            name,
+            lambda *args, _name=name, **kwargs: (
+                calls.append(_name) or QMessageBox.StandardButton.Ok
+            ),
+        )
+    return calls
+
+
+@pytest.mark.parametrize(
+    "outcomes",
+    [
+        [footer._finish, footer._finish],
+        [footer._finish, footer._fail],
+        [footer._fail, footer._fail],
+    ],
+    ids=["모두 완료", "일부 실패", "전부 실패"],
+)
+def test_no_dialog_when_the_run_ends(
+    tmp_path: Path, popups: list[str], outcomes: list[Callable]
+) -> None:
+    """다운로드 작업이 끝나면 대화상자가 뜨지 않고 하단바 실행 결과만 보여야 한다.
+
+    대기 2장 → 두 장 끝 -> 안내 · 확인 창 호출 0 · 모달 창 없음 · 하단바 실행 결과 보임
+    """
+    win, _items, engine = footer._window(tmp_path, cards=2)
+    _run_to_end(win, engine, outcomes)
+    shown = [
+        w for w in QApplication.topLevelWidgets() if isinstance(w, QMessageBox) and w.isVisible()
+    ]
+    assert (popups, QApplication.activeModalWidget(), shown) == ([], None, [])
+    assert win.runResultLabel.isVisible()
+
+
+@pytest.mark.parametrize(
+    ("after", "commands"),
+    [
+        ("sleep", ["rundll32.exe powrprof.dll,SetSuspendState 0,1,0"]),
+        ("shutdown", ["shutdown -s -t 0"]),
+        ("none", []),
+    ],
+    ids=["절전", "종료", "없음"],
+)
+def test_after_download_action_still_runs_after_the_notice(
+    tmp_path: Path,
+    popups: list[str],
+    notices: dict[str, list],
+    monkeypatch: pytest.MonkeyPatch,
+    after: str,
+    commands: list[str],
+) -> None:
+    """다운로드 뒤 동작은 작업이 끝날 때 그대로 불리고, OS 알림 뒤에 불려야 한다.
+
+    Windows · 다운로드 뒤 동작 after · 창 최소화 → 완료 -> OS 명령 commands(알림 다음) · 대화상자 0
+    """
+    from app.system import settings
+
+    events: list[str] = []
+    monkeypatch.setattr(mw_mod.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(mw_mod.os, "system", lambda command: events.append(command) or 0)
+    monkeypatch.setattr(
+        os_notice.QApplication, "alert", lambda widget, msec=0: events.append("notice")
+    )
+    settings.update_settings({"afterDownload": after})
+    win, _items, engine = footer._window(tmp_path)
+    win.downloadButton.click()
+    footer._pump()
+    _send_behind(win)
+    footer._finish(engine)
+    assert (events, popups) == (["notice", *commands], [])
