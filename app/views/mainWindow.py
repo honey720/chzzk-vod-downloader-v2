@@ -17,12 +17,23 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtCore import QMargins, QMetaObject, QPoint, QRect, QSize, QStandardPaths, Qt, QTimer
+from PySide6.QtCore import (
+    QEvent,
+    QMargins,
+    QMetaObject,
+    QPoint,
+    QRect,
+    QSize,
+    QStandardPaths,
+    Qt,
+    QTimer,
+)
 
 from app.system.free_space import FreeSpaceProbe
 from app.system.process_memory import log_process_memory, resident_bytes
 from app.viewmodels.download_viewmodel import DownloadViewModel
 from app.viewmodels.footer_monitor import RunResult, combine_readings
+from app.viewmodels.menu_bubble import RESULT_STATES, MenuBubble
 from app.viewmodels.path_gates import check_fetch_path
 from app.viewmodels.save_location import SaveLocations
 from app.views.dialog import SettingDialog
@@ -36,6 +47,8 @@ from app.widgets.eliding_label import ElidingLabel
 from app.widgets.footer_bar import FooterMonitor, RunResultLabel
 from app.widgets.header_controls import BusyButton, FilterChips, SaveLocationButton, SortButton
 from app.widgets.icons import IconButton
+from app.widgets.menu_button import MenuButton
+from app.widgets.os_notice import DownloadEndNotice
 from app.widgets.view import ContentListView
 from core.models.download_state import DownloadState
 import app.theme as theme
@@ -176,6 +189,12 @@ class VodDownloader(QMainWindow):
         # 하단바(#504) — 실행 결과 · 여유 공간 측정 · 1초마다 모니터링
         self.runResult = RunResult(self.contentManager.model, self.contentManager.order, self)
         self.runResult.changed.connect(self._showRunResult)
+        # 메뉴바 상태 버블(#523) — 하단바 실행 결과와 같은 RunResult를 본다(나타나고 사라지는 조건이 같다)
+        self.menuBubble = MenuBubble(self.contentManager.order, self.runResult, self)
+        self.menuBubble.changed.connect(self._showMenuBubble)
+        self._showMenuBubble()
+        # 창이 앞에 없을 때 다운로드 끝 OS 알림(#523, 설계 §8-11)
+        self.downloadEndNotice = DownloadEndNotice(self, self._bringToFront, APP_DISPLAY_NAME)
         self.freeSpace = FreeSpaceProbe(self)
         self.freeSpace.measured.connect(self._onFreeSpaceMeasured)
         self.monitorTimer = QTimer(self)
@@ -231,14 +250,14 @@ class VodDownloader(QMainWindow):
         # 메뉴바(#492) — 창 위 가로 줄, 메뉴 이름 글이 보인다. QMenuBar가 아니라 버튼 줄로 짠다:
         # macOS는 QMenuBar를 화면 맨 위 시스템 메뉴 막대로 옮겨 창 안에 남지 않고, 메뉴는
         # 펼치는 목록이지 고른 화면을 표시하지 않는다(「VOD 다운」이 눌린 채로 남아야 한다).
-        # 나중에 상태 버블이 메뉴 버튼의 오른쪽 안쪽 여백에 붙는다(셸 S3).
+        # 「VOD 다운」의 오른쪽 안쪽 여백에 상태 버블이 붙는다(#523 — 셸 S3-1).
         # 「VOD 다운」 = 지금 화면(목록). 「설정」 = 설정 창을 띄우고 선택은 「VOD 다운」에 남는다.
         self.appMenuBar = QFrame(self.contentColumn)
         self.appMenuBar.setObjectName("appMenuBar")
         self.appMenuLayout = QHBoxLayout(self.appMenuBar)
         self.appMenuLayout.setSpacing(8)
         self.appMenuLayout.setObjectName("appMenuLayout")
-        self.menuDownloadButton = QPushButton(self.appMenuBar)
+        self.menuDownloadButton = MenuButton(self.appMenuBar)  # 상태 버블 · 깜빡이는 테두리(#523)
         self.menuDownloadButton.setObjectName("menuDownloadButton")
         self.menuDownloadButton.setCheckable(True)
         self.menuDownloadButton.setChecked(True)
@@ -706,6 +725,8 @@ class VodDownloader(QMainWindow):
         self.saveLocationButton.errorOccurred.connect(self._showRegisterError)
         self.urlInput.textChanged.connect(self._clearRegisterError)
         self.menuSettingsButton.clicked.connect(self.onSetting)
+        # 「VOD 다운」을 눌렀다 — 결과를 봤다(#523)
+        self.menuDownloadButton.clicked.connect(self.menuDownloadButton.stopBlink)
         self.clearFinishedButton.clicked.connect(self.contentManager.clrearFinishedItems)
         self.downloadButton.clicked.connect(self.onDownloadPause)
         self.stopButton.clicked.connect(self.onStop)
@@ -978,19 +999,143 @@ class VodDownloader(QMainWindow):
         if path == self.saveLocations.current():
             self._showFooter()
 
+    def _showMenuBubble(self) -> None:
+        """버블 상태 · 숫자가 바뀌었을 수 있다 — 버블과 툴팁을 고친다. 결과 버블이 사라지면 깜빡임도 멈춘다(#523)."""
+        state = self.menuBubble.state()
+        self.menuDownloadButton.setBubble(state)
+        self.menuDownloadButton.setToolTip(self._menuBubbleTip(state))
+        if state not in RESULT_STATES and self.menuDownloadButton.isBlinking():
+            self.menuDownloadButton.stopBlink()
+
+    def _menuBubbleTip(self, state: str) -> str:
+        """버블 툴팁 — 버블 이름 다음에 숫자. 버블이 없으면 빈 글(툴팁 없음).
+
+        받는 중 · 일시정지는 「받는 중 · 완료 3/5 · 실패 1」. 결과 버블은 이름과 같은 낱말을 숫자 앞에 다시
+        쓰지 않는다 — 완료 「완료 · 2/2」, 일부 실패 「일부 실패 · 완료 1 · 실패 1」, 전부 실패 「전부 실패 · 실패 3」
+        (오너 실기 2026-11-07).
+        """
+        if not state:
+            return ""
+        # 구분 글 "menu bubble" — 같은 원문의 다른 자리(닫기 확인 창 제목 등)와 번역을 나눈다(설계 §2의 이름)
+        names = {
+            "running": self.tr("Downloading", "menu bubble"),
+            "paused": self.tr("Paused", "menu bubble"),
+            "all_failed": self.tr("All failed", "menu bubble"),
+            "some_failed": self.tr("Some failed", "menu bubble"),
+            "done": self.tr("Completed", "menu bubble"),
+        }
+        finished, failed, total = self.menuBubble.counts()
+        if state == "done":
+            parts = [names[state], f"{finished}/{total}"]
+        elif state == "some_failed":
+            parts = [
+                names[state],
+                self.tr("Completed {0}").format(finished),
+                self.tr("Failed {0}").format(failed),
+            ]
+        elif state == "all_failed":
+            parts = [names[state], self.tr("Failed {0}").format(failed)]
+        else:
+            parts = [names[state], self.tr("Completed {0}/{1}").format(finished, total)]
+            if failed:
+                parts.append(self.tr("Failed {0}").format(failed))
+        return " · ".join(parts)
+
+    def _announceRunEnd(self) -> None:
+        """다운로드 작업이 끝났다 — 결과를 아직 못 봤으면 메뉴 테두리를 깜빡이고, 창이 앞에 없으면 OS 알림.
+
+        칩 숫자는 마지막 카드의 상태가 바뀐 차례가 끝난 뒤에 고쳐지므로 여기서는 목록을 한 번 센다(작업
+        끝마다 한 번). 깜빡임은 결과 버블이 보일 때만이다 — 받는 중 · 일시정지 카드가 남았으면 버블은 그
+        상태다. VOD 다운 화면을 보고 있고 창이 앞이면 이미 본 것이라 깜빡이지 않는다(설계 §12.1).
+        """
+        front = self._inFront()
+        active = any(
+            item.downloadState in (DownloadState.RUNNING, DownloadState.PAUSED)
+            for item in self.contentManager.model.items
+        )
+        if self.runResult.isShown() and not active and not (front and self._screen() == "vod"):
+            self.menuDownloadButton.startBlink()
+        if not front:
+            finished, failed = self.runResult.counts()
+            self.downloadEndNotice.notify(*self._runEndNotice(finished, failed))
+
+    def _runEndNotice(self, finished: int, failed: int) -> tuple[str, str, str]:
+        """OS 알림의 (제목, 글, 아이콘 상태) — 제목 「다운로드를 마쳤습니다」 · 글 「완료 N(· 실패 N)」.
+
+        전부 실패면 제목 「다운로드에 실패했습니다」 · 글 「실패 N」. 앱 이름은 넣지 않는다 — OS가 알림
+        머리줄에 앱 이름을 쓰므로 제목에 넣으면 두 번 나온다(오너 실기 2026-11-07).
+        """
+        if failed and not finished:
+            return (
+                self.tr("Download failed"),
+                self.tr("Failed {0}").format(failed),
+                "all_failed",
+            )
+        text = self.tr("Completed {0}").format(finished)
+        if failed:
+            text += " · " + self.tr("Failed {0}").format(failed)
+        return self.tr("Download finished"), text, "some_failed" if failed else "done"
+
+    def _screen(self) -> str:
+        """지금 보이는 화면 — 설정 창이 떠 있으면 "settings", 아니면 "vod"(VOD 다운).
+
+        설정은 아직 창이다(설정 화면 개편 전) — 떠 있는 동안을 설정 화면으로 본다.
+        """
+        dialog = getattr(self, "dialog", None)
+        return "settings" if dialog is not None and dialog.isVisible() else "vod"
+
+    def _inFront(self) -> bool:
+        """창이 앞에 있는지 — 최소화가 아니고, 활성 창이 이 창이거나 이 창의 자식 창(설정 · 확인 창 등)이다."""
+        if self.isMinimized():
+            return False
+        active = QApplication.activeWindow()
+        return active is not None and (active is self or self.isAncestorOf(active))
+
+    def _bringToFront(self) -> None:
+        """본 창을 앞으로 — 최소화면 풀고(최대화였으면 최대화로) 맨 앞으로 올려 활성으로 한다(#523)."""
+        if self.isMinimized():
+            if self.windowState() & Qt.WindowState.WindowMaximized:
+                self.showMaximized()
+            else:
+                self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def changeEvent(self, event: QEvent) -> None:
+        """창이 포커스를 받았다 — VOD 다운 화면이면 결과를 본 것이라 깜빡임을 멈춘다(설정 화면이면 계속, #523).
+
+        포커스를 받은 때: 활성이 바뀌었거나, 최소화가 풀렸는데 이미 활성이다(활성이 그대로면 활성 변화가
+        오지 않는다 — offscreen이 그렇다).
+        """
+        super().changeEvent(event)
+        button = getattr(self, "menuDownloadButton", None)  # 창을 짜는 중에도 불린다
+        if (
+            button is not None
+            and event.type() in (QEvent.Type.ActivationChange, QEvent.Type.WindowStateChange)
+            and self.isActiveWindow()
+            and not self.isMinimized()
+            and self._screen() == "vod"
+            and button.isBlinking()
+        ):
+            button.stopBlink()
+
     def _showRunResult(self) -> None:
         """실행 결과가 바뀌었다 — 하단바 결과 글을 고친다 (#504)."""
         finished, failed = self.runResult.counts()
         self.runResultLabel.showResult(self.runResult.isShown(), finished, failed)
 
     def onDownloadAllFinished(self) -> None:
-        """
-        모든 메타데이터 카드 다운로드 완료 콜백.
+        """다운로드 작업이 끝났다 — 결과를 보이고 알린 뒤 다운로드 뒤 동작(절전 · 종료)을 한다.
+
+        끝 소식은 하단바 실행 결과 · 메뉴 버블 · 깜빡임 · OS 알림이 맡는다 — 끝 안내 대화상자는 없다
+        (#523, 설계 §2 「알림 자리」: 확인이 필요한 것만 대화상자).
         """
         self.setStopButtonEnable(False)
         self._syncDownloadButton()
-        # 하단바 실행 결과 — 끝났다는 안내(대화상자)를 띄우기 전에 보인다 (#504)
+        # 하단바 실행 결과 (#504)
         self.runResult.finish()
+        # 결과 버블 강조 · OS 알림(#523) — 절전 · 종료 전에 알린다
+        self._announceRunEnd()
 
         os_type = platform.system()
 
@@ -1015,26 +1160,6 @@ class VodDownloader(QMainWindow):
             else:
                 logger.warning(f"시스템 종료는 {os_type}에서 지원되지 않습니다.")
 
-        # 배치 종료 안내는 화면의 결과와 모순되지 않아야 한다 (#134 — #128 후속 ⑤).
-        # 실패 카드가 보이는데 "완료했습니다"만 뜨던 문구를 결과별로 나눈다
-        finished, failed = self.contentManager.downloadResultCounts()
-        if failed and not finished:
-            QMessageBox.warning(
-                self,
-                self.tr("Completed"),
-                self.tr("All downloads failed. Check the failed cards for the reason."),
-            )
-        elif failed:
-            QMessageBox.warning(
-                self,
-                self.tr("Completed"),
-                self.tr(
-                    "Download finished, but some items failed. Check the failed cards for the reason."
-                ),
-            )
-        else:
-            QMessageBox.information(self, self.tr("Completed"), self.tr("Download completed."))
-
     def setStopButtonEnable(self, bool) -> None:
         self.stopButton.setEnabled(bool)
 
@@ -1054,6 +1179,7 @@ class VodDownloader(QMainWindow):
         창을 닫을 때 실행되는 이벤트
         """
         if self.downloadViewModel.isDownloading():
+            self._bringToFront()  # 확인 창 전에 본 창을 앞으로 — 최소화 · 가려진 창이 묻는 것을 보이게(#523)
             reply = QMessageBox.warning(
                 self,
                 self.tr("Downloading"),

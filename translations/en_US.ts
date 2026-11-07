@@ -815,20 +815,49 @@ Check your connection and cookies, then open this window again.</translation>
         <translation>Pause all</translation>
     </message>
     <message>
+        <source>Download failed</source>
+        <translation>Download failed</translation>
+    </message>
+    <message>
+        <source>Completed {0}</source>
+        <translation>Completed {0}</translation>
+    </message>
+    <message>
+        <source>Download finished</source>
+        <translation>Download finished</translation>
+    </message>
+    <message>
+        <source>Completed {0}/{1}</source>
+        <translation>Completed {0}/{1}</translation>
+    </message>
+    <message>
+        <source>Downloading</source>
+        <comment>menu bubble</comment>
+        <translation>Downloading</translation>
+    </message>
+    <message>
+        <source>Paused</source>
+        <comment>menu bubble</comment>
+        <translation>Paused</translation>
+    </message>
+    <message>
+        <source>All failed</source>
+        <comment>menu bubble</comment>
+        <translation>All failed</translation>
+    </message>
+    <message>
+        <source>Some failed</source>
+        <comment>menu bubble</comment>
+        <translation>Some failed</translation>
+    </message>
+    <message>
         <source>Completed</source>
+        <comment>menu bubble</comment>
         <translation>Completed</translation>
     </message>
     <message>
-        <source>All downloads failed. Check the failed cards for the reason.</source>
-        <translation>All downloads failed. Check the failed cards for the reason.</translation>
-    </message>
-    <message>
-        <source>Download finished, but some items failed. Check the failed cards for the reason.</source>
-        <translation>Download finished, but some items failed. Check the failed cards for the reason.</translation>
-    </message>
-    <message>
-        <source>Download completed.</source>
-        <translation>Download completed.</translation>
+        <source>Failed {0}</source>
+        <translation>Failed {0}</translation>
     </message>
     <message>
         <source>Settings</source>

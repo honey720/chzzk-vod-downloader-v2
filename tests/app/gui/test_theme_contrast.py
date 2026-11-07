@@ -4,6 +4,8 @@
 않는다(제품이 틀리면 테스트도 같이 틀리지 않게). 기준: 글 4.5 · 그림 3.0(inbox 39).
 """
 
+import math
+
 import pytest
 
 import app.theme as theme
@@ -123,3 +125,95 @@ def test_fill_rule_splits_the_two_themes() -> None:
     """
     assert _luminance(theme.DARK["accent"]) > _luminance(theme.DARK["onAccent"])
     assert _luminance(theme.LIGHT["accent"]) < _luminance(theme.LIGHT["onAccent"])
+
+
+# ---------------------------------------------------------------------------
+# 상태 버블 · OS 알림 아이콘의 원 색(#523, 설계 §12.1 상태 색)
+# ---------------------------------------------------------------------------
+
+#: 버블 상태마다의 원 색 토큰 — 제품 표(app.widgets.icons.BUBBLE_FILL_TOKENS)를 쓰지 않고 따로 적는다.
+BUBBLE_FILLS = ("stateRunning", "statePaused", "stateFailed", "stateWarning", "stateFinished")
+
+#: OS 알림 바탕 — 설계 §12.1이 정한 값(라이트 흰색 · 다크 #2c2c2c).
+OS_NOTICE_GROUND = {"dark": "#2c2c2c", "light": "#ffffff"}
+
+#: 원이 놓이는 평소 바탕 토큰 — 메뉴바(창 배경) · 고른 메뉴(버튼 면).
+BUBBLE_GROUNDS = ("windowBg", "surfaceAlt")
+
+#: 경고 · 정보 토큰의 원래 색 — 색상각이 같아야 한다(밝기만 옮긴다). 정보 = 진행 색.
+WARNING_ORIGINAL = "#f0a33c"
+
+
+def _oklch_hue(color: str) -> float:
+    """OKLCH 색상각(도) — 설계 §12.1: 색상이 같은지는 OKLCH 색상각으로 잰다."""
+
+    def linear(value: int) -> float:
+        v = value / 255
+        return v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
+
+    r, g, b = (linear(int(color[i : i + 2], 16)) for i in (1, 3, 5))
+    lms = (
+        (0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b) ** (1 / 3),
+        (0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b) ** (1 / 3),
+        (0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b) ** (1 / 3),
+    )
+    a = 1.9779984951 * lms[0] - 2.4285922050 * lms[1] + 0.4505937099 * lms[2]
+    bb = 0.0259040371 * lms[0] + 0.7827717662 * lms[1] - 0.8086757660 * lms[2]
+    return math.degrees(math.atan2(bb, a)) % 360
+
+
+@pytest.mark.parametrize("scheme", SCHEMES)
+@pytest.mark.parametrize("fill", BUBBLE_FILLS)
+def test_bubble_glyph_reads_on_its_fill(scheme: str, fill: str) -> None:
+    """버블 원 안 기호(채움 안 그림 onAccent)는 원 색과 4.5 이상이어야 한다.
+
+    두 테마 × 버블 원 색 다섯 -> onAccent ↔ 원 색 ≥ 4.5
+    """
+    table = SCHEMES[scheme]
+    ratio = _contrast(table["onAccent"], table[fill])
+    assert ratio >= 4.5, f"{scheme} {fill}: {table[fill]} = {ratio:.2f}"
+
+
+@pytest.mark.parametrize("scheme", SCHEMES)
+@pytest.mark.parametrize("fill", BUBBLE_FILLS)
+def test_bubble_stands_out_on_its_grounds(scheme: str, fill: str) -> None:
+    """버블 원은 메뉴바 · 고른 메뉴 · OS 알림 바탕 모두와 3.0 이상이어야 한다.
+
+    두 테마 × 버블 원 색 다섯 -> 원 ↔ windowBg · surfaceAlt · OS 알림 바탕 ≥ 3.0
+    """
+    table = SCHEMES[scheme]
+    grounds = {name: table[name] for name in BUBBLE_GROUNDS} | {"os": OS_NOTICE_GROUND[scheme]}
+    low = {name: round(_contrast(table[fill], g), 2) for name, g in grounds.items()}
+    assert min(low.values()) >= 3.0, f"{scheme} {fill}: {low}"
+
+
+@pytest.mark.parametrize("scheme", SCHEMES)
+def test_warning_keeps_the_orange_hue(scheme: str) -> None:
+    """경고 토큰은 원래 주황(#f0a33c)과 OKLCH 색상각이 1도 안이어야 한다 — 밝기만 옮긴다.
+
+    두 테마의 stateWarning -> |색상각 − 원래 색상각| ≤ 1
+    """
+    hue = _oklch_hue(SCHEMES[scheme]["stateWarning"])
+    assert abs(hue - _oklch_hue(WARNING_ORIGINAL)) <= 1.0
+
+
+@pytest.mark.parametrize("scheme", SCHEMES)
+def test_info_is_the_progress_hue(scheme: str) -> None:
+    """정보 토큰은 그 테마의 진행 색(stateRunning)과 OKLCH 색상각이 1도 안이어야 한다(설계 §11.5).
+
+    두 테마의 stateInfo -> |색상각 − stateRunning 색상각| ≤ 1
+    """
+    table = SCHEMES[scheme]
+    assert abs(_oklch_hue(table["stateInfo"]) - _oklch_hue(table["stateRunning"])) <= 1.0
+
+
+@pytest.mark.parametrize("scheme", SCHEMES)
+def test_info_meets_the_bubble_conditions(scheme: str) -> None:
+    """정보 토큰도 버블 조건(기호 4.5 · 바탕 3.0)을 지켜야 한다 — 쓰는 자리가 생겨도 같은 기준.
+
+    두 테마의 stateInfo -> onAccent ↔ stateInfo ≥ 4.5 · 바탕 셋 ≥ 3.0
+    """
+    table = SCHEMES[scheme]
+    grounds = [table[name] for name in BUBBLE_GROUNDS] + [OS_NOTICE_GROUND[scheme]]
+    assert _contrast(table["onAccent"], table["stateInfo"]) >= 4.5
+    assert min(_contrast(table["stateInfo"], g) for g in grounds) >= 3.0
