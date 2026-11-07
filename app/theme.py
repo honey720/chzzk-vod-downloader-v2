@@ -108,22 +108,24 @@ DARK = {
     "text": "#e6e8ec",
     "textMuted": "#a0a6b0",
     "textDisabled": "#6b7078",
-    # ---- 강조(주 동작 버튼) ----
-    "accent": "#3d8bfd",
+    # ---- 강조(주 동작 버튼) — 채움 색 규칙(#512, 설계 §12.1): 다크는 채움이 밝은 톤, 그 안 글자 · 그림은
+    # 어둡게. 채움 안 글자 ↔ 채움 · 호버 · 눌림 모두 4.5 이상(tests/app/gui/test_theme_contrast.py) ----
+    "accent": "#3b8cff",
     "accentHover": "#559bff",
-    "accentPressed": "#2f74d8",
-    "onAccent": "#ffffff",
+    "accentPressed": "#3f84e9",
+    "onAccent": "#1b1d22",
     # ---- 카드 ----
     "cardBg": "#2b2d33",
     # ---- 상태색 (상태 아이콘·상태 텍스트·진행바 공용) ----
     # running/failed는 기존 값을 그대로 승계한다 — 실패 빨강(#FF6969)은
     # tests/app/gui/test_failure_display.py가 상태 표시에서 직접 확인한다.
-    "stateWaiting": "#6b7078",   # 대기 — 회색
+    # 상태 글은 같은 색상에서 카드 바탕 위 4.5 이상인 가장 가까운 밝기(#512 — 대기 2.76 · 일시정지 4.13이었다)
+    "stateWaiting": "#8f949b",   # 대기 — 회색
     "stateRunning": "#55B5FF",   # 진행 — 파랑
     # 일시정지 — 진행 파랑의 채도를 뺀 강철빛 회색. 진행바가 그대로 남되
     # "돌고 있지 않다"가 색으로 읽혀야 한다(#245). 대기 회색과는 달라야
     # 한다(상태색은 정보를 나른다 — tests/app/gui/test_theme.py 상호 구별 게이트).
-    "statePaused": "#7f8ea3",
+    "statePaused": "#8695a8",
     "stateFinished": "#4CC38A",  # 완료 — 초록
     "stateFailed": "#FF6969",    # 실패 — 빨강
     # ---- 진행바 ----
@@ -155,20 +157,21 @@ LIGHT = {
     "textMuted": "#5b6069",
     "textDisabled": "#9a9fa8",
     # ---- 강조(주 동작 버튼) ----
-    "accent": "#3d8bfd",
-    "accentHover": "#559bff",
-    "accentPressed": "#2f74d8",
+    # 채움 색 규칙(#512): 라이트는 채움이 어두운 톤, 그 안 글자 · 그림은 흰색
+    "accent": "#0062ec",
+    "accentHover": "#146df8",
+    "accentPressed": "#044fbf",
     "onAccent": "#ffffff",
     # ---- 카드 ----
     "cardBg": "#ffffff",
     # ---- 상태색 (상태 아이콘·상태 텍스트·진행바 공용) — 흰 배경 대비용으로 짙게 눌렀다 ----
     "stateWaiting": "#6b7078",
     "stateRunning": "#1f6fd6",
-    "statePaused": "#6f7d91",    # 일시정지 — 흰 배경에서 진행 파랑과 구별되는 무채색 강철빛
-    "stateFinished": "#2f9e63",
-    "stateFailed": "#d93636",
+    "statePaused": "#6a778b",    # 일시정지 — 흰 배경에서 진행 파랑과 구별되는 무채색 강철빛
+    "stateFinished": "#288654",  # #512 — 카드 바탕 위 4.5(3.39였다)
+    "stateFailed": "#d02727",  # #512 — 카드 · 헤더바 · 버튼 면(실패 칩) 위 모두 4.5(버튼 면 3.99였다)
     # ---- 진행바 ----
-    "barTrack": "#e3e5e9",
+    "barTrack": "#d5d8de",  # = border — 진행 막대 트랙은 카드 테두리 색(설계 §12.1, #512)
     "scrollHandle": "#c3c7cd",
     "scrollHandleHover": "#aeb3bb",
 }
