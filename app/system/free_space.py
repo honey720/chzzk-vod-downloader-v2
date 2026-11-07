@@ -2,8 +2,9 @@
 
 `shutil.disk_usage`는 무응답 네트워크 마운트에서 오래 멈출 수 있다 — 메인 스레드에서 부르면 창이
 멈춘다(#136, 쓰기 프로브와 같은 까닭). 재는 일은 워커 스레드가 하고, 값은 큐 연결 Signal로 메인
-스레드에 넘긴다. 앞 측정이 아직 끝나지 않았으면 새로 재지 않는다 — 1초마다 불러도 멈춘 측정이
-스레드를 쌓지 않는다.
+스레드에 넘긴다. 같은 경로의 앞 측정이 아직 끝나지 않았으면 새로 재지 않는다 — 1초마다 불러도 멈춘
+측정이 스레드를 쌓지 않는다. 재는 중인지는 경로마다 따로 둔다 — 한 경로(무응답 마운트)의 측정이 멈춰
+있어도 저장 위치를 다른 경로로 바꾸면 새 경로를 잰다. 도는 스레드 수의 상한은 서로 다른 경로 수다.
 """
 
 import shutil
@@ -23,7 +24,8 @@ class FreeSpaceProbe(QObject):
 
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
-        self._busy = threading.Lock()  # 재는 중이면 잡혀 있다
+        self._lock = threading.Lock()  # _busy를 고치는 동안 잡는다
+        self._busy: set[str] = set()  # 지금 재는 중인 경로
         self._values: dict[str, int | None] = {}  # 경로 → 마지막으로 잰 값
         # 워커가 내는 Signal은 이 객체(메인 스레드)로 큐 연결된다 — 바운드 메서드로 잇는다
         self._finished.connect(self._onFinished)
@@ -35,9 +37,13 @@ class FreeSpaceProbe(QObject):
         return self._values.get(path)
 
     def request(self, path: str) -> bool:
-        """그 경로를 다시 재게 한다. 앞 측정이 도는 중이면 아무것도 하지 않고 False."""
-        if not path or not self._busy.acquire(blocking=False):
+        """그 경로를 다시 재게 한다. 같은 경로의 앞 측정이 도는 중이면 아무것도 하지 않고 False."""
+        if not path:
             return False
+        with self._lock:
+            if path in self._busy:
+                return False
+            self._busy.add(path)
         threading.Thread(
             target=self._measure, args=(path,), name="FreeSpaceProbe", daemon=True
         ).start()
@@ -50,7 +56,8 @@ class FreeSpaceProbe(QObject):
         except (OSError, ValueError):
             free = None  # 사라진 경로 · 권한 없음 · 쓸 수 없는 경로 글
         finally:
-            self._busy.release()
+            with self._lock:
+                self._busy.discard(path)
         try:
             self._finished.emit(path, free)
         except RuntimeError:
