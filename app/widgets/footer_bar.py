@@ -8,11 +8,10 @@
 것은 셸 S3다.
 """
 
-from time import gmtime, strftime
-
 from PySide6.QtCore import QCoreApplication
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
+from app.viewmodels.clock_text import clock_text
 from app.viewmodels.footer_monitor import MonitorSnapshot
 from app.widgets.widget import short_time
 
@@ -66,7 +65,7 @@ class FooterMonitor(QWidget):
             speed = f"{snapshot.speed / _MEBIBYTE:.1f} MB/s"
             texts["speed"] = (f"↓ {speed}", self.tr("Speed · {0}").format(speed))
             if snapshot.remaining_seconds is not None:
-                remain = short_time(strftime("%H:%M:%S", gmtime(snapshot.remaining_seconds)))
+                remain = short_time(clock_text(snapshot.remaining_seconds))
                 # 카드의 남은 시간과 같은 글 — 카드의 번역(ContentItemWidget 컨텍스트)을 그대로 쓴다
                 left = QCoreApplication.translate("ContentItemWidget", "{0} left").format(remain)
                 texts["remain"] = (left, "")

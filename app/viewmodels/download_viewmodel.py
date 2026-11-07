@@ -33,7 +33,6 @@ import threading
 import time
 from collections.abc import Callable
 from functools import partial
-from time import gmtime, strftime
 from types import SimpleNamespace
 from typing import Protocol
 
@@ -42,6 +41,7 @@ from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from app.system.platform_adapter import begin_background_work, end_background_work
 from app.system.process_memory import log_process_memory
 from app.system.user_activity import user_interacting
+from app.viewmodels.clock_text import clock_text
 from app.viewmodels.data import ContentItem
 from app.viewmodels.footer_monitor import TransferReading, transfer_reading
 from app.viewmodels.section_edit import take_section_head, watch_section_head
@@ -606,7 +606,7 @@ class DownloadViewModel(QObject):
             self.failed.emit(item, self._outsideVideoMessage())
             return
         item.section_retry = None  # 모든 구간을 만들었다 — 이어받을 것이 없다
-        download_time = strftime("%H:%M:%S", gmtime(self.handle.elapsed_seconds()))
+        download_time = clock_text(self.handle.elapsed_seconds())
         self.removeThreads()
         self.finished.emit(item, download_time)
 
@@ -900,7 +900,7 @@ def _file_progress_args(event: ProgressEvent) -> tuple[str, str, str, int]:
 
     if speed_mb > 0:
         remaining_time = (total_size - event.downloaded_size) / (speed_mb * 1024 * 1024)
-        remaining_time_str = strftime("%H:%M:%S", gmtime(remaining_time))
+        remaining_time_str = clock_text(remaining_time)
     else:
         remaining_time_str = "N/A"
 
@@ -1080,7 +1080,7 @@ def _segment_progress_args(
         avg_segment_size = event.downloaded_size / received_segments
         remaining_segments = counters.max_threads - counters.completed_threads
         remaining_time = (avg_segment_size * remaining_segments) / (speed_mb * 1024 * 1024)
-        remaining_time_str = strftime("%H:%M:%S", gmtime(remaining_time))
+        remaining_time_str = clock_text(remaining_time)
     else:
         remaining_time_str = "N/A"
 
