@@ -21,12 +21,19 @@ AlignVCenter로 되돌리거나 라벨을 평범한 QLabel(×7/4 없음)로 되�
 생성 순서를 바꾸면 ③이, QFormLayout으로 되돌리면 첫 게이트가 실패한다.
 """
 
-
 from collections.abc import Iterator
 
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QDialogButtonBox, QFormLayout, QGroupBox, QLabel, QLayout, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QDialogButtonBox,
+    QFormLayout,
+    QGroupBox,
+    QLabel,
+    QLayout,
+    QWidget,
+)
 
 import app.theme as theme
 import app.system.settings as settings
@@ -196,7 +203,9 @@ def test_labels_sit_where_a_form_layout_would_put_them(dialog) -> None:
     for rows in ROWS.values():
         for label_name, field_name in rows:
             label, field = _widget(dialog, label_name), _widget(dialog, field_name)
-            expected_dy, expected_h = _form_reference(label.font(), label.text(), field.geometry().height())
+            expected_dy, expected_h = _form_reference(
+                label.font(), label.text(), field.geometry().height()
+            )
             actual = (label.geometry().y() - field.geometry().y(), label.geometry().height())
             assert actual == (expected_dy, expected_h), (
                 f"{label_name}: (필드 대비 y, 높이) {actual} ≠ QFormLayout 대조군 {(expected_dy, expected_h)}"
@@ -297,7 +306,9 @@ def test_extra_height_stays_below_the_rows(dialog) -> None:
     dialog.resize(dialog.sizeHint().width(), dialog.sizeHint().height() + 240)
     QApplication.processEvents()
     for name in ROWS:
-        assert _widget(dialog, name).height() > box_heights[name], f"{name}: 상자가 같이 안 늘어났다 — 전제"
+        assert _widget(dialog, name).height() > box_heights[name], (
+            f"{name}: 상자가 같이 안 늘어났다 — 전제"
+        )
     after = _rows_top_left(dialog)
     moved = {name: (y, after[name]) for name, y in at_hint.items() if after[name] != y}
     assert moved == {}, f"창을 키웠더니 행이 움직였다 (이름: sizeHint 높이 y → 키운 뒤 y): {moved}"

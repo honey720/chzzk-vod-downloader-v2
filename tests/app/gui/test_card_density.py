@@ -37,7 +37,9 @@ def _apply_production_qss(qapp) -> None:
     `_apply_dark_card_qss` 문서 참고, 같은 `theme.build_style()` 수명 문제).
     """
     theme.set_color_scheme("dark")
-    qapp.setStyle(hold_style(theme.build_style()))  # 참조 보관 — 이중 해제 우회 (#243, card_helpers.hold_style)
+    qapp.setStyle(
+        hold_style(theme.build_style())
+    )  # 참조 보관 — 이중 해제 우회 (#243, card_helpers.hold_style)
     qapp.setPalette(theme.build_palette())
     qapp.setStyleSheet(theme.load_stylesheet(main_module.resource_path(theme.QSS_RELATIVE_PATH)))
 
@@ -57,8 +59,19 @@ def no_network(monkeypatch) -> None:
 def _make_item(i: int) -> ContentItem:
     return ContentItem(
         f"https://chzzk.naver.com/video/{i}",
-        {"title": f"제목 {i}", "category": "", "channelName": f"채널{i}", "createdDate": "", "duration": 3600},
-        [], None, "", "C:/dl", "video", None,
+        {
+            "title": f"제목 {i}",
+            "category": "",
+            "channelName": f"채널{i}",
+            "createdDate": "",
+            "duration": 3600,
+        },
+        [],
+        None,
+        "",
+        "C:/dl",
+        "video",
+        None,
     )
 
 
@@ -80,10 +93,14 @@ def _resize_or_skip(window: VodDownloader, window_height: int) -> None:
         pytest.skip(
             f"창 높이 {window_height}px(+ 제목 표시줄 {title_bar}px)이 작업 영역 {available}px에 들어가지 않는다"
         )
-    assert window.height() == window_height, f"resize({window_height}) 뒤 실제 높이가 {window.height()}px이다"
+    assert window.height() == window_height, (
+        f"resize({window_height}) 뒤 실제 높이가 {window.height()}px이다"
+    )
 
 
-def _visible_card_count(window: VodDownloader, window_height: int, require_fully_visible: bool) -> int:
+def _visible_card_count(
+    window: VodDownloader, window_height: int, require_fully_visible: bool
+) -> int:
     _resize_or_skip(window, window_height)
 
     viewport = window.listView.viewport()
@@ -122,7 +139,9 @@ def window_with_cards(qapp) -> Iterator[VodDownloader]:
 def test_card_density_meets_the_owner_confirmed_minimum(
     window_with_cards, window_height, minimum_cards
 ) -> None:
-    fully_visible = _visible_card_count(window_with_cards, window_height, require_fully_visible=True)
+    fully_visible = _visible_card_count(
+        window_with_cards, window_height, require_fully_visible=True
+    )
     assert fully_visible >= minimum_cards, (
         f"창 높이 {window_height}px에서 완전히 보이는 카드가 {fully_visible}개뿐이다 "
         f"(최소 {minimum_cards}개 필요) — 카드 압축(#244)이 목표를 못 채운 회귀다"

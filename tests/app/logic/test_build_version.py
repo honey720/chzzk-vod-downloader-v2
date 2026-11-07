@@ -78,9 +78,7 @@ def test_git_describe_success_is_used(monkeypatch, tmp_path) -> None:
     class _Result:
         stdout = "v2.9.5-3-gabc1234-dirty\n"
 
-    monkeypatch.setattr(
-        config_module.subprocess, "run", lambda *a, **k: _Result()
-    )
+    monkeypatch.setattr(config_module.subprocess, "run", lambda *a, **k: _Result())
 
     assert config_module._git_describe(str(tmp_path)) == "v2.9.5-3-gabc1234-dirty"
 

@@ -3,7 +3,14 @@
 import os
 import re
 import threading
-from PySide6.QtWidgets import QWidget, QPushButton, QMessageBox, QFileDialog, QHBoxLayout, QSizePolicy
+from PySide6.QtWidgets import (
+    QWidget,
+    QPushButton,
+    QMessageBox,
+    QFileDialog,
+    QHBoxLayout,
+    QSizePolicy,
+)
 from PySide6.QtGui import QPainter, QPainterPath, QPixmap, QDesktopServices, QRegion
 from PySide6.QtCore import Qt, Signal, QUrl, QDir, QProcess, QRectF
 from app.viewmodels.data import (
@@ -35,7 +42,7 @@ logger = logging.getLogger(__name__)
 # 모양은 macOS·Linux 실기 없이는 확인할 길이 없었다).
 STATE_ICON = {
     "finished": "✓",  # 체크 — 완료 (U+2713)
-    "failed": "✕",    # 엑스 — 실패 (U+2715)
+    "failed": "✕",  # 엑스 — 실패 (U+2715)
 }
 
 # 전역 설정의 다운로드 경로 — 카드는 자기 경로가 이 값과 **다를 때만**
@@ -66,13 +73,17 @@ def _split_path(path: str, home: str | None = None) -> tuple[str, list[str], boo
     경로 플래그로 구분). 구분자는 표시용으로 `/`로 통일한다(OS 무관 렌더).
     """
     norm = os.path.normpath(path).replace("\\", "/")
-    home_norm = os.path.normpath(home if home is not None else os.path.expanduser("~")).replace("\\", "/")
+    home_norm = os.path.normpath(home if home is not None else os.path.expanduser("~")).replace(
+        "\\", "/"
+    )
+
     def _same(a: str, b: str) -> bool:
         return os.path.normcase(a) == os.path.normcase(b)
+
     if _same(norm, home_norm):
         return "~", [], True
     if _same(norm[: len(home_norm) + 1], home_norm + "/"):
-        root, rest = "~", norm[len(home_norm) + 1:]
+        root, rest = "~", norm[len(home_norm) + 1 :]
     else:
         # 드라이브 판정은 os.path.splitdrive가 아니라 직접 한다 — POSIX 파이썬은
         # "D:"를 드라이브로 보지 않아(splitdrive가 빈 문자열 반환) 같은 경로
@@ -80,7 +91,7 @@ def _split_path(path: str, home: str | None = None) -> tuple[str, list[str], boo
         # 전용이고 "OS 무관 렌더"가 계약이므로 판정도 OS 무관이어야 한다.
         drive_match = re.match(r"[A-Za-z]:(?=/|$)", norm)
         if drive_match:
-            root, rest = drive_match.group(0), norm[drive_match.end():].lstrip("/")
+            root, rest = drive_match.group(0), norm[drive_match.end() :].lstrip("/")
         elif norm.startswith("/"):
             root, rest = "", norm.lstrip("/")
         else:
@@ -127,7 +138,7 @@ def path_display_parts(path: str, home: str | None = None) -> tuple[str, str, st
 
 
 def short_time(remain: str) -> str:
-    """"HH:MM:SS" 시간을 짧은 표시("3:12")로 줄인다 — 표시 정책.
+    """ "HH:MM:SS" 시간을 짧은 표시("3:12")로 줄인다 — 표시 정책.
 
     카드의 진행 중 남은 시간 · 완료의 소요 시간(#245)과 하단바의 남은 시간(#504)이 같은 표기를
     쓴다. 계산 자체는 viewmodel(app/viewmodels/download_viewmodel.py)이 ProgressEvent 값으로
@@ -151,14 +162,13 @@ def _resolution_key(resolution) -> int:
         return 0
 
 
-
 class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     """컨텐츠 정보를 표시하는 커스텀 위젯"""
 
     textChanged = Signal(str)
     deleteRequest = Signal()
-    pauseRequest = Signal()   # 진행 카드의 ⏸ (#245 상태별 조작)
-    retryRequest = Signal()   # 실패 카드의 ↻ (#245 상태별 조작)
+    pauseRequest = Signal()  # 진행 카드의 ⏸ (#245 상태별 조작)
+    retryRequest = Signal()  # 실패 카드의 ↻ (#245 상태별 조작)
     sectionEditRequest = Signal()  # 대기 카드의 구간 요약(재생 시간 자리) 클릭 (#309)
     # 구간이 있는 카드의 해상도가 바뀌었다 (#309) — 뷰모델이 구간을 새 해상도에 다시 맞춘다
     sectionRefitRequest = Signal()
@@ -182,12 +192,16 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self._expanded = False
         self._pillMode = "all"
         self._layingOutRowThree = False
-        self._userPicked = False  # 유저가 pill을 직접 고른 적이 있는가 — 늦게 온 크기 조회가 이를 덮지 않는다
+        self._userPicked = (
+            False  # 유저가 pill을 직접 고른 적이 있는가 — 늦게 온 크기 조회가 이를 덮지 않는다
+        )
         self._selectedButton: ResolutionPill | None = None
         self._pillRows: list[QHBoxLayout] = []  # 펼쳐서 넘친 pill을 받는 추가 행(0개가 기본)
-        self._pillRowOf: dict[int, int] = {}    # id(pill) → 지금 놓인 행 번호(0 = 3행)
-        self._rowStrut: QWidget | None = None       # 펼친 동안 3행 세로 정책을 지키는 0폭 버팀목
-        self._thumbnailSource: QPixmap | None = None  # 표시 전에 받은 썸네일 원본 — 첫 표시에서 다시 그리고 놓는다 (#288)
+        self._pillRowOf: dict[int, int] = {}  # id(pill) → 지금 놓인 행 번호(0 = 3행)
+        self._rowStrut: QWidget | None = None  # 펼친 동안 3행 세로 정책을 지키는 0폭 버팀목
+        self._thumbnailSource: QPixmap | None = (
+            None  # 표시 전에 받은 썸네일 원본 — 첫 표시에서 다시 그리고 놓는다 (#288)
+        )
         self.buttons: list[ResolutionPill] = []
         self.setupUi(self)
         self._sizeThumbnail()  # 컨텐츠 열 높이가 정해진 뒤, 이미지 로드 전에
@@ -222,8 +236,14 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         if self._expanded:
             # 펼쳐서 늘어난 높이는 잠깐이다 — 썸네일은 접힌 높이를 유지한다
             return
-        for label in (self.channelNameLabel, self.titleLabel, self.statusLabel,
-                      self.fileSizeLabel, self.directoryLabel, self.titleEdit):
+        for label in (
+            self.channelNameLabel,
+            self.titleLabel,
+            self.statusLabel,
+            self.fileSizeLabel,
+            self.directoryLabel,
+            self.titleEdit,
+        ):
             label.ensurePolished()
         self.titleLabel.setMinimumHeight(self.titleEdit.sizeHint().height())
         height = self.contentLayout.sizeHint().height()
@@ -252,7 +272,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         # 카드에 상주하는 파이썬 객체가 아니다.
         radius = theme.METRICS["cardRadius"] - 1
         path = QPainterPath()
-        path.addRoundedRect(QRectF(0, 1 - bar_y, frame.width() - 2, frame.height() - 2), radius, radius)
+        path.addRoundedRect(
+            QRectF(0, 1 - bar_y, frame.width() - 2, frame.height() - 2), radius, radius
+        )
         self.progressBar.setMask(QRegion(path.toFillPolygon().toPolygon(), Qt.FillRule.WindingFill))
         self.progressBar.raise_()
 
@@ -276,7 +298,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         # 생성 중에 잰 행 높이 힌트는 표시 전이라 작을 수 있다(1행 16 → 20px 실측) — 표시 뒤의
         # 힌트로 썸네일을 다시 맞춘다. 숨은 제목 입력칸의 힌트가 이 차이를 가려 왔다 (#288)
         self._sizeThumbnail()
-        self._thumbnailSource = None  # 다시 그렸으니 원본을 놓는다 — 카드마다 원본을 들고 있지 않는다
+        self._thumbnailSource = (
+            None  # 다시 그렸으니 원본을 놓는다 — 카드마다 원본을 들고 있지 않는다
+        )
         self._layoutRowThree()
 
     def _clampChannelMinWidth(self) -> None:
@@ -304,8 +328,10 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     def setupDynamicUi(self) -> None:
         icon = theme.METRICS["iconSize"]
         self.loadImageFromUrl(self.channelImageLabel, self.item.channel_image_url, icon, "channel")
-        self.loadImageFromUrl(self.thumbnailLabel, self.item.thumbnail_url, self.thumbnailLabel.height(), "thumbnail")
-        self.channelNameLabel.setText(self.item.channel_name) # 채널 이름 업데이트
+        self.loadImageFromUrl(
+            self.thumbnailLabel, self.item.thumbnail_url, self.thumbnailLabel.height(), "thumbnail"
+        )
+        self.channelNameLabel.setText(self.item.channel_name)  # 채널 이름 업데이트
         self._clampChannelMinWidth()
         # 조작 도형(app/widgets/icons.py) — 평소 muted, 호버에서 강조. 삭제는
         # 호버에서만 실패색(빨강)이 된다(항상 빨간 ❌는 카드에서 삭제만 튀는
@@ -320,9 +346,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.sectionEditButton.setIconName("scissors")
         self.sectionEditButton.setToolTip(self.tr("Edit sections"))
         self.setIndex(self.index)  # 인덱스 업데이트
-        self.titleLabel.setText(self.item.title) # 제목 업데이트
-        self.titleEdit.setText(self.item.title) # 제목 업데이트
-        self.titleEdit.setVisible(False) # 제목 수정용 QLineEdit 숨김
+        self.titleLabel.setText(self.item.title)  # 제목 업데이트
+        self.titleEdit.setText(self.item.title)  # 제목 업데이트
+        self.titleEdit.setVisible(False)  # 제목 수정용 QLineEdit 숨김
         self._refreshPathLabel()
         self.applyStateStyle()  # setData 전에도 카드가 무스타일로 보이지 않게 (#227)
 
@@ -392,7 +418,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         # 기본 선택 = 최고 해상도 = 내림차순의 첫 pill. 버튼을 넘겨 선택
         # 표시(비활성=채움)까지 바로 건다 — 크기 조회가 끝나기 전에도 무엇이
         # 골라져 있는지 보여야 하고, 그래야 카드마다 선택 x가 한 줄로 선다.
-        self.setresolutionUrlSize(self.item.unique_reps[0][0], self.item.unique_reps[0][1], 0, self.buttons[0])
+        self.setresolutionUrlSize(
+            self.item.unique_reps[0][0], self.item.unique_reps[0][1], 0, self.buttons[0]
+        )
 
         # pill(높이 pillHeight)이 3행에 꽂히면 컨텐츠 열이 몇 px 자랄 수
         # 있다 — 썸네일이 그 높이를 계속 가득 채우도록 다시 맞춘다(#244).
@@ -436,7 +464,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """
         need = sum(b.naturalWidth() for b in self.buttons) + (len(self.buttons) - 1) * spacing
         if self._sizeShown():
-            need += spacing + max(self.fileSizeLabel.minimumWidth(), self.fileSizeLabel.sizeHint().width())
+            need += spacing + max(
+                self.fileSizeLabel.minimumWidth(), self.fileSizeLabel.sizeHint().width()
+            )
         return need <= row_width
 
     def pillMode(self) -> str:
@@ -490,7 +520,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             for button in self.buttons:
                 button.setCaret(mode == "collapsed")
                 button.setVisible(
-                    mode in ("all", "expanded") or (mode == "collapsed" and button is self._selectedButton)
+                    mode in ("all", "expanded")
+                    or (mode == "collapsed" and button is self._selectedButton)
                 )
             self.fileSizeLabel.setVisible(self._sizeShown() and mode != "expanded")
             self._packPills()
@@ -508,7 +539,10 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             if self.statusLabel.isVisibleTo(self):
                 used += self.statusLabel.sizeHint().width() + spacing
             if self.fileSizeLabel.isVisibleTo(self):
-                used += max(self.fileSizeLabel.minimumWidth(), self.fileSizeLabel.sizeHint().width()) + spacing
+                used += (
+                    max(self.fileSizeLabel.minimumWidth(), self.fileSizeLabel.sizeHint().width())
+                    + spacing
+                )
             available = row_width - used
             # 접힘(③)이면 자리가 남아도 경로는 숨은 채(②)다 — 순서는 한 방향이다:
             # ① 경로 ElideMiddle → ② 경로 숨김 → ③ 해상도 접힘. pill을 접어 생긴 자리로
@@ -651,11 +685,13 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
                 try:
                     resp = get_thread_session().head(base_url, timeout=REQUEST_TIMEOUT)
                     resp.raise_for_status()
-                    size = int(resp.headers.get('content-length', 0))
+                    size = int(resp.headers.get("content-length", 0))
                     if size == 0:
-                        resp = get_thread_session().get(base_url, stream=True, timeout=REQUEST_TIMEOUT)
+                        resp = get_thread_session().get(
+                            base_url, stream=True, timeout=REQUEST_TIMEOUT
+                        )
                         resp.raise_for_status()
-                        size = int(resp.headers.get('content-length', 0))
+                        size = int(resp.headers.get("content-length", 0))
                         resp.close()
                     size_text = self.setSize(size)
                 except Exception:
@@ -805,9 +841,11 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         if not url:
             label.clear()
             return
-        
+
         # 이미지 로딩 스레드 시작
-        thread = threading.Thread(target=self.fetchImage, args=(label, url, maxHeight, type), daemon=True)
+        thread = threading.Thread(
+            target=self.fetchImage, args=(label, url, maxHeight, type), daemon=True
+        )
         thread.start()
 
     def fetchImage(self, label, url, maxHeight, type) -> None:
@@ -857,7 +895,10 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
                 new_width = int(new_height * aspect_ratio)
 
             scaled_image = image.scaled(
-                new_width, new_height, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+                new_width,
+                new_height,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
             )
             if type == "channel":
                 # 채널 이미지는 원형으로 자른다(#244 재설계 — 1행의 ⬤ 아바타).
@@ -883,10 +924,19 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         - 로드 시점 일회성 변환이다 — 카드에 상주하는 파이썬 객체가 아니라
           O(1) 삽입과 무관하다.
         """
-        average = pixmap.scaled(1, 1, Qt.AspectRatioMode.IgnoreAspectRatio,
-                                Qt.TransformationMode.SmoothTransformation).toImage().pixelColor(0, 0)
-        fitted = pixmap.scaled(box, Qt.AspectRatioMode.KeepAspectRatio,
-                               Qt.TransformationMode.SmoothTransformation)
+        average = (
+            pixmap.scaled(
+                1,
+                1,
+                Qt.AspectRatioMode.IgnoreAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            .toImage()
+            .pixelColor(0, 0)
+        )
+        fitted = pixmap.scaled(
+            box, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+        )
         result = QPixmap(box)
         result.fill(Qt.GlobalColor.transparent)
         painter = QPainter(result)
@@ -896,8 +946,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         path.addRoundedRect(0, 0, box.width(), box.height(), radius, radius)
         painter.setClipPath(path)
         painter.fillRect(0, 0, box.width(), box.height(), average)
-        painter.drawPixmap((box.width() - fitted.width()) // 2,
-                           (box.height() - fitted.height()) // 2, fitted)
+        painter.drawPixmap(
+            (box.width() - fitted.width()) // 2, (box.height() - fitted.height()) // 2, fitted
+        )
         painter.end()
         return result
 
@@ -1105,7 +1156,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.sectionEditRequest.emit()
 
     def _shortRemain(self, remain: str) -> str:
-        """"HH:MM:SS" 시간을 짧은 표시("3:12")로 줄인다 — 표기는 `short_time`."""
+        """ "HH:MM:SS" 시간을 짧은 표시("3:12")로 줄인다 — 표기는 `short_time`."""
         return short_time(remain)
 
     def setData(self, item: ContentItem, index: int) -> None:
@@ -1492,12 +1543,16 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         for position, button in enumerate(self.buttons):
             row_index = target.get(id(button), 0)
             dest = self.resolutionLayout if row_index == 0 else self._pillRows[row_index - 1]
-            slot = sum(1 for other in self.buttons[:position] if target.get(id(other), 0) == row_index)
+            slot = sum(
+                1 for other in self.buttons[:position] if target.get(id(other), 0) == row_index
+            )
             current_index = dest.indexOf(button)
             if self._pillRowOf.get(id(button), 0) != row_index or current_index != slot:
                 if current_index == -1:
                     source_row = self._pillRowOf.get(id(button), 0)
-                    source = self.resolutionLayout if source_row == 0 else self._pillRows[source_row - 1]
+                    source = (
+                        self.resolutionLayout if source_row == 0 else self._pillRows[source_row - 1]
+                    )
                     source.removeWidget(button)
                 else:
                     dest.removeWidget(button)
@@ -1599,14 +1654,14 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     def getData(self) -> ContentItem:
         """✅ 위젯에서 입력된 데이터를 가져와서 ContentItem으로 반환"""
         return ContentItem(
-            #index=self.item.index,
+            # index=self.item.index,
             channel_name=self.channelNameLabel.text(),
             title=self.titleEdit.text(),
             directory=self.directoryLabel.text(),
-            #status=self.statusLabel.text(),
+            # status=self.statusLabel.text(),
             progress=self.item.download_progress,
-            #remaining_time=self.remainingTimeLabel.text(),
-            #size_info=self.sizeInfoLabel.text(),
+            # remaining_time=self.remainingTimeLabel.text(),
+            # size_info=self.sizeInfoLabel.text(),
         )
 
     def startTitleEditing(self, event) -> None:
@@ -1677,7 +1732,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         if self.item.downloadState != DownloadState.WAITING:
             # 대화상자가 열린 사이 다운로드가 시작됐다 — 이미 옛 경로에 쓰고 있으므로
             # 고른 폴더는 버린다(#244 P-5 감사 칸). 시작 시점에 확정된 경로가 정답이다
-            logger.info("카드 저장 경로 변경 무시 — 대화상자 중 상태가 %s로 바뀜", self.item.downloadState)
+            logger.info(
+                "카드 저장 경로 변경 무시 — 대화상자 중 상태가 %s로 바뀜", self.item.downloadState
+            )
             return
         self.item.download_path = chosen
         self._refreshPathLabel()
@@ -1742,5 +1799,5 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         unit_index = 0
         while size >= 1024 and unit_index < len(units) - 1:
             size /= 1024
-            unit_index += 1 
-        return f'{size:.2f} {units[unit_index]}'
+            unit_index += 1
+        return f"{size:.2f} {units[unit_index]}"

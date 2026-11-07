@@ -47,9 +47,7 @@ def _popup_window() -> QWindow:
     보이는 Popup 타입 창을 찾는 쪽이 안전하다.
     """
     return next(
-        w
-        for w in QGuiApplication.allWindows()
-        if w.type() == Qt.WindowType.Popup and w.isVisible()
+        w for w in QGuiApplication.allWindows() if w.type() == Qt.WindowType.Popup and w.isVisible()
     )
 
 

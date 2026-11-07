@@ -33,7 +33,9 @@ class TestContentType:
 class TestContent:
     def test_minimal_construction_with_defaults(self) -> None:
         """필수 필드만으로 생성되고 나머지는 기본값이어야 한다."""
-        content = Content(content_type=ContentType.CHZZK_VIDEO, url="https://chzzk.naver.com/video/1")
+        content = Content(
+            content_type=ContentType.CHZZK_VIDEO, url="https://chzzk.naver.com/video/1"
+        )
         assert content.content_type is ContentType.CHZZK_VIDEO
         assert content.url == "https://chzzk.naver.com/video/1"
         assert content.title is None
@@ -42,7 +44,9 @@ class TestContent:
         assert content.selections == ()
         assert content.selection_paths == ()
         assert content.mp4_head is None  # 넘기지 않으면 엔진이 moov를 받는다
-        assert content.fmp4_head is None  # 넘기지 않으면 엔진이 플레이리스트·초기화 세그먼트·moof를 받는다
+        assert (
+            content.fmp4_head is None
+        )  # 넘기지 않으면 엔진이 플레이리스트·초기화 세그먼트·moof를 받는다
         assert content.ts_head is None  # 넘기지 않으면 엔진이 플레이리스트·세그먼트를 받는다
         assert content.encryption_type is None
 

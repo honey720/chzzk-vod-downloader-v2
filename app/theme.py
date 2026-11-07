@@ -64,46 +64,46 @@ QSS_RELATIVE_PATH = "resources/qss/style.qss"
 #: 크기·간격(px 정수). 다크/라이트 공통.
 METRICS = {
     # ---- 카드 ----
-    "cardPadding": 8,     # 카드 안쪽 여백 — 썸네일·글이 테두리에서 떨어지는 거리
+    "cardPadding": 8,  # 카드 안쪽 여백 — 썸네일·글이 테두리에서 떨어지는 거리
     "cardRowSpacing": 4,  # 카드 안 행 간격(4의 배수 권장) — 줄이면 카드가 낮아져 밀도↑
-    "cardRadius": 12,     # 카드 모서리 둥글기
-    "thumbRadius": 8,     # 썸네일 모서리 — 카드보다 작아야 안쪽이 자연스럽다
-    "iconSize": 20,       # 채널 이미지·삭제(✕)·폴더(📁) 아이콘 한 변 — 1·4행 높이를 정한다(키우면 밀도↓)
-    "pillHeight": 20,     # 해상도 pill 높이(모서리는 자동으로 절반)
-    "barHeight": 4,      # 하단 진행바 두께(진행분이 있을 때 — 진행·일시정지 — 보임)
-    "actionGlyph": 12,    # 조작 아이콘(일시정지·재개·재시도·폴더·삭제) 도형 한 변 — iconSize 버튼 안에 그려진다
-    "barGlyph": 14,       # 하단바 아이콘 버튼(▶ ‖ ■) 도형 한 변 — 버튼은 글 버튼 높이의 정사각이다(#504)
+    "cardRadius": 12,  # 카드 모서리 둥글기
+    "thumbRadius": 8,  # 썸네일 모서리 — 카드보다 작아야 안쪽이 자연스럽다
+    "iconSize": 20,  # 채널 이미지·삭제(✕)·폴더(📁) 아이콘 한 변 — 1·4행 높이를 정한다(키우면 밀도↓)
+    "pillHeight": 20,  # 해상도 pill 높이(모서리는 자동으로 절반)
+    "barHeight": 4,  # 하단 진행바 두께(진행분이 있을 때 — 진행·일시정지 — 보임)
+    "actionGlyph": 12,  # 조작 아이콘(일시정지·재개·재시도·폴더·삭제) 도형 한 변 — iconSize 버튼 안에 그려진다
+    "barGlyph": 14,  # 하단바 아이콘 버튼(▶ ‖ ■) 도형 한 변 — 버튼은 글 버튼 높이의 정사각이다(#504)
     # 썸네일 높이는 토큰이 아니다 — 우측 4행의 실제 높이에 맞춰 런타임에
     # 계산되고(16:9로 폭 결정, app/widgets/widget.py), 행 간격·글자 크기를
     # 바꾸면 썸네일도 따라간다.
     # ---- 상단·하단 바 & 창 ----
-    "framePadding": 8,    # 상단·하단 바 안쪽 여백 — cardPadding과 같으면 정렬선이 관통
-    "frameRadius": 8,     # 상단·하단 바 모서리
-    "outerMargin": 12,    # 창 가장자리 ↔ 상단바·카드 목록·하단바 좌우 여백
+    "framePadding": 8,  # 상단·하단 바 안쪽 여백 — cardPadding과 같으면 정렬선이 관통
+    "frameRadius": 8,  # 상단·하단 바 모서리
+    "outerMargin": 12,  # 창 가장자리 ↔ 상단바·카드 목록·하단바 좌우 여백
     "initialWidthMax": 800,  # 첫 실행 초기 창 폭의 상한 — 콘텐츠 최대폭이 아니다(#253, 유저는 얼마든지 넓힐 수 있다)
     # ---- 공통 형태 ----
-    "radius": 8,          # 버튼·입력창 등 일반 모서리
+    "radius": 8,  # 버튼·입력창 등 일반 모서리
 }
 
 #: 글자 위계 — 위(제목)에서 아래(경로)로 무게가 내려간다. 값은 QSS 문자열.
 FONTS = {
-    "fontSizeTitle": "15px",    # 카드 제목 — 카드에서 가장 크다
-    "fontSizeBase": "14px",     # 앱 기본(입력창·버튼 등)
+    "fontSizeTitle": "15px",  # 카드 제목 — 카드에서 가장 크다
+    "fontSizeBase": "14px",  # 앱 기본(입력창·버튼 등)
     "fontSizeChannel": "13px",  # 채널명 — 제목보다 작지만 굵다
-    "fontSizeMeta": "12px",     # 상태·종류·파일 크기·진행률
-    "fontSizePath": "11px",     # 저장 경로 — 가장 작다
-    "channelWeight": "600",     # 채널명 굵기(400=보통, 600=semibold, 700=bold)
+    "fontSizeMeta": "12px",  # 상태·종류·파일 크기·진행률
+    "fontSizePath": "11px",  # 저장 경로 — 가장 작다
+    "channelWeight": "600",  # 채널명 굵기(400=보통, 600=semibold, 700=bold)
 }
 
 #: 다크 테마 토큰 — 이 저장소의 모든 색·모서리·간격 값의 유일한 정의 지점.
 DARK = {
     # ---- 바탕 ----
-    "windowBg": "#1b1c1f",       # 창 배경
-    "surface": "#24262b",        # 헤더·하단 바 같은 패널
-    "surfaceAlt": "#2f3239",     # 기본 버튼·입력창 바탕
+    "windowBg": "#1b1c1f",  # 창 배경
+    "surface": "#24262b",  # 헤더·하단 바 같은 패널
+    "surfaceAlt": "#2f3239",  # 기본 버튼·입력창 바탕
     "surfaceHover": "#383c44",
     "surfacePressed": "#282b31",
-    "thumbBg": "#1f2126",        # 썸네일 자리표시 바탕
+    "thumbBg": "#1f2126",  # 썸네일 자리표시 바탕
     # ---- 선·글자 ----
     "border": "#3a3d45",
     "borderStrong": "#4c515b",
@@ -122,14 +122,14 @@ DARK = {
     # running/failed는 기존 값을 그대로 승계한다 — 실패 빨강(#FF6969)은
     # tests/app/gui/test_failure_display.py가 상태 표시에서 직접 확인한다.
     # 상태 글은 같은 색상에서 카드 바탕 위 4.5 이상인 가장 가까운 밝기(#512 — 대기 2.76 · 일시정지 4.13이었다)
-    "stateWaiting": "#8f949b",   # 대기 — 회색
-    "stateRunning": "#55B5FF",   # 진행 — 파랑
+    "stateWaiting": "#8f949b",  # 대기 — 회색
+    "stateRunning": "#55B5FF",  # 진행 — 파랑
     # 일시정지 — 진행 파랑의 채도를 뺀 강철빛 회색. 진행바가 그대로 남되
     # "돌고 있지 않다"가 색으로 읽혀야 한다(#245). 대기 회색과는 달라야
     # 한다(상태색은 정보를 나른다 — tests/app/gui/test_theme.py 상호 구별 게이트).
     "statePaused": "#8695a8",
     "stateFinished": "#4CC38A",  # 완료 — 초록
-    "stateFailed": "#FF6969",    # 실패 — 빨강
+    "stateFailed": "#FF6969",  # 실패 — 빨강
     # ---- 진행바 ----
     "barTrack": "#3a3d45",
     "scrollHandle": "#4c515b",
@@ -169,7 +169,7 @@ LIGHT = {
     # ---- 상태색 (상태 아이콘·상태 텍스트·진행바 공용) — 흰 배경 대비용으로 짙게 눌렀다 ----
     "stateWaiting": "#6b7078",
     "stateRunning": "#1f6fd6",
-    "statePaused": "#6a778b",    # 일시정지 — 흰 배경에서 진행 파랑과 구별되는 무채색 강철빛
+    "statePaused": "#6a778b",  # 일시정지 — 흰 배경에서 진행 파랑과 구별되는 무채색 강철빛
     "stateFinished": "#288654",  # #512 — 카드 바탕 위 4.5(3.39였다)
     "stateFailed": "#d02727",  # #512 — 카드 · 헤더바 · 버튼 면(실패 칩) 위 모두 4.5(버튼 면 3.99였다)
     # ---- 진행바 ----
@@ -253,7 +253,8 @@ def detect_color_scheme(app=None) -> str:
     result = "light" if window_lightness >= 128 else "dark"
     logger.info(
         "theme scheme detected via palette fallback: %s (Window lightness=%d)",
-        result, window_lightness,
+        result,
+        window_lightness,
     )
     return result
 

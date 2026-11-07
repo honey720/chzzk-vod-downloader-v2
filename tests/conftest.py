@@ -250,7 +250,9 @@ def _destroy_top_level_widgets(request, _isolate_real_config) -> Iterator[None]:
     # 클수록 오래 걸려 Qt를 쓰지 않는 테스트 수천 건에서 돌리면 전체 시간이 크게 늘어난다
     if "qapp" in request.fixturenames:
         gc.collect()
-    leftover = [f"{type(w).__name__}({w.objectName() or '-'})" for w in QApplication.topLevelWidgets()]
+    leftover = [
+        f"{type(w).__name__}({w.objectName() or '-'})" for w in QApplication.topLevelWidgets()
+    ]
     assert not leftover, f"테스트 뒤 파괴되지 않은 최상위 위젯 {len(leftover)}개: {leftover}"
 
 

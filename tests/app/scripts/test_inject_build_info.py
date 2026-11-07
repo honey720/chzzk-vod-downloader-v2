@@ -14,7 +14,7 @@ import scripts.inject_build_info as inject_module
 from typing import Never
 
 
-FAKE_CONFIG = '''\
+FAKE_CONFIG = """\
 APP_VERSION = "9.9.9"
 
 BUILD_COMMIT = "unknown"
@@ -24,7 +24,7 @@ IS_RELEASE_BUILD = False
 
 def get_app_version():
     return APP_VERSION
-'''
+"""
 
 
 @pytest.fixture

@@ -54,9 +54,7 @@ def test_fallback_preserves_saved_language(monkeypatch) -> None:
 def test_fallback_does_not_persist_on_first_run(monkeypatch) -> None:
     """설정에 언어가 없고 시스템 언어 로드도 실패하면, en_US를 저장하지 않고 적용만 한다."""
     stub_app, saves = _patch_environment(monkeypatch)
-    monkeypatch.setattr(
-        main.QLocale, "system", lambda: main.QLocale("xx_XX"), raising=False
-    )
+    monkeypatch.setattr(main.QLocale, "system", lambda: main.QLocale("xx_XX"), raising=False)
     app_config = {}
 
     main.set_language(app_config, _StubTranslator())
@@ -69,9 +67,7 @@ def test_fallback_does_not_persist_on_first_run(monkeypatch) -> None:
 def test_successful_load_still_saves_detected_language(monkeypatch, tmp_path) -> None:
     """(기존 동작 보존) 설정에 언어가 없고 로드에 성공하면 감지된 언어를 저장한다."""
     stub_app, saves = _patch_environment(monkeypatch)
-    monkeypatch.setattr(
-        main.QLocale, "system", lambda: main.QLocale("en_US"), raising=False
-    )
+    monkeypatch.setattr(main.QLocale, "system", lambda: main.QLocale("en_US"), raising=False)
     monkeypatch.setattr(main.os.path, "exists", lambda path: True)
     app_config = {}
 

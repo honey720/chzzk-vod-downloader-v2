@@ -34,7 +34,9 @@ CARET_GAP = 6  # 글 ↔ ▾(px)
 BUTTON_VPAD = 7  # 위아래(px) — QPushButton의 QSS padding 6 + 테두리 1과 같아 한 줄의 높이가 맞는다
 WIDTH_SAMPLE = "Downloads"  # 저장 위치 버튼 폭의 기준 글 — 이 이름이 줄지 않고 들어간다(프로토 11o)
 MENU_DETAIL_GAP = 16  # 메뉴 줄의 글 ↔ 흐린 글(px)
-MENU_WINDOW_MARGIN = 24  # 저장 위치 메뉴 폭의 상한 = 창 폭 − 이 값(px) — 프로토 PATH_MENU_MARGIN(inbox 71)
+MENU_WINDOW_MARGIN = (
+    24  # 저장 위치 메뉴 폭의 상한 = 창 폭 − 이 값(px) — 프로토 PATH_MENU_MARGIN(inbox 71)
+)
 MENU_MIN_LIMIT = 200  # 창이 아주 좁아도 메뉴 폭 상한은 이만큼은 둔다(px) — 프로토와 같다
 
 
@@ -130,11 +132,13 @@ class ChoiceMenu(QMenu):
             path = action.property("detailPath")
             if path:
                 # 「(없음)」 같은 꼬리는 줄이지 않고 남긴다 — 줄이는 것은 경로뿐(카드 표기 차례)
-                tail = detail[len(abbreviate_path(path)):]
+                tail = detail[len(abbreviate_path(path)) :]
                 shown = fit_path(metrics, path, room - metrics.horizontalAdvance(tail)) + tail
             else:
                 shown = metrics.elidedText(detail, Qt.TextElideMode.ElideMiddle, room)
-            painter.drawText(rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, shown)
+            painter.drawText(
+                rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, shown
+            )
         if painter is not None:
             painter.end()
 
@@ -239,8 +243,11 @@ class DropButton(QToolButton):
             pixmap = action_pixmap(self._glyph, muted.name(), size, self.devicePixelRatioF())
             painter.drawPixmap(1 + BUTTON_PADDING, (self.height() - size) // 2, pixmap)
         painter.setPen(QColor(tokens["text" if enabled else "textDisabled"]))
-        painter.drawText(self._textRect(), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
-                         self.shownText())
+        painter.drawText(
+            self._textRect(),
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+            self.shownText(),
+        )
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(muted)

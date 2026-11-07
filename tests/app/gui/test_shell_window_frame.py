@@ -93,7 +93,9 @@ def _wide_enough(area: QRect) -> QRect:
     need = probe.minimumWidth() + MARGINS.left() + MARGINS.right()
     if NATIVE or area.width() >= need * 10 // 6 + 100:
         return area
-    return QRect(area.x(), area.y(), need * 10 // 6 + 100, area.height())  # 기록 폭(60%)도 최소폭 위
+    return QRect(
+        area.x(), area.y(), need * 10 // 6 + 100, area.height()
+    )  # 기록 폭(60%)도 최소폭 위
 
 
 def _open(record: dict) -> VodDownloader:

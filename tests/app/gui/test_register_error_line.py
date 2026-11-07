@@ -43,7 +43,9 @@ def window(qapp, monkeypatch, tmp_path) -> Iterator[VodDownloader]:
     popups = []
     for name in ("warning", "critical", "information"):
         monkeypatch.setattr(
-            mw_mod.QMessageBox, name, lambda parent, title, text, *a, _n=name, **k: popups.append(text)
+            mw_mod.QMessageBox,
+            name,
+            lambda parent, title, text, *a, _n=name, **k: popups.append(text),
         )
     win = VodDownloader()
     assert win.saveLocations.choose(str(tmp_path))

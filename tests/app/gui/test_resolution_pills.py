@@ -59,8 +59,19 @@ def make_waiting_widget(reps, width=900, path="C:/dl") -> ContentItemWidget:
     """대기 카드 — `reps`는 파서가 돌려주는 `[해상도, url]` 목록(또는 그 튜플)."""
     item = ContentItem(
         "https://chzzk.naver.com/video/1",
-        {"title": "제목", "category": "", "channelName": "채널", "createdDate": "", "duration": 3600},
-        [list(r) for r in reps], None, "", path, "video", None,
+        {
+            "title": "제목",
+            "category": "",
+            "channelName": "채널",
+            "createdDate": "",
+            "duration": 3600,
+        },
+        [list(r) for r in reps],
+        None,
+        "",
+        path,
+        "video",
+        None,
     )
     item.downloadState = DownloadState.WAITING
     item.total_size = "711.02 MB"
@@ -139,8 +150,19 @@ def make_boxed(reps=FIVE, width=900, path=LONG_PATH) -> tuple[QWidget, ContentIt
     column.setSpacing(0)
     item = ContentItem(
         "https://chzzk.naver.com/video/1",
-        {"title": "제목", "category": "", "channelName": "채널", "createdDate": "", "duration": 3600},
-        [[r, f"u{r}"] for r in reps], None, "", path, "video", None,
+        {
+            "title": "제목",
+            "category": "",
+            "channelName": "채널",
+            "createdDate": "",
+            "duration": 3600,
+        },
+        [[r, f"u{r}"] for r in reps],
+        None,
+        "",
+        path,
+        "video",
+        None,
     )
     item.downloadState = DownloadState.WAITING
     item.total_size = "711.02 MB"
@@ -152,7 +174,9 @@ def make_boxed(reps=FIVE, width=900, path=LONG_PATH) -> tuple[QWidget, ContentIt
     box.resize(width, 400)
     box.show()
     _pump()
-    assert widget.width() == width, f"전제: 카드가 컨테이너 폭 {width}px을 받았다(실제 {widget.width()}px)"
+    assert widget.width() == width, (
+        f"전제: 카드가 컨테이너 폭 {width}px을 받았다(실제 {widget.width()}px)"
+    )
     assert widget.pillMode() == "all", "전제: 900px에서는 pill 전부가 들어간다"
     return box, widget
 
@@ -210,8 +234,12 @@ def _row3_snapshot(widget) -> dict:
         "size": (widget.fileSizeLabel.isVisible(), widget.fileSizeLabel.geometry()),
         # 경로는 선택 pill 폭이 바뀌면 그만큼 x·폭이 달라지는 것이 정상(남는 폭을 다 받는다) —
         # 우측 끝·y·높이만 잰다. 같은 pill을 고르는 왕복에서는 이것도 완전히 같다.
-        "path": (widget.directoryLabel.isVisible(), widget.directoryLabel.geometry().right(),
-                 widget.directoryLabel.y(), widget.directoryLabel.height()),
+        "path": (
+            widget.directoryLabel.isVisible(),
+            widget.directoryLabel.geometry().right(),
+            widget.directoryLabel.y(),
+            widget.directoryLabel.height(),
+        ),
         "icon": (widget.pathButton.isVisible(), widget.pathButton.geometry()),
         "thumb": widget.thumbnailLabel.size(),
         "extra_rows": widget.contentLayout.count(),
@@ -227,9 +255,13 @@ class TestResponsiveMode:
         resize_box(box, widget, threshold + 1)
         assert widget.pillMode() == "all" and _visible_pills(widget) == [f"{r}p" for r in FIVE]
         assert not any(b.hasCaret() for b in widget.buttons)
-        assert widget.fileSizeLabel.isVisible() and widget.pathButton.isVisible(), "T+1: 크기가 있고 저장 위치 버튼이 1행에 있다"
+        assert widget.fileSizeLabel.isVisible() and widget.pathButton.isVisible(), (
+            "T+1: 크기가 있고 저장 위치 버튼이 1행에 있다"
+        )
         resize_box(box, widget, threshold - 1)
-        assert widget.pillMode() == "collapsed" and _visible_pills(widget) == ["1080p"], "T−1에서 접혀야 한다"
+        assert widget.pillMode() == "collapsed" and _visible_pills(widget) == ["1080p"], (
+            "T−1에서 접혀야 한다"
+        )
         assert widget.buttons[0].hasCaret()
         assert widget.fileSizeLabel.isVisible(), "접혀도 크기는 그대로 보인다"
         assert widget.pathButton.isVisible(), "접혀도 경로 진입점(1행의 저장 위치 버튼)은 남는다"
@@ -239,7 +271,9 @@ class TestResponsiveMode:
         threshold = fit_threshold(widget)
         resize_box(box, widget, threshold)
         assert widget.pillMode() == "all"
-        assert widget.pathButton.isVisible() and not widget.directoryLabel.isVisible(), "T에서 경로 글자는 숨고 진입점은 1행에 있다"
+        assert widget.pathButton.isVisible() and not widget.directoryLabel.isVisible(), (
+            "T에서 경로 글자는 숨고 진입점은 1행에 있다"
+        )
 
     def test_widening_shows_all_pills_again_without_feedback(self, qapp) -> None:
         box, widget = make_boxed()
@@ -248,9 +282,9 @@ class TestResponsiveMode:
             resize_box(box, widget, threshold - 1)
             assert widget.pillMode() == "collapsed"
             resize_box(box, widget, threshold + 1)
-            assert widget.pillMode() == "all" and _visible_pills(widget) == [f"{r}p" for r in FIVE], (
-                "넓혔는데 다시 펼쳐지지 않았다 — 되먹임 루프"
-            )
+            assert widget.pillMode() == "all" and _visible_pills(widget) == [
+                f"{r}p" for r in FIVE
+            ], "넓혔는데 다시 펼쳐지지 않았다 — 되먹임 루프"
 
     def test_selection_survives_every_transition(self, qapp) -> None:
         """⚠️ 제일 중요 — 전부↔접힘↔펼침을 오가도 고른 해상도가 바뀌지 않는다."""
@@ -260,13 +294,21 @@ class TestResponsiveMode:
         _pump()
         assert widget.pillMode() == "all" and str(widget.item.resolution) == "480"
         resize_box(box, widget, threshold - 1)
-        assert widget.pillMode() == "collapsed" and _visible_pills(widget) == ["480p"], "접히며 선택이 바뀌었다"
+        assert widget.pillMode() == "collapsed" and _visible_pills(widget) == ["480p"], (
+            "접히며 선택이 바뀌었다"
+        )
         assert str(widget.item.resolution) == "480" and widget.item.base_url == "u480"
         widget.buttons[2].click()  # 접힌 pill을 눌러 펼친다
         _pump()
         assert widget.pillMode() == "expanded" and widget.buttons[2].isSelected()
         resize_box(box, widget, threshold + 1)
-        assert widget.pillMode() == "all" and [b.isSelected() for b in widget.buttons] == [False, False, True, False, False]
+        assert widget.pillMode() == "all" and [b.isSelected() for b in widget.buttons] == [
+            False,
+            False,
+            True,
+            False,
+            False,
+        ]
         assert str(widget.item.resolution) == "480" and widget.item.base_url == "u480"
 
     def test_widening_while_expanded_drops_the_expansion(self, qapp) -> None:
@@ -283,9 +325,13 @@ class TestResponsiveMode:
         assert not widget.fileSizeLabel.isVisible()
         resize_box(box, widget, threshold + 1)
         assert widget.pillMode() == "all" and not widget.isExpanded() and events == [True, False]
-        assert widget.fileSizeLabel.isVisible() and widget.pathButton.isVisible(), "펼침이 풀리면 크기가 돌아오고 저장 위치 버튼은 그대로다"
+        assert widget.fileSizeLabel.isVisible() and widget.pathButton.isVisible(), (
+            "펼침이 풀리면 크기가 돌아오고 저장 위치 버튼은 그대로다"
+        )
         resize_box(box, widget, threshold - 1)
-        assert widget.pillMode() == "collapsed" and not widget.isExpanded(), "펼침은 기억되지 않는다"
+        assert widget.pillMode() == "collapsed" and not widget.isExpanded(), (
+            "펼침은 기억되지 않는다"
+        )
         assert _visible_pills(widget) == ["1080p"]
 
     def test_card_height_is_the_same_in_every_mode(self, qapp) -> None:
@@ -302,8 +348,12 @@ class TestResponsiveMode:
         _pump()
         assert widget.pillMode() == "expanded" and _rows(widget) == 1
         h_expanded, y_expanded = widget.height(), widget.buttons[0].y()
-        assert h_all == h_collapsed == h_expanded, f"모드별 카드 높이가 다르다: {h_all}/{h_collapsed}/{h_expanded}"
-        assert y_all == y_collapsed == y_expanded, f"모드별 3행 y가 다르다: {y_all}/{y_collapsed}/{y_expanded}"
+        assert h_all == h_collapsed == h_expanded, (
+            f"모드별 카드 높이가 다르다: {h_all}/{h_collapsed}/{h_expanded}"
+        )
+        assert y_all == y_collapsed == y_expanded, (
+            f"모드별 3행 y가 다르다: {y_all}/{y_collapsed}/{y_expanded}"
+        )
 
     def test_fewer_pills_fit_where_more_do_not(self, qapp) -> None:
         """임계는 pill 개수를 따라 움직인다 — 5개가 접히는 폭에서 2개(클립)는 전부 보인다."""
@@ -327,7 +377,9 @@ class TestCollapsedAndExpandedStates:
         box, widget = self._collapsed(qapp)
         assert _visible_pills(widget) == ["1080p"]
         pill = widget.buttons[0]
-        assert pill.isSelected() and pill.hasCaret() and pill.isEnabled(), "접힌 선택 pill은 ▾가 있고 눌 수 있어야 한다"
+        assert pill.isSelected() and pill.hasCaret() and pill.isEnabled(), (
+            "접힌 선택 pill은 ▾가 있고 눌 수 있어야 한다"
+        )
         assert widget.fileSizeLabel.isVisible()
 
     def test_expanding_shows_all_pills_and_hides_path_and_size(self, qapp) -> None:
@@ -368,17 +420,27 @@ class TestCollapsedAndExpandedStates:
         box, widget = make_boxed()
         widget.setExpanded(True)
         _pump()
-        assert not widget.isExpanded() and widget.pillMode() == "all", "전부 보이는데 펼칠 것은 없다"
+        assert not widget.isExpanded() and widget.pillMode() == "all", (
+            "전부 보이는데 펼칠 것은 없다"
+        )
 
     def test_starting_the_download_collapses_and_hides_the_pills(self, qapp) -> None:
         box, widget = self._collapsed(qapp)
         widget.setExpanded(True)
         _pump()
         widget.item.downloadState = DownloadState.RUNNING
-        widget.item.download_progress, widget.item.download_speed, widget.item.download_remain_time = 1, "1 MB/s", "00:10:00"
+        (
+            widget.item.download_progress,
+            widget.item.download_speed,
+            widget.item.download_remain_time,
+        ) = 1, "1 MB/s", "00:10:00"
         widget.setData(widget.item, 0)
         _pump()
-        assert not widget.isExpanded() and widget.pillMode() == "hidden" and _visible_pills(widget) == []
+        assert (
+            not widget.isExpanded()
+            and widget.pillMode() == "hidden"
+            and _visible_pills(widget) == []
+        )
         assert widget.statusLabel.isVisible() and widget.fileSizeLabel.isVisible()
         assert widget.contentLayout.count() == 3, "추가 행이 남아 있다"
         widget.setExpanded(True)  # 대기가 아니면 펼쳐지지 않는다
@@ -405,16 +467,30 @@ class TestGeometryRestoresAfterCollapse:
     def test_one_row_round_trip_keeps_row_three_geometry(self, qapp) -> None:
         before, after, expanded_h = self._round_trip(qapp, lambda fit, one: fit - 1, pick=0)
         assert after == before, f"접힌 뒤 3행 기하가 달라졌다:\n{before}\n{after}"
-        assert expanded_h == before["card_h"], "한 줄에 들어가는 폭에서는 펼쳐도 높이가 변하지 않는다"
+        assert expanded_h == before["card_h"], (
+            "한 줄에 들어가는 폭에서는 펼쳐도 높이가 변하지 않는다"
+        )
 
     def test_wrapped_round_trip_returns_to_the_original_height(self, qapp) -> None:
         before, after, expanded_h = self._round_trip(qapp, lambda fit, one: one - 1, pick=0)
-        assert expanded_h > before["card_h"], "전제: 한 줄 임계 아래에서는 줄바꿈으로 카드가 잠깐 자란다"
+        assert expanded_h > before["card_h"], (
+            "전제: 한 줄 임계 아래에서는 줄바꿈으로 카드가 잠깐 자란다"
+        )
         assert after == before, f"접힌 뒤 원래 높이·기하로 돌아오지 않았다:\n{before}\n{after}"
 
     def test_picking_a_different_pill_restores_everything_but_the_pill_width(self, qapp) -> None:
         before, after, _ = self._round_trip(qapp, lambda fit, one: one - 1, pick=2)
-        for key in ("mode", "card_h", "hint_h", "row3", "size", "path", "icon", "thumb", "extra_rows"):
+        for key in (
+            "mode",
+            "card_h",
+            "hint_h",
+            "row3",
+            "size",
+            "path",
+            "icon",
+            "thumb",
+            "extra_rows",
+        ):
             assert after[key] == before[key], f"{key}: {before[key]} → {after[key]}"
         assert after["pill_xy"][0] == before["pill_xy"][0], "선택 pill의 x(기준선)가 달라졌다"
         assert after["pill_xy"][1:] == before["pill_xy"][1:]
@@ -437,7 +513,9 @@ class TestWrapThreshold:
         resize_box(box, widget, one)
         widget.buttons[0].click()  # 접힘 → 펼침
         _pump()
-        assert widget.pillMode() == "expanded" and _rows(widget) == 1 and widget.height() == base_h, "한 줄 임계에서는 한 줄"
+        assert (
+            widget.pillMode() == "expanded" and _rows(widget) == 1 and widget.height() == base_h
+        ), "한 줄 임계에서는 한 줄"
         resize_box(box, widget, one - 1)
         assert _rows(widget) == 2, "한 줄 임계 −1에서 줄바꿈이 시작돼야 한다"
         assert widget.height() > base_h
@@ -445,7 +523,9 @@ class TestWrapThreshold:
         assert last.x() == widget.buttons[0].x(), "둘째 줄도 컨텐츠 열 기준선에서 시작한다"
         assert last.y() > widget.buttons[0].y()
         resize_box(box, widget, one + 20)
-        assert widget.pillMode() == "expanded" and _rows(widget) == 1 and widget.height() == base_h, "넓히면 한 줄로 회복돼야 한다"
+        assert (
+            widget.pillMode() == "expanded" and _rows(widget) == 1 and widget.height() == base_h
+        ), "넓히면 한 줄로 회복돼야 한다"
         assert widget.contentLayout.count() == 3, "추가 행이 남았다"
 
     def test_expanded_pills_never_overflow_the_row(self, qapp) -> None:
@@ -478,8 +558,19 @@ class TestOneExpandedAtATime:
         for i in range(2):
             item = ContentItem(
                 f"https://chzzk.naver.com/video/{i}",
-                {"title": f"제목{i}", "category": "", "channelName": "채널", "createdDate": "", "duration": 3600},
-                [[r, f"u{r}"] for r in FIVE], None, "", "C:/dl", "video", None,
+                {
+                    "title": f"제목{i}",
+                    "category": "",
+                    "channelName": "채널",
+                    "createdDate": "",
+                    "duration": 3600,
+                },
+                [[r, f"u{r}"] for r in FIVE],
+                None,
+                "",
+                "C:/dl",
+                "video",
+                None,
             )
             item.downloadState = DownloadState.WAITING
             model.addItem(item)
@@ -490,7 +581,9 @@ class TestOneExpandedAtATime:
         threshold = fit_threshold(first)
         view.resize(threshold - 1 + (view.width() - first.width()), 600)
         _pump()
-        assert first.width() == threshold - 1 and first.pillMode() == second.pillMode() == "collapsed", "전제: 두 카드가 접혔다"
+        assert (
+            first.width() == threshold - 1 and first.pillMode() == second.pillMode() == "collapsed"
+        ), "전제: 두 카드가 접혔다"
         first.buttons[0].click()
         _pump()
         assert first.isExpanded() and not second.isExpanded()
@@ -511,7 +604,6 @@ class TestOneExpandedAtATime:
 #
 # 고장 주입(확인됨): _layoutRowThree의 `icon_only = mode == "collapsed" or ...`에서
 # 접힘 조건을 빼면 TestShrinkOrderIsMonotonic이 잡는다(③에서 경로 텍스트가 살아난다).
-
 
 
 def _stage(widget) -> int:
@@ -540,7 +632,9 @@ class TestShrinkOrderIsMonotonic:
             resize_box(box, widget, width)
             seen[width] = _stage(widget)
             assert seen[width] != -1, f"폭 {width}px: 정의 밖의 3행 모양(접힘+경로 텍스트 등)"
-            assert shown(widget.fileSizeLabel) == widget.fileSizeLabel.text(), f"폭 {width}px: 파일 크기가 잘렸다"
+            assert shown(widget.fileSizeLabel) == widget.fileSizeLabel.text(), (
+                f"폭 {width}px: 파일 크기가 잘렸다"
+            )
         return seen
 
     def _widths(self, widget) -> list[int]:
@@ -570,7 +664,9 @@ class TestShrinkOrderIsMonotonic:
         box, widget = make_boxed()
         seen = self._sweep(box, widget, self._widths(widget))
         stages = list(seen.values())
-        assert stages[0] == 0 and stages[-1] == 3, f"전제: 넓게 ①전문 → 좁게 ③접힘까지 내려간다: {stages[0]}…{stages[-1]}"
+        assert stages[0] == 0 and stages[-1] == 3, (
+            f"전제: 넓게 ①전문 → 좁게 ③접힘까지 내려간다: {stages[0]}…{stages[-1]}"
+        )
         assert all(a <= b for a, b in zip(stages, stages[1:])), f"역방향 전이가 있다: {stages}"
         assert {1, 2} <= set(stages), f"①줄임·②숨김 단계를 거치지 않았다: {sorted(set(stages))}"
 
@@ -580,13 +676,19 @@ class TestShrinkOrderIsMonotonic:
         resize_box(box, widget, fit - 1)
         assert widget.pillMode() == "collapsed"
         # 접힘으로 생긴 자리: 경로 텍스트 최소치보다 훨씬 넓다 — 그래도 경로는 숨은 채다
-        used = widget.buttons[0].sizeHint().width() + widget.fileSizeLabel.width() + 3 * FIXED_SPACING
+        used = (
+            widget.buttons[0].sizeHint().width() + widget.fileSizeLabel.width() + 3 * FIXED_SPACING
+        )
         room = widget.resolutionLayout.geometry().width() - used
-        assert room > widget.fontMetrics().horizontalAdvance("~/…/abcdef"), "전제: 텍스트를 다시 펼 자리가 남아 있다"
+        assert room > widget.fontMetrics().horizontalAdvance("~/…/abcdef"), (
+            "전제: 텍스트를 다시 펼 자리가 남아 있다"
+        )
         assert _stage(widget) == 3 and not widget.directoryLabel.isVisible(), (
             "③ 접힘 뒤 자리가 남는다고 경로가 다시 펴졌다 — 순서는 한 방향이다"
         )
-        assert widget.pathButton.toolTip().endswith(LONG_PATH), "글자가 숨어도 전문은 저장 위치 버튼의 툴팁에 남는다"
+        assert widget.pathButton.toolTip().endswith(LONG_PATH), (
+            "글자가 숨어도 전문은 저장 위치 버튼의 툴팁에 남는다"
+        )
 
     def test_widening_recovers_in_reverse_and_the_same_width_always_looks_the_same(
         self, qapp
@@ -598,7 +700,9 @@ class TestShrinkOrderIsMonotonic:
         widening = self._sweep(box, widget, list(reversed(widths)))
         assert widening == narrowing, "같은 폭에서 좁힐 때와 넓힐 때 모양이 다르다"
         stages_up = [widening[w] for w in reversed(widths)]
-        assert all(a >= b for a, b in zip(stages_up, stages_up[1:])), f"넓힐 때 역순 회복이 아니다: {stages_up}"
+        assert all(a >= b for a, b in zip(stages_up, stages_up[1:])), (
+            f"넓힐 때 역순 회복이 아니다: {stages_up}"
+        )
 
     def test_bouncing_around_the_threshold_never_oscillates(self, qapp) -> None:
         box, widget = make_boxed(width=900)
@@ -609,7 +713,9 @@ class TestShrinkOrderIsMonotonic:
                 resize_box(box, widget, width)
                 stage = _stage(widget)
                 assert stage != -1
-                assert expected.setdefault(width, stage) == stage, f"폭 {width}px에서 모양이 진동한다: {expected[width]} → {stage}"
+                assert expected.setdefault(width, stage) == stage, (
+                    f"폭 {width}px에서 모양이 진동한다: {expected[width]} → {stage}"
+                )
         assert expected[fit + 1] <= 2 and expected[fit - 1] == 3
 
 
@@ -628,7 +734,6 @@ class TestShrinkOrderIsMonotonic:
 # TestLateSizeFetchKeepsTheUsersPick가 잡는다.
 
 
-
 class _SlowResponse:
     def __init__(self, size: int) -> None:
         self.headers = {"content-length": str(size)}
@@ -642,7 +747,13 @@ class _SlowSession:
 
     def __init__(self, delay: float) -> None:
         self.delay = delay
-        self.sizes = {"u1080": 700_000_000, "u720": 400_000_000, "u480": 200_000_000, "u360": 100_000_000, "u144": 50_000_000}
+        self.sizes = {
+            "u1080": 700_000_000,
+            "u720": 400_000_000,
+            "u480": 200_000_000,
+            "u360": 100_000_000,
+            "u144": 50_000_000,
+        }
 
     def head(self, url, timeout=None) -> _SlowResponse:
         time.sleep(self.delay)
@@ -671,19 +782,28 @@ class TestLateSizeFetchKeepsTheUsersPick:
         assert str(widget.item.resolution) == "720"
         qtbot.waitUntil(lambda: self._all_sizes_arrived(widget), timeout=5000)
         _pump()
-        assert str(widget.item.resolution) == "720" and widget.item.base_url == "u720", "늦게 온 조회가 선택을 덮었다"
+        assert str(widget.item.resolution) == "720" and widget.item.base_url == "u720", (
+            "늦게 온 조회가 선택을 덮었다"
+        )
         assert [b.isSelected() for b in widget.buttons] == [False, True, False, False, False]
-        assert "381.47 MB" in widget.fileSizeLabel.text(), "고른 해상도(720p)의 크기로 표시가 채워져야 한다"
+        assert "381.47 MB" in widget.fileSizeLabel.text(), (
+            "고른 해상도(720p)의 크기로 표시가 채워져야 한다"
+        )
 
     def test_without_a_pick_the_default_selection_still_runs(
         self, qapp, qtbot, monkeypatch
     ) -> None:
         self._slow(monkeypatch)
         box, widget = make_boxed()
-        assert "Checking" in widget.fileSizeLabel.text() or widget.fileSizeLabel.text().strip() in ("", "711.02 MB")
+        assert "Checking" in widget.fileSizeLabel.text() or widget.fileSizeLabel.text().strip() in (
+            "",
+            "711.02 MB",
+        )
         qtbot.waitUntil(lambda: self._all_sizes_arrived(widget), timeout=5000)
         _pump()
-        assert str(widget.item.resolution) == "1080" and widget.buttons[0].isSelected(), "안 골랐으면 최고화질이 잡혀야 한다"
+        assert str(widget.item.resolution) == "1080" and widget.buttons[0].isSelected(), (
+            "안 골랐으면 최고화질이 잡혀야 한다"
+        )
         assert "667.57 MB" in widget.fileSizeLabel.text(), "자동 선택의 크기가 표시에 채워져야 한다"
         assert widget.item.total_size == widget.item.unique_reps[0][-1]
 
@@ -698,4 +818,6 @@ class TestLateSizeFetchKeepsTheUsersPick:
         assert widget.pillMode() == "collapsed" and _visible_pills(widget) == ["720p"]
         qtbot.waitUntil(lambda: self._all_sizes_arrived(widget), timeout=5000)
         _pump()
-        assert _visible_pills(widget) == ["720p"] and str(widget.item.resolution) == "720", "접힌 채로 선택이 뒤집혔다"
+        assert _visible_pills(widget) == ["720p"] and str(widget.item.resolution) == "720", (
+            "접힌 채로 선택이 뒤집혔다"
+        )

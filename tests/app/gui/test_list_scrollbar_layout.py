@@ -53,8 +53,19 @@ def _destroy_windows() -> Iterator[None]:
 def _item(i: int) -> ContentItem:
     return ContentItem(
         f"https://chzzk.naver.com/video/{i}",
-        {"title": f"{i:02d} 제목", "category": "", "channelName": "채널", "createdDate": "", "duration": 3600},
-        [["1080", "u1"], ["720", "u2"]], None, "", "", "video", None,
+        {
+            "title": f"{i:02d} 제목",
+            "category": "",
+            "channelName": "채널",
+            "createdDate": "",
+            "duration": 3600,
+        },
+        [["1080", "u1"], ["720", "u2"]],
+        None,
+        "",
+        "",
+        "video",
+        None,
     )
 
 
@@ -134,22 +145,32 @@ def test_scrollbar_hugs_the_window_edge_and_cards_keep_the_outer_margin(
     assert (lst.left(), lst.width()) == (0, win.width()), f"목록이 창 끝까지 안 간다: {lst}"
     card = _in_window(win, _first_card(win))
     assert card.left() == outer, f"카드 왼쪽이 outerMargin({outer})이 아니다: {card}"
-    assert card.right() + 1 == win.width() - outer, f"카드 오른쪽 여백이 outerMargin({outer})이 아니다: {card}"
+    assert card.right() + 1 == win.width() - outer, (
+        f"카드 오른쪽 여백이 outerMargin({outer})이 아니다: {card}"
+    )
     bar_widget = win.listView.verticalScrollBar()
     if bar_widget.isVisible():
         bar = _in_window(win, bar_widget)
         assert bar.right() + 1 == win.width(), f"스크롤바가 창 우측 끝에 안 붙는다: {bar}"
-        assert bar.left() >= card.right() + 1, f"스크롤바가 카드를 덮는다: 카드 {card}, 스크롤바 {bar}"
+        assert bar.left() >= card.right() + 1, (
+            f"스크롤바가 카드를 덮는다: 카드 {card}, 스크롤바 {bar}"
+        )
     for frame in (win.headerFrame, win.infoFrame):
         rect = _in_window(win, frame)
-        assert (rect.left(), rect.width()) == (outer, win.width() - 2 * outer), f"{frame.objectName()} {rect}"
+        assert (rect.left(), rect.width()) == (outer, win.width() - 2 * outer), (
+            f"{frame.objectName()} {rect}"
+        )
 
 
 def test_card_left_edge_lines_up_with_the_bars(make_window) -> None:
     """카드 프레임 왼쪽이 상단바·하단바 왼쪽과 한 선이다 — 여백이 자리만 옮겼지 값은 그대로다(#244 정렬선)."""
     win = make_window(cards=2)
     card_left = _in_window(win, _first_card(win)).left()
-    assert card_left == _in_window(win, win.headerFrame).left() == _in_window(win, win.infoFrame).left()
+    assert (
+        card_left
+        == _in_window(win, win.headerFrame).left()
+        == _in_window(win, win.infoFrame).left()
+    )
 
 
 # ================================================================ ③ 상태 칩 숫자 자릿수
@@ -165,11 +186,15 @@ def test_content_minimum_width_ignores_chip_count_digits(make_window) -> None:
             win.contentManager.model.addItem(_item(added))
             added += 1
         _pump()
-        assert win.filterChips["all"].text().endswith(str(total)), "전제: 전체 칩 숫자가 카드 수를 따라야 한다"
+        assert win.filterChips["all"].text().endswith(str(total)), (
+            "전제: 전체 칩 숫자가 카드 수를 따라야 한다"
+        )
         assert win.contentColumn.minimumSizeHint().width() == base, (
             f"카드 {total}장에서 콘텐츠 열 최소폭이 {base} → {win.contentColumn.minimumSizeHint().width()}"
         )
-        assert win.windowScrollArea.horizontalScrollBar().maximum() == 0, f"카드 {total}장에서 좌우 스크롤이 생겼다"
+        assert win.windowScrollArea.horizontalScrollBar().maximum() == 0, (
+            f"카드 {total}장에서 좌우 스크롤이 생겼다"
+        )
 
 
 def test_chips_reserve_three_digits_from_their_own_font(make_window) -> None:

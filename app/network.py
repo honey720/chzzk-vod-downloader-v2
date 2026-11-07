@@ -121,7 +121,6 @@ _KEY_HOSTS = frozenset({urlsplit(CHZZK_API).hostname})
 
 
 class NetworkManager:
-
     @staticmethod
     def extract_content_no(vod_url: str) -> tuple[str, str]:
         """
@@ -163,24 +162,26 @@ class NetworkManager:
         )
         response.raise_for_status()
 
-        content = response.json().get('content', {})
+        content = response.json().get("content", {})
         metadata = {
-            'title': sanitize_filename(content.get('videoTitle', 'Unknown Title')), # 금지 문자·제어 문자 제거 (#105)
-            'thumbnailImageUrl': content.get('thumbnailImageUrl', ''),
-            'category': content.get('videoCategoryValue', 'Unknown Category'),
-            'channelName': content.get('channel', {}).get('channelName', 'Unknown Channel'),
-            'channelImageUrl': content.get('channel', {}).get('channelImageUrl', ''),
-            'createdDate': content.get('liveOpenDate', 'Unknown Date'),
-            'duration': content.get('duration', 0),
+            "title": sanitize_filename(
+                content.get("videoTitle", "Unknown Title")
+            ),  # 금지 문자·제어 문자 제거 (#105)
+            "thumbnailImageUrl": content.get("thumbnailImageUrl", ""),
+            "category": content.get("videoCategoryValue", "Unknown Category"),
+            "channelName": content.get("channel", {}).get("channelName", "Unknown Channel"),
+            "channelImageUrl": content.get("channel", {}).get("channelImageUrl", ""),
+            "createdDate": content.get("liveOpenDate", "Unknown Date"),
+            "duration": content.get("duration", 0),
         }
         return VideoInfo(
-            video_id=content.get('videoId'),
-            in_key=content.get('inKey'),
-            adult=content.get('adult'),
-            vod_status=content.get('vodStatus'),
-            live_rewind_playback_json=content.get('liveRewindPlaybackJson'),
-            membership_benefit_type=content.get('membershipBenefitType'),
-            encryption_type=content.get('encryptionType'),
+            video_id=content.get("videoId"),
+            in_key=content.get("inKey"),
+            adult=content.get("adult"),
+            vod_status=content.get("vodStatus"),
+            live_rewind_playback_json=content.get("liveRewindPlaybackJson"),
+            membership_benefit_type=content.get("membershipBenefitType"),
+            encryption_type=content.get("encryptionType"),
             metadata=metadata,
         )
 
@@ -196,7 +197,9 @@ class NetworkManager:
         """
         manifest_url = f"{NAVER_API}/neonplayer/vodplay/v2/playback/{video_id}?key={in_key}"
         headers = {"Accept": "application/dash+xml"}
-        response = _session.get(manifest_url, cookies=cookies, headers=headers, timeout=REQUEST_TIMEOUT)
+        response = _session.get(
+            manifest_url, cookies=cookies, headers=headers, timeout=REQUEST_TIMEOUT
+        )
         response.raise_for_status()
 
         return parse_dash_manifest(response.text)
@@ -237,7 +240,9 @@ class NetworkManager:
         """
         manifest_url = f"{NAVER_API}/neonplayer/vodplay/v2/playback/{video_id}?key={in_key}"
         headers = {"Accept": "application/dash+xml"}
-        response = _session.get(manifest_url, cookies=cookies, headers=headers, timeout=REQUEST_TIMEOUT)
+        response = _session.get(
+            manifest_url, cookies=cookies, headers=headers, timeout=REQUEST_TIMEOUT
+        )
         response.raise_for_status()
 
         if not is_supported_sea(response.text):
@@ -284,7 +289,7 @@ class NetworkManager:
         auto_resolution = sorted_reps[-1][0]
         auto_base_url = sorted_reps[-1][1]
         return sorted_reps, auto_resolution, auto_base_url
-    
+
     @staticmethod
     def get_video_m3u8_streams(
         json_str: str, cookies: dict | None = None
@@ -390,7 +395,7 @@ class NetworkManager:
                 return select_variant_by_height(master_text, resolution)
             except StreamSelectionError:
                 raise selection_error from None
-    
+
     @staticmethod
     def get_clip_info(clip_no: str, cookies: dict) -> tuple[str | None, str | None, dict]:
         """
@@ -401,18 +406,24 @@ class NetworkManager:
         response = _session.get(api_url, cookies=cookies, headers=headers, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
 
-        content = response.json().get('content', {})
-        video_id = content.get('videoId')
-        vodStatus = content.get('vodStatus')
+        content = response.json().get("content", {})
+        video_id = content.get("videoId")
+        vodStatus = content.get("vodStatus")
 
         metadata = {
-            'title': sanitize_filename(content.get('clipTitle', 'Unknown Title')), # 금지 문자·제어 문자 제거 (#105)
-            'thumbnailImageUrl': content.get('thumbnailImageUrl', ''),
-            'category': content.get('clipCategory', 'Unknown Category'),
-            'channelName': content.get('optionalProperty', {}).get('ownerChannel', {}).get('channelName', 'Unknown Channel'),
-            'channelImageUrl': content.get('optionalProperty', {}).get('ownerChannel', {}).get('channelImageUrl', ''),
-            'createdDate': content.get('createdDate', 'Unknown Date'),
-            'duration': content.get('duration', 0),
+            "title": sanitize_filename(
+                content.get("clipTitle", "Unknown Title")
+            ),  # 금지 문자·제어 문자 제거 (#105)
+            "thumbnailImageUrl": content.get("thumbnailImageUrl", ""),
+            "category": content.get("clipCategory", "Unknown Category"),
+            "channelName": content.get("optionalProperty", {})
+            .get("ownerChannel", {})
+            .get("channelName", "Unknown Channel"),
+            "channelImageUrl": content.get("optionalProperty", {})
+            .get("ownerChannel", {})
+            .get("channelImageUrl", ""),
+            "createdDate": content.get("createdDate", "Unknown Date"),
+            "duration": content.get("duration", 0),
         }
         return video_id, vodStatus, metadata
 
@@ -425,21 +436,23 @@ class NetworkManager:
         """
         manifest_url = f"{VIDEOHUB_API}/shortformhub/feeds/v3/card?serviceType=CHZZK&seedMediaId={clip_id}&mediaType=VOD"
         headers = {"User-Agent": "Mozilla/5.0"}
-        response = _session.get(manifest_url, cookies=cookies, headers=headers, timeout=REQUEST_TIMEOUT)
+        response = _session.get(
+            manifest_url, cookies=cookies, headers=headers, timeout=REQUEST_TIMEOUT
+        )
         response.raise_for_status()
 
         data = response.json()
 
         resolutions = []
 
-        #오류현상 예외처리
+        # 오류현상 예외처리
 
-        content = data['card']['content']
-        if 'error' in content:
-            error = content['error']
+        content = data["card"]["content"]
+        if "error" in content:
+            error = content["error"]
             return None, None, None, error
-        
-        video_list = content['vod']['playback']['videos']['list']
+
+        video_list = content["vod"]["playback"]["videos"]["list"]
 
         for video in video_list:
             encoding = video.get("encodingOption", {})

@@ -25,8 +25,13 @@ from core.models.download_state import DownloadState
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, shown, snapshot_top_levels
 from typing import Never
 
-STATES = (DownloadState.WAITING, DownloadState.RUNNING, DownloadState.PAUSED,
-          DownloadState.FINISHED, DownloadState.FAILED)
+STATES = (
+    DownloadState.WAITING,
+    DownloadState.RUNNING,
+    DownloadState.PAUSED,
+    DownloadState.FINISHED,
+    DownloadState.FAILED,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -63,8 +68,19 @@ def _card_in_window(state: DownloadState) -> tuple[QWidget, ContentItemWidget]:
     """상태별 카드를 보이는 최상위 창 안에 놓는다 — 호버는 창(QWindow)이 받아야 라벨까지 간다."""
     item = ContentItem(
         "https://chzzk.naver.com/video/1",
-        {"title": "제목", "category": "", "channelName": "채널", "createdDate": "", "duration": 3600},
-        [["1080", "u1"], ["720", "u2"]], None, "", "C:/dl", "video", None,
+        {
+            "title": "제목",
+            "category": "",
+            "channelName": "채널",
+            "createdDate": "",
+            "duration": 3600,
+        },
+        [["1080", "u1"], ["720", "u2"]],
+        None,
+        "",
+        "C:/dl",
+        "video",
+        None,
     )
     item.downloadState = DownloadState.WAITING
     item.total_size = "595.34 MB"
@@ -150,7 +166,9 @@ class TestTitleHoverMatchesClickability:
         clickable = state == DownloadState.WAITING
         assert widget.titleLabel.property("editable") == clickable
         expected = Qt.CursorShape.IBeamCursor if clickable else Qt.CursorShape.ArrowCursor
-        assert widget.titleLabel.cursor().shape() == expected, f"{state.name}: 커서가 클릭 가능 여부와 다르다"
+        assert widget.titleLabel.cursor().shape() == expected, (
+            f"{state.name}: 커서가 클릭 가능 여부와 다르다"
+        )
         window.close()
 
     def test_state_change_after_creation_updates_the_hint(self, qapp, qtbot) -> None:

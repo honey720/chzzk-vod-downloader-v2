@@ -139,7 +139,8 @@ class TestCardPathPickerFeedback:
         new_dir = tmp_path / "space dir"
         new_dir.mkdir()
         monkeypatch.setattr(
-            widget_mod.QFileDialog, "getExistingDirectory",
+            widget_mod.QFileDialog,
+            "getExistingDirectory",
             staticmethod(lambda parent, caption, start, *a, **k: str(new_dir)),
         )
 
@@ -155,18 +156,26 @@ class TestCardPathPickerFeedback:
         """취소(빈 반환)는 무변경·무안내 — 입력을 포기한 유저에게 팝업이 뜨던 결함의 반대 증명."""
         item, widget = self._widget(manager, qapp, str(tmp_path))
         warnings = []
-        monkeypatch.setattr(widget_mod.QMessageBox, "warning",
-                            lambda parent, title, text, *a, **k: warnings.append(text))
-        monkeypatch.setattr(widget_mod.QFileDialog, "getExistingDirectory",
-                            staticmethod(lambda *a, **k: ""))
+        monkeypatch.setattr(
+            widget_mod.QMessageBox,
+            "warning",
+            lambda parent, title, text, *a, **k: warnings.append(text),
+        )
+        monkeypatch.setattr(
+            widget_mod.QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: "")
+        )
 
         with caplog.at_level("INFO", logger="app.widgets.widget"):
-            widget_mod.logger.info("표식: 캡처 채널 생존")  # 제품 로거로 흘려야 이름이 틀리면 같이 죽는다
+            widget_mod.logger.info(
+                "표식: 캡처 채널 생존"
+            )  # 제품 로거로 흘려야 이름이 틀리면 같이 죽는다
             widget.choosePath(None)
 
         assert item.download_path == str(tmp_path)
         assert warnings == []
-        assert "표식: 캡처 채널 생존" in caplog.text  # 채널이 살아 있다 — 이게 없으면 아래 음성 단언은 아무것도 안 잰다(#263)
+        assert (
+            "표식: 캡처 채널 생존" in caplog.text
+        )  # 채널이 살아 있다 — 이게 없으면 아래 음성 단언은 아무것도 안 잰다(#263)
         assert "카드 저장 경로" not in caplog.text
 
 
@@ -196,10 +205,14 @@ class TestFetchGateLogging:
         """메뉴 「폴더 찾기…」로 그 폴더를 고른다 — 메뉴를 실제로 열고 폴더 선택 창만 바꿔 끼운다."""
         from PySide6.QtWidgets import QFileDialog
 
-        monkeypatch.setattr(QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: str(folder)))
+        monkeypatch.setattr(
+            QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: str(folder))
+        )
         button = win.saveLocationButton
         button.menuWidget.popup(button.mapToGlobal(button.rect().bottomLeft()))
-        action = next(a for a in button.menuWidget.actions() if a.objectName() == "findFolderAction")
+        action = next(
+            a for a in button.menuWidget.actions() if a.objectName() == "findFolderAction"
+        )
         action.trigger()
         button.menuWidget.hide()
 
@@ -217,7 +230,9 @@ class TestFetchGateLogging:
         with caplog.at_level("WARNING", logger="app.views.mainWindow"):
             win.fetchButton.click()
 
-        assert win.registerErrorLabel.text() == "Path does not exist."  # 안내 글은 그대로, 자리는 오류 줄(#495)
+        assert (
+            win.registerErrorLabel.text() == "Path does not exist."
+        )  # 안내 글은 그대로, 자리는 오류 줄(#495)
         assert "조회 거부" in caplog.text
         assert "\\xa0" in caplog.text
 

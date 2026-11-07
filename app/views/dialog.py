@@ -14,7 +14,16 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtCore import QEvent, QItemSelectionModel, QMetaObject, QObject, QSize, Qt, QTimer, QUrl
+from PySide6.QtCore import (
+    QEvent,
+    QItemSelectionModel,
+    QMetaObject,
+    QObject,
+    QSize,
+    Qt,
+    QTimer,
+    QUrl,
+)
 
 
 class _ComboBoxPopupHighlightResync(QObject):
@@ -97,7 +106,9 @@ class _ComboBoxPopupHighlightResync(QObject):
     def _resync(self) -> None:
         combo = self._combo
         view = combo.view()
-        index = combo.model().index(combo.currentIndex(), combo.modelColumn(), combo.rootModelIndex())
+        index = combo.model().index(
+            combo.currentIndex(), combo.modelColumn(), combo.rootModelIndex()
+        )
         view.setCurrentIndex(index)
         selection_model = view.selectionModel()
         if selection_model is not None:
@@ -247,7 +258,9 @@ class SettingDialog(QDialog):
         self.downloadGridLayout = _label_field_grid(self.downloadBox, "downloadGridLayout")
         self.afterDownloadLabel = _FormLabel(self.downloadBox)
         self.afterDownloadLabel.setObjectName("afterDownloadLabel")
-        self.downloadGridLayout.addWidget(self.afterDownloadLabel, 0, _LABEL_COLUMN, _LABEL_ALIGNMENT)
+        self.downloadGridLayout.addWidget(
+            self.afterDownloadLabel, 0, _LABEL_COLUMN, _LABEL_ALIGNMENT
+        )
         self.afterDownload = QComboBox(self.downloadBox)
         self.afterDownload.setObjectName("afterDownload")
         self.downloadGridLayout.addWidget(self.afterDownload, 0, _FIELD_COLUMN)
@@ -307,9 +320,11 @@ class SettingDialog(QDialog):
         self.nidaut.setText(cookies["NID_AUT"])  # 쿠키값을 불러와서 QLineEdit에 세팅
         self.nidses.setText(cookies["NID_SES"])
 
-        self.helpButton.clicked.connect(self.showHelp) # 도움말 버튼 클릭 시 showHelp 메소드 호출
+        self.helpButton.clicked.connect(self.showHelp)  # 도움말 버튼 클릭 시 showHelp 메소드 호출
 
-        self.afterDownload.addItem(self.tr("none"), "none") # 다운로드 완료 후 동작을 선택할 수 있는 QComboBox 생성
+        self.afterDownload.addItem(
+            self.tr("none"), "none"
+        )  # 다운로드 완료 후 동작을 선택할 수 있는 QComboBox 생성
         self.afterDownload.addItem(self.tr("sleep"), "sleep")
         self.afterDownload.addItem(self.tr("shutdown"), "shutdown")
 
@@ -320,7 +335,9 @@ class SettingDialog(QDialog):
             self.afterDownload.setCurrentIndex(index)
         _wire_popup_highlight_resync(self.afterDownload)
 
-        self.language.addItem("English", "en_US") # 언어 선택을 위한 QComboBox 생성 TODO: 언어 리스트는 project.pro에서 관리
+        self.language.addItem(
+            "English", "en_US"
+        )  # 언어 선택을 위한 QComboBox 생성 TODO: 언어 리스트는 project.pro에서 관리
         self.language.addItem("한국어", "ko_KR")
 
         currentLang = settings.load_setting("language")  # 현재 설정된 언어에 맞는 인덱스 찾기
@@ -329,7 +346,9 @@ class SettingDialog(QDialog):
             self.language.setCurrentIndex(index)
         _wire_popup_highlight_resync(self.language)
 
-        self.logsFolder.clicked.connect(self.openLogsFolder) # 로그 폴더 열기 버튼 클릭 시 openLogsFolder 메소드 호출
+        self.logsFolder.clicked.connect(
+            self.openLogsFolder
+        )  # 로그 폴더 열기 버튼 클릭 시 openLogsFolder 메소드 호출
 
     def accept(self) -> None:
         # 이 창이 보이는 세 키만 쓴다 — 창을 연 뒤 다른 곳이 바꾼 키를 되돌리지 않는다 (#519)
@@ -356,7 +375,7 @@ class SettingDialog(QDialog):
             "2. Press F12 to open the developer tool. <br>"
             "3. Click Cookies > https://chzzk.naver.com on the Application tab. <br>"
             "4. Add the values of 'NID_AUT' and 'NID_SES'."
-            ).format(link, link)
+        ).format(link, link)
         QMessageBox.information(self, self.tr("Helper"), msg)
 
     def openLogsFolder(self) -> None:

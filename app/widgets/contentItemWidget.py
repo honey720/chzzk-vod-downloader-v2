@@ -28,9 +28,8 @@
 ## 위계·색은 전역 QSS(theme.FONTS 토큰)가 정한다.
 ################################################################################
 
-from PySide6.QtCore import (QCoreApplication, QMetaObject, QSize, Qt)
-from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel,
-    QLineEdit, QProgressBar, QVBoxLayout)
+from PySide6.QtCore import QCoreApplication, QMetaObject, QSize, Qt
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QLineEdit, QProgressBar, QVBoxLayout
 
 import app.theme as theme
 from app.widgets.eliding_label import ElidingLabel, PathLabel
@@ -40,7 +39,7 @@ from app.widgets.icons import IconButton
 class Ui_ContentItemWidget(object):
     def setupUi(self, ContentItemWidget) -> None:
         if not ContentItemWidget.objectName():
-            ContentItemWidget.setObjectName(u"ContentItemWidget")
+            ContentItemWidget.setObjectName("ContentItemWidget")
         ContentItemWidget.resize(600, 110)
 
         pad = theme.METRICS["cardPadding"]
@@ -50,26 +49,26 @@ class Ui_ContentItemWidget(object):
         pill_h = theme.METRICS["pillHeight"]
 
         self.contentItemLayout = QVBoxLayout(ContentItemWidget)
-        self.contentItemLayout.setObjectName(u"contentItemLayout")
+        self.contentItemLayout.setObjectName("contentItemLayout")
         # 좌우 0 — 카드 프레임의 좌우 위치는 목록 컨테이너·창 여백
         # (theme.METRICS["outerMargin"])이 정해, 상단·하단 바와 같은
         # 정렬선을 쓴다. 위 6은 카드 사이 간격의 일부다.
         self.contentItemLayout.setContentsMargins(0, 6, 0, 0)
         self.contentFrame = QFrame(ContentItemWidget)
-        self.contentFrame.setObjectName(u"contentFrame")
+        self.contentFrame.setObjectName("contentFrame")
         self.contentFrame.setFrameShape(QFrame.Shape.StyledPanel)
         self.contentFrame.setFrameShadow(QFrame.Shadow.Raised)
 
         # 프레임 직속 레이아웃은 여백 0 — 안쪽 여백은 bodyLayout이 준다.
         # 하단 진행바가 카드 가장자리에 딱 붙어야 해서다.
         self.contentFrameLayout = QVBoxLayout(self.contentFrame)
-        self.contentFrameLayout.setObjectName(u"contentFrameLayout")
+        self.contentFrameLayout.setObjectName("contentFrameLayout")
         self.contentFrameLayout.setContentsMargins(0, 0, 0, 0)
         self.contentFrameLayout.setSpacing(0)
 
         # ---- 본체: 썸네일 | 컨텐츠 열 ----
         self.bodyLayout = QHBoxLayout()
-        self.bodyLayout.setObjectName(u"bodyLayout")
+        self.bodyLayout.setObjectName("bodyLayout")
         self.bodyLayout.setContentsMargins(pad, pad, pad, pad)
         self.bodyLayout.setSpacing(pad)
 
@@ -79,13 +78,13 @@ class Ui_ContentItemWidget(object):
         # 안에서 비율 유지 + letterbox를 이미지 평균색으로 채운다
         # (app/widgets/widget.py::_composeThumbnail).
         self.thumbnailLabel = QLabel(self.contentFrame)
-        self.thumbnailLabel.setObjectName(u"thumbnailLabel")
+        self.thumbnailLabel.setObjectName("thumbnailLabel")
         self.thumbnailLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.bodyLayout.addWidget(self.thumbnailLabel)
 
         self.contentLayout = QVBoxLayout()
-        self.contentLayout.setObjectName(u"contentLayout")
+        self.contentLayout.setObjectName("contentLayout")
         self.contentLayout.setSpacing(row_gap)
 
         # ---- 1행: 채널 식별 ··· 상태별 조작 · 삭제 ----
@@ -94,11 +93,11 @@ class Ui_ContentItemWidget(object):
         # (⏸/📁/↻)은 항상 존재하고 상태에 맞는 것만 보인다 — 버튼이 있고
         # 없고가 행 높이를 흔들지 않게 한다.
         self.topLayout = QHBoxLayout()
-        self.topLayout.setObjectName(u"topLayout")
+        self.topLayout.setObjectName("topLayout")
         self.topLayout.setSpacing(4)
 
         self.channelImageLabel = QLabel(self.contentFrame)
-        self.channelImageLabel.setObjectName(u"channelImageLabel")
+        self.channelImageLabel.setObjectName("channelImageLabel")
         self.channelImageLabel.setMinimumSize(QSize(icon, icon))
         self.channelImageLabel.setMaximumSize(QSize(icon, icon))
         self.channelImageLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -106,7 +105,7 @@ class Ui_ContentItemWidget(object):
         self.topLayout.addWidget(self.channelImageLabel)
 
         self.channelNameLabel = ElidingLabel(self.contentFrame)
-        self.channelNameLabel.setObjectName(u"channelNameLabel")
+        self.channelNameLabel.setObjectName("channelNameLabel")
         # 최소폭은 app/widgets/widget.py::_clampChannelMinWidth가 이름 길이에
         # 맞춰 조인다(짧은 이름이 빈 폭을 예약하지 않게). 최대폭은 아주
         # 긴 채널명이 우측 조작을 밀어내는 것을 막는다.
@@ -124,46 +123,46 @@ class Ui_ContentItemWidget(object):
         # 글자 · 경로 글자를 누르는 것과 같은 일을 한다(글자는 눌린다는 것이 잘 보이지 않는다).
         # 그 동작이 허용되는 상태에서만 보인다(app/widgets/widget.py::applyStateStyle)
         self.sectionEditButton = IconButton(self.contentFrame)
-        self.sectionEditButton.setObjectName(u"sectionEditButton")
+        self.sectionEditButton.setObjectName("sectionEditButton")
         self.sectionEditButton.setMinimumSize(QSize(icon, icon))
         self.sectionEditButton.setMaximumSize(QSize(icon, icon))
-        self.sectionEditButton.setProperty("role", u"icon")
+        self.sectionEditButton.setProperty("role", "icon")
         self.sectionEditButton.setVisible(False)
 
         self.topLayout.addWidget(self.sectionEditButton)
 
         self.pathButton = IconButton(self.contentFrame)
-        self.pathButton.setObjectName(u"pathButton")
+        self.pathButton.setObjectName("pathButton")
         self.pathButton.setMinimumSize(QSize(icon, icon))
         self.pathButton.setMaximumSize(QSize(icon, icon))
-        self.pathButton.setProperty("role", u"icon")
+        self.pathButton.setProperty("role", "icon")
         self.pathButton.setVisible(False)
 
         self.topLayout.addWidget(self.pathButton)
 
         self.pauseButton = IconButton(self.contentFrame)
-        self.pauseButton.setObjectName(u"pauseButton")
+        self.pauseButton.setObjectName("pauseButton")
         self.pauseButton.setMinimumSize(QSize(icon, icon))
         self.pauseButton.setMaximumSize(QSize(icon, icon))
-        self.pauseButton.setProperty("role", u"icon")
+        self.pauseButton.setProperty("role", "icon")
         self.pauseButton.setVisible(False)
 
         self.topLayout.addWidget(self.pauseButton)
 
         self.openDirectoryButton = IconButton(self.contentFrame)
-        self.openDirectoryButton.setObjectName(u"openDirectoryButton")
+        self.openDirectoryButton.setObjectName("openDirectoryButton")
         self.openDirectoryButton.setMinimumSize(QSize(icon, icon))
         self.openDirectoryButton.setMaximumSize(QSize(icon, icon))
-        self.openDirectoryButton.setProperty("role", u"icon")
+        self.openDirectoryButton.setProperty("role", "icon")
         self.openDirectoryButton.setVisible(False)
 
         self.topLayout.addWidget(self.openDirectoryButton)
 
         self.retryButton = IconButton(self.contentFrame)
-        self.retryButton.setObjectName(u"retryButton")
+        self.retryButton.setObjectName("retryButton")
         self.retryButton.setMinimumSize(QSize(icon, icon))
         self.retryButton.setMaximumSize(QSize(icon, icon))
-        self.retryButton.setProperty("role", u"icon")
+        self.retryButton.setProperty("role", "icon")
         self.retryButton.setVisible(False)
 
         self.topLayout.addWidget(self.retryButton)
@@ -174,10 +173,10 @@ class Ui_ContentItemWidget(object):
         self.topLayout.addSpacing(8)
 
         self.deleteButton = IconButton(self.contentFrame)
-        self.deleteButton.setObjectName(u"deleteButton")
+        self.deleteButton.setObjectName("deleteButton")
         self.deleteButton.setMinimumSize(QSize(icon, icon))
         self.deleteButton.setMaximumSize(QSize(icon, icon))
-        self.deleteButton.setProperty("role", u"icon")
+        self.deleteButton.setProperty("role", "icon")
 
         self.topLayout.addWidget(self.deleteButton)
 
@@ -185,16 +184,16 @@ class Ui_ContentItemWidget(object):
 
         # ---- 2행: 제목 (클릭하면 편집 — 호버 힌트는 전역 QSS) ----
         self.titleLayout = QHBoxLayout()
-        self.titleLayout.setObjectName(u"titleLayout")
+        self.titleLayout.setObjectName("titleLayout")
         self.titleLabel = ElidingLabel(self.contentFrame)
-        self.titleLabel.setObjectName(u"titleLabel")
+        self.titleLabel.setObjectName("titleLabel")
         self.titleLabel.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.titleLabel.setCursor(Qt.CursorShape.IBeamCursor)
 
         self.titleLayout.addWidget(self.titleLabel, 1)
 
         self.titleEdit = QLineEdit(self.contentFrame)
-        self.titleEdit.setObjectName(u"titleEdit")
+        self.titleEdit.setObjectName("titleEdit")
         self.titleEdit.setClearButtonEnabled(True)
 
         self.titleLayout.addWidget(self.titleEdit, 1)
@@ -209,11 +208,11 @@ class Ui_ContentItemWidget(object):
         # 경로는 전역 설정 경로와 다를 때만 보인다 — 같은 값을 카드마다
         # 반복하는 것이 정보 과다의 큰 몫이었다(#245).
         self.resolutionLayout = QHBoxLayout()
-        self.resolutionLayout.setObjectName(u"resolutionLayout")
+        self.resolutionLayout.setObjectName("resolutionLayout")
         self.resolutionLayout.setSpacing(4)
 
         self.statusLabel = ElidingLabel(self.contentFrame)
-        self.statusLabel.setObjectName(u"statusLabel")
+        self.statusLabel.setObjectName("statusLabel")
         self.statusLabel.setMinimumHeight(pill_h)
         self.statusLabel.setVisible(False)
 
@@ -229,7 +228,7 @@ class Ui_ContentItemWidget(object):
         # 경로는 줄어드는 순서가 정해진 PathLabel(#245): 전체 → 중간 폴더 접기 →
         # 마지막 폴더만 ElideMiddle. 파일이 들어가는 마지막 폴더가 가장 늦게 잘린다.
         self.directoryLabel = PathLabel(self.contentFrame)
-        self.directoryLabel.setObjectName(u"directoryLabel")
+        self.directoryLabel.setObjectName("directoryLabel")
         self.directoryLabel.setCursor(Qt.CursorShape.PointingHandCursor)
         self.directoryLabel.setVisible(False)
 
@@ -244,7 +243,7 @@ class Ui_ContentItemWidget(object):
         # 또는 해상도 접두 + 크기)로 먼저 확보하고, 3행에서 줄어드는 것은 경로
         # 하나뿐이다. 오른쪽 정렬이라 확보 폭이 남아도 우측 끝선이 유지된다.
         self.fileSizeLabel = ElidingLabel(self.contentFrame)
-        self.fileSizeLabel.setObjectName(u"fileSizeLabel")
+        self.fileSizeLabel.setObjectName("fileSizeLabel")
         self.fileSizeLabel.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         self.resolutionLayout.addWidget(self.fileSizeLabel)
@@ -265,13 +264,13 @@ class Ui_ContentItemWidget(object):
         # 깨진다(실측 95→99px). 바닥 여백(cardPadding 8px)이 바(4px)보다
         # 커서 겹쳐도 글과 안 부딪힌다.
         self.progressBar = QProgressBar(self.contentFrame)
-        self.progressBar.setObjectName(u"progressBar")
+        self.progressBar.setObjectName("progressBar")
         self.progressBar.setMinimumSize(QSize(0, bar_h))
         self.progressBar.setMaximumSize(QSize(16777215, bar_h))
         self.progressBar.setMaximum(100)
         self.progressBar.setValue(0)
         self.progressBar.setTextVisible(False)
-        self.progressBar.setProperty("state", u"waiting")
+        self.progressBar.setProperty("state", "waiting")
         self.progressBar.setVisible(False)
 
         self.contentItemLayout.addWidget(self.contentFrame)
@@ -279,48 +278,76 @@ class Ui_ContentItemWidget(object):
         self.retranslateUi(ContentItemWidget)
 
         QMetaObject.connectSlotsByName(ContentItemWidget)
+
     # setupUi
 
     def retranslateUi(self, ContentItemWidget) -> None:
-        ContentItemWidget.setWindowTitle(QCoreApplication.translate("ContentItemWidget", u"ContentItemWidget", None))
-#if QT_CONFIG(tooltip)
-        self.channelImageLabel.setToolTip(QCoreApplication.translate("ContentItemWidget", u"Channel image", None))
-#endif // QT_CONFIG(tooltip)
-        self.channelImageLabel.setText(QCoreApplication.translate("ContentItemWidget", u"Channel image", None))
-#if QT_CONFIG(tooltip)
-        self.channelNameLabel.setToolTip(QCoreApplication.translate("ContentItemWidget", u"Channel name", None))
-#endif // QT_CONFIG(tooltip)
-        self.channelNameLabel.setText(QCoreApplication.translate("ContentItemWidget", u"Channel name", None))
-#if QT_CONFIG(tooltip)
-        self.pauseButton.setToolTip(QCoreApplication.translate("ContentItemWidget", u"Pause", None))
-#endif // QT_CONFIG(tooltip)
-#if QT_CONFIG(tooltip)
-        self.openDirectoryButton.setToolTip(QCoreApplication.translate("ContentItemWidget", u"Open directory", None))
-#endif // QT_CONFIG(tooltip)
-#if QT_CONFIG(tooltip)
-        self.retryButton.setToolTip(QCoreApplication.translate("ContentItemWidget", u"Retry", None))
-#endif // QT_CONFIG(tooltip)
-#if QT_CONFIG(tooltip)
-        self.deleteButton.setToolTip(QCoreApplication.translate("ContentItemWidget", u"Delete", None))
-#endif // QT_CONFIG(tooltip)
-#if QT_CONFIG(tooltip)
-        self.thumbnailLabel.setToolTip(QCoreApplication.translate("ContentItemWidget", u"Thumbnail", None))
-#endif // QT_CONFIG(tooltip)
-        self.thumbnailLabel.setText(QCoreApplication.translate("ContentItemWidget", u"Thumbnail", None))
-#if QT_CONFIG(tooltip)
-        self.titleLabel.setToolTip(QCoreApplication.translate("ContentItemWidget", u"Title", None))
-#endif // QT_CONFIG(tooltip)
-        self.titleLabel.setText(QCoreApplication.translate("ContentItemWidget", u"Title", None))
-#if QT_CONFIG(tooltip)
-        self.statusLabel.setToolTip(QCoreApplication.translate("ContentItemWidget", u"Status", None))
-#endif // QT_CONFIG(tooltip)
-        self.statusLabel.setText(QCoreApplication.translate("ContentItemWidget", u"Status", None))
-#if QT_CONFIG(tooltip)
-        self.directoryLabel.setToolTip(QCoreApplication.translate("ContentItemWidget", u"Directory", None))
-#endif // QT_CONFIG(tooltip)
-        self.directoryLabel.setText(QCoreApplication.translate("ContentItemWidget", u"Directory", None))
-#if QT_CONFIG(tooltip)
-        self.fileSizeLabel.setToolTip(QCoreApplication.translate("ContentItemWidget", u"File size", None))
-#endif // QT_CONFIG(tooltip)
-        self.fileSizeLabel.setText(QCoreApplication.translate("ContentItemWidget", u"File size", None))
+        ContentItemWidget.setWindowTitle(
+            QCoreApplication.translate("ContentItemWidget", "ContentItemWidget", None)
+        )
+        # if QT_CONFIG(tooltip)
+        self.channelImageLabel.setToolTip(
+            QCoreApplication.translate("ContentItemWidget", "Channel image", None)
+        )
+        # endif // QT_CONFIG(tooltip)
+        self.channelImageLabel.setText(
+            QCoreApplication.translate("ContentItemWidget", "Channel image", None)
+        )
+        # if QT_CONFIG(tooltip)
+        self.channelNameLabel.setToolTip(
+            QCoreApplication.translate("ContentItemWidget", "Channel name", None)
+        )
+        # endif // QT_CONFIG(tooltip)
+        self.channelNameLabel.setText(
+            QCoreApplication.translate("ContentItemWidget", "Channel name", None)
+        )
+        # if QT_CONFIG(tooltip)
+        self.pauseButton.setToolTip(QCoreApplication.translate("ContentItemWidget", "Pause", None))
+        # endif // QT_CONFIG(tooltip)
+        # if QT_CONFIG(tooltip)
+        self.openDirectoryButton.setToolTip(
+            QCoreApplication.translate("ContentItemWidget", "Open directory", None)
+        )
+        # endif // QT_CONFIG(tooltip)
+        # if QT_CONFIG(tooltip)
+        self.retryButton.setToolTip(QCoreApplication.translate("ContentItemWidget", "Retry", None))
+        # endif // QT_CONFIG(tooltip)
+        # if QT_CONFIG(tooltip)
+        self.deleteButton.setToolTip(
+            QCoreApplication.translate("ContentItemWidget", "Delete", None)
+        )
+        # endif // QT_CONFIG(tooltip)
+        # if QT_CONFIG(tooltip)
+        self.thumbnailLabel.setToolTip(
+            QCoreApplication.translate("ContentItemWidget", "Thumbnail", None)
+        )
+        # endif // QT_CONFIG(tooltip)
+        self.thumbnailLabel.setText(
+            QCoreApplication.translate("ContentItemWidget", "Thumbnail", None)
+        )
+        # if QT_CONFIG(tooltip)
+        self.titleLabel.setToolTip(QCoreApplication.translate("ContentItemWidget", "Title", None))
+        # endif // QT_CONFIG(tooltip)
+        self.titleLabel.setText(QCoreApplication.translate("ContentItemWidget", "Title", None))
+        # if QT_CONFIG(tooltip)
+        self.statusLabel.setToolTip(QCoreApplication.translate("ContentItemWidget", "Status", None))
+        # endif // QT_CONFIG(tooltip)
+        self.statusLabel.setText(QCoreApplication.translate("ContentItemWidget", "Status", None))
+        # if QT_CONFIG(tooltip)
+        self.directoryLabel.setToolTip(
+            QCoreApplication.translate("ContentItemWidget", "Directory", None)
+        )
+        # endif // QT_CONFIG(tooltip)
+        self.directoryLabel.setText(
+            QCoreApplication.translate("ContentItemWidget", "Directory", None)
+        )
+        # if QT_CONFIG(tooltip)
+        self.fileSizeLabel.setToolTip(
+            QCoreApplication.translate("ContentItemWidget", "File size", None)
+        )
+        # endif // QT_CONFIG(tooltip)
+        self.fileSizeLabel.setText(
+            QCoreApplication.translate("ContentItemWidget", "File size", None)
+        )
+
     # retranslateUi

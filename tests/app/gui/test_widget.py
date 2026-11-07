@@ -47,7 +47,9 @@ def _apply_production_qss(qapp) -> None:
     (`test_widget_theme.py`의 `_apply_dark_card_qss` 문서 참고).
     """
     theme.set_color_scheme("dark")
-    qapp.setStyle(hold_style(theme.build_style()))  # 참조 보관 — 이중 해제 우회 (#243, card_helpers.hold_style)
+    qapp.setStyle(
+        hold_style(theme.build_style())
+    )  # 참조 보관 — 이중 해제 우회 (#243, card_helpers.hold_style)
     qapp.setPalette(theme.build_palette())
     qapp.setStyleSheet(theme.load_stylesheet(main_module.resource_path(theme.QSS_RELATIVE_PATH)))
 
@@ -71,8 +73,19 @@ def no_network(monkeypatch) -> None:
 def _make_item(content_type="video", title="제목", channel="채널") -> ContentItem:
     return ContentItem(
         "https://chzzk.naver.com/video/1",
-        {"title": title, "category": "", "channelName": channel, "createdDate": "", "duration": 3600},
-        [], None, "", "C:/Users/LeeDH/Downloads", content_type, None,
+        {
+            "title": title,
+            "category": "",
+            "channelName": channel,
+            "createdDate": "",
+            "duration": 3600,
+        },
+        [],
+        None,
+        "",
+        "C:/Users/LeeDH/Downloads",
+        content_type,
+        None,
     )
 
 
@@ -225,7 +238,9 @@ class TestChannelNameYieldsBeforeStatusAndFileSize:
         # 있어 대기 상태에선 아예 숨겨진다(pill 몫). 우선순위 검증은 상태
         # 텍스트가 실제로 보이는 진행 상태로 잰다 — 채널명(1행, max 150
         # 상한으로 반드시 잘림)은 줄고, 상태·크기(3행)는 온전해야 한다.
-        item = _make_item(content_type="video", channel="우왁굳의 게임방송 다시보기 풀버전 모음집 전체")
+        item = _make_item(
+            content_type="video", channel="우왁굳의 게임방송 다시보기 풀버전 모음집 전체"
+        )
         item.total_size = "1.24 GB"
         item.downloadState = DownloadState.RUNNING
         item.download_remain_time = "00:01:23"
@@ -345,6 +360,4 @@ class TestRecoversFullTextAfterWidthIncreases:
 
     def test_status_text_recovers_when_widened_after_being_narrow(self, qapp) -> None:
         container, label = self._narrow_then_wide(qapp, "00:05:12")
-        assert "00:05:12" in _rendered(label), (
-            "컨테이너를 넓혔는데도 상태 문구가 회복되지 않았다"
-        )
+        assert "00:05:12" in _rendered(label), "컨테이너를 넓혔는데도 상태 문구가 회복되지 않았다"

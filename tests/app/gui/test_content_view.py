@@ -35,7 +35,12 @@ def _make_item(title="제목", download_path=".") -> ContentItem:
     return ContentItem(
         "https://chzzk.naver.com/video/1",
         {"title": title, "category": "", "channelName": "채널", "createdDate": "", "duration": 0},
-        [], None, "", download_path, "video", None,
+        [],
+        None,
+        "",
+        download_path,
+        "video",
+        None,
     )
 
 
@@ -449,7 +454,9 @@ class TestNoHorizontalOverflow:
         rendered_title = shown(widget.titleLabel)  # 가시성 단언 후의 표시 문자열(QLabel.text)
         full_title = widget.titleLabel.text()
         full_path = widget.directoryLabel.text()  # 축약형 표시 문자열 — 말줄임의 원문
-        assert "…" not in full_path, "축약이 '…'를 넣었다 — 이 테스트의 경로는 뿌리 뒤 2단계여야 한다"
+        assert "…" not in full_path, (
+            "축약이 '…'를 넣었다 — 이 테스트의 경로는 뿌리 뒤 2단계여야 한다"
+        )
 
         assert widget.titleLabel._elide_mode == Qt.TextElideMode.ElideRight
         assert widget.directoryLabel._elide_mode == Qt.TextElideMode.ElideMiddle
@@ -478,9 +485,13 @@ class TestNoHorizontalOverflow:
         rendered_path = shown(widget.directoryLabel)
         last_folder = full_path.rsplit("/", 1)[-1]
         assert rendered_path != full_path, "경로가 이 폭에서 안 잘렸다 — 게이트 전제가 깨졌다"
-        assert rendered_path.startswith("C:/…/"), f"중간 폴더 접기 접두가 고정되지 않았다: {rendered_path!r}"
-        tail = rendered_path[len("C:/…/"):]
-        assert "…" in tail, f"마지막 폴더 안의 가운데 말줄임이 없다 — 전제(첫 가시 폭) 확인: {rendered_path!r}"
+        assert rendered_path.startswith("C:/…/"), (
+            f"중간 폴더 접기 접두가 고정되지 않았다: {rendered_path!r}"
+        )
+        tail = rendered_path[len("C:/…/") :]
+        assert "…" in tail, (
+            f"마지막 폴더 안의 가운데 말줄임이 없다 — 전제(첫 가시 폭) 확인: {rendered_path!r}"
+        )
         before, _, after = tail.partition("…")
         assert last_folder.startswith(before), f"가운데 말줄임이 아니다 — 앞부분 불일치: {before!r}"
         assert last_folder.endswith(after), f"가운데 말줄임이 아니다 — 뒷부분 불일치: {after!r}"

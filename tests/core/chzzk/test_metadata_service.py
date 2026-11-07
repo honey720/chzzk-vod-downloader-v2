@@ -164,7 +164,12 @@ def test_encrypted_vod_with_entitlement_takes_sea_path(
         NetworkManager,
         "get_video_sea_manifest",
         lambda *args, **kwargs: (
-            sea_calls.append(args) or ([[144, "https://example.invalid/media.m3u8"]], 144, "https://example.invalid/media.m3u8")
+            sea_calls.append(args)
+            or (
+                [[144, "https://example.invalid/media.m3u8"]],
+                144,
+                "https://example.invalid/media.m3u8",
+            )
         ),
     )
 

@@ -52,7 +52,9 @@ def _apply_production_qss(qapp) -> None:
     `scope="function"` 유지 — 넓히면 macOS 종료 크래시 재발
     (`test_widget_theme.py`의 `_apply_dark_card_qss` 문서 참고)."""
     theme.set_color_scheme("dark")
-    qapp.setStyle(hold_style(theme.build_style()))  # 참조 보관 — 이중 해제 우회 (#243, card_helpers.hold_style)
+    qapp.setStyle(
+        hold_style(theme.build_style())
+    )  # 참조 보관 — 이중 해제 우회 (#243, card_helpers.hold_style)
     qapp.setPalette(theme.build_palette())
     qapp.setStyleSheet(theme.load_stylesheet(main_module.resource_path(theme.QSS_RELATIVE_PATH)))
 
@@ -76,8 +78,19 @@ def no_network(monkeypatch) -> None:
 def _make_widget(qapp) -> ContentItemWidget:
     item = ContentItem(
         "https://chzzk.naver.com/video/1",
-        {"title": "제목", "category": "", "channelName": "채널", "createdDate": "", "duration": 3600},
-        [["1080", "u1"], ["720", "u2"], ["144", "u3"]], None, "", "C:/dl", "video", None,
+        {
+            "title": "제목",
+            "category": "",
+            "channelName": "채널",
+            "createdDate": "",
+            "duration": 3600,
+        },
+        [["1080", "u1"], ["720", "u2"], ["144", "u3"]],
+        None,
+        "",
+        "C:/dl",
+        "video",
+        None,
     )
     item.downloadState = DownloadState.WAITING
     item.total_size = "711.02 MB"
@@ -291,8 +304,7 @@ class TestRowOneClusters:
         _at_width(widget, width)
         gap = _gap(widget.retryButton, widget.deleteButton)
         assert gap == self.DELETE_EXTRA_GAP, (
-            f"폭 {width}px에서 조작→삭제 간격이 {gap}px "
-            f"(기대 {self.DELETE_EXTRA_GAP}px)"
+            f"폭 {width}px에서 조작→삭제 간격이 {gap}px (기대 {self.DELETE_EXTRA_GAP}px)"
         )
 
     @pytest.mark.parametrize("width", WIDTHS)
@@ -360,8 +372,19 @@ def _make_widget_with_reps(qapp, reps, width=900) -> ContentItemWidget:
     """해상도 목록을 지정해 대기 카드를 만든다 — 개수가 다른 카드를 섞어 재기 위함."""
     item = ContentItem(
         "https://chzzk.naver.com/video/1",
-        {"title": "제목", "category": "", "channelName": "채널", "createdDate": "", "duration": 3600},
-        [[r, f"u{r}"] for r in reps], None, "", "C:/dl", "video", None,
+        {
+            "title": "제목",
+            "category": "",
+            "channelName": "채널",
+            "createdDate": "",
+            "duration": 3600,
+        },
+        [[r, f"u{r}"] for r in reps],
+        None,
+        "",
+        "C:/dl",
+        "video",
+        None,
     )
     item.downloadState = DownloadState.WAITING
     item.total_size = "711.02 MB"
@@ -425,9 +448,13 @@ class TestResolutionPillsDescending:
         xs_before = [b.x() for b in widget.buttons]
         widget.buttons[2].click()  # 480p 선택
         QApplication.processEvents()
-        assert widget.pillMode() == "all" and _visible_pills(widget) == order_before, "고른다고 접히면 안 된다"
+        assert widget.pillMode() == "all" and _visible_pills(widget) == order_before, (
+            "고른다고 접히면 안 된다"
+        )
         assert [b.text() for b in widget.buttons] == order_before
-        assert [b.x() for b in widget.buttons] == xs_before, "선택했다고 pill이 움직였다 — 순서는 고정이다"
+        assert [b.x() for b in widget.buttons] == xs_before, (
+            "선택했다고 pill이 움직였다 — 순서는 고정이다"
+        )
         assert _selected(widget) == [widget.buttons[2]]
 
 
@@ -452,7 +479,9 @@ class TestPillsCollapseOnlyWhenTheyDoNotFit:
         wide = [b.width() for b in widget.buttons]
         _at_width(widget, 900)
         assert widget.pillMode() == "all", "전제: 900px에서도 8개가 들어간다(offscreen·실기 모두)"
-        assert [b.width() for b in widget.buttons] == wide, "좁아지자 pill이 쥐어짜였다 — 안 들어가면 접혀야지 줄면 안 된다"
+        assert [b.width() for b in widget.buttons] == wide, (
+            "좁아지자 pill이 쥐어짜였다 — 안 들어가면 접혀야지 줄면 안 된다"
+        )
 
 
 class TestRowThreePriority:
@@ -504,7 +533,11 @@ class TestRowThreePriority:
     def _points(self, widget) -> dict:
         """측정점 — T(경로 숨김) / T+경로 자연 폭÷2(경로 텍스트이되 부분) / T+200."""
         threshold = self._threshold_waiting(widget)
-        return {"T": threshold, "T+path/2": threshold + widget.directoryLabel.sizeHint().width() // 2, "T+200": threshold + 200}
+        return {
+            "T": threshold,
+            "T+path/2": threshold + widget.directoryLabel.sizeHint().width() // 2,
+            "T+200": threshold + 200,
+        }
 
     @pytest.mark.parametrize("point", ("T", "T+path/2", "T+200"))
     def test_file_size_is_never_elided_with_five_pills(self, qapp, point) -> None:
@@ -519,7 +552,9 @@ class TestRowThreePriority:
     def test_duration_is_never_elided_either(self, qapp, point) -> None:
         """크기 조회 전에는 같은 자리에 재생 시간이 들어온다 — 그것도 온전해야 한다."""
         widget = self._tight(qapp, 900, segment=True)
-        assert widget.fileSizeLabel.text().count(":") == 2, "세그먼트 기반 대기 카드는 재생 시간을 보여야 한다(전제)"
+        assert widget.fileSizeLabel.text().count(":") == 2, (
+            "세그먼트 기반 대기 카드는 재생 시간을 보여야 한다(전제)"
+        )
         resize_to(widget, self._points(widget)[point])
         assert self._rendered(widget.fileSizeLabel) == widget.fileSizeLabel.text(), (
             f"{point}에서 재생 시간이 잘렸다: {self._rendered(widget.fileSizeLabel)!r}"
@@ -546,7 +581,13 @@ class TestRowThreePriority:
         widget = self._tight(qapp, 900)
         threshold = self._threshold_waiting(widget)
         half_path = widget.directoryLabel.sizeHint().width() // 2
-        widths = (threshold + 600, threshold + 300, threshold + half_path, threshold + 40, threshold)
+        widths = (
+            threshold + 600,
+            threshold + 300,
+            threshold + half_path,
+            threshold + 40,
+            threshold,
+        )
         resize_to(widget, widths[0])
         size_w = widget.fileSizeLabel.width()
         visible = [b for b in widget.buttons if b.isVisible()]  # 접힘: 선택 pill 하나
@@ -556,15 +597,21 @@ class TestRowThreePriority:
             resize_to(widget, width)
             assert widget.fileSizeLabel.width() == size_w, f"폭 {width}px에서 파일 크기 폭이 변했다"
             assert self._rendered(widget.fileSizeLabel) == widget.fileSizeLabel.text()
-            assert [shown(b) for b in visible] == [f"{r}p" for r in self.FIVE], "pill이 숨었다 — T 이상에서는 전부 보인다"
+            assert [shown(b) for b in visible] == [f"{r}p" for r in self.FIVE], (
+                "pill이 숨었다 — T 이상에서는 전부 보인다"
+            )
             assert [(b.x() - widget.buttons[0].x(), b.width()) for b in visible] == pills, (
                 f"폭 {width}px에서 pill 배치가 변했다"
             )
-            path_widths.append(widget.directoryLabel.width() if widget.directoryLabel.isVisible() else 0)
+            path_widths.append(
+                widget.directoryLabel.width() if widget.directoryLabel.isVisible() else 0
+            )
         assert all(a >= b for a, b in zip(path_widths, path_widths[1:])), (
             f"경로 폭이 단조 감소하지 않는다: {path_widths}"
         )
-        assert path_widths[0] > path_widths[2] > path_widths[-1], f"좁혀도 경로가 줄지 않았다: {path_widths}"
+        assert path_widths[0] > path_widths[2] > path_widths[-1], (
+            f"좁혀도 경로가 줄지 않았다: {path_widths}"
+        )
         assert path_widths[-1] == 0 and widget.pathButton.isVisible(), (
             "T에서는 경로 글자가 숨고 진입점(1행의 저장 위치 버튼)이 있어야 한다"
         )
@@ -573,17 +620,26 @@ class TestRowThreePriority:
         """남는 폭이 최소치 아래면 경로 글자는 숨는다 — 글자가 사라져도 폴더 선택
         진입점(1행의 저장 위치 버튼)은 산다. 전역과 다르면 점 표시(folder_edit_dot) (#309)."""
         widget = self._tight(qapp, None)  # T — 경로 자리가 최소 텍스트 폭보다 좁다
-        assert [shown(b) for b in widget.buttons] == [f"{r}p" for r in self.FIVE], "전제: pill 5개가 전부 보인다(압력의 근원)"
-        assert not widget.directoryLabel.isVisible(), "경로 글자가 숨지 않았다 — 전제(최소폭, 5 pill) 확인"
+        assert [shown(b) for b in widget.buttons] == [f"{r}p" for r in self.FIVE], (
+            "전제: pill 5개가 전부 보인다(압력의 근원)"
+        )
+        assert not widget.directoryLabel.isVisible(), (
+            "경로 글자가 숨지 않았다 — 전제(최소폭, 5 pill) 확인"
+        )
         assert widget.pathButton.isVisible(), "경로 글자가 숨었는데 저장 위치 버튼이 없다"
-        assert widget.pathButton.iconName() == "folder_edit_dot", "전역과 다른 경로인데 점 표시가 없다"
+        assert widget.pathButton.iconName() == "folder_edit_dot", (
+            "전역과 다른 경로인데 점 표시가 없다"
+        )
         assert widget.pathButton.toolTip().endswith(self.LONG_PATH)
         from app.widgets import widget as widget_mod
 
         calls = []
         monkeypatch.setattr(
-            widget_mod.QFileDialog, "getExistingDirectory",
-            staticmethod(lambda parent, caption, start, *a, **k: calls.append(start) or "E:/picked"),
+            widget_mod.QFileDialog,
+            "getExistingDirectory",
+            staticmethod(
+                lambda parent, caption, start, *a, **k: calls.append(start) or "E:/picked"
+            ),
         )
         widget.pathButton.click()
         assert calls == [self.LONG_PATH], "저장 위치 버튼의 클릭이 폴더 선택으로 이어지지 않는다"
@@ -610,8 +666,19 @@ class TestRowThreePriority:
         QApplication.processEvents()
         item = ContentItem(
             "https://chzzk.naver.com/video/1",
-            {"title": "제목", "category": "", "channelName": "채널", "createdDate": "", "duration": 3600},
-            [[r, f"u{r}"] for r in self.FIVE], None, "", self.LONG_PATH, "video", None,
+            {
+                "title": "제목",
+                "category": "",
+                "channelName": "채널",
+                "createdDate": "",
+                "duration": 3600,
+            },
+            [[r, f"u{r}"] for r in self.FIVE],
+            None,
+            "",
+            self.LONG_PATH,
+            "video",
+            None,
         )
         item.downloadState = DownloadState.WAITING
         item.total_size = "711.02 MB"
@@ -621,7 +688,9 @@ class TestRowThreePriority:
         column.addWidget(widget)  # 보이는 컨테이너가 카드를 (큐로) 처음 보인다
         for _ in range(3):
             QApplication.processEvents()
-        assert widget.isVisible() and widget.width() == box.width(), "전제: 카드가 컨테이너 폭으로 보인다"
+        assert widget.isVisible() and widget.width() == box.width(), (
+            "전제: 카드가 컨테이너 폭으로 보인다"
+        )
         assert widget.pathButton.isVisible() and not widget.directoryLabel.isVisible(), (
             "첫 표시에서 경로 글자가 숨지 않았다 — 창을 흔들어야 고쳐지는 결함"
         )
@@ -633,7 +702,11 @@ class TestRowThreePriority:
         item.download_path = self.LONG_PATH  # 전역과 다름 → 진행 중에도 경로가 보인다
         item.downloadState = DownloadState.RUNNING
         item.resolution = "1080"
-        item.download_progress, item.download_speed, item.download_remain_time = 42, "12.3 MB/s", "00:03:21"
+        item.download_progress, item.download_speed, item.download_remain_time = (
+            42,
+            "12.3 MB/s",
+            "00:03:21",
+        )
         widget.setData(item, 0)
         _at_width(widget, 900)
         return widget
@@ -669,8 +742,12 @@ class TestRowThreePriority:
         유일한 구간이고, 자연 폭의 절반은 어떤 폰트에서도 그 안에 있다."""
         widget = self._running_widget(qapp)
         threshold = self._threshold(widget)
-        extra = {"T": 0, "T+path/2": widget.directoryLabel.sizeHint().width() // 2, "T+200": 200}[point]
-        assert threshold > widget.minimumSizeHint().width(), "전제: T가 카드 최소폭보다 커야 T±에서 실제로 잰다"
+        extra = {"T": 0, "T+path/2": widget.directoryLabel.sizeHint().width() // 2, "T+200": 200}[
+            point
+        ]
+        assert threshold > widget.minimumSizeHint().width(), (
+            "전제: T가 카드 최소폭보다 커야 T±에서 실제로 잰다"
+        )
         _at_width(widget, threshold + extra)
         assert widget.width() == threshold + extra, "전제: 카드가 요청 폭을 받았다"
         assert self._rendered(widget.statusLabel) == widget.statusLabel.text(), (
@@ -731,17 +808,23 @@ class TestPathVisibilityRule:
         # 경로는 파일 크기 왼쪽에 고정 간격으로 붙는다(우측 끝선 유지)
         assert _gap(widget.directoryLabel, widget.fileSizeLabel) == FIXED_SPACING
 
-    @pytest.mark.parametrize("state", (DownloadState.RUNNING, DownloadState.PAUSED,
-                                       DownloadState.FINISHED, DownloadState.FAILED))
+    @pytest.mark.parametrize(
+        "state",
+        (DownloadState.RUNNING, DownloadState.PAUSED, DownloadState.FINISHED, DownloadState.FAILED),
+    )
     def test_other_states_hide_the_path_when_it_matches_global(self, qapp, state) -> None:
         widget = _make_widget(qapp)
         widget.item.downloadState = state
         widget.item.download_progress = 42
         widget.setData(widget.item, 0)
         _at_width(widget, 900)
-        assert not widget.directoryLabel.isVisible(), f"{state.name}: 전역과 같은 경로가 반복 표시된다"
+        assert not widget.directoryLabel.isVisible(), (
+            f"{state.name}: 전역과 같은 경로가 반복 표시된다"
+        )
 
-    @pytest.mark.parametrize("state", (DownloadState.WAITING, DownloadState.RUNNING, DownloadState.FINISHED))
+    @pytest.mark.parametrize(
+        "state", (DownloadState.WAITING, DownloadState.RUNNING, DownloadState.FINISHED)
+    )
     def test_path_shown_when_it_differs(self, qapp, state) -> None:
         widget = _make_widget(qapp)
         widget.item.downloadState = state
@@ -763,17 +846,20 @@ class TestPathAbbreviationAndTooltip:
 
         return abbreviate_path(path, home=home)
 
-    @pytest.mark.parametrize("path,expected", [
-        ("C:/Users/me/Downloads/vod/lck/2026", "~/…/2026"),        # 홈 아래, 3단계 이상 → 접음
-        ("C:/Users/me/Downloads/vod", "~/Downloads/vod"),           # 홈 아래, 2단계 → 전부
-        ("C:/Users/me/Downloads", "~/Downloads"),
-        ("C:/Users/me", "~"),
-        ("D:/vod/lck/2026/finals", "D:/…/finals"),                   # 홈 밖(드라이브), 접음
-        ("D:/vod/lck", "D:/vod/lck"),                                # 홈 밖, 2단계 → 전부
-        ("C:\\Users\\me\\Videos\\a\\b", "~/…/b"),                    # 역슬래시 입력도 /로 통일
-        ("/srv/media/vod/2026", "/…/2026"),                          # POSIX 루트
-        ("", ""),
-    ])
+    @pytest.mark.parametrize(
+        "path,expected",
+        [
+            ("C:/Users/me/Downloads/vod/lck/2026", "~/…/2026"),  # 홈 아래, 3단계 이상 → 접음
+            ("C:/Users/me/Downloads/vod", "~/Downloads/vod"),  # 홈 아래, 2단계 → 전부
+            ("C:/Users/me/Downloads", "~/Downloads"),
+            ("C:/Users/me", "~"),
+            ("D:/vod/lck/2026/finals", "D:/…/finals"),  # 홈 밖(드라이브), 접음
+            ("D:/vod/lck", "D:/vod/lck"),  # 홈 밖, 2단계 → 전부
+            ("C:\\Users\\me\\Videos\\a\\b", "~/…/b"),  # 역슬래시 입력도 /로 통일
+            ("/srv/media/vod/2026", "/…/2026"),  # POSIX 루트
+            ("", ""),
+        ],
+    )
     def test_abbreviation_rule(self, path, expected) -> None:
         assert self._abbr(path, home=self.HOME) == expected
 
@@ -831,22 +917,26 @@ class TestPathShrinkOrder:
         folded = f"D:/…/{self.LAST}"
         assert folded in seen, f"②(중간 폴더 접기) 단계가 없다 — 표시 순서: {seen}"
         fold_at = seen.index(folded)
-        assert fold_at == 1, f"①에서 ②로 바로 가야 한다 — 중간에 다른 표시가 끼었다: {seen[:fold_at + 1]}"
-        for text in seen[fold_at + 1:]:
+        assert fold_at == 1, (
+            f"①에서 ②로 바로 가야 한다 — 중간에 다른 표시가 끼었다: {seen[: fold_at + 1]}"
+        )
+        for text in seen[fold_at + 1 :]:
             assert text.startswith("D:/…/"), f"③에서 접두 `D:/…/`가 고정되지 않았다: {text!r}"
-            assert "…" in text[len("D:/…/"):], f"③은 마지막 폴더 안에서만 말줄임한다: {text!r}"
+            assert "…" in text[len("D:/…/") :], f"③은 마지막 폴더 안에서만 말줄임한다: {text!r}"
         cut_at = next((i for i, t in enumerate(seen) if self.LAST not in t), None)
-        assert cut_at is not None and cut_at > fold_at, "마지막 폴더는 중간 폴더가 접힌 **뒤에** 잘려야 한다"
+        assert cut_at is not None and cut_at > fold_at, (
+            "마지막 폴더는 중간 폴더가 접힌 **뒤에** 잘려야 한다"
+        )
 
     def test_depth_one_keeps_the_root_and_elides_inside_the_folder(self, qapp) -> None:
         widget, seen = self._rendered_while_narrowing(qapp, f"D:/{self.LAST}")
         assert seen[0] == f"D:/{self.LAST}"
-        assert all(t.startswith("D:/") and "…" in t[len("D:/"):] for t in seen[1:]), seen
+        assert all(t.startswith("D:/") and "…" in t[len("D:/") :] for t in seen[1:]), seen
 
     def test_depth_five_starts_folded_and_then_elides_the_last_folder_only(self, qapp) -> None:
         widget, seen = self._rendered_while_narrowing(qapp, f"D:/a/b/c/d/{self.LAST}")
         assert seen[0] == f"D:/…/{self.LAST}", "깊이 3 이상은 ①이 곧 ②(뿌리/…/마지막)"
-        assert all(t.startswith("D:/…/") and "…" in t[len("D:/…/"):] for t in seen[1:]), seen
+        assert all(t.startswith("D:/…/") and "…" in t[len("D:/…/") :] for t in seen[1:]), seen
         assert len(seen) >= 2, "좁혀도 ③으로 내려가지 않았다 — 전제 확인"
 
     def test_widening_recovers_the_full_text(self, qapp) -> None:
@@ -855,18 +945,23 @@ class TestPathShrinkOrder:
         _at_width(widget, 1400)
         from PySide6.QtWidgets import QLabel
 
-        assert QLabel.text(widget.directoryLabel) == f"D:/archive-2026/{self.LAST}", "넓혀도 ①로 돌아오지 않는다"
+        assert QLabel.text(widget.directoryLabel) == f"D:/archive-2026/{self.LAST}", (
+            "넓혀도 ①로 돌아오지 않는다"
+        )
 
-    @pytest.mark.parametrize("path,expected", [
-        ("D:/archive-2026/x", ("D:/archive-2026/x", "D:/…/", "x")),
-        ("D:/x", ("D:/x", "D:/", "x")),
-        ("D:/a/b/c/x", ("D:/…/x", "D:/…/", "x")),
-        ("C:/Users/me/x", ("~/x", "~/", "x")),
-        ("C:/Users/me", ("~", "", "~")),
-        ("/x", ("/x", "/", "x")),
-        ("/srv/x", ("/srv/x", "/…/", "x")),
-        ("/srv/media/x", ("/…/x", "/…/", "x")),
-    ])
+    @pytest.mark.parametrize(
+        "path,expected",
+        [
+            ("D:/archive-2026/x", ("D:/archive-2026/x", "D:/…/", "x")),
+            ("D:/x", ("D:/x", "D:/", "x")),
+            ("D:/a/b/c/x", ("D:/…/x", "D:/…/", "x")),
+            ("C:/Users/me/x", ("~/x", "~/", "x")),
+            ("C:/Users/me", ("~", "", "~")),
+            ("/x", ("/x", "/", "x")),
+            ("/srv/x", ("/srv/x", "/…/", "x")),
+            ("/srv/media/x", ("/…/x", "/…/", "x")),
+        ],
+    )
     def test_display_parts(self, path, expected) -> None:
         from app.widgets.widget import path_display_parts
 
@@ -895,7 +990,9 @@ class TestPathClickOpensFolderPicker:
         calls = self._patch_dialog(monkeypatch, "D:/new/folder")
         emitted = []
         widget.textChanged.connect(emitted.append)
-        widget.choosePath(None)  # 실배선: directoryLabel.mousePressEvent → choosePath (아래에서 확인)
+        widget.choosePath(
+            None
+        )  # 실배선: directoryLabel.mousePressEvent → choosePath (아래에서 확인)
         assert calls and calls[0][1] == "C:/dl", "대화상자가 현재 경로에서 열리지 않는다"
         assert widget.item.download_path == "D:/new/folder"
         assert widget.directoryLabel.text() == "D:/new/folder"
@@ -939,8 +1036,13 @@ class TestStateSwapKeepsCardHeight:
     def test_card_height_is_identical_across_all_states(self, qapp) -> None:
         widget = _make_widget(qapp)
         heights = {}
-        for state in (DownloadState.WAITING, DownloadState.RUNNING, DownloadState.PAUSED,
-                      DownloadState.FINISHED, DownloadState.FAILED):
+        for state in (
+            DownloadState.WAITING,
+            DownloadState.RUNNING,
+            DownloadState.PAUSED,
+            DownloadState.FINISHED,
+            DownloadState.FAILED,
+        ):
             widget.item.downloadState = state
             widget.item.download_progress = 42
             widget.setData(widget.item, 0)
@@ -1042,10 +1144,13 @@ class TestProgressBarOnlyWithProgress:
                 f"{state}에서 진행바가 보인다 — 진행분이 있는 상태(진행·일시정지)만 보여야 한다"
             )
 
-    @pytest.mark.parametrize("state,bar_state", [
-        (DownloadState.RUNNING, "running"),
-        (DownloadState.PAUSED, "paused"),
-    ])
+    @pytest.mark.parametrize(
+        "state,bar_state",
+        [
+            (DownloadState.RUNNING, "running"),
+            (DownloadState.PAUSED, "paused"),
+        ],
+    )
     def test_bar_visible_and_full_width_with_progress(self, qapp, state, bar_state) -> None:
         widget = _make_widget(qapp)
         widget.item.downloadState = state
@@ -1085,9 +1190,14 @@ class TestProgressBarOnlyWithProgress:
         assert not mask.isEmpty(), "진행바에 카드 곡률 마스크가 없다"
         w, h = bar.width(), bar.height()
         from PySide6.QtCore import QPoint
+
         # 바닥 모서리 픽셀은 잘려 있고(카드 몸통 밖), 가운데는 살아 있다
-        assert not mask.contains(QPoint(0, h - 1)), f"폭 {width}px: 바 왼쪽 아래 모서리가 카드 곡률 밖에 남는다"
-        assert not mask.contains(QPoint(w - 1, h - 1)), f"폭 {width}px: 바 오른쪽 아래 모서리가 카드 곡률 밖에 남는다"
+        assert not mask.contains(QPoint(0, h - 1)), (
+            f"폭 {width}px: 바 왼쪽 아래 모서리가 카드 곡률 밖에 남는다"
+        )
+        assert not mask.contains(QPoint(w - 1, h - 1)), (
+            f"폭 {width}px: 바 오른쪽 아래 모서리가 카드 곡률 밖에 남는다"
+        )
         assert mask.contains(QPoint(w // 2, h - 1))
         assert mask.contains(QPoint(w // 2, 0))
         # 마스크가 바 안쪽 대부분은 살려 둔다 — 잘려 나가는 것은 모서리뿐

@@ -296,7 +296,12 @@ class TestFirstRunAndOldConfigs:
             None,
             {"x": 1e1000, "y": 0, "width": BROKEN_WIDTH, "height": 600},  # JSON 1e1000 → 무한대
             {"x": 0, "y": 0, "width": 1e1000, "height": 600},
-            {"x": 10**30, "y": 0, "width": BROKEN_WIDTH, "height": 600},  # C++ int 범위 밖의 거대 정수
+            {
+                "x": 10**30,
+                "y": 0,
+                "width": BROKEN_WIDTH,
+                "height": 600,
+            },  # C++ int 범위 밖의 거대 정수
             {"x": 0, "y": 0, "width": 2**31, "height": 600},
             {"x": float("nan"), "y": 0, "width": BROKEN_WIDTH, "height": 600},
             {"x": 0, "y": 0, "width": float("nan"), "height": 600},
@@ -334,7 +339,9 @@ class TestRestoreClampsAfterTheMinimumSizeIsApplied:
         """오른쪽·아래 끝에 붙은 작은 기록이 최소 크기로 커져도 작업 영역 안에 남는다."""
         grown = AVAILABLE.width() // 2  # 기록 폭보다 훨씬 큰 최소폭
         monkeypatch.setattr(VodDownloader, "_contentMinimumWidth", lambda self: grown)
-        monkeypatch.setattr(VodDownloader, "_contentMinimumHeight", lambda self: AVAILABLE.height() // 2)
+        monkeypatch.setattr(
+            VodDownloader, "_contentMinimumHeight", lambda self: AVAILABLE.height() // 2
+        )
         small = (120, 100)
         _write_window(
             {
@@ -361,7 +368,9 @@ class TestRestoreClampsAfterTheMinimumSizeIsApplied:
         """커진 뒤에도 자리가 있으면 기록 위치를 옮기지 않는다."""
         grown = AVAILABLE.width() // 2
         monkeypatch.setattr(VodDownloader, "_contentMinimumWidth", lambda self: grown)
-        monkeypatch.setattr(VodDownloader, "_contentMinimumHeight", lambda self: AVAILABLE.height() // 2)
+        monkeypatch.setattr(
+            VodDownloader, "_contentMinimumHeight", lambda self: AVAILABLE.height() // 2
+        )
         _write_window({"x": 100, "y": 80, "width": 120, "height": 100, "maximized": False})
         win = _open()
         assert _requested(win).size().toTuple() == (grown, AVAILABLE.height() // 2)

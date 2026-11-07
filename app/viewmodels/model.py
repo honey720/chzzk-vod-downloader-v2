@@ -47,8 +47,8 @@ class ContentListModel(QObject):
 
     def removeRows(self, row: int, count: int = 1) -> None:
         """아이템 삭제 — 제거된 아이템별로 itemRemoved를 낸다."""
-        removed = self.items[row: row + count]
-        del self.items[row: row + count]
+        removed = self.items[row : row + count]
+        del self.items[row : row + count]
         for item in removed:
             self.itemRemoved.emit(item)
 

@@ -71,7 +71,9 @@ def _apply_dark_card_qss(qapp) -> None:
     기대값이 전부 깨진다. 스킴 감지는 건너뛰고 "dark"만 명시 고정한다.
     """
     theme.set_color_scheme("dark")
-    qapp.setStyle(hold_style(theme.build_style()))  # 참조 보관 — 이중 해제 우회 (#243, card_helpers.hold_style)
+    qapp.setStyle(
+        hold_style(theme.build_style())
+    )  # 참조 보관 — 이중 해제 우회 (#243, card_helpers.hold_style)
     qapp.setPalette(theme.build_palette())
     qapp.setStyleSheet(theme.load_stylesheet(main_module.resource_path(theme.QSS_RELATIVE_PATH)))
 
@@ -106,8 +108,19 @@ def no_network(monkeypatch) -> None:
 def _make_item() -> ContentItem:
     return ContentItem(
         "https://chzzk.naver.com/video/1",
-        {"title": "제목", "category": "", "channelName": "채널", "createdDate": "", "duration": 3600},
-        [], None, "", "C:/Users/LeeDH/Downloads", "video", None,
+        {
+            "title": "제목",
+            "category": "",
+            "channelName": "채널",
+            "createdDate": "",
+            "duration": 3600,
+        },
+        [],
+        None,
+        "",
+        "C:/Users/LeeDH/Downloads",
+        "video",
+        None,
     )
 
 
@@ -341,7 +354,12 @@ class TestCardInnerWidthIsUnchanged:
 
     @pytest.mark.parametrize(
         "download_state",
-        [DownloadState.WAITING, DownloadState.RUNNING, DownloadState.FINISHED, DownloadState.FAILED],
+        [
+            DownloadState.WAITING,
+            DownloadState.RUNNING,
+            DownloadState.FINISHED,
+            DownloadState.FAILED,
+        ],
     )
     def test_no_extra_horizontal_inset_in_any_state(self, qapp, download_state) -> None:
         """상태가 달라져도 가로 가용 폭은 같아야 한다 — 폭이 상태에 따라 흔들리면 안 된다."""
