@@ -1138,7 +1138,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
                 # 구간 다운로드는 재생 시간 자리에 구간 요약을 적는다 (#309)
                 self.fileSizeLabel.setText(self._sectionSummary())
             elif self.item.is_segment_based:
-                self.fileSizeLabel.setText(clock_text(item.duration))
+                # 길이를 모르면 칸을 비운다(#515) — 응답의 길이가 null이면 None, 키가 없으면 0이다
+                self.fileSizeLabel.setText(clock_text(item.duration or None))
             else:
                 self.fileSizeLabel.setText(f"{item.total_size}")
 
