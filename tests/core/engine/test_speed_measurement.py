@@ -3,6 +3,8 @@
 시계는 엔진의 단조 시계(`_now`)를 가짜로 바꿔 끼운다. 실제 시간은 쓰지 않는다.
 """
 
+from collections.abc import Callable
+
 import pytest
 
 from core.sources.file_downloader import FileDownloader
@@ -14,14 +16,14 @@ MB = 1024 * 1024
 class QuietLogger:
     """엔진이 부르는 로그 메서드를 모두 받아 버린다."""
 
-    def __getattr__(self, name):
+    def __getattr__(self, name) -> Callable[..., None]:
         return lambda *args, **kwargs: None
 
 
 class ManualClock:
     """엔진의 단조 시계 대체 — 시험이 직접 옮긴다."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.now = 500.0
 
     def __call__(self) -> float:
@@ -29,7 +31,7 @@ class ManualClock:
 
 
 @pytest.fixture
-def measured():
+def measured() -> tuple[FileDownloader, DownloadData, ManualClock]:
     """가짜 시계를 끼우고 방금 한 번 잰 것으로 해 둔 엔진 — (엔진, 데이터, 시계)."""
     data = DownloadData(
         base_url="https://example.invalid/video.mp4",
@@ -45,7 +47,7 @@ def measured():
     return scaler, data, clock
 
 
-def test_measure_speed_divides_by_the_time_since_the_last_measurement(measured):
+def test_measure_speed_divides_by_the_time_since_the_last_measurement(measured) -> None:
     """속도는 직전 측정 뒤로 받은 양을 그 사이의 실제 시간으로 나눈 값이어야 한다.
 
     직전 측정 뒤 1.25초 동안 5 MB를 받음 -> 4.0 MB/s, prev_size == 5 MB
@@ -62,7 +64,7 @@ def test_measure_speed_divides_by_the_time_since_the_last_measurement(measured):
 
 def test_measure_speed_after_a_pause_divides_by_the_time_spent_receiving_and_restarts_the_clock(
     measured, monkeypatch
-):
+) -> None:
     """재개 직후의 측정은 일시정지한 시간을 뺀 시간으로 나누고, 다음 측정의 기준 시각을 지금으로 잡아야 한다.
 
     직전 측정 뒤 300초(그 가운데 298초는 일시정지) 동안 5 MB → since_pause 측정 -> 2.5 MB/s
@@ -87,7 +89,7 @@ def test_measure_speed_after_a_pause_divides_by_the_time_spent_receiving_and_res
     assert data.speed_mb == pytest.approx(3.0)
 
 
-def test_measure_speed_is_not_divided_when_no_time_has_passed(measured):
+def test_measure_speed_is_not_divided_when_no_time_has_passed(measured) -> None:
     """직전 측정과 같은 시각에 재면 나누지 않아야 한다(0으로 나누지 않는다).
 
     직전 측정 뒤 0초, 2 MB를 받음 -> 2.0 MB/s

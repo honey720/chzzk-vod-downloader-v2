@@ -7,6 +7,7 @@ OS의 호출은 바꿔치기한다 — 러너의 디스크가 무엇인지에 �
 import re
 import subprocess
 import sys
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -14,12 +15,13 @@ import pytest
 
 import core.utils.filesystem as fs_module
 from core.utils.filesystem import FAT_MAX_FILE_BYTES, filesystem_name, is_fat, mount_type
+from typing import Never
 
 # 이 러너에서 filesystem_name이 부르는 읽기 함수의 이름
 READER = {"win32": "_windows_name", "darwin": "_macos_name"}.get(sys.platform, "_linux_name")
 
 
-def test_fat_limit_is_four_gibibytes_minus_one():
+def test_fat_limit_is_four_gibibytes_minus_one() -> None:
     """FAT 계열의 파일 하나의 최대 크기는 4GiB − 1바이트여야 한다.
 
     -> FAT_MAX_FILE_BYTES == 4,294,967,295
@@ -44,7 +46,7 @@ def test_fat_limit_is_four_gibibytes_minus_one():
         (None, False),  # 읽지 못했다
     ],
 )
-def test_is_fat_only_for_the_fat_family(name, expected):
+def test_is_fat_only_for_the_fat_family(name, expected) -> None:
     """is_fat은 FAT 계열의 이름에만 참이어야 한다 — exFAT과 읽지 못한 이름(None)은 거짓이다.
 
     이름마다의 기대값은 표의 것
@@ -72,7 +74,7 @@ MOUNTS = (
         ("/media/my disk/folder", "vfat"),  # 8진수로 적힌 빈칸
     ],
 )
-def test_mount_type_is_the_type_of_the_longest_mount_point_over_the_path(path, expected):
+def test_mount_type_is_the_type_of_the_longest_mount_point_over_the_path(path, expected) -> None:
     """mount_type은 그 경로를 덮는 가장 긴 마운트 지점의 파일 시스템 종류를 돌려줘야 한다.
 
     마운트 넷(/ ext4 · /media/usb vfat · /media/usb/inner exfat · "/media/my disk" vfat)
@@ -81,7 +83,7 @@ def test_mount_type_is_the_type_of_the_longest_mount_point_over_the_path(path, e
     assert mount_type(MOUNTS, path) == expected
 
 
-def test_mount_type_is_none_when_no_mount_point_covers_the_path():
+def test_mount_type_is_none_when_no_mount_point_covers_the_path() -> None:
     """그 경로를 덮는 마운트 지점이 없으면 mount_type은 None이어야 한다.
 
     마운트가 /media/usb 하나뿐, 경로 /home -> None
@@ -89,14 +91,14 @@ def test_mount_type_is_none_when_no_mount_point_covers_the_path():
     assert mount_type("/dev/sdb1 /media/usb vfat rw 0 0\n", "/home") is None
 
 
-def test_filesystem_name_asks_about_the_nearest_folder_that_exists(tmp_path, monkeypatch):
+def test_filesystem_name_asks_about_the_nearest_folder_that_exists(tmp_path, monkeypatch) -> None:
     """아직 없는 폴더의 파일 시스템은 실제로 있는 윗폴더에서 읽어야 한다.
 
     tmp_path/없음/더없음 -> 읽기 함수가 받은 경로 == tmp_path, 돌려준 이름 그대로
     """
     asked = []
 
-    def reader(path):
+    def reader(path) -> str:
         asked.append(path)
         return "FAT32"
 
@@ -108,13 +110,13 @@ def test_filesystem_name_asks_about_the_nearest_folder_that_exists(tmp_path, mon
 
 
 @pytest.mark.parametrize("error", [OSError("읽기 실패"), ValueError("모양이 다르다")])
-def test_filesystem_name_is_none_when_it_cannot_be_read(tmp_path, monkeypatch, error):
+def test_filesystem_name_is_none_when_it_cannot_be_read(tmp_path, monkeypatch, error) -> None:
     """파일 시스템 이름을 읽다 실패하면 예외가 아니라 None이어야 한다.
 
     읽기 함수가 OSError 또는 ValueError -> None
     """
 
-    def failing(path):
+    def failing(path) -> Never:
         raise error
 
     monkeypatch.setattr(fs_module, READER, failing)
@@ -122,7 +124,7 @@ def test_filesystem_name_is_none_when_it_cannot_be_read(tmp_path, monkeypatch, e
     assert filesystem_name(str(tmp_path)) is None
 
 
-def test_filesystem_name_of_a_real_folder_is_a_name_or_none(tmp_path):
+def test_filesystem_name_of_a_real_folder_is_a_name_or_none(tmp_path) -> None:
     """실제 폴더에 물으면 예외 없이 파일 시스템 이름이나 None을 돌려줘야 한다.
 
     tmp_path -> None이거나, 영숫자로 시작하고 영숫자 · "_" · "." · "-"만 든 글
@@ -134,7 +136,7 @@ def test_filesystem_name_of_a_real_folder_is_a_name_or_none(tmp_path):
 
 
 @contextmanager
-def _attached_image(tmp_path: Path, filesystem: str):
+def _attached_image(tmp_path: Path, filesystem: str) -> Iterator[Path]:
     """tmp_path에 작은 디스크 이미지를 만들어 붙이고 그 마운트 지점을 준다 — 끝나면 떼고 지운다.
 
     macOS의 hdiutil로 만든다(root가 필요 없다). 붙이지 못하면 건너뛰지 않고 실패한다.
@@ -179,7 +181,9 @@ _HDIUTIL_SECONDS = 120  # hdiutil 한 번을 기다리는 시간(초) — 러너
     [("MS-DOS FAT32", "msdos", True), ("ExFAT", "exfat", False)],
     ids=["fat32", "exfat"],
 )
-def test_macos_reads_the_filesystem_of_a_mounted_volume(tmp_path, filesystem, expected, fat):
+def test_macos_reads_the_filesystem_of_a_mounted_volume(
+    tmp_path, filesystem, expected, fat
+) -> None:
     """macOS에서 붙인 볼륨 안의 폴더에 물으면 그 볼륨의 파일 시스템 이름이 나와야 한다.
 
     hdiutil로 tmp_path에 만든 64MB 이미지(FAT32 · exFAT)를 붙이고, 그 안의 폴더를 물음

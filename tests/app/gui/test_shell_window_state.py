@@ -22,6 +22,7 @@
 """
 
 import os
+from collections.abc import Iterator
 
 import pytest
 from PySide6.QtCore import QMargins, QPoint, QRect
@@ -47,7 +48,7 @@ BROKEN_WIDTH = 1500
 
 
 @pytest.fixture(autouse=True)
-def _apply_production_qss(qapp):
+def _apply_production_qss(qapp) -> None:
     """실제 전역 QSS·스타일을 태운다(최소폭이 QSS padding·폰트에 좌우된다). ⚠️ function scope 유지."""
     theme.set_color_scheme("dark")
     qapp.setStyle(hold_style(theme.build_style()))  # 참조 보관 — 이중 해제 우회 (#243)
@@ -56,7 +57,7 @@ def _apply_production_qss(qapp):
 
 
 @pytest.fixture(autouse=True)
-def _destroy_windows():
+def _destroy_windows() -> Iterator[None]:
     """테스트가 만든 최상위 창은 close()가 아니라 파괴한다 — 숨은 채 남으면 다음 setStyle이 죽는다(#248 CI)."""
     before = snapshot_top_levels()
     yield
@@ -64,7 +65,7 @@ def _destroy_windows():
 
 
 @pytest.fixture(autouse=True)
-def _fake_available(monkeypatch):
+def _fake_available(monkeypatch) -> None:
     """모든 창이 같은 작업 영역을 본다 — 기록 위치가 어느 점이든 주 화면 하나."""
     monkeypatch.setattr(
         VodDownloader, "_availableGeometry", lambda self, near=None: QRect(AVAILABLE)
@@ -72,16 +73,16 @@ def _fake_available(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _record_requested(monkeypatch):
+def _record_requested(monkeypatch) -> None:
     """창이 `show()` · `showMaximized()`를 부르는 순간의 위치 · 크기(앱이 요청한 값)를 창마다 기록한다(#486)."""
     requested.clear()
     real_show, real_maximized = VodDownloader.show, VodDownloader.showMaximized
 
-    def show(self):
+    def show(self) -> None:
         requested[id(self)] = QRect(self.pos(), self.size())
         real_show(self)
 
-    def show_maximized(self):
+    def show_maximized(self) -> None:
         requested[id(self)] = QRect(self.pos(), self.size())
         real_maximized(self)
 
@@ -139,7 +140,7 @@ def _in_available(win: VodDownloader) -> bool:
 
 
 class TestRoundTrip:
-    def test_close_saves_and_the_next_window_restores_the_same_size_and_position(self):
+    def test_close_saves_and_the_next_window_restores_the_same_size_and_position(self) -> None:
         """실제 배선: 창을 옮기고 줄인 뒤 닫으면 기록되고, 다음 창이 같은 값으로 뜬다."""
         first = _open()
         resize_to(first, _record_width())  # 초기 규칙과 다른 값이어야 복원을 가를 수 있다
@@ -164,7 +165,7 @@ class TestRoundTrip:
             f"복원값 {second.pos().toTuple()} {second.size().toTuple()} ≠ 기록값 {expected}"
         )
 
-    def test_the_key_survives_open_settings(self):
+    def test_the_key_survives_open_settings(self) -> None:
         """기록된 키는 시작 시 `open_settings()`(정규화)를 거쳐도 남는다 — 스키마 표 등재의 이유."""
         first = _open()
         first.close()
@@ -176,7 +177,7 @@ class TestRoundTrip:
         )
         assert "window" in settings_module.default_settings()
 
-    def test_unchanged_state_does_not_rewrite_the_file(self):
+    def test_unchanged_state_does_not_rewrite_the_file(self) -> None:
         """같은 값이면 다시 쓰지 않는다 — 닫을 때마다 파일이 바뀌는 일이 없다.
 
         첫 창 위치를 OS에 맡기지 않는다 — 다중 모니터에서 주입한 작업 영역 밖에 뜰 수 있다 (#403).
@@ -194,7 +195,7 @@ class TestRoundTrip:
 
 
 class TestRestoreIsClampedToTheCurrentScreen:
-    def test_a_saved_rect_bigger_than_the_screen_shrinks_and_moves_inside(self):
+    def test_a_saved_rect_bigger_than_the_screen_shrinks_and_moves_inside(self) -> None:
         """모니터를 바꾼 상황: 기록이 작업 영역보다 크고 밖에 있으면 안으로 들어온다."""
         _write_window({"x": 3000, "y": 2000, "width": 2500, "height": 1500, "maximized": False})
         win = _open()
@@ -203,7 +204,7 @@ class TestRestoreIsClampedToTheCurrentScreen:
         )
         assert _requested(win).size().toTuple() == (AVAILABLE.width(), AVAILABLE.height())
 
-    def test_a_partly_offscreen_position_is_pushed_back_in(self):
+    def test_a_partly_offscreen_position_is_pushed_back_in(self) -> None:
         """크기는 맞는데 오른쪽·아래로 걸쳐 있으면 위치만 민다 — 크기는 그대로."""
         width = _record_width()
         _write_window({"x": 1800, "y": 900, "width": width, "height": 600, "maximized": False})
@@ -215,14 +216,14 @@ class TestRestoreIsClampedToTheCurrentScreen:
         )
         assert _in_available(win)
 
-    def test_a_negative_position_is_pushed_to_the_edge(self):
+    def test_a_negative_position_is_pushed_to_the_edge(self) -> None:
         """왼쪽·위로 나간 기록은 작업 영역 가장자리(0, 0)로 민다."""
         width = _record_width()
         _write_window({"x": -400, "y": -50, "width": width, "height": 600, "maximized": False})
         win = _open()
         assert _requested(win).topLeft().toTuple() == (0, 0)
 
-    def test_a_saved_rect_that_fits_is_left_alone(self):
+    def test_a_saved_rect_that_fits_is_left_alone(self) -> None:
         """작업 영역 안에 있는 기록은 그대로 되살린다."""
         width = _record_width()
         _write_window({"x": 200, "y": 150, "width": width, "height": 600, "maximized": False})
@@ -236,19 +237,19 @@ class TestRestoreIsClampedToTheCurrentScreen:
 class TestClampFunction:
     """순수 함수 `clamp_to_available` — 창 없이 사각형만으로 잰다."""
 
-    def test_fits_unchanged(self):
+    def test_fits_unchanged(self) -> None:
         """안에 들어가는 사각형은 바뀌지 않는다."""
         assert clamp_to_available(QRect(10, 20, 300, 200), QRect(0, 0, 800, 600)) == QRect(
             10, 20, 300, 200
         )
 
-    def test_too_big_becomes_the_available_rect(self):
+    def test_too_big_becomes_the_available_rect(self) -> None:
         """작업 영역보다 큰 사각형은 작업 영역 그 자체가 된다."""
         assert clamp_to_available(QRect(50, 50, 900, 700), QRect(0, 0, 800, 600)) == QRect(
             0, 0, 800, 600
         )
 
-    def test_overhang_is_pushed_in_and_negative_origin_is_pushed_to_the_edge(self):
+    def test_overhang_is_pushed_in_and_negative_origin_is_pushed_to_the_edge(self) -> None:
         """오른쪽·아래로 걸치면 안으로 밀고, 음수 원점은 가장자리로 민다."""
         assert clamp_to_available(QRect(700, 500, 300, 200), QRect(0, 0, 800, 600)) == QRect(
             500, 400, 300, 200
@@ -257,7 +258,7 @@ class TestClampFunction:
             0, 0, 300, 200
         )
 
-    def test_respects_a_screen_that_does_not_start_at_the_origin(self):
+    def test_respects_a_screen_that_does_not_start_at_the_origin(self) -> None:
         """두 번째 모니터처럼 작업 영역이 (1920, 0)에서 시작해도 그 안으로 민다."""
         available = QRect(1920, 0, 1280, 700)
         assert clamp_to_available(QRect(100, 100, 400, 300), available) == QRect(
@@ -269,7 +270,7 @@ class TestClampFunction:
 
 
 class TestFirstRunAndOldConfigs:
-    def test_a_config_without_the_key_opens_at_the_initial_rule(self):
+    def test_a_config_without_the_key_opens_at_the_initial_rule(self) -> None:
         """업데이트 전 유저의 config(키 없음): 초기 크기 규칙으로 뜨고 에러가 없다."""
         _write_window(None)
         floor = _floor_width()
@@ -277,7 +278,7 @@ class TestFirstRunAndOldConfigs:
         assert win.width() == floor
         assert win.height() == AVAILABLE.height() // 2
 
-    def test_an_empty_record_opens_at_the_initial_rule(self):
+    def test_an_empty_record_opens_at_the_initial_rule(self) -> None:
         """표의 기본값({}) — 파일이 새로 만들어진 첫 실행."""
         _write_window({})
         floor = _floor_width()
@@ -309,7 +310,7 @@ class TestFirstRunAndOldConfigs:
             {"x": 0, "y": 0, "width": BROKEN_WIDTH, "height": 600, "maximized": "yes"},
         ),
     )
-    def test_a_broken_record_falls_back_to_the_initial_rule(self, broken):
+    def test_a_broken_record_falls_back_to_the_initial_rule(self, broken) -> None:
         """깨진 기록(문자열·0/음수·필드 누락·비-dict·null·무한대·거대 정수·NaN·bool·비정수 float·비-bool 최대화)은 첫 실행으로 뜬다."""
         _write_window(broken)
         floor = _floor_width()
@@ -327,7 +328,9 @@ class TestRestoreClampsAfterTheMinimumSizeIsApplied:
     기록보다 커진 상황. 절대 px 대신 작업 영역에서 유도한다.
     """
 
-    def test_a_small_record_at_the_bottom_right_ends_inside_after_growing(self, monkeypatch):
+    def test_a_small_record_at_the_bottom_right_ends_inside_after_growing(
+        self, monkeypatch
+    ) -> None:
         """오른쪽·아래 끝에 붙은 작은 기록이 최소 크기로 커져도 작업 영역 안에 남는다."""
         grown = AVAILABLE.width() // 2  # 기록 폭보다 훨씬 큰 최소폭
         monkeypatch.setattr(VodDownloader, "_contentMinimumWidth", lambda self: grown)
@@ -354,7 +357,7 @@ class TestRestoreClampsAfterTheMinimumSizeIsApplied:
         )
         assert _in_available(win)
 
-    def test_a_small_record_that_fits_after_growing_keeps_its_position(self, monkeypatch):
+    def test_a_small_record_that_fits_after_growing_keeps_its_position(self, monkeypatch) -> None:
         """커진 뒤에도 자리가 있으면 기록 위치를 옮기지 않는다."""
         grown = AVAILABLE.width() // 2
         monkeypatch.setattr(VodDownloader, "_contentMinimumWidth", lambda self: grown)
@@ -366,7 +369,7 @@ class TestRestoreClampsAfterTheMinimumSizeIsApplied:
 
 
 class TestMaximized:
-    def test_maximized_state_is_saved_with_the_normal_geometry_and_restored(self):
+    def test_maximized_state_is_saved_with_the_normal_geometry_and_restored(self) -> None:
         """최대화한 채 닫으면 플래그와 보통 크기가 함께 기록되고, 다음 창은 최대화로 뜬다."""
         first = _open()
         first.resize(first.width(), 600)

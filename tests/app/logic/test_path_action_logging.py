@@ -10,6 +10,8 @@ repr로 남긴다 — U+00A0(NBSP) 같은 공백 유사 문자는 그냥 찍으�
 시그널로, 조회 관문은 fetchButton.click()으로 진입한다.
 """
 
+from collections.abc import Iterator
+
 import pytest
 
 import app.viewmodels.content_viewmodel as cvm_mod
@@ -18,19 +20,23 @@ from app.viewmodels.data import ContentItem
 from app.viewmodels.content_viewmodel import ContentViewModel
 from app.widgets.view import ContentListView
 from core.models.download_state import DownloadState
+from typing import TYPE_CHECKING, Never
+
+if TYPE_CHECKING:
+    from app.views.mainWindow import VodDownloader
 
 NBSP_SUFFIX = "없는\u00a0폴더"  # 존재하지 않는 + 공백 유사 문자 포함
 
 
 @pytest.fixture(autouse=True)
-def no_network(monkeypatch):
+def no_network(monkeypatch) -> None:
     """위젯의 썸네일·파일 크기 조회 스레드가 실네트워크에 나가지 않게 차단한다."""
 
     class _FailingSession:
-        def head(self, *args, **kwargs):
+        def head(self, *args, **kwargs) -> Never:
             raise RuntimeError("network disabled in tests")
 
-        def get(self, *args, **kwargs):
+        def get(self, *args, **kwargs) -> Never:
             raise RuntimeError("network disabled in tests")
 
     monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
@@ -60,7 +66,7 @@ def _make_item(download_path: str, title: str = "경로 로깅 검증") -> Conte
 
 
 @pytest.fixture
-def manager(qapp):
+def manager(qapp) -> Iterator[tuple[ContentViewModel, ContentListView]]:
     view = ContentListView()
     m = ContentViewModel()
     view.bind(m)
@@ -73,7 +79,7 @@ def manager(qapp):
 
 
 class TestDownloadGateLogging:
-    def test_missing_path_is_logged_with_repr(self, manager, qapp, tmp_path, caplog):
+    def test_missing_path_is_logged_with_repr(self, manager, qapp, tmp_path, caplog) -> None:
         """미존재 경로 거부가 WARNING으로 남고, 경로는 repr(이스케이프)로 적힌다."""
         m, _view = manager
         item = _make_item(str(tmp_path / NBSP_SUFFIX))
@@ -87,7 +93,9 @@ class TestDownloadGateLogging:
         assert "다운로드 시작 거부" in caplog.text
         assert "\\xa0" in caplog.text  # repr 이스케이프 — U+00A0이 육안 구분된다
 
-    def test_probe_denied_warning_uses_repr(self, manager, qapp, tmp_path, caplog, monkeypatch):
+    def test_probe_denied_warning_uses_repr(
+        self, manager, qapp, tmp_path, caplog, monkeypatch
+    ) -> None:
         """쓰기 프로브 실패 경고도 경로를 repr로 남긴다 (기존 %s → %r 전환)."""
         m, _view = manager
         monkeypatch.setattr(cvm_mod, "probe_writable", lambda d: (False, "denied"))
@@ -116,14 +124,16 @@ class TestCardPathPickerFeedback:
     "변경이 INFO로 남는다"(#148의 살아있는 절반)만 폴더 선택 배선으로 잰다.
     """
 
-    def _widget(self, manager, qapp, path):
+    def _widget(
+        self, manager, qapp, path
+    ) -> tuple[ContentItem, widget_mod.ContentItemWidget | None]:
         m, view = manager
         item = _make_item(path)
         m.model.addItem(item)
         qapp.processEvents()
         return item, view.widgetFor(item)
 
-    def test_pick_updates_and_logs(self, manager, qapp, tmp_path, caplog, monkeypatch):
+    def test_pick_updates_and_logs(self, manager, qapp, tmp_path, caplog, monkeypatch) -> None:
         """고른 폴더(공백 포함)는 반영되고 INFO로 남는다 — 대화상자는 막고 반환값 주입."""
         item, widget = self._widget(manager, qapp, str(tmp_path))
         new_dir = tmp_path / "space dir"
@@ -139,7 +149,9 @@ class TestCardPathPickerFeedback:
         assert item.download_path == str(new_dir)
         assert "카드 저장 경로 변경" in caplog.text
 
-    def test_cancel_changes_nothing_and_shows_no_popup(self, manager, qapp, tmp_path, caplog, monkeypatch):
+    def test_cancel_changes_nothing_and_shows_no_popup(
+        self, manager, qapp, tmp_path, caplog, monkeypatch
+    ) -> None:
         """취소(빈 반환)는 무변경·무안내 — 입력을 포기한 유저에게 팝업이 뜨던 결함의 반대 증명."""
         item, widget = self._widget(manager, qapp, str(tmp_path))
         warnings = []
@@ -163,7 +175,7 @@ class TestCardPathPickerFeedback:
 
 class TestFetchGateLogging:
     @pytest.fixture
-    def window(self, qapp, monkeypatch):
+    def window(self, qapp, monkeypatch) -> "Iterator[tuple[VodDownloader, list[str]]]":
         import app.views.mainWindow as mw_mod
 
         # 팝업은 기록으로 대체한다 — offscreen에서 모달은 테스트를 멈춘다
@@ -191,7 +203,9 @@ class TestFetchGateLogging:
         action.trigger()
         button.menuWidget.hide()
 
-    def test_fetch_reject_logs_input_with_repr(self, window, qapp, tmp_path, caplog, monkeypatch):
+    def test_fetch_reject_logs_input_with_repr(
+        self, window, qapp, tmp_path, caplog, monkeypatch
+    ) -> None:
         """조회 관문 거부가 경로 repr과 함께 WARNING으로 남는다 — 고른 뒤 사라진 폴더 → 버튼 클릭 실배선."""
         win, warnings = window
         gone = tmp_path / NBSP_SUFFIX
@@ -207,7 +221,7 @@ class TestFetchGateLogging:
         assert "조회 거부" in caplog.text
         assert "\\xa0" in caplog.text
 
-    def test_chosen_location_is_logged(self, window, qapp, tmp_path, caplog, monkeypatch):
+    def test_chosen_location_is_logged(self, window, qapp, tmp_path, caplog, monkeypatch) -> None:
         """저장 위치 메뉴 「폴더 찾기…」로 고른 위치가 INFO로 남는다 — 메뉴 항목 실배선(창만 대체)."""
         win, _warnings = window
         chosen = tmp_path / "선택한 폴더"

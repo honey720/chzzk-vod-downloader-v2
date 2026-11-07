@@ -13,9 +13,11 @@
 폭 3점은 절대 px가 아니라 창 최소폭에서 유도한다(#249).
 """
 
+from collections.abc import Iterator
+
 import pytest
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import Qt, QTranslator
+from PySide6.QtWidgets import QApplication, QWidget
 
 import CVDv2 as main_module
 import app.theme as theme
@@ -33,7 +35,7 @@ def _resolve_width(win, which: str) -> int:
 
 
 @pytest.fixture(autouse=True)
-def _apply_production_qss(qapp):
+def _apply_production_qss(qapp) -> None:
     """실제 전역 QSS를 태운다. ⚠️ `scope="function"` 유지(macOS 종료 크래시 —
     `test_widget_theme.py`의 `_apply_dark_card_qss` 문서 참고)."""
     theme.set_color_scheme("dark")
@@ -43,14 +45,14 @@ def _apply_production_qss(qapp):
 
 
 @pytest.fixture
-def window(qapp):
+def window(qapp) -> Iterator[VodDownloader]:
     win = VodDownloader()
     yield win
     win.deleteLater()
     QApplication.processEvents()
 
 
-def _at_width(win, width):
+def _at_width(win, width) -> None:
     """창을 `width`("min"/"mid"/"wide" 또는 px)로 놓고, 실제 폭이 요청과 같은지 단언한다.
 
     resize()는 요청이지 결과가 아니다 — 최소폭 미만은 조용히 클램프되어 여러
@@ -80,13 +82,13 @@ def _centre_y(win, w) -> float:
 
 
 class TestStructure:
-    def test_header_line_holds_url_location_and_add_in_that_order(self, window):
+    def test_header_line_holds_url_location_and_add_in_that_order(self, window) -> None:
         """헤더 1줄 레이아웃의 항목은 URL 입력 · 저장 위치 버튼 · VOD 추가 차례여야 한다."""
         line = window.urlRowLayout
         items = [line.itemAt(i).widget() for i in range(line.count())]
         assert items == _line_widgets(window)
 
-    def test_error_line_sits_between_the_two_lines(self, window):
+    def test_error_line_sits_between_the_two_lines(self, window) -> None:
         """헤더 프레임 레이아웃은 1줄 · 등록 오류 줄 · 2줄(칩 · 정렬 · 완료 지우기) 차례여야 한다."""
         frame = window.headerFrameLayout
         assert frame.count() == 3
@@ -94,19 +96,19 @@ class TestStructure:
         assert frame.itemAt(1).widget() is window.registerErrorLabel
         assert frame.itemAt(2).layout() is window.filterRowLayout
 
-    def test_second_line_holds_chips_sort_and_clear_finished(self, window):
+    def test_second_line_holds_chips_sort_and_clear_finished(self, window) -> None:
         """헤더 2줄 레이아웃은 칩 줄 · 정렬 버튼 · 빈칸 · 완료 지우기 차례여야 한다."""
         line = window.filterRowLayout
         assert [line.itemAt(i).widget() for i in range(line.count())] == [window.filterChipBar, window.sortButton, None, window.clearFinishedButton]
 
-    def test_tab_order_follows_the_line_from_the_menu_to_the_list(self, window):
+    def test_tab_order_follows_the_line_from_the_menu_to_the_list(self, window) -> None:
         """탭 순서는 메뉴 둘 → URL 입력 → 저장 위치 버튼 → VOD 추가 → 칩 여섯 → 정렬 → 완료 지우기 → 목록이어야 한다.
 
         포커스 체인에는 포커스를 안 받는 위젯(입력창의 지우기 버튼 등)도 끼어 있어,
         포커스를 받는 다음 위젯까지 건너 뛰어 잰다.
         """
 
-        def next_focusable(widget):
+        def next_focusable(widget) -> QWidget | None:
             cursor = widget.nextInFocusChain()
             while cursor is not None and cursor is not widget:
                 if cursor.focusPolicy() != Qt.FocusPolicy.NoFocus and cursor.isVisibleTo(window):
@@ -124,7 +126,7 @@ class TestStructure:
 
 class TestOneLine:
     @pytest.mark.parametrize("width", WIDTHS)
-    def test_the_three_sit_on_one_line_left_to_right(self, window, width):
+    def test_the_three_sit_on_one_line_left_to_right(self, window, width) -> None:
         """창 폭 min · mid · wide에서 헤더 세 위젯은 세로 중심이 같고(±1) 왼쪽부터 겹침 없이 놓여야 한다."""
         _at_width(window, width)
         widgets = _line_widgets(window)
@@ -138,7 +140,7 @@ class TestSaveLocationButtonWidth:
     """저장 위치 버튼은 기준 글이 들어가는 고정 폭이다 — 고른 위치 · 언어와 무관하다(#495)."""
 
     @pytest.fixture
-    def korean(self, qapp):
+    def korean(self, qapp) -> Iterator[QTranslator]:
         from PySide6.QtCore import QTranslator
 
         translator = QTranslator()
@@ -147,7 +149,7 @@ class TestSaveLocationButtonWidth:
         yield translator
         qapp.removeTranslator(translator)
 
-    def test_the_sample_name_fits_without_eliding(self, window):
+    def test_the_sample_name_fits_without_eliding(self, window) -> None:
         """저장 위치 버튼 폭에서 기준 글 Downloads가 줄지 않고 그려져야 한다."""
         from app.widgets.header_controls import WIDTH_SAMPLE
 
@@ -157,7 +159,7 @@ class TestSaveLocationButtonWidth:
         assert button.isVisible()
         assert button.shownText() == WIDTH_SAMPLE
 
-    def test_a_long_name_is_elided_in_the_middle_without_widening(self, window):
+    def test_a_long_name_is_elided_in_the_middle_without_widening(self, window) -> None:
         """기준 글보다 긴 폴더 이름은 폭을 바꾸지 않고 가운데가 줄어야 한다(앞 · 끝 글자는 남는다)."""
         _at_width(window, "min")
         button = window.saveLocationButton
@@ -171,7 +173,7 @@ class TestSaveLocationButtonWidth:
         assert shown.startswith("앞") and shown.endswith("쪽")
 
     @pytest.mark.parametrize("width", WIDTHS)
-    def test_the_width_is_the_same_in_korean_and_english(self, qapp, korean, width):
+    def test_the_width_is_the_same_in_korean_and_english(self, qapp, korean, width) -> None:
         """한국어 번역을 올려도 창 폭 min · mid · wide에서 저장 위치 버튼 폭은 원문과 같아야 한다."""
         qapp.removeTranslator(korean)
         english = VodDownloader()
@@ -191,7 +193,7 @@ class TestSaveLocationButtonWidth:
 class TestFreeSpaceGoesToTheUrlInputOnly:
     BUTTONS = ("saveLocationButton", "fetchButton")
 
-    def test_buttons_keep_their_width_as_the_window_widens(self, window):
+    def test_buttons_keep_their_width_as_the_window_widens(self, window) -> None:
         """창이 min → mid → wide로 넓어져도 저장 위치 버튼 · VOD 추가의 폭이 그대로여야 한다."""
         widths = {}
         for width in WIDTHS:
@@ -201,7 +203,7 @@ class TestFreeSpaceGoesToTheUrlInputOnly:
             f"버튼 폭이 창 폭을 따라 변한다: {widths} — 남는 공간은 URL 입력만 받아야 한다"
         )
 
-    def test_the_url_input_grows_with_the_window(self, window):
+    def test_the_url_input_grows_with_the_window(self, window) -> None:
         """창이 min → mid → wide로 넓어지면 URL 입력이 그만큼 늘어야 한다."""
         url = []
         for width in WIDTHS:

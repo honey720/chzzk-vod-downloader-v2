@@ -127,7 +127,7 @@ class DownloadViewModel(QObject):
     # start()가 돌아간 뒤에 끝낸다(끝내는 통지가 다음 카드의 start()를 부른다)
     _nothingToReceive = Signal(object)
 
-    def __init__(self, content, service: DownloadService | None = None, parent=None):
+    def __init__(self, content, service: DownloadService | None = None, parent=None) -> None:
         """content: 다운로드 이벤트를 반영할 상대 — update_progress/pause/resume/
         stop/finish/fail을 가진 객체(ContentManager 바인더)를 받는다.
         service: DownloadService 주입 이음새(테스트 대역용). None이면 제품과
@@ -446,7 +446,9 @@ class DownloadViewModel(QObject):
 
     # ============ 워커 스레드 콜백 (emit까지만 수행) ============
 
-    def _make_progress_relay(self, data: DownloadData, item: ContentItem, attempt: int):
+    def _make_progress_relay(
+        self, data: DownloadData, item: ContentItem, attempt: int
+    ) -> Callable[[ProgressEvent], None]:
         """ProgressEvent를 기존 progress Signal 인자로 변환해 emit하는 콜백을 만든다.
 
         엔진 관측 스레드에서 호출되므로 계산과 Signal emit까지만 수행한다. 시도 번호를 실어
@@ -493,7 +495,7 @@ class DownloadViewModel(QObject):
 
         return relay
 
-    def _make_state_relay(self, item: ContentItem, attempt: int):
+    def _make_state_relay(self, item: ContentItem, attempt: int) -> Callable[[DownloadState], None]:
         """상태 기계의 전이를 카드 상태로 옮기는 콜백을 만든다 (#484).
 
         메인 스레드에서 일어난 전이(시작 · 일시정지 · 재개 · 중지)는 바로 적는다. 워커 스레드에서
@@ -793,7 +795,7 @@ def _unfit_sections(item: ContentItem, count: int) -> frozenset[int]:
     return frozenset(n for n in getattr(item, "section_unfit", ()) if 0 <= n < count)
 
 
-def _usable_resume(item: ContentItem, selections: tuple):
+def _usable_resume(item: ContentItem, selections: tuple) -> SectionResume | None:
     """아이템에 남아 있는, 지금 시작하는 다운로드가 이어받을 수 있는 것을 돌려준다. 없으면 None.
 
     그때와 같은 스트림 · 같은 저장 폴더 · 같은 제목 · 같은 구간 목록일 때만 이어받는다.
@@ -814,7 +816,9 @@ def _usable_resume(item: ContentItem, selections: tuple):
     return resume.with_files_checked() if resume is not None else None
 
 
-def _resume_for_edited_sections(item: ContentItem, resume: SectionResume, selections: tuple):
+def _resume_for_edited_sections(
+    item: ContentItem, resume: SectionResume, selections: tuple
+) -> SectionResume | None:
     """구간을 편집한 카드가 이어받을 수 있는 것을 만든다. 이어받을 구간이 없으면 None (#309).
 
     **같은 번호에 같은 값(시작 · 끝 프레임)인 구간만** 끝낸 것으로 이어받는다 — 그 구간의 파일은
@@ -915,7 +919,7 @@ class _ShownSize:
     시작할 때마다 새로 만든다. 엔진의 관측 스레드와 컷을 돌리는 스레드가 함께 부른다.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._shown = 0  # 지금까지 보인 가장 큰 받은 양(바이트)
         self._lock = threading.Lock()
 
@@ -956,7 +960,9 @@ class _SectionProgress:
     ``_cut_seconds``의 어림이다. 엔진의 관측 스레드와 컷을 돌리는 스레드가 함께 부른다.
     """
 
-    def __init__(self, cut_seconds: float, paused_seconds: Callable[[], float] = lambda: 0.0):
+    def __init__(
+        self, cut_seconds: float, paused_seconds: Callable[[], float] = lambda: 0.0
+    ) -> None:
         """막대를 만든다.
 
         Args:

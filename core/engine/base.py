@@ -63,7 +63,7 @@ import threading
 import time as tm
 from abc import ABC, abstractmethod
 from collections import deque
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
@@ -152,7 +152,7 @@ class DiskSpaceError(OSError):
     하위라 파일을 쓰다 난 오류와 같은 실패 처리(통지 · 정리)를 탄다.
     """
 
-    def __init__(self, needed: int, free: int, message_key: str = DISK_SPACE_SHORT):
+    def __init__(self, needed: int, free: int, message_key: str = DISK_SPACE_SHORT) -> None:
         super().__init__(f"필요 {needed}바이트 · 여유 {free}바이트")
         self.message_key = message_key
         self.needed = needed  # 그 볼륨에 비어 있어야 하는 양(바이트)
@@ -173,7 +173,7 @@ class NetworkLostError(requests.ConnectionError):
     하위라 연결 오류를 받는 처리는 그대로 받는다.
     """
 
-    def __init__(self, quiet_seconds: float):
+    def __init__(self, quiet_seconds: float) -> None:
         super().__init__(
             f"{quiet_seconds:.1f}초 동안 받은 데이터 없음 · 받는 작업자 모두 연결 오류"
         )
@@ -227,7 +227,7 @@ class FileSizeLimitError(OSError):
     번역하지 않은 i18n 키 원문이다. OSError의 하위라 파일을 쓰다 난 오류와 같은 실패 처리를 탄다.
     """
 
-    def __init__(self, largest: int, filesystem: str):
+    def __init__(self, largest: int, filesystem: str) -> None:
         super().__init__(f"파일 {largest}바이트 · 파일 시스템 {filesystem}")
         self.message_key = FILE_TOO_LARGE_FOR_FAT
         self.largest = largest  # 만들 파일 가운데 가장 큰 것의 크기(바이트, 어림일 수 있다)
@@ -363,7 +363,7 @@ class SectionCutProgress:
     알리는 값은 줄지 않는다. 1은 모든 구간이 끝났을 때만 알린다.
     """
 
-    def __init__(self, lengths: dict[int, float], publish: Callable[[float], None]):
+    def __init__(self, lengths: dict[int, float], publish: Callable[[float], None]) -> None:
         self._lengths = lengths
         self._total = sum(lengths.values())
         self._publish = publish
@@ -412,7 +412,7 @@ class _PauseClock:
     일시정지 시간을 꺼내 뺀다. 여러 스레드가 부른다(컷을 도는 스레드 · ffmpeg를 지켜보는 스레드).
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._lock = threading.Lock()
         self._since: float | None = None  # 일시정지를 처음 본 시각. 일시정지 중이 아니면 None
         self._total = 0.0  # 꺼내 가지 않은 일시정지 시간(초)
@@ -448,7 +448,7 @@ class _SlowWatch:
 
     def __init__(
         self, engine: "BaseDownloader", part_num: int, expected: int | None, resumes: bool
-    ):
+    ) -> None:
         self._engine = engine
         self._part_num = part_num
         self._expected = expected  # 이 응답이 줄 본문의 길이(바이트). 모르면 None
@@ -545,7 +545,7 @@ class BaseDownloader(ABC):
         on_finished: FinishedCallback | None = None,
         on_failed: FailedCallback | None = None,
         on_merge_start: Callable[[], None] | None = None,
-    ):
+    ) -> None:
         """엔진을 생성한다.
 
         Args:
@@ -704,7 +704,7 @@ class BaseDownloader(ABC):
         """
 
     @abstractmethod
-    def _download_item(self, item, part_num: int):
+    def _download_item(self, item, part_num: int) -> int:
         """작업 1건을 다운로드한다 (저속 재시도·일시정지·중단 핸들링 포함).
 
         풀 스레드에서 실행된다. part_num 반환이 완료 콜백의 슬롯 해제 신호다.
@@ -1028,7 +1028,7 @@ class BaseDownloader(ABC):
         total_segments = len(segment_paths)
         last_percent = -1
 
-        def feed():
+        def feed() -> Iterator[bytes]:
             nonlocal last_percent
             for path in segment_paths:
                 for chunk in read_in_chunks(path):
@@ -1513,7 +1513,7 @@ class BaseDownloader(ABC):
 
     # ============ 다운로드 조정 및 콜백 메서드 ============
 
-    def _download_completed_callback(self, future):
+    def _download_completed_callback(self, future) -> None:
         """future 종료 콜백 — 성공·실패 모든 경로에서 슬롯을 반드시 정리한다 (#147 E2).
 
         정리를 finally로 보장하는 이유: 실패 경로에서 future_dict 항목이
@@ -1636,7 +1636,7 @@ class BaseDownloader(ABC):
         with self.lock:
             return self._ready_position() is not None
 
-    def _take_ready_item(self):
+    def _take_ready_item(self) -> object | None:
         """지금 꺼낼 수 있는 항목 하나를 remaining_ranges에서 꺼낸다. 없으면 None (#329).
 
         **호출자가 self.lock을 쥔 채 부른다.** 대기가 끝난 재큐 항목을 먼저 꺼낸다 — 같은 항목의
@@ -1720,7 +1720,7 @@ class BaseDownloader(ABC):
 
     def _check_speed_and_update_progress(
         self, part_num: int, downloaded_size: int, total_size: int, speed_kb_s: float
-    ):
+    ) -> None:
         """
         스레드가 다운로드 중일 때 속도 체크 및 진행 상황 업데이트.
 
@@ -1806,7 +1806,7 @@ class BaseDownloader(ABC):
         if monitor.is_alive():
             monitor.join(timeout=2)
 
-    def _monitor_loop(self):
+    def _monitor_loop(self) -> None:
         """주기(1초)마다 속도 측정·스레드 수 조정·진행 통지를 수행하는 관측 루프.
 
         전송 단계 동안만 산다 — 전송이 끝나면 run()이 _monitor_stop으로
@@ -1860,7 +1860,7 @@ class BaseDownloader(ABC):
             DownloadState.PAUSED,
         ]
 
-    def _adjust_threads(self):
+    def _adjust_threads(self) -> None:
         """직전 틱의 총 처리량(speed_mb)으로 목표 스레드 수를 조정한다 (#112 · #347).
 
         판단은 ThreadController가 한다 — 규칙과 근거는 그 모듈에 있다. 여기서는 틱마다
@@ -1886,7 +1886,7 @@ class BaseDownloader(ABC):
             self.s.adjust_threads = self._threads.target
             self.logger.log_thread_adjust(self.s.adjust_threads, total_speed)
 
-    def measure_speed(self, since_pause: bool = False):
+    def measure_speed(self, since_pause: bool = False) -> None:
         """직전 측정 뒤로 받은 바이트를 그 사이의 실제 시간으로 나눠 속도(MB/s)를 계산한다.
 
         관측 틱은 0.1초 대기 열 번이라 1초보다 길다 — 받은 양을 그대로 MB/s로 읽으면 실제보다
@@ -1926,7 +1926,7 @@ class BaseDownloader(ABC):
 
     # ============ 진행 상황 업데이트 ============
 
-    def update_progress(self):
+    def update_progress(self) -> None:
         """
         다운로드된 총량을 저장한다.
         """
@@ -1942,7 +1942,7 @@ class BaseDownloader(ABC):
             self.s.completed_progress + active_downloaded_size + self.s.parked_progress
         )
 
-    def emit_progress(self):
+    def emit_progress(self) -> None:
         """진행 상태를 집계해 ProgressEvent 콜백으로 통지한다 (구 Monitor.update_progress)."""
         with self.lock:
             self._recount()

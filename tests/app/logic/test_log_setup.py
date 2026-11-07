@@ -5,6 +5,8 @@
 """
 
 import logging
+from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
@@ -14,7 +16,7 @@ import core.utils.logging_setup as core_logging_setup
 
 
 @pytest.fixture
-def isolated_logging(monkeypatch, tmp_path):
+def isolated_logging(monkeypatch, tmp_path) -> Iterator[Path]:
     """로그 저장 위치를 임시 경로로 돌리고, 테스트 후 루트 로거 상태를 복원한다."""
     root = logging.getLogger()
     saved_handlers = root.handlers[:]
@@ -36,7 +38,7 @@ def isolated_logging(monkeypatch, tmp_path):
     root.setLevel(saved_level)
 
 
-def test_setup_logging_writes_to_config_dir_logs(isolated_logging):
+def test_setup_logging_writes_to_config_dir_logs(isolated_logging) -> None:
     """기존 진입점 호출 시 앱 데이터 폴더의 logs/app.log에 기록된다 (동작 무변경)."""
     log_setup.setup_logging()
 

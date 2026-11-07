@@ -46,7 +46,7 @@ class SaveLocations(QObject):
 
     changed = Signal()
 
-    def __init__(self, default_path: str, parent: QObject | None = None):
+    def __init__(self, default_path: str, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._default = normalize_path(default_path)
         self._current = self._default

@@ -8,6 +8,7 @@
 """
 
 import os
+from collections.abc import Callable
 
 import pytest
 
@@ -34,7 +35,7 @@ PORTRAIT = [
 
 
 @pytest.fixture
-def serve_master(monkeypatch):
+def serve_master(monkeypatch) -> Callable[[str], None]:
     """마스터 플레이리스트 요청에 주어진 본문으로 답하게 한다."""
 
     def install(text: str) -> None:
@@ -43,7 +44,7 @@ def serve_master(monkeypatch):
     return install
 
 
-def test_portrait_list_shows_both_tracks_of_the_same_size():
+def test_portrait_list_shows_both_tracks_of_the_same_size() -> None:
     """세로 방송의 해상도 목록에는 크기가 같은 두 트랙이 이름의 해상도로 따로 나와야 한다.
 
     PORTRAIT(720x1280 트랙 둘 — "720p" · "1080p")
@@ -61,7 +62,9 @@ def test_portrait_list_shows_both_tracks_of_the_same_size():
     ("resolution", "track_number"),
     [(144, 3), (360, 2), (480, 1), (720, 0), (1080, 4)],
 )
-def test_each_portrait_resolution_selects_its_own_stream(serve_master, resolution, track_number):
+def test_each_portrait_resolution_selects_its_own_stream(
+    serve_master, resolution, track_number
+) -> None:
     """세로 방송에서 목록의 해상도를 고르면 그 트랙의 플레이리스트 주소가 나와야 한다.
 
     PORTRAIT의 playback 정보와 마스터 플레이리스트, 목록의 해상도마다
@@ -77,7 +80,7 @@ def test_each_portrait_resolution_selects_its_own_stream(serve_master, resolutio
 @pytest.mark.parametrize(("resolution", "track_number"), [(720, 0), (1080, 4)])
 def test_same_size_tracks_are_told_apart_whatever_the_order_in_the_master(
     serve_master, resolution, track_number
-):
+) -> None:
     """크기가 같은 두 트랙은 마스터 플레이리스트에서의 순서와 관계없이 제 변형을 골라야 한다.
 
     PORTRAIT의 playback 정보, 변형의 순서를 뒤집은 마스터 플레이리스트
@@ -93,7 +96,7 @@ def test_same_size_tracks_are_told_apart_whatever_the_order_in_the_master(
     assert base_url == variant_url(track_number)
 
 
-def test_portrait_file_names_carry_the_track_name(tmp_path):
+def test_portrait_file_names_carry_the_track_name(tmp_path) -> None:
     """세로 방송의 파일명은 `{제목} {트랙 이름의 해상도}p.mp4`여야 한다.
 
     PORTRAIT, 제목 "방송"
@@ -114,7 +117,9 @@ def test_portrait_file_names_carry_the_track_name(tmp_path):
     ]
 
 
-def test_selection_fails_with_a_key_when_neither_the_track_size_nor_the_height_fits(serve_master):
+def test_selection_fails_with_a_key_when_neither_the_track_size_nor_the_height_fits(
+    serve_master,
+) -> None:
     """고른 트랙과 크기가 같은 변형도, 세로값이 그 해상도인 변형도 없으면 키 기반 오류로 실패해야 한다.
 
     PORTRAIT의 playback 정보, 1920x1080 변형 하나뿐인 마스터 플레이리스트, 해상도 720
@@ -128,7 +133,7 @@ def test_selection_fails_with_a_key_when_neither_the_track_size_nor_the_height_f
     assert caught.value.message_key == STREAM_NOT_FOUND
 
 
-def test_selection_fails_with_a_key_when_two_variants_fit_the_track(serve_master):
+def test_selection_fails_with_a_key_when_two_variants_fit_the_track(serve_master) -> None:
     """고른 트랙에 맞는 변형이 둘이면 먼저 나온 것을 고르지 않고 키 기반 오류로 실패해야 한다.
 
     PORTRAIT의 playback 정보, 원본 트랙의 변형이 두 번 나오는 마스터 플레이리스트, 해상도 1080
@@ -142,7 +147,9 @@ def test_selection_fails_with_a_key_when_two_variants_fit_the_track(serve_master
     assert caught.value.message_key == STREAM_NOT_FOUND
 
 
-def test_selection_falls_back_to_the_height_when_the_playback_has_no_such_track(serve_master):
+def test_selection_falls_back_to_the_height_when_the_playback_has_no_such_track(
+    serve_master,
+) -> None:
     """playback 정보에 그 해상도의 트랙이 없으면 세로값이 그 해상도인 첫 변형을 골라야 한다.
 
     encodingTrack이 없는 playback 정보, LANDSCAPE의 마스터 플레이리스트, 해상도 480

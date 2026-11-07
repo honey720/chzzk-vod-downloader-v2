@@ -10,7 +10,7 @@ import CVDv2 as main
 class _StubTranslator:
     """QTranslator 대역: en_US 번역 파일만 로드에 성공한다."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.loaded_paths = []
 
     def load(self, path: str) -> bool:
@@ -21,14 +21,14 @@ class _StubTranslator:
 class _StubApp:
     """QApplication 대역: installTranslator 호출만 기록한다."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.installed = []
 
     def installTranslator(self, translator) -> None:
         self.installed.append(translator)
 
 
-def _patch_environment(monkeypatch):
+def _patch_environment(monkeypatch) -> tuple[_StubApp, list[dict]]:
     """set_language가 참조하는 전역 app과 config 저장 함수를 대역으로 바꾼다."""
     stub_app = _StubApp()
     saves = []
@@ -37,7 +37,7 @@ def _patch_environment(monkeypatch):
     return stub_app, saves
 
 
-def test_fallback_preserves_saved_language(monkeypatch):
+def test_fallback_preserves_saved_language(monkeypatch) -> None:
     """저장된 언어의 번역 로드에 실패해도 config의 language 값은 보존된다."""
     stub_app, saves = _patch_environment(monkeypatch)
     app_config = {"language": "xx_XX"}  # 번역 파일이 존재하지 않는 로케일
@@ -49,7 +49,7 @@ def test_fallback_preserves_saved_language(monkeypatch):
     assert len(stub_app.installed) == 1  # 이번 실행에는 en_US 폴백이 적용된다
 
 
-def test_fallback_does_not_persist_on_first_run(monkeypatch):
+def test_fallback_does_not_persist_on_first_run(monkeypatch) -> None:
     """설정에 언어가 없고 시스템 언어 로드도 실패하면, en_US를 저장하지 않고 적용만 한다."""
     stub_app, saves = _patch_environment(monkeypatch)
     monkeypatch.setattr(
@@ -64,7 +64,7 @@ def test_fallback_does_not_persist_on_first_run(monkeypatch):
     assert len(stub_app.installed) == 1
 
 
-def test_successful_load_still_saves_detected_language(monkeypatch, tmp_path):
+def test_successful_load_still_saves_detected_language(monkeypatch, tmp_path) -> None:
     """(기존 동작 보존) 설정에 언어가 없고 로드에 성공하면 감지된 언어를 저장한다."""
     stub_app, saves = _patch_environment(monkeypatch)
     monkeypatch.setattr(

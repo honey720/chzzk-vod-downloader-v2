@@ -23,7 +23,7 @@ def _run_to_the_end(engine, data, finished) -> None:
     thread.join(timeout=10)
 
 
-def _padded_remux_stream(chunks, dst_path, **_wait):
+def _padded_remux_stream(chunks, dst_path, **_wait) -> None:
     """받은 스트림 뒤에 PADDING을 덧붙여 쓴다 — 파일 크기가 받은 양과 달라진다."""
     with open(dst_path, "wb") as f:
         for chunk in chunks:
@@ -31,7 +31,7 @@ def _padded_remux_stream(chunks, dst_path, **_wait):
         f.write(PADDING)
 
 
-def test_whole_mp4_run_reports_the_size_of_the_saved_file(tmp_path, monkeypatch):
+def test_whole_mp4_run_reports_the_size_of_the_saved_file(tmp_path, monkeypatch) -> None:
     """구간 없는 mp4 다운로드는 완료하며 저장된 파일의 크기를 공유 데이터에 적어야 한다.
 
     4 MiB 파일 -> 완료 전 output_size is None, 완료 뒤 output_size == 파일 크기 == 4 MiB
@@ -47,7 +47,7 @@ def test_whole_mp4_run_reports_the_size_of_the_saved_file(tmp_path, monkeypatch)
 
 def test_whole_m3u8_run_reports_the_size_of_the_saved_file_not_what_it_received(
     tmp_path, monkeypatch
-):
+) -> None:
     """구간 없는 m3u8 다운로드는 받은 양이 아니라 저장된 파일의 크기를 공유 데이터에 적어야 한다.
 
     다시 포장이 받은 것에 777바이트를 덧붙임
@@ -69,7 +69,7 @@ def test_whole_m3u8_run_reports_the_size_of_the_saved_file_not_what_it_received(
 
 def test_whole_encrypted_run_reports_the_size_of_the_saved_file_not_what_it_received(
     tmp_path, monkeypatch
-):
+) -> None:
     """구간 없는 암호화 VOD 다운로드는 받은 양이 아니라 저장된 파일의 크기를 공유 데이터에 적어야 한다.
 
     다시 포장이 받은 것에 777바이트를 덧붙임

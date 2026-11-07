@@ -9,22 +9,26 @@ config 로드·저장은 메모리로 격리한다 — 실유저 config.json 무
 """
 
 import os
+from collections.abc import Callable, Iterator
 
 import pytest
+from PySide6.QtGui import QAction
 
 import app.views.mainWindow as mw_mod
 import app.system.settings as settings_mod
+from app.widgets.header_controls import ChoiceMenu
+from typing import Never
 
 
 @pytest.fixture(autouse=True)
-def no_network(monkeypatch):
+def no_network(monkeypatch) -> None:
     """조회·위젯 스레드가 실네트워크에 나가지 않게 차단한다."""
 
     class _FailingSession:
-        def head(self, *args, **kwargs):
+        def head(self, *args, **kwargs) -> Never:
             raise RuntimeError("network disabled in tests")
 
-        def get(self, *args, **kwargs):
+        def get(self, *args, **kwargs) -> Never:
             raise RuntimeError("network disabled in tests")
 
     monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
@@ -32,14 +36,14 @@ def no_network(monkeypatch):
 
 
 @pytest.fixture
-def config_store(monkeypatch):
+def config_store(monkeypatch) -> tuple[dict, list[dict]]:
     """config 로드·저장을 메모리 딕셔너리로 격리하고 저장 이력을 기록한다."""
     store = {"cookies": {"NID_AUT": "", "NID_SES": ""}}
     saves: list[dict] = []
 
     monkeypatch.setattr(settings_mod, "load_settings", lambda: dict(store))
 
-    def _save(cfg):
+    def _save(cfg) -> None:
         saves.append(dict(cfg))
         store.clear()
         store.update(cfg)
@@ -49,7 +53,9 @@ def config_store(monkeypatch):
 
 
 @pytest.fixture
-def window_factory(qapp, monkeypatch, config_store):
+def window_factory(
+    qapp, monkeypatch, config_store
+) -> Iterator[tuple[Callable[[], mw_mod.VodDownloader], list[str]]]:
     """팝업을 기록으로 대체한 실물 메인 윈도우를 만든다 (offscreen 실배선)."""
     warnings = []
     monkeypatch.setattr(
@@ -66,7 +72,7 @@ def window_factory(qapp, monkeypatch, config_store):
     )
     made = []
 
-    def _make():
+    def _make() -> mw_mod.VodDownloader:
         win = mw_mod.VodDownloader()
         made.append(win)
         return win
@@ -78,13 +84,13 @@ def window_factory(qapp, monkeypatch, config_store):
     qapp.processEvents()
 
 
-def test_downloadpath_key_registered_in_default_settings():
+def test_downloadpath_key_registered_in_default_settings() -> None:
     """정규화(normalize_settings)가 키 표 미등재 키를 버리므로 등재가 보존의 전제다."""
     assert "downloadPath" in settings_mod.default_settings()
     assert settings_mod.default_settings()["downloadPath"] == ""  # 빈 값 = 미설정
 
 
-def test_saved_path_wins(window_factory, config_store, tmp_path):
+def test_saved_path_wins(window_factory, config_store, tmp_path) -> None:
     """저장된 경로가 실존하면 초기값 ①로 쓰인다."""
     store, _saves = config_store
     store["downloadPath"] = str(tmp_path)
@@ -95,7 +101,7 @@ def test_saved_path_wins(window_factory, config_store, tmp_path):
 
 def test_missing_saved_falls_back_to_standard_downloads(
     window_factory, config_store, tmp_path, monkeypatch
-):
+) -> None:
     """저장된 경로가 사라졌으면(외장 분리 등) 시스템 다운로드 폴더 ②로 간다."""
     store, _saves = config_store
     store["downloadPath"] = str(tmp_path / "분리된 드라이브")
@@ -106,7 +112,7 @@ def test_missing_saved_falls_back_to_standard_downloads(
         StandardLocation = mw_mod.QStandardPaths.StandardLocation
 
         @staticmethod
-        def writableLocation(kind):
+        def writableLocation(kind) -> str:
             return str(downloads)
 
     monkeypatch.setattr(mw_mod, "QStandardPaths", _StubPaths)
@@ -115,14 +121,16 @@ def test_missing_saved_falls_back_to_standard_downloads(
     assert make().saveLocations.current() == str(downloads)
 
 
-def test_standard_missing_falls_back_to_cwd(window_factory, config_store, tmp_path, monkeypatch):
+def test_standard_missing_falls_back_to_cwd(
+    window_factory, config_store, tmp_path, monkeypatch
+) -> None:
     """표준 폴더까지 없으면 cwd ③ — 소스 실행(개발) 관례 유지."""
 
     class _StubPaths:
         StandardLocation = mw_mod.QStandardPaths.StandardLocation
 
         @staticmethod
-        def writableLocation(kind):
+        def writableLocation(kind) -> str:
             return str(tmp_path / "없는 폴더")
 
     monkeypatch.setattr(mw_mod, "QStandardPaths", _StubPaths)
@@ -131,7 +139,7 @@ def test_standard_missing_falls_back_to_cwd(window_factory, config_store, tmp_pa
     assert make().saveLocations.current() == os.getcwd()
 
 
-def _menu_action(win, object_name: str):
+def _menu_action(win, object_name: str) -> tuple[ChoiceMenu, QAction]:
     """저장 위치 메뉴를 실제로 열고(aboutToShow 배선) 그 이름의 명령 항목을 돌려준다."""
     menu = win.saveLocationButton.menuWidget
     menu.popup(win.saveLocationButton.mapToGlobal(win.saveLocationButton.rect().bottomLeft()))
@@ -151,7 +159,7 @@ def _find_folder(win, monkeypatch, folder) -> None:
 
 def test_found_folder_goes_to_recent_and_leaves_the_default_alone(
     window_factory, config_store, tmp_path, monkeypatch
-):
+) -> None:
     """「폴더 찾기…」로 고른 폴더는 지금 위치 · 최근 맨 앞이 되고 downloadPath는 그대로여야 한다 (#495)."""
     store, _saves = config_store
     default = tmp_path / "기본"
@@ -171,7 +179,7 @@ def test_found_folder_goes_to_recent_and_leaves_the_default_alone(
 
 def test_fetch_uses_the_chosen_location_and_leaves_the_default_alone(
     window_factory, config_store, tmp_path, monkeypatch, qapp
-):
+) -> None:
     """고른 위치로 등록하면 그 카드의 저장 위치는 고른 위치이고 downloadPath는 그대로여야 한다 (#495)."""
     store, _saves = config_store
     default = tmp_path / "기본"
@@ -195,7 +203,7 @@ def test_fetch_uses_the_chosen_location_and_leaves_the_default_alone(
 
 def test_a_vanished_location_is_rejected_at_fetch_and_nothing_is_saved(
     window_factory, config_store, tmp_path, monkeypatch, qapp
-):
+) -> None:
     """고른 뒤 사라진 폴더로 등록하면 등록 오류 줄에 안내만 뜨고 카드 · downloadPath가 그대로여야 한다(#169 조회 관문)."""
     store, _saves = config_store
     make, warnings = window_factory
@@ -214,7 +222,9 @@ def test_a_vanished_location_is_rejected_at_fetch_and_nothing_is_saved(
     assert store.get("downloadPath", "") == ""
 
 
-def test_closing_does_not_change_the_default_location(window_factory, config_store, tmp_path, monkeypatch):
+def test_closing_does_not_change_the_default_location(
+    window_factory, config_store, tmp_path, monkeypatch
+) -> None:
     """다른 위치를 고른 채 창을 닫아도 downloadPath는 그대로여야 한다 (#495 — #165의 닫기 보존을 걷었다)."""
     store, _saves = config_store
     default = tmp_path / "기본"
@@ -233,7 +243,7 @@ def test_closing_does_not_change_the_default_location(window_factory, config_sto
 
 def test_a_restart_starts_at_the_default_and_keeps_the_recent_list(
     window_factory, config_store, tmp_path, monkeypatch
-):
+) -> None:
     """고른 위치로 바꾼 뒤 창을 닫고 다시 띄우면 지금 위치는 기본 위치, 메뉴 「최근」에는 고른 위치가 있어야 한다."""
     store, _saves = config_store
     default = tmp_path / "기본"

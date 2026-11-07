@@ -45,7 +45,7 @@ class DownloadTaskModel:
         self,
         pause_event: threading.Event | None = None,
         on_state_change: Callable[[DownloadState], None] | None = None,
-    ):
+    ) -> None:
         """모델을 초기 상태(WAITING)로 생성한다.
 
         Args:

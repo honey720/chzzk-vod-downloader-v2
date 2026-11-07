@@ -28,8 +28,12 @@ import sys
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import TYPE_CHECKING
 
 import platformdirs
+
+if TYPE_CHECKING:
+    import ctypes
 
 logger = logging.getLogger(__name__)
 
@@ -186,7 +190,7 @@ def background_work() -> Iterator[None]:
         end_background_work()
 
 
-def _timer_library():
+def _timer_library() -> "ctypes.CDLL | None":
     """winmm.dll을 한 번만 연다. Windows가 아니거나 열 수 없으면 None."""
     global _winmm
     if _winmm is None:

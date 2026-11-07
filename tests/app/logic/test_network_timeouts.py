@@ -20,11 +20,11 @@ COOKIES = {"NID_AUT": "REDACTED", "NID_SES": "REDACTED"}
 class RecordingSession:
     """호출 kwargs를 기록하고 준비된 응답을 돌려주는 가짜 세션."""
 
-    def __init__(self, response):
+    def __init__(self, response) -> None:
         self._response = response
         self.calls: list[tuple[str, dict]] = []
 
-    def get(self, url, **kwargs):
+    def get(self, url, **kwargs) -> MockResponse:
         self.calls.append((url, kwargs))
         return self._response
 
@@ -32,12 +32,12 @@ class RecordingSession:
 class BytesResponse(MockResponse):
     """content 바이트가 필요한 호출(get_aes_key)용 응답."""
 
-    def __init__(self, content: bytes = b"key", status_code: int = 200):
+    def __init__(self, content: bytes = b"key", status_code: int = 200) -> None:
         super().__init__(status_code=status_code)
         self.content = content
 
 
-def _install(monkeypatch, response):
+def _install(monkeypatch, response) -> RecordingSession:
     session = RecordingSession(response)
     monkeypatch.setattr(network, "_session", session)
     return session
@@ -83,7 +83,7 @@ M3U8_PLAYLIST = "\n".join(
         ),
     ],
 )
-def test_metadata_calls_carry_request_timeout(monkeypatch, name, call, response):
+def test_metadata_calls_carry_request_timeout(monkeypatch, name, call, response) -> None:
     """조회 호출은 모두 REQUEST_TIMEOUT을 실어야 한다."""
     session = _install(monkeypatch, response)
 
@@ -95,7 +95,7 @@ def test_metadata_calls_carry_request_timeout(monkeypatch, name, call, response)
 
 
 @pytest.mark.parametrize("method", ["get_video_dash_manifest", "get_video_sea_manifest"])
-def test_manifest_calls_carry_request_timeout(monkeypatch, load_mock_response, method):
+def test_manifest_calls_carry_request_timeout(monkeypatch, load_mock_response, method) -> None:
     """매니페스트 조회도 REQUEST_TIMEOUT을 실어야 한다 (실픽스처 XML 파싱 통과)."""
     xml = load_mock_response("dash_manifest.xml")
     session = _install(monkeypatch, MockResponse(text=xml))
@@ -107,7 +107,7 @@ def test_manifest_calls_carry_request_timeout(monkeypatch, load_mock_response, m
         assert kwargs.get("timeout") == REQUEST_TIMEOUT
 
 
-def test_aes_key_keeps_dedicated_timeout(monkeypatch):
+def test_aes_key_keeps_dedicated_timeout(monkeypatch) -> None:
     """복호화 키 요청의 기존 timeout=30은 유지된다 (#57 경로, 이 이슈 범위 밖)."""
     session = _install(monkeypatch, BytesResponse())
 
@@ -118,7 +118,7 @@ def test_aes_key_keeps_dedicated_timeout(monkeypatch):
     assert kwargs.get("timeout") == 30
 
 
-def test_request_timeout_is_connect_read_pair():
+def test_request_timeout_is_connect_read_pair() -> None:
     """connect·read를 모두 지정한다 — 단일 값이면 connect만 걸리는 실수 방지."""
     assert isinstance(REQUEST_TIMEOUT, tuple)
     assert len(REQUEST_TIMEOUT) == 2
@@ -134,11 +134,11 @@ VIDEO_URL = "https://chzzk.naver.com/video/123"
 class ScriptedSession:
     """정해 둔 순서대로 예외를 던지거나 응답을 돌려주는 가짜 세션 — 받은 요청 수를 센다."""
 
-    def __init__(self, *outcomes):
+    def __init__(self, *outcomes) -> None:
         self._outcomes = list(outcomes)
         self.calls = 0
 
-    def get(self, url, **kwargs):
+    def get(self, url, **kwargs) -> MockResponse:
         self.calls += 1
         outcome = self._outcomes.pop(0)
         if isinstance(outcome, BaseException):
@@ -155,7 +155,7 @@ def _video_info_response(title: str = "다시 받은 제목") -> MockResponse:
     [requests.ReadTimeout("read"), requests.ConnectTimeout("connect")],
     ids=["read", "connect"],
 )
-def test_video_info_is_requested_again_after_a_timeout(monkeypatch, timeout):
+def test_video_info_is_requested_again_after_a_timeout(monkeypatch, timeout) -> None:
     """영상 정보 요청이 제한 시간(읽기 · 연결)에 걸리면 한 번 더 보내 그 응답을 써야 한다.
 
     첫 요청은 ReadTimeout(또는 ConnectTimeout), 둘째 요청은 제목 "다시 받은 제목"인 응답
@@ -170,7 +170,7 @@ def test_video_info_is_requested_again_after_a_timeout(monkeypatch, timeout):
     assert info.metadata["title"] == "다시 받은 제목"
 
 
-def test_video_info_gives_up_after_one_retry(monkeypatch):
+def test_video_info_gives_up_after_one_retry(monkeypatch) -> None:
     """영상 정보 요청이 다시 보낸 뒤에도 제한 시간에 걸리면 더 보내지 않고 Timeout을 올려야 한다.
 
     요청마다 ReadTimeout(세 번째 응답도 준비해 둠)
@@ -192,7 +192,9 @@ def test_video_info_gives_up_after_one_retry(monkeypatch):
     [requests.ConnectionError("refused"), MockResponse(status_code=500)],
     ids=["connection-error", "http-500"],
 )
-def test_video_info_is_not_requested_again_after_a_non_timeout_failure(monkeypatch, outcome):
+def test_video_info_is_not_requested_again_after_a_non_timeout_failure(
+    monkeypatch, outcome
+) -> None:
     """영상 정보 요청이 제한 시간이 아닌 이유(연결 실패 · HTTP 오류)로 실패하면 다시 보내지 않아야 한다.
 
     첫 요청이 ConnectionError(또는 500 응답), 둘째 응답은 정상으로 준비해 둠
@@ -218,7 +220,7 @@ def test_video_info_is_not_requested_again_after_a_non_timeout_failure(monkeypat
 )
 def test_lookup_tells_a_slow_response_apart_from_a_connection_failure(
     monkeypatch, outcomes, expected_key
-):
+) -> None:
     """영상 정보 조회가 두 번 다 제한 시간에 걸리면 응답 지연 키, 연결 실패면 연결 오류 키로 실패해야 한다.
 
     NetworkManager로 fetch_content — 세션이 outcomes 순서대로 실패

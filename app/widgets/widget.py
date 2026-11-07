@@ -170,7 +170,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     _repSizeFetched = Signal(int, str)  # (해상도 index, 크기 텍스트 — 세그먼트 기반이면 "")
     _imageFetched = Signal(object, object, str, int, str)  # (label, bytes, url, maxHeight, type)
 
-    def __init__(self, item: ContentItem, index=0, parent=None):
+    def __init__(self, item: ContentItem, index=0, parent=None) -> None:
         super().__init__(parent)
         self.item = item  # ContentItem 저장
         self.index = index  # 인덱스 저장
@@ -195,7 +195,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.setupDynamicUi()
         self.setupSignals()  # 시그널 연결
 
-    def _setupThreadRelays(self):
+    def _setupThreadRelays(self) -> None:
         self._repSizeFetched.connect(self._onRepSizeFetched)
         self._imageFetched.connect(self._onImageFetched)
 
@@ -256,12 +256,12 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.progressBar.setMask(QRegion(path.toFillPolygon().toPolygon(), Qt.FillRule.WindingFill))
         self.progressBar.raise_()
 
-    def resizeEvent(self, event):
+    def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._placeProgressBar()
         self._layoutRowThree()  # 폭이 바뀌면 pill 모드·줄바꿈·경로 모양이 바뀐다
 
-    def showEvent(self, event):
+    def showEvent(self, event) -> None:
         """첫 표시 직후 3행 판정을 한 번 더 돌린다 (#245).
 
         첫 표시에서 resizeEvent는 자식 contentFrame의 레이아웃이 활성화되기
@@ -301,7 +301,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """
         self.index = index
 
-    def setupDynamicUi(self):
+    def setupDynamicUi(self) -> None:
         icon = theme.METRICS["iconSize"]
         self.loadImageFromUrl(self.channelImageLabel, self.item.channel_image_url, icon, "channel")
         self.loadImageFromUrl(self.thumbnailLabel, self.item.thumbnail_url, self.thumbnailLabel.height(), "thumbnail")
@@ -334,7 +334,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         change_text = self.tr("Change save location")
         self.pathButton.setToolTip(f"{change_text}\n{self.item.download_path}")
 
-    def setupSignals(self):
+    def setupSignals(self) -> None:
         self.deleteButton.clicked.connect(self.requestDelete)
         self.titleLabel.mousePressEvent = self.startTitleEditing
         self.titleEdit.editingFinished.connect(self.finishTitleEditing)
@@ -348,7 +348,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.pauseButton.clicked.connect(self.pauseRequest.emit)
         self.retryButton.clicked.connect(self.retryRequest.emit)
 
-    def addRepresentationButtons(self):
+    def addRepresentationButtons(self) -> None:
         """
         해상도 목록(Representation)을 정렬 후, 버튼을 생성해 Resolution 영역에 배치한다.
         """
@@ -617,7 +617,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         mark = self.tr("(source)") if self.item.resolution_tag else ""
         return f"{self.item.resolution}p{mark}"
 
-    def addRepresentationButton(self, resolution, base_url, index):
+    def addRepresentationButton(self, resolution, base_url, index) -> None:
         """
         해상도 버튼을 추가하고, 비동기로 파일 사이즈를 헤더에서 가져와 버튼 텍스트를 업데이트한다.
         """
@@ -644,7 +644,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.buttons.append(button)
         self._pillRowOf[id(button)] = 0
 
-        def update_button_text():
+        def update_button_text() -> None:
             # 네트워크만 담당한다 — 위젯·아이템 반영은 _onRepSizeFetched(메인 스레드)로 (#168)
             size_text = ""
             if not self.item.is_segment_based:
@@ -669,7 +669,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         thread = threading.Thread(target=update_button_text, daemon=True)
         thread.start()
 
-    def _onRepSizeFetched(self, index, size_text):
+    def _onRepSizeFetched(self, index, size_text) -> None:
         """해상도 크기 조회 결과를 위젯·아이템에 반영한다 — 메인 스레드 (#168)."""
         if index >= len(self.buttons) or index >= len(self.item.unique_reps):
             return  # setData로 아이템이 교체된 뒤의 늦은 완료
@@ -690,7 +690,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             # 파일 크기 표시를 채운다 — 아무것도 안 골랐을 때 최고화질이 잡히는 것은 의도다
             self.setresolutionUrlSize(resolution, base_url, index, self.buttons[index])
 
-    def setresolutionUrlSize(self, resolution, base_url, index=None, button:QPushButton = None):
+    def setresolutionUrlSize(
+        self, resolution, base_url, index=None, button: QPushButton = None
+    ) -> None:
         if self.item.downloadState == DownloadState.WAITING:
             if button is not None:
                 # 선택 = 채움 표시(app/widgets/pill.py) — 버튼은 전부 활성으로 둔다.
@@ -795,7 +797,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             )
         return lines
 
-    def loadImageFromUrl(self, label, url, maxHeight, type):
+    def loadImageFromUrl(self, label, url, maxHeight, type) -> None:
         """
         주어진 URL에서 이미지를 다운로드해 QLabel에 띄운다.
         세로 높이를 고정하고 가로 크기를 비율에 맞게 조정한다.
@@ -808,7 +810,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         thread = threading.Thread(target=self.fetchImage, args=(label, url, maxHeight, type), daemon=True)
         thread.start()
 
-    def fetchImage(self, label, url, maxHeight, type):
+    def fetchImage(self, label, url, maxHeight, type) -> None:
         """이미지 바이트를 받아 메인 스레드로 중계한다 — 워커 스레드 (#168).
 
         QPixmap 생성·스케일·setPixmap은 GUI 스레드 전용이라 여기서 하지
@@ -823,7 +825,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         except Exception as e:
             logger.error(f"Error loading image from {url}: {e}")
 
-    def _onImageFetched(self, label, data, url, maxHeight, type):
+    def _onImageFetched(self, label, data, url, maxHeight, type) -> None:
         """이미지 디코드·스케일·표시 — 메인 스레드 (#168)."""
         try:
             image = QPixmap()
@@ -1106,7 +1108,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """"HH:MM:SS" 시간을 짧은 표시("3:12")로 줄인다 — 표기는 `short_time`."""
         return short_time(remain)
 
-    def setData(self, item: ContentItem, index: int):
+    def setData(self, item: ContentItem, index: int) -> None:
         """✅ 모델 데이터를 위젯에 반영 — 3행 슬롯 텍스트는 상태별로 다르다 (#245).
 
         유저가 알고 싶은 것은 상태마다 다르다 — 대기 "어느 화질로?"(pill),
@@ -1316,7 +1318,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """
         return self.item.downloadState in (DownloadState.RUNNING, DownloadState.PAUSED)
 
-    def applyStateStyle(self):
+    def applyStateStyle(self) -> None:
         """상태에 따라 슬롯·조작·색·진행바를 맞춘다 (#227→#245 상태별 슬롯).
 
         색은 theme.py 한 곳에서만 정의된다. 슬롯 텍스트·진행바는 위젯별
@@ -1607,7 +1609,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             #size_info=self.sizeInfoLabel.text(),
         )
 
-    def startTitleEditing(self, event):
+    def startTitleEditing(self, event) -> None:
         """✅ QLabel을 더블클릭하면 QLineEdit로 변경"""
         if self.item.downloadState == DownloadState.WAITING:
             if not self.isEditing:
@@ -1632,7 +1634,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.titleEdit.blockSignals(False)
         self.titleLabel.setVisible(True)
 
-    def finishTitleEditing(self):
+    def finishTitleEditing(self) -> None:
         """✅ QLineEdit에서 Enter 또는 포커스 해제 시 QLabel로 복귀
 
         편집 중이 아니면(상태 전이로 이미 취소됐거나 편집이 없었으면) 아무것도 확정하지
@@ -1652,8 +1654,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             self.textChanged.emit(new_text)  # ✅ 모델에도 반영하도록 시그널 전송
         else:
             self.titleLabel.setText(self.item.default_title)
-            
-    def choosePath(self, event=None):
+
+    def choosePath(self, event=None) -> None:
         """경로를 클릭하면 폴더 선택 대화상자로 이 카드의 저장 경로를 바꾼다 (#245).
 
         인라인 편집(QLineEdit)의 **교체**다 — 기능(카드별 경로 변경)은 그대로,
@@ -1683,7 +1685,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.textChanged.emit(chosen)  # 모델에도 반영
         logger.info("카드 저장 경로 변경: %r", chosen)
 
-    def requestDelete(self):
+    def requestDelete(self) -> None:
         """✅ 삭제 요청"""
         # print("widget - requestDelete") # Debugging
         self.deleteRequest.emit()
@@ -1705,7 +1707,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             return made[0] if made else item.download_path
         return item.output_path
 
-    def requestOpenDir(self):
+    def requestOpenDir(self) -> None:
         try:
             # 라벨 텍스트는 축약형이다 — 실제 경로는 아이템에서 읽는다(#245)
             path = self._openTarget()
@@ -1730,9 +1732,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             # 경고 창의 글은 화면 언어로 낸다 (#431)
             QMessageBox.warning(self, self.tr("Warning"), str(e))
             return
-            
 
-    def setSize(self, size):
+    def setSize(self, size) -> str:
         try:
             size = float(size)
         except (ValueError, TypeError):

@@ -169,7 +169,7 @@ class M3U8Downloader(BaseDownloader):
     # 테스트가 True로 두고 cut_results를 정합 판정(check_cut)에 넘긴다
     _inspect_cuts: bool = False
 
-    def __init__(self, data, logger, **callbacks):
+    def __init__(self, data, logger, **callbacks) -> None:
         super().__init__(data, logger, **callbacks)
         self._cache_recovery: set[int] = set()
         # 세그먼트마다 이 실행에서 받은 손상 응답 — 로그 줄을 묶는다 (#375)
@@ -474,7 +474,7 @@ class M3U8Downloader(BaseDownloader):
         _index, segment = item
         self.logger.log_m3u8_thread_start(part_num, segment)
 
-    def _download_item(self, item, part_num: int):
+    def _download_item(self, item, part_num: int) -> int:
         index, segment = item
         return self._download_segment(
             index=index, segment=segment, part_num=part_num, total_ranges=self.s.total_ranges
@@ -722,7 +722,7 @@ class M3U8Downloader(BaseDownloader):
             recovery,
         )
 
-    def _download_segment(self, index: int, segment: str, part_num: int, total_ranges: int):
+    def _download_segment(self, index: int, segment: str, part_num: int, total_ranges: int) -> int:
         """
         개별 세그먼트 다운로드(재시도 포함)
         """

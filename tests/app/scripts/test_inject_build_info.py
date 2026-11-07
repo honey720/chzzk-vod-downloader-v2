@@ -6,10 +6,12 @@
 """
 
 import subprocess
+from pathlib import Path
 
 import pytest
 
 import scripts.inject_build_info as inject_module
+from typing import Never
 
 
 FAKE_CONFIG = '''\
@@ -26,7 +28,7 @@ def get_app_version():
 
 
 @pytest.fixture
-def fake_config_path(tmp_path, monkeypatch):
+def fake_config_path(tmp_path, monkeypatch) -> Path:
     """CONFIG_PATH를 임시 파일로 바꿔치기한다 — 실제 저장소 파일은 무변경."""
     path = tmp_path / "config.py"
     path.write_text(FAKE_CONFIG, encoding="utf-8")
@@ -34,7 +36,7 @@ def fake_config_path(tmp_path, monkeypatch):
     return path
 
 
-def test_inject_writes_commit_and_release_marker(fake_config_path, monkeypatch):
+def test_inject_writes_commit_and_release_marker(fake_config_path, monkeypatch) -> None:
     """git describe가 성공하면 그 값이 BUILD_COMMIT에, --release가 IS_RELEASE_BUILD에 실린다."""
     monkeypatch.setattr(inject_module, "_git_describe", lambda repo_root: "v1.2.3-4-gabc1234")
 
@@ -47,7 +49,7 @@ def test_inject_writes_commit_and_release_marker(fake_config_path, monkeypatch):
     assert 'APP_VERSION = "9.9.9"' in text  # 무관한 상수는 그대로
 
 
-def test_inject_without_release_flag_keeps_marker_false(fake_config_path, monkeypatch):
+def test_inject_without_release_flag_keeps_marker_false(fake_config_path, monkeypatch) -> None:
     """--release 없이 부르면(로컬 빌드) 커밋만 채우고 마커는 False로 남는다."""
     monkeypatch.setattr(inject_module, "_git_describe", lambda repo_root: "abc1234")
 
@@ -58,10 +60,10 @@ def test_inject_without_release_flag_keeps_marker_false(fake_config_path, monkey
     assert "IS_RELEASE_BUILD = False" in text
 
 
-def test_inject_falls_back_to_unknown_when_git_fails(fake_config_path, monkeypatch):
+def test_inject_falls_back_to_unknown_when_git_fails(fake_config_path, monkeypatch) -> None:
     """git이 없거나 실패해도 빌드를 막지 않고 unknown으로 폴백한다."""
 
-    def boom(*args, **kwargs):
+    def boom(*args, **kwargs) -> Never:
         raise FileNotFoundError("git not found")
 
     monkeypatch.setattr(inject_module.subprocess, "run", boom)
@@ -73,10 +75,10 @@ def test_inject_falls_back_to_unknown_when_git_fails(fake_config_path, monkeypat
     assert 'BUILD_COMMIT = "unknown"' in text
 
 
-def test_git_describe_timeout_falls_back_to_unknown(monkeypatch, tmp_path):
+def test_git_describe_timeout_falls_back_to_unknown(monkeypatch, tmp_path) -> None:
     """subprocess 타임아웃도 SubprocessError 계열이라 unknown으로 폴백한다."""
 
-    def timeout(*args, **kwargs):
+    def timeout(*args, **kwargs) -> Never:
         raise subprocess.TimeoutExpired(cmd="git", timeout=10)
 
     monkeypatch.setattr(inject_module.subprocess, "run", timeout)
@@ -84,7 +86,7 @@ def test_git_describe_timeout_falls_back_to_unknown(monkeypatch, tmp_path):
     assert inject_module._git_describe(tmp_path) == "unknown"
 
 
-def test_inject_raises_if_constants_not_found(tmp_path, monkeypatch):
+def test_inject_raises_if_constants_not_found(tmp_path, monkeypatch) -> None:
     """상수 형식이 바뀌어 정규식이 못 찾으면 조용히 넘어가지 않고 명확히 실패한다."""
     path = tmp_path / "config.py"
     path.write_text("APP_VERSION = '9.9.9'\n", encoding="utf-8")

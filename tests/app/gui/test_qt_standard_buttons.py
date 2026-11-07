@@ -15,6 +15,7 @@
 - `en_US`인데 한국어 카탈로그 로드 → 영어 게이트 실패
 """
 
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -51,7 +52,7 @@ def _seed_config(language: str) -> dict:
 
 
 @pytest.fixture
-def translators(qapp, monkeypatch):
+def translators(qapp, monkeypatch) -> Iterator[Callable[[str], list]]:
     """`CVDv2.set_language`를 실제 QApplication에 걸고, 끝나면 설치한 번역기를 전부 뗀다.
 
     전역 상태(번역기)를 되돌리지 않으면 뒤 테스트가 한국어 버튼을 보게 된다.
@@ -104,7 +105,7 @@ def _message_box_texts() -> dict:
 
 
 class TestKorean:
-    def test_setting_dialog_ok_cancel_are_korean(self, qapp, translators):
+    def test_setting_dialog_ok_cancel_are_korean(self, qapp, translators) -> None:
         translators("ko_KR")
         dialog = SettingDialog()
         try:
@@ -112,11 +113,11 @@ class TestKorean:
         finally:
             dialog.deleteLater()
 
-    def test_message_box_standard_buttons_are_korean(self, qapp, translators):
+    def test_message_box_standard_buttons_are_korean(self, qapp, translators) -> None:
         translators("ko_KR")
         assert _message_box_texts() == {"ok": KOREAN["ok"], "yes": KOREAN["yes"], "no": KOREAN["no"]}
 
-    def test_every_message_box_call_site_uses_standard_buttons_only(self):
+    def test_every_message_box_call_site_uses_standard_buttons_only(self) -> None:
         """정적 QMessageBox 호출 10곳이 전부 표준 버튼이라 카탈로그 하나로 덮인다 — 문구를
         직접 준 버튼(addButton/setButtonText)이 생기면 이 가정이 깨진다."""
         import re
@@ -133,7 +134,7 @@ class TestKorean:
 
 
 class TestEnglish:
-    def test_english_setting_keeps_english_buttons(self, qapp, translators):
+    def test_english_setting_keeps_english_buttons(self, qapp, translators) -> None:
         """영어 설정에서는 카탈로그를 얹지 않는다 — 한국어 카탈로그가 섞이면 문구가 갈린다."""
         result = translators("en_US")
         assert len(result) == 1, "영어에는 Qt 카탈로그가 없어야 한다(원문)"
@@ -146,18 +147,18 @@ class TestEnglish:
 
 
 class TestInstallOrder:
-    def test_later_installed_translator_wins(self, qapp):
+    def test_later_installed_translator_wins(self, qapp) -> None:
         """Qt 규칙의 대조군 — 같은 키를 가진 번역기 둘 중 나중에 설치한 쪽이 이긴다."""
 
         class _Stub(QTranslator):
-            def __init__(self, tag):
+            def __init__(self, tag) -> None:
                 super().__init__()
                 self.tag = tag
 
-            def isEmpty(self):
+            def isEmpty(self) -> bool:
                 return False
 
-            def translate(self, context, source, disambiguation=None, n=-1):
+            def translate(self, context, source, disambiguation=None, n=-1) -> str:
                 return f"{self.tag}:{source}" if (context, source) == ("Ctx", "key") else ""
 
         first, second = _Stub("first"), _Stub("second")
@@ -169,7 +170,7 @@ class TestInstallOrder:
             qapp.removeTranslator(first)
             qapp.removeTranslator(second)
 
-    def test_app_catalog_is_installed_after_the_qt_catalog(self, qapp, translators):
+    def test_app_catalog_is_installed_after_the_qt_catalog(self, qapp, translators) -> None:
         """우리 번역이 Qt 카탈로그보다 우선하려면 우리 것이 **마지막**에 설치돼야 한다."""
         result = translators("ko_KR")
         assert len(result) == 2, "한국어에는 Qt 카탈로그 + 우리 번역, 둘이 설치돼야 한다"
@@ -181,7 +182,9 @@ class TestInstallOrder:
 
 
 class TestMissingCatalogDoesNotCrash:
-    def test_missing_catalog_leaves_english_and_installs_only_ours(self, qapp, translators, monkeypatch):
+    def test_missing_catalog_leaves_english_and_installs_only_ours(
+        self, qapp, translators, monkeypatch
+    ) -> None:
         """카탈로그 파일이 없으면 영어로 남는 것이 정상 — 앱은 그대로 뜬다."""
         real = main.qt_catalog_path
         monkeypatch.setattr(main, "qt_catalog_path", lambda language: real(language) + ".missing")
@@ -193,7 +196,7 @@ class TestMissingCatalogDoesNotCrash:
 class TestPreserved:
     """보존 목록 — 카탈로그가 바꾸는 것은 문구뿐이어야 한다."""
 
-    def _dialog(self, qapp, translators, language):
+    def _dialog(self, qapp, translators, language) -> SettingDialog:
         translators(language)
         dialog = SettingDialog()
         dialog.show()
@@ -201,7 +204,7 @@ class TestPreserved:
         return dialog
 
     @pytest.mark.parametrize("language", ("ko_KR", "en_US"))
-    def test_button_order_default_and_escape(self, qapp, qtbot, translators, language):
+    def test_button_order_default_and_escape(self, qapp, qtbot, translators, language) -> None:
         """버튼 차례가 스타일 배치 힌트와 같고, 기본 버튼은 OK, Esc는 취소여야 한다(#486)."""
         dialog = self._dialog(qapp, translators, language)
         qtbot.addWidget(dialog)
@@ -215,14 +218,16 @@ class TestPreserved:
         assert dialog.result() == QDialog.DialogCode.Rejected and not dialog.isVisible(), "Esc가 취소하지 않는다"
 
     @pytest.mark.parametrize("language", ("ko_KR", "en_US"))
-    def test_tab_order_follows_the_button_layout(self, qapp, qtbot, translators, language):
+    def test_tab_order_follows_the_button_layout(self, qapp, qtbot, translators, language) -> None:
         """탭 순서가 배치 힌트의 버튼 차례(앞 → 뒤)와 같아야 한다(#486)."""
         dialog = self._dialog(qapp, translators, language)
         qtbot.addWidget(dialog)
         first, second = _layout_order(dialog.dialogButtonBox)
         assert first.nextInFocusChain() is second, f"탭 순서가 {first.text()} → {second.text()}가 아니다"
 
-    def test_minimum_size_is_reported_for_both_languages(self, qapp, translators, monkeypatch):
+    def test_minimum_size_is_reported_for_both_languages(
+        self, qapp, translators, monkeypatch
+    ) -> None:
         """최소 크기는 버튼 문구 폭에 따라 달라질 수 있다 — 세 조건을 같이 잰다(회귀 감시용).
 
         en_US / ko_KR / ko_KR(카탈로그 없음). 마지막 둘의 차가 **Qt 카탈로그가 바꾼 몫**이다

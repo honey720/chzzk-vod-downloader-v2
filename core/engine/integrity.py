@@ -34,7 +34,7 @@ class TruncatedSegmentError(Exception):
     ``message_key``는 번역하지 않은 i18n 키 원문이다. 표시 계층이 번역한다.
     """
 
-    def __init__(self, detail: str):
+    def __init__(self, detail: str) -> None:
         super().__init__(detail)
         self.message_key = SEGMENT_TRUNCATED
 

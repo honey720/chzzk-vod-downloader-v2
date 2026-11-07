@@ -11,26 +11,28 @@
 """
 
 import struct
+from collections.abc import Callable
 
 import pytest
 
 import core.media.mp4 as mp4_module
 import core.sections.mp4_partial as partial_module
 from core.media.mp4 import MP4_INVALID, MP4_UNSUPPORTED, Mp4Error, parse_moov, read_mp4_head
+from core.media.mp4_index import Mp4Head, Mp4Index
 from core.models.plan import TimeRange
 from core.sections.mp4_partial import build_head, merge_ranges, plan_partial
 from core.sections.mp4_ranges import selection_byte_ranges
-from tests.support.mp4_builder import audio_spec, build_mp4, video_spec
+from tests.support.mp4_builder import BuiltMp4, audio_spec, build_mp4, video_spec
 
 
-def _reader(data: bytes):
+def _reader(data: bytes) -> Callable[[int, int], bytes]:
     def read(offset: int, size: int) -> bytes:
         return data[offset : offset + size]
 
     return read
 
 
-def _built(**options):
+def _built(**options) -> tuple[BuiltMp4, Mp4Head]:
     """(조립 결과, Mp4Head)."""
     built = build_mp4([video_spec(), audio_spec()], **options)
     return built, read_mp4_head(_reader(built.data))
@@ -43,7 +45,7 @@ def _partial_bytes(built, head, layout) -> bytes:
     return b"".join(pieces)
 
 
-def _index_of(data: bytes):
+def _index_of(data: bytes) -> Mp4Index:
     return read_mp4_head(_reader(data)).index
 
 
@@ -61,7 +63,7 @@ def _index_of(data: bytes):
         ([(10, 19), (15, 29), (25, 40), (50, 60)], ((10, 40), (50, 60))),  # 셋이 이어 겹친다
     ],
 )
-def test_merge_ranges_joins_overlapping_and_touching_ranges(ranges, expected):
+def test_merge_ranges_joins_overlapping_and_touching_ranges(ranges, expected) -> None:
     """merge_ranges는 겹치거나 맞닿은 범위를 하나로 합치고 오름차순으로 돌려줘야 한다.
 
     주석의 경우마다 (시작, 끝) 목록
@@ -73,7 +75,7 @@ def test_merge_ranges_joins_overlapping_and_touching_ranges(ranges, expected):
 # ================================================================ 배치
 
 
-def test_plan_partial_downloads_only_the_given_ranges():
+def test_plan_partial_downloads_only_the_given_ranges() -> None:
     """plan_partial은 주어진 범위만 받을 범위로 두고 머리는 받을 범위에 넣지 않아야 한다.
 
     합성 mp4(moov가 앞), 구간 범위 하나
@@ -89,7 +91,7 @@ def test_plan_partial_downloads_only_the_given_ranges():
     assert all(first > head.index.moov_range[1] for first, _last in layout.ranges)
 
 
-def test_plan_partial_size_is_head_plus_ranges():
+def test_plan_partial_size_is_head_plus_ranges() -> None:
     """plan_partial의 size는 머리의 길이 + 받을 바이트의 합이고, 범위는 머리 뒤에 빈틈없이 놓여야 한다.
 
     합성 mp4, 구간 범위 하나
@@ -107,7 +109,7 @@ def test_plan_partial_size_is_head_plus_ranges():
     assert layout.size < len(built.data)
 
 
-def test_plan_partial_counts_overlapping_ranges_once():
+def test_plan_partial_counts_overlapping_ranges_once() -> None:
     """plan_partial은 겹치는 범위를 합쳐 같은 바이트를 한 번만 세야 한다.
 
     합성 mp4, 서로 겹치는 구간 0.5~0.6초와 0.5~0.9초
@@ -120,7 +122,7 @@ def test_plan_partial_counts_overlapping_ranges_once():
     assert plan_partial(head.index, [*narrow, *wide]).size == plan_partial(head.index, wide).size
 
 
-def test_layout_position_maps_received_offsets_and_rejects_the_rest():
+def test_layout_position_maps_received_offsets_and_rejects_the_rest() -> None:
     """PartialLayout.position은 받는 자리는 부분 파일 안의 위치로, 받지 않는 자리는 None으로 답해야 한다.
 
     합성 mp4, 구간 1.0~1.2초의 범위 (first, last)
@@ -138,7 +140,7 @@ def test_layout_position_maps_received_offsets_and_rejects_the_rest():
     assert layout.position(last + 1) is None
 
 
-def test_plan_partial_rejects_moov_behind_the_samples():
+def test_plan_partial_rejects_moov_behind_the_samples() -> None:
     """plan_partial은 moov가 샘플보다 뒤에 있으면 미지원 키로 거부해야 한다.
 
     합성 mp4(ftyp · mdat · moov)
@@ -152,7 +154,7 @@ def test_plan_partial_rejects_moov_behind_the_samples():
     assert info.value.message_key == MP4_UNSUPPORTED
 
 
-def test_plan_partial_rejects_index_without_moov_location():
+def test_plan_partial_rejects_index_without_moov_location() -> None:
     """plan_partial은 moov의 위치를 모르는 색인을 미지원 키로 거부해야 한다.
 
     parse_moov(bytes)로만 만든 색인(moov_range is None)
@@ -170,7 +172,7 @@ def test_plan_partial_rejects_index_without_moov_location():
 
 
 @pytest.mark.parametrize("co64", [False, True], ids=["stco", "co64"])
-def test_built_partial_file_points_received_samples_at_their_bytes(co64):
+def test_built_partial_file_points_received_samples_at_their_bytes(co64) -> None:
     """만든 부분 파일을 다시 해석하면 받은 샘플의 위치에 조립기가 쓴 그 샘플의 바이트가 있어야 한다.
 
     합성 mp4(stco · co64), 구간 0.5~0.6초 → 영상 샘플 3~7 · 오디오 샘플 0~7을 받는다
@@ -192,7 +194,7 @@ def test_built_partial_file_points_received_samples_at_their_bytes(co64):
             assert partial[start : start + size] == built.sample_bytes(handler, sample, size)
 
 
-def test_built_partial_file_points_missing_chunks_at_end_of_file():
+def test_built_partial_file_points_missing_chunks_at_end_of_file() -> None:
     """만든 부분 파일에서 받지 않은 청크의 위치는 부분 파일의 끝이어야 한다.
 
     합성 mp4, 구간 0.5~0.6초 → 영상 청크 (0~2) · (8~11)은 받지 않는다
@@ -209,7 +211,7 @@ def test_built_partial_file_points_missing_chunks_at_end_of_file():
 
 
 @pytest.mark.parametrize("large", [False, True], ids=["8byte-gap", "16byte-gap"])
-def test_built_head_writes_mdat_that_ends_at_the_end_of_file(large):
+def test_built_head_writes_mdat_that_ends_at_the_end_of_file(large) -> None:
     """만든 머리는 moov 바로 뒤에 mdat 머리를 쓰고, 그 mdat는 부분 파일의 끝에서 끝나야 한다.
 
     합성 mp4(원본의 mdat 머리 8바이트 · 16바이트), 구간 0.5~0.6초
@@ -229,7 +231,7 @@ def test_built_head_writes_mdat_that_ends_at_the_end_of_file(large):
     assert made[moov_end + 8 :] == bytes(layout.head_size - moov_end - 8)
 
 
-def test_built_head_marks_mdat_as_running_to_end_of_file_when_too_large(monkeypatch):
+def test_built_head_marks_mdat_as_running_to_end_of_file_when_too_large(monkeypatch) -> None:
     """만든 머리는 mdat의 크기가 32비트 칸에 담기지 않으면 크기를 0("파일 끝까지")으로 적어야 한다.
 
     32비트 상한을 100바이트로 줄임, 구간 0.5~0.6초 (mdat가 100바이트보다 크다)
@@ -245,7 +247,7 @@ def test_built_head_marks_mdat_as_running_to_end_of_file_when_too_large(monkeypa
     assert (size, kind) == (0, b"mdat")
 
 
-def test_built_head_keeps_everything_but_chunk_offsets():
+def test_built_head_keeps_everything_but_chunk_offsets() -> None:
     """build_head는 0부터 moov 끝까지에서 청크 위치 표 말고는 바꾸지 않아야 한다.
 
     합성 mp4, 구간 0.5~0.6초
@@ -263,7 +265,7 @@ def test_built_head_keeps_everything_but_chunk_offsets():
     assert moved.audio.times == head.index.audio.times
 
 
-def test_build_head_rejects_data_that_does_not_hold_the_moov():
+def test_build_head_rejects_data_that_does_not_hold_the_moov() -> None:
     """build_head는 받은 바이트에 moov가 다 들어 있지 않으면 손상 키로 거부해야 한다.
 
     합성 mp4의 앞부분을 moov 중간에서 자른 bytes
@@ -281,7 +283,7 @@ def test_build_head_rejects_data_that_does_not_hold_the_moov():
 # ================================================================ 받은 앞부분 (Mp4Head)
 
 
-def test_read_mp4_head_keeps_the_bytes_up_to_the_end_of_moov():
+def test_read_mp4_head_keeps_the_bytes_up_to_the_end_of_moov() -> None:
     """read_mp4_head는 moov가 파일 앞에 있으면 0부터 moov 끝까지의 바이트를 돌려줘야 한다.
 
     ftyp · moov · mdat
@@ -295,7 +297,7 @@ def test_read_mp4_head_keeps_the_bytes_up_to_the_end_of_moov():
     assert head.index.moov_range == (built.moov_offset, moov_end - 1)
 
 
-def test_read_mp4_head_reads_a_moov_larger_than_the_first_read(monkeypatch):
+def test_read_mp4_head_reads_a_moov_larger_than_the_first_read(monkeypatch) -> None:
     """read_mp4_head는 moov가 첫 읽기보다 길어 두 번에 나눠 받아도 0부터 moov 끝까지를 이어 돌려줘야 한다.
 
     첫 읽기를 64바이트로 줄임(moov는 그보다 길다)
@@ -315,7 +317,7 @@ def test_read_mp4_head_reads_a_moov_larger_than_the_first_read(monkeypatch):
     assert head.data == built.data[: built.moov_offset + len(built.moov)]
 
 
-def test_read_mp4_head_has_no_bytes_when_moov_is_not_at_the_front(monkeypatch):
+def test_read_mp4_head_has_no_bytes_when_moov_is_not_at_the_front(monkeypatch) -> None:
     """read_mp4_head는 moov가 mdat 뒤에 있으면 앞부분의 바이트 없이 색인만 돌려줘야 한다.
 
     ftyp · mdat · moov, 읽기 단위를 24바이트로 줄여 moov를 뒤 읽기에서 찾게 함

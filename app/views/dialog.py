@@ -194,7 +194,7 @@ class SettingDialog(QDialog):
     `.ts`에 항목이 새로 생기고 옛 항목이 지워진다(`.qm` 재컴파일 = rc 대상).
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None) -> None:
         super().__init__(parent)
 
         self.config = settings.load_settings()
@@ -303,7 +303,7 @@ class SettingDialog(QDialog):
         self.logsFolderLabel.setText(self.tr("Logs Folder"))
         self.logsFolder.setText(self.tr("Open"))
 
-    def setupDynamicUi(self):
+    def setupDynamicUi(self) -> None:
         self.nidaut.setText(self.config.get("cookies", {}).get("NID_AUT", "")) # 쿠키값을 불러와서 QLineEdit에 세팅
         self.nidses.setText(self.config.get("cookies", {}).get("NID_SES", ""))
 
@@ -330,17 +330,17 @@ class SettingDialog(QDialog):
 
         self.logsFolder.clicked.connect(self.openLogsFolder) # 로그 폴더 열기 버튼 클릭 시 openLogsFolder 메소드 호출
 
-    def accept(self):
+    def accept(self) -> None:
         self.config['cookies'] = {"NID_AUT": self.nidaut.text(), "NID_SES": self.nidses.text()}
         self.config['afterDownload'] = self.afterDownload.currentData()
         self.config['language'] = self.language.currentData()  # 선택된 언어 코드 저장
         settings.save_settings(self.config)
         return super().accept()
-    
-    def reject(self):
+
+    def reject(self) -> None:
         return super().reject()
 
-    def showHelp(self):
+    def showHelp(self) -> None:
         """
         쿠키를 얻는 방법 안내 메시지.
         """
@@ -354,7 +354,7 @@ class SettingDialog(QDialog):
             ).format(link, link)
         QMessageBox.information(self, self.tr("Helper"), msg)
 
-    def openLogsFolder(self):
+    def openLogsFolder(self) -> None:
         # os.startfile은 Windows 전용이라 macOS·Linux에서 무조건 AttributeError였다
         # (#181). QDesktopServices.openUrl은 3-OS 공통으로 폴더를 연다.
         path = settings.logs_dir()

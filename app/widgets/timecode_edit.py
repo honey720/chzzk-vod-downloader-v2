@@ -33,6 +33,8 @@ QSS와 Qt가 그대로 준다. 글자만 이 클래스가 그린다(흐린 부�
 채워져 가운데를 골라 고칠 일이 없다. 복사(Ctrl+C)는 선택과 무관하게 네 칸 값 전체를 넣는다.
 """
 
+from collections.abc import Callable
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QAction, QColor, QGuiApplication, QKeySequence, QPainter
 from PySide6.QtWidgets import (
@@ -124,7 +126,7 @@ class TimecodeEdit(QLineEdit):
     dotPressed = Signal()  # "."을 쳤다 — 칸에는 들어가지 않는다
     touched = Signal()  # 키를 누르거나 마우스로 눌렀다 — 그 입력을 처리하기 **전에** 나온다
 
-    def __init__(self, parent: QWidget | None = None, fields: int = _FIELDS):
+    def __init__(self, parent: QWidget | None = None, fields: int = _FIELDS) -> None:
         """
         Args:
             fields: 두 자리 묶음의 수 — 4는 시각 하나, ``CLOCK_FIELDS``는 시분초, ``FRAME_FIELDS``는 프레임
@@ -460,7 +462,7 @@ class TimePointEdit(QWidget):
     pasted = Signal()  # 붙여넣은 글을 받았다 — edited 뒤에 나온다(값이 그대로여도 나온다)
     touched = Signal()  # 두 칸 가운데 하나에 키 · 마우스 입력이 왔다 — 처리하기 전에 나온다
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -561,7 +563,7 @@ class TimePointEdit(QWidget):
             self.edited.emit(self.text())
         return True
 
-    def _handler(self, part: TimecodeEdit):
+    def _handler(self, part: TimecodeEdit) -> Callable[[str], bool]:
         def handle(text: str) -> bool:
             accepted = self.pasteInto(part, text)
             if accepted:
@@ -572,7 +574,7 @@ class TimePointEdit(QWidget):
 
     # ---- 두 칸의 신호 ----
 
-    def _edited(self, part: TimecodeEdit):
+    def _edited(self, part: TimecodeEdit) -> Callable[[str], None]:
         def relay(_text: str) -> None:
             if not isValid(self):
                 return
@@ -581,7 +583,7 @@ class TimePointEdit(QWidget):
 
         return relay
 
-    def _committed(self, part: TimecodeEdit):
+    def _committed(self, part: TimecodeEdit) -> Callable[[], None]:
         def relay() -> None:
             if not isValid(self):
                 return  # 창이 닫히며 칸이 포커스를 잃었다 — 이 묶음은 이미 사라졌다

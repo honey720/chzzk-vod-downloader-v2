@@ -25,6 +25,7 @@ DownloadLogger는 클래스 메서드를 대역으로 바꿔 파일 생성을 �
 """
 
 import threading
+from collections.abc import Iterator
 
 import pytest
 import requests
@@ -56,7 +57,7 @@ class FakeHandle:
     즉시 True를 돌려준다 — 엔진이 없으므로 기다릴 대상이 없다.
     """
 
-    def __init__(self, data):
+    def __init__(self, data) -> None:
         self.data = data
         self.wait_calls = 0
         self.wait_timeouts: list = []
@@ -98,7 +99,7 @@ class FakeService:
     워커에서는 정확히 그 핸들 하나여야 한다(#137의 슬롯 방출).
     """
 
-    def __init__(self, log_calls: list, handle_factory=FakeHandle):
+    def __init__(self, log_calls: list, handle_factory=FakeHandle) -> None:
         """log_calls: `log_calls` 픽스처의 기록 리스트(제출 시점 길이를 잰다).
         handle_factory: 돌려줄 핸들 대역 — 갇힌 워커 시나리오만 StuckHandle을 준다."""
         self._log_calls = log_calls
@@ -109,7 +110,7 @@ class FakeService:
         self.state_at_submit: DownloadState | None = None
         self.log_calls_at_submit: int | None = None
 
-    def submit(self, content, **kwargs):
+    def submit(self, content, **kwargs) -> FakeHandle:
         """제출 시점 스냅샷을 먼저 뜨고, 인자를 보관한 뒤, 핸들 대역을 돌려준다."""
         self.state_at_submit = kwargs["data"].model.state
         self.log_calls_at_submit = len(self._log_calls)
@@ -119,7 +120,7 @@ class FakeService:
         self.handles.append(handle)
         return handle
 
-    def abandon(self, handle):
+    def abandon(self, handle) -> None:
         """갇힌 워커의 슬롯 방출 — 호출된 핸들을 남긴다."""
         self.abandoned.append(handle)
 
@@ -147,7 +148,7 @@ class RecordingContent(QObject):
     같은 조건에서 검증된다.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.calls: list[tuple[str, tuple, int, DownloadState]] = []
 
@@ -155,27 +156,27 @@ class RecordingContent(QObject):
         """한 호출을 네 항목으로 남긴다 — 스레드 id와 아이템 상태는 **지금 이 순간**의 값이다."""
         self.calls.append((name, (item, *args), threading.get_ident(), item.downloadState))
 
-    def update_progress(self, rem, size, spd, prog, item: ContentItem):
+    def update_progress(self, rem, size, spd, prog, item: ContentItem) -> None:
         """진행 통지 자리 — 인자 순서(남은 시간·크기·속도·%·item)는 ContentManager와 같다."""
         self._record("update_progress", item, rem, size, spd, prog)
 
-    def pause(self, item: ContentItem):
+    def pause(self, item: ContentItem) -> None:
         """일시정지 통지 자리."""
         self._record("pause", item)
 
-    def resume(self, item: ContentItem):
+    def resume(self, item: ContentItem) -> None:
         """재개 통지 자리."""
         self._record("resume", item)
 
-    def stop(self, item: ContentItem):
+    def stop(self, item: ContentItem) -> None:
         """중지 통지 자리 — 실패 경로에서는 오지 않아야 한다."""
         self._record("stop", item)
 
-    def finish(self, item: ContentItem, download_time: str):
+    def finish(self, item: ContentItem, download_time: str) -> None:
         """완료 통지 자리 — download_time은 "HH:MM:SS" 문자열이다."""
         self._record("finish", item, download_time)
 
-    def fail(self, item: ContentItem, message: str = ""):
+    def fail(self, item: ContentItem, message: str = "") -> None:
         """실패 통지 자리 — message는 매핑을 거친 사유 문구(매핑 밖이면 "")다."""
         self._record("fail", item, message)
 
@@ -214,7 +215,7 @@ class Wired:
     테스트는 그대로다.
     """
 
-    def __init__(self, qapp, log_calls: list, handle_factory=FakeHandle):
+    def __init__(self, qapp, log_calls: list, handle_factory=FakeHandle) -> None:
         """qapp: 큐 연결을 배달할 이벤트 루프. log_calls: `log_calls` 픽스처의 기록.
         handle_factory: 서비스 대역이 돌려줄 핸들 종류(갇힌 워커 시나리오용)."""
         self.qapp = qapp
@@ -263,7 +264,7 @@ _WIRED: list[Wired] = []  # 이 파일의 테스트가 만든 배선 묶음 — 
 
 
 @pytest.fixture(autouse=True)
-def _stop_viewmodel_timers():
+def _stop_viewmodel_timers() -> Iterator[None]:
     """테스트가 만든 viewmodel의 타이머를 테스트가 끝날 때 모두 세운다.
 
     다운로드를 끝내지 않고 끝나는 테스트는 viewmodel의 "준비 중" 타이머를 켜 둔 채 끝난다. 그
@@ -292,7 +293,7 @@ MAIN_THREAD = threading.main_thread().ident
 class TestStart:
     """시작 계약 — 서비스에 무엇이 어떤 상태로 제출되는가, 그리고 content는 아직 조용한가."""
 
-    def test_submit_carries_shared_data_and_running_precedes_submit(self, wired):
+    def test_submit_carries_shared_data_and_running_precedes_submit(self, wired) -> None:
         """submit의 content는 공유 데이터의 것이고, 제출 시점에 이미 RUNNING·정보 로깅 완료다."""
         item = _make_item()
         wired.start(item)
@@ -309,7 +310,7 @@ class TestStart:
         assert wired.service.log_calls_at_submit == 1
         assert wired.log_calls == [("log_download_info", item)]
 
-    def test_start_hands_the_selected_stream_to_the_content(self, wired):
+    def test_start_hands_the_selected_stream_to_the_content(self, wired) -> None:
         """아이템이 고른 스트림 값은 제출하는 content에 실려야 한다 (#318).
 
         item.stream = StreamKey(720, 1280, 30.0, 2692000)
@@ -322,7 +323,7 @@ class TestStart:
 
         assert wired.submission["content"].stream == StreamKey(720, 1280, 30.0, 2692000)
 
-    def test_start_reflects_running_without_calling_content(self, wired):
+    def test_start_reflects_running_without_calling_content(self, wired) -> None:
         """시작은 content를 부르지 않는다 — 카드의 시작 반영은 mainWindow가 따로 한다."""
         item = _make_item()
         wired.start(item)
@@ -341,7 +342,7 @@ class TestStart:
 class TestControls:
     """유저 조작(일시정지·재개·중지)의 통지 — 횟수와 "전이 → 통지" 순서, 중지 뒤 정리 규칙."""
 
-    def test_pause_then_resume_notify_after_transition(self, wired):
+    def test_pause_then_resume_notify_after_transition(self, wired) -> None:
         """pause → resume 각 1회, 통지 시점에 모델은 이미 전이돼 있다 (카드가 새 상태로 그린다)."""
         item = _make_item()
         wired.start(item)
@@ -356,7 +357,7 @@ class TestControls:
             ("resume", (item,), MAIN_THREAD, DownloadState.RUNNING),
         ]
 
-    def test_stop_notifies_once_in_waiting_state(self, wired):
+    def test_stop_notifies_once_in_waiting_state(self, wired) -> None:
         """중지는 stop 1회, 통지 시점에 WAITING, 병합 표시 해제. 참조 정리는 removeThreads 몫이라 아직 살아 있다."""
         item = _make_item("m3u8")
         wired.start(item)
@@ -371,7 +372,7 @@ class TestControls:
             wired.vm.isDownloading() is True
         )  # mainWindow.stopDownload가 이어서 removeThreads를 부른다
 
-    def test_cleanup_after_stop_waits_once_and_keeps_slot(self, wired):
+    def test_cleanup_after_stop_waits_once_and_keeps_slot(self, wired) -> None:
         """정상 종료 워커: wait 1회(유한 timeout), abandon 없음, 참조 정리."""
         item = _make_item()
         wired.start(item)
@@ -393,7 +394,7 @@ class TestControls:
 class TestCompletion:
     """완료 통지와, 정리가 끝난 뒤 늦게 도착한 통지의 무시."""
 
-    def test_finish_carries_elapsed_time_after_refs_are_cleared(self, wired):
+    def test_finish_carries_elapsed_time_after_refs_are_cleared(self, wired) -> None:
         """완료: finish(item, "HH:MM:SS") 1회. 서비스 계약대로 모델 FINISHED 뒤에 콜백이 온다."""
         item = _make_item()
         wired.start(item)
@@ -410,7 +411,7 @@ class TestCompletion:
         assert wired.vm.isDownloading() is False
         assert wired.vm.task is None
 
-    def test_late_finished_after_user_cleanup_is_ignored(self, wired):
+    def test_late_finished_after_user_cleanup_is_ignored(self, wired) -> None:
         """중지·정리 뒤 늦게 도착한 완료는 content에 닿지 않는다."""
         item = _make_item()
         wired.start(item)
@@ -424,7 +425,7 @@ class TestCompletion:
         assert wired.content.names == ["stop"]
         assert item.downloadState is DownloadState.WAITING
 
-    def test_late_failed_after_user_cleanup_is_ignored(self, wired):
+    def test_late_failed_after_user_cleanup_is_ignored(self, wired) -> None:
         """중지·정리 뒤 늦게 도착한 실패도 마찬가지다."""
         item = _make_item()
         wired.start(item)
@@ -445,7 +446,7 @@ class TestCompletion:
 class _FakeHttpResponse:
     """HTTPError에 실을 상태 코드만 가진 응답 흉내 — 사유 매핑이 보는 것은 status_code뿐이다."""
 
-    def __init__(self, status_code: int):
+    def __init__(self, status_code: int) -> None:
         self.status_code = status_code
 
 
@@ -467,7 +468,7 @@ def _postprocess_error(cause: BaseException | None) -> PostprocessError:
 class TestFailure:
     """실패 통지 — fail 하나만 오고(stop 없음), 사유는 매핑 문구이며 원시 예외 문자열은 새지 않는다."""
 
-    def test_mapped_failure_calls_fail_only_without_stop_or_wait(self, wired):
+    def test_mapped_failure_calls_fail_only_without_stop_or_wait(self, wired) -> None:
         """실패: fail 1회(stop 없음), 사유는 매핑 문구, 엔진은 WAITING 신호, 메인 스레드는 기다리지 않는다."""
         item = _make_item("m3u8")
         wired.start(item)
@@ -492,7 +493,7 @@ class TestFailure:
         assert wired.vm.isDownloading() is False
         assert wired.vm.task is None
 
-    def test_unmapped_failure_carries_empty_reason(self, wired):
+    def test_unmapped_failure_carries_empty_reason(self, wired) -> None:
         item = _make_item()
         wired.start(item)
 
@@ -543,7 +544,7 @@ class TestFailure:
         ],
         ids=lambda v: v if isinstance(v, str) else type(v).__name__,
     )
-    def test_failure_reason_headline_by_exception(self, wired, exc, headline):
+    def test_failure_reason_headline_by_exception(self, wired, exc, headline) -> None:
         """예외 → 사유 첫 줄(핵심 한 줄) 매핑 — 번역기 미설치 환경이라 원문이 온다."""
         item = _make_item()
         wired.start(item)
@@ -573,7 +574,7 @@ class TestFailure:
     )
     def test_disk_space_detail_names_section_files_only_for_a_section_download(
         self, wired, exc, detail
-    ):
+    ) -> None:
         """공간 부족 사유의 둘째 줄은 구간 다운로드일 때만 구간 파일을 말해야 한다 (#309).
 
         DiskSpaceError(구간 다운로드의 키) -> 둘째 줄이 "…for the section files."
@@ -595,7 +596,7 @@ class TestFailure:
 class TestStuckWorker:
     """정리 규칙 중 병리 경로 — 끝나지 않는 워커를 유한하게 기다리고 포기한다 (#136·#137)."""
 
-    def test_stuck_worker_is_abandoned_after_finite_wait(self, qapp, log_calls):
+    def test_stuck_worker_is_abandoned_after_finite_wait(self, qapp, log_calls) -> None:
         """갇힌 워커: 유한 timeout으로 기다린 뒤 슬롯을 방출하고 참조만 정리한다 (#137)."""
         wired = Wired(qapp, log_calls, handle_factory=StuckHandle)
         item = _make_item()
@@ -616,7 +617,7 @@ class TestStuckWorker:
 class TestProgress:
     """ProgressEvent → (남은 시간, 크기, 속도, %) 변환값 — 파일은 바이트 기준, 세그먼트는 개수 기준(병합 단계 전환 포함)."""
 
-    def test_file_progress_is_converted_to_the_four_tuple(self, wired):
+    def test_file_progress_is_converted_to_the_four_tuple(self, wired) -> None:
         item = _make_item()
         wired.start(item)
 
@@ -634,7 +635,7 @@ class TestProgress:
             )
         ]
 
-    def test_segment_progress_switches_to_merge_ratio_after_merge_start(self, wired):
+    def test_segment_progress_switches_to_merge_ratio_after_merge_start(self, wired) -> None:
         item = _make_item("m3u8")
         wired.start(item)
         sub = wired.submission
@@ -671,7 +672,7 @@ def _call_on_worker(fn, *args) -> int:
     """
     ident: list[int] = []
 
-    def run():
+    def run() -> None:
         """스레드 본체 — 자기 id를 남기고 콜백을 부른다."""
         ident.append(threading.get_ident())
         fn(*args)
@@ -705,7 +706,7 @@ class TestThreadBoundary:
     사실뿐이다. 그 사실은 RecordingContent가 호출 순간의 id로 남긴다.
     """
 
-    def test_progress_from_worker_arrives_on_main_thread(self, wired):
+    def test_progress_from_worker_arrives_on_main_thread(self, wired) -> None:
         """진행 통지 — viewmodel의 바깥 연결(progress → content)이 큐 연결인가.
 
         ④a 고장(연결을 DirectConnection으로)을 잡는 유일한 케이스다: 완료·실패와
@@ -727,7 +728,7 @@ class TestThreadBoundary:
         assert args == (item, "00:00:00", "50", "1.0 MB/s", 50)
         assert ident == MAIN_THREAD
 
-    def test_finished_from_worker_arrives_on_main_thread(self, wired):
+    def test_finished_from_worker_arrives_on_main_thread(self, wired) -> None:
         """완료 통지 — 참조 정리(후처리)까지 메인 스레드 몫이라 pump 전에는 `isDownloading()`도 그대로다.
 
         진행과 달리 완료는 후처리 슬롯을 거쳐 content에 닿는다. 콜백이 그 슬롯을
@@ -748,7 +749,7 @@ class TestThreadBoundary:
         ]
         assert wired.vm.isDownloading() is False
 
-    def test_failed_from_worker_arrives_on_main_thread(self, wired):
+    def test_failed_from_worker_arrives_on_main_thread(self, wired) -> None:
         """실패 통지 — 완료와 같은 후처리 경로. 병합 표시 해제도 pump 뒤 메인 스레드에서 한다.
 
         #484 전에는 `post_process`를 워커에서 바로 내렸다(문서화된 예외). 이제 아이템은 메인
@@ -769,7 +770,7 @@ class TestThreadBoundary:
         assert wired.content.calls == [("fail", (item, ""), MAIN_THREAD, DownloadState.WAITING)]
         assert wired.vm.isDownloading() is False
 
-    def test_merge_start_from_worker_sets_flag_on_main_thread(self, wired):
+    def test_merge_start_from_worker_sets_flag_on_main_thread(self, wired) -> None:
         """병합 시작은 pump 뒤 메인 스레드에서 병합 표시를 켠다 — content 호출은 없다.
 
         #484 전에는 워커 스레드에서 즉시 기록했다. 이제 아이템은 메인 스레드에서만 적는다.

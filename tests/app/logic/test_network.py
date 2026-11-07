@@ -61,11 +61,11 @@ class TestExtractContentNo:
             ("", (None, None)),  # 빈 문자열
         ],
     )
-    def test_extract_content_no(self, vod_url: str, expected: tuple):
+    def test_extract_content_no(self, vod_url: str, expected: tuple) -> None:
         """URL별 (type, content_no) 추출 결과가 요구 동작과 일치해야 한다."""
         assert extract_content_no(vod_url) == expected
 
-    def test_network_manager_delegates_to_core(self):
+    def test_network_manager_delegates_to_core(self) -> None:
         """NetworkManager.extract_content_no 시그니처가 유지되고 core 함수에 위임한다 (#50)."""
         assert NetworkManager.extract_content_no(
             "https://chzzk.naver.com/video/1510760"
@@ -75,7 +75,9 @@ class TestExtractContentNo:
 class TestGetVideoFrameRates:
     """NetworkManager.get_video_frame_rates의 HTTP 경로(요청 구성·위임) 검증 (#309)."""
 
-    def test_requests_manifest_and_delegates_to_core_parser(self, monkeypatch, load_mock_response):
+    def test_requests_manifest_and_delegates_to_core_parser(
+        self, monkeypatch, load_mock_response
+    ) -> None:
         """get_video_frame_rates는 매니페스트를 조회 요청과 같은 모양으로 받아 core 파서의 결과를 돌려줘야 한다.
 
         픽스처 dash_manifest_audio_only_14158884.xml
@@ -85,7 +87,7 @@ class TestGetVideoFrameRates:
         xml_text = load_mock_response("dash_manifest_audio_only_14158884.xml")
         cookies = {"NID_AUT": "REDACTED", "NID_SES": "REDACTED"}
 
-        def fake_get(url, **kwargs):
+        def fake_get(url, **kwargs) -> MockResponse:
             calls.append((url, kwargs))
             return MockResponse(text=xml_text)
 
@@ -117,13 +119,13 @@ class TestGetVideoDashManifest:
 
     def test_requests_manifest_and_delegates_to_core_parser(
         self, monkeypatch, load_mock_response
-    ):
+    ) -> None:
         """요청 URL·헤더·쿠키 구성을 고정하고, 응답 본문이 core 파서 결과로 반환되는지 확인한다."""
         calls = []
         xml_text = load_mock_response("dash_manifest.xml")
         cookies = {"NID_AUT": "REDACTED", "NID_SES": "REDACTED"}
 
-        def fake_get(url, **kwargs):
+        def fake_get(url, **kwargs) -> MockResponse:
             calls.append((url, kwargs))
             return MockResponse(text=xml_text)
 
@@ -149,12 +151,14 @@ class TestGetVideoDashManifest:
         # 반환값은 core 파서에 응답 본문을 그대로 넘긴 결과와 일치해야 한다
         assert (sorted_reps, auto_resolution, auto_base_url) == parse_dash_manifest(xml_text)
 
-    def test_cookies_default_to_none_for_backward_compat(self, monkeypatch, load_mock_response):
+    def test_cookies_default_to_none_for_backward_compat(
+        self, monkeypatch, load_mock_response
+    ) -> None:
         """cookies 인자를 생략한 기존 호출도 그대로 동작해야 한다."""
         calls = []
         xml_text = load_mock_response("dash_manifest.xml")
 
-        def fake_get(url, **kwargs):
+        def fake_get(url, **kwargs) -> MockResponse:
             calls.append((url, kwargs))
             return MockResponse(text=xml_text)
 
@@ -174,13 +178,13 @@ class TestGetVideoInfo:
 
     def test_sends_cookies_and_parses_member_only_response(
         self, monkeypatch, load_mock_response
-    ):
+    ) -> None:
         """등록된 쿠키가 메타데이터(inKey) 요청에 실리고, MEMBER_ONLY 응답이 파싱돼야 한다."""
         calls = []
         body = load_mock_response("video_member_only_13714380.json")
         cookies = {"NID_AUT": "REDACTED", "NID_SES": "REDACTED"}
 
-        def fake_get(url, **kwargs):
+        def fake_get(url, **kwargs) -> MockResponse:
             calls.append((url, kwargs))
             return MockResponse(text=body)
 
@@ -210,7 +214,7 @@ class TestGetVideoInfo:
         assert info.encryption_type == "AES"
         assert info.metadata["duration"] == 10925
 
-    def test_title_is_sanitized_for_filenames(self, monkeypatch):
+    def test_title_is_sanitized_for_filenames(self, monkeypatch) -> None:
         """제목의 금지 문자·ASCII 제어 문자는 조회 단계에서 제거된다 (#105).
 
         정제는 core/utils/paths.py의 sanitize_filename에 위임한다 — 산출물
@@ -230,7 +234,7 @@ class TestGetVideoInfo:
 class TestGetVideoM3u8BaseUrl:
     """NetworkManager.get_video_m3u8_base_url의 요청 구성 검증 (#55)."""
 
-    def test_sends_cookies_to_playlist_request(self, monkeypatch):
+    def test_sends_cookies_to_playlist_request(self, monkeypatch) -> None:
         """플레이리스트 요청에도 쿠키가 실려야 한다."""
         calls = []
         playlist = (
@@ -241,7 +245,7 @@ class TestGetVideoM3u8BaseUrl:
         json_str = '{"media": [{"path": "https://example.invalid/master.m3u8"}]}'
         cookies = {"NID_AUT": "REDACTED", "NID_SES": "REDACTED"}
 
-        def fake_get(url, **kwargs):
+        def fake_get(url, **kwargs) -> MockResponse:
             calls.append((url, kwargs))
             return MockResponse(text=playlist)
 
@@ -266,7 +270,7 @@ class TestSameHeightTracksAreMerged:
     규칙과 근거는 core/media/representations.py — 비트레이트 높은 쪽, 모르면 먼저 온 쪽.
     """
 
-    def test_m3u8_encoding_tracks_with_the_same_height_become_one(self):
+    def test_m3u8_encoding_tracks_with_the_same_height_become_one(self) -> None:
         json_str = json.dumps({"media": [{"encodingTrack": [
             {"videoWidth": 1920, "videoHeight": 1080, "videoBitRate": 6000000},
             {"videoWidth": 1920, "videoHeight": 1080, "videoBitRate": 4000000},  # 저비트레이트 변형
@@ -277,7 +281,7 @@ class TestSameHeightTracksAreMerged:
         assert sorted_reps == [[720, None], [1080, None]], "같은 높이가 pill 둘로 나타나던 결함"
         assert (auto_resolution, auto_base_url) == (1080, None)
 
-    def test_clip_keeps_the_first_track_per_height(self, monkeypatch):
+    def test_clip_keeps_the_first_track_per_height(self, monkeypatch) -> None:
         payload = {"card": {"content": {"vod": {"playback": {"videos": {"list": [
             {"encodingOption": {"width": 1920, "height": 1080}, "source": "https://c.invalid/1080_first.mp4"},
             {"encodingOption": {"width": 1920, "height": 1080}, "source": "https://c.invalid/1080_second.mp4"},
@@ -285,7 +289,7 @@ class TestSameHeightTracksAreMerged:
         ]}}}}}}
 
         class _JsonResponse(MockResponse):
-            def json(self):
+            def json(self) -> dict:
                 return payload
 
         monkeypatch.setattr(network._session, "get", lambda url, **kwargs: _JsonResponse(text=""))
@@ -316,7 +320,7 @@ class TestGetVideoM3u8Variant:
     )
     def test_returns_the_frame_rate_declared_for_the_chosen_resolution(
         self, monkeypatch, resolution, path, rate
-    ):
+    ) -> None:
         """get_video_m3u8_variant는 고른 해상도의 주소와, 그 변형의 FRAME-RATE(없으면 None)를 돌려줘야 한다.
 
         변형 셋(720p 30.000 · 1080p 59.940 · 480p 속성 없음), 주석의 해상도
@@ -330,7 +334,7 @@ class TestGetVideoM3u8Variant:
 
         assert variant == (f"https://example.invalid/{path}/playlist.m3u8", rate)
 
-    def test_base_url_is_the_address_of_the_same_variant(self, monkeypatch):
+    def test_base_url_is_the_address_of_the_same_variant(self, monkeypatch) -> None:
         """get_video_m3u8_base_url은 get_video_m3u8_variant가 고른 변형의 주소를 돌려주고 요청은 한 번이어야 한다.
 
         같은 마스터 플레이리스트, 해상도 1080
@@ -338,7 +342,7 @@ class TestGetVideoM3u8Variant:
         """
         calls = []
 
-        def fake_get(url, **kwargs):
+        def fake_get(url, **kwargs) -> MockResponse:
             calls.append(url)
             return MockResponse(text=self.MASTER)
 

@@ -17,13 +17,13 @@ class _Overlay(QWidget):
     `ContentListView`의 형제뻘 자식으로 얹어 항상 맨 위에 띄운다.
     """
 
-    def __init__(self, owner: "ContentListView"):
+    def __init__(self, owner: "ContentListView") -> None:
         super().__init__(owner)
         self._owner = owner
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
 
-    def paintEvent(self, event):
+    def paintEvent(self, event) -> None:
         self._owner._paintOverlay(self)
 
 
@@ -49,7 +49,7 @@ class ContentListView(QScrollArea):
     sectionEditRequested = Signal(object)  # 대기 카드의 구간 요약 클릭 (#309)
     sectionRefitRequested = Signal(object)  # 구간이 있는 카드의 해상도가 바뀌었다 (#309)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWidgetResizable(True)
         # 카드는 창 폭에 맞춰야 한다 — 넘치는 제목·경로·상태 문구는 ElidingLabel이
@@ -94,7 +94,7 @@ class ContentListView(QScrollArea):
         self._overlay.raise_()
         self._overlay.show()
 
-    def resizeEvent(self, event):
+    def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._overlay.setGeometry(self.rect())
 
@@ -107,7 +107,7 @@ class ContentListView(QScrollArea):
         """
         self._scrollPadding.fit()
 
-    def setModel(self, model):
+    def setModel(self, model) -> None:
         """✅ 모델을 설정하고 위젯을 자동으로 연결"""
         self._model = model
         model.itemInserted.connect(self._onItemInserted)
@@ -126,7 +126,7 @@ class ContentListView(QScrollArea):
 
     # ---- 모델 시그널 핸들러 — 항상 아이템 하나만, 전체 재스캔 없음 ----
 
-    def _onItemInserted(self, item: ContentItem):
+    def _onItemInserted(self, item: ContentItem) -> None:
         row = self._model.getRow(item)
         if row is not None:
             self._insertWidget(item, row)
@@ -193,7 +193,7 @@ class ContentListView(QScrollArea):
         if widget is not None:
             widget.setVisible(self._accepts(item))
 
-    def _insertWidget(self, item: ContentItem, row: int):
+    def _insertWidget(self, item: ContentItem, row: int) -> None:
         widget = ContentItemWidget(item, row, self._container)
         widget.setData(item, row)
         widget.deleteRequest.connect(lambda it=item: self.onDeleteItem(it))
@@ -222,7 +222,7 @@ class ContentListView(QScrollArea):
             if other is not widget and other.isExpanded():
                 other.setExpanded(False)
 
-    def _onItemRemoved(self, item: ContentItem):
+    def _onItemRemoved(self, item: ContentItem) -> None:
         widget = self._widgets.pop(item, None)
         if widget is not None:
             self._layout.removeWidget(widget)
@@ -230,7 +230,7 @@ class ContentListView(QScrollArea):
         self._overlay.update()  # 마지막 카드가 지워졌으면 빈 리스트 안내를 다시 띄운다
         self._scheduleRenumber()  # 뒤쪽 카드 번호를 당긴다 (#235)
 
-    def _scheduleRenumber(self):
+    def _scheduleRenumber(self) -> None:
         """삭제 뒤 남은 카드들의 번호(표시용, `ContentItemWidget.setIndex`)를 다시 매긴다.
 
         `QTimer.singleShot(0, ...)`으로 다음 이벤트 루프 턴까지 미룬다 —
@@ -254,7 +254,7 @@ class ContentListView(QScrollArea):
             self._renumberPending = True
             QTimer.singleShot(0, self, self._renumberAll)
 
-    def _renumberAll(self):
+    def _renumberAll(self) -> None:
         self._renumberPending = False
         if self._model is None:
             return
@@ -264,17 +264,17 @@ class ContentListView(QScrollArea):
             if widget is not None and widget.index != row:
                 widget.setIndex(row)
 
-    def _onItemChanged(self, item: ContentItem):
+    def _onItemChanged(self, item: ContentItem) -> None:
         widget = self._widgets.get(item)
         if widget is not None:
             row = self._model.getRow(item)
             widget.setData(item, row)
 
-    def onDeleteItem(self, item):
+    def onDeleteItem(self, item) -> None:
         # print("view - onDeleteItem") # Debugging
         self.deleteRequest.emit(item)
 
-    def dragEnterEvent(self, event: QDragEnterEvent):
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         # 드래그된 데이터가 텍스트인지 확인
         if event.mimeData().hasText():
             self._dragActive = True  # 드래그 시작 플래그 활성화
@@ -283,19 +283,19 @@ class ContentListView(QScrollArea):
         else:
             event.ignore()
 
-    def dragMoveEvent(self, event: QDragMoveEvent):
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:
         # 드래그 중인 데이터가 텍스트일 경우 계속 수락
         if event.mimeData().hasText():
             event.acceptProposedAction()
         else:
             event.ignore()
 
-    def dragLeaveEvent(self, event: QDragLeaveEvent):
+    def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:
         self._dragActive = False  # 드래그 종료 플래그 비활성화
         self._overlay.update()             # 화면 갱신
         event.accept()
 
-    def dropEvent(self, event: QDropEvent):
+    def dropEvent(self, event: QDropEvent) -> None:
         # 드롭된 데이터가 텍스트라면 처리
         if event.mimeData().hasText():
             self._dragActive = False  # 드래그 상태 해제
@@ -306,7 +306,7 @@ class ContentListView(QScrollArea):
         else:
             event.ignore()
 
-    def _paintOverlay(self, viewport_widget):
+    def _paintOverlay(self, viewport_widget) -> None:
         # 드래그 중일 때만 오버레이 텍스트 출력
         if self._dragActive:
             painter = QPainter(viewport_widget)
@@ -345,29 +345,29 @@ class ContentListView(QScrollArea):
         viewmodel.itemResumed.connect(self.onDownloadResumed)
         viewmodel.itemFinished.connect(self.onDownloadFinished)
 
-    def onDownloadStarted(self, item: ContentItem):
+    def onDownloadStarted(self, item: ContentItem) -> None:
         widget = self._widgets.get(item)
         if widget:
             widget.deleteButton.setEnabled(False)
             widget.setData(item, self._model.getRow(item))
 
-    def onDownloadStoped(self, item: ContentItem):
+    def onDownloadStoped(self, item: ContentItem) -> None:
         widget = self._widgets.get(item)
         if widget:
             widget.deleteButton.setEnabled(True)
             widget.setData(item, self._model.getRow(item))
 
-    def onDownloadPaused(self, item: ContentItem):
+    def onDownloadPaused(self, item: ContentItem) -> None:
         widget = self._widgets.get(item)
         if widget:
             widget.setData(item, self._model.getRow(item))
 
-    def onDownloadResumed(self, item: ContentItem):
+    def onDownloadResumed(self, item: ContentItem) -> None:
         widget = self._widgets.get(item)
         if widget:
             widget.setData(item, self._model.getRow(item))
 
-    def onDownloadFinished(self, item: ContentItem, isFinish: bool):
+    def onDownloadFinished(self, item: ContentItem, isFinish: bool) -> None:
         widget = self._widgets.get(item)
         if widget:
             widget.deleteButton.setEnabled(True)

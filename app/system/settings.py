@@ -27,7 +27,7 @@ import math
 import os
 import platform
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -337,7 +337,7 @@ def _enter_memory_mode(reason: str) -> None:
 
 
 @contextlib.contextmanager
-def _transaction(conn: sqlite3.Connection):
+def _transaction(conn: sqlite3.Connection) -> Iterator[None]:
     """쓰기 잠금을 먼저 잡는 트랜잭션(`BEGIN IMMEDIATE`) — 예외면 되돌리고 그 예외를 그대로 올린다.
 
     되돌리기(`ROLLBACK`)가 실패해도 로그만 남기고 **원래 예외**를 올린다 — 손상된 DB에서는

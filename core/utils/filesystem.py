@@ -20,6 +20,7 @@ import ctypes.util
 import os
 import platform
 import sys
+from collections.abc import Callable
 
 # FAT 계열의 파일 하나의 최대 크기(바이트) — 4GiB − 1. 디렉토리 항목의 크기 칸이 32비트다
 FAT_MAX_FILE_BYTES = 4 * 1024**3 - 1
@@ -139,7 +140,7 @@ class _StatFs(ctypes.Structure):
     ]
 
 
-def _macos_statfs():
+def _macos_statfs() -> Callable[..., int]:
     """libc의 statfs 함수 — 처음 쓸 때 한 번만 찾는다.
 
     Intel(x86_64)에서는 같은 구조체를 채우는 이름이 ``statfs$INODE64``다. Apple Silicon(arm64)에는

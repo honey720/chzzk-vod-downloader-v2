@@ -21,7 +21,7 @@ from core.chzzk.playback_tracks import (
     select_variant_by_height,
     track_for_resolution,
 )
-from core.media.representations import dedupe_by_resolution
+from core.media.representations import StreamEntry, dedupe_by_resolution
 from core.chzzk.url_parser import extract_content_no
 from core.models.content import StreamKey, VideoInfo
 from core.utils.paths import sanitize_filename
@@ -185,7 +185,9 @@ class NetworkManager:
         )
 
     @staticmethod
-    def get_video_dash_manifest(video_id: str, in_key: str, cookies: dict | None = None):
+    def get_video_dash_manifest(
+        video_id: str, in_key: str, cookies: dict | None = None
+    ) -> tuple[list[list], int, str]:
         """
         DASH 매니페스트를 요청하여 Representation 목록을 파싱한다.
 
@@ -223,7 +225,9 @@ class NetworkManager:
         return parse_frame_rates(response.text)
 
     @staticmethod
-    def get_video_sea_manifest(video_id: str, in_key: str, cookies: dict | None = None):
+    def get_video_sea_manifest(
+        video_id: str, in_key: str, cookies: dict | None = None
+    ) -> tuple[list[list], int | None, str | None]:
         """AES(SEA) 암호화 VOD의 매니페스트를 요청해 비디오 Representation을 파싱한다 (#57).
 
         암호화 비디오 Representation은 BaseURL 없이 nvod:m3u(HLS 미디어
@@ -261,7 +265,7 @@ class NetworkManager:
         return response.content
 
     @staticmethod
-    def get_video_m3u8_manifest(json_str: str):
+    def get_video_m3u8_manifest(json_str: str) -> tuple[list[list], int, str | None]:
         """
         m3u8 정보가 포함된 json형식의 문자열을 받아서 Representation 목록을 파싱한다.
 
@@ -282,7 +286,9 @@ class NetworkManager:
         return sorted_reps, auto_resolution, auto_base_url
     
     @staticmethod
-    def get_video_m3u8_streams(json_str: str, cookies: dict | None = None):
+    def get_video_m3u8_streams(
+        json_str: str, cookies: dict | None = None
+    ) -> tuple[list[StreamEntry], int | None, None]:
         """마스터 플레이리스트를 받아 실제 변형으로 해상도 목록을 만든다 (#318).
 
         playback 정보의 트랙은 영상과 어긋날 수 있다(원본 트랙의 값이 0이거나, 다른 방송의
@@ -386,7 +392,7 @@ class NetworkManager:
                 raise selection_error from None
     
     @staticmethod
-    def get_clip_info(clip_no: str, cookies: dict):
+    def get_clip_info(clip_no: str, cookies: dict) -> tuple[str | None, str | None, dict]:
         """
         API를 통해 clip_no에 대응하는 clip_id, in_key, 메타데이터를 가져온다.
         """
@@ -411,7 +417,9 @@ class NetworkManager:
         return video_id, vodStatus, metadata
 
     @staticmethod
-    def get_clip_manifest(clip_id: str, cookies: dict):
+    def get_clip_manifest(
+        clip_id: str, cookies: dict
+    ) -> tuple[list[list] | None, int | None, str | None, str | None]:
         """
         DASH 매니페스트를 요청하여 Representation 목록을 파싱한다.
         """

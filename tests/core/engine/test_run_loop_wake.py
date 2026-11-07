@@ -10,9 +10,12 @@
 
 import threading
 import time
+from typing import Any
 
 import core.engine.base as base_module
 import core.sources.m3u8_downloader as m3u8_module
+from core.models.download_data import DownloadData
+from core.sources.m3u8_downloader import M3U8Downloader
 from tests.core.sources import test_m3u8_downloader_run as m3u8_run
 
 # 신호를 실제로 기다리는 상한(초) — 받아 둔 세그먼트의 완료는 곧바로 온다. 이 안에 오지 않으면
@@ -40,7 +43,7 @@ class _TimeOnClock:
         self._clock.rest(seconds)
         time.sleep(0.001)  # 실제로 쉬지 않으면 루프가 다른 스레드에 차례를 넘기지 않는다
 
-    def __getattr__(self, name: str):
+    def __getattr__(self, name: str) -> Any:
         return getattr(time, name)
 
 
@@ -81,7 +84,7 @@ class _CountingSession(m3u8_run.M3U8Session):
         self.segment_requests = 0
         self.quick_first = False  # 첫 세그먼트만 곧바로 받게 할지
 
-    def get(self, url, **kwargs):
+    def get(self, url, **kwargs) -> m3u8_run.StreamResponse | m3u8_run.TextResponse:
         if url.endswith(".m4v"):
             self.segment_requests += 1
             if url.endswith("seg_0.m4v") and self.quick_first:
@@ -89,7 +92,16 @@ class _CountingSession(m3u8_run.M3U8Session):
         return super().get(url, **kwargs)
 
 
-def _engine_on_clock(tmp_path, monkeypatch, session: _CountingSession, workers: int):
+def _engine_on_clock(
+    tmp_path, monkeypatch, session: _CountingSession, workers: int
+) -> tuple[
+    M3U8Downloader,
+    DownloadData,
+    m3u8_run.RunLogger,
+    threading.Event,
+    list[BaseException],
+    _RestClock,
+]:
     """루프가 쉰 시간을 시계에 적는, 작업자 수가 고정된 m3u8 엔진을 준비한다."""
     engine, data, logger, _output, finished, failures, _merge = m3u8_run._make_engine(
         tmp_path, monkeypatch
@@ -106,7 +118,7 @@ def _engine_on_clock(tmp_path, monkeypatch, session: _CountingSession, workers: 
 
 def test_run_that_only_uses_stored_segments_does_not_rest_a_tenth_of_a_second_per_turn(
     tmp_path, monkeypatch
-):
+) -> None:
     """받아 둔 세그먼트만 쓰는 실행은 작업자 수만큼 끝낼 때마다 0.1초를 쉬지 않아야 한다 (#376).
 
     세그먼트 200개 전부 받아 둔 것(_prefetched), 작업자 4
@@ -132,7 +144,7 @@ def test_run_that_only_uses_stored_segments_does_not_rest_a_tenth_of_a_second_pe
 
 def test_stop_while_every_worker_is_receiving_ends_the_loop_after_at_most_one_short_rest(
     tmp_path, monkeypatch
-):
+) -> None:
     """모든 작업자가 받는 중에 중지하면 실행 루프는 길어야 0.1초를 더 쉬고 끝나야 한다 (#376).
 
     세그먼트 6개, 세그먼트마다 청크 1000개 × 5ms(받는 데 5초), 작업자 4. 루프가 0.2초 이상
@@ -146,7 +158,7 @@ def test_stop_while_every_worker_is_receiving_ends_the_loop_after_at_most_one_sh
     loop_ended_at: list[float] = []
     stop_monitor = engine._stop_monitor
 
-    def recorded_stop_monitor(monitor):
+    def recorded_stop_monitor(monitor) -> None:
         loop_ended_at.append(clock.rested)
         return stop_monitor(monitor)
 
@@ -174,7 +186,7 @@ def test_stop_while_every_worker_is_receiving_ends_the_loop_after_at_most_one_sh
 
 def test_loop_rests_again_after_a_finished_job_while_the_other_workers_keep_receiving(
     tmp_path, monkeypatch
-):
+) -> None:
     """작업 하나가 끝나 깬 뒤 다른 작업자들이 받는 동안 실행 루프는 다시 쉬어야 한다 (#376).
 
     세그먼트 6개, 첫 세그먼트는 청크 1개(곧바로 끝남) · 나머지는 청크 1000개 × 5ms(받는 데 5초),

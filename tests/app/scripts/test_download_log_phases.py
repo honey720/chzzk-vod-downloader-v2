@@ -43,7 +43,7 @@ def _pyproject_version() -> str:
         return tomllib.load(f)["project"]["version"]
 
 
-def test_get_app_version_matches_pyproject_exactly():
+def test_get_app_version_matches_pyproject_exactly() -> None:
     """소스 실행의 앱 버전은 정본(pyproject) 문자열과 정확히 일치한다 (#116).
 
     구 구현의 importlib.metadata는 버전을 정규화해(2.9.0-rc1 → 2.9.0rc1)
@@ -58,7 +58,7 @@ def test_get_app_version_matches_pyproject_exactly():
     assert base_version == _pyproject_version()
 
 
-def test_version_mirror_constant_matches_pyproject():
+def test_version_mirror_constant_matches_pyproject() -> None:
     """미러 상수(APP_VERSION)는 정본(pyproject)과 정확히 일치해야 한다 (#116).
 
     Nuitka 빌드 실행 파일에는 pyproject.toml이 없어 이 상수가 쓰인다.
@@ -68,7 +68,7 @@ def test_version_mirror_constant_matches_pyproject():
     assert config_module.APP_VERSION == _pyproject_version()
 
 
-def test_build_marker_constants_stay_at_source_defaults():
+def test_build_marker_constants_stay_at_source_defaults() -> None:
     """저장소 소스의 BUILD_COMMIT·IS_RELEASE_BUILD는 항상 기본값이어야 한다 (#195).
 
     이 두 상수는 scripts/inject_build_info.py가 빌드 직전에만 실제 값으로
@@ -83,7 +83,7 @@ def test_build_marker_constants_stay_at_source_defaults():
     assert config_module.BUILD_COMMIT == "unknown"
 
 
-def test_phase_lines_parse_and_old_lines_still_parse(tmp_path, monkeypatch):
+def test_phase_lines_parse_and_old_lines_still_parse(tmp_path, monkeypatch) -> None:
     """완료 조건: 새 줄이 파싱되고, 기존 요약 스크립트 지표도 계속 동작한다."""
     logger = _make_logger(tmp_path, monkeypatch)
     logger.log_download_info(_stub_item())
@@ -117,7 +117,7 @@ def test_phase_lines_parse_and_old_lines_still_parse(tmp_path, monkeypatch):
     assert summary["postprocess_output_bytes"] == 987000000
 
 
-def test_breakdown_line_marks_missing_postprocess(tmp_path, monkeypatch):
+def test_breakdown_line_marks_missing_postprocess(tmp_path, monkeypatch) -> None:
     """후처리 없는 경로(file)의 구분 줄은 "(no postprocess)"로 남는다 (#110 요건 6)."""
     logger = _make_logger(tmp_path, monkeypatch)
     logger.log_transfer_complete(3.21, 42, 0, 8)
@@ -135,7 +135,7 @@ def test_breakdown_line_marks_missing_postprocess(tmp_path, monkeypatch):
     assert summary["postprocess_kind"] is None
 
 
-def test_breakdown_line_shows_transfer_plus_postprocess_sum(tmp_path, monkeypatch):
+def test_breakdown_line_shows_transfer_plus_postprocess_sum(tmp_path, monkeypatch) -> None:
     """구분 줄은 전송+후처리=전체 형태로 남는다 (#110 요건 4)."""
     logger = _make_logger(tmp_path, monkeypatch)
     logger.log_total_breakdown(10.0, 2.5)
@@ -146,7 +146,7 @@ def test_breakdown_line_shows_transfer_plus_postprocess_sum(tmp_path, monkeypatc
     assert "Total time breakdown - Transfer: 10.00s + Postprocess: 2.50s = 12.50s" in text
 
 
-def test_download_info_logs_section_paths_instead_of_output_path(tmp_path, monkeypatch):
+def test_download_info_logs_section_paths_instead_of_output_path(tmp_path, monkeypatch) -> None:
     """구간 경로를 넘기면 시작 정보 블록은 output_path 줄 대신 구간 파일마다 한 줄씩 적어야 한다 (#309).
 
     output_path "out.mp4"인 아이템, 구간 경로 ("a 1080p_1.mp4", "a 1080p_2.mp4")
@@ -164,7 +164,7 @@ def test_download_info_logs_section_paths_instead_of_output_path(tmp_path, monke
     assert "download_path: 'downloads'" in text  # 같은 블록의 다른 줄은 그대로 찍힌다
 
 
-def test_download_info_logs_output_path_without_sections(tmp_path, monkeypatch):
+def test_download_info_logs_output_path_without_sections(tmp_path, monkeypatch) -> None:
     """구간 경로를 넘기지 않으면 시작 정보 블록은 지금처럼 output_path 줄을 적어야 한다.
 
     output_path "out.mp4"인 아이템, 구간 경로 없음
@@ -182,7 +182,7 @@ def test_download_info_logs_output_path_without_sections(tmp_path, monkeypatch):
 
 def test_prepare_and_net_transfer_lines_are_added_without_changing_the_transfer_line(
     tmp_path, monkeypatch
-):
+) -> None:
     """준비 줄과 준비를 뺀 전송 줄을 더해도 Transfer 줄과 요약 지표는 그대로여야 한다 (#309).
 
     준비 6.90초(moov reused) · Transfer 12.34초 · 준비를 뺀 전송 5.44초를 차례로 로깅
@@ -205,7 +205,9 @@ def test_prepare_and_net_transfer_lines_are_added_without_changing_the_transfer_
     assert summarize(log_file)["transfer_seconds"] == 12.34
 
 
-def test_stored_segments_line_is_added_without_changing_the_transfer_line(tmp_path, monkeypatch):
+def test_stored_segments_line_is_added_without_changing_the_transfer_line(
+    tmp_path, monkeypatch
+) -> None:
     """받아 둔 세그먼트 줄을 더해도 Transfer 줄과 요약 지표는 그대로여야 한다 (#376).
 
     Transfer 12.34초 · 1000바이트, 받아 둔 세그먼트 900개 · 234567890바이트를 차례로 로깅
@@ -223,7 +225,7 @@ def test_stored_segments_line_is_added_without_changing_the_transfer_line(tmp_pa
     assert summarize(log_file)["transfer_bytes"] == 1000
 
 
-def test_prepare_line_keeps_its_front_when_rests_are_appended(tmp_path, monkeypatch):
+def test_prepare_line_keeps_its_front_when_rests_are_appended(tmp_path, monkeypatch) -> None:
     """쉰 횟수 · 시간이 붙은 준비 줄도 앞부분은 그대로이고 요약 지표를 바꾸지 않아야 한다 (#309).
 
     준비 11.55초, 덧붙인 말 "moov reused - rested 3210 times for 6.42s" · Transfer 12.34초
@@ -243,7 +245,7 @@ def test_prepare_line_keeps_its_front_when_rests_are_appended(tmp_path, monkeypa
     assert summarize(log_file)["transfer_seconds"] == 12.34
 
 
-def test_prepare_line_without_a_note_ends_at_the_seconds(tmp_path, monkeypatch):
+def test_prepare_line_without_a_note_ends_at_the_seconds(tmp_path, monkeypatch) -> None:
     """덧붙일 말이 없는 준비 줄은 시간에서 끝나야 한다 (#309).
 
     준비 0.02초, 덧붙인 말 없음 -> 줄이 "Prepare completed in 0.02 seconds"로 끝남
@@ -259,7 +261,7 @@ def test_prepare_line_without_a_note_ends_at_the_seconds(tmp_path, monkeypatch):
     )
 
 
-def test_cut_stage_line_lists_each_stage_and_their_sum(tmp_path, monkeypatch):
+def test_cut_stage_line_lists_each_stage_and_their_sum(tmp_path, monkeypatch) -> None:
     """컷 단계 줄은 구간 번호 · 단계마다의 시간 · 그 합을 한 줄에 적어야 한다 (#309).
 
     구간 2/3, 단계 probe 0.41초 · 0_head 1.20초 · audio 2.00초 · mux 0.30초
@@ -276,7 +278,9 @@ def test_cut_stage_line_lists_each_stage_and_their_sum(tmp_path, monkeypatch):
     assert "Cut 2/3 stages - probe: 0.41s, 0_head: 1.20s, audio: 2.00s, mux: 0.30s = 3.91s" in text
 
 
-def test_cut_stage_line_adds_the_paused_time_only_when_there_was_a_pause(tmp_path, monkeypatch):
+def test_cut_stage_line_adds_the_paused_time_only_when_there_was_a_pause(
+    tmp_path, monkeypatch
+) -> None:
     """컷 단계 줄은 일시정지한 시간이 있으면 끝에 따로 적고, 없으면 적지 않아야 한다 (#309).
 
     구간 1/1, 단계 audio 2.00초 · mux 0.30초. 한 번은 일시정지 12.3초, 한 번은 일시정지 없이
@@ -295,7 +299,7 @@ def test_cut_stage_line_adds_the_paused_time_only_when_there_was_a_pause(tmp_pat
     assert lines[1].endswith("Cut 1/1 stages - audio: 2.00s, mux: 0.30s = 2.30s")
 
 
-def test_stopped_line_names_the_phase(tmp_path, monkeypatch):
+def test_stopped_line_names_the_phase(tmp_path, monkeypatch) -> None:
     """중단 줄은 어느 단계에서 중단됐는지 적어야 한다 (#309).
 
     log_stopped("transfer") -> "Download stopped by user during transfer"
@@ -310,7 +314,7 @@ def test_stopped_line_names_the_phase(tmp_path, monkeypatch):
 
 def test_transfer_and_breakdown_lines_add_the_paused_time_only_when_there_was_a_pause(
     tmp_path, monkeypatch
-):
+) -> None:
     """전송 줄과 시간 구분 줄은 일시정지한 시간이 있으면 끝에 따로 적고, 없으면 이전과 같아야 한다 (#309).
 
     전송 12.5초 · 1000바이트 · 재시도 0 · 정점 4. 일시정지 3.2초를 넘긴 것과 넘기지 않은 것
@@ -335,7 +339,9 @@ def test_transfer_and_breakdown_lines_add_the_paused_time_only_when_there_was_a_
     )
 
 
-def test_failure_stop_line_names_the_phase_and_does_not_blame_the_user(tmp_path, monkeypatch):
+def test_failure_stop_line_names_the_phase_and_does_not_blame_the_user(
+    tmp_path, monkeypatch
+) -> None:
     """실패로 멈춘 줄은 어느 단계였는지 적고, 사용자가 멈췄다고 적지 않아야 한다 (#309).
 
     log_stopped_after_failure("transfer") -> "Download stopped after a failure during transfer",
@@ -351,7 +357,9 @@ def test_failure_stop_line_names_the_phase_and_does_not_blame_the_user(tmp_path,
     assert "by user" not in written
 
 
-def test_postprocess_line_adds_the_paused_time_only_when_there_was_a_pause(tmp_path, monkeypatch):
+def test_postprocess_line_adds_the_paused_time_only_when_there_was_a_pause(
+    tmp_path, monkeypatch
+) -> None:
     """후처리 종료 줄은 일시정지한 시간이 있으면 끝에 따로 적고, 없으면 이전과 같아야 하며, 요약은 둘 다 읽어야 한다 (#309).
 
     후처리 5.67초 · 987바이트. 일시정지 3.2초를 넘긴 것과 넘기지 않은 것

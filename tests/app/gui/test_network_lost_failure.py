@@ -18,7 +18,7 @@ SOURCE = (
 )
 
 
-def test_network_lost_error_maps_to_its_own_key():
+def test_network_lost_error_maps_to_its_own_key() -> None:
     """NetworkLostError는 일반 연결 오류 키가 아니라 그 예외가 든 키로 매핑돼야 한다.
 
     NetworkLostError(10.0), 원인 ConnectionError
@@ -31,7 +31,7 @@ def test_network_lost_error_maps_to_its_own_key():
     assert _failure_message_key(error) == NETWORK_LOST
 
 
-def test_network_lost_failure_shows_its_reason_on_the_card(qapp):
+def test_network_lost_failure_shows_its_reason_on_the_card(qapp) -> None:
     """회선 끊김 실패의 카드 사유는 그 실패의 원문이어야 한다(번역기 없음).
 
     DownloadViewModel(가짜 content · service)._failure_message(NetworkLostError(10.0))
@@ -49,7 +49,7 @@ def test_network_lost_failure_shows_its_reason_on_the_card(qapp):
         ("en_US", "Network connection lost · check it and try again"),
     ],
 )
-def test_network_lost_reason_is_translated_in_the_bundled_catalog(qapp, language, headline):
+def test_network_lost_reason_is_translated_in_the_bundled_catalog(qapp, language, headline) -> None:
     """동봉된 번역 카탈로그는 회선 끊김 실패 사유를 그 언어의 두 줄 문구로 돌려줘야 한다.
 
     translations/<언어>.qm, 컨텍스트 DownloadViewModel, 원문 SOURCE

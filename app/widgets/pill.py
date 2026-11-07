@@ -54,7 +54,7 @@ SECONDARY_SELECTED_OPACITY = 0.7
 class ResolutionPill(QPushButton):
     """해상도 pill. `selected`·`caret`는 QSS 선택자용 동적 속성이기도 하다."""
 
-    def __init__(self, text: str, parent=None):
+    def __init__(self, text: str, parent=None) -> None:
         super().__init__(text, parent)
         self._selected = False
         self._caret = False

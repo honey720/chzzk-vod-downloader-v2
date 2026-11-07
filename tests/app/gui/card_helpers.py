@@ -14,7 +14,7 @@
 쓰지 못하게 한다. 폭은 절대 px가 아니라 카드 자체 기하로 유도한 값을 넣는다.
 """
 
-from PySide6.QtWidgets import QApplication, QLabel, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QStyle, QWidget
 
 
 def resize_to(widget: QWidget, width: int) -> None:
@@ -56,7 +56,7 @@ def shown(widget: QWidget) -> str:
 _STYLE_REFS: list = []
 
 
-def hold_style(style):
+def hold_style(style) -> QStyle:
     """`qapp.setStyle()`에 넘길 스타일 객체의 파이썬 참조를 **앱 수명 동안** 붙든다 (#243 우회).
 
     `setStyle()`로 소유권이 Qt C++ 쪽으로 넘어간 스타일의 파이썬 래퍼가 먼저

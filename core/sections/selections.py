@@ -40,7 +40,7 @@ class SelectionError(Exception):
     키다. 구간마다의 위반 키 전부는 ``violations``에 있다(``validate_selections``의 결과).
     """
 
-    def __init__(self, violations: dict[int, tuple[str, ...]]):
+    def __init__(self, violations: dict[int, tuple[str, ...]]) -> None:
         first = min(violations)
         self.violations = violations
         self.message_key = violations[first][0]

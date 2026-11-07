@@ -12,8 +12,10 @@ import socket
 import subprocess
 import sys
 import threading
+from collections.abc import Callable, Generator, Iterator
 from pathlib import Path
 
+import pluggy
 import pytest
 import requests.adapters
 
@@ -54,7 +56,7 @@ MOCK_RESPONSES_DIR = Path(__file__).resolve().parent / "fixtures" / "mock_respon
 
 
 @pytest.fixture
-def load_mock_response():
+def load_mock_response() -> Callable[[str], str]:
     """mock_responses 디렉토리의 픽스처 파일 내용을 문자열로 읽어 오는 헬퍼를 반환한다."""
 
     def _load(name: str) -> str:
@@ -85,7 +87,7 @@ class NetworkAttemptBlocked(RuntimeError):
 class _NetworkGuard:
     """나가는 연결의 시도를 막고 (어느 테스트가, 어디로) 기록한다. 스레드 안전."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """기록 리스트와 그것을 지키는 락, 그리고 시도를 귀속시킬 현재 테스트 이름을 준비한다."""
         self._lock = threading.Lock()
         self._attempts: list[tuple[str, str]] = []
@@ -114,7 +116,7 @@ def _describe_socket_target(address) -> str:
 
 
 @pytest.fixture(scope="session", autouse=True)
-def network_guard():
+def network_guard() -> Iterator[_NetworkGuard]:
     """세션 내내 socket 연결과 requests 어댑터 전송을 막는다 — 요청은 외부로 나가지 않는다.
 
     차단은 **되돌리지 않는다.** 세션이 끝나면 프로세스도 끝나므로 복원할 이유가
@@ -124,15 +126,15 @@ def network_guard():
     """
     guard = _NetworkGuard()
 
-    def blocked_connect(self, address, *args, **kwargs):
+    def blocked_connect(self, address, *args, **kwargs) -> None:
         """socket.socket.connect / connect_ex 자리 — 주소를 기록하고 연결 없이 예외."""
         guard.record(_describe_socket_target(address))
 
-    def blocked_create_connection(address, *args, **kwargs):
+    def blocked_create_connection(address, *args, **kwargs) -> None:
         """socket.create_connection 자리 — urllib3 등 고수준 경로가 여기로 온다."""
         guard.record(_describe_socket_target(address))
 
-    def blocked_send(self, request, *args, **kwargs):
+    def blocked_send(self, request, *args, **kwargs) -> None:
         """requests HTTPAdapter.send 자리 — 소켓에 닿기 전, 메서드와 URL만 기록하고 예외."""
         guard.record(f"{request.method} {request.url}")
 
@@ -150,7 +152,7 @@ def network_guard():
 
 
 @pytest.fixture(autouse=True)
-def _no_network_attempts(network_guard, request):
+def _no_network_attempts(network_guard, request) -> Iterator[None]:
     """테스트가 끝나면 그 사이의 연결 시도가 0건임을 단언한다 — 예외를 삼킨 스레드가 있어도 드러난다."""
     network_guard.current_test = request.node.nodeid
     yield
@@ -174,7 +176,7 @@ def _no_network_attempts(network_guard, request):
 # (config_store 등, 저장 이력 검증 같은 자기 목적이 있다)는 그대로 둔다 —
 # 같은 값으로 다시 monkeypatch되어도 무해하다.
 @pytest.fixture(autouse=True)
-def _isolate_real_config(tmp_path, monkeypatch):
+def _isolate_real_config(tmp_path, monkeypatch) -> None:
     """모든 테스트에서 앱 데이터 폴더(설정 DB · 옛 config.json · logs/)를 임시 위치로 돌린다.
 
     메모리 모드(코드가 모르는 DB 버전)도 테스트마다 끈다 — 앞 테스트가 켠 채 남으면 뒤 테스트가
@@ -195,7 +197,7 @@ def _isolate_real_config(tmp_path, monkeypatch):
 # (tests/core/sources/test_choose_temp_dir.py)만 이 픽스처를 지역적으로
 # 되돌려(monkeypatch로 실제 choose_temp_dir를 복원) 실 프로브를 태운다.
 @pytest.fixture(autouse=True)
-def _isolate_choose_temp_dir(monkeypatch):
+def _isolate_choose_temp_dir(monkeypatch) -> None:
     """기본은 임시 폴더를 산출물 폴더에 그대로 두는 기존 동작으로 고정한다."""
 
     def _default_temp_dir(output_path: str) -> str:
@@ -226,7 +228,7 @@ def _isolate_choose_temp_dir(monkeypatch):
 # 건드리지 않는다. autouse 픽스처는 가장 먼저 세워져 가장 나중에 걷히므로,
 # 테스트 자신의 정리(qtbot·파일별 픽스처)가 끝난 뒤의 잔여만 여기로 온다.
 @pytest.fixture(autouse=True)
-def _destroy_top_level_widgets(request, _isolate_real_config):
+def _destroy_top_level_widgets(request, _isolate_real_config) -> Iterator[None]:
     """테스트가 끝나면 살아 있는 최상위 위젯을 닫고 실제로 파괴한 뒤, 하나도 안 남았음을 단언한다."""
     yield
     from PySide6.QtCore import QCoreApplication, QEvent
@@ -282,7 +284,9 @@ def _capture_screenshots(nodeid: str, outcome: str) -> list[str]:
 
 
 @pytest.hookimpl(hookwrapper=True)
-def pytest_runtest_makereport(item, call):
+def pytest_runtest_makereport(
+    item, call
+) -> Generator[None, pluggy.Result[pytest.TestReport], None]:
     outcome = yield
     rep = outcome.get_result()
     if rep.when != "call":

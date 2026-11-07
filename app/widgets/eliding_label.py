@@ -23,7 +23,9 @@ from PySide6.QtWidgets import QLabel, QSizePolicy
 
 
 class ElidingLabel(QLabel):
-    def __init__(self, parent=None, elide_mode: Qt.TextElideMode = Qt.TextElideMode.ElideRight):
+    def __init__(
+        self, parent=None, elide_mode: Qt.TextElideMode = Qt.TextElideMode.ElideRight
+    ) -> None:
         super().__init__(parent)
         self._elide_mode = elide_mode
         self._full_text = ""
@@ -76,7 +78,7 @@ class ElidingLabel(QLabel):
     def text(self) -> str:
         return self._full_text
 
-    def resizeEvent(self, event):
+    def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._applyElide()
 
@@ -111,7 +113,7 @@ class PathLabel(ElidingLabel):
     `setText()`만 부르면(Designer 초기 문구 등) 단계 없이 기본 말줄임이다.
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None) -> None:
         super().__init__(parent, elide_mode=Qt.TextElideMode.ElideMiddle)
         self._prefix = ""
         self._last = ""
@@ -169,7 +171,7 @@ class TwoLineLabel(ElidingLabel):
     JOINER = " · "  # 한 줄일 때 두 문장을 잇는 글
     LINES = 2  # 청하는 높이의 줄 수
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._head = ""
         self._tail = ""

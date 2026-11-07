@@ -13,10 +13,11 @@ config는 conftest가 격리한다.
 
 import os
 import threading
+from collections.abc import Callable, Iterator
 from fractions import Fraction
 
 import pytest
-from PySide6.QtCore import QPoint, Qt
+from PySide6.QtCore import QPoint, QRect, Qt
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication
@@ -29,20 +30,22 @@ from app.section_input.basis import SectionBasis
 from app.viewmodels.data import ContentItem
 from app.views import mainWindow as mw_mod
 from app.views.mainWindow import VodDownloader
+from app.views.section_dialog import SectionEditDialog
 from core.media.representations import StreamEntry
 from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
 from core.utils.paths import release_output_paths
-from app.viewmodels.section_edit import refit_selections
+from app.viewmodels.section_edit import SectionRefitter, refit_selections
 from tests.mocks.engine_side import engine_side
 from tests.app.gui.section_input import leave_time, type_clock, type_frame, type_time
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, shown, snapshot_top_levels
+from typing import Never
 
 HOUR = 3600.0  # 대역이 돌려주는 영상 길이(초) — 60fps · 30fps 모두에서 프레임 경계다
 
 
 @pytest.fixture(autouse=True)
-def _apply_production_qss(qapp):
+def _apply_production_qss(qapp) -> None:
     """실제 전역 QSS·스타일을 태운다. ⚠️ function scope 유지."""
     theme.set_color_scheme("dark")
     qapp.setStyle(hold_style(theme.build_style()))  # 참조 보관 — 이중 해제 우회 (#243)
@@ -51,7 +54,7 @@ def _apply_production_qss(qapp):
 
 
 @pytest.fixture(autouse=True)
-def _destroy_windows():
+def _destroy_windows() -> Iterator[None]:
     """테스트가 만든 최상위 창은 숨긴 채 두지 않고 파괴한다."""
     before = snapshot_top_levels()
     yield
@@ -59,14 +62,14 @@ def _destroy_windows():
 
 
 @pytest.fixture(autouse=True)
-def _no_network(monkeypatch):
+def _no_network(monkeypatch) -> None:
     """카드의 크기 조회가 네트워크를 타지 않게 막고, 다운로드 로그 파일을 만들지 않는다."""
 
     class _FailingSession:
-        def head(self, *a, **k):
+        def head(self, *a, **k) -> Never:
             raise RuntimeError("network disabled in tests")
 
-        def get(self, *a, **k):
+        def get(self, *a, **k) -> Never:
             raise RuntimeError("network disabled in tests")
 
     monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
@@ -74,7 +77,7 @@ def _no_network(monkeypatch):
 
 
 @pytest.fixture
-def basis(monkeypatch):
+def basis(monkeypatch) -> type:
     """프레임률 · 영상 길이 조회 대역 — 기본 60fps · 1시간.
 
     해상도마다 다른 값을 돌려주거나(by_resolution) 실패시키고(fail_resolutions), 조회가 끝나는
@@ -92,7 +95,7 @@ def basis(monkeypatch):
         gate = threading.Event()  # 내려 두면 모든 조회가 기다린다
         gates: dict = {}  # 해상도 → Event. 내려 두면 그 해상도의 조회가 기다린다
 
-    def probe(item):
+    def probe(item) -> SectionBasis:
         _Basis.calls.append(item)
         resolution = getattr(item, "resolution", None)
         assert _Basis.gate.wait(5), "조회 대역의 문이 열리지 않았다"
@@ -114,7 +117,7 @@ def basis(monkeypatch):
 
 
 @pytest.fixture
-def started(monkeypatch):
+def started(monkeypatch) -> list[ContentItem]:
     """`DownloadViewModel.start` 기록 대역 — 시작된 카드를 순서대로 남긴다."""
     calls: list = []
     monkeypatch.setattr(mw_mod.DownloadViewModel, "start", lambda self, item: calls.append(item))
@@ -123,7 +126,7 @@ def started(monkeypatch):
     return calls
 
 
-def _pump():
+def _pump() -> None:
     for _ in range(3):
         QApplication.processEvents()
 
@@ -170,7 +173,7 @@ def click_summary(win: VodDownloader, item: ContentItem) -> None:
     _pump()
 
 
-def open_editor(qtbot, win: VodDownloader, item: ContentItem):
+def open_editor(qtbot, win: VodDownloader, item: ContentItem) -> SectionEditDialog:
     """카드를 눌러 편집 창을 열고 조회가 끝나기를 기다린다."""
     click_summary(win, item)
     dialog = win._sectionDialog
@@ -247,7 +250,7 @@ def notice_of(win: VodDownloader, item: ContentItem) -> str:
 
 def test_clicking_the_summary_of_a_waiting_card_opens_the_editor_with_the_whole_video(
     qtbot, tmp_path, basis
-):
+) -> None:
     """대기 카드의 구간 요약을 누르면 편집 창이 열리고 빈 행 하나가 보여야 한다.
 
     60fps · 길이 3600초, 구간 없는 카드
@@ -276,7 +279,9 @@ def test_clicking_the_summary_of_a_waiting_card_opens_the_editor_with_the_whole_
 @pytest.mark.parametrize(
     "state", [DownloadState.RUNNING, DownloadState.PAUSED, DownloadState.FINISHED]
 )
-def test_clicking_the_summary_of_a_card_that_is_not_waiting_opens_nothing(tmp_path, basis, state):
+def test_clicking_the_summary_of_a_card_that_is_not_waiting_opens_nothing(
+    tmp_path, basis, state
+) -> None:
     """대기가 아닌 카드의 구간 요약을 누르면 편집 창이 열리지 않아야 한다.
 
     상태가 RUNNING · PAUSED · FINISHED인 카드
@@ -297,7 +302,7 @@ def test_clicking_the_summary_of_a_card_that_is_not_waiting_opens_nothing(tmp_pa
     assert label.property("editable") is False
 
 
-def test_waiting_card_summary_looks_clickable(tmp_path, basis):
+def test_waiting_card_summary_looks_clickable(tmp_path, basis) -> None:
     """대기 카드의 구간 요약 자리는 누를 수 있는 모양이어야 한다.
 
     대기 상태의 VOD 카드
@@ -313,7 +318,7 @@ def test_waiting_card_summary_looks_clickable(tmp_path, basis):
     assert "Click to edit sections" in label.toolTip()
 
 
-def test_clicking_the_summary_of_a_clip_card_opens_nothing(tmp_path, basis):
+def test_clicking_the_summary_of_a_clip_card_opens_nothing(tmp_path, basis) -> None:
     """클립 카드는 대기 상태여도 편집 창이 열리지 않아야 한다.
 
     content_type="clip"인 대기 카드
@@ -328,7 +333,7 @@ def test_clicking_the_summary_of_a_clip_card_opens_nothing(tmp_path, basis):
     assert basis.calls == []
 
 
-def test_failed_lookup_shows_the_reason_and_blocks_editing(qtbot, tmp_path, basis):
+def test_failed_lookup_shows_the_reason_and_blocks_editing(qtbot, tmp_path, basis) -> None:
     """조회가 실패하면 실패 안내가 보이고 확인할 수 없어야 한다.
 
     조회 대역이 예외를 던짐
@@ -352,7 +357,9 @@ def test_failed_lookup_shows_the_reason_and_blocks_editing(qtbot, tmp_path, basi
 # ================================================================ 쓰기
 
 
-def test_confirming_three_sections_writes_them_to_the_card_in_row_order(qtbot, tmp_path, basis):
+def test_confirming_three_sections_writes_them_to_the_card_in_row_order(
+    qtbot, tmp_path, basis
+) -> None:
     """구간 셋을 넣고 확인하면 카드에 행 순서대로 쓰이고 요약이 바뀌어야 한다.
 
     60fps. 행: 00:10:00:00~00:20:00:00, 00:30:00:30~00:31:00:00, 00:00:05:00~00:00:06:00
@@ -383,7 +390,9 @@ def test_confirming_three_sections_writes_them_to_the_card_in_row_order(qtbot, t
     assert summary_text(win, item) == "Sections 3"
 
 
-def test_confirming_the_single_whole_row_keeps_the_card_a_whole_download(qtbot, tmp_path, basis):
+def test_confirming_the_single_whole_row_keeps_the_card_a_whole_download(
+    qtbot, tmp_path, basis
+) -> None:
     """영상 전체 한 행뿐이면 확인해도 카드의 구간은 빈 튜플이고 표시가 그대로여야 한다.
 
     구간 없는 카드에서 편집 창을 열고 그대로 확인
@@ -401,7 +410,7 @@ def test_confirming_the_single_whole_row_keeps_the_card_a_whole_download(qtbot, 
     assert summary_text(win, item) == before
 
 
-def test_cancel_leaves_the_card_untouched(qtbot, tmp_path, basis):
+def test_cancel_leaves_the_card_untouched(qtbot, tmp_path, basis) -> None:
     """취소로 닫으면 넣은 구간이 카드에 쓰이지 않아야 한다.
 
     행을 00:10:00:00~00:20:00:00으로 고친 뒤 취소
@@ -417,7 +426,7 @@ def test_cancel_leaves_the_card_untouched(qtbot, tmp_path, basis):
     assert item.selections == ()
 
 
-def test_reopening_shows_the_sections_already_on_the_card(qtbot, tmp_path, basis):
+def test_reopening_shows_the_sections_already_on_the_card(qtbot, tmp_path, basis) -> None:
     """구간이 있는 카드에서 다시 열면 그 구간이 행으로 보여야 한다.
 
     selections = ((600, 1200), (1800.5, 1860)), 60fps
@@ -467,7 +476,7 @@ def flagged_fields(row) -> set[str]:
 )
 def test_invalid_input_is_shown_on_the_row_and_cannot_be_confirmed(
     qtbot, tmp_path, basis, start, end, message, flagged
-):
+) -> None:
     """틀린 입력은 그 행에 오류로 보이고, 틀린 칸만 붉게 칠해지며, 확인으로 카드에 쓰이지 않아야 한다.
 
     60fps · 길이 3600초에서 위 표의 (시작, 끝)
@@ -489,7 +498,9 @@ def test_invalid_input_is_shown_on_the_row_and_cannot_be_confirmed(
     assert item.selections == ()
 
 
-def test_frame_field_and_range_follow_the_looked_up_frame_rate_and_length(qtbot, tmp_path, basis):
+def test_frame_field_and_range_follow_the_looked_up_frame_rate_and_length(
+    qtbot, tmp_path, basis
+) -> None:
     """FF의 범위와 구간의 끝은 조회한 프레임률 · 길이로 판정해야 한다.
 
     29.97fps(2997/100) · 길이 10.02초
@@ -519,7 +530,7 @@ def test_frame_field_and_range_follow_the_looked_up_frame_rate_and_length(qtbot,
 
 def test_a_section_one_frame_long_is_accepted_and_the_same_frame_twice_is_not(
     qtbot, tmp_path, basis
-):
+) -> None:
     """한 프레임짜리 구간은 통과하고, 시작과 끝이 둘 다 같은 구간 둘은 막혀야 한다.
 
     60fps. 00:10:00:00~00:10:00:01 한 행 -> 오류 없음
@@ -537,7 +548,7 @@ def test_a_section_one_frame_long_is_accepted_and_the_same_frame_twice_is_not(
     assert not dialog.okButton.isEnabled()
 
 
-def test_overlapping_sections_are_accepted(qtbot, tmp_path, basis):
+def test_overlapping_sections_are_accepted(qtbot, tmp_path, basis) -> None:
     """겹치는 구간은 통과해야 한다.
 
     60fps. 00:10:00:00~00:20:00:00, 00:15:00:00~00:25:00:00
@@ -553,7 +564,7 @@ def test_overlapping_sections_are_accepted(qtbot, tmp_path, basis):
     assert item.selections == (TimeRange(600.0, 1200.0), TimeRange(900.0, 1500.0))
 
 
-def test_the_twenty_first_section_cannot_be_added(qtbot, tmp_path, basis):
+def test_the_twenty_first_section_cannot_be_added(qtbot, tmp_path, basis) -> None:
     """구간이 20개면 추가 버튼이 꺼지고 21번째 행이 생기지 않아야 한다.
 
     추가 버튼을 19번 눌러 20행(모두 빈 행 — 구간으로는 맨 위 한 행만 센다)
@@ -599,7 +610,7 @@ def _notice(row) -> str:
 )
 def test_digits_above_the_maximum_are_set_to_the_maximum_when_the_field_is_left(
     qtbot, tmp_path, basis, fps, column, typed, settled
-):
+) -> None:
     """분 · 초 · 프레임이 최대를 넘은 채 칸을 떠나면 오류 없이 최대값으로 맞춰지고, 맞췄다는 안내가 보여야 한다.
 
     3600초 영상. 표의 프레임률에서 표의 칸에 값을 치고 떠남
@@ -630,7 +641,7 @@ def test_digits_above_the_maximum_are_set_to_the_maximum_when_the_field_is_left(
 
 def test_an_end_that_is_not_a_timecode_is_left_as_it_is_and_shown_as_a_format_error(
     qtbot, tmp_path, basis
-):
+) -> None:
     """타임코드로 읽히지 않는 끝 값은 편집을 끝내도 영상 끝으로 맞추지 않고 그대로 두며, 형식 오류로 보여야 한다.
 
     60fps · 3600초. 뷰모델의 끝 칸에 칸이 모자란 글 "12:34:56"을 편집을 끝낸 값으로 넣음
@@ -662,7 +673,7 @@ def test_an_end_that_is_not_a_timecode_is_left_as_it_is_and_shown_as_a_format_er
 )
 def test_the_over_the_maximum_notice_waits_until_the_field_is_full(
     qtbot, tmp_path, basis, part, digits, typed, settled
-):
+) -> None:
     """최대를 넘는다는 안내는 넘은 칸의 자리를 다 채웠을 때만 보이고, 덜 채웠어도 칸을 떠나면 맞춰져야 한다.
 
     60fps · 3600초. 시작 시각의 표의 칸에 표의 숫자를 침(시분초 칸은 여섯 자리, 프레임 칸은 두 자리)
@@ -687,7 +698,9 @@ def test_the_over_the_maximum_notice_waits_until_the_field_is_full(
     assert _notice(row) == SET_TO_MAX.format(settled)
 
 
-def test_a_pasted_value_above_the_maximum_is_set_at_once(qtbot, tmp_path, basis, monkeypatch):
+def test_a_pasted_value_above_the_maximum_is_set_at_once(
+    qtbot, tmp_path, basis, monkeypatch
+) -> None:
     """붙여넣은 값의 분 · 초 · 프레임이 최대를 넘으면 칸을 떠나기를 기다리지 않고 바로 최대값으로 맞춰야 한다.
 
     60fps · 3600초. 클립보드 "00:75:99:75"를 시작 시분초 칸에 붙여넣음(포커스는 그 칸에 그대로)
@@ -727,7 +740,7 @@ def test_a_pasted_value_above_the_maximum_is_set_at_once(qtbot, tmp_path, basis,
 )
 def test_an_overflow_left_in_a_field_nobody_is_typing_in_is_shown_as_an_error(
     qtbot, tmp_path, basis, text, message, flagged
-):
+) -> None:
     """치고 있지 않은 칸에 넘는 값이 맞춰지지 않은 채 남아 있으면 그 칸의 오류로 보이고 확인을 막아야 한다.
 
     60fps. 뷰모델의 시작 칸에 넘는 값을 "치는 도중의 값"으로 직접 넣음(창은 아무 칸도 치고 있지 않다)
@@ -756,7 +769,7 @@ def error_shown(row) -> str:
     return shown(row.errorLabel) if row.errorLabel.isVisible() else ""
 
 
-def test_start_past_the_end_is_flagged_while_typing(qtbot, tmp_path, basis):
+def test_start_past_the_end_is_flagged_while_typing(qtbot, tmp_path, basis) -> None:
     """시작 칸을 치는 중 시작이 끝과 같거나 넘으면 칸을 떠나기 전에 바로 오류를 띄워야 한다.
 
     60fps · 3600초. 끝을 00:10:00:00으로 둔 행의 시작 시분초 칸에 2 · 0 · 0 · 0을 차례로 침
@@ -781,7 +794,7 @@ def test_start_past_the_end_is_flagged_while_typing(qtbot, tmp_path, basis):
     assert not dialog.okButton.isEnabled()
 
 
-def test_an_end_still_below_the_start_waits_until_the_field_is_left(qtbot, tmp_path, basis):
+def test_an_end_still_below_the_start_waits_until_the_field_is_left(qtbot, tmp_path, basis) -> None:
     """끝 칸을 치는 중 끝이 아직 시작에 못 미치는 것은 칸을 떠날 때까지 띄우지 않되, 확인은 꺼 두어야 한다.
 
     60fps · 3600초. 시작 00:10:00:00인 행의 끝 시분초 칸을 비우고 2 · 0 · 0 · 0을 차례로 침
@@ -814,7 +827,9 @@ def test_an_end_still_below_the_start_waits_until_the_field_is_left(qtbot, tmp_p
     assert row.startEdit.property("invalid") is True and row.endEdit.property("invalid") is True
 
 
-def test_a_field_overflow_on_the_way_to_a_valid_value_is_not_flagged(qtbot, tmp_path, basis):
+def test_a_field_overflow_on_the_way_to_a_valid_value_is_not_flagged(
+    qtbot, tmp_path, basis
+) -> None:
     """치는 도중 잠깐 생기는 자리 넘침(초 ≥ 60)은 값을 바꾸지 않고 아무것도 띄우지 않으며, 다 친 값이 유효하면 그대로 남아야 한다.
 
     30fps · 3600초. 끝 시분초 칸에 1 · 9 · 0 · 0을 차례로 침
@@ -841,7 +856,7 @@ def test_a_field_overflow_on_the_way_to_a_valid_value_is_not_flagged(qtbot, tmp_
 
 def test_a_frame_past_the_frame_rate_shows_a_notice_while_typed_and_is_set_when_left(
     qtbot, tmp_path, basis
-):
+) -> None:
     """프레임 칸에 프레임률 이상을 치면 값을 바꾸지 않고 안내만 보이고, 칸을 떠나면 프레임률 − 1로 맞춰져야 한다.
 
     60fps. 끝 프레임 칸에 6 -> 안내 없음(00:30:00:06). 0을 더 침(60)
@@ -871,7 +886,7 @@ def test_a_frame_past_the_frame_rate_shows_a_notice_while_typed_and_is_set_when_
     assert _notice(row) == SET_TO_MAX.format("00:30:00:59")
 
 
-def test_an_error_disappears_at_once_when_the_value_becomes_valid(qtbot, tmp_path, basis):
+def test_an_error_disappears_at_once_when_the_value_becomes_valid(qtbot, tmp_path, basis) -> None:
     """오류는 값이 유효해지는 순간 칸을 떠나지 않아도 바로 사라져야 한다.
 
     60fps · 3600초. 끝이 00:10:00:00인 행의 시작 시분초 칸에 2000(00:20:00 — 끝보다 뒤)을 쳐
@@ -894,7 +909,7 @@ def test_an_error_disappears_at_once_when_the_value_becomes_valid(qtbot, tmp_pat
     assert dialog.okButton.isEnabled()
 
 
-def test_an_error_caused_in_another_row_shows_at_once(qtbot, tmp_path, basis):
+def test_an_error_caused_in_another_row_shows_at_once(qtbot, tmp_path, basis) -> None:
     """치고 있는 칸 때문에 다른 행에 생긴 오류는 그 행에 바로 띄우고, 치고 있는 행의 것은 떠날 때 띄워야 한다.
 
     60fps. 첫째 행 00:10:00:00~00:20:00:00, 둘째 행 00:10:00:00~00:30:00:00.
@@ -918,7 +933,7 @@ def test_an_error_caused_in_another_row_shows_at_once(qtbot, tmp_path, basis):
     assert error_shown(second) == "Duplicate selection"
 
 
-def test_every_error_is_shown_at_once_when_the_window_opens(qtbot, tmp_path, basis):
+def test_every_error_is_shown_at_once_when_the_window_opens(qtbot, tmp_path, basis) -> None:
     """창을 열 때는 치고 있는 칸이 없으므로 떠날 때 띄우는 종류의 오류도 바로 띄워야 한다.
 
     카드의 구간이 600~1200초 둘(같은 구간 두 개 — 중복)인 채로 편집 창을 엶
@@ -934,7 +949,9 @@ def test_every_error_is_shown_at_once_when_the_window_opens(qtbot, tmp_path, bas
     assert not dialog.okButton.isEnabled()
 
 
-def test_typed_digits_reach_the_card_and_milliseconds_are_only_shown(qtbot, tmp_path, basis):
+def test_typed_digits_reach_the_card_and_milliseconds_are_only_shown(
+    qtbot, tmp_path, basis
+) -> None:
     """숫자만 쳐서 넣은 값이 카드에 쓰이고, 밀리초는 툴팁에만 나와야 한다.
 
     60fps. 시작의 시분초 칸에 503 · 프레임 칸에 30(00:05:03:30), 끝의 시분초 칸에 1000(00:10:00:00)을 치고 확인
@@ -958,7 +975,7 @@ def test_typed_digits_reach_the_card_and_milliseconds_are_only_shown(qtbot, tmp_
     assert item.selections == (TimeRange(303.5, 600.0),)
 
 
-def test_ok_takes_the_digits_of_the_field_still_being_typed(qtbot, tmp_path, basis):
+def test_ok_takes_the_digits_of_the_field_still_being_typed(qtbot, tmp_path, basis) -> None:
     """칸을 떠나지 않고 확인을 눌러도 그 칸에 친 숫자가 카드에 쓰여야 한다.
 
     60fps. 끝 칸에 100000(00:10:00:00)을 치고 칸을 떠나지 않은 채 확인을 누름
@@ -975,7 +992,7 @@ def test_ok_takes_the_digits_of_the_field_still_being_typed(qtbot, tmp_path, bas
 
 
 @pytest.mark.parametrize("text", ["00:10:00", "5:03", "00:10:00.500", "00:10:00:0x"])
-def test_viewmodel_still_refuses_text_that_is_not_four_fields(qtbot, tmp_path, basis, text):
+def test_viewmodel_still_refuses_text_that_is_not_four_fields(qtbot, tmp_path, basis, text) -> None:
     """뷰모델은 네 칸이 아니거나 숫자가 아닌 글을 형식 오류로 봐야 한다 — 입력 칸이 막아 주는 것에 기대지 않는다.
 
     60fps. 뷰모델의 첫 행 시작 칸에 세 칸 · 두 칸 · 밀리초 · 숫자 아닌 글자를 직접 넣음
@@ -998,7 +1015,7 @@ def test_viewmodel_still_refuses_text_that_is_not_four_fields(qtbot, tmp_path, b
 
 def test_moved_rows_reach_the_engine_in_the_new_order_with_matching_file_numbers(
     qtbot, tmp_path, basis, monkeypatch
-):
+) -> None:
     """위 · 아래로 바꾼 행의 순서가 엔진에 넘어가는 구간 순서이고 파일 이름의 _N이어야 한다.
 
     행 A(600~1200) · B(1800~1860) · C(5~6)에서 C의 ▲를 두 번, A(이제 2번째)의 ▼를 한 번
@@ -1015,7 +1032,7 @@ def test_moved_rows_reach_the_engine_in_the_new_order_with_matching_file_numbers
             return True
 
     class _Service:
-        def submit(self, content, **kwargs):
+        def submit(self, content, **kwargs) -> "_Handle":
             submissions.append(content)
             return _Handle()
 
@@ -1058,7 +1075,7 @@ def test_moved_rows_reach_the_engine_in_the_new_order_with_matching_file_numbers
             release_output_paths(submissions[0].selection_paths)
 
 
-def test_deleting_a_row_removes_that_section_and_the_last_row_stays(qtbot, tmp_path, basis):
+def test_deleting_a_row_removes_that_section_and_the_last_row_stays(qtbot, tmp_path, basis) -> None:
     """삭제는 그 행만 지우고, 하나 남은 행은 지워지지 않고 값만 비워져야 한다.
 
     행 A(600~1200) · B(1800~1860)에서 A의 ✕ -> 행 B만 남는다
@@ -1086,7 +1103,9 @@ def test_deleting_a_row_removes_that_section_and_the_last_row_stays(qtbot, tmp_p
 # ================================================================ 편집 중 건너뛰기
 
 
-def test_the_card_being_edited_is_skipped_and_the_next_card_starts(qtbot, tmp_path, basis, started):
+def test_the_card_being_edited_is_skipped_and_the_next_card_starts(
+    qtbot, tmp_path, basis, started
+) -> None:
     """편집 창이 열린 카드는 시작되지 않고 다음 카드가 시작되어야 한다.
 
     카드 A(첫 줄) · B(둘째 줄) 모두 대기. A의 편집 창을 연 채 전역 다운로드를 청함
@@ -1103,7 +1122,7 @@ def test_the_card_being_edited_is_skipped_and_the_next_card_starts(qtbot, tmp_pa
     assert first.downloadState == DownloadState.WAITING
 
 
-def test_closing_the_editor_makes_the_card_a_target_again(qtbot, tmp_path, basis, started):
+def test_closing_the_editor_makes_the_card_a_target_again(qtbot, tmp_path, basis, started) -> None:
     """편집 창을 닫으면 그 카드가 다시 다운로드 대상이 되어야 한다.
 
     A 편집 중에 B가 시작됨 → A의 창을 취소로 닫음 → B가 끝남
@@ -1127,7 +1146,7 @@ def test_closing_the_editor_makes_the_card_a_target_again(qtbot, tmp_path, basis
 
 def test_batch_waits_instead_of_finishing_while_the_only_card_left_is_being_edited(
     qtbot, tmp_path, basis, started
-):
+) -> None:
     """남은 대상이 편집 중인 카드뿐이면 배치를 끝내지 않고, 창을 닫으면 그 카드를 시작해야 한다.
 
     A 편집 중에 B가 시작되고 끝남(남은 대상은 A뿐)
@@ -1155,7 +1174,7 @@ def test_batch_waits_instead_of_finishing_while_the_only_card_left_is_being_edit
 
 def test_closing_the_editor_starts_nothing_when_no_download_was_waiting_on_it(
     qtbot, tmp_path, basis, started
-):
+) -> None:
     """멈춰 둔 배치가 없으면 편집 창을 닫아도 아무것도 시작하지 않아야 한다.
 
     다운로드를 청한 적 없이 A의 편집 창을 열고 확인으로 닫음
@@ -1175,7 +1194,7 @@ def test_closing_the_editor_starts_nothing_when_no_download_was_waiting_on_it(
 
 def test_sections_are_not_written_when_the_card_left_waiting_while_the_editor_was_open(
     qtbot, tmp_path, basis
-):
+) -> None:
     """편집 창이 열린 사이 카드가 대기가 아니게 됐으면 확인해도 구간을 쓰지 않아야 한다.
 
     편집 창을 연 뒤 카드 상태를 RUNNING으로 바꾸고 00:10:00:00~00:20:00:00을 확인
@@ -1198,7 +1217,7 @@ def test_sections_are_not_written_when_the_card_left_waiting_while_the_editor_wa
 
 def test_a_waiting_card_can_be_edited_while_another_card_is_downloading(
     qtbot, tmp_path, basis, started
-):
+) -> None:
     """다른 카드가 받는 중이어도 대기 카드의 편집 창이 열리고 구간이 쓰여야 한다.
 
     카드 A가 RUNNING, 카드 B가 대기. B의 구간 요약을 누르고 00:10:00:00~00:20:00:00을 확인
@@ -1233,7 +1252,7 @@ def _pick(win: VodDownloader, item: ContentItem, resolution: int) -> None:
     assert item.resolution == resolution, "전제: 해상도가 바뀌어야 한다"
 
 
-def _refitter(win: VodDownloader):
+def _refitter(win: VodDownloader) -> SectionRefitter:
     return win.contentManager._sectionRefitter
 
 
@@ -1261,7 +1280,7 @@ ODD = [("00:00:10:31", "00:00:20:01")]  # 60fps의 홀수 프레임 — 30fps에
 
 def test_changing_resolution_refits_by_the_declared_rate_at_once_and_marks_the_length_unchecked(
     qtbot, tmp_path, basis
-):
+) -> None:
     """해상도를 바꾸면 조회가 끝나기 전에도 선언 프레임률로 맞추고 길이를 확인하는 중이라고 알려야 한다.
 
     60fps에서 정한 10.5167~20.0167초, 480p의 선언값 30fps, 480p의 조회는 붙잡아 둠
@@ -1284,7 +1303,7 @@ def test_changing_resolution_refits_by_the_declared_rate_at_once_and_marks_the_l
         settle(qtbot, win)
 
 
-def test_the_looked_up_frame_rate_and_length_settle_the_sections(qtbot, tmp_path, basis):
+def test_the_looked_up_frame_rate_and_length_settle_the_sections(qtbot, tmp_path, basis) -> None:
     """조회가 끝나면 조회한 프레임률로 다시 맞추고 길이 확인 표시를 지워야 한다.
 
     60fps에서 정한 10.5167~20.0167초, 480p의 조회값 30fps · 3600초
@@ -1309,7 +1328,7 @@ def test_the_looked_up_frame_rate_and_length_settle_the_sections(qtbot, tmp_path
     assert [call.resolution for call in basis.calls[1:]] == [480], "새 해상도로 조회해야 한다"
 
 
-def test_the_looked_up_rate_wins_over_the_declared_rate(qtbot, tmp_path, basis):
+def test_the_looked_up_rate_wins_over_the_declared_rate(qtbot, tmp_path, basis) -> None:
     """선언값과 조회값이 다르면 조회값으로 맞춰야 한다.
 
     480p의 선언값 30fps, 조회값 25fps · 3600초. 60fps에서 정한 10.5167~20.0167초
@@ -1332,7 +1351,7 @@ def test_the_looked_up_rate_wins_over_the_declared_rate(qtbot, tmp_path, basis):
     assert notice_of(win, item) == "refit to 25fps"
 
 
-def test_same_frame_rate_and_length_change_nothing(qtbot, tmp_path, basis):
+def test_same_frame_rate_and_length_change_nothing(qtbot, tmp_path, basis) -> None:
     """프레임률 · 길이가 같은 해상도로 바꾸면 구간이 그대로이고 알림이 남지 않아야 한다.
 
     1080p · 720p 모두 60fps · 3600초인 카드에서 10.5167~20.0167초를 정한 뒤 720p를 고름
@@ -1364,7 +1383,9 @@ EXTENDED = "This resolution is longer. Sections that reached the end now reach i
 UNFIT = "Some sections start after the end of this resolution."
 
 
-def test_a_section_that_reached_the_end_is_pulled_to_the_shorter_end(qtbot, tmp_path, basis):
+def test_a_section_that_reached_the_end_is_pulled_to_the_shorter_end(
+    qtbot, tmp_path, basis
+) -> None:
     """옛 영상의 끝에 닿아 있던 구간은 더 짧은 새 영상의 끝으로 당겨지고 카드에 적혀야 한다.
 
     60fps · 3600초에서 3540~3600초(끝 = 영상 끝)를 정함. 480p의 조회값 30fps · 3590초
@@ -1384,7 +1405,9 @@ def test_a_section_that_reached_the_end_is_pulled_to_the_shorter_end(qtbot, tmp_
     assert PULLED in tooltip_of(win, item)
 
 
-def test_a_section_past_the_new_length_is_pulled_and_sections_inside_stay(qtbot, tmp_path, basis):
+def test_a_section_past_the_new_length_is_pulled_and_sections_inside_stay(
+    qtbot, tmp_path, basis
+) -> None:
     """끝이 새 길이를 넘는 구간은 새 영상의 끝으로 당겨지고, 길이 안의 구간은 그대로여야 한다.
 
     60fps · 3600초에서 600~1200초와 3500~3595초를 정함. 480p의 조회값 30fps · 3590초
@@ -1406,7 +1429,9 @@ def test_a_section_past_the_new_length_is_pulled_and_sections_inside_stay(qtbot,
     assert PULLED in tooltip_of(win, item)
 
 
-def test_only_the_section_that_reached_the_end_grows_with_a_longer_video(qtbot, tmp_path, basis):
+def test_only_the_section_that_reached_the_end_grows_with_a_longer_video(
+    qtbot, tmp_path, basis
+) -> None:
     """새 영상이 더 길면 옛 영상의 끝에 닿아 있던 구간만 늘어나고 그 밖의 구간은 그대로여야 한다.
 
     60fps · 3600초에서 600~1200초와 3540~3600초(끝 = 영상 끝)를 정함. 480p의 조회값 30fps · 3700초
@@ -1427,7 +1452,9 @@ def test_only_the_section_that_reached_the_end_grows_with_a_longer_video(qtbot, 
     assert EXTENDED in tooltip_of(win, item)
 
 
-def test_a_section_that_starts_after_the_new_end_is_kept_and_flagged(qtbot, tmp_path, basis):
+def test_a_section_that_starts_after_the_new_end_is_kept_and_flagged(
+    qtbot, tmp_path, basis
+) -> None:
     """새 영상의 끝 이후에서 시작하는 구간은 지우거나 고치지 않고 받을 수 없다고 경고해야 한다.
 
     60fps · 3600초에서 600~1200초와 3595~3599초를 정함. 480p의 조회값 30fps · 3590초
@@ -1454,7 +1481,7 @@ def test_a_section_that_starts_after_the_new_end_is_kept_and_flagged(qtbot, tmp_
 
 def test_a_failed_lookup_keeps_the_declared_refit_and_says_the_length_is_unchecked(
     qtbot, tmp_path, basis
-):
+) -> None:
     """조회가 실패하면 선언값으로 맞춘 구간을 두고 길이를 확인하지 못했다고 알려야 한다.
 
     60fps에서 정한 10.5167~20.0167초, 480p의 선언값 30fps, 480p의 조회는 예외
@@ -1475,7 +1502,7 @@ def test_a_failed_lookup_keeps_the_declared_refit_and_says_the_length_is_uncheck
     assert notice_of(win, item) == "refit to 30fps · length not checked"
 
 
-def test_a_late_result_for_an_earlier_resolution_is_dropped(qtbot, tmp_path, basis):
+def test_a_late_result_for_an_earlier_resolution_is_dropped(qtbot, tmp_path, basis) -> None:
     """조회가 끝나기 전에 해상도를 또 바꾸면 앞 해상도의 늦은 결과를 버려야 한다.
 
     1080p(60) · 720p(60) · 480p(선언 30) 카드. 480p를 고르고(조회 붙잡음) 곧 720p를 고름.
@@ -1515,7 +1542,7 @@ def test_a_late_result_for_an_earlier_resolution_is_dropped(qtbot, tmp_path, bas
 
 def test_an_earlier_result_that_arrives_first_is_dropped_and_the_newer_one_settles(
     qtbot, tmp_path, basis
-):
+) -> None:
     """해상도를 또 바꾼 뒤 앞 해상도의 결과가 먼저 와도 쓰지 않고, 새 해상도의 결과로 정해야 한다.
 
     1080p(60) · 720p(60) · 480p(선언 30) 카드. 480p를 고르고(조회 붙잡음) 곧 720p를 고름.
@@ -1554,7 +1581,9 @@ def test_an_earlier_result_that_arrives_first_is_dropped_and_the_newer_one_settl
     assert summary_text(win, item) == "Sections 1"
 
 
-def test_a_result_that_arrives_after_the_download_started_is_dropped(qtbot, tmp_path, basis):
+def test_a_result_that_arrives_after_the_download_started_is_dropped(
+    qtbot, tmp_path, basis
+) -> None:
     """조회가 끝나기 전에 받기 시작한 카드에는 늦은 결과를 쓰지 않아야 한다.
 
     480p를 고르고(조회 붙잡음, 조회값 25fps · 3000초) 카드 상태를 RUNNING으로 바꾼 뒤 조회를 끝냄
@@ -1579,7 +1608,9 @@ def test_a_result_that_arrives_after_the_download_started_is_dropped(qtbot, tmp_
     assert item.section_frame_rate == Fraction(30)
 
 
-def test_a_result_that_arrives_after_the_card_was_deleted_is_dropped(qtbot, tmp_path, basis):
+def test_a_result_that_arrives_after_the_card_was_deleted_is_dropped(
+    qtbot, tmp_path, basis
+) -> None:
     """조회가 끝나기 전에 지운 카드에는 늦은 결과를 쓰지 않아야 한다.
 
     480p를 고르고(조회 붙잡음, 조회값 25fps · 3000초) 카드를 지운 뒤 조회를 끝냄
@@ -1604,7 +1635,7 @@ def test_a_result_that_arrives_after_the_card_was_deleted_is_dropped(qtbot, tmp_
     assert item.section_frame_rate == Fraction(30)
 
 
-def test_editing_again_clears_the_refit_notice(qtbot, tmp_path, basis):
+def test_editing_again_clears_the_refit_notice(qtbot, tmp_path, basis) -> None:
     """다시 맞춘 알림은 구간을 다시 편집해 확인하면 사라져야 한다.
 
     60fps에서 정한 구간을 480p(30fps)로 옮겨 알림이 뜬 뒤, 편집 창을 열어 확인
@@ -1625,7 +1656,7 @@ def test_editing_again_clears_the_refit_notice(qtbot, tmp_path, basis):
     assert len(item.selections) == 1
 
 
-def test_whole_download_card_changes_resolution_without_a_lookup(qtbot, tmp_path, basis):
+def test_whole_download_card_changes_resolution_without_a_lookup(qtbot, tmp_path, basis) -> None:
     """구간 없는 카드는 해상도를 바꿔도 조회를 돌리지 않고 요약 자리에 구간 요약이 나오지 않아야 한다.
 
     구간 없는 mp4 카드에서 480p를 고름
@@ -1643,7 +1674,7 @@ def test_whole_download_card_changes_resolution_without_a_lookup(qtbot, tmp_path
     assert not any(word in text for word in ("Sections", "refit", "length"))
 
 
-def test_picking_the_resolution_already_picked_starts_no_lookup(qtbot, tmp_path, basis):
+def test_picking_the_resolution_already_picked_starts_no_lookup(qtbot, tmp_path, basis) -> None:
     """이미 고른 해상도를 다시 고르면 조회를 돌리지 않아야 한다.
 
     구간이 있는 카드(1080p)에서 1080p 버튼을 다시 누름
@@ -1660,7 +1691,7 @@ def test_picking_the_resolution_already_picked_starts_no_lookup(qtbot, tmp_path,
     assert item.section_check == ""
 
 
-def test_the_default_pick_of_a_new_card_starts_no_lookup(qtbot, tmp_path, basis):
+def test_the_default_pick_of_a_new_card_starts_no_lookup(qtbot, tmp_path, basis) -> None:
     """카드가 만들어질 때 스스로 고르는 기본 해상도는 조회를 돌리지 않아야 한다.
 
     구간과 확인된 기준값(60fps · 3600초)을 이미 든 아이템(고른 해상도 없음)을 목록에 넣음
@@ -1680,7 +1711,7 @@ def test_the_default_pick_of_a_new_card_starts_no_lookup(qtbot, tmp_path, basis)
     assert item.section_verified is verified and item.section_check == ""
 
 
-def test_notice_gives_way_when_it_does_not_fit_in_the_row(qtbot, tmp_path, basis):
+def test_notice_gives_way_when_it_does_not_fit_in_the_row(qtbot, tmp_path, basis) -> None:
     """알림까지 붙인 요약이 3행에 안 들어가면 알림을 떼고 요약만 적어야 한다.
 
     구간 하나인 대기 카드의 알림을 어떤 창 폭보다도 긴 글(프레임률 숫자 400자리)로 둠
@@ -1720,10 +1751,10 @@ class _Handle:
 class _Service:
     """DownloadService 대역 — 제출된 것을 적어 두고 테스트가 엔진처럼 콜백을 부르게 한다."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.submissions: list[dict] = []
 
-    def submit(self, content, **kwargs):
+    def submit(self, content, **kwargs) -> _Handle:
         # 엔진 흉내 — 콜백 입구는 서비스 핸들의 중계(값 묶음 · 키를 싣는다, #484)
         self.submissions.append(engine_side(content, kwargs))
         return _Handle()
@@ -1740,7 +1771,7 @@ class _Service:
 
 
 @pytest.fixture
-def service(monkeypatch):
+def service(monkeypatch) -> Iterator[Callable[[VodDownloader], _Service]]:
     """엔진 자리의 서비스 대역 — 창을 만든 뒤 `use(win)`으로 끼운다. 끝나면 파일명 예약을 푼다."""
     monkeypatch.setattr(mw_mod.QMessageBox, "warning", lambda *a, **k: None)
     monkeypatch.setattr(mw_mod.QMessageBox, "information", lambda *a, **k: None)
@@ -1767,7 +1798,9 @@ FIRST, SECOND, THIRD = (
 )
 
 
-def card_with_an_unfit_section(qtbot, tmp_path, basis, service, rows=THREE):
+def card_with_an_unfit_section(
+    qtbot, tmp_path, basis, service, rows=THREE
+) -> tuple[VodDownloader, ContentItem, _Service]:
     """구간을 정한 뒤 480p(30fps · 3590초)로 바꿔 둘째 구간이 받을 수 없게 된 대기 카드."""
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -1790,7 +1823,7 @@ def names(paths) -> list[str]:
 
 def test_only_the_unfit_section_is_left_out_and_its_file_number_stays_empty(
     qtbot, tmp_path, basis, service
-):
+) -> None:
     """받을 수 없는 구간만 엔진에 넘어가지 않고, 파일 번호는 목록 순서대로 비워 두어야 한다.
 
     구간 셋 가운데 둘째가 받을 수 없는 카드(480p)를 받기 시작
@@ -1811,7 +1844,7 @@ def test_only_the_unfit_section_is_left_out_and_its_file_number_stays_empty(
 
 def test_the_card_ends_as_a_partial_failure_counting_the_section_left_out(
     qtbot, tmp_path, basis, service
-):
+) -> None:
     """넘긴 구간을 다 받아도 뺀 구간이 있으면 카드는 일부 실패로 끝나고 뺀 수가 실패 수에 들어야 한다.
 
     구간 셋 가운데 둘째를 뺀 카드에서 엔진이 넘겨받은 둘을 모두 끝냄
@@ -1833,7 +1866,7 @@ def test_the_card_ends_as_a_partial_failure_counting_the_section_left_out(
 
 def test_retry_leaves_the_same_section_out_again_and_does_not_redo_finished_files(
     qtbot, tmp_path, basis, service
-):
+) -> None:
     """재시도해도 받을 수 없는 구간은 다시 빠지고, 이미 만든 구간 파일은 다시 받지 않아야 한다.
 
     둘째를 빼고 끝난 카드에서 ↻ → 받기 시작: 구간 파일 둘이 그대로 있다
@@ -1871,7 +1904,7 @@ def test_retry_leaves_the_same_section_out_again_and_does_not_redo_finished_file
 
 def test_a_card_whose_sections_are_all_unfit_fails_at_once_and_the_batch_goes_on(
     qtbot, tmp_path, basis, service
-):
+) -> None:
     """모든 구간이 빠지는 카드는 엔진에 넘기지 않고 곧바로 실패로 끝내고 다음 카드로 가야 한다.
 
     카드 A의 구간은 하나뿐이고 받을 수 없다(480p). 카드 B는 구간 없는 대기 카드
@@ -1899,7 +1932,7 @@ def test_a_card_whose_sections_are_all_unfit_fails_at_once_and_the_batch_goes_on
 
 def test_a_card_whose_length_could_not_be_checked_hands_every_section_to_the_engine(
     qtbot, tmp_path, basis, service
-):
+) -> None:
     """길이를 확인하지 못한 카드는 구간을 빼지 않고 전부 엔진에 넘겨야 한다.
 
     구간 셋을 정한 뒤 480p로 바꿨는데 조회가 실패함(길이 미확인)
@@ -1934,7 +1967,7 @@ def card_checking_its_length(qtbot, win: VodDownloader, item: ContentItem, basis
 
 def test_a_card_still_checking_its_length_is_skipped_and_taken_after_the_lookup(
     qtbot, tmp_path, basis, started
-):
+) -> None:
     """길이를 확인하는 중인 카드는 건너뛰고, 조회가 끝난 뒤에는 다시 대상이 되어야 한다.
 
     카드 A(첫 줄)는 길이 확인 중, B는 대기. 받기를 청함 -> 시작된 카드 == [B]
@@ -1961,7 +1994,7 @@ def test_a_card_still_checking_its_length_is_skipped_and_taken_after_the_lookup(
 
 def test_batch_waits_for_the_lookup_when_only_a_checking_card_is_left(
     qtbot, tmp_path, basis, started
-):
+) -> None:
     """남은 대상이 길이 확인 중인 카드뿐이면 배치를 끝내지 않고, 조회가 끝나면 그 카드를 받아야 한다.
 
     길이 확인 중인 카드 하나만 있는 목록에서 받기를 청함 -> 시작된 카드 없음, 전체 완료 신호 0건
@@ -1982,7 +2015,7 @@ def test_batch_waits_for_the_lookup_when_only_a_checking_card_is_left(
     assert item.section_check == "" and finished_all.count() == 0
 
 
-def test_a_card_whose_lookup_failed_is_received_as_it_is(qtbot, tmp_path, basis, started):
+def test_a_card_whose_lookup_failed_is_received_as_it_is(qtbot, tmp_path, basis, started) -> None:
     """조회가 실패한 카드는 막지 않고 선언값으로 맞춘 그대로 받아야 한다.
 
     길이 확인 중인 카드 하나에서 받기를 청한 뒤 조회가 예외로 끝남
@@ -2008,7 +2041,7 @@ def test_a_card_whose_lookup_failed_is_received_as_it_is(qtbot, tmp_path, basis,
 
 def test_opening_the_editor_marks_the_unfit_section_and_fixing_it_clears_the_warning(
     qtbot, tmp_path, basis, service
-):
+) -> None:
     """받을 수 없는 구간이 든 카드를 열면 그 행이 강조되고 확인이 막히며, 고치면 풀려야 한다.
 
     둘째 구간(3595~3599초)이 받을 수 없는 480p(30fps · 3590초) 카드의 편집 창을 엶
@@ -2041,7 +2074,7 @@ def test_opening_the_editor_marks_the_unfit_section_and_fixing_it_clears_the_war
 
 def test_the_waiting_hint_shows_only_while_the_batch_waits_for_the_edited_card(
     qtbot, tmp_path, basis, started
-):
+) -> None:
     """편집 창 아래쪽 안내는 배치가 그 카드를 기다리는 동안에만 보여야 한다.
 
     A 편집 중, B 대기. 창을 열었을 때 -> 안내 숨김
@@ -2066,7 +2099,9 @@ def test_the_waiting_hint_shows_only_while_the_batch_waits_for_the_edited_card(
     assert "A download is waiting for this card" in shown(dialog.waitHintLabel)
 
 
-def test_values_from_the_card_are_shown_bright_even_when_they_are_zero(qtbot, tmp_path, basis):
+def test_values_from_the_card_are_shown_bright_even_when_they_are_zero(
+    qtbot, tmp_path, basis
+) -> None:
     """목록에서 온 값은 0이어도 친 값처럼 전부 밝게 보여야 한다 — 아무것도 치지 않은 칸과 구분된다.
 
     구간 (0, 3600) · (600, 1200)이 있는 카드를 열면 첫 행은 00:00:00:00 ~ 01:00:00:00
@@ -2091,7 +2126,7 @@ def test_values_from_the_card_are_shown_bright_even_when_they_are_zero(qtbot, tm
 # ================================================================ 영상의 끝 타임코드
 
 
-def test_header_shows_the_end_of_the_video_only_after_the_lookup(qtbot, tmp_path, basis):
+def test_header_shows_the_end_of_the_video_only_after_the_lookup(qtbot, tmp_path, basis) -> None:
     """머리줄은 조회가 끝난 뒤에만 영상의 끝 타임코드를 보여야 한다.
 
     조회를 붙잡아 둔 동안 -> 끝 타임코드 "" (모르는 값을 보이지 않는다), 머리줄 숨김
@@ -2114,7 +2149,7 @@ def test_header_shows_the_end_of_the_video_only_after_the_lookup(qtbot, tmp_path
     assert dialog.headerLabel.toolTip().splitlines()[0] == "01:00:00.000"
 
 
-def test_no_end_is_shown_when_the_lookup_failed(qtbot, tmp_path, basis):
+def test_no_end_is_shown_when_the_lookup_failed(qtbot, tmp_path, basis) -> None:
     """조회가 실패하면 영상의 끝 타임코드를 보이지 않아야 한다.
 
     조회 대역이 예외를 던짐 -> 끝 타임코드 "", 머리줄 숨김
@@ -2142,7 +2177,7 @@ def test_no_end_is_shown_when_the_lookup_failed(qtbot, tmp_path, basis):
 )
 def test_the_shown_end_is_the_last_frame_boundary_of_the_looked_up_length(
     qtbot, tmp_path, basis, fps, duration, end
-):
+) -> None:
     """영상의 끝 타임코드는 조회한 프레임률 · 길이에서 길이를 넘지 않는 마지막 프레임 경계여야 한다.
 
     위 표의 프레임률 · 길이 -> 끝 타임코드가 표와 같고, 머리줄에 그 값이 들어 있다
@@ -2167,7 +2202,7 @@ def test_the_shown_end_is_the_last_frame_boundary_of_the_looked_up_length(
 )
 def test_typing_the_shown_end_reaches_the_end_and_one_frame_more_is_set_back_to_it(
     qtbot, tmp_path, basis, fps, duration, end_digits, one_more
-):
+) -> None:
     """보인 끝 타임코드를 끝 칸에 치면 통과하고 전체 다운로드로 판정되며, 한 프레임 더하면 그 끝으로 맞춰져야 한다.
 
     위 표의 프레임률 · 길이에서 끝 칸에 끝 타임코드의 숫자를 침 -> 오류 없음, 확인하면 selections == ()
@@ -2192,7 +2227,7 @@ def test_typing_the_shown_end_reaches_the_end_and_one_frame_more_is_set_back_to_
     assert item.selections == ()
 
 
-def test_the_end_follows_the_looked_up_rate_not_the_declared_one(qtbot, tmp_path, basis):
+def test_the_end_follows_the_looked_up_rate_not_the_declared_one(qtbot, tmp_path, basis) -> None:
     """영상의 끝 타임코드는 목록의 선언 프레임률이 아니라 조회한 프레임률로 정해야 한다.
 
     카드의 1080p 선언값 60fps, 조회값 30fps · 10.5초
@@ -2210,7 +2245,9 @@ def test_the_end_follows_the_looked_up_rate_not_the_declared_one(qtbot, tmp_path
 # ================================================================ Enter
 
 
-def test_enter_confirms_the_field_and_moves_on_without_closing_the_window(qtbot, tmp_path, basis):
+def test_enter_confirms_the_field_and_moves_on_without_closing_the_window(
+    qtbot, tmp_path, basis
+) -> None:
     """시분초 칸에서 Enter를 치면 값을 확정하고 프레임 칸을 건너뛰어 다음 시각의 시분초 칸으로 가야 하며 창은 닫히지 않아야 한다.
 
     60fps. 행 둘. 첫째 행 시작 시분초 칸에 1000(10분)을 치고 Enter -> 포커스가 첫째 행 끝의 시분초 칸, 창 열림
@@ -2243,7 +2280,7 @@ def test_enter_confirms_the_field_and_moves_on_without_closing_the_window(qtbot,
     assert item.selections == ()
 
 
-def test_enter_sets_digits_above_the_maximum_like_leaving_the_field(qtbot, tmp_path, basis):
+def test_enter_sets_digits_above_the_maximum_like_leaving_the_field(qtbot, tmp_path, basis) -> None:
     """Enter는 칸을 떠날 때처럼 최대를 넘은 값을 최대값으로 맞춰야 한다.
 
     30fps. 끝 시분초 칸에 75(초 75)를 치고 Enter
@@ -2265,7 +2302,7 @@ def test_enter_sets_digits_above_the_maximum_like_leaving_the_field(qtbot, tmp_p
     assert dialog.isVisible()
 
 
-def test_the_window_closes_only_through_the_ok_button(qtbot, tmp_path, basis):
+def test_the_window_closes_only_through_the_ok_button(qtbot, tmp_path, basis) -> None:
     """창은 확인 버튼으로만 닫혀야 한다 — 창이나 다른 버튼에 간 Enter는 닫지 않고, 확인 버튼에 포커스가 있을 때의 Enter는 닫는다.
 
     값이 유효한 창에서 창 자신과 구간 추가 버튼에 Enter를 보냄 -> 창 열림, 구간 그대로
@@ -2291,7 +2328,7 @@ def test_the_window_closes_only_through_the_ok_button(qtbot, tmp_path, basis):
     assert item.selections == (TimeRange(600.0, 1200.0),)
 
 
-def test_escape_cancels_the_window(qtbot, tmp_path, basis):
+def test_escape_cancels_the_window(qtbot, tmp_path, basis) -> None:
     """Esc는 취소와 같이 창을 닫고 구간을 쓰지 않아야 한다.
 
     구간을 고친 창의 입력 칸에서 Esc -> 창 닫힘, selections == ()
@@ -2311,17 +2348,17 @@ def test_escape_cancels_the_window(qtbot, tmp_path, basis):
 
 
 @pytest.fixture
-def opened(monkeypatch):
+def opened(monkeypatch) -> list[tuple[str, str] | str]:
     """폴더 열기가 OS에 넘기는 것을 적어 둔다 — 탐색기 · 파일 관리자를 실제로 띄우지 않는다."""
     import app.widgets.widget as widget_module
 
     calls: list = []
 
-    def detached(program, arguments):
+    def detached(program, arguments) -> bool:
         calls.append(("select", arguments[-1]))
         return True
 
-    def open_url(url):
+    def open_url(url) -> bool:
         calls.append(("open", url.toLocalFile()))
         return True
 
@@ -2333,7 +2370,9 @@ def opened(monkeypatch):
     return calls
 
 
-def finished_section_card(qtbot, tmp_path, basis, service):
+def finished_section_card(
+    qtbot, tmp_path, basis, service
+) -> tuple[VodDownloader, ContentItem, tuple[str, ...]]:
     """구간 셋을 모두 받아 완료된 카드 — 구간 파일 `_1` · `_2` · `_3`이 디스크에 있다."""
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -2365,7 +2404,7 @@ def _same_file(first: str, second: str) -> bool:
 
 def test_folder_button_of_a_section_card_selects_the_lowest_numbered_file_that_exists(
     qtbot, tmp_path, basis, service, opened
-):
+) -> None:
     """구간 카드의 폴더 버튼은 실제로 있는 구간 파일 가운데 번호가 가장 작은 것을 선택한 채 폴더를 열어야 한다.
 
     구간 파일 `_1` · `_2` · `_3`이 있는 완료 카드에서 폴더 버튼 -> `_1`을 선택
@@ -2387,7 +2426,7 @@ def test_folder_button_of_a_section_card_selects_the_lowest_numbered_file_that_e
 
 def test_folder_button_opens_the_download_folder_when_no_section_file_is_left(
     qtbot, tmp_path, basis, service, opened
-):
+) -> None:
     """구간 파일이 하나도 없으면 폴더 버튼은 경고 없이 저장 폴더를 열어야 한다.
 
     완료 카드의 구간 파일 셋을 모두 지우고 폴더 버튼 -> 저장 폴더를 연다, 경고 없음
@@ -2404,7 +2443,7 @@ def test_folder_button_opens_the_download_folder_when_no_section_file_is_left(
 
 def test_folder_button_of_a_whole_download_card_still_selects_its_output_file(
     qtbot, tmp_path, basis, opened
-):
+) -> None:
     """구간 없는 카드의 폴더 버튼은 전과 같이 산출물 파일을 선택한 채 폴더를 열어야 한다.
 
     산출물 파일("제목 1080p.mp4")이 있는 완료 카드에서 폴더 버튼 -> 그 파일을 선택
@@ -2429,7 +2468,7 @@ def test_folder_button_of_a_whole_download_card_still_selects_its_output_file(
 
 def test_a_row_has_a_clock_and_a_frame_field_for_each_time_with_a_tilde_between(
     qtbot, tmp_path, basis
-):
+) -> None:
     """한 행은 [시작 시분초][시작 프레임] ~ [끝 시분초][끝 프레임] 순서로 놓여야 한다.
 
     편집 창의 첫 행 -> 네 칸과 "~"가 보이고, 왼쪽 끝의 x가 그 순서로 커진다
@@ -2452,7 +2491,7 @@ def test_a_row_has_a_clock_and_a_frame_field_for_each_time_with_a_tilde_between(
     assert shown(row.rangeLabel) == "~"
 
 
-def test_one_minute_typed_as_0100_reaches_the_card_as_sixty_seconds(qtbot, tmp_path, basis):
+def test_one_minute_typed_as_0100_reaches_the_card_as_sixty_seconds(qtbot, tmp_path, basis) -> None:
     """시분초 칸에 0100을 치면 1분이어야 한다 — 카드에 60초로 쓰인다.
 
     60fps. 시작 시분초 칸에 0100, 끝 시분초 칸에 012345 · 프레임 칸에 30을 치고 확인
@@ -2477,7 +2516,7 @@ def test_one_minute_typed_as_0100_reaches_the_card_as_sixty_seconds(qtbot, tmp_p
     assert item.selections == (TimeRange(60.0, 5025.5),)
 
 
-def test_tab_walks_the_four_fields_of_a_row_in_order(qtbot, tmp_path, basis):
+def test_tab_walks_the_four_fields_of_a_row_in_order(qtbot, tmp_path, basis) -> None:
     """Tab은 시작 시분초 → 시작 프레임 → 끝 시분초 → 끝 프레임 순서로 가고 Shift+Tab은 거꾸로 가야 한다.
 
     첫 행의 시작 시분초 칸에서 Tab을 세 번, 이어 Shift+Tab을 세 번
@@ -2511,7 +2550,7 @@ def test_tab_walks_the_four_fields_of_a_row_in_order(qtbot, tmp_path, basis):
     ]
 
 
-def test_enter_in_a_frame_field_goes_to_the_next_clock_field(qtbot, tmp_path, basis):
+def test_enter_in_a_frame_field_goes_to_the_next_clock_field(qtbot, tmp_path, basis) -> None:
     """프레임 칸에서 Enter를 치면 다음 시각의 시분초 칸으로 가고, 마지막 끝의 프레임 칸에서는 확인 버튼으로 가야 한다.
 
     행 하나. 시작 프레임 칸에서 Enter -> 끝 시분초 칸. 끝 프레임 칸에서 Enter -> 확인 버튼. 창은 열려 있다
@@ -2539,7 +2578,7 @@ def test_enter_in_a_frame_field_goes_to_the_next_clock_field(qtbot, tmp_path, ba
 
 def test_period_moves_from_the_clock_field_to_the_frame_field_of_the_same_time(
     qtbot, tmp_path, basis
-):
+) -> None:
     """시분초 칸에서 "."을 누르면 같은 시각의 프레임 칸으로 가고, 이어 친 숫자가 프레임이 되어야 한다.
 
     끝 시분초 칸에 1000 · "." · 30
@@ -2564,7 +2603,9 @@ def test_period_moves_from_the_clock_field_to_the_frame_field_of_the_same_time(
     assert row.endEdit.text() == "00:10:00:30"
 
 
-def test_end_timecode_of_the_header_typed_into_both_fields_reaches_the_end(qtbot, tmp_path, basis):
+def test_end_timecode_of_the_header_typed_into_both_fields_reaches_the_end(
+    qtbot, tmp_path, basis
+) -> None:
     """머리줄의 끝 타임코드를 시분초 칸과 프레임 칸에 나눠 치면 영상 끝까지 받는 구간이어야 한다.
 
     60fps · 길이 100.25초(끝 타임코드 00:01:40:15). 끝 시분초 칸에 140, 프레임 칸에 15를 치고 확인
@@ -2589,7 +2630,9 @@ def test_end_timecode_of_the_header_typed_into_both_fields_reaches_the_end(qtbot
     assert item.selections == (TimeRange(10.0, 100.25),)
 
 
-def test_frame_change_that_breaks_the_whole_time_follows_the_timing_table(qtbot, tmp_path, basis):
+def test_frame_change_that_breaks_the_whole_time_follows_the_timing_table(
+    qtbot, tmp_path, basis
+) -> None:
     """프레임 칸의 값이 바뀌어 생긴 시각 전체의 오류도 표를 따라야 한다 — 끝이 시작에 못 미치는 것은 떠날 때 띄운다.
 
     60fps. 시작 00:10:00:30, 끝 시분초 00:10:00인 행의 끝 프레임 칸에 2 · 0을 침(00:10:00:20 < 시작)
@@ -2636,7 +2679,7 @@ def _range(first: int, last: int, rate: Fraction) -> TimeRange:
         (30, 90, (15, 45)),  # 가운데가 아니면 그 프레임 그대로
     ],
 )
-def test_refit_sends_an_exact_midpoint_outwards(old, new, first, last, expected):
+def test_refit_sends_an_exact_midpoint_outwards(old, new, first, last, expected) -> None:
     """새 프레임률의 두 프레임 정확히 가운데에 오는 시각은 시작이면 앞 프레임, 끝이면 뒤 프레임으로 가야 한다.
 
     60fps(또는 59.94fps)의 프레임 번호 (first, last)로 만든 구간을 절반의 프레임률에 맞춤
@@ -2648,7 +2691,7 @@ def test_refit_sends_an_exact_midpoint_outwards(old, new, first, last, expected)
     assert refit == _range(*expected, new)
 
 
-def test_refit_to_a_doubled_frame_rate_is_exactly_twice_the_frame_number():
+def test_refit_to_a_doubled_frame_rate_is_exactly_twice_the_frame_number() -> None:
     """30fps에서 60fps로 맞추면 프레임 번호가 정확히 두 배여야 한다 — 가운데가 생기지 않는다.
 
     30fps의 프레임 15~46 -> 60fps의 프레임 30~92
@@ -2658,7 +2701,7 @@ def test_refit_to_a_doubled_frame_rate_is_exactly_twice_the_frame_number():
     assert refit == _range(30, 92, Fraction(60))
 
 
-def test_refit_picks_the_nearest_frame_when_not_at_a_midpoint():
+def test_refit_picks_the_nearest_frame_when_not_at_a_midpoint() -> None:
     """가운데가 아닌 시각은 시작이든 끝이든 가장 가까운 프레임으로 가야 한다.
 
     60fps의 프레임 7~101을 24fps에 맞춤(7/60초 = 24fps의 2.8번째, 101/60초 = 40.4번째)
@@ -2671,7 +2714,7 @@ def test_refit_picks_the_nearest_frame_when_not_at_a_midpoint():
 
 def test_going_back_to_the_original_frame_rate_restores_the_original_sections(
     qtbot, tmp_path, basis
-):
+) -> None:
     """해상도를 바꿨다가 원래 프레임률로 돌아오면 사용자가 확정한 원래 구간이 그대로 나와야 한다.
 
     60fps에서 홀수 프레임의 구간(00:00:10:31 ~ 00:00:20:01)을 확인 → 480p(30fps) → 1080p(60fps)
@@ -2693,7 +2736,9 @@ def test_going_back_to_the_original_frame_rate_restores_the_original_sections(
     assert notice_of(win, item) == ""
 
 
-def test_changing_twice_refits_from_the_original_not_from_the_last_result(qtbot, tmp_path, basis):
+def test_changing_twice_refits_from_the_original_not_from_the_last_result(
+    qtbot, tmp_path, basis
+) -> None:
     """해상도를 연달아 바꿔도 결과는 원래 구간을 지금의 프레임률에 한 번 맞춘 것이어야 한다.
 
     60fps에서 00:00:10:31 ~ 00:00:20:01을 확인 → 480p(30fps) → 1080p(60fps) → 480p(30fps)
@@ -2716,7 +2761,7 @@ def test_changing_twice_refits_from_the_original_not_from_the_last_result(qtbot,
     assert seen[2] == expected
 
 
-def test_editing_after_a_change_makes_the_edit_the_new_original(qtbot, tmp_path, basis):
+def test_editing_after_a_change_makes_the_edit_the_new_original(qtbot, tmp_path, basis) -> None:
     """해상도를 바꾼 뒤 구간을 다시 확정하면 그 값이 새 원래 값이 되어야 한다.
 
     60fps에서 구간을 확인 → 480p(30fps)에서 편집 창을 열어 00:00:05:07 ~ 00:00:09:11로 확정
@@ -2743,7 +2788,7 @@ def test_editing_after_a_change_makes_the_edit_the_new_original(qtbot, tmp_path,
     assert item.selections == edited
 
 
-def test_a_section_pulled_to_a_shorter_end_gets_its_end_back(qtbot, tmp_path, basis):
+def test_a_section_pulled_to_a_shorter_end_gets_its_end_back(qtbot, tmp_path, basis) -> None:
     """더 짧은 해상도에서 끝이 당겨진 구간도 원래 해상도로 돌아오면 원래 끝으로 돌아가야 한다.
 
     60fps · 3600초에서 00:10:00:00 ~ 01:00:00:00(영상 끝)을 확인 → 480p(30fps · 3590초) → 1080p
@@ -2796,7 +2841,7 @@ IGNORED = "Empty — this row is ignored"
 
 def test_a_card_without_sections_opens_with_one_empty_row_that_confirms_as_a_whole_download(
     qtbot, tmp_path, basis
-):
+) -> None:
     """구간 없는 카드를 열면 빈 행 하나가 보이고, 그대로 확인하면 빈 튜플이어야 한다.
 
     60fps · 3600초, 구간 없는 카드
@@ -2833,7 +2878,7 @@ def test_a_card_without_sections_opens_with_one_empty_row_that_confirms_as_a_who
 )
 def test_the_only_row_can_be_cleared_as_soon_as_any_field_has_a_value(
     qtbot, tmp_path, basis, column, typer, digits
-):
+) -> None:
     """행이 하나뿐일 때 네 칸 중 하나라도 값이 있으면 ✕가 켜지고, 누르면 행은 남고 네 칸이 비워져야 한다.
 
     60fps · 3600초, 빈 행 하나. 네 칸 가운데 하나에 5를 침(칸마다)
@@ -2864,7 +2909,7 @@ def test_the_only_row_can_be_cleared_as_soon_as_any_field_has_a_value(
 
 def test_clearing_the_only_row_leaves_it_like_a_fresh_empty_row_and_focuses_its_start(
     qtbot, tmp_path, basis
-):
+) -> None:
     """하나뿐인 행의 값을 비우면 안내 줄 · 오류 · 확인 버튼이 빈 행 하나일 때와 같아야 하고, 포커스는 시작 시분초 칸이어야 한다.
 
     60fps · 3600초, 행 하나에 시작 00:20:00:00 · 끝 00:10:00:00(끝이 시작보다 앞이라 오류)을 넣고 ✕
@@ -2893,7 +2938,7 @@ def test_clearing_the_only_row_leaves_it_like_a_fresh_empty_row_and_focuses_its_
 
 def test_the_x_button_says_clear_for_the_only_row_and_delete_when_there_are_more(
     qtbot, tmp_path, basis
-):
+) -> None:
     """✕의 툴팁은 행이 하나뿐이면 값을 비운다고, 둘 이상이면 구간을 지운다고 말해야 한다.
 
     행 하나 -> "Clear values". 구간 추가로 두 행 -> 두 행 모두 "Delete section"
@@ -2910,7 +2955,9 @@ def test_the_x_button_says_clear_for_the_only_row_and_delete_when_there_are_more
     assert [row.deleteButton.toolTip() for row in dialog._rows] == ["Delete section"] * 2
 
 
-def test_the_only_row_cannot_be_deleted_and_no_action_leaves_zero_rows(qtbot, tmp_path, basis):
+def test_the_only_row_cannot_be_deleted_and_no_action_leaves_zero_rows(
+    qtbot, tmp_path, basis
+) -> None:
     """행이 하나면 삭제 버튼이 꺼져 있고, 어떤 조작으로도 행이 0개가 되지 않아야 한다.
 
     행 1개 -> 삭제 꺼짐. 뷰모델에 직접 삭제를 청해도 1행
@@ -2941,7 +2988,7 @@ def test_the_only_row_cannot_be_deleted_and_no_action_leaves_zero_rows(qtbot, tm
 
 def test_adding_a_section_gives_an_empty_row_and_focuses_its_start_clock_field(
     qtbot, tmp_path, basis
-):
+) -> None:
     """구간 추가는 빈 행을 끝에 넣고 그 행의 시작 시분초 칸에 포커스를 줘야 한다.
 
     첫 행에 10분~20분을 넣고 구간 추가
@@ -2970,7 +3017,7 @@ def test_adding_a_section_gives_an_empty_row_and_focuses_its_start_clock_field(
 )
 def test_an_empty_start_means_the_beginning_and_an_empty_end_means_the_end(
     qtbot, tmp_path, basis, start, end, expected
-):
+) -> None:
     """빈 시작은 영상 맨 처음, 빈 끝은 영상 맨 끝이어야 한다.
 
     60fps · 3600초. 한 행의 시작만 00:10:00:00 / 끝만 00:20:00:00
@@ -2991,7 +3038,7 @@ def test_an_empty_start_means_the_beginning_and_an_empty_end_means_the_end(
     assert item.selections == (expected,)
 
 
-def test_a_frame_typed_under_an_empty_clock_field_counts_from_zero(qtbot, tmp_path, basis):
+def test_a_frame_typed_under_an_empty_clock_field_counts_from_zero(qtbot, tmp_path, basis) -> None:
     """시분초 칸이 빈 채 프레임 칸만 치면 그 시각은 00:00:00에 그 프레임이어야 한다.
 
     60fps. 끝의 프레임 칸에만 30을 침(시분초 칸은 치지 않음)
@@ -3012,7 +3059,9 @@ def test_a_frame_typed_under_an_empty_clock_field_counts_from_zero(qtbot, tmp_pa
     assert item.selections == (TimeRange(0.0, 0.5),)
 
 
-def test_three_empty_rows_keep_the_top_one_and_confirm_as_a_whole_download(qtbot, tmp_path, basis):
+def test_three_empty_rows_keep_the_top_one_and_confirm_as_a_whole_download(
+    qtbot, tmp_path, basis
+) -> None:
     """모든 행이 비어 있으면 맨 위 행만 남고 나머지는 안내와 함께 걸러져야 한다.
 
     빈 행 셋
@@ -3038,7 +3087,7 @@ def test_three_empty_rows_keep_the_top_one_and_confirm_as_a_whole_download(qtbot
     assert texts(dialog) == [("", "")]
 
 
-def test_an_empty_row_beside_a_filled_row_is_left_out(qtbot, tmp_path, basis):
+def test_an_empty_row_beside_a_filled_row_is_left_out(qtbot, tmp_path, basis) -> None:
     """빈 행과 입력한 행이 함께 있으면 입력한 행만 구간이 되고 안내는 빈 행에만 보여야 한다.
 
     첫 행은 빈 채, 둘째 행에 10분~20분
@@ -3067,7 +3116,7 @@ def test_an_empty_row_beside_a_filled_row_is_left_out(qtbot, tmp_path, basis):
     assert texts(dialog) == [("00:10:00:00", "00:20:00:00")]
 
 
-def test_rows_around_an_empty_row_are_numbered_one_and_two(qtbot, tmp_path, basis, service):
+def test_rows_around_an_empty_row_are_numbered_one_and_two(qtbot, tmp_path, basis, service) -> None:
     """입력한 행 사이의 빈 행은 번호를 받지 않고, 남은 행의 파일 번호가 _1 · _2로 이어져야 한다.
 
     행: 10분~20분 · 빈 행 · 30분~31분. 확인하고 받기 시작
@@ -3103,7 +3152,7 @@ def test_rows_around_an_empty_row_are_numbered_one_and_two(qtbot, tmp_path, basi
     ]
 
 
-def test_two_rows_with_only_the_same_start_are_duplicates(qtbot, tmp_path, basis):
+def test_two_rows_with_only_the_same_start_are_duplicates(qtbot, tmp_path, basis) -> None:
     """일부만 빈 행은 걸러지지 않아, 시작만 같은 값인 두 행은 중복 오류여야 한다.
 
     두 행 모두 시작만 00:10:00:00(끝은 빈 채)
@@ -3123,7 +3172,7 @@ def test_two_rows_with_only_the_same_start_are_duplicates(qtbot, tmp_path, basis
     assert not dialog.okButton.isEnabled()
 
 
-def test_a_typed_whole_video_row_beside_another_row_is_a_section(qtbot, tmp_path, basis):
+def test_a_typed_whole_video_row_beside_another_row_is_a_section(qtbot, tmp_path, basis) -> None:
     """직접 00:00:00:00 ~ 끝을 친 행은 빈 행이 아니어서, 다른 행과 함께 있으면 구간으로 들어가야 한다.
 
     행: 직접 친 00:00:00:00~01:00:00:00 · 10분~20분
@@ -3146,7 +3195,7 @@ def test_a_typed_whole_video_row_beside_another_row_is_a_section(qtbot, tmp_path
     assert item.selections == expected
 
 
-def test_the_empty_end_field_shows_the_end_of_the_video_dimmed(qtbot, tmp_path, basis):
+def test_the_empty_end_field_shows_the_end_of_the_video_dimmed(qtbot, tmp_path, basis) -> None:
     """빈 끝 칸에는 영상의 끝 타임코드가, 빈 시작 칸에는 00:00:00이 흐리게 보여야 한다.
 
     60fps · 3599.5초(끝 타임코드 00:59:59:30)인 카드의 빈 행
@@ -3173,7 +3222,7 @@ def test_the_empty_end_field_shows_the_end_of_the_video_dimmed(qtbot, tmp_path, 
 
 def test_copying_from_an_empty_field_gives_the_value_it_stands_for(
     qtbot, tmp_path, basis, monkeypatch
-):
+) -> None:
     """빈 칸에서 복사하면 그 칸이 뜻하는 값이 클립보드에 들어가야 한다.
 
     60fps · 3600초의 빈 행. 시작 칸 · 끝 칸에서 차례로 복사
@@ -3202,7 +3251,9 @@ def test_copying_from_an_empty_field_gives_the_value_it_stands_for(
     assert copied == ["00:00:00:00", "01:00:00:00"]
 
 
-def test_times_at_the_beginning_and_the_end_are_shown_as_empty_fields(qtbot, tmp_path, basis):
+def test_times_at_the_beginning_and_the_end_are_shown_as_empty_fields(
+    qtbot, tmp_path, basis
+) -> None:
     """구간이 있는 카드를 열 때 영상 맨 처음과 같은 시작 · 맨 끝과 같은 끝은 빈 칸으로 보여야 한다.
 
     60fps · 3600초, selections = ((0, 1200), (1800, 3600))
@@ -3223,7 +3274,7 @@ def test_times_at_the_beginning_and_the_end_are_shown_as_empty_fields(qtbot, tmp
 
 def test_a_section_with_an_empty_end_follows_the_new_end_after_a_resolution_change(
     qtbot, tmp_path, basis
-):
+) -> None:
     """빈 끝으로 정한 구간은 해상도를 바꾼 뒤 새 영상의 끝을 따라가야 한다.
 
     1080p(60fps · 3600초)에서 시작만 00:10:00:00으로 확인 → 480p(30fps · 3700초)를 고름
@@ -3246,7 +3297,7 @@ def test_a_section_with_an_empty_end_follows_the_new_end_after_a_resolution_chan
 
 def test_moving_a_row_while_a_field_has_focus_does_not_overwrite_the_row_that_took_its_place(
     qtbot, tmp_path, basis
-):
+) -> None:
     """칸에 포커스가 있는 채로 행의 순서를 바꿔도 그 자리에 온 행의 값이 덮이지 않아야 한다.
 
     행 A(10분~20분) · B(30분~31분). B의 시작 시분초 칸에 포커스를 두고 B의 ▲
@@ -3288,7 +3339,9 @@ def _spots(dialog) -> list[tuple[int, int]]:
     return [(widget.mapTo(dialog, QPoint(0, 0)).x(), widget.width()) for widget in widgets]
 
 
-def test_rows_keep_their_place_when_the_scroll_bar_appears_and_disappears(qtbot, tmp_path, basis):
+def test_rows_keep_their_place_when_the_scroll_bar_appears_and_disappears(
+    qtbot, tmp_path, basis
+) -> None:
     """구간 목록의 스크롤바가 생기고 사라져도 행의 폭과 칸의 자리가 같아야 한다.
 
     창 560x420. 행 1개(스크롤바 없음) → 스크롤바가 보일 때까지 구간 추가 → 사라질 때까지 삭제
@@ -3323,7 +3376,7 @@ def test_rows_keep_their_place_when_the_scroll_bar_appears_and_disappears(qtbot,
     assert dialog._rowLayout.contentsMargins().right() == margin_without
 
 
-def test_row_height_is_the_same_with_and_without_a_message(qtbot, tmp_path, basis):
+def test_row_height_is_the_same_with_and_without_a_message(qtbot, tmp_path, basis) -> None:
     """안내 줄은 글이 없어도 한 줄을 차지해, 오류 · 무시 안내가 생기고 사라져도 행의 높이가 같아야 한다.
 
     행 A(10분~20분) · B(30분~31분). 오류 없음 → A의 시작을 50분으로(시작이 끝보다 뒤) → 되돌림 →
@@ -3359,7 +3412,7 @@ def test_row_height_is_the_same_with_and_without_a_message(qtbot, tmp_path, basi
     assert dialog._rows[0].height() == plain and blank.height() == plain
 
 
-def test_message_line_sits_right_under_the_fields_with_no_gap(qtbot, tmp_path, basis):
+def test_message_line_sits_right_under_the_fields_with_no_gap(qtbot, tmp_path, basis) -> None:
     """안내 줄은 칸의 줄 바로 아래에 붙어야 한다 — 그 사이에 간격이 없다.
 
     행 A(10분~20분) 하나
@@ -3391,7 +3444,7 @@ def test_message_line_sits_right_under_the_fields_with_no_gap(qtbot, tmp_path, b
     assert row.messageSlot.y() == lowest + 1
 
 
-def test_a_message_too_long_for_the_row_is_elided_on_one_line(qtbot, tmp_path, basis):
+def test_a_message_too_long_for_the_row_is_elided_on_one_line(qtbot, tmp_path, basis) -> None:
     """안내 줄은 줄바꿈하지 않고, 넘치는 글은 말줄임하며 전문을 툴팁에 둬야 한다. 행의 높이는 그대로다.
 
     창을 가장 좁게 줄이고 첫 행의 안내 줄에 행보다 긴 글(같은 글자 200개)을 오류로 보임
@@ -3416,7 +3469,9 @@ def test_a_message_too_long_for_the_row_is_elided_on_one_line(qtbot, tmp_path, b
     assert row.height() == plain
 
 
-def test_only_the_error_shows_when_an_error_and_a_note_fall_on_the_same_row(qtbot, tmp_path, basis):
+def test_only_the_error_shows_when_an_error_and_a_note_fall_on_the_same_row(
+    qtbot, tmp_path, basis
+) -> None:
     """안내 줄에 오류와 무시 안내가 함께 걸리면 오류만 보여야 한다.
 
     첫 행의 안내 줄에 오류 "E"와 무시 안내 "N"을 함께 넘김 -> 오류 라벨만 보이고 글 == "E"
@@ -3448,7 +3503,9 @@ def notice_shown(row) -> str:
     return shown(row.noticeLabel) if row.noticeLabel.isVisible() else ""
 
 
-def half_hour_editor(qtbot, tmp_path, basis, rows: int = 1, duration: float = HALF_HOUR):
+def half_hour_editor(
+    qtbot, tmp_path, basis, rows: int = 1, duration: float = HALF_HOUR
+) -> tuple[VodDownloader, ContentItem, SectionEditDialog]:
     """30분(60fps) 영상의 편집 창 — 행을 rows개로 늘려 둔다."""
     basis.duration = duration
     item = _make_item(str(tmp_path))
@@ -3465,7 +3522,9 @@ def wait_armed(qtbot, dialog) -> None:
     qtbot.waitUntil(dialog.clampNoticeArmed, timeout=3000)
 
 
-def test_an_end_past_the_video_is_set_to_the_end_when_the_field_is_left(qtbot, tmp_path, basis):
+def test_an_end_past_the_video_is_set_to_the_end_when_the_field_is_left(
+    qtbot, tmp_path, basis
+) -> None:
     """끝 칸이 영상의 끝을 넘은 채 떠나면 끝 타임코드로 바뀌고, 오류 없이 맞춘 안내가 보여야 한다.
 
     30분(60fps) 영상. 시작 00:10:00:00, 끝에 01:00:00:00을 치고 떠남
@@ -3494,7 +3553,7 @@ def test_an_end_past_the_video_is_set_to_the_end_when_the_field_is_left(qtbot, t
     assert item.selections == (TimeRange(600.0, HALF_HOUR),)
 
 
-def test_enter_sets_an_end_past_the_video_to_the_end_and_moves_on(qtbot, tmp_path, basis):
+def test_enter_sets_an_end_past_the_video_to_the_end_and_moves_on(qtbot, tmp_path, basis) -> None:
     """끝 칸에서 Enter를 쳐도 영상 끝으로 맞추고, 포커스는 다음 칸으로 가야 한다.
 
     30분 영상 · 행 둘. 첫 행의 끝 시분초 칸에 010000을 치고 Enter
@@ -3517,7 +3576,7 @@ def test_enter_sets_an_end_past_the_video_to_the_end_and_moves_on(qtbot, tmp_pat
 
 def test_pasting_an_end_past_the_video_sets_it_to_the_end_at_once(
     qtbot, tmp_path, basis, monkeypatch
-):
+) -> None:
     """끝 칸에 영상 끝을 넘는 값을 붙여넣으면 떠나기를 기다리지 않고 바로 영상 끝으로 맞춰야 한다.
 
     30분 영상. 클립보드 "01:00:00:00"을 끝 시분초 칸에 붙여넣음(포커스는 그 칸에 그대로)
@@ -3548,7 +3607,7 @@ def test_pasting_an_end_past_the_video_sets_it_to_the_end_at_once(
 
 def test_typing_past_the_end_changes_nothing_and_shows_a_notice_instead_of_an_error(
     qtbot, tmp_path, basis
-):
+) -> None:
     """끝 칸을 치는 동안 영상 끝을 넘으면 값을 바꾸지 않고, 붉은 오류 대신 흐린 안내만 보여야 한다.
 
     30분 영상. 끝 시분초 칸에 010000을 침(떠나지 않음) → Backspace 한 번(00:10:00)
@@ -3572,7 +3631,9 @@ def test_typing_past_the_end_changes_nothing_and_shows_a_notice_instead_of_an_er
     assert notice_shown(row) == "" and error_shown(row) == ""
 
 
-def test_ok_pressed_while_typing_past_the_end_sets_the_end_and_confirms(qtbot, tmp_path, basis):
+def test_ok_pressed_while_typing_past_the_end_sets_the_end_and_confirms(
+    qtbot, tmp_path, basis
+) -> None:
     """끝 칸을 치는 중 영상 끝을 넘은 채 확인을 눌러도 끝으로 맞춰 카드에 써야 한다.
 
     30분 영상. 시작 00:10:00:00, 끝 시분초 칸에 010000을 친 채(떠나지 않음) 확인
@@ -3593,7 +3654,7 @@ def test_ok_pressed_while_typing_past_the_end_sets_the_end_and_confirms(qtbot, t
 
 def test_the_set_notice_stays_through_the_tab_that_caused_it_and_goes_with_the_next_key(
     qtbot, tmp_path, basis
-):
+) -> None:
     """맞춘 안내는 맞추게 만든 Tab으로는 남고, 그 뒤의 키 하나에 내려가며 그 키는 칸에 들어가야 한다.
 
     30분 영상. 끝 시분초 칸에 010000을 치고 프레임 칸에서 Tab(그 시각을 떠난다) → 시작 시분초
@@ -3624,7 +3685,7 @@ def test_the_set_notice_stays_through_the_tab_that_caused_it_and_goes_with_the_n
 
 def test_the_set_notice_stays_through_the_click_that_caused_it_and_goes_with_the_next_click(
     qtbot, tmp_path, basis
-):
+) -> None:
     """맞춘 안내는 맞추게 만든 클릭으로는 남고, 그 뒤의 클릭 하나에 내려가며 그 클릭은 포커스를 줘야 한다.
 
     30분 영상. 끝 시분초 칸에 010000을 친 채 시작 시분초 칸을 클릭(끝을 떠난다) → 끝 프레임 칸을 클릭
@@ -3654,7 +3715,7 @@ def test_the_set_notice_stays_through_the_click_that_caused_it_and_goes_with_the
     assert QApplication.focusWidget() is row.endEdit.frameEdit
 
 
-def test_an_end_inside_the_video_gets_no_notice(qtbot, tmp_path, basis):
+def test_an_end_inside_the_video_gets_no_notice(qtbot, tmp_path, basis) -> None:
     """영상 끝을 넘지 않는 끝을 치고 떠나면 값이 그대로이고 맞춘 안내가 뜨지 않아야 한다.
 
     30분 영상. 끝에 00:20:00:00, 그리고 끝 타임코드 그대로 00:30:00:00을 치고 떠남
@@ -3674,7 +3735,7 @@ def test_an_end_inside_the_video_gets_no_notice(qtbot, tmp_path, basis):
 
 def test_a_value_set_to_the_field_maximum_that_is_still_past_the_end_goes_on_to_the_end(
     qtbot, tmp_path, basis
-):
+) -> None:
     """끝의 프레임이 프레임률 이상이면 최대값으로 맞추고, 그 결과가 영상 끝을 넘으면 이어서 영상 끝으로 맞추며 안내는 하나여야 한다.
 
     60fps · 1800.5초(끝 타임코드 00:30:00:30). 끝에 00:30:00:45를 치고 떠남 → 00:30:00:75를 치고 떠남
@@ -3712,7 +3773,7 @@ def test_a_value_set_to_the_field_maximum_that_is_still_past_the_end_goes_on_to_
 )
 def test_a_start_at_or_past_the_end_of_the_video_stays_an_error(
     qtbot, tmp_path, basis, end, message
-):
+) -> None:
     """시작이 영상 끝 이상이면 맞추지 않고 오류로 둬야 한다 — 끝을 넘은 끝이 함께 있어도.
 
     30분 영상. 시작 00:40:00:00, 끝은 빈 칸 / 01:00:00:00, 둘 다 떠남
@@ -3734,7 +3795,9 @@ def test_a_start_at_or_past_the_end_of_the_video_stays_an_error(
     assert not dialog.okButton.isEnabled()
 
 
-def test_an_error_caused_by_setting_the_end_is_shown_instead_of_the_notice(qtbot, tmp_path, basis):
+def test_an_error_caused_by_setting_the_end_is_shown_instead_of_the_notice(
+    qtbot, tmp_path, basis
+) -> None:
     """끝을 맞춘 뒤 생긴 중복은 오류이고, 안내 줄에는 맞춘 안내가 아니라 오류가 보여야 한다.
 
     30분 영상. 행 A: 10분~(빈 끝 = 영상 끝). 행 B: 시작 10분, 끝에 01:00:00:00을 치고 떠남
@@ -3756,7 +3819,9 @@ def test_an_error_caused_by_setting_the_end_is_shown_instead_of_the_notice(qtbot
     assert notice_shown(second) == ""
 
 
-def test_a_row_button_settles_the_field_being_typed_before_it_moves_the_row(qtbot, tmp_path, basis):
+def test_a_row_button_settles_the_field_being_typed_before_it_moves_the_row(
+    qtbot, tmp_path, basis
+) -> None:
     """끝 칸을 치는 중 영상 끝을 넘은 채 행의 ▼를 눌러도, 그 칸을 끝으로 맞춘 뒤 행을 옮겨야 한다.
 
     30분 영상 · 행 A(10분~) · B(20분~25분). A의 끝 시분초 칸에 010000을 친 채 A의 ▼
@@ -3781,7 +3846,7 @@ def test_a_row_button_settles_the_field_being_typed_before_it_moves_the_row(qtbo
 
 def test_an_end_set_to_the_end_reopens_empty_and_follows_a_new_resolution_without_a_notice(
     qtbot, tmp_path, basis
-):
+) -> None:
     """맞춘 끝은 영상 끝으로 저장돼, 다시 열면 끝 칸이 비고 해상도를 바꾸면 새 끝을 따라가야 한다.
 
     1080p 30분(60fps)에서 시작 10분 · 끝 01:00:00:00을 떠나 맞추고 확인 → 다시 엶 → 닫고
@@ -3812,7 +3877,7 @@ def test_an_end_set_to_the_end_reopens_empty_and_follows_a_new_resolution_withou
     assert dialog.viewModel().clampedRow() is None
 
 
-def test_nothing_is_set_before_the_end_of_the_video_is_known(qtbot, tmp_path, basis):
+def test_nothing_is_set_before_the_end_of_the_video_is_known(qtbot, tmp_path, basis) -> None:
     """영상의 끝을 모르는 동안(조회 중)에는 끝을 맞추지 않아야 한다.
 
     조회를 붙잡아 둔 편집 창의 뷰모델에 끝 칸의 값을 맞추라고 직접 청함 -> False, 맞춘 행 없음
@@ -3832,7 +3897,7 @@ def test_nothing_is_set_before_the_end_of_the_video_is_known(qtbot, tmp_path, ba
 
 def test_a_saved_end_past_the_video_opens_as_an_error_on_the_end_and_is_set_when_the_field_is_left(
     qtbot, tmp_path, basis
-):
+) -> None:
     """카드에 있던 끝이 영상 끝을 넘으면 열 때는 끝 칸만 칠한 오류이고, 그 칸을 떠나면 끝으로 맞춰야 한다.
 
     60fps · 3600초. 카드의 selections = ((600, 3700),) — 끝이 영상 끝을 넘는다(시작은 안이다)
@@ -3868,7 +3933,7 @@ def test_a_saved_end_past_the_video_opens_as_an_error_on_the_end_and_is_set_when
 # ================================================================ 칸 · 버튼의 툴팁 (#309)
 
 
-def test_fields_and_buttons_say_how_they_work_in_their_tooltips(qtbot, tmp_path, basis):
+def test_fields_and_buttons_say_how_they_work_in_their_tooltips(qtbot, tmp_path, basis) -> None:
     """편집 창의 시분초 칸 · 프레임 칸 · 구간 추가 · ▲▼ · 머리줄은 쓰는 법을 툴팁에 적어야 하고, 그 숫자는 코드의 값과 같아야 한다.
 
     60fps · 3600초, 빈 행 하나
@@ -3907,7 +3972,7 @@ def test_fields_and_buttons_say_how_they_work_in_their_tooltips(qtbot, tmp_path,
     ]
 
 
-def test_frame_field_tooltip_follows_the_frame_rate(qtbot, tmp_path, basis):
+def test_frame_field_tooltip_follows_the_frame_rate(qtbot, tmp_path, basis) -> None:
     """프레임 칸의 툴팁에 적는 최대값은 조회한 프레임률 − 1이어야 한다.
 
     30fps -> "Frame number, 0 to 29"
@@ -3933,7 +3998,7 @@ def total_shown(dialog) -> str:
     return dialog.totalLabel.text() if dialog.totalLabel.isVisible() else ""
 
 
-def test_total_longer_than_the_video_is_noted_and_does_not_block_ok(qtbot, tmp_path, basis):
+def test_total_longer_than_the_video_is_noted_and_does_not_block_ok(qtbot, tmp_path, basis) -> None:
     """구간 길이의 합이 영상 길이보다 길면 버튼 줄 왼쪽에 알림이 보이고, 확인은 켜져 있어야 한다.
 
     60fps · 3600초. 세 행: 처음~10분 / 4분~끝 / 1분~끝(빈 끝 = 3600초)
@@ -3969,7 +4034,7 @@ def test_total_longer_than_the_video_is_noted_and_does_not_block_ok(qtbot, tmp_p
 )
 def test_total_is_noted_only_when_it_is_longer_than_the_video(
     qtbot, tmp_path, basis, second_start, shown_text
-):
+) -> None:
     """구간 길이의 합이 영상 길이와 같거나 짧으면 알림이 없고, 한 프레임이라도 길면 보여야 한다.
 
     60fps · 3600초(216000프레임). 행 처음~00:30:00:00, 행 second_start~끝 -> 알림 == shown_text
@@ -3986,7 +4051,7 @@ def test_total_is_noted_only_when_it_is_longer_than_the_video(
 
 def test_an_empty_row_is_left_out_of_the_total_and_an_empty_end_counts_to_the_end(
     qtbot, tmp_path, basis
-):
+) -> None:
     """완전히 빈 행은 합에 들지 않고, 빈 끝은 영상 끝까지로 세야 한다.
 
     60fps · 3600초
@@ -4010,7 +4075,7 @@ def test_an_empty_row_is_left_out_of_the_total_and_an_empty_end_counts_to_the_en
 
 def test_the_total_note_coming_and_going_moves_neither_the_rows_nor_the_buttons(
     qtbot, tmp_path, basis
-):
+) -> None:
     """합 알림이 생기고 사라져도 행 영역과 취소 · 확인 버튼의 자리가 그대로여야 한다.
 
     60fps · 3600초. 두 행(알림 없음) → 둘째 행의 시작을 당겨 합이 넘게 함(알림) → 되돌림(알림 없음)
@@ -4020,7 +4085,7 @@ def test_the_total_note_coming_and_going_moves_neither_the_rows_nor_the_buttons(
     win = open_window(tmp_path, item)
     dialog = open_editor(qtbot, win, item)
 
-    def places():
+    def places() -> tuple[QRect, QRect, QRect]:
         return (
             dialog.scrollArea.geometry(),
             dialog.cancelButton.geometry(),
@@ -4042,7 +4107,7 @@ def test_the_total_note_coming_and_going_moves_neither_the_rows_nor_the_buttons(
     assert noted[1] == quiet[1] and places() == quiet[1]
 
 
-def test_no_total_is_noted_before_the_length_of_the_video_is_known(qtbot, tmp_path, basis):
+def test_no_total_is_noted_before_the_length_of_the_video_is_known(qtbot, tmp_path, basis) -> None:
     """영상 길이를 모르는 동안(조회 중)에는 합 알림이 없어야 한다.
 
     조회를 붙잡아 둔 편집 창 -> 뷰모델의 합 알림 == "", 창의 합 알림 없음
@@ -4064,7 +4129,7 @@ def test_no_total_is_noted_before_the_length_of_the_video_is_known(qtbot, tmp_pa
 
 
 @pytest.mark.parametrize("row_count", [3, 20], ids=["스크롤 없음", "스크롤 있음"])
-def test_rows_fit_inside_the_dialog_at_its_narrowest(qtbot, tmp_path, basis, row_count):
+def test_rows_fit_inside_the_dialog_at_its_narrowest(qtbot, tmp_path, basis, row_count) -> None:
     """편집 창을 가장 좁게 줄여도 각 행의 ✕ 버튼이 스크롤 영역의 보이는 부분 안에 있어야 한다.
 
     행 row_count개, 머리줄 · 버튼 줄의 글을 한 글자로 줄여 행보다 좁게 둠,
@@ -4123,7 +4188,9 @@ def _notice_width(dialog, text: str) -> int:
     return QFontMetrics(dialog.totalLabel.font()).horizontalAdvance(text)
 
 
-def test_total_notice_too_wide_for_one_line_is_split_into_its_two_sentences(qtbot, tmp_path, basis):
+def test_total_notice_too_wide_for_one_line_is_split_into_its_two_sentences(
+    qtbot, tmp_path, basis
+) -> None:
     """합 알림이 한 줄에 안 들어가면 말줄임하지 않고 두 문장을 한 줄씩 보여야 한다.
 
     60fps · 3600초. 세 행: 처음~10분 / 4분~끝 / 1분~끝. 알림 라벨의 폭을 전체 글의 한 줄 폭으로
@@ -4147,7 +4214,9 @@ def test_total_notice_too_wide_for_one_line_is_split_into_its_two_sentences(qtbo
     assert dialog.totalLabel.toolTip() == whole
 
 
-def test_buttons_stay_where_they_are_when_the_total_notice_takes_two_lines(qtbot, tmp_path, basis):
+def test_buttons_stay_where_they_are_when_the_total_notice_takes_two_lines(
+    qtbot, tmp_path, basis
+) -> None:
     """합 알림이 두 줄이 되어도 버튼 줄과 행 영역의 자리 · 높이가 그대로여야 한다.
 
     60fps · 3600초, 같은 창 폭(알림이 두 줄이 되는 폭)에서
@@ -4174,7 +4243,7 @@ def test_buttons_stay_where_they_are_when_the_total_notice_takes_two_lines(qtbot
 # ================================================================ 합 알림은 오류가 없는 행만 더한다 (#309)
 
 
-def test_duplicate_rows_are_left_out_of_the_total(qtbot, tmp_path, basis):
+def test_duplicate_rows_are_left_out_of_the_total(qtbot, tmp_path, basis) -> None:
     """같은 구간을 두 행에 넣어 중복 오류가 나면, 그 행들은 합에 들지 않아 합 알림이 없어야 한다.
 
     60fps · 3600초. 두 행 모두 00:10:00:00~00:50:00:00(40분씩 — 더하면 80분으로 영상보다 길다)
@@ -4191,7 +4260,7 @@ def test_duplicate_rows_are_left_out_of_the_total(qtbot, tmp_path, basis):
     assert total_shown(dialog) == ""
 
 
-def test_a_row_outside_the_video_is_left_out_of_the_total(qtbot, tmp_path, basis):
+def test_a_row_outside_the_video_is_left_out_of_the_total(qtbot, tmp_path, basis) -> None:
     """영상 밖이라 오류인 행은 합에 들지 않아야 한다.
 
     60fps · 3600초. 행 처음~00:55:00:00(55분), 행 01:10:00:00~01:20:00:00(영상 밖 — 10분)
@@ -4209,7 +4278,7 @@ def test_a_row_outside_the_video_is_left_out_of_the_total(qtbot, tmp_path, basis
     assert total_shown(dialog) == ""
 
 
-def test_overlapping_rows_without_errors_both_count_in_the_total(qtbot, tmp_path, basis):
+def test_overlapping_rows_without_errors_both_count_in_the_total(qtbot, tmp_path, basis) -> None:
     """겹치지만 오류가 아닌 두 행은 둘 다 합에 들어야 한다.
 
     60fps · 3600초. 행 처음~00:40:00:00(40분), 행 00:20:00:00~끝(40분) — 20분이 겹친다
@@ -4234,7 +4303,7 @@ def sum_shown(dialog) -> str:
     return dialog.sumLabel.text() if dialog.sumLabel.isVisible() else ""
 
 
-def test_sum_of_the_row_lengths_is_shown_left_of_the_buttons(qtbot, tmp_path, basis):
+def test_sum_of_the_row_lengths_is_shown_left_of_the_buttons(qtbot, tmp_path, basis) -> None:
     """편집 창은 버튼 줄 왼쪽에 행 길이의 합을 행 길이와 같은 표기로 적어야 한다.
 
     60fps · 3600초. 두 행: 00:10:00:00~00:20:00:30(10분 0.5초) / 00:30:00:00~00:31:00:00(1분)
@@ -4255,7 +4324,7 @@ def test_sum_of_the_row_lengths_is_shown_left_of_the_buttons(qtbot, tmp_path, ba
     assert cancel.top() <= label.center().y() <= cancel.bottom()
 
 
-def test_sum_follows_every_change_of_the_rows(qtbot, tmp_path, basis):
+def test_sum_follows_every_change_of_the_rows(qtbot, tmp_path, basis) -> None:
     """칸의 값 · 구간 추가 · 삭제 · 순서 바꿈이 있을 때마다 합계가 바로 바뀌어야 한다.
 
     60fps · 3600초. 처음: 00:10:00:00~00:20:00:00(10분) / 00:30:00:00~00:31:00:00(1분) -> 11분
@@ -4301,7 +4370,7 @@ def test_sum_follows_every_change_of_the_rows(qtbot, tmp_path, basis):
     ]
 
 
-def test_sum_changes_while_a_value_is_being_typed(qtbot, tmp_path, basis):
+def test_sum_changes_while_a_value_is_being_typed(qtbot, tmp_path, basis) -> None:
     """칸을 떠나지 않아도 친 값이 합계에 바로 반영돼야 한다.
 
     60fps · 3600초. 행 00:10:00:00~00:20:00:00(10분). 끝 칸에 00:21:00:00을 치고 떠나지 않음
@@ -4320,7 +4389,7 @@ def test_sum_changes_while_a_value_is_being_typed(qtbot, tmp_path, basis):
     assert sum_shown(dialog) == "Total 00:11:00.000"
 
 
-def test_rows_with_an_error_and_empty_rows_are_left_out_of_the_sum(qtbot, tmp_path, basis):
+def test_rows_with_an_error_and_empty_rows_are_left_out_of_the_sum(qtbot, tmp_path, basis) -> None:
     """오류인 행과 완전히 빈 행은 합계에 들지 않아야 한다 — 길이가 적히는 행만 센다.
 
     60fps · 3600초. 네 행: 00:10:00:00~00:20:00:00(10분) / 00:30:00:00~00:25:00:00(시작이 끝보다
@@ -4347,7 +4416,7 @@ def test_rows_with_an_error_and_empty_rows_are_left_out_of_the_sum(qtbot, tmp_pa
     assert sum_shown(dialog) == "Total 00:10:00.000"
 
 
-def test_sum_is_added_in_frames_not_in_rounded_row_lengths(qtbot, tmp_path, basis):
+def test_sum_is_added_in_frames_not_in_rounded_row_lengths(qtbot, tmp_path, basis) -> None:
     """합계는 프레임으로 더한 값이어야 한다 — 행마다 밀리초로 반올림한 길이를 더한 값이 아니다.
 
     60fps · 3600초. 한 프레임짜리 행 셋(00:00:01:00~00:00:01:01 등) — 행 길이는 저마다 "00:00:00.017"
@@ -4371,7 +4440,7 @@ def test_sum_is_added_in_frames_not_in_rounded_row_lengths(qtbot, tmp_path, basi
     assert sum_shown(dialog) == "Total 00:00:00.050"
 
 
-def test_sum_gives_way_to_the_notice_that_already_carries_it(qtbot, tmp_path, basis):
+def test_sum_gives_way_to_the_notice_that_already_carries_it(qtbot, tmp_path, basis) -> None:
     """합이 영상보다 길어 알림이 뜨면 합계 글은 숨고 알림이 그 합을 적어야 한다.
 
     60fps · 3600초. 행 처음~00:40:00:00, 행 00:20:00:00~끝 (합 80분 > 60분)
@@ -4393,7 +4462,7 @@ def test_sum_gives_way_to_the_notice_that_already_carries_it(qtbot, tmp_path, ba
     assert (sum_shown(dialog), total_shown(dialog)) == ("Total 00:50:00.000", "")
 
 
-def test_sum_is_not_shown_until_the_lookup_ends(qtbot, tmp_path, basis):
+def test_sum_is_not_shown_until_the_lookup_ends(qtbot, tmp_path, basis) -> None:
     """조회가 끝나기 전에는 합계를 적지 않아야 하고, 끝나면 적어야 한다.
 
     조회를 막아 둔 채 편집 창을 엶 -> 합계 없음
@@ -4416,7 +4485,9 @@ def test_sum_is_not_shown_until_the_lookup_ends(qtbot, tmp_path, basis):
     assert sum_shown(dialog) == "Total 01:00:00.000"
 
 
-def test_dialog_at_its_narrowest_keeps_the_sum_and_both_buttons_inside(qtbot, tmp_path, basis):
+def test_dialog_at_its_narrowest_keeps_the_sum_and_both_buttons_inside(
+    qtbot, tmp_path, basis
+) -> None:
     """창을 가장 좁게 줄여도 합계 · 취소 · 확인이 창 안에 다 보여야 한다.
 
     60fps · 3600초, 행 00:10:00:00~00:20:00:00. 창 폭을 1로 청함(최소 폭으로 선다)

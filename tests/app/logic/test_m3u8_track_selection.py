@@ -6,6 +6,7 @@ playback 정보의 트랙과 마스터 플레이리스트의 변형을 같은 �
 
 import json
 import os
+from collections.abc import Callable
 
 import pytest
 
@@ -71,7 +72,7 @@ def variant_url(number: int) -> str:
 
 
 @pytest.fixture
-def serve_master(monkeypatch):
+def serve_master(monkeypatch) -> Callable[[str], None]:
     """마스터 플레이리스트 요청에 주어진 본문으로 답하게 한다."""
 
     def install(text: str) -> None:
@@ -83,7 +84,7 @@ def serve_master(monkeypatch):
 class TestLandscapeBroadcastIsUnchanged:
     """가로 방송의 목록 · 선택 · 파일명은 #318 수정 전과 같다 — 수정 전 코드에서 얻은 값이다."""
 
-    def test_list_has_one_entry_per_track_in_ascending_order(self):
+    def test_list_has_one_entry_per_track_in_ascending_order(self) -> None:
         """가로 방송의 해상도 목록은 트랙마다 하나씩 오름차순이고 자동 선택은 가장 높은 해상도여야 한다.
 
         LANDSCAPE(트랙 5개)
@@ -102,7 +103,7 @@ class TestLandscapeBroadcastIsUnchanged:
     )
     def test_each_listed_resolution_selects_its_own_stream(
         self, serve_master, resolution, track_number
-    ):
+    ) -> None:
         """가로 방송에서 목록의 해상도를 고르면 그 트랙의 플레이리스트 주소가 나와야 한다.
 
         LANDSCAPE의 playback 정보와 마스터 플레이리스트, 목록의 해상도마다
@@ -114,7 +115,7 @@ class TestLandscapeBroadcastIsUnchanged:
 
         assert base_url == variant_url(track_number)
 
-    def test_file_names_carry_the_listed_resolution(self, tmp_path):
+    def test_file_names_carry_the_listed_resolution(self, tmp_path) -> None:
         """가로 방송의 파일명은 `{제목} {목록의 해상도}p.mp4`여야 한다.
 
         LANDSCAPE, 제목 "방송"
@@ -157,7 +158,7 @@ class TestMasterEndingWithATagFailsWithAKey:
         ],
         ids=["no-track", "track-without-variant"],
     )
-    def test_selecting_720_fails_with_the_stream_not_found_key(self, serve_master, tracks):
+    def test_selecting_720_fails_with_the_stream_not_found_key(self, serve_master, tracks) -> None:
         """마스터가 주소 줄 없는 720 태그로 끝나면 720을 고를 때 STREAM_NOT_FOUND 키의 선택 실패여야 한다.
 
         MASTER, playback 트랙(480만 · 480과 720), 해상도 720

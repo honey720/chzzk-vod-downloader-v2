@@ -139,7 +139,7 @@ class CutError(Exception):
     message_key는 번역하지 않은 i18n 키 원문이다(이 모듈의 ``CUT_*`` 상수).
     """
 
-    def __init__(self, message_key: str, detail: str = ""):
+    def __init__(self, message_key: str, detail: str = "") -> None:
         super().__init__(f"{message_key}: {detail}" if detail else message_key)
         self.message_key = message_key
 
@@ -382,7 +382,7 @@ class _CutProgress:
 
     def __init__(
         self, on_progress: Callable[[float], None] | None, work: dict[str, tuple[float, float]]
-    ):
+    ) -> None:
         self._on_progress = on_progress
         self._work = work
         self._total = sum(amount for amount, _length in work.values())

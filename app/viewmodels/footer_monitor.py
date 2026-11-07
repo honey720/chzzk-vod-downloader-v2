@@ -106,7 +106,7 @@ class RunResult(QObject):
 
     changed = Signal()
 
-    def __init__(self, model, order, parent: QObject | None = None):
+    def __init__(self, model, order, parent: QObject | None = None) -> None:
         """결과를 만든다.
 
         Args:

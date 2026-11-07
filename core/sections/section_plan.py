@@ -361,7 +361,7 @@ class _Locator:
         source: SectionSource,
         group: SegmentGroup,
         steps: int,
-    ):
+    ) -> None:
         self._number = number  # 구간 번호 — 실패를 어느 구간의 것으로 알릴지
         self._source = source
         self._group = group

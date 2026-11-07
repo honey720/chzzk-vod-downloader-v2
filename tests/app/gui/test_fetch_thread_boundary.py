@@ -24,6 +24,7 @@
 """
 
 import threading
+from collections.abc import Callable, Iterator
 
 import pytest
 from PySide6.QtCore import Qt
@@ -31,6 +32,7 @@ from PySide6.QtCore import Qt
 import app.views.mainWindow as mw_mod
 from core.chzzk import metadata_service
 from core.chzzk.metadata_service import MetadataError
+from typing import Never
 
 MAIN_THREAD = threading.main_thread().ident
 URL = "https://chzzk.naver.com/video/1"
@@ -38,17 +40,17 @@ DUMMY_COOKIES = {"NID_AUT": "dummy-aut", "NID_SES": "dummy-ses"}
 
 
 @pytest.fixture(autouse=True)
-def no_network(monkeypatch):
+def no_network(monkeypatch) -> None:
     """위젯·조회의 HTTP 세션을 차단한다 — 조회 함수는 별도로 패치하므로 여기까지 오면 결함이다."""
 
     class _FailingSession:
         """requests 세션 대역 — 어떤 요청이든 즉시 예외. 카드의 썸네일·크기 조회 스레드까지 막는다."""
 
-        def head(self, *a, **k):
+        def head(self, *a, **k) -> Never:
             """HEAD 요청(파일 크기 조회) 차단."""
             raise RuntimeError("network disabled in tests")
 
-        def get(self, *a, **k):
+        def get(self, *a, **k) -> Never:
             """GET 요청(썸네일·API) 차단."""
             raise RuntimeError("network disabled in tests")
 
@@ -57,7 +59,7 @@ def no_network(monkeypatch):
 
 
 @pytest.fixture
-def window(qapp, monkeypatch):
+def window(qapp, monkeypatch) -> Iterator[mw_mod.VodDownloader]:
     """실물 메인 창 — 팝업은 기록으로 대체한다(실모달이 뜨면 이벤트 루프가 멈춘다).
 
     config는 conftest의 autouse 픽스처가 임시 폴더로 격리한다.
@@ -87,13 +89,13 @@ class Recorder:
     잰다.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.events: list[tuple[str, int]] = []
 
-    def hook(self, name: str):
+    def hook(self, name: str) -> Callable[..., None]:
         """`name` 지점에 붙일 슬롯을 만든다 — Signal 인자는 버리고 이름과 스레드 id만 남긴다."""
 
-        def slot(*args):
+        def slot(*args) -> None:
             """DirectConnection으로 붙는 슬롯 — 발신 스레드에서 돈다."""
             self.events.append((name, threading.get_ident()))
 
@@ -142,12 +144,12 @@ def _result(download_path: str) -> tuple:
 
 
 @pytest.fixture
-def fetch_spy(monkeypatch):
+def fetch_spy(monkeypatch) -> tuple[list[dict], dict[str, object]]:
     """core 조회 함수를 대역으로 — 호출 스레드 id와 받은 인자를 기록하고, 지정한 결과/예외를 낸다."""
     calls: list[dict] = []
     outcome = {"raise": None, "download_path": ""}
 
-    def fake_fetch(vod_url, cookies, download_path, api):
+    def fake_fetch(vod_url, cookies, download_path, api) -> tuple[tuple, str]:
         """core 조회 함수 자리 — 풀 스레드에서 불리므로 여기서 잡은 id가 "조회 스레드"다."""
         calls.append(
             {
@@ -175,7 +177,7 @@ class TestFetchRunsOffTheMainThread:
 
     def test_the_core_fetch_is_called_on_a_pool_thread_with_the_given_arguments(
         self, window, fetch_spy, tmp_path
-    ):
+    ) -> None:
         calls, _ = fetch_spy
         window.contentManager.fetchContent(URL, DUMMY_COOKIES, str(tmp_path))
         _pool_done(window)
@@ -197,7 +199,7 @@ class TestArrivalOnTheMainThread:
 
     def test_success_replaces_the_placeholder_on_the_main_thread(
         self, window, fetch_spy, qapp, tmp_path
-    ):
+    ) -> None:
         rec = _observe(window)
         cm = window.contentManager
 
@@ -224,7 +226,7 @@ class TestArrivalOnTheMainThread:
 
     def test_failure_removes_the_placeholder_and_reports_on_the_main_thread(
         self, window, fetch_spy, qapp, tmp_path
-    ):
+    ) -> None:
         _, outcome = fetch_spy
         outcome["raise"] = MetadataError("Video not found", URL)
         rec = _observe(window)
@@ -265,7 +267,7 @@ class TestArrivalOnTheMainThread:
 
     def test_unexpected_exception_is_reported_without_raw_details(
         self, window, fetch_spy, qapp, tmp_path
-    ):
+    ) -> None:
         """MetadataError가 아닌 예외도 같은 경로로 메인 스레드에 도착하고, 원시 문자열·쿠키는 새지 않는다 (#126)."""
         _, outcome = fetch_spy
         outcome["raise"] = RuntimeError("raw internal detail dummy-ses")

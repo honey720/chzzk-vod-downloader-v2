@@ -11,6 +11,7 @@
 
 import struct
 import tracemalloc
+from collections.abc import Callable, Iterator
 from fractions import Fraction
 
 import pytest
@@ -35,7 +36,7 @@ from core.sections.timecode import snap_to_frame
 from tests.support.mp4_builder import audio_spec, box, build_mp4, video_spec
 
 
-def _reader(data: bytes, log: list[tuple[int, int]] | None = None):
+def _reader(data: bytes, log: list[tuple[int, int]] | None = None) -> Callable[[int, int], bytes]:
     """bytes를 파일처럼 읽어 주는 읽기 함수 — 요청을 log에 남긴다."""
 
     def read(offset: int, size: int) -> bytes:
@@ -49,7 +50,7 @@ def _reader(data: bytes, log: list[tuple[int, int]] | None = None):
 # ================================================================ 프레임 시각
 
 
-def test_parse_moov_orders_frames_by_presentation_time():
+def test_parse_moov_orders_frames_by_presentation_time() -> None:
     """parse_moov는 ctts를 적용해 프레임 PTS를 표시 순서로 돌려줘야 한다.
 
     디코드 순서 I P B B × 3, ctts=[100, 300, 0, 0] × 3, 샘플 길이 100, timescale 1000
@@ -61,7 +62,7 @@ def test_parse_moov_orders_frames_by_presentation_time():
     assert index.frame_samples == (0, 2, 3, 1, 4, 6, 7, 5, 8, 10, 11, 9)
 
 
-def test_parse_moov_subtracts_edit_list_media_time():
+def test_parse_moov_subtracts_edit_list_media_time() -> None:
     """parse_moov는 편집 목록의 media_time을 빼서 첫 프레임을 0초에 놓아야 한다.
 
     영상 첫 PTS = 100틱, elst media_time = 100
@@ -72,7 +73,7 @@ def test_parse_moov_subtracts_edit_list_media_time():
     assert index.frame_pts[0] == 0.0
 
 
-def test_parse_moov_keeps_video_delay_from_empty_edit():
+def test_parse_moov_keeps_video_delay_from_empty_edit() -> None:
     """parse_moov는 영상에 빈 편집이 있으면 그 길이만큼 영상을 늦게 시작시켜야 한다.
 
     영상 elst = [(250, -1), (1200, 100)] (무비 timescale 1000), 오디오는 0초 시작
@@ -86,7 +87,7 @@ def test_parse_moov_keeps_video_delay_from_empty_edit():
     assert index.audio.times[1] == pytest.approx(0.0)
 
 
-def test_parse_moov_sets_zero_at_earliest_presented_sample():
+def test_parse_moov_sets_zero_at_earliest_presented_sample() -> None:
     """parse_moov는 두 트랙 모두 늦게 시작하면 가장 먼저 표시되는 샘플을 0초로 삼아야 한다.
 
     영상 빈 편집 250, 오디오 빈 편집 400 (무비 timescale 1000)
@@ -101,7 +102,7 @@ def test_parse_moov_sets_zero_at_earliest_presented_sample():
     assert index.audio.times[1] == pytest.approx(0.15)
 
 
-def test_parse_moov_marks_samples_hidden_by_edit_list_as_negative():
+def test_parse_moov_marks_samples_hidden_by_edit_list_as_negative() -> None:
     """parse_moov는 편집 목록이 가린 오디오 샘플의 시각을 음수로 돌려줘야 한다.
 
     오디오 샘플 길이 1024틱(8000Hz), elst media_time = 1024
@@ -113,7 +114,7 @@ def test_parse_moov_marks_samples_hidden_by_edit_list_as_negative():
     assert index.audio.times[1] == pytest.approx(0.0)
 
 
-def test_parse_moov_reads_keyframes_from_stss():
+def test_parse_moov_reads_keyframes_from_stss() -> None:
     """parse_moov는 stss의 샘플 번호(1부터)를 키프레임의 프레임 번호로 바꿔야 한다.
 
     stss = [1, 5, 9]
@@ -125,7 +126,7 @@ def test_parse_moov_reads_keyframes_from_stss():
     assert index.video.sync_samples == (0, 4, 8)
 
 
-def test_parse_moov_treats_every_sample_as_sync_without_stss():
+def test_parse_moov_treats_every_sample_as_sync_without_stss() -> None:
     """parse_moov는 stss가 없는 트랙의 모든 샘플을 단독 디코드 가능으로 돌려줘야 한다.
 
     오디오 16샘플, stss 없음
@@ -136,7 +137,7 @@ def test_parse_moov_treats_every_sample_as_sync_without_stss():
     assert index.audio.sync_samples == tuple(range(16))
 
 
-def test_parse_moov_reports_duration_and_frame_rate():
+def test_parse_moov_reports_duration_and_frame_rate() -> None:
     """parse_moov는 마지막 프레임이 끝나는 시각과 timescale ÷ 샘플 길이를 돌려줘야 한다.
 
     12프레임 × 100틱, timescale 1000
@@ -148,7 +149,7 @@ def test_parse_moov_reports_duration_and_frame_rate():
     assert index.fps == Fraction(10)
 
 
-def test_parse_moov_frame_rate_keeps_exact_ratio():
+def test_parse_moov_frame_rate_keeps_exact_ratio() -> None:
     """parse_moov는 프레임률을 timescale과 샘플 길이의 정확한 비로 돌려줘야 한다.
 
     timescale 11988, 샘플 길이 400
@@ -166,7 +167,7 @@ def test_parse_moov_frame_rate_keeps_exact_ratio():
     assert index.fps == Fraction(2997, 100)
 
 
-def test_parse_moov_result_feeds_snap_to_frame():
+def test_parse_moov_result_feeds_snap_to_frame() -> None:
     """parse_moov의 frame_pts와 fps는 snap_to_frame에 그대로 넣을 수 있어야 한다.
 
     명목 시각 0.52초, 10fps
@@ -177,7 +178,7 @@ def test_parse_moov_result_feeds_snap_to_frame():
     assert snap_to_frame(0.52, index.frame_pts, index.fps, "start") == 5
 
 
-def test_parse_moov_reads_video_only_file():
+def test_parse_moov_reads_video_only_file() -> None:
     """parse_moov는 오디오 트랙이 없으면 audio를 None으로 돌려줘야 한다.
 
     영상 트랙만 있는 moov
@@ -193,7 +194,7 @@ def test_parse_moov_reads_video_only_file():
 
 
 @pytest.mark.parametrize("co64", [False, True])
-def test_parse_moov_locates_every_sample_in_the_file(co64):
+def test_parse_moov_locates_every_sample_in_the_file(co64) -> None:
     """parse_moov가 돌려준 샘플 위치·크기로 파일을 읽으면 그 샘플의 바이트가 나와야 한다.
 
     영상 청크 [3, 3, 2, 4]샘플(stsc 구간 3개), 오디오 청크 [4, 4, 4, 4], 청크는 번갈아 놓임, stco · co64
@@ -209,7 +210,7 @@ def test_parse_moov_locates_every_sample_in_the_file(co64):
             assert built.data[offset : offset + size] == built.sample_bytes(handler, sample, size)
 
 
-def test_parse_moov_reads_uniform_sample_size():
+def test_parse_moov_reads_uniform_sample_size() -> None:
     """parse_moov는 stsz의 고정 크기 칸이 0이 아니면 모든 샘플에 그 크기를 줘야 한다.
 
     오디오 stsz: sample_size=7, sample_count=16
@@ -220,7 +221,7 @@ def test_parse_moov_reads_uniform_sample_size():
     assert index.audio.sizes == (7,) * 16
 
 
-def test_parse_moov_reads_chunk_offsets_beyond_four_gigabytes():
+def test_parse_moov_reads_chunk_offsets_beyond_four_gigabytes() -> None:
     """parse_moov는 co64의 4GB를 넘는 청크 위치를 그대로 돌려줘야 한다.
 
     co64 청크 위치에 5,000,000,000을 더한 moov
@@ -242,7 +243,7 @@ def test_parse_moov_reads_chunk_offsets_beyond_four_gigabytes():
 # ================================================================ moov 찾기
 
 
-def test_scan_top_level_finds_moov_before_mdat():
+def test_scan_top_level_finds_moov_before_mdat() -> None:
     """scan_top_level은 moov가 앞에 있으면 그 위치와 크기를 돌려줘야 한다.
 
     ftyp · moov · mdat
@@ -255,7 +256,7 @@ def test_scan_top_level_finds_moov_before_mdat():
     assert scan.moov == (built.moov_offset, len(built.moov))
 
 
-def test_scan_top_level_points_past_mdat_when_moov_is_not_in_view():
+def test_scan_top_level_points_past_mdat_when_moov_is_not_in_view() -> None:
     """scan_top_level은 mdat 머리만 보여도 그 크기로 다음 상자 위치를 돌려줘야 한다.
 
     ftyp · mdat · moov 중 앞 40바이트만
@@ -269,7 +270,7 @@ def test_scan_top_level_points_past_mdat_when_moov_is_not_in_view():
     assert scan.next_offset == built.moov_offset
 
 
-def test_scan_top_level_reads_64bit_box_size():
+def test_scan_top_level_reads_64bit_box_size() -> None:
     """scan_top_level은 크기 칸이 1이면 뒤따르는 64비트 크기로 다음 상자 위치를 계산해야 한다.
 
     mdat 머리가 16바이트(64비트 크기)인 ftyp · mdat · moov 중 앞 48바이트만
@@ -282,7 +283,7 @@ def test_scan_top_level_reads_64bit_box_size():
     assert scan.next_offset == built.moov_offset
 
 
-def test_read_mp4_index_skips_mdat_body_when_moov_is_at_the_end(monkeypatch):
+def test_read_mp4_index_skips_mdat_body_when_moov_is_at_the_end(monkeypatch) -> None:
     """read_mp4_index는 moov가 mdat 뒤에 있으면 mdat 본문을 건너뛰어 moov만 읽어야 한다.
 
     ftyp(24B) · mdat · moov, 한 번에 24바이트씩 읽도록 줄임
@@ -304,7 +305,7 @@ def test_read_mp4_index_skips_mdat_body_when_moov_is_at_the_end(monkeypatch):
     assert list(index.video.offsets) == built.sample_offsets[b"vide"]
 
 
-def test_read_mp4_index_reads_front_moov_in_one_request():
+def test_read_mp4_index_reads_front_moov_in_one_request() -> None:
     """read_mp4_index는 moov가 첫 읽기 안에 다 들어오면 요청 한 번으로 끝내야 한다.
 
     ftyp · moov · mdat (전체가 첫 읽기 크기보다 작음)
@@ -319,7 +320,7 @@ def test_read_mp4_index_reads_front_moov_in_one_request():
     assert len(index.frame_pts) == 12
 
 
-def test_read_mp4_index_raises_when_file_has_no_moov():
+def test_read_mp4_index_raises_when_file_has_no_moov() -> None:
     """read_mp4_index는 파일 끝까지 moov가 없으면 못 찾음 키로 Mp4Error를 내야 한다.
 
     ftyp · mdat만 있는 파일
@@ -336,7 +337,7 @@ def test_read_mp4_index_raises_when_file_has_no_moov():
 # ================================================================ 거부
 
 
-def test_scan_top_level_rejects_moof():
+def test_scan_top_level_rejects_moof() -> None:
     """scan_top_level은 최상위에 moof가 있으면 조각난 mp4 키로 Mp4Error를 내야 한다.
 
     ftyp · moof · moov · mdat
@@ -350,7 +351,7 @@ def test_scan_top_level_rejects_moof():
     assert info.value.message_key == MP4_FRAGMENTED
 
 
-def test_parse_moov_rejects_mvex():
+def test_parse_moov_rejects_mvex() -> None:
     """parse_moov는 moov 안에 mvex가 있으면 조각난 mp4 키로 Mp4Error를 내야 한다.
 
     moov = mvhd · trak · mvex
@@ -364,7 +365,7 @@ def test_parse_moov_rejects_mvex():
     assert info.value.message_key == MP4_FRAGMENTED
 
 
-def test_parse_moov_rejects_table_cut_short():
+def test_parse_moov_rejects_table_cut_short() -> None:
     """parse_moov는 표의 항목 수보다 데이터가 짧으면 손상 키로 Mp4Error를 내야 한다.
 
     stsz의 sample_count를 12에서 5000으로 바꾼 moov
@@ -379,7 +380,7 @@ def test_parse_moov_rejects_table_cut_short():
     assert info.value.message_key == MP4_INVALID
 
 
-def test_parse_moov_rejects_entry_count_that_runs_past_its_box():
+def test_parse_moov_rejects_entry_count_that_runs_past_its_box() -> None:
     """parse_moov는 표의 항목 수가 그 상자에 들어가는 수보다 많으면 뒤 상자를 읽지 않고 거부해야 한다.
 
     stss의 항목 수를 3에서 4로 바꾼 moov (상자에는 3개만 들어 있고 바로 뒤에 다음 상자가 온다)
@@ -394,7 +395,7 @@ def test_parse_moov_rejects_entry_count_that_runs_past_its_box():
     assert info.value.message_key == MP4_INVALID
 
 
-def test_parse_moov_rejects_one_sample_chunks_that_run_past_the_chunk_table():
+def test_parse_moov_rejects_one_sample_chunks_that_run_past_the_chunk_table() -> None:
     """parse_moov는 청크당 샘플 1개인 stsc 구간이 실제 청크 수보다 큰 범위를 가리키면 거부해야 한다.
 
     12샘플, 청크 8개([1, 1, 1, 1, 2, 2, 2, 2]샘플 — stsc 구간 2개). 둘째 구간의 first_chunk를
@@ -414,7 +415,7 @@ def test_parse_moov_rejects_one_sample_chunks_that_run_past_the_chunk_table():
     assert info.value.message_key == MP4_INVALID
 
 
-def test_parse_moov_rejects_sample_count_mismatch():
+def test_parse_moov_rejects_sample_count_mismatch() -> None:
     """parse_moov는 stts와 stsz의 샘플 수가 다르면 손상 키로 Mp4Error를 내야 한다.
 
     stts 11샘플, stsz 12샘플
@@ -428,7 +429,7 @@ def test_parse_moov_rejects_sample_count_mismatch():
     assert info.value.message_key == MP4_INVALID
 
 
-def test_parse_moov_rejects_file_without_video_track():
+def test_parse_moov_rejects_file_without_video_track() -> None:
     """parse_moov는 영상 트랙이 없으면 미지원 키로 Mp4Error를 내야 한다.
 
     오디오 트랙만 있는 moov
@@ -440,7 +441,7 @@ def test_parse_moov_rejects_file_without_video_track():
     assert info.value.message_key == MP4_UNSUPPORTED
 
 
-def test_parse_moov_rejects_edit_list_with_two_segments():
+def test_parse_moov_rejects_edit_list_with_two_segments() -> None:
     """parse_moov는 편집 목록에 구간이 둘이면 미지원 키로 Mp4Error를 내야 한다.
 
     영상 elst = [(600, 100), (600, 700)]
@@ -474,7 +475,7 @@ def _peak_memory_of_rejected_parse(moov: bytes) -> tuple[str, int]:
     return info.value.message_key, peak
 
 
-def test_parse_moov_rejects_stts_run_total_before_expanding_it():
+def test_parse_moov_rejects_stts_run_total_before_expanding_it() -> None:
     """parse_moov는 stts의 개수 합이 샘플 수와 다르면 구간을 펼치지 않고 손상 키로 거부해야 한다.
 
     stts 첫 구간의 개수를 12에서 2,000,000으로 바꾼 moov (stsz는 12샘플)
@@ -489,7 +490,7 @@ def test_parse_moov_rejects_stts_run_total_before_expanding_it():
     assert peak < SMALL_PEAK
 
 
-def test_parse_moov_rejects_ctts_run_total_before_expanding_it():
+def test_parse_moov_rejects_ctts_run_total_before_expanding_it() -> None:
     """parse_moov는 ctts의 개수 합이 샘플 수와 다르면 구간을 펼치지 않고 손상 키로 거부해야 한다.
 
     ctts 첫 구간의 개수를 1에서 2,000,000으로 바꾼 moov (stsz는 12샘플)
@@ -513,7 +514,7 @@ def test_parse_moov_rejects_ctts_run_total_before_expanding_it():
     ],
     ids=["at-limit", "video-over", "audio-over"],
 )
-def test_parse_moov_applies_sample_limit_per_track(monkeypatch, limits, expected_key):
+def test_parse_moov_applies_sample_limit_per_track(monkeypatch, limits, expected_key) -> None:
     """parse_moov는 트랙의 샘플 수가 그 트랙의 상한과 같으면 받고 하나라도 넘으면 길이 초과 키로 거부해야 한다.
 
     영상 12샘플 · 오디오 16샘플, 상한 (12, 16) · (11, 16) · (12, 15)
@@ -530,7 +531,7 @@ def test_parse_moov_applies_sample_limit_per_track(monkeypatch, limits, expected
         assert info.value.message_key == expected_key
 
 
-def test_parse_moov_rejects_uniform_stsz_count_over_limit_before_allocating(monkeypatch):
+def test_parse_moov_rejects_uniform_stsz_count_over_limit_before_allocating(monkeypatch) -> None:
     """parse_moov는 고정 크기 stsz의 샘플 수가 상한을 넘으면 크기 목록을 만들지 않고 거부해야 한다.
 
     오디오 stsz(고정 크기 7)의 sample_count를 16에서 2,000,000으로 바꾼 moov, 오디오 상한 1,000,000
@@ -548,7 +549,7 @@ def test_parse_moov_rejects_uniform_stsz_count_over_limit_before_allocating(monk
     assert peak < SMALL_PEAK
 
 
-def test_sample_limits_cover_twenty_four_hours():
+def test_sample_limits_cover_twenty_four_hours() -> None:
     """샘플 수 상한은 24시간 분량의 60fps 영상과 48kHz AAC 오디오여야 한다.
 
     60 × 86,400 / 48,000 ÷ 1,024 × 86,400
@@ -563,23 +564,25 @@ def test_sample_limits_cover_twenty_four_hours():
 class FakeResponse:
     """requests 응답 흉내 — 본문을 몇 바이트 내줬는지 기록한다."""
 
-    def __init__(self, status_code: int, body: bytes, headers: dict[str, str] | None = None):
+    def __init__(
+        self, status_code: int, body: bytes, headers: dict[str, str] | None = None
+    ) -> None:
         self.status_code = status_code
         self.headers = headers or {}
         self._body = body
         self.bytes_handed = 0
 
-    def __enter__(self):
+    def __enter__(self) -> "FakeResponse":
         return self
 
-    def __exit__(self, *exc):
+    def __exit__(self, *exc) -> bool:
         return False
 
-    def raise_for_status(self):
+    def raise_for_status(self) -> None:
         if self.status_code >= 400:
             raise requests.HTTPError(f"status {self.status_code}")
 
-    def iter_content(self, chunk_size: int):
+    def iter_content(self, chunk_size: int) -> Iterator[bytes]:
         for start in range(0, len(self._body), chunk_size):
             chunk = self._body[start : start + chunk_size]
             self.bytes_handed += len(chunk)
@@ -600,7 +603,7 @@ class RangeServer:
         body: 보낼 조각 → 실제로 보낼 본문. 주지 않으면 조각 그대로 보낸다
     """
 
-    def __init__(self, data: bytes, status_code: int = 206, content_range=None, body=None):
+    def __init__(self, data: bytes, status_code: int = 206, content_range=None, body=None) -> None:
         self.data = data
         self.status_code = status_code
         self.content_range = content_range
@@ -628,7 +631,7 @@ class RangeServer:
         return response
 
 
-def test_fetch_mp4_index_requests_ranges_and_builds_index(monkeypatch):
+def test_fetch_mp4_index_requests_ranges_and_builds_index(monkeypatch) -> None:
     """fetch_mp4_index는 범위 요청으로 받은 moov로 색인을 만들어야 한다.
 
     ftyp · mdat · moov를 주는 가짜 서버, 한 번에 24바이트씩 읽도록 줄임
@@ -651,7 +654,7 @@ def test_fetch_mp4_index_requests_ranges_and_builds_index(monkeypatch):
     assert len(index.frame_pts) == 12
 
 
-def test_fetch_mp4_index_sends_timeout_and_no_cookies(monkeypatch):
+def test_fetch_mp4_index_sends_timeout_and_no_cookies(monkeypatch) -> None:
     """fetch_mp4_index는 요청마다 타임아웃을 주고 쿠키는 싣지 않아야 한다.
 
     가짜 서버에 요청
@@ -670,7 +673,7 @@ def test_fetch_mp4_index_sends_timeout_and_no_cookies(monkeypatch):
         assert "cookies" not in kwargs
 
 
-def test_fetch_mp4_index_rejects_full_response_without_reading_body(monkeypatch):
+def test_fetch_mp4_index_rejects_full_response_without_reading_body(monkeypatch) -> None:
     """fetch_mp4_index는 서버가 범위 요청에 200으로 답하면 본문을 읽지 않고 거부해야 한다.
 
     모든 요청에 200과 파일 전체로 답하는 가짜 서버
@@ -688,7 +691,7 @@ def test_fetch_mp4_index_rejects_full_response_without_reading_body(monkeypatch)
     assert server.responses[0].bytes_handed == 0
 
 
-def test_fetch_mp4_index_stops_reading_when_body_exceeds_granted_range(monkeypatch):
+def test_fetch_mp4_index_stops_reading_when_body_exceeds_granted_range(monkeypatch) -> None:
     """fetch_mp4_index는 본문이 Content-Range가 말한 길이를 넘으면 끝까지 읽지 않고 거부해야 한다.
 
     Content-Range는 정직하게 적고 본문 뒤에 4MiB를 덧붙여 보내는 가짜 서버
@@ -706,7 +709,7 @@ def test_fetch_mp4_index_stops_reading_when_body_exceeds_granted_range(monkeypat
     assert 0 < server.responses[0].bytes_handed < len(built.data) + len(padding)
 
 
-def test_fetch_mp4_index_rejects_body_shorter_than_granted_range(monkeypatch):
+def test_fetch_mp4_index_rejects_body_shorter_than_granted_range(monkeypatch) -> None:
     """fetch_mp4_index는 본문이 Content-Range가 말한 길이보다 짧으면 거부해야 한다.
 
     Content-Range는 정직하게 적고 본문의 마지막 3바이트를 빼고 보내는 가짜 서버
@@ -738,7 +741,7 @@ def test_fetch_mp4_index_rejects_body_shorter_than_granted_range(monkeypatch):
 )
 def test_fetch_mp4_index_rejects_content_range_that_differs_from_request(
     monkeypatch, content_range
-):
+) -> None:
     """fetch_mp4_index는 206의 Content-Range가 요청한 범위와 다르면 본문을 읽지 않고 거부해야 한다.
 
     요청 bytes=0-23 (파일은 그보다 길다), Content-Range를 6가지로 틀리게 적는 가짜 서버
@@ -757,7 +760,7 @@ def test_fetch_mp4_index_rejects_content_range_that_differs_from_request(
     assert server.responses[0].bytes_handed == 0
 
 
-def test_fetch_mp4_index_accepts_exact_range_with_unknown_total(monkeypatch):
+def test_fetch_mp4_index_accepts_exact_range_with_unknown_total(monkeypatch) -> None:
     """fetch_mp4_index는 Content-Range의 전체 크기가 "*"여도 범위가 요청과 같으면 받아야 한다.
 
     ftyp · mdat · moov, 한 번에 24바이트씩 읽어 모든 요청이 파일 안에 들어감, Content-Range = "bytes 시작-끝/*"
@@ -776,7 +779,7 @@ def test_fetch_mp4_index_accepts_exact_range_with_unknown_total(monkeypatch):
     assert len(index.frame_pts) == 12
 
 
-def test_fetch_mp4_index_accepts_range_cut_at_end_of_file(monkeypatch):
+def test_fetch_mp4_index_accepts_range_cut_at_end_of_file(monkeypatch) -> None:
     """fetch_mp4_index는 파일이 요청보다 먼저 끝나 끝이 파일의 마지막 바이트인 응답을 받아야 한다.
 
     파일 전체가 첫 요청(1MiB)보다 작음, Content-Range = "bytes 0-(파일 크기−1)/파일 크기"
@@ -792,7 +795,7 @@ def test_fetch_mp4_index_accepts_range_cut_at_end_of_file(monkeypatch):
     assert len(index.frame_pts) == 12
 
 
-def test_fetch_mp4_index_propagates_http_error(monkeypatch):
+def test_fetch_mp4_index_propagates_http_error(monkeypatch) -> None:
     """fetch_mp4_index는 서버가 오류 상태로 답하면 requests 예외를 그대로 내야 한다.
 
     모든 요청에 403으로 답하는 가짜 서버
@@ -810,7 +813,7 @@ def test_fetch_mp4_index_propagates_http_error(monkeypatch):
 
 
 @pytest.mark.parametrize("moov_first", [True, False], ids=["front", "back"])
-def test_read_mp4_index_reports_where_the_moov_is(moov_first):
+def test_read_mp4_index_reports_where_the_moov_is(moov_first) -> None:
     """read_mp4_index는 파일에서 moov를 찾은 (시작, 끝) 바이트를 moov_range에 실어야 한다.
 
     ftyp · moov · mdat 와 ftyp · mdat · moov
@@ -823,7 +826,7 @@ def test_read_mp4_index_reports_where_the_moov_is(moov_first):
     assert index.moov_range == (built.moov_offset, built.moov_offset + len(built.moov) - 1)
 
 
-def test_parse_moov_leaves_moov_range_empty():
+def test_parse_moov_leaves_moov_range_empty() -> None:
     """parse_moov는 moov bytes만 받았으므로 moov_range를 채우지 않아야 한다.
 
     합성 mp4의 moov bytes
@@ -834,7 +837,7 @@ def test_parse_moov_leaves_moov_range_empty():
     assert parse_moov(built.moov).moov_range is None
 
 
-def test_parse_moov_reports_first_sample_of_every_chunk():
+def test_parse_moov_reports_first_sample_of_every_chunk() -> None:
     """parse_moov는 트랙마다 청크의 첫 샘플 인덱스를 chunk_starts에 실어야 한다.
 
     영상 청크별 샘플 수 [3, 3, 2, 4], 오디오 [4, 4, 4, 4]
@@ -932,7 +935,7 @@ def _audio_stsd(*children: bytes, entries: int = 1, version: int = 0) -> bytes:
         "wrong-descriptor",
     ],
 )
-def test_declared_bitrate_reads_the_sample_entry(stsd, expected):
+def test_declared_bitrate_reads_the_sample_entry(stsd, expected) -> None:
     """_declared_bitrate는 오디오 샘플 엔트리의 esds avg · btrt avg · esds max · btrt max 순서로 0이 아닌 첫 값을 돌려주고, 없거나 읽지 못하면 None을 돌려줘야 한다.
 
     주석의 경우마다 손으로 조립한 stsd 본문 (값은 bit/s)
@@ -941,7 +944,7 @@ def test_declared_bitrate_reads_the_sample_entry(stsd, expected):
     assert mp4_module._declared_bitrate(stsd, (0, len(stsd))) == expected
 
 
-def test_parse_moov_leaves_declared_bitrate_empty_without_a_sample_entry():
+def test_parse_moov_leaves_declared_bitrate_empty_without_a_sample_entry() -> None:
     """parse_moov는 샘플 엔트리가 없는 트랙의 declared_bitrate를 None으로 두고 해석에 실패하지 않아야 한다.
 
     합성 mp4 — stsd의 항목 수 0
@@ -952,7 +955,7 @@ def test_parse_moov_leaves_declared_bitrate_empty_without_a_sample_entry():
     assert (index.video.declared_bitrate, index.audio.declared_bitrate) == (None, None)
 
 
-def test_composition_offsets_reads_negative_values_and_expands_runs():
+def test_composition_offsets_reads_negative_values_and_expands_runs() -> None:
     """_composition_offsets는 ctts의 값을 부호 있는 수로 읽고, 개수만큼 펼쳐 샘플마다 하나씩 돌려줘야 한다.
 
     손으로 조립한 ctts 본문 — (개수 2, 값 -100) · (개수 1, 값 0) · (개수 1, 값 300), 샘플 4개
@@ -966,7 +969,7 @@ def test_composition_offsets_reads_negative_values_and_expands_runs():
 # ================================================================ 표를 배열로 통째로 읽기 (#309)
 
 
-def test_read_table_reads_big_endian_values_of_each_width():
+def test_read_table_reads_big_endian_values_of_each_width() -> None:
     """_read_table은 빅엔디언 32비트(부호 없음 · 있음) · 64비트 값을 그 개수만큼 읽어야 한다.
 
     바이트 00 00 00 01 · FF FF FF FE · 00 00 00 01 00 00 00 00
@@ -979,7 +982,7 @@ def test_read_table_reads_big_endian_values_of_each_width():
     assert list(mp4_module._read_table(data, 8, 1, "Q")) == [1 << 32]
 
 
-def test_read_table_rejects_a_table_that_runs_past_the_data():
+def test_read_table_rejects_a_table_that_runs_past_the_data() -> None:
     """_read_table은 표가 바이트의 끝을 넘으면 손상 키로 거부해야 한다.
 
     8바이트에서 32비트 값 3개(12바이트)를 읽음 -> Mp4Error(MP4_INVALID)
@@ -990,7 +993,7 @@ def test_read_table_rejects_a_table_that_runs_past_the_data():
     assert info.value.message_key == MP4_INVALID
 
 
-def test_expand_runs_repeats_each_value_by_its_count():
+def test_expand_runs_repeats_each_value_by_its_count() -> None:
     """_expand_runs는 (개수, 값) 구간을 샘플마다 값 하나씩으로 펴야 한다 — 개수 0인 구간은 사라진다.
 
     개수 [2, 0, 3] · 값 [7, 8, 9] -> [7, 7, 9, 9, 9]
@@ -1002,7 +1005,7 @@ def test_expand_runs_repeats_each_value_by_its_count():
     assert list(mp4_module._expand_runs(runs, values, "q")) == [7, 7, 9, 9, 9]
 
 
-def test_parse_moov_reads_chunks_that_hold_one_sample_each():
+def test_parse_moov_reads_chunks_that_hold_one_sample_each() -> None:
     """parse_moov는 청크마다 샘플이 하나인 트랙의 샘플 위치를 조립기가 쓴 위치 그대로 읽어야 한다.
 
     영상 12샘플을 청크 12개에(청크당 1샘플), 오디오는 표준 재료
@@ -1016,7 +1019,7 @@ def test_parse_moov_reads_chunks_that_hold_one_sample_each():
     assert list(index.video.chunk_starts) == list(range(12))
 
 
-def test_parse_moov_does_not_hold_many_times_the_index_while_parsing():
+def test_parse_moov_does_not_hold_many_times_the_index_while_parsing() -> None:
     """parse_moov가 해석하는 동안 쓰는 메모리의 최고치는 다 만든 색인의 3배를 넘지 않아야 한다.
 
     영상 12,000샘플(재정렬 I P B B) + 오디오 9,000샘플을 tracemalloc 아래에서 해석
@@ -1047,7 +1050,7 @@ def test_parse_moov_does_not_hold_many_times_the_index_while_parsing():
     assert peak / held < 3, f"최고 {peak / 1e6:.1f}MB · 색인 {held / 1e6:.1f}MB"
 
 
-def test_parse_moov_gives_each_sample_its_own_duration_when_they_differ():
+def test_parse_moov_gives_each_sample_its_own_duration_when_they_differ() -> None:
     """샘플 길이가 고르지 않은 트랙은 샘플마다 제 길이(틱 ÷ timescale)를 가져야 한다.
 
     영상 12샘플의 길이(틱) [100, 100, 150, 150, 150, 90, 100, 100, 100, 100, 100, 110], timescale 1000

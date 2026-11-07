@@ -89,7 +89,7 @@ def _end(pid: int) -> None:
 
 
 @pytest.mark.parametrize("mode", ["running", "paused"])
-def test_ffmpeg_ends_when_the_process_that_launched_it_is_killed(tmp_path, mode):
+def test_ffmpeg_ends_when_the_process_that_launched_it_is_killed(tmp_path, mode) -> None:
     """ffmpeg를 띄운 프로세스가 강제로 끝나면 그 ffmpeg도 끝나야 한다 — 일시정지로 멈춰 있는 것도.
 
     파이썬 프로세스가 제품의 run_ffmpeg로 10분 도는 ffmpeg를 띄움(paused는 띄운 직후 일시정지).

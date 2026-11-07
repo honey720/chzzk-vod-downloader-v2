@@ -22,6 +22,7 @@ from itertools import islice
 
 from core.utils.interaction import rest_if_user_interacting
 from core.utils.stop import check_stop
+from typing import Never
 
 # 긴 표를 한 번에 채우거나 훑는 C 반복을 이 개수씩 잘라 돈다. C 안에서 도는 반복은 끝날 때까지
 # GIL을 놓지 않는다 — 샘플이 180만 개인 표 하나를 통째로 돌면 0.1~0.3초 동안 다른 스레드(GUI)가
@@ -124,7 +125,7 @@ class SampleColumn(array.array):
     def __deepcopy__(self, memo: dict) -> "SampleColumn":
         return self
 
-    def _read_only(self, *args, **kwargs):
+    def _read_only(self, *args, **kwargs) -> Never:
         raise TypeError("SampleColumn은 고칠 수 없다")
 
     __setitem__ = __delitem__ = __iadd__ = __imul__ = _read_only

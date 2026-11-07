@@ -10,7 +10,7 @@ import pytest
 from core.models.events import ProgressEvent
 
 
-def test_progress_event_is_frozen():
+def test_progress_event_is_frozen() -> None:
     """진행 이벤트는 스레드 간에 전달되므로 생성 후 변경할 수 없어야 한다."""
     event = ProgressEvent(downloaded_size=1024)
 
@@ -18,7 +18,7 @@ def test_progress_event_is_frozen():
         event.downloaded_size = 2048
 
 
-def test_progress_event_optional_fields_default_to_none():
+def test_progress_event_optional_fields_default_to_none() -> None:
     """total_size·speed·active_threads는 아직 알 수 없는 시점이 있어 None을 허용한다."""
     event = ProgressEvent(downloaded_size=0)
 
@@ -27,7 +27,7 @@ def test_progress_event_optional_fields_default_to_none():
     assert event.active_threads is None
 
 
-def test_progress_event_holds_given_values():
+def test_progress_event_holds_given_values() -> None:
     """모든 필드가 값 그대로 보존돼야 한다."""
     event = ProgressEvent(downloaded_size=10, total_size=100, speed=2.5, active_threads=4)
 

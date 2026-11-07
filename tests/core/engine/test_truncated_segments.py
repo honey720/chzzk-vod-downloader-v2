@@ -7,6 +7,8 @@
 - hls_aes: AES-128-CBC로 암호화된 MPEG-TS 세그먼트
 """
 
+from collections.abc import Callable, Iterator
+
 import pytest
 import requests
 from Crypto.Cipher import AES
@@ -62,7 +64,7 @@ def _encrypted(index: int) -> bytes:
 class _Declared:
     """본문과 다른 길이를 Content-Length로 선언해서 줄 본문."""
 
-    def __init__(self, body: bytes, declared: int):
+    def __init__(self, body: bytes, declared: int) -> None:
         self.body = body
         self.declared = declared
 
@@ -70,10 +72,10 @@ class _Declared:
 class _BrokenRead:
     """본문을 읽다가 예외가 나는 응답 — 응답은 왔지만 본문이 끝까지 오지 않았다."""
 
-    def __init__(self, error: Exception):
+    def __init__(self, error: Exception) -> None:
         self.error = error
 
-    def raise_for_status(self):
+    def raise_for_status(self) -> None:
         pass
 
     @property
@@ -84,19 +86,19 @@ class _BrokenRead:
 class _NoResponse:
     """요청 자체가 예외로 끝나는 경우 — 연결 실패 · 타임아웃."""
 
-    def __init__(self, error: Exception):
+    def __init__(self, error: Exception) -> None:
         self.error = error
 
 
 class _HttpStatus:
     """HTTP 오류 상태로 온 응답 — 본문은 짧은 오류 글이고 raise_for_status가 requests의 예외를 낸다."""
 
-    def __init__(self, status: int):
+    def __init__(self, status: int) -> None:
         self.status = status
         self.content = b"<html>error</html>"
         self.headers = {"Content-Length": str(len(self.content))}
 
-    def raise_for_status(self):
+    def raise_for_status(self) -> None:
         response = requests.Response()
         response.status_code = self.status
         response.url = "https://example.invalid/hls/init.m4s"
@@ -106,16 +108,16 @@ class _HttpStatus:
 class _Response:
     """본문과 Content-Length를 가진 가짜 응답 — 따로 정하지 않으면 본문의 길이를 선언한다."""
 
-    def __init__(self, body: bytes | _Declared):
+    def __init__(self, body: bytes | _Declared) -> None:
         declared = body.declared if isinstance(body, _Declared) else len(body)
         self.content = body.body if isinstance(body, _Declared) else body
         self.text = self.content.decode("utf-8", "replace")
         self.headers = {"Content-Length": str(declared)}
 
-    def raise_for_status(self):
+    def raise_for_status(self) -> None:
         pass
 
-    def iter_content(self, chunk_size=8192):
+    def iter_content(self, chunk_size=8192) -> Iterator[bytes]:
         for offset in range(0, len(self.content), chunk_size):
             yield self.content[offset : offset + chunk_size]
 
@@ -123,11 +125,11 @@ class _Response:
 class _Session:
     """주소마다 준비된 본문을 차례로 준다. 마지막 본문은 되풀이한다. 요청 횟수를 센다."""
 
-    def __init__(self, bodies: dict[str, list[bytes]]):
+    def __init__(self, bodies: dict[str, list[bytes]]) -> None:
         self._bodies = bodies
         self.requests: dict[str, int] = {}
 
-    def get(self, url, **kwargs):
+    def get(self, url, **kwargs) -> _Response | _BrokenRead | _HttpStatus:
         name = url.rsplit("/", 1)[1]
         served = self.requests.get(name, 0)
         self.requests[name] = served + 1
@@ -139,11 +141,11 @@ class _Session:
 
 
 class _Logger:
-    def __getattr__(self, name):
+    def __getattr__(self, name) -> Callable[..., None]:
         return lambda *args, **kwargs: None
 
 
-def _passthrough_remux_stream(chunks, dst_path, **_wait):
+def _passthrough_remux_stream(chunks, dst_path, **_wait) -> None:
     """받은 스트림을 그대로 파일에 쓰는 remux_stream 스텁 — 공급된 바이트를 잰다."""
     with open(dst_path, "wb") as f:
         for chunk in chunks:
@@ -153,7 +155,7 @@ def _passthrough_remux_stream(chunks, dst_path, **_wait):
 class _LeapingClock:
     """엔진의 재요청 시계(`_retry_now`) 대체 — 읽을 때마다 재요청 대기의 상한만큼 흐른다."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.now = 0.0
 
     def __call__(self) -> float:
@@ -161,7 +163,9 @@ class _LeapingClock:
         return self.now
 
 
-def _run(cls, module, url, content_type, session, tmp_path, monkeypatch):
+def _run(
+    cls, module, url, content_type, session, tmp_path, monkeypatch
+) -> tuple[DownloadData, list[BaseException], list[bool]]:
     """가짜 세션으로 run()을 끝까지 돌리고 (데이터, 실패 콜백이 받은 것, 완료 횟수)를 돌려준다."""
     monkeypatch.setattr(module, "get_thread_session", lambda: session)
     monkeypatch.setattr(base_module, "remux_stream", _passthrough_remux_stream)
@@ -175,7 +179,7 @@ def _run(cls, module, url, content_type, session, tmp_path, monkeypatch):
     failures: list[BaseException] = []
     finished: list[bool] = []
 
-    def on_finished():
+    def on_finished() -> None:
         data.model.finish()
         finished.append(True)
 
@@ -189,7 +193,9 @@ def _run(cls, module, url, content_type, session, tmp_path, monkeypatch):
     return data, failures, finished
 
 
-def _run_m3u8(tmp_path, monkeypatch, **overrides: list[bytes]):
+def _run_m3u8(
+    tmp_path, monkeypatch, **overrides: list[bytes]
+) -> tuple[_Session, DownloadData, list[BaseException], list[bool]]:
     bodies = {"video.m3u8": [M3U8_PLAYLIST.encode()], "init.m4s": [INIT]}
     bodies.update({f"seg_{i}.m4v": [_media(i)] for i in range(SEGMENTS)})
     bodies.update(overrides)
@@ -198,7 +204,9 @@ def _run_m3u8(tmp_path, monkeypatch, **overrides: list[bytes]):
     return session, *result
 
 
-def _run_aes(tmp_path, monkeypatch, **overrides: list[bytes]):
+def _run_aes(
+    tmp_path, monkeypatch, **overrides: list[bytes]
+) -> tuple[_Session, DownloadData, list[BaseException], list[bool]]:
     bodies = {"media.m3u8": [AES_PLAYLIST.encode()]}
     bodies.update({f"segment-{i}.ts": [_encrypted(i)] for i in range(SEGMENTS)})
     bodies.update(overrides)
@@ -222,7 +230,7 @@ CIPHER_CUTS = {
 }
 
 
-def _assert_failed_as_truncated(failures, finished, data, tmp_path):
+def _assert_failed_as_truncated(failures, finished, data, tmp_path) -> None:
     assert len(failures) == 1 and isinstance(failures[0], TruncatedSegmentError)
     assert failures[0].message_key == SEGMENT_TRUNCATED
     assert finished == []
@@ -232,7 +240,7 @@ def _assert_failed_as_truncated(failures, finished, data, tmp_path):
 # ================================================================ m3u8 — 미디어 세그먼트
 
 
-def test_intact_m3u8_download_completes_with_one_request_per_segment(tmp_path, monkeypatch):
+def test_intact_m3u8_download_completes_with_one_request_per_segment(tmp_path, monkeypatch) -> None:
     """온전한 세그먼트만 오면 다시 받지 않고 완료돼야 한다.
 
     초기화 세그먼트와 미디어 세그먼트 3개가 전부 온전한 가짜 세션
@@ -247,7 +255,7 @@ def test_intact_m3u8_download_completes_with_one_request_per_segment(tmp_path, m
 
 
 @pytest.mark.parametrize("cut", MEDIA_CUTS)
-def test_truncated_media_segment_is_fetched_again_until_intact(cut, tmp_path, monkeypatch):
+def test_truncated_media_segment_is_fetched_again_until_intact(cut, tmp_path, monkeypatch) -> None:
     """잘린 미디어 세그먼트는 다시 받고, 온전한 본문이 오면 다운로드가 완료돼야 한다.
 
     seg_1이 두 번 잘려 오고(Content-Length도 잘린 길이) 세 번째에 온전하게 온다
@@ -265,7 +273,7 @@ def test_truncated_media_segment_is_fetched_again_until_intact(cut, tmp_path, mo
 
 
 @pytest.mark.parametrize("cut", MEDIA_CUTS)
-def test_media_segment_that_stays_truncated_fails_the_download(cut, tmp_path, monkeypatch):
+def test_media_segment_that_stays_truncated_fails_the_download(cut, tmp_path, monkeypatch) -> None:
     """미디어 세그먼트가 계속 잘려 오면 상한까지 다시 받은 뒤 잘림 실패 키로 실패해야 한다.
 
     seg_1이 항상 잘려 온다
@@ -279,7 +287,9 @@ def test_media_segment_that_stays_truncated_fails_the_download(cut, tmp_path, mo
     _assert_failed_as_truncated(failures, finished, data, tmp_path)
 
 
-def test_media_segment_shorter_than_its_content_length_is_fetched_again(tmp_path, monkeypatch):
+def test_media_segment_shorter_than_its_content_length_is_fetched_again(
+    tmp_path, monkeypatch
+) -> None:
     """받은 미디어 세그먼트가 선언된 Content-Length와 길이가 다르면 다시 받아야 한다.
 
     seg_1이 처음에는 상자 구조가 온전한 본문에 100바이트 더 긴 Content-Length로 오고,
@@ -305,7 +315,7 @@ INIT_CUTS = {
 
 
 @pytest.mark.parametrize("cut", INIT_CUTS)
-def test_truncated_init_segment_is_fetched_again_until_intact(cut, tmp_path, monkeypatch):
+def test_truncated_init_segment_is_fetched_again_until_intact(cut, tmp_path, monkeypatch) -> None:
     """잘린 초기화 세그먼트는 다시 받고, 온전한 본문이 오면 다운로드가 완료돼야 한다.
 
     init.m4s가 두 번 잘려 오고 세 번째에 온전하게 온다
@@ -322,7 +332,7 @@ def test_truncated_init_segment_is_fetched_again_until_intact(cut, tmp_path, mon
 
 
 @pytest.mark.parametrize("cut", INIT_CUTS)
-def test_init_segment_that_stays_truncated_fails_the_download(cut, tmp_path, monkeypatch):
+def test_init_segment_that_stays_truncated_fails_the_download(cut, tmp_path, monkeypatch) -> None:
     """초기화 세그먼트가 계속 잘려 오면 상한까지 다시 받은 뒤 잘림 실패 키로 실패해야 한다.
 
     init.m4s가 항상 잘려 온다
@@ -347,7 +357,7 @@ SHORT_READS = {
 @pytest.mark.parametrize("error", SHORT_READS)
 def test_init_segment_whose_body_ends_early_is_fetched_again_until_intact(
     error, tmp_path, monkeypatch
-):
+) -> None:
     """초기화 세그먼트의 본문이 선언된 길이보다 먼저 끝나면 다시 받고, 온전하면 완료돼야 한다.
 
     init.m4s의 본문 읽기가 두 번 주석의 예외로 끝나고 세 번째에 온전하게 온다
@@ -366,7 +376,7 @@ def test_init_segment_whose_body_ends_early_is_fetched_again_until_intact(
 @pytest.mark.parametrize("error", SHORT_READS)
 def test_init_segment_whose_body_keeps_ending_early_fails_with_that_error(
     error, tmp_path, monkeypatch
-):
+) -> None:
     """초기화 세그먼트의 본문이 계속 먼저 끝나면 상한까지 다시 받은 뒤 그 예외 그대로 실패해야 한다.
 
     init.m4s의 본문 읽기가 항상 주석의 예외로 끝난다
@@ -393,7 +403,7 @@ NETWORK_ERRORS = {
 @pytest.mark.parametrize("error", NETWORK_ERRORS)
 def test_network_error_on_the_init_segment_fails_without_fetching_again(
     error, tmp_path, monkeypatch
-):
+) -> None:
     """초기화 세그먼트 요청이 연결 실패 · 타임아웃으로 끝나면 다시 받지 않고 그 예외로 실패해야 한다.
 
     init.m4s 요청이 주석의 예외로 끝난다
@@ -415,7 +425,7 @@ HTTP_ERRORS = {403: "Viewing permission required", 404: "Video not found"}  # �
 @pytest.mark.parametrize("segments_fail", [False, True], ids=["init-only", "init-and-segments"])
 def test_http_error_on_the_init_segment_fails_as_that_http_error(
     status, segments_fail, tmp_path, monkeypatch
-):
+) -> None:
     """초기화 세그먼트가 HTTP 오류로 오면 잘림으로 다시 받지 않고 그 HTTP 오류로 실패해야 한다 (#334).
 
     init.m4s가 주석의 상태(403 · 404)와 짧은 오류 본문으로 온다. 세그먼트는 정상 · 같은 상태
@@ -439,7 +449,7 @@ def test_http_error_on_the_init_segment_fails_as_that_http_error(
 # ================================================================ hls_aes — 암호화된 TS
 
 
-def test_intact_aes_download_completes_without_refetching(tmp_path, monkeypatch):
+def test_intact_aes_download_completes_without_refetching(tmp_path, monkeypatch) -> None:
     """온전한 암호화 세그먼트만 오면 다시 받지 않고 완료돼야 한다.
 
     암호화된 TS 세그먼트 3개가 전부 온전한 가짜 세션
@@ -460,7 +470,9 @@ def test_intact_aes_download_completes_without_refetching(tmp_path, monkeypatch)
 
 
 @pytest.mark.parametrize("cut", CIPHER_CUTS)
-def test_truncated_encrypted_segment_is_fetched_again_until_intact(cut, tmp_path, monkeypatch):
+def test_truncated_encrypted_segment_is_fetched_again_until_intact(
+    cut, tmp_path, monkeypatch
+) -> None:
     """잘린 암호화 세그먼트는 다시 받고, 온전한 본문이 오면 다운로드가 완료돼야 한다.
 
     segment-1이 두 번 잘려 오고(Content-Length도 잘린 길이) 세 번째에 온전하게 온다
@@ -478,7 +490,9 @@ def test_truncated_encrypted_segment_is_fetched_again_until_intact(cut, tmp_path
 
 
 @pytest.mark.parametrize("cut", CIPHER_CUTS)
-def test_encrypted_segment_that_stays_truncated_fails_the_download(cut, tmp_path, monkeypatch):
+def test_encrypted_segment_that_stays_truncated_fails_the_download(
+    cut, tmp_path, monkeypatch
+) -> None:
     """암호화 세그먼트가 계속 잘려 오면 상한까지 다시 받은 뒤 잘림 실패 키로 실패해야 한다.
 
     segment-1이 항상 잘려 온다
@@ -492,7 +506,7 @@ def test_encrypted_segment_that_stays_truncated_fails_the_download(cut, tmp_path
     _assert_failed_as_truncated(failures, finished, data, tmp_path)
 
 
-def test_decrypted_segment_with_a_bad_sync_byte_is_fetched_again(tmp_path, monkeypatch):
+def test_decrypted_segment_with_a_bad_sync_byte_is_fetched_again(tmp_path, monkeypatch) -> None:
     """복호화한 세그먼트에 0x47로 시작하지 않는 패킷이 있으면 다시 받아야 한다.
 
     segment-1이 처음에는 둘째 패킷의 첫 바이트가 0x00인 TS(길이는 188의 배수)를 암호화한
@@ -514,7 +528,9 @@ def test_decrypted_segment_with_a_bad_sync_byte_is_fetched_again(tmp_path, monke
     assert (tmp_path / "out.mp4").read_bytes() == AES_OUTPUT
 
 
-def test_encrypted_segment_shorter_than_its_content_length_is_fetched_again(tmp_path, monkeypatch):
+def test_encrypted_segment_shorter_than_its_content_length_is_fetched_again(
+    tmp_path, monkeypatch
+) -> None:
     """받은 암호화 세그먼트가 선언된 Content-Length와 길이가 다르면 다시 받아야 한다.
 
     segment-1이 처음에는 온전한 암호문에 16바이트 더 긴 Content-Length로 오고,

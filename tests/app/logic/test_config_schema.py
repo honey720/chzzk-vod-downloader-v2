@@ -63,7 +63,7 @@ class TestTheTableIsTheSingleSource:
     PROBE_DEFAULT = 7
 
     @pytest.fixture
-    def probe(self, monkeypatch):
+    def probe(self, monkeypatch) -> Setting:
         """표에 `_probe` 줄을 추가한다 — 정수만 받고 기본값 7. 다른 코드는 손대지 않는다."""
 
         def integer(value: object) -> int:
@@ -76,7 +76,7 @@ class TestTheTableIsTheSingleSource:
         monkeypatch.setattr(settings_module, "SCHEMA", (*settings_module.SCHEMA, row))
         return row
 
-    def test_a_new_row_is_registered_in_the_defaults_and_the_fresh_database(self, probe):
+    def test_a_new_row_is_registered_in_the_defaults_and_the_fresh_database(self, probe) -> None:
         """등재: 기본값 표와 첫 시작의 읽기 둘 다에 임시 키가 있고, 기본값의 행은 쓰지 않는다."""
         assert settings_module.default_settings()["_probe"] == self.PROBE_DEFAULT, (
             "기본값 표가 표에서 도출되지 않는다(하드코딩된 dict가 따로 있다)"
@@ -85,14 +85,16 @@ class TestTheTableIsTheSingleSource:
         assert cfg["_probe"] == self.PROBE_DEFAULT
         assert "_probe" not in _read(), "기본값을 행으로 썼다 — DB에는 사용자가 정한 키의 행만 둔다"
 
-    def test_a_missing_key_is_filled_with_the_row_default_on_startup(self, probe):
+    def test_a_missing_key_is_filled_with_the_row_default_on_startup(self, probe) -> None:
         """기본값: 행이 없는 키는 시작 경로(`open_settings`)를 거쳐도 표의 기본값으로 읽히고 행은 없다."""
         _write(VALID)  # `_probe` 없음
         assert settings_module.load_settings()["_probe"] == self.PROBE_DEFAULT
         assert settings_module.open_settings()["_probe"] == self.PROBE_DEFAULT
         assert "_probe" not in _read(), "행이 없던 키에 기본값 행을 썼다"
 
-    def test_a_broken_value_falls_back_to_the_row_default_with_a_warning(self, probe, caplog):
+    def test_a_broken_value_falls_back_to_the_row_default_with_a_warning(
+        self, probe, caplog
+    ) -> None:
         """검증: 표의 검증기에 걸린 값은 기본값으로 대체되고 경고가 남는다."""
         _write({**VALID, "_probe": "seven"})
         with caplog.at_level("WARNING", logger="app.system.settings"):
@@ -101,19 +103,19 @@ class TestTheTableIsTheSingleSource:
         assert "_probe" not in _read(), "깨진 행이 지워지지 않았다"
         assert any("'_probe'" in m for m in _warnings(caplog)), _warnings(caplog)
 
-    def test_a_valid_value_survives_open_settings(self, probe):
+    def test_a_valid_value_survives_open_settings(self, probe) -> None:
         """보존: 유효한 값은 시작 경로를 거쳐도 그대로다 — 미등재 키를 지우는 함정이 여기서 잡힌다."""
         _write({**VALID, "_probe": 42})
         assert settings_module.open_settings()["_probe"] == 42
         assert _read()["_probe"] == 42, "정규화가 표의 키를 지웠다"
 
-    def test_unknown_keys_are_dropped_from_what_the_app_reads(self):
+    def test_unknown_keys_are_dropped_from_what_the_app_reads(self) -> None:
         """표에 없는 키는 읽은 설정에 없다 — 등재가 보존의 전제."""
         _write({**VALID, "stray": 1})
         assert "stray" not in settings_module.open_settings()
         assert "stray" not in settings_module.load_settings()
 
-    def test_an_unknown_row_is_left_in_the_table(self):
+    def test_an_unknown_row_is_left_in_the_table(self) -> None:
         """표에 없는 행은 지우지 않는다 — 같은 DB 버전의 새 판이 더한 키를 옛 판이 지우지 않게.
 
         키를 더해도 DB 버전(user_version)은 오르지 않는다(#475) — 새 판의 키는 옛 판에 낯선 행이다.
@@ -162,7 +164,7 @@ class TestBrokenValuesFallBackInsteadOfCrashing:
             ("sortOrder", None),
         ),
     )
-    def test_the_key_falls_back_and_the_rest_is_preserved(self, key, broken, caplog):
+    def test_the_key_falls_back_and_the_rest_is_preserved(self, key, broken, caplog) -> None:
         """깨진 키만 기본값이 되고 **나머지(인증 값 포함)는 그대로**이며 경고가 남는다."""
         _write({**VALID, key: broken})
         with caplog.at_level("WARNING", logger="app.system.settings"):
@@ -180,14 +182,14 @@ class TestBrokenValuesFallBackInsteadOfCrashing:
             f"{key}의 폴백이 경고로 남지 않았다: {_warnings(caplog)}"
         )
 
-    def test_a_broken_value_does_not_crash_the_readers(self):
+    def test_a_broken_value_does_not_crash_the_readers(self) -> None:
         """읽기 쪽(`load_cookies`·`load_settings().get`)도 검증된 형태만 본다 — 실측 크래시 두 곳."""
         _write({**VALID, "cookies": "str", "downloadPath": ["x"]})
         assert settings_module.load_cookies() == {"NID_AUT": "", "NID_SES": ""}
         assert settings_module.load_settings()["downloadPath"] == ""
 
     @pytest.mark.parametrize("text", ("{broken", "", "NaN-ish text"))
-    def test_a_row_that_is_not_json_falls_back_alone(self, text, caplog):
+    def test_a_row_that_is_not_json_falls_back_alone(self, text, caplog) -> None:
         """값이 JSON이 아닌 행은 그 키만 기본값 + 경고, 나머지 키는 그대로다 — 크래시 아님."""
         write_rows({**{k: json.dumps(v) for k, v in VALID.items()}, "language": text})
         with caplog.at_level("WARNING", logger="app.system.settings"):
@@ -196,7 +198,7 @@ class TestBrokenValuesFallBackInsteadOfCrashing:
         assert "language" not in _read(), "JSON이 아닌 행이 지워지지 않았다"
         assert any("'language'" in m for m in _warnings(caplog)), _warnings(caplog)
 
-    def test_reading_without_startup_keeps_the_other_keys(self, caplog):
+    def test_reading_without_startup_keeps_the_other_keys(self, caplog) -> None:
         """시작 경로를 거치지 않은 읽기에서도 깨진 두 행만 기본값이고 나머지 키는 그대로여야 한다.
 
         language 행 = JSON 아님 · downloadPath 행 = 숫자 3 · 나머지 VALID
@@ -210,7 +212,7 @@ class TestBrokenValuesFallBackInsteadOfCrashing:
         assert any("'language'" in m for m in _warnings(caplog)), _warnings(caplog)
         assert any("'downloadPath'" in m for m in _warnings(caplog)), _warnings(caplog)
 
-    def test_a_valid_config_is_read_unchanged(self, caplog):
+    def test_a_valid_config_is_read_unchanged(self, caplog) -> None:
         """온전한 설정은 값 하나 안 바뀌고 경고도 없다."""
         _write(VALID)
         with caplog.at_level("WARNING", logger="app.system.settings"):
@@ -223,13 +225,13 @@ class TestCookiePolicy:
     """쿠키는 **문자열이 아닐 때만** 빈 문자열로 대체하고 내용은 검사하지 않는다(오너 결정)."""
 
     @pytest.mark.parametrize("weird", ("", " ", "not=a;cookie", "한글", "a" * 5000, "\n"))
-    def test_string_contents_are_never_inspected(self, weird):
+    def test_string_contents_are_never_inspected(self, weird) -> None:
         """어떤 문자열이든 그대로 남는다 — 형식은 이 앱이 정하지 않는다."""
         _write({**VALID, "cookies": {"NID_AUT": weird, "NID_SES": "ses-placeholder"}})
         cfg = settings_module.open_settings()
         assert cfg["cookies"] == {"NID_AUT": weird, "NID_SES": "ses-placeholder"}
 
-    def test_only_the_non_string_value_is_cleared(self, caplog):
+    def test_only_the_non_string_value_is_cleared(self, caplog) -> None:
         """값 하나가 숫자면 그 값만 비우고 다른 쿠키는 남긴다 — 통째로 지우지 않는다."""
         _write({**VALID, "cookies": {"NID_AUT": 12345, "NID_SES": "ses-placeholder"}})
         with caplog.at_level("WARNING", logger="app.system.settings"):
@@ -237,18 +239,18 @@ class TestCookiePolicy:
         assert cfg["cookies"] == {"NID_AUT": "", "NID_SES": "ses-placeholder"}
         assert any("cookies.NID_AUT" in m for m in _warnings(caplog))
 
-    def test_extra_cookie_keys_are_left_alone(self):
+    def test_extra_cookie_keys_are_left_alone(self) -> None:
         """두 이름 밖의 키는 건드리지 않는다."""
         _write({**VALID, "cookies": {**COOKIES, "OTHER": "kept"}})
         assert settings_module.open_settings()["cookies"] == {**COOKIES, "OTHER": "kept"}
 
-    def test_a_missing_cookie_name_is_tolerated(self):
+    def test_a_missing_cookie_name_is_tolerated(self) -> None:
         """이름이 하나 빠져도 나머지는 그대로이고 `load_cookies`가 빈 값으로 채운다."""
         _write({**VALID, "cookies": {"NID_AUT": "aut-placeholder"}})
         assert settings_module.open_settings()["cookies"] == {"NID_AUT": "aut-placeholder"}
         assert settings_module.load_cookies() == {"NID_AUT": "aut-placeholder", "NID_SES": ""}
 
-    def test_warnings_never_contain_the_value(self, caplog):
+    def test_warnings_never_contain_the_value(self, caplog) -> None:
         """경고에 값을 찍지 않는다 — 인증 값이 로그에 남으면 안 된다."""
         _write({**VALID, "cookies": {"NID_AUT": ["secret-list-item"], "NID_SES": "s"}})
         with caplog.at_level("WARNING", logger="app.system.settings"):
@@ -263,7 +265,7 @@ class TestCookiePolicy:
 class TestLoadConfigReturnsAValidatedCopy:
     """`load_settings()`는 검증된 **복사본**을 돌려준다 — DB는 손대지 않는다."""
 
-    def test_load_does_not_rewrite_the_database(self):
+    def test_load_does_not_rewrite_the_database(self) -> None:
         """읽기만으로는 DB 파일이 바뀌지 않는다(정규화된 결과는 반환값에만)."""
         _write({**VALID, "downloadPath": 3, "stray": 1})
         before = os.stat(settings_module.database_path()).st_mtime_ns
@@ -272,7 +274,7 @@ class TestLoadConfigReturnsAValidatedCopy:
         assert os.stat(settings_module.database_path()).st_mtime_ns == before
         assert _read()["downloadPath"] == 3
 
-    def test_each_load_is_an_independent_object(self):
+    def test_each_load_is_an_independent_object(self) -> None:
         """두 번 읽으면 중첩 dict까지 서로 다른 객체다."""
         _write(VALID)
         first, second = settings_module.load_settings(), settings_module.load_settings()
@@ -281,7 +283,7 @@ class TestLoadConfigReturnsAValidatedCopy:
         assert second["cookies"]["NID_AUT"] == "aut-placeholder"
         assert second["window"]["x"] == 10
 
-    def test_defaults_come_out_as_fresh_copies(self):
+    def test_defaults_come_out_as_fresh_copies(self) -> None:
         """표의 기본값 객체가 새어 나오지 않는다 — 반환값을 고쳐도 다음 기본값은 깨끗하다."""
         _write({})  # 행 없음 — 전부 기본값
         cfg = settings_module.load_settings()
@@ -294,13 +296,13 @@ class TestLoadConfigReturnsAValidatedCopy:
 class TestWindowWhitelist:
     """`parse_saved_window` — 원하는 형태만 통과한다(#253). 순수 파이썬 값."""
 
-    def test_a_proper_record_parses(self):
+    def test_a_proper_record_parses(self) -> None:
         """형태가 맞는 기록은 ((x, y, width, height), 최대화)로 나온다 — Qt 타입이 아니다."""
         assert parse_saved_window(
             {"x": 1, "y": 2, "width": 700, "height": 600, "maximized": True}
         ) == ((1, 2, 700, 600), True)
 
-    def test_integral_floats_are_accepted_and_maximized_defaults_to_false(self):
+    def test_integral_floats_are_accepted_and_maximized_defaults_to_false(self) -> None:
         """JSON을 거치며 700.0처럼 실수가 된 정수는 받는다 — 정수값이면 형태가 같다."""
         parsed = parse_saved_window({"x": 1.0, "y": 2.0, "width": 700.0, "height": 600.0})
         assert parsed == ((1, 2, 700, 600), False)
@@ -327,17 +329,17 @@ class TestWindowWhitelist:
             {},
         ),
     )
-    def test_anything_else_is_rejected(self, bad):
+    def test_anything_else_is_rejected(self, bad) -> None:
         """화이트리스트 밖의 값은 전부 None — 예외가 아니라 정상 반환이다."""
         assert parse_saved_window(bad) is None, f"화이트리스트가 {bad!r}를 통과시켰다"
 
-    def test_the_boundary_of_the_int_range_is_inclusive(self):
+    def test_the_boundary_of_the_int_range_is_inclusive(self) -> None:
         """32비트 int의 양 끝값은 범위 안이다."""
         assert (
             parse_saved_window({"x": 2**31 - 1, "y": -(2**31), "width": 1, "height": 1}) is not None
         )
 
-    def test_the_table_uses_the_same_whitelist(self, caplog):
+    def test_the_table_uses_the_same_whitelist(self, caplog) -> None:
         """표의 `window` 줄이 같은 화이트리스트를 쓴다 — 빈 dict는 기록 없음으로 통과, 깨진 기록은 {}."""
         _write({**VALID, "window": {}})
         assert settings_module.open_settings()["window"] == {}

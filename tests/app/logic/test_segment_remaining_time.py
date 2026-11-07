@@ -29,7 +29,7 @@ def _args(data: DownloadData, received: int, speed: float) -> tuple[str, str, st
     return _segment_progress_args(event, data, item)
 
 
-def test_remaining_time_averages_only_the_segments_received_when_some_were_stored():
+def test_remaining_time_averages_only_the_segments_received_when_some_were_stored() -> None:
     """받아 둔 세그먼트가 있으면 남은 시간은 받은 세그먼트만의 평균 크기로 내야 한다.
 
     전체 10개, 끝낸 6개 중 받아 둔 것 4개, 받은 2 MiB, 1 MB/s
@@ -40,7 +40,7 @@ def test_remaining_time_averages_only_the_segments_received_when_some_were_store
     assert (remaining, size, progress) == ("00:00:04", str(2 * MB), 60)
 
 
-def test_remaining_time_without_stored_segments_averages_every_finished_segment():
+def test_remaining_time_without_stored_segments_averages_every_finished_segment() -> None:
     """받아 둔 세그먼트가 없으면 남은 시간은 끝낸 세그먼트 전부의 평균 크기로 내야 한다.
 
     전체 10개, 끝낸 2개(받아 둔 것 0), 받은 2 MiB, 1 MB/s
@@ -51,7 +51,7 @@ def test_remaining_time_without_stored_segments_averages_every_finished_segment(
     assert (remaining, progress) == ("00:00:08", 20)
 
 
-def test_remaining_time_is_unknown_while_only_stored_segments_are_finished():
+def test_remaining_time_is_unknown_while_only_stored_segments_are_finished() -> None:
     """끝낸 세그먼트가 모두 받아 둔 것이면 남은 시간은 알 수 없음이어야 한다.
 
     전체 10개, 끝낸 4개 모두 받아 둔 것, 받은 0, 1 MB/s -> "N/A", 진행률 40
@@ -61,7 +61,7 @@ def test_remaining_time_is_unknown_while_only_stored_segments_are_finished():
     assert (remaining, progress) == ("N/A", 40)
 
 
-def test_progress_reaches_100_when_every_segment_was_stored():
+def test_progress_reaches_100_when_every_segment_was_stored() -> None:
     """세그먼트 전부를 받아 둔 것으로 끝냈으면 진행률은 100이어야 한다.
 
     전체 10개, 끝낸 10개 모두 받아 둔 것, 받은 0 -> 진행률 100

@@ -28,6 +28,7 @@ import core.utils.paths as paths_module
 import app.section_input.basis as section_basis
 import scripts.headless_download as headless
 from core.media.dash import parse_frame_rates, parse_sea_manifest
+from core.media.hls import HlsPlaylist
 from core.sources.hls_aes_downloader import HlsAesDownloader
 from core.models.content import VideoInfo
 from core.models.download_data import DownloadData
@@ -38,6 +39,7 @@ from core.sections.hybrid import CUT_FAILED, CutError
 from core.utils.paths import build_section_output_paths, release_output_paths, temp_dir_for
 from tests.app.scripts.encrypted_hls import FPS, KEY_EVERY, LEAD, SEGMENT_FRAMES, make_encrypted_hls
 from tests.support.range_host import RangeHost
+from typing import Never
 
 KEY = bytes.fromhex("9a3f5c0e71b2d4486e1d7f20c5a8b693")  # 테스트용 키 — 실제 키가 아니다
 WRONG_KEY = bytes.fromhex("11223344556677889900aabbccddeeff")  # 테스트용 — 복호화가 틀어진다
@@ -53,7 +55,7 @@ NTSC = Fraction(30000, 1001)  # 잰 값(30)과 다른 선언값 — 선언값이
 
 
 @pytest.fixture(scope="module")
-def vod(tmp_path_factory):
+def vod(tmp_path_factory) -> tuple[HlsPlaylist, dict[str, bytes]]:
     """ffmpeg로 만든 6초짜리 암호화 HLS 하나 — (플레이리스트, 파일 이름 → bytes)."""
     return make_encrypted_hls(tmp_path_factory.mktemp("headless_ts"), KEY, KEY_URI)
 
@@ -71,7 +73,7 @@ def host(vod, monkeypatch) -> RangeHost:
 class _Headless:
     """헤드리스의 main을 대역과 함께 돌린 한 번의 실행과 그 둘레에서 본 것."""
 
-    def __init__(self, monkeypatch, host, tmp_path, rates=None, key=KEY):
+    def __init__(self, monkeypatch, host, tmp_path, rates=None, key=KEY) -> None:
         self.folder = tmp_path / "out"
         self.folder.mkdir(exist_ok=True)
         self.base_url = host.url("vod/media.m3u8")
@@ -83,13 +85,15 @@ class _Headless:
         result = (VOD_URL, {"title": TITLE}, [[144, self.base_url]], 144, self.base_url)
         result += (str(self.folder), None)
 
-        def resolve_key(_content, key_uri):
+        def resolve_key(_content, key_uri) -> bytes:
             self.key_requests.append(key_uri)
             return key
 
         resolve = headless._resolve_ts_sections
 
-        def observed_resolve(item, texts, segment_dir=None, declared=None):
+        def observed_resolve(
+            item, texts, segment_dir=None, declared=None
+        ) -> tuple[tuple[TimeRange, ...], TsHead] | None:
             self.segment_dirs.append(segment_dir)
             self.declared.append(declared)
             resolved = resolve(item, texts, segment_dir, declared)
@@ -99,7 +103,7 @@ class _Headless:
 
         init = HlsAesDownloader.__init__
 
-        def observed_init(engine, *args, **kwargs):
+        def observed_init(engine, *args, **kwargs) -> None:
             init(engine, *args, **kwargs)
             self.engines.append(engine)
 
@@ -159,7 +163,7 @@ def _logged(caplog) -> str:
 
 def test_headless_downloads_sections_of_an_encrypted_vod_to_the_end(
     vod, host, tmp_path, monkeypatch
-):
+) -> None:
     """암호화 VOD에 --section 둘을 주면 헤드리스는 구간 파일 둘을 끝까지 만들고 0으로 끝나야 한다.
 
     구간 0.8 ~ 2.3초 · 3.4 ~ 5.2초(30fps의 타임코드), 매니페스트의 선언 프레임률 30
@@ -207,7 +211,7 @@ def test_headless_downloads_sections_of_an_encrypted_vod_to_the_end(
 )
 def test_ts_sections_use_the_declared_frame_rate_when_there_is_one(
     vod, host, tmp_path, monkeypatch, caplog, declared, rate, source
-):
+) -> None:
     """암호화 VOD의 구간 해석은 선언 프레임률이 있으면 그 값을, 없으면 잰 값을 받은 것에 실어야 한다.
 
     30fps로 만든 영상, 선언값은 주석의 값(30000/1001 · 없음). --section 00:00:01:00-00:00:01:20
@@ -234,7 +238,7 @@ def test_ts_sections_use_the_declared_frame_rate_when_there_is_one(
 
 def test_headless_hands_the_declared_frame_rate_of_the_picked_resolution_to_the_resolver(
     vod, host, tmp_path, monkeypatch
-):
+) -> None:
     """헤드리스는 매니페스트의 프레임률 가운데 고른 해상도의 것을 구간 해석에 넘기고, 엔진은 그 값으로 계획해야 한다.
 
     매니페스트의 프레임률 {고른 해상도의 주소: 30000/1001, 다른 주소: 60}, --section 00:00:01:00-00:00:02:00
@@ -275,7 +279,7 @@ def _declared_in_manifest(xml_text: str) -> list[tuple[int, str]]:
 )
 def test_list_option_shows_the_declared_frame_rate_of_each_encrypted_resolution(
     monkeypatch, tmp_path, caplog, load_mock_response, fixture_name
-):
+) -> None:
     """--list는 암호화 VOD의 해상도마다 매니페스트가 선언한 프레임률을 적어야 한다.
 
     박제한 SEA 매니페스트(해상도 144 · 720 · 1080, frameRate가 정수로 적혀 있다).
@@ -297,7 +301,7 @@ def test_list_option_shows_the_declared_frame_rate_of_each_encrypted_resolution(
     )
     asked = []
 
-    def frame_rates(video_id, in_key, cookies):
+    def frame_rates(video_id, in_key, cookies) -> dict[str, Fraction]:
         asked.append((video_id, in_key))
         return parse_frame_rates(xml_text)
 
@@ -327,7 +331,7 @@ def test_list_option_shows_the_declared_frame_rate_of_each_encrypted_resolution(
 @pytest.mark.parametrize("separated", [True, False], ids=["other-volume", "same-folder"])
 def test_headless_segment_folder_is_the_folder_an_engine_alone_would_choose(
     monkeypatch, tmp_path, separated
-):
+) -> None:
     """헤드리스가 구간 해석에 주는 segment_dir은 같은 조건에서 엔진이 혼자 돌 때 정하는 임시 폴더와 같아야 한다.
 
     임시 폴더 선택(choose_temp_dir)을 실제 함수로 두고 그 판단의 재료만 정함 —
@@ -351,7 +355,7 @@ def test_headless_segment_folder_is_the_folder_an_engine_alone_would_choose(
     result = (VOD_URL, {"title": TITLE}, [[144, "u144"]], 144, "u144", str(out), None)
     given = []
 
-    def resolver(item, texts, segment_dir=None, declared=None):
+    def resolver(item, texts, segment_dir=None, declared=None) -> None:
         given.append(segment_dir)
         return None  # 여기서 멈춘다 — 폴더만 본다
 
@@ -380,7 +384,9 @@ def test_headless_segment_folder_is_the_folder_an_engine_alone_would_choose(
     assert os.path.dirname(given[0]) == (scratch if separated else str(out))
 
 
-def test_failed_ts_resolution_releases_names_and_removes_the_segment_folder(monkeypatch, tmp_path):
+def test_failed_ts_resolution_releases_names_and_removes_the_segment_folder(
+    monkeypatch, tmp_path
+) -> None:
     """암호화 VOD의 구간 해석이 실패하면 배정한 구간 파일명을 풀고, 세그먼트를 받아 둔 폴더를 지우고, 2로 끝나야 한다.
 
     구간 해석 대역이 넘겨받은 폴더에 파일 하나를 쓰고 None을 돌려줌(해석 실패)
@@ -394,7 +400,7 @@ def test_failed_ts_resolution_releases_names_and_removes_the_segment_folder(monk
     monkeypatch.setattr(headless, "choose_temp_dir", temp_dir_for)
     folders = []
 
-    def failing(item, texts, segment_dir=None, declared=None):
+    def failing(item, texts, segment_dir=None, declared=None) -> None:
         os.makedirs(segment_dir)
         with open(os.path.join(segment_dir, "0.ts"), "wb") as f:
             f.write(b"segment")
@@ -426,7 +432,7 @@ def _name_is_free(folder) -> bool:
 
 def test_interrupt_during_ts_resolution_removes_the_segment_folder_and_is_raised_again(
     vod, host, tmp_path, monkeypatch
-):
+) -> None:
     """구간 해석이 세그먼트를 받아 둔 뒤 중단(KeyboardInterrupt)되면 폴더를 지우고 이름을 풀고 그 중단을 그대로 올려야 한다.
 
     --section 하나. 구간 해석이 첫 세그먼트를 받아 둔 다음 부르는 ts_timeline이 KeyboardInterrupt를 냄
@@ -436,7 +442,7 @@ def test_interrupt_during_ts_resolution_removes_the_segment_folder_and_is_raised
     run = _Headless(monkeypatch, host, tmp_path)
     stored = []
 
-    def interrupted(playlist, segment_at, fps):
+    def interrupted(playlist, segment_at, fps) -> Never:
         stored.append(sorted(os.listdir(run.segment_dirs[0])))
         raise KeyboardInterrupt
 
@@ -455,7 +461,7 @@ def test_interrupt_during_ts_resolution_removes_the_segment_folder_and_is_raised
 @pytest.mark.parametrize("where", ["before-submit", "engine-not-created"])
 def test_failure_between_ts_resolution_and_the_engine_removes_the_segment_folder(
     vod, host, tmp_path, monkeypatch, where
-):
+) -> None:
     """구간 해석이 끝난 뒤 엔진이 실행을 넘겨받기 전에 실패하면 폴더를 지우고 이름을 풀어야 한다.
 
     --section 하나, 구간 해석은 끝까지 감(세그먼트를 받아 둔다).
@@ -469,7 +475,7 @@ def test_failure_between_ts_resolution_and_the_engine_removes_the_segment_folder
     stored = []
     raised_in = []  # 실패를 낸 스레드 — engine-not-created에서는 서비스의 워커다
 
-    def failing(*_args, **_kwargs):
+    def failing(*_args, **_kwargs) -> Never:
         stored.append(sorted(os.listdir(run.segment_dirs[0])))
         raised_in.append(threading.current_thread())
         raise RuntimeError("시험")
@@ -500,7 +506,7 @@ def test_failure_between_ts_resolution_and_the_engine_removes_the_segment_folder
 
 def test_headless_leaves_the_segment_folder_to_the_engine_once_it_took_over(
     vod, host, tmp_path, monkeypatch
-):
+) -> None:
     """엔진이 실행을 넘겨받은 뒤의 실패에서는 헤드리스가 세그먼트 폴더를 지우지 않아야 한다.
 
     --section 하나. 엔진의 컷이 CutError를 내 후처리가 실패함(엔진은 세그먼트를 남긴다)
@@ -508,7 +514,7 @@ def test_headless_leaves_the_segment_folder_to_the_engine_once_it_took_over(
     """
     run = _Headless(monkeypatch, host, tmp_path)
 
-    def failing_cut(*_args, **_kwargs):
+    def failing_cut(*_args, **_kwargs) -> Never:
         raise CutError(CUT_FAILED, "시험")
 
     monkeypatch.setattr(aes_module, "cut_ts_section", failing_cut)
@@ -527,7 +533,7 @@ def test_headless_leaves_the_segment_folder_to_the_engine_once_it_took_over(
 @pytest.mark.parametrize("key", [KEY, WRONG_KEY], ids=["success", "wrong-key"])
 def test_key_is_not_left_in_the_log_or_in_what_the_resolver_returns(
     vod, host, tmp_path, monkeypatch, caplog, key
-):
+) -> None:
     """암호화 VOD의 구간 해석이 끝나든 키가 틀려 실패하든, 받은 키 값은 로그와 돌려주는 것 어디에도 없어야 한다.
 
     --section 00:00:01:00-00:00:02:00, 키 리졸버가 맞는 키 · 다른 키를 줌. 로그는 모든 로거를 DEBUG로 캡처
@@ -537,7 +543,7 @@ def test_key_is_not_left_in_the_log_or_in_what_the_resolver_returns(
     """
     asked = []
 
-    def resolve_key(_content, key_uri):
+    def resolve_key(_content, key_uri) -> bytes:
         asked.append(key_uri)
         return key
 
@@ -559,7 +565,7 @@ def test_key_is_not_left_in_the_log_or_in_what_the_resolver_returns(
         assert all(not isinstance(value, bytes | bytearray) for value in vars(resolved[1]).values())
 
 
-def test_runner_hands_the_ts_head_to_the_engine(monkeypatch, tmp_path):
+def test_runner_hands_the_ts_head_to_the_engine(monkeypatch, tmp_path) -> None:
     """러너는 구간을 해석하며 받은 TsHead를 제출하는 Content에 실어야 한다.
 
     구간 하나와 TsHead 대역을 받은 러너, DownloadService · 로거 · 태스크는 대역
@@ -568,10 +574,10 @@ def test_runner_hands_the_ts_head_to_the_engine(monkeypatch, tmp_path):
     submitted = []
 
     class FakeService:
-        def __init__(self, **kwargs):
+        def __init__(self, **kwargs) -> None:
             pass
 
-        def submit(self, content, **kwargs):
+        def submit(self, content, **kwargs) -> SimpleNamespace:
             submitted.append(content)
             return SimpleNamespace(wait=lambda timeout=None: True)
 

@@ -256,7 +256,7 @@ class _Control:
         timeout: float,
         should_stop: Callable[[], bool] | None,
         should_pause: Callable[[], bool] | None,
-    ):
+    ) -> None:
         self._process = process
         self._should_stop = should_stop
         self._should_pause = should_pause

@@ -6,6 +6,7 @@
 """
 
 import logging
+from collections.abc import Iterator
 
 import pytest
 from PySide6.QtCore import QTranslator
@@ -26,12 +27,13 @@ from core.models.download_state import DownloadState
 from scripts.headless_download import _format_resolutions, _rep_label
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, shown, snapshot_top_levels
 from tests.support.stream_samples import S1, S2, S4, S11, Sample
+from typing import Never
 
 WIDE = 1600  # pill이 접히지 않는 폭 — 버튼을 누르면 바로 선택된다
 
 
 @pytest.fixture(autouse=True)
-def _apply_production_qss(qapp):
+def _apply_production_qss(qapp) -> None:
     """실제 전역 QSS를 태운 상태에서 잰다(scope=function 유지 — test_widget_theme 참고)."""
     theme.set_color_scheme("dark")
     qapp.setStyle(hold_style(theme.build_style()))
@@ -40,7 +42,7 @@ def _apply_production_qss(qapp):
 
 
 @pytest.fixture(autouse=True)
-def _drop_windows(qapp):
+def _drop_windows(qapp) -> Iterator[None]:
     """이 파일의 테스트가 띄운 창을 테스트 끝에 확실히 파괴한다(card_helpers.drop_new_top_levels)."""
     before = snapshot_top_levels()
     yield
@@ -48,12 +50,12 @@ def _drop_windows(qapp):
 
 
 @pytest.fixture(autouse=True)
-def no_network(monkeypatch):
+def no_network(monkeypatch) -> None:
     class _FailingSession:
-        def head(self, *a, **k):
+        def head(self, *a, **k) -> Never:
             raise RuntimeError("network disabled in tests")
 
-        def get(self, *a, **k):
+        def get(self, *a, **k) -> Never:
             raise RuntimeError("network disabled in tests")
 
     monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
@@ -126,7 +128,7 @@ def _encoded_vod() -> list:
     ],
     ids=["S1", "S2", "S4", "S11"],
 )
-def test_replay_button_text_is_the_short_side_with_the_source_mark(qapp, sample, texts):
+def test_replay_button_text_is_the_short_side_with_the_source_mark(qapp, sample, texts) -> None:
     """다시보기의 해상도 버튼의 본 글자는 높은 것부터 "<짧은 변>p"이고 원본에만 원본 표시가 붙어야 한다.
 
     주석의 표본마다 (번역기 없음 — 원본 표시는 원문 "(source)")
@@ -147,7 +149,7 @@ def test_replay_button_text_is_the_short_side_with_the_source_mark(qapp, sample,
     ],
     ids=["S1", "S2", "S4", "S11"],
 )
-def test_replay_button_secondary_text_is_the_frame_rate_from_50fps(qapp, sample, secondary):
+def test_replay_button_secondary_text_is_the_frame_rate_from_50fps(qapp, sample, secondary) -> None:
     """다시보기의 해상도 버튼의 보조 글자는 50fps 이상인 항목에만 "<fps>fps"여야 한다.
 
     주석의 표본마다
@@ -158,7 +160,7 @@ def test_replay_button_secondary_text_is_the_frame_rate_from_50fps(qapp, sample,
     assert _secondary_texts(widget) == secondary
 
 
-def test_fallback_list_buttons_show_the_same_resolutions_without_source_or_frame_rate(qapp):
+def test_fallback_list_buttons_show_the_same_resolutions_without_source_or_frame_rate(qapp) -> None:
     """playback 정보로 돌아간 목록의 해상도 버튼은 정상 목록과 같은 해상도를 보이되 원본 표시 · fps는 없어야 한다 (#331).
 
     S1 — 정상 목록(마스터 플레이리스트의 변형)과 대체 목록(playback 정보의 트랙,
@@ -175,7 +177,7 @@ def test_fallback_list_buttons_show_the_same_resolutions_without_source_or_frame
     assert _secondary_texts(fallback) == [""] * 5
 
 
-def test_encoded_vod_buttons_show_the_frame_rate_without_a_source_mark(qapp):
+def test_encoded_vod_buttons_show_the_frame_rate_without_a_source_mark(qapp) -> None:
     """인코딩 완료 VOD의 해상도 버튼은 보조 글자에 fps만 있고 원본 표시는 없어야 한다.
 
     1080(60fps) · 720(60fps) · 144(30fps) 매니페스트
@@ -187,7 +189,7 @@ def test_encoded_vod_buttons_show_the_frame_rate_without_a_source_mark(qapp):
     assert _secondary_texts(widget) == ["60fps", "60fps", ""]
 
 
-def test_clip_buttons_show_only_the_number(qapp):
+def test_clip_buttons_show_only_the_number(qapp) -> None:
     """스트림 정보가 없는 목록(클립)의 해상도 버튼은 숫자만 보이고 보조 글자가 없어야 한다.
 
     [[480, 주소], [720, 주소]]
@@ -202,7 +204,7 @@ def test_clip_buttons_show_only_the_number(qapp):
     assert _secondary_texts(widget) == ["", ""]
 
 
-def test_button_with_secondary_text_is_wider_by_more_than_that_text(qapp):
+def test_button_with_secondary_text_is_wider_by_more_than_that_text(qapp) -> None:
     """보조 글자가 있는 버튼의 자연 폭은 없을 때보다 그 글자의 폭 넘게 넓어야 한다.
 
     S1의 둘째 버튼("720p" + "60fps"), 보조 글자를 지운 뒤의 자연 폭과 비교
@@ -218,7 +220,7 @@ def test_button_with_secondary_text_is_wider_by_more_than_that_text(qapp):
     assert with_secondary - button.sizeHint().width() > text_width
 
 
-def test_secondary_text_of_an_unselected_button_is_dimmer_than_its_text(qapp):
+def test_secondary_text_of_an_unselected_button_is_dimmer_than_its_text(qapp) -> None:
     """선택되지 않은 버튼의 보조 글자 색은 textDisabled 토큰의 색이고 본 글자 색과 달라야 한다.
 
     S1의 둘째 버튼(선택 아님, 보조 글자 "60fps"), 다크 테마. 본 글자 색은 QSS의 textMuted
@@ -232,7 +234,7 @@ def test_secondary_text_of_an_unselected_button_is_dimmer_than_its_text(qapp):
     assert button.secondaryColor() != QColor(tokens["textMuted"])
 
 
-def test_secondary_text_of_the_selected_button_is_translucent_on_accent(qapp):
+def test_secondary_text_of_the_selected_button_is_translucent_on_accent(qapp) -> None:
     """선택된 버튼의 보조 글자 색은 onAccent와 색이 같고 불투명하지 않되, 절반보다는 진해야 한다.
 
     S1의 첫 버튼(선택, 보조 글자 "60fps"), 다크 테마. 본 글자 색은 QSS의 onAccent(불투명)
@@ -252,7 +254,7 @@ def test_secondary_text_of_the_selected_button_is_translucent_on_accent(qapp):
     ("language", "translated"),
     [("ko_KR", "(원본)"), ("en_US", "(source)")],
 )
-def test_source_mark_is_translated_in_the_bundled_catalogs(qapp, language, translated):
+def test_source_mark_is_translated_in_the_bundled_catalogs(qapp, language, translated) -> None:
     """동봉된 카탈로그는 언어마다 원본 표시의 번역을 갖고 있어야 한다.
 
     translations/<언어>.qm, 컨텍스트 ContentItemWidget, 원문 "(source)"
@@ -264,7 +266,7 @@ def test_source_mark_is_translated_in_the_bundled_catalogs(qapp, language, trans
     assert translator.translate("ContentItemWidget", "(source)") == translated
 
 
-def test_first_button_of_the_same_short_side_is_selected_and_is_the_original(qapp):
+def test_first_button_of_the_same_short_side_is_selected_and_is_the_original(qapp) -> None:
     """짧은 변이 같은 두 항목이 있으면 기본 선택은 맨 앞 버튼이고 그것이 원본이어야 한다.
 
     S4
@@ -277,7 +279,7 @@ def test_first_button_of_the_same_short_side_is_selected_and_is_the_original(qap
     assert (widget.item.resolution, widget.item.resolution_tag) == (720, "(원본)")
 
 
-def test_clicking_the_other_button_of_the_same_short_side_selects_that_stream(qapp):
+def test_clicking_the_other_button_of_the_same_short_side_selects_that_stream(qapp) -> None:
     """짧은 변이 같은 다른 버튼을 누르면 아이템의 스트림 값이 그 항목의 것으로 바뀌어야 한다.
 
     S4, 둘째 버튼("720p", 보조 글자 "60fps")을 누름
@@ -304,7 +306,7 @@ _TWO_720 = """<?xml version="1.0" encoding="UTF-8"?>
 </MPD>"""
 
 
-def test_higher_bandwidth_of_the_same_short_side_is_the_first_and_default_button(qapp):
+def test_higher_bandwidth_of_the_same_short_side_is_the_first_and_default_button(qapp) -> None:
     """해상도와 원본 여부가 같은 두 항목이면 대역폭이 높은 쪽이 첫 버튼이고 기본 선택이어야 한다 (#336).
 
     _TWO_720(720 60fps 3200000 · 720 30fps 1600000 · 144, 모두 원본 아님)
@@ -324,7 +326,7 @@ def test_higher_bandwidth_of_the_same_short_side_is_the_first_and_default_button
     assert (widget.item.resolution, widget.item.base_url) == (720, "https://v.invalid/720-60.mp4")
 
 
-def test_late_size_of_another_button_does_not_move_the_default(qapp):
+def test_late_size_of_another_button_does_not_move_the_default(qapp) -> None:
     """다른 버튼의 크기 조회가 먼저 끝나도 기본 선택이 옮겨 가지 않아야 한다 (#336).
 
     _TWO_720, 둘째 버튼(720 30fps)의 크기 "1.00 GB"가 도착 → 다음 첫 버튼(720 60fps)의 "2.00 GB"
@@ -354,7 +356,7 @@ def _start(widget: ContentItemWidget) -> None:
     QApplication.processEvents()
 
 
-def test_running_card_marks_the_original_when_two_entries_share_the_short_side(qapp):
+def test_running_card_marks_the_original_when_two_entries_share_the_short_side(qapp) -> None:
     """짧은 변이 같은 항목이 둘이고 원본을 골랐으면 다운로드 중 카드의 해상도에 원본 표시가 붙어야 한다.
 
     S4, 기본 선택(원본 720p), 받은 양 1.20 GB (번역기 없음)
@@ -367,7 +369,7 @@ def test_running_card_marks_the_original_when_two_entries_share_the_short_side(q
     assert shown(widget.fileSizeLabel) == "720p(source) · 1.20 GB"
 
 
-def test_running_card_shows_the_translated_source_mark(qapp):
+def test_running_card_shows_the_translated_source_mark(qapp) -> None:
     """한국어 카탈로그를 쓰면 다운로드 중 카드의 원본 표시는 "(원본)"이어야 한다.
 
     S4, 기본 선택(원본 720p), 받은 양 1.20 GB, translations/ko_KR.qm 설치
@@ -385,7 +387,7 @@ def test_running_card_shows_the_translated_source_mark(qapp):
         qapp.removeTranslator(translator)
 
 
-def test_running_card_of_the_other_entry_of_the_same_short_side_shows_only_the_number(qapp):
+def test_running_card_of_the_other_entry_of_the_same_short_side_shows_only_the_number(qapp) -> None:
     """짧은 변이 같은 두 항목 중 원본이 아닌 쪽을 골랐으면 다운로드 중 카드의 해상도는 숫자만이어야 한다.
 
     S4, 둘째 버튼(다시 인코딩한 720p)을 누름, 받은 양 1.20 GB
@@ -412,7 +414,7 @@ def test_running_card_of_the_other_entry_of_the_same_short_side_shows_only_the_n
 )
 def test_running_card_of_a_landscape_video_shows_only_the_number(
     qapp, reps, content_type, expected
-):
+) -> None:
     """해상도마다 항목이 하나인 영상의 다운로드 중 카드는 원본을 골라도 해상도가 숫자만이어야 한다.
 
     주석의 표본마다 기본 선택(최고 해상도), 받은 크기 1.20 GB(인코딩 완료 VOD는 전체도 1.20 GB)
@@ -438,7 +440,9 @@ def _logged_resolution(tmp_path, monkeypatch, item: ContentItem) -> list[str]:
     return [message for message in messages if message.startswith("resolution: ")]
 
 
-def test_log_marks_the_original_when_two_entries_share_the_short_side(qapp, tmp_path, monkeypatch):
+def test_log_marks_the_original_when_two_entries_share_the_short_side(
+    qapp, tmp_path, monkeypatch
+) -> None:
     """짧은 변이 같은 항목이 둘이고 원본을 골랐으면 로그의 resolution 줄에 "(원본)"이 붙어야 한다.
 
     S4, 기본 선택(원본 720p)
@@ -451,7 +455,7 @@ def test_log_marks_the_original_when_two_entries_share_the_short_side(qapp, tmp_
 
 def test_log_of_the_other_entry_of_the_same_short_side_is_only_the_number(
     qapp, tmp_path, monkeypatch
-):
+) -> None:
     """짧은 변이 같은 두 항목 중 원본이 아닌 쪽을 골랐으면 로그의 resolution 줄은 숫자만이어야 한다.
 
     S4, 둘째 버튼(다시 인코딩한 720p)을 누름
@@ -464,7 +468,7 @@ def test_log_of_the_other_entry_of_the_same_short_side_is_only_the_number(
     assert _logged_resolution(tmp_path, monkeypatch, widget.item) == ["resolution: 720"]
 
 
-def test_log_of_a_landscape_video_is_only_the_number(qapp, tmp_path, monkeypatch):
+def test_log_of_a_landscape_video_is_only_the_number(qapp, tmp_path, monkeypatch) -> None:
     """해상도마다 항목이 하나인 영상은 원본을 골라도 로그의 resolution 줄이 숫자만이어야 한다.
 
     S1, 기본 선택(원본 1080p)
@@ -483,7 +487,7 @@ def test_log_of_a_landscape_video_is_only_the_number(qapp, tmp_path, monkeypatch
     ],
     ids=["S1", "S4"],
 )
-def test_headless_list_labels_match_the_button(sample, labels):
+def test_headless_list_labels_match_the_button(sample, labels) -> None:
     """헤드리스 --list의 항목 글자는 "<짧은 변>p"에 원본이면 "(원본)", 50fps 이상이면 " · <fps>fps"가 붙어야 한다.
 
     주석의 표본마다 조회 결과의 목록 순서 그대로(낮은 것부터)
@@ -500,7 +504,9 @@ def test_headless_list_labels_match_the_button(sample, labels):
     ],
     ids=["S1", "S4"],
 )
-def test_headless_list_line_shows_the_source_mark_and_every_declared_frame_rate(sample, line):
+def test_headless_list_line_shows_the_source_mark_and_every_declared_frame_rate(
+    sample, line
+) -> None:
     """헤드리스 --list의 한 줄은 원본에 "(원본)"을 붙이고 항목이 든 프레임률을 전부 적어야 한다.
 
     주석의 표본마다 조회 결과의 목록, 매니페스트 프레임률 없음({})

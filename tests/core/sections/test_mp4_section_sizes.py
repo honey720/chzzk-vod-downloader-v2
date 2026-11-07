@@ -37,6 +37,7 @@ from tests.support.mp4_builder import (
     video_spec,
 )
 from tests.core.media.test_mp4_summary import CASES as SUMMARY_CASES
+from typing import Never
 
 SELECTIONS_PER_SHAPE = 300  # 모양마다 뽑는 구간 수
 
@@ -48,7 +49,9 @@ def _chunks(count: int, size: int) -> list[int]:
     return chunks
 
 
-def _video(count: int, *, seed: int, per_chunk: int, b_frames: bool, edits=None, sync=True):
+def _video(
+    count: int, *, seed: int, per_chunk: int, b_frames: bool, edits=None, sync=True
+) -> TrackSpec:
     """60fps 영상 — 샘플 크기는 고르지 않다. b_frames면 P 하나 + B 1~3개의 묶음이 섞인다."""
     rng = random.Random(seed)
     composition = None
@@ -75,7 +78,9 @@ def _video(count: int, *, seed: int, per_chunk: int, b_frames: bool, edits=None,
     )
 
 
-def _audio(count: int, *, seed: int, per_chunk: int, edits=None, uniform: bool = False):
+def _audio(
+    count: int, *, seed: int, per_chunk: int, edits=None, uniform: bool = False
+) -> TrackSpec:
     rng = random.Random(seed)
     return TrackSpec(
         handler=b"soun",
@@ -214,7 +219,7 @@ for _name, _make in SUMMARY_CASES.items():
     SHAPES[f"summary:{_name}"] = lambda make=_make: ([spec for spec in make() if spec], {})
 
 
-def _raw_of(tracks, options):
+def _raw_of(tracks, options) -> Mp4Raw:
     data = build_mp4(tracks, **options).data
     return read_mp4_raw(lambda offset, size: data[offset : offset + size])
 
@@ -270,7 +275,7 @@ def _random_selections(index, rng: random.Random, count: int) -> list[TimeRange]
     return selections
 
 
-def _outcome(function):
+def _outcome(function) -> object:
     """함수의 결과 — 값이거나, 던진 예외의 종류(와 Mp4Error의 실패 키)."""
     try:
         return function()
@@ -281,7 +286,7 @@ def _outcome(function):
 
 
 @pytest.mark.parametrize("shape", list(SHAPES), ids=list(SHAPES))
-def test_light_sizes_equal_the_index_sizes_for_random_selections(shape):
+def test_light_sizes_equal_the_index_sizes_for_random_selections(shape) -> None:
     """색인 없이 센 (받을 바이트의 합, 머리 길이)는 무작위 구간마다 색인으로 센 값과 같아야 한다.
 
     모양마다 구간 300개(프레임 시각 그대로 · 프레임 사이 · 영상 밖을 섞음), 씨앗 고정
@@ -305,7 +310,7 @@ def test_light_sizes_equal_the_index_sizes_for_random_selections(shape):
 
 
 @pytest.mark.parametrize("shape", list(SHAPES), ids=list(SHAPES))
-def test_light_sizes_equal_the_index_sizes_for_several_selections_at_once(shape):
+def test_light_sizes_equal_the_index_sizes_for_several_selections_at_once(shape) -> None:
     """구간 여럿을 함께 세도(겹치는 자리는 한 번만) 색인으로 센 값과 같아야 한다.
 
     모양마다 구간 1~6개짜리 묶음 60개, 씨앗 고정
@@ -329,7 +334,7 @@ def test_light_sizes_equal_the_index_sizes_for_several_selections_at_once(shape)
 
 
 @pytest.mark.parametrize("shape", list(SHAPES), ids=list(SHAPES))
-def test_light_head_size_equals_the_index_head_size(shape):
+def test_light_head_size_equals_the_index_head_size(shape) -> None:
     """색인 없이 구한 머리 길이는 색인으로 구한 값과 같아야 한다.
 
     모양마다 -> LightTables.head_size() == mp4_ranges.sections_head_size(색인)
@@ -340,7 +345,7 @@ def test_light_head_size_equals_the_index_head_size(shape):
     assert LightTables(raw).head_size() == sections_head_size(index_mp4(raw).index)
 
 
-def test_light_sizes_equal_the_index_sizes_when_tables_are_longer_than_one_chunk():
+def test_light_sizes_equal_the_index_sizes_when_tables_are_longer_than_one_chunk() -> None:
     """표가 자르는 단위(CHUNK_ITEMS)보다 길어도 색인으로 센 값과 같아야 한다.
 
     영상 70,000샘플(청크당 샘플 하나 · stss에 모든 샘플) · 오디오 40,000샘플, 구간 40개
@@ -367,7 +372,7 @@ def test_light_sizes_equal_the_index_sizes_when_tables_are_longer_than_one_chunk
         assert tables.sections_sizes([selection]) == sections_sizes(index, [selection])
 
 
-def test_light_sizes_do_not_build_an_index(monkeypatch):
+def test_light_sizes_do_not_build_an_index(monkeypatch) -> None:
     """표에서 셀 수 있는 모양이면 moov_sections_sizes는 색인을 만들지 않아야 한다.
 
     청크 묶음 모양, index_mp4 · parse_moov를 부르면 실패하게 바꿔 둠, 구간 1.0~5.0초
@@ -377,7 +382,7 @@ def test_light_sizes_do_not_build_an_index(monkeypatch):
     raw = _raw_of(tracks, options)
     expected = sections_sizes(index_mp4(raw).index, [TimeRange(1.0, 5.0)])
 
-    def forbidden(*args, **kwargs):
+    def forbidden(*args, **kwargs) -> Never:
         raise AssertionError("색인을 만들었다")
 
     monkeypatch.setattr(light.mp4, "index_mp4", forbidden)
@@ -387,14 +392,14 @@ def test_light_sizes_do_not_build_an_index(monkeypatch):
     assert moov_head_size(raw) == expected[1]
 
 
-def _with_audio_composition():
+def _with_audio_composition() -> list[TrackSpec]:
     """오디오에 ctts가 있다 — 표에서 세지 않는 모양."""
     audio = _audio(300, seed=31, per_chunk=23)
     audio.composition = [0] * 300
     return [_video(400, seed=30, per_chunk=30, b_frames=True), audio]
 
 
-def test_shape_that_cannot_be_read_from_tables_is_reported():
+def test_shape_that_cannot_be_read_from_tables_is_reported() -> None:
     """표에서 셀 수 없는 모양이면 LightTables는 NeedsFullIndex를 던져야 한다.
 
     오디오 트랙에 ctts가 있는 mp4 -> NeedsFullIndex
@@ -405,7 +410,7 @@ def test_shape_that_cannot_be_read_from_tables_is_reported():
         LightTables(raw)
 
 
-def test_shape_that_cannot_be_read_from_tables_is_counted_with_an_index():
+def test_shape_that_cannot_be_read_from_tables_is_counted_with_an_index() -> None:
     """표에서 셀 수 없는 모양이면 moov_sections_sizes는 색인을 만들어 같은 값을 내야 한다.
 
     오디오 트랙에 ctts가 있는 mp4, 구간 1.0~3.0초
@@ -419,7 +424,7 @@ def test_shape_that_cannot_be_read_from_tables_is_counted_with_an_index():
     assert moov_head_size(raw) == sections_head_size(index)
 
 
-def test_moov_behind_the_samples_is_refused_like_the_index():
+def test_moov_behind_the_samples_is_refused_like_the_index() -> None:
     """moov가 샘플보다 뒤에 있으면 색인으로 셀 때와 같은 실패 키의 Mp4Error여야 한다.
 
     ftyp · mdat · moov 순서의 mp4, 구간 0.2~0.5초 -> Mp4Error(MP4_UNSUPPORTED) — 크기 · 머리 모두
@@ -435,7 +440,7 @@ def test_moov_behind_the_samples_is_refused_like_the_index():
     assert sizes.value.message_key == head.value.message_key == MP4_UNSUPPORTED
 
 
-def test_damaged_chunk_table_is_judged_by_the_index():
+def test_damaged_chunk_table_is_judged_by_the_index() -> None:
     """표가 어긋난 moov면 moov_sections_sizes는 색인 해석과 같은 예외를 내야 한다.
 
     stsc의 청크당 샘플 수를 하나 늘린(샘플 수가 stsz와 달라진) mp4
@@ -455,7 +460,7 @@ def test_damaged_chunk_table_is_judged_by_the_index():
     assert actual.value.message_key == expected.value.message_key
 
 
-def test_counting_stops_when_told_to():
+def test_counting_stops_when_told_to() -> None:
     """그만두라는 답이 걸려 있으면 moov_sections_sizes는 StopRequested로 끝나야 한다.
 
     청크 묶음 모양, stoppable(항상 참) 안에서 부름 -> StopRequested
@@ -467,7 +472,7 @@ def test_counting_stops_when_told_to():
         moov_sections_sizes(raw, [TimeRange(1.0, 5.0)])
 
 
-def test_counting_with_an_index_waits_for_its_turn_to_parse():
+def test_counting_with_an_index_waits_for_its_turn_to_parse() -> None:
     """색인을 만들어 세야 하는 모양이면, 다른 해석이 도는 동안에는 기다렸다가 세어야 한다.
 
     오디오 트랙에 ctts가 있는 mp4. 해석의 차례를 테스트가 쥔 채 다른 스레드에서 세게 하고,
@@ -490,7 +495,7 @@ def test_counting_with_an_index_waits_for_its_turn_to_parse():
     assert got == [expected]
 
 
-def test_no_room_for_the_mdat_header_is_refused_like_the_index():
+def test_no_room_for_the_mdat_header_is_refused_like_the_index() -> None:
     """moov와 첫 샘플 사이에 mdat 머리가 들어갈 자리가 없으면 색인으로 셀 때와 같은 실패 키의 Mp4Error여야 한다.
 
     moov의 끝을 4바이트 뒤로 적은 moov(첫 샘플까지 4바이트 — 머리는 8바이트다), 구간 0.2~0.5초
@@ -517,7 +522,7 @@ def test_no_room_for_the_mdat_header_is_refused_like_the_index():
 
 
 @pytest.mark.parametrize("shape", list(SHAPES), ids=list(SHAPES))
-def test_light_file_size_equals_the_index_file_size_for_random_selections(shape):
+def test_light_file_size_equals_the_index_file_size_for_random_selections(shape) -> None:
     """색인 없이 센 구간 파일 크기의 합은 무작위 구간마다 색인으로 센 값과 같아야 한다.
 
     모양마다 구간 300개(프레임 시각 그대로 · 프레임 사이 · 영상 밖을 섞음), 씨앗 고정
@@ -541,7 +546,7 @@ def test_light_file_size_equals_the_index_file_size_for_random_selections(shape)
 
 
 @pytest.mark.parametrize("shape", list(SHAPES), ids=list(SHAPES))
-def test_light_file_size_equals_the_index_file_size_for_several_selections_at_once(shape):
+def test_light_file_size_equals_the_index_file_size_for_several_selections_at_once(shape) -> None:
     """구간 여럿을 함께 세도(겹치는 자리를 구간마다) 색인으로 센 값과 같아야 한다.
 
     모양마다 구간 1~6개짜리 묶음 60개, 씨앗 고정
@@ -564,7 +569,7 @@ def test_light_file_size_equals_the_index_file_size_for_several_selections_at_on
     assert different == []
 
 
-def _long_tracks():
+def _long_tracks() -> list[TrackSpec]:
     """영상 70,000샘플(B프레임 재배열) · 오디오 40,000샘플 — 크기 표가 묶음(8192개) 여럿에 걸친다."""
     return [
         _video(70_000, seed=11, per_chunk=7, b_frames=True),
@@ -572,7 +577,7 @@ def _long_tracks():
     ]
 
 
-def test_light_file_size_equals_the_index_file_size_when_sections_span_many_blocks():
+def test_light_file_size_equals_the_index_file_size_when_sections_span_many_blocks() -> None:
     """구간이 크기 표의 묶음 여럿에 걸쳐도(묶음의 합 + 양 끝의 자투리) 색인으로 센 값과 같아야 한다.
 
     영상 70,000샘플 · 오디오 40,000샘플(약 1166초). 구간: 거의 전체 · 묶음 경계에 걸친 것 · 묶음 하나
@@ -594,7 +599,7 @@ def test_light_file_size_equals_the_index_file_size_when_sections_span_many_bloc
         assert moov_sections_file_size(raw, selections) == expected, selections
 
 
-def test_light_file_size_reads_the_size_table_once_however_many_sections():
+def test_light_file_size_reads_the_size_table_once_however_many_sections() -> None:
     """구간이 많아도 크기 표는 한 번만 훑어야 한다 — 구간마다 다시 훑지 않는다.
 
     영상 70,000샘플 · 오디오 40,000샘플. 크기 표를 묶음(8192칸) 단위로 통째로 읽은 횟수를 센다 —
@@ -622,7 +627,7 @@ def test_light_file_size_reads_the_size_table_once_however_many_sections():
     assert whole_blocks_read(one) == whole_blocks_read(twenty) > 0
 
 
-def test_light_file_size_does_not_build_an_index(monkeypatch):
+def test_light_file_size_does_not_build_an_index(monkeypatch) -> None:
     """표에서 셀 수 있는 모양이면 moov_sections_file_size는 색인을 만들지 않아야 한다.
 
     청크 묶음 모양, 구간 1.0~5.0초. 색인 만들기를 부르면 적는 대역 -> 색인으로 미리 센 값과 같고 만들기 0번
@@ -638,7 +643,7 @@ def test_light_file_size_does_not_build_an_index(monkeypatch):
     assert built == []
 
 
-def test_file_size_of_a_shape_that_cannot_be_read_from_tables_is_counted_with_an_index():
+def test_file_size_of_a_shape_that_cannot_be_read_from_tables_is_counted_with_an_index() -> None:
     """표에서 셀 수 없는 모양이면 moov_sections_file_size는 색인을 만들어 같은 값을 내야 한다.
 
     오디오 트랙에 ctts가 있는 mp4(LightTables는 NeedsFullIndex), 구간 1.0~3.0초
@@ -654,7 +659,7 @@ def test_file_size_of_a_shape_that_cannot_be_read_from_tables_is_counted_with_an
     )
 
 
-def test_file_size_of_a_moov_behind_the_samples_is_refused_like_the_index():
+def test_file_size_of_a_moov_behind_the_samples_is_refused_like_the_index() -> None:
     """moov가 샘플 뒤에 있는 파일은 구간 파일 크기도 세지 않고 색인 쪽과 같은 실패를 내야 한다.
 
     ftyp · mdat · moov 순서의 mp4, 구간 0.2~0.5초 -> Mp4Error(MP4_UNSUPPORTED)
@@ -667,7 +672,7 @@ def test_file_size_of_a_moov_behind_the_samples_is_refused_like_the_index():
     assert caught.value.message_key == MP4_UNSUPPORTED
 
 
-def test_light_tables_count_the_whole_video_as_the_size_of_the_source_file():
+def test_light_tables_count_the_whole_video_as_the_size_of_the_source_file() -> None:
     """색인 없이 세어도 영상 전체를 덮는 구간의 크기는 원본 파일의 크기여야 한다.
 
     표준 영상 + 오디오, 구간 0초 ~ 1.2초(프레임 0~11) -> moov_sections_file_size == 파일의 바이트 수

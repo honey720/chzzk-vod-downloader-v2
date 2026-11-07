@@ -45,7 +45,7 @@ def install(module, platform: str) -> bool:
     class _HiddenWindowPopen(base):
         _hides_console_window = True
 
-        def __init__(self, *args, **kwargs):
+        def __init__(self, *args, **kwargs) -> None:
             super().__init__(*args, **with_hidden_window(args, kwargs))
 
     module.Popen = _HiddenWindowPopen

@@ -36,7 +36,7 @@ CALIBRATED = (
 
 
 class QuietLogger:
-    def __getattr__(self, name):
+    def __getattr__(self, name) -> Callable[..., None]:
         return lambda *args, **kwargs: None
 
 
@@ -100,7 +100,7 @@ def mean(values) -> float:
 # ================================================================ 1 · 2. 출렁임 없는 회선
 
 
-def test_target_reaches_the_cap_when_the_line_never_fills():
+def test_target_reaches_the_cap_when_the_line_never_fills() -> None:
     """회선이 차지 않으면(스레드를 올릴수록 처리량이 늘면) 목표가 상한 48에 닿아야 한다.
 
     대역 무한, 출렁임 없음, 120틱 -> 마지막 목표 == 48
@@ -110,7 +110,7 @@ def test_target_reaches_the_cap_when_the_line_never_fills():
     assert targets[-1] == 48
 
 
-def test_target_stays_just_above_the_fill_point_on_a_steady_line():
+def test_target_stays_just_above_the_fill_point_on_a_steady_line() -> None:
     """출렁임 없는 회선에서는 목표가 회선이 찬 지점(20)과 그 위 두 칸(28) 사이에 머물러야 한다.
 
     대역 20 MB/s(스레드 20개에서 참), 출렁임 없음, 400틱 -> 80틱 뒤의 목표가 모두 20 ~ 28
@@ -125,7 +125,7 @@ def test_target_stays_just_above_the_fill_point_on_a_steady_line():
 
 
 @pytest.mark.parametrize("seed", SEEDS)
-def test_target_is_not_stuck_far_below_the_fill_point_on_a_noisy_line(seed):
+def test_target_is_not_stuck_far_below_the_fill_point_on_a_noisy_line(seed) -> None:
     """출렁이는 회선에서 목표가 회선이 찬 지점보다 한참 아래에 갇혀서는 안 된다.
 
     대역 20 MB/s(스레드 20개에서 참), 보정한 출렁임, 600틱 -> 80틱 뒤의 평균 목표 >= 12
@@ -136,7 +136,7 @@ def test_target_is_not_stuck_far_below_the_fill_point_on_a_noisy_line(seed):
 
 
 @pytest.mark.parametrize("seed", SEEDS)
-def test_target_stays_near_the_fill_point_on_a_noisy_line(seed):
+def test_target_stays_near_the_fill_point_on_a_noisy_line(seed) -> None:
     """출렁이는 회선에서도 목표가 회선이 찬 지점 근처에 머물고, 뒤로 갈수록 오르지 않아야 한다.
 
     대역 20 MB/s(스레드 20개에서 참), 보정한 출렁임, 1800틱
@@ -152,7 +152,7 @@ def test_target_stays_near_the_fill_point_on_a_noisy_line(seed):
 
 
 @pytest.mark.parametrize("seed", SEEDS)
-def test_target_stays_low_when_a_few_connections_fill_a_fixed_line(seed):
+def test_target_stays_low_when_a_few_connections_fill_a_fixed_line(seed) -> None:
     """연결 몇 개로 차는 고정 대역에서는, 틱 속도가 흔들려도 목표가 찬 지점 근처에 머물러야 한다.
 
     대역 22 MB/s · 연결당 2.75 MB/s(스레드 8개에서 참), 틱 ±15% 흔들림, 1800틱
@@ -166,7 +166,7 @@ def test_target_stays_low_when_a_few_connections_fill_a_fixed_line(seed):
     assert mean(settled) <= 14
 
 
-def test_target_stays_at_the_fill_point_when_a_few_connections_fill_a_steady_line():
+def test_target_stays_at_the_fill_point_when_a_few_connections_fill_a_steady_line() -> None:
     """연결 몇 개로 차는 일정한 대역에서는 목표가 찬 지점(8)과 그 위 한 칸(12) 사이에 머물러야 한다.
 
     대역 22 MB/s · 연결당 2.75 MB/s(스레드 8개에서 참), 출렁임 없음, 600틱
@@ -181,7 +181,7 @@ def test_target_stays_at_the_fill_point_when_a_few_connections_fill_a_steady_lin
 # ================================================================ 4 · 5. 대역이 바뀌는 회선
 
 
-def test_target_survives_a_drop_and_the_throughput_recovers():
+def test_target_survives_a_drop_and_the_throughput_recovers() -> None:
     """대역이 잠깐 크게 떨어졌다 돌아오면 목표가 무너지지 않고 처리량이 곧 회복돼야 한다.
 
     대역 20 MB/s, 틱 200 ~ 219에서 4 MB/s(20%), 그 뒤 다시 20 MB/s. 출렁임 없음, 300틱
@@ -194,7 +194,7 @@ def test_target_survives_a_drop_and_the_throughput_recovers():
     assert max(speeds[220:240]) >= speeds[199] * 0.9
 
 
-def test_target_climbs_again_when_the_line_gets_wider():
+def test_target_climbs_again_when_the_line_gets_wider() -> None:
     """대역이 넓어지면 목표가 새로 찬 지점 근처까지 다시 올라가야 한다.
 
     대역 20 MB/s → 틱 200부터 40 MB/s(스레드 40개에서 참). 출렁임 없음, 320틱

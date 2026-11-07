@@ -22,7 +22,7 @@ SIGNED_KEY_URI = "https://key.test/k?token=SIGNED-KEY-VALUE"
 MOOV_BYTES = b"MOOV-BYTES-MARKER"
 
 
-def test_fits_a_run_with_the_same_sections_and_the_same_paths_of_the_finished_ones():
+def test_fits_a_run_with_the_same_sections_and_the_same_paths_of_the_finished_ones() -> None:
     """fits는 구간 목록이 같고 끝낸 구간의 경로가 같으면 참이어야 한다 — 끝나지 않은 구간의 경로는 달라도 된다.
 
     끝낸 구간 {0, 2}. 같은 구간 목록에 1번 경로만 "… (1).mp4"로 바뀐 경로
@@ -34,7 +34,7 @@ def test_fits_a_run_with_the_same_sections_and_the_same_paths_of_the_finished_on
     assert resume.fits(SELECTIONS, renamed) is True
 
 
-def test_does_not_fit_a_run_whose_finished_section_has_another_path():
+def test_does_not_fit_a_run_whose_finished_section_has_another_path() -> None:
     """fits는 끝낸 구간의 경로가 다르면 거짓이어야 한다.
 
     끝낸 구간 {0, 2}. 같은 구간 목록에 0번 경로가 "… (1).mp4"로 바뀐 경로
@@ -46,7 +46,7 @@ def test_does_not_fit_a_run_whose_finished_section_has_another_path():
     assert resume.fits(SELECTIONS, renamed) is False
 
 
-def test_does_not_fit_a_run_with_other_sections():
+def test_does_not_fit_a_run_with_other_sections() -> None:
     """fits는 구간 목록이 다르면 거짓이어야 한다.
 
     끝낸 구간 {0}. 둘째 구간의 끝이 다른 구간 목록, 경로는 그대로
@@ -58,7 +58,7 @@ def test_does_not_fit_a_run_with_other_sections():
     assert resume.fits(others, PATHS) is False
 
 
-def test_repr_does_not_show_what_was_received():
+def test_repr_does_not_show_what_was_received() -> None:
     """SectionResume과 그것을 담은 Content의 repr에는 받아 둔 것의 내용이 없어야 한다.
 
     서명 값이 붙은 세그먼트 주소 · 키 주소를 든 플레이리스트의 TsHead와, 표식 바이트를 든 Mp4Head를 담음
@@ -96,7 +96,7 @@ def _files(tmp_path, sizes: dict[int, int]) -> tuple[str, ...]:
     return paths
 
 
-def test_sizes_of_reads_the_size_of_each_finished_file_that_exists(tmp_path):
+def test_sizes_of_reads_the_size_of_each_finished_file_that_exists(tmp_path) -> None:
     """sizes_of는 끝낸 구간 가운데 파일이 있는 것의 (번호, 크기)를 번호순으로 돌려줘야 한다.
 
     파일 0번 5바이트 · 2번 7바이트(1번 없음), 끝낸 구간을 [2, 1, 0]의 순서로 줌
@@ -107,7 +107,9 @@ def test_sizes_of_reads_the_size_of_each_finished_file_that_exists(tmp_path):
     assert SectionResume.sizes_of(paths, [2, 1, 0]) == ((0, 5), (2, 7))
 
 
-def test_checked_record_is_the_same_object_when_every_finished_file_is_as_recorded(tmp_path):
+def test_checked_record_is_the_same_object_when_every_finished_file_is_as_recorded(
+    tmp_path,
+) -> None:
     """끝낸 구간의 파일이 모두 적어 둔 크기 그대로면 with_files_checked는 그 객체를 돌려줘야 한다.
 
     파일 0번 5바이트 · 2번 7바이트, 끝낸 구간 {0, 2}, 적어 둔 크기 ((0, 5), (2, 7)) -> 같은 객체
@@ -120,7 +122,7 @@ def test_checked_record_is_the_same_object_when_every_finished_file_is_as_record
     assert resume.with_files_checked() is resume
 
 
-def test_finished_section_whose_file_is_gone_is_not_finished_any_more(tmp_path):
+def test_finished_section_whose_file_is_gone_is_not_finished_any_more(tmp_path) -> None:
     """끝낸 구간의 파일이 없으면 그 구간은 끝낸 것에서 빠져야 한다 — 크기 기록도 함께 빠진다.
 
     파일 2번만 있음(0번 없음), 끝낸 구간 {0, 2}, 적어 둔 크기 ((0, 5), (2, 7))
@@ -138,7 +140,9 @@ def test_finished_section_whose_file_is_gone_is_not_finished_any_more(tmp_path):
 
 
 @pytest.mark.parametrize("size_now", [6, 8], ids=["smaller", "larger"])
-def test_finished_section_whose_file_changed_size_is_not_finished_any_more(tmp_path, size_now):
+def test_finished_section_whose_file_changed_size_is_not_finished_any_more(
+    tmp_path, size_now
+) -> None:
     """끝낸 구간의 파일 크기가 적어 둔 값과 다르면 그 구간은 끝낸 것에서 빠져야 한다.
 
     적어 둔 크기 2번 = 7바이트, 지금의 파일 6 또는 8바이트 -> 끝낸 구간 {0}
@@ -151,7 +155,7 @@ def test_finished_section_whose_file_changed_size_is_not_finished_any_more(tmp_p
     assert resume.with_files_checked().done == frozenset({0})
 
 
-def test_finished_section_without_a_recorded_size_is_kept_while_its_file_exists(tmp_path):
+def test_finished_section_without_a_recorded_size_is_kept_while_its_file_exists(tmp_path) -> None:
     """크기가 적히지 않은 끝낸 구간은 파일이 있으면 끝낸 것으로 남고, 없으면 빠져야 한다.
 
     크기 기록 없음, 끝낸 구간 {0, 2}, 파일은 0번만 있음 -> 끝낸 구간 {0}

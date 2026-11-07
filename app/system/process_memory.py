@@ -136,7 +136,7 @@ class _MachBasicInfo(ctypes.Structure):
 
 
 @functools.cache
-def _macos_api():
+def _macos_api() -> ctypes.CDLL:
     """macOS의 libSystem — task_info · mach_task_self의 형을 맞춰 한 번만 연다."""
     libc = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
     libc.mach_task_self.restype = ctypes.c_uint32

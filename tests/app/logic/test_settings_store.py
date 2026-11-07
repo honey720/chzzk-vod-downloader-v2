@@ -21,6 +21,7 @@ from tests.support.settings_db import (
     write_rows,
     write_settings,
 )
+from typing import Never
 
 #: 테스트가 쓰는 자리표시 인증 값 — 실제 쿠키가 아니다.
 COOKIES = {"NID_AUT": "aut-placeholder", "NID_SES": "ses-placeholder"}
@@ -50,7 +51,7 @@ def _database_bytes() -> bytes:
 class TestImportConfigJson:
     """0 → 1 단계의 config.json 가져오기. ⚠️ 2.14.0에서 `import_config_json`과 함께 이 클래스를 지운다."""
 
-    def test_the_three_keys_are_imported_and_the_file_is_removed(self):
+    def test_the_three_keys_are_imported_and_the_file_is_removed(self) -> None:
         """config.json이 있으면 쿠키 · 저장 위치 · 언어만 넣고, 커밋한 뒤 파일을 지워야 한다.
 
         config.json 키 여섯 -> 설정 테이블에 cookies · downloadPath · language 셋 · user_version 1
@@ -66,7 +67,7 @@ class TestImportConfigJson:
         assert user_version() == 1
         assert not os.path.exists(_config_json_path())
 
-    def test_the_dropped_keys_start_from_defaults(self):
+    def test_the_dropped_keys_start_from_defaults(self) -> None:
         """가져오지 않은 키(창 크기 · 다운로드 뒤 동작)는 기본값으로 읽혀야 한다.
 
         config.json afterDownload=shutdown · window 기록 -> afterDownload "none" · window {}
@@ -86,7 +87,7 @@ class TestImportConfigJson:
             b"\xff\xfe\x00{",  # utf-8로 못 읽는 바이트
         ),
     )
-    def test_an_unreadable_file_starts_from_defaults_and_is_removed(self, content, caplog):
+    def test_an_unreadable_file_starts_from_defaults_and_is_removed(self, content, caplog) -> None:
         """못 읽는 config.json이면 아무것도 넣지 않고 기본값으로 시작하며 파일을 지워야 한다.
 
         깨진 config.json -> 설정 테이블 비어 있음 · 읽은 설정 = 기본값 · user_version 1 · 파일 없음 · 경고
@@ -102,7 +103,7 @@ class TestImportConfigJson:
         assert not os.path.exists(path)
         assert any("config.json" in r.getMessage() for r in caplog.records), caplog.text
 
-    def test_an_invalid_key_is_skipped_and_the_others_are_imported(self, caplog):
+    def test_an_invalid_key_is_skipped_and_the_others_are_imported(self, caplog) -> None:
         """세 키 중 표의 검증에 걸린 키만 빼고 나머지는 넣어야 한다.
 
         config.json language="xx_XX" · 쿠키 · 저장 위치 정상 -> language 행 없음 · 나머지 둘 있음 · 경고
@@ -113,7 +114,7 @@ class TestImportConfigJson:
         assert read_settings() == {"cookies": COOKIES, "downloadPath": "D:/vod"}
         assert any("'language'" in r.getMessage() for r in caplog.records), caplog.text
 
-    def test_without_a_file_the_database_starts_empty(self):
+    def test_without_a_file_the_database_starts_empty(self) -> None:
         """config.json이 없으면 빈 설정 테이블로 버전 1이 되어야 한다.
 
         config.json 없음 -> 설정 테이블 있음 · 행 0 · user_version 1
@@ -123,7 +124,7 @@ class TestImportConfigJson:
         assert read_settings() == {}
         assert user_version() == 1
 
-    def test_a_database_at_version_one_never_looks_for_the_file(self):
+    def test_a_database_at_version_one_never_looks_for_the_file(self) -> None:
         """DB 버전이 1이면 config.json이 있어도 가져오지도 지우지도 않아야 한다.
 
         user_version 1 · 언어 en_US · config.json(언어 ko_KR) -> 언어 en_US · config.json 남음
@@ -133,7 +134,7 @@ class TestImportConfigJson:
         assert settings_module.load_settings()["language"] == "en_US"
         assert os.path.exists(path)
 
-    def test_a_failure_inside_the_step_leaves_version_zero_and_the_file(self, monkeypatch):
+    def test_a_failure_inside_the_step_leaves_version_zero_and_the_file(self, monkeypatch) -> None:
         """단계 안에서 예외가 나면 user_version 0 · 설정 테이블 없음 · config.json 그대로여야 한다.
 
         가져오기 뒤 · 버전 쓰기 전에 예외 -> 예외가 올라옴 · user_version 0 · 테이블 없음 · config.json 남음
@@ -142,7 +143,7 @@ class TestImportConfigJson:
         path = write_config_json(OLD_CONFIG)
         real_import = settings_module.import_config_json
 
-        def import_then_fail(conn):
+        def import_then_fail(conn) -> Never:
             """실제 가져오기를 한 뒤 예외를 낸다 — 버전 쓰기 · 커밋 앞."""
             real_import(conn)
             raise RuntimeError("injected")
@@ -159,7 +160,7 @@ class TestImportConfigJson:
         assert user_version() == 1
         assert not os.path.exists(path)
 
-    def test_an_already_raised_version_skips_the_step(self):
+    def test_an_already_raised_version_skips_the_step(self) -> None:
         """잠금을 잡은 뒤 버전이 이미 올라가 있으면(다른 실행이 먼저 올림) 단계를 돌리지 않아야 한다.
 
         DB user_version 1 · 단계 0을 돌리라는 요청 · config.json 있음 -> 1을 돌려줌 · config.json 남음
@@ -179,12 +180,12 @@ class TestANewerDatabaseIsNeverWritten:
     """코드가 모르는 버전(옛 판이 새 판의 DB를 엶)이면 DB에 쓰지 않고 메모리 안 기본값으로 돈다."""
 
     @pytest.fixture
-    def newer(self):
+    def newer(self) -> bytes:
         """user_version 2(이 코드의 목표 + 1)에 언어 ko_KR이 든 DB."""
         write_settings({"language": "ko_KR"}, user_version=settings_module.DATABASE_VERSION + 1)
         return _database_bytes()
 
-    def test_open_save_and_reset_leave_the_file_byte_for_byte(self, newer):
+    def test_open_save_and_reset_leave_the_file_byte_for_byte(self, newer) -> None:
         """시작 · 저장 · 초기화를 거쳐도 DB 파일의 바이트가 그대로여야 한다.
 
         user_version 2 DB -> open_settings · save_settings(언어 en_US) · reset_settings 뒤 바이트 같음
@@ -194,7 +195,7 @@ class TestANewerDatabaseIsNeverWritten:
         settings_module.reset_settings()
         assert _database_bytes() == newer
 
-    def test_the_run_uses_defaults_in_memory(self, newer):
+    def test_the_run_uses_defaults_in_memory(self, newer) -> None:
         """읽은 설정은 기본값이고, 저장한 값은 이번 실행 동안 메모리에서 읽혀야 한다.
 
         user_version 2 DB(언어 ko_KR) -> 처음 읽기 = 기본값 · 언어 ko_KR 저장 뒤 읽기 = ko_KR
@@ -203,7 +204,7 @@ class TestANewerDatabaseIsNeverWritten:
         settings_module.save_settings({"language": "ko_KR"})
         assert settings_module.load_settings()["language"] == "ko_KR"
 
-    def test_the_warning_is_logged_once(self, newer, caplog):
+    def test_the_warning_is_logged_once(self, newer, caplog) -> None:
         """경고는 처음 열 때 한 번만 남아야 한다.
 
         user_version 2 DB · 읽기 셋 · 저장 하나 -> 메모리 경고 1건
@@ -215,7 +216,7 @@ class TestANewerDatabaseIsNeverWritten:
         memory = [r for r in caplog.records if "in memory only" in r.getMessage()]
         assert len(memory) == 1, caplog.text
 
-    def test_a_newer_database_is_not_set_aside(self, newer):
+    def test_a_newer_database_is_not_set_aside(self, newer) -> None:
         """높은 버전 DB는 손상이 아니다 — 비켜 두지 않고 제자리에 그대로 있어야 한다.
 
         user_version 2 DB -> open_settings · save_settings 뒤 cvdv2.db.broken 없음 · DB 바이트 같음
@@ -243,7 +244,7 @@ def _broken_bytes() -> bytes:
 class TestADamagedDatabaseIsSetAside:
     """DB가 아니거나 손상된 파일은 cvdv2.db.broken으로 비켜 두고 새 DB로 시작한다."""
 
-    def test_a_file_that_is_not_a_database_is_moved_and_a_new_one_starts(self, caplog):
+    def test_a_file_that_is_not_a_database_is_moved_and_a_new_one_starts(self, caplog) -> None:
         """DB가 아닌 파일이면 .broken으로 옮겨지고, 새 DB가 버전 1로 생겨 저장이 남아야 한다.
 
         DB 자리에 글자 파일 -> .broken = 그 바이트 · 새 DB user_version 1 · 읽기 = 기본값
@@ -260,7 +261,7 @@ class TestADamagedDatabaseIsSetAside:
             settings_module.broken_database_path() in r.getMessage() for r in caplog.records
         ), caplog.text
 
-    def test_damage_found_while_reading_rows_is_set_aside(self):
+    def test_damage_found_while_reading_rows_is_set_aside(self) -> None:
         """머리는 멀쩡하고 표의 쪽이 깨진 DB(읽을 때 malformed)도 비켜 두고 새 DB로 읽어야 한다.
 
         언어 행이 든 DB의 둘째 쪽(4096바이트부터 200바이트)을 0xFF로 -> 읽기 = 기본값 · .broken 있음
@@ -273,7 +274,7 @@ class TestADamagedDatabaseIsSetAside:
         assert os.path.exists(settings_module.broken_database_path())
         assert read_settings() == {}
 
-    def test_damage_is_set_aside_even_when_the_rollback_fails(self, monkeypatch, caplog):
+    def test_damage_is_set_aside_even_when_the_rollback_fails(self, monkeypatch, caplog) -> None:
         """트랜잭션 안에서 손상이 드러나고 되돌리기마저 다른 예외를 내도, 손상 DB는 비켜 둬야 한다.
 
         저장 위치 행이 든 DB의 둘째 쪽을 0xFF로 · ROLLBACK이 OperationalError를 냄
@@ -287,7 +288,7 @@ class TestADamagedDatabaseIsSetAside:
         class RollbackFails(sqlite3.Connection):
             """ROLLBACK만 다른 예외를 낸다 — 손상 DB에서 되돌리기도 실패하는 상황."""
 
-            def execute(self, sql, *args):
+            def execute(self, sql, *args) -> sqlite3.Cursor:
                 if sql == "ROLLBACK":
                     raise sqlite3.OperationalError("injected rollback failure")
                 return super().execute(sql, *args)
@@ -306,7 +307,7 @@ class TestADamagedDatabaseIsSetAside:
         assert read_settings() == {"language": "ko_KR"}
         assert any("rollback failed" in r.getMessage() for r in caplog.records), caplog.text
 
-    def test_only_one_broken_file_is_kept(self):
+    def test_only_one_broken_file_is_kept(self) -> None:
         """이미 .broken이 있으면 새로 깨진 파일이 그 자리를 덮어써야 한다 — 하나만 남는다.
 
         옛 .broken(바이트 A) · DB 자리에 바이트 B -> .broken = B · 폴더의 .broken 하나
@@ -322,7 +323,7 @@ class TestADamagedDatabaseIsSetAside:
             os.path.basename(settings_module.broken_database_path())
         ]
 
-    def test_a_lock_timeout_is_not_damage(self, monkeypatch):
+    def test_a_lock_timeout_is_not_damage(self, monkeypatch) -> None:
         """다른 연결이 쓰기 잠금을 쥐어 대기가 넘치면 예외가 올라오고 DB는 비켜지지 않아야 한다.
 
         다른 연결의 BEGIN EXCLUSIVE · BUSY_TIMEOUT 0.1초 -> save_settings가 OperationalError
@@ -341,7 +342,7 @@ class TestADamagedDatabaseIsSetAside:
         assert not os.path.exists(settings_module.broken_database_path())
         assert read_settings() == {"language": "ko_KR"}
 
-    def test_a_file_that_cannot_be_moved_runs_in_memory(self, monkeypatch, caplog):
+    def test_a_file_that_cannot_be_moved_runs_in_memory(self, monkeypatch, caplog) -> None:
         """깨진 파일을 옮기지 못하면 그 파일을 그대로 두고 메모리 안 기본값으로 돌아야 한다.
 
         DB 자리에 글자 파일 · os.replace가 PermissionError -> 읽기 = 기본값 · 파일 바이트 같음
@@ -349,7 +350,7 @@ class TestADamagedDatabaseIsSetAside:
         """
         damaged = _write_damaged()
 
-        def refuse(src, dst):
+        def refuse(src, dst) -> Never:
             """옮기기를 거절한다 — 다른 프로그램이 파일을 쥔 상황."""
             raise PermissionError("held by another program")
 
@@ -365,7 +366,7 @@ class TestADamagedDatabaseIsSetAside:
 class TestSaveAndReset:
     """저장은 키마다 한 행(JSON) · 표 밖의 키는 거부 · 초기화는 전부 기본값."""
 
-    def test_a_saved_value_is_one_json_row(self):
+    def test_a_saved_value_is_one_json_row(self) -> None:
         """저장한 키는 설정 테이블에 JSON 문자열 한 행으로 들어가야 한다.
 
         save_settings(cookies · window) -> 두 행, 값은 JSON 해석 결과가 같은 dict
@@ -374,7 +375,7 @@ class TestSaveAndReset:
         settings_module.save_settings({"cookies": COOKIES, "window": window})
         assert read_settings() == {"cookies": COOKIES, "window": window}
 
-    def test_an_unknown_key_is_refused_without_writing(self):
+    def test_an_unknown_key_is_refused_without_writing(self) -> None:
         """표에 없는 키가 섞이면 KeyError이고 아무 행도 쓰지 않아야 한다.
 
         save_settings(language · stray) -> KeyError · 설정 테이블 행 0
@@ -384,7 +385,7 @@ class TestSaveAndReset:
             settings_module.save_settings({"language": "ko_KR", "stray": 1})
         assert read_settings() == {}
 
-    def test_saving_a_loaded_dict_writes_only_the_changed_row(self):
+    def test_saving_a_loaded_dict_writes_only_the_changed_row(self) -> None:
         """읽은 dict를 통째로 넘겨도 저장된 값과 다른 키의 행만 써야 한다.
 
         쿠키 · 저장 위치 행(제품이 쓰지 않을 공백 모양 JSON) · 언어 행 없음
@@ -401,7 +402,7 @@ class TestSaveAndReset:
         settings_module.save_settings(settings)
         assert read_rows() == {**seeded, "language": '"ko_KR"'}
 
-    def test_saving_unchanged_values_writes_nothing(self):
+    def test_saving_unchanged_values_writes_nothing(self) -> None:
         """값이 하나도 바뀌지 않았으면 행을 하나도 쓰지 않아야 한다.
 
         빈 설정 테이블 -> 기본값 dict 저장 -> 행 0
@@ -409,7 +410,7 @@ class TestSaveAndReset:
         settings_module.save_settings(settings_module.load_settings())
         assert read_rows() == {}
 
-    def test_reset_of_one_key_removes_only_that_row(self):
+    def test_reset_of_one_key_removes_only_that_row(self) -> None:
         """키 하나를 초기화하면 그 행만 지워지고 그 키는 기본값으로 읽혀야 한다.
 
         쿠키 · 언어 행 -> reset_settings("language") -> 쿠키 행만 · 언어 en_US
@@ -419,7 +420,7 @@ class TestSaveAndReset:
         assert read_settings() == {"cookies": COOKIES}
         assert settings_module.load_settings()["language"] == "en_US"
 
-    def test_reset_of_an_unknown_key_is_refused(self):
+    def test_reset_of_an_unknown_key_is_refused(self) -> None:
         """표에 없는 키를 초기화하려 하면 KeyError여야 한다.
 
         reset_settings("stray") -> KeyError
@@ -427,7 +428,7 @@ class TestSaveAndReset:
         with pytest.raises(KeyError, match="stray"):
             settings_module.reset_settings("stray")
 
-    def test_reset_brings_every_key_back_to_its_default(self):
+    def test_reset_brings_every_key_back_to_its_default(self) -> None:
         """초기화하면 모든 설정이 기본값으로 읽혀야 한다.
 
         쿠키 · 언어 · 저장 위치가 든 DB -> reset_settings 뒤 읽기 = 기본값 · 행 0
@@ -437,7 +438,7 @@ class TestSaveAndReset:
         assert settings_module.load_settings() == settings_module.default_settings()
         assert read_settings() == {}
 
-    def test_a_value_survives_a_new_connection(self):
+    def test_a_value_survives_a_new_connection(self) -> None:
         """저장한 값은 다음 읽기(새 연결)에서 그대로 나와야 한다 — 다음 실행과 같은 경로.
 
         save_settings(언어 ko_KR · 쿠키) -> load_settings 언어 ko_KR · load_cookies 쿠키
@@ -450,7 +451,7 @@ class TestSaveAndReset:
 class TestPaths:
     """경로는 앱 데이터 폴더 한 곳에서 나온다."""
 
-    def test_the_database_and_logs_live_in_the_data_folder(self):
+    def test_the_database_and_logs_live_in_the_data_folder(self) -> None:
         """DB 파일과 logs/는 앱 데이터 폴더 바로 아래여야 한다.
 
         data_dir() -> database_path() · logs_dir()의 부모가 data_dir()
@@ -459,7 +460,7 @@ class TestPaths:
         assert os.path.dirname(settings_module.logs_dir()) == settings_module.data_dir()
         assert os.path.basename(settings_module.logs_dir()) == "logs"
 
-    def test_the_database_file_is_created_on_first_read(self):
+    def test_the_database_file_is_created_on_first_read(self) -> None:
         """첫 읽기에서 앱 데이터 폴더와 DB 파일이 만들어져야 한다.
 
         폴더 없음 -> load_settings 뒤 DB 파일 있음

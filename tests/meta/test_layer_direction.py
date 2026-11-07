@@ -50,7 +50,7 @@ def _git_tracked_top_level_names() -> frozenset[str] | None:
     return frozenset(names)
 
 
-def test_core_imports_nothing_the_repository_owns_except_core():
+def test_core_imports_nothing_the_repository_owns_except_core() -> None:
     """core/의 모든 .py(지연 import 포함)가 저장소의 다른 최상위 이름을 import하지 않는다."""
     py_files = core_source_files()
     assert py_files, "core/에서 .py 파일을 찾지 못했다 — 스캔 대상 경로를 확인할 것"
@@ -72,7 +72,7 @@ def test_core_imports_nothing_the_repository_owns_except_core():
     )
 
 
-def test_owned_names_are_derived_and_cover_every_git_tracked_top_level():
+def test_owned_names_are_derived_and_cover_every_git_tracked_top_level() -> None:
     """메타 게이트 — 유도된 소유 이름이 git 추적 `.py`의 최상위 이름을 전부 포함한다.
 
     유도가 `tests/`나 새 디렉토리를 놓치면 여기서 이름이 찍혀 실패한다. 빈 집합도 여기서 잡힌다.
@@ -92,7 +92,7 @@ def test_owned_names_are_derived_and_cover_every_git_tracked_top_level():
     )
 
 
-def test_scanner_sees_imports_inside_functions(tmp_path):
+def test_scanner_sees_imports_inside_functions(tmp_path) -> None:
     """순회가 함수 안 지연 import를 본다 — 모듈 상단만 보면 `def f(): import app`이 새어 나간다."""
     probe = tmp_path / "probe.py"
     probe.write_text(

@@ -6,6 +6,7 @@
 입력은 tests/support/stream_samples.py의 합성 표본이다. 요청은 보내지 않는다.
 """
 
+from collections.abc import Callable
 from fractions import Fraction
 from types import SimpleNamespace
 
@@ -20,6 +21,7 @@ from core.media.mp4 import MP4_INVALID, Mp4Error
 from core.models.content import Content, ContentType, StreamKey, VideoInfo
 from tests.mocks.mock_http import MockResponse
 from tests.support.stream_samples import S4, S5, Sample, variant_url
+from typing import Never
 
 VOD_URL = "https://chzzk.naver.com/video/123"
 
@@ -39,7 +41,7 @@ def _stream_key(sample: Sample, number: int) -> StreamKey:
 
 
 @pytest.fixture
-def serve(monkeypatch):
+def serve(monkeypatch) -> Callable[[Sample], None]:
     """영상 정보 조회와 마스터 플레이리스트 요청에 표본으로 답하게 한다."""
 
     def install(sample: Sample) -> None:
@@ -63,7 +65,7 @@ def serve(monkeypatch):
 
 
 @pytest.mark.parametrize(("sample", "number"), CASES, ids=IDS)
-def test_section_resolver_reads_the_variant_picked_in_the_list(serve, sample, number):
+def test_section_resolver_reads_the_variant_picked_in_the_list(serve, sample, number) -> None:
     """구간 해석이 읽는 주소는 목록에서 고른 변형의 주소이고, 다운로드가 받는 주소와 같아야 한다.
 
     주석의 표본마다 number번째 변형을 고른 Content(해상도 = 짧은 변, stream = 그 변형의 값)
@@ -86,7 +88,7 @@ def test_section_resolver_reads_the_variant_picked_in_the_list(serve, sample, nu
 @pytest.mark.parametrize(("sample", "number"), CASES, ids=IDS)
 def test_headless_section_resolution_reads_the_variant_of_the_item(
     monkeypatch, serve, sample, number
-):
+) -> None:
     """헤드리스의 구간 해석은 아이템이 고른 변형의 플레이리스트를 받아야 한다.
 
     주석의 표본마다 number번째 변형을 고른 아이템(해상도 = 짧은 변, stream = 그 변형의 값)
@@ -99,7 +101,7 @@ def test_headless_section_resolution_reads_the_variant_of_the_item(
     )
     fetched = []
 
-    def fetch_fmp4_head(url, segment_dir=None):
+    def fetch_fmp4_head(url, segment_dir=None) -> Never:
         fetched.append(url)
         raise Mp4Error(MP4_INVALID, "여기서 멈춘다 — 주소만 본다")
 

@@ -260,7 +260,7 @@ class IconButton(QPushButton):
     비활성 `textDisabled`. 인스턴스가 드는 것은 문자열 둘뿐이다.
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._icon_name = ""
         self._idle_token = "textMuted"

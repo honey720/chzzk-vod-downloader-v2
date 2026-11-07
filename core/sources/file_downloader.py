@@ -44,6 +44,7 @@ core/engine/base.py의 BaseDownloader로 이주했다(#82). 이 클래스에는
 그대로 쓴다. 절대값으로 된 속도 기준은 저속 판정 임계(100 KB/s) 하나뿐이다.
 """
 
+import io
 import logging
 import os
 import shutil
@@ -117,7 +118,7 @@ class _MapWriter:
     잠그지 않는다(작업자끼리 받는 범위가 겹치지 않는다).
     """
 
-    def __init__(self, outlets: tuple[_Outlet, ...], offset: int):
+    def __init__(self, outlets: tuple[_Outlet, ...], offset: int) -> None:
         self._outlets = outlets
         self._position = offset  # 다음에 받을 바이트의 원본 위치
         self._files: dict[int, object] = {}
@@ -285,7 +286,7 @@ class FileDownloader(BaseDownloader):
     # 더 읽으므로 제품 경로에서는 켜지 않는다
     _inspect_cuts: bool = False
 
-    def __init__(self, data, logger, **callbacks):
+    def __init__(self, data, logger, **callbacks) -> None:
         super().__init__(data, logger, **callbacks)
         # 재큐잉된 파트가 이미 받아 쓴 바이트 수 — 재시도가 이어받는다 (#78).
         # (start, end) → 산출물에 쓰인 바이트 수. 완료·폴백 시 지운다
@@ -649,7 +650,7 @@ class FileDownloader(BaseDownloader):
         start, end = item
         self.logger.log_thread_start(part_num, start, end)
 
-    def _download_item(self, item, part_num: int):
+    def _download_item(self, item, part_num: int) -> int:
         start, end = item
         return self._download_part(start, end, part_num, self.s.total_size)
 
@@ -870,7 +871,7 @@ class FileDownloader(BaseDownloader):
 
     # ============ 다운로드 동작 관련 메서드들 ============
 
-    def _download_part(self, start: int, end: int, part_num: int, total_size: int):
+    def _download_part(self, start: int, end: int, part_num: int, total_size: int) -> int:
         """
         파일의 특정 구간(start~end)을 다운로드하는 함수.
         속도가 느릴 경우 재시도 로직, 일시정지/중지 핸들링을 포함한다.
@@ -990,7 +991,7 @@ class FileDownloader(BaseDownloader):
                 self._settle_requeue(requeue, f"Part {part_num} download failed", e)
                 return part_num
 
-    def _writer_at(self, offset: int):
+    def _writer_at(self, offset: int) -> _MapWriter | io.BufferedRandom:
         """원본의 offset부터 받는 바이트를 쓸 곳 — 전체 다운로드는 산출물, 구간 다운로드는 대응표."""
         if self._outlets:
             return _MapWriter(self._outlets, offset)

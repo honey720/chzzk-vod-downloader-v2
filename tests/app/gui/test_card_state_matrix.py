@@ -30,10 +30,11 @@ from app.viewmodels.data import ContentItem
 from app.widgets.widget import ContentItemWidget
 from core.models.download_state import DownloadState
 from tests.app.gui.card_helpers import hold_style
+from typing import Never
 
 
 @pytest.fixture(autouse=True)
-def _apply_production_qss(qapp):
+def _apply_production_qss(qapp) -> None:
     """실제 전역 QSS를 태운다. ⚠️ `scope="function"` 유지(macOS 종료 크래시 —
     `test_widget_theme.py`의 `_apply_dark_card_qss` 문서 참고)."""
     theme.set_color_scheme("dark")
@@ -43,12 +44,12 @@ def _apply_production_qss(qapp):
 
 
 @pytest.fixture(autouse=True)
-def no_network(monkeypatch):
+def no_network(monkeypatch) -> None:
     class _FailingSession:
-        def head(self, *a, **k):
+        def head(self, *a, **k) -> Never:
             raise RuntimeError("network disabled in tests")
 
-        def get(self, *a, **k):
+        def get(self, *a, **k) -> Never:
             raise RuntimeError("network disabled in tests")
 
     monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
@@ -113,7 +114,7 @@ PROGRESS = {DownloadState.RUNNING: 42, DownloadState.PAUSED: 54, DownloadState.F
 class TestSlotColumn:
     """3행 슬롯 — 상태마다 다른 질문에 답한다."""
 
-    def test_waiting_shows_resolution_pills_only(self, qapp):
+    def test_waiting_shows_resolution_pills_only(self, qapp) -> None:
         """대기 슬롯은 pill — 900px에는 둘 다 들어가므로 전부 보인다(안 들어갈 때의 접힘은
         tests/app/gui/test_resolution_pills.py, #244 3행 정리)."""
         widget = _make_widget(qapp, DownloadState.WAITING)
@@ -121,14 +122,14 @@ class TestSlotColumn:
         assert widget.pillMode() == "all"
         assert not widget.statusLabel.isVisible()
 
-    def test_running_shows_percent_speed_and_remaining(self, qapp):
+    def test_running_shows_percent_speed_and_remaining(self, qapp) -> None:
         widget = _make_widget(qapp, DownloadState.RUNNING, 42)
         text = widget.statusLabel.text()
         assert widget.statusLabel.isVisible()
         assert text.startswith("42%"), text
         assert "8.2 MB/s" in text and "12:34" in text
 
-    def test_postprocessing_shows_percent_first_then_label(self, qapp):
+    def test_postprocessing_shows_percent_first_then_label(self, qapp) -> None:
         """"13% · 후처리 중" — 후처리 진행률은 이미 있던 값(실기에서 일시정지로
         확인)인데 슬롯이 "후처리 중" 텍스트로 대체되며 퍼센트만 빠졌던 것.
         퍼센트는 **앞** — 전송·일시정지와 자리를 맞춘다(#245 정정)."""
@@ -138,7 +139,7 @@ class TestSlotColumn:
         assert text.endswith("Post-processing"), text
         assert "MB/s" not in text and "left" not in text, "후처리 국면에 전송 속도·남은 시간이 붙어 있다"
 
-    def test_postprocessing_keeps_pause_action_and_bar(self, qapp):
+    def test_postprocessing_keeps_pause_action_and_bar(self, qapp) -> None:
         """후처리 중 일시정지는 가능하다 — 조작을 숨기거나 비활성화하지 않는다.
         진행바는 후처리에서 0부터 다시 차오르는 값을 그대로 보인다(오너 확정)."""
         widget = _make_widget(qapp, DownloadState.RUNNING, 13, post_process=True)
@@ -146,7 +147,7 @@ class TestSlotColumn:
         assert widget.pauseButton.iconName() == "pause"
         assert widget.progressBar.isVisible() and widget.progressBar.value() == 13
 
-    def test_paused_shows_percent_first_then_paused(self, qapp):
+    def test_paused_shows_percent_first_then_paused(self, qapp) -> None:
         widget = _make_widget(qapp, DownloadState.PAUSED, 54)
         text = widget.statusLabel.text()
         assert widget.statusLabel.isVisible()
@@ -157,13 +158,13 @@ class TestSlotColumn:
         )
         assert "left" not in text, "일시정지에 남은 시간이 붙어 있다 — 멈춘 상태에 남은 시간은 없다"
 
-    def test_finished_shows_check_completed_and_elapsed(self, qapp):
+    def test_finished_shows_check_completed_and_elapsed(self, qapp) -> None:
         """"✓ 완료 · 5:12" — 소요 시간은 진행 중의 남은 시간과 같은 짧은 포맷.
         전송 성능에 들인 공이 유저에게 보이는 유일한 자리다(#245)."""
         widget = _make_widget(qapp, DownloadState.FINISHED, 100)
         assert widget.statusLabel.text() == "✓ Completed · 5:12", widget.statusLabel.text()
 
-    def test_finished_elapsed_uses_the_same_short_format_as_remaining(self, qapp):
+    def test_finished_elapsed_uses_the_same_short_format_as_remaining(self, qapp) -> None:
         widget = _make_widget(qapp, DownloadState.FINISHED, 100)
         widget.item.download_time = "01:02:03"
         widget.setData(widget.item, 0)
@@ -172,18 +173,18 @@ class TestSlotColumn:
         widget.setData(widget.item, 0)
         assert widget.statusLabel.text().endswith("· 0:07")
 
-    def test_finished_without_elapsed_shows_completed_only(self, qapp):
+    def test_finished_without_elapsed_shows_completed_only(self, qapp) -> None:
         """값이 없으면 억지로 채우지 않는다 — "✓ 완료"만."""
         widget = _make_widget(qapp, DownloadState.FINISHED, 100)
         widget.item.download_time = ""
         widget.setData(widget.item, 0)
         assert widget.statusLabel.text() == "✓ Completed"
 
-    def test_failed_shows_cross_and_reason(self, qapp):
+    def test_failed_shows_cross_and_reason(self, qapp) -> None:
         widget = _make_widget(qapp, DownloadState.FAILED)
         assert widget.statusLabel.text() == "✕ Failed to save file"
 
-    def test_failed_without_mapped_reason_says_unknown_error_not_silence(self, qapp):
+    def test_failed_without_mapped_reason_says_unknown_error_not_silence(self, qapp) -> None:
         """매핑 밖 예외(사유 빈 문자열) — 침묵 대신 "알 수 없는 오류 · 로그를
         확인해 주세요". str(e)는 노출하지 않는다(SPEC §5). 틀린 문구도 없는
         문구도 진단을 막는다(#183) — 틀리지 않으면서 다음 행동(로그 폴더
@@ -194,7 +195,9 @@ class TestSlotColumn:
         assert widget.statusLabel.text() == "✕ Unknown error - check the log"
         assert "Download failed" not in widget.statusLabel.text()
 
-    def test_failure_reason_shows_only_the_headline_and_keeps_detail_in_the_tooltip(self, qapp):
+    def test_failure_reason_shows_only_the_headline_and_keeps_detail_in_the_tooltip(
+        self, qapp
+    ) -> None:
         """사유 문구는 "첫 줄=핵심(할 일 포함) / 둘째 줄부터=상세"다 — 3행에는 첫
         줄만, 전문은 툴팁. 실패 사유는 마우스를 올려야 보이면 안 된다(#245)."""
         widget = _make_widget(qapp, DownloadState.FAILED)
@@ -211,7 +214,7 @@ class TestSlotColumn:
 
     @pytest.mark.parametrize("language", ("ko_KR", "en_US"))
     @pytest.mark.parametrize("context", ("DownloadViewModel", "ContentViewModel", "ContentItemWidget"))
-    def test_every_failure_headline_fits_the_card_row(self, language, context):
+    def test_every_failure_headline_fits_the_card_row(self, language, context) -> None:
         """모든 사유의 **첫 줄**이 640px 카드 3행에 들어간다 — 폰트 무의존 대리
         지표로 언어별 글자 수 상한을 건다(HEADLINE_LIMIT). 원문 전체가 아니라
         첫 줄만 재는 것이 규칙이다 — 상세(둘째 줄)는 툴팁이 맡는다. en은
@@ -232,7 +235,7 @@ class TestSlotColumn:
         too_long = {src: tr.splitlines()[0] for src, tr in failures if len(tr.splitlines()[0]) > limit}
         assert not too_long, f"{language}: 640px에서 잘릴 첫 줄({limit}자 초과): {too_long}"
 
-    def test_english_source_strings_follow_the_headline_detail_convention(self):
+    def test_english_source_strings_follow_the_headline_detail_convention(self) -> None:
         """영문 원문(tr() 소스)도 첫 줄=핵심 / 둘째 줄=상세다 — ko 번역만 갈라
         두면 영어로 띄울 때 긴 한 줄이 그대로 잘린다(#245 정정)."""
         import io
@@ -248,7 +251,7 @@ class TestSlotColumn:
             assert "·" in headline, f"첫 줄에 '할 일'(· 뒤)이 없다: {headline!r}"
             assert detail.strip(), f"둘째 줄(상세)이 비었다: {s!r}"
 
-    def test_long_failure_reason_is_elided_but_the_tooltip_keeps_the_whole_text(self, qapp):
+    def test_long_failure_reason_is_elided_but_the_tooltip_keeps_the_whole_text(self, qapp) -> None:
         """긴 사유는 3행에서 ElideRight로 잘릴 수 있다 — 전문은 툴팁이 준다.
         (ko 실측: 640px에서 9종 중 2종이 잘린다 — 후처리 손상·시청 권한 안내)"""
         from PySide6.QtWidgets import QLabel
@@ -275,14 +278,14 @@ class TestPercentStartsAtTheSameX:
         ("paused", DownloadState.PAUSED, 54, False),
     )
 
-    def test_percent_is_the_first_token_in_every_phase(self, qapp):
+    def test_percent_is_the_first_token_in_every_phase(self, qapp) -> None:
         for name, state, progress, post in self.PERCENT_PHASES:
             widget = _make_widget(qapp, state, progress, post_process=post)
             assert widget.statusLabel.text().split(" ")[0] == f"{progress}%", (
                 f"{name}: 첫 토큰이 퍼센트가 아니다 — {widget.statusLabel.text()!r}"
             )
 
-    def test_percent_column_x_is_identical_across_phases(self, qapp):
+    def test_percent_column_x_is_identical_across_phases(self, qapp) -> None:
         xs = {}
         for name, state, progress, post in self.PERCENT_PHASES:
             widget = _make_widget(qapp, state, progress, post_process=post)
@@ -290,7 +293,7 @@ class TestPercentStartsAtTheSameX:
             assert widget.statusLabel.x() == widget.titleLabel.x(), f"{name}: 슬롯이 컨텐츠 열 기준선에 없다"
         assert len(set(xs.values())) == 1, f"국면에 따라 퍼센트 시작 x가 다르다: {xs}"
 
-    def test_all_five_states_and_postprocess_keep_the_slot_baseline(self, qapp):
+    def test_all_five_states_and_postprocess_keep_the_slot_baseline(self, qapp) -> None:
         """다섯 상태 + 후처리 — 3행 슬롯(pill 또는 텍스트)의 시작 x가 전부 같다."""
         xs = {}
         for state in MATRIX:
@@ -306,7 +309,7 @@ class TestActionColumn:
     """1행 우측 조작 — "지금 할 수 있는 것" 하나만 보이고 삭제는 항상."""
 
     @pytest.mark.parametrize("state", list(MATRIX))
-    def test_exactly_the_matrix_action_is_visible(self, qapp, state):
+    def test_exactly_the_matrix_action_is_visible(self, qapp, state) -> None:
         button_name, icon, _, _ = MATRIX[state]
         widget = _make_widget(qapp, state, PROGRESS.get(state, 0))
         visible = [name for name in ACTION_BUTTONS if getattr(widget, name).isVisible()]
@@ -319,18 +322,18 @@ class TestActionColumn:
                 f"{state.name}: 조작 도형이 {getattr(widget, button_name).iconName()!r} — {icon!r}이어야 한다"
             )
 
-    def test_paused_offers_resume_not_pause_again(self, qapp):
+    def test_paused_offers_resume_not_pause_again(self, qapp) -> None:
         """멈춰 있는데 일시정지 버튼이 그대로면 이미 한 일을 또 권하는 것이다."""
         widget = _make_widget(qapp, DownloadState.PAUSED, 54)
         assert widget.pauseButton.iconName() == "resume"
         assert widget.pauseButton.toolTip() == "Resume"
 
-    def test_running_offers_pause(self, qapp):
+    def test_running_offers_pause(self, qapp) -> None:
         widget = _make_widget(qapp, DownloadState.RUNNING, 42)
         assert widget.pauseButton.iconName() == "pause"
         assert widget.pauseButton.toolTip() == "Pause"
 
-    def test_pause_and_resume_toggle_back_and_forth(self, qapp):
+    def test_pause_and_resume_toggle_back_and_forth(self, qapp) -> None:
         """같은 버튼이 상태를 따라 도형·툴팁을 오간다 — 한쪽으로 굳으면 회귀다."""
         widget = _make_widget(qapp, DownloadState.RUNNING, 42)
         seen = []
@@ -340,7 +343,7 @@ class TestActionColumn:
             seen.append(widget.pauseButton.iconName())
         assert seen == ["resume", "pause", "resume"], seen
 
-    def test_delete_highlights_with_the_failure_colour_on_hover(self, qapp):
+    def test_delete_highlights_with_the_failure_colour_on_hover(self, qapp) -> None:
         """삭제는 평소 muted, 호버에서만 실패색 — 항상 빨간 ✕는 위계 역전(#244)."""
         widget = _make_widget(qapp, DownloadState.WAITING)
         assert widget.deleteButton.hoverToken() == "stateFailed"
@@ -353,7 +356,7 @@ class TestProgressBarColumn:
     """진행바 — 진행분이 있을 때(진행·일시정지)만, 일시정지는 muted."""
 
     @pytest.mark.parametrize("state", list(MATRIX))
-    def test_bar_visibility_and_colour_state_follow_the_matrix(self, qapp, state):
+    def test_bar_visibility_and_colour_state_follow_the_matrix(self, qapp, state) -> None:
         _, _, bar_visible, bar_state = MATRIX[state]
         widget = _make_widget(qapp, state, PROGRESS.get(state, 0))
         assert widget.progressBar.isVisible() == bar_visible, (
@@ -362,11 +365,11 @@ class TestProgressBarColumn:
         assert widget.progressBar.property("state") == bar_state
         assert widget.statusLabel.property("state") == bar_state
 
-    def test_paused_bar_keeps_the_progress_value(self, qapp):
+    def test_paused_bar_keeps_the_progress_value(self, qapp) -> None:
         widget = _make_widget(qapp, DownloadState.PAUSED, 54)
         assert widget.progressBar.value() == 54
 
-    def test_paused_colour_is_distinct_from_running_and_waiting(self):
+    def test_paused_colour_is_distinct_from_running_and_waiting(self) -> None:
         """muted는 "다른 색"이어야 정보다 — 진행 파랑·대기 회색 둘 다와 달라야 한다."""
         for table in (theme.DARK, theme.LIGHT):
             assert table["statePaused"] not in (table["stateRunning"], table["stateWaiting"])
@@ -379,23 +382,23 @@ class TestRightColumnResolutionAndSize:
     표기를 되살렸다. 폭이 모자라면 받은 크기만 남는다 — tests/app/gui/test_card_size_text.py)."""
 
     @pytest.mark.parametrize("state", (DownloadState.RUNNING, DownloadState.PAUSED))
-    def test_running_and_paused_show_resolution_with_total_size(self, qapp, state):
+    def test_running_and_paused_show_resolution_with_total_size(self, qapp, state) -> None:
         widget = _make_widget(qapp, state, PROGRESS[state])
         assert widget.fileSizeLabel.isVisible()
         assert widget.fileSizeLabel.text() == "1080p · 595.09 MB / 595.34 MB", (
             widget.fileSizeLabel.text()
         )
 
-    def test_finished_shows_resolution_with_downloaded_size(self, qapp):
+    def test_finished_shows_resolution_with_downloaded_size(self, qapp) -> None:
         widget = _make_widget(qapp, DownloadState.FINISHED, 100)
         assert widget.fileSizeLabel.text().startswith("1080p · ")
         assert "MB" in widget.fileSizeLabel.text()
 
-    def test_waiting_shows_size_only(self, qapp):
+    def test_waiting_shows_size_only(self, qapp) -> None:
         widget = _make_widget(qapp, DownloadState.WAITING)
         assert "1080p" not in widget.fileSizeLabel.text()
 
-    def test_failed_hides_the_size_slot(self, qapp):
+    def test_failed_hides_the_size_slot(self, qapp) -> None:
         widget = _make_widget(qapp, DownloadState.FAILED)
         assert not widget.fileSizeLabel.isVisible()
 
@@ -403,14 +406,14 @@ class TestRightColumnResolutionAndSize:
 class TestHeightIsInvariantAcrossFiveStates:
     """다섯 상태 전부에서 카드 높이가 같다 — 목록이 들썩이면 안 된다."""
 
-    def test_same_height_in_all_five_states(self, qapp):
+    def test_same_height_in_all_five_states(self, qapp) -> None:
         heights = {}
         for state in MATRIX:
             widget = _make_widget(qapp, state, PROGRESS.get(state, 0))
             heights[state.name] = widget.height()
         assert len(set(heights.values())) == 1, f"상태별 카드 높이가 다르다: {heights}"
 
-    def test_same_height_when_one_card_walks_through_all_five_states(self, qapp):
+    def test_same_height_when_one_card_walks_through_all_five_states(self, qapp) -> None:
         widget = _make_widget(qapp, DownloadState.WAITING)
         heights = {}
         for state in MATRIX:
@@ -429,7 +432,7 @@ class TestDrawnIconsAreSharedAndFontFree:
     """조작 아이콘은 폰트 글리프가 아니라 그린 도형이고, 아이콘당 한 번만
     그려 공유한다 — 카드마다 페인트 객체가 붙으면 O(1) 삽입이 무너진다."""
 
-    def test_every_icon_paints_something_without_a_font(self, qapp):
+    def test_every_icon_paints_something_without_a_font(self, qapp) -> None:
         for name in icons.ICON_NAMES:
             image = icons.action_pixmap(
                 name, theme.DARK["text"], theme.METRICS["actionGlyph"]
@@ -443,7 +446,7 @@ class TestDrawnIconsAreSharedAndFontFree:
             assert painted > 0, f"{name} 도형이 비어 있다"
 
     @pytest.mark.parametrize("scheme", ["DARK", "LIGHT"])
-    def test_change_location_icon_is_drawn_apart_from_open_folder(self, qapp, scheme):
+    def test_change_location_icon_is_drawn_apart_from_open_folder(self, qapp, scheme) -> None:
         """저장 위치 변경 아이콘은 폴더 열기 아이콘과 다른 그림이어야 하고, 폴더 몸통은 함께 가져야 한다.
 
         같은 색 · 16px로 그린 "folder"와 "folder_edit"
@@ -463,7 +466,7 @@ class TestDrawnIconsAreSharedAndFontFree:
         assert differing > 0
         assert folder.pixelColor(4, 8).alpha() == 255 and change.pixelColor(4, 8).alpha() == 255
 
-    def test_waiting_and_finished_cards_use_different_folder_icons(self, qapp):
+    def test_waiting_and_finished_cards_use_different_folder_icons(self, qapp) -> None:
         """대기 카드의 저장 위치 버튼과 완료 카드의 폴더 열기 버튼은 다른 아이콘을 써야 한다.
 
         대기 카드 -> 보이는 pathButton의 아이콘 == "folder_edit" 또는 "folder_edit_dot"
@@ -477,7 +480,7 @@ class TestDrawnIconsAreSharedAndFontFree:
         assert waiting.pathButton.iconName() in ("folder_edit", "folder_edit_dot")
         assert finished.openDirectoryButton.iconName() == "folder"
 
-    def test_icon_pixmaps_are_shared_across_cards(self, qapp):
+    def test_icon_pixmaps_are_shared_across_cards(self, qapp) -> None:
         before = icons.cache_size()
         widgets = [_make_widget(qapp, DownloadState.FAILED) for _ in range(5)]
         for widget in widgets:
@@ -492,11 +495,11 @@ class TestDrawnIconsAreSharedAndFontFree:
             "retry", theme.DARK["textMuted"], theme.METRICS["actionGlyph"], 1.0
         )
 
-    def test_buttons_carry_no_text_glyph(self, qapp):
+    def test_buttons_carry_no_text_glyph(self, qapp) -> None:
         widget = _make_widget(qapp, DownloadState.RUNNING, 42)
         for name in ACTION_BUTTONS + ("deleteButton",):
             assert getattr(widget, name).text() == "", f"{name}이 아직 문자 글리프를 쓴다"
 
-    def test_unknown_icon_name_is_rejected(self, qapp):
+    def test_unknown_icon_name_is_rejected(self, qapp) -> None:
         with pytest.raises(ValueError):
             icons.action_pixmap("emoji", theme.DARK["text"], 10)

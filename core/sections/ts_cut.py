@@ -26,7 +26,7 @@ ffmpeg로 넘긴다. 오디오는 구간의 세그먼트를 한 번 흘려 복�
 import dataclasses
 import os
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from itertools import accumulate
 
 from core.media.mp4 import Mp4Error, read_mp4_index
@@ -175,7 +175,7 @@ def _remux(
         CutCancelled: 흘려 넣는 도중 멈추라는 요청이 온 경우 — ffmpeg는 끝내고 쓰다 만 파일은 지운다
     """
 
-    def feed():
+    def feed() -> Iterator[bytes]:
         for path in segment_paths:
             for chunk in read_in_chunks(path):
                 while should_pause is not None and should_pause():

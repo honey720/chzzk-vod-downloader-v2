@@ -7,7 +7,9 @@
 
 import os
 from collections.abc import Callable, Collection
+from typing import Any
 
+from core.sections.cut import CutFrames, CutResult
 from core.utils.paths import release_output_paths, reserve_section_output_paths
 from tests.ffmpeg.sections.midway_cut_failure import MidwayCutFailure
 
@@ -30,7 +32,7 @@ class CutCalls:
         self._source_arg = source_arg
         monkeypatch.setattr(module, name, self._call)
 
-    def _call(self, *args, **kwargs):
+    def _call(self, *args, **kwargs) -> CutResult | tuple[CutResult, CutFrames]:
         self.outputs.append(os.path.basename(args[OUTPUT_ARG]))
         number = len(self.outputs)
         if number in self.fail_on:
@@ -47,7 +49,7 @@ class CutCalls:
         self.after = None
 
 
-def hand_over(failed, again, check_files: bool = True):
+def hand_over(failed, again, check_files: bool = True) -> Any:
     """실패한 실행(failed)이 남긴 것을 새 실행(again)에 넘기고 again을 돌려준다.
 
     구간 파일 경로는 실패한 실행의 것을 그대로 다시 예약한다 — 다운로드를 시작하는 쪽이

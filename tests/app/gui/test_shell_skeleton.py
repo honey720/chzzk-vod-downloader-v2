@@ -10,6 +10,8 @@
 폭 · 높이는 절대 px로 박지 않는다 — 창의 실제 최소 크기에서 유도한다.
 """
 
+from collections.abc import Iterator
+
 import pytest
 from PySide6.QtCore import QMimeData, QObject, QPoint, QRect, Qt, QTranslator, Signal
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
@@ -25,10 +27,11 @@ from app.views.mainWindow import VodDownloader, window_title
 from app.viewmodels.data import ContentItem
 from core.models.download_state import DownloadState
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
+from typing import Never
 
 
 @pytest.fixture(autouse=True)
-def _apply_production_qss(qapp):
+def _apply_production_qss(qapp) -> None:
     """실제 전역 QSS · 스타일을 태운다(폭 · 높이는 QSS 여백 · 글꼴에 좌우된다). ⚠️ function scope 유지."""
     theme.set_color_scheme("dark")
     qapp.setStyle(hold_style(theme.build_style()))  # 참조 보관 — 이중 해제 우회 (#243)
@@ -37,7 +40,7 @@ def _apply_production_qss(qapp):
 
 
 @pytest.fixture(autouse=True)
-def _destroy_windows():
+def _destroy_windows() -> Iterator[None]:
     """테스트가 만든 최상위 창은 close()가 아니라 파괴한다 — close()는 창 크기를 기억한다(#253)."""
     before = snapshot_top_levels()
     yield
@@ -45,15 +48,15 @@ def _destroy_windows():
 
 
 @pytest.fixture(autouse=True)
-def no_network(monkeypatch):
+def no_network(monkeypatch) -> None:
     """카드의 썸네일 · 크기 조회가 실호출로 새지 않게 세션을 막는다 — 호출되면 즉시 실패한다."""
 
     class _FailingSession:
-        def head(self, *a, **k):
+        def head(self, *a, **k) -> Never:
             """HEAD 요청은 금지 — 호출 자체가 테스트 실패다."""
             raise RuntimeError("network disabled in tests")
 
-        def get(self, *a, **k):
+        def get(self, *a, **k) -> Never:
             """GET 요청은 금지 — 호출 자체가 테스트 실패다."""
             raise RuntimeError("network disabled in tests")
 
@@ -128,7 +131,7 @@ def _zones(win) -> list:
 
 class TestFourZones:
     @pytest.mark.parametrize("extra", (0, 400))
-    def test_menu_header_list_footer_run_top_to_bottom_without_overlap(self, extra):
+    def test_menu_header_list_footer_run_top_to_bottom_without_overlap(self, extra) -> None:
         """창 최소 크기와 그보다 넓고 높은 크기에서 네 칸은 보이고 메뉴바 · 헤더바 · 목록 · 하단바 차례로 겹침 없이 놓여야 한다."""
         win = _window()
         _at_size(win, win.minimumWidth() + extra, win.minimumHeight() + extra)
@@ -137,7 +140,7 @@ class TestFourZones:
         for upper, lower in zip(rects, rects[1:]):
             assert upper.bottom() < lower.top(), f"칸이 겹치거나 차례가 다르다: {upper} / {lower}"
 
-    def test_the_menu_holds_vod_download_then_settings(self):
+    def test_the_menu_holds_vod_download_then_settings(self) -> None:
         """메뉴바에는 왼쪽부터 「VOD 다운」 · 「설정」이 있고 「VOD 다운」이 고른 상태여야 한다."""
         win = _window()
         win.show()
@@ -147,7 +150,7 @@ class TestFourZones:
         assert download.x() < settings_button.x()
         assert download.isChecked()
 
-    def test_the_footer_ends_with_download_then_stop(self):
+    def test_the_footer_ends_with_download_then_stop(self) -> None:
         """하단바의 마지막 두 위젯은 다운로드 · 중지 차례여야 한다(오른쪽 끝)."""
         win = _window()
         layout = win.infoLayout
@@ -165,18 +168,18 @@ class TestWindowTitle:
             ("2.12.0+dev", "Chzzk VOD Downloader 2.12.0+dev"),
         ),
     )
-    def test_title_is_the_name_and_the_version_without_the_commit(self, version, expected):
+    def test_title_is_the_name_and_the_version_without_the_commit(self, version, expected) -> None:
         """버전 문자열이 정식 · rc · 개발(커밋 있음 · 없음)이면 창 제목은 표시 이름 + 버전(커밋 뺌)이어야 한다."""
         assert window_title(version) == expected
 
     @pytest.mark.parametrize("version", ("2.12.0", "2.12.0-rc1", "2.12.0+dev.7-gabcdef0"))
-    def test_window_shows_the_title_from_get_app_version(self, monkeypatch, version):
+    def test_window_shows_the_title_from_get_app_version(self, monkeypatch, version) -> None:
         """`config.get_app_version()`이 그 버전을 내면 창 제목은 window_title(그 버전)이어야 한다."""
         monkeypatch.setattr(config, "get_app_version", lambda: version)
         win = _window()
         assert win.windowTitle() == window_title(version)
 
-    def test_title_is_not_translated(self, qapp, monkeypatch):
+    def test_title_is_not_translated(self, qapp, monkeypatch) -> None:
         """한국어 번역을 올려도 창 제목은 영어 표시 이름 그대로여야 한다."""
         monkeypatch.setattr(config, "get_app_version", lambda: "2.12.0")
         translator = QTranslator()
@@ -191,7 +194,9 @@ class TestWindowTitle:
 
 
 class TestMenuSettings:
-    def test_settings_menu_opens_the_settings_dialog_and_keeps_vod_download_chosen(self, monkeypatch):
+    def test_settings_menu_opens_the_settings_dialog_and_keeps_vod_download_chosen(
+        self, monkeypatch
+    ) -> None:
         """메뉴 「설정」을 누르면 설정 창이 한 번 열리고 고른 메뉴는 「VOD 다운」 그대로여야 한다."""
         opened = []
         monkeypatch.setattr(
@@ -204,7 +209,7 @@ class TestMenuSettings:
         assert win.menuDownloadButton.isChecked()
         assert not win.menuSettingsButton.isCheckable()
 
-    def test_pressing_vod_download_again_keeps_it_chosen(self):
+    def test_pressing_vod_download_again_keeps_it_chosen(self) -> None:
         """고른 「VOD 다운」을 다시 눌러도 고른 상태가 풀리지 않아야 한다."""
         win = _window()
         win.menuDownloadButton.click()
@@ -213,7 +218,7 @@ class TestMenuSettings:
 
 
 class TestMinimumSize:
-    def test_at_the_minimum_every_button_is_whole_inside_the_window(self):
+    def test_at_the_minimum_every_button_is_whole_inside_the_window(self) -> None:
         """창 최소 크기에서 보이는 모든 버튼은 크기가 0이 아니고 창 사각형 안에 다 들어가야 한다."""
         win = _window()
         _at_size(win, win.minimumWidth(), win.minimumHeight())
@@ -226,7 +231,7 @@ class TestMinimumSize:
                if b.width() <= 0 or b.height() <= 0 or not window_rect.contains(_in_window(win, b))]
         assert not cut, f"창 최소 크기 {win.size().toTuple()}에서 잘리거나 밖으로 나간 버튼: {cut}"
 
-    def test_at_the_minimum_one_card_is_fully_visible_in_the_list(self):
+    def test_at_the_minimum_one_card_is_fully_visible_in_the_list(self) -> None:
         """창 최소 크기에서 카드 한 장이 목록 뷰포트 안에 위아래까지 다 보여야 한다."""
         win = _window()
         (item,) = _add_cards(win, 0, 1)
@@ -237,7 +242,7 @@ class TestMinimumSize:
         assert card.isVisible()
         assert viewport.rect().contains(rect), f"카드 {rect}가 목록 뷰포트 {viewport.rect()}에 다 들어가지 않는다"
 
-    def test_at_the_minimum_the_tallest_card_fits_without_the_bottom_padding(self):
+    def test_at_the_minimum_the_tallest_card_fits_without_the_bottom_padding(self) -> None:
         """창 최소 크기에서 해상도 pill이 있는 대기 카드가 목록 아래 안쪽 여백을 뺀 자리 안에 다 보여야 한다.
 
         pill이 있는 대기 카드가 평소 카드 가운데 가장 높다(상태 글 최소 높이 = pill 높이, #245 — 다른
@@ -269,7 +274,7 @@ class TestMinimumSize:
             f"카드 {rect}가 아래 안쪽 여백({bottom_padding}px)을 뺀 목록 자리 {room}에 다 들어가지 않는다"
         )
 
-    def test_minimum_size_is_the_same_with_0_1_and_50_cards(self, monkeypatch, tmp_path):
+    def test_minimum_size_is_the_same_with_0_1_and_50_cards(self, monkeypatch, tmp_path) -> None:
         """카드 0장 · 1장 · 50장일 때 창에 걸린 최소 크기와 최소 크기 계산값이 모두 처음과 같아야 한다.
 
         1장째는 실제 등록 길(URL 칸 Enter → 조회 중 카드)로 넣어 등록 때 창이 받는 신호까지 타고,
@@ -301,7 +306,7 @@ class TestMinimumSize:
 
 class TestRegistrationWiring:
     @pytest.fixture
-    def fetches(self, monkeypatch, tmp_path):
+    def fetches(self, monkeypatch, tmp_path) -> tuple[VodDownloader, list[tuple[str, str]], str]:
         """조회 요청을 기록한다 — 창의 콘텐츠 뷰모델 `fetchContent`를 대역으로 바꾼다(네트워크 없음)."""
         calls = []
         win = _window()
@@ -311,7 +316,7 @@ class TestRegistrationWiring:
         )
         return win, calls, str(tmp_path)
 
-    def test_enter_in_the_url_field_registers_the_url(self, fetches):
+    def test_enter_in_the_url_field_registers_the_url(self, fetches) -> None:
         """URL 칸에 주소를 넣고 Enter를 누르면 그 주소로 조회가 한 번 요청돼야 한다."""
         win, calls, path = fetches
         url = "https://chzzk.naver.com/video/1"
@@ -320,7 +325,7 @@ class TestRegistrationWiring:
         QApplication.processEvents()
         assert calls == [(url, path)]
 
-    def test_dropping_a_url_on_the_list_registers_it(self, fetches):
+    def test_dropping_a_url_on_the_list_registers_it(self, fetches) -> None:
         """목록 뷰포트에 주소 글을 끌어다 놓으면 그 주소로 조회가 한 번 요청돼야 한다."""
         win, calls, path = fetches
         url = "https://chzzk.naver.com/video/2"

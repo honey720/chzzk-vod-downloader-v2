@@ -10,7 +10,7 @@ from fractions import Fraction
 import pytest
 
 from core.media.fmp4 import parse_init_segment, parse_media_segment
-from core.media.hls import parse_media_playlist
+from core.media.hls import HlsPlaylist, parse_media_playlist
 from core.models.plan import TimeRange
 from core.media.fmp4_index import Fmp4Init, Fmp4Segment
 import core.sections.fmp4_sections as sections_module
@@ -67,14 +67,14 @@ def _segment(
     return media_segment([Fragment(trafs)])
 
 
-def _playlist(durations: list[float]):
+def _playlist(durations: list[float]) -> HlsPlaylist:
     lines = ["#EXTM3U", "#EXT-X-VERSION:7", '#EXT-X-MAP:URI="init.mp4"']
     for number, duration in enumerate(durations):
         lines += [f"#EXTINF:{duration:.6f},", f"seg-{number}.m4s"]
     return parse_media_playlist("\n".join([*lines, "#EXT-X-ENDLIST"]))
 
 
-def test_section_ending_at_the_video_length_skips_a_last_segment_without_video():
+def test_section_ending_at_the_video_length_skips_a_last_segment_without_video() -> None:
     """끝이 영상 길이와 같은 구간은 마지막 세그먼트에 영상이 없으면 그 앞 세그먼트의 마지막 프레임에서 끝나야 한다.
 
     세그먼트 셋 — 0 · 1은 영상 10프레임씩과 오디오, 2는 오디오뿐. 영상 길이 2.0초(프레임 19가 끝나는 시각),
@@ -97,7 +97,7 @@ def test_section_ending_at_the_video_length_skips_a_last_segment_without_video()
     assert (sections[0].first_segment, sections[0].last_segment) == (0, 2)
 
 
-def test_section_to_the_video_length_is_rejected_when_it_starts_before_a_break():
+def test_section_to_the_video_length_is_rejected_when_it_starts_before_a_break() -> None:
     """끝이 영상 길이와 같은 구간은 끊긴 자리 앞에서 시작하면 끊긴 자리를 넘는 구간으로 거부해야 한다.
 
     세그먼트 0 · 1(영상 1초씩) · 끊김 · 세그먼트 2(영상 1초). 영상 길이 3.0초, 구간 0.5 ~ 3.0초
@@ -139,7 +139,7 @@ def _video_segment(durations: list[int], timescale: int = 1000) -> tuple[Fmp4Ini
     return init, parse_media_segment(media_segment([Fragment([Traf(VIDEO, [Run(frames)])])]), init)
 
 
-def test_choose_frame_rate_reads_sixty_from_millisecond_timestamps():
+def test_choose_frame_rate_reads_sixty_from_millisecond_timestamps() -> None:
     """choose_frame_rate는 프레임 간격이 17 · 17 · 16ms로 도는 입력의 프레임률을 60으로 정해야 한다.
 
     timescale 1000, 영상 240프레임(4초), 샘플 길이 17 · 17 · 16틱의 반복. 선언값 없음
@@ -152,7 +152,7 @@ def test_choose_frame_rate_reads_sixty_from_millisecond_timestamps():
     assert (choice.rate, choice.source) == (Fraction(60), FPS_STANDARD)
 
 
-def test_last_frame_number_of_a_second_stays_inside_that_second():
+def test_last_frame_number_of_a_second_stays_inside_that_second() -> None:
     """정한 프레임률로 읽은 타임코드 FF 59는 그 초 안의 시각이어야 한다.
 
     17 · 17 · 16ms 입력에서 정한 프레임률, 타임코드 00:00:01:59
@@ -167,7 +167,7 @@ def test_last_frame_number_of_a_second_stays_inside_that_second():
         parse_timecode("00:00:01:59", Fraction(1000, 17))
 
 
-def test_choose_frame_rate_prefers_the_declared_value():
+def test_choose_frame_rate_prefers_the_declared_value() -> None:
     """choose_frame_rate는 선언된 프레임률이 있으면 프레임을 재지 않고 그 값을 그대로 써야 한다.
 
     17 · 17 · 16ms 입력(재면 60), 선언값 2997/50
@@ -192,7 +192,9 @@ def test_choose_frame_rate_prefers_the_declared_value():
     ],
     ids=["29.97", "59.94", "30-in-ms", "25", "60", "23.976"],
 )
-def test_choose_frame_rate_snaps_to_the_nearest_standard_rate(timescale, durations, expected):
+def test_choose_frame_rate_snaps_to_the_nearest_standard_rate(
+    timescale, durations, expected
+) -> None:
     """choose_frame_rate는 잰 평균 프레임률이 표준 비율과 0.1% 안이면 가장 가까운 표준 비율을 돌려줘야 한다.
 
     주석의 경우마다 (timescale, 샘플 길이들). 선언값 없음
@@ -216,7 +218,9 @@ def test_choose_frame_rate_snaps_to_the_nearest_standard_rate(timescale, duratio
     ],
     ids=["10", "20", "58.8", "dropped-frames"],
 )
-def test_choose_frame_rate_keeps_the_measured_average_outside_standard_rates(durations, expected):
+def test_choose_frame_rate_keeps_the_measured_average_outside_standard_rates(
+    durations, expected
+) -> None:
     """choose_frame_rate는 잰 평균 프레임률이 어느 표준 비율과도 0.1% 넘게 다르면 잰 값을 분수 그대로 돌려줘야 한다.
 
     timescale 1000, 주석의 샘플 길이들. 선언값 없음
@@ -229,7 +233,7 @@ def test_choose_frame_rate_keeps_the_measured_average_outside_standard_rates(dur
     assert (choice.rate, choice.source) == (expected, FPS_MEASURED)
 
 
-def test_choose_frame_rate_uses_the_sample_duration_of_a_single_frame():
+def test_choose_frame_rate_uses_the_sample_duration_of_a_single_frame() -> None:
     """choose_frame_rate는 프레임이 하나뿐이면 그 프레임의 샘플 길이로 정해야 한다.
 
     timescale 1000, 영상 1프레임(길이 40틱)
@@ -242,7 +246,7 @@ def test_choose_frame_rate_uses_the_sample_duration_of_a_single_frame():
     assert (choice.rate, choice.source) == (Fraction(25), FPS_MEASURED)
 
 
-def test_choose_frame_rate_fails_without_any_frame_or_declared_value():
+def test_choose_frame_rate_fails_without_any_frame_or_declared_value() -> None:
     """choose_frame_rate는 선언값도 영상 프레임도 없으면 ValueError를 내야 한다.
 
     오디오뿐인 세그먼트, 선언값 없음
@@ -255,7 +259,7 @@ def test_choose_frame_rate_fails_without_any_frame_or_declared_value():
         choose_frame_rate(init, [segment])
 
 
-def test_plan_validates_selections_with_the_frame_rate_it_is_given():
+def test_plan_validates_selections_with_the_frame_rate_it_is_given() -> None:
     """plan_fmp4_sections는 프레임률을 넘겨받으면 첫 세그먼트로 다시 정하지 않고 그 값으로 구간을 검증해야 한다.
 
     10fps 입력, 구간 0.1 ~ 0.3초. 넘긴 프레임률 1(프레임 번호 0 ~ 0) · 넘기지 않음(프레임 번호 1 ~ 3)
@@ -276,7 +280,7 @@ def test_plan_validates_selections_with_the_frame_rate_it_is_given():
 # ================================================================ 끝 = 길이
 
 
-def test_section_ending_at_a_video_length_off_the_frame_grid_is_accepted():
+def test_section_ending_at_a_video_length_off_the_frame_grid_is_accepted() -> None:
     """끝이 영상 길이(초)와 같은 구간은 길이 × fps의 소수부가 .5 이상이어도 통과하고 마지막 프레임에서 끝나야 한다.
 
     세그먼트 둘(영상 10프레임씩, 10fps), 마지막 프레임의 길이만 160틱 — 영상 길이 2.06초 = 20.6프레임.
@@ -317,7 +321,7 @@ class _Replay:
     AUDIO_START = 143599  # 첫 세그먼트의 오디오 tfdt(틱) = 2.991646초 — VOD 0초
     DURATIONS = [100] * 58 + [102, 102]  # moof 하나의 영상 샘플 길이(틱)
 
-    def __init__(self, count: int, *, program_times: bool, extinf: float = 2.001333):
+    def __init__(self, count: int, *, program_times: bool, extinf: float = 2.001333) -> None:
         self.count = count
         self.init = parse_init_segment(
             init_segment(
@@ -399,7 +403,7 @@ class _Replay:
         return min(times, key=lambda time: abs(time - seconds))
 
 
-def test_timeline_measures_the_video_length_from_real_timestamps_not_extinf():
+def test_timeline_measures_the_video_length_from_real_timestamps_not_extinf() -> None:
     """fmp4_timeline은 영상 길이를 #EXTINF의 합이 아니라 마지막 영상 프레임이 끝나는 실제 시각으로 정해야 한다.
 
     세그먼트 5,000개(#EXTINF 2.001333, 실제 간격 2.000초)
@@ -416,7 +420,7 @@ def test_timeline_measures_the_video_length_from_real_timestamps_not_extinf():
 
 
 @pytest.mark.parametrize("program_times", [True, False], ids=["pdt", "extinf-only"])
-def test_section_near_the_end_of_a_long_replay_lands_on_the_right_frames(program_times):
+def test_section_near_the_end_of_a_long_replay_lands_on_the_right_frames(program_times) -> None:
     """#EXTINF의 누적이 실제 시각과 세그먼트 여럿만큼 벌어진 위치에서도 구간의 첫·끝 프레임은 요청 시각에 가장 가까운 프레임이어야 한다.
 
     세그먼트 5,000개(끝에서 #EXTINF 누적이 6.7초 = 세그먼트 셋 넘게 앞선다), 60fps,
@@ -438,7 +442,7 @@ def test_section_near_the_end_of_a_long_replay_lands_on_the_right_frames(program
     assert (section.first_segment, section.last_segment) == (4993, 4997)
 
 
-def test_program_date_time_finds_the_segment_without_extra_reads():
+def test_program_date_time_finds_the_segment_without_extra_reads() -> None:
     """PROGRAM-DATE-TIME이 있으면 구간의 세그먼트를 추정 한 번에 찾고, 없으면 다시 추정하느라 더 읽어야 한다.
 
     세그먼트 5,000개, 구간 9990.0 ~ 9995.5초 (받는 세그먼트 4993~4997)
@@ -458,7 +462,7 @@ def test_program_date_time_finds_the_segment_without_extra_reads():
     assert len(set(without.asked)) <= len(needed) + 4
 
 
-def test_section_fails_when_the_segment_cannot_be_located_in_the_allowed_steps(monkeypatch):
+def test_section_fails_when_the_segment_cannot_be_located_in_the_allowed_steps(monkeypatch) -> None:
     """구간의 시각이 놓인 세그먼트를 정해진 횟수 안에 찾지 못하면 틀린 프레임을 고르지 않고 키 기반 오류로 실패해야 한다.
 
     세그먼트 5,000개 · PROGRAM-DATE-TIME 없음(처음 추정이 세그먼트 셋 넘게 어긋난다), 찾는 걸음을 1로 제한,
@@ -477,7 +481,7 @@ def test_section_fails_when_the_segment_cannot_be_located_in_the_allowed_steps(m
     assert info.value.violations == {0: (SELECTION_NOT_LOCATED,)}
 
 
-def test_section_past_the_real_length_is_out_of_range_even_inside_the_extinf_total():
+def test_section_past_the_real_length_is_out_of_range_even_inside_the_extinf_total() -> None:
     """구간의 끝이 실제 영상 길이를 넘으면 #EXTINF의 합 안이어도 범위 위반이어야 한다.
 
     세그먼트 5,000개 — 실제 길이 약 10000.04초, #EXTINF의 합 약 10006.7초. 구간 9990 ~ 10003초
@@ -494,7 +498,7 @@ def test_section_past_the_real_length_is_out_of_range_even_inside_the_extinf_tot
     assert info.value.message_key == SELECTION_OUT_OF_RANGE
 
 
-def test_section_reads_frames_from_the_second_moof_of_a_segment():
+def test_section_reads_frames_from_the_second_moof_of_a_segment() -> None:
     """구간의 시각이 세그먼트의 둘째 moof에 놓이면 그 moof의 프레임을 골라야 한다.
 
     세그먼트 40개, 구간 60.0 ~ 61.5초 — 60.0초는 세그먼트 29의 둘째 moof(59.04 ~ 60.04초)에 있다
@@ -512,7 +516,7 @@ def test_section_reads_frames_from_the_second_moof_of_a_segment():
     assert (section.first_segment, section.last_segment) == (28, 30)
 
 
-def test_time_between_two_segments_starts_on_the_frame_before_the_gap():
+def test_time_between_two_segments_starts_on_the_frame_before_the_gap() -> None:
     """구간의 시작이 두 세그먼트 사이의 프레임 없는 자리에 놓이면 오류 없이 빈 자리 앞의 프레임에서 시작해야 한다.
 
     10fps 세그먼트 셋 — 둘째 세그먼트에는 프레임이 5개뿐이다(1.0 ~ 1.4초, 1.5 ~ 1.9초가 비었다).

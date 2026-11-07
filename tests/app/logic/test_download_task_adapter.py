@@ -21,28 +21,28 @@ from app.download.task import DownloadTask
 class _FakeLogger:
     """DownloadLogger 대역 — 파일 핸들러 생성 없이 호출 기록만 남긴다."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.warnings: list[str] = []
         self.infos: list[str] = []
         self.logged_items: list[object] = []
 
-    def warning(self, message: str):
+    def warning(self, message: str) -> None:
         self.warnings.append(message)
 
-    def info(self, message: str):
+    def info(self, message: str) -> None:
         self.infos.append(message)
 
-    def log_download_info(self, item):
+    def log_download_info(self, item) -> None:
         self.logged_items.append(item)
 
 
 class _FakeItem:
     """ContentItem 대역 — setDownloadState 수신 상태만 기록한다."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.downloadState = DownloadState.WAITING
 
-    def setDownloadState(self, state: DownloadState):
+    def setDownloadState(self, state: DownloadState) -> None:
         self.downloadState = state
 
 
@@ -53,7 +53,7 @@ def _make_task() -> tuple[DownloadTask, DownloadData, _FakeItem, _FakeLogger]:
     return DownloadTask(data, item, logger), data, item, logger
 
 
-def test_adapter_keeps_engine_interface():
+def test_adapter_keeps_engine_interface() -> None:
     """엔진(worker/monitor)이 쓰는 state·lock 인터페이스가 유지된다."""
     task, _, _, _ = _make_task()
     assert task.state is DownloadState.WAITING
@@ -61,7 +61,7 @@ def test_adapter_keeps_engine_interface():
     assert not task.isRunning()
 
 
-def test_transitions_update_item_state():
+def test_transitions_update_item_state() -> None:
     """전이 시 ContentItem에 상태가 반영된다 (기존 setDownloadState 경로 유지)."""
     task, _, item, logger = _make_task()
 
@@ -80,7 +80,7 @@ def test_transitions_update_item_state():
     assert item.downloadState is DownloadState.FINISHED
 
 
-def test_pause_event_is_shared_with_download_data():
+def test_pause_event_is_shared_with_download_data() -> None:
     """어댑터는 DownloadData._pause_event를 core 모델과 공유한다 (엔진 무변경)."""
     task, data, _, _ = _make_task()
     task.start()
@@ -92,7 +92,7 @@ def test_pause_event_is_shared_with_download_data():
     assert data._pause_event.is_set()
 
 
-def test_pause_and_resume_are_logged():
+def test_pause_and_resume_are_logged() -> None:
     """일시정지·재개 성공이 로그에 남는다 (#78) — UI→엔진 도달 여부를 로그로 확인하기 위함."""
     task, _, _, logger = _make_task()
     task.start()
@@ -104,7 +104,7 @@ def test_pause_and_resume_are_logged():
     assert "Download resumed" in logger.infos
 
 
-def test_failed_pause_is_not_logged_as_success():
+def test_failed_pause_is_not_logged_as_success() -> None:
     """전이가 무시된 경우(허용되지 않는 상태) 성공 로그를 남기지 않는다."""
     task, _, _, logger = _make_task()
 
@@ -113,7 +113,7 @@ def test_failed_pause_is_not_logged_as_success():
     assert logger.warnings  # 무시 경고만 남는다
 
 
-def test_invalid_transition_is_absorbed_not_raised():
+def test_invalid_transition_is_absorbed_not_raised() -> None:
     """허용되지 않는 전이는 예외로 앱을 죽이지 않고 경고 로그로 흡수한다."""
     task, _, item, logger = _make_task()
 
@@ -126,16 +126,16 @@ def test_invalid_transition_is_absorbed_not_raised():
 class _SectionLogger(_FakeLogger):
     """log_download_info가 받은 인자를 그대로 기록하는 대역."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.info_calls: list[tuple] = []
 
-    def log_download_info(self, *args):
+    def log_download_info(self, *args) -> None:
         self.info_calls.append(args)
 
 
 @pytest.mark.parametrize("content_type", ["video", "m3u8"])
-def test_start_passes_section_paths_to_the_logger(content_type):
+def test_start_passes_section_paths_to_the_logger(content_type) -> None:
     """구간이 있는 다운로드를 시작하면 로거에 아이템과 함께 구간 파일 경로를 넘겨야 한다 (#309).
 
     content_type "video" · "m3u8", content.selection_paths = ("a_1.mp4", "a_2.mp4")
@@ -151,7 +151,7 @@ def test_start_passes_section_paths_to_the_logger(content_type):
     assert logger.info_calls == [(item, ("a_1.mp4", "a_2.mp4"))]
 
 
-def test_start_passes_only_the_item_without_sections():
+def test_start_passes_only_the_item_without_sections() -> None:
     """구간이 없는 다운로드를 시작하면 로거에 아이템만 넘겨야 한다.
 
     content.selection_paths = ()

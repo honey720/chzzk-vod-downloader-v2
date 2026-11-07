@@ -10,6 +10,7 @@ import gc
 import threading
 import time
 import weakref
+from collections.abc import Callable
 
 import pytest
 
@@ -36,7 +37,7 @@ class FakeEngine:
         on_failed=None,
         on_merge_start=None,
         **_,
-    ):
+    ) -> None:
         self.data = data
         self.logger = logger
         self.on_progress = on_progress
@@ -49,7 +50,7 @@ class FakeEngine:
         self.fail_with: BaseException | None = None
         self.final_progress_calls = 0
 
-    def run(self):
+    def run(self) -> None:
         self.started.set()
         assert self.release.wait(WAIT), "테스트가 release를 set하지 않았다"
         if self.fail_with is not None:
@@ -57,10 +58,10 @@ class FakeEngine:
         else:
             self.on_finished()
 
-    def emit_progress(self):
+    def emit_progress(self) -> None:
         self.final_progress_calls += 1
 
-    def set_key_resolver(self, resolver):
+    def set_key_resolver(self, resolver) -> None:
         """BaseDownloader의 키 리졸버 주입 계약을 흉내 낸다 (#57)."""
         self.key_resolver = resolver
 
@@ -78,7 +79,7 @@ class FakeEngineFactory:
         requires_base_url_resolution: bool = False,
         requires_key_resolution: bool = False,
         run_thread_name: str = "DownloadThread",
-    ):
+    ) -> None:
         self.supported = supported
         self.requires_base_url_resolution = requires_base_url_resolution
         self.requires_key_resolution = requires_key_resolution
@@ -89,7 +90,7 @@ class FakeEngineFactory:
     def supports(self, content: Content) -> bool:
         return content.content_type in self.supported
 
-    def __call__(self, **kwargs):
+    def __call__(self, **kwargs) -> FakeEngine:
         engine = FakeEngine(**kwargs)
         self.instances.append(engine)
         self.created.set()
@@ -99,11 +100,11 @@ class FakeEngineFactory:
 class RecordingLogger:
     """호출된 로그 메서드 이름을 기록하는 DownloadLogger 호환 페이크."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.calls: list[str] = []
 
-    def __getattr__(self, name):
-        def record(*args, **kwargs):
+    def __getattr__(self, name) -> Callable[..., None]:
+        def record(*args, **kwargs) -> None:
             self.calls.append(name)
 
         return record
@@ -120,14 +121,14 @@ def _make_content(content_type: ContentType = ContentType.CHZZK_VIDEO) -> Conten
 
 
 @pytest.fixture
-def file_factory(monkeypatch):
+def file_factory(monkeypatch) -> FakeEngineFactory:
     factory = FakeEngineFactory({ContentType.CHZZK_VIDEO, ContentType.CHZZK_CLIP})
     monkeypatch.setattr(download_service_module, "FileDownloader", factory)
     return factory
 
 
 @pytest.fixture
-def m3u8_factory(monkeypatch):
+def m3u8_factory(monkeypatch) -> FakeEngineFactory:
     factory = FakeEngineFactory(
         {ContentType.CHZZK_VIDEO_M3U8},
         requires_base_url_resolution=True,
@@ -137,7 +138,7 @@ def m3u8_factory(monkeypatch):
     return factory
 
 
-def _finish(engine: FakeEngine):
+def _finish(engine: FakeEngine) -> None:
     """페이크 엔진을 정상 완료 경로로 종료시킨다."""
     engine.release.set()
 
@@ -160,7 +161,7 @@ class TestAbandon:
     set하는 페이크 엔진으로 흉내 낸다.
     """
 
-    def test_abandon_active_handle_releases_slot_for_next(self, file_factory):
+    def test_abandon_active_handle_releases_slot_for_next(self, file_factory) -> None:
         """활성 핸들을 방출하면 대기 중이던 다음 건이 시작된다 (max_concurrent=1)."""
         service = DownloadService()
         first = service.submit(_make_content())
@@ -182,7 +183,7 @@ class TestAbandon:
         assert second.wait(WAIT)
         assert _wait_until(lambda: service.active_count == 0)
 
-    def test_abandon_pending_handle_removes_from_queue(self, file_factory):
+    def test_abandon_pending_handle_removes_from_queue(self, file_factory) -> None:
         """대기 중 핸들의 방출은 큐에서 제거한다 — 시작되지 않는다."""
         service = DownloadService()
         first = service.submit(_make_content())
@@ -203,14 +204,14 @@ class TestDownloaderSelection:
     """컨텐츠 타입 → 다운로더 선택 규칙."""
 
     @pytest.mark.parametrize("content_type", [ContentType.CHZZK_VIDEO, ContentType.CHZZK_CLIP])
-    def test_video_and_clip_use_file_downloader(self, file_factory, content_type):
+    def test_video_and_clip_use_file_downloader(self, file_factory, content_type) -> None:
         service = DownloadService()
         handle = service.submit(_make_content(content_type))
         assert file_factory.created.wait(WAIT)
         _finish(file_factory.instances[0])
         assert handle.wait(WAIT)
 
-    def test_m3u8_uses_m3u8_downloader_and_resolver(self, m3u8_factory):
+    def test_m3u8_uses_m3u8_downloader_and_resolver(self, m3u8_factory) -> None:
         """m3u8은 시작 시점에 resolver로 base_url을 해석한 뒤 엔진을 실행한다."""
         resolved: list[Content] = []
 
@@ -232,7 +233,7 @@ class TestDownloaderSelection:
         _finish(engine)
         assert handle.wait(WAIT)
 
-    def test_m3u8_without_resolver_fails(self, m3u8_factory):
+    def test_m3u8_without_resolver_fails(self, m3u8_factory) -> None:
         """resolver 미주입 상태의 m3u8 제출은 실패 콜백으로 통지된다 (엔진 미실행)."""
         failures: list[BaseException] = []
         recording = RecordingLogger()
@@ -247,7 +248,7 @@ class TestDownloaderSelection:
         assert "log_exception" in recording.calls
         assert "save_and_close" in recording.calls
 
-    def test_resolver_failure_notifies_failed(self, m3u8_factory):
+    def test_resolver_failure_notifies_failed(self, m3u8_factory) -> None:
         """resolver가 던진 예외는 실패 콜백으로 그대로 전달된다."""
         boom = RuntimeError("resolve 실패")
         failures: list[BaseException] = []
@@ -262,7 +263,7 @@ class TestDownloaderSelection:
         assert handle.wait(WAIT)
         assert failures == [boom]
 
-    def test_hls_aes_uses_aes_downloader_and_injects_key_resolver(self, monkeypatch):
+    def test_hls_aes_uses_aes_downloader_and_injects_key_resolver(self, monkeypatch) -> None:
         """암호화 VOD는 AES 다운로더가 선택되고 키 리졸버가 주입돼야 한다 (#57)."""
         factory = FakeEngineFactory(
             {ContentType.CHZZK_VIDEO_HLS_AES},
@@ -271,7 +272,7 @@ class TestDownloaderSelection:
         )
         monkeypatch.setattr(download_service_module, "HlsAesDownloader", factory)
 
-        def key_resolver(content, key_uri):
+        def key_resolver(content, key_uri) -> bytes:
             return bytes(16)
 
         service = DownloadService(key_resolver=key_resolver)
@@ -285,14 +286,14 @@ class TestDownloaderSelection:
         _finish(engine)
         assert handle.wait(WAIT)
 
-    def test_real_hls_aes_downloader_declares_key_resolution(self):
+    def test_real_hls_aes_downloader_declares_key_resolution(self) -> None:
         """실제 다운로더가 키 리졸버 주입 계약을 선언한다 — 서비스 배선의 근거."""
         from core.sources.hls_aes_downloader import HlsAesDownloader
 
         assert HlsAesDownloader.supports(_make_content(ContentType.CHZZK_VIDEO_HLS_AES)) is True
         assert HlsAesDownloader.requires_key_resolution is True
 
-    def test_unsupported_type_raises(self, file_factory):
+    def test_unsupported_type_raises(self, file_factory) -> None:
         with pytest.raises(ValueError):
             DownloadService().submit(_make_content(ContentType.CHZZK_LIVE))
 
@@ -305,7 +306,7 @@ class TestDownloaderSelection:
             (ContentType.CHZZK_LIVE, False, False),
         ],
     )
-    def test_real_downloader_supports_matrix(self, content_type, file_ok, m3u8_ok):
+    def test_real_downloader_supports_matrix(self, content_type, file_ok, m3u8_ok) -> None:
         """실제 다운로더의 supports() 판정 매트릭스 (#82) — 서비스 선택 규칙의 근거."""
         from core.sources.file_downloader import FileDownloader
         from core.sources.m3u8_downloader import M3U8Downloader
@@ -314,7 +315,7 @@ class TestDownloaderSelection:
         assert FileDownloader.supports(content) is file_ok
         assert M3U8Downloader.supports(content) is m3u8_ok
 
-    def test_mismatched_data_raises(self, file_factory):
+    def test_mismatched_data_raises(self, file_factory) -> None:
         from core.models.download_data import DownloadData
 
         content = _make_content()
@@ -326,7 +327,7 @@ class TestDownloaderSelection:
 class TestConcurrencyAndQueue:
     """동시 실행 수 제한과 큐잉."""
 
-    def test_default_limit_is_one_and_queues(self, file_factory):
+    def test_default_limit_is_one_and_queues(self, file_factory) -> None:
         """기본값(1)에서는 두 번째 제출이 첫 건 완료까지 대기한다 — 현행 GUI와 동일."""
         service = DownloadService()
         h1 = service.submit(_make_content())
@@ -346,7 +347,7 @@ class TestConcurrencyAndQueue:
         _finish(file_factory.instances[1])
         assert h2.wait(WAIT)
 
-    def test_limit_two_runs_concurrently(self, file_factory):
+    def test_limit_two_runs_concurrently(self, file_factory) -> None:
         service = DownloadService(max_concurrent=2)
         h1 = service.submit(_make_content())
         h2 = service.submit(_make_content())
@@ -359,11 +360,11 @@ class TestConcurrencyAndQueue:
             _finish(engine)
         assert h1.wait(WAIT) and h2.wait(WAIT)
 
-    def test_invalid_limit_raises(self):
+    def test_invalid_limit_raises(self) -> None:
         with pytest.raises(ValueError):
             DownloadService(max_concurrent=0)
 
-    def test_stop_before_start_skips_engine(self, file_factory):
+    def test_stop_before_start_skips_engine(self, file_factory) -> None:
         """큐 대기 중 중지된 건은 엔진을 실행하지 않고 종료 처리된다."""
         service = DownloadService()
         h1 = service.submit(_make_content())
@@ -381,7 +382,7 @@ class TestConcurrencyAndQueue:
 class TestLifecycleAndCallbacks:
     """상태 전이와 콜백 중계."""
 
-    def test_finish_flow(self, file_factory):
+    def test_finish_flow(self, file_factory) -> None:
         """완료 시: FINISHED 전이 → 최종 진행 통지 → 완료 콜백 (구 manager.finish 순서)."""
         finished = threading.Event()
         states: list[DownloadState] = []
@@ -401,7 +402,7 @@ class TestLifecycleAndCallbacks:
         assert engine.final_progress_calls == 1
         assert states == [DownloadState.RUNNING, DownloadState.FINISHED]
 
-    def test_pre_started_model_is_idempotent(self, file_factory):
+    def test_pre_started_model_is_idempotent(self, file_factory) -> None:
         """호출자(브리지)가 먼저 RUNNING 전이를 마쳐도 실행에 지장이 없다."""
         from core.models.download_data import DownloadData
 
@@ -417,7 +418,7 @@ class TestLifecycleAndCallbacks:
         assert handle.wait(WAIT)
         assert handle.state is DownloadState.FINISHED
 
-    def test_failed_relays_exception_without_transition(self, file_factory):
+    def test_failed_relays_exception_without_transition(self, file_factory) -> None:
         """실패는 예외 객체 그대로 콜백 통지만 한다 — 상태 정리는 어댑터 몫 (구 흐름 보존)."""
         boom = RuntimeError("다운로드 실패")
         failures: list[BaseException] = []
@@ -433,7 +434,7 @@ class TestLifecycleAndCallbacks:
         assert failures == [boom]
         assert handle.state is DownloadState.RUNNING
 
-    def test_progress_callback_relays_events(self, file_factory):
+    def test_progress_callback_relays_events(self, file_factory) -> None:
         """엔진 진행 콜백이 제출 시 등록한 콜백으로 전달된다."""
         from core.models.events import ProgressEvent
 
@@ -478,7 +479,9 @@ class TestHandleOutlivesItsCaller:
         """제출하고 핸들을 버린다 — 약한 참조만 돌려준다."""
         return weakref.ref(service.submit(_make_content(), **callbacks))
 
-    def test_progress_merge_and_finish_arrive_after_the_caller_drops_the_handle(self, file_factory):
+    def test_progress_merge_and_finish_arrive_after_the_caller_drops_the_handle(
+        self, file_factory
+    ) -> None:
         """핸들을 버린 채 돌려도 진행 · 병합 시작 · 완료 알림이 모두 와야 하고, 도는 중 순환 수집을 돌려도 같아야 한다.
 
         제출한 핸들을 버림 → 엔진이 도는 중 gc.collect() → 엔진이 진행 · 병합 시작을 알리고 끝남
@@ -506,7 +509,7 @@ class TestHandleOutlivesItsCaller:
         assert alive_while_running
         assert seen == ["progress:event", "merge", "finished"]
 
-    def test_failure_arrives_after_the_caller_drops_the_handle(self, file_factory):
+    def test_failure_arrives_after_the_caller_drops_the_handle(self, file_factory) -> None:
         """핸들을 버린 채 돌려도 실패 알림이 예외 객체 그대로 와야 한다.
 
         제출한 핸들을 버림 → gc.collect() → 엔진이 OSError로 실패
@@ -529,7 +532,7 @@ class TestHandleOutlivesItsCaller:
 
     def test_stop_releases_the_slot_and_starts_the_next_after_the_caller_drops_the_handle(
         self, file_factory
-    ):
+    ) -> None:
         """핸들을 버린 채 정지해도 상태 알림이 오고, 서비스가 자리를 비워 기다리던 다음 건을 시작해야 한다.
 
         동시 실행 1. 첫 건의 핸들을 버림, 둘째 건을 제출(대기) → gc.collect() → 첫 건의 공유 데이터로 정지 → 엔진이 끝남
@@ -553,7 +556,7 @@ class TestHandleOutlivesItsCaller:
         assert _wait_for_second(file_factory)
         assert DownloadState.WAITING in states
 
-    def test_service_lets_go_of_the_handle_when_the_run_ends(self, file_factory):
+    def test_service_lets_go_of_the_handle_when_the_run_ends(self, file_factory) -> None:
         """실행이 끝나면 서비스는 핸들을 놓아야 한다 — 순환 수집 없이 사라진다.
 
         순환 수집기를 끔. 제출한 핸들을 버림 → 엔진이 끝남
@@ -583,7 +586,7 @@ class TestUserInteracting:
     """조작 중인지 묻는 값이 엔진을 돌리는 스레드에 걸리는지 (#309)."""
 
     @pytest.fixture
-    def rests(self, monkeypatch):
+    def rests(self, monkeypatch) -> list[str]:
         """쉰 스레드의 이름을 담는 리스트 — 쉬는 일을 자지 않고 적기만 하는 대역으로 바꾼다."""
         import core.utils.interaction as interaction
 
@@ -594,7 +597,7 @@ class TestUserInteracting:
         return rested
 
     @staticmethod
-    def _run_resting(engine):
+    def _run_resting(engine) -> None:
         """엔진의 run 대역 — 조각 사이의 틈을 한 번 흉내 내고 끝낸다."""
         from core.utils.interaction import rest_if_user_interacting
 
@@ -604,7 +607,7 @@ class TestUserInteracting:
 
     def test_engine_thread_rests_while_the_given_value_says_interacting(
         self, file_factory, monkeypatch, rests
-    ):
+    ) -> None:
         """서비스에 준 값이 조작 중이라고 답하면 엔진을 돌리는 스레드의 틈에서 쉬어야 한다.
 
         DownloadService(user_interacting=늘 참). 엔진의 run이 틈을 한 번 흉내 냄
@@ -620,7 +623,7 @@ class TestUserInteracting:
 
     def test_engine_thread_does_not_rest_when_no_value_is_given(
         self, file_factory, monkeypatch, rests
-    ):
+    ) -> None:
         """서비스에 값을 주지 않으면 엔진을 돌리는 스레드는 쉬지 않아야 한다(헤드리스).
 
         DownloadService(). 엔진의 run이 틈을 한 번 흉내 냄 -> 엔진은 돌았고 쉰 스레드 == []
@@ -637,7 +640,7 @@ class TestUserInteracting:
 
 def test_run_that_ends_without_closing_the_log_has_it_closed_by_the_service(
     monkeypatch, file_factory
-):
+) -> None:
     """엔진이 로그를 닫지 않고 끝나면(중단으로 끝난 실행) 서비스가 그 시도의 로그를 닫아야 한다 (#410).
 
     엔진의 run이 아무 통지 없이 돌아오게 바꿈
@@ -652,7 +655,7 @@ def test_run_that_ends_without_closing_the_log_has_it_closed_by_the_service(
     assert recording.calls == ["save_and_close"]
 
 
-def test_handle_cancelled_while_waiting_has_its_log_closed(file_factory):
+def test_handle_cancelled_while_waiting_has_its_log_closed(file_factory) -> None:
     """대기 중에 취소한 다운로드도 실행되지 않은 채 끝날 때 그 시도의 로그가 닫혀야 한다 (#410).
 
     max_concurrent=1, 첫 건이 슬롯을 쥔 동안 둘째 건을 제출해 stop() → 첫 건을 끝냄

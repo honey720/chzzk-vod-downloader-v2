@@ -8,6 +8,7 @@
 
 import gc
 import weakref
+from collections.abc import Iterator
 from fractions import Fraction
 
 import pytest
@@ -24,12 +25,14 @@ from app.viewmodels.data import ContentItem
 from app.viewmodels.section_edit import keep_section_head, take_section_head
 from app.views import mainWindow as mw_mod
 from app.views.mainWindow import VodDownloader
+from app.views.section_dialog import SectionEditDialog
 from core.media.representations import StreamEntry
 from core.models.download_state import DownloadState
 from core.utils.paths import release_output_paths
 from tests.mocks.engine_side import engine_side
 from tests.app.gui.section_input import enter_time
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
+from typing import Never, Self
 
 ROW = ("00100000", "00200000")
 
@@ -37,14 +40,14 @@ ROW = ("00100000", "00200000")
 class _Head:
     """moov 대역 — 어느 해상도를 조회하며 받았는지만 안다."""
 
-    def __init__(self, resolution: int):
+    def __init__(self, resolution: int) -> None:
         self.resolution = resolution
 
 
 class _Probe:
     """조회 대역 — 60fps · 1시간. 조회마다 그 해상도의 새 moov 대역을 돌려준다."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.heads: list[_Head] = []
 
     def __call__(self, item) -> SectionBasis:
@@ -56,10 +59,10 @@ class _Probe:
 class _Engine:
     """DownloadService 대역 — 제출을 적어 둔다."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.submissions: list[dict] = []
 
-    def submit(self, content, **kwargs):
+    def submit(self, content, **kwargs) -> Self:
         # 엔진 흉내 — 콜백 입구는 서비스 핸들의 중계(값 묶음 · 키를 싣는다, #484)
         self.submissions.append(engine_side(content, kwargs))
         return self
@@ -72,14 +75,14 @@ class _Engine:
 
 
 @pytest.fixture
-def probe(qapp, monkeypatch):
+def probe(qapp, monkeypatch) -> Iterator[_Probe]:
     """실제 QSS · 조회 대역 · 네트워크와 안내 창 차단."""
     theme.set_color_scheme("dark")
     qapp.setStyle(hold_style(theme.build_style()))
     qapp.setPalette(theme.build_palette())
     qapp.setStyleSheet(theme.load_stylesheet(main_module.resource_path(theme.QSS_RELATIVE_PATH)))
 
-    def no_network():
+    def no_network() -> Never:
         raise RuntimeError("network disabled in tests")
 
     fake = _Probe()
@@ -93,7 +96,7 @@ def probe(qapp, monkeypatch):
     drop_new_top_levels(before)
 
 
-def _pump():
+def _pump() -> None:
     for _ in range(3):
         QApplication.processEvents()
 
@@ -121,7 +124,7 @@ def _item(tmp_path, title: str = "제목") -> ContentItem:
 
 
 @pytest.fixture
-def window(probe):
+def window(probe) -> Iterator[tuple[VodDownloader, _Engine]]:
     """실제 메인 창과 서비스 대역. 끝나면 예약한 파일 이름을 푼다."""
     win = VodDownloader()
     win.resize(1000, win.height())
@@ -139,7 +142,7 @@ def _add(win, item: ContentItem) -> None:
     _pump()
 
 
-def _give_section(qtbot, win, item: ContentItem):
+def _give_section(qtbot, win, item: ContentItem) -> SectionEditDialog:
     """편집 창으로 구간 하나(10분~20분)를 넣는다. 닫힌 그 편집 창을 돌려준다."""
     QTest.mouseClick(win.listView.widgetFor(item).fileSizeLabel, Qt.MouseButton.LeftButton)
     _pump()
@@ -173,7 +176,9 @@ def _settle(qtbot, win) -> None:
     _pump()
 
 
-def test_the_moov_fetched_by_the_editor_is_handed_to_the_engine(qtbot, tmp_path, window, probe):
+def test_the_moov_fetched_by_the_editor_is_handed_to_the_engine(
+    qtbot, tmp_path, window, probe
+) -> None:
     """편집 창이 조회하며 받은 moov는 같은 주소의 다운로드를 시작할 때 엔진에 넘어가야 한다.
 
     1080p에서 편집 창을 열어 구간 하나를 확인, 전역 다운로드
@@ -194,7 +199,7 @@ def test_the_moov_fetched_by_the_editor_is_handed_to_the_engine(qtbot, tmp_path,
 
 def test_the_moov_of_the_new_resolution_is_handed_after_a_resolution_change(
     qtbot, tmp_path, window, probe
-):
+) -> None:
     """해상도를 바꾸면 앞 해상도의 moov를 버리고 새 해상도를 조회하며 받은 것을 넘겨야 한다.
 
     1080p에서 구간을 확인한 뒤 480p를 고름, 조회가 끝난 뒤 전역 다운로드
@@ -216,7 +221,7 @@ def test_the_moov_of_the_new_resolution_is_handed_after_a_resolution_change(
 
 def test_the_moov_of_the_old_resolution_is_dropped_the_moment_the_resolution_changes(
     qtbot, tmp_path, window, probe, monkeypatch
-):
+) -> None:
     """해상도를 바꾼 순간 — 새 조회가 끝나기 전에도 — 카드는 앞 해상도의 moov를 놓아야 한다.
 
     1080p에서 구간을 확인, 480p의 조회가 실패하게 한 뒤 480p를 고름
@@ -227,7 +232,7 @@ def test_the_moov_of_the_old_resolution_is_dropped_the_moment_the_resolution_cha
     _add(win, item)
     _give_section(qtbot, win, item)
 
-    def failing(probed):
+    def failing(probed) -> Never:
         raise RuntimeError("조회 실패(대역)")
 
     monkeypatch.setattr(section_basis, "probe_section_basis", failing)
@@ -241,7 +246,7 @@ def test_the_moov_of_the_old_resolution_is_dropped_the_moment_the_resolution_cha
     assert engine.submissions[0]["content"].mp4_head is None
 
 
-def test_a_moov_fetched_at_another_address_is_not_handed_over(tmp_path):
+def test_a_moov_fetched_at_another_address_is_not_handed_over(tmp_path) -> None:
     """카드가 든 moov의 주소가 지금의 주소와 다르면 넘기지 않고 버려야 한다.
 
     주소 u1에서 받은 moov를 둔 카드의 주소가 u2로 바뀜(다시 맞추기를 거치지 않은 해상도 변경)
@@ -256,7 +261,7 @@ def test_a_moov_fetched_at_another_address_is_not_handed_over(tmp_path):
     assert item.section_head is None
 
 
-def test_deleting_the_card_drops_its_moov(qtbot, tmp_path, window, probe):
+def test_deleting_the_card_drops_its_moov(qtbot, tmp_path, window, probe) -> None:
     """카드를 지우면 그 카드가 들고 있던 moov를 아무도 붙잡지 않아야 한다.
 
     구간을 확인해 moov를 든 카드를 목록에서 지움. 받을 크기를 세던 일이 끝나기를 기다림.
@@ -283,7 +288,7 @@ def test_deleting_the_card_drops_its_moov(qtbot, tmp_path, window, probe):
     assert dialog is not None, "전제: 닫힌 편집 창을 테스트가 쥐고 있었다"
 
 
-def test_only_the_most_recent_card_keeps_a_moov(qtbot, tmp_path, window, probe):
+def test_only_the_most_recent_card_keeps_a_moov(qtbot, tmp_path, window, probe) -> None:
     """다른 카드의 구간을 확인하면 앞 카드가 들고 있던 moov는 버려야 한다 — 한 번에 한 카드만 든다.
 
     카드 둘의 구간을 차례로 확인
@@ -301,7 +306,7 @@ def test_only_the_most_recent_card_keeps_a_moov(qtbot, tmp_path, window, probe):
     assert second.section_head == ("u1", probe.heads[1])
 
 
-def test_the_moov_is_released_when_the_download_ends(qtbot, tmp_path, window, probe):
+def test_the_moov_is_released_when_the_download_ends(qtbot, tmp_path, window, probe) -> None:
     """다운로드가 끝나면 엔진에 넘겼던 moov를 뷰모델이 붙잡고 있지 않아야 한다.
 
     구간을 확인하고 다운로드를 시작, 서비스 대역이 완료를 알림

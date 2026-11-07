@@ -10,8 +10,10 @@
 """
 
 import os
+import subprocess
 import threading
 import time
+from collections.abc import Iterator
 
 import pytest
 
@@ -38,7 +40,7 @@ class _Stop:
     뜨기 전에는 켜지지 않는다 — 실행 파일을 처음 찾는 확인 실행이 얼마나 걸리든 같다.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._processes: list = []
         self._long_running = None
         self._event = threading.Event()
@@ -76,7 +78,7 @@ def stop() -> _Stop:
 
 
 @pytest.fixture
-def launched(monkeypatch, stop):
+def launched(monkeypatch, stop) -> Iterator[list[subprocess.Popen]]:
     """ffmpeg 모듈이 띄운 프로세스들 — 테스트가 끝날 때 살아 있는 것이 있으면 그 객체로 끝낸다."""
     processes = record_processes(monkeypatch, stop.on_launch)
     stop.watch(processes)
@@ -85,7 +87,7 @@ def launched(monkeypatch, stop):
 
 
 @pytest.mark.parametrize("reporting", [False, True], ids=["출력을 모으는 실행", "진행을 받는 실행"])
-def test_run_ffmpeg_ends_the_process_when_told_to_stop(launched, stop, reporting):
+def test_run_ffmpeg_ends_the_process_when_told_to_stop(launched, stop, reporting) -> None:
     """도는 ffmpeg는 멈추라는 요청이 오면 바로 끝나고, 호출은 취소 예외로 돌아와야 한다.
 
     멈추지 않으면 10분을 도는 명령을 띄우고, 그 프로세스가 뜬 0.4초 뒤 should_stop이 참을 돌려주게 함
@@ -104,7 +106,7 @@ def test_run_ffmpeg_ends_the_process_when_told_to_stop(launched, stop, reporting
     assert launched and all(process.poll() is not None for process in launched)
 
 
-def test_a_stop_check_that_never_fires_changes_nothing_about_the_result(launched):
+def test_a_stop_check_that_never_fires_changes_nothing_about_the_result(launched) -> None:
     """멈춤 확인을 줘도 멈추라는 요청이 없으면 결과(종료 코드 · 출력)는 주지 않았을 때와 같아야 한다.
 
     합성 영상 0.2초의 패킷 목록(framecrc)을 내는 명령을 멈춤 확인 없이 / 늘 거짓인 확인과 함께 실행
@@ -142,7 +144,7 @@ def test_cut_stops_in_the_middle_of_any_stage(
     launched,
     stop,
     stage,
-):
+) -> None:
     """컷의 어느 단계가 도는 도중에 멈추라고 해도 그 ffmpeg가 바로 끝나고 아무것도 남지 않아야 한다.
 
     mp4, 프레임 35~80. 표의 단계(입력 읽기 · 머리 · 가운데 · 끝 · 오디오 · 잇기)의 명령을 10분 도는
@@ -156,7 +158,7 @@ def test_cut_stops_in_the_middle_of_any_stage(
     real = cut_module.run_ffmpeg
     swapped = []
 
-    def slowed(args, **kwargs):
+    def slowed(args, **kwargs) -> subprocess.CompletedProcess[str]:
         if any(marker in str(arg) for arg in args) and not swapped:
             swapped.append(stage)
             kwargs.pop("on_out_time", None)  # 바꿔 띄운 명령은 진행을 내지 않는다
@@ -180,7 +182,7 @@ def test_cut_stops_in_the_middle_of_any_stage(
     assert not os.path.exists(cut_temp_dir_for(output))
 
 
-def test_cut_told_to_stop_before_it_starts_launches_nothing(mp4_source, tmp_path, launched):  # noqa: F811
+def test_cut_told_to_stop_before_it_starts_launches_nothing(mp4_source, tmp_path, launched) -> None:  # noqa: F811
     """이미 멈추라는 요청이 와 있으면 컷은 ffmpeg를 하나도 띄우지 않고 그만둬야 한다.
 
     should_stop이 처음부터 참 -> CutCancelled, 띄운 프로세스 0개, 산출물 없음
@@ -195,7 +197,7 @@ def test_cut_told_to_stop_before_it_starts_launches_nothing(mp4_source, tmp_path
     assert not os.path.exists(output)
 
 
-def test_rewrapping_ts_segments_stops_when_told_to(tmp_path, launched):
+def test_rewrapping_ts_segments_stops_when_told_to(tmp_path, launched) -> None:
     """TS 세그먼트를 mp4로 다시 싸는 도중 멈추라고 하면 그만두고 쓰다 만 파일을 남기지 않아야 한다.
 
     세그먼트 파일 둘(내용은 아무 바이트). should_stop이 둘째 조각을 흘려 넣기 전에 참이 됨

@@ -18,7 +18,7 @@ import pytest
 
 import core.sections.fmp4_cut as fmp4_cut_module
 from core.media.fmp4 import fmp4_origin, parse_media_segment
-from core.sections.cut import CutPiece
+from core.sections.cut import CutFrames, CutPiece, CutResult
 from core.media.fmp4_index import Fmp4Head
 from core.models.plan import TimeRange
 from core.sections.check import check_cut
@@ -39,6 +39,7 @@ from core.sections.hybrid import (
     CutError,
 )
 from tests.ffmpeg.sections.test_m3u8_sections import _contents, _make_hls, _packets, _Source
+from typing import Never
 
 SEGMENT_FRAMES = 30  # 세그먼트 하나의 프레임 수 (1초 · 30fps)
 
@@ -77,7 +78,7 @@ def made(tmp_path_factory) -> dict[str, tuple]:
 class _Cut:
     """구간 하나를 자르는 데 넘길 것들 — 세그먼트는 tmp_path에 복사해 쓴다(자르는 쪽이 지워도 되게)."""
 
-    def __init__(self, made, tmp_path, first: int, last: int, segments: tuple[int, int]):
+    def __init__(self, made, tmp_path, first: int, last: int, segments: tuple[int, int]) -> None:
         folder, source = made
         self.source = source
         names = source.playlist.segments
@@ -101,7 +102,7 @@ class _Cut:
         self.work = str(tmp_path / "work")
         self.output = str(tmp_path / "section.mp4")
 
-    def run(self, **kwargs):
+    def run(self, **kwargs) -> tuple[CutResult, CutFrames]:
         return cut_fmp4_section(
             self.work, self.head, self.section, self.paths, self.output, **kwargs
         )
@@ -110,7 +111,7 @@ class _Cut:
 # ================================================================ 입력의 전제
 
 
-def test_loose_hls_has_a_segment_that_does_not_start_with_a_keyframe(made):
+def test_loose_hls_has_a_segment_that_does_not_start_with_a_keyframe(made) -> None:
     """loose의 둘째 세그먼트는 키프레임이 아닌 프레임으로 시작해야 한다.
 
     -g 45 · -hls_flags split_by_time · -hls_time 1
@@ -128,7 +129,9 @@ def test_loose_hls_has_a_segment_that_does_not_start_with_a_keyframe(made):
 # ================================================================ 조각 · 넘기기
 
 
-def test_section_with_both_ends_inside_segments_pipes_only_the_segments_between(made, tmp_path):
+def test_section_with_both_ends_inside_segments_pipes_only_the_segments_between(
+    made, tmp_path
+) -> None:
     """양 끝이 세그먼트 중간인 구간은 그 사이의 세그먼트만 통째로 넘기고 양 끝은 조각으로 만들어야 한다.
 
     plain, 구간 프레임 40~100, 세그먼트 0~3(프레임 40은 세그먼트 1, 100은 세그먼트 3)
@@ -152,7 +155,7 @@ def test_section_with_both_ends_inside_segments_pipes_only_the_segments_between(
 
 def test_section_made_of_whole_segments_reencodes_nothing_and_keeps_the_original_packets(
     made, tmp_path
-):
+) -> None:
     """양 끝이 세그먼트의 처음 · 끝과 맞는 구간은 다시 만드는 조각 없이 원본의 영상 패킷 그대로여야 한다.
 
     plain, 구간 프레임 30~119(세그먼트 1~3 전체)
@@ -172,7 +175,9 @@ def test_section_made_of_whole_segments_reencodes_nothing_and_keeps_the_original
     assert result.audio_overhang == pytest.approx(1024 / 48000)
 
 
-def test_section_ending_with_its_segment_copies_the_rest_of_the_head_segment(made, tmp_path):
+def test_section_ending_with_its_segment_copies_the_rest_of_the_head_segment(
+    made, tmp_path
+) -> None:
     """세그먼트 하나 안에서 그 세그먼트의 끝까지인 구간은 경계 GOP만 다시 만들고 나머지 GOP는 복사해야 한다.
 
     plain, 구간 프레임 32~59, 세그먼트 1(프레임 30~59, 키프레임 30 · 36)
@@ -190,7 +195,7 @@ def test_section_ending_with_its_segment_copies_the_rest_of_the_head_segment(mad
     assert len(_packets(cut.output)["v:0"]) == 28
 
 
-def test_frame_at_rejects_a_time_that_is_not_a_frame(made, tmp_path):
+def test_frame_at_rejects_a_time_that_is_not_a_frame(made, tmp_path) -> None:
     """받은 세그먼트에 그 PTS의 프레임이 없으면 CutError(CUT_FAILED)여야 한다.
 
     plain의 프레임 정보, 프레임 40과 41의 PTS 가운데 값
@@ -208,7 +213,7 @@ def test_frame_at_rejects_a_time_that_is_not_a_frame(made, tmp_path):
 # ================================================================ 만들 수 없는 입력 · 실패
 
 
-def test_segment_that_does_not_start_with_a_keyframe_is_unsupported(made, tmp_path):
+def test_segment_that_does_not_start_with_a_keyframe_is_unsupported(made, tmp_path) -> None:
     """이어지는 세그먼트가 키프레임으로 시작하지 않으면 CutError(CUT_UNSUPPORTED)이고 아무것도 남지 않아야 한다.
 
     loose, 구간 프레임 10~50, 세그먼트 0~1
@@ -225,7 +230,7 @@ def test_segment_that_does_not_start_with_a_keyframe_is_unsupported(made, tmp_pa
     assert all(os.path.exists(path) for path in cut.paths)
 
 
-def test_dts_warning_from_the_joining_ffmpeg_fails_the_cut(made, tmp_path, monkeypatch):
+def test_dts_warning_from_the_joining_ffmpeg_fails_the_cut(made, tmp_path, monkeypatch) -> None:
     """잇는 ffmpeg가 DTS가 뒤로 간다고 경고하면 CutError(CUT_FAILED)이고 구간 파일이 남지 않아야 한다.
 
     plain, 구간 프레임 40~100. remux_through가 구간 파일을 다 쓴 뒤 경고 문구를 돌려주게 바꿈
@@ -235,7 +240,7 @@ def test_dts_warning_from_the_joining_ffmpeg_fails_the_cut(made, tmp_path, monke
     real = fmp4_cut_module.remux_through
     existed = []
 
-    def warns(*args, **kwargs):
+    def warns(*args, **kwargs) -> str:
         real(*args, **kwargs)
         existed.append(os.path.exists(cut.output))
         return "[mp4 @ 0] Non-monotonic DTS in output stream 0:0; previous: 10, current: 5"
@@ -253,7 +258,7 @@ def test_dts_warning_from_the_joining_ffmpeg_fails_the_cut(made, tmp_path, monke
 # ================================================================ 중단 · 일시정지
 
 
-def test_stop_while_feeding_segments_cancels_and_leaves_nothing(made, tmp_path):
+def test_stop_while_feeding_segments_cancels_and_leaves_nothing(made, tmp_path) -> None:
     """세그먼트를 넘기는 도중에 멈추라는 요청이 오면 CutCancelled이고 구간 파일 · 작업 폴더가 남지 않아야 한다.
 
     plain, 구간 프레임 30~119(세그먼트 1~3을 통째로 넘긴다), 첫 세그먼트를 다 넘긴 뒤부터 should_stop이 참
@@ -270,7 +275,9 @@ def test_stop_while_feeding_segments_cancels_and_leaves_nothing(made, tmp_path):
     assert not os.path.exists(cut.work)
 
 
-def test_pause_while_feeding_holds_and_then_makes_the_same_file(made, tmp_path, monkeypatch):
+def test_pause_while_feeding_holds_and_then_makes_the_same_file(
+    made, tmp_path, monkeypatch
+) -> None:
     """넘기는 도중 일시정지하면 그동안 넘기지 않고, 풀리면 일시정지 없이 만든 것과 같은 구간 파일을 만들어야 한다.
 
     plain, 구간 프레임 30~119. 첫 세그먼트를 다 넘긴 뒤 should_pause가 세 번 참(확인 간격 0.001초)
@@ -300,7 +307,7 @@ def test_pause_while_feeding_holds_and_then_makes_the_same_file(made, tmp_path, 
 # ================================================================ 오디오 통과
 
 
-def test_extract_audio_stream_copies_the_audio_packets_and_drops_the_video(made, tmp_path):
+def test_extract_audio_stream_copies_the_audio_packets_and_drops_the_video(made, tmp_path) -> None:
     """extract_audio_stream은 넘긴 fMP4에서 오디오 패킷만 내용 그대로 옮겨야 한다.
 
     plain의 초기화 세그먼트 + 세그먼트 전부를 이은 파일을 조각으로 공급
@@ -329,7 +336,9 @@ def test_extract_audio_stream_copies_the_audio_packets_and_drops_the_video(made,
 # ================================================================ 판정 (check_cut)
 
 
-def test_section_made_of_whole_segments_passes_the_check_without_piece_information(made, tmp_path):
+def test_section_made_of_whole_segments_passes_the_check_without_piece_information(
+    made, tmp_path
+) -> None:
     """다시 만든 조각이 하나도 없는 구간 파일은 조각 정보 없이도 판정 다섯 항목을 통과해야 한다.
 
     plain, 구간 프레임 30~119(세그먼트 1~3 전체), inspect=True
@@ -344,7 +353,9 @@ def test_section_made_of_whole_segments_passes_the_check_without_piece_informati
     assert check.ok, check.notes
 
 
-def test_check_accepts_copied_audio_ending_up_to_one_chunk_late_and_no_later(made, tmp_path):
+def test_check_accepts_copied_audio_ending_up_to_one_chunk_late_and_no_later(
+    made, tmp_path
+) -> None:
     """오디오를 복사한 컷은 오디오가 구간 끝보다 한 덩어리까지 늦게 끝나도 A/V 판정을 통과하고, 그 허용이 없으면 통과하지 못해야 한다.
 
     plain, 구간 프레임 40~100. 판정에 넘기는 프레임 정보의 한 프레임 길이를 0.1ms로 줄여
@@ -372,7 +383,7 @@ def test_check_accepts_copied_audio_ending_up_to_one_chunk_late_and_no_later(mad
 # ================================================================ 읽기 · 오디오 통과의 진행
 
 
-def test_reading_the_segments_reports_the_share_read_after_each_segment(made, tmp_path):
+def test_reading_the_segments_reports_the_share_read_after_each_segment(made, tmp_path) -> None:
     """프레임 정보를 읽는 동안 on_read는 세그먼트를 하나 읽을 때마다 읽은 비율로 불려야 한다.
 
     plain, 구간 프레임 40~100, 세그먼트 0~3(넷)
@@ -387,7 +398,7 @@ def test_reading_the_segments_reports_the_share_read_after_each_segment(made, tm
     assert not [event for event in events[events.index("read") :] if isinstance(event, float)]
 
 
-def test_audio_pass_raises_the_progress_once_per_segment_before_it_ends(made, tmp_path):
+def test_audio_pass_raises_the_progress_once_per_segment_before_it_ends(made, tmp_path) -> None:
     """오디오 통과는 세그먼트를 하나 넘길 때마다 진행을 올려야 한다 — 단계가 끝날 때 한 번이 아니다.
 
     plain, 구간 프레임 40~100, 세그먼트 0~3(넷)
@@ -408,7 +419,7 @@ def test_audio_pass_raises_the_progress_once_per_segment_before_it_ends(made, tm
 
 def test_writing_the_section_file_waits_under_the_stop_pause_and_time_limit_of_the_cut(
     made, tmp_path, monkeypatch
-):
+) -> None:
     """구간 파일을 쓰는 실행에는 컷의 멈춤 · 일시정지 확인과 한 시간의 제한 시간이 넘어가야 한다.
 
     plain, 구간 프레임 40~100. should_stop · should_pause를 주고 remux_through가 받은 인자를 적음
@@ -418,7 +429,7 @@ def test_writing_the_section_file_waits_under_the_stop_pause_and_time_limit_of_t
     real = fmp4_cut_module.remux_through
     given = {}
 
-    def records(*args, **kwargs):
+    def records(*args, **kwargs) -> str:
         given.update(kwargs)
         return real(*args, **kwargs)
 
@@ -442,7 +453,7 @@ def test_writing_the_section_file_waits_under_the_stop_pause_and_time_limit_of_t
 )
 def test_stop_and_timeout_while_writing_the_section_file_are_not_reported_as_a_cut_failure(
     made, tmp_path, monkeypatch, raised, expected
-):
+) -> None:
     """구간 파일을 쓰다 멈춤 요청으로 끝난 것은 중단으로, 제한 시간을 넘긴 것은 시간 초과로 알려야 한다.
 
     plain, 구간 프레임 40~100. remux_through가 FFmpegCancelledError 또는 FFmpegTimeoutError를 냄
@@ -450,7 +461,7 @@ def test_stop_and_timeout_while_writing_the_section_file_are_not_reported_as_a_c
     """
     cut = _Cut(made["plain"], tmp_path, 40, 100, (0, 3))
 
-    def fails(*args, **kwargs):
+    def fails(*args, **kwargs) -> Never:
         raise raised
 
     monkeypatch.setattr(fmp4_cut_module, "remux_through", fails)
@@ -465,7 +476,7 @@ def test_stop_and_timeout_while_writing_the_section_file_are_not_reported_as_a_c
 
 def test_audio_pass_waits_under_the_stop_pause_and_time_limit_of_the_cut(
     made, tmp_path, monkeypatch
-):
+) -> None:
     """오디오 통과에도 컷의 멈춤 · 일시정지 확인과 한 시간의 제한 시간이 넘어가야 한다.
 
     plain, 구간 프레임 40~100. should_stop · should_pause를 주고 extract_audio_stream이 받은 인자를 적음
@@ -475,7 +486,7 @@ def test_audio_pass_waits_under_the_stop_pause_and_time_limit_of_the_cut(
     real = fmp4_cut_module.extract_audio_stream
     given = {}
 
-    def records(chunks, dst_path, **wait):
+    def records(chunks, dst_path, **wait) -> None:
         given.update(wait)
         return real(chunks, dst_path, **wait)
 
@@ -499,7 +510,7 @@ def test_audio_pass_waits_under_the_stop_pause_and_time_limit_of_the_cut(
 )
 def test_stop_and_timeout_during_the_audio_pass_are_not_reported_as_a_cut_failure(
     made, tmp_path, monkeypatch, raised, expected
-):
+) -> None:
     """오디오 통과가 멈춤 요청으로 끝난 것은 중단으로, 제한 시간을 넘긴 것은 시간 초과로 알려야 한다.
 
     plain, 구간 프레임 40~100. extract_audio_stream이 FFmpegCancelledError 또는 FFmpegTimeoutError를 냄
@@ -507,7 +518,7 @@ def test_stop_and_timeout_during_the_audio_pass_are_not_reported_as_a_cut_failur
     """
     cut = _Cut(made["plain"], tmp_path, 40, 100, (0, 3))
 
-    def fails(chunks, dst_path, **_wait):
+    def fails(chunks, dst_path, **_wait) -> Never:
         raise raised
 
     monkeypatch.setattr(fmp4_cut_module, "extract_audio_stream", fails)

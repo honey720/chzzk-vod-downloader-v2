@@ -22,6 +22,8 @@ AlignVCenter로 되돌리거나 라벨을 평범한 QLabel(×7/4 없음)로 되�
 """
 
 
+from collections.abc import Iterator
+
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QDialogButtonBox, QFormLayout, QGroupBox, QLabel, QLayout, QWidget
@@ -48,7 +50,7 @@ def _seed_config() -> None:
 
 
 @pytest.fixture(autouse=True)
-def _apply_production_qss(qapp):
+def _apply_production_qss(qapp) -> None:
     """실제 전역 QSS·스타일을 태운다 — 라벨 높이·창 최소폭은 QSS에 좌우된다(#369).
 
     앞서 돈 파일이 남긴 전역 스타일에 기대지 않는다. ⚠️ function scope 유지.
@@ -60,7 +62,7 @@ def _apply_production_qss(qapp):
 
 
 @pytest.fixture
-def dialog(qapp):
+def dialog(qapp) -> Iterator[SettingDialog]:
     _seed_config()
     dlg = SettingDialog()
     dlg.show()
@@ -78,7 +80,7 @@ def _at_width(dlg: SettingDialog, extra: int) -> None:
     assert dlg.width() == dlg.minimumSizeHint().width() + extra, "폭이 요청대로 안 잡혔다 — 전제"
 
 
-def _widget(dlg: SettingDialog, name: str):
+def _widget(dlg: SettingDialog, name: str) -> QWidget:
     w = getattr(dlg, name)
     assert w.objectName() == name
     return w
@@ -96,7 +98,7 @@ def _box_inner_right(box: QGroupBox) -> int:
 # ================================================================ 교체 자체
 
 
-def test_no_form_layout_remains(dialog):
+def test_no_form_layout_remains(dialog) -> None:
     """설정 창 어디에도 QFormLayout이 없다 — S2의 목적."""
     forms = [layout for layout in dialog.findChildren(QLayout) if isinstance(layout, QFormLayout)]
     assert forms == [], f"QFormLayout이 남아 있다: {[f.objectName() for f in forms]}"
@@ -107,7 +109,7 @@ def test_no_form_layout_remains(dialog):
 
 
 @pytest.mark.parametrize("extra", [0, 240])
-def test_fields_reach_the_inner_right_edge(dialog, extra):
+def test_fields_reach_the_inner_right_edge(dialog, extra) -> None:
     """필드는 어느 폭에서든 그룹 상자 안쪽 오른쪽 끝까지 닿는다."""
     _at_width(dialog, extra)
     for box_name, rows in ROWS.items():
@@ -119,7 +121,7 @@ def test_fields_reach_the_inner_right_edge(dialog, extra):
             )
 
 
-def test_extra_width_goes_to_fields_not_labels(dialog):
+def test_extra_width_goes_to_fields_not_labels(dialog) -> None:
     """창을 넓히면 늘어난 만큼 필드만 넓어지고 라벨 열(라벨 x·폭, 필드 x)은 그대로다."""
     _at_width(dialog, 0)
     narrow = {
@@ -146,7 +148,7 @@ def test_extra_width_goes_to_fields_not_labels(dialog):
 # ================================================================ ② 라벨 정렬
 
 
-def test_labels_hug_their_size_hint_on_the_left(dialog):
+def test_labels_hug_their_size_hint_on_the_left(dialog) -> None:
     """라벨은 열 폭이 아니라 자기 sizeHint 폭이고, 상자 안쪽 왼쪽 끝에 붙는다."""
     _at_width(dialog, 240)
     for box_name, rows in ROWS.items():
@@ -183,7 +185,7 @@ def _form_reference(label_font, label_text: str, field_height: int) -> tuple[int
     return result
 
 
-def test_labels_sit_where_a_form_layout_would_put_them(dialog):
+def test_labels_sit_where_a_form_layout_would_put_them(dialog) -> None:
     """라벨의 세로 위치·높이가 구 QFormLayout과 같다 — 위쪽 끝은 필드와 같고 높이는 폼 규칙.
 
     구 폼은 라벨을 행 상단에 놓되 높이를 sizeHint × 7/4까지 늘려 글자가 그 안에서
@@ -201,7 +203,7 @@ def test_labels_sit_where_a_form_layout_would_put_them(dialog):
             )
 
 
-def test_help_button_sits_in_the_label_column_at_hint_width(dialog):
+def test_help_button_sits_in_the_label_column_at_hint_width(dialog) -> None:
     """도움말 버튼은 라벨 열에 있고, 열이 더 넓어도 자기 sizeHint 폭을 지킨다."""
     _at_width(dialog, 0)
     help_button = _widget(dialog, "helpButton")
@@ -209,7 +211,7 @@ def test_help_button_sits_in_the_label_column_at_hint_width(dialog):
     assert help_button.geometry().width() == help_button.sizeHint().width()
 
 
-def test_rows_in_a_box_share_columns(dialog):
+def test_rows_in_a_box_share_columns(dialog) -> None:
     """같은 상자의 행들은 라벨 x 와 필드 x·폭을 공유한다 — 열이 하나로 정렬돼 있다."""
     _at_width(dialog, 120)
     for rows in ROWS.values():
@@ -226,7 +228,7 @@ def test_rows_in_a_box_share_columns(dialog):
 # ================================================================ ③ 탭 순서
 
 
-def test_tab_order_runs_top_to_bottom_then_ok_cancel(dialog):
+def test_tab_order_runs_top_to_bottom_then_ok_cancel(dialog) -> None:
     """Tab 은 쿠키 두 칸 → 도움말 → 다운로드 후 동작 → 언어 → 로그 폴더 → OK/Cancel 순이다."""
     chain = []
     cursor = dialog
@@ -248,7 +250,7 @@ def test_tab_order_runs_top_to_bottom_then_ok_cancel(dialog):
 # ================================================================ ④ 창 최소 크기
 
 
-def test_minimum_width_is_derived_from_the_widest_group_box(dialog):
+def test_minimum_width_is_derived_from_the_widest_group_box(dialog) -> None:
     """창 최소폭은 상수가 아니라 그룹 상자 셋 중 가장 넓은 것 + 바깥 여백이다."""
     outer = dialog.layout().contentsMargins()
     widest = max(_widget(dialog, name).minimumSizeHint().width() for name in ROWS)
@@ -274,7 +276,7 @@ def _rows_top_left(dlg: SettingDialog) -> dict[str, int]:
     return result
 
 
-def test_extra_height_stays_below_the_rows(dialog):
+def test_extra_height_stays_below_the_rows(dialog) -> None:
     """창을 세로로 키우면 남는 공간은 각 상자의 행 **아래**에 남고 행은 움직이지 않는다.
 
     구 QFormLayout의 동작이다. 격자는 늘어날 수 있는 행이 없으면 남는 공간을 행 앞·사이·

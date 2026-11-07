@@ -13,7 +13,10 @@ import time
 
 import errno
 import os
+from collections.abc import Iterator
+from pathlib import Path
 from types import SimpleNamespace
+from typing import Self
 
 import pytest
 
@@ -38,7 +41,7 @@ TOTAL_SIZE = 4 * MB  # 해상도 144 → 파트 1MB → 4파트
 class RunLogger:
     """run() 경로 전체가 쓰는 로거 인터페이스를 기록만 하며 흉내 낸다."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.warnings: list[str] = []
         self.errors: list[str] = []
         self.completed_times: list[float] = []
@@ -52,52 +55,54 @@ class RunLogger:
         self.postprocess_paused: list[float] = []  # 후처리 종료 줄에 함께 온 일시정지한 시간(초)
         self.breakdowns: list[tuple] = []
 
-    def log_download_start(self, total_size, part_size, segments, initial_threads):
+    def log_download_start(self, total_size, part_size, segments, initial_threads) -> None:
         pass
 
-    def log_part_resume(self, part_num, offset, part_size):
+    def log_part_resume(self, part_num, offset, part_size) -> None:
         pass
 
-    def log_transfer_complete(self, elapsed, downloaded_bytes, retries, peak_threads, paused=0.0):
+    def log_transfer_complete(
+        self, elapsed, downloaded_bytes, retries, peak_threads, paused=0.0
+    ) -> None:
         self.transfer_completes.append((elapsed, downloaded_bytes, retries, peak_threads))
         self.transfer_paused.append(paused)
 
-    def log_postprocess_start(self, kind):
+    def log_postprocess_start(self, kind) -> None:
         self.postprocess_starts.append(kind)
 
-    def log_postprocess_complete(self, elapsed, output_size, paused=0.0):
+    def log_postprocess_complete(self, elapsed, output_size, paused=0.0) -> None:
         self.postprocess_completes.append((elapsed, output_size))
         self.postprocess_paused.append(paused)
 
-    def log_total_breakdown(self, transfer_elapsed, postprocess_elapsed, paused=0.0):
+    def log_total_breakdown(self, transfer_elapsed, postprocess_elapsed, paused=0.0) -> None:
         self.breakdowns.append((transfer_elapsed, postprocess_elapsed))
         self.breakdown_paused.append(paused)
 
-    def log_thread_start(self, thread_id, start, end):
+    def log_thread_start(self, thread_id, start, end) -> None:
         pass
 
-    def log_thread_complete(self, thread_id, downloaded_size):
+    def log_thread_complete(self, thread_id, downloaded_size) -> None:
         pass
 
-    def log_thread_adjust(self, active_threads, avg_speed):
+    def log_thread_adjust(self, active_threads, avg_speed) -> None:
         pass
 
-    def log_thread_debug(self, active_threads, download_speed, avg_speed):
+    def log_thread_debug(self, active_threads, download_speed, avg_speed) -> None:
         pass
 
-    def log_download_complete(self, total_time):
+    def log_download_complete(self, total_time) -> None:
         self.completed_times.append(total_time)
 
-    def log_error(self, message, exception=None):
+    def log_error(self, message, exception=None) -> None:
         self.errors.append(message)
 
-    def log_exception(self, message, exception=None):
+    def log_exception(self, message, exception=None) -> None:
         self.errors.append(message)
 
-    def warning(self, message):
+    def warning(self, message) -> None:
         self.warnings.append(message)
 
-    def save_and_close(self):
+    def save_and_close(self) -> None:
         self.closed += 1
 
 
@@ -114,14 +119,14 @@ CONTENT = _content_bytes(TOTAL_SIZE)
 class RangeResponse:
     """Range 요청 구간을 청크로 흘리는 가짜 응답. throttle 초/청크로 속도를 조절한다."""
 
-    def __init__(self, body: bytes, throttle: float):
+    def __init__(self, body: bytes, throttle: float) -> None:
         self._body = body
         self._throttle = throttle
 
-    def raise_for_status(self):
+    def raise_for_status(self) -> None:
         pass
 
-    def iter_content(self, chunk_size=8192):
+    def iter_content(self, chunk_size=8192) -> Iterator[bytes]:
         for i in range(0, len(self._body), chunk_size):
             if self._throttle:
                 time.sleep(self._throttle)
@@ -131,26 +136,28 @@ class RangeResponse:
 class RangeSession:
     """head/get(Range)을 지원하는 가짜 세션 (requests.Session 최소 인터페이스)."""
 
-    def __init__(self, content: bytes, throttle: float = 0.0):
+    def __init__(self, content: bytes, throttle: float = 0.0) -> None:
         self._content = content
         self._throttle = throttle
         self.headers = {"content-length": str(len(content))}
 
-    def head(self, url, **kwargs):
+    def head(self, url, **kwargs) -> Self:
         return self
 
     # head() 응답 겸용: raise_for_status/headers만 쓰인다
 
-    def raise_for_status(self):
+    def raise_for_status(self) -> None:
         pass
 
-    def get(self, url, headers=None, **kwargs):
+    def get(self, url, headers=None, **kwargs) -> RangeResponse:
         range_header = (headers or {})["Range"]  # "bytes=start-end"
         start, end = map(int, range_header.removeprefix("bytes=").split("-"))
         return RangeResponse(self._content[start : end + 1], self._throttle)
 
 
-def _make_engine(tmp_path, monkeypatch, throttle: float = 0.0):
+def _make_engine(
+    tmp_path, monkeypatch, throttle: float = 0.0
+) -> tuple[FileDownloader, DownloadData, RunLogger, Path, threading.Event, list[BaseException]]:
     """가짜 세션이 연결된 RUNNING 이전 상태의 엔진을 준비한다."""
     output = tmp_path / "out.mp4"
     data = DownloadData(
@@ -167,7 +174,7 @@ def _make_engine(tmp_path, monkeypatch, throttle: float = 0.0):
     finished = threading.Event()
     failures: list[BaseException] = []
 
-    def on_finished():
+    def on_finished() -> None:
         # 실제 어댑터 경로(manager.finish → task.finish)를 흉내 내 상태를 종결한다
         data.model.finish()
         finished.set()
@@ -188,7 +195,7 @@ def _run_in_thread(engine) -> threading.Thread:
     return thread
 
 
-def test_run_downloads_file_byte_exact(tmp_path, monkeypatch):
+def test_run_downloads_file_byte_exact(tmp_path, monkeypatch) -> None:
     """전체 파이프라인이 원본과 동일한 파일을 만들고 완료 콜백을 1회 호출한다."""
     engine, data, logger, output, finished, failures = _make_engine(tmp_path, monkeypatch)
 
@@ -205,7 +212,7 @@ def test_run_downloads_file_byte_exact(tmp_path, monkeypatch):
     assert data.completed_threads == 4  # 파트 4개 전부 정상 완료
 
 
-def test_phase_boundary_logs_for_file_path(tmp_path, monkeypatch):
+def test_phase_boundary_logs_for_file_path(tmp_path, monkeypatch) -> None:
     """파일 경로의 단계 경계 로그 (#110) — 전송 요약 1줄, 후처리 줄 없음.
 
     후처리가 없는 경로는 구분 줄이 "(no postprocess)"(postprocess_elapsed
@@ -230,7 +237,7 @@ def test_phase_boundary_logs_for_file_path(tmp_path, monkeypatch):
     assert logger.completed_times  # 기존 완료 줄(형식 불변)도 그대로
 
 
-def test_pause_resume_then_complete(tmp_path, monkeypatch):
+def test_pause_resume_then_complete(tmp_path, monkeypatch) -> None:
     """일시정지 동안 진행이 멈추고, 재개 후 완주한다. 전이 warning 0건."""
     # 청크당 5ms 스로틀 → 4파트 병렬로 약 0.64초 — 중간에 일시정지할 여유를 만든다
     engine, data, logger, output, finished, failures = _make_engine(
@@ -268,7 +275,7 @@ def test_pause_resume_then_complete(tmp_path, monkeypatch):
     assert data.model.state is DownloadState.FINISHED
 
 
-def test_stop_removes_partial_file(tmp_path, monkeypatch):
+def test_stop_removes_partial_file(tmp_path, monkeypatch) -> None:
     """중단(stop)하면 부분 파일을 삭제하고 완료 콜백을 호출하지 않는다."""
     engine, data, logger, output, finished, failures = _make_engine(
         tmp_path, monkeypatch, throttle=0.005
@@ -296,7 +303,7 @@ def _on_filesystem(monkeypatch, name, free: int = 10**13) -> list[str]:
     """저장 폴더의 파일 시스템 이름과 여유 공간을 정해 둔다 — 이름을 물은 폴더를 적어 돌려준다."""
     asked: list[str] = []
 
-    def filesystem_name(folder):
+    def filesystem_name(folder) -> str | None:
         asked.append(folder)
         return name
 
@@ -318,7 +325,7 @@ def _on_filesystem(monkeypatch, name, free: int = 10**13) -> list[str]:
 )
 def test_file_size_is_refused_only_over_the_limit_on_a_fat_drive(
     tmp_path, monkeypatch, name, largest, refused
-):
+) -> None:
     """만들 파일은 저장 폴더가 FAT 계열이고 크기가 4GiB − 1바이트를 넘을 때만 거부돼야 한다.
 
     파일 시스템 이름과 크기는 표의 것
@@ -342,7 +349,7 @@ def test_file_size_is_refused_only_over_the_limit_on_a_fat_drive(
     assert asked == [str(tmp_path)]
 
 
-def test_file_size_check_logs_the_filesystem_and_the_largest_file(tmp_path, monkeypatch):
+def test_file_size_check_logs_the_filesystem_and_the_largest_file(tmp_path, monkeypatch) -> None:
     """파일 크기 검사는 읽은 파일 시스템 이름과 가장 큰 파일의 크기를 로그로 남겨야 한다.
 
     이름 "exFAT", 크기 123 -> 줄 ("exFAT", 123). 이름을 읽지 못하면 (None, 123)
@@ -362,7 +369,7 @@ def test_file_size_check_logs_the_filesystem_and_the_largest_file(tmp_path, monk
 @pytest.mark.parametrize(("over", "starts"), [(1, False), (0, True)], ids=["over", "at-limit"])
 def test_download_without_sections_does_not_start_when_the_file_is_over_the_fat_limit(
     tmp_path, monkeypatch, over, starts
-):
+) -> None:
     """구간 없는 mp4는 저장 폴더가 FAT 계열이고 파일이 한계를 넘으면 받지 않고 실패해야 한다.
 
     파일 4MiB, 파일 시스템 "FAT32", 한계를 4MiB − 1(파일이 1바이트 넘는다) 또는 4MiB(꼭 맞는다)로 둠
@@ -417,7 +424,7 @@ def _cut_failure_from_ffmpeg() -> PostprocessError:
         "other-cut-failure",
     ],
 )
-def test_running_out_of_space_is_found_in_the_error_or_its_cause(make, expected):
+def test_running_out_of_space_is_found_in_the_error_or_its_cause(make, expected) -> None:
     """쓰다가 공간이 없어 난 실패는 예외 자신이나 원인에서 알아봐야 한다.
 
     ENOSPC인 OSError(글이 "No space left on device"인 것 · 다른 말인 것) · 원인의 글에
@@ -456,7 +463,7 @@ def _too_large_from_ffmpeg() -> PostprocessError:
         "other-remux-failure",
     ],
 )
-def test_hitting_the_file_size_limit_is_found_in_the_error_or_its_cause(make, expected):
+def test_hitting_the_file_size_limit_is_found_in_the_error_or_its_cause(make, expected) -> None:
     """파일 하나의 한계에 닿아 난 실패(EFBIG)는 예외 자신이나 원인에서 알아봐야 한다.
 
     EFBIG인 OSError(글이 "File too large"인 것 · 다른 말인 것) · 원인의 글에
@@ -483,7 +490,7 @@ def test_hitting_the_file_size_limit_is_found_in_the_error_or_its_cause(make, ex
 )
 def test_failure_from_the_file_size_limit_carries_a_key_by_the_filesystem(
     tmp_path, monkeypatch, name, expected, make
-):
+) -> None:
     """파일 하나의 한계에 닿아 난 실패는 FAT 계열 · 이름 모름이면 FAT 안내, 그 밖이면 저장 실패 키여야 한다.
 
     여유 넉넉. 엔진의 실패 통지로 EFBIG인 OSError 또는 원인의 글에 "File too large"가 든
@@ -513,7 +520,7 @@ def test_failure_from_the_file_size_limit_carries_a_key_by_the_filesystem(
 )
 def test_failure_from_running_out_of_space_carries_the_key_to_show(
     tmp_path, monkeypatch, name, free, sections, expected
-):
+) -> None:
     """쓰다가 공간이 없어 난 실패를 알릴 때, 예외에 보일 안내의 키(space_key)가 적혀 있어야 한다.
 
     파일 시스템 · 저장 폴더의 여유 · 구간이 있는지는 표의 것. 엔진의 실패 통지로 ENOSPC인 OSError를 보냄
@@ -532,7 +539,7 @@ def test_failure_from_running_out_of_space_carries_the_key_to_show(
     assert getattr(sent, "space_key", None) == expected
 
 
-def test_failure_that_is_not_about_space_carries_no_key(tmp_path, monkeypatch):
+def test_failure_that_is_not_about_space_carries_no_key(tmp_path, monkeypatch) -> None:
     """공간과 무관한 실패에는 space_key를 적지 않아야 한다.
 
     파일 시스템 "FAT32"(여유 넉넉), 권한 오류인 OSError를 실패로 통지 -> space_key 속성 없음
@@ -552,16 +559,18 @@ def test_failure_that_is_not_about_space_carries_no_key(tmp_path, monkeypatch):
 class _CountingSession(RangeSession):
     """받은 범위 요청의 수를 세는 가짜 세션."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(CONTENT)
         self.gets = 0
 
-    def get(self, url, headers=None, **kwargs):
+    def get(self, url, headers=None, **kwargs) -> RangeResponse:
         self.gets += 1
         return super().get(url, headers=headers, **kwargs)
 
 
-def _run_with_free_space(tmp_path, monkeypatch, free):
+def _run_with_free_space(
+    tmp_path, monkeypatch, free
+) -> tuple[Path, list[BaseException], bool, int, list[tuple], list[str]]:
     """여유 공간을 정해 두고 엔진을 끝까지 돌린다 — free가 예외면 여유 공간을 알 수 없는 것이다.
 
     Returns:
@@ -572,7 +581,7 @@ def _run_with_free_space(tmp_path, monkeypatch, free):
     monkeypatch.setattr(fd_module, "get_thread_session", lambda: session)
     asked: list[str] = []
 
-    def free_bytes(folder):
+    def free_bytes(folder) -> int:
         asked.append(folder)
         if isinstance(free, Exception):
             raise free
@@ -589,7 +598,9 @@ def _run_with_free_space(tmp_path, monkeypatch, free):
     return output, failures, finished.is_set(), session.gets, lines, asked
 
 
-def test_download_without_sections_does_not_start_when_the_file_does_not_fit(tmp_path, monkeypatch):
+def test_download_without_sections_does_not_start_when_the_file_does_not_fit(
+    tmp_path, monkeypatch
+) -> None:
     """구간 없는 mp4는 파일 크기가 저장 폴더의 여유 공간보다 1바이트라도 크면 받지 않고 실패해야 한다.
 
     파일 4MiB, 여유 4MiB − 1
@@ -613,7 +624,7 @@ def test_download_without_sections_does_not_start_when_the_file_does_not_fit(tmp
     assert asked == [str(tmp_path)]
 
 
-def test_download_without_sections_starts_when_the_file_exactly_fits(tmp_path, monkeypatch):
+def test_download_without_sections_starts_when_the_file_exactly_fits(tmp_path, monkeypatch) -> None:
     """여유 공간이 파일 크기와 같으면 받기를 시작해 끝까지 가야 한다.
 
     파일 4MiB, 여유 4MiB
@@ -628,7 +639,9 @@ def test_download_without_sections_starts_when_the_file_exactly_fits(tmp_path, m
     assert lines == [("start", 0, TOTAL_SIZE, (("output", TOTAL_SIZE, TOTAL_SIZE),))]
 
 
-def test_download_without_sections_starts_when_the_free_space_is_unknown(tmp_path, monkeypatch):
+def test_download_without_sections_starts_when_the_free_space_is_unknown(
+    tmp_path, monkeypatch
+) -> None:
     """여유 공간을 알 수 없으면 확인하지 않고 받아야 한다 — 여유 공간 줄도 남기지 않는다.
 
     여유 공간을 묻는 함수가 OSError -> 완료, 실패 0건, 줄 없음
@@ -643,7 +656,9 @@ def test_download_without_sections_starts_when_the_free_space_is_unknown(tmp_pat
 # ================================================================ 이 시도가 쓰지 않은 산출물 (#412)
 
 
-def test_failure_in_prepare_leaves_the_file_already_at_output_path_alone(tmp_path, monkeypatch):
+def test_failure_in_prepare_leaves_the_file_already_at_output_path_alone(
+    tmp_path, monkeypatch
+) -> None:
     """준비에서 실패한 전체 다운로드는 output_path에 이미 있던 파일을 지우지 않아야 한다.
 
     output_path에 b"keep" 파일을 미리 둠, 크기 조회(_get_total_size)가 OSError(EIO)

@@ -10,7 +10,7 @@ import core.sources.m3u8_downloader as m3u8_module
 from core.models.download_data import DownloadData
 
 
-def _make_engine(tmp_path):
+def _make_engine(tmp_path) -> tuple[m3u8_module.M3U8Downloader, DownloadData]:
     data = DownloadData(
         base_url="https://example.invalid/hls/video.m3u8",
         vod_url="https://chzzk.naver.com/video/1",
@@ -23,7 +23,7 @@ def _make_engine(tmp_path):
     return engine, data
 
 
-def test_mass_pollution_warning_is_summarized_not_dumped_in_full(tmp_path):
+def test_mass_pollution_warning_is_summarized_not_dumped_in_full(tmp_path) -> None:
     """오염 파일 1011개가 있어도 경고 한 줄에 전부 찍지 않고 개수+샘플만 남긴다."""
     engine, _data = _make_engine(tmp_path)
     for i in range(3):

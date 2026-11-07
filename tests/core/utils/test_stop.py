@@ -4,6 +4,8 @@
 """
 
 import threading
+from collections.abc import Iterator
+from typing import Self
 
 import pytest
 
@@ -12,22 +14,22 @@ import core.media.mp4_index as index_module
 import core.media.sample_column as column_module
 import core.sections.mp4_ranges as ranges_module
 from core.media.mp4 import index_mp4, read_mp4_raw
-from core.media.mp4_index import PendingMp4Head
+from core.media.mp4_index import Mp4Raw, PendingMp4Head
 from core.models.plan import TimeRange
-from core.sections.mp4_partial import plan_partial
+from core.sections.mp4_partial import PartialLayout, plan_partial
 from core.sections.mp4_ranges import sections_download_size, sections_head_size, sections_sizes
 from core.utils.stop import StopRequested, check_stop, stop_requested, stoppable
 from tests.support.mp4_builder import audio_spec, build_mp4, video_spec
 
 
-def _raw():
+def _raw() -> Mp4Raw:
     """실제 mp4 바이트(10fps 12프레임)에서 받은 moov."""
     data = build_mp4([video_spec(), audio_spec()]).data
     return read_mp4_raw(lambda offset, size: data[offset : offset + size])
 
 
 @pytest.fixture
-def tiny_chunks(monkeypatch):
+def tiny_chunks(monkeypatch) -> None:
     """조각을 2개씩으로 줄인다 — 12프레임짜리 moov도 여러 조각으로 돈다."""
     monkeypatch.setattr(column_module, "CHUNK_ITEMS", 2)
     monkeypatch.setattr(mp4_module, "CHUNK_ITEMS", 2)
@@ -36,7 +38,7 @@ def tiny_chunks(monkeypatch):
 class _After:
     """n번째 물음부터 그만두라고 답한다. 물은 횟수를 센다."""
 
-    def __init__(self, n: int):
+    def __init__(self, n: int) -> None:
         self.n = n
         self.asked = 0
 
@@ -48,7 +50,7 @@ class _After:
 # ================================================================ 그만둘지 묻기
 
 
-def test_check_stop_does_nothing_when_nothing_is_set_on_the_thread():
+def test_check_stop_does_nothing_when_nothing_is_set_on_the_thread() -> None:
     """그만둘지 묻는 값을 걸지 않은 스레드에서는 check_stop이 아무것도 하지 않아야 한다.
 
     걸어 둔 값 없음 -> stop_requested() is False, check_stop()이 예외 없이 돌아온다
@@ -57,7 +59,7 @@ def test_check_stop_does_nothing_when_nothing_is_set_on_the_thread():
     check_stop()
 
 
-def test_check_stop_raises_when_the_value_set_on_the_thread_says_stop():
+def test_check_stop_raises_when_the_value_set_on_the_thread_says_stop() -> None:
     """걸어 둔 값이 참을 돌려주면 check_stop이 StopRequested를 던져야 한다.
 
     stoppable(늘 참) 안 -> StopRequested, 블록을 나온 뒤에는 던지지 않는다
@@ -69,7 +71,7 @@ def test_check_stop_raises_when_the_value_set_on_the_thread_says_stop():
     check_stop()
 
 
-def test_inner_stoppable_wins_and_the_outer_one_comes_back():
+def test_inner_stoppable_wins_and_the_outer_one_comes_back() -> None:
     """겹쳐 걸면 안쪽 값이 이기고, 안쪽을 나오면 바깥 값으로 돌아와야 한다.
 
     바깥 = 늘 참, 안쪽 = 늘 거짓 -> 안쪽에서는 거짓, 안쪽을 나오면 참
@@ -82,7 +84,7 @@ def test_inner_stoppable_wins_and_the_outer_one_comes_back():
     assert (inner, outer) == (False, True)
 
 
-def test_stoppable_given_none_keeps_the_outer_value():
+def test_stoppable_given_none_keeps_the_outer_value() -> None:
     """None을 걸면 바깥에 걸어 둔 값을 그대로 따라야 한다.
 
     바깥 = 늘 참, 안쪽 = None -> 안쪽에서도 참
@@ -92,7 +94,7 @@ def test_stoppable_given_none_keeps_the_outer_value():
             assert stop_requested() is True
 
 
-def test_value_set_on_one_thread_does_not_reach_another():
+def test_value_set_on_one_thread_does_not_reach_another() -> None:
     """한 스레드에 건 값은 다른 스레드의 일을 그만두게 하지 않아야 한다.
 
     메인에 늘 참을 걸고 다른 스레드에서 stop_requested()를 읽음 -> False
@@ -109,7 +111,7 @@ def test_value_set_on_one_thread_does_not_reach_another():
 # ================================================================ 색인 해석의 그만두기
 
 
-def test_index_mp4_does_not_start_when_told_to_stop_from_the_beginning(monkeypatch):
+def test_index_mp4_does_not_start_when_told_to_stop_from_the_beginning(monkeypatch) -> None:
     """처음부터 그만두라는 답이면 index_mp4는 해석을 시작하지 않고 StopRequested를 던져야 한다.
 
     should_stop = 늘 참 -> StopRequested, 물은 횟수 == 1, 해석 함수(parse_moov) 0번
@@ -125,7 +127,7 @@ def test_index_mp4_does_not_start_when_told_to_stop_from_the_beginning(monkeypat
     assert parsed == []
 
 
-def test_index_mp4_stops_between_chunks(tiny_chunks):
+def test_index_mp4_stops_between_chunks(tiny_chunks) -> None:
     """해석하는 도중에 그만두라는 답이 오면 index_mp4는 끝까지 가지 않고 멈춰야 한다.
 
     조각 2개씩. 끝까지 돌 때 묻는 횟수 N을 먼저 세고, 그 절반째 물음부터 그만두라고 답함
@@ -142,7 +144,7 @@ def test_index_mp4_stops_between_chunks(tiny_chunks):
     assert half.asked == whole.asked // 2
 
 
-def test_index_mp4_gives_the_same_index_whether_or_not_it_is_asked(tiny_chunks):
+def test_index_mp4_gives_the_same_index_whether_or_not_it_is_asked(tiny_chunks) -> None:
     """그만둘지 묻는 값을 줘도, 그만두라는 답이 없으면 색인은 주지 않았을 때와 같아야 한다.
 
     should_stop = 늘 거짓 -> 색인 == should_stop 없이 만든 색인
@@ -150,7 +152,7 @@ def test_index_mp4_gives_the_same_index_whether_or_not_it_is_asked(tiny_chunks):
     assert index_mp4(_raw(), lambda: False).index == index_mp4(_raw()).index
 
 
-def test_fetching_the_moov_stops_between_chunks(monkeypatch):
+def test_fetching_the_moov_stops_between_chunks(monkeypatch) -> None:
     """moov를 받는 도중에 그만두라는 답이 오면 남은 본문을 받지 않고 응답을 닫아야 한다.
 
     조각 셋을 주는 응답, 둘째 조각 앞에서부터 그만두라고 답함
@@ -161,20 +163,20 @@ def test_fetching_the_moov_stops_between_chunks(monkeypatch):
         status_code = 206
         headers = {"Content-Range": "bytes 0-29/1000"}
 
-        def __init__(self):
+        def __init__(self) -> None:
             self.given = 0
             self.closed = 0
 
-        def __enter__(self):
+        def __enter__(self) -> Self:
             return self
 
-        def __exit__(self, *exc):
+        def __exit__(self, *exc) -> None:
             self.closed += 1
 
-        def raise_for_status(self):
+        def raise_for_status(self) -> None:
             pass
 
-        def iter_content(self, chunk_size):
+        def iter_content(self, chunk_size) -> Iterator[bytes]:
             for _ in range(3):
                 self.given += 1
                 yield b"x" * 10
@@ -182,7 +184,7 @@ def test_fetching_the_moov_stops_between_chunks(monkeypatch):
     response = _Response()
 
     class _Session:
-        def get(self, url, **kwargs):
+        def get(self, url, **kwargs) -> _Response:
             return response
 
     monkeypatch.setattr(mp4_module, "get_thread_session", lambda: _Session())
@@ -198,7 +200,7 @@ def test_fetching_the_moov_stops_between_chunks(monkeypatch):
 # ================================================================ 받아 둔 moov의 해석
 
 
-def test_stopped_get_keeps_the_bytes_and_the_next_get_builds_the_index():
+def test_stopped_get_keeps_the_bytes_and_the_next_get_builds_the_index() -> None:
     """그만둔 청은 기억되지 않아야 한다 — 바이트가 남아 있고, 다음 청이 색인을 만든다.
 
     첫 청 = 늘 그만두라고 답함, 둘째 청 = 묻는 값 없음
@@ -219,13 +221,13 @@ def test_stopped_get_keeps_the_bytes_and_the_next_get_builds_the_index():
 class _Blocking:
     """해석 대역 — 들어온 것을 알리고, 문을 열 때까지 기다린다. 드나든 순서를 적는다."""
 
-    def __init__(self, name: str, order: list):
+    def __init__(self, name: str, order: list) -> None:
         self.name = name
         self.order = order
         self.entered = threading.Event()
         self.release = threading.Event()
 
-    def __call__(self, raw):
+    def __call__(self, raw) -> str:
         self.order.append(f"{self.name} 들어옴")
         self.entered.set()
         assert self.release.wait(10), "해석 대역의 문이 열리지 않았다"
@@ -233,7 +235,7 @@ class _Blocking:
         return self.name
 
 
-def test_only_one_index_is_built_at_a_time_across_different_moovs():
+def test_only_one_index_is_built_at_a_time_across_different_moovs() -> None:
     """서로 다른 moov의 해석도 한 번에 하나만 돌아야 한다 — 둘째는 첫째가 끝난 뒤에 시작한다.
 
     A의 해석이 도는 중에 B를 청함. B가 관문에서 기다리는 것을 확인한 뒤(B의 물음이 불린다) A를 놓음
@@ -263,7 +265,7 @@ def test_only_one_index_is_built_at_a_time_across_different_moovs():
     assert order == ["A 들어옴", "A 나감", "B 들어옴", "B 나감"]
 
 
-def test_a_request_waiting_for_another_index_gives_up_when_told_to_stop():
+def test_a_request_waiting_for_another_index_gives_up_when_told_to_stop() -> None:
     """다른 해석이 끝나기를 기다리던 청은 그만두라는 답이 오면 해석을 시작하지 않고 그만둬야 한다.
 
     A의 해석이 도는 중에 B를 청하고, B가 기다리는 동안 B에 그만두라고 답함
@@ -297,7 +299,7 @@ def test_a_request_waiting_for_another_index_gives_up_when_told_to_stop():
     assert order == ["A 들어옴", "A 나감"]
 
 
-def test_the_gate_is_free_again_after_a_stopped_build():
+def test_the_gate_is_free_again_after_a_stopped_build() -> None:
     """그만둔 해석도 관문을 놓아야 한다 — 다음 해석이 기다리지 않고 돈다.
 
     첫 moov의 해석을 그만두게 한 뒤 다른 moov를 청함 -> 둘째 청이 색인을 돌려준다, 관문은 비어 있다
@@ -317,7 +319,7 @@ def test_the_gate_is_free_again_after_a_stopped_build():
 # ================================================================ 크기 세기 (plan_partial · sections_sizes)
 
 
-def test_plan_partial_scans_the_sample_offsets_in_chunks(tiny_chunks):
+def test_plan_partial_scans_the_sample_offsets_in_chunks(tiny_chunks) -> None:
     """plan_partial은 샘플 위치 열을 조각마다 훑어야 한다 — 값은 한 번에 훑은 것과 같고, 조각 사이에서 그만둘 수 있다.
 
     조각 2개씩 -> head_size == 조각을 키웠을 때의 값
@@ -333,7 +335,7 @@ def test_plan_partial_scans_the_sample_offsets_in_chunks(tiny_chunks):
     assert chunked == min(min(index.video.offsets), min(index.audio.offsets))
 
 
-def test_sections_sizes_equals_the_two_separate_sizes_with_one_layout(monkeypatch):
+def test_sections_sizes_equals_the_two_separate_sizes_with_one_layout(monkeypatch) -> None:
     """sections_sizes는 받을 양 · 머리 길이를 따로 구한 것과 같은 값을, 배치 한 번으로 돌려줘야 한다.
 
     구간 0.2~0.5초 · 0.4~1.0초(겹친다)
@@ -345,7 +347,7 @@ def test_sections_sizes_equals_the_two_separate_sizes_with_one_layout(monkeypatc
     calls = []
     real = ranges_module.plan_partial
 
-    def counting(*args):
+    def counting(*args) -> PartialLayout:
         calls.append(args)
         return real(*args)
 
@@ -358,7 +360,7 @@ def test_sections_sizes_equals_the_two_separate_sizes_with_one_layout(monkeypatc
 # ================================================================ 조각을 스스로 자르는 세 자리
 
 
-def test_presentation_order_stops_between_chunks(tiny_chunks):
+def test_presentation_order_stops_between_chunks(tiny_chunks) -> None:
     """표시 순서의 정렬은 조각 사이에서 그만둘 수 있어야 한다.
 
     샘플 12개 · 조각 2개씩, 그만두라는 답을 걸고 부름 -> StopRequested
@@ -371,7 +373,7 @@ def test_presentation_order_stops_between_chunks(tiny_chunks):
             mp4_module._presentation_order(presented, decoded, 0)
 
 
-def test_largest_stops_between_chunks(tiny_chunks):
+def test_largest_stops_between_chunks(tiny_chunks) -> None:
     """최댓값 훑기는 조각 사이에서 그만둘 수 있어야 한다.
 
     값 12개 · 조각 2개씩, 그만두라는 답을 걸고 부름 -> StopRequested
@@ -381,7 +383,7 @@ def test_largest_stops_between_chunks(tiny_chunks):
             mp4_module._largest(iter([float(n) for n in range(12)]))
 
 
-def test_positions_in_stops_between_chunks(tiny_chunks):
+def test_positions_in_stops_between_chunks(tiny_chunks) -> None:
     """자리 찾기는 조각 사이에서 그만둘 수 있어야 한다.
 
     샘플 12개 · 조각 2개씩, 그만두라는 답을 걸고 부름 -> StopRequested
@@ -396,7 +398,7 @@ def test_positions_in_stops_between_chunks(tiny_chunks):
 # ================================================================ 조각을 자르는 두 함수
 
 
-def test_fill_in_chunks_stops_between_chunks(tiny_chunks):
+def test_fill_in_chunks_stops_between_chunks(tiny_chunks) -> None:
     """채우는 반복은 조각 사이에서 그만둘 수 있어야 한다 — 그만두지 않으면 값은 한 번에 채운 것과 같다.
 
     값 12개 · 조각 2개씩, 셋째 물음부터 그만두라고 답함 -> StopRequested, 그때까지 채운 값 4개
@@ -412,7 +414,7 @@ def test_fill_in_chunks_stops_between_chunks(tiny_chunks):
     assert list(column_module.array_in_chunks("q", range(12))) == list(range(12))
 
 
-def test_in_chunks_stops_between_chunks(tiny_chunks):
+def test_in_chunks_stops_between_chunks(tiny_chunks) -> None:
     """훑는 반복은 조각 사이에서 그만둘 수 있어야 한다.
 
     값 12개 · 조각 2개씩, 셋째 물음부터 그만두라고 답함 -> 조각 2개를 낸 뒤 StopRequested

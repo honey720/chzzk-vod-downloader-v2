@@ -161,7 +161,7 @@ def build_mp4(
     for chunk in range(max(len(spec.chunks) for spec in tracks)):
         order += [(t, chunk) for t, spec in enumerate(tracks) if chunk < len(spec.chunks)]
 
-    def layout(body_start: int):
+    def layout(body_start: int) -> tuple[list[list[int]], list[list[int]], bytes]:
         position = body_start
         chunk_offsets = [[0] * len(spec.chunks) for spec in tracks]
         sample_offsets = [[] for _ in tracks]

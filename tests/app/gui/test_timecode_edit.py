@@ -6,6 +6,7 @@
 
 import random
 from fractions import Fraction
+from typing import Any
 
 import pytest
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
@@ -23,7 +24,7 @@ from app.widgets.timecode_edit import (
 
 
 @pytest.fixture
-def edit(qtbot):
+def edit(qtbot) -> TimecodeEdit:
     """보이는 입력 칸 하나."""
     widget = TimecodeEdit()
     qtbot.addWidget(widget)
@@ -33,7 +34,7 @@ def edit(qtbot):
 
 
 @pytest.fixture
-def clipboard(monkeypatch):
+def clipboard(monkeypatch) -> Any:
     """클립보드 대역 — 칸이 읽는 글을 정한다. 실제(OS) 클립보드를 읽거나 쓰지 않는다."""
 
     class _Clipboard:
@@ -56,7 +57,7 @@ def type_digits(widget, digits: str) -> None:
     QApplication.processEvents()
 
 
-def test_empty_field_is_all_dim_and_reads_as_zero(edit):
+def test_empty_field_is_all_dim_and_reads_as_zero(edit) -> None:
     """아무것도 치지 않은 칸은 전부 흐리고 값은 00:00:00:00이어야 한다.
 
     숫자 0개 -> 흐린 부분 "00:00:00:00", 밝은 부분 "", 값 "00:00:00:00"
@@ -65,7 +66,7 @@ def test_empty_field_is_all_dim_and_reads_as_zero(edit):
     assert edit.text() == "00:00:00:00"
 
 
-def test_digits_fill_from_the_right_and_only_the_typed_part_is_bright(edit):
+def test_digits_fill_from_the_right_and_only_the_typed_part_is_bright(edit) -> None:
     """숫자는 맨 오른쪽부터 채워지고 친 부분만 밝게 보여야 한다 — 오너가 준 여섯 단계.
 
     0 · 0 · 1 · 0 · 0 · 3을 차례로 침
@@ -89,7 +90,7 @@ def test_digits_fill_from_the_right_and_only_the_typed_part_is_bright(edit):
     assert edit.dimText() == "00:"
 
 
-def test_the_ninth_digit_is_ignored(edit):
+def test_the_ninth_digit_is_ignored(edit) -> None:
     """여덟 자리가 찬 칸은 숫자를 더 받지 않아야 한다.
 
     1~8을 친 뒤 9를 침 -> 값 "12:34:56:78" 그대로, 흐린 부분 없음
@@ -103,7 +104,7 @@ def test_the_ninth_digit_is_ignored(edit):
     assert edit.dimText() == ""
 
 
-def test_backspace_removes_the_rightmost_digit_and_delete_clears(edit):
+def test_backspace_removes_the_rightmost_digit_and_delete_clears(edit) -> None:
     """Backspace는 맨 오른쪽 숫자부터 하나씩 지우고 나머지를 오른쪽으로 당기며, Delete는 전부 지워야 한다.
 
     001003을 침(00:00:10:03) → Backspace -> 밝은 부분 "0:01:00", 값 "00:00:01:00"
@@ -119,7 +120,7 @@ def test_backspace_removes_the_rightmost_digit_and_delete_clears(edit):
     assert (edit.brightText(), edit.text()) == ("", "00:00:00:00")
 
 
-def test_typing_into_a_field_that_has_a_value_starts_over(edit):
+def test_typing_into_a_field_that_has_a_value_starts_over(edit) -> None:
     """값이 있는 칸에 들어가 숫자를 치면 기존 값을 지우고 새로 시작해야 한다.
 
     값 "01:02:03:04"인 칸에 포커스가 들어온 뒤 5를 침 -> 값 "00:00:00:05", 밝은 부분 "5"
@@ -135,7 +136,7 @@ def test_typing_into_a_field_that_has_a_value_starts_over(edit):
     assert edit.text() == "00:00:00:56"
 
 
-def test_backspace_on_a_field_just_entered_edits_the_existing_value(edit):
+def test_backspace_on_a_field_just_entered_edits_the_existing_value(edit) -> None:
     """값이 있는 칸에 들어가 Backspace를 누르면 기존 값의 맨 오른쪽 숫자를 지워야 한다.
 
     값 "01:02:03:04"인 칸에 포커스가 들어온 뒤 Backspace -> 값 "00:10:20:30"
@@ -148,7 +149,7 @@ def test_backspace_on_a_field_just_entered_edits_the_existing_value(edit):
     assert edit.text() == "00:10:20:30"
 
 
-def test_only_digits_are_taken_and_the_keypad_counts(edit):
+def test_only_digits_are_taken_and_the_keypad_counts(edit) -> None:
     """숫자가 아닌 글자는 들어가지 않고, 숫자 키패드의 숫자는 들어가야 한다.
 
     "1a:b.2-" 를 치고, 키패드 수식키와 함께 3을 침 -> 숫자 "123", 값 "00:00:01:23"
@@ -160,7 +161,7 @@ def test_only_digits_are_taken_and_the_keypad_counts(edit):
     assert edit.text() == "00:00:01:23"
 
 
-def test_out_of_range_digits_are_kept_as_typed(edit):
+def test_out_of_range_digits_are_kept_as_typed(edit) -> None:
     """칸은 초 75 같은 값을 올림하거나 고치지 않고 친 그대로 내놓아야 한다.
 
     7500을 침 -> 값 "00:00:75:00"
@@ -170,7 +171,7 @@ def test_out_of_range_digits_are_kept_as_typed(edit):
     assert edit.text() == "00:00:75:00"
 
 
-def test_signals_tell_edits_from_leaving_the_field(edit):
+def test_signals_tell_edits_from_leaving_the_field(edit) -> None:
     """숫자가 바뀌면 edited가, 칸을 떠나거나 Enter를 치면 committed가 나와야 한다.
 
     12를 침 -> edited 2번(마지막 값 "00:00:00:12"), committed 0번
@@ -198,7 +199,7 @@ def test_signals_tell_edits_from_leaving_the_field(edit):
         ("  12:34:56:78\n", "12:34:56:78", "12:34:56:78"),  # 앞뒤 공백
     ],
 )
-def test_paste_aligns_fields_from_the_right(edit, clipboard, pasted, value, bright):
+def test_paste_aligns_fields_from_the_right(edit, clipboard, pasted, value, bright) -> None:
     """붙여넣은 글은 칸을 오른쪽부터 맞춰야 한다.
 
     위 표의 글을 클립보드에 두고 Ctrl+V -> 값과 밝은 부분이 표와 같다
@@ -214,7 +215,7 @@ def test_paste_aligns_fields_from_the_right(edit, clipboard, pasted, value, brig
     "pasted",
     ["12:34:56.789", "abc", "1:2:3:4:5", "123:04", "1::2", "123456789", "", "12 34"],
 )
-def test_paste_of_anything_else_changes_nothing(edit, clipboard, pasted):
+def test_paste_of_anything_else_changes_nothing(edit, clipboard, pasted) -> None:
     """숫자 · 콜론 밖의 글자가 있거나 칸에 맞지 않는 글은 붙여넣지 않아야 한다.
 
     값 "00:00:10:03"인 칸에 위 글(밀리초 · 글자 · 다섯 칸 · 세 자리 칸 · 빈 칸 · 아홉 자리 · 빈 글 · 공백)을 붙여넣음
@@ -230,7 +231,7 @@ def test_paste_of_anything_else_changes_nothing(edit, clipboard, pasted):
     assert digits_from_text(pasted) is None
 
 
-def test_the_value_is_always_four_fields(edit):
+def test_the_value_is_always_four_fields(edit) -> None:
     """칸이 내놓는 값은 숫자를 몇 개 쳤든 네 칸 HH:MM:SS:FF여야 한다.
 
     숫자를 0개부터 8개까지 하나씩 침 -> 매번 값이 "dd:dd:dd:dd" 모양(길이 11, 콜론 셋)
@@ -247,7 +248,7 @@ def test_the_value_is_always_four_fields(edit):
     assert values[-1] == "12:34:56:78"
 
 
-def test_copy_puts_the_whole_four_field_value_on_the_clipboard(edit, clipboard):
+def test_copy_puts_the_whole_four_field_value_on_the_clipboard(edit, clipboard) -> None:
     """복사는 흐린 자리까지 포함한 네 칸 값 전체를 클립보드에 넣어야 한다.
 
     0010을 친 칸(밝은 부분 "00:10")에서 Ctrl+C -> 클립보드 "00:00:00:10"
@@ -259,7 +260,7 @@ def test_copy_puts_the_whole_four_field_value_on_the_clipboard(edit, clipboard):
     assert clipboard.content == "00:00:00:10"
 
 
-def test_select_all_selects_the_whole_field_and_a_digit_then_starts_over(edit):
+def test_select_all_selects_the_whole_field_and_a_digit_then_starts_over(edit) -> None:
     """Ctrl+A는 칸 전체를 선택하고, 선택된 칸에 숫자를 치면 새로 시작하며 선택이 풀려야 한다.
 
     001003을 친 칸에서 Ctrl+A -> 선택됨. 5를 침 -> 값 "00:00:00:05", 선택 풀림
@@ -275,7 +276,7 @@ def test_select_all_selects_the_whole_field_and_a_digit_then_starts_over(edit):
     assert not edit.isAllSelected()
 
 
-def test_backspace_on_a_selected_field_still_removes_one_digit(edit):
+def test_backspace_on_a_selected_field_still_removes_one_digit(edit) -> None:
     """선택된 칸에서도 Backspace는 맨 오른쪽 숫자 하나를, Delete는 전부를 지워야 한다.
 
     001003을 치고 Ctrl+A → Backspace -> "00:00:01:00". 다시 Ctrl+A → Delete -> "00:00:00:00"
@@ -290,7 +291,7 @@ def test_backspace_on_a_selected_field_still_removes_one_digit(edit):
     assert edit.text() == "00:00:00:00"
 
 
-def test_double_click_and_drag_select_the_whole_field_and_a_click_clears_it(edit):
+def test_double_click_and_drag_select_the_whole_field_and_a_click_clears_it(edit) -> None:
     """더블클릭과 드래그는 칸 전체를 선택하고, 한 번 누르면 선택이 풀려야 한다.
 
     칸을 더블클릭 -> 선택됨. 한 번 누름 -> 풀림. 누른 채 끌어 옮김 -> 선택됨
@@ -309,7 +310,7 @@ def test_double_click_and_drag_select_the_whole_field_and_a_click_clears_it(edit
     assert edit.isAllSelected()
 
 
-def test_a_selected_field_is_painted_differently(edit):
+def test_a_selected_field_is_painted_differently(edit) -> None:
     """선택된 칸은 선택되지 않은 칸과 다르게 그려져야 한다.
 
     001003을 친 칸의 그림을 선택 전 · 후로 견줌 -> 다르다
@@ -323,7 +324,7 @@ def test_a_selected_field_is_painted_differently(edit):
     assert edit.grab().toImage() != plain
 
 
-def test_context_menu_has_only_copy_and_paste(edit, clipboard):
+def test_context_menu_has_only_copy_and_paste(edit, clipboard) -> None:
     """우클릭 메뉴에는 복사 · 붙여넣기 두 항목만 있어야 하고, 붙여넣기는 Ctrl+V와 같은 규칙이어야 한다.
 
     클립보드 "03:04"인 채 메뉴를 만듦 -> 항목 == ["Copy", "Paste"], 붙여넣기 켜짐
@@ -364,7 +365,7 @@ def _seconds(value: str, fps: Fraction) -> Fraction:
 
 
 @pytest.mark.parametrize("fps", [Fraction(2997, 100), Fraction(30), Fraction(60)])
-def test_typing_one_more_digit_never_makes_the_value_smaller(edit, fps):
+def test_typing_one_more_digit_never_makes_the_value_smaller(edit, fps) -> None:
     """숫자를 하나 더 치면 값(명목 시각)이 줄지 않아야 한다 — 치는 도중의 "너무 크다"는 더 쳐도 풀리지 않는다.
 
     씨앗을 고정한 무작위 여덟 자리 숫자열 200개를 한 글자씩 침(29.97 · 30 · 60fps)
@@ -395,7 +396,7 @@ def _focus_out() -> QFocusEvent:
 
 
 @pytest.fixture
-def clock(qtbot):
+def clock(qtbot) -> TimecodeEdit:
     """보이는 시분초 칸 하나(묶음 셋 — 숫자 여섯 자리)."""
     widget = TimecodeEdit(fields=CLOCK_FIELDS)
     qtbot.addWidget(widget)
@@ -405,7 +406,7 @@ def clock(qtbot):
 
 
 @pytest.fixture
-def point(qtbot):
+def point(qtbot) -> TimePointEdit:
     """보이는 시각 입력 하나 — 시분초 칸과 프레임 칸의 묶음."""
     widget = TimePointEdit()
     qtbot.addWidget(widget)
@@ -423,7 +424,7 @@ def point(qtbot):
         ("130", "00:01:30", "1:30"),
     ],
 )
-def test_clock_field_fills_from_the_seconds(clock, digits, value, bright):
+def test_clock_field_fills_from_the_seconds(clock, digits, value, bright) -> None:
     """시분초 칸에 친 숫자는 초 자리부터 채워져야 한다 — 숫자의 기본 단위가 초다.
 
     0100 -> 00:01:00(1분) / 012345 -> 01:23:45 / 5 -> 00:00:05 / 130 -> 00:01:30
@@ -433,7 +434,7 @@ def test_clock_field_fills_from_the_seconds(clock, digits, value, bright):
     assert (clock.text(), clock.brightText()) == (value, bright)
 
 
-def test_clock_field_shows_the_six_steps_with_seconds_as_the_base(clock):
+def test_clock_field_shows_the_six_steps_with_seconds_as_the_base(clock) -> None:
     """오너의 여섯 단계는 보이는 모양이 그대로이고 값은 초 기준이어야 한다.
 
     0 · 0 · 1 · 0 · 0 · 3을 차례로 침
@@ -455,7 +456,7 @@ def test_clock_field_shows_the_six_steps_with_seconds_as_the_base(clock):
     ]
 
 
-def test_clock_field_ignores_the_seventh_digit(clock):
+def test_clock_field_ignores_the_seventh_digit(clock) -> None:
     """시분초 칸은 일곱째 숫자를 받지 않아야 한다.
 
     123456을 치고 7을 더 침 -> 값 "12:34:56" 그대로
@@ -467,7 +468,7 @@ def test_clock_field_ignores_the_seventh_digit(clock):
 
 
 @pytest.mark.parametrize("seed", range(20))
-def test_typing_one_more_digit_into_the_clock_field_never_makes_it_smaller(clock, seed):
+def test_typing_one_more_digit_into_the_clock_field_never_makes_it_smaller(clock, seed) -> None:
     """시분초 칸에 숫자를 하나 더 치면 값(시 · 분 · 초를 이어 읽은 수)이 줄지 않아야 한다.
 
     씨앗마다 무작위 숫자 여섯 개를 차례로 침 -> 단계마다 int(값의 숫자)가 앞 단계 이상
@@ -481,7 +482,7 @@ def test_typing_one_more_digit_into_the_clock_field_never_makes_it_smaller(clock
         previous = current
 
 
-def test_frame_field_takes_two_digits_and_ignores_the_third(point):
+def test_frame_field_takes_two_digits_and_ignores_the_third(point) -> None:
     """프레임 칸은 오른쪽부터 두 자리를 받고 세 자리째를 받지 않아야 한다. 치지 않으면 00이다.
 
     아무것도 안 침 -> "00" / 3 -> "03" / 30 -> "30" / 5를 더 침 -> "30" 그대로
@@ -496,7 +497,7 @@ def test_frame_field_takes_two_digits_and_ignores_the_third(point):
     assert (frame.dimText(), frame.brightText()) == ("", "30")
 
 
-def test_time_point_joins_the_two_fields_into_four_fields(point):
+def test_time_point_joins_the_two_fields_into_four_fields(point) -> None:
     """시각의 값은 시분초 칸과 프레임 칸을 합친 네 칸 HH:MM:SS:FF여야 한다.
 
     시분초 칸에 0100, 프레임 칸에 30 -> "00:01:00:30". 아무것도 치지 않은 시각은 빈 글(빈 시각)
@@ -509,7 +510,7 @@ def test_time_point_joins_the_two_fields_into_four_fields(point):
     assert point.text() == "00:01:00:30"
 
 
-def test_set_text_splits_a_timecode_into_both_fields_and_shows_it_bright(point):
+def test_set_text_splits_a_timecode_into_both_fields_and_shows_it_bright(point) -> None:
     """setText는 네 칸 타임코드를 두 칸에 나눠 넣고 전부 밝게 보여야 한다. 읽을 수 없으면 비운다.
 
     "01:02:03:04" -> 시분초 "01:02:03" · 프레임 "04", 흐린 부분 없음
@@ -527,7 +528,7 @@ def test_set_text_splits_a_timecode_into_both_fields_and_shows_it_bright(point):
 @pytest.mark.parametrize(
     "modifier", [Qt.KeyboardModifier.NoModifier, Qt.KeyboardModifier.KeypadModifier]
 )
-def test_period_in_the_clock_field_moves_to_the_frame_field(point, modifier):
+def test_period_in_the_clock_field_moves_to_the_frame_field(point, modifier) -> None:
     """시분초 칸에서 "."을 누르면 같은 시각의 프레임 칸으로 가야 하고 칸에는 들어가지 않아야 한다.
 
     시분초 칸에 12를 치고 "."(자판 · 숫자 키패드) -> 포커스가 프레임 칸, 시분초 값 "00:00:12" 그대로
@@ -545,7 +546,9 @@ def test_period_in_the_clock_field_moves_to_the_frame_field(point, modifier):
 
 
 @pytest.mark.parametrize("part", ["clockEdit", "frameEdit"])
-def test_copy_from_either_field_puts_the_whole_time_point_on_the_clipboard(point, clipboard, part):
+def test_copy_from_either_field_puts_the_whole_time_point_on_the_clipboard(
+    point, clipboard, part
+) -> None:
     """어느 칸에서 복사하든 그 시각 전체(HH:MM:SS:FF)가 클립보드에 들어가야 한다.
 
     시분초 01:02:03 · 프레임 04인 시각의 시분초 칸 / 프레임 칸에서 Ctrl+C -> "01:02:03:04"
@@ -569,7 +572,7 @@ def test_copy_from_either_field_puts_the_whole_time_point_on_the_clipboard(point
         ("30", "frameEdit", "00:00:07:30"),  # 숫자만 — 붙여넣은 칸의 규칙(프레임 칸)
     ],
 )
-def test_paste_follows_the_shape_of_the_text(point, clipboard, pasted, part, expected):
+def test_paste_follows_the_shape_of_the_text(point, clipboard, pasted, part, expected) -> None:
     """붙여넣기는 글의 모양에 따라 두 칸에 나눠 넣거나 붙여넣은 칸에만 넣어야 한다.
 
     시분초 00:00:07 · 프레임 15인 시각에 위 표의 글을 그 칸에서 Ctrl+V -> 기대한 시각
@@ -595,7 +598,7 @@ def test_paste_follows_the_shape_of_the_text(point, clipboard, pasted, part, exp
         ("", "clockEdit"),
     ],
 )
-def test_paste_of_a_text_that_does_not_fit_changes_nothing(point, clipboard, pasted, part):
+def test_paste_of_a_text_that_does_not_fit_changes_nothing(point, clipboard, pasted, part) -> None:
     """받을 수 없는 글을 붙여넣으면 시각이 그대로여야 하고 edited도 나오지 않아야 한다.
 
     시분초 00:00:07 · 프레임 15인 시각에 위 표의 글을 붙여넣음 -> "00:00:07:15" 그대로, edited 0회
@@ -610,7 +613,7 @@ def test_paste_of_a_text_that_does_not_fit_changes_nothing(point, clipboard, pas
     assert edited.count() == 0
 
 
-def test_moving_between_the_two_fields_is_not_leaving_the_time_point(point, qtbot):
+def test_moving_between_the_two_fields_is_not_leaving_the_time_point(point, qtbot) -> None:
     """시분초 칸에서 프레임 칸으로 가는 것은 그 시각을 떠난 것이 아니어야 하고, 둘 다 떠나면 committed가 한 번 나와야 한다.
 
     시분초 칸에 포커스 → "."으로 프레임 칸 -> committed 0회
@@ -636,7 +639,7 @@ def test_moving_between_the_two_fields_is_not_leaving_the_time_point(point, qtbo
 
 
 @pytest.mark.parametrize("part", ["clockEdit", "frameEdit"])
-def test_enter_in_either_field_commits_and_reports_entered_once(point, part):
+def test_enter_in_either_field_commits_and_reports_entered_once(point, part) -> None:
     """어느 칸에서 Enter를 치든 그 시각의 committed와 entered가 한 번씩, 그 순서로 나와야 한다."""
     order = []
     point.committed.connect(lambda: order.append("committed"))
@@ -650,7 +653,7 @@ def test_enter_in_either_field_commits_and_reports_entered_once(point, part):
 # ================================================================ 빈 시각 · 확정 표시 (#309)
 
 
-def test_typed_digits_are_bright_and_the_whole_field_turns_bright_when_left(point):
+def test_typed_digits_are_bright_and_the_whole_field_turns_bright_when_left(point) -> None:
     """치는 동안에는 친 자리만 밝고, 칸을 떠나면 앞쪽의 0까지 전부 밝아야 한다. 값은 그대로다.
 
     시분초 칸에 0100 -> 밝은 부분 "01:00" · 흐린 부분 "00:"
@@ -667,7 +670,7 @@ def test_typed_digits_are_bright_and_the_whole_field_turns_bright_when_left(poin
     assert clock.text() == value == "00:01:00"
 
 
-def test_a_frame_field_turns_bright_when_left(point):
+def test_a_frame_field_turns_bright_when_left(point) -> None:
     """프레임 칸에 한 자리만 치고 떠나면 앞의 0까지 밝아야 한다.
 
     프레임 칸에 5 -> 밝은 부분 "5" · 흐린 부분 "0". 편집을 끝냄 -> 밝은 부분 "05" · 흐린 부분 ""
@@ -681,7 +684,7 @@ def test_a_frame_field_turns_bright_when_left(point):
     assert (frame.dimText(), frame.brightText()) == ("", "05")
 
 
-def test_enter_turns_the_field_bright(point):
+def test_enter_turns_the_field_bright(point) -> None:
     """Enter를 쳐도 칸이 확정돼 앞쪽의 0까지 밝아야 한다.
 
     시분초 칸에 12를 치고 Enter -> 밝은 부분 "00:00:12"
@@ -693,7 +696,7 @@ def test_enter_turns_the_field_bright(point):
     assert point.clockEdit.brightText() == "00:00:12"
 
 
-def test_typing_again_in_a_confirmed_field_goes_back_to_the_typing_look(point):
+def test_typing_again_in_a_confirmed_field_goes_back_to_the_typing_look(point) -> None:
     """확정된 칸에 다시 들어가 치면 치는 동안의 표시(친 자리만 밝음)로 돌아가야 한다.
 
     0100을 치고 편집을 끝낸 칸에 포커스를 주고 5를 침 -> 밝은 부분 "5", 값 "00:00:05"
@@ -713,7 +716,7 @@ def test_typing_again_in_a_confirmed_field_goes_back_to_the_typing_look(point):
     assert (clock.brightText(), clock.text()) == ("5", "00:00:05")
 
 
-def test_an_untouched_field_stays_dim_when_left(point):
+def test_an_untouched_field_stays_dim_when_left(point) -> None:
     """숫자를 하나도 치지 않은 칸은 떠나도 흐린 채여야 한다.
 
     아무것도 치지 않은 시분초 칸 · 프레임 칸의 편집을 끝냄 -> 밝은 부분 "" · 흐린 부분 "00:00:00" · "00"
@@ -725,7 +728,7 @@ def test_an_untouched_field_stays_dim_when_left(point):
     assert (point.frameEdit.dimText(), point.frameEdit.brightText()) == ("00", "")
 
 
-def test_an_untouched_time_is_empty_and_shows_what_it_stands_for(point):
+def test_an_untouched_time_is_empty_and_shows_what_it_stands_for(point) -> None:
     """두 칸 모두 치지 않은 시각은 빈 시각이고, 정해 준 뜻하는 값을 흐리게 보여야 한다.
 
     기본 -> isEmpty, text() == "", 흐린 글 "00:00:00" · "00", meaningText() == "00:00:00:00"
@@ -742,7 +745,7 @@ def test_an_untouched_time_is_empty_and_shows_what_it_stands_for(point):
     assert point.text() == ""
 
 
-def test_the_dimmed_meaning_gives_way_to_zeros_once_either_field_is_typed(point):
+def test_the_dimmed_meaning_gives_way_to_zeros_once_either_field_is_typed(point) -> None:
     """한 칸이라도 치면 빈 시각이 아니어서, 치지 않은 칸의 흐린 글은 0으로 돌아가야 한다.
 
     뜻하는 값 01:23:45:10. 프레임 칸에 7 -> text() == "00:00:00:07", 시분초 칸의 흐린 글 "00:00:00"

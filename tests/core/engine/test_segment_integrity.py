@@ -41,7 +41,7 @@ def _media(body: bytes) -> None:
     ],
     ids=["real-shaped", "one-fragment", "two-fragments", "emsg-between", "large-size", "to-end"],
 )
-def test_intact_media_segment_passes(body):
+def test_intact_media_segment_passes(body) -> None:
     """상자가 본문을 정확히 채우고 moof마다 뒤에 mdat가 있는 미디어 세그먼트는 통과해야 한다.
 
     주석의 상자 순서마다
@@ -75,7 +75,7 @@ def test_intact_media_segment_passes(body):
         "size-below-header",
     ],
 )
-def test_incomplete_media_segment_is_rejected(body):
+def test_incomplete_media_segment_is_rejected(body) -> None:
     """상자가 본문을 정확히 채우지 않거나 mdat 없는 moof가 있는 미디어 세그먼트는 거부돼야 한다.
 
     주석의 본문마다
@@ -87,7 +87,7 @@ def test_incomplete_media_segment_is_rejected(body):
     assert raised.value.message_key == SEGMENT_TRUNCATED
 
 
-def test_media_segment_cut_after_a_whole_fragment_is_not_detected():
+def test_media_segment_cut_after_a_whole_fragment_is_not_detected() -> None:
     """조각 하나가 끝난 자리에서 정확히 잘린 미디어 세그먼트는 구조 검사를 통과한다 (알려진 한계).
 
     styp moof mdat emsg moof mdat emsg 에서 첫 emsg까지만 남긴 본문
@@ -99,7 +99,7 @@ def test_media_segment_cut_after_a_whole_fragment_is_not_detected():
     _media(body[:first_fragment_end])
 
 
-def test_intact_init_segment_passes():
+def test_intact_init_segment_passes() -> None:
     """ftyp와 moov가 본문을 정확히 채우는 초기화 세그먼트는 통과해야 한다.
 
     ftyp(4바이트 내용) + moov(100바이트 내용)
@@ -119,7 +119,7 @@ def test_intact_init_segment_passes():
     ],
     ids=["last-byte-missing", "cut-inside-ftyp", "no-moov", "no-ftyp", "empty"],
 )
-def test_incomplete_init_segment_is_rejected(body):
+def test_incomplete_init_segment_is_rejected(body) -> None:
     """상자가 본문을 정확히 채우지 않거나 ftyp · moov가 없는 초기화 세그먼트는 거부돼야 한다.
 
     주석의 본문마다
@@ -129,7 +129,7 @@ def test_incomplete_init_segment_is_rejected(body):
         check_fmp4_init_segment(body)
 
 
-def test_intact_ts_segment_passes():
+def test_intact_ts_segment_passes() -> None:
     """길이가 188의 배수이고 패킷마다 0x47로 시작하는 TS 세그먼트는 통과해야 한다.
 
     패킷 3개(564바이트)
@@ -149,7 +149,7 @@ def test_intact_ts_segment_passes():
     ],
     ids=["one-byte-short", "cut-inside-packet", "bad-sync-byte", "empty"],
 )
-def test_incomplete_ts_segment_is_rejected(body):
+def test_incomplete_ts_segment_is_rejected(body) -> None:
     """길이가 188의 배수가 아니거나 0x47로 시작하지 않는 패킷이 있는 TS 세그먼트는 거부돼야 한다.
 
     주석의 본문마다
@@ -160,7 +160,7 @@ def test_incomplete_ts_segment_is_rejected(body):
 
 
 @pytest.mark.parametrize(("length", "intact"), [(32, True), (16, True), (31, False), (0, False)])
-def test_ciphertext_length_must_be_a_multiple_of_the_block(length, intact):
+def test_ciphertext_length_must_be_a_multiple_of_the_block(length, intact) -> None:
     """AES-128-CBC 암호문은 길이가 16의 배수일 때만 통과해야 한다.
 
     길이 32 · 16 -> 예외 없음 / 길이 31 · 0 -> TruncatedSegmentError
@@ -183,7 +183,7 @@ def test_ciphertext_length_must_be_a_multiple_of_the_block(length, intact):
     ],
     ids=["equal", "absent", "no-headers", "not-a-number", "encoded"],
 )
-def test_content_length_that_matches_or_cannot_be_compared_passes(headers):
+def test_content_length_that_matches_or_cannot_be_compared_passes(headers) -> None:
     """Content-Length가 받은 길이와 같거나 견줄 수 없으면 통과해야 한다.
 
     주석의 머리마다, 받은 본문 600바이트
@@ -192,7 +192,7 @@ def test_content_length_that_matches_or_cannot_be_compared_passes(headers):
     check_content_length(headers, 600)
 
 
-def test_content_length_that_differs_is_rejected():
+def test_content_length_that_differs_is_rejected() -> None:
     """Content-Length가 받은 본문 길이와 다르면 거부돼야 한다.
 
     Content-Length 1000, 받은 본문 600바이트
@@ -202,7 +202,7 @@ def test_content_length_that_differs_is_rejected():
         check_content_length({"Content-Length": "1000"}, 600)
 
 
-def test_content_length_of_an_identity_encoded_body_is_compared():
+def test_content_length_of_an_identity_encoded_body_is_compared() -> None:
     """Content-Encoding이 identity인 응답의 Content-Length는 받은 본문 길이와 견줘야 한다.
 
     Content-Length 1000 · Content-Encoding identity, 받은 본문 600바이트 · 1000바이트
@@ -227,7 +227,7 @@ def test_content_length_of_an_identity_encoded_body_is_compared():
     ],
     ids=["plain", "missing", "no-headers", "compressed", "identity", "not-a-number"],
 )
-def test_declared_content_length_is_given_only_when_it_can_be_compared(headers, expected):
+def test_declared_content_length_is_given_only_when_it_can_be_compared(headers, expected) -> None:
     """declared_content_length는 받은 길이와 견줄 수 있는 Content-Length만 돌려주고, 아니면 None을 돌려줘야 한다.
 
     주석의 경우마다 응답 머리

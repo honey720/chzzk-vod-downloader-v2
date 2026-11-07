@@ -28,11 +28,13 @@ _RANGE = re.compile(r"bytes=(\d+)-(\d*)")
 class _RangeAdapter(BaseAdapter):
     """요청을 호스트의 bytes로 답하는 전송 어댑터."""
 
-    def __init__(self, host: "RangeHost"):
+    def __init__(self, host: "RangeHost") -> None:
         super().__init__()
         self._host = host
 
-    def send(self, request, stream=False, timeout=None, verify=True, cert=None, proxies=None):
+    def send(
+        self, request, stream=False, timeout=None, verify=True, cert=None, proxies=None
+    ) -> requests.Response:
         name = request.url[len(RangeHost.BASE) :]
         range_header = request.headers.get("Range")
         self._host._record(request.method, name, range_header)
@@ -80,7 +82,7 @@ class RangeHost:
 
     BASE = "http://range.test/"  # 이 주소로 가는 요청만 답한다 — 실제로 연결되지 않는다
 
-    def __init__(self, files: dict[str, bytes]):
+    def __init__(self, files: dict[str, bytes]) -> None:
         self.files = dict(files)
         self.ignore_range = False  # True면 범위 요청을 무시하고 200으로 전체를 내준다
         # True면 캐시에 없는 파일의 범위 요청에 200 + 잘린 본문으로 답하고 그것을 캐시한다

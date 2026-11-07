@@ -10,6 +10,7 @@ import os
 import stat
 import sys
 import textwrap
+from collections.abc import Callable
 from types import SimpleNamespace
 
 import pytest
@@ -39,10 +40,10 @@ def _stderr_cut_inside_the_name(limit: int) -> str:
     return text
 
 
-def _failed(stderr: str):
+def _failed(stderr: str) -> Callable[..., SimpleNamespace]:
     """returncode 1과 그 stderr를 돌려주는 ffmpeg 실행의 대역(hybrid_cut._ffmpeg 자리)."""
 
-    def fake(args, **kwargs):
+    def fake(args, **kwargs) -> SimpleNamespace:
         return SimpleNamespace(returncode=1, stderr=stderr, stdout="")
 
     return fake
@@ -57,7 +58,9 @@ def _failed(stderr: str):
     ],
     ids=["_run", "_read_params", "read_packets"],
 )
-def test_cut_failure_text_keeps_the_whole_path_where_its_tail_is_cut(monkeypatch, site, limit):
+def test_cut_failure_text_keeps_the_whole_path_where_its_tail_is_cut(
+    monkeypatch, site, limit
+) -> None:
     """컷의 ffmpeg 실패 글은 끝을 잘라 붙일 때 경로를 가르지 않고 경로가 든 줄을 통째로 남겨야 한다.
 
     hybrid_cut의 ffmpeg 실행 대역이 returncode 1과, 끝 limit 글자 꼬리가 사용자 이름 "Tester" 안에서
@@ -85,7 +88,7 @@ _FAKE_FFMPEG = textwrap.dedent(
 
 
 @pytest.fixture
-def failing_ffmpeg(tmp_path, monkeypatch):
+def failing_ffmpeg(tmp_path, monkeypatch) -> Callable[[str], None]:
     """실패 글을 내고 1로 끝나는 ffmpeg 대역 실행 파일 — get_ffmpeg_exe가 그것을 돌려준다.
 
     글은 ``FAKE_FFMPEG_STDERR``가 가리키는 파일에서 읽는다. Windows는 .cmd, 그 밖은 실행 비트를 준
@@ -112,7 +115,7 @@ def failing_ffmpeg(tmp_path, monkeypatch):
 
 def test_remux_through_failure_text_keeps_the_whole_path_where_its_tail_is_cut(
     tmp_path, failing_ffmpeg
-):
+) -> None:
     """두 ffmpeg를 잇는 재포장의 실패 글은 프로세스마다 끝을 잘라 붙일 때 경로를 가르지 않아야 한다.
 
     ffmpeg 대역 실행 파일: 변환 · 잇기 둘 다 1로 끝나며, 끝 250 글자 꼬리가 사용자 이름 "Tester" 안에서

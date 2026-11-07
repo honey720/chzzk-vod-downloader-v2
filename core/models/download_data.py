@@ -17,6 +17,8 @@
 (download.data)의 re-export는 #171에서 제거됐다 — 이곳이 유일한 정의처다.
 """
 
+import threading
+
 from core.models.content import Content, ContentType
 from core.models.download_task import DownloadTaskModel
 from core.models.events import DownloadCounters
@@ -25,7 +27,7 @@ from core.models.events import DownloadCounters
 class DownloadData:
     """다운로드 엔진·서비스가 공유하는 데이터 홀더 (core 모델 위임 어댑터)."""
 
-    def __init__(self, base_url, vod_url, output_path, resolution, content_type):
+    def __init__(self, base_url, vod_url, output_path, resolution, content_type) -> None:
         # 컨텐츠 식별·재생 정보의 소유처 (#61)
         self.content = Content(
             content_type=ContentType(content_type),
@@ -121,35 +123,35 @@ class DownloadData:
     # ============ 컨텐츠 필드 위임 (Content 소유) ============
 
     @property
-    def base_url(self):
+    def base_url(self) -> str | None:
         return self.content.base_url
 
     @base_url.setter
-    def base_url(self, value):
+    def base_url(self, value) -> None:
         self.content.base_url = value
 
     @property
-    def vod_url(self):
+    def vod_url(self) -> str:
         return self.content.url
 
     @vod_url.setter
-    def vod_url(self, value):
+    def vod_url(self, value) -> None:
         self.content.url = value
 
     @property
-    def output_path(self):
+    def output_path(self) -> str:
         return self.content.output_path
 
     @output_path.setter
-    def output_path(self, value):
+    def output_path(self, value) -> None:
         self.content.output_path = value
 
     @property
-    def resolution(self):
+    def resolution(self) -> int | None:
         return self.content.resolution
 
     @resolution.setter
-    def resolution(self, value):
+    def resolution(self, value) -> None:
         self.content.resolution = value
 
     @property
@@ -158,45 +160,45 @@ class DownloadData:
         return self.content.content_type.value
 
     @content_type.setter
-    def content_type(self, value: str):
+    def content_type(self, value: str) -> None:
         self.content.content_type = ContentType(value)
 
     # ============ 상태·진행률 필드 위임 (DownloadTaskModel 소유) ============
 
     @property
-    def total_size(self):
+    def total_size(self) -> int | None:
         return self.model.total_size
 
     @total_size.setter
-    def total_size(self, value):
+    def total_size(self, value) -> None:
         self.model.total_size = value
 
     @property
-    def threads_progress(self):
+    def threads_progress(self) -> list[int]:
         return self.model.threads_progress
 
     @threads_progress.setter
-    def threads_progress(self, value):
+    def threads_progress(self, value) -> None:
         self.model.threads_progress = value
 
     @property
-    def start_time(self):
+    def start_time(self) -> float:
         return self.model.start_time
 
     @start_time.setter
-    def start_time(self, value):
+    def start_time(self, value) -> None:
         self.model.start_time = value
 
     @property
-    def end_time(self):
+    def end_time(self) -> float:
         return self.model.end_time
 
     @end_time.setter
-    def end_time(self, value):
+    def end_time(self, value) -> None:
         self.model.end_time = value
 
     @property
-    def _pause_event(self):
+    def _pause_event(self) -> threading.Event:
         return self.model.pause_event
 
     # ============ 진행 통지의 값 묶음 (#484) ============

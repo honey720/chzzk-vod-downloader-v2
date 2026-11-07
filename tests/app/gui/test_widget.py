@@ -20,19 +20,21 @@ progress·fileSize·delete)에 `Ignored` 정책 라벨이 둘 이상 + `Expandin
 """
 
 import pytest
-from PySide6.QtWidgets import QLabel
+from PySide6.QtWidgets import QLabel, QWidget
 
 import CVDv2 as main_module
 import app.theme as theme
 from app.viewmodels.data import ContentItem
+from app.widgets.eliding_label import ElidingLabel
 from app.widgets.widget import ContentItemWidget
 from core.models.download_state import DownloadState
 from app.viewmodels.item_state import ItemState
 from tests.app.gui.card_helpers import hold_style
+from typing import Never
 
 
 @pytest.fixture(autouse=True)
-def _apply_production_qss(qapp):
+def _apply_production_qss(qapp) -> None:
     """실제 전역 QSS(글자 위계 토큰 포함)를 태운 상태에서 잰다 (#244).
 
     카드 라벨의 폰트가 위젯별 인라인 스타일에서 전역 QSS 위계 토큰
@@ -51,12 +53,12 @@ def _apply_production_qss(qapp):
 
 
 @pytest.fixture(autouse=True)
-def no_network(monkeypatch):
+def no_network(monkeypatch) -> None:
     class _FailingSession:
-        def head(self, *a, **k):
+        def head(self, *a, **k) -> Never:
             raise RuntimeError("network disabled in tests")
 
-        def get(self, *a, **k):
+        def get(self, *a, **k) -> Never:
             raise RuntimeError("network disabled in tests")
 
     monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
@@ -66,7 +68,7 @@ def no_network(monkeypatch):
     monkeypatch.setattr("app.widgets.widget._global_download_path", "C:/Users/LeeDH/Downloads")
 
 
-def _make_item(content_type="video", title="제목", channel="채널"):
+def _make_item(content_type="video", title="제목", channel="채널") -> ContentItem:
     return ContentItem(
         "https://chzzk.naver.com/video/1",
         {"title": title, "category": "", "channelName": channel, "createdDate": "", "duration": 3600},
@@ -112,7 +114,7 @@ class TestStatusAndFileSizeAreVisible:
     """카드 폭이 넉넉한(창을 좁히지 않은) 정상 상태에서 이 라벨들이 실제로
     보여야 한다 — PR #229 이후 폭 0으로 눌려 전부 빈 문자열이 되던 회귀."""
 
-    def test_waiting_file_type_shows_status_and_total_size(self, qapp):
+    def test_waiting_file_type_shows_status_and_total_size(self, qapp) -> None:
         item = _make_item(content_type="video")
         item.total_size = "1.2 GB"
         widget = _build_widget(item, qapp, width=_UNCONSTRAINED_WIDTH)
@@ -121,21 +123,21 @@ class TestStatusAndFileSizeAreVisible:
         assert _rendered(widget.fileSizeLabel) != ""
         assert "1.2 GB" in _rendered(widget.fileSizeLabel)
 
-    def test_waiting_segment_type_shows_status_and_duration(self, qapp):
+    def test_waiting_segment_type_shows_status_and_duration(self, qapp) -> None:
         item = _make_item(content_type="m3u8")
         widget = _build_widget(item, qapp)
 
         assert _rendered(widget.statusLabel) != ""
         assert _rendered(widget.fileSizeLabel) != ""
 
-    def test_loading_placeholder_shows_status(self, qapp):
+    def test_loading_placeholder_shows_status(self, qapp) -> None:
         item = _make_item()
         item.downloadState = ItemState.LOADING
         widget = _build_widget(item, qapp)
 
         assert _rendered(widget.statusLabel) != ""
 
-    def test_running_shows_progress_status_and_size(self, qapp):
+    def test_running_shows_progress_status_and_size(self, qapp) -> None:
         item = _make_item()
         item.total_size = "500 MB"
         item.downloadState = DownloadState.RUNNING
@@ -155,7 +157,7 @@ class TestStatusAndFileSizeAreVisible:
         assert _rendered(widget.fileSizeLabel) != ""
         assert "123.00 MB" in _rendered(widget.fileSizeLabel)
 
-    def test_finished_shows_completion_and_size(self, qapp):
+    def test_finished_shows_completion_and_size(self, qapp) -> None:
         # #245 상태별 슬롯: 완료 슬롯은 "✓ 완료 표시"다 — 소요 시간(download_time)
         # 표시는 오너 확정 설계에서 빠졌다(완료 카드가 답할 질문은 "어디에?"이고
         # 그건 📁 버튼이 답한다).
@@ -170,7 +172,7 @@ class TestStatusAndFileSizeAreVisible:
         assert _rendered(widget.fileSizeLabel) != ""
         assert "800" in _rendered(widget.fileSizeLabel)
 
-    def test_failed_shows_failure_reason(self, qapp):
+    def test_failed_shows_failure_reason(self, qapp) -> None:
         item = _make_item()
         item.downloadState = DownloadState.FAILED
         item.stateMessage = "Postprocessing failed"
@@ -191,7 +193,7 @@ class TestChannelNameYieldsBeforeStatusAndFileSize:
     몫까지 욕심내 폭이 과하게 넓어진다(실측 확인 — 249px까지 늘어났었음).
     """
 
-    def test_narrow_width_elides_channel_name_but_not_status_or_size(self, qapp):
+    def test_narrow_width_elides_channel_name_but_not_status_or_size(self, qapp) -> None:
         # 채널명은 넉넉히 길게 잡는다 — 짧은 채널명은 플랫폼 폴백 폰트에서
         # 글리프 폭이 좁아 150px 상한 안에 통째로 들어가 버려(실측: 이
         # 환경에서 채널명 라벨이 99px을 받는데 "우왁굳의 게임방송"이 안
@@ -245,7 +247,7 @@ class TestChannelNameYieldsBeforeStatusAndFileSize:
             "파일 크기가 잘렸다 — 채널명보다 먼저 줄면 안 된다"
         )
 
-    def test_wide_width_does_not_over_grow_channel_name(self, qapp):
+    def test_wide_width_does_not_over_grow_channel_name(self, qapp) -> None:
         """여유가 있을 때 stretch 때문에 채널명이 스페이서 몫까지 삼키면 안 된다."""
         item = _make_item(content_type="video", channel="짧은채널")
         widget = _build_widget(item, qapp, width=600)
@@ -270,7 +272,7 @@ class TestRecoversFullTextAfterWidthIncreases:
     다시는 더 넓은 폭을 받지 못하는 되먹임 루프에 갇힌다.
     """
 
-    def _narrow_then_wide(self, qapp, text: str):
+    def _narrow_then_wide(self, qapp, text: str) -> tuple[QWidget, ElidingLabel]:
         """ElidingLabel을 좁은 컨테이너에서 잘리게 만든 뒤 넓힌다.
 
         (#244 카드 재설계 후속) 카드 안에서는 이 전제를 더는 만들 수 없다 —
@@ -334,14 +336,14 @@ class TestRecoversFullTextAfterWidthIncreases:
         # 죽는다(libshiboken RuntimeError로 실측).
         return host, label
 
-    def test_file_size_text_recovers_when_widened_after_being_narrow(self, qapp):
+    def test_file_size_text_recovers_when_widened_after_being_narrow(self, qapp) -> None:
         container, label = self._narrow_then_wide(qapp, "1.24 GB")
         assert "1.24 GB" in _rendered(label), (
             "컨테이너를 넓혔는데도 파일 크기가 회복되지 않았다 — "
             "sizeHint()가 표시 중인(이미 elide된) 텍스트 기준으로 계산되고 있을 가능성"
         )
 
-    def test_status_text_recovers_when_widened_after_being_narrow(self, qapp):
+    def test_status_text_recovers_when_widened_after_being_narrow(self, qapp) -> None:
         container, label = self._narrow_then_wide(qapp, "00:05:12")
         assert "00:05:12" in _rendered(label), (
             "컨테이너를 넓혔는데도 상태 문구가 회복되지 않았다"

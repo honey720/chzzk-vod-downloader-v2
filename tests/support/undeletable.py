@@ -41,13 +41,13 @@ class Undeletable:
         self._blocked.clear()
         self._replace_blocked.clear()
 
-    def _remove(self, path, *args, **kwargs):
+    def _remove(self, path, *args, **kwargs) -> None:
         if _key(path) in self._blocked:
             self.refused.append(str(path))
             raise PermissionError(13, "시험 — 지울 수 없다", str(path))
         return self._real_remove(path, *args, **kwargs)
 
-    def _replace(self, src, dst, *args, **kwargs):
+    def _replace(self, src, dst, *args, **kwargs) -> None:
         if _key(dst) in self._replace_blocked:
             self.replace_refused.append(str(dst))
             raise PermissionError(13, "시험 — 그 자리에 둘 수 없다", str(dst))

@@ -12,6 +12,8 @@
 """
 
 import os
+from collections.abc import Iterator
+from typing import Self
 from types import SimpleNamespace
 
 import pytest
@@ -70,7 +72,7 @@ def _ranged(host: RangeHost) -> list[str]:
 # ================================================================ 플레이리스트 · 초기화 세그먼트
 
 
-def test_fetch_fmp4_head_requests_playlist_and_init_once_each(monkeypatch):
+def test_fetch_fmp4_head_requests_playlist_and_init_once_each(monkeypatch) -> None:
     """fetch_fmp4_head는 플레이리스트와 초기화 세그먼트를 한 번씩 받아 해석해야 한다.
 
     EXT-X-MAP "init.mp4"와 세그먼트 둘이 있는 플레이리스트
@@ -90,7 +92,7 @@ def test_fetch_fmp4_head_requests_playlist_and_init_once_each(monkeypatch):
     assert head.segments == {}
 
 
-def test_fetch_fmp4_head_rejects_playlist_without_init_segment(monkeypatch):
+def test_fetch_fmp4_head_rejects_playlist_without_init_segment(monkeypatch) -> None:
     """fetch_fmp4_head는 EXT-X-MAP이 없는 플레이리스트를 fMP4가 아니라는 키로 거부해야 한다.
 
     세그먼트만 있는 플레이리스트(MPEG-TS 모양)
@@ -104,7 +106,7 @@ def test_fetch_fmp4_head_rejects_playlist_without_init_segment(monkeypatch):
     assert info.value.message_key == HLS_NOT_FMP4
 
 
-def test_fetch_fmp4_head_rejects_playlist_whose_init_segment_changes(monkeypatch):
+def test_fetch_fmp4_head_rejects_playlist_whose_init_segment_changes(monkeypatch) -> None:
     """fetch_fmp4_head는 EXT-X-MAP이 중간에 바뀌는 플레이리스트를 거부해야 한다.
 
     EXT-X-MAP "one.mp4" 뒤에 세그먼트, 다시 EXT-X-MAP "two.mp4" 뒤에 세그먼트
@@ -146,7 +148,7 @@ def _vod(monkeypatch, segments: dict[str, bytes]) -> tuple[RangeHost, str]:
     return host, host.url("v/media.m3u8")
 
 
-def test_segment_frames_reads_every_moof_with_one_whole_request(monkeypatch, tmp_path):
+def test_segment_frames_reads_every_moof_with_one_whole_request(monkeypatch, tmp_path) -> None:
     """segment_frames는 세그먼트를 범위 머리 없는 요청 한 번으로 받아 그 안의 moof를 모두 읽어야 한다.
 
     moof 둘(사이에 emsg)인 세그먼트 하나 — 영상 4샘플 + 2샘플
@@ -163,7 +165,7 @@ def test_segment_frames_reads_every_moof_with_one_whole_request(monkeypatch, tmp
     assert segment == parse_media_segment(data, head.init)
 
 
-def test_segment_frames_keeps_the_segment_in_the_segment_folder(monkeypatch, tmp_path):
+def test_segment_frames_keeps_the_segment_in_the_segment_folder(monkeypatch, tmp_path) -> None:
     """segment_frames는 받은 세그먼트를 segment_dir에 엔진과 같은 이름으로 두고 stored에 적어야 한다.
 
     세그먼트 셋인 플레이리스트, segment_dir 지정, 1번(둘째) 세그먼트를 읽음
@@ -181,7 +183,7 @@ def test_segment_frames_keeps_the_segment_in_the_segment_folder(monkeypatch, tmp
     assert head.stored == {1}
 
 
-def test_segment_frames_keeps_nothing_without_a_segment_folder(monkeypatch, tmp_path):
+def test_segment_frames_keeps_nothing_without_a_segment_folder(monkeypatch, tmp_path) -> None:
     """segment_frames는 segment_dir이 없으면 프레임 정보만 읽고 본문은 남기지 않아야 한다.
 
     segment_dir 없이 만든 Fmp4Head, 0번 세그먼트를 읽음
@@ -196,7 +198,7 @@ def test_segment_frames_keeps_nothing_without_a_segment_folder(monkeypatch, tmp_
     assert head.stored == set()
 
 
-def test_segment_frames_requests_each_segment_only_once(monkeypatch, tmp_path):
+def test_segment_frames_requests_each_segment_only_once(monkeypatch, tmp_path) -> None:
     """segment_frames는 한 번 받은 세그먼트를 보관해 두고 다시 요청하지 않아야 한다.
 
     세그먼트 둘인 플레이리스트, 0번을 두 번 · 1번을 한 번 요청
@@ -225,7 +227,7 @@ def test_segment_frames_requests_each_segment_only_once(monkeypatch, tmp_path):
 @pytest.mark.parametrize("folder", [True, False], ids=["with-folder", "without-folder"])
 def test_segment_frames_rejects_a_truncated_segment_and_keeps_no_file(
     monkeypatch, tmp_path, folder
-):
+) -> None:
     """segment_frames는 서버가 잘린 세그먼트를 주면 잘림 오류로 실패하고 그 파일을 남기지 않아야 한다.
 
     mdat 도중에서 잘린 세그먼트(상자가 말하는 끝 > 본문 길이)
@@ -243,7 +245,9 @@ def test_segment_frames_rejects_a_truncated_segment_and_keeps_no_file(
     assert (head.stored, head.segments) == (set(), {})
 
 
-def test_segment_frames_never_sends_a_range_request_to_a_truncating_cache(monkeypatch, tmp_path):
+def test_segment_frames_never_sends_a_range_request_to_a_truncating_cache(
+    monkeypatch, tmp_path
+) -> None:
     """segment_frames는 범위 요청에 잘린 본문을 주고 그것을 캐시하는 서버에서도 온전한 세그먼트를 받아야 한다.
 
     truncating_cache를 켠 호스트, 세그먼트 둘을 읽음
@@ -264,7 +268,7 @@ def test_segment_frames_never_sends_a_range_request_to_a_truncating_cache(monkey
     assert (folder / "2.m4v").read_bytes() == segments["b.m4s"]
 
 
-def test_truncating_cache_host_poisons_a_file_after_a_range_request(monkeypatch):
+def test_truncating_cache_host_poisons_a_file_after_a_range_request(monkeypatch) -> None:
     """truncating_cache를 켠 호스트는 캐시에 없는 파일의 범위 요청에 200과 잘린 본문으로 답하고, 그 뒤의 전체 요청에도 잘린 본문을 줘야 한다.
 
     1,000바이트 파일 둘. a: 범위 0-99 요청 뒤 전체 요청 / b: 전체 요청 뒤 범위 0-99 요청 뒤 전체 요청
@@ -284,7 +288,7 @@ def test_truncating_cache_host_poisons_a_file_after_a_range_request(monkeypatch)
     assert host.truncated() == ["a"]
 
 
-def test_read_segment_file_reads_the_frames_of_a_stored_segment(tmp_path):
+def test_read_segment_file_reads_the_frames_of_a_stored_segment(tmp_path) -> None:
     """read_segment_file은 받아 둔 세그먼트 파일의 프레임 정보를 돌려줘야 한다.
 
     moof 둘짜리 세그먼트를 그대로 쓴 파일
@@ -307,7 +311,7 @@ def test_read_segment_file_reads_the_frames_of_a_stored_segment(tmp_path):
         (10, 0, "01.m4v"),
     ],
 )
-def test_segment_file_name_matches_the_name_the_engine_writes(count, index, expected):
+def test_segment_file_name_matches_the_name_the_engine_writes(count, index, expected) -> None:
     """segment_file_name은 세그먼트 번호(1부터)를 세그먼트 수의 자릿수만큼 0으로 채운 이름을 돌려줘야 한다.
 
     주석의 경우마다 (세그먼트 수, 인덱스)
@@ -316,7 +320,7 @@ def test_segment_file_name_matches_the_name_the_engine_writes(count, index, expe
     assert segment_file_name(count, index) == expected
 
 
-def test_download_segment_rejects_a_body_shorter_than_content_length(monkeypatch, tmp_path):
+def test_download_segment_rejects_a_body_shorter_than_content_length(monkeypatch, tmp_path) -> None:
     """download_segment는 받은 길이가 서버가 말한 Content-Length와 다르면 잘림 오류로 실패하고 파일을 남기지 않아야 한다.
 
     Content-Length 100인데 본문은 60바이트인 응답
@@ -326,16 +330,16 @@ def test_download_segment_rejects_a_body_shorter_than_content_length(monkeypatch
     class Short:
         headers = {"Content-Length": "100"}
 
-        def __enter__(self):
+        def __enter__(self) -> Self:
             return self
 
-        def __exit__(self, *args):
+        def __exit__(self, *args) -> bool:
             return False
 
-        def raise_for_status(self):
+        def raise_for_status(self) -> None:
             pass
 
-        def iter_content(self, chunk_size):
+        def iter_content(self, chunk_size) -> Iterator[bytes]:
             yield bytes(60)
 
     session = SimpleNamespace(get=lambda url, **kwargs: Short())
@@ -347,7 +351,9 @@ def test_download_segment_rejects_a_body_shorter_than_content_length(monkeypatch
     assert os.listdir(tmp_path) == []
 
 
-def test_download_segment_rejects_a_body_that_ends_right_after_a_moof(monkeypatch, tmp_path):
+def test_download_segment_rejects_a_body_that_ends_right_after_a_moof(
+    monkeypatch, tmp_path
+) -> None:
     """download_segment는 본문이 moof 바로 뒤에서 끝나면 잘림 오류로 실패하고 파일을 남기지 않아야 한다.
 
     moof 하나 · mdat 하나인 세그먼트에서 mdat를 통째로 뺀 본문(상자 크기의 합 == 본문 길이)

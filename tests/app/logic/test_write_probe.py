@@ -10,6 +10,7 @@ downloadItem 연동은 실제 모델·뷰·시그널 배선으로 검증한다 (
 """
 
 import threading
+from collections.abc import Iterator
 
 import pytest
 
@@ -18,40 +19,41 @@ from app.viewmodels.data import ContentItem
 from app.viewmodels.content_viewmodel import ContentViewModel, probe_writable
 from app.widgets.view import ContentListView
 from core.models.download_state import DownloadState
+from typing import Never
 
 
 @pytest.fixture(autouse=True)
-def no_network(monkeypatch):
+def no_network(monkeypatch) -> None:
     """위젯의 썸네일·파일 크기 조회 스레드가 실네트워크에 나가지 않게 차단한다."""
 
     class _FailingSession:
-        def head(self, *args, **kwargs):
+        def head(self, *args, **kwargs) -> Never:
             raise RuntimeError("network disabled in tests")
 
-        def get(self, *args, **kwargs):
+        def get(self, *args, **kwargs) -> Never:
             raise RuntimeError("network disabled in tests")
 
     monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
 
 
 class TestProbeWritable:
-    def test_writable_directory_passes_and_leaves_no_residue(self, tmp_path):
+    def test_writable_directory_passes_and_leaves_no_residue(self, tmp_path) -> None:
         assert probe_writable(str(tmp_path)) == (True, "")
         assert list(tmp_path.iterdir()) == []  # 프로브 파일 잔재 없음
 
-    def test_missing_directory(self, tmp_path):
+    def test_missing_directory(self, tmp_path) -> None:
         assert probe_writable(str(tmp_path / "없는폴더")) == (False, "missing")
 
-    def test_permission_error_is_denied(self, tmp_path, monkeypatch):
+    def test_permission_error_is_denied(self, tmp_path, monkeypatch) -> None:
         """권한 오류가 정상적으로 오류로 반환되는 경우 (예: 로컬 읽기 전용)."""
 
-        def deny(*args, **kwargs):
+        def deny(*args, **kwargs) -> Never:
             raise PermissionError(13, "Permission denied")
 
         monkeypatch.setattr(cvm_mod.tempfile, "mkstemp", deny)
         assert probe_writable(str(tmp_path)) == (False, "denied")
 
-    def test_hanging_io_times_out(self, tmp_path, monkeypatch):
+    def test_hanging_io_times_out(self, tmp_path, monkeypatch) -> None:
         """무응답 마운트 흉내 — 파일 생성 호출이 반환하지 않으면 상한에서 포기한다.
 
         RaiDrive가 SFTP 권한 오류(ZFS 풀 루트)를 Windows 오류로 전파하지
@@ -60,7 +62,7 @@ class TestProbeWritable:
         """
         release = threading.Event()
 
-        def hang(*args, **kwargs):
+        def hang(*args, **kwargs) -> Never:
             release.wait(5)  # 반환하지 않는 I/O 흉내
             raise PermissionError(13, "belated")
 
@@ -98,7 +100,7 @@ def _make_item(download_path: str, title: str) -> ContentItem:
 
 
 @pytest.fixture
-def manager(qapp):
+def manager(qapp) -> Iterator[tuple[ContentViewModel, ContentListView]]:
     view = ContentListView()
     m = ContentViewModel()
     view.bind(m)
@@ -108,7 +110,7 @@ def manager(qapp):
 
 
 class TestDownloadItemWriteGate:
-    def test_unwritable_path_fails_before_start(self, manager, qapp, tmp_path, monkeypatch):
+    def test_unwritable_path_fails_before_start(self, manager, qapp, tmp_path, monkeypatch) -> None:
         """완료 조건: 쓰기 불가 경로는 다운로드 시작 전에 카드 실패로 끝난다."""
         m, view = manager
         # 프로브 판정 자체는 위 단위 테스트가 고정한다 — 여기서는 배선만 본다
@@ -134,7 +136,7 @@ class TestDownloadItemWriteGate:
         assert widget.statusLabel.text() == "✕ Failed to save file · check the path and disk space"
         assert widget.statusLabel.toolTip() == item.stateMessage
 
-    def test_timeout_probe_fails_the_same_way(self, manager, qapp, tmp_path, monkeypatch):
+    def test_timeout_probe_fails_the_same_way(self, manager, qapp, tmp_path, monkeypatch) -> None:
         """무응답(timeout)도 같은 안내다 — 유저에게는 '저장할 수 없는 경로'라는 같은 사실."""
         m, _view = manager
         monkeypatch.setattr(cvm_mod, "probe_writable", lambda d: (False, "timeout"))
@@ -147,7 +149,7 @@ class TestDownloadItemWriteGate:
         assert item.downloadState is DownloadState.FAILED
         assert item.stateMessage.startswith("Failed to save file · check the path and disk space\n")
 
-    def test_missing_path_keeps_invalid_path_message(self, manager, qapp, tmp_path):
+    def test_missing_path_keeps_invalid_path_message(self, manager, qapp, tmp_path) -> None:
         """존재하지 않는 경로는 기존 안내(Invalid file path)를 유지한다 — 실프로브 경유."""
         m, _view = manager
         item = _make_item(str(tmp_path / "없는폴더"), "경로 없음 항목")
@@ -159,7 +161,7 @@ class TestDownloadItemWriteGate:
         assert item.downloadState is DownloadState.FAILED
         assert item.stateMessage == "Invalid file path"
 
-    def test_writable_path_proceeds_to_download(self, manager, qapp, tmp_path):
+    def test_writable_path_proceeds_to_download(self, manager, qapp, tmp_path) -> None:
         """완료 조건: 정상 경로는 회귀 없음 — 실프로브를 지나 다운로드 요청이 나간다."""
         m, _view = manager
         item = _make_item(str(tmp_path), "정상 항목")

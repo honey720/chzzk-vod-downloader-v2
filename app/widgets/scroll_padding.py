@@ -21,7 +21,7 @@ class ScrollBarPadding(QObject):
     ``right``를 바의 폭 이상으로 준다.
     """
 
-    def __init__(self, area: QAbstractScrollArea, layout: QLayout, right: int):
+    def __init__(self, area: QAbstractScrollArea, layout: QLayout, right: int) -> None:
         """
         Args:
             area: 세로 스크롤바를 가진 스크롤 영역 — 이 객체의 부모가 된다

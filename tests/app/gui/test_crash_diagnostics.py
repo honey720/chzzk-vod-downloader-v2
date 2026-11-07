@@ -10,6 +10,9 @@ import subprocess
 import sys
 import textwrap
 import threading
+from collections.abc import Iterator
+from pathlib import Path
+from typing import IO, Any
 
 import pytest
 from PySide6.QtCore import QTimer
@@ -132,14 +135,14 @@ def _read(path) -> str:
 
 
 @pytest.fixture
-def crashed(tmp_path):
+def crashed(tmp_path) -> Path:
     """별도 프로세스에서 충돌 진단을 켠 뒤 일부러 충돌시킨다 — 그 로그 폴더."""
     done = _run(tmp_path, _CRASH)
     assert done.returncode != 0, "전제: 프로세스가 충돌로 끝났다"
     return tmp_path / "logs"
 
 
-def test_native_crash_leaves_every_threads_stack_in_the_crash_file(crashed):
+def test_native_crash_leaves_every_threads_stack_in_the_crash_file(crashed) -> None:
     """충돌 진단을 켠 프로세스가 네이티브 충돌로 끝나면 crash.log에 모든 스레드의 스택이 남아야 한다.
 
     별도 프로세스: install_crash_diagnostics → 기다리는 스레드 하나 → crash_here_for_test()에서
@@ -156,7 +159,7 @@ def test_native_crash_leaves_every_threads_stack_in_the_crash_file(crashed):
 
 def test_next_start_moves_the_crash_record_to_the_app_log_with_the_home_folder_hidden(
     crashed, tmp_path
-):
+) -> None:
     """충돌 뒤 다음 시작은 충돌 기록을 가려서 앱 로그로 옮기고 crash.log를 비워야 한다.
 
     위 충돌 뒤 별도 프로세스: setup_logging(같은 로그 폴더) → install_crash_diagnostics → 정상 종료
@@ -176,7 +179,7 @@ def test_next_start_moves_the_crash_record_to_the_app_log_with_the_home_folder_h
     assert _read(crashed / CRASH_FILE_NAME) == ""
 
 
-def test_next_start_hides_an_escaped_non_ascii_home_in_the_crash_record(tmp_path):
+def test_next_start_hides_an_escaped_non_ascii_home_in_the_crash_record(tmp_path) -> None:
     r"""홈 폴더 이름이 비ASCII면 충돌 기록에 이스케이프로 적힌 홈 경로도 앱 로그에서 가려져야 한다.
 
     홈 폴더 이름 "테스터"인 별도 프로세스가 충돌(crash.log에 \ud14c\uc2a4\ud130) → 같은 홈으로 다음 시작
@@ -197,7 +200,7 @@ def test_next_start_hides_an_escaped_non_ascii_home_in_the_crash_record(tmp_path
 
 def test_app_start_logs_an_unhandled_exception_to_the_app_log_with_the_home_folder_hidden(
     tmp_path,
-):
+) -> None:
     """앱 시작 경로(setup_logging → install_crash_diagnostics) 뒤 처리되지 않은 예외는 app.log에 가려져 남아야 한다.
 
     별도 프로세스: 위 두 함수를 부른 뒤 최상위에서 ValueError("<홈 폴더>/unhandled-marker.mp4")
@@ -212,7 +215,7 @@ def test_app_start_logs_an_unhandled_exception_to_the_app_log_with_the_home_fold
     assert _fake_home(tmp_path) not in app_log
 
 
-def test_empty_crash_record_leaves_nothing_in_the_app_log(tmp_path, caplog):
+def test_empty_crash_record_leaves_nothing_in_the_app_log(tmp_path, caplog) -> None:
     """앞 실행이 정상으로 끝나 충돌 기록이 비어 있으면 앱 로그에 아무것도 남기지 않아야 한다.
 
     빈 crash.log -> carry_over_previous_crash가 True(비워도 된다), 이 모듈의 로그 레코드 0개
@@ -229,7 +232,9 @@ def test_empty_crash_record_leaves_nothing_in_the_app_log(tmp_path, caplog):
     assert [r for r in caplog.records if r.name == "app.system.crash_diagnostics"][1:] == []
 
 
-def test_crash_record_longer_than_the_limit_drops_the_line_cut_at_the_limit(tmp_path, caplog):
+def test_crash_record_longer_than_the_limit_drops_the_line_cut_at_the_limit(
+    tmp_path, caplog
+) -> None:
     """옮길 상한(64KiB)보다 긴 충돌 기록은 상한에서 잘린 끝 줄을 옮기지 않고 잘렸다고 적어야 한다.
 
     crash.log = "a" 줄들로 상한 10자 앞까지 채우고, 그 뒤에 홈 폴더 경로가 든 줄이 상한을 넘어 이어짐
@@ -252,7 +257,7 @@ def test_crash_record_longer_than_the_limit_drops_the_line_cut_at_the_limit(tmp_
     assert message.endswith(f"(cut at {limit} characters)")
 
 
-def test_unreadable_crash_record_is_kept_instead_of_cleared(tmp_path, monkeypatch):
+def test_unreadable_crash_record_is_kept_instead_of_cleared(tmp_path, monkeypatch) -> None:
     """앞 충돌 기록을 읽지 못하면 그 기록을 비우지 않고 이번 실행의 기록을 그 뒤에 이어야 한다.
 
     crash.log = "old record", 그 파일을 읽으려 하면 PermissionError(쓰기는 된다). faulthandler 연결은
@@ -265,7 +270,7 @@ def test_unreadable_crash_record_is_kept_instead_of_cleared(tmp_path, monkeypatc
     path.write_text("old record", encoding="ascii")
     real_open = open
 
-    def refusing_read(file, mode="r", *args, **kwargs):
+    def refusing_read(file, mode="r", *args, **kwargs) -> IO[Any]:
         if mode == "r" and os.fspath(file) == str(path):
             raise PermissionError("시험 — 읽을 수 없다")
         return real_open(file, mode, *args, **kwargs)
@@ -285,7 +290,7 @@ def test_unreadable_crash_record_is_kept_instead_of_cleared(tmp_path, monkeypatc
 
 
 @pytest.fixture
-def hooked(monkeypatch):
+def hooked(monkeypatch) -> Iterator[io.StringIO]:
     """예외 훅을 건다 — 테스트가 끝나면 원래 훅으로 되돌린다. 이 모듈의 로그를 가리는 포매터로 받는다."""
     monkeypatch.setattr(sys, "excepthook", sys.excepthook)
     monkeypatch.setattr(threading, "excepthook", threading.excepthook)
@@ -300,7 +305,9 @@ def hooked(monkeypatch):
 
 
 @pytest.mark.qt_no_exception_capture  # 앞의 훅이 pytest-qt의 것이면 그 훅이 테스트를 실패시킨다
-def test_unhandled_exception_on_the_main_thread_is_logged_with_the_home_folder_hidden(hooked):
+def test_unhandled_exception_on_the_main_thread_is_logged_with_the_home_folder_hidden(
+    hooked,
+) -> None:
     """메인 스레드의 처리되지 않은 예외는 앱 로그에 남고 그 글의 홈 폴더 경로는 가려져야 한다.
 
     sys.excepthook에 ValueError("<홈 폴더>/x.mp4를 열지 못했다")
@@ -319,7 +326,7 @@ def test_unhandled_exception_on_the_main_thread_is_logged_with_the_home_folder_h
 @pytest.mark.filterwarnings(
     "ignore::pytest.PytestUnhandledThreadExceptionWarning"
 )  # 앞의 훅이 pytest의 것
-def test_unhandled_exception_in_another_thread_is_logged_with_the_thread_name(hooked):
+def test_unhandled_exception_in_another_thread_is_logged_with_the_thread_name(hooked) -> None:
     """다른 스레드의 처리되지 않은 예외는 스레드 이름과 함께 앱 로그에 남고 홈 폴더 경로는 가려져야 한다.
 
     "fetch-worker" 스레드가 RuntimeError("<홈 폴더>/y를 쓰지 못했다")
@@ -340,7 +347,7 @@ def test_unhandled_exception_in_another_thread_is_logged_with_the_thread_name(ho
 
 
 @pytest.mark.qt_no_exception_capture
-def test_exception_in_a_qt_slot_reaches_the_main_hook(hooked, qtbot):
+def test_exception_in_a_qt_slot_reaches_the_main_hook(hooked, qtbot) -> None:
     """Qt 이벤트 처리 중(타이머 슬롯) 난 예외도 처리되지 않은 예외로 앱 로그에 남아야 한다.
 
     QTimer.singleShot(0, 예외를 내는 함수) — pytest-qt의 예외 가로채기는 끈다
@@ -357,7 +364,7 @@ def test_exception_in_a_qt_slot_reaches_the_main_hook(hooked, qtbot):
 
 
 @pytest.mark.parametrize("value", [None, "0", "true"], ids=["unset", "zero", "true"])
-def test_debug_crash_does_nothing_unless_the_variable_is_one(tmp_path, monkeypatch, value):
+def test_debug_crash_does_nothing_unless_the_variable_is_one(tmp_path, monkeypatch, value) -> None:
     """CVDV2_DEBUG_CRASH가 없거나 "1"이 아니면 시험용 충돌 경로는 아무것도 하지 않아야 한다.
 
     별도 프로세스: install_crash_diagnostics → crash_if_requested → "still running" 출력. 변수는 주석의 값
@@ -373,7 +380,7 @@ def test_debug_crash_does_nothing_unless_the_variable_is_one(tmp_path, monkeypat
     assert _read(tmp_path / "logs" / CRASH_FILE_NAME) == ""
 
 
-def test_debug_crash_with_the_variable_set_leaves_a_crash_record(tmp_path):
+def test_debug_crash_with_the_variable_set_leaves_a_crash_record(tmp_path) -> None:
     """CVDV2_DEBUG_CRASH=1이면 시험용 충돌 경로가 충돌하고 crash.log에 그 스택이 남아야 한다.
 
     별도 프로세스: install_crash_diagnostics → crash_if_requested, CVDV2_DEBUG_CRASH=1

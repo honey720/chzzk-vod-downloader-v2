@@ -11,24 +11,24 @@ from app.viewmodels.path_gates import normalize_path
 
 
 class TestNormalizePath:
-    def test_absolute_path_is_unchanged(self, tmp_path):
+    def test_absolute_path_is_unchanged(self, tmp_path) -> None:
         absolute = str(tmp_path)
         assert normalize_path(absolute) == absolute
 
-    def test_idempotent(self, tmp_path):
+    def test_idempotent(self, tmp_path) -> None:
         absolute = str(tmp_path)
         assert normalize_path(normalize_path(absolute)) == normalize_path(absolute)
 
-    def test_empty_string_passes_through_unchanged(self):
+    def test_empty_string_passes_through_unchanged(self) -> None:
         """빈 문자열은 '미설정'이라는 별개 의미다 — cwd로 바뀌면 안 된다."""
         assert normalize_path("") == ""
 
-    def test_relative_path_resolved_against_cwd(self, tmp_path, monkeypatch):
+    def test_relative_path_resolved_against_cwd(self, tmp_path, monkeypatch) -> None:
         monkeypatch.chdir(tmp_path)
         assert normalize_path("relative dir") == os.path.abspath("relative dir")
         assert os.path.isabs(normalize_path("relative dir"))
 
-    def test_user_home_expanded(self, monkeypatch, tmp_path):
+    def test_user_home_expanded(self, monkeypatch, tmp_path) -> None:
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.setenv("USERPROFILE", str(tmp_path))
         result = normalize_path(os.path.join("~", "downloads"))

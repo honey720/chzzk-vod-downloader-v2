@@ -3,6 +3,8 @@
 시계와 대기를 바꿔 끼워 루프를 그대로 돌린다 — 대기는 실제로 자지 않고 가짜 시계를 옮긴다.
 """
 
+from collections.abc import Callable
+
 import pytest
 
 from core.sources.file_downloader import FileDownloader
@@ -12,7 +14,7 @@ WORK = 0.19  # 틱 하나의 일(속도 측정)에 드는 시간(초)으로 흉�
 
 
 class Clock:
-    def __init__(self):
+    def __init__(self) -> None:
         self.now = 100.0
 
     def __call__(self) -> float:
@@ -22,7 +24,7 @@ class Clock:
 class SleepingStop:
     """정지 신호 대체 — wait는 자는 대신 시계를 그만큼 옮긴다."""
 
-    def __init__(self, clock: Clock):
+    def __init__(self, clock: Clock) -> None:
         self._clock = clock
         self._stopped = False
 
@@ -40,7 +42,7 @@ class SleepingStop:
 class PausedOnce:
     """일시정지 Event 대체 — 한 번 '정지 중'으로 보였다가, wait가 seconds만큼 시계를 옮기고 풀린다."""
 
-    def __init__(self, clock: Clock, seconds: float):
+    def __init__(self, clock: Clock, seconds: float) -> None:
         self._clock = clock
         self._seconds = seconds
         self._paused = True
@@ -55,14 +57,14 @@ class PausedOnce:
 
 
 class QuietLogger:
-    def __getattr__(self, name):
+    def __getattr__(self, name) -> Callable[..., None]:
         return lambda *args, **kwargs: None
 
 
 class Loop:
     """관측 루프를 가짜 시계로 돌리고, 조정이 불린 시각을 적는다."""
 
-    def __init__(self, ticks: int, work=lambda index: WORK):
+    def __init__(self, ticks: int, work=lambda index: WORK) -> None:
         data = DownloadData(
             base_url="https://example.invalid/video.mp4",
             vod_url="https://chzzk.naver.com/video/1",
@@ -103,7 +105,7 @@ class Loop:
         return [later - earlier for earlier, later in zip(self.measured_at, self.measured_at[1:])]
 
 
-def test_ticks_are_one_second_apart_whatever_the_work_takes():
+def test_ticks_are_one_second_apart_whatever_the_work_takes() -> None:
     """틱마다의 일에 시간이 들어도 틱 사이의 간격은 1초여야 한다.
 
     틱의 일 0.19초, 6틱 -> 간격 다섯 개가 모두 1.0초 (일한 시간만큼 늘어지면 1.19초다)
@@ -115,7 +117,7 @@ def test_ticks_are_one_second_apart_whatever_the_work_takes():
     assert loop.gaps() == pytest.approx([1.0] * 5)
 
 
-def test_each_tick_measures_the_speed_before_adjusting_the_threads():
+def test_each_tick_measures_the_speed_before_adjusting_the_threads() -> None:
     """틱마다 속도를 먼저 재고, 그 값으로 스레드를 조정한 뒤, 진행을 알려야 한다.
 
     2틱 -> 부른 순서: 측정, 조정, 통지, 측정, 조정, 통지
@@ -132,7 +134,7 @@ def test_each_tick_measures_the_speed_before_adjusting_the_threads():
     assert order == ["측정", "조정", "통지"] * 2
 
 
-def test_a_tick_that_overruns_is_followed_by_a_full_period_not_a_burst():
+def test_a_tick_that_overruns_is_followed_by_a_full_period_not_a_burst() -> None:
     """틱 하나가 주기보다 오래 걸리면, 밀린 틱을 몰아서 돌지 않고 그때부터 1초 뒤에 다음 틱을 돌아야 한다.
 
     둘째 틱의 일만 3.2초, 나머지는 0.19초, 5틱
@@ -145,7 +147,7 @@ def test_a_tick_that_overruns_is_followed_by_a_full_period_not_a_burst():
     assert loop.gaps() == pytest.approx([1.0, 4.2, 1.0, 1.0])
 
 
-def test_pause_is_measured_once_and_the_next_tick_comes_a_period_after_the_resume():
+def test_pause_is_measured_once_and_the_next_tick_comes_a_period_after_the_resume() -> None:
     """일시정지에서 풀리면 재개 측정을 한 번 하고, 그때부터 1초 뒤에 다음 틱을 돌아야 한다.
 
     첫 대기 뒤 300초 일시정지 → 재개, 그 뒤 3틱
@@ -162,7 +164,7 @@ def test_pause_is_measured_once_and_the_next_tick_comes_a_period_after_the_resum
     assert loop.gaps() == pytest.approx([1.0, 1.0])
 
 
-def test_paused_seconds_are_taken_out_of_the_thread_adjust_timers():
+def test_paused_seconds_are_taken_out_of_the_thread_adjust_timers() -> None:
     """일시정지한 시간은 스레드 조정의 시각 기준에서 빠져야 한다 — 재개 직후 재탐침이 몰리지 않는다.
 
     조정기를 만든 뒤 300초 일시정지 → 재개

@@ -38,7 +38,7 @@ class RedirectingSession:
     "두 번째 주소에 쿠키가 갔는가"를 잰다.
     """
 
-    def __init__(self, first_url: str, location: str, final: MockResponse):
+    def __init__(self, first_url: str, location: str, final: MockResponse) -> None:
         self.first_url = first_url
         self.location = location
         self.final = final
@@ -47,7 +47,7 @@ class RedirectingSession:
         #: 실패하지 않고 앱이 멈춘다. 그래서 따로 기록해 "모든 홉이 받았다"를 단언한다
         self.timeouts: list = []
 
-    def get(self, url, **kwargs):
+    def get(self, url, **kwargs) -> MockResponse:
         self.calls.append((url, kwargs.get("cookies")))
         self.timeouts.append(kwargs.get("timeout"))
         if url == self.first_url:
@@ -60,7 +60,7 @@ class RedirectingSession:
 class BytesResponse(MockResponse):
     """키 응답 대역 — content 바이트."""
 
-    def __init__(self, content: bytes = b"0123456789abcdef"):
+    def __init__(self, content: bytes = b"0123456789abcdef") -> None:
         super().__init__(status_code=200)
         self.content = content
         self.headers = {}
@@ -72,23 +72,23 @@ class BytesResponse(MockResponse):
 class TestKeyRequestRejectsUntrustedAddress:
     """복호화 키: https가 아니거나 API 호스트가 아니면 요청 없이 거부한다."""
 
-    def test_http_key_uri_is_rejected_before_any_request(self):
+    def test_http_key_uri_is_rejected_before_any_request(self) -> None:
         with pytest.raises(requests.exceptions.InvalidURL):
             NetworkManager.get_aes_key(
                 "http://api.chzzk.naver.com/service/v1/encryption/videos/VID/aes_key", COOKIES
             )
 
-    def test_other_https_host_is_rejected_before_any_request(self):
+    def test_other_https_host_is_rejected_before_any_request(self) -> None:
         with pytest.raises(requests.exceptions.InvalidURL):
             NetworkManager.get_aes_key("https://keys.example.invalid/aes_key", COOKIES)
 
-    def test_rejection_message_carries_no_path_or_query(self):
+    def test_rejection_message_carries_no_path_or_query(self) -> None:
         """예외 메시지에는 스킴·호스트만 — 경로·질의(토큰이 섞일 수 있다)는 싣지 않는다."""
         with pytest.raises(requests.exceptions.InvalidURL) as info:
             NetworkManager.get_aes_key("https://keys.example.invalid/aes_key?token=SECRET", COOKIES)
         assert "SECRET" not in str(info.value) and "/aes_key" not in str(info.value)
 
-    def test_malformed_uri_is_rejected_as_invalid_url_without_echoing_it(self):
+    def test_malformed_uri_is_rejected_as_invalid_url_without_echoing_it(self) -> None:
         """쪼갤 수 없는 주소(urlsplit의 ValueError)도 InvalidURL — 기존 실패 사유 매핑을
         타야 한다. 어디까지가 호스트인지 알 수 없으므로 메시지에 주소를 아예 싣지 않는다."""
         malformed = "https://[bad/aes_key?token=SECRET"
@@ -100,7 +100,7 @@ class TestKeyRequestRejectsUntrustedAddress:
 class TestMasterPlaylistRequestRejectsHttp:
     """m3u8 마스터: https만 강제한다(호스트는 잠그지 않는다)."""
 
-    def test_http_path_is_rejected_before_any_request(self):
+    def test_http_path_is_rejected_before_any_request(self) -> None:
         with pytest.raises(requests.exceptions.InvalidURL):
             NetworkManager.get_video_m3u8_base_url(
                 _playback_json("http://vod-example.invalid/master.m3u8"), 1080, COOKIES
@@ -111,7 +111,7 @@ class TestMasterPlaylistRequestRejectsHttp:
 
 
 class TestTrustedAddressesStillWork:
-    def test_key_from_api_host_is_fetched_with_cookies(self, monkeypatch):
+    def test_key_from_api_host_is_fetched_with_cookies(self, monkeypatch) -> None:
         session = RedirectingSession(first_url="<none>", location="", final=BytesResponse())
         monkeypatch.setattr(network, "_session", session)
 
@@ -120,7 +120,7 @@ class TestTrustedAddressesStillWork:
         assert key == b"0123456789abcdef"
         assert session.calls == [(KEY_URI, COOKIES)]
 
-    def test_any_https_host_is_allowed_for_the_master_playlist(self, monkeypatch):
+    def test_any_https_host_is_allowed_for_the_master_playlist(self, monkeypatch) -> None:
         session = RedirectingSession(
             first_url="<none>", location="", final=MockResponse(text=PLAYLIST)
         )
@@ -138,7 +138,7 @@ class TestTrustedAddressesStillWork:
 class TestRedirectHopsAreCheckedBeforeCookiesAreSent:
     """허용된 첫 주소가 302로 다른 곳을 가리켜도, 그 홉이 검사를 못 넘으면 요청 자체가 없다."""
 
-    def test_key_redirect_to_another_host_gets_no_request_and_no_cookies(self, monkeypatch):
+    def test_key_redirect_to_another_host_gets_no_request_and_no_cookies(self, monkeypatch) -> None:
         leak_target = "https://keys.example.invalid/aes_key"
         session = RedirectingSession(first_url=KEY_URI, location=leak_target, final=BytesResponse())
         monkeypatch.setattr(network, "_session", session)
@@ -150,7 +150,9 @@ class TestRedirectHopsAreCheckedBeforeCookiesAreSent:
         assert session.calls == [(KEY_URI, COOKIES)]
         assert all(url != leak_target for url, _ in session.calls)
 
-    def test_master_playlist_redirect_to_http_gets_no_request_and_no_cookies(self, monkeypatch):
+    def test_master_playlist_redirect_to_http_gets_no_request_and_no_cookies(
+        self, monkeypatch
+    ) -> None:
         leak_target = "http://vod-example.invalid/glive/master.m3u8"
         session = RedirectingSession(
             first_url=MASTER, location=leak_target, final=MockResponse(text=PLAYLIST)
@@ -163,7 +165,7 @@ class TestRedirectHopsAreCheckedBeforeCookiesAreSent:
         assert session.calls == [(MASTER, COOKIES)]
         assert all(url != leak_target for url, _ in session.calls)
 
-    def test_key_redirect_within_the_api_host_is_followed_with_cookies(self, monkeypatch):
+    def test_key_redirect_within_the_api_host_is_followed_with_cookies(self, monkeypatch) -> None:
         """검사를 넘는 홉(같은 호스트·https)은 따라간다 — 쿠키는 그 홉에도 실린다."""
         hop = "https://api.chzzk.naver.com/service/v1/encryption/videos/VID/aes_key?rev=2"
         session = RedirectingSession(first_url=KEY_URI, location=hop, final=BytesResponse())

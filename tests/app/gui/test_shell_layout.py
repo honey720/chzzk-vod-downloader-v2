@@ -25,6 +25,8 @@
 합산한다 — 제품이 틀리면 테스트도 같이 틀리기 때문이다.
 """
 
+from collections.abc import Iterator
+
 import pytest
 from PySide6.QtCore import QMimeData, QPoint, QRect, QSize, Qt
 from PySide6.QtGui import QDragEnterEvent, QImage
@@ -36,13 +38,14 @@ from app.views.mainWindow import VodDownloader
 from app.viewmodels.data import ContentItem
 from core.models.download_state import DownloadState
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
+from typing import Never
 
 #: "넓은 창" = 창 최소폭 + 이만큼 — 절대 px 대신 창 최소폭에서 유도한다.
 WIDE_EXTRA = 800
 
 
 @pytest.fixture(autouse=True)
-def _apply_production_qss(qapp):
+def _apply_production_qss(qapp) -> None:
     """실제 전역 QSS·스타일을 태운다(폭은 QSS padding·폰트에 좌우된다). ⚠️ function scope 유지."""
     theme.set_color_scheme("dark")
     qapp.setStyle(hold_style(theme.build_style()))  # 참조 보관 — 이중 해제 우회 (#243)
@@ -51,7 +54,7 @@ def _apply_production_qss(qapp):
 
 
 @pytest.fixture(autouse=True)
-def _destroy_windows():
+def _destroy_windows() -> Iterator[None]:
     """테스트가 만든 최상위 창은 close()가 아니라 파괴한다 — 숨은 채 남으면 다음 setStyle이 죽는다(#248 CI)."""
     before = snapshot_top_levels()
     yield
@@ -59,15 +62,15 @@ def _destroy_windows():
 
 
 @pytest.fixture(autouse=True)
-def no_network(monkeypatch):
+def no_network(monkeypatch) -> None:
     """카드의 썸네일·크기 조회가 실호출로 새지 않게 세션을 막는다 — 호출되면 즉시 실패한다."""
 
     class _FailingSession:
-        def head(self, *a, **k):
+        def head(self, *a, **k) -> Never:
             """HEAD 요청은 금지 — 호출 자체가 테스트 실패다."""
             raise RuntimeError("network disabled in tests")
 
-        def get(self, *a, **k):
+        def get(self, *a, **k) -> Never:
             """GET 요청은 금지 — 호출 자체가 테스트 실패다."""
             raise RuntimeError("network disabled in tests")
 
@@ -196,7 +199,7 @@ class TestMinimumWidthIsTheContentMinimumRegardlessOfScreen:
     """
 
     @pytest.mark.parametrize("screen", SCREENS)
-    def test_minimum_width_equals_the_content_minimum(self, monkeypatch, screen):
+    def test_minimum_width_equals_the_content_minimum(self, monkeypatch, screen) -> None:
         """주입한 화면 크기가 무엇이든 최소폭 == 콘텐츠 최소폭(독립 합산)."""
         _fake_screen(monkeypatch, screen)
         win = _window()
@@ -210,7 +213,9 @@ class TestMinimumWidthIsTheContentMinimumRegardlessOfScreen:
             f"화면 {screen}px 주입: 창 최소폭 {win.minimumWidth()} ≠ 콘텐츠 최소폭 {content_min}"
         )
 
-    def test_minimum_width_does_not_move_between_a_small_and_a_large_screen(self, monkeypatch):
+    def test_minimum_width_does_not_move_between_a_small_and_a_large_screen(
+        self, monkeypatch
+    ) -> None:
         """같은 콘텐츠면 화면이 800이든 3440이든 최소폭은 같은 숫자다."""
         widths = {}
         for screen in SCREENS:
@@ -230,7 +235,7 @@ class TestInitialSizeRule:
     """
 
     @pytest.mark.parametrize("screen_w", (1366, 1536, 1707, 1920, 2560, 3440))
-    def test_width_is_the_ratio_capped_by_the_token(self, monkeypatch, screen_w):
+    def test_width_is_the_ratio_capped_by_the_token(self, monkeypatch, screen_w) -> None:
         """작업 영역 폭을 주입하면 초기 폭 = min(폭 × 0.45, 상한) (콘텐츠 최소 아래면 최소)."""
         _fake_screen(monkeypatch, screen_w, 800)
         win = _window()
@@ -244,7 +249,7 @@ class TestInitialSizeRule:
             f"작업 영역 {screen_w}px: 초기 크기 {win.size().toTuple()} ≠ ({expected}, {height})"
         )
 
-    def test_the_cap_wins_on_a_large_screen(self, monkeypatch):
+    def test_the_cap_wins_on_a_large_screen(self, monkeypatch) -> None:
         """3440 주입: 0.45면 1548인데 상한 토큰에서 멈춘다 — 비율은 선형이지만 적당한 첫 크기는 선형이 아니다."""
         _fake_screen(monkeypatch, 3440, 1440)
         cap = theme.METRICS["initialWidthMax"]
@@ -261,7 +266,7 @@ class TestInitialSizeRule:
         )
         assert win.maximumWidth() > cap, "상한은 첫 크기에만 걸린다 — 창 최대폭 제한이 아니다"
 
-    def test_the_ratio_wins_on_a_small_screen(self, monkeypatch):
+    def test_the_ratio_wins_on_a_small_screen(self, monkeypatch) -> None:
         """1366 주입: 0.45 → 614, 상한 아래이므로 비율값 그대로(콘텐츠 최소보다 크면)."""
         _fake_screen(monkeypatch, 1366, 768)
         win = _window()
@@ -278,7 +283,7 @@ class TestInitialSizeRule:
             f"작은 화면에서 비율이 반영되지 않았다: {win.width()} ≠ {expected}"
         )
 
-    def test_tiny_screen_is_clamped_up_to_the_minimum_width(self, monkeypatch):
+    def test_tiny_screen_is_clamped_up_to_the_minimum_width(self, monkeypatch) -> None:
         """비율값이 콘텐츠 최소 아래인 화면 주입: Qt가 최소폭으로 클램프한다(높이는 300 그대로).
 
         "작은 화면"을 절대 px(종전 800)로 박지 않는다 (#280) — 콘텐츠 최소폭은 글꼴에 따라
@@ -310,7 +315,7 @@ class TestInitialSizeRule:
         expected_h = max(300, win.minimumHeight())  # 비율(600×0.5)이 최소 높이(#492)보다 작으면 클램프
         assert win.height() == expected_h, f"초기 높이는 비율(600×0.5)이어야 한다: {win.height()}"
 
-    def test_minimum_height_does_not_follow_the_screen(self, monkeypatch):
+    def test_minimum_height_does_not_follow_the_screen(self, monkeypatch) -> None:
         """작업 영역 높이를 600 · 1440으로 주입해도 창 최소 높이가 같아야 한다.
 
         #251의 「최소 높이 = 작업 영역 높이 × 0.5」는 #492에서 계산값(세 바 + 카드 한 장)으로
@@ -326,7 +331,7 @@ class TestInitialSizeRule:
         assert heights[600] == heights[1440], f"최소 높이가 화면 높이를 따라 움직인다: {heights}"
         assert heights[1440] < 720, f"최소 높이가 아직 화면 비율(1440×0.5)이다: {heights}"
 
-    def test_screen_basis_is_the_available_geometry_not_the_full_screen(self, monkeypatch):
+    def test_screen_basis_is_the_available_geometry_not_the_full_screen(self, monkeypatch) -> None:
         """화면 기준은 availableGeometry(작업표시줄·독 제외)다 — 전체 화면(size())이면 창이 화면 밖으로 나간다.
 
         이음새(`_availableGeometry`)를 흉내 내지 않고 그 **안**의 화면 객체를 흉내 낸다 — 전체
@@ -334,11 +339,11 @@ class TestInitialSizeRule:
         """
 
         class _Screen:
-            def size(self):
+            def size(self) -> QSize:
                 """전체 화면 크기 — 작업 영역과 다르게 둔다."""
                 return QSize(2400, 1000)
 
-            def availableGeometry(self):
+            def availableGeometry(self) -> QRect:
                 """작업 영역 — 전체 화면보다 낮다. 폭 × 0.45가 초기 폭 상한(800)을 넘게 두어 초기 폭이
                 콘텐츠 최소폭(#495 헤더바 2줄 뒤 실제 화면 790 안팎)에 클램프되지 않게 한다 — 두 기준은
                 높이(900 vs 1000)로 가른다."""
@@ -346,12 +351,12 @@ class TestInitialSizeRule:
 
         class _App:
             @staticmethod
-            def primaryScreen():
+            def primaryScreen() -> "_Screen":
                 """주 화면은 위의 가짜 화면 하나."""
                 return _Screen()
 
             @staticmethod
-            def screenAt(point):
+            def screenAt(point) -> None:
                 """어느 점에도 화면이 없다고 답한다 — 주 화면 경로로 떨어진다."""
                 return None
 
@@ -375,7 +380,7 @@ class TestInitialSizeRule:
 class TestWindowMinimumWidthHasAContentFloor:
     """바닥 폭에서 레이아웃이 깨지지 않고, 바닥은 상수가 아니라 레이아웃에서 온다."""
 
-    def test_at_the_floor_nothing_overflows_its_frame(self, monkeypatch):
+    def test_at_the_floor_nothing_overflows_its_frame(self, monkeypatch) -> None:
         """바닥 폭에서 상단 버튼이 프레임 밖으로 나가지 않는다 — 800×600 실기에서 무너지던 그 증상."""
         _fake_screen(monkeypatch, 800)
         win = _window(cards=2)
@@ -411,7 +416,7 @@ class TestWindowMinimumWidthHasAContentFloor:
             "바닥 폭에서 열이 창보다 넓다(가로 스크롤이 필요한 상태)"
         )
 
-    def test_the_floor_is_asked_from_the_layout_not_a_constant(self, monkeypatch):
+    def test_the_floor_is_asked_from_the_layout_not_a_constant(self, monkeypatch) -> None:
         """콘텐츠가 넓어지면 바닥도 따라간다 — 하단 버튼을 (지금 바닥 + 300px)만큼 넓히면 콘텐츠 최소 계산이 바닥 + 300px 이상이어야 한다.
 
         하단바는 가장 넓은 칸이 아닐 수 있다(#495 — 헤더바 2줄 칩 줄이 더 넓다). 지금 바닥만큼 더 넓혀
@@ -440,7 +445,7 @@ class TestWindowMinimumWidthHasAContentFloor:
 
 class TestHorizontalScrollIsOnlyASafetyNet:
     @pytest.mark.parametrize("which", ("min", "mid", "wide"))
-    def test_no_scrollbar_at_any_ordinary_width(self, which):
+    def test_no_scrollbar_at_any_ordinary_width(self, which) -> None:
         """평소 폭(최소·중간·넓게) 어디서도 창 전체 스크롤바는 가로·세로 모두 보이지 않는다."""
         win = _window(cards=30)  # 세로 스크롤바가 떠 있는 상태여도 가로는 없어야 한다
         minimum = win.minimumWidth()
@@ -454,7 +459,9 @@ class TestHorizontalScrollIsOnlyASafetyNet:
             "창 전체 세로 스크롤은 없어야 한다(목록 것 하나뿐)"
         )
 
-    def test_scrollbar_appears_only_when_the_window_is_forced_narrower_than_the_content(self):
+    def test_scrollbar_appears_only_when_the_window_is_forced_narrower_than_the_content(
+        self,
+    ) -> None:
         """OS가 창을 콘텐츠보다 좁게 만드는 상황(접근성 배율로 콘텐츠 최소가 화면보다 큰 경우)."""
         win = _window(cards=3)
         win.show()
@@ -473,7 +480,7 @@ class TestHorizontalScrollIsOnlyASafetyNet:
         )
         assert hbar.maximum() == content_min - win.windowScrollArea.viewport().width()
 
-    def test_the_container_is_the_scroll_areas_only_child_and_holds_all_three(self):
+    def test_the_container_is_the_scroll_areas_only_child_and_holds_all_three(self) -> None:
         """contentColumn의 존재 이유 — QScrollArea는 자식 위젯을 하나만 받는다.
 
         상단바·목록·하단바가 그 하나(컨테이너) 안에 있어야 셋이 함께 스크롤 영역 안에서
@@ -495,7 +502,7 @@ class TestHorizontalScrollIsOnlyASafetyNet:
             "컨테이너는 창 폭을 그대로 채운다(폭 제한 없음)"
         )
 
-    def test_the_container_fills_the_window_at_every_width(self):
+    def test_the_container_fills_the_window_at_every_width(self) -> None:
         """폭 제한이 없다 — 어느 폭에서도 컨테이너와 상단바·목록·하단바가 창을 가득 채운다."""
         win = _window(cards=3)
         outer = theme.METRICS["outerMargin"]
@@ -545,7 +552,7 @@ class TestOverlaysLiveInTheContentArea:
     """드래그 반투명·빈 목록 안내는 카드 목록(콘텐츠 영역) 위에 그려진다 — 창 기준이 아니다."""
 
     @pytest.mark.parametrize("cards", (0, 3))
-    def test_overlay_rect_equals_the_list_rect_not_the_window(self, cards):
+    def test_overlay_rect_equals_the_list_rect_not_the_window(self, cards) -> None:
         """오버레이 사각형은 목록 사각형과 같다 — 창 사각형이 아니다(카드 유무 무관)."""
         win = _window(cards=cards)
         _at_width(win, win.minimumWidth() + WIDE_EXTRA)
@@ -557,7 +564,7 @@ class TestOverlaysLiveInTheContentArea:
             "전제: 목록은 창 전체가 아니다(상단바 아래, 하단바 위)"
         )
 
-    def test_drag_overlay_dims_the_list_but_not_the_margins(self):
+    def test_drag_overlay_dims_the_list_but_not_the_margins(self) -> None:
         """실제 렌더로 확인 — 드래그 중 어두워지는 픽셀은 목록 안에만 있고 목록 바깥 여백은 그대로다."""
         win = _window(cards=3)
         _at_width(win, win.minimumWidth() + WIDE_EXTRA)
@@ -576,7 +583,7 @@ class TestOverlaysLiveInTheContentArea:
             "목록 바깥 여백까지 어두워졌다 — 오버레이가 창 기준으로 그려졌다"
         )
 
-    def test_empty_hint_pixels_stay_within_the_list_rect(self):
+    def test_empty_hint_pixels_stay_within_the_list_rect(self) -> None:
         """빈 목록 안내 글자는 목록 사각형 안에만 찍힌다(글꼴 무관 — 위치만 본다)."""
         win = _window(cards=0)
         _at_width(win, win.minimumWidth() + WIDE_EXTRA)

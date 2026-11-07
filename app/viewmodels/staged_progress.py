@@ -28,7 +28,7 @@ class StagedProgress:
     단계를 더하려면(구간 없는 다운로드의 받기 → 합치기 등) 이름만 늘리면 된다.
     """
 
-    def __init__(self, stages: Sequence[str]):
+    def __init__(self, stages: Sequence[str]) -> None:
         """계산기를 만든다.
 
         Args:

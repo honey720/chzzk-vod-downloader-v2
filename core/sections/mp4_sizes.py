@@ -23,7 +23,7 @@
 
 import struct
 from bisect import bisect_left, bisect_right
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from fractions import Fraction
 from itertools import accumulate, islice
@@ -84,7 +84,7 @@ class _Track:
     시각"은 거기에 그 샘플의 (PTS − DTS)를 더한 값(색인의 ``presented``)이다.
     """
 
-    def __init__(self, data: bytes, time: _TimeTrack, boxes: dict[bytes, tuple[int, int]]):
+    def __init__(self, data: bytes, time: _TimeTrack, boxes: dict[bytes, tuple[int, int]]) -> None:
         self._data = data
         self._time = time
         self.count = time.count
@@ -370,7 +370,7 @@ class _FramePts:
     값을 미리 만들지 않는다. ``snap_to_frame`` · ``bisect``가 묻는 번호만 그때 계산한다.
     """
 
-    def __init__(self, video: _Track, hidden: int):
+    def __init__(self, video: _Track, hidden: int) -> None:
         self._video = video
         self._hidden = (
             hidden  # 편집 목록이 가린(표시 시각이 음수인) 샘플의 수 — 표시 순서의 맨 앞이다
@@ -401,7 +401,7 @@ class LightTables:
         Mp4Error: 조각난 mp4이거나 영상 트랙이 없는 등 색인도 만들 수 없는 경우
     """
 
-    def __init__(self, raw: Mp4Raw):
+    def __init__(self, raw: Mp4Raw) -> None:
         self._moov_range = raw.moov_range
         try:
             self._read(raw.moov)
@@ -645,7 +645,7 @@ class LightTables:
 
 
 @contextmanager
-def _translated():
+def _translated() -> Iterator[None]:
     """표를 읽다 난 낮은 수준의 예외를 "색인으로 넘긴다"로 바꾼다 — 손상된 표는 색인 쪽이 판정한다."""
     try:
         yield

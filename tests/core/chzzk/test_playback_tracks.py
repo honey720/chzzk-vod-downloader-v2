@@ -64,7 +64,9 @@ def _master(*variants: tuple[str, str]) -> str:
         (1080, 1280, 720, 720),  # 문자열이 아님 — 짧은 변
     ],
 )
-def test_track_resolution_follows_the_track_name_or_the_short_side(name, width, height, expected):
+def test_track_resolution_follows_the_track_name_or_the_short_side(
+    name, width, height, expected
+) -> None:
     """track_resolution은 이름이 `<숫자>p`면 그 숫자를, 아니면 짧은 변을 돌려줘야 한다.
 
     주석의 경우마다 (이름, 가로, 세로)
@@ -76,7 +78,7 @@ def test_track_resolution_follows_the_track_name_or_the_short_side(name, width, 
 # ================================================================ 트랙 읽기
 
 
-def test_playback_tracks_reads_each_track_in_order():
+def test_playback_tracks_reads_each_track_in_order() -> None:
     """playback_tracks는 첫 media의 encodingTrack을 등장 순서대로 읽어야 한다.
 
     트랙 둘 — "720p" 720x1280 60fps 3000000+192000, 이름·fps·비트레이트 없는 1280x720
@@ -108,7 +110,7 @@ def test_playback_tracks_reads_each_track_in_order():
     ]
 
 
-def test_playback_tracks_is_empty_without_encoding_tracks():
+def test_playback_tracks_is_empty_without_encoding_tracks() -> None:
     """encodingTrack이 없는 playback 정보에서는 빈 목록이어야 한다.
 
     {"media": [{"path": ...}]}
@@ -117,7 +119,7 @@ def test_playback_tracks_is_empty_without_encoding_tracks():
     assert playback_tracks('{"media": [{"path": "https://example.invalid/master.m3u8"}]}') == []
 
 
-def test_track_for_resolution_keeps_the_higher_video_bitrate_then_the_first():
+def test_track_for_resolution_keeps_the_higher_video_bitrate_then_the_first() -> None:
     """track_for_resolution은 해상도가 같은 트랙 중 영상 비트레이트가 높은 것, 같으면 먼저 나온 것을 골라야 한다.
 
     1080 셋(영상 4000000 · 6000000 · 6000000), 720 하나
@@ -138,7 +140,7 @@ def test_track_for_resolution_keeps_the_higher_video_bitrate_then_the_first():
 # ================================================================ 변형 고르기
 
 
-def test_select_variant_matches_by_size_when_one_variant_has_it():
+def test_select_variant_matches_by_size_when_one_variant_has_it() -> None:
     """크기가 같은 변형이 하나면 프레임률·BANDWIDTH가 달라도 그 변형을 골라야 한다.
 
     트랙 1280x720 30fps 1192000, 변형 1280x720(60fps · BANDWIDTH 9) · 1920x1080
@@ -152,7 +154,7 @@ def test_select_variant_matches_by_size_when_one_variant_has_it():
     assert select_variant(master, _track("720p", 1280, 720)) == "a.m3u8"
 
 
-def test_select_variant_compares_the_width_as_well_as_the_height():
+def test_select_variant_compares_the_width_as_well_as_the_height() -> None:
     """세로가 같고 가로가 다른 변형은 같은 크기로 보지 않아야 한다.
 
     트랙 1280x720, 변형 960x720 · 1280x720(프레임률 · BANDWIDTH 선언 없음)
@@ -166,7 +168,7 @@ def test_select_variant_compares_the_width_as_well_as_the_height():
     assert select_variant(master, _track("720p", 1280, 720)) == "wide.m3u8"
 
 
-def test_select_variant_does_not_match_a_swapped_size():
+def test_select_variant_does_not_match_a_swapped_size() -> None:
     """가로와 세로가 뒤바뀐 변형은 같은 크기로 보지 않아야 한다.
 
     트랙 720x1280, 변형 1280x720 하나
@@ -180,7 +182,7 @@ def test_select_variant_does_not_match_a_swapped_size():
     assert caught.value.message_key == STREAM_NOT_FOUND
 
 
-def test_select_variant_narrows_same_size_variants_by_frame_rate():
+def test_select_variant_narrows_same_size_variants_by_frame_rate() -> None:
     """크기가 같은 변형이 둘이면 프레임률이 같은 것을 골라야 한다.
 
     변형 720x1280 60fps · 720x1280 30fps(BANDWIDTH는 둘 다 2692000), 트랙 720x1280 30fps
@@ -197,7 +199,7 @@ def test_select_variant_narrows_same_size_variants_by_frame_rate():
     assert select_variant(master, track) == "source.m3u8"
 
 
-def test_select_variant_narrows_same_size_and_frame_rate_by_bandwidth():
+def test_select_variant_narrows_same_size_and_frame_rate_by_bandwidth() -> None:
     """크기와 프레임률이 같은 변형이 둘이면 BANDWIDTH가 영상 + 오디오 비트레이트인 것을 골라야 한다.
 
     변형 720x1280 30fps BANDWIDTH 3192000 · 2692000, 트랙 영상 2500000 + 오디오 192000
@@ -213,7 +215,7 @@ def test_select_variant_narrows_same_size_and_frame_rate_by_bandwidth():
     assert select_variant(master, track) == "low.m3u8"
 
 
-def test_select_variant_skips_the_frame_rate_when_a_variant_does_not_declare_it():
+def test_select_variant_skips_the_frame_rate_when_a_variant_does_not_declare_it() -> None:
     """크기가 같은 변형 중 FRAME-RATE를 선언하지 않은 것이 있으면 프레임률을 건너뛰고 BANDWIDTH로 골라야 한다.
 
     변형 720x1280 BANDWIDTH 3192000(FRAME-RATE 없음) · 2692000(30fps), 트랙 60fps 3000000 + 192000
@@ -257,7 +259,7 @@ def test_select_variant_skips_the_frame_rate_when_a_variant_does_not_declare_it(
     ],
     ids=["identical", "no-bandwidth-match", "no-frame-rate-match", "nothing-declared", "empty"],
 )
-def test_select_variant_fails_when_the_variant_is_not_determined(variants):
+def test_select_variant_fails_when_the_variant_is_not_determined(variants) -> None:
     """변형이 하나로 정해지지 않으면 아무거나 고르지 않고 키 기반 오류로 실패해야 한다.
 
     주석의 경우마다 마스터 플레이리스트, 트랙 720x1280 30fps 2500000 + 192000
@@ -271,7 +273,7 @@ def test_select_variant_fails_when_the_variant_is_not_determined(variants):
     assert caught.value.message_key == STREAM_NOT_FOUND
 
 
-def test_stream_selection_error_is_a_value_error():
+def test_stream_selection_error_is_a_value_error() -> None:
     """StreamSelectionError는 ValueError여야 한다.
 
     StreamSelectionError("x")
@@ -286,7 +288,7 @@ def test_stream_selection_error_is_a_value_error():
 # ================================================================ 트랙 정보가 없을 때
 
 
-def test_select_variant_by_height_returns_the_first_variant_with_that_height():
+def test_select_variant_by_height_returns_the_first_variant_with_that_height() -> None:
     """select_variant_by_height는 세로값이 그 해상도인 첫 변형의 주소를 돌려줘야 한다.
 
     변형 1920x1080 둘 · 1280x720 하나, 해상도 1080
@@ -301,7 +303,7 @@ def test_select_variant_by_height_returns_the_first_variant_with_that_height():
     assert select_variant_by_height(master, 1080) == "first.m3u8"
 
 
-def test_select_variant_by_height_fails_when_no_variant_has_that_height():
+def test_select_variant_by_height_fails_when_no_variant_has_that_height() -> None:
     """세로값이 그 해상도인 변형이 없으면 키 기반 오류로 실패해야 한다.
 
     변형 720x1280 하나, 해상도 720
@@ -316,7 +318,7 @@ def test_select_variant_by_height_fails_when_no_variant_has_that_height():
 
 
 @pytest.mark.parametrize("ending", ["", "\n"])
-def test_select_variant_by_height_fails_when_the_matching_tag_is_the_last_line(ending):
+def test_select_variant_by_height_fails_when_the_matching_tag_is_the_last_line(ending) -> None:
     """세로값이 맞는 STREAM-INF 줄이 마지막 줄이라 주소 줄이 없으면 키 기반 오류로 실패해야 한다 (#333).
 
     변형 852x480(주소 있음) 뒤에 주소 줄 없는 1280x720 태그로 끝나는 마스터(끝 줄바꿈 없음 · 있음),
@@ -339,7 +341,7 @@ def test_select_variant_by_height_fails_when_the_matching_tag_is_the_last_line(e
 # ================================================================ AVERAGE-BANDWIDTH
 
 
-def test_listed_stream_carries_the_average_bandwidth_only_when_the_master_declares_it():
+def test_listed_stream_carries_the_average_bandwidth_only_when_the_master_declares_it() -> None:
     """목록의 변형은 마스터가 AVERAGE-BANDWIDTH를 선언했을 때만 그 값을 싣고, 없으면 None이어야 한다.
 
     변형 1280x720(BANDWIDTH 3192000 · AVERAGE-BANDWIDTH 2500000) · 852x480(BANDWIDTH 1692000뿐)
@@ -358,7 +360,7 @@ def test_listed_stream_carries_the_average_bandwidth_only_when_the_master_declar
     ]
 
 
-def test_stream_with_an_average_bandwidth_is_found_again_in_the_master():
+def test_stream_with_an_average_bandwidth_is_found_again_in_the_master() -> None:
     """AVERAGE-BANDWIDTH를 실은 변형도 마스터에서 다시 찾을 수 있어야 한다 — 그 값은 찾는 데 쓰지 않는다.
 
     크기가 같은 변형 둘(BANDWIDTH 3192000 · 2692000, 둘 다 AVERAGE-BANDWIDTH 2500000).

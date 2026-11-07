@@ -25,7 +25,7 @@ class DownloadTask:
         item: ContentItem,
         logger: DownloadLogger,
         on_state_change: Callable[[DownloadState], None] | None = None,
-    ):
+    ) -> None:
         """어댑터를 만든다.
 
         Args:
@@ -65,7 +65,7 @@ class DownloadTask:
             self.logger.warning(f"상태 전이 무시: {e}")
             return False
 
-    def start(self):
+    def start(self) -> None:
         """다운로드 시작. 성공 시 다운로드 정보를 로그로 남긴다."""
         if self._try_transition("start"):
             # 구간 다운로드는 실제로 생기는 구간 파일 경로를 함께 넘긴다 (#309)
@@ -97,11 +97,11 @@ class DownloadTask:
             self.logger.info("Download resumed")
         return changed
 
-    def stop(self):
+    def stop(self) -> None:
         """다운로드 취소(대기 상태로 복귀)."""
         self._try_transition("stop")
 
-    def finish(self):
+    def finish(self) -> None:
         """다운로드 완료 처리."""
         self._try_transition("finish")
 

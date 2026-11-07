@@ -32,9 +32,11 @@ from PySide6.QtWidgets import QApplication
 import CVDv2 as main_module
 import app.theme as theme
 from app.viewmodels.data import ContentItem
+from app.widgets.pill import ResolutionPill
 from app.widgets.widget import ContentItemWidget
 from core.models.download_state import DownloadState
 from tests.app.gui.card_helpers import resize_to, shown, hold_style
+from typing import Never
 
 #: 좁게(요소가 꽉 참)·기본·아주 넓게(실기 와이드 모니터 — 결함이 실제로
 #: 발견된 조건). 카드 최소폭이 썸네일(16:9) 때문에 커져 하한을 520→560으로.
@@ -45,7 +47,7 @@ FIXED_SPACING = 4
 
 
 @pytest.fixture(autouse=True)
-def _apply_production_qss(qapp):
+def _apply_production_qss(qapp) -> None:
     """실제 전역 QSS(위계 폰트 토큰 포함)를 태운 상태에서 잰다. ⚠️
     `scope="function"` 유지 — 넓히면 macOS 종료 크래시 재발
     (`test_widget_theme.py`의 `_apply_dark_card_qss` 문서 참고)."""
@@ -56,12 +58,12 @@ def _apply_production_qss(qapp):
 
 
 @pytest.fixture(autouse=True)
-def no_network(monkeypatch):
+def no_network(monkeypatch) -> None:
     class _FailingSession:
-        def head(self, *a, **k):
+        def head(self, *a, **k) -> Never:
             raise RuntimeError("network disabled in tests")
 
-        def get(self, *a, **k):
+        def get(self, *a, **k) -> Never:
             raise RuntimeError("network disabled in tests")
 
     monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
@@ -85,7 +87,7 @@ def _make_widget(qapp) -> ContentItemWidget:
     return widget
 
 
-def _at_width(widget, width):
+def _at_width(widget, width) -> None:
     # 높이는 자연값(sizeHint)을 쓴다 — 임의 고정 높이를 강제하면 세로 여분이
     # 행 사이로 분배돼 실제 목록(카드가 자기 hint 높이를 받는)과 다른
     # 조건에서 재게 된다(썸네일 가득 채움 검증이 3px 어긋나는 것으로 실측).
@@ -121,7 +123,7 @@ class TestTwoLeftBaselines:
     ROW_HEADS = ("channelImageLabel", "titleLabel")
 
     @pytest.mark.parametrize("width", WIDTHS)
-    def test_all_rows_start_at_the_content_baseline(self, qapp, width):
+    def test_all_rows_start_at_the_content_baseline(self, qapp, width) -> None:
         widget = _make_widget(qapp)
         _at_width(widget, width)
         content_x = widget.titleLabel.x()
@@ -134,7 +136,7 @@ class TestTwoLeftBaselines:
         )
 
     @pytest.mark.parametrize("width", WIDTHS)
-    def test_exactly_two_left_baselines(self, qapp, width):
+    def test_exactly_two_left_baselines(self, qapp, width) -> None:
         widget = _make_widget(qapp)
         _at_width(widget, width)
         thumb_x = widget.thumbnailLabel.x()
@@ -146,7 +148,7 @@ class TestTwoLeftBaselines:
         # 썸네일 기준선 = 카드 안쪽 여백(cardPadding) + 테두리 1px
         assert thumb_x == theme.METRICS["cardPadding"] + 1
 
-    def test_baselines_do_not_move_as_the_window_widens(self, qapp):
+    def test_baselines_do_not_move_as_the_window_widens(self, qapp) -> None:
         widget = _make_widget(qapp)
         positions = []
         for width in WIDTHS:
@@ -156,7 +158,7 @@ class TestTwoLeftBaselines:
             f"창 폭에 따라 기준선이 움직인다: {positions}"
         )
 
-    def test_thumbnail_fills_the_content_height_at_16_9(self, qapp):
+    def test_thumbnail_fills_the_content_height_at_16_9(self, qapp) -> None:
         """썸네일은 컨텐츠 열 높이를 가득 채우고 폭은 16:9로 나온다(#244 확정).
 
         "카드 높이가 썸네일을 결정하는 게 아니라, 원하는 카드 높이에서
@@ -176,7 +178,9 @@ class TestTwoLeftBaselines:
             f"썸네일이 16:9가 아니다: {thumb.width()}x{thumb.height()}"
         )
 
-    def test_a_picture_that_arrived_before_the_first_show_is_redrawn_to_the_shown_box(self, qapp):
+    def test_a_picture_that_arrived_before_the_first_show_is_redrawn_to_the_shown_box(
+        self, qapp
+    ) -> None:
         """썸네일 그림이 카드 표시 전에 도착하면 표시 뒤 그려진 그림 크기가 썸네일 칸과 같아야 한다 (#288).
 
         160x90 PNG를 표시 전 카드의 이미지 도착 신호(_imageFetched)로 넣는다 → 창 폭 900으로 표시
@@ -197,7 +201,9 @@ class TestTwoLeftBaselines:
             f"그림 {thumb.pixmap().size().toTuple()} ≠ 썸네일 칸 {thumb.size().toTuple()}"
         )
 
-    def test_a_picture_that_arrived_before_the_first_show_is_let_go_at_the_first_show(self, qapp):
+    def test_a_picture_that_arrived_before_the_first_show_is_let_go_at_the_first_show(
+        self, qapp
+    ) -> None:
         """썸네일 그림이 카드 표시 전에 도착하면 첫 표시 뒤 카드가 원본 그림을 들고 있지 않아야 한다 (#288).
 
         160x90 PNG를 표시 전 카드의 이미지 도착 신호(_imageFetched)로 넣는다 → 창 폭 900으로 표시
@@ -213,7 +219,7 @@ class TestTwoLeftBaselines:
         assert widget.isVisible(), "전제: 표시됨"
         assert widget._thumbnailSource is None, "첫 표시 뒤에도 원본 그림을 들고 있다"
 
-    def test_a_picture_that_arrives_after_the_first_show_is_not_held(self, qapp):
+    def test_a_picture_that_arrives_after_the_first_show_is_not_held(self, qapp) -> None:
         """썸네일 그림이 카드 표시 뒤에 도착하면 카드가 원본 그림을 들고 있지 않아야 한다 (#288).
 
         창 폭 900으로 표시 → 160x90 PNG를 이미지 도착 신호(_imageFetched)로 넣는다
@@ -234,7 +240,7 @@ class TestOneRightEdge:
     """우측 끝은 하나 — 삭제(1행)와 파일 크기(3행)의 오른쪽 끝이 같은 x."""
 
     @pytest.mark.parametrize("width", WIDTHS)
-    def test_delete_and_file_size_share_the_right_edge(self, qapp, width):
+    def test_delete_and_file_size_share_the_right_edge(self, qapp, width) -> None:
         widget = _make_widget(qapp)
         _at_width(widget, width)
         assert _right(widget.deleteButton) == _right(widget.fileSizeLabel), (
@@ -252,7 +258,7 @@ class TestRowOneClusters:
     DELETE_EXTRA_GAP = FIXED_SPACING + 8
 
     @pytest.mark.parametrize("width", WIDTHS)
-    def test_left_cluster_gap_is_fixed(self, qapp, width):
+    def test_left_cluster_gap_is_fixed(self, qapp, width) -> None:
         widget = _make_widget(qapp)
         _at_width(widget, width)
         gap = _gap(widget.channelImageLabel, widget.channelNameLabel)
@@ -260,7 +266,7 @@ class TestRowOneClusters:
             f"폭 {width}px에서 채널이미지→채널명 간격이 {gap}px — 군집이 흩어졌다"
         )
 
-    def test_free_space_lives_only_between_the_clusters(self, qapp):
+    def test_free_space_lives_only_between_the_clusters(self, qapp) -> None:
         """폭이 커질수록 채널명→우측 조작 사이 한 곳만 벌어져야 한다 —
         실패 카드(↻ 조작 가시)로 재서 우측 군집의 첫 요소를 고정한다."""
         widget = _make_widget(qapp)
@@ -276,7 +282,7 @@ class TestRowOneClusters:
         )
 
     @pytest.mark.parametrize("width", WIDTHS)
-    def test_delete_is_separated_by_the_extra_gap(self, qapp, width):
+    def test_delete_is_separated_by_the_extra_gap(self, qapp, width) -> None:
         """삭제(✕)는 앞 조작과 추가 간격으로 떨어져 있다 — 파괴적 조작이
         같은 무게로 붙어 있으면 실수로 누른다(#245)."""
         widget = _make_widget(qapp)
@@ -290,7 +296,7 @@ class TestRowOneClusters:
         )
 
     @pytest.mark.parametrize("width", WIDTHS)
-    def test_right_edge_holds_with_three_actions(self, qapp, width):
+    def test_right_edge_holds_with_three_actions(self, qapp, width) -> None:
         """#178 구간 버튼 자리 확보 게이트 — 조작이 3개로 늘어도 우측
         끝선(삭제==파일크기)과 카드 높이가 안 깨진다. 버튼을 새로 만들지
         않고(눌러도 아무 일 없는 버튼은 노이즈) 기존 3개(⏸·📁·↻)를 강제로
@@ -317,7 +323,7 @@ class TestResolutionRow:
     tests/app/gui/test_resolution_pills.py)."""
 
     @pytest.mark.parametrize("width", WIDTHS)
-    def test_pill_gaps_are_fixed(self, qapp, width):
+    def test_pill_gaps_are_fixed(self, qapp, width) -> None:
         widget = _make_widget(qapp)
         _at_width(widget, width)
         assert widget.pillMode() == "all", "전제: 이 폭에서는 pill 전부가 보인다"
@@ -329,7 +335,7 @@ class TestResolutionRow:
                 "335px 실측)의 재발이다"
             )
 
-    def test_pill_positions_do_not_move_as_the_window_widens(self, qapp):
+    def test_pill_positions_do_not_move_as_the_window_widens(self, qapp) -> None:
         widget = _make_widget(qapp)
         positions = []
         for width in WIDTHS:
@@ -339,7 +345,7 @@ class TestResolutionRow:
             f"창 폭에 따라 pill x가 움직인다: {positions} — 왼쪽 고정이 깨졌다"
         )
 
-    def test_free_space_lives_between_pills_and_file_size(self, qapp):
+    def test_free_space_lives_between_pills_and_file_size(self, qapp) -> None:
         widget = _make_widget(qapp)
         middle_gaps = []
         for width in WIDTHS:
@@ -370,7 +376,7 @@ def _visible_pills(widget) -> list[str]:
     return [b.text() for b in widget.buttons if b.isVisible()]
 
 
-def _selected(widget):
+def _selected(widget) -> list[ResolutionPill]:
     return [b for b in widget.buttons if b.isSelected()]
 
 
@@ -384,11 +390,11 @@ class TestResolutionPillsDescending:
     있어야 한다). 선택만 바뀐다.
     """
 
-    def test_pills_are_ordered_high_to_low(self, qapp):
+    def test_pills_are_ordered_high_to_low(self, qapp) -> None:
         widget = _make_widget_with_reps(qapp, (480, 1080, 720))  # API 입력 순서와 무관
         assert [b.text() for b in widget.buttons] == ["1080p", "720p", "480p"]
 
-    def test_default_selection_is_the_first_pill(self, qapp):
+    def test_default_selection_is_the_first_pill(self, qapp) -> None:
         widget = _make_widget_with_reps(qapp, (480, 1080, 720))
         # 선택 표시는 `isSelected()`(app/widgets/pill.py) — 이전의 "선택 = 비활성"은
         # 접힌 pill을 눌러 펼쳐야 하므로 폐기됐다(#244 3행 정리)
@@ -396,7 +402,9 @@ class TestResolutionPillsDescending:
         assert str(widget.item.resolution) == "1080"
 
     @pytest.mark.parametrize("width", WIDTHS)
-    def test_selected_pill_x_is_identical_across_cards_with_different_counts(self, qapp, width):
+    def test_selected_pill_x_is_identical_across_cards_with_different_counts(
+        self, qapp, width
+    ) -> None:
         """3개짜리(VOD)와 2개짜리(클립)를 섞어도 기본 선택 pill의 x가 같다 —
         목록에서 선택 표시가 한 줄로 선다."""
         three = _make_widget_with_reps(qapp, (1080, 720, 480), width)
@@ -409,7 +417,7 @@ class TestResolutionPillsDescending:
         )
         assert sel3.x() == three.titleLabel.x(), "선택 pill이 컨텐츠 열 기준선에 있지 않다"
 
-    def test_clicking_another_pill_does_not_reorder(self, qapp):
+    def test_clicking_another_pill_does_not_reorder(self, qapp) -> None:
         """전부 보이는 폭 — 클릭 한 번에 480p가 고르고 pill은 움직이지 않는다."""
         widget = _make_widget_with_reps(qapp, (1080, 720, 480))
         assert widget.pillMode() == "all"
@@ -433,13 +441,13 @@ class TestPillsCollapseOnlyWhenTheyDoNotFit:
 
     MANY = (2160, 1440, 1080, 720, 480, 360, 240, 144)
 
-    def test_all_pills_show_when_they_fit(self, qapp):
+    def test_all_pills_show_when_they_fit(self, qapp) -> None:
         widget = _make_widget_with_reps(qapp, self.MANY, 1600)
         assert widget.pillMode() == "all"
         assert _visible_pills(widget) == [f"{r}p" for r in self.MANY]
         assert not any(b.hasCaret() for b in widget.buttons), "전부 보이는데 ▾가 있다"
 
-    def test_pill_widths_do_not_shrink_when_the_card_narrows_but_still_fits(self, qapp):
+    def test_pill_widths_do_not_shrink_when_the_card_narrows_but_still_fits(self, qapp) -> None:
         widget = _make_widget_with_reps(qapp, self.MANY, 1600)
         wide = [b.width() for b in widget.buttons]
         _at_width(widget, 900)
@@ -455,7 +463,7 @@ class TestRowThreePriority:
     FIVE = (2160, 1440, 1080, 720, 480)
     LONG_PATH = "D:/vod/archive/2026/summer/finals/T1-vs-GEN-full-set-highlights-and-interviews"
 
-    def _tight(self, qapp, width, *, segment=False, path=LONG_PATH):
+    def _tight(self, qapp, width, *, segment=False, path=LONG_PATH) -> ContentItemWidget:
         """`width=None`이면 임계 폭 T(`_threshold_waiting`)까지 줄인다 — 그때 경로
         자리는 아이콘 하나 폭이라 아이콘 모드가 폰트와 무관하게 보장된다.
         `minimumSizeHint()`는 표시 모드(텍스트/아이콘)에 따라 몇 px 움직여 고정점이
@@ -499,7 +507,7 @@ class TestRowThreePriority:
         return {"T": threshold, "T+path/2": threshold + widget.directoryLabel.sizeHint().width() // 2, "T+200": threshold + 200}
 
     @pytest.mark.parametrize("point", ("T", "T+path/2", "T+200"))
-    def test_file_size_is_never_elided_with_five_pills(self, qapp, point):
+    def test_file_size_is_never_elided_with_five_pills(self, qapp, point) -> None:
         """지금 실패하던 조건 — 해상도 5개에서 파일 크기가 잘리면 안 된다."""
         widget = self._tight(qapp, 900)
         resize_to(widget, self._points(widget)[point])
@@ -508,7 +516,7 @@ class TestRowThreePriority:
         )
 
     @pytest.mark.parametrize("point", ("T", "T+path/2", "T+200"))
-    def test_duration_is_never_elided_either(self, qapp, point):
+    def test_duration_is_never_elided_either(self, qapp, point) -> None:
         """크기 조회 전에는 같은 자리에 재생 시간이 들어온다 — 그것도 온전해야 한다."""
         widget = self._tight(qapp, 900, segment=True)
         assert widget.fileSizeLabel.text().count(":") == 2, "세그먼트 기반 대기 카드는 재생 시간을 보여야 한다(전제)"
@@ -517,7 +525,7 @@ class TestRowThreePriority:
             f"{point}에서 재생 시간이 잘렸다: {self._rendered(widget.fileSizeLabel)!r}"
         )
 
-    def test_reserved_width_covers_the_longest_case(self, qapp):
+    def test_reserved_width_covers_the_longest_case(self, qapp) -> None:
         """확보 폭은 "가장 긴 경우"(재생 시간 vs 크기) 기준이다 — 텍스트가 크기에서
         시간으로 바뀌어도 라벨 폭이 늘 필요가 없다."""
         widget = self._tight(qapp, 900)
@@ -527,7 +535,7 @@ class TestRowThreePriority:
         assert widget.fileSizeLabel.minimumWidth() >= duration, "재생 시간 폭을 확보하지 않았다"
         assert widget.fileSizeLabel.width() >= widget.fileSizeLabel.minimumWidth()
 
-    def test_only_the_path_shrinks_as_the_card_narrows(self, qapp):
+    def test_only_the_path_shrinks_as_the_card_narrows(self, qapp) -> None:
         """폭을 계속 줄일 때 경로만 짧아지고 크기·pill은 불변이다.
 
         폭은 T 기준으로 유도한다(T+600 → T+300 → T+경로÷2 → T+40 → T). 이전의
@@ -561,7 +569,7 @@ class TestRowThreePriority:
             "T에서는 경로 글자가 숨고 진입점(1행의 저장 위치 버튼)이 있어야 한다"
         )
 
-    def test_path_collapses_to_an_icon_but_stays_clickable(self, qapp, monkeypatch):
+    def test_path_collapses_to_an_icon_but_stays_clickable(self, qapp, monkeypatch) -> None:
         """남는 폭이 최소치 아래면 경로 글자는 숨는다 — 글자가 사라져도 폴더 선택
         진입점(1행의 저장 위치 버튼)은 산다. 전역과 다르면 점 표시(folder_edit_dot) (#309)."""
         widget = self._tight(qapp, None)  # T — 경로 자리가 최소 텍스트 폭보다 좁다
@@ -581,7 +589,7 @@ class TestRowThreePriority:
         assert calls == [self.LONG_PATH], "저장 위치 버튼의 클릭이 폴더 선택으로 이어지지 않는다"
         assert widget.item.download_path == "E:/picked"
 
-    def test_icon_mode_is_decided_on_the_very_first_show(self, qapp):
+    def test_icon_mode_is_decided_on_the_very_first_show(self, qapp) -> None:
         """**이미 보이는 목록에 카드가 들어올 때**(실제 앱의 삽입 경로) 좁으면 첫
         화면부터 아이콘이어야 한다.
 
@@ -618,7 +626,7 @@ class TestRowThreePriority:
             "첫 표시에서 경로 글자가 숨지 않았다 — 창을 흔들어야 고쳐지는 결함"
         )
 
-    def _running_widget(self, qapp):
+    def _running_widget(self, qapp) -> ContentItemWidget:
         """진행 중 + 전역과 다른 긴 경로 — 3행에 슬롯·경로·크기가 함께 있는 카드."""
         widget = _make_widget_with_reps(qapp, self.FIVE, 900)
         item = widget.item
@@ -649,7 +657,7 @@ class TestRowThreePriority:
         return offset + slot + size + path + 3 * FIXED_SPACING
 
     @pytest.mark.parametrize("point", ("T", "T+path/2", "T+200"))
-    def test_progress_slot_keeps_its_text_and_the_path_yields(self, qapp, point):
+    def test_progress_slot_keeps_its_text_and_the_path_yields(self, qapp, point) -> None:
         """대기 밖 상태에서도 같은 규칙 — 진행 슬롯("42% · 속도 · 남은 시간")은
         잘리지 않고 **경로가 먼저 양보**한다(560px 실기에서 슬롯이 잘리고 경로가
         남던 결함). 측정점은 절대 px가 아니라 임계 폭 T 기준 — 폭을 px로 박으면
@@ -672,7 +680,9 @@ class TestRowThreePriority:
         # 받는 중에는 저장 위치를 바꿀 수 없다 — 경로 글자가 숨어도 남길 진입점이 없다 (#309)
         assert not widget.pathButton.isVisible()
 
-    def test_slot_longer_than_the_row_still_keeps_size_and_folds_the_path_to_an_icon(self, qapp):
+    def test_slot_longer_than_the_row_still_keeps_size_and_folds_the_path_to_an_icon(
+        self, qapp
+    ) -> None:
         """T−1 — 슬롯·경로 최소 자리·크기가 1px 모자라는 "슬롯이 행보다 긴 상황"의 별도
         게이트(완화 조건에 섞지 않는다). 그때도 크기는 온전하고 경로는 숨어
         완전히 양보한다(텍스트를 붙들고 있으면 안 된다)."""
@@ -686,12 +696,12 @@ class TestRowThreePriority:
             "슬롯이 행보다 긴데 경로가 텍스트를 붙들고 있다 — 경로가 먼저 양보해야 한다"
         )
 
-    def test_icon_has_no_dot_when_the_path_matches_global(self, qapp):
+    def test_icon_has_no_dot_when_the_path_matches_global(self, qapp) -> None:
         widget = self._tight(qapp, None, path="C:/dl")  # 전역과 같음
         assert widget.pathButton.isVisible(), "전제: 대기 카드라 저장 위치 버튼이 보인다"
         assert widget.pathButton.iconName() == "folder_edit"
 
-    def test_path_text_recovers_when_the_card_widens_again(self, qapp):
+    def test_path_text_recovers_when_the_card_widens_again(self, qapp) -> None:
         """되먹임 루프 회귀 게이트 — 한 번 아이콘/말줄임까지 줄었다가 넓히면
         경로가 원래 길이(축약형 전문)로 돌아온다."""
         widget = self._tight(qapp, None)
@@ -714,7 +724,7 @@ class TestPathVisibilityRule:
     카드마다 반복하는 것이 정보 과다라 다를 때만 남긴다.
     """
 
-    def test_waiting_always_shows_the_path_even_when_it_matches_global(self, qapp):
+    def test_waiting_always_shows_the_path_even_when_it_matches_global(self, qapp) -> None:
         widget = _make_widget(qapp)  # 아이템 경로 == 전역("C:/dl", 픽스처 주입), WAITING
         _at_width(widget, 900)
         assert widget.directoryLabel.isVisible(), "대기 카드에서 경로가 숨었다 — 클릭할 대상이 없다"
@@ -723,7 +733,7 @@ class TestPathVisibilityRule:
 
     @pytest.mark.parametrize("state", (DownloadState.RUNNING, DownloadState.PAUSED,
                                        DownloadState.FINISHED, DownloadState.FAILED))
-    def test_other_states_hide_the_path_when_it_matches_global(self, qapp, state):
+    def test_other_states_hide_the_path_when_it_matches_global(self, qapp, state) -> None:
         widget = _make_widget(qapp)
         widget.item.downloadState = state
         widget.item.download_progress = 42
@@ -732,7 +742,7 @@ class TestPathVisibilityRule:
         assert not widget.directoryLabel.isVisible(), f"{state.name}: 전역과 같은 경로가 반복 표시된다"
 
     @pytest.mark.parametrize("state", (DownloadState.WAITING, DownloadState.RUNNING, DownloadState.FINISHED))
-    def test_path_shown_when_it_differs(self, qapp, state):
+    def test_path_shown_when_it_differs(self, qapp, state) -> None:
         widget = _make_widget(qapp)
         widget.item.downloadState = state
         widget.item.download_path = "D:/다른/폴더"
@@ -748,7 +758,7 @@ class TestPathAbbreviationAndTooltip:
     HOME = "C:/Users/me"
 
     @staticmethod
-    def _abbr(path, home):
+    def _abbr(path, home) -> str:
         from app.widgets.widget import abbreviate_path
 
         return abbreviate_path(path, home=home)
@@ -764,10 +774,10 @@ class TestPathAbbreviationAndTooltip:
         ("/srv/media/vod/2026", "/…/2026"),                          # POSIX 루트
         ("", ""),
     ])
-    def test_abbreviation_rule(self, path, expected):
+    def test_abbreviation_rule(self, path, expected) -> None:
         assert self._abbr(path, home=self.HOME) == expected
 
-    def test_label_shows_abbreviation_and_tooltip_carries_the_full_path(self, qapp):
+    def test_label_shows_abbreviation_and_tooltip_carries_the_full_path(self, qapp) -> None:
         widget = _make_widget(qapp)
         widget.item.download_path = "D:/vod/lck/2026/finals"
         widget.setData(widget.item, 0)
@@ -775,7 +785,7 @@ class TestPathAbbreviationAndTooltip:
         assert widget.directoryLabel.text() == "D:/…/finals"
         assert widget.directoryLabel.toolTip() == "D:/vod/lck/2026/finals"
 
-    def test_abbreviated_label_does_not_break_the_row(self, qapp):
+    def test_abbreviated_label_does_not_break_the_row(self, qapp) -> None:
         """긴 경로도 3행이 터지지 않는다 — 카드 폭 안에서 우측 끝선 유지."""
         widget = _make_widget(qapp)
         widget.item.download_path = "D:/아주/긴/경로/구조/를/가진/폴더/이름/마지막"
@@ -797,7 +807,7 @@ class TestPathShrinkOrder:
 
     LAST = "chzzk-vod-downloader-v2"
 
-    def _rendered_while_narrowing(self, qapp, path):
+    def _rendered_while_narrowing(self, qapp, path) -> tuple[ContentItemWidget, list[str]]:
         """1400px에서 카드 최소폭까지 4px씩 좁히며 경로 라벨의 실제 표시 문자열을
         순서대로 모은다(연속 중복 제거). 아이콘 모드로 접히면 멈춘다."""
         from PySide6.QtWidgets import QLabel
@@ -815,7 +825,7 @@ class TestPathShrinkOrder:
                 seen.append(shown)
         return widget, seen
 
-    def test_depth_two_folds_the_middle_folder_before_touching_the_last(self, qapp):
+    def test_depth_two_folds_the_middle_folder_before_touching_the_last(self, qapp) -> None:
         widget, seen = self._rendered_while_narrowing(qapp, f"D:/archive-2026/{self.LAST}")
         assert seen[0] == f"D:/archive-2026/{self.LAST}", "넓을 때는 전체가 보여야 한다(①)"
         folded = f"D:/…/{self.LAST}"
@@ -828,18 +838,18 @@ class TestPathShrinkOrder:
         cut_at = next((i for i, t in enumerate(seen) if self.LAST not in t), None)
         assert cut_at is not None and cut_at > fold_at, "마지막 폴더는 중간 폴더가 접힌 **뒤에** 잘려야 한다"
 
-    def test_depth_one_keeps_the_root_and_elides_inside_the_folder(self, qapp):
+    def test_depth_one_keeps_the_root_and_elides_inside_the_folder(self, qapp) -> None:
         widget, seen = self._rendered_while_narrowing(qapp, f"D:/{self.LAST}")
         assert seen[0] == f"D:/{self.LAST}"
         assert all(t.startswith("D:/") and "…" in t[len("D:/"):] for t in seen[1:]), seen
 
-    def test_depth_five_starts_folded_and_then_elides_the_last_folder_only(self, qapp):
+    def test_depth_five_starts_folded_and_then_elides_the_last_folder_only(self, qapp) -> None:
         widget, seen = self._rendered_while_narrowing(qapp, f"D:/a/b/c/d/{self.LAST}")
         assert seen[0] == f"D:/…/{self.LAST}", "깊이 3 이상은 ①이 곧 ②(뿌리/…/마지막)"
         assert all(t.startswith("D:/…/") and "…" in t[len("D:/…/"):] for t in seen[1:]), seen
         assert len(seen) >= 2, "좁혀도 ③으로 내려가지 않았다 — 전제 확인"
 
-    def test_widening_recovers_the_full_text(self, qapp):
+    def test_widening_recovers_the_full_text(self, qapp) -> None:
         widget, seen = self._rendered_while_narrowing(qapp, f"D:/archive-2026/{self.LAST}")
         assert len(seen) >= 3, "전제: ①→②→③까지 내려갔다"
         _at_width(widget, 1400)
@@ -857,7 +867,7 @@ class TestPathShrinkOrder:
         ("/srv/x", ("/srv/x", "/…/", "x")),
         ("/srv/media/x", ("/…/x", "/…/", "x")),
     ])
-    def test_display_parts(self, path, expected):
+    def test_display_parts(self, path, expected) -> None:
         from app.widgets.widget import path_display_parts
 
         assert path_display_parts(path, home="C:/Users/me") == expected
@@ -868,18 +878,18 @@ class TestPathClickOpensFolderPicker:
     인라인 편집의 교체 — 대화상자는 monkeypatch로 막고 반환값을 주입한다
     (상단 [경로 찾기] 테스트와 같은 방식)."""
 
-    def _patch_dialog(self, monkeypatch, result):
+    def _patch_dialog(self, monkeypatch, result) -> list[tuple[str, str]]:
         calls = []
         from app.widgets import widget as widget_mod
 
-        def fake(parent, caption, start_dir, *a, **k):
+        def fake(parent, caption, start_dir, *a, **k) -> str:
             calls.append((caption, start_dir))
             return result
 
         monkeypatch.setattr(widget_mod.QFileDialog, "getExistingDirectory", staticmethod(fake))
         return calls
 
-    def test_click_on_waiting_card_applies_the_chosen_folder(self, qapp, monkeypatch):
+    def test_click_on_waiting_card_applies_the_chosen_folder(self, qapp, monkeypatch) -> None:
         widget = _make_widget(qapp)
         _at_width(widget, 900)
         calls = self._patch_dialog(monkeypatch, "D:/new/folder")
@@ -892,7 +902,7 @@ class TestPathClickOpensFolderPicker:
         assert widget.directoryLabel.toolTip() == "D:/new/folder"
         assert emitted == ["D:/new/folder"], "모델 반영 시그널(textChanged)이 안 나갔다"
 
-    def test_label_click_is_wired_to_the_picker(self, qapp, monkeypatch):
+    def test_label_click_is_wired_to_the_picker(self, qapp, monkeypatch) -> None:
         """핸들러 직접 호출이 아니라 라벨 클릭 배선 자체를 확인한다."""
         widget = _make_widget(qapp)
         _at_width(widget, 900)
@@ -904,13 +914,13 @@ class TestPathClickOpensFolderPicker:
         QTest.mouseClick(widget.directoryLabel, Qt.MouseButton.LeftButton)
         assert calls, "경로 라벨 클릭이 폴더 선택으로 이어지지 않는다"
 
-    def test_cancel_keeps_the_path(self, qapp, monkeypatch):
+    def test_cancel_keeps_the_path(self, qapp, monkeypatch) -> None:
         widget = _make_widget(qapp)
         self._patch_dialog(monkeypatch, "")
         widget.choosePath(None)
         assert widget.item.download_path == "C:/dl"
 
-    def test_no_picker_once_the_download_has_started(self, qapp, monkeypatch):
+    def test_no_picker_once_the_download_has_started(self, qapp, monkeypatch) -> None:
         widget = _make_widget(qapp)
         widget.item.downloadState = DownloadState.RUNNING
         widget.item.download_path = "D:/다른"  # 진행 중이라도 다르면 라벨은 보인다
@@ -926,7 +936,7 @@ class TestStateSwapKeepsCardHeight:
     교체(일시정지/재개/폴더/재시도)·크기 숨김(실패)·진행바 표시(진행·
     일시정지)가 전부 일어나는 **다섯 상태**(PAUSED 포함)를 순회한다."""
 
-    def test_card_height_is_identical_across_all_states(self, qapp):
+    def test_card_height_is_identical_across_all_states(self, qapp) -> None:
         widget = _make_widget(qapp)
         heights = {}
         for state in (DownloadState.WAITING, DownloadState.RUNNING, DownloadState.PAUSED,
@@ -940,7 +950,7 @@ class TestStateSwapKeepsCardHeight:
             f"상태에 따라 카드 높이가 변한다: {heights} — 목록이 들썩인다"
         )
 
-    def test_row3_stays_at_the_same_y_across_states(self, qapp):
+    def test_row3_stays_at_the_same_y_across_states(self, qapp) -> None:
         """슬롯이 pill↔텍스트로 바뀌어도 3행의 세로 위치가 같아야 한다."""
         widget = _make_widget(qapp)
         _at_width(widget, 900)
@@ -962,7 +972,7 @@ class TestTitleEditKeepsCardHeight:
         return widget.sizeHint().height(), widget.buttons[0].y()
 
     @pytest.mark.parametrize("width", WIDTHS)
-    def test_card_height_and_row3_y_stay_while_editing_the_title(self, qapp, width):
+    def test_card_height_and_row3_y_stay_while_editing_the_title(self, qapp, width) -> None:
         """대기 카드의 제목을 눌러 편집하고 Enter로 끝내면 카드 높이와 3행 세로 위치가 그대로여야 한다.
 
         대기 카드, 창 폭 560 · 900 · 1600, 제목 라벨 클릭 → Enter
@@ -997,7 +1007,7 @@ class TestLabelsDoNotGrow:
 
     LABELS = ("statusLabel", "fileSizeLabel")
 
-    def test_labels_do_not_grow_when_the_window_widens(self, qapp):
+    def test_labels_do_not_grow_when_the_window_widens(self, qapp) -> None:
         # 상태 텍스트가 실제로 보이는 진행 상태로 잰다(#245 슬롯)
         widget = _make_widget(qapp)
         widget.item.downloadState = DownloadState.RUNNING
@@ -1021,7 +1031,7 @@ class TestProgressBarOnlyWithProgress:
     빈 막대는 정보가 없고 자리만 먹는다. 보일 때는 카드 아래 가장자리
     근처 전체 폭이고, 양끝은 카드 곡률로 잘려 있다."""
 
-    def test_bar_hidden_for_states_without_progress(self, qapp):
+    def test_bar_hidden_for_states_without_progress(self, qapp) -> None:
         for state in (DownloadState.WAITING, DownloadState.FINISHED, DownloadState.FAILED):
             widget = _make_widget(qapp)
             widget.item.downloadState = state
@@ -1036,7 +1046,7 @@ class TestProgressBarOnlyWithProgress:
         (DownloadState.RUNNING, "running"),
         (DownloadState.PAUSED, "paused"),
     ])
-    def test_bar_visible_and_full_width_with_progress(self, qapp, state, bar_state):
+    def test_bar_visible_and_full_width_with_progress(self, qapp, state, bar_state) -> None:
         widget = _make_widget(qapp)
         widget.item.downloadState = state
         widget.item.download_progress = 42
@@ -1057,7 +1067,7 @@ class TestProgressBarOnlyWithProgress:
         )
 
     @pytest.mark.parametrize("width", WIDTHS)
-    def test_bar_is_clipped_to_the_card_corners(self, qapp, width):
+    def test_bar_is_clipped_to_the_card_corners(self, qapp, width) -> None:
         """막대 양끝이 카드의 둥근 모서리 바깥으로 튀어나오지 않는다.
 
         바 자체의 QSS border-radius는 높이(4px)에 눌려 카드 반지름(12px)을

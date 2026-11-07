@@ -43,7 +43,7 @@ from scripts.headless_download import (
 )
 
 
-def test_section_option_can_be_given_several_times():
+def test_section_option_can_be_given_several_times() -> None:
     """--section을 여러 번 주면 준 순서대로 모아야 한다.
 
     URL 하나와 --section 둘
@@ -57,7 +57,7 @@ def test_section_option_can_be_given_several_times():
     assert args.section == ["00:10:05:00-00:10:16:00", "00:42:00:12-00:42:31:00"]
 
 
-def test_section_option_defaults_to_whole_download():
+def test_section_option_defaults_to_whole_download() -> None:
     """--section을 주지 않으면 구간이 없어야 한다(전체 다운로드).
 
     URL 하나
@@ -66,7 +66,7 @@ def test_section_option_defaults_to_whole_download():
     assert _parse_args(["https://chzzk.naver.com/video/1"]).section == []
 
 
-def test_parse_sections_turns_timecodes_into_seconds():
+def test_parse_sections_turns_timecodes_into_seconds() -> None:
     """_parse_sections는 `시작-끝` 타임코드를 그 프레임률의 초 쌍으로 바꿔야 한다.
 
     "00:00:10:15-00:01:00:00", 30fps (15프레임 = 0.5초)
@@ -83,7 +83,7 @@ def test_parse_sections_turns_timecodes_into_seconds():
         ("00:00:10:30-00:00:20:00", TIMECODE_FRAME_OUT_OF_RANGE),  # 30fps에서 프레임 칸 30
     ],
 )
-def test_parse_sections_rejects_malformed_section(text, key):
+def test_parse_sections_rejects_malformed_section(text, key) -> None:
     """_parse_sections는 형식에 맞지 않는 구간을 타임코드 키로 거부해야 한다.
 
     주석의 경우마다 구간 문자열, 30fps
@@ -110,7 +110,7 @@ def test_parse_sections_rejects_malformed_section(text, key):
         (None, "fps 모름"),
     ],
 )
-def test_format_fps_shows_integers_bare_and_fractions_to_two_places(rate, expected):
+def test_format_fps_shows_integers_bare_and_fractions_to_two_places(rate, expected) -> None:
     """_format_fps는 정수 프레임률은 그대로, 분수는 소수 둘째 자리까지, 없으면 "fps 모름"으로 적어야 한다.
 
     주석의 경우마다 프레임률
@@ -119,7 +119,7 @@ def test_format_fps_shows_integers_bare_and_fractions_to_two_places(rate, expect
     assert _format_fps(rate) == expected
 
 
-def test_format_resolutions_attaches_frame_rate_to_each_resolution():
+def test_format_resolutions_attaches_frame_rate_to_each_resolution() -> None:
     """_format_resolutions는 해상도마다 그 base_url의 프레임률을 붙이고, 없는 것은 "fps 모름"으로 적어야 한다.
 
     해상도 144 · 720 · 1080, 프레임률은 144(30) · 1080(60)만 있음
@@ -144,7 +144,7 @@ def _video_info() -> VideoInfo:
     )
 
 
-def test_fetch_frame_rates_reads_the_manifest_of_an_encoded_vod(monkeypatch):
+def test_fetch_frame_rates_reads_the_manifest_of_an_encoded_vod(monkeypatch) -> None:
     """_fetch_frame_rates는 인코딩 완료 VOD면 영상 정보의 video_id · in_key로 매니페스트의 프레임률을 읽어야 한다.
 
     content_type "video", get_video_info가 (vid, key)를 돌려줌
@@ -154,7 +154,7 @@ def test_fetch_frame_rates_reads_the_manifest_of_an_encoded_vod(monkeypatch):
     cookies = {"NID_AUT": "", "NID_SES": ""}
     monkeypatch.setattr(headless.NetworkManager, "get_video_info", lambda no, c: _video_info())
 
-    def frame_rates(video_id, in_key, given):
+    def frame_rates(video_id, in_key, given) -> dict[str, Fraction]:
         calls.append((video_id, in_key, given))
         return {"u1080": Fraction(60)}
 
@@ -167,7 +167,9 @@ def test_fetch_frame_rates_reads_the_manifest_of_an_encoded_vod(monkeypatch):
 
 
 @pytest.mark.parametrize("content_type", ["clip", "m3u8"])
-def test_fetch_frame_rates_does_not_query_types_without_a_dash_manifest(monkeypatch, content_type):
+def test_fetch_frame_rates_does_not_query_types_without_a_dash_manifest(
+    monkeypatch, content_type
+) -> None:
     """_fetch_frame_rates는 클립과 인코딩 전 다시보기면 조회하지 않고 빈 결과를 돌려줘야 한다.
 
     content_type "clip" · "m3u8"
@@ -180,7 +182,7 @@ def test_fetch_frame_rates_does_not_query_types_without_a_dash_manifest(monkeypa
     assert calls == []
 
 
-def test_list_option_logs_frame_rate_next_to_each_resolution(monkeypatch, tmp_path, caplog):
+def test_list_option_logs_frame_rate_next_to_each_resolution(monkeypatch, tmp_path, caplog) -> None:
     """--list는 해상도마다 프레임률을 붙여 한 줄로 찍고 다운로드 없이 0으로 끝나야 한다.
 
     조회 결과 해상도 720(base u720) · 1080(base u1080), 프레임률 {u720: 60, u1080: 2997/100}
@@ -209,7 +211,7 @@ def test_list_option_logs_frame_rate_next_to_each_resolution(monkeypatch, tmp_pa
 # ================================================================ 엔진에 넘기기
 
 
-def test_runner_hands_sections_paths_and_moov_to_the_engine(monkeypatch, tmp_path):
+def test_runner_hands_sections_paths_and_moov_to_the_engine(monkeypatch, tmp_path) -> None:
     """러너는 구간, 배정한 구간 파일 경로, 구간을 해석하며 받은 것을 제출하는 Content에 실어야 한다.
 
     구간 둘과 moov 대역 · fMP4 대역을 받은 러너, DownloadService · 로거 · 태스크는 대역
@@ -219,10 +221,10 @@ def test_runner_hands_sections_paths_and_moov_to_the_engine(monkeypatch, tmp_pat
     submitted = []
 
     class FakeService:
-        def __init__(self, **kwargs):
+        def __init__(self, **kwargs) -> None:
             pass
 
-        def submit(self, content, **kwargs):
+        def submit(self, content, **kwargs) -> SimpleNamespace:
             submitted.append(content)
             return SimpleNamespace(wait=lambda timeout=None: True)
 
@@ -261,7 +263,9 @@ def test_runner_hands_sections_paths_and_moov_to_the_engine(monkeypatch, tmp_pat
 # ================================================================ 구간 옵션을 받는 타입
 
 
-def _main_with(monkeypatch, tmp_path, content_type: str, calls: list):
+def _main_with(
+    monkeypatch, tmp_path, content_type: str, calls: list
+) -> tuple[int, tuple[TimeRange, ...]]:
     """main을 대역으로 감싼다 — 조회 결과는 content_type이고, 해석·러너 호출을 calls에 남긴다.
 
     암호화 VOD의 해석("ts")은 받은 선언 프레임률과 함께 남기고, 러너가 받은 ts_head는
@@ -280,15 +284,15 @@ def _main_with(monkeypatch, tmp_path, content_type: str, calls: list):
     monkeypatch.setattr(headless, "_fetch", lambda url, cookies, path: (result, content_type))
     selections = (TimeRange(1.0, 2.0),)
 
-    def mp4(item, texts):
+    def mp4(item, texts) -> tuple[tuple[TimeRange, ...], str]:
         calls.append(("mp4", tuple(texts)))
         return selections, "moov"
 
-    def fmp4(item, texts, segment_dir=None):
+    def fmp4(item, texts, segment_dir=None) -> tuple[tuple[TimeRange, ...], str]:
         calls.append(("fmp4", tuple(texts)))
         return selections, "fmp4"
 
-    def ts(item, texts, segment_dir=None, declared=None):
+    def ts(item, texts, segment_dir=None, declared=None) -> tuple[tuple[TimeRange, ...], str]:
         calls.append(("ts", tuple(texts), declared))
         return selections, "ts"
 
@@ -302,7 +306,7 @@ def _main_with(monkeypatch, tmp_path, content_type: str, calls: list):
             fmp4_head=None,
             section_paths=(),
             ts_head=None,
-        ):
+        ) -> None:
             calls.append(("run", given, mp4_head, fmp4_head))
             if ts_head is not None:
                 calls.append(("ts_head", ts_head))
@@ -330,7 +334,7 @@ def _main_with(monkeypatch, tmp_path, content_type: str, calls: list):
 
 def test_section_option_on_unencoded_replay_resolves_fmp4_and_hands_it_to_the_runner(
     monkeypatch, tmp_path
-):
+) -> None:
     """인코딩 전 다시보기(m3u8)에 --section을 주면 fMP4로 구간을 해석하고 받은 것을 러너에 넘겨야 한다.
 
     조회 결과의 content_type "m3u8", --section 하나
@@ -347,7 +351,7 @@ def test_section_option_on_unencoded_replay_resolves_fmp4_and_hands_it_to_the_ru
     ]
 
 
-def test_section_option_on_encoded_vod_resolves_mp4(monkeypatch, tmp_path):
+def test_section_option_on_encoded_vod_resolves_mp4(monkeypatch, tmp_path) -> None:
     """인코딩이 끝난 VOD(video)에 --section을 주면 mp4로 구간을 해석하고 받은 moov를 러너에 넘겨야 한다.
 
     조회 결과의 content_type "video", --section 하나
@@ -363,7 +367,7 @@ def test_section_option_on_encoded_vod_resolves_mp4(monkeypatch, tmp_path):
 
 def test_section_option_on_encrypted_vod_resolves_ts_with_the_declared_frame_rate(
     monkeypatch, tmp_path
-):
+) -> None:
     """암호화 VOD(hls_aes)에 --section을 주면 고른 해상도의 선언 프레임률로 TS 구간을 해석하고 받은 것을 러너에 넘겨야 한다.
 
     조회 결과의 content_type "hls_aes", 고른 해상도의 주소 "u1080",
@@ -382,7 +386,7 @@ def test_section_option_on_encrypted_vod_resolves_ts_with_the_declared_frame_rat
     ]
 
 
-def test_section_option_is_refused_for_clip(monkeypatch, tmp_path):
+def test_section_option_is_refused_for_clip(monkeypatch, tmp_path) -> None:
     """클립에 --section을 주면 해석도 다운로드도 하지 않고 2로 끝나야 한다.
 
     조회 결과의 content_type "clip", --section 하나
@@ -399,7 +403,7 @@ def test_section_option_is_refused_for_clip(monkeypatch, tmp_path):
 # ================================================================ 인코딩 전 다시보기의 프레임률
 
 
-def _fmp4_head(durations: list[int]):
+def _fmp4_head(durations: list[int]) -> Fmp4Head:
     """영상 샘플 길이가 durations(ms)인 세그먼트 하나짜리 다시보기 — (Fmp4Head, 그 세그먼트)."""
     init_data = init_segment([InitTrack(1, b"vide", 1000, trex=(0, 10, NON_KEY))])
     init = parse_init_segment(init_data)
@@ -432,7 +436,7 @@ def _fmp4_head(durations: list[int]):
 )
 def test_fmp4_sections_log_the_frame_rate_and_hand_it_to_the_engine(
     monkeypatch, caplog, declared, rate, source
-):
+) -> None:
     """인코딩 전 다시보기의 구간 해석은 정한 프레임률과 경로를 로그로 남기고, 받은 것에 실어 엔진으로 넘겨야 한다.
 
     프레임 간격 17 · 17 · 16ms인 4초 세그먼트 하나, 마스터 플레이리스트의 FRAME-RATE는 주석의 값.
@@ -465,7 +469,7 @@ def test_fmp4_sections_log_the_frame_rate_and_hand_it_to_the_engine(
 
 def test_failed_fmp4_resolution_releases_names_and_removes_the_segment_folder(
     monkeypatch, tmp_path
-):
+) -> None:
     """인코딩 전 다시보기의 구간 해석이 실패하면 배정한 구간 파일명을 풀고, 세그먼트를 받아 둔 폴더를 지우고, 2로 끝나야 한다.
 
     구간 해석 대역이 넘겨받은 폴더에 파일 하나를 쓰고 None을 돌려줌(해석 실패)
@@ -478,7 +482,7 @@ def test_failed_fmp4_resolution_releases_names_and_removes_the_segment_folder(
     monkeypatch.setattr(headless, "_fetch", lambda url, cookies, path: (result, "m3u8"))
     folders = []
 
-    def failing(item, texts, segment_dir=None):
+    def failing(item, texts, segment_dir=None) -> None:
         os.makedirs(segment_dir)
         with open(os.path.join(segment_dir, "1.m4v"), "wb") as f:
             f.write(b"segment")

@@ -5,6 +5,7 @@
 """
 
 import time
+from collections.abc import Iterator
 from types import SimpleNamespace
 
 import pytest
@@ -33,7 +34,7 @@ from core.models.plan import TimeRange
 class _Clock:
     """테스트가 정하는 시계 — 값을 읽은 횟수를 센다."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.value = 1000.0
         self.read = 0
 
@@ -45,7 +46,7 @@ class _Clock:
 class _Keys(QWidget):
     """받은 키 입력을 적는 위젯."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.pressed: list[int] = []
 
@@ -54,7 +55,7 @@ class _Keys(QWidget):
 
 
 @pytest.fixture(autouse=True)
-def rest_at_every_gap(monkeypatch):
+def rest_at_every_gap(monkeypatch) -> None:
     """조작 중이면 틈마다 쉬게 한다(쉼 사이 시간 판정 0) — 이 파일은 쉬는 자리를 잰다 (#408).
 
     쉼을 일한 시간으로 묶는 동작은 ``tests/core/utils/test_interaction.py``의 가짜 시계 테스트가 잰다.
@@ -63,14 +64,14 @@ def rest_at_every_gap(monkeypatch):
 
 
 @pytest.fixture
-def clock(monkeypatch):
+def clock(monkeypatch) -> _Clock:
     clock = _Clock()
     monkeypatch.setattr(activity, "_now", clock)
     return clock
 
 
 @pytest.fixture
-def watching(qapp, clock):
+def watching(qapp, clock) -> Iterator[None]:
     """앱 전체의 입력을 지켜보는 상태 — 끝나면 필터를 걷고 마지막 입력을 잊는다."""
     activity.watch_user_input(qapp)
     yield
@@ -80,7 +81,7 @@ def watching(qapp, clock):
 class _WindowEvents(QObject):
     """창(QWindow) 하나가 받은 Expose · Resize 이벤트를 센다 — 그 창에만 건다."""
 
-    def __init__(self, parent: QObject):
+    def __init__(self, parent: QObject) -> None:
         super().__init__(parent)
         self.exposes = 0
         self.resizes = 0
@@ -99,7 +100,7 @@ _FIRST_EXPOSE_LIMIT = 1.0
 
 
 @pytest.fixture
-def window(qtbot, watching):
+def window(qtbot, watching) -> _Keys:
     """보이는 창 하나(안에 자식 위젯 하나) — 띄우며 생긴 이벤트는 잊고 시작한다.
 
     창 시스템이 띄운 창의 크기 · 위치(Resize · Move)는 그 창의 첫 Expose 이벤트보다 먼저 온다.
@@ -172,7 +173,7 @@ INPUTS = {
 }
 
 
-def test_user_is_not_interacting_before_any_input(window):
+def test_user_is_not_interacting_before_any_input(window) -> None:
     """입력이 한 번도 없었으면 조작 중이 아니어야 한다.
 
     필터를 건 뒤 아무 입력도 보내지 않음 -> user_interacting() is False.
@@ -186,7 +187,7 @@ def test_user_is_not_interacting_before_any_input(window):
 
 
 @pytest.mark.parametrize("kind", list(INPUTS))
-def test_each_kind_of_input_makes_the_user_interacting(qtbot, window, kind):
+def test_each_kind_of_input_makes_the_user_interacting(qtbot, window, kind) -> None:
     """앱 창에 입력이 들어오면 조작 중이어야 한다.
 
     키 · 마우스 버튼 · 휠 · 창 크기 바꾸기 · 창 옮기기를 하나씩 보냄
@@ -232,7 +233,7 @@ SINGLE_EVENTS = {
 
 
 @pytest.mark.parametrize("kind", list(SINGLE_EVENTS))
-def test_each_input_event_alone_makes_the_user_interacting(window, kind):
+def test_each_input_event_alone_makes_the_user_interacting(window, kind) -> None:
     """입력 이벤트는 종류마다 하나만 와도 조작 중이어야 한다.
 
     창 안의 위젯에 KeyPress · KeyRelease · MouseButtonPress · MouseButtonRelease ·
@@ -247,7 +248,7 @@ def test_each_input_event_alone_makes_the_user_interacting(window, kind):
 
 
 @pytest.mark.parametrize("kind", MOVES, ids=["창 안", "창 테두리 · 제목 줄"])
-def test_mouse_move_without_a_button_is_not_interaction(window, kind):
+def test_mouse_move_without_a_button_is_not_interaction(window, kind) -> None:
     """버튼을 누르지 않은 마우스 이동은 조작으로 치지 않아야 한다.
 
     창 안의 위젯에 MouseMove / NonClientAreaMouseMove(누른 버튼 없음)를 20번 보냄
@@ -270,7 +271,7 @@ WINDOW_SYSTEM_EVENTS = {
 
 
 @pytest.mark.parametrize("kind", list(WINDOW_SYSTEM_EVENTS))
-def test_window_system_event_to_the_window_is_not_interaction(window, kind):
+def test_window_system_event_to_the_window_is_not_interaction(window, kind) -> None:
     """창 시스템이 창에 보내는 노출 · 포커스 · 상태 이벤트는 조작으로 치지 않아야 한다.
 
     창(QWindow)에 Expose / FocusIn / WindowStateChange를 하나 보냄
@@ -283,7 +284,7 @@ def test_window_system_event_to_the_window_is_not_interaction(window, kind):
     assert activity.user_interacting() is True
 
 
-def test_mouse_move_over_the_window_without_a_button_is_not_interaction(window):
+def test_mouse_move_over_the_window_without_a_button_is_not_interaction(window) -> None:
     """창(QWindow)에 온 버튼 없는 마우스 이동도 조작으로 치지 않아야 한다.
 
     창에 합성 마우스 이동을 보냄(진짜 커서는 그대로다) -> user_interacting() is False.
@@ -298,7 +299,7 @@ def test_mouse_move_over_the_window_without_a_button_is_not_interaction(window):
 
 
 @pytest.mark.parametrize("kind", MOVES, ids=["창 안", "창 테두리 · 제목 줄"])
-def test_mouse_move_with_a_button_held_is_interaction(window, kind):
+def test_mouse_move_with_a_button_held_is_interaction(window, kind) -> None:
     """버튼을 누른 채 움직이는 마우스는 조작이어야 한다(끌기).
 
     창 안의 위젯에 MouseMove / NonClientAreaMouseMove(왼쪽 버튼을 누른 채)를 하나 보냄
@@ -311,7 +312,7 @@ def test_mouse_move_with_a_button_held_is_interaction(window, kind):
     assert activity.user_interacting() is True
 
 
-def test_interaction_ends_after_the_interaction_time(window, clock):
+def test_interaction_ends_after_the_interaction_time(window, clock) -> None:
     """마지막 입력 뒤 INTERACTION_SECONDS(0.2초)가 지나면 조작 중이 아니어야 한다.
 
     시계 0.0에서 키 입력 -> 시계 0.19: True, 0.2: False
@@ -328,7 +329,7 @@ def test_interaction_ends_after_the_interaction_time(window, clock):
     assert (still, after) == (True, False)
 
 
-def test_a_later_input_extends_the_interaction(window, clock):
+def test_a_later_input_extends_the_interaction(window, clock) -> None:
     """입력이 이어지면 마지막 입력을 기준으로 조작 중이어야 한다.
 
     시계 1000.0에서 키 입력, 1000.15에서 다시 키 입력 -> 시계 1000.3: True, 1000.35: False
@@ -345,7 +346,7 @@ def test_a_later_input_extends_the_interaction(window, clock):
     assert (still, after) == (True, False)
 
 
-def test_events_that_are_not_input_do_not_count(window):
+def test_events_that_are_not_input_do_not_count(window) -> None:
     """창 안 위젯의 크기 · 위치 변경과 그 밖의 이벤트는 입력으로 치지 않아야 한다.
 
     자식 위젯의 크기 · 위치를 바꾸고, 다시 그리고, 사용자 정의 이벤트를 보냄
@@ -364,7 +365,7 @@ def test_events_that_are_not_input_do_not_count(window):
     assert activity.user_interacting() is True
 
 
-def test_watching_does_not_swallow_the_input(window):
+def test_watching_does_not_swallow_the_input(window) -> None:
     """지켜보는 필터는 입력을 막지 않아야 한다 — 위젯이 그대로 받는다.
 
     보이는 창에 키 A를 누름 -> 창이 받은 키 == [Key_A]
@@ -374,7 +375,7 @@ def test_watching_does_not_swallow_the_input(window):
     assert window.pressed == [Qt.Key.Key_A]
 
 
-def test_watching_twice_installs_one_filter(window, clock, qapp):
+def test_watching_twice_installs_one_filter(window, clock, qapp) -> None:
     """지켜보기를 두 번 청해도 필터는 하나여야 한다 — 입력 하나에 시계를 한 번만 읽는다.
 
     watch_user_input을 한 번 더 부른 뒤 KeyPress 하나를 창에 직접 보냄
@@ -390,7 +391,7 @@ def test_watching_twice_installs_one_filter(window, clock, qapp):
     assert clock.read - before == 1
 
 
-def test_stopping_removes_the_filter_and_forgets_the_last_input(window):
+def test_stopping_removes_the_filter_and_forgets_the_last_input(window) -> None:
     """지켜보기를 그만두면 조작 중이 아니게 되고, 그 뒤의 입력도 세지 않아야 한다.
 
     키 입력(True 확인) → stop_watching_user_input() -> False. 다시 키 입력 -> 여전히 False
@@ -405,7 +406,7 @@ def test_stopping_removes_the_filter_and_forgets_the_last_input(window):
     assert (stopped, activity.user_interacting()) == (False, False)
 
 
-def test_download_viewmodel_hands_the_question_to_the_service(qapp, monkeypatch):
+def test_download_viewmodel_hands_the_question_to_the_service(qapp, monkeypatch) -> None:
     """다운로드 뷰모델은 서비스를 만들 때 조작 중인지 묻는 값으로 user_interacting을 넘겨야 한다.
 
     DownloadService를 받은 인자를 적는 대역으로 바꾸고 DownloadViewModel(content)을 만듦
@@ -414,16 +415,16 @@ def test_download_viewmodel_hands_the_question_to_the_service(qapp, monkeypatch)
     given: dict = {}
 
     class Service:
-        def __init__(self, **kwargs):
+        def __init__(self, **kwargs) -> None:
             given.update(kwargs)
 
     class Content(QObject):
-        def update_progress(self, *args): ...
-        def pause(self, *args): ...
-        def resume(self, *args): ...
-        def stop(self, *args): ...
-        def finish(self, *args): ...
-        def fail(self, *args): ...
+        def update_progress(self, *args) -> None: ...
+        def pause(self, *args) -> None: ...
+        def resume(self, *args) -> None: ...
+        def stop(self, *args) -> None: ...
+        def finish(self, *args) -> None: ...
+        def fail(self, *args) -> None: ...
 
     monkeypatch.setattr(download_viewmodel, "DownloadService", Service)
 
@@ -436,14 +437,14 @@ def test_download_viewmodel_hands_the_question_to_the_service(qapp, monkeypatch)
 
 
 @pytest.fixture
-def rests(monkeypatch):
+def rests(monkeypatch) -> list[int]:
     """쉰 횟수를 담는 리스트 — 쉬는 일을 자지 않고 세기만 하는 대역으로 바꾼다."""
     counted: list[int] = []
     monkeypatch.setattr(interaction, "_rest", lambda: counted.append(1))
     return counted
 
 
-def _gap(*_args):
+def _gap(*_args) -> tuple[int, int]:
     """조회의 대역 — 조각 사이의 틈을 한 번 흉내 낸다."""
     interaction.rest_if_user_interacting()
     return 7, 3
@@ -473,7 +474,7 @@ def _run_refit_job() -> list[tuple]:
     return done
 
 
-def test_section_jobs_ask_the_question_of_user_activity():
+def test_section_jobs_ask_the_question_of_user_activity() -> None:
     """카드의 조회 · 크기 세기가 조작 중인지 묻는 값은 app.system.user_activity.user_interacting이어야 한다.
 
     -> section_edit_viewmodel.user_interacting is app.system.user_activity.user_interacting
@@ -484,7 +485,7 @@ def test_section_jobs_ask_the_question_of_user_activity():
 @pytest.mark.parametrize(("answer", "expected"), [(True, 1), (False, 0)], ids=["조작 중", "아님"])
 def test_size_job_rests_at_a_gap_only_while_the_user_is_interacting(
     qapp, monkeypatch, rests, answer, expected
-):
+) -> None:
     """크기 세기는 조작 중이라고 답할 때만 틈에서 쉬어야 한다.
 
     section_file_bytes_of를 틈을 한 번 흉내 내고 7을 돌려주는 대역으로, user_interacting을
@@ -503,7 +504,7 @@ def test_size_job_rests_at_a_gap_only_while_the_user_is_interacting(
 @pytest.mark.parametrize(("answer", "expected"), [(True, 1), (False, 0)], ids=["조작 중", "아님"])
 def test_refit_job_rests_at_a_gap_only_while_the_user_is_interacting(
     qapp, monkeypatch, rests, answer, expected
-):
+) -> None:
     """해상도 변경 뒤의 조회는 조작 중이라고 답할 때만 틈에서 쉬어야 한다.
 
     probe_section_basis를 틈을 한 번 흉내 내는 대역으로, user_interacting을 늘 참 / 늘 거짓으로
@@ -518,7 +519,9 @@ def test_refit_job_rests_at_a_gap_only_while_the_user_is_interacting(
     assert done == [("요청", (7, 3))]
 
 
-def test_section_jobs_leave_nothing_set_on_the_thread_after_they_run(qapp, monkeypatch, rests):
+def test_section_jobs_leave_nothing_set_on_the_thread_after_they_run(
+    qapp, monkeypatch, rests
+) -> None:
     """카드의 조회 · 크기 세기가 끝나면 그 스레드에 조작 중인지 묻는 값이 남지 않아야 한다.
 
     user_interacting = 늘 참. 두 일을 차례로 돌린 뒤(쉰 횟수 2) 같은 스레드에서 틈을 한 번 흉내 냄
@@ -536,7 +539,7 @@ def test_section_jobs_leave_nothing_set_on_the_thread_after_they_run(qapp, monke
     assert len(rests) == 2
 
 
-def test_edit_window_lookup_does_not_rest(qapp, monkeypatch, rests):
+def test_edit_window_lookup_does_not_rest(qapp, monkeypatch, rests) -> None:
     """편집 창의 조회는 조작 중이어도 쉬지 않아야 한다 — 쉬는 것은 카드의 조회 · 크기 세기뿐이다.
 
     user_interacting = 늘 참, probe_section_basis는 틈을 한 번 흉내 내는 대역. SectionBasisJob.run()
@@ -555,7 +558,9 @@ def test_edit_window_lookup_does_not_rest(qapp, monkeypatch, rests):
     assert len(rests) == 1
 
 
-def test_size_counted_while_resting_equals_the_size_counted_without_resting(qapp, monkeypatch):
+def test_size_counted_while_resting_equals_the_size_counted_without_resting(
+    qapp, monkeypatch
+) -> None:
     """조작 중에 쉬어 가며 센 카드의 크기는 쉬지 않고 센 크기와 같아야 한다.
 
     영상 20,000샘플의 moov(해석하지 않은 것), 구간 10~60초 · 200~320초. 실제로 잔다(1ms).

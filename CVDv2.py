@@ -24,7 +24,7 @@ def resource_path(relative_path: str) -> str:
     base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
 
-def apply_theme(app):
+def apply_theme(app) -> None:
     """OS 라이트/다크 설정을 감지해 앱 전역 팔레트·스타일시트를 적용한다 (#227).
 
     실패해도 앱은 뜬다 — 스타일이 없으면 Qt 기본 외형으로 보일 뿐이고,
@@ -76,7 +76,7 @@ def qt_catalog_path(language: str) -> str:
     return resource_path(f"translations/qtbase_{QLocale(language).bcp47Name()}.qm")
 
 
-def install_qt_catalog(app, language: str):
+def install_qt_catalog(app, language: str) -> QTranslator | None:
     """Qt 자체 카탈로그(qtbase_<언어코드>.qm)를 설치한다. 파일이 없거나 못 읽으면 None.
 
     설치 순서가 중요하다 — Qt는 **나중에 설치한 번역기를 먼저** 검색한다(실측: 같은
@@ -98,7 +98,7 @@ def install_qt_catalog(app, language: str):
     return translator
 
 
-def set_language(app_config, translator):
+def set_language(app_config, translator) -> list[QTranslator]:
     """앱 언어를 정하고 번역기를 설치한다 — 설치 순서: Qt 카탈로그 → 우리 번역(마지막이 우선).
 
     Returns:

@@ -34,6 +34,7 @@ import weakref
 from collections import deque
 from collections.abc import Callable
 
+from core.engine.base import BaseDownloader
 from core.sources.file_downloader import FileDownloader
 from core.sources.hls_aes_downloader import HlsAesDownloader
 from core.sources.m3u8_downloader import M3U8Downloader
@@ -68,7 +69,7 @@ class _NullDownloadLogger:
     엔진이 호출하는 모든 log_*·save_and_close 메서드를 no-op으로 받는다.
     """
 
-    def __getattr__(self, name: str):
+    def __getattr__(self, name: str) -> Callable[..., None]:
         return lambda *args, **kwargs: None
 
 
@@ -99,7 +100,7 @@ class DownloadHandle:
         on_merge_start: Callable[[], None] | None = None,
         on_failed_key: FailedKeyCallback | None = None,
         on_finished_counters: FinishedCountersCallback | None = None,
-    ):
+    ) -> None:
         self.content = content
         self.data = data
         self.logger = task_logger
@@ -208,7 +209,7 @@ class DownloadService:
         base_url_resolver: BaseUrlResolver | None = None,
         key_resolver: KeyResolver | None = None,
         user_interacting: Callable[[], bool] | None = None,
-    ):
+    ) -> None:
         """서비스를 생성한다.
 
         Args:
@@ -288,7 +289,7 @@ class DownloadService:
             self._dispatch_locked()
         return handle
 
-    def _select_downloader(self, content: Content):
+    def _select_downloader(self, content: Content) -> type[BaseDownloader]:
         """supports()로 컨텐츠를 처리할 다운로더 클래스를 고른다 (#82).
 
         서비스는 구체 클래스의 타입 분기를 알지 않는다 — 각 다운로더가
@@ -418,7 +419,7 @@ class DownloadService:
                     self._active.discard(handle)
                     self._dispatch_locked()
 
-    def _create_engine(self, handle: DownloadHandle):
+    def _create_engine(self, handle: DownloadHandle) -> BaseDownloader:
         """선택된 다운로더 클래스로 엔진을 만들고 콜백을 배선한다.
 
         생성자 시그니처는 BaseDownloader가 통일한다(#82) — 서비스는 구체
@@ -431,8 +432,8 @@ class DownloadService:
         # 스레드와 _active가 핸들을 붙들고 있다
         target = weakref.ref(handle)
 
-        def relay(name: str):
-            def call(*args):
+        def relay(name: str) -> Callable[..., None]:
+            def call(*args) -> None:
                 alive = target()
                 if alive is not None:
                     getattr(alive, name)(*args)

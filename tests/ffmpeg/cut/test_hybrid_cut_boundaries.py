@@ -63,7 +63,7 @@ def source(request, tmp_path_factory) -> tuple[int, str, CutFrames]:
     return delay, path, cut_frames_from_mp4(read_mp4_index(read))
 
 
-def test_generated_source_has_the_wanted_reorder_delay_and_short_gop(source):
+def test_generated_source_has_the_wanted_reorder_delay_and_short_gop(source) -> None:
     """만든 입력은 요청한 재정렬 지연과 짧은 GOP를 가져야 한다.
 
     -bf 2 · b-pyramid=none(지연 1) 또는 -bf 3 · b-pyramid=normal(지연 2), 키프레임 0·30·36·60·90
@@ -78,7 +78,7 @@ def test_generated_source_has_the_wanted_reorder_delay_and_short_gop(source):
 
 
 @pytest.mark.parametrize("start", OFFSETS, ids=[f"start{offset:+d}" for offset in OFFSETS])
-def test_cut_passes_every_check_for_each_end_around_a_keyframe(source, tmp_path, start):
+def test_cut_passes_every_check_for_each_end_around_a_keyframe(source, tmp_path, start) -> None:
     """시작이 키프레임 30에서 start프레임 떨어진 구간은 끝이 키프레임 36의 -4~+4프레임 어디든 판정을 통과해야 한다.
 
     시작 프레임 30 + start, 끝 프레임 32~40 (시작보다 앞인 끝은 뺀다)

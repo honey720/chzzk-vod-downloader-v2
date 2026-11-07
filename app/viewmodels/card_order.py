@@ -77,7 +77,7 @@ class _Reversed:
 
     __slots__ = ("value",)
 
-    def __init__(self, value):
+    def __init__(self, value) -> None:
         self.value = value
 
     def __eq__(self, other) -> bool:
@@ -104,7 +104,7 @@ class CardOrder(QObject):
     itemStateChanged = Signal(object)
     countsChanged = Signal()
 
-    def __init__(self, model, parent: QObject | None = None):
+    def __init__(self, model, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._model = model
         saved = settings.load_settings().get("sortOrder", "added:asc")

@@ -122,7 +122,7 @@ class HlsAesDownloader(BaseDownloader):
     # 처음 만난 작업자만 알리고(_fail_fatally) 나머지는 알리지 않고 끝난다. self.lock으로 지킨다
     _decrypt_failed: bool = False
 
-    def __init__(self, data, logger, **callbacks):
+    def __init__(self, data, logger, **callbacks) -> None:
         super().__init__(data, logger, **callbacks)
         # 세그먼트 저장용 임시 폴더 (실패 정리 경로가 참조하므로 실행 전에 확정).
         # 산출물 파일명에서 파생해 다운로드 간 폴더 공유·상호 삭제를 막는다 (#105).
@@ -418,7 +418,7 @@ class HlsAesDownloader(BaseDownloader):
         _index, segment = item
         self.logger.log_m3u8_thread_start(part_num, segment)
 
-    def _download_item(self, item, part_num: int):
+    def _download_item(self, item, part_num: int) -> int:
         index, segment = item
         if index in self._prefetched:
             # 구간을 정하면서 이미 온전하게 받아 둔 세그먼트 — 다시 받지 않는다 (#309)
@@ -712,7 +712,7 @@ class HlsAesDownloader(BaseDownloader):
 
     # ============ 다운로드 동작 ============
 
-    def _download_segment(self, index: int, segment: str, part_num: int, total_ranges: int):
+    def _download_segment(self, index: int, segment: str, part_num: int, total_ranges: int) -> int:
         """개별 세그먼트를 받아 복호화해 임시 파일로 저장한다 (재시도 포함).
 
         저속 재시도·일시정지·중단 판정 규칙은 m3u8 경로와 동일하다. 차이는

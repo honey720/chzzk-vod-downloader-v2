@@ -46,7 +46,7 @@ class TimecodeError(ValueError):
     message_key는 번역하지 않은 i18n 키 원문이다(이 모듈의 ``TIMECODE_*`` 상수).
     """
 
-    def __init__(self, message_key: str, text: str):
+    def __init__(self, message_key: str, text: str) -> None:
         super().__init__(f"{message_key}: {text!r}")
         self.message_key = message_key
         self.text = text

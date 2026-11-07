@@ -15,6 +15,7 @@ PTS보다 0.1초 앞선다), 영상 청크는 샘플 0~2 · 3~5 · 6~7 · 8~11. 
 import pytest
 
 from core.media.mp4 import index_mp4, parse_moov, read_mp4_raw
+from core.media.mp4_index import Mp4Index
 from core.models.plan import TimeRange
 from core.sections.hybrid import SOURCE_LEAD_SECONDS
 from core.sections.mp4_ranges import (
@@ -25,23 +26,23 @@ from core.sections.mp4_ranges import (
     selection_byte_ranges,
 )
 from core.sections.selections import reaches_end, validate_selections
-from tests.support.mp4_builder import audio_spec, build_mp4, video_spec
+from tests.support.mp4_builder import BuiltMp4, audio_spec, build_mp4, video_spec
 
 VIDEO_SIZES = [40 + 3 * n for n in range(12)]  # 조립기 video_spec의 샘플 크기
 AUDIO_SIZE = 7  # 조립기 audio_spec의 샘플 크기
 
 
-def _video_only():
+def _video_only() -> tuple[BuiltMp4, Mp4Index]:
     built = build_mp4([video_spec()])
     return built, parse_moov(built.moov)
 
 
-def _with_audio():
+def _with_audio() -> tuple[BuiltMp4, Mp4Index]:
     built = build_mp4([video_spec(), audio_spec()])
     return built, parse_moov(built.moov)
 
 
-def test_selection_byte_ranges_starts_at_keyframe_before_first_frame():
+def test_selection_byte_ranges_starts_at_keyframe_before_first_frame() -> None:
     """selection_byte_ranges는 구간 첫 프레임 앞의 키프레임이 든 청크부터 범위를 잡아야 한다.
 
     영상만, 구간 0.5~0.6초 (프레임 5~6, 앞 키프레임 = 프레임 4 = 샘플 4, 그 청크는 샘플 3~5)
@@ -55,7 +56,7 @@ def test_selection_byte_ranges_starts_at_keyframe_before_first_frame():
     assert (result.keyframe, result.first_frame, result.last_frame) == (4, 5, 6)
 
 
-def test_selection_byte_ranges_starts_one_keyframe_earlier_when_first_frame_is_a_keyframe():
+def test_selection_byte_ranges_starts_one_keyframe_earlier_when_first_frame_is_a_keyframe() -> None:
     """selection_byte_ranges는 구간 첫 프레임이 키프레임이면 그 앞 키프레임부터 범위를 잡아야 한다.
 
     영상만, 구간 0.4~0.6초 (첫 프레임 4는 키프레임. 0.4 − SOURCE_LEAD_SECONDS를 덮는 키프레임은 프레임 0)
@@ -70,7 +71,7 @@ def test_selection_byte_ranges_starts_one_keyframe_earlier_when_first_frame_is_a
     assert result.ranges[0][0] == built.sample_offsets[b"vide"][0]
 
 
-def test_selection_byte_ranges_starts_at_first_keyframe_when_nothing_precedes_it():
+def test_selection_byte_ranges_starts_at_first_keyframe_when_nothing_precedes_it() -> None:
     """selection_byte_ranges는 구간이 파일의 첫 프레임에서 시작하면 첫 키프레임부터 범위를 잡아야 한다.
 
     영상만, 구간 0.0~0.1초
@@ -83,7 +84,7 @@ def test_selection_byte_ranges_starts_at_first_keyframe_when_nothing_precedes_it
     assert (result.keyframe, result.first_frame) == (0, 0)
 
 
-def test_selection_byte_ranges_ends_at_last_sample_needed_in_decode_order():
+def test_selection_byte_ranges_ends_at_last_sample_needed_in_decode_order() -> None:
     """selection_byte_ranges는 끝 프레임보다 먼저 표시되지만 나중에 디코드되는 샘플이 든 청크까지 범위에 넣어야 한다.
 
     영상만, 구간 0.0~0.3초 (프레임 0~3 = 샘플 0, 2, 3, 1 — 가장 뒤 샘플 3의 청크는 샘플 3~5)
@@ -97,7 +98,7 @@ def test_selection_byte_ranges_ends_at_last_sample_needed_in_decode_order():
     assert result.ranges == ((offsets[0], offsets[5] + VIDEO_SIZES[5] - 1),)
 
 
-def test_selection_byte_ranges_total_size_equals_whole_chunks_for_video_only():
+def test_selection_byte_ranges_total_size_equals_whole_chunks_for_video_only() -> None:
     """selection_byte_ranges의 total_size는 영상만 있는 파일에서 필요한 샘플이 든 청크 크기의 합이어야 한다.
 
     영상만, 구간 0.5~0.6초 → 필요한 샘플 4~7 → 청크 (3~5) · (6~7)
@@ -112,7 +113,7 @@ def test_selection_byte_ranges_total_size_equals_whole_chunks_for_video_only():
     assert result.ranges[0][1] - result.ranges[0][0] + 1 == result.total_size
 
 
-def test_selection_byte_ranges_includes_last_frame_when_end_is_duration():
+def test_selection_byte_ranges_includes_last_frame_when_end_is_duration() -> None:
     """selection_byte_ranges는 구간 끝이 영상 길이이면 마지막 프레임까지 범위에 넣어야 한다.
 
     영상만, 구간 1.0~1.2초 (프레임 10~11, 앞 키프레임 = 프레임 8 = 샘플 8, 청크는 샘플 8~11)
@@ -127,7 +128,7 @@ def test_selection_byte_ranges_includes_last_frame_when_end_is_duration():
     assert result.last_frame == 11
 
 
-def test_selection_byte_ranges_snaps_times_to_frames():
+def test_selection_byte_ranges_snaps_times_to_frames() -> None:
     """selection_byte_ranges는 프레임 경계가 아닌 시각을 가장 가까운 프레임에 맞춰야 한다.
 
     영상만, 구간 0.52~0.58초
@@ -140,7 +141,7 @@ def test_selection_byte_ranges_snaps_times_to_frames():
     assert result == selection_byte_ranges(index, TimeRange(0.5, 0.6))
 
 
-def test_selection_byte_ranges_covers_audio_from_the_keyframe_decode_time():
+def test_selection_byte_ranges_covers_audio_from_the_keyframe_decode_time() -> None:
     """selection_byte_ranges는 키프레임의 DTS부터 끝 프레임이 끝날 때까지와 겹치는 오디오 샘플의 청크를 범위에 넣어야 한다.
 
     구간 0.5~0.6초 → 키프레임 4의 DTS 0.3초 ~ 0.7초 → 오디오 샘플 3~6 (0.256~0.768초)
@@ -159,7 +160,7 @@ def test_selection_byte_ranges_covers_audio_from_the_keyframe_decode_time():
     assert result.total_size == end - begin
 
 
-def test_selection_byte_ranges_widens_to_audio_stored_before_the_video():
+def test_selection_byte_ranges_widens_to_audio_stored_before_the_video() -> None:
     """selection_byte_ranges는 필요한 오디오 청크가 영상 청크보다 앞에 놓여 있으면 범위를 거기까지 넓혀야 한다.
 
     구간 1.0~1.2초 → 영상 샘플 8~11(마지막 영상 청크), 키프레임 8의 DTS 0.7초 ~ 1.2초 → 오디오 샘플 6~10
@@ -176,7 +177,7 @@ def test_selection_byte_ranges_widens_to_audio_stored_before_the_video():
     assert result.ranges == ((audio[4], video[11] + VIDEO_SIZES[11] - 1),)
 
 
-def test_selection_byte_ranges_ends_on_chunk_boundaries_of_every_track():
+def test_selection_byte_ranges_ends_on_chunk_boundaries_of_every_track() -> None:
     """selection_byte_ranges가 돌려준 범위의 양 끝은 어느 트랙의 청크도 가르지 않아야 한다.
 
     구간 0.5~0.6초, 영상 청크 (0~2)(3~5)(6~7)(8~11) · 오디오 청크 4개씩
@@ -197,7 +198,7 @@ def test_selection_byte_ranges_ends_on_chunk_boundaries_of_every_track():
             assert inside or outside
 
 
-def test_selection_byte_ranges_holds_every_needed_sample_inside_the_range():
+def test_selection_byte_ranges_holds_every_needed_sample_inside_the_range() -> None:
     """selection_byte_ranges가 돌려준 범위만 읽어도 필요한 샘플의 바이트가 모두 들어 있어야 한다.
 
     구간 0.5~0.6초 → 영상 샘플 4~7, 오디오 샘플 3~6
@@ -220,7 +221,7 @@ def test_selection_byte_ranges_holds_every_needed_sample_inside_the_range():
             assert piece[start : start + size] == built.sample_bytes(handler, sample, size)
 
 
-def test_selection_ending_at_a_duration_off_the_frame_grid_ends_on_the_last_frame():
+def test_selection_ending_at_a_duration_off_the_frame_grid_ends_on_the_last_frame() -> None:
     """끝이 영상 길이(초)와 같은 mp4 구간은 길이 × fps의 소수부가 .5 이상이어도 검증을 통과하고 마지막 프레임에서 끝나야 한다.
 
     영상만 · 재정렬 없음, 12샘플(길이 100틱, 마지막만 160틱 · timescale 1000) — 길이 1.26초 = 12.6프레임.
@@ -237,12 +238,12 @@ def test_selection_ending_at_a_duration_off_the_frame_grid_ends_on_the_last_fram
     assert selection_byte_ranges(index, selection).last_frame == 11
 
 
-def _file_index(data: bytes):
+def _file_index(data: bytes) -> Mp4Index:
     """파일의 바이트에서 읽은 색인 — moov의 위치가 들어 있다."""
     return index_mp4(read_mp4_raw(lambda offset, size: data[offset : offset + size])).index
 
 
-def test_head_plus_the_download_of_sections_covering_the_video_is_the_size_of_the_file():
+def test_head_plus_the_download_of_sections_covering_the_video_is_the_size_of_the_file() -> None:
     """구간이 영상 전체를 덮으면 머리 길이와 받을 바이트의 합이 파일 크기와 같아야 한다.
 
     영상 1.2초 · 오디오 10샘플(영상 안에서 끝난다 — 1.152초). 파일: ftyp · moov · mdat
@@ -262,7 +263,7 @@ def test_head_plus_the_download_of_sections_covering_the_video_is_the_size_of_th
     assert head + sections_download_size(index, overlapping) == len(built.data)
 
 
-def test_head_is_left_out_of_the_download_of_a_part_of_the_video():
+def test_head_is_left_out_of_the_download_of_a_part_of_the_video() -> None:
     """영상의 일부만 받는 구간은 머리와 받을 바이트의 합이 파일 크기보다 작아야 한다.
 
     위와 같은 파일, 구간 0~0.4초 -> 머리 == mdat 본문의 시작, 머리 + 받을 바이트 < 파일 크기
@@ -296,7 +297,9 @@ def test_head_is_left_out_of_the_download_of_a_part_of_the_video():
     ],
     ids=["영상과 오디오", "영상만", "청크가 여럿", "4GiB를 넘는다"],
 )
-def test_estimated_section_file_size_adds_the_samples_and_a_head_by_their_counts(counts, expected):
+def test_estimated_section_file_size_adds_the_samples_and_a_head_by_their_counts(
+    counts, expected
+) -> None:
     """구간 파일 하나의 추정은 샘플의 바이트에 샘플 · 청크 수로 어림한 머리를 더한 값이어야 한다.
 
     (프레임 수, 영상 바이트, 오디오 샘플 수, 오디오 바이트, 영상 청크 수, 오디오 청크 수)
@@ -317,7 +320,9 @@ def test_estimated_section_file_size_adds_the_samples_and_a_head_by_their_counts
     ],
     ids=["샘플이 이어진 구간", "디코드 순서가 엇갈린 구간"],
 )
-def test_sections_file_size_counts_the_samples_of_the_section_and_its_head(selection, expected):
+def test_sections_file_size_counts_the_samples_of_the_section_and_its_head(
+    selection, expected
+) -> None:
     """구간 파일 크기의 합은 그 구간의 영상 · 오디오 샘플 바이트에 머리의 어림을 더한 값이어야 한다.
 
     영상 + 오디오, 구간 하나 -> expected (받을 양 sections_download_size와는 다른 값이다)
@@ -329,7 +334,7 @@ def test_sections_file_size_counts_the_samples_of_the_section_and_its_head(selec
 
 
 @pytest.mark.parametrize("with_audio", [True, False], ids=["영상과 오디오", "영상만"])
-def test_sections_file_size_of_the_whole_video_is_the_size_of_the_source_file(with_audio):
+def test_sections_file_size_of_the_whole_video_is_the_size_of_the_source_file(with_audio) -> None:
     """영상 전체를 덮는 구간의 크기는 원본 파일의 크기여야 한다 — 받은 것이 곧 원본이다.
 
     구간 0초 ~ 영상 길이(1.2초, 프레임 0~11) -> 합성 파일의 바이트 수.
@@ -342,7 +347,7 @@ def test_sections_file_size_of_the_whole_video_is_the_size_of_the_source_file(wi
     assert sections_file_size(index, [TimeRange(0.0, 1.0)]) != len(built.data)
 
 
-def test_sections_file_size_counts_overlapping_sections_once_each():
+def test_sections_file_size_counts_overlapping_sections_once_each() -> None:
     """겹치는 구간은 구간마다 세어야 한다 — 구간마다 파일이 하나씩 생긴다.
 
     영상 + 오디오. 구간 0.5~0.6초 하나의 크기 2592. 같은 구간 둘, 그리고 0.5~0.6초와 0.3~0.4초(2668)
@@ -357,7 +362,7 @@ def test_sections_file_size_counts_overlapping_sections_once_each():
     assert sections_download_size(index, [one, one]) == sections_download_size(index, [one])
 
 
-def test_sections_file_size_of_a_video_without_audio_counts_no_audio():
+def test_sections_file_size_of_a_video_without_audio_counts_no_audio() -> None:
     """오디오가 없는 영상의 구간 파일 크기에는 오디오의 몫이 없어야 한다.
 
     영상만, 구간 0.5~0.6초(샘플 6 · 7 — 119바이트, 청크 하나) -> 2400 + 24 + 8 + 119

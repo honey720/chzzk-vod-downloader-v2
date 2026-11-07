@@ -25,6 +25,8 @@ elapsed 계산 자체가 원래 식으로 돌아왔으므로 애초에 영향이
 
 import time as real_time
 import types
+from collections.abc import Callable, Iterator
+from typing import Self
 
 import pytest
 
@@ -43,7 +45,7 @@ CHUNK_COUNT = 8  # 0.15초 × 8 = 1.2초 — 아래에서 줄인 판정 창(0.5�
 
 
 @pytest.fixture(autouse=True)
-def _short_slow_window(monkeypatch):
+def _short_slow_window(monkeypatch) -> None:
     """저속 판정 창을 0.5초로 줄인다 (#347).
 
     이 파일은 실제 시계와 실제 지연으로 잰다. 제품의 창(3초)을 그대로 두면 시나리오가 판정에
@@ -53,7 +55,7 @@ def _short_slow_window(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _only_this_connection_is_slow(monkeypatch):
+def _only_this_connection_is_slow(monkeypatch) -> None:
     """다른 연결 셋은 아주 빠르고 새 요청의 시작 비용은 없는 것으로 둔다 (#347 재시작 이득 판정).
 
     이 파일의 본문은 몇십 KB라, 제품의 값(시작 비용 1초)으로는 끊는 쪽이 이득일 수 없다 — 그 셈은
@@ -68,30 +70,30 @@ def _only_this_connection_is_slow(monkeypatch):
 class _SlowWriteFile:
     """실제 파일을 감싸 write()마다 인위적 지연을 주는 래퍼 — 느린 디스크 흉내."""
 
-    def __init__(self, real_file, delay: float):
+    def __init__(self, real_file, delay: float) -> None:
         self._real_file = real_file
         self._delay = delay
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
         self._real_file.close()
         return False
 
-    def seek(self, *args, **kwargs):
+    def seek(self, *args, **kwargs) -> int:
         return self._real_file.seek(*args, **kwargs)
 
-    def write(self, data):
+    def write(self, data) -> int:
         real_time.sleep(self._delay)
         return self._real_file.write(data)
 
 
-def _make_slow_open(delay: float):
+def _make_slow_open(delay: float) -> Callable[..., _SlowWriteFile]:
     """monkeypatch로 다운로더 모듈의 open()을 대체할 팩토리."""
     real_open = open
 
-    def _slow_open(path, mode, *args, **kwargs):
+    def _slow_open(path, mode, *args, **kwargs) -> _SlowWriteFile:
         return _SlowWriteFile(real_open(path, mode, *args, **kwargs), delay)
 
     return _slow_open
@@ -100,38 +102,38 @@ def _make_slow_open(delay: float):
 class _InstantResponse:
     """네트워크 지연 없이 즉시 청크를 흘리는 가짜 응답."""
 
-    def __init__(self, body: bytes):
+    def __init__(self, body: bytes) -> None:
         self._body = body
         self.headers = {"Content-Length": str(len(body))}
 
-    def raise_for_status(self):
+    def raise_for_status(self) -> None:
         pass
 
-    def iter_content(self, chunk_size=CHUNK):
+    def iter_content(self, chunk_size=CHUNK) -> Iterator[bytes]:
         for i in range(0, len(self._body), chunk_size):
             yield self._body[i : i + chunk_size]
 
 
 class _InstantSession:
-    def __init__(self, body: bytes):
+    def __init__(self, body: bytes) -> None:
         self._body = body
         self.headers = {"content-length": str(len(body))}
 
-    def head(self, *args, **kwargs):
+    def head(self, *args, **kwargs) -> Self:
         return self
 
-    def get(self, *args, **kwargs):
+    def get(self, *args, **kwargs) -> _InstantResponse:
         return _InstantResponse(self._body)
 
 
 class _RecordingLogger:
-    def __init__(self):
+    def __init__(self) -> None:
         self.warnings: list[str] = []
 
-    def warning(self, message: str):
+    def warning(self, message: str) -> None:
         self.warnings.append(message)
 
-    def __getattr__(self, name):
+    def __getattr__(self, name) -> Callable[..., None]:
         return lambda *args, **kwargs: None
 
 
@@ -158,7 +160,7 @@ def _diag_ratio(logger: _RecordingLogger) -> float:
 
 def test_disk_write_delay_still_triggers_requeue_but_diagnostic_shows_high_ratio(
     tmp_path, monkeypatch
-):
+) -> None:
     """판정은 되돌렸으므로 디스크 지연도 여전히 재큐를 유발한다 — 그 대신 진단이 원인을 밝힌다."""
     body = b"x" * (CHUNK * CHUNK_COUNT)
     output = tmp_path / "part.bin"
@@ -180,7 +182,7 @@ def test_disk_write_delay_still_triggers_requeue_but_diagnostic_shows_high_ratio
 class _TestClock:
     """테스트가 흘리는 시계 — 읽어서는 흐르지 않고 ``advance()``로만 흐른다."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.now = 0.0
 
     def __call__(self) -> float:
@@ -190,22 +192,22 @@ class _TestClock:
         self.now += seconds
 
 
-def _make_clocked_open(clock: _TestClock, write_seconds: float):
+def _make_clocked_open(clock: _TestClock, write_seconds: float) -> Callable[..., _SlowWriteFile]:
     """write()마다 시계를 write_seconds만큼 흘리는 open() — 쓰기 시간을 테스트가 정한다."""
     real_open = open
 
     class _ClockedWriteFile(_SlowWriteFile):
-        def write(self, data):
+        def write(self, data) -> int:
             clock.advance(write_seconds)
             return self._real_file.write(data)
 
-    def _clocked_open(path, mode, *args, **kwargs):
+    def _clocked_open(path, mode, *args, **kwargs) -> _ClockedWriteFile:
         return _ClockedWriteFile(real_open(path, mode, *args, **kwargs), 0.0)
 
     return _clocked_open
 
 
-def test_slow_network_still_triggers_requeue_for_file_part(tmp_path, monkeypatch):
+def test_slow_network_still_triggers_requeue_for_file_part(tmp_path, monkeypatch) -> None:
     """대조군: 네트워크 자체가 느리면(수신 사이 지연) 여전히 저속 재큐가 발동해야 한다.
 
     수신 0.15초 · 쓰기 0.001초인 청크 8개, 판정 시계와 쓰기 시계는 테스트가 흘린다
@@ -214,16 +216,16 @@ def test_slow_network_still_triggers_requeue_for_file_part(tmp_path, monkeypatch
     clock = _TestClock()
 
     class _SlowNetworkResponse:
-        def raise_for_status(self):
+        def raise_for_status(self) -> None:
             pass
 
-        def iter_content(self, chunk_size=CHUNK):
+        def iter_content(self, chunk_size=CHUNK) -> Iterator[bytes]:
             for _ in range(CHUNK_COUNT):
                 clock.advance(SLOW_WRITE_DELAY_S)  # 수신 자체가 느리다(디스크 아님)
                 yield b"x" * chunk_size
 
     class _SlowNetworkSession:
-        def get(self, *args, **kwargs):
+        def get(self, *args, **kwargs) -> _SlowNetworkResponse:
             return _SlowNetworkResponse()
 
     output = tmp_path / "part.bin"
@@ -248,7 +250,7 @@ def test_slow_network_still_triggers_requeue_for_file_part(tmp_path, monkeypatch
 # ================================================================ m3u8 세그먼트
 
 
-def test_disk_write_delay_still_triggers_requeue_for_segment(tmp_path, monkeypatch):
+def test_disk_write_delay_still_triggers_requeue_for_segment(tmp_path, monkeypatch) -> None:
     """m3u8 경로도 동일 — 판정은 원래대로이므로 디스크 지연이 재큐를 유발하고, 진단이 원인을 밝힌다."""
     body = b"x" * (CHUNK * CHUNK_COUNT)
     data = _make_data(str(tmp_path / "out.mp4"))

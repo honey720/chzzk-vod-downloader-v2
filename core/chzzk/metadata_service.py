@@ -62,7 +62,7 @@ class MetadataError(Exception):
     str()은 기존 ContentWorker의 ValueError와 같은 "<url>\\n<메시지>" 구조를 유지한다.
     """
 
-    def __init__(self, message_key: str, url: str):
+    def __init__(self, message_key: str, url: str) -> None:
         super().__init__(f"{url}\n{message_key}")
         self.message_key = message_key
         self.url = url

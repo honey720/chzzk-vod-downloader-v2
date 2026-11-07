@@ -13,6 +13,8 @@
 import os
 import threading
 import time
+from collections.abc import Iterator
+from pathlib import Path
 
 import core.engine.base as base_module
 import core.sources.m3u8_downloader as m3u8_module
@@ -22,6 +24,7 @@ from core.models.download_state import DownloadState
 from core.models.download_data import DownloadData
 from tests.support.undeletable import Undeletable
 from tests.core.engine.fmp4_samples import init_segment, media_segment
+from typing import Never
 
 CHUNK = 8192
 SEGMENT_COUNT = 6
@@ -48,14 +51,14 @@ def _playlist_text() -> str:
 class StreamResponse:
     """세그먼트 본문을 청크로 흘리는 가짜 응답. throttle 초/청크로 속도를 조절한다."""
 
-    def __init__(self, body: bytes, throttle: float):
+    def __init__(self, body: bytes, throttle: float) -> None:
         self._body = body
         self._throttle = throttle
 
-    def raise_for_status(self):
+    def raise_for_status(self) -> None:
         pass
 
-    def iter_content(self, chunk_size=CHUNK):
+    def iter_content(self, chunk_size=CHUNK) -> Iterator[bytes]:
         for i in range(0, len(self._body), chunk_size):
             if self._throttle:
                 time.sleep(self._throttle)
@@ -65,22 +68,22 @@ class StreamResponse:
 class TextResponse:
     """플레이리스트(.text)·초기화 세그먼트(.content) 겸용 가짜 응답."""
 
-    def __init__(self, text: str = "", content: bytes = b""):
+    def __init__(self, text: str = "", content: bytes = b"") -> None:
         self.text = text
         self.content = content
 
-    def raise_for_status(self):
+    def raise_for_status(self) -> None:
         pass
 
 
 class M3U8Session:
     """m3u8 경로의 세 요청(플레이리스트/초기화/세그먼트)을 URL로 분기하는 가짜 세션."""
 
-    def __init__(self, chunks_per_segment: int, throttle: float = 0.0):
+    def __init__(self, chunks_per_segment: int, throttle: float = 0.0) -> None:
         self._chunks_per_segment = chunks_per_segment
         self._throttle = throttle
 
-    def get(self, url, **kwargs):
+    def get(self, url, **kwargs) -> TextResponse | StreamResponse:
         if url.endswith(".m3u8"):
             return TextResponse(text=_playlist_text())
         if url.endswith("init.m4s"):
@@ -96,7 +99,7 @@ def _expected_output(chunks_per_segment: int) -> bytes:
     )
 
 
-def _passthrough_remux_stream(chunks, dst_path, **_wait):
+def _passthrough_remux_stream(chunks, dst_path, **_wait) -> None:
     """받은 스트림을 그대로 파일에 쓰는 remux_stream 스텁 (공급 순서·바이트 검증용)."""
     with open(dst_path, "wb") as f:
         for chunk in chunks:
@@ -106,7 +109,7 @@ def _passthrough_remux_stream(chunks, dst_path, **_wait):
 class RunLogger:
     """run() 경로 전체가 쓰는 로거 인터페이스를 기록만 하며 흉내 낸다."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.warnings: list[str] = []
         self.errors: list[str] = []
         self.completed_times: list[float] = []
@@ -119,52 +122,58 @@ class RunLogger:
         self.postprocess_paused: list[float] = []  # 후처리 종료 줄에 함께 온 일시정지한 시간(초)
         self.breakdowns: list[tuple] = []
 
-    def log_download_start(self, total_size, part_size, segments, initial_threads):
+    def log_download_start(self, total_size, part_size, segments, initial_threads) -> None:
         pass
 
-    def log_m3u8_thread_start(self, thread_id, segment_url):
+    def log_m3u8_thread_start(self, thread_id, segment_url) -> None:
         pass
 
-    def log_transfer_complete(self, elapsed, downloaded_bytes, retries, peak_threads, paused=0.0):
+    def log_transfer_complete(
+        self, elapsed, downloaded_bytes, retries, peak_threads, paused=0.0
+    ) -> None:
         self.transfer_completes.append((elapsed, downloaded_bytes, retries, peak_threads))
         self.transfer_paused.append(paused)
 
-    def log_postprocess_start(self, kind):
+    def log_postprocess_start(self, kind) -> None:
         self.postprocess_starts.append(kind)
 
-    def log_postprocess_complete(self, elapsed, output_size, paused=0.0):
+    def log_postprocess_complete(self, elapsed, output_size, paused=0.0) -> None:
         self.postprocess_completes.append((elapsed, output_size))
         self.postprocess_paused.append(paused)
 
-    def log_total_breakdown(self, transfer_elapsed, postprocess_elapsed, paused=0.0):
+    def log_total_breakdown(self, transfer_elapsed, postprocess_elapsed, paused=0.0) -> None:
         self.breakdowns.append((transfer_elapsed, postprocess_elapsed))
 
-    def log_thread_complete(self, thread_id, downloaded_size):
+    def log_thread_complete(self, thread_id, downloaded_size) -> None:
         pass
 
-    def log_thread_adjust(self, active_threads, avg_speed):
+    def log_thread_adjust(self, active_threads, avg_speed) -> None:
         pass
 
-    def log_thread_debug(self, active_threads, download_speed, avg_speed):
+    def log_thread_debug(self, active_threads, download_speed, avg_speed) -> None:
         pass
 
-    def log_download_complete(self, total_time):
+    def log_download_complete(self, total_time) -> None:
         self.completed_times.append(total_time)
 
-    def log_error(self, message, exception=None):
+    def log_error(self, message, exception=None) -> None:
         self.errors.append(message)
 
-    def log_exception(self, message, exception=None):
+    def log_exception(self, message, exception=None) -> None:
         self.errors.append(message)
 
-    def warning(self, message):
+    def warning(self, message) -> None:
         self.warnings.append(message)
 
-    def save_and_close(self):
+    def save_and_close(self) -> None:
         self.closed += 1
 
 
-def _make_engine(tmp_path, monkeypatch, chunks_per_segment: int = 3, throttle: float = 0.0):
+def _make_engine(
+    tmp_path, monkeypatch, chunks_per_segment: int = 3, throttle: float = 0.0
+) -> tuple[
+    M3U8Downloader, DownloadData, RunLogger, Path, threading.Event, list[BaseException], list[bool]
+]:
     """가짜 세션이 연결된 RUNNING 이전 상태의 엔진을 준비한다."""
     output = tmp_path / "out.mp4"
     data = DownloadData(
@@ -187,7 +196,7 @@ def _make_engine(tmp_path, monkeypatch, chunks_per_segment: int = 3, throttle: f
     failures: list[BaseException] = []
     merge_starts: list[bool] = []
 
-    def on_finished():
+    def on_finished() -> None:
         # 실제 어댑터 경로(manager.finish → task.finish)를 흉내 내 상태를 종결한다
         data.model.finish()
         finished.set()
@@ -209,7 +218,7 @@ def _run_in_thread(engine) -> threading.Thread:
     return thread
 
 
-def test_run_merges_segments_in_index_order_byte_exact(tmp_path, monkeypatch):
+def test_run_merges_segments_in_index_order_byte_exact(tmp_path, monkeypatch) -> None:
     """전체 파이프라인이 초기화+세그먼트 순서 그대로의 파일을 만들고 콜백을 1회씩 호출한다."""
     engine, data, logger, output, finished, failures, merge_starts = _make_engine(
         tmp_path, monkeypatch
@@ -231,7 +240,7 @@ def test_run_merges_segments_in_index_order_byte_exact(tmp_path, monkeypatch):
     assert not (tmp_path / "CVDv2_temp_out").exists()  # 임시 폴더 삭제 (#105 산출물 파생 이름)
 
 
-def test_remux_failure_fails_explicitly_and_preserves_segments(tmp_path, monkeypatch):
+def test_remux_failure_fails_explicitly_and_preserves_segments(tmp_path, monkeypatch) -> None:
     """remux 실패는 폴백 없이 명시적 실패다 — 산출물 없음, 넘기지 않은 세그먼트는 남는다 (#92).
 
     바이트 연결본은 #88이 고치려던 결함품이므로 대신 내주지 않는다.
@@ -244,7 +253,7 @@ def test_remux_failure_fails_explicitly_and_preserves_segments(tmp_path, monkeyp
         tmp_path, monkeypatch
     )
 
-    def broken_remux_stream(chunks, dst_path, **_wait):
+    def broken_remux_stream(chunks, dst_path, **_wait) -> Never:
         # 실제 remux_stream처럼 불완전 산출물을 지우고 실패를 알린다
         raise base_module.FFmpegError("가짜 remux 실패")
 
@@ -266,7 +275,7 @@ def test_remux_failure_fails_explicitly_and_preserves_segments(tmp_path, monkeyp
     assert merge_starts == [True]
 
 
-def test_remux_failure_midway_leaves_only_the_segments_not_yet_fed(tmp_path, monkeypatch):
+def test_remux_failure_midway_leaves_only_the_segments_not_yet_fed(tmp_path, monkeypatch) -> None:
     """remux가 도중에 실패하면 이미 넘긴 세그먼트는 지워져 있고 나머지만 임시 폴더에 남아야 한다 (#309).
 
     가짜 remux가 조각 둘(초기화 세그먼트 · 첫 세그먼트)을 받고 셋째를 청한 뒤 실패
@@ -278,7 +287,7 @@ def test_remux_failure_midway_leaves_only_the_segments_not_yet_fed(tmp_path, mon
         tmp_path, monkeypatch
     )
 
-    def fails_after_two(chunks, dst_path, **_wait):
+    def fails_after_two(chunks, dst_path, **_wait) -> Never:
         feed = iter(chunks)
         next(feed)
         next(feed)
@@ -299,7 +308,7 @@ def test_remux_failure_midway_leaves_only_the_segments_not_yet_fed(tmp_path, mon
     assert len(list(temp_dir.iterdir())) == SEGMENT_COUNT + 1 - 2
 
 
-def test_stop_during_postprocess_cleans_up_without_failure(tmp_path, monkeypatch):
+def test_stop_during_postprocess_cleans_up_without_failure(tmp_path, monkeypatch) -> None:
     """후처리 공급 중 중단하면 실패 없이 중단 정리(산출물·임시 폴더 삭제)로 끝난다 (#92)."""
     engine, data, logger, output, finished, failures, merge_starts = _make_engine(
         tmp_path, monkeypatch
@@ -307,7 +316,7 @@ def test_stop_during_postprocess_cleans_up_without_failure(tmp_path, monkeypatch
 
     fed_once = threading.Event()
 
-    def slow_remux_stream(chunks, dst_path, **_wait):
+    def slow_remux_stream(chunks, dst_path, **_wait) -> None:
         # 천천히 소비한다 — 그 사이 stop이 들어오면 공급측(feed)이 중단
         # 신호를 던지고, 그 예외는 실제 remux_stream처럼 그대로 전파된다
         for _ in chunks:
@@ -329,7 +338,7 @@ def test_stop_during_postprocess_cleans_up_without_failure(tmp_path, monkeypatch
     assert not (tmp_path / "CVDv2_temp_out").exists()  # 중단은 현행대로 전체 정리
 
 
-def test_pause_resume_then_complete(tmp_path, monkeypatch):
+def test_pause_resume_then_complete(tmp_path, monkeypatch) -> None:
     """일시정지 동안 진행이 멈추고, 재개 후 완주한다. 전이 warning 0건."""
     # 청크당 5ms 스로틀 × 세그먼트당 120청크 → 일시정지할 여유를 만들고,
     # 일시정지 시점까지 누적 바이트를 충분히 키워 재개 직후 평균 속도가
@@ -366,7 +375,7 @@ def test_pause_resume_then_complete(tmp_path, monkeypatch):
     assert data.model.state is DownloadState.FINISHED
 
 
-def test_phase_boundary_logs_for_m3u8_path(tmp_path, monkeypatch):
+def test_phase_boundary_logs_for_m3u8_path(tmp_path, monkeypatch) -> None:
     """m3u8 경로의 단계 경계 로그 (#110) — 전송 요약 → remux 시작·종료 → 전체 구분."""
     engine, data, logger, output, finished, failures, merge_starts = _make_engine(
         tmp_path, monkeypatch
@@ -390,7 +399,7 @@ def test_phase_boundary_logs_for_m3u8_path(tmp_path, monkeypatch):
     assert logger.completed_times  # 기존 완료 줄(형식 불변)도 그대로
 
 
-def test_monitor_thread_is_stopped_before_postprocess(tmp_path, monkeypatch):
+def test_monitor_thread_is_stopped_before_postprocess(tmp_path, monkeypatch) -> None:
     """후처리 중에는 관측 스레드가 살아 있지 않다 — 병합 꼬리 로그의 원천 제거 (#89).
 
     관측 정지가 remux 시작보다 먼저임을 remux 스텁 안에서 직접 확인한다.
@@ -401,7 +410,7 @@ def test_monitor_thread_is_stopped_before_postprocess(tmp_path, monkeypatch):
 
     monitor_alive_during_remux = []
 
-    def checking_remux_stream(chunks, dst_path, **_wait):
+    def checking_remux_stream(chunks, dst_path, **_wait) -> None:
         monitor_alive_during_remux.append(
             any(t.name == "DownloadMonitor" and t.is_alive() for t in threading.enumerate())
         )
@@ -418,7 +427,7 @@ def test_monitor_thread_is_stopped_before_postprocess(tmp_path, monkeypatch):
     assert output.read_bytes() == _expected_output(chunks_per_segment=3)  # 완주 무영향
 
 
-def test_postprocess_progress_is_emitted_by_feed_loop(tmp_path, monkeypatch):
+def test_postprocess_progress_is_emitted_by_feed_loop(tmp_path, monkeypatch) -> None:
     """후처리 진행 통지는 공급 루프가 담당한다 (#89) — 병합 % 변화마다 1회.
 
     병합 구간 이벤트는 구 관측 스레드의 병합 관측과 동일하게 속도 0·활성
@@ -445,7 +454,7 @@ def test_postprocess_progress_is_emitted_by_feed_loop(tmp_path, monkeypatch):
         assert event.active_threads == 0
 
 
-def test_postprocess_progress_throttled_to_percent_changes(tmp_path, monkeypatch):
+def test_postprocess_progress_throttled_to_percent_changes(tmp_path, monkeypatch) -> None:
     """세그먼트가 %당 여러 개면 % 변화 시에만 통지한다 — 최대 ~101회로 묶인다 (#89)."""
     engine, data, logger, output, finished, failures, merge_starts = _make_engine(
         tmp_path, monkeypatch
@@ -470,7 +479,7 @@ def test_postprocess_progress_throttled_to_percent_changes(tmp_path, monkeypatch
     assert len(events) == 101
 
 
-def test_stop_removes_partial_file_and_temp_dir(tmp_path, monkeypatch):
+def test_stop_removes_partial_file_and_temp_dir(tmp_path, monkeypatch) -> None:
     """중단(stop)하면 임시 폴더·부분 파일을 삭제하고 완료 콜백을 호출하지 않는다."""
     engine, data, logger, output, finished, failures, merge_starts = _make_engine(
         tmp_path, monkeypatch, chunks_per_segment=40, throttle=0.005
@@ -493,7 +502,7 @@ def test_stop_removes_partial_file_and_temp_dir(tmp_path, monkeypatch):
 class _ShiftedClock:
     """실제 단조 시계에 테스트가 흘린 시간을 더한 시계 — ``advance()``로만 앞당겨진다."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.shift = 0.0
 
     def __call__(self) -> float:
@@ -506,12 +515,12 @@ class _ShiftedClock:
 class _ClockedResponse(StreamResponse):
     """조각을 하나 흘릴 때마다 시계를 정해진 만큼 흘리는 가짜 응답 — 받는 속도를 테스트가 정한다."""
 
-    def __init__(self, body: bytes, clock: _ShiftedClock, seconds_per_chunk: float):
+    def __init__(self, body: bytes, clock: _ShiftedClock, seconds_per_chunk: float) -> None:
         super().__init__(body, throttle=0.0)
         self._clock = clock
         self._seconds_per_chunk = seconds_per_chunk
 
-    def iter_content(self, chunk_size=CHUNK):
+    def iter_content(self, chunk_size=CHUNK) -> Iterator[bytes]:
         for chunk in super().iter_content(chunk_size):
             self._clock.advance(self._seconds_per_chunk)
             yield chunk
@@ -520,19 +529,21 @@ class _ClockedResponse(StreamResponse):
 class _ClockedSession(M3U8Session):
     """세그먼트 응답만 ``_ClockedResponse``로 주는 가짜 세션."""
 
-    def __init__(self, chunks_per_segment: int, clock: _ShiftedClock, seconds_per_chunk: float):
+    def __init__(
+        self, chunks_per_segment: int, clock: _ShiftedClock, seconds_per_chunk: float
+    ) -> None:
         super().__init__(chunks_per_segment)
         self._clock = clock
         self._seconds_per_chunk = seconds_per_chunk
 
-    def get(self, url, **kwargs):
+    def get(self, url, **kwargs) -> _ClockedResponse | TextResponse:
         response = super().get(url, **kwargs)
         if isinstance(response, StreamResponse):
             return _ClockedResponse(response._body, self._clock, self._seconds_per_chunk)
         return response
 
 
-def test_forced_slow_requeue_does_not_corrupt_output(tmp_path, monkeypatch):
+def test_forced_slow_requeue_does_not_corrupt_output(tmp_path, monkeypatch) -> None:
     """저속 재큐가 여러 번 발동해도 최종 산출물은 손상되지 않는다 (#180 조사).
 
     #180 초기 진단은 macOS 실기 로그의 "Retries: 14" + remux 실패(exit 183,
@@ -564,7 +575,7 @@ def test_forced_slow_requeue_does_not_corrupt_output(tmp_path, monkeypatch):
     monkeypatch.setattr(engine, "_peer_speeds", lambda part_num, now: [1e18, 1e18, 1e18])
     monkeypatch.setattr(base_module._SlowWatch, "_restart_pays", lambda self, *args: True)
 
-    def _disable_after_first_requeue():
+    def _disable_after_first_requeue() -> None:
         while data.restart_threads == 0:
             time.sleep(0.01)
         # 재큐가 최소 1회 발동한 뒤에는 정상 임계로 되돌려 완주시킨다
@@ -584,7 +595,7 @@ def test_forced_slow_requeue_does_not_corrupt_output(tmp_path, monkeypatch):
     assert failures == []
 
 
-def test_stray_dotfile_in_temp_dir_is_excluded_from_merge(tmp_path, monkeypatch):
+def test_stray_dotfile_in_temp_dir_is_excluded_from_merge(tmp_path, monkeypatch) -> None:
     """세그먼트가 아닌 파일이 임시 폴더에 있어도 병합에서 제외되고 경고가 남는다 (#180).
 
     exFAT 등 xattr 미지원 파일시스템에 macOS가 쓰는 AppleDouble 사이드카
@@ -597,7 +608,7 @@ def test_stray_dotfile_in_temp_dir_is_excluded_from_merge(tmp_path, monkeypatch)
         tmp_path, monkeypatch
     )
 
-    def _pollute_then_start_merge():
+    def _pollute_then_start_merge() -> None:
         # AppleDouble류 사이드카뿐 아니라 확장자 없는 잡파일까지 함께 심는다
         for name in ("._0000000.m4s", ".DS_Store", "notes.txt"):
             with open(os.path.join(engine.temp_dir, name), "wb") as f:
@@ -621,7 +632,9 @@ def test_stray_dotfile_in_temp_dir_is_excluded_from_merge(tmp_path, monkeypatch)
     assert "notes.txt" in logger.warnings[0]
 
 
-def test_downstream_stop_after_postprocess_failure_preserves_segments(tmp_path, monkeypatch):
+def test_downstream_stop_after_postprocess_failure_preserves_segments(
+    tmp_path, monkeypatch
+) -> None:
     """실패 콜백이 비동기로 상태를 WAITING으로 돌려도 넘기지 않은 세그먼트는 남는다 (#185).
 
     (#309: 넘긴 세그먼트는 곧바로 지운다 — 오너 결정 2026-10-12. 여기의 가짜 remux는 하나도
@@ -649,7 +662,7 @@ def test_downstream_stop_after_postprocess_failure_preserves_segments(tmp_path, 
         tmp_path, monkeypatch
     )
 
-    def broken_remux_stream(chunks, dst_path, **_wait):
+    def broken_remux_stream(chunks, dst_path, **_wait) -> Never:
         raise base_module.FFmpegError("가짜 remux 실패")
 
     monkeypatch.setattr(base_module, "remux_stream", broken_remux_stream)
@@ -657,7 +670,7 @@ def test_downstream_stop_after_postprocess_failure_preserves_segments(tmp_path, 
     # 실제 DownloadViewModel._onEngineFailed가 (큐드 커넥션을 거쳐) 하는 일 — task.stop()
     original_on_failed = engine._on_failed
 
-    def on_failed_then_stop(exc):
+    def on_failed_then_stop(exc) -> None:
         original_on_failed(exc)
         data.model.stop()
 
@@ -678,7 +691,7 @@ def test_downstream_stop_after_postprocess_failure_preserves_segments(tmp_path, 
 
 def test_remux_failure_whose_output_cannot_be_removed_still_fails_as_a_postprocess_failure(
     tmp_path, monkeypatch
-):
+) -> None:
     """재포장이 실패하고 그 산출물을 지울 수 없어도 후처리 실패로 끝나고 넘기지 않은 세그먼트가 남아야 한다 (#389).
 
     실제 remux_stream. 산출물 경로에 폴더가 있고(ffmpeg가 쓰지 못한다) 그 경로의 os.remove가 PermissionError
@@ -714,7 +727,7 @@ def test_remux_failure_whose_output_cannot_be_removed_still_fails_as_a_postproce
     assert (tmp_path / "CVDv2_temp_out").is_dir()
 
 
-def test_cleanup_error_after_a_failure_does_not_replace_the_failure(tmp_path, monkeypatch):
+def test_cleanup_error_after_a_failure_does_not_replace_the_failure(tmp_path, monkeypatch) -> None:
     """실패 뒤 정리가 예외를 내도 실패는 원래 예외로 한 번 알려지고, 정리 예외는 로그로만 남아야 한다 (#389).
 
     준비 단계가 RuntimeError("준비 실패"), 부분 산출물 정리가 PermissionError
@@ -727,7 +740,7 @@ def test_cleanup_error_after_a_failure_does_not_replace_the_failure(tmp_path, mo
     cause = RuntimeError("준비 실패")
     order = []
 
-    def prepare(_content):
+    def prepare(_content) -> Never:
         raise cause
 
     def cleanup() -> None:
@@ -761,7 +774,7 @@ def test_cleanup_error_after_a_failure_does_not_replace_the_failure(tmp_path, mo
     assert logger.closed == 1
 
 
-def test_failure_callback_that_raises_still_lets_the_cleanup_run(tmp_path, monkeypatch):
+def test_failure_callback_that_raises_still_lets_the_cleanup_run(tmp_path, monkeypatch) -> None:
     """실패 콜백이 예외를 내도 부분 산출물 정리와 로그 닫기는 해야 한다 (#389).
 
     준비 단계가 RuntimeError("준비 실패"), 실패 콜백이 ValueError("콜백 고장")
@@ -773,10 +786,10 @@ def test_failure_callback_that_raises_still_lets_the_cleanup_run(tmp_path, monke
     order = []
     broken = ValueError("콜백 고장")
 
-    def prepare(_content):
+    def prepare(_content) -> Never:
         raise RuntimeError("준비 실패")
 
-    def on_failed(_exc):
+    def on_failed(_exc) -> Never:
         order.append("failed")
         raise broken
 
@@ -805,7 +818,9 @@ def test_failure_callback_that_raises_still_lets_the_cleanup_run(tmp_path, monke
 # ================================================================ 이 시도가 쓰지 않은 산출물 (#412)
 
 
-def test_failure_in_prepare_leaves_the_file_already_at_output_path_alone(tmp_path, monkeypatch):
+def test_failure_in_prepare_leaves_the_file_already_at_output_path_alone(
+    tmp_path, monkeypatch
+) -> None:
     """준비에서 실패한 전체 다운로드는 output_path에 이미 있던 파일을 지우지 않아야 한다.
 
     output_path에 b"keep" 파일을 미리 둠, 준비(prepare)가 RuntimeError
@@ -816,7 +831,7 @@ def test_failure_in_prepare_leaves_the_file_already_at_output_path_alone(tmp_pat
     )
     output.write_bytes(b"keep")
 
-    def prepare(_content):
+    def prepare(_content) -> Never:
         raise RuntimeError("준비 실패")
 
     monkeypatch.setattr(engine, "prepare", prepare)
@@ -828,7 +843,9 @@ def test_failure_in_prepare_leaves_the_file_already_at_output_path_alone(tmp_pat
     assert output.read_bytes() == b"keep"
 
 
-def test_stop_during_transfer_leaves_the_file_already_at_output_path_alone(tmp_path, monkeypatch):
+def test_stop_during_transfer_leaves_the_file_already_at_output_path_alone(
+    tmp_path, monkeypatch
+) -> None:
     """전송 중에 중단한 전체 다운로드는 output_path에 이미 있던 파일을 지우지 않아야 한다.
 
     output_path에 b"keep" 파일을 미리 둠, 세그먼트 40조각 · 조각마다 0.005초, 0.25초 뒤 model.stop()
@@ -852,7 +869,7 @@ def test_stop_during_transfer_leaves_the_file_already_at_output_path_alone(tmp_p
     assert not (tmp_path / "CVDv2_temp_out").exists()
 
 
-def test_stop_after_the_remux_wrote_part_of_the_output_removes_it(tmp_path, monkeypatch):
+def test_stop_after_the_remux_wrote_part_of_the_output_removes_it(tmp_path, monkeypatch) -> None:
     """후처리가 산출물을 쓰기 시작한 뒤 중단하면 정리가 그 산출물을 지워야 한다.
 
     가짜 remux가 받은 조각을 output_path에 쓰며 조각마다 0.05초 쉼, 첫 조각을 쓴 뒤 model.stop()
@@ -863,7 +880,7 @@ def test_stop_after_the_remux_wrote_part_of_the_output_removes_it(tmp_path, monk
     )
     wrote_once = threading.Event()
 
-    def writing_remux_stream(chunks, dst_path, **_wait):
+    def writing_remux_stream(chunks, dst_path, **_wait) -> None:
         with open(dst_path, "wb") as f:
             for chunk in chunks:
                 f.write(chunk)
@@ -888,7 +905,7 @@ def test_stop_after_the_remux_wrote_part_of_the_output_removes_it(tmp_path, monk
 
 def test_rerun_of_the_same_engine_that_fails_in_prepare_keeps_the_file_at_output_path(
     tmp_path, monkeypatch
-):
+) -> None:
     """후처리까지 간 엔진을 다시 돌려 준비에서 실패하면 output_path에 있던 파일을 지우지 않아야 한다.
 
     같은 엔진. 첫 실행: remux가 FFmpegError(후처리 실패). 그 뒤 output_path에 b"keep" 파일을 둠,
@@ -899,7 +916,7 @@ def test_rerun_of_the_same_engine_that_fails_in_prepare_keeps_the_file_at_output
         tmp_path, monkeypatch
     )
 
-    def broken_remux_stream(chunks, dst_path, **_wait):
+    def broken_remux_stream(chunks, dst_path, **_wait) -> Never:
         raise base_module.FFmpegError("가짜 remux 실패")
 
     monkeypatch.setattr(base_module, "remux_stream", broken_remux_stream)
@@ -910,7 +927,7 @@ def test_rerun_of_the_same_engine_that_fails_in_prepare_keeps_the_file_at_output
     cause = RuntimeError("플레이리스트를 받지 못했다")
 
     class _FailingSession:
-        def get(self, url, **kwargs):
+        def get(self, url, **kwargs) -> Never:
             raise cause
 
     monkeypatch.setattr(m3u8_module, "get_thread_session", lambda: _FailingSession())

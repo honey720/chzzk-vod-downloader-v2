@@ -37,7 +37,7 @@ import array
 import struct
 import sys
 from bisect import bisect_left, bisect_right
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from itertools import accumulate, compress, groupby, islice, repeat
@@ -243,7 +243,7 @@ def plan_section_file(
         raise Mp4Error(MP4_INVALID, str(e)) from e
 
 
-def _batches(values):
+def _batches(values) -> Iterator[tuple]:
     """값들을 조각으로 낸다 — 합 · 모두 · 하나라도처럼 훑기만 하는 일을 잘라 돈다."""
     source = iter(values)
     items = chunk_items(CHUNK_ITEMS)
@@ -541,7 +541,9 @@ def _chunk_pieces(
     return offsets, lengths, counts
 
 
-def _place(*tracks: tuple[Mp4Track | None, int, int, _TrackPart | None]):
+def _place(
+    *tracks: tuple[Mp4Track | None, int, int, _TrackPart | None],
+) -> tuple[list[tuple[int, ...]], int]:
     """옮기는 청크를 원본 위치 순서로 이어 붙여 놓는다 — (대응표의 줄들, 옮기는 바이트 수).
 
     대응표의 줄은 (원본 위치, 바이트 수, mdat 본문 안의 위치)다. 원본에서 이어져 있던 청크는
@@ -1029,7 +1031,7 @@ def merged_sample_description(original: bytes, extras: Sequence[bytes]) -> bytes
     return bytes(merged)
 
 
-def _parameter_sets(stsd: bytes):
+def _parameter_sets(stsd: bytes) -> tuple[tuple[int, int], bytes, list[bytes], list[bytes], bytes]:
     """stsd 본문에서 avcC 상자의 (시작, 끝)과 (머리 5바이트, SPS 목록, PPS 목록, 나머지)를 읽는다."""
     if len(stsd) < 16 or struct.unpack_from(">I", stsd, 4)[0] != 1:
         raise Mp4Error(MP4_UNSUPPORTED, "영상 샘플 설명이 하나가 아니다")

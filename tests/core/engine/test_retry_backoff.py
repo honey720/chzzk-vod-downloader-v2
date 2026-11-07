@@ -7,9 +7,11 @@
 
 import threading
 import time
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 import requests
@@ -36,7 +38,7 @@ NOMINAL_WAITS = (0.5, 1.0, 2.0, 4.0, 4.0)  # 흔들기 전 재요청 대기(초)
 EPSILON = 1e-3  # 시계를 이분 탐색해 찾은 시각의 오차(초)
 
 
-def test_quiet_constant_matches_the_engine():
+def test_quiet_constant_matches_the_engine() -> None:
     """이 파일이 쓰는 무수신 시간은 엔진의 값과 같아야 한다.
 
     base._ALL_FAILED_QUIET_SECONDS -> 10.0
@@ -47,7 +49,7 @@ def test_quiet_constant_matches_the_engine():
 # ================================================================ 대기 시간 계산
 
 
-def test_retry_delay_without_jitter_doubles_from_half_a_second_and_stops_at_four():
+def test_retry_delay_without_jitter_doubles_from_half_a_second_and_stops_at_four() -> None:
     """흔들림이 0이면 재요청 대기는 0.5초부터 두 배씩 늘다가 4초에서 멈춰야 한다.
 
     attempt 1~7, rand=0
@@ -58,7 +60,7 @@ def test_retry_delay_without_jitter_doubles_from_half_a_second_and_stops_at_four
     assert waits == [0.5, 1.0, 2.0, 4.0, 4.0, 4.0, 4.0]
 
 
-def test_retry_delay_jitter_shortens_by_at_most_a_tenth():
+def test_retry_delay_jitter_shortens_by_at_most_a_tenth() -> None:
     """흔들림은 대기를 10%까지만 줄이고 늘리지는 않아야 한다.
 
     attempt 1~5, rand가 0에 가까운 값과 1에 가까운 값, 기본 난수 200번
@@ -77,7 +79,7 @@ def test_retry_delay_jitter_shortens_by_at_most_a_tenth():
 class _Clock:
     """테스트가 손으로 돌리는 재요청 시계."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.now = START
 
     def __call__(self) -> float:
@@ -91,7 +93,7 @@ class _Faults:
     gated에 든 항목의 응답은 gate를 하나 얻을 때마다 조각 하나를 흘린다.
     """
 
-    def __init__(self, clock: _Clock, fail):
+    def __init__(self, clock: _Clock, fail) -> None:
         self.clock = clock
         self.fail = fail
         self.requests: dict[int, list[float]] = {}
@@ -108,7 +110,7 @@ class _Faults:
         if error is not None:
             raise error
 
-    def wrap(self, key: int, response):
+    def wrap(self, key: int, response) -> object:
         return _Gated(response, self.gate) if key in self.gated else response
 
 
@@ -117,14 +119,14 @@ class _Gated:
 
     PIECES = 64  # 원래 조각 하나를 나누는 수
 
-    def __init__(self, response, gate: threading.Semaphore):
+    def __init__(self, response, gate: threading.Semaphore) -> None:
         self._response = response
         self._gate = gate
 
-    def __getattr__(self, name):
+    def __getattr__(self, name) -> Any:
         return getattr(self._response, name)
 
-    def iter_content(self, chunk_size=8192):
+    def iter_content(self, chunk_size=8192) -> Iterator[bytes]:
         for chunk in self._response.iter_content(chunk_size):
             size = max(1, -(-len(chunk) // self.PIECES))
             for offset in range(0, len(chunk), size):
@@ -133,11 +135,11 @@ class _Gated:
 
 
 class _M3U8Session(m3u8_run.M3U8Session):
-    def __init__(self, faults: _Faults):
+    def __init__(self, faults: _Faults) -> None:
         super().__init__(chunks_per_segment=3)
         self.faults = faults
 
-    def get(self, url, **kwargs):
+    def get(self, url, **kwargs) -> object:
         if "seg_" not in url:
             return super().get(url, **kwargs)
         key = int(url.rsplit("seg_", 1)[1].removesuffix(".m4v"))
@@ -146,11 +148,11 @@ class _M3U8Session(m3u8_run.M3U8Session):
 
 
 class _AesSession(aes_run.FakeSession):
-    def __init__(self, faults: _Faults):
+    def __init__(self, faults: _Faults) -> None:
         super().__init__(aes_run._playlist_text())
         self.faults = faults
 
-    def get(self, url, **kwargs):
+    def get(self, url, **kwargs) -> object:
         if "segment-" not in url or not kwargs.get("stream"):
             # 준비 단계의 키 확인(첫 세그먼트를 스트리밍 없이 받는다)은 전송이 아니다
             return super().get(url, **kwargs)
@@ -160,11 +162,11 @@ class _AesSession(aes_run.FakeSession):
 
 
 class _FileSession(file_run.RangeSession):
-    def __init__(self, faults: _Faults):
+    def __init__(self, faults: _Faults) -> None:
         super().__init__(file_run.CONTENT)
         self.faults = faults
 
-    def get(self, url, headers=None, **kwargs):
+    def get(self, url, headers=None, **kwargs) -> object:
         start = int(headers["Range"].removeprefix("bytes=").split("-")[0])
         key = start // file_run.MB  # 해상도 144의 파트는 1MB다
         self.faults.check(key)
@@ -174,17 +176,17 @@ class _FileSession(file_run.RangeSession):
 class _Logger:
     """로거 대역 — 오류 · 경고 줄만 적고 나머지는 받아 넘긴다."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.errors: list[str] = []
         self.warnings: list[str] = []
 
-    def __getattr__(self, name):
+    def __getattr__(self, name) -> Callable[..., None]:
         return lambda *args, **kwargs: None
 
-    def log_error(self, message, exception=None):
+    def log_error(self, message, exception=None) -> None:
         self.errors.append(message)
 
-    def warning(self, message):
+    def warning(self, message) -> None:
         self.warnings.append(message)
 
 
@@ -237,11 +239,11 @@ def _rig(kind: str, tmp_path, monkeypatch, fail=lambda key, attempt: None) -> _R
     logger = _Logger()
     rig = _Rig(None, data, logger, clock, faults, output, expected, keys)
 
-    def on_finished():
+    def on_finished() -> None:
         data.model.finish()
         rig.finished.set()
 
-    def on_failed(exc):
+    def on_failed(exc) -> None:
         rig.failures.append(exc)
         grabbed = rig.engine.lock.acquire(timeout=2)
         rig.lock_grabbed.append(grabbed)
@@ -321,7 +323,7 @@ def _drive_settled(rig: _Rig, until, step: float = 1.0, limit: float = 60.0) -> 
         _wait(lambda: until() or _settled(rig), timeout=30.0)
 
 
-def _others_done(rig: _Rig, target: int):
+def _others_done(rig: _Rig, target: int) -> Callable[[], bool]:
     """target 말고 모든 항목을 한 번씩 요청해 받았다."""
     others = [key for key in rig.keys if key != target]
     return lambda: (
@@ -368,7 +370,7 @@ def _fetch(rig: _Rig, index: int) -> None:
 
 def test_the_same_segment_is_handed_out_again_after_waits_of_0_5_1_2_4_4_seconds(
     tmp_path, monkeypatch
-):
+) -> None:
     """같은 세그먼트가 연달아 실패하면 다시 꺼낼 수 있게 되기까지 0.5 · 1 · 2 · 4 · 4초여야 한다.
 
     seg_2가 연결 오류로 다섯 번 실패하고, 실패할 때마다 다시 꺼낼 수 있게 되는 시각을 찾아 그때 꺼냄
@@ -392,7 +394,7 @@ def test_the_same_segment_is_handed_out_again_after_waits_of_0_5_1_2_4_4_seconds
 
 def test_other_segments_are_handed_out_while_a_failed_one_waits_and_it_goes_first_when_ready(
     tmp_path, monkeypatch
-):
+) -> None:
     """실패한 세그먼트가 기다리는 동안 다른 세그먼트를 꺼내고, 대기가 끝나면 그것을 먼저 꺼내야 한다.
 
     seg_2가 연결 오류로 한 번 실패, 대기열에 seg_3 · seg_4를 더함
@@ -419,7 +421,7 @@ def test_other_segments_are_handed_out_while_a_failed_one_waits_and_it_goes_firs
 class _FakeTime:
     """모델이 일시정지 시간을 재는 시계를 테스트 시계로 바꾼다 (time.time은 그대로)."""
 
-    def __init__(self, clock: _Clock):
+    def __init__(self, clock: _Clock) -> None:
         self._clock = clock
 
     def perf_counter(self) -> float:
@@ -429,7 +431,9 @@ class _FakeTime:
         return time.time()
 
 
-def test_wait_stands_still_while_paused_and_resumes_with_what_was_left(tmp_path, monkeypatch):
+def test_wait_stands_still_while_paused_and_resumes_with_what_was_left(
+    tmp_path, monkeypatch
+) -> None:
     """일시정지한 동안은 재요청 대기가 흐르지 않고, 재개하면 남은 대기만큼 더 기다려야 한다.
 
     seg_2가 연결 오류로 한 번 실패(대기 0.45~0.5초), 0.2초 뒤 일시정지, 100초 뒤 재개.
@@ -459,7 +463,9 @@ def test_wait_stands_still_while_paused_and_resumes_with_what_was_left(tmp_path,
 
 
 @pytest.mark.parametrize("kind", KINDS)
-def test_failed_item_is_not_requested_again_until_its_wait_passes(kind, tmp_path, monkeypatch):
+def test_failed_item_is_not_requested_again_until_its_wait_passes(
+    kind, tmp_path, monkeypatch
+) -> None:
     """오류로 실패한 항목은 대기가 지나기 전에 다시 요청하지 않고, 그동안 다른 항목을 받아야 한다.
 
     첫 항목이 연결 오류로 한 번 실패하고 다음부터 정상. 테스트 시계를 멈춘 채 실행 루프를 몇 번 돌림
@@ -490,7 +496,7 @@ def test_failed_item_is_not_requested_again_until_its_wait_passes(kind, tmp_path
 
 
 @pytest.mark.parametrize("kind", KINDS)
-def test_stop_while_an_item_waits_ends_the_run_at_once(kind, tmp_path, monkeypatch):
+def test_stop_while_an_item_waits_ends_the_run_at_once(kind, tmp_path, monkeypatch) -> None:
     """재요청을 기다리는 항목이 있을 때 중지하면 기다리지 않고 바로 끝나야 한다.
 
     첫 항목이 늘 연결 오류. 테스트 시계를 멈춘 채 나머지 항목을 다 받은 뒤 중지
@@ -518,7 +524,7 @@ def test_stop_while_an_item_waits_ends_the_run_at_once(kind, tmp_path, monkeypat
 
 
 @pytest.mark.parametrize("kind", KINDS)
-def test_item_that_fails_a_few_times_is_still_in_the_output(kind, tmp_path, monkeypatch):
+def test_item_that_fails_a_few_times_is_still_in_the_output(kind, tmp_path, monkeypatch) -> None:
     """몇 번 실패한 뒤 받아진 항목은 산출물에 들어 있어야 한다.
 
     둘째 항목이 연결 오류로 세 번 실패한 뒤 정상. 시계를 0.5초씩 돌림
@@ -548,7 +554,7 @@ def _http_error(status: int) -> requests.HTTPError:
 @pytest.mark.parametrize("kind", KINDS)
 def test_item_that_never_arrives_fails_the_download_instead_of_completing_without_it(
     kind, tmp_path, monkeypatch
-):
+) -> None:
     """끝내 받지 못한 항목이 있으면 그 항목을 뺀 채 완료하지 않고 실패해야 한다.
 
     둘째 항목이 늘 404. 시계를 0.5초씩 돌림
@@ -571,7 +577,7 @@ def test_item_that_never_arrives_fails_the_download_instead_of_completing_withou
 @pytest.mark.parametrize("kind", KINDS)
 def test_every_request_failing_to_connect_ends_as_network_lost_within_the_quiet_time(
     kind, tmp_path, monkeypatch
-):
+) -> None:
     """모든 요청이 연결 오류면 무수신 10초를 넘긴 뒤 곧 회선 끊김으로 실패하고 상한까지 끌지 않아야 한다.
 
     모든 항목 요청이 연결 오류. 시계를 1초씩 돌리고, 돌릴 때마다 엔진이 그 시각의 일을 다 할 때까지 기다림
@@ -598,7 +604,7 @@ def test_every_request_failing_to_connect_ends_as_network_lost_within_the_quiet_
 @pytest.mark.parametrize("kind", KINDS)
 def test_a_request_waiting_for_its_answer_in_a_slot_that_failed_holds_off_network_lost(
     kind, tmp_path, monkeypatch
-):
+) -> None:
     """실패했던 슬롯이 새로 보낸 요청이 답을 기다리는 동안은 회선 끊김으로 판정하지 않아야 한다.
 
     모든 항목 요청이 연결 오류. 다만 첫 항목의 둘째 요청(앞서 연결 오류로 실패한 슬롯이 받음)은
@@ -610,7 +616,7 @@ def test_a_request_waiting_for_its_answer_in_a_slot_that_failed_holds_off_networ
     waiting = threading.Event()
     release = threading.Event()
 
-    def fail(key, attempt):
+    def fail(key, attempt) -> requests.ConnectionError:
         if key == 0 and attempt == 2:
             waiting.set()
             assert release.wait(timeout=30)
@@ -641,7 +647,7 @@ def test_a_request_waiting_for_its_answer_in_a_slot_that_failed_holds_off_networ
 @pytest.mark.parametrize("kind", KINDS)
 def test_failures_while_another_item_is_still_arriving_are_not_network_lost(
     kind, tmp_path, monkeypatch
-):
+) -> None:
     """한 항목이 계속 연결 오류여도 다른 항목을 받고 있는 동안은 전체 실패로 판정하지 않아야 한다.
 
     첫 항목이 늘 연결 오류, 둘째 항목은 시계를 1초 돌릴 때마다 한 조각씩 옴. 시계를 20초 돌림
@@ -677,7 +683,7 @@ def test_failures_while_another_item_is_still_arriving_are_not_network_lost(
 @pytest.mark.parametrize(
     "error", [_http_error(404), requests.ConnectionError("끊김")], ids=["limit", "network-lost"]
 )
-def test_failure_callback_can_take_the_engine_lock(kind, error, tmp_path, monkeypatch):
+def test_failure_callback_can_take_the_engine_lock(kind, error, tmp_path, monkeypatch) -> None:
     """실패 콜백이 엔진 락을 잡아도 교착하지 않고 실패로 끝나야 한다 — 통지는 락 밖에서 한다.
 
     모든 항목 요청이 그 오류(404면 재큐 상한, 연결 오류면 전체 실패 판정). 실패 콜백이 엔진 락을

@@ -20,6 +20,7 @@
 import os
 import threading
 import time
+from collections.abc import Callable, Iterator
 
 from core.models.download_state import DownloadState
 from core.services.download_service import DownloadService
@@ -27,6 +28,7 @@ from core.services.download_service import DownloadService
 import core.sources.file_downloader as fd_module
 from core.sources.file_downloader import FileDownloader
 from core.models.download_data import DownloadData
+from typing import IO, Never, Self
 
 MB = 1024 * 1024
 TOTAL_SIZE = 4 * MB  # 해상도 144 → 파트 1MB → 4파트
@@ -43,33 +45,33 @@ CONTENT = _content_bytes(TOTAL_SIZE)
 class RecordingLogger:
     """엔진·서비스 로거 인터페이스의 기록용 최소 구현 — 그 외 호출은 무시한다."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.errors: list[str] = []
         self.closed = 0
 
-    def log_error(self, message, exception=None):
+    def log_error(self, message, exception=None) -> None:
         self.errors.append(message)
 
-    def log_exception(self, message, exception=None):
+    def log_exception(self, message, exception=None) -> None:
         self.errors.append(message)
 
-    def save_and_close(self):
+    def save_and_close(self) -> None:
         self.closed += 1
 
-    def __getattr__(self, name):
+    def __getattr__(self, name) -> Callable[..., None]:
         return lambda *args, **kwargs: None
 
 
 class RangeResponse:
     """Range 요청 구간을 청크로 흘리는 가짜 응답 (run 하네스와 동일 최소 인터페이스)."""
 
-    def __init__(self, body: bytes):
+    def __init__(self, body: bytes) -> None:
         self._body = body
 
-    def raise_for_status(self):
+    def raise_for_status(self) -> None:
         pass
 
-    def iter_content(self, chunk_size=8192):
+    def iter_content(self, chunk_size=8192) -> Iterator[bytes]:
         for i in range(0, len(self._body), chunk_size):
             yield self._body[i : i + chunk_size]
 
@@ -77,22 +79,24 @@ class RangeResponse:
 class RangeSession:
     """head/get(Range)을 지원하는 가짜 세션 — 실네트워크 없음."""
 
-    def __init__(self, content: bytes):
+    def __init__(self, content: bytes) -> None:
         self._content = content
         self.headers = {"content-length": str(len(content))}
 
-    def head(self, url, **kwargs):
+    def head(self, url, **kwargs) -> Self:
         return self
 
-    def raise_for_status(self):
+    def raise_for_status(self) -> None:
         pass
 
-    def get(self, url, headers=None, **kwargs):
+    def get(self, url, headers=None, **kwargs) -> RangeResponse:
         start, end = map(int, (headers or {})["Range"].removeprefix("bytes=").split("-"))
         return RangeResponse(self._content[start : end + 1])
 
 
-def _make_engine(tmp_path, monkeypatch):
+def _make_engine(
+    tmp_path, monkeypatch
+) -> tuple[FileDownloader, DownloadData, RecordingLogger, str, list[BaseException]]:
     """가짜 세션이 연결된 엔진과 (data, logger, output, failures)를 준비한다."""
     output = str(tmp_path / "out.mp4")
     data = DownloadData(
@@ -118,7 +122,7 @@ def _inject_output_oserror(monkeypatch, output: str, fail_from: int) -> None:
     calls = {"n": 0}
     real_open = open
 
-    def guarded_open(file, mode="r", *args, **kwargs):
+    def guarded_open(file, mode="r", *args, **kwargs) -> IO:
         if file == output and mode == "r+b":
             calls["n"] += 1
             if calls["n"] >= fail_from:
@@ -131,7 +135,7 @@ def _inject_output_oserror(monkeypatch, output: str, fail_from: int) -> None:
 # ================================================================ E1 — run 스레드
 
 
-def test_run_thread_oserror_is_contained_as_failure(tmp_path, monkeypatch):
+def test_run_thread_oserror_is_contained_as_failure(tmp_path, monkeypatch) -> None:
     """run 스레드의 OSError는 실패 콜백·로그·부분 산출물 정리로 귀결된다 (E1).
 
     고장 커밋에서는 OSError가 run() 밖으로 그대로 전파되어 이 테스트가
@@ -151,7 +155,7 @@ def test_run_thread_oserror_is_contained_as_failure(tmp_path, monkeypatch):
 # ================================================================ E2 — 워커
 
 
-def test_worker_oserror_stops_loop_and_notifies(tmp_path, monkeypatch):
+def test_worker_oserror_stops_loop_and_notifies(tmp_path, monkeypatch) -> None:
     """워커의 OSError는 전체 실패로 종결되고 실행 루프가 끝난다 (E2).
 
     고장 커밋에서는 future 슬롯이 정리되지 않아 루프가 영원히 돌았다 —
@@ -184,14 +188,14 @@ class _ExplodingEngine:
     requires_base_url_resolution = False
     requires_key_resolution = False
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         pass
 
-    def run(self):
+    def run(self) -> Never:
         raise RuntimeError("엔진이 처리하지 못한 예외 (테스트 주입)")
 
 
-def test_service_relays_unexpected_engine_exception(tmp_path, monkeypatch):
+def test_service_relays_unexpected_engine_exception(tmp_path, monkeypatch) -> None:
     """엔진이 흘린 예외도 서비스가 실패로 통지하고 로그·슬롯을 정리한다 (E1 근본).
 
     다운로더별 _failure_exceptions가 어떻게 설정돼 있든, 실행 스레드가
