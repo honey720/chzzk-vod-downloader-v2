@@ -33,40 +33,52 @@ def held(monkeypatch):
     release.set()
 
 
+@pytest.fixture
+def probe(qtbot, held):
+    """측정기 — 정리할 때 붙잡은 측정을 풀고 측정 스레드가 끝나기를 기다린 뒤 메인 스레드에서 지운다.
+
+    측정 스레드가 측정기의 마지막 참조를 쥔 채 끝나면 QObject가 그 워커 스레드에서 지워진다(실제 화면에서
+    접근 위반으로 죽었다). 앱에서는 측정기가 창의 자식이라 이 일이 없다.
+    """
+    made = FreeSpaceProbe()
+    yield made
+    held.set()
+    qtbot.waitUntil(lambda: _probe_threads() == 0, timeout=10000)
+    qtbot.wait(10)  # 마지막 측정의 큐 연결 알림을 메인 스레드에서 받는다
+    del made
+
+
 def _probe_threads() -> int:
     return sum(1 for t in threading.enumerate() if t.name == "FreeSpaceProbe" and t.is_alive())
 
 
-def test_a_stuck_path_does_not_block_another_path(qtbot, held):
+def test_a_stuck_path_does_not_block_another_path(qtbot, held, probe):
     """경로 A의 측정이 붙잡혀 있어도 경로 B를 요청하면 B의 값이 들어와야 한다.
 
     A 요청(붙잡힘) → B 요청 -> 두 요청 모두 True, B 값 222가 들어오고 A는 아직 None
     """
-    probe = FreeSpaceProbe()
     assert probe.request(PATH_A) is True
     assert probe.request(PATH_B) is True
     qtbot.waitUntil(lambda: probe.value(PATH_B) == FREE[PATH_B], timeout=5000)
     assert probe.value(PATH_A) is None
 
 
-def test_asking_a_stuck_path_again_starts_no_thread(qtbot, held):
+def test_asking_a_stuck_path_again_starts_no_thread(qtbot, held, probe):
     """재는 중인 경로를 다시 요청하면 새로 재지 않아 측정 스레드가 늘지 않아야 한다.
 
     A 요청(붙잡힘) → A 다섯 번 더 요청 -> 다섯 번 모두 False, 측정 스레드 수 그대로
     """
-    probe = FreeSpaceProbe()
     assert probe.request(PATH_A) is True
     before = _probe_threads()
     assert [probe.request(PATH_A) for _ in range(5)] == [False] * 5
     assert _probe_threads() == before
 
 
-def test_a_released_path_reports_its_value_and_can_be_asked_again(qtbot, held):
+def test_a_released_path_reports_its_value_and_can_be_asked_again(qtbot, held, probe):
     """붙잡혔던 경로가 풀리면 그 값이 들어오고, 그 뒤에는 다시 요청할 수 있어야 한다.
 
     A 요청(붙잡힘) → 풀어 줌 -> A 값 111이 들어옴, 다시 A 요청 True
     """
-    probe = FreeSpaceProbe()
     assert probe.request(PATH_A) is True
     held.set()
     qtbot.waitUntil(lambda: probe.value(PATH_A) == FREE[PATH_A], timeout=5000)
