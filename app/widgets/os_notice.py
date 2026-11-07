@@ -5,7 +5,9 @@
 - 작업 표시줄 깜빡임(`QApplication.alert`) — 창이 활성이 될 때까지. 트레이가 없어도 한다.
 - 트레이 알림(`QSystemTrayIcon.showMessage`) — 트레이가 있고 알림을 받을 때만. 트레이 아이콘은 알림
   동안만(10초) 띄우고, 알림이나 아이콘을 누르면 창을 앞으로 가져온다.
-- 알림 아이콘은 여러 크기(16 · 32 · 48 · 64px)를 담는다 — 16px 한 장이면 Windows가 알림을 띄우지 않았다
+- 트레이 아이콘은 앱 로고(창 아이콘), 알림 본문 아이콘만 상태 버블이다(설계 §12.1) — 둘 다 버블이면
+  알림 머리줄의 작은 아이콘과 본문의 큰 아이콘이 같은 기호로 겹친다(오너 실기 2026-11-07).
+- 두 아이콘 모두 여러 크기(16 · 32 · 48 · 64px)를 담는다 — 16px 한 장이면 Windows가 알림을 띄우지 않았다
   (오너 실기 2026-11-03). 알림 센터에 남지 않는 것은 Qt 트레이 알림의 한계로 받아들인다.
 """
 
@@ -36,6 +38,18 @@ def notice_icon(state: str) -> QIcon:
     return icon
 
 
+def logo_icon(window: QWidget) -> QIcon:
+    """창 아이콘(앱 로고)을 여러 크기로 담은 아이콘 — 트레이 아이콘용.
+
+    창 아이콘은 진입점이 앱 전체에 정한 것(`QApplication.setWindowIcon`)을 창이 물려받은 값이다.
+    """
+    source = window.windowIcon()
+    icon = QIcon()
+    for side in NOTICE_ICON_SIDES:
+        icon.addPixmap(source.pixmap(side, side))
+    return icon
+
+
 def tray_messages_available() -> bool:
     """트레이 알림을 쓸 수 있는 환경인지 — 트레이가 있고 알림을 받는다."""
     return QSystemTrayIcon.isSystemTrayAvailable() and QSystemTrayIcon.supportsMessages()
@@ -44,15 +58,17 @@ def tray_messages_available() -> bool:
 class DownloadEndNotice(QObject):
     """다운로드 끝 OS 알림 — 창 하나에 하나. 트레이 아이콘은 처음 알릴 때 만든다."""
 
-    def __init__(self, window: QWidget, bring_to_front: Callable[[], None]) -> None:
+    def __init__(self, window: QWidget, bring_to_front: Callable[[], None], app_name: str) -> None:
         """알림을 만든다.
 
         Args:
-            window: 깜빡일 창 · 트레이 아이콘의 부모
+            window: 깜빡일 창 · 트레이 아이콘의 부모 · 로고를 물려받는 창
             bring_to_front: 알림 · 트레이 아이콘을 눌렀을 때 창을 앞으로 가져오는 함수
+            app_name: 트레이 아이콘 툴팁(앱 표시 이름)
         """
         super().__init__(window)
         self._window = window
+        self._appName = app_name
         self._bringToFront = bring_to_front
         self._tray: QSystemTrayIcon | None = None
         self._hideTimer = QTimer(self)
@@ -64,22 +80,21 @@ class DownloadEndNotice(QObject):
         """작업 표시줄을 깜빡이고, 쓸 수 있으면 트레이 알림을 띄운다.
 
         Args:
-            title: 알림 제목(앱 이름)
-            text: 알림 글(「다운로드를 마쳤습니다 · 완료 N」 등)
-            state: 아이콘의 결과 상태(`done` · `some_failed` · `all_failed`)
+            title: 알림 제목(「다운로드를 마쳤습니다」 등 — 앱 이름은 OS가 머리줄에 쓴다)
+            text: 알림 글(「완료 N · 실패 N」 등)
+            state: 본문 아이콘의 결과 상태(`done` · `some_failed` · `all_failed`)
         """
         QApplication.alert(self._window, 0)
         if not tray_messages_available():
             return
-        icon = notice_icon(state)
         if self._tray is None:
             self._tray = QSystemTrayIcon(self._window)
             self._tray.messageClicked.connect(self._onClicked)
             self._tray.activated.connect(self._onClicked)
-        self._tray.setIcon(icon)
-        self._tray.setToolTip(title)
+        self._tray.setIcon(logo_icon(self._window))
+        self._tray.setToolTip(self._appName)
         self._tray.show()
-        self._tray.showMessage(title, text, icon, TRAY_SHOWN_MS)
+        self._tray.showMessage(title, text, notice_icon(state), TRAY_SHOWN_MS)
         self._hideTimer.start()
 
     def trayShown(self) -> bool:

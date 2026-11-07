@@ -194,7 +194,7 @@ class VodDownloader(QMainWindow):
         self.menuBubble.changed.connect(self._showMenuBubble)
         self._showMenuBubble()
         # 창이 앞에 없을 때 다운로드 끝 OS 알림(#523, 설계 §8-11)
-        self.downloadEndNotice = DownloadEndNotice(self, self._bringToFront)
+        self.downloadEndNotice = DownloadEndNotice(self, self._bringToFront, APP_DISPLAY_NAME)
         self.freeSpace = FreeSpaceProbe(self)
         self.freeSpace.measured.connect(self._onFreeSpaceMeasured)
         self.monitorTimer = QTimer(self)

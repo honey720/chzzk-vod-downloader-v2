@@ -4,21 +4,23 @@
 실제 활성 · 최소화로 만든다(offscreen도 창 활성을 바꾼다). 트레이는 대역이다 — offscreen에는 트레이가 없다.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QObject, Signal
-from PySide6.QtGui import QCloseEvent, QGuiApplication, QIcon
+from PySide6.QtGui import QCloseEvent, QGuiApplication, QIcon, QImage
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QWidget
 
+import app.theme as theme
 import app.widgets.os_notice as os_notice
+import CVDv2 as main_module
 from app.viewmodels.data import ContentItem
 from app.views import mainWindow as mw_mod
 from app.views.dialog import SettingDialog
 from app.views.mainWindow import VodDownloader
-from app.widgets.icons import BUBBLE_STATES
+from app.widgets.icons import BUBBLE_FILL_TOKENS, BUBBLE_STATES, bubble_pixmap
 from core.models.download_state import DownloadState
 from tests.app.gui import test_footer_bar as footer
 from tests.app.gui.test_footer_bar import _environment, answers  # noqa: F401 — 같은 환경 · 확인 창 대역
@@ -41,6 +43,7 @@ class _Tray(QObject):
     messageClicked = Signal()
     activated = Signal(object)
     messages: list[tuple[str, str]] = []
+    message_icons: list[QIcon] = []
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -58,7 +61,7 @@ class _Tray(QObject):
         self.icon = icon
 
     def setToolTip(self, text: str) -> None:
-        pass
+        self.tip = text
 
     def show(self) -> None:
         self._visible = True
@@ -71,6 +74,7 @@ class _Tray(QObject):
 
     def showMessage(self, title: str, text: str, icon: QIcon, msecs: int) -> None:
         _Tray.messages.append((title, text))
+        _Tray.message_icons.append(icon)
 
 
 @pytest.fixture
@@ -78,11 +82,27 @@ def notices(monkeypatch: pytest.MonkeyPatch) -> dict[str, list]:
     """OS 알림 대역 — 작업 표시줄 깜빡임 횟수와 트레이 알림 글을 적는다."""
     alerts: list[QWidget] = []
     _Tray.messages = []
+    _Tray.message_icons = []
     monkeypatch.setattr(
         os_notice.QApplication, "alert", lambda widget, msec=0: alerts.append(widget)
     )
     monkeypatch.setattr(os_notice, "QSystemTrayIcon", _Tray)
-    return {"alerts": alerts, "messages": _Tray.messages}
+    return {"alerts": alerts, "messages": _Tray.messages, "icons": _Tray.message_icons}
+
+
+@pytest.fixture
+def app_logo(qapp: QApplication) -> Iterator[QIcon]:
+    """진입점처럼 앱 전체 창 아이콘을 로고로 정한다 — 끝나면 원래 아이콘으로 되돌린다."""
+    before = qapp.windowIcon()
+    logo = QIcon(main_module.resource_path("resources/icon.png"))
+    qapp.setWindowIcon(logo)
+    yield logo
+    qapp.setWindowIcon(before)
+
+
+def _image(icon: QIcon, side: int) -> QImage:
+    """아이콘의 그 크기 그림 — 같은 그림인지 비교한다."""
+    return icon.pixmap(side, side).toImage()
 
 
 def _window_with(
@@ -535,6 +555,46 @@ def test_notice_icon_has_sizes_from_16_to_64() -> None:
     """
     sides = sorted(size.width() for size in os_notice.notice_icon("done").availableSizes())
     assert sides == [16, 32, 48, 64]
+
+
+@pytest.mark.usefixtures("answers")
+def test_tray_icon_is_the_app_logo_and_the_notice_icon_is_the_bubble(
+    tmp_path: Path, notices: dict[str, list], app_logo: QIcon
+) -> None:
+    """트레이 아이콘은 앱 로고, 알림 본문 아이콘은 결과 상태 버블이어야 한다 — 두 아이콘이 달라야 한다.
+
+    앱 창 아이콘 = 로고 · 창 뒤 → 완료 -> 트레이 아이콘 그림 = 로고(16 ~ 64px) · 알림 아이콘 그림 = 완료 버블
+    """
+    win, _items, engine = footer._window(tmp_path)
+    win.downloadButton.click()
+    footer._pump()
+    _send_behind(win)
+    footer._finish(engine)
+    tray = win.downloadEndNotice._tray
+    tokens = theme.current_tokens()
+    for side in os_notice.NOTICE_ICON_SIDES:
+        bubble = bubble_pixmap(
+            "done", tokens[BUBBLE_FILL_TOKENS["done"]], tokens["onAccent"], side
+        ).toImage()
+        assert _image(tray.icon, side) == _image(app_logo, side), side
+        assert _image(notices["icons"][0], side) == bubble, side
+        assert _image(tray.icon, side) != bubble, side
+
+
+@pytest.mark.usefixtures("answers")
+def test_tray_icon_tooltip_is_the_app_display_name(
+    tmp_path: Path, notices: dict[str, list]
+) -> None:
+    """트레이 아이콘 툴팁은 앱 표시 이름이어야 한다.
+
+    창 뒤 → 완료 -> 트레이 툴팁 APP_DISPLAY_NAME
+    """
+    win, _items, engine = footer._window(tmp_path)
+    win.downloadButton.click()
+    footer._pump()
+    _send_behind(win)
+    footer._finish(engine)
+    assert win.downloadEndNotice._tray.tip == mw_mod.APP_DISPLAY_NAME
 
 
 @pytest.mark.usefixtures("answers")
