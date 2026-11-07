@@ -1008,7 +1008,12 @@ class VodDownloader(QMainWindow):
             self.menuDownloadButton.stopBlink()
 
     def _menuBubbleTip(self, state: str) -> str:
-        """버블 툴팁 — 「받는 중 · 완료 3/5 · 실패 1」. 버블이 없으면 빈 글(툴팁 없음)."""
+        """버블 툴팁 — 버블 이름 다음에 숫자. 버블이 없으면 빈 글(툴팁 없음).
+
+        받는 중 · 일시정지는 「받는 중 · 완료 3/5 · 실패 1」. 결과 버블은 이름과 같은 낱말을 숫자 앞에 다시
+        쓰지 않는다 — 완료 「완료 · 2/2」, 일부 실패 「일부 실패 · 완료 1 · 실패 1」, 전부 실패 「전부 실패 · 실패 3」
+        (오너 실기 2026-11-07).
+        """
         if not state:
             return ""
         # 구분 글 "menu bubble" — 같은 원문의 다른 자리(닫기 확인 창 제목 등)와 번역을 나눈다(설계 §2의 이름)
@@ -1020,9 +1025,20 @@ class VodDownloader(QMainWindow):
             "done": self.tr("Completed", "menu bubble"),
         }
         finished, failed, total = self.menuBubble.counts()
-        parts = [names[state], self.tr("Completed {0}/{1}").format(finished, total)]
-        if failed:
-            parts.append(self.tr("Failed {0}").format(failed))
+        if state == "done":
+            parts = [names[state], f"{finished}/{total}"]
+        elif state == "some_failed":
+            parts = [
+                names[state],
+                self.tr("Completed {0}").format(finished),
+                self.tr("Failed {0}").format(failed),
+            ]
+        elif state == "all_failed":
+            parts = [names[state], self.tr("Failed {0}").format(failed)]
+        else:
+            parts = [names[state], self.tr("Completed {0}/{1}").format(finished, total)]
+            if failed:
+                parts.append(self.tr("Failed {0}").format(failed))
         return " · ".join(parts)
 
     def _announceRunEnd(self) -> None:

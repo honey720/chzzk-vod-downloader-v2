@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QTranslator, Signal
 from PySide6.QtGui import QCloseEvent, QGuiApplication, QIcon, QImage
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox, QWidget
@@ -285,13 +285,53 @@ def test_result_bubble_follows_deleting_a_card(tmp_path: Path) -> None:
 
 @pytest.mark.usefixtures("answers")
 def test_bubble_tooltip_has_the_numbers(tmp_path: Path) -> None:
-    """버블 툴팁은 상태 이름 · 완료 수 / 전체 · 실패 수여야 한다.
+    """일부 실패 버블 툴팁은 상태 이름 · 완료 수 · 실패 수여야 한다.
 
-    대기 2장 → 완료 · 실패 -> 툴팁 "Some failed · Completed 1/2 · Failed 1"
+    대기 2장 → 완료 · 실패 -> 툴팁 "Some failed · Completed 1 · Failed 1"
     """
     win, _items, engine = footer._window(tmp_path, cards=2)
     _run_to_end(win, engine, [footer._finish, footer._fail])
-    assert win.menuDownloadButton.toolTip() == "Some failed · Completed 1/2 · Failed 1"
+    assert win.menuDownloadButton.toolTip() == "Some failed · Completed 1 · Failed 1"
+
+
+@pytest.fixture
+def korean(qapp: QApplication) -> Iterator[QTranslator]:
+    """동봉된 한국어 번역을 앱에 건다 — 끝나면 뗀다."""
+    translator = QTranslator()
+    assert translator.load(main_module.resource_path("translations/ko_KR.qm")), "ko_KR.qm 로드 실패"
+    qapp.installTranslator(translator)
+    yield translator
+    qapp.removeTranslator(translator)
+
+
+@pytest.mark.parametrize(
+    ("states", "outcomes", "tip"),
+    [
+        ([R, F, X], [], "받는 중 · 완료 1/3 · 실패 1"),
+        ([P, F], [], "일시정지 · 완료 1/2"),
+        ([], [footer._finish, footer._finish], "완료 · 2/2"),
+        ([], [footer._finish, footer._fail], "일부 실패 · 완료 1 · 실패 1"),
+        ([], [footer._fail, footer._fail, footer._fail], "전부 실패 · 실패 3"),
+    ],
+    ids=["받는 중", "일시정지", "완료", "일부 실패", "전부 실패"],
+)
+@pytest.mark.usefixtures("answers", "korean")
+def test_bubble_tooltip_does_not_repeat_the_bubble_name(
+    tmp_path: Path, states: list[DownloadState], outcomes: list[Callable], tip: str
+) -> None:
+    """한국어 버블 툴팁은 버블 이름 다음에 숫자만 오고, 이름을 다시 쓰지 않아야 한다.
+
+    카드 상태 states(또는 대기 카드를 outcomes로 끝냄) -> 툴팁 tip · 첫 조각(이름)이 나머지에 없음
+    """
+    if outcomes:
+        win, _items, engine = footer._window(tmp_path, cards=len(outcomes))
+        _run_to_end(win, engine, outcomes)
+    else:
+        win, _items = _window_with(tmp_path, states)
+    text = win.menuDownloadButton.toolTip()
+    name, *rest = text.split(" · ")
+    assert text == tip
+    assert name not in " · ".join(rest)
 
 
 def test_hidden_bubble_keeps_the_menu_bar_in_place(tmp_path: Path) -> None:
