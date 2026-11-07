@@ -395,6 +395,48 @@ Part of the video kept arriving incomplete from the server. Try again later.</so
     </message>
 </context>
 <context>
+    <name>FooterMonitor</name>
+    <message>
+        <source>Speed · {0}</source>
+        <translation>속도 · {0}</translation>
+    </message>
+    <message>
+        <source>Connections {0}</source>
+        <translation>연결 {0}</translation>
+    </message>
+    <message>
+        <source>Connections · {0}</source>
+        <translation>연결 · {0}</translation>
+    </message>
+    <message>
+        <source>Memory {0}</source>
+        <translation>메모리 {0}</translation>
+    </message>
+    <message>
+        <source>Memory · {0}</source>
+        <translation>메모리 · {0}</translation>
+    </message>
+    <message>
+        <source>Free {0}</source>
+        <translation>여유 {0}</translation>
+    </message>
+    <message>
+        <source>Free space · {0}</source>
+        <translation>여유 공간 · {0}</translation>
+    </message>
+</context>
+<context>
+    <name>RunResultLabel</name>
+    <message>
+        <source>Completed {0}</source>
+        <translation>완료 {0}</translation>
+    </message>
+    <message>
+        <source>Failed {0}</source>
+        <translation>실패 {0}</translation>
+    </message>
+</context>
+<context>
     <name>SaveLocationButton</name>
     <message>
         <source>(missing)</source>
@@ -736,16 +778,8 @@ Check your connection and cookies, then open this window again.</source>
         <translation>경로가 존재하지 않습니다.</translation>
     </message>
     <message>
-        <source>Pause</source>
-        <translation>일시정지</translation>
-    </message>
-    <message>
         <source>Download</source>
         <translation>다운로드</translation>
-    </message>
-    <message>
-        <source>No VODs added.</source>
-        <translation>추가된 VOD가 없습니다.</translation>
     </message>
     <message>
         <source>Still loading video information. Please try again in a moment.</source>
@@ -756,12 +790,24 @@ Check your connection and cookies, then open this window again.</source>
         <translation>VOD 다운</translation>
     </message>
     <message>
+        <source>No VOD can be started right now.</source>
+        <translation>지금 시작할 수 있는 VOD가 없습니다.</translation>
+    </message>
+    <message>
         <source>Downloading</source>
         <translation>다운로드 중</translation>
     </message>
     <message>
         <source>Download is in progress. Do you want to quit?</source>
         <translation>다운로드가 진행 중입니다. 종료하시겠습니까?</translation>
+    </message>
+    <message>
+        <source>Resume</source>
+        <translation>이어 받기</translation>
+    </message>
+    <message>
+        <source>Pause all</source>
+        <translation>모두 일시정지</translation>
     </message>
     <message>
         <source>Completed</source>

@@ -101,7 +101,7 @@ def test_rapid_presses_leave_the_engine_the_card_and_the_button_in_the_same_stat
     """일시정지 버튼이 이벤트를 처리할 틈 없이 여러 번 눌려도 마지막 누름의 상태로 끝나고 셋이 같아야 한다.
 
     받는 중인 카드에서 전역 버튼과 카드의 ⏸를 번갈아 1 · 2 · 9 · 10번 누름(사이에 이벤트를 돌리지 않는다)
-    -> 홀수 번: 엔진 PAUSED · 카드 PAUSED · 전역 버튼 "Download" / 짝수 번: RUNNING · RUNNING · "Pause"
+    -> 홀수 번: 엔진 PAUSED · 카드 PAUSED · 전역 버튼 이름(툴팁) "Resume" / 짝수 번: RUNNING · RUNNING · "Pause all"
     -> 엔진의 일시정지 신호(pause_event)가 그 상태와 같다(일시정지면 내려가 있다)
     """
     win, item, engine = downloading
@@ -117,7 +117,7 @@ def test_rapid_presses_leave_the_engine_the_card_and_the_button_in_the_same_stat
     expected = DownloadState.PAUSED if presses % 2 else DownloadState.RUNNING
     model = engine.submissions[0]["data"].model
     assert (model.state, item.downloadState) == (expected, expected)
-    assert win.downloadButton.text() == ("Download" if presses % 2 else "Pause")
+    assert win.downloadButton.toolTip() == ("Resume" if presses % 2 else "Pause all")
     assert model.pause_event.is_set() == (expected == DownloadState.RUNNING)
     assert len(engine.submissions) == 1, "누름이 새 다운로드를 시작하지 않았다"
 
@@ -126,7 +126,7 @@ def test_a_press_that_lands_after_the_engine_finished_changes_nothing(downloadin
     """엔진이 막 끝났고 그 알림이 아직 처리되지 않은 틈에 눌린 일시정지는 카드와 버튼을 바꾸지 않아야 한다.
 
     엔진의 상태를 FINISHED로 바꿈(끝났다는 알림은 아직 오지 않았다). 전역 버튼을 누름
-    -> 일시정지 알림 0회, 카드는 PAUSED가 아니다, 전역 버튼의 글자 "Pause" 그대로
+    -> 일시정지 알림 0회, 카드는 PAUSED가 아니다, 전역 버튼의 이름(툴팁) "Pause all" 그대로
     """
     win, item, engine = downloading
     model = engine.submissions[0]["data"].model
@@ -138,14 +138,14 @@ def test_a_press_that_lands_after_the_engine_finished_changes_nothing(downloadin
 
     assert paused.count() == 0
     assert item.downloadState != DownloadState.PAUSED
-    assert win.downloadButton.text() == "Pause"
+    assert win.downloadButton.toolTip() == "Pause all"
 
 
 def test_a_download_started_after_a_paused_one_was_stopped_does_not_start_paused(downloading):
     """일시정지했다가 중지한 카드를 다시 받기 시작하면 새 다운로드는 일시정지를 이어받지 않아야 한다.
 
     받는 중 → 일시정지 → 중지 → 전역 다운로드
-    -> 제출 2건, 둘째의 엔진 상태 RUNNING · 일시정지 신호가 올라가 있다, 카드 RUNNING, 버튼 "Pause"
+    -> 제출 2건, 둘째의 엔진 상태 RUNNING · 일시정지 신호가 올라가 있다, 카드 RUNNING, 버튼 이름 "Pause all"
     """
     win, item, engine = downloading
     win.downloadButton.click()
@@ -163,4 +163,4 @@ def test_a_download_started_after_a_paused_one_was_stopped_does_not_start_paused
     assert model is not engine.submissions[0]["data"].model
     assert model.state == DownloadState.RUNNING and model.pause_event.is_set()
     assert item.downloadState == DownloadState.RUNNING
-    assert win.downloadButton.text() == "Pause"
+    assert win.downloadButton.toolTip() == "Pause all"
