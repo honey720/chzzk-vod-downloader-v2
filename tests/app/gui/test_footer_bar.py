@@ -297,26 +297,34 @@ def test_footer_while_paused_shows_only_free_space(qtbot, tmp_path, answers):
     assert win.footerMonitor.shownKeys() == ["free"]
 
 
-def test_a_tick_redraws_only_the_footer(qtbot, tmp_path, answers):
-    """1초 갱신은 카드 1000장에서도 카드 갱신 통지 · 목록 배치를 내지 않아야 한다.
+def test_a_tick_redraws_only_the_footer(qtbot, tmp_path, answers, monkeypatch):
+    """1초 갱신은 카드 1000장에서도 카드 갱신 통지 · 목록 전체 맞추기를 내지 않아야 한다.
 
-    카드 1000장 · 받는 중 · 통지 하나 -> 갱신 한 번 동안 itemChanged 0건 · 목록 다시 배치 0회
+    카드 1000장 · 받는 중 · 통지 하나 -> 갱신 한 번 동안 itemChanged 0건 · 목록 다시 배치(_relayout) 0회 ·
+    모든 카드 보임 맞추기(_applyFilter) 0회
     """
+    # 창을 만들기 전에 감싼다 — 목록이 순서 신호(orderReset · filterChanged)에 이을 때 감싼 함수를 붙잡아,
+    # 신호로 오든 직접 부르든 실제로 목록 전체를 맞춘 횟수를 센다(창을 만든 뒤 바꾸면 신호 연결은 원래 함수다)
+    whole_list: list[str] = []
+    for name in ("_relayout", "_applyFilter"):
+        original = getattr(ContentListView, name)
+
+        def counted(self, _original=original, _name=name):
+            whole_list.append(_name)
+            return _original(self)
+
+        monkeypatch.setattr(ContentListView, name, counted)
     win, _items, engine = _window(tmp_path, cards=1000)
     win.downloadButton.click()
     _pump()
     _progress(engine, 0, 10 * MIB, 2.0, 4)
+    assert whole_list, "전제: 감싼 함수가 목록에 이어졌다(창을 만들 때 한 번은 맞춘다)"
     changed = QSignalSpy(win.contentManager.model.itemChanged)
-    relayouts: list[int] = []
-    original = ContentListView._relayout
-    ContentListView._relayout = lambda self: (relayouts.append(1), original(self))[1]
-    try:
-        _tick(win)
-    finally:
-        ContentListView._relayout = original
+    whole_list.clear()
+    _tick(win)
     assert win.footerMonitor.shownKeys()[0] == "speed", "전제: 받는 중의 값이 보인다"
     assert changed.count() == 0
-    assert relayouts == []
+    assert whole_list == []
 
 
 # ---------------------------------------------------------------------------
