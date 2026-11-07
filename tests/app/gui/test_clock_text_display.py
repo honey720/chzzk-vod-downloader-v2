@@ -45,16 +45,16 @@ def test_card_shows_an_elapsed_time_past_a_day(qtbot, tmp_path):
     assert win.listView.widgetFor(items[0]).statusLabel.text().endswith("· 30:00:00")
 
 
-def test_waiting_card_shows_a_video_length_past_a_day(qapp):
-    """영상 길이가 30시간인 대기 세그먼트 카드는 길이를 "30:00:00"으로 보여야 한다."""
+def _waiting_segment_card(duration) -> ContentItemWidget:
+    """영상 길이가 duration인 대기 세그먼트 카드 — 세그먼트 카드는 대기에서 길이 칸에 길이를 적는다."""
     item = ContentItem(
         "https://chzzk.naver.com/video/1",
         {
-            "title": "긴 방송",
+            "title": "방송",
             "category": "",
             "channelName": "채널",
             "createdDate": "",
-            "duration": DAY_AND_A_QUARTER,
+            "duration": duration,
         },
         [["1080", "u1"]],
         None,
@@ -67,7 +67,36 @@ def test_waiting_card_shows_a_video_length_past_a_day(qapp):
     widget = ContentItemWidget(item, 0)
     widget.setData(item, 0)
     assert item.is_segment_based, "전제: 세그먼트 카드는 대기에서 길이를 적는다"
+    return widget
+
+
+def test_waiting_card_shows_a_video_length_past_a_day(qapp):
+    """영상 길이가 30시간인 대기 세그먼트 카드는 길이를 "30:00:00"으로 보여야 한다."""
+    widget = _waiting_segment_card(DAY_AND_A_QUARTER)
     assert widget.fileSizeLabel.text() == "30:00:00"
+
+
+@pytest.mark.parametrize("duration", [None, 0], ids=["null", "키 없음"])
+def test_waiting_card_leaves_an_unknown_video_length_empty(qapp, duration):
+    """영상 길이를 모르는 대기 카드는 길이 칸이 비어 있어야 한다 — 지금 시각 · "00:00:00"을 보이지 않는다 (#515).
+
+    응답의 길이 null(None) · 키 없음(0) -> 길이 칸 글 "", 확보 폭은 길이를 아는 카드(3600초)와 같다
+    """
+    widget = _waiting_segment_card(duration)
+    known = _waiting_segment_card(3600)
+    assert widget.fileSizeLabel.text() == ""
+    assert widget.fileSizeLabel.minimumWidth() == known.fileSizeLabel.minimumWidth()
+
+
+def test_waiting_card_shows_the_length_once_it_is_known(qapp):
+    """길이를 모르던 대기 카드에 길이가 채워지면 다시 그릴 때 길이가 보여야 한다.
+
+    길이 None 카드 → 길이 3600초를 채워 다시 그림 -> "01:00:00"
+    """
+    widget = _waiting_segment_card(None)
+    widget.item.duration = 3600
+    widget.setData(widget.item, 0)
+    assert widget.fileSizeLabel.text() == "01:00:00"
 
 
 @pytest.mark.usefixtures("answers")
