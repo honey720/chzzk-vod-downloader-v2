@@ -34,7 +34,7 @@ def record_processes(monkeypatch, on_launch=None) -> list[subprocess.Popen]:
     real = subprocess.Popen
 
     class Recording(real):
-        def __init__(self, *args, **kwargs):
+        def __init__(self, *args, **kwargs) -> None:
             super().__init__(*args, **kwargs)
             processes.append(self)
             if on_launch is not None:

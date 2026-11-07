@@ -90,7 +90,7 @@ def _has_key(text: str, key: bytes = KEY) -> bool:
 # ================================================================ open_ts_segment
 
 
-def test_open_ts_segment_returns_the_decrypted_segment():
+def test_open_ts_segment_returns_the_decrypted_segment() -> None:
     """open_ts_segment는 온전한 암호화 세그먼트를 복호화한 TS로 돌려줘야 한다.
 
     합성 세그먼트 1을 암호화한 것, Content-Length가 받은 길이와 같다
@@ -107,7 +107,7 @@ def test_open_ts_segment_returns_the_decrypted_segment():
     "damage",
     ["content-length", "not-block-multiple", "block-truncated", "bad-sync"],
 )
-def test_open_ts_segment_rejects_a_segment_that_is_not_whole(damage):
+def test_open_ts_segment_rejects_a_segment_that_is_not_whole(damage) -> None:
     """open_ts_segment는 길이 · 암호문 · 복호화한 TS 가운데 하나라도 온전하지 않으면 잘림 오류를 내야 한다.
 
     합성 세그먼트를 암호화한 것에 주석의 손상 —
@@ -135,7 +135,7 @@ def test_open_ts_segment_rejects_a_segment_that_is_not_whole(damage):
         open_ts_segment(body, headers, KEY, sequence_iv(0))
 
 
-def test_open_ts_segment_tells_a_wrong_key_only_when_asked():
+def test_open_ts_segment_tells_a_wrong_key_only_when_asked() -> None:
     """open_ts_segment는 key_check일 때만 TS가 아닌 복호화 결과를 키 오류로 알려야 한다.
 
     합성 세그먼트를 암호화한 것을 다른 키로 연다
@@ -149,7 +149,7 @@ def test_open_ts_segment_tells_a_wrong_key_only_when_asked():
         open_ts_segment(body, None, WRONG_KEY, sequence_iv(0))
 
 
-def test_decryption_error_is_the_same_class_from_both_modules():
+def test_decryption_error_is_the_same_class_from_both_modules() -> None:
     """DecryptionError는 decrypt 모듈과 hls_aes_downloader 모듈에서 같은 클래스로 import돼야 한다.
 
     두 모듈에서 import한 이름
@@ -166,7 +166,7 @@ def test_decryption_error_is_the_same_class_from_both_modules():
     ],
     ids=["sequence-number", "explicit"],
 )
-def test_segment_iv_is_the_explicit_value_or_the_sequence_number(key_line, index, expected):
+def test_segment_iv_is_the_explicit_value_or_the_sequence_number(key_line, index, expected) -> None:
     """segment_iv는 #EXT-X-KEY에 IV가 있으면 그 값을, 없으면 미디어 시퀀스 번호를 돌려줘야 한다.
 
     주석의 #EXT-X-KEY 줄, MEDIA-SEQUENCE 0, 세그먼트 인덱스 5
@@ -180,7 +180,7 @@ def test_segment_iv_is_the_explicit_value_or_the_sequence_number(key_line, index
 # ================================================================ 플레이리스트 · 세그먼트 받기
 
 
-def test_fetch_ts_head_reads_the_playlist_and_fetches_no_segment(host):
+def test_fetch_ts_head_reads_the_playlist_and_fetches_no_segment(host) -> None:
     """fetch_ts_head는 플레이리스트만 받아 해석하고 세그먼트와 키는 받지 않아야 한다.
 
     세그먼트 셋 · AES-128 키가 적힌 플레이리스트
@@ -206,7 +206,7 @@ def test_fetch_ts_head_reads_the_playlist_and_fetches_no_segment(host):
     ],
     ids=["bare", "query", "fragment", "query-and-fragment"],
 )
-def test_playlist_ref_has_no_query_and_no_fragment(url):
+def test_playlist_ref_has_no_query_and_no_fragment(url) -> None:
     """playlist_ref는 주소에서 쿼리와 프래그먼트를 뺀 값이어야 한다.
 
     같은 경로에 쿼리 · 프래그먼트만 다른 주소 넷
@@ -218,7 +218,7 @@ def test_playlist_ref_has_no_query_and_no_fragment(url):
     assert "?" not in ref and "#" not in ref and "token" not in ref
 
 
-def test_playlist_ref_differs_between_paths():
+def test_playlist_ref_differs_between_paths() -> None:
     """playlist_ref는 경로가 다른 플레이리스트끼리 달라야 한다.
 
     경로가 720 · 1080인 주소(쿼리는 같다)
@@ -235,7 +235,7 @@ def test_playlist_ref_differs_between_paths():
 )
 def test_playlist_ref_differs_between_the_resolutions_of_a_real_manifest(
     load_mock_response, fixture_name
-):
+) -> None:
     """실제 매니페스트의 해상도마다 플레이리스트 주소의 playlist_ref가 서로 달라야 한다.
 
     박제한 SEA 매니페스트의 해상도 셋(144 · 720 · 1080)의 플레이리스트 주소
@@ -249,7 +249,7 @@ def test_playlist_ref_differs_between_the_resolutions_of_a_real_manifest(
     assert len(refs) == 3
 
 
-def test_fetch_ts_head_records_the_playlist_ref_without_the_query(monkeypatch):
+def test_fetch_ts_head_records_the_playlist_ref_without_the_query(monkeypatch) -> None:
     """fetch_ts_head는 받은 주소에서 쿼리를 뺀 값을 playlist_ref에 적어야 한다.
 
     "vod/media.m3u8?token=abc"로 받는다
@@ -270,7 +270,7 @@ def test_fetch_ts_head_records_the_playlist_ref_without_the_query(monkeypatch):
     ["#EXT-X-VERSION:3", '#EXT-X-KEY:METHOD=SAMPLE-AES,URI="k"'],
     ids=["no-key", "other-method"],
 )
-def test_fetch_ts_head_rejects_a_playlist_it_cannot_decrypt(monkeypatch, key_line):
+def test_fetch_ts_head_rejects_a_playlist_it_cannot_decrypt(monkeypatch, key_line) -> None:
     """fetch_ts_head는 #EXT-X-KEY가 없거나 AES-128이 아닌 플레이리스트를 거부해야 한다.
 
     주석의 플레이리스트
@@ -283,7 +283,7 @@ def test_fetch_ts_head_rejects_a_playlist_it_cannot_decrypt(monkeypatch, key_lin
         fetch_ts_head(served.url("vod/media.m3u8"))
 
 
-def test_segment_streams_fetches_once_and_stores_the_decrypted_segment(host, tmp_path):
+def test_segment_streams_fetches_once_and_stores_the_decrypted_segment(host, tmp_path) -> None:
     """segment_streams는 세그먼트를 전체 요청으로 한 번만 받고, 복호화한 본문을 엔진과 같은 이름으로 둬야 한다.
 
     세그먼트 1을 두 번 읽음. segment_dir 지정
@@ -306,7 +306,7 @@ def test_segment_streams_fetches_once_and_stores_the_decrypted_segment(host, tmp
     assert again is first
 
 
-def test_segment_streams_keeps_nothing_without_a_folder(host):
+def test_segment_streams_keeps_nothing_without_a_folder(host) -> None:
     """segment_streams는 둘 폴더가 없으면 프레임 정보만 보관하고 stored에 적지 않아야 한다.
 
     segment_dir 없이 만든 TsHead로 세그먼트 0을 읽음
@@ -327,7 +327,7 @@ def test_segment_streams_keeps_nothing_without_a_folder(host):
 )
 def test_segment_streams_leaves_no_file_when_the_segment_is_rejected(
     monkeypatch, tmp_path, damage, error
-):
+) -> None:
     """segment_streams는 세그먼트가 온전하지 않거나 키가 맞지 않으면 실패하고 파일을 남기지 않아야 한다.
 
     truncated: 서버가 끝 16바이트를 뺀 세그먼트를 준다 / wrong-key: 다른 키로 읽는다
@@ -353,7 +353,7 @@ def test_segment_streams_leaves_no_file_when_the_segment_is_rejected(
     ("count", "index", "expected"),
     [(6, 0, "0.ts"), (6, 5, "5.ts"), (2351, 28, "0028.ts"), (10, 9, "09.ts"), (10, 0, "00.ts")],
 )
-def test_ts_segment_file_name_is_zero_based_and_padded(count, index, expected):
+def test_ts_segment_file_name_is_zero_based_and_padded(count, index, expected) -> None:
     """ts_segment_file_name은 세그먼트 번호(0부터)를 세그먼트 수의 자릿수만큼 0으로 채운 이름을 돌려줘야 한다.
 
     주석의 경우마다 (세그먼트 수, 인덱스)
@@ -375,7 +375,9 @@ def _logged(caplog) -> str:
     return "\n".join(parts)
 
 
-def test_key_is_not_left_in_the_model_the_content_or_the_log_on_success(host, tmp_path, caplog):
+def test_key_is_not_left_in_the_model_the_content_or_the_log_on_success(
+    host, tmp_path, caplog
+) -> None:
     """세그먼트를 받아 복호화한 뒤 TsHead · Content의 repr과 로그 어디에도 키 값이 없어야 한다.
 
     세그먼트 셋을 KEY로 읽은 TsHead를 Content.ts_head에 실음. 로그는 모든 로거를 DEBUG로 캡처
@@ -401,7 +403,7 @@ def test_key_is_not_left_in_the_model_the_content_or_the_log_on_success(host, tm
 @pytest.mark.parametrize("damage", ["wrong-key", "truncated", "short-key"])
 def test_key_is_not_left_in_the_error_the_model_or_the_log_on_failure(
     monkeypatch, tmp_path, caplog, damage
-):
+) -> None:
     """세그먼트 읽기가 실패해도 예외 글 · TsHead의 repr · 로그 어디에도 준 키 값이 없어야 한다.
 
     wrong-key: 다른 키로 읽는다 / truncated: 잘린 세그먼트 / short-key: 15바이트 키
@@ -430,7 +432,7 @@ def test_key_is_not_left_in_the_error_the_model_or_the_log_on_failure(
         assert not _has_key(text, key)
 
 
-def test_ts_head_has_no_field_that_can_hold_a_key():
+def test_ts_head_has_no_field_that_can_hold_a_key() -> None:
     """TsHead에는 키를 담을 칸이 없어야 한다 — 필드 이름이 정해진 여섯 개다.
 
     TsHead의 필드 이름
@@ -446,7 +448,7 @@ def test_ts_head_has_no_field_that_can_hold_a_key():
     }
 
 
-def test_fetch_ts_segment_sends_a_whole_request(host):
+def test_fetch_ts_segment_sends_a_whole_request(host) -> None:
     """fetch_ts_segment는 범위 없는 요청 하나로 세그먼트를 받아 복호화해야 한다.
 
     세그먼트 2의 주소

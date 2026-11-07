@@ -117,7 +117,7 @@ def _assert_no_secret(text: str) -> None:
 # ================================================================ 앱 로그 · 콘솔
 
 
-def test_app_log_and_console_hide_signatures_in_messages_exceptions_and_tracebacks(app_log):
+def test_app_log_and_console_hide_signatures_in_messages_exceptions_and_tracebacks(app_log) -> None:
     """앱 로그 파일과 콘솔에는 주소의 서명 · 토큰 값이 남지 않고 호스트 · 경로는 남아야 한다.
 
     모듈 로거로 주소를 적은 줄 · requests의 HTTPError 글 · 연결 실패 글 · HTTPError의 트레이스백을 남김
@@ -147,14 +147,14 @@ def test_app_log_and_console_hide_signatures_in_messages_exceptions_and_tracebac
 class _Response:
     """가짜 응답 — 본문을 조각으로 흘리고, 상태가 오류면 raise_for_status가 requests의 예외를 낸다."""
 
-    def __init__(self, url: str, body: bytes = b"", text: str = "", status: int = 200):
+    def __init__(self, url: str, body: bytes = b"", text: str = "", status: int = 200) -> None:
         self.url = url
         self.content = body
         self.text = text
         self._status = status
         self.headers = {}
 
-    def raise_for_status(self):
+    def raise_for_status(self) -> None:
         if self._status >= 400:
             raise _http_error(self.url)
 
@@ -170,7 +170,7 @@ class _Session:
     403이다. 그 밖에는 첫 세그먼트의 첫 요청만 403이고 다시 받으면 온다.
     """
 
-    def __init__(self, fail_playlist: bool = False):
+    def __init__(self, fail_playlist: bool = False) -> None:
         self._fail_playlist = fail_playlist
         self._first_segment_failed = False
         self._lock = threading.Lock()
@@ -213,7 +213,7 @@ def _run_engine(tmp_path, monkeypatch, session: _Session) -> tuple[str, list]:
     failures: list = []
     finished = threading.Event()
 
-    def on_finished():
+    def on_finished() -> None:
         data.model.finish()
         finished.set()
 
@@ -226,7 +226,7 @@ def _run_engine(tmp_path, monkeypatch, session: _Session) -> tuple[str, list]:
 
 def test_download_log_hides_signatures_on_a_retried_segment_and_on_success(
     app_log, tmp_path, monkeypatch
-):
+) -> None:
     """세그먼트가 403으로 한 번 실패해도 다운로드 로그 · 앱 로그에 서명 · 토큰 값이 남지 않아야 한다.
 
     플레이리스트 주소: 경로 토큰 · 쿼리 서명, 세그먼트 · 초기화 주소: 쿼리 토큰, 첫 세그먼트의 첫 요청만 403,
@@ -250,7 +250,7 @@ def test_download_log_hides_signatures_on_a_retried_segment_and_on_success(
 
 def test_download_log_hides_signatures_in_the_traceback_of_a_failed_download(
     app_log, tmp_path, monkeypatch
-):
+) -> None:
     """플레이리스트 요청이 403으로 실패하면 남는 트레이스백에도 서명 · 토큰 값이 없어야 한다.
 
     플레이리스트 403 → 엔진이 "Download failed"를 트레이스백과 함께 적음
@@ -273,7 +273,7 @@ WINDOWS_HOME = r"C:\Users\Tester"  # 가짜 Windows 홈 — 사용자 이름 "Te
 SAVED = WINDOWS_HOME + "\\Videos\\영상\u00a0폴더\\제목 1080p.mp4"
 
 
-def test_app_log_and_console_replace_the_windows_home_with_a_tilde(app_log, monkeypatch):
+def test_app_log_and_console_replace_the_windows_home_with_a_tilde(app_log, monkeypatch) -> None:
     r"""앱 로그와 콘솔은 Windows 홈 폴더 경로를 ~로 바꾸고 그 뒤의 경로 repr은 그대로 둬야 한다.
 
     홈 C:\Users\Tester. 경로 repr 한 줄 · 소문자와 / 구분자로 적은 경로 한 줄 · 다른 사용자(Tester2)의
@@ -300,7 +300,9 @@ def test_app_log_and_console_replace_the_windows_home_with_a_tilde(app_log, monk
         assert r"'~\\Downloads\\b.mp4'" in text  # 트레이스백 끝줄의 예외 글(경로는 repr)
 
 
-def test_posix_home_is_replaced_case_sensitively_and_only_as_a_whole_folder(app_log, monkeypatch):
+def test_posix_home_is_replaced_case_sensitively_and_only_as_a_whole_folder(
+    app_log, monkeypatch
+) -> None:
     """macOS · Linux 홈은 대소문자를 가려 바꾸고, 이름이 이어지는 다른 폴더는 바꾸지 않아야 한다.
 
     홈 /Users/tester. /Users/tester/Movies/a.mp4 · /Users/tester2/x · /Users/TESTER/Movies를 적음
@@ -316,7 +318,9 @@ def test_posix_home_is_replaced_case_sensitively_and_only_as_a_whole_folder(app_
         assert "경로: ~/Movies/a.mp4 /Users/tester2/x /Users/TESTER/Movies" in text
 
 
-def test_download_log_header_keeps_title_and_channel_and_hides_the_home(app_log, monkeypatch):
+def test_download_log_header_keeps_title_and_channel_and_hides_the_home(
+    app_log, monkeypatch
+) -> None:
     r"""다운로드 로그의 시작 정보는 제목 · 채널 줄을 그대로 두고 경로 줄의 홈 폴더만 ~로 바꿔야 한다.
 
     홈 C:\Users\Tester, 제목 "제목" · 채널 "채널", 산출물 SAVED, 저장 폴더 홈\Videos
@@ -371,7 +375,9 @@ def test_download_log_header_keeps_title_and_channel_and_hides_the_home(app_log,
         ("/Users/tester", "Users/tester/a.mp4", "~/a.mp4"),
     ],
 )
-def test_home_fragment_without_the_drive_or_the_leading_folders_is_replaced(home, text, expected):
+def test_home_fragment_without_the_drive_or_the_leading_folders_is_replaced(
+    home, text, expected
+) -> None:
     r"""홈의 끝 두 조각(Users\<이름> · home/<이름>)이 경로 조각으로 나오면 앞에 무엇이 있든 ~로 바뀌어야 한다 (#397).
 
     홈과 글 -> 바꾼 글 == expected
@@ -392,7 +398,7 @@ def test_home_fragment_without_the_drive_or_the_leading_folders_is_replaced(home
         ("/home/tester", "/home/tester2/a.mp4"),  # 다른 사용자
     ],
 )
-def test_same_letters_outside_a_home_fragment_are_kept(home, text):
+def test_same_letters_outside_a_home_fragment_are_kept(home, text) -> None:
     """홈 조각이 아닌 곳의 같은 글자 · 다른 사용자의 경로는 그대로여야 한다 (#397).
 
     홈과 글 -> 바꾼 글 == 원래 글
@@ -415,7 +421,7 @@ def test_same_letters_outside_a_home_fragment_are_kept(home, text):
         ("/home/a😀", r'  File "/home/a\U0001f600/a.py"', r'  File "~/a.py"'),  # \UNNNNNNNN
     ],
 )
-def test_home_written_with_faulthandler_escapes_is_replaced(home, text, expected):
+def test_home_written_with_faulthandler_escapes_is_replaced(home, text, expected) -> None:
     r"""비ASCII 홈 이름이 faulthandler의 이스케이프(\xNN · \uNNNN · \UNNNNNNNN)로 적혀 있어도 ~로 바뀌어야 한다 (#427).
 
     홈과 글 -> 바꾼 글 == expected
@@ -430,7 +436,7 @@ def test_home_written_with_faulthandler_escapes_is_replaced(home, text, expected
         ("/home/테스터", r"/home/\ud14c\uc2a4\ud130x/a.py"),  # 다른 사용자(이름이 이어진다)
     ],
 )
-def test_escaped_name_of_another_user_is_kept(home, text):
+def test_escaped_name_of_another_user_is_kept(home, text) -> None:
     """이스케이프로 적힌 다른 사용자의 홈은 그대로여야 한다 (#427).
 
     홈과 글 -> 바꾼 글 == 원래 글
@@ -449,7 +455,7 @@ _FAKE_FFMPEG_FAILING = (  # 표준 입력을 다 읽고, 파일의 글을 표준
 @pytest.mark.parametrize("cut_at", range(len(WINDOWS_HOME) + 1))
 def test_ffmpeg_error_whose_tail_starts_inside_the_home_leaves_no_part_of_the_name_in_the_log(
     app_log, tmp_path, monkeypatch, cut_at
-):
+) -> None:
     r"""ffmpeg 오류 글의 끝 500글자가 홈 경로의 어느 글자에서 시작해도 로그에 이름의 일부가 남지 않아야 한다 (#397).
 
     홈 C:\Users\Tester. remux_stream의 ffmpeg 대역이 3줄을 쓰고 1로 끝남 — 가운데 줄
@@ -493,7 +499,7 @@ _LONG_LINE = "w " * 600 + _LONG_LINE_PATH + " end"  # 줄 머리가 꼬리의 �
 @pytest.mark.parametrize("cut_at", range(len(_LONG_LINE_PATH)))
 def test_long_one_line_error_whose_tail_starts_inside_the_path_leaves_no_part_of_the_name(
     app_log, monkeypatch, cut_at
-):
+) -> None:
     r"""한 줄이 매우 긴 오류 글에서 끝 글자 수 꼬리가 경로의 어느 글자에서 시작해도 로그에 이름의 일부가 남지 않아야 한다 (#397).
 
     홈 C:\Users\Tester. "w " × 600 + "C:\Users\Tester\Videos\clip.mp4 end"(줄 바꿈 없음)를 error_tail로
@@ -524,7 +530,7 @@ _HOME_AT = _DECODE_ERROR_LINE.index("C:")  # 줄에서 홈 경로가 시작하�
 @pytest.mark.parametrize("cut_at", range(_HOME_AT + 1, _HOME_AT + len(WINDOWS_HOME) + 1))
 def test_error_line_cut_from_the_front_inside_the_home_leaves_no_part_of_the_name_in_the_log(
     app_log, monkeypatch, cut_at
-):
+) -> None:
     r"""오류 줄의 앞을 남기는 자리가 홈 경로의 어느 글자여도 로그에 이름의 앞부분이 남지 않아야 한다 (#397).
 
     홈 C:\Users\Tester. 오류 줄 "[h264 @ 0x1] error while decoding C:\Users\Tester\Videos\a.mp4 at 1"을
@@ -553,7 +559,7 @@ def test_error_line_cut_from_the_front_inside_the_home_leaves_no_part_of_the_nam
 )
 def test_error_line_cut_from_the_front_keeps_what_is_not_this_home(
     app_log, monkeypatch, line, cut_at, expected
-):
+) -> None:
     r"""홈이 아닌 경로 · 경로가 아닌 같은 글자는 조각 안에서 앞을 잘라도 그 조각 끝까지 그대로 적혀야 한다 (#397).
 
     홈 C:\Users\Tester. 오류 줄을 error_head로 cut_at글자(조각 안) 남겨 앱 로그에 적음
@@ -590,7 +596,7 @@ def _written(app_log) -> list[str]:
 )
 def test_error_tail_never_starts_inside_a_home_whose_name_has_a_space(
     app_log, monkeypatch, shape, cut_at
-):
+) -> None:
     r"""사용자 이름에 공백이 있는 홈이어도 꼬리가 경로의 어느 글자에서 시작하든 로그에 이름 조각이 남지 않아야 한다 (#397).
 
     홈 C:\Users\Jo Doe. 오류 글(여러 줄 · 긴 한 줄)에 "C:\Users\Jo Doe\Videos\a.mp4"가 있고, 글자 수
@@ -610,7 +616,9 @@ def test_error_tail_never_starts_inside_a_home_whose_name_has_a_space(
 
 
 @pytest.mark.parametrize("cut_at", range(1, len(SPACED_HOME) + 1))
-def test_error_head_never_ends_inside_a_home_whose_name_has_a_space(app_log, monkeypatch, cut_at):
+def test_error_head_never_ends_inside_a_home_whose_name_has_a_space(
+    app_log, monkeypatch, cut_at
+) -> None:
     r"""사용자 이름에 공백이 있는 홈이어도 머리가 홈 경로의 어느 글자에서 끝나든 로그에 이름 조각이 남지 않아야 한다 (#397).
 
     홈 C:\Users\Jo Doe. 오류 줄 "error while decoding C:\Users\Jo Doe\Videos\a.mp4 at 1"을 홈 경로의
@@ -628,7 +636,7 @@ def test_error_head_never_ends_inside_a_home_whose_name_has_a_space(app_log, mon
         assert not any(piece in written for piece in _SPACED_NAME_PIECES)
 
 
-def test_cut_inside_another_users_path_with_a_space_is_not_moved(monkeypatch):
+def test_cut_inside_another_users_path_with_a_space_is_not_moved(monkeypatch) -> None:
     r"""홈이 아닌 경로(이름이 이어지는 다른 사용자) 안에서는 자르는 자리가 홈 때문에 옮겨지지 않아야 한다 (#397).
 
     홈 C:\Users\Jo Doe. "error in C:\Users\Jo Doe2\a.mp4"를 "Jo" 다음(공백)에서 끝나게 error_head로 자름

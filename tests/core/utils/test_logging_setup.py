@@ -34,7 +34,7 @@ def isolated_logging(monkeypatch, tmp_path):
     root.setLevel(saved_level)
 
 
-def test_setup_adds_console_and_rotating_file_handlers(isolated_logging):
+def test_setup_adds_console_and_rotating_file_handlers(isolated_logging) -> None:
     """루트 로거에 콘솔 핸들러와 회전 파일 핸들러가 각각 1개씩 연결된다."""
     # pytest 로깅 플러그인이 끼워 넣는 캡처 핸들러를 제외하기 위해 전후 차집합으로 비교한다
     before = set(logging.getLogger().handlers)
@@ -54,7 +54,7 @@ def test_setup_adds_console_and_rotating_file_handlers(isolated_logging):
     assert len(consoles) == 1
 
 
-def test_log_message_is_written_to_logs_file(isolated_logging):
+def test_log_message_is_written_to_logs_file(isolated_logging) -> None:
     """모듈 로거로 남긴 메시지가 log_dir의 app.log 파일에 기록된다."""
     logging_setup.setup_logging(str(isolated_logging / "logs"))
 
@@ -65,7 +65,7 @@ def test_log_message_is_written_to_logs_file(isolated_logging):
     assert "hello log file" in log_file.read_text(encoding="utf-8")
 
 
-def test_setup_logging_is_idempotent(isolated_logging):
+def test_setup_logging_is_idempotent(isolated_logging) -> None:
     """setup_logging을 여러 번 호출해도 핸들러가 중복 추가되지 않는다."""
     logging_setup.setup_logging(str(isolated_logging / "logs"))
     handler_count = len(logging.getLogger().handlers)

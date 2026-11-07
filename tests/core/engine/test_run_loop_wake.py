@@ -106,7 +106,7 @@ def _engine_on_clock(tmp_path, monkeypatch, session: _CountingSession, workers: 
 
 def test_run_that_only_uses_stored_segments_does_not_rest_a_tenth_of_a_second_per_turn(
     tmp_path, monkeypatch
-):
+) -> None:
     """받아 둔 세그먼트만 쓰는 실행은 작업자 수만큼 끝낼 때마다 0.1초를 쉬지 않아야 한다 (#376).
 
     세그먼트 200개 전부 받아 둔 것(_prefetched), 작업자 4
@@ -132,7 +132,7 @@ def test_run_that_only_uses_stored_segments_does_not_rest_a_tenth_of_a_second_pe
 
 def test_stop_while_every_worker_is_receiving_ends_the_loop_after_at_most_one_short_rest(
     tmp_path, monkeypatch
-):
+) -> None:
     """모든 작업자가 받는 중에 중지하면 실행 루프는 길어야 0.1초를 더 쉬고 끝나야 한다 (#376).
 
     세그먼트 6개, 세그먼트마다 청크 1000개 × 5ms(받는 데 5초), 작업자 4. 루프가 0.2초 이상
@@ -174,7 +174,7 @@ def test_stop_while_every_worker_is_receiving_ends_the_loop_after_at_most_one_sh
 
 def test_loop_rests_again_after_a_finished_job_while_the_other_workers_keep_receiving(
     tmp_path, monkeypatch
-):
+) -> None:
     """작업 하나가 끝나 깬 뒤 다른 작업자들이 받는 동안 실행 루프는 다시 쉬어야 한다 (#376).
 
     세그먼트 6개, 첫 세그먼트는 청크 1개(곧바로 끝남) · 나머지는 청크 1000개 × 5ms(받는 데 5초),

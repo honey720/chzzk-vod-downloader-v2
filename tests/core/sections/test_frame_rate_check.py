@@ -12,7 +12,7 @@ import pytest
 from core.sections.timecode import check_frame_rate
 
 
-def test_check_frame_rate_reports_clean_match_for_uniform_frames():
+def test_check_frame_rate_reports_clean_match_for_uniform_frames() -> None:
     """check_frame_rate는 간격이 일정한 프레임에서 빈 자리 0, 어긋남 0에 가까운 값을 돌려줘야 한다.
 
     PTS = n/60 (600개), fps = 60
@@ -26,7 +26,7 @@ def test_check_frame_rate_reports_clean_match_for_uniform_frames():
     assert (result.declared, result.frames) == (Fraction(60), 600)
 
 
-def test_check_frame_rate_measures_jitter_as_grid_offset():
+def test_check_frame_rate_measures_jitter_as_grid_offset() -> None:
     """check_frame_rate는 간격이 17·17·16ms로 반복되는 프레임에서 빈 자리 없이 작은 어긋남을 돌려줘야 한다.
 
     PTS = 0, 17, 34, 50, 67, 84 … ms (300개), fps = 60
@@ -40,7 +40,7 @@ def test_check_frame_rate_measures_jitter_as_grid_offset():
     assert 0.01 < result.max_grid_offset < 0.05
 
 
-def test_check_frame_rate_counts_missing_frames():
+def test_check_frame_rate_counts_missing_frames() -> None:
     """check_frame_rate는 프레임이 빠진 자리 수를 돌려줘야 한다.
 
     60fps PTS 10개에서 4·5번 프레임을 뺀 목록
@@ -62,7 +62,7 @@ def test_check_frame_rate_counts_missing_frames():
         ),  # 100만 분의 1 다른 프레임률 — 40만 프레임에서 0.4프레임
     ],
 )
-def test_check_frame_rate_shows_drift_of_slightly_different_rate(fps, low, high):
+def test_check_frame_rate_shows_drift_of_slightly_different_rate(fps, low, high) -> None:
     """check_frame_rate는 선언 프레임률이 실제와 100만 분의 1 다르면 그만큼 커진 어긋남을 돌려줘야 한다.
 
     PTS = n × 400/11988 (n = 0 … 400,000, 1,000프레임마다 하나), fps = 2997/100 · 30000/1001
@@ -76,7 +76,7 @@ def test_check_frame_rate_shows_drift_of_slightly_different_rate(fps, low, high)
 
 
 @pytest.mark.parametrize("pts", [[], [1.0], [2.0, 2.0]])
-def test_check_frame_rate_rejects_too_few_frames(pts):
+def test_check_frame_rate_rejects_too_few_frames(pts) -> None:
     """check_frame_rate는 프레임이 2개 미만이거나 첫 PTS와 마지막 PTS가 같으면 ValueError를 내야 한다.
 
     [], [1.0], [2.0, 2.0]

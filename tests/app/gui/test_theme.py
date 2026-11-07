@@ -29,11 +29,11 @@ UNRESOLVED_TOKEN = re.compile(r"@[A-Za-z]")
 
 
 class TestStylesheetIsBundled:
-    def test_qss_exists_at_resource_path(self):
+    def test_qss_exists_at_resource_path(self) -> None:
         """`resource_path()`가 가리키는 자리에 실제 파일이 있어야 한다."""
         assert Path(main.resource_path(theme.QSS_RELATIVE_PATH)).is_file()
 
-    def test_qss_lives_under_resources_dir(self):
+    def test_qss_lives_under_resources_dir(self) -> None:
         """`resources/` 아래여야 릴리스 워크플로 수정 없이 번들된다.
 
         release.yml은 `--include-data-dir=resources=resources`로 이 폴더를
@@ -44,19 +44,19 @@ class TestStylesheetIsBundled:
 
 
 class TestTokenSubstitution:
-    def test_every_token_in_qss_is_defined(self):
+    def test_every_token_in_qss_is_defined(self) -> None:
         """`.qss`가 쓰는 모든 `@토큰`이 theme에 정의돼 있어야 한다."""
         theme.load_stylesheet(main.resource_path(theme.QSS_RELATIVE_PATH))  # KeyError면 실패
 
-    def test_no_placeholder_survives_substitution(self):
+    def test_no_placeholder_survives_substitution(self) -> None:
         loaded = theme.load_stylesheet(main.resource_path(theme.QSS_RELATIVE_PATH))
         assert not UNRESOLVED_TOKEN.search(loaded)
 
-    def test_unknown_token_raises(self):
+    def test_unknown_token_raises(self) -> None:
         with pytest.raises(KeyError):
             theme.substitute("QWidget { color: @nope; }")
 
-    def test_substitute_uses_given_table(self):
+    def test_substitute_uses_given_table(self) -> None:
         assert theme.substitute("a: @x;", {"x": "1px"}) == "a: 1px;"
 
 
@@ -79,11 +79,11 @@ class TestCardStateStyles:
     """
 
     @pytest.mark.parametrize("state", theme.CARD_STATES)
-    def test_each_state_rule_exists_and_resolves_to_its_token(self, state):
+    def test_each_state_rule_exists_and_resolves_to_its_token(self, state) -> None:
         block = _rule_block(_raw_qss(), f'#statusLabel[state="{state}"]')
         assert f"@state{state.capitalize()}" in block
 
-    def test_states_resolve_to_distinct_colours(self):
+    def test_states_resolve_to_distinct_colours(self) -> None:
         loaded = theme.load_stylesheet(main.resource_path(theme.QSS_RELATIVE_PATH))
         colours = {
             _rule_block(loaded, f'#statusLabel[state="{state}"]').strip()
@@ -91,7 +91,7 @@ class TestCardStateStyles:
         }
         assert len(colours) == len(theme.CARD_STATES)
 
-    def test_base_rule_has_zero_horizontal_padding(self):
+    def test_base_rule_has_zero_horizontal_padding(self) -> None:
         """상태와 무관한 공통 규칙 — padding은 세로만 있고 가로는 0이어야
         한다(#227 PR #234 3-OS 폭 회귀 재발 방지, theme.py 주석 참고)."""
         block = _rule_block(_raw_qss(), "#contentFrame")
@@ -99,7 +99,7 @@ class TestCardStateStyles:
         assert padding, "카드 규칙에 padding 선언이 사라졌다 — 이 테스트의 전제를 확인할 것"
         assert padding[0].strip().rstrip(";").split(":")[1].split()[-1] == "0px"
 
-    def test_card_frame_border_is_always_neutral(self):
+    def test_card_frame_border_is_always_neutral(self) -> None:
         """카드 테두리는 상태 선택자를 전혀 안 쓴다 — #244의 핵심 불변식."""
         block = _rule_block(_raw_qss(), "#contentFrame")
         assert "@border" in block
@@ -203,7 +203,7 @@ class TestColoursAreDefinedOnlyOnce:
     #: 것이 아닌지 먼저 확인**하고 나서 이 값을 내린다. 등록 시점(2026-09-05) 실측 66.
     MIN_SCANNED_SOURCES = 60
 
-    def test_scan_is_not_empty_and_covers_the_tree(self):
+    def test_scan_is_not_empty_and_covers_the_tree(self) -> None:
         """메타 게이트 — 스캔이 실제로 무언가를 재고 있다: 바닥 수 이상 · 진입점 · `.ui` 포함."""
         files = scan_sources()
         names = {p.relative_to(ROOT_DIR).as_posix() for p in files}
@@ -218,7 +218,7 @@ class TestColoursAreDefinedOnlyOnce:
             p.parts[-2] == "tests" or "tests" in p.relative_to(ROOT_DIR).parts for p in files
         )
 
-    def test_scan_covers_every_git_tracked_source(self):
+    def test_scan_covers_every_git_tracked_source(self) -> None:
         """메타 게이트 — git이 아는 소스(tests·theme.py 제외)는 전부 스캔에 들어 있다.
 
         제외 규칙이 소스 디렉토리를 삼키면 여기서 이름이 찍혀 드러난다. git이 없는
@@ -234,7 +234,7 @@ class TestColoursAreDefinedOnlyOnce:
             "git이 아는 소스가 색 스캔에서 빠졌다(제외 규칙이 너무 넓다):\n" + "\n".join(missing)
         )
 
-    def test_no_hex_colour_outside_theme(self):
+    def test_no_hex_colour_outside_theme(self) -> None:
         offenders = []
         for path in scan_sources():
             for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
@@ -242,13 +242,13 @@ class TestColoursAreDefinedOnlyOnce:
                     offenders.append(f"{path.relative_to(ROOT_DIR)}:{n}: {line.strip()}")
         assert not offenders, "색 리터럴은 theme.py에서만 정의한다. 발견:\n" + "\n".join(offenders)
 
-    def test_qss_file_holds_no_hex_colour(self):
+    def test_qss_file_holds_no_hex_colour(self) -> None:
         text = Path(main.resource_path(theme.QSS_RELATIVE_PATH)).read_text(encoding="utf-8")
         assert not HEX_COLOR.search(text), ".qss는 값이 아니라 `@토큰`만 써야 한다"
 
 
 class TestPalette:
-    def test_palette_uses_theme_tokens(self, qapp):
+    def test_palette_uses_theme_tokens(self, qapp) -> None:
         from PySide6.QtGui import QColor, QPalette
 
         palette = theme.build_palette()
@@ -284,7 +284,7 @@ class TestComboBoxDropDownStyle:
     호출 자체가 없었음, `git show v2.9.6:main.py`로 확인).
     """
 
-    def test_plain_fusion_uses_the_overlay_popup(self, qapp):
+    def test_plain_fusion_uses_the_overlay_popup(self, qapp) -> None:
         """되돌릴 회귀가 실제로 존재한다는 것부터 고정한다 — Fusion 자체는
         이 힌트를 켠 채로 둔다(#227이 조용히 들여온 배치 변경의 근거)."""
         from PySide6.QtWidgets import QComboBox, QStyle, QStyleFactory
@@ -294,7 +294,7 @@ class TestComboBoxDropDownStyle:
         combo.setStyle(fusion)
         assert _style_hint_for_real_combo(fusion, combo, QStyle.StyleHint.SH_ComboBox_Popup) == 1
 
-    def test_style_hint_disables_combobox_overlay_popup(self, qapp):
+    def test_style_hint_disables_combobox_overlay_popup(self, qapp) -> None:
         from PySide6.QtWidgets import QComboBox, QStyle
 
         style = theme.build_style()
@@ -302,7 +302,7 @@ class TestComboBoxDropDownStyle:
         combo.setStyle(style)
         assert _style_hint_for_real_combo(style, combo, QStyle.StyleHint.SH_ComboBox_Popup) == 0
 
-    def test_other_style_hints_still_delegate_to_fusion(self, qapp):
+    def test_other_style_hints_still_delegate_to_fusion(self, qapp) -> None:
         """오버라이드 안 한 힌트는 그대로 Fusion 값을 내야 한다 — 프록시가
         SH_ComboBox_Popup 하나만 가로채고 나머지는 안 건드리는지 확인."""
         from PySide6.QtWidgets import QStyle, QStyleFactory
@@ -312,7 +312,7 @@ class TestComboBoxDropDownStyle:
         hint = QStyle.StyleHint.SH_EtchDisabledText
         assert style.styleHint(hint) == fusion.styleHint(hint)
 
-    def test_deferred_popup_hide_turns_on_flash_hint_for_comboboxes_only(self, qapp):
+    def test_deferred_popup_hide_turns_on_flash_hint_for_comboboxes_only(self, qapp) -> None:
         """`SH_Menu_FlashTriggeredItem`을 QComboBox에 한해 켠다 —
         v2.9.6의 QMacStyle이 이 힌트로 `hidePopup()`을 한 턴 뒤로 미뤘고,
         그것이 Enter의 `KeyPress`가 다이얼로그로 새는 것을 막고 있었다
@@ -335,7 +335,9 @@ class TestComboBoxDropDownStyle:
 
     @pytest.mark.parametrize("platform", ["darwin", "win32", "linux"])
     @pytest.mark.parametrize("override", [None, True, False])
-    def test_deferred_popup_hide_default_is_macos_only(self, qapp, monkeypatch, platform, override):
+    def test_deferred_popup_hide_default_is_macos_only(
+        self, qapp, monkeypatch, platform, override
+    ) -> None:
         """플랫폼 분기를 명시적으로 잰다 — 이것이 이 수정의 계약이다. 생략(None)이면
         macOS에서만 힌트가 켜지고, 명시(True/False)는 플랫폼과 무관하게 그대로다.
         Windows 실기 계측에서 이 힌트가 v2.9.6 Windows에 없던 깜빡임을
@@ -354,7 +356,7 @@ class TestComboBoxDropDownStyle:
         expected = 1 if (override is True or (override is None and platform == "darwin")) else 0
         assert style.styleHint(hint, None, combo) == expected
 
-    def test_list_mouse_tracking_hint_is_intentionally_left_untouched(self, qapp):
+    def test_list_mouse_tracking_hint_is_intentionally_left_untouched(self, qapp) -> None:
         """`SH_ComboBox_ListMouseTracking`을 같이 끄면 호버 오염(선택이 마우스를
         따라가는 것)도 같이 사라질 것 같지만, 실측해보니 Fusion은 이 힌트
         하나에 "마우스 추적 켜짐"과 "호버 페인트"를 함께 묶어놔서 끄면 호버
@@ -378,7 +380,7 @@ class TestComboBoxDropDownStyle:
         plain = _style_hint_for_real_combo(fusion, combo_fusion_ref, hint)
         assert ours == plain == 1
 
-    def test_popup_drops_below_the_combo_regardless_of_current_index(self, qapp):
+    def test_popup_drops_below_the_combo_regardless_of_current_index(self, qapp) -> None:
         """실제 QComboBox로 배치 자체를 확인 — 겹침 배치였다면 팝업 top이
         콤보 bottom보다 위(작은 y)에 온다. 드롭다운이면 정확히 콤보 bottom."""
         from PySide6.QtWidgets import QComboBox
@@ -399,7 +401,7 @@ class TestComboBoxDropDownStyle:
 
         assert popup_pos == combo_bottom
 
-    def test_popup_placement_is_stable_across_a_stray_hover_and_reopen(self, qapp):
+    def test_popup_placement_is_stable_across_a_stray_hover_and_reopen(self, qapp) -> None:
         """드롭다운으로 고정하면 배치가 currentIndex를 아예 안 보므로,
         호버로 뷰의 currentIndex가 옮겨가도 팝업 위치 자체는 안 흔들려야
         한다 — 강조 복원(_ComboBoxPopupHighlightResync)과 별개로, 배치
@@ -441,16 +443,16 @@ class TestLightTokenTable:
     고른다"는 배선을 고정한다 — 둘 다 있어야 회귀가 다시 나면 여기서 잡힌다.
     """
 
-    def test_light_and_dark_share_the_same_keys(self):
+    def test_light_and_dark_share_the_same_keys(self) -> None:
         """`.qss`와 `card_style()`은 두 표를 구분 없이 조회한다 — 키가 어긋나면 KeyError."""
         assert set(theme.LIGHT.keys()) == set(theme.DARK.keys())
 
-    def test_light_backgrounds_are_not_just_dark_reused(self):
+    def test_light_backgrounds_are_not_just_dark_reused(self) -> None:
         for key in ("windowBg", "surface", "surfaceAlt", "cardBg"):
             assert theme.LIGHT[key] != theme.DARK[key], f"LIGHT[{key}]가 DARK와 같다"
 
     @pytest.mark.parametrize("state", theme.CARD_STATES)
-    def test_light_state_colours_paint_light_cards(self, state):
+    def test_light_state_colours_paint_light_cards(self, state) -> None:
         """LIGHT 토큰으로 치환한 실제 `.qss`(`theme.card_style()` 폐지 후속,
         `CVDv2.apply_theme()`이 쓰는 것과 같은 `load_stylesheet()` 경로)에
         LIGHT 상태색이 들어가는지."""
@@ -459,13 +461,13 @@ class TestLightTokenTable:
         assert theme.LIGHT["state" + state.capitalize()] in block
 
     @pytest.mark.parametrize("state", ("running", "finished", "failed"))
-    def test_light_state_colours_differ_from_dark_where_contrast_needed(self, state):
+    def test_light_state_colours_differ_from_dark_where_contrast_needed(self, state) -> None:
         """대기색은 원래도 흰 배경에서 대비가 충분해 재사용하지만, 나머지 셋은 대비 때문에 갈아 끼웠다."""
         loaded = theme.load_stylesheet(main.resource_path(theme.QSS_RELATIVE_PATH), theme.LIGHT)
         block = _rule_block(loaded, f'#statusLabel[state="{state}"]')
         assert theme.DARK["state" + state.capitalize()] not in block
 
-    def test_light_state_colours_are_still_mutually_distinct(self):
+    def test_light_state_colours_are_still_mutually_distinct(self) -> None:
         """상태색은 장식이 아니라 정보를 나른다 — 라이트 배경에서도 4종이 서로 달라야 한다."""
         colours = [theme.LIGHT["state" + s.capitalize()] for s in theme.CARD_STATES]
         assert len(set(colours)) == len(colours)
@@ -480,24 +482,24 @@ class TestColorSchemeSelection:
     로직 자체는 아래 TestDetectColorScheme가 가짜 `styleHints()`로 고정한다.
     """
 
-    def teardown_method(self):
+    def teardown_method(self) -> None:
         # 다른 테스트 파일이 기본값(dark)을 전제하므로 항상 되돌린다
         theme.set_color_scheme("dark")
 
-    def test_default_scheme_is_dark(self):
+    def test_default_scheme_is_dark(self) -> None:
         """아무도 set_color_scheme()을 안 부르면 예전처럼 항상 DARK — 기존 테스트 전제."""
         assert theme.current_tokens() is theme.DARK
 
-    def test_set_color_scheme_light_switches_current_tokens(self):
+    def test_set_color_scheme_light_switches_current_tokens(self) -> None:
         theme.set_color_scheme("light")
         assert theme.current_tokens() is theme.LIGHT
 
-    def test_set_color_scheme_back_to_dark_switches_back(self):
+    def test_set_color_scheme_back_to_dark_switches_back(self) -> None:
         theme.set_color_scheme("light")
         theme.set_color_scheme("dark")
         assert theme.current_tokens() is theme.DARK
 
-    def test_unknown_scheme_raises_and_does_not_change_current(self):
+    def test_unknown_scheme_raises_and_does_not_change_current(self) -> None:
         theme.set_color_scheme("light")
         with pytest.raises(ValueError):
             theme.set_color_scheme("sepia")
@@ -505,7 +507,7 @@ class TestColorSchemeSelection:
 
 
 class _FakeStyleHints:
-    def __init__(self, scheme):
+    def __init__(self, scheme) -> None:
         self._scheme = scheme
 
     def colorScheme(self):
@@ -515,7 +517,7 @@ class _FakeStyleHints:
 class _FakeApp:
     """`detect_color_scheme()`이 보는 건 `styleHints()`와 `palette()`뿐이라 이걸로 충분하다."""
 
-    def __init__(self, scheme, palette=None):
+    def __init__(self, scheme, palette=None) -> None:
         self._hints = _FakeStyleHints(scheme)
         self._palette = palette
 
@@ -534,17 +536,17 @@ class TestDetectColorScheme:
     테마 개념이 없다), 그렇다고 이 함수를 통째로 안 재는 것도 안 된다.
     """
 
-    def test_qt_api_reports_dark(self):
+    def test_qt_api_reports_dark(self) -> None:
         from PySide6.QtCore import Qt
 
         assert theme.detect_color_scheme(_FakeApp(Qt.ColorScheme.Dark)) == "dark"
 
-    def test_qt_api_reports_light(self):
+    def test_qt_api_reports_light(self) -> None:
         from PySide6.QtCore import Qt
 
         assert theme.detect_color_scheme(_FakeApp(Qt.ColorScheme.Light)) == "light"
 
-    def test_unknown_falls_back_to_dark_palette_lightness(self):
+    def test_unknown_falls_back_to_dark_palette_lightness(self) -> None:
         from PySide6.QtCore import Qt
         from PySide6.QtGui import QColor, QPalette
 
@@ -553,7 +555,7 @@ class TestDetectColorScheme:
         fake = _FakeApp(Qt.ColorScheme.Unknown, palette=palette)
         assert theme.detect_color_scheme(fake) == "dark"
 
-    def test_unknown_falls_back_to_light_palette_lightness(self):
+    def test_unknown_falls_back_to_light_palette_lightness(self) -> None:
         from PySide6.QtCore import Qt
         from PySide6.QtGui import QColor, QPalette
 
@@ -562,7 +564,7 @@ class TestDetectColorScheme:
         fake = _FakeApp(Qt.ColorScheme.Unknown, palette=palette)
         assert theme.detect_color_scheme(fake) == "light"
 
-    def test_offscreen_qpa_has_no_os_theme_and_uses_palette_fallback(self, qapp):
+    def test_offscreen_qpa_has_no_os_theme_and_uses_palette_fallback(self, qapp) -> None:
         """오프스크린 QPA(테스트 환경)는 `colorScheme()`이 Unknown을 준다 — 실측 확인.
 
         그래서 여기서 나오는 값은 "OS가 라이트/다크다"가 아니라 "오프스크린
@@ -591,24 +593,30 @@ class TestApplyThemeWiring:
     간극을 닫는다.
     """
 
-    def teardown_method(self):
+    def teardown_method(self) -> None:
         theme.set_color_scheme("dark")
 
-    def test_apply_theme_builds_a_light_palette_when_light_is_detected(self, qapp, monkeypatch):
+    def test_apply_theme_builds_a_light_palette_when_light_is_detected(
+        self, qapp, monkeypatch
+    ) -> None:
         from PySide6.QtGui import QColor, QPalette
 
         monkeypatch.setattr(theme, "detect_color_scheme", lambda app: "light")
         main.apply_theme(qapp)
         assert qapp.palette().color(QPalette.ColorRole.Window) == QColor(theme.LIGHT["windowBg"])
 
-    def test_apply_theme_builds_a_dark_palette_when_dark_is_detected(self, qapp, monkeypatch):
+    def test_apply_theme_builds_a_dark_palette_when_dark_is_detected(
+        self, qapp, monkeypatch
+    ) -> None:
         from PySide6.QtGui import QColor, QPalette
 
         monkeypatch.setattr(theme, "detect_color_scheme", lambda app: "dark")
         main.apply_theme(qapp)
         assert qapp.palette().color(QPalette.ColorRole.Window) == QColor(theme.DARK["windowBg"])
 
-    def test_apply_theme_falls_back_to_palette_only_when_qss_is_missing(self, qapp, monkeypatch):
+    def test_apply_theme_falls_back_to_palette_only_when_qss_is_missing(
+        self, qapp, monkeypatch
+    ) -> None:
         """시작 시점에 QSS 로드가 실패하면 예전과 같이 감지된 스킴의 팔레트만 건다
         (#216 정책 — 스타일이 없어도 앱은 뜬다). `apply_color_scheme()`이
         원자적이라 실패 시 아무것도 안 바뀌므로, 이 폴백은 `CVDv2.apply_theme()`
@@ -626,7 +634,7 @@ class TestApplyThemeWiring:
         assert qapp.palette().color(QPalette.ColorRole.Window) == QColor(theme.LIGHT["windowBg"])
         assert qapp.styleSheet() == stylesheet_before
 
-    def test_apply_theme_disables_the_combobox_overlay_popup(self, qapp, monkeypatch):
+    def test_apply_theme_disables_the_combobox_overlay_popup(self, qapp, monkeypatch) -> None:
         """#241 후속 — 순정 `"Fusion"` 문자열이 아니라 `theme.build_style()`로
         감싼 스타일을 실제로 앱에 건다는 것까지 확인한다(간극을 닫는다,
         위 클래스 docstring과 같은 이유).
@@ -680,20 +688,20 @@ class TestComboBoxSubcontrols:
     채우지 않으면 화살표 버튼만 네이티브로 남는다.
     """
 
-    def test_drop_down_subcontrol_is_styled(self):
+    def test_drop_down_subcontrol_is_styled(self) -> None:
         _rule_block(_raw_qss(), "QComboBox::drop-down")  # 못 찾으면 자체 assert로 실패
 
-    def test_down_arrow_subcontrol_is_styled(self):
+    def test_down_arrow_subcontrol_is_styled(self) -> None:
         _rule_block(_raw_qss(), "QComboBox::down-arrow")  # 못 찾으면 자체 assert로 실패
 
-    def test_down_arrow_does_not_use_the_transparent_keyword(self):
+    def test_down_arrow_does_not_use_the_transparent_keyword(self) -> None:
         """실측 확인: Qt QSS는 `border-color: transparent`로 삼각형 모서리를 안
         마이터링한다 — 사각형이 그대로 찍힌다. 배경과 같은 실색을 써야 삼각형이
         나온다(육안으로는 똑같이 안 보이면서 도형은 제대로 그려진다)."""
         block = _rule_block(_raw_qss(), "QComboBox::down-arrow")
         assert "transparent" not in block
 
-    def test_down_arrow_border_colours_track_the_drop_down_background(self):
+    def test_down_arrow_border_colours_track_the_drop_down_background(self) -> None:
         """정지 상태 화살표의 좌우 border 색이 `::drop-down`의 배경 토큰과
         같아야 이음매가 안 보인다."""
         raw = _raw_qss()
@@ -702,7 +710,7 @@ class TestComboBoxSubcontrols:
         assert "@surfaceAlt" in arrow_block
         assert "background-color: @surfaceAlt" in drop_down_block
 
-    def test_selection_colours_are_declared_on_combobox_itself(self):
+    def test_selection_colours_are_declared_on_combobox_itself(self) -> None:
         """`selection-background-color`/`selection-color`는 QComboBox 자신에 둬야
         팝업에 실제로 먹는다 — `QAbstractItemView`·`::item:selected`에 두면 안
         먹는 걸 실측으로 확인했다(고장 주입으로도 재확인, 아래 완료 보고 참고)."""
@@ -710,7 +718,7 @@ class TestComboBoxSubcontrols:
         assert "selection-background-color: @accent" in block
         assert "selection-color: @onAccent" in block
 
-    def test_selection_colours_resolve_to_accent_tokens(self):
+    def test_selection_colours_resolve_to_accent_tokens(self) -> None:
         loaded = theme.load_stylesheet(main.resource_path(theme.QSS_RELATIVE_PATH))
         block = _rule_block(loaded, "QComboBox")
         assert theme.DARK["accent"] in block
@@ -726,10 +734,10 @@ class TestPopupWindowsAreSquareCornered:
     투명 배경은 플랫폼마다 동작이 달라 SPEC §8.4의 플랫폼 전제 코드가 된다.
     """
 
-    def test_tooltip_has_no_border_radius(self):
+    def test_tooltip_has_no_border_radius(self) -> None:
         block = _rule_block(_raw_qss(), "QToolTip")
         assert "border-radius" not in block
 
-    def test_combobox_popup_has_no_border_radius(self):
+    def test_combobox_popup_has_no_border_radius(self) -> None:
         block = _rule_block(_raw_qss(), "QComboBox QAbstractItemView")
         assert "border-radius" not in block

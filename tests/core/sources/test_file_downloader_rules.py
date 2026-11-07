@@ -37,7 +37,7 @@ MB = 1024 * 1024
 class RecordingLogger:
     """DownloadLogger 호환 가짜 로거 — 실제 파일을 만들지 않고 호출만 기록한다."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.adjust_calls: list[tuple] = []
         self.debug_calls: list[tuple] = []
         self.warnings: list[str] = []
@@ -45,25 +45,25 @@ class RecordingLogger:
         self.thread_completes: list[tuple] = []
         self.part_resumes: list[tuple] = []  # 이어받기 로그 (#78)
 
-    def log_thread_adjust(self, active_threads, avg_speed):
+    def log_thread_adjust(self, active_threads, avg_speed) -> None:
         self.adjust_calls.append((active_threads, avg_speed))
 
-    def log_thread_debug(self, active_threads, download_speed, avg_speed):
+    def log_thread_debug(self, active_threads, download_speed, avg_speed) -> None:
         self.debug_calls.append((active_threads, download_speed, avg_speed))
 
-    def log_thread_start(self, thread_id, start, end):
+    def log_thread_start(self, thread_id, start, end) -> None:
         pass
 
-    def log_thread_complete(self, thread_id, downloaded_size):
+    def log_thread_complete(self, thread_id, downloaded_size) -> None:
         self.thread_completes.append((thread_id, downloaded_size))
 
-    def log_part_resume(self, part_num, offset, part_size):
+    def log_part_resume(self, part_num, offset, part_size) -> None:
         self.part_resumes.append((part_num, offset, part_size))
 
-    def log_error(self, message, exception=None):
+    def log_error(self, message, exception=None) -> None:
         self.errors.append(message)
 
-    def warning(self, message):
+    def warning(self, message) -> None:
         self.warnings.append(message)
 
 
@@ -151,7 +151,7 @@ def _hold_at_8(scaler, data) -> None:
     _ticks(scaler, data, 9.0, 2)
 
 
-def test_warmup_without_measurement_does_nothing():
+def test_warmup_without_measurement_does_nothing() -> None:
     """첫 유효 측정 전(속도 0)에는 조정하지 않는다 — 시작 직후 오판 방지."""
     data, logger = _make_data(), RecordingLogger()
     scaler = _make_scaler(data, logger)
@@ -162,7 +162,7 @@ def test_warmup_without_measurement_does_nothing():
     assert logger.adjust_calls == []
 
 
-def test_first_valid_tick_probes_up_by_4():
+def test_first_valid_tick_probes_up_by_4() -> None:
     """첫 유효 측정에서 +4 탐침을 시작한다 (구 규칙의 +4 보폭 유지)."""
     data, logger = _make_data(), RecordingLogger()
     data.max_threads = 32
@@ -174,7 +174,7 @@ def test_first_valid_tick_probes_up_by_4():
     assert logger.adjust_calls == [(8, 3.9)]
 
 
-def test_climbs_while_throughput_grows_and_caps_at_max_threads():
+def test_climbs_while_throughput_grows_and_caps_at_max_threads() -> None:
     """총 처리량이 느는 동안 +4 계단으로 오르되 상한은 min(max_threads, 48)이다."""
     data, logger = _make_data(), RecordingLogger()
     data.max_threads = 10
@@ -186,7 +186,7 @@ def test_climbs_while_throughput_grows_and_caps_at_max_threads():
     assert data.adjust_threads == 10  # 8+4=12가 아니라 상한 10
 
 
-def test_reverts_and_holds_when_raise_does_not_increase_throughput():
+def test_reverts_and_holds_when_raise_does_not_increase_throughput() -> None:
     """인상해도 총 처리량이 늘지 않으면 되물리고 그 지점을 상한으로 정체한다."""
     data, logger = _make_data(), RecordingLogger()
     data.max_threads = 32
@@ -201,7 +201,7 @@ def test_reverts_and_holds_when_raise_does_not_increase_throughput():
     assert logger.adjust_calls == [(8, 5.0), (4, 5.2), (8, 5.0), (4, 5.2)]
 
 
-def test_sustained_collapse_halves_after_five_ticks():
+def test_sustained_collapse_halves_after_five_ticks() -> None:
     """정체 기준의 절반 미만이 5틱 지속되면 절반으로 줄인다 (관성은 구 규칙과 동일)."""
     data, logger = _make_data(), RecordingLogger()
     data.max_threads = 32
@@ -217,7 +217,7 @@ def test_sustained_collapse_halves_after_five_ticks():
     assert data.adjust_threads == 4
 
 
-def test_halving_floor_is_one_thread():
+def test_halving_floor_is_one_thread() -> None:
     """처리량 하락이 이어지면 절반씩 1까지 내려가고, 그 밑으로는 내려가지 않는다."""
     data, logger = _make_data(), RecordingLogger()
     data.max_threads = 32
@@ -238,7 +238,7 @@ def test_halving_floor_is_one_thread():
     assert data.adjust_threads == 1
 
 
-def test_zero_active_sample_is_not_a_slow_signal():
+def test_zero_active_sample_is_not_a_slow_signal() -> None:
     """관측 순간 활성 0이어도 총 처리량이 신호다 — 구 규칙 붕괴 원인의 반전 박제 (#112)."""
     data, logger = _make_data(), RecordingLogger()
     data.max_threads = 32
@@ -253,7 +253,7 @@ def test_zero_active_sample_is_not_a_slow_signal():
 # ================================================================ 속도 계산
 
 
-def test_measure_speed_uses_delta_from_previous_tick():
+def test_measure_speed_uses_delta_from_previous_tick() -> None:
     """속도 = (현재 누적 - 직전 누적) 바이트를 MB/s로 환산, prev_size 갱신."""
     data, logger = _make_data(), RecordingLogger()
     scaler = _make_scaler(data, logger)
@@ -269,7 +269,7 @@ def test_measure_speed_uses_delta_from_previous_tick():
     assert logger.debug_calls == [(3, pytest.approx(3.0), pytest.approx(1.0))]
 
 
-def test_measure_speed_with_no_active_threads_reports_zero_average():
+def test_measure_speed_with_no_active_threads_reports_zero_average() -> None:
     """활성 스레드 0이면 평균 속도는 0으로 기록한다 (0 나눗셈 금지)."""
     data, logger = _make_data(), RecordingLogger()
     scaler = _make_scaler(data, logger)
@@ -289,10 +289,10 @@ def test_measure_speed_with_no_active_threads_reports_zero_average():
 class FakeResponse:
     """스트리밍 응답 흉내 — 지정한 청크 목록을 그대로 흘린다."""
 
-    def __init__(self, chunks):
+    def __init__(self, chunks) -> None:
         self._chunks = chunks
 
-    def raise_for_status(self):
+    def raise_for_status(self) -> None:
         pass
 
     def iter_content(self, chunk_size=8192):
@@ -302,7 +302,7 @@ class FakeResponse:
 class FakeSession:
     """get_thread_session() 대체 — 준비된 응답을 반환하거나 예외를 던진다."""
 
-    def __init__(self, response=None, exception=None):
+    def __init__(self, response=None, exception=None) -> None:
         self._response = response
         self._exception = exception
 
@@ -318,7 +318,7 @@ class TickingClock:
     받기 루프는 청크마다 시계를 두 번 읽는다(경과 시간 · 저속 판정).
     """
 
-    def __init__(self, step: float):
+    def __init__(self, step: float) -> None:
         self.now = 1_000_000.0
         self.step = step
 
@@ -352,7 +352,7 @@ def _prepare_running_engine(tmp_path, monkeypatch, chunks=None, exception=None, 
     return engine, data, logger
 
 
-def test_slow_part_restarts_when_the_recent_window_is_slow(tmp_path, monkeypatch):
+def test_slow_part_restarts_when_the_recent_window_is_slow(tmp_path, monkeypatch) -> None:
     """응답 시작 뒤 3초가 지났고 최근 3초의 속도가 100 KB/s 미만이면 파트를 중단·재큐잉한다 (#347)."""
     chunks = [b"x" * 8192] * 10  # 시계 읽기마다 1초 → 청크당 2초, 4 KB/s로 항상 저속
     engine, data, logger = _prepare_running_engine(
@@ -371,7 +371,7 @@ def test_slow_part_restarts_when_the_recent_window_is_slow(tmp_path, monkeypatch
     assert any("slow" in w for w in logger.warnings)
 
 
-def test_fast_part_completes_and_accumulates_progress(tmp_path, monkeypatch):
+def test_fast_part_completes_and_accumulates_progress(tmp_path, monkeypatch) -> None:
     """정상 속도면 파트를 완주하고 완료 카운터·누적 진행에 반영한다."""
     part_size = 3 * 8192
     chunks = [b"x" * 8192] * 3
@@ -389,7 +389,7 @@ def test_fast_part_completes_and_accumulates_progress(tmp_path, monkeypatch):
     assert logger.thread_completes == [(0, part_size)]
 
 
-def test_request_exception_requeues_range_as_failed(tmp_path, monkeypatch):
+def test_request_exception_requeues_range_as_failed(tmp_path, monkeypatch) -> None:
     """요청 예외 시 실패 카운터를 올리고 같은 구간을 재큐잉한다."""
     engine, data, logger = _prepare_running_engine(
         tmp_path, monkeypatch, exception=requests.ConnectionError("boom")
@@ -410,18 +410,18 @@ def test_request_exception_requeues_range_as_failed(tmp_path, monkeypatch):
 class ResumeResponse(FakeResponse):
     """status_code를 가진 스트리밍 응답 — 이어받기(206) 검증용."""
 
-    def __init__(self, chunks, status_code=206):
+    def __init__(self, chunks, status_code=206) -> None:
         super().__init__(chunks)
         self.status_code = status_code
 
-    def close(self):
+    def close(self) -> None:
         pass
 
 
 class RecordingSession:
     """요청별 Range 헤더를 기록하고 준비된 응답을 순서대로 돌려준다 (#78)."""
 
-    def __init__(self, responses):
+    def __init__(self, responses) -> None:
         self._responses = list(responses)
         self.range_headers: list[str] = []
 
@@ -454,7 +454,7 @@ def _prepare_resume_engine(tmp_path, monkeypatch, responses, prewritten: bytes =
     return engine, data, logger, session, output
 
 
-def test_requeued_part_resumes_with_range(tmp_path, monkeypatch):
+def test_requeued_part_resumes_with_range(tmp_path, monkeypatch) -> None:
     """재큐잉된 파트는 이미 받은 바이트 뒤에서 Range로 이어받는다 (#78).
 
     완료 시 누적 진행은 이어받은 바이트를 포함한 파트 전체여야 한다.
@@ -479,7 +479,7 @@ def test_requeued_part_resumes_with_range(tmp_path, monkeypatch):
     assert (0, PART_END) not in engine._part_progress  # 완료 후 기록 정리
 
 
-def test_resume_rejected_falls_back_to_full_retry(tmp_path, monkeypatch):
+def test_resume_rejected_falls_back_to_full_retry(tmp_path, monkeypatch) -> None:
     """완료 조건: 서버가 이어받기 Range를 존중하지 않으면(200) 전체 재시도로 폴백한다."""
     engine, data, logger, session, output = _prepare_resume_engine(
         tmp_path,
@@ -504,7 +504,7 @@ def test_resume_rejected_falls_back_to_full_retry(tmp_path, monkeypatch):
     assert output.read_bytes() == b"z" * (3 * CHUNK)  # 전체를 새로 받았다
 
 
-def test_resume_integrity_mismatch_restarts_from_start(tmp_path, monkeypatch):
+def test_resume_integrity_mismatch_restarts_from_start(tmp_path, monkeypatch) -> None:
     """완료 조건: 기록된 오프셋만큼 파일이 자라 있지 않으면 처음부터 받는다."""
     engine, data, logger, session, output = _prepare_resume_engine(
         tmp_path,
@@ -524,7 +524,7 @@ def test_resume_integrity_mismatch_restarts_from_start(tmp_path, monkeypatch):
     assert output.read_bytes() == b"z" * (3 * CHUNK)
 
 
-def test_slow_requeue_records_partial_progress(tmp_path, monkeypatch):
+def test_slow_requeue_records_partial_progress(tmp_path, monkeypatch) -> None:
     """저속 재큐잉 시 받아 쓴 바이트가 기록된다 — 다음 시도의 이어받기 근거 (#78).
 
     저속 판정 규칙의 박제는 test_slow_part_restarts_when_the_recent_window_is_slow가 맡는다.

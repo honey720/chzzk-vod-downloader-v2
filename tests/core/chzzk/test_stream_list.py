@@ -53,7 +53,7 @@ _PORTRAIT_REST = [(r, h, w, o, f) for r, w, h, o, f in _LANDSCAPE_REST]
     ],
     ids=["S1", "S2", "S4", "S5", "S9", "S11"],
 )
-def test_list_follows_the_master_playlist(sample, expected):
+def test_list_follows_the_master_playlist(sample, expected) -> None:
     """해상도 목록은 마스터 플레이리스트의 변형마다 한 항목이고, 원본 여부와 fps는 그 변형의 것이어야 한다.
 
     주석의 표본마다 playback 정보와 마스터 플레이리스트
@@ -62,7 +62,7 @@ def test_list_follows_the_master_playlist(sample, expected):
     assert _listed(sample) == expected
 
 
-def test_s4_lists_both_streams_of_the_same_short_side():
+def test_s4_lists_both_streams_of_the_same_short_side() -> None:
     """짧은 변이 같은 두 변형은 합치지 않고 둘 다 목록에 남아야 한다.
 
     S4(720x1280 변형 둘 — 60fps · 30fps 원본)
@@ -76,7 +76,7 @@ def test_s4_lists_both_streams_of_the_same_short_side():
     assert entries[-1] is same[-1]
 
 
-def test_entries_keep_the_list_format():
+def test_entries_keep_the_list_format() -> None:
     """목록 항목은 `[해상도, None]` 리스트와 같아야 한다.
 
     S1
@@ -87,7 +87,7 @@ def test_entries_keep_the_list_format():
     assert entries == [[144, None], [360, None], [480, None], [720, None], [1080, None]]
 
 
-def test_original_is_not_marked_when_same_size_variants_cannot_be_told_apart():
+def test_original_is_not_marked_when_same_size_variants_cannot_be_told_apart() -> None:
     """원본 트랙과 크기가 같은 변형이 둘인데 프레임률·BANDWIDTH로도 갈리지 않으면 원본을 표시하지 않아야 한다.
 
     S4의 마스터에서 두 720x1280 변형을 같은 fps·BANDWIDTH로 바꿈
@@ -100,7 +100,7 @@ def test_original_is_not_marked_when_same_size_variants_cannot_be_told_apart():
     assert [e for e in entries if is_original(e)] == []
 
 
-def test_original_among_same_size_variants_is_told_by_bandwidth_when_frame_rates_match():
+def test_original_among_same_size_variants_is_told_by_bandwidth_when_frame_rates_match() -> None:
     """원본 트랙과 크기·프레임률이 같은 변형이 둘이면 BANDWIDTH가 맞는 쪽이 원본이어야 한다.
 
     S4의 마스터에서 다시 인코딩한 720x1280 변형을 30fps로 바꿈(BANDWIDTH는 그대로)
@@ -113,7 +113,7 @@ def test_original_among_same_size_variants_is_told_by_bandwidth_when_frame_rates
     assert [e.stream.bandwidth for e in entries if is_original(e)] == [2692000]
 
 
-def test_list_skips_variants_without_a_resolution():
+def test_list_skips_variants_without_a_resolution() -> None:
     """RESOLUTION이 없는 변형은 목록에 넣지 않아야 한다.
 
     변형 둘 — RESOLUTION 없는 것(오디오 전용), 1280x720
@@ -144,7 +144,7 @@ def test_list_skips_variants_without_a_resolution():
     ],
     ids=["S1-top", "S4-original", "S4-60fps", "S11-top", "S11-144"],
 )
-def test_select_stream_finds_the_listed_variant_again(sample, position, variant):
+def test_select_stream_finds_the_listed_variant_again(sample, position, variant) -> None:
     """목록에서 고른 항목의 스트림 값으로 마스터 플레이리스트에서 같은 변형을 다시 찾아야 한다.
 
     주석의 경우마다 표본과 목록에서의 위치
@@ -164,7 +164,7 @@ def test_select_stream_finds_the_listed_variant_again(sample, position, variant)
     ],
     ids=["no-size", "no-frame-rate", "nothing-to-tell"],
 )
-def test_select_stream_fails_with_a_key_when_the_variant_is_not_determined(key):
+def test_select_stream_fails_with_a_key_when_the_variant_is_not_determined(key) -> None:
     """고른 변형을 하나로 다시 찾지 못하면 키 기반 오류로 실패해야 한다.
 
     S4의 마스터 플레이리스트, 주석의 스트림 값
@@ -183,7 +183,7 @@ def test_select_stream_fails_with_a_key_when_the_variant_is_not_determined(key):
     ("frame_rate", "shown"),
     [(60.0, 60), (59.94, 60), (50.0, 50), (49.9, None), (30.0, None), (None, None)],
 )
-def test_shown_frame_rate_is_the_rounded_value_from_fifty(frame_rate, shown):
+def test_shown_frame_rate_is_the_rounded_value_from_fifty(frame_rate, shown) -> None:
     """표시할 프레임률은 50fps 이상일 때만 반올림한 정수이고, 그 아래나 모르는 값은 None이어야 한다.
 
     주석의 경우마다 선언된 프레임률
@@ -192,7 +192,7 @@ def test_shown_frame_rate_is_the_rounded_value_from_fifty(frame_rate, shown):
     assert shown_frame_rate(StreamEntry(720, None, frame_rate=frame_rate)) == shown
 
 
-def test_shown_frame_rate_and_original_of_a_plain_list_are_empty():
+def test_shown_frame_rate_and_original_of_a_plain_list_are_empty() -> None:
     """스트림 정보가 없는 평범한 목록 항목은 표시할 프레임률이 없고 원본이 아니어야 한다.
 
     [720, "https://v.invalid/720.mp4"]
@@ -211,7 +211,7 @@ def test_shown_frame_rate_and_original_of_a_plain_list_are_empty():
     ],
     ids=["S1", "S4"],
 )
-def test_file_tag_marks_the_original_only_among_same_short_sides(sample, tags):
+def test_file_tag_marks_the_original_only_among_same_short_sides(sample, tags) -> None:
     """파일명 표시는 짧은 변이 같은 항목이 둘일 때 원본 쪽에만 붙어야 한다.
 
     주석의 표본마다 목록의 항목 순서대로

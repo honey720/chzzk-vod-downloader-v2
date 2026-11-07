@@ -122,7 +122,7 @@ class HlsAesDownloader(BaseDownloader):
     # 처음 만난 작업자만 알리고(_fail_fatally) 나머지는 알리지 않고 끝난다. self.lock으로 지킨다
     _decrypt_failed: bool = False
 
-    def __init__(self, data, logger, **callbacks):
+    def __init__(self, data, logger, **callbacks) -> None:
         super().__init__(data, logger, **callbacks)
         # 세그먼트 저장용 임시 폴더 (실패 정리 경로가 참조하므로 실행 전에 확정).
         # 산출물 파일명에서 파생해 다운로드 간 폴더 공유·상호 삭제를 막는다 (#105).

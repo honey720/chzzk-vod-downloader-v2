@@ -33,7 +33,7 @@ def _messages(caplog: pytest.LogCaptureFixture, level: int) -> list[str]:
     return [r.getMessage() for r in caplog.records if r.name == LOGGER and r.levelno == level]
 
 
-def test_suspend_and_resume_of_a_live_process_are_logged_at_debug(caplog, sleeper):
+def test_suspend_and_resume_of_a_live_process_are_logged_at_debug(caplog, sleeper) -> None:
     """살아 있는 프로세스를 멈추고 다시 돌리면 결과가 debug 두 줄로 남아야 한다.
 
     30초 자는 자식 프로세스 -> _set_suspended(True) · _set_suspended(False) 모두 True,
@@ -52,7 +52,9 @@ def test_suspend_and_resume_of_a_live_process_are_logged_at_debug(caplog, sleepe
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="NTSTATUS는 Windows의 결과다")
-def test_a_failed_ntstatus_is_logged_as_a_warning_with_its_value(caplog, monkeypatch, sleeper):
+def test_a_failed_ntstatus_is_logged_as_a_warning_with_its_value(
+    caplog, monkeypatch, sleeper
+) -> None:
     """Windows에서 멈추기 · 다시 시작 API가 실패 코드를 돌려주면 그 NTSTATUS가 warning으로 남아야 한다 (#505).
 
     살아 있는 자식 프로세스, 두 API 모두 STATUS_PROCESS_IS_TERMINATING(0xC000010A)을 돌려주는 대역
@@ -74,7 +76,7 @@ def test_a_failed_ntstatus_is_logged_as_a_warning_with_its_value(caplog, monkeyp
     ]
 
 
-def test_suspend_of_an_ended_process_is_logged_and_does_nothing(caplog):
+def test_suspend_of_an_ended_process_is_logged_and_does_nothing(caplog) -> None:
     """이미 끝난 프로세스를 멈추라고 하면 아무것도 하지 않고 그 사실이 debug로 남아야 한다.
 
     바로 끝나는 자식 프로세스(끝난 것을 확인) -> _set_suspended(True)는 False,
@@ -111,7 +113,7 @@ def _toggle_and_fail_resume(monkeypatch: pytest.MonkeyPatch, process: _LiveProce
     assert control.poll() is None  # 해제 — 다시 시작 실패
 
 
-def test_a_failed_resume_of_a_live_process_is_logged_as_a_warning(caplog, monkeypatch):
+def test_a_failed_resume_of_a_live_process_is_logged_as_a_warning(caplog, monkeypatch) -> None:
     """살아 있는 프로세스를 다시 돌리지 못하면 _Control.poll이 warning을 남겨야 한다.
 
     살아 있는 대역(pid=4242), 멈추기 True · 다시 시작 False, 일시정지 → 해제
@@ -125,7 +127,7 @@ def test_a_failed_resume_of_a_live_process_is_logged_as_a_warning(caplog, monkey
     assert "다시 돌리지 못했다" in lines[0] and "pid=4242" in lines[0]
 
 
-def test_a_failed_resume_of_an_ended_process_is_not_warned(caplog, monkeypatch):
+def test_a_failed_resume_of_an_ended_process_is_not_warned(caplog, monkeypatch) -> None:
     """다시 돌리지 못한 까닭이 프로세스가 끝나서라면 warning을 남기지 않아야 한다.
 
     끝난 대역(returncode=0), 멈추기 True · 다시 시작 False, 일시정지 → 해제

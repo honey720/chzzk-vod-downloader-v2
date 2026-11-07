@@ -28,38 +28,38 @@ CHUNK = 8192
 class StepLogger:
     """워커 함수가 쓰는 로거 인터페이스를 기록만 하며 흉내 낸다."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.warnings: list[str] = []
         self.errors: list[str] = []
 
-    def log_thread_debug(self, active_threads, download_speed, avg_speed):
+    def log_thread_debug(self, active_threads, download_speed, avg_speed) -> None:
         pass
 
-    def log_thread_complete(self, thread_id, downloaded_size):
+    def log_thread_complete(self, thread_id, downloaded_size) -> None:
         pass
 
-    def log_m3u8_thread_start(self, thread_id, segment_url):
+    def log_m3u8_thread_start(self, thread_id, segment_url) -> None:
         pass
 
-    def log_part_resume(self, part_num, offset, part_size):
+    def log_part_resume(self, part_num, offset, part_size) -> None:
         pass
 
-    def log_error(self, message, exception=None):
+    def log_error(self, message, exception=None) -> None:
         self.errors.append(message)
 
-    def warning(self, message):
+    def warning(self, message) -> None:
         self.warnings.append(message)
 
 
 class Body:
     """청크를 흘리는 가짜 응답 — fail_after개를 흘린 뒤 연결이 끊긴다(None이면 끝까지)."""
 
-    def __init__(self, chunks, status_code: int = 206, fail_after: int | None = None):
+    def __init__(self, chunks, status_code: int = 206, fail_after: int | None = None) -> None:
         self._chunks = chunks
         self.status_code = status_code
         self._fail_after = fail_after
 
-    def raise_for_status(self):
+    def raise_for_status(self) -> None:
         pass
 
     def iter_content(self, chunk_size=CHUNK):
@@ -68,14 +68,14 @@ class Body:
                 raise requests.ConnectionError("연결 끊김")
             yield chunk
 
-    def close(self):
+    def close(self) -> None:
         pass
 
 
 class QueuedSession:
     """준비된 응답을 요청 순서대로 돌려주는 가짜 세션."""
 
-    def __init__(self, responses):
+    def __init__(self, responses) -> None:
         self._responses = list(responses)
 
     def get(self, url, **kwargs):
@@ -85,7 +85,7 @@ class QueuedSession:
 class Clock:
     """엔진의 단조 시계(``_now``) 대체 — 읽을 때마다 1ms 흐른다(저속 판정 창에 닿지 않는다)."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.now = 1_000_000.0
 
     def __call__(self) -> float:
@@ -96,7 +96,7 @@ class Clock:
 class SlowAfter:
     """``_watch_slow``가 돌려주는 판정기 대체 — 첫 판정기만 calls번째 판정에서 저속이라 답한다."""
 
-    def __init__(self, calls: int):
+    def __init__(self, calls: int) -> None:
         self._calls = calls
         self._made = 0
 
@@ -116,13 +116,13 @@ class SlowAfter:
 class Watched:
     """진행을 기록할 때마다, 그리고 tick()을 부를 때 속도를 재고 그때의 받은 양을 적는다."""
 
-    def __init__(self, engine, data, monkeypatch):
+    def __init__(self, engine, data, monkeypatch) -> None:
         self.engine, self.data = engine, data
         self.speeds: list[float] = []
         self.sizes: list[int] = []
         report = engine._check_speed_and_update_progress
 
-        def report_and_tick(*args):
+        def report_and_tick(*args) -> None:
             report(*args)
             self.tick()
 
@@ -189,7 +189,7 @@ def _non_decreasing(values) -> bool:
 # ================================================================ 세그먼트 — 받다 만 것을 버린다
 
 
-def test_slow_restart_of_a_segment_keeps_speed_non_negative(tmp_path, monkeypatch):
+def test_slow_restart_of_a_segment_keeps_speed_non_negative(tmp_path, monkeypatch) -> None:
     """세그먼트가 저속으로 재시작되면 버린 바이트를 따로 세고 속도가 0 미만이 되지 않아야 한다 (#395).
 
     세그먼트 3청크, 둘째 청크에서 저속 판정 → 재시작, 다시 받아 끝냄
@@ -212,7 +212,7 @@ def test_slow_restart_of_a_segment_keeps_speed_non_negative(tmp_path, monkeypatc
     assert data.total_downloaded_size == len(SEGMENT)
 
 
-def test_error_retry_of_a_segment_keeps_speed_non_negative(tmp_path, monkeypatch):
+def test_error_retry_of_a_segment_keeps_speed_non_negative(tmp_path, monkeypatch) -> None:
     """세그먼트가 받는 중 끊겨 다시 요청되면 버린 바이트를 따로 세고 속도가 0 미만이 되지 않아야 한다 (#395).
 
     세그먼트 3청크, 둘째 청크를 받은 뒤 연결 끊김 → 오류 재요청, 다시 받아 끝냄
@@ -237,7 +237,9 @@ def test_error_retry_of_a_segment_keeps_speed_non_negative(tmp_path, monkeypatch
 # ================================================================ 파일 파트 — 산출물에 남은 것을 이어받는다
 
 
-def test_slow_restart_of_a_part_resumes_without_lowering_the_received_size(tmp_path, monkeypatch):
+def test_slow_restart_of_a_part_resumes_without_lowering_the_received_size(
+    tmp_path, monkeypatch
+) -> None:
     """파트가 저속으로 재시작돼 이어받으면 받은 양이 줄지 않고 속도가 0 미만이 되지 않아야 한다 (#395).
 
     파트 4청크, 둘째 청크에서 저속 판정 → 재시작, 셋째 청크부터 이어받아(206) 끝냄
@@ -263,7 +265,9 @@ def test_slow_restart_of_a_part_resumes_without_lowering_the_received_size(tmp_p
     assert (tmp_path / "out.mp4").read_bytes() == PART
 
 
-def test_error_retry_of_a_part_resumes_without_lowering_the_received_size(tmp_path, monkeypatch):
+def test_error_retry_of_a_part_resumes_without_lowering_the_received_size(
+    tmp_path, monkeypatch
+) -> None:
     """파트가 받는 중 끊겨 이어받으면 받은 양이 줄지 않고 속도가 0 미만이 되지 않아야 한다 (#395).
 
     파트 4청크, 둘째 청크를 받은 뒤 연결 끊김 → 오류 재요청, 셋째 청크부터 이어받아(206) 끝냄
@@ -288,7 +292,7 @@ def test_error_retry_of_a_part_resumes_without_lowering_the_received_size(tmp_pa
     assert (tmp_path / "out.mp4").read_bytes() == PART
 
 
-def test_rejected_resume_counts_the_kept_bytes_as_discarded(tmp_path, monkeypatch):
+def test_rejected_resume_counts_the_kept_bytes_as_discarded(tmp_path, monkeypatch) -> None:
     """이어받기가 거부되면(200) 남겨 둔 바이트를 버린 바이트로 세고 속도가 0 미만이 되지 않아야 한다 (#395).
 
     파트 4청크, 둘째 청크를 받은 뒤 연결 끊김 → 이어받기 요청에 200 → 처음부터 다시 받아 끝냄
@@ -312,7 +316,7 @@ def test_rejected_resume_counts_the_kept_bytes_as_discarded(tmp_path, monkeypatc
     assert (tmp_path / "out.mp4").read_bytes() == PART
 
 
-def test_part_without_retry_is_counted_as_before(tmp_path, monkeypatch):
+def test_part_without_retry_is_counted_as_before(tmp_path, monkeypatch) -> None:
     """다시 요청하지 않은 파트는 받은 바이트가 받은 양에 그대로 오르고 버린 바이트가 없어야 한다 (#395).
 
     파트 4청크를 한 번에 받음
@@ -335,21 +339,23 @@ def test_part_without_retry_is_counted_as_before(tmp_path, monkeypatch):
 class RunLogger:
     """run() 경로 전체가 쓰는 로거 인터페이스 — 전송 줄과 버린 바이트 줄만 기록한다."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.transfer_bytes: list[int] = []
         self.discarded: list[int] = []
         self.errors: list[str] = []
 
-    def log_transfer_complete(self, elapsed, downloaded_bytes, retries, peak_threads, paused=0.0):
+    def log_transfer_complete(
+        self, elapsed, downloaded_bytes, retries, peak_threads, paused=0.0
+    ) -> None:
         self.transfer_bytes.append(downloaded_bytes)
 
-    def log_transfer_discarded(self, size):
+    def log_transfer_discarded(self, size) -> None:
         self.discarded.append(size)
 
-    def log_error(self, message, exception=None):
+    def log_error(self, message, exception=None) -> None:
         self.errors.append(message)
 
-    def log_exception(self, message, exception=None):
+    def log_exception(self, message, exception=None) -> None:
         self.errors.append(message)
 
     def __getattr__(self, name):
@@ -363,14 +369,14 @@ FILE_BODY = bytes(range(251)) * (TOTAL // 251) + bytes(range(TOTAL % 251))
 class FileServer:
     """head · Range get을 받는 가짜 세션 — 둘째 파트의 첫 요청만 2청크 뒤에 끊는다."""
 
-    def __init__(self, fail: bool):
+    def __init__(self, fail: bool) -> None:
         self._fail = fail
         self.headers = {"content-length": str(TOTAL)}
 
     def head(self, url, **kwargs):
         return self
 
-    def raise_for_status(self):
+    def raise_for_status(self) -> None:
         pass
 
     def get(self, url, headers=None, **kwargs):
@@ -394,17 +400,17 @@ PLAYLIST = "\n".join(
 class Text:
     """플레이리스트(.text) · 초기화 세그먼트(.content) 겸용 가짜 응답."""
 
-    def __init__(self, text: str = "", content: bytes = b""):
+    def __init__(self, text: str = "", content: bytes = b"") -> None:
         self.text, self.content = text, content
 
-    def raise_for_status(self):
+    def raise_for_status(self) -> None:
         pass
 
 
 class SegmentServer:
     """m3u8 경로의 가짜 세션 — 셋째 세그먼트의 첫 요청만 2청크 뒤에 끊는다."""
 
-    def __init__(self, fail: bool):
+    def __init__(self, fail: bool) -> None:
         self._fail = fail
 
     def get(self, url, **kwargs):
@@ -420,7 +426,7 @@ class SegmentServer:
         return Body(chunks, status_code=200)
 
 
-def _pass_through(chunks, dst_path, **_wait):
+def _pass_through(chunks, dst_path, **_wait) -> None:
     with open(dst_path, "wb") as f:
         for chunk in chunks:
             f.write(chunk)
@@ -438,7 +444,7 @@ def _run(make, data) -> None:
 
 
 @pytest.mark.parametrize("fail", [True, False], ids=["retry", "no-retry"])
-def test_file_run_reports_the_output_bytes_after_a_retry(tmp_path, monkeypatch, fail):
+def test_file_run_reports_the_output_bytes_after_a_retry(tmp_path, monkeypatch, fail) -> None:
     """파트가 끊겨 이어받은 파일 다운로드도 전송 줄의 Bytes가 산출물 크기와 같아야 한다 (#395).
 
     4파트, 둘째 파트의 첫 요청이 2청크 뒤 끊김(retry) · 끊김 없음(no-retry)
@@ -465,7 +471,9 @@ def test_file_run_reports_the_output_bytes_after_a_retry(tmp_path, monkeypatch, 
 
 
 @pytest.mark.parametrize("fail", [True, False], ids=["retry", "no-retry"])
-def test_segment_run_reports_the_kept_bytes_and_the_discarded_bytes(tmp_path, monkeypatch, fail):
+def test_segment_run_reports_the_kept_bytes_and_the_discarded_bytes(
+    tmp_path, monkeypatch, fail
+) -> None:
     """세그먼트를 다시 받은 m3u8 다운로드는 Bytes가 세그먼트 크기의 합이고 버린 바이트를 따로 적어야 한다 (#395).
 
     6세그먼트, 셋째 세그먼트의 첫 요청이 2청크 뒤 끊김(retry) · 끊김 없음(no-retry)

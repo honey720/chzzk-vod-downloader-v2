@@ -36,7 +36,7 @@ def isolated_logging(monkeypatch, tmp_path):
     root.setLevel(saved_level)
 
 
-def test_setup_logging_writes_to_config_dir_logs(isolated_logging):
+def test_setup_logging_writes_to_config_dir_logs(isolated_logging) -> None:
     """기존 진입점 호출 시 앱 데이터 폴더의 logs/app.log에 기록된다 (동작 무변경)."""
     log_setup.setup_logging()
 

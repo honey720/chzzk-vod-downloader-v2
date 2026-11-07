@@ -30,7 +30,7 @@ MANY = 40
 
 
 @pytest.fixture(autouse=True)
-def _apply_production_qss(qapp):
+def _apply_production_qss(qapp) -> None:
     """실제 전역 QSS·스타일을 태운다 — QSS 없이는 목록에 프레임(1~2px)과 Fusion 스크롤바(14px)가
     붙어 제품(프레임 0, 스크롤바 10px)과 다른 기하가 나온다. ⚠️ function scope 유지."""
     theme.set_color_scheme("dark")
@@ -93,7 +93,7 @@ def _first_card(win: VodDownloader):
 # ================================================================ ① 스크롤바 유무와 카드 폭
 
 
-def test_vertical_scrollbar_appears_only_when_the_list_overflows(make_window):
+def test_vertical_scrollbar_appears_only_when_the_list_overflows(make_window) -> None:
     """스크롤바는 필요할 때만 보인다(AsNeeded) — 항상 켜 두는 안은 빈 목록에도 바가 보여 기각."""
     few, many = make_window(cards=1), make_window(cards=MANY)
     assert few.listView.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded
@@ -101,7 +101,7 @@ def test_vertical_scrollbar_appears_only_when_the_list_overflows(make_window):
     assert many.listView.verticalScrollBar().isVisible(), "40장인데 스크롤바가 없다"
 
 
-def test_card_width_is_the_same_whether_or_not_the_list_overflows(make_window):
+def test_card_width_is_the_same_whether_or_not_the_list_overflows(make_window) -> None:
     """카드가 뷰포트에 다 들어갈 때(1장)와 넘칠 때(40장) 카드 폭·위치가 같다 — 이 작업의 목적.
 
     AsNeeded는 넘치는 순간 스크롤바 폭만큼 뷰포트가 좁아진다. 그만큼 컨테이너 오른쪽 패딩을
@@ -121,7 +121,9 @@ def test_card_width_is_the_same_whether_or_not_the_list_overflows(make_window):
 
 @pytest.mark.parametrize("width_extra", [0, 300])
 @pytest.mark.parametrize("cards", [1, MANY])
-def test_scrollbar_hugs_the_window_edge_and_cards_keep_the_outer_margin(make_window, width_extra, cards):
+def test_scrollbar_hugs_the_window_edge_and_cards_keep_the_outer_margin(
+    make_window, width_extra, cards
+) -> None:
     """목록은 창 좌우 끝까지, 카드는 좌우 outerMargin 안쪽에, 스크롤바(보일 때)는 창 우측 끝 그 여백 안에."""
     win = make_window(cards=cards, width_extra=width_extra)
     outer = theme.METRICS["outerMargin"]
@@ -140,7 +142,7 @@ def test_scrollbar_hugs_the_window_edge_and_cards_keep_the_outer_margin(make_win
         assert (rect.left(), rect.width()) == (outer, win.width() - 2 * outer), f"{frame.objectName()} {rect}"
 
 
-def test_card_left_edge_lines_up_with_the_bars(make_window):
+def test_card_left_edge_lines_up_with_the_bars(make_window) -> None:
     """카드 프레임 왼쪽이 상단바·하단바 왼쪽과 한 선이다 — 여백이 자리만 옮겼지 값은 그대로다(#244 정렬선)."""
     win = make_window(cards=2)
     card_left = _in_window(win, _first_card(win)).left()
@@ -150,7 +152,7 @@ def test_card_left_edge_lines_up_with_the_bars(make_window):
 # ================================================================ ③ 상태 칩 숫자 자릿수
 
 
-def test_content_minimum_width_ignores_chip_count_digits(make_window):
+def test_content_minimum_width_ignores_chip_count_digits(make_window) -> None:
     """카드가 9 → 10 → 99 → 100장으로 늘어 칩 숫자가 한 자리 → 세 자리가 돼도 콘텐츠 열 최소폭이 그대로이고 좌우 스크롤이 안 떠야 한다."""
     win = make_window(cards=0, width_extra=0)
     base = win.contentColumn.minimumSizeHint().width()
@@ -167,7 +169,7 @@ def test_content_minimum_width_ignores_chip_count_digits(make_window):
         assert win.windowScrollArea.horizontalScrollBar().maximum() == 0, f"카드 {total}장에서 좌우 스크롤이 생겼다"
 
 
-def test_chips_reserve_three_digits_from_their_own_font(make_window):
+def test_chips_reserve_three_digits_from_their_own_font(make_window) -> None:
     """칩마다 폭은 그 칩의 글꼴로 잰 「이름 999」 폭이어야 한다 — 상수가 아니라 글꼴 · 번역을 따라간다."""
     from app.widgets.header_controls import CHIP_COUNT_RESERVE
 

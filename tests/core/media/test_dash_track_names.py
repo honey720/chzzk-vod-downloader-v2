@@ -54,7 +54,7 @@ def _listed(reps: list) -> list[tuple]:
     return [(rep[0], rep[1], shown_frame_rate(rep), is_original(rep)) for rep in reps]
 
 
-def test_dash_lists_each_quality_once_with_its_frame_rate():
+def test_dash_lists_each_quality_once_with_its_frame_rate() -> None:
     """한 화질이 전송 형식만 달라 두 번 나오면 하나만 목록에 있고, 프레임률은 frameRate 속성이어야 한다.
 
     인코딩 완료 VOD의 구조 — 1080(60fps) · 144(30fps) · 720(60fps)이 주소만 다르게 두 번씩
@@ -79,7 +79,7 @@ def test_dash_lists_each_quality_once_with_its_frame_rate():
     assert (auto_resolution, auto_base_url) == (1080, "https://v.invalid/1080.mp4")
 
 
-def test_dash_keeps_two_qualities_of_the_same_short_side():
+def test_dash_keeps_two_qualities_of_the_same_short_side() -> None:
     """짧은 변이 같아도 화질 이름이 다른 Representation은 둘 다 목록에 남아야 한다.
 
     720x1280 둘 — "720P_A"(60fps, bandwidth 3200000) · "720P_B"(30fps, bandwidth 2700000)
@@ -112,7 +112,7 @@ def test_dash_keeps_two_qualities_of_the_same_short_side():
 )
 def test_dash_frame_rate_comes_from_the_representation_then_the_adaptation_set(
     own, adaptation, shown
-):
+) -> None:
     """프레임률은 Representation의 frameRate, 없으면 감싼 AdaptationSet의 frameRate여야 한다.
 
     주석의 경우마다 (Representation의 값, AdaptationSet의 값)
@@ -128,7 +128,7 @@ def test_dash_frame_rate_comes_from_the_representation_then_the_adaptation_set(
     assert shown_frame_rate(reps[0]) == shown
 
 
-def test_sea_lists_each_quality_once_with_its_frame_rate():
+def test_sea_lists_each_quality_once_with_its_frame_rate() -> None:
     """암호화 VOD도 같은 화질은 하나만 목록에 있고, 프레임률이 함께 실려야 한다.
 
     1080(60fps) · 720(60fps) · 144(30fps), 1080이 bandwidth만 다르게 한 번 더(높은 쪽이 뒤)

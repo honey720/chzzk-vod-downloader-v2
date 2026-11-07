@@ -26,7 +26,7 @@ class ContentListModel(QObject):
     itemRemoved = Signal(object)
     itemChanged = Signal(object)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.items: list[ContentItem] = []
 

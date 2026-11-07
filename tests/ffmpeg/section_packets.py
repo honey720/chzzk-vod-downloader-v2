@@ -45,7 +45,7 @@ class JoinedSource:
     영상보다 먼저 시작하는 입력이라 파일의 0초가 VOD의 0초다.
     """
 
-    def __init__(self, plain_segments: list[bytes], folder, audio_rate: int = 48000):
+    def __init__(self, plain_segments: list[bytes], folder, audio_rate: int = 48000) -> None:
         self.path = str(folder / "all_segments.mp4")
         remux_stream(iter(plain_segments), self.path)
 

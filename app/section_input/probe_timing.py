@@ -36,7 +36,7 @@ LOG_PREFIX = "구간 기준값 조회"  # 로그에서 이 줄을 찾는 문자�
 class ProbeTiming:
     """조회 한 번의 단계별 시간 · 요청을 모아 로그 한 줄로 낸다."""
 
-    def __init__(self, kind: str):
+    def __init__(self, kind: str) -> None:
         """
         Args:
             kind: 전달 방식의 이름표 — "mp4" · "fmp4" · "ts"

@@ -32,6 +32,7 @@ from core.utils.paths import release_output_paths
 from tests.mocks.engine_side import engine_side
 from tests.app.gui.section_input import enter_time
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
+from typing import Never
 
 FIRST, SECOND, THIRD = (
     TimeRange(600.0, 1200.0),
@@ -49,7 +50,7 @@ def _environment(qapp, monkeypatch):
     qapp.setPalette(theme.build_palette())
     qapp.setStyleSheet(theme.load_stylesheet(main_module.resource_path(theme.QSS_RELATIVE_PATH)))
 
-    def no_network():
+    def no_network() -> Never:
         raise RuntimeError("network disabled in tests")
 
     monkeypatch.setattr("app.widgets.widget.get_thread_session", no_network)
@@ -69,7 +70,7 @@ def _environment(qapp, monkeypatch):
 class _Engine:
     """DownloadService 대역 — 제출을 적어 두고, 테스트가 일부 실패로 끝낸다."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.submissions: list[dict] = []
 
     def submit(self, content, **kwargs):
@@ -103,7 +104,7 @@ class _Engine:
         return tuple(content.selection_paths)
 
 
-def _pump():
+def _pump() -> None:
     for _ in range(3):
         QApplication.processEvents()
 
@@ -183,7 +184,9 @@ def _restart(win) -> None:
     _pump()
 
 
-def test_only_the_edited_section_is_received_again_and_the_file_names_stay(qtbot, failed_card):
+def test_only_the_edited_section_is_received_again_and_the_file_names_stay(
+    qtbot, failed_card
+) -> None:
     """셋 가운데 둘째 구간만 고쳐 재시도하면 둘째만 다시 받고 파일 이름은 _1 · _2 · _3 그대로여야 한다.
 
     `_1` · `_3`을 끝낸 카드에서 둘째 구간을 00:35:00:00~00:45:00:00으로 고치고 다시 받기 시작
@@ -210,7 +213,7 @@ def test_only_the_edited_section_is_received_again_and_the_file_names_stay(qtbot
 
 def test_an_edited_section_that_was_already_made_gets_a_new_name_instead_of_overwriting(
     qtbot, failed_card
-):
+) -> None:
     """끝낸 구간의 값을 바꾸면 그 번호의 옛 파일을 덮어쓰지 않고 새 이름으로 받아야 한다.
 
     `_1` 파일이 있는 카드에서 첫째 구간을 00:05:00:00~00:20:00:00으로 고치고 다시 받기 시작
@@ -233,7 +236,7 @@ def test_an_edited_section_that_was_already_made_gets_a_new_name_instead_of_over
         assert file.read() == b"made by the first run"
 
 
-def test_added_sections_are_received_and_finished_ones_are_kept(qtbot, failed_card):
+def test_added_sections_are_received_and_finished_ones_are_kept(qtbot, failed_card) -> None:
     """구간을 더하면 새 구간과 끝내지 못한 구간만 받고, 끝낸 구간은 그대로 두어야 한다.
 
     `_1` · `_3`을 끝낸 카드에 넷째 구간 00:56:00:00~00:58:00:00을 더하고 다시 받기 시작
@@ -252,7 +255,7 @@ def test_added_sections_are_received_and_finished_ones_are_kept(qtbot, failed_ca
     assert _names(content.selection_paths) == [f"제목 1080p_{n}.mp4" for n in (1, 2, 3, 4)]
 
 
-def test_reordered_sections_start_over_with_new_names(qtbot, failed_card):
+def test_reordered_sections_start_over_with_new_names(qtbot, failed_card) -> None:
     """번호와 값이 함께 맞는 끝낸 구간이 없으면 기록을 버리고 처음부터 새 이름으로 받아야 한다.
 
     `_1` · `_3`을 끝낸 카드에서 첫째 행을 맨 아래로 내려 순서를 (둘째, 셋째, 첫째)로 바꾸고 다시 받기 시작
@@ -279,7 +282,7 @@ def test_reordered_sections_start_over_with_new_names(qtbot, failed_card):
     ]
 
 
-def test_same_number_with_another_value_is_not_resumed(qtbot, failed_card):
+def test_same_number_with_another_value_is_not_resumed(qtbot, failed_card) -> None:
     """번호가 같아도 값이 다르면, 값이 같아도 번호가 다르면 이어받지 않아야 한다.
 
     `_1` · `_3`을 끝낸 카드에서 첫째를 셋째의 값(00:50:00:00~00:55:00:00)으로, 셋째를 첫째의 값으로 바꿈
@@ -296,7 +299,7 @@ def test_same_number_with_another_value_is_not_resumed(qtbot, failed_card):
     assert engine.submissions[1]["content"].section_resume is None
 
 
-def test_a_finished_file_that_disappeared_is_received_again(qtbot, tmp_path):
+def test_a_finished_file_that_disappeared_is_received_again(qtbot, tmp_path) -> None:
     """끝낸 구간의 파일이 사라졌으면 재시도를 누를 때 그 구간을 끝나지 않은 것으로 돌려 다시 받아야 한다.
 
     `_1` · `_3`을 끝내고 실패한 카드에서 `_3` 파일을 지운 뒤 ↻ → 둘째 구간을 고치고 다시 받기 시작
@@ -350,7 +353,7 @@ def test_a_finished_file_that_disappeared_is_received_again(qtbot, tmp_path):
             release_output_paths(submission["content"].selection_paths)
 
 
-def test_an_unedited_retry_card_resumes_exactly_as_before(qtbot, failed_card):
+def test_an_unedited_retry_card_resumes_exactly_as_before(qtbot, failed_card) -> None:
     """구간을 고치지 않은 재시도 카드는 전과 같이 그때의 기록 그대로 이어받아야 한다.
 
     `_1` · `_3`을 끝낸 카드를 편집 없이 다시 받기 시작

@@ -120,7 +120,7 @@ class VodDownloader(QMainWindow):
     오른쪽 끝 다운로드 · 중지).
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setupUi(self)
         self.setupDynamicUi()
@@ -400,7 +400,7 @@ class VodDownloader(QMainWindow):
         self.downloadButton.setToolTip(self.tr("Download"))
         self.stopButton.setToolTip(self.tr("Stop"))
 
-    def setupDynamicUi(self):
+    def setupDynamicUi(self) -> None:
         """
         UI 동적 설정을 수행한다.
         """
@@ -687,7 +687,7 @@ class VodDownloader(QMainWindow):
             self.urlInput.setProperty("invalid", False)
             theme.repolish(self.urlInput)
 
-    def setupThreadSignals(self):
+    def setupThreadSignals(self) -> None:
         """
         content 매니저와 UI를 연결하는 시그널 슬롯 설정.
 
@@ -701,7 +701,7 @@ class VodDownloader(QMainWindow):
         self.contentManager.stopRequested.connect(self.onStop)
         self.contentManager.finishedAllRequested.connect(self.onDownloadAllFinished)
 
-    def setupSignals(self):
+    def setupSignals(self) -> None:
         """
         각종 버튼 클릭 시그널 및 UI 내 이벤트를 핸들링할 슬롯을 연결한다.
         """
@@ -801,13 +801,13 @@ class VodDownloader(QMainWindow):
         if item is not None:
             self.contentManager.endSectionEdit(item)
 
-    def fetchContents(self, urls: str):
+    def fetchContents(self, urls: str) -> None:
         # URL 목록을 미리 준비합니다.
         self.urlsToFetch = [url.strip() for url in urls.splitlines() if url.strip() != '']
         self.currentUrlIndex = 0
         self.scheduleNextFetch()
 
-    def scheduleNextFetch(self):
+    def scheduleNextFetch(self) -> None:
         if self.currentUrlIndex < len(self.urlsToFetch):
             # 다음 URL을 가져와 처리합니다.
             url = self.urlsToFetch[self.currentUrlIndex]
@@ -816,7 +816,7 @@ class VodDownloader(QMainWindow):
             # 0.1초(100밀리초) 후에 다음 작업을 스케줄합니다.
             QTimer.singleShot(100, self.scheduleNextFetch)
 
-    def onFetch(self, url = None):
+    def onFetch(self, url=None) -> None:
         """
         VOD URL을 입력받아 메타데이터를 가져오고, 메타데이터 카드를 생성합니다.
         """
@@ -857,7 +857,7 @@ class VodDownloader(QMainWindow):
         url, _newline, reason = errorMessage.partition("\n")
         self._showRegisterError(f"{reason} · {url}" if reason else url)
 
-    def onDownloadPause(self):
+    def onDownloadPause(self) -> None:
         """
         추가한 동영상에 대한 다운로드 버튼.
         """
@@ -882,8 +882,8 @@ class VodDownloader(QMainWindow):
                 return
             self.contentManager.downloadItem()
             self._syncDownloadButton()
-    
-    def onSetting(self):
+
+    def onSetting(self) -> None:
         """
         설정 파일에 저장된 값 불러오기 버튼.
         """
@@ -902,8 +902,7 @@ class VodDownloader(QMainWindow):
         self.freeSpace.request(path)
         self._showFooter()
 
-
-    def onStop(self):
+    def onStop(self) -> None:
         """
         중지 버튼 콜백.
         """
@@ -919,7 +918,7 @@ class VodDownloader(QMainWindow):
             if reply == QMessageBox.Yes:
                 self.stopDownload()
 
-    def stopDownload(self):
+    def stopDownload(self) -> None:
         self.downloadViewModel.stop()
         self.setStopButtonEnable(False)
         self.downloadViewModel.removeThreads()
@@ -982,7 +981,7 @@ class VodDownloader(QMainWindow):
         finished, failed = self.runResult.counts()
         self.runResultLabel.showResult(self.runResult.isShown(), finished, failed)
 
-    def onDownloadAllFinished(self):
+    def onDownloadAllFinished(self) -> None:
         """
         모든 메타데이터 카드 다운로드 완료 콜백.
         """
@@ -1032,12 +1031,12 @@ class VodDownloader(QMainWindow):
         else:
             QMessageBox.information(self, self.tr("Completed"), self.tr("Download completed."))
 
-    def setStopButtonEnable(self, bool):
+    def setStopButtonEnable(self, bool) -> None:
         self.stopButton.setEnabled(bool)
 
     # ============ 다운로드 진행 준비 및 상태 업데이트 ============
 
-    def startDownload(self, item:ContentItem):
+    def startDownload(self, item: ContentItem) -> None:
         """
         특정 해상도에 대한 다운로드 스레드를 생성 및 시작하기 전 UI 상태 업데이트를 수행한다.
         """
@@ -1046,7 +1045,7 @@ class VodDownloader(QMainWindow):
         self.setStopButtonEnable(True)
         self._syncDownloadButton()
 
-    def closeEvent(self, event):
+    def closeEvent(self, event) -> None:
         """
         창을 닫을 때 실행되는 이벤트
         """

@@ -11,7 +11,7 @@ from app.viewmodels.item_state import ItemState
 from core.models.download_state import DownloadState
 
 
-def test_core_enum_has_only_task_lifecycle_states():
+def test_core_enum_has_only_task_lifecycle_states() -> None:
     """core DownloadState는 태스크 생명주기 5개만 갖는다 — LOADING 재유입 방지."""
     assert {m.name for m in DownloadState} == {
         "WAITING",
@@ -22,12 +22,12 @@ def test_core_enum_has_only_task_lifecycle_states():
     }
 
 
-def test_value_five_is_not_reused():
+def test_value_five_is_not_reused() -> None:
     """값 5(구 LOADING 자리)는 재사용하지 않는다 — 로그·직렬화 혼동 방지."""
     assert all(m.value != 5 for m in DownloadState)
 
 
-def test_item_state_never_equals_core_states():
+def test_item_state_never_equals_core_states() -> None:
     """병존 비교의 안전성: ItemState 멤버는 어떤 core 상태와도 같지 않다.
 
     ContentItem.downloadState에 두 타입이 섞여 들어가도 기존 ==/in

@@ -31,7 +31,7 @@ class StreamSelectionError(ValueError):
     전에 같은 자리에서 내던 ValueError를 잡는 쪽이 그대로 잡도록 ValueError를 잇는다.
     """
 
-    def __init__(self, detail: str):
+    def __init__(self, detail: str) -> None:
         super().__init__(detail)
         self.message_key = STREAM_NOT_FOUND
 

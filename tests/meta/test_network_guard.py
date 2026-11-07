@@ -15,14 +15,14 @@ import requests
 BLOCKED = RuntimeError  # 가드의 NetworkAttemptBlocked는 RuntimeError 하위 — conftest 모듈 객체 이중 로드를 피해 기반 타입과 메시지로 잡는다
 
 
-def test_requests_send_is_blocked_and_recorded(network_guard, request):
+def test_requests_send_is_blocked_and_recorded(network_guard, request) -> None:
     with pytest.raises(BLOCKED, match="네트워크 가드"):
         requests.get("http://example.invalid/", timeout=1)
 
     assert network_guard.take() == [(request.node.nodeid, "GET http://example.invalid/")]
 
 
-def test_socket_connect_is_blocked_and_recorded(network_guard, request):
+def test_socket_connect_is_blocked_and_recorded(network_guard, request) -> None:
     with pytest.raises(BLOCKED, match="네트워크 가드"):
         socket.create_connection(("example.invalid", 80), timeout=1)
     with pytest.raises(BLOCKED, match="네트워크 가드"):
@@ -34,10 +34,10 @@ def test_socket_connect_is_blocked_and_recorded(network_guard, request):
     ]
 
 
-def test_attempt_swallowed_in_a_worker_thread_is_still_recorded(network_guard, request):
+def test_attempt_swallowed_in_a_worker_thread_is_still_recorded(network_guard, request) -> None:
     """예외를 삼키는 스레드 — 실측에서 테스트를 초록으로 남긴 바로 그 형태 — 도 기록에 남는다."""
 
-    def swallow():
+    def swallow() -> None:
         """카드의 썸네일·크기 조회 스레드가 하는 일 — 시도하고, 실패를 삼키고, 조용히 끝난다."""
         try:
             requests.get("http://example.invalid/thumbnail.png", timeout=1)

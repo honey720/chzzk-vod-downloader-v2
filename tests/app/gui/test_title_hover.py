@@ -20,13 +20,14 @@ from app.viewmodels.data import ContentItem
 from app.widgets.widget import ContentItemWidget
 from core.models.download_state import DownloadState
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, shown, snapshot_top_levels
+from typing import Never
 
 STATES = (DownloadState.WAITING, DownloadState.RUNNING, DownloadState.PAUSED,
           DownloadState.FINISHED, DownloadState.FAILED)
 
 
 @pytest.fixture(autouse=True)
-def _apply_production_qss(qapp):
+def _apply_production_qss(qapp) -> None:
     """실제 전역 QSS(호버 규칙 포함)를 태운다 — scope=function 유지(test_widget_theme 참고)."""
     theme.set_color_scheme("dark")
     qapp.setStyle(hold_style(theme.build_style()))
@@ -43,12 +44,12 @@ def _drop_windows(qapp):
 
 
 @pytest.fixture(autouse=True)
-def no_network(monkeypatch):
+def no_network(monkeypatch) -> None:
     class _FailingSession:
-        def head(self, *a, **k):
+        def head(self, *a, **k) -> Never:
             raise RuntimeError("network disabled in tests")
 
-        def get(self, *a, **k):
+        def get(self, *a, **k) -> Never:
             raise RuntimeError("network disabled in tests")
 
     monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
@@ -110,7 +111,7 @@ def _title_pixels(widget: ContentItemWidget):
 
 class TestTitleHoverMatchesClickability:
     @pytest.mark.parametrize("state", STATES, ids=[s.name for s in STATES])
-    def test_hover_highlight_appears_iff_the_title_is_clickable(self, qapp, qtbot, state):
+    def test_hover_highlight_appears_iff_the_title_is_clickable(self, qapp, qtbot, state) -> None:
         window, widget = _card_in_window(state)
         qtbot.addWidget(window)  # 실패해도 창을 닫는다 — 남은 창이 다음 테스트의 호버를 가로챈다
         clickable = state == DownloadState.WAITING
@@ -128,7 +129,7 @@ class TestTitleHoverMatchesClickability:
         window.close()
 
     @pytest.mark.parametrize("state", STATES, ids=[s.name for s in STATES])
-    def test_click_opens_the_editor_iff_waiting(self, qapp, qtbot, state):
+    def test_click_opens_the_editor_iff_waiting(self, qapp, qtbot, state) -> None:
         window, widget = _card_in_window(state)
         qtbot.addWidget(window)
         shown(widget.titleLabel)
@@ -140,7 +141,7 @@ class TestTitleHoverMatchesClickability:
         window.close()
 
     @pytest.mark.parametrize("state", STATES, ids=[s.name for s in STATES])
-    def test_cursor_and_editable_property_follow_the_state(self, qapp, qtbot, state):
+    def test_cursor_and_editable_property_follow_the_state(self, qapp, qtbot, state) -> None:
         window, widget = _card_in_window(state)
         qtbot.addWidget(window)
         clickable = state == DownloadState.WAITING
@@ -149,7 +150,7 @@ class TestTitleHoverMatchesClickability:
         assert widget.titleLabel.cursor().shape() == expected, f"{state.name}: 커서가 클릭 가능 여부와 다르다"
         window.close()
 
-    def test_state_change_after_creation_updates_the_hint(self, qapp, qtbot):
+    def test_state_change_after_creation_updates_the_hint(self, qapp, qtbot) -> None:
         """대기로 만들어진 카드가 진행으로 바뀌면(실제 경로: setData) 힌트도 따라 꺼진다."""
         window, widget = _card_in_window(DownloadState.WAITING)
         qtbot.addWidget(window)

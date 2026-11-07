@@ -33,7 +33,7 @@ class TestDecidePartSize:
             ("video", 719, 10 * MB),
         ],
     )
-    def test_decide_part_size(self, content_type: str, resolution: int, expected: int):
+    def test_decide_part_size(self, content_type: str, resolution: int, expected: int) -> None:
         """조합별 part_size를 현재 동작 그대로 고정한다."""
         assert decide_part_size(content_type, resolution) == expected
 
@@ -58,11 +58,11 @@ class TestSplitRanges:
             (0, 10, []),
         ],
     )
-    def test_split_ranges(self, total_size: int, part_size: int, expected: list):
+    def test_split_ranges(self, total_size: int, part_size: int, expected: list) -> None:
         """total_size·part_size 조합별 분할 결과를 현재 동작 그대로 고정한다."""
         assert split_ranges(total_size, part_size) == expected
 
-    def test_realistic_720p_video(self):
+    def test_realistic_720p_video(self) -> None:
         """실제와 유사한 조합: 10.5MB 파일을 720p part_size(5MB)로 분할."""
         total_size = 10 * MB + 512 * 1024  # 10.5MB
         part_size = decide_part_size("video", 720)  # 5MB
@@ -79,7 +79,7 @@ class TestSplitRanges:
         ("total_size", "part_size"),
         [(1, 1), (99, 10), (100, 10), (101, 10), (10 * MB + 3, 2 * MB)],
     )
-    def test_ranges_cover_whole_file_without_gap(self, total_size: int, part_size: int):
+    def test_ranges_cover_whole_file_without_gap(self, total_size: int, part_size: int) -> None:
         """분할 구간이 빈틈·겹침 없이 파일 전체 [0, total_size-1]을 덮는 불변식을 고정한다."""
         ranges = split_ranges(total_size, part_size)
 

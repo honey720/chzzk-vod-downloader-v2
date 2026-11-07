@@ -11,27 +11,27 @@ from core.models.content import Content, ContentType, VideoInfo
 
 
 class TestContentType:
-    def test_values_match_current_strings(self):
+    def test_values_match_current_strings(self) -> None:
         """열거형 값은 현행 코드가 쓰는 문자열('video'/'m3u8'/'clip'/'live')과 같아야 한다."""
         assert ContentType.CHZZK_VIDEO.value == "video"
         assert ContentType.CHZZK_VIDEO_M3U8.value == "m3u8"
         assert ContentType.CHZZK_CLIP.value == "clip"
         assert ContentType.CHZZK_LIVE.value == "live"
 
-    def test_lookup_by_value(self):
+    def test_lookup_by_value(self) -> None:
         """기존 문자열로 역변환(ContentType(value))이 가능해야 한다."""
         assert ContentType("video") is ContentType.CHZZK_VIDEO
         assert ContentType("m3u8") is ContentType.CHZZK_VIDEO_M3U8
         assert ContentType("clip") is ContentType.CHZZK_CLIP
 
-    def test_unknown_value_raises(self):
+    def test_unknown_value_raises(self) -> None:
         """정의되지 않은 타입 문자열은 ValueError — 에러를 타입 값으로 표현하지 않는다."""
         with pytest.raises(ValueError):
             ContentType("error")
 
 
 class TestContent:
-    def test_minimal_construction_with_defaults(self):
+    def test_minimal_construction_with_defaults(self) -> None:
         """필수 필드만으로 생성되고 나머지는 기본값이어야 한다."""
         content = Content(content_type=ContentType.CHZZK_VIDEO, url="https://chzzk.naver.com/video/1")
         assert content.content_type is ContentType.CHZZK_VIDEO
@@ -46,14 +46,14 @@ class TestContent:
         assert content.ts_head is None  # 넘기지 않으면 엔진이 플레이리스트·세그먼트를 받는다
         assert content.encryption_type is None
 
-    def test_id_is_unique_per_instance(self):
+    def test_id_is_unique_per_instance(self) -> None:
         """id는 인스턴스마다 자동 생성되는 고유값이어야 한다."""
         a = Content(content_type=ContentType.CHZZK_CLIP, url="u")
         b = Content(content_type=ContentType.CHZZK_CLIP, url="u")
         assert a.id and b.id
         assert a.id != b.id
 
-    def test_is_single_dataclass_without_subclasses(self):
+    def test_is_single_dataclass_without_subclasses(self) -> None:
         """SPEC §4.1: 서브클래스 없는 단일 데이터클래스여야 한다."""
         assert dataclasses.is_dataclass(Content)
         assert Content.__subclasses__() == []
@@ -72,14 +72,14 @@ class TestVideoInfo:
             metadata={"duration": 1},
         )
 
-    def test_field_access(self):
+    def test_field_access(self) -> None:
         """tuple 위치가 아닌 이름으로 필드에 접근할 수 있어야 한다."""
         info = self._make()
         assert info.video_id == "vid"
         assert info.in_key == "key"
         assert info.metadata["duration"] == 1
 
-    def test_result_object_is_immutable(self):
+    def test_result_object_is_immutable(self) -> None:
         """조회 결과는 값 객체이므로 필드 재할당이 금지된다(frozen)."""
         info = self._make()
         with pytest.raises(dataclasses.FrozenInstanceError):

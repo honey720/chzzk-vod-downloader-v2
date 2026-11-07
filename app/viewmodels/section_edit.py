@@ -137,7 +137,7 @@ class _IndexReleaseReporter(QObject):
 
     _released = Signal()
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self._watching: set[int] = set()  # 걸어 둔 moov의 id — 같은 것을 두 번 걸지 않는다
         self._released.connect(self._onReleased, Qt.ConnectionType.QueuedConnection)
@@ -398,7 +398,7 @@ class SectionBasisJob(QObject):
     finished = Signal(object)  # SectionBasis
     failed = Signal()
 
-    def __init__(self, item: ContentItem):
+    def __init__(self, item: ContentItem) -> None:
         super().__init__()
         self._item = item
 
@@ -433,7 +433,7 @@ class SectionEditViewModel(QObject):
         item: ContentItem,
         notify: Callable[[ContentItem], None] | None = None,
         parent: QObject | None = None,
-    ):
+    ) -> None:
         """
         Args:
             item: 편집할 카드의 데이터
@@ -1139,7 +1139,7 @@ class SectionSizeJob(QObject):
 
     done = Signal(object, object, object)  # (token, 셌는지(bool), 크기 또는 None)
 
-    def __init__(self, moov, selections, token):
+    def __init__(self, moov, selections, token) -> None:
         super().__init__()
         self._moov = moov
         self._selections = selections
@@ -1187,7 +1187,7 @@ class SectionSizer(QObject):
     해상도가 바뀌어 쥔 moov가 달라진 경우다.
     """
 
-    def __init__(self, model, pool: QThreadPool, parent: QObject | None = None):
+    def __init__(self, model, pool: QThreadPool, parent: QObject | None = None) -> None:
         """
         Args:
             model: 목록 모델 — ``getRow`` · ``notifyChanged``를 쓴다
@@ -1286,7 +1286,7 @@ class SectionRefitJob(QObject):
 
     done = Signal(object, object)  # (token, SectionBasis 또는 None — 조회 실패)
 
-    def __init__(self, snapshot, token):
+    def __init__(self, snapshot, token) -> None:
         super().__init__()
         self._snapshot = snapshot
         self._token = token
@@ -1342,7 +1342,7 @@ class SectionRefitter(QObject):
 
     settled = Signal(object)  # 카드의 조회가 끝났다(성공 · 실패) — 더는 조회 중이 아니다
 
-    def __init__(self, model, pool: QThreadPool, parent: QObject | None = None):
+    def __init__(self, model, pool: QThreadPool, parent: QObject | None = None) -> None:
         """
         Args:
             model: 목록 모델 — ``getRow`` · ``notifyChanged``를 쓴다

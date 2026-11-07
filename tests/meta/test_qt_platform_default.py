@@ -47,7 +47,7 @@ def _conftest_sets(extra: dict[str, str], *args: str) -> dict:
 
 
 @pytest.mark.parametrize("platform", ["win32", "darwin"])
-def test_unset_platform_defaults_to_offscreen_with_the_ci_font_folder(platform):
+def test_unset_platform_defaults_to_offscreen_with_the_ci_font_folder(platform) -> None:
     """플랫폼 값이 없는 로컬 실행이면 offscreen과 CI의 폰트 폴더를 더해야 한다 (#399).
 
     environ={}, platform -> {"QT_QPA_PLATFORM": "offscreen", "QT_QPA_FONTDIR": CI_FONT_DIRS[platform]}
@@ -58,7 +58,7 @@ def test_unset_platform_defaults_to_offscreen_with_the_ci_font_folder(platform):
     }
 
 
-def test_unset_platform_on_linux_defaults_to_offscreen_without_a_font_folder():
+def test_unset_platform_on_linux_defaults_to_offscreen_without_a_font_folder() -> None:
     """Linux는 CI가 offscreen 폰트 폴더를 주지 않으므로 offscreen만 더해야 한다 (#399).
 
     environ={}, platform="linux" -> {"QT_QPA_PLATFORM": "offscreen"}
@@ -66,7 +66,7 @@ def test_unset_platform_on_linux_defaults_to_offscreen_without_a_font_folder():
     assert defaults({}, "linux") == {"QT_QPA_PLATFORM": "offscreen"}
 
 
-def test_font_folder_already_set_is_kept():
+def test_font_folder_already_set_is_kept() -> None:
     """폰트 폴더를 이미 정했으면 그 값을 덮지 않아야 한다 (#399).
 
     environ={"QT_QPA_FONTDIR": "D:/fonts"}, platform="win32" -> {"QT_QPA_PLATFORM": "offscreen"}
@@ -75,7 +75,7 @@ def test_font_folder_already_set_is_kept():
 
 
 @pytest.mark.parametrize("platform", ["win32", "darwin"])
-def test_offscreen_set_directly_still_gets_the_ci_font_folder(platform):
+def test_offscreen_set_directly_still_gets_the_ci_font_folder(platform) -> None:
     """offscreen을 직접 정하고 폰트 폴더 변수가 없으면 CI의 폰트 폴더만 더해야 한다 (#405).
 
     environ={"QT_QPA_PLATFORM": "offscreen"}, platform -> {"QT_QPA_FONTDIR": CI_FONT_DIRS[platform]}
@@ -85,7 +85,7 @@ def test_offscreen_set_directly_still_gets_the_ci_font_folder(platform):
     }
 
 
-def test_offscreen_set_directly_on_linux_adds_nothing():
+def test_offscreen_set_directly_on_linux_adds_nothing() -> None:
     """Linux에서 offscreen을 직접 정하면 CI 폰트 폴더가 없으므로 아무것도 더하지 않아야 한다 (#405).
 
     environ={"QT_QPA_PLATFORM": "offscreen"}, platform="linux" -> {}
@@ -101,7 +101,7 @@ def test_offscreen_set_directly_on_linux_adds_nothing():
     ],
     ids=["folder", "empty-string"],
 )
-def test_offscreen_with_a_font_folder_already_set_adds_nothing(font_dir):
+def test_offscreen_with_a_font_folder_already_set_adds_nothing(font_dir) -> None:
     """offscreen과 폰트 폴더 변수를 이미 정했으면 아무것도 더하지 않아야 한다 (#405).
 
     environ={"QT_QPA_PLATFORM": "offscreen", "QT_QPA_FONTDIR": font_dir}, platform="win32" -> {}
@@ -111,7 +111,7 @@ def test_offscreen_with_a_font_folder_already_set_adds_nothing(font_dir):
     assert defaults(environ, "win32") == {}
 
 
-def test_offscreen_with_an_empty_font_folder_adds_nothing(tmp_path):
+def test_offscreen_with_an_empty_font_folder_adds_nothing(tmp_path) -> None:
     """offscreen과 빈 폴더를 폰트 폴더로 정했으면 아무것도 더하지 않아야 한다 (#405).
 
     environ={"QT_QPA_PLATFORM": "offscreen", "QT_QPA_FONTDIR": 빈 폴더}, platform="win32" -> {}
@@ -133,7 +133,7 @@ def test_offscreen_with_an_empty_font_folder_adds_nothing(tmp_path):
     ],
     ids=["set", "set-empty", "ci", "native", "ci-offscreen", "native-offscreen"],
 )
-def test_nothing_is_added_when_the_platform_is_set_or_on_ci_or_native(environ):
+def test_nothing_is_added_when_the_platform_is_set_or_on_ci_or_native(environ) -> None:
     """offscreen이 아닌 플랫폼을 이미 정했거나 CI이거나 CVDV2_TEST_NATIVE=1이면 아무것도 더하지 않아야 한다 (#399 · #405).
 
     environ -> {}
@@ -141,7 +141,7 @@ def test_nothing_is_added_when_the_platform_is_set_or_on_ci_or_native(environ):
     assert defaults(environ, "win32") == {}
 
 
-def test_native_switch_other_than_1_still_defaults_to_offscreen():
+def test_native_switch_other_than_1_still_defaults_to_offscreen() -> None:
     """CVDV2_TEST_NATIVE가 1이 아니면(0) offscreen을 더해야 한다 (#399).
 
     environ={"CVDV2_TEST_NATIVE": "0"}, platform="linux" -> {"QT_QPA_PLATFORM": "offscreen"}
@@ -149,7 +149,7 @@ def test_native_switch_other_than_1_still_defaults_to_offscreen():
     assert defaults({NATIVE_SWITCH: "0"}, "linux") == {"QT_QPA_PLATFORM": "offscreen"}
 
 
-def test_conftest_makes_a_local_run_use_offscreen_before_qt_makes_its_app():
+def test_conftest_makes_a_local_run_use_offscreen_before_qt_makes_its_app() -> None:
     """값을 정하지 않은 로컬 실행에서 conftest를 읽은 뒤 만든 Qt 앱은 offscreen이어야 한다 (#399).
 
     별도 프로세스: QT_QPA_PLATFORM · QT_QPA_FONTDIR · CI · CVDV2_TEST_NATIVE 없음 → conftest를 읽고
@@ -171,7 +171,7 @@ def test_conftest_makes_a_local_run_use_offscreen_before_qt_makes_its_app():
     ],
     ids=["set", "ci", "native"],
 )
-def test_conftest_leaves_the_platform_alone_when_set_or_on_ci_or_native(extra, expected):
+def test_conftest_leaves_the_platform_alone_when_set_or_on_ci_or_native(extra, expected) -> None:
     """이미 정했거나 CI이거나 CVDV2_TEST_NATIVE=1이면 conftest가 플랫폼 · 폰트 폴더를 바꾸지 않아야 한다 (#399).
 
     별도 프로세스: 위 넷을 지운 뒤 extra만 둠 → conftest를 읽음
@@ -182,7 +182,7 @@ def test_conftest_leaves_the_platform_alone_when_set_or_on_ci_or_native(extra, e
     assert seen == {"QT_QPA_PLATFORM": expected, "QT_QPA_FONTDIR": None}
 
 
-def test_conftest_gives_the_font_folder_to_an_offscreen_set_directly():
+def test_conftest_gives_the_font_folder_to_an_offscreen_set_directly() -> None:
     """offscreen만 직접 정한 로컬 실행이면 conftest를 읽은 뒤 폰트 폴더가 이 OS의 CI 값이어야 한다 (#405).
 
     별도 프로세스: QT_QPA_PLATFORM=offscreen만 둠 → conftest를 읽음
@@ -196,7 +196,7 @@ def test_conftest_gives_the_font_folder_to_an_offscreen_set_directly():
     }
 
 
-def test_conftest_keeps_an_empty_font_folder_given_with_offscreen(tmp_path):
+def test_conftest_keeps_an_empty_font_folder_given_with_offscreen(tmp_path) -> None:
     """offscreen과 빈 폴더를 폰트 폴더로 준 로컬 실행이면 conftest가 그 폴더를 바꾸지 않아야 한다 (#405).
 
     별도 프로세스: QT_QPA_PLATFORM=offscreen, QT_QPA_FONTDIR=빈 폴더 → conftest를 읽음

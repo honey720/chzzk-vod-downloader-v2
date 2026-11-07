@@ -28,6 +28,10 @@ line-length = 100
 target-version = "py313"
 # 파일별 린트 예외는 없다 — 마지막 uic 생성물(ui/mainWindow.py)을 메인 창 코드 전환(#492)에서 없앴다.
 
+[tool.ruff.lint]
+# 기본 규칙에 반환 타입힌트 규칙만 더한다(1단계). 매개변수 타입힌트 규칙(ANN001 등)은 켜지 않는다
+extend-select = ["ANN201", "ANN202", "ANN204", "ANN205", "ANN206"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # 테스트 하나(셋업 · 정리 포함)가 이 초를 넘기면 모든 스레드의 스택을 출력에 남긴다 — CI가 출력 없이

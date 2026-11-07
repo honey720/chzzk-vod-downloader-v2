@@ -25,12 +25,12 @@ class _ControlledFetchJob(QObject):
     error = Signal(str)
     made: list = []
 
-    def __init__(self, vod_url, cookies, path):
+    def __init__(self, vod_url, cookies, path) -> None:
         super().__init__()
         self.vod_url = vod_url
         _ControlledFetchJob.made.append(self)
 
-    def run(self):
+    def run(self) -> None:
         pass
 
 
@@ -66,7 +66,7 @@ def _list_top(win) -> int:
 
 
 class TestErrorLine:
-    def test_an_empty_url_shows_the_error_line_without_a_dialog(self, window):
+    def test_an_empty_url_shows_the_error_line_without_a_dialog(self, window) -> None:
         """URL 칸이 빈 채 Enter를 누르면 오류 줄에 안내가 뜨고 URL 칸이 오류 표시가 되며 대화상자는 없어야 한다."""
         _press_enter(window, "")
         assert window.registerErrorLabel.isVisible()
@@ -74,7 +74,7 @@ class TestErrorLine:
         assert window.urlInput.property("invalid") is True
         assert window.popups == []
 
-    def test_the_list_does_not_move_when_the_error_appears_or_goes(self, window):
+    def test_the_list_does_not_move_when_the_error_appears_or_goes(self, window) -> None:
         """오류가 뜨고 사라져도 목록의 위끝 · 높이가 그대로여야 한다(줄 자리를 늘 잡아 둔다)."""
         before = (_list_top(window), window.listView.height())
         _press_enter(window, "")
@@ -84,7 +84,7 @@ class TestErrorLine:
         after = (_list_top(window), window.listView.height())
         assert before == shown == after
 
-    def test_editing_the_input_clears_the_error(self, window):
+    def test_editing_the_input_clears_the_error(self, window) -> None:
         """오류가 뜬 뒤 URL 칸에 글을 넣으면 오류 줄이 비고 URL 칸 오류 표시가 꺼져야 한다."""
         _press_enter(window, "")
         QTest.keyClicks(window.urlInput, "h")
@@ -92,7 +92,7 @@ class TestErrorLine:
         assert window.registerErrorLabel.text() == ""
         assert not window.urlInput.property("invalid")
 
-    def test_a_fetch_failure_shows_the_reason_and_the_url_on_the_line(self, window):
+    def test_a_fetch_failure_shows_the_reason_and_the_url_on_the_line(self, window) -> None:
         """조회가 실패하면 조회 중 카드가 빠지고 오류 줄에 「까닭 · 주소」가 뜨며 대화상자는 없어야 한다."""
         url = "https://chzzk.naver.com/video/404"
         _press_enter(window, url)
@@ -103,7 +103,7 @@ class TestErrorLine:
         assert window.registerErrorLabel.text() == f"Video not found · {url}"
         assert window.popups == []
 
-    def test_a_vanished_location_shows_the_error_line(self, window, tmp_path):
+    def test_a_vanished_location_shows_the_error_line(self, window, tmp_path) -> None:
         """고른 저장 위치가 사라진 뒤 등록하면 오류 줄에 「Path does not exist.」가 떠야 한다."""
         gone = tmp_path / "분리"
         gone.mkdir()
@@ -113,7 +113,7 @@ class TestErrorLine:
         assert window.registerErrorLabel.text() == "Path does not exist."
         assert window.contentManager.model.rowCount() == 0
 
-    def test_a_long_error_is_elided_without_widening_the_window(self, window):
+    def test_a_long_error_is_elided_without_widening_the_window(self, window) -> None:
         """아주 긴 오류 글이 떠도 창 최소폭 · 콘텐츠 최소폭이 그대로이고 전문은 툴팁에 있어야 한다."""
         base = window.contentColumn.minimumSizeHint().width()
         long_url = "https://chzzk.naver.com/video/" + "9" * 400
@@ -125,7 +125,7 @@ class TestErrorLine:
 
 
 class TestBusyIndicator:
-    def test_the_add_button_spins_while_loading_and_keeps_its_width(self, window):
+    def test_the_add_button_spins_while_loading_and_keeps_its_width(self, window) -> None:
         """등록한 조회가 끝나기 전에는 등록 버튼이 도는 상태이고, 끝나면 멈추며 폭은 내내 같아야 한다."""
         width = window.fetchButton.width()
         assert not window.fetchButton.isBusy()
@@ -137,7 +137,7 @@ class TestBusyIndicator:
         assert not window.fetchButton.isBusy()
         assert window.fetchButton.width() == width
 
-    def test_it_spins_until_the_last_of_several_fetches_ends(self, window):
+    def test_it_spins_until_the_last_of_several_fetches_ends(self, window) -> None:
         """조회 둘을 등록하면 첫 조회가 끝나도 돌고, 둘째까지 끝나야 멈춰야 한다."""
         _press_enter(window, "https://chzzk.naver.com/video/1")
         _press_enter(window, "https://chzzk.naver.com/video/2")
@@ -151,13 +151,13 @@ class TestBusyIndicator:
 
 
 class TestClearFinishedPlace:
-    def test_clear_finished_is_the_last_item_of_the_second_line(self, window):
+    def test_clear_finished_is_the_last_item_of_the_second_line(self, window) -> None:
         """완료 지우기는 헤더바 2줄 레이아웃의 마지막 항목이고 하단바에는 없어야 한다."""
         line = window.filterRowLayout
         assert line.itemAt(line.count() - 1).widget() is window.clearFinishedButton
         assert not window.infoFrame.isAncestorOf(window.clearFinishedButton)
 
-    def test_its_right_edge_lines_up_with_the_add_button(self, window):
+    def test_its_right_edge_lines_up_with_the_add_button(self, window) -> None:
         """완료 지우기의 오른쪽 끝은 1줄 VOD 추가의 오른쪽 끝과 같아야 한다(헤더바 안쪽 오른쪽 끝)."""
 
         def right(widget) -> int:

@@ -28,7 +28,7 @@ VOD_URL = "https://chzzk.naver.com/video/1"
 class _Session:
     """마스터 플레이리스트 요청에 주어진 본문으로 답하고 요청을 기록한다."""
 
-    def __init__(self, monkeypatch, text: str = "", *, error: Exception | None = None):
+    def __init__(self, monkeypatch, text: str = "", *, error: Exception | None = None) -> None:
         self.calls: list[tuple] = []
         self._text = text
         self._error = error
@@ -47,7 +47,7 @@ class _Api:
     get_video_m3u8_manifest = staticmethod(NetworkManager.get_video_m3u8_manifest)
     get_video_m3u8_streams = staticmethod(NetworkManager.get_video_m3u8_streams)
 
-    def __init__(self, sample: Sample):
+    def __init__(self, sample: Sample) -> None:
         self._sample = sample
 
     def get_video_info(self, video_no, cookies):
@@ -87,7 +87,7 @@ def _item(sample: Sample, tmp_path) -> ContentItem:
 # ================================================================ 불러올 때
 
 
-def test_loading_requests_the_master_playlist_once_with_cookies(monkeypatch):
+def test_loading_requests_the_master_playlist_once_with_cookies(monkeypatch) -> None:
     """다시보기를 불러올 때 마스터 플레이리스트를 쿠키와 함께 한 번 받아야 한다.
 
     S1
@@ -114,7 +114,9 @@ def test_loading_requests_the_master_playlist_once_with_cookies(monkeypatch):
     ],
     ids=["S1", "S2", "S4", "S5", "S9", "S11"],
 )
-def test_loaded_list_carries_the_short_side_and_the_shown_frame_rate(monkeypatch, sample, expected):
+def test_loaded_list_carries_the_short_side_and_the_shown_frame_rate(
+    monkeypatch, sample, expected
+) -> None:
     """불러온 목록의 해상도는 짧은 변이고, 표시할 프레임률은 마스터 플레이리스트의 값이어야 한다.
 
     주석의 표본마다
@@ -140,7 +142,7 @@ def test_loaded_list_carries_the_short_side_and_the_shown_frame_rate(monkeypatch
     ],
     ids=["S1", "S2", "S4", "S5", "S9", "S11"],
 )
-def test_loaded_list_marks_the_original_stream(monkeypatch, sample, originals):
+def test_loaded_list_marks_the_original_stream(monkeypatch, sample, originals) -> None:
     """불러온 목록의 원본 표시는 playback의 원본 트랙과 짝인 변형 하나에만 있어야 한다.
 
     주석의 표본마다
@@ -160,7 +162,7 @@ def test_loaded_list_marks_the_original_stream(monkeypatch, sample, originals):
 )
 def test_loading_falls_back_to_the_playback_tracks_when_the_master_cannot_be_fetched(
     monkeypatch, caplog, error
-):
+) -> None:
     """마스터 플레이리스트를 받지 못하면 playback 정보의 트랙으로 목록을 만들고 경고를 남겨야 한다.
 
     S1, 마스터 플레이리스트 요청이 주석의 예외로 실패
@@ -179,7 +181,7 @@ def test_loading_falls_back_to_the_playback_tracks_when_the_master_cannot_be_fet
     assert [r.levelno for r in warnings] == [logging.WARNING]
 
 
-def test_loading_falls_back_when_the_master_has_no_variant(monkeypatch, caplog):
+def test_loading_falls_back_when_the_master_has_no_variant(monkeypatch, caplog) -> None:
     """마스터 플레이리스트에 변형이 없으면 playback 정보의 트랙으로 목록을 만들고 경고를 남겨야 한다.
 
     S1의 playback 정보, 변형이 없는 마스터 플레이리스트("#EXTM3U")
@@ -209,7 +211,7 @@ def test_loading_falls_back_when_the_master_has_no_variant(monkeypatch, caplog):
 )
 def test_default_selection_is_the_largest_short_side_and_the_original_among_equals(
     monkeypatch, tmp_path, sample, resolution, stream, tag
-):
+) -> None:
     """기본 선택은 짧은 변이 가장 큰 항목이고, 같으면 원본이어야 한다.
 
     주석의 표본마다
@@ -244,7 +246,7 @@ def test_default_selection_is_the_largest_short_side_and_the_original_among_equa
 )
 def test_file_names_tell_the_two_streams_of_the_same_short_side_apart(
     monkeypatch, tmp_path, sample, names
-):
+) -> None:
     """파일명은 `{제목} {짧은 변}p.mp4`이고, 짧은 변이 같은 항목이 둘일 때 원본 쪽에만 `(원본)`이 붙어야 한다.
 
     주석의 표본마다 목록의 항목을 차례로 고름
@@ -275,7 +277,7 @@ def test_file_names_tell_the_two_streams_of_the_same_short_side_apart(
     ],
     ids=["S1", "S4", "S9", "S11"],
 )
-def test_each_listed_entry_downloads_its_own_variant(monkeypatch, sample, variants):
+def test_each_listed_entry_downloads_its_own_variant(monkeypatch, sample, variants) -> None:
     """목록의 항목을 고르면 다운로드 주소는 그 항목이 가리키는 변형의 것이어야 한다.
 
     주석의 표본마다 목록의 항목 순서대로 (해상도, 스트림 값)으로 주소를 해석
@@ -292,7 +294,7 @@ def test_each_listed_entry_downloads_its_own_variant(monkeypatch, sample, varian
     assert urls == [variant_url(number) for number in variants]
 
 
-def test_download_fails_with_a_key_when_the_selected_variant_is_gone(monkeypatch):
+def test_download_fails_with_a_key_when_the_selected_variant_is_gone(monkeypatch) -> None:
     """다운로드를 시작할 때 고른 변형이 마스터 플레이리스트에 없으면 키 기반 오류로 실패해야 한다.
 
     S4에서 고른 720p(원본)의 스트림 값, 다시 받은 마스터 플레이리스트는 S1의 것
@@ -313,7 +315,7 @@ def test_download_fails_with_a_key_when_the_selected_variant_is_gone(monkeypatch
 )
 def test_download_without_a_stream_value_finds_the_height_when_the_tracks_do_not_fit(
     monkeypatch, resolution, variant
-):
+) -> None:
     """스트림 값 없이 해상도만으로 받을 때, playback의 트랙과 맞는 변형이 없으면 세로값이 그 해상도인 변형을 받아야 한다.
 
     S11(playback은 세로 트랙, 마스터는 가로 변형), 해상도마다
@@ -326,7 +328,7 @@ def test_download_without_a_stream_value_finds_the_height_when_the_tracks_do_not
     assert base_url == variant_url(variant)
 
 
-def test_resolver_hands_the_selected_stream_to_the_lookup(monkeypatch):
+def test_resolver_hands_the_selected_stream_to_the_lookup(monkeypatch) -> None:
     """다운로드 시작 때의 주소 해석은 Content에 실린 스트림 값을 그대로 넘겨야 한다.
 
     Content(resolution=720, stream=S4의 720p(원본) 값)

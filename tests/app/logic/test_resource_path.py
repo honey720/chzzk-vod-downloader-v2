@@ -12,7 +12,7 @@ import CVDv2 as main
 ROOT_DIR = Path(main.__file__).resolve().parent
 
 
-def test_resource_path_is_anchored_to_main_file(monkeypatch, tmp_path):
+def test_resource_path_is_anchored_to_main_file(monkeypatch, tmp_path) -> None:
     """CWD를 바꿔도 CVDv2.py 위치 기준으로 해석되어야 한다 (Nuitka onefile 대응)."""
     monkeypatch.chdir(tmp_path)
 
@@ -21,7 +21,7 @@ def test_resource_path_is_anchored_to_main_file(monkeypatch, tmp_path):
     assert result == ROOT_DIR / "translations" / "ko_KR.qm"
 
 
-def test_resource_path_finds_existing_resources():
+def test_resource_path_finds_existing_resources() -> None:
     """저장소의 실제 번역 파일·아이콘이 존재하는 경로로 해석된다."""
     assert os.path.exists(main.resource_path("translations/en_US.qm"))
     assert os.path.exists(main.resource_path("resources/icon.png"))

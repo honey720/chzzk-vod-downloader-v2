@@ -38,6 +38,7 @@ from core.utils.ffmpeg import (
     remux_stream,
 )
 from tests.support.undeletable import Undeletable
+from typing import Never
 
 
 def _top_level_boxes(path) -> list[str]:
@@ -118,7 +119,7 @@ def _resolved_ffmpeg_demuxes_ts() -> bool:
 # ================================================================ 경로 탐색
 
 
-def test_get_ffmpeg_exe_returns_existing_executable():
+def test_get_ffmpeg_exe_returns_existing_executable() -> None:
     """탐색 결과는 실재하는 실행 파일 경로여야 한다 (배포 방식 검증의 로컬 관문)."""
     exe = get_ffmpeg_exe()
     assert os.path.isfile(exe)
@@ -128,7 +129,7 @@ def test_get_ffmpeg_exe_returns_existing_executable():
 # ================================================================ 탐색 순서 (#94)
 
 
-def test_explicit_env_var_wins_over_everything(monkeypatch):
+def test_explicit_env_var_wins_over_everything(monkeypatch) -> None:
     """IMAGEIO_FFMPEG_EXE 명시 지정은 플랫폼·시스템 탐색보다 항상 우선한다."""
     monkeypatch.setenv("IMAGEIO_FFMPEG_EXE", "/explicit/ffmpeg")
     monkeypatch.setattr(ffmpeg_module, "_IS_LINUX", True)
@@ -137,7 +138,7 @@ def test_explicit_env_var_wins_over_everything(monkeypatch):
     assert get_ffmpeg_exe() == "/explicit/ffmpeg"
 
 
-def test_linux_prefers_system_ffmpeg(monkeypatch):
+def test_linux_prefers_system_ffmpeg(monkeypatch) -> None:
     """리눅스는 시스템 ffmpeg를 동봉본보다 우선한다 (#94 — 동봉본 TS demux SIGSEGV 회피)."""
     monkeypatch.delenv("IMAGEIO_FFMPEG_EXE", raising=False)
     monkeypatch.setattr(ffmpeg_module, "_IS_LINUX", True)
@@ -146,7 +147,7 @@ def test_linux_prefers_system_ffmpeg(monkeypatch):
     assert get_ffmpeg_exe() == "/usr/bin/ffmpeg"
 
 
-def test_linux_without_system_falls_back_to_bundled(monkeypatch):
+def test_linux_without_system_falls_back_to_bundled(monkeypatch) -> None:
     """리눅스에 시스템 ffmpeg가 없으면 동봉본으로 폴백한다 (m3u8 경로는 동봉본도 정상)."""
     import imageio_ffmpeg
 
@@ -157,19 +158,19 @@ def test_linux_without_system_falls_back_to_bundled(monkeypatch):
     assert get_ffmpeg_exe() == imageio_ffmpeg.get_ffmpeg_exe()
 
 
-def test_non_linux_does_not_probe_system(monkeypatch):
+def test_non_linux_does_not_probe_system(monkeypatch) -> None:
     """리눅스가 아니면 시스템 탐색을 하지 않는다 — 동봉본이 기본이다."""
     monkeypatch.delenv("IMAGEIO_FFMPEG_EXE", raising=False)
     monkeypatch.setattr(ffmpeg_module, "_IS_LINUX", False)
 
-    def must_not_be_called(name):
+    def must_not_be_called(name) -> Never:
         raise AssertionError("리눅스가 아니면 shutil.which를 호출하지 않아야 한다")
 
     monkeypatch.setattr(ffmpeg_module.shutil, "which", must_not_be_called)
     assert os.path.isfile(get_ffmpeg_exe())
 
 
-def test_not_found_error_guides_installation(monkeypatch):
+def test_not_found_error_guides_installation(monkeypatch) -> None:
     """어느 경로로도 못 찾으면 설치 유도 안내를 담아 명확히 실패한다 (#94)."""
     import imageio_ffmpeg
 
@@ -177,7 +178,7 @@ def test_not_found_error_guides_installation(monkeypatch):
     monkeypatch.setattr(ffmpeg_module, "_IS_LINUX", True)
     monkeypatch.setattr(ffmpeg_module.shutil, "which", lambda name: None)
 
-    def broken():
+    def broken() -> Never:
         raise RuntimeError("no exe")
 
     monkeypatch.setattr(imageio_ffmpeg, "get_ffmpeg_exe", broken)
@@ -217,7 +218,9 @@ def bundled_slot(tmp_path, monkeypatch):
     utils._get_ffmpeg_exe.cache_clear()
 
 
-def test_ffmpeg_that_appears_after_a_failed_lookup_is_found_on_the_next_lookup(bundled_slot):
+def test_ffmpeg_that_appears_after_a_failed_lookup_is_found_on_the_next_lookup(
+    bundled_slot,
+) -> None:
     """처음 조회에서 ffmpeg를 못 찾았어도 그 뒤 ffmpeg가 생기면 다음 조회에서 찾아야 한다.
 
     동봉본 자리가 빈 상태로 get_ffmpeg_exe → 그 자리에 파일을 둠 → 다시 get_ffmpeg_exe
@@ -231,7 +234,7 @@ def test_ffmpeg_that_appears_after_a_failed_lookup_is_found_on_the_next_lookup(b
     assert get_ffmpeg_exe() == bundled_slot.path
 
 
-def test_found_ffmpeg_is_remembered_and_not_checked_again(bundled_slot):
+def test_found_ffmpeg_is_remembered_and_not_checked_again(bundled_slot) -> None:
     """ffmpeg를 찾은 뒤의 조회는 실행 확인을 다시 하지 않고 같은 경로를 돌려줘야 한다.
 
     동봉본 자리에 파일을 두고 get_ffmpeg_exe 세 번
@@ -246,7 +249,7 @@ def test_found_ffmpeg_is_remembered_and_not_checked_again(bundled_slot):
     assert bundled_slot.checked == [bundled_slot.path]
 
 
-def test_imageio_lookup_cache_can_be_cleared():
+def test_imageio_lookup_cache_can_be_cleared() -> None:
     """imageio-ffmpeg의 자동 탐색 함수(_utils._get_ffmpeg_exe)는 cache_clear를 가져야 한다.
 
     get_ffmpeg_exe가 못 찾은 결과를 지울 때 이 비공개 이름을 쓴다 (#423)
@@ -269,7 +272,7 @@ def _assert_fully_decodes(path) -> None:
     assert result.returncode == 0 and not result.stderr.strip()
 
 
-def test_remux_stream_produces_mp4_with_moov_and_no_second_pass(tmp_path):
+def test_remux_stream_produces_mp4_with_moov_and_no_second_pass(tmp_path) -> None:
     """산출물은 전역 인덱스(moov)를 가진 mp4이고, moov는 파일 끝이다 (#108).
 
     편집 프로그램 인식에 필요한 것은 moov의 **존재**(#88)이지 위치가 아니다.
@@ -290,7 +293,7 @@ def test_remux_stream_produces_mp4_with_moov_and_no_second_pass(tmp_path):
     _assert_fully_decodes(dst)
 
 
-def test_remux_stream_ts_input_produces_mp4(tmp_path):
+def test_remux_stream_ts_input_produces_mp4(tmp_path) -> None:
     """TS 스트림(hls_aes 경로 형식)도 파이프 공급으로 mp4가 된다.
 
     리눅스 동봉 빌드는 mpegts demux가 SIGSEGV라 스킵된다(#94) — 실제 치지직
@@ -310,7 +313,7 @@ def test_remux_stream_ts_input_produces_mp4(tmp_path):
     _assert_fully_decodes(dst)
 
 
-def test_remux_stream_writes_mp4_regardless_of_extension(tmp_path):
+def test_remux_stream_writes_mp4_regardless_of_extension(tmp_path) -> None:
     """출력 컨테이너는 -f mp4로 명시된다 — 확장자가 .mp4가 아니어도 mp4다 (#92)."""
     src = tmp_path / "src.mp4"
     dst = tmp_path / "이름을 바꾼 산출물.mkv"
@@ -321,7 +324,7 @@ def test_remux_stream_writes_mp4_regardless_of_extension(tmp_path):
     assert _top_level_boxes(dst)[0] == "ftyp"  # mp4 계열 시그니처
 
 
-def test_remux_stream_invalid_input_raises_and_leaves_no_output(tmp_path):
+def test_remux_stream_invalid_input_raises_and_leaves_no_output(tmp_path) -> None:
     """미디어가 아닌 스트림이면 RemuxError를 던지고 부분 산출물을 남기지 않는다."""
     dst = tmp_path / "dst.mp4"
 
@@ -330,7 +333,7 @@ def test_remux_stream_invalid_input_raises_and_leaves_no_output(tmp_path):
     assert not dst.exists()  # 무음 실패 금지·쓰레기 산출물 금지
 
 
-def test_remux_stream_feed_exception_propagates_and_cleans_output(tmp_path):
+def test_remux_stream_feed_exception_propagates_and_cleans_output(tmp_path) -> None:
     """공급측 예외(중단 신호 등)는 그대로 전파되고 산출물은 남지 않는다."""
     src = tmp_path / "src.mp4"
     dst = tmp_path / "dst.mp4"
@@ -354,7 +357,7 @@ def test_remux_stream_feed_exception_propagates_and_cleans_output(tmp_path):
 class _FakeEngine:
     """_remux_streamed가 참조하는 최소 속성만 가진 가짜 다운로더."""
 
-    def __init__(self, tmp_path):
+    def __init__(self, tmp_path) -> None:
         self.state = DownloadState.RUNNING
         self.s = SimpleNamespace(
             output_path=str(tmp_path / "out.mp4"),
@@ -373,7 +376,9 @@ class _FakeEngine:
         self._progress_total_size = lambda: None
 
 
-def test_streamed_failure_raises_postprocess_error_and_preserves_segments(tmp_path, monkeypatch):
+def test_streamed_failure_raises_postprocess_error_and_preserves_segments(
+    tmp_path, monkeypatch
+) -> None:
     """remux가 세그먼트를 하나도 받기 전에 실패하면 PostprocessError로 끝나고 세그먼트가 모두 남아야 한다.
 
     #92의 규칙은 "실패해도 세그먼트를 모두 남긴다"였다. #309에서 넘긴 세그먼트는 곧바로
@@ -385,7 +390,7 @@ def test_streamed_failure_raises_postprocess_error_and_preserves_segments(tmp_pa
     for s in segs:
         s.write_bytes(b"seg-bytes")
 
-    def broken_remux_stream(chunks, dst_path, **_wait):
+    def broken_remux_stream(chunks, dst_path, **_wait) -> Never:
         raise RemuxError("가짜 실패")
 
     monkeypatch.setattr(base_module, "remux_stream", broken_remux_stream)
@@ -397,7 +402,7 @@ def test_streamed_failure_raises_postprocess_error_and_preserves_segments(tmp_pa
     assert fake.errors  # 원인 로그 존재 (무음 실패 금지)
 
 
-def test_streamed_success_feeds_in_order_and_counts_segments(tmp_path, monkeypatch):
+def test_streamed_success_feeds_in_order_and_counts_segments(tmp_path, monkeypatch) -> None:
     """공급은 목록 순서 그대로이고 세그먼트 단위로 진행 카운트가 오르며, 넘긴 세그먼트는 지워져야 한다.
 
     세그먼트 3개(10바이트씩)를 그대로 받아 쓰는 대역 remux
@@ -412,7 +417,7 @@ def test_streamed_success_feeds_in_order_and_counts_segments(tmp_path, monkeypat
         p.write_bytes(bytes([i + 1]) * 10)
         segs.append(str(p))
 
-    def passthrough(chunks, dst_path, **_wait):
+    def passthrough(chunks, dst_path, **_wait) -> None:
         with open(dst_path, "wb") as f:
             for chunk in chunks:
                 f.write(chunk)
@@ -425,7 +430,9 @@ def test_streamed_success_feeds_in_order_and_counts_segments(tmp_path, monkeypat
     assert not any(os.path.exists(s) for s in segs)  # 넘긴 세그먼트는 곧바로 지운다
 
 
-def test_streamed_feed_removes_each_segment_once_the_next_one_is_asked_for(tmp_path, monkeypatch):
+def test_streamed_feed_removes_each_segment_once_the_next_one_is_asked_for(
+    tmp_path, monkeypatch
+) -> None:
     """세그먼트는 그 마지막 조각이 넘어간 뒤에 지워져야 한다 — 다음 세그먼트를 청하기 전에는 남아 있다.
 
     세그먼트 3개. 대역 remux가 조각을 하나 받을 때마다 그때 남아 있는 세그먼트를 적음
@@ -439,7 +446,7 @@ def test_streamed_feed_removes_each_segment_once_the_next_one_is_asked_for(tmp_p
         segs.append(str(p))
     seen = []
 
-    def watching(chunks, dst_path, **_wait):
+    def watching(chunks, dst_path, **_wait) -> None:
         for _chunk in chunks:
             seen.append([os.path.exists(s) for s in segs])
 
@@ -449,7 +456,7 @@ def test_streamed_feed_removes_each_segment_once_the_next_one_is_asked_for(tmp_p
     assert seen == [[True, True, True], [False, True, True], [False, False, True]]
 
 
-def test_streamed_feed_removes_a_segment_only_after_its_last_chunk(tmp_path, monkeypatch):
+def test_streamed_feed_removes_a_segment_only_after_its_last_chunk(tmp_path, monkeypatch) -> None:
     """조각이 여러 개인 세그먼트는 마지막 조각까지 넘긴 뒤에만 지워야 한다 — 그 전에는 지우려 하지도 않는다.
 
     세그먼트 3개(10바이트씩)를 4바이트 조각으로 읽게 함 — 세그먼트마다 조각 3개.
@@ -470,11 +477,11 @@ def test_streamed_feed_removes_a_segment_only_after_its_last_chunk(tmp_path, mon
     def small_chunks(path):
         return real_read(path, 4)
 
-    def recording_remove(path):
+    def recording_remove(path) -> None:
         removed.append((os.path.basename(path), len(received)))
         real_remove(path)
 
-    def watching(chunks, dst_path, **_wait):
+    def watching(chunks, dst_path, **_wait) -> None:
         for chunk in chunks:
             received.append(os.path.exists(segs[chunk[0] - 1]))
 
@@ -489,7 +496,9 @@ def test_streamed_feed_removes_a_segment_only_after_its_last_chunk(tmp_path, mon
     assert not any(os.path.exists(s) for s in segs)
 
 
-def test_streamed_failure_midway_leaves_only_the_segments_not_yet_fed(tmp_path, monkeypatch):
+def test_streamed_failure_midway_leaves_only_the_segments_not_yet_fed(
+    tmp_path, monkeypatch
+) -> None:
     """remux가 도중에 실패하면 이미 넘긴 세그먼트는 없고 넘기지 않은 세그먼트만 남아야 한다 (#309).
 
     세그먼트 3개. 대역 remux가 조각 둘을 받은 뒤 RemuxError
@@ -504,7 +513,7 @@ def test_streamed_failure_midway_leaves_only_the_segments_not_yet_fed(tmp_path, 
         p.write_bytes(bytes([i + 1]) * 10)
         segs.append(str(p))
 
-    def fails_after_two(chunks, dst_path, **_wait):
+    def fails_after_two(chunks, dst_path, **_wait) -> Never:
         feed = iter(chunks)
         next(feed)
         next(feed)
@@ -519,7 +528,7 @@ def test_streamed_failure_midway_leaves_only_the_segments_not_yet_fed(tmp_path, 
     assert fake.errors
 
 
-def test_streamed_feed_goes_on_when_a_fed_segment_cannot_be_removed(tmp_path, monkeypatch):
+def test_streamed_feed_goes_on_when_a_fed_segment_cannot_be_removed(tmp_path, monkeypatch) -> None:
     """넘긴 세그먼트를 지우지 못해도 후처리는 끝까지 가야 한다 — 산출물은 그대로다.
 
     세그먼트 3개, os.remove가 늘 OSError -> 산출물 == 세 세그먼트를 이은 것, merged_segments == 3
@@ -531,12 +540,12 @@ def test_streamed_feed_goes_on_when_a_fed_segment_cannot_be_removed(tmp_path, mo
         p.write_bytes(bytes([i + 1]) * 10)
         segs.append(str(p))
 
-    def passthrough(chunks, dst_path, **_wait):
+    def passthrough(chunks, dst_path, **_wait) -> None:
         with open(dst_path, "wb") as f:
             for chunk in chunks:
                 f.write(chunk)
 
-    def locked(path):
+    def locked(path) -> Never:
         raise OSError("시험")
 
     monkeypatch.setattr(base_module, "remux_stream", passthrough)
@@ -570,7 +579,7 @@ def _run_streamed_in_thread(fake, paths):
     """_remux_streamed를 스레드로 실행하고 (스레드, 예외 수집 리스트)를 반환한다."""
     raised: list[BaseException] = []
 
-    def target():
+    def target() -> None:
         try:
             BaseDownloader._remux_streamed(fake, paths)
         except BaseException as e:  # noqa: BLE001 — 검증용 수집
@@ -581,7 +590,7 @@ def _run_streamed_in_thread(fake, paths):
     return thread, raised
 
 
-def test_pause_blocks_feed_then_resume_completes(tmp_path):
+def test_pause_blocks_feed_then_resume_completes(tmp_path) -> None:
     """일시정지면 ffmpeg가 stdin을 기다리며 멈추고, 재개하면 완주한다 (#92)."""
     src = tmp_path / "src.mp4"
     _make_tiny_fmp4(src)
@@ -611,7 +620,7 @@ def test_pause_blocks_feed_then_resume_completes(tmp_path):
     assert fake.s.merged_segments == len(paths)
 
 
-def test_stop_while_paused_kills_ffmpeg_and_leaves_no_output(tmp_path):
+def test_stop_while_paused_kills_ffmpeg_and_leaves_no_output(tmp_path) -> None:
     """아무것도 넘기기 전의 stdin 대기 상태에서 중단하면 산출물 없이 조용히 끝나고 세그먼트는 남는다 (#92).
 
     중단 시 세그먼트·임시 폴더 삭제는 엔진(run)의 중단 정리 몫이다. _remux_streamed는
@@ -670,7 +679,7 @@ def _strip_sdt(src_path, dst_path) -> None:
     open(dst_path, "wb").write(bytes(kept))
 
 
-def test_gconv_guard_applied_for_bundled_on_linux(monkeypatch):
+def test_gconv_guard_applied_for_bundled_on_linux(monkeypatch) -> None:
     """리눅스+동봉본 조합에서만 GCONV_PATH 가드가 적용된다 — 빈 디렉토리·전역 불변."""
     monkeypatch.setattr(ffmpeg_module, "_IS_LINUX", True)
     env = ffmpeg_module._subprocess_env(_explicit_bundled_exe())
@@ -681,19 +690,19 @@ def test_gconv_guard_applied_for_bundled_on_linux(monkeypatch):
     assert "GCONV_PATH" not in os.environ  # 프로세스 전역은 건드리지 않는다
 
 
-def test_gconv_guard_not_applied_for_system_exe(monkeypatch):
+def test_gconv_guard_not_applied_for_system_exe(monkeypatch) -> None:
     """시스템 ffmpeg(동적 glibc — 자기 배포판과 호환)에는 가드를 적용하지 않는다."""
     monkeypatch.setattr(ffmpeg_module, "_IS_LINUX", True)
     assert ffmpeg_module._subprocess_env("/usr/bin/ffmpeg") is None
 
 
-def test_gconv_guard_not_applied_off_linux(monkeypatch):
+def test_gconv_guard_not_applied_off_linux(monkeypatch) -> None:
     """리눅스가 아니면 동봉본이어도 가드를 적용하지 않는다 (Windows·macOS 무영향)."""
     monkeypatch.setattr(ffmpeg_module, "_IS_LINUX", False)
     assert ffmpeg_module._subprocess_env(_explicit_bundled_exe()) is None
 
 
-def test_remux_stream_passes_guard_env_to_subprocess(tmp_path, monkeypatch):
+def test_remux_stream_passes_guard_env_to_subprocess(tmp_path, monkeypatch) -> None:
     """remux_stream은 _subprocess_env가 준 환경을 그대로 서브프로세스에 전달한다."""
     import io
 
@@ -701,15 +710,15 @@ def test_remux_stream_passes_guard_env_to_subprocess(tmp_path, monkeypatch):
     captured = {}
 
     class _FakePopen:
-        def __init__(self, cmd, **kwargs):
+        def __init__(self, cmd, **kwargs) -> None:
             captured.update(kwargs)
             self.stdin = io.BytesIO()
             self.stderr = io.BytesIO(b"")
 
-        def wait(self):
+        def wait(self) -> int:
             return 0
 
-        def kill(self):
+        def kill(self) -> None:
             pass
 
     monkeypatch.setattr(ffmpeg_module, "_subprocess_env", lambda exe: sentinel_env)
@@ -723,7 +732,7 @@ def test_remux_stream_passes_guard_env_to_subprocess(tmp_path, monkeypatch):
 # ================ CI(리눅스) 전용 — 동봉본 명시 지정 실검증 (#97 완료 조건)
 
 
-def test_bundled_ts_remux_succeeds_with_guard(tmp_path, monkeypatch):
+def test_bundled_ts_remux_succeeds_with_guard(tmp_path, monkeypatch) -> None:
     """최신 배포판(CI)에서 동봉본만으로 TS remux가 성공한다 — #97의 목적 그 자체.
 
     가드 도입 전에는 이 remux가 SIGSEGV였다(#94). 동봉본을 명시 지정해
@@ -745,7 +754,7 @@ def test_bundled_ts_remux_succeeds_with_guard(tmp_path, monkeypatch):
     assert "moov" in boxes and "mdat" in boxes  # 정상 remux 완주 (moov 위치는 #108)
 
 
-def test_guard_output_is_byte_identical(tmp_path, monkeypatch):
+def test_guard_output_is_byte_identical(tmp_path, monkeypatch) -> None:
     """가드 적용 전후 산출물이 바이트 단위로 동일하다 — A/V 무영향 입증 (#97).
 
     양쪽 다 성공하는 입력(fMP4, SDT 제거 TS)으로 비교한다 — SDT 포함 TS는
@@ -806,7 +815,7 @@ def _join_args(work, dst) -> list[str]:
     ]  # fmt: skip
 
 
-def test_remux_through_makes_the_same_video_as_remuxing_directly(tmp_path):
+def test_remux_through_makes_the_same_video_as_remuxing_directly(tmp_path) -> None:
     """변환 ffmpeg를 거쳐 이은 mp4의 영상 패킷은 바로 재포장한 mp4의 것과 같아야 한다.
 
     1초짜리 fMP4를 세 조각으로 나눠 공급. 변환: 영상만 조각난 mp4로 / 잇기: concat의 pipe:0
@@ -829,7 +838,7 @@ def test_remux_through_makes_the_same_video_as_remuxing_directly(tmp_path):
     _assert_fully_decodes(through)
 
 
-def test_remux_through_fails_and_leaves_no_output_when_the_input_is_not_media(tmp_path):
+def test_remux_through_fails_and_leaves_no_output_when_the_input_is_not_media(tmp_path) -> None:
     """변환 ffmpeg가 읽지 못하는 입력이면 RemuxError로 끝나고 산출물이 남지 않아야 한다.
 
     공급: 미디어가 아닌 바이트 4096개 -> RemuxError, 산출물 없음
@@ -850,7 +859,7 @@ def test_remux_through_fails_and_leaves_no_output_when_the_input_is_not_media(tm
 
 def test_remux_through_ends_both_processes_and_cleans_up_when_the_feed_raises(
     tmp_path, monkeypatch
-):
+) -> None:
     """공급이 예외를 던지면 두 ffmpeg를 모두 끝내고 산출물을 지운 뒤 그 예외를 그대로 올려야 한다.
 
     공급: 첫 조각을 낸 뒤 RuntimeError -> 같은 RuntimeError, 띄운 프로세스 2개가 모두 끝났다, 산출물 없음
@@ -883,7 +892,7 @@ def test_remux_through_ends_both_processes_and_cleans_up_when_the_feed_raises(
     assert not out.exists()
 
 
-def test_remux_through_fails_when_only_the_join_side_fails(tmp_path):
+def test_remux_through_fails_when_only_the_join_side_fails(tmp_path) -> None:
     """잇는 ffmpeg만 실패해도(없는 목록 파일) RemuxError로 끝나야 한다.
 
     잇기의 입력 목록이 없는 파일 -> RemuxError, 산출물 없음
@@ -920,7 +929,9 @@ _REMUXERS = pytest.mark.parametrize(
 
 
 @_REMUXERS
-def test_feed_left_midway_because_ffmpeg_ended_is_closed_with_the_file_it_opened(tmp_path, remux):
+def test_feed_left_midway_because_ffmpeg_ended_is_closed_with_the_file_it_opened(
+    tmp_path, remux
+) -> None:
     """ffmpeg가 먼저 끝나 공급이 중간에 멈추면, 실패가 올라간 뒤 공급 제너레이터와 그것이 연 파일이 닫혀 있어야 한다 (#389).
 
     공급: 미디어가 아닌 파일 하나를 연 채 그 내용을 끝없이 내는 제너레이터
@@ -950,7 +961,7 @@ def test_feed_left_midway_because_ffmpeg_ended_is_closed_with_the_file_it_opened
 
 def test_segment_feed_left_midway_closes_the_reader_of_every_segment_it_opened(
     tmp_path, monkeypatch
-):
+) -> None:
     """구간 컷의 공급(fmp4_cut._feed)이 중간에 멈추면 세그먼트마다 연 읽기 제너레이터가 모두 닫혀 있어야 한다 (#389).
 
     공급: 미디어가 아닌 약 64KB 파일 200개를 _feed로 잇는다. 변환 ffmpeg는 그것을 읽지 못하고 끝난다
@@ -993,7 +1004,7 @@ def test_segment_feed_left_midway_closes_the_reader_of_every_segment_it_opened(
 @_REMUXERS
 def test_output_that_cannot_be_removed_does_not_replace_the_remux_failure(
     tmp_path, monkeypatch, remux
-):
+) -> None:
     """실패한 산출물을 지울 수 없어도 재포장의 실패(RemuxError)가 그대로 올라가야 한다 (#389).
 
     출력 경로에 파일이 있고 그 os.remove가 PermissionError. 공급: 미디어가 아닌 바이트
@@ -1041,7 +1052,7 @@ def _fake_pair(monkeypatch, dst, convert_code: int, join_code: int) -> None:
     monkeypatch.setattr(ffmpeg_module.subprocess, "Popen", fake)
 
 
-def test_remux_through_with_both_sides_succeeding_keeps_the_output(tmp_path, monkeypatch):
+def test_remux_through_with_both_sides_succeeding_keeps_the_output(tmp_path, monkeypatch) -> None:
     """두 프로세스가 모두 0으로 끝나면 예외 없이 산출물이 남아야 한다 — 아래 두 테스트의 대조군이다.
 
     변환 대역 0 · 잇기 대역 0 -> 예외 없음, 산출물이 있다
@@ -1056,7 +1067,7 @@ def test_remux_through_with_both_sides_succeeding_keeps_the_output(tmp_path, mon
 
 def test_remux_through_removes_the_output_the_join_side_made_when_the_convert_side_fails(
     tmp_path, monkeypatch
-):
+) -> None:
     """잇는 쪽이 산출물을 만든 뒤에 변환 쪽이 실패하면 RemuxError로 끝나고 그 산출물이 지워져야 한다.
 
     변환 대역 1 · 잇기 대역 0(산출물을 만들고 입력을 끝까지 읽는다)
@@ -1074,7 +1085,7 @@ def test_remux_through_removes_the_output_the_join_side_made_when_the_convert_si
 
 def test_remux_through_fails_when_the_join_side_fails_after_the_convert_side_ended_well(
     tmp_path, monkeypatch
-):
+) -> None:
     """변환 쪽이 다 넘기고 0으로 끝났어도 잇는 쪽이 실패하면 RemuxError로 끝나고 산출물이 지워져야 한다.
 
     잇는 쪽만 실패하는 경우가 있다 — 입력을 다 받은 뒤 파일의 끝부분을 쓰다 디스크가 모자란 때.
@@ -1093,7 +1104,7 @@ def test_remux_through_fails_when_the_join_side_fails_after_the_convert_side_end
 
 def test_remux_through_returns_the_warnings_of_the_join_side_and_asks_it_for_them(
     tmp_path, monkeypatch
-):
+) -> None:
     """remux_through는 잇는 ffmpeg를 경고까지 내게 띄우고, 그것이 stderr에 쓴 글을 돌려줘야 한다.
 
     변환 대역 0 · 잇기 대역 0, 잇기 대역이 stderr에 "DTS mark"를 쓴다
@@ -1162,7 +1173,7 @@ def _lingering_pair(monkeypatch, dst, linger: float) -> dict:
 
 def test_remux_through_stops_waiting_when_asked_to_stop_after_the_input_ended(
     tmp_path, monkeypatch
-):
+) -> None:
     """입력을 다 넣은 뒤 두 ffmpeg를 기다리는 동안 멈추라고 하면 둘을 끝내고 산출물을 지워야 한다.
 
     잇기 대역이 입력을 다 읽은 뒤 8초 더 돈다. should_stop이 늘 참
@@ -1183,7 +1194,7 @@ def test_remux_through_stops_waiting_when_asked_to_stop_after_the_input_ended(
 
 def test_remux_through_gives_up_when_the_processes_outlive_the_timeout_after_the_input_ended(
     tmp_path, monkeypatch
-):
+) -> None:
     """입력을 다 넣은 뒤 두 ffmpeg가 제한 시간 안에 끝나지 않으면 둘을 끝내고 산출물을 지워야 한다.
 
     잇기 대역이 입력을 다 읽은 뒤 8초 더 돈다. timeout 0.5초
@@ -1202,7 +1213,7 @@ def test_remux_through_gives_up_when_the_processes_outlive_the_timeout_after_the
 
 def test_remux_through_holds_the_processes_while_paused_and_does_not_count_that_time(
     tmp_path, monkeypatch
-):
+) -> None:
     """기다리는 동안 일시정지면 두 ffmpeg가 서 있어야 하고, 서 있던 시간은 제한 시간에 세지 않아야 한다.
 
     잇기 대역이 입력을 다 읽은 뒤 1초 더 돈다. 변환 대역이 끝난 것을 본 때부터 2초 동안
@@ -1254,7 +1265,9 @@ def _lingering_one(monkeypatch, linger: float) -> list:
     return started
 
 
-def test_remux_stream_stops_waiting_when_asked_to_stop_after_the_input_ended(tmp_path, monkeypatch):
+def test_remux_stream_stops_waiting_when_asked_to_stop_after_the_input_ended(
+    tmp_path, monkeypatch
+) -> None:
     """입력을 다 넣은 뒤 ffmpeg를 기다리는 동안 멈추라고 하면 끝내고 산출물을 지워야 한다.
 
     대역이 입력을 다 읽은 뒤 8초 더 돈다. should_stop이 늘 참
@@ -1272,7 +1285,7 @@ def test_remux_stream_stops_waiting_when_asked_to_stop_after_the_input_ended(tmp
 
 def test_remux_stream_gives_up_when_ffmpeg_outlives_the_timeout_after_the_input_ended(
     tmp_path, monkeypatch
-):
+) -> None:
     """입력을 다 넣은 뒤 ffmpeg가 제한 시간 안에 끝나지 않으면 끝내고 산출물을 지워야 한다.
 
     대역이 입력을 다 읽은 뒤 8초 더 돈다. timeout 0.5초
@@ -1288,7 +1301,9 @@ def test_remux_stream_gives_up_when_ffmpeg_outlives_the_timeout_after_the_input_
     assert not out.exists()
 
 
-def test_remux_stream_holds_ffmpeg_while_paused_and_does_not_count_that_time(tmp_path, monkeypatch):
+def test_remux_stream_holds_ffmpeg_while_paused_and_does_not_count_that_time(
+    tmp_path, monkeypatch
+) -> None:
     """기다리는 동안 일시정지면 ffmpeg가 서 있어야 하고, 서 있던 시간은 제한 시간에 세지 않아야 한다.
 
     대역이 입력을 다 읽은 뒤 1초 더 돈다. should_pause가 처음 불린 뒤 2초 동안 참, timeout 1.5초
@@ -1313,7 +1328,7 @@ def test_remux_stream_holds_ffmpeg_while_paused_and_does_not_count_that_time(tmp
 
 def test_streamed_remux_waits_under_the_stop_pause_and_time_limit_of_the_download(
     tmp_path, monkeypatch
-):
+) -> None:
     """구간 없는 후처리는 remux에 한 시간의 제한 시간과 다운로드의 중단 · 일시정지 확인을 넘겨야 한다.
 
     세그먼트 하나. 대역 remux가 받은 인자로 상태를 RUNNING · PAUSED · WAITING으로 바꿔 가며 물어봄
@@ -1325,7 +1340,7 @@ def test_streamed_remux_waits_under_the_stop_pause_and_time_limit_of_the_downloa
     segment.write_bytes(b"seg-bytes")
     seen = {}
 
-    def asking(chunks, dst_path, **wait):
+    def asking(chunks, dst_path, **wait) -> None:
         for _chunk in chunks:
             pass
         seen["timeout"] = wait["timeout"]
@@ -1346,7 +1361,7 @@ def test_streamed_remux_waits_under_the_stop_pause_and_time_limit_of_the_downloa
     }
 
 
-def test_streamed_remux_stopped_while_waiting_ends_without_a_failure(tmp_path, monkeypatch):
+def test_streamed_remux_stopped_while_waiting_ends_without_a_failure(tmp_path, monkeypatch) -> None:
     """remux가 기다리다 중단 요청으로 끝났으면 구간 없는 후처리는 실패가 아니라 중단으로 끝나야 한다.
 
     세그먼트 하나. 대역 remux가 FFmpegCancelledError를 냄 -> 예외 없이 돌아온다, 오류 로그 없음
@@ -1355,7 +1370,7 @@ def test_streamed_remux_stopped_while_waiting_ends_without_a_failure(tmp_path, m
     segment = tmp_path / "0000.ts"
     segment.write_bytes(b"seg-bytes")
 
-    def cancelled(chunks, dst_path, **_wait):
+    def cancelled(chunks, dst_path, **_wait) -> Never:
         raise ffmpeg_module.FFmpegCancelledError("stopped")
 
     monkeypatch.setattr(base_module, "remux_stream", cancelled)
@@ -1368,7 +1383,7 @@ def test_streamed_remux_stopped_while_waiting_ends_without_a_failure(tmp_path, m
 # ============ 오류 글의 꼬리 (#397)
 
 
-def test_error_tail_that_would_start_mid_line_starts_at_the_head_of_that_line():
+def test_error_tail_that_would_start_mid_line_starts_at_the_head_of_that_line() -> None:
     """끝 limit 글자가 줄 중간에서 시작하면 꼬리는 그 줄의 머리에서 시작하고 글자 수 꼬리를 다 담아야 한다 (#397).
 
     "first line\\nsecond line\\nthird", limit=10 (글자 수 꼬리 "line\\nthird")
@@ -1382,7 +1397,7 @@ def test_error_tail_that_would_start_mid_line_starts_at_the_head_of_that_line():
     assert tail.endswith(text[-10:])
 
 
-def test_error_tail_that_starts_at_a_line_head_is_the_character_tail():
+def test_error_tail_that_starts_at_a_line_head_is_the_character_tail() -> None:
     """끝 limit 글자가 줄 머리에서 시작하면 꼬리는 글자 수 꼬리 그대로여야 한다 (#397).
 
     "first line\\nthird", limit=5
@@ -1391,7 +1406,7 @@ def test_error_tail_that_starts_at_a_line_head_is_the_character_tail():
     assert ffmpeg_module.error_tail("first line\nthird", 5) == "third"
 
 
-def test_error_tail_treats_a_carriage_return_as_a_line_break():
+def test_error_tail_treats_a_carriage_return_as_a_line_break() -> None:
     """줄 바꿈이 \\r뿐인 글(ffmpeg의 진행 줄)에서도 줄 머리에서 시작해야 한다 (#397).
 
     "progress 1\\rframe 22 end", limit=6 (글자 수 꼬리 "22 end", \\r 다음 줄 머리는 6글자 앞)
@@ -1400,7 +1415,7 @@ def test_error_tail_treats_a_carriage_return_as_a_line_break():
     assert ffmpeg_module.error_tail("progress 1\rframe 22 end", 6) == "frame 22 end"
 
 
-def test_error_tail_of_a_short_text_is_the_whole_stripped_text():
+def test_error_tail_of_a_short_text_is_the_whole_stripped_text() -> None:
     """글이 limit보다 짧으면 앞뒤 공백을 걷은 글 전체여야 한다 (#397).
 
     "  short\\n", limit=500
@@ -1409,7 +1424,9 @@ def test_error_tail_of_a_short_text_is_the_whole_stripped_text():
     assert ffmpeg_module.error_tail("  short\n", 500) == "short"
 
 
-def test_error_tail_of_one_word_longer_than_limit_from_its_line_head_is_the_character_tail():
+def test_error_tail_of_one_word_longer_than_limit_from_its_line_head_is_the_character_tail() -> (
+    None
+):
     """줄 머리가 limit보다 멀고 그 줄이 끝까지 한 낱말이면 글자 수 꼬리여야 한다 (#397).
 
     "head\\n" + "a" * 30 + "end", limit=10 (줄 머리가 꼬리 시작에서 23글자 앞, 공백 없음)
@@ -1420,7 +1437,7 @@ def test_error_tail_of_one_word_longer_than_limit_from_its_line_head_is_the_char
     assert ffmpeg_module.error_tail(text, 10) == text[-10:]
 
 
-def test_error_tail_in_a_long_line_starts_at_the_head_of_the_word_it_would_cut():
+def test_error_tail_in_a_long_line_starts_at_the_head_of_the_word_it_would_cut() -> None:
     """줄 머리가 limit보다 멀면 자른 자리가 든 낱말의 머리(앞 공백 다음)에서 시작해야 한다 (#397).
 
     "w " * 20 + "C:/aa/bbbb/c.mp4 end", limit=12 (글자 수 꼬리 "bb/c.mp4 end", 낱말 머리는 8글자 앞)
@@ -1431,7 +1448,7 @@ def test_error_tail_in_a_long_line_starts_at_the_head_of_the_word_it_would_cut()
     )
 
 
-def test_error_tail_in_a_long_line_drops_the_rest_of_a_word_whose_head_is_too_far():
+def test_error_tail_in_a_long_line_drops_the_rest_of_a_word_whose_head_is_too_far() -> None:
     """줄 머리도 낱말 머리도 limit보다 멀면 자른 자리가 든 낱말의 남은 부분을 버려야 한다 (#397).
 
     "w " * 20 + "C:/" + "a" * 30 + "/b.mp4 end tail", limit=12 (낱말 머리가 꼬리 시작에서 36글자 앞)
@@ -1455,7 +1472,7 @@ def test_error_tail_in_a_long_line_drops_the_rest_of_a_word_whose_head_is_too_fa
 )
 def test_error_head_that_would_end_inside_a_piece_ends_at_the_end_of_that_piece(
     text, limit, expected
-):
+) -> None:
     """앞 limit 글자가 경로 조각 안에서 끝나면 그 조각의 끝(공백 · 경로 구분자 · 글 끝)까지 늘려야 한다 (#397).
 
     글, limit -> expected
@@ -1471,7 +1488,7 @@ def test_error_head_that_would_end_inside_a_piece_ends_at_the_end_of_that_piece(
         ("short", 50, "short"),  # limit보다 짧다
     ],
 )
-def test_error_head_on_a_piece_boundary_is_the_character_head(text, limit, expected):
+def test_error_head_on_a_piece_boundary_is_the_character_head(text, limit, expected) -> None:
     """자른 자리가 조각 경계이거나 글이 limit보다 짧으면 앞 limit 글자 그대로여야 한다 (#397).
 
     글, limit -> expected
@@ -1479,7 +1496,7 @@ def test_error_head_on_a_piece_boundary_is_the_character_head(text, limit, expec
     assert ffmpeg_module.error_head(text, limit) == expected
 
 
-def test_error_head_whose_piece_end_is_farther_than_limit_ends_before_that_piece():
+def test_error_head_whose_piece_end_is_farther_than_limit_ends_before_that_piece() -> None:
     """조각 끝이 limit보다 멀면 그 조각 앞에서 잘라야 한다 (#397).
 
     "open " + "a" * 30, limit=10 (조각 끝이 자른 자리에서 25글자 뒤)
@@ -1488,7 +1505,7 @@ def test_error_head_whose_piece_end_is_farther_than_limit_ends_before_that_piece
     assert ffmpeg_module.error_head("open " + "a" * 30, 10) == "open"
 
 
-def test_error_head_of_one_long_piece_is_the_character_head():
+def test_error_head_of_one_long_piece_is_the_character_head() -> None:
     """글 전체가 limit보다 긴 한 조각이면 앞 limit 글자여야 한다 (#397).
 
     "a" * 30, limit=10 -> "a" * 10

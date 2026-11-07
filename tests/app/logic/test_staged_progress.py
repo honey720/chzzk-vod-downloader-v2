@@ -7,7 +7,7 @@ from app.viewmodels.staged_progress import StagedProgress
 STAGES = ("transfer", "cut")
 
 
-def test_bar_rises_by_the_work_done_measured_in_expected_seconds():
+def test_bar_rises_by_the_work_done_measured_in_expected_seconds() -> None:
     """막대는 (100 − 지금 값) × 이번에 한 일 ÷ 남은 일만큼 올라야 한다.
 
     받기 예상 80초 · 컷 예상 20초. 받기 0.5 → 받기 1 → 컷 0.5 → 컷 1
@@ -26,7 +26,7 @@ def test_bar_rises_by_the_work_done_measured_in_expected_seconds():
     assert seen == [40, 80, 90, 100]
 
 
-def test_bar_stands_still_when_no_work_was_done():
+def test_bar_stands_still_when_no_work_was_done() -> None:
     """한 일이 그대로인 통지는 예상 시간이 바뀌어도 막대를 움직이지 않아야 한다.
 
     받기 예상 80초 · 컷 20초에서 받기 0.5(40) → 같은 일로 받기 예상 40 · 160 · 80초인 통지 셋
@@ -41,7 +41,7 @@ def test_bar_stands_still_when_no_work_was_done():
     assert seen == [40, 40, 40, 40]
 
 
-def test_work_that_goes_back_is_taken_as_the_work_seen_before():
+def test_work_that_goes_back_is_taken_as_the_work_seen_before() -> None:
     """앞서 받은 것보다 작은 한 일이 와도 막대는 내려가지 않고, 그 뒤의 일은 앞서 받은 값부터 센다.
 
     받기 예상 80초 · 컷 20초. 받기 0.5 → 0.2 → 0.75
@@ -56,7 +56,7 @@ def test_work_that_goes_back_is_taken_as_the_work_seen_before():
 
 
 @pytest.mark.parametrize("cut_seconds", [20.0, 60.0, 180.0, 1.0])
-def test_last_stage_alone_fills_what_is_left_by_its_work_whatever_its_estimate(cut_seconds):
+def test_last_stage_alone_fills_what_is_left_by_its_work_whatever_its_estimate(cut_seconds) -> None:
     """남은 단계가 하나면 그 단계의 예상 시간이 얼마든 그 단계의 한 일만큼 남은 몫을 채워야 한다.
 
     받기 예상 80초 · 컷 예상 20초로 받기를 끝냄(80). 그 뒤 컷 예상을 20 · 60 · 180 · 1초로 바꾸고
@@ -74,7 +74,7 @@ def test_last_stage_alone_fills_what_is_left_by_its_work_whatever_its_estimate(c
     assert seen == [85, 90, 95, 100]
 
 
-def test_bar_shows_100_only_when_every_stage_is_done():
+def test_bar_shows_100_only_when_every_stage_is_done() -> None:
     """막대는 모든 단계의 일이 끝났을 때만 100이고, 그 전에는 거의 다 해도 99여야 한다.
 
     받기 예상 1초 · 컷 예상 1000초. 컷만 1 · 받기 0.9999 → 받기 1
@@ -89,7 +89,7 @@ def test_bar_shows_100_only_when_every_stage_is_done():
     assert (almost, done) == (99, 100)
 
 
-def test_stage_without_an_estimate_takes_no_share_of_the_bar():
+def test_stage_without_an_estimate_takes_no_share_of_the_bar() -> None:
     """예상 시간이 0인 단계(받을 것이 없는 받기)는 몫이 없어, 다른 단계의 일만으로 0에서 100까지 차야 한다.
 
     받기 예상 0초(받기는 처음부터 1) · 컷 예상 20초. 받기 1 → 컷 0.5 → 컷 1
@@ -107,7 +107,7 @@ def test_stage_without_an_estimate_takes_no_share_of_the_bar():
     assert seen == [0, 50, 100]
 
 
-def test_changed_estimate_changes_only_the_slope_from_then_on():
+def test_changed_estimate_changes_only_the_slope_from_then_on() -> None:
     """두 단계가 남은 동안 예상이 바뀌어도 막대는 뛰거나 줄지 않고, 그때부터의 기울기만 바뀌어야 한다.
 
     컷 예상 20초. 받기 예상 80초로 받기 0.5(40) → 받기 예상이 120초로 늘고 받기 0.75
@@ -121,7 +121,7 @@ def test_changed_estimate_changes_only_the_slope_from_then_on():
     assert (first, second) == (40, 62)
 
 
-def test_stage_names_must_not_repeat():
+def test_stage_names_must_not_repeat() -> None:
     """같은 단계 이름을 두 번 주면 계산기를 만들지 않아야 한다."""
     with pytest.raises(ValueError):
         StagedProgress(("transfer", "transfer"))

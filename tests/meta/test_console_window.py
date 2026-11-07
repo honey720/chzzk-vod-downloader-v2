@@ -25,7 +25,7 @@ _REPORT_CONSOLE = (
 _INTERPRETER = getattr(sys, "_base_executable", sys.executable)
 
 
-def test_call_without_creationflags_gets_the_hidden_window_flag():
+def test_call_without_creationflags_gets_the_hidden_window_flag() -> None:
     """creationflags 없이 부르면 CREATE_NO_WINDOW가 더해져야 한다 (#399).
 
     args=(["x"],), kwargs={"stdout": PIPE} -> kwargs에 creationflags=0x08000000, 나머지는 그대로
@@ -36,7 +36,7 @@ def test_call_without_creationflags_gets_the_hidden_window_flag():
 
 
 @pytest.mark.parametrize("flags", [0, 0x00000200])  # 0 · CREATE_NEW_PROCESS_GROUP
-def test_call_with_creationflags_keeps_them(flags):
+def test_call_with_creationflags_keeps_them(flags) -> None:
     """creationflags를 키워드로 직접 주면 0이어도 그 값 그대로여야 한다 (#399).
 
     kwargs={"creationflags": flags} -> 같은 kwargs
@@ -44,7 +44,7 @@ def test_call_with_creationflags_keeps_them(flags):
     assert with_hidden_window((["x"],), {"creationflags": flags}) == {"creationflags": flags}
 
 
-def test_call_with_creationflags_given_by_position_keeps_them():
+def test_call_with_creationflags_given_by_position_keeps_them() -> None:
     """creationflags를 위치 인자(14번째)로 주면 키워드를 더하지 않아야 한다 (#399).
 
     args 14개(마지막이 creationflags=0) -> kwargs 그대로(빈 dict)
@@ -57,12 +57,12 @@ def test_call_with_creationflags_given_by_position_keeps_them():
 class _RecordingPopen:
     """받은 인자를 적는 Popen 대역."""
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         self.args, self.kwargs = args, kwargs
 
 
 @pytest.mark.parametrize("platform", ["linux", "darwin"])
-def test_install_changes_nothing_outside_windows(platform):
+def test_install_changes_nothing_outside_windows(platform) -> None:
     """Windows가 아니면 install이 Popen을 바꾸지 않아야 한다 (#399).
 
     Popen이 대역인 모듈, platform -> False, Popen은 같은 객체
@@ -73,7 +73,7 @@ def test_install_changes_nothing_outside_windows(platform):
     assert module.Popen is _RecordingPopen
 
 
-def test_install_on_windows_wraps_popen_once_and_passes_the_flags_through():
+def test_install_on_windows_wraps_popen_once_and_passes_the_flags_through() -> None:
     """Windows면 Popen을 한 번만 감싸고, 감싼 Popen이 기본 플래그 · 직접 준 플래그를 원래 Popen에 넘겨야 한다 (#399).
 
     Popen이 대역인 모듈에 install을 두 번 -> True · False. 감싼 Popen(["a"]) · Popen(["b"], creationflags=0)
@@ -92,7 +92,7 @@ def test_install_on_windows_wraps_popen_once_and_passes_the_flags_through():
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows의 콘솔 창")
-def test_child_started_by_a_test_without_flags_gets_a_console_without_a_window():
+def test_child_started_by_a_test_without_flags_gets_a_console_without_a_window() -> None:
     """테스트가 플래그 없이 띄운 자식 프로세스는 창 없는 자기 콘솔을 받아야 한다 — conftest가 건 Popen (#399).
 
     subprocess.run([인터프리터, -c, 콘솔 보고])를 creationflags 없이 부름

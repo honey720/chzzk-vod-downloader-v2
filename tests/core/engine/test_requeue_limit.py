@@ -27,45 +27,45 @@ CHUNK = 8192
 class RecordingLogger:
     """DownloadLogger 호환 가짜 로거 — 실제 파일을 만들지 않고 호출만 기록한다."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.warnings: list[str] = []
         self.errors: list[str] = []
         self.thread_completes: list[tuple] = []
 
-    def log_thread_adjust(self, active_threads, avg_speed):
+    def log_thread_adjust(self, active_threads, avg_speed) -> None:
         pass
 
-    def log_thread_debug(self, active_threads, download_speed, avg_speed):
+    def log_thread_debug(self, active_threads, download_speed, avg_speed) -> None:
         pass
 
-    def log_thread_start(self, thread_id, start, end):
+    def log_thread_start(self, thread_id, start, end) -> None:
         pass
 
-    def log_m3u8_thread_start(self, thread_id, segment):
+    def log_m3u8_thread_start(self, thread_id, segment) -> None:
         pass
 
-    def log_thread_complete(self, thread_id, downloaded_size):
+    def log_thread_complete(self, thread_id, downloaded_size) -> None:
         self.thread_completes.append((thread_id, downloaded_size))
 
-    def log_part_resume(self, part_num, offset, part_size):
+    def log_part_resume(self, part_num, offset, part_size) -> None:
         pass
 
-    def log_error(self, message, exception=None):
+    def log_error(self, message, exception=None) -> None:
         self.errors.append(message)
 
-    def warning(self, message):
+    def warning(self, message) -> None:
         self.warnings.append(message)
 
 
 class FakeResponse:
     """스트리밍 응답 흉내 — 지정한 청크 목록을 그대로 흘린다."""
 
-    def __init__(self, chunks, content_length: int | None = None):
+    def __init__(self, chunks, content_length: int | None = None) -> None:
         self._chunks = chunks
         if content_length is not None:
             self.headers = {"Content-Length": str(content_length)}
 
-    def raise_for_status(self):
+    def raise_for_status(self) -> None:
         pass
 
     def iter_content(self, chunk_size=8192):
@@ -75,7 +75,7 @@ class FakeResponse:
 class FakeSession:
     """get_thread_session() 대체 — 준비된 응답을 반환하거나 예외를 던진다."""
 
-    def __init__(self, response=None, exception=None):
+    def __init__(self, response=None, exception=None) -> None:
         self._response = response
         self._exception = exception
 
@@ -91,7 +91,7 @@ class TickingClock:
     받기 루프는 청크마다 시계를 두 번 읽는다(경과 시간 · 저속 판정).
     """
 
-    def __init__(self, step: float):
+    def __init__(self, step: float) -> None:
         self.now = 1_000_000.0
         self.step = step
 
@@ -103,7 +103,7 @@ class TickingClock:
 class FakeHttpResponse:
     """HTTPError에 실을 상태 코드만 가진 응답 흉내."""
 
-    def __init__(self, status_code: int):
+    def __init__(self, status_code: int) -> None:
         self.status_code = status_code
 
 
@@ -126,14 +126,14 @@ def _make_data(output_path: str) -> DownloadData:
 # ================================================================ 오류 분류
 
 
-def test_client_errors_are_permanent():
+def test_client_errors_are_permanent() -> None:
     """404·403 등 4xx(408·429 제외)는 재시도해도 결과가 같은 영구 오류다."""
     assert _is_permanent_error(_http_error(404))
     assert _is_permanent_error(_http_error(403))
     assert _is_permanent_error(_http_error(410))
 
 
-def test_retryable_statuses_and_transport_errors_are_transient():
+def test_retryable_statuses_and_transport_errors_are_transient() -> None:
     """408·429·5xx·연결/타임아웃 오류는 일시 오류로 분류한다."""
     assert not _is_permanent_error(_http_error(408))
     assert not _is_permanent_error(_http_error(429))
@@ -171,7 +171,7 @@ def _prepare_file_engine(tmp_path, monkeypatch, exception=None, chunks=None, clo
     return engine, data, logger, failures
 
 
-def test_permanent_error_fails_download_at_limit(tmp_path, monkeypatch):
+def test_permanent_error_fails_download_at_limit(tmp_path, monkeypatch) -> None:
     """완료 조건: 영구 오류(404)를 주입하면 상한(재큐 2회)에서 멈추고 실패로 끝난다."""
     error = _http_error(404)
     engine, data, logger, failures = _prepare_file_engine(tmp_path, monkeypatch, exception=error)
@@ -194,7 +194,7 @@ def test_permanent_error_fails_download_at_limit(tmp_path, monkeypatch):
     assert any("requeue limit" in m and "permanent" in m for m in logger.errors)
 
 
-def test_transient_error_gets_longer_allowance(tmp_path, monkeypatch):
+def test_transient_error_gets_longer_allowance(tmp_path, monkeypatch) -> None:
     """일시 오류(연결 끊김)는 재큐 10회까지 허용되고, 11회째에 실패로 끝난다."""
     error = requests.ConnectionError("boom")
     engine, data, logger, failures = _prepare_file_engine(tmp_path, monkeypatch, exception=error)
@@ -214,7 +214,7 @@ def test_transient_error_gets_longer_allowance(tmp_path, monkeypatch):
     assert any("requeue limit" in m and "transient" in m for m in logger.errors)
 
 
-def test_requeue_counts_are_per_item(tmp_path, monkeypatch):
+def test_requeue_counts_are_per_item(tmp_path, monkeypatch) -> None:
     """상한은 항목별이다 — 한 파트의 실패가 다른 파트의 허용 횟수를 깎지 않는다."""
     error = _http_error(404)
     engine, data, logger, failures = _prepare_file_engine(tmp_path, monkeypatch, exception=error)
@@ -251,7 +251,7 @@ def _prepare_m3u8_engine(tmp_path):
     return engine, data, logger, failures, mod
 
 
-def test_slow_requeues_are_unlimited_and_download_still_completes(tmp_path, monkeypatch):
+def test_slow_requeues_are_unlimited_and_download_still_completes(tmp_path, monkeypatch) -> None:
     """완료 조건: 저속 재큐가 양 상한(2·10회)을 넘게 반복돼도 실패하지 않고 완주한다."""
     engine, data, logger, failures, mod = _prepare_m3u8_engine(tmp_path)
 
@@ -284,7 +284,7 @@ def test_slow_requeues_are_unlimited_and_download_still_completes(tmp_path, monk
     assert failures == []
 
 
-def test_slow_requeues_do_not_consume_error_allowance(tmp_path, monkeypatch):
+def test_slow_requeues_do_not_consume_error_allowance(tmp_path, monkeypatch) -> None:
     """저속 재큐와 오류 재큐는 별도 계열이다 — 저속 반복 후에도 오류 허용 횟수는 그대로다."""
     engine, data, logger, failures, mod = _prepare_m3u8_engine(tmp_path)
 
@@ -305,7 +305,7 @@ def test_slow_requeues_do_not_consume_error_allowance(tmp_path, monkeypatch):
 # ================================================================ hls_aes 경로 배선
 
 
-def test_hls_aes_permanent_error_fails_at_limit(tmp_path, monkeypatch):
+def test_hls_aes_permanent_error_fails_at_limit(tmp_path, monkeypatch) -> None:
     """AES 경로도 같은 상한을 탄다 — 세그먼트 403(키·쿠키 만료류) 반복 시 실패로 끝난다."""
     import core.sources.hls_aes_downloader as mod
     from core.sources.hls_aes_downloader import HlsAesDownloader
@@ -341,7 +341,7 @@ def test_hls_aes_permanent_error_fails_at_limit(tmp_path, monkeypatch):
 # ================================================================ 실행 루프 재사용 초기화
 
 
-def test_error_counts_reset_between_runs(tmp_path, monkeypatch):
+def test_error_counts_reset_between_runs(tmp_path, monkeypatch) -> None:
     """엔진 재사용 시 run()이 카운터를 초기화한다 — 이전 실행의 실패가 이월되지 않는다."""
     engine, data, logger, failures = _prepare_file_engine(
         tmp_path, monkeypatch, exception=_http_error(404)

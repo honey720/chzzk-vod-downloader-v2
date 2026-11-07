@@ -47,7 +47,7 @@ class ChoiceMenu(QMenu):
     흐린 색으로 그린다.
     """
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setToolTipsVisible(True)
 
@@ -172,7 +172,7 @@ class DropButton(QToolButton):
     헤더바가 움직인다.
     """
 
-    def __init__(self, glyph: str = "", parent: QWidget | None = None):
+    def __init__(self, glyph: str = "", parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._glyph = glyph
         self._full = ""
@@ -275,7 +275,7 @@ class SaveLocationButton(DropButton):
 
     errorOccurred = Signal(str)
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__("folder", parent)
         self._locations: SaveLocations | None = None
         self.menuWidget = ChoiceMenu(self)
@@ -383,7 +383,7 @@ class SortButton(DropButton):
     기준 · 방향에만 ✓. 폭은 가장 긴 이름이 들어가는 고정 폭이다 — 고른 정렬과 무관하다(프로토 11k).
     """
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__("", parent)
         self._order = None
         self.menuWidget = ChoiceMenu(self)
@@ -439,7 +439,7 @@ class FilterChips(QWidget):
     (`CHIP_COUNT_RESERVE`)가 들어가는 고정 폭이다 — 숫자가 바뀌어도 줄이 움직이지 않는다.
     """
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._order = None
         self.chips: dict[str, QPushButton] = {}
@@ -526,7 +526,7 @@ class BusyButton(QPushButton):
     그릴 때마다 theme 토큰을 새로 읽는다(실행 중 테마 전환 #247).
     """
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._busy = False
         self._step = 0

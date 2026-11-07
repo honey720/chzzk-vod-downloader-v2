@@ -12,7 +12,7 @@ from core.media.dash import parse_dash_manifest
 class TestParseDashManifest:
     """parse_dash_manifest의 XML 파싱 결과 박제."""
 
-    def test_parses_sorts_and_skips_hls(self, load_mock_response):
+    def test_parses_sorts_and_skips_hls(self, load_mock_response) -> None:
         """해상도 오름차순 정렬, min(width, height) 계산, '/hls/' 항목 스킵을 고정한다."""
         sorted_reps, auto_resolution, auto_base_url = parse_dash_manifest(
             load_mock_response("dash_manifest.xml")
@@ -27,7 +27,7 @@ class TestParseDashManifest:
         assert auto_resolution == 1080
         assert auto_base_url == "https://vod-example.invalid/chzzk/video_1080p.mp4"
 
-    def test_skips_audio_only_representation(self, load_mock_response):
+    def test_skips_audio_only_representation(self, load_mock_response) -> None:
         """width/height 없는 오디오 전용 Representation은 건너뛰어야 한다 (#38).
 
         픽스처는 videoNo 14158884의 실제 매니페스트 박제본이다: video/mp4 3종(1080/720/144)
@@ -53,7 +53,7 @@ class TestParseDashManifest:
     )
     def test_sea_encrypted_manifest_returns_empty_without_crash(
         self, load_mock_response, fixture_name
-    ):
+    ) -> None:
         """AES(SEA) 암호화 매니페스트에서 크래시 없이 빈 결과를 반환해야 한다 (#55).
 
         픽스처는 멤버십 VOD 13714380·14283698의 실제 매니페스트 박제본이다(서명 REDACTED):
@@ -71,7 +71,7 @@ class TestParseDashManifest:
         assert auto_resolution is None
         assert auto_base_url is None
 
-    def test_portrait_single_representation(self, load_mock_response):
+    def test_portrait_single_representation(self, load_mock_response) -> None:
         """세로 영상(720x1280) 단일 항목: 해상도는 min(width, height)=720으로 계산된다."""
         sorted_reps, auto_resolution, auto_base_url = parse_dash_manifest(
             load_mock_response("dash_manifest_portrait.xml")
@@ -107,7 +107,7 @@ class TestSameHeightTracks:
     같은 높이 트랙 둘이 카드에 "1080p" pill 둘로 나타났다.
     """
 
-    def test_dash_keeps_the_higher_bandwidth_track_per_height(self):
+    def test_dash_keeps_the_higher_bandwidth_track_per_height(self) -> None:
         sorted_reps, auto_resolution, auto_base_url = parse_dash_manifest(_DUP_DASH)
         assert sorted_reps == [
             [720, "https://v.invalid/720.mp4"],
@@ -115,7 +115,7 @@ class TestSameHeightTracks:
         ], "같은 높이는 비트레이트가 높은 트랙 하나만 남아야 한다"
         assert (auto_resolution, auto_base_url) == (1080, "https://v.invalid/1080_high.mp4")
 
-    def test_sea_applies_the_same_rule(self):
+    def test_sea_applies_the_same_rule(self) -> None:
         from core.media.dash import parse_sea_manifest
 
         sorted_reps, auto_resolution, auto_base_url = parse_sea_manifest(_DUP_SEA)

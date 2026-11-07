@@ -24,7 +24,7 @@ _GIBIBYTE = 1024 * 1024 * 1024  # 여유 공간의 GB
 class FooterMonitor(QWidget):
     """하단바 왼쪽 모니터링 — 칸마다 라벨 하나, 툴팁은 「이름 · 값」(남은 시간은 글이 다 말해 없음)."""
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -92,7 +92,7 @@ class FooterMonitor(QWidget):
 class RunResultLabel(QLabel):
     """하단바의 실행 결과 글 — 「완료 N」, 실패가 있을 때만 「 · 실패 N」. 다운로드 버튼 바로 왼쪽."""
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("footerResult")
         self.setMinimumWidth(1)  # 글 길이가 창 최소폭을 올리지 않는다

@@ -127,7 +127,7 @@ class DownloadViewModel(QObject):
     # start()가 돌아간 뒤에 끝낸다(끝내는 통지가 다음 카드의 start()를 부른다)
     _nothingToReceive = Signal(object)
 
-    def __init__(self, content, service: DownloadService | None = None, parent=None):
+    def __init__(self, content, service: DownloadService | None = None, parent=None) -> None:
         """content: 다운로드 이벤트를 반영할 상대 — update_progress/pause/resume/
         stop/finish/fail을 가진 객체(ContentManager 바인더)를 받는다.
         service: DownloadService 주입 이음새(테스트 대역용). None이면 제품과
@@ -915,7 +915,7 @@ class _ShownSize:
     시작할 때마다 새로 만든다. 엔진의 관측 스레드와 컷을 돌리는 스레드가 함께 부른다.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._shown = 0  # 지금까지 보인 가장 큰 받은 양(바이트)
         self._lock = threading.Lock()
 
@@ -956,7 +956,9 @@ class _SectionProgress:
     ``_cut_seconds``의 어림이다. 엔진의 관측 스레드와 컷을 돌리는 스레드가 함께 부른다.
     """
 
-    def __init__(self, cut_seconds: float, paused_seconds: Callable[[], float] = lambda: 0.0):
+    def __init__(
+        self, cut_seconds: float, paused_seconds: Callable[[], float] = lambda: 0.0
+    ) -> None:
         """막대를 만든다.
 
         Args:

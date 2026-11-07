@@ -163,7 +163,7 @@ class PendingMp4Head:
         raw: Mp4Raw,
         build: Callable[[Mp4Raw], Mp4Head],
         permanent: tuple[type[Exception], ...] = (),
-    ):
+    ) -> None:
         """
         Args:
             raw: 받아 둔 moov

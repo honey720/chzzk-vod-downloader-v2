@@ -17,7 +17,7 @@ import core.utils.paths as paths_module
 from core.models.download_data import DownloadData
 
 
-def _restore_real_choose_temp_dir(monkeypatch):
+def _restore_real_choose_temp_dir(monkeypatch) -> None:
     """conftest의 전역 격리를 이 테스트에 한해 되돌린다."""
     monkeypatch.setattr(m3u8_module, "choose_temp_dir", paths_module.choose_temp_dir)
     monkeypatch.setattr(hls_aes_module, "choose_temp_dir", paths_module.choose_temp_dir)
@@ -26,7 +26,7 @@ def _restore_real_choose_temp_dir(monkeypatch):
 # ================================================================ measure_write_speed
 
 
-def test_measure_write_speed_returns_positive_number_for_real_directory(tmp_path):
+def test_measure_write_speed_returns_positive_number_for_real_directory(tmp_path) -> None:
     """실제 쓰기 가능한 디렉토리는 양수 바이트/초를 돌려준다."""
     disk_speed_module.clear_speed_cache()
     speed = disk_speed_module.measure_write_speed(str(tmp_path), sample_bytes=64 * 1024)
@@ -34,7 +34,7 @@ def test_measure_write_speed_returns_positive_number_for_real_directory(tmp_path
     assert speed > 0
 
 
-def test_measure_write_speed_caches_per_volume(tmp_path, monkeypatch):
+def test_measure_write_speed_caches_per_volume(tmp_path, monkeypatch) -> None:
     """같은 볼륨은 두 번째 호출부터 실제 쓰기 없이 캐시된 값을 돌려준다."""
     disk_speed_module.clear_speed_cache()
     calls = []
@@ -53,21 +53,21 @@ def test_measure_write_speed_caches_per_volume(tmp_path, monkeypatch):
     assert len(calls) == 1, "캐시가 없으면 매번 실제로 파일을 썼을 것이다"
 
 
-def test_measure_write_speed_missing_directory_returns_none(tmp_path):
+def test_measure_write_speed_missing_directory_returns_none(tmp_path) -> None:
     """없는 디렉토리는 None — 실패를 조용히 삼키되 값은 신뢰할 수 없다고 알린다."""
     disk_speed_module.clear_speed_cache()
     speed = disk_speed_module.measure_write_speed(str(tmp_path / "없는폴더"))
     assert speed is None
 
 
-def test_measure_write_speed_leaves_no_residue(tmp_path):
+def test_measure_write_speed_leaves_no_residue(tmp_path) -> None:
     """프로브 파일은 측정 후 남지 않는다."""
     disk_speed_module.clear_speed_cache()
     disk_speed_module.measure_write_speed(str(tmp_path), sample_bytes=1024)
     assert list(tmp_path.iterdir()) == []
 
 
-def test_measure_write_speed_calls_fsync(tmp_path, monkeypatch):
+def test_measure_write_speed_calls_fsync(tmp_path, monkeypatch) -> None:
     """fsync를 실제로 호출한다 — 없으면 페이지 캐시만 재는 무의미한 측정이 된다(#191).
 
     f.write()는 OS 페이지 캐시에 즉시 반환되어(#191 실기 확인) 매체 속도와
@@ -91,7 +91,7 @@ def test_measure_write_speed_calls_fsync(tmp_path, monkeypatch):
 # ================================================================ choose_temp_dir 게이트
 
 
-def test_falls_back_when_scratch_has_insufficient_free_space(tmp_path, monkeypatch):
+def test_falls_back_when_scratch_has_insufficient_free_space(tmp_path, monkeypatch) -> None:
     """스크래치 볼륨 여유 공간이 부족하면 분리하지 않는다.
 
     다른 게이트(같은 볼륨·속도)가 우연히 같은 결과를 내 이 게이트를 안
@@ -122,7 +122,7 @@ def test_falls_back_when_scratch_has_insufficient_free_space(tmp_path, monkeypat
     assert result == paths_module.temp_dir_for(output_path)
 
 
-def test_falls_back_when_scratch_and_output_are_same_volume(tmp_path, monkeypatch):
+def test_falls_back_when_scratch_and_output_are_same_volume(tmp_path, monkeypatch) -> None:
     """스크래치와 산출물 폴더가 이미 같은 볼륨이면 비교 없이 분리하지 않는다."""
 
     class _PlentyUsage:
@@ -148,7 +148,7 @@ def test_falls_back_when_scratch_and_output_are_same_volume(tmp_path, monkeypatc
     assert speed_calls == [], "같은 볼륨이면 속도를 잴 필요도 없다"
 
 
-def test_falls_back_when_scratch_probe_fails(tmp_path, monkeypatch):
+def test_falls_back_when_scratch_probe_fails(tmp_path, monkeypatch) -> None:
     """스크래치 폴더 속도 측정에 실패하면(None) 분리하지 않는다."""
 
     class _PlentyUsage:
@@ -167,7 +167,7 @@ def test_falls_back_when_scratch_probe_fails(tmp_path, monkeypatch):
     assert result == paths_module.temp_dir_for(output_path)
 
 
-def test_falls_back_when_output_probe_fails(tmp_path, monkeypatch):
+def test_falls_back_when_output_probe_fails(tmp_path, monkeypatch) -> None:
     """스크래치는 재도 산출물 쪽 속도를 못 재면(비교 기준 없음) 분리하지 않는다."""
 
     class _PlentyUsage:
@@ -178,7 +178,7 @@ def test_falls_back_when_output_probe_fails(tmp_path, monkeypatch):
     monkeypatch.setattr(paths_module, "_scratch_base_dir", lambda: scratch_str)
     monkeypatch.setattr(paths_module, "_same_volume", lambda a, b: False)
 
-    def fake_speed(directory):
+    def fake_speed(directory) -> float | None:
         return 100_000_000.0 if directory == scratch_str else None
 
     monkeypatch.setattr(paths_module, "measure_write_speed", fake_speed)
@@ -191,7 +191,7 @@ def test_falls_back_when_output_probe_fails(tmp_path, monkeypatch):
     assert result == paths_module.temp_dir_for(output_path)
 
 
-def test_falls_back_when_scratch_is_not_clearly_faster(tmp_path, monkeypatch):
+def test_falls_back_when_scratch_is_not_clearly_faster(tmp_path, monkeypatch) -> None:
     """스크래치가 산출물보다 빠르긴 해도 배수 기준(_SEPARATION_SPEED_MARGIN) 미달이면 그대로 둔다."""
 
     class _PlentyUsage:
@@ -202,7 +202,7 @@ def test_falls_back_when_scratch_is_not_clearly_faster(tmp_path, monkeypatch):
     monkeypatch.setattr(paths_module, "_scratch_base_dir", lambda: scratch_str)
     monkeypatch.setattr(paths_module, "_same_volume", lambda a, b: False)
 
-    def fake_speed(directory):
+    def fake_speed(directory) -> float:
         # 스크래치가 1.2배만 빠르다 — margin(2.0배) 미달
         return 120.0 if directory == scratch_str else 100.0
 
@@ -216,7 +216,7 @@ def test_falls_back_when_scratch_is_not_clearly_faster(tmp_path, monkeypatch):
     assert result == paths_module.temp_dir_for(output_path)
 
 
-def test_separates_when_scratch_is_clearly_faster_and_has_room(tmp_path, monkeypatch):
+def test_separates_when_scratch_is_clearly_faster_and_has_room(tmp_path, monkeypatch) -> None:
     """모든 게이트를 통과하면(여유 공간+다른 볼륨+뚜렷이 빠름) 스크래치 폴더를 쓴다."""
 
     class _PlentyUsage:
@@ -228,7 +228,7 @@ def test_separates_when_scratch_is_clearly_faster_and_has_room(tmp_path, monkeyp
     monkeypatch.setattr(paths_module, "_scratch_base_dir", lambda: scratch_str)
     monkeypatch.setattr(paths_module, "_same_volume", lambda a, b: False)
 
-    def fake_speed(directory):
+    def fake_speed(directory) -> float:
         return 100_000_000.0 if directory == scratch_str else 1_000_000.0  # 100배 차이
 
     monkeypatch.setattr(paths_module, "measure_write_speed", fake_speed)
@@ -245,7 +245,9 @@ def test_separates_when_scratch_is_clearly_faster_and_has_room(tmp_path, monkeyp
 # ================================================================ 다운로더 연동
 
 
-def test_m3u8_downloader_uses_scratch_temp_dir_when_conditions_are_met(tmp_path, monkeypatch):
+def test_m3u8_downloader_uses_scratch_temp_dir_when_conditions_are_met(
+    tmp_path, monkeypatch
+) -> None:
     """조건이 맞으면 M3U8Downloader.temp_dir이 실제로 스크래치 폴더를 가리킨다."""
     _restore_real_choose_temp_dir(monkeypatch)
 
@@ -280,7 +282,7 @@ def test_m3u8_downloader_uses_scratch_temp_dir_when_conditions_are_met(tmp_path,
     assert engine.temp_dir != paths_module.temp_dir_for(output_path)
 
 
-def test_m3u8_downloader_keeps_output_adjacent_temp_dir_by_default(tmp_path):
+def test_m3u8_downloader_keeps_output_adjacent_temp_dir_by_default(tmp_path) -> None:
     """conftest의 전역 격리를 그대로 두면(기본) 기존 동작과 동일하다."""
     output_path = str(tmp_path / "video 1080p.mp4")
     data = DownloadData(

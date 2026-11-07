@@ -198,7 +198,7 @@ def _violations(py_file: Path) -> list[str]:
     return found
 
 
-def test_the_module_index_actually_sees_the_tree():
+def test_the_module_index_actually_sees_the_tree() -> None:
     """메타 게이트 — 프로젝트 모듈 색인이 비어 있지 않고, 뷰에 닿는 모듈이 실제로 존재한다.
 
     뷰 계층 모듈이 하나도 안 잡히면 "뷰를 import하지 않는다"가 공허하게 통과한다.
@@ -212,7 +212,7 @@ def test_the_module_index_actually_sees_the_tree():
     assert all(_resolve_project_module(m) == m for m in index)
 
 
-def test_import_analysis_finds_a_view_module_outside_the_view_layer_directories():
+def test_import_analysis_finds_a_view_module_outside_the_view_layer_directories() -> None:
     """뷰 계층 위치 밖에서 import 내용으로 Qt 위젯에 닿는 모듈이 하나 이상 있어야 한다.
 
     위치(views·widgets·theme)로 잡히는 뷰 모듈은 import 분석이 빈 결과를 내도 잡힌다(#369).
@@ -228,7 +228,7 @@ def test_import_analysis_finds_a_view_module_outside_the_view_layer_directories(
     )
 
 
-def test_viewmodel_layer_does_not_reach_qt_widgets_or_view_modules():
+def test_viewmodel_layer_does_not_reach_qt_widgets_or_view_modules() -> None:
     """뷰모델 계층(`app/` 중 views·widgets 밖)의 모든 `.py`는 Qt 위젯도 뷰 계층 모듈도 import하지 않는다."""
     files = viewmodel_layer_files()
     assert len(files) >= MIN_VIEWMODEL_FILES, (
@@ -244,7 +244,7 @@ def test_viewmodel_layer_does_not_reach_qt_widgets_or_view_modules():
     )
 
 
-def test_view_layer_directories_are_exempt_by_position_not_by_name():
+def test_view_layer_directories_are_exempt_by_position_not_by_name() -> None:
     """뷰 계층(views·widgets·theme)은 존재 여부와 무관하게 위치로 판정한다 — 그 밖의 `app/`는 뷰모델 계층.
 
     theme은 파일(`app/theme.py`)이든 패키지(`app/theme/…`)든 같은 접두사로 잡힌다. 이름이 비슷한
@@ -260,7 +260,7 @@ def test_view_layer_directories_are_exempt_by_position_not_by_name():
     assert not is_view_layer(APP_DIR / "viewmodels" / "anything.py")
 
 
-def test_relative_imports_are_resolved_against_the_package_path():
+def test_relative_imports_are_resolved_against_the_package_path() -> None:
     """상대 import도 절대 이름으로 풀려 규칙에 걸린다 — 건너뛰면 `from ..views import x`가 조용히 통과한다."""
     vm = APP_DIR / "viewmodels" / "some_viewmodel.py"
     assert _absolute_base(vm, 1, None) == "app.viewmodels"  # from . import x

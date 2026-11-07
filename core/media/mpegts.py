@@ -78,7 +78,7 @@ class TsError(Exception):
     message_key는 번역하지 않은 i18n 키 원문이다(이 모듈의 ``TS_*`` 상수).
     """
 
-    def __init__(self, message_key: str, detail: str = ""):
+    def __init__(self, message_key: str, detail: str = "") -> None:
         super().__init__(f"{message_key}: {detail}" if detail else message_key)
         self.message_key = message_key
 

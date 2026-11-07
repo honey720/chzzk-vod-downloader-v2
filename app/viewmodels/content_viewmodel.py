@@ -111,13 +111,13 @@ class FetchJob(QObject):
     finished = Signal(object, str)
     error = Signal(str)
 
-    def __init__(self, vod_url: str, cookies: dict, downloadPath: str):
+    def __init__(self, vod_url: str, cookies: dict, downloadPath: str) -> None:
         super().__init__()
         self.vod_url = vod_url
         self.cookies = cookies
         self.downloadPath = downloadPath
 
-    def run(self):
+    def run(self) -> None:
         """메타데이터를 조회해 finished(성공) 또는 error(실패) Signal을 emit한다."""
         try:
             result, content_type = metadata_service.fetch_content(
@@ -173,15 +173,15 @@ class _WorkerRelay(QObject):
     살아 있다.
     """
 
-    def __init__(self, viewmodel: "ContentViewModel", worker):
+    def __init__(self, viewmodel: "ContentViewModel", worker) -> None:
         super().__init__(viewmodel)
         self._viewmodel = viewmodel
         self._worker = worker
 
-    def onFinished(self, result, content_type):
+    def onFinished(self, result, content_type) -> None:
         self._viewmodel._workerFinished(self._worker, result, content_type)
 
-    def onError(self, error_message):
+    def onError(self, error_message) -> None:
         self._viewmodel._workerError(self._worker, error_message)
 
 
@@ -208,7 +208,7 @@ class ContentViewModel(QObject):
     itemResumed = Signal(object)
     itemFinished = Signal(object, bool)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.model = ContentListModel()
         # 필터 · 정렬 상태와 보이는 차례 = 다운로드 차례(#495). ⚠️ 목록 뷰가 모델에 잇기 전에 만든다 —
@@ -273,7 +273,7 @@ class ContentViewModel(QObject):
 
         self.threadpool.start(lambda: worker.run())
 
-    def _workerFinished(self, worker, result, content_type):
+    def _workerFinished(self, worker, result, content_type) -> None:
         # result는 (vod_url, metadata, unique_reps, resolution, base_url, downloadPath, liveRewindPlaybackJson) 형식
         placeholder = self._pendingPlaceholders.pop(worker, None)
         self._relays.pop(worker, None)
@@ -309,7 +309,7 @@ class ContentViewModel(QObject):
         self.model.removeRows(row, 1)
         self.model.addItem(item, row)
 
-    def _workerError(self, worker, error_message):
+    def _workerError(self, worker, error_message) -> None:
         placeholder = self._pendingPlaceholders.pop(worker, None)
         self._relays.pop(worker, None)
         self._emitFetchingDone()
@@ -344,7 +344,7 @@ class ContentViewModel(QObject):
             "The file could not be saved. Check the download path and free disk space."
         )
 
-    def clrearFinishedItems(self):
+    def clrearFinishedItems(self) -> None:
         if not self.model.isEmpty():
             for row in reversed(range(self.model.rowCount())):
                 item = self.model.itemAt(row)
@@ -352,7 +352,7 @@ class ContentViewModel(QObject):
                 if item.downloadState == DownloadState.FINISHED:
                     self.removeItem(item)
 
-    def removeItem(self, item: ContentItem):
+    def removeItem(self, item: ContentItem) -> None:
         row = self.model.getRow(item)
         if row is not None:
             self.model.removeRows(row, 1)
@@ -364,7 +364,7 @@ class ContentViewModel(QObject):
             index = self.model.rowCount()
             self.deleteItemRequested.emit(item, index)
 
-    def downloadItem(self):
+    def downloadItem(self) -> None:
         found, item, index = self.findItem()
         if found:
             try:
@@ -491,7 +491,7 @@ class ContentViewModel(QObject):
                 return True
         return False
 
-    def onDownload(self, item: ContentItem):
+    def onDownload(self, item: ContentItem) -> None:
         """해상도가 정해진 아이템의 산출물 경로를 조립하고 다운로드를 요청한다."""
         if item:
             # 조립·중복 회피는 core가 단일 지점으로 담당한다 — 같은 제목이
@@ -510,7 +510,7 @@ class ContentViewModel(QObject):
             # 다운로드 요청 시그널 발행
             self.downloadRequested.emit(item)
 
-    def update_progress(self, rem, size, spd, prog, item: ContentItem):
+    def update_progress(self, rem, size, spd, prog, item: ContentItem) -> None:
         item.download_remain_time = rem
         item.download_size = size
         item.download_speed = spd
@@ -518,24 +518,24 @@ class ContentViewModel(QObject):
 
         self.model.notifyChanged(item)
 
-    def start(self, item):
+    def start(self, item) -> None:
         self.itemStarted.emit(item)
 
-    def stop(self, item):
+    def stop(self, item) -> None:
         self.itemStopped.emit(item)
 
-    def pause(self, item):
+    def pause(self, item) -> None:
         self.itemPaused.emit(item)
 
-    def resume(self, item):
+    def resume(self, item) -> None:
         self.itemResumed.emit(item)
 
-    def finish(self, item: ContentItem, download_time):
+    def finish(self, item: ContentItem, download_time) -> None:
         item.download_time = download_time
         self.itemFinished.emit(item, True)
         self.emitFinishedRequest(item)
 
-    def fail(self, item: ContentItem, message: str = ""):
+    def fail(self, item: ContentItem, message: str = "") -> None:
         """아이템을 실패 상태로 표시하고 배치 체인을 계속 진행한다 (#134).
 
         message는 카드의 실패 사유로 렌더된다 — 키 기반 매핑을 거친 번역
@@ -547,10 +547,10 @@ class ContentViewModel(QObject):
         self.itemFinished.emit(item, False)
         self.emitFinishedRequest(item)
 
-    def emitStopRequested(self, item: ContentItem):
+    def emitStopRequested(self, item: ContentItem) -> None:
         self.stopRequested.emit(item)
 
-    def emitFinishedRequest(self, item: ContentItem):
+    def emitFinishedRequest(self, item: ContentItem) -> None:
         self.finishedRequested.emit(item)
         self.downloadItem()
 
@@ -573,7 +573,7 @@ class ContentViewModel(QObject):
                 return True, item, self.model.getRow(item)
         return False, None, None
 
-    def hasLoadingItems(self):
+    def hasLoadingItems(self) -> bool:
         """메타데이터 조회가 끝나지 않은 아이템이 있는지 여부."""
         for row in range(self.model.rowCount()):
             item = self.model.itemAt(row)

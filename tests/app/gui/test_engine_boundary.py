@@ -39,7 +39,7 @@ def _watch_item_writes(item) -> list[tuple[str, int]]:
     base = type(item)
 
     class Watched(base):
-        def __setattr__(self, name, value):
+        def __setattr__(self, name, value) -> None:
             if name in ("post_process", "downloadState"):
                 writes.append((name, threading.get_ident()))
             super().__setattr__(name, value)
@@ -48,7 +48,7 @@ def _watch_item_writes(item) -> list[tuple[str, int]]:
     return writes
 
 
-def test_section_counts_come_from_the_counters_sent_with_the_progress(wired):
+def test_section_counts_come_from_the_counters_sent_with_the_progress(wired) -> None:
     """카드의 구간 수는 진행 통지에 실린 값 묶음의 것이어야 한다 — 그 뒤 바뀐 공유 데이터의 것이 아니다.
 
     공유 데이터 sections_total 3 · sections_done 1에서 워커가 진행을 알림 → 공유 데이터 sections_done
@@ -67,7 +67,7 @@ def test_section_counts_come_from_the_counters_sent_with_the_progress(wired):
     assert item.sections_done == 1
 
 
-def test_failure_reaches_the_main_thread_as_a_key_not_an_exception(wired):
+def test_failure_reaches_the_main_thread_as_a_key_not_an_exception(wired) -> None:
     """실패는 메인 스레드에 예외 객체가 아니라 엔진 쪽이 고른 안내 키로 닿아야 한다.
 
     워커가 OSError("디스크")로 실패를 알림 → 내부 실패 Signal의 인자를 기록
@@ -86,7 +86,7 @@ def test_failure_reaches_the_main_thread_as_a_key_not_an_exception(wired):
     assert "Failed to save file" in args
 
 
-def test_item_is_written_only_on_the_main_thread(wired):
+def test_item_is_written_only_on_the_main_thread(wired) -> None:
     """엔진 통지(병합 시작 · 상태 전이 · 실패)가 워커에서 와도 아이템의 병합 표시 · 상태는 메인 스레드에서만 적혀야 한다.
 
     시작 → 워커가 병합 시작 · 완료 전이 · 실패를 차례로 알림 → 이벤트 처리
@@ -107,7 +107,7 @@ def test_item_is_written_only_on_the_main_thread(wired):
     assert {ident for _name, ident in writes} == {MAIN_THREAD}
 
 
-def test_merge_start_then_failure_leaves_the_merge_mark_off(wired):
+def test_merge_start_then_failure_leaves_the_merge_mark_off(wired) -> None:
     """병합 시작과 실패가 서로 다른 워커에서 그 차례로 오면 병합 표시는 꺼진 채 끝나야 한다.
 
     워커 A가 병합 시작을 알림 → 워커 B가 실패를 알림 → 이벤트 처리
@@ -123,7 +123,7 @@ def test_merge_start_then_failure_leaves_the_merge_mark_off(wired):
     assert item.post_process is False
 
 
-def test_late_worker_state_does_not_overwrite_the_failed_card(wired):
+def test_late_worker_state_does_not_overwrite_the_failed_card(wired) -> None:
     """실패 처리가 끝난 뒤 닿은 워커의 상태 전이는 카드 상태를 덮지 않아야 한다.
 
     워커가 실패를 알림 → 이벤트 처리(카드 실패 처리) → 카드를 FAILED로 적음 → 워커의 대기 전이 →
@@ -137,7 +137,7 @@ def test_late_worker_state_does_not_overwrite_the_failed_card(wired):
     wired.pump()
     item.downloadState = DownloadState.FAILED  # content.fail이 하는 일 — 기록 대역은 적지 않는다
 
-    def late_transition():
+    def late_transition() -> None:
         """실패한 시도의 모델이 상태 전이를 알린다 — 실패한 엔진이 스스로 대기로 돌아가는 길."""
         data.model._on_state_change(DownloadState.WAITING)
 
@@ -147,7 +147,7 @@ def test_late_worker_state_does_not_overwrite_the_failed_card(wired):
     assert item.downloadState is DownloadState.FAILED
 
 
-def test_each_progress_counts_the_bar_with_its_own_paused_time(wired, monkeypatch):
+def test_each_progress_counts_the_bar_with_its_own_paused_time(wired, monkeypatch) -> None:
     """두 스레드의 진행 통지가 겹쳐도 막대는 각 통지의 일시정지 누적으로 세어야 한다.
 
     구간 3개 m3u8. 스레드 A가 일시정지 누적 5초인 통지를 내고 막대를 세기 직전에 멈춤 → 스레드 B가

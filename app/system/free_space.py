@@ -22,7 +22,7 @@ class FreeSpaceProbe(QObject):
 
     measured = Signal(str, object)
 
-    def __init__(self, parent: QObject | None = None):
+    def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._lock = threading.Lock()  # _busy를 고치는 동안 잡는다
         self._busy: set[str] = set()  # 지금 재는 중인 경로

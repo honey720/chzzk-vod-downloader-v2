@@ -75,7 +75,7 @@ class StreamEntry(list):
         frame_rate: float | None = None,
         original: bool = False,
         stream: Any = None,
-    ):
+    ) -> None:
         super().__init__([resolution, base_url])
         self.frame_rate = frame_rate  # 선언된 프레임률(fps). 모르면 None
         self.original = original  # 다시 인코딩하지 않은 원본 스트림인지

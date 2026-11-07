@@ -31,6 +31,7 @@ from core.media.mp4 import (
     summarize_mp4,
 )
 from tests.support.mp4_builder import TrackSpec, audio_spec, box, build_mp4, video_spec
+from typing import Never
 
 
 def _chunks(count: int, size: int) -> list[int]:
@@ -131,7 +132,7 @@ CASES = {
 
 
 @pytest.mark.parametrize("case", list(CASES), ids=list(CASES))
-def test_summary_equals_the_full_parse(case):
+def test_summary_equals_the_full_parse(case) -> None:
     """가볍게 읽은 프레임률 · 길이는 그 mp4를 전체 해석한 색인의 값과 비트까지 같아야 한다.
 
     위 표의 종류마다(고정 · 가변 프레임률 · B 프레임 · 편집 목록 · 29.97/30/60fps · 오디오 먼저 시작 등)
@@ -193,7 +194,7 @@ def _random_tracks(seed: int):
 
 
 @pytest.mark.parametrize("seed", range(300))
-def test_summary_equals_the_full_parse_on_random_tracks(seed):
+def test_summary_equals_the_full_parse_on_random_tracks(seed) -> None:
     """씨앗으로 흔든 트랙에서도 가볍게 읽은 값은 전체 해석의 값과 같아야 한다 — 실패하는 쪽도 같다.
 
     씨앗마다 무작위 timescale · 샘플 길이(고정 · 구간 · 샘플마다) · ctts(음수 · 큰 값 포함) ·
@@ -213,7 +214,7 @@ def test_summary_equals_the_full_parse_on_random_tracks(seed):
     _same(moov)
 
 
-def test_summary_does_not_expand_the_sample_tables(monkeypatch):
+def test_summary_does_not_expand_the_sample_tables(monkeypatch) -> None:
     """가벼운 해석은 샘플마다 값을 펴는 길(전체 해석)을 타지 않아야 한다.
 
     B 프레임 · 편집 목록이 있는 30fps 120프레임. 전체 해석 함수를 부르면 실패하게 바꿈
@@ -223,7 +224,7 @@ def test_summary_does_not_expand_the_sample_tables(monkeypatch):
     moov = build_mp4([video, audio]).moov
     expected = parse_moov(moov)
 
-    def forbidden(_moov):
+    def forbidden(_moov) -> Never:
         raise AssertionError("전체 해석을 불렀다")
 
     monkeypatch.setattr(mp4_module, "parse_moov", forbidden)
@@ -233,7 +234,9 @@ def test_summary_does_not_expand_the_sample_tables(monkeypatch):
     assert (summary.fps, summary.duration) == (expected.fps, expected.duration)
 
 
-def test_summary_falls_back_to_the_full_parse_when_sample_lengths_keep_changing(monkeypatch):
+def test_summary_falls_back_to_the_full_parse_when_sample_lengths_keep_changing(
+    monkeypatch,
+) -> None:
     """구간이 한계보다 많은(샘플 길이가 계속 바뀌는) 영상은 전체 해석으로 같은 값을 구해야 한다.
 
     구간의 한계를 3으로 줄임, 길이가 여섯 번 바뀌는 영상
@@ -261,7 +264,7 @@ def test_summary_falls_back_to_the_full_parse_when_sample_lengths_keep_changing(
         ("garbage", MP4_INVALID),
     ],
 )
-def test_summary_rejects_what_the_full_parse_rejects(damage, key):
+def test_summary_rejects_what_the_full_parse_rejects(damage, key) -> None:
     """가벼운 해석은 조각난 mp4 · 영상 트랙 없음 · 여러 구간 편집 목록 · moov가 아닌 바이트를 전체 해석과 같은 키로 거부해야 한다."""
     if damage == "mvex":
         moov = build_mp4([video_spec(), audio_spec()], mvex=True).moov
@@ -292,7 +295,7 @@ def _moov_span(data: bytes) -> tuple[int, int]:
     raise AssertionError("재료에 moov가 없다")
 
 
-def test_raw_moov_gives_the_index_and_bytes_of_the_file():
+def test_raw_moov_gives_the_index_and_bytes_of_the_file() -> None:
     """받아 둔 moov 바이트를 나중에 해석한 색인은 파일의 그 moov의 것이어야 하고, 파일 앞부분을 실어야 한다.
 
     표준 재료의 mp4(moov가 mdat 앞)를 read_mp4_raw로 받은 뒤 index_mp4 / summarize_mp4.
@@ -330,7 +333,7 @@ def _raw_of_standard_mp4():
     return read_mp4_raw(lambda offset, size: data[offset : offset + size])
 
 
-def test_pending_head_parses_once_when_two_threads_ask_at_the_same_time(monkeypatch):
+def test_pending_head_parses_once_when_two_threads_ask_at_the_same_time(monkeypatch) -> None:
     """받아 둔 moov를 두 스레드가 함께 청해도 해석은 한 번만 돌고 둘이 같은 색인을 받아야 한다.
 
     해석 함수를 문으로 막고 호출을 세는 대역으로 바꿈. 스레드 A가 get()으로 해석 안에 들어간 뒤
@@ -372,7 +375,7 @@ def test_pending_head_parses_once_when_two_threads_ask_at_the_same_time(monkeypa
     assert pending.raw is None and pending.peek() is got["first"]
 
 
-def test_pending_head_raises_the_same_error_again_without_parsing_again(monkeypatch):
+def test_pending_head_raises_the_same_error_again_without_parsing_again(monkeypatch) -> None:
     """moov가 틀려 해석이 실패한(Mp4Error) 묶음은 청할 때마다 같은 예외를 내고 다시 해석하지 않아야 한다.
 
     해석 함수가 Mp4Error를 던지게 바꾸고 get()을 세 번 부름
@@ -380,7 +383,7 @@ def test_pending_head_raises_the_same_error_again_without_parsing_again(monkeypa
     """
     calls = []
 
-    def broken(held):
+    def broken(held) -> Never:
         calls.append(held)
         raise Mp4Error(MP4_INVALID, "깨진 moov(대역)")
 
@@ -398,7 +401,7 @@ def test_pending_head_raises_the_same_error_again_without_parsing_again(monkeypa
     assert pending.peek() is None and pending.raw is None
 
 
-def test_pending_head_parses_again_after_a_failure_that_is_not_about_the_moov(monkeypatch):
+def test_pending_head_parses_again_after_a_failure_that_is_not_about_the_moov(monkeypatch) -> None:
     """moov와 무관한 실패(Mp4Error가 아닌 예외)는 기억하지 않아, 다시 청하면 해석이 다시 돌고 성공해야 한다.
 
     해석 함수가 첫 호출에만 MemoryError를 던지게 바꾸고 get()을 두 번 부름
@@ -428,7 +431,9 @@ def test_pending_head_parses_again_after_a_failure_that_is_not_about_the_moov(mo
     assert len(calls) == 2
 
 
-def test_a_waiter_parses_by_itself_after_the_first_caller_failed_for_another_reason(monkeypatch):
+def test_a_waiter_parses_by_itself_after_the_first_caller_failed_for_another_reason(
+    monkeypatch,
+) -> None:
     """먼저 청한 쪽이 moov와 무관한 이유로 실패하면, 기다리던 쪽이 스스로 해석해 색인을 받아야 한다.
 
     해석 함수를 문으로 막고 첫 호출에만 RuntimeError를 던지게 바꿈. 스레드 A가 해석 안에 들어간
@@ -474,7 +479,7 @@ def test_a_waiter_parses_by_itself_after_the_first_caller_failed_for_another_rea
     assert len(calls) == 2
 
 
-def test_a_remembered_failure_does_not_keep_what_the_parser_was_holding(monkeypatch):
+def test_a_remembered_failure_does_not_keep_what_the_parser_was_holding(monkeypatch) -> None:
     """기억한 실패는 해석 중의 지역 변수를 붙잡지 않아야 한다 — 처음 실패한 쪽에는 해석 자리가 보인다.
 
     해석 함수가 받은 moov를 지역 변수로 쥔 채 Mp4Error를 던지게 바꿈(순환 수집을 끈 채 잰다).
@@ -484,7 +489,7 @@ def test_a_remembered_failure_does_not_keep_what_the_parser_was_holding(monkeypa
     -> 다시 낸 예외는 종류 · 글이 같고, 그 traceback에는 해석 함수가 없다
     """
 
-    def broken(held):
+    def broken(held) -> Never:
         kept_by_the_parser = held  # noqa: F841 — 해석 중에 쥐고 있던 것
         raise Mp4Error(MP4_INVALID, "깨진 moov(대역)")
 

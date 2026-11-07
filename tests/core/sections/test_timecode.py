@@ -47,7 +47,7 @@ SIX_HOURS = 6 * 3600  # 초
         ("30000/1001", Fraction(30000, 1001)),
     ],
 )
-def test_frame_rate_reads_declared_fps_literally(fps, expected):
+def test_frame_rate_reads_declared_fps_literally(fps, expected) -> None:
     """frame_rate는 선언값(정수·소수·문자열)을 글자 그대로의 유리수로 돌려줘야 한다.
 
     60 -> 60, 29.97 -> 2997/100, 59.94 -> 2997/50, 23.976 -> 2997/125,
@@ -57,7 +57,7 @@ def test_frame_rate_reads_declared_fps_literally(fps, expected):
 
 
 @pytest.mark.parametrize("fps", [Fraction(30000, 1001), Fraction(2997, 100), Fraction(60)])
-def test_frame_rate_returns_fraction_unchanged(fps):
+def test_frame_rate_returns_fraction_unchanged(fps) -> None:
     """frame_rate는 Fraction을 받으면 같은 값을 그대로 돌려줘야 한다.
 
     30000/1001, 2997/100, 60/1
@@ -69,7 +69,7 @@ def test_frame_rate_returns_fraction_unchanged(fps):
 @pytest.mark.parametrize(
     "fps", [0, -30, float("nan"), float("inf"), Fraction(0), Fraction(-30), "0", "abc", "", "1/0"]
 )
-def test_frame_rate_rejects_non_positive_or_unreadable(fps):
+def test_frame_rate_rejects_non_positive_or_unreadable(fps) -> None:
     """frame_rate는 fps가 0 이하이거나 유한하지 않거나 수로 읽을 수 없으면 ValueError를 내야 한다.
 
     0, -30, nan, inf, Fraction(0), Fraction(-30), "0", "abc", "", "1/0"
@@ -80,7 +80,7 @@ def test_frame_rate_rejects_non_positive_or_unreadable(fps):
 
 
 @pytest.mark.parametrize(("fps", "expected"), [(60, 60), (30, 30), (29.97, 30), (59.94, 60)])
-def test_frames_per_second_is_ceiling_of_frame_rate(fps, expected):
+def test_frames_per_second_is_ceiling_of_frame_rate(fps, expected) -> None:
     """frames_per_second는 프레임률을 올림한 정수를 돌려줘야 한다.
 
     60 -> 60, 30 -> 30, 29.97 -> 30, 59.94 -> 60
@@ -98,7 +98,7 @@ def _mismatched_frames(interval: Fraction, fps) -> list[int]:
 
 
 @pytest.mark.parametrize("fps", [DECIMAL_2997, 29.97, "29.97"])
-def test_frame_index_matches_pts_of_decimal_2997_source_up_to_six_hours(fps):
+def test_frame_index_matches_pts_of_decimal_2997_source_up_to_six_hours(fps) -> None:
     """frame_index는 간격이 400/11988초인 원본의 PTS를 6시간 지점까지 제 프레임 번호로 바꿔야 한다.
 
     PTS = n × 400/11988 (n = 0 … 647,352), fps = 2997/100 · 29.97 · "29.97"
@@ -107,7 +107,7 @@ def test_frame_index_matches_pts_of_decimal_2997_source_up_to_six_hours(fps):
     assert _mismatched_frames(Fraction(400, 11988), fps) == []
 
 
-def test_frame_index_matches_pts_of_ntsc_source_up_to_six_hours():
+def test_frame_index_matches_pts_of_ntsc_source_up_to_six_hours() -> None:
     """frame_index는 간격이 1001/30000초인 원본의 PTS를 6시간 지점까지 제 프레임 번호로 바꿔야 한다.
 
     PTS = n × 1001/30000 (n = 0 … 647,352), fps = 30000/1001
@@ -116,7 +116,7 @@ def test_frame_index_matches_pts_of_ntsc_source_up_to_six_hours():
     assert _mismatched_frames(Fraction(1001, 30000), NTSC_30) == []
 
 
-def test_frame_index_drifts_when_the_other_2997_rate_is_used():
+def test_frame_index_drifts_when_the_other_2997_rate_is_used() -> None:
     """frame_index는 원본과 다른 29.97 계열 프레임률을 받으면 6시간 안에 프레임 번호가 어긋나야 한다.
 
     PTS = n × 400/11988, fps = 30000/1001
@@ -131,7 +131,7 @@ def test_frame_index_drifts_when_the_other_2997_rate_is_used():
 # ================================================================ parse_timecode
 
 
-def test_parse_timecode_reads_full_form():
+def test_parse_timecode_reads_full_form() -> None:
     """parse_timecode는 HH:MM:SS:FF를 명목 시각으로 바꿔야 한다.
 
     "01:02:03:30", fps=60
@@ -141,7 +141,7 @@ def test_parse_timecode_reads_full_form():
 
 
 @pytest.mark.parametrize(("text", "expected"), [("5:03", 303.0), ("1:05:03", 3903.0)])
-def test_parse_timecode_reads_short_forms(text, expected):
+def test_parse_timecode_reads_short_forms(text, expected) -> None:
     """parse_timecode는 칸이 둘이면 MM:SS, 셋이면 HH:MM:SS로 읽어야 한다.
 
     "5:03" -> 303.0, "1:05:03" -> 3903.0 (fps=60)
@@ -156,7 +156,7 @@ def test_parse_timecode_reads_short_forms(text, expected):
         (NTSC_30, 1 + 15 * 1001 / 30000),  # 1.5005
     ],
 )
-def test_parse_timecode_divides_frames_by_the_given_rate(fps, expected):
+def test_parse_timecode_divides_frames_by_the_given_rate(fps, expected) -> None:
     """parse_timecode는 FF를 받은 프레임률 그대로 나눠야 한다.
 
     "00:00:01:15", fps = 29.97 · 30000/1001
@@ -165,7 +165,7 @@ def test_parse_timecode_divides_frames_by_the_given_rate(fps, expected):
     assert parse_timecode("00:00:01:15", fps) == pytest.approx(expected, abs=1e-9)
 
 
-def test_parse_timecode_ignores_surrounding_whitespace():
+def test_parse_timecode_ignores_surrounding_whitespace() -> None:
     """parse_timecode는 앞뒤 공백이 있어도 같은 값을 돌려줘야 한다.
 
     " 5:03 ", fps=60
@@ -188,7 +188,7 @@ def test_parse_timecode_ignores_surrounding_whitespace():
         "５:03",  # 전각 숫자
     ],
 )
-def test_parse_timecode_rejects_malformed_text(text):
+def test_parse_timecode_rejects_malformed_text(text) -> None:
     """parse_timecode는 형태가 맞지 않으면 형식 오류 키로 TimecodeError를 내야 한다.
 
     칸 수가 2~4가 아님, 숫자가 아닌 글자, 빈 칸, 밀리초 표기
@@ -201,7 +201,7 @@ def test_parse_timecode_rejects_malformed_text(text):
 
 
 @pytest.mark.parametrize("text", ["60:00", "0:60", "1:60:00", "1:00:60", "00:59:60:00"])
-def test_parse_timecode_rejects_minutes_or_seconds_of_sixty(text):
+def test_parse_timecode_rejects_minutes_or_seconds_of_sixty(text) -> None:
     """parse_timecode는 MM이나 SS가 60 이상이면 칸 범위 키로 TimecodeError를 내야 한다.
 
     "60:00", "0:60", "1:60:00", "1:00:60", "00:59:60:00" (fps=60)
@@ -214,7 +214,7 @@ def test_parse_timecode_rejects_minutes_or_seconds_of_sixty(text):
 
 
 @pytest.mark.parametrize(("fps", "last_frame"), [(60, 59), (30, 29), (29.97, 29)])
-def test_parse_timecode_frame_field_is_bounded_by_fps(fps, last_frame):
+def test_parse_timecode_frame_field_is_bounded_by_fps(fps, last_frame) -> None:
     """parse_timecode는 FF가 fps 미만의 마지막 값이면 받고 그 다음 값이면 프레임 범위 키로 거부해야 한다.
 
     60fps: 59 통과 / 60 거부, 30fps: 29 / 30, 29.97fps: 29 / 30
@@ -232,7 +232,7 @@ def test_parse_timecode_frame_field_is_bounded_by_fps(fps, last_frame):
 
 
 @pytest.mark.parametrize(("fps", "frame_count"), [(60, 60), (30, 30), (29.97, 30)])
-def test_timecode_round_trips_through_parse_and_format(fps, frame_count):
+def test_timecode_round_trips_through_parse_and_format(fps, frame_count) -> None:
     """해석한 타임코드를 다시 표기하면 원래 문자열이어야 한다.
 
     fps=60 · 30 · 29.97, 시각 6종 × FF 전부
@@ -253,7 +253,7 @@ def test_timecode_round_trips_through_parse_and_format(fps, frame_count):
         (59.999, 29.97, "00:01:00:00"),
     ],
 )
-def test_format_timecode_carries_into_next_second(seconds, fps, expected):
+def test_format_timecode_carries_into_next_second(seconds, fps, expected) -> None:
     """format_timecode는 반올림한 FF가 칸의 범위를 넘으면 다음 초로 올려야 한다.
 
     2.9999999996초 @60 -> "00:00:03:00", 0.9999초 @30 -> "00:00:01:00", 59.999초 @29.97 -> "00:01:00:00"
@@ -262,7 +262,7 @@ def test_format_timecode_carries_into_next_second(seconds, fps, expected):
 
 
 @pytest.mark.parametrize("seconds", [-0.001, float("nan"), float("inf")])
-def test_format_timecode_rejects_negative_or_non_finite(seconds):
+def test_format_timecode_rejects_negative_or_non_finite(seconds) -> None:
     """format_timecode는 시각이 음수이거나 유한하지 않으면 ValueError를 내야 한다.
 
     seconds=-0.001, nan, inf
@@ -285,7 +285,7 @@ def test_format_timecode_rejects_negative_or_non_finite(seconds):
         (360000.25, "100:00:00.250"),
     ],
 )
-def test_format_milliseconds_rounds_to_nearest_millisecond(seconds, expected):
+def test_format_milliseconds_rounds_to_nearest_millisecond(seconds, expected) -> None:
     """format_milliseconds는 가장 가까운 밀리초로 반올림해 HH:MM:SS.mmm으로 표기해야 한다.
 
     3723.5 -> "01:02:03.500", 0.9996 -> "00:00:01.000", 360000.25 -> "100:00:00.250"
@@ -303,7 +303,7 @@ def _uniform_pts(count: int, rate: Fraction) -> list[float]:
 
 @pytest.mark.parametrize("edge", ["start", "end"])
 @pytest.mark.parametrize("offset_frames", [-0.4, 0.0, 0.4])
-def test_snap_to_frame_picks_nearest_on_uniform_60fps(edge, offset_frames):
+def test_snap_to_frame_picks_nearest_on_uniform_60fps(edge, offset_frames) -> None:
     """snap_to_frame은 간격이 일정한 60fps에서 반 프레임 안의 가장 가까운 프레임을 골라야 한다.
 
     PTS = n/60 (600개), 명목 시각 = (123 + offset)/60, offset = -0.4 · 0 · 0.4
@@ -315,7 +315,7 @@ def test_snap_to_frame_picks_nearest_on_uniform_60fps(edge, offset_frames):
 
 
 @pytest.mark.parametrize("edge", ["start", "end"])
-def test_snap_to_frame_follows_frame_number_on_jittered_intervals(edge):
+def test_snap_to_frame_follows_frame_number_on_jittered_intervals(edge) -> None:
     """snap_to_frame은 간격이 17·17·16ms로 반복되는 목록에서 명목 시각 n/60을 n번째 프레임에 맞춰야 한다.
 
     PTS = 0, 17, 34, 50, 67, 84, 100 … ms (300개), 명목 시각 = n/60
@@ -327,7 +327,9 @@ def test_snap_to_frame_follows_frame_number_on_jittered_intervals(edge):
 
 
 @pytest.mark.parametrize("missing_frame", [4, 5])
-def test_snap_to_frame_start_falls_back_to_previous_frame_when_frame_is_missing(missing_frame):
+def test_snap_to_frame_start_falls_back_to_previous_frame_when_frame_is_missing(
+    missing_frame,
+) -> None:
     """snap_to_frame은 명목 시각의 프레임이 빠져 있으면 시작을 앞 프레임에 맞춰야 한다.
 
     60fps PTS에서 4·5번 프레임을 뺀 목록 [0,1,2,3,6,7,8,9]/60, 명목 시각 = 4/60 · 5/60
@@ -339,7 +341,7 @@ def test_snap_to_frame_start_falls_back_to_previous_frame_when_frame_is_missing(
 
 
 @pytest.mark.parametrize("missing_frame", [4, 5])
-def test_snap_to_frame_end_falls_back_to_next_frame_when_frame_is_missing(missing_frame):
+def test_snap_to_frame_end_falls_back_to_next_frame_when_frame_is_missing(missing_frame) -> None:
     """snap_to_frame은 명목 시각의 프레임이 빠져 있으면 끝을 뒤 프레임에 맞춰야 한다.
 
     60fps PTS에서 4·5번 프레임을 뺀 목록 [0,1,2,3,6,7,8,9]/60, 명목 시각 = 4/60 · 5/60
@@ -352,7 +354,7 @@ def test_snap_to_frame_end_falls_back_to_next_frame_when_frame_is_missing(missin
 
 @pytest.mark.parametrize("rate", [NTSC_30, DECIMAL_2997], ids=["30000/1001", "2997/100"])
 @pytest.mark.parametrize("edge", ["start", "end"])
-def test_snap_to_frame_maps_nominal_time_to_nearest_frame_at_2997(edge, rate):
+def test_snap_to_frame_maps_nominal_time_to_nearest_frame_at_2997(edge, rate) -> None:
     """snap_to_frame은 29.97 계열 프레임률에서 명목 시각 SS + FF ÷ fps에 가장 가까운 프레임을 골라야 한다.
 
     fps = 30000/1001 · 2997/100, PTS = n ÷ fps (300개), SS = 0~8, FF = 0~29
@@ -368,7 +370,7 @@ def test_snap_to_frame_maps_nominal_time_to_nearest_frame_at_2997(edge, rate):
             assert snap_to_frame(float(nominal), pts, rate, edge) == expected
 
 
-def test_snap_to_frame_breaks_tie_by_edge():
+def test_snap_to_frame_breaks_tie_by_edge() -> None:
     """snap_to_frame은 두 프레임과의 거리가 같으면 시작은 앞, 끝은 뒤 프레임을 골라야 한다.
 
     PTS = [0.0, 0.5], fps=2, 명목 시각 = 0.25
@@ -381,7 +383,7 @@ def test_snap_to_frame_breaks_tie_by_edge():
 
 
 @pytest.mark.parametrize("edge", ["start", "end"])
-def test_snap_to_frame_clamps_outside_the_list(edge):
+def test_snap_to_frame_clamps_outside_the_list(edge) -> None:
     """snap_to_frame은 명목 시각이 목록 밖이면 가장 가까운 끝 프레임을 골라야 한다.
 
     PTS = [1.0, 2.0, 3.0], fps=1, 명목 시각 = 0.0 · 9.0
@@ -393,7 +395,7 @@ def test_snap_to_frame_clamps_outside_the_list(edge):
     assert snap_to_frame(9.0, pts, 1, edge) == 2
 
 
-def test_snap_to_frame_rejects_empty_list():
+def test_snap_to_frame_rejects_empty_list() -> None:
     """snap_to_frame은 PTS 목록이 비어 있으면 ValueError를 내야 한다.
 
     frame_pts=[]

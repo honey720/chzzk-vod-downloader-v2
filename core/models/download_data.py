@@ -25,7 +25,7 @@ from core.models.events import DownloadCounters
 class DownloadData:
     """다운로드 엔진·서비스가 공유하는 데이터 홀더 (core 모델 위임 어댑터)."""
 
-    def __init__(self, base_url, vod_url, output_path, resolution, content_type):
+    def __init__(self, base_url, vod_url, output_path, resolution, content_type) -> None:
         # 컨텐츠 식별·재생 정보의 소유처 (#61)
         self.content = Content(
             content_type=ContentType(content_type),
@@ -125,7 +125,7 @@ class DownloadData:
         return self.content.base_url
 
     @base_url.setter
-    def base_url(self, value):
+    def base_url(self, value) -> None:
         self.content.base_url = value
 
     @property
@@ -133,7 +133,7 @@ class DownloadData:
         return self.content.url
 
     @vod_url.setter
-    def vod_url(self, value):
+    def vod_url(self, value) -> None:
         self.content.url = value
 
     @property
@@ -141,7 +141,7 @@ class DownloadData:
         return self.content.output_path
 
     @output_path.setter
-    def output_path(self, value):
+    def output_path(self, value) -> None:
         self.content.output_path = value
 
     @property
@@ -149,7 +149,7 @@ class DownloadData:
         return self.content.resolution
 
     @resolution.setter
-    def resolution(self, value):
+    def resolution(self, value) -> None:
         self.content.resolution = value
 
     @property
@@ -158,7 +158,7 @@ class DownloadData:
         return self.content.content_type.value
 
     @content_type.setter
-    def content_type(self, value: str):
+    def content_type(self, value: str) -> None:
         self.content.content_type = ContentType(value)
 
     # ============ 상태·진행률 필드 위임 (DownloadTaskModel 소유) ============
@@ -168,7 +168,7 @@ class DownloadData:
         return self.model.total_size
 
     @total_size.setter
-    def total_size(self, value):
+    def total_size(self, value) -> None:
         self.model.total_size = value
 
     @property
@@ -176,7 +176,7 @@ class DownloadData:
         return self.model.threads_progress
 
     @threads_progress.setter
-    def threads_progress(self, value):
+    def threads_progress(self, value) -> None:
         self.model.threads_progress = value
 
     @property
@@ -184,7 +184,7 @@ class DownloadData:
         return self.model.start_time
 
     @start_time.setter
-    def start_time(self, value):
+    def start_time(self, value) -> None:
         self.model.start_time = value
 
     @property
@@ -192,7 +192,7 @@ class DownloadData:
         return self.model.end_time
 
     @end_time.setter
-    def end_time(self, value):
+    def end_time(self, value) -> None:
         self.model.end_time = value
 
     @property

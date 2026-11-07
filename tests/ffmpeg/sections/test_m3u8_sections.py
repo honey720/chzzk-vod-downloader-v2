@@ -86,6 +86,7 @@ from tests.support.range_host import RangeHost
 from tests.ffmpeg.reference_cut import hybrid_cut
 from tests.ffmpeg.sections.section_retry import OUTPUT_ARG, CutCalls, hand_over, snapshot
 from tests.support.undeletable import Undeletable
+from typing import Never
 
 KEYFRAMES = (0, 30, 36, 60, 90, 120, 150)  # -force_key_frames 0,1,1.2,2,3,4,5 (30fps)
 SEGMENTS = 6  # 1초 세그먼트 — 키프레임 0·30·60·90·120·150에서 갈린다
@@ -117,7 +118,7 @@ def _make_hls(folder, *extra: str, b_frames: str, pyramid: str) -> None:
 class _Source:
     """만든 HLS 하나 — 파일들과, 세그먼트 전부를 이어 해석한 프레임 정보(대조용)."""
 
-    def __init__(self, folder):
+    def __init__(self, folder) -> None:
         self.files = {path.name: path.read_bytes() for path in folder.iterdir()}
         self.playlist = parse_media_playlist(self.files["media.m3u8"].decode("utf-8"))
         self.init = parse_init_segment(self.files["init.mp4"])
@@ -219,7 +220,7 @@ def host(sources) -> RangeHost:
 
 
 @pytest.fixture(autouse=True)
-def _requests_go_to_host(host, monkeypatch):
+def _requests_go_to_host(host, monkeypatch) -> None:
     """엔진과 moof 읽기가 쓰는 세션을 호스트로 가는 세션으로 바꾼다. 호스트의 상태는 테스트마다 되돌린다."""
     monkeypatch.setattr(m3u8_module, "get_thread_session", host.session)
     monkeypatch.setattr(hls_fmp4_module, "get_thread_session", host.session)
@@ -231,11 +232,11 @@ def _requests_go_to_host(host, monkeypatch):
 class _Logger:
     """엔진이 부르는 로그 메서드를 이름과 인자로 기록한다."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.calls: list[tuple[str, tuple]] = []
 
     def __getattr__(self, name):
-        def record(*args, **kwargs):
+        def record(*args, **kwargs) -> None:
             self.calls.append((name, args))
 
         return record
@@ -244,7 +245,7 @@ class _Logger:
 class _Run:
     """엔진 한 번의 실행과 그 결과."""
 
-    def __init__(self, host, tmp_path, selections, playlist: str = "plain/media.m3u8"):
+    def __init__(self, host, tmp_path, selections, playlist: str = "plain/media.m3u8") -> None:
         self.folder = tmp_path / "out"
         self.folder.mkdir(exist_ok=True)
         self.data = DownloadData(
@@ -372,7 +373,7 @@ def _requests_for(host, suffix: str, ranged: bool) -> list[str]:
 # ================================================================ 입력의 전제
 
 
-def test_generated_hls_has_six_segments_and_a_short_gop(sources):
+def test_generated_hls_has_six_segments_and_a_short_gop(sources) -> None:
     """만든 HLS는 세그먼트 6개와 초기화 세그먼트, 짧은 GOP를 가져야 한다.
 
     -hls_time 1 · -force_key_frames 0,1,1.2,2,3,4,5
@@ -387,7 +388,7 @@ def test_generated_hls_has_six_segments_and_a_short_gop(sources):
 
 
 @pytest.mark.parametrize(("name", "delay"), [("plain", 2), ("uneven", 1)])
-def test_generated_hls_has_the_wanted_reorder_delay(sources, name, delay):
+def test_generated_hls_has_the_wanted_reorder_delay(sources, name, delay) -> None:
     """만든 HLS의 재정렬 지연은 plain이 2프레임, uneven이 1프레임이어야 한다.
 
     b-pyramid=normal · -bf 3 (plain) / b-pyramid=none · -bf 2 (uneven)
@@ -400,7 +401,7 @@ def test_generated_hls_has_the_wanted_reorder_delay(sources, name, delay):
     assert round(lead / frames.frame_duration) == delay
 
 
-def test_generated_hls_declares_its_audio_bitrate_in_the_init_segment(sources):
+def test_generated_hls_declares_its_audio_bitrate_in_the_init_segment(sources) -> None:
     """만든 HLS의 초기화 세그먼트에는 오디오 비트레이트가 적혀 있고 영상 트랙에는 없어야 한다.
 
     ffmpeg aac 기본값(스테레오 128kb/s)
@@ -411,7 +412,7 @@ def test_generated_hls_declares_its_audio_bitrate_in_the_init_segment(sources):
     assert (init.audio.declared_bitrate, init.video.declared_bitrate) == (128_000, None)
 
 
-def test_real_shaped_hls_has_two_moofs_per_segment_and_no_declared_bitrate(sources):
+def test_real_shaped_hls_has_two_moofs_per_segment_and_no_declared_bitrate(sources) -> None:
     """real의 세그먼트에는 moof가 둘씩 있고, 초기화 세그먼트에는 오디오 비트레이트가 적혀 있지 않아야 한다.
 
     plain의 세그먼트를 둘씩 묶고 esds의 비트레이트를 0으로 고친 입력
@@ -432,7 +433,9 @@ def test_real_shaped_hls_has_two_moofs_per_segment_and_no_declared_bitrate(sourc
 # ================================================================ 끝까지 경로
 
 
-def test_section_in_the_middle_makes_a_file_that_passes_every_check(host, sources, tmp_path):
+def test_section_in_the_middle_makes_a_file_that_passes_every_check(
+    host, sources, tmp_path
+) -> None:
     """세그먼트 여럿에 걸친 구간을 받으면 `_1` 파일이 생기고 판정 다섯 항목을 통과해야 한다.
 
     plain, 구간 프레임 40~100 (둘째 ~ 넷째 세그먼트 — 짧은 GOP 30~36을 지난다)
@@ -468,7 +471,7 @@ def test_section_in_the_middle_makes_a_file_that_passes_every_check(host, source
 )
 def test_section_file_equals_the_cut_from_all_segments(
     host, sources, tmp_path, first, last, segments
-):
+) -> None:
     """받은 세그먼트만으로 만든 구간 파일의 영상 패킷은 세그먼트 전부를 이은 파일에서 자른 것과 같고 오디오 패킷은 원본의 것이어야 한다.
 
     plain, 주석의 경우마다 구간 프레임 first~last
@@ -490,7 +493,7 @@ def test_section_file_equals_the_cut_from_all_segments(
     assert check.ok, check.notes
 
 
-def test_section_ending_at_the_video_length_ends_on_the_last_frame(host, sources, tmp_path):
+def test_section_ending_at_the_video_length_ends_on_the_last_frame(host, sources, tmp_path) -> None:
     """끝이 영상 길이와 같은 구간은 마지막 프레임에서 끝나야 한다.
 
     plain, 구간 = 프레임 150의 시각 ~ 영상 길이(마지막 프레임 179가 끝나는 시각)
@@ -511,7 +514,7 @@ def test_section_ending_at_the_video_length_ends_on_the_last_frame(host, sources
     _assert_section_matches(source, run.paths[0], 150, 179, tmp_path, original_tail=True)
 
 
-def test_section_past_the_real_video_length_is_out_of_range(host, sources, tmp_path):
+def test_section_past_the_real_video_length_is_out_of_range(host, sources, tmp_path) -> None:
     """구간의 끝이 실제 영상 길이를 넘으면 #EXTINF의 합 안이어도 범위 위반으로 실패해야 한다.
 
     padded.m3u8(#EXTINF의 합 7.5초, 실제 길이는 프레임 179가 끝나는 시각 약 6.02초), 구간 = 프레임 150의 시각 ~ 7.0초
@@ -531,7 +534,7 @@ def test_section_past_the_real_video_length_is_out_of_range(host, sources, tmp_p
 @pytest.mark.parametrize("playlist", ["real/media.m3u8", "real/nopdt.m3u8"], ids=["pdt", "no-pdt"])
 def test_real_shaped_replay_section_equals_the_cut_from_all_segments(
     host, sources, tmp_path, playlist
-):
+) -> None:
     """실제 다시보기 모양의 입력(moof 둘 · emsg · 긴 #EXTINF · 비트레이트 0)에서도 구간 파일의 영상은 전부 이은 파일에서 자른 것과 같고 오디오는 원본의 것이어야 한다.
 
     real · nopdt, 범위 요청에 잘린 본문을 주고 캐시하는 호스트, 구간 프레임 100~170
@@ -554,7 +557,7 @@ def test_real_shaped_replay_section_equals_the_cut_from_all_segments(
     assert check.ok, check.notes
 
 
-def test_section_of_uneven_input_passes_every_check(host, sources, tmp_path):
+def test_section_of_uneven_input_passes_every_check(host, sources, tmp_path) -> None:
     """프레임 간격이 고르지 않은 입력에서도 구간 파일의 영상 패킷은 전부 이은 파일에서 자른 것과 같고 판정을 통과해야 한다.
 
     uneven, 구간 프레임 33~100
@@ -570,7 +573,7 @@ def test_section_of_uneven_input_passes_every_check(host, sources, tmp_path):
     assert check.ok, check.notes
 
 
-def test_sections_sharing_segments_download_each_segment_once(host, sources, tmp_path):
+def test_sections_sharing_segments_download_each_segment_once(host, sources, tmp_path) -> None:
     """두 구간이 같은 세그먼트를 쓰면 그 세그먼트는 한 번만 받고, 구간마다 파일이 하나씩 생겨야 한다.
 
     plain, 구간 프레임 5~130(세그먼트 0~4) · 35~170(세그먼트 0~5) — 세그먼트 2 · 3은 두 구간이 함께 쓰고,
@@ -595,7 +598,7 @@ def test_sections_sharing_segments_download_each_segment_once(host, sources, tmp
 # ================================================================ 요청 수
 
 
-def test_engine_requests_playlist_init_and_each_segment_once(host, sources, tmp_path):
+def test_engine_requests_playlist_init_and_each_segment_once(host, sources, tmp_path) -> None:
     """넘겨받은 것이 없으면 엔진은 플레이리스트·초기화 세그먼트·세그먼트를 한 번씩만, 범위 머리 없이 요청해야 한다.
 
     plain, 구간 프레임 40~100 (세그먼트 0~3)
@@ -625,7 +628,7 @@ def _resolve(host, tmp_path, selection, playlist: str = "plain/media.m3u8"):
     return head, sections
 
 
-def test_engine_requests_nothing_that_was_handed_in(host, sources, tmp_path):
+def test_engine_requests_nothing_that_was_handed_in(host, sources, tmp_path) -> None:
     """구간을 해석하며 받은 것(Content.fmp4_head)을 넘기면 엔진은 플레이리스트·초기화 세그먼트와 이미 받아 둔 세그먼트를 요청하지 않아야 한다.
 
     plain, 구간 프레임 40~100(세그먼트 0~3). 먼저 해석한 뒤(받은 세그먼트는 폴더에 둠) 엔진에 넘김
@@ -670,7 +673,7 @@ def _last_mdat_offset(data: bytes) -> int:
 @pytest.mark.parametrize("cut", ["inside-mdat", "after-moof"])
 def test_engine_downloads_a_handed_in_segment_again_when_its_file_is_damaged(
     host, sources, tmp_path, cut
-):
+) -> None:
     """구간을 해석하며 받아 둔 세그먼트 파일이 온전하지 않으면 엔진은 그 세그먼트를 다시 받아야 한다.
 
     plain, 구간 프레임 40~100. 해석 뒤 받아 둔 첫 세그먼트 파일을 자름 —
@@ -698,7 +701,9 @@ def test_engine_downloads_a_handed_in_segment_again_when_its_file_is_damaged(
     _assert_section_matches(source, run.paths[0], 40, 100, tmp_path)
 
 
-def test_section_download_sends_no_range_request_to_a_truncating_cache(host, sources, tmp_path):
+def test_section_download_sends_no_range_request_to_a_truncating_cache(
+    host, sources, tmp_path
+) -> None:
     """범위 요청에 잘린 본문을 주고 그것을 캐시하는 서버에서 구간 다운로드는 범위 요청을 보내지 않고 온전한 구간 파일을 만들어야 한다.
 
     plain, truncating_cache를 켠 호스트, 구간 프레임 40~100
@@ -715,7 +720,9 @@ def test_section_download_sends_no_range_request_to_a_truncating_cache(host, sou
     _assert_section_matches(source, run.paths[0], 40, 100, tmp_path)
 
 
-def test_section_download_fails_instead_of_cutting_a_truncated_segment(host, sources, tmp_path):
+def test_section_download_fails_instead_of_cutting_a_truncated_segment(
+    host, sources, tmp_path
+) -> None:
     """받은 세그먼트가 잘려 있으면 구간 다운로드는 컷을 하지 않고 잘림 오류로 실패해야 한다.
 
     plain, truncating_cache를 켠 호스트에서 셋째 세그먼트를 누군가 범위 요청으로 먼저 받아 캐시에
@@ -739,7 +746,7 @@ def test_section_download_fails_instead_of_cutting_a_truncated_segment(host, sou
 # ================================================================ 끊긴 녹화
 
 
-def test_section_crossing_a_discontinuity_is_rejected(host, sources, tmp_path):
+def test_section_crossing_a_discontinuity_is_rejected(host, sources, tmp_path) -> None:
     """구간이 #EXT-X-DISCONTINUITY를 넘으면 구간 위반 키로 실패해야 한다.
 
     broken.m3u8(넷째 세그먼트 앞에서 끊김), 구간 프레임 70~100 (셋째 ~ 넷째 세그먼트)
@@ -756,7 +763,7 @@ def test_section_crossing_a_discontinuity_is_rejected(host, sources, tmp_path):
     assert run.listing() == []
 
 
-def test_section_beside_a_discontinuity_is_downloaded(host, sources, tmp_path):
+def test_section_beside_a_discontinuity_is_downloaded(host, sources, tmp_path) -> None:
     """구간이 #EXT-X-DISCONTINUITY를 넘지 않으면 끊긴 자리 바로 앞에서도 받아야 한다.
 
     broken.m3u8(넷째 세그먼트 앞에서 끊김), 구간 프레임 40~80 (둘째 ~ 셋째 세그먼트)
@@ -773,7 +780,7 @@ def test_section_beside_a_discontinuity_is_downloaded(host, sources, tmp_path):
 @pytest.mark.parametrize("to_end", [False, True], ids=["across-the-break", "to-the-video-length"])
 def test_section_crossing_a_discontinuity_is_rejected_before_reading_its_segments(
     host, sources, tmp_path, to_end
-):
+) -> None:
     """끊긴 자리를 넘는 구간은 그 구간의 세그먼트를 받기 전에 거부해야 한다.
 
     across-the-break: broken.m3u8(세그먼트 0~2 · 끊김 · 3~5), 구간 프레임 70~100
@@ -799,7 +806,7 @@ def test_section_crossing_a_discontinuity_is_rejected_before_reading_its_segment
     ]
 
 
-def test_section_after_a_discontinuity_counts_time_from_the_break(host, sources, tmp_path):
+def test_section_after_a_discontinuity_counts_time_from_the_break(host, sources, tmp_path) -> None:
     """끊긴 자리 뒤의 구간은 앞 묶음이 끝난 시각에서 이어 세어 프레임을 골라야 한다.
 
     twice.m3u8(세그먼트 여섯 · 끊김 · 같은 여섯 — 뒤쪽 타임스탬프가 0으로 돌아간다),
@@ -819,7 +826,9 @@ def test_section_after_a_discontinuity_counts_time_from_the_break(host, sources,
     _assert_section_matches(source, run.paths[0], 40, 100, tmp_path)
 
 
-def test_section_after_a_discontinuity_ignores_timestamps_before_the_break(host, sources, tmp_path):
+def test_section_after_a_discontinuity_ignores_timestamps_before_the_break(
+    host, sources, tmp_path
+) -> None:
     """끊긴 자리 뒤의 구간은 플레이리스트 첫 세그먼트의 타임스탬프가 아니라 끊긴 자리의 첫 세그먼트를 기준으로 프레임을 골라야 한다.
 
     late.m3u8(세그먼트 넷째 ~ 여섯째 · 끊김 · 세그먼트 여섯 — 앞쪽 타임스탬프는 3초부터, 뒤쪽은 0부터),
@@ -846,7 +855,7 @@ def test_section_after_a_discontinuity_ignores_timestamps_before_the_break(host,
 # ================================================================ 임시 파일 · 실패
 
 
-def test_temp_folder_is_removed_after_success(host, sources, tmp_path):
+def test_temp_folder_is_removed_after_success(host, sources, tmp_path) -> None:
     """구간을 모두 만들면 받은 세그먼트와 이은 파일이 든 임시 폴더가 남지 않아야 한다.
 
     plain, 구간 프레임 40~100
@@ -858,7 +867,9 @@ def test_temp_folder_is_removed_after_success(host, sources, tmp_path):
     assert run.listing() == ["구간 시험 144p_1.mp4"]
 
 
-def test_cut_failure_keeps_segments_and_finished_sections(host, sources, tmp_path, monkeypatch):
+def test_cut_failure_keeps_segments_and_finished_sections(
+    host, sources, tmp_path, monkeypatch
+) -> None:
     """둘째 구간의 컷이 실패하면 다운로드는 실패하고, 임시 폴더와 먼저 만든 구간 파일은 남아야 한다.
 
     plain, 구간 둘, 둘째 구간의 컷이 CutError를 내도록 바꿈
@@ -888,7 +899,7 @@ def test_cut_failure_keeps_segments_and_finished_sections(host, sources, tmp_pat
 
 def test_cut_failure_of_one_section_still_cuts_the_sections_after_it(
     host, sources, tmp_path, monkeypatch
-):
+) -> None:
     """구간 셋 가운데 둘째의 컷이 실패해도 셋째는 잘라야 하고, 다운로드는 그 뒤에 한 번 실패해야 한다.
 
     plain, 구간 프레임 5~20 · 40~70 · 100~130, 둘째 구간의 컷이 첫 조각의 ffmpeg 실행 자리에서
@@ -938,7 +949,7 @@ def test_cut_failure_of_one_section_still_cuts_the_sections_after_it(
     assert (data.sections_total, data.sections_done, data.sections_failed) == (3, 2, 1)
 
 
-def test_section_outside_the_playlist_fails_with_selection_key(host, tmp_path):
+def test_section_outside_the_playlist_fails_with_selection_key(host, tmp_path) -> None:
     """구간이 영상 길이를 넘으면 구간 위반 키로 실패하고 아무것도 남기지 않아야 한다.
 
     plain(6초), 구간 5~7초
@@ -954,7 +965,7 @@ def test_section_outside_the_playlist_fails_with_selection_key(host, tmp_path):
 
 def test_section_download_checks_the_free_space_before_the_transfer(
     host, sources, tmp_path, monkeypatch
-):
+) -> None:
     """구간 다운로드도 선언된 비트레이트로 어림한 크기가 여유 공간에 안 들어가면 받기 전에 실패해야 한다.
 
     plain, 구간 프레임 40~100(세그먼트 0~3), 선언 800,000 bit/s(100,000바이트/초), 여유 0
@@ -989,7 +1000,7 @@ def test_section_download_checks_the_free_space_before_the_transfer(
 
 def test_section_download_does_not_start_when_a_section_file_is_over_the_fat_limit(
     host, sources, tmp_path, monkeypatch
-):
+) -> None:
     """구간 다운로드는 저장 폴더가 FAT 계열이고 가장 큰 구간 파일의 어림이 한계를 넘으면 받기 전에 실패해야 한다.
 
     plain, 구간 둘(프레임 5~20 · 40~100), 선언 800,000 bit/s, 파일 시스템 "FAT32", 한계 1,000바이트,
@@ -1023,7 +1034,7 @@ def test_section_download_does_not_start_when_a_section_file_is_over_the_fat_lim
     assert (allowed.finished, allowed.failures) == (1, [])
 
 
-def test_section_log_reports_cut_and_total_size_of_section_files(host, sources, tmp_path):
+def test_section_log_reports_cut_and_total_size_of_section_files(host, sources, tmp_path) -> None:
     """구간 다운로드의 후처리 로그는 종류 "cut"으로 시작하고, 끝 로그의 크기는 구간 파일 크기의 합이어야 한다.
 
     plain, 구간 둘
@@ -1040,7 +1051,7 @@ def test_section_log_reports_cut_and_total_size_of_section_files(host, sources, 
 
 def test_finished_section_run_reports_the_saved_size_as_the_sum_of_its_section_files(
     host, sources, tmp_path
-):
+) -> None:
     """구간을 모두 만든 fMP4 실행은 저장된 크기로 구간 파일 크기의 합을 적어야 한다 — 받은 양이 아니다.
 
     plain, 구간 둘 -> 완료 1회, output_size == 두 파일 크기의 합 == 로그의 Output size,
@@ -1061,7 +1072,7 @@ def test_finished_section_run_reports_the_saved_size_as_the_sum_of_its_section_f
 @pytest.mark.parametrize("how", ["failure", "stop"])
 def test_section_run_that_fails_or_stops_leaves_the_file_at_output_path_alone(
     host, sources, tmp_path, monkeypatch, how
-):
+) -> None:
     """구간 다운로드가 실패하거나 중단돼도 output_path 자리에 있던 파일은 그대로 남아야 한다.
 
     plain, 구간 프레임 40~100, output_path 자리에 내용이 b"keep"인 파일을 미리 둠.
@@ -1090,7 +1101,7 @@ def test_section_run_that_fails_or_stops_leaves_the_file_at_output_path_alone(
         assert f.read() == b"keep"
 
 
-def test_engine_validates_sections_with_the_frame_rate_handed_in(host, sources, tmp_path):
+def test_engine_validates_sections_with_the_frame_rate_handed_in(host, sources, tmp_path) -> None:
     """구간을 해석한 쪽이 정한 프레임률(Fmp4Head.frame_rate)을 넘기면 엔진은 그 값으로 구간을 검증해야 한다.
 
     plain(30fps), 구간 1.1 ~ 1.3초. 넘긴 프레임률 1(프레임 번호 1 ~ 1) · 넘기지 않음(프레임 번호 33 ~ 39)
@@ -1112,7 +1123,7 @@ def test_engine_validates_sections_with_the_frame_rate_handed_in(host, sources, 
 
 def test_section_postprocess_reads_segments_in_fixed_size_chunks(
     host, sources, tmp_path, monkeypatch
-):
+) -> None:
     """구간 후처리는 받은 세그먼트를 통째로 읽지 않고 정해진 크기씩 읽어야 한다.
 
     plain, 구간 프레임 40~100 (세그먼트 0~3), 읽는 크기를 1,000바이트로 낮추고 세그먼트 파일의 read를 기록
@@ -1127,7 +1138,7 @@ def test_section_postprocess_reads_segments_in_fixed_size_chunks(
     class Recording:
         """세그먼트 파일의 read가 돌려준 길이를 적는 대역."""
 
-        def __init__(self, file):
+        def __init__(self, file) -> None:
             self._file = file
 
         def read(self, size=-1):
@@ -1164,7 +1175,7 @@ def test_section_postprocess_reads_segments_in_fixed_size_chunks(
 
 def test_engine_keeps_handed_in_segments_and_removes_other_files_from_the_segment_folder(
     host, sources, tmp_path, monkeypatch
-):
+) -> None:
     """엔진은 넘겨받은 세그먼트 폴더에서 받아 둔 세그먼트만 남기고, 이 다운로드의 것이 아닌 파일은 지워야 한다.
 
     plain, 구간 프레임 40~100(세그먼트 0~3). 해석 뒤 폴더에 이전 실행의 것처럼 "9.m4v"와 "old.bin"을 넣음.
@@ -1179,7 +1190,7 @@ def test_engine_keeps_handed_in_segments_and_removes_other_files_from_the_segmen
         with open(os.path.join(head.segment_dir, name), "wb") as f:
             f.write(b"stale")
 
-    def fails(*args, **kwargs):
+    def fails(*args, **kwargs) -> Never:
         raise CutError(CUT_FAILED, "시험")
 
     monkeypatch.setattr(m3u8_module, "cut_fmp4_section", fails)
@@ -1196,7 +1207,7 @@ def test_engine_keeps_handed_in_segments_and_removes_other_files_from_the_segmen
 # ================================================================ 전체 다운로드 (보존)
 
 
-def test_download_without_sections_keeps_the_remux_path(host, sources, tmp_path):
+def test_download_without_sections_keeps_the_remux_path(host, sources, tmp_path) -> None:
     """구간이 없으면 지금처럼 세그먼트 전부를 받아 output_path로 재포장해야 한다.
 
     plain, selections 빈 튜플
@@ -1228,7 +1239,7 @@ def _three(source) -> list[TimeRange]:
 
 def test_retry_cuts_only_the_failed_section_from_the_kept_segments_without_requests(
     host, sources, tmp_path, monkeypatch
-):
+) -> None:
     """둘째 구간만 실패한 실행을 이어받은 실행은 둘째만 잘라야 하고 아무것도 요청하지 않아야 한다.
 
     첫 실행: plain, 구간 셋, 둘째 구간의 컷이 세그먼트를 넘기기 전에 실패. 이어받은 실행: 새 엔진에 첫 실행이 남긴 것과 그때의 경로를 넘김
@@ -1269,7 +1280,7 @@ def test_retry_cuts_only_the_failed_section_from_the_kept_segments_without_reque
 @pytest.mark.parametrize("undeletable", [False, True], ids=["지울 수 있음", "지울 수 없음"])
 def test_cut_failure_whose_output_cannot_be_removed_still_ends_as_a_partial_failure(
     host, sources, tmp_path, monkeypatch, undeletable
-):
+) -> None:
     """구간의 컷이 실패하면 그 출력을 지울 수 없어도 일부 실패로 끝나고, 이어받은 실행은 그 구간만 다시 잘라야 한다 (#389).
 
     plain, 구간 셋, 둘째 구간의 컷이 출력 파일을 반쯤 쓰고 CutError. 그 출력의 os.remove가
@@ -1311,7 +1322,7 @@ def test_cut_failure_whose_output_cannot_be_removed_still_ends_as_a_partial_fail
 
 def test_section_whose_output_ffmpeg_cannot_write_or_remove_fails_alone(
     host, sources, tmp_path, monkeypatch
-):
+) -> None:
     """세그먼트를 흘려 잇는 구간의 출력을 ffmpeg가 쓰지 못하고 지울 수도 없으면 그 구간만 실패해야 한다 (#389).
 
     plain, 구간 셋. 둘째 구간(세그먼트 넷에 걸쳐 가운데 둘을 흘린다)의 출력 경로에 폴더가 있고 그 경로의
@@ -1356,7 +1367,9 @@ def test_section_whose_output_ffmpeg_cannot_write_or_remove_fails_alone(
     ]
 
 
-def test_stop_during_retry_removes_only_what_the_retry_made(host, sources, tmp_path, monkeypatch):
+def test_stop_during_retry_removes_only_what_the_retry_made(
+    host, sources, tmp_path, monkeypatch
+) -> None:
     """이어받은 실행을 컷 사이에서 중단하면 그 실행이 만든 구간 파일만 지워야 한다.
 
     같은 엔진. 첫 실행: 둘째 · 셋째 구간의 컷이 도중에 실패(`_1`만 만듦). 이어받은 실행: 둘째 구간의 컷이 끝난 뒤 중단
@@ -1388,7 +1401,7 @@ def test_stop_during_retry_removes_only_what_the_retry_made(host, sources, tmp_p
     assert [name for name in os.listdir(run.engine.temp_dir) if name.endswith(".m4v")]
 
 
-def test_retry_receives_only_the_segment_that_is_gone(host, sources, tmp_path, monkeypatch):
+def test_retry_receives_only_the_segment_that_is_gone(host, sources, tmp_path, monkeypatch) -> None:
     """받아 둔 세그먼트 하나가 없어졌으면 이어받은 실행은 그 세그먼트만 다시 받아야 한다.
 
     첫 실행: plain, 구간 셋, 둘째 구간의 컷이 도중에 실패. 둘째 구간의 첫 세그먼트 파일을 지움. 이어받은 실행
@@ -1473,7 +1486,7 @@ def _retry_with_one_segment_gone(host, sources, tmp_path, monkeypatch):
 
 def test_retry_counts_only_the_segment_it_received_as_received_bytes(
     host, sources, tmp_path, monkeypatch
-):
+) -> None:
     """이어받은 실행의 받은 양 · 전송 줄의 Bytes · 진행 통지의 받은 양은 다시 받은 세그먼트 하나의 크기여야 한다.
 
     `test_retry_receives_only_the_segment_that_is_gone`의 실행. 둘째 구간의 세그먼트 중 하나를 다시 받음
@@ -1492,7 +1505,9 @@ def test_retry_counts_only_the_segment_it_received_as_received_bytes(
     assert _logged(again, "log_transfer_reused") == [(len(reused), sum(reused))]
 
 
-def test_retry_speed_comes_only_from_the_segment_it_received(host, sources, tmp_path, monkeypatch):
+def test_retry_speed_comes_only_from_the_segment_it_received(
+    host, sources, tmp_path, monkeypatch
+) -> None:
     """이어받은 실행이 1초 동안 받은 양으로 낸 속도는 다시 받은 세그먼트 하나의 크기여야 한다.
 
     `test_retry_receives_only_the_segment_that_is_gone`의 실행이 끝난 엔진, 직전 측정 0바이트 · 1초 전
@@ -1507,7 +1522,7 @@ def test_retry_speed_comes_only_from_the_segment_it_received(host, sources, tmp_
 
 def test_retry_counts_every_segment_as_done_so_the_progress_reaches_the_end(
     host, sources, tmp_path, monkeypatch
-):
+) -> None:
     """이어받은 실행은 다시 쓴 세그먼트도 끝낸 세그먼트로 세어야 한다.
 
     `test_retry_receives_only_the_segment_that_is_gone`의 실행. 둘째 구간의 세그먼트 중 하나를 다시 받음
@@ -1524,7 +1539,7 @@ def test_retry_counts_every_segment_as_done_so_the_progress_reaches_the_end(
 
 def test_retry_tells_how_many_segments_it_will_use_without_receiving(
     host, sources, tmp_path, monkeypatch
-):
+) -> None:
     """이어받은 실행은 받지 않고 다시 쓸 세그먼트의 수를 적어 두고, 다시 쓴 수가 그와 같아야 한다 (#390).
 
     `test_retry_receives_only_the_segment_that_is_gone`의 실행. 둘째 구간의 세그먼트 중 하나를 다시 받음
@@ -1537,7 +1552,9 @@ def test_retry_tells_how_many_segments_it_will_use_without_receiving(
     assert (again.data.reusable_threads, again.data.reused_threads) == (len(reused), len(reused))
 
 
-def test_download_without_sections_counts_every_segment_as_received_bytes(host, sources, tmp_path):
+def test_download_without_sections_counts_every_segment_as_received_bytes(
+    host, sources, tmp_path
+) -> None:
     """받아 둔 것이 없는 실행의 받은 양 · 전송 줄의 Bytes · 속도는 세그먼트 전부의 크기여야 한다.
 
     plain, selections 빈 튜플
@@ -1559,7 +1576,7 @@ def test_download_without_sections_counts_every_segment_as_received_bytes(host, 
 
 def test_first_section_run_counts_the_segments_read_to_place_the_sections_as_stored(
     host, sources, tmp_path
-):
+) -> None:
     """구간을 정할 때 받아 둔 세그먼트는 첫 실행에서도 받은 양이 아니라 받아 둔 것으로 세어야 한다.
 
     plain, 구간 셋(`_three`). 받기 전 첫 진행 통지 시점의 호스트 요청 수로 그 전(구간을 정하며 받음) ·
@@ -1622,7 +1639,7 @@ class _JoinSpy:
 
 def test_segment_fed_to_the_section_file_is_removed_before_the_section_is_done(
     host, sources, tmp_path, monkeypatch
-):
+) -> None:
     """구간 파일로 넘긴 세그먼트는 그 구간 파일을 다 쓰기 전에 지워져 있어야 한다.
 
     plain, 구간 프레임 40~100(세그먼트 0~3 — 프레임 40은 세그먼트 1, 100은 세그먼트 3에 있다.
@@ -1642,7 +1659,7 @@ def test_segment_fed_to_the_section_file_is_removed_before_the_section_is_done(
 
 def test_segment_another_section_still_needs_is_kept_until_that_section_is_made(
     host, sources, tmp_path, monkeypatch
-):
+) -> None:
     """남은 구간이 쓰는 세그먼트는 넘긴 뒤에도 남아 있다가 마지막으로 쓰는 구간이 넘길 때 지워져야 한다.
 
     plain, 구간 프레임 5~130(세그먼트 0~4) · 35~170(세그먼트 0~5). 긴 둘째 구간을 먼저 만든다 —
@@ -1665,7 +1682,7 @@ def test_segment_another_section_still_needs_is_kept_until_that_section_is_made(
 
 def test_retry_after_a_failed_section_file_receives_only_the_segments_that_were_fed(
     host, sources, tmp_path, monkeypatch
-):
+) -> None:
     """구간 파일을 쓰다 실패한 실행을 이어받은 실행은 넘기면서 지운 세그먼트만 다시 받아야 한다.
 
     첫 실행: plain, 구간 프레임 40~100(세그먼트 0~3, 통째로 넘기는 것은 세그먼트 2),
@@ -1708,7 +1725,7 @@ def _fail_the_second_of_three(host, sources, tmp_path, monkeypatch):
 
 def test_failed_run_records_the_size_of_each_section_file_it_finished(
     host, sources, tmp_path, monkeypatch
-):
+) -> None:
     """일부 구간만 실패한 실행은 끝낸 구간 파일의 크기를 재시도 기록에 적어야 한다.
 
     구간 셋, 둘째 구간의 컷이 실패 -> 기록의 크기 == ((0, `_1`의 크기), (2, `_3`의 크기))
@@ -1724,7 +1741,7 @@ def test_failed_run_records_the_size_of_each_section_file_it_finished(
 @pytest.mark.parametrize("check_files", [True, False], ids=["starter-checks", "engine-checks"])
 def test_retry_makes_a_finished_section_again_when_its_file_was_removed(
     host, sources, tmp_path, monkeypatch, check_files
-):
+) -> None:
     """끝낸 구간의 파일을 지운 뒤 재시도하면 그 구간도 다시 만들어야 한다.
 
     첫 실행: 구간 셋, 둘째 구간의 컷이 실패. `_1`을 지움. 이어받은 실행(시작하는 쪽이 파일을
@@ -1752,7 +1769,7 @@ def test_retry_makes_a_finished_section_again_when_its_file_was_removed(
 
 def test_retry_makes_a_finished_section_again_when_its_file_changed_size(
     host, sources, tmp_path, monkeypatch
-):
+) -> None:
     """끝낸 구간의 파일 크기가 달라졌으면 재시도는 그 구간을 다시 만들고, 바뀐 파일은 건드리지 않아야 한다.
 
     첫 실행: 구간 셋, 둘째 구간의 컷이 실패. `_3`의 자리에 10바이트짜리 다른 파일을 둠. 이어받은 실행
@@ -1781,7 +1798,7 @@ def test_retry_makes_a_finished_section_again_when_its_file_changed_size(
 
 def test_reading_before_the_cut_raises_the_cut_progress_and_is_marked_as_preparing(
     host, sources, tmp_path
-):
+) -> None:
     """구간을 자르기 전 세그먼트를 읽는 동안 준비 중으로 적히고 컷 진행이 읽기 몫 안에서 올라야 한다.
 
     plain, 구간 하나(프레임 40~100 — 엔진이 읽는 세그먼트 0~3, 넷). 읽기 몫 0.1
@@ -1811,7 +1828,7 @@ def test_reading_before_the_cut_raises_the_cut_progress_and_is_marked_as_prepari
 
 def test_progress_the_cut_reports_is_placed_after_the_share_of_the_reading(
     host, sources, tmp_path, monkeypatch
-):
+) -> None:
     """컷이 알린 진행은 읽기 몫 뒤의 구간으로 옮겨 적혀야 한다.
 
     plain, 구간 하나, 읽기 몫 0.1. 컷 함수가 일을 시작하기 전에 진행 0.5를 알리게 함
@@ -1854,7 +1871,7 @@ _SIZE_LIMIT_KEYS = pytest.mark.parametrize(
 @_SIZE_LIMIT_KEYS
 def test_section_cut_that_hits_the_file_size_limit_carries_a_key_by_the_filesystem(
     host, sources, tmp_path, monkeypatch, name, expected
-):
+) -> None:
     """구간 파일을 쓰는 ffmpeg가 "File too large"로 실패하면 저장 폴더의 파일 시스템에 맞는 키가 적혀야 한다.
 
     plain, 구간 프레임 40~100. 구간 파일을 쓰는 실행(remux_through)이 stderr에
@@ -1866,7 +1883,7 @@ def test_section_cut_that_hits_the_file_size_limit_carries_a_key_by_the_filesyst
     run = _Run(host, tmp_path, [sources["plain"].selection(40, 100)])
     monkeypatch.setattr(base_module, "filesystem_name", lambda folder: name)
 
-    def too_large(*args, **kwargs):
+    def too_large(*args, **kwargs) -> Never:
         raise RemuxError(f"ffmpeg remux 실패 (변환 exit 0 · 잇기 exit 1): {_FFMPEG_FILE_TOO_LARGE}")
 
     monkeypatch.setattr(fmp4_cut_module, "remux_through", too_large)
@@ -1881,7 +1898,7 @@ def test_section_cut_that_hits_the_file_size_limit_carries_a_key_by_the_filesyst
 @_SIZE_LIMIT_KEYS
 def test_remux_that_hits_the_file_size_limit_carries_a_key_by_the_filesystem(
     host, tmp_path, monkeypatch, name, expected
-):
+) -> None:
     """구간 없는 다운로드의 재포장이 "File too large"로 실패하면 저장 폴더의 파일 시스템에 맞는 키가 적혀야 한다.
 
     plain, selections 빈 튜플. 재포장(remux_stream)이 세그먼트를 다 받아 넘긴 뒤 stderr에
@@ -1893,7 +1910,7 @@ def test_remux_that_hits_the_file_size_limit_carries_a_key_by_the_filesystem(
     run = _Run(host, tmp_path, [])
     monkeypatch.setattr(base_module, "filesystem_name", lambda folder: name)
 
-    def too_large(chunks, dst_path, **kwargs):
+    def too_large(chunks, dst_path, **kwargs) -> Never:
         for _chunk in chunks:  # 제품의 재포장처럼 세그먼트를 끝까지 넘긴다(넘긴 것은 지워진다)
             pass
         raise RemuxError(f"ffmpeg remux 실패 (exit 1): {_FFMPEG_FILE_TOO_LARGE}")

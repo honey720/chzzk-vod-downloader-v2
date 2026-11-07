@@ -17,7 +17,7 @@ from tests.core.sources.test_m3u8_downloader_run import (
 HOST = "https://ex-nlive-slitvod-streaming.navercdn.com"
 
 
-def test_recovery_url_keeps_auth_and_is_idempotent():
+def test_recovery_url_keeps_auth_and_is_idempotent() -> None:
     """복구 주소가 생성되면 인증 경로와 쿼리를 보존하고 반복해도 같아야 한다."""
     url = HOST + "/video/hdntl=test/seg.m4v?signature=test"
     expected = HOST + "/video/hdntl=test//seg.m4v?signature=test"
@@ -28,13 +28,13 @@ def test_recovery_url_keeps_auth_and_is_idempotent():
 @pytest.mark.parametrize(
     "url", ["https://example.org/a.m4v", HOST.replace("https", "http") + "/a.m4v"]
 )
-def test_other_servers_are_unchanged(url):
+def test_other_servers_are_unchanged(url) -> None:
     """실측하지 않은 서버나 HTTP 주소는 변경되지 않아야 한다."""
     assert module._cache_recovery_url(url) == url
 
 
 @pytest.mark.parametrize("recover", [True, False])
-def test_invalid_cache_uses_validated_retry_and_keeps_limit(tmp_path, monkeypatch, recover):
+def test_invalid_cache_uses_validated_retry_and_keeps_limit(tmp_path, monkeypatch, recover) -> None:
     """손상 캐시를 만나면 대체 경로를 검증하고 반복 손상은 한도에서 실패해야 한다."""
     engine, data, logger, output, finished, errors, merges = _make_engine(tmp_path, monkeypatch)
     data.base_url = HOST + "/hls/video.m3u8"
@@ -71,7 +71,7 @@ WORKERS = 4  # 같은 세그먼트를 동시에 받는 작업자 수
 class _DamagedTogether(StreamResponse):
     """손상 본문을 다 흘린 뒤 모든 작업자가 모일 때까지 기다리는 응답 — 구조 검사 실패를 한꺼번에 낸다."""
 
-    def __init__(self, barrier: threading.Barrier):
+    def __init__(self, barrier: threading.Barrier) -> None:
         super().__init__(b"damaged cached payload", 0)
         self._barrier = barrier
 
@@ -80,7 +80,9 @@ class _DamagedTogether(StreamResponse):
         self._barrier.wait(timeout=10)
 
 
-def test_workers_failing_the_same_segment_together_mark_and_warn_once(tmp_path, monkeypatch):
+def test_workers_failing_the_same_segment_together_mark_and_warn_once(
+    tmp_path, monkeypatch
+) -> None:
     """여러 작업자가 같은 세그먼트의 손상 본문을 동시에 받으면 복구 표시와 경고는 한 번이어야 한다 (#375).
 
     작업자 4개가 seg_3(복구 대상 CDN)을 동시에 받고, 손상 본문을 다 받은 뒤 함께 구조 검사에 실패함
@@ -122,7 +124,7 @@ def test_workers_failing_the_same_segment_together_mark_and_warn_once(tmp_path, 
 
 def test_a_second_run_of_the_same_engine_starts_each_segment_on_its_normal_path(
     tmp_path, monkeypatch
-):
+) -> None:
     """같은 엔진을 다시 돌리면 앞 실행에서 복구로 표시된 세그먼트도 처음에는 원래 경로로 받아야 한다 (#375).
 
     첫 실행: seg_3이 원래 경로 · // 경로 모두 손상 → 재시도 한도로 실패. 둘째 실행(같은 엔진): seg_3이
@@ -174,7 +176,7 @@ CORRUPT_HEADERS = {
 class _HeaderedResponse(StreamResponse):
     """헤더를 가진 손상 응답."""
 
-    def __init__(self, body: bytes, headers: dict):
+    def __init__(self, body: bytes, headers: dict) -> None:
         super().__init__(body, 0)
         self.headers = headers
 
@@ -202,7 +204,9 @@ def _corrupt_lines(logger) -> list[str]:
     return [w for w in logger.warnings if "corrupt response -" in w]
 
 
-def test_corrupt_response_line_carries_the_response_facts_and_the_recovery(tmp_path, monkeypatch):
+def test_corrupt_response_line_carries_the_response_facts_and_the_recovery(
+    tmp_path, monkeypatch
+) -> None:
     """손상 응답을 받으면 받은 길이 · Content-Length · ETag · Age · 캐시 상태 · 시도 · 경로 · 복구를 한 줄에 남겨야 한다.
 
     seg_3의 원래 경로가 22바이트 손상 본문(Content-Length 22 · ETag "etag-1" · Age 30 · X-Cache HIT),
@@ -226,7 +230,7 @@ def test_corrupt_response_line_carries_the_response_facts_and_the_recovery(tmp_p
     )
 
 
-def test_repeated_corrupt_responses_of_a_segment_are_grouped(tmp_path, monkeypatch):
+def test_repeated_corrupt_responses_of_a_segment_are_grouped(tmp_path, monkeypatch) -> None:
     """한 세그먼트의 손상 응답이 되풀이되면 자세한 줄은 원래 경로 · 복구 경로의 첫 것만이고 나머지는 끝 줄에 수로 적혀야 한다.
 
     seg_3의 원래 경로 · // 경로 모두 손상, 일시 오류 재큐 상한 3(요청 4번)
@@ -255,7 +259,7 @@ def test_repeated_corrupt_responses_of_a_segment_are_grouped(tmp_path, monkeypat
 )
 def test_corrupt_response_that_is_not_retried_says_so_instead_of_a_recovery(
     tmp_path, monkeypatch, limit, expected
-):
+) -> None:
     """손상 응답으로 재큐 상한에 닿아 다시 받지 않으면 그 자세한 줄의 복구는 not retried여야 한다 (#375).
 
     seg_3의 원래 경로 · // 경로 모두 손상, 일시 오류 재큐 상한 0 · 1
@@ -270,7 +274,7 @@ def test_corrupt_response_that_is_not_retried_says_so_instead_of_a_recovery(
     assert [line.rsplit(", attempt ", 1)[1] for line in lines] == expected
 
 
-def test_corrupt_response_without_headers_marks_each_missing_fact(tmp_path, monkeypatch):
+def test_corrupt_response_without_headers_marks_each_missing_fact(tmp_path, monkeypatch) -> None:
     """헤더가 없는 손상 응답이면 빠진 항목을 "-"로 적어야 한다.
 
     seg_3의 원래 경로가 헤더 없는 22바이트 손상 본문, // 경로는 정상
@@ -288,7 +292,7 @@ def test_corrupt_response_without_headers_marks_each_missing_fact(tmp_path, monk
 
 def test_corrupt_response_line_has_no_address_and_its_header_tokens_are_redacted_in_the_log_file(
     tmp_path, monkeypatch
-):
+) -> None:
     """손상 응답의 줄에는 세그먼트 주소가 없어야 하고, 헤더 값에 섞인 주소의 토큰은 로그 파일에서 가려져야 한다.
 
     seg_3의 X-Cache 헤더가 "HIT from https://edge.invalid/x?token=SECRET123", // 경로는 정상.
@@ -315,7 +319,7 @@ def test_corrupt_response_line_has_no_address_and_its_header_tokens_are_redacted
     assert "SECRET123" not in written
 
 
-def test_corrupt_header_value_with_a_line_break_stays_on_one_line(tmp_path, monkeypatch):
+def test_corrupt_header_value_with_a_line_break_stays_on_one_line(tmp_path, monkeypatch) -> None:
     """헤더 값에 줄바꿈 · 제어 문자가 섞여 와도 손상 응답의 줄은 한 줄이어야 한다.
 
     seg_3의 ETag 헤더가 '"a"\r\nInjected: 1', // 경로는 정상
@@ -331,7 +335,7 @@ def test_corrupt_header_value_with_a_line_break_stays_on_one_line(tmp_path, monk
     assert 'ETag "a"Injected: 1, ' in line
 
 
-def test_normal_responses_leave_no_corrupt_response_line(tmp_path, monkeypatch):
+def test_normal_responses_leave_no_corrupt_response_line(tmp_path, monkeypatch) -> None:
     """세그먼트가 모두 온전하게 오면 손상 응답의 줄도 묶음의 끝 줄도 없어야 한다.
 
     복구 대상 CDN, 세그먼트 3개 모두 정상

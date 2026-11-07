@@ -24,7 +24,7 @@ def resource_path(relative_path: str) -> str:
     base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
 
-def apply_theme(app):
+def apply_theme(app) -> None:
     """OS 라이트/다크 설정을 감지해 앱 전역 팔레트·스타일시트를 적용한다 (#227).
 
     실패해도 앱은 뜬다 — 스타일이 없으면 Qt 기본 외형으로 보일 뿐이고,

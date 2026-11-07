@@ -30,20 +30,20 @@ from core.utils.paths import (
 # ================================================================ ensure_unique_path
 
 
-def test_ensure_unique_path_returns_original_when_free(tmp_path):
+def test_ensure_unique_path_returns_original_when_free(tmp_path) -> None:
     """비어 있는 경로는 그대로 돌려준다 — 기본 파일명은 변하지 않는다."""
     path = str(tmp_path / "방송 1080p.mp4")
     assert ensure_unique_path(path) == path
 
 
-def test_ensure_unique_path_appends_counter_when_taken(tmp_path):
+def test_ensure_unique_path_appends_counter_when_taken(tmp_path) -> None:
     """이미 파일이 있으면 확장자 앞에 ' (1)'을 붙인다 — 덮어쓰기 금지 필수 조건."""
     (tmp_path / "방송 1080p.mp4").write_bytes(b"existing")
     result = ensure_unique_path(str(tmp_path / "방송 1080p.mp4"))
     assert result == str(tmp_path / "방송 1080p (1).mp4")
 
 
-def test_ensure_unique_path_increments_until_free(tmp_path):
+def test_ensure_unique_path_increments_until_free(tmp_path) -> None:
     """(1)도 차 있으면 (2), (3)… 비어 있는 번호까지 올린다."""
     (tmp_path / "방송 1080p.mp4").write_bytes(b"a")
     (tmp_path / "방송 1080p (1).mp4").write_bytes(b"b")
@@ -51,7 +51,7 @@ def test_ensure_unique_path_increments_until_free(tmp_path):
     assert result == str(tmp_path / "방송 1080p (2).mp4")
 
 
-def test_ensure_unique_path_counts_directories_too(tmp_path):
+def test_ensure_unique_path_counts_directories_too(tmp_path) -> None:
     """같은 이름의 디렉토리가 있어도 충돌로 본다 (os.path.exists 기준)."""
     (tmp_path / "방송 1080p.mp4").mkdir()
     result = ensure_unique_path(str(tmp_path / "방송 1080p.mp4"))
@@ -61,7 +61,7 @@ def test_ensure_unique_path_counts_directories_too(tmp_path):
 # ================================================================ 연속 다운로드 시나리오
 
 
-def test_sequential_same_title_downloads_keep_both_files(tmp_path):
+def test_sequential_same_title_downloads_keep_both_files(tmp_path) -> None:
     """완료 조건: 같은 제목 VOD를 연속으로 받아도 두 파일이 모두 남는다."""
     first = build_output_path(str(tmp_path), "즐거운 방송", 1080)
     with open(first, "wb") as f:
@@ -81,18 +81,18 @@ def test_sequential_same_title_downloads_keep_both_files(tmp_path):
 # ================================================================ 정제·길이 제한
 
 
-def test_sanitize_filename_strips_windows_invalid_chars():
+def test_sanitize_filename_strips_windows_invalid_chars() -> None:
     """Windows 금지 문자와 개행이 제거된다 — app/network.py 정제가 이 함수를 쓴다."""
     assert sanitize_filename('a\\b/c:d*e?f"g<h>i|j\nk') == "abcdefghijk"
 
 
-def test_sanitize_filename_strips_all_ascii_control_chars():
+def test_sanitize_filename_strips_all_ascii_control_chars() -> None:
     """감사 보강 1: 0x00–0x1F 제어 문자 전체가 제거된다 (Windows는 생성 자체를 거부)."""
     assert sanitize_filename("a\rb\tc\x00d\x1fe") == "abcde"
     assert sanitize_filename("".join(chr(c) for c in range(0x20)) + "제목") == "제목"
 
 
-def test_build_output_path_with_control_chars_creates_real_file(tmp_path):
+def test_build_output_path_with_control_chars_creates_real_file(tmp_path) -> None:
     """제어 문자가 든 제목도 실제 파일 생성까지 통과한다."""
     result = build_output_path(str(tmp_path), "탭\t과 캐리지\r리턴", 1080)
     assert os.path.basename(result) == "탭과 캐리지리턴 1080p.mp4"
@@ -101,19 +101,19 @@ def test_build_output_path_with_control_chars_creates_real_file(tmp_path):
     assert os.path.exists(result)
 
 
-def test_build_output_path_sanitizes_title(tmp_path):
+def test_build_output_path_sanitizes_title(tmp_path) -> None:
     """완료 조건: 특수문자가 있는 제목으로도 정상 경로가 나온다."""
     result = build_output_path(str(tmp_path), '공지: "오늘 방송" <특집>?', 720)
     assert result == str(tmp_path / "공지 오늘 방송 특집 720p.mp4")
 
 
-def test_build_output_path_falls_back_when_title_empty(tmp_path):
+def test_build_output_path_falls_back_when_title_empty(tmp_path) -> None:
     """정제 후 제목이 비면 'video'로 대체한다 — ' 1080p.mp4' 같은 이름을 막는다."""
     result = build_output_path(str(tmp_path), "???", 1080)
     assert result == str(tmp_path / "video 1080p.mp4")
 
 
-def test_build_output_path_truncates_long_title(tmp_path):
+def test_build_output_path_truncates_long_title(tmp_path) -> None:
     """전체 경로가 상한(240자)을 넘으면 제목만 잘라 맞춘다 — 접미사·확장자 보존."""
     result = build_output_path(str(tmp_path), "가" * 300, 1080)
     assert len(result) <= 240
@@ -121,7 +121,7 @@ def test_build_output_path_truncates_long_title(tmp_path):
     assert os.path.dirname(result) == str(tmp_path)
 
 
-def test_truncated_titles_with_same_prefix_stay_distinct(tmp_path):
+def test_truncated_titles_with_same_prefix_stay_distinct(tmp_path) -> None:
     """추가 확인 3: 앞부분이 같은 긴 제목들은 절단 후에도 해시 표식으로 갈라진다.
 
     표식 없이는 절단본이 동일해져 " (n)"만으로 구분되고(식별성 저하),
@@ -134,7 +134,7 @@ def test_truncated_titles_with_same_prefix_stay_distinct(tmp_path):
     assert len(a) <= 240 and len(b) <= 240
 
 
-def test_truncated_title_is_deterministic(tmp_path):
+def test_truncated_title_is_deterministic(tmp_path) -> None:
     """절단 표식은 원제목의 해시라 같은 제목이면 항상 같은 이름이다 (충돌 시에만 (n))."""
     title = "가" * 300
     assert build_output_path(str(tmp_path), title, 1080) == build_output_path(
@@ -142,7 +142,7 @@ def test_truncated_title_is_deterministic(tmp_path):
     )
 
 
-def test_filename_respects_posix_byte_limit(tmp_path):
+def test_filename_respects_posix_byte_limit(tmp_path) -> None:
     """감사 보강 2: 문자 수 상한 안쪽이어도 파일명 UTF-8 바이트가 240을 넘지 않는다.
 
     한글 150자 제목은 문자 수로는 짧지만 UTF-8로 450바이트라, ext4 등
@@ -158,7 +158,7 @@ def test_filename_respects_posix_byte_limit(tmp_path):
     assert os.path.exists(result)
 
 
-def test_byte_truncation_keeps_character_boundary(tmp_path):
+def test_byte_truncation_keeps_character_boundary(tmp_path) -> None:
     """바이트 절단은 문자 경계를 깨지 않는다 — 한글 3바이트·이모지 4바이트."""
     for title in ("한" * 150, "🎮" * 100, "한🎮" * 70):
         result = build_output_path(str(tmp_path), title, 1080)
@@ -169,14 +169,14 @@ def test_byte_truncation_keeps_character_boundary(tmp_path):
         assert title.startswith(clipped)
 
 
-def test_byte_truncated_titles_with_same_prefix_stay_distinct(tmp_path):
+def test_byte_truncated_titles_with_same_prefix_stay_distinct(tmp_path) -> None:
     """바이트 절단으로 앞부분이 같아진 제목들도 해시 표식으로 갈라진다."""
     a = build_output_path(str(tmp_path), "한" * 150 + "일회차", 1080)
     b = build_output_path(str(tmp_path), "한" * 150 + "이회차", 1080)
     assert a != b  # 파일을 만들지 않아도 서로 다른 경로
 
 
-def test_byte_limit_covers_temp_dir_name(tmp_path):
+def test_byte_limit_covers_temp_dir_name(tmp_path) -> None:
     """임시 폴더 이름(stem + 접두사 11바이트)도 255바이트 안에 들어온다."""
     result = build_output_path(str(tmp_path), "한" * 150, 1080)
     temp_name = os.path.basename(temp_dir_for(result))
@@ -186,7 +186,7 @@ def test_byte_limit_covers_temp_dir_name(tmp_path):
 # ================================================================ Windows 예약어·끝 점
 
 
-def test_reserved_device_title_gets_prefixed(tmp_path):
+def test_reserved_device_title_gets_prefixed(tmp_path) -> None:
     """추가 확인 1: 제목이 예약 장치명(그대로/점·공백 후속)이면 '_'를 앞에 붙인다.
 
     Windows 11 실측으로는 CON.mp4도 생성되지만 지원 대상인 Windows 10이
@@ -197,7 +197,7 @@ def test_reserved_device_title_gets_prefixed(tmp_path):
     assert os.path.basename(build_output_path(str(tmp_path), "lpt1", 480)) == "_lpt1 480p.mp4"
 
 
-def test_reserved_lookalike_titles_are_untouched(tmp_path):
+def test_reserved_lookalike_titles_are_untouched(tmp_path) -> None:
     """예약어로 시작하는 일반 단어(CONCERT 등)는 오탐하지 않는다."""
     assert (
         os.path.basename(build_output_path(str(tmp_path), "CONCERT 실황", 1080))
@@ -209,7 +209,7 @@ def test_reserved_lookalike_titles_are_untouched(tmp_path):
     )
 
 
-def test_trailing_dots_in_title_land_mid_filename(tmp_path):
+def test_trailing_dots_in_title_land_mid_filename(tmp_path) -> None:
     """추가 확인 2: 마침표로 끝나는 제목도 접미사가 항상 뒤에 붙어 이름 중간에 놓인다.
 
     Windows는 이름 '끝'의 점·공백만 조용히 잘라낸다(실측) — 생성된 이름은
@@ -222,7 +222,7 @@ def test_trailing_dots_in_title_land_mid_filename(tmp_path):
     assert os.path.basename(result) in os.listdir(tmp_path)  # 이름 그대로 저장된다
 
 
-def test_trailing_spaces_in_title_are_stripped(tmp_path):
+def test_trailing_spaces_in_title_are_stripped(tmp_path) -> None:
     """제목 양끝 공백은 정제 단계에서 제거된다 — ' 제목  ' 같은 입력도 안전."""
     result = build_output_path(str(tmp_path), "  공백 제목   ", 1080)
     assert os.path.basename(result) == "공백 제목 1080p.mp4"
@@ -231,20 +231,20 @@ def test_trailing_spaces_in_title_are_stripped(tmp_path):
 # ================================================================ 임시 폴더 명명
 
 
-def test_temp_dir_for_derives_from_output_stem(tmp_path):
+def test_temp_dir_for_derives_from_output_stem(tmp_path) -> None:
     """임시 폴더는 산출물 파일명(확장자 제외)에서 파생된다."""
     output = str(tmp_path / "방송 1080p.mp4")
     assert temp_dir_for(output) == str(tmp_path / "CVDv2_temp_방송 1080p")
 
 
-def test_temp_dir_for_distinct_across_uniquified_outputs(tmp_path):
+def test_temp_dir_for_distinct_across_uniquified_outputs(tmp_path) -> None:
     """중복 회피로 갈라진 산출물끼리는 임시 폴더도 겹치지 않는다 (#105 확인 항목 4)."""
     a = temp_dir_for(str(tmp_path / "방송 1080p.mp4"))
     b = temp_dir_for(str(tmp_path / "방송 1080p (1).mp4"))
     assert a != b
 
 
-def test_same_video_queued_twice_gets_distinct_temp_dirs(tmp_path):
+def test_same_video_queued_twice_gets_distinct_temp_dirs(tmp_path) -> None:
     """추가 확인 4: 같은 영상을 두 번 큐에 넣어도 임시 폴더가 갈라진다.
 
     앱은 다운로드를 순차 실행하고 경로는 각 건의 시작 직전에 배정되므로,
@@ -276,7 +276,7 @@ def _sections(reserved, directory, title, resolution, count) -> tuple[str, ...]:
     return paths
 
 
-def test_section_paths_are_numbered_in_list_order(tmp_path, reserved):
+def test_section_paths_are_numbered_in_list_order(tmp_path, reserved) -> None:
     """build_section_output_paths는 구간 수만큼 `_1`부터 순서대로 번호를 붙인 경로를 돌려줘야 한다.
 
     제목 "방송", 해상도 1080, 구간 3개
@@ -287,7 +287,7 @@ def test_section_paths_are_numbered_in_list_order(tmp_path, reserved):
     assert paths == tuple(str(tmp_path / f"방송 1080p_{n}.mp4") for n in (1, 2, 3))
 
 
-def test_single_section_still_gets_number_one(tmp_path, reserved):
+def test_single_section_still_gets_number_one(tmp_path, reserved) -> None:
     """build_section_output_paths는 구간이 하나여도 `_1`을 붙여야 한다.
 
     제목 "방송", 해상도 1080, 구간 1개
@@ -299,7 +299,7 @@ def test_single_section_still_gets_number_one(tmp_path, reserved):
     assert paths[0] != build_output_path(str(tmp_path), "방송", 1080)
 
 
-def test_section_path_gets_counter_only_where_a_file_exists(tmp_path, reserved):
+def test_section_path_gets_counter_only_where_a_file_exists(tmp_path, reserved) -> None:
     """build_section_output_paths는 같은 이름의 파일이 있는 구간에만 " (n)"을 붙여야 한다.
 
     "방송 1080p_1.mp4"가 디스크에 있음, 구간 2개
@@ -312,7 +312,7 @@ def test_section_path_gets_counter_only_where_a_file_exists(tmp_path, reserved):
     assert paths == (str(tmp_path / "방송 1080p_1 (1).mp4"), str(tmp_path / "방송 1080p_2.mp4"))
 
 
-def test_section_paths_avoid_names_reserved_by_another_download(tmp_path, reserved):
+def test_section_paths_avoid_names_reserved_by_another_download(tmp_path, reserved) -> None:
     """build_section_output_paths는 디스크에 없어도 다른 다운로드가 배정받은 이름을 피해야 한다.
 
     같은 제목으로 두 번 배정(파일은 만들지 않음), 구간 2개씩
@@ -326,7 +326,7 @@ def test_section_paths_avoid_names_reserved_by_another_download(tmp_path, reserv
     assert second == tuple(str(tmp_path / f"방송 1080p_{n} (1).mp4") for n in (1, 2))
 
 
-def test_released_section_paths_can_be_assigned_again(tmp_path):
+def test_released_section_paths_can_be_assigned_again(tmp_path) -> None:
     """release_output_paths로 푼 이름은 다시 배정되어야 한다.
 
     배정 → 풀기 → 같은 제목으로 다시 배정
@@ -341,7 +341,7 @@ def test_released_section_paths_can_be_assigned_again(tmp_path):
     assert second == first
 
 
-def test_concurrent_assignments_never_share_a_name(tmp_path, reserved):
+def test_concurrent_assignments_never_share_a_name(tmp_path, reserved) -> None:
     """여러 스레드가 같은 제목으로 동시에 배정해도 같은 경로가 두 번 나오지 않아야 한다.
 
     스레드 8개가 Barrier로 동시에 구간 3개씩 배정
@@ -351,7 +351,7 @@ def test_concurrent_assignments_never_share_a_name(tmp_path, reserved):
     results: list[tuple[str, ...]] = []
     lock = threading.Lock()
 
-    def assign():
+    def assign() -> None:
         barrier.wait()
         paths = build_section_output_paths(str(tmp_path), "방송", 1080, 3)
         with lock:
@@ -369,7 +369,7 @@ def test_concurrent_assignments_never_share_a_name(tmp_path, reserved):
     assert len(set(every)) == 24
 
 
-def test_section_path_sanitizes_and_truncates_like_whole_download(tmp_path, reserved):
+def test_section_path_sanitizes_and_truncates_like_whole_download(tmp_path, reserved) -> None:
     """build_section_output_paths는 전체 다운로드와 같은 정제·길이 제한을 적용하고 번호는 남겨야 한다.
 
     제목 "a" 400자에 금지 문자 ':' 포함, 구간 1개
@@ -383,7 +383,7 @@ def test_section_path_sanitizes_and_truncates_like_whole_download(tmp_path, rese
     assert ":" not in name
 
 
-def test_partial_source_path_derives_from_section_output(tmp_path):
+def test_partial_source_path_derives_from_section_output(tmp_path) -> None:
     """partial_source_path_for는 산출물과 같은 폴더에 산출물 이름에서 파생한 mp4 경로를 돌려줘야 한다.
 
     산출물 "<폴더>/방송 1080p_1 (1).mp4"
@@ -394,7 +394,7 @@ def test_partial_source_path_derives_from_section_output(tmp_path):
     assert partial_source_path_for(output) == str(tmp_path / "CVDv2_part_방송 1080p_1 (1).mp4")
 
 
-def test_partial_source_name_stays_within_component_limit(tmp_path):
+def test_partial_source_name_stays_within_component_limit(tmp_path) -> None:
     """partial_source_path_for는 접두사를 붙인 이름이 255바이트를 넘으면 잘라서 255바이트 안에 맞춰야 한다.
 
     240바이트짜리 산출물 이름에 " (10)"이 붙은 경로 (접두사 11바이트를 더하면 256바이트)
@@ -412,7 +412,7 @@ def test_partial_source_name_stays_within_component_limit(tmp_path):
     assert "�" not in name  # 문자 중간에서 잘리지 않았다
 
 
-def test_truncated_partial_source_names_stay_distinct(tmp_path):
+def test_truncated_partial_source_names_stay_distinct(tmp_path) -> None:
     """partial_source_path_for는 잘린 뒤 같아지는 두 산출물 이름에 서로 다른 임시 원본 이름을 줘야 한다.
 
     끝의 중복 번호만 다른 긴 산출물 이름 " (10)"과 " (11)"
@@ -426,7 +426,7 @@ def test_truncated_partial_source_names_stay_distinct(tmp_path):
     assert first != second
 
 
-def test_reserved_section_paths_keep_the_names_of_the_finished_sections(tmp_path):
+def test_reserved_section_paths_keep_the_names_of_the_finished_sections(tmp_path) -> None:
     """reserve_section_output_paths는 끝낸 구간의 파일이 디스크에 있어도 그 이름을 그대로 돌려줘야 한다.
 
     경로 셋. 0 · 2번의 파일이 있고 1번은 없다. kept == {0, 2}
@@ -443,7 +443,9 @@ def test_reserved_section_paths_keep_the_names_of_the_finished_sections(tmp_path
     assert reserved == paths
 
 
-def test_reserved_section_paths_rename_only_an_unfinished_section_whose_name_was_taken(tmp_path):
+def test_reserved_section_paths_rename_only_an_unfinished_section_whose_name_was_taken(
+    tmp_path,
+) -> None:
     """reserve_section_output_paths는 끝나지 않은 구간의 이름을 다른 것이 차지했을 때만 " (n)"을 붙여야 한다.
 
     경로 셋 모두 파일이 있다. kept == {0, 2}
@@ -460,7 +462,7 @@ def test_reserved_section_paths_rename_only_an_unfinished_section_whose_name_was
     assert reserved == (paths[0], str(tmp_path / "방송 1080p_2 (1).mp4"), paths[2])
 
 
-def test_reserved_section_paths_are_avoided_by_other_downloads(tmp_path):
+def test_reserved_section_paths_are_avoided_by_other_downloads(tmp_path) -> None:
     """reserve_section_output_paths로 예약한 이름은 디스크에 없어도 다른 다운로드가 배정받지 않아야 한다.
 
     경로 둘(파일 없음)을 예약한 채 같은 제목 · 해상도의 구간 둘을 새로 배정
@@ -479,7 +481,7 @@ def test_reserved_section_paths_are_avoided_by_other_downloads(tmp_path):
     ]
 
 
-def test_section_body_path_derives_from_section_output(tmp_path):
+def test_section_body_path_derives_from_section_output(tmp_path) -> None:
     """section_body_path_for는 산출물과 같은 폴더에 산출물 이름 앞에 접두사를 붙인 mp4 경로를 돌려줘야 한다.
 
     "방송 1080p_1 (1).mp4" -> "CVDv2_body_방송 1080p_1 (1).mp4" — 경계 원본의 이름과 다르다
@@ -490,7 +492,7 @@ def test_section_body_path_derives_from_section_output(tmp_path):
     assert section_body_path_for(output) != partial_source_path_for(output)
 
 
-def test_section_body_path_is_cut_to_the_name_limit(tmp_path):
+def test_section_body_path_is_cut_to_the_name_limit(tmp_path) -> None:
     """section_body_path_for는 접두사를 붙인 이름이 255바이트를 넘으면 잘라서 255바이트 안에 맞춰야 한다.
 
     한글 80자(240바이트) 이름 -> 파일명의 바이트 수 <= 255, 접두사와 확장자는 그대로
@@ -537,7 +539,7 @@ def _fitting_stem_length(prefix: str, extension: str, deepest: str) -> int:
 
 
 @pytest.mark.parametrize("kind", TEMP_PATHS)
-def test_temp_path_that_just_fits_keeps_the_output_name(tmp_path, kind):
+def test_temp_path_that_just_fits_keeps_the_output_name(tmp_path, kind) -> None:
     """임시 경로 아래 가장 깊은 경로가 딱 259자면 임시 이름은 접두사 + 산출물 이름 그대로여야 한다.
 
     폴더 180자, 가장 깊은 경로가 259자가 되는 길이의 산출물 이름(ASCII)
@@ -554,7 +556,7 @@ def test_temp_path_that_just_fits_keeps_the_output_name(tmp_path, kind):
 
 
 @pytest.mark.parametrize("kind", TEMP_PATHS)
-def test_temp_path_one_char_over_is_shortened_with_a_hash(tmp_path, kind):
+def test_temp_path_one_char_over_is_shortened_with_a_hash(tmp_path, kind) -> None:
     """임시 경로 아래 가장 깊은 경로가 259자를 1자 넘으면 이름을 줄이고 해시 6자리를 붙여 259자 안에 맞춰야 한다.
 
     폴더 180자, 딱 맞는 길이보다 1자 긴 산출물 이름(ASCII)
@@ -574,7 +576,7 @@ def test_temp_path_one_char_over_is_shortened_with_a_hash(tmp_path, kind):
 
 
 @pytest.mark.parametrize("kind", TEMP_PATHS)
-def test_shortened_temp_path_is_the_same_for_the_same_output(tmp_path, kind):
+def test_shortened_temp_path_is_the_same_for_the_same_output(tmp_path, kind) -> None:
     """같은 산출물 경로면 줄인 임시 경로도 매번 같아야 하고, 끝만 다른 산출물은 서로 달라야 한다.
 
     폴더 180자, 예산을 넘는 산출물 이름 "…a (1)"과 "…a (2)"
@@ -591,7 +593,7 @@ def test_shortened_temp_path_is_the_same_for_the_same_output(tmp_path, kind):
 
 
 @pytest.mark.parametrize("kind", TEMP_PATHS)
-def test_shortened_hangul_temp_path_keeps_whole_characters(tmp_path, kind):
+def test_shortened_hangul_temp_path_keeps_whole_characters(tmp_path, kind) -> None:
     """한글 산출물 이름이 예산을 넘으면 줄인 이름은 문자 중간에서 잘리지 않고 길이 · 바이트 상한에 들어야 한다.
 
     폴더 180자, 딱 맞는 길이보다 10자 긴 한글 산출물 이름
@@ -612,7 +614,9 @@ def test_shortened_hangul_temp_path_keeps_whole_characters(tmp_path, kind):
 
 @pytest.mark.parametrize("kind", TEMP_PATHS)
 @pytest.mark.parametrize("filler", [" ", "."], ids=["space", "dot"])
-def test_shortened_temp_name_does_not_end_in_a_space_or_dot_where_it_is_cut(tmp_path, kind, filler):
+def test_shortened_temp_name_does_not_end_in_a_space_or_dot_where_it_is_cut(
+    tmp_path, kind, filler
+) -> None:
     """줄이는 자리에 공백 · 점이 이어지면 줄인 이름의 해시 앞에 공백이 겹치지 않고 이름이 공백 · 점으로 끝나지 않아야 한다.
 
     폴더 180자, "a" 다음에 공백(또는 점) 30개가 이어지고 끝에 "b" 하나 — 줄이는 자리가 공백(점) 사이
@@ -635,7 +639,9 @@ EMOJI = "\U0001f600"  # 보조 평면 문자 — UTF-16 단위로 둘이다
 
 
 @pytest.mark.parametrize("kind", TEMP_PATHS)
-def test_emoji_temp_path_that_just_fits_in_utf16_units_keeps_the_output_name(tmp_path, kind):
+def test_emoji_temp_path_that_just_fits_in_utf16_units_keeps_the_output_name(
+    tmp_path, kind
+) -> None:
     """이모지가 든 임시 경로가 UTF-16 단위로 딱 259면 임시 이름은 접두사 + 산출물 이름 그대로여야 한다.
 
     폴더 180자, 이모지(2단위)로 채워 가장 깊은 경로가 UTF-16 259단위가 되는 산출물 이름
@@ -653,7 +659,7 @@ def test_emoji_temp_path_that_just_fits_in_utf16_units_keeps_the_output_name(tmp
 
 
 @pytest.mark.parametrize("kind", TEMP_PATHS)
-def test_emoji_temp_path_over_in_utf16_units_is_shortened(tmp_path, kind):
+def test_emoji_temp_path_over_in_utf16_units_is_shortened(tmp_path, kind) -> None:
     """글자 수로는 259 안이어도 UTF-16 단위로 넘는 이모지 임시 경로는 줄여서 259단위 안에 맞춰야 한다.
 
     폴더 180자, 딱 맞는 길이보다 1단위 긴 이모지 산출물 이름(글자 수로는 딱 맞는 길이의 절반 남짓)
@@ -673,7 +679,7 @@ def test_emoji_temp_path_over_in_utf16_units_is_shortened(tmp_path, kind):
     assert "�" not in name
 
 
-def test_emoji_temp_name_with_one_unit_left_drops_the_emoji_instead_of_going_over(tmp_path):
+def test_emoji_temp_name_with_one_unit_left_drops_the_emoji_instead_of_going_over(tmp_path) -> None:
     """줄인 앞부분에 1단위만 남았는데 첫 글자가 이모지(2단위)면 앞부분을 비워 259단위 안에 맞춰야 한다.
 
     폴더 211자 — 세그먼트 임시 폴더 이름의 앞부분에 1단위만 남는 깊이, 이모지 20개의 산출물 이름
@@ -690,7 +696,7 @@ def test_emoji_temp_name_with_one_unit_left_drops_the_emoji_instead_of_going_ove
 
 
 @pytest.mark.parametrize("kind", TEMP_PATHS)
-def test_temp_path_in_a_folder_with_an_undecodable_byte_is_measured(tmp_path, kind):
+def test_temp_path_in_a_folder_with_an_undecodable_byte_is_measured(tmp_path, kind) -> None:
     """디코드하지 못한 바이트(짝 없는 서로게이트)가 든 폴더에서도 임시 경로를 만들어야 한다.
 
     폴더 이름에 "\\udc80"(POSIX가 디코드하지 못한 바이트를 담는 글자), 짧은 산출물 이름
@@ -704,7 +710,7 @@ def test_temp_path_in_a_folder_with_an_undecodable_byte_is_measured(tmp_path, ki
     assert path == os.path.join(folder, prefix + "방송 1080p_1" + extension)
 
 
-def test_output_path_in_a_folder_with_an_undecodable_byte_is_measured(tmp_path):
+def test_output_path_in_a_folder_with_an_undecodable_byte_is_measured(tmp_path) -> None:
     """디코드하지 못한 바이트(짝 없는 서로게이트)가 든 폴더에서도 산출물 경로를 만들어야 한다.
 
     폴더 이름에 "\\udc80", 제목 "방송"
@@ -719,7 +725,7 @@ def test_output_path_in_a_folder_with_an_undecodable_byte_is_measured(tmp_path):
 OUTPUT_LIMIT = 240
 
 
-def test_emoji_output_path_that_just_fits_in_utf16_units_keeps_the_title(tmp_path):
+def test_emoji_output_path_that_just_fits_in_utf16_units_keeps_the_title(tmp_path) -> None:
     """이모지가 든 산출물 경로가 UTF-16 단위로 딱 240이면 제목을 자르지 않아야 한다.
 
     폴더 180자, 제목 "a" + 이모지 24개(UTF-16 49단위), 1080p
@@ -734,7 +740,7 @@ def test_emoji_output_path_that_just_fits_in_utf16_units_keeps_the_title(tmp_pat
     assert _deepest_length(path, "") == OUTPUT_LIMIT
 
 
-def test_emoji_output_path_over_in_utf16_units_is_shortened(tmp_path):
+def test_emoji_output_path_over_in_utf16_units_is_shortened(tmp_path) -> None:
     """글자 수로는 240 안이어도 UTF-16 단위로 넘는 이모지 산출물 경로는 제목을 줄여 240단위 안에 맞춰야 한다.
 
     폴더 180자, 제목 "aa" + 이모지 24개(UTF-16 50단위 · 26글자), 1080p
@@ -750,7 +756,7 @@ def test_emoji_output_path_over_in_utf16_units_is_shortened(tmp_path):
     assert "�" not in name
 
 
-def test_short_temp_names_are_unchanged(tmp_path):
+def test_short_temp_names_are_unchanged(tmp_path) -> None:
     """짧은 산출물 이름의 임시 경로는 접두사 + 산출물 이름 그대로여야 한다.
 
     "방송 1080p_1 (1).mp4" -> CVDv2_temp_ · CVDv2_cut_ 폴더, CVDv2_body_ · CVDv2_part_ 파일이 그 이름 그대로

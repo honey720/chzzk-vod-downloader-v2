@@ -90,7 +90,7 @@ class SectionRow(QWidget):
     넘치는 글은 말줄임하고 전문은 툴팁에 둔다(``ElidingLabel``).
     """
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         column = QVBoxLayout(self)
         column.setContentsMargins(0, 0, 0, 0)
@@ -191,7 +191,7 @@ class SectionRow(QWidget):
 class SectionEditDialog(QDialog):
     """구간 편집 창. 뷰모델의 상태를 그리고 입력을 뷰모델에 넘긴다."""
 
-    def __init__(self, viewmodel: SectionEditViewModel, parent: QWidget | None = None):
+    def __init__(self, viewmodel: SectionEditViewModel, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._viewmodel = viewmodel
         self._rows: list[SectionRow] = []

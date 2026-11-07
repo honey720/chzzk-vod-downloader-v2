@@ -21,6 +21,7 @@ from core.engine.decrypt import AES_BLOCK_SIZE, TS_PACKET_SIZE, sequence_iv
 from core.sources.hls_aes_downloader import DecryptionError, HlsAesDownloader
 from core.models.content import Content, ContentType
 from core.models.download_data import DownloadData
+from typing import Never
 
 KEY = bytes(range(16))  # 테스트용 더미 키
 KEY_URI = "https://api.chzzk.naver.com/service/v1/encryption/videos/VID/aes_key"
@@ -34,7 +35,7 @@ SEGMENT_COUNT = 5
 @pytest.mark.parametrize(
     "fixture_name", ["dash_manifest_sea_13714380.xml", "dash_manifest_sea_14283698.xml"]
 )
-def test_real_sea_manifest_is_supported(load_mock_response, fixture_name):
+def test_real_sea_manifest_is_supported(load_mock_response, fixture_name) -> None:
     """실제 매니페스트는 지원 대상(AES-128-CBC + keysys:http)으로 판정돼야 한다."""
     assert is_supported_sea(load_mock_response(fixture_name)) is True
 
@@ -42,7 +43,7 @@ def test_real_sea_manifest_is_supported(load_mock_response, fixture_name):
 @pytest.mark.parametrize(
     "fixture_name", ["dash_manifest_sea_13714380.xml", "dash_manifest_sea_14283698.xml"]
 )
-def test_parse_sea_manifest_uses_nvod_m3u_as_base_url(load_mock_response, fixture_name):
+def test_parse_sea_manifest_uses_nvod_m3u_as_base_url(load_mock_response, fixture_name) -> None:
     """암호화 비디오 Representation은 BaseURL이 없어 nvod:m3u를 base_url로 쓴다."""
     reps, auto_resolution, auto_base_url = parse_sea_manifest(load_mock_response(fixture_name))
 
@@ -55,7 +56,7 @@ def test_parse_sea_manifest_uses_nvod_m3u_as_base_url(load_mock_response, fixtur
     assert all("cmaf" not in url for _, url in reps)
 
 
-def test_drm_manifest_is_not_supported():
+def test_drm_manifest_is_not_supported() -> None:
     """라이선스 서버형 DRM(Widevine 등)은 지원 대상이 아니다 — 우회하지 않는다."""
     drm_xml = (
         '<MPD xmlns="urn:mpeg:dash:schema:mpd:2011"><Period><AdaptationSet><Representation '
@@ -67,7 +68,7 @@ def test_drm_manifest_is_not_supported():
     assert is_supported_sea(drm_xml) is False
 
 
-def test_plain_manifest_is_not_sea(load_mock_response):
+def test_plain_manifest_is_not_sea(load_mock_response) -> None:
     """ContentProtection이 없는 평문 매니페스트는 SEA가 아니다."""
     assert is_supported_sea(load_mock_response("dash_manifest.xml")) is False
 
@@ -94,12 +95,12 @@ def _make_content(content_type=ContentType.CHZZK_VIDEO_HLS_AES) -> Content:
         (ContentType.CHZZK_CLIP, False),
     ],
 )
-def test_supports_matrix(content_type, expected):
+def test_supports_matrix(content_type, expected) -> None:
     """암호화 VOD 타입만 이 다운로더가 처리한다."""
     assert HlsAesDownloader.supports(_make_content(content_type)) is expected
 
 
-def test_requires_key_resolution_is_declared():
+def test_requires_key_resolution_is_declared() -> None:
     """서비스가 키 리졸버를 주입하도록 계약을 선언해야 한다."""
     assert HlsAesDownloader.requires_key_resolution is True
     # base_url은 매니페스트 조회 시점에 확정되므로 재해석하지 않는다
@@ -134,7 +135,7 @@ def _playlist_text(method: str = "AES-128") -> str:
 
 
 class _Response:
-    def __init__(self, text: str = "", body: bytes = b""):
+    def __init__(self, text: str = "", body: bytes = b"") -> None:
         self.text = text
         self._body = body
 
@@ -143,7 +144,7 @@ class _Response:
         """비스트리밍 요청용 본문 (prepare의 키 검증이 쓴다)."""
         return self._body
 
-    def raise_for_status(self):
+    def raise_for_status(self) -> None:
         pass
 
     def iter_content(self, chunk_size=8192):
@@ -154,7 +155,7 @@ class _Response:
 class FakeSession:
     """플레이리스트와 암호화 세그먼트를 URL로 분기해 돌려주는 가짜 세션."""
 
-    def __init__(self, playlist: str):
+    def __init__(self, playlist: str) -> None:
         self._playlist = playlist
 
     def get(self, url, **kwargs):
@@ -167,7 +168,7 @@ class FakeSession:
 class RunLogger:
     """run() 경로가 쓰는 로거 인터페이스를 기록만 하며 흉내 낸다."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.errors: list[str] = []
         self.warnings: list[str] = []
         self.completed_times: list[float] = []
@@ -176,19 +177,19 @@ class RunLogger:
     def __getattr__(self, name):
         return lambda *args, **kwargs: None
 
-    def log_download_complete(self, total_time):
+    def log_download_complete(self, total_time) -> None:
         self.completed_times.append(total_time)
 
-    def log_error(self, message, exception=None):
+    def log_error(self, message, exception=None) -> None:
         self.errors.append(message)
 
-    def log_exception(self, message, exception=None):
+    def log_exception(self, message, exception=None) -> None:
         self.errors.append(message)
 
-    def warning(self, message):
+    def warning(self, message) -> None:
         self.warnings.append(message)
 
-    def save_and_close(self):
+    def save_and_close(self) -> None:
         self.closed += 1
 
 
@@ -209,7 +210,7 @@ def _make_engine(tmp_path, monkeypatch, playlist=None, key_resolver=None):
     # remux(#88·#92)는 성공 시 스트림 복사 재포장이다 — 이 파일의 검증 대상은
     # 복호화·공급 순서·바이트이므로 받은 스트림을 그대로 쓰는 스텁으로 대체한다.
     # 실제 ffmpeg 실행은 test_ffmpeg_utils.py가 검증한다
-    def _passthrough_remux_stream(chunks, dst_path, **_wait):
+    def _passthrough_remux_stream(chunks, dst_path, **_wait) -> None:
         with open(dst_path, "wb") as f:
             for chunk in chunks:
                 f.write(chunk)
@@ -220,7 +221,7 @@ def _make_engine(tmp_path, monkeypatch, playlist=None, key_resolver=None):
     failures: list[BaseException] = []
     merge_starts: list[bool] = []
 
-    def on_finished():
+    def on_finished() -> None:
         data.model.finish()
         finished.set()
 
@@ -239,7 +240,7 @@ def _make_engine(tmp_path, monkeypatch, playlist=None, key_resolver=None):
 # ================================================================ prepare·키 취득
 
 
-def test_prepare_fetches_key_through_injected_resolver(tmp_path, monkeypatch):
+def test_prepare_fetches_key_through_injected_resolver(tmp_path, monkeypatch) -> None:
     """키는 주입된 리졸버로 취득하고, 계획은 세그먼트 목록·후처리 필요를 담는다."""
     calls: list[tuple] = []
 
@@ -257,7 +258,7 @@ def test_prepare_fetches_key_through_injected_resolver(tmp_path, monkeypatch):
     assert plan.items[0] == (0, "segment-000000.ts")
 
 
-def test_prepare_without_resolver_fails(tmp_path, monkeypatch):
+def test_prepare_without_resolver_fails(tmp_path, monkeypatch) -> None:
     """키 리졸버가 없으면 명확히 실패해야 한다 (임의 우회 없음)."""
     engine, data, *_ = _make_engine(tmp_path, monkeypatch)
 
@@ -265,7 +266,7 @@ def test_prepare_without_resolver_fails(tmp_path, monkeypatch):
         engine.prepare(data.content)
 
 
-def test_prepare_rejects_unsupported_method(tmp_path, monkeypatch):
+def test_prepare_rejects_unsupported_method(tmp_path, monkeypatch) -> None:
     """AES-128이 아닌 방식은 우회를 시도하지 않고 거부한다."""
     engine, data, *_ = _make_engine(
         tmp_path,
@@ -278,7 +279,7 @@ def test_prepare_rejects_unsupported_method(tmp_path, monkeypatch):
         engine.prepare(data.content)
 
 
-def test_prepare_rejects_playlist_without_key(tmp_path, monkeypatch):
+def test_prepare_rejects_playlist_without_key(tmp_path, monkeypatch) -> None:
     """암호화 정보가 없는 플레이리스트는 이 경로의 대상이 아니다."""
     engine, data, *_ = _make_engine(
         tmp_path, monkeypatch, playlist=_playlist_text(method="NONE"), key_resolver=lambda c, u: KEY
@@ -288,7 +289,7 @@ def test_prepare_rejects_playlist_without_key(tmp_path, monkeypatch):
         engine.prepare(data.content)
 
 
-def test_wrong_key_fails_fast_instead_of_writing_garbage(tmp_path, monkeypatch):
+def test_wrong_key_fails_fast_instead_of_writing_garbage(tmp_path, monkeypatch) -> None:
     """키가 틀리면 첫 세그먼트에서 즉시 실패하고 결과 파일을 남기지 않는다."""
     wrong_key = bytes([0xFF]) * 16
     engine, data, logger, finished, failures, _ = _make_engine(
@@ -303,7 +304,7 @@ def test_wrong_key_fails_fast_instead_of_writing_garbage(tmp_path, monkeypatch):
     assert not (tmp_path / "out.mp4").exists()
 
 
-def test_wrong_key_failure_does_not_leak_key_value(tmp_path, monkeypatch):
+def test_wrong_key_failure_does_not_leak_key_value(tmp_path, monkeypatch) -> None:
     """키가 틀려 실패해도 실제 키 바이트가 실패 예외·로그 어디에도 남지 않는다 (SPEC §8.1).
 
     decrypt.py의 예외 메시지는 길이만 담아 이미 안전하지만(코드 확인), 그
@@ -329,7 +330,7 @@ def test_wrong_key_failure_does_not_leak_key_value(tmp_path, monkeypatch):
         assert repr(secret) not in log_text
 
 
-def test_short_key_failure_does_not_leak_key_value(tmp_path, monkeypatch):
+def test_short_key_failure_does_not_leak_key_value(tmp_path, monkeypatch) -> None:
     """리졸버가 길이가 틀린 키를 주면 값이 아니라 길이만 실패 메시지에 남는다 (SPEC §8.1)."""
     short_key = b"\xab\xcd\xef"  # 16바이트가 아닌 더미
     engine, data, *_ = _make_engine(tmp_path, monkeypatch, key_resolver=lambda c, u: short_key)
@@ -346,7 +347,7 @@ def test_short_key_failure_does_not_leak_key_value(tmp_path, monkeypatch):
 # ================================================================ 전체 파이프라인
 
 
-def test_run_downloads_decrypts_and_merges_in_order(tmp_path, monkeypatch):
+def test_run_downloads_decrypts_and_merges_in_order(tmp_path, monkeypatch) -> None:
     """전체 파이프라인이 복호화된 세그먼트를 순서대로 이어붙인 파일을 만든다."""
     engine, data, logger, finished, failures, merge_starts = _make_engine(
         tmp_path, monkeypatch, key_resolver=lambda c, u: KEY
@@ -368,7 +369,7 @@ def test_run_downloads_decrypts_and_merges_in_order(tmp_path, monkeypatch):
     assert not (tmp_path / "CVDv2_temp_out").exists()  # 임시 폴더 삭제 (#105 산출물 파생 이름)
 
 
-def test_stray_dotfile_in_temp_dir_is_excluded_from_merge(tmp_path, monkeypatch):
+def test_stray_dotfile_in_temp_dir_is_excluded_from_merge(tmp_path, monkeypatch) -> None:
     """세그먼트가 아닌 파일이 임시 폴더에 있어도 병합에서 제외되고 경고가 남는다 (#180).
 
     m3u8(fMP4) 경로와 같은 오염 경로 — TS 경로는 확장자가 달라(``.ts``)
@@ -378,7 +379,7 @@ def test_stray_dotfile_in_temp_dir_is_excluded_from_merge(tmp_path, monkeypatch)
         tmp_path, monkeypatch, key_resolver=lambda c, u: KEY
     )
 
-    def _pollute_then_start_merge():
+    def _pollute_then_start_merge() -> None:
         for name in ("._0.ts", ".DS_Store", "notes.txt"):
             with open(os.path.join(engine.temp_dir, name), "wb") as f:
                 f.write(b"not-a-segment")
@@ -404,7 +405,9 @@ def test_stray_dotfile_in_temp_dir_is_excluded_from_merge(tmp_path, monkeypatch)
 # ================================================================ 이 시도가 쓰지 않은 산출물 (#412)
 
 
-def test_failure_in_prepare_leaves_the_file_already_at_output_path_alone(tmp_path, monkeypatch):
+def test_failure_in_prepare_leaves_the_file_already_at_output_path_alone(
+    tmp_path, monkeypatch
+) -> None:
     """준비에서 실패한 전체 다운로드는 output_path에 이미 있던 파일을 지우지 않아야 한다.
 
     output_path에 b"keep" 파일을 미리 둠, 키 리졸버 없음(준비가 DecryptionError)
@@ -424,7 +427,7 @@ def test_failure_in_prepare_leaves_the_file_already_at_output_path_alone(tmp_pat
 
 def test_rerun_of_the_same_engine_that_fails_in_prepare_keeps_the_file_at_output_path(
     tmp_path, monkeypatch
-):
+) -> None:
     """후처리까지 간 엔진을 다시 돌려 준비에서 실패하면 output_path에 있던 파일을 지우지 않아야 한다.
 
     같은 엔진, 키 리졸버 있음. 첫 실행: remux가 FFmpegError(후처리 실패). 그 뒤 output_path에
@@ -435,7 +438,7 @@ def test_rerun_of_the_same_engine_that_fails_in_prepare_keeps_the_file_at_output
         tmp_path, monkeypatch, key_resolver=lambda c, u: KEY
     )
 
-    def broken_remux_stream(chunks, dst_path, **_wait):
+    def broken_remux_stream(chunks, dst_path, **_wait) -> Never:
         raise base_module.FFmpegError("가짜 remux 실패")
 
     monkeypatch.setattr(base_module, "remux_stream", broken_remux_stream)

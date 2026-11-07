@@ -117,7 +117,7 @@ class _MapWriter:
     잠그지 않는다(작업자끼리 받는 범위가 겹치지 않는다).
     """
 
-    def __init__(self, outlets: tuple[_Outlet, ...], offset: int):
+    def __init__(self, outlets: tuple[_Outlet, ...], offset: int) -> None:
         self._outlets = outlets
         self._position = offset  # 다음에 받을 바이트의 원본 위치
         self._files: dict[int, object] = {}
@@ -285,7 +285,7 @@ class FileDownloader(BaseDownloader):
     # 더 읽으므로 제품 경로에서는 켜지 않는다
     _inspect_cuts: bool = False
 
-    def __init__(self, data, logger, **callbacks):
+    def __init__(self, data, logger, **callbacks) -> None:
         super().__init__(data, logger, **callbacks)
         # 재큐잉된 파트가 이미 받아 쓴 바이트 수 — 재시도가 이어받는다 (#78).
         # (start, end) → 산출물에 쓰인 바이트 수. 완료·폴백 시 지운다

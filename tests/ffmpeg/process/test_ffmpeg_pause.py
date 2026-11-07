@@ -85,7 +85,7 @@ def launched(monkeypatch, launch_hooks):
 class _Pause:
     """일시정지 요청 — 켜고 끄는 시각을 정해 두고, 켜져 있는 동안의 관측을 적는다."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._event = threading.Event()
         self.observed: dict[str, object] = {}
 
@@ -123,7 +123,7 @@ class _PollRecord:
     값은 가장 최근에 만든 ``_Control`` 하나의 것이다(먼저 돈 기준 실행의 것은 지운다).
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._lock = threading.Lock()
         self._control_id: int | None = None
         self.calls = 0  # poll 호출 수 — 띄우자마자 한 번 + 루프 반복마다 한 번
@@ -300,7 +300,7 @@ def _run_watched(
 @pytest.mark.parametrize("reporting", [False, True], ids=["출력을 모으는 실행", "진행을 받는 실행"])
 def test_a_paused_ffmpeg_stands_still_and_writes_the_same_file_when_resumed(
     tmp_path, launched, launch_hooks, poll_record, reporting
-):
+) -> None:
     """일시정지 중인 ffmpeg는 살아 있되 아무것도 쓰지 않고, 재개하면 일시정지 없이 돈 것과 같은 파일을 내야 한다.
 
     일하는 명령을 일시정지 없이 한 번(기준), 띄운 지 0.5초 뒤부터 1.5초 동안 일시정지하며 한 번
@@ -357,7 +357,7 @@ def test_a_paused_ffmpeg_stands_still_and_writes_the_same_file_when_resumed(
 @pytest.mark.parametrize("reporting", [False, True], ids=["출력을 모으는 실행", "진행을 받는 실행"])
 def test_time_spent_paused_does_not_count_towards_the_timeout(
     tmp_path, launched, launch_hooks, poll_record, reporting
-):
+) -> None:
     """일시정지해 둔 시간은 제한 시간에 세지 않아야 한다 — 일시정지가 길었다고 시간 초과가 되지 않는다.
 
     일하는 명령이 혼자 도는 시간 D를 먼저 잼. 제한 시간을 3 × D + 3초로 주고, 띄운 지 0.5초
@@ -393,7 +393,7 @@ def test_time_spent_paused_does_not_count_towards_the_timeout(
 
 
 @pytest.mark.parametrize("reporting", [False, True], ids=["출력을 모으는 실행", "진행을 받는 실행"])
-def test_a_paused_ffmpeg_ends_when_told_to_stop(launched, launch_hooks, reporting):
+def test_a_paused_ffmpeg_ends_when_told_to_stop(launched, launch_hooks, reporting) -> None:
     """일시정지로 멈춰 있는 ffmpeg도 멈추라는 요청이 오면 바로 끝나야 한다 — 멈춘 채로 남지 않는다.
 
     10분 도는 명령을 띄우고, 그 프로세스가 뜬 0.3초 뒤 일시정지, 0.8초 뒤 멈추라고 함
@@ -425,7 +425,7 @@ def test_a_paused_ffmpeg_ends_when_told_to_stop(launched, launch_hooks, reportin
     assert launched and all(process.poll() is not None for process in launched)
 
 
-def test_no_ffmpeg_is_launched_while_paused(tmp_path, launched):
+def test_no_ffmpeg_is_launched_while_paused(tmp_path, launched) -> None:
     """일시정지 중에는 새 ffmpeg를 띄우지 않고, 풀리면 띄워야 한다.
 
     처음부터 일시정지 상태로 짧은 명령을 실행하고 0.6초 뒤 일시정지를 품. 0.3초 시점에 띄운
@@ -453,7 +453,7 @@ def test_no_ffmpeg_is_launched_while_paused(tmp_path, launched):
     assert len(launched) >= 1 and done.returncode == 0 and took >= 0.6
 
 
-def test_a_stop_while_waiting_to_launch_launches_nothing(launched):
+def test_a_stop_while_waiting_to_launch_launches_nothing(launched) -> None:
     """일시정지로 띄우기를 기다리는 동안 멈추라는 요청이 오면 아무것도 띄우지 않고 그만둬야 한다.
 
     처음부터 일시정지 상태, 0.3초 뒤 멈추라고 함 -> FFmpegCancelledError, 띄운 프로세스 0개
@@ -515,7 +515,7 @@ def test_cut_paused_during_any_stage_resumes_and_writes_the_same_file(
     tmp_path,
     monkeypatch,
     stage,
-):
+) -> None:
     """컷의 어느 단계가 도는 도중 일시정지해도 그동안 컷이 끝나지 않고, 재개하면 일시정지 없이 자른 것과 같은 파일을 내야 한다.
 
     mp4, 프레임 35~80. 표의 단계(머리 · 가운데 · 끝 · 오디오 · 잇기)의 ffmpeg가 뜬 직후부터
@@ -562,7 +562,7 @@ def test_cut_paused_between_stages_launches_the_next_stage_only_after_resuming(
     tmp_path,
     monkeypatch,
     launched,
-):
+) -> None:
     """단계 사이에서 일시정지 중이면 다음 단계의 ffmpeg가 뜨지 않고, 재개하면 떠야 한다.
 
     mp4, 프레임 35~80. 오디오 단계를 띄우려는 순간 일시정지를 켜고 0.6초 뒤 끔. 0.3초 시점에
@@ -602,7 +602,7 @@ def test_cut_stopped_while_paused_ends_its_ffmpeg_and_leaves_nothing(
     tmp_path,
     monkeypatch,
     launched,
-):
+) -> None:
     """일시정지로 멈춰 있는 컷을 중단하면 멈춘 ffmpeg가 끝나고 아무것도 남지 않아야 한다.
 
     mp4, 프레임 35~80. 오디오 단계를 10분 도는 명령으로 바꿔 띄우고 0.3초 뒤 일시정지, 0.8초 뒤 중단
@@ -639,7 +639,7 @@ def test_cut_stopped_while_paused_ends_its_ffmpeg_and_leaves_nothing(
     assert not os.path.exists(output) and not os.path.exists(cut_temp_dir_for(output))
 
 
-def test_rewrapping_ts_segments_waits_while_paused(tmp_path, launched, monkeypatch):
+def test_rewrapping_ts_segments_waits_while_paused(tmp_path, launched, monkeypatch) -> None:
     """TS 세그먼트를 mp4로 다시 싸는 동안 일시정지 중이면 세그먼트를 흘려 넣지 않고 기다려야 한다.
 
     조각 넷(188바이트씩)으로 읽히는 세그먼트 파일 하나(내용은 아무 바이트 — 다시 싸기는 결국
@@ -656,7 +656,7 @@ def test_rewrapping_ts_segments_waits_while_paused(tmp_path, launched, monkeypat
     taken = []  # remux_stream이 흘려 넣기에서 꺼낸 조각
     real_remux_stream = ts_cut_module.remux_stream
 
-    def counting_remux_stream(chunks, *args, **kwargs):
+    def counting_remux_stream(chunks, *args, **kwargs) -> None:
         def counted():
             for chunk in chunks:
                 taken.append(chunk)
@@ -669,7 +669,7 @@ def test_rewrapping_ts_segments_waits_while_paused(tmp_path, launched, monkeypat
     pause.set()
     seen = []
 
-    def look_then_resume():
+    def look_then_resume() -> None:
         # 적고 나서 푼다 — 한 스레드라 적는 쪽이 늦어도 푼 뒤의 조각이 섞이지 않는다
         time.sleep(0.4)
         seen.append((bool(launched) and launched[-1].poll() is None, len(taken)))

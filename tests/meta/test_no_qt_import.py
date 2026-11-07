@@ -15,7 +15,7 @@ from tests.meta.import_scan import core_source_files, describe, iter_imports
 FORBIDDEN_PACKAGES = {"PySide6", "shiboken6"}
 
 
-def test_core_has_no_qt_import():
+def test_core_has_no_qt_import() -> None:
     """core/ 내 모든 .py 파일에 PySide6·shiboken6 import가 없어야 한다."""
     py_files = core_source_files()
     assert py_files, "core/에서 .py 파일을 찾지 못했다 — 스캔 대상 경로를 확인할 것"

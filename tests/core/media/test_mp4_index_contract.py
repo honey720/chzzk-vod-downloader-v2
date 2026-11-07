@@ -69,7 +69,7 @@ def _digest(values, code: str) -> str:
     return hashlib.sha256(struct.pack(f"<{len(values)}{code}", *values)).hexdigest()[:16]
 
 
-def test_index_scalars_are_unchanged(head):
+def test_index_scalars_are_unchanged(head) -> None:
     """색인의 프레임 수 · 길이 · 프레임률 · 키프레임은 바꾸기 전의 값이어야 한다.
 
     -> 240프레임, 8.008초, 30000/1001, 키프레임 [0, 29, 60, 89, 120, 149, 180, 209]
@@ -111,7 +111,7 @@ def test_index_scalars_are_unchanged(head):
         ),
     ],
 )
-def test_track_tables_are_unchanged(head, track, expected):
+def test_track_tables_are_unchanged(head, track, expected) -> None:
     """트랙의 샘플 표(시각 · DTS · 길이 · 위치 · 크기 · 청크 · 동기 샘플)는 바꾸기 전의 값이어야 한다.
 
     표마다 값들을 순회해 싼 바이트의 지문이 기대값과 같다. 청크 · 동기 샘플은 앞 넷과 개수.
@@ -127,7 +127,7 @@ def test_track_tables_are_unchanged(head, track, expected):
     assert (list(table.sync_samples)[:4], len(table.sync_samples)) == expected["sync"]
 
 
-def test_frame_order_is_unchanged(head):
+def test_frame_order_is_unchanged(head) -> None:
     """표시 순서의 프레임 PTS와 그 프레임의 샘플 번호는 바꾸기 전의 값이어야 한다."""
     assert _digest(head.index.frame_pts, "d") == "cf80ce921baf31c4"
     assert _digest(head.index.frame_samples, "q") == "cbbb907e8a8db3cb"
@@ -144,7 +144,7 @@ def test_frame_order_is_unchanged(head):
 )
 def test_selection_byte_ranges_are_unchanged(
     head, selection, ranges, keyframe, first_frame, last_frame
-):
+) -> None:
     """구간의 바이트 범위 · 시작 키프레임 · 첫 프레임 · 끝 프레임은 바꾸기 전의 값이어야 한다."""
     picked = selection_byte_ranges(head.index, selection)
 
@@ -157,7 +157,7 @@ def test_selection_byte_ranges_are_unchanged(
     )
 
 
-def test_partial_layout_and_head_bytes_are_unchanged(head):
+def test_partial_layout_and_head_bytes_are_unchanged(head) -> None:
     """구간 넷의 받을 크기 · 부분 파일의 배치 · 머리 바이트는 바꾸기 전의 값이어야 한다.
 
     -> 받을 크기 540,356바이트, 머리 4,918바이트, 범위 둘(겹치는 구간은 합쳐진다),
@@ -181,7 +181,7 @@ def test_partial_layout_and_head_bytes_are_unchanged(head):
     )
 
 
-def test_cut_frames_and_cut_plan_are_unchanged(head):
+def test_cut_frames_and_cut_plan_are_unchanged(head) -> None:
     """색인에서 뽑은 컷의 프레임 정보와 프레임 15~100의 컷 계획은 바꾸기 전의 값이어야 한다."""
     frames = cut_frames_from_mp4(head.index)
 

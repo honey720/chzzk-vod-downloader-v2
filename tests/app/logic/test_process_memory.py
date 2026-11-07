@@ -5,11 +5,12 @@ import sys
 
 import app.system.process_memory as process_memory
 from app.system.process_memory import log_process_memory, read_process_memory
+from typing import Never
 
 MB = 1024 * 1024
 
 
-def test_reading_returns_positive_sizes_on_this_platform():
+def test_reading_returns_positive_sizes_on_this_platform() -> None:
     """지금 도는 OS에서 프로세스 메모리를 읽으면 이름마다 양수 바이트가 나와야 한다.
 
     Windows는 "커밋"과 ("개인 작업 집합" 또는 "작업 집합"), Linux는 "RSS".
@@ -27,7 +28,7 @@ def test_reading_returns_positive_sizes_on_this_platform():
     assert all(isinstance(size, int) and size > 0 for size in values.values())
 
 
-def test_reading_follows_memory_the_process_takes():
+def test_reading_follows_memory_the_process_takes() -> None:
     """프로세스가 메모리를 더 쥐면 읽은 값이 그만큼 늘어야 한다.
 
     64 MiB를 0이 아닌 값으로 채워 쥠 -> 읽은 값(가장 큰 것) 증가 >= 48 MiB.
@@ -44,7 +45,7 @@ def test_reading_follows_memory_the_process_takes():
     assert len(held) == 64 * MB  # 재는 동안 쥐고 있다
 
 
-def test_log_line_names_the_point_and_each_size_in_megabytes(monkeypatch, caplog):
+def test_log_line_names_the_point_and_each_size_in_megabytes(monkeypatch, caplog) -> None:
     """메모리 줄은 "프로세스 메모리 [시점] 이름 값MB · …" 형식이고 로거 이름은 app.system.process_memory여야 한다.
 
     읽기를 {개인 작업 집합: 812.4 MiB, 커밋: 1536 MiB}로 고정, 시점 "조회 끝"
@@ -66,13 +67,13 @@ def test_log_line_names_the_point_and_each_size_in_megabytes(monkeypatch, caplog
     )
 
 
-def test_nothing_is_logged_when_memory_cannot_be_read(monkeypatch, caplog):
+def test_nothing_is_logged_when_memory_cannot_be_read(monkeypatch, caplog) -> None:
     """메모리를 읽지 못하면 줄을 남기지 않고 예외도 내지 않아야 한다.
 
     읽기가 빈 dict를 돌려줄 때와 예외를 낼 때 -> 메모리 줄 0건, 표식 줄은 잡힌다
     """
 
-    def broken():
+    def broken() -> Never:
         raise OSError("읽기 실패(대역)")
 
     caplog.set_level(logging.INFO)
@@ -86,13 +87,13 @@ def test_nothing_is_logged_when_memory_cannot_be_read(monkeypatch, caplog):
     assert [record.getMessage() for record in caplog.records] == ["표식"]
 
 
-def test_a_failing_platform_reader_yields_nothing(monkeypatch):
+def test_a_failing_platform_reader_yields_nothing(monkeypatch) -> None:
     """OS별 읽기가 예외를 내면 read_process_memory는 빈 dict를 돌려줘야 한다.
 
     세 OS의 읽기를 모두 예외를 내게 바꿈 -> {}
     """
 
-    def broken():
+    def broken() -> Never:
         raise OSError("읽기 실패(대역)")
 
     for name in ("_read_windows", "_read_linux", "_read_macos"):

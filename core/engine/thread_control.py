@@ -64,7 +64,7 @@ class ThreadController:
     - 총 처리량이 기준의 절반 미만으로 이어지면 절반으로 줄인다 (#112 그대로).
     """
 
-    def __init__(self, target: int, cap: int):
+    def __init__(self, target: int, cap: int) -> None:
         """조정기를 만든다.
 
         Args:

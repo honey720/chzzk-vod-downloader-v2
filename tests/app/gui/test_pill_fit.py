@@ -23,6 +23,7 @@ from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
 from tests.support.stream_samples import S1
+from typing import Never
 
 MAIN = "1080p(source)"
 SECONDARY = "60fps"
@@ -30,7 +31,7 @@ ELLIPSIS = "…"
 
 
 @pytest.fixture(autouse=True)
-def _apply_production_qss(qapp):
+def _apply_production_qss(qapp) -> None:
     """실제 전역 QSS를 태운 상태에서 잰다 — pill의 여백은 QSS가 준다."""
     theme.set_color_scheme("dark")
     qapp.setStyle(hold_style(theme.build_style()))
@@ -47,12 +48,12 @@ def _drop_windows(qapp):
 
 
 @pytest.fixture(autouse=True)
-def no_network(monkeypatch):
+def no_network(monkeypatch) -> None:
     class _FailingSession:
-        def head(self, *a, **k):
+        def head(self, *a, **k) -> Never:
             raise RuntimeError("network disabled in tests")
 
-        def get(self, *a, **k):
+        def get(self, *a, **k) -> Never:
             raise RuntimeError("network disabled in tests")
 
     monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
@@ -96,7 +97,7 @@ def _advance(pill: ResolutionPill, text: str) -> int:
 
 
 @pytest.mark.parametrize("caret", [True, False], ids=["접힌 pill(▾)", "▾ 없는 pill"])
-def test_texts_drawn_at_any_width_fit_without_overlapping(qapp, caret):
+def test_texts_drawn_at_any_width_fit_without_overlapping(qapp, caret) -> None:
     """pill이 그리는 본 글자와 보조 글자는 어떤 폭에서도 겹치지 않고 글자 자리 안에 있어야 한다.
 
     "1080p(source)" + "60fps". 폭을 자연 폭에서 1px까지 1px씩 줄임
@@ -120,7 +121,7 @@ def test_texts_drawn_at_any_width_fit_without_overlapping(qapp, caret):
     assert seen >= {(True, True), (True, False), (False, False)}
 
 
-def test_narrowing_hides_the_secondary_text_first_and_then_elides_the_main_text(qapp):
+def test_narrowing_hides_the_secondary_text_first_and_then_elides_the_main_text(qapp) -> None:
     """폭이 줄면 먼저 보조 글자가 사라지고, 그 뒤에 본 글자가 말줄임돼야 한다 — 거꾸로는 없다.
 
     "1080p(source)" + "60fps". 폭을 자연 폭에서 1px까지 줄임
@@ -155,7 +156,9 @@ def _picture(pill: ResolutionPill):
 
 
 @pytest.mark.parametrize("squeeze", [1, 12], ids=["1px 모자람", "12px 모자람"])
-def test_pill_too_narrow_for_the_secondary_text_is_drawn_like_a_pill_without_it(qapp, squeeze):
+def test_pill_too_narrow_for_the_secondary_text_is_drawn_like_a_pill_without_it(
+    qapp, squeeze
+) -> None:
     """보조 글자가 들어가지 않는 폭의 pill은 보조 글자가 없는 pill과 똑같이 그려져야 한다.
 
     "1080p(source)" + "60fps"인 pill을 자연 폭 − squeeze px로, 본 글자만 가진 pill을 같은 폭으로
@@ -176,7 +179,7 @@ def test_pill_too_narrow_for_the_secondary_text_is_drawn_like_a_pill_without_it(
     assert _picture(pill) == _picture(plain)
 
 
-def test_pill_too_narrow_for_the_main_text_is_drawn_like_a_pill_with_the_elided_text(qapp):
+def test_pill_too_narrow_for_the_main_text_is_drawn_like_a_pill_with_the_elided_text(qapp) -> None:
     """본 글자도 들어가지 않는 폭의 pill은 말줄임한 글자만 가진 pill과 똑같이 그려져야 한다.
 
     "1080p(source)" + "60fps"인 pill을 (보조 글자 없는 자연 폭 − 20px)로
@@ -204,13 +207,13 @@ class _TipSpy:
     했는지만 잰다.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.shown: list[str] = []
 
-    def showText(self, _position, text, _widget=None):
+    def showText(self, _position, text, _widget=None) -> None:
         self.shown.append(text)
 
-    def hideText(self):
+    def hideText(self) -> None:
         pass
 
 
@@ -236,7 +239,7 @@ def _tooltips_requested_by(pill: ResolutionPill, monkeypatch) -> list[str]:
 )
 def test_tooltip_of_a_shortened_pill_starts_with_the_whole_text(
     qapp, monkeypatch, given, narrow, expected
-):
+) -> None:
     """글자를 줄인 pill의 툴팁은 첫 줄이 전체 글자여야 하고, 줄이지 않은 pill의 툴팁은 받은 글 그대로여야 한다.
 
     "1080p(source)" + "60fps", setToolTip(given). 자연 폭 / 자연 폭 − 5px에서 툴팁 이벤트
@@ -249,7 +252,9 @@ def test_tooltip_of_a_shortened_pill_starts_with_the_whole_text(
     assert _tooltips_requested_by(pill, monkeypatch) == ([expected] if expected else [])
 
 
-def test_tooltip_of_an_elided_pill_without_secondary_text_is_the_whole_text(qapp, monkeypatch):
+def test_tooltip_of_an_elided_pill_without_secondary_text_is_the_whole_text(
+    qapp, monkeypatch
+) -> None:
     """보조 글자가 없는 pill도 본 글자를 말줄임했으면 툴팁이 전체 글자여야 한다.
 
     "1080p(source)"만, 자연 폭 − 20px -> pill이 띄우라고 한 글 == ["1080p(source)"]
@@ -303,7 +308,7 @@ def _card(sections=()):
     [(), (TimeRange(600.0, 1200.0), TimeRange(1800.0, 2400.0))],
     ids=["구간 없음", "구간 둘"],
 )
-def test_collapsed_pill_squeezed_by_the_size_text_never_overlaps_its_texts(qapp, sections):
+def test_collapsed_pill_squeezed_by_the_size_text_never_overlaps_its_texts(qapp, sections) -> None:
     """카드가 좁아 접힌 pill이 눌려도 pill의 글자는 서로 겹치지 않고, pill은 크기 글과 겹치지 않아야 한다.
 
     원본 1080p 60fps 대기 카드. 창을 1px씩 좁혀 최소 폭까지 감

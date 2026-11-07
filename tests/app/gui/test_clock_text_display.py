@@ -17,7 +17,7 @@ DAY_AND_A_QUARTER = 108000  # 30시간(초) — 날짜를 버리면 6시간으�
 
 
 @pytest.mark.usefixtures("answers")
-def test_footer_and_card_show_a_time_left_past_a_day(qtbot, tmp_path):
+def test_footer_and_card_show_a_time_left_past_a_day(qtbot, tmp_path) -> None:
     """남은 시간이 30시간이면 하단바와 카드 모두 "30:00:00 left"여야 한다.
 
     받을 크기 108000 MiB, 받은 0, 속도 1.0 MB/s 통지 -> 하단바 남은 시간 칸 · 카드 상태 글에 "30:00:00 left"
@@ -32,7 +32,7 @@ def test_footer_and_card_show_a_time_left_past_a_day(qtbot, tmp_path):
 
 
 @pytest.mark.usefixtures("answers")
-def test_card_shows_an_elapsed_time_past_a_day(qtbot, tmp_path):
+def test_card_shows_an_elapsed_time_past_a_day(qtbot, tmp_path) -> None:
     """받는 데 30시간 걸린 카드의 완료 글은 "· 30:00:00"으로 끝나야 한다.
 
     서비스 대역의 걸린 시간 108000초 → 완료 -> 카드 상태 글 끝 "· 30:00:00"
@@ -103,7 +103,7 @@ def test_waiting_card_shows_the_length_once_it_is_known(qapp: QApplication) -> N
 
 
 @pytest.mark.usefixtures("answers")
-def test_a_negative_time_left_still_updates_the_card_and_the_footer(qtbot, tmp_path):
+def test_a_negative_time_left_still_updates_the_card_and_the_footer(qtbot, tmp_path) -> None:
     """받은 크기가 받을 크기보다 큰 통지가 와도 카드 · 하단바가 예외 없이 고쳐져야 한다(#513 리뷰).
 
     받을 크기 1 MiB, 받은 2 MiB, 속도 1.0 MB/s 통지 -> 카드 상태 글에 "0:00 left", 하단바 속도 칸 보임

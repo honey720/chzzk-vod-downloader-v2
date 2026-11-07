@@ -49,6 +49,7 @@ from app.widgets.widget import ContentItemWidget
 from core.models.download_state import DownloadState
 from core.utils.paths import build_output_path
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, shown, snapshot_top_levels
+from typing import Never
 
 STATES = (DownloadState.WAITING, DownloadState.RUNNING, DownloadState.PAUSED,
           DownloadState.FINISHED, DownloadState.FAILED)
@@ -58,7 +59,7 @@ OTHER_PATH = "D:/vod/archive/2026/summer/finals/T1-vs-GEN-full-set-highlights-an
 
 
 @pytest.fixture(autouse=True)
-def _apply_production_qss(qapp):
+def _apply_production_qss(qapp) -> None:
     """실제 전역 QSS(호버 규칙 포함)를 태운다 — scope=function 유지(test_widget_theme 참고)."""
     theme.set_color_scheme("dark")
     qapp.setStyle(hold_style(theme.build_style()))
@@ -75,19 +76,19 @@ def _drop_windows(qapp):
 
 
 @pytest.fixture(autouse=True)
-def no_network(monkeypatch):
+def no_network(monkeypatch) -> None:
     class _FailingSession:
-        def head(self, *a, **k):
+        def head(self, *a, **k) -> Never:
             raise RuntimeError("network disabled in tests")
 
-        def get(self, *a, **k):
+        def get(self, *a, **k) -> Never:
             raise RuntimeError("network disabled in tests")
 
     monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
     monkeypatch.setattr("app.widgets.widget._global_download_path", "C:/dl")
 
 
-def _pump():
+def _pump() -> None:
     for _ in range(3):
         QApplication.processEvents()
 
@@ -125,7 +126,7 @@ def make_card(state: DownloadState, path: str = OTHER_PATH, width: int = 900):
     return window, widget
 
 
-def resize_window(window, widget, width):
+def resize_window(window, widget, width) -> None:
     window.resize(width, widget.sizeHint().height() + 40)
     _pump()
     assert widget.width() == width, f"요청 폭 {width}px인데 실제 {widget.width()}px — 클램프"
@@ -181,7 +182,7 @@ def _record_dialog(monkeypatch, result="", during=None):
 
 class TestTitleSurface:
     @pytest.mark.parametrize("state", STATES, ids=IDS)
-    def test_hover_highlight_matches_clickability(self, qapp, qtbot, state):
+    def test_hover_highlight_matches_clickability(self, qapp, qtbot, state) -> None:
         window, widget = make_card(state)
         qtbot.addWidget(window)
         assert highlights_on_hover(qtbot, window, widget.titleLabel) == _clickable(state), (
@@ -189,14 +190,14 @@ class TestTitleSurface:
         )
 
     @pytest.mark.parametrize("state", STATES, ids=IDS)
-    def test_cursor_matches_clickability(self, qapp, qtbot, state):
+    def test_cursor_matches_clickability(self, qapp, qtbot, state) -> None:
         window, widget = make_card(state)
         qtbot.addWidget(window)
         expected = Qt.CursorShape.IBeamCursor if _clickable(state) else Qt.CursorShape.ArrowCursor
         assert widget.titleLabel.cursor().shape() == expected, f"{state.name}: 제목 커서가 클릭 가능 여부와 다르다"
 
     @pytest.mark.parametrize("state", STATES, ids=IDS)
-    def test_click_opens_the_editor_only_when_clickable(self, qapp, qtbot, state):
+    def test_click_opens_the_editor_only_when_clickable(self, qapp, qtbot, state) -> None:
         window, widget = make_card(state)
         qtbot.addWidget(window)
         shown(widget.titleLabel)
@@ -210,7 +211,7 @@ class TestTitleSurface:
 
 class TestPathLabelSurface:
     @pytest.mark.parametrize("state", STATES, ids=IDS)
-    def test_cursor_matches_clickability(self, qapp, qtbot, state):
+    def test_cursor_matches_clickability(self, qapp, qtbot, state) -> None:
         window, widget = make_card(state)
         qtbot.addWidget(window)
         assert widget.directoryLabel.isVisible(), "전제: 전역과 다른 경로라 라벨이 보인다"
@@ -220,7 +221,7 @@ class TestPathLabelSurface:
         )
 
     @pytest.mark.parametrize("state", STATES, ids=IDS)
-    def test_label_highlights_on_hover_only_when_clickable(self, qapp, qtbot, state):
+    def test_label_highlights_on_hover_only_when_clickable(self, qapp, qtbot, state) -> None:
         """경로 라벨은 누를 수 있는 상태(대기)에서만 호버에 색이 바뀌어야 한다 (#309).
 
         종전 단언은 "어느 상태에서도 호버에 반응하지 않는다"였다. 대기 카드의 구간 요약 · 제목과
@@ -233,7 +234,9 @@ class TestPathLabelSurface:
         )
 
     @pytest.mark.parametrize("state", STATES, ids=IDS)
-    def test_click_opens_the_folder_dialog_only_when_clickable(self, qapp, qtbot, monkeypatch, state):
+    def test_click_opens_the_folder_dialog_only_when_clickable(
+        self, qapp, qtbot, monkeypatch, state
+    ) -> None:
         window, widget = make_card(state)
         qtbot.addWidget(window)
         calls = _record_dialog(monkeypatch)
@@ -255,7 +258,7 @@ class TestPathButtonSurface:
         return window, widget
 
     @pytest.mark.parametrize("state", STATES, ids=IDS)
-    def test_button_is_there_only_when_the_path_can_be_changed(self, qapp, qtbot, state):
+    def test_button_is_there_only_when_the_path_can_be_changed(self, qapp, qtbot, state) -> None:
         """저장 위치 버튼은 저장 위치를 바꿀 수 있는 상태(대기)에서만 보여야 하고, 숨을 때는 꺼 두는 것이 아니라 없어야 한다.
 
         상태마다 카드 하나 -> 보임 == (대기), 보일 때는 켜져 있다
@@ -266,18 +269,18 @@ class TestPathButtonSurface:
         )
         assert widget.pathButton.isEnabled(), f"{state.name}: 버튼을 숨기지 않고 꺼 두었다"
 
-    def test_hover_highlights_the_button_like_the_other_row_one_buttons(self, qapp, qtbot):
+    def test_hover_highlights_the_button_like_the_other_row_one_buttons(self, qapp, qtbot) -> None:
         window, widget = self._card(qtbot, DownloadState.WAITING)
         assert highlights_on_hover(qtbot, window, widget.pathButton), (
             "대기 카드의 저장 위치 버튼이 호버에 반응하지 않는다"
         )
 
-    def test_cursor_is_the_arrow_like_every_other_button(self, qapp, qtbot):
+    def test_cursor_is_the_arrow_like_every_other_button(self, qapp, qtbot) -> None:
         """버튼의 조작 표면은 호버 배경(위 게이트)이다 — 1행 조작 버튼과 같이 커서는 화살표."""
         _window, widget = self._card(qtbot, DownloadState.WAITING)
         assert widget.pathButton.cursor().shape() == Qt.CursorShape.ArrowCursor
 
-    def test_click_opens_the_folder_dialog(self, qapp, qtbot, monkeypatch):
+    def test_click_opens_the_folder_dialog(self, qapp, qtbot, monkeypatch) -> None:
         """저장 위치 버튼을 누르면 경로 글자를 눌렀을 때와 같은 폴더 선택이 열려야 한다.
 
         대기 카드에서 버튼을 클릭 -> 폴더 선택 대화상자 호출 1회
@@ -289,7 +292,9 @@ class TestPathButtonSurface:
         assert len(calls) == 1
 
     @pytest.mark.parametrize("state", STATES, ids=IDS)
-    def test_choose_path_does_nothing_outside_waiting(self, qapp, qtbot, monkeypatch, state):
+    def test_choose_path_does_nothing_outside_waiting(
+        self, qapp, qtbot, monkeypatch, state
+    ) -> None:
         """폴더 선택은 버튼이 불러도 대기가 아닌 상태에서는 열리지 않아야 한다.
 
         상태마다 choosePath()를 직접 부름(버튼이 부르는 모양 — 이벤트 없이)
@@ -300,7 +305,7 @@ class TestPathButtonSurface:
         widget.choosePath()
         assert (len(calls) == 1) == _clickable(state)
 
-    def test_tooltip_says_what_the_button_does_and_carries_the_full_path(self, qapp, qtbot):
+    def test_tooltip_says_what_the_button_does_and_carries_the_full_path(self, qapp, qtbot) -> None:
         """툴팁은 무엇을 하는 버튼인지와 지금의 경로 전문을 준다."""
         _window, widget = self._card(qtbot, DownloadState.WAITING)
         assert widget.pathButton.toolTip() == f"Change save location\n{OTHER_PATH}"
@@ -319,7 +324,7 @@ class TestSectionEditButtonSurface:
         return window, widget
 
     @pytest.mark.parametrize("state", STATES, ids=IDS)
-    def test_button_is_there_only_when_the_sections_can_be_edited(self, qapp, qtbot, state):
+    def test_button_is_there_only_when_the_sections_can_be_edited(self, qapp, qtbot, state) -> None:
         """구간 편집 버튼은 편집 창을 열 수 있는 상태(대기)에서만 보여야 하고, 숨을 때는 꺼 두는 것이 아니라 없어야 한다.
 
         상태마다 구간 기능이 있는 타입(video)의 카드 하나 -> 보임 == (대기), 보일 때는 켜져 있다
@@ -330,7 +335,9 @@ class TestSectionEditButtonSurface:
         )
         assert widget.sectionEditButton.isEnabled(), f"{state.name}: 버튼을 숨기지 않고 꺼 두었다"
 
-    def test_button_is_hidden_on_a_waiting_card_whose_type_has_no_sections(self, qapp, qtbot):
+    def test_button_is_hidden_on_a_waiting_card_whose_type_has_no_sections(
+        self, qapp, qtbot
+    ) -> None:
         """구간 기능이 없는 타입의 카드에는 대기 상태여도 구간 편집 버튼이 없어야 한다.
 
         대기 카드의 타입을 구간 기능이 없는 것(clip)으로 둠 -> 구간 편집 버튼 숨김, 저장 위치 버튼은 보임
@@ -341,7 +348,7 @@ class TestSectionEditButtonSurface:
 
     def test_click_asks_for_the_editor_like_a_click_on_the_summary_text(
         self, qapp, qtbot, monkeypatch
-    ):
+    ) -> None:
         """구간 편집 버튼을 누르면 구간 요약 글자를 눌렀을 때와 같은 요청(sectionEditRequest)이 한 번 나와야 하고, 폴더 선택은 열리지 않아야 한다.
 
         대기 카드에서 버튼을 클릭, 이어서 구간 요약 글자를 클릭(폴더 선택 대화상자는 대역)
@@ -361,11 +368,11 @@ class TestSectionEditButtonSurface:
         assert (after_button, len(asked)) == (1, 2)
         assert dialogs == []
 
-    def test_tooltip_says_what_the_button_does(self, qapp, qtbot):
+    def test_tooltip_says_what_the_button_does(self, qapp, qtbot) -> None:
         _window, widget = self._card(qtbot, DownloadState.WAITING)
         assert widget.sectionEditButton.toolTip() == "Edit sections"
 
-    def test_row_three_has_no_path_icon_any_more(self, qapp, qtbot):
+    def test_row_three_has_no_path_icon_any_more(self, qapp, qtbot) -> None:
         """아래 줄에 남던 경로 아이콘은 없어야 한다 — 그 일은 1행의 저장 위치 버튼이 한다."""
         _window, widget = self._card(qtbot, DownloadState.WAITING)
         assert not hasattr(widget, "pathIconButton")
@@ -373,7 +380,9 @@ class TestSectionEditButtonSurface:
 
 
 class TestRowOneAtTheNarrowestCard:
-    def test_waiting_card_keeps_its_three_buttons_apart_from_the_channel_name(self, qapp, qtbot):
+    def test_waiting_card_keeps_its_three_buttons_apart_from_the_channel_name(
+        self, qapp, qtbot
+    ) -> None:
         """1행의 버튼이 가장 많은 대기 카드는 가장 좁은 폭에서도 채널 이름 · 버튼이 겹치거나 잘리지 않아야 한다.
 
         대기 카드(구간 편집 · 저장 위치 · 삭제 세 버튼)를 카드의 최소 폭으로 줄임
@@ -394,12 +403,14 @@ class TestRowOneAtTheNarrowestCard:
 
 
 class TestPathDialogDuringTransition:
-    def test_a_folder_picked_after_the_download_started_is_discarded(self, qapp, qtbot, monkeypatch):
+    def test_a_folder_picked_after_the_download_started_is_discarded(
+        self, qapp, qtbot, monkeypatch
+    ) -> None:
         """대화상자가 열린 사이 다운로드가 시작되면 고른 폴더는 버린다 — 이미 그 경로에 쓰고 있다."""
         window, widget = make_card(DownloadState.WAITING)
         qtbot.addWidget(window)
 
-        def start_download():
+        def start_download() -> None:
             widget.item.downloadState = DownloadState.RUNNING
             widget.setData(widget.item, 0)
 
@@ -432,7 +443,7 @@ class TestEditingIsCancelledOnStateChange:
         assert widget.titleEdit.text() == typed
         return window, widget, emitted
 
-    def _start(self, widget, tmp_path):
+    def _start(self, widget, tmp_path) -> None:
         """다운로드 시작 — 파일명은 이 순간의 제목으로 확정된다(app/viewmodels/content_viewmodel.py::onDownload)."""
         item = widget.item
         item.output_path = build_output_path(str(tmp_path), item.title, "1080")
@@ -441,7 +452,7 @@ class TestEditingIsCancelledOnStateChange:
         _pump()
 
     @pytest.mark.parametrize("state", STATES[1:], ids=IDS[1:])
-    def test_editor_closes_and_the_title_reverts(self, qapp, qtbot, state):
+    def test_editor_closes_and_the_title_reverts(self, qapp, qtbot, state) -> None:
         window, widget, emitted = self._editing_card(qtbot)
         widget.item.downloadState = state
         widget.setData(widget.item, 0)
@@ -450,7 +461,7 @@ class TestEditingIsCancelledOnStateChange:
         assert shown(widget.titleLabel) == "제목" and widget.item.title == "제목", "편집 중이던 값이 확정됐다"
         assert emitted == [], "확정하지 않은 편집이 모델로 나갔다"
 
-    def test_saved_filename_matches_the_label_after_the_revert(self, qapp, qtbot, tmp_path):
+    def test_saved_filename_matches_the_label_after_the_revert(self, qapp, qtbot, tmp_path) -> None:
         """결함 3의 핵심 — 라벨만 보는 게이트는 못 잡는다. 시작 시점에 확정된 파일명과 라벨이 같아야 한다."""
         window, widget, emitted = self._editing_card(qtbot)
         self._start(widget, tmp_path)
@@ -464,7 +475,9 @@ class TestEditingIsCancelledOnStateChange:
         )
         assert "NewName" not in stem and emitted == []
 
-    def test_finishing_the_edit_after_the_start_does_not_rename(self, qapp, qtbot, tmp_path):
+    def test_finishing_the_edit_after_the_start_does_not_rename(
+        self, qapp, qtbot, tmp_path
+    ) -> None:
         """시작된 뒤 어떤 경로로든 finishTitleEditing이 불려도 제목은 바뀌지 않는다."""
         window, widget, emitted = self._editing_card(qtbot)
         self._start(widget, tmp_path)
@@ -473,7 +486,7 @@ class TestEditingIsCancelledOnStateChange:
         _pump()
         assert widget.item.title == "제목" and shown(widget.titleLabel) == "제목" and emitted == []
 
-    def test_editing_still_commits_normally_while_waiting(self, qapp, qtbot):
+    def test_editing_still_commits_normally_while_waiting(self, qapp, qtbot) -> None:
         """대조군 — 대기에서는 편집이 정상 확정된다(취소 규칙이 정상 경로를 망가뜨리지 않는다)."""
         window, widget, emitted = self._editing_card(qtbot)
         QTest.keyClick(widget.titleEdit, Qt.Key.Key_Return)

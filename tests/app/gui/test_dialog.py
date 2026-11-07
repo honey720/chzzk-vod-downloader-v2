@@ -19,7 +19,7 @@ from tests.app.gui.card_helpers import hold_style
 from app.views.dialog import SettingDialog
 
 
-def test_open_logs_folder_uses_desktop_services(qapp):
+def test_open_logs_folder_uses_desktop_services(qapp) -> None:
     dialog = SettingDialog()
     with patch("app.views.dialog.QDesktopServices.openUrl", return_value=True) as m:
         dialog.openLogsFolder()
@@ -30,7 +30,7 @@ def test_open_logs_folder_uses_desktop_services(qapp):
     assert url.toLocalFile().endswith("logs")
 
 
-def test_open_logs_folder_warns_on_failure(qapp):
+def test_open_logs_folder_warns_on_failure(qapp) -> None:
     dialog = SettingDialog()
     with patch("app.views.dialog.QDesktopServices.openUrl", return_value=False):
         with patch("app.views.dialog.QMessageBox.warning") as warn:
@@ -53,7 +53,7 @@ def _popup_window():
     )
 
 
-def _hover_row(view, row):
+def _hover_row(view, row) -> None:
     """팝업 뷰의 `row` 위로 마우스를 지나가게 한다 — **합성 이벤트로만**.
 
     `QTest.mouseMove(QWidget)`는 버튼이 눌려 있지 않으면 `QCursor::setPos()`로
@@ -95,7 +95,7 @@ def _capture_current_index_before_resync_runs(window, view):
     seen = []
 
     class _Probe(QObject):
-        def eventFilter(self, watched, event):
+        def eventFilter(self, watched, event) -> bool:
             if event.type() == QEvent.Type.Show:
                 seen.append(view.currentIndex().row())
             return False
@@ -120,7 +120,7 @@ class TestComboBoxPopupHighlightResync:
     """
 
     @pytest.fixture(autouse=True)
-    def _production_style(self, qapp):
+    def _production_style(self, qapp) -> None:
         """이 클래스는 **Fusion 전용 동작**(호버가 selection을 옮김)을 단언하므로
         스타일을 명시한다 — SPEC §2.0 "스타일 의존 동작을 대조할 때는 명시적으로
         `setStyle()`". 그동안은 offscreen QPA의 기본 스타일이 Fusion이라 명시 없이
@@ -143,7 +143,7 @@ class TestComboBoxPopupHighlightResync:
         return combo
 
     @staticmethod
-    def _open_popup(qtbot, combo):
+    def _open_popup(qtbot, combo) -> None:
         """`showPopup()` 뒤 팝업 뷰가 실제로 보일 때까지 기다린다.
 
         Windows 실기 QPA는 `SH_ComboBox_Popup`이 꺼진 드롭다운을 롤 효과
@@ -158,7 +158,7 @@ class TestComboBoxPopupHighlightResync:
         qtbot.waitUntil(combo.view().isVisible)
 
     @staticmethod
-    def _close_popup(qtbot, combo):
+    def _close_popup(qtbot, combo) -> None:
         """`hidePopup()` 뒤 팝업이 실제로 사라질 때까지 기다린다.
 
         프로덕션 스타일은 macOS에서 팝업 닫기를 한 턴 뒤로 미룬다
@@ -171,7 +171,7 @@ class TestComboBoxPopupHighlightResync:
         combo.hidePopup()
         qtbot.waitUntil(lambda: not combo.view().isVisible())
 
-    def test_popup_opens_with_highlight_on_the_real_current_value(self, qapp, qtbot):
+    def test_popup_opens_with_highlight_on_the_real_current_value(self, qapp, qtbot) -> None:
         dialog = SettingDialog()
         qtbot.addWidget(dialog)
         combo = self._combo(dialog)
@@ -183,7 +183,7 @@ class TestComboBoxPopupHighlightResync:
         assert view.selectionModel().isSelected(view.model().index(2, 0))
         self._close_popup(qtbot, combo)
 
-    def test_stray_hover_does_not_survive_a_reopen(self, qapp, qtbot):
+    def test_stray_hover_does_not_survive_a_reopen(self, qapp, qtbot) -> None:
         dialog = SettingDialog()
         qtbot.addWidget(dialog)
         combo = self._combo(dialog)
@@ -202,7 +202,7 @@ class TestComboBoxPopupHighlightResync:
         assert not view.selectionModel().isSelected(view.model().index(0, 0))
         self._close_popup(qtbot, combo)
 
-    def test_repeated_reopen_without_hover_stays_on_the_real_value(self, qapp, qtbot):
+    def test_repeated_reopen_without_hover_stays_on_the_real_value(self, qapp, qtbot) -> None:
         """호버가 전혀 없었으면 애초에 흐트러질 게 없다 — 되돌리는 로직이
         아무 부작용 없이 반복 재오픈에서도 항상 같은 값을 보여주는지 확인."""
         dialog = SettingDialog()
@@ -215,7 +215,9 @@ class TestComboBoxPopupHighlightResync:
             assert view.currentIndex().row() == 2
             self._close_popup(qtbot, combo)
 
-    def test_fault_injection_without_resync_the_bug_reproduces(self, qapp, qtbot, monkeypatch):
+    def test_fault_injection_without_resync_the_bug_reproduces(
+        self, qapp, qtbot, monkeypatch
+    ) -> None:
         """새 테스트가 실제로 고장을 잡는지 확인 — resync 배선을 빼면 위
         시나리오가 다시 실패해야 한다(고장 주입, #241 검증 관례와 동일)."""
         monkeypatch.setattr(dialog_module, "_wire_popup_highlight_resync", lambda combo: None)
@@ -233,7 +235,7 @@ class TestComboBoxPopupHighlightResync:
         assert view.currentIndex().row() == 0  # 배선을 빼면 #241 증상 그대로 재현된다
         self._close_popup(qtbot, combo)
 
-    def test_click_selecting_a_new_value_survives_the_hide_time_restore(self, qapp, qtbot):
+    def test_click_selecting_a_new_value_survives_the_hide_time_restore(self, qapp, qtbot) -> None:
         """클릭으로 항목을 골라 닫는 경우의 함정 확인 — `Hide` 이벤트가 오는
         시점엔 `combo.currentIndex()`가 아직 클릭 전 값이다(실측 확인). 그
         순간 바로 되돌리면 방금 고른 값을 도로 뭉갠다 — `QTimer.singleShot(0, ...)`
@@ -256,7 +258,7 @@ class TestComboBoxPopupHighlightResync:
         assert view.selectionModel().isSelected(view.model().index(0, 0))
         self._close_popup(qtbot, combo)
 
-    def test_highlight_is_already_correct_before_show_time_resync_runs(self, qapp, qtbot):
+    def test_highlight_is_already_correct_before_show_time_resync_runs(self, qapp, qtbot) -> None:
         """복원이 "일어난 시점"이 아니라 "열렸을 때 이미 올바른가"를 본다 —
         전자만 확인하면 이번 깜빡임 결함을 못 잡는다(오너 지시).
 
@@ -281,12 +283,14 @@ class TestComboBoxPopupHighlightResync:
         assert seen == [2]  # Show 콜백이 돌기 *전*부터 이미 올바른 값이어야 한다
         self._close_popup(qtbot, combo)
 
-    def test_fault_injection_show_only_resync_still_flickers(self, qapp, qtbot, monkeypatch):
+    def test_fault_injection_show_only_resync_still_flickers(
+        self, qapp, qtbot, monkeypatch
+    ) -> None:
         """고장 주입 — Hide 시점 복원을 지우고 Show 시점만 남기면(이전 구현),
         위 무깜빡임 테스트가 다시 실패해야 한다. 안 실패하면 그 테스트가
         이번 결함을 안 보고 있는 것이다(오너 지시)."""
 
-        def show_only_event_filter(self, watched, event):
+        def show_only_event_filter(self, watched, event) -> bool:
             if event.type() == QEvent.Type.Show:
                 self._resync()
             return False
@@ -313,7 +317,7 @@ class TestComboBoxPopupHighlightResync:
         self._close_popup(qtbot, combo)
 
 
-def _press_enter_the_way_macos_delivers_it(window):
+def _press_enter_the_way_macos_delivers_it(window) -> None:
     """macOS QPA의 Enter 배달 순서를 어느 플랫폼에서든 재현한다.
 
     실제 macOS에서는 팝업(NSPanel)이 key window가 될 수 없고 키보드 grab도
@@ -368,7 +372,7 @@ class TestComboBoxPopupEnterStaysInsideThePopup:
         view.setCurrentIndex(view.model().index(row, 0))  # 키보드 탐색으로 강조를 옮긴 상태
         return view
 
-    def test_enter_picks_the_highlighted_item_and_leaves_the_dialog_open(self, qapp, qtbot):
+    def test_enter_picks_the_highlighted_item_and_leaves_the_dialog_open(self, qapp, qtbot) -> None:
         qapp.setStyle(hold_style(theme.build_style(deferred_popup_hide=True)))
         dialog, combo = self._show(qapp, qtbot)
         finished = []
@@ -382,7 +386,7 @@ class TestComboBoxPopupEnterStaysInsideThePopup:
         assert dialog.isVisible()
         assert finished == []  # 설정 창은 그대로 열려 있어야 한다
 
-    def test_fault_injection_without_deferred_hide_the_dialog_closes(self, qapp, qtbot):
+    def test_fault_injection_without_deferred_hide_the_dialog_closes(self, qapp, qtbot) -> None:
         """지연 닫기를 끄면(수정 전 동작) 위 게이트가 실제로 실패하는지 — 이
         테스트가 회귀를 보고 있다는 증거이자, macOS 증상의 플랫폼 무관
         재현이다(고장 주입 관례)."""

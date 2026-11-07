@@ -22,7 +22,7 @@ SMALL_CHUNK = 4  # 조각 하나의 샘플 수 — 트랙마다 조각의 경계
 
 
 @pytest.fixture(autouse=True)
-def small_chunks(monkeypatch):
+def small_chunks(monkeypatch) -> None:
     """해석기와 배열 모듈의 조각 크기를 SMALL_CHUNK로 줄인다."""
     monkeypatch.setattr(column_module, "CHUNK_ITEMS", SMALL_CHUNK)
     monkeypatch.setattr(mp4_module, "CHUNK_ITEMS", SMALL_CHUNK)
@@ -68,7 +68,7 @@ def _video(**fields) -> TrackSpec:
 
 
 @pytest.mark.parametrize("seed", range(30))
-def test_frames_equal_the_definition_when_parsed_in_small_chunks(seed):
+def test_frames_equal_the_definition_when_parsed_in_small_chunks(seed) -> None:
     """조각을 4샘플로 줄여 해석해도 표시 순서 · 표시 시각 · 키프레임 · 길이가 정의와 같아야 한다.
 
     씨앗마다 무작위 영상 · 오디오(재정렬 · 빈 편집 · 편집 목록이 가리는 샘플)를 만들어 해석
@@ -82,7 +82,7 @@ def test_frames_equal_the_definition_when_parsed_in_small_chunks(seed):
     assert _frames(index) == _expected_frames(video, movie_timescale, origin)
 
 
-def test_frame_list_leaves_out_frames_the_edit_list_hides():
+def test_frame_list_leaves_out_frames_the_edit_list_hides() -> None:
     """편집 목록이 앞 프레임을 가리면 표시 순서에서 그 프레임들이 빠져야 한다.
 
     영상 8프레임(길이 100틱, ctts 없음), elst media_time = 200 -> 샘플 0 · 1의 표시 시각이 음수
@@ -96,7 +96,7 @@ def test_frame_list_leaves_out_frames_the_edit_list_hides():
     assert index.frame_pts[0] == 0.0
 
 
-def test_video_start_is_the_earliest_frame_when_the_first_decoded_frame_shows_later():
+def test_video_start_is_the_earliest_frame_when_the_first_decoded_frame_shows_later() -> None:
     """디코드 순서의 첫 프레임이 늦게 표시되면 영상의 시작은 가장 이른 표시 시각이어야 한다.
 
     영상 4프레임(길이 100틱), ctts [300, 0, 0, 0] -> 표시 시각(틱) [300, 100, 200, 300]
@@ -110,7 +110,7 @@ def test_video_start_is_the_earliest_frame_when_the_first_decoded_frame_shows_la
     assert list(index.frame_pts) == [0.0, 0.1, 0.2, 0.2]
 
 
-def test_audio_start_with_ctts_is_its_earliest_sample_not_a_bisected_one():
+def test_audio_start_with_ctts_is_its_earliest_sample_not_a_bisected_one() -> None:
     """ctts가 있어 표시 시각이 줄었다 느는 오디오면 오디오의 시작은 가장 이른 표시 시각이어야 한다.
 
     영상은 빈 편집 1초 뒤에 시작한다. 오디오 6샘플(8000Hz, 길이 1024틱), ctts [3000, 0, 0, 0, 0, 0]
@@ -134,7 +134,7 @@ def test_audio_start_with_ctts_is_its_earliest_sample_not_a_bisected_one():
 
 def test_audio_start_with_ctts_whose_earliest_sample_is_past_the_first_chunk_equals_one_pass(
     monkeypatch,
-):
+) -> None:
     """ctts 오디오의 가장 이른 표시 샘플이 둘째 조각 이후에 있으면 오디오의 시작은 한 번에 훑은 것과 같아야 한다.
 
     영상은 빈 편집 1초 뒤에 시작한다. 오디오 6샘플(8000Hz, 길이 1024틱), ctts [9000, 9000, 9000, 9000, 0, 0],
@@ -162,7 +162,7 @@ def test_audio_start_with_ctts_whose_earliest_sample_is_past_the_first_chunk_equ
     assert chunked == one_pass
 
 
-def test_audio_hidden_entirely_by_the_edit_list_leaves_the_start_to_video():
+def test_audio_hidden_entirely_by_the_edit_list_leaves_the_start_to_video() -> None:
     """편집 목록이 오디오의 모든 샘플을 가리면 시각의 0은 영상의 첫 프레임이어야 한다.
 
     영상 4프레임(빈 편집 1초), 오디오 4샘플(8000Hz, 길이 1024틱, ctts 없음), 오디오 elst media_time = 8192
@@ -184,7 +184,7 @@ def test_audio_hidden_entirely_by_the_edit_list_leaves_the_start_to_video():
     assert all(time < 0 for time in index.audio.times)
 
 
-def test_audio_decode_times_follow_stts_runs_of_different_lengths():
+def test_audio_decode_times_follow_stts_runs_of_different_lengths() -> None:
     """stts 구간마다 길이가 다른 오디오면 DTS와 샘플 길이가 구간을 샘플마다 편 정의와 같아야 한다.
 
     오디오 10샘플(48000Hz), 길이(틱) [1024 × 3, 960 × 2, 2048, 1024 × 4], elst media_time = 1024
@@ -211,7 +211,7 @@ def test_audio_decode_times_follow_stts_runs_of_different_lengths():
     assert list(index.audio.durations) == [delta / 48000 for delta in deltas]
 
 
-def test_duration_reaches_a_frame_shown_first_that_ends_last():
+def test_duration_reaches_a_frame_shown_first_that_ends_last() -> None:
     """먼저 표시되는 프레임이 가장 늦게 끝나면 길이는 그 프레임이 끝나는 시각이어야 한다.
 
     영상 41프레임 — 샘플 0은 길이 5000틱 · ctts 4500, 나머지 40개는 길이 100틱 · ctts 0
@@ -226,7 +226,7 @@ def test_duration_reaches_a_frame_shown_first_that_ends_last():
     assert index.duration == 5.0
 
 
-def test_sample_limits_fit_the_sample_number_array():
+def test_sample_limits_fit_the_sample_number_array() -> None:
     """트랙의 샘플 상한은 샘플 번호를 담는 배열 종류의 최댓값보다 작아야 한다.
 
     샘플 번호는 0 … 상한 − 1이다

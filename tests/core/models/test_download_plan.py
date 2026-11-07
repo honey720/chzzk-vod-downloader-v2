@@ -34,11 +34,11 @@ MB = 1024 * 1024
 class RecordingLogger:
     """호출된 로그 메서드 이름만 기록하는 DownloadLogger 호환 페이크."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.calls: list[str] = []
 
     def __getattr__(self, name):
-        def record(*args, **kwargs):
+        def record(*args, **kwargs) -> None:
             self.calls.append(name)
 
         return record
@@ -47,7 +47,7 @@ class RecordingLogger:
 # ================================================================ 모델 계약
 
 
-def test_plan_is_frozen_and_defaults_to_full_download():
+def test_plan_is_frozen_and_defaults_to_full_download() -> None:
     """계획은 불변이고, selections 기본값(빈 튜플)은 전체 다운로드를 뜻한다."""
     plan = DownloadPlan(items=((0, 9), (10, 19)), total_size=20)
 
@@ -58,7 +58,7 @@ def test_plan_is_frozen_and_defaults_to_full_download():
         plan.total_size = 999
 
 
-def test_time_range_holds_seconds():
+def test_time_range_holds_seconds() -> None:
     """TimeRange는 초 단위 (start, end) 구간을 담는다 — 다중 구간은 튜플로 나열한다."""
     plan = DownloadPlan(items=(), selections=(TimeRange(0.0, 10.0), TimeRange(30.0, 45.5)))
 
@@ -72,13 +72,13 @@ def test_time_range_holds_seconds():
 class HeadSession:
     """HEAD로 content-length만 답하는 가짜 세션 (_get_total_size 최소 인터페이스)."""
 
-    def __init__(self, size: int):
+    def __init__(self, size: int) -> None:
         self.headers = {"content-length": str(size)}
 
     def head(self, url, **kwargs):
         return self
 
-    def raise_for_status(self):
+    def raise_for_status(self) -> None:
         pass
 
 
@@ -92,7 +92,7 @@ def _make_file_data() -> DownloadData:
     )
 
 
-def test_file_prepare_returns_plan_with_ranges_and_total_size(monkeypatch):
+def test_file_prepare_returns_plan_with_ranges_and_total_size(monkeypatch) -> None:
     """file 계획: items는 바이트 범위 튜플, 총 크기를 미리 알아 total_size를 채운다."""
     total = 3 * MB + 512
     data = _make_file_data()
@@ -115,14 +115,14 @@ def test_file_prepare_returns_plan_with_ranges_and_total_size(monkeypatch):
 class PlaylistSession:
     """플레이리스트 텍스트만 답하는 가짜 세션 (prepare 최소 인터페이스)."""
 
-    def __init__(self, text: str):
+    def __init__(self, text: str) -> None:
         self._text = text
 
     def get(self, url, **kwargs):
         class _Response:
             text = self._text
 
-            def raise_for_status(self):
+            def raise_for_status(self) -> None:
                 pass
 
         return _Response()
@@ -138,7 +138,7 @@ def _make_m3u8_data() -> DownloadData:
     )
 
 
-def test_m3u8_prepare_returns_plan_with_segments(monkeypatch):
+def test_m3u8_prepare_returns_plan_with_segments(monkeypatch) -> None:
     """m3u8 계획: items는 (index, 세그먼트), 총 크기 미상(None), 병합 후처리 필요."""
     playlist = "\n".join(
         ["#EXTM3U", '#EXT-X-MAP:URI="init.m4s"']
@@ -166,7 +166,7 @@ def _selection_plan() -> DownloadPlan:
     return DownloadPlan(items=((0, MB - 1),), total_size=MB, selections=(TimeRange(0.0, 10.0),))
 
 
-def test_file_m3u8_and_hls_aes_accept_selections_and_the_default_does_not():
+def test_file_m3u8_and_hls_aes_accept_selections_and_the_default_does_not() -> None:
     """구간을 받는 다운로더는 file · m3u8 · hls_aes이고, 기본값은 받지 않아야 한다 (#309).
 
     BaseDownloader · FileDownloader · M3U8Downloader · HlsAesDownloader의 supports_selections
@@ -180,7 +180,7 @@ def test_file_m3u8_and_hls_aes_accept_selections_and_the_default_does_not():
 
 def test_base_run_rejects_selections_for_a_downloader_that_does_not_support_them(
     tmp_path, monkeypatch
-):
+) -> None:
     """구간을 받지 않는 다운로더가 낸 계획에 selections가 있으면 run()은 미지원 예외를 실패로 통지해야 한다.
 
     M3U8Downloader의 supports_selections를 False로 바꾸고 prepare가 selections 있는 계획을 내도록 함

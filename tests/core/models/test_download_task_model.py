@@ -12,7 +12,7 @@ from core.models.download_state import DownloadState
 from core.models.download_task import DownloadTaskModel, InvalidStateTransitionError
 
 
-def test_initial_state_is_waiting():
+def test_initial_state_is_waiting() -> None:
     """생성 직후 상태는 WAITING이고 pause_event는 진행 가능(set) 상태다."""
     model = DownloadTaskModel()
     assert model.state is DownloadState.WAITING
@@ -20,7 +20,7 @@ def test_initial_state_is_waiting():
     assert not model.is_running()
 
 
-def test_normal_transition_path():
+def test_normal_transition_path() -> None:
     """정상 경로: 시작 → 일시정지 → 재개 → 완료."""
     model = DownloadTaskModel()
 
@@ -40,7 +40,7 @@ def test_normal_transition_path():
     assert model.end_time >= model.start_time
 
 
-def test_stop_from_running_returns_to_waiting():
+def test_stop_from_running_returns_to_waiting() -> None:
     """실행 중 취소하면 WAITING으로 복귀한다."""
     model = DownloadTaskModel()
     model.start()
@@ -48,7 +48,7 @@ def test_stop_from_running_returns_to_waiting():
     assert model.state is DownloadState.WAITING
 
 
-def test_stop_from_paused_wakes_waiting_threads():
+def test_stop_from_paused_wakes_waiting_threads() -> None:
     """일시정지 상태에서 취소해도 WAITING으로 가고, 대기 중 스레드를 깨운다."""
     model = DownloadTaskModel()
     model.start()
@@ -59,7 +59,7 @@ def test_stop_from_paused_wakes_waiting_threads():
     assert model.pause_event.is_set()
 
 
-def test_fail_transition():
+def test_fail_transition() -> None:
     """실행 중 실패 처리하면 FAILED가 되고 종료 시각이 기록된다."""
     model = DownloadTaskModel()
     model.start()
@@ -93,7 +93,7 @@ def test_fail_transition():
         (["start", "fail"], "stop"),
     ],
 )
-def test_invalid_transitions_raise(setup: list[str], invalid: str):
+def test_invalid_transitions_raise(setup: list[str], invalid: str) -> None:
     """허용되지 않는 전이는 InvalidStateTransitionError를 던진다."""
     model = DownloadTaskModel()
     for name in setup:
@@ -102,7 +102,7 @@ def test_invalid_transitions_raise(setup: list[str], invalid: str):
         getattr(model, invalid)()
 
 
-def test_same_state_transition_is_idempotent_noop():
+def test_same_state_transition_is_idempotent_noop() -> None:
     """이미 목표 상태면 예외 없이 False를 반환하는 멱등 no-op이다."""
     model = DownloadTaskModel()
     model.start()
@@ -115,7 +115,7 @@ def test_same_state_transition_is_idempotent_noop():
     assert model.stop() is False
 
 
-def test_pause_resume_event_behavior():
+def test_pause_resume_event_behavior() -> None:
     """pause는 Event를 clear해 스레드를 재우고, resume은 set해 깨운다."""
     model = DownloadTaskModel()
     model.start()
@@ -128,7 +128,7 @@ def test_pause_resume_event_behavior():
     assert model.pause_event.is_set()
 
 
-def test_injected_pause_event_is_shared():
+def test_injected_pause_event_is_shared() -> None:
     """외부에서 주입한 Event를 그대로 공유한다 (기존 엔진과의 연결용)."""
     shared = threading.Event()
     model = DownloadTaskModel(pause_event=shared)
@@ -138,7 +138,7 @@ def test_injected_pause_event_is_shared():
     assert not shared.is_set()
 
 
-def test_on_state_change_fires_only_on_real_transition():
+def test_on_state_change_fires_only_on_real_transition() -> None:
     """콜백은 상태가 실제로 바뀔 때만, 새 상태를 인자로 호출된다."""
     changes: list[DownloadState] = []
     model = DownloadTaskModel(on_state_change=changes.append)
@@ -157,7 +157,7 @@ def test_on_state_change_fires_only_on_real_transition():
     ]
 
 
-def test_progress_aggregation():
+def test_progress_aggregation() -> None:
     """스레드별 진행 바이트의 합과 백분율 진행률을 집계한다."""
     model = DownloadTaskModel()
     model.total_size = 1000
@@ -172,7 +172,7 @@ def test_progress_aggregation():
     assert model.progress == 50.0
 
 
-def test_progress_is_zero_without_total_size():
+def test_progress_is_zero_without_total_size() -> None:
     """total_size가 확정되지 않았으면(0) 진행률은 0.0이다."""
     model = DownloadTaskModel()
     model.init_threads_progress(2)
@@ -180,7 +180,7 @@ def test_progress_is_zero_without_total_size():
     assert model.progress == 0.0
 
 
-def test_progress_is_capped_at_100():
+def test_progress_is_capped_at_100() -> None:
     """재시도 등으로 total_size보다 많이 받아도 진행률은 100.0으로 캡한다."""
     model = DownloadTaskModel()
     model.total_size = 100
@@ -189,7 +189,7 @@ def test_progress_is_capped_at_100():
     assert model.progress == 100.0
 
 
-def test_state_enum_values_preserved():
+def test_state_enum_values_preserved() -> None:
     """이주 후에도 상태 값·의미가 기존 download/state.py와 동일해야 한다."""
     assert DownloadState.WAITING.value == 0
     assert DownloadState.RUNNING.value == 1

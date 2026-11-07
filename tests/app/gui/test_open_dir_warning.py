@@ -14,6 +14,7 @@ from app.viewmodels.data import ContentItem
 from app.widgets.widget import ContentItemWidget
 from core.models.download_state import DownloadState
 from tests.app.gui.card_helpers import drop_new_top_levels, snapshot_top_levels
+from typing import Never
 
 
 @pytest.fixture(autouse=True)
@@ -25,14 +26,14 @@ def _drop_windows(qapp):
 
 
 @pytest.fixture(autouse=True)
-def no_network(monkeypatch):
+def no_network(monkeypatch) -> None:
     """카드가 크기를 묻는 요청을 내보내지 않게 한다."""
 
     class _FailingSession:
-        def head(self, *a, **k):
+        def head(self, *a, **k) -> Never:
             raise RuntimeError("network disabled in tests")
 
-        def get(self, *a, **k):
+        def get(self, *a, **k) -> Never:
             raise RuntimeError("network disabled in tests")
 
     monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
@@ -96,7 +97,7 @@ _FILE = {
 @pytest.mark.parametrize("language", ["ko_KR", "en_US"], indirect=True)
 def test_folder_open_warning_for_a_folder_is_in_the_screen_language(
     qapp, tmp_path, refused, language
-):
+) -> None:
     """대기 카드의 폴더 열기를 OS가 거부하면 경고 창의 제목 · 본문이 화면 언어여야 한다.
 
     번역 카탈로그 ko_KR(또는 en_US)을 걸고, 저장 폴더를 여는 대기 카드에서 폴더 열기 버튼을 누름
@@ -113,7 +114,7 @@ def test_folder_open_warning_for_a_folder_is_in_the_screen_language(
 @pytest.mark.parametrize("language", ["ko_KR", "en_US"], indirect=True)
 def test_folder_open_warning_for_a_finished_file_is_in_the_screen_language(
     qapp, tmp_path, refused, language
-):
+) -> None:
     """완료 카드의 폴더 열기(파일을 고른 채 폴더 열기)를 OS가 거부하면 경고 창의 글이 화면 언어여야 한다.
 
     번역 카탈로그 ko_KR(또는 en_US)을 걸고, 산출물 파일이 있는 완료 카드에서 폴더 열기 버튼을 누름

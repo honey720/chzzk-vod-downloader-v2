@@ -52,7 +52,7 @@ def _probe_threads() -> int:
     return sum(1 for t in threading.enumerate() if t.name == "FreeSpaceProbe" and t.is_alive())
 
 
-def test_a_stuck_path_does_not_block_another_path(qtbot, held, probe):
+def test_a_stuck_path_does_not_block_another_path(qtbot, held, probe) -> None:
     """경로 A의 측정이 붙잡혀 있어도 경로 B를 요청하면 B의 값이 들어와야 한다.
 
     A 요청(붙잡힘) → B 요청 -> 두 요청 모두 True, B 값 222가 들어오고 A는 아직 None
@@ -63,7 +63,7 @@ def test_a_stuck_path_does_not_block_another_path(qtbot, held, probe):
     assert probe.value(PATH_A) is None
 
 
-def test_asking_a_stuck_path_again_starts_no_thread(qtbot, held, probe):
+def test_asking_a_stuck_path_again_starts_no_thread(qtbot, held, probe) -> None:
     """재는 중인 경로를 다시 요청하면 새로 재지 않아 측정 스레드가 늘지 않아야 한다.
 
     A 요청(붙잡힘) → A 다섯 번 더 요청 -> 다섯 번 모두 False, 측정 스레드 수 그대로
@@ -74,7 +74,7 @@ def test_asking_a_stuck_path_again_starts_no_thread(qtbot, held, probe):
     assert _probe_threads() == before
 
 
-def test_a_released_path_reports_its_value_and_can_be_asked_again(qtbot, held, probe):
+def test_a_released_path_reports_its_value_and_can_be_asked_again(qtbot, held, probe) -> None:
     """붙잡혔던 경로가 풀리면 그 값이 들어오고, 그 뒤에는 다시 요청할 수 있어야 한다.
 
     A 요청(붙잡힘) → 풀어 줌 -> A 값 111이 들어옴, 다시 A 요청 True

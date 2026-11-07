@@ -40,6 +40,7 @@ from app.views.mainWindow import VodDownloader
 from app.viewmodels.data import ContentItem
 from core.models.download_state import DownloadState
 from tests.app.gui.card_helpers import hold_style, shown
+from typing import Never
 
 QSS_PATH = main_module.resource_path(theme.QSS_RELATIVE_PATH)
 
@@ -84,10 +85,10 @@ def theme_sandbox(qapp):
 @pytest.fixture
 def _theme_sandbox(qapp, monkeypatch):
     class _FailingSession:
-        def head(self, *a, **k):
+        def head(self, *a, **k) -> Never:
             raise RuntimeError("network disabled in tests")
 
-        def get(self, *a, **k):
+        def get(self, *a, **k) -> Never:
             raise RuntimeError("network disabled in tests")
 
     monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
@@ -125,7 +126,7 @@ def _make_item(i: int) -> ContentItem:
 class Scene:
     """메인 창에 카드 다섯 상태를 올린 화면. `components()`가 비교 대상 위젯을 이름으로 돌려준다."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.window = VodDownloader()
         # 두 장면이 설정 상태에 기대지 않게 저장 위치를 고정한다 — 버튼 글(폴더 이름)이 장면마다
         # 다르면 테마와 무관한 차이가 난다(#495 전에는 경로 입력창의 글이었다).
@@ -292,14 +293,16 @@ def _differences(a: dict, b: dict) -> list[str]:
 @pytest.mark.usefixtures("_theme_sandbox")
 class TestRuntimeSwitchIsComplete:
     @pytest.mark.parametrize("start,then", [("dark", "light"), ("light", "dark")])
-    def test_switched_scene_renders_exactly_like_a_fresh_start(self, qapp, qtbot, start, then):
+    def test_switched_scene_renders_exactly_like_a_fresh_start(
+        self, qapp, qtbot, start, then
+    ) -> None:
         fresh = _fresh(qapp, qtbot, then)
         switched = _switched(qapp, qtbot, start, then)
 
         assert _differences(fresh, switched) == []
 
     @pytest.mark.parametrize("start,then", [("dark", "light"), ("light", "dark")])
-    def test_switch_actually_changes_the_scene(self, qapp, qtbot, start, then):
+    def test_switch_actually_changes_the_scene(self, qapp, qtbot, start, then) -> None:
         """비교가 공허하지 않은지 — 전환 전 화면과는 달라야 한다(다크와 라이트가
         같은 픽셀이면 위 동일성 게이트는 아무것도 재지 않은 것)."""
         before = _fresh(qapp, qtbot, start)
@@ -324,8 +327,8 @@ class TestFaultInjection:
     생겼을 결함)이다. 각각 어느 구성 요소에서 드러나는지까지 단언한다.
     """
 
-    def test_skipping_the_qss_reload_leaves_qss_driven_parts_stale(self, qapp, qtbot):
-        def apply_without_qss(scheme):
+    def test_skipping_the_qss_reload_leaves_qss_driven_parts_stale(self, qapp, qtbot) -> None:
+        def apply_without_qss(scheme) -> None:
             theme.set_color_scheme(scheme)
             qapp.setPalette(theme.build_palette())
 
@@ -337,8 +340,8 @@ class TestFaultInjection:
         assert "card[running].frame" in stale  # 카드 배경(#contentFrame)
         assert "header.fetchButton" in stale  # 버튼 QSS
 
-    def test_skipping_the_palette_leaves_palette_driven_parts_stale(self, qapp, qtbot):
-        def apply_without_palette(scheme):
+    def test_skipping_the_palette_leaves_palette_driven_parts_stale(self, qapp, qtbot) -> None:
+        def apply_without_palette(scheme) -> None:
             theme.set_color_scheme(scheme)
             qapp.setStyleSheet(theme.load_stylesheet(QSS_PATH))
 
@@ -350,7 +353,7 @@ class TestFaultInjection:
         assert "card[waiting].title" in stale
         assert "card[waiting].pathLabel" in stale
 
-    def test_icons_that_cache_their_color_would_be_caught(self, qapp, qtbot, monkeypatch):
+    def test_icons_that_cache_their_color_would_be_caught(self, qapp, qtbot, monkeypatch) -> None:
         """파이썬 색 계산 갱신을 한 곳 빼기 — `IconButton`이 토큰을 paint마다 새로
         읽지 않고 전환 전 표를 붙들고 있다면(캐시), 조작 아이콘이 낡은 색으로
         남는다. 그 상황을 만들어 게이트가 아이콘에서 잡는지 본다."""
@@ -359,7 +362,7 @@ class TestFaultInjection:
         frozen = dict(theme.DARK)
         original_paint = icons.IconButton.paintEvent
 
-        def paint_with_frozen_tokens(self, event):
+        def paint_with_frozen_tokens(self, event) -> None:
             monkeypatch.setattr(theme, "current_tokens", lambda: frozen)
             try:
                 original_paint(self, event)
@@ -387,7 +390,7 @@ class TestSwitchIsAtomic:
     그리고 원자성을 깨면(색 먼저 커밋) 이 게이트가 잡는지를 잰다.
     """
 
-    def test_missing_qss_changes_nothing(self, qapp, tmp_path):
+    def test_missing_qss_changes_nothing(self, qapp, tmp_path) -> None:
         theme.apply_color_scheme(qapp, "dark", QSS_PATH)
         before = _snapshot_global_state(qapp)
 
@@ -397,7 +400,7 @@ class TestSwitchIsAtomic:
         assert _snapshot_global_state(qapp) == before  # 팔레트·QSS·스킴 전부 옛 테마 그대로
         assert theme.current_tokens() is theme.DARK
 
-    def test_broken_token_changes_nothing(self, qapp, tmp_path):
+    def test_broken_token_changes_nothing(self, qapp, tmp_path) -> None:
         broken = tmp_path / "broken.qss"
         broken.write_text("QWidget { color: @noSuchToken; }", encoding="utf-8")
         theme.apply_color_scheme(qapp, "dark", QSS_PATH)
@@ -408,7 +411,7 @@ class TestSwitchIsAtomic:
 
         assert _snapshot_global_state(qapp) == before
 
-    def test_unknown_scheme_changes_nothing(self, qapp):
+    def test_unknown_scheme_changes_nothing(self, qapp) -> None:
         theme.apply_color_scheme(qapp, "dark", QSS_PATH)
         before = _snapshot_global_state(qapp)
 
@@ -417,12 +420,12 @@ class TestSwitchIsAtomic:
 
         assert _snapshot_global_state(qapp) == before
 
-    def test_switch_recovers_after_a_failed_switch(self, qapp, qtbot, tmp_path):
+    def test_switch_recovers_after_a_failed_switch(self, qapp, qtbot, tmp_path) -> None:
         """실패한 전환이 상태를 망가뜨린 채 남기지 않는지 — 실패 뒤 정상 전환한
         화면이 처음부터 그 테마로 띄운 화면과 픽셀까지 같아야 한다."""
         missing = str(tmp_path / "missing.qss")
 
-        def fail_then_switch(scheme):
+        def fail_then_switch(scheme) -> None:
             with pytest.raises(OSError):
                 theme.apply_color_scheme(qapp, scheme, missing)
             theme.apply_color_scheme(qapp, scheme, QSS_PATH)
@@ -432,7 +435,7 @@ class TestSwitchIsAtomic:
 
         assert _differences(fresh, switched) == []
 
-    def test_follower_keeps_the_old_theme_when_reload_fails(self, qapp, tmp_path):
+    def test_follower_keeps_the_old_theme_when_reload_fails(self, qapp, tmp_path) -> None:
         """OS 신호 경로에서 실패하면 예외 없이 옛 테마를 지킨다(로그만)."""
         theme.apply_color_scheme(qapp, "dark", QSS_PATH)
         before = _snapshot_global_state(qapp)
@@ -444,11 +447,13 @@ class TestSwitchIsAtomic:
         finally:
             theme.unfollow_os_color_scheme(qapp, slot)
 
-    def test_fault_injection_committing_colors_first_is_caught(self, qapp, monkeypatch, tmp_path):
+    def test_fault_injection_committing_colors_first_is_caught(
+        self, qapp, monkeypatch, tmp_path
+    ) -> None:
         """원자성을 깨서(스킴·팔레트를 먼저 커밋) 위 게이트가 잡는지 — 반쪽 상태가
         실제로 만들어지는 것을 보인다."""
 
-        def non_atomic(app, scheme, qss_path):
+        def non_atomic(app, scheme, qss_path) -> None:
             theme.set_color_scheme(scheme)
             app.setPalette(theme.build_palette())
             app.setStyleSheet(theme.load_stylesheet(qss_path))
@@ -468,7 +473,7 @@ class TestSwitchIsAtomic:
 
 @pytest.mark.usefixtures("_theme_sandbox")
 class TestOsSignalWiring:
-    def test_color_scheme_changed_signal_reapplies_the_theme(self, qapp):
+    def test_color_scheme_changed_signal_reapplies_the_theme(self, qapp) -> None:
         """`follow_os_color_scheme()`이 건 배선이 실제 신호에 반응하는지.
 
         offscreen에서는 `QStyleHints.setColorScheme()`조차 `Unknown`에 머물러
@@ -490,7 +495,7 @@ class TestOsSignalWiring:
         finally:
             theme.unfollow_os_color_scheme(qapp, slot)
 
-    def test_unfollow_disconnects(self, qapp):
+    def test_unfollow_disconnects(self, qapp) -> None:
         hints = qapp.styleHints()
         theme.apply_color_scheme(qapp, "dark", QSS_PATH)
         slot = theme.follow_os_color_scheme(qapp, QSS_PATH)
@@ -502,7 +507,7 @@ class TestOsSignalWiring:
 
 
 class TestGlobalStateRestored:
-    def test_sandbox_restores_palette_stylesheet_and_scheme(self, qapp):
+    def test_sandbox_restores_palette_stylesheet_and_scheme(self, qapp) -> None:
         """이 파일이 전역 상태를 남기지 않는지 — 샌드박스를 지나온 뒤 팔레트·QSS·
         스킴이 들어가기 전과 같아야 한다."""
         before = _snapshot_global_state(qapp)
@@ -513,7 +518,7 @@ class TestGlobalStateRestored:
 
         assert _snapshot_global_state(qapp) == before
 
-    def test_fault_injection_without_restore_the_gate_catches_it(self, qapp, monkeypatch):
+    def test_fault_injection_without_restore_the_gate_catches_it(self, qapp, monkeypatch) -> None:
         """복구를 빼면 위 게이트가 실패해야 한다 — 복구 게이트가 진짜로 재는지."""
         before = _snapshot_global_state(qapp)
         monkeypatch.setattr(sys.modules[__name__], "_restore_global_state", lambda qapp, snapshot: None)

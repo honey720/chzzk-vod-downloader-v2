@@ -386,7 +386,7 @@ def _top_level(data: bytes):
 class _Run:
     """한 트랙의 샘플을 세그먼트 안에서 모으는 그릇."""
 
-    def __init__(self, track: Fmp4Track):
+    def __init__(self, track: Fmp4Track) -> None:
         self.track = track
         self.limit = _MAX_SAMPLES[track.handler.encode("ascii")]
         self.implied = 0  # 샘플마다의 칸이 없는 trun이 선언한 샘플 수의 합

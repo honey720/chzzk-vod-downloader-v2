@@ -64,7 +64,7 @@ def _playlist_text() -> str:
 class GatedSession:
     """m3u8 경로의 가짜 세션 — hold_from번부터의 세그먼트 요청은 release가 설 때까지 붙잡는다."""
 
-    def __init__(self, hold_from: int | None = None):
+    def __init__(self, hold_from: int | None = None) -> None:
         self.hold_from = hold_from
         self.release = threading.Event()
         self.segments: list[int] = []  # 청한 세그먼트의 인덱스
@@ -84,12 +84,12 @@ class GatedSession:
 class SpaceLogger(RunLogger):
     """여유 공간 줄을 적어 두는 로거 — 전송 중 검사가 적히면 붙잡아 둔 요청을 푼다."""
 
-    def __init__(self, release: threading.Event):
+    def __init__(self, release: threading.Event) -> None:
         super().__init__()
         self.space: list[tuple] = []
         self._release = release
 
-    def log_space_check(self, stage, segments, output, checks):
+    def log_space_check(self, stage, segments, output, checks) -> None:
         self.space.append((stage, segments, output, checks))
         if stage == "transfer":
             self._release.set()
@@ -98,7 +98,7 @@ class SpaceLogger(RunLogger):
 class _Run:
     """m3u8 엔진 한 번의 실행."""
 
-    def __init__(self, tmp_path, monkeypatch, free: int, bandwidth: int | None, hold: bool):
+    def __init__(self, tmp_path, monkeypatch, free: int, bandwidth: int | None, hold: bool) -> None:
         self.output = tmp_path / "out.mp4"
         self.data = DownloadData(
             base_url=BASE_URL,
@@ -138,7 +138,7 @@ class _Run:
         return self
 
 
-def test_start_check_fails_before_any_segment_is_requested(tmp_path, monkeypatch):
+def test_start_check_fails_before_any_segment_is_requested(tmp_path, monkeypatch) -> None:
     """시작 전 어림이 여유 공간에 1바이트라도 안 들어가면 세그먼트를 청하지 않고 실패해야 한다.
 
     선언 8,000,000 bit/s, 2초 세그먼트 24개 -> 어림 48,000,000, 필요 52,800,000 + 256MiB
@@ -162,7 +162,9 @@ def test_start_check_fails_before_any_segment_is_requested(tmp_path, monkeypatch
     assert not run.output.exists() and not (tmp_path / "CVDv2_temp_out").exists()
 
 
-def test_start_check_passes_when_the_free_space_equals_the_needed_bytes(tmp_path, monkeypatch):
+def test_start_check_passes_when_the_free_space_equals_the_needed_bytes(
+    tmp_path, monkeypatch
+) -> None:
     """여유 공간이 필요한 양과 같으면 받기를 시작해 끝까지 가야 한다.
 
     선언 8,000,000 bit/s, 2초 세그먼트 24개, 여유 = 52,800,000 + 256MiB
@@ -181,7 +183,7 @@ def test_start_check_passes_when_the_free_space_equals_the_needed_bytes(tmp_path
     )
 
 
-def test_start_check_is_skipped_without_a_declared_bitrate(tmp_path, monkeypatch):
+def test_start_check_is_skipped_without_a_declared_bitrate(tmp_path, monkeypatch) -> None:
     """비트레이트를 모르면 여유 공간이 0이어도 받기를 시작해야 한다 — 시작 줄이 없어야 한다.
 
     변형의 정체 없음, 여유 0, 21번째부터의 요청을 붙잡음
@@ -195,7 +197,9 @@ def test_start_check_is_skipped_without_a_declared_bitrate(tmp_path, monkeypatch
     assert "start" not in [line[0] for line in run.logger.space]
 
 
-def test_transfer_check_stops_the_transfer_when_the_real_sizes_do_not_fit(tmp_path, monkeypatch):
+def test_transfer_check_stops_the_transfer_when_the_real_sizes_do_not_fit(
+    tmp_path, monkeypatch
+) -> None:
     """20개를 받은 뒤 실제 평균으로 본 남은 양이 안 들어가면 전송을 멈추고 실패해야 한다.
 
     변형의 정체 없음(시작 전 검사 없음), 세그먼트 24개 x 24,576바이트, 20개 받은 뒤 여유 5바이트
@@ -220,7 +224,9 @@ def test_transfer_check_stops_the_transfer_when_the_real_sizes_do_not_fit(tmp_pa
     ]
 
 
-def test_transfer_check_uses_the_real_average_not_the_declared_bitrate(tmp_path, monkeypatch):
+def test_transfer_check_uses_the_real_average_not_the_declared_bitrate(
+    tmp_path, monkeypatch
+) -> None:
     """전송 중 어림은 선언된 비트레이트가 아니라 받은 세그먼트의 실제 크기로 해야 한다.
 
     선언 8,000,000 bit/s(시작 어림 48,000,000), 실제 세그먼트 24,576바이트 x 24, 여유 넉넉
@@ -238,7 +244,7 @@ def test_transfer_check_uses_the_real_average_not_the_declared_bitrate(tmp_path,
     assert run.logger.transfer_completes[0][1] == TRANSFER_ESTIMATE
 
 
-def test_volumes_apart_are_checked_one_by_one(tmp_path, monkeypatch):
+def test_volumes_apart_are_checked_one_by_one(tmp_path, monkeypatch) -> None:
     """임시 폴더와 저장 폴더가 다른 볼륨이면 볼륨마다 따로 견줘야 한다.
 
     선언 8,000,000 bit/s, 다른 볼륨, 임시 폴더 쪽 여유는 넉넉하고 저장 폴더 쪽 여유 = 필요 − 1
@@ -282,7 +288,7 @@ def _on_fat(monkeypatch, name: str, limit: int) -> list[tuple]:
 )
 def test_start_check_refuses_an_output_over_the_fat_limit(
     tmp_path, monkeypatch, name, over, refused
-):
+) -> None:
     """구간 없는 m3u8은 저장 폴더가 FAT 계열이고 어림한 산출물이 한계를 넘을 때만 받지 않고 실패해야 한다.
 
     선언 8,000,000 bit/s, 2초 세그먼트 24개 -> 어림 48,000,000. 한계를 어림 − 1(넘는다) 또는
@@ -306,7 +312,7 @@ def test_start_check_refuses_an_output_over_the_fat_limit(
 
 def test_transfer_check_stops_the_transfer_when_the_output_is_over_the_fat_limit(
     tmp_path, monkeypatch
-):
+) -> None:
     """받기 전 어림이 없는 다운로드는 20개를 받은 뒤의 어림이 FAT의 한계를 넘으면 전송을 멈추고 실패해야 한다.
 
     변형의 정체 없음(시작 전 검사 없음), 세그먼트 24개 x 24,576바이트(어림 589,824), 파일 시스템
@@ -329,7 +335,7 @@ def test_transfer_check_stops_the_transfer_when_the_output_is_over_the_fat_limit
 class _GatedAesSession(aes_tests.FakeSession):
     """암호화 VOD의 가짜 세션 — hold_from번부터의 세그먼트 요청을 붙잡는다."""
 
-    def __init__(self, playlist: str, hold_from: int):
+    def __init__(self, playlist: str, hold_from: int) -> None:
         super().__init__(playlist)
         self.hold_from = hold_from
         self.release = threading.Event()
@@ -352,7 +358,9 @@ def _aes_playlist() -> str:
 
 
 @pytest.mark.parametrize("free", [5, 10**12], ids=["short", "enough"])
-def test_encrypted_vod_transfer_check_counts_the_decrypted_segments(tmp_path, monkeypatch, free):
+def test_encrypted_vod_transfer_check_counts_the_decrypted_segments(
+    tmp_path, monkeypatch, free
+) -> None:
     """암호화 VOD도 20개를 받은 뒤 디스크에 쓴(복호화한) 크기로 다시 어림해 여유 공간을 봐야 한다.
 
     세그먼트 24개, 복호화한 크기 376바이트(TS 패킷 2개), 3.84초. 20개 받은 뒤 검사
@@ -369,7 +377,7 @@ def test_encrypted_vod_transfer_check_counts_the_decrypted_segments(tmp_path, mo
     engine._slow_speed_threshold_kb_s = 0
     checked: list[tuple] = []
 
-    def log_space_check(stage, segments, output, checks):
+    def log_space_check(stage, segments, output, checks) -> None:
         checked.append((stage, segments, checks))
         session.release.set()
 
@@ -393,7 +401,7 @@ def test_encrypted_vod_transfer_check_counts_the_decrypted_segments(tmp_path, mo
 
 def test_encrypted_vod_transfer_check_stops_when_the_output_is_over_the_fat_limit(
     tmp_path, monkeypatch
-):
+) -> None:
     """암호화 VOD(받기 전 어림 없음)도 20개를 받은 뒤의 어림이 FAT의 한계를 넘으면 전송을 멈추고 실패해야 한다.
 
     세그먼트 24개, 복호화한 크기 376바이트(어림 9,024), 파일 시스템 "FAT32", 한계 9,023
@@ -422,7 +430,7 @@ def test_encrypted_vod_transfer_check_stops_when_the_output_is_over_the_fat_limi
 
 def test_file_size_check_compares_the_size_it_reports_when_the_estimate_is_a_fraction(
     tmp_path, monkeypatch
-):
+) -> None:
     """어림이 소수여도 파일 크기 검사는 예외 · 로그에 적는 그 값을 한계와 견줘야 한다.
 
     파일 시스템 "FAT32", 어림 1000.5바이트. 한계 1000으로 검사한 뒤, 한계를 예외에 적힌 크기로
@@ -451,7 +459,7 @@ def test_file_size_check_compares_the_size_it_reports_when_the_estimate_is_a_fra
 )
 def test_start_estimate_uses_the_average_bandwidth_when_it_is_declared(
     tmp_path, monkeypatch, average, expected
-):
+) -> None:
     """받기 전 어림은 AVERAGE-BANDWIDTH가 선언돼 있으면 그 값으로, 없으면 BANDWIDTH로 해야 한다.
 
     BANDWIDTH 16,000,000 bit/s, 2초 세그먼트 24개. AVERAGE-BANDWIDTH 8,000,000 또는 선언 없음

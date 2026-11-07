@@ -19,7 +19,9 @@ SOURCE = (
         ("en_US", "Stream not found · pick another resolution"),
     ],
 )
-def test_stream_failure_reason_is_translated_in_the_bundled_catalog(qapp, language, headline):
+def test_stream_failure_reason_is_translated_in_the_bundled_catalog(
+    qapp, language, headline
+) -> None:
     """동봉된 번역 카탈로그는 스트림 선택 실패 사유를 그 언어의 두 줄 문구로 돌려줘야 한다.
 
     translations/<언어>.qm, 컨텍스트 DownloadViewModel, 원문 SOURCE
@@ -49,7 +51,9 @@ def test_stream_failure_reason_is_translated_in_the_bundled_catalog(qapp, langua
         ),
     ],
 )
-def test_slow_response_has_its_own_wording_in_the_bundled_catalog(qapp, language, slow, connection):
+def test_slow_response_has_its_own_wording_in_the_bundled_catalog(
+    qapp, language, slow, connection
+) -> None:
     """동봉된 번역 카탈로그는 영상 정보의 응답 지연을 연결 실패와 다른 문구로 돌려줘야 한다 (#331).
 
     translations/<언어>.qm, 컨텍스트 FetchJob, 원문 "Server response is slow" ·

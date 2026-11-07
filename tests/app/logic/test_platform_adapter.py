@@ -14,12 +14,13 @@ from pathlib import Path
 import pytest
 
 import app.system.platform_adapter as adapter
+from typing import Never
 
 
 class FakePopenCall:
     """subprocess.Popen 대역 — 호출 인자만 기록하고 실제 프로세스는 안 띄운다."""
 
-    def __init__(self, raise_oserror: bool = False):
+    def __init__(self, raise_oserror: bool = False) -> None:
         self.calls: list[list[str]] = []
         self._raise = raise_oserror
 
@@ -38,7 +39,7 @@ def fake_popen(monkeypatch):
 
 
 class TestGetDefaultDownloadDir:
-    def test_delegates_to_platformdirs(self, monkeypatch):
+    def test_delegates_to_platformdirs(self, monkeypatch) -> None:
         monkeypatch.setattr(adapter.platformdirs, "user_downloads_dir", lambda: "/fake/Downloads")
         assert adapter.get_default_download_dir() == "/fake/Downloads"
 
@@ -47,7 +48,7 @@ class TestOpenFolder:
     """QDesktopServices.openUrl(QUrl.fromLocalFile(path)) 대체 — config/dialog.py의
     openLogsFolder가 오늘 이 패턴으로 로그 폴더를 여는 것과 동등해야 한다."""
 
-    def test_windows_uses_os_startfile(self, monkeypatch):
+    def test_windows_uses_os_startfile(self, monkeypatch) -> None:
         calls = []
         monkeypatch.setattr(adapter.platform, "system", lambda: "Windows")
         # os.startfile은 Windows에만 존재하는 속성이다 — CI의 Linux/macOS 러너에서는
@@ -59,37 +60,37 @@ class TestOpenFolder:
         assert adapter.open_folder("C:/logs") is True
         assert calls == ["C:/logs"]
 
-    def test_windows_startfile_failure_returns_false_not_raises(self, monkeypatch):
+    def test_windows_startfile_failure_returns_false_not_raises(self, monkeypatch) -> None:
         """#181: os.startfile은 Windows 전용이라 다른 OS에서 AttributeError로 죽었었다 —
         여기서는 반대로 Windows에서 startfile 자체가 실패하는 경우(OSError)를 검증한다."""
         monkeypatch.setattr(adapter.platform, "system", lambda: "Windows")
 
-        def boom(path):
+        def boom(path) -> Never:
             raise OSError("연결된 프로그램 없음")
 
         monkeypatch.setattr(adapter.os, "startfile", boom, raising=False)
 
         assert adapter.open_folder("C:/missing") is False
 
-    def test_macos_uses_open(self, monkeypatch, fake_popen):
+    def test_macos_uses_open(self, monkeypatch, fake_popen) -> None:
         monkeypatch.setattr(adapter.platform, "system", lambda: "Darwin")
 
         assert adapter.open_folder("/Users/x/logs") is True
         assert fake_popen.calls == [["open", "/Users/x/logs"]]
 
-    def test_linux_uses_xdg_open(self, monkeypatch, fake_popen):
+    def test_linux_uses_xdg_open(self, monkeypatch, fake_popen) -> None:
         monkeypatch.setattr(adapter.platform, "system", lambda: "Linux")
 
         assert adapter.open_folder("/home/x/logs") is True
         assert fake_popen.calls == [["xdg-open", "/home/x/logs"]]
 
-    def test_popen_oserror_returns_false(self, monkeypatch):
+    def test_popen_oserror_returns_false(self, monkeypatch) -> None:
         monkeypatch.setattr(adapter.platform, "system", lambda: "Linux")
         monkeypatch.setattr(adapter.subprocess, "Popen", FakePopenCall(raise_oserror=True))
 
         assert adapter.open_folder("/no/such/xdg-open") is False
 
-    def test_unknown_platform_returns_false(self, monkeypatch):
+    def test_unknown_platform_returns_false(self, monkeypatch) -> None:
         monkeypatch.setattr(adapter.platform, "system", lambda: "SomeOtherOS")
 
         assert adapter.open_folder("/anywhere") is False
@@ -98,7 +99,7 @@ class TestOpenFolder:
 class TestRevealInFileManager:
     """content/widget.py의 requestOpenDir 3-way 분기 그대로 이식."""
 
-    def test_folder_path_delegates_to_open_folder(self, monkeypatch, tmp_path, fake_popen):
+    def test_folder_path_delegates_to_open_folder(self, monkeypatch, tmp_path, fake_popen) -> None:
         """경로가 폴더면 requestOpenDir의 else 분기(QDesktopServices.openUrl)와 동일하다."""
         monkeypatch.setattr(adapter.platform, "system", lambda: "Linux")
         folder = tmp_path  # 실제 존재하는 디렉토리 — os.path.isfile이 False가 되게
@@ -108,7 +109,9 @@ class TestRevealInFileManager:
         assert result is True
         assert fake_popen.calls == [["xdg-open", str(folder)]]
 
-    def test_windows_file_path_uses_explorer_select(self, monkeypatch, tmp_path, fake_popen):
+    def test_windows_file_path_uses_explorer_select(
+        self, monkeypatch, tmp_path, fake_popen
+    ) -> None:
         monkeypatch.setattr(adapter.platform, "system", lambda: "Windows")
         file_path = tmp_path / "video.mp4"
         file_path.write_text("x")
@@ -124,7 +127,7 @@ class TestRevealInFileManager:
 
         assert call[2] == _os.path.normpath(str(file_path))
 
-    def test_macos_file_path_uses_open_dash_r(self, monkeypatch, tmp_path, fake_popen):
+    def test_macos_file_path_uses_open_dash_r(self, monkeypatch, tmp_path, fake_popen) -> None:
         monkeypatch.setattr(adapter.platform, "system", lambda: "Darwin")
         file_path = tmp_path / "video.mp4"
         file_path.write_text("x")
@@ -136,7 +139,7 @@ class TestRevealInFileManager:
         assert call[0] == "open"
         assert call[1] == "-R"
 
-    def test_linux_file_path_uses_nautilus(self, monkeypatch, tmp_path, fake_popen):
+    def test_linux_file_path_uses_nautilus(self, monkeypatch, tmp_path, fake_popen) -> None:
         """Linux는 nautilus 고정 — GNOME 전제(#193 감사가 이미 지적, 이 PR에서 안 바꿈)."""
         monkeypatch.setattr(adapter.platform, "system", lambda: "Linux")
         file_path = tmp_path / "video.mp4"
@@ -148,7 +151,7 @@ class TestRevealInFileManager:
         [call] = fake_popen.calls
         assert call[0] == "nautilus"
 
-    def test_file_manager_launch_failure_returns_false(self, monkeypatch, tmp_path):
+    def test_file_manager_launch_failure_returns_false(self, monkeypatch, tmp_path) -> None:
         monkeypatch.setattr(adapter.platform, "system", lambda: "Linux")
         monkeypatch.setattr(adapter.subprocess, "Popen", FakePopenCall(raise_oserror=True))
         file_path = tmp_path / "video.mp4"
@@ -156,7 +159,7 @@ class TestRevealInFileManager:
 
         assert adapter.reveal_in_file_manager(str(file_path)) is False
 
-    def test_unknown_platform_file_path_returns_false(self, monkeypatch, tmp_path):
+    def test_unknown_platform_file_path_returns_false(self, monkeypatch, tmp_path) -> None:
         monkeypatch.setattr(adapter.platform, "system", lambda: "SomeOtherOS")
         file_path = tmp_path / "video.mp4"
         file_path.write_text("x")
@@ -172,7 +175,7 @@ class TestStartDetachedIsNonBlocking:
     느린 환경에서 호출 스레드가 붙잡힌다.
     """
 
-    def test_uses_popen_not_run(self, monkeypatch):
+    def test_uses_popen_not_run(self, monkeypatch) -> None:
         run_calls = []
         monkeypatch.setattr(adapter.subprocess, "run", lambda *a, **kw: run_calls.append(a))
         monkeypatch.setattr(adapter.subprocess, "Popen", lambda *a, **kw: object())
@@ -214,7 +217,7 @@ def timing(monkeypatch):
 class TestResponsiveTiming:
     def test_enabling_on_windows_sets_the_switch_interval_to_one_millisecond(
         self, monkeypatch, timing
-    ):
+    ) -> None:
         """Windows에서 켜면 GIL 넘김 간격이 1ms가 돼야 한다.
 
         platform.system() == "Windows", 넘김 간격 5ms에서 켬 -> 넘김 간격 == 0.001초
@@ -227,7 +230,7 @@ class TestResponsiveTiming:
         assert sys.getswitchinterval() == pytest.approx(0.001)
 
     @pytest.mark.parametrize("system", ["Darwin", "Linux"])
-    def test_other_systems_change_nothing(self, monkeypatch, timing, system):
+    def test_other_systems_change_nothing(self, monkeypatch, timing, system) -> None:
         """Windows가 아니면 켜도 넘김 간격이 그대로이고, 일이 돌아도 타이머를 청하지 않아야 한다.
 
         platform.system() == system, 넘김 간격 5ms에서 켜고 일을 하나 돌림
@@ -244,7 +247,7 @@ class TestResponsiveTiming:
         assert sys.getswitchinterval() == pytest.approx(0.005)
         assert calls == []
 
-    def test_nothing_is_requested_before_it_is_enabled(self, monkeypatch, timing):
+    def test_nothing_is_requested_before_it_is_enabled(self, monkeypatch, timing) -> None:
         """켜지 않았으면(헤드리스) Windows에서도 일이 돌 때 타이머를 청하지 않아야 한다.
 
         platform.system() == "Windows", 켜지 않고 일을 하나 돌림 -> 타이머를 청하거나 푼 적 없음
@@ -259,7 +262,7 @@ class TestResponsiveTiming:
 
     def test_timer_is_requested_for_the_first_work_and_released_after_the_last(
         self, monkeypatch, timing
-    ):
+    ) -> None:
         """겹치는 일은 수를 세어, 첫 일에서 타이머를 청하고 마지막 일이 끝날 때 한 번만 풀어야 한다.
 
         Windows에서 켬. 일 A 시작 → 일 B 시작 → A 끝 → B 끝
@@ -282,7 +285,7 @@ class TestResponsiveTiming:
 
     def test_timer_is_requested_again_for_work_that_starts_after_the_release(
         self, monkeypatch, timing
-    ):
+    ) -> None:
         """마지막 일이 끝나 타이머를 푼 뒤 새 일이 시작하면 다시 청해야 한다.
 
         Windows에서 켬. 일 하나를 돌리고, 끝난 뒤 하나를 더 돌림 -> [청함 1, 풂 1, 청함 1, 풂 1]
@@ -298,7 +301,9 @@ class TestResponsiveTiming:
 
         assert calls == [("청함", 1), ("풂", 1), ("청함", 1), ("풂", 1)]
 
-    def test_enabling_on_windows_records_the_switch_interval(self, monkeypatch, timing, caplog):
+    def test_enabling_on_windows_records_the_switch_interval(
+        self, monkeypatch, timing, caplog
+    ) -> None:
         """Windows에서 켜면 그때의 넘김 간격을 기록 한 줄로 남겨야 한다.
 
         platform.system() == "Windows", 넘김 간격 5ms에서 켬
@@ -325,7 +330,7 @@ class TestResponsiveTiming:
     )
     def test_timer_request_and_release_are_recorded(
         self, monkeypatch, timing, caplog, granted, expected
-    ):
+    ) -> None:
         """타이머를 청한 결과와 푼 것을 기록으로 남겨야 한다 — 거절된 청은 풀지 않으므로 푼 줄이 없다.
 
         Windows에서 켠 뒤 일을 하나 돌림. 청이 받아들여짐 / 거절됨
@@ -345,7 +350,7 @@ class TestResponsiveTiming:
             (logging.DEBUG, message) for message in expected
         ]
 
-    def test_a_refused_request_is_not_released(self, monkeypatch, timing):
+    def test_a_refused_request_is_not_released(self, monkeypatch, timing) -> None:
         """타이머의 청이 받아들여지지 않았으면 풀지 않아야 한다.
 
         Windows에서 켬. 청이 거절되게 하고 일을 하나 돌림 -> [청함 1]
@@ -360,7 +365,7 @@ class TestResponsiveTiming:
 
         assert calls == [("청함", 1)]
 
-    def test_work_that_raises_still_releases_the_timer(self, monkeypatch, timing):
+    def test_work_that_raises_still_releases_the_timer(self, monkeypatch, timing) -> Never:
         """일이 예외로 끝나도 타이머를 풀어야 한다.
 
         Windows에서 켬. 일 안에서 예외를 던짐 -> 예외가 그대로 나온다, [청함 1, 풂 1]
@@ -375,7 +380,7 @@ class TestResponsiveTiming:
 
         assert calls == [("청함", 1), ("풂", 1)]
 
-    def test_an_end_without_a_begin_is_ignored(self, monkeypatch, timing):
+    def test_an_end_without_a_begin_is_ignored(self, monkeypatch, timing) -> None:
         """짝이 없는 끝은 무시해야 한다 — 그 뒤의 일이 정상으로 세어진다.
 
         Windows에서 켬. 끝을 먼저 한 번 부르고 일을 하나 돌림 -> [청함 1, 풂 1]
@@ -390,7 +395,7 @@ class TestResponsiveTiming:
 
         assert calls == [("청함", 1), ("풂", 1)]
 
-    def test_timer_library_is_absent_where_the_loader_does_not_exist(self, monkeypatch):
+    def test_timer_library_is_absent_where_the_loader_does_not_exist(self, monkeypatch) -> None:
         """winmm을 여는 길이 없는 OS에서는 타이머를 청해도 거짓을 돌려주고 예외가 없어야 한다.
 
         ctypes에 WinDLL이 없는 것으로 만들고 청함 · 풂을 부름 -> 청함 == False, 풂은 조용히 돌아온다
@@ -408,7 +413,7 @@ def _source(relative: str) -> str:
     return (Path(__file__).resolve().parents[3] / relative).read_text(encoding="utf-8")
 
 
-def test_gui_entry_enables_responsive_timing_and_headless_does_not():
+def test_gui_entry_enables_responsive_timing_and_headless_does_not() -> None:
     """GUI 진입점은 타이머 청을 켜고, 헤드리스 스크립트는 켜지 않아야 한다.
 
     CVDv2.py · scripts/headless_download.py의 소스 -> 앞의 것에만 enable_responsive_timing() 호출이 있다

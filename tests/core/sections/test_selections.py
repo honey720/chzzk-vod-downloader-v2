@@ -33,7 +33,7 @@ DURATION = 10.0  # 60fps에서 600프레임
 
 
 @pytest.mark.parametrize(("start", "end"), [(5.0, 5.0), (5.0, 4.0), (float("nan"), 1.0)])
-def test_time_range_rejects_start_not_before_end(start, end):
+def test_time_range_rejects_start_not_before_end(start, end) -> None:
     """TimeRange는 start < end가 아니면 ValueError를 내야 한다.
 
     (5.0, 5.0), (5.0, 4.0), (nan, 1.0)
@@ -43,7 +43,7 @@ def test_time_range_rejects_start_not_before_end(start, end):
         TimeRange(start, end)
 
 
-def test_time_range_accepts_start_before_end():
+def test_time_range_accepts_start_before_end() -> None:
     """TimeRange는 start < end이면 두 값을 그대로 담아야 한다.
 
     (1.5, 2.0)
@@ -57,7 +57,7 @@ def test_time_range_accepts_start_before_end():
 # ================================================================ 통과
 
 
-def test_validate_selections_returns_empty_when_all_rules_hold():
+def test_validate_selections_returns_empty_when_all_rules_hold() -> None:
     """validate_selections는 위반이 없으면 빈 dict를 돌려줘야 한다.
 
     [(0.0, 1.0), (2.0, 3.5)], duration=10.0, fps=60
@@ -66,7 +66,7 @@ def test_validate_selections_returns_empty_when_all_rules_hold():
     assert validate_selections([(0.0, 1.0), (2.0, 3.5)], DURATION, FPS) == {}
 
 
-def test_validate_selections_accepts_time_range_objects():
+def test_validate_selections_accepts_time_range_objects() -> None:
     """validate_selections는 TimeRange 객체도 쌍과 같게 판정해야 한다.
 
     [TimeRange(1.0, 2.0), TimeRange(1.0, 2.0)]
@@ -81,7 +81,7 @@ def test_validate_selections_accepts_time_range_objects():
 
 
 @pytest.mark.parametrize(("start", "end"), [(5.0, 5.0), (5.0, 4.0)])
-def test_validate_selections_flags_start_not_before_end(start, end):
+def test_validate_selections_flags_start_not_before_end(start, end) -> None:
     """validate_selections는 시작이 끝과 같거나 뒤이면 순서 위반만 돌려줘야 한다.
 
     (5.0, 5.0), (5.0, 4.0), duration=10.0
@@ -93,7 +93,7 @@ def test_validate_selections_flags_start_not_before_end(start, end):
 # ================================================================ 최소 길이
 
 
-def test_validate_selections_accepts_exactly_one_frame():
+def test_validate_selections_accepts_exactly_one_frame() -> None:
     """validate_selections는 길이가 정확히 1프레임인 구간을 통과시켜야 한다.
 
     (5.0, 5.0 + 1/60), fps=60
@@ -102,7 +102,7 @@ def test_validate_selections_accepts_exactly_one_frame():
     assert validate_selections([(5.0, 5.0 + FRAME)], DURATION, FPS) == {}
 
 
-def test_validate_selections_flags_shorter_than_one_frame():
+def test_validate_selections_flags_shorter_than_one_frame() -> None:
     """validate_selections는 시작과 끝이 같은 프레임이면 최소 길이 위반을 돌려줘야 한다.
 
     (5.0, 5.0 + 0.4/60), fps=60
@@ -113,7 +113,7 @@ def test_validate_selections_flags_shorter_than_one_frame():
     assert result == {0: (SELECTION_TOO_SHORT,)}
 
 
-def test_validate_selections_counts_one_frame_despite_float_error():
+def test_validate_selections_counts_one_frame_despite_float_error() -> None:
     """validate_selections는 float 오차가 있어도 1프레임 떨어진 두 시각을 1프레임 길이로 봐야 한다.
 
     start = 0.1 + 0.2 (0.30000000000000004), end = 0.3 + 1/60
@@ -127,7 +127,7 @@ def test_validate_selections_counts_one_frame_despite_float_error():
 # ================================================================ 범위
 
 
-def test_validate_selections_accepts_whole_video():
+def test_validate_selections_accepts_whole_video() -> None:
     """validate_selections는 0부터 영상 길이까지인 구간을 통과시켜야 한다.
 
     (0.0, 10.0), duration=10.0
@@ -136,7 +136,7 @@ def test_validate_selections_accepts_whole_video():
     assert validate_selections([(0.0, DURATION)], DURATION, FPS) == {}
 
 
-def test_validate_selections_flags_end_one_frame_past_duration():
+def test_validate_selections_flags_end_one_frame_past_duration() -> None:
     """validate_selections는 끝이 영상 길이보다 1프레임 뒤이면 범위 위반을 돌려줘야 한다.
 
     (0.0, 10.0 + 1/60), duration=10.0
@@ -147,7 +147,7 @@ def test_validate_selections_flags_end_one_frame_past_duration():
     assert result == {0: (SELECTION_OUT_OF_RANGE,)}
 
 
-def test_validate_selections_flags_start_one_frame_before_zero():
+def test_validate_selections_flags_start_one_frame_before_zero() -> None:
     """validate_selections는 시작이 0보다 1프레임 앞이면 범위 위반을 돌려줘야 한다.
 
     (-1/60, 1.0), duration=10.0
@@ -164,7 +164,9 @@ def test_validate_selections_flags_start_one_frame_before_zero():
         (300, {0: (SELECTION_OUT_OF_RANGE,)}),  # 300번째 프레임 경계는 10.01초 — 10초 밖이다
     ],
 )
-def test_validate_selections_bounds_end_by_last_whole_frame_at_2997(end_frame, expected, rate):
+def test_validate_selections_bounds_end_by_last_whole_frame_at_2997(
+    end_frame, expected, rate
+) -> None:
     """validate_selections는 29.97 계열 프레임률에서 영상 길이 안의 마지막 프레임 경계까지만 끝으로 받아야 한다.
 
     duration=10.0, fps = 30000/1001 · 2997/100 · 29.97, 끝 = 299프레임 · 300프레임 (끝 시각 = 프레임 ÷ fps)
@@ -176,7 +178,7 @@ def test_validate_selections_bounds_end_by_last_whole_frame_at_2997(end_frame, e
 
 
 @pytest.mark.parametrize("fps", [Fraction(2997, 100), 29.97])
-def test_validate_selections_accepts_end_at_duration_after_five_hours_of_decimal_2997(fps):
+def test_validate_selections_accepts_end_at_duration_after_five_hours_of_decimal_2997(fps) -> None:
     """validate_selections는 간격이 400/11988초인 5시간 반짜리 영상에서 끝이 영상 길이인 구간을 통과시켜야 한다.
 
     영상 600,000프레임, duration = 600,000 × 400/11988 (약 20,020초), 구간 (0.0, duration), fps = 2997/100 · 29.97
@@ -187,7 +189,7 @@ def test_validate_selections_accepts_end_at_duration_after_five_hours_of_decimal
     assert validate_selections([(0.0, duration)], duration, fps) == {}
 
 
-def test_validate_selections_flags_non_finite_time_as_out_of_range():
+def test_validate_selections_flags_non_finite_time_as_out_of_range() -> None:
     """validate_selections는 유한하지 않은 시각을 범위 위반 하나로 돌려줘야 한다.
 
     (nan, 1.0)
@@ -198,7 +200,7 @@ def test_validate_selections_flags_non_finite_time_as_out_of_range():
     assert result == {0: (SELECTION_OUT_OF_RANGE,)}
 
 
-def test_validate_selections_reports_every_broken_rule_in_rule_order():
+def test_validate_selections_reports_every_broken_rule_in_rule_order() -> None:
     """validate_selections는 한 구간이 여러 규칙을 어기면 규칙 순서대로 모두 돌려줘야 한다.
 
     (12.0, 11.0), duration=10.0
@@ -212,7 +214,7 @@ def test_validate_selections_reports_every_broken_rule_in_rule_order():
 # ================================================================ 중복 · 겹침
 
 
-def test_validate_selections_flags_every_member_of_a_duplicate_group():
+def test_validate_selections_flags_every_member_of_a_duplicate_group() -> None:
     """validate_selections는 시작·끝이 둘 다 같은 구간들을 모두 중복으로 돌려줘야 한다.
 
     [(1.0, 2.0), (3.0, 4.0), (1.0, 2.0)]
@@ -223,7 +225,7 @@ def test_validate_selections_flags_every_member_of_a_duplicate_group():
     assert result == {0: (SELECTION_DUPLICATE,), 2: (SELECTION_DUPLICATE,)}
 
 
-def test_validate_selections_compares_duplicates_by_frame():
+def test_validate_selections_compares_duplicates_by_frame() -> None:
     """validate_selections는 float 값이 달라도 같은 프레임을 가리키면 중복으로 봐야 한다.
 
     [(0.1 + 0.2, 1.0), (0.3, 1.0)]
@@ -234,7 +236,7 @@ def test_validate_selections_compares_duplicates_by_frame():
     assert result == {0: (SELECTION_DUPLICATE,), 1: (SELECTION_DUPLICATE,)}
 
 
-def test_validate_selections_treats_one_frame_difference_as_distinct():
+def test_validate_selections_treats_one_frame_difference_as_distinct() -> None:
     """validate_selections는 끝이 1프레임 다른 두 구간을 중복으로 보지 않아야 한다.
 
     [(1.0, 2.0), (1.0, 2.0 + 1/60)]
@@ -243,7 +245,7 @@ def test_validate_selections_treats_one_frame_difference_as_distinct():
     assert validate_selections([(1.0, 2.0), (1.0, 2.0 + FRAME)], DURATION, FPS) == {}
 
 
-def test_validate_selections_allows_overlapping_ranges():
+def test_validate_selections_allows_overlapping_ranges() -> None:
     """validate_selections는 서로 겹치거나 포함하는 구간을 통과시켜야 한다.
 
     [(1.0, 5.0), (3.0, 8.0), (1.0, 8.0)]
@@ -260,7 +262,7 @@ def _distinct_ranges(count: int) -> list[tuple[float, float]]:
     return [(float(n), float(n + 1)) for n in range(count)]
 
 
-def test_validate_selections_accepts_max_selections():
+def test_validate_selections_accepts_max_selections() -> None:
     """validate_selections는 구간이 상한 개수이면 통과시켜야 한다.
 
     서로 다른 구간 MAX_SELECTIONS개
@@ -271,7 +273,7 @@ def test_validate_selections_accepts_max_selections():
     assert validate_selections(ranges, float(MAX_SELECTIONS + 1), FPS) == {}
 
 
-def test_validate_selections_flags_ranges_beyond_max_selections():
+def test_validate_selections_flags_ranges_beyond_max_selections() -> None:
     """validate_selections는 구간이 상한보다 하나 많으면 마지막 구간을 개수 위반으로 돌려줘야 한다.
 
     서로 다른 구간 MAX_SELECTIONS + 1개
@@ -287,7 +289,7 @@ def test_validate_selections_flags_ranges_beyond_max_selections():
 # ================================================================ SelectionError (#309)
 
 
-def test_selection_error_carries_first_violation_key_and_all_violations():
+def test_selection_error_carries_first_violation_key_and_all_violations() -> None:
     """SelectionError의 message_key는 번호가 가장 앞선 구간의 첫 위반 키이고 violations는 전부를 담아야 한다.
 
     violations = {2: (DUPLICATE,), 1: (ORDER, OUT_OF_RANGE)}
@@ -317,7 +319,7 @@ def test_selection_error_carries_first_violation_key_and_all_violations():
     ],
     ids=["equal", "duration-off-grid", "same-frame", "three-frames-short", "middle", "sample"],
 )
-def test_reaches_end_compares_end_and_duration_by_frame(end, duration, fps, expected):
+def test_reaches_end_compares_end_and_duration_by_frame(end, duration, fps, expected) -> None:
     """reaches_end는 구간의 끝과 영상 길이를 프레임 번호로 바꿔 같으면 참을 돌려줘야 한다.
 
     주석의 경우마다 (끝, 길이, fps)
@@ -326,7 +328,7 @@ def test_reaches_end_compares_end_and_duration_by_frame(end, duration, fps, expe
     assert reaches_end(end, duration, fps) is expected
 
 
-def test_reaches_end_is_true_only_for_ends_that_validation_accepts_as_the_last():
+def test_reaches_end_is_true_only_for_ends_that_validation_accepts_as_the_last() -> None:
     """reaches_end가 참인 끝은 검증을 통과하고, 그보다 한 프레임 뒤의 끝은 범위 위반이어야 한다.
 
     길이 10.02초, 30fps — 끝 10.0초(프레임 300) · 끝 10.0 + 1/30초(프레임 301)
@@ -342,7 +344,7 @@ def test_reaches_end_is_true_only_for_ends_that_validation_accepts_as_the_last()
     [(10.02, 30), (10.0, 30), (4250.620667, Fraction(1000, 17)), (1.26, 10), (2.06, 10)],
     ids=["frac-.6", "on-grid", "sample", "frac-.6-short", "frac-.6-playlist"],
 )
-def test_selection_ending_exactly_at_the_duration_always_passes(duration, fps):
+def test_selection_ending_exactly_at_the_duration_always_passes(duration, fps) -> None:
     """validate_selections는 끝이 영상 길이(초)와 같으면 길이 × fps의 소수부가 .5 이상이어도 통과시키고, reaches_end는 참이어야 한다.
 
     주석의 경우마다 (길이, fps), 구간 (0.5, 길이)
@@ -352,7 +354,7 @@ def test_selection_ending_exactly_at_the_duration_always_passes(duration, fps):
     assert reaches_end(duration, duration, fps) is True
 
 
-def test_selection_ending_past_the_duration_is_still_out_of_range():
+def test_selection_ending_past_the_duration_is_still_out_of_range() -> None:
     """validate_selections는 끝이 영상 길이를 넘고 프레임 번호도 길이의 프레임 수보다 크면 범위 위반으로 판정해야 한다.
 
     길이 10.02초 · 30fps(300.6프레임 → 300프레임), 끝 10.03초(프레임 301) · 끝 10.021초(프레임 301)

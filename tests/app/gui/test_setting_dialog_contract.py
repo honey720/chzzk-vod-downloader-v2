@@ -76,7 +76,7 @@ def _choices(combo: QComboBox) -> dict[str, int]:
 # ================================================================ (a)
 
 
-def test_cookies_typed_then_ok_land_in_the_config_file(qapp):
+def test_cookies_typed_then_ok_land_in_the_config_file(qapp) -> None:
     _seed_config()
     dlg = SettingDialog()
     _line_edit(dlg, "nidaut").setText("aut-typed")
@@ -91,7 +91,7 @@ def test_cookies_typed_then_ok_land_in_the_config_file(qapp):
 # ================================================================ (b)
 
 
-def test_ok_writes_all_three_keys(qapp):
+def test_ok_writes_all_three_keys(qapp) -> None:
     """쿠키·다운로드 후 동작·언어 셋 다 — 위젯에 넣은 값 그대로 파일에 실린다."""
     _seed_config()
     dlg = SettingDialog()
@@ -114,7 +114,7 @@ def test_ok_writes_all_three_keys(qapp):
 # ================================================================ (c)
 
 
-def test_cancel_writes_nothing(qapp):
+def test_cancel_writes_nothing(qapp) -> None:
     """모든 칸을 바꾸고 Cancel — 행의 문자열이 그대로다(내용 비교가 아니라 문자열)."""
     _seed_config()
     before = read_rows()
@@ -135,7 +135,7 @@ def test_cancel_writes_nothing(qapp):
 # ================================================================ (d)
 
 
-def test_after_download_choices_and_stored_values(qapp):
+def test_after_download_choices_and_stored_values(qapp) -> None:
     _seed_config()
     dlg = SettingDialog()
     assert set(_choices(_combo(dlg, "afterDownload"))) == AFTER_DOWNLOAD_CHOICES
@@ -143,7 +143,7 @@ def test_after_download_choices_and_stored_values(qapp):
     QApplication.processEvents()
 
 
-def test_language_choices_and_stored_values(qapp):
+def test_language_choices_and_stored_values(qapp) -> None:
     _seed_config()
     dlg = SettingDialog()
     assert set(_choices(_combo(dlg, "language"))) == LANGUAGE_CHOICES
@@ -152,7 +152,7 @@ def test_language_choices_and_stored_values(qapp):
 
 
 @pytest.mark.parametrize("choice", sorted(AFTER_DOWNLOAD_CHOICES))
-def test_each_after_download_choice_is_what_gets_saved(qapp, choice):
+def test_each_after_download_choice_is_what_gets_saved(qapp, choice) -> None:
     _seed_config()
     dlg = SettingDialog()
     combo = _combo(dlg, "afterDownload")
@@ -164,7 +164,7 @@ def test_each_after_download_choice_is_what_gets_saved(qapp, choice):
 
 
 @pytest.mark.parametrize("choice", sorted(LANGUAGE_CHOICES))
-def test_each_language_choice_is_what_gets_saved(qapp, choice):
+def test_each_language_choice_is_what_gets_saved(qapp, choice) -> None:
     _seed_config()
     dlg = SettingDialog()
     combo = _combo(dlg, "language")

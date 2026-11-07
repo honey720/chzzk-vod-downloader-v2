@@ -50,6 +50,7 @@ from core.sections.ts_cut import cut_ts_section
 from core.sections.ts_sections import TsSectionSource, choose_ts_frame_rate, plan_ts_sections
 from tests.support.range_host import RangeHost
 from tests.ffmpeg.section_packets import JoinedSource, assert_section_matches
+from typing import Never
 
 KEY = bytes.fromhex("5b0e7c91a2d34f6880b1c3e5f7092a4d")  # 테스트용 키 — 실제 키가 아니다
 FPS = 30
@@ -77,7 +78,7 @@ def _ffmpeg(*args: str, cwd=None) -> subprocess.CompletedProcess:
 class _Vod:
     """만든 HLS 하나 — 암호화해 내줄 파일들과, 복호화 전의 세그먼트(대조용)."""
 
-    def __init__(self, folder):
+    def __init__(self, folder) -> None:
         _ffmpeg(
             "-itsoffset", "0.042667", "-f", "lavfi",
             "-i", f"testsrc2=size=320x240:rate={FPS}:duration=6",
@@ -121,7 +122,7 @@ def host(vod, monkeypatch) -> RangeHost:
 class _Planned:
     """구간 하나를 계획하고 그 세그먼트를 받아 둔 상태 — 엔진이 컷을 부르기 직전이다."""
 
-    def __init__(self, host: RangeHost, folder, selection: TimeRange = SELECTION):
+    def __init__(self, host: RangeHost, folder, selection: TimeRange = SELECTION) -> None:
         url = host.url("vod/media.m3u8")
         self.head = fetch_ts_head(url, str(folder))
 
@@ -189,7 +190,7 @@ def joined(vod, tmp_path_factory) -> JoinedSource:
 # ================================================================ 끝까지
 
 
-def test_generated_vod_has_video_starting_off_the_millisecond_grid(vod, host, tmp_path):
+def test_generated_vod_has_video_starting_off_the_millisecond_grid(vod, host, tmp_path) -> None:
     """만든 입력은 영상이 오디오보다 늦게 시작하고 그 차이가 1ms의 배수가 아니어야 한다.
 
     만든 HLS의 세그먼트 0 ~ 2
@@ -205,7 +206,7 @@ def test_generated_vod_has_video_starting_off_the_millisecond_grid(vod, host, tm
     assert planned.ts_frames.keyframes[:4] == (0, 15, 30, 45)
 
 
-def test_section_across_segments_is_cut_and_passes_every_check(vod, host, tmp_path):
+def test_section_across_segments_is_cut_and_passes_every_check(vod, host, tmp_path) -> None:
     """세그먼트 경계를 걸치고 양 끝이 키프레임이 아닌 구간을 자르면 판정 다섯 항목을 모두 통과해야 한다.
 
     구간 0.8 ~ 2.3초. 계획 → 받기·복호화·검사 → 구간 파일 쓰기
@@ -243,7 +244,7 @@ def test_section_across_segments_is_cut_and_passes_every_check(vod, host, tmp_pa
     assert not os.path.exists(work)
 
 
-def test_copied_frames_are_the_frames_the_plan_picked(vod, host, tmp_path):
+def test_copied_frames_are_the_frames_the_plan_picked(vod, host, tmp_path) -> None:
     """구간 파일의 통째로 넘긴 조각은 원본 TS에서 구간 계획이 고른 번호의 프레임과 화소가 같아야 한다.
 
     구간 0.8 ~ 2.3초의 구간 파일과, 복호화 전의 세그먼트 0 ~ 2를 이은 TS를 각각 디코드
@@ -287,7 +288,7 @@ def test_copied_frames_are_the_frames_the_plan_picked(vod, host, tmp_path):
 )
 def test_section_file_has_the_video_packets_of_the_hybrid_cut_and_the_original_audio_packets(
     vod, host, joined, tmp_path, first, last, kinds, original_tail
-):
+) -> None:
     """구간 파일의 영상 패킷은 전부 이어 다시 싼 파일에서 자른 것과 같고, 오디오 패킷은 원본 그대로여야 한다.
 
     영상 전체에서 센 프레임 first ~ last(세그먼트는 30프레임 · 키프레임 15프레임마다)
@@ -311,7 +312,7 @@ def test_section_file_has_the_video_packets_of_the_hybrid_cut_and_the_original_a
     assert check.ok, check.notes
 
 
-def test_remuxed_mp4_is_off_the_ts_time_by_the_truncated_lead(vod, host, tmp_path):
+def test_remuxed_mp4_is_off_the_ts_time_by_the_truncated_lead(vod, host, tmp_path) -> None:
     """다시 싼 mp4는 영상 앞의 빈 구간을 1ms 단위로 내림해 적어, 영상 시각이 TS보다 1ms 미만으로 앞서야 한다.
 
     세그먼트 0 ~ 2를 다시 싼 mp4의 프레임 시각과 TS의 프레임 시각(VOD 시각 — 0초가 가장 이른 PTS)
@@ -342,7 +343,7 @@ def test_remuxed_mp4_is_off_the_ts_time_by_the_truncated_lead(vod, host, tmp_pat
 )
 def test_cut_fails_when_the_frames_of_a_boundary_segment_differ_from_the_ts_frames(
     vod, host, tmp_path, difference, key
-):
+) -> None:
     """받은 세그먼트의 프레임이 TS에서 읽은 프레임 정보와 다르면 자르지 않고 실패해야 한다.
 
     구간 0.8 ~ 1.4초(세그먼트 0 · 1). TS 쪽 프레임 정보를 다르게 준다 —
@@ -388,7 +389,7 @@ def test_cut_fails_when_the_frames_of_a_boundary_segment_differ_from_the_ts_fram
 
 def test_boundary_segment_is_checked_against_its_own_frames_not_the_first_segments(
     vod, host, tmp_path
-):
+) -> None:
     """경계 세그먼트가 넘긴 첫 세그먼트가 아닐 때도, 다시 싼 mp4는 그 세그먼트의 프레임 정보와 견줘야 한다.
 
     구간 프레임 35 ~ 70(넘기는 세그먼트 0 ~ 2, 머리 조각은 세그먼트 1에서 만든다). TS 쪽 프레임
@@ -420,7 +421,7 @@ def test_boundary_segment_is_checked_against_its_own_frames_not_the_first_segmen
     assert not os.path.exists(work)
 
 
-def test_segment_that_does_not_start_with_a_keyframe_is_unsupported(vod, host, tmp_path):
+def test_segment_that_does_not_start_with_a_keyframe_is_unsupported(vod, host, tmp_path) -> None:
     """이어지는 세그먼트가 키프레임으로 시작하지 않으면 자르지 않고 CUT_UNSUPPORTED로 실패해야 한다.
 
     구간 0.8 ~ 2.3초(세그먼트 0 ~ 2). 세그먼트 1을 읽은 정보의 키프레임을 (0, 15)에서 (3, 15)로 바꿔 넘김
@@ -450,7 +451,7 @@ def test_segment_that_does_not_start_with_a_keyframe_is_unsupported(vod, host, t
     assert os.path.getsize(output) > 0
 
 
-def test_stop_request_cancels_the_cut_and_leaves_nothing(vod, host, tmp_path):
+def test_stop_request_cancels_the_cut_and_leaves_nothing(vod, host, tmp_path) -> None:
     """멈추라는 요청이 와 있으면 컷은 CutCancelled로 그만두고 산출물과 작업 폴더를 남기지 않아야 한다.
 
     구간 0.8 ~ 2.3초, should_stop이 늘 참
@@ -467,7 +468,7 @@ def test_stop_request_cancels_the_cut_and_leaves_nothing(vod, host, tmp_path):
     assert all(os.path.exists(path) for path in planned.paths)
 
 
-def test_frame_number_of_a_pts_that_is_not_a_frame_is_an_error(vod, host, tmp_path):
+def test_frame_number_of_a_pts_that_is_not_a_frame_is_an_error(vod, host, tmp_path) -> None:
     """구간 계획이 정한 PTS가 받은 세그먼트의 프레임이 아니면 번호를 정하지 못하고 실패해야 한다.
 
     세그먼트 0 ~ 2의 프레임 정보. 23번 프레임의 PTS와, 그보다 반 프레임 뒤의 시각
@@ -486,7 +487,7 @@ def test_frame_number_of_a_pts_that_is_not_a_frame_is_an_error(vod, host, tmp_pa
 
 def test_remuxing_a_boundary_segment_waits_under_the_stop_pause_and_time_limit(
     vod, host, tmp_path, monkeypatch
-):
+) -> None:
     """경계 세그먼트를 다시 쌀 때 remux에 한 시간의 제한 시간과 넘겨받은 멈춤 · 일시정지 확인을 넘겨야 한다.
 
     세그먼트 0 ~ 2, should_stop · should_pause를 줌. remux_stream이 받은 인자를 적음
@@ -520,7 +521,7 @@ def test_remuxing_a_boundary_segment_waits_under_the_stop_pause_and_time_limit(
 )
 def test_stop_and_timeout_while_remuxing_are_not_reported_as_a_cut_failure(
     vod, host, tmp_path, monkeypatch, raised, expected
-):
+) -> None:
     """다시 싸다 멈춤 요청으로 끝난 것은 중단으로, 제한 시간을 넘긴 것은 시간 초과로 알려야 한다.
 
     세그먼트 0 ~ 2. remux_stream이 FFmpegCancelledError 또는 FFmpegTimeoutError를 냄
@@ -528,7 +529,7 @@ def test_stop_and_timeout_while_remuxing_are_not_reported_as_a_cut_failure(
     """
     planned = _Planned(host, tmp_path / "segments")
 
-    def fails(chunks, dst_path, **_wait):
+    def fails(chunks, dst_path, **_wait) -> Never:
         raise raised
 
     monkeypatch.setattr(ts_cut_module, "remux_stream", fails)

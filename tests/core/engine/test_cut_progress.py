@@ -10,7 +10,7 @@ def _tracker(lengths: dict[int, float]) -> tuple[SectionCutProgress, list[float]
     return SectionCutProgress(lengths, published.append), published
 
 
-def test_sections_are_weighed_by_length():
+def test_sections_are_weighed_by_length() -> None:
     """구간 하나가 끝나면 진행은 그 구간의 길이 ÷ 전체 길이만큼 올라야 한다.
 
     구간 길이 {0: 1, 1: 3}. 0번이 끝남 → 1번이 절반 진행 → 1번이 끝남
@@ -25,7 +25,7 @@ def test_sections_are_weighed_by_length():
     assert published == pytest.approx([0.25, 0.625, 1.0])
 
 
-def test_progress_inside_a_section_is_published_as_it_rises():
+def test_progress_inside_a_section_is_published_as_it_rises() -> None:
     """구간 하나를 자르는 동안 오른 진행은 그때마다 알려야 한다.
 
     구간 하나(길이 10). 진행 0.1 · 0.2 · 0.3
@@ -40,7 +40,7 @@ def test_progress_inside_a_section_is_published_as_it_rises():
     assert published == pytest.approx([0.1, 0.2, 0.3])
 
 
-def test_published_progress_never_goes_back():
+def test_published_progress_never_goes_back() -> None:
     """앞서 알린 값보다 낮은 진행이 와도 알리지 않아야 한다.
 
     구간 하나. 진행 0.5 → 0.2 → 0.6
@@ -55,7 +55,7 @@ def test_published_progress_never_goes_back():
     assert published == pytest.approx([0.5, 0.6])
 
 
-def test_one_is_published_only_when_every_section_is_finished():
+def test_one_is_published_only_when_every_section_is_finished() -> None:
     """구간의 진행이 1에 닿아도 그 구간이 끝났다고 알리기 전에는 1을 알리지 않아야 한다.
 
     구간 하나. 진행 1.0 → 끝남
@@ -69,7 +69,7 @@ def test_one_is_published_only_when_every_section_is_finished():
     assert published == [0.999, 1.0]
 
 
-def test_steps_smaller_than_the_threshold_are_not_published():
+def test_steps_smaller_than_the_threshold_are_not_published() -> None:
     """아주 조금 오른 진행은 알리지 않아야 한다 — 통지가 ffmpeg가 알리는 횟수만큼 늘지 않는다.
 
     구간 하나. 진행 0.1000 → 0.1005 → 0.1010 → 0.1030 (알리는 간격 0.002)

@@ -44,7 +44,7 @@ def _event() -> ProgressEvent:
     return ProgressEvent(downloaded_size=1000, total_size=4000, speed=0.0, active_threads=0)
 
 
-def test_progress_of_the_earlier_attempt_does_not_reach_the_card(restarted):
+def test_progress_of_the_earlier_attempt_does_not_reach_the_card(restarted) -> None:
     """앞 시도의 진행 통지는 content에 닿지 않고, 지금 시도의 통지는 닿아야 한다.
 
     시작 → 중지 → 다시 시작. 앞 시도의 on_progress(1000/4000) → 지금 시도의 on_progress(1000/4000)
@@ -62,7 +62,7 @@ def test_progress_of_the_earlier_attempt_does_not_reach_the_card(restarted):
     assert wired.content.names == ["update_progress"]
 
 
-def test_finish_of_the_earlier_attempt_does_not_finish_the_current_one(restarted):
+def test_finish_of_the_earlier_attempt_does_not_finish_the_current_one(restarted) -> None:
     """앞 시도의 완료 통지는 지금 시도를 끝내지 않아야 한다.
 
     시작 → 중지 → 다시 시작. 앞 시도의 on_finished
@@ -78,7 +78,7 @@ def test_finish_of_the_earlier_attempt_does_not_finish_the_current_one(restarted
     assert item.downloadState is DownloadState.RUNNING
 
 
-def test_failure_of_the_earlier_attempt_does_not_fail_the_current_one(restarted):
+def test_failure_of_the_earlier_attempt_does_not_fail_the_current_one(restarted) -> None:
     """앞 시도의 실패 통지는 지금 시도를 실패로 끝내지 않아야 한다.
 
     시작 → 중지 → 다시 시작. 앞 시도의 on_failed(RuntimeError("앞 시도"))
@@ -94,7 +94,7 @@ def test_failure_of_the_earlier_attempt_does_not_fail_the_current_one(restarted)
     assert item.downloadState is DownloadState.RUNNING
 
 
-def test_merge_start_of_the_earlier_attempt_does_not_mark_the_card(restarted):
+def test_merge_start_of_the_earlier_attempt_does_not_mark_the_card(restarted) -> None:
     """앞 시도의 병합 시작 통지는 카드의 병합 표시를 켜지 않고, 지금 시도의 것은 켜야 한다.
 
     시작 → 중지 → 다시 시작. 앞 시도의 on_merge_start → 지금 시도의 on_merge_start
@@ -114,7 +114,7 @@ def test_merge_start_of_the_earlier_attempt_does_not_mark_the_card(restarted):
     assert item.post_process is True
 
 
-def test_failure_of_the_earlier_attempt_leaves_the_merge_mark_of_the_current_one(restarted):
+def test_failure_of_the_earlier_attempt_leaves_the_merge_mark_of_the_current_one(restarted) -> None:
     """앞 시도의 실패 통지는 지금 시도가 켠 병합 표시를 끄지 않아야 한다.
 
     시작 → 중지 → 다시 시작. 지금 시도의 on_merge_start → 앞 시도의 on_failed

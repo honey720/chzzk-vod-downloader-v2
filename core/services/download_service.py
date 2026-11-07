@@ -99,7 +99,7 @@ class DownloadHandle:
         on_merge_start: Callable[[], None] | None = None,
         on_failed_key: FailedKeyCallback | None = None,
         on_finished_counters: FinishedCountersCallback | None = None,
-    ):
+    ) -> None:
         self.content = content
         self.data = data
         self.logger = task_logger
@@ -208,7 +208,7 @@ class DownloadService:
         base_url_resolver: BaseUrlResolver | None = None,
         key_resolver: KeyResolver | None = None,
         user_interacting: Callable[[], bool] | None = None,
-    ):
+    ) -> None:
         """서비스를 생성한다.
 
         Args:
@@ -432,7 +432,7 @@ class DownloadService:
         target = weakref.ref(handle)
 
         def relay(name: str):
-            def call(*args):
+            def call(*args) -> None:
                 alive = target()
                 if alive is not None:
                     getattr(alive, name)(*args)

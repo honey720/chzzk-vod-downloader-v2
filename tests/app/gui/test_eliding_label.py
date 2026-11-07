@@ -12,7 +12,7 @@ from app.widgets.eliding_label import ElidingLabel
 
 
 class TestSizePolicy:
-    def test_minimum_size_hint_is_small_regardless_of_text_length(self, qapp):
+    def test_minimum_size_hint_is_small_regardless_of_text_length(self, qapp) -> None:
         """실제로 중요한 계약: `minimumSizeHint()`가 원문 길이와 무관하게 작아야
         레이아웃이 이 라벨을 content 폭 밑으로 줄일 수 있다(#226/#229 이전
         버그의 원인 — 기본 QLabel은 minimumSizeHint가 곧 content 폭이라
@@ -32,14 +32,14 @@ class TestSizePolicy:
 
 
 class TestTextContract:
-    def test_text_returns_full_value_not_elided_display(self, qapp):
+    def test_text_returns_full_value_not_elided_display(self, qapp) -> None:
         label = ElidingLabel()
         label.resize(20, 20)  # 원문이 절대 안 들어갈 만큼 좁게
         full = "This is a very long value that will not fit in 20 pixels"
         label.setText(full)
         assert label.text() == full
 
-    def test_tooltip_always_shows_full_value(self, qapp):
+    def test_tooltip_always_shows_full_value(self, qapp) -> None:
         label = ElidingLabel()
         label.resize(20, 20)
         full = "C:/Users/LeeDH/Desktop/AVeryLongPathThatWillDefinitelyBeElided/file.mp4"
@@ -48,7 +48,7 @@ class TestTextContract:
 
 
 class TestElision:
-    def test_narrow_width_elides_the_rendered_text(self, qapp):
+    def test_narrow_width_elides_the_rendered_text(self, qapp) -> None:
         label = ElidingLabel()
         label.resize(30, 20)
         full = "This is a very long value that will not fit in 30 pixels at all"
@@ -57,7 +57,7 @@ class TestElision:
         assert rendered != full
         assert "…" in rendered
 
-    def test_wide_enough_width_shows_full_text_unelided(self, qapp):
+    def test_wide_enough_width_shows_full_text_unelided(self, qapp) -> None:
         label = ElidingLabel()
         label.resize(2000, 20)
         full = "short"
@@ -65,7 +65,7 @@ class TestElision:
         rendered = ElidingLabel.__mro__[1].text(label)
         assert rendered == full
 
-    def test_resize_recomputes_elision(self, qapp):
+    def test_resize_recomputes_elision(self, qapp) -> None:
         """폭이 바뀌면 다시 잘려야 한다 — 창 크기 변경 시나리오.
 
         show() 없이 top-level 위젯에 resize()만 연달아 호출하면 Qt가
@@ -92,7 +92,7 @@ class TestElision:
         assert len(narrow_rendered) < len(wide_rendered)
         label.deleteLater()
 
-    def test_elide_right_keeps_the_beginning(self, qapp):
+    def test_elide_right_keeps_the_beginning(self, qapp) -> None:
         label = ElidingLabel(elide_mode=Qt.TextElideMode.ElideRight)
         label.resize(60, 20)
         label.setText("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAZZZZZZZZ")
@@ -100,7 +100,7 @@ class TestElision:
         assert rendered.startswith("A")
         assert not rendered.endswith("Z")
 
-    def test_elide_middle_keeps_both_ends(self, qapp):
+    def test_elide_middle_keeps_both_ends(self, qapp) -> None:
         """경로는 드라이브(앞)·파일명(뒤)이 둘 다 정보라 가운데를 잘라야 한다.
 
         폭은 넉넉히 둔다 — 너무 좁으면 정확히 어디서 잘리는지가 플랫폼별
@@ -113,7 +113,7 @@ class TestElision:
         assert rendered.startswith("C:")
         assert rendered.endswith(".mp4")
 
-    def test_set_elide_mode_reapplies_immediately(self, qapp):
+    def test_set_elide_mode_reapplies_immediately(self, qapp) -> None:
         # 폭을 넉넉히 둔다 — 너무 좁으면 정확히 몇 글자가 남는지가 플랫폼별
         # 폰트 메트릭에 좌우돼("mp4"는 남고 그 앞의 "."만 잘리는 등) CI
         # 3-OS에서 결과가 갈릴 수 있다(실제로 Windows 로컬에선 통과, CI

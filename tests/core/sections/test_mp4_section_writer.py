@@ -147,7 +147,9 @@ class TestSectionPieces:
             (8, 11, [("mid", 8, 12)]),  # 마지막 GOP 전체
         ],
     )
-    def test_pieces_follow_the_keyframes_and_the_end_of_the_video(self, first, last, expected):
+    def test_pieces_follow_the_keyframes_and_the_end_of_the_video(
+        self, first, last, expected
+    ) -> None:
         """구간이 키프레임 · 영상 끝과 어떻게 놓이느냐에 따라 조각이 정해져야 한다.
 
         키프레임 = 프레임 0 · 4 · 8, 프레임 12개
@@ -160,14 +162,14 @@ class TestSectionPieces:
         assert [(p.kind, p.first, p.end) for p in pieces] == expected
 
     @pytest.mark.parametrize("first, last", [(-1, 3), (3, 2), (0, 12)])
-    def test_frames_outside_the_video_are_rejected(self, first, last):
+    def test_frames_outside_the_video_are_rejected(self, first, last) -> None:
         """프레임 번호가 영상 범위를 벗어나면 ValueError여야 한다."""
         _built, index = _source()
 
         with pytest.raises(ValueError):
             section_pieces(index, first, last)
 
-    def test_covers_whole_video_only_for_the_first_to_the_last_frame(self):
+    def test_covers_whole_video_only_for_the_first_to_the_last_frame(self) -> None:
         """구간이 프레임 0부터 마지막 프레임까지일 때만 영상 전체로 봐야 한다."""
         _built, index = _source()
 
@@ -180,7 +182,7 @@ class TestSectionPieces:
 
 
 class TestPlan:
-    def test_runs_carry_the_moved_video_and_audio_samples_only(self):
+    def test_runs_carry_the_moved_video_and_audio_samples_only(self) -> None:
         """대응표가 가리키는 원본 바이트는 옮기는 영상 샘플과 구간의 오디오 샘플뿐이어야 한다.
 
         구간 프레임 1~10 -> 옮기는 영상 = 프레임 4~7(샘플 4~7),
@@ -205,7 +207,7 @@ class TestPlan:
             wanted.update(range(start, start + 7))
         assert covered == wanted
 
-    def test_runs_fill_the_body_without_gaps_in_source_order(self):
+    def test_runs_fill_the_body_without_gaps_in_source_order(self) -> None:
         """대응표의 줄은 원본 위치 순서이고, 구간 파일의 본문을 빈틈없이 채워야 한다."""
         built, index = _source()
 
@@ -220,7 +222,7 @@ class TestPlan:
             position += run.length
         assert position == plan.encoded_offset
 
-    def test_adjacent_source_ranges_are_one_run(self):
+    def test_adjacent_source_ranges_are_one_run(self) -> None:
         """원본에서 이어져 있는 옮길 바이트는 대응표의 한 줄이어야 한다.
 
         오디오 없는 영상의 프레임 4~11 -> 샘플 4~11이 원본에서 이어져 있다 -> 한 줄
@@ -232,7 +234,7 @@ class TestPlan:
         assert len(plan.runs) == 1
         assert plan.runs[0].source_offset == built.sample_offsets[b"vide"][4]
 
-    def test_layout_is_ftyp_then_reserved_moov_then_mdat_header(self):
+    def test_layout_is_ftyp_then_reserved_moov_then_mdat_header(self) -> None:
         """본문은 ftyp · moov 자리 · mdat 머리 바로 뒤에서 시작해야 한다."""
         built, index = _source()
 
@@ -241,7 +243,7 @@ class TestPlan:
         assert plan.moov_offset == len(SECTION_FILE_FTYP)
         assert plan.body_offset == len(SECTION_FILE_FTYP) + plan.moov_reserved + MDAT_HEADER_BYTES
 
-    def test_an_open_gop_is_rejected(self):
+    def test_an_open_gop_is_rejected(self) -> None:
         """옮길 프레임 묶음이 디코드 순서로 이어진 샘플이 아니면 MP4_UNSUPPORTED여야 한다.
 
         샘플 4가 키프레임인데 샘플 5 · 6이 그보다 먼저 표시된다(열린 GOP)
@@ -264,7 +266,7 @@ class TestPlan:
 
         assert caught.value.message_key == MP4_UNSUPPORTED
 
-    def test_one_sample_per_chunk_and_many_samples_per_chunk_give_the_same_file(self):
+    def test_one_sample_per_chunk_and_many_samples_per_chunk_give_the_same_file(self) -> None:
         """청크마다 샘플이 하나든 여럿이든 구간 파일의 프레임과 샘플 바이트가 같아야 한다."""
         results = []
         for chunks in ([3, 3, 2, 4], [1] * 12):
@@ -286,7 +288,7 @@ class TestPlan:
 
 
 class TestSectionFile:
-    def test_top_level_boxes_fill_the_file(self):
+    def test_top_level_boxes_fill_the_file(self) -> None:
         """구간 파일은 ftyp · moov · free · mdat 넷이고 그 길이의 합이 파일 길이여야 한다."""
         built, index = _source()
         plan = plan_section_file(index, built.moov, 1, 10)
@@ -304,7 +306,7 @@ class TestSectionFile:
     @pytest.mark.parametrize(
         "first, last", [(first, last) for first in range(12) for last in range(first, 12)]
     )
-    def test_every_section_reads_back_as_its_frames_from_zero(self, first, last):
+    def test_every_section_reads_back_as_its_frames_from_zero(self, first, last) -> None:
         """어느 구간이든 구간 파일의 프레임 수 · 표시 시각 · 샘플 바이트가 구간의 것이어야 한다.
 
         프레임 [first, last] -> 프레임 last − first + 1개, 표시 시각 0.0 · 0.1 · …
@@ -334,7 +336,7 @@ class TestSectionFile:
             expected[frame] for frame in range(first, last + 1)
         ]
 
-    def test_keyframes_are_the_piece_starts_and_the_moved_keyframes(self):
+    def test_keyframes_are_the_piece_starts_and_the_moved_keyframes(self) -> None:
         """구간 파일의 키프레임은 조각의 첫 프레임과 옮긴 키프레임이어야 한다.
 
         프레임 1~10 = 머리(1~3) · 옮김(4~7) · 꼬리(8~10) -> 구간 안 번호 0 · 3 · 7
@@ -346,7 +348,7 @@ class TestSectionFile:
 
         assert list(made.keyframes) == [0, 3, 7]
 
-    def test_audio_starts_on_the_sample_that_spans_the_section_start(self):
+    def test_audio_starts_on_the_sample_that_spans_the_section_start(self) -> None:
         """오디오는 구간 시작에 걸친 샘플부터 들어가고, 앞의 남는 부분만큼 음수 시각이어야 한다.
 
         구간 시작 0.1초 -> 오디오 샘플 1(0.0초에서 시작) 부터 -> 첫 샘플의 표시 시각 −0.1초
@@ -365,7 +367,7 @@ class TestSectionFile:
             offset = audio.offsets[number]
             assert data[offset : offset + 7] == built.sample_bytes(b"soun", number + 1, 7)
 
-    def test_a_section_from_zero_leaves_out_the_hidden_first_audio_sample(self):
+    def test_a_section_from_zero_leaves_out_the_hidden_first_audio_sample(self) -> None:
         """0초에서 시작하는 구간은 원본이 가린 첫 오디오 샘플을 넣지 않아야 한다.
 
         오디오 샘플 0은 −0.128초(편집 목록이 가린다) -> 샘플 1부터, 첫 표시 시각 0.0초
@@ -380,7 +382,7 @@ class TestSectionFile:
         offset = audio.offsets[0]
         assert data[offset : offset + 7] == built.sample_bytes(b"soun", 1, 7)
 
-    def test_a_video_without_audio_gives_a_file_without_an_audio_track(self):
+    def test_a_video_without_audio_gives_a_file_without_an_audio_track(self) -> None:
         """원본에 오디오가 없으면 구간 파일에도 오디오 트랙이 없어야 한다."""
         built, index = _source(audio=False)
         plan = plan_section_file(index, built.moov, 1, 10)
@@ -390,7 +392,7 @@ class TestSectionFile:
         assert made.audio is None
         assert len(made.frame_pts) == 10
 
-    def test_sample_description_holds_the_source_and_the_piece_parameter_sets(self):
+    def test_sample_description_holds_the_source_and_the_piece_parameter_sets(self) -> None:
         """영상 샘플 설명의 avcC에 원본과 조각들의 SPS · PPS가 모두 들어 있어야 한다.
 
         원본 0번, 머리 1번, 꼬리 2번 -> SPS 3개 · PPS 3개
@@ -406,7 +408,7 @@ class TestSectionFile:
             assert _sps(number) in data[at : at + 200]
             assert _pps(number) in data[at : at + 200]
 
-    def test_audio_that_starts_after_the_section_start_keeps_its_delay(self):
+    def test_audio_that_starts_after_the_section_start_keeps_its_delay(self) -> None:
         """오디오가 구간 시작보다 늦게 시작하면 그만큼 늦게 시작해야 한다.
 
         오디오 앞에 0.3초의 빈 편집이 있다 -> 구간 0초~ 에서 첫 오디오 샘플의 표시 시각 0.3초
@@ -421,7 +423,7 @@ class TestSectionFile:
         assert made.frame_pts[0] == pytest.approx(0.0)
         assert made.audio.times[0] == pytest.approx(0.3)
 
-    def test_durations_in_the_headers_are_the_section_length(self):
+    def test_durations_in_the_headers_are_the_section_length(self) -> None:
         """mvhd · tkhd의 길이는 구간 길이(무비 틱), 영상 mdhd의 길이는 프레임 길이의 합이어야 한다.
 
         프레임 1~10 = 10프레임 × 100틱 -> 무비 timescale 1000에서 1000, 영상 timescale 1000에서 1000
@@ -438,7 +440,7 @@ class TestSectionFile:
         mdhd = data.index(b"mdhd") + 4  # 첫 트랙이 영상이다
         assert struct.unpack_from(">II", data, mdhd + 12) == (1000, 1000)
 
-    def test_a_worst_case_piece_still_fits_the_reserved_space(self):
+    def test_a_worst_case_piece_still_fits_the_reserved_space(self) -> None:
         """프레임마다 길이 · 재정렬 값이 다르고 모두 키프레임인 조각도 잡아 둔 자리에 들어가야 한다.
 
         GOP 하나짜리 영상의 프레임 1~10 = 조각 하나(10프레임).
@@ -465,7 +467,7 @@ class TestSectionFile:
 
         assert len(head) == plan.body_offset
 
-    def test_a_long_media_duration_is_written_in_64_bits(self):
+    def test_a_long_media_duration_is_written_in_64_bits(self) -> None:
         """트랙 길이가 32비트를 넘으면 64비트 칸으로 쓰여, 다시 읽은 표시 시각이 맞아야 한다.
 
         프레임 길이 500,000,000틱, 프레임 0~9 = 5,000,000,000틱 > 2^32 − 1.
@@ -510,7 +512,7 @@ class TestBuildRejects:
         built, index = _source()
         return plan_section_file(index, built.moov, 1, 10)
 
-    def test_a_missing_piece_is_rejected(self):
+    def test_a_missing_piece_is_rejected(self) -> None:
         """조각의 수가 계획과 다르면 MP4_INVALID여야 한다."""
         plan = self._plan()
 
@@ -519,7 +521,7 @@ class TestBuildRejects:
 
         assert caught.value.message_key == MP4_INVALID
 
-    def test_a_piece_with_another_frame_count_is_rejected(self):
+    def test_a_piece_with_another_frame_count_is_rejected(self) -> None:
         """조각의 프레임 수가 계획과 다르면 MP4_INVALID여야 한다.
 
         머리는 프레임 3개여야 하는데 2개짜리 조각 — 프레임이 모자란 조각은 이음매의 DTS 확인에
@@ -534,7 +536,7 @@ class TestBuildRejects:
 
         assert caught.value.message_key == MP4_INVALID
 
-    def test_a_piece_with_another_timescale_is_rejected(self):
+    def test_a_piece_with_another_timescale_is_rejected(self) -> None:
         """조각의 timescale이 원본과 다르면 MP4_INVALID여야 한다."""
         plan = self._plan()
         encoded = _pieces_for(plan)
@@ -545,7 +547,7 @@ class TestBuildRejects:
 
         assert caught.value.message_key == MP4_INVALID
 
-    def test_a_piece_that_runs_into_the_moved_video_is_rejected(self):
+    def test_a_piece_that_runs_into_the_moved_video_is_rejected(self) -> None:
         """머리 조각의 마지막 DTS가 옮긴 영상의 첫 DTS 이상이면 MP4_INVALID여야 한다.
 
         머리의 재정렬 지연을 0으로 두면 DTS가 PTS와 같아져 100 · 200 · 300 → 200 · 300 · 400,
@@ -560,7 +562,7 @@ class TestBuildRejects:
 
         assert caught.value.message_key == MP4_INVALID
 
-    def test_parameter_sets_that_reuse_the_source_number_are_rejected(self):
+    def test_parameter_sets_that_reuse_the_source_number_are_rejected(self) -> None:
         """조각의 SPS가 원본과 내용이 다른데 번호가 같으면 MP4_INVALID여야 한다."""
         plan = self._plan()
         encoded = _pieces_for(plan)
@@ -572,7 +574,7 @@ class TestBuildRejects:
 
         assert caught.value.message_key == MP4_INVALID
 
-    def test_a_payload_that_does_not_match_the_sample_sizes_is_rejected(self):
+    def test_a_payload_that_does_not_match_the_sample_sizes_is_rejected(self) -> None:
         """조각의 샘플 바이트 길이가 샘플 크기의 합과 다르면 MP4_INVALID여야 한다."""
         plan = self._plan()
         encoded = _pieces_for(plan)
@@ -583,7 +585,7 @@ class TestBuildRejects:
 
         assert caught.value.message_key == MP4_INVALID
 
-    def test_a_moov_larger_than_the_reserved_space_is_rejected(self):
+    def test_a_moov_larger_than_the_reserved_space_is_rejected(self) -> None:
         """moov가 잡아 둔 자리를 넘으면 MP4_INVALID여야 한다.
 
         조각의 SPS를 2000바이트로 키운다 — 조각마다 잡아 둔 여유는 276바이트다
@@ -603,27 +605,27 @@ class TestBuildRejects:
 
 
 class TestMergedSampleDescription:
-    def test_identical_parameter_sets_are_kept_once(self):
+    def test_identical_parameter_sets_are_kept_once(self) -> None:
         """조각의 SPS · PPS가 원본과 바이트가 같으면 한 번만 들어가야 한다."""
         merged = merged_sample_description(_SOURCE_STSD, [_SOURCE_STSD])
 
         assert merged == _SOURCE_STSD
 
-    def test_the_entry_grows_by_the_added_parameter_sets(self):
+    def test_the_entry_grows_by_the_added_parameter_sets(self) -> None:
         """합친 뒤 샘플 엔트리의 길이 칸이 실제 길이와 같아야 한다."""
         merged = merged_sample_description(_SOURCE_STSD, [_avc_stsd([_sps(1)], [_pps(1)])])
 
         assert struct.unpack_from(">I", merged, 8)[0] == len(merged) - 8
         assert len(merged) == len(_SOURCE_STSD) + (2 + len(_sps(1))) + (2 + len(_pps(1)))
 
-    def test_pps_that_reuse_a_number_are_rejected(self):
+    def test_pps_that_reuse_a_number_are_rejected(self) -> None:
         """조각의 PPS가 원본과 내용이 다른데 번호가 같으면 MP4_INVALID여야 한다."""
         with pytest.raises(Mp4Error) as caught:
             merged_sample_description(_SOURCE_STSD, [_avc_stsd([_sps(1)], [_pps(0, b"\xcc")])])
 
         assert caught.value.message_key == MP4_INVALID
 
-    def test_a_codec_other_than_h264_is_rejected(self):
+    def test_a_codec_other_than_h264_is_rejected(self) -> None:
         """샘플 엔트리가 H.264가 아니면 MP4_UNSUPPORTED여야 한다."""
         hevc = _avc_stsd([_sps(0)], [_pps(0)], kind=b"hvc1")
 
@@ -637,7 +639,7 @@ class TestMergedSampleDescription:
 
 
 class TestReadEncodedPiece:
-    def test_reads_the_video_samples_and_their_tables(self):
+    def test_reads_the_video_samples_and_their_tables(self) -> None:
         """조각 파일에서 샘플별 DTS · (PTS − DTS) · 크기 · 키프레임 · 바이트를 읽어야 한다.
 
         I P B B 4샘플, 길이 100틱 -> DTS 0 · 100 · 200 · 300, 키프레임은 샘플 0
@@ -666,7 +668,7 @@ class TestReadEncodedPiece:
             built.sample_bytes(b"vide", number, size) for number, size in enumerate(piece.sizes)
         )
 
-    def test_a_file_without_moov_is_rejected(self):
+    def test_a_file_without_moov_is_rejected(self) -> None:
         """moov가 없으면 MP4_INVALID여야 한다."""
         built = build_mp4([video_spec(stsd=_SOURCE_STSD)], include_moov=False)
 
@@ -675,7 +677,7 @@ class TestReadEncodedPiece:
 
         assert caught.value.message_key == MP4_INVALID
 
-    def test_a_file_without_a_video_track_is_rejected(self):
+    def test_a_file_without_a_video_track_is_rejected(self) -> None:
         """영상 트랙이 없으면 MP4_INVALID여야 한다."""
         built = build_mp4([audio_spec()])
 
@@ -684,7 +686,7 @@ class TestReadEncodedPiece:
 
         assert caught.value.message_key == MP4_INVALID
 
-    def test_samples_beyond_the_file_are_rejected(self):
+    def test_samples_beyond_the_file_are_rejected(self) -> None:
         """샘플이 파일 끝을 넘으면 MP4_INVALID여야 한다."""
         built = build_mp4([video_spec(stsd=_SOURCE_STSD)])
 
@@ -694,7 +696,7 @@ class TestReadEncodedPiece:
         assert caught.value.message_key == MP4_INVALID
 
 
-def test_pieces_are_cut_pieces():
+def test_pieces_are_cut_pieces() -> None:
     """조각은 컷의 조각 모델(CutPiece)이어야 한다 — 인코딩 명령이 그대로 받는다."""
     _built, index = _source()
 

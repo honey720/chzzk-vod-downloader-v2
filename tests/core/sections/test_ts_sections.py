@@ -115,7 +115,7 @@ def _plan(segments: list[TsStreams], selection: TimeRange, playlist=None):
 # ================================================================ 시각 축
 
 
-def test_timeline_starts_at_the_first_audio_pts_and_ends_with_the_last_video_frame(vod):
+def test_timeline_starts_at_the_first_audio_pts_and_ends_with_the_last_video_frame(vod) -> None:
     """TS의 시각 축은 0초가 첫 오디오 PTS이고 영상 길이가 마지막 영상 프레임이 끝나는 시각이어야 한다.
 
     LAYOUT(영상 315프레임, 영상이 42.667ms 늦게 시작)
@@ -129,7 +129,7 @@ def test_timeline_starts_at_the_first_audio_pts_and_ends_with_the_last_video_fra
     assert axis.duration == (LEAD + 315 * FRAME_60) / CLOCK
 
 
-def test_segment_spans_meet_and_the_first_one_starts_after_the_audio(vod):
+def test_segment_spans_meet_and_the_first_one_starts_after_the_audio(vod) -> None:
     """세그먼트의 시각 범위는 첫 세그먼트가 영상이 시작하는 시각에서 시작하고, 이웃끼리 맞닿아야 한다.
 
     LAYOUT의 세그먼트 0~5
@@ -150,7 +150,7 @@ def test_segment_spans_meet_and_the_first_one_starts_after_the_audio(vod):
 # ================================================================ 구간 계획
 
 
-def test_section_across_segment_boundaries_picks_the_nearest_frames(vod):
+def test_section_across_segment_boundaries_picks_the_nearest_frames(vod) -> None:
     """세그먼트 경계를 걸치는 구간은 양 끝 시각에서 가장 가까운 프레임과 그 사이의 세그먼트를 골라야 한다.
 
     구간 1.5 ~ 3.2초 (프레임은 0.042667 + n ÷ 60초에 있다)
@@ -163,7 +163,7 @@ def test_section_across_segment_boundaries_picks_the_nearest_frames(vod):
     assert (section.first_segment, section.last_segment) == (0, 3)
 
 
-def test_section_at_the_start_begins_with_the_first_video_frame(vod):
+def test_section_at_the_start_begins_with_the_first_video_frame(vod) -> None:
     """0초에서 시작하는 구간의 첫 프레임은 오디오보다 늦게 시작하는 첫 영상 프레임이어야 한다.
 
     구간 0.0 ~ 0.5초
@@ -184,7 +184,7 @@ def test_section_at_the_start_begins_with_the_first_video_frame(vod):
     ],
     ids=["inside", "to-the-end"],
 )
-def test_section_ending_in_the_short_last_segment(vod, end, last_frame):
+def test_section_ending_in_the_short_last_segment(vod, end, last_frame) -> None:
     """마지막 짧은 세그먼트에서 끝나는 구간은 그 세그먼트의 프레임을 끝 프레임으로 골라야 한다.
 
     구간 4.9 ~ 주석의 끝(초). 마지막 세그먼트는 15프레임(300 ~ 314번)
@@ -199,7 +199,7 @@ def test_section_ending_in_the_short_last_segment(vod, end, last_frame):
     assert section.last_segment == 5
 
 
-def test_segment_without_video_is_measured_by_its_audio():
+def test_segment_without_video_is_measured_by_its_audio() -> None:
     """영상 프레임이 없는 세그먼트는 오디오로 시각 범위를 재고, 영상 길이와 끝 프레임은 그 앞 세그먼트에서 나와야 한다.
 
     1초 세그먼트 둘 뒤에 오디오 12프레임만 든 세그먼트 하나. 구간 1.5초 ~ 영상 길이
@@ -227,7 +227,7 @@ def test_segment_without_video_is_measured_by_its_audio():
     assert section.last_segment == 2
 
 
-def test_segment_with_a_single_frame_spans_one_frame_of_the_vod_frame_rate():
+def test_segment_with_a_single_frame_spans_one_frame_of_the_vod_frame_rate() -> None:
     """프레임이 하나뿐인 세그먼트의 시각 범위는 VOD 전체의 프레임 길이만큼이어야 한다.
 
     1초 세그먼트 둘 뒤에 영상 프레임 하나짜리 세그먼트. 프레임률 60. 구간 1.5초 ~ 영상 길이
@@ -261,7 +261,7 @@ def test_segment_with_a_single_frame_spans_one_frame_of_the_vod_frame_rate():
     ],
     ids=["known-end", "unknown-end"],
 )
-def test_unknown_audio_end_takes_one_more_segment(audio, last_segment):
+def test_unknown_audio_end_takes_one_more_segment(audio, last_segment) -> None:
     """오디오가 있는데 끝나는 시각을 모르면 끝 프레임이 든 세그먼트의 다음 세그먼트까지 받아야 한다.
 
     LAYOUT, 오디오는 주석의 종류. 구간 1.5 ~ 3.2초 (끝 프레임 189번은 세그먼트 3에 있다)
@@ -276,7 +276,7 @@ def test_unknown_audio_end_takes_one_more_segment(audio, last_segment):
     assert section.last_pts == pytest.approx(_pts(189), abs=1e-9)
 
 
-def test_video_without_audio_takes_no_extra_segment():
+def test_video_without_audio_takes_no_extra_segment() -> None:
     """오디오가 없는 영상은 끝 프레임이 든 세그먼트까지만 받아야 한다 — 끝을 모르는 오디오와 다르게 다룬다.
 
     LAYOUT인데 오디오가 없다(0초가 첫 영상 프레임이고 프레임은 n ÷ 60초에 있다). 구간 1.5 ~ 3.2초
@@ -292,7 +292,7 @@ def test_video_without_audio_takes_no_extra_segment():
     assert (section.first_segment, section.last_segment) == (0, 3)
 
 
-def test_unknown_audio_end_stops_at_the_last_segment():
+def test_unknown_audio_end_stops_at_the_last_segment() -> None:
     """오디오가 끝나는 시각을 모르는 영상에서 마지막 세그먼트에서 끝나는 구간은 넣을 세그먼트가 없어도 계획이 서야 한다.
 
     LAYOUT, ADTS가 아닌 오디오. 구간 4.9 ~ 5.2초 (끝 프레임 309번은 마지막 세그먼트에 있다)
@@ -306,7 +306,7 @@ def test_unknown_audio_end_stops_at_the_last_segment():
     assert section.last_pts == pytest.approx(_pts(309), abs=1e-9)
 
 
-def test_span_of_a_segment_without_video_needs_the_audio_end():
+def test_span_of_a_segment_without_video_needs_the_audio_end() -> None:
     """영상이 없는 세그먼트의 시각 범위는 오디오가 끝나는 시각을 모르면 구할 수 없어야 한다.
 
     1초 세그먼트 하나 뒤에 ADTS가 아닌 오디오만 든 세그먼트
@@ -320,7 +320,7 @@ def test_span_of_a_segment_without_video_needs_the_audio_end():
     assert info.value.message_key == TS_UNSUPPORTED
 
 
-def test_plan_does_not_look_for_a_time_in_an_audio_only_segment_after_the_video():
+def test_plan_does_not_look_for_a_time_in_an_audio_only_segment_after_the_video() -> None:
     """구간의 끝 시각을 찾을 때 영상이 끝난 뒤의 오디오만 든 세그먼트는 읽지 않아야 한다 — 추정이 그 세그먼트를 가리켜도.
 
     1초 세그먼트 둘 뒤에 ADTS가 아닌 오디오만 든 세그먼트(시각 범위를 구할 수 없다).
@@ -339,7 +339,7 @@ def test_plan_does_not_look_for_a_time_in_an_audio_only_segment_after_the_video(
     assert (section.first_segment, section.last_segment) == (0, 2)
 
 
-def test_plan_follows_timestamps_through_the_33bit_wraparound():
+def test_plan_follows_timestamps_through_the_33bit_wraparound() -> None:
     """33비트 타임스탬프가 영상 도중에 0으로 돌아가도 구간의 프레임과 세그먼트가 같아야 한다.
 
     LAYOUT인데 첫 오디오 PTS가 2³³ − 2초의 틱 (세그먼트 1 ~ 2 사이에서 되감긴다). 구간 1.5 ~ 3.2초
@@ -367,7 +367,7 @@ def broken():
     return playlist, first + second
 
 
-def test_group_after_a_discontinuity_starts_where_the_previous_one_ended(broken):
+def test_group_after_a_discontinuity_starts_where_the_previous_one_ended(broken) -> None:
     """끊긴 자리 뒤의 묶음은 앞 묶음이 끝난 VOD 시각에서 시작해야 한다.
 
     60프레임 세그먼트 셋 + 끊긴 자리 + 60프레임 세그먼트 셋
@@ -384,7 +384,7 @@ def test_group_after_a_discontinuity_starts_where_the_previous_one_ended(broken)
     assert axis.duration == pytest.approx(2 * length, abs=1e-9)
 
 
-def test_section_in_the_second_group_is_planned_in_vod_time(broken):
+def test_section_in_the_second_group_is_planned_in_vod_time(broken) -> None:
     """끊긴 자리 뒤의 구간은 그 묶음의 세그먼트에서 VOD 시각으로 프레임을 골라야 한다.
 
     위의 VOD(둘째 묶음은 3.042667초에서 시작한다). 구간 3.5 ~ 4.5초
@@ -400,7 +400,7 @@ def test_section_in_the_second_group_is_planned_in_vod_time(broken):
     assert (section.first_segment, section.last_segment) == (3, 4)
 
 
-def test_section_across_a_discontinuity_is_rejected(broken):
+def test_section_across_a_discontinuity_is_rejected(broken) -> None:
     """끊긴 자리를 넘는 구간은 거부돼야 한다.
 
     위의 VOD. 구간 2.5 ~ 3.5초 (끊긴 자리는 3.042667초)
@@ -417,7 +417,7 @@ def test_section_across_a_discontinuity_is_rejected(broken):
 # ================================================================ 프레임률
 
 
-def test_frame_rate_is_the_declared_value_when_there_is_one(vod):
+def test_frame_rate_is_the_declared_value_when_there_is_one(vod) -> None:
     """선언된 프레임률이 있으면 세그먼트를 재지 않고 그 값이어야 한다.
 
     60fps 세그먼트, 선언값 30000/1001
@@ -428,7 +428,7 @@ def test_frame_rate_is_the_declared_value_when_there_is_one(vod):
     assert (choice.rate, choice.source) == (Fraction(30000, 1001), FPS_DECLARED)
 
 
-def test_frame_rate_is_measured_from_the_pts_of_the_first_segment(vod):
+def test_frame_rate_is_measured_from_the_pts_of_the_first_segment(vod) -> None:
     """선언값이 없으면 세그먼트의 PTS 평균 간격으로 정해야 한다.
 
     60fps 세그먼트(B프레임 포함), 선언값 없음
@@ -439,7 +439,7 @@ def test_frame_rate_is_measured_from_the_pts_of_the_first_segment(vod):
     assert (choice.rate, choice.source) == (Fraction(60), FPS_STANDARD)
 
 
-def test_frame_rate_cannot_be_measured_from_a_single_frame():
+def test_frame_rate_cannot_be_measured_from_a_single_frame() -> None:
     """선언값이 없고 프레임이 하나뿐이면 프레임률을 정할 수 없어야 한다.
 
     영상 프레임 하나짜리 세그먼트, 선언값 없음

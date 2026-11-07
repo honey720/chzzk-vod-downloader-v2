@@ -77,7 +77,9 @@ def _parsed(moov: bytes):
 
 @pytest.mark.parametrize("items", [1, 2, 3, 7, 64])
 @pytest.mark.parametrize("case", list(CASES), ids=list(CASES))
-def test_index_parsed_in_chunks_equals_the_index_parsed_in_one_pass(chunk_items, case, items):
+def test_index_parsed_in_chunks_equals_the_index_parsed_in_one_pass(
+    chunk_items, case, items
+) -> None:
     """표를 잘라 해석한 색인은 한 번에 해석한 색인과 모든 값이 바이트까지 같아야 한다.
 
     손으로 만든 트랙들(고정 · 가변 프레임률 · B 프레임 · 편집 목록 · 오디오 먼저 시작 등)을
@@ -96,7 +98,7 @@ def test_index_parsed_in_chunks_equals_the_index_parsed_in_one_pass(chunk_items,
 
 
 @pytest.mark.parametrize("seed", range(120))
-def test_random_tracks_parsed_in_chunks_equal_one_pass(chunk_items, seed):
+def test_random_tracks_parsed_in_chunks_equal_one_pass(chunk_items, seed) -> None:
     """씨앗으로 흔든 트랙도 잘라 해석한 결과가 한 번에 해석한 결과와 같아야 한다 — 거부하는 쪽도 같다.
 
     씨앗마다의 무작위 트랙(음수 · 큰 ctts, 빈 편집, 샘플마다 다른 길이 포함)을 조각 5개로 해석
@@ -113,7 +115,7 @@ def test_random_tracks_parsed_in_chunks_equal_one_pass(chunk_items, seed):
 
 
 @pytest.mark.parametrize("seed", range(40))
-def test_presentation_order_sorted_in_chunks_equals_a_stable_sort(chunk_items, seed):
+def test_presentation_order_sorted_in_chunks_equals_a_stable_sort(chunk_items, seed) -> None:
     """표시 순서를 조각마다 정렬해 이은 것은 전체를 안정 정렬한 것과 같아야 한다.
 
     무작위 DTS(줄지 않는다 — 길이 0 포함) · PTS − DTS(음수 · 큰 값 · 같은 표시 시각이 많게)로
@@ -140,7 +142,7 @@ def test_presentation_order_sorted_in_chunks_equals_a_stable_sort(chunk_items, s
 @pytest.mark.parametrize("count", [0, 1, 7, 8, 9, 16, 23])
 def test_filling_in_chunks_keeps_every_value_and_carries_running_totals_across_chunks(
     chunk_items, count
-):
+) -> None:
     """잘라 채운 배열은 한 번에 채운 배열과 같아야 한다 — 마지막 조각 · 경계를 넘는 누적값까지.
 
     조각 8개. 0 · 1 · 7 · 8 · 9 · 16 · 23개의 값(조각보다 적음 · 딱 맞음 · 하나 넘음 · 두 배 · 나머지 있음)을
@@ -163,7 +165,7 @@ def test_filling_in_chunks_keeps_every_value_and_carries_running_totals_across_c
     assert isinstance(filled, SampleColumn) and filled == [float(value) for value in values]
 
 
-def test_largest_and_positions_cut_in_chunks_equal_the_plain_ones(chunk_items):
+def test_largest_and_positions_cut_in_chunks_equal_the_plain_ones(chunk_items) -> None:
     """잘라 구한 최댓값 · 걸러 낸 자리는 한 번에 구한 것과 같아야 한다.
 
     조각 4개. 값 11개(최댓값이 마지막 조각에 있다), 샘플 번호 11개 가운데 넷이 wanted에 든다
@@ -206,7 +208,7 @@ def _long_moov(frames: int) -> bytes:
     return box(b"moov", mvhd + _trak(spec, chunk_offsets, True))
 
 
-def test_parser_never_hands_more_than_a_chunk_to_one_pass(monkeypatch, chunk_items):
+def test_parser_never_hands_more_than_a_chunk_to_one_pass(monkeypatch, chunk_items) -> None:
     """해석기는 샘플 수만큼 긴 반복을 조각 크기보다 많이 한 번에 넘기지 않아야 한다.
 
     조각 1,000개. 영상 20,000샘플의 moov를 해석하며 배열을 채우는 쪽이 한 번에 청하는 양
@@ -230,7 +232,7 @@ def test_parser_never_hands_more_than_a_chunk_to_one_pass(monkeypatch, chunk_ite
         return sorted(values, **kwargs)
 
     class WatchingCounter(real_counter):
-        def update(self, values=None, **kwargs):
+        def update(self, values=None, **kwargs) -> None:
             if values is not None:  # 빈 Counter를 만들 때도 update(None)이 불린다
                 counted_sizes.append(len(values))
             super().update(values, **kwargs)

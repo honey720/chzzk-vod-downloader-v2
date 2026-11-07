@@ -14,15 +14,16 @@ from app.viewmodels.model import ContentListModel
 from app.widgets.view import ContentListView
 from core.models.download_state import DownloadState
 from tests.app.gui.card_helpers import shown
+from typing import Never
 
 
 @pytest.fixture(autouse=True)
-def no_network(monkeypatch):
+def no_network(monkeypatch) -> None:
     class _FailingSession:
-        def head(self, *a, **k):
+        def head(self, *a, **k) -> Never:
             raise RuntimeError("network disabled in tests")
 
-        def get(self, *a, **k):
+        def get(self, *a, **k) -> Never:
             raise RuntimeError("network disabled in tests")
 
     monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
@@ -46,7 +47,7 @@ def view(qapp):
 
 
 class TestInsertion:
-    def test_inserted_item_gets_a_widget(self, view, qapp):
+    def test_inserted_item_gets_a_widget(self, view, qapp) -> None:
         v, model = view
         item = _make_item()
         model.addItem(item)
@@ -56,7 +57,7 @@ class TestInsertion:
         assert widget is not None
         assert widget.titleLabel.text() == "제목"
 
-    def test_layout_position_matches_row(self, view, qapp):
+    def test_layout_position_matches_row(self, view, qapp) -> None:
         """카드는 항상 스트레치보다 앞, 삽입 순서대로 레이아웃에 놓인다."""
         v, model = view
         first, second = _make_item("첫번째"), _make_item("두번째")
@@ -71,7 +72,7 @@ class TestInsertion:
         # 스트레치가 항상 카드들 뒤에 있어야 새 카드가 끝에 쌓인다
         assert v._layout.indexOf(w_second) < v._layout.count() - 1
 
-    def test_replace_at_same_row_keeps_position(self, view, qapp):
+    def test_replace_at_same_row_keeps_position(self, view, qapp) -> None:
         """조회 완료로 자리표시가 완성 카드로 바뀔 때(같은 자리) 순서가 안 흐트러진다."""
         v, model = view
         before, placeholder, after = _make_item("앞"), _make_item("자리표시"), _make_item("뒤")
@@ -92,7 +93,7 @@ class TestInsertion:
 
 
 class TestDeletionLifecycle:
-    def test_removed_widget_leaves_the_dict(self, view, qapp):
+    def test_removed_widget_leaves_the_dict(self, view, qapp) -> None:
         v, model = view
         item = _make_item()
         model.addItem(item)
@@ -104,7 +105,7 @@ class TestDeletionLifecycle:
 
         assert v.widgetFor(item) is None
 
-    def test_removed_widget_is_taken_out_of_the_layout(self, view, qapp):
+    def test_removed_widget_is_taken_out_of_the_layout(self, view, qapp) -> None:
         """레이아웃에 남겨두면 다음 카드 위치가 밀리는 회귀가 재발한다."""
         v, model = view
         item = _make_item()
@@ -117,7 +118,7 @@ class TestDeletionLifecycle:
 
         assert v._layout.indexOf(widget) == -1
 
-    def test_removed_widget_is_scheduled_for_deletion(self, view, qapp, monkeypatch):
+    def test_removed_widget_is_scheduled_for_deletion(self, view, qapp, monkeypatch) -> None:
         """생명주기를 빠뜨리면 누수 — deleteLater가 실제로 호출되는지 스파이로 고정한다."""
         v, model = view
         item = _make_item()
@@ -133,7 +134,7 @@ class TestDeletionLifecycle:
 
         assert calls == [True]
 
-    def test_removing_last_item_does_not_crash_and_dict_is_empty(self, view, qapp):
+    def test_removing_last_item_does_not_crash_and_dict_is_empty(self, view, qapp) -> None:
         v, model = view
         item = _make_item()
         model.addItem(item)
@@ -147,7 +148,7 @@ class TestDeletionLifecycle:
 
 
 class TestEmptyOverlayState:
-    def test_paints_empty_message_when_no_items_and_not_dragging(self, view):
+    def test_paints_empty_message_when_no_items_and_not_dragging(self, view) -> None:
         v, model = view
         assert model.isEmpty()
         assert v._dragActive is False
@@ -155,7 +156,7 @@ class TestEmptyOverlayState:
         # 실제 렌더링 대신 분기 조건 자체(모델 소스)를 고정한다
         assert model.isEmpty() and not v._dragActive
 
-    def test_no_empty_message_once_an_item_exists(self, view, qapp):
+    def test_no_empty_message_once_an_item_exists(self, view, qapp) -> None:
         v, model = view
         model.addItem(_make_item())
         qapp.processEvents()
@@ -163,7 +164,7 @@ class TestEmptyOverlayState:
 
 
 class TestProgressUpdate:
-    def test_notify_changed_refreshes_only_that_widget(self, view, qapp):
+    def test_notify_changed_refreshes_only_that_widget(self, view, qapp) -> None:
         v, model = view
         a, b = _make_item("A"), _make_item("B")
         model.addItem(a)
@@ -186,7 +187,7 @@ class TestStateActionSignalsAreWired:
     묶여 있어 여기서는 뷰 경계까지를 고정한다.
     """
 
-    def test_retry_click_reaches_the_view_with_its_item(self, view, qapp):
+    def test_retry_click_reaches_the_view_with_its_item(self, view, qapp) -> None:
         v, model = view
         item = _make_item()
         item.downloadState = DownloadState.FAILED
@@ -200,7 +201,7 @@ class TestStateActionSignalsAreWired:
         qapp.processEvents()
         assert received == [item]
 
-    def test_pause_click_reaches_the_view_with_its_item(self, view, qapp):
+    def test_pause_click_reaches_the_view_with_its_item(self, view, qapp) -> None:
         v, model = view
         item = _make_item()
         item.downloadState = DownloadState.RUNNING
@@ -244,7 +245,7 @@ class TestCardNumberingFollowsPosition:
         # 삭제 후 연속 번호)는 그대로다.
         return [v.widgetFor(model.itemAt(row)).index for row in range(model.rowCount())]
 
-    def test_middle_delete_renumbers_trailing_cards(self, view, qapp, qtbot):
+    def test_middle_delete_renumbers_trailing_cards(self, view, qapp, qtbot) -> None:
         v, model = view
         a, b, c = _make_item("A"), _make_item("B"), _make_item("C")
         for it in (a, b, c):
@@ -256,7 +257,7 @@ class TestCardNumberingFollowsPosition:
 
         qtbot.waitUntil(lambda: self._labels(v, model) == [0, 1], timeout=2000)
 
-    def test_new_card_after_middle_delete_does_not_collide(self, view, qapp, qtbot):
+    def test_new_card_after_middle_delete_does_not_collide(self, view, qapp, qtbot) -> None:
         """⚠️ 회귀의 핵심 — 재부여가 없으면 새 카드와 기존 카드의 번호가 겹친다."""
         v, model = view
         a, b, c = _make_item("A"), _make_item("B"), _make_item("C")
@@ -272,7 +273,7 @@ class TestCardNumberingFollowsPosition:
         labels = self._labels(v, model)
         assert len(labels) == len(set(labels)), f"번호가 겹쳤다: {labels}"
 
-    def test_first_delete_renumbers(self, view, qapp, qtbot):
+    def test_first_delete_renumbers(self, view, qapp, qtbot) -> None:
         v, model = view
         a, b, c = _make_item("A"), _make_item("B"), _make_item("C")
         for it in (a, b, c):
@@ -283,7 +284,7 @@ class TestCardNumberingFollowsPosition:
 
         qtbot.waitUntil(lambda: self._labels(v, model) == [0, 1], timeout=2000)
 
-    def test_last_delete_leaves_leading_numbers_untouched(self, view, qapp, qtbot):
+    def test_last_delete_leaves_leading_numbers_untouched(self, view, qapp, qtbot) -> None:
         v, model = view
         a, b, c = _make_item("A"), _make_item("B"), _make_item("C")
         for it in (a, b, c):
@@ -294,7 +295,7 @@ class TestCardNumberingFollowsPosition:
 
         qtbot.waitUntil(lambda: self._labels(v, model) == [0, 1], timeout=2000)
 
-    def test_bulk_delete_ends_with_contiguous_numbering(self, view, qapp, qtbot):
+    def test_bulk_delete_ends_with_contiguous_numbering(self, view, qapp, qtbot) -> None:
         """일괄 삭제(비연속 위치) 뒤에도 번호가 연속이어야 한다."""
         v, model = view
         items = [_make_item(str(i)) for i in range(5)]
@@ -309,7 +310,7 @@ class TestCardNumberingFollowsPosition:
 
         qtbot.waitUntil(lambda: self._labels(v, model) == [0, 1], timeout=2000)
 
-    def test_bulk_delete_renumbers_only_once(self, view, qapp, qtbot, monkeypatch):
+    def test_bulk_delete_renumbers_only_once(self, view, qapp, qtbot, monkeypatch) -> None:
         """일괄 삭제 한 번에 재번호매김이 여러 번(O(n²)) 돌면 안 된다 — 끝에 한 번만."""
         v, model = view
         items = [_make_item(str(i)) for i in range(6)]
@@ -320,7 +321,7 @@ class TestCardNumberingFollowsPosition:
         calls = []
         original = v._renumberAll
 
-        def _spy():
+        def _spy() -> None:
             calls.append(True)
             original()
 
@@ -333,7 +334,7 @@ class TestCardNumberingFollowsPosition:
         qtbot.waitUntil(lambda: len(calls) >= 1, timeout=2000)  # 배치가 도는 걸 조건으로 기다린다
         assert calls == [True], f"재번호매김이 {len(calls)}번 돌았다 — 배치가 안 눌렸다"
 
-    def test_insertion_does_not_trigger_a_renumber_pass(self, view, qapp, monkeypatch):
+    def test_insertion_does_not_trigger_a_renumber_pass(self, view, qapp, monkeypatch) -> None:
         """삽입은 O(1)이어야 한다 — 재번호매김(전체 순회)이 삽입 경로로 새면 안 된다 (#226 유지)."""
         v, model = view
         for i in range(5):
@@ -348,7 +349,7 @@ class TestCardNumberingFollowsPosition:
 
         assert calls == [], "삽입만 했는데 재번호매김이 돌았다 — O(1) 삽입 위반"
 
-    def test_insertion_only_touches_the_new_widgets_setData(self, view, qapp, monkeypatch):
+    def test_insertion_only_touches_the_new_widgets_setData(self, view, qapp, monkeypatch) -> None:
         """기존 카드가 삽입 때문에 다시 그려지면 안 된다 — 새 카드 자기 몫만."""
         from app.widgets.widget import ContentItemWidget
 
@@ -383,11 +384,13 @@ class TestNoHorizontalOverflow:
     상태를 보게 된다).
     """
 
-    def test_horizontal_scrollbar_is_always_off(self, view):
+    def test_horizontal_scrollbar_is_always_off(self, view) -> None:
         v, _ = view
         assert v.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
 
-    def test_long_title_and_path_do_not_widen_the_container_past_the_viewport(self, view, qapp):
+    def test_long_title_and_path_do_not_widen_the_container_past_the_viewport(
+        self, view, qapp
+    ) -> None:
         v, model = view
         v.resize(500, 400)
         v.show()
@@ -407,7 +410,7 @@ class TestNoHorizontalOverflow:
             "— 가로 스크롤 버그 회귀"
         )
 
-    def test_title_is_elided_right_and_path_is_elided_middle(self, view, qapp):
+    def test_title_is_elided_right_and_path_is_elided_middle(self, view, qapp) -> None:
         """제목은 오른쪽, 경로는 가운데 말줄임인지 — **폰트 무의존 재표현** (#237).
 
         원래는 `rendered_title.startswith("StartOfTitle")`처럼 정확한 글자

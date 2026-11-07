@@ -16,7 +16,7 @@ SOURCE = (
 )
 
 
-def test_truncated_segment_error_maps_to_its_own_key():
+def test_truncated_segment_error_maps_to_its_own_key() -> None:
     """TruncatedSegmentError는 그 예외가 든 키로 매핑돼야 한다.
 
     TruncatedSegmentError("마지막 moof 뒤에 mdat가 없다")
@@ -28,7 +28,7 @@ def test_truncated_segment_error_maps_to_its_own_key():
     assert _failure_message_key(error) == SEGMENT_TRUNCATED
 
 
-def test_truncated_segment_failure_shows_its_reason_on_the_card(qapp):
+def test_truncated_segment_failure_shows_its_reason_on_the_card(qapp) -> None:
     """잘린 세그먼트 실패의 카드 사유는 그 실패의 원문이어야 한다(번역기 없음).
 
     DownloadViewModel(가짜 content · service)._failure_message(TruncatedSegmentError(...))
@@ -46,7 +46,9 @@ def test_truncated_segment_failure_shows_its_reason_on_the_card(qapp):
         ("en_US", "Video data arrived corrupted · try again later"),
     ],
 )
-def test_truncated_segment_reason_is_translated_in_the_bundled_catalog(qapp, language, headline):
+def test_truncated_segment_reason_is_translated_in_the_bundled_catalog(
+    qapp, language, headline
+) -> None:
     """동봉된 번역 카탈로그는 잘린 세그먼트 실패 사유를 그 언어의 두 줄 문구로 돌려줘야 한다.
 
     translations/<언어>.qm, 컨텍스트 DownloadViewModel, 원문 SOURCE

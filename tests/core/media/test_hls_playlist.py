@@ -42,7 +42,7 @@ CHZZK_STYLE = "\n".join(
 # ================================================================ 플레이리스트 파싱
 
 
-def test_parses_chzzk_style_playlist():
+def test_parses_chzzk_style_playlist() -> None:
     """치지직 실응답 형태: AES-128 키(IV 없음), TS 세그먼트, 초기화 세그먼트 없음."""
     pl = parse_media_playlist(CHZZK_STYLE)
 
@@ -53,7 +53,7 @@ def test_parses_chzzk_style_playlist():
     assert pl.key.is_aes_128 is True
 
 
-def test_sequence_of_offsets_by_media_sequence():
+def test_sequence_of_offsets_by_media_sequence() -> None:
     """세그먼트의 시퀀스 번호는 EXT-X-MEDIA-SEQUENCE부터 센다 (IV 유도의 근거)."""
     pl = parse_media_playlist(CHZZK_STYLE.replace("MEDIA-SEQUENCE:0", "MEDIA-SEQUENCE:100"))
 
@@ -61,7 +61,7 @@ def test_sequence_of_offsets_by_media_sequence():
     assert (pl.sequence_of(0), pl.sequence_of(1)) == (100, 101)
 
 
-def test_explicit_iv_is_parsed_as_bytes():
+def test_explicit_iv_is_parsed_as_bytes() -> None:
     """IV 속성이 있으면 16진 문자열을 바이트로 파싱한다."""
     iv_hex = "0x000102030405060708090a0b0c0d0e0f"
     pl = parse_media_playlist(
@@ -71,7 +71,7 @@ def test_explicit_iv_is_parsed_as_bytes():
     assert pl.key.iv == bytes(range(16))
 
 
-def test_method_none_means_unencrypted():
+def test_method_none_means_unencrypted() -> None:
     """METHOD=NONE은 암호화 해제 지시이므로 키 없음으로 다룬다."""
     pl = parse_media_playlist(CHZZK_STYLE.replace(f'METHOD=AES-128,URI="{KEY_URI}"', "METHOD=NONE"))
 
@@ -79,14 +79,14 @@ def test_method_none_means_unencrypted():
     assert pl.segments  # 세그먼트 목록 자체는 그대로 파싱된다
 
 
-def test_ext_x_map_is_parsed_when_present():
+def test_ext_x_map_is_parsed_when_present() -> None:
     """fMP4 플레이리스트의 초기화 세그먼트(EXT-X-MAP)도 파싱한다."""
     pl = parse_media_playlist(CHZZK_STYLE.replace("#EXTM3U", '#EXTM3U\n#EXT-X-MAP:URI="init.m4s"'))
 
     assert pl.init_uri == "init.m4s"
 
 
-def test_plain_playlist_has_no_key():
+def test_plain_playlist_has_no_key() -> None:
     """평문 플레이리스트는 키 없이 세그먼트만 나온다."""
     pl = parse_media_playlist("#EXTM3U\n#EXTINF:2.0,\na.ts\n#EXT-X-ENDLIST")
 
@@ -109,7 +109,7 @@ def _fake_ts(packets: int = 3) -> bytes:
     return b"".join(bytes([0x47]) + bytes(TS_PACKET_SIZE - 1) for _ in range(packets))
 
 
-def test_decrypt_round_trip_strips_padding():
+def test_decrypt_round_trip_strips_padding() -> None:
     """암호화 → 복호화가 원본과 정확히 일치해야 한다 (PKCS#7 패딩 제거 포함)."""
     key, iv = bytes(range(16)), sequence_iv(7)
     plain = _fake_ts()
@@ -117,7 +117,7 @@ def test_decrypt_round_trip_strips_padding():
     assert decrypt_segment(_encrypt(plain, key, iv), key, iv) == plain
 
 
-def test_sequence_iv_is_big_endian_128bit():
+def test_sequence_iv_is_big_endian_128bit() -> None:
     """IV는 시퀀스 번호의 128비트 빅엔디언 표현이다 (RFC 8216 §5.2)."""
     assert sequence_iv(0) == bytes(16)
     assert sequence_iv(1) == bytes(15) + b"\x01"
@@ -132,13 +132,13 @@ def test_sequence_iv_is_big_endian_128bit():
         (bytes(16), bytes(16), bytes(17)),  # 블록 배수 아님
     ],
 )
-def test_decrypt_rejects_malformed_input(key, iv, data):
+def test_decrypt_rejects_malformed_input(key, iv, data) -> None:
     """키·IV 길이와 블록 정렬이 어긋나면 ValueError로 실패해야 한다."""
     with pytest.raises(ValueError):
         decrypt_segment(data, key, iv)
 
 
-def test_looks_like_ts_detects_sync_bytes():
+def test_looks_like_ts_detects_sync_bytes() -> None:
     """TS 판정은 첫 바이트와 다음 패킷 경계의 동기 바이트(0x47)로 한다."""
     assert looks_like_ts(_fake_ts()) is True
     # 키가 틀리면 난수가 되어 통과할 수 없다
@@ -149,7 +149,7 @@ def test_looks_like_ts_detects_sync_bytes():
 # ================================================================ 끊긴 자리 · 초기화 세그먼트 (#309)
 
 
-def test_discontinuity_marks_the_segment_that_follows_it():
+def test_discontinuity_marks_the_segment_that_follows_it() -> None:
     """parse_media_playlist는 #EXT-X-DISCONTINUITY 바로 뒤 세그먼트의 인덱스를 discontinuities에 실어야 한다.
 
     세그먼트 a · b, DISCONTINUITY, c, DISCONTINUITY, d
@@ -163,7 +163,7 @@ def test_discontinuity_marks_the_segment_that_follows_it():
     assert parse_media_playlist(text).discontinuities == (2, 3)
 
 
-def test_discontinuity_before_the_first_segment_is_not_a_break():
+def test_discontinuity_before_the_first_segment_is_not_a_break() -> None:
     """parse_media_playlist는 첫 세그먼트 앞의 #EXT-X-DISCONTINUITY를 끊긴 자리로 세지 않아야 한다.
 
     DISCONTINUITY, 세그먼트 a · b
@@ -174,7 +174,7 @@ def test_discontinuity_before_the_first_segment_is_not_a_break():
     assert parse_media_playlist(text).discontinuities == ()
 
 
-def test_init_uris_lists_each_distinct_map_in_order():
+def test_init_uris_lists_each_distinct_map_in_order() -> None:
     """parse_media_playlist는 #EXT-X-MAP의 URI를 나온 순서대로 겹치지 않게 init_uris에 실어야 한다.
 
     MAP "one" · 세그먼트 · MAP "one" · 세그먼트 · MAP "two" · 세그먼트
@@ -216,7 +216,7 @@ def test_init_uris_lists_each_distinct_map_in_order():
     ],
     ids=["60.000", "59.940", "after-quoted", "missing", "zero", "not-a-number", "other-tag", "uri"],
 )
-def test_stream_frame_rate_reads_the_declared_value_as_written(line, expected):
+def test_stream_frame_rate_reads_the_declared_value_as_written(line, expected) -> None:
     """stream_frame_rate는 #EXT-X-STREAM-INF 줄의 FRAME-RATE를 적힌 글자 그대로의 분수로 돌려주고, 없거나 읽을 수 없으면 None을 돌려줘야 한다.
 
     주석의 경우마다 마스터 플레이리스트의 한 줄
@@ -236,7 +236,7 @@ def test_stream_frame_rate_reads_the_declared_value_as_written(line, expected):
     ],
     ids=["first-720", "undeclared", "59.940", "second-720", "absent"],
 )
-def test_variant_frame_rate_reads_the_rate_of_the_variant_with_that_address(uri, expected):
+def test_variant_frame_rate_reads_the_rate_of_the_variant_with_that_address(uri, expected) -> None:
     """variant_frame_rate는 주소가 같은 변형의 FRAME-RATE를 적힌 글자 그대로의 분수로 돌려줘야 한다.
 
     변형 다섯 — 1280x720(60.00) · 852x480(30.00) · 256x144(속성 없음) · 1920x1080(59.940) ·
@@ -262,7 +262,7 @@ def test_variant_frame_rate_reads_the_rate_of_the_variant_with_that_address(uri,
     assert variant_frame_rate(text, uri) == expected
 
 
-def test_parse_media_playlist_reads_program_date_time_per_segment():
+def test_parse_media_playlist_reads_program_date_time_per_segment() -> None:
     """parse_media_playlist는 세그먼트마다 바로 앞의 #EXT-X-PROGRAM-DATE-TIME을 유닉스 시각으로 돌려주고, 없거나 읽을 수 없으면 None을 돌려줘야 한다.
 
     세그먼트 넷 — 태그 있음(…17.062Z) · 있음(2초 뒤) · 없음 · 읽을 수 없는 값

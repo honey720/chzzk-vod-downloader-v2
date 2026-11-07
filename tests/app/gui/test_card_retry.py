@@ -45,10 +45,11 @@ from tests.app.gui.card_helpers import (
     shown,
     snapshot_top_levels,
 )
+from typing import Never
 
 
 @pytest.fixture(autouse=True)
-def _apply_production_qss(qapp):
+def _apply_production_qss(qapp) -> None:
     """실제 전역 QSS·스타일(호버 규칙 포함)을 태운다. ⚠️ function scope 유지."""
     theme.set_color_scheme("dark")
     qapp.setStyle(hold_style(theme.build_style()))  # 참조 보관 — 이중 해제 우회 (#243)
@@ -65,14 +66,14 @@ def _destroy_windows():
 
 
 @pytest.fixture(autouse=True)
-def _no_network(monkeypatch):
+def _no_network(monkeypatch) -> None:
     """카드의 크기 조회·메타데이터 조회가 네트워크를 타지 않게 막는다."""
 
     class _FailingSession:
-        def head(self, *a, **k):
+        def head(self, *a, **k) -> Never:
             raise RuntimeError("network disabled in tests")
 
-        def get(self, *a, **k):
+        def get(self, *a, **k) -> Never:
             raise RuntimeError("network disabled in tests")
 
     monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
@@ -94,7 +95,7 @@ def started(monkeypatch):
     return calls
 
 
-def _pump():
+def _pump() -> None:
     for _ in range(3):
         QApplication.processEvents()
 
@@ -142,7 +143,7 @@ def open_window_with_a_failed_card(tmp_path):
     return win, item, widget
 
 
-def click_retry(widget):
+def click_retry(widget) -> None:
     """카드의 ↻를 실제로 누른다 — 위젯 시그널 → 뷰 릴레이 → 메인 창 핸들러."""
     widget.retryButton.click()
     _pump()
@@ -171,7 +172,7 @@ def highlights_on_hover(qtbot, window, target) -> bool:
 
 
 class TestRetryOnlyReturnsToWaiting:
-    def test_retry_makes_the_card_waiting_and_starts_nothing(self, tmp_path, started):
+    def test_retry_makes_the_card_waiting_and_starts_nothing(self, tmp_path, started) -> None:
         """★ ↻ → 대기. `DownloadViewModel.start`가 불리지 않고 핸들도 없다."""
         win, item, widget = open_window_with_a_failed_card(tmp_path)
         click_retry(widget)
@@ -183,7 +184,7 @@ class TestRetryOnlyReturnsToWaiting:
 
     def test_the_global_button_then_takes_the_reverted_card_through_the_normal_path(
         self, tmp_path, started
-    ):
+    ) -> None:
         """되돌린 뒤 전역 다운로드 버튼 → 기존 시작 경로(`startDownload`)가 그 카드로 불린다."""
         win, item, widget = open_window_with_a_failed_card(tmp_path)
         click_retry(widget)
@@ -193,7 +194,7 @@ class TestRetryOnlyReturnsToWaiting:
         assert item.output_path, "기존 경로라면 산출물 경로가 조립돼 있어야 한다"
         assert os.path.dirname(item.output_path) == str(tmp_path)
 
-    def test_a_card_left_failed_is_not_taken_by_the_global_button(self, tmp_path, started):
+    def test_a_card_left_failed_is_not_taken_by_the_global_button(self, tmp_path, started) -> None:
         """실패인 채인 카드는 전역 버튼이 집어 가지 않는다 — 자동 포함 반대(정본)의 경계.
 
         실패 카드 1장뿐 -> 다운로드 버튼이 꺼져 있고(시작할 것이 없음 — #504), 눌러도 시작 · 안내 창 없음
@@ -205,7 +206,7 @@ class TestRetryOnlyReturnsToWaiting:
         assert item.downloadState is DownloadState.FAILED
         assert started == []
 
-    def test_retry_does_not_touch_preserved_segments(self, tmp_path, started):
+    def test_retry_does_not_touch_preserved_segments(self, tmp_path, started) -> None:
         """후처리 실패로 보존된 세그먼트 폴더(#185)는 대기로 되돌려도 그대로 남는다."""
         win, item, widget = open_window_with_a_failed_card(tmp_path)
         item.output_path = build_output_path(item.download_path, item.title, "1080")
@@ -224,7 +225,7 @@ class TestRetryOnlyReturnsToWaiting:
 class TestControlsFollowTheState:
     """§3.4 — 상태가 바뀌면 3행의 조작 요소가 전부 따라온다: 가시성·호버·커서·툴팁."""
 
-    def test_retry_button_goes_and_the_waiting_controls_come(self, tmp_path, started):
+    def test_retry_button_goes_and_the_waiting_controls_come(self, tmp_path, started) -> None:
         """↻·실패 사유가 사라지고 해상도 pill이 나온다 — 대기 매트릭스 그대로."""
         win, item, widget = open_window_with_a_failed_card(tmp_path)
         assert widget.statusLabel.isVisible() and not any(b.isVisible() for b in widget.buttons)
@@ -238,7 +239,7 @@ class TestControlsFollowTheState:
         assert widget.fileSizeLabel.isVisible(), "대기에서는 크기 슬롯이 다시 보인다"
         assert widget.progressBar.property("state") == "waiting"
 
-    def test_failure_tooltip_is_not_exposed_after_the_revert(self, tmp_path, started):
+    def test_failure_tooltip_is_not_exposed_after_the_revert(self, tmp_path, started) -> None:
         """실패 사유 툴팁을 들고 있던 라벨은 숨겨지고, 대기 카드의 보이는 표면에 실패 문구가 없다."""
         win, item, widget = open_window_with_a_failed_card(tmp_path)
         assert "Failed to save file" in widget.statusLabel.toolTip()
@@ -248,7 +249,7 @@ class TestControlsFollowTheState:
         ] + [b.toolTip() for b in widget.buttons if b.isVisible()]
         assert not any("Failed" in t for t in visible_tooltips), visible_tooltips
 
-    def test_title_and_path_surfaces_switch_to_waiting(self, tmp_path, started, qtbot):
+    def test_title_and_path_surfaces_switch_to_waiting(self, tmp_path, started, qtbot) -> None:
         """제목은 편집 가능(IBeam·호버 강조), 경로 라벨은 손가락 커서 — 실패에서는 둘 다 아니었다."""
         win, item, widget = open_window_with_a_failed_card(tmp_path)
         qtbot.addWidget(win)
@@ -267,7 +268,7 @@ class TestControlsFollowTheState:
         else:
             assert widget.pathButton.isVisible()  # 글자가 숨어도 진입점은 1행에 있다 (#309)
 
-    def test_pills_are_clickable_again_after_the_revert(self, tmp_path, started, qtbot):
+    def test_pills_are_clickable_again_after_the_revert(self, tmp_path, started, qtbot) -> None:
         """대기 카드의 pill은 눌러서 해상도를 고를 수 있다 — 호버 강조와 클릭 반응."""
         win, item, widget = open_window_with_a_failed_card(tmp_path)
         qtbot.addWidget(win)
@@ -282,7 +283,9 @@ class TestControlsFollowTheState:
 
 
 class TestRetryChecksTheFinishedSections:
-    def test_retry_press_drops_a_finished_section_whose_file_is_gone(self, tmp_path, started):
+    def test_retry_press_drops_a_finished_section_whose_file_is_gone(
+        self, tmp_path, started
+    ) -> None:
         """실패 카드의 ↻를 누르면 끝낸 구간 가운데 파일이 없는 것을 끝나지 않은 것으로 돌려야 한다 (#309).
 
         실패 카드에 남긴 것: 구간 셋, 끝낸 구간 {0, 2}. 0번 파일은 있고 2번 파일은 없다

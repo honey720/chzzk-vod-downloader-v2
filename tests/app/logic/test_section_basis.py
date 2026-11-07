@@ -15,6 +15,7 @@ from app.section_input.basis import SectionBasis, SectionBasisError, probe_secti
 from core.models.content import ContentType, StreamKey
 from core.media.mp4 import pending_mp4_head
 from core.media.mp4_index import Mp4Head, Mp4Summary
+from typing import Never
 
 
 def _item(content_type: str, **extra) -> SimpleNamespace:
@@ -30,7 +31,7 @@ def _item(content_type: str, **extra) -> SimpleNamespace:
     return SimpleNamespace(**values)
 
 
-def test_encoded_vod_reads_the_frame_rate_and_length_from_the_moov(monkeypatch):
+def test_encoded_vod_reads_the_frame_rate_and_length_from_the_moov(monkeypatch) -> None:
     """인코딩 완료 VOD는 고른 해상도의 mp4에서 moov의 바이트를 받아 가볍게 읽은 값을 돌려줘야 한다.
 
     받은 moov를 가볍게 읽은 값: fps 60000/1001, 길이 1234.5초
@@ -50,7 +51,7 @@ def test_encoded_vod_reads_the_frame_rate_and_length_from_the_moov(monkeypatch):
         assert raw is raws[0]
         return Mp4Summary(fps=Fraction(60000, 1001), duration=1234.5, frames=3)
 
-    def no_index(raw):
+    def no_index(raw) -> Never:
         raise AssertionError("조회가 색인을 만들었다")
 
     monkeypatch.setattr(section_basis, "fetch_mp4_raw", fetch)
@@ -66,11 +67,13 @@ def test_encoded_vod_reads_the_frame_rate_and_length_from_the_moov(monkeypatch):
     assert basis.mp4_head is None
 
 
-def _no_fetch(url):
+def _no_fetch(url) -> Never:
     raise AssertionError("moov를 다시 받았다")
 
 
-def test_encoded_vod_lookup_reuses_the_bytes_the_card_holds_for_the_same_address(monkeypatch):
+def test_encoded_vod_lookup_reuses_the_bytes_the_card_holds_for_the_same_address(
+    monkeypatch,
+) -> None:
     """카드가 지금의 주소에서 받은 moov 바이트를 쥐고 있으면 조회가 다시 받지 않고 그것을 읽어야 한다.
 
     카드의 section_head == (base_url, 아직 해석하지 않은 moov), moov 받기를 부르면 실패하게 바꿈
@@ -87,7 +90,9 @@ def test_encoded_vod_lookup_reuses_the_bytes_the_card_holds_for_the_same_address
     assert basis.mp4_pending is held
 
 
-def test_encoded_vod_lookup_reuses_the_index_the_card_holds_for_the_same_address(monkeypatch):
+def test_encoded_vod_lookup_reuses_the_index_the_card_holds_for_the_same_address(
+    monkeypatch,
+) -> None:
     """카드가 지금의 주소의 색인을 쥐고 있으면 조회가 받지도 읽지도 않고 색인의 값을 돌려줘야 한다.
 
     카드의 section_head == (base_url, Mp4Head(fps 60, 길이 99.5초)), 받기 · 가벼운 해석을 부르면 실패
@@ -103,7 +108,9 @@ def test_encoded_vod_lookup_reuses_the_index_the_card_holds_for_the_same_address
     assert basis.mp4_head is held
 
 
-def test_encoded_vod_lookup_fetches_again_when_the_held_moov_is_of_another_address(monkeypatch):
+def test_encoded_vod_lookup_fetches_again_when_the_held_moov_is_of_another_address(
+    monkeypatch,
+) -> None:
     """카드가 쥔 moov가 다른 주소의 것이면 조회가 지금의 주소에서 다시 받아야 한다.
 
     카드의 section_head == ("https://media.invalid/other", 아직 해석하지 않은 moov)
@@ -127,7 +134,9 @@ def test_encoded_vod_lookup_fetches_again_when_the_held_moov_is_of_another_addre
     assert basis.mp4_pending.raw is fresh
 
 
-def test_encoded_vod_lookup_uses_the_index_when_the_held_moov_was_parsed_meanwhile(monkeypatch):
+def test_encoded_vod_lookup_uses_the_index_when_the_held_moov_was_parsed_meanwhile(
+    monkeypatch,
+) -> None:
     """카드가 쥔 moov가 그사이 해석됐으면 조회가 받지도 읽지도 않고 그 색인의 값을 돌려줘야 한다.
 
     카드의 section_head == (base_url, 이미 get()으로 해석한 PendingMp4Head — fps 60 · 길이 99.5초)
@@ -146,7 +155,7 @@ def test_encoded_vod_lookup_uses_the_index_when_the_held_moov_was_parsed_meanwhi
     assert basis.mp4_head is head and basis.mp4_pending is None
 
 
-def test_lookup_builds_the_index_only_when_asked(monkeypatch):
+def test_lookup_builds_the_index_only_when_asked(monkeypatch) -> None:
     """index=True로 부른 mp4 조회만 색인을 만들어 head에 실어야 한다.
 
     받은 바이트를 색인으로 만드는 자리를 표식을 돌려주는 대역으로 바꿈
@@ -166,7 +175,7 @@ def test_lookup_builds_the_index_only_when_asked(monkeypatch):
     assert plain.head is None and plain.basis.mp4_head is None
 
 
-def test_replay_uses_the_picked_variant_and_its_declared_frame_rate(monkeypatch):
+def test_replay_uses_the_picked_variant_and_its_declared_frame_rate(monkeypatch) -> None:
     """인코딩 전 다시보기는 고른 변형의 플레이리스트에서 읽고, 선언된 프레임률을 넘겨야 한다.
 
     고른 변형 StreamKey(1920, 1080, 60.0, 6336000), 마스터의 선언값 60
@@ -186,7 +195,7 @@ def test_replay_uses_the_picked_variant_and_its_declared_frame_rate(monkeypatch)
         seen["head_args"] = (args, kwargs)
         return SimpleNamespace(init="init", playlist="playlist")
 
-    def frames(head, url, index):
+    def frames(head, url, index) -> str:
         seen.setdefault("segments", []).append((url, index))
         return f"segment{index}"
 
@@ -218,7 +227,9 @@ def test_replay_uses_the_picked_variant_and_its_declared_frame_rate(monkeypatch)
     ]
 
 
-def test_encrypted_vod_decrypts_with_the_resolved_key_and_keeps_it_out_of_the_result(monkeypatch):
+def test_encrypted_vod_decrypts_with_the_resolved_key_and_keeps_it_out_of_the_result(
+    monkeypatch,
+) -> None:
     """암호화 VOD는 리졸버로 받은 키로 세그먼트를 읽고, 돌려주는 값에 키가 없어야 한다.
 
     매니페스트의 선언값 {base_url: 30}, 키 b"K" * 16
@@ -234,7 +245,7 @@ def test_encrypted_vod_decrypts_with_the_resolved_key_and_keeps_it_out_of_the_re
         seen["head_args"] = (args, kwargs)
         return SimpleNamespace(playlist="playlist")
 
-    def streams(head, url, index, used_key):
+    def streams(head, url, index, used_key) -> str:
         seen.setdefault("keys", []).append(used_key)
         return f"segment{index}"
 
@@ -273,7 +284,9 @@ def test_encrypted_vod_decrypts_with_the_resolved_key_and_keeps_it_out_of_the_re
     assert seen["choose"] == (["segment0"], Fraction(30))
 
 
-def test_encrypted_vod_measures_the_frame_rate_when_the_manifest_cannot_be_read(monkeypatch):
+def test_encrypted_vod_measures_the_frame_rate_when_the_manifest_cannot_be_read(
+    monkeypatch,
+) -> None:
     """선언된 프레임률을 읽지 못하면 선언값 없이(None) 첫 세그먼트에서 재게 해야 한다.
 
     영상 정보 조회가 예외를 던짐
@@ -281,7 +294,7 @@ def test_encrypted_vod_measures_the_frame_rate_when_the_manifest_cannot_be_read(
     """
     seen = {}
 
-    def broken(*args):
+    def broken(*args) -> Never:
         raise RuntimeError("조회 실패(대역)")
 
     def choose(segments, declared):
@@ -308,7 +321,7 @@ def test_encrypted_vod_measures_the_frame_rate_when_the_manifest_cannot_be_read(
 
 
 @pytest.mark.parametrize("content_type", ["clip", "live", ""])
-def test_types_without_sections_are_refused(content_type):
+def test_types_without_sections_are_refused(content_type) -> None:
     """구간 기능이 없는 타입은 조회하지 않고 SectionBasisError여야 한다.
 
     content_type = "clip" · "live" · ""

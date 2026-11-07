@@ -21,6 +21,7 @@ from app.network import NetworkManager
 from app.viewmodels.content_viewmodel import FetchJob
 from core.models.content import VideoInfo
 from tests.mocks.mock_http import MockResponse
+from typing import Never
 
 COOKIES = {"NID_AUT": "REDACTED", "NID_SES": "REDACTED"}
 VOD_URL = "https://chzzk.naver.com/video/13714380"
@@ -54,7 +55,7 @@ def _run_and_capture(worker: FetchJob) -> tuple[list, list]:
 )
 def test_encrypted_vod_with_entitlement_takes_sea_path(
     monkeypatch, load_mock_response, fixture_name
-):
+) -> None:
     """AES(SEA) 암호화 VOD는 권한이 있으면 SEA 경로로 조회된다 (#57).
 
     #55에서는 조기 거부했지만 SEA는 유저 본인 쿠키로 키를 받아 복호화할 수
@@ -84,7 +85,7 @@ def test_encrypted_vod_with_entitlement_takes_sea_path(
 
 def test_encrypted_vod_without_entitlement_raises_membership_error(
     monkeypatch, load_mock_response
-):
+) -> None:
     """암호화 VOD라도 권한이 없으면(inKey null) 멤버십 안내가 나와야 한다 (#57)."""
     body = load_mock_response("video_member_only_13714380.json")
     monkeypatch.setattr(network._session, "get", lambda url, **kwargs: MockResponse(text=body))
@@ -95,7 +96,7 @@ def test_encrypted_vod_without_entitlement_raises_membership_error(
     assert errors == [f"{VOD_URL}\nChannel membership required"]
 
 
-def test_member_only_without_in_key_raises_membership_error(monkeypatch):
+def test_member_only_without_in_key_raises_membership_error(monkeypatch) -> None:
     """비암호화 멤버십 전용 VOD(inKey null)이면 멤버십 안내 에러가 발생해야 한다."""
 
     def fake_get_video_info(video_no, cookies):
@@ -118,7 +119,7 @@ def test_member_only_without_in_key_raises_membership_error(monkeypatch):
     assert errors == [f"{VOD_URL}\nChannel membership required"]
 
 
-def test_adult_without_video_id_keeps_invalid_cookies_error(monkeypatch):
+def test_adult_without_video_id_keeps_invalid_cookies_error(monkeypatch) -> None:
     """성인 VOD(adult=True, videoId 없음)의 기존 에러 동작이 유지돼야 한다 (회귀 방지)."""
 
     def fake_get_video_info(video_no, cookies):
@@ -141,7 +142,7 @@ def test_adult_without_video_id_keeps_invalid_cookies_error(monkeypatch):
     assert errors == [f"{VOD_URL}\nInvalid cookies value"]
 
 
-def test_dash_path_passes_cookies_to_manifest_request(monkeypatch):
+def test_dash_path_passes_cookies_to_manifest_request(monkeypatch) -> None:
     """inKey가 있는 비암호화 정상 경로에서 쿠키가 매니페스트 요청까지 전달돼야 한다 (#55)."""
     manifest_calls = []
 
@@ -176,7 +177,7 @@ def test_dash_path_passes_cookies_to_manifest_request(monkeypatch):
     assert content_type == "video"
 
 
-def test_run_emits_error_signal_in_legacy_format():
+def test_run_emits_error_signal_in_legacy_format() -> None:
     """run() 실패 시 error 시그널이 기존 "<url>\\n<메시지>" 형식을 유지해야 한다 (#72).
 
     번역기가 로드되지 않은 테스트 환경에서 tr()은 원문 키를 그대로 돌려주므로,
@@ -192,7 +193,7 @@ def test_run_emits_error_signal_in_legacy_format():
     assert captured == [f"{bad_url}\nInvalid VOD URL"]
 
 
-def test_run_error_hides_raw_exception_details(monkeypatch):
+def test_run_error_hides_raw_exception_details(monkeypatch) -> None:
     """MetadataError가 아닌 예외의 원시 문자열은 노출되지 않아야 한다 (#126).
 
     내부 API URL 등이 섞인 str(e) 대신 일반 안내 키가 실려야 하고,
@@ -200,7 +201,7 @@ def test_run_error_hides_raw_exception_details(monkeypatch):
     """
     from core.chzzk import metadata_service
 
-    def boom(*args, **kwargs):
+    def boom(*args, **kwargs) -> Never:
         raise RuntimeError("secret detail https://api.chzzk.naver.com/internal")
 
     monkeypatch.setattr(metadata_service, "fetch_content", boom)
@@ -214,7 +215,9 @@ def test_run_error_hides_raw_exception_details(monkeypatch):
     assert "secret detail" not in captured[0]
 
 
-def test_run_failure_does_not_leak_cookie_values_to_log_or_error_signal(monkeypatch, caplog):
+def test_run_failure_does_not_leak_cookie_values_to_log_or_error_signal(
+    monkeypatch, caplog
+) -> None:
     """실패 경로에서도 쿠키 값은 error 시그널·로그(traceback 포함) 어디에도 남지 않는다 (SPEC §7.2).
 
     run()의 실패 분기는 유저 시그널은 일반 안내로 가리지만(#126) 디버깅을 위해
@@ -227,7 +230,7 @@ def test_run_failure_does_not_leak_cookie_values_to_log_or_error_signal(monkeypa
 
     from core.chzzk import metadata_service
 
-    def boom(*args, **kwargs):
+    def boom(*args, **kwargs) -> Never:
         raise RuntimeError("boom")
 
     monkeypatch.setattr(metadata_service, "fetch_content", boom)
@@ -244,7 +247,7 @@ def test_run_failure_does_not_leak_cookie_values_to_log_or_error_signal(monkeypa
         assert value not in log_text
 
 
-def test_run_success_does_not_leak_cookie_values_to_log(monkeypatch, caplog):
+def test_run_success_does_not_leak_cookie_values_to_log(monkeypatch, caplog) -> None:
     """정상 경로(쿠키가 실제로 매니페스트 요청까지 전달됨)에서도 로그에 쿠키 값이 남지 않는다."""
     secret_cookies = {"NID_AUT": "SECRET-AUT-9f8e7d6c", "NID_SES": "SECRET-SES-1a2b3c4d"}
 

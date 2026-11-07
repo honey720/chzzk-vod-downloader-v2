@@ -169,7 +169,7 @@ class M3U8Downloader(BaseDownloader):
     # 테스트가 True로 두고 cut_results를 정합 판정(check_cut)에 넘긴다
     _inspect_cuts: bool = False
 
-    def __init__(self, data, logger, **callbacks):
+    def __init__(self, data, logger, **callbacks) -> None:
         super().__init__(data, logger, **callbacks)
         self._cache_recovery: set[int] = set()
         # 세그먼트마다 이 실행에서 받은 손상 응답 — 로그 줄을 묶는다 (#375)

@@ -85,7 +85,7 @@ class NetworkAttemptBlocked(RuntimeError):
 class _NetworkGuard:
     """나가는 연결의 시도를 막고 (어느 테스트가, 어디로) 기록한다. 스레드 안전."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """기록 리스트와 그것을 지키는 락, 그리고 시도를 귀속시킬 현재 테스트 이름을 준비한다."""
         self._lock = threading.Lock()
         self._attempts: list[tuple[str, str]] = []
@@ -124,15 +124,15 @@ def network_guard():
     """
     guard = _NetworkGuard()
 
-    def blocked_connect(self, address, *args, **kwargs):
+    def blocked_connect(self, address, *args, **kwargs) -> None:
         """socket.socket.connect / connect_ex 자리 — 주소를 기록하고 연결 없이 예외."""
         guard.record(_describe_socket_target(address))
 
-    def blocked_create_connection(address, *args, **kwargs):
+    def blocked_create_connection(address, *args, **kwargs) -> None:
         """socket.create_connection 자리 — urllib3 등 고수준 경로가 여기로 온다."""
         guard.record(_describe_socket_target(address))
 
-    def blocked_send(self, request, *args, **kwargs):
+    def blocked_send(self, request, *args, **kwargs) -> None:
         """requests HTTPAdapter.send 자리 — 소켓에 닿기 전, 메서드와 URL만 기록하고 예외."""
         guard.record(f"{request.method} {request.url}")
 
@@ -174,7 +174,7 @@ def _no_network_attempts(network_guard, request):
 # (config_store 등, 저장 이력 검증 같은 자기 목적이 있다)는 그대로 둔다 —
 # 같은 값으로 다시 monkeypatch되어도 무해하다.
 @pytest.fixture(autouse=True)
-def _isolate_real_config(tmp_path, monkeypatch):
+def _isolate_real_config(tmp_path, monkeypatch) -> None:
     """모든 테스트에서 앱 데이터 폴더(설정 DB · 옛 config.json · logs/)를 임시 위치로 돌린다.
 
     메모리 모드(코드가 모르는 DB 버전)도 테스트마다 끈다 — 앞 테스트가 켠 채 남으면 뒤 테스트가
@@ -195,7 +195,7 @@ def _isolate_real_config(tmp_path, monkeypatch):
 # (tests/core/sources/test_choose_temp_dir.py)만 이 픽스처를 지역적으로
 # 되돌려(monkeypatch로 실제 choose_temp_dir를 복원) 실 프로브를 태운다.
 @pytest.fixture(autouse=True)
-def _isolate_choose_temp_dir(monkeypatch):
+def _isolate_choose_temp_dir(monkeypatch) -> None:
     """기본은 임시 폴더를 산출물 폴더에 그대로 두는 기존 동작으로 고정한다."""
 
     def _default_temp_dir(output_path: str) -> str:

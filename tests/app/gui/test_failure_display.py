@@ -29,10 +29,11 @@ from core.services.download_service import DownloadService
 from app.download.logger import DownloadLogger
 from tests.mocks.engine_side import engine_side
 from tests.app.gui.card_helpers import hold_style
+from typing import Never
 
 
 @pytest.fixture(autouse=True)
-def _apply_dark_card_qss(qapp):
+def _apply_dark_card_qss(qapp) -> None:
     """카드 테두리 색 검증(아래 실패 카드 border_pixel 확인)이 실제
     프로덕션 스타일시트를 필요로 해서 이 파일에만 국소 적용한다.
 
@@ -51,14 +52,14 @@ def _apply_dark_card_qss(qapp):
 
 
 @pytest.fixture(autouse=True)
-def no_network(monkeypatch):
+def no_network(monkeypatch) -> None:
     """위젯의 썸네일·파일 크기 조회 스레드가 실네트워크에 나가지 않게 차단한다."""
 
     class _FailingSession:
-        def head(self, *args, **kwargs):
+        def head(self, *args, **kwargs) -> Never:
             raise RuntimeError("network disabled in tests")
 
-        def get(self, *args, **kwargs):
+        def get(self, *args, **kwargs) -> Never:
             raise RuntimeError("network disabled in tests")
 
     monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
@@ -67,7 +68,7 @@ def no_network(monkeypatch):
 class FakeHandle:
     """DownloadHandle 대역 — 다운로드 쪽이 쓰는 인터페이스만 제공한다."""
 
-    def __init__(self, data):
+    def __init__(self, data) -> None:
         self.data = data
 
     def elapsed_seconds(self) -> float:
@@ -80,7 +81,7 @@ class FakeHandle:
 class FakeService:
     """DownloadService 대역 — submit 인자를 기록하고 페이크 핸들을 돌려준다."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.submissions: list[dict] = []
 
     def submit(self, content, **kwargs):
@@ -95,7 +96,7 @@ class RecordingService:
     viewmodel의 공개 API에는 핸들이 없으므로(isDownloading만) 서비스 쪽에서 잡는다.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._real = DownloadService()
         self.handles: list = []
 
@@ -105,13 +106,13 @@ class RecordingService:
         self.handles.append(handle)
         return handle
 
-    def abandon(self, handle):
+    def abandon(self, handle) -> None:
         """실제 서비스에 위임 — 이 테스트에서는 불리지 않아야 하지만 계약은 갖춘다."""
         self._real.abandon(handle)
 
 
 @pytest.fixture(autouse=True)
-def quiet_download_logger(monkeypatch):
+def quiet_download_logger(monkeypatch) -> None:
     """DownloadLogger의 파일 생성을 막는다 — 클래스 메서드 교체(모듈 경로 무의존).
 
     logger가 None이면 모든 기록 메서드가 무동작이다. 모듈 경로 문자열
@@ -130,7 +131,7 @@ class WindowHarness(QObject):
     연결의 수명 함정 — CLAUDE 규칙).
     """
 
-    def __init__(self, manager: ContentViewModel, viewmodel: DownloadViewModel):
+    def __init__(self, manager: ContentViewModel, viewmodel: DownloadViewModel) -> None:
         super().__init__()
         self.manager = manager
         self.viewmodel = viewmodel
@@ -183,7 +184,7 @@ def wired(qapp, tmp_path):
     qapp.processEvents()
 
 
-def test_failed_card_shows_failure_and_batch_continues(wired, qapp, tmp_path):
+def test_failed_card_shows_failure_and_batch_continues(wired, qapp, tmp_path) -> None:
     """완료 조건 ①②③: 실패가 카드에 사유와 함께 표시되고(정지와 구분),
     원시 문자열이 노출되지 않으며, 배치가 다음 항목으로 계속된다."""
     manager, service, _viewmodel, harness, finished_all, view = wired
@@ -226,7 +227,7 @@ def test_failed_card_shows_failure_and_batch_continues(wired, qapp, tmp_path):
     assert item2.downloadState is DownloadState.RUNNING
 
 
-def test_stop_still_shows_waiting_not_failed(wired, qapp, tmp_path):
+def test_stop_still_shows_waiting_not_failed(wired, qapp, tmp_path) -> None:
     """유저의 정지는 여전히 대기로 표시된다 — 실패와 시각적으로 구분 (#134)."""
     manager, _service, viewmodel, harness, _finished_all, view = wired
 
@@ -246,7 +247,7 @@ def test_stop_still_shows_waiting_not_failed(wired, qapp, tmp_path):
     assert "Download failed" not in widget.statusLabel.text()
 
 
-def test_all_failed_batch_reaches_end(wired, qapp, tmp_path):
+def test_all_failed_batch_reaches_end(wired, qapp, tmp_path) -> None:
     """마지막 항목이 실패해도 배치 종료 신호가 발화한다 — 조용한 멈춤 없음."""
     manager, service, _viewmodel, harness, finished_all, _view = wired
 
@@ -264,7 +265,7 @@ def test_all_failed_batch_reaches_end(wired, qapp, tmp_path):
     assert manager.downloadResultCounts() == (0, 1)
 
 
-def test_download_result_counts_reflect_screen_state(wired, qapp, tmp_path):
+def test_download_result_counts_reflect_screen_state(wired, qapp, tmp_path) -> None:
     """배치 종료 안내 분기용 집계 (#128 후속 ⑤): 화면(모델)의 완료·실패 수를 센다.
 
     별도 배치 장부가 아니라 화면 상태를 세는 이유: 안내의 역할은 지금 화면에
@@ -291,7 +292,7 @@ class _HeadResponse:
 
     headers = {"content-length": str(4 * 1024 * 1024)}
 
-    def raise_for_status(self):
+    def raise_for_status(self) -> None:
         pass
 
 
@@ -307,11 +308,11 @@ class _DeadMountSession:
     def head(self, url, **kwargs):
         return _HeadResponse()
 
-    def get(self, url, **kwargs):
+    def get(self, url, **kwargs) -> Never:
         raise OSError(9, "Bad file descriptor")
 
 
-def test_dead_mount_worker_failure_does_not_freeze_app(qapp, tmp_path, monkeypatch):
+def test_dead_mount_worker_failure_does_not_freeze_app(qapp, tmp_path, monkeypatch) -> None:
     """프리즈 회귀 재현 (PR #135 코멘트): 워커가 OSError로 죽는 실패는 run 루프가
     살아 있는 중에 통지된다. 종점이 모델을 FAILED로 전이하면 루프가 끝나지 않고
     (WAITING만 종료 신호, FAILED→WAITING 불허), handle.wait()가 메인 스레드를

@@ -52,7 +52,9 @@ class _PausingResponse:
     같은 시계로 확인한 뒤에 푼다 — 타이머의 길이에 기대지 않는다.
     """
 
-    def __init__(self, body: bytes, model, pause_before_chunk: int, marks: dict[str, float]):
+    def __init__(
+        self, body: bytes, model, pause_before_chunk: int, marks: dict[str, float]
+    ) -> None:
         self._body = body
         self._model = model
         self._pause_before_chunk = pause_before_chunk
@@ -64,7 +66,7 @@ class _PausingResponse:
         self._marks["resumed_at"] = time.perf_counter()
         self._model.resume()
 
-    def raise_for_status(self):
+    def raise_for_status(self) -> None:
         pass
 
     def iter_content(self, chunk_size=CHUNK):
@@ -77,7 +79,7 @@ class _PausingResponse:
 
 
 class _PausingSession:
-    def __init__(self, body: bytes, model, pause_before_chunk: int):
+    def __init__(self, body: bytes, model, pause_before_chunk: int) -> None:
         self.marks: dict[str, float] = {}  # 일시정지를 건 시각(paused_at) · 푼 시각(resumed_at)
         self._args = (body, model, pause_before_chunk, self.marks)
 
@@ -85,7 +87,7 @@ class _PausingSession:
         return _PausingResponse(*self._args)
 
 
-def test_time_spent_paused_is_left_out_of_a_parts_speed(tmp_path, monkeypatch):
+def test_time_spent_paused_is_left_out_of_a_parts_speed(tmp_path, monkeypatch) -> None:
     """파트를 받는 도중 일시정지한 시간은 그 파트의 속도 판정에 들지 않아야 한다 — 재개 뒤 느린 속도로 끊기지 않는다.
 
     12청크(8192바이트씩)를 곧바로 흘리는 응답. 둘째 청크 뒤에 일시정지하고 3.5초 뒤 재개
@@ -117,26 +119,26 @@ def test_time_spent_paused_is_left_out_of_a_parts_speed(tmp_path, monkeypatch):
 class _Recording(RunLogger):
     """엔진이 부른 것 가운데 이 파일이 재는 것을 시각과 함께 적는다."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.speed_lines: list[float] = []  # 스레드 수 · 속도 로그를 남긴 시각
         self.stopped: list[str] = []
         self.stopped_after_failure: list[str] = []
         self.started_at: list[float] = []  # 받기 시작 로그(log_download_start)의 시각
 
-    def log_download_start(self, *args):
+    def log_download_start(self, *args) -> None:
         self.started_at.append(time.perf_counter())
 
-    def log_thread_adjust(self, active_threads, avg_speed):
+    def log_thread_adjust(self, active_threads, avg_speed) -> None:
         self.speed_lines.append(time.perf_counter())
 
-    def log_thread_debug(self, active_threads, download_speed, avg_speed):
+    def log_thread_debug(self, active_threads, download_speed, avg_speed) -> None:
         self.speed_lines.append(time.perf_counter())
 
-    def log_stopped(self, phase):
+    def log_stopped(self, phase) -> None:
         self.stopped.append(phase)
 
-    def log_stopped_after_failure(self, phase):
+    def log_stopped_after_failure(self, phase) -> None:
         self.stopped_after_failure.append(phase)
 
 
@@ -178,7 +180,7 @@ def _recording_engine(tmp_path, monkeypatch, throttle: float):
 
 def test_engine_paused_while_preparing_starts_receiving_only_after_it_is_resumed(
     tmp_path, monkeypatch
-):
+) -> None:
     """준비하는 동안 일시정지됐으면 준비가 끝나도 받기를 띄우지 않고, 재개하면 그때 받아 끝내야 한다.
 
     준비(prepare)가 도는 동안 일시정지. 준비가 끝난 0.6초 뒤에 적고 재개
@@ -227,7 +229,7 @@ def test_engine_paused_while_preparing_starts_receiving_only_after_it_is_resumed
     assert output.read_bytes() == CONTENT
 
 
-def test_no_thread_or_speed_line_is_logged_while_paused(tmp_path, monkeypatch):
+def test_no_thread_or_speed_line_is_logged_while_paused(tmp_path, monkeypatch) -> None:
     """일시정지 중에는 스레드 수 · 속도 로그를 남기지 않아야 한다.
 
     청크마다 5ms 쉬는 가짜 세션으로 받는 도중 0.3초에 일시정지, 2.5초 뒤 재개
@@ -257,7 +259,7 @@ def test_no_thread_or_speed_line_is_logged_while_paused(tmp_path, monkeypatch):
 
 def test_stopping_while_receiving_tells_the_logger_it_stopped_during_transfer(
     tmp_path, monkeypatch
-):
+) -> None:
     """받는 도중 중단하면 로거에 전송 단계에서 중단됐다고 한 번 알려야 한다.
 
     청크마다 5ms 쉬는 가짜 세션으로 받는 도중 0.25초에 중단
@@ -279,7 +281,7 @@ def test_stopping_while_receiving_tells_the_logger_it_stopped_during_transfer(
 
 def test_engine_that_stops_itself_after_a_failure_does_not_log_a_stop_by_the_user(
     tmp_path, monkeypatch
-):
+) -> None:
     """받는 도중 엔진이 실패로 스스로 멈추면 사용자가 멈췄다는 줄이 아니라 실패로 멈췄다는 줄을 남겨야 한다.
 
     청크마다 5ms 쉬는 가짜 세션으로 받는 도중 0.25초에 회복할 수 없는 실패를 알림(_fail_fatally)
@@ -302,7 +304,7 @@ def test_engine_that_stops_itself_after_a_failure_does_not_log_a_stop_by_the_use
 
 def test_user_stop_of_a_run_after_a_failed_run_is_logged_as_a_stop_by_the_user(
     tmp_path, monkeypatch
-):
+) -> None:
     """실패로 멈춘 엔진을 다시 돌려 사용자가 멈추면 사용자가 멈췄다는 줄을 남겨야 한다.
 
     같은 엔진. 첫 실행: 받는 도중 실패로 멈춤. 둘째 실행: 받는 도중 0.25초에 중단
@@ -327,7 +329,9 @@ def test_user_stop_of_a_run_after_a_failed_run_is_logged_as_a_stop_by_the_user(
     assert (logger.stopped, logger.stopped_after_failure) == (["transfer"], ["transfer"])
 
 
-def test_stopping_while_preparing_tells_the_logger_it_stopped_during_prepare(tmp_path, monkeypatch):
+def test_stopping_while_preparing_tells_the_logger_it_stopped_during_prepare(
+    tmp_path, monkeypatch
+) -> None:
     """준비하는 동안 중단하면 로거에 준비 단계에서 중단됐다고 알려야 하고, 받기를 띄우지 않아야 한다.
 
     준비(prepare)가 도는 동안 중단
@@ -357,7 +361,7 @@ def test_cut_stage_times_leave_out_the_pause_and_the_pause_is_reported_apart(
     server,  # noqa: F811
     tmp_path,
     monkeypatch,
-):
+) -> None:
     """컷의 단계 시간에는 일시정지한 시간이 들지 않아야 하고, 그 합은 따로 넘겨야 한다.
 
     구간 하나(프레임 35~80). 머리 재인코딩의 ffmpeg가 뜬 직후 일시정지하고 1.5초 뒤 재개
@@ -392,7 +396,7 @@ def test_cut_stage_times_leave_out_the_pause_and_the_pause_is_reported_apart(
     assert (run.finished, run.failures) == (1, [])
 
 
-def test_cut_without_a_pause_reports_no_paused_time(server, tmp_path):  # noqa: F811
+def test_cut_without_a_pause_reports_no_paused_time(server, tmp_path) -> None:  # noqa: F811
     """일시정지 없이 자른 구간은 일시정지한 시간을 넘기지 않아야 한다(그 인자를 모르는 로거가 깨지지 않는다).
 
     구간 하나(프레임 35~80)를 일시정지 없이 받음 -> log_cut_stages의 인자 3개
@@ -408,7 +412,7 @@ def test_stopping_during_the_cut_tells_the_logger_it_stopped_during_postprocess(
     server,  # noqa: F811
     tmp_path,
     monkeypatch,
-):
+) -> None:
     """구간을 자르는 도중 중단하면 로거에 후처리 단계에서 중단됐다고 알려야 한다.
 
     구간 하나(프레임 35~80). 머리 재인코딩의 ffmpeg가 뜬 직후 중단
@@ -432,7 +436,7 @@ def test_stopping_during_the_cut_tells_the_logger_it_stopped_during_postprocess(
 
 def test_monitor_measures_nothing_when_the_pause_lands_between_its_check_and_its_work(
     tmp_path, monkeypatch
-):
+) -> None:
     """관측은 일시정지 상태로 바뀐 직후(일시정지 신호가 아직 내려가기 전)에도 스레드 수 · 속도를 재지 않아야 한다.
 
     상태는 PAUSED인데 일시정지 신호(pause_event)는 아직 켜져 있는 순간을 만든다 — 일시정지는
@@ -466,18 +470,18 @@ def test_monitor_measures_nothing_when_the_pause_lands_between_its_check_and_its
 class _SpeedSpy:
     """엔진의 로거를 감싸 스레드 수 · 속도 로그와 중단 알림만 가로챈다 — 나머지는 그대로 넘긴다."""
 
-    def __init__(self, inner):
+    def __init__(self, inner) -> None:
         self._inner = inner
         self.speed_lines: list[tuple] = []
         self.stopped: list[str] = []
 
-    def log_thread_adjust(self, active_threads, avg_speed):
+    def log_thread_adjust(self, active_threads, avg_speed) -> None:
         self.speed_lines.append(("adjust", active_threads, avg_speed))
 
-    def log_thread_debug(self, active_threads, download_speed, avg_speed):
+    def log_thread_debug(self, active_threads, download_speed, avg_speed) -> None:
         self.speed_lines.append(("debug", active_threads, download_speed))
 
-    def log_stopped(self, phase):
+    def log_stopped(self, phase) -> None:
         self.stopped.append(phase)
 
     def __getattr__(self, name):
@@ -499,7 +503,9 @@ def _aes_engine(tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     "make", [_file_engine, _m3u8_engine, _aes_engine], ids=["file", "m3u8", "hls_aes"]
 )
-def test_stopping_a_paused_download_logs_no_thread_or_speed_line(tmp_path, monkeypatch, make):
+def test_stopping_a_paused_download_logs_no_thread_or_speed_line(
+    tmp_path, monkeypatch, make
+) -> None:
     """일시정지한 다운로드를 중단하면 중단까지 스레드 수 · 속도 로그가 한 줄도 남지 않아야 한다.
 
     받는 스레드를 붙잡아 둔 채(전송이 끝나지 않는다) 0.3초에 일시정지, 관측이 일시정지에 들어설
@@ -535,7 +541,9 @@ def test_stopping_a_paused_download_logs_no_thread_or_speed_line(tmp_path, monke
     assert spy.stopped == ["transfer"]
 
 
-def test_speed_measured_right_after_resuming_leaves_out_the_paused_time(tmp_path, monkeypatch):
+def test_speed_measured_right_after_resuming_leaves_out_the_paused_time(
+    tmp_path, monkeypatch
+) -> None:
     """재개 직후의 속도는 일시정지한 시간을 뺀, 실제로 받던 시간으로 재야 한다.
 
     직전 측정 뒤 0.5초 동안 4MiB를 받고 → 1초 일시정지 → 재개 직후에 측정
@@ -558,7 +566,9 @@ def test_speed_measured_right_after_resuming_leaves_out_the_paused_time(tmp_path
     assert 6.0 < data.speed_mb < 10.0
 
 
-def test_transfer_time_leaves_out_the_pause_and_the_pause_is_reported_apart(tmp_path, monkeypatch):
+def test_transfer_time_leaves_out_the_pause_and_the_pause_is_reported_apart(
+    tmp_path, monkeypatch
+) -> None:
     """전송 시간에는 일시정지한 시간이 들지 않아야 하고, 그 합은 전송 줄과 함께 따로 넘겨야 한다.
 
     청크마다 5ms 쉬는 가짜 세션으로 받는 도중 0.3초에 일시정지, 1.2초 뒤 재개해 끝까지 받음
@@ -594,7 +604,7 @@ def test_transfer_time_leaves_out_the_pause_and_the_pause_is_reported_apart(tmp_
 
 def test_monitor_logs_the_speed_over_the_time_spent_receiving_right_after_a_resume(
     tmp_path, monkeypatch
-):
+) -> None:
     """관측 루프가 재개 직후 남기는 속도 줄의 값은 일시정지한 시간을 뺀, 받던 시간으로 나눈 값이어야 한다.
 
     관측 루프를 돌림. 첫 측정 뒤 0.5초 동안 4MiB를 받고 → 일시정지 1.6초 → 재개
@@ -610,7 +620,7 @@ def test_monitor_logs_the_speed_over_the_time_spent_receiving_right_after_a_resu
     measured = threading.Event()
     real_measure = engine.measure_speed
 
-    def counting_measure(*args, **kwargs):
+    def counting_measure(*args, **kwargs) -> None:
         real_measure(*args, **kwargs)
         measured.set()
 
@@ -640,7 +650,7 @@ def test_monitor_logs_the_speed_over_the_time_spent_receiving_right_after_a_resu
 
 def test_a_second_run_with_the_same_model_does_not_take_off_the_first_runs_pause(
     tmp_path, monkeypatch
-):
+) -> None:
     """같은 다운로드 모델로 다시 실행하면, 앞 실행에서 일시정지한 시간이 이번 실행의 전송 시간에서 빠지지 않아야 한다.
 
     첫 실행: 받는 도중 0.3초에 일시정지, 1.2초 뒤 중단. 둘째 실행: 같은 엔진 · 같은 모델로 일시정지

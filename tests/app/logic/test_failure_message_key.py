@@ -27,7 +27,7 @@ from core.sections.hybrid import CUT_FAILED, CUT_TIMEOUT, CUT_UNSUPPORTED, CutEr
 class _FakeHttpResponse:
     """HTTPError에 실을 상태 코드만 가진 응답 흉내."""
 
-    def __init__(self, status_code: int):
+    def __init__(self, status_code: int) -> None:
         self.status_code = status_code
 
 
@@ -45,7 +45,7 @@ def _postprocess_with(cause: BaseException) -> PostprocessError:
 class TestFailureMessageKey:
     """실패 예외 → 안내 키 매핑 (#134, #127의 조회 경로 방식)."""
 
-    def test_postprocess_maps_by_cause_type(self):
+    def test_postprocess_maps_by_cause_type(self) -> None:
         """PostprocessError는 원인(FFmpegError 하위 타입)에 따라 다른 키로 갈린다 (#180).
 
         FFmpegNotFoundError(실행 파일 자체를 못 찾음)와 RemuxError(ffmpeg는
@@ -68,13 +68,13 @@ class TestFailureMessageKey:
 
         assert _failure_message_key(DecryptionError("키·IV 불일치")) == "Decryption failed"
 
-    def test_http_statuses_map_like_metadata_path(self):
+    def test_http_statuses_map_like_metadata_path(self) -> None:
         assert _failure_message_key(_http_error(403)) == "Viewing permission required"
         assert _failure_message_key(_http_error(401)) == "Viewing permission required"
         assert _failure_message_key(_http_error(404)) == "Video not found"
         assert _failure_message_key(_http_error(500)) == "Network connection error"
 
-    def test_transport_and_os_errors(self):
+    def test_transport_and_os_errors(self) -> None:
         assert _failure_message_key(requests.ConnectionError("boom")) == (
             "Network connection error"
         )
@@ -83,7 +83,7 @@ class TestFailureMessageKey:
             "Failed to save file"
         )
 
-    def test_disk_space_error_maps_to_its_own_key_not_the_save_failure(self):
+    def test_disk_space_error_maps_to_its_own_key_not_the_save_failure(self) -> None:
         """DiskSpaceError는 OSError의 하위지만 저장 실패가 아니라 제 키로 매핑돼야 한다 (#309).
 
         DiskSpaceError(필요 10, 여유 5) -> "Not enough disk space"
@@ -91,7 +91,7 @@ class TestFailureMessageKey:
         assert _failure_message_key(DiskSpaceError(10, 5)) == DISK_SPACE_SHORT
         assert DISK_SPACE_SHORT == "Not enough disk space"
 
-    def test_file_size_limit_error_maps_to_its_own_key(self):
+    def test_file_size_limit_error_maps_to_its_own_key(self) -> None:
         """FileSizeLimitError는 OSError의 하위지만 저장 실패가 아니라 제 키로 매핑돼야 한다 (#309).
 
         FileSizeLimitError(5GiB, "FAT32") -> "File too large for a FAT32 drive"
@@ -109,7 +109,7 @@ class TestFailureMessageKey:
         ],
         ids=["cut-failure", "remux-failure", "oserror"],
     )
-    def test_space_key_written_by_the_engine_wins_over_the_kind_of_the_error(self, make):
+    def test_space_key_written_by_the_engine_wins_over_the_kind_of_the_error(self, make) -> None:
         """엔진이 space_key를 적어 둔 실패는 예외의 종류와 무관하게 그 키로 매핑돼야 한다 (#309).
 
         컷 실패(PostprocessError ← CutError) · 재포장 실패(PostprocessError ← RemuxError) · OSError에
@@ -130,7 +130,9 @@ class TestFailureMessageKey:
         ],
         ids=["cut-failure", "remux-failure"],
     )
-    def test_save_failure_key_written_by_the_engine_wins_over_cut_and_corruption(self, make):
+    def test_save_failure_key_written_by_the_engine_wins_over_cut_and_corruption(
+        self, make
+    ) -> None:
         """엔진이 space_key에 저장 실패 키를 적은 후처리 실패는 그 키로 매핑돼야 한다 (#309).
 
         컷 실패(PostprocessError ← CutError) · 재포장 실패(PostprocessError ← RemuxError)에
@@ -143,7 +145,7 @@ class TestFailureMessageKey:
 
         assert _failure_message_key(error) == "Failed to save file"
 
-    def test_disk_space_error_of_a_download_without_sections_maps_to_its_own_key(self):
+    def test_disk_space_error_of_a_download_without_sections_maps_to_its_own_key(self) -> None:
         """구간 없는 다운로드의 DiskSpaceError는 구간 파일을 말하지 않는 키로 매핑돼야 한다 (#309).
 
         DiskSpaceError(필요 10, 여유 5, 구간 없는 다운로드의 키)
@@ -154,7 +156,7 @@ class TestFailureMessageKey:
         assert _failure_message_key(error) == DISK_SPACE_SHORT_WHOLE
         assert DISK_SPACE_SHORT_WHOLE == "Not enough disk space for the download"
 
-    def test_stream_selection_error_maps_to_its_own_key(self):
+    def test_stream_selection_error_maps_to_its_own_key(self) -> None:
         """StreamSelectionError는 그 예외가 든 키로 매핑돼야 한다 (#318).
 
         StreamSelectionError("720 해상도 스트림을 찾을 수 없습니다.")
@@ -164,10 +166,10 @@ class TestFailureMessageKey:
 
         assert _failure_message_key(error) == STREAM_NOT_FOUND
 
-    def test_unknown_exception_has_no_key(self):
+    def test_unknown_exception_has_no_key(self) -> None:
         assert _failure_message_key(RuntimeError("anything")) is None
 
-    def test_cut_failure_has_its_own_key(self):
+    def test_cut_failure_has_its_own_key(self) -> None:
         """PostprocessError의 원인이 CutError면 컷 실패의 키여야 한다 (#309).
 
         원인이 CutError(CUT_FAILED) · CutError(CUT_TIMEOUT) · CutError(CUT_UNSUPPORTED)
@@ -181,7 +183,7 @@ class TestFailureMessageKey:
 
         assert keys == ["Section cut failed"] * 3
 
-    def test_cut_failure_caused_by_missing_ffmpeg_keeps_the_ffmpeg_key(self):
+    def test_cut_failure_caused_by_missing_ffmpeg_keeps_the_ffmpeg_key(self) -> None:
         """컷이 ffmpeg 실행 파일을 찾지 못해 실패했으면 ffmpeg를 찾지 못했다는 키여야 한다 (#309).
 
         PostprocessError ← CutError ← FFmpegNotFoundError

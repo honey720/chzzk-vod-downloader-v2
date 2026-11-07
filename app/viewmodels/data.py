@@ -29,7 +29,7 @@ class ContentItem:
         download_path,
         content_type,
         liveRewindPlaybackJson,
-    ):
+    ) -> None:
         self.vod_url = vod_url
 
         self.default_title = metadata.get("title", "Unknown Title")
@@ -165,6 +165,6 @@ class ContentItem:
         """세그먼트 단위 다운로드 타입인지 (전체 크기 미상 → 표시 방식이 다르다)."""
         return self.content_type in SEGMENT_BASED_TYPES
 
-    def setDownloadState(self, state: DownloadState):
+    def setDownloadState(self, state: DownloadState) -> None:
         if self.downloadState != state:
             self.downloadState = state

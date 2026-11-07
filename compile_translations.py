@@ -6,7 +6,7 @@ After adding the new .ts files, run "pyside6-lupdate -project .\project.json -no
 import os
 import subprocess
 
-def compile_translations():
+def compile_translations() -> None:
     # translations 디렉토리 내의 모든 .ts 파일을 컴파일
     for file in os.listdir('translations'):
         if file.endswith('.ts'):

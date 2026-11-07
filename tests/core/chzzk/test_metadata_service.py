@@ -21,6 +21,7 @@ from core.chzzk.metadata_service import (
     fetch_video,
 )
 from tests.mocks.mock_http import MockResponse
+from typing import Never
 
 COOKIES = {"NID_AUT": "REDACTED", "NID_SES": "REDACTED"}
 VOD_URL = "https://chzzk.naver.com/video/13714380"
@@ -54,7 +55,7 @@ class FakeApi:
         clip_manifest=None,
         dash_manifest=None,
         sea_manifest=None,
-    ):
+    ) -> None:
         self._video_info = video_info
         self._clip_info = clip_info
         self._clip_manifest = clip_manifest
@@ -87,7 +88,7 @@ class FakeApi:
 # ---------------------------------------------------------------- MetadataError 계약
 
 
-def test_metadata_error_carries_untranslated_key_and_url():
+def test_metadata_error_carries_untranslated_key_and_url() -> None:
     """message_key는 i18n 키 원문, str()은 "<url>\\n<키>" 형식이어야 한다 (어댑터 계약)."""
     e = MetadataError("Channel membership required", VOD_URL)
 
@@ -99,13 +100,13 @@ def test_metadata_error_carries_untranslated_key_and_url():
 # ---------------------------------------------------------------- fetch_content 분기
 
 
-def test_fetch_content_rejects_invalid_url():
+def test_fetch_content_rejects_invalid_url() -> None:
     """URL 파싱 실패는 API 호출 전에 Invalid VOD URL로 실패해야 한다."""
     with pytest.raises(MetadataError, match="Invalid VOD URL"):
         fetch_content("https://example.com/video/1", COOKIES, DOWNLOAD_PATH, api=FakeApi())
 
 
-def test_fetch_content_maps_video_with_live_rewind_to_m3u8():
+def test_fetch_content_maps_video_with_live_rewind_to_m3u8() -> None:
     """liveRewindPlaybackJson이 있으면 content_type이 m3u8로 바뀌어야 한다."""
     api = FakeApi(video_info=_video_info(live_rewind_playback_json='{"media": []}'))
 
@@ -115,7 +116,7 @@ def test_fetch_content_maps_video_with_live_rewind_to_m3u8():
     assert result[6] == '{"media": []}'
 
 
-def test_fetch_content_maps_clips_to_clip():
+def test_fetch_content_maps_clips_to_clip() -> None:
     """clips URL은 content_type "clip"으로 정규화돼야 한다."""
     api = FakeApi(
         clip_info=("clip-video-id", "DONE", {"title": "c"}),
@@ -149,7 +150,7 @@ def test_fetch_content_maps_clips_to_clip():
 )
 def test_encrypted_vod_with_entitlement_takes_sea_path(
     monkeypatch, load_mock_response, fixture_name
-):
+) -> None:
     """AES(SEA) 암호화 VOD는 권한이 있으면 SEA 경로로 조회된다 (#57).
 
     #55에서는 여기서 조기 거부했지만, SEA는 유저 본인 쿠키로 키를 받아
@@ -176,7 +177,7 @@ def test_encrypted_vod_with_entitlement_takes_sea_path(
 
 def test_encrypted_vod_without_entitlement_raises_membership_error(
     monkeypatch, load_mock_response
-):
+) -> None:
     """암호화 VOD라도 권한이 없으면(inKey null) 멤버십 안내가 나와야 한다 (#57).
 
     #55에서는 암호화 안내가 우선이었으나, 이제 암호화 자체는 지원되므로
@@ -189,7 +190,7 @@ def test_encrypted_vod_without_entitlement_raises_membership_error(
         fetch_video(VOD_URL, "13714380", COOKIES, DOWNLOAD_PATH, api=NetworkManager)
 
 
-def test_unsupported_encryption_still_raises_encryption_error():
+def test_unsupported_encryption_still_raises_encryption_error() -> None:
     """지원 대상이 아닌 암호화(라이선스 서버형 DRM 등)는 기존 안내로 실패해야 한다 (#57).
 
     NetworkManager.get_video_sea_manifest가 지원 판정에 실패하면 빈 결과를
@@ -205,7 +206,7 @@ def test_unsupported_encryption_still_raises_encryption_error():
         fetch_video(VOD_URL, "13714380", COOKIES, DOWNLOAD_PATH, api=api)
 
 
-def test_fetch_content_maps_encrypted_video_to_hls_aes():
+def test_fetch_content_maps_encrypted_video_to_hls_aes() -> None:
     """암호화 VOD는 content_type이 hls_aes로 매핑돼야 한다 (#57)."""
     api = FakeApi(
         video_info=_video_info(encryption_type="AES"),
@@ -223,7 +224,7 @@ def test_fetch_content_maps_encrypted_video_to_hls_aes():
     assert result[6] is None  # 라이브 다시보기가 아니다
 
 
-def test_member_only_without_in_key_raises_membership_error():
+def test_member_only_without_in_key_raises_membership_error() -> None:
     """비암호화 멤버십 전용 VOD(inKey null)이면 멤버십 안내 에러가 발생해야 한다."""
     api = FakeApi(
         video_info=_video_info(in_key=None, membership_benefit_type="MEMBER_ONLY", metadata={})
@@ -233,7 +234,7 @@ def test_member_only_without_in_key_raises_membership_error():
         fetch_video(VOD_URL, "13714380", COOKIES, DOWNLOAD_PATH, api=api)
 
 
-def test_adult_without_video_id_raises_invalid_cookies_error():
+def test_adult_without_video_id_raises_invalid_cookies_error() -> None:
     """성인 VOD(adult=True, videoId 없음)는 Invalid cookies value로 실패해야 한다."""
     api = FakeApi(video_info=_video_info(video_id=None, in_key=None, adult=True, metadata={}))
 
@@ -241,7 +242,7 @@ def test_adult_without_video_id_raises_invalid_cookies_error():
         fetch_video(VOD_URL, "13714380", COOKIES, DOWNLOAD_PATH, api=api)
 
 
-def test_empty_manifest_raises_dash_error():
+def test_empty_manifest_raises_dash_error() -> None:
     """매니페스트가 비면 Failed to get DASH manifest로 실패해야 한다 (2차 방어선)."""
     api = FakeApi(video_info=_video_info(), dash_manifest=([], None, None))
 
@@ -249,7 +250,7 @@ def test_empty_manifest_raises_dash_error():
         fetch_video(VOD_URL, "13714380", COOKIES, DOWNLOAD_PATH, api=api)
 
 
-def test_dash_path_passes_cookies_to_manifest_request():
+def test_dash_path_passes_cookies_to_manifest_request() -> None:
     """inKey가 있는 비암호화 정상 경로에서 쿠키가 매니페스트 요청까지 전달돼야 한다."""
     api = FakeApi(
         video_info=_video_info(membership_benefit_type="MEMBER_ONLY"),
@@ -273,7 +274,7 @@ def test_dash_path_passes_cookies_to_manifest_request():
 # ---------------------------------------------------------------- fetch_clip 에러 분기
 
 
-def test_unencoded_clip_raises_m3u8_error():
+def test_unencoded_clip_raises_m3u8_error() -> None:
     """vodStatus NONE(미인코딩) 클립은 Unencoded Video(.m3u8)로 실패해야 한다."""
     api = FakeApi(clip_info=("clip-video-id", "NONE", {}))
 
@@ -282,7 +283,7 @@ def test_unencoded_clip_raises_m3u8_error():
     assert exc_info.value.message_key == "Unencoded Video(.m3u8)"
 
 
-def test_clip_adult_auth_error_raises_invalid_cookies_error():
+def test_clip_adult_auth_error_raises_invalid_cookies_error() -> None:
     """ADULT_AUTH_REQUIRED 에러 응답이면 Invalid cookies value로 실패해야 한다."""
     api = FakeApi(
         clip_info=("clip-video-id", "DONE", {}),
@@ -293,7 +294,7 @@ def test_clip_adult_auth_error_raises_invalid_cookies_error():
         fetch_clip(CLIP_URL, "clipUID", COOKIES, DOWNLOAD_PATH, api=api)
 
 
-def test_clip_empty_manifest_raises_dash_error():
+def test_clip_empty_manifest_raises_dash_error() -> None:
     """클립 매니페스트가 비면 Failed to get DASH manifest로 실패해야 한다."""
     api = FakeApi(
         clip_info=("clip-video-id", "DONE", {}),
@@ -310,11 +311,11 @@ def test_clip_empty_manifest_raises_dash_error():
 class RaisingApi(FakeApi):
     """get_video_info에서 지정한 예외를 던지는 가짜 api."""
 
-    def __init__(self, exc: Exception):
+    def __init__(self, exc: Exception) -> None:
         super().__init__()
         self._exc = exc
 
-    def get_video_info(self, video_no, cookies):
+    def get_video_info(self, video_no, cookies) -> Never:
         raise self._exc
 
 
@@ -343,7 +344,7 @@ def _http_error(status: int) -> requests.HTTPError:
         (requests.TooManyRedirects("redirect loop"), "Failed to fetch video information"),
     ],
 )
-def test_fetch_content_wraps_transport_errors(exc, expected_key):
+def test_fetch_content_wraps_transport_errors(exc, expected_key) -> None:
     """원시 requests 예외는 유형별 MetadataError 키로 감싸져야 한다 (#126)."""
     with pytest.raises(MetadataError) as info:
         fetch_content(VOD_URL, COOKIES, DOWNLOAD_PATH, api=RaisingApi(exc))
@@ -356,7 +357,7 @@ def test_fetch_content_wraps_transport_errors(exc, expected_key):
     assert info.value.__cause__ is exc
 
 
-def test_fetch_content_passes_domain_errors_through():
+def test_fetch_content_passes_domain_errors_through() -> None:
     """서비스가 스스로 판정한 MetadataError(#55 멤버십 등)는 전송 매핑을 거치지 않아야 한다."""
     api = FakeApi(video_info=_video_info(in_key=None, membership_benefit_type="MEMBER_ONLY"))
 

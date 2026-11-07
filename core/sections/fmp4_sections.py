@@ -160,7 +160,7 @@ class _Fmp4Source:
     읽는다 — 부를 때마다 그 함수를 한 번씩 부른다(보관은 주는 쪽이 한다).
     """
 
-    def __init__(self, init: Fmp4Init, segment_at: Callable[[int], Fmp4Segment]):
+    def __init__(self, init: Fmp4Init, segment_at: Callable[[int], Fmp4Segment]) -> None:
         self._init = init
         self._segment_at = segment_at
 

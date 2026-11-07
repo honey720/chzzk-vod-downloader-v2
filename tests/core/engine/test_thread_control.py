@@ -12,7 +12,7 @@ from core.engine.thread_control import ThreadController
 class Line:
     """조정기에 틱을 넣는 도우미 — 목표별 속도를 정해 두고 돌린다."""
 
-    def __init__(self, controller: ThreadController):
+    def __init__(self, controller: ThreadController) -> None:
         self.controller = controller
         self.now = 0.0
         self.start = controller.target
@@ -61,7 +61,7 @@ def _line_probing_12_with_a_full_window(low: Callable[[], float]) -> Line:
 # ================================================================ 순위 판정
 
 
-def test_raise_is_accepted_when_three_samples_beat_the_lower_peak():
+def test_raise_is_accepted_when_three_samples_beat_the_lower_peak() -> None:
     """올린 수준의 표본 3개가 아래 수준의 최댓값 + 요구폭을 넘으면 인상을 받아들여야 한다.
 
     8에서 10.0 고정 → 12에서 10.0, 10.0, 10.8, 10.9, 11.0 (요구치 10.0 × 1.0625 = 10.625)
@@ -78,7 +78,7 @@ def test_raise_is_accepted_when_three_samples_beat_the_lower_peak():
     assert min(line.targets[-6:]) >= 12
 
 
-def test_raise_is_reverted_when_fewer_than_three_samples_beat_the_lower_peak():
+def test_raise_is_reverted_when_fewer_than_three_samples_beat_the_lower_peak() -> None:
     """10초 동안 요구치를 넘은 표본이 2개뿐이고 평균도 그대로면 인상을 되물려야 한다.
 
     8에서 9.0과 10.0이 번갈아 → 12에서 10.8 두 번, 나머지 8개는 9.0과 10.0이 번갈아
@@ -93,7 +93,7 @@ def test_raise_is_reverted_when_fewer_than_three_samples_beat_the_lower_peak():
     assert line.controller.target == 8
 
 
-def test_raise_is_reverted_when_the_samples_beat_the_peak_by_less_than_the_required_gain():
+def test_raise_is_reverted_when_the_samples_beat_the_peak_by_less_than_the_required_gain() -> None:
     """아래 수준의 최댓값은 넘어도 요구폭(선형 기대의 12.5%)에 못 미치면 인상을 되물려야 한다.
 
     8에서 10.0 고정 → 12에서 10.3 열 번 (요구치 10.0 × 1.0625 = 10.625)
@@ -106,7 +106,7 @@ def test_raise_is_reverted_when_the_samples_beat_the_peak_by_less_than_the_requi
     assert line.controller.target == 8
 
 
-def test_two_slightly_higher_samples_are_not_accepted_at_once():
+def test_two_slightly_higher_samples_are_not_accepted_at_once() -> None:
     """처음 두 표본이 요구폭은 넘어도 뚜렷하지 않으면(선형 기대의 절반 미만) 바로 받아들이지 않아야 한다.
 
     8에서 10.0 → 12에서 10.7, 10.7 (요구치 10.625, 뚜렷함의 문턱 12.5)
@@ -120,7 +120,7 @@ def test_two_slightly_higher_samples_are_not_accepted_at_once():
     assert line.controller.target == 12
 
 
-def test_two_clearly_higher_samples_are_accepted_at_once_and_the_climb_goes_on():
+def test_two_clearly_higher_samples_are_accepted_at_once_and_the_climb_goes_on() -> None:
     """올린 뒤 처음 두 표본이 모두 뚜렷이 높으면(선형 기대의 절반 이상) 바로 받아들이고 또 올려야 한다.
 
     8에서 10.0 → 12에서 13.0, 13.0 (뚜렷함의 문턱 10.0 × 1.25 = 12.5)
@@ -137,7 +137,7 @@ def test_two_clearly_higher_samples_are_accepted_at_once_and_the_climb_goes_on()
 # ================================================================ 평균 차이 판정
 
 
-def test_raise_is_accepted_when_the_mean_is_clearly_higher_without_beating_the_peak():
+def test_raise_is_accepted_when_the_mean_is_clearly_higher_without_beating_the_peak() -> None:
     """아래 수준에 튄 값이 하나 있어 최댓값을 못 넘어도, 평균이 뚜렷이 높으면 받아들여야 한다.
 
     8에서 10.0 아홉 번 + 12.0 한 번(요구치 12.75) → 12에서 11.5 열 번
@@ -151,7 +151,7 @@ def test_raise_is_accepted_when_the_mean_is_clearly_higher_without_beating_the_p
     assert line.controller.target == 12
 
 
-def test_raise_is_reverted_when_the_mean_gain_is_within_the_noise():
+def test_raise_is_reverted_when_the_mean_gain_is_within_the_noise() -> None:
     """평균이 요구폭보다 늘었어도 그 차이가 흔들림에 묻히면 되물려야 한다.
 
     8에서 8.0과 12.0이 번갈아(평균 10.0) → 12에서 9.0과 12.7이 번갈아(평균 10.85, 요구 10.625)
@@ -170,7 +170,7 @@ def test_raise_is_reverted_when_the_mean_gain_is_within_the_noise():
 # ================================================================ 재탐침 간격
 
 
-def test_reprobe_gap_doubles_after_each_failed_raise_up_to_two_minutes():
+def test_reprobe_gap_doubles_after_each_failed_raise_up_to_two_minutes() -> None:
     """올려도 늘지 않으면 되물린 뒤 30초 · 60초 · 120초 · 120초에 다시 올려 봐야 한다.
 
     속도 10.0 고정(목표와 무관), 시작 목표 4, 400틱
@@ -184,7 +184,7 @@ def test_reprobe_gap_doubles_after_each_failed_raise_up_to_two_minutes():
     assert line.raises() == [1, 17, 59, 131, 263, 395]
 
 
-def test_reprobe_gap_starts_over_after_an_accepted_raise():
+def test_reprobe_gap_starts_over_after_an_accepted_raise() -> None:
     """인상이 받아들여지면 재탐침 간격이 30초로 돌아가야 한다.
 
     대역 4(연결당 1)에서 4에 머물다(되물림 틱 29 · 71 → 다음 재탐침은 60초 뒤인 틱 131),
@@ -209,7 +209,7 @@ def _marginal_then_flat(target: int, high: Iterator[float]) -> float:
     return 10.0 if target <= 8 else next(high)
 
 
-def test_marginally_accepted_level_is_dropped_when_the_lower_level_is_as_fast():
+def test_marginally_accepted_level_is_dropped_when_the_lower_level_is_as_fast() -> None:
     """뚜렷하지 않게 받아들인 수준은 아래 수준과 다시 견줘, 차이가 없으면 내려앉아야 한다.
 
     8에서 10.0 → 12에서 처음 다섯 표본만 10.0, 10.0, 10.8, 10.9, 11.0(우연한 통과), 그 뒤 8 이상은
@@ -227,7 +227,7 @@ def test_marginally_accepted_level_is_dropped_when_the_lower_level_is_as_fast():
     assert 16 in line.targets  # 12에서 16도 올려 봤다(되물림)
 
 
-def test_marginally_accepted_level_is_kept_when_it_really_is_faster():
+def test_marginally_accepted_level_is_kept_when_it_really_is_faster() -> None:
     """뚜렷하지 않게 받아들였어도 아래 수준보다 정말 빠르면, 다시 견준 뒤 그 수준으로 돌아와야 한다.
 
     8에서 10.0 고정, 12 이상에서 10.0과 11.0이 2:3으로 섞임(요구치 10.625를 넘는 표본이 절반 넘음)
@@ -244,7 +244,7 @@ def test_marginally_accepted_level_is_kept_when_it_really_is_faster():
     assert max(settled) <= 16
 
 
-def test_clearly_accepted_level_is_not_rechecked():
+def test_clearly_accepted_level_is_not_rechecked() -> None:
     """뚜렷이 받아들인 수준은 아래 수준으로 내려가 보지 않아야 한다 — 내려가 있는 동안 처리량을 잃는다.
 
     대역 8(연결당 1): 4→8은 두 배(뚜렷), 8→12는 그대로. 600틱
@@ -258,7 +258,7 @@ def test_clearly_accepted_level_is_not_rechecked():
     assert max(line.targets[30:]) == 12
 
 
-def test_clear_level_is_rechecked_once_the_speed_falls_to_what_the_lower_level_gave():
+def test_clear_level_is_rechecked_once_the_speed_falls_to_what_the_lower_level_gave() -> None:
     """뚜렷이 받아들인 수준이라도, 지금 속도가 아래 수준에서 냈던 값을 못 넘게 되면 다시 견줘 내려와야 한다.
 
     대역 8(연결당 1)에서 8에 머물다가 틱 100부터 대역 4.2(절반 미만은 아니라 붕괴 규칙은 안 걸린다)
@@ -276,7 +276,7 @@ def test_clear_level_is_rechecked_once_the_speed_falls_to_what_the_lower_level_g
 # ================================================================ 상한 · 시작 · 일시정지
 
 
-def test_cap_below_the_start_target_never_moves():
+def test_cap_below_the_start_target_never_moves() -> None:
     """상한이 시작 목표와 같으면 목표가 바뀌지 않아야 한다.
 
     시작 2 · 상한 2, 속도 5.0으로 100틱 -> 모든 틱에서 목표 2
@@ -288,7 +288,7 @@ def test_cap_below_the_start_target_never_moves():
     assert set(line.targets) == {2}
 
 
-def test_zero_speed_before_the_first_measurement_is_ignored():
+def test_zero_speed_before_the_first_measurement_is_ignored() -> None:
     """첫 유효 측정 전의 속도 0은 표본으로 치지 않아야 한다.
 
     속도 0으로 5틱 → 3.9 한 틱 -> 0인 동안 목표 4, 3.9인 틱에 목표 8
@@ -304,7 +304,7 @@ def test_zero_speed_before_the_first_measurement_is_ignored():
     assert line.controller.target == 8
 
 
-def test_shift_moves_the_reprobe_time_by_the_paused_seconds():
+def test_shift_moves_the_reprobe_time_by_the_paused_seconds() -> None:
     """일시정지한 시간만큼 재탐침 시각이 뒤로 밀려야 한다.
 
     속도 10.0 고정으로 틱 29에 되물림(재탐침은 틱 59) → 틱 40에 shift(100)
@@ -319,7 +319,7 @@ def test_shift_moves_the_reprobe_time_by_the_paused_seconds():
     assert [tick for tick in line.raises() if tick > 29] == [159]
 
 
-def test_skip_discards_the_samples_right_after_a_resume():
+def test_skip_discards_the_samples_right_after_a_resume() -> None:
     """skip 뒤 그 시간 동안의 측정은 판단에 쓰지 않아야 한다.
 
     정체(기준 10.0) 중에 skip(1초) → 다음 틱의 속도 1.0(일시정지가 섞인 측정) → 그 뒤 10.0

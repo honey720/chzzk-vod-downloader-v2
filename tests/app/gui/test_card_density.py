@@ -21,10 +21,11 @@ from app.views.mainWindow import VodDownloader
 from app.viewmodels.data import ContentItem
 from core.models.download_state import DownloadState
 from tests.app.gui.card_helpers import hold_style
+from typing import Never
 
 
 @pytest.fixture(autouse=True)
-def _apply_production_qss(qapp):
+def _apply_production_qss(qapp) -> None:
     """실제 전역 QSS를 태운 상태에서 잰다 — 안 태우면 카드 높이가 QSS
     토큰(cardPaddingV 등)과 무관하게 항상 같아져 이 게이트가 카드 압축
     회귀를 못 잡는다(#242에서 겪은 "게이트 눈멀기"와 같은 함정).
@@ -40,12 +41,12 @@ def _apply_production_qss(qapp):
 
 
 @pytest.fixture(autouse=True)
-def no_network(monkeypatch):
+def no_network(monkeypatch) -> None:
     class _FailingSession:
-        def head(self, *a, **k):
+        def head(self, *a, **k) -> Never:
             raise RuntimeError("network disabled in tests")
 
-        def get(self, *a, **k):
+        def get(self, *a, **k) -> Never:
             raise RuntimeError("network disabled in tests")
 
     monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
@@ -116,7 +117,9 @@ def window_with_cards(qapp):
     "window_height,minimum_cards",
     [(1000, 6), (750, 4)],
 )
-def test_card_density_meets_the_owner_confirmed_minimum(window_with_cards, window_height, minimum_cards):
+def test_card_density_meets_the_owner_confirmed_minimum(
+    window_with_cards, window_height, minimum_cards
+) -> None:
     fully_visible = _visible_card_count(window_with_cards, window_height, require_fully_visible=True)
     assert fully_visible >= minimum_cards, (
         f"창 높이 {window_height}px에서 완전히 보이는 카드가 {fully_visible}개뿐이다 "

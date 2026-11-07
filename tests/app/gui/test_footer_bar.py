@@ -25,6 +25,7 @@ from core.media.representations import StreamEntry
 from core.models.download_state import DownloadState
 from core.models.events import DownloadCounters, ProgressEvent
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
+from typing import Never
 
 MIB = 1024 * 1024
 
@@ -32,7 +33,7 @@ MIB = 1024 * 1024
 class _Engine:
     """DownloadService 대역 — 제출을 적어 둔다."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.submissions: list[dict] = []
 
     def submit(self, content, **kwargs):
@@ -54,7 +55,7 @@ def _environment(qapp, monkeypatch):
     qapp.setPalette(theme.build_palette())
     qapp.setStyleSheet(theme.load_stylesheet(main_module.resource_path(theme.QSS_RELATIVE_PATH)))
 
-    def no_network():
+    def no_network() -> Never:
         raise RuntimeError("network disabled in tests")
 
     monkeypatch.setattr("app.widgets.widget.get_thread_session", no_network)
@@ -168,7 +169,7 @@ def _free_measured(qtbot, win) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_reading_of_a_file_download_is_the_size_left():
+def test_reading_of_a_file_download_is_the_size_left() -> None:
     """받을 크기를 아는 파일 다운로드의 남은 바이트는 받을 크기 − 받은 크기여야 한다.
 
     받을 크기 10 MiB, 받은 크기 4 MiB, 속도 2 MB/s, 연결 3
@@ -179,7 +180,7 @@ def test_reading_of_a_file_download_is_the_size_left():
     assert reading == TransferReading(2.0 * MIB, 3, 6.0 * MIB)
 
 
-def test_reading_of_a_segment_download_counts_the_segments_left():
+def test_reading_of_a_segment_download_counts_the_segments_left() -> None:
     """세그먼트 기반 다운로드의 남은 바이트는 받은 세그먼트의 평균 크기 × 남은 세그먼트 수여야 한다.
 
     세그먼트 10개 중 4개 끝냄(그중 1개는 다시 씀), 받은 크기 3 MiB
@@ -198,12 +199,12 @@ def test_reading_of_a_segment_download_counts_the_segments_left():
         (ProgressEvent(4 * MIB, 10 * MIB, 0.0, 0), DownloadCounters(merging=True), False),  # 후처리
     ],
 )
-def test_reading_without_a_basis_has_no_size_left(event, counters, segmented):
+def test_reading_without_a_basis_has_no_size_left(event, counters, segmented) -> None:
     """받을 크기를 모름 · 받은 세그먼트 없음 · 후처리 단계면 남은 바이트는 None이어야 한다."""
     assert transfer_reading(event, counters, segmented).remaining_bytes is None
 
 
-def test_snapshot_without_a_download_has_only_free_space():
+def test_snapshot_without_a_download_has_only_free_space() -> None:
     """받는 중인 다운로드가 없으면 묶은 값은 받는 중이 아니고 여유 공간만 들어야 한다.
 
     읽은 값 없음 · 메모리 100 · 여유 500 -> receiving 거짓, memory None, free 500
@@ -212,7 +213,7 @@ def test_snapshot_without_a_download_has_only_free_space():
     assert (snapshot.receiving, snapshot.memory, snapshot.free) == (False, None, 500)
 
 
-def test_snapshot_time_left_is_the_size_left_over_the_speed():
+def test_snapshot_time_left_is_the_size_left_over_the_speed() -> None:
     """전체 남은 시간은 남은 바이트의 합 ÷ 전체 속도여야 한다.
 
     (속도 2 MiB/s · 남은 6 MiB) + (1 MiB/s · 3 MiB) -> 9 MiB ÷ 3 MiB/s = 3초, 연결 합
@@ -222,7 +223,7 @@ def test_snapshot_time_left_is_the_size_left_over_the_speed():
     assert (snapshot.remaining_seconds, snapshot.connections) == (3.0, 5)
 
 
-def test_snapshot_time_left_is_dropped_when_one_download_has_no_size_left():
+def test_snapshot_time_left_is_dropped_when_one_download_has_no_size_left() -> None:
     """남은 바이트를 셀 수 없는 다운로드가 하나라도 섞이면 전체 남은 시간은 None이어야 한다."""
     readings = [TransferReading(2 * MIB, 3, 6 * MIB), TransferReading(1 * MIB, 2, None)]
     assert combine_readings(readings, None, None).remaining_seconds is None
@@ -233,7 +234,7 @@ def test_snapshot_time_left_is_dropped_when_one_download_has_no_size_left():
 # ---------------------------------------------------------------------------
 
 
-def test_footer_without_a_download_shows_only_free_space(qtbot, tmp_path):
+def test_footer_without_a_download_shows_only_free_space(qtbot, tmp_path) -> None:
     """받는 중인 카드가 없으면 하단바 모니터링은 여유 공간 한 칸만 보여야 한다.
 
     대기 카드 1장, 다운로드 시작 전 -> 보이는 칸 ["free"], 글 "Free … GB", 툴팁 "Free space · … GB"
@@ -248,7 +249,7 @@ def test_footer_without_a_download_shows_only_free_space(qtbot, tmp_path):
     assert label.toolTip().startswith("Free space · ")
 
 
-def test_footer_while_receiving_shows_all_five_values(qtbot, tmp_path, answers):
+def test_footer_while_receiving_shows_all_five_values(qtbot, tmp_path, answers) -> None:
     """받을 크기를 아는 카드를 받는 중이면 다섯 칸이 다 보이고 값이 통지를 따라야 한다.
 
     받을 크기 10 MiB · 받은 크기 0 · 속도 2.0 MB/s · 연결 4 통지
@@ -271,7 +272,7 @@ def test_footer_while_receiving_shows_all_five_values(qtbot, tmp_path, answers):
     assert labels["mem"].toolTip().startswith("Memory · ")
 
 
-def test_footer_drops_the_time_left_when_the_size_is_unknown(qtbot, tmp_path, answers):
+def test_footer_drops_the_time_left_when_the_size_is_unknown(qtbot, tmp_path, answers) -> None:
     """받을 크기를 모르는 카드를 받는 중이면 남은 시간 칸만 빠져야 한다.
 
     받을 크기 None · 속도 2.0 MB/s · 연결 4 통지 -> 칸 speed · conn · mem · free
@@ -285,7 +286,7 @@ def test_footer_drops_the_time_left_when_the_size_is_unknown(qtbot, tmp_path, an
     assert win.footerMonitor.shownKeys() == ["speed", "conn", "mem", "free"]
 
 
-def test_footer_while_paused_shows_only_free_space(qtbot, tmp_path, answers):
+def test_footer_while_paused_shows_only_free_space(qtbot, tmp_path, answers) -> None:
     """모두 일시정지하면 받는 것이 없어 하단바 모니터링은 여유 공간만 보여야 한다."""
     win, _items, engine = _window(tmp_path)
     _free_measured(qtbot, win)
@@ -297,7 +298,7 @@ def test_footer_while_paused_shows_only_free_space(qtbot, tmp_path, answers):
     assert win.footerMonitor.shownKeys() == ["free"]
 
 
-def test_a_tick_redraws_only_the_footer(qtbot, tmp_path, answers, monkeypatch):
+def test_a_tick_redraws_only_the_footer(qtbot, tmp_path, answers, monkeypatch) -> None:
     """1초 갱신은 카드 1000장에서도 카드 갱신 통지 · 목록 전체 맞추기를 내지 않아야 한다.
 
     카드 1000장 · 받는 중 · 통지 하나 -> 갱신 한 번 동안 itemChanged 0건 · 목록 다시 배치(_relayout) 0회 ·
@@ -332,7 +333,7 @@ def test_a_tick_redraws_only_the_footer(qtbot, tmp_path, answers, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_result_appears_when_the_run_ends(tmp_path, answers):
+def test_result_appears_when_the_run_ends(tmp_path, answers) -> None:
     """받던 카드가 모두 끝나 다음 카드가 없으면 「완료 N」이 보여야 한다.
 
     대기 카드 1장 → 다운로드 → 완료 -> 결과 글 "Completed 1"(실패 없음 — 실패 부분 없음)
@@ -346,7 +347,7 @@ def test_result_appears_when_the_run_ends(tmp_path, answers):
     assert win.runResultLabel.text() == "Completed 1"
 
 
-def test_result_counts_the_failed_cards(tmp_path, answers):
+def test_result_counts_the_failed_cards(tmp_path, answers) -> None:
     """끝난 작업에 실패 카드가 있으면 결과에 「 · 실패 N」이 붙어야 한다.
 
     대기 카드 2장 → 첫 장 완료 → 둘째 장 실패 -> "Completed 1 · Failed 1"
@@ -360,7 +361,7 @@ def test_result_counts_the_failed_cards(tmp_path, answers):
     assert win.runResultLabel.text() == "Completed 1 · Failed 1"
 
 
-def test_result_goes_when_a_waiting_card_is_added(tmp_path, answers):
+def test_result_goes_when_a_waiting_card_is_added(tmp_path, answers) -> None:
     """결과가 보이는 동안 대기 카드가 생기면 결과는 사라져야 한다."""
     win, _items, engine = _window(tmp_path)
     win.downloadButton.click()
@@ -372,7 +373,7 @@ def test_result_goes_when_a_waiting_card_is_added(tmp_path, answers):
     assert not win.runResultLabel.isVisible()
 
 
-def test_result_goes_when_the_next_run_starts(tmp_path, answers):
+def test_result_goes_when_the_next_run_starts(tmp_path, answers) -> None:
     """결과가 보이는 동안 다음 다운로드를 시작하면 결과는 사라지고 그 작업이 끝날 때 다시 보여야 한다.
 
     완료 1 → 실패 카드를 ↻로 대기 → 다운로드 -> 받는 중 결과 없음 → 완료 -> "Completed 2"
@@ -392,7 +393,7 @@ def test_result_goes_when_the_next_run_starts(tmp_path, answers):
     assert win.runResultLabel.text() == "Completed 2"
 
 
-def test_result_follows_deleting_a_card_while_shown(tmp_path, answers):
+def test_result_follows_deleting_a_card_while_shown(tmp_path, answers) -> None:
     """결과가 보이는 동안 실패 카드를 지우면 숫자가 지금 목록을 따르고, 목록이 비면 사라져야 한다.
 
     완료 1 · 실패 1 → 실패 카드 지움 -> "Completed 1" → 완료 카드 지움 -> 결과 없음
@@ -410,7 +411,7 @@ def test_result_follows_deleting_a_card_while_shown(tmp_path, answers):
     assert not win.runResultLabel.isVisible()
 
 
-def test_deleting_cards_without_a_download_shows_no_result(tmp_path):
+def test_deleting_cards_without_a_download_shows_no_result(tmp_path) -> None:
     """다운로드 없이 카드를 지워 완료 카드만 남아도 결과는 나타나지 않아야 한다.
 
     완료 카드 1장 + 대기 카드 1장 → 대기 카드 지움 -> 결과 없음
@@ -430,7 +431,7 @@ def test_deleting_cards_without_a_download_shows_no_result(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_download_button_toggles_between_play_and_pause(tmp_path, answers):
+def test_download_button_toggles_between_play_and_pause(tmp_path, answers) -> None:
     """다운로드 버튼은 받는 중이면 ‖ 「모두 일시정지」, 일시정지면 ▶ 「이어 받기」여야 한다.
 
     시작 전 ▶ "Download" → 누름 ‖ "Pause all" → 누름 ▶ "Resume"(카드 PAUSED) → 누름 ‖ "Pause all"
@@ -450,7 +451,7 @@ def test_download_button_toggles_between_play_and_pause(tmp_path, answers):
     assert (button.iconName(), button.toolTip()) == ("pause", "Pause all")
 
 
-def test_stop_asks_first_and_returns_the_card_to_waiting(tmp_path, answers):
+def test_stop_asks_first_and_returns_the_card_to_waiting(tmp_path, answers) -> None:
     """■를 누르면 확인 창을 묻고, 예를 고르면 받는 중인 카드가 대기로 돌아가야 한다.
 
     받는 중 → ■ · 답 예 -> 물은 횟수 1, 카드 WAITING, 다운로드 버튼 ▶ "Download", ■ 꺼짐
@@ -469,7 +470,7 @@ def test_stop_asks_first_and_returns_the_card_to_waiting(tmp_path, answers):
     assert not win.stopButton.isEnabled()
 
 
-def test_stop_answered_no_keeps_the_download(tmp_path, answers):
+def test_stop_answered_no_keeps_the_download(tmp_path, answers) -> None:
     """■ 확인 창에서 아니오를 고르면 다운로드가 그대로여야 한다.
 
     받는 중 → ■ · 답 아니오 -> 물은 횟수 1, 카드 RUNNING, 다운로드 버튼 ‖ "Pause all"
@@ -491,7 +492,7 @@ def test_stop_answered_no_keeps_the_download(tmp_path, answers):
 # ---------------------------------------------------------------------------
 
 
-def test_footer_values_do_not_raise_the_window_minimum_width(qtbot, tmp_path, answers):
+def test_footer_values_do_not_raise_the_window_minimum_width(qtbot, tmp_path, answers) -> None:
     """모니터링 다섯 칸 · 실행 결과가 보여도 콘텐츠 최소폭은 받는 것이 없을 때와 같아야 한다.
 
     대기 카드 1장, 다섯 칸이 보이기 전의 최소폭 = 받는 중(긴 값) · 결과가 보일 때의 최소폭 = 창 최소폭
@@ -511,7 +512,7 @@ def test_footer_values_do_not_raise_the_window_minimum_width(qtbot, tmp_path, an
     assert (receiving, finished) == (idle, idle)
 
 
-def test_footer_values_do_not_raise_the_footer_minimum_width(qtbot, tmp_path, answers):
+def test_footer_values_do_not_raise_the_footer_minimum_width(qtbot, tmp_path, answers) -> None:
     """하단바 칸의 최소폭은 값을 보여도 글의 폭만큼 늘지 않아야 한다 — 칸마다 1px와 간격만 는다.
 
     받는 것 없음(칸 0~1개) → 받는 중(긴 값, 칸 4~5개)
@@ -538,7 +539,7 @@ def test_footer_values_do_not_raise_the_footer_minimum_width(qtbot, tmp_path, an
     assert after - before == added * (1 + gap), f"하단바 최소폭 {before} → {after}, 는 칸 {added}개"
 
 
-def test_window_minimum_width_does_not_depend_on_the_cards(tmp_path):
+def test_window_minimum_width_does_not_depend_on_the_cards(tmp_path) -> None:
     """창 최소폭은 카드가 0장이든 50장이든 같아야 한다."""
     empty, _items, _engine = _window(tmp_path, cards=0)
     full, _items, _engine = _window(tmp_path, cards=50)
@@ -550,7 +551,7 @@ def test_window_minimum_width_does_not_depend_on_the_cards(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_download_button_is_off_for_an_empty_list(tmp_path):
+def test_download_button_is_off_for_an_empty_list(tmp_path) -> None:
     """목록이 비면 다운로드 버튼은 꺼지고 도형은 비활성 색이어야 한다.
 
     카드 0장 -> isEnabled 거짓, 도형 색 토큰 "textDisabled"
@@ -560,13 +561,13 @@ def test_download_button_is_off_for_an_empty_list(tmp_path):
     assert win.downloadButton.colorToken() == "textDisabled"
 
 
-def test_download_button_is_on_with_a_waiting_card(tmp_path):
+def test_download_button_is_on_with_a_waiting_card(tmp_path) -> None:
     """대기 카드가 한 장이라도 있으면 다운로드 버튼은 켜져야 한다."""
     win, _items, _engine = _window(tmp_path, cards=1)
     assert win.downloadButton.isEnabled()
 
 
-def test_download_button_waits_for_a_card_still_loading(tmp_path):
+def test_download_button_waits_for_a_card_still_loading(tmp_path) -> None:
     """조회 중 카드만 있으면 꺼지고, 그 카드가 대기가 되면 켜져야 한다.
 
     조회 중 카드 1장 -> 꺼짐 / 그 카드를 대기로 바꿔 알림 -> 켜짐
@@ -583,7 +584,7 @@ def test_download_button_waits_for_a_card_still_loading(tmp_path):
     assert win.downloadButton.isEnabled()
 
 
-def test_download_button_stays_on_while_receiving_and_paused(tmp_path, answers):
+def test_download_button_stays_on_while_receiving_and_paused(tmp_path, answers) -> None:
     """받는 중(‖)과 일시정지(▶ 이어 받기)에는 대기 카드가 없어도 켜져 있어야 한다.
 
     카드 1장 → 다운로드(대기 카드 0) -> 켜짐 · ‖ → 일시정지 -> 켜짐 · ▶
@@ -597,7 +598,9 @@ def test_download_button_stays_on_while_receiving_and_paused(tmp_path, answers):
     assert (win.downloadButton.isEnabled(), win.downloadButton.iconName()) == (True, "resume")
 
 
-def test_download_button_is_off_when_only_finished_and_failed_cards_remain(tmp_path, answers):
+def test_download_button_is_off_when_only_finished_and_failed_cards_remain(
+    tmp_path, answers
+) -> None:
     """작업이 끝나 완료 · 실패 카드만 남으면 다운로드 버튼은 꺼져야 한다.
 
     카드 2장 → 첫 장 완료 · 둘째 장 실패 -> 꺼짐
@@ -611,7 +614,7 @@ def test_download_button_is_off_when_only_finished_and_failed_cards_remain(tmp_p
     assert not win.downloadButton.isEnabled()
 
 
-def test_download_button_turns_off_when_the_last_waiting_card_is_deleted(tmp_path):
+def test_download_button_turns_off_when_the_last_waiting_card_is_deleted(tmp_path) -> None:
     """마지막 대기 카드를 지우면 다운로드 버튼은 꺼져야 한다.
 
     대기 카드 1장 + 완료 카드 1장 → 대기 카드 지움 -> 꺼짐
@@ -629,7 +632,7 @@ def test_download_button_turns_off_when_the_last_waiting_card_is_deleted(tmp_pat
 
 def test_download_button_says_none_can_start_when_the_waiting_card_is_being_edited(
     tmp_path, answers
-):
+) -> None:
     """대기 카드가 구간 편집 창에 열려 있으면 ▶는 켜져 있되 누르면 「지금 시작할 수 있는 VOD가 없다」 안내여야 한다.
 
     대기 카드 1장, 그 카드의 구간 편집 시작 -> ▶ 켜짐, 누르면 안내 글 "No VOD can be started right now."

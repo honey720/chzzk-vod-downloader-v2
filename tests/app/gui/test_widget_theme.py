@@ -22,10 +22,11 @@ from app.viewmodels.data import ContentItem
 from app.widgets.widget import STATE_ICON, ContentItemWidget
 from core.models.download_state import DownloadState
 from tests.app.gui.card_helpers import hold_style
+from typing import Never
 
 
 @pytest.fixture(autouse=True)
-def _apply_dark_card_qss(qapp):
+def _apply_dark_card_qss(qapp) -> None:
     """이 파일의 테스트에만 실제 프로덕션 스타일시트를 적용한다.
 
     카드 프레임 지오메트리·색 검증은 전역 QSS가 실제로 태워진 상태를
@@ -87,12 +88,12 @@ def _card_border_colour(frame) -> QColor:
 
 
 @pytest.fixture(autouse=True)
-def no_network(monkeypatch):
+def no_network(monkeypatch) -> None:
     class _FailingSession:
-        def head(self, *a, **k):
+        def head(self, *a, **k) -> Never:
             raise RuntimeError("network disabled in tests")
 
-        def get(self, *a, **k):
+        def get(self, *a, **k) -> Never:
             raise RuntimeError("network disabled in tests")
 
     monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
@@ -135,7 +136,7 @@ STATE_MAP = [
 
 
 @pytest.mark.parametrize("download_state,card_state", STATE_MAP)
-def test_slot_label_gets_the_state_colour_property(qapp, download_state, card_state):
+def test_slot_label_gets_the_state_colour_property(qapp, download_state, card_state) -> None:
     """3행 슬롯 라벨이 옳은 색 규칙(`state` 동적 속성)을 받는지 (#245).
 
     ⚠️ 글리프 렌더 픽셀은 직접 샘플링하지 않는다 — 폰트 가용성에 좌우돼
@@ -149,7 +150,7 @@ def test_slot_label_gets_the_state_colour_property(qapp, download_state, card_st
 
 
 @pytest.mark.parametrize("download_state,card_state", STATE_MAP)
-def test_slot_swaps_between_pills_and_status_text(qapp, download_state, card_state):
+def test_slot_swaps_between_pills_and_status_text(qapp, download_state, card_state) -> None:
     """3행 슬롯 — 대기에만 pill, 그 외에는 상태 텍스트가 보인다 (#245).
 
     isVisible()은 조상이 안 보이면 항상 False라 위젯을 show()한 뒤 잰다.
@@ -170,7 +171,7 @@ def test_slot_swaps_between_pills_and_status_text(qapp, download_state, card_sta
         (DownloadState.FAILED, False, False, True),
     ],
 )
-def test_state_actions_visibility(qapp, download_state, pause, folder, retry):
+def test_state_actions_visibility(qapp, download_state, pause, folder, retry) -> None:
     """1행 우측 조작 — 진행·일시정지=pauseButton(도형은 pause↔resume,
     `test_card_state_matrix.py`가 본다), 완료=폴더, 실패=재시도, 삭제는
     항상 (#245 확정 매트릭스)."""
@@ -182,7 +183,7 @@ def test_state_actions_visibility(qapp, download_state, pause, folder, retry):
     assert widget.deleteButton.isVisible()
 
 
-def test_failed_hides_file_size_for_the_reason(qapp):
+def test_failed_hides_file_size_for_the_reason(qapp) -> None:
     """실패 카드의 3행 우측은 파일 크기 대신 사유가 자리를 쓴다 (#245)."""
     widget = _widget(qapp, DownloadState.FAILED, progress=0)
     widget.show()
@@ -193,12 +194,12 @@ def test_failed_hides_file_size_for_the_reason(qapp):
 
 
 @pytest.mark.parametrize("download_state,card_state", STATE_MAP)
-def test_progress_bar_property_follows_the_state(qapp, download_state, card_state):
+def test_progress_bar_property_follows_the_state(qapp, download_state, card_state) -> None:
     widget = _widget(qapp, download_state, progress=50)
     assert widget.progressBar.property("state") == card_state
 
 
-def test_card_border_stays_neutral_regardless_of_state(qapp):
+def test_card_border_stays_neutral_regardless_of_state(qapp) -> None:
     """카드 테두리는 상태와 무관하게 항상 중립색이어야 한다(#244).
 
     상태 신호를 "테두리·진행바·텍스트" 3중에서 "아이콘·진행바" 2가지로
@@ -211,7 +212,7 @@ def test_card_border_stays_neutral_regardless_of_state(qapp):
         assert _card_border_colour(widget.contentFrame) == neutral
 
 
-def test_state_change_repaints_an_existing_card(qapp):
+def test_state_change_repaints_an_existing_card(qapp) -> None:
     """같은 위젯이 상태를 갈아탈 때도 따라와야 한다 — 카드는 재사용된다."""
     widget = _widget(qapp, DownloadState.WAITING)
     widget.show()
@@ -233,13 +234,13 @@ def test_state_change_repaints_an_existing_card(qapp):
     assert widget.progressBar.property("state") == "failed"
 
 
-def test_waiting_card_shows_no_progress(qapp):
+def test_waiting_card_shows_no_progress(qapp) -> None:
     """대기 중인 카드에 이전 진행률이 남아 보이면 안 된다."""
     widget = _widget(qapp, DownloadState.WAITING, progress=70)
     assert widget.progressBar.value() == 0
 
 
-def test_resolution_buttons_are_marked_for_the_pill_rule(qapp):
+def test_resolution_buttons_are_marked_for_the_pill_rule(qapp) -> None:
     item = _make_item()
     item.unique_reps = [["1080", "https://x/1080"], ["720", "https://x/720"]]
     widget = ContentItemWidget(item, 0)
@@ -251,7 +252,7 @@ def test_resolution_buttons_are_marked_for_the_pill_rule(qapp):
     assert all(b.property("role") == "resolution" for b in widget.buttons)
 
 
-def test_resolution_buttons_get_their_own_row_not_the_title_row(qapp):
+def test_resolution_buttons_get_their_own_row_not_the_title_row(qapp) -> None:
     """해상도 버튼은 제목과 같은 줄을 공유하지 않는다(#244 — 무관 정보 분리).
 
     이전엔 `titleLayout`에 얹혀 "제목과 해상도라는 서로 무관한 정보가
@@ -285,7 +286,7 @@ def test_resolution_buttons_get_their_own_row_not_the_title_row(qapp):
     assert last.widget() is widget.fileSizeLabel, "파일 크기가 3행 우측 끝이 아니다"
 
 
-def test_icon_buttons_are_marked(qapp):
+def test_icon_buttons_are_marked(qapp) -> None:
     widget = _widget(qapp, DownloadState.WAITING)
     assert widget.deleteButton.property("role") == "icon"
     assert widget.openDirectoryButton.property("role") == "icon"
@@ -321,7 +322,7 @@ class TestCardInnerWidthIsUnchanged:
         return 2 + 2 * theme.METRICS["cardPadding"]  # 테두리 1×2 + 안쪽 여백×2
 
     @pytest.mark.parametrize("width", [460, 600, 900])
-    def test_content_width_matches_the_baseline_budget(self, qapp, width):
+    def test_content_width_matches_the_baseline_budget(self, qapp, width) -> None:
         widget = _widget(qapp, DownloadState.WAITING)
         widget.resize(width, 130)
         widget.show()
@@ -342,7 +343,7 @@ class TestCardInnerWidthIsUnchanged:
         "download_state",
         [DownloadState.WAITING, DownloadState.RUNNING, DownloadState.FINISHED, DownloadState.FAILED],
     )
-    def test_no_extra_horizontal_inset_in_any_state(self, qapp, download_state):
+    def test_no_extra_horizontal_inset_in_any_state(self, qapp, download_state) -> None:
         """상태가 달라져도 가로 가용 폭은 같아야 한다 — 폭이 상태에 따라 흔들리면 안 된다."""
         widget = _widget(qapp, download_state)
         widget.resize(600, 130)

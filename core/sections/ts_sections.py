@@ -100,7 +100,7 @@ class TsSectionSource:
         playlist: HlsPlaylist,
         segment_at: Callable[[int], TsStreams],
         fps: Fraction,
-    ):
+    ) -> None:
         """
         Args:
             playlist: 미디어 플레이리스트 — 세그먼트 길이(#EXTINF)와 끊긴 자리를 쓴다

@@ -105,7 +105,7 @@ class SegmentSpace:
         bandwidth: int | None = None,
         sections: Sequence[SectionUse] = (),
         on_disk: Mapping[int, int] | None = None,
-    ):
+    ) -> None:
         """
         Args:
             durations: 받을 세그먼트의 인덱스 → 길이(초, #EXTINF). 이 다운로드가 쓰는 세그먼트만

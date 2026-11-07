@@ -56,7 +56,7 @@ def _reordered_frames(base: int = 0) -> list[Frame]:
 # ================================================================ parse_ts
 
 
-def test_parse_ts_reads_pts_and_dts_in_decode_order():
+def test_parse_ts_reads_pts_and_dts_in_decode_order() -> None:
     """parse_ts는 영상 PES마다 PTS와 DTS를 파일에 나온 순서로 돌려줘야 한다.
 
     디코드 순서 I P B B, PTS = 3000·12000·6000·9000, DTS = 0·3000·6000·9000
@@ -68,7 +68,7 @@ def test_parse_ts_reads_pts_and_dts_in_decode_order():
     assert streams.video_dts == (0, 3000, 6000, 9000)
 
 
-def test_parse_ts_uses_pts_as_dts_when_pes_has_no_dts():
+def test_parse_ts_uses_pts_as_dts_when_pes_has_no_dts() -> None:
     """parse_ts는 PES에 DTS가 없으면 DTS를 PTS와 같게 돌려줘야 한다.
 
     PTS = 3000 · 6000, DTS 없음
@@ -79,7 +79,7 @@ def test_parse_ts_uses_pts_as_dts_when_pes_has_no_dts():
     assert streams.video_dts == (3000, 6000)
 
 
-def test_parse_ts_marks_idr_frames_as_keyframes():
+def test_parse_ts_marks_idr_frames_as_keyframes() -> None:
     """parse_ts는 랜덤 액세스 표시가 없어도 IDR NAL이 있는 프레임을 키프레임으로 돌려줘야 한다.
 
     프레임 4개 중 0번과 2번에 IDR NAL, 랜덤 액세스 표시는 모두 꺼짐
@@ -90,7 +90,7 @@ def test_parse_ts_marks_idr_frames_as_keyframes():
     assert parse_ts(build_ts(frames)).video_keyframes == (0, 2)
 
 
-def test_parse_ts_marks_random_access_frames_as_keyframes():
+def test_parse_ts_marks_random_access_frames_as_keyframes() -> None:
     """parse_ts는 IDR NAL이 없어도 랜덤 액세스 표시가 켜진 프레임을 키프레임으로 돌려줘야 한다.
 
     프레임 3개 중 1번의 적응 필드에 랜덤 액세스 표시, IDR NAL 없음
@@ -101,7 +101,7 @@ def test_parse_ts_marks_random_access_frames_as_keyframes():
     assert parse_ts(build_ts(frames)).video_keyframes == (1,)
 
 
-def test_parse_ts_finds_idr_nal_beyond_the_first_packet():
+def test_parse_ts_finds_idr_nal_beyond_the_first_packet() -> None:
     """parse_ts는 IDR NAL이 PES의 첫 패킷 밖에 있어도 키프레임으로 돌려줘야 한다.
 
     IDR NAL 앞에 400바이트를 채워 PES가 3패킷 이상에 걸치는 프레임
@@ -112,7 +112,7 @@ def test_parse_ts_finds_idr_nal_beyond_the_first_packet():
     assert streams.video_keyframes == (0,)
 
 
-def test_parse_ts_reads_timestamps_split_across_packets():
+def test_parse_ts_reads_timestamps_split_across_packets() -> None:
     """parse_ts는 PES 머리가 두 패킷에 걸쳐 있어도 PTS와 DTS를 읽어야 한다.
 
     첫 패킷의 본문을 10바이트로 줄여 PTS·DTS 칸이 다음 패킷에 놓인 PES
@@ -130,7 +130,7 @@ def test_parse_ts_reads_timestamps_split_across_packets():
     assert streams.video_dts == (9000,)
 
 
-def test_parse_ts_reads_hevc_irap_as_keyframe():
+def test_parse_ts_reads_hevc_irap_as_keyframe() -> None:
     """parse_ts는 HEVC 스트림에서 IRAP NAL(종류 16~23)이 있는 프레임을 키프레임으로 돌려줘야 한다.
 
     PMT stream_type 0x24, 0번 프레임의 NAL 종류 19(IDR_W_RADL), 1번 프레임의 NAL 종류 1
@@ -144,7 +144,7 @@ def test_parse_ts_reads_hevc_irap_as_keyframe():
     assert parse_ts(build_ts(frames, video_type=0x24)).video_keyframes == (0,)
 
 
-def test_parse_ts_reads_audio_pes_timestamps():
+def test_parse_ts_reads_audio_pes_timestamps() -> None:
     """parse_ts는 오디오 PES마다 PTS를 돌려줘야 한다.
 
     오디오 PES 3개, PTS = 0 · 1920 · 3840
@@ -155,7 +155,7 @@ def test_parse_ts_reads_audio_pes_timestamps():
     assert streams.audio_pts == (0, 1920, 3840)
 
 
-def test_parse_ts_reads_concatenated_segments():
+def test_parse_ts_reads_concatenated_segments() -> None:
     """parse_ts는 세그먼트 둘을 이어 붙인 bytes에서 두 세그먼트의 프레임을 모두 돌려줘야 한다.
 
     프레임 4개짜리 세그먼트 둘(각자 PAT·PMT로 시작)
@@ -178,7 +178,7 @@ def test_parse_ts_reads_concatenated_segments():
     ],
     ids=["length", "sync", "empty"],
 )
-def test_parse_ts_rejects_broken_packets(damage):
+def test_parse_ts_rejects_broken_packets(damage) -> None:
     """parse_ts는 패킷 경계나 동기 바이트가 맞지 않으면 손상 키로 TsError를 내야 한다.
 
     길이를 1바이트 줄임 · 둘째 패킷의 첫 바이트를 0으로 바꿈 · 빈 bytes
@@ -190,7 +190,7 @@ def test_parse_ts_rejects_broken_packets(damage):
     assert info.value.message_key == TS_INVALID
 
 
-def test_parse_ts_rejects_pmt_section_cut_short():
+def test_parse_ts_rejects_pmt_section_cut_short() -> None:
     """parse_ts는 PMT 섹션이 스트림 목록 앞의 고정 칸보다 짧으면 IndexError가 아니라 손상 키로 TsError를 내야 한다.
 
     섹션 본문이 3바이트뿐인 PMT
@@ -202,7 +202,7 @@ def test_parse_ts_rejects_pmt_section_cut_short():
     assert info.value.message_key == TS_INVALID
 
 
-def test_parse_ts_rejects_segment_without_video_stream():
+def test_parse_ts_rejects_segment_without_video_stream() -> None:
     """parse_ts는 PMT에 영상 스트림이 없으면 미지원 키로 TsError를 내야 한다.
 
     PMT에 오디오 스트림만 있는 TS
@@ -216,7 +216,7 @@ def test_parse_ts_rejects_segment_without_video_stream():
     assert info.value.message_key == TS_UNSUPPORTED
 
 
-def test_parse_ts_rejects_video_pes_without_pts():
+def test_parse_ts_rejects_video_pes_without_pts() -> None:
     """parse_ts는 영상 PES에 PTS가 없으면 미지원 키로 TsError를 내야 한다.
 
     PTS·DTS 플래그가 모두 꺼진 영상 PES
@@ -235,7 +235,7 @@ def test_parse_ts_rejects_video_pes_without_pts():
 # ================================================================ ts_origin
 
 
-def test_ts_origin_is_earliest_pts_across_video_and_audio():
+def test_ts_origin_is_earliest_pts_across_video_and_audio() -> None:
     """ts_origin은 영상과 오디오를 통틀어 가장 이른 PTS를 돌려줘야 한다.
 
     영상 PTS = 6000 · 9000, 오디오 PTS = 2580 · 4500
@@ -248,7 +248,7 @@ def test_ts_origin_is_earliest_pts_across_video_and_audio():
     assert ts_origin(streams) == 2580
 
 
-def test_ts_origin_picks_value_before_wraparound():
+def test_ts_origin_picks_value_before_wraparound() -> None:
     """ts_origin은 세그먼트 안에서 값이 0으로 돌아가도 그 직전의 값을 가장 이른 것으로 돌려줘야 한다.
 
     영상 PTS = 2^33 − 3000 · 0 · 3000
@@ -267,7 +267,7 @@ def test_ts_origin_picks_value_before_wraparound():
 # ================================================================ build_ts_index
 
 
-def test_build_ts_index_orders_frames_by_pts():
+def test_build_ts_index_orders_frames_by_pts() -> None:
     """build_ts_index는 프레임을 DTS가 아니라 PTS 순서로 놓아야 한다.
 
     디코드 순서 I P B B, PTS = 3000·12000·6000·9000, origin = 3000
@@ -279,7 +279,7 @@ def test_build_ts_index_orders_frames_by_pts():
     assert index.frame_samples == (0, 2, 3, 1)
 
 
-def test_build_ts_index_keeps_decode_times_in_decode_order():
+def test_build_ts_index_keeps_decode_times_in_decode_order() -> None:
     """build_ts_index는 DTS를 디코드 순서 그대로 초로 돌려줘야 한다.
 
     DTS = 0·3000·6000·9000, origin = 3000
@@ -290,7 +290,7 @@ def test_build_ts_index_keeps_decode_times_in_decode_order():
     assert index.decode_times == pytest.approx([-1 / 30, 0.0, 1 / 30, 2 / 30])
 
 
-def test_build_ts_index_maps_keyframes_to_display_order():
+def test_build_ts_index_maps_keyframes_to_display_order() -> None:
     """build_ts_index는 키프레임을 표시 순서의 프레임 번호로 돌려줘야 한다.
 
     디코드 순서 I P B B 두 묶음 (키프레임은 디코드 0번·4번)
@@ -303,7 +303,7 @@ def test_build_ts_index_maps_keyframes_to_display_order():
     assert index.keyframes == (0, 4)
 
 
-def test_build_ts_index_measures_time_from_origin():
+def test_build_ts_index_measures_time_from_origin() -> None:
     """build_ts_index는 origin을 0초로 삼아 그 뒤 세그먼트의 시각을 돌려줘야 한다.
 
     origin = 126000, 세그먼트의 첫 PTS = 126000 + 90000 × 100 + 3000
@@ -315,7 +315,7 @@ def test_build_ts_index_measures_time_from_origin():
     assert index.frame_pts[0] == pytest.approx(100 + 1 / 30)
 
 
-def test_build_ts_index_unwraps_33bit_timestamps():
+def test_build_ts_index_unwraps_33bit_timestamps() -> None:
     """build_ts_index는 타임스탬프가 2^33에서 0으로 돌아가도 시각을 이어서 돌려줘야 한다.
 
     프레임 4개, PTS = 2^33 − 6000 · 2^33 − 3000 · 0 · 3000 (DTS 같음), origin = 2^33 − 6000
@@ -329,7 +329,7 @@ def test_build_ts_index_unwraps_33bit_timestamps():
     assert index.frame_pts == pytest.approx([0.0, 1 / 30, 2 / 30, 3 / 30])
 
 
-def test_build_ts_index_unwraps_pts_that_wraps_before_its_dts():
+def test_build_ts_index_unwraps_pts_that_wraps_before_its_dts() -> None:
     """build_ts_index는 DTS는 2^33 직전이고 PTS만 0을 넘어간 프레임의 시각을 이어서 돌려줘야 한다.
 
     DTS = 2^33 − 3000, PTS = 3000 (DTS보다 6000틱 뒤), origin = 2^33 − 3000
@@ -342,7 +342,7 @@ def test_build_ts_index_unwraps_pts_that_wraps_before_its_dts():
     assert index.frame_pts[0] == pytest.approx(6000 / 90000)
 
 
-def test_build_ts_index_reads_segment_after_origin_wrapped():
+def test_build_ts_index_reads_segment_after_origin_wrapped() -> None:
     """build_ts_index는 origin 뒤에 랩어라운드가 지난 세그먼트의 시각을 origin 기준으로 돌려줘야 한다.
 
     origin = 2^33 − 90000 × 10 (랩어라운드 10초 전), 세그먼트의 첫 PTS = 90000 × 5 (랩어라운드 5초 뒤)
@@ -355,7 +355,7 @@ def test_build_ts_index_reads_segment_after_origin_wrapped():
     assert index.frame_pts[0] == pytest.approx(15.0)
 
 
-def test_build_ts_index_reads_dts_slightly_before_origin_as_negative():
+def test_build_ts_index_reads_dts_slightly_before_origin_as_negative() -> None:
     """build_ts_index는 첫 DTS가 origin보다 조금 앞서면 26.5시간 뒤가 아니라 음수 시각으로 돌려줘야 한다.
 
     origin = 3000 (가장 이른 PTS), 첫 DTS = 0
@@ -366,7 +366,7 @@ def test_build_ts_index_reads_dts_slightly_before_origin_as_negative():
     assert index.decode_times[0] == pytest.approx(-1 / 30)
 
 
-def test_build_ts_index_uses_expected_start_to_count_wraps():
+def test_build_ts_index_uses_expected_start_to_count_wraps() -> None:
     """build_ts_index는 expected_start를 받으면 랩어라운드 횟수를 그 시각에 가장 가깝게 맞춰야 한다.
 
     origin = 0, 세그먼트의 첫 PTS = 90000 (원시 값으로는 1초), expected_start = 2^33/90000 + 1초 (약 26.5시간 뒤)
@@ -380,7 +380,7 @@ def test_build_ts_index_uses_expected_start_to_count_wraps():
     assert index.frame_pts[0] == pytest.approx(later)
 
 
-def test_build_ts_index_converts_audio_pts():
+def test_build_ts_index_converts_audio_pts() -> None:
     """build_ts_index는 오디오 PES의 PTS도 origin 기준 초로 돌려줘야 한다.
 
     오디오 PTS = 3000 · 4920, origin = 3000
@@ -393,7 +393,7 @@ def test_build_ts_index_converts_audio_pts():
     assert index.audio_pts == pytest.approx([0.0, 1920 / 90000])
 
 
-def test_build_ts_index_rejects_streams_without_video_frames():
+def test_build_ts_index_rejects_streams_without_video_frames() -> None:
     """build_ts_index는 영상 프레임이 없으면 손상 키로 TsError를 내야 한다.
 
     영상 프레임 0개
@@ -407,7 +407,7 @@ def test_build_ts_index_rejects_streams_without_video_frames():
     assert info.value.message_key == TS_INVALID
 
 
-def test_build_ts_index_result_feeds_snap_to_frame():
+def test_build_ts_index_result_feeds_snap_to_frame() -> None:
     """build_ts_index의 frame_pts는 snap_to_frame에 그대로 넣을 수 있어야 한다.
 
     30fps 프레임 4개(0 ~ 0.1초), 명목 시각 0.07초
@@ -490,7 +490,7 @@ def _index_of(number: int) -> TsIndex:
     return build_ts_index(parse_ts(_segment(number)), ORIGIN)
 
 
-def test_synthetic_segments_carry_the_observed_layout():
+def test_synthetic_segments_carry_the_observed_layout() -> None:
     """합성 세그먼트는 옮기려던 구조여야 한다 — 영상이 오디오보다 늦게 시작하고, 키프레임이 2초마다 있고, 재정렬 지연이 한 프레임이다.
 
     합성 세그먼트 0 · 1 · 2
@@ -509,7 +509,7 @@ def test_synthetic_segments_carry_the_observed_layout():
     assert leads == [3840, 960, 0]
 
 
-def test_parse_ts_counts_adts_frames_in_each_audio_pes():
+def test_parse_ts_counts_adts_frames_in_each_audio_pes() -> None:
     """parse_ts는 ADTS 오디오 PES마다 든 프레임 수와 표본화율을 읽어야 한다.
 
     합성 세그먼트 0 — 오디오 PES 8개, 프레임 수 24 × 7 + 21, 48kHz. PES 하나가 여러 패킷에 걸친다
@@ -522,7 +522,7 @@ def test_parse_ts_counts_adts_frames_in_each_audio_pes():
     assert streams.audio_sample_rate == 48000
 
 
-def test_parse_ts_counts_every_aac_frame_inside_one_adts_frame():
+def test_parse_ts_counts_every_aac_frame_inside_one_adts_frame() -> None:
     """parse_ts는 ADTS 프레임 하나에 AAC 프레임이 여럿 들었으면 머리에 적힌 수만큼 세야 한다.
 
     오디오 PES 하나 — AAC 프레임 2개짜리 ADTS 프레임 3개
@@ -543,7 +543,7 @@ def test_parse_ts_counts_every_aac_frame_inside_one_adts_frame():
     ],
     ids=["not-adts-body", "offset-body", "latm-stream"],
 )
-def test_audio_end_is_unknown_when_frames_cannot_be_counted(audio_type, payload):
+def test_audio_end_is_unknown_when_frames_cannot_be_counted(audio_type, payload) -> None:
     """오디오 PES의 프레임 수를 읽을 수 없으면 프레임 수는 0이고 오디오가 끝나는 시각은 None이어야 한다.
 
     주석의 오디오 PES 하나(PTS 3000), 영상 프레임 하나
@@ -560,7 +560,7 @@ def test_audio_end_is_unknown_when_frames_cannot_be_counted(audio_type, payload)
     assert index.audio_end is None
 
 
-def test_audio_end_is_none_without_audio():
+def test_audio_end_is_none_without_audio() -> None:
     """오디오 PES가 없으면 오디오가 끝나는 시각은 None이어야 한다.
 
     영상 프레임만 든 TS
@@ -572,7 +572,7 @@ def test_audio_end_is_none_without_audio():
 
 
 @pytest.mark.parametrize("number", [0, 1])
-def test_audio_end_meets_the_first_audio_pts_of_the_next_segment(number):
+def test_audio_end_meets_the_first_audio_pts_of_the_next_segment(number) -> None:
     """세그먼트의 오디오가 끝나는 시각은 다음 세그먼트의 첫 오디오 PTS와 같아야 한다.
 
     합성 세그먼트 number와 number + 1 (마지막 오디오 PES의 프레임 수 21 · 20)
@@ -586,7 +586,7 @@ def test_audio_end_meets_the_first_audio_pts_of_the_next_segment(number):
     assert following.audio_pts[0] == pytest.approx(expected, abs=1e-9)
 
 
-def test_audio_end_of_joined_segments_is_the_end_of_the_last_one():
+def test_audio_end_of_joined_segments_is_the_end_of_the_last_one() -> None:
     """세그먼트를 이어 붙인 것의 오디오가 끝나는 시각은 마지막 세그먼트의 것이어야 한다.
 
     합성 세그먼트 0 · 1을 이은 bytes
@@ -600,7 +600,7 @@ def test_audio_end_of_joined_segments_is_the_end_of_the_last_one():
     assert index.audio_end == pytest.approx((_segment_audio(2)[0][0] - ORIGIN) / 90_000, abs=1e-9)
 
 
-def test_audio_end_uses_the_sample_rate_of_the_last_audio_pes():
+def test_audio_end_uses_the_sample_rate_of_the_last_audio_pes() -> None:
     """표본화율이 도중에 바뀌면 오디오가 끝나는 시각은 마지막 오디오 PES의 표본화율로 구해야 한다.
 
     오디오 PES 둘 — PTS 0에 44.1kHz 10프레임, PTS 90,000(1초)에 48kHz 5프레임. origin 0
@@ -623,7 +623,7 @@ def test_audio_end_uses_the_sample_rate_of_the_last_audio_pes():
     [(1500, 1 / 60), (3000, 1 / 30), (3600, 1 / 25)],
     ids=["60fps", "30fps", "25fps"],
 )
-def test_frame_duration_is_measured_from_pts_intervals(frame_ticks, expected):
+def test_frame_duration_is_measured_from_pts_intervals(frame_ticks, expected) -> None:
     """프레임 길이는 표시 순서로 이웃한 프레임의 PTS 간격에서 재야 한다.
 
     B프레임이 든 24프레임(GOP 12), 프레임 간격은 주석의 틱
@@ -636,7 +636,7 @@ def test_frame_duration_is_measured_from_pts_intervals(frame_ticks, expected):
     assert index.frame_duration == pytest.approx(expected, abs=1e-12)
 
 
-def test_frame_duration_ignores_the_longer_interval_of_a_missing_frame():
+def test_frame_duration_ignores_the_longer_interval_of_a_missing_frame() -> None:
     """프레임이 빠진 자리의 긴 간격은 프레임 길이에 들어가지 않아야 한다.
 
     60fps 프레임 6개에서 넷째를 뺀 것 — 간격 1500 · 1500 · 3000 · 1500틱
@@ -649,7 +649,7 @@ def test_frame_duration_ignores_the_longer_interval_of_a_missing_frame():
     assert index.frame_duration == pytest.approx(1 / 60, abs=1e-12)
 
 
-def test_frame_duration_is_none_for_a_single_frame():
+def test_frame_duration_is_none_for_a_single_frame() -> None:
     """프레임이 하나뿐이면 프레임 길이는 None이어야 한다.
 
     영상 프레임 하나
@@ -660,7 +660,7 @@ def test_frame_duration_is_none_for_a_single_frame():
     assert index.frame_duration is None
 
 
-def test_video_spans_of_consecutive_segments_meet_without_gap_or_overlap():
+def test_video_spans_of_consecutive_segments_meet_without_gap_or_overlap() -> None:
     """이어지는 세그먼트의 영상 시각 범위는 앞의 끝과 뒤의 시작이 같아야 한다.
 
     합성 세그먼트 0 · 1 · 2 (각 240프레임, 60fps)
@@ -676,7 +676,7 @@ def test_video_spans_of_consecutive_segments_meet_without_gap_or_overlap():
     assert spans[1][1] == pytest.approx(spans[2][0], abs=1e-9)
 
 
-def test_video_span_of_a_30fps_segment_ends_one_frame_after_the_last_pts():
+def test_video_span_of_a_30fps_segment_ends_one_frame_after_the_last_pts() -> None:
     """영상 시각 범위의 끝은 마지막 PTS에 그 영상의 프레임 길이를 더한 값이어야 한다.
 
     30fps 프레임 30개(0초부터)
@@ -689,7 +689,7 @@ def test_video_span_of_a_30fps_segment_ends_one_frame_after_the_last_pts():
     assert (begin, end) == (pytest.approx(0.0, abs=1e-9), pytest.approx(1.0, abs=1e-9))
 
 
-def test_video_span_of_a_single_frame_needs_a_frame_duration():
+def test_video_span_of_a_single_frame_needs_a_frame_duration() -> None:
     """프레임이 하나뿐인 색인의 시각 범위는 프레임 길이를 받아야 구할 수 있어야 한다.
 
     영상 프레임 하나(0초)
@@ -706,7 +706,7 @@ def test_video_span_of_a_single_frame_needs_a_frame_duration():
 # ================================================================ 오디오의 시각 범위 · 스트림 잇기
 
 
-def test_audio_span_measures_a_segment_that_has_no_video():
+def test_audio_span_measures_a_segment_that_has_no_video() -> None:
     """ts_audio_span은 영상 프레임이 없는 세그먼트에서도 오디오가 놓인 시각을 돌려줘야 한다.
 
     오디오 PES 둘만 든 TS — PTS 90,000 · 136,080(24프레임 뒤), 프레임 수 24 · 12. origin 0
@@ -725,7 +725,7 @@ def test_audio_span_measures_a_segment_that_has_no_video():
         build_ts_index(streams, origin=0)
 
 
-def test_audio_span_has_no_end_when_frames_cannot_be_counted():
+def test_audio_span_has_no_end_when_frames_cannot_be_counted() -> None:
     """ts_audio_span은 프레임 수를 읽지 못한 오디오의 끝을 None으로 돌려줘야 한다.
 
     ADTS가 아닌 오디오 PES 하나(PTS 3000), origin 3000
@@ -736,7 +736,7 @@ def test_audio_span_has_no_end_when_frames_cannot_be_counted():
     assert ts_audio_span(streams, origin=3000) == (0.0, None)
 
 
-def test_audio_span_is_none_without_audio():
+def test_audio_span_is_none_without_audio() -> None:
     """ts_audio_span은 오디오 PES가 없으면 None을 돌려줘야 한다.
 
     영상 프레임만 든 TS
@@ -747,7 +747,7 @@ def test_audio_span_is_none_without_audio():
     assert ts_audio_span(streams, origin=3000) is None
 
 
-def test_audio_span_follows_the_expected_start_through_the_wraparound():
+def test_audio_span_follows_the_expected_start_through_the_wraparound() -> None:
     """ts_audio_span은 expected_start를 받으면 랩어라운드 횟수를 그 시각에 맞춰야 한다.
 
     오디오 PES 하나(PTS 90,000 · 24프레임), origin 0, expected_start = 한 바퀴(2³³틱) 뒤의 1초
@@ -762,7 +762,7 @@ def test_audio_span_follows_the_expected_start_through_the_wraparound():
     assert end == pytest.approx(lap + 1 + 24 * AAC_FRAME / 90_000, abs=1e-6)
 
 
-def test_joined_streams_equal_the_streams_of_joined_bytes():
+def test_joined_streams_equal_the_streams_of_joined_bytes() -> None:
     """join_ts_streams의 결과는 세그먼트의 bytes를 이어 parse_ts에 넣은 것과 같아야 한다.
 
     합성 세그먼트 0 · 1 · 2를 따로 읽어 이은 것과, bytes를 이어 한 번에 읽은 것
@@ -776,7 +776,7 @@ def test_joined_streams_equal_the_streams_of_joined_bytes():
     assert joined.video_keyframes == (0, 120, 240, 360, 480, 600)
 
 
-def test_joined_streams_drop_frame_counts_when_a_part_has_none():
+def test_joined_streams_drop_frame_counts_when_a_part_has_none() -> None:
     """join_ts_streams는 프레임 수가 없는 조각이 섞이면 프레임 수를 잇지 않아야 한다.
 
     합성 세그먼트 0의 TsStreams와, 오디오 PTS만 있고 프레임 수가 없는 직접 만든 TsStreams

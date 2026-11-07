@@ -96,7 +96,7 @@ PORTABLE_DIRNAMES = [
 
 
 @pytest.mark.parametrize("dirname", PORTABLE_DIRNAMES)
-def test_ffmpeg_remux_into_special_char_dir(tmp_path, fmp4_input, dirname):
+def test_ffmpeg_remux_into_special_char_dir(tmp_path, fmp4_input, dirname) -> None:
     """공백·특수문자 폴더에서 경로 조립→임시 폴더→remux가 완주한다 (#144)."""
     directory = tmp_path / dirname
     directory.mkdir()
@@ -108,7 +108,7 @@ def test_ffmpeg_remux_into_special_char_dir(tmp_path, fmp4_input, dirname):
     sys.platform == "win32",
     reason="Windows는 생성 시 후행 공백을 조용히 절단한다(실측) — POSIX 전용 케이스",
 )
-def test_ffmpeg_remux_into_trailing_space_dir(tmp_path, fmp4_input):
+def test_ffmpeg_remux_into_trailing_space_dir(tmp_path, fmp4_input) -> None:
     """후행 공백 폴더(POSIX 합법)에서도 파이프라인이 완주한다."""
     directory = tmp_path / "trail test "
     directory.mkdir()
@@ -138,7 +138,7 @@ def _directory_of_length(base: PurePath, target: int) -> PurePath:
     )
 
 
-def test_directory_of_length_from_a_71_char_base_ends_one_past_the_target():
+def test_directory_of_length_from_a_71_char_base_ends_one_past_the_target() -> None:
     """기준 경로가 71자이면 길이 맞추기가 끝나고 목표보다 1자 긴 경로여야 한다 (#439).
 
     base = "/" + "b" * 70 (71자), target=225
@@ -152,7 +152,7 @@ def test_directory_of_length_from_a_71_char_base_ends_one_past_the_target():
     assert len(str(directory)) == 226
 
 
-def test_ffmpeg_remux_into_long_directory_prefix(tmp_path, fmp4_input):
+def test_ffmpeg_remux_into_long_directory_prefix(tmp_path, fmp4_input) -> None:
     """긴 폴더 경로에서 제목 절단(~해시) 경로로 remux가 완주한다 (#146 감사 확장).
 
     디렉토리를 210자 이상으로 만들어 전체 경로 상한(_MAX_FULLPATH=240)에
@@ -178,7 +178,7 @@ def test_ffmpeg_remux_into_long_directory_prefix(tmp_path, fmp4_input):
 # ================================================================ 산출물 이름 충돌
 
 
-def test_ffmpeg_remux_output_collision_gets_suffix(tmp_path, fmp4_input):
+def test_ffmpeg_remux_output_collision_gets_suffix(tmp_path, fmp4_input) -> None:
     """같은 이름 산출물이 이미 있으면 " (1)"로 회피한 경로에 remux가 완주한다."""
     directory = tmp_path / "collision test"
     directory.mkdir()
@@ -196,7 +196,7 @@ def test_ffmpeg_remux_output_collision_gets_suffix(tmp_path, fmp4_input):
     sys.platform != "darwin",
     reason="macOS 파일 시스템의 정규화 무관 조회 검증 — 타 OS는 코드포인트 그대로 저장되어 성립하지 않는다(실측)",
 )
-def test_ffmpeg_space_path_nfd_dir_visible_via_nfc(tmp_path, fmp4_input):
+def test_ffmpeg_space_path_nfd_dir_visible_via_nfc(tmp_path, fmp4_input) -> None:
     """NFD로 만든 한글 폴더가 NFC 경로 문자열로도 보이고 파이프라인이 완주한다.
 
     macOS 로컬 디스크(APFS/HFS+)의 정규화 무관 조회가 실제로 성립하는지의

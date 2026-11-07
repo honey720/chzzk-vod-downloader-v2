@@ -124,7 +124,7 @@ class TimecodeEdit(QLineEdit):
     dotPressed = Signal()  # "."을 쳤다 — 칸에는 들어가지 않는다
     touched = Signal()  # 키를 누르거나 마우스로 눌렀다 — 그 입력을 처리하기 **전에** 나온다
 
-    def __init__(self, parent: QWidget | None = None, fields: int = _FIELDS):
+    def __init__(self, parent: QWidget | None = None, fields: int = _FIELDS) -> None:
         """
         Args:
             fields: 두 자리 묶음의 수 — 4는 시각 하나, ``CLOCK_FIELDS``는 시분초, ``FRAME_FIELDS``는 프레임
@@ -460,7 +460,7 @@ class TimePointEdit(QWidget):
     pasted = Signal()  # 붙여넣은 글을 받았다 — edited 뒤에 나온다(값이 그대로여도 나온다)
     touched = Signal()  # 두 칸 가운데 하나에 키 · 마우스 입력이 왔다 — 처리하기 전에 나온다
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)

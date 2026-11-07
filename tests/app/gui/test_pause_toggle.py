@@ -18,12 +18,13 @@ from app.views.mainWindow import VodDownloader
 from core.media.representations import StreamEntry
 from core.models.download_state import DownloadState
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
+from typing import Never
 
 
 class _Engine:
     """DownloadService 대역 — 제출을 적어 둔다."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.submissions: list[dict] = []
 
     def submit(self, content, **kwargs):
@@ -45,7 +46,7 @@ def _environment(qapp, monkeypatch):
     qapp.setPalette(theme.build_palette())
     qapp.setStyleSheet(theme.load_stylesheet(main_module.resource_path(theme.QSS_RELATIVE_PATH)))
 
-    def no_network():
+    def no_network() -> Never:
         raise RuntimeError("network disabled in tests")
 
     monkeypatch.setattr("app.widgets.widget.get_thread_session", no_network)
@@ -97,7 +98,7 @@ def _engine_state(engine: _Engine) -> DownloadState:
 @pytest.mark.parametrize("presses", [1, 2, 9, 10])
 def test_rapid_presses_leave_the_engine_the_card_and_the_button_in_the_same_state(
     downloading, presses
-):
+) -> None:
     """일시정지 버튼이 이벤트를 처리할 틈 없이 여러 번 눌려도 마지막 누름의 상태로 끝나고 셋이 같아야 한다.
 
     받는 중인 카드에서 전역 버튼과 카드의 ⏸를 번갈아 1 · 2 · 9 · 10번 누름(사이에 이벤트를 돌리지 않는다)
@@ -122,7 +123,7 @@ def test_rapid_presses_leave_the_engine_the_card_and_the_button_in_the_same_stat
     assert len(engine.submissions) == 1, "누름이 새 다운로드를 시작하지 않았다"
 
 
-def test_a_press_that_lands_after_the_engine_finished_changes_nothing(downloading):
+def test_a_press_that_lands_after_the_engine_finished_changes_nothing(downloading) -> None:
     """엔진이 막 끝났고 그 알림이 아직 처리되지 않은 틈에 눌린 일시정지는 카드와 버튼을 바꾸지 않아야 한다.
 
     엔진의 상태를 FINISHED로 바꿈(끝났다는 알림은 아직 오지 않았다). 전역 버튼을 누름
@@ -141,7 +142,9 @@ def test_a_press_that_lands_after_the_engine_finished_changes_nothing(downloadin
     assert win.downloadButton.toolTip() == "Pause all"
 
 
-def test_a_download_started_after_a_paused_one_was_stopped_does_not_start_paused(downloading):
+def test_a_download_started_after_a_paused_one_was_stopped_does_not_start_paused(
+    downloading,
+) -> None:
     """일시정지했다가 중지한 카드를 다시 받기 시작하면 새 다운로드는 일시정지를 이어받지 않아야 한다.
 
     받는 중 → 일시정지 → 중지 → 전역 다운로드

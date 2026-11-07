@@ -18,17 +18,18 @@ from app.viewmodels.data import ContentItem
 from app.viewmodels.content_viewmodel import ContentViewModel
 from app.widgets.view import ContentListView
 from core.models.download_state import DownloadState
+from typing import Never
 
 
 @pytest.fixture(autouse=True)
-def no_network(monkeypatch):
+def no_network(monkeypatch) -> None:
     """위젯의 썸네일·파일 크기 조회 스레드가 실네트워크에 나가지 않게 차단한다."""
 
     class _FailingSession:
-        def head(self, *args, **kwargs):
+        def head(self, *args, **kwargs) -> Never:
             raise RuntimeError("network disabled in tests")
 
-        def get(self, *args, **kwargs):
+        def get(self, *args, **kwargs) -> Never:
             raise RuntimeError("network disabled in tests")
 
     monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
@@ -43,12 +44,12 @@ class FakeWorker(QObject):
     #: None이면 성공 결과를, 문자열이면 해당 메시지로 error를 emit한다
     fail_message = None
 
-    def __init__(self, vod_url, cookies, downloadPath):
+    def __init__(self, vod_url, cookies, downloadPath) -> None:
         super().__init__()
         self.vod_url = vod_url
         self.downloadPath = downloadPath
 
-    def run(self):
+    def run(self) -> None:
         if self.fail_message is not None:
             self.error.emit(self.fail_message)
             return
@@ -77,7 +78,7 @@ def manager(qapp, monkeypatch):
     view.deleteLater()
 
 
-def _drain(manager, qapp):
+def _drain(manager, qapp) -> None:
     """풀 스레드의 emit이 큐 전달로 메인 스레드에 도착할 때까지 처리한다."""
     assert manager.threadpool.waitForDone(3000)
     for _ in range(20):
@@ -111,7 +112,7 @@ def _make_item(state, title="완성 아이템"):
 
 
 class TestFindItemGate:
-    def test_loading_item_is_not_download_target(self, manager, qapp):
+    def test_loading_item_is_not_download_target(self, manager, qapp) -> None:
         manager.fetchContent("https://chzzk.naver.com/video/1", {}, ".")
         # 워커가 끝나기 전 = LOADING 상태 (emit은 아직 전달되지 않음)
         found, item, _ = manager.findItem()
@@ -119,7 +120,7 @@ class TestFindItemGate:
         assert item is None
         _drain(manager, qapp)
 
-    def test_waiting_item_is_still_found_when_another_is_loading(self, manager, qapp):
+    def test_waiting_item_is_still_found_when_another_is_loading(self, manager, qapp) -> None:
         """일부만 로딩 중일 때 완성된 항목은 정상 다운로드 대상이어야 한다."""
         waiting = _make_item(DownloadState.WAITING)
         manager.model.addItem(waiting)
@@ -129,13 +130,13 @@ class TestFindItemGate:
         assert item is waiting
         _drain(manager, qapp)
 
-    def test_finished_and_failed_are_still_skipped(self, manager):
+    def test_finished_and_failed_are_still_skipped(self, manager) -> None:
         manager.model.addItem(_make_item(DownloadState.FINISHED))
         manager.model.addItem(_make_item(DownloadState.FAILED))
         found, _, _ = manager.findItem()
         assert not found
 
-    def test_has_loading_items(self, manager, qapp):
+    def test_has_loading_items(self, manager, qapp) -> None:
         assert not manager.hasLoadingItems()
         manager.fetchContent("https://chzzk.naver.com/video/1", {}, ".")
         assert manager.hasLoadingItems()
@@ -146,7 +147,7 @@ class TestFindItemGate:
 class TestFetchSignalPath:
     """실제 시그널 배선을 타는 교체 경로 검증 — 워커 참조는 잡지 않는다."""
 
-    def test_placeholder_becomes_waiting_item_after_fetch(self, manager, qapp):
+    def test_placeholder_becomes_waiting_item_after_fetch(self, manager, qapp) -> None:
         manager.fetchContent("https://chzzk.naver.com/video/1", {}, ".")
         _drain(manager, qapp)
 
@@ -156,7 +157,7 @@ class TestFetchSignalPath:
         assert item.title == "제목:https://chzzk.naver.com/video/1"
         assert not manager._pendingPlaceholders
 
-    def test_multiple_urls_all_complete_in_order(self, manager, qapp):
+    def test_multiple_urls_all_complete_in_order(self, manager, qapp) -> None:
         """스모크 실패 재현 조건: URL 3개 연속 추가 → 전부 완성 카드로 교체."""
         urls = [f"https://chzzk.naver.com/video/{i}" for i in range(3)]
         for url in urls:
@@ -168,7 +169,7 @@ class TestFetchSignalPath:
             assert item.downloadState == DownloadState.WAITING, url
             assert item.vod_url == url
 
-    def test_replacement_keeps_row_position(self, manager, qapp):
+    def test_replacement_keeps_row_position(self, manager, qapp) -> None:
         first = _make_item(DownloadState.WAITING, title="앞 아이템")
         manager.model.addItem(first)
         manager.fetchContent("https://chzzk.naver.com/video/2", {}, ".")
@@ -182,7 +183,7 @@ class TestFetchSignalPath:
         assert manager.model.items[1].vod_url == "https://chzzk.naver.com/video/2"
         assert manager.model.items[2] is last
 
-    def test_result_is_discarded_when_placeholder_was_deleted(self, manager, qapp):
+    def test_result_is_discarded_when_placeholder_was_deleted(self, manager, qapp) -> None:
         manager.fetchContent("https://chzzk.naver.com/video/1", {}, ".")
         placeholder = manager.model.items[0]
         manager.removeItem(placeholder)
@@ -193,7 +194,7 @@ class TestFetchSignalPath:
 
 
 class TestFetchErrorPath:
-    def test_placeholder_is_removed_and_error_emitted(self, manager, qapp, monkeypatch):
+    def test_placeholder_is_removed_and_error_emitted(self, manager, qapp, monkeypatch) -> None:
         monkeypatch.setattr(FakeWorker, "fail_message", "boom")
         errors = []
         manager.contentError.connect(errors.append)
@@ -206,7 +207,7 @@ class TestFetchErrorPath:
         assert errors == ["boom"]
         assert not manager._pendingPlaceholders
 
-    def test_error_after_manual_delete_only_emits_message(self, manager, qapp, monkeypatch):
+    def test_error_after_manual_delete_only_emits_message(self, manager, qapp, monkeypatch) -> None:
         monkeypatch.setattr(FakeWorker, "fail_message", "boom")
         errors = []
         manager.contentError.connect(errors.append)

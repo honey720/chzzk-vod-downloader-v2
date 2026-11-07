@@ -92,7 +92,7 @@ def _chunks(generator: random.Random, count: int) -> list[int]:
 
 
 @pytest.mark.parametrize("seed", range(40))
-def test_sample_times_equal_the_exact_rational_definition(seed):
+def test_sample_times_equal_the_exact_rational_definition(seed) -> None:
     """샘플의 표시 시각은 분수로 정확히 계산한 값을 float로 바꾼 것과 비트까지 같아야 한다.
 
     씨앗마다 무작위 영상 · 오디오(나누어떨어지지 않는 timescale · 빈 편집 · 재정렬)를 만들어 해석
@@ -109,7 +109,7 @@ def test_sample_times_equal_the_exact_rational_definition(seed):
 
 
 @pytest.mark.parametrize("seed", range(40))
-def test_sample_offsets_equal_the_positions_the_builder_wrote(seed):
+def test_sample_offsets_equal_the_positions_the_builder_wrote(seed) -> None:
     """샘플의 파일 안 위치는 조립기가 샘플을 써 넣은 위치와 같아야 한다.
 
     씨앗마다 무작위 영상 · 오디오(청크마다 샘플 수가 다르다)를 만들어 해석
@@ -125,7 +125,7 @@ def test_sample_offsets_equal_the_positions_the_builder_wrote(seed):
         assert list(track.chunk_starts) == [0, *accumulate(spec.chunks)][: len(spec.chunks)]
 
 
-def test_standard_fixture_times_are_unchanged():
+def test_standard_fixture_times_are_unchanged() -> None:
     """표준 재료(10fps 영상 12샘플 · 8000Hz 오디오 16샘플)의 표시 시각은 손으로 센 값이어야 한다.
 
     영상은 디코드 순서 I P B B 세 묶음 -> 표시 시각(초) [0.0, 0.3, 0.1, 0.2, 0.4, 0.7, 0.5, 0.6, …]

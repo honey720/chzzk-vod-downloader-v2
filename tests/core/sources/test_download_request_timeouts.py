@@ -46,15 +46,15 @@ class _WouldNeverReturn(Exception):
 
 
 class _Response:
-    def __init__(self, text: str = "", content: bytes = b"", headers: dict | None = None):
+    def __init__(self, text: str = "", content: bytes = b"", headers: dict | None = None) -> None:
         self.text = text
         self.content = content
         self.headers = headers or {}
 
-    def raise_for_status(self):
+    def raise_for_status(self) -> None:
         pass
 
-    def close(self):
+    def close(self) -> None:
         pass
 
 
@@ -74,7 +74,7 @@ def _kind(method: str, url: str) -> str:
 class _Session:
     """요청의 종류와 받은 timeout을 기록한다. silent에 든 종류에는 응답하지 않는다."""
 
-    def __init__(self, silent: str | None = None):
+    def __init__(self, silent: str | None = None) -> None:
         self.silent = silent
         self.calls: list[tuple[str, object]] = []
 
@@ -147,7 +147,7 @@ FIVE = ["file-head", "file-get", "m3u8-playlist", "m3u8-init", "aes-playlist"]
 
 
 @pytest.mark.parametrize("kind", FIVE)
-def test_preparation_request_carries_the_timeout(kind, tmp_path, monkeypatch):
+def test_preparation_request_carries_the_timeout(kind, tmp_path, monkeypatch) -> None:
     """준비 단계의 요청은 범위 · 세그먼트 요청과 같은 timeout을 받아야 한다.
 
     요청 종류마다, 응답하는 가짜 세션
@@ -162,7 +162,7 @@ def test_preparation_request_carries_the_timeout(kind, tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("kind", FIVE)
-def test_unanswered_preparation_request_fails_the_download(kind, tmp_path, monkeypatch):
+def test_unanswered_preparation_request_fails_the_download(kind, tmp_path, monkeypatch) -> None:
     """준비 단계의 요청에 서버가 응답하지 않으면 다운로드가 타임아웃 예외로 실패 처리돼야 한다.
 
     요청 종류마다, 그 요청에만 응답하지 않는 가짜 세션으로 run()

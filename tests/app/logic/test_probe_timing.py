@@ -20,6 +20,7 @@ import core.engine.session as session_module
 from app.section_input.probe_timing import LOG_PREFIX, ProbeTiming
 from app.section_input.basis import SectionBasis, probe_fmp4, probe_mp4, probe_ts
 from core.media.mp4_index import Mp4Summary
+from typing import Never
 
 LOGGER = "app.section_input.basis"
 # 로그에 나오면 안 되는 것 — 주소 · 쿼리의 토큰 · 영상 번호 · 쿠키 · 키 · 제목
@@ -84,7 +85,7 @@ def fake_fmp4(monkeypatch):
         playlist = SimpleNamespace(segments=["s"] * 19960)
         return SimpleNamespace(init="init", playlist=playlist)
 
-    def frames(head, url, index):
+    def frames(head, url, index) -> str:
         request("1580043", 480.0)
         return f"segment{index}"
 
@@ -106,7 +107,9 @@ def fake_fmp4(monkeypatch):
     return hooks
 
 
-def test_replay_lookup_logs_one_line_with_each_stage_and_its_requests(caplog, item, fake_fmp4):
+def test_replay_lookup_logs_one_line_with_each_stage_and_its_requests(
+    caplog, item, fake_fmp4
+) -> None:
     """다시보기 조회는 단계마다의 시간 · 요청 수 · 응답 크기를 INFO 로그 한 줄로 남겨야 한다.
 
     변형 해석 1건(1,256B) · 플레이리스트와 초기화 2건(2,314,962B · 크기 모름) · 첫 세그먼트 1건 ·
@@ -134,7 +137,7 @@ def test_replay_lookup_logs_one_line_with_each_stage_and_its_requests(caplog, it
     assert fake_fmp4 == [], "조회가 끝났는데 세션에 훅이 남았다"
 
 
-def test_the_log_line_carries_no_address_token_cookie_key_or_title(caplog, item, fake_fmp4):
+def test_the_log_line_carries_no_address_token_cookie_key_or_title(caplog, item, fake_fmp4) -> None:
     """시간 기록 줄에는 주소 · 쿼리의 토큰 · 영상 번호 · 쿠키 · 키 · 제목이 없어야 한다.
 
     주소 · 영상 번호 · 제목이 든 아이템, 주소 · 쿠키 · 제목이 든 응답으로 조회
@@ -152,7 +155,7 @@ def test_the_log_line_carries_no_address_token_cookie_key_or_title(caplog, item,
     assert "http" not in lines[0] and "?" not in lines[0].replace("ms/?", "")
 
 
-def test_encrypted_lookup_keeps_the_key_out_of_the_line(caplog, monkeypatch):
+def test_encrypted_lookup_keeps_the_key_out_of_the_line(caplog, monkeypatch) -> None:
     """암호화 VOD 조회의 시간 기록 줄에는 키가 없어야 하고, 단계에 키 · 첫 · 끝 세그먼트가 있어야 한다.
 
     키 리졸버가 bytes.fromhex("4b" × 16)을 줌
@@ -187,7 +190,7 @@ def test_encrypted_lookup_keeps_the_key_out_of_the_line(caplog, monkeypatch):
         assert form not in lines[0]
 
 
-def test_mp4_lookup_logs_the_moov_size_and_length(caplog, monkeypatch):
+def test_mp4_lookup_logs_the_moov_size_and_length(caplog, monkeypatch) -> None:
     """인코딩 완료 VOD 조회는 받은 moov의 크기 · 프레임 수 · 영상 길이와, 받기 · 가벼운 해석의 시간을 줄에 적어야 한다.
 
     받은 moov 340,596바이트, 가볍게 읽은 값: 프레임 3개 · 길이 1234.5초
@@ -211,14 +214,14 @@ def test_mp4_lookup_logs_the_moov_size_and_length(caplog, monkeypatch):
     assert SECRETS["host"] not in line and SECRETS["token"] not in line
 
 
-def test_a_failed_lookup_still_logs_and_names_only_the_exception_type(caplog, monkeypatch):
+def test_a_failed_lookup_still_logs_and_names_only_the_exception_type(caplog, monkeypatch) -> None:
     """조회가 실패해도 줄을 남기되 예외의 이름만 적고, 예외는 그대로 올려야 한다.
 
     moov 받기가 주소가 든 문구의 RuntimeError를 던짐
     -> RuntimeError가 그대로 올라온다, 줄에 "실패 RuntimeError", 예외 문구의 주소는 없다
     """
 
-    def broken(url):
+    def broken(url) -> Never:
         raise RuntimeError(f"failed to fetch {url}")
 
     monkeypatch.setattr(section_basis, "fetch_mp4_raw", broken)
@@ -231,14 +234,16 @@ def test_a_failed_lookup_still_logs_and_names_only_the_exception_type(caplog, mo
     assert SECRETS["host"] not in line and SECRETS["token"] not in line
 
 
-def test_lookup_finishes_even_when_timing_itself_breaks(caplog, monkeypatch, item, fake_fmp4):
+def test_lookup_finishes_even_when_timing_itself_breaks(
+    caplog, monkeypatch, item, fake_fmp4
+) -> None:
     """시간을 재는 일이 실패해도 조회는 같은 값을 돌려줘야 한다.
 
     시계(time.perf_counter)와 로그 내기가 모두 예외를 던지게 둠
     -> 조회 결과 == SectionBasis(60, 39922.345), 예외 없음
     """
 
-    def broken(*args, **kwargs):
+    def broken(*args, **kwargs) -> Never:
         raise OSError("시계 고장(대역)")
 
     monkeypatch.setattr(probe_timing.time, "perf_counter", broken)
@@ -249,7 +254,7 @@ def test_lookup_finishes_even_when_timing_itself_breaks(caplog, monkeypatch, ite
     assert probe.basis == SectionBasis(fps=Fraction(60), duration=39922.345)
 
 
-def test_requests_of_other_threads_are_not_counted():
+def test_requests_of_other_threads_are_not_counted() -> None:
     """공유 세션의 훅은 조회를 돌리는 스레드의 요청만 세야 한다.
 
     조회 스레드에서 단계 하나를 연 채, 다른 스레드에서 훅을 부름
@@ -272,7 +277,7 @@ def test_requests_of_other_threads_are_not_counted():
 
 def test_requests_after_the_lookup_are_not_counted_and_the_session_keeps_no_hook(
     caplog, item, fake_fmp4
-):
+) -> None:
     """조회가 끝난 뒤 같은 세션으로 나간 요청은 세지 않아야 하고, 세션에 훅이 남지 않아야 한다.
 
     조회 한 번(요청 5건)이 끝난 뒤 같은 세션의 훅 목록으로 응답 하나를 더 흘림
@@ -288,7 +293,7 @@ def test_requests_after_the_lookup_are_not_counted_and_the_session_keeps_no_hook
     assert len(lines) == 1 and "요청 5건" in lines[0]
 
 
-def test_a_lookup_that_ends_with_an_exception_leaves_no_hook(monkeypatch):
+def test_a_lookup_that_ends_with_an_exception_leaves_no_hook(monkeypatch) -> None:
     """예외로 끝난 조회 뒤에도 세션에 훅이 남지 않아야 한다.
 
     moov 받기가 RuntimeError를 던지는 조회
@@ -297,7 +302,7 @@ def test_a_lookup_that_ends_with_an_exception_leaves_no_hook(monkeypatch):
     hooks: list = []
     during = []
 
-    def broken(url):
+    def broken(url) -> Never:
         during.append(len(hooks))
         raise RuntimeError("조회 실패(대역)")
 
@@ -312,7 +317,7 @@ def test_a_lookup_that_ends_with_an_exception_leaves_no_hook(monkeypatch):
     assert hooks == []
 
 
-def test_the_shared_session_never_gets_a_hook(monkeypatch, item, fake_fmp4):
+def test_the_shared_session_never_gets_a_hook(monkeypatch, item, fake_fmp4) -> None:
     """모든 스레드가 함께 쓰는 공유 세션에는 조회가 도는 동안에도 훅을 걸지 않아야 한다.
 
     조회의 단계(변형 해석 · 첫 세그먼트) 안에서 공유 세션의 훅 목록을 들여다봄
@@ -335,7 +340,7 @@ def test_the_shared_session_never_gets_a_hook(monkeypatch, item, fake_fmp4):
     assert shared == []
 
 
-def test_two_lookups_running_at_once_do_not_mix_their_counts(caplog, monkeypatch):
+def test_two_lookups_running_at_once_do_not_mix_their_counts(caplog, monkeypatch) -> None:
     """조회 둘이 동시에 돌아도 요청의 셈이 서로 섞이지 않아야 한다.
 
     스레드 둘이 각자의 세션으로 mp4 조회를 동시에 돌린다(둘 다 moov 받기 안에 들어온 뒤 진행).

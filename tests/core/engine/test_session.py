@@ -11,12 +11,12 @@ import app.network as network
 import core.engine.session as session
 
 
-def test_module_session_is_a_requests_session():
+def test_module_session_is_a_requests_session() -> None:
     """API 호출용 모듈 수준 공유 세션이 requests.Session이어야 한다."""
     assert isinstance(session._session, requests.Session)
 
 
-def test_thread_session_is_reused_within_same_thread():
+def test_thread_session_is_reused_within_same_thread() -> None:
     """같은 스레드에서 get_thread_session은 항상 같은 Session을 돌려준다."""
     first = session.get_thread_session()
     second = session.get_thread_session()
@@ -25,12 +25,12 @@ def test_thread_session_is_reused_within_same_thread():
     assert first is second
 
 
-def test_thread_session_is_distinct_across_threads():
+def test_thread_session_is_distinct_across_threads() -> None:
     """다른 스레드에서는 별도의 Session이 생성된다 (스레드 안전성 확보 방식)."""
     main_session = session.get_thread_session()
     other_sessions = []
 
-    def worker():
+    def worker() -> None:
         other_sessions.append(session.get_thread_session())
 
     thread = threading.Thread(target=worker)
@@ -42,7 +42,7 @@ def test_thread_session_is_distinct_across_threads():
     assert other_sessions[0] is not main_session
 
 
-def test_session_does_not_store_response_cookies():
+def test_session_does_not_store_response_cookies() -> None:
     """응답의 Set-Cookie가 세션에 저장되지 않아야 한다 (기존 동작 유지).
 
     쿠키 차단 정책이 적용된 세션은 어떤 도메인의 쿠키도 저장(set_ok)하지 않는다.
@@ -75,7 +75,7 @@ def test_session_does_not_store_response_cookies():
     assert policy.set_ok(cookie, request) is False
 
 
-def test_content_network_reexports_core_session():
+def test_content_network_reexports_core_session() -> None:
     """content.network의 하위 호환 re-export가 core 구현과 동일 객체여야 한다 (#62).
 
     기존 테스트·호출부는 network._session 객체의 get을 monkeypatch하므로,

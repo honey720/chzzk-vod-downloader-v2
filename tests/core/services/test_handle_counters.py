@@ -47,7 +47,7 @@ EXPECTED = DownloadCounters(
 )
 
 
-def test_progress_carries_the_counters_of_the_moment_it_was_relayed():
+def test_progress_carries_the_counters_of_the_moment_it_was_relayed() -> None:
     """진행 통지는 중계하던 순간의 카운터를 값 묶음으로 실어야 하고, 뒤에 바뀐 카운터는 그 묶음에 없어야 한다.
 
     공유 데이터(위 값)에서 진행 ProgressEvent(10)을 중계 → 공유 데이터 sections_done 3으로 바꿈
@@ -65,7 +65,7 @@ def test_progress_carries_the_counters_of_the_moment_it_was_relayed():
     assert event.counters == EXPECTED
 
 
-def test_progress_after_merge_start_says_merging():
+def test_progress_after_merge_start_says_merging() -> None:
     """병합 시작을 중계한 뒤의 진행 통지는 값 묶음에 병합 중이라고 실어야 한다.
 
     병합 시작 중계 → 진행 ProgressEvent(10) 중계
@@ -81,7 +81,9 @@ def test_progress_after_merge_start_says_merging():
     assert seen[0].counters.merging is True
 
 
-def test_failure_carries_the_key_and_the_counters_and_the_exception_callback_keeps_the_exception():
+def test_failure_carries_the_key_and_the_counters_and_the_exception_callback_keeps_the_exception() -> (
+    None
+):
     """실패는 키 콜백에 (안내 키, 실패 때의 값 묶음)을, 예외 콜백에 예외 객체를 그대로 넘겨야 한다.
 
     OSError("디스크")로 실패 중계(예외 콜백 · 키 콜백 둘 다 등록)
@@ -105,7 +107,7 @@ def test_failure_carries_the_key_and_the_counters_and_the_exception_callback_kee
     assert errors == [error] and errors[0] is error
 
 
-def test_finish_carries_the_counters_after_the_finished_callback():
+def test_finish_carries_the_counters_after_the_finished_callback() -> None:
     """완료는 완료 콜백을 부른 뒤 값 묶음 콜백에 완료하던 때의 값 묶음을 넘겨야 한다.
 
     완료 중계(완료 콜백 · 값 묶음 콜백 둘 다 등록)
@@ -126,7 +128,7 @@ def test_finish_carries_the_counters_after_the_finished_callback():
     assert calls == ["완료", ("값 묶음", EXPECTED)]
 
 
-def test_counters_are_left_out_of_event_equality():
+def test_counters_are_left_out_of_event_equality() -> None:
     """진행 이벤트의 같음(==)은 값 묶음을 보지 않아야 한다 — 엔진이 낸 값이 같으면 같은 통지다.
 
     ProgressEvent(10, counters=EXPECTED)와 ProgressEvent(10)

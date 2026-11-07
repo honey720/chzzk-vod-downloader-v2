@@ -18,33 +18,33 @@ from tests.mocks.engine_side import engine_side
 class Content(QObject):
     """content 자리(제품에서는 ContentManager)의 대역 — 받은 진행 통지의 크기를 적는다."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.sizes: list[str] = []
 
-    def update_progress(self, rem, size, spd, prog, item):
+    def update_progress(self, rem, size, spd, prog, item) -> None:
         self.sizes.append(size)
 
-    def pause(self, item):
+    def pause(self, item) -> None:
         pass
 
-    def resume(self, item):
+    def resume(self, item) -> None:
         pass
 
-    def stop(self, item):
+    def stop(self, item) -> None:
         pass
 
-    def finish(self, item, download_time):
+    def finish(self, item, download_time) -> None:
         pass
 
-    def fail(self, item, message=""):
+    def fail(self, item, message="") -> None:
         pass
 
 
 class Handle:
     """DownloadService가 돌려주는 실행 핸들의 대역."""
 
-    def __init__(self, data):
+    def __init__(self, data) -> None:
         self.data = data
 
     def wait(self, timeout=None) -> bool:
@@ -54,7 +54,7 @@ class Handle:
 class Service:
     """DownloadService 대역 — 제출된 진행 콜백을 남긴다."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.on_progress = None
 
     def submit(self, content, **kwargs):
@@ -62,7 +62,7 @@ class Service:
         self.on_progress = engine_side(content, kwargs)["on_progress"]
         return Handle(kwargs["data"])
 
-    def abandon(self, handle):
+    def abandon(self, handle) -> None:
         pass
 
 
@@ -105,7 +105,7 @@ def _shown(qapp, content, service, sizes) -> list[str]:
 
 
 @pytest.mark.parametrize("content_type", ["m3u8", "video"])
-def test_card_size_does_not_go_below_what_it_showed(qapp, started, content_type):
+def test_card_size_does_not_go_below_what_it_showed(qapp, started, content_type) -> None:
     """받은 양이 줄어든 통지가 와도 카드의 받은 크기는 전에 보인 값 아래로 내려가지 않아야 한다 (#395).
 
     받은 양 100 → 300 → 200(받다 만 세그먼트를 버림) → 250 → 400
@@ -118,7 +118,7 @@ def test_card_size_does_not_go_below_what_it_showed(qapp, started, content_type)
     assert shown == ["100", "300", "300", "300", "400"]
 
 
-def test_card_size_follows_a_received_size_that_only_grows(qapp, started):
+def test_card_size_follows_a_received_size_that_only_grows(qapp, started) -> None:
     """받은 양이 줄지 않으면 카드의 받은 크기는 받은 양 그대로여야 한다 (#395).
 
     받은 양 100 → 200 → 200 → 350

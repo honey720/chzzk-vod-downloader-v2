@@ -15,7 +15,7 @@ def _make_data() -> DownloadData:
     )
 
 
-def test_content_fields_are_delegated_to_content_model():
+def test_content_fields_are_delegated_to_content_model() -> None:
     """컨텐츠 필드는 Content가 소유하고, 기존 속성 이름으로 읽고 쓸 수 있어야 한다."""
     data = _make_data()
 
@@ -31,7 +31,7 @@ def test_content_fields_are_delegated_to_content_model():
     assert data.content.base_url == "https://cdn.example/1080"
 
 
-def test_state_progress_fields_are_delegated_to_task_model():
+def test_state_progress_fields_are_delegated_to_task_model() -> None:
     """상태·진행률 필드는 DownloadTaskModel이 단일 소유처여야 한다."""
     data = _make_data()
 
@@ -50,14 +50,14 @@ def test_state_progress_fields_are_delegated_to_task_model():
     assert data.model.end_time == 3.5
 
 
-def test_pause_event_is_the_models_event():
+def test_pause_event_is_the_models_event() -> None:
     """_pause_event는 모델의 pause_event와 같은 객체여야 한다 (일시정지 연동)."""
     data = _make_data()
     assert data._pause_event is data.model.pause_event
     assert data._pause_event.is_set()  # 초기 상태는 진행 가능
 
 
-def test_unknown_content_type_raises():
+def test_unknown_content_type_raises() -> None:
     """정의되지 않은 content_type 문자열은 생성 시점에 ValueError로 실패해야 한다."""
     with pytest.raises(ValueError):
         DownloadData("b", "u", "o", 720, "unknown-type")

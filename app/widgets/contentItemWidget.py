@@ -38,7 +38,7 @@ from app.widgets.icons import IconButton
 
 
 class Ui_ContentItemWidget(object):
-    def setupUi(self, ContentItemWidget):
+    def setupUi(self, ContentItemWidget) -> None:
         if not ContentItemWidget.objectName():
             ContentItemWidget.setObjectName(u"ContentItemWidget")
         ContentItemWidget.resize(600, 110)
@@ -281,7 +281,7 @@ class Ui_ContentItemWidget(object):
         QMetaObject.connectSlotsByName(ContentItemWidget)
     # setupUi
 
-    def retranslateUi(self, ContentItemWidget):
+    def retranslateUi(self, ContentItemWidget) -> None:
         ContentItemWidget.setWindowTitle(QCoreApplication.translate("ContentItemWidget", u"ContentItemWidget", None))
 #if QT_CONFIG(tooltip)
         self.channelImageLabel.setToolTip(QCoreApplication.translate("ContentItemWidget", u"Channel image", None))

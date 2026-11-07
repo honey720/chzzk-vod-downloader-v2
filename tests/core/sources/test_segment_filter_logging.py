@@ -23,7 +23,7 @@ def _make_engine(tmp_path):
     return engine, data
 
 
-def test_mass_pollution_warning_is_summarized_not_dumped_in_full(tmp_path):
+def test_mass_pollution_warning_is_summarized_not_dumped_in_full(tmp_path) -> None:
     """오염 파일 1011개가 있어도 경고 한 줄에 전부 찍지 않고 개수+샘플만 남긴다."""
     engine, _data = _make_engine(tmp_path)
     for i in range(3):

@@ -31,7 +31,7 @@ FIVE = parse_media_playlist(_playlist(["4.000", "4.000", "4.000", "4.000", "2.50
 # ================================================================ 세그먼트 길이
 
 
-def test_parse_media_playlist_reads_segment_durations():
+def test_parse_media_playlist_reads_segment_durations() -> None:
     """parse_media_playlist는 세그먼트마다 #EXTINF 길이를 같은 순서로 돌려줘야 한다.
 
     #EXTINF = 3.840 · 3.840 · 1.200
@@ -43,7 +43,7 @@ def test_parse_media_playlist_reads_segment_durations():
     assert len(playlist.durations) == len(playlist.segments)
 
 
-def test_parse_media_playlist_reads_extinf_with_title_or_integer():
+def test_parse_media_playlist_reads_extinf_with_title_or_integer() -> None:
     """parse_media_playlist는 #EXTINF에 제목이 붙거나 길이가 정수여도 길이를 읽어야 한다.
 
     "#EXTINF:4,", "#EXTINF:2.5,제목"
@@ -54,7 +54,7 @@ def test_parse_media_playlist_reads_extinf_with_title_or_integer():
     assert parse_media_playlist(text).durations == (4.0, 2.5)
 
 
-def test_parse_media_playlist_gives_zero_to_segment_without_extinf():
+def test_parse_media_playlist_gives_zero_to_segment_without_extinf() -> None:
     """parse_media_playlist는 #EXTINF가 없는 세그먼트의 길이를 0.0으로 돌려줘야 한다.
 
     a.ts(#EXTINF 4.0) · b.ts(#EXTINF 없음) · c.ts(#EXTINF 2.0)
@@ -65,7 +65,7 @@ def test_parse_media_playlist_gives_zero_to_segment_without_extinf():
     assert parse_media_playlist(text).durations == (4.0, 0.0, 2.0)
 
 
-def test_playlist_duration_is_sum_of_extinf():
+def test_playlist_duration_is_sum_of_extinf() -> None:
     """HlsPlaylist.duration은 세그먼트 수 × 목표 길이가 아니라 #EXTINF의 합이어야 한다.
 
     #EXTINF = 4.000 · 4.000 · 4.000 · 4.000 · 2.500 (TARGETDURATION 4)
@@ -74,7 +74,7 @@ def test_playlist_duration_is_sum_of_extinf():
     assert FIVE.duration == pytest.approx(18.5)
 
 
-def test_playlist_built_without_durations_reports_zero_duration():
+def test_playlist_built_without_durations_reports_zero_duration() -> None:
     """HlsPlaylist는 durations 없이 만들면 빈 튜플과 길이 0.0을 돌려줘야 한다.
 
     HlsPlaylist(segments=("a.ts",))
@@ -89,7 +89,7 @@ def test_playlist_built_without_durations_reports_zero_duration():
 # ================================================================ 구간 → 세그먼트
 
 
-def test_selection_segments_starts_one_segment_before_the_covering_segment():
+def test_selection_segments_starts_one_segment_before_the_covering_segment() -> None:
     """selection_segments는 구간이 놓인 세그먼트보다 하나 앞의 세그먼트부터 받도록 돌려줘야 한다.
 
     세그먼트 시작 0 · 4 · 8 · 12 · 16초, 구간 9.0~10.0초 (세그먼트 2 안)
@@ -100,7 +100,7 @@ def test_selection_segments_starts_one_segment_before_the_covering_segment():
     )
 
 
-def test_selection_segments_starts_at_first_segment_when_nothing_precedes():
+def test_selection_segments_starts_at_first_segment_when_nothing_precedes() -> None:
     """selection_segments는 구간이 첫 세그먼트에 놓이면 첫 세그먼트부터 받도록 돌려줘야 한다.
 
     구간 1.0~2.0초 (세그먼트 0 안)
@@ -111,7 +111,7 @@ def test_selection_segments_starts_at_first_segment_when_nothing_precedes():
     assert (span.first, span.last) == (0, 0)
 
 
-def test_selection_segments_covers_every_segment_the_range_touches():
+def test_selection_segments_covers_every_segment_the_range_touches() -> None:
     """selection_segments는 구간이 여러 세그먼트에 걸치면 끝 시각이 놓인 세그먼트까지 돌려줘야 한다.
 
     구간 5.0~13.0초 (세그먼트 1 ~ 3)
@@ -122,7 +122,7 @@ def test_selection_segments_covers_every_segment_the_range_touches():
     )
 
 
-def test_selection_segments_puts_boundary_time_in_the_segment_that_starts_there():
+def test_selection_segments_puts_boundary_time_in_the_segment_that_starts_there() -> None:
     """selection_segments는 세그먼트 경계와 같은 시각을 그 시각에 시작하는 세그먼트에 놓아야 한다.
 
     구간 8.0~12.0초 (8.0은 세그먼트 2의 시작, 12.0은 세그먼트 3의 시작)
@@ -133,7 +133,7 @@ def test_selection_segments_puts_boundary_time_in_the_segment_that_starts_there(
     assert (span.first, span.cover_first, span.cover_last) == (1, 2, 3)
 
 
-def test_selection_segments_follows_uneven_segment_durations():
+def test_selection_segments_follows_uneven_segment_durations() -> None:
     """selection_segments는 세그먼트 길이가 고르지 않아도 #EXTINF 누적으로 세그먼트를 찾아야 한다.
 
     #EXTINF = 2 · 2 · 2 · 6 (시작 0 · 2 · 4 · 6초), 구간 5.0~5.5초
@@ -144,7 +144,7 @@ def test_selection_segments_follows_uneven_segment_durations():
     assert selection_segments(playlist, TimeRange(5.0, 5.5)).cover_first == 2
 
 
-def test_selection_segments_clamps_end_to_last_segment():
+def test_selection_segments_clamps_end_to_last_segment() -> None:
     """selection_segments는 구간의 끝이 플레이리스트 길이를 넘으면 마지막 세그먼트까지 돌려줘야 한다.
 
     플레이리스트 18.5초, 구간 17.0~30.0초
@@ -153,7 +153,7 @@ def test_selection_segments_clamps_end_to_last_segment():
     assert selection_segments(FIVE, TimeRange(17.0, 30.0)).last == 4
 
 
-def test_selection_segments_rejects_start_at_or_after_duration():
+def test_selection_segments_rejects_start_at_or_after_duration() -> None:
     """selection_segments는 구간의 시작이 플레이리스트 길이와 같거나 뒤이면 ValueError를 내야 한다.
 
     플레이리스트 18.5초, 구간 18.5~19.0초
@@ -163,7 +163,7 @@ def test_selection_segments_rejects_start_at_or_after_duration():
         selection_segments(FIVE, TimeRange(18.5, 19.0))
 
 
-def test_selection_segments_rejects_playlist_without_durations():
+def test_selection_segments_rejects_playlist_without_durations() -> None:
     """selection_segments는 플레이리스트에 세그먼트 길이가 없으면 ValueError를 내야 한다.
 
     HlsPlaylist(segments=("a.ts", "b.ts")) — durations 없음
@@ -178,7 +178,7 @@ def test_selection_segments_rejects_playlist_without_durations():
     [(4.0, 0.0, 2.0), (4.0, -1.0, 2.0), (4.0, float("nan"), 2.0), (4.0, float("inf"), 2.0)],
     ids=["zero", "negative", "nan", "inf"],
 )
-def test_selection_segments_rejects_segment_of_unknown_duration(durations):
+def test_selection_segments_rejects_segment_of_unknown_duration(durations) -> None:
     """selection_segments는 길이가 0 이하이거나 유한하지 않은 세그먼트가 있으면 ValueError를 내야 한다.
 
     durations = (4.0, 0.0, 2.0) · (4.0, −1.0, 2.0) · (4.0, nan, 2.0) · (4.0, inf, 2.0), 구간 4.5~5.0초
@@ -190,7 +190,7 @@ def test_selection_segments_rejects_segment_of_unknown_duration(durations):
         selection_segments(playlist, TimeRange(4.5, 5.0))
 
 
-def test_selection_segments_rejects_playlist_parsed_with_missing_extinf():
+def test_selection_segments_rejects_playlist_parsed_with_missing_extinf() -> None:
     """selection_segments는 #EXTINF가 빠진 세그먼트가 있는 플레이리스트를 ValueError로 거부해야 한다.
 
     a.ts(#EXTINF 4.0) · b.ts(#EXTINF 없음) · c.ts(#EXTINF 2.0), 구간 4.5~5.0초
@@ -202,7 +202,7 @@ def test_selection_segments_rejects_playlist_parsed_with_missing_extinf():
         selection_segments(parse_media_playlist(text), TimeRange(4.5, 5.0))
 
 
-def test_selection_segments_keeps_boundary_segment_despite_float_accumulation():
+def test_selection_segments_keeps_boundary_segment_despite_float_accumulation() -> None:
     """selection_segments는 세그먼트 길이를 누적한 값에 float 오차가 있어도 끝 시각에 시작하는 세그먼트를 받아야 한다.
 
     #EXTINF = 0.1 × 4 (넷째 세그먼트의 누적 시작 시각 = 0.30000000000000004), 구간 0.25~0.3초
