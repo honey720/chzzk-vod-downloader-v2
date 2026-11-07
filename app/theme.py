@@ -73,6 +73,9 @@ METRICS = {
     "barHeight": 4,  # 하단 진행바 두께(진행분이 있을 때 — 진행·일시정지 — 보임)
     "actionGlyph": 12,  # 조작 아이콘(일시정지·재개·재시도·폴더·삭제) 도형 한 변 — iconSize 버튼 안에 그려진다
     "barGlyph": 14,  # 하단바 아이콘 버튼(▶ ‖ ■) 도형 한 변 — 버튼은 글 버튼 높이의 정사각이다(#504)
+    # ---- 메뉴바 상태 버블(#523, 설계 §2) — 메뉴 버튼 오른쪽 안쪽 여백에 늘 잡아 두는 자리 ----
+    "menuBubble": 14,  # 버블(원) 지름
+    "menuBubbleGap": 6,  # 메뉴 이름 글 ↔ 버블 사이
     # 썸네일 높이는 토큰이 아니다 — 우측 4행의 실제 높이에 맞춰 런타임에
     # 계산되고(16:9로 폭 결정, app/widgets/widget.py), 행 간격·글자 크기를
     # 바꾸면 썸네일도 따라간다.
@@ -83,6 +86,7 @@ METRICS = {
     "initialWidthMax": 800,  # 첫 실행 초기 창 폭의 상한 — 콘텐츠 최대폭이 아니다(#253, 유저는 얼마든지 넓힐 수 있다)
     # ---- 공통 형태 ----
     "radius": 8,  # 버튼·입력창 등 일반 모서리
+    "buttonPadX": 14,  # 기본 버튼 좌우 안쪽 여백 — 메뉴 버튼의 버블 자리도 이 값 안쪽에 둔다(#523)
 }
 
 #: 글자 위계 — 위(제목)에서 아래(경로)로 무게가 내려간다. 값은 QSS 문자열.
@@ -130,6 +134,11 @@ DARK = {
     "statePaused": "#8695a8",
     "stateFinished": "#4CC38A",  # 완료 — 초록
     "stateFailed": "#FF6969",  # 실패 — 빨강
+    # 경고 · 정보(#523, 설계 §12.1 상태 색) — 원래 색의 OKLCH 색상각 그대로 밝기만 옮긴 값: 기호(onAccent) ↔ 원
+    # 4.5, 원 ↔ 평소 바탕(메뉴바 windowBg · 고른 메뉴 surfaceAlt · OS 알림 바탕 #2c2c2c) 3.0을 지키는 가장
+    # 가까운 밝기. 다크는 원래 값이 그대로 통과한다(tests/app/gui/test_theme_contrast.py)
+    "stateWarning": "#f0a33c",  # 경고 — 주황(일부 실패 버블)
+    "stateInfo": "#55b5ff",  # 정보 — 진행 색(설계 §11.5)
     # ---- 진행바 ----
     "barTrack": "#3a3d45",
     "scrollHandle": "#4c515b",
@@ -172,6 +181,9 @@ LIGHT = {
     "statePaused": "#6a778b",  # 일시정지 — 흰 배경에서 진행 파랑과 구별되는 무채색 강철빛
     "stateFinished": "#288654",  # #512 — 카드 바탕 위 4.5(3.39였다)
     "stateFailed": "#d02727",  # #512 — 카드 · 헤더바 · 버튼 면(실패 칩) 위 모두 4.5(버튼 면 3.99였다)
+    # #523 — 주황 #f0a33c의 색상각 그대로 밝기만 낮춤(흰 기호 4.5 · 바탕 3.0, 화면 색 범위 안으로 채도만 조금 줄어듦)
+    "stateWarning": "#a66904",
+    "stateInfo": "#1f6fd6",  # 정보 — 진행 색(설계 §11.5)
     # ---- 진행바 ----
     "barTrack": "#d5d8de",  # = border — 진행 막대 트랙은 카드 테두리 색(설계 §12.1, #512)
     "scrollHandle": "#c3c7cd",
@@ -188,6 +200,10 @@ for _table in (DARK, LIGHT):
     _table.update(FONTS)
     _table["pillRadius"] = f"{METRICS['pillHeight'] // 2}px"
     _table["barRadius"] = f"{METRICS['barHeight'] // 2}px"
+    # 메뉴 버튼 오른쪽 안쪽 여백 = 기본 여백 + 글 ↔ 버블 + 버블 — 버블이 숨어도 자리를 둔다(#523, 설계 §2)
+    _table["menuButtonPadRight"] = (
+        f"{METRICS['buttonPadX'] + METRICS['menuBubbleGap'] + METRICS['menuBubble']}px"
+    )
 
 #: 카드 상태 이름 — 파이썬(`setProperty`)과 QSS(`[state="..."]`)가 공유하는 어휘.
 #: 상태 아이콘·진행바 둘 다 이 값을 그대로 `state` 동적 속성에 써서

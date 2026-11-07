@@ -819,6 +819,47 @@ Check your connection and cookies, then open this window again.</translation>
         <translation>Completed</translation>
     </message>
     <message>
+        <source>Completed {0}/{1}</source>
+        <translation>Completed {0}/{1}</translation>
+    </message>
+    <message>
+        <source>Downloading</source>
+        <comment>menu bubble</comment>
+        <translation>Downloading</translation>
+    </message>
+    <message>
+        <source>Paused</source>
+        <comment>menu bubble</comment>
+        <translation>Paused</translation>
+    </message>
+    <message>
+        <source>All failed</source>
+        <comment>menu bubble</comment>
+        <translation>All failed</translation>
+    </message>
+    <message>
+        <source>Some failed</source>
+        <comment>menu bubble</comment>
+        <translation>Some failed</translation>
+    </message>
+    <message>
+        <source>Completed</source>
+        <comment>menu bubble</comment>
+        <translation>Completed</translation>
+    </message>
+    <message>
+        <source>Failed {0}</source>
+        <translation>Failed {0}</translation>
+    </message>
+    <message>
+        <source>Download failed · Failed {0}</source>
+        <translation>Download failed · Failed {0}</translation>
+    </message>
+    <message>
+        <source>Download finished · Completed {0}</source>
+        <translation>Download finished · Completed {0}</translation>
+    </message>
+    <message>
         <source>All downloads failed. Check the failed cards for the reason.</source>
         <translation>All downloads failed. Check the failed cards for the reason.</translation>
     </message>

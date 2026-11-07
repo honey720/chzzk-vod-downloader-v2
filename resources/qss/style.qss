@@ -204,7 +204,14 @@ QPushButton {
     color: @text;
     border: 1px solid @border;
     border-radius: @radius;
-    padding: 6px 14px;
+    padding: 6px @buttonPadX;
+}
+
+/* 메뉴바 「VOD 다운」 — 오른쪽 안쪽 여백에 상태 버블 자리를 늘 잡아 둔다(#523, 설계 §2). 버블이 숨어도
+ * 버튼 폭이 그대로라 메뉴바가 움직이지 않는다. 버블 · 깜빡이는 테두리는 버튼 위에 얹는 자식 위젯이 그린다
+ * (app/widgets/menu_button.py) */
+QPushButton#menuDownloadButton {
+    padding-right: @menuButtonPadRight;
 }
 
 QPushButton:hover {

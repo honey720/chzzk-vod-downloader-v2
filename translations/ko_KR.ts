@@ -814,6 +814,47 @@ Check your connection and cookies, then open this window again.</source>
         <translation>완료</translation>
     </message>
     <message>
+        <source>Completed {0}/{1}</source>
+        <translation>완료 {0}/{1}</translation>
+    </message>
+    <message>
+        <source>Downloading</source>
+        <comment>menu bubble</comment>
+        <translation>받는 중</translation>
+    </message>
+    <message>
+        <source>Paused</source>
+        <comment>menu bubble</comment>
+        <translation>일시정지</translation>
+    </message>
+    <message>
+        <source>All failed</source>
+        <comment>menu bubble</comment>
+        <translation>전부 실패</translation>
+    </message>
+    <message>
+        <source>Some failed</source>
+        <comment>menu bubble</comment>
+        <translation>일부 실패</translation>
+    </message>
+    <message>
+        <source>Completed</source>
+        <comment>menu bubble</comment>
+        <translation>완료</translation>
+    </message>
+    <message>
+        <source>Failed {0}</source>
+        <translation>실패 {0}</translation>
+    </message>
+    <message>
+        <source>Download failed · Failed {0}</source>
+        <translation>다운로드에 실패했습니다 · 실패 {0}</translation>
+    </message>
+    <message>
+        <source>Download finished · Completed {0}</source>
+        <translation>다운로드를 마쳤습니다 · 완료 {0}</translation>
+    </message>
+    <message>
         <source>All downloads failed. Check the failed cards for the reason.</source>
         <translation>다운로드에 모두 실패했습니다. 실패한 카드에서 사유를 확인해 주세요.</translation>
     </message>
