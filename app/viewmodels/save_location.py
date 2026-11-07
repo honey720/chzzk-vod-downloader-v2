@@ -41,7 +41,7 @@ class SaveLocations(QObject):
     """저장 위치 버튼이 보이는 값과 고르기 · 즐겨찾기 더하기를 맡는다 (#495).
 
     바뀔 때마다(`changed`) 버튼이 글 · 메뉴를 다시 그린다. 저장은 즐겨찾기 · 최근이 바뀐 때만
-    한다 — 바뀐 키만 쓴다(`settings.save_settings`).
+    한다 — 바뀐 키만 쓴다(`settings.update_settings`).
     """
 
     changed = Signal()
@@ -50,9 +50,10 @@ class SaveLocations(QObject):
         super().__init__(parent)
         self._default = normalize_path(default_path)
         self._current = self._default
-        saved = settings.load_settings()
-        self._favorites: list[dict] = [dict(entry) for entry in saved.get("favoritePaths", [])]
-        self._recent: list[str] = list(saved.get("recentPaths", []))
+        self._favorites: list[dict] = [
+            dict(entry) for entry in settings.load_setting("favoritePaths")
+        ]
+        self._recent: list[str] = list(settings.load_setting("recentPaths"))
 
     def current(self) -> str:
         """지금 위치 — 다음에 등록하는 카드의 저장 위치."""
@@ -151,19 +152,15 @@ class SaveLocations(QObject):
         if any(entry["name"] == name for entry in self._favorites):
             return self.tr("A favorite with this name already exists.")
         self._favorites.append({"name": name, "path": path})
-        cfg = settings.load_settings()
-        cfg["favoritePaths"] = self.favorites()
+        changes: dict[str, object] = {"favoritePaths": self.favorites()}
         if path in self._recent:
             self._recent = [p for p in self._recent if p != path]
-            cfg["recentPaths"] = list(self._recent)
-        settings.save_settings(cfg)
+            changes["recentPaths"] = list(self._recent)
+        settings.update_settings(changes)
         self.changed.emit()
         return ""
 
     def _saveRecent(self, recent: list[str]) -> None:
         """최근 목록을 바꾸고, 저장된 값과 다를 때만 저장한다."""
         self._recent = recent
-        cfg = settings.load_settings()
-        if cfg.get("recentPaths", []) != recent:
-            cfg["recentPaths"] = list(recent)
-            settings.save_settings(cfg)
+        settings.update_settings({"recentPaths": list(recent)})  # 저장된 값과 같으면 쓰지 않는다

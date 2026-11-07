@@ -33,7 +33,9 @@ def _patch_environment(monkeypatch) -> tuple[_StubApp, list[dict]]:
     stub_app = _StubApp()
     saves = []
     monkeypatch.setattr(main, "app", stub_app, raising=False)
-    monkeypatch.setattr(main.settings, "save_settings", lambda cfg: saves.append(dict(cfg)))
+    monkeypatch.setattr(
+        main.settings, "update_settings", lambda changes: saves.append(dict(changes))
+    )
     return stub_app, saves
 
 

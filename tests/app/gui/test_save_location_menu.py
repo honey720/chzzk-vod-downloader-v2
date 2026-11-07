@@ -49,9 +49,7 @@ def folders(tmp_path) -> Callable[[str], str]:
 
 def _seed(**values) -> None:
     """창을 띄우기 전 설정 DB에 값을 쓴다."""
-    cfg = settings.load_settings()
-    cfg.update(values)
-    settings.save_settings(cfg)
+    settings.update_settings(values)
 
 
 @pytest.fixture
