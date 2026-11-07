@@ -103,7 +103,7 @@ def _load_cookies() -> dict:
     return settings.load_cookies()
 
 
-def _fetch(vod_url: str, cookies: dict, download_path: str):
+def _fetch(vod_url: str, cookies: dict, download_path: str) -> tuple[tuple, str] | None:
     """core 메타데이터 서비스를 직접 호출해 (result, content_type)을 반환한다.
 
     에러 메시지 형식은 구 ContentWorker 경유("<url> | <메시지>")와 동일하다 —
@@ -122,7 +122,7 @@ def _fetch(vod_url: str, cookies: dict, download_path: str):
         return None
 
 
-def _select_resolution(unique_reps: list, resolution: int | None):
+def _select_resolution(unique_reps: list, resolution: int | None) -> list | None:
     """unique_reps에서 원하는 해상도의 항목을 고른다.
 
     resolution이 None이면 최고 화질(목록의 마지막)을 쓴다. 해상도가 같은 항목이 둘이면

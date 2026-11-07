@@ -474,7 +474,7 @@ class M3U8Downloader(BaseDownloader):
         _index, segment = item
         self.logger.log_m3u8_thread_start(part_num, segment)
 
-    def _download_item(self, item, part_num: int):
+    def _download_item(self, item, part_num: int) -> int:
         index, segment = item
         return self._download_segment(
             index=index, segment=segment, part_num=part_num, total_ranges=self.s.total_ranges
@@ -722,7 +722,7 @@ class M3U8Downloader(BaseDownloader):
             recovery,
         )
 
-    def _download_segment(self, index: int, segment: str, part_num: int, total_ranges: int):
+    def _download_segment(self, index: int, segment: str, part_num: int, total_ranges: int) -> int:
         """
         개별 세그먼트 다운로드(재시도 포함)
         """

@@ -63,7 +63,7 @@ import threading
 import time as tm
 from abc import ABC, abstractmethod
 from collections import deque
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
@@ -704,7 +704,7 @@ class BaseDownloader(ABC):
         """
 
     @abstractmethod
-    def _download_item(self, item, part_num: int):
+    def _download_item(self, item, part_num: int) -> int:
         """작업 1건을 다운로드한다 (저속 재시도·일시정지·중단 핸들링 포함).
 
         풀 스레드에서 실행된다. part_num 반환이 완료 콜백의 슬롯 해제 신호다.
@@ -1028,7 +1028,7 @@ class BaseDownloader(ABC):
         total_segments = len(segment_paths)
         last_percent = -1
 
-        def feed():
+        def feed() -> Iterator[bytes]:
             nonlocal last_percent
             for path in segment_paths:
                 for chunk in read_in_chunks(path):
@@ -1636,7 +1636,7 @@ class BaseDownloader(ABC):
         with self.lock:
             return self._ready_position() is not None
 
-    def _take_ready_item(self):
+    def _take_ready_item(self) -> object | None:
         """지금 꺼낼 수 있는 항목 하나를 remaining_ranges에서 꺼낸다. 없으면 None (#329).
 
         **호출자가 self.lock을 쥔 채 부른다.** 대기가 끝난 재큐 항목을 먼저 꺼낸다 — 같은 항목의

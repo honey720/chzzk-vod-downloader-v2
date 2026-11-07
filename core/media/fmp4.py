@@ -20,7 +20,7 @@ bytes(또는 주입받은 읽기 함수)만 받는 순수 함수다. 실패는 `
 """
 
 import struct
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from fractions import Fraction
 
 from core.media.mp4 import (
@@ -357,7 +357,7 @@ def _require_distinct_tracks(init: Fmp4Init) -> None:
         raise Mp4Error(MP4_INVALID, f"영상과 오디오의 트랙 번호가 같다: {init.video.track_id}")
 
 
-def _top_level(data: bytes):
+def _top_level(data: bytes) -> Iterator[tuple[bytes, int, int]]:
     """최상위 상자를 (종류, 본문 시작, 본문 끝)으로 낸다. 본문이 bytes 밖으로 나가는 상자에서 멈춘다.
 
     세그먼트의 앞부분만 받은 경우 마지막 상자(mdat)는 잘려 있다 — 그 상자는 내지 않는다.

@@ -418,7 +418,7 @@ class HlsAesDownloader(BaseDownloader):
         _index, segment = item
         self.logger.log_m3u8_thread_start(part_num, segment)
 
-    def _download_item(self, item, part_num: int):
+    def _download_item(self, item, part_num: int) -> int:
         index, segment = item
         if index in self._prefetched:
             # 구간을 정하면서 이미 온전하게 받아 둔 세그먼트 — 다시 받지 않는다 (#309)
@@ -712,7 +712,7 @@ class HlsAesDownloader(BaseDownloader):
 
     # ============ 다운로드 동작 ============
 
-    def _download_segment(self, index: int, segment: str, part_num: int, total_ranges: int):
+    def _download_segment(self, index: int, segment: str, part_num: int, total_ranges: int) -> int:
         """개별 세그먼트를 받아 복호화해 임시 파일로 저장한다 (재시도 포함).
 
         저속 재시도·일시정지·중단 판정 규칙은 m3u8 경로와 동일하다. 차이는

@@ -37,9 +37,9 @@ from core.sections.hls_fmp4 import fetch_fmp4_head, segment_frames
 from core.sections.hls_ts import fetch_ts_head, segment_streams, ts_key_uri
 from core.media.mp4 import Mp4Error, fetch_mp4_raw, pending_mp4_head, summarize_mp4
 from core.models.content import Content, ContentType
-from core.media.fmp4_index import Fmp4Head
+from core.media.fmp4_index import Fmp4Head, Fmp4Segment
 from core.media.mp4_index import Mp4Head, PendingMp4Head
-from core.media.ts_index import TsHead
+from core.media.ts_index import TsHead, TsStreams
 from core.sections.fmp4_sections import FPS_DECLARED, choose_frame_rate, fmp4_timeline
 from core.utils.stop import check_stop
 from core.sections.ts_sections import choose_ts_frame_rate, ts_timeline
@@ -113,7 +113,7 @@ def probe_section_basis(item) -> SectionBasis:
     raise SectionBasisError(f"구간 기능이 없는 타입이다: {kind!r}")
 
 
-def _held_moov(item):
+def _held_moov(item) -> Mp4Head | PendingMp4Head | None:
     """카드가 이미 쥐고 있는, 지금의 주소에서 받은 moov(바이트 또는 색인). 없으면 None.
 
     같은 카드를 다시 열 때 moov를 또 받지 않는다 — 주소가 같으면 같은 파일이다.
@@ -217,7 +217,7 @@ def probe_fmp4(item, segment_dir: str | None = None) -> SectionProbe:
             head = fetch_fmp4_head(base_url, segment_dir)
         timing.note("세그먼트", lambda: f"{len(head.playlist.segments):,}개")
 
-        def segment_at(index: int):
+        def segment_at(index: int) -> Fmp4Segment:
             return segment_frames(head, base_url, index)
 
         with timing.stage("첫 세그먼트"):
@@ -271,7 +271,7 @@ def probe_ts(
         with timing.stage("키"):
             key = resolve_aes_key(content, ts_key_uri(base_url, head))
 
-        def segment_at(index: int):
+        def segment_at(index: int) -> TsStreams:
             return segment_streams(head, base_url, index, key)
 
         with timing.stage("첫 세그먼트"):

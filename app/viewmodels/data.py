@@ -133,7 +133,7 @@ class ContentItem:
         # 번역 문자열만 넣는다 — 원시 예외 문자열 금지
         self.stateMessage = ""
 
-    def _auto_rep(self, resolution, base_url):
+    def _auto_rep(self, resolution, base_url) -> list | None:
         """기본 선택(목록의 마지막 항목)이 생성자가 받은 해상도·주소와 같으면 그 항목."""
         if not self.unique_reps:
             return None

@@ -35,7 +35,7 @@ from app.viewmodels.data import (
 )
 from core.media.mp4 import Mp4Error
 from core.models.download_state import DownloadState
-from core.media.mp4_index import PendingMp4Head
+from core.media.mp4_index import Mp4Head, PendingMp4Head
 from core.models.plan import TimeRange
 from core.utils.interaction import resting_while
 from core.sections.mp4_ranges import sections_file_size
@@ -229,7 +229,7 @@ def keep_section_head(item: ContentItem, base_url: str, head) -> None:
     _head_owner = weakref.ref(item) if head is not None else None
 
 
-def take_section_head(item: ContentItem):
+def take_section_head(item: ContentItem) -> Mp4Head | PendingMp4Head | None:
     """카드에 둔 moov를 꺼낸다 — 카드에서는 비운다. 넘길 수 없으면 None.
 
     그 moov를 받은 주소가 지금의 주소와 같을 때만 돌려준다 — 해상도가 바뀌었으면 다른 파일의

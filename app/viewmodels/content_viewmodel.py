@@ -554,7 +554,7 @@ class ContentViewModel(QObject):
         self.finishedRequested.emit(item)
         self.downloadItem()
 
-    def findItem(self):
+    def findItem(self) -> tuple[bool, ContentItem | None, int | None]:
         """다음에 받을 카드를 고른다 — (찾음, 카드, 목록 행).
 
         고르는 차례는 화면 순서(정렬 · 방향)다 — 받을 차례가 올 때마다 그 순서에서 위부터 첫

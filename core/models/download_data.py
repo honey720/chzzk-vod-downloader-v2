@@ -17,6 +17,8 @@
 (download.data)의 re-export는 #171에서 제거됐다 — 이곳이 유일한 정의처다.
 """
 
+import threading
+
 from core.models.content import Content, ContentType
 from core.models.download_task import DownloadTaskModel
 from core.models.events import DownloadCounters
@@ -121,7 +123,7 @@ class DownloadData:
     # ============ 컨텐츠 필드 위임 (Content 소유) ============
 
     @property
-    def base_url(self):
+    def base_url(self) -> str | None:
         return self.content.base_url
 
     @base_url.setter
@@ -129,7 +131,7 @@ class DownloadData:
         self.content.base_url = value
 
     @property
-    def vod_url(self):
+    def vod_url(self) -> str:
         return self.content.url
 
     @vod_url.setter
@@ -137,7 +139,7 @@ class DownloadData:
         self.content.url = value
 
     @property
-    def output_path(self):
+    def output_path(self) -> str:
         return self.content.output_path
 
     @output_path.setter
@@ -145,7 +147,7 @@ class DownloadData:
         self.content.output_path = value
 
     @property
-    def resolution(self):
+    def resolution(self) -> int | None:
         return self.content.resolution
 
     @resolution.setter
@@ -164,7 +166,7 @@ class DownloadData:
     # ============ 상태·진행률 필드 위임 (DownloadTaskModel 소유) ============
 
     @property
-    def total_size(self):
+    def total_size(self) -> int | None:
         return self.model.total_size
 
     @total_size.setter
@@ -172,7 +174,7 @@ class DownloadData:
         self.model.total_size = value
 
     @property
-    def threads_progress(self):
+    def threads_progress(self) -> list[int]:
         return self.model.threads_progress
 
     @threads_progress.setter
@@ -180,7 +182,7 @@ class DownloadData:
         self.model.threads_progress = value
 
     @property
-    def start_time(self):
+    def start_time(self) -> float:
         return self.model.start_time
 
     @start_time.setter
@@ -188,7 +190,7 @@ class DownloadData:
         self.model.start_time = value
 
     @property
-    def end_time(self):
+    def end_time(self) -> float:
         return self.model.end_time
 
     @end_time.setter
@@ -196,7 +198,7 @@ class DownloadData:
         self.model.end_time = value
 
     @property
-    def _pause_event(self):
+    def _pause_event(self) -> threading.Event:
         return self.model.pause_event
 
     # ============ 진행 통지의 값 묶음 (#484) ============

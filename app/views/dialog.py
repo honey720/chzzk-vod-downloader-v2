@@ -330,14 +330,14 @@ class SettingDialog(QDialog):
 
         self.logsFolder.clicked.connect(self.openLogsFolder) # 로그 폴더 열기 버튼 클릭 시 openLogsFolder 메소드 호출
 
-    def accept(self):
+    def accept(self) -> None:
         self.config['cookies'] = {"NID_AUT": self.nidaut.text(), "NID_SES": self.nidses.text()}
         self.config['afterDownload'] = self.afterDownload.currentData()
         self.config['language'] = self.language.currentData()  # 선택된 언어 코드 저장
         settings.save_settings(self.config)
         return super().accept()
-    
-    def reject(self):
+
+    def reject(self) -> None:
         return super().reject()
 
     def showHelp(self) -> None:

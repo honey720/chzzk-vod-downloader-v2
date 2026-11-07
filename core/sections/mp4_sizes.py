@@ -23,7 +23,7 @@
 
 import struct
 from bisect import bisect_left, bisect_right
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from fractions import Fraction
 from itertools import accumulate, islice
@@ -645,7 +645,7 @@ class LightTables:
 
 
 @contextmanager
-def _translated():
+def _translated() -> Iterator[None]:
     """표를 읽다 난 낮은 수준의 예외를 "색인으로 넘긴다"로 바꾼다 — 손상된 표는 색인 쪽이 판정한다."""
     try:
         yield

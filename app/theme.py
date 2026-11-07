@@ -37,7 +37,9 @@ QSS 양쪽을 같이 손봐야 동작한다(파이썬에서 속성만 바꾸면 
 import logging
 import re
 import sys
+from collections.abc import Callable
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QComboBox, QProxyStyle, QStyle, QStyleFactory
 
@@ -385,7 +387,7 @@ class _DropDownComboBoxStyle(QProxyStyle):
         super().__init__(base_style)
         self._deferred_popup_hide = deferred_popup_hide
 
-    def styleHint(self, hint, option=None, widget=None, returnData=None):
+    def styleHint(self, hint, option=None, widget=None, returnData=None) -> int:
         if hint == QStyle.StyleHint.SH_ComboBox_Popup:
             return 0
         if (
@@ -480,7 +482,7 @@ def apply_color_scheme(app, scheme: str, qss_path: str) -> None:
 _SCHEME_FOLLOWERS: dict = {}
 
 
-def follow_os_color_scheme(app, qss_path: str):
+def follow_os_color_scheme(app, qss_path: str) -> Callable[[Qt.ColorScheme], None]:
     """OS 라이트/다크 설정이 바뀌면 `apply_color_scheme()`을 다시 태운다.
 
     `QStyleHints.colorSchemeChanged`는 OS가 보내는 신호다 — offscreen QPA와

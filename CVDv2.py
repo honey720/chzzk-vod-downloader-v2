@@ -76,7 +76,7 @@ def qt_catalog_path(language: str) -> str:
     return resource_path(f"translations/qtbase_{QLocale(language).bcp47Name()}.qm")
 
 
-def install_qt_catalog(app, language: str):
+def install_qt_catalog(app, language: str) -> QTranslator | None:
     """Qt 자체 카탈로그(qtbase_<언어코드>.qm)를 설치한다. 파일이 없거나 못 읽으면 None.
 
     설치 순서가 중요하다 — Qt는 **나중에 설치한 번역기를 먼저** 검색한다(실측: 같은
@@ -98,7 +98,7 @@ def install_qt_catalog(app, language: str):
     return translator
 
 
-def set_language(app_config, translator):
+def set_language(app_config, translator) -> list[QTranslator]:
     """앱 언어를 정하고 번역기를 설치한다 — 설치 순서: Qt 카탈로그 → 우리 번역(마지막이 우선).
 
     Returns:
