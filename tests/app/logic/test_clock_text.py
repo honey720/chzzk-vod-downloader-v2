@@ -108,6 +108,6 @@ def test_segment_remaining_time_with_more_finished_than_planned_is_zero():
     assert remaining == "00:00:00"
 
 
-def test_unknown_time_is_empty_text():
+def test_unknown_time_is_empty_text() -> None:
     """모르는 시간(None)은 빈 글이어야 한다 — 지금 시각을 내지 않는다 (#515)."""
     assert clock_text(None) == ""
