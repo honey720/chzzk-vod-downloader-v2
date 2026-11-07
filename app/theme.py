@@ -74,8 +74,10 @@ METRICS = {
     "actionGlyph": 12,  # 조작 아이콘(일시정지·재개·재시도·폴더·삭제) 도형 한 변 — iconSize 버튼 안에 그려진다
     "barGlyph": 14,  # 하단바 아이콘 버튼(▶ ‖ ■) 도형 한 변 — 버튼은 글 버튼 높이의 정사각이다(#504)
     # ---- 메뉴바 상태 버블(#523, 설계 §2) — 메뉴 버튼 오른쪽 안쪽 여백에 늘 잡아 두는 자리 ----
-    "menuBubble": 14,  # 버블(원) 지름
-    "menuBubbleGap": 6,  # 메뉴 이름 글 ↔ 버블 사이
+    # 수치는 프로토(shell.py BADGE_SIDE 16 · 버블 자리 여백 29 · 버튼 오른끝 ↔ 버블 7)를 따른다(오너 실기 2026-11-07)
+    "menuBubble": 16,  # 버블(원) 지름 — 기호는 16 격자에 그려 이 크기에서 프로토와 같다
+    "menuBubbleGap": 7,  # 메뉴 이름 글 ↔ 버블 사이
+    "menuBubbleInset": 7,  # 버튼 오른쪽 바깥 끝(테두리 포함) ↔ 버블
     # 썸네일 높이는 토큰이 아니다 — 우측 4행의 실제 높이에 맞춰 런타임에
     # 계산되고(16:9로 폭 결정, app/widgets/widget.py), 행 간격·글자 크기를
     # 바꾸면 썸네일도 따라간다.
@@ -86,7 +88,7 @@ METRICS = {
     "initialWidthMax": 800,  # 첫 실행 초기 창 폭의 상한 — 콘텐츠 최대폭이 아니다(#253, 유저는 얼마든지 넓힐 수 있다)
     # ---- 공통 형태 ----
     "radius": 8,  # 버튼·입력창 등 일반 모서리
-    "buttonPadX": 14,  # 기본 버튼 좌우 안쪽 여백 — 메뉴 버튼의 버블 자리도 이 값 안쪽에 둔다(#523)
+    "buttonPadX": 14,  # 기본 버튼 좌우 안쪽 여백
 }
 
 #: 글자 위계 — 위(제목)에서 아래(경로)로 무게가 내려간다. 값은 QSS 문자열.
@@ -200,9 +202,10 @@ for _table in (DARK, LIGHT):
     _table.update(FONTS)
     _table["pillRadius"] = f"{METRICS['pillHeight'] // 2}px"
     _table["barRadius"] = f"{METRICS['barHeight'] // 2}px"
-    # 메뉴 버튼 오른쪽 안쪽 여백 = 기본 여백 + 글 ↔ 버블 + 버블 — 버블이 숨어도 자리를 둔다(#523, 설계 §2)
+    # 메뉴 버튼 오른쪽 안쪽 여백 = 바깥 끝 ↔ 버블 + 버블 + 글 ↔ 버블 − 테두리 1px(style.qss QPushButton)
+    # — 버블이 숨어도 자리를 둔다(#523, 설계 §2)
     _table["menuButtonPadRight"] = (
-        f"{METRICS['buttonPadX'] + METRICS['menuBubbleGap'] + METRICS['menuBubble']}px"
+        f"{METRICS['menuBubbleInset'] + METRICS['menuBubble'] + METRICS['menuBubbleGap'] - 1}px"
     )
 
 #: 카드 상태 이름 — 파이썬(`setProperty`)과 QSS(`[state="..."]`)가 공유하는 어휘.

@@ -139,9 +139,9 @@ class MenuButton(QPushButton):
         self.blinkBorder.setLevel(0.5 - 0.5 * math.cos(2 * math.pi * progress))
 
     def resizeEvent(self, event: QResizeEvent) -> None:
-        """버블을 오른쪽 안쪽 여백(기본 여백 안쪽)에, 테두리를 버튼 전체에 둔다."""
+        """버블을 오른쪽 안쪽 여백 자리(바깥 끝에서 `menuBubbleInset` 안쪽)에, 테두리를 버튼 전체에 둔다."""
         super().resizeEvent(event)
         side = self.bubble.width()
-        x = self.width() - theme.METRICS["buttonPadX"] - side
+        x = self.width() - theme.METRICS["menuBubbleInset"] - side
         self.bubble.move(x, (self.height() - side) // 2)
         self.blinkBorder.setGeometry(self.rect())

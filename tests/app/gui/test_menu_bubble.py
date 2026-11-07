@@ -314,22 +314,34 @@ def test_hidden_bubble_keeps_the_menu_bar_in_place(tmp_path: Path) -> None:
 
 
 def test_bubble_sits_inside_the_button_right_padding(tmp_path: Path) -> None:
-    """버블은 「VOD 다운」 버튼 오른쪽 안쪽 여백 자리 안에 있어야 한다.
+    """버블은 「VOD 다운」 버튼 글 끝에서 글 ↔ 버블만큼, 버튼 바깥 끝에서 안쪽 자리만큼 떨어져야 한다.
 
-    받는 중 카드 -> 버블이 [버튼 폭 − (기본 여백 + 글 ↔ 버블 + 버블), 버튼 폭 − 기본 여백) 안 · 세로로 버튼 안
+    받는 중 카드 -> 버블 왼끝 − 글 자리 끝 = menuBubbleGap · 버튼 폭 − 버블 오른끝 = menuBubbleInset · 세로로 버튼 안
     """
     win, _items = _window_with(tmp_path, [R])
     button = win.menuDownloadButton
     bubble = button.bubble
     assert bubble.isVisible(), "전제: 버블이 보인다"
     metrics = mw_mod.theme.METRICS
-    room_left = button.width() - (
-        metrics["buttonPadX"] + metrics["menuBubbleGap"] + metrics["menuBubble"]
+    border = 1  # style.qss QPushButton 테두리
+    pad_right = (
+        metrics["menuBubbleInset"] + metrics["menuBubble"] + metrics["menuBubbleGap"] - border
     )
-    room_right = button.width() - metrics["buttonPadX"]
+    text_end = button.width() - border - pad_right
     geometry = bubble.geometry()
-    assert room_left <= geometry.left() and geometry.right() < room_right
+    assert geometry.left() - text_end == metrics["menuBubbleGap"]
+    assert button.width() - (geometry.right() + 1) == metrics["menuBubbleInset"]
     assert geometry.top() >= 0 and geometry.bottom() < button.height()
+
+
+def test_bubble_diameter_is_16(tmp_path: Path) -> None:
+    """메뉴 버블 지름은 16px이어야 한다(프로토 BADGE_SIDE).
+
+    받는 중 카드 -> 버블 16 × 16
+    """
+    win, _items = _window_with(tmp_path, [R])
+    assert _bubble(win) == "running", "전제: 버블이 보인다"
+    assert win.menuDownloadButton.bubble.size().toTuple() == (16, 16)
 
 
 def test_each_bubble_state_draws_its_own_picture() -> None:
