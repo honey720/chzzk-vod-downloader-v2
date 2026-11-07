@@ -188,10 +188,10 @@ class TestANewerDatabaseIsNeverWritten:
     def test_open_save_and_reset_leave_the_file_byte_for_byte(self, newer) -> None:
         """시작 · 저장 · 초기화를 거쳐도 DB 파일의 바이트가 그대로여야 한다.
 
-        user_version 2 DB -> open_settings · save_settings(언어 en_US) · reset_settings 뒤 바이트 같음
+        user_version 2 DB -> open_settings · update_settings(언어 en_US) · reset_settings 뒤 바이트 같음
         """
         settings_module.open_settings()
-        settings_module.save_settings({"language": "en_US"})
+        settings_module.update_settings({"language": "en_US"})
         settings_module.reset_settings()
         assert _database_bytes() == newer
 
@@ -201,7 +201,7 @@ class TestANewerDatabaseIsNeverWritten:
         user_version 2 DB(언어 ko_KR) -> 처음 읽기 = 기본값 · 언어 ko_KR 저장 뒤 읽기 = ko_KR
         """
         assert settings_module.open_settings() == settings_module.default_settings()
-        settings_module.save_settings({"language": "ko_KR"})
+        settings_module.update_settings({"language": "ko_KR"})
         assert settings_module.load_settings()["language"] == "ko_KR"
 
     def test_the_warning_is_logged_once(self, newer, caplog) -> None:
@@ -212,17 +212,17 @@ class TestANewerDatabaseIsNeverWritten:
         with caplog.at_level("WARNING", logger="app.system.settings"):
             for _ in range(3):
                 settings_module.load_settings()
-            settings_module.save_settings({"language": "ko_KR"})
+            settings_module.update_settings({"language": "ko_KR"})
         memory = [r for r in caplog.records if "in memory only" in r.getMessage()]
         assert len(memory) == 1, caplog.text
 
     def test_a_newer_database_is_not_set_aside(self, newer) -> None:
         """높은 버전 DB는 손상이 아니다 — 비켜 두지 않고 제자리에 그대로 있어야 한다.
 
-        user_version 2 DB -> open_settings · save_settings 뒤 cvdv2.db.broken 없음 · DB 바이트 같음
+        user_version 2 DB -> open_settings · update_settings 뒤 cvdv2.db.broken 없음 · DB 바이트 같음
         """
         settings_module.open_settings()
-        settings_module.save_settings({"language": "en_US"})
+        settings_module.update_settings({"language": "en_US"})
         assert not os.path.exists(settings_module.broken_database_path())
         assert _database_bytes() == newer
 
@@ -255,7 +255,7 @@ class TestADamagedDatabaseIsSetAside:
             assert settings_module.load_settings() == settings_module.default_settings()
         assert _broken_bytes() == damaged
         assert user_version() == 1
-        settings_module.save_settings({"language": "ko_KR"})
+        settings_module.update_settings({"language": "ko_KR"})
         assert read_settings() == {"language": "ko_KR"}
         assert any(
             settings_module.broken_database_path() in r.getMessage() for r in caplog.records
@@ -278,7 +278,7 @@ class TestADamagedDatabaseIsSetAside:
         """트랜잭션 안에서 손상이 드러나고 되돌리기마저 다른 예외를 내도, 손상 DB는 비켜 둬야 한다.
 
         저장 위치 행이 든 DB의 둘째 쪽을 0xFF로 · ROLLBACK이 OperationalError를 냄
-        -> save_settings(언어 ko_KR) 예외 없음 · .broken 있음 · 새 DB에 언어 ko_KR 행만 · 되돌리기 실패 경고
+        -> update_settings(언어 ko_KR) 예외 없음 · .broken 있음 · 새 DB에 언어 ko_KR 행만 · 되돌리기 실패 경고
         """
         write_settings({"downloadPath": "D:/vod"})
         with open(settings_module.database_path(), "r+b") as file:
@@ -302,7 +302,7 @@ class TestADamagedDatabaseIsSetAside:
                 lambda *args, **kwargs: real_connect(*args, factory=RollbackFails, **kwargs),
             )
             with caplog.at_level("WARNING", logger="app.system.settings"):
-                settings_module.save_settings({"language": "ko_KR"})
+                settings_module.update_settings({"language": "ko_KR"})
         assert os.path.exists(settings_module.broken_database_path())
         assert read_settings() == {"language": "ko_KR"}
         assert any("rollback failed" in r.getMessage() for r in caplog.records), caplog.text
@@ -326,7 +326,7 @@ class TestADamagedDatabaseIsSetAside:
     def test_a_lock_timeout_is_not_damage(self, monkeypatch) -> None:
         """다른 연결이 쓰기 잠금을 쥐어 대기가 넘치면 예외가 올라오고 DB는 비켜지지 않아야 한다.
 
-        다른 연결의 BEGIN EXCLUSIVE · BUSY_TIMEOUT 0.1초 -> save_settings가 OperationalError
+        다른 연결의 BEGIN EXCLUSIVE · BUSY_TIMEOUT 0.1초 -> update_settings가 OperationalError
         · .broken 없음 · 잠금을 푼 뒤 원래 행 그대로
         """
         write_settings({"language": "ko_KR"})
@@ -335,7 +335,7 @@ class TestADamagedDatabaseIsSetAside:
         try:
             holder.execute("BEGIN EXCLUSIVE")
             with pytest.raises(sqlite3.OperationalError):
-                settings_module.save_settings({"language": "en_US"})
+                settings_module.update_settings({"language": "en_US"})
             holder.execute("ROLLBACK")
         finally:
             holder.close()
@@ -357,7 +357,7 @@ class TestADamagedDatabaseIsSetAside:
         monkeypatch.setattr(settings_module.os, "replace", refuse)
         with caplog.at_level("WARNING", logger="app.system.settings"):
             assert settings_module.load_settings() == settings_module.default_settings()
-            settings_module.save_settings({"language": "ko_KR"})
+            settings_module.update_settings({"language": "ko_KR"})
         assert _database_bytes() == damaged
         assert settings_module.load_settings()["language"] == "ko_KR"
         assert any("in memory only" in r.getMessage() for r in caplog.records), caplog.text
@@ -369,20 +369,20 @@ class TestSaveAndReset:
     def test_a_saved_value_is_one_json_row(self) -> None:
         """저장한 키는 설정 테이블에 JSON 문자열 한 행으로 들어가야 한다.
 
-        save_settings(cookies · window) -> 두 행, 값은 JSON 해석 결과가 같은 dict
+        update_settings(cookies · window) -> 두 행, 값은 JSON 해석 결과가 같은 dict
         """
         window = {"x": 1, "y": 2, "width": 700, "height": 600, "maximized": False}
-        settings_module.save_settings({"cookies": COOKIES, "window": window})
+        settings_module.update_settings({"cookies": COOKIES, "window": window})
         assert read_settings() == {"cookies": COOKIES, "window": window}
 
     def test_an_unknown_key_is_refused_without_writing(self) -> None:
         """표에 없는 키가 섞이면 KeyError이고 아무 행도 쓰지 않아야 한다.
 
-        save_settings(language · stray) -> KeyError · 설정 테이블 행 0
+        update_settings(language · stray) -> KeyError · 설정 테이블 행 0
         """
         settings_module.load_settings()
         with pytest.raises(KeyError, match="stray"):
-            settings_module.save_settings({"language": "ko_KR", "stray": 1})
+            settings_module.update_settings({"language": "ko_KR", "stray": 1})
         assert read_settings() == {}
 
     def test_saving_a_loaded_dict_writes_only_the_changed_row(self) -> None:
@@ -399,7 +399,7 @@ class TestSaveAndReset:
         write_rows(seeded)
         settings = settings_module.load_settings()
         settings["language"] = "ko_KR"
-        settings_module.save_settings(settings)
+        settings_module.update_settings(settings)
         assert read_rows() == {**seeded, "language": '"ko_KR"'}
 
     def test_saving_unchanged_values_writes_nothing(self) -> None:
@@ -407,7 +407,7 @@ class TestSaveAndReset:
 
         빈 설정 테이블 -> 기본값 dict 저장 -> 행 0
         """
-        settings_module.save_settings(settings_module.load_settings())
+        settings_module.update_settings(settings_module.load_settings())
         assert read_rows() == {}
 
     def test_reset_of_one_key_removes_only_that_row(self) -> None:
@@ -441,9 +441,9 @@ class TestSaveAndReset:
     def test_a_value_survives_a_new_connection(self) -> None:
         """저장한 값은 다음 읽기(새 연결)에서 그대로 나와야 한다 — 다음 실행과 같은 경로.
 
-        save_settings(언어 ko_KR · 쿠키) -> load_settings 언어 ko_KR · load_cookies 쿠키
+        update_settings(언어 ko_KR · 쿠키) -> load_settings 언어 ko_KR · load_cookies 쿠키
         """
-        settings_module.save_settings({"language": "ko_KR", "cookies": COOKIES})
+        settings_module.update_settings({"language": "ko_KR", "cookies": COOKIES})
         assert settings_module.load_settings()["language"] == "ko_KR"
         assert settings_module.load_cookies() == COOKIES
 

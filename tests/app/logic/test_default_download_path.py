@@ -8,6 +8,7 @@
 config 로드·저장은 메모리로 격리한다 — 실유저 config.json 무접촉.
 """
 
+import copy
 import os
 from collections.abc import Callable, Iterator
 
@@ -41,14 +42,15 @@ def config_store(monkeypatch) -> tuple[dict, list[dict]]:
     store = {"cookies": {"NID_AUT": "", "NID_SES": ""}}
     saves: list[dict] = []
 
-    monkeypatch.setattr(settings_mod, "load_settings", lambda: dict(store))
+    def _load(key: str) -> object:
+        return copy.deepcopy(store[key]) if key in store else settings_mod.default_settings()[key]
 
-    def _save(cfg) -> None:
-        saves.append(dict(cfg))
-        store.clear()
-        store.update(cfg)
+    def _save(changes: dict) -> None:
+        saves.append(dict(changes))
+        store.update(copy.deepcopy(changes))
 
-    monkeypatch.setattr(settings_mod, "save_settings", _save)
+    monkeypatch.setattr(settings_mod, "load_setting", _load)
+    monkeypatch.setattr(settings_mod, "update_settings", _save)
     return store, saves
 
 

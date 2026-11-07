@@ -27,7 +27,7 @@ import math
 import os
 import platform
 import sqlite3
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -549,10 +549,11 @@ def _stored(conn: sqlite3.Connection) -> dict[str, str]:
 
 
 def load_settings() -> dict:
-    """설정을 읽어 **표로 검증한 새 dict**를 돌려준다.
+    """설정 전체를 읽어 **표로 검증한 새 dict**를 돌려준다.
 
-    반환값은 늘 새 객체다 — 호출부가 반환 dict를 고쳐 저장하는 관례(`cfg["window"] = …`)라
-    원본을 주면 기본값 표가 오염된다(#255). 행이 없는 키는 표의 기본값이고(DB에는 사용자가 정한
+    앱 코드는 키 하나씩 읽는다(`load_setting`) — 이 함수는 `open_settings`의 반환값을 만든다(#519).
+    이 dict를 고쳐 다시 저장하지 않는다 — 쓰기는 바꾼 키만 `update_settings`로 한다. 반환값은 늘
+    새 객체다 — 고쳐도 기본값 표가 오염되지 않는다(#255). 행이 없는 키는 표의 기본값이고(DB에는 사용자가 정한
     키의 행만 있다), 깨진 행(JSON이 아님 · 검증에 걸림)은 그 키만 기본값 + 경고다. 읽기만으로는
     DB에 아무것도 쓰지 않는다(버전 올리기는 예외 — 열 때 돈다).
     """
@@ -568,31 +569,68 @@ def load_settings() -> dict:
     return normalize_settings(raw)
 
 
-def save_settings(values: dict) -> None:
-    """설정 dict 가운데 **저장된 값과 다른 키의 행만** 한 트랜잭션으로 쓴다.
+def load_setting(key: str) -> object:
+    """키 하나의 값을 읽어 **표로 검증한 새 객체**로 돌려준다 (#519).
 
-    호출부는 `load_settings()` 결과를 고쳐 통째로 넘긴다 — 바뀌지 않은 키는 쓰지 않으므로 행이
-    없던 키(기본값)는 계속 행이 없다. 견주는 대상은 잠금을 잡은 뒤 다시 읽은 행이다 — 행이 없으면
-    표의 기본값, JSON이 아니면 다른 값으로 본다. ⚠️ 이 dict를 읽은 뒤 다른 실행이 바꾼 키는 DB와
-    다르므로 이 dict의 옛 값으로 다시 쓰인다(두 판을 함께 띄웠을 때 — config.json 때와 같다).
-
-    표에 없는 키가 있으면 `KeyError` — 미등재 키가 조용히 버려지는 일(#159 전례)을 막는다.
-    메모리 모드면 메모리에만 쓴다. 손상된 DB는 비켜 두고 새 DB에 쓴다(`_use`). 잠금 대기 초과 등
-    그 밖의 DB 오류는 그대로 올라간다.
+    그 키의 행만 읽고 그 키만 검증한다. 행이 없으면 표의 기본값이고, 깨진 행(JSON이 아님 · 검증에
+    걸림)은 기본값 + 경고다 — `load_settings()`가 그 키에 내는 값과 같다. 반환값은 늘 새 깊은
+    복사본이라 고쳐도 저장된 값 · 기본값 표가 바뀌지 않는다. 읽기만으로는 DB에 아무것도 쓰지 않는다.
+    표에 없는 키는 `KeyError`.
     """
-    unknown = set(values) - {setting.key for setting in SCHEMA}
+    setting = _setting_or_key_error(key)
+    rows = _use(lambda conn: _stored_rows(conn, (key,)))
+    if rows is _IN_MEMORY:
+        return copy.deepcopy(_memory[key])
+    if key not in rows:
+        return setting.fallback()
+    try:
+        value = json.loads(rows[key])
+    except ValueError:
+        logger.warning("Setting %r is not valid JSON — falling back to the default", key)
+        return setting.fallback()
+    try:
+        return setting.normalize(value)
+    except InvalidSetting as reason:
+        logger.warning(
+            "Setting %r has an invalid value (%s) — falling back to the default", key, reason
+        )
+        return setting.fallback()
+
+
+def update_settings(changes: Mapping[str, object]) -> None:
+    """넘긴 키만 표로 검증해, **저장된 값과 다른 키의 행만** 한 트랜잭션으로 쓴다 (#519).
+
+    부르는 쪽은 자기가 바꾼 키만 넘긴다 — 설정 전체를 넘기면 읽은 뒤 다른 곳(다른 화면 · 함께 띄운
+    다른 실행)이 바꾼 키를 읽을 때의 값으로 되돌린다. 넘기지 않은 키의 행은 읽지도 쓰지도 않는다.
+    비교 대상은 잠금을 잡은 뒤 다시 읽은 그 키들의 행이다 — 행이 없으면 표의 기본값, JSON이
+    아니면 다른 값으로 본다. 같은 값이면 쓰지 않으므로 행이 없던 키(기본값)는 계속 행이 없다.
+
+    Raises:
+        KeyError: 표에 없는 키가 있다 — 아무것도 쓰지 않는다(미등재 키가 조용히 버려지는 일, #159)
+        InvalidSetting: 검증에 걸린 값이 있다 — 아무것도 쓰지 않는다
+        sqlite3.Error: 잠금 대기 초과 등 DB 오류(손상된 DB는 비켜 두고 새 DB에 쓴다 — `_use`)
+    """
+    unknown = set(changes) - {setting.key for setting in SCHEMA}
     if unknown:
         raise KeyError(f"not in the settings table: {sorted(unknown)}")
+    values = {key: _setting(key).normalize(value) for key, value in changes.items()}
 
     def write_changed(conn: sqlite3.Connection) -> None:
-        """잠금을 잡은 뒤 다시 읽은 행과 견줘 다른 키만 쓴다."""
+        """잠금을 잡은 뒤 다시 읽은 그 키들의 행과 비교해 다른 키만 쓴다."""
         with _transaction(conn):
-            stored = _stored(conn)
+            stored = _stored_rows(conn, tuple(values))
             changed = {key: value for key, value in values.items() if _differs(key, value, stored)}
             _write_rows(conn, changed)
 
     if _use(write_changed) is _IN_MEMORY:
         _memory.update(copy.deepcopy(values))
+
+
+def _stored_rows(conn: sqlite3.Connection, keys: tuple[str, ...]) -> dict[str, str]:
+    """그 키들의 행만 — 키 → 저장된 JSON 문자열 그대로. 행이 없는 키는 빠진다."""
+    marks = ", ".join("?" * len(keys))
+    query = f"SELECT key, value FROM settings WHERE key IN ({marks})"
+    return dict(conn.execute(query, keys).fetchall())
 
 
 def _differs(key: str, value: object, stored: dict[str, str]) -> bool:
@@ -686,7 +724,8 @@ def _setting_or_key_error(key: str) -> Setting:
 def load_cookies() -> dict:
     """등록된 치지직 인증 쿠키를 {NID_AUT, NID_SES} 형태로 읽는다 (#170).
 
-    조립의 단일 지점이다. 미설정 키는 빈 문자열이다. 다운로드 워커 스레드에서도 불린다.
+    조립의 단일 지점이다. 미설정 키는 빈 문자열이다. 다운로드 워커 스레드에서도 불린다 — cookies
+    행만 읽는다(#519).
     """
-    data = load_settings()["cookies"]
+    data = load_setting("cookies")
     return {name: data.get(name, "") for name in COOKIE_NAMES}

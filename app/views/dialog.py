@@ -197,7 +197,6 @@ class SettingDialog(QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
 
-        self.config = settings.load_settings()
         self.worker = None
 
         self.setupUi(self)
@@ -304,8 +303,9 @@ class SettingDialog(QDialog):
         self.logsFolder.setText(self.tr("Open"))
 
     def setupDynamicUi(self) -> None:
-        self.nidaut.setText(self.config.get("cookies", {}).get("NID_AUT", "")) # 쿠키값을 불러와서 QLineEdit에 세팅
-        self.nidses.setText(self.config.get("cookies", {}).get("NID_SES", ""))
+        cookies = settings.load_cookies()  # 창을 열 때의 값 — 저장은 OK에서 이 창의 세 키만 (#519)
+        self.nidaut.setText(cookies["NID_AUT"])  # 쿠키값을 불러와서 QLineEdit에 세팅
+        self.nidses.setText(cookies["NID_SES"])
 
         self.helpButton.clicked.connect(self.showHelp) # 도움말 버튼 클릭 시 showHelp 메소드 호출
 
@@ -313,7 +313,8 @@ class SettingDialog(QDialog):
         self.afterDownload.addItem(self.tr("sleep"), "sleep")
         self.afterDownload.addItem(self.tr("shutdown"), "shutdown")
 
-        currentAfterDownload = self.config.get("afterDownload", "none") # 현재 설정된 afterDownload 값을 불러옴
+        # 현재 설정된 afterDownload 값을 불러옴
+        currentAfterDownload = settings.load_setting("afterDownload")
         index = self.afterDownload.findData(currentAfterDownload)
         if index != -1:
             self.afterDownload.setCurrentIndex(index)
@@ -322,7 +323,7 @@ class SettingDialog(QDialog):
         self.language.addItem("English", "en_US") # 언어 선택을 위한 QComboBox 생성 TODO: 언어 리스트는 project.pro에서 관리
         self.language.addItem("한국어", "ko_KR")
 
-        currentLang = self.config.get("language", "en_US") # 현재 설정된 언어에 맞는 인덱스 찾기
+        currentLang = settings.load_setting("language")  # 현재 설정된 언어에 맞는 인덱스 찾기
         index = self.language.findData(currentLang)
         if index != -1:
             self.language.setCurrentIndex(index)
@@ -331,10 +332,14 @@ class SettingDialog(QDialog):
         self.logsFolder.clicked.connect(self.openLogsFolder) # 로그 폴더 열기 버튼 클릭 시 openLogsFolder 메소드 호출
 
     def accept(self) -> None:
-        self.config['cookies'] = {"NID_AUT": self.nidaut.text(), "NID_SES": self.nidses.text()}
-        self.config['afterDownload'] = self.afterDownload.currentData()
-        self.config['language'] = self.language.currentData()  # 선택된 언어 코드 저장
-        settings.save_settings(self.config)
+        # 이 창이 보이는 세 키만 쓴다 — 창을 연 뒤 다른 곳이 바꾼 키를 되돌리지 않는다 (#519)
+        settings.update_settings(
+            {
+                "cookies": {"NID_AUT": self.nidaut.text(), "NID_SES": self.nidses.text()},
+                "afterDownload": self.afterDownload.currentData(),
+                "language": self.language.currentData(),  # 선택된 언어 코드 저장
+            }
+        )
         return super().accept()
 
     def reject(self) -> None:

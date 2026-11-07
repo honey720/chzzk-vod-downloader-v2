@@ -107,7 +107,7 @@ class CardOrder(QObject):
     def __init__(self, model, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._model = model
-        saved = settings.load_settings().get("sortOrder", "added:asc")
+        saved = settings.load_setting("sortOrder")
         by, _, direction = saved.partition(":")
         self._sortBy = by if by in SORT_KEYS else "added"
         self._descending = direction == "desc"
@@ -171,10 +171,7 @@ class CardOrder(QObject):
         self._sortBy, self._descending = by, descending
         self._ordered.sort(key=self._key)
         value = f"{by}:{'desc' if descending else 'asc'}"
-        cfg = settings.load_settings()
-        if cfg.get("sortOrder") != value:
-            cfg["sortOrder"] = value
-            settings.save_settings(cfg)
+        settings.update_settings({"sortOrder": value})  # 저장된 값과 같으면 쓰지 않는다
         self.orderReset.emit()
 
     def setFilter(self, key: str) -> None:

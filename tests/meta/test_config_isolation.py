@@ -55,7 +55,7 @@ def test_database_and_logs_are_under_the_isolated_folder() -> None:
 def test_writing_through_isolated_settings_does_not_touch_real_files() -> None:
     """격리된 경로로 설정을 열고 써도 실제 DB와 실제 config.json은 그대로여야 한다.
 
-    open_settings · save_settings -> 격리 위치에 DB 생김 · 실제 DB · config.json의 존재와 수정 시각 그대로
+    open_settings · update_settings -> 격리 위치에 DB 생김 · 실제 DB · config.json의 존재와 수정 시각 그대로
     """
     real_files = [
         os.path.join(_real_default_data_dir(), name)
@@ -64,7 +64,7 @@ def test_writing_through_isolated_settings_does_not_touch_real_files() -> None:
     before = {path: os.path.getmtime(path) if os.path.exists(path) else None for path in real_files}
 
     settings_module.open_settings()
-    settings_module.save_settings({"language": "ko_KR"})
+    settings_module.update_settings({"language": "ko_KR"})
 
     assert os.path.exists(settings_module.database_path())  # 격리된 위치엔 실제로 쓰였다
     after = {path: os.path.getmtime(path) if os.path.exists(path) else None for path in real_files}

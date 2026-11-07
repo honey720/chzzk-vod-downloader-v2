@@ -83,7 +83,7 @@ def _default_download_path() -> str:
     저장 위치를 골라도 `downloadPath`는 바뀌지 않는다(#495 — 바꾼 위치는 최근 목록). 2.11까지는
     마지막으로 쓴 경로를 거기 적었으므로(#165) 올린 유저는 그 경로로 시작한다.
     """
-    saved = settings.load_settings().get("downloadPath", "")
+    saved = settings.load_setting("downloadPath")
     if saved and os.path.isdir(saved):
         return saved
     downloads = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation)
@@ -503,7 +503,7 @@ class VodDownloader(QMainWindow):
         첫 표시 전에는 Qt 6 레이아웃 캐시가 polish 전 값을 들고 있어 시점에 따라 틀린다
         (#249). 최대화였다면 보통 크기를 먼저 복원해 두고(해제 시 돌아갈 크기) 최대화로 띄운다.
         """
-        parsed = settings.parse_saved_window(settings.load_settings().get("window"))
+        parsed = settings.parse_saved_window(settings.load_setting("window"))
         if parsed is None:
             return False
         (x, y, width, height), maximized = parsed
@@ -567,10 +567,7 @@ class VodDownloader(QMainWindow):
         else:
             x, y, width, height = self.pos().x(), self.pos().y(), self.width(), self.height()
         state = {"x": x, "y": y, "width": width, "height": height, "maximized": maximized}
-        cfg = settings.load_settings()
-        if cfg.get("window") != state:
-            cfg["window"] = state
-            settings.save_settings(cfg)
+        settings.update_settings({"window": state})  # 저장된 값과 같으면 쓰지 않는다
 
     def _contentMinimumWidth(self) -> int:
         """콘텐츠 열이 실제로 요구하는 최소폭 — 레이아웃에 묻는다 (#244 목록/헤더).
@@ -992,7 +989,7 @@ class VodDownloader(QMainWindow):
         
         os_type = platform.system()
 
-        afterDownload = settings.load_settings().get('afterDownload')
+        afterDownload = settings.load_setting("afterDownload")
 
         if afterDownload == "sleep":
             if os_type == "Windows":

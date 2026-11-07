@@ -135,7 +135,7 @@ def set_language(app_config, translator) -> list[QTranslator]:
         # 설정 파일에 언어가 없었던 경우에만 저장
         if not is_language_in_config:
             app_config['language'] = language
-            settings.save_settings(app_config)
+            settings.update_settings({"language": language})
     else:
         logger.warning("translation file load failed")
         # 번역 파일 로드 실패 -> 이번 실행에 한해 기본 언어(en_US) 사용.
