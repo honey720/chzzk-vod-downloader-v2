@@ -38,7 +38,9 @@ def _apply_production_qss(qapp) -> None:
     """실제 전역 QSS를 태운다. ⚠️ `scope="function"` 유지(macOS 종료 크래시 —
     `test_widget_theme.py`의 `_apply_dark_card_qss` 문서 참고)."""
     theme.set_color_scheme("dark")
-    qapp.setStyle(hold_style(theme.build_style()))  # 참조 보관 — 이중 해제 우회 (#243, card_helpers.hold_style)
+    qapp.setStyle(
+        hold_style(theme.build_style())
+    )  # 참조 보관 — 이중 해제 우회 (#243, card_helpers.hold_style)
     qapp.setPalette(theme.build_palette())
     qapp.setStyleSheet(theme.load_stylesheet(main_module.resource_path(theme.QSS_RELATIVE_PATH)))
 
@@ -130,14 +132,16 @@ class TestSlotColumn:
         assert "8.2 MB/s" in text and "12:34" in text
 
     def test_postprocessing_shows_percent_first_then_label(self, qapp) -> None:
-        """"13% · 후처리 중" — 후처리 진행률은 이미 있던 값(실기에서 일시정지로
+        """ "13% · 후처리 중" — 후처리 진행률은 이미 있던 값(실기에서 일시정지로
         확인)인데 슬롯이 "후처리 중" 텍스트로 대체되며 퍼센트만 빠졌던 것.
         퍼센트는 **앞** — 전송·일시정지와 자리를 맞춘다(#245 정정)."""
         widget = _make_widget(qapp, DownloadState.RUNNING, 13, post_process=True)
         text = widget.statusLabel.text()
         assert text.startswith("13%"), f"후처리 퍼센트가 앞에 없다: {text!r}"
         assert text.endswith("Post-processing"), text
-        assert "MB/s" not in text and "left" not in text, "후처리 국면에 전송 속도·남은 시간이 붙어 있다"
+        assert "MB/s" not in text and "left" not in text, (
+            "후처리 국면에 전송 속도·남은 시간이 붙어 있다"
+        )
 
     def test_postprocessing_keeps_pause_action_and_bar(self, qapp) -> None:
         """후처리 중 일시정지는 가능하다 — 조작을 숨기거나 비활성화하지 않는다.
@@ -159,7 +163,7 @@ class TestSlotColumn:
         assert "left" not in text, "일시정지에 남은 시간이 붙어 있다 — 멈춘 상태에 남은 시간은 없다"
 
     def test_finished_shows_check_completed_and_elapsed(self, qapp) -> None:
-        """"✓ 완료 · 5:12" — 소요 시간은 진행 중의 남은 시간과 같은 짧은 포맷.
+        """ "✓ 완료 · 5:12" — 소요 시간은 진행 중의 남은 시간과 같은 짧은 포맷.
         전송 성능에 들인 공이 유저에게 보이는 유일한 자리다(#245)."""
         widget = _make_widget(qapp, DownloadState.FINISHED, 100)
         assert widget.statusLabel.text() == "✓ Completed · 5:12", widget.statusLabel.text()
@@ -213,7 +217,9 @@ class TestSlotColumn:
     HEADLINE_LIMIT = {"ko_KR": 40, "en_US": 60}
 
     @pytest.mark.parametrize("language", ("ko_KR", "en_US"))
-    @pytest.mark.parametrize("context", ("DownloadViewModel", "ContentViewModel", "ContentItemWidget"))
+    @pytest.mark.parametrize(
+        "context", ("DownloadViewModel", "ContentViewModel", "ContentItemWidget")
+    )
     def test_every_failure_headline_fits_the_card_row(self, language, context) -> None:
         """모든 사유의 **첫 줄**이 640px 카드 3행에 들어간다 — 폰트 무의존 대리
         지표로 언어별 글자 수 상한을 건다(HEADLINE_LIMIT). 원문 전체가 아니라
@@ -223,16 +229,36 @@ class TestSlotColumn:
         import io
         import re
 
-        source = io.open(main_module.resource_path(f"translations/{language}.ts"), encoding="utf-8").read()
+        source = io.open(
+            main_module.resource_path(f"translations/{language}.ts"), encoding="utf-8"
+        ).read()
         block = re.search(rf"<name>{context}</name>(.*?)</context>", source, re.S).group(1)
         failures = [
             (src, tr)
-            for src, tr in re.findall(r"<source>([^<]*)</source>\s*<translation>([^<]*)</translation>", block)
-            if any(k in src for k in ("fail", "Fail", "required", "not found", "Decryption", "Invalid", "Network", "Unknown", "corrupted", "ffmpeg"))
+            for src, tr in re.findall(
+                r"<source>([^<]*)</source>\s*<translation>([^<]*)</translation>", block
+            )
+            if any(
+                k in src
+                for k in (
+                    "fail",
+                    "Fail",
+                    "required",
+                    "not found",
+                    "Decryption",
+                    "Invalid",
+                    "Network",
+                    "Unknown",
+                    "corrupted",
+                    "ffmpeg",
+                )
+            )
         ]
         assert failures, f"{language}/{context}: 실패 문구를 하나도 못 찾았다 — 필터를 확인할 것"
         limit = self.HEADLINE_LIMIT[language]
-        too_long = {src: tr.splitlines()[0] for src, tr in failures if len(tr.splitlines()[0]) > limit}
+        too_long = {
+            src: tr.splitlines()[0] for src, tr in failures if len(tr.splitlines()[0]) > limit
+        }
         assert not too_long, f"{language}: 640px에서 잘릴 첫 줄({limit}자 초과): {too_long}"
 
     def test_english_source_strings_follow_the_headline_detail_convention(self) -> None:
@@ -241,11 +267,15 @@ class TestSlotColumn:
         import io
         import re
 
-        source = io.open(main_module.resource_path("translations/en_US.ts"), encoding="utf-8").read()
+        source = io.open(
+            main_module.resource_path("translations/en_US.ts"), encoding="utf-8"
+        ).read()
         block = re.search(r"<name>DownloadViewModel</name>(.*?)</context>", source, re.S).group(1)
         sources = re.findall(r"<source>([^<]*)</source>", block)
         multi = [s for s in sources if "\n" in s]
-        assert len(multi) >= 7, f"두 줄 규약을 따르는 다운로드 실패 사유가 {len(multi)}개뿐이다: {sources}"
+        assert len(multi) >= 7, (
+            f"두 줄 규약을 따르는 다운로드 실패 사유가 {len(multi)}개뿐이다: {sources}"
+        )
         for s in multi:
             headline, detail = s.split("\n", 1)
             assert "·" in headline, f"첫 줄에 '할 일'(· 뒤)이 없다: {headline!r}"
@@ -257,12 +287,17 @@ class TestSlotColumn:
         from PySide6.QtWidgets import QLabel
 
         widget = _make_widget(qapp, DownloadState.FAILED)
-        reason = "Postprocessing failed because the received segments look corrupted, please download again " * 2
+        reason = (
+            "Postprocessing failed because the received segments look corrupted, please download again "
+            * 2
+        )
         widget.item.stateMessage = reason
         widget.setData(widget.item, 0)
         widget.resize(640, widget.sizeHint().height())
         QApplication.processEvents()
-        assert QLabel.text(widget.statusLabel) != widget.statusLabel.text(), "이 폭에서 안 잘렸다 — 전제 확인"
+        assert QLabel.text(widget.statusLabel) != widget.statusLabel.text(), (
+            "이 폭에서 안 잘렸다 — 전제 확인"
+        )
         assert reason in widget.statusLabel.toolTip(), "잘린 사유의 전문이 툴팁에 없다"
 
 
@@ -290,7 +325,9 @@ class TestPercentStartsAtTheSameX:
         for name, state, progress, post in self.PERCENT_PHASES:
             widget = _make_widget(qapp, state, progress, post_process=post)
             xs[name] = widget.statusLabel.x()
-            assert widget.statusLabel.x() == widget.titleLabel.x(), f"{name}: 슬롯이 컨텐츠 열 기준선에 없다"
+            assert widget.statusLabel.x() == widget.titleLabel.x(), (
+                f"{name}: 슬롯이 컨텐츠 열 기준선에 없다"
+            )
         assert len(set(xs.values())) == 1, f"국면에 따라 퍼센트 시작 x가 다르다: {xs}"
 
     def test_all_five_states_and_postprocess_keep_the_slot_baseline(self, qapp) -> None:
