@@ -18,9 +18,9 @@ from core.engine.session import get_thread_session
 from app.widgets.pill import CARET_GAP, CARET_WIDTH, ResolutionPill
 from core.models.download_state import DownloadState
 from app.viewmodels.item_state import ItemState
+from app.viewmodels.clock_text import clock_text
 from app.widgets.contentItemWidget import Ui_ContentItemWidget
 import app.theme as theme
-from time import strftime, gmtime
 import platform
 import logging
 
@@ -413,7 +413,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         label = self.fileSizeLabel
         metrics = label.fontMetrics()
         item = self.item
-        candidates = [label.text(), strftime("%H:%M:%S", gmtime(item.duration or 0)), "0000.00 MB"]
+        candidates = [label.text(), clock_text(item.duration or 0), "0000.00 MB"]
         if item.downloadState != DownloadState.WAITING and item.resolution:
             candidates.append(f"{self._resolutionText()} · 0000.00 MB")
         label.setMinimumWidth(max(metrics.horizontalAdvance(text) for text in candidates) + 4)
@@ -992,7 +992,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     def _clock(self, seconds: float) -> str:
         """초를 짧은 시간 표기("3:12" · "1:02:03")로 적는다 — 하루를 넘어도 시간을 그대로 센다."""
         whole = int(max(seconds, 0))
-        return self._shortRemain(f"{whole // 3600:02d}:{whole % 3600 // 60:02d}:{whole % 60:02d}")
+        return self._shortRemain(clock_text(whole))
 
     def _sectionOverlapDetail(self) -> list[str]:
         """겹침이 있는 구간 카드의 툴팁에 더하는 줄 — 받을 양(길이) · 구간 길이의 합 · 한 번만 받는다.
@@ -1138,7 +1138,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
                 # 구간 다운로드는 재생 시간 자리에 구간 요약을 적는다 (#309)
                 self.fileSizeLabel.setText(self._sectionSummary())
             elif self.item.is_segment_based:
-                self.fileSizeLabel.setText(strftime('%H:%M:%S', gmtime(item.duration)))
+                self.fileSizeLabel.setText(clock_text(item.duration))
             else:
                 self.fileSizeLabel.setText(f"{item.total_size}")
 
