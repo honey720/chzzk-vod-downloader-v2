@@ -68,3 +68,18 @@ def test_waiting_card_shows_a_video_length_past_a_day(qapp):
     widget.setData(item, 0)
     assert item.is_segment_based, "전제: 세그먼트 카드는 대기에서 길이를 적는다"
     assert widget.fileSizeLabel.text() == "30:00:00"
+
+
+@pytest.mark.usefixtures("answers")
+def test_a_negative_time_left_still_updates_the_card_and_the_footer(qtbot, tmp_path):
+    """받은 크기가 받을 크기보다 큰 통지가 와도 카드 · 하단바가 예외 없이 고쳐져야 한다(#513 리뷰).
+
+    받을 크기 1 MiB, 받은 2 MiB, 속도 1.0 MB/s 통지 -> 카드 상태 글에 "0:00 left", 하단바 속도 칸 보임
+    """
+    win, items, engine = footer._window(tmp_path)
+    win.downloadButton.click()
+    footer._pump()
+    footer._progress(engine, 2 * MIB, MIB, 1.0, 4)
+    footer._tick(win)
+    assert "0:00 left" in win.listView.widgetFor(items[0]).statusLabel.text()
+    assert win.footerMonitor.labels["speed"].text() == "↓ 1.0 MB/s"
