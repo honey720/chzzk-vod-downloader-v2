@@ -1,8 +1,8 @@
 """멈추기 · 다시 시작의 결과가 로그에 남는지 (#458).
 
 일시정지 뒤 끝나지 않는 실행에서 멈추기 · 다시 시작이 들었는지 가르려면 그 결과가 남아야 한다.
-``_set_suspended``는 결과를 debug로, ``_Control.poll``은 살아 있는 프로세스를 다시 돌리지 못하면
-warning으로 남긴다. 로그 이름은 ``record.name``으로 잰다(``caplog.at_level``의 logger는 거르지 않는다).
+``_set_suspended``는 결과를 debug로(Windows에서 실패한 NTSTATUS는 warning으로 — #505),
+``_Control.poll``은 살아 있는 프로세스를 다시 돌리지 못하면 warning으로 남긴다. 로그 이름은 ``record.name``으로 잰다(``caplog.at_level``의 logger는 거르지 않는다).
 """
 
 import logging
@@ -49,6 +49,29 @@ def test_suspend_and_resume_of_a_live_process_are_logged_at_debug(caplog, sleepe
     assert len(lines) == 2
     assert f"멈추기 pid={sleeper.pid}" in lines[0] and result in lines[0]
     assert f"다시 시작 pid={sleeper.pid}" in lines[1] and result in lines[1]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="NTSTATUS는 Windows의 결과다")
+def test_a_failed_ntstatus_is_logged_as_a_warning_with_its_value(caplog, monkeypatch, sleeper):
+    """Windows에서 멈추기 · 다시 시작 API가 실패 코드를 돌려주면 그 NTSTATUS가 warning으로 남아야 한다 (#505).
+
+    살아 있는 자식 프로세스, 두 API 모두 STATUS_PROCESS_IS_TERMINATING(0xC000010A)을 돌려주는 대역
+    -> _set_suspended(True) · _set_suspended(False) 모두 False,
+    core.utils.ffmpeg의 warning 두 줄: "멈추기 pid=<pid> NTSTATUS=0xC000010A" · "다시 시작 pid=<pid> NTSTATUS=0xC000010A"
+    """
+    failing = -0x3FFFFEF6  # 0xC000010A를 부호 있는 32비트로 읽은 값 — API가 돌려주는 꼴
+    api = (lambda handle: failing, lambda handle: failing)
+    monkeypatch.setattr(ffmpeg_module, "_windows_process_api", lambda: api)
+
+    with caplog.at_level(logging.DEBUG, logger=LOGGER):
+        assert _set_suspended(sleeper, True) is False
+        assert _set_suspended(sleeper, False) is False
+
+    lines = _messages(caplog, logging.WARNING)
+    assert lines == [
+        f"ffmpeg 멈추기 pid={sleeper.pid} NTSTATUS=0xC000010A",
+        f"ffmpeg 다시 시작 pid={sleeper.pid} NTSTATUS=0xC000010A",
+    ]
 
 
 def test_suspend_of_an_ended_process_is_logged_and_does_nothing(caplog):
