@@ -140,6 +140,30 @@ class _Recording(RunLogger):
         self.stopped_after_failure.append(phase)
 
 
+RECEIVING_TIMEOUT = 10.0  # 받기에 들어서기를 기다리는 상한(초) — 넘기면 「전제」 실패 (#509)
+
+
+def _wait_until(condition, what: str, timeout: float = RECEIVING_TIMEOUT) -> None:
+    """조건이 참이 될 때까지 기다린다 — 상한을 넘기면 그 전제가 서지 않은 것으로 실패한다 (#509).
+
+    엔진을 띄운 뒤 고정 시간을 쉬고 받기 단계라고 가정하면, 느린 러너에서는 그때 아직 준비 단계라
+    일시정지 · 중단이 다른 단계에 걸린다. 관측할 수 있는 조건을 기다린다.
+    """
+    deadline = time.monotonic() + timeout
+    while not condition():
+        if time.monotonic() >= deadline:
+            pytest.fail(f"전제: {what} — {timeout:g}초 안에 오지 않았다")
+        time.sleep(0.01)
+
+
+def _wait_receiving(data, before: int = 0) -> None:
+    """엔진이 받기에 들어설 때까지 기다린다 — 받은 바이트가 생겼다(before와 달라졌다)."""
+    _wait_until(
+        lambda: data.total_downloaded_size > 0 and data.total_downloaded_size != before,
+        "받기에 들어섰다(받은 바이트가 생겼다)",
+    )
+
+
 def _recording_engine(tmp_path, monkeypatch, throttle: float):
     engine, data, _logger, output, finished, failures = _make_engine(
         tmp_path, monkeypatch, throttle=throttle
@@ -216,7 +240,7 @@ def test_no_thread_or_speed_line_is_logged_while_paused(tmp_path, monkeypatch):
 
     data.model.start()
     thread = _run_in_thread(engine)
-    time.sleep(0.3)
+    _wait_receiving(data)
     assert data.model.pause() is True, "전제: 받는 도중에 일시정지됐다"
     paused_at = time.perf_counter()
     time.sleep(2.5)
@@ -245,7 +269,7 @@ def test_stopping_while_receiving_tells_the_logger_it_stopped_during_transfer(
 
     data.model.start()
     thread = _run_in_thread(engine)
-    time.sleep(0.25)
+    _wait_receiving(data)
     data.model.stop()
     thread.join(timeout=10)
 
@@ -268,7 +292,7 @@ def test_engine_that_stops_itself_after_a_failure_does_not_log_a_stop_by_the_use
 
     data.model.start()
     thread = _run_in_thread(engine)
-    time.sleep(0.25)
+    _wait_receiving(data)
     engine._fail_fatally(error, "Thread failed — failing download")
     thread.join(timeout=10)
 
@@ -289,13 +313,14 @@ def test_user_stop_of_a_run_after_a_failed_run_is_logged_as_a_stop_by_the_user(
     )
     data.model.start()
     thread = _run_in_thread(engine)
-    time.sleep(0.25)
+    _wait_receiving(data)
     engine._fail_fatally(RuntimeError("part failed"), "Thread failed — failing download")
     thread.join(timeout=10)
 
+    first_run = data.total_downloaded_size
     data.model.start()
     thread = _run_in_thread(engine)
-    time.sleep(0.25)
+    _wait_receiving(data, before=first_run)
     data.model.stop()
     thread.join(timeout=10)
 
@@ -485,9 +510,11 @@ def test_stopping_a_paused_download_logs_no_thread_or_speed_line(tmp_path, monke
     spy = _SpeedSpy(engine.logger)
     engine.logger = spy
     release = threading.Event()
+    entered = threading.Event()  # 받기(붙잡은 _download_item)에 들어섰다 — 준비가 끝났다 (#509)
     real_download = engine._download_item
 
     def held(item, part_num):
+        entered.set()
         release.wait(20)  # 중단할 때까지 받기를 붙잡아 둔다
         return real_download(item, part_num)
 
@@ -495,7 +522,7 @@ def test_stopping_a_paused_download_logs_no_thread_or_speed_line(tmp_path, monke
 
     data.model.start()
     thread = _run_in_thread(engine)
-    time.sleep(0.3)
+    _wait_until(entered.is_set, "받기에 들어섰다(붙잡은 _download_item에 들어섰다)")
     assert data.model.pause() is True, "전제: 받는 도중에 일시정지됐다"
     logged_before_pause = len(spy.speed_lines)
     time.sleep(1.6)
@@ -546,7 +573,7 @@ def test_transfer_time_leaves_out_the_pause_and_the_pause_is_reported_apart(tmp_
     started = time.perf_counter()
     data.model.start()
     thread = _run_in_thread(engine)
-    time.sleep(0.3)
+    _wait_receiving(data)
     assert data.model.pause() is True, "전제: 받는 도중에 일시정지됐다"
     time.sleep(1.2)
     data.model.resume()
@@ -626,7 +653,7 @@ def test_a_second_run_with_the_same_model_does_not_take_off_the_first_runs_pause
     )
     data.model.start()
     first = _run_in_thread(engine)
-    time.sleep(0.3)
+    _wait_receiving(data)
     assert data.model.pause() is True, "전제: 첫 실행이 받는 도중에 일시정지됐다"
     time.sleep(1.2)
     data.model.stop()
