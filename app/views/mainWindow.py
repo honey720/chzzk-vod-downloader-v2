@@ -912,6 +912,13 @@ class VodDownloader(QMainWindow):
             self.urlInput.setProperty("invalid", True)
             theme.repolish(self.urlInput)
 
+    def _syncFetchButton(self) -> None:
+        """URL 칸이 비었으면(공백만 포함) 「+」를 끄고, 무언가 있으면 켠다 (#536 오너 실기 — 설계 §11.6).
+
+        빈 칸에서 Enter는 그대로 등록 오류 말풍선(「VOD URL을 입력하세요」)을 띄운다 — 버튼만 끈 모양이다.
+        """
+        self.fetchButton.setEnabled(bool(self.urlInput.text().strip()))
+
     def _clearRegisterError(self) -> None:
         """등록 오류 말풍선을 닫고 URL 칸 테두리를 되돌린다 — URL 입력이 바뀔 때."""
         self.registerError.hide()
@@ -941,6 +948,8 @@ class VodDownloader(QMainWindow):
         self.fetchButton.clicked.connect(self.onFetch)
         self.saveLocationButton.errorOccurred.connect(self._showRegisterError)
         self.urlInput.textChanged.connect(self._clearRegisterError)
+        self.urlInput.textChanged.connect(self._syncFetchButton)
+        self._syncFetchButton()
         self.menuSettingsButton.clicked.connect(self.onSetting)
         # 「VOD 다운」을 눌렀다 — 결과를 봤다(#523)
         self.menuDownloadButton.clicked.connect(self.menuDownloadButton.stopBlink)

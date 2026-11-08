@@ -981,7 +981,8 @@ class BusyButton(QPushButton):
     def paintEvent(self, event) -> None:
         super().paintEvent(event)  # 바탕 · 테두리(전역 QSS) — 글은 없다
         tokens = theme.current_tokens()
-        color = tokens["text" if self.isEnabled() else "textDisabled"]
+        # 도는 표시는 끈 모양이어도 글 색이다 — 등록하면 URL 칸이 비어 버튼이 꺼진 채 돈다(#536)
+        color = tokens["text" if self.isEnabled() or self._busy else "textDisabled"]
         rect = self.glyphRect()
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)

@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QSize, Qt
 from PySide6.QtGui import QColor, QEnterEvent, QHelpEvent, QMouseEvent
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QWidget
 
 import app.system.settings as settings
@@ -372,7 +373,12 @@ def _close(a: QColor, b: str) -> bool:
     "name", ["fetchButton", "menuSettingsButton", "sortButton", "clearFinishedButton"]
 )
 def test_keyboard_focus_draws_an_accent_border(window: VodDownloader, name: str) -> None:
-    """키보드 초점을 받은 바 컨트롤의 테두리는 강조색이어야 한다(초점 전에는 강조색이 아니다)."""
+    """키보드 초점을 받은 바 컨트롤의 테두리는 강조색이어야 한다(초점 전에는 강조색이 아니다).
+
+    URL 칸에 글을 넣어 둔다 — 「+」는 빈 칸이면 꺼져 초점을 받지 않는다
+    """
+    window.urlInput.setText("https://chzzk.naver.com/video/1")
+    _pump()
     widget = getattr(window, name)
     tokens = theme.current_tokens()
     assert not _close(_top_border(widget), tokens["accent"]), (
@@ -543,7 +549,12 @@ def test_the_chosen_chip_has_the_bar_face_and_a_border_and_no_accent_fill(
 
 
 def test_the_add_button_is_a_square_plus_with_a_shortcut_tip(window: VodDownloader) -> None:
-    """등록은 글 없는 정사각(바 컨트롤 높이) 버튼이고, 들어가면 말풍선에 「Add · Enter」가 떠야 한다."""
+    """등록은 글 없는 정사각(바 컨트롤 높이) 버튼이고, 들어가면 말풍선에 「Add · Enter」가 떠야 한다.
+
+    URL 칸에 글이 있어 켠 상태에서 잰다(빈 칸이면 꺼진 색 — 아래 테스트)
+    """
+    window.urlInput.setText("https://chzzk.naver.com/video/1")
+    _pump()
     button = window.fetchButton
     side = theme.METRICS["barControl"]
     assert button.text() == ""
@@ -552,6 +563,41 @@ def test_the_add_button_is_a_square_plus_with_a_shortcut_tip(window: VodDownload
     assert _inked(button, button.glyphRect(), theme.current_tokens()["text"]) > 0, "「+」를 그린다"
     _enter(button)
     assert _bubble().isVisible() and _bubble().shownText() == "Add · Enter"
+
+
+@pytest.mark.parametrize("text", ["", "   "])
+def test_the_add_button_is_off_while_the_url_input_is_blank(
+    window: VodDownloader, text: str
+) -> None:
+    """URL 칸이 비었거나 공백뿐이면 「+」가 꺼지고 꺼진 글 색으로 그려져야 한다."""
+    window.urlInput.setText("x")
+    window.urlInput.setText(text)
+    _pump()
+    button = window.fetchButton
+    tokens = theme.current_tokens()
+    assert not button.isEnabled()
+    assert _inked(button, button.glyphRect(), tokens["textDisabled"]) > 0
+    assert _inked(button, button.glyphRect(), tokens["text"]) == 0
+
+
+def test_the_add_button_turns_on_once_the_url_input_has_text(window: VodDownloader) -> None:
+    """빈 URL 칸에 글을 치면 「+」가 켜지고 다시 지우면 꺼져야 한다."""
+    assert not window.fetchButton.isEnabled(), "전제: 창을 연 직후 URL 칸은 비어 있다"
+    QTest.keyClicks(window.urlInput, "h")
+    _pump()
+    assert window.fetchButton.isEnabled()
+    window.urlInput.clear()
+    _pump()
+    assert not window.fetchButton.isEnabled()
+
+
+@pytest.mark.parametrize("text", ["", "https://chzzk.naver.com/video/1"])
+def test_the_add_button_has_no_accent_fill(window: VodDownloader, text: str) -> None:
+    """「+」는 켜졌든 꺼졌든 강조색으로 채우지 않아야 한다(채운 강조 버튼은 하단 다운로드 하나 — 설계 §11.6)."""
+    window.urlInput.setText(text)
+    _pump()
+    button = window.fetchButton
+    assert _inked(button, button.rect(), theme.current_tokens()["accent"]) == 0
 
 
 def test_the_url_hint_says_enter_adds(window: VodDownloader) -> None:
