@@ -16,7 +16,8 @@ import os
 from collections.abc import Iterator
 
 import pytest
-from PySide6.QtCore import QMargins, QRect, QSize
+import shiboken6
+from PySide6.QtCore import QEvent, QMargins, QRect, QSize
 from PySide6.QtWidgets import QApplication, QMainWindow
 from pytestqt.qtbot import QtBot
 
@@ -86,11 +87,17 @@ def _wide_enough(area: QRect) -> QRect:
     (좁은 폭 모양은 셸 S3). 그 화면에서는 "프레임까지 안에 넣는다"를 잴 수 없으므로 최소폭에서 유도한
     폭으로 넓혀 잰다. offscreen은 OS가 창을 옮기지 않아 넓혀도 앱의 계산을 잰다(`_screen_area`의 주의는
     실제 화면 이야기다).
+
+    측정용 창은 잰 뒤 바로 지운다. 참조만 놓으면 순환 참조에 묶여 나중에 GC가 아무 할당 자리(다음
+    `VodDownloader()`)에서 지우고, 이 파일만 돌리면 그 자리에서 프로세스가 힙 손상으로 죽는다(#538).
     """
     write_settings({})
     probe = VodDownloader()
     QApplication.processEvents()
     need = probe.minimumWidth() + MARGINS.left() + MARGINS.right()
+    probe.deleteLater()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert not shiboken6.isValid(probe), "전제: 측정용 창이 지금 지워졌다"
     if NATIVE or area.width() >= need * 10 // 6 + 100:
         return area
     return QRect(
