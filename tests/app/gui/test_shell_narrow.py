@@ -274,6 +274,48 @@ def test_crossing_the_threshold_settles_before_returning_to_the_event_loop(
     assert window.contentColumn.width() == window.width()
 
 
+def test_a_shape_change_does_not_touch_card_widgets(
+    window: VodDownloader, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """모양이 바뀔 때 캐시 비우기는 바 위젯과 목록 하나만 건드리고 목록 안(카드 위젯 · 그 자손)은 건드리지 않아야 한다.
+
+    카드 20장 · 넓은 창 -> 칩 모양 필요 폭 − 1(헤더 모양이 바뀜). 캐시 비우기(`_flushBarCaches`)가 도는
+    동안 updateGeometry를 부른 위젯을 센다 — 그 뒤 레이아웃 처리에서 카드가 창 폭을 따라 스스로 부르는
+    것은 세지 않는다 (#530)
+    """
+    for n in range(20):
+        _add(window, DownloadState.FINISHED, n)
+    _at_width(window, window.minimumWidth() + WIDE_EXTRA)
+    need = _chip_shape_need(window, _sort_text_width(window))
+    touched: list[QWidget] = []
+    flushing = {"on": False}
+    original_update = QWidget.updateGeometry
+    original_flush = VodDownloader._flushBarCaches
+
+    def spy(widget: QWidget) -> None:
+        if flushing["on"]:
+            touched.append(widget)
+        original_update(widget)
+
+    def flush(win: VodDownloader) -> None:
+        flushing["on"] = True
+        try:
+            original_flush(win)
+        finally:
+            flushing["on"] = False
+
+    monkeypatch.setattr(QWidget, "updateGeometry", spy)
+    monkeypatch.setattr(VodDownloader, "_flushBarCaches", flush)
+    before = window.headerShapeChanges
+    window.resize(need - 1, 700)
+    monkeypatch.undo()
+    assert window.headerShapeChanges - before == 1, "전제: 모양이 바뀌었다"
+    assert any(window.headerFrame.isAncestorOf(w) for w in touched), "전제: 바 위젯은 비웠다"
+    list_view = window.listView
+    inside = [w for w in touched if w is not list_view and list_view.isAncestorOf(w)]
+    assert inside == []
+
+
 def test_one_resize_changes_the_header_shape_once(window: VodDownloader) -> None:
     """넓은 창에서 창 최소폭으로 한 번 줄이면 헤더 모양이 한 번만 바뀌고 드롭다운은 한 번만 나타나야 한다.
 

@@ -776,9 +776,26 @@ class VodDownloader(QMainWindow):
         차례에 사라지고, 그 높이만큼 목록이 출렁였다(offscreen 실측). 보이는 창에서도 줄 · 열 · 스크롤 영역이
         레이아웃 요청을 차례로 주고받는 동안 같은 일이 한 차례 생긴다. 캐시를 비우고 그 자리에서 처리해
         그리기 전에 끝낸다.
+
         """
-        self._flushLayoutCaches()
+        self._flushBarCaches()
         QCoreApplication.sendPostedEvents(None, QEvent.Type.LayoutRequest)
+
+    def _flushBarCaches(self) -> None:
+        """세 바(메뉴바 · 헤더바 · 하단바)와 콘텐츠 열 레이아웃의 크기 캐시만 비운다 (#530).
+
+        목록은 열의 항목(위젯 하나)으로만 비우고 카드 위젯 안으로는 들어가지 않는다 — 콘텐츠 열 전체를
+        돌면(`_flushLayoutCaches`) 카드 1000장에서 한 번에 약 220ms가 걸렸다(#530 리뷰, offscreen 실측).
+        """
+        for frame in (self.appMenuBar, self.headerFrame, self.infoFrame):
+            for widget in (frame, *frame.findChildren(QWidget)):
+                widget.updateGeometry()
+            for layout in frame.findChildren(QLayout):
+                layout.invalidate()
+        for row in (self.menuRow, self.headerRow, self.infoRow):
+            row.invalidate()
+        self.listView.updateGeometry()
+        self.centralWidgetLayout.invalidate()
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         """창 폭이 바뀌면 헤더바 2줄 · 하단바의 좁은 폭 모양을 다시 고른다 (#529).
