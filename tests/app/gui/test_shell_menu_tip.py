@@ -246,6 +246,58 @@ def test_pressing_closes_the_bubble_until_the_pointer_leaves(window: VodDownload
     assert _bubble().isVisible()
 
 
+def _activate_other_window() -> QWidget:
+    """다른 최상위 창을 띄워 활성으로 만든다 — 본 창이 비활성이 된다(Alt+Tab 흉내)."""
+    other = QWidget()
+    other.resize(120, 80)
+    other.show()
+    other.activateWindow()
+    _pump()
+    return other
+
+
+def test_the_tip_closes_when_the_window_becomes_inactive(window: VodDownloader) -> None:
+    """포인터를 대상에 둔 채(나감 없이) 다른 창이 활성이 되면 말풍선이 닫혀야 한다."""
+    window.activateWindow()
+    _pump()
+    _enter(window.stopButton)
+    assert _bubble().isVisible(), "전제: 말풍선이 떴다"
+    other = _activate_other_window()
+    assert QApplication.activeWindow() is other, "전제: 다른 창이 활성이다"
+    assert not _bubble().isVisible()
+
+
+def test_the_tip_closes_when_the_window_is_minimized(window: VodDownloader) -> None:
+    """포인터를 대상에 둔 채 본 창을 최소화하면 말풍선이 닫혀야 한다."""
+    _enter(window.stopButton)
+    assert _bubble().isVisible(), "전제: 말풍선이 떴다"
+    window.showMinimized()
+    _pump()
+    assert window.isMinimized(), "전제: 창이 최소화됐다"
+    assert not _bubble().isVisible()
+
+
+def test_an_open_menu_closes_when_the_window_becomes_inactive(window: VodDownloader) -> None:
+    """정렬 메뉴가 열린 채 다른 창이 활성이 되면 메뉴가 닫혀야 한다."""
+    window.activateWindow()
+    _pump()
+    menu = _open(window.sortButton)
+    assert menu.isVisible(), "전제: 메뉴가 열렸다"
+    other = _activate_other_window()
+    assert QApplication.activeWindow() is other, "전제: 다른 창이 활성이다"
+    assert not menu.isVisible()
+
+
+def test_an_open_menu_closes_when_the_window_is_minimized(window: VodDownloader) -> None:
+    """정렬 메뉴가 열린 채 본 창을 최소화하면 메뉴가 닫혀야 한다."""
+    menu = _open(window.sortButton)
+    assert menu.isVisible(), "전제: 메뉴가 열렸다"
+    window.showMinimized()
+    _pump()
+    assert window.isMinimized(), "전제: 창이 최소화됐다"
+    assert not menu.isVisible()
+
+
 def test_qt_tooltip_events_are_swallowed_for_bar_controls(window: VodDownloader) -> None:
     """툴팁 글이 있는 바 컨트롤의 Qt 툴팁 이벤트는 필터가 삼켜 기본 툴팁이 뜨지 않아야 한다."""
     target = window.stopButton

@@ -117,23 +117,30 @@ class TipBubble(QWidget):
 
     꼬리 쪽에는 그림자 자리를 두지 않는다 — 창 사각형의 꼬리 쪽 끝이 곧 대상에서 `tipGap` 떨어진 자리다.
     색 묶음(`tone`)은 툴팁(`"tip"`)과 등록 오류(`"error"` — 실패 색 계열, #536)다(`TONES`).
+
+    `embedded=True`면 따로 뜬 창이 아니라 `parent`의 자식 위젯으로 그린다 — 자리는 화면 대신 `parent` 사각형
+    안에서 잡는다. 따로 뜬 최상위 창은 본 창을 Alt+Tab으로 뒤로 보내도 화면 맨 위에 남는다(#536 오너 실기).
     """
 
-    def __init__(self, tone: str = "tip", parent: QWidget | None = None) -> None:
-        super().__init__(
-            parent,
-            Qt.WindowType.ToolTip
-            | Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.NoDropShadowWindowHint
-            | Qt.WindowType.WindowTransparentForInput,
-        )
+    def __init__(
+        self, tone: str = "tip", parent: QWidget | None = None, embedded: bool = False
+    ) -> None:
+        if embedded:
+            super().__init__(parent)
+        else:
+            super().__init__(
+                parent,
+                Qt.WindowType.ToolTip
+                | Qt.WindowType.FramelessWindowHint
+                | Qt.WindowType.NoDropShadowWindowHint
+                | Qt.WindowType.WindowTransparentForInput,
+            )
+            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+            self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setObjectName("tipBubble")
-        for attribute in (
-            Qt.WidgetAttribute.WA_TranslucentBackground,
-            Qt.WidgetAttribute.WA_TransparentForMouseEvents,
-            Qt.WidgetAttribute.WA_ShowWithoutActivating,
-        ):
-            self.setAttribute(attribute)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        # 창 안 자식으로 그리는지 — 등록 오류는 본 창과 함께 뒤로 가고 · 최소화되고 · 움직인다(#536 오너 실기)
+        self.embedded = embedded
         self.tone = tone  # 색 묶음 — TONES의 키
         self._doc = QTextDocument(self)
         self._doc.setDocumentMargin(0)
@@ -198,7 +205,11 @@ class TipBubble(QWidget):
         self.targetRect = (
             rect if rect is not None else QRect(target.mapToGlobal(QPoint(0, 0)), target.size())
         )
-        screen = target.screen().availableGeometry()
+        host = self.parentWidget() if self.embedded else None
+        if host is not None:
+            screen = QRect(host.mapToGlobal(QPoint(0, 0)), host.size())
+        else:
+            screen = target.screen().availableGeometry()
         body = self._bodySize()
         wanted = side or tip_side(target)
         self.side = wanted
@@ -213,10 +224,16 @@ class TipBubble(QWidget):
             self._tail = self.targetRect.center().x() - geometry.left()
         else:
             self._tail = self.targetRect.center().y() - geometry.top()
+        if host is not None:
+            geometry.translate(-screen.topLeft())
         self.setGeometry(geometry)
         self.update()
         self.show()
         self.raise_()
+
+    def globalRect(self) -> QRect:
+        """말풍선 사각형(전역) — 따로 뜬 창이든 자식이든 같은 좌표로 잰다."""
+        return QRect(self.mapToGlobal(QPoint(0, 0)), self.size())
 
     def hideNow(self) -> None:
         """바로 숨긴다."""
@@ -314,6 +331,25 @@ def hide_tip(target: QWidget | None = None) -> None:
         bubble.hideNow()
 
 
+def close_floats_if_left(window: QWidget) -> None:
+    """창을 떠났으면(다른 창이 활성 · 최소화) 말풍선과 열린 메뉴를 닫는다 (#536 오너 실기).
+
+    창의 활성 · 상태 변화(`changeEvent`)에서 부른다. 포인터를 대상에 둔 채 Alt+Tab 하면 나감 이벤트가 오지 않아
+    따로 뜬 말풍선 · 메뉴가 다른 창 위에 남는다. 그 창이 연 메뉴가 활성을 가져간 경우(활성 창이 메뉴)는 떠난
+    것이 아니다. 등록 오류 말풍선(`ErrorTip`)은 창의 자식이라 창과 함께 뒤로 가므로 닫지 않는다.
+    """
+    active = QApplication.activeWindow()
+    popup = QApplication.activePopupWidget()
+    left = window.isMinimized() or (
+        active is not window and (active is None or active is not popup)
+    )
+    if not left:
+        return
+    hide_tip()
+    if popup is not None:
+        popup.close()
+
+
 class TipFilter(QObject):
     """위젯마다 거는 이벤트 필터 — 들어오면 그 위젯의 툴팁을 말풍선으로 바로 띄우고, 나가거나 누르면 닫는다.
 
@@ -364,12 +400,16 @@ class ErrorTip(QObject):
     """입력칸 아래에 붙는 오류 말풍선 — 헤더바 등록 오류(#536 — 설계 §2 알림 자리 · §12.1 등록 오류).
 
     툴팁과 같은 말풍선 부품(`TipBubble`)에 실패 색 계열(`tone="error"`)이고, 늘 대상 아래로(꼬리 위) 뜬다. 포인터가
-    나가도 닫히지 않는다 — 입력을 고치면(부르는 쪽이 `hide`) · Esc · 대상 밖을 누르면 닫힌다. 말풍선은 떠 있는
-    창이라 헤더바에 오류 줄 자리를 비워 두지 않아도 목록이 움직이지 않는다.
+    나가도 닫히지 않는다 — 입력을 고치면(부르는 쪽이 `hide`) · Esc · 대상 밖을 누르면 닫힌다.
+
+    말풍선은 대상 창의 자식 위젯이다(`embedded`) — 따로 뜬 창이면 본 창을 Alt+Tab으로 뒤로 보내도 화면 맨 위에
+    남는다(#536 오너 실기). 자식이라 본 창과 함께 뒤로 가고 · 최소화되고 · 움직인다. 레이아웃에 들지 않고 형제
+    위젯 위에 겹쳐 그리므로 헤더바에 오류 줄 자리를 비워 두지 않아도 목록이 움직이지 않는다. 최소화했다가 다시
+    띄우면 오류가 남아 있는 한 그대로 보인다 — 최소화는 닫히는 조건(입력 고침 · Esc · 다른 곳 누름)이 아니다.
 
     누름 · Esc는 말풍선이 보이는 동안만 대상 창의 `QWindow`에 건 필터로 본다 — 그 창으로 오는 입력이 위젯보다
     먼저 지나가는 자리라 카드 위젯마다 걸지 않아도 되고, 앱 전체 필터가 아니다(전체 테스트 접근 위반 #536 기록).
-    창이 움직이거나 크기가 바뀌면 말풍선을 대상 아래로 다시 놓는다.
+    창 크기가 바뀌면 말풍선을 대상 아래로 다시 놓는다(대상이 창 안에서 움직인다).
     """
 
     def __init__(self, target: QWidget) -> None:
@@ -398,8 +438,8 @@ class ErrorTip(QObject):
         """대상 아래에 오류 글을 띄운다 — 떠 있으면 글만 바꿔 다시 놓는다."""
         bubble = self.bubble()
         if bubble is None:
-            # 창을 부모로 둔다 — 창이 지워지면 함께 지워진다(ToolTip 창 종류라 따로 뜨는 창이다)
-            bubble = self._bubble = TipBubble("error", self._target.window())
+            # 창의 자식으로 그린다 — 창이 지워지면 함께 지워진다
+            bubble = self._bubble = TipBubble("error", self._target.window(), embedded=True)
             bubble.setObjectName("errorTip")
         self._text = text
         bubble.showFor(self._target, text, side="below")
@@ -437,9 +477,7 @@ class ErrorTip(QObject):
                 self.hide()  # 대상 밖을 눌렀다 — 누름은 그대로 흘려 보낸다
         elif kind == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape:
             self.hide()
-        elif kind in (QEvent.Type.Move, QEvent.Type.Resize) and obj.isWidgetType():
+        elif kind == QEvent.Type.Resize and obj.isWidgetType():
             if self.isShowing():
                 self.bubble().showFor(self._target, self._text, side="below")
-        elif kind == QEvent.Type.Hide and obj.isWidgetType():
-            self.hide()
         return False

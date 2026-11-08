@@ -101,8 +101,8 @@ class TestErrorLine:
         bubble = window.registerError.bubble()
         url = _global(window.urlInput)
         assert bubble.side == "below" and bubble.tone == "error"
-        assert bubble.geometry().top() == url.bottom() + 1 + theme.METRICS["tipGap"]
-        assert not bubble.geometry().intersects(url)
+        assert bubble.globalRect().top() == url.bottom() + 1 + theme.METRICS["tipGap"]
+        assert not bubble.globalRect().intersects(url)
 
     def test_leaving_the_input_keeps_the_bubble(self, window) -> None:
         """오류가 뜬 뒤 포인터가 URL 칸을 나가도 오류 말풍선은 남아야 한다."""
@@ -204,6 +204,43 @@ class TestErrorLine:
         limit = theme.METRICS["tipMaxWidth"] + 2 * theme.METRICS["tipPadX"] + 2
         assert bubble.bodyRect().width() <= limit
         assert bubble.shownText() == f"Video not found · {long_url}"
+
+
+class TestErrorBubbleInTheWindow:
+    def test_the_error_bubble_is_a_child_of_the_main_window(self, window) -> None:
+        """오류 말풍선은 따로 뜬 창이 아니라 본 창의 자식 위젯이어야 한다 — 본 창과 함께 뒤로 간다."""
+        _press_enter(window, "")
+        bubble = window.registerError.bubble()
+        assert bubble.isVisible()
+        assert not bubble.isWindow()
+        assert bubble.window() is window
+        assert bubble not in QApplication.topLevelWidgets()
+
+    def test_it_stays_inside_the_window_on_top_of_its_siblings(self, window) -> None:
+        """오류 말풍선은 창 안에 있고, 레이아웃에 들지 않으며, 형제 위젯 가운데 맨 위(겹쳐 그림)여야 한다."""
+        _press_enter(window, "")
+        bubble = window.registerError.bubble()
+        assert _global(window).contains(bubble.globalRect())
+        assert window.layout().indexOf(bubble) == -1
+        siblings = [w for w in bubble.parentWidget().children() if w.isWidgetType()]
+        assert siblings[-1] is bubble
+
+    def test_minimizing_hides_it_and_restoring_brings_it_back(self, window) -> None:
+        """오류가 뜬 채 본 창을 최소화하면 말풍선이 따로 남지 않고, 다시 띄우면 같은 오류가 다시 보여야 한다.
+
+        최소화는 닫는 조건(입력 고침 · Esc · 다른 곳 누름)이 아니다 — 오류는 그대로 남아 있다
+        """
+        _press_enter(window, "")
+        window.showMinimized()
+        QApplication.processEvents()
+        assert window.isMinimized(), "전제: 창이 최소화됐다"
+        visible = [w for w in QApplication.topLevelWidgets() if w.isVisible() and w is not window]
+        assert window.registerError.bubble() not in visible
+        assert window.registerError.bubble().window() is window
+        window.showNormal()
+        QApplication.processEvents()
+        assert window.registerError.isShowing()
+        assert window.registerError.text() == "Please enter VOD URL."
 
 
 class TestBusyIndicator:

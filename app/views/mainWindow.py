@@ -50,7 +50,7 @@ from app.widgets.header_controls import BusyButton, FilterChips, SaveLocationBut
 from app.widgets.icons import IconButton
 from app.widgets.menu_button import MenuButton
 from app.widgets.narrow_steps import step_level
-from app.widgets.tip_bubble import ErrorTip, install_tips, shortcut_tip
+from app.widgets.tip_bubble import ErrorTip, close_floats_if_left, install_tips, shortcut_tip
 from app.widgets.os_notice import DownloadEndNotice
 from app.widgets.view import ContentListView
 from core.models.download_state import DownloadState
@@ -1325,6 +1325,8 @@ class VodDownloader(QMainWindow):
         오지 않는다 — offscreen이 그렇다).
         """
         super().changeEvent(event)
+        if event.type() in (QEvent.Type.ActivationChange, QEvent.Type.WindowStateChange):
+            close_floats_if_left(self)
         button = getattr(self, "menuDownloadButton", None)  # 창을 짜는 중에도 불린다
         if (
             button is not None
