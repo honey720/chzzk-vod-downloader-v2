@@ -94,6 +94,27 @@ METRICS = {
     "narrowIcon": 16,  # 좁은 폭 아이콘 모양(정렬 ⇅ · 저장 위치 📁) 도형 한 변 — 아이콘 한 벌 크기(§11.3)
     "sortDot": 3,  # 기본 정렬이 아닐 때 정렬 아이콘 상자 안 점의 반지름(프로토 SORT_DOT)
     "sortDotInset": 7,  # 상자 오른쪽 · 위 끝 ↔ 점 가운데(프로토 SortIconButton)
+    # ---- 드롭다운 메뉴 D(#536, 설계 §12.1 「드롭다운 메뉴」 · 프로토 shell.py MENU_*) ----
+    "menuRadius": 8,  # 메뉴 창 모서리(떠 있는 것 8 — §11.7)
+    "menuVPad": 4,  # 메뉴 위아래 안쪽 여백
+    "menuRowInset": 4,  # 호버 면 ↔ 메뉴 테두리
+    "menuRowPad": 8,  # 줄 안 좌우 · 위아래 여백 — 아이콘 칸은 이 뒤에서 시작한다
+    "menuIcon": 16,  # 모든 줄의 아이콘 칸(✓ · 별 · 폴더 · 되돌리기) 한 변
+    "menuIconGap": 8,  # 아이콘 칸 ↔ 글
+    "menuHoverRadius": 4,  # 호버 면 모서리
+    "menuOffset": 4,  # 메뉴를 버튼 아래 이만큼 띄운다
+    "menuNamePx": 14,  # 항목 이름 글 크기
+    "menuDetailPx": 12,  # 흐린 경로 · 머리글 글 크기
+    # ---- 말풍선(툴팁, #536 — 설계 §2 「말풍선」 · 프로토 card.py TIP_*) ----
+    "tipGap": 4,  # 꼬리 끝 ↔ 대상
+    "tipTail": 6,  # 꼬리 길이
+    "tipTailWidth": 12,  # 꼬리 밑변
+    "tipRadius": 8,  # 말풍선 모서리
+    "tipPadX": 8,  # 안쪽 여백 가로
+    "tipPadY": 4,  # 안쪽 여백 세로
+    "tipShadow": 6,  # 그림자 자리 — 꼬리 쪽에는 두지 않는다
+    "tipFontPx": 12,  # 말풍선 글 크기(보조 글 — §11.4)
+    "tipMaxWidth": 360,  # 이보다 긴 글은 접는다
     # ---- 공통 형태 ----
     "radius": 8,  # 버튼·입력창 등 일반 모서리
     "buttonPadX": 14,  # 기본 버튼 좌우 안쪽 여백
@@ -117,6 +138,8 @@ DARK = {
     "surfaceAlt": "#2f3239",  # 기본 버튼·입력창 바탕
     "surfaceHover": "#383c44",
     "surfacePressed": "#282b31",
+    "menuHover": "#2c2f35",  # 드롭다운 메뉴 호버 면 — 바 면(surface)에서 한 단계(ΔE00 약 2.9, #536)
+    "shadow": "#000000",  # 말풍선 그림자 — 그릴 때 불투명도를 낮춰 쓴다(#536)
     "thumbBg": "#1f2126",  # 썸네일 자리표시 바탕
     # ---- 선·글자 ----
     "border": "#3a3d45",
@@ -130,6 +153,7 @@ DARK = {
     "accentHover": "#559bff",
     "accentPressed": "#3f84e9",
     "onAccent": "#1b1d22",
+    "focusOnAccent": "#ffffff",  # 강조색 채움 버튼의 키보드 초점 테두리 — 채움 · 바 면 모두와 3.0 이상(#536)
     # ---- 카드 ----
     "cardBg": "#2b2d33",
     # ---- 상태색 (상태 아이콘·상태 텍스트·진행바 공용) ----
@@ -170,6 +194,8 @@ LIGHT = {
     "surfaceAlt": "#eceef1",
     "surfaceHover": "#e1e4e9",
     "surfacePressed": "#d5d9df",
+    "menuHover": "#f0f1f3",  # 드롭다운 메뉴 호버 면 — 바 면(surface)에서 한 단계(ΔE00 약 3.0, #536)
+    "shadow": "#000000",  # 말풍선 그림자 — 그릴 때 불투명도를 낮춰 쓴다(#536)
     "thumbBg": "#e6e8ec",
     # ---- 선·글자 ----
     "border": "#d5d8de",
@@ -183,6 +209,7 @@ LIGHT = {
     "accentHover": "#146df8",
     "accentPressed": "#044fbf",
     "onAccent": "#ffffff",
+    "focusOnAccent": "#1b1d22",  # 강조색 채움 버튼의 키보드 초점 테두리 — 채움 · 바 면 모두와 3.0 이상(#536)
     # ---- 카드 ----
     "cardBg": "#ffffff",
     # ---- 상태색 (상태 아이콘·상태 텍스트·진행바 공용) — 흰 배경 대비용으로 짙게 눌렀다 ----

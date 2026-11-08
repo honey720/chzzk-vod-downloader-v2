@@ -8,10 +8,11 @@
 
 import math
 
-from PySide6.QtCore import QPointF, QRect, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QAction,
     QColor,
+    QFont,
     QFontMetrics,
     QFontMetricsF,
     QIcon,
@@ -24,8 +25,10 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QMenu,
+    QProxyStyle,
     QPushButton,
     QStyle,
+    QStyleOptionMenuItem,
     QStyleOptionToolButton,
     QStylePainter,
     QToolButton,
@@ -37,6 +40,7 @@ from app.viewmodels.card_order import FILTER_KEYS, SORT_KEYS
 from app.viewmodels.save_location import SaveLocations, folder_name
 from app.widgets.widget import abbreviate_path, path_display_parts
 from app.widgets.icons import action_pixmap
+from app.widgets.tip_bubble import hide_tip, show_tip
 
 BUTTON_PADDING = 10  # 펼침 버튼 안쪽 좌우 여백(px) — 프로토 v8 저장 위치 버튼
 GLYPH_GAP = 6  # 앞 도형 ↔ 글(px)
@@ -51,107 +55,272 @@ MENU_WINDOW_MARGIN = (
 MENU_MIN_LIMIT = 200  # 창이 아주 좁아도 메뉴 폭 상한은 이만큼은 둔다(px) — 프로토와 같다
 
 
-class ChoiceMenu(QMenu):
-    """하나만 고르는 메뉴 — 고른 항목에만 ✓, 고르지 않은 항목에는 빈 상자를 그리지 않는다(설계 §2).
+MENU_SEP = "\x1f"  # 항목 글의 이름 ↔ 흐린 글 구분 — 탭이면 Qt가 단축키 칸 폭을 한 번 더 더한다(프로토 MENU_SEP)
+MENU_HEADER_MARK = "\x01"  # 묶음 머리글 항목 글 앞 표시 — 꺼진 항목이라 키보드가 건너뛴다
 
-    체크형 항목(`setCheckable`)은 쓰지 않는다 — 스타일이 고르지 않은 항목에도 빈 상자를 그린다.
-    대신 같은 크기의 아이콘 자리에 ✓ 도형 또는 빈 그림을 둔다. 항목 글의 탭 뒤(`"글\\t흐린 글"`)는
-    Qt가 단축키 칸으로 재어 폭을 잡게 두고, 그리기에서는 탭 앞만 Qt가 그린 뒤 탭 뒤를 이 메뉴가
-    흐린 색으로 그린다.
+
+class _MenuRowStyle(QProxyStyle):
+    """메뉴 D의 줄 높이 · 폭과 여백을 정하는 프록시 스타일 — 그리기는 `ChoiceMenu.paintEvent`가 한다 (#536).
+
+    전역 QSS에 `QMenu::item` 규칙이 없어 스타일이 줄 크기를 이 프록시에 묻는다(프로토 MenuRowStyle).
+    """
+
+    def __init__(self, menu: "ChoiceMenu") -> None:
+        super().__init__()
+        self._menu = menu
+
+    def pixelMetric(self, metric, option=None, widget=None) -> int:
+        if metric == QStyle.PixelMetric.PM_MenuHMargin:
+            return 0
+        if metric == QStyle.PixelMetric.PM_MenuVMargin:
+            return theme.METRICS["menuVPad"]
+        if metric == QStyle.PixelMetric.PM_MenuPanelWidth:
+            return 1
+        return super().pixelMetric(metric, option, widget)
+
+    def sizeFromContents(self, kind, option, size, widget=None) -> QSize:
+        if kind == QStyle.ContentsType.CT_MenuItem and option is not None:
+            return self._menu.rowSize(option)
+        return super().sizeFromContents(kind, option, size, widget)
+
+
+class ChoiceMenu(QMenu):
+    """하나만 고르는 메뉴 — 설계의 드롭다운 메뉴 D (#495 · #536, 설계 §12.1 「드롭다운 메뉴」).
+
+    한 줄 항목(이름 왼쪽 · 흐린 경로 오른쪽 — 경로는 카드와 같은 표기로 줄인다) · 묶음 머리글(12px 흐린 색) ·
+    묶음 사이 구분선 · 모든 줄의 16px 아이콘 칸(고른 항목 ✓ · 동작 줄 도형) · 고른 항목 굵은 글 · 은은한 호버 면
+    (`menuHover` — 강조색 면 아님). 면은 바 면 색 · 테두리 1px · 모서리 8이다.
+
+    항목은 Qt 메뉴 항목(`QAction`) 그대로라 화살표 키 · Enter · Esc · 꺼진 항목 건너뛰기가 Qt 동작이다. 줄 크기는
+    `_MenuRowStyle`이, 면 · 글 · 아이콘 · 호버는 `paintEvent`가 그린다. 항목 글은 `이름\\x1f흐린 글`이고
+    (`nameOf` · `detailOf`), 머리글은 `\\x01머리`다.
+
+    둥근 모서리: 메뉴 창에 투명 바탕(`WA_TranslucentBackground`)과 프레임 없음 플래그(`FramelessWindowHint`)를
+    둘 다 건다 — 플래그가 없으면 Windows가 메뉴 창을 화소 알파를 쓰는 창으로 만들지 않아 모서리 바깥이 검게
+    남는다(프로토 inbox 74 실제 화면 측정). 합성 관리자가 없는 Linux X11은 검게 남는다.
+
+    항목 툴팁은 말줄임으로 잘린 경로에만 그 전문을 말풍선으로 띄운다 — 보이는 글을 되풀이하는 툴팁은 없다.
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setToolTipsVisible(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setWindowFlag(
+            Qt.WindowType.NoDropShadowWindowHint
+        )  # 둥근 모서리 밖에 네모 그림자가 남지 않게
+        self.setWindowFlag(Qt.WindowType.FramelessWindowHint)
+        self._rowStyle = _MenuRowStyle(self)  # 참조 보관 — setStyle은 소유하지 않는다
+        self.setStyle(self._rowStyle)
+        self.anchor: QWidget | None = None  # 메뉴를 맞출 버튼 — 왼쪽 끝 맞춤 · menuOffset 아래
 
     def addChoice(self, text: str, key: object, detail: str = "", path: str = "") -> QAction:
         """고르는 항목을 더한다 — `key`는 `mark`와 테스트가 항목을 찾는 값이다.
 
         `path`를 주면 흐린 글은 그 경로를 카드와 같은 표기로 줄여 그린다(`fit_path` — #495 inbox 71).
-        `detail`은 그 표기의 ①(전체 축약형) — Qt가 단축키 칸으로 재어 메뉴 폭을 잡는다.
+        `detail`은 그 표기의 ①(전체 축약형) — 줄 폭을 이것으로 센다.
         """
-        action = self.addAction(f"{text}\t{detail}" if detail else text)
+        action = self.addAction(f"{text}{MENU_SEP}{detail}" if detail else text)
         action.setData(key)
-        action.setIcon(_blankIcon())
         action.setProperty("detailPath", path)
         return action
 
-    def addCommand(self, text: str, detail: str = "", path: str = "") -> QAction:
-        """고르는 항목이 아닌 명령 — 같은 크기의 빈 아이콘으로 글 자리를 맞춘다. 흐린 글은 `addChoice`와 같다."""
-        action = self.addAction(f"{text}\t{detail}" if detail else text)
-        action.setIcon(_blankIcon())
+    def addCommand(self, text: str, detail: str = "", path: str = "", glyph: str = "") -> QAction:
+        """고르는 항목이 아닌 명령 — `glyph`(icons의 이름)를 아이콘 칸에 그린다. 흐린 글은 `addChoice`와 같다."""
+        action = self.addAction(f"{text}{MENU_SEP}{detail}" if detail else text)
         action.setProperty("detailPath", path)
+        action.setProperty("glyph", glyph)
         return action
 
     def addHeader(self, text: str) -> QAction:
         """묶음 머리 — 꺼진 항목이라 고를 수 없고 키보드가 건너뛴다."""
-        action = self.addAction(text)
+        action = self.addAction(MENU_HEADER_MARK + text)
         action.setEnabled(False)
         action.setProperty("menuHeader", True)
         return action
+
+    @staticmethod
+    def nameOf(action: QAction) -> str:
+        """항목의 이름(흐린 글 · 머리글 표시를 뺀 글)."""
+        return action.text().removeprefix(MENU_HEADER_MARK).partition(MENU_SEP)[0]
+
+    @staticmethod
+    def detailOf(action: QAction) -> str:
+        """항목의 흐린 글(없으면 빈 글)."""
+        return action.text().partition(MENU_SEP)[2]
 
     def choices(self) -> list[QAction]:
         """고르는 항목(머리 · 명령 · 구분선 제외) — 메뉴 차례."""
         return [a for a in self.actions() if a.data() is not None]
 
     def mark(self, *keys: object) -> None:
-        """그 키의 항목에만 ✓를 그린다(정렬처럼 한 메뉴에 묶음이 둘이면 키도 둘)."""
-        tokens = theme.current_tokens()
-        size = _menuIconSize(self)
+        """그 키의 항목에만 ✓ · 굵은 글(정렬처럼 한 메뉴에 묶음이 둘이면 키도 둘)."""
         for action in self.choices():
-            marked = action.data() in keys
-            action.setProperty("marked", marked)
-            if marked:
-                pixmap = action_pixmap("check", tokens["text"], size, self.devicePixelRatioF())
-                action.setIcon(QIcon(pixmap))
-            else:
-                action.setIcon(_blankIcon())
+            action.setProperty("marked", action.data() in keys)
+        self.update()
 
     def markedKeys(self) -> list:
         """✓를 그린 항목의 키 — 메뉴 차례."""
         return [a.data() for a in self.choices() if a.property("marked")]
 
-    def initStyleOption(self, option, action) -> None:
-        super().initStyleOption(option, action)
-        option.text = option.text.split("\t")[0]  # 탭 뒤(흐린 글)는 paintEvent가 그린다
+    def _fonts(self) -> tuple[QFont, QFont, QFont]:
+        """(이름 글꼴, 굵은 이름 글꼴, 흐린 글 · 머리글 글꼴)."""
+        name = QFont(self.font())
+        name.setPixelSize(theme.METRICS["menuNamePx"])
+        bold = QFont(name)
+        bold.setBold(True)
+        detail = QFont(self.font())
+        detail.setPixelSize(theme.METRICS["menuDetailPx"])
+        return name, bold, detail
+
+    def textLeft(self) -> int:
+        """글이 시작하는 x(메뉴 좌표) — 아이콘 칸 뒤. 모든 줄에서 같다."""
+        m = theme.METRICS
+        return m["menuRowInset"] + m["menuRowPad"] + m["menuIcon"] + m["menuIconGap"]
+
+    def iconRect(self, action: QAction) -> QRect:
+        """아이콘 칸(메뉴 좌표) — 모든 줄에서 같은 x, 줄 높이 가운데."""
+        m = theme.METRICS
+        g = self.actionGeometry(action)
+        top = g.top() + (g.height() - m["menuIcon"]) // 2
+        return QRect(m["menuRowInset"] + m["menuRowPad"], top, m["menuIcon"], m["menuIcon"])
+
+    def rowSize(self, option: QStyleOptionMenuItem) -> QSize:
+        """줄 크기 — `_MenuRowStyle`이 묻는다. 이름은 굵은 글꼴로 재 고른 항목이 되어도 폭이 같다."""
+        m = theme.METRICS
+        name_font, bold_font, detail_font = self._fonts()
+        fm_name, fm_bold, fm_detail = (
+            QFontMetrics(name_font),
+            QFontMetrics(bold_font),
+            QFontMetrics(detail_font),
+        )
+        if option.menuItemType == QStyleOptionMenuItem.MenuItemType.Separator:
+            return QSize(1, 2 * m["menuVPad"] + 1)  # 폭 0이면 Qt가 빈 줄로 보고 건너뛴다
+        text = option.text
+        if text.startswith(MENU_HEADER_MARK):
+            title = text[len(MENU_HEADER_MARK) :]
+            width = 2 * (m["menuRowInset"] + m["menuRowPad"]) + text_width(fm_detail, title)
+            return QSize(width, m["menuRowPad"] + fm_detail.height() + m["menuVPad"])
+        name, _sep, detail = text.partition(MENU_SEP)
+        width = self.textLeft() + text_width(fm_bold, name) + m["menuRowPad"] + m["menuRowInset"]
+        if detail:
+            width += MENU_DETAIL_GAP + text_width(fm_detail, detail)
+        height = m["menuRowPad"] + max(m["menuIcon"], fm_name.height()) + m["menuRowPad"]
+        return QSize(width, height)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if self.anchor is not None:
+            # 버튼 왼쪽 끝 맞춤 · menuOffset 아래 — Qt가 버튼 바로 밑에 놓은 자리에서 옮긴다(위로 뒤집혔으면 그대로)
+            offset = theme.METRICS["menuOffset"]
+            below = self.anchor.mapToGlobal(QPoint(0, self.anchor.height() + offset))
+            if abs(self.y() - (below.y() - offset)) <= 1:
+                self.move(below.x(), below.y())
+
+    def event(self, event: QEvent) -> bool:
+        """툴팁 이벤트 — 말줄임으로 잘린 경로 항목이면 그 전문을 말풍선으로, 아니면 아무것도 띄우지 않는다."""
+        if event.type() == QEvent.Type.ToolTip:
+            action = self.actionAt(event.pos())
+            tip = self.menuTip(action)
+            if tip:
+                rect = self.actionGeometry(action)
+                show_tip(self, tip, QRect(self.mapToGlobal(rect.topLeft()), rect.size()))
+            else:
+                hide_tip(self)
+            return True
+        if event.type() in (QEvent.Type.Leave, QEvent.Type.Hide):
+            hide_tip(self)
+        return super().event(event)
+
+    @staticmethod
+    def menuTip(action: QAction | None) -> str:
+        """그 항목에 띄울 툴팁 — 흐린 경로가 말줄임으로 잘렸을 때만 전체 경로, 아니면 빈 글."""
+        if action is None or not action.property("detailElided"):
+            return ""
+        return action.property("detailPath") or ""
 
     def paintEvent(self, event) -> None:
-        super().paintEvent(event)
+        """면 · 테두리 · 머리글 · 구분선 · 아이콘 · 글 · 호버 면을 그린다 — 색은 그릴 때마다 토큰을 읽는다."""
+        m = theme.METRICS
         tokens = theme.current_tokens()
-        metrics = self.fontMetrics()
-        painter = None
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor(tokens["border"]), 1))
+        painter.setBrush(QColor(tokens["surface"]))
+        radius = m["menuRadius"]
+        painter.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), radius, radius)
+        name_font, bold_font, detail_font = self._fonts()
+        fm_detail = QFontMetrics(detail_font)
+        inset, pad = m["menuRowInset"], m["menuRowPad"]
+        right_edge = self.width() - inset - pad
+        active = self.activeAction()
         for action in self.actions():
-            text = action.text()
-            if "\t" not in text:
+            g = self.actionGeometry(action)
+            if not action.isVisible() or g.isEmpty():
                 continue
-            if painter is None:
-                painter = QPainter(self)
-                painter.setFont(self.font())
-            head, detail = text.split("\t", 1)
-            rect = self.actionGeometry(action).adjusted(0, 0, -BUTTON_PADDING, 0)
-            # 메뉴 폭을 상한(setMaximumWidth)으로 잘라도 Qt는 줄 사각형을 잘리기 전 폭으로 둔다 — 그대로
-            # 오른쪽에 맞춰 그리면 흐린 글이 보이는 메뉴 밖으로 나간다(inbox 71 그림). 보이는 폭으로 자른다
-            rect.setRight(min(rect.right(), self.width() - 1 - BUTTON_PADDING))
-            if action is self.activeAction() and action.isEnabled():
-                color = tokens["onAccent"]  # 강조색으로 채운 줄 안의 글
-            elif action.isEnabled():
-                color = tokens["textMuted"]
-            else:
-                color = tokens["textDisabled"]
-            painter.setPen(QColor(color))
-            room = max(20, rect.width() - text_width(metrics, head) - 3 * MENU_DETAIL_GAP)
-            path = action.property("detailPath")
-            if path:
-                # 「(없음)」 같은 꼬리는 줄이지 않고 남긴다 — 줄이는 것은 경로뿐(카드 표기 차례)
-                tail = detail[len(abbreviate_path(path)) :]
-                shown = fit_path(metrics, path, room - text_width(metrics, tail)) + tail
-            else:
-                shown = metrics.elidedText(detail, Qt.TextElideMode.ElideMiddle, room)
+            if action.isSeparator():
+                y = g.top() + g.height() // 2
+                painter.setPen(QPen(QColor(tokens["border"]), 1))
+                painter.drawLine(inset + pad, y, self.width() - inset - pad, y)
+                continue
+            text = action.text()
+            if text.startswith(MENU_HEADER_MARK):
+                painter.setFont(detail_font)
+                painter.setPen(QColor(tokens["textMuted"]))
+                painter.drawText(
+                    QRect(inset + pad, g.top() + pad, g.width(), fm_detail.height()),
+                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                    text[len(MENU_HEADER_MARK) :],
+                )
+                continue
+            enabled = action.isEnabled()
+            if action is active and enabled:
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(tokens["menuHover"]))
+                hover_radius = m["menuHoverRadius"]
+                painter.drawRoundedRect(
+                    QRectF(g.adjusted(inset, 0, -inset, 0)).intersected(QRectF(self.rect())),
+                    hover_radius,
+                    hover_radius,
+                )
+            name_color = tokens["text" if enabled else "textDisabled"]
+            detail_color = tokens["textMuted" if enabled else "textDisabled"]
+            glyph = "check" if action.property("marked") else (action.property("glyph") or "")
+            if glyph:
+                pixmap = action_pixmap(glyph, name_color, m["menuIcon"], self.devicePixelRatioF())
+                painter.drawPixmap(self.iconRect(action).topLeft(), pixmap)
+            name, _sep, detail = text.partition(MENU_SEP)
+            left = self.textLeft()
+            font = bold_font if action.property("marked") else name_font
+            painter.setFont(font)
+            painter.setPen(QColor(name_color))
+            fm_name = QFontMetrics(font)
+            name_w = min(text_width(fm_name, name), right_edge - left)
             painter.drawText(
-                rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, shown
+                QRect(left, g.top(), name_w, g.height()),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                fm_name.elidedText(name, Qt.TextElideMode.ElideRight, name_w),
             )
-        if painter is not None:
-            painter.end()
+            if detail:
+                room = right_edge - left - name_w - MENU_DETAIL_GAP
+                shown = self._detailText(fm_detail, action, detail, room)
+                action.setProperty("detailElided", shown != detail)
+                painter.setFont(detail_font)
+                painter.setPen(QColor(detail_color))
+                painter.drawText(
+                    QRect(right_edge - room, g.top(), room, g.height()),
+                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                    shown,
+                )
+        painter.end()
+
+    @staticmethod
+    def _detailText(metrics: QFontMetrics, action: QAction, detail: str, room: int) -> str:
+        """흐린 글 — 경로(`detailPath`)는 카드 표기 차례로 줄이고, 「(없음)」 같은 꼬리는 끝에 남긴다."""
+        path = action.property("detailPath")
+        if not path:
+            return metrics.elidedText(detail, Qt.TextElideMode.ElideMiddle, max(room, 0))
+        tail = detail[len(abbreviate_path(path)) :]
+        return fit_path(metrics, path, max(room - text_width(metrics, tail), 0)) + tail
 
 
 def text_width(metrics: QFontMetrics, text: str) -> int:
@@ -179,16 +348,6 @@ def fit_path(metrics: QFontMetrics, path: str, room: int) -> str:
         return prefix + last
     rest = max(room - text_width(metrics, prefix), 0)
     return prefix + metrics.elidedText(last, Qt.TextElideMode.ElideMiddle, rest)
-
-
-def _menuIconSize(menu: QMenu) -> int:
-    """메뉴 항목 아이콘 한 변 — 스타일이 정한 값."""
-    return menu.style().pixelMetric(QStyle.PixelMetric.PM_SmallIconSize, None, menu)
-
-
-def _blankIcon() -> QIcon:
-    """✓ 자리를 비워 두는 빈 아이콘 — 고른 항목과 글 자리가 같다."""
-    return QIcon()
 
 
 class DropButton(QToolButton):
@@ -234,7 +393,8 @@ class DropButton(QToolButton):
 
     def sizeHint(self) -> QSize:
         self.ensurePolished()
-        height = self.fontMetrics().height() + 2 * BUTTON_VPAD
+        # 높이는 바 컨트롤 높이(#536 — 설계 §11.3). 글이 더 높은 글꼴이면 글 높이를 따른다
+        height = max(theme.METRICS["barControl"], self.fontMetrics().height() + 2 * BUTTON_VPAD)
         return QSize(self.widthFor(self._full), height)
 
     def minimumSizeHint(self) -> QSize:
@@ -335,6 +495,7 @@ class SaveLocationButton(DropButton):
         self._locations: SaveLocations | None = None
         self._compact = False
         self.menuWidget = ChoiceMenu(self)
+        self.menuWidget.anchor = self  # 버튼 왼쪽 끝 맞춤 · 조금 아래(#536)
         self.menuWidget.aboutToShow.connect(self._fillMenu)
         self.setMenu(self.menuWidget)
 
@@ -363,8 +524,8 @@ class SaveLocationButton(DropButton):
         return self.widthFor(WIDTH_SAMPLE)
 
     def iconWidth(self) -> int:
-        """아이콘 모양의 폭 — 버튼 높이의 정사각(지금 모양과 무관)."""
-        return self.sizeHint().height()
+        """아이콘 모양의 폭 — 바 컨트롤 높이의 정사각(지금 모양과 무관, #536)."""
+        return theme.METRICS["barControl"]
 
     def applyWidth(self) -> None:
         """지금 모양의 폭을 건다 — 글꼴이 바뀌면 다시 부른다."""
@@ -410,7 +571,7 @@ class SaveLocationButton(DropButton):
                 menu.addHeader(self.tr("Recent"))
                 headed.add("recent")
             # 줄마다 「이름 + 흐린 경로」 — 이름은 즐겨찾기면 별칭(★), 아니면 폴더 이름(지금 위치가 즐겨찾기면
-            # 그 별칭). 경로는 카드와 같은 표기, 툴팁은 전체 경로
+            # 그 별칭). 경로는 카드와 같은 표기. 툴팁은 경로가 말줄임으로 잘렸을 때만 전체 경로(ChoiceMenu)
             favorite = locations.favorite_for(entry.path)
             if entry.kind == "favorite":
                 name = f"★ {entry.name}"
@@ -421,25 +582,28 @@ class SaveLocationButton(DropButton):
             action = menu.addChoice(
                 name, (entry.kind, entry.path), abbreviate_path(entry.path) + suffix, entry.path
             )
-            action.setToolTip(entry.path)
             action.setProperty("missing", entry.missing)
             action.setEnabled(not entry.missing or entry.kind == "current")
             action.triggered.connect(lambda _=False, p=entry.path: self._choose(p))
         menu.mark(("current", locations.current()))
         menu.addSeparator()
-        add = menu.addCommand(self.tr("☆ Add current folder to favorites"))
+        # 동작 줄 — 아이콘 칸에 별 · 폴더 · 되돌리기(#536, 설계 §12.1)
+        add = menu.addCommand(self.tr("Add current folder to favorites"), glyph="star")
         add.setObjectName("addFavoriteAction")
         add.setEnabled(locations.can_add_favorite())  # 이미 즐겨찾기 · 가득 차면 끔
         add.triggered.connect(self._addFavorite)
-        find = menu.addCommand(self.tr("Find folder…"))
+        find = menu.addCommand(self.tr("Find folder…"), glyph="folder")
         find.setObjectName("findFolderAction")
         find.triggered.connect(self._findFolder)
         default = locations.default()
-        reset = menu.addCommand(self.tr("Default location"), abbreviate_path(default), default)
+        reset = menu.addCommand(
+            self.tr("Default location"), abbreviate_path(default), default, glyph="undo"
+        )
         reset.setObjectName("defaultLocationAction")
-        reset.setToolTip(default)
         reset.setEnabled(not locations.is_default())  # 이미 기본 위치면 끔(inbox 71)
         reset.triggered.connect(locations.reset)
+        # 폭 = 버튼 폭 ~ 창 폭 − 24(설계 §12.1)
+        menu.setMinimumWidth(min(self.width(), limit))
         menu.setMaximumWidth(limit)
 
     def _choose(self, path: str) -> None:
@@ -484,6 +648,7 @@ class SortButton(DropButton):
         self._order = None
         self._compact = False
         self.menuWidget = ChoiceMenu(self)
+        self.menuWidget.anchor = self  # 버튼 왼쪽 끝 맞춤 · 조금 아래(#536)
         self.menuWidget.aboutToShow.connect(self._fillMenu)
         self.setMenu(self.menuWidget)
 
@@ -505,8 +670,8 @@ class SortButton(DropButton):
         return max(self.widthFor(name) for name in self.names().values())
 
     def iconWidth(self) -> int:
-        """아이콘 모양의 폭 — 버튼 높이의 정사각(지금 모양과 무관)."""
-        return self.sizeHint().height()
+        """아이콘 모양의 폭 — 바 컨트롤 높이의 정사각(지금 모양과 무관, #536)."""
+        return theme.METRICS["barControl"]
 
     def isDefaultSort(self) -> bool:
         """기본 정렬(추가된 순서 오름차순)인지 — 아니면 아이콘 모양에 점을 찍는다."""
@@ -563,14 +728,28 @@ class SortButton(DropButton):
         menu = self.menuWidget
         menu.clear()
         order = self._order
+        menu.addHeader(self.tr("Sort by"))
         for key, name in self.names().items():
             action = menu.addChoice(name, ("by", key))
             action.triggered.connect(lambda _=False, k=key: order.setSort(k, order.isDescending()))
         menu.addSeparator()
-        for descending, name in ((False, self.tr("Ascending")), (True, self.tr("Descending"))):
+        menu.addHeader(self.tr("Direction"))
+        for descending, name in zip((False, True), self.directionNames(order.sortBy())):
             action = menu.addChoice(name, ("direction", "desc" if descending else "asc"))
             action.triggered.connect(lambda _=False, d=descending: order.setSort(order.sortBy(), d))
         menu.mark(("by", order.sortBy()), ("direction", "desc" if order.isDescending() else "asc"))
+        menu.setMinimumWidth(self.width())  # 폭 = 버튼 폭부터(설계 §12.1)
+
+    def directionNames(self, by: str) -> tuple[str, str]:
+        """정렬 방향 이름(오름 · 내림) — 기준마다 다르다(#536, 설계 §12.1 「드롭다운 메뉴」)."""
+        names = {
+            "added": (self.tr("Oldest added first"), self.tr("Newest added first")),
+            "title": (self.tr("A to Z"), self.tr("Z to A")),
+            "channel": (self.tr("A to Z"), self.tr("Z to A")),
+            "upload": (self.tr("Newest first"), self.tr("Oldest first")),
+            "state": (self.tr("Downloading first"), self.tr("Finished first")),
+        }
+        return names[by]
 
 
 CHIP_COUNT_RESERVE = 999  # 칩 폭을 잡는 숫자 — 세 자리까지 칩 · 헤더바 · 창 최소폭이 그대로다(옛 카운트의 999/999 예약)
@@ -602,6 +781,7 @@ class FilterChips(QWidget):
         self.dropButton = DropButton("", self)
         self.dropButton.setObjectName("filterDropButton")
         self.dropMenu = ChoiceMenu(self.dropButton)
+        self.dropMenu.anchor = self.dropButton
         self.dropMenu.aboutToShow.connect(self._fillMenu)
         self.dropButton.setMenu(self.dropMenu)
         self.dropButton.hide()

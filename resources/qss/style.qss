@@ -396,6 +396,56 @@ QPushButton[role="subtle"]:disabled {
     color: @textDisabled;
 }
 
+/* ---------- 셸 바 컨트롤 모양 · 상태 (#536 — 설계 §11.3 · §11.5 · §11.7) ----------
+ * 메뉴바 · 헤더바 · 하단바 안의 컨트롤만 — 설정 창 · 편집 창은 설정 메뉴 단계에서 맞춘다.
+ * 높이(@barControl)는 코드가 건다(mainWindow._applyBarControls). 모서리는 컨트롤 반경, 칩도 같다.
+ * 상태는 모든 바 컨트롤이 같은 규칙: 호버 = 바탕 surfaceHover · 테두리 borderStrong, 눌림 = surfacePressed ·
+ * borderStrong, 키보드 초점 = 테두리 강조색, 꺼짐 = 바탕 surface · 글 textDisabled · 테두리 border.
+ * 초점은 키보드로만 받는다(초점 정책 Tab — 마우스로 누른 뒤 테두리가 남지 않는다). */
+QFrame#appMenuBar QPushButton,
+QFrame#headerFrame QPushButton,
+QFrame#headerFrame QToolButton,
+QFrame#headerFrame QLineEdit,
+QFrame#infoFrame QPushButton {
+    border-radius: @controlRadius;
+}
+
+/* 완료 지우기 — 평소 테두리는 투명(자리만) — 초점 · 호버 때 테두리 색만 바뀌고 크기는 그대로 */
+QFrame#headerFrame QPushButton[role="subtle"] {
+    border: 1px solid transparent;
+}
+
+QFrame#headerFrame QPushButton[role="subtle"]:hover {
+    border-color: @borderStrong;
+}
+
+QFrame#headerFrame QPushButton[role="subtle"]:pressed {
+    background-color: @surfacePressed;
+    border-color: @borderStrong;
+}
+
+QPushButton[role="filter"]:checked:hover {
+    background-color: @accentHover;
+    border-color: @accentHover;
+}
+
+QPushButton[role="filter"]:checked:pressed {
+    background-color: @accentPressed;
+    border-color: @accentPressed;
+}
+
+QFrame#appMenuBar QPushButton:focus,
+QFrame#headerFrame QPushButton:focus,
+QFrame#headerFrame QToolButton:focus,
+QFrame#infoFrame QPushButton:focus {
+    border-color: @accent;
+}
+
+/* 강조색 채움 버튼(▶) 위 초점 — 채움 · 바 면 모두와 3.0 이상인 초점 테두리(@focusOnAccent) */
+QFrame#infoFrame QPushButton#downloadButton:focus {
+    border-color: @focusOnAccent;
+}
+
 /* ---------- 입력창 ---------- */
 
 QLineEdit {

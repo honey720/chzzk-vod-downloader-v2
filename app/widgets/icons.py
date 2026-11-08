@@ -40,7 +40,10 @@ import app.theme as theme
 #: check = 하나만 고르는 메뉴의 고른 항목 표시(✓) — 헤더바 저장 위치 · 정렬 메뉴(#495).
 #: stop = 하단바의 중지(■) — 받는 중 · 일시정지 카드를 대기로 되돌린다(#504).
 #: sort = 좁은 폭 헤더바의 정렬 아이콘(⇅) — 위 화살표 · 아래 화살표 나란히(#529).
+#: star · undo = 드롭다운 메뉴 동작 줄의 아이콘 — 「지금 위치를 즐겨찾기에」 · 「기본 위치로」(#536).
 ICON_NAMES = (
+    "star",
+    "undo",
     "pause",
     "resume",
     "retry",
@@ -267,7 +270,40 @@ def _paint_sort(painter: QPainter, s: float, color: QColor, accent: QColor) -> N
     )
 
 
+def _paint_star(painter: QPainter, s: float, color: QColor, accent: QColor) -> None:
+    """별 — 꼭짓점 다섯의 윤곽선. 좌표는 프로토 메뉴 별 그림(16 격자)이다."""
+    _stroke(painter, color, s * 0.094)
+    unit = s / 16
+    points = [
+        (8, 2.2), (9.8, 6), (13.9, 6.4), (10.8, 9.1), (11.7, 13.2),
+        (8, 11.1), (4.3, 13.2), (5.2, 9.1), (2.1, 6.4), (6.2, 6),
+    ]  # fmt: skip
+    painter.drawPolygon(QPolygonF([QPointF(x * unit, y * unit) for x, y in points]))
+
+
+def _paint_undo(painter: QPainter, s: float, color: QColor, accent: QColor) -> None:
+    """되돌리기 — 왼쪽을 가리키는 꺾쇠와 아래로 돌아오는 고리. 좌표는 프로토 메뉴 되돌리기 그림(16 격자)이다."""
+    _stroke(painter, color, s * 0.1)
+    unit = s / 16
+    painter.drawPolyline(
+        QPolygonF(
+            [
+                QPointF(5.4 * unit, 3.2 * unit),
+                QPointF(2.6 * unit, 6 * unit),
+                QPointF(5.4 * unit, 8.8 * unit),
+            ]
+        )
+    )
+    path = QPainterPath(QPointF(2.8 * unit, 6 * unit))
+    path.lineTo(9.2 * unit, 6 * unit)
+    path.arcTo(QRectF(5.6 * unit, 6 * unit, 7.2 * unit, 7.2 * unit), 90, -180)
+    path.lineTo(6.4 * unit, 13.2 * unit)
+    painter.drawPath(path)
+
+
 _PAINTERS = {
+    "star": _paint_star,
+    "undo": _paint_undo,
     "sort": _paint_sort,
     "pause": _paint_pause,
     "resume": _paint_resume,

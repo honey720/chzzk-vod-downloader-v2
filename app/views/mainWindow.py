@@ -51,6 +51,7 @@ from app.widgets.header_controls import BusyButton, FilterChips, SaveLocationBut
 from app.widgets.icons import IconButton
 from app.widgets.menu_button import MenuButton
 from app.widgets.narrow_steps import step_level
+from app.widgets.tip_bubble import install_tips
 from app.widgets.os_notice import DownloadEndNotice
 from app.widgets.view import ContentListView
 from core.models.download_state import DownloadState
@@ -456,6 +457,10 @@ class VodDownloader(QMainWindow):
         content_widget.set_global_download_path(self.saveLocations.current())
         self.saveLocations.changed.connect(self._onSaveLocationChanged)
         self._applyLayoutMetrics()
+        # 말풍선(#536) — 세 바의 위젯마다 필터를 건다. 앱 전체가 아니라 메인 창의 바에만: 설정 창 · 편집 창 ·
+        # 구간 창의 툴팁은 설정 메뉴 단계(§12.3)에서 정하고, 카드는 카드 단계에서 본다
+        for bar in (self.appMenuBar, self.headerFrame, self.infoFrame):
+            install_tips(bar)
 
     def _applyLayoutMetrics(self) -> None:
         """상단·카드·하단의 좌우 정렬선을 theme.METRICS 토큰 하나로 관통시킨다 (#244).
@@ -479,8 +484,7 @@ class VodDownloader(QMainWindow):
         self.centralWidgetLayout.setSpacing(8)
         self.menuRow.setContentsMargins(pad_x, 0, pad_x, 0)
         self.appMenuLayout.setContentsMargins(0, 0, 0, 0)
-        for button in (self.menuDownloadButton, self.menuSettingsButton):
-            button.setFixedHeight(theme.METRICS["barControl"])
+        self._applyBarControls()
         self.headerRow.setContentsMargins(outer, 0, outer, 0)
         self.infoRow.setContentsMargins(outer, 0, outer, 0)
         self.headerFrameLayout.setContentsMargins(frame_pad, frame_pad, frame_pad, frame_pad)
@@ -491,6 +495,40 @@ class VodDownloader(QMainWindow):
         self.filterChipBar.applyWidth()
         self.sortButton.applyWidth()
         self._reserveErrorLineHeight()
+
+    def barControls(self) -> list[QWidget]:
+        """메뉴바 · 헤더바 · 하단바에서 누르거나 쓰는 컨트롤 — 높이 · 커서 · 초점 · 말풍선 규칙이 같다 (#536)."""
+        return [
+            self.menuDownloadButton,
+            self.menuSettingsButton,
+            self.urlInput,
+            self.saveLocationButton,
+            self.fetchButton,
+            self.filterChipBar.dropButton,
+            *self.filterChips.values(),
+            self.sortButton,
+            self.clearFinishedButton,
+            self.downloadButton,
+            self.stopButton,
+        ]
+
+    def _applyBarControls(self) -> None:
+        """바 컨트롤의 높이 · 커서 · 초점 정책을 건다 (#536 — 설계 §11.3 · §11.7 · §2 「말풍선」).
+
+        높이는 바 컨트롤 높이(`barControl`). 누르는 컨트롤은 손 모양 커서이고, 초점은 키보드(Tab)로만 받는다 —
+        마우스로 누른 뒤 초점 테두리(강조색)가 남지 않는다. 입력칸은 눌러서 쓰는 곳이라 초점 정책을 그대로 둔다.
+        """
+        control = theme.METRICS["barControl"]
+        for widget in self.barControls():
+            widget.setFixedHeight(control)
+            if widget is self.urlInput:
+                continue
+            widget.setCursor(Qt.CursorShape.PointingHandCursor)
+            widget.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+
+    def tipBoundary(self) -> int:
+        """말풍선 방향의 경계(전역 y) — 헤더바 아래 끝. 그보다 위 대상은 아래로, 아니면 위로 뜬다 (#536)."""
+        return self.headerFrame.mapToGlobal(QPoint(0, self.headerFrame.height())).y()
 
     def _reserveErrorLineHeight(self) -> None:
         """등록 오류 줄의 높이를 오류 유무와 무관하게 고정한다 (#492 — #493 CI, #495).
@@ -871,14 +909,9 @@ class VodDownloader(QMainWindow):
         self.fetchButton.setFixedWidth(self.fetchButton.reservedWidth())
 
     def _squareFooterButtons(self) -> None:
-        """하단 아이콘 버튼 둘을 글 버튼의 높이인 정사각으로 건다 (#504).
-
-        높이는 같은 QSS의 글 버튼 높이(글꼴 · 안쪽 여백을 따른다)라 하단바 높이가 글 버튼일 때와 같다.
-        폭은 그 높이와 같다 — 글이 없어 폭 힌트가 안쪽 여백뿐이기 때문이다.
-        """
+        """하단 아이콘 버튼 둘을 바 컨트롤 높이의 정사각으로 건다 (#504 · #536 — 설계 §11.3)."""
+        side = theme.METRICS["barControl"]
         for button in (self.downloadButton, self.stopButton):
-            button.ensurePolished()
-            side = button.sizeHint().height()
             button.setFixedSize(side, side)
 
     def _showRegisterError(self, text: str) -> None:
