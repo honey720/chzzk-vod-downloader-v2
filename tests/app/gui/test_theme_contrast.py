@@ -41,6 +41,7 @@ PAIRS = [
     ("textMuted", "menuHover", 4.5, "메뉴 흐린 경로 · 머리글 ↔ 메뉴 호버 면(#536)"),
     ("textMuted", "surface", 4.5, "메뉴 흐린 경로 · 머리글 ↔ 메뉴 면(#536)"),
     ("folderIcon", "surface", 3.0, "저장 위치 폴더 ↔ 바 면 — 그림(#536)"),
+    ("folderIcon", "surfaceAlt", 3.0, "저장 위치 폴더 ↔ 버튼 면(폴더가 놓이는 면) — 그림(#536)"),
 ]
 
 # 면 색 — 오너 결정(2026-11-07): 테마 색 이식에서 바꾸지 않는다. 앱의 지금 값 그대로
@@ -258,10 +259,12 @@ def test_dark_folder_keeps_the_proto_yellow() -> None:
 
 
 def test_light_folder_is_the_dark_hue_one_step_darker() -> None:
-    """라이트 폴더 색은 다크 노랑과 HSL 색상각이 1도 안이고, 바 면 대비가 3.0 이상 3.1 미만이어야 한다.
+    """라이트 폴더 색은 다크 노랑과 HSL 색상각이 1도 안이고, 버튼 면 대비 3.0 이상 3.1 미만 · 바 면 대비 3.0 이상이어야 한다.
 
-    LIGHT["folderIcon"] ↔ LIGHT["surface"] -> 3.0 ≤ 대비 < 3.1(기준을 넘는 가장 밝은 쪽)
+    LIGHT["folderIcon"] ↔ LIGHT["surfaceAlt"](폴더가 놓이는 버튼 면) -> 3.0 ≤ 대비 < 3.1(기준을 넘는 가장 밝은 쪽)
+    LIGHT["folderIcon"] ↔ LIGHT["surface"](바 면) -> 3.0 ≤ 대비
     """
     light = theme.LIGHT["folderIcon"]
     assert abs(_hsl_hue(light) - _hsl_hue(FOLDER_DARK)) <= 1.0
-    assert 3.0 <= _contrast(light, theme.LIGHT["surface"]) < 3.1
+    assert 3.0 <= _contrast(light, theme.LIGHT["surfaceAlt"]) < 3.1
+    assert _contrast(light, theme.LIGHT["surface"]) >= 3.0
