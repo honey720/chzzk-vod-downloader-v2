@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from PySide6.QtCore import (
+    QCoreApplication,
     QEvent,
     QMargins,
     QMetaObject,
@@ -748,7 +749,7 @@ class VodDownloader(QMainWindow):
         그리기 전에 끝낸다.
         """
         self._flushLayoutCaches()
-        QApplication.sendPostedEvents(None, QEvent.Type.LayoutRequest)
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.LayoutRequest)
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         """창 폭이 바뀌면 헤더바 2줄 · 하단바의 좁은 폭 모양을 다시 고른다 (#529).

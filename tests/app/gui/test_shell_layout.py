@@ -490,11 +490,16 @@ class TestHorizontalScrollIsOnlyASafetyNet:
         win = _window(cards=3)
         win.show()
         QApplication.processEvents()
-        content_min = win.contentColumn.minimumSizeHint().width()
+        floor = win.minimumWidth()
         win.setMinimumWidth(
             0
         )  # 창 최소폭 바닥을 걷어내야 그 아래로 내려갈 수 있다 — 화면이 작은 상황의 대역
+        # 콘텐츠 최소폭은 좁은 폭 모양(#529)을 따른다 — 창 최소폭의 절반으로 끝까지 줄인 모양을 만든 뒤에
+        # 읽고, 그보다 120px 좁게 놓는다
+        _at_width(win, floor // 2)
+        content_min = win.contentColumn.minimumSizeHint().width()
         _at_width(win, content_min - 120)
+        assert win.contentColumn.minimumSizeHint().width() == content_min, "전제: 모양이 그대로다"
         hbar = win.windowScrollArea.horizontalScrollBar()
         assert hbar.isVisible(), (
             "콘텐츠보다 좁은데 좌우 스크롤바가 없다 — 레이아웃이 무너지는 대신 받아내야 한다"
