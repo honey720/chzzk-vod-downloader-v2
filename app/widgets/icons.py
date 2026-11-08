@@ -253,6 +253,95 @@ _PAINTERS = {
 }
 
 
+#: 메뉴 상태 버블의 상태 — 우선순위 차례(위가 먼저, 설계 §2). 「없음」은 버블을 숨긴다(#523).
+BUBBLE_STATES = ("running", "paused", "all_failed", "some_failed", "done")
+
+#: 버블 상태 → 원 색 토큰 — 진행 막대 · 상태 글과 같은 상태 색(설계 §12.1). 일부 실패는 경고 색.
+BUBBLE_FILL_TOKENS = {
+    "running": "stateRunning",
+    "paused": "statePaused",
+    "all_failed": "stateFailed",
+    "some_failed": "stateWarning",
+    "done": "stateFinished",
+}
+
+_BUBBLE_CACHE: dict[tuple[str, str, str, int, float], QPixmap] = {}
+
+
+def bubble_pixmap(state: str, fill: str, glyph: str, size: int, dpr: float = 1.0) -> QPixmap:
+    """메뉴 상태 버블 — `fill` 색 원 안에 `glyph` 색 기호를 그린 `size`px 정사각 픽스맵(#523).
+
+    기호는 글자(↓ ‖ ✕ ! ✓)가 아니라 도형이다 — 글꼴에 따라 모양 · 자리가 달라지지 않는다(설계 §2).
+    같은 (상태, 색, 크기, 배율)은 같은 QPixmap 객체다. OS 알림 아이콘도 이 그림을 크기마다 쓴다.
+    """
+    if state not in BUBBLE_STATES:
+        raise ValueError(f"알 수 없는 버블 상태: {state!r} (허용: {BUBBLE_STATES})")
+    key = (state, fill, glyph, size, dpr)
+    cached = _BUBBLE_CACHE.get(key)
+    if cached is not None:
+        return cached
+    pixmap = QPixmap(round(size * dpr), round(size * dpr))
+    pixmap.setDevicePixelRatio(dpr)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    _fill(painter, QColor(fill))
+    painter.drawEllipse(QRectF(0, 0, size, size))
+    painter.scale(size / _BUBBLE_GRID, size / _BUBBLE_GRID)
+    _BUBBLE_GLYPHS[state](painter, QColor(glyph))
+    painter.end()
+    _BUBBLE_CACHE[key] = pixmap
+    return pixmap
+
+
+#: 버블 기호를 그리는 격자 한 변 — 좌표는 0..16 정사각 안(원 지름 = 16).
+_BUBBLE_GRID = 16.0
+
+
+def _glyph_down(painter: QPainter, color: QColor) -> None:
+    """받는 중 — 아래 화살표(↓). 화살촉이 아래에 몰려 있어 전체를 0.8 내려 원 가운데에 맞춘다."""
+    _stroke(painter, color, 1.8)
+    painter.drawLine(QPointF(8, 4.6), QPointF(8, 11.2))
+    painter.drawPolyline(QPolygonF([QPointF(5, 8.4), QPointF(8, 11.4), QPointF(11, 8.4)]))
+
+
+def _glyph_pause(painter: QPainter, color: QColor) -> None:
+    """일시정지 — 세로 막대 둘(‖)."""
+    _stroke(painter, color, 1.9)
+    painter.drawLine(QPointF(6.2, 5), QPointF(6.2, 11))
+    painter.drawLine(QPointF(9.8, 5), QPointF(9.8, 11))
+
+
+def _glyph_cross(painter: QPainter, color: QColor) -> None:
+    """전부 실패 — 엇갈린 선 둘(✕)."""
+    _stroke(painter, color, 1.8)
+    painter.drawLine(QPointF(5.3, 5.3), QPointF(10.7, 10.7))
+    painter.drawLine(QPointF(10.7, 5.3), QPointF(5.3, 10.7))
+
+
+def _glyph_bang(painter: QPainter, color: QColor) -> None:
+    """일부 실패 — 세로 선과 점(!)."""
+    _stroke(painter, color, 1.9)
+    painter.drawLine(QPointF(8, 4.2), QPointF(8, 8.9))
+    _fill(painter, color)
+    painter.drawEllipse(QPointF(8, 11.5), 1.1, 1.1)
+
+
+def _glyph_tick(painter: QPainter, color: QColor) -> None:
+    """완료 — 꺾인 선 하나(✓)."""
+    _stroke(painter, color, 1.8)
+    painter.drawPolyline(QPolygonF([QPointF(4.5, 8.3), QPointF(6.8, 10.5), QPointF(11.5, 5.7)]))
+
+
+_BUBBLE_GLYPHS = {
+    "running": _glyph_down,
+    "paused": _glyph_pause,
+    "all_failed": _glyph_cross,
+    "some_failed": _glyph_bang,
+    "done": _glyph_tick,
+}
+
+
 class IconButton(QPushButton):
     """도형 아이콘을 그리는 정사각 조작 버튼 (#245).
 
