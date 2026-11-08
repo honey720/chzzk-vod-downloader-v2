@@ -139,7 +139,9 @@ class VodDownloader(QMainWindow):
         # 좁은 폭 모양 단계(#529) — 헤더바 2줄(0 칩 · 1 드롭다운 · 2 드롭다운 + 정렬 아이콘), 하단바(뺀 칸 수)
         self._headerLevel = 0
         self._footerLevel = 0
-        self.shapeChanges = 0  # 모양이 바뀐 횟수 — 창 크기 한 번에 한 번만 바뀌는지 테스트가 센다
+        # 모양이 바뀐 횟수(헤더바 2줄 · 하단바) — 창 크기 한 번에 한 번만 바뀌는지 테스트가 센다
+        self.headerShapeChanges = 0
+        self.footerShapeChanges = 0
         self.minimumParts: dict[str, int] = {}  # 창 최소폭을 정한 줄마다의 폭(_contentMinimumWidth)
         self.setupUi(self)
         self.setupDynamicUi()
@@ -715,7 +717,7 @@ class VodDownloader(QMainWindow):
         level = step_level(needs, room, self._headerLevel)
         if level != self._headerLevel:
             self._headerLevel = level
-            self.shapeChanges += 1
+            self.headerShapeChanges += 1
         self.filterChipBar.setCompact(level >= 1)
         self.sortButton.setCompact(level >= 2)
 
@@ -725,7 +727,7 @@ class VodDownloader(QMainWindow):
         level = step_level(self.footerNeeds(), room, self._footerLevel)
         if level != self._footerLevel:
             self._footerLevel = level
-            self.shapeChanges += 1
+            self.footerShapeChanges += 1
         self.footerMonitor.setDropped(level)
 
     def resizeEvent(self, event: QResizeEvent) -> None:
