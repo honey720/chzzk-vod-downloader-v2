@@ -928,8 +928,15 @@ def _run_controlled(
 ) -> subprocess.CompletedProcess[str]:
     """ffmpeg를 실행해 출력을 모으되, 멈춤 · 일시정지 요청을 따른다. ``run_ffmpeg``가 부른다.
 
-    출력을 모으는 일(``communicate``)을 짧은 간격으로 끊어 그 사이에 요청을 확인한다
-    (``_Control``). 돌려주는 값은 그런 확인이 없는 경로(``subprocess.run``)와 같다.
+    출력은 처음부터 띄운 읽기 스레드 둘(stdout · stderr)이 끝까지 읽는다. 이 함수의 루프는
+    ``process.wait(timeout=_STOP_POLL_SECONDS)``로 프로세스가 끝나기를 짧게 기다리며 그 사이마다
+    요청을 확인한다(``_Control``). 끝나거나 끝낸 뒤에 읽기 스레드를 제한 없이 기다린다 — 프로세스가
+    끝나 파이프가 닫히므로 돌아온다. 돌려주는 값은 그런 확인이 없는 경로(``subprocess.run``)와 같다.
+
+    루프에서 ``communicate(timeout)``을 쓰지 않는다. Windows의 ``communicate(timeout)``은 읽기
+    스레드를 ``Thread.join(timeout)``으로 기다리는데, CI windows에서 일시정지 중 그 join이 제한 시간이
+    지나도 돌아오지 않아 루프가 서고 재개 · 중지 · 제한 시간이 모두 듣지 않았다(#533 — 까닭은
+    미확정). 같은 꼴(자기 읽기 스레드 + 짧은 대기)인 ``_run_reporting``에서는 그 멈춤이 없었다.
     """
     command = [exe, "-hide_banner", *args]
     try:
@@ -948,22 +955,39 @@ def _run_controlled(
     except OSError as e:
         raise FFmpegError(f"ffmpeg 실행 실패: {e}") from e
     _end_with_parent(process)
+    output: list[str] = []
+    errors: list[str] = []
+    # 두 파이프를 처음부터 끝까지 읽는다 — 한쪽만 읽으면 다른 쪽이 차서 ffmpeg가 선다
+    readers = [
+        threading.Thread(target=lambda: output.append(process.stdout.read()), daemon=True),
+        threading.Thread(target=lambda: errors.append(process.stderr.read()), daemon=True),
+    ]
+    for reader in readers:
+        reader.start()
     control = _Control(process, timeout, should_stop, should_pause)
     # 띄우자마자 한 번 확인한다 — 띄우는 사이에 온 일시정지 · 중단이 첫 간격만큼 늦지 않게
     outcome = control.poll()
-    while True:
+    while outcome is None:
         try:
-            if outcome is None:
-                output, errors = process.communicate(timeout=_STOP_POLL_SECONDS)
-                return subprocess.CompletedProcess(command, process.returncode, output, errors)
+            process.wait(timeout=_STOP_POLL_SECONDS)
         except subprocess.TimeoutExpired:
             outcome = control.poll()
-        if outcome is not None:
-            process.kill()  # 멈춰 있는 프로세스도 그대로 끝난다
-            process.communicate()  # 파이프를 비우고 닫는다 — 프로세스가 끝난 것까지 기다린다
-            if outcome == _Control.CANCELLED:
-                raise FFmpegCancelledError("멈추라는 요청으로 ffmpeg를 끝냈다")
-            raise FFmpegTimeoutError(f"ffmpeg가 {timeout:g}초 안에 끝나지 않았다")
+            continue
+        break  # 끝났다
+    if outcome is not None:
+        process.kill()  # 멈춰 있는 프로세스도 그대로 끝난다
+        process.wait()
+    for reader in readers:
+        reader.join()  # 프로세스가 끝나 파이프가 닫혔다 — EOF까지 읽고 돌아온다
+    process.stdout.close()
+    process.stderr.close()
+    if outcome == _Control.CANCELLED:
+        raise FFmpegCancelledError("멈추라는 요청으로 ffmpeg를 끝냈다")
+    if outcome == _Control.TIMED_OUT:
+        raise FFmpegTimeoutError(f"ffmpeg가 {timeout:g}초 안에 끝나지 않았다")
+    return subprocess.CompletedProcess(
+        command, process.returncode, output[0] if output else "", errors[0] if errors else ""
+    )
 
 
 def _run_reporting(
