@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QObject, QTranslator, Signal
+from PySide6.QtCore import QObject, QSize, QTranslator, Signal
 from PySide6.QtGui import QCloseEvent, QGuiApplication, QIcon, QImage
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox, QWidget
@@ -101,8 +101,13 @@ def app_logo(qapp: QApplication) -> Iterator[QIcon]:
 
 
 def _image(icon: QIcon, side: int) -> QImage:
-    """아이콘의 그 크기 그림 — 같은 그림인지 비교한다."""
-    return icon.pixmap(side, side).toImage()
+    """아이콘이 담은 그 크기(배율 1) 그림 — 같은 그림인지 비교한다.
+
+    배율을 주지 않으면 앱 배율로 늘인 그림이 나온다(배율 1.25면 16px이 20×20) — 버블은 배율 1로 그린다.
+    """
+    pixmap = icon.pixmap(QSize(side, side), 1.0)
+    assert (pixmap.width(), pixmap.height(), pixmap.devicePixelRatio()) == (side, side, 1.0)
+    return pixmap.toImage()
 
 
 def _window_with(

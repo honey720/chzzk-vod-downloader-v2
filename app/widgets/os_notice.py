@@ -13,7 +13,7 @@
 
 from collections.abc import Callable
 
-from PySide6.QtCore import QObject, QTimer
+from PySide6.QtCore import QObject, QSize, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QWidget
 
@@ -42,11 +42,13 @@ def logo_icon(window: QWidget) -> QIcon:
     """창 아이콘(앱 로고)을 여러 크기로 담은 아이콘 — 트레이 아이콘용.
 
     창 아이콘은 진입점이 앱 전체에 정한 것(`QApplication.setWindowIcon`)을 창이 물려받은 값이다.
+    배율 1로 뽑는다 — 배율을 주지 않으면 화면 배율로 늘인 그림이 담겨(배율 1.25면 20 · 40 · 60 · 80px)
+    알림 아이콘과 크기 목록이 어긋난다.
     """
     source = window.windowIcon()
     icon = QIcon()
     for side in NOTICE_ICON_SIDES:
-        icon.addPixmap(source.pixmap(side, side))
+        icon.addPixmap(source.pixmap(QSize(side, side), 1.0))
     return icon
 
 
