@@ -9,14 +9,20 @@
 """
 
 from PySide6.QtCore import QCoreApplication
+from PySide6.QtGui import QPainter, QPaintEvent
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
+import app.theme as theme
 from app.viewmodels.clock_text import clock_text
 from app.viewmodels.footer_monitor import MonitorSnapshot
 from app.widgets.header_controls import text_width
+from app.widgets.icons import action_pixmap
 from app.widgets.widget import short_time
 
 MONITOR_KEYS = ("speed", "remain", "conn", "mem", "free")  # 모니터링 칸의 화면 차례
+# 이름 글 대신 아이콘을 두는 칸 — 뜻은 툴팁(설계 §2 「연결 · 메모리 · 여유에는 툴팁으로 뜻」, 프로토 11v, #536)
+MONITOR_ICONS = {"conn": "link", "mem": "memory", "free": "disk"}
+ICON_GAP = 4  # 칸 아이콘 ↔ 값(px) — 설계 §11.2, 프로토 MonitorLabel
 DROP_ORDER = ("conn", "mem", "remain", "free")  # 좁은 폭에서 빼는 칸 차례 — 설계 §2
 SPEED_SAMPLE = "↓ 999.9 MB/s"  # 창 최소폭에 넣는 전체 속도 칸의 글 — 값과 무관한 고정 견본
 MONITOR_GAP = 8  # 모니터링 칸 사이 간격(px) — 하단바 버튼 사이 간격과 같다(설계 §11.2)
@@ -24,8 +30,36 @@ _MEBIBYTE = 1024 * 1024  # 속도 · 메모리의 MB — 카드의 속도 글과
 _GIBIBYTE = 1024 * 1024 * 1024  # 여유 공간의 GB
 
 
+class MonitorLabel(QLabel):
+    """하단바 모니터링 한 칸 — 아이콘(16px)이 있으면 그 오른쪽에 값 (#536, 프로토 MonitorLabel).
+
+    아이콘 자리는 왼쪽 안쪽 여백으로 잡는다 — 크기 힌트가 아이콘 · 간격 · 값 글 폭을 함께 센다. 아이콘 색은 그릴
+    때마다 흐린 글 토큰을 읽는다(실행 중 테마 전환 #247).
+    """
+
+    def __init__(self, icon: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.icon = icon  # icons의 이름 — 빈 글이면 글만
+        if icon:
+            self.setContentsMargins(theme.METRICS["narrowIcon"] + ICON_GAP, 0, 0, 0)
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        super().paintEvent(event)
+        if not self.icon:
+            return
+        tokens = theme.current_tokens()
+        side = theme.METRICS["narrowIcon"]
+        pixmap = action_pixmap(self.icon, tokens["textMuted"], side, self.devicePixelRatioF())
+        painter = QPainter(self)
+        painter.drawPixmap(0, (self.height() - side) // 2, pixmap)
+        painter.end()
+
+
 class FooterMonitor(QWidget):
-    """하단바 왼쪽 모니터링 — 칸마다 라벨 하나, 툴팁은 「이름 · 값」(남은 시간은 글이 다 말해 없음)."""
+    """하단바 왼쪽 모니터링 — 칸마다 라벨 하나, 툴팁은 「이름 · 값」(남은 시간은 글이 다 말해 없음).
+
+    연결 · 메모리 · 여유는 이름 글 대신 아이콘 + 값이다(#536) — 이름은 툴팁이 말한다.
+    """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -36,7 +70,7 @@ class FooterMonitor(QWidget):
         self._present: set[str] = set()  # 값이 있어 보일 수 있는 칸 — 마지막 setSnapshot
         self._dropped = 0  # 좁은 폭에서 뺀 칸 수 — DROP_ORDER 앞에서부터
         for key in MONITOR_KEYS:
-            label = QLabel(self)
+            label = MonitorLabel(MONITOR_ICONS.get(key, ""), self)
             label.setObjectName("footerMonitor")
             label.setProperty("key", key)
             label.setMinimumWidth(1)  # 글 길이가 창 최소폭을 올리지 않는다
@@ -109,23 +143,15 @@ class FooterMonitor(QWidget):
                 # 카드의 남은 시간과 같은 글 — 카드의 번역(ContentItemWidget 컨텍스트)을 그대로 쓴다
                 left = QCoreApplication.translate("ContentItemWidget", "{0} left").format(remain)
                 texts["remain"] = (left, "")
+            # 연결 · 메모리 · 여유는 아이콘 + 값 — 이름은 툴팁에(#536)
             connections = str(snapshot.connections)
-            texts["conn"] = (
-                self.tr("Connections {0}").format(connections),
-                self.tr("Connections · {0}").format(connections),
-            )
+            texts["conn"] = (connections, self.tr("Connections · {0}").format(connections))
             if snapshot.memory is not None:
                 memory = f"{snapshot.memory / _MEBIBYTE:,.0f} MB"
-                texts["mem"] = (
-                    self.tr("Memory {0}").format(memory),
-                    self.tr("Memory · {0}").format(memory),
-                )
+                texts["mem"] = (memory, self.tr("Memory · {0}").format(memory))
         if snapshot.free is not None:
             free = f"{snapshot.free / _GIBIBYTE:,.1f} GB"
-            texts["free"] = (
-                self.tr("Free {0}").format(free),
-                self.tr("Free space · {0}").format(free),
-            )
+            texts["free"] = (free, self.tr("Free space · {0}").format(free))
         return texts
 
 

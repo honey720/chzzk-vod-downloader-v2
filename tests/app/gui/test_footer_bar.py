@@ -241,7 +241,8 @@ def test_snapshot_time_left_is_dropped_when_one_download_has_no_size_left() -> N
 def test_footer_without_a_download_shows_only_free_space(qtbot, tmp_path) -> None:
     """받는 중인 카드가 없으면 하단바 모니터링은 여유 공간 한 칸만 보여야 한다.
 
-    대기 카드 1장, 다운로드 시작 전 -> 보이는 칸 ["free"], 글 "Free … GB", 툴팁 "Free space · … GB"
+    대기 카드 1장, 다운로드 시작 전 -> 보이는 칸 ["free"], 글 "… GB"(이름 대신 디스크 아이콘 — #536),
+    툴팁 "Free space · … GB"
     """
     win, _items, _engine = _window(tmp_path)
     _free_measured(qtbot, win)
@@ -249,7 +250,8 @@ def test_footer_without_a_download_shows_only_free_space(qtbot, tmp_path) -> Non
     assert win.footerMonitor.isVisible()
     assert win.footerMonitor.shownKeys() == ["free"]
     label = win.footerMonitor.labels["free"]
-    assert label.text().startswith("Free ") and label.text().endswith(" GB")
+    assert label.icon == "disk"
+    assert label.text()[0].isdigit() and label.text().endswith(" GB")
     assert label.toolTip().startswith("Free space · ")
 
 
@@ -257,7 +259,8 @@ def test_footer_while_receiving_shows_all_five_values(qtbot, tmp_path, answers) 
     """받을 크기를 아는 카드를 받는 중이면 다섯 칸이 다 보이고 값이 통지를 따라야 한다.
 
     받을 크기 10 MiB · 받은 크기 0 · 속도 2.0 MB/s · 연결 4 통지
-    -> 칸 speed · remain · conn · mem · free, "↓ 2.0 MB/s", "0:05 left", "Connections 4", "Memory … MB"
+    -> 칸 speed · remain · conn · mem · free, "↓ 2.0 MB/s", "0:05 left", 연결 "4" · 메모리 "… MB"(이름 대신
+    아이콘, 이름은 툴팁 — #536)
     """
     win, _items, engine = _window(tmp_path)
     _free_measured(qtbot, win)
@@ -270,10 +273,11 @@ def test_footer_while_receiving_shows_all_five_values(qtbot, tmp_path, answers) 
     assert labels["speed"].text() == "↓ 2.0 MB/s"
     assert labels["speed"].toolTip() == "Speed · 2.0 MB/s"
     assert labels["remain"].text() == "0:05 left"
-    assert labels["conn"].text() == "Connections 4"
+    assert labels["conn"].text() == "4"
     assert labels["conn"].toolTip() == "Connections · 4"
-    assert labels["mem"].text().startswith("Memory ") and labels["mem"].text().endswith(" MB")
+    assert labels["mem"].text()[0].isdigit() and labels["mem"].text().endswith(" MB")
     assert labels["mem"].toolTip().startswith("Memory · ")
+    assert (labels["conn"].icon, labels["mem"].icon, labels["speed"].icon) == ("link", "memory", "")
 
 
 def test_footer_drops_the_time_left_when_the_size_is_unknown(qtbot, tmp_path, answers) -> None:

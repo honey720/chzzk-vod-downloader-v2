@@ -406,24 +406,12 @@ Part of the video kept arriving incomplete from the server. Try again later.</tr
         <translation>Speed · {0}</translation>
     </message>
     <message>
-        <source>Connections {0}</source>
-        <translation>Connections {0}</translation>
-    </message>
-    <message>
         <source>Connections · {0}</source>
         <translation>Connections · {0}</translation>
     </message>
     <message>
-        <source>Memory {0}</source>
-        <translation>Memory {0}</translation>
-    </message>
-    <message>
         <source>Memory · {0}</source>
         <translation>Memory · {0}</translation>
-    </message>
-    <message>
-        <source>Free {0}</source>
-        <translation>Free {0}</translation>
     </message>
     <message>
         <source>Free space · {0}</source>

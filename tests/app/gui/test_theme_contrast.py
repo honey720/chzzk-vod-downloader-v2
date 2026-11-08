@@ -29,6 +29,8 @@ PAIRS = [
     ("stateFailed", "cardBg", 4.5, "실패 상태 글 ↔ 카드"),
     ("stateFailed", "surface", 4.5, "실패 칩 글 ↔ 헤더바(칩 면 없음 · 고른 칩 바 면 — #536)"),
     ("text", "errorTipBg", 4.5, "등록 오류 말풍선 글 ↔ 면(#536)"),
+    ("text", "tipBg", 4.5, "말풍선 글 ↔ 떠 있는 면(#536)"),
+    ("textMuted", "tipBg", 4.5, "말풍선 단축키(흐린 글) ↔ 떠 있는 면(#536)"),
     ("stateFailed", "errorTipBg", 3.0, "등록 오류 말풍선 테두리 ↔ 면 — 그림(#536)"),
     ("stateFailed", "surfaceAlt", 4.5, "실패 칩 글 ↔ 칩(버튼 면)"),
     ("textMuted", "surfaceAlt", 4.5, "꺼진 칩 글 ↔ 칩(버튼 면)"),

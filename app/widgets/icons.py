@@ -236,11 +236,20 @@ def _paint_delete(painter: QPainter, s: float, color: QColor, accent: QColor) ->
 
 
 def _paint_check(painter: QPainter, s: float, color: QColor, accent: QColor) -> None:
-    """고른 항목 — 꺾인 선 하나(✓). 삭제(✕)와 같은 굵기 계열의 선이다."""
-    _stroke(painter, color, s * 0.16)
+    """고른 항목 — 꺾인 선 하나(✓). 좌표 · 굵기는 프로토 메뉴 ✓ SVG(16 격자, 선 1.8)다(#536).
+
+    색은 부르는 쪽이 본문 글 색(text)으로 준다 — 프로토도 같은 역할의 글 색이다(재 보니 두 쪽 다 그 테마의 본문
+    글 색이고, 다른 화소는 선 굵기 · 꺾는 자리 차이였다 — inbox 113 나란히 비교).
+    """
+    _stroke(painter, color, s * 1.8 / 16)
+    unit = s / 16
     painter.drawPolyline(
         QPolygonF(
-            [QPointF(s * 0.16, s * 0.54), QPointF(s * 0.40, s * 0.78), QPointF(s * 0.86, s * 0.24)]
+            [
+                QPointF(3.2 * unit, 8.4 * unit),
+                QPointF(6.4 * unit, 11.4 * unit),
+                QPointF(12.8 * unit, 4.8 * unit),
+            ]
         )
     )
 

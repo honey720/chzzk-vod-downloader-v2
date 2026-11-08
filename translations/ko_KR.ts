@@ -401,24 +401,12 @@ Part of the video kept arriving incomplete from the server. Try again later.</so
         <translation>속도 · {0}</translation>
     </message>
     <message>
-        <source>Connections {0}</source>
-        <translation>연결 {0}</translation>
-    </message>
-    <message>
         <source>Connections · {0}</source>
         <translation>연결 · {0}</translation>
     </message>
     <message>
-        <source>Memory {0}</source>
-        <translation>메모리 {0}</translation>
-    </message>
-    <message>
         <source>Memory · {0}</source>
         <translation>메모리 · {0}</translation>
-    </message>
-    <message>
-        <source>Free {0}</source>
-        <translation>여유 {0}</translation>
     </message>
     <message>
         <source>Free space · {0}</source>

@@ -46,9 +46,10 @@ _FACING = {"below": "top", "above": "bottom", "right": "left", "left": "right"} 
 _TIP_WEIGHT = 600  # 말풍선 글 굵기 — 굵게(설계 §12.1 「툴팁 글은 굵게」)
 _SHADOW_ALPHA = 0.05  # 그림자 가장 안쪽 한 겹의 불투명도 — 바깥으로 갈수록 옅다
 KEY_SEP = "\t"  # 툴팁 글의 이름 ↔ 단축키 구분 — 말풍선이 「이름 · 단축키」로 그리고 단축키는 흐린 색(#536)
-# 말풍선 색 묶음 — (면, 테두리, 글) 토큰. 툴팁은 바 면, 등록 오류는 실패 색 계열(설계 §2 알림 자리, #536)
+# 말풍선 색 묶음 — (면, 테두리, 글) 토큰. 툴팁은 바보다 한 단계 떠 있는 면 · 진한 테두리(프로토 demoFloat),
+# 등록 오류는 실패 색 계열(설계 §2 알림 자리, #536)
 TONES = {
-    "tip": ("surface", "border", "text"),
+    "tip": ("tipBg", "borderStrong", "text"),
     "error": ("errorTipBg", "stateFailed", "text"),
 }
 

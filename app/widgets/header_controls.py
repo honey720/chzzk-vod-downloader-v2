@@ -600,7 +600,8 @@ class SaveLocationButton(DropButton):
         add.setObjectName("addFavoriteAction")
         add.setEnabled(locations.can_add_favorite())  # 이미 즐겨찾기 · 가득 차면 끔
         add.triggered.connect(self._addFavorite)
-        find = menu.addCommand(self.tr("Find folder…"), glyph="folder")
+        # 「폴더 찾기…」는 테두리 폴더 — 별 · 되돌리기와 같은 선 그림(#536, 프로토 folder_outline)
+        find = menu.addCommand(self.tr("Find folder…"), glyph="folder_outline")
         find.setObjectName("findFolderAction")
         find.triggered.connect(self._findFolder)
         default = locations.default()

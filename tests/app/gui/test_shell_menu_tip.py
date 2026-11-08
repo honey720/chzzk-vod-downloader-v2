@@ -524,3 +524,56 @@ def test_the_save_location_folder_is_yellow_and_the_caret_is_a_chevron(
     caret = button.caretRect()
     assert caret.width() == CARET_WIDTH
     assert _inked(button, caret, tokens["textMuted"]) > 0
+
+
+# ---------------------------------------------------------------------------
+# ⑤ 하단 아이콘 칸 · 말풍선 면 · 메뉴 아이콘(#536)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("key", "tip"),
+    [("conn", "Connections · 4"), ("mem", "Memory · 64 MB"), ("free", "Free space · 12.0 GB")],
+)
+def test_footer_cells_show_an_icon_and_the_value_with_the_name_in_the_tip(
+    window: VodDownloader, key: str, tip: str
+) -> None:
+    """연결 · 메모리 · 여유 칸은 왼쪽 16px에 흐린 색 아이콘, 글은 값만, 이름은 툴팁이어야 한다.
+
+    받는 중 · 연결 4 · 메모리 64 MiB · 여유 12 GiB -> 글 "4" · "64 MB" · "12.0 GB", 툴팁 「이름 · 값」
+    """
+    from app.viewmodels.footer_monitor import MonitorSnapshot
+
+    monitor = window.footerMonitor
+    monitor.setSnapshot(MonitorSnapshot(True, 2_000_000.0, None, 4, 64 * 1024 * 1024, 12 * 1024**3))
+    _pump()
+    label = monitor.labels[key]
+    assert label.isVisible(), "전제: 칸이 보인다"
+    assert label.text() == tip.split(" · ")[1]
+    assert label.toolTip() == tip
+    side = theme.METRICS["narrowIcon"]
+    icon = QRect(0, (label.height() - side) // 2, side, side)
+    assert _inked(label, icon, theme.current_tokens()["textMuted"]) > 0
+
+
+def test_the_tip_bubble_floats_on_its_own_face(window: VodDownloader) -> None:
+    """말풍선 몸통 면은 tipBg(바 면 아님)이어야 한다 — 하단 중지 버튼 말풍선의 몸통 가운데 화소."""
+    _enter(window.stopButton)
+    bubble = _bubble()
+    assert bubble.isVisible() and bubble.tone == "tip"
+    body = bubble.bodyRect()
+    image = bubble.grab().toImage()
+    ratio = image.devicePixelRatio()
+    corner = image.pixelColor(int((body.left() + 3) * ratio), int(body.center().y() * ratio))
+    tokens = theme.current_tokens()
+    assert not _close(QColor(tokens["tipBg"]), tokens["surface"]), (
+        "전제(다크): 떠 있는 면은 바 면과 다르다"
+    )
+    assert _close(corner, tokens["tipBg"])
+
+
+def test_find_folder_uses_the_outline_folder(window: VodDownloader) -> None:
+    """저장 위치 메뉴 「폴더 찾기…」 줄의 아이콘은 테두리 폴더(folder_outline)여야 한다."""
+    menu = _open(window.saveLocationButton)
+    find = next(a for a in menu.actions() if a.objectName() == "findFolderAction")
+    assert find.property("glyph") == "folder_outline"
