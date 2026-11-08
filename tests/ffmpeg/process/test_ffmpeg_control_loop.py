@@ -12,6 +12,7 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable, Iterator
+from pathlib import Path
 
 import pytest
 
@@ -87,7 +88,7 @@ class _Run:
 
 
 def test_the_loop_keeps_polling_while_paused(
-    tmp_path: pytest.TempPathFactory, launched: list[subprocess.Popen], polls: list[float]
+    tmp_path: Path, launched: list[subprocess.Popen], polls: list[float]
 ) -> None:
     """일시정지 중에도 확인(_Control.poll)이 계속 불리고, 풀면 끝까지 돌아 성공해야 한다.
 
@@ -110,7 +111,7 @@ def test_the_loop_keeps_polling_while_paused(
 
 
 def test_a_stop_during_pause_ends_the_run(
-    tmp_path: pytest.TempPathFactory, launched: list[subprocess.Popen], polls: list[float]
+    tmp_path: Path, launched: list[subprocess.Popen], polls: list[float]
 ) -> None:
     """일시정지 중 중지를 요청하면 FFmpegCancelledError로 끝나고 프로세스가 남지 않아야 한다."""
     paused, stopped = threading.Event(), threading.Event()
@@ -128,7 +129,7 @@ def test_a_stop_during_pause_ends_the_run(
 
 
 def test_the_timeout_still_applies_after_a_pause(
-    tmp_path: pytest.TempPathFactory, launched: list[subprocess.Popen]
+    tmp_path: Path, launched: list[subprocess.Popen]
 ) -> None:
     """일시정지했다 풀어도 제한 시간은 듣고, 끝나기까지 걸린 시간에는 일시정지한 시간이 더해져야 한다.
 
@@ -147,6 +148,30 @@ def test_the_timeout_still_applies_after_a_pause(
     assert isinstance(run.error, FFmpegTimeoutError)
     # 제한 시간은 프로세스를 띄운 직후부터 센다 — 뜬 것을 본 시각(begun)이 조금 늦을 수 있어 0.2초를 덜어 준다
     assert time.monotonic() - begun >= 2.0 + 1.0 - 0.2
+
+
+def test_a_check_that_raises_still_ends_the_paused_ffmpeg(
+    tmp_path: Path, launched: list[subprocess.Popen]
+) -> None:
+    """일시정지 중 중지 확인 콜백이 예외를 내면 그 예외가 올라오고 ffmpeg는 끝나 있어야 한다 (#534 리뷰).
+
+    일하는 명령 · 일시정지 켬 -> 중지 확인이 RuntimeError -> RuntimeError, 프로세스 끝남
+    """
+    paused, broken = threading.Event(), threading.Event()
+
+    def check() -> bool:
+        if broken.is_set():
+            raise RuntimeError("확인 실패")
+        return False
+
+    output = str(tmp_path / "out.mp4")
+    run = _Run(_work(output), timeout=300, should_pause=paused.is_set, should_stop=check)
+    _wait_until(lambda: _working(launched, output) is not None, "일하는 ffmpeg가 뜨지 않았다")
+    paused.set()
+    broken.set()
+    _wait_until(run.finished, "확인이 예외를 낸 뒤 끝나지 않았다")
+    assert isinstance(run.error, RuntimeError)
+    assert _working(launched, output).poll() is not None
 
 
 def test_a_large_output_does_not_stall_the_run(launched: list[subprocess.Popen]) -> None:

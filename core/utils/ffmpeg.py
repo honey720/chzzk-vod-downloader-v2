@@ -965,22 +965,27 @@ def _run_controlled(
     for reader in readers:
         reader.start()
     control = _Control(process, timeout, should_stop, should_pause)
-    # 띄우자마자 한 번 확인한다 — 띄우는 사이에 온 일시정지 · 중단이 첫 간격만큼 늦지 않게
-    outcome = control.poll()
-    while outcome is None:
-        try:
-            process.wait(timeout=_STOP_POLL_SECONDS)
-        except subprocess.TimeoutExpired:
-            outcome = control.poll()
-            continue
-        break  # 끝났다
-    if outcome is not None:
-        process.kill()  # 멈춰 있는 프로세스도 그대로 끝난다
-        process.wait()
-    for reader in readers:
-        reader.join()  # 프로세스가 끝나 파이프가 닫혔다 — EOF까지 읽고 돌아온다
-    process.stdout.close()
-    process.stderr.close()
+    outcome = None
+    try:
+        # 띄우자마자 한 번 확인한다 — 띄우는 사이에 온 일시정지 · 중단이 첫 간격만큼 늦지 않게
+        outcome = control.poll()
+        while outcome is None:
+            try:
+                process.wait(timeout=_STOP_POLL_SECONDS)
+            except subprocess.TimeoutExpired:
+                outcome = control.poll()
+                continue
+            break  # 끝났다
+    finally:
+        # 끝내야 하거나 확인(요청 콜백 · 멈추기)이 예외를 내도 ffmpeg · 읽기 스레드 · 파이프를 남기지 않는다
+        # (#534 리뷰 — _run_reporting과 같다)
+        if process.poll() is None:
+            process.kill()  # 멈춰 있는 프로세스도 그대로 끝난다
+            process.wait()
+        for reader in readers:
+            reader.join()  # 프로세스가 끝나 파이프가 닫혔다 — EOF까지 읽고 돌아온다
+        process.stdout.close()
+        process.stderr.close()
     if outcome == _Control.CANCELLED:
         raise FFmpegCancelledError("멈추라는 요청으로 ffmpeg를 끝냈다")
     if outcome == _Control.TIMED_OUT:
