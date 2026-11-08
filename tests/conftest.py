@@ -34,6 +34,7 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+from tests.qt_platform import NATIVE_SWITCH  # noqa: E402
 from tests.qt_platform import apply as apply_qt_platform_defaults  # noqa: E402
 
 # 로컬 테스트가 Qt 창을 실제 화면에 띄우지 않게 한다 (#399) — 값을 정하지 않은 로컬 실행만
@@ -50,6 +51,35 @@ from tests.console_window import install as hide_console_windows  # noqa: E402
 # Windows에서 테스트가 띄우는 자식 프로세스가 콘솔 창을 띄우지 않게 한다 (#399) — 수집 중의
 # 호출도 덮도록 모듈을 읽을 때 건다. creationflags를 직접 준 호출(제품의 ffmpeg 등)은 그대로다
 hide_console_windows(subprocess, sys.platform)
+
+# ============ OS 창 활성을 바꾸는 테스트 (#523) ============
+# 창 최소화 · 최소화 풀기 · activateWindow는 실제 화면에서 OS의 포그라운드 창을 바꾼다 — 같은 화면의
+# 다른 xdist 워커(다른 프로세스) 창도 활성을 잃거나 얻는다. 활성만 바뀌어도 렌더가 달라지는 위젯이 있어
+# (헤더 저장 위치 · 정렬 버튼) 그 워커의 렌더 비교 · 포커스 테스트가 실패한다. 프로세스마다 활성이 따로인
+# offscreen과 CI에서는 그대로 돌고, 실제 화면 병렬(CVDV2_TEST_NATIVE=1 · xdist 워커)에서만 건너뛴다 —
+# 그 테스트는 실제 화면 직렬(`-m os_window`, `-n` 없이)로 따로 돌린다.
+OS_WINDOW_MARK = "os_window"  # OS 창 활성 · 최소화를 바꾸는 테스트 표시
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """`os_window` 표시를 등록한다."""
+    config.addinivalue_line(
+        "markers",
+        f"{OS_WINDOW_MARK}: OS 창 활성 · 최소화를 바꾼다 — 실제 화면 병렬 실행에서는 건너뛴다",
+    )
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """실제 화면 병렬 실행이면 `os_window` 표시가 붙은 테스트를 건너뛴다(#523)."""
+    if os.environ.get(NATIVE_SWITCH) != "1" or not os.environ.get("PYTEST_XDIST_WORKER"):
+        return
+    skip = pytest.mark.skip(
+        reason="실제 화면 병렬에서는 다른 워커 창의 활성을 바꾼다 — -m os_window를 -n 없이 따로 돌린다"
+    )
+    for item in items:
+        if item.get_closest_marker(OS_WINDOW_MARK):
+            item.add_marker(skip)
+
 
 # 외부 API 응답을 흉내 내는 픽스처 파일 저장 위치
 MOCK_RESPONSES_DIR = Path(__file__).resolve().parent / "fixtures" / "mock_responses"

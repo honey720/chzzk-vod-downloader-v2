@@ -25,6 +25,9 @@ from core.models.download_state import DownloadState
 from tests.app.gui import test_footer_bar as footer
 from tests.app.gui.test_footer_bar import _environment, answers  # noqa: F401 — 같은 환경 · 확인 창 대역
 
+# 이 파일은 메인 창을 최소화하고 다시 앞으로 가져온다 — 실제 화면에서는 다른 프로세스 창의 활성도 바뀐다
+pytestmark = pytest.mark.os_window
+
 #: 창 활성이 자리를 잡을 때까지 기다리는 시간(ms) — 실제 화면(Windows)에서 활성 이벤트가 늦게 온다.
 ACTIVATION_SETTLE_MS = 300
 
