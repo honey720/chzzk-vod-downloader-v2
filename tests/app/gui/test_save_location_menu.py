@@ -103,7 +103,7 @@ def _command(menu, name: str) -> QAction:
 
 class TestMenuRows:
     def test_rows_are_current_favorites_recent_then_commands(self, make_window, folders) -> None:
-        """즐겨찾기 둘 · 최근 둘이 있으면 메뉴는 지금 위치 · 즐겨찾기 머리와 둘 · 최근 머리와 둘 · 구분선 · 명령 셋 차례여야 한다."""
+        """즐겨찾기 둘 · 최근 둘이 있으면 메뉴는 지금 위치 │ 즐겨찾기 머리와 둘 │ 최근 머리와 둘 │ 명령 셋 차례이고 묶음 사이마다 구분선이어야 한다(#536)."""
         a, b, r1, r2 = folders("즐1"), folders("즐2"), folders("최1"), folders("최2")
         _seed(
             favoritePaths=[{"name": "하나", "path": a}, {"name": "둘", "path": b}],
@@ -116,9 +116,11 @@ class TestMenuRows:
 
         assert rows == [
             ("current", current),
+            ("-",),
             ("header", "Favorites"),
             ("favorite", a),
             ("favorite", b),
+            ("-",),
             ("header", "Recent"),
             ("recent", r1),
             ("recent", r2),
@@ -143,12 +145,12 @@ class TestMenuRows:
         assert menu.markedKeys() == [("current", win.saveLocations.current())]
 
     def test_a_favorite_row_shows_its_name_and_its_muted_path(self, make_window, folders) -> None:
-        """즐겨찾기 줄의 이름은 「★ 별칭」이고 흐린 글은 카드 표기 경로(abbreviate_path)여야 한다(#536 — 메뉴 D 한 줄 항목)."""
+        """즐겨찾기 줄의 이름은 ★ 없는 별칭이고 흐린 글은 카드 표기 경로(abbreviate_path)여야 한다(#536 — 메뉴 D, 머리글이 즐겨찾기를 알린다)."""
         a = folders("즐1")
         _seed(favoritePaths=[{"name": "녹화", "path": a}])
         win = make_window()
         action = _choice(_open(win), "favorite", a)
-        assert ChoiceMenu.nameOf(action) == "★ 녹화"
+        assert ChoiceMenu.nameOf(action) == "녹화"
         assert ChoiceMenu.detailOf(action) == abbreviate_path(a)
 
 

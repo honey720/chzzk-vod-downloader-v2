@@ -333,6 +333,57 @@ def test_keyboard_focus_draws_an_accent_border(window: VodDownloader, name: str)
     assert _close(_top_border(widget), tokens["accent"])
 
 
+def test_the_list_has_focus_when_the_window_opens(qapp: QApplication) -> None:
+    """창을 처음 띄우면 초점이 목록에 있고 메뉴바 「VOD 다운」 테두리는 강조색이 아니어야 한다(#536 — 설계 §12.1)."""
+    win = VodDownloader()
+    win.monitorTimer.stop()
+    win.show()
+    win.activateWindow()
+    _pump()
+    assert QApplication.focusWidget() is win.listView
+    assert not _close(_top_border(win.menuDownloadButton), theme.current_tokens()["accent"])
+
+
+@pytest.mark.parametrize("name", ["menuDownloadButton", "menuSettingsButton"])
+def test_clicking_a_bar_control_draws_no_accent_border(
+    window: VodDownloader, name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """바 컨트롤을 마우스로 누르면 초점이 옮겨 가지 않고 테두리가 강조색이 아니어야 한다(#536 — §11.5).
+
+    누름 = QTest.mouseClick(실제 마우스 이벤트 경로 — 누름 초점 처리를 탄다), 「설정」 창 열기는 막는다
+    """
+    from PySide6.QtTest import QTest
+
+    monkeypatch.setattr(window, "onSetting", lambda: None)
+    window.menuSettingsButton.clicked.disconnect()
+    widget = getattr(window, name)
+    window.activateWindow()
+    _pump()
+    QTest.mouseClick(widget, Qt.MouseButton.LeftButton)
+    _pump()
+    assert QApplication.focusWidget() is not widget
+    assert not _close(_top_border(widget), theme.current_tokens()["accent"])
+
+
+def test_tab_from_the_list_moves_focus_to_a_bar_control_with_an_accent_border(
+    window: VodDownloader,
+) -> None:
+    """시작 초점(목록)에서 Shift+Tab을 누르면 앞 바 컨트롤(완료 지우기)로 초점이 가고 테두리가 강조색이어야 한다.
+
+    탭 순서: … 정렬 → 완료 지우기 → 목록 → ▶ (#536)
+    """
+    from PySide6.QtTest import QTest
+
+    window.activateWindow()
+    window.listView.setFocus(Qt.FocusReason.OtherFocusReason)
+    _pump()
+    assert QApplication.focusWidget() is window.listView, "전제: 목록에 초점"
+    QTest.keyClick(window.listView, Qt.Key.Key_Backtab, Qt.KeyboardModifier.ShiftModifier)
+    _pump()
+    assert QApplication.focusWidget() is window.clearFinishedButton
+    assert _close(_top_border(window.clearFinishedButton), theme.current_tokens()["accent"])
+
+
 def test_keyboard_focus_on_the_accent_button_draws_the_focus_on_accent_border(
     window: VodDownloader,
 ) -> None:

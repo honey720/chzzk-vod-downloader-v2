@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QLayout, QWidget
 
 import app.theme as theme
 import CVDv2 as main_module
@@ -107,18 +107,24 @@ def _add(win: VodDownloader, state: DownloadState, n: int = 1) -> ContentItem:
 # ---- 독립 합산 — 제품의 필요 폭 계산을 부르지 않는다 ----
 
 
+def _chrome(win: VodDownloader, inner: QLayout) -> int:
+    """창 폭 − 그 바 안쪽 폭 — 놓인 레이아웃의 내용 사각형 폭을 잰다(줄 여백 · 테두리 · 안쪽 여백을 따로 세지 않는다).
+
+    바 테두리는 목록 쪽 한 줄뿐이라(#536) 테두리 폭 한 변 값(`frameWidth()`)으로 셈하면 좌우가 틀린다.
+    """
+    win.show()
+    _pump()
+    return win.width() - inner.contentsRect().width()
+
+
 def _header_chrome(win: VodDownloader) -> int:
-    """창 폭 − 헤더바 안쪽 폭: 줄 좌우 여백 + 프레임 테두리 둘 + 프레임 안쪽 여백."""
-    row, inner = win.headerRow.contentsMargins(), win.headerFrameLayout.contentsMargins()
-    return (
-        row.left() + row.right() + 2 * win.headerFrame.frameWidth() + inner.left() + inner.right()
-    )
+    """창 폭 − 헤더바 안쪽 폭."""
+    return _chrome(win, win.headerFrameLayout)
 
 
 def _footer_chrome(win: VodDownloader) -> int:
     """창 폭 − 하단바 안쪽 폭."""
-    row, inner = win.infoRow.contentsMargins(), win.infoLayout.contentsMargins()
-    return row.left() + row.right() + 2 * win.infoFrame.frameWidth() + inner.left() + inner.right()
+    return _chrome(win, win.infoLayout)
 
 
 def _sort_text_width(win: VodDownloader) -> int:

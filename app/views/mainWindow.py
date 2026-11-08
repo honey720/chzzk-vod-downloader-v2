@@ -232,6 +232,9 @@ class VodDownloader(QMainWindow):
         self._applyUrlRowShape()
         self._applyHeaderShape()
         self._applyFooterShape()
+        # 시작 초점은 목록(#536 — 설계 §12.1, 프로토 focusList). 정하지 않으면 Qt가 탭 순서의 첫 위젯(메뉴바
+        # 「VOD 다운」)에 초점을 주고, 키보드를 쓰지 않았는데 강조색 초점 테두리가 보인다(§11.5 — 키보드 초점에만)
+        self.listView.setFocus(Qt.FocusReason.OtherFocusReason)
 
         if self._startMaximized:
             self.showMaximized()
@@ -359,9 +362,8 @@ class VodDownloader(QMainWindow):
         self.filterRowLayout.addWidget(self.clearFinishedButton)
         self.headerFrameLayout.addLayout(self.filterRowLayout)
 
-        # 상단·하단 바는 각자 행(headerRow·infoRow)에 담아 좌우 outerMargin을 그 행이
-        # 지게 한다 — 열(centralWidgetLayout)은 좌우 여백이 0이라 사이의 카드 목록이
-        # 창 끝까지 간다(v2.10.1). 여백 값은 _applyLayoutMetrics가 런타임에 건다.
+        # 상단·하단 바는 각자 행(headerRow·infoRow)에 담는다. 바는 창 끝까지 붙어 행 여백도 0이다(#536 —
+        # 설계 §11.1). 여백 값은 _applyLayoutMetrics가 런타임에 건다.
         self.headerRow = QHBoxLayout()
         self.headerRow.setObjectName("headerRow")
         self.headerRow.addWidget(self.headerFrame)
@@ -463,32 +465,27 @@ class VodDownloader(QMainWindow):
             install_tips(bar)
 
     def _applyLayoutMetrics(self) -> None:
-        """상단·카드·하단의 좌우 정렬선을 theme.METRICS 토큰 하나로 관통시킨다 (#244).
+        """메뉴바 · 헤더바 · 목록 · 하단바의 여백을 theme.METRICS 토큰으로 건다 (#244 · #536).
 
         여백을 조립(setupUi)과 따로 여기서 런타임에 건다(`.ui` 시절에는 theme를 연결할 수
-        없었다) — 오너가 theme.py의 outerMargin/framePadding 숫자만
-        바꾸고 `uv run python CVDv2.py`로 바로 확인할 수 있게 하기 위해서다.
-        상단바·카드 목록·하단바가 같은 outerMargin에서 시작하고, 바 안쪽
-        여백(framePadding)이 카드 안쪽 여백(cardPadding)과 같으면 입력창·
-        썸네일·하단 요약의 왼쪽 끝이 한 선에 놓인다.
+        없었다) — 오너가 theme.py의 숫자만 바꾸고 `uv run python CVDv2.py`로 바로 확인할 수 있게
+        하기 위해서다. 바는 창 끝까지 붙고, 바 안 내용의 좌우 끝과 카드 바깥 끝이 같은 두 선이다(§11.1).
         """
-        outer = theme.METRICS["outerMargin"]
-        frame_pad = theme.METRICS["framePadding"]
-        # 좌우 여백은 열(contentColumn)이 아니라 상단·하단 바의 행(headerRow·infoRow)이
-        # 진다(v2.10.1) — 카드 목록은 창 좌우 끝까지 가서 세로 스크롤바가 창 끝에 붙고,
-        # 카드 쪽 여백은 목록의 컨테이너 패딩이 같은 값으로 진다(app/widgets/view.py).
-        # 메뉴바 안쪽 여백 세로 barPadY · 가로 barPadX, 메뉴 버튼 높이 barControl(#529 — 설계 §11.2 · §11.3).
-        # 메뉴바는 열의 첫 줄이라 열 위 여백이 메뉴바 위 여백이다
+        # 바는 창 끝까지 붙는다 — 바깥 여백 0, 바 · 목록 사이 간격 0(바의 경계선 하나로만 나눈다). 바 안쪽
+        # 여백은 세로 barPadY · 가로 barPadX(설계 §11.2), 가로 barPadX는 목록 카드의 좌우 여백(outerMargin,
+        # app/widgets/view.py)과 같은 12라 바 안 내용 끝과 카드 바깥 끝이 같은 두 선에 놓인다(§11.1 —
+        # #536, 프로토 11b). 카드 목록은 창 좌우 끝까지 가서 세로 스크롤바가 창 끝에 붙는다(v2.10.1).
+        # 메뉴 버튼 높이는 barControl(#529 — §11.3)
         pad_x, pad_y = theme.METRICS["barPadX"], theme.METRICS["barPadY"]
-        self.centralWidgetLayout.setContentsMargins(0, pad_y, 0, outer)
-        self.centralWidgetLayout.setSpacing(8)
-        self.menuRow.setContentsMargins(pad_x, 0, pad_x, 0)
-        self.appMenuLayout.setContentsMargins(0, 0, 0, 0)
+        self.centralWidgetLayout.setContentsMargins(0, 0, 0, 0)
+        self.centralWidgetLayout.setSpacing(0)
+        self.menuRow.setContentsMargins(0, 0, 0, 0)
+        self.appMenuLayout.setContentsMargins(pad_x, pad_y, pad_x, pad_y)
         self._applyBarControls()
-        self.headerRow.setContentsMargins(outer, 0, outer, 0)
-        self.infoRow.setContentsMargins(outer, 0, outer, 0)
-        self.headerFrameLayout.setContentsMargins(frame_pad, frame_pad, frame_pad, frame_pad)
-        self.infoLayout.setContentsMargins(frame_pad, frame_pad, frame_pad, frame_pad)
+        self.headerRow.setContentsMargins(0, 0, 0, 0)
+        self.infoRow.setContentsMargins(0, 0, 0, 0)
+        self.headerFrameLayout.setContentsMargins(pad_x, pad_y, pad_x, pad_y)
+        self.infoLayout.setContentsMargins(pad_x, pad_y, pad_x, pad_y)
         self._equalizeHeaderButtons()
         self._squareFooterButtons()
         # 헤더바 2줄의 칩 · 정렬 버튼 폭(숫자 세 자리 · 가장 긴 이름) — 창 최소폭 계산 전에 건다
@@ -711,16 +708,15 @@ class VodDownloader(QMainWindow):
         }
 
     def _barChrome(self, row: QLayout, frame: QFrame, inner: QLayout) -> int:
-        """창 폭 − 그 바 안쪽 폭 — 줄의 좌우 여백 · 바 테두리 · 바 안쪽 여백. 바의 내용과 무관하다."""
+        """창 폭 − 그 바 안쪽 폭 — 줄의 좌우 여백 · 바 좌우 테두리 · 바 안쪽 여백. 바의 내용과 무관하다.
+
+        바 테두리는 목록 쪽 한 줄뿐이라(#536) 좌우 테두리 폭은 `frameWidth()`(한 변 값)가 아니라 바 사각형과
+        내용 사각형의 폭 차이로 잰다 — `frameWidth()`는 좌우에 테두리가 없어도 1을 돌려준다(offscreen 실측).
+        """
         outside = row.contentsMargins()
         margins = inner.contentsMargins()
-        return (
-            outside.left()
-            + outside.right()
-            + 2 * frame.frameWidth()
-            + margins.left()
-            + margins.right()
-        )
+        sides = frame.rect().width() - frame.contentsRect().width()
+        return outside.left() + outside.right() + sides + margins.left() + margins.right()
 
     def headerRow1Needs(self) -> list[int]:
         """헤더바 1줄이 단계마다 바라는 폭 — 0 저장 위치 글 · 1 저장 위치 아이콘 (#529 — 프로토 11v).

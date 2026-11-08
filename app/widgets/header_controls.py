@@ -478,8 +478,8 @@ class SaveLocationButton(DropButton):
     창 최소폭이 따라 움직인다). 긴 이름은 가운데를 줄이고 툴팁에 전체 경로를 보인다. 지금 위치가
     즐겨찾기면 별칭을 보인다.
 
-    메뉴 차례: 지금 위치(✓) · 즐겨찾기(★ 별칭 + 흐린 경로) · 최근 · 구분선 · 「지금 위치를 즐겨찾기에」
-    · 「폴더 찾기…」 · 「기본 위치로」. 없는 경로는 흐리게 「(없음)」을 붙이고 고를 수 없다.
+    메뉴 차례: 지금 위치(✓) │ 즐겨찾기(머리글 · 별칭 + 흐린 경로) │ 최근(머리글) │ 「지금 위치를 즐겨찾기에」
+    · 「폴더 찾기…」 · 「기본 위치로」 — 묶음 사이마다 구분선(#536). 없는 경로는 흐리게 「(없음)」을 붙이고 고를 수 없다.
 
     좁은 폭에서는 아이콘 모양이 된다(`setCompact` — #529, 프로토 11v): 버튼 높이의 정사각에 📁만 그리고, 글이
     없으므로 툴팁 첫 줄에 지금 위치 이름, 둘째 줄에 전체 경로를 둔다. 누르면 같은 메뉴가 열린다.
@@ -564,17 +564,21 @@ class SaveLocationButton(DropButton):
         metrics = menu.fontMetrics()
         headed: set[str] = set()
         for entry in entries:
+            # 묶음(지금 위치 │ 즐겨찾기 │ 최근 │ 동작) 사이마다 구분선, 그 아래 머리글(설계 §12.1, 프로토 D)
             if entry.kind == "favorite" and "favorite" not in headed:
+                menu.addSeparator()
                 menu.addHeader(self.tr("Favorites"))
                 headed.add("favorite")
             if entry.kind == "recent" and "recent" not in headed:
+                menu.addSeparator()
                 menu.addHeader(self.tr("Recent"))
                 headed.add("recent")
-            # 줄마다 「이름 + 흐린 경로」 — 이름은 즐겨찾기면 별칭(★), 아니면 폴더 이름(지금 위치가 즐겨찾기면
-            # 그 별칭). 경로는 카드와 같은 표기. 툴팁은 경로가 말줄임으로 잘렸을 때만 전체 경로(ChoiceMenu)
+            # 줄마다 「이름 + 흐린 경로」 — 이름은 즐겨찾기면 별칭, 아니면 폴더 이름(지금 위치가 즐겨찾기면
+            # 그 별칭). 즐겨찾기인 것은 머리글이 알린다 — 이름 앞에 ★를 붙이지 않는다(#536, 프로토 D).
+            # 경로는 카드와 같은 표기. 툴팁은 경로가 말줄임으로 잘렸을 때만 전체 경로(ChoiceMenu)
             favorite = locations.favorite_for(entry.path)
             if entry.kind == "favorite":
-                name = f"★ {entry.name}"
+                name = entry.name
             else:
                 name = favorite["name"] if favorite else folder_name(entry.path)
             name = metrics.elidedText(name, Qt.TextElideMode.ElideRight, limit // 2)
