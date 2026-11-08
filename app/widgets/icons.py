@@ -39,6 +39,7 @@ import app.theme as theme
 #: scissors = 카드 위 줄의 구간 편집 버튼 — 가위(자를 구간을 정한다, #309).
 #: check = 하나만 고르는 메뉴의 고른 항목 표시(✓) — 헤더바 저장 위치 · 정렬 메뉴(#495).
 #: stop = 하단바의 중지(■) — 받는 중 · 일시정지 카드를 대기로 되돌린다(#504).
+#: sort = 좁은 폭 헤더바의 정렬 아이콘(⇅) — 위 화살표 · 아래 화살표 나란히(#529).
 ICON_NAMES = (
     "pause",
     "resume",
@@ -50,6 +51,7 @@ ICON_NAMES = (
     "scissors",
     "check",
     "stop",
+    "sort",
 )
 
 _CACHE: dict[tuple[str, str, int, float, str], QPixmap] = {}
@@ -239,7 +241,34 @@ def _paint_stop(painter: QPainter, s: float, color: QColor, accent: QColor) -> N
     painter.drawRoundedRect(QRectF(s * 0.10, s * 0.10, s * 0.80, s * 0.80), radius, radius)
 
 
+def _paint_sort(painter: QPainter, s: float, color: QColor, accent: QColor) -> None:
+    """정렬 — 왼쪽은 위로, 오른쪽은 아래로 가는 화살표(⇅). 좌표는 프로토 정렬 그림(16 격자)이다."""
+    _stroke(painter, color, s * 0.11)
+    unit = s / 16
+    painter.drawLine(QPointF(5.2 * unit, 13 * unit), QPointF(5.2 * unit, 3.4 * unit))
+    painter.drawPolyline(
+        QPolygonF(
+            [
+                QPointF(2.6 * unit, 6 * unit),
+                QPointF(5.2 * unit, 3.4 * unit),
+                QPointF(7.8 * unit, 6 * unit),
+            ]
+        )
+    )
+    painter.drawLine(QPointF(10.8 * unit, 3 * unit), QPointF(10.8 * unit, 12.6 * unit))
+    painter.drawPolyline(
+        QPolygonF(
+            [
+                QPointF(8.2 * unit, 10 * unit),
+                QPointF(10.8 * unit, 12.6 * unit),
+                QPointF(13.4 * unit, 10 * unit),
+            ]
+        )
+    )
+
+
 _PAINTERS = {
+    "sort": _paint_sort,
     "pause": _paint_pause,
     "resume": _paint_resume,
     "retry": _paint_retry,

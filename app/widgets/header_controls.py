@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 import app.theme as theme
-from app.viewmodels.card_order import FILTER_KEYS
+from app.viewmodels.card_order import FILTER_KEYS, SORT_KEYS
 from app.viewmodels.save_location import SaveLocations, folder_name
 from app.widgets.widget import abbreviate_path, path_display_parts
 from app.widgets.icons import action_pixmap
@@ -414,14 +414,44 @@ class SortButton(DropButton):
 
     메뉴: 추가된 순서 · 제목순 · 채널명순 · 업로드순 · 상태순 · 구분선 · 오름차순 · 내림차순. 고른
     기준 · 방향에만 ✓. 폭은 가장 긴 이름이 들어가는 고정 폭이다 — 고른 정렬과 무관하다(프로토 11k).
+
+    좁은 폭에서는 아이콘 모양이 된다(`setCompact` — #529, 설계 §2 「좁은 폭」): 같은 테두리 상자의
+    정사각에 ⇅만 그리고, 기본 정렬(추가된 순서 오름차순)이 아니면 상자 오른쪽 위 안쪽에 강조색 점을 찍는다.
+    글이 없으므로 툴팁 「정렬: <이름>」을 단다. 누르면 같은 메뉴가 열린다.
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__("", parent)
         self._order = None
+        self._compact = False
         self.menuWidget = ChoiceMenu(self)
         self.menuWidget.aboutToShow.connect(self._fillMenu)
         self.setMenu(self.menuWidget)
+
+    def isCompact(self) -> bool:
+        """아이콘 모양인지."""
+        return self._compact
+
+    def setCompact(self, compact: bool) -> None:
+        """글 모양 ↔ 아이콘 모양을 바꾼다 — 폭 · 툴팁이 함께 바뀐다."""
+        if compact == self._compact:
+            return
+        self._compact = compact
+        self.applyWidth()
+        self._refreshTip()
+        self.update()
+
+    def textWidth(self) -> int:
+        """글 모양의 폭 — 가장 긴 이름이 들어가는 폭(지금 모양과 무관)."""
+        return max(self.widthFor(name) for name in self.names().values())
+
+    def iconWidth(self) -> int:
+        """아이콘 모양의 폭 — 버튼 높이의 정사각(지금 모양과 무관)."""
+        return self.sizeHint().height()
+
+    def isDefaultSort(self) -> bool:
+        """기본 정렬(추가된 순서 오름차순)인지 — 아니면 아이콘 모양에 점을 찍는다."""
+        return self._order.sortBy() == SORT_KEYS[0] and not self._order.isDescending()
 
     def names(self) -> dict[str, str]:
         """정렬 기준 키 → 보이는 이름(번역)."""
@@ -441,11 +471,45 @@ class SortButton(DropButton):
         self._refresh()
 
     def applyWidth(self) -> None:
-        """가장 긴 이름이 들어가는 폭을 건다 — 글꼴 · 번역이 바뀌면 다시 부른다."""
-        self.setFixedWidth(max(self.widthFor(name) for name in self.names().values()))
+        """지금 모양의 폭을 건다 — 글 모양은 가장 긴 이름, 아이콘 모양은 정사각. 글꼴 · 번역이 바뀌면 다시 부른다."""
+        self.setFixedWidth(self.iconWidth() if self._compact else self.textWidth())
 
     def _refresh(self) -> None:
         self.setFullText(self.names()[self._order.sortBy()])
+        self._refreshTip()
+
+    def _refreshTip(self) -> None:
+        """아이콘 모양이면 「정렬: <이름>」 툴팁, 글 모양이면 없음(보이는 글을 되풀이하지 않는다)."""
+        tip = self.tr("Sort: {0}").format(self.fullText()) if self._compact else ""
+        if self.toolTip() != tip:
+            self.setToolTip(tip)
+
+    def paintEvent(self, event) -> None:
+        """글 모양은 펼침 버튼 그대로, 아이콘 모양은 상자 · ⇅ · (기본 정렬이 아니면) 점을 그린다."""
+        if not self._compact:
+            super().paintEvent(event)
+            return
+        option = QStyleOptionToolButton()
+        self.initStyleOption(option)
+        option.text = ""
+        option.icon = QIcon()
+        option.features &= ~QStyleOptionToolButton.ToolButtonFeature.HasMenu
+        painter = QStylePainter(self)
+        painter.drawComplexControl(QStyle.ComplexControl.CC_ToolButton, option)
+        tokens = theme.current_tokens()
+        enabled = self.isEnabled()
+        side = theme.METRICS["sortGlyph"]
+        color = tokens["textMuted" if enabled else "textDisabled"]
+        pixmap = action_pixmap("sort", color, side, self.devicePixelRatioF())
+        painter.drawPixmap((self.width() - side) // 2, (self.height() - side) // 2, pixmap)
+        if self._order is not None and not self.isDefaultSort():
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(tokens["accent" if enabled else "textDisabled"]))
+            inset = theme.METRICS["sortDotInset"]
+            radius = theme.METRICS["sortDot"]
+            painter.drawEllipse(QPointF(self.width() - inset, inset), radius, radius)
+        painter.end()
 
     def _fillMenu(self) -> None:
         menu = self.menuWidget
@@ -462,6 +526,7 @@ class SortButton(DropButton):
 
 
 CHIP_COUNT_RESERVE = 999  # 칩 폭을 잡는 숫자 — 세 자리까지 칩 · 헤더바 · 창 최소폭이 그대로다(옛 카운트의 999/999 예약)
+CHIP_GAP = 4  # 칩 사이 간격(px) — 좁은 폭의 드롭다운 ↔ 실패 칩도 같다
 
 
 class FilterChips(QWidget):
@@ -470,15 +535,29 @@ class FilterChips(QWidget):
     고른 칩만 눌린 상태다. 고른 칩을 다시 누르면 전체로 돌아간다(설계 §2 — 뜻은 `CardOrder.setFilter`).
     실패 칩은 실패 카드가 있을 때 강조한다(`alert` 속성 → 전역 QSS). 칩 폭은 숫자 세 자리
     (`CHIP_COUNT_RESERVE`)가 들어가는 고정 폭이다 — 숫자가 바뀌어도 줄이 움직이지 않는다.
+
+    좁은 폭에서는 드롭다운 모양이 된다(`setCompact` — #529, 설계 §2 「좁은 폭」): 칩 여섯 대신 고른 필터
+    「이름 N」을 보이는 드롭다운 하나(`dropButton`)와, 실패 카드가 있을 때만 그 옆에 남는 실패 칩이다.
+    실패 칩은 넓은 모양의 그 칩 그대로라 다시 누르면 전체로 돌아간다. 고른 필터는 뷰모델에 있어 모양이
+    바뀌어도 그대로다. 숫자는 뷰모델이 세어 둔 값만 읽는다 — 카드 목록을 돌지 않는다.
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._order = None
+        self._compact = False
         self.chips: dict[str, QPushButton] = {}
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
+        layout.setSpacing(CHIP_GAP)
+        # 좁은 폭 드롭다운 — 칩 줄 맨 앞, 평소에는 숨는다
+        self.dropButton = DropButton("", self)
+        self.dropButton.setObjectName("filterDropButton")
+        self.dropMenu = ChoiceMenu(self.dropButton)
+        self.dropMenu.aboutToShow.connect(self._fillMenu)
+        self.dropButton.setMenu(self.dropMenu)
+        self.dropButton.hide()
+        layout.addWidget(self.dropButton)
         for key in FILTER_KEYS:
             chip = QPushButton(self)
             chip.setObjectName(f"filterChip_{key}")
@@ -520,14 +599,55 @@ class FilterChips(QWidget):
         self._refreshChecked()
 
     def applyWidth(self) -> None:
-        """칩마다 「이름 999」가 들어가는 폭을 건다 — 글꼴 · 번역이 바뀌면 다시 부른다."""
-        for key, name in self.names().items():
+        """칩마다 「이름 999」, 드롭다운에 가장 긴 「이름 999」가 들어가는 폭을 건다 — 글꼴 · 번역이 바뀌면 다시 부른다."""
+        names = self.names()
+        for key, name in names.items():
             chip = self.chips[key]
             shown = chip.text()
             chip.setText(f"{name} {CHIP_COUNT_RESERVE}")
             chip.ensurePolished()
             chip.setFixedWidth(chip.sizeHint().width())
             chip.setText(shown)
+        self.dropButton.setFixedWidth(
+            max(self.dropButton.widthFor(f"{name} {CHIP_COUNT_RESERVE}") for name in names.values())
+        )
+
+    def isCompact(self) -> bool:
+        """드롭다운 모양인지."""
+        return self._compact
+
+    def setCompact(self, compact: bool) -> None:
+        """칩 모양 ↔ 드롭다운 모양을 바꾼다."""
+        if compact == self._compact:
+            return
+        self._compact = compact
+        self._applyShape()
+
+    def chipsWidth(self) -> int:
+        """칩 모양의 폭 — 칩 여섯 고정 폭과 사이 간격(지금 모양과 무관)."""
+        widths = [chip.minimumWidth() for chip in self.chips.values()]
+        return sum(widths) + CHIP_GAP * (len(widths) - 1)
+
+    def compactWidth(self, failed: bool) -> int:
+        """드롭다운 모양의 폭 — 드롭다운과, `failed`면 실패 칩 · 간격(지금 모양과 무관)."""
+        width = self.dropButton.minimumWidth()
+        if failed:
+            width += CHIP_GAP + self.chips["failed"].minimumWidth()
+        return width
+
+    def hasFailed(self) -> bool:
+        """실패 카드가 있는지 — 좁은 폭에서 실패 칩이 남는지."""
+        return self._order is not None and self._order.counts()["failed"] > 0
+
+    def _applyShape(self) -> None:
+        """지금 모양대로 드롭다운 · 칩을 보이거나 숨긴다."""
+        compact = self._compact
+        self.dropButton.setVisible(compact)
+        for key, chip in self.chips.items():
+            if key == "failed":
+                chip.setVisible(not compact or self.hasFailed())
+            else:
+                chip.setVisible(not compact)
 
     def _refreshCounts(self) -> None:
         counts = self._order.counts()
@@ -540,11 +660,36 @@ class FilterChips(QWidget):
         if failed.property("alert") != alert:
             failed.setProperty("alert", alert)
             theme.repolish(failed)
+        self._refreshDrop()
+        if self._compact:
+            self._applyShape()  # 실패 0 ↔ N — 실패 칩이 나타나거나 숨는다
 
     def _refreshChecked(self) -> None:
         chosen = self._order.filterKey()
         for key, chip in self.chips.items():
             chip.setChecked(key == chosen)
+        self._refreshDrop()
+
+    def _refreshDrop(self) -> None:
+        """드롭다운 닫힌 글 = 고른 필터 「이름 N」."""
+        key = self._order.filterKey()
+        self.dropButton.setFullText(f"{self.names()[key]} {self._order.counts()[key]}")
+
+    def _fillMenu(self) -> None:
+        """드롭다운 메뉴를 지금 숫자로 채운다 — 고른 필터에만 ✓. 고른 것을 다시 골라도 그대로 둔다."""
+        menu = self.dropMenu
+        menu.clear()
+        order = self._order
+        counts = order.counts()
+        for key, name in self.names().items():
+            action = menu.addChoice(f"{name} {counts[key]}", key)
+            action.triggered.connect(lambda _=False, k=key: self._pick(k))
+        menu.mark(order.filterKey())
+
+    def _pick(self, key: str) -> None:
+        """드롭다운에서 고른다 — 이미 고른 필터면 바꾸지 않는다(칩의 「다시 누르면 전체」와 다르다)."""
+        if key != self._order.filterKey():
+            self._order.setFilter(key)
 
 
 SPIN_INTERVAL_MS = 80  # 도는 표시 한 칸의 시간(ms) — 한 바퀴 약 1초(12칸)

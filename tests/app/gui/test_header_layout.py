@@ -143,8 +143,8 @@ class TestStructure:
                 cursor = cursor.nextInFocusChain()
             return None
 
-        window.show()
-        QApplication.processEvents()
+        # 칩 여섯이 보이는 넓은 모양 — 좁은 폭 모양의 차례는 test_shell_narrow(#529)
+        _at_width(window, "wide")
         chain = [
             window.menuDownloadButton,
             window.menuSettingsButton,

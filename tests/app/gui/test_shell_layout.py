@@ -25,17 +25,19 @@
 합산한다 — 제품이 틀리면 테스트도 같이 틀리기 때문이다.
 """
 
+import math
 from collections.abc import Iterator
 
 import pytest
 from PySide6.QtCore import QMimeData, QPoint, QRect, QSize, Qt
-from PySide6.QtGui import QDragEnterEvent, QImage
+from PySide6.QtGui import QDragEnterEvent, QFontMetricsF, QImage
 from PySide6.QtWidgets import QApplication, QScrollArea
 
 import CVDv2 as main_module
 import app.theme as theme
 from app.views.mainWindow import VodDownloader
 from app.viewmodels.data import ContentItem
+from app.widgets.footer_bar import SPEED_SAMPLE
 from core.models.download_state import DownloadState
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
 from typing import Never
@@ -152,23 +154,25 @@ def _leaf_min(w) -> int:
 def _independent_content_minimum(win: VodDownloader) -> int:
     """콘텐츠 열 최소폭을 leaf 위젯 힌트로 **독립 합산**한다(제품의 `_contentMinimumWidth` 미사용).
 
-    메뉴바(#492): 「VOD 다운」 + 간격 + 「설정」(메뉴바 프레임은 테두리 · 안쪽 여백 0).
-    헤더바(#492 · #495): max(1줄 URL 입력 + 저장 위치 버튼 + VOD 추가 + 간격 2개,
-    2줄 칩 여섯 + 칩 사이 간격 + 정렬 버튼 + 완료 지우기 + 간격 2개) + 프레임 안쪽 여백·테두리.
-    하단바: 다운로드 + 중지 + 간격 + 프레임 안쪽 여백·테두리(#495 — 카운트 없음, 완료 지우기는 헤더바로).
-    열 = max(메뉴바 · 헤더바 · 하단바 각각 + 좌우 outerMargin, 목록 최소).
-    좌우 outerMargin은 세 바의 행에만 붙고 목록은 창 끝까지 간다(v2.10.1).
+    메뉴바(#492): 「VOD 다운」 + 간격 + 「설정」(메뉴바 프레임은 테두리 · 안쪽 여백 0, 좌우 barPadX).
+    헤더바(#492 · #495 · #529): max(1줄 URL 입력 + 저장 위치 버튼 + VOD 추가 + 간격 2개,
+    2줄을 끝까지 줄인 모양 — 상태 드롭다운 + 칩 간격 + 실패 칩 + 정렬 아이콘(버튼 높이의 정사각) +
+    완료 지우기 + 간격 2개) + 프레임 안쪽 여백·테두리.
+    하단바(#529): 끝까지 줄인 모양 — 전체 속도 견본 글 + 실행 결과 견본 글 + 다운로드 + 중지 + 간격 3개
+    + 프레임 안쪽 여백·테두리.
+    열 = max(메뉴바 · 헤더바 · 하단바 각각 + 좌우 여백, 목록 최소).
+    좌우 outerMargin은 헤더 · 하단 바의 행에만 붙고 목록은 창 끝까지 간다(v2.10.1).
     """
     pad, outer = theme.METRICS["framePadding"], theme.METRICS["outerMargin"]
     border = win.headerFrame.frameWidth()
     line = (win.urlInput, win.saveLocationButton, win.fetchButton)
     first = sum(_leaf_min(w) for w in line) + 2 * win.urlRowLayout.spacing()
-    chips = list(win.filterChips.values())
     second = (
-        sum(_leaf_min(w) for w in chips)
-        + (len(chips) - 1) * win.filterChipBar.layout().spacing()
+        _leaf_min(win.filterChipBar.dropButton)
+        + win.filterChipBar.layout().spacing()
+        + _leaf_min(win.filterChips["failed"])
         + 2 * win.filterRowLayout.spacing()
-        + _leaf_min(win.sortButton)
+        + win.sortButton.sizeHint().height()
         + _leaf_min(win.clearFinishedButton)
     )
     header = max(first, second) + 2 * (pad + border)
@@ -178,10 +182,23 @@ def _independent_content_minimum(win: VodDownloader) -> int:
         + _leaf_min(win.menuSettingsButton)
     )
     info_gap = win.infoLayout.spacing()
-    info = _leaf_min(win.downloadButton) + _leaf_min(win.stopButton)
-    info += info_gap + 2 * (pad + border)  # 간격 하나 — 빈칸(크기 0)은 간격을 받지 않는다
+    speed = win.footerMonitor.labels["speed"]
+    speed.ensurePolished()
+    win.runResultLabel.ensurePolished()
+    result_sample = (
+        win.runResultLabel.tr("Completed {0}").format(999)
+        + " · "
+        + win.runResultLabel.tr("Failed {0}").format(999)
+    )
+    info = (
+        math.ceil(QFontMetricsF(speed.font()).horizontalAdvance(SPEED_SAMPLE))
+        + math.ceil(QFontMetricsF(win.runResultLabel.font()).horizontalAdvance(result_sample))
+        + _leaf_min(win.downloadButton)
+        + _leaf_min(win.stopButton)
+    )
+    info += 3 * info_gap + 2 * (pad + border)  # 간격 셋 — 빈칸(크기 0)은 간격을 받지 않는다
     return max(
-        menu + 2 * outer,
+        menu + 2 * theme.METRICS["barPadX"],
         header + 2 * outer,
         info + 2 * outer,
         win.listView.minimumSizeHint().width(),

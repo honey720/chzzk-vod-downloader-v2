@@ -28,6 +28,7 @@ from PySide6.QtCore import (
     Qt,
     QTimer,
 )
+from PySide6.QtGui import QResizeEvent
 
 from app.system.free_space import FreeSpaceProbe
 from app.system.process_memory import log_process_memory, resident_bytes
@@ -44,10 +45,11 @@ from app.viewmodels.content_viewmodel import ContentViewModel
 import config.config as config
 from app.widgets import widget as content_widget
 from app.widgets.eliding_label import ElidingLabel
-from app.widgets.footer_bar import FooterMonitor, RunResultLabel
+from app.widgets.footer_bar import DROP_ORDER, FooterMonitor, RunResultLabel
 from app.widgets.header_controls import BusyButton, FilterChips, SaveLocationButton, SortButton
 from app.widgets.icons import IconButton
 from app.widgets.menu_button import MenuButton
+from app.widgets.narrow_steps import step_level
 from app.widgets.os_notice import DownloadEndNotice
 from app.widgets.view import ContentListView
 from core.models.download_state import DownloadState
@@ -134,6 +136,11 @@ class VodDownloader(QMainWindow):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
+        # 좁은 폭 모양 단계(#529) — 헤더바 2줄(0 칩 · 1 드롭다운 · 2 드롭다운 + 정렬 아이콘), 하단바(뺀 칸 수)
+        self._headerLevel = 0
+        self._footerLevel = 0
+        self.shapeChanges = 0  # 모양이 바뀐 횟수 — 창 크기 한 번에 한 번만 바뀌는지 테스트가 센다
+        self.minimumParts: dict[str, int] = {}  # 창 최소폭을 정한 줄마다의 폭(_contentMinimumWidth)
         self.setupUi(self)
         self.setupDynamicUi()
 
@@ -183,6 +190,8 @@ class VodDownloader(QMainWindow):
         # 헤더바 2줄 — 칩 숫자 · 고른 칩 · 정렬을 순서 뷰모델에 잇는다(#495)
         self.filterChipBar.bind(self.contentManager.order)
         self.sortButton.bind(self.contentManager.order)
+        # 실패 0 ↔ N이면 좁은 폭의 실패 칩 자리가 생기거나 없어진다 — 헤더바 2줄 모양을 다시 본다(#529)
+        self.contentManager.order.countsChanged.connect(self._applyHeaderShape)
         # 다운로드 이벤트(진행·완료·실패)는 viewmodel이 content에 직결한다 (#170)
         # — 구 릴레이 슬롯 6개(_onProgress~_onFailed)는 함께 제거됐다
         self.downloadViewModel = DownloadViewModel(self.contentManager, parent=self)
@@ -210,6 +219,8 @@ class VodDownloader(QMainWindow):
         self._sectionEditItem: ContentItem | None = None
         self.setupThreadSignals()
         self.setupSignals()
+        self._applyHeaderShape()
+        self._applyFooterShape()
 
         if self._startMaximized:
             self.showMaximized()
@@ -259,11 +270,13 @@ class VodDownloader(QMainWindow):
         self.appMenuLayout.setObjectName("appMenuLayout")
         self.menuDownloadButton = MenuButton(self.appMenuBar)  # 상태 버블 · 깜빡이는 테두리(#523)
         self.menuDownloadButton.setObjectName("menuDownloadButton")
+        self.menuDownloadButton.setProperty("role", "menu")  # 메뉴 버튼 모양(#529 — 전역 QSS)
         self.menuDownloadButton.setCheckable(True)
         self.menuDownloadButton.setChecked(True)
         self.appMenuLayout.addWidget(self.menuDownloadButton)
         self.menuSettingsButton = QPushButton(self.appMenuBar)
         self.menuSettingsButton.setObjectName("menuSettingsButton")
+        self.menuSettingsButton.setProperty("role", "menu")
         self.appMenuLayout.addWidget(self.menuSettingsButton)
         self.appMenuLayout.addStretch(1)
         # 고른 화면 메뉴는 하나 — 그룹이 배타라 눌린 「VOD 다운」을 다시 눌러도 풀리지 않는다.
@@ -390,7 +403,9 @@ class VodDownloader(QMainWindow):
         QWidget.setTabOrder(self.menuSettingsButton, self.urlInput)
         QWidget.setTabOrder(self.urlInput, self.saveLocationButton)
         QWidget.setTabOrder(self.saveLocationButton, self.fetchButton)
-        QWidget.setTabOrder(self.fetchButton, self.filterChips["all"])
+        # 좁은 폭 상태 드롭다운은 칩 앞 — 보이는 모양의 것만 Tab이 들른다(숨은 위젯은 건너뛴다)
+        QWidget.setTabOrder(self.fetchButton, self.filterChipBar.dropButton)
+        QWidget.setTabOrder(self.filterChipBar.dropButton, self.filterChips["all"])
         chips = list(self.filterChips.values())
         for before, after in zip(chips, chips[1:]):
             QWidget.setTabOrder(before, after)
@@ -446,10 +461,15 @@ class VodDownloader(QMainWindow):
         # 좌우 여백은 열(contentColumn)이 아니라 상단·하단 바의 행(headerRow·infoRow)이
         # 진다(v2.10.1) — 카드 목록은 창 좌우 끝까지 가서 세로 스크롤바가 창 끝에 붙고,
         # 카드 쪽 여백은 목록의 컨테이너 패딩이 같은 값으로 진다(app/widgets/view.py).
-        self.centralWidgetLayout.setContentsMargins(0, outer, 0, outer)
+        # 메뉴바 안쪽 여백 세로 barPadY · 가로 barPadX, 메뉴 버튼 높이 barControl(#529 — 설계 §11.2 · §11.3).
+        # 메뉴바는 열의 첫 줄이라 열 위 여백이 메뉴바 위 여백이다
+        pad_x, pad_y = theme.METRICS["barPadX"], theme.METRICS["barPadY"]
+        self.centralWidgetLayout.setContentsMargins(0, pad_y, 0, outer)
         self.centralWidgetLayout.setSpacing(8)
-        self.menuRow.setContentsMargins(outer, 0, outer, 0)
+        self.menuRow.setContentsMargins(pad_x, 0, pad_x, 0)
         self.appMenuLayout.setContentsMargins(0, 0, 0, 0)
+        for button in (self.menuDownloadButton, self.menuSettingsButton):
+            button.setFixedHeight(theme.METRICS["barControl"])
         self.headerRow.setContentsMargins(outer, 0, outer, 0)
         self.infoRow.setContentsMargins(outer, 0, outer, 0)
         self.headerFrameLayout.setContentsMargins(frame_pad, frame_pad, frame_pad, frame_pad)
@@ -610,7 +630,113 @@ class VodDownloader(QMainWindow):
         # 칩 폭을 걸기 전 값이 남아 최소폭이 칩 줄을 덜 센다(#495 — offscreen 실측 행 322 vs 항목 합 547)
         for layout in self.contentColumn.findChildren(QLayout):
             layout.invalidate()
-        return self.contentColumn.minimumSizeHint().width()
+        self.minimumParts = self._minimumParts()
+        return max(self.minimumParts.values())
+
+    def _minimumParts(self) -> dict[str, int]:
+        """창 최소폭의 줄마다 몫 — 좁은 폭 모양이 있는 줄은 끝까지 줄인 모양으로 센다 (#529).
+
+        헤더바 2줄 · 하단바를 지금 보이는 모양(칩 · 모니터링 칸)으로 세면 창이 그보다 좁아질 수 없어 줄인
+        모양이 나오지 않는다(설계 §2). 끝까지 줄인 모양은 카드 내용과 무관하게 센다 — 실패 칩은 늘 있다고
+        보고(숫자 세 자리), 하단바는 전체 속도 · 실행 결과 견본 글로 잰다. 목록은 카드 없는 목록의 최소폭이다.
+        """
+        header = self._barChrome(self.headerRow, self.headerFrame, self.headerFrameLayout)
+        footer = self._barChrome(self.infoRow, self.infoFrame, self.infoLayout)
+        gap = self.infoLayout.spacing()
+        footer_items = [
+            self.footerMonitor.sampleWidth(),
+            self.runResultLabel.sampleWidth(),
+            self.downloadButton.minimumWidth(),
+            self.stopButton.minimumWidth(),
+        ]
+        return {
+            "메뉴바": self.menuRow.minimumSize().width(),
+            "헤더바 1줄": self.urlRowLayout.minimumSize().width() + header,
+            "헤더바 2줄": self.headerRow2Needs(True)[-1] + header,
+            "목록": self.listView.minimumSizeHint().width(),
+            "하단바": sum(footer_items) + gap * (len(footer_items) - 1) + footer,
+        }
+
+    def _barChrome(self, row: QLayout, frame: QFrame, inner: QLayout) -> int:
+        """창 폭 − 그 바 안쪽 폭 — 줄의 좌우 여백 · 바 테두리 · 바 안쪽 여백. 바의 내용과 무관하다."""
+        outside = row.contentsMargins()
+        margins = inner.contentsMargins()
+        return (
+            outside.left()
+            + outside.right()
+            + 2 * frame.frameWidth()
+            + margins.left()
+            + margins.right()
+        )
+
+    def headerRow2Needs(self, failed: bool) -> list[int]:
+        """헤더바 2줄이 단계마다 바라는 폭 — 0 칩 · 1 드롭다운 · 2 드롭다운 + 정렬 아이콘 (#529).
+
+        지금 보이는 모양과 무관하다 — 칩 · 드롭다운 · 정렬 두 모양의 고정 폭과 「완료 지우기」 폭, 사이
+        간격(늘어나는 빈칸 옆에는 간격이 없다)으로 센다. 줄어드는 폭이 큰 것(칩)부터 줄인다(설계 §2).
+
+        Args:
+            failed: 좁은 폭에서 실패 칩이 드롭다운 옆에 남는지(실패 카드가 있는지)
+        """
+        chips = self.filterChipBar
+        sort = self.sortButton
+        tail = self.clearFinishedButton.sizeHint().width() + 2 * self.filterRowLayout.spacing()
+        compact = chips.compactWidth(failed)
+        return [
+            chips.chipsWidth() + sort.textWidth() + tail,
+            compact + sort.textWidth() + tail,
+            compact + sort.iconWidth() + tail,
+        ]
+
+    def footerNeeds(self) -> list[int]:
+        """하단바가 단계마다 바라는 폭 — 단계 = 뺀 모니터링 칸 수(연결 · 메모리 · 남은 시간 · 여유) (#529).
+
+        지금 뺀 칸과 무관하다 — 값이 있는 칸의 글 폭, 실행 결과 글(보일 때), 버튼 둘, 사이 간격으로 센다.
+        모니터링 묶음은 칸이 다 빠져도 레이아웃 항목으로 남아 간격 하나를 차지한다.
+        """
+        fixed = [self.downloadButton.minimumWidth(), self.stopButton.minimumWidth()]
+        if not self.runResultLabel.isHidden():
+            fixed.insert(0, self.runResultLabel.sizeHint().width())
+        gap = self.infoLayout.spacing()
+        needs = []
+        for dropped in range(len(DROP_ORDER) + 1):
+            items = [self.footerMonitor.needWidth(dropped), *fixed]
+            needs.append(sum(items) + gap * (len(items) - 1))
+        return needs
+
+    def _barRoom(self, row: QLayout, frame: QFrame, inner: QLayout) -> int:
+        """그 바 안쪽에 쓸 수 있는 폭 — 창 폭에서 셈한다(지금 보이는 위젯 폭으로 재지 않는다, #529)."""
+        return self.width() - self._barChrome(row, frame, inner)
+
+    def _applyHeaderShape(self) -> None:
+        """헤더바 2줄을 창 폭에 맞는 단계의 모양으로 — 칩 → 드롭다운, 정렬 글 → 아이콘 (#529)."""
+        room = self._barRoom(self.headerRow, self.headerFrame, self.headerFrameLayout)
+        needs = self.headerRow2Needs(self.filterChipBar.hasFailed())
+        level = step_level(needs, room, self._headerLevel)
+        if level != self._headerLevel:
+            self._headerLevel = level
+            self.shapeChanges += 1
+        self.filterChipBar.setCompact(level >= 1)
+        self.sortButton.setCompact(level >= 2)
+
+    def _applyFooterShape(self) -> None:
+        """하단바 모니터링을 창 폭에 맞는 칸 수로 — 연결 · 메모리 · 남은 시간 · 여유 공간 차례로 뺀다 (#529)."""
+        room = self._barRoom(self.infoRow, self.infoFrame, self.infoLayout)
+        level = step_level(self.footerNeeds(), room, self._footerLevel)
+        if level != self._footerLevel:
+            self._footerLevel = level
+            self.shapeChanges += 1
+        self.footerMonitor.setDropped(level)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        """창 폭이 바뀌면 헤더바 2줄 · 하단바의 좁은 폭 모양을 다시 고른다 (#529).
+
+        창 최소폭은 여기서 다시 세지 않는다 — 끝까지 줄인 모양의 고정값이라 창 크기와 무관하다.
+        """
+        super().resizeEvent(event)
+        if event.size().width() != event.oldSize().width():
+            self._applyHeaderShape()
+            self._applyFooterShape()
 
     def _contentMinimumHeight(self) -> int:
         """메뉴바 · 헤더바 · 하단바가 다 보이고 목록에 카드 한 장이 다 보이는 높이 (#492).
@@ -993,6 +1119,7 @@ class VodDownloader(QMainWindow):
         memory = resident_bytes() if readings else None
         free = self.freeSpace.value(self.saveLocations.current())
         self.footerMonitor.setSnapshot(combine_readings(readings, memory, free))
+        self._applyFooterShape()  # 글 폭이 바뀌었을 수 있다 — 칸을 빼거나 되살린다(#529)
 
     def _onFreeSpaceMeasured(self, path: str, _free) -> None:
         """여유 공간을 다 쟀다 — 지금 위치의 것이면 바로 보인다."""
@@ -1123,6 +1250,7 @@ class VodDownloader(QMainWindow):
         """실행 결과가 바뀌었다 — 하단바 결과 글을 고친다 (#504)."""
         finished, failed = self.runResult.counts()
         self.runResultLabel.showResult(self.runResult.isShown(), finished, failed)
+        self._applyFooterShape()
 
     def onDownloadAllFinished(self) -> None:
         """다운로드 작업이 끝났다 — 결과를 보이고 알린 뒤 다운로드 뒤 동작(절전 · 종료)을 한다.
