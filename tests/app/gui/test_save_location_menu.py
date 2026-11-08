@@ -423,7 +423,10 @@ class TestRowsAndLimits:
 
     def test_a_long_path_is_shortened_like_the_card(self, make_window, tmp_path) -> None:
         """폭이 모자라면 경로는 뿌리/…/마지막 폴더로 접히고 그래도 모자라면 마지막 폴더 가운데가 줄어야 한다."""
+        import math
         import os
+
+        from PySide6.QtGui import QFontMetricsF
 
         from app.widgets.header_controls import fit_path
 
@@ -431,13 +434,43 @@ class TestRowsAndLimits:
         win = make_window()
         metrics = win.saveLocationButton.menuWidget.fontMetrics()
         last = os.path.basename(path)  # 마지막 폴더 — 구분자는 OS마다 다르다
-        folded = fit_path(metrics, path, metrics.horizontalAdvance("~/…/" + last))
+        # 칸 = 접은 글의 소수 폭 올림 — 정수 폭은 소수 폭 글꼴 엔진에서 글보다 좁을 수 있다(#527)
+        room = math.ceil(QFontMetricsF(metrics).horizontalAdvance("~/…/" + last))
+        folded = fit_path(metrics, path, room)
         squeezed = fit_path(metrics, path, 120)
         assert folded.endswith(last) and "/…/" in folded
         assert (
             "…" in squeezed[len(squeezed.split("/")[0]) + 3 :]
             and metrics.horizontalAdvance(squeezed) <= 120
         )
+
+    def test_a_path_that_fits_keeps_its_last_folder_when_the_text_width_is_fractional(
+        self, qapp: QApplication
+    ) -> None:
+        """글 폭이 소수인 글꼴에서 칸이 경로의 정수 글 폭이면 fit_path가 마지막 폴더 이름을 온전히 남겨야 한다.
+
+        정수 글 폭 칸에서는 경로가 말줄임되는 소수 글자 간격, 경로 = 뿌리/중간 폴더/긴 마지막 폴더,
+        칸 = 정수 글 폭 -> 끝이 「/마지막 폴더」 (#527)
+        """
+        import os
+
+        from PySide6.QtGui import QFontMetrics
+        from PySide6.QtWidgets import QMenu
+
+        from app.widgets.header_controls import fit_path
+        from app.widgets.widget import path_display_parts
+        from tests.app.gui.test_header_layout import _font_whose_rounded_width_elides
+
+        last = (
+            "마지막 폴더 이름이 꽤 긴 다시보기 보관함"  # 가운데 말줄임이 이 이름 안에 떨어지는 길이
+        )
+        path = os.path.join(os.path.abspath(os.sep), "중간 폴더 이름", last)  # 뿌리 아래 두 단계
+        full = path_display_parts(path)[0]
+        assert full.endswith("/" + last), "전제: ①단계 글이 중간 폴더를 접지 않는다"
+        font = _font_whose_rounded_width_elides(QMenu().font(), full)
+        metrics = QFontMetrics(font)
+        shown = fit_path(metrics, path, metrics.horizontalAdvance(full))
+        assert shown.endswith("/" + last)
 
     def test_default_location_row_is_off_at_the_default_and_on_elsewhere(
         self, make_window, folders

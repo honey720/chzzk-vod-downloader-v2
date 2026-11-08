@@ -9,7 +9,16 @@
 import math
 
 from PySide6.QtCore import QPointF, QRect, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QFontMetricsF, QIcon, QPainter, QPen, QPolygonF
+from PySide6.QtGui import (
+    QAction,
+    QColor,
+    QFontMetrics,
+    QFontMetricsF,
+    QIcon,
+    QPainter,
+    QPen,
+    QPolygonF,
+)
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -130,12 +139,12 @@ class ChoiceMenu(QMenu):
             else:
                 color = tokens["textDisabled"]
             painter.setPen(QColor(color))
-            room = max(20, rect.width() - metrics.horizontalAdvance(head) - 3 * MENU_DETAIL_GAP)
+            room = max(20, rect.width() - text_width(metrics, head) - 3 * MENU_DETAIL_GAP)
             path = action.property("detailPath")
             if path:
                 # 「(없음)」 같은 꼬리는 줄이지 않고 남긴다 — 줄이는 것은 경로뿐(카드 표기 차례)
                 tail = detail[len(abbreviate_path(path)) :]
-                shown = fit_path(metrics, path, room - metrics.horizontalAdvance(tail)) + tail
+                shown = fit_path(metrics, path, room - text_width(metrics, tail)) + tail
             else:
                 shown = metrics.elidedText(detail, Qt.TextElideMode.ElideMiddle, room)
             painter.drawText(
@@ -145,18 +154,30 @@ class ChoiceMenu(QMenu):
             painter.end()
 
 
-def fit_path(metrics, path: str, room: int) -> str:
+def text_width(metrics: QFontMetrics, text: str) -> int:
+    """글이 줄지 않고 들어가는 칸 폭 — 소수 글 폭을 올림한다.
+
+    정수 `horizontalAdvance`는 반올림이라 글자 폭이 소수인 글꼴 엔진(Windows 실제 화면)에서 실제 글보다
+    좁을 수 있다. 그 칸으로 부른 `elidedText`는 소수 폭으로 비교해 글을 말줄임한다(#525 · #527).
+    """
+    return math.ceil(QFontMetricsF(metrics).horizontalAdvance(text))
+
+
+def fit_path(metrics: QFontMetrics, path: str, room: int) -> str:
     """경로를 폭에 맞춘 글 — 카드 경로 라벨(PathLabel)과 같은 차례로 줄인다 (#495 inbox 71).
 
     ① 전체 축약형(홈은 `~`, 중간 폴더 접기 — `abbreviate_path`) → ② `뿌리/…/마지막 폴더` → ③ 마지막
-    폴더만 가운데 말줄임. 조각은 카드와 같은 함수(`path_display_parts`)에서 받는다.
+    폴더만 가운데 말줄임. 조각은 카드와 같은 함수(`path_display_parts`)에서 받는다. 들어가는지는
+    `text_width`로 잰다 — 들어가면 `elidedText`에 다시 맡기지 않는다(#527).
     """
     full, prefix, last = path_display_parts(path)
-    if metrics.horizontalAdvance(full) <= room or not last:
+    if text_width(metrics, full) <= room:
+        return full
+    if not last:
         return metrics.elidedText(full, Qt.TextElideMode.ElideMiddle, room)
-    if metrics.horizontalAdvance(prefix + last) <= room:
+    if text_width(metrics, prefix + last) <= room:
         return prefix + last
-    rest = max(room - metrics.horizontalAdvance(prefix), 0)
+    rest = max(room - text_width(metrics, prefix), 0)
     return prefix + metrics.elidedText(last, Qt.TextElideMode.ElideMiddle, rest)
 
 
@@ -206,12 +227,10 @@ class DropButton(QToolButton):
     def widthFor(self, text: str) -> int:
         """그 글이 줄지 않고 들어가는 버튼 폭 — 테두리 · 여백 · 도형 · ▾를 더한다.
 
-        글 폭은 소수 폭을 올림한다. 정수 `horizontalAdvance`는 반올림이라 글자 폭이 소수인 글꼴
-        엔진(Windows 실제 화면)에서 실제 글보다 좁을 수 있고, 그리기의 `elidedText`는 소수 폭으로
-        비교해 그 글을 말줄임한다(#525).
+        글 폭은 `text_width`로 잰다(소수 폭 올림, #525).
         """
         self.ensurePolished()
-        return self._chrome() + math.ceil(QFontMetricsF(self.fontMetrics()).horizontalAdvance(text))
+        return self._chrome() + text_width(self.fontMetrics(), text)
 
     def sizeHint(self) -> QSize:
         self.ensurePolished()
