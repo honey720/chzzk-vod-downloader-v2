@@ -787,6 +787,8 @@ class VodDownloader(QMainWindow):
         목록은 열의 항목(위젯 하나)으로만 비우고 카드 위젯 안으로는 들어가지 않는다 — 콘텐츠 열 전체를
         돌면(`_flushLayoutCaches`) 카드 1000장에서 한 번에 약 220ms가 걸렸다(#530 리뷰, offscreen 실측).
         """
+        # 하단바: 지금은 하단 칸 라벨 최소폭이 1px이라 비우지 않아도 가로 스크롤바가 생기지 않지만, 칸 최소폭이
+        # 바뀌면 필요해지므로 함께 비운다
         for frame in (self.appMenuBar, self.headerFrame, self.infoFrame):
             for widget in (frame, *frame.findChildren(QWidget)):
                 widget.updateGeometry()

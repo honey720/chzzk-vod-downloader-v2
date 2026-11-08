@@ -304,11 +304,13 @@ def test_a_shape_change_does_not_touch_card_widgets(
         finally:
             flushing["on"] = False
 
-    monkeypatch.setattr(QWidget, "updateGeometry", spy)
-    monkeypatch.setattr(VodDownloader, "_flushBarCaches", flush)
     before = window.headerShapeChanges
-    window.resize(need - 1, 700)
-    monkeypatch.undo()
+    # 스파이만 되돌린다 — window 픽스처의 여유 공간 대역은 끝까지 남는다(#530 리뷰)
+    with monkeypatch.context() as patch:
+        patch.setattr(QWidget, "updateGeometry", spy)
+        patch.setattr(VodDownloader, "_flushBarCaches", flush)
+        window.resize(need - 1, 700)
+    assert window.freeSpace.value("") == 50 * GIB, "전제: 픽스처의 여유 공간 대역이 남아 있다"
     assert window.headerShapeChanges - before == 1, "전제: 모양이 바뀌었다"
     assert any(window.headerFrame.isAncestorOf(w) for w in touched), "전제: 바 위젯은 비웠다"
     list_view = window.listView
