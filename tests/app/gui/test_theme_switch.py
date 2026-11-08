@@ -37,6 +37,7 @@ from PySide6.QtWidgets import QApplication
 
 import CVDv2 as main_module
 import app.theme as theme
+from app.system.free_space import FreeSpaceProbe
 from app.views.mainWindow import VodDownloader
 from app.viewmodels.data import ContentItem
 from core.models.download_state import DownloadState
@@ -83,8 +84,13 @@ def theme_sandbox(qapp) -> Iterator[None]:
         _restore_global_state(qapp, snapshot)
 
 
+FIXED_FREE_BYTES = (
+    50 * 1024**3
+)  # 두 장면이 하단바에 보이는 여유 공간(50 GiB) — 실제 디스크 값과 무관한 고정값
+
+
 @pytest.fixture
-def _theme_sandbox(qapp, monkeypatch) -> Iterator[None]:
+def _theme_sandbox(qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     class _FailingSession:
         def head(self, *a, **k) -> Never:
             raise RuntimeError("network disabled in tests")
@@ -93,6 +99,10 @@ def _theme_sandbox(qapp, monkeypatch) -> Iterator[None]:
             raise RuntimeError("network disabled in tests")
 
     monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
+    # 하단바 여유 공간을 두 장면에서 같게 고정한다 — 실제 디스크를 장면마다 비동기로 재면 값(0.1GB 단위)이나
+    # 측정이 끝나는 시점이 갈려 하단바만 다른 화소가 났다(#531). 하단바는 비교 범위에 그대로 둔다
+    monkeypatch.setattr(FreeSpaceProbe, "request", lambda self, path: None)
+    monkeypatch.setattr(FreeSpaceProbe, "value", lambda self, path: FIXED_FREE_BYTES)
     with theme_sandbox(qapp):
         yield
 
@@ -283,6 +293,9 @@ def _assert_key_parts_shown(scene: Scene) -> None:
     shown(w.urlInput)
     shown(w.fetchButton)
     shown(w.downloadButton)
+    shown(
+        w.footerMonitor.labels["free"]
+    )  # 하단바가 빈 채로 비교되지 않게 — 여유 공간 칸이 보인다(#531)
     assert w.listView.viewport().isVisible()
     for state in STATES:
         card = scene.card(state)
