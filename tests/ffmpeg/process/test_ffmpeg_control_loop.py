@@ -151,11 +151,12 @@ def test_the_timeout_still_applies_after_a_pause(
 
 
 def test_a_check_that_raises_still_ends_the_paused_ffmpeg(
-    tmp_path: Path, launched: list[subprocess.Popen]
+    tmp_path: Path, launched: list[subprocess.Popen], polls: list[float]
 ) -> None:
-    """일시정지 중 중지 확인 콜백이 예외를 내면 그 예외가 올라오고 ffmpeg는 끝나 있어야 한다 (#534 리뷰).
+    """일시정지로 멈춘 뒤 중지 확인 콜백이 예외를 내면 그 예외가 올라오고 ffmpeg는 끝나 있어야 한다 (#534 리뷰).
 
-    일하는 명령 · 일시정지 켬 -> 중지 확인이 RuntimeError -> RuntimeError, 프로세스 끝남
+    일하는 명령 · 일시정지 켬 · 멈춘 뒤 확인이 몇 번 더 불림 -> 중지 확인이 RuntimeError
+    -> RuntimeError, 프로세스 끝남(멈춘 채로는 스스로 끝나지 않는다)
     """
     paused, broken = threading.Event(), threading.Event()
 
@@ -168,6 +169,9 @@ def test_a_check_that_raises_still_ends_the_paused_ffmpeg(
     run = _Run(_work(output), timeout=300, should_pause=paused.is_set, should_stop=check)
     _wait_until(lambda: _working(launched, output) is not None, "일하는 ffmpeg가 뜨지 않았다")
     paused.set()
+    start = len(polls)
+    # 일시정지를 켠 뒤 확인이 두 번 넘게 불렸으면 첫 확인에서 멈추기가 끝난 뒤다
+    _wait_until(lambda: len(polls) >= start + 3, "일시정지 뒤 확인이 불리지 않았다")
     broken.set()
     _wait_until(run.finished, "확인이 예외를 낸 뒤 끝나지 않았다")
     assert isinstance(run.error, RuntimeError)
