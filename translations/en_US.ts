@@ -749,6 +749,10 @@ Check your connection and cookies, then open this window again.</translation>
         <translation>Status</translation>
     </message>
     <message>
+        <source>Sort: {0}</source>
+        <translation>Sort: {0}</translation>
+    </message>
+    <message>
         <source>Ascending</source>
         <translation>Ascending</translation>
     </message>

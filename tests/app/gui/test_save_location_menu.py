@@ -234,6 +234,10 @@ class TestChoosing:
         r1 = folders("최근 폴더")
         _seed(recentPaths=[r1])
         win = make_window()
+        win.resize(win.minimumWidth() + 900, win.height())  # 저장 위치 버튼이 글 모양인 폭(#529)
+        win.show()
+        QApplication.processEvents()
+        assert not win.saveLocationButton.isCompact(), "전제: 글 모양"
         _choice(_open(win), "recent", r1).trigger()
         assert win.saveLocations.current() == r1
         assert win.saveLocationButton.toolTip() == r1

@@ -214,6 +214,15 @@ QPushButton#menuDownloadButton {
     padding-right: @menuButtonPadRight;
 }
 
+/* 메뉴바 메뉴 버튼 모양(#529 — 설계 §11.3 · §11.7): 바 컨트롤 높이(@barControl)는 코드가 건다
+ * (mainWindow._applyLayoutMetrics), 모서리는 컨트롤 반경. 위아래 여백은 0으로 두고 글을 높이 가운데에 둔다.
+ * 호버 면 · 초점 테두리는 S3-3 */
+QPushButton[role="menu"] {
+    border-radius: @controlRadius;
+    padding-top: 0px;
+    padding-bottom: 0px;
+}
+
 QPushButton:hover {
     background-color: @surfaceHover;
     border-color: @borderStrong;

@@ -29,9 +29,29 @@ from tests.app.gui.card_helpers import hold_style
 WIDTHS = ("min", "mid", "wide")
 
 
+def _text_shape_width(win: VodDownloader) -> int:
+    """헤더 1줄이 저장 위치 글 모양으로 들어가는 가장 좁은 창 폭 — 테스트가 독립 합산한다(#529).
+
+    URL 칸 최소폭 + 저장 위치 버튼 글 모양 폭 + VOD 추가 + 간격 둘 + 헤더 줄 여백 · 테두리 · 안쪽 여백.
+    """
+    row, inner = win.headerRow.contentsMargins(), win.headerFrameLayout.contentsMargins()
+    chrome = (
+        row.left() + row.right() + 2 * win.headerFrame.frameWidth() + inner.left() + inner.right()
+    )
+    line = (
+        win.urlInput.minimumWidth()
+        + win.saveLocationButton.textWidth()
+        + win.fetchButton.minimumWidth()
+        + 2 * win.urlRowLayout.spacing()
+    )
+    return max(win.minimumWidth(), line + chrome)
+
+
 def _resolve_width(win, which: str) -> int:
     """폭 이름을 실제 px로 — 창 최소폭에서 유도한다."""
     minimum = win.minimumWidth()
+    if which == "text":
+        return _text_shape_width(win)
     return {"min": minimum, "mid": minimum + 300, "wide": minimum + 900}[which]
 
 
@@ -143,8 +163,8 @@ class TestStructure:
                 cursor = cursor.nextInFocusChain()
             return None
 
-        window.show()
-        QApplication.processEvents()
+        # 칩 여섯이 보이는 넓은 모양 — 좁은 폭 모양의 차례는 test_shell_narrow(#529)
+        _at_width(window, "wide")
         chain = [
             window.menuDownloadButton,
             window.menuSettingsButton,
@@ -191,8 +211,11 @@ class TestSaveLocationButtonWidth:
         """저장 위치 버튼 폭에서 기준 글 Downloads가 줄지 않고 그려져야 한다."""
         from app.widgets.header_controls import WIDTH_SAMPLE
 
-        _at_width(window, "min")
+        # 글 모양이 들어가는 가장 좁은 폭 — 넓은 창에서 내려온다(아이콘에서 되돌아가려면 +8, #529)
+        _at_width(window, "wide")
+        _at_width(window, "text")
         button = window.saveLocationButton
+        assert not button.isCompact(), "전제: 글 모양"
         button.setFullText(WIDTH_SAMPLE)
         assert button.isVisible()
         assert button.shownText() == WIDTH_SAMPLE
@@ -216,8 +239,11 @@ class TestSaveLocationButtonWidth:
 
     def test_a_long_name_is_elided_in_the_middle_without_widening(self, window) -> None:
         """기준 글보다 긴 폴더 이름은 폭을 바꾸지 않고 가운데가 줄어야 한다(앞 · 끝 글자는 남는다)."""
-        _at_width(window, "min")
+        # 글 모양이 들어가는 가장 좁은 폭 — 넓은 창에서 내려온다(아이콘에서 되돌아가려면 +8, #529)
+        _at_width(window, "wide")
+        _at_width(window, "text")
         button = window.saveLocationButton
+        assert not button.isCompact(), "전제: 글 모양"
         before = button.width()
         long_name = "앞쪽" + "가" * 60 + "뒤쪽"
         button.setFullText(long_name)
@@ -229,7 +255,10 @@ class TestSaveLocationButtonWidth:
 
     @pytest.mark.parametrize("width", WIDTHS)
     def test_the_width_is_the_same_in_korean_and_english(self, qapp, korean, width) -> None:
-        """한국어 번역을 올려도 창 폭 min · mid · wide에서 저장 위치 버튼 폭은 원문과 같아야 한다."""
+        """한국어 번역을 올려도 저장 위치 버튼의 글 · 아이콘 모양 폭은 원문과 같고, 창 폭 min · mid · wide에서 지금 모양의 폭이어야 한다.
+
+        두 창의 최소폭은 번역마다 달라 같은 폭 이름에서 모양이 갈릴 수 있다(#529) — 모양마다 폭을 비교한다.
+        """
         qapp.removeTranslator(korean)
         english = VodDownloader()
         qapp.installTranslator(korean)
@@ -238,7 +267,13 @@ class TestSaveLocationButtonWidth:
             assert hangul.fetchButton.text() == "VOD 추가", "ko 번역이 적용되지 않았다 — 전제 확인"
             _at_width(english, width)
             _at_width(hangul, width)
-            assert hangul.saveLocationButton.width() == english.saveLocationButton.width()
+            ko, en = hangul.saveLocationButton, english.saveLocationButton
+            assert ko.textWidth() == en.textWidth()
+            assert ko.iconWidth() == en.iconWidth()
+            for button in (ko, en):
+                assert button.width() == (
+                    button.iconWidth() if button.isCompact() else button.textWidth()
+                )
         finally:
             english.deleteLater()
             hangul.deleteLater()
@@ -248,22 +283,31 @@ class TestSaveLocationButtonWidth:
 class TestFreeSpaceGoesToTheUrlInputOnly:
     BUTTONS = ("saveLocationButton", "fetchButton")
 
-    def test_buttons_keep_their_width_as_the_window_widens(self, window) -> None:
-        """창이 min → mid → wide로 넓어져도 저장 위치 버튼 · VOD 추가의 폭이 그대로여야 한다."""
-        widths = {}
-        for width in WIDTHS:
+    @staticmethod
+    def _widths(window: VodDownloader) -> list[int]:
+        """글 모양 최소 +900 · +300 · 글 모양 최소 — 넓은 쪽에서 내려온다.
+
+        창 최소폭에서는 저장 위치가 아이콘 모양이고, 아이콘에서 글로 되돌아가려면 +8이 더 있어야 한다(#529).
+        """
+        base = _text_shape_width(window)
+        return [base + 900, base + 300, base]
+
+    def test_buttons_keep_their_width_as_the_window_narrows(self, window) -> None:
+        """창이 글 모양 최소 +900 → +300 → 글 모양 최소로 좁아져도 저장 위치 버튼 · VOD 추가의 폭이 그대로여야 한다."""
+        widths = []
+        for width in self._widths(window):
             _at_width(window, width)
-            widths[width] = {name: getattr(window, name).width() for name in self.BUTTONS}
-        assert widths[WIDTHS[0]] == widths[WIDTHS[1]] == widths[WIDTHS[2]], (
+            widths.append({name: getattr(window, name).width() for name in self.BUTTONS})
+        assert widths[0] == widths[1] == widths[2], (
             f"버튼 폭이 창 폭을 따라 변한다: {widths} — 남는 공간은 URL 입력만 받아야 한다"
         )
 
     def test_the_url_input_grows_with_the_window(self, window) -> None:
-        """창이 min → mid → wide로 넓어지면 URL 입력이 그만큼 늘어야 한다."""
+        """창 폭이 글 모양 최소 +900 → +300 → 글 모양 최소이면 URL 입력은 그만큼 줄어야 한다."""
         url = []
-        for width in WIDTHS:
+        for width in self._widths(window):
             _at_width(window, width)
             url.append(window.urlInput.width())
-        assert url[1] - url[0] == 300 and url[2] - url[0] == 900, (
+        assert url[0] - url[2] == 900 and url[1] - url[2] == 300, (
             f"URL 입력이 남는 폭을 다 받지 않는다: {url}"
         )

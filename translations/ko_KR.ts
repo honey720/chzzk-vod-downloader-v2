@@ -744,6 +744,10 @@ Check your connection and cookies, then open this window again.</source>
         <translation>상태순</translation>
     </message>
     <message>
+        <source>Sort: {0}</source>
+        <translation>정렬: {0}</translation>
+    </message>
+    <message>
         <source>Ascending</source>
         <translation>오름차순</translation>
     </message>
