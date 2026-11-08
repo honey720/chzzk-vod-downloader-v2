@@ -625,6 +625,12 @@ class VodDownloader(QMainWindow):
         자식 전부에 `updateGeometry()`를 걸어 캐시를 비우면 표시 후와 같은 값이 된다.
         """
         self.contentColumn.ensurePolished()
+        self._flushLayoutCaches()
+        self.minimumParts = self._minimumParts()
+        return max(self.minimumParts.values())
+
+    def _flushLayoutCaches(self) -> None:
+        """콘텐츠 열의 위젯 · 레이아웃 크기 캐시를 비운다(`_contentMinimumWidth` · `_settleLayout`)."""
         for child in self.contentColumn.findChildren(QWidget):
             child.updateGeometry()
         # 중첩 레이아웃(헤더바 1 · 2줄 행)의 계산 캐시도 비운다 — updateGeometry()는 위젯 항목의
@@ -632,8 +638,6 @@ class VodDownloader(QMainWindow):
         # 칩 폭을 걸기 전 값이 남아 최소폭이 칩 줄을 덜 센다(#495 — offscreen 실측 행 322 vs 항목 합 547)
         for layout in self.contentColumn.findChildren(QLayout):
             layout.invalidate()
-        self.minimumParts = self._minimumParts()
-        return max(self.minimumParts.values())
 
     def _minimumParts(self) -> dict[str, int]:
         """창 최소폭의 줄마다 몫 — 좁은 폭 모양이 있는 줄은 끝까지 줄인 모양으로 센다 (#529).
@@ -715,20 +719,36 @@ class VodDownloader(QMainWindow):
         room = self._barRoom(self.headerRow, self.headerFrame, self.headerFrameLayout)
         needs = self.headerRow2Needs(self.filterChipBar.hasFailed())
         level = step_level(needs, room, self._headerLevel)
-        if level != self._headerLevel:
-            self._headerLevel = level
-            self.headerShapeChanges += 1
+        if level == self._headerLevel:
+            return
+        self._headerLevel = level
+        self.headerShapeChanges += 1
         self.filterChipBar.setCompact(level >= 1)
         self.sortButton.setCompact(level >= 2)
+        self._settleLayout()
 
     def _applyFooterShape(self) -> None:
         """하단바 모니터링을 창 폭에 맞는 칸 수로 — 연결 · 메모리 · 남은 시간 · 여유 공간 차례로 뺀다 (#529)."""
         room = self._barRoom(self.infoRow, self.infoFrame, self.infoLayout)
         level = step_level(self.footerNeeds(), room, self._footerLevel)
-        if level != self._footerLevel:
-            self._footerLevel = level
-            self.footerShapeChanges += 1
+        if level == self._footerLevel:
+            return
+        self._footerLevel = level
+        self.footerShapeChanges += 1
         self.footerMonitor.setDropped(level)
+        self._settleLayout()
+
+    def _settleLayout(self) -> None:
+        """모양을 바꾼 뒤 레이아웃 캐시를 비우고 밀린 레이아웃 요청을 바로 처리한다 (#529).
+
+        창이 보이기 전에 위젯을 숨기고 보이면 레이아웃 캐시가 비지 않아 이전 모양(칩)의 최소폭이 남는다 — 창이
+        처음 보일 때 창 전체 스크롤 영역이 그 폭으로 콘텐츠 열을 놓아 가로 스크롤바가 떴다가 다음 이벤트
+        차례에 사라지고, 그 높이만큼 목록이 출렁였다(offscreen 실측). 보이는 창에서도 줄 · 열 · 스크롤 영역이
+        레이아웃 요청을 차례로 주고받는 동안 같은 일이 한 차례 생긴다. 캐시를 비우고 그 자리에서 처리해
+        그리기 전에 끝낸다.
+        """
+        self._flushLayoutCaches()
+        QApplication.sendPostedEvents(None, QEvent.Type.LayoutRequest)
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         """창 폭이 바뀌면 헤더바 2줄 · 하단바의 좁은 폭 모양을 다시 고른다 (#529).

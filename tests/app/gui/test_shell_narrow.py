@@ -224,6 +224,36 @@ def test_the_dropdown_returns_to_chips_only_eight_pixels_past_the_need(
     assert not window.filterChipBar.isCompact()
 
 
+def test_a_window_first_shown_in_the_dropdown_shape_has_no_horizontal_scrollbar(
+    window: VodDownloader,
+) -> None:
+    """드롭다운 모양 폭으로 처음 띄우면 이벤트 한 차례 뒤 가로 스크롤바가 없고 콘텐츠 열이 창 폭이어야 한다.
+
+    창 폭 = 칩 모양 필요 폭 − 1(창이 보이기 전에 드롭다운 모양으로 바뀐다) -> show + processEvents 1번
+    """
+    need = _chip_shape_need(window, window.sortButton.textWidth())
+    window.resize(need - 1, 700)
+    window.show()
+    QApplication.processEvents()
+    assert window.filterChipBar.isCompact(), "전제: 처음부터 드롭다운 모양"
+    assert not window.windowScrollArea.horizontalScrollBar().isVisible()
+    assert window.contentColumn.width() == window.width()
+
+
+def test_crossing_the_threshold_settles_before_returning_to_the_event_loop(
+    window: VodDownloader,
+) -> None:
+    """넓은 창에서 칩 모양 필요 폭 − 1로 줄이면 이벤트를 돌리기 전에 콘텐츠 열이 창 폭이어야 한다.
+
+    넓은 창(칩) -> resize(T − 1) 직후, processEvents 없이 잰다
+    """
+    _at_width(window, window.minimumWidth() + WIDE_EXTRA)
+    need = _chip_shape_need(window, _sort_text_width(window))
+    window.resize(need - 1, 700)
+    assert window.filterChipBar.isCompact(), "전제: 드롭다운 모양으로 바뀌었다"
+    assert window.contentColumn.width() == window.width()
+
+
 def test_one_resize_changes_the_header_shape_once(window: VodDownloader) -> None:
     """넓은 창에서 창 최소폭으로 한 번 줄이면 헤더 모양이 한 번만 바뀌고 드롭다운은 한 번만 나타나야 한다.
 
