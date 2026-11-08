@@ -45,13 +45,12 @@ from app.viewmodels.data import ContentItem
 from app.viewmodels.content_viewmodel import ContentViewModel
 import config.config as config
 from app.widgets import widget as content_widget
-from app.widgets.eliding_label import ElidingLabel
 from app.widgets.footer_bar import DROP_ORDER, FooterMonitor, RunResultLabel
 from app.widgets.header_controls import BusyButton, FilterChips, SaveLocationButton, SortButton
 from app.widgets.icons import IconButton
 from app.widgets.menu_button import MenuButton
 from app.widgets.narrow_steps import step_level
-from app.widgets.tip_bubble import install_tips, shortcut_tip
+from app.widgets.tip_bubble import ErrorTip, install_tips, shortcut_tip
 from app.widgets.os_notice import DownloadEndNotice
 from app.widgets.view import ContentListView
 from core.models.download_state import DownloadState
@@ -317,9 +316,9 @@ class VodDownloader(QMainWindow):
         self.headerFrameLayout.setObjectName("headerFrameLayout")
 
         # 헤더바 1줄(#492 — 셸 S0, #495 — S1):
-        #   ┌ [URL 입력                         ][📁 폴더 이름 ▾][VOD 추가] ┐
-        #   │ 등록 오류 한 줄(빨강, 평소 빈 줄 — 자리는 늘 잡아 둔다)          │
-        #   └ [칩 여섯][정렬 ▾] ……………………………………………… [완료 지우기] ┘
+        #   ┌ [URL 입력                              ][📁 폴더 이름 ⌄][+] ┐
+        #   └ [칩 여섯][정렬 ⌄] ……………………………………………… [완료 지우기] ┘
+        # 등록 오류는 줄이 아니라 URL 칸 아래 오류 말풍선이다(#536)
         # 남는 폭은 URL 입력이 다 받는다(설계: URL 입력이 남는 폭). 저장 위치 버튼은 고정 폭이다
         # (SaveLocationButton.applyWidth). 설정 톱니(#245)는 메뉴바 「설정」으로 옮겼다.
         self.urlRowLayout = QHBoxLayout()
@@ -333,19 +332,20 @@ class VodDownloader(QMainWindow):
         self.saveLocationButton = SaveLocationButton(self.headerFrame)
         self.saveLocationButton.setObjectName("saveLocationButton")
         self.urlRowLayout.addWidget(self.saveLocationButton)
-        self.fetchButton = BusyButton(self.headerFrame)  # 불러오는 동안 글 옆에 도는 표시(#495)
+        self.fetchButton = BusyButton(
+            self.headerFrame
+        )  # 「+」 — 불러오는 동안 그 자리에 도는 표시(#495 · #536)
         self.fetchButton.setObjectName("fetchButton")
         self.urlRowLayout.addWidget(self.fetchButton)
 
         self.headerFrameLayout.addLayout(self.urlRowLayout)
 
-        # 등록 오류 줄(#495 — 설계 알림 자리): 잘못된 URL · 조회 실패를 URL 칸 바로 아래 빨간 글 한 줄로.
-        # 입력을 고치면 사라진다. 줄 자리는 오류가 없어도 늘 잡아 둔다 — 오류가 떠도 목록이 움직이지
-        # 않는다(_reserveErrorLineHeight). 긴 글은 말줄임 + 툴팁(ElidingLabel — 헤더바를 넓히지 않는다).
-        # 「불러오는 중」 · 「가져왔다」는 글로 띄우지 않는다 — 등록 버튼의 도는 표시 · 카드의 조회 중 상태가 보인다
-        self.registerErrorLabel = ElidingLabel(self.headerFrame)
-        self.registerErrorLabel.setObjectName("registerErrorLabel")
-        self.headerFrameLayout.addWidget(self.registerErrorLabel)
+        # 등록 오류(#536 — 설계 §2 알림 자리 · §12.1): 잘못된 URL · 조회 실패를 URL 칸 아래 오류 말풍선(꼬리 위,
+        # 실패 색 계열)으로. 포인터가 나가도 남고, 입력을 고치거나 Esc · 다른 곳을 누르면 닫힌다. 말풍선은 떠 있는
+        # 창이라 헤더바에 오류 줄 자리를 비워 두지 않는다 — 오류가 떠도 목록이 움직이지 않는다. 긴 글은 말풍선 폭
+        # 상한에서 줄을 바꾼다. 「불러오는 중」 · 「가져왔다」는 글로 띄우지 않는다 — 등록 버튼의 도는 표시 · 카드의
+        # 조회 중 상태가 보인다
+        self.registerError = ErrorTip(self.urlInput)
 
         # 헤더바 2줄(#495 — 셸 S1): [상태 칩 여섯][정렬 ▾] ……
         # 칩 · 정렬 버튼은 고정 폭이다(숫자 세 자리 · 가장 긴 정렬 이름) — 남는 폭은 줄 끝 빈칸이 받는다
@@ -497,7 +497,6 @@ class VodDownloader(QMainWindow):
         # 헤더바 2줄의 칩 · 정렬 버튼 폭(숫자 세 자리 · 가장 긴 이름) — 창 최소폭 계산 전에 건다
         self.filterChipBar.applyWidth()
         self.sortButton.applyWidth()
-        self._reserveErrorLineHeight()
 
     def barControls(self) -> list[QWidget]:
         """메뉴바 · 헤더바 · 하단바에서 누르거나 쓰는 컨트롤 — 높이 · 커서 · 초점 · 말풍선 규칙이 같다 (#536)."""
@@ -537,25 +536,6 @@ class VodDownloader(QMainWindow):
     def tipBoundary(self) -> int:
         """말풍선 방향의 경계(전역 y) — 헤더바 아래 끝. 그보다 위 대상은 아래로, 아니면 위로 뜬다 (#536)."""
         return self.headerFrame.mapToGlobal(QPoint(0, self.headerFrame.height())).y()
-
-    def _reserveErrorLineHeight(self) -> None:
-        """등록 오류 줄의 높이를 오류 유무와 무관하게 고정한다 (#492 — #493 CI, #495).
-
-        오류가 없을 때도 줄 자리를 비워 둔다 — 오류가 뜨고 사라질 때 목록이 움직이지 않는다(설계
-        알림 자리). 빈 라벨과 글이 든 라벨은 글꼴에 따라 높이 힌트가 다르므로(대체 글꼴 offscreen
-        실측: 빈 14 · 글 12) 빈 글과 이 줄에 띄우는 글을 이 라벨의 글꼴 · QSS로 재어 가장 높은 값을
-        최소 높이로 건다 — 글꼴 · 번역을 따라간다. 창 최소 높이(`_contentMinimumHeight`)도 오류
-        유무와 무관해진다.
-        """
-        label = self.registerErrorLabel
-        shown = label.text()
-        label.ensurePolished()
-        heights = []
-        for text in ("", self.tr("Please enter VOD URL."), self.tr("Path does not exist.")):
-            label.setText(text)
-            heights.append(label.sizeHint().height())
-        label.setText(shown)
-        label.setMinimumHeight(max(heights))
 
     def _availableGeometry(self, near: QPoint | None = None) -> QRect:
         """작업 영역(작업표시줄·독 제외) — 초기 크기·최소 높이·복원 클램프의 화면 기준 (#253).
@@ -922,20 +902,19 @@ class VodDownloader(QMainWindow):
             button.setFixedSize(side, side)
 
     def _showRegisterError(self, text: str) -> None:
-        """등록 오류를 URL 칸 아래 줄에 띄우고 URL 칸 테두리를 빨강으로 한다 (#495 — 설계 §12.1).
+        """등록 오류를 URL 칸 아래 오류 말풍선으로 띄우고 URL 칸 테두리를 빨강으로 한다 (#495 · #536 — 설계 §12.1).
 
-        줄 자리는 늘 잡혀 있어 글만 바뀐다 — 목록이 움직이지 않는다. 입력을 고치면 사라진다
-        (`_clearRegisterError`). 테두리는 전역 QSS의 `QLineEdit[invalid="true"]`가 칠한다.
+        말풍선은 떠 있어 목록이 움직이지 않는다. 입력을 고치면 사라진다(`_clearRegisterError`) — Esc · 다른 곳
+        누름은 말풍선이 스스로 닫는다(`ErrorTip`). 테두리는 전역 QSS의 `QLineEdit[invalid="true"]`가 칠한다.
         """
-        self.registerErrorLabel.setText(text)
+        self.registerError.show(text)
         if self.urlInput.property("invalid") is not True:
             self.urlInput.setProperty("invalid", True)
             theme.repolish(self.urlInput)
 
     def _clearRegisterError(self) -> None:
-        """등록 오류 줄을 비우고 URL 칸 테두리를 되돌린다 — URL 입력이 바뀔 때."""
-        if self.registerErrorLabel.text():
-            self.registerErrorLabel.setText("")
+        """등록 오류 말풍선을 닫고 URL 칸 테두리를 되돌린다 — URL 입력이 바뀔 때."""
+        self.registerError.hide()
         if self.urlInput.property("invalid"):
             self.urlInput.setProperty("invalid", False)
             theme.repolish(self.urlInput)
@@ -1100,14 +1079,13 @@ class VodDownloader(QMainWindow):
 
         self.contentManager.fetchContent(vod_url, cookies, downloadPath)
 
-        self.urlInput.clear()  # 입력이 바뀌어 앞 오류 줄도 비워진다
+        self.urlInput.clear()  # 입력이 바뀌어 앞 오류 말풍선도 닫힌다
 
     def onFetchError(self, errorMessage: str) -> None:
-        """조회 실패를 등록 오류 줄에 띄운다 — 대화상자를 띄우지 않는다 (#495 — 설계 알림 자리).
+        """조회 실패를 등록 오류 말풍선에 띄운다 — 대화상자를 띄우지 않는다 (#495 · #536 — 설계 알림 자리).
 
-        뷰모델의 오류 글은 `"<주소>\n<까닭>"`이다(FetchJob). 줄 하나에 까닭을 앞에 두고 주소를 뒤에
-        붙인다 — 넘치면 뒤(주소)부터 줄이고 툴팁에 전문을 보인다(ElidingLabel). 여러 주소를 한꺼번에
-        등록했으면 마지막 실패가 남는다.
+        뷰모델의 오류 글은 `"<주소>\n<까닭>"`이다(FetchJob). 까닭을 앞에 두고 주소를 뒤에 붙인다 — 길면
+        말풍선 폭 상한에서 줄을 바꾼다. 여러 주소를 한꺼번에 등록했으면 마지막 실패가 남는다.
         """
         url, _newline, reason = errorMessage.partition("\n")
         self._showRegisterError(f"{reason} · {url}" if reason else url)

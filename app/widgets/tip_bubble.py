@@ -29,6 +29,7 @@ from PySide6.QtGui import (
     QPalette,
     QPen,
     QTextDocument,
+    QTextOption,
 )
 from PySide6.QtWidgets import QApplication, QWidget
 
@@ -45,6 +46,11 @@ _FACING = {"below": "top", "above": "bottom", "right": "left", "left": "right"} 
 _TIP_WEIGHT = 600  # 말풍선 글 굵기 — 굵게(설계 §12.1 「툴팁 글은 굵게」)
 _SHADOW_ALPHA = 0.05  # 그림자 가장 안쪽 한 겹의 불투명도 — 바깥으로 갈수록 옅다
 KEY_SEP = "\t"  # 툴팁 글의 이름 ↔ 단축키 구분 — 말풍선이 「이름 · 단축키」로 그리고 단축키는 흐린 색(#536)
+# 말풍선 색 묶음 — (면, 테두리, 글) 토큰. 툴팁은 바 면, 등록 오류는 실패 색 계열(설계 §2 알림 자리, #536)
+TONES = {
+    "tip": ("surface", "border", "text"),
+    "error": ("errorTipBg", "stateFailed", "text"),
+}
 
 
 def shortcut_tip(name: str, key: str) -> str:
@@ -109,11 +115,12 @@ class TipBubble(QWidget):
     """말풍선 창 하나 — 모서리 · 대상 쪽 꼬리 · 그림자 · 굵은 글. 포인터를 받지 않고 활성을 빼앗지 않는다.
 
     꼬리 쪽에는 그림자 자리를 두지 않는다 — 창 사각형의 꼬리 쪽 끝이 곧 대상에서 `tipGap` 떨어진 자리다.
+    색 묶음(`tone`)은 툴팁(`"tip"`)과 등록 오류(`"error"` — 실패 색 계열, #536)다(`TONES`).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, tone: str = "tip", parent: QWidget | None = None) -> None:
         super().__init__(
-            None,
+            parent,
             Qt.WindowType.ToolTip
             | Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.NoDropShadowWindowHint
@@ -126,8 +133,13 @@ class TipBubble(QWidget):
             Qt.WidgetAttribute.WA_ShowWithoutActivating,
         ):
             self.setAttribute(attribute)
+        self.tone = tone  # 색 묶음 — TONES의 키
         self._doc = QTextDocument(self)
         self._doc.setDocumentMargin(0)
+        # 빈칸 없는 긴 글(등록 오류의 긴 주소)도 폭 상한에서 줄을 바꾼다 — 상한을 넘겨 그리지 않는다
+        option = self._doc.defaultTextOption()
+        option.setWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+        self._doc.setDefaultTextOption(option)
         self.side = "below"  # 지금 방향(대상에서 말풍선이 있는 쪽)
         self.target: QWidget | None = None  # 지금 띄운 대상
         self.text = ""  # 지금 띄운 글
@@ -172,8 +184,13 @@ class TipBubble(QWidget):
         pad_x, pad_y = theme.METRICS["tipPadX"], theme.METRICS["tipPadY"]
         return QSize(round(width) + 2 * pad_x + 2, round(self._doc.size().height()) + 2 * pad_y + 2)
 
-    def showFor(self, target: QWidget, text: str, rect: QRect | None = None) -> None:
-        """대상 옆에 띄운다 — `rect`(전역)를 주면 그 사각형(메뉴 항목 등)을 대상으로 본다."""
+    def showFor(
+        self, target: QWidget, text: str, rect: QRect | None = None, side: str | None = None
+    ) -> None:
+        """대상 옆에 띄운다 — `rect`(전역)를 주면 그 사각형(메뉴 항목 등)을 대상으로 본다.
+
+        `side`를 주면 창의 경계 대신 그 방향을 바란다(등록 오류는 늘 URL 칸 아래 — #536). 화면 밖이면 반대쪽이다.
+        """
         self.target = target
         self.text = text
         self._setText(text)
@@ -182,7 +199,7 @@ class TipBubble(QWidget):
         )
         screen = target.screen().availableGeometry()
         body = self._bodySize()
-        wanted = tip_side(target)
+        wanted = side or tip_side(target)
         self.side = wanted
         for _ in range(2):  # 방향이 바뀌면 꼬리 쪽 여백이 바뀌므로 한 번 더 센다
             left, top, right, bottom = self.margins()
@@ -252,13 +269,14 @@ class TipBubble(QWidget):
             )
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawPath(shape.translated(0, 1))
-        painter.setPen(QPen(QColor(tokens["border"]), 1))
-        painter.setBrush(QColor(tokens["surface"]))
+        face, border, text = TONES[self.tone]
+        painter.setPen(QPen(QColor(tokens[border]), 1))
+        painter.setBrush(QColor(tokens[face]))
         painter.drawPath(shape)
         pad_x, pad_y = theme.METRICS["tipPadX"], theme.METRICS["tipPadY"]
         painter.translate(body.left() + 1 + pad_x, body.top() + 1 + pad_y)
         context = QAbstractTextDocumentLayout.PaintContext()
-        context.palette.setColor(QPalette.ColorRole.Text, QColor(tokens["text"]))
+        context.palette.setColor(QPalette.ColorRole.Text, QColor(tokens[text]))
         self._doc.documentLayout().draw(painter, context)
         painter.end()
 
@@ -339,3 +357,88 @@ def install_tips(root: QWidget) -> None:
         if not widget.property("tipInstalled"):
             widget.installEventFilter(_FILTER["filter"])
             widget.setProperty("tipInstalled", True)
+
+
+class ErrorTip(QObject):
+    """입력칸 아래에 붙는 오류 말풍선 — 헤더바 등록 오류(#536 — 설계 §2 알림 자리 · §12.1 등록 오류).
+
+    툴팁과 같은 말풍선 부품(`TipBubble`)에 실패 색 계열(`tone="error"`)이고, 늘 대상 아래로(꼬리 위) 뜬다. 포인터가
+    나가도 닫히지 않는다 — 입력을 고치면(부르는 쪽이 `hide`) · Esc · 대상 밖을 누르면 닫힌다. 말풍선은 떠 있는
+    창이라 헤더바에 오류 줄 자리를 비워 두지 않아도 목록이 움직이지 않는다.
+
+    누름 · Esc는 말풍선이 보이는 동안만 대상 창의 `QWindow`에 건 필터로 본다 — 그 창으로 오는 입력이 위젯보다
+    먼저 지나가는 자리라 카드 위젯마다 걸지 않아도 되고, 앱 전체 필터가 아니다(전체 테스트 접근 위반 #536 기록).
+    창이 움직이거나 크기가 바뀌면 말풍선을 대상 아래로 다시 놓는다.
+    """
+
+    def __init__(self, target: QWidget) -> None:
+        super().__init__(target)
+        self._target = target
+        self._bubble: TipBubble | None = None
+        self._text = ""
+        self._watched: list[QObject] = []
+
+    def bubble(self) -> TipBubble | None:
+        """말풍선 창(한 번도 띄우지 않았거나 지워졌으면 None)."""
+        if self._bubble is not None and not shiboken6.isValid(self._bubble):
+            self._bubble = None
+        return self._bubble
+
+    def isShowing(self) -> bool:
+        """말풍선이 보이는지."""
+        bubble = self.bubble()
+        return bubble is not None and bubble.isVisible()
+
+    def text(self) -> str:
+        """지금 보이는 오류 글(닫혀 있으면 빈 글)."""
+        return self._text if self.isShowing() else ""
+
+    def show(self, text: str) -> None:
+        """대상 아래에 오류 글을 띄운다 — 떠 있으면 글만 바꿔 다시 놓는다."""
+        bubble = self.bubble()
+        if bubble is None:
+            # 창을 부모로 둔다 — 창이 지워지면 함께 지워진다(ToolTip 창 종류라 따로 뜨는 창이다)
+            bubble = self._bubble = TipBubble("error", self._target.window())
+            bubble.setObjectName("errorTip")
+        self._text = text
+        bubble.showFor(self._target, text, side="below")
+        self._watch()
+
+    def hide(self) -> None:
+        """닫는다 — 이미 닫혀 있으면 아무 일도 없다."""
+        self._unwatch()
+        self._text = ""
+        bubble = self.bubble()
+        if bubble is not None and bubble.isVisible():
+            bubble.hideNow()
+
+    def _watch(self) -> None:
+        if self._watched:
+            return
+        window = self._target.window()
+        handle = window.windowHandle()
+        self._watched = [obj for obj in (handle, window) if obj is not None]
+        for obj in self._watched:
+            obj.installEventFilter(self)
+
+    def _unwatch(self) -> None:
+        for obj in self._watched:
+            if shiboken6.isValid(obj):
+                obj.removeEventFilter(self)
+        self._watched = []
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        kind = event.type()
+        if kind == QEvent.Type.MouseButtonPress and not obj.isWidgetType():
+            point = event.globalPosition().toPoint()
+            inside = QRect(self._target.mapToGlobal(QPoint(0, 0)), self._target.size())
+            if not inside.contains(point):
+                self.hide()  # 대상 밖을 눌렀다 — 누름은 그대로 흘려 보낸다
+        elif kind == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape:
+            self.hide()
+        elif kind in (QEvent.Type.Move, QEvent.Type.Resize) and obj.isWidgetType():
+            if self.isShowing():
+                self.bubble().showFor(self._target, self._text, side="below")
+        elif kind == QEvent.Type.Hide and obj.isWidgetType():
+            self.hide()
+        return False

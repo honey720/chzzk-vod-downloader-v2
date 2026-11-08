@@ -130,13 +130,15 @@ class TestStructure:
         items = [line.itemAt(i).widget() for i in range(line.count())]
         assert items == _line_widgets(window)
 
-    def test_error_line_sits_between_the_two_lines(self, window) -> None:
-        """헤더 프레임 레이아웃은 1줄 · 등록 오류 줄 · 2줄(칩 · 정렬 · 완료 지우기) 차례여야 한다."""
+    def test_the_frame_holds_only_the_two_lines(self, window) -> None:
+        """헤더 프레임 레이아웃은 1줄 · 2줄(칩 · 정렬 · 완료 지우기) 둘뿐이어야 한다 — 오류 줄 자리가 없다(#536).
+
+        등록 오류는 URL 칸 아래 떠 있는 오류 말풍선이다(설계 §2 알림 자리)
+        """
         frame = window.headerFrameLayout
-        assert frame.count() == 3
+        assert frame.count() == 2
         assert frame.itemAt(0).layout() is window.urlRowLayout
-        assert frame.itemAt(1).widget() is window.registerErrorLabel
-        assert frame.itemAt(2).layout() is window.filterRowLayout
+        assert frame.itemAt(1).layout() is window.filterRowLayout
 
     def test_second_line_holds_chips_sort_and_clear_finished(self, window) -> None:
         """헤더 2줄 레이아웃은 칩 줄 · 정렬 버튼 · 빈칸 · 완료 지우기 차례여야 한다."""

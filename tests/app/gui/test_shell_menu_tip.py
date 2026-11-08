@@ -440,6 +440,22 @@ def test_the_menu_bar_has_the_bar_face_and_a_bottom_line(window: VodDownloader) 
     assert _close(_pixel(bar, bar.width() // 2, bar.height() - 1), tokens["border"])
 
 
+def test_the_header_bar_is_two_rows_high_with_a_bottom_line(window: VodDownloader) -> None:
+    """헤더바는 높이 = 안쪽 여백 위아래 + 두 줄 + 줄 사이 + 경계선 1이고 맨 아래 줄이 테두리 색이어야 한다(오류 줄 자리 없음).
+
+    barPadY 8 · barControl 32 · 줄 사이 8 -> 89, 맨 아래 줄 = border (#536 — 프로토 헤더바 89)
+    """
+    frame = window.headerFrame
+    m = theme.METRICS
+    assert (
+        frame.height()
+        == 2 * m["barPadY"] + 2 * m["barControl"] + window.headerFrameLayout.spacing() + 1
+    )
+    assert _close(
+        _pixel(frame, frame.width() // 2, frame.height() - 1), theme.current_tokens()["border"]
+    )
+
+
 def test_an_unselected_menu_is_muted_text_without_a_face_or_border(window: VodDownloader) -> None:
     """고르지 않은 메뉴(「설정」)는 면 · 테두리 없이 바 면 위 글만이어야 한다 — 위 테두리 · 왼쪽 안 = 바 면."""
     button = window.menuSettingsButton

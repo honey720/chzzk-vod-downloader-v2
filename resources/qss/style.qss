@@ -76,14 +76,6 @@ QFrame#infoFrame {
     border-radius: 0px;
 }
 
-/* 등록 오류 줄(#495 — URL 칸 바로 아래, 잘못된 URL · 조회 실패). 오류만 띄우므로 늘 실패 색이다.
- * 「불러오는 중」 · 「가져왔다」 글(#244 조회 상태 메시지)은 없앴다 — 등록 버튼의 도는 표시와
- * 카드의 조회 중 상태가 보인다. URL 칸의 빨간 테두리는 아래 QLineEdit[invalid="true"] 규칙이다. */
-QLabel#registerErrorLabel {
-    font-size: @fontSizeMeta;
-    color: @stateFailed;
-}
-
 /* 하단바 모니터링 · 실행 결과(#504 — 셸 S2). 보조 글이라 카드의 메타 글과 같은 크기 · 색이다.
  * 라벨은 app/widgets/footer_bar.py가 만든다. */
 QLabel#footerMonitor,
