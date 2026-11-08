@@ -155,9 +155,9 @@ def _independent_content_minimum(win: VodDownloader) -> int:
     """콘텐츠 열 최소폭을 leaf 위젯 힌트로 **독립 합산**한다(제품의 `_contentMinimumWidth` 미사용).
 
     메뉴바(#492): 「VOD 다운」 + 간격 + 「설정」(메뉴바 프레임은 테두리 · 안쪽 여백 0, 좌우 barPadX).
-    헤더바(#492 · #495 · #529): max(1줄 URL 입력 + 저장 위치 버튼 + VOD 추가 + 간격 2개,
-    2줄을 끝까지 줄인 모양 — 상태 드롭다운 + 칩 간격 + 실패 칩 + 정렬 아이콘(버튼 높이의 정사각) +
-    완료 지우기 + 간격 2개) + 프레임 안쪽 여백·테두리.
+    헤더바(#492 · #495 · #529): max(1줄을 끝까지 줄인 모양 — URL 입력 최소폭 + 저장 위치 아이콘(버튼 높이의
+    정사각) + VOD 추가 + 간격 2개, 2줄을 끝까지 줄인 모양 — 상태 드롭다운 + 칩 간격 + 실패 칩 + 정렬
+    아이콘(버튼 높이의 정사각) + 완료 지우기 + 간격 2개) + 프레임 안쪽 여백·테두리.
     하단바(#529): 끝까지 줄인 모양 — 전체 속도 견본 글 + 실행 결과 견본 글 + 다운로드 + 중지 + 간격 3개
     + 프레임 안쪽 여백·테두리.
     열 = max(메뉴바 · 헤더바 · 하단바 각각 + 좌우 여백, 목록 최소).
@@ -165,8 +165,12 @@ def _independent_content_minimum(win: VodDownloader) -> int:
     """
     pad, outer = theme.METRICS["framePadding"], theme.METRICS["outerMargin"]
     border = win.headerFrame.frameWidth()
-    line = (win.urlInput, win.saveLocationButton, win.fetchButton)
-    first = sum(_leaf_min(w) for w in line) + 2 * win.urlRowLayout.spacing()
+    first = (
+        _leaf_min(win.urlInput)
+        + win.saveLocationButton.sizeHint().height()
+        + _leaf_min(win.fetchButton)
+        + 2 * win.urlRowLayout.spacing()
+    )
     second = (
         _leaf_min(win.filterChipBar.dropButton)
         + win.filterChipBar.layout().spacing()

@@ -452,10 +452,13 @@ def test_tab_order_in_the_narrow_shape_goes_through_the_dropdown(window: VodDown
 
 
 def _receiving(win: VodDownloader, monkeypatch: pytest.MonkeyPatch) -> None:
-    """받는 중 값(속도 · 남은 시간 · 연결 · 메모리 · 여유)을 1초 갱신 신호로 넣는다."""
-    reading = TransferReading(speed=12.5 * MIB, connections=8, remaining_bytes=900 * MIB)
+    """받는 중 값(속도 · 남은 시간 · 연결 · 메모리 · 여유)을 1초 갱신 신호로 넣는다.
+
+    값은 칸 글이 길게 나오는 쪽으로 둔다 — 창 최소폭까지 줄였을 때 여러 칸이 빠지게.
+    """
+    reading = TransferReading(speed=512.5 * MIB, connections=128, remaining_bytes=9000 * GIB)
     monkeypatch.setattr(win.downloadViewModel, "transferReadings", lambda: [reading])
-    monkeypatch.setattr(mw_mod, "resident_bytes", lambda: 321 * MIB)
+    monkeypatch.setattr(mw_mod, "resident_bytes", lambda: 98765 * MIB)
     win.monitorTimer.timeout.emit()
     _pump()
 

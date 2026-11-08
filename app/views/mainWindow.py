@@ -61,6 +61,9 @@ logger = logging.getLogger(__name__)
 FRAME_RETRY_MS = 50  # 표시 뒤 프레임 여백을 다시 보는 간격(ms) — X11 창 관리자는 테두리를 표시 뒤 비동기로 붙인다 (#487)
 FRAME_RETRIES = 10  # 그만큼(약 0.5초) 기다려도 여백이 없으면 그만둔다 — 창 관리자가 없는 X 서버 등
 MONITOR_INTERVAL_MS = 1000  # 하단바 모니터링을 고치는 간격(ms) — 설계 §2 「1초마다」 (#504)
+URL_MIN_WIDTH = (
+    160  # URL 칸 최소폭(px) — 이보다 좁아지기 전에 저장 위치 버튼을 아이콘으로(프로토 11v, #529)
+)
 # 창 제목의 앱 이름 — 번역하지 않는다. 앱 데이터 폴더 이름(app/system/settings.py APP_NAME)과 따로 둔다:
 # 표시 이름을 바꿔도 데이터 폴더가 그대로라 설정을 잃지 않는다 (#492)
 APP_DISPLAY_NAME = "Chzzk VOD Downloader"
@@ -137,10 +140,13 @@ class VodDownloader(QMainWindow):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        # 좁은 폭 모양 단계(#529) — 헤더바 2줄(0 칩 · 1 드롭다운 · 2 드롭다운 + 정렬 아이콘), 하단바(뺀 칸 수)
+        # 좁은 폭 모양 단계(#529) — 헤더바 1줄(0 저장 위치 글 · 1 아이콘), 2줄(0 칩 · 1 드롭다운 ·
+        # 2 드롭다운 + 정렬 아이콘), 하단바(뺀 칸 수)
+        self._urlRowLevel = 0
         self._headerLevel = 0
         self._footerLevel = 0
-        # 모양이 바뀐 횟수(헤더바 2줄 · 하단바) — 창 크기 한 번에 한 번만 바뀌는지 테스트가 센다
+        # 모양이 바뀐 횟수(헤더바 1줄 · 2줄 · 하단바) — 창 크기 한 번에 한 번만 바뀌는지 테스트가 센다
+        self.urlRowShapeChanges = 0
         self.headerShapeChanges = 0
         self.footerShapeChanges = 0
         self.minimumParts: dict[str, int] = {}  # 창 최소폭을 정한 줄마다의 폭(_contentMinimumWidth)
@@ -222,6 +228,7 @@ class VodDownloader(QMainWindow):
         self._sectionEditItem: ContentItem | None = None
         self.setupThreadSignals()
         self.setupSignals()
+        self._applyUrlRowShape()
         self._applyHeaderShape()
         self._applyFooterShape()
 
@@ -312,6 +319,7 @@ class VodDownloader(QMainWindow):
         self.urlInput = QLineEdit(self.headerFrame)
         self.urlInput.setObjectName("urlInput")
         self.urlInput.setClearButtonEnabled(True)
+        self.urlInput.setMinimumWidth(URL_MIN_WIDTH)  # 좁은 폭에서도 URL이 보이는 폭(#529)
         self.urlRowLayout.addWidget(self.urlInput, 1)
         self.saveLocationButton = SaveLocationButton(self.headerFrame)
         self.saveLocationButton.setObjectName("saveLocationButton")
@@ -658,7 +666,7 @@ class VodDownloader(QMainWindow):
         ]
         return {
             "메뉴바": self.menuRow.minimumSize().width(),
-            "헤더바 1줄": self.urlRowLayout.minimumSize().width() + header,
+            "헤더바 1줄": self.headerRow1Needs()[-1] + header,
             "헤더바 2줄": self.headerRow2Needs(True)[-1] + header,
             "목록": self.listView.minimumSizeHint().width(),
             "하단바": sum(footer_items) + gap * (len(footer_items) - 1) + footer,
@@ -675,6 +683,16 @@ class VodDownloader(QMainWindow):
             + margins.left()
             + margins.right()
         )
+
+    def headerRow1Needs(self) -> list[int]:
+        """헤더바 1줄이 단계마다 바라는 폭 — 0 저장 위치 글 · 1 저장 위치 아이콘 (#529 — 프로토 11v).
+
+        URL 칸은 최소폭(`URL_MIN_WIDTH`)으로 센다 — 그보다 좁아지기 전에 저장 위치 버튼을 아이콘으로 줄인다.
+        등록 버튼은 늘 글자다. 지금 보이는 모양과 무관하게 두 모양의 폭과 사이 간격으로 센다.
+        """
+        save = self.saveLocationButton
+        rest = URL_MIN_WIDTH + self.fetchButton.minimumWidth() + 2 * self.urlRowLayout.spacing()
+        return [rest + save.textWidth(), rest + save.iconWidth()]
 
     def headerRow2Needs(self, failed: bool) -> list[int]:
         """헤더바 2줄이 단계마다 바라는 폭 — 0 칩 · 1 드롭다운 · 2 드롭다운 + 정렬 아이콘 (#529).
@@ -714,6 +732,17 @@ class VodDownloader(QMainWindow):
     def _barRoom(self, row: QLayout, frame: QFrame, inner: QLayout) -> int:
         """그 바 안쪽에 쓸 수 있는 폭 — 창 폭에서 셈한다(지금 보이는 위젯 폭으로 재지 않는다, #529)."""
         return self.width() - self._barChrome(row, frame, inner)
+
+    def _applyUrlRowShape(self) -> None:
+        """헤더바 1줄을 창 폭에 맞는 단계의 모양으로 — 저장 위치 글 → 아이콘 (#529 — 프로토 11v)."""
+        room = self._barRoom(self.headerRow, self.headerFrame, self.headerFrameLayout)
+        level = step_level(self.headerRow1Needs(), room, self._urlRowLevel)
+        if level == self._urlRowLevel:
+            return
+        self._urlRowLevel = level
+        self.urlRowShapeChanges += 1
+        self.saveLocationButton.setCompact(level >= 1)
+        self._settleLayout()
 
     def _applyHeaderShape(self) -> None:
         """헤더바 2줄을 창 폭에 맞는 단계의 모양으로 — 칩 → 드롭다운, 정렬 글 → 아이콘 (#529)."""
@@ -758,6 +787,7 @@ class VodDownloader(QMainWindow):
         """
         super().resizeEvent(event)
         if event.size().width() != event.oldSize().width():
+            self._applyUrlRowShape()
             self._applyHeaderShape()
             self._applyFooterShape()
 

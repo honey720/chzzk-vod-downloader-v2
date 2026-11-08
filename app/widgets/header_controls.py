@@ -291,6 +291,25 @@ class DropButton(QToolButton):
         )
         painter.end()
 
+    def _paintIcon(self, glyph: str) -> QStylePainter:
+        """아이콘 모양(좁은 폭) — 같은 테두리 상자와 가운데 도형을 그리고 painter를 돌려준다(부른 쪽이 끝낸다).
+
+        도형은 `narrowIcon` 크기, 색은 그릴 때마다 토큰을 읽는다(실행 중 테마 전환 #247) (#529).
+        """
+        option = QStyleOptionToolButton()
+        self.initStyleOption(option)
+        option.text = ""
+        option.icon = QIcon()
+        option.features &= ~QStyleOptionToolButton.ToolButtonFeature.HasMenu
+        painter = QStylePainter(self)
+        painter.drawComplexControl(QStyle.ComplexControl.CC_ToolButton, option)
+        tokens = theme.current_tokens()
+        side = theme.METRICS["narrowIcon"]
+        color = tokens["textMuted" if self.isEnabled() else "textDisabled"]
+        pixmap = action_pixmap(glyph, color, side, self.devicePixelRatioF())
+        painter.drawPixmap((self.width() - side) // 2, (self.height() - side) // 2, pixmap)
+        return painter
+
 
 class SaveLocationButton(DropButton):
     """헤더바 저장 위치 버튼 — 「📁 폴더 이름 ▾」, 누르면 저장 위치 메뉴 (#495 — 설계 §2).
@@ -302,6 +321,9 @@ class SaveLocationButton(DropButton):
     메뉴 차례: 지금 위치(✓) · 즐겨찾기(★ 별칭 + 흐린 경로) · 최근 · 구분선 · 「지금 위치를 즐겨찾기에」
     · 「폴더 찾기…」 · 「기본 위치로」. 없는 경로는 흐리게 「(없음)」을 붙이고 고를 수 없다.
 
+    좁은 폭에서는 아이콘 모양이 된다(`setCompact` — #529, 프로토 11v): 버튼 높이의 정사각에 📁만 그리고, 글이
+    없으므로 툴팁 첫 줄에 지금 위치 이름, 둘째 줄에 전체 경로를 둔다. 누르면 같은 메뉴가 열린다.
+
     시그널:
         errorOccurred(str): 고르기 · 즐겨찾기 더하기가 막혔다 — 번역된 까닭
     """
@@ -311,6 +333,7 @@ class SaveLocationButton(DropButton):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__("folder", parent)
         self._locations: SaveLocations | None = None
+        self._compact = False
         self.menuWidget = ChoiceMenu(self)
         self.menuWidget.aboutToShow.connect(self._fillMenu)
         self.setMenu(self.menuWidget)
@@ -322,15 +345,51 @@ class SaveLocationButton(DropButton):
         self.applyWidth()
         self._refresh()
 
+    def isCompact(self) -> bool:
+        """아이콘 모양인지."""
+        return self._compact
+
+    def setCompact(self, compact: bool) -> None:
+        """글 모양 ↔ 아이콘 모양을 바꾼다 — 폭 · 툴팁이 함께 바뀐다."""
+        if compact == self._compact:
+            return
+        self._compact = compact
+        self.applyWidth()
+        self._refreshTip()
+        self.update()
+
+    def textWidth(self) -> int:
+        """글 모양의 폭 — 기준 글(`WIDTH_SAMPLE`)이 들어가는 폭(지금 모양과 무관, 소수 폭 올림 #525)."""
+        return self.widthFor(WIDTH_SAMPLE)
+
+    def iconWidth(self) -> int:
+        """아이콘 모양의 폭 — 버튼 높이의 정사각(지금 모양과 무관)."""
+        return self.sizeHint().height()
+
     def applyWidth(self) -> None:
-        """기준 글이 들어가는 폭을 건다 — 글꼴이 바뀌면 다시 부른다."""
-        self.setFixedWidth(self.widthFor(WIDTH_SAMPLE))
+        """지금 모양의 폭을 건다 — 글꼴이 바뀌면 다시 부른다."""
+        self.setFixedWidth(self.iconWidth() if self._compact else self.textWidth())
 
     def _refresh(self) -> None:
-        """글(별칭 또는 폴더 이름) · 툴팁(전체 경로)을 지금 위치로."""
-        locations = self._locations
-        self.setFullText(locations.display_name())
-        self.setToolTip(locations.current())
+        """글(별칭 또는 폴더 이름) · 툴팁을 지금 위치로."""
+        self.setFullText(self._locations.display_name())
+        self._refreshTip()
+
+    def _refreshTip(self) -> None:
+        """글 모양은 전체 경로, 아이콘 모양은 「이름」 · 「전체 경로」 두 줄."""
+        if self._locations is None:
+            return
+        path = self._locations.current()
+        tip = f"{self.fullText()}\n{path}" if self._compact else path
+        if self.toolTip() != tip:
+            self.setToolTip(tip)
+
+    def paintEvent(self, event) -> None:
+        """글 모양은 펼침 버튼 그대로, 아이콘 모양은 상자 · 📁만 그린다."""
+        if not self._compact:
+            super().paintEvent(event)
+            return
+        self._paintIcon("folder").end()
 
     def _fillMenu(self) -> None:
         """메뉴를 지금 값으로 다시 채운다 — 열 때마다(없는 경로 · 도형 색이 늘 지금 값)."""
@@ -489,23 +548,12 @@ class SortButton(DropButton):
         if not self._compact:
             super().paintEvent(event)
             return
-        option = QStyleOptionToolButton()
-        self.initStyleOption(option)
-        option.text = ""
-        option.icon = QIcon()
-        option.features &= ~QStyleOptionToolButton.ToolButtonFeature.HasMenu
-        painter = QStylePainter(self)
-        painter.drawComplexControl(QStyle.ComplexControl.CC_ToolButton, option)
-        tokens = theme.current_tokens()
-        enabled = self.isEnabled()
-        side = theme.METRICS["sortGlyph"]
-        color = tokens["textMuted" if enabled else "textDisabled"]
-        pixmap = action_pixmap("sort", color, side, self.devicePixelRatioF())
-        painter.drawPixmap((self.width() - side) // 2, (self.height() - side) // 2, pixmap)
+        painter = self._paintIcon("sort")
         if self._order is not None and not self.isDefaultSort():
+            tokens = theme.current_tokens()
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(tokens["accent" if enabled else "textDisabled"]))
+            painter.setBrush(QColor(tokens["accent" if self.isEnabled() else "textDisabled"]))
             inset = theme.METRICS["sortDotInset"]
             radius = theme.METRICS["sortDot"]
             painter.drawEllipse(QPointF(self.width() - inset, inset), radius, radius)
