@@ -17,6 +17,7 @@ from collections.abc import Iterator
 
 import pytest
 from PySide6.QtCore import Qt, QTranslator
+from PySide6.QtGui import QFont, QFontMetrics
 from PySide6.QtWidgets import QApplication, QWidget
 
 import CVDv2 as main_module
@@ -68,6 +69,23 @@ def _at_width(win, width) -> None:
     assert win.width() == width, (
         f"요청 폭 {width}px인데 실제 {win.width()}px — 최소폭({win.minimumWidth()})에 클램프됐다"
     )
+
+
+def _font_whose_rounded_width_elides(base: QFont, text: str) -> QFont:
+    """`base`에 글자 사이 간격(소수 px)을 더해, 정수 글 폭(`horizontalAdvance`) 칸에서 `text`가 말줄임되는 글꼴.
+
+    간격이 소수면 글 폭이 소수가 된다 — 글자 폭이 소수인 글꼴 엔진(Windows 실제 화면)과 같은 조건이다.
+    반올림한 정수 폭이 소수 폭보다 좁아지는 간격을 0.01 ~ 0.99px에서 찾는다. 글꼴마다 그 값이 달라
+    박지 않는다(#525).
+    """
+    for hundredths in range(1, 100):
+        font = QFont(base)
+        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, hundredths / 100)
+        metrics = QFontMetrics(font)
+        rounded = metrics.horizontalAdvance(text)
+        if metrics.elidedText(text, Qt.TextElideMode.ElideMiddle, rounded) != text:
+            return font
+    pytest.fail(f"전제: 0.01 ~ 0.99px 간격 가운데 정수 폭 칸에서 {text!r}가 말줄임되는 값이 없다")
 
 
 def _right(w) -> int:
@@ -177,6 +195,23 @@ class TestSaveLocationButtonWidth:
         button = window.saveLocationButton
         button.setFullText(WIDTH_SAMPLE)
         assert button.isVisible()
+        assert button.shownText() == WIDTH_SAMPLE
+
+    def test_the_sample_name_fits_when_the_text_width_is_fractional(self) -> None:
+        """글 폭이 소수인 글꼴이어도 저장 위치 버튼에 기준 글 Downloads가 줄지 않고 그려져야 한다.
+
+        정수 글 폭 칸에서는 기준 글이 말줄임되는 소수 글자 간격 -> 버튼이 그리는 글 = Downloads (#525)
+        """
+        from app.widgets.header_controls import WIDTH_SAMPLE, SaveLocationButton
+
+        button = SaveLocationButton()
+        button.ensurePolished()
+        font = _font_whose_rounded_width_elides(button.font(), WIDTH_SAMPLE)
+        button.setFont(font)
+        button.ensurePolished()
+        assert button.font() == font, "전제: 전역 QSS가 글꼴을 덮지 않는다"
+        button.applyWidth()
+        button.setFullText(WIDTH_SAMPLE)
         assert button.shownText() == WIDTH_SAMPLE
 
     def test_a_long_name_is_elided_in_the_middle_without_widening(self, window) -> None:

@@ -6,8 +6,10 @@
 도형 색이 늘 지금 값이다.
 """
 
+import math
+
 from PySide6.QtCore import QPointF, QRect, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPolygonF
+from PySide6.QtGui import QAction, QColor, QFontMetricsF, QIcon, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -202,9 +204,14 @@ class DropButton(QToolButton):
         )
 
     def widthFor(self, text: str) -> int:
-        """그 글이 줄지 않고 들어가는 버튼 폭 — 테두리 · 여백 · 도형 · ▾를 더한다."""
+        """그 글이 줄지 않고 들어가는 버튼 폭 — 테두리 · 여백 · 도형 · ▾를 더한다.
+
+        글 폭은 소수 폭을 올림한다. 정수 `horizontalAdvance`는 반올림이라 글자 폭이 소수인 글꼴
+        엔진(Windows 실제 화면)에서 실제 글보다 좁을 수 있고, 그리기의 `elidedText`는 소수 폭으로
+        비교해 그 글을 말줄임한다(#525).
+        """
         self.ensurePolished()
-        return self._chrome() + self.fontMetrics().horizontalAdvance(text)
+        return self._chrome() + math.ceil(QFontMetricsF(self.fontMetrics()).horizontalAdvance(text))
 
     def sizeHint(self) -> QSize:
         self.ensurePolished()
