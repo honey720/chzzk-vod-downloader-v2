@@ -25,7 +25,7 @@ from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, snapshot
 
 @pytest.fixture(autouse=True)
 def _environment(qapp: QApplication) -> Iterator[None]:
-    """실제 QSS(다크). 테스트가 띄운 창은 끝에 파괴한다."""
+    """실제 QSS(다크). 테스트가 띄운 창은 끝에 파괴하고, 테스트가 테마를 바꿨으면 다크로 되돌린다."""
     theme.set_color_scheme("dark")
     qapp.setStyle(hold_style(theme.build_style()))
     qapp.setPalette(theme.build_palette())
@@ -34,6 +34,9 @@ def _environment(qapp: QApplication) -> Iterator[None]:
     yield
     tip_bubble.hide_tip()
     drop_new_top_levels(before)
+    theme.set_color_scheme("dark")
+    qapp.setPalette(theme.build_palette())
+    qapp.setStyleSheet(theme.load_stylesheet(main_module.resource_path(theme.QSS_RELATIVE_PATH)))
 
 
 @pytest.fixture
@@ -607,12 +610,16 @@ def test_the_url_hint_says_enter_adds(window: VodDownloader) -> None:
     assert window.urlInput.placeholderText() == "Enter Chzzk URL · Enter to add"
 
 
-def test_the_save_location_folder_is_yellow_and_the_caret_is_a_chevron(
-    window: VodDownloader,
+@pytest.mark.parametrize("scheme", ["dark", "light"])
+def test_the_save_location_folder_is_muted_and_the_caret_is_a_chevron(
+    qapp: QApplication, window: VodDownloader, scheme: str
 ) -> None:
-    """저장 위치 버튼 글 모양의 폴더는 folderIcon 노랑이고, 펼침 표시는 ⌄ 칸(10px)에 흐린 색으로 그려야 한다."""
+    """저장 위치 버튼 글 모양의 폴더와 펼침 표시(⌄ 칸 10px)는 두 테마 모두 흐린 글 색 단색이어야 한다(#536)."""
     from app.widgets.header_controls import BUTTON_PADDING, CARET_WIDTH
 
+    theme.set_color_scheme(scheme)
+    qapp.setPalette(theme.build_palette())
+    qapp.setStyleSheet(theme.load_stylesheet(main_module.resource_path(theme.QSS_RELATIVE_PATH)))
     window.resize(window.minimumWidth() + 900, 600)
     _pump()
     button = window.saveLocationButton
@@ -620,7 +627,7 @@ def test_the_save_location_folder_is_yellow_and_the_caret_is_a_chevron(
     tokens = theme.current_tokens()
     size = theme.METRICS["actionGlyph"]
     glyph = QRect(1 + BUTTON_PADDING, (button.height() - size) // 2, size, size)
-    assert _inked(button, glyph, tokens["folderIcon"]) > 0
+    assert _inked(button, glyph, tokens["textMuted"]) > 0
     caret = button.caretRect()
     assert caret.width() == CARET_WIDTH
     assert _inked(button, caret, tokens["textMuted"]) > 0

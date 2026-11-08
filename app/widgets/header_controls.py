@@ -357,7 +357,8 @@ class DropButton(QToolButton):
     헤더바가 움직인다.
     """
 
-    glyphToken = "textMuted"  # 앞 도형 색 토큰 — 저장 위치 버튼은 폴더 노랑(folderIcon, #536)
+    # 앞 도형 색 토큰 — 모든 펼침 버튼이 흐린 글 색 단색이다. 색은 상태 · 조작에만 쓴다(#536 오너 결정)
+    glyphToken = "textMuted"
 
     def __init__(self, glyph: str = "", parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -490,9 +491,6 @@ class SaveLocationButton(DropButton):
     """
 
     errorOccurred = Signal(str)
-    # 글 모양의 폴더는 프로토 📁 그림 글자의 노랑(#536). 아이콘 모양(좁은 폭)은 도형 하나가 버튼의 뜻을 다 지므로
-    # 흐린 글 색 그대로다(_paintIcon) — 노랑은 라이트 바 면과 대비가 낮다
-    glyphToken = "folderIcon"
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__("folder", parent)

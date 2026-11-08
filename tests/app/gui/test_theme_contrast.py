@@ -40,8 +40,6 @@ PAIRS = [
     ("text", "menuHover", 4.5, "메뉴 항목 이름 ↔ 메뉴 호버 면(#536)"),
     ("textMuted", "menuHover", 4.5, "메뉴 흐린 경로 · 머리글 ↔ 메뉴 호버 면(#536)"),
     ("textMuted", "surface", 4.5, "메뉴 흐린 경로 · 머리글 ↔ 메뉴 면(#536)"),
-    ("folderIcon", "surface", 3.0, "저장 위치 폴더 ↔ 바 면 — 그림(#536)"),
-    ("folderIcon", "surfaceAlt", 3.0, "저장 위치 폴더 ↔ 버튼 면(폴더가 놓이는 면) — 그림(#536)"),
 ]
 
 # 면 색 — 오너 결정(2026-11-07): 테마 색 이식에서 바꾸지 않는다. 앱의 지금 값 그대로
@@ -229,42 +227,3 @@ def test_info_meets_the_bubble_conditions(scheme: str) -> None:
     grounds = [table[name] for name in BUBBLE_GROUNDS] + [OS_NOTICE_GROUND[scheme]]
     assert _contrast(table["onAccent"], table["stateInfo"]) >= 4.5
     assert min(_contrast(table["stateInfo"], g) for g in grounds) >= 3.0
-
-
-FOLDER_DARK = "#ffd058"  # 다크 폴더 노랑 — 프로토 📁 그림 글자 실측(#536), 바꾸지 않는다
-
-
-def _hsl_hue(color: str) -> float:
-    """HSL 색상각(도) — 폴더 색은 밝기만 옮기고 색상은 그대로다."""
-    r, g, b = (int(color[i : i + 2], 16) / 255 for i in (1, 3, 5))
-    high, low = max(r, g, b), min(r, g, b)
-    span = high - low
-    if span == 0:
-        return 0.0
-    if high == r:
-        hue = ((g - b) / span) % 6
-    elif high == g:
-        hue = (b - r) / span + 2
-    else:
-        hue = (r - g) / span + 4
-    return hue * 60
-
-
-def test_dark_folder_keeps_the_proto_yellow() -> None:
-    """다크 폴더 색은 프로토 노랑 그대로여야 한다.
-
-    DARK["folderIcon"] -> #ffd058
-    """
-    assert theme.DARK["folderIcon"] == FOLDER_DARK
-
-
-def test_light_folder_is_the_dark_hue_one_step_darker() -> None:
-    """라이트 폴더 색은 다크 노랑과 HSL 색상각이 1도 안이고, 버튼 면 대비 3.0 이상 3.1 미만 · 바 면 대비 3.0 이상이어야 한다.
-
-    LIGHT["folderIcon"] ↔ LIGHT["surfaceAlt"](폴더가 놓이는 버튼 면) -> 3.0 ≤ 대비 < 3.1(기준을 넘는 가장 밝은 쪽)
-    LIGHT["folderIcon"] ↔ LIGHT["surface"](바 면) -> 3.0 ≤ 대비
-    """
-    light = theme.LIGHT["folderIcon"]
-    assert abs(_hsl_hue(light) - _hsl_hue(FOLDER_DARK)) <= 1.0
-    assert 3.0 <= _contrast(light, theme.LIGHT["surfaceAlt"]) < 3.1
-    assert _contrast(light, theme.LIGHT["surface"]) >= 3.0
