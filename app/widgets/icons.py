@@ -298,38 +298,30 @@ def bubble_pixmap(state: str, fill: str, glyph: str, size: int, dpr: float = 1.0
 _BUBBLE_GRID = 16.0
 
 
-def _bubble_stroke(painter: QPainter, color: QColor, width: float) -> None:
-    pen = QPen(color, width)
-    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-    painter.setPen(pen)
-    painter.setBrush(Qt.BrushStyle.NoBrush)
-
-
 def _glyph_down(painter: QPainter, color: QColor) -> None:
     """받는 중 — 아래 화살표(↓). 화살촉이 아래에 몰려 있어 전체를 0.8 내려 원 가운데에 맞춘다."""
-    _bubble_stroke(painter, color, 1.8)
+    _stroke(painter, color, 1.8)
     painter.drawLine(QPointF(8, 4.6), QPointF(8, 11.2))
     painter.drawPolyline(QPolygonF([QPointF(5, 8.4), QPointF(8, 11.4), QPointF(11, 8.4)]))
 
 
 def _glyph_pause(painter: QPainter, color: QColor) -> None:
     """일시정지 — 세로 막대 둘(‖)."""
-    _bubble_stroke(painter, color, 1.9)
+    _stroke(painter, color, 1.9)
     painter.drawLine(QPointF(6.2, 5), QPointF(6.2, 11))
     painter.drawLine(QPointF(9.8, 5), QPointF(9.8, 11))
 
 
 def _glyph_cross(painter: QPainter, color: QColor) -> None:
     """전부 실패 — 엇갈린 선 둘(✕)."""
-    _bubble_stroke(painter, color, 1.8)
+    _stroke(painter, color, 1.8)
     painter.drawLine(QPointF(5.3, 5.3), QPointF(10.7, 10.7))
     painter.drawLine(QPointF(10.7, 5.3), QPointF(5.3, 10.7))
 
 
 def _glyph_bang(painter: QPainter, color: QColor) -> None:
     """일부 실패 — 세로 선과 점(!)."""
-    _bubble_stroke(painter, color, 1.9)
+    _stroke(painter, color, 1.9)
     painter.drawLine(QPointF(8, 4.2), QPointF(8, 8.9))
     _fill(painter, color)
     painter.drawEllipse(QPointF(8, 11.5), 1.1, 1.1)
@@ -337,7 +329,7 @@ def _glyph_bang(painter: QPainter, color: QColor) -> None:
 
 def _glyph_tick(painter: QPainter, color: QColor) -> None:
     """완료 — 꺾인 선 하나(✓)."""
-    _bubble_stroke(painter, color, 1.8)
+    _stroke(painter, color, 1.8)
     painter.drawPolyline(QPolygonF([QPointF(4.5, 8.3), QPointF(6.8, 10.5), QPointF(11.5, 5.7)]))
 
 
