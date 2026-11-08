@@ -456,8 +456,8 @@ Part of the video kept arriving incomplete from the server. Try again later.</tr
         <translation>Recent</translation>
     </message>
     <message>
-        <source>☆ Add current folder to favorites</source>
-        <translation>☆ Add current folder to favorites</translation>
+        <source>Add current folder to favorites</source>
+        <translation>Add current folder to favorites</translation>
     </message>
     <message>
         <source>Find folder…</source>
@@ -753,12 +753,44 @@ Check your connection and cookies, then open this window again.</translation>
         <translation>Sort: {0}</translation>
     </message>
     <message>
-        <source>Ascending</source>
-        <translation>Ascending</translation>
+        <source>Sort by</source>
+        <translation>Sort by</translation>
     </message>
     <message>
-        <source>Descending</source>
-        <translation>Descending</translation>
+        <source>Direction</source>
+        <translation>Direction</translation>
+    </message>
+    <message>
+        <source>Oldest added first</source>
+        <translation>Oldest added first</translation>
+    </message>
+    <message>
+        <source>Newest added first</source>
+        <translation>Newest added first</translation>
+    </message>
+    <message>
+        <source>A to Z</source>
+        <translation>A to Z</translation>
+    </message>
+    <message>
+        <source>Z to A</source>
+        <translation>Z to A</translation>
+    </message>
+    <message>
+        <source>Newest first</source>
+        <translation>Newest first</translation>
+    </message>
+    <message>
+        <source>Oldest first</source>
+        <translation>Oldest first</translation>
+    </message>
+    <message>
+        <source>Downloading first</source>
+        <translation>Downloading first</translation>
+    </message>
+    <message>
+        <source>Finished first</source>
+        <translation>Finished first</translation>
     </message>
 </context>
 <context>
