@@ -165,11 +165,13 @@ def test_the_sort_menu_is_at_least_as_wide_as_its_button(window: VodDownloader) 
 def test_menu_tooltips_appear_only_for_elided_paths(window: VodDownloader, tmp_path: Path) -> None:
     """저장 위치 메뉴에서 흐린 경로가 잘린 줄만 그 전문을 툴팁으로 갖고, 잘리지 않은 줄은 툴팁이 없어야 한다.
 
-    최근 = 짧은 이름 폴더 · 아주 긴 마지막 폴더(창 폭 − 24 안에 다 안 들어감)
+    최근 = 짧은 이름 폴더 · 아주 긴 경로(창 폭 − 24 안에 다 안 들어감)
     """
     short = tmp_path / "짧은"
     short.mkdir()
-    long = tmp_path / "중간" / ("마지막 폴더 이름이 아주 아주 김 " * 6).strip()
+    # 긴 이름을 두 조각으로 나눈다 — 리눅스는 이름 한 조각이 255바이트까지(한글 한 자 3바이트)
+    piece = ("마지막 폴더 이름이 아주 아주 김 " * 3).strip()
+    long = tmp_path / "중간" / piece / piece
     long.mkdir(parents=True)
     settings.update_settings({"recentPaths": [str(short), str(long)]})
     win = VodDownloader()
