@@ -31,6 +31,11 @@ PAIRS = [
     ("stateFailed", "surfaceAlt", 4.5, "실패 칩 글 ↔ 칩(버튼 면)"),
     ("textMuted", "surfaceAlt", 4.5, "꺼진 칩 글 ↔ 칩(버튼 면)"),
     ("accent", "surface", 3.0, "강조 채움(하단 다운로드) ↔ 하단바 — 그림"),
+    ("focusOnAccent", "accent", 3.0, "강조 채움 버튼의 초점 테두리 ↔ 채움(#536)"),
+    ("focusOnAccent", "surface", 3.0, "강조 채움 버튼의 초점 테두리 ↔ 바 면(#536)"),
+    ("text", "menuHover", 4.5, "메뉴 항목 이름 ↔ 메뉴 호버 면(#536)"),
+    ("textMuted", "menuHover", 4.5, "메뉴 흐린 경로 · 머리글 ↔ 메뉴 호버 면(#536)"),
+    ("textMuted", "surface", 4.5, "메뉴 흐린 경로 · 머리글 ↔ 메뉴 면(#536)"),
 ]
 
 # 면 색 — 오너 결정(2026-11-07): 테마 색 이식에서 바꾸지 않는다. 앱의 지금 값 그대로

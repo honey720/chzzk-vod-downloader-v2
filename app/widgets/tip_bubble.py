@@ -15,6 +15,7 @@ Qt 기본 툴팁(`QToolTip`)은 기다림이 있고, 대상을 가릴 수 있고
 색은 그릴 때마다 theme 토큰을 읽는다(실행 중 테마 전환 #247). 이 파일에 색 리터럴은 없다.
 """
 
+import shiboken6
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QSize, Qt
 from PySide6.QtGui import (
     QAbstractTextDocumentLayout,
@@ -243,15 +244,18 @@ _STATE: dict[str, TipBubble | None] = {"bubble": None}  # 말풍선 창 하나 �
 
 
 def tip_bubble() -> TipBubble:
-    """말풍선 창 — 하나를 돌려 쓴다."""
-    if _STATE["bubble"] is None:
+    """말풍선 창 — 하나를 돌려 쓴다. 창이 지워졌으면(최상위 창 정리 등) 새로 만든다."""
+    if current_bubble() is None:
         _STATE["bubble"] = TipBubble()
     return _STATE["bubble"]
 
 
 def current_bubble() -> TipBubble | None:
-    """지금까지 만든 말풍선 창(없으면 None) — 시험이 본다."""
-    return _STATE["bubble"]
+    """지금 살아 있는 말풍선 창(없거나 C++ 객체가 지워졌으면 None)."""
+    bubble = _STATE["bubble"]
+    if bubble is not None and not shiboken6.isValid(bubble):
+        _STATE["bubble"] = bubble = None
+    return bubble
 
 
 def show_tip(target: QWidget, text: str, rect: QRect | None = None) -> None:
@@ -263,7 +267,7 @@ def show_tip(target: QWidget, text: str, rect: QRect | None = None) -> None:
 
 def hide_tip(target: QWidget | None = None) -> None:
     """말풍선을 닫는다 — `target`을 주면 그 대상에 떠 있을 때만."""
-    bubble = _STATE["bubble"]
+    bubble = current_bubble()
     if bubble is not None and (target is None or bubble.target is target):
         bubble.hideNow()
 
