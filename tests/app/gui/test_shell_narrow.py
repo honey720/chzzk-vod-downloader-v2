@@ -7,6 +7,7 @@
 """
 
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt
@@ -146,6 +147,17 @@ def _drop_shape_need(win: VodDownloader, sort_width: int, failed: bool) -> int:
     return _header_chrome(win) + filters + gap + sort_width + gap + clear
 
 
+def _url_row_text_need(win: VodDownloader) -> int:
+    """헤더바 1줄 저장 위치 글 모양(단계 0)이 바라는 창 폭.
+
+    URL 칸 최소폭(칸에 건 값) + 저장 위치 글 모양 폭 + VOD 추가 + 간격 둘 + 헤더 여백 · 테두리
+    """
+    gap = win.urlRowLayout.spacing()
+    save = win.saveLocationButton.textWidth()
+    line = win.urlInput.minimumWidth() + gap + save + gap + win.fetchButton.minimumWidth()
+    return _header_chrome(win) + line
+
+
 class _ShowCounter(QObject):
     """위젯이 보이고 숨는 횟수를 센다."""
 
@@ -275,6 +287,105 @@ def test_one_resize_changes_the_header_shape_once(window: VodDownloader) -> None
     assert window.headerShapeChanges - before == 1
     assert counter.count == 1
     assert window.sortButton.isCompact()
+
+
+# ---------------------------------------------------------------------------
+# ②′ 헤더바 1줄 — 저장 위치 글 → 아이콘(프로토 11v)
+# ---------------------------------------------------------------------------
+
+
+def test_the_url_input_minimum_is_160(window: VodDownloader) -> None:
+    """URL 칸의 최소폭은 160px이어야 한다(프로토 11v URL_MIN)."""
+    assert window.urlInput.minimumWidth() == 160
+
+
+def _unfloored(win: VodDownloader) -> None:
+    """창 최소폭 바닥을 걷고 넓은 창에 놓는다.
+
+    헤더 1줄 경계(T)는 글꼴에 따라 창 최소폭(헤더 2줄이 정할 수 있다)보다 좁다 — 바닥을 걷어야 그 경계에
+    창을 놓을 수 있다. 판정은 창 폭으로 하므로 바닥과 무관하다.
+    """
+    wide = win.minimumWidth() + WIDE_EXTRA
+    win.setMinimumWidth(0)
+    _at_width(win, wide)
+
+
+def test_save_location_turns_into_an_icon_one_pixel_below_the_url_row_need(
+    window: VodDownloader,
+) -> None:
+    """창 폭이 헤더 1줄 글 모양 필요 폭 T면 저장 위치는 글, T − 1이면 아이콘(정사각)이어야 한다.
+
+    T = 헤더 여백 · 테두리 + URL 칸 최소폭 + 저장 위치 글 모양 + VOD 추가 + 간격 둘(창 최소폭 바닥 걷음)
+    """
+    _unfloored(window)
+    need = _url_row_text_need(window)
+    _at_width(window, need)
+    save = window.saveLocationButton
+    assert not save.isCompact()
+    _at_width(window, need - 1)
+    assert save.isCompact()
+    assert save.width() == save.height()
+
+
+def test_save_location_returns_to_text_only_eight_pixels_past_the_need(
+    window: VodDownloader,
+) -> None:
+    """저장 위치 아이콘에서 글로는 T + 7에서 그대로, T + 8에서 되돌아가야 한다(창 최소폭 바닥 걷음)."""
+    _unfloored(window)
+    need = _url_row_text_need(window)
+    _at_width(window, need - 1)
+    save = window.saveLocationButton
+    assert save.isCompact(), "전제: 아이콘 모양에서 시작한다"
+    _at_width(window, need + RETURN_SLACK - 1)
+    assert save.isCompact()
+    _at_width(window, need + RETURN_SLACK)
+    assert not save.isCompact()
+
+
+def test_the_url_input_never_goes_below_its_minimum_while_shrinking(window: VodDownloader) -> None:
+    """창을 넓은 폭에서 창 최소폭까지 1px씩 줄이는 동안 URL 칸은 늘 최소폭 이상이어야 한다."""
+    _at_width(window, window.minimumWidth() + WIDE_EXTRA)
+    for width in range(window.width(), window.minimumWidth() - 1, -1):
+        _at_width(window, width)
+        assert window.urlInput.width() >= window.urlInput.minimumWidth(), f"{width}px"
+
+
+def test_the_save_location_icon_shows_name_and_path_and_the_same_menu(
+    window: VodDownloader, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """저장 위치 아이콘의 툴팁은 「이름」 · 「전체 경로」 두 줄이고, 메뉴에서 고르면 위치와 툴팁이 따라야 한다.
+
+    메뉴 「폴더 찾기…」 -> 폴더 선택 창 대역이 「다른 폴더」를 돌려준다
+    """
+    from PySide6.QtWidgets import QFileDialog
+
+    other = tmp_path / "다른 폴더"
+    other.mkdir()
+    _unfloored(window)
+    _at_width(window, _url_row_text_need(window) - 1)
+    save = window.saveLocationButton
+    assert save.isCompact(), "전제: 아이콘 모양"
+    current = window.saveLocations.current()
+    assert save.toolTip() == f"{save.fullText()}\n{current}"
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: str(other))
+    )
+    other = str(other)
+    save.menuWidget.aboutToShow.emit()
+    find = next(a for a in save.menuWidget.actions() if a.objectName() == "findFolderAction")
+    find.trigger()
+    _pump()
+    assert window.saveLocations.current() == other
+    assert save.toolTip() == f"다른 폴더\n{other}"
+
+
+def test_one_resize_changes_the_url_row_shape_once(window: VodDownloader) -> None:
+    """넓은 창에서 헤더 1줄 글 모양 필요 폭 − 1로 한 번 줄이면 1줄 모양이 한 번만 바뀌어야 한다(바닥 걷음)."""
+    _unfloored(window)
+    before = window.urlRowShapeChanges
+    _at_width(window, _url_row_text_need(window) - 1)
+    assert window.urlRowShapeChanges - before == 1
+    assert window.saveLocationButton.isCompact()
 
 
 # ---------------------------------------------------------------------------
