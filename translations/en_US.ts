@@ -831,6 +831,14 @@ Check your connection and cookies, then open this window again.</translation>
         <translation>VOD Download</translation>
     </message>
     <message>
+        <source>Enter Chzzk URL · Enter to add</source>
+        <translation>Enter Chzzk URL · Enter to add</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>Add</translation>
+    </message>
+    <message>
         <source>No VOD can be started right now.</source>
         <translation>No VOD can be started right now.</translation>
     </message>
@@ -898,14 +906,6 @@ Check your connection and cookies, then open this window again.</translation>
     <message>
         <source>Settings</source>
         <translation>Settings</translation>
-    </message>
-    <message>
-        <source>Enter Chzzk URL</source>
-        <translation>Enter Chzzk URL</translation>
-    </message>
-    <message>
-        <source>Add VOD</source>
-        <translation>Add VOD</translation>
     </message>
     <message>
         <source>Clear Finished</source>

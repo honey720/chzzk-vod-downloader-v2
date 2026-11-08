@@ -51,7 +51,7 @@ from app.widgets.header_controls import BusyButton, FilterChips, SaveLocationBut
 from app.widgets.icons import IconButton
 from app.widgets.menu_button import MenuButton
 from app.widgets.narrow_steps import step_level
-from app.widgets.tip_bubble import install_tips
+from app.widgets.tip_bubble import install_tips, shortcut_tip
 from app.widgets.os_notice import DownloadEndNotice
 from app.widgets.view import ContentListView
 from core.models.download_state import DownloadState
@@ -287,10 +287,15 @@ class VodDownloader(QMainWindow):
         self.menuDownloadButton.setProperty("role", "menu")  # 메뉴 버튼 모양(#529 — 전역 QSS)
         self.menuDownloadButton.setCheckable(True)
         self.menuDownloadButton.setChecked(True)
+        # 고른 메뉴는 굵게 — 속성(on)으로 건다: :checked의 글꼴은 위젯 글꼴에 들지 않아 크기 힌트가 굵은 글
+        # 폭을 모른다(#536, 프로토 11s)
+        self.menuDownloadButton.setProperty("on", True)
+        self.menuDownloadButton.toggled.connect(self._onMenuToggled)
         self.appMenuLayout.addWidget(self.menuDownloadButton)
         self.menuSettingsButton = QPushButton(self.appMenuBar)
         self.menuSettingsButton.setObjectName("menuSettingsButton")
         self.menuSettingsButton.setProperty("role", "menu")
+        self.menuSettingsButton.setProperty("on", False)
         self.appMenuLayout.addWidget(self.menuSettingsButton)
         self.appMenuLayout.addStretch(1)
         # 고른 화면 메뉴는 하나 — 그룹이 배타라 눌린 「VOD 다운」을 다시 눌러도 풀리지 않는다.
@@ -440,8 +445,9 @@ class VodDownloader(QMainWindow):
         window.setWindowTitle(window_title(config.get_app_version()))
         self.menuDownloadButton.setText(self.tr("VOD Download"))
         self.menuSettingsButton.setText(self.tr("Settings"))
-        self.urlInput.setPlaceholderText(self.tr("Enter Chzzk URL"))
-        self.fetchButton.setText(self.tr("Add VOD"))
+        self.urlInput.setPlaceholderText(self.tr("Enter Chzzk URL · Enter to add"))
+        # 등록은 「+」 아이콘 버튼 — 이름 · 단축키는 툴팁(#536 — 설계 §12.1, 프로토 「등록 · Enter」)
+        self.fetchButton.setToolTip(shortcut_tip(self.tr("Add"), "Enter"))
         self.clearFinishedButton.setText(self.tr("Clear Finished"))
         # 하단 버튼은 아이콘만 — 이름은 툴팁이다(#504). 다운로드 버튼의 이름은 상태를 따른다
         self.downloadButton.setToolTip(self.tr("Download"))
@@ -522,6 +528,11 @@ class VodDownloader(QMainWindow):
                 continue
             widget.setCursor(Qt.CursorShape.PointingHandCursor)
             widget.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+
+    def _onMenuToggled(self, on: bool) -> None:
+        """「VOD 다운」 고름이 바뀌면 굵은 글 속성을 따라 바꾼다(전역 QSS `[on="true"]`, #536)."""
+        self.menuDownloadButton.setProperty("on", on)
+        theme.repolish(self.menuDownloadButton)
 
     def tipBoundary(self) -> int:
         """말풍선 방향의 경계(전역 y) — 헤더바 아래 끝. 그보다 위 대상은 아래로, 아니면 위로 뜬다 (#536)."""

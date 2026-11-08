@@ -295,23 +295,13 @@ QPushButton[role="icon"][interactive="false"]:pressed {
     border-color: transparent;
 }
 
-/* 상태 필터 칩(#495 — 헤더바 2줄). 고른 칩만 채운다(채움 색 규칙 — 강조색 면 안 글은 @onAccent).
- * 실패 카드가 있으면 실패 칩 글을 실패 색으로 강조한다. `role` · `alert`는
+/* 상태 필터 칩(#495 — 헤더바 2줄). 면 · 테두리 · 상태는 아래 셸 바 절(#536)이 칠한다 — 고른 칩 = 바 면 +
+ * 테두리, 나머지 = 면 · 테두리 없는 글. 실패 카드가 있으면 실패 칩 글을 실패 색으로 강조한다. `role` · `alert`는
  * app/widgets/header_controls.py::FilterChips가 심는다. */
 QPushButton[role="filter"] {
     padding: 2px 10px;
     font-size: @fontSizeMeta;
     color: @textMuted;
-}
-
-QPushButton[role="filter"][alert="true"] {
-    color: @stateFailed;
-}
-
-QPushButton[role="filter"]:checked {
-    background-color: @accent;
-    border-color: @accent;
-    color: @onAccent;
 }
 
 /* 펼침 버튼(#495 — 헤더바 저장 위치 · 정렬) — QToolButton + QMenu. 바탕 · 테두리만 여기서
@@ -432,14 +422,79 @@ QFrame#headerFrame QPushButton[role="subtle"]:pressed {
     border-color: @borderStrong;
 }
 
-QPushButton[role="filter"]:checked:hover {
-    background-color: @accentHover;
-    border-color: @accentHover;
+/* 메뉴바(#536 — 설계 §12.1 「셸 모양은 프로토대로」, 프로토 11b · 11k): 바 면 + 아래 경계선. 고른 메뉴는 버튼 면 ·
+ * 굵은 글(속성 on — :checked 글꼴은 크기 힌트에 들지 않는다), 고르지 않은 메뉴는 면 · 테두리 없는 흐린 글. 평소에도
+ * 투명 테두리 1px — 호버 · 초점 때 크기가 바뀌지 않는다. 상태는 셸 바 규칙 그대로 */
+QFrame#appMenuBar {
+    background-color: @surface;
+    border: none;
+    border-bottom: 1px solid @border;
+    border-radius: 0px;
 }
 
-QPushButton[role="filter"]:checked:pressed {
-    background-color: @accentPressed;
-    border-color: @accentPressed;
+QFrame#appMenuBar QPushButton[role="menu"] {
+    background-color: transparent;
+    border: 1px solid transparent;
+    color: @textMuted;
+}
+
+QFrame#appMenuBar QPushButton[role="menu"][on="true"] {
+    font-weight: bold;
+}
+
+QFrame#appMenuBar QPushButton[role="menu"]:checked {
+    background-color: @surfaceAlt;
+    border-color: @border;
+    color: @text;
+}
+
+QFrame#appMenuBar QPushButton[role="menu"]:hover {
+    background-color: @surfaceHover;
+    border-color: @borderStrong;
+    color: @text;
+}
+
+QFrame#appMenuBar QPushButton[role="menu"]:pressed {
+    background-color: @surfacePressed;
+    border-color: @borderStrong;
+    color: @text;
+}
+
+QFrame#appMenuBar QPushButton[role="menu"]:focus {
+    border-color: @accent;
+}
+
+/* 상태 필터 칩(#536 — 설계 §12.1, 프로토 11k): 고른 칩 = 바 면 + 테두리(강조색 채움 아님 — 채운 강조 버튼은
+ * 다운로드 하나, §11.6), 나머지 = 면 · 테두리 없는 글(투명 테두리 1px로 자리만). 실패 칩 글은 실패 색 — 고른 칩 ·
+ * 호버에서도(아래 [alert] 규칙을 상태 규칙 뒤에 둔다) */
+QFrame#headerFrame QPushButton[role="filter"] {
+    background-color: transparent;
+    border: 1px solid transparent;
+}
+
+QFrame#headerFrame QPushButton[role="filter"]:checked {
+    background-color: @surface;
+    border-color: @border;
+    color: @text;
+}
+
+QFrame#headerFrame QPushButton[role="filter"]:hover {
+    background-color: @surfaceHover;
+    border-color: @borderStrong;
+    color: @text;
+}
+
+QFrame#headerFrame QPushButton[role="filter"]:pressed {
+    background-color: @surfacePressed;
+    border-color: @borderStrong;
+}
+
+QFrame#headerFrame QPushButton[role="filter"]:focus {
+    border-color: @accent;
+}
+
+QFrame#headerFrame QPushButton[role="filter"][alert="true"] {
+    color: @stateFailed;
 }
 
 QFrame#appMenuBar QPushButton:focus,

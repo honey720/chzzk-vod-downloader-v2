@@ -18,7 +18,6 @@ from PySide6.QtGui import (
     QIcon,
     QPainter,
     QPen,
-    QPolygonF,
 )
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -44,7 +43,7 @@ from app.widgets.tip_bubble import hide_tip, show_tip
 
 BUTTON_PADDING = 10  # 펼침 버튼 안쪽 좌우 여백(px) — 프로토 v8 저장 위치 버튼
 GLYPH_GAP = 6  # 앞 도형 ↔ 글(px)
-CARET_WIDTH = 8  # ▾ 폭(px)
+CARET_WIDTH = 10  # ⌄ 한 변(px) — 프로토 DROP_ARROW
 CARET_GAP = 6  # 글 ↔ ▾(px)
 BUTTON_VPAD = 7  # 위아래(px) — QPushButton의 QSS padding 6 + 테두리 1과 같아 한 줄의 높이가 맞는다
 WIDTH_SAMPLE = "Downloads"  # 저장 위치 버튼 폭의 기준 글 — 이 이름이 줄지 않고 들어간다(프로토 11o)
@@ -358,6 +357,8 @@ class DropButton(QToolButton):
     헤더바가 움직인다.
     """
 
+    glyphToken = "textMuted"  # 앞 도형 색 토큰 — 저장 위치 버튼은 폴더 노랑(folderIcon, #536)
+
     def __init__(self, glyph: str = "", parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._glyph = glyph
@@ -423,10 +424,10 @@ class DropButton(QToolButton):
         painter.drawComplexControl(QStyle.ComplexControl.CC_ToolButton, option)
         tokens = theme.current_tokens()
         enabled = self.isEnabled()
-        muted = QColor(tokens["textMuted" if enabled else "textDisabled"])
         if self._glyph:
             size = theme.METRICS["actionGlyph"]
-            pixmap = action_pixmap(self._glyph, muted.name(), size, self.devicePixelRatioF())
+            glyph_color = tokens[self.glyphToken if enabled else "textDisabled"]
+            pixmap = action_pixmap(self._glyph, glyph_color, size, self.devicePixelRatioF())
             painter.drawPixmap(1 + BUTTON_PADDING, (self.height() - size) // 2, pixmap)
         painter.setPen(QColor(tokens["text" if enabled else "textDisabled"]))
         painter.drawText(
@@ -434,22 +435,22 @@ class DropButton(QToolButton):
             Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
             self.shownText(),
         )
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(muted)
-        right = self.width() - 1 - BUTTON_PADDING
-        middle = self.height() / 2
-        half = CARET_WIDTH / 2
-        painter.drawPolygon(
-            QPolygonF(
-                [
-                    QPointF(right - CARET_WIDTH, middle - half / 2),
-                    QPointF(right, middle - half / 2),
-                    QPointF(right - half, middle + half / 2 + 1),
-                ]
-            )
-        )
+        # ⌄ — 평소 흐린 색, 포인터가 오르거나 누르는 동안 본문 색(프로토 ▾ SVG, #536)
+        caret = "textDisabled" if not enabled else ("text" if self._pointed() else "textMuted")
+        pixmap = action_pixmap("chevron_down", tokens[caret], CARET_WIDTH, self.devicePixelRatioF())
+        painter.drawPixmap(self.caretRect().topLeft(), pixmap)
         painter.end()
+
+    def caretRect(self) -> QRect:
+        """⌄를 그리는 칸(버튼 좌표) — 오른쪽 안쪽 여백 앞, 높이 가운데."""
+        right = self.width() - 1 - BUTTON_PADDING
+        return QRect(
+            right - CARET_WIDTH, (self.height() - CARET_WIDTH) // 2, CARET_WIDTH, CARET_WIDTH
+        )
+
+    def _pointed(self) -> bool:
+        """포인터가 버튼 위에 있거나 누르는 중인지 — 메뉴가 열려 있는 동안도 눌린 것으로 본다."""
+        return self.underMouse() or self.isDown()
 
     def _paintIcon(self, glyph: str) -> QStylePainter:
         """아이콘 모양(좁은 폭) — 같은 테두리 상자와 가운데 도형을 그리고 painter를 돌려준다(부른 쪽이 끝낸다).
@@ -489,6 +490,9 @@ class SaveLocationButton(DropButton):
     """
 
     errorOccurred = Signal(str)
+    # 글 모양의 폴더는 프로토 📁 그림 글자의 노랑(#536). 아이콘 모양(좁은 폭)은 도형 하나가 버튼의 뜻을 다 지므로
+    # 흐린 글 색 그대로다(_paintIcon) — 노랑은 라이트 바 면과 대비가 낮다
+    glyphToken = "folderIcon"
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__("folder", parent)
@@ -929,11 +933,11 @@ SPIN_STEP_DEGREES = 30  # 한 칸에 도는 각도
 
 
 class BusyButton(QPushButton):
-    """도는 표시가 있는 글 버튼 — 헤더바 「VOD 추가」(#495 — 설계 알림 자리).
+    """도는 표시가 있는 아이콘 버튼 — 헤더바 등록(+) (#495 — 설계 알림 자리, #536 — 프로토 11v).
 
-    영상 정보를 불러오는 동안 글 왼쪽에 도는 호를 그린다(「불러오는 중」 글은 띄우지 않는다).
-    호 자리는 늘 잡아 둔다(`reservedWidth`) — 돌기 시작해도 버튼 폭 · 글 자리가 그대로다. 호 색은
-    그릴 때마다 theme 토큰을 새로 읽는다(실행 중 테마 전환 #247).
+    바 컨트롤 높이의 정사각에 「+」를 그리고, 영상 정보를 불러오는 동안은 그 자리에 도는 호를 그린다(「불러오는 중」
+    글은 띄우지 않는다). 폭은 늘 정사각이라 돌기 시작해도 바뀌지 않는다. 이름은 툴팁이다(글자 없는 아이콘 버튼 —
+    설계 §12.1 「툴팁을 띄우는 자리」). 도형 · 호 색은 그릴 때마다 theme 토큰을 새로 읽는다(실행 중 테마 전환 #247).
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -961,24 +965,33 @@ class BusyButton(QPushButton):
         self.update()
 
     def reservedWidth(self) -> int:
-        """글 양옆에 호 자리(도형 + 간격)를 하나씩 더한 폭 — 글이 늘 가운데에 남는다."""
-        self.ensurePolished()
-        return self.sizeHint().width() + 2 * (theme.METRICS["actionGlyph"] + GLYPH_GAP)
+        """버튼 폭 — 바 컨트롤 높이의 정사각(#536 — 설계 §11.3 「아이콘 버튼은 그 높이의 정사각」)."""
+        return theme.METRICS["barControl"]
 
     def _advance(self) -> None:
         self._step = (self._step + 1) % (360 // SPIN_STEP_DEGREES)
         self.update()
 
+    def glyphRect(self) -> QRect:
+        """「+」 · 도는 호를 그리는 칸 — 버튼 가운데 아이콘 한 벌 크기(`narrowIcon` 16 — 설계 §11.3) 정사각."""
+        size = theme.METRICS["narrowIcon"]
+        return QRect((self.width() - size) // 2, (self.height() - size) // 2, size, size)
+
     def paintEvent(self, event) -> None:
-        super().paintEvent(event)
-        if not self._busy:
-            return
-        size = theme.METRICS["actionGlyph"]
-        text_left = (self.width() - self.fontMetrics().horizontalAdvance(self.text())) // 2
-        rect = QRect(text_left - GLYPH_GAP - size, (self.height() - size) // 2, size, size)
+        super().paintEvent(event)  # 바탕 · 테두리(전역 QSS) — 글은 없다
+        tokens = theme.current_tokens()
+        color = tokens["text" if self.isEnabled() else "textDisabled"]
+        rect = self.glyphRect()
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        pen = QPen(QColor(theme.current_tokens()["text"]), 1.5)
+        if not self._busy:
+            painter.drawPixmap(
+                rect.topLeft(),
+                action_pixmap("plus", color, rect.width(), self.devicePixelRatioF()),
+            )
+            painter.end()
+            return
+        pen = QPen(QColor(color), 1.5)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         painter.setPen(pen)
         painter.drawArc(rect.adjusted(1, 1, -1, -1), -self._step * SPIN_STEP_DEGREES * 16, 270 * 16)

@@ -15,6 +15,8 @@ Qt 기본 툴팁(`QToolTip`)은 기다림이 있고, 대상을 가릴 수 있고
 색은 그릴 때마다 theme 토큰을 읽는다(실행 중 테마 전환 #247). 이 파일에 색 리터럴은 없다.
 """
 
+import html
+
 import shiboken6
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QSize, Qt
 from PySide6.QtGui import (
@@ -42,6 +44,15 @@ _SIDEWAYS = {
 _FACING = {"below": "top", "above": "bottom", "right": "left", "left": "right"}  # 꼬리가 나는 쪽
 _TIP_WEIGHT = 600  # 말풍선 글 굵기 — 굵게(설계 §12.1 「툴팁 글은 굵게」)
 _SHADOW_ALPHA = 0.05  # 그림자 가장 안쪽 한 겹의 불투명도 — 바깥으로 갈수록 옅다
+KEY_SEP = "\t"  # 툴팁 글의 이름 ↔ 단축키 구분 — 말풍선이 「이름 · 단축키」로 그리고 단축키는 흐린 색(#536)
+
+
+def shortcut_tip(name: str, key: str) -> str:
+    """「이름 · 단축키」 툴팁 글 — 말풍선이 단축키를 흐린 색으로 그린다(프로토 「등록 · Enter」, #536).
+
+    Qt 기본 툴팁으로 뜨는 자리(말풍선 필터가 없는 창)에서는 구분 문자가 빈칸으로 보인다.
+    """
+    return f"{name}{KEY_SEP}{key}"
 
 
 def tip_rect(target: QRect, size: QSize, side: str, screen: QRect) -> tuple[QRect, str]:
@@ -139,10 +150,22 @@ class TipBubble(QWidget):
         font.setPixelSize(theme.METRICS["tipFontPx"])
         font.setWeight(QFont.Weight(_TIP_WEIGHT))
         self._doc.setDefaultFont(font)
-        self._doc.setPlainText(text)
+        name, sep, key = text.partition(KEY_SEP)
+        if sep:
+            # 「이름 · 단축키」 — 단축키는 흐린 색(그릴 때의 토큰 — 띄울 때마다 다시 쓴다)
+            muted = theme.current_tokens()["textMuted"]
+            self._doc.setHtml(
+                f"{html.escape(name)} · <span style='color:{muted};'>{html.escape(key)}</span>"
+            )
+        else:
+            self._doc.setPlainText(text)
         self._doc.setTextWidth(-1)
         if self._doc.idealWidth() > theme.METRICS["tipMaxWidth"]:
             self._doc.setTextWidth(theme.METRICS["tipMaxWidth"])
+
+    def shownText(self) -> str:
+        """지금 그리는 글(꾸밈 없이) — 「이름 · 단축키」 꼴도 이어 붙인 글로 돌려준다."""
+        return self._doc.toPlainText()
 
     def _bodySize(self) -> QSize:
         width = self._doc.idealWidth() if self._doc.textWidth() < 0 else self._doc.textWidth()

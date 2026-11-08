@@ -396,3 +396,115 @@ def test_keyboard_focus_on_the_accent_button_draws_the_focus_on_accent_border(
     _pump()
     assert button.hasFocus(), "전제: 초점을 받았다"
     assert _close(_top_border(button), tokens["focusOnAccent"])
+
+
+# ---------------------------------------------------------------------------
+# ④ 셸 모양 프로토 맞춤 — 메뉴바 · 칩 · 등록 · 펼침 버튼 (#536 — 설계 §12.1 「셸 모양은 프로토대로」)
+# ---------------------------------------------------------------------------
+
+
+def _seen(widget: QWidget) -> "QImage":  # noqa: F821
+    """창에 보이는 그대로의 위젯 자리 — 바탕이 투명한 위젯은 제 grab에 부모 면이 없어 창에서 잘라 찍는다."""
+    window = widget.window()
+    return window.grab(QRect(widget.mapTo(window, QPoint(0, 0)), widget.size())).toImage()
+
+
+def _pixel(widget: QWidget, x: int, y: int) -> QColor:
+    """위젯 좌표 (x, y)의 보이는 화소 — 이미지는 장치 화소라 배율을 곱해 읽는다."""
+    image = _seen(widget)
+    ratio = image.devicePixelRatio()
+    return image.pixelColor(int(x * ratio), int(y * ratio))
+
+
+def _inked(widget: QWidget, rect: QRect, color: str) -> int:
+    """그 칸 안에서 `color`에 가까운 보이는 화소 수."""
+    image = _seen(widget)
+    ratio = image.devicePixelRatio()
+    return sum(
+        1
+        for y in range(int(rect.top() * ratio), int((rect.bottom() + 1) * ratio))
+        for x in range(int(rect.left() * ratio), int((rect.right() + 1) * ratio))
+        if _close(image.pixelColor(x, y), color)
+    )
+
+
+def test_the_menu_bar_has_the_bar_face_and_a_bottom_line(window: VodDownloader) -> None:
+    """메뉴바는 높이 = 안쪽 여백 위아래 + 바 컨트롤 + 경계선 1, 빈 자리는 바 면, 맨 아래 줄은 테두리 색이어야 한다.
+
+    barPadY 8 · barControl 32 -> 높이 49, 오른쪽 빈 자리 = surface, 맨 아래 줄 = border
+    """
+    bar = window.appMenuBar
+    tokens = theme.current_tokens()
+    assert bar.height() == 2 * theme.METRICS["barPadY"] + theme.METRICS["barControl"] + 1
+    assert _close(_pixel(bar, bar.width() - 4, bar.height() // 2), tokens["surface"])
+    assert _close(_pixel(bar, bar.width() // 2, bar.height() - 1), tokens["border"])
+
+
+def test_an_unselected_menu_is_muted_text_without_a_face_or_border(window: VodDownloader) -> None:
+    """고르지 않은 메뉴(「설정」)는 면 · 테두리 없이 바 면 위 글만이어야 한다 — 위 테두리 · 왼쪽 안 = 바 면."""
+    button = window.menuSettingsButton
+    surface = theme.current_tokens()["surface"]
+    assert not button.isChecked()
+    assert _close(_pixel(button, button.width() // 2, 0), surface)
+    assert _close(_pixel(button, 3, button.height() // 2), surface)
+
+
+def test_the_selected_menu_keeps_its_face_and_bold_text(window: VodDownloader) -> None:
+    """고른 메뉴(「VOD 다운」)는 버튼 면(surfaceAlt) 위 굵은 글이어야 한다."""
+    button = window.menuDownloadButton
+    assert button.isChecked() and button.font().bold()
+    assert _close(_pixel(button, 3, button.height() // 2), theme.current_tokens()["surfaceAlt"])
+
+
+def test_the_chosen_chip_has_the_bar_face_and_a_border_and_no_accent_fill(
+    window: VodDownloader,
+) -> None:
+    """고른 칩(전체)은 바 면 + 테두리, 고르지 않은 칩(대기)은 면 · 테두리 없이 바 면이고 칩 줄에 강조색이 없어야 한다."""
+    tokens = theme.current_tokens()
+    window.resize(window.minimumWidth() + 900, 600)  # 칩 모양이 보이는 폭
+    _pump()
+    chosen, other = window.filterChips["all"], window.filterChips["waiting"]
+    assert chosen.isVisible() and other.isVisible(), "전제: 칩 모양"
+    assert chosen.isChecked() and not other.isChecked()
+    assert _close(_pixel(chosen, 3, chosen.height() // 2), tokens["surface"])
+    assert _close(_pixel(chosen, chosen.width() // 2, 0), tokens["border"])
+    assert _close(_pixel(other, other.width() // 2, 0), tokens["surface"])
+    assert _close(_pixel(other, 3, other.height() // 2), tokens["surface"])
+    bar = window.filterChipBar
+    assert _inked(bar, bar.rect(), tokens["accent"]) == 0
+
+
+def test_the_add_button_is_a_square_plus_with_a_shortcut_tip(window: VodDownloader) -> None:
+    """등록은 글 없는 정사각(바 컨트롤 높이) 버튼이고, 들어가면 말풍선에 「Add · Enter」가 떠야 한다."""
+    button = window.fetchButton
+    side = theme.METRICS["barControl"]
+    assert button.text() == ""
+    assert (button.width(), button.height()) == (side, side)
+    assert button.toolTip() == tip_bubble.shortcut_tip("Add", "Enter")
+    assert _inked(button, button.glyphRect(), theme.current_tokens()["text"]) > 0, "「+」를 그린다"
+    _enter(button)
+    assert _bubble().isVisible() and _bubble().shownText() == "Add · Enter"
+
+
+def test_the_url_hint_says_enter_adds(window: VodDownloader) -> None:
+    """URL 칸 안내 글은 「Enter Chzzk URL · Enter to add」여야 한다."""
+    assert window.urlInput.placeholderText() == "Enter Chzzk URL · Enter to add"
+
+
+def test_the_save_location_folder_is_yellow_and_the_caret_is_a_chevron(
+    window: VodDownloader,
+) -> None:
+    """저장 위치 버튼 글 모양의 폴더는 folderIcon 노랑이고, 펼침 표시는 ⌄ 칸(10px)에 흐린 색으로 그려야 한다."""
+    from app.widgets.header_controls import BUTTON_PADDING, CARET_WIDTH
+
+    window.resize(window.minimumWidth() + 900, 600)
+    _pump()
+    button = window.saveLocationButton
+    assert not button.isCompact(), "전제: 글 모양"
+    tokens = theme.current_tokens()
+    size = theme.METRICS["actionGlyph"]
+    glyph = QRect(1 + BUTTON_PADDING, (button.height() - size) // 2, size, size)
+    assert _inked(button, glyph, tokens["folderIcon"]) > 0
+    caret = button.caretRect()
+    assert caret.width() == CARET_WIDTH
+    assert _inked(button, caret, tokens["textMuted"]) > 0

@@ -41,7 +41,15 @@ import app.theme as theme
 #: stop = 하단바의 중지(■) — 받는 중 · 일시정지 카드를 대기로 되돌린다(#504).
 #: sort = 좁은 폭 헤더바의 정렬 아이콘(⇅) — 위 화살표 · 아래 화살표 나란히(#529).
 #: star · undo = 드롭다운 메뉴 동작 줄의 아이콘 — 「지금 위치를 즐겨찾기에」 · 「기본 위치로」(#536).
+#: plus = 헤더바 등록(+), chevron_down = 펼침 버튼의 ⌄, folder_outline = 메뉴 「폴더 찾기…」(테두리 폴더),
+#: link · memory · disk = 하단바 연결 · 메모리 · 여유 칸 — 프로토 그림을 옮겼다(#536).
 ICON_NAMES = (
+    "plus",
+    "chevron_down",
+    "folder_outline",
+    "link",
+    "memory",
+    "disk",
     "star",
     "undo",
     "pause",
@@ -301,7 +309,74 @@ def _paint_undo(painter: QPainter, s: float, color: QColor, accent: QColor) -> N
     painter.drawPath(path)
 
 
+LINE_WIDTH = 0.11  # 선 아이콘 굵기 — 한 변에 대한 비율(프로토 11v 새 아이콘 선 · 폴더 윤곽과 같다)
+
+
+def _paint_plus(painter: QPainter, s: float, color: QColor, accent: QColor) -> None:
+    """더하기 — 헤더바 등록 버튼. 좌표는 프로토 등록 + 그림이다."""
+    _stroke(painter, color, s * LINE_WIDTH)
+    painter.drawLine(QPointF(s * 0.5, s * 0.18), QPointF(s * 0.5, s * 0.82))
+    painter.drawLine(QPointF(s * 0.18, s * 0.5), QPointF(s * 0.82, s * 0.5))
+
+
+def _paint_chevron_down(painter: QPainter, s: float, color: QColor, accent: QColor) -> None:
+    """아래 꺾쇠(⌄) — 펼침 버튼의 펼침 표시. 좌표는 프로토 ▾ SVG(10 격자, 선 1.6)이다."""
+    _stroke(painter, color, s * 0.16)
+    unit = s / 10
+    painter.drawPolyline(
+        QPolygonF(
+            [
+                QPointF(1.8 * unit, 3.6 * unit),
+                QPointF(5 * unit, 6.8 * unit),
+                QPointF(8.2 * unit, 3.6 * unit),
+            ]
+        )
+    )
+
+
+def _paint_folder_outline(painter: QPainter, s: float, color: QColor, accent: QColor) -> None:
+    """닫힌 폴더 윤곽 — 탭이 있는 상자 하나, 선만. 좌표는 프로토 폴더 윤곽 그림이다."""
+    _stroke(painter, color, s * LINE_WIDTH)
+    points = [(0.12, 0.80), (0.12, 0.24), (0.38, 0.24), (0.46, 0.32), (0.88, 0.32), (0.88, 0.80)]
+    painter.drawPolygon(QPolygonF([QPointF(s * x, s * y) for x, y in points]))
+
+
+def _paint_link(painter: QPainter, s: float, color: QColor, accent: QColor) -> None:
+    """연결 — 서로 걸친 둥근 고리 둘(하단바 연결 수). 좌표는 프로토 연결 그림이다."""
+    _stroke(painter, color, s * LINE_WIDTH)
+    painter.save()
+    painter.translate(s * 0.5, s * 0.5)
+    painter.rotate(-45)
+    width, height, radius = s * 0.46, s * 0.26, s * 0.13
+    painter.drawRoundedRect(QRectF(-width + s * 0.06, -height / 2, width, height), radius, radius)
+    painter.drawRoundedRect(QRectF(-s * 0.06, -height / 2, width, height), radius, radius)
+    painter.restore()
+
+
+def _paint_memory(painter: QPainter, s: float, color: QColor, accent: QColor) -> None:
+    """메모리 — 칩 상자와 위아래 다리 셋씩(하단바 메모리). 좌표는 프로토 메모리 그림이다."""
+    _stroke(painter, color, s * LINE_WIDTH)
+    painter.drawRoundedRect(QRectF(s * 0.24, s * 0.24, s * 0.52, s * 0.52), s * 0.06, s * 0.06)
+    for x in (0.36, 0.5, 0.64):
+        painter.drawLine(QPointF(s * x, s * 0.08), QPointF(s * x, s * 0.2))
+        painter.drawLine(QPointF(s * x, s * 0.8), QPointF(s * x, s * 0.92))
+
+
+def _paint_disk(painter: QPainter, s: float, color: QColor, accent: QColor) -> None:
+    """디스크 — 납작한 상자와 오른쪽 점(하단바 여유 공간). 좌표는 프로토 여유 공간 그림이다."""
+    _stroke(painter, color, s * LINE_WIDTH)
+    painter.drawRoundedRect(QRectF(s * 0.1, s * 0.3, s * 0.8, s * 0.4), s * 0.08, s * 0.08)
+    _fill(painter, color)
+    painter.drawEllipse(QPointF(s * 0.72, s * 0.5), s * 0.06, s * 0.06)
+
+
 _PAINTERS = {
+    "plus": _paint_plus,
+    "chevron_down": _paint_chevron_down,
+    "folder_outline": _paint_folder_outline,
+    "link": _paint_link,
+    "memory": _paint_memory,
+    "disk": _paint_disk,
     "star": _paint_star,
     "undo": _paint_undo,
     "sort": _paint_sort,

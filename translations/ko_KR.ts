@@ -826,6 +826,14 @@ Check your connection and cookies, then open this window again.</source>
         <translation>VOD 다운</translation>
     </message>
     <message>
+        <source>Enter Chzzk URL · Enter to add</source>
+        <translation>치지직 URL 입력 · Enter로 등록</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>등록</translation>
+    </message>
+    <message>
         <source>No VOD can be started right now.</source>
         <translation>지금 시작할 수 있는 VOD가 없습니다.</translation>
     </message>
@@ -893,14 +901,6 @@ Check your connection and cookies, then open this window again.</source>
     <message>
         <source>Settings</source>
         <translation>설정</translation>
-    </message>
-    <message>
-        <source>Enter Chzzk URL</source>
-        <translation>치지직 URL 입력</translation>
-    </message>
-    <message>
-        <source>Add VOD</source>
-        <translation>VOD 추가</translation>
     </message>
     <message>
         <source>Clear Finished</source>

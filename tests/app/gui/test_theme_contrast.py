@@ -142,8 +142,9 @@ BUBBLE_FILLS = ("stateRunning", "statePaused", "stateFailed", "stateWarning", "s
 #: OS 알림 바탕 — 설계 §12.1이 정한 값(라이트 흰색 · 다크 #2c2c2c).
 OS_NOTICE_GROUND = {"dark": "#2c2c2c", "light": "#ffffff"}
 
-#: 원이 놓이는 평소 바탕 토큰 — 메뉴바(창 배경) · 고른 메뉴(버튼 면).
-BUBBLE_GROUNDS = ("windowBg", "surfaceAlt")
+#: 원이 놓이는 평소 바탕 토큰 — 메뉴바(바 면 — #536부터, 그 전 창 배경) · 고른 메뉴(버튼 면).
+#: 창 배경은 메뉴바가 바 면이 된 뒤에도 남겨 둔다(기준을 줄이지 않는다).
+BUBBLE_GROUNDS = ("windowBg", "surface", "surfaceAlt")
 
 #: 경고 · 정보 토큰의 원래 색 — 색상각이 같아야 한다(밝기만 옮긴다). 정보 = 진행 색.
 WARNING_ORIGINAL = "#f0a33c"

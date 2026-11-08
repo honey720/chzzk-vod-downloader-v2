@@ -264,7 +264,10 @@ class TestSaveLocationButtonWidth:
         qapp.installTranslator(korean)
         hangul = VodDownloader()
         try:
-            assert hangul.fetchButton.text() == "VOD 추가", "ko 번역이 적용되지 않았다 — 전제 확인"
+            # 등록은 글 없는 「+」 아이콘이라(#536) 메뉴바 「설정」 글로 번역을 확인한다
+            assert hangul.menuSettingsButton.text() == "설정", (
+                "ko 번역이 적용되지 않았다 — 전제 확인"
+            )
             _at_width(english, width)
             _at_width(hangul, width)
             ko, en = hangul.saveLocationButton, english.saveLocationButton
