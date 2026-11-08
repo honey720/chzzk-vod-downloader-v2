@@ -31,7 +31,7 @@ _GIBIBYTE = 1024 * 1024 * 1024  # 여유 공간의 GB
 
 
 class MonitorLabel(QLabel):
-    """하단바 모니터링 한 칸 — 아이콘(16px)이 있으면 그 오른쪽에 값 (#536, 프로토 MonitorLabel).
+    """하단바 모니터링 한 칸을 그린다 — 아이콘(16px)이 있으면 그 오른쪽에 값 (#536, 프로토 MonitorLabel).
 
     아이콘 자리는 왼쪽 안쪽 여백으로 잡는다 — 크기 힌트가 아이콘 · 간격 · 값 글 폭을 함께 센다. 아이콘 색은 그릴
     때마다 흐린 글 토큰을 읽는다(실행 중 테마 전환 #247).
@@ -44,6 +44,7 @@ class MonitorLabel(QLabel):
             self.setContentsMargins(theme.METRICS["narrowIcon"] + ICON_GAP, 0, 0, 0)
 
     def paintEvent(self, event: QPaintEvent) -> None:
+        """값 글을 그리고, 아이콘이 있으면 왼쪽 안쪽 여백 자리에 흐린 글 색으로 그린다."""
         super().paintEvent(event)
         if not self.icon:
             return
@@ -56,7 +57,7 @@ class MonitorLabel(QLabel):
 
 
 class FooterMonitor(QWidget):
-    """하단바 왼쪽 모니터링 — 칸마다 라벨 하나, 툴팁은 「이름 · 값」(남은 시간은 글이 다 말해 없음).
+    """하단바 왼쪽 모니터링 칸들을 둔다 — 칸마다 라벨 하나, 툴팁은 「이름 · 값」(남은 시간은 글이 다 말해 없음).
 
     연결 · 메모리 · 여유는 이름 글 대신 아이콘 + 값이다(#536) — 이름은 툴팁이 말한다.
     """

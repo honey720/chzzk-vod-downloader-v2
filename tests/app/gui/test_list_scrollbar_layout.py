@@ -20,7 +20,7 @@ from collections.abc import Callable, Iterator
 
 import pytest
 from PySide6.QtCore import QPoint, QRect, Qt
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLayout, QWidget
 
 import CVDv2 as main_module
 import app.theme as theme
@@ -162,7 +162,7 @@ def test_scrollbar_hugs_the_window_edge_and_cards_keep_the_outer_margin(
         assert (rect.left(), rect.width()) == (0, win.width()), f"{frame.objectName()} {rect}"
 
 
-def _content_edges(win: VodDownloader, frame, inner) -> tuple[int, int]:
+def _content_edges(win: VodDownloader, frame: QWidget, inner: QLayout) -> tuple[int, int]:
     """그 바 안 내용의 (왼쪽 x, 오른쪽 끝 x + 1) — 창 좌표. 바 레이아웃의 내용 사각형으로 잰다."""
     rect = inner.contentsRect()
     left = frame.mapTo(win, rect.topLeft()).x()
@@ -170,7 +170,9 @@ def _content_edges(win: VodDownloader, frame, inner) -> tuple[int, int]:
 
 
 @pytest.mark.parametrize("width_extra", [0, 300, 900])
-def test_bar_contents_and_card_edges_share_two_lines(make_window, width_extra) -> None:
+def test_bar_contents_and_card_edges_share_two_lines(
+    make_window: Callable[..., VodDownloader], width_extra: int
+) -> None:
     """메뉴바 · 헤더바 · 하단바 안 내용의 왼쪽 · 오른쪽 끝이 카드 바깥 왼쪽 · 오른쪽 끝과 같아야 한다.
 
     창 폭 = 최소폭 + 0 · 300 · 900, 카드 2장
