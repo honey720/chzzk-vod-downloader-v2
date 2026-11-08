@@ -225,19 +225,27 @@ def test_the_dropdown_returns_to_chips_only_eight_pixels_past_the_need(
 
 
 def test_a_window_first_shown_in_the_dropdown_shape_has_no_horizontal_scrollbar(
-    window: VodDownloader,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """드롭다운 모양 폭으로 처음 띄우면 이벤트 한 차례 뒤 가로 스크롤바가 없고 콘텐츠 열이 창 폭이어야 한다.
 
-    창 폭 = 칩 모양 필요 폭 − 1(창이 보이기 전에 드롭다운 모양으로 바뀐다) -> show + processEvents 1번
+    여유 공간 모름(하단 칸이 하나도 안 보인다) · 창 폭 = 칩 모양 필요 폭 − 1(창이 보이기 전에 드롭다운
+    모양으로 바뀐다) -> show + processEvents 1번
     """
-    need = _chip_shape_need(window, window.sortButton.textWidth())
-    window.resize(need - 1, 700)
-    window.show()
+    from app.system.free_space import FreeSpaceProbe
+
+    monkeypatch.setattr(FreeSpaceProbe, "request", lambda self, path: None)
+    monkeypatch.setattr(FreeSpaceProbe, "value", lambda self, path: None)
+    win = VodDownloader()
+    win.monitorTimer.stop()
+    need = _chip_shape_need(win, win.sortButton.textWidth())
+    win.resize(need - 1, 700)
+    win.show()
     QApplication.processEvents()
-    assert window.filterChipBar.isCompact(), "전제: 처음부터 드롭다운 모양"
-    assert not window.windowScrollArea.horizontalScrollBar().isVisible()
-    assert window.contentColumn.width() == window.width()
+    assert win.filterChipBar.isCompact(), "전제: 처음부터 드롭다운 모양"
+    assert win.footerMonitor.shownKeys() == [], "전제: 하단 칸이 하나도 안 보인다"
+    assert not win.windowScrollArea.horizontalScrollBar().isVisible()
+    assert win.contentColumn.width() == win.width()
 
 
 def test_crossing_the_threshold_settles_before_returning_to_the_event_loop(
