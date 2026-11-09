@@ -35,6 +35,7 @@ QSS 양쪽을 같이 손봐야 동작한다(파이썬에서 속성만 바꾸면 
 """
 
 import logging
+import math
 import re
 import sys
 from collections.abc import Callable
@@ -69,6 +70,8 @@ METRICS = {
     "cardRadius": 8,  # 카드 모서리 둥글기 — 카드 · 메뉴 창 8(설계 §11.7, #550)
     "cardThumbWidth": 110,  # 카드 썸네일 폭(px) — 글 묶음 높이(62)에 맞춘 16:9(설계 §11.1, #550)
     "cardThumbHeight": 62,  # 카드 썸네일 높이(px) — 1줄 위끝 ~ 3줄 아래끝
+    "cardThumbCompactWidth": 68,  # 썸네일 줄이기의 폭(px) — 위 두 줄 높이(38)에 맞춘 16:9(설계 §12.1, #554)
+    "cardThumbCompactHeight": 38,  # 썸네일 줄이기의 높이(px) — 1줄 위끝 ~ 2줄 아래끝(16 + 4 + 18)
     "cardThumbGap": 12,  # 썸네일 ↔ 글(px) — 프로토 THUMB_GAP(#550)
     "cardRow1Height": 16,  # 카드 1줄(채널 그림 · 채널명 · 날짜) 높이(px)
     "cardRow2Height": 18,  # 카드 2줄(제목) 높이(px)
@@ -240,6 +243,211 @@ LIGHT = {
     "scrollHandleHover": "#aeb3bb",
 }
 
+# ---- 카드 색조 · 채움 색(#554 — 설계 §8의 6 · §12.1) ----
+# 완료 · 실패 색조와 배경 채움 색은 리터럴로 적지 않고 카드 면 · 상태 색에서 셈한다. 색상은 상태 색의
+# OKLCH 색상각 그대로, 밝기는 카드 면과 같게 두고 채도로 세기(카드 면과의 ΔE00)를 맞춘다 — 투명도로
+# 섞으면 카드 면의 기운 때문에 색상이 상태 색에서 어긋난다. 그 위 글(본문 · 보조 · 상태 글)은 4.5를 지킨다.
+TINT_DE00 = {
+    "dark": 12.0,
+    "light": 10.0,
+}  # 색조 · 채움 ↔ 카드 면 ΔE00 목표 — 설계 §8의 6(오너 2026-11-02)
+TINT_TEXT_CONTRAST = 4.5  # 색조 · 채움 위 글의 대비 하한 — 설계 §11.5
+
+
+def _linear(value: float) -> float:
+    """sRGB 0~1 → 선형."""
+    return value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
+
+
+def _gamma(value: float) -> float:
+    """선형 → sRGB 0~1."""
+    return 12.92 * value if value <= 0.0031308 else 1.055 * value ** (1 / 2.4) - 0.055
+
+
+def _rgb(color: str) -> tuple[float, float, float]:
+    """ "#rrggbb" → 선형 RGB."""
+    return tuple(_linear(int(color[i : i + 2], 16) / 255) for i in (1, 3, 5))
+
+
+def _hex(rgb: tuple[float, float, float]) -> str:
+    """선형 RGB → "#rrggbb"(범위 밖은 자른다)."""
+    return "#" + "".join(
+        f"{round(min(max(_gamma(min(max(v, 0.0), 1.0)), 0.0), 1.0) * 255):02x}" for v in rgb
+    )
+
+
+def _oklab(color: str) -> tuple[float, float, float]:
+    """ "#rrggbb" → OKLab (L, a, b)."""
+    r, g, b = _rgb(color)
+    lms = (
+        (0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b) ** (1 / 3),
+        (0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b) ** (1 / 3),
+        (0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b) ** (1 / 3),
+    )
+    return (
+        0.2104542553 * lms[0] + 0.7936177850 * lms[1] - 0.0040720468 * lms[2],
+        1.9779984951 * lms[0] - 2.4285922050 * lms[1] + 0.4505937099 * lms[2],
+        0.0259040371 * lms[0] + 0.7827717662 * lms[1] - 0.8086757660 * lms[2],
+    )
+
+
+def _from_oklab(lab: tuple[float, float, float]) -> str:
+    """OKLab → "#rrggbb"."""
+    big_l, a, b = lab
+    l_ = (big_l + 0.3963377774 * a + 0.2158037573 * b) ** 3
+    m_ = (big_l - 0.1055613458 * a - 0.0638541728 * b) ** 3
+    s_ = (big_l - 0.0894841775 * a - 1.2914855480 * b) ** 3
+    return _hex(
+        (
+            4.0767416621 * l_ - 3.3077115913 * m_ + 0.2309699292 * s_,
+            -1.2684380046 * l_ + 2.6097574011 * m_ - 0.3413193965 * s_,
+            -0.0041960863 * l_ - 0.7034186147 * m_ + 1.7076147010 * s_,
+        )
+    )
+
+
+def _cielab(color: str) -> tuple[float, float, float]:
+    """ "#rrggbb" → CIELAB(D65)."""
+    r, g, b = _rgb(color)
+    xyz = (
+        (0.4124564 * r + 0.3575761 * g + 0.1804375 * b) / 0.95047,
+        0.2126729 * r + 0.7151522 * g + 0.0721750 * b,
+        (0.0193339 * r + 0.1191920 * g + 0.9503041 * b) / 1.08883,
+    )
+    f = [t ** (1 / 3) if t > 216 / 24389 else (24389 / 27 * t + 16) / 116 for t in xyz]
+    return 116 * f[1] - 16, 500 * (f[0] - f[1]), 200 * (f[1] - f[2])
+
+
+def delta_e00(first: str, second: str) -> float:
+    """두 색의 CIEDE2000 색 차이."""
+    l1, a1, b1 = _cielab(first)
+    l2, a2, b2 = _cielab(second)
+    c_bar = (math.hypot(a1, b1) + math.hypot(a2, b2)) / 2
+    g = 0.5 * (1 - math.sqrt(c_bar**7 / (c_bar**7 + 25**7)))
+    a1p, a2p = a1 * (1 + g), a2 * (1 + g)
+    c1p, c2p = math.hypot(a1p, b1), math.hypot(a2p, b2)
+    h1p = math.degrees(math.atan2(b1, a1p)) % 360 if c1p else 0.0
+    h2p = math.degrees(math.atan2(b2, a2p)) % 360 if c2p else 0.0
+    dl, dc = l2 - l1, c2p - c1p
+    dh = 0.0
+    if c1p * c2p:
+        dh = h2p - h1p
+        dh = dh - 360 if dh > 180 else dh + 360 if dh < -180 else dh
+    big_dh = 2 * math.sqrt(c1p * c2p) * math.sin(math.radians(dh / 2))
+    l_bar, cp_bar = (l1 + l2) / 2, (c1p + c2p) / 2
+    if c1p * c2p == 0:
+        hp_bar = h1p + h2p
+    elif abs(h1p - h2p) <= 180:
+        hp_bar = (h1p + h2p) / 2
+    else:
+        hp_bar = (h1p + h2p + 360) / 2 if h1p + h2p < 360 else (h1p + h2p - 360) / 2
+    t = (
+        1
+        - 0.17 * math.cos(math.radians(hp_bar - 30))
+        + 0.24 * math.cos(math.radians(2 * hp_bar))
+        + 0.32 * math.cos(math.radians(3 * hp_bar + 6))
+        - 0.20 * math.cos(math.radians(4 * hp_bar - 63))
+    )
+    sl = 1 + 0.015 * (l_bar - 50) ** 2 / math.sqrt(20 + (l_bar - 50) ** 2)
+    sc, sh = 1 + 0.045 * cp_bar, 1 + 0.015 * cp_bar * t
+    rt = (
+        -2
+        * math.sqrt(cp_bar**7 / (cp_bar**7 + 25**7))
+        * math.sin(math.radians(60 * math.exp(-(((hp_bar - 275) / 25) ** 2))))
+    )
+    return math.sqrt(
+        (dl / sl) ** 2 + (dc / sc) ** 2 + (big_dh / sh) ** 2 + rt * (dc / sc) * (big_dh / sh)
+    )
+
+
+def contrast_ratio(first: str, second: str) -> float:
+    """WCAG 대비."""
+
+    def luminance(color: str) -> float:
+        r, g, b = _rgb(color)
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+    light, dark = sorted((luminance(first), luminance(second)), reverse=True)
+    return (light + 0.05) / (dark + 0.05)
+
+
+def _tinted(base: str, hue_from: str | None, target: float, texts: tuple[str, ...]) -> str:
+    """`base`에서 `hue_from`의 색상각으로 채도만 올려 ΔE00 `target`이 되는 색 — 글 대비를 지키는 만큼만.
+
+    `hue_from`이 None이면 무채색 그대로 밝기만 옮긴다(일시정지 회색 채움 — 어두운 면이면 밝게, 밝은
+    면이면 어둡게). 밝은 면(흰 카드)은 밝기를 그대로 두고 채도만 올리면 sRGB 밖으로 나가 잘리므로, 채도를
+    올린 만큼의 절반을 밝기에서 뺀다. 이분 탐색으로 정하고, `texts`의 글이 4.5 아래로 내려가면 그 아래
+    세기에서 멈춘다.
+    """
+    big_l, _a, _b = _oklab(base)
+
+    def color_at(amount: float) -> str:
+        if hue_from is None:
+            step = amount if big_l < 0.6 else -amount
+            return _from_oklab((big_l + step, 0.0, 0.0))
+        _l, ha, hb = _oklab(hue_from)
+        hue = math.atan2(hb, ha)
+        lightness = big_l - amount / 2 if big_l > 0.85 else big_l
+        return _from_oklab((lightness, amount * math.cos(hue), amount * math.sin(hue)))
+
+    def readable(color: str) -> bool:
+        return all(contrast_ratio(text, color) >= TINT_TEXT_CONTRAST for text in texts)
+
+    low, high = 0.0, 0.4
+    for _ in range(40):
+        middle = (low + high) / 2
+        color = color_at(middle)
+        if delta_e00(base, color) < target and readable(color):
+            low = middle
+        else:
+            high = middle
+    return color_at(low)
+
+
+def _hover_of(tint: str, card: str, hover: str) -> str:
+    """색조 면의 호버 — 카드 면 → 호버 바탕과 같은 OKLab 밝기 차를 색조에 옮긴다(설계 §12.1 카드 호버)."""
+    big_l, a, b = _oklab(tint)
+    return _from_oklab((big_l + _oklab(hover)[0] - _oklab(card)[0], a, b))
+
+
+def _readable_on(color: str, grounds: tuple[str, ...]) -> str:
+    """`color`의 색상 · 채도는 두고 OKLab 밝기만 옮겨 모든 `grounds` 위 4.5가 되는 가장 가까운 색.
+
+    이미 4.5면 그대로다. 어두운 면이면 밝게, 밝은 면이면 어둡게 옮긴다.
+    """
+    if all(contrast_ratio(color, ground) >= TINT_TEXT_CONTRAST for ground in grounds):
+        return color
+    big_l, a, b = _oklab(color)
+    direction = 1.0 if _oklab(grounds[0])[0] < 0.6 else -1.0
+    step = 0.0
+    while step < 1.0:
+        step += 0.005
+        moved = _from_oklab((big_l + direction * step, a, b))
+        if all(contrast_ratio(moved, ground) >= TINT_TEXT_CONTRAST for ground in grounds):
+            return moved
+    return color
+
+
+def _card_tints(table: dict, scheme: str) -> None:
+    """완료 · 실패 색조(+ 호버 · 그 위 상태 글 색)와 받는 중 · 일시정지 채움 색을 표에 더한다.
+
+    색조 세기는 목표(ΔE00)를 먼저 정한다(설계 §8의 6). 본문 · 보조 글은 그 세기에서 4.5를 지키는지
+    본다. 상태 글(완료 초록 · 실패 빨강)은 색조 위에서 4.5가 되게 같은 색상의 밝기만 옮긴 색을 따로 둔다
+    (`state…OnTint`) — 라이트의 완료 초록은 흰 카드에서 이미 4.5라 색조가 조금만 생겨도 4.5 아래로 내려간다.
+    """
+    card, hover, target = table["cardBg"], table["cardHoverBg"], TINT_DE00[scheme]
+    texts = (table["text"], table["textMuted"])
+    for name, state in (("Finished", "stateFinished"), ("Failed", "stateFailed")):
+        tint = _tinted(card, table[state], target, texts)
+        table[f"cardTint{name}"] = tint
+        table[f"cardTint{name}Hover"] = _hover_of(tint, card, hover)
+        table[f"{state}OnTint"] = _readable_on(table[state], (tint, table[f"cardTint{name}Hover"]))
+    # 배경 채움 위의 상태 색(상태 원 · 상태 글)은 대비 조건 밖이다 — 설정에서 고르는 선택의 예외(설계 §12.1
+    # 상태 색). 본문 · 보조 글만 4.5를 지킨다
+    table["cardFillRunning"] = _tinted(card, table["stateRunning"], target, texts)
+    table["cardFillPaused"] = _tinted(card, None, target, texts)
+
+
 # METRICS(정수)와 FONTS(문자열)를 두 색 표에 자동 주입한다 — .qss는
 # @cardPadding·@fontSizeTitle 같은 이름으로 참조하고, 파이썬 코드는
 # theme.METRICS["cardPadding"] 정수를 직접 쓴다. 정의 지점은 위 한 곳이다.
@@ -253,6 +461,8 @@ for _table in (DARK, LIGHT):
     _table["menuButtonPadRight"] = (
         f"{METRICS['menuBubbleInset'] + METRICS['menuBubble'] + METRICS['menuBubbleGap'] - 1}px"
     )
+_card_tints(DARK, "dark")
+_card_tints(LIGHT, "light")
 
 #: 카드 상태 이름 — 파이썬(`setProperty`)과 QSS(`[state="..."]`)가 공유하는 어휘.
 #: 상태 아이콘·진행바 둘 다 이 값을 그대로 `state` 동적 속성에 써서

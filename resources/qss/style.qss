@@ -166,6 +166,33 @@ QLabel#thumbnailLabel {
     background-color: @cardHoverBg;
 }
 
+/* 완료 · 실패 카드 전체 색조(#554 — 설계 §12.1 카드 배치 · §8의 6). 색은 theme.py가 상태 색의 색상 ·
+ * ΔE00 목표로 셈한다. `tint`는 app/widgets/widget.py::applyStateStyle이 심는다. 호버면 그 색조에서 한 단계 */
+#contentFrame[tint="finished"] {
+    background-color: @cardTintFinished;
+}
+
+#contentFrame[tint="finished"][hover="true"] {
+    background-color: @cardTintFinishedHover;
+}
+
+#contentFrame[tint="failed"] {
+    background-color: @cardTintFailed;
+}
+
+#contentFrame[tint="failed"][hover="true"] {
+    background-color: @cardTintFailedHover;
+}
+
+/* 색조 위 상태 글 — 같은 색상의 밝기만 옮겨 4.5를 지키는 색(theme.py `…OnTint`) */
+#contentFrame[tint="finished"] #statusLabel[state="finished"] {
+    color: @stateFinishedOnTint;
+}
+
+#contentFrame[tint="failed"] #statusLabel[state="failed"] {
+    color: @stateFailedOnTint;
+}
+
 /* 키보드 초점 — 테두리만 강조색(#550). 마우스로는 초점을 받지 않는다(TabFocus) */
 #contentFrame[keyFocus="true"] {
     border-color: @accent;
