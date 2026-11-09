@@ -3,6 +3,7 @@
     "sources": [
         "app/views/mainWindow.py",
         "app/widgets/widget.py",
+        "app/viewmodels/card_text.py",
         "app/widgets/view.py",
         "app/widgets/header_controls.py",
         "app/widgets/footer_bar.py",
