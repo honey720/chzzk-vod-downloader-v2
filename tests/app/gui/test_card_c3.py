@@ -12,7 +12,7 @@ from collections.abc import Iterator
 from typing import Never
 
 import pytest
-from PySide6.QtCore import QPoint
+from PySide6.QtCore import QEvent, QPoint, QVariantAnimation
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
@@ -694,6 +694,24 @@ class TestStopMotion:
         card = self._stopped()
         assert card.motion() is None
         assert not card.progressBar.isVisible()
+
+    def test_finished_fill_motions_do_not_pile_up_on_the_card(self, qapp) -> None:
+        """채움 방식에서 틱 다섯 번의 모션이 끝나면 카드에 남은 모션 객체가 0개여야 한다.
+
+        받는 중 10% → 20 · 30 · 40 · 50 · 60%, 틱마다 모션을 끝까지 돌림 -> QVariantAnimation 자식 0개
+        """
+        _display(progress="fill", animations=True)
+        item = _item(DownloadState.RUNNING)
+        item.download_progress = 10
+        card = _card(item)
+        for progress in (20, 30, 40, 50, 60):
+            item.download_progress = progress
+            card.setData(item, 0)
+            motion = card.motion()
+            assert motion is not None
+            motion.setCurrentTime(motion.duration())
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        assert card.findChildren(QVariantAnimation) == []
 
     def test_restart_during_the_motion_stops_it(self, qapp) -> None:
         """모션 도중 다시 받는 중(10%)이 되면 모션이 멈추고 막대가 10이어야 한다."""

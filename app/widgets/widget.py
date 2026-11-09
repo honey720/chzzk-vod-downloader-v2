@@ -1019,7 +1019,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
 
     def _onMotionFinished(self) -> None:
         """모션이 끝났다 — 지금 아이템의 진행으로 맞춘다(중지 모션이면 대기 — 막대 · 채움 없음)."""
-        self._motion = None
+        motion, self._motion = self._motion, None
+        if motion is not None:
+            motion.deleteLater()  # 끝난 모션이 카드의 자식으로 쌓이지 않게(채움은 틱마다 하나)
         self._showProgress(*self._target())
 
     def _applyProgress(self, previous: object) -> None:
