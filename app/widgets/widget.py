@@ -1696,19 +1696,20 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         않는다 — 포커스 이탈로 늦게 오는 editingFinished나 직접 호출이 입력창의 값을 제목으로
         굳히지 않게(#244 P-5). 대기 밖에서 편집 중인 상태는 _applyEditability의 취소 때문에
         생기지 않으므로 별도 검사는 두지 않는다.
+
+        빈 이름(공백만 포함)이면 처음 제목(`default_title`)으로 돌아간다. 라벨만 되돌리면
+        `item.title`에 앞서 고친 값이 남아 화면과 다른 이름으로 저장된다(#543) — 라벨 ·
+        `item.title` · `textChanged`에 같은 값을 쓴다.
         """
         if not self.isEditing:
             return
         self.isEditing = False
         self.titleEdit.setVisible(False)
         self.titleLabel.setVisible(True)
-        new_text = self.titleEdit.text().strip()
-        if new_text:
-            self.titleLabel.setText(new_text)  # ✅ UI 업데이트
-            self.item.title = new_text  # ✅ 데이터 업데이트
-            self.textChanged.emit(new_text)  # ✅ 모델에도 반영하도록 시그널 전송
-        else:
-            self.titleLabel.setText(self.item.default_title)
+        new_text = self.titleEdit.text().strip() or self.item.default_title
+        self.titleLabel.setText(new_text)  # ✅ UI 업데이트
+        self.item.title = new_text  # ✅ 데이터 업데이트
+        self.textChanged.emit(new_text)  # ✅ 모델에도 반영하도록 시그널 전송
 
     def choosePath(self, event=None) -> None:
         """경로를 클릭하면 폴더 선택 대화상자로 이 카드의 저장 경로를 바꾼다 (#245).

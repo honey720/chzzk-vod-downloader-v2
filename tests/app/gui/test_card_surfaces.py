@@ -540,3 +540,68 @@ class TestEditingIsCancelledOnStateChange:
             and widget.item.title == "NewName"
             and emitted == ["NewName"]
         )
+
+
+# ============================ 빈 제목 ============================
+
+
+class TestEmptyTitleFallsBackToTheOriginal:
+    """빈 제목을 확정하면 라벨 · 저장 제목 · 알림이 모두 처음 제목이 된다 (#543)."""
+
+    def _card(self, qtbot) -> tuple[QWidget, ContentItemWidget, list[str]]:
+        window, widget = make_card(DownloadState.WAITING, path="C:/dl")
+        qtbot.addWidget(window)
+        emitted: list[str] = []
+        widget.textChanged.connect(emitted.append)
+        shown(widget.titleLabel)
+        return window, widget, emitted
+
+    def _commit(self, widget: ContentItemWidget, typed: str) -> None:
+        """제목을 눌러 입력칸을 열고, 글을 모두 지운 뒤 typed를 쳐서 Enter로 확정한다."""
+        QTest.mouseClick(widget.titleLabel, Qt.MouseButton.LeftButton)
+        _pump()
+        assert widget.titleEdit.isVisible() and widget.isEditing, "전제: 편집 중"
+        widget.titleEdit.selectAll()
+        QTest.keyClick(widget.titleEdit, Qt.Key.Key_Delete)
+        if typed:
+            QTest.keyClicks(widget.titleEdit, typed)  # ASCII만 — 한글은 offscreen에서 키 매핑 없음
+        assert widget.titleEdit.text() == typed, "전제: 입력칸에 친 글만 남았다"
+        QTest.keyClick(widget.titleEdit, Qt.Key.Key_Return)
+        _pump()
+
+    @pytest.mark.parametrize("typed", ["", "   "], ids=["empty", "spaces"])
+    def test_emptying_an_edited_title_restores_the_original(self, qapp, qtbot, typed: str) -> None:
+        """고친 제목을 비우거나 공백만 남겨 확정하면 라벨 · item.title · textChanged가 처음 제목이어야 한다.
+
+        "제목" → "NewName" 확정 → typed 확정
+        -> 라벨 "제목", item.title "제목", textChanged ["NewName", "제목"]
+        """
+        window, widget, emitted = self._card(qtbot)
+        self._commit(widget, "NewName")
+        assert widget.item.title == "NewName", "전제: 한 번 고쳤다"
+        self._commit(widget, typed)
+        assert shown(widget.titleLabel) == "제목"
+        assert widget.item.title == "제목"
+        assert emitted == ["NewName", "제목"]
+
+    def test_emptying_an_unedited_title_keeps_the_original(self, qapp, qtbot) -> None:
+        """고친 적 없는 카드에서 빈 제목을 확정하면 라벨 · item.title · textChanged가 처음 제목이어야 한다.
+
+        "제목" → "" 확정 -> 라벨 "제목", item.title "제목", textChanged ["제목"]
+        """
+        window, widget, emitted = self._card(qtbot)
+        self._commit(widget, "")
+        assert shown(widget.titleLabel) == "제목"
+        assert widget.item.title == "제목"
+        assert emitted == ["제목"]
+
+    def test_the_saved_filename_uses_the_original_title(self, qapp, qtbot, tmp_path) -> None:
+        """고친 제목을 비워 확정한 뒤 받으면 파일 이름이 처음 제목이어야 한다.
+
+        "제목" → "NewName" → "" 확정, 파일 이름 조립에 item.title을 넣음 -> "제목 1080p.mp4"
+        """
+        window, widget, emitted = self._card(qtbot)
+        self._commit(widget, "NewName")
+        self._commit(widget, "")
+        path = build_output_path(str(tmp_path), widget.item.title, "1080")
+        assert os.path.basename(path) == "제목 1080p.mp4"
