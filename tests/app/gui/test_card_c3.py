@@ -167,11 +167,14 @@ def _row3_need(card: ContentItemWidget) -> int:
     return sum(widths) + layout.spacing() * (len(widths) - 1)
 
 
-def _fold_steps(card: ContentItemWidget, start: int, stop: int) -> list[tuple[int, tuple, tuple]]:
+def _fold_steps(
+    card: ContentItemWidget, start: int, stop: int, count: int
+) -> list[tuple[int, tuple, tuple]]:
     """카드를 `start`에서 `stop`까지 1px씩 좁히며 모양이 바뀐 곳마다 (T, 앞 모양, 뒤 모양)을 모은다.
 
     T는 앞 모양이 마지막으로 들어간 폭이다. 각 T에서 독립 합산이 T의 3줄 폭과 같은지 보고, T+7에서는
-    접힌 채, T+8에서는 앞 모양으로 돌아오는지 본 뒤 다시 좁혀 이어 간다.
+    접힌 채, T+8에서는 앞 모양으로 돌아오는지 본 뒤 다시 좁혀 이어 간다. 바뀜을 `count`번 모으면
+    멈춘다 — 실제 화면은 최상위 창 최소폭이 있어 아주 좁게는 못 줄인다.
     """
     _at(card, start)
     chrome = card.width() - card.statusRow.width()  # 카드 폭 − 3줄 폭(썸네일 · 여백 · 테두리)
@@ -195,6 +198,8 @@ def _fold_steps(card: ContentItemWidget, start: int, stop: int) -> list[tuple[in
         _at(card, width)
         assert _signature(card) == current
         steps.append((threshold, previous, current))
+        if len(steps) == count:
+            break
         previous, need = current, _row3_need(card)
     return steps
 
@@ -205,12 +210,12 @@ class TestFoldOrder:
     def test_running_card_folds_in_the_proto_order_with_the_return_slack(self, qapp) -> None:
         """받는 중 구간 카드면 경계마다 독립 합산 폭에서 접히고 그 차례가 프로토 가와 같아야 한다.
 
-        저장 위치 다름 · 구간 둘(20:00) · 50 MB / 200 MB · 18.4 MB/s · 6:00 남음, 900px → 260px 1px씩
+        저장 위치 다름 · 구간 둘(20:00) · 50 MB / 200 MB · 18.4 MB/s · 6:00 남음, 900px → 280px 1px씩
         -> 바뀐 차례: 폴더 이름 숨음 → 폴더 아이콘 숨음 → 「20:00」 빠짐 → 「/ 200.00 MB」 빠짐 →
         「18.4 MB/s」 빠짐 → 「6:00 left」 빠짐, 경계마다 T−1 접힘 · T 들어감 · T+7 접힌 채 · T+8 되돌아감
         """
         card = _card(_sections_running())
-        steps = _fold_steps(card, 900, 260)
+        steps = _fold_steps(card, 900, 280, count=7)  # 7번째가 없으면 끝까지 줄인 뒤 6개로 끝난다
         changes = []
         for _, (status, info, icon, name), (status2, info2, icon2, name2) in steps:
             if name and not name2:
@@ -232,13 +237,13 @@ class TestFoldOrder:
     def test_failed_card_drops_the_reason_tail_first(self, qapp) -> None:
         """실패 카드면 첫 경계에서 사유의 뒤(조치 안내)가 빠지고 앞은 남아야 한다.
 
-        사유 "Failed to save the file · Check the free space" · 저장 위치 다름, 900px → 260px
+        사유 "Failed to save the file · Check the free space" · 저장 위치 다름, 900px부터 1px씩(첫 바뀜까지)
         -> 첫 바뀜: 상태 글 "Failed to save the file · Check …" → "Failed to save the file"
         """
         item = _item(DownloadState.FAILED, path=OTHER_DIR)
         item.stateMessage = "Failed to save the file · Check the free space"
         card = _card(item)
-        steps = _fold_steps(card, 900, 260)
+        steps = _fold_steps(card, 900, 280, count=1)
         first_before, first_after = steps[0][1][0], steps[0][2][0]
         assert first_before == "Failed to save the file · Check the free space"
         assert first_after == "Failed to save the file"
