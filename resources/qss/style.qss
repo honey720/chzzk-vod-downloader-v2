@@ -263,7 +263,7 @@ QPushButton#downloadButton:disabled {
 }
 
 /* 아이콘 버튼(조작·삭제) — iconSize 정사각 고정이라 여백을 0으로 되돌려야
- * 도형이 안 잘린다. `role`은 ui/contentItemWidget.py가 동적 속성으로 심는다. */
+ * 도형이 안 잘린다. `role`은 app/widgets/contentItemWidget.py가 동적 속성으로 심는다. */
 QPushButton[role="icon"] {
     padding: 0px;
     background-color: transparent;

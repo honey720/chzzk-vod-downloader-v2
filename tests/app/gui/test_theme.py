@@ -12,6 +12,7 @@
    붙일 때 갈라진다. 소스 트리를 스캔해 그 재발을 막는다.
 """
 
+import inspect
 import re
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from PySide6.QtGui import QPalette
 
 import CVDv2 as main
 import app.theme as theme
+from app.widgets.contentItemWidget import Ui_ContentItemWidget
 from tests.app.gui.card_helpers import hold_style
 from tests.support.layers import is_theme
 
@@ -192,8 +194,8 @@ def _git_tracked_sources() -> list[Path] | None:
 class TestColoursAreDefinedOnlyOnce:
     """색 리터럴은 theme.py에만 있어야 한다.
 
-    카드 완료·실패 색이 `app/widgets/view.py`에, 카드 배경이
-    `ui/contentItemWidget.ui`에 직접 박혀 있던 게 #227 착수 전 모습이다.
+    카드 완료·실패 색이 `app/widgets/view.py`에, 카드 배경이 카드 설계 기록
+    `contentItemWidget.ui`(#541에서 지움)에 직접 박혀 있던 게 #227 착수 전 모습이다.
     그 상태로 테마가 하나 더 붙으면 값이 여러 곳에서 갈린다.
 
     스캔 대상은 `scan_sources()` — 디렉토리 이름을 박지 않는다(#259 C0). 대신 **스캔한
@@ -206,15 +208,21 @@ class TestColoursAreDefinedOnlyOnce:
     MIN_SCANNED_SOURCES = 60
 
     def test_scan_is_not_empty_and_covers_the_tree(self) -> None:
-        """메타 게이트 — 스캔이 실제로 무언가를 재고 있다: 바닥 수 이상 · 진입점 · `.ui` 포함."""
+        """메타 게이트 — 스캔이 실제로 무언가를 재고 있다: 바닥 수 이상 · 진입점 · 카드 구현 포함.
+
+        카드 구현 파일은 파일 이름을 박지 않고 `Ui_ContentItemWidget`이 정의된 곳에서 읽는다 —
+        카드 배경 색이 새던 자리다. 그 자리가 `.ui`(설계 기록)였을 때는 `.ui`가 스캔에 드는지를
+        쟀고, `.ui`를 지운 뒤(#541)에는 실제 구현이 드는지를 잰다.
+        """
         files = scan_sources()
         names = {p.relative_to(ROOT_DIR).as_posix() for p in files}
         assert len(files) >= self.MIN_SCANNED_SOURCES, (
             f"색 스캔 대상이 {len(files)}개뿐이다(바닥 {self.MIN_SCANNED_SOURCES}) — 제외 목록이 잘못 넓어졌거나 소스가 사라졌다"
         )
         assert "CVDv2.py" in names, "진입점이 스캔에 없다"
-        assert any(p.suffix == ".ui" for p in files), (
-            ".ui 파일이 하나도 스캔되지 않았다 — 카드 배경이 새던 곳이다"
+        card_source = Path(inspect.getsourcefile(Ui_ContentItemWidget)).resolve()
+        assert card_source in {p.resolve() for p in files}, (
+            f"카드 구현({card_source.name})이 스캔되지 않았다 — 카드 배경 색이 새던 곳이다"
         )
         assert not any(
             p.parts[-2] == "tests" or "tests" in p.relative_to(ROOT_DIR).parts for p in files
