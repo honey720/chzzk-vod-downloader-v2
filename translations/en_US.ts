@@ -91,16 +91,8 @@
         <translation>Sections were moved to the frames of the new frame rate.</translation>
     </message>
     <message>
-        <source>Edit sections</source>
-        <translation>Edit sections</translation>
-    </message>
-    <message>
         <source>Edit</source>
         <translation>Edit</translation>
-    </message>
-    <message>
-        <source>Change save location</source>
-        <translation>Change save location</translation>
     </message>
     <message>
         <source>checking length</source>
@@ -139,10 +131,6 @@
         <translation>Overlapping parts are received once</translation>
     </message>
     <message>
-        <source>Click to edit sections</source>
-        <translation>Click to edit sections</translation>
-    </message>
-    <message>
         <source>Preparing</source>
         <translation>Preparing</translation>
     </message>
@@ -157,6 +145,10 @@
     <message>
         <source>Post-processing</source>
         <translation>Post-processing</translation>
+    </message>
+    <message>
+        <source>Downloading</source>
+        <translation>Downloading</translation>
     </message>
     <message>
         <source>{0} left</source>
@@ -179,8 +171,12 @@
         <translation>{0} failed</translation>
     </message>
     <message>
-        <source>Select download folder</source>
-        <translation>Select download folder</translation>
+        <source>The downloaded section files are not there anymore.</source>
+        <translation>The downloaded section files are not there anymore.</translation>
+    </message>
+    <message>
+        <source>The downloaded file is not there anymore.</source>
+        <translation>The downloaded file is not there anymore.</translation>
     </message>
     <message>
         <source>Could not find &apos;{0}&apos;.</source>
@@ -211,36 +207,8 @@
         <translation>ContentItemWidget</translation>
     </message>
     <message>
-        <source>Channel image</source>
-        <translation>Channel image</translation>
-    </message>
-    <message>
-        <source>Channel name</source>
-        <translation>Channel name</translation>
-    </message>
-    <message>
-        <source>Status</source>
-        <translation>Status</translation>
-    </message>
-    <message>
-        <source>File size</source>
-        <translation>File size</translation>
-    </message>
-    <message>
         <source>Delete</source>
         <translation>Delete</translation>
-    </message>
-    <message>
-        <source>Thumbnail</source>
-        <translation>Thumbnail</translation>
-    </message>
-    <message>
-        <source>Title</source>
-        <translation>Title</translation>
-    </message>
-    <message>
-        <source>Directory</source>
-        <translation>Directory</translation>
     </message>
     <message>
         <source>Open directory</source>
@@ -261,6 +229,18 @@
 </context>
 <context>
     <name>ContentListView</name>
+    <message>
+        <source>Delete</source>
+        <translation>Delete</translation>
+    </message>
+    <message>
+        <source>This VOD is downloading. Stop the download and delete it?</source>
+        <translation>This VOD is downloading. Stop the download and delete it?</translation>
+    </message>
+    <message>
+        <source>Stop and delete</source>
+        <translation>Stop and delete</translation>
+    </message>
     <message>
         <source>Drag the URL here.</source>
         <translation>Drag the URL here.</translation>

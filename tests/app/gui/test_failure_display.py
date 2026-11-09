@@ -216,9 +216,9 @@ def test_failed_card_shows_failure_and_batch_continues(wired, qapp, tmp_path) ->
     assert item1.downloadState is DownloadState.FAILED
     widget = view.widgetFor(manager.model.items[0])
     label = widget.statusLabel.text()
-    # #245 상태별 슬롯: 실패 사유가 있으면 "✕ 사유"만 보인다(오너 확정 —
-    # "Download failed —" 접두는 사유 없는 경우의 폴백으로만 쓰인다)
-    assert label.startswith("✕ ")
+    # #550: 실패 표시는 글 머리 「✕ 」가 아니라 3줄 왼쪽 상태 원 아이콘이 맡는다 — 글은 사유만
+    assert widget.statusIcon.state() == "all_failed"
+    assert not label.startswith("✕")
     # 첫 줄=핵심(할 일 포함)만 3행에 보인다(#245) — 상세는 툴팁
     assert "corrupted" in label and "download the video again" in label
     assert "\n" not in label, "둘째 줄(상세)이 3행에 새어 나왔다"

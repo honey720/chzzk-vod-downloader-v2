@@ -630,7 +630,7 @@ def test_footer_drops_cells_from_the_front_of_the_drop_order_while_shrinking(
 ) -> None:
     """창을 1px씩 줄이면 하단 칸은 연결부터 차례로 하나씩 빠지고 다시 나타나지 않으며 속도는 남아야 한다.
 
-    받는 중 값(다섯 칸) · 넓은 창 -> 창 최소폭까지 1px씩 -> 빠진 칸 = DROP_ORDER의 앞부분(두 칸 이상)
+    받는 중 값(다섯 칸) · 넓은 창 -> 창 최소폭까지 1px씩 -> 빠진 칸 = DROP_ORDER의 앞부분(한 칸 이상)
     """
     _at_width(window, window.minimumWidth() + WIDE_EXTRA)
     _receiving(window, monkeypatch)
@@ -642,7 +642,9 @@ def test_footer_drops_cells_from_the_front_of_the_drop_order_while_shrinking(
         assert all(key not in shown for key in gone), f"{width}px에서 빠진 칸이 다시 나타났다"
         gone += [key for key in mw_mod.DROP_ORDER if key not in shown and key not in gone]
         assert "speed" in shown
-    assert len(gone) >= 2, "전제: 창 최소폭까지 줄이면 두 칸 이상 빠진다"
+    # 창 최소폭은 가장 긴 대기 카드 정보 글이 정한다(#550 — 정보 글은 말줄임하지 않는다). 그 폭에서
+    # 빠지는 칸 수는 글꼴에 달렸다 — 한 칸 이상이면 차례를 잰다
+    assert len(gone) >= 1, "전제: 창 최소폭까지 줄이면 한 칸 이상 빠진다"
     assert gone == list(mw_mod.DROP_ORDER[: len(gone)])
 
 

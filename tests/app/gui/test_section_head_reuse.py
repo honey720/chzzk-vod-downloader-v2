@@ -12,7 +12,6 @@ from collections.abc import Iterator
 from fractions import Fraction
 
 import pytest
-from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
@@ -32,6 +31,7 @@ from core.utils.paths import release_output_paths
 from tests.mocks.engine_side import engine_side
 from tests.app.gui.section_input import enter_time
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
+from tests.app.gui.test_section_editor import _pick
 from typing import Never, Self
 
 ROW = ("00100000", "00200000")
@@ -144,7 +144,7 @@ def _add(win, item: ContentItem) -> None:
 
 def _give_section(qtbot, win, item: ContentItem) -> SectionEditDialog:
     """편집 창으로 구간 하나(10분~20분)를 넣는다. 닫힌 그 편집 창을 돌려준다."""
-    QTest.mouseClick(win.listView.widgetFor(item).fileSizeLabel, Qt.MouseButton.LeftButton)
+    win.onCardSectionEdit(item)  # 구간 창을 여는 길 — 카드의 크기 클릭은 #550에서 없어졌다
     _pump()
     dialog = win._sectionDialog
     qtbot.waitUntil(lambda: dialog.viewModel().state == "ready", timeout=3000)
@@ -156,18 +156,6 @@ def _give_section(qtbot, win, item: ContentItem) -> SectionEditDialog:
     _pump()
     assert len(item.selections) == 1, "전제: 구간이 쓰여야 한다"
     return dialog
-
-
-def _pick(win, item: ContentItem, resolution: int) -> None:
-    """카드에서 그 해상도의 버튼을 실제로 눌러 고른다 — 접혀 있으면 먼저 펼친다."""
-    widget = win.listView.widgetFor(item)
-    index = next(i for i, rep in enumerate(item.unique_reps) if rep[0] == resolution)
-    widget.buttons[index].click()
-    _pump()
-    if widget.isExpanded():
-        widget.buttons[index].click()
-        _pump()
-    assert item.resolution == resolution, "전제: 해상도가 바뀌어야 한다"
 
 
 def _settle(qtbot, win) -> None:

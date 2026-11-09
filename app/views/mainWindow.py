@@ -1,6 +1,7 @@
 import logging
 import os
 import platform
+from app.section_input.basis import SECTION_CONTENT_TYPES
 from app.system import settings
 
 from PySide6.QtWidgets import (
@@ -864,18 +865,28 @@ class VodDownloader(QMainWindow):
         return margins.top() + bars + list_height + gaps + margins.bottom()
 
     def _referenceCardWidth(self) -> int:
-        """버튼이 가장 많은 대기 카드 한 장의 최소폭 — 창 최소폭의 카드 몫 (#545).
+        """대기 카드 한 장의 최소폭 — 창 최소폭의 카드 몫 (#545 · #550).
 
-        대기 카드의 위 줄에는 편집 · 구간 편집 · 저장 위치 · 삭제 버튼이 모두 보인다. 카드 편집 창
-        버튼(✎)이 더해져 위 줄이 넓어졌고, 창 최소폭이 카드 없이 센 값이면 가장 좁은 창에서 카드가
-        넘친다. 견본은 카드 내용과 무관한 고정 카드다 — 카드 수와 상관없이 최소폭이 같다. 채널명은
-        최소폭 상한(`_clampChannelMinWidth` 64px)에 닿는 긴 이름으로 둔다. 해상도 목록을 비워 크기
-        조회 스레드를 타지 않고, 썸네일 · 채널 그림 주소가 비어 네트워크도 없다.
+        카드 버튼은 1줄 위에 겹쳐 놓으므로(#550) 최소폭에 들지 않는다 — 최소폭은 썸네일과 세 줄의
+        최소 폭이 정한다. 창 최소폭이 카드 없이 센 값이면 가장 좁은 창에서 카드가 넘친다.
+
+        견본은 카드 내용과 무관한 고정 카드다 — 카드 수와 상관없이 최소폭이 같다. 3줄 정보 글은
+        말줄임하지 않으므로(#550) 가장 긴 대기 정보 글(해상도 · 크기 자리 · 길이)과 저장 위치를 넣는다.
+        크기 자리는 「확인 중...」과 「0000.00 MB」 가운데 넓은 쪽이다. 채널명은 최소폭 상한
+        (`_clampChannelMinWidth` 64px)에 닿는 긴 이름으로 둔다. 해상도 목록을 비워 크기 조회 스레드를
+        타지 않고, 썸네일 · 채널 그림 주소가 비어 네트워크도 없다.
         """
         metadata = dict(REFERENCE_CARD_METADATA, channelName="Chzzk VOD Downloader Channel")
-        item = ContentItem("", metadata, [], None, "", "", "video", None)
+        # 저장 위치는 기본 위치와 다르게 둔다 — 다를 때만 3줄에 보인다
+        item = ContentItem("", metadata, [], None, "", "Reference folder", "video", None)
+        item.resolution = 1080
         card = content_widget.ContentItemWidget(item)
         card.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
+        card.fileSizeLabel.ensurePolished()  # 정보 글의 글꼴(QSS 12px)로 잰다
+        metrics = card.fileSizeLabel.fontMetrics()
+        checking = QCoreApplication.translate("ContentItemWidget", "Checking...")
+        item.total_size = max((checking, "0000.00 MB"), key=metrics.horizontalAdvance)
+        card.setData(item, 0)
         card.show()
         card.layout().activate()
         width = card.minimumSizeHint().width()
@@ -886,17 +897,11 @@ class VodDownloader(QMainWindow):
     def _referenceCardHeight(self) -> int:
         """가장 높은 평소 카드 한 장의 높이 — 창 최소 높이의 목록 몫 (#492).
 
-        평소(펼침이 아닌) 카드 높이는 상태와 무관하게 같다: 3행 상태 글의 최소 높이를 해상도
-        pill 높이에 맞춰 두었다(#245 — 상태가 바뀌어도 목록이 들썩이지 않게). 그 높이보다 낮은
-        카드는 해상도가 없는 대기 카드(조회 중 자리표시) 하나뿐이다 — 상태 글도 pill도 없다.
-        그래서 견본은 완료 카드다. 해상도 pill이 있는 대기 카드와 같은 높이이면서, pill을 만들 때
-        시작되는 크기 조회 스레드를 타지 않는다. 썸네일 · 채널 그림 주소가 비어 네트워크도 없다.
+        카드 높이는 상태와 무관하게 같다 — 세 줄의 높이가 고정이다(#245 · #550, 상태가 바뀌어도
+        목록이 들썩이지 않게). 견본은 완료 카드다 — 해상도 크기 조회 스레드를 타지 않는다. 썸네일 ·
+        채널 그림 주소가 비어 네트워크도 없다.
 
-        상태 글의 최소 높이는 카드가 표시된 뒤에야 레이아웃에 든다 — 화면에 그리지 않는 표시
-        (`WA_DontShowOnScreen`)로 한 번 띄워 잰 뒤 바로 버린다.
-
-        유저가 접힌 pill을 눌러 펼친 동안(좁은 폭에서 pill이 줄을 바꿈)은 카드가 더 높아진다.
-        그 높이는 유저가 일으킨 잠깐의 변화라(`ContentItemWidget.setExpanded`) 최소 높이에 넣지 않는다.
+        화면에 그리지 않는 표시(`WA_DontShowOnScreen`)로 한 번 띄워 잰 뒤 바로 버린다.
         """
         item = ContentItem("", dict(REFERENCE_CARD_METADATA), [], None, "", "", "video", None)
         item.downloadState = DownloadState.FINISHED
@@ -983,9 +988,18 @@ class VodDownloader(QMainWindow):
         # 카드 상태별 조작(#245) — ⏸/↻ 는 뷰가 아이템을 붙여 올려준다
         self.listView.pauseRequested.connect(self.onCardPause)
         self.listView.retryRequested.connect(self.onCardRetry)
-        self.listView.sectionEditRequested.connect(self.onCardSectionEdit)
-        self.listView.sectionRefitRequested.connect(self.contentManager.refitSections)
         self.listView.editRequested.connect(self.onCardEdit)
+        self.listView.stopAndDeleteRequested.connect(self.onCardStopAndDelete)
+
+    def onCardStopAndDelete(self, item: ContentItem) -> None:
+        """받는 중 카드의 ✕에서 「멈추고 지우기」를 골랐다 — 다운로드를 멈추고 카드를 지운다 (#550).
+
+        엔진은 동시 다운로드가 하나뿐이라 받는 중 · 일시정지 카드는 곧 엔진이 쥔 카드다. 멈추기는
+        하단바 ■과 같은 경로(`stopDownload`)다. 확인은 목록이 이미 했다.
+        """
+        if self.downloadViewModel.isDownloading():
+            self.stopDownload()
+        self.contentManager.removeItem(item)
 
     def onCardPause(self, item: ContentItem) -> None:
         """진행 카드의 ⏸ — 전역 일시정지/재개 토글과 같은 경로를 탄다 (#245).
@@ -1045,6 +1059,8 @@ class VodDownloader(QMainWindow):
         """
         if item.downloadState != DownloadState.WAITING or self._dialogOpen():
             return
+        if item.content_type not in SECTION_CONTENT_TYPES:
+            return  # 구간 기능이 없는 종류(클립) — 카드가 하던 검사(#309)를 여기서 한다(#550)
         viewmodel = SectionEditViewModel(item, self.contentManager.model.notifyChanged, self)
         dialog = SectionEditDialog(viewmodel, self)
         self._sectionDialog = dialog

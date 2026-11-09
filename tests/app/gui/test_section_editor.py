@@ -27,6 +27,7 @@ import app.theme as theme
 import CVDv2 as main_module
 from app.download.logger import DownloadLogger
 from app.section_input.basis import SectionBasis
+from app.viewmodels import card_text
 from app.viewmodels.data import ContentItem
 from app.views import mainWindow as mw_mod
 from app.views.mainWindow import VodDownloader
@@ -165,19 +166,17 @@ def open_window(tmp_path, *items: ContentItem) -> VodDownloader:
     return win
 
 
-def click_summary(win: VodDownloader, item: ContentItem) -> None:
-    """카드의 구간 요약 자리(재생 시간 · 파일 크기)를 실제로 누른다."""
-    widget = win.listView.widgetFor(item)
-    shown(widget.fileSizeLabel)
-    QTest.mouseClick(widget.fileSizeLabel, Qt.MouseButton.LeftButton)
+def ask_section_editor(win: VodDownloader, item: ContentItem) -> None:
+    """메인 창에 그 카드의 구간 창을 청한다 — 카드의 구간 요약 클릭 길은 #550에서 없어졌다."""
+    win.onCardSectionEdit(item)
     _pump()
 
 
 def open_editor(qtbot, win: VodDownloader, item: ContentItem) -> SectionEditDialog:
     """카드를 눌러 편집 창을 열고 조회가 끝나기를 기다린다."""
-    click_summary(win, item)
+    ask_section_editor(win, item)
     dialog = win._sectionDialog
-    assert dialog is not None, "구간 요약을 눌렀는데 편집 창이 열리지 않았다"
+    assert dialog is not None, "구간 창을 청했는데 열리지 않았다"
     qtbot.waitUntil(lambda: dialog.viewModel().state != "loading", timeout=3000)
     _pump()
     return dialog
@@ -228,20 +227,14 @@ def summary_text(win: VodDownloader, item: ContentItem) -> str:
 def notice_of(win: VodDownloader, item: ContentItem) -> str:
     """카드가 구간 요약 뒤에 붙이는 알림 — 폭이 모자라 떼인 것과 무관한 전문.
 
-    알림은 3행에 들어갈 때만 요약 뒤에 붙는다. 들어가는 폭은 폰트마다 달라(로컬과 CI의
-    offscreen 폰트가 다르다) 라벨의 글자로 재면 폰트에 기댄다. 카드가 만든 알림 전문을 읽고,
-    라벨에는 요약이 보이고 그 뒤가 전문의 일부(전부 · 경고만 · 없음)인지만 본다.
+    알림은 3줄에 들어갈 때만 정보 글 뒤에 붙는다. 들어가는 폭은 폰트마다 달라(로컬과 CI의
+    offscreen 폰트가 다르다) 라벨의 글자로 재면 폰트에 기댄다. 알림 전문을 읽고, 라벨에는
+    정보 글이 알림을 붙인 꼴인지 뗀 꼴인지만 본다(#550).
     """
-    widget = win.listView.widgetFor(item)
-    notice = widget._sectionNotice()
-    base = widget._sectionSummary(with_notice=False)
+    notice = card_text.section_notice(item)
     text = summary_text(win, item)
-    allowed = {
-        base,
-        f"{base} · {notice}",
-        f"{base} · {widget._sectionNotice(warnings_only=True)}".removesuffix(" · "),
-    }
-    assert text in allowed, f"요약 자리의 글이 요약 · 알림의 조합이 아니다: {text!r}"
+    allowed = {card_text.info_text(item), card_text.info_text(item, with_notice=False)}
+    assert text in allowed, f"정보 글이 알림을 붙인 꼴도 뗀 꼴도 아니다: {text!r}"
     return notice
 
 
@@ -261,7 +254,7 @@ def test_clicking_the_summary_of_a_waiting_card_opens_the_editor_with_the_whole_
     win = open_window(tmp_path, item)
 
     basis.gate.clear()  # 조회를 붙잡아 둔다 — 조회 중 화면을 본다
-    click_summary(win, item)
+    ask_section_editor(win, item)
     dialog = win._sectionDialog
     assert dialog is not None and dialog.isVisible() and dialog.isModal()
     assert shown(dialog.statusLabel) == dialog.viewModel().loadingText()
@@ -282,10 +275,10 @@ def test_clicking_the_summary_of_a_waiting_card_opens_the_editor_with_the_whole_
 def test_clicking_the_summary_of_a_card_that_is_not_waiting_opens_nothing(
     tmp_path, basis, state
 ) -> None:
-    """대기가 아닌 카드의 구간 요약을 누르면 편집 창이 열리지 않아야 한다.
+    """대기가 아닌 카드의 구간 창을 청하면 편집 창이 열리지 않아야 한다.
 
     상태가 RUNNING · PAUSED · FINISHED인 카드
-    -> 편집 창 없음, 조회 0건, 손가락 커서 아님
+    -> 편집 창 없음, 조회 0건
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -293,33 +286,14 @@ def test_clicking_the_summary_of_a_card_that_is_not_waiting_opens_nothing(
     win.contentManager.model.notifyChanged(item)
     _pump()
 
-    click_summary(win, item)
+    ask_section_editor(win, item)
 
     assert win._sectionDialog is None
     assert basis.calls == []
-    label = win.listView.widgetFor(item).fileSizeLabel
-    assert label.cursor().shape() == Qt.CursorShape.ArrowCursor
-    assert label.property("editable") is False
-
-
-def test_waiting_card_summary_looks_clickable(tmp_path, basis) -> None:
-    """대기 카드의 구간 요약 자리는 누를 수 있는 모양이어야 한다.
-
-    대기 상태의 VOD 카드
-    -> 손가락 커서, editable 속성 참, 툴팁에 "Click to edit sections"
-    """
-    item = _make_item(str(tmp_path))
-    win = open_window(tmp_path, item)
-    label = win.listView.widgetFor(item).fileSizeLabel
-
-    shown(label)
-    assert label.cursor().shape() == Qt.CursorShape.PointingHandCursor
-    assert label.property("editable") is True
-    assert "Click to edit sections" in label.toolTip()
 
 
 def test_clicking_the_summary_of_a_clip_card_opens_nothing(tmp_path, basis) -> None:
-    """클립 카드는 대기 상태여도 편집 창이 열리지 않아야 한다.
+    """클립 카드는 대기 상태여도 구간 창이 열리지 않아야 한다.
 
     content_type="clip"인 대기 카드
     -> 편집 창 없음, 조회 0건
@@ -327,7 +301,7 @@ def test_clicking_the_summary_of_a_clip_card_opens_nothing(tmp_path, basis) -> N
     item = _make_item(str(tmp_path), content_type="clip")
     win = open_window(tmp_path, item)
 
-    click_summary(win, item)
+    ask_section_editor(win, item)
 
     assert win._sectionDialog is None
     assert basis.calls == []
@@ -363,7 +337,7 @@ def test_confirming_three_sections_writes_them_to_the_card_in_row_order(
     """구간 셋을 넣고 확인하면 카드에 행 순서대로 쓰이고 요약이 바뀌어야 한다.
 
     60fps. 행: 00:10:00:00~00:20:00:00, 00:30:00:30~00:31:00:00, 00:00:05:00~00:00:06:00
-    -> selections == ((600, 1200), (1800.5, 1860), (5, 6)), 요약 "Sections 3"
+    -> selections == ((600, 1200), (1800.5, 1860), (5, 6)), 정보 글 끝 「 · Sections 3」
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -387,7 +361,7 @@ def test_confirming_three_sections_writes_them_to_the_card_in_row_order(
     )
     assert item.section_frame_rate == Fraction(60)
     # 길이의 합 600 + 59.5 + 1 = 660.5초 → "11:00"(초 아래 버림)
-    assert summary_text(win, item) == "Sections 3"
+    assert summary_text(win, item).endswith(" · Sections 3")
 
 
 def test_confirming_the_single_whole_row_keeps_the_card_a_whole_download(
@@ -1241,14 +1215,18 @@ def test_a_waiting_card_can_be_edited_while_another_card_is_downloading(
 
 
 def _pick(win: VodDownloader, item: ContentItem, resolution: int) -> None:
-    """카드에서 그 해상도의 버튼을 실제로 눌러 고른다 — 접혀 있으면 먼저 펼친다."""
-    widget = win.listView.widgetFor(item)
-    index = next(i for i, rep in enumerate(item.unique_reps) if rep[0] == resolution)
-    widget.buttons[index].click()
+    """카드 편집 창의 해상도 드롭다운에서 그 해상도를 골라 저장한다 — 카드의 해상도 버튼은 #550에서 없어졌다."""
+    win.onCardEdit(item)
     _pump()
-    if widget.isExpanded():
-        widget.buttons[index].click()
-        _pump()
+    dialog = win._editDialog
+    assert dialog is not None, "전제: 카드 편집 창이 열렸다"
+    combo = dialog.resolutionCombo
+    row = next(
+        r for r in range(combo.count()) if item.unique_reps[combo.itemData(r)][0] == resolution
+    )
+    combo.setCurrentIndex(row)
+    dialog.saveButton.click()
+    _pump()
     assert item.resolution == resolution, "전제: 해상도가 바뀌어야 한다"
 
 
@@ -1355,7 +1333,7 @@ def test_same_frame_rate_and_length_change_nothing(qtbot, tmp_path, basis) -> No
     """프레임률 · 길이가 같은 해상도로 바꾸면 구간이 그대로이고 알림이 남지 않아야 한다.
 
     1080p · 720p 모두 60fps · 3600초인 카드에서 10.5167~20.0167초를 정한 뒤 720p를 고름
-    -> 조회가 끝난 뒤 selections가 같은 객체, 요약 == "Sections 1"
+    -> 조회가 끝난 뒤 selections가 같은 객체, 정보 글 끝 == 「 · Sections 1」
     """
     item = _make_item(str(tmp_path))
     item.unique_reps = [
@@ -1370,7 +1348,7 @@ def test_same_frame_rate_and_length_change_nothing(qtbot, tmp_path, basis) -> No
 
     assert item.selections is before
     assert item.section_refit_fps is None and item.section_check == ""
-    assert summary_text(win, item) == "Sections 1"
+    assert summary_text(win, item).endswith(" · Sections 1")
 
 
 def tooltip_of(win: VodDownloader, item: ContentItem) -> str:
@@ -1474,7 +1452,7 @@ def test_a_section_that_starts_after_the_new_end_is_kept_and_flagged(
     assert item.selections == (TimeRange(600.0, 1200.0), TimeRange(3595.0, 3599.0))
     assert item.section_unfit == frozenset({1})
     assert not item.section_end_pulled and not item.section_end_extended
-    assert win.listView.widgetFor(item)._sectionNotice(warnings_only=True) == "1 outside the video"
+    assert card_text.section_notice(item, warnings_only=True) == "1 outside the video"
     assert notice_of(win, item) == "refit to 30fps · 1 outside the video"
     assert UNFIT in tooltip_of(win, item)
 
@@ -1507,7 +1485,7 @@ def test_a_late_result_for_an_earlier_resolution_is_dropped(qtbot, tmp_path, bas
 
     1080p(60) · 720p(60) · 480p(선언 30) 카드. 480p를 고르고(조회 붙잡음) 곧 720p를 고름.
     720p의 조회(60fps · 3600초)를 먼저 끝내고, 그 뒤에 480p의 조회(25fps · 3000초)를 끝냄
-    -> 끝까지 selections == 처음 정한 구간, section_frame_rate == 60, 요약 == "Sections 1"
+    -> 끝까지 selections == 처음 정한 구간, section_frame_rate == 60, 정보 글 끝 == 「 · Sections 1」
     """
     item = _make_item(str(tmp_path))
     item.unique_reps = [
@@ -1537,7 +1515,7 @@ def test_a_late_result_for_an_earlier_resolution_is_dropped(qtbot, tmp_path, bas
     assert basis.returned[-2:] == [720, 480], "전제: 480p의 결과가 나중에 와야 한다"
     assert item.selections == before
     assert item.section_frame_rate == Fraction(60)
-    assert summary_text(win, item) == "Sections 1"
+    assert summary_text(win, item).endswith(" · Sections 1")
 
 
 def test_an_earlier_result_that_arrives_first_is_dropped_and_the_newer_one_settles(
@@ -1578,7 +1556,7 @@ def test_an_earlier_result_that_arrives_first_is_dropped_and_the_newer_one_settl
 
     assert item.selections == before
     assert item.section_frame_rate == Fraction(60) and item.section_check == ""
-    assert summary_text(win, item) == "Sections 1"
+    assert summary_text(win, item).endswith(" · Sections 1")
 
 
 def test_a_result_that_arrives_after_the_download_started_is_dropped(
@@ -1639,7 +1617,7 @@ def test_editing_again_clears_the_refit_notice(qtbot, tmp_path, basis) -> None:
     """다시 맞춘 알림은 구간을 다시 편집해 확인하면 사라져야 한다.
 
     60fps에서 정한 구간을 480p(30fps)로 옮겨 알림이 뜬 뒤, 편집 창을 열어 확인
-    -> 요약 == "Sections 1"
+    -> 정보 글 끝 == 「 · Sections 1」
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -1652,7 +1630,7 @@ def test_editing_again_clears_the_refit_notice(qtbot, tmp_path, basis) -> None:
     dialog = open_editor(qtbot, win, item)
     press_ok(dialog)
 
-    assert summary_text(win, item) == "Sections 1"
+    assert summary_text(win, item).endswith(" · Sections 1")
     assert len(item.selections) == 1
 
 
@@ -1715,8 +1693,8 @@ def test_notice_gives_way_when_it_does_not_fit_in_the_row(qtbot, tmp_path, basis
     """알림까지 붙인 요약이 3행에 안 들어가면 알림을 떼고 요약만 적어야 한다.
 
     구간 하나인 대기 카드의 알림을 어떤 창 폭보다도 긴 글(프레임률 숫자 400자리)로 둠
-    -> 요약 자리의 글 == "Sections 1"(알림 없음), 툴팁에는 알림 문장이 남는다
-    -> 고른 해상도 버튼이 제 폭보다 좁게 눌리지 않고, 카드가 목록 폭을 넘지 않는다
+    -> 정보 글 끝 == 「 · Sections 1」(알림 없음), 툴팁에는 알림 문장이 남는다
+    -> 정보 글이 제 폭보다 좁게 눌리지 않고, 카드가 목록 폭을 넘지 않는다(카드의 해상도 버튼은 #550에서 없어졌다)
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -1727,11 +1705,11 @@ def test_notice_gives_way_when_it_does_not_fit_in_the_row(qtbot, tmp_path, basis
     win.contentManager.model.notifyChanged(item)
     _pump()
 
-    assert summary_text(win, item) == "Sections 1"
+    assert summary_text(win, item).endswith(" · Sections 1")
     tooltip = widget.fileSizeLabel.toolTip()
     assert "Sections were moved to the frames of the new frame rate." in tooltip
-    selected = widget._selectedButton
-    assert selected.isVisible() and selected.width() >= selected.minimumSizeHint().width()
+    info = widget.fileSizeLabel
+    assert info.width() >= info.fontMetrics().horizontalAdvance(info.text())
     assert widget.width() <= win.listView.viewport().width()
 
 
@@ -2136,7 +2114,7 @@ def test_header_shows_the_end_of_the_video_only_after_the_lookup(qtbot, tmp_path
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
     basis.gate.clear()
-    click_summary(win, item)
+    ask_section_editor(win, item)
     dialog = win._sectionDialog
     assert dialog.viewModel().endTimecodeText() == ""
     assert not dialog.headerLabel.isVisible()
@@ -2411,9 +2389,10 @@ def test_folder_button_of_a_section_card_selects_the_lowest_numbered_file_that_e
     `_1`을 지우고 다시 누름 -> `_2`를 선택. 전체 다운로드 이름("제목 1080p.mp4")은 쓰지 않는다
     """
     win, item, paths = finished_section_card(qtbot, tmp_path, basis, service)
-    button = win.listView.widgetFor(item).openDirectoryButton
-    shown_button = button.isVisible()
-    assert shown_button, "전제: 완료 카드에 폴더 버튼이 보여야 한다"
+    card = win.listView.widgetFor(item)
+    card.setHovered(True)  # 카드 버튼은 호버 때만 보인다(#550)
+    button = card.openDirectoryButton
+    assert button.isVisible(), "전제: 호버한 완료 카드에 폴더 버튼이 보여야 한다"
 
     button.click()
     os.remove(paths[0])
@@ -2424,12 +2403,12 @@ def test_folder_button_of_a_section_card_selects_the_lowest_numbered_file_that_e
     assert not any(_same_file(path, item.output_path) for _, path in opened)
 
 
-def test_folder_button_opens_the_download_folder_when_no_section_file_is_left(
+def test_folder_button_only_warns_when_no_section_file_is_left(
     qtbot, tmp_path, basis, service, opened
 ) -> None:
-    """구간 파일이 하나도 없으면 폴더 버튼은 경고 없이 저장 폴더를 열어야 한다.
+    """구간 파일이 하나도 없으면 폴더 버튼은 경고만 하고 아무것도 열지 않아야 한다(#550 설계 §5).
 
-    완료 카드의 구간 파일 셋을 모두 지우고 폴더 버튼 -> 저장 폴더를 연다, 경고 없음
+    완료 카드의 구간 파일 셋을 모두 지우고 폴더 버튼 -> 경고 1번, 열기 0번
     """
     win, item, paths = finished_section_card(qtbot, tmp_path, basis, service)
     for path in paths:
@@ -2437,8 +2416,7 @@ def test_folder_button_opens_the_download_folder_when_no_section_file_is_left(
 
     win.listView.widgetFor(item).openDirectoryButton.click()
 
-    assert len(opened) == 1 and opened[0][0] == "open"
-    assert _same_file(opened[0][1], str(tmp_path))
+    assert opened == ["warning"]
 
 
 def test_folder_button_of_a_whole_download_card_still_selects_its_output_file(
@@ -3885,7 +3863,7 @@ def test_nothing_is_set_before_the_end_of_the_video_is_known(qtbot, tmp_path, ba
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
     basis.gate.clear()
-    click_summary(win, item)
+    ask_section_editor(win, item)
     viewmodel = win._sectionDialog.viewModel()
     try:
         assert viewmodel.state == "loading", "전제: 조회 중이다"
@@ -4115,7 +4093,7 @@ def test_no_total_is_noted_before_the_length_of_the_video_is_known(qtbot, tmp_pa
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
     basis.gate.clear()
-    click_summary(win, item)
+    ask_section_editor(win, item)
     dialog = win._sectionDialog
     try:
         assert dialog.viewModel().state == "loading", "전제: 조회 중이다"
@@ -4471,7 +4449,7 @@ def test_sum_is_not_shown_until_the_lookup_ends(qtbot, tmp_path, basis) -> None:
     basis.gate.clear()
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
-    click_summary(win, item)
+    ask_section_editor(win, item)
     dialog = win._sectionDialog
     _pump()
     before = sum_shown(dialog)

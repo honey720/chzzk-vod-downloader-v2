@@ -91,16 +91,8 @@
         <translation>해상도를 바꿔 프레임률이 달라져, 구간을 새 프레임에 맞게 옮겼습니다.</translation>
     </message>
     <message>
-        <source>Edit sections</source>
-        <translation>구간 편집</translation>
-    </message>
-    <message>
         <source>Edit</source>
         <translation>편집</translation>
-    </message>
-    <message>
-        <source>Change save location</source>
-        <translation>저장 위치 변경</translation>
     </message>
     <message>
         <source>checking length</source>
@@ -139,10 +131,6 @@
         <translation>겹치는 구간은 한 번만 받습니다</translation>
     </message>
     <message>
-        <source>Click to edit sections</source>
-        <translation>누르면 구간을 편집합니다</translation>
-    </message>
-    <message>
         <source>Preparing</source>
         <translation>준비 중</translation>
     </message>
@@ -157,6 +145,10 @@
     <message>
         <source>Post-processing</source>
         <translation>후처리 중</translation>
+    </message>
+    <message>
+        <source>Downloading</source>
+        <translation>받는 중</translation>
     </message>
     <message>
         <source>{0} left</source>
@@ -179,8 +171,12 @@
         <translation>{0}개 실패</translation>
     </message>
     <message>
-        <source>Select download folder</source>
-        <translation>저장 폴더 선택</translation>
+        <source>The downloaded section files are not there anymore.</source>
+        <translation>받은 구간 파일을 찾을 수 없습니다.</translation>
+    </message>
+    <message>
+        <source>The downloaded file is not there anymore.</source>
+        <translation>받은 파일을 찾을 수 없습니다.</translation>
     </message>
     <message>
         <source>Could not find &apos;{0}&apos;.</source>
@@ -211,36 +207,8 @@
         <translation>컨텐츠위젯</translation>
     </message>
     <message>
-        <source>Channel image</source>
-        <translation>채널 이미지</translation>
-    </message>
-    <message>
-        <source>Channel name</source>
-        <translation>채널 이름</translation>
-    </message>
-    <message>
-        <source>Status</source>
-        <translation>상태</translation>
-    </message>
-    <message>
-        <source>File size</source>
-        <translation>파일 크기</translation>
-    </message>
-    <message>
         <source>Delete</source>
         <translation>삭제</translation>
-    </message>
-    <message>
-        <source>Thumbnail</source>
-        <translation>썸네일</translation>
-    </message>
-    <message>
-        <source>Title</source>
-        <translation>제목</translation>
-    </message>
-    <message>
-        <source>Directory</source>
-        <translation>다운로드 위치</translation>
     </message>
     <message>
         <source>Open directory</source>
@@ -261,6 +229,18 @@
 </context>
 <context>
     <name>ContentListView</name>
+    <message>
+        <source>Delete</source>
+        <translation>삭제</translation>
+    </message>
+    <message>
+        <source>This VOD is downloading. Stop the download and delete it?</source>
+        <translation>받는 중인 VOD입니다. 다운로드를 멈추고 지울까요?</translation>
+    </message>
+    <message>
+        <source>Stop and delete</source>
+        <translation>멈추고 지우기</translation>
+    </message>
     <message>
         <source>Drag the URL here.</source>
         <translation>URL을 여기로 드래그하세요.</translation>

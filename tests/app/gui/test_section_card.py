@@ -328,7 +328,7 @@ def test_combined_progress_rises_through_transfer_and_cut_to_100(card) -> None:
     for done in (1, 2, 3):
         card.cut(done)
         seen.append(card.item.download_progress)
-        assert card.widget._progressValue() == card.item.download_progress
+        assert card.widget.progressBar.value() == card.item.download_progress
 
     assert seen == [0, 24, 56, 80, 86, 93, 100]
     assert seen == sorted(seen)
@@ -359,8 +359,8 @@ def test_done_count_is_hidden_while_transferring_and_shown_from_the_cut_stage(ca
     """완료 구간 수는 전송 중에는 숨기고, 컷 단계와 완료 카드의 상태 문구에 붙어야 한다.
 
     구간 셋. 전송 40% → 그 상태에서 일시정지 → 재개 → 컷 단계에서 구간 하나 끝남 → 셋 다 끝나고 완료 통지
-    -> 전송 중 == "32% · 3.1 MB/s · 0:19 left"(수 없음), 전송 중 일시정지 == "32% · Paused"(수 없음),
-       컷 중 == "86% · Cutting · 1/3", 완료 == "✓ Completed · 3/3 · 1:12"
+    -> 전송 중 == "32% · Downloading · 3.1 MB/s · 0:19 left"(수 없음), 전송 중 일시정지 == "32% · Paused"(수 없음),
+       컷 중 == "86% · Cutting · 1/3", 완료 == "Completed · 3/3 · 1:12"
     """
     card.start()
     card.transfer(0.4)
@@ -378,11 +378,11 @@ def test_done_count_is_hidden_while_transferring_and_shown_from_the_cut_stage(ca
     card.submission["on_finished"]()
     card.qapp.processEvents()
 
-    assert transferring == "32% · 3.1 MB/s · 0:19 left"
+    assert transferring == "32% · Downloading · 3.1 MB/s · 0:19 left"
     assert paused == "32% · Paused"
     assert cutting == "86% · Cutting · 1/3"
     assert card.item.downloadState is DownloadState.FINISHED
-    assert card.status == "✓ Completed · 3/3 · 1:12"
+    assert card.status == "Completed · 3/3 · 1:12"
 
 
 # ================================================================ 컷 단계
@@ -433,7 +433,7 @@ def test_partial_failure_fails_the_card_only_after_the_remaining_sections_finish
 
     구간 셋. 컷 단계에서 구간 1 완료 → 구간 2 실패 → 구간 3 완료 → 엔진이 실패를 알림(PostprocessError)
     -> 구간 2가 실패한 직후와 구간 3이 끝난 직후의 카드는 RUNNING이고 진행률이 93 · 100,
-       실패 통지 뒤 카드는 FAILED, 상태 문구가 "✕ 1 failed · 2/3 · "로 시작하고 사유의 첫 줄이 이어진다,
+       실패 통지 뒤 카드는 FAILED, 상태 문구가 "1 failed · 2/3 · "로 시작하고 사유의 첫 줄이 이어진다,
        공유 모델의 상태 == WAITING
     """
     card.start()
@@ -453,7 +453,7 @@ def test_partial_failure_fails_the_card_only_after_the_remaining_sections_finish
     assert after_last == (DownloadState.RUNNING, 100, "100% · Cutting · 2/3")
     assert card.item.downloadState is DownloadState.FAILED
     assert (card.item.sections_done, card.item.sections_failed) == (2, 1)
-    assert card.status.startswith("✕ 1 failed · 2/3 · ")
+    assert card.status.startswith("1 failed · 2/3 · ")
     assert "\n" not in card.status
     assert card.data.model.state is DownloadState.WAITING
 
@@ -461,14 +461,14 @@ def test_partial_failure_fails_the_card_only_after_the_remaining_sections_finish
 # ================================================================ 구간 요약
 
 
-def test_waiting_card_shows_the_section_summary_in_the_duration_slot(card) -> None:
-    """구간이 있는 대기 카드는 재생 시간 자리에 구간 수와 길이의 합을 적어야 한다.
+def test_waiting_card_shows_the_section_summary_in_the_info_text(card) -> None:
+    """구간이 있는 대기 카드는 정보 글에 해상도 · 받을 길이의 합 · 구간 수를 적어야 한다.
 
-    구간 셋(6 · 11 · 29초 = 46초)
-    -> 재생 시간 자리의 글 == "Sections 3 · 0:46"
+    hls_aes 1080p, 구간 셋(6 · 11 · 29초 = 46초)
+    -> 정보 글 == "1080p · 0:46 · Sections 3"
     """
     assert card.item.downloadState is DownloadState.WAITING
-    assert card.widget.fileSizeLabel.text() == "Sections 3 · 0:46"
+    assert card.widget.fileSizeLabel.text() == "1080p · 0:46 · Sections 3"
 
 
 # ================================================================ 구간이 없거나 하나인 카드
@@ -477,8 +477,18 @@ def test_waiting_card_shows_the_section_summary_in_the_duration_slot(card) -> No
 @pytest.mark.parametrize(
     ("content_type", "waiting", "running", "postprocess"),
     [
-        ("hls_aes", "02:00:00", "40% · 3.1 MB/s · 0:19 left", "50% · Post-processing"),
-        ("video", None, "40% · 3.1 MB/s · 0:19 left", None),
+        (
+            "hls_aes",
+            "1080p · 2:00:00",
+            "40% · Downloading · 3.1 MB/s · 0:19 left",
+            "50% · Post-processing",
+        ),
+        (
+            "video",
+            "1080p · Checking... · 2:00:00",  # 크기 조회는 막혀 있다(조회 중 글)
+            "40% · Downloading · 3.1 MB/s · 0:19 left",
+            None,
+        ),
     ],
 )
 def test_whole_download_card_text_is_unchanged(
@@ -487,14 +497,12 @@ def test_whole_download_card_text_is_unchanged(
     """구간이 없는 카드의 대기 · 전송 · 후처리 · 완료 문구는 구간 표시가 없던 때와 같아야 한다.
 
     구간 없는 카드(세그먼트 기반 · 파일). 전송 40% → (세그먼트 기반만) 병합 5/10 → 완료
-    -> 대기의 재생 시간 자리(세그먼트 기반은 재생 시간, 파일은 아이템의 크기 글) · 전송 문구 ·
-       후처리 문구 · 완료 문구가 주석의 글 그대로다
+    -> 대기의 정보 글(해상도 · 파일은 크기 · 길이) · 전송 문구 · 후처리 문구 · 완료 문구가
+       주석의 글 그대로다
     """
     card = _Card(qapp, tmp_path, content_type, selections=())
     try:
         waiting_text = card.widget.fileSizeLabel.text()
-        if waiting is None:
-            waiting = f"{card.item.total_size}"  # 파일 카드는 아이템의 크기 글을 그대로 적는다
         card.manager.downloadItem()
         card.submission = card.service.submissions[0]
         card.data = card.submission["data"]
@@ -513,7 +521,7 @@ def test_whole_download_card_text_is_unchanged(
 
         assert card.submission["content"].selections == ()
         assert (waiting_text, running_text, postprocess_text) == (waiting, running, postprocess)
-        assert card.status == "✓ Completed · 1:12"
+        assert card.status == "Completed · 1:12"
     finally:
         card.close()
 
@@ -523,7 +531,7 @@ def test_single_section_card_shows_no_done_count(qapp, tmp_path) -> None:
 
     구간 하나. 전송 40% → 컷 단계에서 그 구간이 끝남 → 완료
     -> 전송 · 컷 · 완료 문구 어디에도 "수/수" 모양이 없다, 컷 문구 == "100% · Cutting",
-       완료 문구 == "✓ Completed · 1:12"
+       완료 문구 == "Completed · 1:12"
     """
     card = _Card(qapp, tmp_path, "hls_aes", selections=SELECTIONS[:1])
     try:
@@ -539,7 +547,7 @@ def test_single_section_card_shows_no_done_count(qapp, tmp_path) -> None:
         texts.append(card.status)
 
         assert not any(re.search(r"\d+/\d+", text) for text in texts)
-        assert texts[1:] == ["100% · Cutting", "✓ Completed · 1:12"]
+        assert texts[1:] == ["100% · Cutting", "Completed · 1:12"]
     finally:
         card.close()
 
@@ -615,7 +623,7 @@ def test_retry_bar_starts_from_zero_and_the_count_continues_from_the_finished_se
     전송 0% · 50% → 컷 단계 → 둘째 구간 끝남 → 완료 통지. 전송에 둘째 구간(11초)의 컷 예상
     시간의 4.02배가 걸림
     -> 진행률 == [0, 40, 80, 100], 전송 중 문구에 구간 수 없음, 컷 단계 == "80% · Cutting · 2/3",
-       둘째가 끝난 뒤 == "100% · Cutting · 3/3", 완료 == "✓ Completed · 3/3 · 1:12", 남긴 것이 지워진다
+       둘째가 끝난 뒤 == "100% · Cutting · 3/3", 완료 == "Completed · 3/3 · 1:12", 남긴 것이 지워진다
     """
     _fail_second_section(card)
     card.retry()
@@ -640,7 +648,7 @@ def test_retry_bar_starts_from_zero_and_the_count_continues_from_the_finished_se
     assert [progress for progress, _text in seen] == [0, 40, 80, 100]
     assert not re.search(r"\d+/\d+", seen[0][1] + seen[1][1])
     assert [text for _progress, text in seen[2:]] == ["80% · Cutting · 2/3", "100% · Cutting · 3/3"]
-    assert card.status == "✓ Completed · 3/3 · 1:12"
+    assert card.status == "Completed · 3/3 · 1:12"
     assert card.item.section_retry is None
 
 
@@ -712,7 +720,7 @@ def test_cut_failure_card_shows_its_own_reason(card, cause, headline) -> None:
     """컷이 실패한 카드는 컷 실패의 사유를, 그 밖의 후처리 실패는 지금의 사유를 보여야 한다.
 
     구간 셋, 둘째 실패. 실패 통지의 원인이 CutError / RemuxError
-    -> 상태 문구 == "✕ 1 failed · 2/3 · " + 그 원인의 사유 첫 줄
+    -> 상태 문구 == "1 failed · 2/3 · " + 그 원인의 사유 첫 줄
     """
     card.start()
     card.begin_cut()
@@ -723,7 +731,7 @@ def test_cut_failure_card_shows_its_own_reason(card, cause, headline) -> None:
     card.submission["on_failed"](error)
     card.qapp.processEvents()
 
-    assert card.status == f"✕ 1 failed · 2/3 · {headline}"
+    assert card.status == f"1 failed · 2/3 · {headline}"
 
 
 @pytest.mark.parametrize("changed", ["folder", "title"])

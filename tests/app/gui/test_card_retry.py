@@ -8,8 +8,8 @@
 2. 되돌린 뒤 전역 다운로드 버튼을 누르면 **기존 시작 경로**를 탄다 — 재시도 전용 경로가 없다.
 3. 전역 버튼은 **되돌린 카드는 집어 가고, 실패인 채인 카드는 집어 가지 않는다** — 정본의
    "실패 카드 자동 포함 반대"와의 경계다.
-4. 조작 표면이 상태를 따라온다(§3.4): ↻가 사라지고 대기의 조작(pill·제목 편집·경로 변경)이
-   나온다 — 가시성·호버 강조·커서·툴팁.
+4. 조작 표면이 상태를 따라온다(§3.4): ↻가 사라지고 대기의 조작(✎ — 카드 편집 창, #550)이
+   나온다 — 카드 버튼 · 툴팁.
 5. 대기로 되돌릴 때 후처리 실패로 보존된 세그먼트(#185)가 지워지지 않는다.
 
 core `DownloadState`의 `FAILED → WAITING` 불허(#135)는 tests/core/models/test_download_task_model.py가
@@ -19,14 +19,13 @@ core `DownloadState`의 `FAILED → WAITING` 불허(#135)는 tests/core/models/t
 실제 배선을 탄다: 카드의 ↻ 클릭 → 위젯 시그널 → 뷰 릴레이 → `VodDownloader.onCardRetry`,
 전역 버튼 클릭 → `onDownloadPause` → `downloadItem` → `downloadRequested` → `startDownload`.
 `DownloadViewModel.start`만 대역으로 바꿔 실제 네트워크·엔진은 돌리지 않는다.
-config는 conftest가 격리한다. 호버는 실제 커서를 옮기지 않고 `QWindow` 합성 이벤트로 보낸다.
+config는 conftest가 격리한다. 카드 버튼은 호버 때만 보인다 — 누르기 전에 `setHovered(True)`로 보인다.
 """
 
 import os
 from collections.abc import Iterator
 
 import pytest
-from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
@@ -43,8 +42,6 @@ from core.utils.paths import build_output_path, temp_dir_for
 from tests.app.gui.card_helpers import (
     drop_new_top_levels,
     hold_style,
-    resize_to,
-    shown,
     snapshot_top_levels,
 )
 from typing import Never
@@ -127,7 +124,7 @@ def _make_item(download_path: str) -> ContentItem:
 def open_window_with_a_failed_card(
     tmp_path,
 ) -> tuple[VodDownloader, ContentItem, ContentItemWidget]:
-    """실제 메인 창에 실패 카드 한 장 — 대기로 넣어 pill이 만들어진 뒤 실패로 바꾼다(제품 순서)."""
+    """실제 메인 창에 실패 카드 한 장 — 대기로 넣어 해상도가 골라진 뒤 실패로 바꾼다(제품 순서)."""
     win = VodDownloader()
     win.resize(900, win.height())
     win.show()
@@ -136,43 +133,32 @@ def open_window_with_a_failed_card(
     win.contentManager.model.addItem(item)
     _pump()
     widget = win.listView.widgetFor(item)
-    assert widget is not None and widget.buttons, "전제: 카드와 해상도 pill이 만들어져야 한다"
-    widget.setresolutionUrlSize("1080", "u1", 0, widget.buttons[0])  # 유저가 해상도를 고른 상태
+    assert widget is not None, "전제: 카드가 만들어져야 한다"
+    assert item.resolution == "1080", "전제: 가장 높은 해상도가 기본으로 골라진다"
     item.download_progress = 37
     item.stateMessage = "Failed to save file\nDetail line"
     item.downloadState = DownloadState.FAILED
     win.contentManager.model.notifyChanged(item)
     _pump()
-    assert widget.retryButton.isVisible(), "전제: 실패 카드에는 ↻가 보여야 한다"
+    assert widget.visibleCardButtons() == ["retryButton", "deleteButton"], (
+        "전제: 실패 카드에는 ↻가 놓여야 한다"
+    )
     return win, item, widget
 
 
+def hover_card(widget) -> None:
+    """카드를 호버로 둬 카드 버튼을 보인다 — 목록의 호버 다시 맞추기가 끈 뒤에도 다시 켠다."""
+    widget.setHovered(True)
+    _pump()
+    widget.setHovered(True)
+
+
 def click_retry(widget) -> None:
-    """카드의 ↻를 실제로 누른다 — 위젯 시그널 → 뷰 릴레이 → 메인 창 핸들러."""
+    """카드에 호버해 ↻를 보인 뒤 실제로 누른다 — 위젯 시그널 → 뷰 릴레이 → 메인 창 핸들러."""
+    hover_card(widget)
+    assert widget.retryButton.isVisible(), "전제: 호버한 실패 카드에는 ↻가 보여야 한다"
     widget.retryButton.click()
     _pump()
-
-
-def hover(qtbot, window, target, on: bool) -> None:
-    """`target` 위(on) 또는 창의 빈 바닥(off)으로 합성 이동 — 실제 커서는 옮기지 않는다."""
-    if on:
-        pos = target.mapTo(window, target.rect().center())
-    else:
-        pos = QPoint(window.width() - 2, window.height() - 2)
-    QTest.mouseMove(window.windowHandle(), pos + QPoint(1, 1))
-    QTest.mouseMove(window.windowHandle(), pos)
-    qtbot.waitUntil(lambda: target.underMouse() == on, timeout=2000)
-
-
-def highlights_on_hover(qtbot, window, target) -> bool:
-    """호버 전후 렌더가 다른가 — `shown()`으로 가시성을 먼저 단언한다."""
-    hover(qtbot, window, target, on=False)
-    shown(target)
-    idle = target.grab().toImage()
-    hover(qtbot, window, target, on=True)
-    hovered = target.grab().toImage()
-    hover(qtbot, window, target, on=False)
-    return hovered != idle
 
 
 class TestRetryOnlyReturnsToWaiting:
@@ -227,61 +213,65 @@ class TestRetryOnlyReturnsToWaiting:
 
 
 class TestControlsFollowTheState:
-    """§3.4 — 상태가 바뀌면 3행의 조작 요소가 전부 따라온다: 가시성·호버·커서·툴팁."""
+    """§3.4 — 상태가 바뀌면 카드 버튼 · 3줄 글 · 툴팁이 전부 따라온다."""
 
     def test_retry_button_goes_and_the_waiting_controls_come(self, tmp_path, started) -> None:
-        """↻·실패 사유가 사라지고 해상도 pill이 나온다 — 대기 매트릭스 그대로."""
+        """실패 카드가 ↻로 되돌려지면 카드 버튼이 ✎ · ✕가 되고 3줄이 대기 글이어야 한다.
+
+        실패 카드(버튼 ↻ · ✕, 사유 "Failed to save file") → ↻
+        -> 버튼 ["editButton", "deleteButton"], 상태 글 "Download waiting", 정보 칸 보임,
+        진행바 상태 "waiting"
+        """
         win, item, widget = open_window_with_a_failed_card(tmp_path)
-        assert widget.statusLabel.isVisible() and not any(b.isVisible() for b in widget.buttons)
+        assert widget.statusLabel.text() == "Failed to save file"
         click_retry(widget)
+        assert widget.visibleCardButtons() == ["editButton", "deleteButton"]
+        hover_card(widget)
+        assert widget.editButton.isVisible(), "호버한 대기 카드에 ✎가 안 보인다"
         assert not widget.retryButton.isVisible(), "대기 카드에 ↻가 남아 있다"
-        assert not widget.pauseButton.isVisible() and not widget.openDirectoryButton.isVisible()
-        assert not widget.statusLabel.isVisible(), "실패 사유가 3행에 남아 있다"
-        assert widget.buttons and all(b.isVisible() for b in widget.buttons), (
-            "대기의 조작(pill)이 안 나왔다"
-        )
-        assert widget.fileSizeLabel.isVisible(), "대기에서는 크기 슬롯이 다시 보인다"
+        assert widget.statusLabel.text() == "Download waiting", "실패 사유가 3줄에 남아 있다"
+        assert widget.fileSizeLabel.isVisible(), "대기에서는 정보 칸이 다시 보인다"
         assert widget.progressBar.property("state") == "waiting"
 
     def test_failure_tooltip_is_not_exposed_after_the_revert(self, tmp_path, started) -> None:
-        """실패 사유 툴팁을 들고 있던 라벨은 숨겨지고, 대기 카드의 보이는 표면에 실패 문구가 없다."""
+        """되돌린 대기 카드는 보이는 라벨 · 카드 버튼의 툴팁에 실패 문구가 없어야 한다.
+
+                사유 "Failed to save file
+        Detail line"인 실패 카드 → ↻ -> 보이는 툴팁에 "Failed" 없음
+        """
         win, item, widget = open_window_with_a_failed_card(tmp_path)
         assert "Failed to save file" in widget.statusLabel.toolTip()
         click_retry(widget)
+        hover_card(widget)
         visible_tooltips = [
             w.toolTip() for w in widget.findChildren(type(widget.statusLabel)) if w.isVisible()
-        ] + [b.toolTip() for b in widget.buttons if b.isVisible()]
+        ] + [
+            getattr(widget, name).toolTip()
+            for name in widget.visibleCardButtons()
+            if getattr(widget, name).isVisible()
+        ]
         assert not any("Failed" in t for t in visible_tooltips), visible_tooltips
 
-    def test_title_and_path_surfaces_switch_to_waiting(self, tmp_path, started, qtbot) -> None:
-        """제목은 편집 가능(IBeam·호버 강조), 경로 라벨은 손가락 커서 — 실패에서는 둘 다 아니었다."""
-        win, item, widget = open_window_with_a_failed_card(tmp_path)
-        qtbot.addWidget(win)
-        assert widget.titleLabel.cursor().shape() == Qt.CursorShape.ArrowCursor
-        assert not highlights_on_hover(qtbot, win, widget.titleLabel)
-        click_retry(widget)
-        assert widget.titleLabel.cursor().shape() == Qt.CursorShape.IBeamCursor, (
-            "대기 제목은 편집 가능해야 한다"
-        )
-        assert highlights_on_hover(qtbot, win, widget.titleLabel), (
-            "대기 제목의 호버 강조가 안 따라왔다"
-        )
-        # 경로 표면 — 전역 경로와 다르므로 라벨이 보인다(같으면 아예 숨는다)
-        if widget.directoryLabel.isVisible():
-            assert widget.directoryLabel.cursor().shape() == Qt.CursorShape.PointingHandCursor
-        else:
-            assert widget.pathButton.isVisible()  # 글자가 숨어도 진입점은 1행에 있다 (#309)
+    def test_edit_dialog_picks_a_resolution_again_after_the_revert(self, tmp_path, started) -> None:
+        """되돌린 대기 카드의 ✎를 누르면 편집 창에서 해상도를 다시 고를 수 있어야 한다.
 
-    def test_pills_are_clickable_again_after_the_revert(self, tmp_path, started, qtbot) -> None:
-        """대기 카드의 pill은 눌러서 해상도를 고를 수 있다 — 호버 강조와 클릭 반응."""
+        해상도 1080 · 720, 1080을 고른 채 실패한 카드 → ↻ → ✎ → 편집 창에서 720 · 저장
+        -> 아이템 해상도 "720"
+        """
         win, item, widget = open_window_with_a_failed_card(tmp_path)
-        qtbot.addWidget(win)
         click_retry(widget)
-        resize_to(win, win.width())  # 폭을 확정한 뒤 pill 배치를 다시 잰다
-        other = widget.buttons[1]
-        shown(other)
-        assert highlights_on_hover(qtbot, win, other), "대기 pill이 호버에 반응하지 않는다"
-        other.click()
+        hover_card(widget)
+        assert widget.editButton.isVisible(), "전제: 호버한 대기 카드에 ✎가 보여야 한다"
+        widget.editButton.click()
+        _pump()
+        dialog = win._editDialog
+        assert dialog is not None, "되돌린 카드의 ✎가 편집 창을 열지 않았다"
+        combo = dialog.resolutionCombo
+        row = next(
+            r for r in range(combo.count()) if item.unique_reps[combo.itemData(r)][0] == "720"
+        )
+        combo.setCurrentIndex(row)
+        dialog.saveButton.click()
         _pump()
         assert item.resolution == "720", "되돌린 카드에서 해상도를 다시 고를 수 없다"
 

@@ -1,6 +1,7 @@
-from PySide6.QtWidgets import QScrollArea, QWidget, QVBoxLayout
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtWidgets import QApplication, QMessageBox, QScrollArea, QWidget, QVBoxLayout
+from PySide6.QtCore import QCoreApplication, Qt, QTimer, Signal
 from PySide6.QtGui import (
+    QCursor,
     QDragEnterEvent,
     QDragMoveEvent,
     QDragLeaveEvent,
@@ -10,8 +11,37 @@ from PySide6.QtGui import (
 )
 import app.theme as theme
 from app.widgets.scroll_padding import ScrollBarPadding
-from app.widgets.widget import ContentItemWidget
+from app.widgets.widget import BUSY_STATES, ContentItemWidget
 from app.viewmodels.data import ContentItem
+
+
+def widget_under_pointer() -> QWidget | None:
+    """포인터 밑의 위젯 — 목록이 바뀐 뒤 호버를 다시 맞출 때 쓴다(#550). 테스트가 갈아 끼운다."""
+    return QApplication.widgetAt(QCursor.pos())
+
+
+def confirm_stop_and_delete(parent: QWidget) -> bool:
+    """받는 중 카드의 ✕ — 「멈추고 지우기」를 묻는다. 기본 단추 · Esc는 취소다 (#550 설계 §12.1).
+
+    고른 것이 「멈추고 지우기」면 참. 테스트가 갈아 끼운다.
+    """
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Warning)
+    box.setWindowTitle(QCoreApplication.translate("ContentListView", "Delete"))
+    box.setText(
+        QCoreApplication.translate(
+            "ContentListView", "This VOD is downloading. Stop the download and delete it?"
+        )
+    )
+    stop = box.addButton(
+        QCoreApplication.translate("ContentListView", "Stop and delete"),
+        QMessageBox.ButtonRole.DestructiveRole,
+    )
+    cancel = box.addButton(QMessageBox.StandardButton.Cancel)
+    box.setDefaultButton(cancel)
+    box.setEscapeButton(cancel)
+    box.exec()
+    return box.clickedButton() is stop
 
 
 class _Overlay(QWidget):
@@ -53,8 +83,8 @@ class ContentListView(QScrollArea):
     # 내고, 뷰가 아이템을 붙여 앱 계층(mainWindow)으로 올린다.
     pauseRequested = Signal(object)
     retryRequested = Signal(object)
-    sectionEditRequested = Signal(object)  # 대기 카드의 구간 요약 클릭 (#309)
-    sectionRefitRequested = Signal(object)  # 구간이 있는 카드의 해상도가 바뀌었다 (#309)
+    # 받는 중 카드의 ✕에서 「멈추고 지우기」를 골랐다 (#550) — 엔진을 멈추는 쪽(mainWindow)이 받는다
+    stopAndDeleteRequested = Signal(object)
     editRequested = Signal(object)  # 대기 카드의 ✎ · 더블 클릭 — 카드 편집 창 (#545)
 
     def __init__(self, parent=None) -> None:
@@ -77,16 +107,16 @@ class ContentListView(QScrollArea):
         # 목록 자체는 창 좌우 끝까지 가서 스크롤바가 창 끝에 붙고, 카드 프레임은
         # 이 패딩만큼 안쪽에 놓여 상단·하단 바와 같은 좌측 정렬선(outerMargin)을
         # 지킨다 — 값이 바뀐 게 아니라 자리가 옮겨진 것이다(#244 정렬선 유지).
-        # 위 여백 8: 헤더바와 목록 사이에 간격이 없어(바는 경계선 하나로만 나눈다, #536) 헤더바 ↔ 첫 카드
-        # 사이를 이 여백이 진다 — 카드 사이와 같은 8(설계 §11.2, 프로토 CARD_GAP)
+        # 위 여백: 헤더바와 목록 사이에 간격이 없어(바는 경계선 하나로만 나눈다, #536) 헤더바 ↔ 첫 카드
+        # 사이를 이 여백이 진다 — 카드 사이와 같은 cardGap(설계 §11.2, 프로토 CARD_GAP)
         outer = theme.METRICS["outerMargin"]
-        self._layout.setContentsMargins(outer, 8, outer, 8)
+        gap = theme.METRICS["cardGap"]
+        self._layout.setContentsMargins(outer, gap, outer, gap)
         # 스크롤바의 Show/Hide에 맞춰 오른쪽 패딩을 고친다 — 편집 창의 구간 목록과 함께 쓴다
         self._scrollPadding = ScrollBarPadding(self, self._layout, outer)
-        # 카드끼리 붙어 있으면 목록이 답답해 보인다 (#227). 카드 자체가 가진
-        # 위쪽 여백(contentItemLayout 10px)에 이만큼을 더해 간격을 낸다 —
-        # 카드 폭에는 영향을 주지 않는 값이라 ElidingLabel 폭 계산과 무관하다
-        self._layout.setSpacing(6)
+        # 카드 사이 — 카드 자체는 바깥 여백이 없다(#550). 카드 폭에는 영향을 주지 않는 값이라
+        # ElidingLabel 폭 계산과 무관하다
+        self._layout.setSpacing(gap)
         self._layout.addStretch(1)  # 카드는 항상 이 스트레치 앞에 insertWidget된다
         self.setWidget(self._container)
 
@@ -98,6 +128,9 @@ class ContentListView(QScrollArea):
         self._widgets: dict[ContentItem, ContentItemWidget] = {}
         self._dragActive = False  # 드래그 상태 플래그 TODO: 대체 가능한 메서드 사용
         self._renumberPending = False  # 삭제 뒤 번호 재계산 배치 대기 플래그 (#235)
+        self._hoverCard: ContentItemWidget | None = None  # 호버라고 보는 카드 하나(#550)
+        self._rehoverPending = False  # 호버 다시 맞추기를 다음 턴에 한 번만 (#550)
+        self._steppingFocus = False  # 목록이 카드 초점을 옮기는 중 — 들어옴으로 보지 않는다
 
         self._overlay = _Overlay(self)
         self._overlay.setGeometry(self.rect())
@@ -107,6 +140,116 @@ class ContentListView(QScrollArea):
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._overlay.setGeometry(self.rect())
+        self._scheduleRehover()
+
+    def scrollContentsBy(self, dx: int, dy: int) -> None:
+        super().scrollContentsBy(dx, dy)
+        self._scheduleRehover()  # 굴리면 포인터 밑 카드가 바뀐다
+
+    # ---- 호버 다시 맞추기 (#550) ----
+    # Qt는 포인터가 움직일 때만 들어감 · 나감을 보낸다. 지우기 · 정렬 · 필터 · 굴림 · 창 크기로 카드가
+    # 포인터 밑에서 바뀌면 옛 카드가 호버인 채 남는다 — 목록이 바뀐 뒤 포인터 밑 카드를 다시 맞춘다
+
+    def _onCardHover(self, widget: ContentItemWidget, hovered: bool) -> None:
+        """카드 하나의 호버가 바뀌었다 — 호버 카드는 늘 하나다."""
+        if hovered:
+            previous = self._hoverCard
+            if previous is not None and previous is not widget:
+                previous.setHovered(False)
+            self._hoverCard = widget
+        elif self._hoverCard is widget:
+            self._hoverCard = None
+
+    def hoverCard(self) -> ContentItemWidget | None:
+        """호버라고 보는 카드 — 없으면 None."""
+        return self._hoverCard
+
+    def _scheduleRehover(self) -> None:
+        """호버 다시 맞추기를 다음 이벤트 루프 턴에 한 번 돌린다 — 한 번의 조작에서 여러 번 불려도 한 번."""
+        if not self._rehoverPending:
+            self._rehoverPending = True
+            QTimer.singleShot(0, self, self._rehover)
+
+    def _rehover(self) -> None:
+        """포인터 밑의 카드를 호버로, 그 밖의 카드를 호버 아님으로 맞춘다 — 카드 수와 무관하다."""
+        self._rehoverPending = False
+        under = widget_under_pointer() if self.isVisible() else None
+        card = None
+        if under is not None and (under is self._container or self._container.isAncestorOf(under)):
+            while under is not None and not isinstance(under, ContentItemWidget):
+                under = under.parentWidget()
+            card = under
+        if card is self._hoverCard:
+            return
+        if self._hoverCard is not None:
+            self._hoverCard.setHovered(False)
+        if card is not None:
+            card.setHovered(True)
+
+    # ---- 카드 초점 — 보이는 차례로 Tab (#550) ----
+
+    def _visibleCards(self, forward: bool, start: int) -> ContentItemWidget | None:
+        """레이아웃 자리 `start`부터 한 방향으로 첫 보이는 카드."""
+        step = 1 if forward else -1
+        index = start
+        while 0 <= index < self._layout.count():
+            candidate = self._layout.itemAt(index).widget()
+            if isinstance(candidate, ContentItemWidget) and not candidate.isHidden():
+                return candidate
+            index += step
+        return None
+
+    def _focusCard(self, card: ContentItemWidget, reason: Qt.FocusReason) -> None:
+        self._steppingFocus = True
+        try:
+            card.setFocus(reason)
+        finally:
+            self._steppingFocus = False
+        self.ensureWidgetVisible(card, 0, 0)
+
+    def stepCardFocus(self, widget: ContentItemWidget, forward: bool) -> bool:
+        """초점을 보이는 차례(정렬 · 필터 뒤)의 다음(앞) 카드로 옮긴다 — 끝이면 목록 밖으로.
+
+        카드가 부른다(`ContentItemWidget.focusNextPrevChild`). 옮겼으면 참. 카드는 만든 차례로 초점
+        사슬에 들어 있어 Qt에 맡기면 정렬 · 필터와 다른 차례로 간다.
+        """
+        index = self._layout.indexOf(widget)
+        if index < 0:
+            return False
+        reason = Qt.FocusReason.TabFocusReason if forward else Qt.FocusReason.BacktabFocusReason
+        card = self._visibleCards(forward, index + (1 if forward else -1))
+        if card is not None:
+            self._focusCard(card, reason)
+            return True
+        # 목록 밖으로 — 초점 사슬에서 카드 · 목록이 아닌 다음(앞) 위젯
+        current = widget.nextInFocusChain() if forward else widget.previousInFocusChain()
+        while current is not None and current is not widget:
+            inside = current is self or self.isAncestorOf(current)
+            takes_tab = current.focusPolicy().value & Qt.FocusPolicy.TabFocus.value
+            if (
+                not inside
+                and takes_tab
+                and current.isVisible()
+                and current.isEnabled()
+                and current.window() is widget.window()
+            ):
+                current.setFocus(reason)
+                return True
+            current = current.nextInFocusChain() if forward else current.previousInFocusChain()
+        return False
+
+    def cardFocusEntered(self, widget: ContentItemWidget, reason: Qt.FocusReason) -> None:
+        """카드가 초점을 받았다 — 목록 밖에서 Tab으로 들어왔으면 보이는 차례의 첫(끝) 카드로 옮긴다."""
+        if self._steppingFocus:
+            return
+        if reason in (Qt.FocusReason.TabFocusReason, Qt.FocusReason.BacktabFocusReason):
+            forward = reason == Qt.FocusReason.TabFocusReason
+            start = 0 if forward else self._layout.count() - 1
+            target = self._visibleCards(forward, start)
+            if target is not None and target is not widget:
+                self._focusCard(target, reason)
+                return
+        self.ensureWidgetVisible(widget, 0, 0)
 
     def _fitPaddingAroundScrollBar(self) -> None:
         """스크롤바가 보이면 컨테이너 오른쪽 패딩에서 그 폭을 빼고, 숨으면 되돌린다 (v2.10.1).
@@ -174,6 +317,7 @@ class ContentListView(QScrollArea):
                 self._layout.removeWidget(widget)
                 self._layout.insertWidget(index, widget)
         self._overlay.update()
+        self._scheduleRehover()
 
     def _moveWidget(self, item: ContentItem) -> None:
         """카드 하나를 보이는 차례의 새 자리로 옮긴다."""
@@ -182,6 +326,7 @@ class ContentListView(QScrollArea):
             return
         self._layout.removeWidget(widget)
         self._layout.insertWidget(self._order.indexOf(item), widget)
+        self._scheduleRehover()
 
     def _applyFilter(self) -> None:
         """고른 칩에 맞춰 모든 카드의 보임을 정한다.
@@ -196,12 +341,14 @@ class ContentListView(QScrollArea):
             widget.setVisible(self._accepts(item))
         container.show()
         self._overlay.update()
+        self._scheduleRehover()
 
     def _applyVisibility(self, item: ContentItem) -> None:
         """카드 하나의 보임을 지금 칩에 맞춘다."""
         widget = self._widgets.get(item)
         if widget is not None:
             widget.setVisible(self._accepts(item))
+            self._scheduleRehover()
 
     def _insertWidget(self, item: ContentItem, row: int) -> None:
         widget = ContentItemWidget(item, row, self._container)
@@ -209,37 +356,24 @@ class ContentListView(QScrollArea):
         widget.deleteRequest.connect(lambda it=item: self.onDeleteItem(it))
         widget.pauseRequest.connect(lambda it=item: self.pauseRequested.emit(it))
         widget.retryRequest.connect(lambda it=item: self.retryRequested.emit(it))
-        widget.sectionEditRequest.connect(lambda it=item: self.sectionEditRequested.emit(it))
-        widget.sectionRefitRequest.connect(lambda it=item: self.sectionRefitRequested.emit(it))
         widget.editRequest.connect(lambda it=item: self.editRequested.emit(it))
-        # 해상도 펼침은 한 번에 하나 — 다른 카드가 펼쳐지면 앞의 것을 접는다 (#244 3행 정리)
-        widget.expandedChanged.connect(lambda expanded, w=widget: self._onCardExpanded(w, expanded))
-        widget.addRepresentationButtons()
+        widget.hoverChanged.connect(lambda hovered, w=widget: self._onCardHover(w, hovered))
+        widget.loadRepresentations()
         self._layout.insertWidget(self._placeOf(item, row), widget)
         widget.setVisible(self._accepts(item))
         self._widgets[item] = widget
         self._overlay.update()  # 빈 리스트 안내를 즉시 감춘다
 
-    def _onCardExpanded(self, widget: ContentItemWidget, expanded: bool) -> None:
-        """한 카드가 해상도를 펼치면 펼쳐져 있던 다른 카드를 접는다 (#244 3행 정리).
-
-        펼침은 "지금 이 카드의 화질을 고르는 중"이라는 뜻이라 동시에 둘일 이유가
-        없고, 둘이 펼쳐져 있으면 높이가 늘어난 카드가 둘이라 목록이 어수선하다.
-        유저 조작에만 도는 경로라 O(n) 순회여도 삽입 단가(O(1))와 무관하다.
-        """
-        if not expanded:
-            return
-        for other in self._widgets.values():
-            if other is not widget and other.isExpanded():
-                other.setExpanded(False)
-
     def _onItemRemoved(self, item: ContentItem) -> None:
         widget = self._widgets.pop(item, None)
         if widget is not None:
+            if self._hoverCard is widget:
+                self._hoverCard = None
             self._layout.removeWidget(widget)
             widget.deleteLater()  # 생명주기 직접 관리 — 빠뜨리면 누수 (#226)
         self._overlay.update()  # 마지막 카드가 지워졌으면 빈 리스트 안내를 다시 띄운다
         self._scheduleRenumber()  # 뒤쪽 카드 번호를 당긴다 (#235)
+        self._scheduleRehover()  # 아래 카드가 포인터 밑으로 올라온다
 
     def _scheduleRenumber(self) -> None:
         """삭제 뒤 남은 카드들의 번호(표시용, `ContentItemWidget.setIndex`)를 다시 매긴다.
@@ -281,8 +415,16 @@ class ContentListView(QScrollArea):
             row = self._model.getRow(item)
             widget.setData(item, row)
 
-    def onDeleteItem(self, item) -> None:
-        # print("view - onDeleteItem") # Debugging
+    def onDeleteItem(self, item: ContentItem) -> None:
+        """카드의 ✕ — 받는 중 카드는 「멈추고 지우기」를 물은 뒤에만 지운다 (#550).
+
+        받는 중 · 일시정지 카드는 엔진이 쥐고 있다 — 고르면 `stopAndDeleteRequested`(엔진을 멈추고
+        지운다), 취소면 아무 일도 없다. 그 밖 카드는 바로 `deleteRequest`다.
+        """
+        if item.downloadState in BUSY_STATES:
+            if confirm_stop_and_delete(self):
+                self.stopAndDeleteRequested.emit(item)
+            return
         self.deleteRequest.emit(item)
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
@@ -365,13 +507,11 @@ class ContentListView(QScrollArea):
     def onDownloadStarted(self, item: ContentItem) -> None:
         widget = self._widgets.get(item)
         if widget:
-            widget.deleteButton.setEnabled(False)
             widget.setData(item, self._model.getRow(item))
 
     def onDownloadStoped(self, item: ContentItem) -> None:
         widget = self._widgets.get(item)
         if widget:
-            widget.deleteButton.setEnabled(True)
             widget.setData(item, self._model.getRow(item))
 
     def onDownloadPaused(self, item: ContentItem) -> None:
@@ -387,7 +527,6 @@ class ContentListView(QScrollArea):
     def onDownloadFinished(self, item: ContentItem, isFinish: bool) -> None:
         widget = self._widgets.get(item)
         if widget:
-            widget.deleteButton.setEnabled(True)
             # 완료·실패 색은 여기서 직접 칠하지 않는다 (#227) — setData가
             # 아이템 상태(FINISHED/FAILED)를 보고 applyStateStyle()로
             # 카드 테두리·진행바를 함께 맞춘다. 색을 이 자리에 박아두면

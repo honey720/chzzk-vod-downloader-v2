@@ -2,13 +2,17 @@
 
 오너 확정 표를 그대로 코드로 옮겨 **셀 하나씩** 단언한다:
 
-| 상태     | 3행 슬롯              | 조작        | 진행바        |
-|----------|-----------------------|-------------|---------------|
-| 대기     | 해상도 pill           | —           | 없음          |
-| 진행     | 42% · 8.2 MB/s · 남음 | 일시정지    | 있음          |
-| 일시정지 | 54% · 일시정지됨      | 재개        | 있음(muted)   |
-| 완료     | ✓ 완료                | 폴더 열기   | 없음          |
-| 실패     | ✕ 사유                | 재시도      | 없음          |
+| 상태     | 3행 상태 원 · 글           | 조작        | 진행바        |
+|----------|----------------------------|-------------|---------------|
+| 대기     | (없음) · 다운로드 대기     | 편집(✎)     | 없음          |
+| 진행     | ↓ · 42% · 8.2 MB/s · 남음  | 일시정지    | 있음          |
+| 일시정지 | ‖ · 54% · 일시정지됨       | 재개        | 있음(muted)   |
+| 완료     | ✓ · 완료                   | 폴더 열기   | 없음          |
+| 실패     | ✕ · 사유                   | 재시도      | 없음          |
+
+완료 · 실패 표시는 글 머리 글자가 아니라 상태 원 아이콘(`statusIcon`)이 맡는다(#550).
+카드 버튼은 호버 · 키보드 초점 때만 보인다 — 상태마다 놓이는 버튼은 `visibleCardButtons()`로,
+보이는지는 호버(`setHovered(True)`) 뒤에 잰다.
 
 `DownloadState.PAUSED`가 첫 슬롯 설계에서 빠진 채 "진행 중일 때만 바 /
 일시정지에도 일시정지 버튼"으로 나갔던 것을 되돌린 게이트다 — 멈춰 있는
@@ -21,7 +25,8 @@
 """
 
 import pytest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QPoint
+from PySide6.QtWidgets import QApplication, QWidget
 
 import CVDv2 as main_module
 import app.theme as theme
@@ -81,10 +86,9 @@ def _make_widget(qapp, state, progress=0, *, post_process=False) -> ContentItemW
     item.downloadState = DownloadState.WAITING
     item.total_size = "595.34 MB"
     widget = ContentItemWidget(item, 0)
-    widget.addRepresentationButtons()  # 대기에서 pill 생성(크기 조회는 네트워크 차단으로 안 돈다)
-    # 유저가 1080p pill을 골라 확정한 상태를 재현 — 실제 앱은 크기 조회 콜백이
-    # 마지막 해상도를 기본 선택하고 유저 클릭이 바꾼다
-    widget.setresolutionUrlSize("1080", "u1", 0, widget.buttons[0])
+    # 해상도 정렬 · 기본 선택(가장 높은 1080) — 크기 조회는 네트워크 차단으로 안 돈다
+    widget.loadRepresentations()
+    assert item.resolution == "1080", "전제: 가장 높은 해상도가 기본으로 골라진다"
     item.total_size = "595.34 MB"
     item.downloadState = state
     item.download_progress = progress
@@ -100,29 +104,61 @@ def _make_widget(qapp, state, progress=0, *, post_process=False) -> ContentItemW
     return widget
 
 
-#: 상태 → (조작 버튼 이름 또는 None, 도형 이름, 진행바 표시, 진행바 색 상태)
+#: 상태 → (조작 버튼 이름, 도형 이름, 진행바 표시, 진행바 색 상태)
 MATRIX = {
-    DownloadState.WAITING: (None, None, False, "waiting"),
+    DownloadState.WAITING: ("editButton", "edit", False, "waiting"),
     DownloadState.RUNNING: ("pauseButton", "pause", True, "running"),
     DownloadState.PAUSED: ("pauseButton", "resume", True, "paused"),
     DownloadState.FINISHED: ("openDirectoryButton", "folder", False, "finished"),
     DownloadState.FAILED: ("retryButton", "retry", False, "failed"),
 }
 
-ACTION_BUTTONS = ("pauseButton", "openDirectoryButton", "retryButton")
+ACTION_BUTTONS = ("editButton", "pauseButton", "openDirectoryButton", "retryButton")
+
+#: 상태 → 3줄 상태 원의 그림(StateBubble.state()) — 대기는 그림이 없다
+STATUS_ICON = {
+    DownloadState.WAITING: "",
+    DownloadState.RUNNING: "running",
+    DownloadState.PAUSED: "paused",
+    DownloadState.FINISHED: "done",
+    DownloadState.FAILED: "all_failed",
+}
+
+
+def _left_x(widget: ContentItemWidget, child) -> int:
+    """카드 좌표계에서 `child`의 왼쪽 끝 x — 서로 다른 줄의 시작 자리를 견준다."""
+    return child.mapTo(widget, QPoint(0, 0)).x()
+
+
+def _row_head(widget: ContentItemWidget) -> QWidget:
+    """3줄의 첫 항목 — 보이는 상태 원, 원이 숨었으면(대기 · 조회 중) 상태 글."""
+    return widget.statusIcon if widget.statusIcon.isVisible() else widget.statusLabel
+
+
 PROGRESS = {DownloadState.RUNNING: 42, DownloadState.PAUSED: 54, DownloadState.FINISHED: 100}
 
 
 class TestSlotColumn:
     """3행 슬롯 — 상태마다 다른 질문에 답한다."""
 
-    def test_waiting_shows_resolution_pills_only(self, qapp) -> None:
-        """대기 슬롯은 pill — 900px에는 둘 다 들어가므로 전부 보인다(안 들어갈 때의 접힘은
-        tests/app/gui/test_resolution_pills.py, #244 3행 정리)."""
+    def test_waiting_shows_the_waiting_text_without_an_icon(self, qapp) -> None:
+        """대기 카드의 3줄 왼쪽은 그림 없는 상태 원과 "Download waiting"이어야 한다 (#550).
+
+        대기 카드 -> 상태 글 "Download waiting"(보임), 상태 원 그림 ""
+        """
         widget = _make_widget(qapp, DownloadState.WAITING)
-        assert widget.buttons and all(b.isVisible() for b in widget.buttons)
-        assert widget.pillMode() == "all"
-        assert not widget.statusLabel.isVisible()
+        assert widget.statusLabel.isVisible()
+        assert widget.statusLabel.text() == "Download waiting"
+        assert widget.statusIcon.state() == ""
+
+    @pytest.mark.parametrize("state", list(MATRIX))
+    def test_status_icon_follows_the_state(self, qapp, state) -> None:
+        """3줄 상태 원의 그림은 상태마다 STATUS_ICON 표와 같아야 한다 (#550).
+
+        대기 "" · 진행 "running" · 일시정지 "paused" · 완료 "done" · 실패 "all_failed"
+        """
+        widget = _make_widget(qapp, state, PROGRESS.get(state, 0))
+        assert widget.statusIcon.state() == STATUS_ICON[state]
 
     def test_running_shows_percent_speed_and_remaining(self, qapp) -> None:
         widget = _make_widget(qapp, DownloadState.RUNNING, 42)
@@ -163,10 +199,10 @@ class TestSlotColumn:
         assert "left" not in text, "일시정지에 남은 시간이 붙어 있다 — 멈춘 상태에 남은 시간은 없다"
 
     def test_finished_shows_check_completed_and_elapsed(self, qapp) -> None:
-        """ "✓ 완료 · 5:12" — 소요 시간은 진행 중의 남은 시간과 같은 짧은 포맷.
-        전송 성능에 들인 공이 유저에게 보이는 유일한 자리다(#245)."""
+        """ "완료 · 5:12" — 소요 시간은 진행 중의 남은 시간과 같은 짧은 포맷.
+        전송 성능에 들인 공이 유저에게 보이는 유일한 자리다(#245). ✓는 상태 원이 맡는다(#550)."""
         widget = _make_widget(qapp, DownloadState.FINISHED, 100)
-        assert widget.statusLabel.text() == "✓ Completed · 5:12", widget.statusLabel.text()
+        assert widget.statusLabel.text() == "Completed · 5:12", widget.statusLabel.text()
 
     def test_finished_elapsed_uses_the_same_short_format_as_remaining(self, qapp) -> None:
         widget = _make_widget(qapp, DownloadState.FINISHED, 100)
@@ -178,15 +214,19 @@ class TestSlotColumn:
         assert widget.statusLabel.text().endswith("· 0:07")
 
     def test_finished_without_elapsed_shows_completed_only(self, qapp) -> None:
-        """값이 없으면 억지로 채우지 않는다 — "✓ 완료"만."""
+        """값이 없으면 억지로 채우지 않는다 — "완료"만."""
         widget = _make_widget(qapp, DownloadState.FINISHED, 100)
         widget.item.download_time = ""
         widget.setData(widget.item, 0)
-        assert widget.statusLabel.text() == "✓ Completed"
+        assert widget.statusLabel.text() == "Completed"
 
-    def test_failed_shows_cross_and_reason(self, qapp) -> None:
+    def test_failed_shows_reason_without_a_cross_glyph(self, qapp) -> None:
+        """실패 카드의 상태 글은 「✕ 」 머리 없이 사유만이어야 한다 — ✕는 상태 원이 맡는다 (#550).
+
+        사유 "Failed to save file" -> 상태 글 "Failed to save file"
+        """
         widget = _make_widget(qapp, DownloadState.FAILED)
-        assert widget.statusLabel.text() == "✕ Failed to save file"
+        assert widget.statusLabel.text() == "Failed to save file"
 
     def test_failed_without_mapped_reason_says_unknown_error_not_silence(self, qapp) -> None:
         """매핑 밖 예외(사유 빈 문자열) — 침묵 대신 "알 수 없는 오류 · 로그를
@@ -196,7 +236,7 @@ class TestSlotColumn:
         widget = _make_widget(qapp, DownloadState.FAILED)
         widget.item.stateMessage = ""
         widget.setData(widget.item, 0)
-        assert widget.statusLabel.text() == "✕ Unknown error - check the log"
+        assert widget.statusLabel.text() == "Unknown error - check the log"
         assert "Download failed" not in widget.statusLabel.text()
 
     def test_failure_reason_shows_only_the_headline_and_keeps_detail_in_the_tooltip(
@@ -207,7 +247,7 @@ class TestSlotColumn:
         widget = _make_widget(qapp, DownloadState.FAILED)
         widget.item.stateMessage = "Segments look corrupted · download again\nPostprocessing failed because segments were corrupted."
         widget.setData(widget.item, 0)
-        assert widget.statusLabel.text() == "✕ Segments look corrupted · download again"
+        assert widget.statusLabel.text() == "Segments look corrupted · download again"
         assert widget.statusLabel.toolTip() == widget.item.stateMessage
 
     #: 첫 줄 글자 수 상한 — 언어별. 640px 카드 3행 실측(Windows 실기, 기본 폰트):
@@ -321,43 +361,72 @@ class TestPercentStartsAtTheSameX:
             )
 
     def test_percent_column_x_is_identical_across_phases(self, qapp) -> None:
+        """전송 · 후처리 · 일시정지에서 상태 글의 시작 x가 같고, 상태 원이 제목 시작 x에 있어야 한다.
+
+        세 국면 카드(900px) -> 상태 글 왼쪽 x 셋이 같다, 상태 원 왼쪽 x == 제목 왼쪽 x
+        """
         xs = {}
         for name, state, progress, post in self.PERCENT_PHASES:
             widget = _make_widget(qapp, state, progress, post_process=post)
-            xs[name] = widget.statusLabel.x()
-            assert widget.statusLabel.x() == widget.titleLabel.x(), (
-                f"{name}: 슬롯이 컨텐츠 열 기준선에 없다"
+            xs[name] = _left_x(widget, widget.statusLabel)
+            assert _left_x(widget, widget.statusIcon) == _left_x(widget, widget.titleLabel), (
+                f"{name}: 3줄이 컨텐츠 열 기준선에 없다"
             )
         assert len(set(xs.values())) == 1, f"국면에 따라 퍼센트 시작 x가 다르다: {xs}"
 
     def test_all_five_states_and_postprocess_keep_the_slot_baseline(self, qapp) -> None:
-        """다섯 상태 + 후처리 — 3행 슬롯(pill 또는 텍스트)의 시작 x가 전부 같다."""
+        """다섯 상태와 후처리 카드에서 3줄 상태 글의 시작 x가 모두 같아야 한다.
+
+        상태 원이 없는 대기 카드도 원 자리를 비워 둔다(#550)
+        대기 · 진행 · 일시정지 · 완료 · 실패 · 후처리 카드(900px) -> 상태 글 왼쪽 x 여섯이 같다
+        """
         xs = {}
         for state in MATRIX:
             widget = _make_widget(qapp, state, PROGRESS.get(state, 0))
-            head = widget.buttons[0] if state == DownloadState.WAITING else widget.statusLabel
-            xs[state.name] = head.x()
+            xs[state.name] = _left_x(widget, widget.statusLabel)
         widget = _make_widget(qapp, DownloadState.RUNNING, 13, post_process=True)
-        xs["POSTPROCESS"] = widget.statusLabel.x()
+        xs["POSTPROCESS"] = _left_x(widget, widget.statusLabel)
         assert len(set(xs.values())) == 1, f"슬롯 시작 x가 상태마다 다르다: {xs}"
 
 
 class TestActionColumn:
-    """1행 우측 조작 — "지금 할 수 있는 것" 하나만 보이고 삭제는 항상."""
+    """1행 우측 조작 — "지금 할 수 있는 것" 하나와 삭제. 호버 · 키보드 초점 때만 보인다(#550)."""
 
     @pytest.mark.parametrize("state", list(MATRIX))
     def test_exactly_the_matrix_action_is_visible(self, qapp, state) -> None:
+        """호버한 카드는 상태마다 MATRIX의 조작 하나와 삭제만 보여야 한다.
+
+        상태마다 카드 하나 → 호버 -> 보이는 버튼 == [MATRIX 조작, "deleteButton"], 조작 도형 == MATRIX 도형
+        """
         button_name, icon, _, _ = MATRIX[state]
         widget = _make_widget(qapp, state, PROGRESS.get(state, 0))
+        assert widget.visibleCardButtons() == [button_name, "deleteButton"]
+        widget.setHovered(True)
+        QApplication.processEvents()
         visible = [name for name in ACTION_BUTTONS if getattr(widget, name).isVisible()]
-        assert visible == ([button_name] if button_name else []), (
+        assert visible == [button_name], (
             f"{state.name}: 보이는 조작 {visible} — 매트릭스는 {button_name}"
         )
-        assert widget.deleteButton.isVisible(), f"{state.name}: 삭제는 항상 보여야 한다"
-        if button_name:
-            assert getattr(widget, button_name).iconName() == icon, (
-                f"{state.name}: 조작 도형이 {getattr(widget, button_name).iconName()!r} — {icon!r}이어야 한다"
-            )
+        assert widget.deleteButton.isVisible(), f"{state.name}: 삭제는 늘 함께 보여야 한다"
+        assert getattr(widget, button_name).iconName() == icon, (
+            f"{state.name}: 조작 도형이 {getattr(widget, button_name).iconName()!r} — {icon!r}이어야 한다"
+        )
+
+    @pytest.mark.parametrize("state", list(MATRIX))
+    def test_card_buttons_hide_without_hover_or_key_focus(self, qapp, state) -> None:
+        """호버도 키보드 초점도 없는 카드는 카드 버튼이 하나도 보이지 않아야 한다 (#550).
+
+        상태마다 카드 하나 → 초점을 빼고 호버 끔 -> 보이는 카드 버튼 없음, 놓인 버튼 목록은 그대로
+        """
+        widget = _make_widget(qapp, state, PROGRESS.get(state, 0))
+        button_name = MATRIX[state][0]
+        widget.clearFocus()
+        widget.setHovered(False)
+        QApplication.processEvents()
+        assert not widget.hasKeyFocus() and not widget.isHovered(), "전제: 호버 · 초점이 없다"
+        names = ACTION_BUTTONS + ("deleteButton",)
+        assert not any(getattr(widget, name).isVisible() for name in names)
+        assert widget.visibleCardButtons() == [button_name, "deleteButton"]
 
     def test_paused_offers_resume_not_pause_again(self, qapp) -> None:
         """멈춰 있는데 일시정지 버튼이 그대로면 이미 한 일을 또 권하는 것이다."""
@@ -414,7 +483,7 @@ class TestProgressBarColumn:
 
 class TestRightColumnResolutionAndSize:
     """3행 우측 — 확정 해상도를 파일 크기 옆에 붙인다("1080p · 595.34 MB").
-    한 자리라 행이 늘지 않는다. 대기에서는 pill이 선택을 보여주므로 안 붙인다.
+    한 자리라 행이 늘지 않는다. 대기에도 해상도 · 크기 · 길이가 붙는다(#550 — 해상도 버튼이 없다).
     받는 중 · 일시정지의 인코딩 완료 VOD는 "받은 크기 / 전체 크기"다 (#309 — v2.9.6의
     표기를 되살렸다. 폭이 모자라면 받은 크기만 남는다 — tests/app/gui/test_card_size_text.py)."""
 
@@ -431,9 +500,13 @@ class TestRightColumnResolutionAndSize:
         assert widget.fileSizeLabel.text().startswith("1080p · ")
         assert "MB" in widget.fileSizeLabel.text()
 
-    def test_waiting_shows_size_only(self, qapp) -> None:
+    def test_waiting_shows_resolution_size_and_length(self, qapp) -> None:
+        """대기 카드의 정보 글은 해상도 · 크기 · 길이여야 한다 (#550).
+
+        1080 · 595.34 MB · 3600초 대기 카드 -> "1080p · 595.34 MB · 1:00:00"
+        """
         widget = _make_widget(qapp, DownloadState.WAITING)
-        assert "1080p" not in widget.fileSizeLabel.text()
+        assert widget.fileSizeLabel.text() == "1080p · 595.34 MB · 1:00:00"
 
     def test_failed_hides_the_size_slot(self, qapp) -> None:
         widget = _make_widget(qapp, DownloadState.FAILED)
@@ -503,18 +576,24 @@ class TestDrawnIconsAreSharedAndFontFree:
         assert differing > 0
         assert folder.pixelColor(4, 8).alpha() == 255 and change.pixelColor(4, 8).alpha() == 255
 
-    def test_waiting_and_finished_cards_use_different_folder_icons(self, qapp) -> None:
-        """대기 카드의 저장 위치 버튼과 완료 카드의 폴더 열기 버튼은 다른 아이콘을 써야 한다.
+    def test_path_mark_and_open_folder_button_use_different_folder_icons(
+        self, qapp, monkeypatch
+    ) -> None:
+        """3줄 저장 위치 표시와 완료 카드의 폴더 열기 버튼은 다른 아이콘을 써야 한다 (#550).
 
-        대기 카드 -> 보이는 pathButton의 아이콘 == "folder_edit" 또는 "folder_edit_dot"
-        완료 카드 -> 보이는 openDirectoryButton의 아이콘 == "folder"
+        기본 위치 "C:/other", 카드 저장 위치 "C:/dl"
+        -> 대기 카드의 보이는 pathIcon 아이콘 == "folder_outline"
+        -> 호버한 완료 카드의 보이는 openDirectoryButton 아이콘 == "folder"
         """
+        monkeypatch.setattr("app.widgets.widget._global_download_path", "C:/other")
         waiting = _make_widget(qapp, DownloadState.WAITING)
         finished = _make_widget(qapp, DownloadState.FINISHED)
+        finished.setHovered(True)
+        QApplication.processEvents()
 
-        assert waiting.pathButton.isVisibleTo(waiting)
-        assert finished.openDirectoryButton.isVisibleTo(finished)
-        assert waiting.pathButton.iconName() in ("folder_edit", "folder_edit_dot")
+        assert waiting.pathIcon.isVisible()
+        assert finished.openDirectoryButton.isVisible()
+        assert waiting.pathIcon.iconName() == "folder_outline"
         assert finished.openDirectoryButton.iconName() == "folder"
 
     def test_icon_pixmaps_are_shared_across_cards(self, qapp) -> None:

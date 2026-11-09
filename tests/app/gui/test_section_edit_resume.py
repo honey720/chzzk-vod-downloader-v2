@@ -11,7 +11,6 @@ from collections.abc import Iterator
 from fractions import Fraction
 
 import pytest
-from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
@@ -113,7 +112,7 @@ def _pump() -> None:
 
 def _edit(qtbot, win, item, rows) -> SectionEditDialog:
     """편집 창을 열어 행을 rows로 만들고 확인한다. rows의 항목이 None이면 그 행은 건드리지 않는다."""
-    QTest.mouseClick(win.listView.widgetFor(item).fileSizeLabel, Qt.MouseButton.LeftButton)
+    win.onCardSectionEdit(item)  # 구간 창을 여는 길 — 카드의 크기 클릭은 #550에서 없어졌다
     _pump()
     dialog = win._sectionDialog
     qtbot.waitUntil(lambda: dialog.viewModel().state == "ready", timeout=3000)

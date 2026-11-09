@@ -9,7 +9,8 @@
   동일성을 그대로 단언할 수 있다 — 폰트 의존 값을 절대치로 박지 않는다.
 - 카드 다섯 상태(대기·진행·일시정지·완료·실패)를 실제 배선(`model.addItem` →
   `ContentListView`)으로 메인 창에 올린 채 전환한다. 헤더·입력창·버튼·목록
-  배경·진행바·pill·경로 라벨·상태 텍스트·조작 아이콘을 각각 비교한다.
+  배경·진행바·경로 라벨·상태 아이콘·상태 텍스트를 각각 비교하고, 카드 버튼은
+  카드마다 호버해 보인 채(호버 바탕 · 오버레이 포함) 비교한다(#550).
 - 양방향(다크→라이트, 라이트→다크).
 - 숨은 위젯은 낡은 값을 들고 있으므로 보이는 위젯만 잰다 — 다만 "보이는지"
   자체가 두 화면에서 같아야 하고(같은 상태이므로), 보여야 할 핵심 위젯은
@@ -39,6 +40,7 @@ import CVDv2 as main_module
 import app.theme as theme
 from app.system.free_space import FreeSpaceProbe
 from app.views.mainWindow import VodDownloader
+from app.widgets.widget import CARD_BUTTON_NAMES
 from app.viewmodels.data import ContentItem
 from core.models.download_state import DownloadState
 from tests.app.gui.card_helpers import hold_style, shown
@@ -154,10 +156,7 @@ class Scene:
             item = _make_item(i)
             item.downloadState = DownloadState.WAITING
             self.window.contentManager.model.addItem(item)
-            widget = self.window.listView.widgetFor(item)  # 뷰가 pill까지 만들어 둔 실제 배선
-            widget.setresolutionUrlSize(
-                "1080", "u1", 0, widget.buttons[0]
-            )  # 유저가 1080p를 고른 상태
+            widget = self.window.listView.widgetFor(item)  # 뷰가 해상도 목록까지 읽어 둔 실제 배선
             item.total_size = "595.34 MB"
             item.downloadState = state
             item.download_progress = PROGRESS.get(state, 0)
@@ -214,19 +213,32 @@ class Scene:
             parts[f"{prefix}.thumbnail"] = card.thumbnailLabel
             parts[f"{prefix}.channelName"] = card.channelNameLabel
             parts[f"{prefix}.title"] = card.titleLabel
+            parts[f"{prefix}.statusIcon"] = card.statusIcon
             parts[f"{prefix}.status"] = card.statusLabel
+            parts[f"{prefix}.pathIcon"] = card.pathIcon
             parts[f"{prefix}.pathLabel"] = card.directoryLabel
-            parts[f"{prefix}.pathButton"] = card.pathButton
-            parts[f"{prefix}.sectionEditButton"] = card.sectionEditButton
             parts[f"{prefix}.fileSize"] = card.fileSizeLabel
             parts[f"{prefix}.progressBar"] = card.progressBar
-            parts[f"{prefix}.pauseButton"] = card.pauseButton
-            parts[f"{prefix}.openDirectoryButton"] = card.openDirectoryButton
-            parts[f"{prefix}.retryButton"] = card.retryButton
-            parts[f"{prefix}.deleteButton"] = card.deleteButton
-            for n, pill in enumerate(card.buttons):
-                parts[f"{prefix}.pill{n}"] = pill
         return parts
+
+    def hovered_snapshot(self) -> dict:
+        """카드를 하나씩 호버한 채 찍은 카드 면 · 카드 버튼의 렌더 픽셀 — 숨은 버튼은 `None`.
+
+        카드 버튼은 호버 · 키보드 초점 때만 보이고 목록의 호버 카드는 늘 하나라(#550) 카드마다
+        차례로 호버를 켜고 찍은 뒤 끈다. 카드 면은 호버 바탕(`cardHoverBg`)과 버튼 밑 오버레이(`hoverShade`)를 담는다.
+        """
+        images = {}
+        for state in STATES:
+            card = self.card(state)
+            prefix = f"card[{state.name.lower()}]"
+            card.setHovered(True)
+            assert card.hoverBox.isVisible(), f"{prefix}: 호버했는데 카드 버튼 상자가 숨어 있다"
+            images[f"{prefix}.hoverFrame"] = card.contentFrame.grab().toImage()
+            for name in CARD_BUTTON_NAMES:
+                button = getattr(card, name)
+                images[f"{prefix}.{name}"] = button.grab().toImage() if button.isVisible() else None
+            card.setHovered(False)
+        return images
 
     def snapshot(self, qtbot) -> dict:
         """보이는 위젯의 렌더 픽셀. 숨은 위젯은 `None`으로 기록해 '보임 여부'도 비교에 넣는다.
@@ -238,10 +250,12 @@ class Scene:
         안 바뀌었다"를 조건으로 기다린다.
         """
         _wait_render_settled(qtbot, self.window)
-        return {
+        images = {
             name: (widget.grab().toImage() if widget.isVisible() else None)
             for name, widget in self.components().items()
         }
+        images.update(self.hovered_snapshot())
+        return images
 
 
 def _wait_render_settled(qtbot, widget, quiet_ms: int = 150) -> None:
@@ -303,10 +317,10 @@ def _assert_key_parts_shown(scene: Scene) -> None:
     assert scene.card(DownloadState.RUNNING).progressBar.isVisible()
     assert scene.card(DownloadState.PAUSED).progressBar.isVisible()
     shown(scene.card(DownloadState.FAILED).statusLabel)
-    assert (
-        scene.card(DownloadState.WAITING).buttons
-        and scene.card(DownloadState.WAITING).buttons[0].isVisible()
-    )
+    assert scene.card(DownloadState.RUNNING).statusIcon.isVisible()
+    # 카드 경로(C:/dl)가 고른 저장 위치와 달라 저장 위치가 보인다
+    assert scene.card(DownloadState.WAITING).pathIcon.isVisible()
+    shown(scene.card(DownloadState.WAITING).directoryLabel)
 
 
 def _differences(a: dict, b: dict) -> list[str]:

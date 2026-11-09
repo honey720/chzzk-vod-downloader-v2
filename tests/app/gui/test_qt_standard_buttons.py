@@ -139,8 +139,13 @@ class TestKorean:
         }
 
     def test_every_message_box_call_site_uses_standard_buttons_only(self) -> None:
-        """정적 QMessageBox 호출 7곳이 전부 표준 버튼이라 카탈로그 하나로 덮인다 — 문구를
-        직접 준 버튼(addButton/setButtonText)이 생기면 이 가정이 깨진다."""
+        """정적 QMessageBox 호출 8곳이 전부 표준 버튼이라 카탈로그 하나로 덮인다 — 문구를
+        직접 준 버튼(addButton/setButtonText)이 생기면 이 가정이 깨진다.
+
+        8곳 = 설정 창 2 · 메인 창 4 · 카드 폴더 열기 2(받은 파일 없음 경고 #550 · 열기 실패).
+        목록의 「멈추고 지우기」 확인(`app/widgets/view.py`)은 정적 호출이 아니라 `QMessageBox`
+        객체라 이 셈에 들지 않는다.
+        """
         import re
 
         root = Path(main.__file__).resolve().parent
@@ -152,7 +157,7 @@ class TestKorean:
             )
             if re.search(r"setButtonText\(|\.addButton\(\s*[\"']", text):
                 custom.append(path.relative_to(root).as_posix())
-        assert calls == 7, f"정적 QMessageBox 호출이 {calls}곳 — 7곳 전제가 바뀌었다(게이트 갱신)"
+        assert calls == 8, f"정적 QMessageBox 호출이 {calls}곳 — 8곳 전제가 바뀌었다(게이트 갱신)"
         assert custom == [], f"문구를 직접 준 버튼이 있다 — 카탈로그가 덮지 못한다: {custom}"
 
 

@@ -4,10 +4,10 @@
 `test_theme.py`가 실제 파일 소스로 본다. 여기서는 **위젯이 그 규칙을 타는
 동적 속성·가시성을 실제로 세팅하는지**를 본다.
 
-**#245 상태별 슬롯**: 3행은 상태마다 다른 것을 보여준다 — 대기=해상도
-pill, 진행=%·속도·남은시간, 완료=✓ 완료, 실패=✕ 사유. 슬롯 텍스트
+**#245 상태별 슬롯 → #550 C2 배치**: 3줄 왼쪽은 상태 원 아이콘 · 상태 글이고 모든 상태에서
+상태 글이 보인다 — 대기=대기 안내, 진행=%·속도·남은시간, 완료=완료, 실패=사유. 상태 글
 (statusLabel)의 색은 동적 속성(`state`) + 전역 QSS `[state="..."]` 규칙,
-1행 우측 조작(⏸/📁/↻)은 상태별 가시성으로 정해진다. QSS는 `.className`
+카드 버튼(✎/⏸/📁/↻/✕)은 상태별로 상자에 놓인다(호버 · 키보드 초점 때만 보인다). QSS는 `.className`
 선택자를 지원하지 않고 조용히 무시하므로 이 배선이 유일한 경로다 —
 속성이 상태를 따라가지 않으면 색이 안 변하는데 **아무 에러도 안 난다**.
 """
@@ -19,7 +19,7 @@ import CVDv2 as main_module
 import app.theme as theme
 from app.viewmodels.item_state import ItemState
 from app.viewmodels.data import ContentItem
-from app.widgets.widget import STATE_ICON, ContentItemWidget
+from app.widgets.widget import ContentItemWidget
 from core.models.download_state import DownloadState
 from tests.app.gui.card_helpers import hold_style
 from typing import Never
@@ -163,37 +163,64 @@ def test_slot_label_gets_the_state_colour_property(qapp, download_state, card_st
 
 
 @pytest.mark.parametrize("download_state,card_state", STATE_MAP)
-def test_slot_swaps_between_pills_and_status_text(qapp, download_state, card_state) -> None:
-    """3행 슬롯 — 대기에만 pill, 그 외에는 상태 텍스트가 보인다 (#245).
+def test_status_text_is_shown_in_every_state(qapp, download_state, card_state) -> None:
+    """3줄 상태 글이 어느 상태에서든 보여야 한다 (#550).
 
-    isVisible()은 조상이 안 보이면 항상 False라 위젯을 show()한 뒤 잰다.
+    상태마다 카드 하나를 show() -> statusLabel.isVisible() is True
+    (isVisible()은 조상이 안 보이면 항상 False라 위젯을 show()한 뒤 잰다)
     """
     widget = _widget(qapp, download_state, progress=50)
     widget.show()
-    pills_expected = download_state == DownloadState.WAITING
-    assert widget.statusLabel.isVisible() == (not pills_expected)
+    assert widget.statusLabel.isVisible()
 
 
 @pytest.mark.parametrize(
-    "download_state,pause,folder,retry",
+    "download_state,bubble",
     [
-        (DownloadState.WAITING, False, False, False),
-        (DownloadState.RUNNING, True, False, False),
-        (DownloadState.PAUSED, True, False, False),
-        (DownloadState.FINISHED, False, True, False),
-        (DownloadState.FAILED, False, False, True),
+        (DownloadState.WAITING, ""),
+        (DownloadState.PAUSED, "paused"),
+        (ItemState.LOADING, ""),
+        (DownloadState.RUNNING, "running"),
+        (DownloadState.FINISHED, "done"),
+        (DownloadState.FAILED, "all_failed"),
     ],
 )
-def test_state_actions_visibility(qapp, download_state, pause, folder, retry) -> None:
-    """1행 우측 조작 — 진행·일시정지=pauseButton(도형은 pause↔resume,
-    `test_card_state_matrix.py`가 본다), 완료=폴더, 실패=재시도, 삭제는
-    항상 (#245 확정 매트릭스)."""
+def test_status_icon_follows_the_state(qapp, download_state, bubble) -> None:
+    """3줄 상태 원 아이콘이 상태에 맞는 그림을 그리고, 그림이 없는 상태에서는 숨어야 한다 (#550).
+
+    상태마다 카드 하나를 show()
+    -> statusIcon.state() == 표의 값, 보임 == (값이 빈 글이 아님)
+    """
     widget = _widget(qapp, download_state, progress=50)
     widget.show()
-    assert widget.pauseButton.isVisible() == pause
-    assert widget.openDirectoryButton.isVisible() == folder
-    assert widget.retryButton.isVisible() == retry
-    assert widget.deleteButton.isVisible()
+    assert widget.statusIcon.state() == bubble
+    assert widget.statusIcon.isVisible() == bool(bubble)
+
+
+@pytest.mark.parametrize(
+    "download_state,edit,pause,folder,retry",
+    [
+        (DownloadState.WAITING, True, False, False, False),
+        (DownloadState.RUNNING, False, True, False, False),
+        (DownloadState.PAUSED, False, True, False, False),
+        (DownloadState.FINISHED, False, False, True, False),
+        (DownloadState.FAILED, False, False, False, True),
+    ],
+)
+def test_state_actions_visibility(qapp, download_state, edit, pause, folder, retry) -> None:
+    """카드 버튼 상자에 놓이는 버튼이 상태마다 표와 같아야 하고, 삭제는 늘 놓여야 한다 (#245 · #550).
+
+    상태마다 카드 하나(호버 아님) -> 버튼마다 isHidden() == (not 표의 값), deleteButton은 늘 True
+    (상자 자체는 호버 · 초점 때만 보이므로 isVisible()이 아니라 isHidden()으로 잰다. pauseButton의
+    도형 pause↔resume은 `test_card_state_matrix.py`가 본다)
+    """
+    widget = _widget(qapp, download_state, progress=50)
+    widget.show()
+    assert widget.editButton.isHidden() == (not edit)
+    assert widget.pauseButton.isHidden() == (not pause)
+    assert widget.openDirectoryButton.isHidden() == (not folder)
+    assert widget.retryButton.isHidden() == (not retry)
+    assert not widget.deleteButton.isHidden()
 
 
 def test_failed_hides_file_size_for_the_reason(qapp) -> None:
@@ -230,7 +257,6 @@ def test_state_change_repaints_an_existing_card(qapp) -> None:
     widget = _widget(qapp, DownloadState.WAITING)
     widget.show()
     assert widget.statusLabel.property("state") == "waiting"
-    assert not widget.statusLabel.isVisible()  # 대기 슬롯은 pill 몫
 
     widget.item.downloadState = DownloadState.RUNNING
     widget.item.download_progress = 30
@@ -243,7 +269,7 @@ def test_state_change_repaints_an_existing_card(qapp) -> None:
     widget.item.downloadState = DownloadState.FAILED
     widget.setData(widget.item, 0)
     assert widget.statusLabel.property("state") == "failed"
-    assert widget.statusLabel.text().startswith(STATE_ICON["failed"])
+    assert widget.statusIcon.state() == "all_failed"
     assert widget.progressBar.property("state") == "failed"
 
 
@@ -253,52 +279,6 @@ def test_waiting_card_shows_no_progress(qapp) -> None:
     assert widget.progressBar.value() == 0
 
 
-def test_resolution_buttons_are_marked_for_the_pill_rule(qapp) -> None:
-    item = _make_item()
-    item.unique_reps = [["1080", "https://x/1080"], ["720", "https://x/720"]]
-    widget = ContentItemWidget(item, 0)
-    widget.setData(item, 0)
-    widget.addRepresentationButtons()
-    qapp.processEvents()
-
-    assert widget.buttons, "해상도 버튼이 만들어지지 않았다"
-    assert all(b.property("role") == "resolution" for b in widget.buttons)
-
-
-def test_resolution_buttons_get_their_own_row_not_the_title_row(qapp) -> None:
-    """해상도 버튼은 제목과 같은 줄을 공유하지 않는다(#244 — 무관 정보 분리).
-
-    이전엔 `titleLayout`에 얹혀 "제목과 해상도라는 서로 무관한 정보가
-    같은 줄에 섞인다"는 문제였다.
-    """
-    item = _make_item()
-    item.unique_reps = [["1080", "https://x/1080"], ["720", "https://x/720"]]
-    widget = ContentItemWidget(item, 0)
-    widget.setData(item, 0)
-    widget.addRepresentationButtons()
-    qapp.processEvents()
-
-    assert widget.titleLayout.count() == 2, "titleLayout에는 제목 라벨·편집창만 있어야 한다"
-    # 3행 구조(#245 상태별 슬롯): [pill들..., statusLabel(슬롯 텍스트),
-    # 가운데 스트레치, 경로 라벨, 파일 크기]. pill은 왼쪽부터 순서대로,
-    # 스트레치가 없으면 넓은 창에서 흩어지고(오너 실기 확인), 파일 크기는
-    # 우측 끝 — 간격·기준선은 tests/app/gui/test_card_layout.py가 폭 3종으로
-    # 게이트한다. (경로 편집 QLineEdit은 폴더 선택으로 교체돼 빠졌고, 경로 라벨 뒤에
-    # 있던 경로 아이콘은 1행의 저장 위치 버튼으로 옮겨 갔다 #309)
-    assert widget.resolutionLayout.count() == len(widget.buttons) + 4
-    for position, button in enumerate(widget.buttons):
-        assert widget.resolutionLayout.indexOf(button) == position, (
-            "해상도 버튼이 왼쪽부터 순서대로 놓이지 않았다"
-        )
-    stretch_index = widget.resolutionLayout.indexOf(widget.statusLabel) + 1
-    stretch_item = widget.resolutionLayout.itemAt(stretch_index)
-    assert stretch_item.widget() is None and stretch_item.spacerItem() is not None, (
-        "슬롯과 파일 크기 사이의 가운데 스트레치가 없다 — 넓은 창에서 흩어진다"
-    )
-    last = widget.resolutionLayout.itemAt(widget.resolutionLayout.count() - 1)
-    assert last.widget() is widget.fileSizeLabel, "파일 크기가 3행 우측 끝이 아니다"
-
-
 def test_icon_buttons_are_marked(qapp) -> None:
     widget = _widget(qapp, DownloadState.WAITING)
     assert widget.deleteButton.property("role") == "icon"
@@ -306,7 +286,7 @@ def test_icon_buttons_are_marked(qapp) -> None:
 
 
 class TestCardInnerWidthIsUnchanged:
-    """카드 안쪽 가로 가용 폭은 "카드 폭 − (테두리 2 + cardPadding×2)"로 고정이다.
+    """카드 안쪽 가로 여백은 좌우 모두 "테두리 1 + cardPadding"으로 고정이다.
 
     **이 파일에서 가장 중요한 테스트다.** 스타일을 입히면서 테두리나 가로
     여백을 늘리면 제목·경로·상태 라벨이 받는 폭이 그만큼 줄고, 라벨이
@@ -316,41 +296,55 @@ class TestCardInnerWidthIsUnchanged:
     **로컬 한 OS에서는 통과하고 CI 3-OS에서 실패**할 수 있다 — PR #234의
     첫 CI가 정확히 그랬다.
 
-    **#244 재설계로 기준이 바뀌었다(재베이스라인)**: 이전 불변식은
-    "위젯 폭 − 20px"(카드 외부 여백 9×2 + 테두리 1×2)이었다. 재설계 후
-    카드 외부 좌우 여백은 0(정렬선을 상·하단 바와 공유), 안쪽 여백은
-    QSS padding이 아니라 bodyLayout 마진(theme.METRICS["cardPadding"])이
-    준다 — 하단 진행바가 카드 가장자리에 딱 붙어야 해서다. 그래서 이제
-    "프레임 contentsRect == 위젯 폭 − 2(테두리)"와 "본문 가용 폭 ==
-    위젯 폭 − 2 − cardPadding×2"를 함께 고정한다. 상수가 아니라 토큰을
-    직접 읽으므로 오너가 cardPadding을 바꿔도 게이트는 옳게 따라간다.
-
-    **#237 추가 — "순수 기하값"이되 요청 폭이 아니라 실제 폭을 써야
-    한다.** `resize(...)`가 요청한 폭 그대로 받는다는 보장은 없다 —
-    최소폭 클램프가 있어도 "관계"는 폰트와 무관하게 성립한다.
+    **#550 C2 배치로 다시 유도했다**: 카드 바깥 여백은 0, 테두리 1, 안쪽 여백 cardPadding,
+    그 안에 썸네일(cardThumbWidth) · 간격(cardThumbGap) · 세 줄이다. 그래서 왼쪽 여백은
+    썸네일 왼쪽 끝, 오른쪽 여백은 세 줄의 오른쪽 끝으로 재고, 세 줄의 왼쪽 끝 · 폭도 그 합으로
+    잰다. 기대값은 토큰을 더해 테스트가 따로 만든다(레이아웃 객체의 contentsRect를 읽지 않는다 —
+    배치된 자식의 실제 자리를 본다). 폭은 요청 폭이 아니라 resize 뒤 실제 폭을 쓴다(#237).
     """
 
-    @staticmethod
-    def _expected_inset() -> int:
-        return 2 + 2 * theme.METRICS["cardPadding"]  # 테두리 1×2 + 안쪽 여백×2
+    BORDER = 1  # 카드 테두리 두께(px) — #contentFrame QSS border
 
-    @pytest.mark.parametrize("width", [460, 600, 900])
-    def test_content_width_matches_the_baseline_budget(self, qapp, width) -> None:
-        widget = _widget(qapp, DownloadState.WAITING)
-        widget.resize(width, 130)
+    @classmethod
+    def _inset(cls) -> int:
+        return cls.BORDER + theme.METRICS["cardPadding"]
+
+    @staticmethod
+    def _span(widget: ContentItemWidget, part) -> tuple[int, int]:
+        """`part`의 (왼쪽 끝, 오른쪽 끝 바로 뒤) x — 카드 좌표."""
+        left = part.mapTo(widget, part.rect().topLeft()).x()
+        return left, left + part.width()
+
+    def _measure(self, qapp, download_state, width: int) -> None:
+        widget = _widget(qapp, download_state)
+        widget.resize(width, 80)
         widget.show()
         qapp.processEvents()
 
         actual_width = widget.width()
-        frame_inner = widget.contentFrame.contentsRect().width()
-        assert frame_inner == actual_width - 2, (
+        assert widget.contentFrame.contentsRect().width() == actual_width - 2 * self.BORDER, (
             "카드 프레임에 테두리 외 가로 여백이 생겼다 — QSS padding이 다시 붙었는지 확인"
         )
-        body = widget.bodyLayout.contentsRect().width()
-        assert body == actual_width - self._expected_inset(), (
-            f"본문 가용 폭이 기대에서 벗어났다(위젯 {actual_width}px, 본문 {body}px) — "
-            "라벨 잘림 위치가 밀려 3-OS 폰트 메트릭 회귀 테스트가 깨진다"
-        )
+        thumb_left, _ = self._span(widget, widget.thumbnailLabel)
+        assert thumb_left == self._inset(), f"왼쪽 여백이 {thumb_left}px다"
+        text_left = self._inset() + theme.METRICS["cardThumbWidth"] + theme.METRICS["cardThumbGap"]
+        text_width = actual_width - text_left - self._inset()
+        for row in (widget.topRow, widget.titleRow, widget.statusRow):
+            left, right = self._span(widget, row)
+            assert (left, right - left) == (text_left, text_width), (
+                f"{row.objectName()} 자리 {left}..{right}가 기대({text_left}, 폭 {text_width})에서 "
+                f"벗어났다(카드 {actual_width}px) — 라벨 잘림 위치가 밀려 3-OS 폰트 메트릭 회귀 "
+                "테스트가 깨진다"
+            )
+
+    @pytest.mark.parametrize("width", [460, 600, 900])
+    def test_content_width_matches_the_baseline_budget(self, qapp, width) -> None:
+        """대기 카드의 좌우 안쪽 여백이 폭과 무관하게 테두리 1 + cardPadding이어야 한다.
+
+        폭 460 · 600 · 900 -> 썸네일 왼쪽 끝 = 1 + cardPadding,
+        세 줄 = 왼쪽 1 + cardPadding + cardThumbWidth + cardThumbGap, 오른쪽 끝 = 폭 − (1 + cardPadding)
+        """
+        self._measure(qapp, DownloadState.WAITING, width)
 
     @pytest.mark.parametrize(
         "download_state",
@@ -362,10 +356,8 @@ class TestCardInnerWidthIsUnchanged:
         ],
     )
     def test_no_extra_horizontal_inset_in_any_state(self, qapp, download_state) -> None:
-        """상태가 달라져도 가로 가용 폭은 같아야 한다 — 폭이 상태에 따라 흔들리면 안 된다."""
-        widget = _widget(qapp, download_state)
-        widget.resize(600, 130)
-        widget.show()
-        qapp.processEvents()
-        body = widget.bodyLayout.contentsRect().width()
-        assert body == widget.width() - self._expected_inset()
+        """상태가 달라도 카드 안쪽 가로 여백과 세 줄의 자리가 같아야 한다.
+
+        상태마다 폭 600 카드 -> 위와 같은 여백 · 세 줄 자리
+        """
+        self._measure(qapp, download_state, 600)

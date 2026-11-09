@@ -77,15 +77,6 @@ class _WheelGuard(QObject):
         return False
 
 
-def _upload_date(item: ContentItem) -> str:
-    """머리 줄의 업로드 날짜 — 「2026. 10. 26.」. 모르는 꼴이면 빈 글이다."""
-    head = str(getattr(item, "live_open_date", "") or "")[:10]
-    parts = head.split("-")
-    if len(parts) == 3 and all(p.isdigit() for p in parts):
-        return f"{parts[0]}. {parts[1]}. {parts[2]}."
-    return ""
-
-
 class CardEditDialog(QDialog):
     """대기 카드 하나의 편집 창. `open()`으로 열고 저장 · 취소는 `finished`로 받는다."""
 
@@ -300,7 +291,7 @@ class CardEditDialog(QDialog):
         """머리 줄 — 「채널 · 업로드 날짜 · 고른 해상도」. 해상도는 드롭다운에서 고른 것이다."""
         rep = self._chosenRep()
         resolution = card_text.rep_label(rep) if rep is not None else ""
-        meta = [self._item.channel_name, _upload_date(self._item), resolution]
+        meta = [self._item.channel_name, card_text.upload_date_text(self._item), resolution]
         self.metaLabel.setText(" · ".join(part for part in meta if part))
 
     # ---- 파일명 꼬리 · 구간 · 저장 위치 표시 ----
