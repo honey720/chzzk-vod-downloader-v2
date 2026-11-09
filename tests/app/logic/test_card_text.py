@@ -246,16 +246,17 @@ class TestSlotTexts:
         assert card_text.slot_texts(item).size == "1080p · 2.00 KB · 1:00:00"
 
     def test_failed_shows_the_first_line_and_keeps_the_full_reason_in_the_tip(self) -> None:
-        """실패 카드면 상태 글이 사유 첫 줄, 툴팁이 사유 전문, 정보 글은 바꾸지 않음(None), 아이콘 err여야 한다.
+        """실패 카드면 상태 글이 사유 첫 줄, 툴팁이 사유 전문, 정보 글이 해상도 · 길이, 아이콘 err여야 한다.
 
-        stateMessage "저장 실패\\n자세히" -> ("저장 실패", None, "저장 실패\\n자세히", "err")
+        stateMessage "저장 실패\\n자세히" -> ("저장 실패", "1080p · 1:00:00", "저장 실패\\n자세히", "err")
+        (#554 — 실패 카드도 정보 글을 보인다)
         """
         item = _item(DownloadState.FAILED)
         item.stateMessage = "저장 실패\n자세히"
         texts = card_text.slot_texts(item)
         assert (texts.status, texts.size, texts.status_tip, texts.icon) == (
             "저장 실패",
-            None,
+            "1080p · 1:00:00",
             "저장 실패\n자세히",
             "err",
         )

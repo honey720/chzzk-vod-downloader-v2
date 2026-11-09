@@ -36,6 +36,21 @@ STATE_ICON = {
 # 가장 짧은 프레임(120fps ≈ 8.3ms)보다 훨씬 짧고, 소수 초 덧셈의 오차보다는 훨씬 길다
 OVERLAP_SLACK = 0.001
 
+# 3줄 접는 단계의 끝 — 0이 가장 넓은 모양이다(#554, 설계 §3 「3행 상태 보호」 · 프로토 card.py 가 levelTexts).
+# 단계가 오를수록 이 차례로 뺀다: ⓪(1) 실패 사유 뒤 · 구간 알림 → ①(2) 저장 위치 이름 → 아이콘만 →
+# ②(3) 저장 위치 → ③(4) 길이(구간 길이 · 실패 카드의 영상 길이) → ④(5) 받을 크기 · 「/ 전체」 →
+# ⑤(6) 속도(실패 카드는 해상도) → ⑥(7) 남은 시간 · 완료 소요 시간 · 구간 집계(실패 카드 밖).
+# 진행률 · 상태 단어 · 실패 사유 앞은 빼지 않는다
+LEVEL_MAX = 7
+LEVEL_REASON_TAIL = 1  # 이 단계부터 실패 사유 뒤(조치 안내) · 구간 알림을 뺀다
+LEVEL_PATH_ICON = 2  # 이 단계부터 저장 위치는 아이콘만
+LEVEL_PATH_GONE = 3  # 이 단계부터 저장 위치를 뺀다
+LEVEL_LENGTH = 4  # 이 단계부터 구간 길이 · 실패 카드의 영상 길이를 뺀다
+LEVEL_SIZE = 5  # 이 단계부터 받을 크기(받는 중 · 일시정지는 「/ 전체」)를 뺀다
+LEVEL_SPEED = 6  # 이 단계부터 속도를 뺀다(실패 카드는 해상도)
+LEVEL_REMAIN = 7  # 이 단계부터 남은 시간 · 완료 소요 시간 · 구간 집계(실패 밖)를 뺀다
+REASON_JOINER = " · "  # 실패 사유의 앞(무엇이 실패) · 뒤(조치 안내)를 가르는 글
+
 
 @dataclass(frozen=True)
 class SlotTexts:
@@ -545,16 +560,28 @@ def open_target(item: ContentItem) -> str:
     return item.output_path
 
 
-def upload_date_text(item: ContentItem) -> str:
-    """업로드 날짜를 연도까지 적는다 — 「2026. 10. 26.」(카드 1줄 · 편집 창 머리 줄, #550).
+def upload_date_text(item: ContentItem, with_year: bool = True) -> str:
+    """업로드 날짜를 적는다 — 「2026. 10. 26.」, 연도를 빼면 「10. 26.」(카드 1줄 · 편집 창 머리 줄, #550).
 
+    연도는 목록 전체가 함께 뺀다(#554 — 같은 폭에서 연도가 섞이지 않게, 판정은 목록이 한다).
     모르는 꼴이면 빈 글이다.
     """
     head = str(getattr(item, "live_open_date", "") or "")[:10]
     parts = head.split("-")
     if len(parts) == 3 and all(p.isdigit() for p in parts):
+        if not with_year:
+            return f"{parts[1]}. {parts[2]}."
         return f"{parts[0]}. {parts[1]}. {parts[2]}."
     return ""
+
+
+def split_reason(reason: str) -> tuple[str, str]:
+    """실패 사유를 첫 「 · 」에서 앞(무엇이 실패) · 뒤(조치 안내)로 나눈다(#554, 설계 §3 프로토 v11).
+
+    「 · 」가 없으면 (사유 전체, "")이다. 좁은 폭에서는 뒤를 먼저 빼고 앞은 맨 마지막에 말줄임한다.
+    """
+    head, joiner, tail = reason.partition(REASON_JOINER)
+    return (head, tail) if joiner else (reason, "")
 
 
 def _joined(*parts: str) -> str:
@@ -562,7 +589,9 @@ def _joined(*parts: str) -> str:
     return " · ".join(part for part in parts if part)
 
 
-def info_text(item: ContentItem, with_notice: bool = True, with_total: bool = True) -> str:
+def info_text(
+    item: ContentItem, with_notice: bool = True, with_total: bool = True, level: int = 0
+) -> str:
     """카드 3줄 오른쪽 정보 — 해상도 · 크기 · 길이 · 구간 수(+ 구간 알림) (#550, 설계 §12.1 카드 배치).
 
     - 구간 카드: 크기는 구간 파일 크기의 합(추정), 길이는 받을 양(합친 범위), 「구간 N」(겹치면
@@ -570,20 +599,31 @@ def info_text(item: ContentItem, with_notice: bool = True, with_total: bool = Tr
     - 받는 중 · 일시정지: 크기 자리가 「받은 / 전체」(받을 크기를 모르면 받은 크기만)
     - 완료: 저장된 파일 크기
     - 대기: 조회한 크기(세그먼트 방식은 미리 알 수 없어 비움)
+    - 실패: 해상도 · 크기 · 길이(대기 카드와 같은 값 — 프로토 가)
     길이는 영상 길이(구간 카드는 받을 양)다. 모르면 비운다(#515).
 
     Args:
-        with_notice: 거짓이면 구간 알림을 뗀다 — 폭이 모자랄 때 가장 먼저 양보한다(#309)
-        with_total: 거짓이면 받는 중 · 일시정지의 「/ 전체」를 뗀다 — 알림 다음으로 양보한다(#309)
+        with_notice: 거짓이면 구간 알림을 뗀다
+        with_total: 거짓이면 받는 중 · 일시정지의 「/ 전체」를 뗀다
+        level: 3줄 접는 단계(0 ~ LEVEL_MAX, #554) — 단계마다 빼는 것은 `LEVEL_MAX` 주석
     """
     state = item.downloadState
+    failed = state == DownloadState.FAILED
+    with_notice = with_notice and level < LEVEL_REASON_TAIL
+    with_total = with_total and level < LEVEL_SIZE
+    with_size = level < LEVEL_SIZE
+    if failed and level >= LEVEL_SPEED:
+        # 실패 카드는 ⑤에서 해상도를 뺀다 — 크기 · 길이는 그 앞 단계에서 이미 빠졌다
+        return ""
     if section_count(item):
         if state in (DownloadState.RUNNING, DownloadState.PAUSED):
-            size = received_size_text(item, with_total)
+            # 자르는 단계는 전송이 끝나 받은 크기가 진행이 아니다 — ④에서 통째로 뺀다(프로토 가)
+            cutting = state == DownloadState.RUNNING and bool(item.post_process)
+            size = "" if cutting and not with_size else received_size_text(item, with_total)
         elif state == DownloadState.FINISHED:
-            size = finished_size_text(item)
+            size = finished_size_text(item) if with_size else ""
         else:
-            size = section_size_note(item)
+            size = section_size_note(item) if with_size else ""
         marker = (
             QCoreApplication.translate("ContentItemWidget", "overlap")
             if sections_overlap(item)
@@ -593,26 +633,32 @@ def info_text(item: ContentItem, with_notice: bool = True, with_total: bool = Tr
             section_count(item)
         )
         notice = section_notice(item) if with_notice and state == DownloadState.WAITING else ""
-        return with_resolution(
-            item, _joined(size, section_clock(section_span(item)), sections, marker, notice)
-        )
+        span = section_clock(section_span(item)) if level < LEVEL_LENGTH else ""
+        return with_resolution(item, _joined(size, span, sections, marker, notice))
     if state in (DownloadState.RUNNING, DownloadState.PAUSED):
         return with_resolution(item, received_size_text(item, with_total))
     length = (
         clock(item.duration) if item.duration else ""
     )  # 남은 시간과 같은 짧은 꼴(#515 — 모르면 비움)
+    if failed and level >= LEVEL_LENGTH:
+        length = ""  # 실패 카드는 ③에서 영상 길이를 뺀다(프로토 가 — 다른 상태는 길이를 남긴다)
     if state == DownloadState.FINISHED:
-        return with_resolution(item, _joined(finished_size_text(item), length))
-    size = "" if item.is_segment_based else f"{item.total_size or ''}"
+        return with_resolution(item, _joined(finished_size_text(item) if with_size else "", length))
+    size = "" if item.is_segment_based or not with_size else whole_size_text(item)
+    if not failed and not item.is_segment_based and with_size:
+        size = f"{item.total_size or ''}"  # 대기는 조회 중 안내(「확인 중...」)도 그대로 적는다
     return with_resolution(item, _joined(size, length))
 
 
-def slot_texts(item: ContentItem) -> SlotTexts:
+def slot_texts(item: ContentItem, level: int = 0) -> SlotTexts:
     """카드 3줄의 상태 글 · 정보 글 · 상태 툴팁 · 상태 원 아이콘 — 상태마다 다르다 (#245 · #550).
 
     상태 글은 진행률이 앞, 상태 단어가 그 뒤다(「37% · 받는 중 · 18.4 MB/s · 6:00 남음」) — 상태가
     바뀌어도 진행률 자리가 흔들리지 않는다(#245, 설계 §12.1 카드 글 · 초점). 완료 · 실패 표시는 글
     머리 글자 대신 상태 원 아이콘(↓ ‖ ✓ ✕, 상태 색)이 맡는다.
+
+    `level`은 3줄 접는 단계다(#554 — `LEVEL_MAX` 주석). 진행률 · 상태 단어 · 실패 사유 앞은 어느
+    단계에서도 빼지 않는다.
 
     ⚠️ 번역 호출은 f-string 밖에 둔다 — pyside6-lupdate는 f-string 중괄호 안의 번역 호출을
     못 읽어 -no-obsolete 재생성에서 항목이 지워진다(실측).
@@ -625,8 +671,11 @@ def slot_texts(item: ContentItem) -> SlotTexts:
 
     if state == DownloadState.WAITING:
         status = QCoreApplication.translate("ContentItemWidget", "Download waiting")
-        return SlotTexts(status, info_text(item))
+        return SlotTexts(status, info_text(item, level=level))
 
+    # 구간 집계(「 · 2/3」)는 ⑥에서 뺀다 — 진행률이 이미 앞에 있다(프로토 가는 집계를 적지 않는다).
+    # 실패 카드의 집계는 사유 앞(무엇이 실패했는지)이라 빼지 않는다
+    tally = section_tally(item) if level < LEVEL_REMAIN else ""
     if state == DownloadState.RUNNING:
         if is_preparing(item):
             # 엔진이 받을 것을 정하는 중 (#309) — 진행률 · 속도가 아직 없다. 막대는 값 없이 움직인다
@@ -638,20 +687,23 @@ def slot_texts(item: ContentItem) -> SlotTexts:
                 cutting_text = QCoreApplication.translate("ContentItemWidget", "Preparing to cut")
             else:
                 cutting_text = QCoreApplication.translate("ContentItemWidget", "Cutting")
-            status = f"{item.download_progress}% · {cutting_text}{section_tally(item)}"
+            status = f"{item.download_progress}% · {cutting_text}{tally}"
         elif item.is_segment_based and item.post_process:
             # 후처리 진행률(download_progress는 후처리에서 0부터 다시 차오른다)도 앞에 둔다
             postprocess_text = QCoreApplication.translate("ContentItemWidget", "Post-processing")
             status = f"{item.download_progress}% · {postprocess_text}"
         else:
             receiving_text = QCoreApplication.translate("ContentItemWidget", "Downloading")
-            remain = short_time(item.download_remain_time)
-            status = (
-                f"{item.download_progress}% · {receiving_text} · {item.download_speed} · "
-                + QCoreApplication.translate("ContentItemWidget", "{0} left").format(remain)
-                + section_tally(item)
-            )
-        return SlotTexts(status, info_text(item), icon="down")
+            parts = [f"{item.download_progress}%", receiving_text]
+            if level < LEVEL_SPEED and item.download_speed:
+                parts.append(f"{item.download_speed}")
+            if level < LEVEL_REMAIN:
+                remain = short_time(item.download_remain_time)
+                parts.append(
+                    QCoreApplication.translate("ContentItemWidget", "{0} left").format(remain)
+                )
+            status = " · ".join(parts) + tally
+        return SlotTexts(status, info_text(item, level=level), icon="down")
 
     if state == DownloadState.PAUSED:
         # 진행분이 먼저, 상태가 뒤 — "54% · 일시정지됨"
@@ -660,18 +712,18 @@ def slot_texts(item: ContentItem) -> SlotTexts:
             # 준비 중에 일시정지했다 (#309) — 아직 받은 것이 없어 진행률을 적지 않는다
             status = paused_text
         else:
-            status = f"{item.download_progress}% · {paused_text}{section_tally(item)}"
-        return SlotTexts(status, info_text(item), icon="pause")
+            status = f"{item.download_progress}% · {paused_text}{tally}"
+        return SlotTexts(status, info_text(item, level=level), icon="pause")
 
     if state == DownloadState.FINISHED:
         # "완료 · 2:12" — 소요 시간은 진행 중의 남은 시간과 같은 짧은 포맷(#245). 값은 엔진의
-        # start_time~end_time으로 만든 "HH:MM:SS"이고, 값이 없으면(앱 재시작 복원 등) 시간 없이
-        completed = QCoreApplication.translate("ContentItemWidget", "Completed") + section_tally(
-            item
-        )
-        elapsed = short_time(item.download_time) if item.download_time else ""
+        # start_time~end_time으로 만든 "HH:MM:SS"이고, 값이 없으면(앱 재시작 복원 등) 시간 없이.
+        # 소요 시간은 ⑥에서 남은 시간과 함께 뺀다(#554 — 프로토 가는 「✓ 완료」만 남긴다)
+        completed = QCoreApplication.translate("ContentItemWidget", "Completed") + tally
+        with_elapsed = item.download_time and level < LEVEL_REMAIN
+        elapsed = short_time(item.download_time) if with_elapsed else ""
         status = f"{completed} · {elapsed}" if elapsed else completed
-        return SlotTexts(status, info_text(item), icon="ok")
+        return SlotTexts(status, info_text(item, level=level), icon="ok")
 
     # 실패 — 사유(stateMessage)는 키 기반 매핑을 거친 번역 문자열만 온다. 매핑 밖 예외는
     # 사유가 비어 온다 — 틀리지 않으면서 다음 행동(로그 폴더 열기 #181)을 주는 안내를 띄운다(#245).
@@ -681,8 +733,11 @@ def slot_texts(item: ContentItem) -> SlotTexts:
         if reason
         else QCoreApplication.translate("ContentItemWidget", "Unknown error - check the log")
     )
-    # 사유 문구는 첫 줄이 핵심 한 줄, 둘째 줄부터는 상세다 — 3행에는 첫 줄만, 전문은 툴팁으로(#245)
+    # 사유 문구는 첫 줄이 핵심 한 줄, 둘째 줄부터는 상세다 — 3행에는 첫 줄만, 전문은 툴팁으로(#245).
+    # 첫 줄은 첫 「 · 」에서 앞(무엇이 실패) · 뒤(조치 안내)로 나눠 ⓪부터 뒤를 뺀다(#554)
     headline = text.splitlines()[0] if text else text
+    head, tail = split_reason(headline)
+    headline = head if level >= LEVEL_REASON_TAIL or not tail else headline
     failed_sections = getattr(item, "sections_failed", 0)
     if section_count(item) >= 2 and failed_sections:
         # 일부 구간만 자르지 못했다 (#309) — 실패한 구간 수와 완료 구간 수를 사유 앞에 적는다
@@ -690,4 +745,4 @@ def slot_texts(item: ContentItem) -> SlotTexts:
             failed_sections
         ) + section_tally(item)
         headline = f"{tally} · {headline}"
-    return SlotTexts(headline, None, text, icon="err")
+    return SlotTexts(headline, info_text(item, level=level), text, icon="err")
