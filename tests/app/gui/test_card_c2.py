@@ -214,15 +214,16 @@ class TestRows:
         rows = {state: self._rows(_card(state)) for state, _ in STATE_BUTTONS}
         assert len(set(rows.values())) == 1, rows
 
-    def test_status_text_starts_at_the_same_x_with_or_without_an_icon(self, qapp) -> None:
-        """상태 원 아이콘이 없는 상태(대기 · 조회 중)에도 상태 글의 시작 x가 다른 상태와 같아야 한다.
+    def test_row_three_starts_at_the_title_x_with_or_without_an_icon(self, qapp) -> None:
+        """3줄 첫 항목(상태 원, 없으면 상태 글)의 왼쪽 x가 어느 상태에서나 제목 왼쪽 x와 같아야 한다.
 
-        상태 여섯 -> statusLabel 왼쪽 x 하나, statusIcon 자리 폭 16
+        대기 · 조회 중(원 없음) -> statusLabel x == titleLabel x, 그 밖 -> statusIcon x == titleLabel x
         """
-        cards = {state: _card(state) for state, _ in STATE_BUTTONS}
-        starts = {state: card.statusLabel.x() for state, card in cards.items()}
-        assert len(set(starts.values())) == 1, starts
-        assert cards[DownloadState.WAITING].statusIcon.isHidden()
+        for state, _ in STATE_BUTTONS:
+            card = _card(state)
+            head = card.statusLabel if card.statusIcon.isHidden() else card.statusIcon
+            title_x = card.titleLabel.mapTo(card, QPoint(0, 0)).x()
+            assert head.mapTo(card, QPoint(0, 0)).x() == title_x, state
 
     def test_title_label_is_as_wide_as_its_text_and_has_no_tooltip(self, qapp) -> None:
         """자리가 남는 카드의 제목 라벨 폭이 글자 폭이고 툴팁이 없어야 한다.

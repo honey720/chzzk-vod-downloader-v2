@@ -171,7 +171,7 @@ class TestTwoLeftBaselines:
     def _row_heads(widget) -> dict[str, int]:
         """줄마다 자리를 차지하는 첫 항목의 카드 면 x.
 
-        3줄 상태 아이콘은 숨어도(대기) 자리를 지킨다 — 레이아웃 항목이 비지 않았는지
+        숨은 항목(대기 카드의 3줄 상태 아이콘)은 건너뛴다 — 레이아웃 항목이 비지 않았는지
         (`isEmpty()`)로 고르고, 위젯이 아니라 레이아웃이 준 자리(`geometry()`)를 잰다.
         """
         heads = {}
@@ -194,7 +194,7 @@ class TestTwoLeftBaselines:
         """세 줄의 첫 자리가 폭 · 상태와 무관하게 같은 x(글 열 기준선)에서 시작해야 한다.
 
         대기 · 받는 중 카드, 창 폭 560 · 900 · 1600
-        -> 1줄 channelImageLabel · 2줄 titleLabel · 3줄 statusIcon 자리의 카드 면 x가 모두 같다
+        -> 1줄 channelImageLabel · 2줄 titleLabel · 3줄 첫 항목(대기는 statusLabel)의 카드 면 x가 모두 같다
         """
         widget = _make_widget(qapp)
         _set_state(widget, state)
@@ -206,27 +206,6 @@ class TestTwoLeftBaselines:
             f"폭 {width}px에서 글 열 기준선({content_x}px)을 벗어난 줄 시작점: {offenders} — "
             "좌측 기준선은 썸네일·글 열 둘뿐이어야 한다"
         )
-
-    def test_status_text_starts_at_the_same_x_in_every_state(self, qapp) -> None:
-        """상태 아이콘이 없는 대기에서도 상태 글이 아이콘이 있는 상태와 같은 x에서 시작해야 한다.
-
-        창 폭 900, 대기(아이콘 없음) · 받는 중 · 일시정지 · 완료 · 실패
-        -> statusLabel 카드 면 x가 모두 같다
-        """
-        widget = _make_widget(qapp)
-        xs = {}
-        for state in (
-            DownloadState.WAITING,
-            DownloadState.RUNNING,
-            DownloadState.PAUSED,
-            DownloadState.FINISHED,
-            DownloadState.FAILED,
-        ):
-            _set_state(widget, state)
-            _at_width(widget, 900)
-            xs[state.name] = _x(widget, widget.statusLabel)
-        assert widget.statusIcon.isVisible(), "전제: 실패 카드에는 상태 아이콘이 보인다"
-        assert len(set(xs.values())) == 1, f"상태에 따라 상태 글 x가 다르다: {xs}"
 
     @pytest.mark.parametrize("width", WIDTHS)
     def test_exactly_two_left_baselines(self, qapp, width) -> None:

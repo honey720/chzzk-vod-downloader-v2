@@ -163,10 +163,7 @@ class Ui_ContentItemWidget(object):
         self.statusIcon = StateBubble(self.statusRow)
         self.statusIcon.setObjectName("statusIcon")
         self.statusIcon.setFixedSize(QSize(status_icon, status_icon))
-        # 아이콘이 없는 상태(대기 · 조회 중)에도 자리를 지킨다 — 상태 글의 시작 x가 어느 상태에서나 같다
-        icon_policy = self.statusIcon.sizePolicy()
-        icon_policy.setRetainSizeWhenHidden(True)
-        self.statusIcon.setSizePolicy(icon_policy)
+        # 아이콘이 없는 상태(대기 · 조회 중)는 상태 글이 그 자리에서 시작한다 — 프로토와 같다(#550)
         self.resolutionLayout.addWidget(self.statusIcon)
         self.statusLabel = ElidingLabel(self.statusRow, tip_when_elided=True)
         self.statusLabel.setObjectName("statusLabel")

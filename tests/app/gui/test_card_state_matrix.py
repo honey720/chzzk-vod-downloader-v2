@@ -375,17 +375,17 @@ class TestPercentStartsAtTheSameX:
         assert len(set(xs.values())) == 1, f"국면에 따라 퍼센트 시작 x가 다르다: {xs}"
 
     def test_all_five_states_and_postprocess_keep_the_slot_baseline(self, qapp) -> None:
-        """다섯 상태와 후처리 카드에서 3줄 상태 글의 시작 x가 모두 같아야 한다.
+        """다섯 상태와 후처리 카드에서 3줄 첫 항목의 시작 x가 모두 같아야 한다.
 
-        상태 원이 없는 대기 카드도 원 자리를 비워 둔다(#550)
-        대기 · 진행 · 일시정지 · 완료 · 실패 · 후처리 카드(900px) -> 상태 글 왼쪽 x 여섯이 같다
+        3줄 첫 항목은 보이는 상태 원, 원이 없으면(대기) 상태 글이다(프로토와 같다, #550)
+        대기 · 진행 · 일시정지 · 완료 · 실패 · 후처리 카드(900px) -> 첫 항목 왼쪽 x 여섯이 같다
         """
         xs = {}
         for state in MATRIX:
             widget = _make_widget(qapp, state, PROGRESS.get(state, 0))
-            xs[state.name] = _left_x(widget, widget.statusLabel)
+            xs[state.name] = _left_x(widget, _row_head(widget))
         widget = _make_widget(qapp, DownloadState.RUNNING, 13, post_process=True)
-        xs["POSTPROCESS"] = _left_x(widget, widget.statusLabel)
+        xs["POSTPROCESS"] = _left_x(widget, _row_head(widget))
         assert len(set(xs.values())) == 1, f"슬롯 시작 x가 상태마다 다르다: {xs}"
 
 
