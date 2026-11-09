@@ -276,7 +276,7 @@ class TestRows:
     def test_long_info_is_elided_instead_of_overflowing_a_narrow_list(self, qapp) -> None:
         """좁은 목록에서 정보 글이 줄에 안 들어가면 카드가 목록 밖으로 넘치지 않고 정보 글이 줄 안에서 잘려야 한다.
 
-        구간 셋 · 다른 저장 위치 대기 카드 · 목록 폭 280
+        구간 셋 · 다른 저장 위치 대기 카드 · 목록 폭 = 카드가 자기 최소폭을 받는 폭
         -> 카드 오른쪽 끝 ≤ 뷰포트 폭, 정보 글 오른쪽 끝 ≤ 3줄 폭, 정보 글 툴팁 첫 줄 = 전체 글
         """
         view = ContentListView()
@@ -285,10 +285,15 @@ class TestRows:
         item = _item(path="D:/vod/a folder with a long name")
         item.selections = (TimeRange(0, 600), TimeRange(1200, 1800), TimeRange(2400, 3000))
         model.addItem(item)
-        view.resize(280, 400)
+        view.resize(800, 400)
         view.show()
         QApplication.processEvents()
         card = view.widgetFor(item)
+        around = view.width() - card.width()  # 목록 폭 − 카드 폭(바깥 여백 · 테두리)
+        # 카드 최소폭보다 좁은 창은 없다 — 카드가 최소폭을 받는 폭에서 잰다(글꼴과 무관)
+        view.resize(card.minimumSizeHint().width() + around, 400)
+        QApplication.processEvents()
+        assert card.width() == card.minimumSizeHint().width(), "전제: 카드가 최소폭을 받았다"
         info = card.fileSizeLabel
         assert info.isVisible()
         assert card.geometry().right() < view.viewport().width()
@@ -299,12 +304,14 @@ class TestRows:
     def test_status_text_gives_way_before_the_info_text(self, qapp) -> None:
         """줄이 정보 글 전체와 「…」까지 준 상태 글만큼이면 상태 글이 먼저 잘리고 정보 글은 온전해야 한다.
 
-        받는 중 카드(받을 크기 모름 — 정보 글 한 꼴) · 다른 저장 위치
+        받는 중 구간 카드(구간 셋, 받을 크기 모름 — 정보 글 한 꼴) · 다른 저장 위치
         3줄 폭 = 상태 원 + 간격 + 「…」 상태 글 최소 + 간격 + 폴더 아이콘 + 간격 2 + 정보 글 전체 + 여유 10
         (카드 폭 = 3줄 폭 + 테두리 2 + 안쪽 여백 16 + 썸네일 110 + 간격 12)
         -> 정보 글 안 잘림, 상태 글 잘림
         """
         card = _card(DownloadState.RUNNING, path="D:/vod/lck")
+        # 구간 셋 — 정보 글이 길어져 3줄 폭이 어떤 글꼴에서도 카드 최소폭 위에 온다
+        card.item.selections = (TimeRange(0, 600), TimeRange(1200, 1800), TimeRange(2400, 3000))
         card.item.download_progress = 37
         card.item.download_speed = "18.4 MB/s"
         card.item.download_remain_time = "00:06:00"
