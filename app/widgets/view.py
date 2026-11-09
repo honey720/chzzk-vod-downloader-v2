@@ -10,6 +10,7 @@ from PySide6.QtGui import (
     QColor,
 )
 import app.theme as theme
+from app.widgets.narrow_steps import RETURN_SLACK
 from app.widgets.scroll_padding import ScrollBarPadding
 from app.widgets.widget import BUSY_STATES, ContentItemWidget
 from app.viewmodels.data import ContentItem
@@ -131,6 +132,9 @@ class ContentListView(QScrollArea):
         self._hoverCard: ContentItemWidget | None = None  # 호버라고 보는 카드 하나(#550)
         self._rehoverPending = False  # 호버 다시 맞추기를 다음 턴에 한 번만 (#550)
         self._steppingFocus = False  # 목록이 카드 초점을 옮기는 중 — 들어옴으로 보지 않는다
+        self._showYear = True  # 카드 날짜에 연도를 적는지 — 목록 전체가 함께 정한다(#554)
+        self._datesPending = False  # 날짜 연도 전체 판정을 다음 턴에 한 번만(#554)
+        self._newCards: list[ContentItemWidget] = []  # 다음 턴에 연도를 볼 새 카드(#554)
 
         self._overlay = _Overlay(self)
         self._overlay.setGeometry(self.rect())
@@ -141,6 +145,55 @@ class ContentListView(QScrollArea):
         super().resizeEvent(event)
         self._overlay.setGeometry(self.rect())
         self._scheduleRehover()
+        self._scheduleDates()
+
+    # ---- 날짜 연도 — 목록 전체가 함께 뺀다 (#554) ----
+    # 같은 폭에서 연도가 있는 카드와 없는 카드가 섞이지 않게 목록이 한 번에 정한다. 판정은 창 폭이 바뀔
+    # 때(보이는 카드 전부)와 카드가 들어올 때(들어온 카드만)뿐이다 — 카드 상태가 바뀔 때는 하지 않는다
+
+    def showsYear(self) -> bool:
+        """카드 날짜에 연도를 적는지."""
+        return self._showYear
+
+    def _scheduleDates(self) -> None:
+        """날짜 연도 전체 판정을 다음 이벤트 루프 턴에 한 번 돌린다."""
+        if not self._datesPending:
+            self._datesPending = True
+            QTimer.singleShot(0, self, self._fitDates)
+
+    def _fitDates(self) -> None:
+        """보이는 카드의 1줄이 연도 있는 날짜로 들어가는지 보고 목록 전체의 연도를 정한다.
+
+        연도를 적는 중이면 한 장이라도 안 들어갈 때 뺀다. 뺀 뒤에는 모든 카드에 +8px이 남을 때
+        되돌린다(`narrow_steps.RETURN_SLACK` — 경계에서 오가지 않게).
+        """
+        self._datesPending = False
+        self._newCards.clear()
+        self._container.layout().activate()
+        self._decideYear([w for w in self._widgets.values() if w.isVisible()], allow_show=True)
+
+    def _fitNewDates(self) -> None:
+        """들어온 카드만 본다 — 연도를 적는 중인데 들어가지 않는 카드가 있으면 목록 전체에서 뺀다."""
+        cards = [w for w in self._newCards if w.isVisible()]
+        self._newCards.clear()
+        if cards and self._showYear:
+            self._container.layout().activate()
+            self._decideYear(cards, allow_show=False)
+
+    def _decideYear(self, cards: list[ContentItemWidget], allow_show: bool) -> None:
+        cards = [card for card in cards if card.row1Room() > 0]
+        if not cards:
+            return
+        if self._showYear:
+            show = all(card.row1Need(True) <= card.row1Room() for card in cards)
+        elif allow_show:
+            show = all(card.row1Need(True) + RETURN_SLACK <= card.row1Room() for card in cards)
+        else:
+            return
+        if show != self._showYear:
+            self._showYear = show
+            for widget in self._widgets.values():
+                widget.setShowYear(show)
 
     def scrollContentsBy(self, dx: int, dy: int) -> None:
         super().scrollContentsBy(dx, dy)
@@ -342,6 +395,7 @@ class ContentListView(QScrollArea):
         container.show()
         self._overlay.update()
         self._scheduleRehover()
+        self._scheduleDates()  # 다시 보인 카드가 연도를 못 넣을 수 있다 — 칩 조작 한 번에 한 번
 
     def _applyVisibility(self, item: ContentItem) -> None:
         """카드 하나의 보임을 지금 칩에 맞춘다."""
@@ -359,16 +413,23 @@ class ContentListView(QScrollArea):
         widget.editRequest.connect(lambda it=item: self.editRequested.emit(it))
         widget.hoverChanged.connect(lambda hovered, w=widget: self._onCardHover(w, hovered))
         widget.loadRepresentations()
+        widget.setShowYear(self._showYear)
         self._layout.insertWidget(self._placeOf(item, row), widget)
         widget.setVisible(self._accepts(item))
         self._widgets[item] = widget
         self._overlay.update()  # 빈 리스트 안내를 즉시 감춘다
+        # 날짜 연도 — 들어온 카드만 다음 턴에 한 번에 본다(배치 뒤라야 폭이 있다)
+        if not self._newCards:
+            QTimer.singleShot(0, self, self._fitNewDates)
+        self._newCards.append(widget)
 
     def _onItemRemoved(self, item: ContentItem) -> None:
         widget = self._widgets.pop(item, None)
         if widget is not None:
             if self._hoverCard is widget:
                 self._hoverCard = None
+            if widget in self._newCards:
+                self._newCards.remove(widget)
             self._layout.removeWidget(widget)
             widget.deleteLater()  # 생명주기 직접 관리 — 빠뜨리면 누수 (#226)
         self._overlay.update()  # 마지막 카드가 지워졌으면 빈 리스트 안내를 다시 띄운다
