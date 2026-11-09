@@ -142,6 +142,11 @@ class TestTipWhenElided:
         self._resize(label, width)
         return label
 
+    def _wide(self, label: ElidingLabel) -> int:
+        """글이 다 들어가는 폭 — 전역 QSS 글꼴이 합쳐진 뒤(polish)의 글 폭 + 40."""
+        label.ensurePolished()
+        return label.fontMetrics().horizontalAdvance(self.TEXT) + 40
+
     @staticmethod
     def _resize(label: ElidingLabel, width: int) -> None:
         """폭을 바꾸고 보인다 — 숨은 위젯은 resizeEvent가 표시 때까지 미뤄진다."""
@@ -156,7 +161,7 @@ class TestTipWhenElided:
         """
         label = ElidingLabel(tip_when_elided=True)
         label.setText(self.TEXT)
-        self._resize(label, label.fontMetrics().horizontalAdvance(self.TEXT) + 40)
+        self._resize(label, self._wide(label))
         assert not label.isElided()
         assert label.toolTip() == ""
 
@@ -169,7 +174,7 @@ class TestTipWhenElided:
         """
         label = self._label(60)
         assert label.isElided() and label.toolTip() == self.TEXT
-        self._resize(label, label.fontMetrics().horizontalAdvance(self.TEXT) + 40)
+        self._resize(label, self._wide(label))
         assert label.toolTip() == ""
 
     def test_detail_tip_is_kept_whether_or_not_the_text_is_elided(self, qapp) -> None:
@@ -180,7 +185,7 @@ class TestTipWhenElided:
         label = self._label(60)
         label.setDetailTip("자세히")
         assert label.toolTip() == "자세히"
-        self._resize(label, label.fontMetrics().horizontalAdvance(self.TEXT) + 40)
+        self._resize(label, self._wide(label))
         assert label.toolTip() == "자세히"
 
     def test_default_label_keeps_the_full_text_tooltip(self, qapp) -> None:
@@ -190,5 +195,5 @@ class TestTipWhenElided:
         """
         label = ElidingLabel()
         label.setText(self.TEXT)
-        self._resize(label, label.fontMetrics().horizontalAdvance(self.TEXT) + 40)
+        self._resize(label, self._wide(label))
         assert label.toolTip() == self.TEXT
