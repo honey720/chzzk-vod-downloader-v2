@@ -2,6 +2,53 @@
 <!DOCTYPE TS>
 <TS version="2.1" language="en_US">
 <context>
+    <name>CardEditDialog</name>
+    <message>
+        <source>Edit</source>
+        <translation>Edit</translation>
+    </message>
+    <message>
+        <source>File name</source>
+        <translation>File name</translation>
+    </message>
+    <message>
+        <source>Default</source>
+        <translation>Default</translation>
+    </message>
+    <message>
+        <source>Resolution</source>
+        <translation>Resolution</translation>
+    </message>
+    <message>
+        <source>Sections</source>
+        <translation>Sections</translation>
+    </message>
+    <message>
+        <source>Edit sections…</source>
+        <translation>Edit sections…</translation>
+    </message>
+    <message>
+        <source>Save location</source>
+        <translation>Save location</translation>
+    </message>
+    <message>
+        <source>Browse…</source>
+        <translation>Browse…</translation>
+    </message>
+    <message>
+        <source>Default location</source>
+        <translation>Default location</translation>
+    </message>
+    <message>
+        <source>Whole video</source>
+        <translation>Whole video</translation>
+    </message>
+    <message>
+        <source>Select download folder</source>
+        <translation>Select download folder</translation>
+    </message>
+</context>
+<context>
     <name>ContentItemWidget</name>
     <message>
         <source>(source)</source>
@@ -46,6 +93,10 @@
     <message>
         <source>Edit sections</source>
         <translation>Edit sections</translation>
+    </message>
+    <message>
+        <source>Edit</source>
+        <translation>Edit</translation>
     </message>
     <message>
         <source>Change save location</source>

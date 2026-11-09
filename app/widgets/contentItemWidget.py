@@ -123,6 +123,17 @@ class Ui_ContentItemWidget(object):
         # 대기 카드의 두 조작 (#309) — 구간 편집 창 열기 · 저장 위치 바꾸기. 아래 줄의 구간 요약
         # 글자 · 경로 글자를 누르는 것과 같은 일을 한다(글자는 눌린다는 것이 잘 보이지 않는다).
         # 그 동작이 허용되는 상태에서만 보인다(app/widgets/widget.py::applyStateStyle)
+        # 카드 편집 창 열기(#545) — 대기 카드에만 보인다. 파일명 · 해상도 · 저장 위치 · 구간을
+        # 한 창에서 고친다. 옆의 옛 편집 길(구간 편집 · 저장 위치)은 C2에서 이 버튼으로 모은다
+        self.editButton = IconButton(self.contentFrame)
+        self.editButton.setObjectName("editButton")
+        self.editButton.setMinimumSize(QSize(icon, icon))
+        self.editButton.setMaximumSize(QSize(icon, icon))
+        self.editButton.setProperty("role", "icon")
+        self.editButton.setVisible(False)
+
+        self.topLayout.addWidget(self.editButton)
+
         self.sectionEditButton = IconButton(self.contentFrame)
         self.sectionEditButton.setObjectName("sectionEditButton")
         self.sectionEditButton.setMinimumSize(QSize(icon, icon))

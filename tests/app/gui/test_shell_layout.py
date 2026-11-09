@@ -38,6 +38,7 @@ import app.theme as theme
 from app.views.mainWindow import VodDownloader
 from app.viewmodels.data import ContentItem
 from app.widgets.footer_bar import SPEED_SAMPLE
+from app.widgets.widget import ContentItemWidget
 from core.models.download_state import DownloadState
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
 from typing import Never
@@ -206,7 +207,47 @@ def _independent_content_minimum(win: VodDownloader) -> int:
         header + 2 * outer,
         info + 2 * outer,
         win.listView.minimumSizeHint().width(),
+        _widest_waiting_card_minimum() + 2 * theme.METRICS["outerMargin"],
     )
+
+
+def _widest_waiting_card_minimum() -> int:
+    """위 줄 버튼이 가장 많은 대기 카드의 최소폭을 위젯 폭으로 독립 합산한다 (#545).
+
+    카드 테두리 + 안쪽 여백 + 썸네일 + 썸네일 ↔ 글 간격 + 위 줄(보이는 위젯의 최소폭 + 사이 간격 +
+    고정 빈칸). 채널명은 최소폭 상한(64px)에 닿는 긴 이름이다. 위 줄이 카드에서 가장 넓은 줄이다 —
+    제목 · 3줄은 말줄임 · 접힘으로 그보다 좁아진다.
+    """
+    metadata = {
+        "title": "VOD",
+        "category": "",
+        "channelName": "a channel name longer than the cap",  # 최소폭 상한에 닿는 이름
+        "createdDate": "",
+        "duration": 3600,
+    }
+    card = ContentItemWidget(ContentItem("", metadata, [], None, "", "", "video", None))
+    card.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
+    card.show()
+    card.layout().activate()
+    top = card.topLayout
+    shown, spacers = [], 0
+    for index in range(top.count()):
+        entry = top.itemAt(index)
+        if entry.widget() is None:
+            spacers += entry.minimumSize().width()  # 늘어나는 빈칸은 0, 고정 빈칸은 그 폭
+        elif not entry.widget().isHidden():
+            shown.append(_leaf_min(entry.widget()))
+    assert len(shown) == 6, (
+        f"전제: 위 줄에 채널 그림 · 이름 · 편집 · 구간 편집 · 저장 위치 · 삭제가 보인다 ({len(shown)})"
+    )
+    row = sum(shown) + top.spacing() * (len(shown) - 1) + spacers
+    margins = card.bodyLayout.contentsMargins()
+    frame = card.contentFrame.rect().width() - card.contentFrame.contentsRect().width()
+    width = frame + margins.left() + margins.right() + card.thumbnailLabel.width()
+    width += card.bodyLayout.spacing() + row
+    card.hide()
+    card.deleteLater()
+    return width
 
 
 # ---------------------------------------------------------------------------

@@ -139,6 +139,10 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     # 구간이 있는 카드의 해상도가 바뀌었다 (#309) — 뷰모델이 구간을 새 해상도에 다시 맞춘다
     sectionRefitRequest = Signal()
     expandedChanged = Signal(bool)  # 해상도 펼침/접힘 — 목록이 "한 번에 하나"를 맞춘다
+    editRequest = Signal()  # 대기 카드의 ✎ · 더블 클릭 — 카드 편집 창 (#545)
+    # 해상도 크기 조회 결과가 아이템에 들어갔다 (#545) — (해상도 목록 번호, 크기 글). 열린 카드
+    # 편집 창이 해상도 목록의 크기를 고친다. 창이 닫혀 지워진 뒤에 와도 연결이 함께 끊긴다
+    repSizeChanged = Signal(int, str)
 
     # 워커 스레드 → 메인 스레드 중계 (#168). 위젯·아이템 조작은 반드시 메인
     # 스레드 슬롯에서 한다 — download 경로가 DownloadViewModel로 세운 스레드 경계
@@ -311,6 +315,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         # 대기 카드의 두 조작 (#309) — 저장 위치 버튼의 도형은 _updatePathVisibility가 정한다
         self.sectionEditButton.setIconName("scissors")
         self.sectionEditButton.setToolTip(self.tr("Edit sections"))
+        self.editButton.setIconName("edit")  # 카드 편집 창 (#545)
+        self.editButton.setToolTip(self.tr("Edit"))
         self.setIndex(self.index)  # 인덱스 업데이트
         self.titleLabel.setText(self.item.title)  # 제목 업데이트
         self.titleEdit.setText(self.item.title)  # 제목 업데이트
@@ -336,6 +342,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         # checked(bool)가 event 자리로 가지 않게 람다로 받는다
         self.pathButton.clicked.connect(lambda: self.choosePath())
         self.sectionEditButton.clicked.connect(lambda: self.requestSectionEdit())
+        self.editButton.clicked.connect(lambda: self.requestEdit())
         self.openDirectoryButton.clicked.connect(self.requestOpenDir)
         self.pauseButton.clicked.connect(self.pauseRequest.emit)
         self.retryButton.clicked.connect(self.retryRequest.emit)
@@ -664,6 +671,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         if size_text:
             self.item.unique_reps[index][-1] = size_text
             self.buttons[index].setToolTip(size_text)
+            self.repSizeChanged.emit(index, size_text)  # 열린 편집 창의 해상도 목록 (#545)
         resolution, base_url = self.item.unique_reps[index][0], self.item.unique_reps[index][1]
         if self._userPicked:
             # 유저가 이미 골랐다 — 자동 선택은 건너뛴다(#244 3행 정리 P-4). 늦게 온
@@ -963,6 +971,47 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             return
         self.sectionEditRequest.emit()
 
+    def requestEdit(self) -> None:
+        """카드 편집 창을 청한다 — 대기 카드에서만 (#545). ✎ 버튼과 카드 더블 클릭이 부른다."""
+        if self.item.downloadState != DownloadState.WAITING:
+            return
+        self.editRequest.emit()
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        """카드를 더블 클릭하면 대기 카드는 편집 창을 연다 (#545). 그 밖 상태는 아무 일도 없다.
+
+        버튼 · 해상도 pill · 제목 입력칸은 더블 클릭을 스스로 받아 여기 오지 않는다. 제목 글자는
+        첫 누름에 그 자리 고치기가 열려 둘째 누름이 입력칸으로 간다(옛 길, C2에서 지운다).
+        """
+        if event.button() == Qt.MouseButton.LeftButton:
+            event.accept()
+            self.requestEdit()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def syncPickedResolution(self) -> None:
+        """아이템의 해상도에 맞춰 고른 pill을 다시 표시한다 — 카드 밖(편집 창)에서 바꾼 뒤 (#545).
+
+        pill을 누른 것과 같은 표시가 된다. 구간을 다시 맞추라는 알림은 내지 않는다 — 바꾼 쪽이
+        이미 맞추게 했다. 고른 것이 이미 같으면 아무것도 하지 않는다. 아이템의 해상도를 바꾼
+        뒤에는 사용자가 고른 것이므로, 늦게 온 크기 조회가 기본 선택으로 되돌리지 않게 한다.
+        """
+        if not self._slotShowsPills() or not self.buttons:
+            return
+        for index, rep in enumerate(self.item.unique_reps):
+            if rep[0] == self.item.resolution and rep[1] == self.item.base_url:
+                break
+        else:
+            return
+        button = self.buttons[index]
+        if button is self._selectedButton:
+            return
+        self._userPicked = True
+        for other in self.buttons:
+            other.setSelected(other is button)
+        self._selectedButton = button
+        self._layoutRowThree()
+
     def _shortRemain(self, remain: str) -> str:
         """HH:MM:SS 시간을 짧은 표시로 줄인다 — `card_text.short_time`."""
         return short_time(remain)
@@ -995,6 +1044,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             self.statusLabel.setToolTip(texts.status_tip)
 
         self.applyStateStyle()
+        self.syncPickedResolution()  # 편집 창이 바꾼 해상도를 pill에 (#545)
 
     def _sizeText(self, item: ContentItem, with_total: bool = True) -> str:
         """진행·일시정지 카드의 크기 표기 — `card_text.received_size_text`."""
@@ -1079,6 +1129,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.retryButton.setVisible(raw == DownloadState.FAILED)
         # 구간 편집 · 저장 위치 (#309) — 아래 줄의 글자를 눌러 그 일을 할 수 있는 상태에서만
         # 보인다(같은 판정을 쓴다). 꺼 두지 않고 숨긴다 — 다른 조작 버튼들과 같다
+        self.editButton.setVisible(raw == DownloadState.WAITING)  # 카드 편집 창 (#545)
         self.sectionEditButton.setVisible(self._sectionsEditable())
         self.pathButton.setVisible(self._pathEditable())
         self.fileSizeLabel.setVisible(raw != DownloadState.FAILED)

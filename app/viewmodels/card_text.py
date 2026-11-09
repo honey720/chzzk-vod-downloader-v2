@@ -359,6 +359,34 @@ def section_summary(
     return f"{summary} · {notice}" if notice else summary
 
 
+def section_lines(item: ContentItem) -> list[str]:
+    """구간마다 한 줄 — 「1. 1:05 ~ 5:30 (4:25)」. 카드 편집 창의 구간 요약 목록이다 (#545).
+
+    시각은 남은 시간과 같은 짧은 표기다(초 밑은 버린다 — 정확한 값은 구간 창에 있다).
+    """
+    return [
+        f"{number}. {clock(s.start)} ~ {clock(s.end)} ({clock(max(s.end - s.start, 0.0))})"
+        for number, s in enumerate(item.selections, 1)
+    ]
+
+
+def file_tail(resolution, tag: str, sections: int) -> str:
+    """받을 때 제목 뒤에 붙는 꼬리의 모양 — 「 1080p.mp4」, 구간이면 「 1080p_1.mp4」 (#545).
+
+    파일 이름 조립(core/utils/paths.py)과 같은 모양을 보이기만 한다 — 조립 함수를 부르지 않는다.
+    중복 회피 「 (n)」과 긴 이름 자르기는 받을 때 정해지므로 넣지 않는다. 구간 이름에는 원본
+    표시(tag)가 붙지 않는다(조립 함수와 같다). 구간이 둘 이상이면 첫 이름 뒤에 「…」를 붙인다.
+
+    Args:
+        tag: 해상도 뒤 원본 표시(「(원본)」 또는 빈 글 — ``file_tag``)
+        sections: 구간 수(0이면 전체 다운로드)
+    """
+    if sections:
+        tail = f" {resolution}p_1.mp4"
+        return f"{tail} …" if sections > 1 else tail
+    return f" {resolution}p{tag}.mp4"
+
+
 # ---- 크기 ----
 
 

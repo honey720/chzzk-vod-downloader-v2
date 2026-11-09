@@ -239,24 +239,28 @@ QPushButton:disabled {
     border-color: @border;
 }
 
-/* 주 동작 — 다운로드 */
-QPushButton#downloadButton {
+/* 주 동작 — 다운로드 · 카드 편집 창 저장(role=primary, #545) */
+QPushButton#downloadButton,
+QPushButton[role="primary"] {
     background-color: @accent;
     color: @onAccent;
     border-color: @accent;
 }
 
-QPushButton#downloadButton:hover {
+QPushButton#downloadButton:hover,
+QPushButton[role="primary"]:hover {
     background-color: @accentHover;
     border-color: @accentHover;
 }
 
-QPushButton#downloadButton:pressed {
+QPushButton#downloadButton:pressed,
+QPushButton[role="primary"]:pressed {
     background-color: @accentPressed;
     border-color: @accentPressed;
 }
 
-QPushButton#downloadButton:disabled {
+QPushButton#downloadButton:disabled,
+QPushButton[role="primary"]:disabled {
     background-color: @surface;
     color: @textDisabled;
     border-color: @border;
@@ -777,4 +781,16 @@ QMessageBox {
 
 QMessageBox QLabel {
     color: @text;
+}
+
+/* 카드 편집 창 (#545) — 머리 제목은 굵게, 보조 글(채널 · 날짜 · 파일명 꼬리 · 구간 줄)은 흐린 글 */
+QLabel#cardEditTitle {
+    font-weight: bold;
+}
+
+QLabel#cardEditMeta,
+QLabel#cardEditTail,
+QLabel#cardEditSectionLines {
+    color: @textMuted;
+    font-size: @fontSizeMeta;
 }

@@ -467,3 +467,40 @@ class TestStateValues:
         cut = _item(DownloadState.FINISHED, sections=((0, 60), (120, 180)))
         cut.section_paths = (str(tmp_path / "제목 1080p_1.mp4"), str(second))
         assert card_text.open_target(cut) == str(second)
+
+
+# ---- 편집 창 글 ----
+
+
+class TestEditDialogText:
+    """카드 편집 창의 파일명 꼬리 · 구간 줄."""
+
+    @pytest.mark.parametrize(
+        ("resolution", "tag", "sections", "expected"),
+        [
+            (1080, "", 0, " 1080p.mp4"),
+            (720, "(원본)", 0, " 720p(원본).mp4"),
+            (1080, "(원본)", 1, " 1080p_1.mp4"),
+            (480, "", 3, " 480p_1.mp4 …"),
+        ],
+    )
+    def test_file_tail_matches_the_file_name_rule(
+        self, resolution: int, tag: str, sections: int, expected: str
+    ) -> None:
+        """file_tail이 파일 이름 규칙의 꼬리 모양이어야 한다(구간에는 원본 표시 없음, 둘 이상이면 「…」).
+
+        1080 전체 · 720 원본 전체 · 1080 원본 구간 1 · 480 구간 3
+        -> " 1080p.mp4" · " 720p(원본).mp4" · " 1080p_1.mp4" · " 480p_1.mp4 …"
+        """
+        assert card_text.file_tail(resolution, tag, sections) == expected
+
+    def test_section_lines_number_each_section(self) -> None:
+        """section_lines가 구간마다 「번호. 시작 ~ 끝 (길이)」 한 줄이어야 한다.
+
+        구간 65~330.5 · 3600~3725 -> ["1. 1:05 ~ 5:30 (4:25)", "2. 1:00:00 ~ 1:02:05 (2:05)"]
+        """
+        item = _item(sections=((65.0, 330.5), (3600.0, 3725.0)))
+        assert card_text.section_lines(item) == [
+            "1. 1:05 ~ 5:30 (4:25)",
+            "2. 1:00:00 ~ 1:02:05 (2:05)",
+        ]

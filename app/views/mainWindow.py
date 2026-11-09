@@ -39,6 +39,7 @@ from app.viewmodels.menu_bubble import RESULT_STATES, MenuBubble
 from app.viewmodels.path_gates import check_fetch_path
 from app.viewmodels.save_location import SaveLocations
 from app.views.dialog import SettingDialog
+from app.views.card_edit_dialog import CardEditDialog
 from app.views.section_dialog import SectionEditDialog
 from app.viewmodels.section_edit import SectionEditViewModel
 from app.viewmodels.data import ContentItem
@@ -226,6 +227,8 @@ class VodDownloader(QMainWindow):
         # 열려 있는 구간 편집 창과 그 카드 (#309) — 창은 한 번에 하나다
         self._sectionDialog: SectionEditDialog | None = None
         self._sectionEditItem: ContentItem | None = None
+        self._editDialog: CardEditDialog | None = None  # 열린 카드 편집 창 (#545)
+        self._editItem: ContentItem | None = None
         self.setupThreadSignals()
         self.setupSignals()
         self._applyUrlRowShape()
@@ -695,6 +698,7 @@ class VodDownloader(QMainWindow):
             "헤더바 1줄": self.headerRow1Needs()[-1] + header,
             "헤더바 2줄": self.headerRow2Needs(True)[-1] + header,
             "목록": self.listView.minimumSizeHint().width(),
+            "카드": self._referenceCardWidth() + 2 * theme.METRICS["outerMargin"],
             "하단바": sum(footer_items) + gap * (len(footer_items) - 1) + footer,
         }
 
@@ -859,6 +863,26 @@ class VodDownloader(QMainWindow):
         gaps = column.spacing() * (column.count() - 1)
         return margins.top() + bars + list_height + gaps + margins.bottom()
 
+    def _referenceCardWidth(self) -> int:
+        """버튼이 가장 많은 대기 카드 한 장의 최소폭 — 창 최소폭의 카드 몫 (#545).
+
+        대기 카드의 위 줄에는 편집 · 구간 편집 · 저장 위치 · 삭제 버튼이 모두 보인다. 카드 편집 창
+        버튼(✎)이 더해져 위 줄이 넓어졌고, 창 최소폭이 카드 없이 센 값이면 가장 좁은 창에서 카드가
+        넘친다. 견본은 카드 내용과 무관한 고정 카드다 — 카드 수와 상관없이 최소폭이 같다. 채널명은
+        최소폭 상한(`_clampChannelMinWidth` 64px)에 닿는 긴 이름으로 둔다. 해상도 목록을 비워 크기
+        조회 스레드를 타지 않고, 썸네일 · 채널 그림 주소가 비어 네트워크도 없다.
+        """
+        metadata = dict(REFERENCE_CARD_METADATA, channelName="Chzzk VOD Downloader Channel")
+        item = ContentItem("", metadata, [], None, "", "", "video", None)
+        card = content_widget.ContentItemWidget(item)
+        card.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
+        card.show()
+        card.layout().activate()
+        width = card.minimumSizeHint().width()
+        card.hide()
+        card.deleteLater()
+        return width
+
     def _referenceCardHeight(self) -> int:
         """가장 높은 평소 카드 한 장의 높이 — 창 최소 높이의 목록 몫 (#492).
 
@@ -961,6 +985,7 @@ class VodDownloader(QMainWindow):
         self.listView.retryRequested.connect(self.onCardRetry)
         self.listView.sectionEditRequested.connect(self.onCardSectionEdit)
         self.listView.sectionRefitRequested.connect(self.contentManager.refitSections)
+        self.listView.editRequested.connect(self.onCardEdit)
 
     def onCardPause(self, item: ContentItem) -> None:
         """진행 카드의 ⏸ — 전역 일시정지/재개 토글과 같은 경로를 탄다 (#245).
@@ -1018,7 +1043,7 @@ class VodDownloader(QMainWindow):
         ``exec()``가 아니라 ``open()``으로 연다 — 창은 모달이지만 이 함수는 바로 돌아가고,
         닫힘은 ``finished`` 시그널로 받는다.
         """
-        if item.downloadState != DownloadState.WAITING or self._sectionDialog is not None:
+        if item.downloadState != DownloadState.WAITING or self._dialogOpen():
             return
         viewmodel = SectionEditViewModel(item, self.contentManager.model.notifyChanged, self)
         dialog = SectionEditDialog(viewmodel, self)
@@ -1040,6 +1065,48 @@ class VodDownloader(QMainWindow):
             dialog.viewModel().release()  # 조회하며 받은 moov를 놓는다
             log_process_memory("편집 창 닫힘")
             dialog.viewModel().deleteLater()
+            dialog.deleteLater()
+        if item is not None:
+            self.contentManager.endSectionEdit(item)
+
+    def _dialogOpen(self) -> bool:
+        """카드 편집 창이나 구간 편집 창이 열려 있는지 — 둘은 한 번에 하나만 연다 (#545)."""
+        return self._sectionDialog is not None or self._editDialog is not None
+
+    def onCardEdit(self, item: ContentItem) -> None:
+        """대기 카드의 ✎ · 더블 클릭 — 카드 편집 창을 모달로 연다 (#545).
+
+        구간 편집 창과 같은 꼴이다. 창이 열린 동안 그 카드는 다운로드 차례에서 빠지고
+        (``beginSectionEdit``), 닫히면 다시 대상이 된다. 창이 열린 사이 카드가 대기가 아니게
+        되거나 지워지면 창의 저장이 쓰지 않는다(``CardEditDialog.writable``). 카드가 창이 열린
+        사이 받은 해상도 크기는 카드의 알림으로 창의 해상도 목록에 들어간다.
+        """
+        if item.downloadState != DownloadState.WAITING or self._dialogOpen():
+            return
+        model = self.contentManager.model
+        dialog = CardEditDialog(
+            item,
+            self.saveLocations.default(),
+            refit=self.contentManager.refitSections,
+            notify=model.notifyChanged,
+            is_present=lambda it: model.getRow(it) is not None,
+            parent=self,
+        )
+        card = self.listView.widgetFor(item)
+        if card is not None:
+            card.repSizeChanged.connect(dialog.updateRepSize)
+        self._editDialog = dialog
+        self._editItem = item
+        self.contentManager.beginSectionEdit(item)
+        dialog.finished.connect(self._onEditDialogFinished)
+        dialog.open()
+
+    def _onEditDialogFinished(self, _result: int) -> None:
+        """카드 편집 창이 닫혔다 — 카드를 다시 다운로드 대상으로 돌리고 창을 버린다."""
+        dialog, item = self._editDialog, self._editItem
+        self._editDialog = None
+        self._editItem = None
+        if dialog is not None:
             dialog.deleteLater()
         if item is not None:
             self.contentManager.endSectionEdit(item)
