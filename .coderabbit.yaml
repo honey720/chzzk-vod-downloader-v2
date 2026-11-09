@@ -6,3 +6,6 @@ reviews:
     ignore_title_keywords:
       - "chore:"
       - "chore("
+    # PR을 처음 열 때만 자동 리뷰한다 — 수정 푸시마다 다시 리뷰하면 시간당 리뷰 한도를 써서
+    # 다른 PR의 첫 리뷰가 밀린다. 다시 리뷰가 필요하면 @coderabbitai review로 부른다
+    auto_incremental_review: false
