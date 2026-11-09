@@ -347,16 +347,19 @@ class TestResolution:
         assert calls == [item]
 
     def test_file_tail_follows_the_resolution_and_the_sections(self, qtbot, tmp_path) -> None:
-        """파일명 칸 뒤 꼬리가 고른 해상도와 구간 수를 따라야 한다.
+        """파일명 칸 뒤 꼬리 · 머리 줄 해상도가 고른 해상도와 구간 수를 따라야 한다.
 
-        1080p 전체 -> " 1080p.mp4", 480p로 바꿈 -> " 480p.mp4", 구간 2개 카드 -> " 1080p_1.mp4 …"
+        1080p 전체 -> " 1080p.mp4" · 머리 "채널 · 1080p", 480p로 바꿈 -> " 480p.mp4" · "채널 · 480p",
+        구간 2개 카드 -> " 1080p_1.mp4 …"
         """
         item = _make_item(str(tmp_path))
         win = _window(tmp_path, item)
         dialog = _open(win, item)
         assert dialog.tailLabel.text() == " 1080p.mp4"
+        assert dialog.metaLabel.text() == "채널 · 1080p"
         _pick(dialog, 480)
         assert dialog.tailLabel.text() == " 480p.mp4"
+        assert dialog.metaLabel.text() == "채널 · 480p"
         dialog.reject()
         _pump()
         item.selections = (TimeRange(0.0, 60.0), TimeRange(120.0, 180.0))

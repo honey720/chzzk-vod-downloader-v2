@@ -224,10 +224,8 @@ class CardEditDialog(QDialog):
         self.setMinimumWidth(DIALOG_WIDTH)
 
     def _retranslateUi(self) -> None:
-        item = self._item
         self.setWindowTitle(self.tr("Edit"))
-        meta = [item.channel_name, _upload_date(item)]
-        self.metaLabel.setText(" · ".join(part for part in meta if part))
+        self._refreshMeta()
         self.nameRowLabel.setText(self.tr("File name"))
         self.defaultNameButton.setText(self.tr("Default"))
         self.resolutionRowLabel.setText(self.tr("Resolution"))
@@ -275,6 +273,14 @@ class CardEditDialog(QDialog):
 
     def _onResolutionChanged(self) -> None:
         self._refreshTail()
+        self._refreshMeta()
+
+    def _refreshMeta(self) -> None:
+        """머리 줄 — 「채널 · 업로드 날짜 · 고른 해상도」. 해상도는 드롭다운에서 고른 것이다."""
+        rep = self._chosenRep()
+        resolution = card_text.rep_label(rep) if rep is not None else ""
+        meta = [self._item.channel_name, _upload_date(self._item), resolution]
+        self.metaLabel.setText(" · ".join(part for part in meta if part))
 
     # ---- 파일명 꼬리 · 구간 · 저장 위치 표시 ----
 
