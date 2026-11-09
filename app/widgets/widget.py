@@ -6,7 +6,18 @@ import platform
 import re
 import threading
 
-from PySide6.QtCore import QDir, QEvent, QProcess, QRectF, QSize, Qt, QUrl, Signal
+from PySide6.QtCore import (
+    QDir,
+    QEasingCurve,
+    QEvent,
+    QProcess,
+    QRectF,
+    QSize,
+    Qt,
+    QUrl,
+    QVariantAnimation,
+    Signal,
+)
 from PySide6.QtGui import (
     QDesktopServices,
     QEnterEvent,
@@ -24,13 +35,14 @@ from PySide6.QtWidgets import QLabel, QMessageBox, QWidget
 
 import app.theme as theme
 from app.network import REQUEST_TIMEOUT
-from app.viewmodels import card_text
+from app.viewmodels import card_display, card_text
 from app.viewmodels.card_text import (  # noqa: F401 — 바깥(footer_bar · 테스트)이 이 자리에서 import한다
     STATE_ICON,
     short_time,
 )
 from app.viewmodels.data import ContentItem
 from app.widgets.contentItemWidget import HoverShade, Ui_ContentItemWidget
+from app.widgets.narrow_steps import step_level
 from app.widgets.tip_bubble import install_tips
 from core.engine.session import get_thread_session
 from core.models.download_state import DownloadState
@@ -165,6 +177,12 @@ TIP_LABEL_NAMES = (
     "pathIcon",
 )
 
+STOP_MOTION_MS = 300  # 중지 모션 — 막대 · 채움이 왼쪽 끝까지 줄어드는 시간(ms, 설계 §12.1)
+FILL_MOTION_MS = 400  # 배경 채움이 틱 사이를 이어 움직이는 시간(ms) — 1초 틱보다 짧게
+STATUS_KEEP_CHARS = (
+    3  # 상태 글을 끝까지 줄여도 남기는 앞 글자 수 — 프로토 가 「✕ 사유를…」의 「사유를」
+)
+
 # ✕를 누르면 「멈추고 지우기」를 묻는 상태 — 엔진이 그 카드를 쥐고 있다(#550)
 BUSY_STATES = (DownloadState.RUNNING, DownloadState.PAUSED)
 
@@ -214,7 +232,14 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self._hovered = False
         self._keyFocus = False
         self._tipsInstalled = False  # 말풍선 필터를 걸었는지 — 처음 호버할 때 건다
-        self._infoVariants: list[str] = []  # 정보 글 — 긴 것부터, 폭이 모자라면 뒤의 것을 쓴다
+        self._levelTexts: list[card_text.SlotTexts] = []  # 접는 단계마다의 3줄 글(#554)
+        self._needs: list[int] | None = None  # 단계마다 3줄 필요 폭 — 글이 바뀌면 다시 센다
+        self._level = 0  # 지금 3줄 접는 단계
+        self._appliedLevel = -1  # 라벨에 놓은 단계 — 다르면 글을 다시 놓는다
+        self._showYear = True  # 날짜에 연도를 적는지 — 목록이 정한다
+        self._shown = 0.0  # 막대 · 채움이 지금 보이는 진행 비율(0 ~ 1)
+        self._motion: QVariantAnimation | None = None  # 도는 진행 모션 — 없으면 None
+        self._previousState: object = None  # 직전 applyStateStyle의 상태 — 중지를 알아본다
         self.setupUi(self)
         # 카드 하나가 Tab 한 번이다. 마우스로는 초점을 받지 않는다 — 초점 테두리는 키보드 초점만
         self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
@@ -276,7 +301,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self._placeProgressBar()
         if self.hoverBox.isVisibleTo(self):
             self._placeCardButtons()
-        self._fitInfo()
+        self._fitRow3()
 
     def showEvent(self, event: QShowEvent) -> None:
         """첫 표시 직후 3줄 폭 맞추기를 한 번 더 돌린다 (#245).
@@ -287,7 +312,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         한 다시 돌지 않는다. showEvent 시점엔 자식 레이아웃이 잡혀 있다.
         """
         super().showEvent(event)
-        self._fitInfo()
+        self._fitRow3()
 
     # ---- 호버 · 키보드 초점 — 카드 버튼을 보이는 때 (#550) ----
 
@@ -443,7 +468,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """1 · 2줄(채널명 · 날짜 · 제목)과 3줄 저장 위치를 아이템에 맞춘다."""
         self.channelNameLabel.setText(self.item.channel_name)
         self._clampChannelMinWidth()
-        self.dateLabel.setText(card_text.upload_date_text(self.item))
+        self.dateLabel.setText(card_text.upload_date_text(self.item, self._showYear))
         self.titleLabel.setText(self.item.title)
         self._refreshPathLabel()
 
@@ -458,6 +483,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     def _refreshPathLabel(self) -> None:
         """저장 위치 — 회색 폴더 윤곽 + 마지막 폴더 이름. 누를 수 없고 툴팁에 전체 경로 (#550)."""
         shown = self._pathShown()
+        self._needs = None  # 저장 위치가 바뀌면 필요 폭이 바뀐다
+        self._appliedLevel = -1
         self.pathIcon.setVisible(shown)
         self.directoryLabel.setVisible(shown)
         if not shown:
@@ -717,119 +744,142 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.syncPickedResolution()  # 편집 창이 바꾼 해상도 (#545)
 
     def _applyTexts(self) -> None:
-        """3줄의 상태 아이콘 · 상태 글 · 정보 글을 아이템에 맞춘다.
+        """3줄의 상태 아이콘과 단계마다의 상태 글 · 정보 글을 만들어 두고 폭에 맞는 단계를 고른다 (#554).
 
-        정보 글이 None(실패)이면 정보 칸을 숨긴다 — 사유가 그 자리를 쓴다. 정보 글은 폭이
-        모자라면 짧은 꼴로 바꾼다(`_fitInfo`).
+        글은 데이터가 바뀔 때 한 번 단계 수만큼 만든다 — 창 크기가 바뀔 때는 만들어 둔 글의 필요 폭으로
+        단계만 고른다(`_fitRow3`).
         """
         item = self.item
-        texts = card_text.slot_texts(item)
+        self._levelTexts = [
+            card_text.slot_texts(item, level) for level in range(card_text.LEVEL_MAX + 1)
+        ]
+        self._needs = None
+        texts = self._levelTexts[0]
         self.statusIcon.setState(_STATUS_BUBBLE.get(texts.icon, ""))
-        self.statusLabel.setText(texts.status)
         self.statusLabel.setDetailTip(texts.status_tip or "")
-        self.fileSizeLabel.setVisible(item.downloadState != DownloadState.FAILED)
-        if texts.size is None:
-            self._infoVariants = []
-            return
-        variants = [texts.size]
-        state = item.downloadState
-        if state == DownloadState.WAITING and card_text.section_count(item):
-            variants.append(card_text.info_text(item, with_notice=False))
-        if state in (DownloadState.RUNNING, DownloadState.PAUSED):
-            variants.append(card_text.info_text(item, with_total=False))
-        self._infoVariants = [v for k, v in enumerate(variants) if v not in variants[:k]]
-        self._fitInfo()
+        self._appliedLevel = -1
+        self._fitRow3()
 
-    def _fitInfo(self) -> None:
-        """3줄 정보 글을 폭에 맞춰 고르고, 줄어드는 차례대로 최대폭을 씌운다 (#309 · #550).
+    def _levelNeeds(self) -> list[int]:
+        """단계마다 3줄이 바라는 폭(px) — 지금 보이는 모양과 무관하게 글로 센다(설계 §2 좁은 폭).
 
-        폭이 줄면 ① 저장 위치 글 → ② 상태 글(「…」까지) → ③ 정보 글 차례로 줄어든다. 가로 넘침은 어떤
-        폭에서도 만들지 않는다 — 정보 글은 ③에서만 말줄임하고 툴팁에 전체 글을 단다(접는 차례는 C3).
-        긴 꼴(구간 알림 · 「/ 전체」 포함)이 상태 글 · 저장 위치와 함께 한 줄에 안 들어가면 짧은 꼴을
-        쓴다.
-
-        최소폭이 아니라 최대폭을 씌운다 — 최소폭은 카드 최소폭이 되어 카드가 목록보다 넓은 채
-        굳는다(줄 폭이 카드 폭에서 나오므로 되먹임). 판정은 지금 표시 중인 글이 아니라 "줄 폭 − 다른
-        항목"으로만 한다. 표시 전(줄 폭 0)이면 씌운 최대폭을 풀고 showEvent · resizeEvent에서 다시 온다.
-
-        정보 글이 없는 카드(실패 — 사유가 그 자리를 쓴다)도 최대폭은 다시 씌운다 — 건너뛰면 앞 상태의
-        좁은 폭에서 씌운 최대폭이 남아 저장 위치가 0폭으로 굳는다(#550).
+        줄의 차례: 상태 원 · 상태 글 ··· 폴더 아이콘 · 폴더 이름 · 정보 글. 숨은 항목과 늘어나는 빈칸은
+        간격을 받지 않는다(QBoxLayout). 라벨 하나는 글 폭 + 4(`ElidingLabel.sizeHint`)를 바란다.
         """
-        label = self.fileSizeLabel
+        if self._needs is not None:
+            return self._needs
         spacing = self.resolutionLayout.spacing()
-        row_width = self._rowWidth()
+        status_metrics = self.statusLabel.fontMetrics()
+        info_metrics = self.fileSizeLabel.fontMetrics()
         path_shown = self._pathShown()
-        icon_need = 0 if self.statusIcon.isHidden() else self.statusIcon.width() + spacing
-        status_need = icon_need + self.statusLabel.sizeHint().width() + spacing
-        # 저장 위치 아이콘 + 그 뒤 두 간격(아이콘 ↔ 글, 글 ↔ 정보 글) — 저장 위치 글이 0폭이어도 남는다
-        path_need = self.pathIcon.width() + 2 * spacing if path_shown else 0
-        path_text_min = (
-            self.directoryLabel.fontMetrics().horizontalAdvance("abcdef") if path_shown else 0
-        )
-        status_floor = self.statusLabel.minimumSizeHint().width()
-        info_width = 0
-        clipped = False
-        text = ""
-        if self._infoVariants:
-            metrics = label.fontMetrics()
-            text = self._infoVariants[0]
-            if row_width > 0:
-                text = next(
-                    (
-                        v
-                        for v in self._infoVariants
-                        if metrics.horizontalAdvance(v)
-                        + 4
-                        + status_need
-                        + path_need
-                        + path_text_min
-                        <= row_width
-                    ),
-                    self._infoVariants[-1],
-                )
-            if label.text() != text:
-                label.setText(text)
-            info_width = metrics.horizontalAdvance(text) + 4
-            clipped = (
-                row_width > 0
-                and info_width > row_width - icon_need - status_floor - spacing - path_need
-            )
-            label.setDetailTip(self._infoTip(text, clipped))
-        if row_width <= 0:
-            self.statusLabel.setMaximumWidth(_NO_MAX_WIDTH)
-            self.directoryLabel.setMaximumWidth(_NO_MAX_WIDTH)
+        folder = last_folder_name(self.item.download_path) if path_shown else ""
+        folder_width = self.directoryLabel.fontMetrics().horizontalAdvance(folder) + 4
+        needs = []
+        for level, texts in enumerate(self._levelTexts):
+            widths = []
+            if texts.icon:
+                widths.append(self.statusIcon.width())
+            widths.append(status_metrics.horizontalAdvance(texts.status) + 4)
+            if path_shown and level < card_text.LEVEL_PATH_GONE:
+                widths.append(self.pathIcon.width())
+                if level < card_text.LEVEL_PATH_ICON:
+                    widths.append(folder_width)
+            if texts.size:
+                widths.append(info_metrics.horizontalAdvance(texts.size) + 4)
+            needs.append(sum(widths) + spacing * (len(widths) - 1))
+        self._needs = needs
+        return needs
+
+    def _fitRow3(self) -> None:
+        """3줄의 접는 단계를 폭에 맞춰 고르고 그 단계의 글을 놓는다 (#554, 설계 §3 「3행 상태 보호」).
+
+        판정은 셸 좁은 폭과 같다(`narrow_steps.step_level` — 모자라면 올리고, 되돌아갈 때는 +8). 진행률 ·
+        상태 단어 · 실패 사유 앞은 어느 단계에서도 빠지지 않는다. 마지막 단계에서도 모자라면(창 최소폭보다
+        좁은 카드 — 단독으로 띄운 테스트 카드 등) 상태 글 → 정보 글 차례로 말줄임한다 — 가로 넘침은 없다.
+
+        라벨에 최소폭을 걸지 않는다 — 최소폭은 카드 최소폭이 되어 카드가 목록보다 넓게 굳는다(줄 폭이 카드
+        폭에서 나오므로 되먹임, #550). 표시 전(줄 폭 0)이면 넓은 모양으로 두고 showEvent에서 다시 온다.
+        """
+        if not self._levelTexts:
             return
-        # ② 상태 글 — 정보 글 · 아이콘들을 뺀 폭까지, 「…」 아래로는 줄지 않는다(그 뒤는 ③ 정보 글이 줄어든다)
-        status_room = row_width - icon_need - spacing - path_need - info_width
-        self.statusLabel.setMaximumWidth(max(status_room, status_floor))
-        # ① 저장 위치 — 상태 글이 온전한 채 남는 폭만 준다(안 씌우면 Qt가 같은 정책의 상태 글과 나눠
-        # 줄여 상태 글이 잘린다, #245 560px 실기)
-        if path_shown:
-            room = row_width - status_need - path_need - info_width
-            self.directoryLabel.setMaximumWidth(max(room, 0))
+        row_width = self._rowWidth()
+        level = self._level
+        if row_width > 0:
+            level = step_level(self._levelNeeds(), row_width, self._level)
+        self._level = level
+        texts = self._levelTexts[level]
+        if level != self._appliedLevel:
+            self._appliedLevel = level
+            self.statusLabel.setText(texts.status)
+            info = self.fileSizeLabel
+            info.setText(texts.size or "")
+            info.setVisible(bool(texts.size))
+            info.setDetailTip(self._infoTip(texts.size or ""))
+            path_shown = self._pathShown()
+            self.pathIcon.setVisible(path_shown and level < card_text.LEVEL_PATH_GONE)
+            self.directoryLabel.setVisible(path_shown and level < card_text.LEVEL_PATH_ICON)
+        self._capRow3(row_width, texts)
+
+    def _capRow3(self, row_width: int, texts: card_text.SlotTexts) -> None:
+        """마지막 수단 — 고른 단계에서도 모자라면 상태 글 → 정보 글 차례로 줄게 최대폭을 씌운다.
+
+        고른 단계가 들어가면(대개) 최대폭을 푼다. 실패 사유 앞의 말줄임도 여기서 일어난다(마지막 단계).
+        """
+        status, info = self.statusLabel, self.fileSizeLabel
+        if row_width <= 0 or self._levelNeeds()[self._level] <= row_width:
+            status.setMaximumWidth(_NO_MAX_WIDTH)
+            info.setMaximumWidth(_NO_MAX_WIDTH)
+            return
+        spacing = self.resolutionLayout.spacing()
+        icon = self.statusIcon.width() + spacing if texts.icon else 0
+        info_width = (
+            info.fontMetrics().horizontalAdvance(texts.size) + 4 + spacing if texts.size else 0
+        )
+        floor = self._statusFloor(texts.status)
+        status.setMaximumWidth(max(row_width - icon - info_width, floor))
+        info.setMaximumWidth(max(row_width - icon - floor - spacing, 0))
+
+    def _statusFloor(self, status: str) -> int:
+        """상태 글을 말줄임할 때 남기는 폭 — 앞 `STATUS_KEEP_CHARS`글자 + 「…」(프로토 가 「✕ 사유를…」).
+
+        실패 사유 앞은 끝까지 줄여도 무엇이 실패했는지 몇 글자가 남는다. 글이 그보다 짧으면 글 전체다.
+        """
+        metrics = self.statusLabel.fontMetrics()
+        if len(status) <= STATUS_KEEP_CHARS:
+            return metrics.horizontalAdvance(status) + 4
+        return metrics.horizontalAdvance(status[:STATUS_KEEP_CHARS] + "…") + 4
 
     def _rowWidth(self) -> int:
-        """세 줄의 폭 — 카드 폭에서 테두리 · 안쪽 여백 · 썸네일 · 썸네일 ↔ 글 간격을 뺀 값.
+        """3줄의 폭 — 카드 폭에서 테두리 · 안쪽 여백(· 썸네일 · 썸네일 ↔ 글 간격)을 뺀 값.
 
-        줄 위젯의 지금 폭이 아니라 카드 폭으로 센다 — 카드의 resizeEvent 때는 안쪽 레이아웃이 아직
-        옛 자리라 줄 폭이 낡아 있다. 아직 표시 전이면 0(배치 전)이다.
+        썸네일 줄이기면 3줄은 썸네일 밑까지 넓어진다(#554). 줄 위젯의 지금 폭이 아니라 카드 폭으로
+        센다 — 카드의 resizeEvent 때는 안쪽 레이아웃이 아직 옛 자리라 줄 폭이 낡아 있다. 아직 표시
+        전이면 0(배치 전)이다.
         """
         if not self.isVisible():
             return 0
-        border = self.contentFrame.frameWidth()
-        margins = self.bodyLayout.contentsMargins()
-        inset = 2 * border + margins.left() + margins.right()
-        inset += self.thumbnailLabel.width() + self.bodyLayout.spacing()
+        inset = self._frameInset()
+        if not self.compactThumbnail:
+            inset += self._thumbColumn()
         return max(self.width() - inset, 0)
 
-    def _infoTip(self, shown: str, clipped: bool = False) -> str:
-        """정보 글의 툴팁 — 줄여 보였으면(짧은 꼴 · 말줄임) 전체 글, 구간 카드면 구간 설명 줄. 없으면 빈 글.
+    def _frameInset(self) -> int:
+        """카드 폭 − 안쪽 폭 — 테두리 둘 + 안쪽 여백 둘."""
+        margins = self.bodyLayout.contentsMargins()
+        return 2 * self.contentFrame.frameWidth() + margins.left() + margins.right()
+
+    def _thumbColumn(self) -> int:
+        """썸네일 열 — 썸네일 폭 + 썸네일 ↔ 글 간격."""
+        return self.thumbnailLabel.width() + self.bodyLayout.horizontalSpacing()
+
+    def _infoTip(self, shown: str) -> str:
+        """정보 글의 툴팁 — 접혀 줄었으면 전체 글, 구간 카드면 구간 설명 줄. 없으면 빈 글.
 
         보이는 글을 그대로 되풀이하는 툴팁은 달지 않는다(#550).
         """
         item = self.item
-        full = self._infoVariants[0]
-        lines = [full] if clipped or shown != full else []
+        full = self._levelTexts[0].size or "" if self._levelTexts else ""
+        lines = [full] if full and shown != full else []
         if card_text.section_count(item):
             detail = card_text.section_overlap_detail(item)
             if not detail and not item.is_segment_based:
@@ -845,12 +895,181 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
                 lines.extend(card_text.section_notice_detail(item))
         return "\n".join(lines)
 
-    def applyStateStyle(self) -> None:
-        """상태에 따라 3줄 글 · 카드 버튼 · 색 · 진행바를 맞춘다 (#227 → #245 → #550).
+    # ---- 날짜 연도 — 목록 전체가 함께 정한다 (#554) ----
 
-        색은 theme.py 한 곳에서만 정의된다. 상태 글·진행바는 위젯별 `setStyleSheet` 없이
-        동적 속성(`state`)만 바꾸고, 색은 전역 QSS의 `[state="..."]` 규칙이 고른다 — 속성만
-        바꾸면 이미 계산된 스타일이 갱신되지 않으므로 theme.repolish()가 함께 필요하다.
+    def showsYear(self) -> bool:
+        """날짜에 연도를 적고 있는지."""
+        return self._showYear
+
+    def setShowYear(self, show: bool) -> None:
+        """날짜의 연도를 적거나 뺀다 — 목록(`ContentListView`)이 모든 카드에 같은 값을 준다."""
+        if show == self._showYear:
+            return
+        self._showYear = show
+        self.dateLabel.setText(card_text.upload_date_text(self.item, show))
+
+    def row1Need(self, with_year: bool) -> int:
+        """1줄(채널 그림 · 채널명 · 날짜)이 바라는 폭 — 채널명은 다 보이는 폭(최대 150)으로 센다."""
+        spacing = self.topLayout.spacing()
+        name = min(self.channelNameLabel.sizeHint().width(), self.channelNameLabel.maximumWidth())
+        date = card_text.upload_date_text(self.item, with_year)
+        date_width = self.dateLabel.fontMetrics().horizontalAdvance(date)
+        return self.channelImageLabel.width() + spacing + name + spacing + spacing + date_width
+
+    def row1Room(self) -> int:
+        """1줄의 폭 — 카드 폭 − 테두리 · 안쪽 여백 − 썸네일 열."""
+        return max(self.width() - self._frameInset() - self._thumbColumn(), 0)
+
+    # ---- 가장 나쁜 카드 폭 — 창 최소폭 (#554) ----
+
+    def foldedMinimumWidth(self) -> int:
+        """이 카드를 다 접었을 때 들어가는 카드 폭 — 연도 없는 날짜 · 채널명 최소폭 · 3줄 마지막 단계.
+
+        실패 카드의 사유 앞은 마지막 단계에서도 말줄임할 수 있어 상태 글을 최소폭으로 센다. 제목은
+        말줄임한다(최소폭 작음).
+        """
+        spacing = self.topLayout.spacing()
+        date = card_text.upload_date_text(self.item, False)
+        row1 = (
+            self.channelImageLabel.width()
+            + spacing
+            + self.channelNameLabel.minimumWidth()
+            + spacing
+            + spacing
+            + self.dateLabel.fontMetrics().horizontalAdvance(date)
+        )
+        row3 = self._levelNeeds()[-1]
+        if self.item.downloadState == DownloadState.FAILED:
+            texts = self._levelTexts[-1]
+            spacing3 = self.resolutionLayout.spacing()
+            icon = self.statusIcon.width() + spacing3 if texts.icon else 0
+            info = (
+                self.fileSizeLabel.fontMetrics().horizontalAdvance(texts.size) + 4 + spacing3
+                if texts.size
+                else 0
+            )
+            row3 = icon + self._statusFloor(texts.status) + info
+        inset = self._frameInset()
+        if self.compactThumbnail:
+            return max(inset + self._thumbColumn() + row1, inset + row3)
+        return inset + self._thumbColumn() + max(row1, row3)
+
+    # ---- 진행 막대 · 배경 채움 · 색조 · 중지 모션 (#554) ----
+
+    def _target(self) -> tuple[float, str, bool]:
+        """(보일 진행 비율, 상태 어휘, 값 없이 움직이는 막대인지) — 지금 아이템으로 정한다."""
+        item = self.item
+        raw = item.downloadState
+        state = self._cardState()
+        busy = card_text.is_preparing(item) or (
+            raw == DownloadState.RUNNING
+            and bool(card_text.section_count(item))
+            and bool(item.post_process)
+            and bool(getattr(item, "cut_preparing", False))
+        )
+        if raw in (DownloadState.FINISHED, DownloadState.FAILED):
+            return 1.0, state, False
+        if raw in (DownloadState.RUNNING, DownloadState.PAUSED):
+            return card_text.progress_value(item) / 100, state, busy
+        return 0.0, state, False
+
+    def _showProgress(self, fraction: float, state: str, busy: bool) -> None:
+        """막대 · 채움에 진행을 그린다 — 진행 표시 방식(설정 키)을 따른다."""
+        self._shown = fraction
+        display = card_display.current()
+        bar = self.progressBar
+        if display.fill:
+            bar.setVisible(False)
+            token = {"running": "cardFillRunning", "paused": "cardFillPaused"}.get(state, "")
+            self.contentFrame.setFill(0.0 if busy else fraction, token)
+            return
+        self.contentFrame.setFill(0.0, "")
+        maximum = 0 if busy else 100
+        if bar.maximum() != maximum:
+            bar.setRange(0, maximum)
+        bar.setValue(round(fraction * 100))
+        visible = busy or fraction > 0 or state in ("running", "paused")
+        bar.setVisible(visible)
+        if bar.property("state") != state:
+            bar.setProperty("state", state)
+            theme.repolish(bar)
+
+    def motion(self) -> QVariantAnimation | None:
+        """지금 도는 진행 모션(중지 모션 · 채움 이어 움직임) — 없으면 None. 테스트가 시간을 정한다."""
+        return self._motion
+
+    def _stopMotion(self) -> None:
+        if self._motion is not None:
+            self._motion.stop()
+            self._motion.deleteLater()
+            self._motion = None
+
+    def _animate(self, start: float, end: float, state: str, duration: int, easing) -> None:
+        """진행 비율을 `start` → `end`로 움직인다 — 색(상태)은 그동안 `state` 그대로다."""
+        self._stopMotion()
+        motion = QVariantAnimation(self)
+        motion.setStartValue(float(start))
+        motion.setEndValue(float(end))
+        motion.setDuration(duration)
+        motion.setEasingCurve(easing)
+        motion.valueChanged.connect(lambda value: self._showProgress(float(value), state, False))
+        motion.finished.connect(self._onMotionFinished)
+        self._motion = motion
+        motion.start()
+
+    def _onMotionFinished(self) -> None:
+        """모션이 끝났다 — 지금 아이템의 진행으로 맞춘다(중지 모션이면 대기 — 막대 · 채움 없음)."""
+        self._motion = None
+        self._showProgress(*self._target())
+
+    def _applyProgress(self, previous: object) -> None:
+        """상태가 바뀐 뒤 막대 · 채움 · 색조를 맞춘다 — 중지면 줄어드는 모션을 돈다(설계 §12.1 중지 모션).
+
+        중지 확인 뒤 대기로 돌아가는 카드(받는 중 · 일시정지)는 막대 · 채움이 지금 자리에서 왼쪽 끝까지
+        `STOP_MOTION_MS`에 줄어든다(처음 빠르고 끝에서 느림, 그 카드의 지금 색). 애니메이션을 끄면 바로
+        사라진다. 모션 도중 다시 시작하면 모션을 멈추고 새 진행을 따른다. 배경 채움 방식에서 받는 중
+        진행은 틱 사이를 이어 움직인다(애니메이션 켬일 때).
+        """
+        display = card_display.current()
+        raw = self.item.downloadState
+        fraction, state, busy = self._target()
+        tint = state if state in ("finished", "failed") else ""
+        frame = self.contentFrame
+        if frame.property("tint") != tint:
+            frame.setProperty("tint", tint)
+            theme.repolish(frame)
+            # 상태 글의 「색조 위」 색은 카드 면의 속성을 보는 규칙이다 — 조상 속성이 바뀌어도 자식은 다시
+            # 계산되지 않는다(Qt 스타일시트). 빠뜨리면 새 카드만 옛 색으로 남고 테마 전환 뒤에야 맞는다
+            theme.repolish(self.statusLabel)
+            self.hoverShade.update()
+        stopped = previous in BUSY_STATES and raw == DownloadState.WAITING and self._shown > 0
+        if stopped and display.animations:
+            old_state = "paused" if previous == DownloadState.PAUSED else "running"
+            self._animate(self._shown, 0.0, old_state, STOP_MOTION_MS, QEasingCurve.Type.OutCubic)
+            return
+        if (
+            display.fill
+            and display.animations
+            and raw == DownloadState.RUNNING
+            and not busy
+            and previous == DownloadState.RUNNING
+            and fraction > self._shown
+        ):
+            self._animate(self._shown, fraction, state, FILL_MOTION_MS, QEasingCurve.Type.Linear)
+            return
+        self._stopMotion()
+        self._showProgress(fraction, state, busy)
+
+    def applyStateStyle(self) -> None:
+        """상태에 따라 3줄 글 · 카드 버튼 · 색 · 진행 표시를 맞춘다 (#227 → #245 → #550 → #554).
+
+        색은 theme.py 한 곳에서만 정의된다. 상태 글 · 진행바 · 카드 면은 위젯별 `setStyleSheet` 없이
+        동적 속성(`state` · `tint`)만 바꾸고, 색은 전역 QSS 규칙이 고른다 — 속성만 바꾸면 이미 계산된
+        스타일이 갱신되지 않으므로 theme.repolish()가 함께 필요하다.
+
+        진행 표시(#554): 막대 방식은 받는 중 · 일시정지가 진행만큼, 완료 · 실패는 끝까지 찬 막대(상태 색)다.
+        배경 채움 방식은 받는 중 · 일시정지를 카드 면에 칠한다. 어느 방식이든 완료 · 실패는 카드 전체
+        색조다. 준비 중 · 자르기 준비 중은 값 없이 움직이는 막대다.
 
         카드 버튼은 `CARD_BUTTONS`가 상태마다 정한다. 줄 자리 · 카드 높이는 상태와 무관하다
         (목록이 들썩이면 안 된다). 일시정지의 조작은 **이어 받기**다 — 버튼 하나(pauseButton)가
@@ -858,18 +1077,11 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """
         state = self._cardState()
         raw = self.item.downloadState
-        # 준비 중에는 막대를 값 없는(움직이는) 상태로 둔다 — 범위 0~0이 그 상태다
-        busy_maximum = 0 if card_text.is_preparing(self.item) else 100
-        if self.progressBar.maximum() != busy_maximum:
-            self.progressBar.setRange(0, busy_maximum)
-        self.progressBar.setValue(card_text.progress_value(self.item))
-        self.progressBar.setVisible(card_text.has_progress(self.item))
-        if self.progressBar.property("state") != state:
-            self.progressBar.setProperty("state", state)
-            theme.repolish(self.progressBar)
+        previous, self._previousState = self._previousState, raw
         if self.statusLabel.property("state") != state:
             self.statusLabel.setProperty("state", state)
             theme.repolish(self.statusLabel)
+        self._applyProgress(previous)
 
         if raw == DownloadState.PAUSED:
             self.pauseButton.setIconName("resume")

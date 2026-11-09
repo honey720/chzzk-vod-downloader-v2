@@ -223,14 +223,12 @@ def test_state_actions_visibility(qapp, download_state, edit, pause, folder, ret
     assert not widget.deleteButton.isHidden()
 
 
-def test_failed_hides_file_size_for_the_reason(qapp) -> None:
-    """실패 카드의 3행 우측은 파일 크기 대신 사유가 자리를 쓴다 (#245)."""
+def test_failed_shows_the_reason_and_the_info_text(qapp) -> None:
+    """실패 카드면 3행에 사유와 정보 글이 함께 보여야 한다 (#554 — 프로토 「가」 열)."""
     widget = _widget(qapp, DownloadState.FAILED, progress=0)
     widget.show()
-    assert not widget.fileSizeLabel.isVisible()
-    widget2 = _widget(qapp, DownloadState.WAITING)
-    widget2.show()
-    assert widget2.fileSizeLabel.isVisible()
+    assert widget.statusLabel.isVisible()
+    assert widget.fileSizeLabel.isVisible()
 
 
 @pytest.mark.parametrize("download_state,card_state", STATE_MAP)

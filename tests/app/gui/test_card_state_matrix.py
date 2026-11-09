@@ -105,12 +105,13 @@ def _make_widget(qapp, state, progress=0, *, post_process=False) -> ContentItemW
 
 
 #: 상태 → (조작 버튼 이름, 도형 이름, 진행바 표시, 진행바 색 상태)
+#: 완료 · 실패는 끝까지 찬 상태 색 막대다(#554)
 MATRIX = {
     DownloadState.WAITING: ("editButton", "edit", False, "waiting"),
     DownloadState.RUNNING: ("pauseButton", "pause", True, "running"),
     DownloadState.PAUSED: ("pauseButton", "resume", True, "paused"),
-    DownloadState.FINISHED: ("openDirectoryButton", "folder", False, "finished"),
-    DownloadState.FAILED: ("retryButton", "retry", False, "failed"),
+    DownloadState.FINISHED: ("openDirectoryButton", "folder", True, "finished"),
+    DownloadState.FAILED: ("retryButton", "retry", True, "failed"),
 }
 
 ACTION_BUTTONS = ("editButton", "pauseButton", "openDirectoryButton", "retryButton")
@@ -512,9 +513,14 @@ class TestRightColumnResolutionAndSize:
         widget = _make_widget(qapp, DownloadState.WAITING)
         assert widget.fileSizeLabel.text() == "1080p · 595.34 MB · 1:00:00"
 
-    def test_failed_hides_the_size_slot(self, qapp) -> None:
+    def test_failed_shows_resolution_and_length(self, qapp) -> None:
+        """실패 카드의 정보 글은 해상도 · 크기 · 길이여야 한다 (#554).
+
+        1080 · 595.34 MB · 3600초 실패 카드 -> "1080p · 595.34 MB · 1:00:00"
+        """
         widget = _make_widget(qapp, DownloadState.FAILED)
-        assert not widget.fileSizeLabel.isVisible()
+        assert widget.fileSizeLabel.isVisible()
+        assert widget.fileSizeLabel.text() == "1080p · 595.34 MB · 1:00:00"
 
 
 class TestHeightIsInvariantAcrossFiveStates:
