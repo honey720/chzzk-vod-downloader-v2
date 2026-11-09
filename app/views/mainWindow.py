@@ -1000,8 +1000,11 @@ class VodDownloader(QMainWindow):
 
         엔진은 동시 다운로드가 하나뿐이라 받는 중 · 일시정지 카드는 곧 엔진이 쥔 카드다. 멈추기는
         하단바 ■과 같은 경로(`stopDownload`)다. 확인은 목록이 이미 했다.
+
+        엔진이 쥔 카드가 이 카드일 때만 멈춘다 — 확인 창이 열린 사이 이 카드가 끝나 배치가 다음
+        카드로 넘어갔으면, 멈추기는 다른 카드의 다운로드를 멈춘다.
         """
-        if self.downloadViewModel.isDownloading():
+        if self.downloadViewModel.isDownloading() and self.downloadViewModel.item is item:
             self.stopDownload()
         self.contentManager.removeItem(item)
 

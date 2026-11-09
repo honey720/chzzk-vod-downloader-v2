@@ -420,11 +420,17 @@ class ContentListView(QScrollArea):
 
         받는 중 · 일시정지 카드는 엔진이 쥐고 있다 — 고르면 `stopAndDeleteRequested`(엔진을 멈추고
         지운다), 취소면 아무 일도 없다. 그 밖 카드는 바로 `deleteRequest`다.
+
+        확인 창은 모달 이벤트 루프를 돌리므로 열린 동안 그 카드가 끝날 수 있다(배치는 다음 카드로
+        넘어간다). 그래서 닫힌 뒤 상태를 다시 보고, 더는 받는 중이 아니면 그냥 지운다 — 멈추면 다음
+        카드의 다운로드가 멈춘다.
         """
         if item.downloadState in BUSY_STATES:
-            if confirm_stop_and_delete(self):
+            if not confirm_stop_and_delete(self):
+                return
+            if item.downloadState in BUSY_STATES:
                 self.stopAndDeleteRequested.emit(item)
-            return
+                return
         self.deleteRequest.emit(item)
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:

@@ -457,6 +457,46 @@ class TestStopAndDelete:
         assert len(asked) == 1
         assert (len(stopped), len(deleted)) == (expected, 0)
 
+    def test_card_that_finished_while_asking_is_only_deleted(self, qapp, monkeypatch) -> None:
+        """확인 창이 열린 사이 카드가 끝났으면 「멈추고 지우기」를 골라도 멈추지 않고 지우기만 해야 한다.
+
+        받는 중 카드 · 확인 창이 열린 동안 완료로 바뀜 · 「멈추고 지우기」 고름
+        -> stopAndDeleteRequested 0번, deleteRequest 1번
+        """
+        view, item, deleted, stopped = self._view(DownloadState.RUNNING)
+
+        def finish_while_asking(parent) -> bool:
+            item.downloadState = DownloadState.FINISHED  # 모달 이벤트 루프 동안 엔진이 끝냈다
+            return True
+
+        monkeypatch.setattr(view_module, "confirm_stop_and_delete", finish_while_asking)
+        view.widgetFor(item).deleteButton.click()
+        assert (stopped, deleted) == ([], [item])
+
+    @pytest.mark.parametrize(("engine_holds_it", "stops"), [(True, 1), (False, 0)])
+    def test_main_window_stops_only_the_card_the_engine_holds(
+        self, qapp, engine_holds_it: bool, stops: int
+    ) -> None:
+        """「멈추고 지우기」는 엔진이 그 카드를 쥐고 있을 때만 다운로드를 멈추고, 카드는 늘 지워야 한다.
+
+        엔진이 받는 중 · 엔진의 카드 = 지울 카드 / 다른 카드 -> 멈춤 1번 / 0번, 지움 1번
+        """
+        from types import SimpleNamespace
+
+        from app.views.mainWindow import VodDownloader
+
+        item, other = _item(DownloadState.RUNNING), _item(DownloadState.RUNNING)
+        calls: dict[str, list] = {"stop": [], "remove": []}
+        window = SimpleNamespace(
+            downloadViewModel=SimpleNamespace(
+                isDownloading=lambda: True, item=item if engine_holds_it else other
+            ),
+            stopDownload=lambda: calls["stop"].append(1),
+            contentManager=SimpleNamespace(removeItem=calls["remove"].append),
+        )
+        VodDownloader.onCardStopAndDelete(window, item)
+        assert (len(calls["stop"]), calls["remove"]) == (stops, [item])
+
     @pytest.mark.parametrize("state", [DownloadState.WAITING, DownloadState.FINISHED])
     def test_idle_card_deletes_without_asking(self, qapp, monkeypatch, state) -> None:
         """받는 중이 아닌 카드의 ✕면 묻지 않고 바로 지우기를 청해야 한다.
