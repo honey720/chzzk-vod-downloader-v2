@@ -37,6 +37,9 @@ from core.models.download_state import DownloadState
 
 logger = logging.getLogger(__name__)
 
+# Qt의 QWIDGETSIZE_MAX(PySide6가 노출하지 않음) — 최대폭 제한을 푸는 값.
+_NO_MAX_WIDTH = (1 << 24) - 1
+
 # 전역 설정의 다운로드 경로 — 카드는 자기 경로가 이 값과 **다를 때만**
 # 3행에 경로를 표시한다(#245 — 같은 값을 카드마다 반복 표시하는 것이
 # 정보 과다의 큰 몫이었다. 다르다는 것 자체가 정보다).
@@ -711,31 +714,35 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self._fitInfo()
 
     def _fitInfo(self) -> None:
-        """3줄 정보 글을 폭에 맞춰 고르고, 저장 위치가 먼저 줄어들게 최대폭을 씌운다 (#309 · #550).
+        """3줄 정보 글을 폭에 맞춰 고르고, 줄어드는 차례대로 최대폭을 씌운다 (#309 · #550).
 
-        정보 글은 말줄임하지 않는다 — 폭을 먼저 확보한다. 긴 꼴(구간 알림 · 「/ 전체」 포함)이
-        상태 글 · 저장 위치의 최소 폭과 함께 한 줄에 안 들어가면 짧은 꼴을 쓴다. 판정은 지금
-        표시 중인 글이 아니라 "줄 폭 − 다른 항목"으로만 해 되먹임이 없다. 배치 전(줄 폭 0)이면
-        긴 꼴로 두고 resizeEvent · showEvent에서 다시 온다.
+        폭이 줄면 ① 저장 위치 글 → ② 상태 글(「…」까지) → ③ 정보 글 차례로 줄어든다. 가로 넘침은 어떤
+        폭에서도 만들지 않는다 — 정보 글은 ③에서만 말줄임하고 툴팁에 전체 글을 단다(접는 차례는 C3).
+        긴 꼴(구간 알림 · 「/ 전체」 포함)이 상태 글 · 저장 위치와 함께 한 줄에 안 들어가면 짧은 꼴을
+        쓴다.
 
-        정보 글이 없는 카드(실패 — 사유가 그 자리를 쓴다)도 저장 위치의 최대폭은 다시 씌운다 —
-        건너뛰면 앞 상태의 좁은 폭에서 씌운 최대폭이 남아 저장 위치가 0폭으로 굳는다(#550).
+        최소폭이 아니라 최대폭을 씌운다 — 최소폭은 카드 최소폭이 되어 카드가 목록보다 넓은 채
+        굳는다(줄 폭이 카드 폭에서 나오므로 되먹임). 판정은 지금 표시 중인 글이 아니라 "줄 폭 − 다른
+        항목"으로만 한다. 표시 전(줄 폭 0)이면 씌운 최대폭을 풀고 showEvent · resizeEvent에서 다시 온다.
+
+        정보 글이 없는 카드(실패 — 사유가 그 자리를 쓴다)도 최대폭은 다시 씌운다 — 건너뛰면 앞 상태의
+        좁은 폭에서 씌운 최대폭이 남아 저장 위치가 0폭으로 굳는다(#550).
         """
         label = self.fileSizeLabel
         spacing = self.resolutionLayout.spacing()
-        row_width = self.statusRow.width() if self.statusRow.isVisibleTo(self) else 0
-        status_need = (
-            self.statusIcon.width() + spacing + self.statusLabel.sizeHint().width() + spacing
+        row_width = self._rowWidth()
+        path_shown = self._pathShown()
+        icon_need = 0 if self.statusIcon.isHidden() else self.statusIcon.width() + spacing
+        status_need = icon_need + self.statusLabel.sizeHint().width() + spacing
+        # 저장 위치 아이콘 + 그 뒤 두 간격(아이콘 ↔ 글, 글 ↔ 정보 글) — 저장 위치 글이 0폭이어도 남는다
+        path_need = self.pathIcon.width() + 2 * spacing if path_shown else 0
+        path_text_min = (
+            self.directoryLabel.fontMetrics().horizontalAdvance("abcdef") if path_shown else 0
         )
-        path_min = 0
-        if self._pathShown():
-            path_min = (
-                self.pathIcon.width()
-                + spacing
-                + self.directoryLabel.fontMetrics().horizontalAdvance("abcdef")
-                + spacing
-            )
+        status_floor = self.statusLabel.minimumSizeHint().width()
         info_width = 0
+        clipped = False
+        text = ""
         if self._infoVariants:
             metrics = label.fontMetrics()
             text = self._infoVariants[0]
@@ -744,29 +751,58 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
                     (
                         v
                         for v in self._infoVariants
-                        if metrics.horizontalAdvance(v) + 4 + status_need + path_min <= row_width
+                        if metrics.horizontalAdvance(v)
+                        + 4
+                        + status_need
+                        + path_need
+                        + path_text_min
+                        <= row_width
                     ),
                     self._infoVariants[-1],
                 )
             if label.text() != text:
                 label.setText(text)
             info_width = metrics.horizontalAdvance(text) + 4
-            if label.minimumWidth() != info_width:
-                label.setMinimumWidth(info_width)
-            label.setDetailTip(self._infoTip(text))
-        if self._pathShown() and row_width > 0:
-            # 저장 위치가 상태 글보다 먼저 줄어든다 — 남는 폭만 준다(안 씌우면 Qt가 같은 정책의
-            # 상태 글과 나눠 줄여 상태 글이 잘린다, #245 560px 실기)
-            room = row_width - status_need - info_width - self.pathIcon.width() - 2 * spacing
+            clipped = (
+                row_width > 0
+                and info_width > row_width - icon_need - status_floor - spacing - path_need
+            )
+            label.setDetailTip(self._infoTip(text, clipped))
+        if row_width <= 0:
+            self.statusLabel.setMaximumWidth(_NO_MAX_WIDTH)
+            self.directoryLabel.setMaximumWidth(_NO_MAX_WIDTH)
+            return
+        # ② 상태 글 — 정보 글 · 아이콘들을 뺀 폭까지, 「…」 아래로는 줄지 않는다(그 뒤는 ③ 정보 글이 줄어든다)
+        status_room = row_width - icon_need - spacing - path_need - info_width
+        self.statusLabel.setMaximumWidth(max(status_room, status_floor))
+        # ① 저장 위치 — 상태 글이 온전한 채 남는 폭만 준다(안 씌우면 Qt가 같은 정책의 상태 글과 나눠
+        # 줄여 상태 글이 잘린다, #245 560px 실기)
+        if path_shown:
+            room = row_width - status_need - path_need - info_width
             self.directoryLabel.setMaximumWidth(max(room, 0))
 
-    def _infoTip(self, shown: str) -> str:
-        """정보 글의 툴팁 — 줄여 보였으면 전체 글, 구간 카드면 구간 설명 줄. 없으면 빈 글.
+    def _rowWidth(self) -> int:
+        """세 줄의 폭 — 카드 폭에서 테두리 · 안쪽 여백 · 썸네일 · 썸네일 ↔ 글 간격을 뺀 값.
+
+        줄 위젯의 지금 폭이 아니라 카드 폭으로 센다 — 카드의 resizeEvent 때는 안쪽 레이아웃이 아직
+        옛 자리라 줄 폭이 낡아 있다. 아직 표시 전이면 0(배치 전)이다.
+        """
+        if not self.isVisible():
+            return 0
+        border = self.contentFrame.frameWidth()
+        margins = self.bodyLayout.contentsMargins()
+        inset = 2 * border + margins.left() + margins.right()
+        inset += self.thumbnailLabel.width() + self.bodyLayout.spacing()
+        return max(self.width() - inset, 0)
+
+    def _infoTip(self, shown: str, clipped: bool = False) -> str:
+        """정보 글의 툴팁 — 줄여 보였으면(짧은 꼴 · 말줄임) 전체 글, 구간 카드면 구간 설명 줄. 없으면 빈 글.
 
         보이는 글을 그대로 되풀이하는 툴팁은 달지 않는다(#550).
         """
         item = self.item
-        lines = [self._infoVariants[0]] if shown != self._infoVariants[0] else []
+        full = self._infoVariants[0]
+        lines = [full] if clipped or shown != full else []
         if card_text.section_count(item):
             detail = card_text.section_overlap_detail(item)
             if not detail and not item.is_segment_based:

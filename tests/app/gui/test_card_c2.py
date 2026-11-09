@@ -273,6 +273,29 @@ class TestRows:
         assert label.isVisible()
         assert label.width() >= label.fontMetrics().horizontalAdvance("lck")
 
+    def test_long_info_is_elided_instead_of_overflowing_a_narrow_list(self, qapp) -> None:
+        """좁은 목록에서 정보 글이 줄에 안 들어가면 카드가 목록 밖으로 넘치지 않고 정보 글이 줄 안에서 잘려야 한다.
+
+        구간 셋 · 다른 저장 위치 대기 카드 · 목록 폭 280
+        -> 카드 오른쪽 끝 ≤ 뷰포트 폭, 정보 글 오른쪽 끝 ≤ 3줄 폭, 정보 글 툴팁 첫 줄 = 전체 글
+        """
+        view = ContentListView()
+        model = ContentListModel()
+        view.setModel(model)
+        item = _item(path="D:/vod/a folder with a long name")
+        item.selections = (TimeRange(0, 600), TimeRange(1200, 1800), TimeRange(2400, 3000))
+        model.addItem(item)
+        view.resize(280, 400)
+        view.show()
+        QApplication.processEvents()
+        card = view.widgetFor(item)
+        info = card.fileSizeLabel
+        assert info.isVisible()
+        assert card.geometry().right() < view.viewport().width()
+        assert info.geometry().right() < card.statusRow.width()
+        assert info.isElided()
+        assert info.toolTip().splitlines()[0] == info.text()
+
     def test_row_one_shows_the_upload_date_with_the_year(self, qapp) -> None:
         """1줄 날짜가 연도까지 적혀야 한다.
 

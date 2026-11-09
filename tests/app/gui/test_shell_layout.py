@@ -218,7 +218,7 @@ def _widest_waiting_card_minimum() -> int:
     간격 + 고정 빈칸). 숨은 위젯(대기 카드의 3줄 상태 아이콘)은 세지 않는다. 채널명은
     최소폭 상한(64px)에 닿는 긴 이름이다. 카드 버튼은 1줄 위에 겹쳐
     놓는 상자라(#550) 어느 줄에도 들지 않는다 — 1줄은 채널 그림 · 이름 · 날짜뿐이어야 한다.
-    3줄 정보 글은 말줄임하지 않으므로 가장 긴 대기 정보 글(1080p · 크기 자리 · 1:00:00)과 기본 위치와
+    창 최소폭에서 3줄 정보 글은 줄지 않아야 하므로 가장 긴 대기 정보 글(1080p · 크기 자리 · 1:00:00)과 기본 위치와
     다른 저장 위치를 넣는다. 크기 자리는 "Checking..."과 "0000.00 MB" 가운데 넓은 쪽이다.
     """
     metadata = {
@@ -249,9 +249,9 @@ def _widest_waiting_card_minimum() -> int:
             entry = layout.itemAt(index)
             if entry.widget() is None:
                 spacers += entry.minimumSize().width()  # 늘어나는 빈칸은 0, 고정 빈칸은 그 폭
-            elif entry.widget() is card.directoryLabel:
-                # 저장 위치 글은 가장 먼저 0폭까지 양보한다(폴더 아이콘은 남는다) — 자리 0, 간격은 센다
-                shown.append(0)
+            elif entry.widget() is card.fileSizeLabel:
+                # 창 최소폭에서 견본의 정보 글은 줄지 않는다 — 글 전체 폭(+4)을 센다
+                shown.append(metrics.horizontalAdvance(card.fileSizeLabel.text()) + 4)
             elif not entry.isEmpty():  # 숨은 위젯은 자리가 없다
                 shown.append(_leaf_min(entry.widget()))
         rows[name] = (len(shown), sum(shown) + layout.spacing() * (len(shown) - 1) + spacers)

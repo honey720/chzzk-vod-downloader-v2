@@ -887,6 +887,10 @@ class VodDownloader(QMainWindow):
         checking = QCoreApplication.translate("ContentItemWidget", "Checking...")
         item.total_size = max((checking, "0000.00 MB"), key=metrics.horizontalAdvance)
         card.setData(item, 0)
+        # 정보 글은 줄이 모자라면 말줄임한다(#550 — 넘침 금지). 창 최소폭에서는 이 견본의 정보 글이
+        # 줄지 않아야 하므로 견본에만 정보 글 전체 폭을 최소폭으로 건다
+        info = card.fileSizeLabel
+        info.setMinimumWidth(metrics.horizontalAdvance(info.text()) + 4)
         card.show()
         card.layout().activate()
         width = card.minimumSizeHint().width()
