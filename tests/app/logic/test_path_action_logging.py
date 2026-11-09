@@ -231,7 +231,7 @@ class TestFetchGateLogging:
             win.fetchButton.click()
 
         assert (
-            win.registerErrorLabel.text() == "Path does not exist."
+            win.registerError.text() == "Path does not exist."
         )  # 안내 글은 그대로, 자리는 오류 줄(#495)
         assert "조회 거부" in caplog.text
         assert "\\xa0" in caplog.text

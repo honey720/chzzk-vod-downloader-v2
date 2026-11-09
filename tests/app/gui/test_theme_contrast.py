@@ -27,10 +27,19 @@ PAIRS = [
     ("statePaused", "cardBg", 4.5, "일시정지 상태 글 ↔ 카드"),
     ("stateFinished", "cardBg", 4.5, "완료 상태 글 ↔ 카드"),
     ("stateFailed", "cardBg", 4.5, "실패 상태 글 ↔ 카드"),
-    ("stateFailed", "surface", 4.5, "등록 오류 글 ↔ 헤더바"),
+    ("stateFailed", "surface", 4.5, "실패 칩 글 ↔ 헤더바(칩 면 없음 · 고른 칩 바 면 — #536)"),
+    ("text", "errorTipBg", 4.5, "등록 오류 말풍선 글 ↔ 면(#536)"),
+    ("text", "tipBg", 4.5, "말풍선 글 ↔ 떠 있는 면(#536)"),
+    ("textMuted", "tipBg", 4.5, "말풍선 단축키(흐린 글) ↔ 떠 있는 면(#536)"),
+    ("stateFailed", "errorTipBg", 3.0, "등록 오류 말풍선 테두리 ↔ 면 — 그림(#536)"),
     ("stateFailed", "surfaceAlt", 4.5, "실패 칩 글 ↔ 칩(버튼 면)"),
     ("textMuted", "surfaceAlt", 4.5, "꺼진 칩 글 ↔ 칩(버튼 면)"),
     ("accent", "surface", 3.0, "강조 채움(하단 다운로드) ↔ 하단바 — 그림"),
+    ("focusOnAccent", "accent", 3.0, "강조 채움 버튼의 초점 테두리 ↔ 채움(#536)"),
+    ("focusOnAccent", "surface", 3.0, "강조 채움 버튼의 초점 테두리 ↔ 바 면(#536)"),
+    ("text", "menuHover", 4.5, "메뉴 항목 이름 ↔ 메뉴 호버 면(#536)"),
+    ("textMuted", "menuHover", 4.5, "메뉴 흐린 경로 · 머리글 ↔ 메뉴 호버 면(#536)"),
+    ("textMuted", "surface", 4.5, "메뉴 흐린 경로 · 머리글 ↔ 메뉴 면(#536)"),
 ]
 
 # 면 색 — 오너 결정(2026-11-07): 테마 색 이식에서 바꾸지 않는다. 앱의 지금 값 그대로
@@ -137,8 +146,9 @@ BUBBLE_FILLS = ("stateRunning", "statePaused", "stateFailed", "stateWarning", "s
 #: OS 알림 바탕 — 설계 §12.1이 정한 값(라이트 흰색 · 다크 #2c2c2c).
 OS_NOTICE_GROUND = {"dark": "#2c2c2c", "light": "#ffffff"}
 
-#: 원이 놓이는 평소 바탕 토큰 — 메뉴바(창 배경) · 고른 메뉴(버튼 면).
-BUBBLE_GROUNDS = ("windowBg", "surfaceAlt")
+#: 원이 놓이는 평소 바탕 토큰 — 메뉴바(바 면 — #536부터, 그 전 창 배경) · 고른 메뉴(버튼 면).
+#: 창 배경은 메뉴바가 바 면이 된 뒤에도 남겨 둔다(기준을 줄이지 않는다).
+BUBBLE_GROUNDS = ("windowBg", "surface", "surfaceAlt")
 
 #: 경고 · 정보 토큰의 원래 색 — 색상각이 같아야 한다(밝기만 옮긴다). 정보 = 진행 색.
 WARNING_ORIGINAL = "#f0a33c"

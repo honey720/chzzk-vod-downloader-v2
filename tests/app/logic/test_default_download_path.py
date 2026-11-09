@@ -220,7 +220,8 @@ def test_a_vanished_location_is_rejected_at_fetch_and_nothing_is_saved(
 
     win.fetchButton.click()
 
-    assert win.registerErrorLabel.text() == "Path does not exist."  # #495 — 대화상자 대신 오류 줄
+    # #495 · #536 — 대화상자 대신 오류 말풍선
+    assert win.registerError.text() == "Path does not exist."
     assert warnings == []
     assert win.contentManager.model.rowCount() == 0
     assert store.get("downloadPath", "") == ""

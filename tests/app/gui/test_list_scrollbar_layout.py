@@ -6,7 +6,8 @@
      컨테이너 오른쪽 패딩에서 그 폭을 빼 스크롤바가 여백 안에 들어간다. **이 파일의 핵심 게이트.**
   ② 목록은 창 좌우 끝까지 가서 스크롤바가 창 우측 끝에 붙고, 창 쪽에 있던 좌우 여백
      (outerMargin)은 목록 안 카드 컨테이너의 패딩으로 옮긴다 — 카드의 보이는 왼쪽 위치는
-     그대로다.
+     그대로다. 바(메뉴바 · 헤더바 · 하단바)도 창 끝까지 가고, 바 안 내용 끝과 카드 바깥 끝이
+     같은 두 선이다(#536 — 설계 §11.1).
   ③ 칩 숫자가 늘어도 콘텐츠 최소폭이 그대로다 — 칩마다 숫자 세 자리(`999`) 폭을 미리 잡는다.
      시작 때 고정된 창 최소폭을 숫자가 넘어 좌우 스크롤 안전망이 뜨던 결함(v2.10.1 하단 카운트)을
      #495에서 카운트 대신 칩이 이어 받는다. 창 최소폭을 내용 따라 다시 재지 않는다.
@@ -19,7 +20,7 @@ from collections.abc import Callable, Iterator
 
 import pytest
 from PySide6.QtCore import QPoint, QRect, Qt
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLayout, QWidget
 
 import CVDv2 as main_module
 import app.theme as theme
@@ -155,22 +156,39 @@ def test_scrollbar_hugs_the_window_edge_and_cards_keep_the_outer_margin(
         assert bar.left() >= card.right() + 1, (
             f"스크롤바가 카드를 덮는다: 카드 {card}, 스크롤바 {bar}"
         )
-    for frame in (win.headerFrame, win.infoFrame):
+    # 바는 창 끝까지 간다 — 바깥 여백 0(#536 — 설계 §11.1)
+    for frame in (win.appMenuBar, win.headerFrame, win.infoFrame):
         rect = _in_window(win, frame)
-        assert (rect.left(), rect.width()) == (outer, win.width() - 2 * outer), (
-            f"{frame.objectName()} {rect}"
+        assert (rect.left(), rect.width()) == (0, win.width()), f"{frame.objectName()} {rect}"
+
+
+def _content_edges(win: VodDownloader, frame: QWidget, inner: QLayout) -> tuple[int, int]:
+    """그 바 안 내용의 (왼쪽 x, 오른쪽 끝 x + 1) — 창 좌표. 바 레이아웃의 내용 사각형으로 잰다."""
+    rect = inner.contentsRect()
+    left = frame.mapTo(win, rect.topLeft()).x()
+    return left, left + rect.width()
+
+
+@pytest.mark.parametrize("width_extra", [0, 300, 900])
+def test_bar_contents_and_card_edges_share_two_lines(
+    make_window: Callable[..., VodDownloader], width_extra: int
+) -> None:
+    """메뉴바 · 헤더바 · 하단바 안 내용의 왼쪽 · 오른쪽 끝이 카드 바깥 왼쪽 · 오른쪽 끝과 같아야 한다.
+
+    창 폭 = 최소폭 + 0 · 300 · 900, 카드 2장
+    -> 세 바 내용 (왼쪽, 오른쪽 끝) == 카드 (왼쪽, 오른쪽 끝) (#536 — 설계 §11.1 정렬선 둘)
+    """
+    win = make_window(cards=2, width_extra=width_extra)
+    card = _in_window(win, _first_card(win))
+    edges = (card.left(), card.right() + 1)
+    for frame, inner in (
+        (win.appMenuBar, win.appMenuLayout),
+        (win.headerFrame, win.headerFrameLayout),
+        (win.infoFrame, win.infoLayout),
+    ):
+        assert _content_edges(win, frame, inner) == edges, (
+            f"{frame.objectName()} 내용 {_content_edges(win, frame, inner)} ≠ 카드 {edges} — 창 {win.width()}"
         )
-
-
-def test_card_left_edge_lines_up_with_the_bars(make_window) -> None:
-    """카드 프레임 왼쪽이 상단바·하단바 왼쪽과 한 선이다 — 여백이 자리만 옮겼지 값은 그대로다(#244 정렬선)."""
-    win = make_window(cards=2)
-    card_left = _in_window(win, _first_card(win)).left()
-    assert (
-        card_left
-        == _in_window(win, win.headerFrame).left()
-        == _in_window(win, win.infoFrame).left()
-    )
 
 
 # ================================================================ ③ 상태 칩 숫자 자릿수

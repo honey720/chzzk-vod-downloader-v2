@@ -160,11 +160,11 @@ def _independent_content_minimum(win: VodDownloader) -> int:
     아이콘(버튼 높이의 정사각) + 완료 지우기 + 간격 2개) + 프레임 안쪽 여백·테두리.
     하단바(#529): 끝까지 줄인 모양 — 전체 속도 견본 글 + 실행 결과 견본 글 + 다운로드 + 중지 + 간격 3개
     + 프레임 안쪽 여백·테두리.
-    열 = max(메뉴바 · 헤더바 · 하단바 각각 + 좌우 여백, 목록 최소).
-    좌우 outerMargin은 헤더 · 하단 바의 행에만 붙고 목록은 창 끝까지 간다(v2.10.1).
+    열 = max(메뉴바 · 헤더바 · 하단바 각각, 목록 최소).
+    바는 창 끝까지 붙고(바깥 여백 0) 좌우 테두리가 없다 — 테두리는 목록 쪽 한 줄뿐이다(#536 — 설계 §11.1).
     """
-    pad, outer = theme.METRICS["framePadding"], theme.METRICS["outerMargin"]
-    border = win.headerFrame.frameWidth()
+    pad, outer = theme.METRICS["barPadX"], 0  # 바 안쪽 가로 여백 · 바깥 여백(#536 — 바는 창 끝까지)
+    border = 0  # 바 좌우 테두리 — 목록 쪽 한 줄만 있다(#536)
     first = (
         _leaf_min(win.urlInput)
         + win.saveLocationButton.sizeHint().height()
@@ -538,7 +538,6 @@ class TestHorizontalScrollIsOnlyASafetyNet:
     def test_the_container_fills_the_window_at_every_width(self) -> None:
         """폭 제한이 없다 — 어느 폭에서도 컨테이너와 상단바·목록·하단바가 창을 가득 채운다."""
         win = _window(cards=3)
-        outer = theme.METRICS["outerMargin"]
         for width in (
             win.minimumWidth(),
             win.minimumWidth() + 300,
@@ -546,9 +545,10 @@ class TestHorizontalScrollIsOnlyASafetyNet:
         ):
             _at_width(win, width)
             assert win.contentColumn.width() == width
-            for w in (win.headerFrame, win.infoFrame):
+            # 바도 창 끝까지 간다 — 바깥 여백 0(#536 — 설계 §11.1)
+            for w in (win.appMenuBar, win.headerFrame, win.infoFrame):
                 rect = _in_window(win, w)
-                assert (rect.left(), rect.width()) == (outer, width - 2 * outer), (
+                assert (rect.left(), rect.width()) == (0, width), (
                     f"{w.objectName()} {rect} — 창 {width}px"
                 )
             # 목록은 창 좌우 끝까지 간다(v2.10.1) — 세로 스크롤바가 창 끝에 붙기 위해서다.

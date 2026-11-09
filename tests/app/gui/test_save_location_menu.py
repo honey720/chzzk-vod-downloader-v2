@@ -85,7 +85,7 @@ def _rows(menu) -> list[tuple]:
         if action.isSeparator():
             rows.append(("-",))
         elif action.property("menuHeader"):
-            rows.append(("header", action.text()))
+            rows.append(("header", ChoiceMenu.nameOf(action)))
         elif action.data() is not None:
             rows.append(tuple(action.data()))
         else:
@@ -103,7 +103,7 @@ def _command(menu, name: str) -> QAction:
 
 class TestMenuRows:
     def test_rows_are_current_favorites_recent_then_commands(self, make_window, folders) -> None:
-        """즐겨찾기 둘 · 최근 둘이 있으면 메뉴는 지금 위치 · 즐겨찾기 머리와 둘 · 최근 머리와 둘 · 구분선 · 명령 셋 차례여야 한다."""
+        """즐겨찾기 둘 · 최근 둘이 있으면 메뉴는 지금 위치 │ 즐겨찾기 머리와 둘 │ 최근 머리와 둘 │ 명령 셋 차례이고 묶음 사이마다 구분선이어야 한다(#536)."""
         a, b, r1, r2 = folders("즐1"), folders("즐2"), folders("최1"), folders("최2")
         _seed(
             favoritePaths=[{"name": "하나", "path": a}, {"name": "둘", "path": b}],
@@ -116,9 +116,11 @@ class TestMenuRows:
 
         assert rows == [
             ("current", current),
+            ("-",),
             ("header", "Favorites"),
             ("favorite", a),
             ("favorite", b),
+            ("-",),
             ("header", "Recent"),
             ("recent", r1),
             ("recent", r2),
@@ -142,15 +144,14 @@ class TestMenuRows:
         menu = _open(win)
         assert menu.markedKeys() == [("current", win.saveLocations.current())]
 
-    def test_a_favorite_row_shows_its_name_and_its_path_after_a_tab(
-        self, make_window, folders
-    ) -> None:
-        """즐겨찾기 줄의 글은 「★ 별칭」 다음 탭 뒤에 카드 표기 경로(abbreviate_path)여야 한다(탭 뒤는 흐리게 그린다)."""
+    def test_a_favorite_row_shows_its_name_and_its_muted_path(self, make_window, folders) -> None:
+        """즐겨찾기 줄의 이름은 ★ 없는 별칭이고 흐린 글은 카드 표기 경로(abbreviate_path)여야 한다(#536 — 메뉴 D, 머리글이 즐겨찾기를 알린다)."""
         a = folders("즐1")
         _seed(favoritePaths=[{"name": "녹화", "path": a}])
         win = make_window()
         action = _choice(_open(win), "favorite", a)
-        assert action.text() == f"★ 녹화\t{abbreviate_path(a)}"
+        assert ChoiceMenu.nameOf(action) == "녹화"
+        assert ChoiceMenu.detailOf(action) == abbreviate_path(a)
 
 
 class TestLimitsAndOverlap:
@@ -331,13 +332,14 @@ class TestRowsAndLimits:
     def test_the_current_row_is_its_folder_name_and_a_muted_path(
         self, make_window, folders
     ) -> None:
-        """지금 위치 줄은 폴더 이름 다음 탭 뒤에 카드 표기 경로여야 하고 툴팁은 전체 경로여야 한다."""
+        """지금 위치 줄은 이름이 폴더 이름, 흐린 글이 카드 표기 경로이고, 잘리지 않은 경로라 툴팁이 없어야 한다(#536)."""
         chosen = folders("지금 폴더")
         win = make_window()
         assert win.saveLocations.choose(chosen)
         action = _choice(_open(win), "current", chosen)
-        assert action.text() == f"지금 폴더\t{abbreviate_path(chosen)}"
-        assert action.toolTip() == chosen
+        assert ChoiceMenu.nameOf(action) == "지금 폴더"
+        assert ChoiceMenu.detailOf(action) == abbreviate_path(chosen)
+        assert ChoiceMenu.menuTip(action) == ""
 
     def test_a_current_favorite_row_shows_its_name(self, make_window, folders) -> None:
         """지금 위치가 즐겨찾기면 지금 위치 줄의 이름은 폴더 이름이 아니라 별칭이어야 한다."""
@@ -345,15 +347,15 @@ class TestRowsAndLimits:
         _seed(favoritePaths=[{"name": "녹화함", "path": fav}])
         win = make_window()
         assert win.saveLocations.choose(fav)
-        assert _choice(_open(win), "current", fav).text().startswith("녹화함\t")
+        assert ChoiceMenu.nameOf(_choice(_open(win), "current", fav)) == "녹화함"
 
     def test_paths_use_the_card_notation_with_a_home_tilde(
         self, make_window, folders, tmp_path, monkeypatch
     ) -> None:
-        """홈 아래 경로의 흐린 글은 ~로 시작하는 카드 표기여야 하고 툴팁은 전체 경로여야 한다.
+        """홈 아래 경로의 흐린 글은 ~로 시작하는 카드 표기여야 하고, 잘리지 않았으면 툴팁이 없어야 한다.
 
         홈(HOME · USERPROFILE) = tmp_path, 최근 = tmp_path/최근
-        -> 흐린 글 "~/…", 툴팁 = 전체 경로
+        -> 흐린 글 "~/…", 툴팁 없음(잘린 경로에만 전문 — #536)
         """
         import os
 
@@ -366,8 +368,8 @@ class TestRowsAndLimits:
         _seed(recentPaths=[recent])
         win = make_window()
         action = _choice(_open(win), "recent", recent)
-        assert action.text().split("\t")[1].startswith("~/")
-        assert action.toolTip() == recent
+        assert ChoiceMenu.detailOf(action).startswith("~/")
+        assert ChoiceMenu.menuTip(action) == ""
 
     def test_a_long_path_keeps_the_menu_within_the_window(self, make_window, tmp_path) -> None:
         """마지막 폴더 이름이 창보다 긴 경로를 고르면 메뉴 폭이 창 폭 − 24 이하여야 한다."""
@@ -484,7 +486,8 @@ class TestRowsAndLimits:
         menu = _open(win)
         reset = _command(menu, "defaultLocationAction")
         assert not reset.isEnabled()
-        assert reset.text() == f"Default location\t{abbreviate_path(win.saveLocations.default())}"
+        assert ChoiceMenu.nameOf(reset) == "Default location"
+        assert ChoiceMenu.detailOf(reset) == abbreviate_path(win.saveLocations.default())
         menu.hide()
         assert win.saveLocations.choose(folders("다른"))
         assert _command(_open(win), "defaultLocationAction").isEnabled()

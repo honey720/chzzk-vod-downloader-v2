@@ -401,24 +401,12 @@ Part of the video kept arriving incomplete from the server. Try again later.</so
         <translation>속도 · {0}</translation>
     </message>
     <message>
-        <source>Connections {0}</source>
-        <translation>연결 {0}</translation>
-    </message>
-    <message>
         <source>Connections · {0}</source>
         <translation>연결 · {0}</translation>
     </message>
     <message>
-        <source>Memory {0}</source>
-        <translation>메모리 {0}</translation>
-    </message>
-    <message>
         <source>Memory · {0}</source>
         <translation>메모리 · {0}</translation>
-    </message>
-    <message>
-        <source>Free {0}</source>
-        <translation>여유 {0}</translation>
     </message>
     <message>
         <source>Free space · {0}</source>
@@ -451,8 +439,8 @@ Part of the video kept arriving incomplete from the server. Try again later.</so
         <translation>최근</translation>
     </message>
     <message>
-        <source>☆ Add current folder to favorites</source>
-        <translation>☆ 지금 위치를 즐겨찾기에</translation>
+        <source>Add current folder to favorites</source>
+        <translation>지금 위치를 즐겨찾기에</translation>
     </message>
     <message>
         <source>Find folder…</source>
@@ -748,12 +736,44 @@ Check your connection and cookies, then open this window again.</source>
         <translation>정렬: {0}</translation>
     </message>
     <message>
-        <source>Ascending</source>
-        <translation>오름차순</translation>
+        <source>Sort by</source>
+        <translation>정렬 기준</translation>
     </message>
     <message>
-        <source>Descending</source>
-        <translation>내림차순</translation>
+        <source>Direction</source>
+        <translation>방향</translation>
+    </message>
+    <message>
+        <source>Oldest added first</source>
+        <translation>먼저 넣은 것부터</translation>
+    </message>
+    <message>
+        <source>Newest added first</source>
+        <translation>나중 것부터</translation>
+    </message>
+    <message>
+        <source>A to Z</source>
+        <translation>가나다순</translation>
+    </message>
+    <message>
+        <source>Z to A</source>
+        <translation>역순</translation>
+    </message>
+    <message>
+        <source>Newest first</source>
+        <translation>최신 먼저</translation>
+    </message>
+    <message>
+        <source>Oldest first</source>
+        <translation>오래된 먼저</translation>
+    </message>
+    <message>
+        <source>Downloading first</source>
+        <translation>받는 중 먼저</translation>
+    </message>
+    <message>
+        <source>Finished first</source>
+        <translation>완료 먼저</translation>
     </message>
 </context>
 <context>
@@ -792,6 +812,14 @@ Check your connection and cookies, then open this window again.</source>
     <message>
         <source>VOD Download</source>
         <translation>VOD 다운</translation>
+    </message>
+    <message>
+        <source>Enter Chzzk URL · Enter to add</source>
+        <translation>치지직 URL 입력 · Enter로 등록</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>등록</translation>
     </message>
     <message>
         <source>No VOD can be started right now.</source>
@@ -861,14 +889,6 @@ Check your connection and cookies, then open this window again.</source>
     <message>
         <source>Settings</source>
         <translation>설정</translation>
-    </message>
-    <message>
-        <source>Enter Chzzk URL</source>
-        <translation>치지직 URL 입력</translation>
-    </message>
-    <message>
-        <source>Add VOD</source>
-        <translation>VOD 추가</translation>
     </message>
     <message>
         <source>Clear Finished</source>

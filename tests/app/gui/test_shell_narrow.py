@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QLayout, QWidget
 
 import app.theme as theme
 import CVDv2 as main_module
@@ -107,18 +107,24 @@ def _add(win: VodDownloader, state: DownloadState, n: int = 1) -> ContentItem:
 # ---- 독립 합산 — 제품의 필요 폭 계산을 부르지 않는다 ----
 
 
+def _chrome(win: VodDownloader, inner: QLayout) -> int:
+    """창 폭 − 그 바 안쪽 폭 — 놓인 레이아웃의 내용 사각형 폭을 잰다(줄 여백 · 테두리 · 안쪽 여백을 따로 세지 않는다).
+
+    바 테두리는 목록 쪽 한 줄뿐이라(#536) 테두리 폭 한 변 값(`frameWidth()`)으로 셈하면 좌우가 틀린다.
+    """
+    win.show()
+    _pump()
+    return win.width() - inner.contentsRect().width()
+
+
 def _header_chrome(win: VodDownloader) -> int:
-    """창 폭 − 헤더바 안쪽 폭: 줄 좌우 여백 + 프레임 테두리 둘 + 프레임 안쪽 여백."""
-    row, inner = win.headerRow.contentsMargins(), win.headerFrameLayout.contentsMargins()
-    return (
-        row.left() + row.right() + 2 * win.headerFrame.frameWidth() + inner.left() + inner.right()
-    )
+    """창 폭 − 헤더바 안쪽 폭."""
+    return _chrome(win, win.headerFrameLayout)
 
 
 def _footer_chrome(win: VodDownloader) -> int:
     """창 폭 − 하단바 안쪽 폭."""
-    row, inner = win.infoRow.contentsMargins(), win.infoLayout.contentsMargins()
-    return row.left() + row.right() + 2 * win.infoFrame.frameWidth() + inner.left() + inner.right()
+    return _chrome(win, win.infoLayout)
 
 
 def _sort_text_width(win: VodDownloader) -> int:
@@ -609,11 +615,12 @@ def test_tab_order_in_the_narrow_shape_goes_through_the_dropdown(window: VodDown
 def _receiving(win: VodDownloader, monkeypatch: pytest.MonkeyPatch) -> None:
     """받는 중 값(속도 · 남은 시간 · 연결 · 메모리 · 여유)을 1초 갱신 신호로 넣는다.
 
-    값은 칸 글이 길게 나오는 쪽으로 둔다 — 창 최소폭까지 줄였을 때 여러 칸이 빠지게.
+    값은 칸 글이 길게 나오는 쪽으로 둔다 — 창 최소폭까지 줄였을 때 여러 칸이 빠지게. 연결 · 메모리 칸은 이름 글 대신
+    아이콘이라(#536) 글이 짧아져, 대체 글꼴(빈 글꼴 폴더)에서도 두 칸 이상 빠지도록 자릿수를 늘렸다.
     """
-    reading = TransferReading(speed=512.5 * MIB, connections=128, remaining_bytes=9000 * GIB)
+    reading = TransferReading(speed=512.5 * MIB, connections=99999, remaining_bytes=9000 * GIB)
     monkeypatch.setattr(win.downloadViewModel, "transferReadings", lambda: [reading])
-    monkeypatch.setattr(mw_mod, "resident_bytes", lambda: 98765 * MIB)
+    monkeypatch.setattr(mw_mod, "resident_bytes", lambda: 9876543 * MIB)
     win.monitorTimer.timeout.emit()
     _pump()
 

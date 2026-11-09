@@ -406,24 +406,12 @@ Part of the video kept arriving incomplete from the server. Try again later.</tr
         <translation>Speed · {0}</translation>
     </message>
     <message>
-        <source>Connections {0}</source>
-        <translation>Connections {0}</translation>
-    </message>
-    <message>
         <source>Connections · {0}</source>
         <translation>Connections · {0}</translation>
     </message>
     <message>
-        <source>Memory {0}</source>
-        <translation>Memory {0}</translation>
-    </message>
-    <message>
         <source>Memory · {0}</source>
         <translation>Memory · {0}</translation>
-    </message>
-    <message>
-        <source>Free {0}</source>
-        <translation>Free {0}</translation>
     </message>
     <message>
         <source>Free space · {0}</source>
@@ -456,8 +444,8 @@ Part of the video kept arriving incomplete from the server. Try again later.</tr
         <translation>Recent</translation>
     </message>
     <message>
-        <source>☆ Add current folder to favorites</source>
-        <translation>☆ Add current folder to favorites</translation>
+        <source>Add current folder to favorites</source>
+        <translation>Add current folder to favorites</translation>
     </message>
     <message>
         <source>Find folder…</source>
@@ -753,12 +741,44 @@ Check your connection and cookies, then open this window again.</translation>
         <translation>Sort: {0}</translation>
     </message>
     <message>
-        <source>Ascending</source>
-        <translation>Ascending</translation>
+        <source>Sort by</source>
+        <translation>Sort by</translation>
     </message>
     <message>
-        <source>Descending</source>
-        <translation>Descending</translation>
+        <source>Direction</source>
+        <translation>Direction</translation>
+    </message>
+    <message>
+        <source>Oldest added first</source>
+        <translation>Oldest added first</translation>
+    </message>
+    <message>
+        <source>Newest added first</source>
+        <translation>Newest added first</translation>
+    </message>
+    <message>
+        <source>A to Z</source>
+        <translation>A to Z</translation>
+    </message>
+    <message>
+        <source>Z to A</source>
+        <translation>Z to A</translation>
+    </message>
+    <message>
+        <source>Newest first</source>
+        <translation>Newest first</translation>
+    </message>
+    <message>
+        <source>Oldest first</source>
+        <translation>Oldest first</translation>
+    </message>
+    <message>
+        <source>Downloading first</source>
+        <translation>Downloading first</translation>
+    </message>
+    <message>
+        <source>Finished first</source>
+        <translation>Finished first</translation>
     </message>
 </context>
 <context>
@@ -797,6 +817,14 @@ Check your connection and cookies, then open this window again.</translation>
     <message>
         <source>VOD Download</source>
         <translation>VOD Download</translation>
+    </message>
+    <message>
+        <source>Enter Chzzk URL · Enter to add</source>
+        <translation>Enter Chzzk URL · Enter to add</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>Add</translation>
     </message>
     <message>
         <source>No VOD can be started right now.</source>
@@ -866,14 +894,6 @@ Check your connection and cookies, then open this window again.</translation>
     <message>
         <source>Settings</source>
         <translation>Settings</translation>
-    </message>
-    <message>
-        <source>Enter Chzzk URL</source>
-        <translation>Enter Chzzk URL</translation>
-    </message>
-    <message>
-        <source>Add VOD</source>
-        <translation>Add VOD</translation>
     </message>
     <message>
         <source>Clear Finished</source>

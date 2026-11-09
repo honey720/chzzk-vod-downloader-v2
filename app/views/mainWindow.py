@@ -45,12 +45,12 @@ from app.viewmodels.data import ContentItem
 from app.viewmodels.content_viewmodel import ContentViewModel
 import config.config as config
 from app.widgets import widget as content_widget
-from app.widgets.eliding_label import ElidingLabel
 from app.widgets.footer_bar import DROP_ORDER, FooterMonitor, RunResultLabel
 from app.widgets.header_controls import BusyButton, FilterChips, SaveLocationButton, SortButton
 from app.widgets.icons import IconButton
 from app.widgets.menu_button import MenuButton
 from app.widgets.narrow_steps import step_level
+from app.widgets.tip_bubble import ErrorTip, close_floats_if_left, install_tips, shortcut_tip
 from app.widgets.os_notice import DownloadEndNotice
 from app.widgets.view import ContentListView
 from core.models.download_state import DownloadState
@@ -231,6 +231,9 @@ class VodDownloader(QMainWindow):
         self._applyUrlRowShape()
         self._applyHeaderShape()
         self._applyFooterShape()
+        # 시작 초점은 목록(#536 — 설계 §12.1, 프로토 focusList). 정하지 않으면 Qt가 탭 순서의 첫 위젯(메뉴바
+        # 「VOD 다운」)에 초점을 주고, 키보드를 쓰지 않았는데 강조색 초점 테두리가 보인다(§11.5 — 키보드 초점에만)
+        self.listView.setFocus(Qt.FocusReason.OtherFocusReason)
 
         if self._startMaximized:
             self.showMaximized()
@@ -283,10 +286,15 @@ class VodDownloader(QMainWindow):
         self.menuDownloadButton.setProperty("role", "menu")  # 메뉴 버튼 모양(#529 — 전역 QSS)
         self.menuDownloadButton.setCheckable(True)
         self.menuDownloadButton.setChecked(True)
+        # 고른 메뉴는 굵게 — 속성(on)으로 건다: :checked의 글꼴은 위젯 글꼴에 들지 않아 크기 힌트가 굵은 글
+        # 폭을 모른다(#536, 프로토 11s)
+        self.menuDownloadButton.setProperty("on", True)
+        self.menuDownloadButton.toggled.connect(self._onMenuToggled)
         self.appMenuLayout.addWidget(self.menuDownloadButton)
         self.menuSettingsButton = QPushButton(self.appMenuBar)
         self.menuSettingsButton.setObjectName("menuSettingsButton")
         self.menuSettingsButton.setProperty("role", "menu")
+        self.menuSettingsButton.setProperty("on", False)
         self.appMenuLayout.addWidget(self.menuSettingsButton)
         self.appMenuLayout.addStretch(1)
         # 고른 화면 메뉴는 하나 — 그룹이 배타라 눌린 「VOD 다운」을 다시 눌러도 풀리지 않는다.
@@ -308,9 +316,9 @@ class VodDownloader(QMainWindow):
         self.headerFrameLayout.setObjectName("headerFrameLayout")
 
         # 헤더바 1줄(#492 — 셸 S0, #495 — S1):
-        #   ┌ [URL 입력                         ][📁 폴더 이름 ▾][VOD 추가] ┐
-        #   │ 등록 오류 한 줄(빨강, 평소 빈 줄 — 자리는 늘 잡아 둔다)          │
-        #   └ [칩 여섯][정렬 ▾] ……………………………………………… [완료 지우기] ┘
+        #   ┌ [URL 입력                              ][📁 폴더 이름 ⌄][+] ┐
+        #   └ [칩 여섯][정렬 ⌄] ……………………………………………… [완료 지우기] ┘
+        # 등록 오류는 줄이 아니라 URL 칸 아래 오류 말풍선이다(#536)
         # 남는 폭은 URL 입력이 다 받는다(설계: URL 입력이 남는 폭). 저장 위치 버튼은 고정 폭이다
         # (SaveLocationButton.applyWidth). 설정 톱니(#245)는 메뉴바 「설정」으로 옮겼다.
         self.urlRowLayout = QHBoxLayout()
@@ -324,19 +332,20 @@ class VodDownloader(QMainWindow):
         self.saveLocationButton = SaveLocationButton(self.headerFrame)
         self.saveLocationButton.setObjectName("saveLocationButton")
         self.urlRowLayout.addWidget(self.saveLocationButton)
-        self.fetchButton = BusyButton(self.headerFrame)  # 불러오는 동안 글 옆에 도는 표시(#495)
+        self.fetchButton = BusyButton(
+            self.headerFrame
+        )  # 「+」 — 불러오는 동안 그 자리에 도는 표시(#495 · #536)
         self.fetchButton.setObjectName("fetchButton")
         self.urlRowLayout.addWidget(self.fetchButton)
 
         self.headerFrameLayout.addLayout(self.urlRowLayout)
 
-        # 등록 오류 줄(#495 — 설계 알림 자리): 잘못된 URL · 조회 실패를 URL 칸 바로 아래 빨간 글 한 줄로.
-        # 입력을 고치면 사라진다. 줄 자리는 오류가 없어도 늘 잡아 둔다 — 오류가 떠도 목록이 움직이지
-        # 않는다(_reserveErrorLineHeight). 긴 글은 말줄임 + 툴팁(ElidingLabel — 헤더바를 넓히지 않는다).
-        # 「불러오는 중」 · 「가져왔다」는 글로 띄우지 않는다 — 등록 버튼의 도는 표시 · 카드의 조회 중 상태가 보인다
-        self.registerErrorLabel = ElidingLabel(self.headerFrame)
-        self.registerErrorLabel.setObjectName("registerErrorLabel")
-        self.headerFrameLayout.addWidget(self.registerErrorLabel)
+        # 등록 오류(#536 — 설계 §2 알림 자리 · §12.1): 잘못된 URL · 조회 실패를 URL 칸 아래 오류 말풍선(꼬리 위,
+        # 실패 색 계열)으로. 포인터가 나가도 남고, 입력을 고치거나 Esc · 다른 곳을 누르면 닫힌다. 말풍선은 떠 있는
+        # 창이라 헤더바에 오류 줄 자리를 비워 두지 않는다 — 오류가 떠도 목록이 움직이지 않는다. 긴 글은 말풍선 폭
+        # 상한에서 줄을 바꾼다. 「불러오는 중」 · 「가져왔다」는 글로 띄우지 않는다 — 등록 버튼의 도는 표시 · 카드의
+        # 조회 중 상태가 보인다
+        self.registerError = ErrorTip(self.urlInput)
 
         # 헤더바 2줄(#495 — 셸 S1): [상태 칩 여섯][정렬 ▾] ……
         # 칩 · 정렬 버튼은 고정 폭이다(숫자 세 자리 · 가장 긴 정렬 이름) — 남는 폭은 줄 끝 빈칸이 받는다
@@ -358,9 +367,8 @@ class VodDownloader(QMainWindow):
         self.filterRowLayout.addWidget(self.clearFinishedButton)
         self.headerFrameLayout.addLayout(self.filterRowLayout)
 
-        # 상단·하단 바는 각자 행(headerRow·infoRow)에 담아 좌우 outerMargin을 그 행이
-        # 지게 한다 — 열(centralWidgetLayout)은 좌우 여백이 0이라 사이의 카드 목록이
-        # 창 끝까지 간다(v2.10.1). 여백 값은 _applyLayoutMetrics가 런타임에 건다.
+        # 상단·하단 바는 각자 행(headerRow·infoRow)에 담는다. 바는 창 끝까지 붙어 행 여백도 0이다(#536 —
+        # 설계 §11.1). 여백 값은 _applyLayoutMetrics가 런타임에 건다.
         self.headerRow = QHBoxLayout()
         self.headerRow.setObjectName("headerRow")
         self.headerRow.addWidget(self.headerFrame)
@@ -437,8 +445,9 @@ class VodDownloader(QMainWindow):
         window.setWindowTitle(window_title(config.get_app_version()))
         self.menuDownloadButton.setText(self.tr("VOD Download"))
         self.menuSettingsButton.setText(self.tr("Settings"))
-        self.urlInput.setPlaceholderText(self.tr("Enter Chzzk URL"))
-        self.fetchButton.setText(self.tr("Add VOD"))
+        self.urlInput.setPlaceholderText(self.tr("Enter Chzzk URL · Enter to add"))
+        # 등록은 「+」 아이콘 버튼 — 이름 · 단축키는 툴팁(#536 — 설계 §12.1, 프로토 「등록 · Enter」)
+        self.fetchButton.setToolTip(shortcut_tip(self.tr("Add"), "Enter"))
         self.clearFinishedButton.setText(self.tr("Clear Finished"))
         # 하단 버튼은 아이콘만 — 이름은 툴팁이다(#504). 다운로드 버튼의 이름은 상태를 따른다
         self.downloadButton.setToolTip(self.tr("Download"))
@@ -456,60 +465,77 @@ class VodDownloader(QMainWindow):
         content_widget.set_global_download_path(self.saveLocations.current())
         self.saveLocations.changed.connect(self._onSaveLocationChanged)
         self._applyLayoutMetrics()
+        # 말풍선(#536) — 세 바의 위젯마다 필터를 건다. 앱 전체가 아니라 메인 창의 바에만: 설정 창 · 편집 창 ·
+        # 구간 창의 툴팁은 설정 메뉴 단계(§12.3)에서 정하고, 카드는 카드 단계에서 본다
+        for bar in (self.appMenuBar, self.headerFrame, self.infoFrame):
+            install_tips(bar)
 
     def _applyLayoutMetrics(self) -> None:
-        """상단·카드·하단의 좌우 정렬선을 theme.METRICS 토큰 하나로 관통시킨다 (#244).
+        """메뉴바 · 헤더바 · 목록 · 하단바의 여백을 theme.METRICS 토큰으로 건다 (#244 · #536).
 
         여백을 조립(setupUi)과 따로 여기서 런타임에 건다(`.ui` 시절에는 theme를 연결할 수
-        없었다) — 오너가 theme.py의 outerMargin/framePadding 숫자만
-        바꾸고 `uv run python CVDv2.py`로 바로 확인할 수 있게 하기 위해서다.
-        상단바·카드 목록·하단바가 같은 outerMargin에서 시작하고, 바 안쪽
-        여백(framePadding)이 카드 안쪽 여백(cardPadding)과 같으면 입력창·
-        썸네일·하단 요약의 왼쪽 끝이 한 선에 놓인다.
+        없었다) — 오너가 theme.py의 숫자만 바꾸고 `uv run python CVDv2.py`로 바로 확인할 수 있게
+        하기 위해서다. 바는 창 끝까지 붙고, 바 안 내용의 좌우 끝과 카드 바깥 끝이 같은 두 선이다(§11.1).
         """
-        outer = theme.METRICS["outerMargin"]
-        frame_pad = theme.METRICS["framePadding"]
-        # 좌우 여백은 열(contentColumn)이 아니라 상단·하단 바의 행(headerRow·infoRow)이
-        # 진다(v2.10.1) — 카드 목록은 창 좌우 끝까지 가서 세로 스크롤바가 창 끝에 붙고,
-        # 카드 쪽 여백은 목록의 컨테이너 패딩이 같은 값으로 진다(app/widgets/view.py).
-        # 메뉴바 안쪽 여백 세로 barPadY · 가로 barPadX, 메뉴 버튼 높이 barControl(#529 — 설계 §11.2 · §11.3).
-        # 메뉴바는 열의 첫 줄이라 열 위 여백이 메뉴바 위 여백이다
+        # 바는 창 끝까지 붙는다 — 바깥 여백 0, 바 · 목록 사이 간격 0(바의 경계선 하나로만 나눈다). 바 안쪽
+        # 여백은 세로 barPadY · 가로 barPadX(설계 §11.2), 가로 barPadX는 목록 카드의 좌우 여백(outerMargin,
+        # app/widgets/view.py)과 같은 12라 바 안 내용 끝과 카드 바깥 끝이 같은 두 선에 놓인다(§11.1 —
+        # #536, 프로토 11b). 카드 목록은 창 좌우 끝까지 가서 세로 스크롤바가 창 끝에 붙는다(v2.10.1).
+        # 메뉴 버튼 높이는 barControl(#529 — §11.3)
         pad_x, pad_y = theme.METRICS["barPadX"], theme.METRICS["barPadY"]
-        self.centralWidgetLayout.setContentsMargins(0, pad_y, 0, outer)
-        self.centralWidgetLayout.setSpacing(8)
-        self.menuRow.setContentsMargins(pad_x, 0, pad_x, 0)
-        self.appMenuLayout.setContentsMargins(0, 0, 0, 0)
-        for button in (self.menuDownloadButton, self.menuSettingsButton):
-            button.setFixedHeight(theme.METRICS["barControl"])
-        self.headerRow.setContentsMargins(outer, 0, outer, 0)
-        self.infoRow.setContentsMargins(outer, 0, outer, 0)
-        self.headerFrameLayout.setContentsMargins(frame_pad, frame_pad, frame_pad, frame_pad)
-        self.infoLayout.setContentsMargins(frame_pad, frame_pad, frame_pad, frame_pad)
+        self.centralWidgetLayout.setContentsMargins(0, 0, 0, 0)
+        self.centralWidgetLayout.setSpacing(0)
+        self.menuRow.setContentsMargins(0, 0, 0, 0)
+        self.appMenuLayout.setContentsMargins(pad_x, pad_y, pad_x, pad_y)
+        self._applyBarControls()
+        self.headerRow.setContentsMargins(0, 0, 0, 0)
+        self.infoRow.setContentsMargins(0, 0, 0, 0)
+        self.headerFrameLayout.setContentsMargins(pad_x, pad_y, pad_x, pad_y)
+        self.infoLayout.setContentsMargins(pad_x, pad_y, pad_x, pad_y)
         self._equalizeHeaderButtons()
         self._squareFooterButtons()
         # 헤더바 2줄의 칩 · 정렬 버튼 폭(숫자 세 자리 · 가장 긴 이름) — 창 최소폭 계산 전에 건다
         self.filterChipBar.applyWidth()
         self.sortButton.applyWidth()
-        self._reserveErrorLineHeight()
 
-    def _reserveErrorLineHeight(self) -> None:
-        """등록 오류 줄의 높이를 오류 유무와 무관하게 고정한다 (#492 — #493 CI, #495).
+    def barControls(self) -> list[QWidget]:
+        """메뉴바 · 헤더바 · 하단바에서 누르거나 쓰는 컨트롤 — 높이 · 커서 · 초점 · 말풍선 규칙이 같다 (#536)."""
+        return [
+            self.menuDownloadButton,
+            self.menuSettingsButton,
+            self.urlInput,
+            self.saveLocationButton,
+            self.fetchButton,
+            self.filterChipBar.dropButton,
+            *self.filterChips.values(),
+            self.sortButton,
+            self.clearFinishedButton,
+            self.downloadButton,
+            self.stopButton,
+        ]
 
-        오류가 없을 때도 줄 자리를 비워 둔다 — 오류가 뜨고 사라질 때 목록이 움직이지 않는다(설계
-        알림 자리). 빈 라벨과 글이 든 라벨은 글꼴에 따라 높이 힌트가 다르므로(대체 글꼴 offscreen
-        실측: 빈 14 · 글 12) 빈 글과 이 줄에 띄우는 글을 이 라벨의 글꼴 · QSS로 재어 가장 높은 값을
-        최소 높이로 건다 — 글꼴 · 번역을 따라간다. 창 최소 높이(`_contentMinimumHeight`)도 오류
-        유무와 무관해진다.
+    def _applyBarControls(self) -> None:
+        """바 컨트롤의 높이 · 커서 · 초점 정책을 건다 (#536 — 설계 §11.3 · §11.7 · §2 「말풍선」).
+
+        높이는 바 컨트롤 높이(`barControl`). 누르는 컨트롤은 손 모양 커서이고, 초점은 키보드(Tab)로만 받는다 —
+        마우스로 누른 뒤 초점 테두리(강조색)가 남지 않는다. 입력칸은 눌러서 쓰는 곳이라 초점 정책을 그대로 둔다.
         """
-        label = self.registerErrorLabel
-        shown = label.text()
-        label.ensurePolished()
-        heights = []
-        for text in ("", self.tr("Please enter VOD URL."), self.tr("Path does not exist.")):
-            label.setText(text)
-            heights.append(label.sizeHint().height())
-        label.setText(shown)
-        label.setMinimumHeight(max(heights))
+        control = theme.METRICS["barControl"]
+        for widget in self.barControls():
+            widget.setFixedHeight(control)
+            if widget is self.urlInput:
+                continue
+            widget.setCursor(Qt.CursorShape.PointingHandCursor)
+            widget.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+
+    def _onMenuToggled(self, on: bool) -> None:
+        """「VOD 다운」 고름이 바뀌면 굵은 글 속성을 따라 바꾼다(전역 QSS `[on="true"]`, #536)."""
+        self.menuDownloadButton.setProperty("on", on)
+        theme.repolish(self.menuDownloadButton)
+
+    def tipBoundary(self) -> int:
+        """말풍선 방향의 경계(전역 y) — 헤더바 아래 끝. 그보다 위 대상은 아래로, 아니면 위로 뜬다 (#536)."""
+        return self.headerFrame.mapToGlobal(QPoint(0, self.headerFrame.height())).y()
 
     def _availableGeometry(self, near: QPoint | None = None) -> QRect:
         """작업 영역(작업표시줄·독 제외) — 초기 크기·최소 높이·복원 클램프의 화면 기준 (#253).
@@ -673,16 +699,15 @@ class VodDownloader(QMainWindow):
         }
 
     def _barChrome(self, row: QLayout, frame: QFrame, inner: QLayout) -> int:
-        """창 폭 − 그 바 안쪽 폭 — 줄의 좌우 여백 · 바 테두리 · 바 안쪽 여백. 바의 내용과 무관하다."""
+        """창 폭 − 그 바 안쪽 폭 — 줄의 좌우 여백 · 바 좌우 테두리 · 바 안쪽 여백. 바의 내용과 무관하다.
+
+        바 테두리는 목록 쪽 한 줄뿐이라(#536) 좌우 테두리 폭은 `frameWidth()`(한 변 값)가 아니라 바 사각형과
+        내용 사각형의 폭 차이로 잰다 — `frameWidth()`는 좌우에 테두리가 없어도 1을 돌려준다(offscreen 실측).
+        """
         outside = row.contentsMargins()
         margins = inner.contentsMargins()
-        return (
-            outside.left()
-            + outside.right()
-            + 2 * frame.frameWidth()
-            + margins.left()
-            + margins.right()
-        )
+        sides = frame.rect().width() - frame.contentsRect().width()
+        return outside.left() + outside.right() + sides + margins.left() + margins.right()
 
     def headerRow1Needs(self) -> list[int]:
         """헤더바 1줄이 단계마다 바라는 폭 — 0 저장 위치 글 · 1 저장 위치 아이콘 (#529 — 프로토 11v).
@@ -871,31 +896,32 @@ class VodDownloader(QMainWindow):
         self.fetchButton.setFixedWidth(self.fetchButton.reservedWidth())
 
     def _squareFooterButtons(self) -> None:
-        """하단 아이콘 버튼 둘을 글 버튼의 높이인 정사각으로 건다 (#504).
-
-        높이는 같은 QSS의 글 버튼 높이(글꼴 · 안쪽 여백을 따른다)라 하단바 높이가 글 버튼일 때와 같다.
-        폭은 그 높이와 같다 — 글이 없어 폭 힌트가 안쪽 여백뿐이기 때문이다.
-        """
+        """하단 아이콘 버튼 둘을 바 컨트롤 높이의 정사각으로 건다 (#504 · #536 — 설계 §11.3)."""
+        side = theme.METRICS["barControl"]
         for button in (self.downloadButton, self.stopButton):
-            button.ensurePolished()
-            side = button.sizeHint().height()
             button.setFixedSize(side, side)
 
     def _showRegisterError(self, text: str) -> None:
-        """등록 오류를 URL 칸 아래 줄에 띄우고 URL 칸 테두리를 빨강으로 한다 (#495 — 설계 §12.1).
+        """등록 오류를 URL 칸 아래 오류 말풍선으로 띄우고 URL 칸 테두리를 빨강으로 한다 (#495 · #536 — 설계 §12.1).
 
-        줄 자리는 늘 잡혀 있어 글만 바뀐다 — 목록이 움직이지 않는다. 입력을 고치면 사라진다
-        (`_clearRegisterError`). 테두리는 전역 QSS의 `QLineEdit[invalid="true"]`가 칠한다.
+        말풍선은 떠 있어 목록이 움직이지 않는다. 입력을 고치면 사라진다(`_clearRegisterError`) — Esc · 다른 곳
+        누름은 말풍선이 스스로 닫는다(`ErrorTip`). 테두리는 전역 QSS의 `QLineEdit[invalid="true"]`가 칠한다.
         """
-        self.registerErrorLabel.setText(text)
+        self.registerError.show(text)
         if self.urlInput.property("invalid") is not True:
             self.urlInput.setProperty("invalid", True)
             theme.repolish(self.urlInput)
 
+    def _syncFetchButton(self) -> None:
+        """URL 칸이 비었으면(공백만 포함) 「+」를 끄고, 무언가 있으면 켠다 (#536 오너 실기 — 설계 §11.6).
+
+        빈 칸에서 Enter는 그대로 등록 오류 말풍선(「VOD URL을 입력하세요」)을 띄운다 — 버튼만 끈 모양이다.
+        """
+        self.fetchButton.setEnabled(bool(self.urlInput.text().strip()))
+
     def _clearRegisterError(self) -> None:
-        """등록 오류 줄을 비우고 URL 칸 테두리를 되돌린다 — URL 입력이 바뀔 때."""
-        if self.registerErrorLabel.text():
-            self.registerErrorLabel.setText("")
+        """등록 오류 말풍선을 닫고 URL 칸 테두리를 되돌린다 — URL 입력이 바뀔 때."""
+        self.registerError.hide()
         if self.urlInput.property("invalid"):
             self.urlInput.setProperty("invalid", False)
             theme.repolish(self.urlInput)
@@ -922,6 +948,8 @@ class VodDownloader(QMainWindow):
         self.fetchButton.clicked.connect(self.onFetch)
         self.saveLocationButton.errorOccurred.connect(self._showRegisterError)
         self.urlInput.textChanged.connect(self._clearRegisterError)
+        self.urlInput.textChanged.connect(self._syncFetchButton)
+        self._syncFetchButton()
         self.menuSettingsButton.clicked.connect(self.onSetting)
         # 「VOD 다운」을 눌렀다 — 결과를 봤다(#523)
         self.menuDownloadButton.clicked.connect(self.menuDownloadButton.stopBlink)
@@ -1060,14 +1088,13 @@ class VodDownloader(QMainWindow):
 
         self.contentManager.fetchContent(vod_url, cookies, downloadPath)
 
-        self.urlInput.clear()  # 입력이 바뀌어 앞 오류 줄도 비워진다
+        self.urlInput.clear()  # 입력이 바뀌어 앞 오류 말풍선도 닫힌다
 
     def onFetchError(self, errorMessage: str) -> None:
-        """조회 실패를 등록 오류 줄에 띄운다 — 대화상자를 띄우지 않는다 (#495 — 설계 알림 자리).
+        """조회 실패를 등록 오류 말풍선에 띄운다 — 대화상자를 띄우지 않는다 (#495 · #536 — 설계 알림 자리).
 
-        뷰모델의 오류 글은 `"<주소>\n<까닭>"`이다(FetchJob). 줄 하나에 까닭을 앞에 두고 주소를 뒤에
-        붙인다 — 넘치면 뒤(주소)부터 줄이고 툴팁에 전문을 보인다(ElidingLabel). 여러 주소를 한꺼번에
-        등록했으면 마지막 실패가 남는다.
+        뷰모델의 오류 글은 `"<주소>\n<까닭>"`이다(FetchJob). 까닭을 앞에 두고 주소를 뒤에 붙인다 — 길면
+        말풍선 폭 상한에서 줄을 바꾼다. 여러 주소를 한꺼번에 등록했으면 마지막 실패가 남는다.
         """
         url, _newline, reason = errorMessage.partition("\n")
         self._showRegisterError(f"{reason} · {url}" if reason else url)
@@ -1307,6 +1334,8 @@ class VodDownloader(QMainWindow):
         오지 않는다 — offscreen이 그렇다).
         """
         super().changeEvent(event)
+        if event.type() in (QEvent.Type.ActivationChange, QEvent.Type.WindowStateChange):
+            close_floats_if_left(self)
         button = getattr(self, "menuDownloadButton", None)  # 창을 짜는 중에도 불린다
         if (
             button is not None

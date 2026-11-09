@@ -76,8 +76,10 @@ class ContentListView(QScrollArea):
         # 목록 자체는 창 좌우 끝까지 가서 스크롤바가 창 끝에 붙고, 카드 프레임은
         # 이 패딩만큼 안쪽에 놓여 상단·하단 바와 같은 좌측 정렬선(outerMargin)을
         # 지킨다 — 값이 바뀐 게 아니라 자리가 옮겨진 것이다(#244 정렬선 유지).
+        # 위 여백 8: 헤더바와 목록 사이에 간격이 없어(바는 경계선 하나로만 나눈다, #536) 헤더바 ↔ 첫 카드
+        # 사이를 이 여백이 진다 — 카드 사이와 같은 8(설계 §11.2, 프로토 CARD_GAP)
         outer = theme.METRICS["outerMargin"]
-        self._layout.setContentsMargins(outer, 4, outer, 8)
+        self._layout.setContentsMargins(outer, 8, outer, 8)
         # 스크롤바의 Show/Hide에 맞춰 오른쪽 패딩을 고친다 — 편집 창의 구간 목록과 함께 쓴다
         self._scrollPadding = ScrollBarPadding(self, self._layout, outer)
         # 카드끼리 붙어 있으면 목록이 답답해 보인다 (#227). 카드 자체가 가진

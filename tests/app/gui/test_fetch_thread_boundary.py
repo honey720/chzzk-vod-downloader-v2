@@ -260,7 +260,7 @@ class TestArrivalOnTheMainThread:
         # 형식: "<url>\n<번역 메시지>" — 번역기 미설치 환경이라 키 원문이 온다
         assert message == f"{URL}\nVideo not found"
         # 창은 오류를 대화상자가 아니라 등록 오류 줄에 보인다(#495) — 쿠키 값은 어디에도 새지 않는다
-        shown = window.registerErrorLabel.text()
+        shown = window.registerError.text()
         assert window.popups == []
         assert "Video not found" in shown
         assert "dummy-aut" not in shown and "dummy-ses" not in shown
@@ -300,7 +300,7 @@ class TestArrivalOnTheMainThread:
         [message] = errors
         assert message.startswith(f"{URL}\n")
         assert "raw internal detail" not in message and "dummy-ses" not in message
-        shown = window.registerErrorLabel.text()  # 대화상자 대신 등록 오류 줄(#495)
-        assert shown, "등록 오류 줄이 비어 있다"
+        shown = window.registerError.text()  # 대화상자 대신 등록 오류 말풍선(#495 · #536)
+        assert shown, "등록 오류 말풍선이 비어 있다"
         assert "raw internal detail" not in shown
         assert "dummy-aut" not in shown and "dummy-ses" not in shown
