@@ -183,6 +183,10 @@ class TestSlotColumn:
         """후처리 중 일시정지는 가능하다 — 조작을 숨기거나 비활성화하지 않는다.
         진행바는 후처리에서 0부터 다시 차오르는 값을 그대로 보인다(오너 확정)."""
         widget = _make_widget(qapp, DownloadState.RUNNING, 13, post_process=True)
+        # 카드 버튼은 호버 · 키보드 초점 때만 보인다(#550) — 창 활성으로 초점이 들어오는지는 플랫폼마다
+        # 달라(xvfb는 들어오지 않음) 호버를 직접 켠다
+        widget.setHovered(True)
+        QApplication.processEvents()
         assert widget.pauseButton.isVisible() and widget.pauseButton.isEnabled()
         assert widget.pauseButton.iconName() == "pause"
         assert widget.progressBar.isVisible() and widget.progressBar.value() == 13
