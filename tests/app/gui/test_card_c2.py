@@ -296,6 +296,32 @@ class TestRows:
         assert info.isElided()
         assert info.toolTip().splitlines()[0] == info.text()
 
+    def test_status_text_gives_way_before_the_info_text(self, qapp) -> None:
+        """줄이 정보 글 전체와 「…」까지 준 상태 글만큼이면 상태 글이 먼저 잘리고 정보 글은 온전해야 한다.
+
+        받는 중 카드(받을 크기 모름 — 정보 글 한 꼴) · 다른 저장 위치
+        3줄 폭 = 상태 원 + 간격 + 「…」 상태 글 최소 + 간격 + 폴더 아이콘 + 간격 2 + 정보 글 전체 + 여유 10
+        (카드 폭 = 3줄 폭 + 테두리 2 + 안쪽 여백 16 + 썸네일 110 + 간격 12)
+        -> 정보 글 안 잘림, 상태 글 잘림
+        """
+        card = _card(DownloadState.RUNNING, path="D:/vod/lck")
+        card.item.download_progress = 37
+        card.item.download_speed = "18.4 MB/s"
+        card.item.download_remain_time = "00:06:00"
+        card.item.total_size = ""
+        card.item.download_size = 3_400_000_000  # 3.17 GB
+        card.setData(card.item, 0)
+        QApplication.processEvents()
+        info, status = card.fileSizeLabel, card.statusLabel
+        info_full = info.fontMetrics().horizontalAdvance(info.text()) + 4
+        # 상태 원 16 · 간격 4 · 폴더 아이콘 16
+        row = 16 + 4 + status.minimumSizeHint().width() + 4 + 16 + 2 * 4 + info_full + 10
+        card.resize(row + 2 + 16 + 110 + 12, card.height())
+        QApplication.processEvents()
+        assert card.statusRow.width() == row, "전제: 3줄 폭이 계산한 폭이다"
+        assert not info.isElided(), "정보 글이 상태 글보다 먼저 잘렸다"
+        assert status.isElided()
+
     def test_row_one_shows_the_upload_date_with_the_year(self, qapp) -> None:
         """1줄 날짜가 연도까지 적혀야 한다.
 
