@@ -108,18 +108,24 @@ def enter(widget: QWidget) -> None:
     QApplication.processEvents()
 
 
-def tooltip_event_swallowed(widget: QWidget) -> bool:
-    """위젯에 Qt 툴팁 이벤트를 보내 누가 받아 삼켰는지 돌려준다 — 말풍선 필터가 있으면 참.
+TOOLTIP_SENTINEL = "⁣tooltip-sentinel"  # Qt 툴팁에 미리 넣는 글 — 위젯 툴팁과 겹치지 않는다
 
-    필터(`TipFilter`)는 툴팁 글이 있으면 툴팁 이벤트를 삼킨다 — 그러면 Qt 기본 툴팁(`QToolTip`)이
-    뜨지 않는다. 필터가 없으면 위젯이 받아 `QToolTip.showText`를 부른다.
+
+def qt_tooltip_shown(widget: QWidget) -> bool:
+    """위젯에 Qt 툴팁 이벤트를 보내 Qt 기본 툴팁(`QToolTip`)이 그 위젯의 글로 떴는지 돌려준다.
+
+    말풍선 필터(`TipFilter`)는 툴팁 글이 있으면 툴팁 이벤트를 삼킨다 — 그러면 `QToolTip.showText`가
+    불리지 않는다. 실제 화면(Windows)은 툴팁을 잠깐 뒤에 보이므로 보임이 아니라 글로 잰다: 먼저
+    `TOOLTIP_SENTINEL`을 띄워 두고, 이벤트 뒤 Qt 툴팁의 글이 위젯 툴팁으로 바뀌었는지 본다.
     """
+    QToolTip.showText(widget.mapToGlobal(QPoint(0, 0)), TOOLTIP_SENTINEL)
     point = QPoint(2, 2)
     event = QHelpEvent(QEvent.Type.ToolTip, point, widget.mapToGlobal(point))
-    QToolTip.hideText()
     QApplication.sendEvent(widget, event)
     QApplication.processEvents()
-    return not QToolTip.isVisible()
+    shown = bool(widget.toolTip()) and QToolTip.text() == widget.toolTip()
+    QToolTip.hideText()
+    return shown
 
 
 def bubble_text_for(widget: QWidget) -> str | None:
