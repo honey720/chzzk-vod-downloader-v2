@@ -8,7 +8,6 @@
 그대로 쓴다 — lupdate는 리터럴 호출만 줍는다(project.json이 이 파일을 스캔한다).
 """
 
-import math
 import os
 from dataclasses import dataclass
 
@@ -90,21 +89,20 @@ def clock(seconds: float) -> str:
     return short_time(clock_text(whole))
 
 
-SECTION_CLOCK_SLACK = (
-    0.001  # 구간 길이 올림에서 무시하는 초 아래 끝자리(초) — 실수 오차로 1초가 더해지지 않게
-)
-
-
 def section_clock(seconds: float) -> str:
-    """구간 길이를 짧은 시간 표기로 적는다 — 0이 아닌 길이는 초 아래를 올린다(#550 오너 2026-11-09).
+    """구간 길이를 짧은 시간 표기로 적는다 — 1초 미만인 0 아닌 길이만 「0:01」이다(#550 오너 2026-11-09).
 
-    1초보다 짧은 구간이 「0:00」으로 보이면 비어 있는 구간으로 읽힌다. 그래서 0보다 긴 길이는 최소
-    「0:01」이다. 구간 길이를 적는 자리(카드 정보 글 · 툴팁 · 편집 창 요약)에만 쓴다 — 시각 · 남은 시간 ·
-    영상 길이는 `clock`(버림) 그대로다.
+    1초보다 짧은 구간이 「0:00」으로 보이면 비어 있는 구간으로 읽힌다. 그래서 0보다 길고 1초보다
+    짧으면 「0:01」로 적는다. 1초 이상은 `clock`처럼 초 아래를 버린다 — 시작 · 끝 시각이 버림이라 길이만
+    올리면 「0:10 ~ 0:14 (0:05)」처럼 앞뒤가 맞지 않게 보인다. 구간 길이를 적는 자리(카드 정보 글 ·
+    툴팁 · 편집 창 요약)에만 쓴다.
+
+    실수 오차를 따로 다루지 않는다 — 1초 이상은 버림이라 오차가 1초를 더하지 않고, 구간은 시작 < 끝
+    (`TimeRange`)이라 길이가 0보다 크다(실제로는 한 프레임 이상).
     """
-    if seconds <= SECTION_CLOCK_SLACK:
+    if seconds <= 0:
         return clock(0)
-    return clock(math.ceil(seconds - SECTION_CLOCK_SLACK))
+    return clock(max(seconds, 1.0))
 
 
 # ---- 해상도 ----

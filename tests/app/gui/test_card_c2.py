@@ -802,6 +802,25 @@ class TestResolutionStaysOnTheCard:
         assert item.total_size == "667.57 MB"
 
 
+class TestSectionLengthInTheInfoTip:
+    """카드 정보 글 툴팁의 구간 합 — 1초 미만인 0 아닌 길이만 「0:01」 (#550)."""
+
+    @pytest.mark.parametrize(
+        ("total", "expected"),
+        [(0.2, "0:01"), (0.999, "0:01"), (1.0, "0:01"), (1.5, "0:01"), (265.5, "4:25")],
+    )
+    def test_info_tip_section_total(self, qapp, total: float, expected: str) -> None:
+        """겹치지 않는 mp4 구간 카드의 정보 글 툴팁 「Sections add up to」가 규칙대로여야 한다.
+
+        구간 10 ~ 10+합 하나 -> 툴팁에 "Sections add up to <표기>"
+        """
+        card = _card()
+        card.item.selections = (TimeRange(10.0, 10.0 + total),)
+        card.setData(card.item, 0)
+        QApplication.processEvents()
+        assert f"Sections add up to {expected}" in card.fileSizeLabel.toolTip().splitlines()
+
+
 class TestTipBubbles:
     """카드 글의 툴팁은 말풍선으로 바로 뜨고 Qt 기본 툴팁은 뜨지 않는다 (#550 inbox 128)."""
 

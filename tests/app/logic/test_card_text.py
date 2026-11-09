@@ -511,43 +511,96 @@ class TestEditDialogText:
     def test_section_lines_number_each_section(self) -> None:
         """section_lines가 구간마다 「번호. 시작 ~ 끝 (길이)」 한 줄이어야 한다.
 
-        구간 65~330.5 · 3600~3725 -> ["1. 1:05 ~ 5:30 (4:26)", "2. 1:00:00 ~ 1:02:05 (2:05)"]
-        (시각은 버리고 길이 265.5초는 올린다 — #550)
+        구간 65~330.5 · 3600~3725 -> ["1. 1:05 ~ 5:30 (4:25)", "2. 1:00:00 ~ 1:02:05 (2:05)"]
         """
         item = _item(sections=((65.0, 330.5), (3600.0, 3725.0)))
         assert card_text.section_lines(item) == [
-            "1. 1:05 ~ 5:30 (4:26)",
+            "1. 1:05 ~ 5:30 (4:25)",
             "2. 1:00:00 ~ 1:02:05 (2:05)",
         ]
 
 
+# 구간 길이(초) -> 짧은 표기. 1초 미만인 0 아닌 길이만 0:01, 1초 이상은 버림(#550 오너 2026-11-09)
+SECTION_LENGTHS = [
+    (0.0, "0:00"),
+    (0.2, "0:01"),
+    (0.999, "0:01"),
+    (1.0, "0:01"),
+    (1.5, "0:01"),
+    (265.5, "4:25"),
+]
+PLACE_LENGTHS = SECTION_LENGTHS[1:]  # 자리 테스트 — 구간은 시작 < 끝이라 길이 0인 구간은 없다
+
+
 class TestSectionClock:
-    """구간 길이 표기 — 0이 아닌 길이는 초 아래를 올린다 (#550)."""
+    """구간 길이 표기 — 1초 미만인 0 아닌 길이만 「0:01」, 1초 이상은 버림 (#550)."""
 
-    @pytest.mark.parametrize(
-        ("seconds", "expected"),
-        [
-            (0.0, "0:00"),
-            (0.0004, "0:00"),  # 1ms 아래는 실수 오차로 본다
-            (0.2, "0:01"),
-            (0.8, "0:01"),
-            (1.0, "0:01"),
-            (1.0000001, "0:01"),  # 실수 오차로 1초가 더해지지 않는다
-            (1.5, "0:02"),
-            (59.983, "1:00"),
-            (3600.0, "1:00:00"),
-        ],
-    )
-    def test_section_clock_rounds_nonzero_lengths_up(self, seconds: float, expected: str) -> None:
-        """section_clock이 0이 아닌 길이의 초 아래를 올려 적어야 한다.
+    @pytest.mark.parametrize(("seconds", "expected"), [*SECTION_LENGTHS, (0.0004, "0:01")])
+    def test_section_clock_shows_short_sections_as_one_second(
+        self, seconds: float, expected: str
+    ) -> None:
+        """section_clock이 1초 미만인 0 아닌 길이만 「0:01」로, 1초 이상은 초 아래를 버려 적어야 한다.
 
-        0 -> "0:00", 0.2 · 0.8 · 1.0 -> "0:01", 1.5 -> "0:02", 59.983 -> "1:00", 3600 -> "1:00:00"
+        0 -> "0:00", 0.0004 · 0.2 · 0.999 · 1.0 · 1.5 -> "0:01", 265.5 -> "4:25"
         """
         assert card_text.section_clock(seconds) == expected
 
     def test_clock_still_drops_the_fraction(self) -> None:
-        """구간 길이 밖의 clock은 초 아래를 그대로 버려야 한다.
+        """구간 길이 밖의 clock은 1초 미만도 버려야 한다.
 
         0.8 -> "0:00", 265.5 -> "4:25"
         """
         assert (card_text.clock(0.8), card_text.clock(265.5)) == ("0:00", "4:25")
+
+
+class TestSectionLengthPlaces:
+    """구간 길이를 적는 자리마다 같은 규칙이다 (#550 — outbox 128의 「바뀌는 자리」 표)."""
+
+    @pytest.mark.parametrize(("length", "expected"), PLACE_LENGTHS)
+    def test_card_info_text(self, length: float, expected: str) -> None:
+        """대기 mp4 구간 카드의 정보 글에서 받을 길이가 규칙대로여야 한다.
+
+        구간 10 ~ 10+길이 하나 -> 정보 글에 「· <표기> · Sections 1」
+        """
+        item = _item(sections=((10.0, 10.0 + length),))
+        assert f" · {expected} · Sections 1" in card_text.info_text(item)
+
+    @pytest.mark.parametrize(("length", "expected"), PLACE_LENGTHS)
+    def test_segment_section_summary(self, length: float, expected: str) -> None:
+        """세그먼트 구간 카드의 구간 요약에서 받을 길이가 규칙대로여야 한다.
+
+        m3u8 · 구간 10 ~ 10+길이 하나 -> 요약 「Sections 1 · <표기>」로 시작
+        """
+        item = _item(content_type="m3u8", sections=((10.0, 10.0 + length),))
+        assert card_text.section_summary(item, with_notice=False, with_size=False) == (
+            f"Sections 1 · {expected}"
+        )
+
+    @pytest.mark.parametrize(("length", "expected"), PLACE_LENGTHS)
+    def test_edit_dialog_section_line(self, length: float, expected: str) -> None:
+        """편집 창 구간 줄의 (길이)가 규칙대로이고 시작 · 끝 시각은 버림이어야 한다.
+
+        구간 10 ~ 10+길이 -> "1. 0:10 ~ <끝 버림> (<표기>)"
+        """
+        end = 10.0 + length
+        item = _item(sections=((10.0, end),))
+        assert card_text.section_lines(item) == [f"1. 0:10 ~ {card_text.clock(end)} ({expected})"]
+
+    @pytest.mark.parametrize(
+        ("length", "span", "total"),
+        [
+            (0.2, "0:01", "0:01"),  # 합 0.4
+            (0.999, "0:01", "0:01"),  # 합 1.998
+            (1.0, "0:01", "0:02"),
+            (1.5, "0:01", "0:03"),
+            (265.5, "4:25", "8:51"),  # 합 531
+        ],
+    )
+    def test_overlap_tooltip(self, length: float, span: str, total: str) -> None:
+        """겹치는 구간 카드 툴팁의 받을 양 · 구간 합이 규칙대로여야 한다.
+
+        같은 구간 10 ~ 10+길이 둘 -> 「To receive: <받을 양>」 · 「Sections add up to <합>」
+        """
+        item = _item(sections=((10.0, 10.0 + length), (10.0, 10.0 + length)))
+        lines = card_text.section_overlap_detail(item)
+        assert lines[:2] == [f"To receive: {span}", f"Sections add up to {total}"]
