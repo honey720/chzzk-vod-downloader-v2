@@ -220,6 +220,24 @@ def test_choosing_the_other_entry_of_the_same_short_side_selects_that_stream(
     assert widget.pickedIndex() == 1
 
 
+def test_reopened_editor_shows_the_other_entry_of_the_same_short_side(qapp, tmp_path) -> None:
+    """같은 짧은 변의 다른 항목을 골라 저장한 뒤 편집 창을 다시 열면 드롭다운이 그 항목이어야 한다.
+
+    S4, 편집 창에서 해상도 목록 1번(720p 60fps)을 골라 저장 · 편집 창 다시 열기
+    -> 드롭다운의 지금 줄이 가리키는 목록 번호 1
+    """
+    win, widget = _window_card(tmp_path, _streams(S4))
+    _choose(win, widget.item, 1)
+
+    win.onCardEdit(widget.item)
+    _pump()
+    dialog = win._editDialog
+    assert dialog is not None, "전제: 카드 편집 창이 다시 열렸다"
+    assert dialog.resolutionCombo.currentData() == 1
+    dialog.reject()
+    _pump()
+
+
 # 짧은 변이 720인 Representation 둘(화질 이름이 다르다, 둘 다 원본 아님)과 144 하나 (#336)
 _TWO_720 = """<?xml version="1.0" encoding="UTF-8"?>
 <MPD xmlns="urn:mpeg:dash:schema:mpd:2011" xmlns:nvod="urn:naver:vod:2020">

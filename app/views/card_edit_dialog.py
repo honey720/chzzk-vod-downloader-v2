@@ -256,10 +256,16 @@ class CardEditDialog(QDialog):
         return f"{text} · {size}" if size else text
 
     def _pickedIndex(self) -> int:
-        """카드가 지금 고른 해상도의 목록 번호. 없으면 -1."""
+        """카드가 지금 고른 해상도의 목록 번호. 없으면 -1.
+
+        해상도 · 주소 · 스트림으로 찾는다 — 세그먼트 목록(m3u8)은 항목마다 주소가 비어 있어, 해상도 ·
+        주소만 보면 같은 해상도의 다른 스트림(원본 · 60fps)을 가르지 못한다. 카드의
+        `syncPickedResolution`과 같은 기준이다(#550).
+        """
         item = self._item
+        picked = (item.resolution, item.base_url, getattr(item, "stream", None))
         for index, rep in enumerate(item.unique_reps):
-            if rep[0] == item.resolution and rep[1] == item.base_url:
+            if (rep[0], rep[1], getattr(rep, "stream", None)) == picked:
                 return index
         return -1
 
