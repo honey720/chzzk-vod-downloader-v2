@@ -58,6 +58,7 @@ from app.viewmodels.section_edit import (
 )
 from app.widgets.eliding_label import ElidingLabel, TwoLineLabel
 from app.widgets.scroll_padding import ScrollBarPadding
+from app.widgets.tip_bubble import install_tips
 from app.widgets.timecode_edit import TimecodeEdit, TimePointEdit
 
 # 칸의 폭을 재는 본보기 글자 — 칸에 깔리는 글자 그대로다
@@ -214,6 +215,9 @@ class SectionEditDialog(QDialog):
         viewmodel.endClamped.connect(self._onEndClamped)
         self._onStateChanged()
         self._rebuildRows()
+        # 툴팁은 모두 말풍선(0ms)으로 뜬다 — 창의 위젯마다 필터를 건다(설계 §12.1 「툴팁」, #550).
+        # 나중에 만드는 행은 _rebuildRows가 건다
+        install_tips(self)
         self.resize(*_INITIAL_SIZE)
 
     def viewModel(self) -> SectionEditViewModel:
@@ -441,6 +445,7 @@ class SectionEditDialog(QDialog):
             row.deleteButton.clicked.connect(lambda _=False, r=index: self._onDeleteOrClear(r))
             self._rowLayout.insertWidget(index, row)
             self._rows.append(row)
+            install_tips(row)  # 새 행의 버튼 · 칸 툴팁도 말풍선으로(#550)
         # 목록의 값은 _refresh가 칸에 넣는다 — 빈 시각(빈 글)이 아닌 값은 새 칸의 값과 달라
         # 언제나 들어가고, 넣은 값은 0이어도 전부 밝게 보인다
         self._refresh()

@@ -14,7 +14,9 @@
 쓰지 못하게 한다. 폭은 절대 px가 아니라 카드 자체 기하로 유도한 값을 넣는다.
 """
 
-from PySide6.QtWidgets import QApplication, QLabel, QStyle, QWidget
+from PySide6.QtCore import QEvent, QPoint, QPointF
+from PySide6.QtGui import QEnterEvent, QHelpEvent
+from PySide6.QtWidgets import QApplication, QLabel, QStyle, QToolTip, QWidget
 
 
 def resize_to(widget: QWidget, width: int) -> None:
@@ -97,3 +99,34 @@ def drop_new_top_levels(before: set) -> None:
         QApplication.processEvents()
     gc.collect()
     QApplication.processEvents()
+
+
+def enter(widget: QWidget) -> None:
+    """위젯에 들어감 이벤트를 보낸다(포인터는 옮기지 않는다 — safety 규칙)."""
+    center = QPointF(widget.rect().center())
+    QApplication.sendEvent(widget, QEnterEvent(center, center, widget.mapToGlobal(center)))
+    QApplication.processEvents()
+
+
+def tooltip_event_swallowed(widget: QWidget) -> bool:
+    """위젯에 Qt 툴팁 이벤트를 보내 누가 받아 삼켰는지 돌려준다 — 말풍선 필터가 있으면 참.
+
+    필터(`TipFilter`)는 툴팁 글이 있으면 툴팁 이벤트를 삼킨다 — 그러면 Qt 기본 툴팁(`QToolTip`)이
+    뜨지 않는다. 필터가 없으면 위젯이 받아 `QToolTip.showText`를 부른다.
+    """
+    point = QPoint(2, 2)
+    event = QHelpEvent(QEvent.Type.ToolTip, point, widget.mapToGlobal(point))
+    QToolTip.hideText()
+    QApplication.sendEvent(widget, event)
+    QApplication.processEvents()
+    return not QToolTip.isVisible()
+
+
+def bubble_text_for(widget: QWidget) -> str | None:
+    """지금 말풍선이 `widget`에 떠 있으면 그 글, 아니면 None."""
+    from app.widgets import tip_bubble
+
+    bubble = tip_bubble.current_bubble()
+    if bubble is None or not bubble.isVisible() or bubble.target is not widget:
+        return None
+    return bubble.text

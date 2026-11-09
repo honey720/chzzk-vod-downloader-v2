@@ -22,7 +22,15 @@ from app.widgets.widget import CARD_BUTTON_NAMES, ContentItemWidget
 from core.media.dash import parse_dash_manifest
 from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
-from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
+from app.widgets import tip_bubble
+from tests.app.gui.card_helpers import (
+    bubble_text_for,
+    drop_new_top_levels,
+    enter,
+    hold_style,
+    snapshot_top_levels,
+    tooltip_event_swallowed,
+)
 
 DEFAULT_DIR = "C:/dl"  # 전역 저장 위치 — 카드의 저장 위치가 이것이면 3줄에 보이지 않는다
 
@@ -752,3 +760,76 @@ class TestResolutionStaysOnTheCard:
         qtbot.waitUntil(lambda: "667.57 MB" in card.fileSizeLabel.text(), timeout=2000)
         assert str(item.resolution) == "1080"
         assert item.total_size == "667.57 MB"
+
+
+class TestTipBubbles:
+    """카드 글의 툴팁은 말풍선으로 바로 뜨고 Qt 기본 툴팁은 뜨지 않는다 (#550 inbox 128)."""
+
+    @pytest.fixture(autouse=True)
+    def _hide_bubble(self) -> Iterator[None]:
+        tip_bubble.hide_tip()
+        yield
+        tip_bubble.hide_tip()
+
+    def test_a_label_without_the_filter_still_gets_the_qt_tooltip(self, qapp) -> None:
+        """필터가 없는 라벨은 툴팁 이벤트에 Qt 기본 툴팁을 띄워야 한다 — 아래 「뜨지 않음」 단언의 대조군.
+
+        툴팁 "plain"인 보통 QLabel · 툴팁 이벤트 -> QToolTip 보임(삼키지 않음)
+        """
+        from PySide6.QtWidgets import QLabel
+
+        label = QLabel("plain")
+        label.setToolTip("plain")
+        label.show()
+        QApplication.processEvents()
+        assert not tooltip_event_swallowed(label)
+
+    def test_section_card_info_shows_its_tooltip_in_the_bubble(self, qapp) -> None:
+        """구간 카드에 호버하고 정보 글에 들어가면 그 툴팁이 말풍선으로 바로 뜨고 Qt 툴팁은 뜨지 않아야 한다.
+
+        mp4 구간 둘(합 20:00) 대기 카드 · 카드 들어감 · 정보 글 들어감
+        -> 말풍선 글 = 정보 글 툴팁(「Sections add up to 20:00」 포함), 툴팁 이벤트는 삼킴
+        """
+        item_card = _card()
+        item_card.item.selections = (TimeRange(0, 600), TimeRange(1200, 1800))
+        item_card.setData(item_card.item, 0)
+        QApplication.processEvents()
+        info = item_card.fileSizeLabel
+        assert "Sections add up to 20:00" in info.toolTip()
+        enter(item_card)
+        enter(info)
+        assert bubble_text_for(info) == info.toolTip()
+        assert tooltip_event_swallowed(info)
+
+    def test_elided_title_shows_the_full_title_in_the_bubble(self, qapp) -> None:
+        """잘린 제목에 들어가면 전체 제목이 말풍선으로 떠야 한다.
+
+        제목 "아주 긴 제목 " × 30 · 카드 폭 400 · 카드 · 제목 들어감 -> 말풍선 글 = 전체 제목
+        """
+        title = "아주 긴 제목 " * 30
+        card = _card(title=title, width=400)
+        enter(card)
+        enter(card.titleLabel)
+        assert bubble_text_for(card.titleLabel) == title
+        assert tooltip_event_swallowed(card.titleLabel)
+
+    def test_fitting_title_shows_nothing(self, qapp) -> None:
+        """다 보이는 제목에 들어가면 말풍선도 Qt 툴팁도 뜨지 않아야 한다.
+
+        제목 "짧은 제목" · 카드 폭 700 · 카드 · 제목 들어감 -> 말풍선 없음, QToolTip 안 보임
+        """
+        card = _card(title="짧은 제목")
+        enter(card)
+        enter(card.titleLabel)
+        assert bubble_text_for(card.titleLabel) is None
+        assert tooltip_event_swallowed(card.titleLabel)  # 글이 없어 기본 툴팁도 없다
+
+    def test_save_location_shows_the_full_path_in_the_bubble(self, qapp) -> None:
+        """기본 위치와 다른 저장 위치의 폴더 글에 들어가면 전체 경로가 말풍선으로 떠야 한다.
+
+        "D:/vod/lck" 카드 · 카드 · 저장 위치 글 들어감 -> 말풍선 글 "D:/vod/lck"
+        """
+        card = _card(path="D:/vod/lck")
+        enter(card)
+        enter(card.directoryLabel)
+        assert bubble_text_for(card.directoryLabel) == "D:/vod/lck"

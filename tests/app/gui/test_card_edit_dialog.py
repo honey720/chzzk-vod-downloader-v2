@@ -6,7 +6,7 @@
 """
 
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 
 import pytest
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
@@ -20,7 +20,8 @@ from app.views.card_edit_dialog import CardEditDialog
 from app.views.mainWindow import VodDownloader
 from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
-from tests.app.gui.card_helpers import shown
+from app.widgets import tip_bubble
+from tests.app.gui.card_helpers import bubble_text_for, enter, shown, tooltip_event_swallowed
 from tests.app.gui.test_section_editor import (  # noqa: F401 — 픽스처는 이름으로 쓴다
     _apply_production_qss,
     _destroy_windows,
@@ -622,3 +623,52 @@ class TestWaitingHint:
         win.contentManager.removeItem(first)
         _pump()
         assert not dialog.waitHintLabel.isVisible()
+
+
+class TestTipBubbles:
+    """편집 창 · 구간 창의 툴팁은 말풍선으로 바로 뜨고 Qt 기본 툴팁은 뜨지 않는다 (#550 inbox 128)."""
+
+    @pytest.fixture(autouse=True)
+    def _hide_bubble(self) -> Iterator[None]:
+        tip_bubble.hide_tip()
+        yield
+        tip_bubble.hide_tip()
+
+    def test_edit_dialog_path_shows_the_full_path_in_the_bubble(self, qtbot, tmp_path) -> None:
+        """편집 창의 저장 위치 글에 들어가면 전체 경로가 말풍선으로 뜨고 Qt 툴팁은 뜨지 않아야 한다.
+
+        카드 편집 창 · 저장 위치 글 들어감 -> 말풍선 글 = 저장 위치 글의 툴팁(전체 경로), 툴팁 이벤트는 삼킴
+        """
+        item = _make_item(str(tmp_path))
+        win = _window(tmp_path, item)
+        dialog = _open(win, item)
+        label = dialog.pathLabel
+        assert label.toolTip(), "전제: 저장 위치 글에 툴팁이 있다"
+        enter(label)
+        assert bubble_text_for(label) == label.toolTip()
+        assert tooltip_event_swallowed(label)
+
+    def test_section_dialog_buttons_show_their_tooltips_in_the_bubble(
+        self,
+        qtbot,
+        tmp_path,
+        basis,  # noqa: F811
+    ) -> None:
+        """구간 창의 버튼 · 나중에 만든 행의 버튼에 들어가면 그 툴팁이 말풍선으로 떠야 한다.
+
+        편집 창 → 「구간 편집…」 · 조회 끝 -> 「구간 추가」와 첫 행 ✕에 들어가면 각자 툴팁이 말풍선, 툴팁 이벤트는 삼킴
+        """
+        item = _make_item(str(tmp_path))
+        win = _window(tmp_path, item)
+        dialog = _open(win, item)
+        dialog.sectionButton.click()
+        _pump()
+        sections = dialog.sectionDialog
+        assert sections is not None, "전제: 구간 창이 열렸다"
+        qtbot.waitUntil(lambda: sections.viewModel().state != "loading", timeout=3000)
+        _pump()
+        for widget in (sections.addButton, sections._rows[0].deleteButton):
+            assert widget.toolTip(), f"전제: {widget.objectName()}에 툴팁이 있다"
+            enter(widget)
+            assert bubble_text_for(widget) == widget.toolTip()
+            assert tooltip_event_swallowed(widget)

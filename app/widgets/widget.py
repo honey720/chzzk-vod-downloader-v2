@@ -155,6 +155,16 @@ CARD_BUTTONS = {
     DownloadState.FAILED: ("retryButton", "deleteButton"),
 }
 
+# 툴팁이 달릴 수 있는 카드 글 위젯 — 잘린 제목 · 채널명 · 상태 글 · 정보 글 · 저장 위치(글 · 아이콘)
+TIP_LABEL_NAMES = (
+    "titleLabel",
+    "channelNameLabel",
+    "statusLabel",
+    "fileSizeLabel",
+    "directoryLabel",
+    "pathIcon",
+)
+
 # ✕를 누르면 「멈추고 지우기」를 묻는 상태 — 엔진이 그 카드를 쥐고 있다(#550)
 BUSY_STATES = (DownloadState.RUNNING, DownloadState.PAUSED)
 
@@ -203,14 +213,11 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self._pickedIndex = 0  # 고른 해상도의 목록 번호(내림차순 정렬 뒤)
         self._hovered = False
         self._keyFocus = False
+        self._tipsInstalled = False  # 말풍선 필터를 걸었는지 — 처음 호버할 때 건다
         self._infoVariants: list[str] = []  # 정보 글 — 긴 것부터, 폭이 모자라면 뒤의 것을 쓴다
         self.setupUi(self)
         # 카드 하나가 Tab 한 번이다. 마우스로는 초점을 받지 않는다 — 초점 테두리는 키보드 초점만
         self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
-        # 카드 버튼 툴팁은 바로(0ms) 뜬다 — 말풍선 필터(#536)를 버튼에만 건다(카드 안 다른 위젯의
-        # 모든 이벤트를 파이썬 필터로 끌어오지 않는다)
-        for name in CARD_BUTTON_NAMES:
-            install_tips(getattr(self, name))
         self._setupThreadRelays()  # setupDynamicUi가 스레드를 띄우기 전에 연결돼야 한다 (#168)
         self.setupDynamicUi()
         self.setupSignals()  # 시그널 연결
@@ -304,11 +311,31 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """
         if hovered == self._hovered:
             return
+        if hovered:
+            self._installTips()
         self._hovered = hovered
         self.contentFrame.setProperty("hover", hovered)
         theme.repolish(self.contentFrame)
         self._syncCardButtons()
         self.hoverChanged.emit(hovered)
+
+    def _installTips(self) -> None:
+        """툴팁이 달릴 수 있는 위젯에 말풍선 필터를 건다 — 카드마다 처음 호버할 때 한 번 (#550).
+
+        툴팁은 모두 말풍선(0ms)으로 뜬다(설계 §12.1 「툴팁」). 필터(#536)는 카드 버튼과 글 위젯에만
+        건다 — 카드 전체 · 모든 자식에 걸면 그 위젯들의 모든 이벤트를 파이썬 필터로 끌어온다. 잘렸을
+        때만 툴팁이 달리는 글도 미리 걸고, 툴팁이 비면 띄우지 않는다(`TipFilter._allowed`).
+
+        만들 때가 아니라 처음 호버할 때 건다 — 카드 1000장의 목록에서 카드마다 필터를 걸면 삽입과
+        필터 칩 전환(카드를 숨기고 보일 때마다 숨김 이벤트가 필터를 지난다)이 눈에 띄게 늘었다(inbox
+        128 실측). 포인터는 카드에 먼저 들어가고 그 안의 위젯에 들어가므로 — Qt는 들어감을 바깥에서
+        안쪽 차례로 보낸다 — 위젯이 들어감을 받기 전에 필터가 걸려 있다.
+        """
+        if self._tipsInstalled:
+            return
+        self._tipsInstalled = True
+        for name in CARD_BUTTON_NAMES + TIP_LABEL_NAMES:
+            install_tips(getattr(self, name))
 
     def hasKeyFocus(self) -> bool:
         """키보드 초점이 이 카드에 있는지 — 초점 테두리 · 카드 버튼을 보이는 때."""

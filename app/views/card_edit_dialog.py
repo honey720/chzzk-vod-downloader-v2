@@ -42,6 +42,7 @@ from app.viewmodels.data import ContentItem
 from app.viewmodels.section_edit import SectionEditViewModel, keep_section_head
 from app.views.section_dialog import SectionEditDialog
 from app.widgets.eliding_label import ElidingLabel, PathLabel
+from app.widgets.tip_bubble import install_tips
 from app.widgets.widget import path_display_parts
 from core.media.representations import file_tag
 from core.models.download_state import DownloadState
@@ -116,6 +117,8 @@ class CardEditDialog(QDialog):
         self._refreshTail()
         self._refreshSections()
         self._refreshPath()
+        # 툴팁은 모두 말풍선(0ms)으로 뜬다 — 창의 위젯마다 필터를 건다(설계 §12.1 「툴팁」, #550)
+        install_tips(self)
 
     # ---- 조립 ----
 
