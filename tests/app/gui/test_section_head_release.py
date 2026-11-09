@@ -26,7 +26,6 @@ import weakref
 from collections.abc import Iterator
 
 import pytest
-from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
@@ -183,7 +182,7 @@ def _give_section(
     qtbot, win, item, start: str = "00000105", end: str = "00000220", wait_size: bool = True
 ) -> None:
     """편집 창으로 구간 하나를 넣는다 — 기본은 1초 5프레임~2초 20프레임(프레임 35~80)."""
-    QTest.mouseClick(win.listView.widgetFor(item).fileSizeLabel, Qt.MouseButton.LeftButton)
+    win.onCardSectionEdit(item)  # 구간 창을 여는 길 — 카드의 크기 클릭은 #550에서 없어졌다
     _pump()
     dialog = win._sectionDialog
     qtbot.waitUntil(lambda: dialog.viewModel().state == "ready", timeout=10_000)

@@ -212,39 +212,54 @@ def _independent_content_minimum(win: VodDownloader) -> int:
 
 
 def _widest_waiting_card_minimum() -> int:
-    """위 줄 버튼이 가장 많은 대기 카드의 최소폭을 위젯 폭으로 독립 합산한다 (#545).
+    """대기 카드의 최소폭을 줄마다 보이는 위젯 폭으로 독립 합산한다 (#545 · #550).
 
-    카드 테두리 + 안쪽 여백 + 썸네일 + 썸네일 ↔ 글 간격 + 위 줄(보이는 위젯의 최소폭 + 사이 간격 +
-    고정 빈칸). 채널명은 최소폭 상한(64px)에 닿는 긴 이름이다. 위 줄이 카드에서 가장 넓은 줄이다 —
-    제목 · 3줄은 말줄임 · 접힘으로 그보다 좁아진다.
+    카드 테두리 + 안쪽 여백 + 썸네일 + 썸네일 ↔ 글 간격 + 가장 넓은 줄(보이는 위젯의 최소폭 + 사이
+    간격 + 고정 빈칸). 숨은 위젯(대기 카드의 3줄 상태 아이콘)은 세지 않는다. 채널명은
+    최소폭 상한(64px)에 닿는 긴 이름이다. 카드 버튼은 1줄 위에 겹쳐
+    놓는 상자라(#550) 어느 줄에도 들지 않는다 — 1줄은 채널 그림 · 이름 · 날짜뿐이어야 한다.
+    창 최소폭에서 3줄 정보 글은 줄지 않아야 하므로 가장 긴 대기 정보 글(1080p · 크기 자리 · 1:00:00)과 기본 위치와
+    다른 저장 위치를 넣는다. 크기 자리는 "Checking..."과 "0000.00 MB" 가운데 넓은 쪽이다.
     """
     metadata = {
-        "title": "VOD",
+        "title": "Chzzk VOD",
         "category": "",
         "channelName": "a channel name longer than the cap",  # 최소폭 상한에 닿는 이름
         "createdDate": "",
         "duration": 3600,
     }
-    card = ContentItemWidget(ContentItem("", metadata, [], None, "", "", "video", None))
+    item = ContentItem("", metadata, [], None, "", "Some other folder", "video", None)
+    item.resolution = 1080
+    card = ContentItemWidget(item)
     card.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
+    card.fileSizeLabel.ensurePolished()
+    metrics = card.fileSizeLabel.fontMetrics()
+    item.total_size = max(("Checking...", "0000.00 MB"), key=metrics.horizontalAdvance)
+    card.setData(item, 0)
     card.show()
     card.layout().activate()
-    top = card.topLayout
-    shown, spacers = [], 0
-    for index in range(top.count()):
-        entry = top.itemAt(index)
-        if entry.widget() is None:
-            spacers += entry.minimumSize().width()  # 늘어나는 빈칸은 0, 고정 빈칸은 그 폭
-        elif not entry.widget().isHidden():
-            shown.append(_leaf_min(entry.widget()))
-    assert len(shown) == 6, (
-        f"전제: 위 줄에 채널 그림 · 이름 · 편집 · 구간 편집 · 저장 위치 · 삭제가 보인다 ({len(shown)})"
-    )
-    row = sum(shown) + top.spacing() * (len(shown) - 1) + spacers
+    rows = {}
+    for name, layout in (
+        ("top", card.topLayout),
+        ("title", card.titleLayout),
+        ("status", card.resolutionLayout),
+    ):
+        shown, spacers = [], 0
+        for index in range(layout.count()):
+            entry = layout.itemAt(index)
+            if entry.widget() is None:
+                spacers += entry.minimumSize().width()  # 늘어나는 빈칸은 0, 고정 빈칸은 그 폭
+            elif entry.widget() is card.fileSizeLabel:
+                # 창 최소폭에서 견본의 정보 글은 줄지 않는다 — 글 전체 폭(+4)을 센다
+                shown.append(metrics.horizontalAdvance(card.fileSizeLabel.text()) + 4)
+            elif not entry.isEmpty():  # 숨은 위젯은 자리가 없다
+                shown.append(_leaf_min(entry.widget()))
+        rows[name] = (len(shown), sum(shown) + layout.spacing() * (len(shown) - 1) + spacers)
+    assert rows["top"][0] == 3, f"전제: 1줄에 채널 그림 · 이름 · 날짜만 보인다 ({rows['top'][0]})"
     margins = card.bodyLayout.contentsMargins()
     frame = card.contentFrame.rect().width() - card.contentFrame.contentsRect().width()
     width = frame + margins.left() + margins.right() + card.thumbnailLabel.width()
-    width += card.bodyLayout.spacing() + row
+    width += card.bodyLayout.spacing() + max(row for _, row in rows.values())
     card.hide()
     card.deleteLater()
     return width

@@ -24,12 +24,23 @@ from PySide6.QtWidgets import QLabel, QSizePolicy
 
 class ElidingLabel(QLabel):
     def __init__(
-        self, parent=None, elide_mode: Qt.TextElideMode = Qt.TextElideMode.ElideRight
+        self,
+        parent=None,
+        elide_mode: Qt.TextElideMode = Qt.TextElideMode.ElideRight,
+        tip_when_elided: bool = False,
     ) -> None:
+        """말줄임 라벨을 만든다.
+
+        Args:
+            tip_when_elided: 참이면 툴팁을 글이 잘렸을 때만 단다 — 보이는 글을 되풀이하는 툴팁을
+                없앤다(#550). 거짓이면 늘 전체 글을 툴팁으로 단다(기존 동작)
+        """
         super().__init__(parent)
         self._elide_mode = elide_mode
         self._full_text = ""
         self._last_elide_width = -1
+        self._tip_when_elided = tip_when_elided
+        self._detail_tip = ""  # 잘렸는지와 무관하게 다는 툴팁(setDetailTip)
         # Ignored였던 첫 시도는 실제로 폭 0에 눌렸다(PR #229 오너 실기 확인 후속 실측 — 아래 참고).
         # Preferred(QLabel 기본값)를 유지하되 sizeHint를 작고 고정된 값으로
         # 바꿔치기하는 쪽이 맞다 — Ignored는 "sizeHint를 아예 안 본다"는
@@ -72,11 +83,33 @@ class ElidingLabel(QLabel):
 
     def setText(self, text: str) -> None:
         self._full_text = text
-        self.setToolTip(text)
+        if not self._tip_when_elided:
+            self.setToolTip(text)
         self._applyElide(force=True)
 
     def text(self) -> str:
         return self._full_text
+
+    def isElided(self) -> bool:
+        """보이는 글이 전체 글과 다른지(잘렸는지) 돌려준다."""
+        return QLabel.text(self) != self._full_text
+
+    def setDetailTip(self, tip: str) -> None:
+        """잘렸는지와 무관하게 늘 다는 툴팁(실패 사유 전문 · 구간 설명 등)을 정한다 — 빈 글이면 없앤다.
+
+        잘렸을 때만 툴팁을 다는 라벨(`tip_when_elided`)에서 쓴다. 정한 툴팁이 있으면 그것이
+        잘린 글의 툴팁을 대신한다.
+        """
+        self._detail_tip = tip
+        self._syncElidedTip()
+
+    def _syncElidedTip(self) -> None:
+        """잘렸을 때만 툴팁을 다는 라벨이면 툴팁을 지금 표시에 맞춘다."""
+        if self._tip_when_elided:
+            elided = self._full_text if self.isElided() else ""
+            tip = self._detail_tip or elided
+            if tip != self.toolTip():
+                self.setToolTip(tip)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -95,6 +128,7 @@ class ElidingLabel(QLabel):
         elided = metrics.elidedText(self._full_text, self._elide_mode, width)
         if elided != super().text():
             super().setText(elided)
+        self._syncElidedTip()
 
 
 class PathLabel(ElidingLabel):

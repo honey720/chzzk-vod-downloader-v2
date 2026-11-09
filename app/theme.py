@@ -66,21 +66,25 @@ METRICS = {
     # ---- 카드 ----
     "cardPadding": 8,  # 카드 안쪽 여백 — 썸네일·글이 테두리에서 떨어지는 거리
     "cardRowSpacing": 4,  # 카드 안 행 간격(4의 배수 권장) — 줄이면 카드가 낮아져 밀도↑
-    "cardRadius": 12,  # 카드 모서리 둥글기
+    "cardRadius": 8,  # 카드 모서리 둥글기 — 카드 · 메뉴 창 8(설계 §11.7, #550)
+    "cardThumbWidth": 110,  # 카드 썸네일 폭(px) — 글 묶음 높이(62)에 맞춘 16:9(설계 §11.1, #550)
+    "cardThumbHeight": 62,  # 카드 썸네일 높이(px) — 1줄 위끝 ~ 3줄 아래끝
+    "cardThumbGap": 12,  # 썸네일 ↔ 글(px) — 프로토 THUMB_GAP(#550)
+    "cardRow1Height": 16,  # 카드 1줄(채널 그림 · 채널명 · 날짜) 높이(px)
+    "cardRow2Height": 18,  # 카드 2줄(제목) 높이(px)
+    "cardRow3Height": 20,  # 카드 3줄(상태 · 정보) 높이(px) — 설계 §11.3 「3줄 20」
+    "cardGap": 8,  # 카드 사이(px) — 설계 §11.2(#550)
+    "cardButton": 20,  # 카드 버튼 한 변(px) — 지금 앱과 같은 20×20(설계 §12.1 카드 배치)
+    "cardStatusIcon": 16,  # 3줄 상태 원 아이콘 지름(px) — 메뉴 버블과 같은 그림
     "thumbRadius": 8,  # 썸네일 모서리 — 카드보다 작아야 안쪽이 자연스럽다
-    "iconSize": 20,  # 채널 이미지·삭제(✕)·폴더(📁) 아이콘 한 변 — 1·4행 높이를 정한다(키우면 밀도↓)
-    "pillHeight": 20,  # 해상도 pill 높이(모서리는 자동으로 절반)
     "barHeight": 4,  # 하단 진행바 두께(진행분이 있을 때 — 진행·일시정지 — 보임)
-    "actionGlyph": 12,  # 조작 아이콘(일시정지·재개·재시도·폴더·삭제) 도형 한 변 — iconSize 버튼 안에 그려진다
+    "actionGlyph": 12,  # 조작 아이콘(일시정지·재개·재시도·폴더·삭제) 도형 한 변 — cardButton 버튼 안에 그려진다
     "barGlyph": 14,  # 하단바 아이콘 버튼(▶ ‖ ■) 도형 한 변 — 버튼은 글 버튼 높이의 정사각이다(#504)
     # ---- 메뉴바 상태 버블(#523, 설계 §2) — 메뉴 버튼 오른쪽 안쪽 여백에 늘 잡아 두는 자리 ----
     # 수치는 프로토(shell.py BADGE_SIDE 16 · 버블 자리 여백 29 · 버튼 오른끝 ↔ 버블 7)를 따른다(오너 실기 2026-11-07)
     "menuBubble": 16,  # 버블(원) 지름 — 기호는 16 격자에 그려 이 크기에서 프로토와 같다
     "menuBubbleGap": 7,  # 메뉴 이름 글 ↔ 버블 사이
     "menuBubbleInset": 7,  # 버튼 오른쪽 바깥 끝(테두리 포함) ↔ 버블
-    # 썸네일 높이는 토큰이 아니다 — 우측 4행의 실제 높이에 맞춰 런타임에
-    # 계산되고(16:9로 폭 결정, app/widgets/widget.py), 행 간격·글자 크기를
-    # 바꾸면 썸네일도 따라간다.
     # ---- 상단·하단 바 & 창 ----
     "framePadding": 8,  # 상단·하단 바 안쪽 여백 — cardPadding과 같으면 정렬선이 관통
     "frameRadius": 8,  # 상단·하단 바 모서리
@@ -122,12 +126,9 @@ METRICS = {
 
 #: 글자 위계 — 위(제목)에서 아래(경로)로 무게가 내려간다. 값은 QSS 문자열.
 FONTS = {
-    "fontSizeTitle": "15px",  # 카드 제목 — 카드에서 가장 크다
+    "fontSizeTitle": "14px",  # 카드 제목 — 굵게(설계 §11.4 「크기 둘 14 · 12」, #550)
     "fontSizeBase": "14px",  # 앱 기본(입력창·버튼 등)
-    "fontSizeChannel": "13px",  # 채널명 — 제목보다 작지만 굵다
-    "fontSizeMeta": "12px",  # 상태·종류·파일 크기·진행률
-    "fontSizePath": "11px",  # 저장 경로 — 가장 작다
-    "channelWeight": "600",  # 채널명 굵기(400=보통, 600=semibold, 700=bold)
+    "fontSizeMeta": "12px",  # 카드의 제목 밖 글(채널명 · 날짜 · 상태 · 저장 위치 · 정보) — #550
 }
 
 #: 다크 테마 토큰 — 이 저장소의 모든 색·모서리·간격 값의 유일한 정의 지점.
@@ -161,6 +162,7 @@ DARK = {
     "focusOnAccent": "#ffffff",  # 강조색 채움 버튼의 키보드 초점 테두리 — 채움 · 바 면 모두와 3.0 이상(#536)
     # ---- 카드 ----
     "cardBg": "#2b2d33",
+    "cardHoverBg": "#35363c",  # 카드 호버 바탕 — 카드 면에서 밝게 한 단계(ΔE00 약 3.0, 설계 §12.1, #550)
     # ---- 상태색 (상태 아이콘·상태 텍스트·진행바 공용) ----
     # running/failed는 기존 값을 그대로 승계한다 — 실패 빨강(#FF6969)은
     # tests/app/gui/test_failure_display.py가 상태 표시에서 직접 확인한다.
@@ -222,6 +224,7 @@ LIGHT = {
     "focusOnAccent": "#1b1d22",  # 강조색 채움 버튼의 키보드 초점 테두리 — 채움 · 바 면 모두와 3.0 이상(#536)
     # ---- 카드 ----
     "cardBg": "#ffffff",
+    "cardHoverBg": "#f0f0f0",  # 카드 호버 바탕 — 카드 면에서 어둡게 한 단계(ΔE00 약 3.0, 설계 §12.1, #550)
     # ---- 상태색 (상태 아이콘·상태 텍스트·진행바 공용) — 흰 배경 대비용으로 짙게 눌렀다 ----
     "stateWaiting": "#6b7078",
     "stateRunning": "#1f6fd6",
@@ -240,12 +243,10 @@ LIGHT = {
 # METRICS(정수)와 FONTS(문자열)를 두 색 표에 자동 주입한다 — .qss는
 # @cardPadding·@fontSizeTitle 같은 이름으로 참조하고, 파이썬 코드는
 # theme.METRICS["cardPadding"] 정수를 직접 쓴다. 정의 지점은 위 한 곳이다.
-# 파생 토큰: pillRadius(=pillHeight/2, pill이 항상 완전한 반원이 되게)·
-# barRadius(=barHeight/2).
+# 파생 토큰: barRadius(=barHeight/2).
 for _table in (DARK, LIGHT):
     _table.update({_name: f"{_value}px" for _name, _value in METRICS.items()})
     _table.update(FONTS)
-    _table["pillRadius"] = f"{METRICS['pillHeight'] // 2}px"
     _table["barRadius"] = f"{METRICS['barHeight'] // 2}px"
     # 메뉴 버튼 오른쪽 안쪽 여백 = 바깥 끝 ↔ 버블 + 버블 + 글 ↔ 버블 − 테두리 1px(style.qss QPushButton)
     # — 버블이 숨어도 자리를 둔다(#523, 설계 §2)

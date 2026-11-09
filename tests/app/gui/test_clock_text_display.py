@@ -83,23 +83,21 @@ def test_waiting_card_leaves_an_unknown_video_length_empty(
 ) -> None:
     """영상 길이를 모르는 대기 카드는 길이 칸이 비어 있어야 한다 — 지금 시각 · "00:00:00"을 보이지 않는다 (#515).
 
-    응답의 길이 null(None) · 키 없음(0) -> 길이 칸 글 "", 확보 폭은 길이를 아는 카드(3600초)와 같다
+    응답의 길이 null(None) · 키 없음(0) -> 정보 글 ""
     """
     widget = _waiting_segment_card(duration)
-    known = _waiting_segment_card(3600)
     assert widget.fileSizeLabel.text() == ""
-    assert widget.fileSizeLabel.minimumWidth() == known.fileSizeLabel.minimumWidth()
 
 
 def test_waiting_card_shows_the_length_once_it_is_known(qapp: QApplication) -> None:
     """길이를 모르던 대기 카드에 길이가 채워지면 다시 그릴 때 길이가 보여야 한다.
 
-    길이 None 카드 → 길이 3600초를 채워 다시 그림 -> "01:00:00"
+    길이 None 카드 → 길이 3600초를 채워 다시 그림 -> "1:00:00"(짧은 꼴, #550)
     """
     widget = _waiting_segment_card(None)
     widget.item.duration = 3600
     widget.setData(widget.item, 0)
-    assert widget.fileSizeLabel.text() == "01:00:00"
+    assert widget.fileSizeLabel.text() == "1:00:00"
 
 
 @pytest.mark.usefixtures("answers")

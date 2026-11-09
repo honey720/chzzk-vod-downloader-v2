@@ -7,6 +7,7 @@
 """
 
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication
 
 from app.widgets.eliding_label import ElidingLabel
 
@@ -128,3 +129,71 @@ class TestElision:
 
         assert right != middle
         assert middle.endswith(".mp4")
+
+
+class TestTipWhenElided:
+    """잘렸을 때만 툴팁을 다는 라벨 (#550)."""
+
+    TEXT = "This is a value that is long enough to need eliding at a narrow width"
+
+    def _label(self, width: int) -> ElidingLabel:
+        label = ElidingLabel(tip_when_elided=True)
+        label.setText(self.TEXT)
+        self._resize(label, width)
+        return label
+
+    def _wide(self, label: ElidingLabel) -> int:
+        """글이 다 들어가는 폭 — 전역 QSS 글꼴이 합쳐진 뒤(polish)의 글 폭 + 40."""
+        label.ensurePolished()
+        return label.fontMetrics().horizontalAdvance(self.TEXT) + 40
+
+    @staticmethod
+    def _resize(label: ElidingLabel, width: int) -> None:
+        """폭을 바꾸고 보인다 — 숨은 위젯은 resizeEvent가 표시 때까지 미뤄진다."""
+        label.resize(width, 20)
+        label.show()
+        QApplication.processEvents()
+
+    def test_fitting_text_has_no_tooltip(self, qapp) -> None:
+        """글이 다 들어가는 폭이면 툴팁이 비어야 한다.
+
+        폭 = 글 폭 + 40 -> 잘리지 않음, 툴팁 ""
+        """
+        label = ElidingLabel(tip_when_elided=True)
+        label.setText(self.TEXT)
+        self._resize(label, self._wide(label))
+        assert not label.isElided()
+        assert label.toolTip() == ""
+
+    def test_elided_text_gets_the_full_text_as_tooltip_and_loses_it_when_widened(
+        self, qapp
+    ) -> None:
+        """잘린 폭이면 툴팁이 전체 글이고, 다시 넓혀 다 들어가면 툴팁이 비어야 한다.
+
+        폭 60 -> 툴팁 = 전체 글, 폭 = 글 폭 + 40 -> 툴팁 ""
+        """
+        label = self._label(60)
+        assert label.isElided() and label.toolTip() == self.TEXT
+        self._resize(label, self._wide(label))
+        assert label.toolTip() == ""
+
+    def test_detail_tip_is_kept_whether_or_not_the_text_is_elided(self, qapp) -> None:
+        """정한 툴팁(setDetailTip)은 잘림과 무관하게 남아야 한다.
+
+        setDetailTip("자세히") · 폭 60 / 넓은 폭 -> 툴팁 둘 다 "자세히"
+        """
+        label = self._label(60)
+        label.setDetailTip("자세히")
+        assert label.toolTip() == "자세히"
+        self._resize(label, self._wide(label))
+        assert label.toolTip() == "자세히"
+
+    def test_default_label_keeps_the_full_text_tooltip(self, qapp) -> None:
+        """옵션 없는 라벨은 다 들어가도 전체 글을 툴팁으로 달아야 한다(기존 동작).
+
+        tip_when_elided 없음 · 넓은 폭 -> 툴팁 = 전체 글
+        """
+        label = ElidingLabel()
+        label.setText(self.TEXT)
+        self._resize(label, self._wide(label))
+        assert label.toolTip() == self.TEXT

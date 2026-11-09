@@ -101,52 +101,61 @@ class TestBasicText:
 
 
 class TestSlotTexts:
-    """상태마다 3줄 상태 글 · 크기 글 · 상태 툴팁."""
+    """상태마다 3줄 상태 글 · 정보 글 · 상태 툴팁 · 상태 원 아이콘 (#550)."""
 
-    def test_loading_shows_the_lookup_and_an_empty_size(self) -> None:
-        """조회 중 카드면 상태 글이 「Loading information...」, 크기 글이 빈 글이어야 한다.
+    def test_loading_shows_the_lookup_and_an_empty_info(self) -> None:
+        """조회 중 카드면 상태 글이 「Loading information...」, 정보 글이 빈 글, 아이콘이 없어야 한다.
 
-        ItemState.LOADING -> ("Loading information...", "", None)
+        ItemState.LOADING -> ("Loading information...", "", None, "")
         """
         texts = card_text.slot_texts(_item(ItemState.LOADING))
-        assert (texts.status, texts.size, texts.status_tip) == ("Loading information...", "", None)
+        assert (texts.status, texts.size, texts.status_tip, texts.icon) == (
+            "Loading information...",
+            "",
+            None,
+            "",
+        )
 
-    def test_waiting_mp4_shows_the_looked_up_size(self) -> None:
-        """대기 mp4 카드면 크기 글이 조회한 크기(total_size) 그대로여야 한다.
+    def test_waiting_mp4_shows_resolution_size_and_length(self) -> None:
+        """대기 mp4 카드면 정보 글이 「해상도 · 조회한 크기 · 길이」, 아이콘이 없어야 한다.
 
-        total_size "595.34 MB" -> ("Download waiting", "595.34 MB")
+        1080p · total_size "595.34 MB" · 길이 3600 -> ("Download waiting", "1080p · 595.34 MB · 1:00:00", "")
         """
         item = _item()
         item.total_size = "595.34 MB"
         texts = card_text.slot_texts(item)
-        assert (texts.status, texts.size) == ("Download waiting", "595.34 MB")
+        assert (texts.status, texts.size, texts.icon) == (
+            "Download waiting",
+            "1080p · 595.34 MB · 1:00:00",
+            "",
+        )
 
-    @pytest.mark.parametrize(("duration", "expected"), [(3600, "01:00:00"), (None, "")])
-    def test_waiting_segment_card_shows_the_length(
+    @pytest.mark.parametrize(("duration", "expected"), [(3600, "1080p · 1:00:00"), (None, "1080p")])
+    def test_waiting_segment_card_shows_resolution_and_length(
         self, duration: int | None, expected: str
     ) -> None:
-        """대기 세그먼트 카드면 크기 글이 영상 길이여야 한다(길이를 모르면 빈 글, #515).
+        """대기 세그먼트 카드면 정보 글이 「해상도 · 길이」여야 한다(크기는 미리 모름, 길이를 모르면 빼기 #515).
 
-        m3u8 · 길이 3600 -> "01:00:00", 길이 None -> ""
+        m3u8 · 길이 3600 -> "1080p · 1:00:00", 길이 None -> "1080p"
         """
         item = _item(content_type="m3u8")
         item.duration = duration
         assert card_text.slot_texts(item).size == expected
 
-    def test_waiting_section_card_shows_the_section_summary(self) -> None:
-        """대기 구간 카드면 크기 글이 구간 요약이어야 한다.
+    def test_waiting_section_card_shows_size_span_and_count(self) -> None:
+        """대기 구간 카드면 정보 글이 「해상도 · 구간 크기 · 받을 길이 · Sections N」이어야 한다.
 
-        mp4 · 구간 2개 · section_bytes 2048 -> "Sections 2 · 2.00 KB"
+        mp4 · 구간 0~60 · 120~180 · section_bytes 2048 -> "1080p · 2.00 KB · 2:00 · Sections 2"
         """
         item = _item(sections=((0, 60), (120, 180)))
         item.section_bytes = 2 * KB
-        assert card_text.slot_texts(item).size == "Sections 2 · 2.00 KB"
+        assert card_text.slot_texts(item).size == "1080p · 2.00 KB · 2:00 · Sections 2"
 
-    def test_running_shows_progress_speed_and_remaining_time(self) -> None:
-        """받는 중 카드면 상태 글이 「% · 속도 · 남은 시간 left」, 크기 글이 「해상도 · 받은 / 전체」여야 한다.
+    def test_running_puts_progress_first_then_the_state_word(self) -> None:
+        """받는 중 카드면 상태 글이 「% · Downloading · 속도 · 남은 시간 left」, 정보가 「해상도 · 받은 / 전체」, 아이콘 down이어야 한다.
 
         42% · 2.5 MB/s · 00:03:12 · 받은 1024 / total_size "2.00 KB"
-        -> "42% · 2.5 MB/s · 3:12 left", "1080p · 1.00 KB / 2.00 KB"
+        -> "42% · Downloading · 2.5 MB/s · 3:12 left", "1080p · 1.00 KB / 2.00 KB", "down"
         """
         item = _item(DownloadState.RUNNING)
         item.download_progress = 42
@@ -155,19 +164,21 @@ class TestSlotTexts:
         item.download_size = KB
         item.total_size = "2.00 KB"
         texts = card_text.slot_texts(item)
-        assert (texts.status, texts.size) == (
-            "42% · 2.5 MB/s · 3:12 left",
+        assert (texts.status, texts.size, texts.icon) == (
+            "42% · Downloading · 2.5 MB/s · 3:12 left",
             "1080p · 1.00 KB / 2.00 KB",
+            "down",
         )
 
     def test_running_while_preparing_shows_preparing(self) -> None:
-        """받는 중이고 준비 중(preparing)이면 상태 글이 「Preparing」이어야 한다.
+        """받는 중이고 준비 중(preparing)이면 상태 글이 「Preparing」, 아이콘 down이어야 한다.
 
-        RUNNING · preparing True -> "Preparing"
+        RUNNING · preparing True -> ("Preparing", "down")
         """
         item = _item(DownloadState.RUNNING)
         item.preparing = True
-        assert card_text.slot_texts(item).status == "Preparing"
+        texts = card_text.slot_texts(item)
+        assert (texts.status, texts.icon) == ("Preparing", "down")
 
     @pytest.mark.parametrize(
         ("preparing", "word"), [(False, "Cutting"), (True, "Preparing to cut")]
@@ -201,70 +212,73 @@ class TestSlotTexts:
     def test_paused_shows_progress_unless_paused_while_preparing(
         self, pending: bool, expected: str
     ) -> None:
-        """일시정지 카드면 「% · Paused」, 준비 중에 멈췄으면(prepare_pending) 「Paused」만이어야 한다.
+        """일시정지 카드면 「% · Paused」(준비 중에 멈췄으면 「Paused」만), 아이콘 pause여야 한다.
 
         59% · prepare_pending False/True -> "59% · Paused", "Paused"
         """
         item = _item(DownloadState.PAUSED)
         item.download_progress = 59
         item.prepare_pending = pending
-        assert card_text.slot_texts(item).status == expected
+        texts = card_text.slot_texts(item)
+        assert (texts.status, texts.icon) == (expected, "pause")
 
     @pytest.mark.parametrize(
-        ("elapsed", "expected"), [("00:02:12", "✓ Completed · 2:12"), ("", "✓ Completed")]
+        ("elapsed", "expected"), [("00:02:12", "Completed · 2:12"), ("", "Completed")]
     )
     def test_finished_shows_the_elapsed_time_when_known(self, elapsed: str, expected: str) -> None:
-        """완료 카드면 상태 글이 「✓ Completed · 걸린 시간」(모르면 시간 없이)이어야 한다.
+        """완료 카드면 상태 글이 「Completed · 걸린 시간」(모르면 시간 없이), 아이콘 ok여야 한다.
 
-        download_time 00:02:12 / "" -> "✓ Completed · 2:12", "✓ Completed"
+        download_time 00:02:12 / "" -> "Completed · 2:12", "Completed"
         """
         item = _item(DownloadState.FINISHED)
         item.download_time = elapsed
-        assert card_text.slot_texts(item).status == expected
+        texts = card_text.slot_texts(item)
+        assert (texts.status, texts.icon) == (expected, "ok")
 
-    def test_finished_size_prefers_the_saved_file_size(self) -> None:
-        """완료 카드의 크기 글이 받은 양이 아니라 저장된 파일 크기(output_bytes)여야 한다.
+    def test_finished_info_prefers_the_saved_file_size(self) -> None:
+        """완료 카드의 정보 글이 받은 양이 아니라 저장된 파일 크기(output_bytes)와 길이여야 한다.
 
-        받은 1024 · output_bytes 2048 -> "1080p · 2.00 KB"
+        받은 1024 · output_bytes 2048 · 길이 3600 -> "1080p · 2.00 KB · 1:00:00"
         """
         item = _item(DownloadState.FINISHED)
         item.download_size = KB
         item.output_bytes = 2 * KB
-        assert card_text.slot_texts(item).size == "1080p · 2.00 KB"
+        assert card_text.slot_texts(item).size == "1080p · 2.00 KB · 1:00:00"
 
     def test_failed_shows_the_first_line_and_keeps_the_full_reason_in_the_tip(self) -> None:
-        """실패 카드면 상태 글이 「✕ 첫 줄」, 툴팁이 사유 전문, 크기 글은 바꾸지 않음(None)이어야 한다.
+        """실패 카드면 상태 글이 사유 첫 줄, 툴팁이 사유 전문, 정보 글은 바꾸지 않음(None), 아이콘 err여야 한다.
 
-        stateMessage "저장 실패\\n자세히" -> ("✕ 저장 실패", None, "저장 실패\\n자세히")
+        stateMessage "저장 실패\\n자세히" -> ("저장 실패", None, "저장 실패\\n자세히", "err")
         """
         item = _item(DownloadState.FAILED)
         item.stateMessage = "저장 실패\n자세히"
         texts = card_text.slot_texts(item)
-        assert (texts.status, texts.size, texts.status_tip) == (
-            "✕ 저장 실패",
+        assert (texts.status, texts.size, texts.status_tip, texts.icon) == (
+            "저장 실패",
             None,
             "저장 실패\n자세히",
+            "err",
         )
 
     def test_failed_without_a_reason_points_to_the_log(self) -> None:
         """사유 없는 실패 카드면 상태 글 · 툴팁이 로그를 보라는 안내여야 한다.
 
-        stateMessage "" -> "✕ Unknown error - check the log"
+        stateMessage "" -> "Unknown error - check the log"
         """
         texts = card_text.slot_texts(_item(DownloadState.FAILED))
-        assert texts.status == "✕ Unknown error - check the log"
+        assert texts.status == "Unknown error - check the log"
         assert texts.status_tip == "Unknown error - check the log"
 
     def test_partly_failed_sections_put_the_counts_before_the_reason(self) -> None:
-        """구간 일부만 실패한 카드면 상태 글이 「✕ N failed · 끝낸 수/전체 · 사유」여야 한다.
+        """구간 일부만 실패한 카드면 상태 글이 「N failed · 끝낸 수/전체 · 사유」여야 한다.
 
-        구간 3개 · 실패 1 · 끝냄 2 · 사유 "자르기 실패" -> "✕ 1 failed · 2/3 · 자르기 실패"
+        구간 3개 · 실패 1 · 끝냄 2 · 사유 "자르기 실패" -> "1 failed · 2/3 · 자르기 실패"
         """
         item = _item(DownloadState.FAILED, sections=((0, 60), (120, 180), (240, 300)))
         item.sections_failed = 1
         item.sections_done = 2
         item.stateMessage = "자르기 실패"
-        assert card_text.slot_texts(item).status == "✕ 1 failed · 2/3 · 자르기 실패"
+        assert card_text.slot_texts(item).status == "1 failed · 2/3 · 자르기 실패"
 
 
 # ---- 크기 ----
@@ -504,3 +518,89 @@ class TestEditDialogText:
             "1. 1:05 ~ 5:30 (4:25)",
             "2. 1:00:00 ~ 1:02:05 (2:05)",
         ]
+
+
+# 구간 길이(초) -> 짧은 표기. 1초 미만인 0 아닌 길이만 0:01, 1초 이상은 버림(#550 오너 2026-11-09)
+SECTION_LENGTHS = [
+    (0.0, "0:00"),
+    (0.2, "0:01"),
+    (0.999, "0:01"),
+    (1.0, "0:01"),
+    (1.5, "0:01"),
+    (265.5, "4:25"),
+]
+PLACE_LENGTHS = SECTION_LENGTHS[1:]  # 자리 테스트 — 구간은 시작 < 끝이라 길이 0인 구간은 없다
+
+
+class TestSectionClock:
+    """구간 길이 표기 — 1초 미만인 0 아닌 길이만 「0:01」, 1초 이상은 버림 (#550)."""
+
+    @pytest.mark.parametrize(("seconds", "expected"), [*SECTION_LENGTHS, (0.0004, "0:01")])
+    def test_section_clock_shows_short_sections_as_one_second(
+        self, seconds: float, expected: str
+    ) -> None:
+        """section_clock이 1초 미만인 0 아닌 길이만 「0:01」로, 1초 이상은 초 아래를 버려 적어야 한다.
+
+        0 -> "0:00", 0.0004 · 0.2 · 0.999 · 1.0 · 1.5 -> "0:01", 265.5 -> "4:25"
+        """
+        assert card_text.section_clock(seconds) == expected
+
+    def test_clock_still_drops_the_fraction(self) -> None:
+        """구간 길이 밖의 clock은 1초 미만도 버려야 한다.
+
+        0.8 -> "0:00", 265.5 -> "4:25"
+        """
+        assert (card_text.clock(0.8), card_text.clock(265.5)) == ("0:00", "4:25")
+
+
+class TestSectionLengthPlaces:
+    """구간 길이를 적는 자리마다 같은 규칙이다 (#550 — outbox 128의 「바뀌는 자리」 표)."""
+
+    @pytest.mark.parametrize(("length", "expected"), PLACE_LENGTHS)
+    def test_card_info_text(self, length: float, expected: str) -> None:
+        """대기 mp4 구간 카드의 정보 글에서 받을 길이가 규칙대로여야 한다.
+
+        구간 10 ~ 10+길이 하나 -> 정보 글에 「· <표기> · Sections 1」
+        """
+        item = _item(sections=((10.0, 10.0 + length),))
+        assert f" · {expected} · Sections 1" in card_text.info_text(item)
+
+    @pytest.mark.parametrize(("length", "expected"), PLACE_LENGTHS)
+    def test_segment_section_summary(self, length: float, expected: str) -> None:
+        """세그먼트 구간 카드의 구간 요약에서 받을 길이가 규칙대로여야 한다.
+
+        m3u8 · 구간 10 ~ 10+길이 하나 -> 요약 「Sections 1 · <표기>」로 시작
+        """
+        item = _item(content_type="m3u8", sections=((10.0, 10.0 + length),))
+        assert card_text.section_summary(item, with_notice=False, with_size=False) == (
+            f"Sections 1 · {expected}"
+        )
+
+    @pytest.mark.parametrize(("length", "expected"), PLACE_LENGTHS)
+    def test_edit_dialog_section_line(self, length: float, expected: str) -> None:
+        """편집 창 구간 줄의 (길이)가 규칙대로이고 시작 · 끝 시각은 버림이어야 한다.
+
+        구간 10 ~ 10+길이 -> "1. 0:10 ~ <끝 버림> (<표기>)"
+        """
+        end = 10.0 + length
+        item = _item(sections=((10.0, end),))
+        assert card_text.section_lines(item) == [f"1. 0:10 ~ {card_text.clock(end)} ({expected})"]
+
+    @pytest.mark.parametrize(
+        ("length", "span", "total"),
+        [
+            (0.2, "0:01", "0:01"),  # 합 0.4
+            (0.999, "0:01", "0:01"),  # 합 1.998
+            (1.0, "0:01", "0:02"),
+            (1.5, "0:01", "0:03"),
+            (265.5, "4:25", "8:51"),  # 합 531
+        ],
+    )
+    def test_overlap_tooltip(self, length: float, span: str, total: str) -> None:
+        """겹치는 구간 카드 툴팁의 받을 양 · 구간 합이 규칙대로여야 한다.
+
+        같은 구간 10 ~ 10+길이 둘 -> 「To receive: <받을 양>」 · 「Sections add up to <합>」
+        """
+        item = _item(sections=((10.0, 10.0 + length), (10.0, 10.0 + length)))
+        lines = card_text.section_overlap_detail(item)
+        assert lines[:2] == [f"To receive: {span}", f"Sections add up to {total}"]

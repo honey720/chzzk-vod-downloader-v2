@@ -1,4 +1,4 @@
-"""카드 편집 창 — 여는 길 · 한 번에 쓰는 저장 · 취소 · 구간 초안 · 해상도 · 옛 길과 같은 결과 (#545).
+"""카드 편집 창 — 여는 길 · 한 번에 쓰는 저장 · 취소 · 구간 초안 · 해상도 (#545 · #550).
 
 실제 메인 창 배선을 탄다(✎ 버튼 · 카드 더블 클릭 → 목록 → 메인 창 → 편집 창). 네트워크는 타지 않는다 —
 카드의 해상도 크기 조회는 막혀 「확인 중...」으로 남고, 크기가 필요한 테스트는 조회 결과 신호를 직접 낸다.
@@ -6,11 +6,11 @@
 """
 
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 
 import pytest
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
-from PySide6.QtGui import QWheelEvent
+from PySide6.QtGui import QEnterEvent, QWheelEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialogButtonBox, QStyle
 
@@ -20,7 +20,8 @@ from app.views.card_edit_dialog import CardEditDialog
 from app.views.mainWindow import VodDownloader
 from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
-from tests.app.gui.card_helpers import shown
+from app.widgets import tip_bubble
+from tests.app.gui.card_helpers import bubble_text_for, enter, shown, qt_tooltip_shown
 from tests.app.gui.test_section_editor import (  # noqa: F401 — 픽스처는 이름으로 쓴다
     _apply_production_qss,
     _destroy_windows,
@@ -48,10 +49,18 @@ def _window(tmp_path, *items: ContentItem) -> VodDownloader:
     return open_window(tmp_path, *items)
 
 
+def _hover(card) -> None:
+    """카드에 들어감 이벤트를 보낸다 — 카드 버튼은 호버 때만 보인다(#550). 포인터는 옮기지 않는다."""
+    center = QPointF(card.rect().center())
+    QApplication.sendEvent(card, QEnterEvent(center, center, card.mapToGlobal(center)))
+    _pump()
+
+
 def _open(win: VodDownloader, item: ContentItem) -> CardEditDialog:
-    """카드의 ✎를 실제로 눌러 편집 창을 연다."""
+    """카드에 호버해 ✎를 실제로 눌러 편집 창을 연다."""
     card = win.listView.widgetFor(item)
-    assert card.editButton.isVisible(), "전제: 대기 카드에 ✎가 보인다"
+    _hover(card)
+    assert card.editButton.isVisible(), "전제: 호버한 대기 카드에 ✎가 보인다"
     QTest.mouseClick(card.editButton, Qt.MouseButton.LeftButton)
     _pump()
     dialog = win._editDialog
@@ -109,14 +118,15 @@ class TestOpening:
     def test_edit_button_shows_only_on_waiting_cards(
         self, qtbot, tmp_path, state: DownloadState
     ) -> None:
-        """카드의 ✎는 대기 상태에서만 보이고 툴팁이 「Edit」이어야 한다.
+        """호버한 카드의 ✎는 대기 상태에서만 보이고 툴팁이 「Edit」이어야 한다.
 
-        상태 다섯 -> 대기만 ✎ 보임
+        상태 다섯 · 호버 -> 대기만 ✎ 보임
         """
         item = _make_item(str(tmp_path))
         item.downloadState = state
         win = _window(tmp_path, item)
         card = win.listView.widgetFor(item)
+        _hover(card)
         assert card.editButton.isVisible() == (state == DownloadState.WAITING)
         assert card.editButton.toolTip() == "Edit"
 
@@ -132,12 +142,13 @@ class TestOpening:
 
     @pytest.mark.parametrize("state", STATES, ids=IDS)
     def test_double_click_opens_the_dialog_only_on_waiting_cards(
-        self, qtbot, tmp_path, state: DownloadState
+        self, qtbot, tmp_path, monkeypatch, state: DownloadState
     ) -> None:
         """카드 썸네일을 더블 클릭하면 대기 카드만 편집 창이 열려야 한다.
 
-        상태 다섯 -> 대기만 편집 창
+        상태 다섯 -> 대기만 편집 창(완료 카드의 폴더 열기 경고는 기록만 한다)
         """
+        monkeypatch.setattr("app.widgets.widget.QMessageBox.warning", lambda *args: None)
         item = _make_item(str(tmp_path))
         item.downloadState = state
         win = _window(tmp_path, item)
@@ -511,91 +522,6 @@ class TestKeysAndButtons:
         assert face(dialog.saveButton) != face(dialog.cancelButton)
 
 
-# ---- 옛 길과 같은 결과 ----
-
-
-class TestSameResultAsTheOldPaths:
-    """같은 값을 옛 길(카드에서 바로)과 새 창으로 고치면 결과가 같다."""
-
-    def test_title_matches_the_inline_edit(self, qtbot, tmp_path) -> None:
-        """제목을 그 자리 고치기와 편집 창으로 같은 글로 바꾸면 item.title이 같아야 한다.
-
-        카드 A: 제목 클릭 · "NewName" · Enter / 카드 B: 편집 창 "NewName" 저장 -> 둘 다 "NewName"
-        """
-        old = _make_item(str(tmp_path), title="A")
-        new = _make_item(str(tmp_path), title="B")
-        win = _window(tmp_path, old, new)
-        card = win.listView.widgetFor(old)
-        shown(card.titleLabel)
-        QTest.mouseClick(card.titleLabel, Qt.MouseButton.LeftButton)
-        _pump()
-        card.titleEdit.selectAll()
-        QTest.keyClicks(card.titleEdit, "NewName")
-        QTest.keyClick(card.titleEdit, Qt.Key.Key_Return)
-        _pump()
-        dialog = _open(win, new)
-        dialog.nameEdit.setText("NewName")
-        dialog.saveButton.click()
-        _pump()
-        assert old.title == new.title == "NewName"
-
-    def test_save_location_matches_the_card_path(
-        self, qtbot, tmp_path, monkeypatch, folder
-    ) -> None:
-        """저장 위치를 카드의 경로 클릭과 편집 창으로 같은 폴더로 바꾸면 download_path가 같아야 한다.
-
-        같은 폴더 other -> 두 카드의 download_path == other
-        """
-        other = str(tmp_path / "other")
-        os.makedirs(other)
-        old = _make_item(str(tmp_path), title="A")
-        new = _make_item(str(tmp_path), title="B")
-        win = _window(tmp_path, old, new)
-        monkeypatch.setattr(
-            "app.widgets.widget.QFileDialog.getExistingDirectory", lambda *a, **k: other
-        )
-        win.listView.widgetFor(old).pathButton.click()
-        _pump()
-        folder(other)
-        dialog = _open(win, new)
-        dialog.browseButton.click()
-        dialog.saveButton.click()
-        _pump()
-        assert old.download_path == new.download_path == other
-
-    def test_resolution_matches_the_pill(self, qtbot, tmp_path, monkeypatch) -> None:
-        """해상도를 pill과 편집 창으로 같은 항목으로 바꾸면 해상도 · 주소 · 스트림 · 크기 · 다시 맞추기가 같아야 한다.
-
-        구간 1개 카드 둘, 480p로: 카드 A pill 클릭 / 카드 B 편집 창 저장
-        -> (resolution, base_url, total_size) 같음, 두 카드 모두 다시 맞추기 1번, B의 pill도 480p 고름
-        """
-        old = _make_item(str(tmp_path), title="A")
-        new = _make_item(str(tmp_path), title="B")
-        for item in (old, new):
-            item.selections = (TimeRange(60.0, 120.0),)
-        win = _window(tmp_path, old, new)
-        calls: list = []
-        monkeypatch.setattr(win.contentManager, "refitSections", calls.append)
-        old_card = win.listView.widgetFor(old)
-        if old_card.pillMode() == "collapsed":
-            old_card.setExpanded(True)
-            _pump()
-        old_card.buttons[1].click()
-        _pump()
-        dialog = _open(win, new)
-        _pick(dialog, 480)
-        dialog.saveButton.click()
-        _pump()
-        picked = lambda it: (it.resolution, it.base_url, it.total_size, it.resolution_tag)  # noqa: E731
-        assert picked(old) == picked(new)
-        assert calls == [old, new]
-        new_card = win.listView.widgetFor(new)
-        assert new_card.buttons[1].property("selected") is True
-
-
-# ---- 구간 편집 버튼 자리 · 기다림 안내 (inbox 124) ----
-
-
 def _with_sections(item: ContentItem, count: int) -> ContentItem:
     """구간 count개(1분씩, 2분 간격)를 넣는다."""
     item.selections = tuple(TimeRange(120.0 * n, 120.0 * n + 60.0) for n in range(count))
@@ -697,3 +623,52 @@ class TestWaitingHint:
         win.contentManager.removeItem(first)
         _pump()
         assert not dialog.waitHintLabel.isVisible()
+
+
+class TestTipBubbles:
+    """편집 창 · 구간 창의 툴팁은 말풍선으로 바로 뜨고 Qt 기본 툴팁은 뜨지 않는다 (#550 inbox 128)."""
+
+    @pytest.fixture(autouse=True)
+    def _hide_bubble(self) -> Iterator[None]:
+        tip_bubble.hide_tip()
+        yield
+        tip_bubble.hide_tip()
+
+    def test_edit_dialog_path_shows_the_full_path_in_the_bubble(self, qtbot, tmp_path) -> None:
+        """편집 창의 저장 위치 글에 들어가면 전체 경로가 말풍선으로 뜨고 Qt 툴팁은 뜨지 않아야 한다.
+
+        카드 편집 창 · 저장 위치 글 들어감 -> 말풍선 글 = 저장 위치 글의 툴팁(전체 경로), Qt 툴팁 안 뜸
+        """
+        item = _make_item(str(tmp_path))
+        win = _window(tmp_path, item)
+        dialog = _open(win, item)
+        label = dialog.pathLabel
+        assert label.toolTip(), "전제: 저장 위치 글에 툴팁이 있다"
+        enter(label)
+        assert bubble_text_for(label) == label.toolTip()
+        assert not qt_tooltip_shown(label)
+
+    def test_section_dialog_buttons_show_their_tooltips_in_the_bubble(
+        self,
+        qtbot,
+        tmp_path,
+        basis,  # noqa: F811
+    ) -> None:
+        """구간 창의 버튼 · 나중에 만든 행의 버튼에 들어가면 그 툴팁이 말풍선으로 떠야 한다.
+
+        편집 창 → 「구간 편집…」 · 조회 끝 -> 「구간 추가」와 첫 행 ✕에 들어가면 각자 툴팁이 말풍선, Qt 툴팁 안 뜸
+        """
+        item = _make_item(str(tmp_path))
+        win = _window(tmp_path, item)
+        dialog = _open(win, item)
+        dialog.sectionButton.click()
+        _pump()
+        sections = dialog.sectionDialog
+        assert sections is not None, "전제: 구간 창이 열렸다"
+        qtbot.waitUntil(lambda: sections.viewModel().state != "loading", timeout=3000)
+        _pump()
+        for widget in (sections.addButton, sections._rows[0].deleteButton):
+            assert widget.toolTip(), f"전제: {widget.objectName()}에 툴팁이 있다"
+            enter(widget)
+            assert bubble_text_for(widget) == widget.toolTip()
+            assert not qt_tooltip_shown(widget)

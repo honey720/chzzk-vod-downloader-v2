@@ -44,9 +44,12 @@ class SlotTexts:
     None인 칸은 위젯이 지금 글을 그대로 둔다(실패 카드의 크기 글은 숨겨져 바꾸지 않는다).
     """
 
-    status: str  # 상태 글(대기 카드에서도 값은 둔다 — 라벨은 pill에 자리를 내주고 숨는다)
-    size: str | None  # 크기 · 구간 요약 글. None이면 바꾸지 않는다
-    status_tip: str | None = None  # 상태 글의 툴팁. None이면 라벨 기본(글 그대로)
+    status: str  # 상태 글
+    size: str | None  # 오른쪽 정보 글(해상도 · 크기 · 길이 · 구간). None이면 바꾸지 않는다
+    status_tip: str | None = None  # 상태 글의 툴팁. None이면 라벨 기본(잘렸을 때만 글 그대로)
+    icon: str = (
+        ""  # 상태 원 아이콘 — "down"(받는 중) · "pause" · "ok" · "err", 없으면 ""(대기 · 조회 중)
+    )
 
 
 def short_time(remain: str) -> str:
@@ -86,6 +89,22 @@ def clock(seconds: float) -> str:
     return short_time(clock_text(whole))
 
 
+def section_clock(seconds: float) -> str:
+    """구간 길이를 짧은 시간 표기로 적는다 — 1초 미만인 0 아닌 길이만 「0:01」이다(#550 오너 2026-11-09).
+
+    1초보다 짧은 구간이 「0:00」으로 보이면 비어 있는 구간으로 읽힌다. 그래서 0보다 길고 1초보다
+    짧으면 「0:01」로 적는다. 1초 이상은 `clock`처럼 초 아래를 버린다 — 시작 · 끝 시각이 버림이라 길이만
+    올리면 「0:10 ~ 0:14 (0:05)」처럼 앞뒤가 맞지 않게 보인다. 구간 길이를 적는 자리(카드 정보 글 ·
+    툴팁 · 편집 창 요약)에만 쓴다.
+
+    실수 오차를 따로 다루지 않는다 — 1초 이상은 버림이라 오차가 1초를 더하지 않고, 구간은 시작 < 끝
+    (`TimeRange`)이라 길이가 0보다 크다(실제로는 한 프레임 이상).
+    """
+    if seconds <= 0:
+        return clock(0)
+    return clock(max(seconds, 1.0))
+
+
 # ---- 해상도 ----
 
 
@@ -121,12 +140,12 @@ def resolution_text(item: ContentItem) -> str:
 
 
 def with_resolution(item: ContentItem, text: str) -> str:
-    """확정 해상도를 크기 앞에 붙인다 — "1080p · 595.34 MB" (#245).
+    """고른 해상도를 정보 글 앞에 붙인다 — "1080p · 595.34 MB" (#245).
 
-    대기에서는 pill이 선택을 보여주므로 붙이지 않는다(중복). 해상도가
-    아직 없으면(조회 중 자리표시 등) 크기만 돌려준다.
+    대기 카드에도 붙인다 — 해상도는 카드에서 표시만 하고 바꾸기는 카드 편집 창에서 한다(#550,
+    설계 §12.1). 해상도가 아직 없으면(조회 중 자리표시 등) 글만 돌려준다.
     """
-    if not item.resolution or item.downloadState == DownloadState.WAITING:
+    if not item.resolution:
         return text
     shown_resolution = resolution_text(item)
     return f"{shown_resolution} · {text}" if text else shown_resolution
@@ -193,10 +212,10 @@ def section_overlap_detail(item: ContentItem) -> list[str]:
         return []
     return [
         QCoreApplication.translate("ContentItemWidget", "To receive: {0}").format(
-            clock(section_span(item))
+            section_clock(section_span(item))
         ),
         QCoreApplication.translate("ContentItemWidget", "Sections add up to {0}").format(
-            clock(section_total(item))
+            section_clock(section_total(item))
         ),
         QCoreApplication.translate("ContentItemWidget", "Overlapping parts are received once"),
     ]
@@ -340,7 +359,7 @@ def section_summary(
     if item.is_segment_based:
         # 길이는 받을 양이다 — 겹치는 자리는 한 번만 받으므로 합친 범위의 길이를 적는다.
         # 겹침이 없으면 구간 길이의 합과 같다
-        span = clock(section_span(item))
+        span = section_clock(section_span(item))
         if marker:
             span = f"{marker} · {span}"  # f-string 안의 tr은 lupdate가 줍지 못한다
         summary = QCoreApplication.translate("ContentItemWidget", "Sections {0} · {1}").format(
@@ -365,7 +384,7 @@ def section_lines(item: ContentItem) -> list[str]:
     시각은 남은 시간과 같은 짧은 표기다(초 밑은 버린다 — 정확한 값은 구간 창에 있다).
     """
     return [
-        f"{number}. {clock(s.start)} ~ {clock(s.end)} ({clock(max(s.end - s.start, 0.0))})"
+        f"{number}. {clock(s.start)} ~ {clock(s.end)} ({section_clock(max(s.end - s.start, 0.0))})"
         for number, s in enumerate(item.selections, 1)
     ]
 
@@ -526,16 +545,74 @@ def open_target(item: ContentItem) -> str:
     return item.output_path
 
 
+def upload_date_text(item: ContentItem) -> str:
+    """업로드 날짜를 연도까지 적는다 — 「2026. 10. 26.」(카드 1줄 · 편집 창 머리 줄, #550).
+
+    모르는 꼴이면 빈 글이다.
+    """
+    head = str(getattr(item, "live_open_date", "") or "")[:10]
+    parts = head.split("-")
+    if len(parts) == 3 and all(p.isdigit() for p in parts):
+        return f"{parts[0]}. {parts[1]}. {parts[2]}."
+    return ""
+
+
+def _joined(*parts: str) -> str:
+    """비지 않은 조각을 「 · 」로 잇는다."""
+    return " · ".join(part for part in parts if part)
+
+
+def info_text(item: ContentItem, with_notice: bool = True, with_total: bool = True) -> str:
+    """카드 3줄 오른쪽 정보 — 해상도 · 크기 · 길이 · 구간 수(+ 구간 알림) (#550, 설계 §12.1 카드 배치).
+
+    - 구간 카드: 크기는 구간 파일 크기의 합(추정), 길이는 받을 양(합친 범위), 「구간 N」(겹치면
+      「· 겹침」), 다시 맞춘 알림이 있으면 그 뒤에
+    - 받는 중 · 일시정지: 크기 자리가 「받은 / 전체」(받을 크기를 모르면 받은 크기만)
+    - 완료: 저장된 파일 크기
+    - 대기: 조회한 크기(세그먼트 방식은 미리 알 수 없어 비움)
+    길이는 영상 길이(구간 카드는 받을 양)다. 모르면 비운다(#515).
+
+    Args:
+        with_notice: 거짓이면 구간 알림을 뗀다 — 폭이 모자랄 때 가장 먼저 양보한다(#309)
+        with_total: 거짓이면 받는 중 · 일시정지의 「/ 전체」를 뗀다 — 알림 다음으로 양보한다(#309)
+    """
+    state = item.downloadState
+    if section_count(item):
+        if state in (DownloadState.RUNNING, DownloadState.PAUSED):
+            size = received_size_text(item, with_total)
+        elif state == DownloadState.FINISHED:
+            size = finished_size_text(item)
+        else:
+            size = section_size_note(item)
+        marker = (
+            QCoreApplication.translate("ContentItemWidget", "overlap")
+            if sections_overlap(item)
+            else ""
+        )
+        sections = QCoreApplication.translate("ContentItemWidget", "Sections {0}").format(
+            section_count(item)
+        )
+        notice = section_notice(item) if with_notice and state == DownloadState.WAITING else ""
+        return with_resolution(
+            item, _joined(size, section_clock(section_span(item)), sections, marker, notice)
+        )
+    if state in (DownloadState.RUNNING, DownloadState.PAUSED):
+        return with_resolution(item, received_size_text(item, with_total))
+    length = (
+        clock(item.duration) if item.duration else ""
+    )  # 남은 시간과 같은 짧은 꼴(#515 — 모르면 비움)
+    if state == DownloadState.FINISHED:
+        return with_resolution(item, _joined(finished_size_text(item), length))
+    size = "" if item.is_segment_based else f"{item.total_size or ''}"
+    return with_resolution(item, _joined(size, length))
+
+
 def slot_texts(item: ContentItem) -> SlotTexts:
-    """카드 3줄의 상태 글 · 크기 글 · 상태 툴팁 — 상태마다 다르다 (#245).
+    """카드 3줄의 상태 글 · 정보 글 · 상태 툴팁 · 상태 원 아이콘 — 상태마다 다르다 (#245 · #550).
 
-    유저가 알고 싶은 것은 상태마다 다르다 — 대기 "어느 화질로?"(pill),
-    진행 "얼마나?"(%·속도·남은시간), 일시정지 "어디까지 받고 멈췄나?"
-    (%·일시정지됨), 완료 "어디에?"(✓ 완료 + 폴더 버튼), 실패 "왜?"(✕ 사유).
-
-    3행 우측(파일 크기)에는 pill이 사라진 뒤(대기 이후)부터 **확정된
-    해상도**를 함께 적는다 — "1080p · 595.34 MB". 같은 자리에 붙이므로
-    행이 늘지 않는다.
+    상태 글은 진행률이 앞, 상태 단어가 그 뒤다(「37% · 받는 중 · 18.4 MB/s · 6:00 남음」) — 상태가
+    바뀌어도 진행률 자리가 흔들리지 않는다(#245, 설계 §12.1 카드 글 · 초점). 완료 · 실패 표시는 글
+    머리 글자 대신 상태 원 아이콘(↓ ‖ ✓ ✕, 상태 색)이 맡는다.
 
     ⚠️ 번역 호출은 f-string 밖에 둔다 — pyside6-lupdate는 f-string 중괄호 안의 번역 호출을
     못 읽어 -no-obsolete 재생성에서 항목이 지워진다(실측).
@@ -547,86 +624,64 @@ def slot_texts(item: ContentItem) -> SlotTexts:
         )
 
     if state == DownloadState.WAITING:
-        # 슬롯은 해상도 pill이 차지한다 — statusLabel은 숨겨지지만
-        # 값은 유지한다(테스트·툴팁 등 텍스트 조회 경로 보존)
         status = QCoreApplication.translate("ContentItemWidget", "Download waiting")
-        if section_count(item):
-            # 구간 다운로드는 재생 시간 자리에 구간 요약을 적는다 (#309)
-            return SlotTexts(status, section_summary(item))
-        if item.is_segment_based:
-            # 길이를 모르면 칸을 비운다(#515) — 응답의 길이가 null이면 None, 키가 없으면 0이다
-            return SlotTexts(status, clock_text(item.duration or None))
-        return SlotTexts(status, f"{item.total_size}")
+        return SlotTexts(status, info_text(item))
 
     if state == DownloadState.RUNNING:
         if is_preparing(item):
             # 엔진이 받을 것을 정하는 중 (#309) — 진행률 · 속도가 아직 없다. 막대는 값 없이 움직인다
             status = QCoreApplication.translate("ContentItemWidget", "Preparing")
         elif section_count(item) and item.post_process:
-            # 구간을 자르는 단계 (#309) — 속도 · 남은 시간은 뜻이 없어 적지 않고 단계
-            # 문구를 적는다. 막대는 전송과 컷을 합친 하나다.
-            # 자르기 전에 받은 세그먼트의 프레임 정보를 읽는 동안은 준비 중임을 적는다 —
-            # 세그먼트가 많으면 그 시간이 길다
+            # 구간을 자르는 단계 (#309) — 속도 · 남은 시간은 뜻이 없어 적지 않는다. 자르기 전에
+            # 받은 세그먼트의 프레임 정보를 읽는 동안은 준비 중임을 적는다
             if getattr(item, "cut_preparing", False):
                 cutting_text = QCoreApplication.translate("ContentItemWidget", "Preparing to cut")
             else:
                 cutting_text = QCoreApplication.translate("ContentItemWidget", "Cutting")
             status = f"{item.download_progress}% · {cutting_text}{section_tally(item)}"
         elif item.is_segment_based and item.post_process:
-            # "13% · 후처리 중" — 후처리 진행률(download_progress는 후처리에서
-            # 0부터 다시 차오른다)을 **앞에** 둔다. 전송 "42% · …"·일시정지
-            # "13% · 일시정지됨"과 자리를 맞춰 상태가 바뀌어도 퍼센트 위치가
-            # 흔들리지 않게(#245)
+            # 후처리 진행률(download_progress는 후처리에서 0부터 다시 차오른다)도 앞에 둔다
             postprocess_text = QCoreApplication.translate("ContentItemWidget", "Post-processing")
             status = f"{item.download_progress}% · {postprocess_text}"
         else:
+            receiving_text = QCoreApplication.translate("ContentItemWidget", "Downloading")
             remain = short_time(item.download_remain_time)
             status = (
-                f"{item.download_progress}% · {item.download_speed} · "
+                f"{item.download_progress}% · {receiving_text} · {item.download_speed} · "
                 + QCoreApplication.translate("ContentItemWidget", "{0} left").format(remain)
                 + section_tally(item)
             )
-        return SlotTexts(status, with_resolution(item, received_size_text(item)))
+        return SlotTexts(status, info_text(item), icon="down")
 
     if state == DownloadState.PAUSED:
-        # 진행분이 먼저, 상태가 뒤 — "54% · 일시정지됨". 진행 슬롯과 같은
-        # 자리에서 숫자가 그대로 이어지고, 뒤 문구만 바뀐다.
+        # 진행분이 먼저, 상태가 뒤 — "54% · 일시정지됨"
         paused_text = QCoreApplication.translate("ContentItemWidget", "Paused")
         if getattr(item, "prepare_pending", False):
-            # 준비 중에 일시정지했다 (#309) — 아직 받은 것이 없어 진행률을 적지 않는다.
-            # 준비가 끝나면 받기를 띄우지 않고 일시정지 상태로 서고, 그때부터 "0% · …"다
+            # 준비 중에 일시정지했다 (#309) — 아직 받은 것이 없어 진행률을 적지 않는다
             status = paused_text
         else:
             status = f"{item.download_progress}% · {paused_text}{section_tally(item)}"
-        return SlotTexts(status, with_resolution(item, received_size_text(item)))
+        return SlotTexts(status, info_text(item), icon="pause")
 
     if state == DownloadState.FINISHED:
-        # "✓ 완료 · 2:12" — 소요 시간은 진행 중의 남은 시간과 같은 짧은
-        # 포맷(#245). 값은 viewmodel(app/viewmodels/download_viewmodel.py)이 엔진의
-        # start_time~end_time으로 만든 "HH:MM:SS"이고, end_time은 후처리가
-        # 끝난 뒤 찍히므로 유저가 체감하는 전체(로그의 "Download completed")다.
-        # 값이 없으면(앱 재시작 복원 등) 시간 없이 "✓ 완료"만.
-        completed = (
-            f"{STATE_ICON['finished']} "
-            + QCoreApplication.translate("ContentItemWidget", "Completed")
-            + section_tally(item)
+        # "완료 · 2:12" — 소요 시간은 진행 중의 남은 시간과 같은 짧은 포맷(#245). 값은 엔진의
+        # start_time~end_time으로 만든 "HH:MM:SS"이고, 값이 없으면(앱 재시작 복원 등) 시간 없이
+        completed = QCoreApplication.translate("ContentItemWidget", "Completed") + section_tally(
+            item
         )
         elapsed = short_time(item.download_time) if item.download_time else ""
         status = f"{completed} · {elapsed}" if elapsed else completed
-        return SlotTexts(status, with_resolution(item, finished_size_text(item)))
+        return SlotTexts(status, info_text(item), icon="ok")
 
     # 실패 — 사유(stateMessage)는 키 기반 매핑을 거친 번역 문자열만 온다. 매핑 밖 예외는
-    # 사유가 비어 온다. SPEC §5의 "str(e) 폴백 없음"은 내부 정보(원시 HTTP 오류·경로) 노출을
-    # 막기 위한 것이지 침묵이 아니다 — 틀린 문구도 없는 문구도 진단을 막는다(#183 교훈). 틀리지
-    # 않으면서 다음 행동(로그 폴더 열기 #181)을 주는 안내를 띄운다(#245).
+    # 사유가 비어 온다 — 틀리지 않으면서 다음 행동(로그 폴더 열기 #181)을 주는 안내를 띄운다(#245).
     reason = getattr(item, "stateMessage", "")
     text = (
         reason
         if reason
         else QCoreApplication.translate("ContentItemWidget", "Unknown error - check the log")
     )
-    # 사유 문구는 **첫 줄이 핵심 한 줄**(무엇을 해야 하는지 포함), 둘째 줄부터는 상세다 —
-    # 번역 문자열이 줄바꿈으로 나눈다. 3행에는 첫 줄만 올리고 전문은 툴팁으로(#245).
+    # 사유 문구는 첫 줄이 핵심 한 줄, 둘째 줄부터는 상세다 — 3행에는 첫 줄만, 전문은 툴팁으로(#245)
     headline = text.splitlines()[0] if text else text
     failed_sections = getattr(item, "sections_failed", 0)
     if section_count(item) >= 2 and failed_sections:
@@ -635,4 +690,4 @@ def slot_texts(item: ContentItem) -> SlotTexts:
             failed_sections
         ) + section_tally(item)
         headline = f"{tally} · {headline}"
-    return SlotTexts(f"{STATE_ICON['failed']} {headline}", None, text)
+    return SlotTexts(headline, None, text, icon="err")

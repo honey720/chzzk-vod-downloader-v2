@@ -109,35 +109,24 @@ QLabel#thumbnailLabel {
     font-size: @fontSizeMeta;
 }
 
-/* ---- 카드 글자 위계(#244 재설계) — 위에서 아래로 무게가 내려간다 ----
- * 제목(크고 밝음) > 채널명(작고 굵음) > 상태(작음·상태색) >
- * 종류·크기(작음·muted) > 경로(가장 작음·muted).
- * 값은 전부 theme.py FONTS 토큰 — 숫자만 바꾸면 앱 전체가 따라온다. */
+/* ---- 카드 글자(#550 — 설계 §11.4 「크기 둘 14 · 12」) ----
+ * 제목만 14 굵게, 나머지(채널명 · 날짜 · 상태 · 저장 위치 · 정보)는 12. 채널명 · 날짜 · 저장 위치 ·
+ * 정보는 회색, 상태 글은 상태색. 값은 전부 theme.py 토큰이다. */
 
-#titleLabel,
-#titleEdit {
+#titleLabel {
     font-size: @fontSizeTitle;
+    font-weight: 700;
     color: @text;
 }
 
-/* 제목은 클릭하면 편집된다(파일명이 된다) — 호버에서 편집 가능하다는
- * 힌트를 준다(#245). 편집은 **대기 상태에서만** 성립하므로(받기 시작하면
- * 이미 그 이름으로 쓰고 있다) 힌트도 대기에서만 — `editable`은
- * content/widget.py::applyStateStyle이 상태에 맞춰 심는다. 대기가 아닌데
- * 강조가 뜨면 클릭이 안 되는 것을 된다고 말하는 셈이다(#244 3행 정리).
- * 커서(IBeam↔화살표)도 같은 곳이 건다. */
-#titleLabel[editable="true"]:hover {
-    color: @accent;
+#channelNameLabel,
+#dateLabel,
+#directoryLabel {
+    font-size: @fontSizeMeta;
+    color: @textMuted;
 }
 
-#channelNameLabel {
-    font-size: @fontSizeChannel;
-    font-weight: @channelWeight;
-    color: @text;
-}
-
-/* 3행 상태 슬롯 텍스트(#245) — 진행 %·속도·남은시간 / ✓ 완료 / ✕ 사유.
- * `state` 동적 속성은 content/widget.py::applyStateStyle이 건다
+/* 3줄 상태 글(#245 · #550) — `state` 동적 속성은 app/widgets/widget.py::applyStateStyle이 건다
  * (진행바와 같은 패턴). */
 #statusLabel {
     font-size: @fontSizeMeta;
@@ -155,26 +144,6 @@ QLabel#thumbnailLabel {
     color: @textMuted;
 }
 
-/* 대기 카드에서는 이 자리(재생 시간 · 파일 크기 · 구간 요약)를 누르면 구간 편집 창이
- * 열린다(#309). 제목과 같은 규칙이다 — 누를 수 있을 때만 호버에서 알린다. `editable`은
- * app/widgets/widget.py::_applySectionHint가 상태에 맞춰 심는다. */
-#fileSizeLabel[editable="true"]:hover {
-    color: @accent;
-}
-
-#directoryLabel,
-#directoryEdit {
-    font-size: @fontSizePath;
-    color: @textMuted;
-}
-
-/* 경로 글자는 대기 카드에서만 누를 수 있다(저장 폴더 바꾸기) — 구간 요약 · 제목과 같은
- * 규칙으로 그때만 호버에서 알린다(#309). `editable`은 app/widgets/widget.py::
- * _applyEditability가 상태에 맞춰 심는다. */
-#directoryLabel[editable="true"]:hover {
-    color: @accent;
-}
-
 /* 카드 테두리 — 항상 중립색이다(#244). 상태는 상태 아이콘·상태 텍스트·
  * (진행분이 있을 때 — 진행·일시정지 — 보이는) 하단 진행바가 알린다 — 카드 프레임 자체는
  * state 동적 속성을 안 본다.
@@ -189,6 +158,17 @@ QLabel#thumbnailLabel {
     border: 1px solid @border;
     border-radius: @cardRadius;
     padding: 0px;
+}
+
+/* 카드 호버 — 바탕 한 단계(#550). `hover`는 app/widgets/widget.py::setHovered가 심는다 — QSS
+ * :hover는 목록이 바뀐 뒤 포인터 밑 카드를 다시 맞출 수 없다(app/widgets/view.py::_rehover) */
+#contentFrame[hover="true"] {
+    background-color: @cardHoverBg;
+}
+
+/* 키보드 초점 — 테두리만 강조색(#550). 마우스로는 초점을 받지 않는다(TabFocus) */
+#contentFrame[keyFocus="true"] {
+    border-color: @accent;
 }
 
 /* 카드 조작 아이콘(일시정지·재개·재시도·폴더·삭제)의 도형 색은 QSS가 아니라
@@ -266,7 +246,7 @@ QPushButton[role="primary"]:disabled {
     border-color: @border;
 }
 
-/* 아이콘 버튼(조작·삭제) — iconSize 정사각 고정이라 여백을 0으로 되돌려야
+/* 아이콘 버튼(조작·삭제) — cardButton 정사각 고정이라 여백을 0으로 되돌려야
  * 도형이 안 잘린다. `role`은 app/widgets/contentItemWidget.py가 동적 속성으로 심는다. */
 QPushButton[role="icon"] {
     padding: 0px;
@@ -331,42 +311,6 @@ QToolButton[role="drop"]:disabled {
 QToolButton[role="drop"]::menu-indicator {
     image: none;
     width: 0px;
-}
-
-/* 해상도(#244 재설계) — 선택된 것만 채워진 pill, 나머지는 배경·테두리
- * 없는 muted 텍스트다(전부 외곽선 pill이던 이전 모습은 줄 전체가
- * 버튼 무더기로 보였다). `role`·`selected`·`caret`는 content/pill.py가 심는다.
- * 평소엔 선택 pill 하나만 `[1080p ▾]`로 접혀 있고 누르면 그 자리에서
- * 펼쳐진다(#244 3행 정리 — content/widget.py::setExpanded).
- * 선택 = `[selected="true"]` (이전의 `:disabled`는 접힌 pill을 누를 수
- * 없게 하므로 폐기 — 선택 pill도 활성이다). */
-QPushButton[role="resolution"] {
-    padding: 0px 8px;
-    border: none;
-    background-color: transparent;
-    border-radius: @pillRadius;
-    color: @textMuted;
-    font-size: @fontSizeMeta;
-    /* 본 글자는 왼쪽에 붙인다 — 보조 글자("60fps")가 있으면 그 오른쪽에
-     * content/pill.py::paintEvent가 그린다(#318). 보조 글자가 없는 pill은 폭이
-     * 글자에 딱 맞아 가운데 정렬과 같은 자리다. */
-    text-align: left;
-}
-
-/* 접힘 표시(▾) 자리 — 8(가장자리) + 8(도형) + 4(글자와의 간격). 도형은
- * content/pill.py::paintEvent가 이 padding 안에 그린다. */
-QPushButton[role="resolution"][caret="true"] {
-    padding-right: 20px;
-}
-
-QPushButton[role="resolution"]:hover {
-    color: @text;
-    background-color: @surfaceHover;
-}
-
-QPushButton[role="resolution"][selected="true"] {
-    background-color: @accent;
-    color: @onAccent;
 }
 
 /* 부차 조작(완료된 VOD 삭제 등) — 주요 버튼과 같은 무게로 두지 않는다

@@ -131,9 +131,9 @@ class TestDownloadItemWriteGate:
         assert item.stateMessage.startswith("Failed to save file · check the path and disk space\n")
         assert finished_all == [True]  # 배치는 종료 신호까지 간다
         widget = view.widgetFor(item)
-        # #245 상태별 슬롯: 실패 카드의 3행은 "✕ 사유 첫 줄"이다 — 사유가 있으면
-        # "Download failed" 접두 없이 사유만, 상세(둘째 줄)는 툴팁으로
-        assert widget.statusLabel.text() == "✕ Failed to save file · check the path and disk space"
+        # #245 상태별 슬롯: 실패 카드의 3행은 사유 첫 줄이다(#550 「✕」 머리는 상태 아이콘이 맡는다)
+        # — 사유가 있으면 "Download failed" 접두 없이 사유만, 상세(둘째 줄)는 툴팁으로
+        assert widget.statusLabel.text() == "Failed to save file · check the path and disk space"
         assert widget.statusLabel.toolTip() == item.stateMessage
 
     def test_timeout_probe_fails_the_same_way(self, manager, qapp, tmp_path, monkeypatch) -> None:

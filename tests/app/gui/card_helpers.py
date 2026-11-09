@@ -14,7 +14,9 @@
 쓰지 못하게 한다. 폭은 절대 px가 아니라 카드 자체 기하로 유도한 값을 넣는다.
 """
 
-from PySide6.QtWidgets import QApplication, QLabel, QStyle, QWidget
+from PySide6.QtCore import QEvent, QPoint, QPointF
+from PySide6.QtGui import QEnterEvent, QHelpEvent
+from PySide6.QtWidgets import QApplication, QLabel, QStyle, QToolTip, QWidget
 
 
 def resize_to(widget: QWidget, width: int) -> None:
@@ -97,3 +99,40 @@ def drop_new_top_levels(before: set) -> None:
         QApplication.processEvents()
     gc.collect()
     QApplication.processEvents()
+
+
+def enter(widget: QWidget) -> None:
+    """위젯에 들어감 이벤트를 보낸다(포인터는 옮기지 않는다 — safety 규칙)."""
+    center = QPointF(widget.rect().center())
+    QApplication.sendEvent(widget, QEnterEvent(center, center, widget.mapToGlobal(center)))
+    QApplication.processEvents()
+
+
+TOOLTIP_SENTINEL = "⁣tooltip-sentinel"  # Qt 툴팁에 미리 넣는 글 — 위젯 툴팁과 겹치지 않는다
+
+
+def qt_tooltip_shown(widget: QWidget) -> bool:
+    """위젯에 Qt 툴팁 이벤트를 보내 Qt 기본 툴팁(`QToolTip`)이 그 위젯의 글로 떴는지 돌려준다.
+
+    말풍선 필터(`TipFilter`)는 툴팁 글이 있으면 툴팁 이벤트를 삼킨다 — 그러면 `QToolTip.showText`가
+    불리지 않는다. 실제 화면(Windows)은 툴팁을 잠깐 뒤에 보이므로 보임이 아니라 글로 잰다: 먼저
+    `TOOLTIP_SENTINEL`을 띄워 두고, 이벤트 뒤 Qt 툴팁의 글이 위젯 툴팁으로 바뀌었는지 본다.
+    """
+    QToolTip.showText(widget.mapToGlobal(QPoint(0, 0)), TOOLTIP_SENTINEL)
+    point = QPoint(2, 2)
+    event = QHelpEvent(QEvent.Type.ToolTip, point, widget.mapToGlobal(point))
+    QApplication.sendEvent(widget, event)
+    QApplication.processEvents()
+    shown = bool(widget.toolTip()) and QToolTip.text() == widget.toolTip()
+    QToolTip.hideText()
+    return shown
+
+
+def bubble_text_for(widget: QWidget) -> str | None:
+    """지금 말풍선이 `widget`에 떠 있으면 그 글, 아니면 None."""
+    from app.widgets import tip_bubble
+
+    bubble = tip_bubble.current_bubble()
+    if bubble is None or not bubble.isVisible() or bubble.target is not widget:
+        return None
+    return bubble.text

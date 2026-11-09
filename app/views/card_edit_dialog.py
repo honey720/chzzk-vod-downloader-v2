@@ -42,6 +42,7 @@ from app.viewmodels.data import ContentItem
 from app.viewmodels.section_edit import SectionEditViewModel, keep_section_head
 from app.views.section_dialog import SectionEditDialog
 from app.widgets.eliding_label import ElidingLabel, PathLabel
+from app.widgets.tip_bubble import install_tips
 from app.widgets.widget import path_display_parts
 from core.media.representations import file_tag
 from core.models.download_state import DownloadState
@@ -75,15 +76,6 @@ class _WheelGuard(QObject):
             event.ignore()
             return True
         return False
-
-
-def _upload_date(item: ContentItem) -> str:
-    """머리 줄의 업로드 날짜 — 「2026. 10. 26.」. 모르는 꼴이면 빈 글이다."""
-    head = str(getattr(item, "live_open_date", "") or "")[:10]
-    parts = head.split("-")
-    if len(parts) == 3 and all(p.isdigit() for p in parts):
-        return f"{parts[0]}. {parts[1]}. {parts[2]}."
-    return ""
 
 
 class CardEditDialog(QDialog):
@@ -125,6 +117,8 @@ class CardEditDialog(QDialog):
         self._refreshTail()
         self._refreshSections()
         self._refreshPath()
+        # 툴팁은 모두 말풍선(0ms)으로 뜬다 — 창의 위젯마다 필터를 건다(설계 §12.1 「툴팁」, #550)
+        install_tips(self)
 
     # ---- 조립 ----
 
@@ -265,10 +259,16 @@ class CardEditDialog(QDialog):
         return f"{text} · {size}" if size else text
 
     def _pickedIndex(self) -> int:
-        """카드가 지금 고른 해상도의 목록 번호. 없으면 -1."""
+        """카드가 지금 고른 해상도의 목록 번호. 없으면 -1.
+
+        해상도 · 주소 · 스트림으로 찾는다 — 세그먼트 목록(m3u8)은 항목마다 주소가 비어 있어, 해상도 ·
+        주소만 보면 같은 해상도의 다른 스트림(원본 · 60fps)을 가르지 못한다. 카드의
+        `syncPickedResolution`과 같은 기준이다(#550).
+        """
         item = self._item
+        picked = (item.resolution, item.base_url, getattr(item, "stream", None))
         for index, rep in enumerate(item.unique_reps):
-            if rep[0] == item.resolution and rep[1] == item.base_url:
+            if (rep[0], rep[1], getattr(rep, "stream", None)) == picked:
                 return index
         return -1
 
@@ -300,7 +300,7 @@ class CardEditDialog(QDialog):
         """머리 줄 — 「채널 · 업로드 날짜 · 고른 해상도」. 해상도는 드롭다운에서 고른 것이다."""
         rep = self._chosenRep()
         resolution = card_text.rep_label(rep) if rep is not None else ""
-        meta = [self._item.channel_name, _upload_date(self._item), resolution]
+        meta = [self._item.channel_name, card_text.upload_date_text(self._item), resolution]
         self.metaLabel.setText(" · ".join(part for part in meta if part))
 
     # ---- 파일명 꼬리 · 구간 · 저장 위치 표시 ----

@@ -1,13 +1,13 @@
-"""저장 경로 행위 로깅·카드 편집 피드백 검증 (#148 — #146 감사 ③).
+"""저장 경로 행위 로깅 검증 (#148 — #146 감사 ③).
 
 시작 전 관문에서 막힌 경로 실패는 지금까지 로그가 전혀 없어 제보를 로그로
-진단할 수 없었고, 카드 경로 편집의 거부는 유저 피드백도 없었다. 경로는
+진단할 수 없었다. 경로는
 repr로 남긴다 — U+00A0(NBSP) 같은 공백 유사 문자는 그냥 찍으면 U+0020과
 육안 구분되지 않는다(#144 실측). repr 검증도 NBSP 경로로 한다: 로그 문자열에
 이스케이프("\\xa0")가 실제로 나타나야 한다.
 
-배선은 실제 시그널 연결을 태운다 (#125 교훈) — 카드 편집은 editingFinished
-시그널로, 조회 관문은 fetchButton.click()으로 진입한다.
+배선은 실제 시그널 연결을 태운다 (#125 교훈) — 조회 관문은 fetchButton.click()으로
+진입한다. 카드에서 저장 위치를 고르는 길은 없어졌다(#550 — 카드 편집 창이 한다).
 """
 
 from collections.abc import Iterator
@@ -15,7 +15,6 @@ from collections.abc import Iterator
 import pytest
 
 import app.viewmodels.content_viewmodel as cvm_mod
-import app.widgets.widget as widget_mod
 from app.viewmodels.data import ContentItem
 from app.viewmodels.content_viewmodel import ContentViewModel
 from app.widgets.view import ContentListView
@@ -108,75 +107,6 @@ class TestDownloadGateLogging:
 
         assert "쓰기 프로브 실패(denied)" in caplog.text
         assert "\\xa0" in caplog.text
-
-
-# ================================================================ 카드 경로 편집
-
-
-class TestCardPathPickerFeedback:
-    """카드 경로 변경은 인라인 편집에서 **폴더 선택 대화상자**로 교체됐다(#245).
-
-    #146 이관 ④("카드 경로 편집 거부 안내")는 이 교체로 해소됐다 — 손 입력에
-    존재 검증이 필요해 생긴 문제였고, 팝업이 editingFinished(포커스 이탈
-    포함)에 걸려 입력을 포기한 유저에게도 떴다. 폴더 선택은 존재하는 폴더만
-    고르므로 검증·거부 안내·중복 팝업 가드가 전부 필요 없다. 그래서 거부·
-    중복 시나리오 테스트(reject / twice)는 대응하는 코드 경로와 함께 제거했고,
-    "변경이 INFO로 남는다"(#148의 살아있는 절반)만 폴더 선택 배선으로 잰다.
-    """
-
-    def _widget(
-        self, manager, qapp, path
-    ) -> tuple[ContentItem, widget_mod.ContentItemWidget | None]:
-        m, view = manager
-        item = _make_item(path)
-        m.model.addItem(item)
-        qapp.processEvents()
-        return item, view.widgetFor(item)
-
-    def test_pick_updates_and_logs(self, manager, qapp, tmp_path, caplog, monkeypatch) -> None:
-        """고른 폴더(공백 포함)는 반영되고 INFO로 남는다 — 대화상자는 막고 반환값 주입."""
-        item, widget = self._widget(manager, qapp, str(tmp_path))
-        new_dir = tmp_path / "space dir"
-        new_dir.mkdir()
-        monkeypatch.setattr(
-            widget_mod.QFileDialog,
-            "getExistingDirectory",
-            staticmethod(lambda parent, caption, start, *a, **k: str(new_dir)),
-        )
-
-        with caplog.at_level("INFO", logger="app.widgets.widget"):
-            widget.choosePath(None)
-
-        assert item.download_path == str(new_dir)
-        assert "카드 저장 경로 변경" in caplog.text
-
-    def test_cancel_changes_nothing_and_shows_no_popup(
-        self, manager, qapp, tmp_path, caplog, monkeypatch
-    ) -> None:
-        """취소(빈 반환)는 무변경·무안내 — 입력을 포기한 유저에게 팝업이 뜨던 결함의 반대 증명."""
-        item, widget = self._widget(manager, qapp, str(tmp_path))
-        warnings = []
-        monkeypatch.setattr(
-            widget_mod.QMessageBox,
-            "warning",
-            lambda parent, title, text, *a, **k: warnings.append(text),
-        )
-        monkeypatch.setattr(
-            widget_mod.QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: "")
-        )
-
-        with caplog.at_level("INFO", logger="app.widgets.widget"):
-            widget_mod.logger.info(
-                "표식: 캡처 채널 생존"
-            )  # 제품 로거로 흘려야 이름이 틀리면 같이 죽는다
-            widget.choosePath(None)
-
-        assert item.download_path == str(tmp_path)
-        assert warnings == []
-        assert (
-            "표식: 캡처 채널 생존" in caplog.text
-        )  # 채널이 살아 있다 — 이게 없으면 아래 음성 단언은 아무것도 안 잰다(#263)
-        assert "카드 저장 경로" not in caplog.text
 
 
 # ================================================================ 조회 관문(메인 윈도우)

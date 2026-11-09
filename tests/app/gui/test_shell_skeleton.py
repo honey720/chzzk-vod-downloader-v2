@@ -263,11 +263,12 @@ class TestMinimumSize:
         )
 
     def test_at_the_minimum_the_tallest_card_fits_without_the_bottom_padding(self) -> None:
-        """창 최소 크기에서 해상도 pill이 있는 대기 카드가 목록 아래 안쪽 여백을 뺀 자리 안에 다 보여야 한다.
+        """창 최소 크기에서 세 줄이 다 찬 대기 카드가 목록 아래 안쪽 여백을 뺀 자리 안에 다 보여야 한다.
 
-        pill이 있는 대기 카드가 평소 카드 가운데 가장 높다(상태 글 최소 높이 = pill 높이, #245 — 다른
-        상태도 같은 높이). 아래 안쪽 여백을 빼고 재므로 견본 카드가 그만큼 낮게 재어져 여백 덕에
-        들어가는 경우를 잡는다(#493 리뷰).
+        해상도 셋 · 기본 위치와 다른 저장 위치(C:/dl) · 길이 3600초인 대기 카드
+        -> 3줄에 저장 위치와 정보 글이 보이고, 카드 사각형이 (목록 뷰포트 − 아래 안쪽 여백) 안에 든다.
+        아래 안쪽 여백을 빼고 재므로 견본 카드가 그만큼 낮게 재어져 여백 덕에 들어가는 경우를
+        잡는다(#493 리뷰). 카드 높이는 상태와 무관하게 같다(#245 · #550).
         """
         win = _window()
         item = ContentItem(
@@ -279,7 +280,7 @@ class TestMinimumSize:
                 "createdDate": "",
                 "duration": 3600,
             },
-            [[r, f"https://v.invalid/{r}.mp4"] for r in (1080, 720, 480)],  # 해상도 셋 — pill 줄
+            [[r, f"https://v.invalid/{r}.mp4"] for r in (1080, 720, 480)],  # 해상도 셋
             None,
             "",
             "C:/dl",
@@ -291,9 +292,8 @@ class TestMinimumSize:
         QApplication.processEvents()
         _at_size(win, win.minimumWidth(), win.minimumHeight())
         card = win.listView.widgetFor(item)
-        assert card.buttons and any(b.isVisible() for b in card.buttons), (
-            "전제: 해상도 pill이 보여야 한다"
-        )
+        assert card.directoryLabel.isVisible(), "전제: 3줄에 저장 위치가 보여야 한다"
+        assert card.fileSizeLabel.isVisible(), "전제: 3줄에 정보 글이 보여야 한다"
         viewport = win.listView.viewport()
         bottom_padding = win.listView.widget().layout().contentsMargins().bottom()
         room = QRect(0, 0, viewport.width(), viewport.height() - bottom_padding)
