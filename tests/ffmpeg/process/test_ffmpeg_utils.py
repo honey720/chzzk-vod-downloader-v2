@@ -21,7 +21,8 @@ import tempfile
 import threading
 import time
 import weakref
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -1137,6 +1138,126 @@ def test_remux_through_returns_the_warnings_of_the_join_side_and_asks_it_for_the
     assert joined[joined.index("-loglevel") + 1] == "warning"
 
 
+# ---- 일시정지 remux 테스트의 표식 대역 (#548) ----
+# 실제 시간에 기대지 않게 대역이 표식으로 움직인다: 시작을 마치면 「.ready」를 만들고, 입력을 다 읽은 뒤
+# 「.go」가 생길 때까지 서 있다가 「.done」을 만들고 끝난다. 테스트는 대역이 시작을 마친 뒤에야 입력을
+# 닫는다 — 제한 시간은 입력이 닫힌 뒤부터 세므로, 느린 러너의 인터프리터 시작이 제한 시간에 섞이지 않는다.
+# 일시정지가 시작될 때 「.go」를 놓는다 — 멈춰 있지 않다면 대역은 바로 끝난다.
+HOLD = 1.5  # 일시정지를 붙드는 시간(초) — 제한 시간보다 길어야 「서 있던 시간은 세지 않음」을 잰다
+LIMIT = 1.0  # 제한 시간(초) — 풀린 뒤 대역이 할 일은 표식 하나를 보고 끝나는 것뿐이다
+READY_WAIT = 30.0  # 대역이 시작을 마치기를 기다리는 상한(초) — 넘으면 전제 실패로 멈춘다
+_SIGNALLED = (
+    "import os, sys, time\n"
+    "open(sys.argv[1], 'wb').write(b'partial')\n"
+    "open(sys.argv[1] + '.ready', 'wb').close()\n"
+    "sys.stdin.buffer.read()\n"
+    "while not os.path.exists(sys.argv[1] + '.go'):\n"
+    "    time.sleep(0.01)\n"
+    "open(sys.argv[1] + '.done', 'wb').close()\n"
+)
+
+
+def _marker(dst: Path, suffix: str) -> Path:
+    """산출물 옆 표식 파일 — "<산출물><suffix>"."""
+    return Path(f"{dst}{suffix}")
+
+
+def _real_python() -> str:
+    """대역을 띄울 진짜 인터프리터 — 가상 환경 실행기를 멈추면 자식이 돌기 때문이다(아래 대역들과 같다)."""
+    return getattr(sys, "_base_executable", None) or sys.executable
+
+
+def _signalled_one(monkeypatch: pytest.MonkeyPatch) -> list[subprocess.Popen]:
+    """remux_stream이 띄우는 ffmpeg를 표식 대역으로 바꾼다. 띄운 프로세스를 적는 목록을 돌려준다."""
+    ffmpeg_module.get_ffmpeg_exe()  # ffmpeg를 찾는 실행이 대역으로 바뀌지 않게 먼저 끝내 둔다
+    real = subprocess.Popen
+    started: list[subprocess.Popen] = []
+
+    def fake(command: list[str], **kwargs) -> subprocess.Popen:
+        assert not started, f"프로세스를 하나 더 띄웠다: {command}"
+        started.append(real([_real_python(), "-c", _SIGNALLED, command[-1]], **kwargs))
+        return started[0]
+
+    monkeypatch.setattr(ffmpeg_module.subprocess, "Popen", fake)
+    return started
+
+
+def _signalled_pair(monkeypatch: pytest.MonkeyPatch, dst: Path) -> dict[str, subprocess.Popen]:
+    """remux_through의 두 프로세스를 대역으로 바꾼다 — 잇기는 표식 대역, 변환은 입력을 그대로 넘긴다.
+
+    변환 대역도 시작을 마치면 "<산출물>.convert-ready"를 만든다. 띄운 프로세스를 구실("join" ·
+    "convert")로 적는 사전을 돌려준다.
+    """
+    ffmpeg_module.get_ffmpeg_exe()
+    real = subprocess.Popen
+    started: dict[str, subprocess.Popen] = {}
+    convert = (
+        "import shutil, sys\n"
+        "open(sys.argv[1], 'wb').close()\n"
+        "shutil.copyfileobj(sys.stdin.buffer, sys.stdout.buffer)\n"
+    )
+
+    def fake(command: list[str], **kwargs) -> subprocess.Popen:
+        if "-nostdin" in command:
+            process = started["join"] = real([_real_python(), "-c", _SIGNALLED, str(dst)], **kwargs)
+        else:
+            assert "convert" not in started, f"두 프로세스 말고 더 띄웠다: {command}"
+            ready = str(_marker(dst, ".convert-ready"))
+            process = started["convert"] = real([_real_python(), "-c", convert, ready], **kwargs)
+        return process
+
+    monkeypatch.setattr(ffmpeg_module.subprocess, "Popen", fake)
+    return started
+
+
+def _feed_when_ready(*markers: Path) -> Iterator[bytes]:
+    """입력 한 덩이를 내준 뒤 대역들이 시작을 마칠 때(표식이 모두 생길 때)까지 기다렸다 끝난다.
+
+    이터레이터가 끝나야 remux가 입력을 닫고 제한 시간을 세기 시작한다.
+    """
+    yield b"abc" * 1000
+    end = time.monotonic() + READY_WAIT
+    while not all(marker.exists() for marker in markers):
+        assert time.monotonic() < end, "전제: 대역이 시작을 마치지 못했다"
+        time.sleep(0.01)
+
+
+class _HoldOnce:
+    """should_pause 대역 — 시작 조건이 서면 「.go」를 놓고 HOLD초 동안 참, 그 뒤로는 거짓.
+
+    붙드는 동안 「.done」이 생겼는지(멈추지 않았는지) 적는다. 붙든 시간은 처음 참을 돌려준 때부터
+    처음 거짓을 돌려준 때까지다.
+    """
+
+    def __init__(self, dst: Path, begin: Callable[[], bool] = lambda: True) -> None:
+        self._go = _marker(dst, ".go")
+        self._done = _marker(dst, ".done")
+        self._begin = begin
+        self.began: float | None = None  # 처음 참을 돌려준 때
+        self.ended: float | None = None  # 붙든 뒤 처음 거짓을 돌려준 때
+        self.finished_while_held = False  # 붙드는 동안 끝 표식이 생겼다
+
+    def __call__(self) -> bool:
+        now = time.monotonic()
+        if self.began is None:
+            if not self._begin():
+                return False
+            self._go.touch()
+            self.began = now
+        if now - self.began < HOLD:
+            self.finished_while_held |= self._done.exists()
+            return True
+        if self.ended is None:
+            self.ended = now
+        return False
+
+    def held_for(self) -> float:
+        """붙든 시간(초). 끝까지 붙들지 못했으면(그 전에 프로세스가 끝났으면) 0."""
+        if self.began is None or self.ended is None:
+            return 0.0
+        return self.ended - self.began
+
+
 def _lingering_pair(monkeypatch, dst, linger: float) -> dict:
     """remux_through의 두 프로세스를 대역으로 바꾼다 — 잇기 대역이 입력을 다 읽은 뒤 linger초 더 돈다.
 
@@ -1213,30 +1334,24 @@ def test_remux_through_gives_up_when_the_processes_outlive_the_timeout_after_the
 
 
 def test_remux_through_holds_the_processes_while_paused_and_does_not_count_that_time(
-    tmp_path, monkeypatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """기다리는 동안 일시정지면 두 ffmpeg가 서 있어야 하고, 서 있던 시간은 제한 시간에 세지 않아야 한다.
 
-    잇기 대역이 입력을 다 읽은 뒤 1초 더 돈다. 변환 대역이 끝난 것을 본 때부터 2초 동안
-    should_pause가 참(그때 도는 것은 잇기 대역뿐이다), timeout 1.5초
-    -> 예외 없이 끝난다(산출물과 끝 표식이 있다), 걸린 시간 >= 2초(서 있는 동안 끝나지 못했다)
+    두 대역이 시작을 마친 뒤 입력이 닫힌다. 변환 대역이 끝난 것을 본 때 「가라」 표식을 놓고
+    HOLD(1.5)초 동안 should_pause가 참, timeout LIMIT(1.0)초
+    -> 예외 없이 끝난다(산출물과 끝 표식이 있다), 붙든 시간 >= HOLD, 붙드는 동안 끝 표식이 생기지 않았다 (#548)
     """
     out = tmp_path / "out.mp4"
-    started = _lingering_pair(monkeypatch, out, linger=1.0)
-    paused_at = []
+    started = _signalled_pair(monkeypatch, out)
+    pause = _HoldOnce(out, begin=lambda: started["convert"].poll() is not None)
+    feed = _feed_when_ready(_marker(out, ".ready"), _marker(out, ".convert-ready"))
 
-    def should_pause() -> bool:
-        if not paused_at and started["convert"].poll() is not None:
-            paused_at.append(time.monotonic())
-        return bool(paused_at) and time.monotonic() - paused_at[0] < 2.0
+    ffmpeg_module.remux_through(feed, [], [], str(out), timeout=LIMIT, should_pause=pause)
 
-    began = time.monotonic()
-    ffmpeg_module.remux_through(
-        iter([b"abc" * 1000]), [], [], str(out), timeout=1.5, should_pause=should_pause
-    )
-
-    assert time.monotonic() - began >= 2.0
-    assert out.exists() and (tmp_path / "out.mp4.done").exists()
+    assert pause.held_for() >= HOLD > LIMIT
+    assert not pause.finished_while_held, "일시정지 동안 잇기 대역이 끝까지 갔다"
+    assert out.exists() and _marker(out, ".done").exists()
 
 
 def _lingering_one(monkeypatch, linger: float) -> list:
@@ -1303,28 +1418,25 @@ def test_remux_stream_gives_up_when_ffmpeg_outlives_the_timeout_after_the_input_
 
 
 def test_remux_stream_holds_ffmpeg_while_paused_and_does_not_count_that_time(
-    tmp_path, monkeypatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """기다리는 동안 일시정지면 ffmpeg가 서 있어야 하고, 서 있던 시간은 제한 시간에 세지 않아야 한다.
 
-    대역이 입력을 다 읽은 뒤 1초 더 돈다. should_pause가 처음 불린 뒤 2초 동안 참, timeout 1.5초
-    -> 예외 없이 끝난다(산출물과 끝 표식이 있다), 걸린 시간 >= 2초(서 있는 동안 끝나지 못했다)
+    대역이 시작을 마친 뒤 입력이 닫힌다. should_pause가 처음 불릴 때 「가라」 표식을 놓고
+    HOLD(1.5)초 동안 참, timeout LIMIT(1.0)초
+    -> 예외 없이 끝난다(산출물과 끝 표식이 있다), 붙든 시간 >= HOLD, 붙드는 동안 끝 표식이 생기지 않았다 (#548)
     """
     out = tmp_path / "out.mp4"
-    _lingering_one(monkeypatch, linger=1.0)
-    asked = []
+    _signalled_one(monkeypatch)
+    pause = _HoldOnce(out)
 
-    def should_pause() -> bool:
-        asked.append(time.monotonic())
-        return asked[-1] - asked[0] < 2.0
-
-    began = time.monotonic()
     ffmpeg_module.remux_stream(
-        iter([b"abc" * 1000]), str(out), timeout=1.5, should_pause=should_pause
+        _feed_when_ready(_marker(out, ".ready")), str(out), timeout=LIMIT, should_pause=pause
     )
 
-    assert time.monotonic() - began >= 2.0
-    assert out.exists() and (tmp_path / "out.mp4.done").exists()
+    assert pause.held_for() >= HOLD > LIMIT
+    assert not pause.finished_while_held, "일시정지 동안 대역이 끝까지 갔다"
+    assert out.exists() and _marker(out, ".done").exists()
 
 
 def test_streamed_remux_waits_under_the_stop_pause_and_time_limit_of_the_download(
