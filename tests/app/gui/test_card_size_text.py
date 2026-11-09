@@ -60,7 +60,7 @@ TWO_SECTIONS = (TimeRange(600.0, 1200.0), TimeRange(1800.0, 2400.0))  # 합 20�
 TWO_TAIL = " · 20:00 · Sections 2"  # TWO_SECTIONS 카드 정보 글의 끝 — 받을 길이 · 구간 수
 WHOLE_TAIL = " · 8:00:00"  # _card의 구간 없는 대기 · 완료 카드 정보 글의 끝 — 영상 길이 28800초
 # 실제 창 카드의 구간 0.2~1.0초 정보 글의 끝 — 받을 길이 0.8초(초 아래는 버린다) · 구간 하나
-ONE_TAIL = " · 0:00 · Sections 1"
+ONE_TAIL = " · 0:01 · Sections 1"  # 1초 미만 구간의 길이는 올려 0:01(#550)
 
 
 @pytest.fixture(autouse=True)
@@ -880,7 +880,7 @@ def test_confirming_sections_computes_the_bytes_the_engine_will_receive(
 
     1080p에서 구간 0.2~1.0초를 확인, 크기를 세는 일이 끝나기를 기다림
     -> section_bytes == sections_file_size(1080p의 색인, 그 구간)(구간 파일 크기의 합의 추정),
-       정보 글이 "1080p · <그 크기> KB · 0:00 · Sections 1"이다. 엔진이 받을 바이트
+       정보 글이 "1080p · <그 크기> KB · 0:01 · Sections 1"이다. 엔진이 받을 바이트
        (sections_download_size)와는 다른 값이다
     """
     win, item, _engine = window
@@ -946,9 +946,9 @@ def test_card_says_checking_while_the_section_total_is_counted_in_the_background
     """받을 크기를 세는 동안 카드는 크기 자리에 "Checking..."을 적고, 다 세면 크기로 바꿔야 한다.
 
     크기 세기를 문으로 막아 둔 채 1080p에서 구간을 확인 → 문을 엶
-    -> 막힌 동안: section_bytes is None, 정보 글 == "1080p · Checking... · 0:00 · Sections 1",
+    -> 막힌 동안: section_bytes is None, 정보 글 == "1080p · Checking... · 0:01 · Sections 1",
        카드는 받은 바이트를 쥔다
-    -> 연 뒤: section_bytes == 1080p의 색인으로 센 값, 정보 글이 "1080p · <그 크기> KB · 0:00 · Sections 1",
+    -> 연 뒤: section_bytes == 1080p의 색인으로 센 값, 정보 글이 "1080p · <그 크기> KB · 0:01 · Sections 1",
        카드는 받은 바이트를 그대로 쥔다(색인으로 바꾸지 않는다)
     """
     win, item, _engine = window
@@ -982,7 +982,7 @@ def test_card_stops_saying_checking_when_counting_fails_and_takes_the_engine_tot
 
     크기 세기가 예외를 던지게 바꾸고 구간을 확인. 전역 다운로드 뒤 엔진처럼 구간 수 1 ·
     전체 크기 4321바이트를 적고 진행을 한 번 알림
-    -> 센 뒤: section_bytes is None, section_sizing이 꺼짐, 정보 글 == "1080p · 0:00 · Sections 1"
+    -> 센 뒤: section_bytes is None, section_sizing이 꺼짐, 정보 글 == "1080p · 0:01 · Sections 1"
     -> 진행 통지 뒤: section_bytes == 4321
     """
     win, item, engine = window
@@ -2001,7 +2001,7 @@ def test_section_card_shows_one_size_from_waiting_through_pause_and_restart(
     1080p에서 구간 0.2~1.0초. 크기 = sections_file_size(색인, 구간)(구간 파일 크기의 합의 추정).
     전역 다운로드 → (준비 중) → 엔진이 받을 바이트(sections_download_size — 다른 값)를 알림 →
     일시정지 → 다시 시작
-    -> 대기 카드와 그 뒤 네 시점의 정보 글이 모두 "<크기> KB · 0:00 · Sections 1"로 끝난다
+    -> 대기 카드와 그 뒤 네 시점의 정보 글이 모두 "<크기> KB · 0:01 · Sections 1"로 끝난다
     """
     win, item, engine = window
     win.downloadViewModel._prepareTimer.setInterval(0)
@@ -2041,8 +2041,8 @@ def test_received_side_follows_the_transfer_and_meets_the_size_at_its_end(
     """받는 동안 왼쪽 숫자는 전송의 진행 × 크기여야 하고, 전송이 끝나면 크기와 같아야 한다.
 
     1080p에서 구간 0.2~1.0초. 크기 E = sections_file_size(색인, 구간), 엔진이 받을 바이트 T = 1000
-    진행 통지 250/1000 -> 정보 글 == "1080p · <E/4> / <E> · 0:00 · Sections 1"
-    진행 통지 1000/1000 -> 정보 글 == "1080p · <E> / <E> · 0:00 · Sections 1"
+    진행 통지 250/1000 -> 정보 글 == "1080p · <E/4> / <E> · 0:01 · Sections 1"
+    진행 통지 1000/1000 -> 정보 글 == "1080p · <E> / <E> · 0:01 · Sections 1"
     """
     win, item, engine = window
     win.downloadViewModel._prepareTimer.setInterval(60_000)
@@ -2080,7 +2080,7 @@ def test_section_card_keeps_its_size_when_a_retry_receives_less(qtbot, window, p
     1080p에서 구간 0.2~1.0초. 크기 E = sections_file_size(색인, 구간). 첫 실행: 엔진이 받을 바이트
     T를 알림 → 중단. 둘째 실행: 엔진이 T의 절반을 알림(끝낸 구간을 빼고 받는 재시도처럼)
     -> 둘째 실행의 통지 뒤: section_bytes == E, transfer_bytes == T // 2,
-       정보 글이 "/ <E> KB · 0:00 · Sections 1"로 끝난다
+       정보 글이 "/ <E> KB · 0:01 · Sections 1"로 끝난다
     """
     win, item, engine = window
     _give_section(qtbot, win, item)
@@ -2108,7 +2108,7 @@ def test_finished_section_card_takes_the_size_the_engine_counted(qtbot, window, 
 
     1080p에서 구간 0.2~1.0초. 엔진이 받을 바이트 1000을 알리고 1000/1000까지 받은 뒤,
     만든 구간 파일의 합 5000바이트를 적고 완료를 알림
-    -> output_bytes == 5000, 정보 글 == "1080p · 4.88 KB · 0:00 · Sections 1"
+    -> output_bytes == 5000, 정보 글 == "1080p · 4.88 KB · 0:01 · Sections 1"
        (받은 양 1000바이트면 "1000.00 B"다)
     """
     win, item, engine = window
@@ -2212,7 +2212,7 @@ def test_engine_total_is_taken_as_the_size_only_when_the_card_could_not_count_it
 
     1080p에서 구간을 확인 → 480p를 고르되 조회가 실패(크기 모름) → 전역 다운로드.
     엔진이 구간 수 1 · 받을 바이트 4321을 알림
-    -> section_bytes == 4321, 정보 글이 "/ 4.22 KB · 0:00 · Sections 1"로 끝난다
+    -> section_bytes == 4321, 정보 글이 "/ 4.22 KB · 0:01 · Sections 1"로 끝난다
     """
     win, item, engine = window
     _give_section(qtbot, win, item)

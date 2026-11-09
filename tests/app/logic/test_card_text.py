@@ -511,10 +511,43 @@ class TestEditDialogText:
     def test_section_lines_number_each_section(self) -> None:
         """section_lines가 구간마다 「번호. 시작 ~ 끝 (길이)」 한 줄이어야 한다.
 
-        구간 65~330.5 · 3600~3725 -> ["1. 1:05 ~ 5:30 (4:25)", "2. 1:00:00 ~ 1:02:05 (2:05)"]
+        구간 65~330.5 · 3600~3725 -> ["1. 1:05 ~ 5:30 (4:26)", "2. 1:00:00 ~ 1:02:05 (2:05)"]
+        (시각은 버리고 길이 265.5초는 올린다 — #550)
         """
         item = _item(sections=((65.0, 330.5), (3600.0, 3725.0)))
         assert card_text.section_lines(item) == [
-            "1. 1:05 ~ 5:30 (4:25)",
+            "1. 1:05 ~ 5:30 (4:26)",
             "2. 1:00:00 ~ 1:02:05 (2:05)",
         ]
+
+
+class TestSectionClock:
+    """구간 길이 표기 — 0이 아닌 길이는 초 아래를 올린다 (#550)."""
+
+    @pytest.mark.parametrize(
+        ("seconds", "expected"),
+        [
+            (0.0, "0:00"),
+            (0.0004, "0:00"),  # 1ms 아래는 실수 오차로 본다
+            (0.2, "0:01"),
+            (0.8, "0:01"),
+            (1.0, "0:01"),
+            (1.0000001, "0:01"),  # 실수 오차로 1초가 더해지지 않는다
+            (1.5, "0:02"),
+            (59.983, "1:00"),
+            (3600.0, "1:00:00"),
+        ],
+    )
+    def test_section_clock_rounds_nonzero_lengths_up(self, seconds: float, expected: str) -> None:
+        """section_clock이 0이 아닌 길이의 초 아래를 올려 적어야 한다.
+
+        0 -> "0:00", 0.2 · 0.8 · 1.0 -> "0:01", 1.5 -> "0:02", 59.983 -> "1:00", 3600 -> "1:00:00"
+        """
+        assert card_text.section_clock(seconds) == expected
+
+    def test_clock_still_drops_the_fraction(self) -> None:
+        """구간 길이 밖의 clock은 초 아래를 그대로 버려야 한다.
+
+        0.8 -> "0:00", 265.5 -> "4:25"
+        """
+        assert (card_text.clock(0.8), card_text.clock(265.5)) == ("0:00", "4:25")

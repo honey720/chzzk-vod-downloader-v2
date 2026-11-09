@@ -8,6 +8,7 @@
 그대로 쓴다 — lupdate는 리터럴 호출만 줍는다(project.json이 이 파일을 스캔한다).
 """
 
+import math
 import os
 from dataclasses import dataclass
 
@@ -87,6 +88,23 @@ def clock(seconds: float) -> str:
     """초를 짧은 시간 표기("3:12" · "1:02:03")로 적는다 — 하루를 넘어도 시간을 그대로 센다."""
     whole = int(max(seconds, 0))
     return short_time(clock_text(whole))
+
+
+SECTION_CLOCK_SLACK = (
+    0.001  # 구간 길이 올림에서 무시하는 초 아래 끝자리(초) — 실수 오차로 1초가 더해지지 않게
+)
+
+
+def section_clock(seconds: float) -> str:
+    """구간 길이를 짧은 시간 표기로 적는다 — 0이 아닌 길이는 초 아래를 올린다(#550 오너 2026-11-09).
+
+    1초보다 짧은 구간이 「0:00」으로 보이면 비어 있는 구간으로 읽힌다. 그래서 0보다 긴 길이는 최소
+    「0:01」이다. 구간 길이를 적는 자리(카드 정보 글 · 툴팁 · 편집 창 요약)에만 쓴다 — 시각 · 남은 시간 ·
+    영상 길이는 `clock`(버림) 그대로다.
+    """
+    if seconds <= SECTION_CLOCK_SLACK:
+        return clock(0)
+    return clock(math.ceil(seconds - SECTION_CLOCK_SLACK))
 
 
 # ---- 해상도 ----
@@ -196,10 +214,10 @@ def section_overlap_detail(item: ContentItem) -> list[str]:
         return []
     return [
         QCoreApplication.translate("ContentItemWidget", "To receive: {0}").format(
-            clock(section_span(item))
+            section_clock(section_span(item))
         ),
         QCoreApplication.translate("ContentItemWidget", "Sections add up to {0}").format(
-            clock(section_total(item))
+            section_clock(section_total(item))
         ),
         QCoreApplication.translate("ContentItemWidget", "Overlapping parts are received once"),
     ]
@@ -343,7 +361,7 @@ def section_summary(
     if item.is_segment_based:
         # 길이는 받을 양이다 — 겹치는 자리는 한 번만 받으므로 합친 범위의 길이를 적는다.
         # 겹침이 없으면 구간 길이의 합과 같다
-        span = clock(section_span(item))
+        span = section_clock(section_span(item))
         if marker:
             span = f"{marker} · {span}"  # f-string 안의 tr은 lupdate가 줍지 못한다
         summary = QCoreApplication.translate("ContentItemWidget", "Sections {0} · {1}").format(
@@ -368,7 +386,7 @@ def section_lines(item: ContentItem) -> list[str]:
     시각은 남은 시간과 같은 짧은 표기다(초 밑은 버린다 — 정확한 값은 구간 창에 있다).
     """
     return [
-        f"{number}. {clock(s.start)} ~ {clock(s.end)} ({clock(max(s.end - s.start, 0.0))})"
+        f"{number}. {clock(s.start)} ~ {clock(s.end)} ({section_clock(max(s.end - s.start, 0.0))})"
         for number, s in enumerate(item.selections, 1)
     ]
 
@@ -578,7 +596,7 @@ def info_text(item: ContentItem, with_notice: bool = True, with_total: bool = Tr
         )
         notice = section_notice(item) if with_notice and state == DownloadState.WAITING else ""
         return with_resolution(
-            item, _joined(size, clock(section_span(item)), sections, marker, notice)
+            item, _joined(size, section_clock(section_span(item)), sections, marker, notice)
         )
     if state in (DownloadState.RUNNING, DownloadState.PAUSED):
         return with_resolution(item, received_size_text(item, with_total))

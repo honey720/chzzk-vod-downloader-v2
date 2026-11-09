@@ -810,7 +810,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
                 # 겹침이 있으면 겹침의 설명이 같은 줄을 이미 담고 있다
                 detail = [
                     self.tr("Sections add up to {0}").format(
-                        card_text.clock(card_text.section_total(item))
+                        card_text.section_clock(card_text.section_total(item))
                     )
                 ]
             lines.extend(detail)
