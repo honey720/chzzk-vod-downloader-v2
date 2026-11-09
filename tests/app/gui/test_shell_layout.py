@@ -40,6 +40,7 @@ from app.viewmodels.data import ContentItem
 from app.widgets.footer_bar import SPEED_SAMPLE
 from app.widgets.widget import ContentItemWidget
 from core.models.download_state import DownloadState
+from core.models.plan import TimeRange
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
 from typing import Never
 
@@ -207,19 +208,42 @@ def _independent_content_minimum(win: VodDownloader) -> int:
         header + 2 * outer,
         info + 2 * outer,
         win.listView.minimumSizeHint().width(),
-        _widest_waiting_card_minimum() + 2 * theme.METRICS["outerMargin"],
+        _worst_folded_card_minimum() + 2 * theme.METRICS["outerMargin"],
     )
 
 
-def _widest_waiting_card_minimum() -> int:
-    """대기 카드의 최소폭을 줄마다 보이는 위젯 폭으로 독립 합산한다 (#545 · #550).
+WORST_SECTIONS = tuple(TimeRange(i * 10, i * 10 + 5) for i in range(99))  # 구간 99개 — 「99/99」
+#: (상태, 그 상태에서 상태 글 · 정보 글이 가장 긴 모양) — 제품의 견본 목록과 따로 적는다(#554)
+WORST_SAMPLES = (
+    (DownloadState.WAITING, {}),
+    (DownloadState.WAITING, {"selections": WORST_SECTIONS}),
+    (DownloadState.RUNNING, {}),
+    (
+        DownloadState.RUNNING,
+        {
+            "selections": WORST_SECTIONS,
+            "sections_done": 99,
+            "post_process": True,
+            "cut_preparing": True,
+        },
+    ),
+    (DownloadState.PAUSED, {}),
+    (DownloadState.FINISHED, {"selections": WORST_SECTIONS, "sections_done": 99}),
+    (
+        DownloadState.FAILED,
+        {"selections": WORST_SECTIONS, "sections_done": 99, "sections_failed": 99},
+    ),
+)
 
-    카드 테두리 + 안쪽 여백 + 썸네일 + 썸네일 ↔ 글 간격 + 가장 넓은 줄(보이는 위젯의 최소폭 + 사이
-    간격 + 고정 빈칸). 숨은 위젯(대기 카드의 3줄 상태 아이콘)은 세지 않는다. 채널명은
-    최소폭 상한(64px)에 닿는 긴 이름이다. 카드 버튼은 1줄 위에 겹쳐
-    놓는 상자라(#550) 어느 줄에도 들지 않는다 — 1줄은 채널 그림 · 이름 · 날짜뿐이어야 한다.
-    창 최소폭에서 3줄 정보 글은 줄지 않아야 하므로 가장 긴 대기 정보 글(1080p · 크기 자리 · 1:00:00)과 기본 위치와
-    다른 저장 위치를 넣는다. 크기 자리는 "Checking..."과 "0000.00 MB" 가운데 넓은 쪽이다.
+
+def _worst_folded_card_minimum() -> int:
+    """상태마다 가장 긴 견본 카드를 다 접었을 때의 폭을 줄마다 보이는 위젯 폭으로 독립 합산한다 (#554).
+
+    카드를 아주 좁게(200px) 줄여 3줄을 마지막 단계로 접은 뒤, 보이는 위젯의 글 폭(+4) · 아이콘 폭 · 사이
+    간격을 더한다. 상태 글은 끝까지 줄여도 앞 세 글자와 「…」가 남는 실패 카드만 그 폭으로, 다른 상태는
+    글 전체로 센다(진행률 · 상태 단어는 빠지지 않는다). 1줄은 채널 그림 · 이름(최소폭 상한 64px에 닿는
+    긴 이름) · 날짜(비움)다. 카드 테두리 + 안쪽 여백 + 썸네일 + 썸네일 ↔ 글 간격을 더한다. 카드 버튼은 1줄
+    위에 겹쳐 놓는 상자라(#550) 어느 줄에도 들지 않는다.
     """
     metadata = {
         "title": "Chzzk VOD",
@@ -228,41 +252,50 @@ def _widest_waiting_card_minimum() -> int:
         "createdDate": "",
         "duration": 3600,
     }
-    item = ContentItem("", metadata, [], None, "", "Some other folder", "video", None)
-    item.resolution = 1080
-    card = ContentItemWidget(item)
-    card.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
-    card.fileSizeLabel.ensurePolished()
-    metrics = card.fileSizeLabel.fontMetrics()
-    item.total_size = max(("Checking...", "0000.00 MB"), key=metrics.horizontalAdvance)
-    card.setData(item, 0)
-    card.show()
-    card.layout().activate()
-    rows = {}
-    for name, layout in (
-        ("top", card.topLayout),
-        ("title", card.titleLayout),
-        ("status", card.resolutionLayout),
-    ):
-        shown, spacers = [], 0
-        for index in range(layout.count()):
-            entry = layout.itemAt(index)
-            if entry.widget() is None:
-                spacers += entry.minimumSize().width()  # 늘어나는 빈칸은 0, 고정 빈칸은 그 폭
-            elif entry.widget() is card.fileSizeLabel:
-                # 창 최소폭에서 견본의 정보 글은 줄지 않는다 — 글 전체 폭(+4)을 센다
-                shown.append(metrics.horizontalAdvance(card.fileSizeLabel.text()) + 4)
-            elif not entry.isEmpty():  # 숨은 위젯은 자리가 없다
-                shown.append(_leaf_min(entry.widget()))
-        rows[name] = (len(shown), sum(shown) + layout.spacing() * (len(shown) - 1) + spacers)
-    assert rows["top"][0] == 3, f"전제: 1줄에 채널 그림 · 이름 · 날짜만 보인다 ({rows['top'][0]})"
-    margins = card.bodyLayout.contentsMargins()
-    frame = card.contentFrame.rect().width() - card.contentFrame.contentsRect().width()
-    width = frame + margins.left() + margins.right() + card.thumbnailLabel.width()
-    width += card.bodyLayout.spacing() + max(row for _, row in rows.values())
-    card.hide()
-    card.deleteLater()
-    return width
+    widths = []
+    for state, fields in WORST_SAMPLES:
+        item = ContentItem("", dict(metadata), [], None, "", "Some other folder", "video", None)
+        item.resolution = 1080
+        item.total_size = "0000.00 MB"
+        item.downloadState = state
+        item.download_progress = 100
+        item.download_size = 1023 * 1024 * 1024 + 1000 * 1024  # 「1023.98 MB」
+        item.download_remain_time = "99:59:59"
+        item.download_time = "99:59:59"
+        for name, value in fields.items():
+            setattr(item, name, value)
+        card = ContentItemWidget(item)
+        card.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
+        card.setData(item, 0)
+        card.show()
+        card.resize(200, card.height())
+        card.layout().activate()
+        QApplication.processEvents()
+        rows = []
+        for layout in (card.topLayout, card.resolutionLayout):
+            shown, spacers = [], 0
+            for index in range(layout.count()):
+                entry = layout.itemAt(index)
+                widget = entry.widget()
+                if widget is None:
+                    spacers += entry.minimumSize().width()  # 늘어나는 빈칸은 0, 고정 빈칸은 그 폭
+                elif entry.isEmpty():  # 숨은 위젯은 자리가 없다
+                    continue
+                elif widget in (card.statusLabel, card.fileSizeLabel):
+                    text = widget.text()
+                    if widget is card.statusLabel and state == DownloadState.FAILED:
+                        text = text[:3] + "…"
+                    shown.append(widget.fontMetrics().horizontalAdvance(text) + 4)
+                else:
+                    shown.append(_leaf_min(widget))
+            rows.append(sum(shown) + layout.spacing() * (len(shown) - 1) + spacers)
+        margins = card.bodyLayout.contentsMargins()
+        frame = card.contentFrame.rect().width() - card.contentFrame.contentsRect().width()
+        width = frame + margins.left() + margins.right() + card.thumbnailLabel.width()
+        widths.append(width + card.bodyLayout.horizontalSpacing() + max(rows))
+        card.hide()
+        card.deleteLater()
+    return max(widths)
 
 
 # ---------------------------------------------------------------------------
