@@ -492,6 +492,21 @@ class TestKeysAndButtons:
         )
         assert dialog.saveButton.property("role") == "primary"
 
+    def test_save_button_is_filled_as_the_main_action(self, qtbot, tmp_path) -> None:
+        """저장 버튼은 주 동작 채움 색이라 가운데 화소가 취소 버튼과 달라야 한다(설계 §12.1 채움 색 규칙).
+
+        저장 · 취소 버튼 grab()의 왼쪽 4px · 세로 가운데 화소(글자를 피함) -> 색이 다르다
+        """
+        item = _make_item(str(tmp_path))
+        win = _window(tmp_path, item)
+        dialog = _open(win, item)
+
+        def face(button) -> int:
+            image = button.grab().toImage()
+            return image.pixel(4, image.height() // 2)
+
+        assert face(dialog.saveButton) != face(dialog.cancelButton)
+
 
 # ---- 옛 길과 같은 결과 ----
 

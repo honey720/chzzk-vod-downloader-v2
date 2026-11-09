@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+import app.theme as theme
 from app.section_input.basis import SECTION_CONTENT_TYPES
 from app.viewmodels import card_text
 from app.viewmodels.data import ContentItem
@@ -210,6 +211,8 @@ class CardEditDialog(QDialog):
         )
         self.saveButton = self.buttonBox.button(QDialogButtonBox.StandardButton.Save)
         self.saveButton.setProperty("role", "primary")
+        # 버튼 상자가 만들며 이미 스타일을 입혔다 — 속성을 바꾼 뒤 다시 입힌다
+        theme.repolish(self.saveButton)
         self.cancelButton = self.buttonBox.button(QDialogButtonBox.StandardButton.Cancel)
         self.buttonBox.accepted.connect(self.accept)
         self.buttonBox.rejected.connect(self.reject)
