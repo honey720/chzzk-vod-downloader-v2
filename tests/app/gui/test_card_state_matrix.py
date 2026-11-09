@@ -252,6 +252,9 @@ class TestSlotColumn:
         widget = _make_widget(qapp, DownloadState.FAILED)
         widget.item.stateMessage = "Segments look corrupted · download again\nPostprocessing failed because segments were corrupted."
         widget.setData(widget.item, 0)
+        # 사유 뒤(조치 안내)는 좁으면 접힌다(#554) — 대체 글꼴에서도 다 들어가는 폭에서 잰다
+        widget.resize(2400, widget.height())
+        QApplication.processEvents()
         assert widget.statusLabel.text() == "Segments look corrupted · download again"
         assert widget.statusLabel.toolTip() == widget.item.stateMessage
 

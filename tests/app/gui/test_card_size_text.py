@@ -658,7 +658,8 @@ def test_total_size_is_the_first_thing_to_give_way_when_the_card_narrows(qtbot, 
     빠짐(아이콘 · 이름 둘 다 숨음 — #554 접는 차례: 저장 위치가 받을 크기보다 먼저)
     -> 더 좁혀 상태 글이 잘릴 때까지: 크기 글은 다시 길어지지 않음
     """
-    window, widget = _card("video", state, received=100 * MB)
+    # 넓은 창 — 대체 글꼴(빈 글꼴 폴더)에서도 접기 전 모양이 들어가는 폭
+    window, widget = _card("video", state, received=100 * MB, width=2400)
     qtbot.addWidget(window)
     full = "1080p · 100.00 MB / 28.99 GB"
     assert shown(widget.fileSizeLabel) == full, "전제: 넓은 창에서는 다 적는다"

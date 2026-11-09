@@ -35,6 +35,7 @@ OTHER_DIR = "D:/vod/lck-finals"  # 전역과 다른 저장 위치 — 3줄에 �
 MB = 1024 * 1024
 TWO_SECTIONS = (TimeRange(600.0, 1200.0), TimeRange(1800.0, 2400.0))  # 합 20분
 RETURN_SLACK = 8  # 되돌아갈 때 더 남아야 하는 폭(px) — 설계 §2 「+8」
+WIDE = 2400  # 대체 글꼴(빈 글꼴 폴더)에서도 3줄이 접히지 않는 카드 폭(px)
 
 
 @pytest.fixture(autouse=True)
@@ -182,6 +183,8 @@ def _fold_steps(
     previous = _signature(card)
     need = _row3_need(card)
     for width in range(start - 1, stop - 1, -1):
+        if width < card.minimumSizeHint().width():
+            break  # 카드 최소폭 아래는 클램프된다 — 거기서는 아무것도 안 잰다
         _at(card, width)
         current = _signature(card)
         if current == previous:
@@ -210,12 +213,12 @@ class TestFoldOrder:
     def test_running_card_folds_in_the_proto_order_with_the_return_slack(self, qapp) -> None:
         """받는 중 구간 카드면 경계마다 독립 합산 폭에서 접히고 그 차례가 프로토 가와 같아야 한다.
 
-        저장 위치 다름 · 구간 둘(20:00) · 50 MB / 200 MB · 18.4 MB/s · 6:00 남음, 900px → 280px 1px씩
+        저장 위치 다름 · 구간 둘(20:00) · 50 MB / 200 MB · 18.4 MB/s · 6:00 남음, 2400px → 280px 1px씩
         -> 바뀐 차례: 폴더 이름 숨음 → 폴더 아이콘 숨음 → 「20:00」 빠짐 → 「/ 200.00 MB」 빠짐 →
         「18.4 MB/s」 빠짐 → 「6:00 left」 빠짐, 경계마다 T−1 접힘 · T 들어감 · T+7 접힌 채 · T+8 되돌아감
         """
         card = _card(_sections_running())
-        steps = _fold_steps(card, 900, 280, count=7)  # 7번째가 없으면 끝까지 줄인 뒤 6개로 끝난다
+        steps = _fold_steps(card, WIDE, 280, count=7)  # 7번째가 없으면 끝까지 줄인 뒤 6개로 끝난다
         changes = []
         for _, (status, info, icon, name), (status2, info2, icon2, name2) in steps:
             if name and not name2:
@@ -237,13 +240,13 @@ class TestFoldOrder:
     def test_failed_card_drops_the_reason_tail_first(self, qapp) -> None:
         """실패 카드면 첫 경계에서 사유의 뒤(조치 안내)가 빠지고 앞은 남아야 한다.
 
-        사유 "Failed to save the file · Check the free space" · 저장 위치 다름, 900px부터 1px씩(첫 바뀜까지)
+        사유 "Failed to save the file · Check the free space" · 저장 위치 다름, 2400px부터 1px씩(첫 바뀜까지)
         -> 첫 바뀜: 상태 글 "Failed to save the file · Check …" → "Failed to save the file"
         """
         item = _item(DownloadState.FAILED, path=OTHER_DIR)
         item.stateMessage = "Failed to save the file · Check the free space"
         card = _card(item)
-        steps = _fold_steps(card, 900, 280, count=1)
+        steps = _fold_steps(card, WIDE, 280, count=1)
         first_before, first_after = steps[0][1][0], steps[0][2][0]
         assert first_before == "Failed to save the file · Check the free space"
         assert first_after == "Failed to save the file"

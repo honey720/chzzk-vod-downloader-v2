@@ -690,15 +690,16 @@ class TestPathAbbreviationAndTooltip:
         """긴 저장 위치도 3줄을 넘치게 하지 않아야 한다 — 우측 끝선 유지.
 
         download_path 깊이 10, 카드 폭 640, setHovered(True)
-        -> fileSizeLabel 오른쪽 끝 == deleteButton 오른쪽 끝, directoryLabel 오른쪽 끝 < fileSizeLabel 왼쪽 끝
+        -> fileSizeLabel 오른쪽 끝 == deleteButton 오른쪽 끝, 저장 위치 이름이 보이면(폭이 모자라면 아이콘으로
+        접힌다 — #554) directoryLabel 오른쪽 끝 < fileSizeLabel 왼쪽 끝
         """
         widget = _make_widget(qapp, path="D:/아주/긴/경로/구조/를/가진/폴더/이름/마지막")
         resize_to(widget, 640)
         _hover(widget)
-        shown(widget.directoryLabel)  # 보이는 라벨의 기하만 의미가 있다
         shown(widget.fileSizeLabel)
         assert _right(widget, widget.fileSizeLabel) == _right(widget, widget.deleteButton)
-        assert _right(widget, widget.directoryLabel) < _x(widget, widget.fileSizeLabel)
+        if widget.directoryLabel.isVisible():  # 보이는 라벨의 기하만 의미가 있다
+            assert _right(widget, widget.directoryLabel) < _x(widget, widget.fileSizeLabel)
 
     @pytest.mark.parametrize(
         "path,expected",

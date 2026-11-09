@@ -33,6 +33,8 @@ from tests.app.gui.card_helpers import (
 )
 
 DEFAULT_DIR = "C:/dl"  # 전역 저장 위치 — 카드의 저장 위치가 이것이면 3줄에 보이지 않는다
+# 대체 글꼴(빈 글꼴 폴더)에서도 3줄이 접히지 않는 카드 폭(px) — 저장 위치 이름이 보여야 하는 테스트가 쓴다(#554)
+WIDE = 2400
 
 
 @pytest.fixture(autouse=True)
@@ -261,7 +263,7 @@ class TestRows:
         """
         default = _card()
         assert not default.directoryLabel.isVisible() and not default.pathIcon.isVisible()
-        other = _card(path="D:/vod/lck")
+        other = _card(path="D:/vod/lck", width=WIDE)
         assert other.directoryLabel.isVisible() and other.pathIcon.isVisible()
         assert other.directoryLabel.text() == "lck"
         assert other.directoryLabel.toolTip() == "D:/vod/lck"
@@ -894,7 +896,7 @@ class TestTipBubbles:
 
         "D:/vod/lck" 카드 · 카드 · 저장 위치 글 들어감 -> 말풍선 글 "D:/vod/lck"
         """
-        card = _card(path="D:/vod/lck")
+        card = _card(path="D:/vod/lck", width=WIDE)
         enter(card)
         enter(card.directoryLabel)
         assert bubble_text_for(card.directoryLabel) == "D:/vod/lck"
