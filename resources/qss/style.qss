@@ -541,6 +541,7 @@ QLineEdit[invalid="true"]:focus {
 
 #sectionHeaderLabel,
 #sectionWaitHintLabel,
+#cardEditWaitHintLabel,
 #sectionNumberLabel,
 #sectionNoticeLabel,
 #sectionNoteLabel,

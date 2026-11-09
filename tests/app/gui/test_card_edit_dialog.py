@@ -591,3 +591,109 @@ class TestSameResultAsTheOldPaths:
         assert calls == [old, new]
         new_card = win.listView.widgetFor(new)
         assert new_card.buttons[1].property("selected") is True
+
+
+# ---- 구간 편집 버튼 자리 · 기다림 안내 (inbox 124) ----
+
+
+def _with_sections(item: ContentItem, count: int) -> ContentItem:
+    """구간 count개(1분씩, 2분 간격)를 넣는다."""
+    item.selections = tuple(TimeRange(120.0 * n, 120.0 * n + 60.0) for n in range(count))
+    return item
+
+
+class TestSectionButtonPlace:
+    """「구간 편집…」은 구간 요약 오른쪽 끝에 위 정렬로 선다(오너 2026-11-09)."""
+
+    def _place(self, dialog: CardEditDialog) -> tuple[int, int, int]:
+        """(버튼 왼쪽 − 요약 오른쪽, 버튼 위끝 − 요약 위끝, 버튼 오른쪽 − 기본 위치 오른쪽) — 창 좌표."""
+        button = dialog.sectionButton.geometry().translated(
+            dialog.sectionButton.parentWidget().mapTo(dialog, QPoint(0, 0))
+        )
+        summary = dialog.sectionSummaryLabel.geometry().translated(
+            dialog.sectionSummaryLabel.parentWidget().mapTo(dialog, QPoint(0, 0))
+        )
+        rightmost = dialog.defaultPathButton.geometry().translated(
+            dialog.defaultPathButton.parentWidget().mapTo(dialog, QPoint(0, 0))
+        )
+        return (
+            button.left() - summary.right(),
+            button.top() - summary.top(),
+            button.right() - rightmost.right(),
+        )
+
+    @pytest.mark.parametrize("count", [1, 5, 20])
+    def test_button_sits_right_of_the_summary_at_the_top(self, qtbot, tmp_path, count: int) -> None:
+        """구간 수가 1 · 5 · 20이어도 버튼이 요약 오른쪽에, 위끝이 요약 첫 줄 위끝과 같게, 저장 위치 줄의 맨 오른쪽 버튼과 같은 오른쪽 열에 서야 한다.
+
+        구간 count개 카드 -> 버튼 왼쪽 > 요약 오른쪽, 위끝 차이 0, 오른쪽 끝 차이 0
+        """
+        item = _with_sections(_make_item(str(tmp_path)), count)
+        win = _window(tmp_path, item)
+        dialog = _open(win, item)
+        assert dialog.sectionButton.isVisible() and dialog.sectionSummaryLabel.isVisible(), (
+            "전제: 구간 줄이 보인다"
+        )
+        gap, top, right = self._place(dialog)
+        assert gap > 0 and top == 0 and right == 0, (
+            f"구간 {count}개: 사이 {gap} · 위끝 {top} · 오른쪽 {right}"
+        )
+
+    def test_long_notice_wraps_without_clipping_at_the_minimum_width(self, qtbot, tmp_path) -> None:
+        """요약 뒤 경고 안내가 길어도 창 최소폭(520)에서 감겨 잘리지 않아야 한다.
+
+        경고 다섯(fps · 끝 당김 · 끝 늘림 · 길이 밖 · 길이 확인 중) · 창 520 -> 요약 칸 높이 ≥ 그 폭의 필요 높이
+        """
+        from fractions import Fraction
+
+        from app.viewmodels.data import SECTION_CHECK_PENDING
+
+        item = _with_sections(_make_item(str(tmp_path)), 2)
+        item.section_refit_fps = Fraction(30)
+        item.section_end_pulled = item.section_end_extended = True
+        item.section_unfit = frozenset({1})
+        item.section_check = SECTION_CHECK_PENDING
+        win = _window(tmp_path, item)
+        dialog = _open(win, item)
+        dialog.resize(dialog.minimumWidth(), dialog.height())
+        _pump()
+        assert dialog.width() == 520, "전제: 창 최소폭"
+        label = dialog.sectionSummaryLabel
+        assert "checking length" in label.text(), "전제: 긴 경고가 요약에 있다"
+        assert label.height() >= label.heightForWidth(label.width())
+        assert dialog.sectionButton.geometry().left() > label.geometry().right()
+
+
+class TestWaitingHint:
+    """다운로드 차례가 이 카드를 기다리면 창 아래에 구간 창과 같은 안내가 뜬다."""
+
+    def test_hint_appears_while_the_batch_waits_and_hides_when_it_stops(
+        self,
+        qtbot,
+        tmp_path,
+        started,  # noqa: F811
+    ) -> None:
+        """배치가 편집 중인 카드를 기다리는 동안에만 안내가 보여야 한다.
+
+        A 편집 중 · B 대기 → 받기(B 받는 중) -> 안내 숨김, B 끝나 남은 대상이 A뿐 -> 안내 보임(구간 창과 같은 문구),
+        A를 지움 -> 안내 숨김
+        """
+        first, second = _make_item(str(tmp_path), title="A"), _make_item(str(tmp_path), title="B")
+        win = _window(tmp_path, first, second)
+        dialog = _open(win, first)
+        assert not dialog.waitHintLabel.isVisible(), "전제: 처음에는 안내가 없다"
+        win.contentManager.downloadItem()
+        _pump()
+        assert started == [second]
+        assert not dialog.waitHintLabel.isVisible(), "다른 카드를 받는 중인데 안내가 보인다"
+        second.downloadState = DownloadState.FINISHED
+        win.contentManager.emitFinishedRequest(second)
+        _pump()
+        assert win.contentManager.isWaitingOnEdit(), "전제: 배치가 A를 기다린다"
+        assert dialog.waitHintLabel.isVisible()
+        assert dialog.waitHintLabel.text() == (
+            "A download is waiting for this card — it continues when you close this window"
+        )
+        win.contentManager.removeItem(first)
+        _pump()
+        assert not dialog.waitHintLabel.isVisible()

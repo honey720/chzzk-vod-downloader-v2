@@ -1098,6 +1098,7 @@ class VodDownloader(QMainWindow):
         self._editDialog = dialog
         self._editItem = item
         self.contentManager.beginSectionEdit(item)
+        self.contentManager.editWaitChanged.connect(dialog.setWaitingHint)
         dialog.finished.connect(self._onEditDialogFinished)
         dialog.open()
 
@@ -1107,6 +1108,7 @@ class VodDownloader(QMainWindow):
         self._editDialog = None
         self._editItem = None
         if dialog is not None:
+            self.contentManager.editWaitChanged.disconnect(dialog.setWaitingHint)
             dialog.deleteLater()
         if item is not None:
             self.contentManager.endSectionEdit(item)

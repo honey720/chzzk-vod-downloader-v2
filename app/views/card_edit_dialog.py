@@ -19,7 +19,7 @@ import copy
 import logging
 from collections.abc import Callable
 
-from PySide6.QtCore import QEvent, QObject, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, Qt
 from PySide6.QtWidgets import (
     QAbstractButton,
     QComboBox,
@@ -171,20 +171,24 @@ class CardEditDialog(QDialog):
         self.resolutionRowLabel = QLabel(self)
         form.addRow(self.resolutionRowLabel, self.resolutionCombo)
 
+        # 구간 줄: 왼쪽 요약(요약 글 · 구간 줄) | 오른쪽 끝 「구간 편집…」(위끝 = 첫 줄 위끝). 버튼은 다른 줄의
+        # 버튼(기본값 · 찾기… · 기본 위치)과 같은 오른쪽 열에 선다 — 프로토 배치(오너 2026-11-09)
         self.sectionsBox = QWidget(self)
-        sections = QVBoxLayout(self.sectionsBox)
+        sections = QHBoxLayout(self.sectionsBox)
         sections.setContentsMargins(0, 0, 0, 0)
+        summary = QVBoxLayout()
         self.sectionSummaryLabel = QLabel(self.sectionsBox)
         self.sectionSummaryLabel.setObjectName("cardEditSectionSummary")
         self.sectionSummaryLabel.setWordWrap(True)
         self.sectionLinesLabel = QLabel(self.sectionsBox)
         self.sectionLinesLabel.setObjectName("cardEditSectionLines")
+        summary.addWidget(self.sectionSummaryLabel)
+        summary.addWidget(self.sectionLinesLabel)
         self.sectionButton = QPushButton(self.sectionsBox)
         self.sectionButton.setObjectName("cardEditSectionButton")
         self.sectionButton.clicked.connect(self.openSections)
-        sections.addWidget(self.sectionSummaryLabel)
-        sections.addWidget(self.sectionLinesLabel)
-        sections.addWidget(self.sectionButton, 0, Qt.AlignmentFlag.AlignLeft)
+        sections.addLayout(summary, 1)
+        sections.addWidget(self.sectionButton, 0, Qt.AlignmentFlag.AlignTop)
         self.sectionsRowLabel = QLabel(self)
         form.addRow(self.sectionsRowLabel, self.sectionsBox)
         # 구간 기능이 없는 타입이면 구간 줄을 두지 않는다(카드의 구간 편집과 같은 판정)
@@ -216,6 +220,12 @@ class CardEditDialog(QDialog):
         self.cancelButton = self.buttonBox.button(QDialogButtonBox.StandardButton.Cancel)
         self.buttonBox.accepted.connect(self.accept)
         self.buttonBox.rejected.connect(self.reject)
+        # 받는 중인 배치가 이 카드를 기다릴 때만 보이는 안내 — 구간 창과 같은 자리 · 같은 문구(#545)
+        self.waitHintLabel = QLabel(self)
+        self.waitHintLabel.setObjectName("cardEditWaitHintLabel")
+        self.waitHintLabel.setWordWrap(True)
+        self.waitHintLabel.setVisible(False)
+        root.addWidget(self.waitHintLabel)
         root.addWidget(self.buttonBox)
         # Enter가 칸에서 창을 닫지 않게 — 어느 버튼도 기본 버튼이 되지 않는다(keyPressEvent)
         for button in self.findChildren(QPushButton):
@@ -234,6 +244,13 @@ class CardEditDialog(QDialog):
         self.pathRowLabel.setText(self.tr("Save location"))
         self.browseButton.setText(self.tr("Browse…"))
         self.defaultPathButton.setText(self.tr("Default location"))
+        # 구간 창의 문구를 그대로 쓴다 — 번역 컨텍스트도 구간 창 것이라 번역 항목이 하나다
+        self.waitHintLabel.setText(
+            QCoreApplication.translate(
+                "SectionEditDialog",
+                "A download is waiting for this card — it continues when you close this window",
+            )
+        )
 
     # ---- 해상도 ----
 
@@ -270,6 +287,10 @@ class CardEditDialog(QDialog):
         """
         if 0 <= index < self.resolutionCombo.count() and index < len(self._item.unique_reps):
             self.resolutionCombo.setItemText(index, self._repText(self._item.unique_reps[index]))
+
+    def setWaitingHint(self, waiting: bool) -> None:
+        """받는 중인 배치가 이 카드를 기다리는지에 맞춰 아래쪽 안내를 켜고 끈다(구간 창과 같다)."""
+        self.waitHintLabel.setVisible(waiting)
 
     def _onResolutionChanged(self) -> None:
         self._refreshTail()
@@ -348,6 +369,17 @@ class CardEditDialog(QDialog):
         self.sectionDialog = None
 
     # ---- 저장 · 취소 ----
+
+    def resizeEvent(self, event) -> None:
+        """폭에 맞는 높이를 최소 높이로 건다 — 감기는 글(구간 경고 안내)이 잘리지 않게.
+
+        최상위 창의 최소 높이는 감긴 글의 높이(높이-폭 관계)를 따라가지 않는다. 폭이 바뀔 때마다
+        그 폭에서 레이아웃이 바라는 높이를 다시 걸면, 모자란 창은 Qt가 그 높이로 늘린다.
+        """
+        super().resizeEvent(event)
+        layout = self.layout()
+        if layout is not None and layout.hasHeightForWidth():
+            self.setMinimumHeight(layout.totalHeightForWidth(self.width()))
 
     def keyPressEvent(self, event) -> None:
         """Enter는 초점이 있는 버튼만 누른다 — 칸에서 친 Enter는 창을 닫지 않는다. Esc는 취소."""
