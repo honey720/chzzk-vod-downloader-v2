@@ -13,7 +13,7 @@
         "app/views/section_dialog.py",
         "app/widgets/timecode_edit.py",
         "app/viewmodels/section_edit.py",
-        "app/widgets/contentItemWidget.ui"
+        "app/widgets/contentItemWidget.py"
     ],
     "translations": [
         "translations/ko_KR.ts",

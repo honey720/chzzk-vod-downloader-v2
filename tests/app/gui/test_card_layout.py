@@ -42,7 +42,7 @@ from typing import Never
 #: 발견된 조건). 카드 최소폭이 썸네일(16:9) 때문에 커져 하한을 520→560으로.
 WIDTHS = (560, 900, 1600)
 
-#: 각 행 QHBoxLayout의 setSpacing 고정값(ui/contentItemWidget.py).
+#: 각 행 QHBoxLayout의 setSpacing 고정값(app/widgets/contentItemWidget.py).
 FIXED_SPACING = 4
 
 

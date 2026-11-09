@@ -9,7 +9,7 @@ override해 레이아웃이 내용 폭보다 좁게 줄 수 있게 하고, `size
 넓게 줄 수 있게 하고 (b) 실제 폭보다 넘치면 `elidedText()`로 잘라 보여주고
 (c) 잘린 전체 값은 툴팁으로 노출한다.
 
-`app/widgets/contentItemWidget.py`(Designer 생성)가 `titleLabel`/`directoryLabel`
+`app/widgets/contentItemWidget.py`(카드 위젯 구현, 손으로 유지)가 `titleLabel`/`directoryLabel`
 생성 시 `QLabel` 대신 이 클래스를 쓴다 — `app/widgets/widget.py`가 아니라 이
 파일에 둔 이유는 `app/widgets/widget.py`가 `app/widgets/contentItemWidget.py`를
 import하므로, 거꾸로 `contentItemWidget.py`가 `app/widgets/widget.py`를 import하면 순환
