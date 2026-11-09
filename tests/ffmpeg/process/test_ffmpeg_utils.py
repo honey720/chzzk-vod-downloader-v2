@@ -1142,7 +1142,7 @@ def test_remux_through_returns_the_warnings_of_the_join_side_and_asks_it_for_the
 # 실제 시간에 기대지 않게 대역이 표식으로 움직인다: 시작을 마치면 「.ready」를 만들고, 입력을 다 읽은 뒤
 # 「.go」가 생길 때까지 서 있다가 「.done」을 만들고 끝난다. 테스트는 대역이 시작을 마친 뒤에야 입력을
 # 닫는다 — 제한 시간은 입력이 닫힌 뒤부터 세므로, 느린 러너의 인터프리터 시작이 제한 시간에 섞이지 않는다.
-# 일시정지가 시작될 때 「.go」를 놓는다 — 멈춰 있지 않다면 대역은 바로 끝난다.
+# 일시정지로 프로세스가 멈춘 뒤 「.go」를 놓는다 — 멈춰 있지 않다면 대역은 바로 끝난다.
 HOLD = 1.5  # 일시정지를 붙드는 시간(초) — 제한 시간보다 길어야 「서 있던 시간은 세지 않음」을 잰다
 LIMIT = 1.0  # 제한 시간(초) — 풀린 뒤 대역이 할 일은 표식 하나를 보고 끝나는 것뿐이다
 READY_WAIT = 30.0  # 대역이 시작을 마치기를 기다리는 상한(초) — 넘으면 전제 실패로 멈춘다
@@ -1223,7 +1223,11 @@ def _feed_when_ready(*markers: Path) -> Iterator[bytes]:
 
 
 class _HoldOnce:
-    """should_pause 대역 — 시작 조건이 서면 「.go」를 놓고 HOLD초 동안 참, 그 뒤로는 거짓.
+    """should_pause 대역 — 시작 조건이 서면 HOLD초 동안 참, 그 뒤로는 거짓. 「.go」는 두 번째 부름에서 놓는다.
+
+    제품(`_await_end`)은 참을 받은 **뒤에** 그 차례에서 프로세스를 멈춘다. 첫 부름에서 「.go」를 놓으면
+    멈추기 전에 대역이 표식을 보고 끝까지 갈 수 있다(#552 — windows CI에서 한 번 실패). 두 번째
+    부름은 첫 참을 받은 차례의 멈추기가 끝난 뒤이므로 그때 놓는다 — 여유 시간을 두지 않는다.
 
     붙드는 동안 「.done」이 생겼는지(멈추지 않았는지) 적는다. 붙든 시간은 처음 참을 돌려준 때부터
     처음 거짓을 돌려준 때까지다.
@@ -1235,6 +1239,7 @@ class _HoldOnce:
         self._begin = begin
         self.began: float | None = None  # 처음 참을 돌려준 때
         self.ended: float | None = None  # 붙든 뒤 처음 거짓을 돌려준 때
+        self.went = False  # 「.go」를 놓았다(멈춘 뒤 — 두 번째 부름)
         self.finished_while_held = False  # 붙드는 동안 끝 표식이 생겼다
 
     def __call__(self) -> bool:
@@ -1242,9 +1247,12 @@ class _HoldOnce:
         if self.began is None:
             if not self._begin():
                 return False
-            self._go.touch()
             self.began = now
+            return True  # 이 참을 받은 차례에서 제품이 프로세스를 멈춘다 — 「.go」는 다음 부름에서
         if now - self.began < HOLD:
+            if not self.went:
+                self._go.touch()
+                self.went = True
             self.finished_while_held |= self._done.exists()
             return True
         if self.ended is None:
@@ -1338,8 +1346,8 @@ def test_remux_through_holds_the_processes_while_paused_and_does_not_count_that_
 ) -> None:
     """기다리는 동안 일시정지면 두 ffmpeg가 서 있어야 하고, 서 있던 시간은 제한 시간에 세지 않아야 한다.
 
-    두 대역이 시작을 마친 뒤 입력이 닫힌다. 변환 대역이 끝난 것을 본 때 「가라」 표식을 놓고
-    HOLD(1.5)초 동안 should_pause가 참, timeout LIMIT(1.0)초
+    두 대역이 시작을 마친 뒤 입력이 닫힌다. 변환 대역이 끝난 것을 본 때부터 HOLD(1.5)초 동안
+    should_pause가 참이고, 두 번째 부름(멈춘 뒤)에 「가라」 표식을 놓는다(#552). timeout LIMIT(1.0)초
     -> 예외 없이 끝난다(산출물과 끝 표식이 있다), 붙든 시간 >= HOLD, 붙드는 동안 끝 표식이 생기지 않았다 (#548)
     """
     out = tmp_path / "out.mp4"
@@ -1422,8 +1430,8 @@ def test_remux_stream_holds_ffmpeg_while_paused_and_does_not_count_that_time(
 ) -> None:
     """기다리는 동안 일시정지면 ffmpeg가 서 있어야 하고, 서 있던 시간은 제한 시간에 세지 않아야 한다.
 
-    대역이 시작을 마친 뒤 입력이 닫힌다. should_pause가 처음 불릴 때 「가라」 표식을 놓고
-    HOLD(1.5)초 동안 참, timeout LIMIT(1.0)초
+    대역이 시작을 마친 뒤 입력이 닫힌다. should_pause가 처음 불린 때부터 HOLD(1.5)초 동안 참이고,
+    두 번째 부름(멈춘 뒤)에 「가라」 표식을 놓는다(#552). timeout LIMIT(1.0)초
     -> 예외 없이 끝난다(산출물과 끝 표식이 있다), 붙든 시간 >= HOLD, 붙드는 동안 끝 표식이 생기지 않았다 (#548)
     """
     out = tmp_path / "out.mp4"
