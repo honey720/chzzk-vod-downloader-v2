@@ -2,6 +2,53 @@
 <!DOCTYPE TS>
 <TS version="2.1" language="ko_KR">
 <context>
+    <name>CardEditDialog</name>
+    <message>
+        <source>Edit</source>
+        <translation>편집</translation>
+    </message>
+    <message>
+        <source>File name</source>
+        <translation>파일명</translation>
+    </message>
+    <message>
+        <source>Default</source>
+        <translation>기본값</translation>
+    </message>
+    <message>
+        <source>Resolution</source>
+        <translation>해상도</translation>
+    </message>
+    <message>
+        <source>Sections</source>
+        <translation>구간</translation>
+    </message>
+    <message>
+        <source>Edit sections…</source>
+        <translation>구간 편집…</translation>
+    </message>
+    <message>
+        <source>Save location</source>
+        <translation>저장 위치</translation>
+    </message>
+    <message>
+        <source>Browse…</source>
+        <translation>찾기…</translation>
+    </message>
+    <message>
+        <source>Default location</source>
+        <translation>기본 위치</translation>
+    </message>
+    <message>
+        <source>Whole video</source>
+        <translation>전체 영상</translation>
+    </message>
+    <message>
+        <source>Select download folder</source>
+        <translation>저장 폴더 선택</translation>
+    </message>
+</context>
+<context>
     <name>ContentItemWidget</name>
     <message>
         <source>(source)</source>
@@ -46,6 +93,10 @@
     <message>
         <source>Edit sections</source>
         <translation>구간 편집</translation>
+    </message>
+    <message>
+        <source>Edit</source>
+        <translation>편집</translation>
     </message>
     <message>
         <source>Change save location</source>

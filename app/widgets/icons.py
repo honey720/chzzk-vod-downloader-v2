@@ -43,7 +43,9 @@ import app.theme as theme
 #: star · undo = 드롭다운 메뉴 동작 줄의 아이콘 — 「지금 위치를 즐겨찾기에」 · 「기본 위치로」(#536).
 #: plus = 헤더바 등록(+), chevron_down = 펼침 버튼의 ⌄, folder_outline = 메뉴 「폴더 찾기…」(테두리 폴더),
 #: link · memory · disk = 하단바 연결 · 메모리 · 여유 칸 — 프로토 그림을 옮겼다(#536).
+#: edit = 대기 카드의 카드 편집 창 열기(✎, #545).
 ICON_NAMES = (
+    "edit",
     "plus",
     "chevron_down",
     "folder_outline",
@@ -379,7 +381,22 @@ def _paint_disk(painter: QPainter, s: float, color: QColor, accent: QColor) -> N
     painter.drawEllipse(QPointF(s * 0.72, s * 0.5), s * 0.06, s * 0.06)
 
 
+def _paint_edit(painter: QPainter, s: float, color: QColor, accent: QColor) -> None:
+    """편집 — 연필. 왼쪽 아래 촉에서 오른쪽 위로 기운 막대 하나와 지우개 쪽 금 하나(#545)."""
+    _stroke(painter, color, s * LINE_WIDTH)
+    path = QPainterPath()
+    path.moveTo(s * 0.18, s * 0.82)  # 촉 끝
+    path.lineTo(s * 0.24, s * 0.60)
+    path.lineTo(s * 0.66, s * 0.18)
+    path.lineTo(s * 0.82, s * 0.34)
+    path.lineTo(s * 0.40, s * 0.76)
+    path.closeSubpath()
+    painter.drawPath(path)
+    painter.drawLine(QPointF(s * 0.56, s * 0.28), QPointF(s * 0.72, s * 0.44))
+
+
 _PAINTERS = {
+    "edit": _paint_edit,
     "plus": _paint_plus,
     "chevron_down": _paint_chevron_down,
     "folder_outline": _paint_folder_outline,

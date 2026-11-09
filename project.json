@@ -3,6 +3,7 @@
     "sources": [
         "app/views/mainWindow.py",
         "app/widgets/widget.py",
+        "app/viewmodels/card_text.py",
         "app/widgets/view.py",
         "app/widgets/header_controls.py",
         "app/widgets/footer_bar.py",
@@ -11,6 +12,7 @@
         "app/viewmodels/download_viewmodel.py",
         "app/views/dialog.py",
         "app/views/section_dialog.py",
+        "app/views/card_edit_dialog.py",
         "app/widgets/timecode_edit.py",
         "app/viewmodels/section_edit.py",
         "app/widgets/contentItemWidget.py"
