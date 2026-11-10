@@ -590,6 +590,9 @@ class ContentListView(QScrollArea):
         released = getattr(model, "itemReleased", None)  # 대역 모델에는 없을 수 있다
         if released is not None:
             released.connect(self._onItemReleased)
+        bulk = getattr(model, "bulkChanged", None)
+        if bulk is not None:
+            bulk.connect(self._onBulk)
         # 방어적 동기화 — 지금은 setModel이 항상 빈 모델로 불리지만(생성 직후),
         # 나중에 미리 채워진 모델이 들어와도 깨지지 않게 기존 항목을 반영한다
         for row in range(model.rowCount()):
@@ -721,6 +724,19 @@ class ContentListView(QScrollArea):
         if not self._newCards:
             QTimer.singleShot(0, self, self._fitNewDates)
         self._newCards.append(widget)
+
+    def _onBulk(self, on: bool) -> None:
+        """여러 장 작업(선택 지우기 · 되살리기, #561) 동안 카드 컨테이너를 숨겨 둔다 — 끝나면 한 번에 보인다.
+
+        보이는 컨테이너 안에서 카드를 한 장씩 빼고 끼우면 그때마다 목록 레이아웃이 다시 계산된다 — 1000장
+        되살리기에서 그 몫이 절반을 넘었다(inbox 139 실측, `_applyFilter`와 같은 까닭).
+        """
+        if on:
+            self._container.hide()
+            return
+        self._container.show()
+        self._overlay.update()
+        self._scheduleRehover()
 
     def _onItemReleased(self, item: ContentItem) -> None:
         """되살릴 수 없게 된 카드의 위젯을 지운다 (#561)."""

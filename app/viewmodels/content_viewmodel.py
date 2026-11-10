@@ -420,35 +420,47 @@ class ContentViewModel(QObject):
             self.undoStack.undo()
 
     def _detach(self, items: list[ContentItem]) -> None:
-        """카드를 목록에서 뺀다 — 되살릴 수 있게 든 채로(`ContentListModel.removeRows(keep=True)`)."""
-        for item in items:
-            row = self.model.getRow(item)
-            if row is None:
-                continue
-            self.model.removeRows(row, 1, keep=True)
-            item.section_head = None  # 구간을 정하며 받아 둔 moov를 버린다 (#309)
-            # 이 카드의 조회 · 크기 세기가 돌고 있으면 그만두게 한다 — 결과를 쓸 카드가 없다
-            self._sectionRefitter.cancel(item)
-            self._sectionSizer.cancel(item)
-            self.deleteItemRequested.emit(item, self.model.rowCount())
+        """카드를 목록에서 뺀다 — 되살릴 수 있게 든 채로(`ContentListModel.removeRows(keep=True)`).
+
+        여러 장 작업(`beginBulk`)으로 묶는다 — 목록 레이아웃 · 칩 숫자는 끝에 한 번 맞춘다.
+        """
+        self.model.beginBulk()
+        try:
+            for item in items:
+                row = self.model.getRow(item)
+                if row is None:
+                    continue
+                self.model.removeRows(row, 1, keep=True)
+                item.section_head = None  # 구간을 정하며 받아 둔 moov를 버린다 (#309)
+                # 이 카드의 조회 · 크기 세기가 돌고 있으면 그만두게 한다 — 결과를 쓸 카드가 없다
+                self._sectionRefitter.cancel(item)
+                self._sectionSizer.cancel(item)
+                self.deleteItemRequested.emit(item, self.model.rowCount())
+        finally:
+            self.model.endBulk()
         self._resumeHeldBatch()  # 기다리던 카드가 지워졌을 수 있다
 
     def _attach(self, entries: list[tuple[int, ContentItem]], working: set[ContentItem]) -> None:
         """지운 카드를 지운 자리로 되살린다 — 행이 작은 것부터 넣는다.
 
         그 사이 목록이 줄었으면 끝에 붙인다. 지울 때 엔진이 쥐고 있던 카드는 대기로(진행 · 속도 · 준비
-        표시를 비운다). 지우며 그만두게 한 길이 확인 · 크기 세기는 다시 시작하거나 표시를 내린다.
+        표시를 비운다). 지우며 그만두게 한 길이 확인 · 크기 세기는 다시 시작하거나 표시를 내린다. 여러 장
+        작업으로 묶는다(`_detach`와 같다).
         """
-        for row, item in entries:
-            if self.model.getRow(item) is not None:
-                continue
-            if item in working:
-                self._resetToWaiting(item)
-            if item.section_sizing:
-                item.section_sizing = False  # 크기 세기는 지울 때 그만뒀다 — moov도 버렸다
-            self.model.addItem(item, min(row, self.model.rowCount()))
-            if item.section_check == SECTION_CHECK_PENDING:
-                self.refitSections(item)  # 길이 확인 조회도 지울 때 그만뒀다 — 다시 묻는다
+        self.model.beginBulk()
+        try:
+            for row, item in entries:
+                if self.model.getRow(item) is not None:
+                    continue
+                if item in working:
+                    self._resetToWaiting(item)
+                if item.section_sizing:
+                    item.section_sizing = False  # 크기 세기는 지울 때 그만뒀다 — moov도 버렸다
+                self.model.addItem(item, min(row, self.model.rowCount()))
+                if item.section_check == SECTION_CHECK_PENDING:
+                    self.refitSections(item)  # 길이 확인 조회도 지울 때 그만뒀다 — 다시 묻는다
+        finally:
+            self.model.endBulk()
 
     @staticmethod
     def _resetToWaiting(item: ContentItem) -> None:

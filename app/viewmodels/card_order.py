@@ -127,6 +127,27 @@ class CardOrder(QObject):
         model.itemInserted.connect(self._onInserted)
         model.itemRemoved.connect(self._onRemoved)
         model.itemChanged.connect(self.touch)
+        # 여러 장 작업(#561 — 선택 지우기 · 되살리기) 동안에는 칩 숫자 알림을 끝에 한 번만 낸다 — 1000장이면
+        # 헤더바 모양 · 칩 글 · 다운로드 버튼을 1000번 다시 맞췄다(inbox 139 실측)
+        self._holdCounts = False
+        self._countsPending = False
+        bulk = getattr(model, "bulkChanged", None)  # 대역 모델에는 없을 수 있다
+        if bulk is not None:
+            bulk.connect(self._onBulk)
+
+    def _onBulk(self, on: bool) -> None:
+        """여러 장 작업이 시작되면 칩 숫자 알림을 모으고, 끝나면 모은 것을 한 번 낸다."""
+        self._holdCounts = on
+        if not on and self._countsPending:
+            self._countsPending = False
+            self.countsChanged.emit()
+
+    def _countsChangedNow(self) -> None:
+        """칩 숫자 알림 — 여러 장 작업 중이면 끝으로 미룬다."""
+        if self._holdCounts:
+            self._countsPending = True
+        else:
+            self.countsChanged.emit()
 
     # ---- 상태 ----
 
@@ -245,7 +266,7 @@ class CardOrder(QObject):
             self._loading.add(item)
         self._counts[chip] += 1
         self._counts["all"] += 1
-        self.countsChanged.emit()
+        self._countsChangedNow()
 
     def _onRemoved(self, item: ContentItem) -> None:
         """카드가 목록에서 빠졌다 — 보이는 차례 · 칩 숫자에서 뺀다."""
@@ -258,7 +279,7 @@ class CardOrder(QObject):
         self._dirty.pop(item, None)
         self._counts[chip] -= 1
         self._counts["all"] -= 1
-        self.countsChanged.emit()
+        self._countsChangedNow()
 
     def _flush(self) -> None:
         """모아 둔 카드의 칩이 바뀌었으면 숫자를 고치고, 상태순이면 그 카드만 옮긴다."""

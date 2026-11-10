@@ -28,12 +28,32 @@ class ContentListModel(QObject):
     # 되살릴 수 있게 들고 있던 지운 카드를 놓았다(#561) — 되돌리기 한도를 넘었거나 새 지우기가 되살리기를 지웠다.
     # 목록은 그 카드의 위젯을 그제야 지운다
     itemReleased = Signal(object)
+    # 여러 장을 한 번에 넣거나 빼기 시작했다(True) · 끝났다(False) (#561 — 선택 지우기 · 되살리기). 구독자는 그동안
+    # 카드마다 하던 다시 맞추기(목록 레이아웃 · 칩 숫자 알림)를 끝에 한 번으로 모은다. 겹쳐 불러도 바깥 한 쌍만 낸다
+    bulkChanged = Signal(bool)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.items: list[ContentItem] = []
         # 지웠지만 되살릴 수 있는 카드(#561) — 목록이 위젯을 지우지 않고 들고 있는다
         self._kept: set[ContentItem] = set()
+        self._bulk = 0  # 여러 장 작업의 겹친 수
+
+    def beginBulk(self) -> None:
+        """여러 장 작업을 시작한다 — `endBulk`와 짝으로 부른다."""
+        self._bulk += 1
+        if self._bulk == 1:
+            self.bulkChanged.emit(True)
+
+    def endBulk(self) -> None:
+        """여러 장 작업을 끝낸다."""
+        self._bulk -= 1
+        if self._bulk == 0:
+            self.bulkChanged.emit(False)
+
+    def inBulk(self) -> bool:
+        """여러 장 작업 중인지."""
+        return self._bulk > 0
 
     def rowCount(self) -> int:
         return len(self.items)
