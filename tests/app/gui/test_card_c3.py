@@ -34,6 +34,7 @@ from app.widgets.widget import ContentItemWidget
 from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
+from tests.app.gui.test_header_layout import _font_whose_rounded_width_elides
 from tests.app.gui.test_shell_layout import WORST_SAMPLES
 from tests.mocks.mock_http import MockResponse
 
@@ -348,6 +349,26 @@ class TestListWideYear:
         _list_at(view, drop + 1)
         assert [card.dateLabel.text() for card in cards] == ["2026. 10. 26."] * 2
         assert QLabel.text(cards[0].channelNameLabel) == wide_name
+
+    def test_fractional_date_width_does_not_shrink_the_channel_name(self, qapp) -> None:
+        """글자 폭이 소수인 글꼴에서도 연도가 돌아온 폭의 긴 채널명 라벨 폭이 넓은 목록과 같아야 한다.
+
+        앱 글꼴에 소수 글자 간격(정수 글 폭 칸에서 "2026. 10. 26."이 말줄임되는 값), 채널명 긴 카드 ·
+        「LCK」 카드 -> 연도가 빠진 폭 + 1에서 두 카드 "2026. 10. 26." · 긴 채널명 라벨 폭 == 900에서의 폭
+        """
+        old = qapp.font()
+        qapp.setFont(_font_whose_rounded_width_elides(old, "2026. 10. 26."))
+        try:
+            view, cards = self._cards()
+            name = cards[0].channelNameLabel
+            wide_width = name.width()
+            drop = self._drop_width(view, cards)
+            _list_at(view, drop + RETURN_SLACK + 1)
+            _list_at(view, drop + 1)
+            assert [card.dateLabel.text() for card in cards] == ["2026. 10. 26."] * 2
+            assert name.isVisible() and name.width() == wide_width
+        finally:
+            qapp.setFont(old)
 
     def test_year_returns_only_with_eight_more_pixels(self, qapp) -> None:
         """연도를 뺀 뒤에는 뺀 폭 + 8에서도 빠진 채, + 9에서 돌아와야 한다.

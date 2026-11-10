@@ -1,6 +1,7 @@
 """목록의 카드 위젯(ContentItemWidget)과 그 부속 함수를 정의한다."""
 
 import logging
+import math
 import os
 import platform
 import re
@@ -22,6 +23,7 @@ from PySide6.QtGui import (
     QDesktopServices,
     QEnterEvent,
     QFocusEvent,
+    QFontMetricsF,
     QKeyEvent,
     QMouseEvent,
     QPainter,
@@ -188,6 +190,16 @@ BUSY_STATES = (DownloadState.RUNNING, DownloadState.PAUSED)
 
 # 키보드 초점으로 보지 않는 까닭 — 카드는 마우스로 초점을 받지 않지만(TabFocus) 혹시 오면 테두리를 안 그린다
 _POINTER_REASONS = (Qt.FocusReason.MouseFocusReason,)
+
+
+def _label_text_width(label: QLabel, text: str) -> int:
+    """`QLabel`이 그 글에 바라는 폭 — 소수 글 폭을 올림한다(`QLabel.sizeHint`와 같은 몫).
+
+    정수 `horizontalAdvance`는 반올림이라 글자 폭이 소수인 글꼴(리눅스 CI)에서 라벨이 실제로 받는
+    폭보다 1px 좁을 수 있다. 그 차이만큼 옆 채널명 라벨이 줄었다(#554, `header_controls.text_width`와
+    같은 셈 — 그 모듈이 이 모듈을 import해 여기 둔다).
+    """
+    return math.ceil(QFontMetricsF(label.font()).horizontalAdvance(text))
 
 
 def last_folder_name(path: str) -> str:
@@ -913,7 +925,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         spacing = self.topLayout.spacing()
         name = min(self.channelNameLabel.sizeHint().width(), self.channelNameLabel.maximumWidth())
         date = card_text.upload_date_text(self.item, with_year)
-        date_width = self.dateLabel.fontMetrics().horizontalAdvance(date)
+        date_width = _label_text_width(self.dateLabel, date)
         return self.channelImageLabel.width() + spacing + name + spacing + spacing + date_width
 
     def row1Room(self) -> int:
@@ -936,7 +948,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             + self.channelNameLabel.minimumWidth()
             + spacing
             + spacing
-            + self.dateLabel.fontMetrics().horizontalAdvance(date)
+            + _label_text_width(self.dateLabel, date)
         )
         row3 = self._levelNeeds()[-1]
         if self.item.downloadState == DownloadState.FAILED:
