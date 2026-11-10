@@ -9,8 +9,8 @@ from collections.abc import Iterator
 from typing import Never
 
 import pytest
-from PySide6.QtCore import QEvent, QPoint, Qt
-from PySide6.QtGui import QFontMetrics, QKeyEvent
+from PySide6.QtCore import QEvent, QPoint, QRect, Qt
+from PySide6.QtGui import QColor, QFontMetrics, QImage, QKeyEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
@@ -925,3 +925,453 @@ class TestSelectBarPlace:
         assert str(count) in label.text()
         need = QFontMetrics(label.font()).horizontalAdvance(label.text())
         assert need <= label.contentsRect().width()
+
+
+# ---- 체크 원 · 선택 모드의 초점 선 ----
+
+QSS_PATH = main_module.resource_path(theme.QSS_RELATIVE_PATH)
+COLOUR_SLACK = 24  # 색이 같다고 보는 한도 — 세 채널 차의 합(안티에일리어싱이 섞는 몫)
+RING_SLACK = 48  # 원 테두리 화소의 한도 — 원 가장자리라 바깥 바탕이 조금 더 섞인다
+MARK_SIDE = {False: 20, True: 16}  # 썸네일 줄이기 끔 · 켬의 원 지름(px)
+MARK_INSET = 4  # 썸네일 왼쪽 위에서 원까지(px)
+
+
+def _toggle_select_mode(win: VodDownloader, on: bool) -> None:
+    win.selectButton.click()
+    _settle()
+    assert win.listView.isSelecting() is on, "전제: 선택 모드가 바뀌었다"
+
+
+def _show_compact(compact: bool) -> None:
+    """뒤에 만드는 카드의 썸네일 줄이기를 정한다 — 되돌리기는 `animations_off`가 한다."""
+    card_display.use(card_display.CardDisplay(animations=False, compact_thumbnail=compact))
+
+
+def _focus_by_key(win: VodDownloader, item: ContentItem) -> ContentItemWidget:
+    """그 카드에 키보드 초점을 준다 — 마우스 초점은 초점 선을 그리지 않는다."""
+    card = _card(win, item)
+    win.activateWindow()
+    card.setFocus(Qt.FocusReason.OtherFocusReason)
+    _settle()
+    assert card.hasKeyFocus(), "전제: 카드가 키보드 초점을 받았다"
+    return card
+
+
+def _colour_at(image: QImage, x: float, y: float) -> QColor:
+    ratio = image.devicePixelRatio()
+    return image.pixelColor(int(x * ratio), int(y * ratio))
+
+
+def _gap(got: QColor, want: QColor) -> int:
+    return (
+        abs(got.red() - want.red())
+        + abs(got.green() - want.green())
+        + abs(got.blue() - want.blue())
+    )
+
+
+def _is(got: QColor, token: str, slack: int = COLOUR_SLACK) -> bool:
+    """그 화소가 지금 테마의 `token` 색인지."""
+    return _gap(got, QColor(theme.current_tokens()[token])) <= slack
+
+
+def _edge(card: ContentItemWidget, depth: int) -> QColor:
+    """카드 면 왼쪽 가장자리에서 `depth`번째(0부터) 화소 — 세로 가운데(모서리 둥글림 밖)."""
+    face = card.contentFrame
+    assert face.isVisible(), "전제: 카드 면이 보인다"
+    return _colour_at(face.grab().toImage(), depth, face.height() / 2)
+
+
+def _mark_colour(card: ContentItemWidget, x: float, y: float) -> QColor:
+    """체크 원 왼쪽 위에서 (x, y) 떨어진 화소 — 원은 썸네일의 자식이라 썸네일을 그려서 읽는다."""
+    mark = card.pickMark()
+    assert mark is not None and mark.isVisible(), "전제: 체크 원이 보인다"
+    return _colour_at(card.thumbnailLabel.grab().toImage(), mark.x() + x, mark.y() + y)
+
+
+class TestPickMark:
+    def test_mark_is_made_on_first_entering_select_mode(self, window) -> None:
+        """선택 모드에 들어간 적 없는 카드에는 체크 원이 없고, 들어가면 모든 카드에 보여야 한다.
+
+        카드 둘 -> 원 없음(None), 선택 버튼 클릭 -> 두 카드 모두 원 보임
+        """
+        items = _add(window, D.WAITING, D.FINISHED)
+        assert [_card(window, item).pickMark() for item in items] == [None, None]
+        _toggle_select_mode(window, True)
+        assert [_card(window, item).pickMark().isVisible() for item in items] == [True, True]
+
+    def test_mark_hides_on_leaving_and_shows_again_on_entering(self, window) -> None:
+        """선택 모드에서 나오면 체크 원이 숨고, 다시 들어가면 보여야 한다.
+
+        카드 하나, 선택 모드 들어감 -> 나옴 -> 원 숨음, 다시 들어감 -> 원 보임
+        """
+        items = _add(window, D.WAITING)
+        _toggle_select_mode(window, True)
+        mark = _card(window, items[0]).pickMark()
+        assert mark is not None and mark.isVisible()
+        _toggle_select_mode(window, False)
+        assert not mark.isVisible()
+        _toggle_select_mode(window, True)
+        assert mark.isVisible()
+
+    def test_mark_follows_picking_and_unpicking(self, window) -> None:
+        """카드를 고르면 그 카드의 원만 고른 모양이 되고, 풀면 빈 원으로 돌아가야 한다.
+
+        선택 모드, 카드 둘, 첫째 클릭 -> 원 [고름, 빔], 첫째 다시 클릭 -> [빔, 빔]
+        """
+        items = _add(window, D.WAITING, D.WAITING)
+        _toggle_select_mode(window, True)
+        marks = [_card(window, item).pickMark() for item in items]
+        _click(window, items[0])
+        assert _picked(window) == [items[0]], "전제: 첫째를 골랐다"
+        assert [mark.isPicked() for mark in marks] == [True, False]
+        _click(window, items[0])
+        assert [mark.isPicked() for mark in marks] == [False, False]
+
+    def test_entering_by_ctrl_a_fills_every_mark(self, window) -> None:
+        """평소 Ctrl/⌘+A로 선택 모드에 들어가면 모든 카드의 원이 보이고 고른 모양이어야 한다.
+
+        카드 셋(원 없음), 목록에 Ctrl+A -> 원 셋 모두 보임 · 고름
+        """
+        items = _add(window, D.WAITING, D.FINISHED, D.FAILED)
+        _key(window.listView, Qt.Key.Key_A, CTRL)
+        marks = [_card(window, item).pickMark() for item in items]
+        assert [mark is not None and mark.isVisible() for mark in marks] == [True, True, True]
+        assert [mark.isPicked() for mark in marks] == [True, True, True]
+
+    def test_marks_are_empty_after_leaving_with_picked_cards(self, window) -> None:
+        """고른 카드가 있는 채 선택 모드를 나갔다 들어오면 원이 모두 비어 있어야 한다.
+
+        카드 둘 모두 고름 -> 나옴 -> 다시 들어감 -> 원 [빔, 빔]
+        """
+        items = _add(window, D.WAITING, D.WAITING)
+        _key(window.listView, Qt.Key.Key_A, CTRL)
+        marks = [_card(window, item).pickMark() for item in items]
+        assert [mark.isPicked() for mark in marks] == [True, True], "전제: 둘 다 골랐다"
+        _toggle_select_mode(window, False)
+        _toggle_select_mode(window, True)
+        assert [mark.isVisible() for mark in marks] == [True, True]
+        assert [mark.isPicked() for mark in marks] == [False, False]
+
+    def test_click_on_the_mark_picks_the_card(self, window) -> None:
+        """체크 원 위를 누르면 그 카드가 골라져야 한다 — 원은 마우스를 받지 않는다.
+
+        선택 모드, 카드 둘, 둘째 카드의 원 가운데를 창에 합성 클릭 -> 고른 카드 [둘째]
+        """
+        items = _add(window, D.WAITING, D.WAITING)
+        _toggle_select_mode(window, True)
+        mark = _card(window, items[1]).pickMark()
+        assert mark is not None and mark.isVisible()
+        QTest.mouseClick(
+            window.windowHandle(),
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+            mark.mapTo(window, mark.rect().center()),
+        )
+        _settle()
+        assert _picked(window) == [items[1]]
+        assert mark.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+    @pytest.mark.parametrize("compact", [False, True])
+    def test_mark_sits_inside_the_thumbnail_top_left(self, window, compact: bool) -> None:
+        """체크 원은 썸네일 왼쪽 위 4px 안쪽에 지름 20(썸네일 줄이기는 16)으로 놓여야 한다.
+
+        썸네일 줄이기 끔 · 켬, 선택 모드 -> 원 자리 (4, 4, 지름, 지름) · 썸네일 안
+        """
+        _show_compact(compact)
+        items = _add(window, D.WAITING)
+        card = _card(window, items[0])
+        assert card.compactThumbnail is compact, "전제: 카드가 그 썸네일 설정으로 만들어졌다"
+        _toggle_select_mode(window, True)
+        mark = card.pickMark()
+        assert mark is not None and mark.isVisible()
+        side = MARK_SIDE[compact]
+        assert mark.geometry() == QRect(MARK_INSET, MARK_INSET, side, side)
+        assert mark.parentWidget() is card.thumbnailLabel
+        assert card.thumbnailLabel.rect().contains(mark.geometry())
+
+    @pytest.mark.parametrize("compact", [False, True])
+    def test_mark_changes_no_card_or_window_size(self, window, compact: bool) -> None:
+        """체크 원이 보여도 카드 크기 · 크기 힌트 · 창 최소폭은 그대로여야 한다.
+
+        카드 둘, 선택 모드에 들어가 하나 고름 -> 카드 sizeHint · minimumSizeHint · 크기 · 썸네일 크기,
+        창 최소폭이 들어가기 전과 같음
+        """
+        _show_compact(compact)
+        items = _add(window, D.WAITING, D.FINISHED)
+        cards = [_card(window, item) for item in items]
+
+        def sizes() -> list:
+            _settle()
+            per_card = [
+                (c.sizeHint(), c.minimumSizeHint(), c.size(), c.thumbnailLabel.size())
+                for c in cards
+            ]
+            return [per_card, window.minimumWidth(), window.minimumSizeHint().width()]
+
+        before = sizes()
+        _toggle_select_mode(window, True)
+        _click(window, items[0])
+        assert cards[0].pickMark().isPicked() and cards[1].pickMark().isVisible()
+        assert sizes() == before
+
+    def test_restored_card_gets_a_mark_in_select_mode(self, window) -> None:
+        """선택 모드에서 되살린 카드에도 빈 체크 원이 보여야 한다.
+
+        카드 둘, 첫째 ✕(선택 모드 밖) -> 선택 모드 -> Ctrl+Z -> 되살린 카드의 원 보임 · 빔
+        """
+        items = _add(window, D.WAITING, D.WAITING)
+        _card(window, items[0]).deleteButton.click()
+        _settle()
+        assert window.contentManager.model.items == [items[1]], "전제: 첫째를 지웠다"
+        _toggle_select_mode(window, True)
+        _undo(window)
+        assert window.listView.isSelecting(), "전제: 되살린 뒤에도 선택 모드다"
+        mark = _card(window, items[0]).pickMark()
+        assert mark is not None and mark.isVisible()
+        assert not mark.isPicked()
+
+    def test_card_restored_outside_select_mode_hides_its_emptied_mark(self, window) -> None:
+        """골라서 지운 카드를 선택 모드 밖에서 되살리면 원이 숨고, 다시 들어가면 빈 원이어야 한다.
+
+        카드 둘 모두 골라 지움(선택 모드에서 나옴) -> Ctrl+Z -> 원 숨음, 선택 모드 -> 원 보임 · 빔
+        """
+        items = _add(window, D.WAITING, D.WAITING)
+        _key(window.listView, Qt.Key.Key_A, CTRL)
+        marks = [_card(window, item).pickMark() for item in items]
+        assert [mark.isPicked() for mark in marks] == [True, True], "전제: 둘 다 골랐다"
+        window.selectBar.deleteButton.click()
+        _settle()
+        assert not window.listView.isSelecting(), "전제: 지우면서 선택 모드에서 나왔다"
+        _undo(window)
+        assert [_card(window, item).isVisible() for item in items] == [True, True]
+        assert [_card(window, item).pickMark().isVisible() for item in items] == [False, False]
+        _toggle_select_mode(window, True)
+        restored = [_card(window, item).pickMark() for item in items]
+        assert [mark.isVisible() for mark in restored] == [True, True]
+        assert [mark.isPicked() for mark in restored] == [False, False]
+
+    def test_card_added_in_select_mode_gets_a_mark(self, window) -> None:
+        """선택 모드 중에 새로 넣은 카드에도 빈 체크 원이 보여야 한다.
+
+        카드 하나 · 선택 모드 -> 카드 하나 더 넣음 -> 새 카드의 원 보임 · 빔
+        """
+        _add(window, D.WAITING)
+        _toggle_select_mode(window, True)
+        added = _add(window, D.WAITING)
+        mark = _card(window, added[0]).pickMark()
+        assert mark is not None and mark.isVisible()
+        assert not mark.isPicked()
+
+
+class TestPickMarkPixels:
+    @pytest.mark.parametrize("compact", [False, True])
+    def test_picked_mark_is_accent_filled_with_a_ring_and_a_check(
+        self, window, compact: bool
+    ) -> None:
+        """고른 원은 강조색 채움 · 원 테두리 색 테두리 · 채움 안 글자 색 ✓여야 한다.
+
+        썸네일 줄이기 끔 · 켬, 선택 모드에서 카드를 고름 -> 원의 위쪽 안(✓ 밖) ≈ accent,
+        왼쪽 끝 가운데 ≈ pickMarkRing, ✓가 꺾이는 점 ≈ onAccent
+        """
+        _show_compact(compact)
+        items = _add(window, D.WAITING)
+        _toggle_select_mode(window, True)
+        _click(window, items[0])
+        card = _card(window, items[0])
+        assert card.pickMark().isPicked(), "전제: 고른 원이다"
+        side = MARK_SIDE[compact]
+        scale = side / 20  # ✓ 좌표는 지름 20 격자다
+        assert _is(_mark_colour(card, side / 2, side / 4), "accent")
+        assert _is(_mark_colour(card, 0, side / 2), "pickMarkRing", RING_SLACK)
+        assert _is(_mark_colour(card, 8.8 * scale, 13.6 * scale), "onAccent")
+
+    def test_empty_mark_darkens_the_thumbnail_inside_a_ring(self, window) -> None:
+        """안 고른 원은 원 테두리 색 테두리 안에서 썸네일을 원 바탕 색으로 어둡게 덮어야 한다.
+
+        카드 하나, 들어가기 전 썸네일 화소 P(원 가운데 자리) -> 선택 모드 -> 원 가운데 ≈
+        pickMarkScrim을 PICK_MARK_SCRIM_ALPHA로 P에 얹은 색(P와는 다름) · 왼쪽 끝 가운데 ≈ pickMarkRing
+        """
+        items = _add(window, D.WAITING)
+        card = _card(window, items[0])
+        assert card.thumbnailLabel.isVisible()
+        centre = MARK_INSET + MARK_SIDE[False] / 2
+        beneath = _colour_at(card.thumbnailLabel.grab().toImage(), centre, centre)
+        _toggle_select_mode(window, True)
+        assert not card.pickMark().isPicked(), "전제: 빈 원이다"
+        scrim = QColor(theme.current_tokens()["pickMarkScrim"])
+        alpha = theme.PICK_MARK_SCRIM_ALPHA
+        want = QColor(
+            round(scrim.red() * alpha + beneath.red() * (1 - alpha)),
+            round(scrim.green() * alpha + beneath.green() * (1 - alpha)),
+            round(scrim.blue() * alpha + beneath.blue() * (1 - alpha)),
+        )
+        got = _mark_colour(card, MARK_SIDE[False] / 2, MARK_SIDE[False] / 2)
+        assert _gap(want, beneath) > COLOUR_SLACK, "전제: 덮은 색이 밑 색과 구별된다"
+        assert _gap(got, want) <= COLOUR_SLACK
+        assert _is(_mark_colour(card, 0, MARK_SIDE[False] / 2), "pickMarkRing", RING_SLACK)
+
+    def test_mark_repaints_in_the_new_theme_after_a_runtime_switch(self, qapp, window) -> None:
+        """실행 중 라이트 테마로 바꾸면 고른 원이 라이트의 강조색 · ✓ 색으로 다시 그려져야 한다.
+
+        다크 · 선택 모드에서 카드를 고름 -> apply_color_scheme("light") -> 원 위쪽 안 ≈ 라이트 accent,
+        ✓가 꺾이는 점 ≈ 라이트 onAccent
+        """
+        items = _add(window, D.WAITING)
+        _toggle_select_mode(window, True)
+        _click(window, items[0])
+        card = _card(window, items[0])
+        assert _is(_mark_colour(card, 10, 5), "accent"), "전제: 다크의 강조색으로 그렸다"
+        try:
+            theme.apply_color_scheme(qapp, "light", QSS_PATH)
+            _settle()
+            assert _gap(_mark_colour(card, 10, 5), QColor(theme.LIGHT["accent"])) <= COLOUR_SLACK
+            assert (
+                _gap(_mark_colour(card, 8.8, 13.6), QColor(theme.LIGHT["onAccent"])) <= COLOUR_SLACK
+            )
+        finally:
+            theme.apply_color_scheme(qapp, "dark", QSS_PATH)
+
+
+class TestSelectModeFocusLine:
+    def test_focus_outside_select_mode_is_an_accent_border(self, window) -> None:
+        """선택 모드 밖에서 키보드 초점을 받은 카드의 테두리 1px는 강조색이어야 한다.
+
+        카드 하나에 키보드 초점 -> 왼쪽 가장자리 화소 0 ≈ accent, 화소 1 ≈ cardBg
+        """
+        items = _add(window, D.WAITING)
+        card = _focus_by_key(window, items[0])
+        assert _is(_edge(card, 0), "accent")
+        assert _is(_edge(card, 1), "cardBg")
+
+    def test_focus_only_in_select_mode_is_a_neutral_border(self, window) -> None:
+        """선택 모드에서 초점만 받은(안 고른) 카드의 테두리 1px는 중립색이어야 한다.
+
+        선택 모드, 카드 하나에 키보드 초점 -> 화소 0 ≈ focusOnAccent, 화소 1 ≈ cardBg
+        """
+        items = _add(window, D.WAITING)
+        _toggle_select_mode(window, True)
+        card = _focus_by_key(window, items[0])
+        assert not card.contentFrame.isSelected(), "전제: 고르지 않았다"
+        assert _is(_edge(card, 0), "focusOnAccent")
+        assert _is(_edge(card, 1), "cardBg")
+
+    def test_picked_only_is_an_accent_border_two_wide(self, window) -> None:
+        """고르기만 한(키보드 초점 없는) 카드는 강조색 2px 테두리이고 셋째 화소는 카드 바탕이어야 한다.
+
+        선택 모드, 카드 둘, 첫째 클릭 · 둘째에 키보드 초점 -> 첫째의 화소 0 · 1 ≈ accent, 화소 2 ≈ cardBg
+        """
+        items = _add(window, D.WAITING, D.WAITING)
+        _toggle_select_mode(window, True)
+        _click(window, items[0])
+        _focus_by_key(window, items[1])
+        card = _card(window, items[0])
+        assert card.contentFrame.isSelected() and not card.hasKeyFocus()
+        assert _is(_edge(card, 0), "accent") and _is(_edge(card, 1), "accent")
+        assert _is(_edge(card, 2), "cardBg")
+
+    def test_picked_and_focused_adds_a_neutral_line_inside_the_accent(self, window) -> None:
+        """고른 카드가 키보드 초점을 받으면 강조색 2px 안쪽에 붙은 중립색 1px가 더 그려져야 한다.
+
+        선택 모드, 카드에 키보드 초점 · Space -> 화소 0 · 1 ≈ accent, 화소 2 ≈ focusOnAccent,
+        화소 3 ≈ cardBg
+        """
+        items = _add(window, D.WAITING)
+        _toggle_select_mode(window, True)
+        card = _focus_by_key(window, items[0])
+        _key(card, Qt.Key.Key_Space)
+        assert card.contentFrame.isSelected() and card.hasKeyFocus()
+        assert _is(_edge(card, 0), "accent") and _is(_edge(card, 1), "accent")
+        assert _is(_edge(card, 2), "focusOnAccent")
+        assert _is(_edge(card, 3), "cardBg")
+
+    def test_unpicking_the_focused_card_returns_to_the_neutral_border(self, window) -> None:
+        """초점 카드의 고름을 풀면 중립색 1px 테두리만 남아야 한다.
+
+        선택 모드, 초점 카드에 Space 두 번 -> 화소 0 ≈ focusOnAccent, 화소 1 · 2 ≈ cardBg
+        """
+        items = _add(window, D.WAITING)
+        _toggle_select_mode(window, True)
+        card = _focus_by_key(window, items[0])
+        _key(card, Qt.Key.Key_Space)
+        assert _is(_edge(card, 2), "focusOnAccent"), "전제: 고름 + 초점 모양이었다"
+        _key(card, Qt.Key.Key_Space)
+        assert not card.contentFrame.isSelected() and card.hasKeyFocus()
+        assert _is(_edge(card, 0), "focusOnAccent")
+        assert _is(_edge(card, 1), "cardBg") and _is(_edge(card, 2), "cardBg")
+
+    def test_focus_moving_away_removes_the_inner_line(self, window) -> None:
+        """고른 카드에서 초점이 다른 카드로 가면 안쪽 중립색 선이 없어져야 한다.
+
+        선택 모드, 카드 둘, 첫째에 초점 · Space · ↓ -> 첫째의 화소 0 · 1 ≈ accent, 화소 2 ≈ cardBg,
+        둘째의 화소 0 ≈ focusOnAccent
+        """
+        items = _add(window, D.WAITING, D.WAITING)
+        _toggle_select_mode(window, True)
+        first = _focus_by_key(window, items[0])
+        _key(first, Qt.Key.Key_Space)
+        assert _is(_edge(first, 2), "focusOnAccent"), "전제: 고름 + 초점 모양이었다"
+        _key(first, Qt.Key.Key_Down)
+        second = _card(window, items[1])
+        assert second.hasKeyFocus() and not first.hasKeyFocus()
+        assert _is(_edge(first, 0), "accent") and _is(_edge(first, 1), "accent")
+        assert _is(_edge(first, 2), "cardBg")
+        assert _is(_edge(second, 0), "focusOnAccent")
+
+    def test_focus_after_leaving_select_mode_is_the_accent_border_again(self, window) -> None:
+        """선택 모드에서 초점 선을 그렸던 카드도 나온 뒤 받는 키보드 초점은 강조색 1px여야 한다.
+
+        선택 모드, 초점 카드에 Space(고름 + 초점) -> 선택 버튼으로 나옴 -> 그 카드에 키보드 초점
+        -> 화소 0 ≈ accent, 화소 1 · 2 ≈ cardBg
+        """
+        items = _add(window, D.WAITING)
+        _toggle_select_mode(window, True)
+        card = _focus_by_key(window, items[0])
+        _key(card, Qt.Key.Key_Space)
+        assert _is(_edge(card, 2), "focusOnAccent"), "전제: 고름 + 초점 모양이었다"
+        _toggle_select_mode(window, False)
+        _focus_by_key(window, items[0])
+        assert _is(_edge(card, 0), "accent")
+        assert _is(_edge(card, 1), "cardBg") and _is(_edge(card, 2), "cardBg")
+
+    def test_entering_by_ctrl_a_on_a_focused_card_draws_the_inner_line(self, window) -> None:
+        """평소 키보드 초점을 받은 카드에서 Ctrl/⌘+A로 들어가면 그 카드에 안쪽 중립색 선이 그려져야 한다.
+
+        카드 둘, 첫째에 키보드 초점 · Ctrl+A -> 첫째(고름 + 초점)의 화소 0 · 1 ≈ accent,
+        화소 2 ≈ focusOnAccent, 둘째(고름만)의 화소 2 ≈ cardBg
+        """
+        items = _add(window, D.WAITING, D.WAITING)
+        first = _focus_by_key(window, items[0])
+        _key(first, Qt.Key.Key_A, CTRL)
+        assert _picked(window) == items and first.hasKeyFocus()
+        assert _is(_edge(first, 0), "accent") and _is(_edge(first, 1), "accent")
+        assert _is(_edge(first, 2), "focusOnAccent")
+        assert _is(_edge(_card(window, items[1]), 2), "cardBg")
+
+    @pytest.mark.parametrize("picked", [False, True])
+    def test_focus_line_repaints_in_the_new_theme_after_a_runtime_switch(
+        self, qapp, window, picked: bool
+    ) -> None:
+        """실행 중 라이트 테마로 바꾸면 선택 모드의 초점 선이 라이트의 중립색으로 다시 그려져야 한다.
+
+        다크 · 선택 모드, 초점만 · 고름 + 초점 -> apply_color_scheme("light") -> 초점만: 화소 0,
+        고름 + 초점: 화소 2 ≈ 라이트 focusOnAccent(고름 + 초점의 화소 0은 라이트 accent)
+        """
+        items = _add(window, D.WAITING)
+        _toggle_select_mode(window, True)
+        card = _focus_by_key(window, items[0])
+        if picked:
+            _key(card, Qt.Key.Key_Space)
+        assert card.contentFrame.isSelected() is picked
+        depth = 2 if picked else 0
+        assert _is(_edge(card, depth), "focusOnAccent"), "전제: 다크의 중립색으로 그렸다"
+        neutral = QColor(theme.LIGHT["focusOnAccent"])
+        assert _gap(QColor(theme.DARK["focusOnAccent"]), neutral) > COLOUR_SLACK
+        try:
+            theme.apply_color_scheme(qapp, "light", QSS_PATH)
+            _settle()
+            assert _gap(_edge(card, depth), neutral) <= COLOUR_SLACK
+            if picked:
+                assert _gap(_edge(card, 0), QColor(theme.LIGHT["accent"])) <= COLOUR_SLACK
+        finally:
+            theme.apply_color_scheme(qapp, "dark", QSS_PATH)

@@ -198,6 +198,13 @@ QLabel#thumbnailLabel {
     border-color: @accent;
 }
 
+/* 선택 모드의 키보드 초점(#561) — 고름 테두리가 강조색이라 안 고른 카드의 초점은 중립색으로 가른다.
+ * `pickFocus`는 app/widgets/widget.py::_syncPickFocus가 심는다. 고른 카드에는 심지 않는다 — 테두리를
+ * 강조색으로 둔 채 그 안쪽에 선을 그린다(CardFace.paintEvent) */
+#contentFrame[keyFocus="true"][pickFocus="true"] {
+    border-color: @focusOnAccent;
+}
+
 /* 카드 조작 아이콘(일시정지·재개·재시도·폴더·삭제)의 도형 색은 QSS가 아니라
  * content/icons.py::IconButton이 theme.py 토큰(textMuted / 호버 text·
  * stateFailed / textDisabled)으로 그린다(#245 — 폰트 글리프를 버리고 직접

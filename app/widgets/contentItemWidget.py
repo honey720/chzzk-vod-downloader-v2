@@ -18,6 +18,8 @@
 ##        (그림만 — 클릭은 밑으로)
 ##   하단 progressBar: 카드 바닥 전체 폭 오버레이(받는 중 · 일시정지는 진행만큼, 완료 · 실패는 끝까지)
 ##   배경 채움(설정 키)이면 막대 대신 카드 면(CardFace)이 진행만큼 왼쪽부터 칠한다
+##   체크 원(PickMark, #561): 선택 모드에서만 썸네일 왼쪽 위에 얹는다 — 카드가 선택 모드에 처음 들어갈 때
+##        만든다(app/widgets/widget.py). 썸네일 위라 줄 자리 · 카드 폭은 그대로다
 ## 줄 높이는 고정이다 — 상태가 바뀌어도 줄 자리 · 카드 높이가 같다(목록이 들썩이면 안 된다).
 ## 크기 · 간격은 theme.METRICS, 글자 · 색은 전역 QSS(theme 토큰)가 정한다.
 ################################################################################
@@ -56,6 +58,7 @@ class CardFace(QFrame):
         self._fill = 0.0  # 채운 비율 0 ~ 1
         self._fillToken = ""  # 채움 색 토큰 — 빈 글이면 채움 없음
         self._selected = False  # 선택 모드에서 고른 카드 — 강조색 테두리(#561)
+        self._focusLine = False  # 선택 모드의 키보드 초점 — 고른 카드면 강조색 안쪽에 초점 선(#561)
 
     def isSelected(self) -> bool:
         """고른 카드의 강조색 테두리를 그리는지."""
@@ -65,6 +68,20 @@ class CardFace(QFrame):
         """고른 카드 테두리를 켜고 끈다 — 줄 배치는 그대로다(그리기만)."""
         if on != self._selected:
             self._selected = on
+            self.update()
+
+    def hasFocusLine(self) -> bool:
+        """선택 모드의 키보드 초점이 이 카드에 있는지 — 고른 카드일 때만 초점 선을 그린다."""
+        return self._focusLine
+
+    def setFocusLine(self, on: bool) -> None:
+        """선택 모드의 키보드 초점을 켜고 끈다 — 카드가 부른다.
+
+        안 고른 카드의 초점은 QSS 테두리 색(`pickFocus` 속성)이 보인다. 고른 카드는 QSS 테두리를 강조색
+        테두리가 덮으므로 그 안쪽에 초점 선을 따로 그린다(`paintEvent`).
+        """
+        if on != self._focusLine:
+            self._focusLine = on
             self.update()
 
     def fill(self) -> tuple[float, str]:
@@ -101,8 +118,17 @@ class CardFace(QFrame):
             return QColor(tokens[name + ("Hover" if hovered else "")])
         return QColor(tokens["cardHoverBg" if hovered else "cardBg"])
 
+    def _drawRing(self, painter: QPainter, token: str, width: float, inset: float) -> None:
+        """카드 가장자리에서 `inset`만큼 들어간 자리에 두께 `width`의 둥근 테두리를 그린다."""
+        edge = inset + width / 2
+        radius = theme.METRICS["cardRadius"] - edge
+        painter.setPen(QPen(QColor(theme.current_tokens()[token]), width))
+        painter.drawRoundedRect(
+            QRectF(self.rect()).adjusted(edge, edge, -edge, -edge), radius, radius
+        )
+
     def paintEvent(self, event: QPaintEvent) -> None:
-        """QSS 바탕 · 테두리를 그린 뒤 진행 채움을 테두리 안쪽에, 고른 카드면 강조색 테두리를 그 위에 그린다."""
+        """QSS 바탕 · 테두리 위에 진행 채움(테두리 안쪽), 고른 카드의 강조색 테두리 · 초점 선을 그린다."""
         super().paintEvent(event)
         if self._fillToken and self._fill > 0:
             radius = theme.METRICS["cardRadius"] - 1
@@ -120,16 +146,80 @@ class CardFace(QFrame):
         if self._selected:
             # 테두리 1px 자리를 덮고 안쪽으로 1px 더 — 호버여도 강조색 그대로(프로토 card.py)
             width = theme.METRICS["cardSelectBorder"]
-            half = width / 2
-            radius = theme.METRICS["cardRadius"] - half
             painter = QPainter(self)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            painter.setPen(QPen(QColor(theme.current_tokens()["accent"]), width))
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawRoundedRect(
-                QRectF(self.rect()).adjusted(half, half, -half, -half), radius, radius
-            )
+            self._drawRing(painter, "accent", width, 0)
+            if self._focusLine:
+                # 고름 + 초점 — 강조색 테두리 안쪽에 붙여 중립색 한 줄. 강조색과 같은 색이면 고른 카드
+                # 사이에서 초점이 어디 있는지 보이지 않는다
+                self._drawRing(painter, "focusOnAccent", theme.CARD_FOCUS_LINE, width)
             painter.end()
+
+
+class PickMark(QWidget):
+    """선택 모드의 체크 원 — 썸네일 왼쪽 위에 얹는 오버레이다. 그림만, 마우스는 밑으로 간다 (#561).
+
+    안 고른 카드는 빈 원(원 테두리 + 어두운 반투명 바탕), 고른 카드는 강조색 채움 + ✓ + 원 테두리다. 색은
+    그릴 때마다 theme 토큰을 읽는다(실행 중 테마 전환) — 색 리터럴은 없다. 원 위를 눌러도 카드를 누른
+    것이다. 카드가 선택 모드에 처음 들어갈 때 만든다 — 카드를 넣는 시간에 들지 않는다.
+    """
+
+    # ✓가 꺾이는 세 점 — 지름 20(cardPickMark) 격자의 좌표. 지름에 비례해 줄인다
+    CHECK = ((5.6, 10.4), (8.8, 13.6), (14.4, 7.0))
+
+    def __init__(self, thumbnail: QWidget, compact: bool) -> None:
+        """썸네일 왼쪽 위에 자리를 잡는다 — 보이기는 카드가 한다.
+
+        Args:
+            thumbnail: 원을 얹을 썸네일 라벨
+            compact: 썸네일 줄이기인지 — 참이면 작은 지름(cardPickMarkCompact)
+        """
+        super().__init__(thumbnail)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._picked = False  # 고른 카드의 원인지 — 채움 · ✓
+        inset = theme.METRICS["cardPickMarkInset"]
+        side = theme.METRICS["cardPickMarkCompact" if compact else "cardPickMark"]
+        self.setGeometry(inset, inset, side, side)
+
+    def isPicked(self) -> bool:
+        """고른 카드의 원(강조색 채움 + ✓)을 그리는지."""
+        return self._picked
+
+    def setPicked(self, on: bool) -> None:
+        """고른 모양을 켜고 끈다 — 바뀔 때만 다시 그린다."""
+        if on != self._picked:
+            self._picked = on
+            self.update()
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        """지금 테마 색으로 원을 그린다 — 고른 카드면 강조색 채움에 ✓."""
+        tokens = theme.current_tokens()
+        ring = theme.PICK_MARK_RING_WIDTH
+        if self._picked:
+            ground = QColor(tokens["accent"])
+        else:
+            ground = QColor(tokens["pickMarkScrim"])
+            ground.setAlphaF(theme.PICK_MARK_SCRIM_ALPHA)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor(tokens["pickMarkRing"]), ring))
+        painter.setBrush(ground)
+        painter.drawEllipse(QRectF(self.rect()).adjusted(ring / 2, ring / 2, -ring / 2, -ring / 2))
+        if self._picked:
+            scale = self.width() / theme.METRICS["cardPickMark"]
+            (start_x, start_y), *rest = self.CHECK
+            check = QPainterPath()
+            check.moveTo(start_x * scale, start_y * scale)
+            for x, y in rest:
+                check.lineTo(x * scale, y * scale)
+            pen = QPen(QColor(tokens["onAccent"]), theme.PICK_MARK_CHECK_WIDTH * scale)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPath(check)
+        painter.end()
 
 
 class ChannelAvatar(QLabel):

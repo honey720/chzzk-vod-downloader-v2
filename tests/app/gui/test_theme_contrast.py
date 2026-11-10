@@ -40,6 +40,23 @@ PAIRS = [
     ("text", "menuHover", 4.5, "메뉴 항목 이름 ↔ 메뉴 호버 면(#536)"),
     ("textMuted", "menuHover", 4.5, "메뉴 흐린 경로 · 머리글 ↔ 메뉴 호버 면(#536)"),
     ("textMuted", "surface", 4.5, "메뉴 흐린 경로 · 머리글 ↔ 메뉴 면(#536)"),
+    ("focusOnAccent", "cardBg", 3.0, "선택 모드의 카드 초점 선 ↔ 카드(#561)"),
+    ("focusOnAccent", "cardHoverBg", 3.0, "선택 모드의 카드 초점 선 ↔ 카드 호버(#561)"),
+    ("focusOnAccent", "cardTintFinished", 3.0, "선택 모드의 카드 초점 선 ↔ 완료 카드(#561)"),
+    (
+        "focusOnAccent",
+        "cardTintFinishedHover",
+        3.0,
+        "선택 모드의 카드 초점 선 ↔ 완료 카드 호버(#561)",
+    ),
+    ("focusOnAccent", "cardTintFailed", 3.0, "선택 모드의 카드 초점 선 ↔ 실패 카드(#561)"),
+    (
+        "focusOnAccent",
+        "cardTintFailedHover",
+        3.0,
+        "선택 모드의 카드 초점 선 ↔ 실패 카드 호버(#561)",
+    ),
+    ("pickMarkRing", "accent", 3.0, "고른 체크 원의 테두리 ↔ 강조색 채움 — 그림(#561)"),
 ]
 
 # 면 색 — 오너 결정(2026-11-07): 테마 색 이식에서 바꾸지 않는다. 앱의 지금 값 그대로
@@ -134,6 +151,56 @@ def test_fill_rule_splits_the_two_themes() -> None:
     """
     assert _luminance(theme.DARK["accent"]) > _luminance(theme.DARK["onAccent"])
     assert _luminance(theme.LIGHT["accent"]) < _luminance(theme.LIGHT["onAccent"])
+
+
+# ---------------------------------------------------------------------------
+# 선택 모드의 체크 원(#561)
+# ---------------------------------------------------------------------------
+
+#: 썸네일 밝기의 두 끝 — 안 고른 체크 원이 놓일 수 있는 가장 밝은 · 어두운 바탕.
+THUMBNAIL_ENDS = {"white": "#ffffff", "black": "#000000"}
+
+
+def _over(front: str, alpha: float, ground: str) -> str:
+    """`front`를 불투명도 `alpha`로 `ground` 위에 얹은 색 — 채널마다 sRGB 값을 섞는다."""
+    mixed = (
+        round(int(front[i : i + 2], 16) * alpha + int(ground[i : i + 2], 16) * (1 - alpha))
+        for i in (1, 3, 5)
+    )
+    return "#" + "".join(f"{value:02x}" for value in mixed)
+
+
+def test_over_helper_matches_known_values() -> None:
+    """얹기 계산이 알려진 값과 맞아야 한다 — 검정 50%를 흰색 위에 = #808080, 100% = 앞 색."""
+    assert _over("#000000", 0.5, "#ffffff") == "#808080"
+    assert _over("#3b8cff", 1.0, "#ffffff") == "#3b8cff"
+
+
+@pytest.mark.parametrize("scheme", SCHEMES)
+@pytest.mark.parametrize("thumbnail", THUMBNAIL_ENDS)
+def test_empty_pick_mark_ring_reads_on_its_ground(scheme: str, thumbnail: str) -> None:
+    """안 고른 체크 원의 테두리는 썸네일 위에 얹힌 원 바탕과 3.0 이상이어야 한다.
+
+    두 테마 × 썸네일 흰색 · 검정, 원 바탕(pickMarkScrim · PICK_MARK_SCRIM_ALPHA)을 썸네일에 얹은 색
+    -> pickMarkRing ↔ 얹은 색 ≥ 3.0
+    """
+    table = SCHEMES[scheme]
+    ground = _over(table["pickMarkScrim"], theme.PICK_MARK_SCRIM_ALPHA, THUMBNAIL_ENDS[thumbnail])
+    ratio = _contrast(table["pickMarkRing"], ground)
+    assert ratio >= 3.0, f"{scheme} {thumbnail}: {table['pickMarkRing']} ↔ {ground} = {ratio:.2f}"
+
+
+@pytest.mark.parametrize("scheme", SCHEMES)
+def test_empty_pick_mark_ground_stands_out_on_a_white_thumbnail(scheme: str) -> None:
+    """안 고른 체크 원의 바탕은 흰 썸네일과 3.0 이상이어야 한다 — 테두리가 썸네일에 묻혀도 원이 보인다.
+
+    두 테마, 원 바탕을 #ffffff에 얹은 색 ↔ #ffffff ≥ 3.0
+    """
+    table = SCHEMES[scheme]
+    white = THUMBNAIL_ENDS["white"]
+    ground = _over(table["pickMarkScrim"], theme.PICK_MARK_SCRIM_ALPHA, white)
+    ratio = _contrast(ground, white)
+    assert ratio >= 3.0, f"{scheme}: {ground} ↔ {white} = {ratio:.2f}"
 
 
 # ---------------------------------------------------------------------------

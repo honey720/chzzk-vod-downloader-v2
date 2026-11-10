@@ -45,7 +45,7 @@ from app.viewmodels.card_text import (  # noqa: F401 — 바깥(footer_bar · �
     short_time,
 )
 from app.viewmodels.data import ContentItem
-from app.widgets.contentItemWidget import HoverShade, Ui_ContentItemWidget
+from app.widgets.contentItemWidget import HoverShade, PickMark, Ui_ContentItemWidget
 from app.widgets.narrow_steps import step_level
 from app.widgets.tip_bubble import install_tips
 from core.engine.session import get_thread_session
@@ -266,6 +266,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self._picking = (
             False  # 목록이 선택 모드다 — 카드 버튼을 숨기고 누름 · 더블 클릭이 고르기다(#561)
         )
+        self._pickMark: PickMark | None = None  # 체크 원 — 선택 모드에 처음 들어갈 때 만든다(#561)
+        self._pickFocus = False  # 프레임의 pickFocus 속성(선택 모드의 초점 색)을 켰는지(#561)
         self._tipsInstalled = False  # 말풍선 필터를 걸었는지 — 처음 호버할 때 건다
         self._levelTexts: list[card_text.SlotTexts] = []  # 접는 단계마다의 3줄 글(#554)
         self._needs: list[int] | None = None  # 단계마다 3줄 필요 폭 — 글이 바뀌면 다시 센다
@@ -408,8 +410,30 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             return
         self._keyFocus = on
         self.contentFrame.setProperty("keyFocus", on)
-        theme.repolish(self.contentFrame)
+        if not self._syncPickFocus():
+            theme.repolish(self.contentFrame)
         self._syncCardButtons()
+
+    def _syncPickFocus(self) -> bool:
+        """선택 모드의 초점 모양을 초점 · 선택 모드 · 고름에 맞춘다 (#561).
+
+        고름 테두리가 강조색이라 선택 모드에서는 초점을 중립색(`focusOnAccent`)으로 가른다. 안 고른 카드는
+        QSS 테두리 색을 바꾸고(프레임의 `pickFocus` 속성), 고른 카드는 QSS 테두리를 강조색으로 둔 채 그 안쪽에
+        선을 그린다(`CardFace.setFocusLine`) — 모서리에서 두 색이 섞이지 않는다. 속성은 바뀔 때만 다시
+        놓는다 — 선택 모드를 드나들 때 초점이 없는 카드는 스타일을 다시 계산하지 않는다.
+
+        Returns:
+            프레임 스타일을 다시 계산했는지
+        """
+        focused = self._keyFocus and self._picking
+        self.contentFrame.setFocusLine(focused)
+        pick_focus = focused and not self.contentFrame.isSelected()
+        if pick_focus == self._pickFocus:
+            return False
+        self._pickFocus = pick_focus
+        self.contentFrame.setProperty("pickFocus", pick_focus)
+        theme.repolish(self.contentFrame)
+        return True
 
     def focusInEvent(self, event: QFocusEvent) -> None:
         """키보드 초점이 들어왔다 — 목록 밖에서 Tab으로 들어오면 목록이 보이는 차례의 첫(끝) 카드로 옮긴다."""
@@ -490,14 +514,32 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         if on != self._picking:
             self._picking = on
             self._syncCardButtons()
+            self._syncPickMark()
+            self._syncPickFocus()
+
+    def pickMark(self) -> PickMark | None:
+        """썸네일 위의 체크 원 — 선택 모드에 들어간 적이 없는 카드는 None이다."""
+        return self._pickMark
+
+    def _syncPickMark(self) -> None:
+        """체크 원을 선택 모드에서만 보인다 — 처음 들어갈 때 만든다(카드를 넣을 때는 만들지 않는다)."""
+        if self._pickMark is None:
+            if not self._picking:
+                return
+            self._pickMark = PickMark(self.thumbnailLabel, self.compactThumbnail)
+            self._pickMark.setPicked(self.contentFrame.isSelected())
+        self._pickMark.setVisible(self._picking)
 
     def isSelected(self) -> bool:
-        """고른 카드인지(강조색 테두리)."""
+        """고른 카드인지(강조색 테두리 · 채운 체크 원)."""
         return self.contentFrame.isSelected()
 
     def setSelected(self, on: bool) -> None:
         """고른 카드 모양을 켜고 끈다 — 목록이 부른다."""
         self.contentFrame.setSelected(on)
+        if self._pickMark is not None:
+            self._pickMark.setPicked(on)
+        self._syncPickFocus()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         """카드 바탕 · 글 · 그림을 누르면 목록에 알린다 — 고르기는 목록이 정한다(#561).
