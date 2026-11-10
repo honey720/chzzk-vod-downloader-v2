@@ -371,6 +371,23 @@ class TestListWideYear:
             QApplication.processEvents()
         assert view.widgetFor(item).dateLabel.text() == "10. 26."
 
+    def test_year_returns_when_the_blocking_card_is_removed(self, qapp) -> None:
+        """연도를 막던 긴 채널명 카드를 지우면 남은 카드가 창 폭 그대로 연도를 되찾아야 한다.
+
+        긴 채널명 · 「LCK」 카드, 연도가 빠진 폭에서 긴 채널명 카드를 지움(남은 카드는 +8이 남음)
+        -> 「LCK」 카드 "2026. 10. 26."
+        """
+        view, cards = self._cards()
+        self._drop_width(view, cards)
+        short = cards[1]
+        assert short.row1Need(True) + RETURN_SLACK <= short.row1Room(), (
+            "전제: 남은 카드에 +8이 남는다"
+        )
+        view._model.removeRows(view._model.getRow(cards[0].item))
+        for _ in range(3):
+            QApplication.processEvents()
+        assert short.dateLabel.text() == "2026. 10. 26."
+
     def test_state_change_does_not_refit_the_list(self, qapp, monkeypatch) -> None:
         """카드 상태가 바뀌면 목록 전체 연도 판정이 돌지 않아야 한다.
 

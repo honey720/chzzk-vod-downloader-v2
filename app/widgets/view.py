@@ -149,8 +149,9 @@ class ContentListView(QScrollArea):
         self._scheduleDates()
 
     # ---- 날짜 연도 — 목록 전체가 함께 뺀다 (#554) ----
-    # 같은 폭에서 연도가 있는 카드와 없는 카드가 섞이지 않게 목록이 한 번에 정한다. 판정은 창 폭이 바뀔
-    # 때(보이는 카드 전부)와 카드가 들어올 때(들어온 카드만)뿐이다 — 카드 상태가 바뀔 때는 하지 않는다
+    # 같은 폭에서 연도가 있는 카드와 없는 카드가 섞이지 않게 목록이 한 번에 정한다. 판정은 창 폭 · 필터가
+    # 바뀔 때와 카드가 지워질 때(보이는 카드 전부), 카드가 들어올 때(들어온 카드만)뿐이다 — 카드 상태가
+    # 바뀔 때는 하지 않는다
 
     def showsYear(self) -> bool:
         """카드 날짜에 연도를 적는지."""
@@ -439,6 +440,7 @@ class ContentListView(QScrollArea):
         self._overlay.update()  # 마지막 카드가 지워졌으면 빈 리스트 안내를 다시 띄운다
         self._scheduleRenumber()  # 뒤쪽 카드 번호를 당긴다 (#235)
         self._scheduleRehover()  # 아래 카드가 포인터 밑으로 올라온다
+        self._scheduleDates()  # 연도를 막던 카드가 지워졌을 수 있다 — 일괄 삭제도 판정은 한 번
 
     def _scheduleRenumber(self) -> None:
         """삭제 뒤 남은 카드들의 번호(표시용, `ContentItemWidget.setIndex`)를 다시 매긴다.
