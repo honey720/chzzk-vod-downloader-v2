@@ -375,18 +375,56 @@ QFrame#infoFrame QPushButton {
     border-radius: @controlRadius;
 }
 
-/* 완료 지우기 — 평소 테두리는 투명(자리만) — 초점 · 호버 때 테두리 색만 바뀌고 크기는 그대로 */
-QFrame#headerFrame QPushButton[role="subtle"] {
-    border: 1px solid transparent;
+/* 선택 버튼(#561) — 선택 모드 안에서는 눌린 모양(다시 누르면 나온다). 도형은 IconButton이 그린다 */
+QFrame#headerFrame QPushButton#selectButton {
+    padding: 0px;
 }
 
-QFrame#headerFrame QPushButton[role="subtle"]:hover {
-    border-color: @borderStrong;
-}
-
-QFrame#headerFrame QPushButton[role="subtle"]:pressed {
+QFrame#headerFrame QPushButton#selectButton[on="true"] {
     background-color: @surfacePressed;
     border-color: @borderStrong;
+}
+
+/* 선택 줄(#561 — 설계 §12.1 「선택 모드」): 면 · 테두리는 SelectBar가 그린다(말풍선과 같은 떠 있는 면). 안 버튼은
+ * 평소 면 · 테두리 없음, 호버 · 누름만 면(테두리 안쪽 2px 들여 — 자리는 그대로). 지우기는 포인터가 오면 실패 색 면 */
+QWidget#selectBar QLabel#selectCount {
+    color: @text;
+    font-size: @fontSizeMeta;
+    padding: 0px 2px;
+}
+
+QWidget#selectBar QPushButton[role="selectIcon"] {
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: @controlRadius;
+    margin: 2px;
+    padding: 0px;
+}
+
+QWidget#selectBar QPushButton[role="selectIcon"]:hover {
+    background-color: @surfaceHover;
+}
+
+QWidget#selectBar QPushButton[role="selectIcon"]:pressed {
+    background-color: @surfacePressed;
+}
+
+QWidget#selectBar QPushButton[role="selectIcon"][danger="true"]:hover,
+QWidget#selectBar QPushButton[role="selectIcon"][danger="true"]:pressed {
+    background-color: @stateFailed;
+}
+
+QWidget#selectBar QPushButton[role="selectIcon"]:disabled {
+    background-color: transparent;
+}
+
+QWidget#selectBar QPushButton[role="selectIcon"]:focus {
+    border-color: @accent;
+}
+
+QWidget#selectBar QPushButton#selectCheck {
+    background: transparent;
+    border: none;
 }
 
 /* 메뉴바(#536 — 설계 §12.1 「셸 모양은 프로토대로」, 프로토 11b · 11k): 바 면 + 아래 경계선. 고른 메뉴는 버튼 면 ·

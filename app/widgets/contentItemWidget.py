@@ -23,7 +23,7 @@
 ################################################################################
 
 from PySide6.QtCore import QCoreApplication, QMetaObject, QRectF, QSize, Qt
-from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPaintEvent
+from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPaintEvent, QPen
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -55,6 +55,17 @@ class CardFace(QFrame):
         super().__init__(parent)
         self._fill = 0.0  # 채운 비율 0 ~ 1
         self._fillToken = ""  # 채움 색 토큰 — 빈 글이면 채움 없음
+        self._selected = False  # 선택 모드에서 고른 카드 — 강조색 테두리(#561)
+
+    def isSelected(self) -> bool:
+        """고른 카드의 강조색 테두리를 그리는지."""
+        return self._selected
+
+    def setSelected(self, on: bool) -> None:
+        """고른 카드 테두리를 켜고 끈다 — 줄 배치는 그대로다(그리기만)."""
+        if on != self._selected:
+            self._selected = on
+            self.update()
 
     def fill(self) -> tuple[float, str]:
         """(채운 비율, 색 토큰)."""
@@ -91,21 +102,34 @@ class CardFace(QFrame):
         return QColor(tokens["cardHoverBg" if hovered else "cardBg"])
 
     def paintEvent(self, event: QPaintEvent) -> None:
-        """QSS 바탕 · 테두리를 그린 뒤 진행 채움을 테두리 안쪽에 그린다."""
+        """QSS 바탕 · 테두리를 그린 뒤 진행 채움을 테두리 안쪽에, 고른 카드면 강조색 테두리를 그 위에 그린다."""
         super().paintEvent(event)
-        if not self._fillToken or self._fill <= 0:
-            return
-        radius = theme.METRICS["cardRadius"] - 1
-        inner = QRectF(1, 1, self.width() - 2, self.height() - 2)
-        path = QPainterPath()
-        path.addRoundedRect(inner, radius, radius)
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setClipPath(path)
-        painter.fillRect(
-            QRectF(1, 1, self._fill * inner.width(), inner.height()),
-            QColor(theme.current_tokens()[self._fillToken]),
-        )
+        if self._fillToken and self._fill > 0:
+            radius = theme.METRICS["cardRadius"] - 1
+            inner = QRectF(1, 1, self.width() - 2, self.height() - 2)
+            path = QPainterPath()
+            path.addRoundedRect(inner, radius, radius)
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setClipPath(path)
+            painter.fillRect(
+                QRectF(1, 1, self._fill * inner.width(), inner.height()),
+                QColor(theme.current_tokens()[self._fillToken]),
+            )
+            painter.end()
+        if self._selected:
+            # 테두리 1px 자리를 덮고 안쪽으로 1px 더 — 호버여도 강조색 그대로(프로토 card.py)
+            width = theme.METRICS["cardSelectBorder"]
+            half = width / 2
+            radius = theme.METRICS["cardRadius"] - half
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(QPen(QColor(theme.current_tokens()["accent"]), width))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(
+                QRectF(self.rect()).adjusted(half, half, -half, -half), radius, radius
+            )
+            painter.end()
 
 
 class ChannelAvatar(QLabel):
