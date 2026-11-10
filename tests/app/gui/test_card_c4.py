@@ -9,8 +9,8 @@ from collections.abc import Iterator
 from typing import Never
 
 import pytest
-from PySide6.QtCore import QPoint, Qt
-from PySide6.QtGui import QFontMetrics
+from PySide6.QtCore import QEvent, QPoint, Qt
+from PySide6.QtGui import QFontMetrics, QKeyEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
@@ -766,6 +766,93 @@ class TestCardKeys:
         _settle()
         _key(_card(window, items[0]), Qt.Key.Key_Return)
         assert edits == []
+
+    def test_space_in_select_mode_picks_and_unpicks_the_focused_card(self, window) -> None:
+        """선택 모드에서 초점 카드에 Space를 누르면 그 카드를 고르고, 다시 누르면 풀어야 한다.
+
+        선택 모드, 둘째 카드에 초점 · Space -> [둘째] · 초점 그대로, Space -> []
+        """
+        items = _add(window, D.WAITING, D.WAITING)
+        window.selectButton.click()
+        _settle()
+        card = _card(window, items[1])
+        card.setFocus(Qt.FocusReason.OtherFocusReason)
+        _key(card, Qt.Key.Key_Space)
+        assert _picked(window) == [items[1]]
+        assert _drawn_picked(window, items) == [items[1]]
+        assert window.focusWidget() is card
+        _key(card, Qt.Key.Key_Space)
+        assert _picked(window) == []
+
+    def test_arrow_then_space_picks_a_second_card(self, window) -> None:
+        """Space로 한 장을 고른 뒤 ↓로 옮겨 Space를 누르면 두 장이 골라져야 한다.
+
+        선택 모드, 카드 셋, 첫째 Space · ↓ · ↓ · Space -> [첫째, 셋째]
+        """
+        items = _add(window, D.WAITING, D.WAITING, D.WAITING)
+        window.selectButton.click()
+        _settle()
+        _card(window, items[0]).setFocus(Qt.FocusReason.OtherFocusReason)
+        _key(window.focusWidget(), Qt.Key.Key_Space)
+        _key(window.focusWidget(), Qt.Key.Key_Down)
+        _key(window.focusWidget(), Qt.Key.Key_Down)
+        assert window.focusWidget() is _card(window, items[2])
+        _key(window.focusWidget(), Qt.Key.Key_Space)
+        assert _picked(window) == [items[0], items[2]]
+
+    def test_shift_space_adds_the_range_from_the_anchor_without_hidden_cards(self, window) -> None:
+        """Shift+Space는 기준 카드부터 초점 카드까지를 필터로 가린 카드 없이 더해야 한다.
+
+        대기 · 완료 · 대기 · 완료 · 대기, 대기 칩, 선택 모드 -> 첫째 Space · ↓ · ↓ · Shift+Space
+        -> [첫째, 셋째, 다섯째]
+        """
+        items = _add(window, D.WAITING, D.FINISHED, D.WAITING, D.FINISHED, D.WAITING)
+        window.filterChips["waiting"].click()
+        _settle()
+        window.selectButton.click()
+        _settle()
+        _card(window, items[0]).setFocus(Qt.FocusReason.OtherFocusReason)
+        _key(window.focusWidget(), Qt.Key.Key_Space)
+        _key(window.focusWidget(), Qt.Key.Key_Down)
+        _key(window.focusWidget(), Qt.Key.Key_Down)
+        assert window.focusWidget() is _card(window, items[4])
+        _key(window.focusWidget(), Qt.Key.Key_Space, SHIFT)
+        assert _picked(window) == [items[0], items[2], items[4]]
+
+    @pytest.mark.parametrize("modifiers", [Qt.KeyboardModifier.NoModifier, SHIFT, CTRL])
+    def test_space_outside_select_mode_does_not_enter_it(
+        self, window, modifiers: Qt.KeyboardModifier
+    ) -> None:
+        """선택 모드 밖에서 초점 카드에 Space를 누르면 선택 모드로 들어가지 않고 아무것도 고르지 않아야 한다.
+
+        카드 하나에 초점, Space · Shift+Space · Ctrl+Space -> 선택 모드 아님 · 고른 카드 0
+        """
+        items = _add(window, D.WAITING)
+        card = _card(window, items[0])
+        card.setFocus(Qt.FocusReason.OtherFocusReason)
+        _key(card, Qt.Key.Key_Space, modifiers)
+        assert not window.listView.isSelecting()
+        assert _picked(window) == []
+
+    def test_auto_repeated_space_does_not_toggle_again(self, window) -> None:
+        """Space를 누르고 있어 오는 키 반복 이벤트는 고른 카드를 바꾸지 않아야 한다.
+
+        선택 모드, 초점 카드에 Space -> [카드], 키 반복 Space 두 번 -> [카드] 그대로
+        """
+        items = _add(window, D.WAITING)
+        window.selectButton.click()
+        _settle()
+        card = _card(window, items[0])
+        card.setFocus(Qt.FocusReason.OtherFocusReason)
+        _key(card, Qt.Key.Key_Space)
+        assert _picked(window) == [items[0]]
+        for _ in range(2):
+            repeat = QKeyEvent(
+                QEvent.Type.KeyPress, Qt.Key.Key_Space, Qt.KeyboardModifier.NoModifier, " ", True
+            )
+            QApplication.sendEvent(card, repeat)
+            _settle()
+        assert _picked(window) == [items[0]]
 
 
 # ---- 선택 줄 자리 ----

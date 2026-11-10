@@ -443,13 +443,23 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         return None
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
-        """카드 키 — Enter · ↑↓ (#550 · #561).
+        """카드 키 — Enter · ↑↓ · 선택 모드의 Space (#550 · #561).
 
         Enter는 더블 클릭과 같은 일(대기 = 편집 창, 완료 = 폴더 열기)이고, 실패 카드에서는 다시 시도다(버튼이
         Tab 차례 밖이라 키보드로 다시 시도할 길이 이것뿐이다). 선택 모드에서는 Enter가 아무것도 열지 않는다.
         ↑↓는 보이는 차례로 앞 · 뒤 카드에 초점을 옮긴다 — 끝에서는 그대로다. Delete는 목록의 단축키가 받는다.
+        선택 모드의 Space는 이 카드를 클릭한 것과 같다(Shift+Space = Shift+클릭) — 클릭과 같이 목록의
+        `cardPressed`로 간다. 선택 모드 밖의 Space는 받지 않는다 — Shift가 붙어도 선택 모드로 들어가지 않는다.
         """
         key = event.key()
+        if key == Qt.Key.Key_Space and self._picking:
+            owner = self._listOwner()
+            if owner is not None:
+                event.accept()
+                # 누르고 있을 때 오는 키 반복은 넘긴다 — 고르기 · 풀기가 되풀이되지 않게
+                if not event.isAutoRepeat():
+                    owner.cardPressed(self, event.modifiers())
+                return
         if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             event.accept()
             if self._picking:
