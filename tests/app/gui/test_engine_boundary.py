@@ -164,7 +164,7 @@ def test_each_progress_counts_the_bar_with_its_own_paused_time(wired, monkeypatc
     a_waits, b_done = threading.Event(), threading.Event()
     original = download_viewmodel._SectionProgress.percent
 
-    def percent(self, *args, **kwargs) -> int:
+    def percent(self, *args, **kwargs) -> float:
         if threading.current_thread().name == "A":
             a_waits.set()
             assert b_done.wait(5)  # B의 통지가 끝난 뒤에 센다
