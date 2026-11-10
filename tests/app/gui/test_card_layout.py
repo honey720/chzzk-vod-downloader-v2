@@ -815,7 +815,7 @@ class TestProgressBarOnlyWithProgress:
         _at_width(widget, 900)
         bar = widget.progressBar
         assert bar.isVisible()
-        assert bar.value() == bar.maximum() == 100
+        assert bar.value() == bar.maximum() == 10000
 
     @pytest.mark.parametrize(
         "state,bar_state",
@@ -833,7 +833,7 @@ class TestProgressBarOnlyWithProgress:
             f"{state}의 진행바 색 규칙이 {widget.progressBar.property('state')!r} — "
             f"{bar_state!r}이어야 한다(일시정지는 muted로 '돌고 있지 않다'를 알린다)"
         )
-        assert widget.progressBar.value() == 42
+        assert widget.progressBar.value() == 4200
         # 전체 폭(테두리 안쪽 1px 여백 허용) + 카드 바닥에 붙어 있다
         frame = widget.contentFrame
         assert widget.progressBar.width() >= frame.width() - 4

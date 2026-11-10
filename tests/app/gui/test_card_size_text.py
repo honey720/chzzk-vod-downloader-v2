@@ -731,7 +731,7 @@ def test_preparing_card_shows_the_text_and_a_bar_without_a_value(qtbot) -> None:
     _pump()
 
     assert shown(widget.statusLabel).startswith("42%")
-    assert (widget.progressBar.maximum(), widget.progressBar.value()) == (100, 42)
+    assert (widget.progressBar.maximum(), widget.progressBar.value()) == (10000, 4200)
 
 
 # ================================================================ 실제 창
@@ -1314,7 +1314,7 @@ def test_card_shows_preparing_until_the_engine_reports_progress(qtbot, window, m
     _pump()
 
     assert shown(widget.statusLabel).startswith("0%")
-    assert widget.progressBar.maximum() == 100
+    assert widget.progressBar.maximum() == 10000
 
 
 def test_a_short_prepare_never_shows_preparing(qtbot, window) -> None:
@@ -1335,7 +1335,7 @@ def test_a_short_prepare_never_shows_preparing(qtbot, window) -> None:
     assert win.downloadViewModel._prepareTimer.isActive(), "전제: 아직 지연 안이다"
     assert not item.preparing
     assert shown(widget.statusLabel) != "Preparing"
-    assert widget.progressBar.maximum() == 100
+    assert widget.progressBar.maximum() == 10000
 
     _first_progress(engine.submissions[0])
     qtbot.waitUntil(lambda: not win.downloadViewModel._prepareTimer.isActive(), timeout=3000)
@@ -1362,7 +1362,7 @@ def test_preparing_is_cleared_when_the_download_fails_while_preparing(qtbot, win
     _pump()
 
     assert not item.preparing
-    assert widget.progressBar.maximum() == 100
+    assert widget.progressBar.maximum() == 10000
 
 
 def test_memory_is_logged_at_each_point_of_the_section_download(

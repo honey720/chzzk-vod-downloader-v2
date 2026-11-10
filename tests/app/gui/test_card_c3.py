@@ -31,6 +31,7 @@ from app.views.card_edit_dialog import CardEditDialog
 from app.views.mainWindow import VodDownloader
 from app.widgets.view import ContentListView
 from app.widgets.widget import STOP_MOTION_MS, ContentItemWidget
+from core.engine.thread_control import TICK_SECONDS
 from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
@@ -478,7 +479,7 @@ class TestProgressBar:
         card = _card(_item(state))
         bar = card.progressBar
         assert bar.isVisible()
-        assert bar.value() == bar.maximum() == 100
+        assert bar.value() == bar.maximum() == 10000
         assert _close(_pixel(bar, bar.width() // 2, bar.height() // 2), _token(token))
 
     def test_running_bar_shows_the_progress_over_the_border_coloured_track(self, qapp) -> None:
@@ -497,7 +498,7 @@ class TestProgressBar:
         item.download_progress = 54
         card = _card(item)
         bar = card.progressBar
-        assert bar.value() == 54
+        assert bar.value() == 5400
         assert _close(_pixel(bar, bar.width() // 10, bar.height() // 2), _token("statePaused"))
 
     @pytest.mark.parametrize("cut", (False, True))
@@ -760,7 +761,7 @@ class TestStopMotion:
         assert card.statusLabel.property("state") == "waiting"
         motion.setCurrentTime(150)
         bar = card.progressBar
-        assert bar.isVisible() and 0 < bar.value() < 15
+        assert bar.isVisible() and 0 < bar.value() < 1500
         assert bar.property("state") == "running"
         motion.setCurrentTime(300)
         QApplication.processEvents()
@@ -793,7 +794,7 @@ class TestStopMotion:
         assert card.findChildren(QVariantAnimation) == []
 
     def test_restart_during_the_motion_stops_it(self, qapp) -> None:
-        """모션 도중 다시 받는 중(10%)이 되면 모션이 멈추고 막대가 10이어야 한다."""
+        """모션 도중 다시 받는 중(10%)이 되면 모션이 멈추고 막대 값이 1000(10%, 0.01% 단위)이어야 한다."""
         card = self._stopped()
         card.motion().setCurrentTime(100)
         item = card.item
@@ -801,7 +802,7 @@ class TestStopMotion:
         item.download_progress = 10
         card.setData(item, 0)
         assert card.motion() is None
-        assert card.progressBar.value() == 10
+        assert card.progressBar.value() == 1000
 
     def test_late_waiting_update_keeps_the_motion(self, qapp) -> None:
         """중지 모션 도중 대기 카드에 갱신이 한 번 더 와도 모션이 이어지고 끝에서 막대가 사라져야 한다.
@@ -837,9 +838,10 @@ class TestBarTickMotion:
         return card
 
     def test_bar_moves_between_ticks_when_animations_are_on(self, qapp) -> None:
-        """애니메이션 켬이면 40% → 60% 틱에서 막대가 반쯤 시간에 40과 60 사이, 끝에 60이어야 한다.
+        """애니메이션 켬이면 40% → 60% 틱에서 막대가 반쯤 시간에 40%와 60% 사이, 끝에 60%여야 한다.
 
-        막대 방식 · 애니메이션 켬, 모션 시간 = 채움과 같은 시간의 절반 -> 40 < 값 < 60, 끝 -> 60 · 모션 없음
+        막대 방식 · 애니메이션 켬, 모션 시간 = 채움과 같은 시간의 절반 -> 4000 < 값 < 6000(0.01% 단위),
+        끝 -> 6000 · 모션 없음
         """
         _display(progress="fill", animations=True)
         fill_duration = self._ticked().motion().duration()
@@ -850,17 +852,17 @@ class TestBarTickMotion:
         assert motion.duration() == fill_duration
         bar = card.progressBar
         motion.setCurrentTime(motion.duration() // 2)
-        assert bar.isVisible() and 40 < bar.value() < 60
+        assert bar.isVisible() and 4000 < bar.value() < 6000
         motion.setCurrentTime(motion.duration())
-        assert bar.value() == 60
+        assert bar.value() == 6000
         assert card.motion() is None
 
     def test_without_animations_the_bar_jumps_to_the_tick(self, qapp) -> None:
-        """애니메이션 끔이면 40% → 60% 틱에서 막대가 바로 60이고 모션이 없어야 한다."""
+        """애니메이션 끔이면 40% → 60% 틱에서 막대 값이 바로 6000(60%)이고 모션이 없어야 한다."""
         _display(animations=False)
         card = self._ticked()
         assert card.motion() is None
-        assert card.progressBar.value() == 60
+        assert card.progressBar.value() == 6000
 
     def test_finished_bar_motions_do_not_pile_up_on_the_card(self, qapp) -> None:
         """막대 방식에서 틱 다섯 번의 모션이 끝나면 카드에 남은 모션 객체가 0개여야 한다.
@@ -879,6 +881,62 @@ class TestBarTickMotion:
             motion.setCurrentTime(motion.duration())
         QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
         assert card.findChildren(QVariantAnimation) == []
+
+    def test_motion_lasts_the_whole_tick_and_keeps_moving(self, qapp) -> None:
+        """이어 움직임 시간이 엔진 틱 간격과 같고, 틱 안 50% · 90% 시점에도 막대가 계속 차올라야 한다.
+
+        40% → 60% 틱 -> 모션 시간 == TICK_SECONDS × 1000ms, 값(50%) < 값(90%) < 6000
+        """
+        card = self._ticked()
+        motion = card.motion()
+        assert motion.duration() == round(TICK_SECONDS * 1000)
+        bar = card.progressBar
+        motion.setCurrentTime(motion.duration() // 2)
+        half = bar.value()
+        motion.setCurrentTime(motion.duration() * 9 // 10)
+        assert 4000 < half < bar.value() < 6000
+
+    def test_early_tick_continues_from_the_drawn_value(self, qapp) -> None:
+        """모션이 끝나기 전에 다음 틱이 오면 새 모션이 지금 그려진 값에서 시작하고 막대가 뒤로 가지 않아야 한다.
+
+        40% → 60% 틱, 반쯤 시간에 80% 틱 -> 새 모션 시작 값 == 그때 막대 비율, 막대 값 줄지 않음
+        """
+        card = self._ticked()
+        first = card.motion()
+        first.setCurrentTime(first.duration() // 2)
+        bar = card.progressBar
+        drawn = bar.value()
+        card.item.download_progress = 80
+        card.setData(card.item, 0)
+        second = card.motion()
+        assert second is not None and second is not first
+        assert round(float(second.startValue()) * 10000) == drawn
+        assert bar.value() >= drawn
+        second.setCurrentTime(1)
+        assert bar.value() >= drawn
+
+    def test_bar_draws_a_value_between_whole_percents(self, qapp) -> None:
+        """37% → 38% 틱의 40% 시점이면 막대 값이 3740이고 화소도 37.4% 자리까지 칠해져야 한다.
+
+        카드 폭 900, 모션 시간의 40% -> 값 3740(0.01% 단위), 막대 폭의 37.4% − 2px 자리 진행 색 ·
+        37.4% + 2px 자리 테두리 색(37%와 38% 경계 사이)
+        """
+        item = _item(DownloadState.RUNNING)
+        item.download_progress = 37
+        card = _card(item)
+        item.download_progress = 38
+        card.setData(item, 0)
+        motion = card.motion()
+        motion.setCurrentTime(motion.duration() * 4 // 10)
+        bar = card.progressBar
+        assert bar.value() == 3740
+        edge = bar.width() * 0.374
+        assert bar.width() * 0.37 < edge - 2 and edge + 2 < bar.width() * 0.38, (
+            "전제: 1%가 4px보다 넓다"
+        )
+        y = bar.height() // 2
+        assert _close(_pixel(bar, int(edge) - 2, y), _token("stateRunning"))
+        assert _close(_pixel(bar, int(edge) + 2, y), _token("border"))
 
 
 class TestLastFoldOfTheCuttingCard:

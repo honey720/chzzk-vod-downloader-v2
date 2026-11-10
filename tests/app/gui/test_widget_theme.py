@@ -262,7 +262,7 @@ def test_state_change_repaints_an_existing_card(qapp) -> None:
     assert widget.statusLabel.property("state") == "running"
     assert widget.statusLabel.isVisible()
     assert widget.progressBar.property("state") == "running"
-    assert widget.progressBar.value() == 30
+    assert widget.progressBar.value() == 3000
 
     widget.item.downloadState = DownloadState.FAILED
     widget.setData(widget.item, 0)

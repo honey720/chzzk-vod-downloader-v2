@@ -190,7 +190,7 @@ class TestSlotColumn:
         QApplication.processEvents()
         assert widget.pauseButton.isVisible() and widget.pauseButton.isEnabled()
         assert widget.pauseButton.iconName() == "pause"
-        assert widget.progressBar.isVisible() and widget.progressBar.value() == 13
+        assert widget.progressBar.isVisible() and widget.progressBar.value() == 1300
 
     def test_paused_shows_percent_first_then_paused(self, qapp) -> None:
         widget = _make_widget(qapp, DownloadState.PAUSED, 54)
@@ -481,7 +481,7 @@ class TestProgressBarColumn:
 
     def test_paused_bar_keeps_the_progress_value(self, qapp) -> None:
         widget = _make_widget(qapp, DownloadState.PAUSED, 54)
-        assert widget.progressBar.value() == 54
+        assert widget.progressBar.value() == 5400
 
     def test_paused_colour_is_distinct_from_running_and_waiting(self) -> None:
         """muted는 "다른 색"이어야 정보다 — 진행 파랑·대기 회색 둘 다와 달라야 한다."""

@@ -330,7 +330,7 @@ def test_combined_progress_rises_through_transfer_and_cut_to_100(card) -> None:
     for done in (1, 2, 3):
         card.cut(done)
         seen.append(card.item.download_progress)
-        assert card.widget.progressBar.value() == card.item.download_progress
+        assert card.widget.progressBar.value() == card.item.download_progress * 100  # 0.01% 단위
 
     assert seen == [0, 24, 56, 80, 86, 93, 100]
     assert seen == sorted(seen)
