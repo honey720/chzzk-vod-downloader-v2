@@ -522,6 +522,23 @@ def _undo(win: VodDownloader) -> None:
 
 
 class TestUndo:
+    def test_deleting_and_restoring_many_cards_sends_one_count_notice_each(self, window) -> None:
+        """여러 장을 한 번에 지우거나 되살리면 칩 숫자 알림은 한 번씩이고 숫자는 맞아야 한다.
+
+        대기 셋 · 완료 둘 모두 고름 -> 지움 -> 알림 1번 · 전체 0, Ctrl+Z -> 알림 1번 · 전체 5 · 완료 2
+        """
+        _add(window, D.WAITING, D.WAITING, D.WAITING, D.FINISHED, D.FINISHED)
+        order = window.contentManager.order
+        notices: list = []
+        order.countsChanged.connect(lambda: notices.append(1))
+        _key(window.listView, Qt.Key.Key_A, CTRL)
+        window.selectBar.deleteButton.click()
+        _settle()
+        assert (len(notices), order.counts()["all"]) == (1, 0)
+        notices.clear()
+        _undo(window)
+        assert (len(notices), order.counts()["all"], order.counts()["finished"]) == (1, 5, 2)
+
     def test_ctrl_z_restores_deleted_cards_to_their_places(self, window) -> None:
         """여러 장을 한 번에 지운 뒤 Ctrl/⌘+Z 한 번이면 모두 지운 자리로 돌아와야 한다.
 
