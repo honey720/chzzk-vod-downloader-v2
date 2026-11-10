@@ -385,6 +385,11 @@ QFrame#headerFrame QPushButton#selectButton[on="true"] {
     border-color: @borderStrong;
 }
 
+/* 눌린 모양 규칙이 초점 규칙보다 구체적이라 초점 테두리를 덮는다 — 그 뒤에 다시 건다 */
+QFrame#headerFrame QPushButton#selectButton[on="true"]:focus {
+    border-color: @accent;
+}
+
 /* 선택 줄(#561 — 설계 §12.1 「선택 모드」): 면 · 테두리는 SelectBar가 그린다(말풍선과 같은 떠 있는 면). 안 버튼은
  * 평소 면 · 테두리 없음, 호버 · 누름만 면(테두리 안쪽 2px 들여 — 자리는 그대로). 지우기는 포인터가 오면 실패 색 면 */
 QWidget#selectBar QLabel#selectCount {

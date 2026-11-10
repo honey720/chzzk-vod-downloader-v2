@@ -442,6 +442,13 @@ class ContentViewModel(QObject):
             for row, item in entries:
                 if self.model.getRow(item) is not None:
                     continue
+                if (
+                    item.downloadState == ItemState.LOADING
+                    and item not in self._pendingPlaceholders.values()
+                ):
+                    # 조회가 이미 끝났다(결과는 카드가 없어 버렸다) — 되살려도 채워 줄 조회가 없어 조회 중으로 남는다
+                    self.model.release([item])
+                    continue
                 if item in working:
                     self._resetToWaiting(item)
                 if item.section_sizing:

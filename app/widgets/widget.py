@@ -459,7 +459,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             else:
                 self.activate()
             return
-        if key in (Qt.Key.Key_Up, Qt.Key.Key_Down) and not event.modifiers():
+        # macOS는 방향키에 키패드 수정자를 단다(Qt 문서) — 그것만 빼고 다른 수정자가 없을 때
+        modifiers = event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier
+        if key in (Qt.Key.Key_Up, Qt.Key.Key_Down) and not modifiers:
             event.accept()
             owner = self._listOwner()
             if owner is not None:
