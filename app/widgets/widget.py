@@ -178,7 +178,7 @@ TIP_LABEL_NAMES = (
 )
 
 STOP_MOTION_MS = 300  # 중지 모션 — 막대 · 채움이 왼쪽 끝까지 줄어드는 시간(ms, 설계 §12.1)
-FILL_MOTION_MS = 400  # 배경 채움이 틱 사이를 이어 움직이는 시간(ms) — 1초 틱보다 짧게
+TICK_MOTION_MS = 400  # 막대 · 배경 채움이 틱 사이를 이어 움직이는 시간(ms) — 1초 틱보다 짧게
 STATUS_KEEP_CHARS = (
     3  # 상태 글을 끝까지 줄여도 남기는 앞 글자 수 — 프로토 가 「✕ 사유를…」의 「사유를」
 )
@@ -995,7 +995,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             theme.repolish(bar)
 
     def motion(self) -> QVariantAnimation | None:
-        """지금 도는 진행 모션(중지 모션 · 채움 이어 움직임) — 없으면 None. 테스트가 시간을 정한다."""
+        """지금 도는 진행 모션(중지 모션 · 틱 사이 이어 움직임) — 없으면 None. 테스트가 시간을 정한다."""
         return self._motion
 
     def _stopMotion(self) -> None:
@@ -1021,7 +1021,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """모션이 끝났다 — 지금 아이템의 진행으로 맞춘다(중지 모션이면 대기 — 막대 · 채움 없음)."""
         motion, self._motion = self._motion, None
         if motion is not None:
-            motion.deleteLater()  # 끝난 모션이 카드의 자식으로 쌓이지 않게(채움은 틱마다 하나)
+            motion.deleteLater()  # 끝난 모션이 카드의 자식으로 쌓이지 않게(이어 움직임은 틱마다 하나)
         self._showProgress(*self._target())
 
     def _applyProgress(self, previous: object) -> None:
@@ -1029,8 +1029,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
 
         중지 확인 뒤 대기로 돌아가는 카드(받는 중 · 일시정지)는 막대 · 채움이 지금 자리에서 왼쪽 끝까지
         `STOP_MOTION_MS`에 줄어든다(처음 빠르고 끝에서 느림, 그 카드의 지금 색). 애니메이션을 끄면 바로
-        사라진다. 모션 도중 다시 시작하면 모션을 멈추고 새 진행을 따른다. 배경 채움 방식에서 받는 중
-        진행은 틱 사이를 이어 움직인다(애니메이션 켬일 때).
+        사라진다. 모션 도중 다시 시작하면 모션을 멈추고 새 진행을 따른다. 받는 중 진행은 막대 · 배경
+        채움 어느 방식이든 틱 사이를 `TICK_MOTION_MS`에 이어 움직인다(애니메이션 켬일 때).
         """
         display = card_display.current()
         raw = self.item.downloadState
@@ -1050,14 +1050,13 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             self._animate(self._shown, 0.0, old_state, STOP_MOTION_MS, QEasingCurve.Type.OutCubic)
             return
         if (
-            display.fill
-            and display.animations
+            display.animations
             and raw == DownloadState.RUNNING
             and not busy
             and previous == DownloadState.RUNNING
             and fraction > self._shown
         ):
-            self._animate(self._shown, fraction, state, FILL_MOTION_MS, QEasingCurve.Type.Linear)
+            self._animate(self._shown, fraction, state, TICK_MOTION_MS, QEasingCurve.Type.Linear)
             return
         self._stopMotion()
         self._showProgress(fraction, state, busy)

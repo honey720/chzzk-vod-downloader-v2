@@ -750,6 +750,63 @@ class TestStopMotion:
         assert card.progressBar.value() == 10
 
 
+class TestBarTickMotion:
+    """막대 방식(기본)도 받는 중 진행이 틱 사이를 이어 움직인다 — 배경 채움과 같은 방식 · 같은 시간."""
+
+    def _ticked(self) -> ContentItemWidget:
+        """받는 중 40% 카드에 60% 틱을 준다."""
+        item = _item(DownloadState.RUNNING)
+        item.download_progress = 40
+        card = _card(item)
+        item.download_progress = 60
+        card.setData(item, 0)
+        return card
+
+    def test_bar_moves_between_ticks_when_animations_are_on(self, qapp) -> None:
+        """애니메이션 켬이면 40% → 60% 틱에서 막대가 반쯤 시간에 40과 60 사이, 끝에 60이어야 한다.
+
+        막대 방식 · 애니메이션 켬, 모션 시간 = 채움과 같은 시간의 절반 -> 40 < 값 < 60, 끝 -> 60 · 모션 없음
+        """
+        _display(progress="fill", animations=True)
+        fill_duration = self._ticked().motion().duration()
+        _display(animations=True)
+        card = self._ticked()
+        motion = card.motion()
+        assert motion is not None
+        assert motion.duration() == fill_duration
+        bar = card.progressBar
+        motion.setCurrentTime(motion.duration() // 2)
+        assert bar.isVisible() and 40 < bar.value() < 60
+        motion.setCurrentTime(motion.duration())
+        assert bar.value() == 60
+        assert card.motion() is None
+
+    def test_without_animations_the_bar_jumps_to_the_tick(self, qapp) -> None:
+        """애니메이션 끔이면 40% → 60% 틱에서 막대가 바로 60이고 모션이 없어야 한다."""
+        _display(animations=False)
+        card = self._ticked()
+        assert card.motion() is None
+        assert card.progressBar.value() == 60
+
+    def test_finished_bar_motions_do_not_pile_up_on_the_card(self, qapp) -> None:
+        """막대 방식에서 틱 다섯 번의 모션이 끝나면 카드에 남은 모션 객체가 0개여야 한다.
+
+        받는 중 10% → 20 · 30 · 40 · 50 · 60%, 틱마다 모션을 끝까지 돌림 -> QVariantAnimation 자식 0개
+        """
+        _display(animations=True)
+        item = _item(DownloadState.RUNNING)
+        item.download_progress = 10
+        card = _card(item)
+        for progress in (20, 30, 40, 50, 60):
+            item.download_progress = progress
+            card.setData(item, 0)
+            motion = card.motion()
+            assert motion is not None
+            motion.setCurrentTime(motion.duration())
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        assert card.findChildren(QVariantAnimation) == []
+
+
 UPLOAD_DATE = "2026-06-15 09:59:58"  # 픽스처 응답의 publishDate(공개 시각)
 
 
