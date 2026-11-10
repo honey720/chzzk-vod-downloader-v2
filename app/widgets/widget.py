@@ -181,6 +181,7 @@ TIP_LABEL_NAMES = (
 
 STOP_MOTION_MS = 300  # 중지 모션 — 막대 · 채움이 왼쪽 끝까지 줄어드는 시간(ms, 설계 §12.1)
 TICK_MOTION_MS = 400  # 막대 · 배경 채움이 틱 사이를 이어 움직이는 시간(ms) — 1초 틱보다 짧게
+PROGRESS_SCALE = 100  # 진행 막대 범위(1% 단위)
 STATUS_KEEP_CHARS = (
     3  # 상태 글을 끝까지 줄여도 남기는 앞 글자 수 — 프로토 가 「✕ 사유를…」의 「사유를」
 )
@@ -986,20 +987,24 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         return 0.0, state, False
 
     def _showProgress(self, fraction: float, state: str, busy: bool) -> None:
-        """막대 · 채움에 진행을 그린다 — 진행 표시 방식(설정 키)을 따른다."""
+        """막대 · 채움에 진행을 그린다 — 진행 표시 방식(설정 키)을 따른다.
+
+        값 없이 움직이는 막대(준비 중 · 자르기 준비 중)는 배경 채움 방식에서도 막대로 보인다 — 채울
+        값이 없어 채움으로는 아무것도 안 보인다(#554 리뷰).
+        """
         self._shown = fraction
         display = card_display.current()
         bar = self.progressBar
-        if display.fill:
+        if display.fill and not busy:
             bar.setVisible(False)
             token = {"running": "cardFillRunning", "paused": "cardFillPaused"}.get(state, "")
-            self.contentFrame.setFill(0.0 if busy else fraction, token)
+            self.contentFrame.setFill(fraction, token)
             return
         self.contentFrame.setFill(0.0, "")
-        maximum = 0 if busy else 100
+        maximum = 0 if busy else PROGRESS_SCALE
         if bar.maximum() != maximum:
             bar.setRange(0, maximum)
-        bar.setValue(round(fraction * 100))
+        bar.setValue(round(fraction * PROGRESS_SCALE))
         visible = busy or fraction > 0 or state in ("running", "paused")
         bar.setVisible(visible)
         if bar.property("state") != state:
@@ -1060,6 +1065,11 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         if stopped and display.animations:
             old_state = "paused" if previous == DownloadState.PAUSED else "running"
             self._animate(self._shown, 0.0, old_state, STOP_MOTION_MS, QEasingCurve.Type.OutCubic)
+            return
+        motion = self._motion
+        if motion is not None and not busy and float(motion.endValue()) == fraction:
+            # 같은 목표로 가는 모션은 그대로 둔다 — 중지 모션 도중 늦게 온 대기 갱신(#554 리뷰), 틱 안의
+            # 다른 갱신이 모션을 끊거나 처음부터 다시 돌리지 않게. 끝에서 `_onMotionFinished`가 맞춘다
             return
         if (
             display.animations

@@ -30,7 +30,7 @@ from app.viewmodels.model import ContentListModel
 from app.views.card_edit_dialog import CardEditDialog
 from app.views.mainWindow import VodDownloader
 from app.widgets.view import ContentListView
-from app.widgets.widget import ContentItemWidget
+from app.widgets.widget import STOP_MOTION_MS, ContentItemWidget
 from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
@@ -694,6 +694,25 @@ class TestFill:
         assert _close(_pixel(frame, frame.width() // 5, y), _token(token))
         assert _close(_pixel(frame, frame.width() * 4 // 5, y), _token("cardBg"))
 
+    @pytest.mark.parametrize("cut", (False, True), ids=["preparing", "preparing-to-cut"])
+    def test_preparing_card_shows_a_bar_without_a_value_in_fill_mode(self, qapp, cut) -> None:
+        """채움 방식에서도 준비 중 · 자르기 준비 중 카드는 값 없는 막대가 보이고 면은 채우지 않아야 한다.
+
+        배경 채움 방식, 받는 중 + 준비 중(또는 구간 자르기 준비 중) -> 막대 보임 · 범위 0~0 · 채움 0
+        """
+        _display(progress="fill", animations=False)
+        item = _item(DownloadState.RUNNING)
+        if cut:
+            item.selections = TWO_SECTIONS
+            item.post_process = True
+            item.cut_preparing = True
+        else:
+            item.preparing = True
+        card = _card(item)
+        assert card.progressBar.isVisible()
+        assert card.progressBar.maximum() == 0
+        assert card.contentFrame.fill()[0] == 0.0
+
     def test_bar_mode_does_not_fill(self, qapp) -> None:
         """막대 방식(기본)에서 40% 받는 중 카드면 면의 20% 자리가 카드 바탕이어야 한다."""
         item = _item(DownloadState.RUNNING)
@@ -783,6 +802,26 @@ class TestStopMotion:
         card.setData(item, 0)
         assert card.motion() is None
         assert card.progressBar.value() == 10
+
+    def test_late_waiting_update_keeps_the_motion(self, qapp) -> None:
+        """중지 모션 도중 대기 카드에 갱신이 한 번 더 와도 모션이 이어지고 끝에서 막대가 사라져야 한다.
+
+        받는 중 60% → 대기(모션 시작), 100ms에 대기 갱신 -> 같은 모션 · 막대 보임 · 150ms 값 < 100ms 값,
+        300ms -> 막대 숨음 · 모션 없음
+        """
+        card = self._stopped()
+        motion = card.motion()
+        motion.setCurrentTime(100)
+        bar = card.progressBar
+        before = bar.value()
+        card.setData(card.item, 0)
+        assert card.motion() is motion
+        assert bar.isVisible() and bar.value() == before
+        motion.setCurrentTime(150)
+        assert 0 < bar.value() < before
+        motion.setCurrentTime(STOP_MOTION_MS)
+        assert card.motion() is None
+        assert not bar.isVisible()
 
 
 class TestBarTickMotion:
