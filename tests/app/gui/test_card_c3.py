@@ -807,6 +807,52 @@ class TestBarTickMotion:
         assert card.findChildren(QVariantAnimation) == []
 
 
+class TestLastFoldOfTheCuttingCard:
+    """마지막 접는 단계(⑥) — 자르는 카드는 「구간 N개」를 뺀다. 받는 중 · 일시정지의 받은 크기는 남는다."""
+
+    def _sections(self, state: DownloadState, cutting: bool) -> ContentItem:
+        item = _sections_running()
+        item.downloadState = state
+        item.post_process = cutting
+        item.resolution = 1080
+        return item
+
+    @pytest.mark.parametrize("preparing", (False, True), ids=["cutting", "preparing-to-cut"])
+    def test_cutting_card_drops_the_section_count_only_at_the_last_step(self, preparing) -> None:
+        """자르는(준비 중 포함) 구간 둘 카드의 정보 글은 ⑤에서 「Sections 2」가 있고 ⑥에서 없어야 한다."""
+        item = self._sections(DownloadState.RUNNING, cutting=True)
+        item.cut_preparing = preparing
+        sections = "Sections 2"
+        assert sections in card_text.info_text(item, level=card_text.LEVEL_REMAIN - 1)
+        last = card_text.info_text(item, level=card_text.LEVEL_REMAIN)
+        assert sections not in last and last.startswith("1080p")
+
+    @pytest.mark.parametrize("state", (DownloadState.RUNNING, DownloadState.PAUSED))
+    def test_transferring_card_keeps_the_received_size_at_the_last_step(self, state) -> None:
+        """전송 중(받는 중 · 일시정지) 구간 카드는 ⑥에서도 받은 크기가 남아야 한다."""
+        item = self._sections(state, cutting=False)
+        last = card_text.info_text(item, level=card_text.LEVEL_REMAIN)
+        assert card_text.received_size_text(item, False) in last
+
+    def test_cutting_card_at_the_window_minimum_shows_no_section_count(self, qapp) -> None:
+        """창 최소폭에서 자르기 준비 중 견본 카드(구간 99개)의 정보 글에 「Sections」가 없어야 한다."""
+        win, cards = _window_with(WORST_SAMPLES)
+        win.resize(win.minimumWidth(), 900)
+        win.show()
+        for _ in range(4):
+            QApplication.processEvents()
+        assert win.width() == win.minimumWidth()
+        cutting = [
+            card
+            for card in cards
+            if card.item.downloadState == DownloadState.RUNNING and card.item.post_process
+        ]
+        assert cutting, "견본에 자르는 카드가 없다"
+        for card in cutting:
+            assert card.isVisible()
+            assert "Sections" not in card.fileSizeLabel.text()
+
+
 UPLOAD_DATE = "2026-06-15 09:59:58"  # 픽스처 응답의 publishDate(공개 시각)
 
 

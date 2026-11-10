@@ -39,8 +39,8 @@ OVERLAP_SLACK = 0.001
 # 3줄 접는 단계의 끝 — 0이 가장 넓은 모양이다(#554, 설계 §3 「3행 상태 보호」 · 프로토 card.py 가 levelTexts).
 # 단계가 오를수록 이 차례로 뺀다: ⓪(1) 실패 사유 뒤 · 구간 알림 → ①(2) 저장 위치 이름 → 아이콘만 →
 # ②(3) 저장 위치 → ③(4) 길이(구간 길이 · 실패 카드의 영상 길이) → ④(5) 받을 크기 · 「/ 전체」 →
-# ⑤(6) 속도(실패 카드는 해상도) → ⑥(7) 남은 시간 · 완료 소요 시간 · 구간 집계(실패 카드 밖).
-# 진행률 · 상태 단어 · 실패 사유 앞은 빼지 않는다
+# ⑤(6) 속도(실패 카드는 해상도) → ⑥(7) 남은 시간 · 완료 소요 시간 · 구간 집계(실패 카드 밖) ·
+# 자르는 카드의 「구간 N개」. 진행률 · 상태 단어 · 실패 사유 앞은 빼지 않는다
 LEVEL_MAX = 7
 LEVEL_REASON_TAIL = 1  # 이 단계부터 실패 사유 뒤(조치 안내) · 구간 알림을 뺀다
 LEVEL_PATH_ICON = 2  # 이 단계부터 저장 위치는 아이콘만
@@ -48,7 +48,9 @@ LEVEL_PATH_GONE = 3  # 이 단계부터 저장 위치를 뺀다
 LEVEL_LENGTH = 4  # 이 단계부터 구간 길이 · 실패 카드의 영상 길이를 뺀다
 LEVEL_SIZE = 5  # 이 단계부터 받을 크기(받는 중 · 일시정지는 「/ 전체」)를 뺀다
 LEVEL_SPEED = 6  # 이 단계부터 속도를 뺀다(실패 카드는 해상도)
-LEVEL_REMAIN = 7  # 이 단계부터 남은 시간 · 완료 소요 시간 · 구간 집계(실패 밖)를 뺀다
+LEVEL_REMAIN = (
+    7  # 이 단계부터 남은 시간 · 완료 소요 시간 · 구간 집계(실패 밖) · 자르는 카드의 구간 수를 뺀다
+)
 REASON_JOINER = " · "  # 실패 사유의 앞(무엇이 실패) · 뒤(조치 안내)를 가르는 글
 
 
@@ -616,9 +618,9 @@ def info_text(
         # 실패 카드는 ⑤에서 해상도를 뺀다 — 크기 · 길이는 그 앞 단계에서 이미 빠졌다
         return ""
     if section_count(item):
+        cutting = state == DownloadState.RUNNING and bool(item.post_process)  # 구간을 자르는 단계
         if state in (DownloadState.RUNNING, DownloadState.PAUSED):
             # 자르는 단계는 전송이 끝나 받은 크기가 진행이 아니다 — ④에서 통째로 뺀다(프로토 가)
-            cutting = state == DownloadState.RUNNING and bool(item.post_process)
             size = "" if cutting and not with_size else received_size_text(item, with_total)
         elif state == DownloadState.FINISHED:
             size = finished_size_text(item) if with_size else ""
@@ -632,6 +634,10 @@ def info_text(
         sections = QCoreApplication.translate("ContentItemWidget", "Sections {0}").format(
             section_count(item)
         )
+        if cutting and level >= LEVEL_REMAIN:
+            # 자르는 카드는 ⑥에서 「구간 N개」(겹침 표시 포함)를 뺀다 — 가장 넓은 견본이라 창 최소폭을
+            # 정한다(오너 2026-11-09 (나)). 받는 중 · 일시정지의 받은 크기는 남긴다
+            sections = marker = ""
         notice = section_notice(item) if with_notice and state == DownloadState.WAITING else ""
         span = section_clock(section_span(item)) if level < LEVEL_LENGTH else ""
         return with_resolution(item, _joined(size, span, sections, marker, notice))
