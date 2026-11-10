@@ -1,16 +1,19 @@
-"""관측 루프의 틱 주기와 일시정지 처리 (#347).
+"""관측 루프의 sample 주기와 일시정지 처리 (#347 · #557).
 
 시계와 대기를 바꿔 끼워 루프를 그대로 돌린다 — 대기는 실제로 자지 않고 가짜 시계를 옮긴다.
+주기는 상수(`SAMPLE_SECONDS` = P)에서 읽는다 — 값을 바꿔도 같은 뜻을 잰다.
 """
 
 from collections.abc import Callable
 
 import pytest
 
+from core.engine.base import SAMPLE_SECONDS as P
+from core.engine.thread_control import EVAL_SECONDS
 from core.sources.file_downloader import FileDownloader
 from core.models.download_data import DownloadData
 
-WORK = 0.19  # 틱 하나의 일(속도 측정)에 드는 시간(초)으로 흉내 내는 값
+WORK = 0.19 * P  # sample 하나의 일(속도 측정)에 드는 시간(초)으로 흉내 내는 값 — 주기보다 짧게
 
 
 class Clock:
@@ -106,15 +109,15 @@ class Loop:
 
 
 def test_ticks_are_one_second_apart_whatever_the_work_takes() -> None:
-    """틱마다의 일에 시간이 들어도 틱 사이의 간격은 1초여야 한다.
+    """sample마다의 일에 시간이 들어도 sample 사이의 간격은 P(SAMPLE_SECONDS)여야 한다.
 
-    틱의 일 0.19초, 6틱 -> 간격 다섯 개가 모두 1.0초 (일한 시간만큼 늘어지면 1.19초다)
+    일 0.19P, 6번 -> 간격 다섯 개가 모두 P (일한 시간만큼 늘어지면 1.19P다)
     """
     loop = Loop(ticks=6)
 
     loop.run()
 
-    assert loop.gaps() == pytest.approx([1.0] * 5)
+    assert loop.gaps() == pytest.approx([P] * 5)
 
 
 def test_each_tick_measures_the_speed_before_adjusting_the_threads() -> None:
@@ -135,23 +138,23 @@ def test_each_tick_measures_the_speed_before_adjusting_the_threads() -> None:
 
 
 def test_a_tick_that_overruns_is_followed_by_a_full_period_not_a_burst() -> None:
-    """틱 하나가 주기보다 오래 걸리면, 밀린 틱을 몰아서 돌지 않고 그때부터 1초 뒤에 다음 틱을 돌아야 한다.
+    """sample 하나가 주기보다 오래 걸리면, 밀린 것을 몰아서 돌지 않고 그때부터 P 뒤에 다음 sample을 돌아야 한다.
 
-    둘째 틱의 일만 3.2초, 나머지는 0.19초, 5틱
-    -> 간격: 1.0, 4.2(일 3.2초 + 한 주기), 1.0, 1.0
+    둘째 일만 3.2P, 나머지는 0.19P, 5번
+    -> 간격: P, 4.2P(일 3.2P + 한 주기), P, P
     """
-    loop = Loop(ticks=5, work=lambda index: 3.2 if index == 1 else WORK)
+    loop = Loop(ticks=5, work=lambda index: 3.2 * P if index == 1 else WORK)
 
     loop.run()
 
-    assert loop.gaps() == pytest.approx([1.0, 4.2, 1.0, 1.0])
+    assert loop.gaps() == pytest.approx([P, 4.2 * P, P, P])
 
 
 def test_pause_is_measured_once_and_the_next_tick_comes_a_period_after_the_resume() -> None:
-    """일시정지에서 풀리면 재개 측정을 한 번 하고, 그때부터 1초 뒤에 다음 틱을 돌아야 한다.
+    """일시정지에서 풀리면 재개 측정을 한 번 하고, 그때부터 P 뒤에 다음 sample을 돌아야 한다.
 
-    첫 대기 뒤 300초 일시정지 → 재개, 그 뒤 3틱
-    -> 재개 측정 1번, 첫 틱은 재개 1초 뒤, 그다음 간격은 1.0초씩
+    첫 대기(P) 뒤 300초 일시정지 → 재개, 그 뒤 3번
+    -> 재개 측정 1번, 첫 sample은 재개 P 뒤, 그다음 간격은 P씩
     """
     loop = Loop(ticks=3)
     loop.data.model.pause_event = PausedOnce(loop.clock, 300.0)
@@ -160,15 +163,15 @@ def test_pause_is_measured_once_and_the_next_tick_comes_a_period_after_the_resum
     loop.run()
 
     assert loop.pause_measures == 1
-    assert loop.measured_at[0] == pytest.approx(started + 1.0 + 300.0 + 1.0)
-    assert loop.gaps() == pytest.approx([1.0, 1.0])
+    assert loop.measured_at[0] == pytest.approx(started + P + 300.0 + P)
+    assert loop.gaps() == pytest.approx([P, P])
 
 
 def test_paused_seconds_are_taken_out_of_the_thread_adjust_timers() -> None:
     """일시정지한 시간은 스레드 조정의 시각 기준에서 빠져야 한다 — 재개 직후 재탐침이 몰리지 않는다.
 
     조정기를 만든 뒤 300초 일시정지 → 재개
-    -> 조정기에 shift(300초)와 skip(재개 시각, 1초)이 한 번씩 불린다
+    -> 조정기에 shift(300초)와 skip(재개 시각, EVAL_SECONDS 1초)이 한 번씩 불린다
     """
     loop = Loop(ticks=1)
     calls: list[tuple] = []
@@ -190,5 +193,5 @@ def test_paused_seconds_are_taken_out_of_the_thread_adjust_timers() -> None:
 
     assert calls == [
         ("shift", pytest.approx(300.0)),
-        ("skip", pytest.approx(started + 1.0 + 300.0), pytest.approx(1.0)),
+        ("skip", pytest.approx(started + P + 300.0), pytest.approx(EVAL_SECONDS)),
     ]
