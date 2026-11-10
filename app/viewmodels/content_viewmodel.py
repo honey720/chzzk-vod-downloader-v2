@@ -32,7 +32,6 @@ import tempfile
 import threading
 
 from PySide6.QtCore import QObject, QThreadPool, Signal
-from PySide6.QtGui import QUndoCommand, QUndoStack
 
 from app.viewmodels.card_order import CardOrder
 from app.viewmodels.item_state import ItemState
@@ -191,7 +190,7 @@ class _WorkerRelay(QObject):
         self._viewmodel._workerError(self._worker, error_message)
 
 
-class RemoveCards(QUndoCommand):
+class RemoveCards:
     """카드 지우기 한 번 — 한 장이든 여러 장이든 되돌리기 한 번에 함께 되살아난다 (#561).
 
     `redo`가 지우고 `undo`가 지운 자리로 되살린다. 지울 때 엔진이 쥐고 있던 카드(받는 중 · 일시정지)는
@@ -200,7 +199,6 @@ class RemoveCards(QUndoCommand):
     """
 
     def __init__(self, viewmodel: "ContentViewModel", items: list[ContentItem]) -> None:
-        super().__init__(f"{len(items)} cards")
         self._viewmodel = viewmodel
         model = viewmodel.model
         # (목록 행, 카드) — 행이 작은 것부터. 되살릴 때 이 차례로 넣어야 저마다의 행이 지울 때와 같다
@@ -275,10 +273,9 @@ class ContentViewModel(QObject):
         self._sectionRefitter.settled.connect(self._onSectionSettled)
         # 구간 카드가 받을 크기를 백그라운드에서 센다 — 구간을 확인했을 때와 해상도 변경의 조회가 끝났을 때
         self._sectionSizer = SectionSizer(self.model, self.threadpool, self)
-        # 지우기 되돌리기(#561, 설계 §6 C4) — Ctrl/⌘+Z가 마지막 지우기부터 되살린다
-        self.undoStack = QUndoStack(self)
-        self.undoStack.setUndoLimit(UNDO_LIMIT)
-        # 스택에 남아 있는 지우기 — 스택이 한도를 넘거나 되살린 위에 새로 지워 버린 지우기의 카드를 놓는 데 쓴다
+        # 지우기 되돌리기(#561, 설계 §6 C4) — Ctrl/⌘+Z가 마지막 지우기부터 되살린다. 오래된 것부터 차례로, 한도
+        # UNDO_LIMIT. 설계 · 프로토는 QUndoStack이지만 QUndoStack은 QtGui에 있어 뷰모델이 쓸 수 없다
+        # (tests/meta/test_app_layer_imports.py) — 다시 하기 없이 되돌리기만 쓰므로 같은 규칙의 목록으로 둔다
         self._removals: list[RemoveCards] = []
 
     def fetchContent(self, vod_url: str, cookies: dict, downloadPath: str) -> None:
@@ -396,28 +393,21 @@ class ContentViewModel(QObject):
         if not present:
             return
         removal = RemoveCards(self, present)
-        live = self._removals[
-            : self.undoStack.index()
-        ]  # 되살린 지우기는 새 지우기가 지운다(QUndoStack.push)
-        self.undoStack.push(removal)  # redo가 지운다
-        live.append(removal)
-        dropped = [r for r in self._removals if r not in live]
-        if len(live) > UNDO_LIMIT:
-            dropped.extend(live[:-UNDO_LIMIT])
-            live = live[-UNDO_LIMIT:]
-        self._removals = live
-        if dropped:
-            held = {item for r in live for item in r.items()}
-            self.model.release(item for r in dropped for item in r.items() if item not in held)
+        removal.redo()
+        self._removals.append(removal)
+        if len(self._removals) > UNDO_LIMIT:
+            dropped = self._removals.pop(0)  # 가장 오래된 지우기 — 그 카드는 이제 되살릴 수 없다
+            held = {item for r in self._removals for item in r.items()}
+            self.model.release(item for item in dropped.items() if item not in held)
 
     def canUndoRemove(self) -> bool:
         """되살릴 지우기가 있는지."""
-        return self.undoStack.canUndo()
+        return bool(self._removals)
 
     def undoRemove(self) -> None:
-        """마지막 지우기를 되살린다 — 없으면 아무 일도 없다."""
-        if self.undoStack.canUndo():
-            self.undoStack.undo()
+        """마지막 지우기를 되살린다 — 없으면 아무 일도 없다. 되살린 지우기는 목록에서 빠진다(다시 하기는 없다)."""
+        if self._removals:
+            self._removals.pop().undo()
 
     def _detach(self, items: list[ContentItem]) -> None:
         """카드를 목록에서 뺀다 — 되살릴 수 있게 든 채로(`ContentListModel.removeRows(keep=True)`).
