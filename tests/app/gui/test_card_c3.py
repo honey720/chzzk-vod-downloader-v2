@@ -31,7 +31,7 @@ from app.views.card_edit_dialog import CardEditDialog
 from app.views.mainWindow import VodDownloader
 from app.widgets.view import ContentListView
 from app.widgets.widget import STILL_STEP_MS, STOP_MOTION_MS, ContentItemWidget
-from core.engine.thread_control import TICK_SECONDS
+from core.engine.base import PROGRESS_SECONDS
 from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
@@ -944,11 +944,11 @@ class TestBarTickMotion:
     def test_motion_lasts_the_whole_tick_and_keeps_moving(self, qapp) -> None:
         """이어 움직임 시간이 엔진 틱 간격과 같고, 틱 안 50% · 90% 시점에도 막대가 계속 차올라야 한다.
 
-        40% → 60% 틱 -> 모션 시간 == TICK_SECONDS × 1000ms, 값(50%) < 값(90%) < 6000
+        40% → 60% 틱 -> 모션 시간 == PROGRESS_SECONDS × 1000ms(엔진의 진행 통지 간격), 값(50%) < 값(90%) < 6000
         """
         card = self._ticked()
         motion = card.motion()
-        assert motion.duration() == round(TICK_SECONDS * 1000)
+        assert motion.duration() == round(PROGRESS_SECONDS * 1000)
         bar = card.progressBar
         motion.setCurrentTime(motion.duration() // 2)
         half = bar.value()
