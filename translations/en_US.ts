@@ -238,8 +238,16 @@
         <translation>This VOD is downloading. Stop the download and delete it?</translation>
     </message>
     <message>
+        <source>%1 of the %2 selected VODs are downloading. Stop the download and delete them?</source>
+        <translation>%1 of the %2 selected VODs are downloading. Stop the download and delete them?</translation>
+    </message>
+    <message>
         <source>Stop and delete</source>
         <translation>Stop and delete</translation>
+    </message>
+    <message>
+        <source>This deletes %1 VODs, including %2 that are not shown.</source>
+        <translation>This deletes %1 VODs, including %2 that are not shown.</translation>
     </message>
     <message>
         <source>Drag the URL here.</source>
@@ -675,6 +683,25 @@ Check your connection and cookies, then open this window again.</translation>
     </message>
 </context>
 <context>
+    <name>SelectBar</name>
+    <message>
+        <source>Select all</source>
+        <translation>Select all</translation>
+    </message>
+    <message>
+        <source>Delete</source>
+        <translation>Delete</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Cancel</translation>
+    </message>
+    <message>
+        <source>%1 selected</source>
+        <translation>%1 selected</translation>
+    </message>
+</context>
+<context>
     <name>SettingDialog</name>
     <message>
         <source>Settings</source>
@@ -858,6 +885,14 @@ Check your connection and cookies, then open this window again.</translation>
         <translation>Add</translation>
     </message>
     <message>
+        <source>Select</source>
+        <translation>Select</translation>
+    </message>
+    <message>
+        <source>Finish selecting</source>
+        <translation>Finish selecting</translation>
+    </message>
+    <message>
         <source>No VOD can be started right now.</source>
         <translation>No VOD can be started right now.</translation>
     </message>
@@ -925,10 +960,6 @@ Check your connection and cookies, then open this window again.</translation>
     <message>
         <source>Settings</source>
         <translation>Settings</translation>
-    </message>
-    <message>
-        <source>Clear Finished</source>
-        <translation>Clear Finished</translation>
     </message>
     <message>
         <source>Stop</source>

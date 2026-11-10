@@ -1,3 +1,5 @@
+import sys
+
 from PySide6.QtWidgets import QApplication, QMessageBox, QScrollArea, QWidget, QVBoxLayout
 from PySide6.QtCore import QCoreApplication, Qt, QTimer, Signal
 from PySide6.QtGui import (
@@ -6,6 +8,8 @@ from PySide6.QtGui import (
     QDragMoveEvent,
     QDragLeaveEvent,
     QDropEvent,
+    QKeyEvent,
+    QKeySequence,
     QPainter,
     QColor,
 )
@@ -22,19 +26,44 @@ def widget_under_pointer() -> QWidget | None:
     return QApplication.widgetAt(QCursor.pos())
 
 
-def confirm_stop_and_delete(parent: QWidget) -> bool:
-    """받는 중 카드의 ✕ — 「멈추고 지우기」를 묻는다. 기본 단추 · Esc는 취소다 (#550 설계 §12.1).
+def is_delete_key(event: QKeyEvent) -> bool:
+    """지우기 키인지 — 그 OS의 표준 Delete, macOS는 ⌘+Backspace도(#561 — 표준 Delete에 없다).
 
-    고른 것이 「멈추고 지우기」면 참. 테스트가 갈아 끼운다.
+    키는 단축키(`QShortcut`)가 아니라 초점 위젯의 키 이벤트로 받는다 — 단축키는 창이 활성일 때만 돌아, 창
+    관리자가 없는 화면(xvfb)에서는 실제 길로 잴 수 없다. 키 이벤트는 초점 위젯에서 받지 않으면 부모로 올라간다.
+    """
+    if event.matches(QKeySequence.StandardKey.Delete):
+        return True
+    return (
+        sys.platform == "darwin"  # Qt의 Ctrl은 macOS에서 ⌘다
+        and event.key() == Qt.Key.Key_Backspace
+        and event.modifiers() == Qt.KeyboardModifier.ControlModifier
+    )
+
+
+def confirm_stop_and_delete(parent: QWidget, total: int = 1, working: int = 1) -> bool:
+    """받는 중 카드를 지우려 한다 — 「멈추고 지우기」를 묻는다. 기본 단추 · Esc는 취소다 (#550 설계 §12.1).
+
+    카드 ✕ · Delete 키 · 선택 지우기가 같은 창을 쓴다(#561). 고른 것이 「멈추고 지우기」면 참. 테스트가 갈아 끼운다.
+
+    Args:
+        total: 지우려는 카드 수
+        working: 그 가운데 받는 중 · 일시정지 · 자르는 중 · 합치는 중인 카드 수
     """
     box = QMessageBox(parent)
     box.setIcon(QMessageBox.Icon.Warning)
     box.setWindowTitle(QCoreApplication.translate("ContentListView", "Delete"))
-    box.setText(
-        QCoreApplication.translate(
+    if total <= 1:
+        text = QCoreApplication.translate(
             "ContentListView", "This VOD is downloading. Stop the download and delete it?"
         )
-    )
+    else:
+        text = QCoreApplication.translate(
+            "ContentListView",
+            "%1 of the %2 selected VODs are downloading. Stop the download and delete them?",
+        )
+        text = text.replace("%1", str(working)).replace("%2", str(total))
+    box.setText(text)
     stop = box.addButton(
         QCoreApplication.translate("ContentListView", "Stop and delete"),
         QMessageBox.ButtonRole.DestructiveRole,
@@ -44,6 +73,29 @@ def confirm_stop_and_delete(parent: QWidget) -> bool:
     box.setEscapeButton(cancel)
     box.exec()
     return box.clickedButton() is stop
+
+
+def confirm_hidden_delete(parent: QWidget, total: int, hidden: int) -> bool:
+    """고른 카드 가운데 지금 필터로 보이지 않는 것이 있다 — 그래도 지울지 묻는다 (#561 설계 §12.1).
+
+    기본 단추 · Esc는 취소다. 고른 것이 「지우기」면 참. 테스트가 갈아 끼운다.
+    """
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Warning)
+    box.setWindowTitle(QCoreApplication.translate("ContentListView", "Delete"))
+    text = QCoreApplication.translate(
+        "ContentListView", "This deletes %1 VODs, including %2 that are not shown."
+    )
+    box.setText(text.replace("%1", str(total)).replace("%2", str(hidden)))
+    remove = box.addButton(
+        QCoreApplication.translate("ContentListView", "Delete"),
+        QMessageBox.ButtonRole.DestructiveRole,
+    )
+    cancel = box.addButton(QMessageBox.StandardButton.Cancel)
+    box.setDefaultButton(cancel)
+    box.setEscapeButton(cancel)
+    box.exec()
+    return box.clickedButton() is remove
 
 
 class _Overlay(QWidget):
@@ -88,6 +140,12 @@ class ContentListView(QScrollArea):
     # 받는 중 카드의 ✕에서 「멈추고 지우기」를 골랐다 (#550) — 엔진을 멈추는 쪽(mainWindow)이 받는다
     stopAndDeleteRequested = Signal(object)
     editRequested = Signal(object)  # 대기 카드의 ✎ · 더블 클릭 — 카드 편집 창 (#545)
+    # 선택 지우기(#561) — 여러 장을 한 번에(되돌리기 한 번에 함께 되살아난다). 받는 중 카드가 섞였으면 엔진을
+    # 멈추는 쪽(mainWindow)이 받는 stopAndRemoveRequested, 아니면 removeRequested
+    removeRequested = Signal(list)
+    stopAndRemoveRequested = Signal(list)
+    selectionChanged = Signal()  # 고른 카드 · 보이는 카드가 바뀌었다 — 선택 줄의 수 · 체크박스
+    selectingChanged = Signal(bool)  # 선택 모드에 들어갔다(True) · 나왔다(False)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -128,6 +186,9 @@ class ContentListView(QScrollArea):
         # 보이는 차례 · 필터(#495 — CardOrder). 없으면(모델만 건 대역) 목록 행 차례, 필터 없음
         self._order = None
         self._widgets: dict[ContentItem, ContentItemWidget] = {}
+        # 지웠지만 되살릴 수 있는 카드의 위젯(#561) — 숨겨 들고 있다가 되살리면 다시 끼운다. 새로 만들면
+        # 해상도 크기를 다시 묻고 고른 해상도가 처음으로 돌아가며, 1000장이면 몇 초가 걸린다(inbox 139 실측)
+        self._parked: dict[ContentItem, ContentItemWidget] = {}
         self._dragActive = False  # 드래그 상태 플래그 TODO: 대체 가능한 메서드 사용
         self._renumberPending = False  # 삭제 뒤 번호 재계산 배치 대기 플래그 (#235)
         self._hoverCard: ContentItemWidget | None = None  # 호버라고 보는 카드 하나(#550)
@@ -136,6 +197,11 @@ class ContentListView(QScrollArea):
         self._showYear = True  # 카드 날짜에 연도를 적는지 — 목록 전체가 함께 정한다(#554)
         self._datesPending = False  # 날짜 연도 전체 판정을 다음 턴에 한 번만(#554)
         self._newCards: list[ContentItemWidget] = []  # 다음 턴에 연도를 볼 새 카드(#554)
+        # 선택 모드(#561 — 설계 §12.1 「선택 모드」). 고른 카드는 필터에 가려도 남는다(지울 때 확인 창이 알린다)
+        self._selecting = False
+        self._selected: dict[ContentItem, None] = {}  # 고른 카드(고른 차례)
+        # Shift 범위의 기준 카드 — 마지막으로 하나를 고르거나 푼 카드
+        self._anchor: ContentItem | None = None
 
         self._overlay = _Overlay(self)
         self._overlay.setGeometry(self.rect())
@@ -309,6 +375,203 @@ class ContentListView(QScrollArea):
                 return
         self.ensureWidgetVisible(widget, 0, 0)
 
+    def moveCardFocus(self, widget: ContentItemWidget, forward: bool) -> bool:
+        """↑↓ — 초점을 보이는 차례의 다음(앞) 카드로 옮긴다. 끝이면 그대로다(#561). 옮겼으면 참."""
+        index = self._layout.indexOf(widget)
+        if index < 0:
+            return False
+        card = self._visibleCards(forward, index + (1 if forward else -1))
+        if card is None:
+            return False
+        reason = Qt.FocusReason.TabFocusReason if forward else Qt.FocusReason.BacktabFocusReason
+        self._focusCard(card, reason)
+        return True
+
+    def _focusedCard(self) -> ContentItemWidget | None:
+        """키보드 초점이 있는 이 목록의 카드 — 없으면 None.
+
+        창의 초점 위젯으로 본다(`QWidget.focusWidget`) — 앱의 초점 위젯은 창이 활성일 때만 있다(xvfb에는 없다).
+        """
+        focus = self.window().focusWidget()
+        while focus is not None and not isinstance(focus, ContentItemWidget):
+            focus = focus.parentWidget()
+        if focus is not None and self._widgets.get(focus.item) is focus:
+            return focus
+        return None
+
+    # ---- 선택 모드 (#561 — 설계 §12.1 「선택 모드」 · §7 「카드 선택」, 프로토 shell.py) ----
+    # 들어가는 길: 선택 버튼 · Ctrl/⌘+클릭 · Shift+클릭 · Ctrl/⌘+A. 나가는 길: 취소 · 선택 버튼 · Esc · 지우기.
+    # 고르고 풀 때는 바뀐 카드만 다시 그린다 — 선택 모드에 들어가고 나올 때만 모든 카드를 본다
+
+    def isSelecting(self) -> bool:
+        """선택 모드인지."""
+        return self._selecting
+
+    def setSelecting(self, on: bool) -> None:
+        """선택 모드에 들어가거나 나온다 — 나오면 고른 카드를 모두 푼다."""
+        if on == self._selecting:
+            return
+        self._selecting = on
+        if not on:
+            self._setSelected(())
+            self._anchor = None
+        for widget in self._widgets.values():
+            widget.setPicking(on)
+        self.selectingChanged.emit(on)
+        self.selectionChanged.emit()
+
+    def visibleItems(self) -> list[ContentItem]:
+        """지금 보이는 카드 — 보이는 차례(정렬 · 필터 뒤)."""
+        items = []
+        for index in range(self._layout.count()):
+            widget = self._layout.itemAt(index).widget()
+            if isinstance(widget, ContentItemWidget) and not widget.isHidden():
+                items.append(widget.item)
+        return items
+
+    def selectedItems(self) -> list[ContentItem]:
+        """고른 카드 전부(필터에 가린 것까지) — 보이는 차례."""
+        if self._order is None:
+            rows = self._model.items if self._model is not None else []
+            return [item for item in rows if item in self._selected]
+        return [item for item in self._order.ordered() if item in self._selected]
+
+    def selectedCount(self) -> int:
+        """고른 카드 수(필터에 가린 것까지)."""
+        return len(self._selected)
+
+    def hiddenSelectedCount(self) -> int:
+        """고른 카드 가운데 지금 필터로 보이지 않는 수."""
+        return sum(1 for item in self._selected if not self._accepts(item))
+
+    def checkState(self) -> int:
+        """선택 줄 체크박스 상태 — 보이는 카드 기준 0 하나도 · 1 일부 · 2 모두."""
+        visible = self.visibleItems()
+        picked = sum(1 for item in visible if item in self._selected)
+        if visible and picked == len(visible):
+            return 2
+        return 1 if picked else 0
+
+    def _setSelected(self, items) -> None:
+        """고른 카드를 `items`로 바꾼다 — 고름이 바뀐 카드만 다시 그린다."""
+        new = dict.fromkeys(items)
+        for item in self._selected.keys() - new.keys():
+            widget = self._widgets.get(item)
+            if widget is not None:
+                widget.setSelected(False)
+        for item in new.keys() - self._selected.keys():
+            widget = self._widgets.get(item)
+            if widget is not None:
+                widget.setSelected(True)
+        self._selected = new
+        self.selectionChanged.emit()
+
+    def cardPressed(self, widget: ContentItemWidget, modifiers: Qt.KeyboardModifier) -> None:
+        """카드를 눌렀다 — 선택 모드면 고르고, 아니면 Ctrl/⌘ · Shift가 선택 모드로 들어간다.
+
+        평소 클릭은 고르지 않는다(더블 클릭은 편집 창 · 폴더 열기). 선택 모드 안에서 클릭은 그 카드를 고르거나
+        풀고, Shift+클릭은 기준 카드부터 그 카드까지(보이는 차례)를 더한다. 누르면 초점은 목록으로 간다 — URL
+        칸에 있던 초점이 남지 않게(그 뒤 Ctrl/⌘+A · Delete · Ctrl/⌘+Z가 목록에 듣는다).
+        """
+        if self._focusedCard() is not widget:
+            self.setFocus(Qt.FocusReason.MouseFocusReason)
+        item = widget.item
+        ctrl = bool(modifiers & Qt.KeyboardModifier.ControlModifier)
+        shift = bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
+        if not self._selecting:
+            if not (ctrl or shift):
+                return
+            self.setSelecting(True)
+        visible = self.visibleItems()
+        if shift and self._anchor in visible and item in visible:
+            first, last = sorted((visible.index(self._anchor), visible.index(item)))
+            self._setSelected([*self._selected, *visible[first : last + 1]])
+            return  # 기준은 그대로 — 범위를 다시 고를 수 있게
+        if item in self._selected:
+            self._setSelected([i for i in self._selected if i is not item])
+        else:
+            self._setSelected([*self._selected, item])
+        self._anchor = item
+
+    def selectAllVisible(self) -> None:
+        """Ctrl/⌘+A · 체크박스 — 보이는 카드를 모두 고른다(가린 고른 카드는 그대로). 선택 모드로 들어간다."""
+        self.setSelecting(True)
+        self._setSelected([*self._selected, *self.visibleItems()])
+
+    def clearSelection(self) -> None:
+        """고른 카드를 모두 푼다 — 선택 모드는 그대로다."""
+        self._setSelected(())
+        self._anchor = None
+
+    def toggleAll(self) -> None:
+        """선택 줄 체크박스 — 보이는 카드가 모두 골라져 있으면 모두 풀고, 아니면(일부여도) 모두 고른다."""
+        if self.checkState() == 2:
+            self.clearSelection()
+        else:
+            self.selectAllVisible()
+
+    def deleteSelected(self) -> None:
+        """고른 카드를 지운다(필터에 가린 것까지) — 선택 줄 지우기 · 선택 모드의 Delete.
+
+        고른 카드 가운데 지금 보이지 않는 것이 있으면 먼저 확인 창을 띄운다. 모두 보이면 바로 지운다(Ctrl/⌘+Z로
+        되살린다). 지운 뒤 선택 모드에서 나온다.
+        """
+        items = self.selectedItems()
+        if not items:
+            return
+        hidden = self.hiddenSelectedCount()
+        if hidden and not confirm_hidden_delete(self, len(items), hidden):
+            return
+        if self.requestRemove(items):
+            self.setSelecting(False)
+
+    def requestRemove(self, items: list[ContentItem]) -> bool:
+        """카드 여럿을 지우려 한다 — 받는 중 카드가 섞였으면 「멈추고 지우기」를 물은 뒤에만 (#561).
+
+        확인 창은 모달 이벤트 루프를 돌리므로 열린 동안 카드가 끝나거나 지워질 수 있다 — 닫힌 뒤 다시 본다.
+        그때 더는 받는 중인 카드가 없으면 멈추지 않고 지우기만 한다. 지웠으면 참, 취소했으면 거짓.
+        """
+        working = [item for item in items if item.downloadState in BUSY_STATES]
+        if working and not confirm_stop_and_delete(self, len(items), len(working)):
+            return False
+        present = [item for item in items if item in self._widgets]
+        if any(item.downloadState in BUSY_STATES for item in present):
+            self.stopAndRemoveRequested.emit(present)
+        elif present:
+            self.removeRequested.emit(present)
+        return True
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        """선택 키 — Ctrl/⌘+A · Delete(macOS ⌘+Backspace) (#561).
+
+        목록이나 카드에 초점이 있을 때만 온다 — 카드가 받지 않은 키는 목록으로 올라온다. URL 칸의 Ctrl+A · Delete는
+        URL 칸이 받는다. 그 밖 키는 스크롤 영역의 기본 처리(↑↓ · PageUp 등으로 굴리기)다.
+        """
+        if event.matches(QKeySequence.StandardKey.SelectAll):
+            event.accept()
+            self.selectAllVisible()
+            return
+        if is_delete_key(event):
+            event.accept()
+            self._onDeleteKey()
+            return
+        super().keyPressEvent(event)
+
+    def _onDeleteKey(self) -> None:
+        """Delete(macOS ⌘+Backspace) — 선택 모드면 고른 카드, 아니면 초점 카드의 ✕와 같다."""
+        if self._selecting:
+            self.deleteSelected()
+            return
+        card = self._focusedCard()
+        if card is None:
+            return
+        # 지운 뒤 초점은 보이는 차례의 다음 카드(없으면 앞 카드)로 — 키보드로 이어서 지울 수 있게
+        index = self._layout.indexOf(card)
+        after = self._visibleCards(True, index + 1) or self._visibleCards(False, index - 1)
+        self.onDeleteItem(card.item)
+        if card.item not in self._widgets and after is not None and after.item in self._widgets:
+            self._focusCard(after, Qt.FocusReason.TabFocusReason)
+
     def _fitPaddingAroundScrollBar(self) -> None:
         """스크롤바가 보이면 컨테이너 오른쪽 패딩에서 그 폭을 빼고, 숨으면 되돌린다 (v2.10.1).
 
@@ -324,6 +587,9 @@ class ContentListView(QScrollArea):
         model.itemInserted.connect(self._onItemInserted)
         model.itemRemoved.connect(self._onItemRemoved)
         model.itemChanged.connect(self._onItemChanged)
+        released = getattr(model, "itemReleased", None)  # 대역 모델에는 없을 수 있다
+        if released is not None:
+            released.connect(self._onItemReleased)
         # 방어적 동기화 — 지금은 setModel이 항상 빈 모델로 불리지만(생성 직후),
         # 나중에 미리 채워진 모델이 들어와도 깨지지 않게 기존 항목을 반영한다
         for row in range(model.rowCount()):
@@ -401,6 +667,11 @@ class ContentListView(QScrollArea):
         self._overlay.update()
         self._scheduleRehover()
         self._scheduleDates()  # 다시 보인 카드가 연도를 못 넣을 수 있다 — 칩 조작 한 번에 한 번
+        # 고른 카드는 필터를 바꿔도 그대로다(#561). Shift 범위의 기준이 가려졌으면 기준만 놓는다
+        if self._anchor is not None and not self._accepts(self._anchor):
+            self._anchor = None
+        if self._selecting:
+            self.selectionChanged.emit()  # 보이는 카드가 바뀌면 체크박스가 바뀐다
 
     def _applyVisibility(self, item: ContentItem) -> None:
         """카드 하나의 보임을 지금 칩에 맞춘다."""
@@ -408,8 +679,14 @@ class ContentListView(QScrollArea):
         if widget is not None:
             widget.setVisible(self._accepts(item))
             self._scheduleRehover()
+            if self._selecting:
+                self.selectionChanged.emit()
 
     def _insertWidget(self, item: ContentItem, row: int) -> None:
+        parked = self._parked.pop(item, None)
+        if parked is not None:
+            self._restoreWidget(item, row, parked)
+            return
         widget = ContentItemWidget(item, row, self._container)
         widget.setData(item, row)
         widget.deleteRequest.connect(lambda it=item: self.onDeleteItem(it))
@@ -419,6 +696,7 @@ class ContentListView(QScrollArea):
         widget.hoverChanged.connect(lambda hovered, w=widget: self._onCardHover(w, hovered))
         widget.loadRepresentations()
         widget.setShowYear(self._showYear)
+        widget.setPicking(self._selecting)
         self._layout.insertWidget(self._placeOf(item, row), widget)
         widget.setVisible(self._accepts(item))
         self._widgets[item] = widget
@@ -428,6 +706,28 @@ class ContentListView(QScrollArea):
             QTimer.singleShot(0, self, self._fitNewDates)
         self._newCards.append(widget)
 
+    def _restoreWidget(self, item: ContentItem, row: int, widget: ContentItemWidget) -> None:
+        """들고 있던 위젯을 되살린 카드의 자리에 다시 끼운다 (#561) — 위젯을 새로 만들지 않는다."""
+        widget.setShowYear(self._showYear)
+        widget.setPicking(self._selecting)
+        widget.setSelected(False)
+        widget.setData(item, row)
+        self._layout.insertWidget(self._placeOf(item, row), widget)
+        widget.setVisible(self._accepts(item))
+        self._widgets[item] = widget
+        self._overlay.update()
+        self._scheduleRenumber()  # 되살린 카드 뒤의 번호가 밀린다(#235 — 한 턴에 한 번)
+        self._scheduleRehover()
+        if not self._newCards:
+            QTimer.singleShot(0, self, self._fitNewDates)
+        self._newCards.append(widget)
+
+    def _onItemReleased(self, item: ContentItem) -> None:
+        """되살릴 수 없게 된 카드의 위젯을 지운다 (#561)."""
+        widget = self._parked.pop(item, None)
+        if widget is not None:
+            widget.deleteLater()
+
     def _onItemRemoved(self, item: ContentItem) -> None:
         widget = self._widgets.pop(item, None)
         if widget is not None:
@@ -436,7 +736,18 @@ class ContentListView(QScrollArea):
             if widget in self._newCards:
                 self._newCards.remove(widget)
             self._layout.removeWidget(widget)
-            widget.deleteLater()  # 생명주기 직접 관리 — 빠뜨리면 누수 (#226)
+            kept = getattr(self._model, "isKept", None)
+            if kept is not None and kept(item):
+                widget.setHovered(False)
+                widget.hide()
+                self._parked[item] = widget  # 되살리면 다시 끼운다(#561)
+            else:
+                widget.deleteLater()  # 생명주기 직접 관리 — 빠뜨리면 누수 (#226)
+        if item in self._selected:
+            del self._selected[item]
+            self.selectionChanged.emit()
+        if self._anchor is item:
+            self._anchor = None
         self._overlay.update()  # 마지막 카드가 지워졌으면 빈 리스트 안내를 다시 띄운다
         self._scheduleRenumber()  # 뒤쪽 카드 번호를 당긴다 (#235)
         self._scheduleRehover()  # 아래 카드가 포인터 밑으로 올라온다
@@ -446,8 +757,9 @@ class ContentListView(QScrollArea):
         """삭제 뒤 남은 카드들의 번호(표시용, `ContentItemWidget.setIndex`)를 다시 매긴다.
 
         `QTimer.singleShot(0, ...)`으로 다음 이벤트 루프 턴까지 미룬다 —
-        `clrearFinishedItems()`처럼 한 번의 호출에서 `removeRows`가 여러 번
-        연달아 일어나는 일괄 삭제가 있다(`app/viewmodels/content_viewmodel.py`).
+        선택 지우기 · 되살리기(`removeItems` · `undoRemove`, #561)처럼 한 번의 호출에서
+        `removeRows` · `addItem`이 여러 번 연달아 일어나는 일괄 작업이 있다
+        (`app/viewmodels/content_viewmodel.py`).
         매번 즉시 전체를 다시 매기면 일괄 삭제 한 번이 O(n) 재번호매김을
         n번 반복해 O(n²)가 된다 — `_renumberPending` 플래그로 그 반복 호출을
         하나로 눌러, 배치가 끝난 뒤(다음 이벤트 루프 턴) 딱 한 번만 돈다.
@@ -569,6 +881,9 @@ class ContentListView(QScrollArea):
         if order is not None:
             self.bindOrder(order)
         self.deleteRequest.connect(viewmodel.removeItem)
+        remove_items = getattr(viewmodel, "removeItems", None)  # 대역 뷰모델에는 없을 수 있다
+        if remove_items is not None:
+            self.removeRequested.connect(remove_items)
         self.fetchRequested.connect(viewmodel.fetchRequested)
         # 구 view 직접 호출 6곳의 반전 (#169): 뷰모델은 시그널로 말하고 뷰가 자기를 건다
         viewmodel.itemStarted.connect(self.onDownloadStarted)

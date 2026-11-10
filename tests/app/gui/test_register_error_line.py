@@ -269,18 +269,18 @@ class TestBusyIndicator:
         assert not window.fetchButton.isBusy()
 
 
-class TestClearFinishedPlace:
-    def test_clear_finished_is_the_last_item_of_the_second_line(self, window) -> None:
-        """완료 지우기는 헤더바 2줄 레이아웃의 마지막 항목이고 하단바에는 없어야 한다."""
+class TestSelectButtonPlace:
+    def test_select_button_is_the_last_item_of_the_second_line(self, window) -> None:
+        """선택 버튼은 헤더바 2줄 레이아웃의 마지막 항목이고 하단바에는 없어야 한다(#561)."""
         line = window.filterRowLayout
-        assert line.itemAt(line.count() - 1).widget() is window.clearFinishedButton
-        assert not window.infoFrame.isAncestorOf(window.clearFinishedButton)
+        assert line.itemAt(line.count() - 1).widget() is window.selectButton
+        assert not window.infoFrame.isAncestorOf(window.selectButton)
 
     def test_its_right_edge_lines_up_with_the_add_button(self, window) -> None:
-        """완료 지우기의 오른쪽 끝은 1줄 VOD 추가의 오른쪽 끝과 같아야 한다(헤더바 안쪽 오른쪽 끝)."""
+        """선택 버튼의 오른쪽 끝은 1줄 VOD 추가의 오른쪽 끝과 같아야 한다(헤더바 안쪽 오른쪽 끝)."""
 
         def right(widget) -> int:
             return widget.mapTo(window, widget.rect().topRight()).x()
 
-        assert window.clearFinishedButton.isVisible()
-        assert right(window.clearFinishedButton) == right(window.fetchButton)
+        assert window.selectButton.isVisible()
+        assert right(window.selectButton) == right(window.fetchButton)

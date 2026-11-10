@@ -30,7 +30,7 @@ from PySide6.QtCore import (
     Qt,
     QTimer,
 )
-from PySide6.QtGui import QResizeEvent
+from PySide6.QtGui import QKeyEvent, QKeySequence, QResizeEvent
 
 from app.system.free_space import FreeSpaceProbe
 from app.system.process_memory import log_process_memory, resident_bytes
@@ -52,6 +52,7 @@ from app.widgets.header_controls import BusyButton, FilterChips, SaveLocationBut
 from app.widgets.icons import IconButton
 from app.widgets.menu_button import MenuButton
 from app.widgets.narrow_steps import step_level
+from app.widgets.select_bar import SelectBar
 from app.widgets.tip_bubble import ErrorTip, close_floats_if_left, install_tips, shortcut_tip
 from app.widgets.os_notice import DownloadEndNotice
 from app.widgets.view import ContentListView
@@ -178,8 +179,8 @@ class VodDownloader(QMainWindow):
     기존 번역을 지운다.
 
     창은 위에서 아래로 네 칸이다(#492 — 2.12.0 셸 S0): 메뉴바(VOD 다운 · 설정) · 헤더바(1줄 URL 입력 ·
-    저장 위치 버튼 · 등록, 조회 상태 한 줄, 2줄 상태 칩 · 정렬 — #495) · 목록 · 하단바(완료 지우기,
-    오른쪽 끝 다운로드 · 중지).
+    저장 위치 버튼 · 등록, 2줄 상태 칩 · 정렬 · 선택 — #495 · #561) · 목록 · 하단바(모니터링 · 실행 결과,
+    오른쪽 끝 다운로드 · 중지). 선택 모드에서는 선택 줄이 선택 버튼 바로 아래 목록 위에 뜬다(#561).
     """
 
     def __init__(self, parent=None) -> None:
@@ -363,7 +364,7 @@ class VodDownloader(QMainWindow):
 
         # 헤더바 1줄(#492 — 셸 S0, #495 — S1):
         #   ┌ [URL 입력                              ][📁 폴더 이름 ⌄][+] ┐
-        #   └ [칩 여섯][정렬 ⌄] ……………………………………………… [완료 지우기] ┘
+        #   └ [칩 여섯][정렬 ⌄] ……………………………………………………… [☑ 선택] ┘
         # 등록 오류는 줄이 아니라 URL 칸 아래 오류 말풍선이다(#536)
         # 남는 폭은 URL 입력이 다 받는다(설계: URL 입력이 남는 폭). 저장 위치 버튼은 고정 폭이다
         # (SaveLocationButton.applyWidth). 설정 톱니(#245)는 메뉴바 「설정」으로 옮겼다.
@@ -406,11 +407,16 @@ class VodDownloader(QMainWindow):
         self.sortButton.setObjectName("sortButton")
         self.filterRowLayout.addWidget(self.sortButton)
         self.filterRowLayout.addStretch(1)
-        # 완료 지우기 — 선택 · 지우기 되돌리기(카드 단계)가 오기 전까지 헤더바 2줄 오른쪽 끝(#495)
-        self.clearFinishedButton = QPushButton(self.headerFrame)
-        self.clearFinishedButton.setObjectName("clearFinishedButton")
-        self.clearFinishedButton.setProperty("role", "subtle")
-        self.filterRowLayout.addWidget(self.clearFinishedButton)
+        # 선택 버튼(#561 — 설계 §6 C4 「완료 지우기」 → 「지우기」 자리): 체크박스 아이콘, 이름은 툴팁. 누르면 선택
+        # 모드로 들어가고 선택 모드 안에서 다시 누르면 나온다. 「완료 지우기」는 없앴다 — 같은 일은 완료 칩 → 모두
+        # 선택 → 지우기(프로토 헤더 2줄에 「완료 지우기」가 없다)
+        self.selectButton = IconButton(self.headerFrame)
+        self.selectButton.setObjectName("selectButton")
+        self.selectButton.setIconName("select")
+        self.selectButton.setGlyphMetric("narrowIcon")
+        self.selectButton.setIdleToken("text")
+        self.selectButton.setProperty("on", False)
+        self.filterRowLayout.addWidget(self.selectButton)
         self.headerFrameLayout.addLayout(self.filterRowLayout)
 
         # 상단·하단 바는 각자 행(headerRow·infoRow)에 담는다. 바는 창 끝까지 붙어 행 여백도 0이다(#536 —
@@ -475,8 +481,8 @@ class VodDownloader(QMainWindow):
         for before, after in zip(chips, chips[1:]):
             QWidget.setTabOrder(before, after)
         QWidget.setTabOrder(chips[-1], self.sortButton)
-        QWidget.setTabOrder(self.sortButton, self.clearFinishedButton)
-        QWidget.setTabOrder(self.clearFinishedButton, self.listView)
+        QWidget.setTabOrder(self.sortButton, self.selectButton)
+        QWidget.setTabOrder(self.selectButton, self.listView)
         QWidget.setTabOrder(self.listView, self.downloadButton)
         QWidget.setTabOrder(self.downloadButton, self.stopButton)
 
@@ -494,7 +500,7 @@ class VodDownloader(QMainWindow):
         self.urlInput.setPlaceholderText(self.tr("Enter Chzzk URL · Enter to add"))
         # 등록은 「+」 아이콘 버튼 — 이름 · 단축키는 툴팁(#536 — 설계 §12.1, 프로토 「등록 · Enter」)
         self.fetchButton.setToolTip(shortcut_tip(self.tr("Add"), "Enter"))
-        self.clearFinishedButton.setText(self.tr("Clear Finished"))
+        self.selectButton.setToolTip(self.tr("Select"))
         # 하단 버튼은 아이콘만 — 이름은 툴팁이다(#504). 다운로드 버튼의 이름은 상태를 따른다
         self.downloadButton.setToolTip(self.tr("Download"))
         self.stopButton.setToolTip(self.tr("Stop"))
@@ -513,7 +519,9 @@ class VodDownloader(QMainWindow):
         self._applyLayoutMetrics()
         # 말풍선(#536) — 세 바의 위젯마다 필터를 건다. 앱 전체가 아니라 메인 창의 바에만: 설정 창 · 편집 창 ·
         # 구간 창의 툴팁은 설정 메뉴 단계(§12.3)에서 정하고, 카드는 카드 단계에서 본다
-        for bar in (self.appMenuBar, self.headerFrame, self.infoFrame):
+        # 선택 줄(#561) — 콘텐츠 열의 자식으로 레이아웃 밖에 뜬다(헤더 · 목록 배치를 바꾸지 않는다)
+        self.selectBar = SelectBar(self.contentColumn)
+        for bar in (self.appMenuBar, self.headerFrame, self.infoFrame, self.selectBar):
             install_tips(bar)
 
     def _applyLayoutMetrics(self) -> None:
@@ -555,7 +563,7 @@ class VodDownloader(QMainWindow):
             self.filterChipBar.dropButton,
             *self.filterChips.values(),
             self.sortButton,
-            self.clearFinishedButton,
+            self.selectButton,
             self.downloadButton,
             self.stopButton,
         ]
@@ -769,7 +777,7 @@ class VodDownloader(QMainWindow):
     def headerRow2Needs(self, failed: bool) -> list[int]:
         """헤더바 2줄이 단계마다 바라는 폭 — 0 칩 · 1 드롭다운 · 2 드롭다운 + 정렬 아이콘 (#529).
 
-        지금 보이는 모양과 무관하다 — 칩 · 드롭다운 · 정렬 두 모양의 고정 폭과 「완료 지우기」 폭, 사이
+        지금 보이는 모양과 무관하다 — 칩 · 드롭다운 · 정렬 두 모양의 고정 폭과 선택 버튼 폭, 사이
         간격(늘어나는 빈칸 옆에는 간격이 없다)으로 센다. 줄어드는 폭이 큰 것(칩)부터 줄인다(설계 §2).
 
         Args:
@@ -777,7 +785,7 @@ class VodDownloader(QMainWindow):
         """
         chips = self.filterChipBar
         sort = self.sortButton
-        tail = self.clearFinishedButton.sizeHint().width() + 2 * self.filterRowLayout.spacing()
+        tail = self.selectButton.minimumWidth() + 2 * self.filterRowLayout.spacing()
         compact = chips.compactWidth(failed)
         return [
             chips.chipsWidth() + sort.textWidth() + tail,
@@ -881,6 +889,8 @@ class VodDownloader(QMainWindow):
             self._applyUrlRowShape()
             self._applyHeaderShape()
             self._applyFooterShape()
+            if self.listView.isSelecting():
+                self._scheduleSelectBar()  # 선택 버튼이 창 오른쪽 끝을 따라 움직였다(#561)
 
     def _contentMinimumHeight(self) -> int:
         """메뉴바 · 헤더바 · 하단바가 다 보이고 목록에 카드 한 장이 다 보이는 높이 (#492).
@@ -963,9 +973,9 @@ class VodDownloader(QMainWindow):
         self.fetchButton.setFixedWidth(self.fetchButton.reservedWidth())
 
     def _squareFooterButtons(self) -> None:
-        """하단 아이콘 버튼 둘을 바 컨트롤 높이의 정사각으로 건다 (#504 · #536 — 설계 §11.3)."""
+        """아이콘 버튼(하단 둘 · 헤더바 선택)을 바 컨트롤 높이의 정사각으로 건다 (#504 · #536 · #561 — 설계 §11.3)."""
         side = theme.METRICS["barControl"]
-        for button in (self.downloadButton, self.stopButton):
+        for button in (self.downloadButton, self.stopButton, self.selectButton):
             button.setFixedSize(side, side)
 
     def _showRegisterError(self, text: str) -> None:
@@ -1020,7 +1030,7 @@ class VodDownloader(QMainWindow):
         self.menuSettingsButton.clicked.connect(self.onSetting)
         # 「VOD 다운」을 눌렀다 — 결과를 봤다(#523)
         self.menuDownloadButton.clicked.connect(self.menuDownloadButton.stopBlink)
-        self.clearFinishedButton.clicked.connect(self.contentManager.clrearFinishedItems)
+        self._setupSelection()
         self.downloadButton.clicked.connect(self.onDownloadPause)
         self.stopButton.clicked.connect(self.onStop)
         # 카드 상태별 조작(#245) — ⏸/↻ 는 뷰가 아이템을 붙여 올려준다
@@ -1028,19 +1038,113 @@ class VodDownloader(QMainWindow):
         self.listView.retryRequested.connect(self.onCardRetry)
         self.listView.editRequested.connect(self.onCardEdit)
         self.listView.stopAndDeleteRequested.connect(self.onCardStopAndDelete)
+        self.listView.stopAndRemoveRequested.connect(self.onStopAndRemove)
 
     def onCardStopAndDelete(self, item: ContentItem) -> None:
         """받는 중 카드의 ✕에서 「멈추고 지우기」를 골랐다 — 다운로드를 멈추고 카드를 지운다 (#550).
 
-        엔진은 동시 다운로드가 하나뿐이라 받는 중 · 일시정지 카드는 곧 엔진이 쥔 카드다. 멈추기는
-        하단바 ■과 같은 경로(`stopDownload`)다. 확인은 목록이 이미 했다.
-
-        엔진이 쥔 카드가 이 카드일 때만 멈춘다 — 확인 창이 열린 사이 이 카드가 끝나 배치가 다음
-        카드로 넘어갔으면, 멈추기는 다른 카드의 다운로드를 멈춘다.
+        여러 장의 `onStopAndRemove`와 같은 규칙이다 — 엔진이 쥔 카드가 이 카드일 때만 멈춘다.
         """
         if self.downloadViewModel.isDownloading() and self.downloadViewModel.item is item:
             self.stopDownload()
         self.contentManager.removeItem(item)
+
+    def onStopAndRemove(self, items: list[ContentItem]) -> None:
+        """받는 중 카드가 섞인 지우기에서 「멈추고 지우기」를 골랐다 — 다운로드를 멈추고 카드를 지운다 (#550 · #561).
+
+        엔진은 동시 다운로드가 하나뿐이라 받는 중 · 일시정지 카드는 곧 엔진이 쥔 카드다. 멈추기는
+        하단바 ■과 같은 경로(`stopDownload` — 임시 파일 · 구간 파일을 정리한다)다. 확인은 목록이 이미 했다.
+
+        엔진이 쥔 카드가 지울 카드 가운데 있을 때만 멈춘다 — 확인 창이 열린 사이 그 카드가 끝나 배치가 다음
+        카드로 넘어갔으면, 멈추기는 다른 카드의 다운로드를 멈춘다. 지운 카드는 Ctrl/⌘+Z로 대기로 되살아난다.
+        """
+        if self.downloadViewModel.isDownloading() and self.downloadViewModel.item in items:
+            self.stopDownload()
+        self.contentManager.removeItems(items)
+
+    # ---- 선택 모드 · 되돌리기 (#561 — 설계 §12.1 「선택 모드」) ----
+
+    def _setupSelection(self) -> None:
+        """선택 버튼 · 선택 줄을 잇는다. 초점이 선택 줄 버튼에 있을 때 Delete는 선택 줄이, Esc는 창이 받는다."""
+        self._selectBarPending = False
+        self.selectButton.clicked.connect(self._onSelectButton)
+        self.listView.selectingChanged.connect(self._onSelectingChanged)
+        self.listView.selectionChanged.connect(self._scheduleSelectBar)
+        self.selectBar.checkClicked.connect(self.listView.toggleAll)
+        self.selectBar.deleteClicked.connect(self.listView.deleteSelected)
+        self.selectBar.cancelClicked.connect(self._exitSelecting)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        """창 키 — Ctrl/⌘+Z 되살리기 · 선택 모드의 Esc (#561).
+
+        초점 위젯이 받지 않은 키가 여기로 올라온다 — 입력칸은 자기 Ctrl/⌘+Z · Esc를 먼저 받는다. 키는 단축키가 아니라
+        키 이벤트로 받는다(단축키는 창이 활성일 때만 돈다 — `app.widgets.view.is_delete_key`).
+        """
+        if event.matches(QKeySequence.StandardKey.Undo):
+            event.accept()
+            self.contentManager.undoRemove()
+            return
+        if event.matches(QKeySequence.StandardKey.Cancel) and self.listView.isSelecting():
+            event.accept()
+            self._exitSelecting()
+            return
+        super().keyPressEvent(event)
+
+    def _onSelectButton(self) -> None:
+        """선택 버튼 — 평소면 선택 모드로, 선택 모드 안이면 나온다."""
+        if self.listView.isSelecting():
+            self._exitSelecting()
+        else:
+            self.listView.setSelecting(True)
+            self.listView.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _exitSelecting(self) -> None:
+        """선택 모드에서 나온다 — 초점은 목록으로."""
+        if self.listView.isSelecting():
+            self.listView.setSelecting(False)
+            self.listView.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _onSelectingChanged(self, on: bool) -> None:
+        """선택 모드가 바뀌었다 — 선택 버튼 모양 · 툴팁 · 선택 줄."""
+        self.selectButton.setProperty("on", on)
+        theme.repolish(self.selectButton)
+        self.selectButton.setToolTip(
+            shortcut_tip(self.tr("Finish selecting"), "Esc") if on else self.tr("Select")
+        )
+        self._syncSelectBar()
+
+    def _scheduleSelectBar(self) -> None:
+        """선택 줄 맞추기를 다음 이벤트 루프 턴에 한 번 — 여러 장을 한 번에 지우거나 고를 때 한 번만 센다."""
+        if not self._selectBarPending:
+            self._selectBarPending = True
+            QTimer.singleShot(0, self, self._syncSelectBar)
+
+    def _syncSelectBar(self) -> None:
+        """선택 줄의 수 · 체크박스 · 자리를 맞추고, 선택 모드면 보이고 아니면 숨긴다."""
+        self._selectBarPending = False
+        view = self.listView
+        if not view.isSelecting():
+            self.selectBar.fadeTo(False)
+            return
+        total = self.contentManager.model.rowCount()
+        self.selectBar.setCounts(view.selectedCount(), total, view.checkState())
+        self.selectBar.deleteButton.setEnabled(view.selectedCount() > 0)
+        self._placeSelectBar()
+        self.selectBar.fadeTo(True)
+
+    def _placeSelectBar(self) -> None:
+        """선택 줄 자리 — 오른쪽 끝 = 선택 버튼 오른쪽 끝, 위끝 = 헤더바 아래끝 + selectBarGap(목록 위에 뜬다)."""
+        column = self.contentColumn
+        column.layout().activate()
+        self.headerFrameLayout.activate()
+        button = self.selectButton
+        right = button.mapTo(column, QPoint(button.width(), 0)).x()
+        ceiling = self.headerFrame.mapTo(column, QPoint(0, self.headerFrame.height())).y()
+        self.selectBar.place(right, ceiling + theme.METRICS["selectBarGap"], ceiling)
+
+    def selectBarRect(self) -> QRect:
+        """선택 줄의 사각형(콘텐츠 열 좌표) — 테스트가 자리를 잰다."""
+        return self.selectBar.geometry()
 
     def onCardPause(self, item: ContentItem) -> None:
         """진행 카드의 ⏸ — 전역 일시정지/재개 토글과 같은 경로를 탄다 (#245).

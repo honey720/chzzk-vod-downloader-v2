@@ -179,7 +179,7 @@ def _independent_content_minimum(win: VodDownloader) -> int:
         + _leaf_min(win.filterChips["failed"])
         + 2 * win.filterRowLayout.spacing()
         + win.sortButton.sizeHint().height()
-        + _leaf_min(win.clearFinishedButton)
+        + _leaf_min(win.selectButton)
     )
     header = max(first, second) + 2 * (pad + border)
     menu = (
@@ -512,7 +512,7 @@ class TestWindowMinimumWidthHasAContentFloor:
                     win.fetchButton,
                     *win.filterChips.values(),
                     win.sortButton,
-                    win.clearFinishedButton,
+                    win.selectButton,
                 ),
             ),
             (

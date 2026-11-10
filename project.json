@@ -15,7 +15,8 @@
         "app/views/card_edit_dialog.py",
         "app/widgets/timecode_edit.py",
         "app/viewmodels/section_edit.py",
-        "app/widgets/contentItemWidget.py"
+        "app/widgets/contentItemWidget.py",
+        "app/widgets/select_bar.py"
     ],
     "translations": [
         "translations/ko_KR.ts",

@@ -194,7 +194,7 @@ class Scene:
             "header.urlInput": w.urlInput,
             "header.fetchButton": w.fetchButton,
             "header.saveLocationButton": w.saveLocationButton,
-            "header.clearFinishedButton": w.clearFinishedButton,
+            "header.selectButton": w.selectButton,
             "header.sortButton": w.sortButton,
             "list.viewport": w.listView.viewport(),
             "footer.frame": w.infoFrame,

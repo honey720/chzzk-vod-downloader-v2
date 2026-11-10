@@ -263,6 +263,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self._pickedIndex = 0  # 고른 해상도의 목록 번호(내림차순 정렬 뒤)
         self._hovered = False
         self._keyFocus = False
+        self._picking = (
+            False  # 목록이 선택 모드다 — 카드 버튼을 숨기고 누름 · 더블 클릭이 고르기다(#561)
+        )
         self._tipsInstalled = False  # 말풍선 필터를 걸었는지 — 처음 호버할 때 건다
         self._levelTexts: list[card_text.SlotTexts] = []  # 접는 단계마다의 3줄 글(#554)
         self._needs: list[int] | None = None  # 단계마다 3줄 필요 폭 — 글이 바뀌면 다시 센다
@@ -440,16 +443,65 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         return None
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
-        """Enter는 더블 클릭과 같은 일을 한다(대기 = 편집 창, 완료 = 폴더 열기)."""
-        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+        """카드 키 — Enter · ↑↓ (#550 · #561).
+
+        Enter는 더블 클릭과 같은 일(대기 = 편집 창, 완료 = 폴더 열기)이고, 실패 카드에서는 다시 시도다(버튼이
+        Tab 차례 밖이라 키보드로 다시 시도할 길이 이것뿐이다). 선택 모드에서는 Enter가 아무것도 열지 않는다.
+        ↑↓는 보이는 차례로 앞 · 뒤 카드에 초점을 옮긴다 — 끝에서는 그대로다. Delete는 목록의 단축키가 받는다.
+        """
+        key = event.key()
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             event.accept()
-            self.activate()
+            if self._picking:
+                return
+            if self.item.downloadState == DownloadState.FAILED:
+                self.retryRequest.emit()
+            else:
+                self.activate()
+            return
+        if key in (Qt.Key.Key_Up, Qt.Key.Key_Down) and not event.modifiers():
+            event.accept()
+            owner = self._listOwner()
+            if owner is not None:
+                owner.moveCardFocus(self, key == Qt.Key.Key_Down)
             return
         super().keyPressEvent(event)
 
+    # ---- 선택 모드 (#561) ----
+
+    def isPicking(self) -> bool:
+        """목록이 선택 모드인지 — 카드 버튼이 숨고 누름이 고르기다."""
+        return self._picking
+
+    def setPicking(self, on: bool) -> None:
+        """선택 모드를 켜고 끈다 — 목록이 부른다."""
+        if on != self._picking:
+            self._picking = on
+            self._syncCardButtons()
+
+    def isSelected(self) -> bool:
+        """고른 카드인지(강조색 테두리)."""
+        return self.contentFrame.isSelected()
+
+    def setSelected(self, on: bool) -> None:
+        """고른 카드 모양을 켜고 끈다 — 목록이 부른다."""
+        self.contentFrame.setSelected(on)
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        """카드 바탕 · 글 · 그림을 누르면 목록에 알린다 — 고르기는 목록이 정한다(#561).
+
+        카드 버튼은 누름을 스스로 받아 여기 오지 않는다. 목록이 없으면(카드만 띄운 테스트) 기본 처리다.
+        """
+        owner = self._listOwner()
+        if event.button() == Qt.MouseButton.LeftButton and owner is not None:
+            event.accept()
+            owner.cardPressed(self, event.modifiers())
+            return
+        super().mousePressEvent(event)
+
     def _syncCardButtons(self) -> None:
-        """카드 버튼 상자 · 덮개를 호버 · 키보드 초점에 맞춰 보이고 숨긴다."""
-        shown = self._hovered or self._keyFocus
+        """카드 버튼 상자 · 덮개를 호버 · 키보드 초점에 맞춰 보이고 숨긴다 — 선택 모드에서는 늘 숨긴다."""
+        shown = (self._hovered or self._keyFocus) and not self._picking
         if shown:
             self._placeCardButtons()
         self.hoverBox.setVisible(shown)
@@ -1200,10 +1252,19 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             self.requestOpenDir()
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
-        """카드를 더블 클릭하면 `activate`한다. 버튼은 더블 클릭을 스스로 받아 여기 오지 않는다."""
+        """카드를 더블 클릭하면 `activate`한다. 버튼은 더블 클릭을 스스로 받아 여기 오지 않는다.
+
+        선택 모드에서는 아무것도 열지 않는다(#561) — 두 번째 누름으로 보고 목록에 알린다(빠르게 두 번 누르면
+        골랐다가 푼다). Qt는 더블 클릭의 두 번째 누름을 누름이 아니라 더블 클릭으로만 보낸다.
+        """
         if event.button() == Qt.MouseButton.LeftButton:
             event.accept()
-            self.activate()
+            owner = self._listOwner()
+            if self._picking and owner is not None:
+                owner.cardPressed(self, event.modifiers())
+                return
+            if not self._picking:
+                self.activate()
             return
         super().mouseDoubleClickEvent(event)
 

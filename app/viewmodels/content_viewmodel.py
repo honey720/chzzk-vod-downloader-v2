@@ -32,6 +32,7 @@ import tempfile
 import threading
 
 from PySide6.QtCore import QObject, QThreadPool, Signal
+from PySide6.QtGui import QUndoCommand, QUndoStack
 
 from app.viewmodels.card_order import CardOrder
 from app.viewmodels.item_state import ItemState
@@ -54,6 +55,11 @@ _fetch_logger = logging.getLogger(__name__)
 # 이 시간만큼 기다리는 대가가 있지만, 무한 정지(0B 침묵) 대신 유한 대기 후
 # 명확한 실패가 목적이다
 _WRITE_PROBE_TIMEOUT_S = 5.0
+
+UNDO_LIMIT = 50  # 되살릴 수 있는 지우기 수(#561) — 한 번에 여러 장을 지웠어도 하나로 센다(설계 §6 C4, 프로토 50)
+# 엔진이 쥔 카드의 상태(#561) — 받는 중(자르는 중 · 합치는 중 포함) · 일시정지. 지울 때 엔진을 멈추고, 되살리면 대기다.
+# 목록의 BUSY_STATES(app/widgets/widget.py)와 같은 값 — 뷰모델은 위젯 모듈을 import하지 않는다
+WORKING_STATES = (DownloadState.RUNNING, DownloadState.PAUSED)
 
 
 def probe_writable(directory: str, timeout_s: float = _WRITE_PROBE_TIMEOUT_S) -> tuple[bool, str]:
@@ -185,6 +191,33 @@ class _WorkerRelay(QObject):
         self._viewmodel._workerError(self._worker, error_message)
 
 
+class RemoveCards(QUndoCommand):
+    """카드 지우기 한 번 — 한 장이든 여러 장이든 되돌리기 한 번에 함께 되살아난다 (#561).
+
+    `redo`가 지우고 `undo`가 지운 자리로 되살린다. 지울 때 엔진이 쥐고 있던 카드(받는 중 · 일시정지)는
+    멈추고 지웠으므로(임시 파일 · 구간 파일이 지워진다) 대기로 되살린다. 그 밖 카드는 지울 때의 상태 ·
+    편집값 · 구간 그대로다(프로토 `RemoveCard`).
+    """
+
+    def __init__(self, viewmodel: "ContentViewModel", items: list[ContentItem]) -> None:
+        super().__init__(f"{len(items)} cards")
+        self._viewmodel = viewmodel
+        model = viewmodel.model
+        # (목록 행, 카드) — 행이 작은 것부터. 되살릴 때 이 차례로 넣어야 저마다의 행이 지울 때와 같다
+        self.entries = sorted(((model.getRow(item), item) for item in items), key=lambda e: e[0])
+        self.working = {item for item in items if item.downloadState in WORKING_STATES}
+
+    def items(self) -> list[ContentItem]:
+        """이 지우기가 든 카드."""
+        return [item for _row, item in self.entries]
+
+    def redo(self) -> None:
+        self._viewmodel._detach(self.items())
+
+    def undo(self) -> None:
+        self._viewmodel._attach(self.entries, self.working)
+
+
 class ContentViewModel(QObject):
     downloadRequested = Signal(object)
     stopRequested = Signal(object)
@@ -242,6 +275,11 @@ class ContentViewModel(QObject):
         self._sectionRefitter.settled.connect(self._onSectionSettled)
         # 구간 카드가 받을 크기를 백그라운드에서 센다 — 구간을 확인했을 때와 해상도 변경의 조회가 끝났을 때
         self._sectionSizer = SectionSizer(self.model, self.threadpool, self)
+        # 지우기 되돌리기(#561, 설계 §6 C4) — Ctrl/⌘+Z가 마지막 지우기부터 되살린다
+        self.undoStack = QUndoStack(self)
+        self.undoStack.setUndoLimit(UNDO_LIMIT)
+        # 스택에 남아 있는 지우기 — 스택이 한도를 넘거나 되살린 위에 새로 지워 버린 지우기의 카드를 놓는 데 쓴다
+        self._removals: list[RemoveCards] = []
 
     def fetchContent(self, vod_url: str, cookies: dict, downloadPath: str) -> None:
         # 조회가 끝나기 전에도 카드가 보이도록 LOADING 상태의 자리표시 아이템을
@@ -344,25 +382,87 @@ class ContentViewModel(QObject):
             "The file could not be saved. Check the download path and free disk space."
         )
 
-    def clrearFinishedItems(self) -> None:
-        if not self.model.isEmpty():
-            for row in reversed(range(self.model.rowCount())):
-                item = self.model.itemAt(row)
-                # 아이템이 완료 상태이면 삭제
-                if item.downloadState == DownloadState.FINISHED:
-                    self.removeItem(item)
-
     def removeItem(self, item: ContentItem) -> None:
-        row = self.model.getRow(item)
-        if row is not None:
-            self.model.removeRows(row, 1)
+        """카드 하나를 지운다 — `removeItems([item])`과 같다(Ctrl/⌘+Z로 되살린다)."""
+        self.removeItems([item])
+
+    def removeItems(self, items) -> None:
+        """카드 여럿을 한 번에 지운다 — 되돌리기 한 번에 함께 되살아난다 (#561).
+
+        목록에 없는 카드는 건너뛴다. 엔진이 쥔 카드는 부르는 쪽(`MainWindow`)이 먼저 멈춘다 — 이
+        뷰모델은 엔진을 모른다. 되살릴 수 있게 카드를 들고 있으므로 목록은 위젯을 지우지 않고 숨겨 둔다.
+        """
+        present = [item for item in dict.fromkeys(items) if self.model.getRow(item) is not None]
+        if not present:
+            return
+        removal = RemoveCards(self, present)
+        live = self._removals[
+            : self.undoStack.index()
+        ]  # 되살린 지우기는 새 지우기가 지운다(QUndoStack.push)
+        self.undoStack.push(removal)  # redo가 지운다
+        live.append(removal)
+        dropped = [r for r in self._removals if r not in live]
+        if len(live) > UNDO_LIMIT:
+            dropped.extend(live[:-UNDO_LIMIT])
+            live = live[-UNDO_LIMIT:]
+        self._removals = live
+        if dropped:
+            held = {item for r in live for item in r.items()}
+            self.model.release(item for r in dropped for item in r.items() if item not in held)
+
+    def canUndoRemove(self) -> bool:
+        """되살릴 지우기가 있는지."""
+        return self.undoStack.canUndo()
+
+    def undoRemove(self) -> None:
+        """마지막 지우기를 되살린다 — 없으면 아무 일도 없다."""
+        if self.undoStack.canUndo():
+            self.undoStack.undo()
+
+    def _detach(self, items: list[ContentItem]) -> None:
+        """카드를 목록에서 뺀다 — 되살릴 수 있게 든 채로(`ContentListModel.removeRows(keep=True)`)."""
+        for item in items:
+            row = self.model.getRow(item)
+            if row is None:
+                continue
+            self.model.removeRows(row, 1, keep=True)
             item.section_head = None  # 구간을 정하며 받아 둔 moov를 버린다 (#309)
             # 이 카드의 조회 · 크기 세기가 돌고 있으면 그만두게 한다 — 결과를 쓸 카드가 없다
             self._sectionRefitter.cancel(item)
             self._sectionSizer.cancel(item)
-            self._resumeHeldBatch()  # 기다리던 카드가 지워졌을 수 있다
-            index = self.model.rowCount()
-            self.deleteItemRequested.emit(item, index)
+            self.deleteItemRequested.emit(item, self.model.rowCount())
+        self._resumeHeldBatch()  # 기다리던 카드가 지워졌을 수 있다
+
+    def _attach(self, entries: list[tuple[int, ContentItem]], working: set[ContentItem]) -> None:
+        """지운 카드를 지운 자리로 되살린다 — 행이 작은 것부터 넣는다.
+
+        그 사이 목록이 줄었으면 끝에 붙인다. 지울 때 엔진이 쥐고 있던 카드는 대기로(진행 · 속도 · 준비
+        표시를 비운다). 지우며 그만두게 한 길이 확인 · 크기 세기는 다시 시작하거나 표시를 내린다.
+        """
+        for row, item in entries:
+            if self.model.getRow(item) is not None:
+                continue
+            if item in working:
+                self._resetToWaiting(item)
+            if item.section_sizing:
+                item.section_sizing = False  # 크기 세기는 지울 때 그만뒀다 — moov도 버렸다
+            self.model.addItem(item, min(row, self.model.rowCount()))
+            if item.section_check == SECTION_CHECK_PENDING:
+                self.refitSections(item)  # 길이 확인 조회도 지울 때 그만뒀다 — 다시 묻는다
+
+    @staticmethod
+    def _resetToWaiting(item: ContentItem) -> None:
+        """멈추고 지운 카드를 대기로 돌린다 — 받는 중 · 일시정지의 표시가 남지 않게."""
+        item.downloadState = DownloadState.WAITING
+        item.stateMessage = ""
+        item.download_progress = 0
+        item.download_size = ""
+        item.download_speed = ""
+        item.download_remain_time = ""
+        item.preparing = False
+        item.prepare_pending = False
+        item.cut_preparing = False
+        item.post_process = False
 
     def downloadItem(self) -> None:
         found, item, index = self.findItem()

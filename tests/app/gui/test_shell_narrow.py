@@ -145,7 +145,7 @@ def _chip_shape_need(win: VodDownloader, sort_width: int) -> int:
     gap = win.filterRowLayout.spacing()
     chip_row = sum(c.minimumWidth() for c in chips)
     chip_row += win.filterChipBar.layout().spacing() * (len(chips) - 1)
-    clear = win.clearFinishedButton.sizeHint().width()
+    clear = win.selectButton.minimumWidth()
     return _header_chrome(win) + chip_row + gap + sort_width + gap + clear
 
 
@@ -155,7 +155,7 @@ def _drop_shape_need(win: VodDownloader, sort_width: int, failed: bool) -> int:
     filters = win.filterChipBar.dropButton.minimumWidth()
     if failed:
         filters += win.filterChipBar.layout().spacing() + win.filterChips["failed"].minimumWidth()
-    clear = win.clearFinishedButton.sizeHint().width()
+    clear = win.selectButton.minimumWidth()
     return _header_chrome(win) + filters + gap + sort_width + gap + clear
 
 
@@ -608,7 +608,7 @@ def test_tab_order_in_the_narrow_shape_goes_through_the_dropdown(window: VodDown
         window.filterChipBar.dropButton,
         window.filterChips["failed"],
         window.sortButton,
-        window.clearFinishedButton,
+        window.selectButton,
     ]
     assert [next_focusable(w) for w in chain[:-1]] == chain[1:]
 
@@ -724,7 +724,7 @@ def test_no_bar_button_is_cut_at_the_minimum_width(window: VodDownloader) -> Non
             window.filterChipBar.dropButton,
             window.filterChips["failed"],
             window.sortButton,
-            window.clearFinishedButton,
+            window.selectButton,
         ),
         window.infoFrame: (window.downloadButton, window.stopButton),
     }
