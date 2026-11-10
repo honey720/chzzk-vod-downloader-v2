@@ -45,7 +45,7 @@ from app.viewmodels.card_text import (  # noqa: F401 — 바깥(footer_bar · �
     short_time,
 )
 from app.viewmodels.data import ContentItem
-from app.widgets.contentItemWidget import HoverShade, PickMark, Ui_ContentItemWidget
+from app.widgets.contentItemWidget import HoverShade, Ui_ContentItemWidget
 from app.widgets.narrow_steps import step_level
 from app.widgets.tip_bubble import install_tips
 from core.engine.session import get_thread_session
@@ -266,7 +266,6 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self._picking = (
             False  # 목록이 선택 모드다 — 카드 버튼을 숨기고 누름 · 더블 클릭이 고르기다(#561)
         )
-        self._pickMark: PickMark | None = None  # 체크 원 — 선택 모드에 처음 들어갈 때 만든다(#561)
         self._pickFocus = False  # 프레임의 pickFocus 속성(선택 모드의 초점 색)을 켰는지(#561)
         self._tipsInstalled = False  # 말풍선 필터를 걸었는지 — 처음 호버할 때 건다
         self._levelTexts: list[card_text.SlotTexts] = []  # 접는 단계마다의 3줄 글(#554)
@@ -517,18 +516,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             self._syncPickMark()
             self._syncPickFocus()
 
-    def pickMark(self) -> PickMark | None:
-        """썸네일 위의 체크 원 — 선택 모드에 들어간 적이 없는 카드는 None이다."""
-        return self._pickMark
-
     def _syncPickMark(self) -> None:
-        """체크 원을 선택 모드에서만 보인다 — 처음 들어갈 때 만든다(카드를 넣을 때는 만들지 않는다)."""
-        if self._pickMark is None:
-            if not self._picking:
-                return
-            self._pickMark = PickMark(self.thumbnailLabel, self.compactThumbnail)
-            self._pickMark.setPicked(self.contentFrame.isSelected())
-        self._pickMark.setVisible(self._picking)
+        """썸네일의 체크 원을 선택 모드 · 고름에 맞춘다 — 선택 모드에서만 그린다."""
+        self.thumbnailLabel.setPickMark(self._picking, self.contentFrame.isSelected())
 
     def isSelected(self) -> bool:
         """고른 카드인지(강조색 테두리 · 채운 체크 원)."""
@@ -537,8 +527,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     def setSelected(self, on: bool) -> None:
         """고른 카드 모양을 켜고 끈다 — 목록이 부른다."""
         self.contentFrame.setSelected(on)
-        if self._pickMark is not None:
-            self._pickMark.setPicked(on)
+        self._syncPickMark()
         self._syncPickFocus()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:

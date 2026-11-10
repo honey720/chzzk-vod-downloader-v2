@@ -9,10 +9,10 @@ from collections.abc import Iterator
 from typing import Never
 
 import pytest
-from PySide6.QtCore import QEvent, QPoint, QRect, Qt
+from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt
 from PySide6.QtGui import QColor, QFontMetrics, QImage, QKeyEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
 import CVDv2 as main_module
 import app.theme as theme
@@ -982,37 +982,85 @@ def _edge(card: ContentItemWidget, depth: int) -> QColor:
     return _colour_at(face.grab().toImage(), depth, face.height() / 2)
 
 
+def _mark_state(card: ContentItemWidget) -> tuple[bool, bool]:
+    """(체크 원을 그리는지, 고른 모양인지)."""
+    thumbnail = card.thumbnailLabel
+    return thumbnail.hasPickMark(), thumbnail.isMarkPicked()
+
+
+def _thumbnail_image(card: ContentItemWidget) -> QImage:
+    """썸네일을 그린 이미지 — 체크 원은 썸네일이 그리므로 썸네일을 그려서 읽는다."""
+    assert card.thumbnailLabel.isVisible(), "전제: 썸네일이 보인다"
+    return card.thumbnailLabel.grab().toImage()
+
+
 def _mark_colour(card: ContentItemWidget, x: float, y: float) -> QColor:
-    """체크 원 왼쪽 위에서 (x, y) 떨어진 화소 — 원은 썸네일의 자식이라 썸네일을 그려서 읽는다."""
-    mark = card.pickMark()
-    assert mark is not None and mark.isVisible(), "전제: 체크 원이 보인다"
-    return _colour_at(card.thumbnailLabel.grab().toImage(), mark.x() + x, mark.y() + y)
+    """체크 원 자리(썸네일 왼쪽 위에서 MARK_INSET 안쪽)의 왼쪽 위에서 (x, y) 떨어진 화소."""
+    return _colour_at(_thumbnail_image(card), MARK_INSET + x, MARK_INSET + y)
+
+
+class _PaintCounter(QObject):
+    """위젯 하나에 온 그리기 이벤트를 센다 — 그 위젯에만 거는 필터다."""
+
+    def __init__(self, watched: QWidget) -> None:
+        super().__init__(watched)
+        self.count = 0
+        watched.installEventFilter(self)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.Paint:
+            self.count += 1
+        return False
 
 
 class TestPickMark:
-    def test_mark_is_made_on_first_entering_select_mode(self, window) -> None:
-        """선택 모드에 들어간 적 없는 카드에는 체크 원이 없고, 들어가면 모든 카드에 보여야 한다.
+    def test_mark_is_drawn_only_after_entering_select_mode(self, window) -> None:
+        """선택 모드 밖의 카드에는 체크 원이 없고, 들어가면 모든 카드에 빈 원이 그려져야 한다.
 
-        카드 둘 -> 원 없음(None), 선택 버튼 클릭 -> 두 카드 모두 원 보임
+        카드 둘 -> 원 없음, 선택 버튼 클릭 -> 두 카드 모두 (원 그림, 빔) · 원 왼쪽 끝 화소 ≈ pickMarkRing
         """
         items = _add(window, D.WAITING, D.FINISHED)
-        assert [_card(window, item).pickMark() for item in items] == [None, None]
+        cards = [_card(window, item) for item in items]
+        assert [_mark_state(card) for card in cards] == [(False, False)] * 2
         _toggle_select_mode(window, True)
-        assert [_card(window, item).pickMark().isVisible() for item in items] == [True, True]
+        assert [_mark_state(card) for card in cards] == [(True, False)] * 2
+        middle = MARK_SIDE[False] / 2
+        for card in cards:
+            assert _is(_mark_colour(card, 0, middle), "pickMarkRing", RING_SLACK)
 
     def test_mark_hides_on_leaving_and_shows_again_on_entering(self, window) -> None:
-        """선택 모드에서 나오면 체크 원이 숨고, 다시 들어가면 보여야 한다.
+        """선택 모드에서 나오면 썸네일이 들어가기 전 모습으로 돌아가고, 다시 들어가면 원이 그려져야 한다.
 
-        카드 하나, 선택 모드 들어감 -> 나옴 -> 원 숨음, 다시 들어감 -> 원 보임
+        카드 하나, 들어가기 전 썸네일 이미지 T -> 들어감: T와 다름 -> 나옴: T와 같음 ->
+        다시 들어감: T와 다름
         """
         items = _add(window, D.WAITING)
+        card = _card(window, items[0])
+        plain = _thumbnail_image(card)
         _toggle_select_mode(window, True)
-        mark = _card(window, items[0]).pickMark()
-        assert mark is not None and mark.isVisible()
+        assert _thumbnail_image(card) != plain
         _toggle_select_mode(window, False)
-        assert not mark.isVisible()
+        assert _mark_state(card) == (False, False)
+        assert _thumbnail_image(card) == plain
         _toggle_select_mode(window, True)
-        assert mark.isVisible()
+        assert _thumbnail_image(card) != plain
+
+    def test_thumbnail_on_screen_is_repainted_on_entering_and_leaving(self, window, qtbot) -> None:
+        """화면에 나온 카드의 썸네일은 선택 모드를 드나들 때마다 다시 그려져야 한다.
+
+        카드 하나(썸네일이 화면에 나와 있음), 썸네일의 그리기 이벤트를 셈 -> 선택 버튼 클릭 -> 1번 이상,
+        다시 클릭 -> 더 늘어남
+        """
+        items = _add(window, D.WAITING)
+        thumbnail = _card(window, items[0]).thumbnailLabel
+        _settle()
+        assert not thumbnail.visibleRegion().isEmpty(), "전제: 썸네일이 화면에 나와 있다"
+        paints = _PaintCounter(thumbnail)
+        _toggle_select_mode(window, True)
+        qtbot.waitUntil(lambda: paints.count >= 1)
+        entered = paints.count
+        _toggle_select_mode(window, False)
+        qtbot.waitUntil(lambda: paints.count > entered)
 
     def test_mark_follows_picking_and_unpicking(self, window) -> None:
         """카드를 고르면 그 카드의 원만 고른 모양이 되고, 풀면 빈 원으로 돌아가야 한다.
@@ -1021,23 +1069,21 @@ class TestPickMark:
         """
         items = _add(window, D.WAITING, D.WAITING)
         _toggle_select_mode(window, True)
-        marks = [_card(window, item).pickMark() for item in items]
+        cards = [_card(window, item) for item in items]
         _click(window, items[0])
         assert _picked(window) == [items[0]], "전제: 첫째를 골랐다"
-        assert [mark.isPicked() for mark in marks] == [True, False]
+        assert [_mark_state(card) for card in cards] == [(True, True), (True, False)]
         _click(window, items[0])
-        assert [mark.isPicked() for mark in marks] == [False, False]
+        assert [_mark_state(card) for card in cards] == [(True, False), (True, False)]
 
     def test_entering_by_ctrl_a_fills_every_mark(self, window) -> None:
-        """평소 Ctrl/⌘+A로 선택 모드에 들어가면 모든 카드의 원이 보이고 고른 모양이어야 한다.
+        """평소 Ctrl/⌘+A로 선택 모드에 들어가면 모든 카드의 원이 그려지고 고른 모양이어야 한다.
 
-        카드 셋(원 없음), 목록에 Ctrl+A -> 원 셋 모두 보임 · 고름
+        카드 셋(원 없음), 목록에 Ctrl+A -> 원 셋 모두 (원 그림, 고름)
         """
         items = _add(window, D.WAITING, D.FINISHED, D.FAILED)
         _key(window.listView, Qt.Key.Key_A, CTRL)
-        marks = [_card(window, item).pickMark() for item in items]
-        assert [mark is not None and mark.isVisible() for mark in marks] == [True, True, True]
-        assert [mark.isPicked() for mark in marks] == [True, True, True]
+        assert [_mark_state(_card(window, item)) for item in items] == [(True, True)] * 3
 
     def test_marks_are_empty_after_leaving_with_picked_cards(self, window) -> None:
         """고른 카드가 있는 채 선택 모드를 나갔다 들어오면 원이 모두 비어 있어야 한다.
@@ -1046,49 +1092,52 @@ class TestPickMark:
         """
         items = _add(window, D.WAITING, D.WAITING)
         _key(window.listView, Qt.Key.Key_A, CTRL)
-        marks = [_card(window, item).pickMark() for item in items]
-        assert [mark.isPicked() for mark in marks] == [True, True], "전제: 둘 다 골랐다"
+        cards = [_card(window, item) for item in items]
+        assert [_mark_state(card) for card in cards] == [(True, True)] * 2, "전제: 둘 다 골랐다"
         _toggle_select_mode(window, False)
         _toggle_select_mode(window, True)
-        assert [mark.isVisible() for mark in marks] == [True, True]
-        assert [mark.isPicked() for mark in marks] == [False, False]
+        assert [_mark_state(card) for card in cards] == [(True, False)] * 2
 
     def test_click_on_the_mark_picks_the_card(self, window) -> None:
-        """체크 원 위를 누르면 그 카드가 골라져야 한다 — 원은 마우스를 받지 않는다.
+        """체크 원 위를 누르면 그 카드가 골라져야 한다.
 
         선택 모드, 카드 둘, 둘째 카드의 원 가운데를 창에 합성 클릭 -> 고른 카드 [둘째]
         """
         items = _add(window, D.WAITING, D.WAITING)
         _toggle_select_mode(window, True)
-        mark = _card(window, items[1]).pickMark()
-        assert mark is not None and mark.isVisible()
+        thumbnail = _card(window, items[1]).thumbnailLabel
+        assert thumbnail.isVisible() and thumbnail.hasPickMark(), "전제: 둘째 카드에 원을 그린다"
+        centre = MARK_INSET + MARK_SIDE[False] // 2
         QTest.mouseClick(
             window.windowHandle(),
             Qt.MouseButton.LeftButton,
             Qt.KeyboardModifier.NoModifier,
-            mark.mapTo(window, mark.rect().center()),
+            thumbnail.mapTo(window, QPoint(centre, centre)),
         )
         _settle()
         assert _picked(window) == [items[1]]
-        assert mark.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
     @pytest.mark.parametrize("compact", [False, True])
     def test_mark_sits_inside_the_thumbnail_top_left(self, window, compact: bool) -> None:
-        """체크 원은 썸네일 왼쪽 위 4px 안쪽에 지름 20(썸네일 줄이기는 16)으로 놓여야 한다.
+        """체크 원은 썸네일 왼쪽 위 4px 안쪽에 지름 20(썸네일 줄이기는 16)으로 그려져야 한다.
 
-        썸네일 줄이기 끔 · 켬, 선택 모드 -> 원 자리 (4, 4, 지름, 지름) · 썸네일 안
+        썸네일 줄이기 끔 · 켬, 들어가기 전 썸네일 이미지 T -> 선택 모드 -> 원 자리 (4, 4, 지름, 지름) ·
+        썸네일 안, 원 오른쪽 끝 화소 ≈ pickMarkRing, 원에서 오른쪽으로 1px 떨어진 화소는 T와 같음
         """
         _show_compact(compact)
         items = _add(window, D.WAITING)
         card = _card(window, items[0])
         assert card.compactThumbnail is compact, "전제: 카드가 그 썸네일 설정으로 만들어졌다"
+        plain = _thumbnail_image(card)
         _toggle_select_mode(window, True)
-        mark = card.pickMark()
-        assert mark is not None and mark.isVisible()
+        thumbnail = card.thumbnailLabel
+        assert thumbnail.hasPickMark()
         side = MARK_SIDE[compact]
-        assert mark.geometry() == QRect(MARK_INSET, MARK_INSET, side, side)
-        assert mark.parentWidget() is card.thumbnailLabel
-        assert card.thumbnailLabel.rect().contains(mark.geometry())
+        assert thumbnail.pickMarkRect() == QRect(MARK_INSET, MARK_INSET, side, side)
+        assert thumbnail.rect().contains(thumbnail.pickMarkRect())
+        assert _is(_mark_colour(card, side - 1, side / 2), "pickMarkRing", RING_SLACK)
+        beyond = _colour_at(plain, MARK_INSET + side + 1, MARK_INSET + side / 2)
+        assert _mark_colour(card, side + 1, side / 2) == beyond
 
     @pytest.mark.parametrize("compact", [False, True])
     def test_mark_changes_no_card_or_window_size(self, window, compact: bool) -> None:
@@ -1112,13 +1161,13 @@ class TestPickMark:
         before = sizes()
         _toggle_select_mode(window, True)
         _click(window, items[0])
-        assert cards[0].pickMark().isPicked() and cards[1].pickMark().isVisible()
+        assert [_mark_state(card) for card in cards] == [(True, True), (True, False)]
         assert sizes() == before
 
     def test_restored_card_gets_a_mark_in_select_mode(self, window) -> None:
-        """선택 모드에서 되살린 카드에도 빈 체크 원이 보여야 한다.
+        """선택 모드에서 되살린 카드에도 빈 체크 원이 그려져야 한다.
 
-        카드 둘, 첫째 ✕(선택 모드 밖) -> 선택 모드 -> Ctrl+Z -> 되살린 카드의 원 보임 · 빔
+        카드 둘, 첫째 ✕(선택 모드 밖) -> 선택 모드 -> Ctrl+Z -> 되살린 카드 (원 그림, 빔)
         """
         items = _add(window, D.WAITING, D.WAITING)
         _card(window, items[0]).deleteButton.click()
@@ -1127,41 +1176,38 @@ class TestPickMark:
         _toggle_select_mode(window, True)
         _undo(window)
         assert window.listView.isSelecting(), "전제: 되살린 뒤에도 선택 모드다"
-        mark = _card(window, items[0]).pickMark()
-        assert mark is not None and mark.isVisible()
-        assert not mark.isPicked()
+        restored = _card(window, items[0])
+        assert restored.isVisible()
+        assert _mark_state(restored) == (True, False)
 
     def test_card_restored_outside_select_mode_hides_its_emptied_mark(self, window) -> None:
-        """골라서 지운 카드를 선택 모드 밖에서 되살리면 원이 숨고, 다시 들어가면 빈 원이어야 한다.
+        """골라서 지운 카드를 선택 모드 밖에서 되살리면 원이 없고, 다시 들어가면 빈 원이어야 한다.
 
-        카드 둘 모두 골라 지움(선택 모드에서 나옴) -> Ctrl+Z -> 원 숨음, 선택 모드 -> 원 보임 · 빔
+        카드 둘 모두 골라 지움(선택 모드에서 나옴) -> Ctrl+Z -> 원 없음, 선택 모드 -> (원 그림, 빔)
         """
         items = _add(window, D.WAITING, D.WAITING)
         _key(window.listView, Qt.Key.Key_A, CTRL)
-        marks = [_card(window, item).pickMark() for item in items]
-        assert [mark.isPicked() for mark in marks] == [True, True], "전제: 둘 다 골랐다"
+        picked = [_mark_state(_card(window, item)) for item in items]
+        assert picked == [(True, True)] * 2, "전제: 둘 다 골랐다"
         window.selectBar.deleteButton.click()
         _settle()
         assert not window.listView.isSelecting(), "전제: 지우면서 선택 모드에서 나왔다"
         _undo(window)
         assert [_card(window, item).isVisible() for item in items] == [True, True]
-        assert [_card(window, item).pickMark().isVisible() for item in items] == [False, False]
+        assert [_mark_state(_card(window, item)) for item in items] == [(False, False)] * 2
         _toggle_select_mode(window, True)
-        restored = [_card(window, item).pickMark() for item in items]
-        assert [mark.isVisible() for mark in restored] == [True, True]
-        assert [mark.isPicked() for mark in restored] == [False, False]
+        assert [_mark_state(_card(window, item)) for item in items] == [(True, False)] * 2
 
     def test_card_added_in_select_mode_gets_a_mark(self, window) -> None:
-        """선택 모드 중에 새로 넣은 카드에도 빈 체크 원이 보여야 한다.
+        """선택 모드 중에 새로 넣은 카드에도 빈 체크 원이 그려져야 한다.
 
-        카드 하나 · 선택 모드 -> 카드 하나 더 넣음 -> 새 카드의 원 보임 · 빔
+        카드 하나 · 선택 모드 -> 카드 하나 더 넣음 -> 새 카드 (원 그림, 빔)
         """
         _add(window, D.WAITING)
         _toggle_select_mode(window, True)
-        added = _add(window, D.WAITING)
-        mark = _card(window, added[0]).pickMark()
-        assert mark is not None and mark.isVisible()
-        assert not mark.isPicked()
+        added = _card(window, _add(window, D.WAITING)[0])
+        assert added.isVisible()
+        assert _mark_state(added) == (True, False)
 
 
 class TestPickMarkPixels:
@@ -1179,7 +1225,7 @@ class TestPickMarkPixels:
         _toggle_select_mode(window, True)
         _click(window, items[0])
         card = _card(window, items[0])
-        assert card.pickMark().isPicked(), "전제: 고른 원이다"
+        assert _mark_state(card) == (True, True), "전제: 고른 원이다"
         side = MARK_SIDE[compact]
         scale = side / 20  # ✓ 좌표는 지름 20 격자다
         assert _is(_mark_colour(card, side / 2, side / 4), "accent")
@@ -1194,11 +1240,10 @@ class TestPickMarkPixels:
         """
         items = _add(window, D.WAITING)
         card = _card(window, items[0])
-        assert card.thumbnailLabel.isVisible()
         centre = MARK_INSET + MARK_SIDE[False] / 2
-        beneath = _colour_at(card.thumbnailLabel.grab().toImage(), centre, centre)
+        beneath = _colour_at(_thumbnail_image(card), centre, centre)
         _toggle_select_mode(window, True)
-        assert not card.pickMark().isPicked(), "전제: 빈 원이다"
+        assert _mark_state(card) == (True, False), "전제: 빈 원이다"
         scrim = QColor(theme.current_tokens()["pickMarkScrim"])
         alpha = theme.PICK_MARK_SCRIM_ALPHA
         want = QColor(
