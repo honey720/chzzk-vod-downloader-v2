@@ -164,7 +164,7 @@ class TestStatusAndFileSizeAreVisible:
         # 짧은 표기(1:23)로 줄어든다. 파일형은 3행 우측에 "받은 크기 / 총 크기"를 보이고,
         # 이 카드의 폭처럼 둘 다 들어가지 않으면 받은 크기만 남긴다 (#309)
         rendered = _rendered(widget.statusLabel)
-        assert "42%" in rendered
+        assert "42.0%" in rendered
         assert "3.2 MB/s" in rendered
         assert "1:23" in rendered
         assert _rendered(widget.fileSizeLabel) != ""

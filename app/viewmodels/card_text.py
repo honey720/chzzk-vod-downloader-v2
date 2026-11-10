@@ -8,6 +8,7 @@
 그대로 쓴다 — lupdate는 리터럴 호출만 줍는다(project.json이 이 파일을 스캔한다).
 """
 
+import math
 import os
 from dataclasses import dataclass
 
@@ -535,14 +536,27 @@ def card_state(item: ContentItem) -> str:
     return "waiting"
 
 
-def progress_value(item: ContentItem) -> int:
-    """진행바에 넣을 0~100 값. 아직 시작 전(대기·조회 중)이면 0이다."""
+def progress_value(item: ContentItem) -> float:
+    """진행바에 넣을 0~100 값(소수, #557). 아직 시작 전(대기·조회 중)이면 0이다."""
     if item.downloadState in (DownloadState.WAITING, ItemState.LOADING):
-        return 0
+        return 0.0
     try:
-        return max(0, min(100, int(item.download_progress)))
+        return max(0.0, min(100.0, float(item.download_progress)))
     except (TypeError, ValueError):
-        return 0
+        return 0.0
+
+
+def progress_text(value: float) -> str:
+    """진행률 글 — 소수 한 자리(「37.4%」), 다 받으면 「100%」 (#557).
+
+    한 자리로 버린다(올리지 않음) — 99.96이 「100.0%」처럼 끝나기 전에 끝난 것으로 보이지 않게,
+    37.96이 다음 값으로 먼저 보이지 않게. 자릿수가 늘 같아 0.25초마다 바뀌어도 글 폭이 흔들리지
+    않는다. 100은 「100%」 — 끝난 값에는 소수 자리가 뜻이 없고, 가장 긴 글(창 최소폭)이 늘지 않는다.
+    """
+    if value >= 100:
+        return "100%"
+    tenths = math.floor(max(value, 0.0) * 10 + 1e-9)  # 37.4가 37.39999…로 버려지지 않게
+    return f"{tenths / 10:.1f}%"
 
 
 def open_target(item: ContentItem) -> str:
@@ -693,14 +707,14 @@ def slot_texts(item: ContentItem, level: int = 0) -> SlotTexts:
                 cutting_text = QCoreApplication.translate("ContentItemWidget", "Preparing to cut")
             else:
                 cutting_text = QCoreApplication.translate("ContentItemWidget", "Cutting")
-            status = f"{item.download_progress}% · {cutting_text}{tally}"
+            status = f"{progress_text(progress_value(item))} · {cutting_text}{tally}"
         elif item.is_segment_based and item.post_process:
             # 후처리 진행률(download_progress는 후처리에서 0부터 다시 차오른다)도 앞에 둔다
             postprocess_text = QCoreApplication.translate("ContentItemWidget", "Post-processing")
-            status = f"{item.download_progress}% · {postprocess_text}"
+            status = f"{progress_text(progress_value(item))} · {postprocess_text}"
         else:
             receiving_text = QCoreApplication.translate("ContentItemWidget", "Downloading")
-            parts = [f"{item.download_progress}%", receiving_text]
+            parts = [progress_text(progress_value(item)), receiving_text]
             if level < LEVEL_SPEED and item.download_speed:
                 parts.append(f"{item.download_speed}")
             if level < LEVEL_REMAIN:
@@ -718,7 +732,7 @@ def slot_texts(item: ContentItem, level: int = 0) -> SlotTexts:
             # 준비 중에 일시정지했다 (#309) — 아직 받은 것이 없어 진행률을 적지 않는다
             status = paused_text
         else:
-            status = f"{item.download_progress}% · {paused_text}{tally}"
+            status = f"{progress_text(progress_value(item))} · {paused_text}{tally}"
         return SlotTexts(status, info_text(item, level=level), icon="pause")
 
     if state == DownloadState.FINISHED:

@@ -103,7 +103,7 @@ class DownloadViewModel(QObject):
     DownloadManager·QtDownloadBridge와 동일하다.
     """
 
-    progress = Signal(str, str, str, int, object)
+    progress = Signal(str, str, str, float, object)  # 진행률은 소수(0 ~ 100) — 0.25초 통지 (#557)
     paused = Signal(object)
     resumed = Signal(object)
     stopped = Signal(object)
@@ -117,7 +117,7 @@ class DownloadViewModel(QObject):
     # 셋 다 시도 번호(start()마다 하나씩 오른다)를 싣는다 — 지금 시도의 것만 카드에 닿는다 (#410)
     # 진행 · 실패는 엔진이 실은 값 묶음(DownloadCounters)을, 실패는 안내 키(str | None)를 싣는다 (#484)
     # 진행은 끝에 하단바 모니터링 값(TransferReading)을 싣는다 (#504)
-    _engineProgress = Signal(int, str, str, str, int, object, object, object)
+    _engineProgress = Signal(int, str, str, str, float, object, object, object)
     _engineFinished = Signal(int, object)
     _engineFailed = Signal(int, object, object)
     # 내부 전용: 병합 시작 · 상태 전이 — 아이템은 메인 스레드에서만 적는다 (#484)
@@ -274,6 +274,7 @@ class DownloadViewModel(QObject):
         item.download_size = ""
         item.download_speed = ""
         item.download_remain_time = ""
+        item.rate_text_at = None  # 새 실행의 첫 속도 · 남은 시간 글은 바로 보인다
         self._prepareTimer.start()
         log_process_memory("다운로드 시작")
         task_logger = DownloadLogger()
@@ -895,12 +896,12 @@ class _StageView(Protocol):
     post_process: bool
 
 
-def _file_progress_args(event: ProgressEvent) -> tuple[str, str, str, int]:
-    """파일 다운로드 진행 변환 — 계산식은 구 MonitorThread.update_progress와 동일."""
+def _file_progress_args(event: ProgressEvent) -> tuple[str, str, str, float]:
+    """파일 다운로드 진행 변환 — 계산식은 구 MonitorThread.update_progress와 같고 진행률은 소수다 (#557)."""
     total_size = event.total_size or 0
     speed_mb = event.speed or 0.0
 
-    progress = int((event.downloaded_size / total_size) * 100) if total_size > 0 else 0
+    progress = (event.downloaded_size / total_size) * 100 if total_size > 0 else 0.0
 
     if speed_mb > 0:
         remaining_time = (total_size - event.downloaded_size) / (speed_mb * 1024 * 1024)
@@ -979,8 +980,8 @@ class _SectionProgress:
         self._seen_received = 0  # 직전 통지 때의 받은 바이트
         self._lock = threading.Lock()
 
-    def percent(self, transfer: float, cutting: bool, cut: float, received: int = 0) -> int:
-        """지금 막대에 보일 값(0~100).
+    def percent(self, transfer: float, cutting: bool, cut: float, received: int = 0) -> float:
+        """지금 막대에 보일 값(0~100, 소수 — #557).
 
         Args:
             transfer: 받기의 진행(0~1) — 이번 실행이 받을 것 가운데 받은 몫. 받을 것이 없으면 1
@@ -1015,7 +1016,7 @@ class _SectionProgress:
 
 def _section_progress_args(
     event: ProgressEvent, counters: _CountersView, stage: _StageView, sections: _SectionProgress
-) -> tuple[str, str, str, int]:
+) -> tuple[str, str, str, float]:
     """구간 다운로드의 진행 변환 — 전송과 컷을 하나의 막대로 합친다 (#309).
 
     막대는 받기와 컷의 한 일로 찬다(``_SectionProgress``). 받기의 진행은 전달 방식의 단위
@@ -1058,8 +1059,8 @@ def _section_progress_args(
 
 def _segment_progress_args(
     event: ProgressEvent, counters: _CountersView, stage: _StageView
-) -> tuple[str, str, str, int]:
-    """세그먼트 기반(m3u8·hls_aes) 진행 변환 — 구 MonitorM3U8Thread.update_progress와 동일.
+) -> tuple[str, str, str, float]:
+    """세그먼트 기반(m3u8·hls_aes) 진행 변환 — 구 MonitorM3U8Thread.update_progress와 같고 진행률은 소수다.
 
     전체 크기를 미리 알 수 없어 진행률은 세그먼트 수 기반이다. 병합 단계
     (stage.post_process)에서는 병합된 세그먼트 수, 그 전에는 완료된 세그먼트 수를
@@ -1072,12 +1073,12 @@ def _segment_progress_args(
     merge_total = counters.max_threads + (1 if stage.content_type == "m3u8" else 0)
 
     if stage.post_process:
-        progress = int((counters.merged_segments / merge_total) * 100) if merge_total > 0 else 0
+        progress = (counters.merged_segments / merge_total) * 100 if merge_total > 0 else 0.0
     else:
         progress = (
-            int((counters.completed_threads / counters.max_threads) * 100)
+            (counters.completed_threads / counters.max_threads) * 100
             if counters.max_threads > 0
-            else 0
+            else 0.0
         )
 
     # 받은 크기에는 받아 두었던 세그먼트가 들어 있지 않다 — 평균도 받은 것만으로 낸다 (#376)

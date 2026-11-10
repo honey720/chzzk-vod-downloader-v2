@@ -5,8 +5,8 @@
 | 상태     | 3행 상태 원 · 글           | 조작        | 진행바        |
 |----------|----------------------------|-------------|---------------|
 | 대기     | (없음) · 다운로드 대기     | 편집(✎)     | 없음          |
-| 진행     | ↓ · 42% · 8.2 MB/s · 남음  | 일시정지    | 있음          |
-| 일시정지 | ‖ · 54% · 일시정지됨       | 재개        | 있음(muted)   |
+| 진행     | ↓ · 42.0% · 8.2 MB/s · 남음  | 일시정지    | 있음          |
+| 일시정지 | ‖ · 54.0% · 일시정지됨       | 재개        | 있음(muted)   |
 | 완료     | ✓ · 완료                   | 폴더 열기   | 없음          |
 | 실패     | ✕ · 사유                   | 재시도      | 없음          |
 
@@ -165,16 +165,16 @@ class TestSlotColumn:
         widget = _make_widget(qapp, DownloadState.RUNNING, 42)
         text = widget.statusLabel.text()
         assert widget.statusLabel.isVisible()
-        assert text.startswith("42%"), text
+        assert text.startswith("42.0%"), text
         assert "8.2 MB/s" in text and "12:34" in text
 
     def test_postprocessing_shows_percent_first_then_label(self, qapp) -> None:
-        """ "13% · 후처리 중" — 후처리 진행률은 이미 있던 값(실기에서 일시정지로
+        """ "13.0% · 후처리 중" — 후처리 진행률은 이미 있던 값(실기에서 일시정지로
         확인)인데 슬롯이 "후처리 중" 텍스트로 대체되며 퍼센트만 빠졌던 것.
         퍼센트는 **앞** — 전송·일시정지와 자리를 맞춘다(#245 정정)."""
         widget = _make_widget(qapp, DownloadState.RUNNING, 13, post_process=True)
         text = widget.statusLabel.text()
-        assert text.startswith("13%"), f"후처리 퍼센트가 앞에 없다: {text!r}"
+        assert text.startswith("13.0%"), f"후처리 퍼센트가 앞에 없다: {text!r}"
         assert text.endswith("Post-processing"), text
         assert "MB/s" not in text and "left" not in text, (
             "후처리 국면에 전송 속도·남은 시간이 붙어 있다"
@@ -196,7 +196,7 @@ class TestSlotColumn:
         widget = _make_widget(qapp, DownloadState.PAUSED, 54)
         text = widget.statusLabel.text()
         assert widget.statusLabel.isVisible()
-        assert text.startswith("54%"), f"진행분이 앞에 와야 한다: {text!r}"
+        assert text.startswith("54.0%"), f"진행분이 앞에 와야 한다: {text!r}"
         assert text.endswith("Paused"), f"뒤 문구는 '일시정지됨'(Paused)이어야 한다: {text!r}"
         assert "Download paused" not in text, (
             "옛 문구('다운로드 정지')가 남아 있다 — 정지는 완전 중단으로 읽힌다"
@@ -364,7 +364,7 @@ class TestPercentStartsAtTheSameX:
     def test_percent_is_the_first_token_in_every_phase(self, qapp) -> None:
         for name, state, progress, post in self.PERCENT_PHASES:
             widget = _make_widget(qapp, state, progress, post_process=post)
-            assert widget.statusLabel.text().split(" ")[0] == f"{progress}%", (
+            assert widget.statusLabel.text().split(" ")[0] == f"{progress:.1f}%", (
                 f"{name}: 첫 토큰이 퍼센트가 아니다 — {widget.statusLabel.text()!r}"
             )
 
