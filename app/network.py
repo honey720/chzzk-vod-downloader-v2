@@ -120,6 +120,19 @@ def _get_with_cookies_trusted(
 _KEY_HOSTS = frozenset({urlsplit(CHZZK_API).hostname})
 
 
+def _video_date(content: dict) -> object:
+    """VOD의 날짜 — 방송 시작 시각(`liveOpenDate`), 없거나 null이면 공개 시각(`publishDate`).
+
+    업로드 영상(다시 보기가 아닌 영상)은 `liveOpenDate`가 없거나 null이라 카드 날짜가 비었다(#554).
+    둘 다 없으면 고치기 전 값(null이면 None, 키가 없으면 "Unknown Date")을 그대로 둔다.
+    """
+    return (
+        content.get("liveOpenDate")
+        or content.get("publishDate")
+        or content.get("liveOpenDate", "Unknown Date")
+    )
+
+
 class NetworkManager:
     @staticmethod
     def extract_content_no(vod_url: str) -> tuple[str, str]:
@@ -171,7 +184,7 @@ class NetworkManager:
             "category": content.get("videoCategoryValue", "Unknown Category"),
             "channelName": content.get("channel", {}).get("channelName", "Unknown Channel"),
             "channelImageUrl": content.get("channel", {}).get("channelImageUrl", ""),
-            "createdDate": content.get("liveOpenDate", "Unknown Date"),
+            "createdDate": _video_date(content),
             "duration": content.get("duration", 0),
         }
         return VideoInfo(

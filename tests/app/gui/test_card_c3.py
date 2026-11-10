@@ -7,8 +7,9 @@
 """
 
 import colorsys
+import json
 import math
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Never
 
 import pytest
@@ -17,11 +18,16 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
 import CVDv2 as main_module
+import app.network as network
 import app.theme as theme
 import app.viewmodels.card_display as card_display
+from app.download.logger import DownloadLogger
+from app.network import NetworkManager
 from app.viewmodels import card_text
+from app.viewmodels.card_order import CardOrder
 from app.viewmodels.data import ContentItem
 from app.viewmodels.model import ContentListModel
+from app.views.card_edit_dialog import CardEditDialog
 from app.views.mainWindow import VodDownloader
 from app.widgets.view import ContentListView
 from app.widgets.widget import ContentItemWidget
@@ -29,6 +35,7 @@ from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
 from tests.app.gui.test_shell_layout import WORST_SAMPLES
+from tests.mocks.mock_http import MockResponse
 
 DEFAULT_DIR = "C:/dl"  # 전역 저장 위치 — 카드 저장 위치가 이것이면 3줄에 보이지 않는다
 OTHER_DIR = "D:/vod/lck-finals"  # 전역과 다른 저장 위치 — 3줄에 보인다
@@ -381,6 +388,24 @@ class TestListWideYear:
             QApplication.processEvents()
         assert calls == []
 
+    def test_card_without_a_date_does_not_take_the_year_away(self, qapp) -> None:
+        """날짜가 빈 카드의 1줄이 넘쳐도 날짜 있는 카드가 연도와 들어가면 연도가 남아야 한다.
+
+        날짜 빈 카드(채널명 긴) · 「LCK」 날짜 카드, 날짜 빈 카드의 1줄 폭 > 1줄 자리가 될 때까지 목록을
+        1px씩 좁힘 -> 그 폭에서 날짜 카드는 연도와 들어가고 "2026. 10. 26."
+        """
+        no_date = _item(channel="a channel name that is very long indeed", created="")
+        view, cards = _list([no_date, _item(channel="LCK")])
+        blank, dated = cards
+        assert blank.dateLabel.text() == ""
+        width = view.width()
+        while blank.row1Need(True) <= blank.row1Room():
+            width -= 1
+            assert width > 200, "날짜 빈 카드가 넘치는 폭에 닿지 않았다 — 아무것도 안 쟀다"
+            _list_at(view, width)
+        assert dated.row1Need(True) <= dated.row1Room(), "전제: 날짜 카드는 연도와 들어간다"
+        assert dated.dateLabel.text() == "2026. 10. 26."
+
 
 def _pixel(widget: QWidget, x: int, y: int) -> QColor:
     """위젯을 grab한 그림에서 논리 좌표 (x, y)의 색 — 장치 화소 배율을 곱해 읽는다."""
@@ -723,6 +748,74 @@ class TestStopMotion:
         card.setData(item, 0)
         assert card.motion() is None
         assert card.progressBar.value() == 10
+
+
+UPLOAD_DATE = "2026-06-15 09:59:58"  # 픽스처 응답의 publishDate(공개 시각)
+
+
+@pytest.fixture
+def upload_item(monkeypatch, load_mock_response: Callable[[str], str]) -> ContentItem:
+    """liveOpenDate 없는 업로드 영상 응답(픽스처에서 키를 지움)을 조회해 만든 아이템."""
+    content = json.loads(load_mock_response("video_member_only_13714380.json"))["content"]
+    del content["liveOpenDate"]
+    body = json.dumps({"content": content})
+    monkeypatch.setattr(network._session, "get", lambda url, **kwargs: MockResponse(text=body))
+    metadata = NetworkManager.get_video_info("1", {}).metadata
+    item = ContentItem(
+        "https://chzzk.naver.com/video/1",
+        metadata,
+        [[1080, "u1080"], [720, "u720"]],
+        None,
+        "",
+        DEFAULT_DIR,
+        "video",
+        None,
+    )
+    item.downloadState = DownloadState.WAITING
+    return item
+
+
+class TestUploadVideoDate:
+    """업로드 영상(liveOpenDate 없음)의 날짜 — publishDate를 쓰는 곳 넷이 함께 바뀐다."""
+
+    def test_card_shows_the_publish_date(self, qapp, upload_item: ContentItem) -> None:
+        """카드 1줄 날짜가 "2026. 06. 15."여야 한다."""
+        card = _card(upload_item)
+        assert card.dateLabel.isVisible()
+        assert card.dateLabel.text() == "2026. 06. 15."
+
+    def test_edit_dialog_head_shows_the_publish_date(self, qapp, upload_item: ContentItem) -> None:
+        """카드 편집 창 머리 줄에 "2026. 06. 15."가 들어 있어야 한다."""
+        dialog = CardEditDialog(
+            upload_item, DEFAULT_DIR, lambda item: None, lambda item: None, lambda item: True
+        )
+        assert "2026. 06. 15." in dialog.metaLabel.text()
+
+    def test_upload_order_puts_it_in_place_not_at_the_end(
+        self, qapp, upload_item: ContentItem
+    ) -> None:
+        """업로드순(최신 먼저)에서 업로드 영상 카드가 날짜 자리에 들어가야 한다(모르는 날짜 뒤가 아님).
+
+        추가 차례: 7월 1일 · 5월 1일 · 날짜 모름 · 업로드 영상(6월 15일)
+        -> [7월 1일, 업로드 영상, 5월 1일, 날짜 모름]
+        """
+        model = ContentListModel()
+        order = CardOrder(model)
+        july = _item(created="2026-07-01 10:00:00")
+        may = _item(created="2026-05-01 10:00:00")
+        unknown = _item(created="")
+        for item in (july, may, unknown, upload_item):
+            model.addItem(item)
+        order.setSort("upload", False)
+        assert order.ordered() == [july, upload_item, may, unknown]
+
+    def test_download_log_writes_the_publish_date(self, upload_item: ContentItem) -> None:
+        """다운로드 시작 로그의 created_date 줄이 publishDate여야 한다."""
+        logger = DownloadLogger()
+        lines: list[str] = []
+        logger.info = lines.append
+        logger.log_download_info(upload_item)
+        assert f"created_date: {UPLOAD_DATE}" in lines
 
 
 class TestThumbnailShapes:

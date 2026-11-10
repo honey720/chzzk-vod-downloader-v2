@@ -13,6 +13,7 @@ import app.theme as theme
 from app.widgets.narrow_steps import RETURN_SLACK
 from app.widgets.scroll_padding import ScrollBarPadding
 from app.widgets.widget import BUSY_STATES, ContentItemWidget
+from app.viewmodels import card_text
 from app.viewmodels.data import ContentItem
 
 
@@ -181,7 +182,10 @@ class ContentListView(QScrollArea):
             self._decideYear(cards, allow_show=False)
 
     def _decideYear(self, cards: list[ContentItemWidget], allow_show: bool) -> None:
-        cards = [card for card in cards if card.row1Room() > 0]
+        # 날짜가 빈 카드(모르는 날짜)는 연도와 무관한 폭이라 판정에 넣지 않는다(#554)
+        cards = [
+            card for card in cards if card.row1Room() > 0 and card_text.upload_date_text(card.item)
+        ]
         if not cards:
             return
         if self._showYear:
