@@ -653,6 +653,26 @@ class TestUndo:
         _key(window.urlInput, Qt.Key.Key_Z, CTRL)
         assert window.contentManager.model.rowCount() == 0
 
+    def test_a_loading_card_whose_lookup_ended_is_not_restored(self, window) -> None:
+        """조회가 끝난 조회 중 카드를 지운 뒤 Ctrl/⌘+Z를 누르면 되살리지 않고 놓아야 한다.
+
+        조회 중 카드(도는 조회 없음) · 대기 카드 둘 다 ✕ -> Ctrl+Z 두 번 -> 목록 [대기] · 조회 중 카드는 들고 있지 않음
+        """
+        from app.viewmodels.item_state import ItemState
+
+        loading, waiting = _item("조회 중"), _item("대기")
+        loading.downloadState = ItemState.LOADING
+        for item in (loading, waiting):
+            window.contentManager.model.addItem(item)
+        _settle()
+        for item in (loading, waiting):
+            _card(window, item).deleteButton.click()
+            _settle()
+        _undo(window)
+        _undo(window)
+        assert window.contentManager.model.items == [waiting]
+        assert not window.contentManager.model.isKept(loading)
+
 
 # ---- 카드 키 ----
 
@@ -675,6 +695,19 @@ class TestCardKeys:
         assert window.focusWidget() is third
         _key(third, Qt.Key.Key_Up)
         assert window.focusWidget() is first
+
+    def test_arrow_keys_with_the_keypad_modifier_still_move_focus(self, window) -> None:
+        """↓에 키패드 수정자가 붙어 와도(macOS의 방향키) 초점이 다음 카드로 가야 한다.
+
+        카드 둘, 첫째에 ↓ + KeypadModifier -> 둘째, ↓ + Shift -> 그대로
+        """
+        items = _add(window, D.WAITING, D.WAITING)
+        first, second = _card(window, items[0]), _card(window, items[1])
+        first.setFocus(Qt.FocusReason.OtherFocusReason)
+        _key(first, Qt.Key.Key_Down, Qt.KeyboardModifier.KeypadModifier)
+        assert window.focusWidget() is second
+        _key(second, Qt.Key.Key_Up, SHIFT)
+        assert window.focusWidget() is second
 
     def test_delete_key_on_a_focused_card_deletes_it(self, window) -> None:
         """선택 모드 밖에서 초점 카드에 Delete를 누르면 그 카드를 지우고 초점은 다음 카드로 가야 한다.
@@ -736,6 +769,32 @@ class TestCardKeys:
 
 
 # ---- 선택 줄 자리 ----
+
+
+def test_pressed_select_button_still_draws_the_focus_border(window) -> None:
+    """선택 모드(눌린 모양)의 선택 버튼도 키보드 초점을 받으면 위 테두리가 강조색이어야 한다.
+
+    선택 모드 -> 선택 버튼에 Tab 초점 -> 위 테두리 가운데 화소 ≈ accent
+    """
+    from PySide6.QtGui import QColor
+
+    _add(window, D.WAITING)
+    window.selectButton.click()
+    _settle()
+    window.activateWindow()
+    window.selectButton.setFocus(Qt.FocusReason.TabFocusReason)
+    _settle()
+    assert window.selectButton.hasFocus(), "전제: 초점을 받았다"
+    image = window.selectButton.grab().toImage()
+    ratio = image.devicePixelRatio()
+    got = image.pixelColor(int(window.selectButton.width() / 2 * ratio), 0)
+    want = QColor(theme.current_tokens()["accent"])
+    assert (
+        abs(got.red() - want.red())
+        + abs(got.green() - want.green())
+        + abs(got.blue() - want.blue())
+        <= 24
+    )
 
 
 class TestSelectBarPlace:
