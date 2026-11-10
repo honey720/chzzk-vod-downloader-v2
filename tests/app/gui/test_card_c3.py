@@ -405,21 +405,18 @@ class TestListWideYear:
             QApplication.processEvents()
         assert calls == []
 
-    def test_card_without_a_date_does_not_take_the_year_away(self, qapp) -> None:
+    def test_card_without_a_date_does_not_take_the_year_away(self, qapp, monkeypatch) -> None:
         """날짜가 빈 카드의 1줄이 넘쳐도 날짜 있는 카드가 연도와 들어가면 연도가 남아야 한다.
 
-        날짜 빈 카드(채널명 긴) · 「LCK」 날짜 카드, 날짜 빈 카드의 1줄 폭 > 1줄 자리가 될 때까지 목록을
-        1px씩 좁힘 -> 그 폭에서 날짜 카드는 연도와 들어가고 "2026. 10. 26."
+        날짜 빈 카드 · 「LCK」 날짜 카드, 날짜 빈 카드의 1줄 폭 = 1줄 자리 + 1, 목록 폭을 1px 바꿈
+        -> 날짜 카드는 연도와 들어가고 "2026. 10. 26."
         """
-        no_date = _item(channel="a channel name that is very long indeed", created="")
-        view, cards = _list([no_date, _item(channel="LCK")])
+        view, cards = _list([_item(created=""), _item(channel="LCK")])
         blank, dated = cards
         assert blank.dateLabel.text() == ""
-        width = view.width()
-        while blank.row1Need(True) <= blank.row1Room():
-            width -= 1
-            assert width > 200, "날짜 빈 카드가 넘치는 폭에 닿지 않았다 — 아무것도 안 쟀다"
-            _list_at(view, width)
+        # 넘침은 글꼴마다 닿는 폭이 달라(대체 글꼴은 카드 최소폭이 먼저 막는다) 폭을 직접 준다
+        monkeypatch.setattr(blank, "row1Need", lambda with_year: blank.row1Room() + 1)
+        _list_at(view, view.width() - 1)
         assert dated.row1Need(True) <= dated.row1Room(), "전제: 날짜 카드는 연도와 들어간다"
         assert dated.dateLabel.text() == "2026. 10. 26."
 
