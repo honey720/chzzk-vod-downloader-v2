@@ -205,6 +205,13 @@ def _label_text_width(label: QLabel, text: str) -> int:
     return math.ceil(QFontMetricsF(label.font()).horizontalAdvance(text))
 
 
+def _snapped(fraction: float, width: int) -> float:
+    """진행 비율을 폭 `width`px의 1px 단위로 묶는다 — 비율이 늘면 줄지 않는다(반올림은 단조)."""
+    if width <= 0:
+        return fraction
+    return round(fraction * width) / width
+
+
 def last_folder_name(path: str) -> str:
     """경로의 마지막 폴더 이름 — 카드 3줄 저장 위치 글(#550). 운영체제와 무관하게 자른다."""
     if not path:
@@ -988,11 +995,15 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             return card_text.progress_value(item) / 100, state, busy
         return 0.0, state, False
 
-    def _showProgress(self, fraction: float, state: str, busy: bool) -> None:
+    def _showProgress(self, fraction: float, state: str, busy: bool, snap: bool = False) -> None:
         """막대 · 채움에 진행을 그린다 — 진행 표시 방식(설정 키)을 따른다.
 
         값 없이 움직이는 막대(준비 중 · 자르기 준비 중)는 배경 채움 방식에서도 막대로 보인다 — 채울
         값이 없어 채움으로는 아무것도 안 보인다(#554 리뷰).
+
+        `snap`이면(모션 프레임) 그리는 값을 그 폭의 1px 단위로 묶는다 — 화소가 바뀌지 않는 프레임은
+        값이 같아 다시 그리지 않는다(오너 2026-11-10, 0.01% 단위의 프레임마다 다시 그리기를 막음).
+        폭은 그릴 때마다 지금 폭으로 센다. 멈춘 값(틱 · 모션 끝)은 묶지 않는다.
         """
         self._shown = fraction
         display = card_display.current()
@@ -1000,13 +1011,16 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         if display.fill and not busy:
             bar.setVisible(False)
             token = {"running": "cardFillRunning", "paused": "cardFillPaused"}.get(state, "")
-            self.contentFrame.setFill(fraction, token)
+            frame = self.contentFrame
+            drawn = _snapped(fraction, frame.width() - 2) if snap else fraction
+            frame.setFill(drawn, token)
             return
         self.contentFrame.setFill(0.0, "")
         maximum = 0 if busy else PROGRESS_SCALE
         if bar.maximum() != maximum:
             bar.setRange(0, maximum)
-        bar.setValue(round(fraction * PROGRESS_SCALE))
+        drawn = _snapped(fraction, bar.width()) if snap else fraction
+        bar.setValue(round(drawn * PROGRESS_SCALE))
         visible = busy or fraction > 0 or state in ("running", "paused")
         bar.setVisible(visible)
         if bar.property("state") != state:
@@ -1031,7 +1045,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         motion.setEndValue(float(end))
         motion.setDuration(duration)
         motion.setEasingCurve(easing)
-        motion.valueChanged.connect(lambda value: self._showProgress(float(value), state, False))
+        motion.valueChanged.connect(
+            lambda value: self._showProgress(float(value), state, False, snap=True)
+        )
         motion.finished.connect(self._onMotionFinished)
         self._motion = motion
         motion.start()

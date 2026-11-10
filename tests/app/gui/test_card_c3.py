@@ -13,7 +13,7 @@ from collections.abc import Callable, Iterator
 from typing import Never
 
 import pytest
-from PySide6.QtCore import QEvent, QPoint, QVariantAnimation
+from PySide6.QtCore import QEvent, QObject, QPoint, QVariantAnimation
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
@@ -441,6 +441,20 @@ class TestListWideYear:
         _list_at(view, view.width() - 1)
         assert dated.row1Need(True) <= dated.row1Room(), "전제: 날짜 카드는 연도와 들어간다"
         assert dated.dateLabel.text() == "2026. 10. 26."
+
+
+class _PaintCounter(QObject):
+    """위젯 하나의 그리기 이벤트를 센다 — 그 위젯에만 거는 필터(앱 전체 필터가 아님)."""
+
+    def __init__(self, widget: QWidget) -> None:
+        super().__init__(widget)
+        self.count = 0
+        widget.installEventFilter(self)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.Paint:
+            self.count += 1
+        return False
 
 
 def _pixel(widget: QWidget, x: int, y: int) -> QColor:
@@ -899,7 +913,7 @@ class TestBarTickMotion:
     def test_early_tick_continues_from_the_drawn_value(self, qapp) -> None:
         """모션이 끝나기 전에 다음 틱이 오면 새 모션이 지금 그려진 값에서 시작하고 막대가 뒤로 가지 않아야 한다.
 
-        40% → 60% 틱, 반쯤 시간에 80% 틱 -> 새 모션 시작 값 == 그때 막대 비율, 막대 값 줄지 않음
+        40% → 60% 틱, 반쯤 시간에 80% 틱 -> 새 모션 시작 값이 그때 그린 막대와 같은 화소, 막대 값 줄지 않음
         """
         card = self._ticked()
         first = card.motion()
@@ -910,26 +924,32 @@ class TestBarTickMotion:
         card.setData(card.item, 0)
         second = card.motion()
         assert second is not None and second is not first
-        assert round(float(second.startValue()) * 10000) == drawn
+        width = bar.width()
+        assert round(float(second.startValue()) * width) == round(drawn * width / 10000)
         assert bar.value() >= drawn
         second.setCurrentTime(1)
         assert bar.value() >= drawn
 
-    def test_bar_draws_a_value_between_whole_percents(self, qapp) -> None:
-        """37% → 38% 틱의 40% 시점이면 막대 값이 3740이고 화소도 37.4% 자리까지 칠해져야 한다.
-
-        카드 폭 900, 모션 시간의 40% -> 값 3740(0.01% 단위), 막대 폭의 37.4% − 2px 자리 진행 색 ·
-        37.4% + 2px 자리 테두리 색(37%와 38% 경계 사이)
-        """
+    def _slow_tick(self) -> ContentItemWidget:
+        """받는 중 37% 카드에 38% 틱을 준다(카드 폭 900 — 1%가 막대 몇 px)."""
         item = _item(DownloadState.RUNNING)
         item.download_progress = 37
         card = _card(item)
         item.download_progress = 38
         card.setData(item, 0)
+        return card
+
+    def test_bar_draws_a_value_between_whole_percents(self, qapp) -> None:
+        """37% → 38% 틱의 40% 시점이면 막대가 37.4% 화소 자리까지 칠해져야 한다.
+
+        카드 폭 900, 모션 시간의 40% -> 값 == 37.4%를 막대 폭 1px로 묶은 값(0.01% 단위), 막대 폭의
+        37.4% − 2px 자리 진행 색 · 37.4% + 2px 자리 테두리 색(37%와 38% 경계 사이)
+        """
+        card = self._slow_tick()
         motion = card.motion()
         motion.setCurrentTime(motion.duration() * 4 // 10)
         bar = card.progressBar
-        assert bar.value() == 3740
+        assert bar.value() == round(round(0.374 * bar.width()) / bar.width() * 10000)
         edge = bar.width() * 0.374
         assert bar.width() * 0.37 < edge - 2 and edge + 2 < bar.width() * 0.38, (
             "전제: 1%가 4px보다 넓다"
@@ -937,6 +957,48 @@ class TestBarTickMotion:
         y = bar.height() // 2
         assert _close(_pixel(bar, int(edge) - 2, y), _token("stateRunning"))
         assert _close(_pixel(bar, int(edge) + 2, y), _token("border"))
+
+    def test_motion_frames_redraw_only_when_a_pixel_changes(self, qapp) -> None:
+        """37% → 38% 모션을 1ms씩 돌리면 막대 값이 1px씩만 바뀌고 다시 그리기가 화소 수 남짓이어야 한다.
+
+        카드 폭 900, 모션 시간 1000ms를 1ms씩(1001 프레임), 프레임마다 이벤트 처리
+        -> 값이 바뀐 횟수 ≤ 38% · 37% 화소 차 + 2(첫 프레임 · 모션 끝은 같은 화소 안에서 정확한 값과
+        묶은 값이 오감), 바뀔 때마다 그린 화소가 0 또는 1 늘어남(뒤로 가지 않음), 막대 다시 그리기 ≤
+        화소 차 + 2
+        """
+        card = self._slow_tick()
+        bar = card.progressBar
+        width = bar.width()
+        span = round(0.38 * width) - round(0.37 * width)
+        assert span >= 4, "전제: 1%가 막대 4px 이상"
+        values: list[int] = []
+        bar.valueChanged.connect(values.append)
+        paints = _PaintCounter(bar)
+        QApplication.processEvents()
+        paints.count = 0
+        motion = card.motion()
+        for ms in range(motion.duration() + 1):
+            motion.setCurrentTime(ms)
+            QApplication.processEvents()
+        assert len(values) <= span + 2, values
+        pixels = [round(value * width / 10000) for value in values]
+        assert all(b - a in (0, 1) for a, b in zip(pixels, pixels[1:])), pixels
+        assert paints.count <= span + 2, f"다시 그리기 {paints.count}번 · 화소 차 {span}"
+
+    def test_width_change_snaps_to_the_new_width(self, qapp) -> None:
+        """모션 도중 카드 폭이 바뀌면 다음 프레임의 막대 값이 새 막대 폭의 1px 단위여야 한다.
+
+        37% → 38% 모션 30%, 카드 900 → 600, 모션 60% -> 값 == 그때 비율을 새 폭 1px로 묶은 값
+        """
+        card = self._slow_tick()
+        motion = card.motion()
+        motion.setCurrentTime(motion.duration() * 3 // 10)
+        _at(card, 600)
+        motion.setCurrentTime(motion.duration() * 6 // 10)
+        bar = card.progressBar
+        width = bar.width()
+        fraction = float(motion.currentValue())
+        assert bar.value() == round(round(fraction * width) / width * 10000)
 
 
 class TestLastFoldOfTheCuttingCard:
