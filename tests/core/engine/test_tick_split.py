@@ -77,13 +77,17 @@ def _whole(rows) -> list[tuple[float, float, float]]:
 
 
 def _halves(rows) -> list[tuple[float, float, float]]:
-    """1초 표본 하나를 0.5초 표본 둘(속도 × 1.3 · × 0.7, 잰 시간 반씩)로 쪼갠다 — 묶으면 원래 속도."""
+    """1초 표본 하나를 0.5초 표본 둘(속도 × 1.3 · × 0.7, 잰 시간 반씩)로 쪼갠다 — 묶으면 원래 속도.
+
+    앞 · 뒤 어느 쪽이 빠른지는 표본마다 번갈아 — 묶음 속도를 마지막 표본으로 잘못 쓰면 흔들림이 된다.
+    """
     previous = rows[0][0] - 1.0
     out = []
-    for now, speed, _target in rows:
+    for index, (now, speed, _target) in enumerate(rows):
         half = (now - previous) / 2
-        out.append((previous + half, speed * (1 + SPLIT), half))
-        out.append((now, speed * (1 - SPLIT), half))
+        sign = 1 if index % 2 == 0 else -1
+        out.append((previous + half, speed * (1 + sign * SPLIT), half))
+        out.append((now, speed * (1 - sign * SPLIT), half))
         previous = now
     return out
 
