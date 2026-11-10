@@ -1208,7 +1208,7 @@ def _window_with(samples: tuple) -> tuple[VodDownloader, list[ContentItemWidget]
     items = []
     for state, fields in samples:
         item = _item(state, path=OTHER_DIR, channel="a channel name longer than the cap")
-        item.download_progress = 100
+        item.download_progress = 99.9  # 「99.9%」 — 가장 긴 진행률 글(#557)
         item.download_size = 1023 * 1024 * 1024 + 1000 * 1024  # 「1023.98 MB」
         item.download_remain_time = "99:59:59"
         item.download_time = "99:59:59"
@@ -1262,7 +1262,7 @@ class TestWindowMinimum:
             else:
                 assert status == card.statusLabel.text(), f"{state}: {status!r}"
             if state in (DownloadState.RUNNING, DownloadState.PAUSED):
-                assert "100%" in status
+                assert "99.9%" in status
 
 
 class TestChannelDefaultImage:

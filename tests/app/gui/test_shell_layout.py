@@ -258,7 +258,7 @@ def _worst_folded_card_minimum() -> int:
         item.resolution = 1080
         item.total_size = "0000.00 MB"
         item.downloadState = state
-        item.download_progress = 100
+        item.download_progress = 99.9  # 「99.9%」 — 소수 진행률에서 가장 긴 꼴(#557)
         item.download_size = 1023 * 1024 * 1024 + 1000 * 1024  # 「1023.98 MB」
         item.download_remain_time = "99:59:59"
         item.download_time = "99:59:59"
