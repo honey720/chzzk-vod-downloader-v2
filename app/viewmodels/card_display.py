@@ -11,6 +11,11 @@
 from dataclasses import dataclass
 
 from app.system import settings
+from core.engine.base import PROGRESS_SECONDS
+
+# 엔진의 진행 통지 간격(ms) — 카드 막대가 통지 사이를 이어 움직이는 시간의 정본(#557). 같은 값을
+# 앱에 따로 박지 않는다
+PROGRESS_INTERVAL_MS = round(PROGRESS_SECONDS * 1000)
 
 PROGRESS_KEY = "cardProgress"  # 진행 표시 — "bar"(막대, 기본) · "fill"(배경 채움)
 COMPACT_THUMBNAIL_KEY = "cardCompactThumbnail"  # 썸네일 줄이기 — 참이면 「위 두 줄 옆」 68×38
