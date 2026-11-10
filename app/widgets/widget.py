@@ -1097,9 +1097,15 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             self._animate(self._shown, 0.0, old_state, STOP_MOTION_MS, QEasingCurve.Type.OutCubic)
             return
         motion = self._motion
-        if motion is not None and not busy and float(motion.endValue()) == fraction:
-            # 같은 목표로 가는 모션은 그대로 둔다 — 중지 모션 도중 늦게 온 대기 갱신(#554 리뷰), 틱 안의
-            # 다른 갱신이 모션을 끊거나 처음부터 다시 돌리지 않게. 끝에서 `_onMotionFinished`가 맞춘다
+        if (
+            motion is not None
+            and not busy
+            and previous == raw
+            and float(motion.endValue()) == fraction
+        ):
+            # 상태가 그대로이고 같은 목표로 가는 모션은 그대로 둔다 — 중지 모션 도중 늦게 온 대기 갱신(#554
+            # 리뷰), 틱 안의 다른 갱신이 모션을 끊거나 처음부터 다시 돌리지 않게. 끝에서 `_onMotionFinished`가
+            # 맞춘다. 상태가 바뀌면(일시정지 등) 모션이 쥔 옛 색이 남지 않게 아래 길로 간다
             return
         if (
             display.animations

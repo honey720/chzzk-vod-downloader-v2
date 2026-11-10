@@ -908,6 +908,21 @@ class TestBarTickMotion:
         assert values == [7000]
         assert card.motion() is None
 
+    def test_pause_during_a_tick_motion_takes_the_paused_colour_at_once(self, qapp) -> None:
+        """틱 모션 도중 같은 진행률로 일시정지가 오면 막대가 바로 일시정지 색 · 그 진행률이고 모션이 없어야 한다.
+
+        받는 중 40% → 60% 틱, 모션 반쯤에 일시정지(60%) -> 막대 state "paused" · 값 6000 · 모션 없음
+        """
+        card = self._ticked()
+        motion = card.motion()
+        motion.setCurrentTime(motion.duration() // 2)
+        card.item.downloadState = DownloadState.PAUSED
+        card.setData(card.item, 0)
+        bar = card.progressBar
+        assert card.motion() is None
+        assert bar.property("state") == "paused"
+        assert bar.value() == 6000
+
     def test_finished_bar_motions_do_not_pile_up_on_the_card(self, qapp) -> None:
         """막대 방식에서 틱 다섯 번의 모션이 끝나면 카드에 남은 모션 객체가 0개여야 한다.
 
