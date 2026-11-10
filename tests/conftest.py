@@ -43,6 +43,7 @@ from tests.qt_platform import apply as apply_qt_platform_defaults  # noqa: E402
 apply_qt_platform_defaults(os.environ, sys.platform)
 
 import app.system.settings as settings_module  # noqa: E402 — sys.path 삽입 후에 와야 한다
+import app.viewmodels.card_display as card_display  # noqa: E402
 import core.sources.hls_aes_downloader as hls_aes_module  # noqa: E402
 import core.sources.m3u8_downloader as m3u8_module  # noqa: E402
 from core.utils.paths import temp_dir_for  # noqa: E402
@@ -215,6 +216,17 @@ def _isolate_real_config(tmp_path, monkeypatch) -> None:
     isolated_dir = tmp_path / "_isolated_config"
     monkeypatch.setattr(settings_module, "DATA_DIR", str(isolated_dir))
     monkeypatch.setattr(settings_module, "_memory", None)
+
+
+@pytest.fixture(autouse=True)
+def _reset_card_display() -> Iterator[None]:
+    """카드 화면 설정(`card_display`)의 읽어 둔 값을 테스트 앞뒤로 비운다 (#554).
+
+    비우지 않으면 앞 테스트가 고른 진행 표시 · 썸네일 모양이 뒤 테스트의 카드에 남는다.
+    """
+    card_display.use(None)
+    yield
+    card_display.use(None)
 
 
 # ============ 전역 choose_temp_dir 격리 (#192) ============

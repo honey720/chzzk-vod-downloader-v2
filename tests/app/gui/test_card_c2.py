@@ -33,6 +33,8 @@ from tests.app.gui.card_helpers import (
 )
 
 DEFAULT_DIR = "C:/dl"  # 전역 저장 위치 — 카드의 저장 위치가 이것이면 3줄에 보이지 않는다
+# 대체 글꼴(빈 글꼴 폴더)에서도 3줄이 접히지 않는 카드 폭(px) — 저장 위치 이름이 보여야 하는 테스트가 쓴다(#554)
+WIDE = 2400
 
 
 @pytest.fixture(autouse=True)
@@ -261,7 +263,7 @@ class TestRows:
         """
         default = _card()
         assert not default.directoryLabel.isVisible() and not default.pathIcon.isVisible()
-        other = _card(path="D:/vod/lck")
+        other = _card(path="D:/vod/lck", width=WIDE)
         assert other.directoryLabel.isVisible() and other.pathIcon.isVisible()
         assert other.directoryLabel.text() == "lck"
         assert other.directoryLabel.toolTip() == "D:/vod/lck"
@@ -285,7 +287,8 @@ class TestRows:
         """좁은 목록에서 정보 글이 줄에 안 들어가면 카드가 목록 밖으로 넘치지 않고 정보 글이 줄 안에서 잘려야 한다.
 
         구간 셋 · 다른 저장 위치 대기 카드 · 목록 폭 = 카드가 자기 최소폭을 받는 폭
-        -> 카드 오른쪽 끝 ≤ 뷰포트 폭, 정보 글 오른쪽 끝 ≤ 3줄 폭, 정보 글 툴팁 첫 줄 = 전체 글
+        -> 카드 오른쪽 끝 ≤ 뷰포트 폭, 정보 글 오른쪽 끝 ≤ 3줄 폭, 정보 글 툴팁 첫 줄 = 넓은 목록
+        (800)에서 보이던 전체 글(#554 — 좁으면 접힌 글이 보인다)
         """
         view = ContentListView()
         model = ContentListModel()
@@ -297,6 +300,7 @@ class TestRows:
         view.show()
         QApplication.processEvents()
         card = view.widgetFor(item)
+        wide_info = card.fileSizeLabel.text()
         around = view.width() - card.width()  # 목록 폭 − 카드 폭(바깥 여백 · 테두리)
         # 카드 최소폭보다 좁은 창은 없다 — 카드가 최소폭을 받는 폭에서 잰다(글꼴과 무관)
         view.resize(card.minimumSizeHint().width() + around, 400)
@@ -307,13 +311,14 @@ class TestRows:
         assert card.geometry().right() < view.viewport().width()
         assert info.geometry().right() < card.statusRow.width()
         assert info.isElided()
-        assert info.toolTip().splitlines()[0] == info.text()
+        assert info.toolTip().splitlines()[0] == wide_info
 
     def test_status_text_gives_way_before_the_info_text(self, qapp) -> None:
-        """줄이 정보 글 전체와 「…」까지 준 상태 글만큼이면 상태 글이 먼저 잘리고 정보 글은 온전해야 한다.
+        """다 접은 줄이 정보 글과 「…」까지 준 상태 글만큼이면 상태 글이 먼저 잘리고 정보 글은 온전해야 한다.
 
-        받는 중 구간 카드(구간 셋, 받을 크기 모름 — 정보 글 한 꼴) · 다른 저장 위치
-        3줄 폭 = 상태 원 + 간격 + 「…」 상태 글 최소 + 간격 + 폴더 아이콘 + 간격 2 + 정보 글 전체 + 여유 10
+        받는 중 구간 카드(구간 셋, 받을 크기 모름 — 정보 글 한 꼴) · 다른 저장 위치, 먼저 카드 폭 300으로
+        다 접음(#554 — 저장 위치 · 속도 · 남은 시간이 빠짐)
+        3줄 폭 = 상태 원 + 간격 + 상태 글 앞 세 글자와 「…」 + 간격 + 접힌 정보 글 + 여유 10
         (카드 폭 = 3줄 폭 + 테두리 2 + 안쪽 여백 16 + 썸네일 110 + 간격 12)
         -> 정보 글 안 잘림, 상태 글 잘림
         """
@@ -326,11 +331,14 @@ class TestRows:
         card.item.total_size = ""
         card.item.download_size = 3_400_000_000  # 3.17 GB
         card.setData(card.item, 0)
+        card.resize(300, card.height())
         QApplication.processEvents()
         info, status = card.fileSizeLabel, card.statusLabel
+        assert not card.pathIcon.isVisible(), "전제: 다 접혀 저장 위치가 빠졌다"
         info_full = info.fontMetrics().horizontalAdvance(info.text()) + 4
-        # 상태 원 16 · 간격 4 · 폴더 아이콘 16
-        row = 16 + 4 + status.minimumSizeHint().width() + 4 + 16 + 2 * 4 + info_full + 10
+        # 상태 원 16 · 간격 4 · 줄여도 남는 상태 글(앞 세 글자 + 「…」, #554)
+        kept = status.fontMetrics().horizontalAdvance(status.text()[:3] + "…") + 4
+        row = 16 + 4 + kept + 4 + info_full + 10
         card.resize(row + 2 + 16 + 110 + 12, card.height())
         QApplication.processEvents()
         assert card.statusRow.width() == row, "전제: 3줄 폭이 계산한 폭이다"
@@ -888,7 +896,7 @@ class TestTipBubbles:
 
         "D:/vod/lck" 카드 · 카드 · 저장 위치 글 들어감 -> 말풍선 글 "D:/vod/lck"
         """
-        card = _card(path="D:/vod/lck")
+        card = _card(path="D:/vod/lck", width=WIDE)
         enter(card)
         enter(card.directoryLabel)
         assert bubble_text_for(card.directoryLabel) == "D:/vod/lck"

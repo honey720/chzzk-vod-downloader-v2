@@ -654,19 +654,23 @@ def test_total_size_is_the_first_thing_to_give_way_when_the_card_narrows(qtbot, 
     """창이 좁아지면 받을 크기가 상태 글보다 먼저 빠져 받은 크기만 남아야 한다.
 
     인코딩 완료 VOD 받는 중 · 일시정지(받은 100 MiB / 전체 28.99 GB), 넓은 창에서 4px씩 좁힘
-    -> 처음 글이 바뀐 폭에서: 크기 == "1080p · 100.00 MB", 상태 글은 잘리지 않음, 저장 위치 칸은 남아 있음
+    -> 처음 글이 바뀐 폭에서: 크기 == "1080p · 100.00 MB", 상태 글은 잘리지 않음, 저장 위치는 이미
+    빠짐(아이콘 · 이름 둘 다 숨음 — #554 접는 차례: 저장 위치가 받을 크기보다 먼저)
     -> 더 좁혀 상태 글이 잘릴 때까지: 크기 글은 다시 길어지지 않음
     """
-    window, widget = _card("video", state, received=100 * MB)
+    # 넓은 창 — 대체 글꼴(빈 글꼴 폴더)에서도 접기 전 모양이 들어가는 폭
+    window, widget = _card("video", state, received=100 * MB, width=2400)
     qtbot.addWidget(window)
     full = "1080p · 100.00 MB / 28.99 GB"
     assert shown(widget.fileSizeLabel) == full, "전제: 넓은 창에서는 다 적는다"
+    assert widget.directoryLabel.isVisible(), "전제: 넓은 창에서는 저장 위치가 보인다"
 
     _narrow_until(window, widget, lambda: widget.fileSizeLabel.text() != full)
 
     assert shown(widget.fileSizeLabel) == "1080p · 100.00 MB"
     assert QLabel.text(widget.statusLabel) == widget.statusLabel.text()  # 말줄임 없음
-    assert widget.directoryLabel.isVisible()
+    assert not widget.directoryLabel.isVisible()
+    assert not widget.pathIcon.isVisible()
 
     seen = []
     _narrow_until(
@@ -681,10 +685,11 @@ def test_total_size_is_the_first_thing_to_give_way_when_the_card_narrows(qtbot, 
 
 
 def test_section_card_keeps_what_it_received_when_the_card_narrows(qtbot) -> None:
-    """구간 카드도 좁아지면 받을 구간의 합이 빠지고 받은 크기가 남아야 한다.
+    """구간 카드도 좁아지면 구간 길이 다음에 받을 구간의 합이 빠지고 받은 크기가 남아야 한다.
 
     구간 둘, 크기 200 MiB, 엔진이 받을 바이트 200 MiB 가운데 50 MiB를 받음, 넓은 창에서 4px씩 좁힘
-    -> 처음 글이 바뀐 폭에서: 크기 == "1080p · 50.00 MB · 20:00 · Sections 2"
+    -> 처음 글이 바뀐 폭에서: 크기 == "1080p · 50.00 MB / 200.00 MB · Sections 2"(길이 먼저 — #554)
+    -> 다음에 바뀐 폭에서: 크기 == "1080p · 50.00 MB · Sections 2"
     """
     window, widget = _card(
         "video",
@@ -700,7 +705,12 @@ def test_section_card_keeps_what_it_received_when_the_card_narrows(qtbot) -> Non
 
     _narrow_until(window, widget, lambda: widget.fileSizeLabel.text() != full)
 
-    assert shown(widget.fileSizeLabel) == "1080p · 50.00 MB · 20:00 · Sections 2"
+    no_length = "1080p · 50.00 MB / 200.00 MB · Sections 2"
+    assert shown(widget.fileSizeLabel) == no_length
+
+    _narrow_until(window, widget, lambda: widget.fileSizeLabel.text() != no_length)
+
+    assert shown(widget.fileSizeLabel) == "1080p · 50.00 MB · Sections 2"
 
 
 def test_preparing_card_shows_the_text_and_a_bar_without_a_value(qtbot) -> None:
@@ -721,7 +731,7 @@ def test_preparing_card_shows_the_text_and_a_bar_without_a_value(qtbot) -> None:
     _pump()
 
     assert shown(widget.statusLabel).startswith("42%")
-    assert (widget.progressBar.maximum(), widget.progressBar.value()) == (100, 42)
+    assert (widget.progressBar.maximum(), widget.progressBar.value()) == (10000, 4200)
 
 
 # ================================================================ 실제 창
@@ -1304,7 +1314,7 @@ def test_card_shows_preparing_until_the_engine_reports_progress(qtbot, window, m
     _pump()
 
     assert shown(widget.statusLabel).startswith("0%")
-    assert widget.progressBar.maximum() == 100
+    assert widget.progressBar.maximum() == 10000
 
 
 def test_a_short_prepare_never_shows_preparing(qtbot, window) -> None:
@@ -1325,7 +1335,7 @@ def test_a_short_prepare_never_shows_preparing(qtbot, window) -> None:
     assert win.downloadViewModel._prepareTimer.isActive(), "전제: 아직 지연 안이다"
     assert not item.preparing
     assert shown(widget.statusLabel) != "Preparing"
-    assert widget.progressBar.maximum() == 100
+    assert widget.progressBar.maximum() == 10000
 
     _first_progress(engine.submissions[0])
     qtbot.waitUntil(lambda: not win.downloadViewModel._prepareTimer.isActive(), timeout=3000)
@@ -1352,7 +1362,7 @@ def test_preparing_is_cleared_when_the_download_fails_while_preparing(qtbot, win
     _pump()
 
     assert not item.preparing
-    assert widget.progressBar.maximum() == 100
+    assert widget.progressBar.maximum() == 10000
 
 
 def test_memory_is_logged_at_each_point_of_the_section_download(

@@ -463,25 +463,15 @@ class TestNoHorizontalOverflow:
             f"오른쪽 말줄임이 아니다 — 접두사가 원문과 안 맞는다: {rendered_title[:-1]!r}"
         )
 
-        # 가운데 말줄임(경로) — 좁은 폭에서는 저장 위치가 상태 글 · 정보 글보다 먼저 줄어
-        # 0폭이 될 수 있다(#245 · #550). 그래서 "…" 앞뒤에 글자가 처음 함께 남는 폭까지
-        # 넓혀 잰다(px를 박지 않아 폰트 무의존). 그 폭에서 "…" 앞뒤가 원문의 접두사 · 접미사다.
+        # 경로 — 저장 위치 이름은 말줄임하지 않고 다 들어갈 때만 보이며, 모자라면 아이콘으로
+        # 접힌다(#554 — 3줄 접는 단계 ①). 좁은 폭에서는 이름이 숨고, 넓혀 이름이 처음 보이는 폭에서
+        # 표시 문자열이 원문 그대로다(px를 박지 않아 폰트 무의존)
+        assert not widget.directoryLabel.isVisible(), "전제: 300px에서 저장 위치 이름이 접혔다"
         width = 300
-        rendered_path = shown(widget.directoryLabel)
-        while not (
-            "…" in rendered_path
-            and not rendered_path.startswith("…")
-            and not rendered_path.endswith("…")
-        ):
-            assert rendered_path != full_path, (
-                f"경로가 앞뒤를 남긴 말줄임 없이 다 보였다 — 가운데 말줄임이 아니다: {width}px"
-            )
+        while not widget.directoryLabel.isVisible():
             width += 8
-            assert width <= 2000, "경로 라벨이 어떤 폭에서도 앞뒤를 남겨 잘리지 않는다"
+            assert width <= 2000, "저장 위치 이름이 어떤 폭에서도 보이지 않는다"
             v.resize(width, 400)
             for _ in range(4):
                 qapp.processEvents()
-            rendered_path = shown(widget.directoryLabel)
-        before, _, after = rendered_path.partition("…")
-        assert full_path.startswith(before), f"가운데 말줄임이 아니다 — 앞부분 불일치: {before!r}"
-        assert full_path.endswith(after), f"가운데 말줄임이 아니다 — 뒷부분 불일치: {after!r}"
+        assert shown(widget.directoryLabel) == full_path, f"{width}px에서 저장 위치 이름이 잘렸다"

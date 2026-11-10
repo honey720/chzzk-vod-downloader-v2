@@ -105,12 +105,13 @@ def _make_widget(qapp, state, progress=0, *, post_process=False) -> ContentItemW
 
 
 #: 상태 → (조작 버튼 이름, 도형 이름, 진행바 표시, 진행바 색 상태)
+#: 완료 · 실패는 끝까지 찬 상태 색 막대다(#554)
 MATRIX = {
     DownloadState.WAITING: ("editButton", "edit", False, "waiting"),
     DownloadState.RUNNING: ("pauseButton", "pause", True, "running"),
     DownloadState.PAUSED: ("pauseButton", "resume", True, "paused"),
-    DownloadState.FINISHED: ("openDirectoryButton", "folder", False, "finished"),
-    DownloadState.FAILED: ("retryButton", "retry", False, "failed"),
+    DownloadState.FINISHED: ("openDirectoryButton", "folder", True, "finished"),
+    DownloadState.FAILED: ("retryButton", "retry", True, "failed"),
 }
 
 ACTION_BUTTONS = ("editButton", "pauseButton", "openDirectoryButton", "retryButton")
@@ -189,7 +190,7 @@ class TestSlotColumn:
         QApplication.processEvents()
         assert widget.pauseButton.isVisible() and widget.pauseButton.isEnabled()
         assert widget.pauseButton.iconName() == "pause"
-        assert widget.progressBar.isVisible() and widget.progressBar.value() == 13
+        assert widget.progressBar.isVisible() and widget.progressBar.value() == 1300
 
     def test_paused_shows_percent_first_then_paused(self, qapp) -> None:
         widget = _make_widget(qapp, DownloadState.PAUSED, 54)
@@ -251,6 +252,9 @@ class TestSlotColumn:
         widget = _make_widget(qapp, DownloadState.FAILED)
         widget.item.stateMessage = "Segments look corrupted · download again\nPostprocessing failed because segments were corrupted."
         widget.setData(widget.item, 0)
+        # 사유 뒤(조치 안내)는 좁으면 접힌다(#554) — 대체 글꼴에서도 다 들어가는 폭에서 잰다
+        widget.resize(2400, widget.height())
+        QApplication.processEvents()
         assert widget.statusLabel.text() == "Segments look corrupted · download again"
         assert widget.statusLabel.toolTip() == widget.item.stateMessage
 
@@ -477,7 +481,7 @@ class TestProgressBarColumn:
 
     def test_paused_bar_keeps_the_progress_value(self, qapp) -> None:
         widget = _make_widget(qapp, DownloadState.PAUSED, 54)
-        assert widget.progressBar.value() == 54
+        assert widget.progressBar.value() == 5400
 
     def test_paused_colour_is_distinct_from_running_and_waiting(self) -> None:
         """muted는 "다른 색"이어야 정보다 — 진행 파랑·대기 회색 둘 다와 달라야 한다."""
@@ -512,9 +516,14 @@ class TestRightColumnResolutionAndSize:
         widget = _make_widget(qapp, DownloadState.WAITING)
         assert widget.fileSizeLabel.text() == "1080p · 595.34 MB · 1:00:00"
 
-    def test_failed_hides_the_size_slot(self, qapp) -> None:
+    def test_failed_shows_resolution_and_length(self, qapp) -> None:
+        """실패 카드의 정보 글은 해상도 · 크기 · 길이여야 한다 (#554).
+
+        1080 · 595.34 MB · 3600초 실패 카드 -> "1080p · 595.34 MB · 1:00:00"
+        """
         widget = _make_widget(qapp, DownloadState.FAILED)
-        assert not widget.fileSizeLabel.isVisible()
+        assert widget.fileSizeLabel.isVisible()
+        assert widget.fileSizeLabel.text() == "1080p · 595.34 MB · 1:00:00"
 
 
 class TestHeightIsInvariantAcrossFiveStates:

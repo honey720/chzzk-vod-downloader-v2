@@ -39,6 +39,9 @@ VALID = {
     "favoritePaths": [{"name": "녹화", "path": "D:/rec"}],
     "recentPaths": ["E:/vod", "D:/old"],
     "sortOrder": "title:desc",
+    "cardProgress": "fill",
+    "cardCompactThumbnail": True,
+    "animations": False,
 }
 
 

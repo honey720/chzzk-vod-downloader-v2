@@ -233,6 +233,66 @@ class TestGetVideoInfo:
         assert info.metadata["title"] == "탭금지문자제어문자"
 
 
+def _video_content(load_mock_response, **changes: object) -> dict:
+    """픽스처 응답의 content를 고친다 — 값이 `_DROP`이면 그 키를 지운다."""
+    content = json.loads(load_mock_response("video_member_only_13714380.json"))["content"]
+    for key, value in changes.items():
+        if value is _DROP:
+            content.pop(key, None)
+        else:
+            content[key] = value
+    return content
+
+
+_DROP = object()  # `_video_content`에서 키를 지우라는 표식
+
+
+def _created_date(monkeypatch, content: dict) -> object:
+    body = json.dumps({"content": content})
+    monkeypatch.setattr(network._session, "get", lambda url, **kwargs: MockResponse(text=body))
+    return NetworkManager.get_video_info("1", {}).metadata["createdDate"]
+
+
+class TestVideoDate:
+    """카드 날짜(`createdDate`) — 방송 시작 시각, 없으면 공개 시각(업로드 영상, #554)."""
+
+    def test_replay_uses_the_live_open_date(self, monkeypatch, load_mock_response) -> None:
+        """liveOpenDate가 있으면 createdDate가 liveOpenDate여야 한다.
+
+        픽스처 liveOpenDate "2026-06-15 04:08:06", publishDate "2026-06-15 09:59:58"
+        -> "2026-06-15 04:08:06"
+        """
+        content = _video_content(load_mock_response)
+        assert _created_date(monkeypatch, content) == "2026-06-15 04:08:06"
+
+    @pytest.mark.parametrize("live", [None, _DROP], ids=["null", "missing"])
+    def test_upload_without_a_live_open_date_uses_the_publish_date(
+        self, monkeypatch, load_mock_response, live: object
+    ) -> None:
+        """liveOpenDate가 null이거나 없으면 createdDate가 publishDate여야 한다.
+
+        픽스처에서 liveOpenDate = null · 키 없음, publishDate "2026-06-15 09:59:58"
+        -> "2026-06-15 09:59:58"
+        """
+        content = _video_content(load_mock_response, liveOpenDate=live)
+        assert _created_date(monkeypatch, content) == "2026-06-15 09:59:58"
+
+    @pytest.mark.parametrize(
+        "live,publish,expected",
+        [(None, None, None), (_DROP, _DROP, "Unknown Date")],
+        ids=["both-null", "both-missing"],
+    )
+    def test_without_both_dates_the_old_value_stays(
+        self, monkeypatch, load_mock_response, live: object, publish: object, expected: object
+    ) -> None:
+        """liveOpenDate · publishDate가 둘 다 없으면 createdDate가 고치기 전과 같아야 한다.
+
+        둘 다 null -> None, 둘 다 키 없음 -> "Unknown Date"
+        """
+        content = _video_content(load_mock_response, liveOpenDate=live, publishDate=publish)
+        assert _created_date(monkeypatch, content) == expected
+
+
 class TestGetVideoM3u8BaseUrl:
     """NetworkManager.get_video_m3u8_base_url의 요청 구성 검증 (#55)."""
 

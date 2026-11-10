@@ -56,6 +56,7 @@ from app.widgets.tip_bubble import ErrorTip, close_floats_if_left, install_tips,
 from app.widgets.os_notice import DownloadEndNotice
 from app.widgets.view import ContentListView
 from core.models.download_state import DownloadState
+from core.models.plan import TimeRange
 import app.theme as theme
 
 logger = logging.getLogger(__name__)
@@ -78,6 +79,47 @@ REFERENCE_CARD_METADATA = {
     "createdDate": "",
     "duration": 3600,
 }
+
+
+WORST_SECTIONS = 99  # 견본 카드의 구간 수 — 상태 글의 「 · 99/99」가 두 자리일 때(#554)
+WORST_TIME = "99:59:59"  # 견본 카드의 남은 · 걸린 시간 — 짧은 표기에서 가장 긴 꼴(#554)
+WORST_RECEIVED = (
+    1023 * 1024 * 1024 + 1000 * 1024
+)  # 견본 카드의 받은 바이트 — 「1023.98 MB」(MB 표기의 끝)
+
+
+def _worst_card_items() -> list[ContentItem]:
+    """창 최소폭을 셀 견본 아이템 — 상태마다 상태 글이 가장 긴 모양 하나씩 (#554).
+
+    대기 · 받는 중 · 자르기 준비 · 일시정지 · 완료 · 실패(구간 일부)다. 저장 위치는 기본 위치와 다르게
+    둔다(다를 때만 3줄에 보인다 — 다 접으면 빠지지만 접기 전 단계의 필요 폭이 바뀐다).
+    """
+    sections = tuple(TimeRange(i * 10, i * 10 + 5) for i in range(WORST_SECTIONS))
+    metadata = dict(REFERENCE_CARD_METADATA, channelName="Chzzk VOD Downloader Channel")
+
+    def sample(state: DownloadState, **fields: object) -> ContentItem:
+        item = ContentItem("", dict(metadata), [], None, "", "Reference folder", "video", None)
+        item.resolution = 1080
+        item.total_size = "0000.00 MB"
+        item.downloadState = state
+        item.download_progress = 100
+        item.download_size = WORST_RECEIVED
+        item.download_remain_time = WORST_TIME
+        item.download_time = WORST_TIME
+        for name, value in fields.items():
+            setattr(item, name, value)
+        return item
+
+    done = {"selections": sections, "sections_done": WORST_SECTIONS}
+    return [
+        sample(DownloadState.WAITING),
+        sample(DownloadState.WAITING, selections=sections),
+        sample(DownloadState.RUNNING),
+        sample(DownloadState.RUNNING, post_process=True, cut_preparing=True, **done),
+        sample(DownloadState.PAUSED),
+        sample(DownloadState.FINISHED, **done),
+        sample(DownloadState.FAILED, sections_failed=WORST_SECTIONS, **done),
+    ]
 
 
 def window_title(version: str) -> str:
@@ -865,35 +907,27 @@ class VodDownloader(QMainWindow):
         return margins.top() + bars + list_height + gaps + margins.bottom()
 
     def _referenceCardWidth(self) -> int:
-        """대기 카드 한 장의 최소폭 — 창 최소폭의 카드 몫 (#545 · #550).
+        """가장 나쁜 견본 카드를 다 접었을 때의 폭 — 창 최소폭의 카드 몫 (#545 · #550 · #554).
 
-        카드 버튼은 1줄 위에 겹쳐 놓으므로(#550) 최소폭에 들지 않는다 — 최소폭은 썸네일과 세 줄의
-        최소 폭이 정한다. 창 최소폭이 카드 없이 센 값이면 가장 좁은 창에서 카드가 넘친다.
+        카드 버튼은 1줄 위에 겹쳐 놓으므로(#550) 최소폭에 들지 않는다. 카드는 3줄을 단계마다 접고
+        날짜 연도를 빼므로(#554) 최소폭은 상태마다 다 접은 모양(`foldedMinimumWidth`)의 가장 큰 값이다.
+        창 최소폭이 카드 없이 센 값이면 가장 좁은 창에서 카드가 넘친다.
 
-        견본은 카드 내용과 무관한 고정 카드다 — 카드 수와 상관없이 최소폭이 같다. 3줄 정보 글은
-        말줄임하지 않으므로(#550) 가장 긴 대기 정보 글(해상도 · 크기 자리 · 길이)과 저장 위치를 넣는다.
-        크기 자리는 「확인 중...」과 「0000.00 MB」 가운데 넓은 쪽이다. 채널명은 최소폭 상한
-        (`_clampChannelMinWidth` 64px)에 닿는 긴 이름으로 둔다. 해상도 목록을 비워 크기 조회 스레드를
-        타지 않고, 썸네일 · 채널 그림 주소가 비어 네트워크도 없다.
+        견본은 카드 내용과 무관한 고정 카드다 — 카드 수와 상관없이 최소폭이 같다. 상태 글이 가장 긴
+        모양(구간 99개 · 진행률 100%)을 상태마다 하나씩 둔다. 채널명은 최소폭 상한
+        (`_clampChannelMinWidth` 64px)에 닿는 긴 이름이다. 해상도 목록을 비워 크기 조회 스레드를 타지
+        않고, 썸네일 · 채널 그림 주소가 비어 네트워크도 없다.
         """
-        metadata = dict(REFERENCE_CARD_METADATA, channelName="Chzzk VOD Downloader Channel")
-        # 저장 위치는 기본 위치와 다르게 둔다 — 다를 때만 3줄에 보인다
-        item = ContentItem("", metadata, [], None, "", "Reference folder", "video", None)
-        item.resolution = 1080
+        return max(self._foldedWidth(item) for item in _worst_card_items())
+
+    def _foldedWidth(self, item: ContentItem) -> int:
+        """견본 아이템 하나로 카드를 띄워 다 접은 폭을 잰다 — 그리지 않고 바로 버린다."""
         card = content_widget.ContentItemWidget(item)
         card.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
-        card.fileSizeLabel.ensurePolished()  # 정보 글의 글꼴(QSS 12px)로 잰다
-        metrics = card.fileSizeLabel.fontMetrics()
-        checking = QCoreApplication.translate("ContentItemWidget", "Checking...")
-        item.total_size = max((checking, "0000.00 MB"), key=metrics.horizontalAdvance)
         card.setData(item, 0)
-        # 정보 글은 줄이 모자라면 말줄임한다(#550 — 넘침 금지). 창 최소폭에서는 이 견본의 정보 글이
-        # 줄지 않아야 하므로 견본에만 정보 글 전체 폭을 최소폭으로 건다
-        info = card.fileSizeLabel
-        info.setMinimumWidth(metrics.horizontalAdvance(info.text()) + 4)
-        card.show()
+        card.show()  # 글꼴(QSS)이 붙은 뒤에 잰다
         card.layout().activate()
-        width = card.minimumSizeHint().width()
+        width = card.foldedMinimumWidth()
         card.hide()
         card.deleteLater()
         return width

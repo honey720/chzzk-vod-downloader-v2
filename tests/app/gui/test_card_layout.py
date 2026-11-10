@@ -471,7 +471,8 @@ class TestRowThreePriority:
         """받는 중 카드의 상태 글은 T 이상에서 잘리지 않아야 한다 — 저장 위치가 먼저 양보한다.
 
         받는 중 · 긴 저장 위치 카드, 폭 T · T+경로÷2 · T+200
-        -> statusLabel 표시 문자열 == 원문, 저장 위치 오른쪽 끝 < 정보 글 왼쪽 끝
+        -> statusLabel 표시 문자열 == 원문, 저장 위치 이름이 숨거나(아이콘만 — #554) 그 오른쪽 끝 <
+        정보 글 왼쪽 끝
         """
         widget = _running_widget(qapp)
         resize_to(widget, self._points(widget)[point])
@@ -479,7 +480,8 @@ class TestRowThreePriority:
             f"{point}에서 상태 글이 잘렸다: {shown(widget.statusLabel)!r} — "
             "줄어드는 것은 저장 위치가 먼저여야 한다"
         )
-        assert _right(widget, widget.directoryLabel) < _x(widget, widget.fileSizeLabel)
+        if widget.directoryLabel.isVisible():
+            assert _right(widget, widget.directoryLabel) < _x(widget, widget.fileSizeLabel)
 
     @pytest.mark.parametrize("point", ("T", "T+path/2", "T+200"))
     def test_segment_info_is_never_elided(self, qapp, point) -> None:
@@ -587,8 +589,9 @@ class TestRowThreePriority:
         """
         widget = _running_widget(qapp)
         resize_to(widget, self._threshold(widget))
-        assert shown(widget.directoryLabel) != widget.directoryLabel.text(), (
-            "전제: 좁은 폭에서 저장 위치가 줄었다"
+        label = widget.directoryLabel
+        assert not label.isVisible() or shown(label) != label.text(), (
+            "전제: 좁은 폭에서 저장 위치가 줄었다(이름이 숨거나 줄어듦 — #554)"
         )
         _at_width(widget, 1600)
         QApplication.processEvents()
@@ -687,15 +690,16 @@ class TestPathAbbreviationAndTooltip:
         """긴 저장 위치도 3줄을 넘치게 하지 않아야 한다 — 우측 끝선 유지.
 
         download_path 깊이 10, 카드 폭 640, setHovered(True)
-        -> fileSizeLabel 오른쪽 끝 == deleteButton 오른쪽 끝, directoryLabel 오른쪽 끝 < fileSizeLabel 왼쪽 끝
+        -> fileSizeLabel 오른쪽 끝 == deleteButton 오른쪽 끝, 저장 위치 이름이 보이면(폭이 모자라면 아이콘으로
+        접힌다 — #554) directoryLabel 오른쪽 끝 < fileSizeLabel 왼쪽 끝
         """
         widget = _make_widget(qapp, path="D:/아주/긴/경로/구조/를/가진/폴더/이름/마지막")
         resize_to(widget, 640)
         _hover(widget)
-        shown(widget.directoryLabel)  # 보이는 라벨의 기하만 의미가 있다
         shown(widget.fileSizeLabel)
         assert _right(widget, widget.fileSizeLabel) == _right(widget, widget.deleteButton)
-        assert _right(widget, widget.directoryLabel) < _x(widget, widget.fileSizeLabel)
+        if widget.directoryLabel.isVisible():  # 보이는 라벨의 기하만 의미가 있다
+            assert _right(widget, widget.directoryLabel) < _x(widget, widget.fileSizeLabel)
 
     @pytest.mark.parametrize(
         "path,expected",
@@ -789,18 +793,29 @@ class TestLabelsDoNotGrow:
 class TestProgressBarOnlyWithProgress:
     """하단 진행바는 **진행분이 있을 때**(진행·일시정지) 보인다(#245 정정 —
     "진행 중일 때만"이 아니다. 일시정지는 멈췄을 뿐 받은 양이 있고 그
-    양을 바가 계속 보여줘야 한다; 색만 muted로 바뀐다). 대기·완료·실패의
-    빈 막대는 정보가 없고 자리만 먹는다. 보일 때는 카드 아래 가장자리
-    근처 전체 폭이고, 양끝은 카드 곡률로 잘려 있다."""
+    양을 바가 계속 보여줘야 한다; 색만 muted로 바뀐다). 대기의 빈 막대는
+    정보가 없고 자리만 먹는다. 완료 · 실패는 끝까지 찬 상태 색 막대다(#554).
+    보일 때는 카드 아래 가장자리 근처 전체 폭이고, 양끝은 카드 곡률로 잘려 있다."""
 
-    def test_bar_hidden_for_states_without_progress(self, qapp) -> None:
-        for state in (DownloadState.WAITING, DownloadState.FINISHED, DownloadState.FAILED):
-            widget = _make_widget(qapp)
-            _set_state(widget, state, 100 if state == DownloadState.FINISHED else 0)
-            _at_width(widget, 900)
-            assert not widget.progressBar.isVisible(), (
-                f"{state}에서 진행바가 보인다 — 진행분이 있는 상태(진행·일시정지)만 보여야 한다"
-            )
+    def test_bar_hidden_while_waiting(self, qapp) -> None:
+        """대기 카드면 진행률 표시줄이 숨어야 한다."""
+        widget = _make_widget(qapp)
+        _set_state(widget, DownloadState.WAITING, 0)
+        _at_width(widget, 900)
+        assert not widget.progressBar.isVisible()
+
+    @pytest.mark.parametrize("state", (DownloadState.FINISHED, DownloadState.FAILED))
+    def test_bar_is_full_when_finished_or_failed(self, qapp, state) -> None:
+        """완료 · 실패 카드면 진행률 표시줄이 끝까지 차 있어야 한다 (#554).
+
+        완료(진행 100) · 실패(진행 0) -> 보임, value == maximum == 100
+        """
+        widget = _make_widget(qapp)
+        _set_state(widget, state, 100 if state == DownloadState.FINISHED else 0)
+        _at_width(widget, 900)
+        bar = widget.progressBar
+        assert bar.isVisible()
+        assert bar.value() == bar.maximum() == 10000
 
     @pytest.mark.parametrize(
         "state,bar_state",
@@ -818,7 +833,7 @@ class TestProgressBarOnlyWithProgress:
             f"{state}의 진행바 색 규칙이 {widget.progressBar.property('state')!r} — "
             f"{bar_state!r}이어야 한다(일시정지는 muted로 '돌고 있지 않다'를 알린다)"
         )
-        assert widget.progressBar.value() == 42
+        assert widget.progressBar.value() == 4200
         # 전체 폭(테두리 안쪽 1px 여백 허용) + 카드 바닥에 붙어 있다
         frame = widget.contentFrame
         assert widget.progressBar.width() >= frame.width() - 4

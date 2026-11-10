@@ -53,7 +53,13 @@ def _environment(qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> Iterato
 
 @pytest.fixture
 def window(monkeypatch: pytest.MonkeyPatch) -> VodDownloader:
-    """실제 메인 창 — 1초 갱신 타이머는 멈추고 여유 공간 측정은 고정 값(테스트가 신호로 갱신한다)."""
+    """실제 메인 창 — 1초 갱신 타이머는 멈추고 여유 공간 측정은 고정 값(테스트가 신호로 갱신한다).
+
+    창 최소폭의 카드 몫은 0으로 둔다 — 이 파일은 바(헤더 · 하단)의 단계를 잰다. 가장 나쁜 카드의 몫
+    (#554)이 헤더 임계보다 넓으면 창 최소폭까지 줄여도 헤더 단계에 닿지 않는다. 카드 몫은
+    `test_shell_layout.py`가 잰다.
+    """
+    monkeypatch.setattr(VodDownloader, "_referenceCardWidth", lambda self: 0)
     win = VodDownloader()
     win.monitorTimer.stop()
     monkeypatch.setattr(win.freeSpace, "request", lambda path: None)
