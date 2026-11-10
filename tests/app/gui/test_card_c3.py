@@ -30,7 +30,7 @@ from app.viewmodels.model import ContentListModel
 from app.views.card_edit_dialog import CardEditDialog
 from app.views.mainWindow import VodDownloader
 from app.widgets.view import ContentListView
-from app.widgets.widget import STOP_MOTION_MS, ContentItemWidget
+from app.widgets.widget import STILL_STEP_MS, STOP_MOTION_MS, ContentItemWidget
 from core.engine.thread_control import TICK_SECONDS
 from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
@@ -878,6 +878,36 @@ class TestBarTickMotion:
         assert card.motion() is None
         assert card.progressBar.value() == 6000
 
+    def test_without_animations_the_bar_changes_once_per_step(
+        self, qapp, qtbot, monkeypatch
+    ) -> None:
+        """애니메이션 끔이면 1초보다 잦은 진행 통지에도 막대가 `STILL_STEP_MS`에 한 번, 마지막 값으로 바뀌어야 한다.
+
+        받는 중 40%, 시계 0ms에 50% · 300ms에 60% · 600ms에 70% 통지
+        -> 50%는 바로(값 5000), 60% · 70% 통지 뒤에는 5000 그대로, 간격이 차면 7000으로 한 번만 바뀜 · 모션 없음
+        """
+        _display(animations=False)
+        clock = [0.0]
+        monkeypatch.setattr("app.widgets.widget._now_ms", lambda: clock[0])
+        item = _item(DownloadState.RUNNING)
+        item.download_progress = 40
+        card = _card(item)
+        bar = card.progressBar
+        item.download_progress = 50
+        card.setData(item, 0)
+        assert bar.value() == 5000
+        values: list[int] = []
+        bar.valueChanged.connect(values.append)
+        for at, progress in ((300.0, 60), (600.0, 70)):
+            clock[0] = at
+            item.download_progress = progress
+            card.setData(item, 0)
+            assert bar.value() == 5000, f"{at}ms"
+        clock[0] = STILL_STEP_MS
+        qtbot.waitUntil(lambda: bar.value() == 7000, timeout=2 * STILL_STEP_MS)
+        assert values == [7000]
+        assert card.motion() is None
+
     def test_finished_bar_motions_do_not_pile_up_on_the_card(self, qapp) -> None:
         """막대 방식에서 틱 다섯 번의 모션이 끝나면 카드에 남은 모션 객체가 0개여야 한다.
 
@@ -973,10 +1003,11 @@ class TestBarTickMotion:
         assert span >= 4, "전제: 1%가 막대 4px 이상"
         values: list[int] = []
         bar.valueChanged.connect(values.append)
+        motion = card.motion()
+        motion.pause()  # 실제 시간으로 흐르지 않게 — 시간은 아래에서 테스트가 정한다
         paints = _PaintCounter(bar)
         QApplication.processEvents()
         paints.count = 0
-        motion = card.motion()
         for ms in range(motion.duration() + 1):
             motion.setCurrentTime(ms)
             QApplication.processEvents()
@@ -992,6 +1023,7 @@ class TestBarTickMotion:
         """
         card = self._slow_tick()
         motion = card.motion()
+        motion.pause()  # 폭을 바꾸는 동안(이벤트 처리) 실제 시간으로 흐르지 않게
         motion.setCurrentTime(motion.duration() * 3 // 10)
         _at(card, 600)
         motion.setCurrentTime(motion.duration() * 6 // 10)

@@ -6,6 +6,7 @@ import os
 import platform
 import re
 import threading
+import time
 
 from PySide6.QtCore import (
     QDir,
@@ -15,6 +16,7 @@ from PySide6.QtCore import (
     QRectF,
     QSize,
     Qt,
+    QTimer,
     QUrl,
     QVariantAnimation,
     Signal,
@@ -184,6 +186,9 @@ STOP_MOTION_MS = 300  # 중지 모션 — 막대 · 채움이 왼쪽 끝까지 �
 # 같다. 짧으면 움직이고 서기를 되풀이한다(오너 실기 2026-11-10). 다음 틱이 먼저 오면 그려진 값에서 잇는다
 TICK_MOTION_MS = 1000
 PROGRESS_SCALE = 10000  # 진행 막대 범위(0.01% 단위) — 넓은 카드에서도 한 단계가 1px보다 작다
+# 애니메이션 끔일 때 받는 중 막대가 새 값으로 바뀌는 간격(ms) — 진행 통지가 이보다 잦아도 이 간격에 한 번
+# 마지막 값으로 바꾼다(오너 2026-11-10)
+STILL_STEP_MS = 1000
 STATUS_KEEP_CHARS = (
     3  # 상태 글을 끝까지 줄여도 남기는 앞 글자 수 — 프로토 가 「✕ 사유를…」의 「사유를」
 )
@@ -203,6 +208,11 @@ def _label_text_width(label: QLabel, text: str) -> int:
     같은 셈 — 그 모듈이 이 모듈을 import해 여기 둔다).
     """
     return math.ceil(QFontMetricsF(label.font()).horizontalAdvance(text))
+
+
+def _now_ms() -> float:
+    """단조 시계(ms) — 테스트가 이 이름을 바꿔 시간을 정한다."""
+    return time.monotonic() * 1000
 
 
 def _snapped(fraction: float, width: int) -> float:
@@ -261,6 +271,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self._showYear = True  # 날짜에 연도를 적는지 — 목록이 정한다
         self._shown = 0.0  # 막대 · 채움이 지금 보이는 진행 비율(0 ~ 1)
         self._motion: QVariantAnimation | None = None  # 도는 진행 모션 — 없으면 None
+        self._stillAt = -float("inf")  # 애니메이션 끔에서 막대를 마지막으로 바꾼 때(ms, `_now_ms`)
+        self._stillPending = False  # 애니메이션 끔에서 미룬 막대 바꾸기가 걸려 있는지
         self._previousState: object = None  # 직전 applyStateStyle의 상태 — 중지를 알아본다
         self.setupUi(self)
         # 카드 하나가 Tab 한 번이다. 마우스로는 초점을 받지 않는다 — 초점 테두리는 키보드 초점만
@@ -1098,8 +1110,29 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         ):
             self._animate(self._shown, fraction, state, TICK_MOTION_MS, QEasingCurve.Type.Linear)
             return
+        if (
+            not display.animations
+            and raw == DownloadState.RUNNING
+            and not busy
+            and previous == DownloadState.RUNNING
+        ):
+            # 애니메이션 끔 — 받는 중 막대는 `STILL_STEP_MS`에 한 번만 바꾼다. 그 사이에 온 값은 미뤄 두고
+            # 간격이 차면 그때의 마지막 값으로 바꾼다
+            wait = STILL_STEP_MS - (_now_ms() - self._stillAt)
+            if wait > 0:
+                if not self._stillPending:
+                    self._stillPending = True
+                    QTimer.singleShot(max(1, math.ceil(wait)), self, self._onStillStep)
+                return
+            self._stillAt = _now_ms()
         self._stopMotion()
         self._showProgress(fraction, state, busy)
+
+    def _onStillStep(self) -> None:
+        """애니메이션 끔에서 미룬 막대 바꾸기 — 지금 아이템의 진행으로 맞춘다."""
+        self._stillPending = False
+        self._stillAt = _now_ms()
+        self._showProgress(*self._target())
 
     def applyStateStyle(self) -> None:
         """상태에 따라 3줄 글 · 카드 버튼 · 색 · 진행 표시를 맞춘다 (#227 → #245 → #550 → #554).

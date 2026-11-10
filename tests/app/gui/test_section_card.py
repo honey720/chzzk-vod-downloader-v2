@@ -31,6 +31,7 @@ import CVDv2 as main_module
 import app.theme as theme
 import app.viewmodels.card_display as card_display
 import app.viewmodels.download_viewmodel as download_viewmodel_module
+import app.widgets.widget as widget_module
 from app.download.logger import DownloadLogger
 from app.viewmodels.content_viewmodel import ContentViewModel
 from app.viewmodels.data import ContentItem
@@ -310,15 +311,16 @@ def card(qapp, tmp_path, request) -> Iterator[_Card]:
 
 
 @pytest.mark.parametrize("card", ["video", "m3u8", "hls_aes"], indirect=True)
-def test_combined_progress_rises_through_transfer_and_cut_to_100(card) -> None:
+def test_combined_progress_rises_through_transfer_and_cut_to_100(card, monkeypatch) -> None:
     """구간 셋의 진행률은 전송과 컷을 합쳐 단조 증가하고, 전달 방식이 달라도 같은 값이며, 마지막에 100이어야 한다.
 
     길이가 다른 구간 셋. 전송 0 · 30 · 70 · 100% → 컷 단계 → 구간 1 · 2 · 3이 차례로 끝남.
     전송에 컷 예상 시간의 4.02배가 걸림(전송이 막대의 80.08%), 엔진이 컷 진행을 적지 않음
     -> 카드의 진행률 == [0, 24, 56, 80, 86, 93, 100] (컷은 구간이 끝날 때마다 나머지의 1/3),
-       진행 막대의 값도 같다(애니메이션 끔 — 막대가 틱 사이를 이어 움직이지 않고 바로 그 값, #554)
+       진행 막대의 값도 같다(애니메이션 끔 · 끔 갱신 간격 0 — 막대가 바로 그 값, #554)
     """
     card_display.use(card_display.CardDisplay(animations=False))
+    monkeypatch.setattr(widget_module, "STILL_STEP_MS", 0)  # 통지를 곧바로 잇따라 보낸다
     card.start()
     seen = []
     for fraction in (0.0, 0.3, 0.7):
