@@ -837,7 +837,7 @@ class TestCardKeys:
     def test_auto_repeated_space_does_not_toggle_again(self, window) -> None:
         """Space를 누르고 있어 오는 키 반복 이벤트는 고른 카드를 바꾸지 않아야 한다.
 
-        선택 모드, 초점 카드에 Space -> [카드], 키 반복 Space 두 번 -> [카드] 그대로
+        선택 모드, 초점 카드에 Space -> [카드], 키 반복 Space 두 번 -> 한 번마다 [카드] 그대로
         """
         items = _add(window, D.WAITING)
         window.selectButton.click()
@@ -852,7 +852,8 @@ class TestCardKeys:
             )
             QApplication.sendEvent(card, repeat)
             _settle()
-        assert _picked(window) == [items[0]]
+            # 한 번마다 본다 — 두 번 뒤에만 보면 풀었다가 다시 고른 것도 같은 값이다
+            assert _picked(window) == [items[0]]
 
 
 # ---- 선택 줄 자리 ----
