@@ -70,7 +70,13 @@ from dataclasses import dataclass
 import requests
 
 from core.engine.segment_space import SectionUse, SegmentSpace, check_space
-from core.engine.thread_control import TARGET_CAP, TICK_SECONDS, ThreadController
+from core.engine.thread_control import (
+    EVAL_SECONDS,
+    TARGET_CAP,
+    EvalBinner,
+    Sample,
+    ThreadController,
+)
 from core.models.content import Content
 from core.models.download_state import DownloadState
 from core.models.events import (
@@ -110,7 +116,11 @@ _RESTART_MARGIN = (
 # 세그먼트)이 쓰는 값이다. 타임아웃 없는 요청은 서버가 응답하지 않으면 끝나지 않아
 # 다운로드가 실패하지도 못하고 멈춘다. 값은 범위 · 세그먼트 요청이 써 오던 그대로다.
 REQUEST_TIMEOUT = 30  # 초 — 연결과 응답 대기 각각의 한도
-_MONITOR_POLL_SECONDS = 0.1  # 관측 루프가 틱을 기다리며 정지 · 상태 변화를 살피는 간격(초)
+_MONITOR_POLL_SECONDS = 0.1  # 관측 루프가 다음 표본을 기다리며 정지 · 상태 변화를 살피는 간격(초)
+# 관측 루프의 세 일 (#557) — 표본기 · 스레드 조정 · 진행 통지. 조정은 표본을 1초 묶음
+# (thread_control.EVAL_SECONDS)으로 받아 표본 간격과 무관하고, 통지는 자기 주기로 낸다
+SAMPLE_SECONDS = 1.0  # 표본기가 회선 바이트 · 속도를 재는 간격(초)
+PROGRESS_SECONDS = SAMPLE_SECONDS  # 진행 통지(ProgressEvent) 간격(초) — 표본 간격의 정수배
 
 # ============ 오류 재큐 상한 (#131) ============
 # 상한이 없으면 영구 오류(404·403)가 무한 재큐돼 다운로드가 끝나지도,
@@ -591,9 +601,12 @@ class BaseDownloader(ABC):
         self._remux_started = False
         # 전송 중 관측된 정점 동시 스레드 수 — 전송 종료 요약 로그용 (#110)
         self._peak_threads = 0
-        # 목표 스레드 조정기 (#112 · #347) — 첫 관측 틱에 만든다(_adjust_threads)
+        # 목표 스레드 조정기 (#112 · #347) — 첫 표본에 만든다(_adjust_threads)
         self._threads: ThreadController | None = None
+        # 표본을 조정기의 1초 판정 표본으로 묶는다 (#557) — 조정기와 함께 만든다
+        self._binner: EvalBinner | None = None
         self._measured_at: float | None = None  # 속도를 마지막으로 잰 시각 (#347)
+        self._sample_seconds = SAMPLE_SECONDS  # 마지막 표본이 잰 시간(초) — 묶음의 가중치
         # 슬롯 → (알린 시각, KB/s). 저속 판정이 다른 연결과 견주는 데 쓴다 (#347)
         self._conn_speeds: dict[int, tuple[float, float]] = {}
         self._on_progress: ProgressCallback = on_progress or (lambda event: None)
@@ -1280,7 +1293,8 @@ class BaseDownloader(ABC):
             self._prepare_output()
 
             # 준비가 끝났다 — 받기 전에 진행을 한 번 알린다 (#309). 표시 계층은 이 통지로
-            # "준비 중"을 걷고, 받을 크기(total_size)를 안다. 관측 스레드의 첫 통지는 1초 뒤다
+            # "준비 중"을 걷고, 받을 크기(total_size)를 안다. 관측 스레드의 첫 통지는 첫 표본
+            # (SAMPLE_SECONDS) 뒤다
             self._on_progress(
                 ProgressEvent(
                     downloaded_size=self.s.total_downloaded_size,
@@ -1807,17 +1821,26 @@ class BaseDownloader(ABC):
             monitor.join(timeout=2)
 
     def _monitor_loop(self) -> None:
-        """주기(1초)마다 속도 측정·스레드 수 조정·진행 통지를 수행하는 관측 루프.
+        """표본기 · 스레드 조정 · 진행 통지를 도는 관측 루프 (#557).
 
         전송 단계 동안만 산다 — 전송이 끝나면 run()이 _monitor_stop으로
         정지시킨다. 후처리(병합·remux)는 관측 대상이 아니다 (#89).
 
-        틱의 시각은 단조 시계의 마감(직전 마감 + 1초)으로 잡는다 — 틱마다 한 일의 시간만큼
-        주기가 늘어지지 않는다 (#347). 속도를 먼저 재고 그 값으로 조정한다.
+        세 일은 주기가 따로다:
+        - 표본기: ``SAMPLE_SECONDS``마다 회선 바이트로 속도를 잰다(``measure_speed``). 시각은 단조
+          시계의 마감(직전 마감 + 표본 간격)으로 잡는다 — 한 일의 시간만큼 주기가 늘어지지 않는다 (#347)
+        - 스레드 조정: 표본을 1초 판정 표본으로 묶어(``EvalBinner``) 묶음이 찰 때만 조정기를 부른다
+          (``_adjust_threads``) — 조정의 뜻이 표본 간격과 무관하다
+        - 진행 통지: ``PROGRESS_SECONDS``마다(표본 간격의 정수배) 낸다(``emit_progress``)
+        같은 표본에서는 재고 → 조정하고 → 통지한다. 지금 값(셋 다 1초)에서는 표본마다 세 일을 한 번씩
+        해 나누기 전과 같다.
         """
+        sample_seconds = SAMPLE_SECONDS
+        progress_every = max(1, round(PROGRESS_SECONDS / sample_seconds))  # 통지 하나의 표본 수
+        samples = 0
         self._measured_at = self._now()
         self._measured_paused = self.s.model.paused_seconds
-        self._monitor_stop.wait(TICK_SECONDS)
+        self._monitor_stop.wait(sample_seconds)
         deadline = self._now()
         while self._monitoring():
             if not self.s._pause_event.is_set():
@@ -1835,18 +1858,24 @@ class BaseDownloader(ABC):
                 self.logger.log_thread_adjust(self.s.adjust_threads, self.s.speed_mb)
                 now = self._now()
                 if self._threads is not None:
+                    # 일시정지는 판정 표본 단위로 뺀다 — 채우던 묶음을 버리고, 재개 뒤 묶음 하나
+                    # (EVAL_SECONDS)를 더 버린다. 표본 간격과 무관하다 (#557)
                     self._threads.shift(now - paused_at)
-                    self._threads.skip(now, TICK_SECONDS)
+                    if self._binner is not None:
+                        self._binner.clear()
+                    self._threads.skip(now, EVAL_SECONDS)
             elif self.state == DownloadState.RUNNING:
                 # 일시정지가 위의 확인과 여기 사이에 들어올 수 있다 — 일시정지 중에는 스레드
                 # 수를 고치지도 속도를 적지도 않는다(받는 스레드가 서 있어 값이 뜻이 없다)
                 self.measure_speed()
                 self._adjust_threads()
-                self.emit_progress()
-            deadline += TICK_SECONDS
+                samples += 1
+                if samples % progress_every == 0:
+                    self.emit_progress()
+            deadline += sample_seconds
             if deadline < self._now():
-                # 틱 하나가 주기보다 오래 걸렸다 — 몰아서 돌지 않고 지금부터 한 주기를 다시 센다
-                deadline = self._now() + TICK_SECONDS
+                # 표본 하나가 주기보다 오래 걸렸다 — 몰아서 돌지 않고 지금부터 한 주기를 다시 센다
+                deadline = self._now() + sample_seconds
             while self._monitoring():
                 remaining = deadline - self._now()
                 if remaining <= 0:
@@ -1861,10 +1890,11 @@ class BaseDownloader(ABC):
         ]
 
     def _adjust_threads(self) -> None:
-        """직전 틱의 총 처리량(speed_mb)으로 목표 스레드 수를 조정한다 (#112 · #347).
+        """직전 표본의 총 처리량(speed_mb)을 1초 판정 표본으로 묶어 목표 스레드 수를 조정한다 (#112 · #347 · #557).
 
-        판단은 ThreadController가 한다 — 규칙과 근거는 그 모듈에 있다. 여기서는 틱마다
-        시각과 속도를 넘기고, 목표가 바뀌면 공유 데이터와 로그에 옮긴다.
+        판단은 ThreadController가 한다 — 규칙과 근거는 그 모듈에 있다. 여기서는 표본마다 시각 ·
+        속도 · 잰 시간을 묶음(``EvalBinner``)에 넣고, 묶음이 차면 그 값을 조정기에 넘긴다. 목표가
+        바뀌면 공유 데이터와 로그에 옮긴다. 표본 간격이 1초면 표본 하나가 곧 판정 표본이다.
 
         판단 신호가 스레드당 속도가 아니라 총 처리량인 이유 (#112 실측):
         - 치지직은 연결당 처리량을 제한한다(144p 연결당 ~0.95 MB/s). 총량은
@@ -1880,8 +1910,12 @@ class BaseDownloader(ABC):
         if self._threads is None:
             cap = min(self.s.max_threads, TARGET_CAP)
             self._threads = ThreadController(self.s.adjust_threads, cap)
+            self._binner = EvalBinner(SAMPLE_SECONDS)
+        evaluation = self._binner.add(Sample(self._now(), total_speed, self._sample_seconds))
+        if evaluation is None:
+            return  # 묶음이 아직 덜 찼다
         before = self._threads.target
-        self._threads.step(self._now(), total_speed)
+        self._threads.step(evaluation.now, evaluation.speed)
         if self._threads.target != before:
             self.s.adjust_threads = self._threads.target
             self.logger.log_thread_adjust(self.s.adjust_threads, total_speed)
@@ -1889,9 +1923,9 @@ class BaseDownloader(ABC):
     def measure_speed(self, since_pause: bool = False) -> None:
         """직전 측정 뒤로 받은 바이트를 그 사이의 실제 시간으로 나눠 속도(MB/s)를 계산한다.
 
-        관측 틱은 0.1초 대기 열 번이라 1초보다 길다 — 받은 양을 그대로 MB/s로 읽으면 실제보다
-        크게 나오고, 틱 길이의 흔들림이 그대로 속도의 흔들림이 된다 (#347). 직전 측정 시각이
-        없으면(관측 루프 밖에서 처음 부른 경우) 나누지 않는다.
+        표본기의 측정이다(``SAMPLE_SECONDS``마다, #557). 받은 양을 실제 경과로 나눈다 — 표본
+        간격이 늘거나 줄어도 MB/s로 읽힌다 (#347). 잰 시간은 조정 묶음의 가중치로 남긴다. 직전 측정
+        시각이 없으면(관측 루프 밖에서 처음 부른 경우) 나누지 않는다.
 
         Args:
             since_pause: 재개 직후의 측정이다 — 직전 측정 뒤로 실제로 받던 시간(일시정지해 있던
@@ -1909,7 +1943,8 @@ class BaseDownloader(ABC):
         if self._measured_at is not None:
             active = (now - self._measured_at) - (paused - self._measured_paused)
         if not since_pause and self._measured_at is not None and now > self._measured_at:
-            speed = speed / (now - self._measured_at)
+            self._sample_seconds = now - self._measured_at
+            speed = speed / self._sample_seconds
         self._measured_at = now
         self._measured_paused = paused
 

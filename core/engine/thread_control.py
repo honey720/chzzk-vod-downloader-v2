@@ -7,13 +7,17 @@
 아래 수준으로 내려가 다시 확인한다.
 
 이 모듈은 엔진을 모른다 — 시각(초)과 총 처리량을 받아 목표를 정할 뿐이다. 시간 상수는 모두
-초이고, 관측 틱은 약 1초 간격이라고 가정한다(``TICK_SECONDS``).
+초다. 판정이 받는 값 하나는 ``EVAL_SECONDS``(1초) 동안의 처리량이다 — 순위 · 평균 판정과 개수 값
+(``FAST_SAMPLES`` · ``RANK_NEED`` · ``COLLAPSE_TICKS`` · ``HOLD_EMA_ALPHA``)이 1초 표본의 흔들림을
+전제한다. 엔진이 더 짧게 재도(표본기 ``SAMPLE_SECONDS``) ``EvalBinner``가 1초 묶음으로 모아 넣으므로
+규칙의 뜻은 표본 간격과 무관하다 (#557).
 """
 
 import math
 import statistics
+from dataclasses import dataclass
 
-TICK_SECONDS = 1.0  # 관측 틱 간격(초) — 표본 하나가 대표하는 시간
+EVAL_SECONDS = 1.0  # 판정 표본 하나가 대표하는 시간(초) — 조정 규칙의 통계가 전제하는 1초 (#557)
 CLIMB_STEP = 4  # 한 번에 올리는 목표 스레드 수 (#112)
 TARGET_CAP = 48  # 목표 스레드 상한 — 서버 부하 상한 (#112)
 # 인상 유효 판정의 요구폭: 선형 기대 이득(step/target)의 이 비율. 낮게 잡는 이유는 #112 —
@@ -47,10 +51,52 @@ def _mean(values: list[float]) -> float:
     return sum(values) / len(values)
 
 
+@dataclass(frozen=True)
+class Sample:
+    """표본기가 낸 측정 하나 — 끝 시각(단조 시계, 초) · 그 사이 총 처리량(MB/s) · 잰 시간(초)."""
+
+    now: float
+    speed: float
+    seconds: float
+
+
+class EvalBinner:
+    """표본기의 표본을 ``EVAL_SECONDS`` 길이의 판정 표본으로 묶는다 (#557).
+
+    조정 규칙(``ThreadController``)은 1초 표본을 전제한다. 표본기가 더 짧게 재도 이 묶음을 거쳐
+    규칙에는 늘 1초 표본이 들어간다 — 표본 간격(``SAMPLE_SECONDS``)을 바꿔도 결정의 뜻이 같다.
+
+    묶음은 표본 개수로 센다: ``EVAL_SECONDS ÷ 표본 간격``(반올림, 1 이상). 표본기는 단조 시계의
+    마감으로 일정하게 재므로 개수가 곧 시간이다. 묶음의 처리량은 받은 양 ÷ 잰 시간(속도 × 시간의 합
+    ÷ 시간의 합)이다. 표본이 하나뿐이면 그 표본의 속도를 그대로 쓴다 — 곱하고 나누는 반올림이 없어
+    표본 간격이 1초일 때 지금까지와 같은 값이 규칙에 들어간다.
+    """
+
+    def __init__(self, sample_seconds: float) -> None:
+        self._size = max(1, round(EVAL_SECONDS / sample_seconds))  # 묶음 하나의 표본 수
+        self._samples: list[Sample] = []
+
+    def add(self, sample: Sample) -> Sample | None:
+        """표본 하나를 넣는다 — 묶음이 차면 판정 표본(끝 시각 · 묶음 처리량 · 묶음 시간)을 돌려준다."""
+        self._samples.append(sample)
+        if len(self._samples) < self._size:
+            return None
+        samples, self._samples = self._samples, []
+        if len(samples) == 1:
+            return samples[0]
+        seconds = sum(s.seconds for s in samples)
+        speed = sum(s.speed * s.seconds for s in samples) / seconds if seconds > 0 else 0.0
+        return Sample(samples[-1].now, speed, seconds)
+
+    def clear(self) -> None:
+        """채우던 묶음을 버린다 — 일시정지가 섞인 묶음으로 판단하지 않는다."""
+        self._samples = []
+
+
 class ThreadController:
     """총 처리량의 표본 묶음을 견줘 목표 스레드 수를 오르내린다.
 
-    관측 틱마다 ``step``을 한 번 부른다. 목표는 ``target``이다.
+    판정 표본(``EVAL_SECONDS`` 묶음 — ``EvalBinner``)마다 ``step``을 한 번 부른다. 목표는 ``target``이다.
 
     판정식(``_gained``): 올린 수준의 표본 가운데 ``RANK_NEED``개 이상이 아래 수준 표본의
     최댓값 × (1 + 요구폭)을 넘거나, 두 묶음의 평균 차이가 요구폭과 표준오차의 ``MEAN_Z``배를
@@ -94,14 +140,14 @@ class ThreadController:
         self._recovering_from: float | None = None  # 회복 판정이 이어지기 시작한 시각
 
     def step(self, now: float, total_speed: float) -> None:
-        """관측 틱 하나 — 지금 시각(단조 시계, 초)과 직전 틱의 총 처리량으로 목표를 조정한다."""
+        """판정 표본 하나 — 지금 시각(단조 시계, 초)과 직전 ``EVAL_SECONDS``의 총 처리량으로 목표를 조정한다."""
         if now < self._settle_until:
             return
         if not self._started:
             if total_speed <= 0:
                 return  # 시작 직후 첫 유효 측정 전 — 판단 근거가 없다
             self._started = True
-            self._visit_from = now - TICK_SECONDS
+            self._visit_from = now - EVAL_SECONDS
         self._visit.append(total_speed)
         self._phase(now, total_speed)
 
@@ -116,7 +162,7 @@ class ThreadController:
 
     def skip(self, now: float, seconds: float) -> None:
         """지금부터 seconds 동안의 측정을 버린다 — 일시정지가 섞인 측정으로 판단하지 않는다."""
-        self._settle_until = max(self._settle_until, now + seconds + TICK_SECONDS / 2)
+        self._settle_until = max(self._settle_until, now + seconds + EVAL_SECONDS / 2)
 
     # ---- 도우미
 
@@ -124,14 +170,14 @@ class ThreadController:
         self.target = level
         self._visit = []
         self._visit_from = now + SETTLE_SECONDS
-        self._settle_until = self._visit_from + TICK_SECONDS / 2
+        self._settle_until = self._visit_from + EVAL_SECONDS / 2
 
     def _full(self, now: float) -> bool:
         """지금 수준에서 묶음 하나만큼 쟀는가."""
         return now - self._visit_from >= WINDOW_SECONDS
 
     def _recent(self) -> list[float]:
-        return self._visit[-int(WINDOW_SECONDS / TICK_SECONDS) :]
+        return self._visit[-int(WINDOW_SECONDS / EVAL_SECONDS) :]
 
     def _bar(self, low: list[float], lower: int, upper: int) -> float:
         """올린 수준의 표본이 넘어야 하는 값 — 아래 수준의 최댓값에 요구폭을 얹는다."""
@@ -243,7 +289,7 @@ class ThreadController:
             return
         if total_speed > self._hold_reference * RECOVERY_RATIO:
             if self._recovering_from is None:
-                self._recovering_from = now - TICK_SECONDS
+                self._recovering_from = now - EVAL_SECONDS
             if now - self._recovering_from >= RECOVERY_SECONDS:
                 # 기준보다 뚜렷이 빠른 상태가 이어졌다(경합 해소 등) — 바로 다시 올려 본다
                 self._recovering_from = None
