@@ -75,6 +75,7 @@ from core.utils.interaction import resting_while
 from core.sections.hybrid import CUT_FAILED, CutError, cut_frames_from_mp4
 from core.utils.paths import (
     build_section_output_paths,
+    hold_output_paths,
     partial_source_path_for,
     release_output_paths,
     reserve_section_output_paths,
@@ -1288,6 +1289,115 @@ def test_retry_leaves_the_old_body_alone_while_another_download_holds_the_old_na
     assert (again.finished, again.failures) == (1, [])
     assert server.requests[requests_before:], "남긴 본문을 쓰지 않고 다시 받아야 한다"
     assert os.path.isfile(old_body)
+
+
+class _NameProbe:
+    """`os.replace` · `os.remove`가 `watched` 파일을 건드리는 순간, 다른 다운로드인 셈으로 `name`을 잡아 본다.
+
+    잡아 본 결과(잡혔으면 참)를 `seen`에 차례로 모은다 — 엔진이 그 순간 옛 이름을 예약하고 있었는지를
+    시간에 기대지 않고 가린다.
+    """
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, name: str, watched: str) -> None:
+        self.seen: list[bool] = []
+        self._name = name
+        self._key = os.path.normcase(os.path.abspath(watched))
+        real_replace, real_remove = os.replace, os.remove
+
+        def replace(src, dst, *args, **kwargs) -> None:
+            self._probe(src)
+            real_replace(src, dst, *args, **kwargs)
+
+        def remove(path, *args, **kwargs) -> None:
+            self._probe(path)
+            real_remove(path, *args, **kwargs)
+
+        monkeypatch.setattr(os, "replace", replace)
+        monkeypatch.setattr(os, "remove", remove)
+
+    def _probe(self, path) -> None:
+        if os.path.normcase(os.path.abspath(path)) == self._key:
+            with hold_output_paths([self._name]) as held:
+                self.seen.append(held)
+
+
+def test_retry_holds_the_old_name_while_moving_what_the_failed_run_kept(
+    server, tmp_path, monkeypatch
+) -> None:
+    """새 이름을 받은 재시도가 남긴 본문을 옮기는 동안 다른 다운로드는 그 옛 이름을 잡지 못해야 한다 (#392).
+
+    구간 셋, 둘째 구간 컷이 실패하고 그 출력을 지우지 못함. 이어받은 실행이 옛 본문을 옮기는 순간 옛 이름을
+    잡아 봄 -> 잡아 본 결과 [거짓], 실행 뒤에는 잡힘, 요청 0건, 완료 1회 · 실패 0건
+    """
+    failed, _cuts = _fail_with_kept_output(server, tmp_path, monkeypatch, 1)
+    probe = _NameProbe(monkeypatch, failed.paths[1], section_body_path_for(failed.paths[1]))
+    requests_before = len(server.requests)
+
+    again = hand_over(failed, _Run(server, "plain", tmp_path, _three())).start()
+
+    assert probe.seen == [False]
+    with hold_output_paths([failed.paths[1]]) as free_after:
+        pass
+    assert free_after is True
+    assert (again.finished, again.failures) == (1, [])
+    assert server.requests[requests_before:] == []
+
+
+def test_retry_holds_the_old_name_while_removing_what_the_failed_run_kept(
+    server, tmp_path, monkeypatch
+) -> None:
+    """남긴 것을 다시 쓸 수 없는 재시도가 옛 본문을 지우는 동안 다른 다운로드는 그 옛 이름을 잡지 못해야 한다 (#392).
+
+    구간 셋, 둘째 구간 컷이 실패하고 그 출력을 지우지 못함. 경계 원본을 지움. 이어받은 실행이 옛 본문을
+    지우는 순간 옛 이름을 잡아 봄 -> 잡아 본 결과 [거짓], 옛 본문 없음, 완료 1회 · 실패 0건
+    """
+    failed, _cuts = _fail_with_kept_output(server, tmp_path, monkeypatch, 1)
+    os.remove(failed.source_path)
+    old_body = section_body_path_for(failed.paths[1])
+    probe = _NameProbe(monkeypatch, failed.paths[1], old_body)
+
+    again = hand_over(failed, _Run(server, "plain", tmp_path, _three())).start()
+
+    assert probe.seen == [False]
+    assert not os.path.exists(old_body)
+    assert (again.finished, again.failures) == (1, [])
+
+
+def test_renamed_retry_stopped_after_the_renamed_section_frees_the_new_name(
+    server, tmp_path, monkeypatch
+) -> None:
+    """새 이름을 받은 구간을 끝낸 뒤 중단된 재시도는 그 구간 파일을 지워, 다음 재시도가 같은 새 이름을 받아야 한다 (#392).
+
+    구간 셋, 둘째 · 셋째 구간 컷이 실패하고 둘째 출력만 지우지 못함 → 재시도(둘째는 " (1)")가 둘째 컷을
+    끝낸 뒤 중단 → 첫 실행의 기록으로 다음 재시도
+    -> 중단한 실행의 컷 호출은 둘째(" (1)") 1회 · 그 파일 없음, 다음 재시도의 둘째 경로 " (1)"(" (2)" 아님),
+       완료 1회 · 실패 0건, 저장 폴더에 `CVDv2_` 임시 파일 없음
+    """
+    blocker = Undeletable(monkeypatch)
+    cuts = CutCalls(monkeypatch, fd_module, "finish_section_file", source_arg=0)
+    cuts.fail_on = (2, 3)
+    failed = _Run(server, "plain", tmp_path, _three())
+    blocker.block(failed.paths[1])
+    failed.start()
+    blocker.release()
+    assert failed.data.section_resume.done == frozenset({0}), "전제: 둘째 · 셋째가 남았다"
+    assert os.path.isfile(failed.paths[1]) and not os.path.exists(failed.paths[2]), (
+        "전제: 둘째 출력만 이름을 차지한 채 남았다"
+    )
+    cuts.restart()
+    stopped = hand_over(failed, _Run(server, "plain", tmp_path, _three()))
+    assert stopped.paths[1] == _renamed(failed.paths[1]), "전제: 둘째 구간이 새 이름을 받았다"
+    cuts.after = lambda number: stopped.data.model.stop() if number == 1 else None
+    stopped.start()
+    assert cuts.outputs == [os.path.basename(stopped.paths[1])], "전제: 둘째를 끝낸 뒤 중단됐다"
+    assert not os.path.exists(stopped.paths[1])
+    cuts.restart()
+
+    again = hand_over(failed, _Run(server, "plain", tmp_path, _three())).start()
+
+    assert again.paths[1] == _renamed(failed.paths[1])
+    assert (again.finished, again.failures) == (1, [])
+    assert not [name for name in again.listing() if name.startswith("CVDv2_")]
 
 
 def test_renamed_retry_that_fails_again_leaves_a_record_the_next_retry_can_reuse(

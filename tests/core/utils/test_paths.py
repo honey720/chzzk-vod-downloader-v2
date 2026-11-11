@@ -11,6 +11,7 @@ import os
 import re
 import threading
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
@@ -19,6 +20,7 @@ from core.utils.paths import (
     build_section_output_paths,
     cut_temp_dir_for,
     ensure_unique_path,
+    hold_output_paths,
     partial_source_path_for,
     section_body_path_for,
     release_output_paths,
@@ -480,6 +482,79 @@ def test_reserved_section_paths_are_avoided_by_other_downloads(tmp_path) -> None
         "방송 1080p_1 (1).mp4",
         "방송 1080p_2 (1).mp4",
     ]
+
+
+def _section_names(directory: Path, count: int) -> list[str]:
+    """같은 제목 · 해상도로 구간 `count`개를 새로 배정한 이름 — 배정한 예약은 바로 푼다."""
+    others = build_section_output_paths(str(directory), "방송", 1080, count)
+    release_output_paths(others)
+    return [os.path.basename(path) for path in others]
+
+
+def test_held_name_is_avoided_inside_the_block_and_free_after_it(tmp_path: Path) -> None:
+    """hold_output_paths가 참을 낸 블록 안에서는 그 이름이 배정되지 않고, 블록을 나가면 다시 배정되어야 한다 (#392).
+
+    "방송 1080p_1.mp4"(파일 없음)를 잡음 -> 낸 값 참, 블록 안의 새 배정 "방송 1080p_1 (1).mp4",
+    블록 밖의 새 배정 "방송 1080p_1.mp4"
+    """
+    path = str(tmp_path / "방송 1080p_1.mp4")
+
+    with hold_output_paths([path]) as held:
+        inside = _section_names(tmp_path, 1)
+    after = _section_names(tmp_path, 1)
+
+    assert held is True
+    assert inside == ["방송 1080p_1 (1).mp4"]
+    assert after == ["방송 1080p_1.mp4"]
+
+
+def test_hold_gives_false_and_holds_nothing_when_one_name_is_reserved(tmp_path: Path) -> None:
+    """이름 하나라도 다른 다운로드가 예약하고 있으면 hold_output_paths가 거짓을 내고 아무것도 잡지 않아야 한다 (#392).
+
+    "_2"를 다른 다운로드가 예약, "_1" · "_2"를 함께 잡음 -> 낸 값 거짓, 블록 안의 새 배정
+    "방송 1080p_1.mp4" · "방송 1080p_2 (1).mp4", 블록 뒤에도 같다("_2"는 다른 다운로드의 예약 그대로)
+    """
+    first, second = (str(tmp_path / f"방송 1080p_{n}.mp4") for n in (1, 2))
+    other = reserve_section_output_paths([second], set())
+    try:
+        with hold_output_paths([first, second]) as held:
+            inside = _section_names(tmp_path, 2)
+        after = _section_names(tmp_path, 2)
+    finally:
+        release_output_paths(other)
+
+    assert held is False
+    assert inside == ["방송 1080p_1.mp4", "방송 1080p_2 (1).mp4"]
+    assert after == ["방송 1080p_1.mp4", "방송 1080p_2 (1).mp4"]
+
+
+def test_hold_sees_a_reservation_under_another_spelling(tmp_path: Path) -> None:
+    """표기만 다른 같은 경로(`x/../`)를 예약해 두면 hold_output_paths가 거짓을 내야 한다 (#392).
+
+    "<폴더>/x/../방송 1080p_1.mp4"를 예약 -> "<폴더>/방송 1080p_1.mp4"를 잡으면 거짓
+    """
+    spelled = os.path.join(str(tmp_path), "x", "..", "방송 1080p_1.mp4")
+    other = reserve_section_output_paths([spelled], set())
+    try:
+        with hold_output_paths([str(tmp_path / "방송 1080p_1.mp4")]) as held:
+            pass
+    finally:
+        release_output_paths(other)
+
+    assert held is False
+
+
+def test_hold_is_released_when_the_block_raises(tmp_path: Path) -> None:
+    """hold_output_paths 블록 안에서 예외가 나도 블록을 나가면 그 이름이 다시 배정되어야 한다 (#392).
+
+    "방송 1080p_1.mp4"를 잡은 블록에서 RuntimeError -> 블록 밖의 새 배정 "방송 1080p_1.mp4"
+    """
+    path = str(tmp_path / "방송 1080p_1.mp4")
+
+    with pytest.raises(RuntimeError), hold_output_paths([path]):
+        raise RuntimeError("block failed")
+
+    assert _section_names(tmp_path, 1) == ["방송 1080p_1.mp4"]
 
 
 def test_section_body_path_derives_from_section_output(tmp_path) -> None:
