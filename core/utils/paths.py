@@ -168,6 +168,16 @@ def release_output_paths(paths: Iterable[str]) -> None:
             _reserved_paths.discard(_path_key(path))
 
 
+def is_output_reserved(path: str) -> bool:
+    """그 산출물 경로를 지금 어느 다운로드가 예약하고 있는지 — 그 이름에서 파생한 임시 파일의 주인을 가린다.
+
+    재시도가 새 이름을 받은 구간의 옛 이름은 이 재시도가 예약하지 않는다. 그 옛 이름을 다른
+    다운로드가 예약했으면 그 이름의 본문 파일은 그 다운로드의 것일 수 있다 (#392).
+    """
+    with _reserved_lock:
+        return _path_key(path) in _reserved_paths
+
+
 def partial_source_path_for(output_path: str) -> str:
     """구간 다운로드가 받은 바이트를 모아 둘 임시 원본 파일의 경로를 산출물 파일명에서 파생한다 (#309).
 
