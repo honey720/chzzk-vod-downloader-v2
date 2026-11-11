@@ -197,7 +197,7 @@ STATUS_KEEP_CHARS = (
 # ✕를 누르면 「멈추고 지우기」를 묻는 상태 — 엔진이 그 카드를 쥐고 있다(#550)
 BUSY_STATES = (DownloadState.RUNNING, DownloadState.PAUSED)
 
-# 키보드 초점으로 보지 않는 까닭 — 카드는 마우스로 초점을 받지 않지만(TabFocus) 혹시 오면 테두리를 안 그린다
+# 키보드 초점으로 보지 않는 까닭 — 카드는 마우스로 초점을 받지 않지만(TabFocus) 혹시 오면 focus ring을 안 그린다
 _POINTER_REASONS = (Qt.FocusReason.MouseFocusReason,)
 
 
@@ -267,7 +267,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self._picking = (
             False  # 목록이 선택 모드다 — 카드 버튼을 숨기고 누름 · 더블 클릭이 고르기다(#561)
         )
-        self._pickFocus = False  # 프레임의 pickFocus 속성(선택 모드의 초점 색)을 켰는지(#561)
+        self._armed = False  # 고르기를 시작한 누름이 이어지는 중 — 카드 안에서 떼면 고른다(#561)
+        self._armedModifiers = Qt.KeyboardModifier.NoModifier  # 그 누름 때의 수정자
+        self._pressed = False  # 프레임의 pressed 속성(눌린 바탕)을 켰는지(#561)
         self._tipsInstalled = False  # 말풍선 필터를 걸었는지 — 처음 호버할 때 건다
         self._levelTexts: list[card_text.SlotTexts] = []  # 접는 단계마다의 3줄 글(#554)
         self._needs: list[int] | None = None  # 단계마다 3줄 필요 폭 — 글이 바뀌면 다시 센다
@@ -280,7 +282,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self._stillPending = False  # 애니메이션 끔에서 미룬 막대 바꾸기가 걸려 있는지
         self._previousState: object = None  # 직전 applyStateStyle의 상태 — 중지를 알아본다
         self.setupUi(self)
-        # 카드 하나가 Tab 한 번이다. 마우스로는 초점을 받지 않는다 — 초점 테두리는 키보드 초점만
+        # 카드 하나가 Tab 한 번이다. 마우스로는 초점을 받지 않는다 — focus ring은 키보드 초점만
         self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         self._setupThreadRelays()  # setupDynamicUi가 스레드를 띄우기 전에 연결돼야 한다 (#168)
         self.setupDynamicUi()
@@ -352,6 +354,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """
         super().showEvent(event)
         self._fitRow3()
+        # 누른 채 숨었다가(지우기 · 필터) 다시 보이는 카드에 눌린 바탕이 남지 않게 한다(#561)
+        if self._armed or self._pressed:
+            self._disarm()
 
     # ---- 호버 · 키보드 초점 — 카드 버튼을 보이는 때 (#550) ----
 
@@ -402,38 +407,24 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             install_tips(getattr(self, name))
 
     def hasKeyFocus(self) -> bool:
-        """키보드 초점이 이 카드에 있는지 — 초점 테두리 · 카드 버튼을 보이는 때."""
+        """키보드 초점이 이 카드에 있는지 — focus ring · 카드 버튼을 보이는 때."""
         return self._keyFocus
 
     def _setKeyFocus(self, on: bool) -> None:
+        """키보드 초점을 켜고 끈다 — 카드 버튼을 맞추고 목록에 알린다 (#550 · #561).
+
+        초점 표시는 카드가 그리지 않는다 — 목록이 카드 바깥에 focus ring 하나를 그린다
+        (`ContentListView.cardKeyFocusChanged`). 프레임의 `keyFocus` 속성은 남긴다(바깥이 읽는다) —
+        이 속성을 보는 QSS 규칙이 없어 스타일은 다시 계산하지 않는다.
+        """
         if on == self._keyFocus:
             return
         self._keyFocus = on
         self.contentFrame.setProperty("keyFocus", on)
-        if not self._syncPickFocus():
-            theme.repolish(self.contentFrame)
         self._syncCardButtons()
-
-    def _syncPickFocus(self) -> bool:
-        """선택 모드의 초점 모양을 초점 · 선택 모드 · 고름에 맞춘다 (#561).
-
-        고름 테두리가 강조색이라 선택 모드에서는 초점을 중립색(`focusOnAccent`)으로 가른다. 안 고른 카드는
-        QSS 테두리 색을 바꾸고(프레임의 `pickFocus` 속성), 고른 카드는 QSS 테두리를 강조색으로 둔 채 그 안쪽에
-        선을 그린다(`CardFace.setFocusLine`) — 모서리에서 두 색이 섞이지 않는다. 속성은 바뀔 때만 다시
-        놓는다 — 선택 모드를 드나들 때 초점이 없는 카드는 스타일을 다시 계산하지 않는다.
-
-        Returns:
-            프레임 스타일을 다시 계산했는지
-        """
-        focused = self._keyFocus and self._picking
-        self.contentFrame.setFocusLine(focused)
-        pick_focus = focused and not self.contentFrame.isSelected()
-        if pick_focus == self._pickFocus:
-            return False
-        self._pickFocus = pick_focus
-        self.contentFrame.setProperty("pickFocus", pick_focus)
-        theme.repolish(self.contentFrame)
-        return True
+        owner = self._listOwner()
+        if owner is not None:
+            owner.cardKeyFocusChanged(self, on)
 
     def focusInEvent(self, event: QFocusEvent) -> None:
         """키보드 초점이 들어왔다 — 목록 밖에서 Tab으로 들어오면 목록이 보이는 차례의 첫(끝) 카드로 옮긴다."""
@@ -473,7 +464,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         Tab 차례 밖이라 키보드로 다시 시도할 길이 이것뿐이다). 선택 모드에서는 Enter가 아무것도 열지 않는다.
         ↑↓는 보이는 차례로 앞 · 뒤 카드에 초점을 옮긴다 — 끝에서는 그대로다. Delete는 목록의 단축키가 받는다.
         선택 모드의 Space는 이 카드를 클릭한 것과 같다(Shift+Space = Shift+클릭) — 클릭과 같이 목록의
-        `cardPressed`로 간다. 선택 모드 밖의 Space는 받지 않는다 — Shift가 붙어도 선택 모드로 들어가지 않는다.
+        `cardPicked`로 간다. 클릭은 뗄 때 고르지만 Space는 누를 때 고른다. 선택 모드 밖의 Space는 받지
+        않는다 — Shift가 붙어도 선택 모드로 들어가지 않는다.
         """
         key = event.key()
         if key == Qt.Key.Key_Space and self._picking:
@@ -482,7 +474,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
                 event.accept()
                 # 누르고 있을 때 오는 키 반복은 넘긴다 — 고르기 · 풀기가 되풀이되지 않게
                 if not event.isAutoRepeat():
-                    owner.cardPressed(self, event.modifiers())
+                    owner.cardPicked(self, event.modifiers())
                 return
         if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             event.accept()
@@ -515,7 +507,6 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             self._picking = on
             self._syncCardButtons()
             self._syncPickMark()
-            self._syncPickFocus()
 
     def _syncPickMark(self) -> None:
         """썸네일의 체크 원을 선택 모드 · 고름에 맞춘다 — 선택 모드에서만 그린다."""
@@ -526,22 +517,92 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         return self.contentFrame.isSelected()
 
     def setSelected(self, on: bool) -> None:
-        """고른 카드 모양을 켜고 끈다 — 목록이 부른다."""
+        """고른 카드 모양을 켜고 끈다 — 목록이 부른다.
+
+        강조색 테두리는 카드 면과 progress bar가 함께 그린다 — 면 위에 놓인 progress bar가 면의 아래 변을
+        가리므로 그 자리의 테두리는 progress bar가 덧그린다(`CardProgress`).
+        """
         self.contentFrame.setSelected(on)
+        self.progressBar.setPicked(on)
         self._syncPickMark()
-        self._syncPickFocus()
+
+    # ---- 뗄 때 고르기 (#561) ----
+    # 누르면 눌린 바탕만 켜고, 카드 안에서 떼면 고른다. 누른 채 카드 밖으로 나가면 눌린 바탕이 꺼지고 그대로
+    # 떼면 아무 일도 없다. 버튼을 누른 동안에는 포인터가 밖에 있어도 옮김 · 뗌이 누른 위젯으로 온다(Qt)
+
+    def isPressed(self) -> bool:
+        """눌린 바탕이 켜져 있는지 — 고르기를 시작한 누름이 카드 안에 있는 동안."""
+        return self._pressed
+
+    def _setPressed(self, on: bool) -> None:
+        """눌린 바탕(`cardPressedBg` 등)을 켜고 끈다 — 모션 없이 바로 바뀐다."""
+        if on == self._pressed:
+            return
+        self._pressed = on
+        frame = self.contentFrame
+        frame.setProperty("pressed", on)
+        theme.repolish(frame)
+        frame.update()  # 배경 채움은 면이 직접 그린다 — 속성만 바뀌면 다시 그리지 않을 수 있다
+        if self.hoverShade.isVisibleTo(self):
+            self.hoverShade.update()
+
+    def _arm(self, on: bool, modifiers: Qt.KeyboardModifier) -> None:
+        """고르기를 시작한 누름이면 뗌을 기다린다 — 수정자는 누를 때의 값을 든다."""
+        self._armed = on
+        self._armedModifiers = modifiers
+        self._setPressed(on)
+
+    def _disarm(self) -> None:
+        self._armed = False
+        self._setPressed(False)
+
+    def _holds(self, event: QMouseEvent) -> bool:
+        """포인터 밑이 이 카드인지 — 굴러 나가 가려진 부분, 다른 위젯이 덮은 부분은 밖으로 본다.
+
+        커서를 읽지 않고 이벤트의 자리로 창에 묻는다(`QWidget.childAt`) — 마우스를 받지 않는 위젯(focus
+        ring)은 건너뛴다.
+        """
+        point = event.position().toPoint()
+        top = self.window()
+        if top is self:
+            return self.rect().contains(point)
+        under = top.childAt(self.mapTo(top, point))
+        return under is self or (under is not None and self.isAncestorOf(under))
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
-        """카드 바탕 · 글 · 그림을 누르면 목록에 알린다 — 고르기는 목록이 정한다(#561).
+        """카드 바탕 · 글 · 썸네일을 누르면 목록에 알린다 — 고르기는 뗄 때 한다(#561).
 
-        카드 버튼은 누름을 스스로 받아 여기 오지 않는다. 목록이 없으면(카드만 띄운 테스트) 기본 처리다.
+        목록이 「고르기를 시작하는 누름」이라고 답하면(선택 모드, 또는 Ctrl/⌘ · Shift와 함께) 눌린 바탕을
+        켜고 뗌을 기다린다. 카드 버튼은 누름을 스스로 받아 여기 오지 않는다. 목록이 없으면(카드만 띄운
+        테스트) 기본 처리다.
         """
         owner = self._listOwner()
         if event.button() == Qt.MouseButton.LeftButton and owner is not None:
             event.accept()
-            owner.cardPressed(self, event.modifiers())
+            self._arm(owner.cardPressed(self, event.modifiers()), event.modifiers())
             return
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        """누른 채 옮기면 눌린 바탕이 포인터가 카드 안에 있는지를 따른다 (#561)."""
+        if self._armed:
+            event.accept()
+            self._setPressed(self._holds(event))
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        """고르기를 시작한 누름을 카드 안에서 떼면 목록에 고르기를 알린다 — 밖에서 떼면 아무 일도 없다 (#561)."""
+        if event.button() == Qt.MouseButton.LeftButton and self._armed:
+            event.accept()
+            inside = self._holds(event)
+            modifiers = self._armedModifiers
+            self._disarm()
+            owner = self._listOwner()
+            if inside and owner is not None:
+                owner.cardPicked(self, modifiers)
+            return
+        super().mouseReleaseEvent(event)
 
     def _syncCardButtons(self) -> None:
         """카드 버튼 상자 · 덮개를 호버 · 키보드 초점에 맞춰 보이고 숨긴다 — 선택 모드에서는 늘 숨긴다."""
@@ -1298,14 +1359,14 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
         """카드를 더블 클릭하면 `activate`한다. 버튼은 더블 클릭을 스스로 받아 여기 오지 않는다.
 
-        선택 모드에서는 아무것도 열지 않는다(#561) — 두 번째 누름으로 보고 목록에 알린다(빠르게 두 번 누르면
+        선택 모드에서는 아무것도 열지 않는다(#561) — 두 번째 누름으로 보고 뗌을 기다린다(빠르게 두 번 누르면
         골랐다가 푼다). Qt는 더블 클릭의 두 번째 누름을 누름이 아니라 더블 클릭으로만 보낸다.
         """
         if event.button() == Qt.MouseButton.LeftButton:
             event.accept()
             owner = self._listOwner()
             if self._picking and owner is not None:
-                owner.cardPressed(self, event.modifiers())
+                self._arm(owner.cardPressed(self, event.modifiers()), event.modifiers())
                 return
             if not self._picking:
                 self.activate()

@@ -14,6 +14,7 @@ from PySide6.QtGui import (
     QColor,
 )
 import app.theme as theme
+from app.widgets.focus_ring import FocusRing
 from app.widgets.narrow_steps import RETURN_SLACK
 from app.widgets.scroll_padding import ScrollBarPadding
 from app.widgets.widget import BUSY_STATES, ContentItemWidget
@@ -179,6 +180,9 @@ class ContentListView(QScrollArea):
         self._layout.setSpacing(gap)
         self._layout.addStretch(1)  # 카드는 항상 이 스트레치 앞에 insertWidget된다
         self.setWidget(self._container)
+        # 키보드 초점 카드의 바깥 고리(#561) — 목록에 하나뿐이다. 컨테이너의 자식이라 카드와 함께 굴러가고
+        # 뷰포트에 잘리며, 목록 밖의 선택 줄보다 아래다. 레이아웃에는 넣지 않는다(카드 자리를 따라 스스로 놓인다)
+        self._ring = FocusRing(self._container)
 
         self.setAcceptDrops(True)
 
@@ -194,6 +198,8 @@ class ContentListView(QScrollArea):
         self._hoverCard: ContentItemWidget | None = None  # 호버라고 보는 카드 하나(#550)
         self._rehoverPending = False  # 호버 다시 맞추기를 다음 턴에 한 번만 (#550)
         self._steppingFocus = False  # 목록이 카드 초점을 옮기는 중 — 들어옴으로 보지 않는다
+        # 카드 컨테이너를 숨기는 동안 적어 둔 초점 카드와 그 초점이 키보드 초점이었는지(#561)
+        self._heldFocus: tuple[ContentItemWidget, bool] | None = None
         self._showYear = True  # 카드 날짜에 연도를 적는지 — 목록 전체가 함께 정한다(#554)
         self._datesPending = False  # 날짜 연도 전체 판정을 다음 턴에 한 번만(#554)
         self._newCards: list[ContentItemWidget] = []  # 다음 턴에 연도를 볼 새 카드(#554)
@@ -323,13 +329,21 @@ class ContentListView(QScrollArea):
             index += step
         return None
 
+    def _revealCard(self, card: ContentItemWidget) -> None:
+        """초점을 받은 카드를 굴려 보이게 한다 — 키보드 초점이면 카드 바깥의 focus ring까지 보이게 한다 (#561).
+
+        마우스로 온 초점은 고리를 그리지 않으므로 카드만 보이면 된다.
+        """
+        ring = theme.METRICS["focusRingGap"] + theme.METRICS["focusRingWidth"]
+        self.ensureWidgetVisible(card, 0, ring if card.hasKeyFocus() else 0)
+
     def _focusCard(self, card: ContentItemWidget, reason: Qt.FocusReason) -> None:
         self._steppingFocus = True
         try:
             card.setFocus(reason)
         finally:
             self._steppingFocus = False
-        self.ensureWidgetVisible(card, 0, 0)
+        self._revealCard(card)
 
     def stepCardFocus(self, widget: ContentItemWidget, forward: bool) -> bool:
         """초점을 보이는 차례(정렬 · 필터 뒤)의 다음(앞) 카드로 옮긴다 — 끝이면 목록 밖으로.
@@ -373,7 +387,7 @@ class ContentListView(QScrollArea):
             if target is not None and target is not widget:
                 self._focusCard(target, reason)
                 return
-        self.ensureWidgetVisible(widget, 0, 0)
+        self._revealCard(widget)
 
     def moveCardFocus(self, widget: ContentItemWidget, forward: bool) -> bool:
         """↑↓ — 초점을 보이는 차례의 다음(앞) 카드로 옮긴다. 끝이면 그대로다(#561). 옮겼으면 참."""
@@ -398,6 +412,53 @@ class ContentListView(QScrollArea):
         if focus is not None and self._widgets.get(focus.item) is focus:
             return focus
         return None
+
+    def focusRing(self) -> FocusRing:
+        """키보드 초점 카드를 따라다니는 고리 — 목록에 하나다(#561)."""
+        return self._ring
+
+    def cardKeyFocusChanged(self, widget: ContentItemWidget, on: bool) -> None:
+        """카드의 키보드 초점이 켜지거나 꺼졌다 — 고리를 그 카드로 옮기거나 숨긴다 (#561).
+
+        카드가 부른다(`ContentItemWidget._setKeyFocus`). 마우스로 온 초점은 키보드 초점이 아니라 여기 오지
+        않는다. 초점이 카드에서 카드로 옮겨 가면 꺼짐 · 켜짐이 차례로 온다 — 꺼짐은 고리가 그 카드를 따라가던
+        때만 숨긴다.
+        """
+        if on:
+            self._ring.follow(widget)
+        elif self._ring.target() is widget:
+            self._ring.follow(None)
+
+    def _hideCards(self) -> None:
+        """카드 컨테이너를 숨긴다 — 초점이 카드에 있으면 그 카드를 적어 둔다 (#561).
+
+        보이는 창에서 컨테이너를 숨기면 Qt가 그 안의 초점을 목록 밖의 위젯으로 옮긴다. 적어 두지 않으면 필터 칩을
+        누르거나 지운 카드를 되살릴 때마다 초점이 카드에서 빠져 focus ring이 사라진다. `_showCards`와 짝으로 부른다.
+        """
+        focus = self.window().focusWidget()
+        if isinstance(focus, ContentItemWidget) and self._widgets.get(focus.item) is focus:
+            self._heldFocus = (focus, focus.hasKeyFocus())
+        self._container.hide()
+
+    def _showCards(self) -> None:
+        """카드 컨테이너를 다시 보이고, 적어 둔 초점 카드가 아직 보이면 초점을 돌려준다 (#561).
+
+        그 카드가 지워졌거나 필터로 숨었으면 초점은 Qt가 옮긴 자리에 둔다. 마우스로 받았던 초점은 마우스 초점으로
+        돌려준다 — 고리가 새로 나타나지 않는다.
+        """
+        self._container.show()
+        held, self._heldFocus = self._heldFocus, None
+        if held is None:
+            return
+        card, key = held
+        if self._widgets.get(card.item) is not card or card.isHidden():
+            return
+        reason = Qt.FocusReason.OtherFocusReason if key else Qt.FocusReason.MouseFocusReason
+        self._steppingFocus = True  # 자리를 굴리지 않는다 — 레이아웃이 아직 다시 계산되지 않았다
+        try:
+            card.setFocus(reason)
+        finally:
+            self._steppingFocus = False
 
     # ---- 선택 모드 (#561 — 설계 §12.1 「선택 모드」 · §7 「카드 선택」, 프로토 shell.py) ----
     # 들어가는 길: 선택 버튼 · Ctrl/⌘+클릭 · Shift+클릭 · Ctrl/⌘+A. 나가는 길: 취소 · 선택 버튼 · Esc · 지우기.
@@ -466,15 +527,27 @@ class ContentListView(QScrollArea):
         self._selected = new
         self.selectionChanged.emit()
 
-    def cardPressed(self, widget: ContentItemWidget, modifiers: Qt.KeyboardModifier) -> None:
-        """카드를 눌렀다 — 선택 모드면 고르고, 아니면 Ctrl/⌘ · Shift가 선택 모드로 들어간다.
+    def cardPressed(self, widget: ContentItemWidget, modifiers: Qt.KeyboardModifier) -> bool:
+        """카드를 눌렀다 — 초점을 목록으로 옮기고, 이 누름이 고르기를 시작하는지 답한다.
 
-        평소 클릭은 고르지 않는다(더블 클릭은 편집 창 · 폴더 열기). 선택 모드 안에서 클릭은 그 카드를 고르거나
-        풀고, Shift+클릭은 기준 카드부터 그 카드까지(보이는 차례)를 더한다. 누르면 초점은 목록으로 간다 — URL
-        칸에 있던 초점이 남지 않게(그 뒤 Ctrl/⌘+A · Delete · Ctrl/⌘+Z가 목록에 듣는다).
+        고르지는 않는다 — 고르기는 카드 안에서 뗄 때다(`cardPicked`). 누르면 초점은 목록으로 간다 — URL 칸에
+        있던 초점이 남지 않게(그 뒤 Ctrl/⌘+A · Delete · Ctrl/⌘+Z가 목록에 듣는다).
+
+        Returns:
+            선택 모드이거나 Ctrl/⌘ · Shift와 함께 눌렀으면 참 — 카드가 눌린 바탕을 켜고 뗌을 기다린다.
+            평소 클릭은 거짓이다(더블 클릭은 편집 창 · 폴더 열기)
         """
         if self._focusedCard() is not widget:
             self.setFocus(Qt.FocusReason.MouseFocusReason)
+        picks = Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier
+        return self._selecting or bool(modifiers & picks)
+
+    def cardPicked(self, widget: ContentItemWidget, modifiers: Qt.KeyboardModifier) -> None:
+        """카드를 골랐다 — 선택 모드면 고르고, 아니면 Ctrl/⌘ · Shift가 선택 모드로 들어가며 고른다.
+
+        카드가 부른다 — 누른 카드 안에서 뗄 때(수정자는 누를 때의 값), 선택 모드의 Space를 누를 때. 선택
+        모드 안에서는 그 카드를 고르거나 풀고, Shift는 기준 카드부터 그 카드까지(보이는 차례)를 더한다.
+        """
         item = widget.item
         ctrl = bool(modifiers & Qt.KeyboardModifier.ControlModifier)
         shift = bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
@@ -662,11 +735,10 @@ class ContentListView(QScrollArea):
         하나씩 보이면 그때마다 목록 레이아웃이 다시 계산돼, 숨었던 카드 800장을 다시 보이는 데
         16초가 걸렸다(#495 offscreen 실측, 카드 1000장).
         """
-        container = self._container
-        container.hide()
+        self._hideCards()
         for item, widget in self._widgets.items():
             widget.setVisible(self._accepts(item))
-        container.show()
+        self._showCards()
         self._overlay.update()
         self._scheduleRehover()
         self._scheduleDates()  # 다시 보인 카드가 연도를 못 넣을 수 있다 — 칩 조작 한 번에 한 번
@@ -732,9 +804,9 @@ class ContentListView(QScrollArea):
         되살리기에서 그 몫이 절반을 넘었다(inbox 139 실측, `_applyFilter`와 같은 까닭).
         """
         if on:
-            self._container.hide()
+            self._hideCards()
             return
-        self._container.show()
+        self._showCards()
         self._overlay.update()
         self._scheduleRehover()
 
@@ -751,6 +823,8 @@ class ContentListView(QScrollArea):
                 self._hoverCard = None
             if widget in self._newCards:
                 self._newCards.remove(widget)
+            if self._ring.target() is widget:
+                self._ring.follow(None)  # 지워질 카드에서 뗀다 — 초점이 옮겨 가면 다시 따라간다
             self._layout.removeWidget(widget)
             kept = getattr(self._model, "isKept", None)
             if kept is not None and kept(item):

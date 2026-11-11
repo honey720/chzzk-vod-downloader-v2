@@ -1,8 +1,10 @@
-"""카드 C4 — 선택 모드 · 지우기 되돌리기 · 카드 키 (#561 — 설계 §12.1 「선택 모드」 · §7 「카드 선택」).
+"""카드 C4 — 선택 모드 · 지우기 되돌리기 · 카드 키 · focus ring (#561 — 설계 §12.1 「선택 모드」 · §7 「카드 선택」).
 
 카드는 모델에 바로 넣는다(`model.addItem` → 목록 · 순서 뷰모델 실배선). 카드 누름은 카드 면에 마우스 이벤트를
-보낸다(`QTest.mouseClick` — 커서는 옮기지 않는다). 키는 초점 위젯에 키 이벤트를 보낸다 — 키 처리는 단축키가 아니라
-키 이벤트라 창 활성 여부와 무관하다. 확인 창은 모듈 함수를 갈아 끼운다.
+보낸다(`QTest.mouseClick` — 커서는 옮기지 않는다). 누름 · 옮김 · 뗌을 나눠 재는 테스트는 창(`QWindow`)에 합성
+이벤트를 보낸다 — 누른 채 카드 밖으로 나간 옮김 · 뗌도 Qt가 누른 카드로 보낸다. 키는 초점 위젯에 키 이벤트를
+보낸다 — 키 처리는 단축키가 아니라 키 이벤트라 창 활성 여부와 무관하다. focus ring은 초점 이벤트를 따르므로 창을
+활성으로 만들고 초점이 올 때까지 조건 대기한다(xvfb에서는 활성이 늦게 온다). 확인 창은 모듈 함수를 갈아 끼운다.
 """
 
 from collections.abc import Iterator
@@ -13,6 +15,7 @@ from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt
 from PySide6.QtGui import QColor, QFontMetrics, QImage, QKeyEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QWidget
+from pytestqt.qtbot import QtBot
 
 import CVDv2 as main_module
 import app.theme as theme
@@ -21,6 +24,7 @@ import app.widgets.view as view_module
 from app.viewmodels import card_display
 from app.viewmodels.data import ContentItem
 from app.views.mainWindow import VodDownloader
+from app.widgets.focus_ring import FocusRing
 from app.widgets.widget import ContentItemWidget
 from core.models.download_state import DownloadState
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
@@ -108,7 +112,10 @@ def _card(win: VodDownloader, item: ContentItem) -> ContentItemWidget:
 
 
 def _click(win: VodDownloader, item: ContentItem, modifiers=Qt.KeyboardModifier.NoModifier) -> None:
-    QTest.mouseClick(_card(win, item).contentFrame, Qt.MouseButton.LeftButton, modifiers, FACE)
+    """카드 면을 누르고 뗀다 — 굴러 나가 안 보이는 카드는 먼저 보이게 굴린다(보이는 카드만 누를 수 있다)."""
+    card = _card(win, item)
+    win.listView.ensureWidgetVisible(card, 0, 0)
+    QTest.mouseClick(card.contentFrame, Qt.MouseButton.LeftButton, modifiers, FACE)
     QApplication.processEvents()
 
 
@@ -859,7 +866,9 @@ class TestCardKeys:
 # ---- 선택 줄 자리 ----
 
 
-def test_pressed_select_button_still_draws_the_focus_border(window) -> None:
+def test_pressed_select_button_still_draws_the_focus_border(
+    window: VodDownloader, qtbot: QtBot
+) -> None:
     """선택 모드(눌린 모양)의 선택 버튼도 키보드 초점을 받으면 위 테두리가 강조색이어야 한다.
 
     선택 모드 -> 선택 버튼에 Tab 초점 -> 위 테두리 가운데 화소 ≈ accent
@@ -871,8 +880,9 @@ def test_pressed_select_button_still_draws_the_focus_border(window) -> None:
     _settle()
     window.activateWindow()
     window.selectButton.setFocus(Qt.FocusReason.TabFocusReason)
-    _settle()
-    assert window.selectButton.hasFocus(), "전제: 초점을 받았다"
+    qtbot.waitUntil(
+        window.selectButton.hasFocus
+    )  # 전제: 초점을 받았다 — xvfb는 창 활성이 늦게 온다
     image = window.selectButton.grab().toImage()
     ratio = image.devicePixelRatio()
     got = image.pixelColor(int(window.selectButton.width() / 2 * ratio), 0)
@@ -927,7 +937,7 @@ class TestSelectBarPlace:
         assert need <= label.contentsRect().width()
 
 
-# ---- 체크 원 · 선택 모드의 초점 선 ----
+# ---- 체크 원 · focus ring · 뗄 때 고르기 ----
 
 QSS_PATH = main_module.resource_path(theme.QSS_RELATIVE_PATH)
 COLOUR_SLACK = 24  # 색이 같다고 보는 한도 — 세 채널 차의 합(안티에일리어싱이 섞는 몫)
@@ -947,14 +957,85 @@ def _show_compact(compact: bool) -> None:
     card_display.use(card_display.CardDisplay(animations=False, compact_thumbnail=compact))
 
 
-def _focus_by_key(win: VodDownloader, item: ContentItem) -> ContentItemWidget:
-    """그 카드에 키보드 초점을 준다 — 마우스 초점은 초점 선을 그리지 않는다."""
+def _focus_by_key(qtbot: QtBot, win: VodDownloader, item: ContentItem) -> ContentItemWidget:
+    """그 카드에 키보드 초점을 주고 초점이 올 때까지 기다린다 — 마우스 초점은 focus ring을 그리지 않는다.
+
+    초점 이벤트는 창이 활성일 때만 온다. xvfb에서는 활성이 늦게 와서 바로 단언하면 실패한다.
+    """
     card = _card(win, item)
     win.activateWindow()
     card.setFocus(Qt.FocusReason.OtherFocusReason)
-    _settle()
-    assert card.hasKeyFocus(), "전제: 카드가 키보드 초점을 받았다"
+    qtbot.waitUntil(card.hasKeyFocus)
     return card
+
+
+RING_GAP = 2  # focus ring을 카드 테두리에서 띄우는 px — 지시 값(제품 토큰을 읽지 않는다)
+RING_WIDTH = 2  # focus ring 굵기(px) — 지시 값
+RING_REACH = RING_GAP + RING_WIDTH  # focus ring의 바깥 끝이 카드 밖으로 나간 px
+LEFT = Qt.MouseButton.LeftButton
+NO_MODIFIER = Qt.KeyboardModifier.NoModifier
+
+
+def _ring(win: VodDownloader) -> FocusRing:
+    return win.listView.focusRing()
+
+
+def _wrapped(card: QWidget) -> QRect:
+    """그 카드를 네 변 모두 RING_REACH만큼 띄워 두른 사각형 — 카드 컨테이너 좌표."""
+    return card.geometry().adjusted(-RING_REACH, -RING_REACH, RING_REACH, RING_REACH)
+
+
+def _ring_wraps(win: VodDownloader, card: ContentItemWidget) -> bool:
+    """focus ring이 보이고 그 카드를 네 변 모두 띄워 두르는지."""
+    ring = _ring(win)
+    return (
+        ring.isVisible()
+        and ring.parentWidget() is card.parentWidget()
+        and ring.geometry() == _wrapped(card)
+    )
+
+
+def _outside(win: VodDownloader, card: ContentItemWidget, out: int) -> QColor:
+    """카드 왼쪽 테두리에서 바깥으로 `out`번째(1부터) 화소 — 세로 가운데, 창을 그려서 읽는다."""
+    assert card.isVisible(), "전제: 카드가 보인다"
+    spot = card.mapTo(win, QPoint(-out, card.height() // 2))
+    return _colour_at(win.grab().toImage(), spot.x(), spot.y())
+
+
+def _spot(win: VodDownloader, item: ContentItem) -> QPoint:
+    """그 카드 면의 바탕 자리 — 창 좌표. 굴러 나간 카드는 먼저 보이게 굴린다."""
+    card = _card(win, item)
+    win.listView.ensureWidgetVisible(card, 0, 0)
+    _settle()
+    return card.contentFrame.mapTo(win, FACE)
+
+
+def _press(
+    win: VodDownloader,
+    item: ContentItem,
+    modifiers: Qt.KeyboardModifier = NO_MODIFIER,
+    button: Qt.MouseButton = LEFT,
+) -> None:
+    """창에 누름 이벤트만 보낸다 — 떼지 않는다."""
+    QTest.mousePress(win.windowHandle(), button, modifiers, _spot(win, item))
+    _settle()
+
+
+def _drag_to(win: VodDownloader, item: ContentItem) -> None:
+    """누른 채 그 카드 면으로 옮긴다 — 창에 보내는 합성 이벤트라 실제 커서는 그대로다."""
+    QTest.mouseMove(win.windowHandle(), _spot(win, item))
+    _settle()
+
+
+def _release(
+    win: VodDownloader,
+    item: ContentItem,
+    modifiers: Qt.KeyboardModifier = NO_MODIFIER,
+    button: Qt.MouseButton = LEFT,
+) -> None:
+    """그 카드 면 위에서 뗀다."""
+    QTest.mouseRelease(win.windowHandle(), button, modifiers, _spot(win, item))
+    _settle()
 
 
 def _colour_at(image: QImage, x: float, y: float) -> QColor:
@@ -1278,145 +1359,729 @@ class TestPickMarkPixels:
             theme.apply_color_scheme(qapp, "dark", QSS_PATH)
 
 
-class TestSelectModeFocusLine:
-    def test_focus_outside_select_mode_is_an_accent_border(self, window) -> None:
-        """선택 모드 밖에서 키보드 초점을 받은 카드의 테두리 1px는 강조색이어야 한다.
+class TestFocusRing:
+    def test_ring_is_hidden_until_a_card_takes_key_focus(
+        self, window: VodDownloader, qtbot: QtBot
+    ) -> None:
+        """focus ring은 카드가 키보드 초점을 받기 전에는 숨어 있고 받으면 나타나야 한다.
 
-        카드 하나에 키보드 초점 -> 왼쪽 가장자리 화소 0 ≈ accent, 화소 1 ≈ cardBg
+        카드 셋 -> 숨음 -> 둘째에 키보드 초점 -> 보임
         """
-        items = _add(window, D.WAITING)
-        card = _focus_by_key(window, items[0])
-        assert _is(_edge(card, 0), "accent")
+        items = _add(window, D.WAITING, D.WAITING, D.WAITING)
+        assert not _ring(window).isVisible()
+        _focus_by_key(qtbot, window, items[1])
+        qtbot.waitUntil(_ring(window).isVisible)
+
+    def test_ring_wraps_the_key_focused_card_four_pixels_out(
+        self, window: VodDownloader, qtbot: QtBot
+    ) -> None:
+        """focus ring은 키보드 초점 카드를 네 변 모두 4px(띄움 2 + 굵기 2) 밖에서 둘러야 한다.
+
+        카드 셋(스크롤바 없음), 둘째에 키보드 초점 -> focus ring 자리 = 카드 자리에서 네 변 4px 밖,
+        붙여 그린 변 없음, 부모 = 카드의 부모(카드 컨테이너)
+        """
+        items = _add(window, D.WAITING, D.WAITING, D.WAITING)
+        assert not window.listView.verticalScrollBar().isVisible(), "전제: 스크롤바가 없다"
+        card = _focus_by_key(qtbot, window, items[1])
+        qtbot.waitUntil(lambda: _ring_wraps(window, card))
+        assert _ring(window).attachedSides() == ()
+
+    @pytest.mark.parametrize(
+        ("key", "modifiers", "start", "end"),
+        [
+            (Qt.Key.Key_Down, NO_MODIFIER, 0, 1),
+            (Qt.Key.Key_Up, NO_MODIFIER, 2, 1),
+            (Qt.Key.Key_Tab, NO_MODIFIER, 0, 1),
+            (Qt.Key.Key_Tab, SHIFT, 2, 1),
+        ],
+    )
+    def test_ring_follows_the_arrow_and_tab_keys(
+        self,
+        window: VodDownloader,
+        qtbot: QtBot,
+        key: Qt.Key,
+        modifiers: Qt.KeyboardModifier,
+        start: int,
+        end: int,
+    ) -> None:
+        """↑↓ · Tab · Shift+Tab으로 초점을 옮기면 focus ring이 새 초점 카드를 둘러야 한다.
+
+        카드 셋, start번째에 키보드 초점 · 키 한 번 -> end번째가 키보드 초점, focus ring이 end번째를 두름
+        """
+        items = _add(window, D.WAITING, D.WAITING, D.WAITING)
+        first = _focus_by_key(qtbot, window, items[start])
+        qtbot.waitUntil(lambda: _ring_wraps(window, first))
+        _key(first, key, modifiers)
+        target = _card(window, items[end])
+        qtbot.waitUntil(target.hasKeyFocus)
+        assert _ring_wraps(window, target)
+
+    def test_ring_scrolls_with_its_card_and_is_clipped_by_the_viewport(
+        self, window: VodDownloader, qtbot: QtBot
+    ) -> None:
+        """스크롤하면 focus ring이 카드와 함께 움직이고 화면 밖으로 나간 부분은 그려지지 않아야 한다.
+
+        카드 12장, 첫째에 키보드 초점 -> 스크롤 값 = 카드 높이 절반 -> 창에서 본 focus ring 위쪽이 그만큼
+        올라가고 보이는 높이가 0과 전체 사이 -> 스크롤 값 = 카드 높이의 두 배 -> 보이는 부분 없음
+        """
+        items = _add(window, *[D.WAITING] * 12)
+        bar = window.listView.verticalScrollBar()
+        card = _focus_by_key(qtbot, window, items[0])
+        ring = _ring(window)
+        qtbot.waitUntil(lambda: ring.isVisible() and ring.geometry().top() == card.y() - RING_REACH)
+        assert bar.maximum() >= 2 * card.height(), "전제: 카드 두 장 높이만큼 굴릴 수 있다"
+        bar.setValue(0)
+        _settle()
+        before = ring.mapTo(window, QPoint(0, 0)).y()
+        assert ring.visibleRegion().boundingRect().height() == ring.height(), "전제: 다 보인다"
+        half = card.height() // 2
+        bar.setValue(half)
+        _settle()
+        assert ring.mapTo(window, QPoint(0, 0)).y() == before - half
+        assert ring.geometry().top() == card.y() - RING_REACH
+        assert 0 < ring.visibleRegion().boundingRect().height() < ring.height()
+        bar.setValue(2 * card.height())
+        _settle()
+        assert ring.visibleRegion().isEmpty()
+
+    def test_ring_touches_the_card_on_the_side_without_room(
+        self, window: VodDownloader, qtbot: QtBot
+    ) -> None:
+        """컨테이너 가장자리까지 여유가 4px보다 작은 변에서는 focus ring이 그 여유 안에만 그려져야 한다.
+
+        카드 12장(스크롤바가 보여 오른쪽 여유가 준다), 첫째에 키보드 초점 -> 오른쪽 여유 < 4
+        -> focus ring 오른쪽 = 카드 오른쪽 + min(여유, 굵기 2), 나머지 세 변은 4px 밖, 붙여 그린 변 = 오른쪽
+        """
+        items = _add(window, *[D.WAITING] * 12)
+        assert window.listView.verticalScrollBar().isVisible(), "전제: 스크롤바가 보인다"
+        card = _focus_by_key(qtbot, window, items[0])
+        ring = _ring(window)
+        qtbot.waitUntil(ring.isVisible)
+        box = card.geometry()
+        room = card.parentWidget().width() - (box.x() + box.width())
+        assert 0 <= room < RING_REACH, "전제: 오른쪽 여유가 모자란다"
+        assert box.x() >= RING_REACH and box.y() >= RING_REACH, "전제: 왼쪽 · 위는 여유가 있다"
+        want = box.adjusted(-RING_REACH, -RING_REACH, min(room, RING_WIDTH), RING_REACH)
+        assert ring.geometry() == want
+        assert ring.attachedSides() == ("right",)
+
+    @pytest.mark.parametrize("wide", [True, False])
+    def test_ring_follows_the_window_width(
+        self, window: VodDownloader, qtbot: QtBot, wide: bool
+    ) -> None:
+        """창 폭이 바뀌어 카드 폭이 바뀌면 focus ring도 새 카드 자리를 둘러야 한다.
+
+        카드 셋, 둘째에 키보드 초점 -> 창 폭 1200 또는 최소폭 -> 카드 폭이 바뀜, focus ring이 그 카드를 두름
+        """
+        items = _add(window, D.WAITING, D.WAITING, D.WAITING)
+        card = _focus_by_key(qtbot, window, items[1])
+        qtbot.waitUntil(lambda: _ring_wraps(window, card))
+        before = card.width()
+        window.resize(1200 if wide else window.minimumWidth(), 700)
+        qtbot.waitUntil(
+            lambda: card.width() != before
+        )  # resize()는 요청이다 — 실제로 바뀐 것을 본다
+        assert (card.width() > before) is wide
+        qtbot.waitUntil(lambda: _ring_wraps(window, card))
+
+    def test_ring_follows_the_card_to_its_sorted_place(
+        self, window: VodDownloader, qtbot: QtBot
+    ) -> None:
+        """정렬로 초점 카드의 자리가 바뀌면 focus ring이 새 자리를 둘러야 한다.
+
+        카드 셋(카드 0 · 1 · 2), 첫째에 키보드 초점 -> 제목 내림차순 정렬 -> 첫째의 y가 커짐,
+        키보드 초점은 그대로, focus ring이 첫째를 두름
+        """
+        items = _add(window, D.WAITING, D.WAITING, D.WAITING)
+        card = _focus_by_key(qtbot, window, items[0])
+        qtbot.waitUntil(lambda: _ring_wraps(window, card))
+        before = card.y()
+        window.contentManager.order.setSort("title", True)
+        qtbot.waitUntil(lambda: card.y() > before)
+        assert card.hasKeyFocus()
+        qtbot.waitUntil(lambda: _ring_wraps(window, card))
+
+    def test_ring_follows_when_a_filter_hides_the_card_above(
+        self, window: VodDownloader, qtbot: QtBot
+    ) -> None:
+        """필터가 위 카드를 숨겨 초점 카드가 올라가면 focus ring이 그 자리를 둘러야 한다.
+
+        완료 · 대기 카드, 대기 카드에 키보드 초점 -> 「대기」 필터 -> 완료 카드가 숨고 대기 카드의 y가 줄어듦,
+        키보드 초점은 그대로, focus ring이 대기 카드를 두름
+        """
+        items = _add(window, D.FINISHED, D.WAITING)
+        card = _focus_by_key(qtbot, window, items[1])
+        qtbot.waitUntil(lambda: _ring_wraps(window, card))
+        before = card.y()
+        window.filterChips["waiting"].click()
+        qtbot.waitUntil(lambda: card.y() < before)
+        assert _card(window, items[0]).isHidden()
+        assert card.hasKeyFocus()
+        qtbot.waitUntil(lambda: _ring_wraps(window, card))
+
+    def test_ring_hides_when_a_filter_hides_the_focused_card(
+        self, window: VodDownloader, qtbot: QtBot
+    ) -> None:
+        """필터가 초점 카드를 숨기면 focus ring도 숨어야 한다.
+
+        완료 · 대기 카드, 완료 카드에 키보드 초점 -> 「대기」 필터 -> 완료 카드가 숨음, focus ring이 숨음
+        """
+        items = _add(window, D.FINISHED, D.WAITING)
+        card = _focus_by_key(qtbot, window, items[0])
+        qtbot.waitUntil(lambda: _ring_wraps(window, card))
+        window.filterChips["waiting"].click()
+        qtbot.waitUntil(card.isHidden)
+        qtbot.waitUntil(lambda: not _ring(window).isVisible())
+
+    def test_ring_moves_to_the_next_card_after_delete_and_back_after_undo(
+        self, window: VodDownloader, qtbot: QtBot
+    ) -> None:
+        """초점 카드를 지우면 focus ring이 초점을 넘겨받은 카드를 두르고, 되살려 자리가 밀려도 따라가야 한다.
+
+        카드 셋, 첫째에 키보드 초점 · Delete -> 둘째가 키보드 초점, focus ring이 둘째를 두름
+        -> Ctrl+Z -> 둘째의 y가 커짐, focus ring이 둘째를 두름
+        """
+        items = _add(window, D.WAITING, D.WAITING, D.WAITING)
+        first = _focus_by_key(qtbot, window, items[0])
+        qtbot.waitUntil(lambda: _ring_wraps(window, first))
+        _key(first, Qt.Key.Key_Delete)
+        assert window.listView.widgetFor(items[0]) is None, "전제: 첫째가 지워졌다"
+        second = _card(window, items[1])
+        qtbot.waitUntil(second.hasKeyFocus)
+        qtbot.waitUntil(lambda: _ring_wraps(window, second))
+        before = second.y()
+        _undo(window)
+        qtbot.waitUntil(lambda: second.y() > before)
+        assert window.listView.widgetFor(items[0]) is not None
+        qtbot.waitUntil(lambda: _ring_wraps(window, second))
+
+    def test_ring_hides_when_focus_leaves_the_list(
+        self, window: VodDownloader, qtbot: QtBot
+    ) -> None:
+        """초점이 목록 밖으로 나가면 focus ring이 숨어야 한다.
+
+        카드 둘, 첫째에 키보드 초점 -> URL 입력칸에 초점 -> focus ring이 숨음
+        """
+        items = _add(window, D.WAITING, D.WAITING)
+        card = _focus_by_key(qtbot, window, items[0])
+        qtbot.waitUntil(lambda: _ring_wraps(window, card))
+        window.urlInput.setFocus(Qt.FocusReason.TabFocusReason)
+        qtbot.waitUntil(window.urlInput.hasFocus)
+        qtbot.waitUntil(lambda: not _ring(window).isVisible())
+
+    def test_mouse_focus_does_not_show_the_ring(self, window: VodDownloader, qtbot: QtBot) -> None:
+        """마우스로 온 초점은 focus ring을 나타내지 않아야 한다.
+
+        카드 둘, 첫째에 마우스 초점(MouseFocusReason) -> 첫째가 초점을 받음, 키보드 초점 아님, focus ring 숨음
+        -> 둘째에 키보드 초점 -> focus ring 보임(같은 창에서 초점 이벤트가 온다는 표식)
+        """
+        items = _add(window, D.WAITING, D.WAITING)
+        first = _card(window, items[0])
+        window.activateWindow()
+        first.setFocus(Qt.FocusReason.MouseFocusReason)
+        qtbot.waitUntil(first.hasFocus)
+        assert not first.hasKeyFocus()
+        assert not _ring(window).isVisible()
+        second = _focus_by_key(qtbot, window, items[1])
+        qtbot.waitUntil(lambda: _ring_wraps(window, second))
+
+    def test_clicking_another_card_hides_the_ring(
+        self, window: VodDownloader, qtbot: QtBot
+    ) -> None:
+        """키보드 초점 카드가 있을 때 다른 카드를 클릭하면 focus ring이 숨어야 한다.
+
+        카드 둘, 첫째에 키보드 초점 -> 둘째 카드 면 클릭 -> 첫째가 키보드 초점을 잃음, focus ring 숨음
+        """
+        items = _add(window, D.WAITING, D.WAITING)
+        first = _focus_by_key(qtbot, window, items[0])
+        qtbot.waitUntil(lambda: _ring_wraps(window, first))
+        _click(window, items[1])
+        qtbot.waitUntil(lambda: not first.hasKeyFocus())
+        qtbot.waitUntil(lambda: not _ring(window).isVisible())
+
+    def test_ring_is_the_same_in_and_out_of_select_mode(
+        self, window: VodDownloader, qtbot: QtBot
+    ) -> None:
+        """focus ring의 자리와 색은 선택 모드 안팎에서 같아야 한다.
+
+        카드 셋, 둘째에 키보드 초점 -> focus ring 자리 · 카드 바깥 화소 1~5 기록 -> Ctrl+A로 들어가 Space로
+        둘째의 고름을 풂 -> 자리 · 화소가 같음
+        """
+        items = _add(window, D.WAITING, D.WAITING, D.WAITING)
+        card = _focus_by_key(qtbot, window, items[1])
+        qtbot.waitUntil(lambda: _ring_wraps(window, card))
+        place = _ring(window).geometry()
+        pixels = [_outside(window, card, out).name() for out in range(1, 6)]
+        _key(card, Qt.Key.Key_A, CTRL)
+        assert window.listView.isSelecting() and card.hasKeyFocus()
+        _key(card, Qt.Key.Key_Space)
+        assert not card.isSelected(), "전제: 초점 카드는 고르지 않은 모양이다"
+        assert _ring(window).isVisible() and _ring(window).geometry() == place
+        assert [_outside(window, card, out).name() for out in range(1, 6)] == pixels
+
+    def test_ring_takes_no_mouse(self, window: VodDownloader, qtbot: QtBot) -> None:
+        """focus ring이 덮은 자리의 클릭은 밑의 카드로 가야 한다.
+
+        선택 모드(Ctrl+A로 들어가 Space로 둘 다 풂), 첫째에 키보드 초점(focus ring이 카드 전체를 덮음)
+        -> 창의 그 카드 면 자리를 클릭 -> 그 자리의 위젯이 focus ring이 아님, 첫째가 골라짐
+        """
+        items = _add(window, D.WAITING, D.WAITING)
+        card = _focus_by_key(qtbot, window, items[0])
+        qtbot.waitUntil(lambda: _ring_wraps(window, card))
+        _key(card, Qt.Key.Key_A, CTRL)
+        _key(card, Qt.Key.Key_Space)
+        _key(_card(window, items[1]), Qt.Key.Key_Space)
+        assert window.listView.isSelecting() and _picked(window) == [], "전제: 고른 카드가 없다"
+        spot = _spot(window, items[0])
+        ring = _ring(window)
+        assert ring.isVisible() and ring.geometry().contains(card.geometry()), "전제: 덮고 있다"
+        assert window.childAt(spot) is not ring
+        QTest.mouseClick(window.windowHandle(), LEFT, NO_MODIFIER, spot)
+        _settle()
+        assert _picked(window) == [items[0]]
+
+    def test_ring_is_the_focus_token_colour_two_pixels_off_the_card(
+        self, window: VodDownloader, qtbot: QtBot
+    ) -> None:
+        """focus ring은 카드 테두리에서 2px 띄운 2px 굵기의 focusOnAccent 색 선이어야 한다.
+
+        카드 셋, 둘째에 키보드 초점 -> 카드 왼쪽 바깥 화소 1 · 2 ≈ windowBg(틈), 3 · 4 ≈ focusOnAccent,
+        5 ≈ windowBg
+        """
+        items = _add(window, D.WAITING, D.WAITING, D.WAITING)
+        card = _focus_by_key(qtbot, window, items[1])
+        qtbot.waitUntil(lambda: _ring_wraps(window, card))
+        assert _gap(QColor(theme.DARK["focusOnAccent"]), QColor(theme.DARK["windowBg"])) > 200
+        assert _is(_outside(window, card, 1), "windowBg") and _is(
+            _outside(window, card, 2), "windowBg"
+        )
+        assert _is(_outside(window, card, 3), "focusOnAccent")
+        assert _is(_outside(window, card, 4), "focusOnAccent")
+        assert _is(_outside(window, card, 5), "windowBg")
+
+    def test_ring_repaints_in_the_new_theme_after_a_runtime_switch(
+        self, qapp: QApplication, window: VodDownloader, qtbot: QtBot
+    ) -> None:
+        """실행 중 라이트 테마로 바꾸면 focus ring이 라이트의 focusOnAccent 색으로 다시 그려져야 한다.
+
+        다크, 카드에 키보드 초점 -> 바깥 화소 3 ≈ 다크 focusOnAccent -> apply_color_scheme("light")
+        -> 바깥 화소 3 ≈ 라이트 focusOnAccent
+        """
+        items = _add(window, D.WAITING, D.WAITING)
+        card = _focus_by_key(qtbot, window, items[0])
+        qtbot.waitUntil(lambda: _ring_wraps(window, card))
+        assert _is(_outside(window, card, 3), "focusOnAccent"), "전제: 다크 색으로 그렸다"
+        light = QColor(theme.LIGHT["focusOnAccent"])
+        assert _gap(QColor(theme.DARK["focusOnAccent"]), light) > COLOUR_SLACK
+        try:
+            theme.apply_color_scheme(qapp, "light", QSS_PATH)
+            _settle()
+            assert _gap(_outside(window, card, 3), light) <= COLOUR_SLACK
+        finally:
+            theme.apply_color_scheme(qapp, "dark", QSS_PATH)
+
+    @pytest.mark.parametrize("selecting", [False, True])
+    def test_focused_card_keeps_its_ordinary_border(
+        self, window: VodDownloader, qtbot: QtBot, selecting: bool
+    ) -> None:
+        """키보드 초점을 받은(안 고른) 카드의 테두리는 초점 없는 카드와 같은 평소 테두리여야 한다.
+
+        카드 둘(선택 모드 밖 · 안), 첫째에 키보드 초점 -> 첫째의 가장자리 화소 0 = 둘째의 화소 0 ≈ border,
+        화소 1 ≈ cardBg
+        """
+        items = _add(window, D.WAITING, D.WAITING)
+        if selecting:
+            _toggle_select_mode(window, True)
+        card = _focus_by_key(qtbot, window, items[0])
+        qtbot.waitUntil(lambda: _ring_wraps(window, card))
+        assert not card.isSelected(), "전제: 고르지 않았다"
+        assert _gap(QColor(theme.DARK["border"]), QColor(theme.DARK["accent"])) > COLOUR_SLACK
+        assert _edge(card, 0) == _edge(_card(window, items[1]), 0)
+        assert _is(_edge(card, 0), "border", 8)
         assert _is(_edge(card, 1), "cardBg")
 
-    def test_focus_only_in_select_mode_is_a_neutral_border(self, window) -> None:
-        """선택 모드에서 초점만 받은(안 고른) 카드의 테두리 1px는 중립색이어야 한다.
+    def test_picked_and_focused_is_accent_border_gap_and_ring(
+        self, window: VodDownloader, qtbot: QtBot
+    ) -> None:
+        """고른 카드가 키보드 초점을 받으면 강조색 2px 테두리 · 2px 틈 · focus ring이 차례로 보여야 한다.
 
-        선택 모드, 카드 하나에 키보드 초점 -> 화소 0 ≈ focusOnAccent, 화소 1 ≈ cardBg
+        선택 모드, 카드에 키보드 초점 · Space -> 가장자리 화소 0 · 1 ≈ accent, 화소 2 ≈ cardBg(안쪽 선 없음),
+        바깥 화소 1 · 2 ≈ windowBg, 3 · 4 ≈ focusOnAccent
         """
-        items = _add(window, D.WAITING)
+        items = _add(window, D.WAITING, D.WAITING)
         _toggle_select_mode(window, True)
-        card = _focus_by_key(window, items[0])
-        assert not card.contentFrame.isSelected(), "전제: 고르지 않았다"
-        assert _is(_edge(card, 0), "focusOnAccent")
-        assert _is(_edge(card, 1), "cardBg")
+        card = _focus_by_key(qtbot, window, items[0])
+        qtbot.waitUntil(lambda: _ring_wraps(window, card))
+        _key(card, Qt.Key.Key_Space)
+        assert card.isSelected() and card.hasKeyFocus()
+        assert _is(_edge(card, 0), "accent") and _is(_edge(card, 1), "accent")
+        assert _is(_edge(card, 2), "cardBg")
+        assert _is(_outside(window, card, 1), "windowBg") and _is(
+            _outside(window, card, 2), "windowBg"
+        )
+        assert _is(_outside(window, card, 3), "focusOnAccent")
+        assert _is(_outside(window, card, 4), "focusOnAccent")
 
-    def test_picked_only_is_an_accent_border_two_wide(self, window) -> None:
-        """고르기만 한(키보드 초점 없는) 카드는 강조색 2px 테두리이고 셋째 화소는 카드 바탕이어야 한다.
+    def test_picked_only_is_an_accent_border_two_wide(
+        self, window: VodDownloader, qtbot: QtBot
+    ) -> None:
+        """고르기만 한(키보드 초점 없는) 카드는 강조색 2px 테두리이고 바깥에 focus ring이 없어야 한다.
 
-        선택 모드, 카드 둘, 첫째 클릭 · 둘째에 키보드 초점 -> 첫째의 화소 0 · 1 ≈ accent, 화소 2 ≈ cardBg
+        선택 모드, 카드 둘, 첫째 클릭 · 둘째에 키보드 초점 -> 첫째의 화소 0 · 1 ≈ accent, 화소 2 ≈ cardBg,
+        첫째의 바깥 화소 3 ≈ windowBg, focus ring은 둘째를 두름
         """
         items = _add(window, D.WAITING, D.WAITING)
         _toggle_select_mode(window, True)
         _click(window, items[0])
-        _focus_by_key(window, items[1])
+        second = _focus_by_key(qtbot, window, items[1])
+        qtbot.waitUntil(lambda: _ring_wraps(window, second))
         card = _card(window, items[0])
-        assert card.contentFrame.isSelected() and not card.hasKeyFocus()
+        assert card.isSelected() and not card.hasKeyFocus()
         assert _is(_edge(card, 0), "accent") and _is(_edge(card, 1), "accent")
         assert _is(_edge(card, 2), "cardBg")
+        assert _is(_outside(window, card, 3), "windowBg")
 
-    def test_picked_and_focused_adds_a_neutral_line_inside_the_accent(self, window) -> None:
-        """고른 카드가 키보드 초점을 받으면 강조색 2px 안쪽에 붙은 중립색 1px가 더 그려져야 한다.
 
-        선택 모드, 카드에 키보드 초점 · Space -> 화소 0 · 1 ≈ accent, 화소 2 ≈ focusOnAccent,
-        화소 3 ≈ cardBg
+class TestFocusRingWidget:
+    """`FocusRing` 하나만 빈 위젯 위에 놓고 잰다 — 목록 배선 없이 따라가기 규칙만."""
+
+    @pytest.fixture
+    def host(self, qapp: QApplication) -> Iterator[QWidget]:
+        """보이는 창 안의 400×300 빈 위젯 — 창이 아니라서 `resize()`가 바로 그 크기가 된다.
+
+        창은 이 픽스처가 붙들고 있다가 `_drop_windows`가 정리한다.
         """
-        items = _add(window, D.WAITING)
-        _toggle_select_mode(window, True)
-        card = _focus_by_key(window, items[0])
-        _key(card, Qt.Key.Key_Space)
-        assert card.contentFrame.isSelected() and card.hasKeyFocus()
-        assert _is(_edge(card, 0), "accent") and _is(_edge(card, 1), "accent")
-        assert _is(_edge(card, 2), "focusOnAccent")
-        assert _is(_edge(card, 3), "cardBg")
+        top = QWidget()
+        top.resize(400, 300)
+        inner = QWidget(top)
+        inner.setGeometry(0, 0, 400, 300)
+        top.show()
+        _settle()
+        yield inner
 
-    def test_unpicking_the_focused_card_returns_to_the_neutral_border(self, window) -> None:
-        """초점 카드의 고름을 풀면 중립색 1px 테두리만 남아야 한다.
+    @staticmethod
+    def _plain_card(host: QWidget, box: QRect) -> QWidget:
+        card = QWidget(host)
+        card.setGeometry(box)
+        card.show()
+        return card
 
-        선택 모드, 초점 카드에 Space 두 번 -> 화소 0 ≈ focusOnAccent, 화소 1 · 2 ≈ cardBg
+    def test_follow_wraps_the_target_and_none_hides(self, host: QWidget) -> None:
+        """`follow(card)`는 그 위젯을 4px 밖에서 두르고 `follow(None)`은 숨겨야 한다.
+
+        위젯 (40, 30, 200, 80) -> follow -> focus ring (36, 26, 208, 88) · 보임 · target = 그 위젯
+        -> follow(None) -> 숨음 · target = None
         """
-        items = _add(window, D.WAITING)
-        _toggle_select_mode(window, True)
-        card = _focus_by_key(window, items[0])
-        _key(card, Qt.Key.Key_Space)
-        assert _is(_edge(card, 2), "focusOnAccent"), "전제: 고름 + 초점 모양이었다"
-        _key(card, Qt.Key.Key_Space)
-        assert not card.contentFrame.isSelected() and card.hasKeyFocus()
-        assert _is(_edge(card, 0), "focusOnAccent")
-        assert _is(_edge(card, 1), "cardBg") and _is(_edge(card, 2), "cardBg")
+        card = self._plain_card(host, QRect(40, 30, 200, 80))
+        ring = FocusRing(host)
+        assert not ring.isVisible()
+        ring.follow(card)
+        assert ring.isVisible() and ring.target() is card
+        assert ring.geometry() == QRect(36, 26, 208, 88)
+        ring.follow(None)
+        assert not ring.isVisible() and ring.target() is None
 
-    def test_focus_moving_away_removes_the_inner_line(self, window) -> None:
-        """고른 카드에서 초점이 다른 카드로 가면 안쪽 중립색 선이 없어져야 한다.
+    def test_ring_hides_and_shows_with_its_target(self, host: QWidget) -> None:
+        """따라가는 위젯이 숨으면 focus ring도 숨고 다시 보이면 나타나야 한다.
 
-        선택 모드, 카드 둘, 첫째에 초점 · Space · ↓ -> 첫째의 화소 0 · 1 ≈ accent, 화소 2 ≈ cardBg,
-        둘째의 화소 0 ≈ focusOnAccent
+        follow -> 위젯 hide() -> focus ring 숨음 -> 위젯 show() -> focus ring 보임
         """
-        items = _add(window, D.WAITING, D.WAITING)
-        _toggle_select_mode(window, True)
-        first = _focus_by_key(window, items[0])
-        _key(first, Qt.Key.Key_Space)
-        assert _is(_edge(first, 2), "focusOnAccent"), "전제: 고름 + 초점 모양이었다"
-        _key(first, Qt.Key.Key_Down)
-        second = _card(window, items[1])
-        assert second.hasKeyFocus() and not first.hasKeyFocus()
-        assert _is(_edge(first, 0), "accent") and _is(_edge(first, 1), "accent")
-        assert _is(_edge(first, 2), "cardBg")
-        assert _is(_edge(second, 0), "focusOnAccent")
+        card = self._plain_card(host, QRect(40, 30, 200, 80))
+        ring = FocusRing(host)
+        ring.follow(card)
+        assert ring.isVisible(), "전제: 보였다"
+        card.hide()
+        _settle()
+        assert not ring.isVisible()
+        card.show()
+        _settle()
+        assert ring.isVisible() and ring.geometry() == QRect(36, 26, 208, 88)
 
-    def test_focus_after_leaving_select_mode_is_the_accent_border_again(self, window) -> None:
-        """선택 모드에서 초점 선을 그렸던 카드도 나온 뒤 받는 키보드 초점은 강조색 1px여야 한다.
+    def test_ring_follows_move_and_resize_of_its_target(self, host: QWidget) -> None:
+        """따라가는 위젯을 옮기거나 크기를 바꾸면 focus ring이 새 자리를 둘러야 한다.
 
-        선택 모드, 초점 카드에 Space(고름 + 초점) -> 선택 버튼으로 나옴 -> 그 카드에 키보드 초점
-        -> 화소 0 ≈ accent, 화소 1 · 2 ≈ cardBg
+        follow -> 위젯을 (60, 100)으로 옮김 -> focus ring (56, 96, 208, 88)
+        -> 위젯 크기 (120, 40) -> focus ring (56, 96, 128, 48)
         """
-        items = _add(window, D.WAITING)
-        _toggle_select_mode(window, True)
-        card = _focus_by_key(window, items[0])
-        _key(card, Qt.Key.Key_Space)
-        assert _is(_edge(card, 2), "focusOnAccent"), "전제: 고름 + 초점 모양이었다"
-        _toggle_select_mode(window, False)
-        _focus_by_key(window, items[0])
-        assert _is(_edge(card, 0), "accent")
-        assert _is(_edge(card, 1), "cardBg") and _is(_edge(card, 2), "cardBg")
+        card = self._plain_card(host, QRect(40, 30, 200, 80))
+        ring = FocusRing(host)
+        ring.follow(card)
+        card.move(60, 100)
+        _settle()
+        assert ring.geometry() == QRect(56, 96, 208, 88)
+        card.resize(120, 40)
+        _settle()
+        assert ring.geometry() == QRect(56, 96, 128, 48)
 
-    def test_entering_by_ctrl_a_on_a_focused_card_draws_the_inner_line(self, window) -> None:
-        """평소 키보드 초점을 받은 카드에서 Ctrl/⌘+A로 들어가면 그 카드에 안쪽 중립색 선이 그려져야 한다.
+    def test_side_without_room_is_attached_and_host_resize_replaces(self, host: QWidget) -> None:
+        """여유가 4px보다 작은 변만 붙여 그리고, 부모 크기가 바뀌어 여유가 달라지면 다시 놓아야 한다.
 
-        카드 둘, 첫째에 키보드 초점 · Ctrl+A -> 첫째(고름 + 초점)의 화소 0 · 1 ≈ accent,
-        화소 2 ≈ focusOnAccent, 둘째(고름만)의 화소 2 ≈ cardBg
+        위젯 (2, 30, 200, 80) -> 왼쪽은 2px만 나감 · 붙여 그린 변 = 왼쪽, focus ring (0, 26, 206, 88)
+        -> 부모 폭 203(오른쪽 여유 1) -> 오른쪽은 1px만 나감, 붙여 그린 변 = 왼쪽 · 오른쪽
         """
-        items = _add(window, D.WAITING, D.WAITING)
-        first = _focus_by_key(window, items[0])
-        _key(first, Qt.Key.Key_A, CTRL)
-        assert _picked(window) == items and first.hasKeyFocus()
-        assert _is(_edge(first, 0), "accent") and _is(_edge(first, 1), "accent")
-        assert _is(_edge(first, 2), "focusOnAccent")
-        assert _is(_edge(_card(window, items[1]), 2), "cardBg")
+        card = self._plain_card(host, QRect(2, 30, 200, 80))
+        ring = FocusRing(host)
+        ring.follow(card)
+        assert ring.geometry() == QRect(0, 26, 206, 88)
+        assert ring.attachedSides() == ("left",)
+        host.resize(203, 300)
+        _settle()
+        assert host.width() == 203, "전제: 부모 폭이 바뀌었다"
+        assert ring.geometry() == QRect(0, 26, 203, 88)
+        assert ring.attachedSides() == ("left", "right")
 
-    @pytest.mark.parametrize("picked", [False, True])
-    def test_focus_line_repaints_in_the_new_theme_after_a_runtime_switch(
-        self, qapp, window, picked: bool
+    def test_ring_is_transparent_for_the_mouse(self, host: QWidget) -> None:
+        """focus ring은 마우스 이벤트를 받지 않아 그 자리의 위젯 조회가 밑의 위젯을 돌려줘야 한다.
+
+        follow -> WA_TransparentForMouseEvents 켜짐, host.childAt(위젯 가운데) = 그 위젯
+        """
+        card = self._plain_card(host, QRect(40, 30, 200, 80))
+        ring = FocusRing(host)
+        ring.follow(card)
+        assert ring.isVisible(), "전제: 보인다"
+        assert ring.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        assert host.childAt(card.geometry().center()) is card
+
+
+class TestPickedBorderOverProgressBar:
+    @pytest.mark.parametrize("state", [D.RUNNING, D.PAUSED, D.FINISHED])
+    def test_bottom_border_of_a_picked_card_is_accent_over_the_bar(
+        self, window: VodDownloader, state: DownloadState
     ) -> None:
-        """실행 중 라이트 테마로 바꾸면 선택 모드의 초점 선이 라이트의 중립색으로 다시 그려져야 한다.
+        """progress bar가 보이는 카드를 고르면 아래 변 2px가 progress bar 위에서도 강조색이어야 한다.
 
-        다크 · 선택 모드, 초점만 · 고름 + 초점 -> apply_color_scheme("light") -> 초점만: 화소 0,
-        고름 + 초점: 화소 2 ≈ 라이트 focusOnAccent(고름 + 초점의 화소 0은 라이트 accent)
+        받는 중 · 일시정지 · 완료 카드(progress bar 보임), 선택 모드에서 클릭 -> 카드 면 가로 가운데의
+        아래에서 첫째 · 둘째 화소 ≈ accent(고르기 전 둘째 화소는 accent가 아님), 셋째 화소는 accent가 아님
         """
-        items = _add(window, D.WAITING)
+        items = _add(window, state)
+        card = _card(window, items[0])
+        face = card.contentFrame
+        assert card.progressBar.isVisible(), "전제: progress bar가 보인다"
+        x, bottom = face.width() / 2, face.height() - 1
+        before = face.grab().toImage()
+        assert not _is(_colour_at(before, x, bottom - 1), "accent"), (
+            "전제: 고르기 전은 강조색이 아니다"
+        )
         _toggle_select_mode(window, True)
-        card = _focus_by_key(window, items[0])
-        if picked:
-            _key(card, Qt.Key.Key_Space)
-        assert card.contentFrame.isSelected() is picked
-        depth = 2 if picked else 0
-        assert _is(_edge(card, depth), "focusOnAccent"), "전제: 다크의 중립색으로 그렸다"
-        neutral = QColor(theme.LIGHT["focusOnAccent"])
-        assert _gap(QColor(theme.DARK["focusOnAccent"]), neutral) > COLOUR_SLACK
-        try:
-            theme.apply_color_scheme(qapp, "light", QSS_PATH)
-            _settle()
-            assert _gap(_edge(card, depth), neutral) <= COLOUR_SLACK
-            if picked:
-                assert _gap(_edge(card, 0), QColor(theme.LIGHT["accent"])) <= COLOUR_SLACK
-        finally:
-            theme.apply_color_scheme(qapp, "dark", QSS_PATH)
+        _click(window, items[0])
+        assert card.isSelected(), "전제: 골랐다"
+        image = face.grab().toImage()
+        assert _is(_colour_at(image, x, bottom), "accent")
+        assert _is(_colour_at(image, x, bottom - 1), "accent")
+        assert not _is(_colour_at(image, x, bottom - 2), "accent")
+
+
+class TestPickOnRelease:
+    """창(`QWindow`)에 누름 · 옮김 · 뗌을 따로 보내 잰다 — 누른 뒤의 이벤트는 Qt가 누른 카드로 보낸다."""
+
+    def test_pressing_does_not_pick_until_released_inside(self, window: VodDownloader) -> None:
+        """선택 모드에서 카드를 누르기만 하면 고르지 않고, 카드 안에서 떼면 골라야 한다.
+
+        선택 모드, 카드 둘, 첫째를 누름 -> 고른 카드 없음 · 눌린 표시 켜짐 -> 그 자리에서 뗌
+        -> 고른 카드 = 첫째 · 눌린 표시 꺼짐
+        """
+        items = _add(window, D.WAITING, D.WAITING)
+        _toggle_select_mode(window, True)
+        card = _card(window, items[0])
+        _press(window, items[0])
+        assert _picked(window) == []
+        assert card.isPressed()
+        _release(window, items[0])
+        assert _picked(window) == [items[0]]
+        assert not card.isPressed()
+
+    def test_releasing_outside_the_card_does_nothing(self, window: VodDownloader) -> None:
+        """누른 채 카드 밖으로 나가 떼면 아무 카드도 고르지 않아야 한다.
+
+        선택 모드, 카드 둘, 첫째를 누름 -> 둘째 위로 옮겨 뗌 -> 고른 카드 없음, 두 카드 모두 눌린 표시 꺼짐
+        """
+        items = _add(window, D.WAITING, D.WAITING)
+        _toggle_select_mode(window, True)
+        _press(window, items[0])
+        assert _card(window, items[0]).isPressed(), "전제: 눌린 표시가 켜졌다"
+        _drag_to(window, items[1])
+        _release(window, items[1])
+        assert _picked(window) == []
+        assert not _card(window, items[0]).isPressed()
+        assert not _card(window, items[1]).isPressed()
+
+    def test_pressed_mark_follows_leaving_and_coming_back(self, window: VodDownloader) -> None:
+        """눌린 표시는 누른 채 카드 밖으로 나가면 꺼지고 돌아오면 켜지며, 돌아와 떼면 골라야 한다.
+
+        선택 모드, 카드 둘, 첫째를 누름(켜짐) -> 둘째 위로 옮김(꺼짐 · 둘째도 꺼짐) -> 첫째로 돌아옴(켜짐)
+        -> 뗌(꺼짐) -> 고른 카드 = 첫째
+        """
+        items = _add(window, D.WAITING, D.WAITING)
+        _toggle_select_mode(window, True)
+        first, second = _card(window, items[0]), _card(window, items[1])
+        _press(window, items[0])
+        assert first.isPressed() and first.contentFrame.property("pressed") is True
+        _drag_to(window, items[1])
+        assert not first.isPressed() and first.contentFrame.property("pressed") is not True
+        assert not second.isPressed()
+        assert _picked(window) == []
+        _drag_to(window, items[0])
+        assert first.isPressed() and first.contentFrame.property("pressed") is True
+        _release(window, items[0])
+        assert not first.isPressed()
+        assert _picked(window) == [items[0]]
+
+    @pytest.mark.parametrize(
+        ("state", "pressed", "hover"),
+        [
+            (D.WAITING, "cardPressedBg", "cardHoverBg"),
+            (D.FINISHED, "cardTintFinishedPressed", "cardTintFinishedHover"),
+            (D.FAILED, "cardTintFailedPressed", "cardTintFailedHover"),
+        ],
+    )
+    def test_pressed_card_ground_is_the_pressed_token(
+        self, window: VodDownloader, state: DownloadState, pressed: str, hover: str
+    ) -> None:
+        """누르고 있는 카드의 바탕은 그 카드 종류의 눌린 색이고 떼면 눌린 색이 아니어야 한다.
+
+        선택 모드, 대기 · 완료 · 실패 카드를 누름 -> 카드 면 왼쪽에서 넷째 화소 ≈ 눌린 색 토큰(한도 8),
+        호버 색 토큰은 아님 -> 카드 밖으로 옮김 -> 눌린 색이 아님
+        """
+        items = _add(window, state, D.WAITING)
+        _toggle_select_mode(window, True)
+        card = _card(window, items[0])
+        tokens = theme.current_tokens()
+        assert _gap(QColor(tokens[pressed]), QColor(tokens[hover])) > 16, (
+            "전제: 두 색이 한도보다 멀다"
+        )
+        _press(window, items[0])
+        assert card.isPressed(), "전제: 눌린 표시가 켜졌다"
+        assert _is(_edge(card, 3), pressed, 8)
+        assert not _is(_edge(card, 3), hover, 8)
+        _drag_to(window, items[1])
+        assert not _is(_edge(card, 3), pressed, 8)
+        _release(window, items[1])
+
+    @pytest.mark.parametrize(
+        ("state", "token"),
+        [(D.RUNNING, "cardFillRunning"), (D.PAUSED, "cardFillPaused")],
+    )
+    def test_pressed_fill_is_the_pressed_fill_token(
+        self, window: VodDownloader, state: DownloadState, token: str
+    ) -> None:
+        """배경 채움 방식에서 누르고 있는 카드의 채운 자리는 채움의 눌린 색이어야 한다.
+
+        배경 채움 · 선택 모드, 40% 받는 중 · 일시정지 카드 -> 면 왼쪽에서 넷째 화소 ≈ 채움 색
+        -> 누름 -> ≈ 채움의 눌린 색(한도 8), 채움 색은 아님
+        """
+        card_display.use(card_display.CardDisplay(animations=False, progress="fill"))
+        item = _item("채움 카드", state)
+        item.download_progress = 40
+        window.contentManager.model.addItem(item)
+        _settle()
+        _toggle_select_mode(window, True)
+        card = _card(window, item)
+        tokens = theme.current_tokens()
+        assert _gap(QColor(tokens[token]), QColor(tokens[token + "Pressed"])) > 16
+        assert _is(_edge(card, 3), token, 8), "전제: 누르기 전은 채움 색이다"
+        _press(window, item)
+        assert card.isPressed(), "전제: 눌린 표시가 켜졌다"
+        assert _is(_edge(card, 3), token + "Pressed", 8)
+        assert not _is(_edge(card, 3), token, 8)
+        _release(window, item)
+
+    def test_shift_range_is_added_on_release_with_the_modifier_of_the_press(
+        self, window: VodDownloader
+    ) -> None:
+        """Shift 범위는 뗄 때 더해지고, Shift 여부는 누를 때의 값이어야 한다.
+
+        선택 모드, 카드 셋, 첫째 클릭 -> 셋째를 Shift와 함께 누름 -> 고른 카드 = 첫째뿐
+        -> Shift 없이 뗌 -> 고른 카드 = 셋 모두
+        """
+        items = _add(window, D.WAITING, D.WAITING, D.WAITING)
+        _toggle_select_mode(window, True)
+        _click(window, items[0])
+        _press(window, items[2], SHIFT)
+        assert _picked(window) == [items[0]]
+        _release(window, items[2])
+        assert sorted(_picked(window), key=items.index) == items
+
+    def test_shift_held_only_at_release_does_not_make_a_range(self, window: VodDownloader) -> None:
+        """누를 때 Shift가 없었으면 뗄 때 Shift가 눌려 있어도 그 카드 하나만 골라야 한다.
+
+        선택 모드, 카드 셋, 첫째 클릭 -> 셋째를 수정자 없이 누름 -> Shift와 함께 뗌 -> 고른 카드 = 첫째 · 셋째
+        """
+        items = _add(window, D.WAITING, D.WAITING, D.WAITING)
+        _toggle_select_mode(window, True)
+        _click(window, items[0])
+        _press(window, items[2])
+        _release(window, items[2], SHIFT)
+        assert sorted(_picked(window), key=items.index) == [items[0], items[2]]
+
+    @pytest.mark.parametrize("modifier", [CTRL, SHIFT])
+    def test_modifier_click_outside_select_mode_enters_on_release(
+        self, window: VodDownloader, modifier: Qt.KeyboardModifier
+    ) -> None:
+        """선택 모드 밖의 Ctrl · Shift+클릭은 누르는 동안 눌린 표시만 켜고 뗄 때 선택 모드로 들어가며 골라야 한다.
+
+        카드 둘, 첫째를 Ctrl(또는 Shift)과 함께 누름 -> 선택 모드 아님 · 눌린 표시 켜짐 -> 뗌
+        -> 선택 모드 · 고른 카드 = 첫째
+        """
+        items = _add(window, D.WAITING, D.WAITING)
+        card = _card(window, items[0])
+        _press(window, items[0], modifier)
+        assert not window.listView.isSelecting()
+        assert card.isPressed()
+        _release(window, items[0], modifier)
+        assert window.listView.isSelecting()
+        assert _picked(window) == [items[0]]
+        assert not card.isPressed()
+
+    def test_modifier_click_released_outside_does_not_enter(self, window: VodDownloader) -> None:
+        """선택 모드 밖에서 Ctrl과 함께 누른 뒤 카드 밖에서 떼면 선택 모드로 들어가지 않아야 한다.
+
+        카드 둘, 첫째를 Ctrl과 함께 누름 -> 둘째 위로 옮겨 뗌 -> 선택 모드 아님
+        """
+        items = _add(window, D.WAITING, D.WAITING)
+        _press(window, items[0], CTRL)
+        assert _card(window, items[0]).isPressed(), "전제: 눌린 표시가 켜졌다"
+        _drag_to(window, items[1])
+        _release(window, items[1], CTRL)
+        assert not window.listView.isSelecting()
+
+    def test_plain_click_outside_select_mode_shows_no_pressed_mark(
+        self, window: VodDownloader
+    ) -> None:
+        """선택 모드 밖의 수정자 없는 누름은 눌린 표시를 켜지 않고 떼도 아무 일이 없어야 한다.
+
+        카드 둘, 첫째를 수정자 없이 누름 -> 눌린 표시 꺼짐 -> 뗌 -> 선택 모드 아님
+        """
+        items = _add(window, D.WAITING, D.WAITING)
+        card = _card(window, items[0])
+        _press(window, items[0])
+        assert not card.isPressed()
+        assert card.contentFrame.property("pressed") is not True
+        _release(window, items[0])
+        assert not window.listView.isSelecting()
+
+    def test_double_click_in_select_mode_toggles_twice(self, window: VodDownloader) -> None:
+        """선택 모드의 더블 클릭은 고르기와 풀기가 한 번씩 일어나야 한다.
+
+        선택 모드, 카드 하나를 더블 클릭 -> 고름이 바뀔 때마다 적은 고른 카드 목록 = [[그 카드], []]
+        """
+        items = _add(window, D.WAITING, D.WAITING)
+        _toggle_select_mode(window, True)
+        seen: list[list[ContentItem]] = []
+        window.listView.selectionChanged.connect(lambda: seen.append(_picked(window)))
+        QTest.mouseDClick(window.windowHandle(), LEFT, NO_MODIFIER, _spot(window, items[0]))
+        _settle()
+        assert seen == [[items[0]], []]
+
+    def test_right_button_does_not_pick(self, window: VodDownloader) -> None:
+        """선택 모드에서 오른쪽 버튼은 눌린 표시를 켜지 않고 떼도 고르지 않아야 한다.
+
+        선택 모드, 카드를 오른쪽 버튼으로 누름 -> 눌린 표시 꺼짐 -> 뗌 -> 고른 카드 없음
+        """
+        items = _add(window, D.WAITING, D.WAITING)
+        _toggle_select_mode(window, True)
+        card = _card(window, items[0])
+        _press(window, items[0], button=Qt.MouseButton.RightButton)
+        assert not card.isPressed()
+        _release(window, items[0], button=Qt.MouseButton.RightButton)
+        assert _picked(window) == []
+        assert window.listView.isSelecting(), "전제: 선택 모드는 그대로다"

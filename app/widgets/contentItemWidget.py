@@ -58,7 +58,6 @@ class CardFace(QFrame):
         self._fill = 0.0  # 채운 비율 0 ~ 1
         self._fillToken = ""  # 채움 색 토큰 — 빈 글이면 채움 없음
         self._selected = False  # 선택 모드에서 고른 카드 — 강조색 테두리(#561)
-        self._focusLine = False  # 선택 모드의 키보드 초점 — 고른 카드면 강조색 안쪽에 초점 선(#561)
 
     def isSelected(self) -> bool:
         """고른 카드의 강조색 테두리를 그리는지."""
@@ -68,20 +67,6 @@ class CardFace(QFrame):
         """고른 카드 테두리를 켜고 끈다 — 줄 배치는 그대로다(그리기만)."""
         if on != self._selected:
             self._selected = on
-            self.update()
-
-    def hasFocusLine(self) -> bool:
-        """선택 모드의 키보드 초점이 이 카드에 있는지 — 고른 카드일 때만 초점 선을 그린다."""
-        return self._focusLine
-
-    def setFocusLine(self, on: bool) -> None:
-        """선택 모드의 키보드 초점을 켜고 끈다 — 카드가 부른다.
-
-        안 고른 카드의 초점은 QSS 테두리 색(`pickFocus` 속성)이 보인다. 고른 카드는 QSS 테두리를 강조색
-        테두리가 덮으므로 그 안쪽에 초점 선을 따로 그린다(`paintEvent`).
-        """
-        if on != self._focusLine:
-            self._focusLine = on
             self.update()
 
     def fill(self) -> tuple[float, str]:
@@ -107,30 +92,24 @@ class CardFace(QFrame):
         return round(1 + self._fill * (self.width() - 2)) if self._fillToken else 0
 
     def colorAt(self, x: int) -> QColor:
-        """면 좌표 `x`에서 보이는 바탕색 — 채움 · 색조 · 호버를 따른다(카드 버튼 덮개가 쓴다)."""
+        """면 좌표 `x`에서 보이는 바탕색 — 채움 · 색조 · 호버 · 눌림을 따른다(카드 버튼 덮개가 쓴다)."""
         tokens = theme.current_tokens()
+        pressed = self.property("pressed") is True
         if self._fillToken and x < self.fillRight():
-            return QColor(tokens[self._fillToken])
-        hovered = self.property("hover") is True
+            return QColor(tokens[self._fillToken + ("Pressed" if pressed else "")])
+        step = "Pressed" if pressed else "Hover" if self.property("hover") is True else ""
         tint = self.property("tint")
         if tint in ("finished", "failed"):
             name = "cardTintFinished" if tint == "finished" else "cardTintFailed"
-            return QColor(tokens[name + ("Hover" if hovered else "")])
-        return QColor(tokens["cardHoverBg" if hovered else "cardBg"])
-
-    def _drawRing(self, painter: QPainter, token: str, width: float, inset: float) -> None:
-        """카드 가장자리에서 `inset`만큼 들어간 자리에 두께 `width`의 둥근 테두리를 그린다."""
-        edge = inset + width / 2
-        radius = theme.METRICS["cardRadius"] - edge
-        painter.setPen(QPen(QColor(theme.current_tokens()[token]), width))
-        painter.drawRoundedRect(
-            QRectF(self.rect()).adjusted(edge, edge, -edge, -edge), radius, radius
-        )
+            return QColor(tokens[name + step])
+        return QColor(tokens["card" + step + "Bg"])  # cardBg · cardHoverBg · cardPressedBg
 
     def paintEvent(self, event: QPaintEvent) -> None:
-        """QSS 바탕 · 테두리 위에 진행 채움(테두리 안쪽), 고른 카드의 강조색 테두리 · 초점 선을 그린다."""
+        """QSS 바탕 · 테두리 위에 진행 채움(테두리 안쪽)과 고른 카드의 강조색 테두리를 그린다."""
         super().paintEvent(event)
         if self._fillToken and self._fill > 0:
+            # 눌린 동안은 채움도 한 단계 더 간 색이다(#561 — QSS 바탕의 `pressed` 규칙과 같이 움직인다)
+            token = self._fillToken + ("Pressed" if self.property("pressed") is True else "")
             radius = theme.METRICS["cardRadius"] - 1
             inner = QRectF(1, 1, self.width() - 2, self.height() - 2)
             path = QPainterPath()
@@ -140,20 +119,59 @@ class CardFace(QFrame):
             painter.setClipPath(path)
             painter.fillRect(
                 QRectF(1, 1, self._fill * inner.width(), inner.height()),
-                QColor(theme.current_tokens()[self._fillToken]),
+                QColor(theme.current_tokens()[token]),
             )
             painter.end()
         if self._selected:
-            # 테두리 1px 자리를 덮고 안쪽으로 1px 더 — 호버여도 강조색 그대로(프로토 card.py)
-            width = theme.METRICS["cardSelectBorder"]
             painter = QPainter(self)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            self._drawRing(painter, "accent", width, 0)
-            if self._focusLine:
-                # 고름 + 초점 — 강조색 테두리 안쪽에 붙여 중립색 한 줄. 강조색과 같은 색이면 고른 카드
-                # 사이에서 초점이 어디 있는지 보이지 않는다
-                self._drawRing(painter, "focusOnAccent", theme.CARD_FOCUS_LINE, width)
+            draw_picked_border(painter, QRectF(self.rect()))
+            painter.end()
+
+
+def draw_picked_border(painter: QPainter, card: QRectF) -> None:
+    """고른 카드의 강조색 테두리를 `card`(painter 좌표의 카드 면 사각형) 가장자리에 그린다 (#561).
+
+    테두리 1px 자리를 덮고 안쪽으로 1px 더 간다 — 호버 · 눌림이어도 강조색 그대로다(프로토 card.py). 카드
+    면과 그 위의 progress bar가 같은 모양을 각자 그린다 — progress bar는 카드 면의 자식이라 면이 그린 테두리의
+    아래 변을 가린다.
+    """
+    edge = theme.METRICS["cardSelectBorder"] / 2
+    radius = theme.METRICS["cardRadius"] - edge
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.setPen(QPen(QColor(theme.current_tokens()["accent"]), edge * 2))
+    painter.drawRoundedRect(card.adjusted(edge, edge, -edge, -edge), radius, radius)
+
+
+class CardProgress(QProgressBar):
+    """카드 바닥의 progress bar — 고른 카드면 자기 자리에 걸친 강조색 테두리를 덧그린다 (#561).
+
+    progress bar는 카드 면(`CardFace`)의 자식으로 면 위에 놓여, 면이 그린 고름 테두리의 아래 변 안쪽 1px과
+    양 끝을 가린다. 카드마다 위젯을 더하지 않고 이미 있는 progress bar가 같은 테두리를 자기 좌표로 옮겨
+    그린다 — 값 하나(`_picked`)만 든다.
+    """
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self._picked = False  # 카드를 골랐는지 — 강조색 테두리를 덧그린다
+
+    def isPicked(self) -> bool:
+        """고른 카드의 테두리를 덧그리는지."""
+        return self._picked
+
+    def setPicked(self, on: bool) -> None:
+        """고름 테두리 덧그리기를 켜고 끈다 — 카드가 `setSelected`에서 부른다."""
+        if on != self._picked:
+            self._picked = on
+            self.update()
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        """progress bar를 그린 뒤, 고른 카드면 카드 면 가장자리의 강조색 테두리를 그 위에 그린다."""
+        super().paintEvent(event)
+        if self._picked:
+            painter = QPainter(self)
+            painter.translate(-self.x(), -self.y())
+            draw_picked_border(painter, QRectF(self.parentWidget().rect()))
             painter.end()
 
 
@@ -480,7 +498,7 @@ class Ui_ContentItemWidget(object):
 
         # ---- 하단 진행바 — 카드 아래 가장자리에 딱 붙는 전체 폭 오버레이 ----
         # 레이아웃 행으로 넣으면 보일 때만 카드가 자라 높이 불변 규칙이 깨진다(#245)
-        self.progressBar = QProgressBar(self.contentFrame)
+        self.progressBar = CardProgress(self.contentFrame)
         self.progressBar.setObjectName("progressBar")
         self.progressBar.setMinimumSize(QSize(0, bar_h))
         self.progressBar.setMaximumSize(QSize(16777215, bar_h))

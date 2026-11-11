@@ -184,6 +184,20 @@ QLabel#thumbnailLabel {
     background-color: @cardTintFailedHover;
 }
 
+/* 눌린 카드(#561) — 호버에서 한 단계 더. `pressed`는 app/widgets/widget.py::_setPressed가 심는다(고르기를
+ * 시작한 누름 동안만). 호버와 함께 켜지므로 호버 규칙 뒤에 두고, 색조 카드는 속성 수가 같은 규칙으로 따로 둔다 */
+#contentFrame[pressed="true"] {
+    background-color: @cardPressedBg;
+}
+
+#contentFrame[tint="finished"][pressed="true"] {
+    background-color: @cardTintFinishedPressed;
+}
+
+#contentFrame[tint="failed"][pressed="true"] {
+    background-color: @cardTintFailedPressed;
+}
+
 /* 색조 위 상태 글 — 같은 색상의 밝기만 옮겨 4.5를 지키는 색(theme.py `…OnTint`) */
 #contentFrame[tint="finished"] #statusLabel[state="finished"] {
     color: @stateFinishedOnTint;
@@ -193,17 +207,8 @@ QLabel#thumbnailLabel {
     color: @stateFailedOnTint;
 }
 
-/* 키보드 초점 — 테두리만 강조색(#550). 마우스로는 초점을 받지 않는다(TabFocus) */
-#contentFrame[keyFocus="true"] {
-    border-color: @accent;
-}
-
-/* 선택 모드의 키보드 초점(#561) — 고름 테두리가 강조색이라 안 고른 카드의 초점은 중립색으로 가른다.
- * `pickFocus`는 app/widgets/widget.py::_syncPickFocus가 심는다. 고른 카드에는 심지 않는다 — 테두리를
- * 강조색으로 둔 채 그 안쪽에 선을 그린다(CardFace.paintEvent) */
-#contentFrame[keyFocus="true"][pickFocus="true"] {
-    border-color: @focusOnAccent;
-}
+/* 카드의 키보드 초점은 카드 안에 그리지 않는다(#561) — 목록이 카드 바깥에 focus ring 하나를 그린다
+ * (app/widgets/focus_ring.py). 카드 테두리는 초점과 무관하게 평소 색 그대로다 */
 
 /* 카드 조작 아이콘(일시정지·재개·재시도·폴더·삭제)의 도형 색은 QSS가 아니라
  * content/icons.py::IconButton이 theme.py 토큰(textMuted / 호버 text·

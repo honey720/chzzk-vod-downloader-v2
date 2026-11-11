@@ -86,6 +86,10 @@ METRICS = {
     "cardPickMark": 20,  # 체크 원 지름(px) — 카드 버튼(cardButton)과 같은 크기
     "cardPickMarkCompact": 16,  # 썸네일 줄이기의 체크 원 지름(px) — 썸네일 높이 38에서 그림을 덜 가린다
     "cardPickMarkInset": 4,  # 썸네일 왼쪽 · 위 끝 ↔ 체크 원(px)
+    # 카드의 키보드 focus ring(#561) — 목록이 초점 카드 바깥에 하나만 그린다(app/widgets/focus_ring.py).
+    # 띄움 + 굵기 = 4 — 카드 사이(cardGap 8)의 절반을 쓴다
+    "focusRingGap": 2,  # 카드 테두리 바깥 끝 ↔ focus ring(px)
+    "focusRingWidth": 2,  # focus ring 굵기(px)
     # ---- 선택 줄(#561 — 설계 §12.1 「선택 모드」, 프로토 shell.py SELECT_*) ----
     "selectBarGap": 4,  # 헤더바 아래끝 ↔ 선택 줄 위끝 — 말풍선 ↔ 대상(tipGap)과 같은 떠 있는 것 간격
     "selectBarPad": 8,  # 선택 줄 왼쪽 안쪽 여백 — 「N개 선택」 앞(§11.2 8)
@@ -175,8 +179,8 @@ DARK = {
     "accentHover": "#559bff",
     "accentPressed": "#3f84e9",
     "onAccent": "#1b1d22",
-    # 강조색 채움 버튼의 키보드 focus ring — 채움 · 바 면 모두와 3.0 이상(#536). 선택 모드의 카드 초점 선도
-    # 이 색이다 — 고름 테두리(강조색) · 카드 면 모두와 3.0 이상(#561)
+    # 강조색 채움 버튼의 키보드 focus ring — 채움 · 바 면 모두와 3.0 이상(#536). 카드 바깥의 focus ring도
+    # 이 색이다 — 창 바탕(카드 사이) · 고름 테두리(강조색) 모두와 3.0 이상(#561)
     "focusOnAccent": "#ffffff",
     # ---- 카드 ----
     # 선택 모드 체크 원의 테두리 — 썸네일 그림 위라 두 테마가 같은 흰색이다. 강조색 채움과 3.0 이상(#561)
@@ -244,8 +248,8 @@ LIGHT = {
     "accentHover": "#146df8",
     "accentPressed": "#044fbf",
     "onAccent": "#ffffff",
-    # 강조색 채움 버튼의 키보드 focus ring — 채움 · 바 면 모두와 3.0 이상(#536). 선택 모드의 카드 초점 선도
-    # 이 색이다 — 고름 테두리(강조색) · 카드 면 모두와 3.0 이상(#561)
+    # 강조색 채움 버튼의 키보드 focus ring — 채움 · 바 면 모두와 3.0 이상(#536). 카드 바깥의 focus ring도
+    # 이 색이다 — 창 바탕(카드 사이) · 고름 테두리(강조색) 모두와 3.0 이상(#561)
     "focusOnAccent": "#1b1d22",
     # ---- 카드 ----
     # 선택 모드 체크 원의 테두리 — 썸네일 그림 위라 두 테마가 같은 흰색이다. 강조색 채움과 3.0 이상(#561)
@@ -279,13 +283,14 @@ TINT_DE00 = {
     "light": 10.0,
 }  # 색조 · 채움 ↔ 카드 면 ΔE00 목표 — 설계 §8의 6(오너 2026-11-02)
 TINT_TEXT_CONTRAST = 4.5  # 색조 · 채움 위 글의 대비 하한 — 설계 §11.5
+# 눌린 카드 바탕 ↔ 호버 바탕 ΔE00 목표 — 카드 면 → 호버와 같은 크기로 한 단계 더(#561)
+PRESS_DE00 = 3.0
 
-# ---- 선택 모드의 체크 원 · 초점 선(#561) ----
+# ---- 선택 모드의 체크 원(#561) ----
 # 정수 px가 아닌 값이라 METRICS(QSS에 "Npx"로 들어간다)에 두지 않는다
 PICK_MARK_RING_WIDTH = 1.5  # 체크 원 테두리 두께(px) — 1은 밝은 썸네일에 묻힌다
 PICK_MARK_SCRIM_ALPHA = 0.5  # 안 고른 원 바탕의 불투명도 — 흰 썸네일 위에서도 테두리와 3.0 이상이다
 PICK_MARK_CHECK_WIDTH = 2.0  # ✓ 선 굵기(px) — 지름 20일 때. 지름에 비례해 줄인다
-CARD_FOCUS_LINE = 1.0  # 고른 카드의 초점 선 두께(px) — 고름 테두리 안쪽에 붙여 그린다
 
 
 def _linear(value: float) -> float:
@@ -444,6 +449,23 @@ def _hover_of(tint: str, card: str, hover: str) -> str:
     return _from_oklab((big_l + _oklab(hover)[0] - _oklab(card)[0], a, b))
 
 
+def _pressed_of(card: str, hover: str) -> str:
+    """눌린 카드 바탕 — 호버 바탕에서 카드 면 → 호버와 같은 쪽으로 밝기만 더 옮겨 ΔE00 `PRESS_DE00`이 되는 색.
+
+    다크는 더 밝게, 라이트는 더 어둡게 간다(#561). 색상 · 채도는 호버 바탕 그대로다.
+    """
+    big_l, a, b = _oklab(hover)
+    direction = 1.0 if big_l >= _oklab(card)[0] else -1.0
+    low, high = 0.0, 0.2
+    for _ in range(40):
+        middle = (low + high) / 2
+        if delta_e00(hover, _from_oklab((big_l + direction * middle, a, b))) < PRESS_DE00:
+            low = middle
+        else:
+            high = middle
+    return _from_oklab((big_l + direction * low, a, b))
+
+
 def _readable_on(color: str, grounds: tuple[str, ...]) -> str:
     """`color`의 색상 · 채도는 두고 OKLab 밝기만 옮겨 모든 `grounds` 위 4.5가 되는 가장 가까운 색.
 
@@ -468,18 +490,28 @@ def _card_tints(table: dict, scheme: str) -> None:
     색조 세기는 목표(ΔE00)를 먼저 정한다(설계 §8의 6). 본문 · 보조 글은 그 세기에서 4.5를 지키는지
     본다. 상태 글(완료 초록 · 실패 빨강)은 색조 위에서 4.5가 되게 같은 색상의 밝기만 옮긴 색을 따로 둔다
     (`state…OnTint`) — 라이트의 완료 초록은 흰 카드에서 이미 4.5라 색조가 조금만 생겨도 4.5 아래로 내려간다.
+
+    눌린 바탕(`…Pressed`, #561)은 호버에서 한 단계 더 간 색이다 — 색조는 카드 면 → 눌린 바탕의 밝기 차를,
+    채움은 호버 → 눌린 바탕의 밝기 차를 옮긴다(채움은 호버에서 바뀌지 않아 한 단계만 간다). 누르는 동안만
+    보이는 면이라 세기(`PRESS_DE00`)를 먼저 지킨다 — 본문 글은 4.5를 지키고 보조 글은 그 아래로 내려간다
+    (tests/app/gui/test_theme_contrast.py가 하한을 잰다).
     """
     card, hover, target = table["cardBg"], table["cardHoverBg"], TINT_DE00[scheme]
+    pressed = _pressed_of(card, hover)
+    table["cardPressedBg"] = pressed
     texts = (table["text"], table["textMuted"])
     for name, state in (("Finished", "stateFinished"), ("Failed", "stateFailed")):
         tint = _tinted(card, table[state], target, texts)
         table[f"cardTint{name}"] = tint
         table[f"cardTint{name}Hover"] = _hover_of(tint, card, hover)
+        table[f"cardTint{name}Pressed"] = _hover_of(tint, card, pressed)
         table[f"{state}OnTint"] = _readable_on(table[state], (tint, table[f"cardTint{name}Hover"]))
     # 배경 채움 위의 상태 색(상태 원 · 상태 글)은 대비 조건 밖이다 — 설정에서 고르는 선택의 예외(설계 §12.1
     # 상태 색). 본문 · 보조 글만 4.5를 지킨다
     table["cardFillRunning"] = _tinted(card, table["stateRunning"], target, texts)
     table["cardFillPaused"] = _tinted(card, None, target, texts)
+    for name in ("Running", "Paused"):
+        table[f"cardFill{name}Pressed"] = _hover_of(table[f"cardFill{name}"], hover, pressed)
 
 
 # METRICS(정수)와 FONTS(문자열)를 두 색 표에 자동 주입한다 — .qss는

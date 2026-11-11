@@ -40,24 +40,30 @@ PAIRS = [
     ("text", "menuHover", 4.5, "메뉴 항목 이름 ↔ 메뉴 호버 면(#536)"),
     ("textMuted", "menuHover", 4.5, "메뉴 흐린 경로 · 머리글 ↔ 메뉴 호버 면(#536)"),
     ("textMuted", "surface", 4.5, "메뉴 흐린 경로 · 머리글 ↔ 메뉴 면(#536)"),
-    ("focusOnAccent", "cardBg", 3.0, "선택 모드의 카드 초점 선 ↔ 카드(#561)"),
-    ("focusOnAccent", "cardHoverBg", 3.0, "선택 모드의 카드 초점 선 ↔ 카드 호버(#561)"),
-    ("focusOnAccent", "cardTintFinished", 3.0, "선택 모드의 카드 초점 선 ↔ 완료 카드(#561)"),
-    (
-        "focusOnAccent",
-        "cardTintFinishedHover",
-        3.0,
-        "선택 모드의 카드 초점 선 ↔ 완료 카드 호버(#561)",
-    ),
-    ("focusOnAccent", "cardTintFailed", 3.0, "선택 모드의 카드 초점 선 ↔ 실패 카드(#561)"),
-    (
-        "focusOnAccent",
-        "cardTintFailedHover",
-        3.0,
-        "선택 모드의 카드 초점 선 ↔ 실패 카드 호버(#561)",
-    ),
+    ("focusOnAccent", "windowBg", 3.0, "카드 focus ring ↔ 창 바탕(카드 사이) — 그림(#561)"),
+    ("text", "cardPressedBg", 4.5, "카드 글 ↔ 눌린 카드(#561)"),
+    ("text", "cardTintFinishedPressed", 4.5, "카드 글 ↔ 눌린 완료 카드(#561)"),
+    ("text", "cardTintFailedPressed", 4.5, "카드 글 ↔ 눌린 실패 카드(#561)"),
+    ("text", "cardFillRunningPressed", 4.5, "카드 글 ↔ 눌린 받는 중 채움(#561)"),
+    ("text", "cardFillPausedPressed", 4.5, "카드 글 ↔ 눌린 일시정지 채움(#561)"),
+    # 흐린 글은 누르는 동안만 놓이는 바탕이라 그림 기준(3.0)으로 잰다 — 4.5에는 못 미치는 자리가 있다
+    ("textMuted", "cardPressedBg", 3.0, "카드 흐린 글 ↔ 눌린 카드(#561)"),
+    ("textMuted", "cardTintFinishedPressed", 3.0, "카드 흐린 글 ↔ 눌린 완료 카드(#561)"),
+    ("textMuted", "cardTintFailedPressed", 3.0, "카드 흐린 글 ↔ 눌린 실패 카드(#561)"),
+    ("textMuted", "cardFillRunningPressed", 3.0, "카드 흐린 글 ↔ 눌린 받는 중 채움(#561)"),
+    ("textMuted", "cardFillPausedPressed", 3.0, "카드 흐린 글 ↔ 눌린 일시정지 채움(#561)"),
     ("pickMarkRing", "accent", 3.0, "고른 체크 원의 테두리 ↔ 강조색 채움 — 그림(#561)"),
 ]
+
+# 눌린 카드 바탕(#561) — (평소, 호버, 눌림). 채움은 호버 토큰이 없어 None이다
+PRESSED_STEPS = [
+    ("cardBg", "cardHoverBg", "cardPressedBg"),
+    ("cardTintFinished", "cardTintFinishedHover", "cardTintFinishedPressed"),
+    ("cardTintFailed", "cardTintFailedHover", "cardTintFailedPressed"),
+    ("cardFillRunning", None, "cardFillRunningPressed"),
+    ("cardFillPaused", None, "cardFillPausedPressed"),
+]
+PRESSED_OVER_HOVER = 1.1  # 눌린 바탕 ↔ 호버 바탕의 최소 대비 — 호버 ↔ 평소(약 1.14)와 같은 한 단계
 
 # 면 색 — 오너 결정(2026-11-07): 테마 색 이식에서 바꾸지 않는다. 앱의 지금 값 그대로
 SURFACES = {
@@ -151,6 +157,28 @@ def test_fill_rule_splits_the_two_themes() -> None:
     """
     assert _luminance(theme.DARK["accent"]) > _luminance(theme.DARK["onAccent"])
     assert _luminance(theme.LIGHT["accent"]) < _luminance(theme.LIGHT["onAccent"])
+
+
+@pytest.mark.parametrize("scheme", SCHEMES)
+@pytest.mark.parametrize(
+    ("base", "hover", "pressed"), PRESSED_STEPS, ids=[s[0] for s in PRESSED_STEPS]
+)
+def test_pressed_ground_is_one_step_past_hover(
+    scheme: str, base: str, hover: str | None, pressed: str
+) -> None:
+    """눌린 카드 바탕은 호버보다 한 단계 더 — 다크는 더 밝고 라이트는 더 어두워야 한다 (#561).
+
+    두 테마 × 카드 바탕 다섯 -> 휘도가 평소 → (호버 →) 눌림 차례로 한 방향(다크 오름 · 라이트 내림),
+    호버가 있으면 눌림 ↔ 호버 ≥ 1.1
+    """
+    table = SCHEMES[scheme]
+    steps = [table[name] for name in (base, hover, pressed) if name is not None]
+    levels = [_luminance(color) for color in steps]
+    assert levels == sorted(levels, reverse=scheme == "light"), f"{scheme} {base}: {steps}"
+    assert len(set(steps)) == len(steps), f"{scheme} {base}: 같은 색이 있다 {steps}"
+    if hover is not None:
+        ratio = _contrast(table[pressed], table[hover])
+        assert ratio >= PRESSED_OVER_HOVER, f"{scheme} {base}: 눌림 ↔ 호버 = {ratio:.3f}"
 
 
 # ---------------------------------------------------------------------------
