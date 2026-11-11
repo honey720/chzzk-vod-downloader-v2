@@ -59,7 +59,7 @@ QToolTip {
 /* ---------- 상·하단 패널 ---------- */
 
 /* 바는 창 끝까지 — 모서리 없이, 목록 쪽 한 줄만 경계선(#536 — 설계 §11.1, 프로토 11b .bar · .hdr · .foot).
- * 안쪽 여백은 QSS padding이 아니라 레이아웃 마진(theme.METRICS["barPadX"] · ["barPadY"],
+ * 안쪽 여백은 QSS padding이 아니라 레이아웃 마진(theme.METRICS["outerMargin"] · ["barPadY"],
  * app/views/mainWindow.py::_applyLayoutMetrics가 런타임에 건다)이 준다 — 바 안 내용 끝과
  * 카드 바깥 끝이 같은 두 선에 놓이게 하기 위해서다. */
 QFrame#headerFrame {

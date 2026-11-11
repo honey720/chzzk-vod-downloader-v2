@@ -759,4 +759,4 @@ def test_menu_buttons_are_bar_controls_inside_the_bar_padding(window: VodDownloa
     for button in (window.menuDownloadButton, window.menuSettingsButton):
         assert button.height() == control
     corner = window.menuDownloadButton.mapTo(window, QPoint(0, 0))
-    assert corner == QPoint(theme.METRICS["barPadX"], theme.METRICS["barPadY"])
+    assert corner == QPoint(theme.METRICS["outerMargin"], theme.METRICS["barPadY"])

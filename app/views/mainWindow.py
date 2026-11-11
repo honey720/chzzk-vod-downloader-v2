@@ -534,11 +534,11 @@ class VodDownloader(QMainWindow):
         하기 위해서다. 바는 창 끝까지 붙고, 바 안 내용의 좌우 끝과 카드 바깥 끝이 같은 두 선이다(§11.1).
         """
         # 바는 창 끝까지 붙는다 — 바깥 여백 0, 바 · 목록 사이 간격 0(바의 경계선 하나로만 나눈다). 바 안쪽
-        # 여백은 세로 barPadY · 가로 barPadX(설계 §11.2), 가로 barPadX는 목록 카드의 좌우 여백(outerMargin,
-        # app/widgets/view.py)과 같은 12라 바 안 내용 끝과 카드 바깥 끝이 같은 두 선에 놓인다(§11.1 —
-        # #536, 프로토 11b). 카드 목록은 창 좌우 끝까지 가서 세로 스크롤바가 창 끝에 붙는다(v2.10.1).
-        # 메뉴 버튼 높이는 barControl(#529 — §11.3)
-        pad_x, pad_y = theme.METRICS["barPadX"], theme.METRICS["barPadY"]
+        # 여백은 세로 barPadY(설계 §11.2) · 가로 outerMargin이다. 가로는 목록 카드의 좌우 여백
+        # (app/widgets/view.py)과 같은 토큰 하나라 바 안 내용 끝과 카드 바깥 끝이 같은 두 선에 놓인다
+        # (§11.1 — #536, 프로토 11b · 한 값만 바꿔도 함께 옮겨 간다, #561). 카드 목록은 창 좌우 끝까지
+        # 가서 세로 스크롤바가 창 끝에 붙는다(v2.10.1). 메뉴 버튼 높이는 barControl(#529 — §11.3)
+        pad_x, pad_y = theme.METRICS["outerMargin"], theme.METRICS["barPadY"]
         self.centralWidgetLayout.setContentsMargins(0, 0, 0, 0)
         self.centralWidgetLayout.setSpacing(0)
         self.menuRow.setContentsMargins(0, 0, 0, 0)

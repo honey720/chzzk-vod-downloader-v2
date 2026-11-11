@@ -1454,13 +1454,13 @@ class TestFocusRing:
         _settle()
         assert ring.visibleRegion().isEmpty()
 
-    def test_ring_touches_the_card_on_the_side_without_room(
+    def test_ring_has_room_on_every_side_while_the_scrollbar_shows(
         self, window: VodDownloader, qtbot: QtBot
     ) -> None:
-        """컨테이너 가장자리까지 여유가 4px보다 작은 변에서는 focus ring이 그 여유 안에만 그려져야 한다.
+        """스크롤바가 보여도 카드 ↔ 스크롤바 사이에 focus ring이 들어가 네 변 모두 4px 밖이어야 한다.
 
-        카드 12장(스크롤바가 보여 오른쪽 여유가 준다), 첫째에 키보드 초점 -> 오른쪽 여유 < 4
-        -> focus ring 오른쪽 = 카드 오른쪽 + min(여유, 굵기 2), 나머지 세 변은 4px 밖, 붙여 그린 변 = 오른쪽
+        카드 12장(스크롤바가 보임), 첫째에 키보드 초점 -> 카드 오른쪽 ↔ 컨테이너 오른쪽(스크롤바 앞)
+        >= 4, focus ring = 카드를 네 변 4px씩 넓힌 사각형, 붙여 그린 변 없음 (#561)
         """
         items = _add(window, *[D.WAITING] * 12)
         assert window.listView.verticalScrollBar().isVisible(), "전제: 스크롤바가 보인다"
@@ -1469,11 +1469,10 @@ class TestFocusRing:
         qtbot.waitUntil(ring.isVisible)
         box = card.geometry()
         room = card.parentWidget().width() - (box.x() + box.width())
-        assert 0 <= room < RING_REACH, "전제: 오른쪽 여유가 모자란다"
-        assert box.x() >= RING_REACH and box.y() >= RING_REACH, "전제: 왼쪽 · 위는 여유가 있다"
-        want = box.adjusted(-RING_REACH, -RING_REACH, min(room, RING_WIDTH), RING_REACH)
-        assert ring.geometry() == want
-        assert ring.attachedSides() == ("right",)
+
+        assert room >= RING_REACH, f"카드 ↔ 스크롤바 사이가 {room}px"
+        assert ring.geometry() == box.adjusted(-RING_REACH, -RING_REACH, RING_REACH, RING_REACH)
+        assert ring.attachedSides() == ()
 
     @pytest.mark.parametrize("wide", [True, False])
     def test_ring_follows_the_window_width(
