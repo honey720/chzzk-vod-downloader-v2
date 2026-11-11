@@ -1423,6 +1423,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             event.accept()
             owner = self._listOwner()
             if self._picking and owner is not None:
+                if self._armedBy == "key":
+                    return  # Space를 누른 채다 — 먼저 시작한 Space만 따른다(누름과 같은 규칙)
                 self._arm(owner.cardPressed(self, event.modifiers()), event.modifiers())
                 return
             if not self._picking:

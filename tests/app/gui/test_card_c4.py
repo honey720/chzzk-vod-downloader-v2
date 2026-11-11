@@ -2218,6 +2218,24 @@ class TestSpaceOnRelease:
         _space(card, LIFT)
         assert seen == [[items[0]]]
 
+    def test_double_click_while_holding_space_picks_once(self, window: VodDownloader) -> None:
+        """Space를 누른 채 같은 카드를 더블 클릭해도 Space를 뗄 때 한 번만 골라야 한다.
+
+        선택 모드, 첫째에 초점, Space 누름 · 첫째 더블 클릭 -> 고른 카드 없음 · 눌린 바탕 켜짐,
+        Space 뗌 -> [첫째](고름이 바뀐 횟수 1)
+        """
+        items = self._picking(window, 1)
+        card = _card(window, items[0])
+        seen: list[list[ContentItem]] = []
+        window.listView.selectionChanged.connect(lambda: seen.append(_picked(window)))
+        _space(card, PRESS)
+        QTest.mouseDClick(window.windowHandle(), LEFT, NO_MODIFIER, _spot(window, items[0]))
+        _settle()
+        assert _picked(window) == []
+        assert card.isPressed(), "전제: Space 누름이 이어진다"
+        _space(card, LIFT)
+        assert seen == [[items[0]]]
+
     def test_space_while_holding_the_mouse_is_ignored(self, window: VodDownloader) -> None:
         """마우스로 누른 채 Space를 누르고 떼면 Space는 무시하고 마우스를 뗄 때 한 번만 골라야 한다.
 
