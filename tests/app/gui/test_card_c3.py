@@ -9,12 +9,14 @@
 import colorsys
 import json
 import math
+import time
 from collections.abc import Callable, Iterator
 from typing import Never
 
 import pytest
 from PySide6.QtCore import QEvent, QObject, QPoint, QVariantAnimation
 from PySide6.QtGui import QColor, QGuiApplication
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
 import CVDv2 as main_module
@@ -46,6 +48,8 @@ MB = 1024 * 1024
 TWO_SECTIONS = (TimeRange(600.0, 1200.0), TimeRange(1800.0, 2400.0))  # 합 20분
 RETURN_SLACK = 8  # 되돌아갈 때 더 남아야 하는 폭(px) — 설계 §2 「+8」
 WIDE = 2400  # 대체 글꼴(빈 글꼴 폴더)에서도 3줄이 접히지 않는 카드 폭(px)
+GEOMETRY_WAIT_S = 2.0  # 크기 변경 반영을 기다리는 최대 시간(초) — xvfb 왕복은 이보다 훨씬 짧다
+GEOMETRY_POLL_MS = 5  # 반영을 다시 확인하는 간격(ms)
 
 
 @pytest.fixture(autouse=True)
@@ -128,21 +132,26 @@ def _card(item: ContentItem, width: int = 900) -> ContentItemWidget:
     return card
 
 
-def _settle_geometry() -> None:
-    """창 시스템이 앞서 받은 크기 변경 요청을 다 처리하고 그 결과가 위젯에 반영될 때까지 기다린다.
+def _settle_width(widget: QWidget, width: int) -> None:
+    """방금 요청한 크기 변경이 반영돼 `widget` 폭이 `width`가 될 때까지 기다린다(최대 2초).
 
     xcb(xvfb)는 최상위 창의 크기 변경 결과를 이벤트로 늦게 돌려준다. `processEvents()` 한 번이면
     바로 앞 요청의 결과가 뒤늦게 반영돼 폭이 그 값(1px씩 좁힐 때 요청 + 1)으로 돌아갈 수 있다.
-    `QGuiApplication.sync()`는 창 시스템과 한 번 왕복한 뒤 쌓인 이벤트를 처리한다. offscreen에서는
-    `processEvents()`와 같다 (#569).
+    `QGuiApplication.sync()`는 창 시스템과 한 번 왕복한 뒤 쌓인 이벤트를 처리하지만, 이벤트 수신
+    스레드가 아직 큐에 넣지 않은 이벤트는 기다리지 않는다 — 그래서 폭이 요청과 같아질 때까지
+    `sync()`를 되풀이한다. 기한이 지나도 기다리기만 끝낸다 — 단언은 부른 쪽이 한다(클램프 확인) (#569).
     """
+    deadline = time.monotonic() + GEOMETRY_WAIT_S
     QGuiApplication.sync()
+    while widget.width() != width and time.monotonic() < deadline:
+        QTest.qWait(GEOMETRY_POLL_MS)
+        QGuiApplication.sync()
 
 
 def _at(card: ContentItemWidget, width: int) -> None:
     """카드를 `width`로 놓는다 — 실제 폭이 요청과 같은지 단언한다(클램프면 아무것도 안 잰다)."""
     card.resize(width, card.sizeHint().height())
-    _settle_geometry()
+    _settle_width(card, width)
     assert card.width() == width, f"요청 {width}px · 실제 {card.width()}px"
 
 
@@ -306,7 +315,7 @@ def _list(widths_cards: list[ContentItem], width: int = 900) -> tuple[ContentLis
 
 def _list_at(view: ContentListView, width: int) -> None:
     view.resize(width, 500)
-    _settle_geometry()
+    _settle_width(view, width)
     for _ in range(3):
         QApplication.processEvents()
     assert view.width() == width
