@@ -26,6 +26,7 @@ from PySide6.QtCore import QObject, Qt, QThreadPool, QTimer, Signal
 import app.section_input.basis as section_basis
 from app.system.platform_adapter import background_work
 from app.system.process_memory import log_process_memory
+from app.system.thread_handoff import start_job
 from app.section_input.basis import SectionBasis
 from app.system.user_activity import user_interacting
 from app.viewmodels.data import (
@@ -467,12 +468,16 @@ class SectionEditViewModel(QObject):
     # ---- 조회 ----
 
     def start(self, pool: QThreadPool | None = None) -> None:
-        """기준값 조회를 풀 스레드에서 시작한다. 한 번만 부른다."""
+        """기준값 조회를 풀 스레드에서 시작한다. 한 번만 부른다.
+
+        일의 마지막 참조는 메인 스레드에서 놓는다(`start_job`, #564) — 결과를 받으며 `_job`을
+        비워도 일이 풀 스레드에서 지워지지 않는다.
+        """
         job = SectionBasisJob(self.item)
         job.finished.connect(self._onBasis)
         job.failed.connect(self._onBasisFailed)
         self._job = job
-        (pool or QThreadPool.globalInstance()).start(lambda: job.run())
+        start_job(pool or QThreadPool.globalInstance(), job)
 
     def release(self) -> None:
         """조회하며 받은 moov를 놓는다 — 편집 창이 닫힐 때 부른다 (#309).
@@ -1232,7 +1237,7 @@ class SectionSizer(QObject):
         self._jobs[token] = (job, kept[1], item.selections)
         item.section_sizing = True  # 카드가 크기 자리에 "확인 중..."을 적는다
         self._model.notifyChanged(item)
-        self._pool.start(lambda: job.run())
+        start_job(self._pool, job)  # 일의 마지막 참조는 메인 스레드에서 놓는다(#564)
 
     def cancel(self, item: ContentItem) -> None:
         """그 카드의 크기 세기를 그만두게 한다 — 해상도가 바뀌었거나 카드가 지워졌다 (#309).
@@ -1392,7 +1397,7 @@ class SectionRefitter(QObject):
         job = SectionRefitJob(snapshot, token)
         job.done.connect(self._onDone)
         self._jobs[token] = job
-        self._pool.start(lambda: job.run())
+        start_job(self._pool, job)  # 일의 마지막 참조는 메인 스레드에서 놓는다(#564)
         self._model.notifyChanged(item)
 
     def cancel(self, item: ContentItem) -> None:
