@@ -1290,6 +1290,64 @@ def test_retry_leaves_the_old_body_alone_while_another_download_holds_the_old_na
     assert os.path.isfile(old_body)
 
 
+def test_renamed_retry_that_fails_again_leaves_a_record_the_next_retry_can_reuse(
+    server, tmp_path, monkeypatch
+) -> None:
+    """첫 구간에 새 이름을 받은 재시도가 또 실패하면, 그 기록으로 다음 재시도가 남긴 것을 다시 써야 한다 (#392).
+
+    구간 셋, 첫 구간 컷이 실패하고 출력을 지우지 못함 → 재시도(`_1 (1)`)도 첫 구간 컷이 실패하고 출력을
+    지우지 못함 → 다음 재시도
+    -> 둘째 실행의 기록의 경계 원본 == 둘째 실행의 첫 경로에서 파생한 경로, 셋째 실행의 첫 경로는 `_1 (1) (1)`,
+       셋째 실행의 요청 0건, 완료 1회 · 실패 0건, 저장 폴더에 `CVDv2_` 임시 파일 없음
+    """
+    failed, cuts = _fail_with_kept_output(server, tmp_path, monkeypatch, 0)
+    blocker = Undeletable(monkeypatch)
+    second = hand_over(failed, _Run(server, "plain", tmp_path, _three()))
+    blocker.block(second.paths[0])
+    cuts.fail_on = (1,)
+    second.start()
+    blocker.release()
+    assert len(second.failures) == 1, "전제: 둘째 실행도 첫 구간만 실패했다"
+    assert second.data.section_resume.source_path == partial_source_path_for(second.paths[0])
+    cuts.restart()
+    requests_before = len(server.requests)
+
+    third = hand_over(second, _Run(server, "plain", tmp_path, _three())).start()
+
+    assert third.paths[0] == _renamed(second.paths[0]), (
+        "전제: 셋째 실행이 첫 구간에 또 새 이름을 줬다"
+    )
+    assert (third.finished, third.failures) == (1, [])
+    assert server.requests[requests_before:] == []
+    assert not [name for name in third.listing() if name.startswith("CVDv2_")]
+
+
+@pytest.mark.parametrize("number", [1, 0], ids=["둘째 구간", "첫 구간"])
+def test_renamed_retry_stopped_before_cutting_leaves_what_the_next_retry_can_reuse(
+    server, tmp_path, monkeypatch, number: int
+) -> None:
+    """새 이름을 받은 재시도가 남긴 것을 옮긴 뒤 컷 전에 중단되면, 같은 기록으로 다음 재시도가 남긴 것을 다시 써야 한다 (#392).
+
+    구간 셋, 주석의 구간 컷이 실패하고 출력을 지우지 못함 → 재시도가 후처리를 시작하자마자 중단(새 기록 없음)
+    → 첫 실행의 기록으로 다음 재시도
+    -> 중단한 실행의 컷 호출 0회, 다음 재시도의 그 구간 경로는 " (1)" 이름, 요청 0건, 완료 1회 · 실패 0건,
+       저장 폴더에 `CVDv2_` 임시 파일 없음
+    """
+    failed, cuts = _fail_with_kept_output(server, tmp_path, monkeypatch, number)
+    stopped = hand_over(failed, _Run(server, "plain", tmp_path, _three()))
+    stopped.engine._on_merge_start = stopped.data.model.stop  # 후처리 시작 = 남긴 것을 옮긴 뒤
+    stopped.start()
+    assert cuts.outputs == [] and stopped.finished == 0, "전제: 컷 전에 중단됐다"
+    requests_before = len(server.requests)
+
+    again = hand_over(failed, _Run(server, "plain", tmp_path, _three())).start()
+
+    assert again.paths[number] == _renamed(failed.paths[number])
+    assert (again.finished, again.failures) == (1, [])
+    assert server.requests[requests_before:] == []
+    assert not [name for name in again.listing() if name.startswith("CVDv2_")]
+
+
 def test_section_file_that_cannot_be_put_in_place_fails_alone(
     server, tmp_path, monkeypatch
 ) -> None:
