@@ -793,9 +793,10 @@ class TestCardKeys:
         assert edits == []
 
     def test_space_in_select_mode_picks_and_unpicks_the_focused_card(self, window) -> None:
-        """선택 모드에서 초점 카드에 Space를 누르면 그 카드를 고르고, 다시 누르면 풀어야 한다.
+        """선택 모드에서 초점 카드에 Space를 누르고 떼면 그 카드를 고르고, 다시 누르고 떼면 풀어야 한다.
 
-        선택 모드, 둘째 카드에 초점 · Space -> [둘째] · 초점 그대로, Space -> []
+        선택 모드, 둘째 카드에 초점 · Space(누름 · 뗌) -> [둘째] · 초점 그대로, Space(누름 · 뗌) -> []
+        누름 · 뗌을 나눠 재는 테스트는 `TestSpaceOnRelease`
         """
         items = _add(window, D.WAITING, D.WAITING)
         window.selectButton.click()
@@ -860,9 +861,10 @@ class TestCardKeys:
         assert _picked(window) == []
 
     def test_auto_repeated_space_does_not_toggle_again(self, window) -> None:
-        """Space를 누르고 있어 오는 키 반복 이벤트는 고른 카드를 바꾸지 않아야 한다.
+        """Space로 고른 뒤 오는 키 반복 누름 이벤트는 고른 카드를 바꾸지 않아야 한다.
 
-        선택 모드, 초점 카드에 Space -> [카드], 키 반복 Space 두 번 -> 한 번마다 [카드] 그대로
+        선택 모드, 초점 카드에 Space(누름 · 뗌) -> [카드], 키 반복 누름 두 번 -> 한 번마다 [카드] 그대로.
+        누른 채 오는 키 반복은 `TestSpaceOnRelease::test_auto_repeat_while_holding_does_not_pick`
         """
         items = _add(window, D.WAITING)
         window.selectButton.click()
@@ -2091,3 +2093,284 @@ class TestPickOnRelease:
         _release(window, items[0], button=Qt.MouseButton.RightButton)
         assert _picked(window) == []
         assert window.listView.isSelecting(), "전제: 선택 모드는 그대로다"
+
+
+# ---- Space도 뗄 때 고르기 (#561, 오너 2026-11-11) ----
+
+
+def _space(
+    widget: QWidget,
+    kind: QEvent.Type,
+    modifiers: Qt.KeyboardModifier = NO_MODIFIER,
+    repeat: bool = False,
+) -> None:
+    """초점 위젯에 Space 누름(`KeyPress`) 또는 뗌(`KeyRelease`) 하나만 보낸다."""
+    QApplication.sendEvent(widget, QKeyEvent(kind, Qt.Key.Key_Space, modifiers, " ", repeat))
+    _settle()
+
+
+PRESS = QEvent.Type.KeyPress
+LIFT = QEvent.Type.KeyRelease
+
+
+class TestSpaceOnRelease:
+    """Space 누름 · 뗌을 따로 보내 잰다 — 키 이벤트는 초점 위젯에 바로 보낸다."""
+
+    def _picking(self, win: VodDownloader, count: int) -> list[ContentItem]:
+        items = _add(win, *[D.WAITING] * count)
+        _toggle_select_mode(win, True)
+        _card(win, items[0]).setFocus(Qt.FocusReason.OtherFocusReason)
+        _settle()
+        return items
+
+    def test_pressing_space_only_shows_the_pressed_ground(self, window: VodDownloader) -> None:
+        """선택 모드에서 초점 카드에 Space를 누르기만 하면 고르지 않고 눌린 바탕만 켜야 한다.
+
+        선택 모드, 카드 둘, 첫째에 초점, Space 누름 -> 고른 카드 없음 · 첫째 눌린 바탕 켜짐
+        """
+        items = self._picking(window, 2)
+        card = _card(window, items[0])
+        _space(card, PRESS)
+        assert _picked(window) == []
+        assert card.isPressed()
+
+    def test_releasing_space_picks_and_clears_the_pressed_ground(
+        self, window: VodDownloader
+    ) -> None:
+        """Space를 누른 뒤 떼면 그때 초점 카드를 고르고 눌린 바탕을 꺼야 한다.
+
+        선택 모드, 첫째에 초점, Space 누름 → 뗌 -> [첫째] · 눌린 바탕 꺼짐
+        """
+        items = self._picking(window, 2)
+        card = _card(window, items[0])
+        _space(card, PRESS)
+        _space(card, LIFT)
+        assert _picked(window) == [items[0]]
+        assert not card.isPressed()
+
+    def test_moving_focus_while_holding_space_picks_nothing(self, window: VodDownloader) -> None:
+        """Space를 누른 채 ↓로 초점을 옮기면 눌린 바탕이 꺼지고, 그 뒤에 떼도 아무 카드도 고르지 않아야 한다.
+
+        선택 모드, 카드 둘, 첫째에 초점, Space 누름 · ↓ -> 초점 = 둘째, 첫째 눌린 바탕 꺼짐,
+        둘째에서 Space 뗌 -> 고른 카드 없음
+        """
+        items = self._picking(window, 2)
+        first, second = _card(window, items[0]), _card(window, items[1])
+        _space(first, PRESS)
+        _key(first, Qt.Key.Key_Down)
+        assert window.focusWidget() is second, "전제: 초점이 둘째로 갔다"
+        assert not first.isPressed()
+        _space(second, LIFT)
+        assert _picked(window) == []
+        assert not second.isPressed()
+
+    def test_shift_space_range_is_added_on_release(self, window: VodDownloader) -> None:
+        """Shift+Space 범위는 누를 때가 아니라 뗄 때 더해야 하고, 수정자는 누를 때의 값이어야 한다.
+
+        선택 모드, 카드 셋, 첫째 Space(누름 · 뗌) · ↓ · ↓, Shift+Space 누름 -> [첫째] 그대로,
+        수정자 없이 뗌 -> [첫째, 둘째, 셋째]
+        """
+        items = self._picking(window, 3)
+        first = _card(window, items[0])
+        _space(first, PRESS)
+        _space(first, LIFT)
+        _key(first, Qt.Key.Key_Down)
+        _key(window.focusWidget(), Qt.Key.Key_Down)
+        last = _card(window, items[2])
+        assert window.focusWidget() is last, "전제: 초점이 셋째로 갔다"
+        _space(last, PRESS, SHIFT)
+        assert _picked(window) == [items[0]]
+        _space(last, LIFT)
+        assert _picked(window) == items
+
+    def test_auto_repeat_while_holding_does_not_pick(self, window: VodDownloader) -> None:
+        """Space를 누르고 있어 오는 키 반복(뗌 · 누름 짝)은 고르지 않고, 손을 뗄 때 한 번만 골라야 한다.
+
+        선택 모드, 첫째에 초점, Space 누름 · 키 반복 뗌 · 누름 두 번 -> 한 번마다 고른 카드 없음 · 눌린 바탕
+        켜짐, 뗌 -> [첫째]
+        """
+        items = self._picking(window, 1)
+        card = _card(window, items[0])
+        _space(card, PRESS)
+        for _ in range(2):
+            _space(card, LIFT, repeat=True)
+            _space(card, PRESS, repeat=True)
+            # 한 번마다 본다 — 두 번 뒤에만 보면 골랐다가 다시 푼 것도 같은 값이다
+            assert _picked(window) == []
+            assert card.isPressed()
+        _space(card, LIFT)
+        assert _picked(window) == [items[0]]
+
+    def test_mouse_press_while_holding_space_picks_once(self, window: VodDownloader) -> None:
+        """Space를 누른 채 같은 카드를 마우스로 누르고 떼도 Space를 뗄 때 한 번만 골라야 한다.
+
+        선택 모드, 첫째에 초점, Space 누름 · 첫째를 마우스로 누름 · 뗌 -> 고른 카드 없음,
+        Space 뗌 -> [첫째](고름이 바뀐 횟수 1)
+        """
+        items = self._picking(window, 1)
+        card = _card(window, items[0])
+        seen: list[list[ContentItem]] = []
+        window.listView.selectionChanged.connect(lambda: seen.append(_picked(window)))
+        _space(card, PRESS)
+        _press(window, items[0])
+        _release(window, items[0])
+        assert _picked(window) == []
+        _space(card, LIFT)
+        assert seen == [[items[0]]]
+
+    def test_space_while_holding_the_mouse_is_ignored(self, window: VodDownloader) -> None:
+        """마우스로 누른 채 Space를 누르고 떼면 Space는 무시하고 마우스를 뗄 때 한 번만 골라야 한다.
+
+        선택 모드, 첫째를 마우스로 누름 · Space 누름 · 뗌 -> 고른 카드 없음, 마우스 뗌 -> [첫째](바뀐 횟수 1)
+        """
+        items = self._picking(window, 1)
+        card = _card(window, items[0])
+        seen: list[list[ContentItem]] = []
+        window.listView.selectionChanged.connect(lambda: seen.append(_picked(window)))
+        _press(window, items[0])
+        focused = window.focusWidget()
+        _space(focused, PRESS)
+        _space(focused, LIFT)
+        assert _picked(window) == []
+        assert card.isPressed(), "전제: 마우스 누름이 이어진다"
+        _release(window, items[0])
+        assert seen == [[items[0]]]
+
+
+# ---- 창을 오간 뒤의 초점 종류 (#561, 141a 정할 것 3) ----
+
+
+def _show(win: VodDownloader, qtbot: QtBot) -> None:
+    win.show()
+    qtbot.waitExposed(win)
+
+
+def _activate(qtbot: QtBot, target: QWidget) -> None:
+    """그 창이 활성이 될 때까지 다시 요청하며 기다린다 — 조건 대기(`_focus`와 같은 까닭)."""
+
+    def active() -> bool:
+        if not target.isActiveWindow():
+            target.activateWindow()
+            return False
+        return True
+
+    qtbot.waitUntil(active)
+
+
+def _leave_and_return(qtbot: QtBot, win: VodDownloader, card: ContentItemWidget) -> None:
+    """다른 최상위 창을 활성으로 만들었다가 이 창을 다시 활성으로 만든다 — 카드 초점이 돌아올 때까지."""
+    other = QWidget()
+    other.resize(200, 100)
+    other.show()
+    qtbot.waitExposed(other)
+    _activate(qtbot, other)
+    qtbot.waitUntil(lambda: not card.hasFocus())
+    _activate(qtbot, win)
+    qtbot.waitUntil(card.hasFocus)
+    _settle()
+    other.hide()
+
+
+class TestFocusKindAfterWindowSwitch:
+    def test_mouse_focus_stays_mouse_after_the_window_comes_back(
+        self, window: VodDownloader, qtbot: QtBot
+    ) -> None:
+        """마우스로 초점을 받은 카드는 창이 비활성이 됐다가 다시 활성이 돼도 키보드 초점이 아니어야 한다.
+
+        카드 둘, 첫째에 마우스 초점 -> focus ring 숨음 · 카드 버튼 숨음, 다른 창 활성 → 이 창 활성
+        -> 첫째가 초점을 되찾음, 키보드 초점 아님 · focus ring 숨음 · 카드 버튼 숨음
+        """
+        items = _add(window, D.WAITING, D.WAITING)
+        _show(window, qtbot)
+        card = _card(window, items[0])
+        _focus(qtbot, window, card, Qt.FocusReason.MouseFocusReason)
+        assert not card.hasKeyFocus(), "전제: 마우스 초점이다"
+        assert not card.hoverBox.isVisible(), "전제: 카드 버튼이 숨어 있다"
+
+        _leave_and_return(qtbot, window, card)
+
+        assert not card.hasKeyFocus()
+        assert not _ring(window).isVisible()
+        assert not card.hoverBox.isVisible()
+
+    def test_key_focus_stays_key_after_the_window_comes_back(
+        self, window: VodDownloader, qtbot: QtBot
+    ) -> None:
+        """키보드로 초점을 받은 카드는 창이 비활성이 됐다가 다시 활성이 되면 키보드 초점 · focus ring이 돌아와야 한다.
+
+        카드 둘, 첫째에 Tab 초점 -> 다른 창 활성 → 이 창 활성 -> 첫째가 키보드 초점, focus ring이 첫째를 두름
+        """
+        items = _add(window, D.WAITING, D.WAITING)
+        _show(window, qtbot)
+        card = _card(window, items[0])
+        _focus(qtbot, window, card, Qt.FocusReason.TabFocusReason)
+        assert card.hasKeyFocus(), "전제: 키보드 초점이다"
+
+        _leave_and_return(qtbot, window, card)
+
+        assert card.hasKeyFocus()
+        qtbot.waitUntil(lambda: _ring_wraps(window, card))
+
+
+# ---- 창 좌우 바깥 여백 (#561, 오너 2026-11-11) ----
+
+
+def _left(win: VodDownloader, widget: QWidget) -> int:
+    assert widget.isVisible(), f"전제: {widget.objectName()}이 보인다"
+    return widget.mapTo(win, QPoint(0, 0)).x()
+
+
+def _right(win: VodDownloader, widget: QWidget) -> int:
+    """위젯 오른쪽 끝 바깥 x — 창 좌표."""
+    assert widget.isVisible(), f"전제: {widget.objectName()}이 보인다"
+    return widget.mapTo(win, QPoint(widget.width(), 0)).x()
+
+
+class TestOuterMargin:
+    @pytest.mark.parametrize("cards", [3, 12])  # 12장이면 스크롤바가 보인다
+    def test_bars_and_cards_share_the_left_and_right_lines(
+        self, window: VodDownloader, qtbot: QtBot, cards: int
+    ) -> None:
+        """메뉴바 · 헤더바 두 줄 · 카드 · 하단바의 왼쪽 끝이 한 선, 오른쪽 끝이 한 선이고 두 여백이 같아야 한다.
+
+        창 900, 카드 3장(스크롤바 없음) · 12장(스크롤바 보임) -> 왼쪽 끝(메뉴 첫 버튼 · URL 칸 · 칩 묶음 ·
+        첫 카드 · 하단바 속도 글)이 모두 같음, 오른쪽 끝(VOD 추가 · 선택 · 첫 카드 · 중지)이 모두 같음,
+        왼쪽 여백 == 창 폭 − 오른쪽 끝
+        """
+        items = _add(window, *[D.WAITING] * cards)
+        _show(window, qtbot)
+        _settle()
+        shows = window.listView.verticalScrollBar().isVisible()
+        assert shows is (cards == 12), "전제: 스크롤바는 12장일 때만 보인다"
+        card = _card(window, items[0])
+        lefts = {
+            "메뉴": _left(window, window.menuDownloadButton),
+            "URL": _left(window, window.urlInput),
+            "칩 묶음": _left(window, window.filterChipBar),  # 헤더바 2줄 — 폭에 따라 칩 · 드롭다운
+            "카드": _left(window, card),
+            "하단바": _left(window, window.footerMonitor),
+        }
+        rights = {
+            "VOD 추가": _right(window, window.fetchButton),
+            "선택": _right(window, window.selectButton),
+            "카드": _right(window, card),
+            "중지": _right(window, window.stopButton),
+        }
+        assert len(set(lefts.values())) == 1, lefts
+        assert len(set(rights.values())) == 1, rights
+        assert lefts["카드"] == window.width() - rights["카드"]
+
+    def test_card_and_scrollbar_leave_room_for_the_focus_ring(
+        self, window: VodDownloader, qtbot: QtBot
+    ) -> None:
+        """스크롤바가 보일 때 카드 오른쪽 끝 ↔ 스크롤바 왼쪽 끝이 focus ring의 띄움 + 굵기 이상이어야 한다.
+
+        창 900, 카드 12장 -> 스크롤바 왼쪽 끝 − 첫 카드 오른쪽 끝 >= 4
+        """
+        items = _add(window, *[D.WAITING] * 12)
+        _show(window, qtbot)
+        _settle()
+        bar = window.listView.verticalScrollBar()
+        assert bar.isVisible(), "전제: 스크롤바가 보인다"
+        room = _left(window, bar) - _right(window, _card(window, items[0]))
+        assert room >= RING_REACH, f"카드 ↔ 스크롤바 {room}px"
