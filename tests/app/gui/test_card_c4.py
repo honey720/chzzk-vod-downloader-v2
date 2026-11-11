@@ -1852,19 +1852,34 @@ class TestFocusRingWidget:
 
 
 class TestPickedBorderOverProgressBar:
-    @pytest.mark.parametrize("state", [D.RUNNING, D.PAUSED, D.FINISHED])
+    @pytest.mark.parametrize("state", [D.RUNNING, D.PAUSED])
     def test_bottom_border_of_a_picked_card_is_accent_over_the_bar(
         self, window: VodDownloader, state: DownloadState
     ) -> None:
         """progress bar가 보이는 카드를 고르면 아래 변 2px가 progress bar 위에서도 강조색이어야 한다.
 
-        받는 중 · 일시정지 · 완료 카드(progress bar 보임), 선택 모드에서 클릭 -> 카드 면 가로 가운데의
+        받는 중 · 일시정지 카드(progress bar 보임), 선택 모드에서 클릭 -> 카드 면 가로 가운데의
         아래에서 첫째 · 둘째 화소 ≈ accent(고르기 전 둘째 화소는 accent가 아님), 셋째 화소는 accent가 아님
         """
+        self._check(window, state, bar_shown=True)
+
+    @pytest.mark.parametrize("state", [D.FINISHED, D.FAILED])
+    def test_bottom_border_of_a_picked_card_without_a_bar_is_accent(
+        self, window: VodDownloader, state: DownloadState
+    ) -> None:
+        """progress bar가 없는 완료 · 실패 카드를 고르면 아래 변 2px가 강조색이어야 한다 (#571).
+
+        완료 · 실패 카드(progress bar 숨음), 선택 모드에서 클릭 -> 카드 면 가로 가운데의 아래에서 첫째 ·
+        둘째 화소 ≈ accent(고르기 전 둘째 화소는 accent가 아님), 셋째 화소는 accent가 아님
+        """
+        self._check(window, state, bar_shown=False)
+
+    def _check(self, window: VodDownloader, state: DownloadState, bar_shown: bool) -> None:
         items = _add(window, state)
         card = _card(window, items[0])
         face = card.contentFrame
-        assert card.progressBar.isVisible(), "전제: progress bar가 보인다"
+        assert card.isVisible(), "전제: 카드가 보인다"
+        assert card.progressBar.isVisible() is bar_shown, "전제: progress bar 보임 · 숨음"
         x, bottom = face.width() / 2, face.height() - 1
         before = face.grab().toImage()
         assert not _is(_colour_at(before, x, bottom - 1), "accent"), (

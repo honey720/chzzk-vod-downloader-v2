@@ -268,7 +268,11 @@ def test_state_change_repaints_an_existing_card(qapp) -> None:
     widget.setData(widget.item, 0)
     assert widget.statusLabel.property("state") == "failed"
     assert widget.statusIcon.state() == "all_failed"
-    assert widget.progressBar.property("state") == "failed"
+    motion = widget.motion()  # 실패 모션(#571) — 끝 시간으로 옮겨 마지막 모양을 본다
+    if motion is not None:
+        motion.setCurrentTime(motion.duration())
+    assert widget.contentFrame.property("tint") == "failed"
+    assert not widget.progressBar.isVisible()
 
 
 def test_waiting_card_shows_no_progress(qapp) -> None:

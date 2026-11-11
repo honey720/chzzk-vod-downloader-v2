@@ -805,17 +805,16 @@ class TestProgressBarOnlyWithProgress:
         assert not widget.progressBar.isVisible()
 
     @pytest.mark.parametrize("state", (DownloadState.FINISHED, DownloadState.FAILED))
-    def test_bar_is_full_when_finished_or_failed(self, qapp, state) -> None:
-        """완료 · 실패 카드면 진행률 표시줄이 끝까지 차 있어야 한다 (#554).
+    def test_bar_hidden_when_finished_or_failed(self, qapp, state) -> None:
+        """완료 · 실패 카드면 진행률 표시줄이 숨어야 한다 (#571).
 
-        완료(진행 100) · 실패(진행 0) -> 보임, value == maximum == 100
+        완료(진행 100) · 실패(진행 0) -> 숨음
         """
         widget = _make_widget(qapp)
         _set_state(widget, state, 100 if state == DownloadState.FINISHED else 0)
         _at_width(widget, 900)
-        bar = widget.progressBar
-        assert bar.isVisible()
-        assert bar.value() == bar.maximum() == 10000
+        assert widget.isVisible(), "전제: 카드가 보인다"
+        assert not widget.progressBar.isVisible()
 
     @pytest.mark.parametrize(
         "state,bar_state",
