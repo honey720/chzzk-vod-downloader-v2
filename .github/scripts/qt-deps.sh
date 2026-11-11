@@ -20,6 +20,28 @@ OPTIONAL=(fonts-nanum)
 APT=(sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30
      -o Dir::Cache::archives="$DEBS" -o APT::Sandbox::User=root)
 
+# 러너의 DNS가 Ubuntu 서버 이름을 주소로 바꾸지 못하는 날이 있다(서버는 살아 있다). 그때는 apt로
+# 받는 동안만 공용 DNS에 묻게 하고, 끝나면 원래 설정으로 되돌린다. apt는 받은 목록 · 패키지의
+# 서명을 확인하므로 DNS를 바꿔도 받는 내용은 같다
+RESOLV_CONF=/etc/resolv.conf
+RESOLV_BACKUP="${RUNNER_TEMP:-/tmp}/resolv.conf.before-qt-deps"
+
+resolves() {
+  timeout 10 getent hosts archive.ubuntu.com > /dev/null
+}
+
+use_public_dns() {
+  echo "::warning::러너의 DNS가 archive.ubuntu.com을 못 찾는다 — apt로 받는 동안 공용 DNS를 쓴다"
+  echo "::group::바꾸기 전 DNS 설정"
+  cat "$RESOLV_CONF" || true
+  grep '^hosts' /etc/nsswitch.conf || true
+  echo "::endgroup::"
+  sudo cp "$RESOLV_CONF" "$RESOLV_BACKUP"
+  trap 'sudo cp "$RESOLV_BACKUP" "$RESOLV_CONF"' EXIT
+  printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' | sudo tee "$RESOLV_CONF" > /dev/null
+  if resolves; then echo "공용 DNS로 이름을 찾았다"; else echo "::warning::공용 DNS로도 못 찾는다"; fi
+}
+
 all_installed() {
   local package
   for package in "${PACKAGES[@]}"; do
@@ -37,6 +59,7 @@ install_from_apt() {
   echo "apt로 받아 설치한다"
   sudo rm -rf "$DEBS"
   mkdir -p "$DEBS/partial"
+  resolves || use_public_dns
   "${APT[@]}" update
   # 캐시 설치가 중간에 실패했으면 의존 패키지가 빠진 채 남는다 — 먼저 그것부터 채운다
   "${APT[@]}" install -y --no-install-recommends --fix-broken
