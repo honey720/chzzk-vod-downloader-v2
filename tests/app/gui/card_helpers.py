@@ -41,6 +41,42 @@ def resize_to(widget: QWidget, width: int) -> None:
     )
 
 
+ROOMY_WIDTH = 2400  # 폭을 유도하기 전에 놓는 폭(px) — 대체 글꼴에서도 3줄이 안 접힌다
+
+
+def row3_need(card: QWidget) -> int:
+    """지금 3줄 모양이 바라는 폭 — 보이는 위젯의 글 폭(+4) · 아이콘 폭 · 사이 간격을 독립 합산한다.
+
+    늘어나는 빈칸과 숨은 위젯은 간격을 받지 않는다(QBoxLayout).
+    """
+    layout = card.resolutionLayout
+    widths = []
+    for index in range(layout.count()):
+        entry = layout.itemAt(index)
+        widget = entry.widget()
+        if widget is None or entry.isEmpty():
+            continue
+        if isinstance(widget, QLabel) and widget.text():
+            widths.append(widget.fontMetrics().horizontalAdvance(widget.text()) + 4)
+        else:
+            widths.append(widget.width())
+    return sum(widths) + layout.spacing() * (len(widths) - 1)
+
+
+def unfold(card: QWidget) -> int:
+    """카드를 3줄이 하나도 접히지 않는 가장 좁은 폭에 놓고 그 폭을 돌려준다(#555).
+
+    넉넉한 폭에서 3줄 모양의 폭을 독립 합산하고(`row3_need`) 3줄 밖의 폭(썸네일 · 여백 · 테두리)을
+    더한다. 글꼴마다 이 폭이 달라 절대 px로 박으면 글자가 넓은 글꼴에서 카드가 설계대로 접힌다.
+    넉넉한 폭에서 이미 접혔으면 합산 폭이 접힌 모양 기준이 되어 뒤 단언이 실패한다 — 거짓 통과는 없다.
+    """
+    resize_to(card, ROOMY_WIDTH)
+    chrome = card.width() - card.statusRow.width()
+    width = chrome + row3_need(card)
+    resize_to(card, width)
+    return width
+
+
 def shown(widget: QWidget) -> str:
     """`widget`이 **보이는지 단언한 뒤** 실제 표시 문자열을 돌려준다.
 

@@ -130,7 +130,8 @@ class CardEditDialog(QDialog):
         self.titleLabel.setObjectName("cardEditTitle")
         self.titleLabel.setText(item.title)
         root.addWidget(self.titleLabel)
-        self.metaLabel = QLabel(self)
+        # 말줄임 라벨 — 채널 이름이 길어도 창 최소폭(`_fitMinimumWidth`)을 늘리지 않는다(#555)
+        self.metaLabel = ElidingLabel(self)
         self.metaLabel.setObjectName("cardEditMeta")
         root.addWidget(self.metaLabel)
 
@@ -225,7 +226,28 @@ class CardEditDialog(QDialog):
         for button in self.findChildren(QPushButton):
             button.setAutoDefault(False)
             button.setDefault(False)
-        self.setMinimumWidth(DIALOG_WIDTH)
+        self._fitMinimumWidth()
+
+    def _fitMinimumWidth(self) -> None:
+        """창 최소폭을 「`DIALOG_WIDTH`와 내용 최소폭 중 큰 값」으로 건다(#555).
+
+        최소폭을 직접 걸면 Qt는 레이아웃의 최소폭을 더는 최소폭으로 쓰지 않는다. 글자가 넓은 글꼴이나
+        긴 번역에서 내용 최소폭이 `DIALOG_WIDTH`를 넘으면, 그 폭까지 줄인 창이 버튼을 글 폭보다 좁게
+        누르고 감기는 구간 요약을 잘랐다. 내용이 바뀌어 레이아웃이 다시 잡힐 때마다(`event`의
+        `LayoutRequest`) 다시 부른다.
+        """
+        layout = self.layout()
+        content = layout.totalMinimumSize().width() if layout is not None else 0
+        width = max(DIALOG_WIDTH, content)
+        if self.minimumWidth() != width:
+            self.setMinimumWidth(width)
+
+    def event(self, event: QEvent) -> bool:
+        """레이아웃이 다시 잡힌 뒤 최소폭을 내용에 맞춘다 — 글 · 글꼴 · 번역이 바뀐 때다(#555)."""
+        handled = super().event(event)
+        if event.type() == QEvent.Type.LayoutRequest:
+            self._fitMinimumWidth()
+        return handled
 
     def _retranslateUi(self) -> None:
         self.setWindowTitle(self.tr("Edit"))

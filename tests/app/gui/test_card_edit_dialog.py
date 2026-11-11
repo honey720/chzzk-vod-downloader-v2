@@ -566,9 +566,10 @@ class TestSectionButtonPlace:
         )
 
     def test_long_notice_wraps_without_clipping_at_the_minimum_width(self, qtbot, tmp_path) -> None:
-        """요약 뒤 경고 안내가 길어도 창 최소폭(520)에서 감겨 잘리지 않아야 한다.
+        """요약 뒤 경고 안내가 길어도 창 최소폭에서 감겨 잘리지 않아야 한다.
 
-        경고 다섯(fps · 끝 당김 · 끝 늘림 · 길이 밖 · 길이 확인 중) · 창 520 -> 요약 칸 높이 ≥ 그 폭의 필요 높이
+        경고 다섯(fps · 끝 당김 · 끝 늘림 · 길이 밖 · 길이 확인 중) · 창 최소폭(≥ 520, 내용 최소폭 이상)
+        -> 요약 칸 높이 ≥ 그 폭의 필요 높이 (#555)
         """
         from fractions import Fraction
 
@@ -583,11 +584,51 @@ class TestSectionButtonPlace:
         dialog = _open(win, item)
         dialog.resize(dialog.minimumWidth(), dialog.height())
         _pump()
-        assert dialog.width() == 520, "전제: 창 최소폭"
+        assert dialog.width() == dialog.minimumWidth() >= dialog_mod.DIALOG_WIDTH, "전제: 창 최소폭"
         label = dialog.sectionSummaryLabel
+        assert label.isVisible(), "전제: 요약이 보인다"
         assert "checking length" in label.text(), "전제: 긴 경고가 요약에 있다"
         assert label.height() >= label.heightForWidth(label.width())
         assert dialog.sectionButton.geometry().left() > label.geometry().right()
+
+    def test_long_button_text_widens_the_minimum_width_without_squeezing(
+        self, qtbot, tmp_path
+    ) -> None:
+        """버튼 글이 길어져 내용 최소폭이 520을 넘으면 창 최소폭이 따라 늘어 버튼이 글 폭보다 좁아지지 않아야 한다.
+
+        「구간 편집…」 글을 원래 글 8번 반복으로 바꿈(긴 번역 대신) -> 창 최소폭 > 520,
+        최소폭으로 줄인 창에서 그 버튼 폭 ≥ 그 버튼 sizeHint 폭 (#555)
+        """
+        item = _with_sections(_make_item(str(tmp_path)), 2)
+        win = _window(tmp_path, item)
+        dialog = _open(win, item)
+        button = dialog.sectionButton
+        button.setText(button.text() * 8)  # 글꼴과 상관없이 내용 최소폭이 520을 넘게 늘린다
+        _pump()
+        assert button.isVisible(), "전제: 구간 편집 버튼이 보인다"
+        assert button.sizeHint().width() > dialog_mod.DIALOG_WIDTH, "전제: 버튼 하나가 520보다 넓다"
+        assert dialog.minimumWidth() > dialog_mod.DIALOG_WIDTH
+        dialog.resize(dialog.minimumWidth(), dialog.height())
+        _pump()
+        assert dialog.width() == dialog.minimumWidth(), "전제: 창 최소폭"
+        assert button.width() >= button.sizeHint().width(), (
+            f"버튼 {button.width()} < 글 폭 {button.sizeHint().width()}"
+        )
+
+    def test_long_channel_name_does_not_widen_the_minimum_width(self, qtbot, tmp_path) -> None:
+        """채널 이름이 아주 길어도 창 최소폭이 머리 줄 글 폭만큼 늘지 않아야 한다.
+
+        채널 이름 「채널」 200번 반복 -> 머리 줄 원문은 그대로, 창 최소폭 < 머리 줄 원문 글 폭 (#555)
+        """
+        item = _make_item(str(tmp_path))
+        item.channel_name = "채널" * 200
+        win = _window(tmp_path, item)
+        dialog = _open(win, item)
+        meta = dialog.metaLabel
+        assert meta.isVisible(), "전제: 머리 줄이 보인다"
+        assert meta.text().startswith(item.channel_name), "전제: 머리 줄 원문에 긴 채널 이름이 있다"
+        full = meta.fontMetrics().horizontalAdvance(meta.text())
+        assert dialog.minimumWidth() < full, f"창 최소폭 {dialog.minimumWidth()} ≥ 글 폭 {full}"
 
 
 class TestWaitingHint:

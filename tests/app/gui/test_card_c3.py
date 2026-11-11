@@ -35,6 +35,7 @@ from core.engine.base import PROGRESS_SECONDS
 from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
+from tests.app.gui.card_helpers import row3_need as _row3_need
 from tests.app.gui.test_header_layout import _font_whose_rounded_width_elides
 from tests.app.gui.test_shell_layout import WORST_SAMPLES
 from tests.mocks.mock_http import MockResponse
@@ -156,25 +157,6 @@ def _signature(card: ContentItemWidget) -> tuple:
         card.pathIcon.isVisible(),
         card.directoryLabel.isVisible(),
     )
-
-
-def _row3_need(card: ContentItemWidget) -> int:
-    """지금 3줄 모양이 바라는 폭 — 보이는 위젯의 글 폭(+4) · 아이콘 폭 · 사이 간격을 독립 합산한다.
-
-    늘어나는 빈칸과 숨은 위젯은 간격을 받지 않는다(QBoxLayout).
-    """
-    layout = card.resolutionLayout
-    widths = []
-    for index in range(layout.count()):
-        entry = layout.itemAt(index)
-        widget = entry.widget()
-        if widget is None or entry.isEmpty():
-            continue
-        if isinstance(widget, QLabel) and widget.text():
-            widths.append(widget.fontMetrics().horizontalAdvance(widget.text()) + 4)
-        else:
-            widths.append(widget.width())
-    return sum(widths) + layout.spacing() * (len(widths) - 1)
 
 
 def _fold_steps(
