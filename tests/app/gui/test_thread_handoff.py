@@ -18,7 +18,9 @@ import pytest
 from PySide6.QtCore import QEvent, QObject, Qt, QThreadPool
 from PySide6.QtWidgets import QApplication, QWidget
 
+import app.system.free_space as free_space_module
 import app.viewmodels.section_edit as sev
+from app.system.free_space import FreeSpaceProbe
 from app.viewmodels.data import ContentItem
 from app.widgets.widget import ContentItemWidget
 from core.models.download_state import DownloadState
@@ -64,11 +66,12 @@ class _Parked:
 
 
 class _Response:
-    """크기 조회 응답 대역 — content-length와 그림 바이트."""
+    """응답 대역 — 크기 조회의 content-length · 그림 바이트 · 여유 공간 측정의 free."""
 
     def __init__(self, size: int) -> None:
         self.headers = {"content-length": str(size)}
         self.content = b""
+        self.free = size
 
     def raise_for_status(self) -> None:
         return None
@@ -124,19 +127,19 @@ def _record_deletion(obj: QObject) -> list[int]:
 
 
 def _drop_while_worker_parked(
-    make: Callable[[], ContentItemWidget], parked: _Parked
+    make: Callable[[], QObject], parked: _Parked
 ) -> tuple[bool, list[int]]:
-    """카드를 만들어 워커를 띄우고, 워커를 멈춰 둔 채 메인이 카드의 참조를 놓는다.
+    """객체(카드 · 측정기)를 만들어 워커를 띄우고, 워커를 멈춰 둔 채 메인이 객체의 참조를 놓는다.
 
-    그 순간 카드가 남았는지와 지워진 스레드를 돌려준다. 카드의 참조는 이 함수만 든다. 카드가
+    그 순간 객체가 남았는지와 지워진 스레드를 돌려준다. 객체의 참조는 이 함수만 든다. 객체가
     남았으면(워커가 잡고 있다) 메인이 참조를 되찾은 뒤에 워커를 풀고, 워커가 끝난 뒤 메인에서
     놓는다 — 워커 스레드에서 지워져 프로세스가 죽지 않게 한다.
     """
-    card = make()
+    obj = make()
     assert parked.started.wait(5), "전제: 워커가 대역에 들어왔다"
-    where = _record_deletion(card)
-    ref = weakref.ref(card)
-    del card
+    where = _record_deletion(obj)
+    ref = weakref.ref(obj)
+    del obj
     gc.collect()
     rescued = ref()
     survived = rescued is not None
@@ -363,3 +366,45 @@ def test_size_job_is_deleted_on_the_main_thread(qtbot, monkeypatch) -> None:
     _let_go_and_wait(qtbot, parked, pool)
 
     assert parked.deleted == [MAIN]
+
+
+# ================================================================ 여유 공간 측정
+
+
+@pytest.fixture
+def parked_disk(monkeypatch) -> _Parked:
+    fake = _Parked(size=1024)  # 여유 1024바이트
+    monkeypatch.setattr(free_space_module.shutil, "disk_usage", lambda path: fake.head())
+    return fake
+
+
+def test_measure_thread_does_not_keep_the_probe(qtbot, parked_disk) -> None:
+    """측정이 도는 동안 메인이 부모 없는 측정기를 놓으면 측정기가 그 자리(메인 스레드)에서 지워져야 한다.
+
+    측정 대역이 멈춰 있음 -> del probe 직후 측정기 없음, 지워진 스레드 == [메인]
+    """
+
+    def make() -> FreeSpaceProbe:
+        probe = FreeSpaceProbe()
+        assert probe.request("C:/")
+        return probe
+
+    survived, where = _drop_while_worker_parked(make, parked_disk)
+
+    assert not survived, "워커 스레드가 측정기를 잡고 있다"
+    assert where == [MAIN]
+
+
+def test_measured_value_reaches_a_living_probe(qtbot, parked_disk) -> None:
+    """측정이 끝나면 살아 있는 측정기가 값을 들고 measured를 내야 한다.
+
+    측정 대역이 여유 1024바이트를 돌려줌 -> measured("C:/", 1024), value("C:/") == 1024
+    """
+    probe = FreeSpaceProbe()
+    with qtbot.waitSignal(probe.measured, timeout=3000) as blocker:
+        assert probe.request("C:/")
+        assert parked_disk.started.wait(5)
+        parked_disk.finish()
+
+    assert blocker.args == ["C:/", 1024]
+    assert probe.value("C:/") == 1024
