@@ -4,6 +4,11 @@ on:
   pull_request:
     branches: [main, 'dev-*']
 
+# 같은 PR에 새 커밋이 푸시되면 앞 커밋의 실행을 취소한다
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   # .github/ · scripts/release_notes.py 를 소유자 외의 주체(에이전트 포함)가 수정하면 실패.
   # 테스트 실행 여부도 여기서 정한다 — chore/ 브랜치는 워크플로를 바꿨을 때만 테스트한다
@@ -46,6 +51,15 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
+        # 테스트를 둘로 나눠 나란히 돈다 — gui = tests/app/gui, rest = 그 밖.
+        # ubuntu는 나누지 않는다(all) — tests/app/gui만 따로 돌리면 xvfb에서
+        # test_theme_switch.py가 실패한다(PR #573 실행 43024938567, 원인 조사 중)
+        part: [gui, rest]
+        exclude:
+          - os: ubuntu-latest
+        include:
+          - os: ubuntu-latest
+            part: all
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
@@ -88,7 +102,7 @@ jobs:
         if: runner.os == 'Linux'
         env:
           CVDV2_SHOT_DIR: test-screenshots
-        run: xvfb-run -a uv run pytest --maxfail=5 -q -rs -n auto --dist loadfile --max-worker-restart 0 --durations=30
+        run: xvfb-run -a uv run pytest --maxfail=5 -q -rs -n auto --dist loadfile --max-worker-restart 0 --durations=30 ${{ matrix.part == 'gui' && 'tests/app/gui' || matrix.part == 'rest' && '--ignore=tests/app/gui' || '' }}
 
       # Windows·macOS: offscreen — release.yml 기동 스모크와 같은 방식.
       # QT_QPA_FONTDIR 지정 필수: offscreen은 시스템 폰트를 자동으로 쓰지
@@ -99,7 +113,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           QT_QPA_FONTDIR: ${{ runner.os == 'Windows' && 'C:\Windows\Fonts' || '/System/Library/Fonts' }}
           CVDV2_SHOT_DIR: test-screenshots
-        run: uv run pytest --maxfail=5 -q -rs -n auto --dist loadfile --max-worker-restart 0 --durations=30
+        run: uv run pytest --maxfail=5 -q -rs -n auto --dist loadfile --max-worker-restart 0 --durations=30 ${{ matrix.part == 'gui' && 'tests/app/gui' || matrix.part == 'rest' && '--ignore=tests/app/gui' || '' }}
 
       # 실패한 GUI 테스트의 위젯 캡처(conftest 훅)를 OS별 아티팩트로.
       # 실패가 없으면 업로드 자체가 생략된다
@@ -107,7 +121,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: test-screenshots-${{ matrix.os }}
+          name: test-screenshots-${{ matrix.os }}-${{ matrix.part }}
           path: test-screenshots/
           if-no-files-found: ignore
           retention-days: 14
