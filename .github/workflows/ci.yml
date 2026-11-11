@@ -72,20 +72,32 @@ jobs:
           prune-cache: false
           save-cache: false   # PR은 복원만 한다. 저장은 uv-cache.yml
 
+      # 시스템 패키지(.deb)는 dev push가 GitHub 캐시에 저장해 둔 것을 쓴다(dev-push-test.yml).
+      # 캐시가 있으면 Ubuntu 서버에 접속하지 않는다 — 러너가 그 서버 이름을 못 찾는 날에도 돈다.
+      # 캐시가 없거나 맞지 않으면 apt로 받는다(.github/scripts/qt-deps.sh)
+      - name: Runner image (Linux)
+        id: image
+        if: runner.os == 'Linux'
+        run: |
+          echo "os=${ImageOS:-unknown}-$(dpkg --print-architecture)" >> "$GITHUB_OUTPUT"
+          echo "version=${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+          tail -2 "$GITHUB_OUTPUT"
+
+      - name: Restore Qt system deps (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: ~/apt-debs
+          key: apt-debs-${{ steps.image.outputs.os }}-${{ hashFiles('.github/scripts/qt-deps.sh') }}-${{ steps.image.outputs.version }}
+          # 러너 이미지 판이 바뀐 직후에는 앞 판의 캐시로 먼저 해 본다
+          restore-keys: |
+            apt-debs-${{ steps.image.outputs.os }}-${{ hashFiles('.github/scripts/qt-deps.sh') }}-
+
       - name: Install Qt system deps (Linux)
         if: runner.os == 'Linux'
         timeout-minutes: 5
         run: |
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
-            xvfb libegl1 libgl1 libxkbcommon-x11-0 libxcb-icccm4 \
-            libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 \
-            libxcb-shape0 libxcb-xinerama0 libxcb-cursor0 libdbus-1-3 \
-            fonts-dejavu-core
-          # 한글 폰트는 스크린샷 글자용이다 — 라틴 폰트(DejaVu)만 있어도 테스트 결과는 같다.
-          # 느린 미러에서 멈추면 건너뛴다
-          sudo timeout 120 apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
-            fonts-nanum || echo "::warning::fonts-nanum 설치를 건너뛰었다(느린 미러)"
+          bash .github/scripts/qt-deps.sh
           fc-list : family | sort -u
 
       - name: Sync dependencies
