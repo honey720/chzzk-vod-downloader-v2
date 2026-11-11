@@ -2114,12 +2114,21 @@ LIFT = QEvent.Type.KeyRelease
 
 
 class TestSpaceOnRelease:
-    """Space 누름 · 뗌을 따로 보내 잰다 — 키 이벤트는 초점 위젯에 바로 보낸다."""
+    """Space 누름 · 뗌을 따로 보내 잰다 — 키 이벤트는 초점 위젯에 바로 보낸다.
+
+    누른 채 초점이 옮겨 가는 것을 재므로 초점 이벤트가 와야 한다 — 창을 띄우고 활성이 된 뒤에 첫 카드에
+    초점을 준다(`_focus`). 활성이 아닌 창에서는 초점이 옮겨도 초점 이벤트가 바로 오지 않는다.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _bot(self, qtbot: QtBot) -> None:
+        self._qtbot = qtbot
 
     def _picking(self, win: VodDownloader, count: int) -> list[ContentItem]:
         items = _add(win, *[D.WAITING] * count)
+        _show(win, self._qtbot)
         _toggle_select_mode(win, True)
-        _card(win, items[0]).setFocus(Qt.FocusReason.OtherFocusReason)
+        _focus(self._qtbot, win, _card(win, items[0]), Qt.FocusReason.OtherFocusReason)
         _settle()
         return items
 
