@@ -9,12 +9,14 @@
 import colorsys
 import json
 import math
+import time
 from collections.abc import Callable, Iterator
 from typing import Never
 
 import pytest
 from PySide6.QtCore import QEvent, QObject, QPoint, QVariantAnimation
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QGuiApplication
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
 import CVDv2 as main_module
@@ -46,6 +48,9 @@ MB = 1024 * 1024
 TWO_SECTIONS = (TimeRange(600.0, 1200.0), TimeRange(1800.0, 2400.0))  # 합 20분
 RETURN_SLACK = 8  # 되돌아갈 때 더 남아야 하는 폭(px) — 설계 §2 「+8」
 WIDE = 2400  # 대체 글꼴(빈 글꼴 폴더)에서도 3줄이 접히지 않는 카드 폭(px)
+GEOMETRY_WAIT_S = 2.0  # 크기 변경 반영을 기다리는 최대 시간(초) — xvfb 왕복은 이보다 훨씬 짧다
+GEOMETRY_POLL_MS = 5  # 반영을 다시 확인하는 간격(ms)
+HOST_SIZE = (WIDE + 200, 900)  # 카드 · 목록을 넣는 빈 창 크기(px) — 재는 가장 넓은 폭보다 크게
 
 
 @pytest.fixture(autouse=True)
@@ -111,8 +116,27 @@ def _item(
     return item
 
 
-def _card(item: ContentItem, width: int = 900) -> ContentItemWidget:
-    """아이템으로 카드를 띄운다 — 해상도를 고른 뒤 상태를 건다(대기에서만 고른다)."""
+def _host(widget: QWidget) -> None:
+    """`widget`을 보이는 빈 최상위 창의 자식으로 넣는다 — 자식이라 `resize()`가 바로 그 폭이 된다.
+
+    최상위 창의 크기는 창 시스템이 정한다. xcb(xvfb)는 그 결과를 이벤트로 늦게 돌려주고, Qt는
+    `resize()` 때 위젯 폭을 먼저 바꾸므로 앞 요청의 결과가 뒤늦게 와 폭을 되돌릴 수 있다(1px씩 좁힐 때
+    요청 + 1). 자식 위젯의 크기는 창 시스템을 거치지 않는다. 창은 크기를 정한 뒤 띄우고 다시 바꾸지
+    않는다. 창은 `widget`이 붙들고 `_drop_windows`가 정리한다 (#569).
+    """
+    host = QWidget()
+    host.resize(HOST_SIZE[0], HOST_SIZE[1])
+    widget.setParent(host)
+    widget._test_host = host  # 파이썬 쪽 참조가 없으면 창이 지워지며 자식도 함께 지워진다
+    host.show()
+
+
+def _card(item: ContentItem, width: int = 900, hosted: bool = False) -> ContentItemWidget:
+    """아이템으로 카드를 띄운다 — 해상도를 고른 뒤 상태를 건다(대기에서만 고른다).
+
+    `hosted`면 카드를 최상위 창이 아니라 빈 창의 자식으로 띄운다(`_host`) — 폭을 여러 번 바꾸며 재는
+    테스트가 쓴다.
+    """
     state = item.downloadState
     item.downloadState = DownloadState.WAITING
     card = ContentItemWidget(item, 0)
@@ -120,6 +144,8 @@ def _card(item: ContentItem, width: int = 900) -> ContentItemWidget:
     item.downloadState = state
     card.setData(item, 0)
     card.resize(width, card.sizeHint().height())
+    if hosted:
+        _host(card)
     card.show()
     QApplication.processEvents()
     # 카드만 띄운 창은 offscreen 포인터 자리에 따라 호버로 잡힐 수 있다 — 호버는 테스트가 정한다
@@ -128,10 +154,26 @@ def _card(item: ContentItem, width: int = 900) -> ContentItemWidget:
     return card
 
 
+def _settle_width(widget: QWidget, width: int) -> None:
+    """방금 요청한 크기 변경이 반영돼 `widget` 폭이 `width`가 될 때까지 기다린다(최대 2초).
+
+    최상위 창이면 앞 요청의 결과가 뒤늦게 와 폭을 되돌릴 수 있다(`_host`). `QGuiApplication.sync()`
+    (창 시스템과 한 번 왕복한 뒤 쌓인 이벤트를 처리)를 폭이 요청과 같아질 때까지 되풀이한다. 같아진
+    뒤에 늦은 이벤트가 또 올 수 있어 최상위 창에서는 완전하지 않다 — 폭을 여러 번 바꾸는 테스트는
+    `_host`를 쓴다. 자식 위젯이면 바로 끝난다. 기한이 지나도 기다리기만 끝낸다 — 단언은 부른 쪽이
+    한다(클램프 확인) (#569).
+    """
+    deadline = time.monotonic() + GEOMETRY_WAIT_S
+    QGuiApplication.sync()
+    while widget.width() != width and time.monotonic() < deadline:
+        QTest.qWait(GEOMETRY_POLL_MS)
+        QGuiApplication.sync()
+
+
 def _at(card: ContentItemWidget, width: int) -> None:
     """카드를 `width`로 놓는다 — 실제 폭이 요청과 같은지 단언한다(클램프면 아무것도 안 잰다)."""
     card.resize(width, card.sizeHint().height())
-    QApplication.processEvents()
+    _settle_width(card, width)
     assert card.width() == width, f"요청 {width}px · 실제 {card.width()}px"
 
 
@@ -166,8 +208,10 @@ def _fold_steps(
 
     T는 앞 모양이 마지막으로 들어간 폭이다. 각 T에서 독립 합산이 T의 3줄 폭과 같은지 보고, T+7에서는
     접힌 채, T+8에서는 앞 모양으로 돌아오는지 본 뒤 다시 좁혀 이어 간다. 바뀜을 `count`번 모으면
-    멈춘다 — 실제 화면은 최상위 창 최소폭이 있어 아주 좁게는 못 줄인다.
+    멈추고, 카드 최소폭에 닿아도 멈춘다. 카드는 빈 창의 자식이어야 한다(`_host`) — 최상위 창이면
+    늦은 크기 이벤트가 폭을 되돌린다.
     """
+    assert not card.isWindow(), "전제: 카드가 빈 창의 자식이다(_card(..., hosted=True))"
     _at(card, start)
     chrome = card.width() - card.statusRow.width()  # 카드 폭 − 3줄 폭(썸네일 · 여백 · 테두리)
     steps = []
@@ -208,7 +252,7 @@ class TestFoldOrder:
         -> 바뀐 차례: 폴더 이름 숨음 → 폴더 아이콘 숨음 → 「20:00」 빠짐 → 「/ 200.00 MB」 빠짐 →
         「18.4 MB/s」 빠짐 → 「6:00 left」 빠짐, 경계마다 T−1 접힘 · T 들어감 · T+7 접힌 채 · T+8 되돌아감
         """
-        card = _card(_sections_running())
+        card = _card(_sections_running(), hosted=True)
         steps = _fold_steps(card, WIDE, 280, count=7)  # 7번째가 없으면 끝까지 줄인 뒤 6개로 끝난다
         changes = []
         for _, (status, info, icon, name), (status2, info2, icon2, name2) in steps:
@@ -236,7 +280,7 @@ class TestFoldOrder:
         """
         item = _item(DownloadState.FAILED, path=OTHER_DIR)
         item.stateMessage = "Failed to save the file · Check the free space"
-        card = _card(item)
+        card = _card(item, hosted=True)
         steps = _fold_steps(card, WIDE, 280, count=1)
         first_before, first_after = steps[0][1][0], steps[0][2][0]
         assert first_before == "Failed to save the file · Check the free space"
@@ -287,6 +331,7 @@ def _list(widths_cards: list[ContentItem], width: int = 900) -> tuple[ContentLis
     for item in widths_cards:
         model.addItem(item)
     view.resize(width, 500)
+    _host(view)  # 목록 폭을 1px씩 바꾸며 잰다 — 최상위 창이면 늦은 크기 이벤트가 폭을 되돌린다
     view.show()
     for _ in range(3):
         QApplication.processEvents()
@@ -294,7 +339,9 @@ def _list(widths_cards: list[ContentItem], width: int = 900) -> tuple[ContentLis
 
 
 def _list_at(view: ContentListView, width: int) -> None:
+    assert not view.isWindow(), "전제: 목록이 빈 창의 자식이다(_list)"
     view.resize(width, 500)
+    _settle_width(view, width)
     for _ in range(3):
         QApplication.processEvents()
     assert view.width() == width
