@@ -3,8 +3,8 @@
 카드는 모델에 바로 넣는다(`model.addItem` → 목록 · 순서 뷰모델 실배선). 카드 누름은 카드 면에 마우스 이벤트를
 보낸다(`QTest.mouseClick` — 커서는 옮기지 않는다). 누름 · 옮김 · 뗌을 나눠 재는 테스트는 창(`QWindow`)에 합성
 이벤트를 보낸다 — 누른 채 카드 밖으로 나간 옮김 · 뗌도 Qt가 누른 카드로 보낸다. 키는 초점 위젯에 키 이벤트를
-보낸다 — 키 처리는 단축키가 아니라 키 이벤트라 창 활성 여부와 무관하다. focus ring은 초점 이벤트를 따르므로 창을
-활성으로 만들고 초점이 올 때까지 조건 대기한다(xvfb에서는 활성이 늦게 온다). 확인 창은 모듈 함수를 갈아 끼운다.
+보낸다 — 키 처리는 단축키가 아니라 키 이벤트라 창 활성 여부와 무관하다. focus ring은 초점 이벤트를 따르므로 창이
+활성이 될 때까지 조건 대기한 뒤에 초점을 준다(`_focus`). 확인 창은 모듈 함수를 갈아 끼운다.
 """
 
 from collections.abc import Iterator
@@ -142,6 +142,24 @@ def _settle() -> None:
 def _key(widget, key: Qt.Key, modifiers=Qt.KeyboardModifier.NoModifier) -> None:
     QTest.keyClick(widget, key, modifiers)
     _settle()
+
+
+def _focus(qtbot: QtBot, win: VodDownloader, widget: QWidget, reason: Qt.FocusReason) -> None:
+    """창이 활성이 된 뒤에 그 위젯에 초점을 준다 — 초점 이벤트가 요청한 `reason` 그대로 온다.
+
+    활성이 아닌 창에서 `setFocus()`를 부르면 초점 이벤트가 바로 오지 않고, 창이 활성이 될 때
+    `ActiveWindowFocusReason`으로 온다 — 마우스 초점을 준 카드가 키보드 초점을 받는다. ubuntu CI(xvfb)에서는
+    활성 요청 한 번으로 5초 안에 초점이 오지 않은 적이 있어, 활성이 될 때까지 다시 요청한다.
+    """
+
+    def focused() -> bool:
+        if not win.isActiveWindow():
+            win.activateWindow()
+            return False
+        widget.setFocus(reason)
+        return widget.hasFocus()
+
+    qtbot.waitUntil(focused)
 
 
 # ---- 들어가기 · 나가기 ----
@@ -878,11 +896,7 @@ def test_pressed_select_button_still_draws_the_focus_border(
     _add(window, D.WAITING)
     window.selectButton.click()
     _settle()
-    window.activateWindow()
-    window.selectButton.setFocus(Qt.FocusReason.TabFocusReason)
-    qtbot.waitUntil(
-        window.selectButton.hasFocus
-    )  # 전제: 초점을 받았다 — xvfb는 창 활성이 늦게 온다
+    _focus(qtbot, window, window.selectButton, Qt.FocusReason.TabFocusReason)
     image = window.selectButton.grab().toImage()
     ratio = image.devicePixelRatio()
     got = image.pixelColor(int(window.selectButton.width() / 2 * ratio), 0)
@@ -958,14 +972,10 @@ def _show_compact(compact: bool) -> None:
 
 
 def _focus_by_key(qtbot: QtBot, win: VodDownloader, item: ContentItem) -> ContentItemWidget:
-    """그 카드에 키보드 초점을 주고 초점이 올 때까지 기다린다 — 마우스 초점은 focus ring을 그리지 않는다.
-
-    초점 이벤트는 창이 활성일 때만 온다. xvfb에서는 활성이 늦게 와서 바로 단언하면 실패한다.
-    """
+    """그 카드에 키보드 초점을 준다 — 마우스 초점은 focus ring을 그리지 않는다."""
     card = _card(win, item)
-    win.activateWindow()
-    card.setFocus(Qt.FocusReason.OtherFocusReason)
-    qtbot.waitUntil(card.hasKeyFocus)
+    _focus(qtbot, win, card, Qt.FocusReason.OtherFocusReason)
+    assert card.hasKeyFocus(), "전제: 키보드 초점을 받았다"
     return card
 
 
@@ -1565,8 +1575,7 @@ class TestFocusRing:
         items = _add(window, D.WAITING, D.WAITING)
         card = _focus_by_key(qtbot, window, items[0])
         qtbot.waitUntil(lambda: _ring_wraps(window, card))
-        window.urlInput.setFocus(Qt.FocusReason.TabFocusReason)
-        qtbot.waitUntil(window.urlInput.hasFocus)
+        _focus(qtbot, window, window.urlInput, Qt.FocusReason.TabFocusReason)
         qtbot.waitUntil(lambda: not _ring(window).isVisible())
 
     def test_mouse_focus_does_not_show_the_ring(self, window: VodDownloader, qtbot: QtBot) -> None:
@@ -1577,9 +1586,7 @@ class TestFocusRing:
         """
         items = _add(window, D.WAITING, D.WAITING)
         first = _card(window, items[0])
-        window.activateWindow()
-        first.setFocus(Qt.FocusReason.MouseFocusReason)
-        qtbot.waitUntil(first.hasFocus)
+        _focus(qtbot, window, first, Qt.FocusReason.MouseFocusReason)
         assert not first.hasKeyFocus()
         assert not _ring(window).isVisible()
         second = _focus_by_key(qtbot, window, items[1])
