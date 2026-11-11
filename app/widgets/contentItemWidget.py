@@ -145,20 +145,34 @@ class CardFace(QFrame):
             self._fillToward, self._fillBlend, self._fillAlpha = look
             self.update()
 
+    def _step(self) -> str:
+        """바탕의 호버 · 눌림 단계 — "Pressed" · "Hover" · "" (QSS 바탕 규칙과 같은 차례)."""
+        if self.property("pressed") is True:
+            return "Pressed"
+        return "Hover" if self.property("hover") is True else ""
+
     def _fillColor(self, pressed: bool) -> QColor:
-        """채움이 칠하는 색 — 섞기 · 불투명도를 따른다(눌린 동안은 한 단계 더 간 색, #561)."""
+        """채움이 칠하는 색 — 섞기 · 불투명도를 따른다(눌린 동안은 한 단계 더 간 색, #561).
+
+        섞여 가는 색조는 지금 호버 · 눌림 단계의 색조다 — 모션이 끝나 QSS 색조로 바뀔 때 색이 튀지 않게(#571).
+        """
         tokens = theme.current_tokens()
         color = QColor(tokens[self._fillToken + ("Pressed" if pressed else "")])
         if self._fillToward:
-            color = mix(color, QColor(tokens[self._fillToward]), self._fillBlend / 255)
+            toward = QColor(tokens[self._fillToward + self._step()])
+            color = mix(color, toward, self._fillBlend / 255)
         color.setAlpha(self._fillAlpha)
         return color
+
+    def _washColor(self) -> QColor:
+        """모션 동안 칠하는 색조 — 지금 호버 · 눌림 단계의 색조(QSS 색조 규칙과 같은 토큰, #571)."""
+        return QColor(theme.current_tokens()[self._washToken + self._step()])
 
     def colorAt(self, x: int) -> QColor:
         """면 좌표 `x`에서 보이는 바탕색 — 채움 · 색조 · 호버 · 눌림을 따른다(카드 버튼 덮개가 쓴다)."""
         tokens = theme.current_tokens()
         pressed = self.property("pressed") is True
-        step = "Pressed" if pressed else "Hover" if self.property("hover") is True else ""
+        step = self._step()
         tint = self.property("tint")
         if tint in ("finished", "failed"):
             name = "cardTintFinished" if tint == "finished" else "cardTintFailed"
@@ -166,7 +180,7 @@ class CardFace(QFrame):
         else:
             ground = QColor(tokens["card" + step + "Bg"])  # cardBg · cardHoverBg · cardPressedBg
         if self._washToken:
-            ground = mix(ground, QColor(tokens[self._washToken]), self._wash / 255)
+            ground = mix(ground, self._washColor(), self._wash / 255)
         if self._fillToken and x < self.fillRight():
             fill = self._fillColor(pressed)
             ground = mix(ground, fill, fill.alphaF())
@@ -186,7 +200,7 @@ class CardFace(QFrame):
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             painter.setClipPath(path)
             if washing:
-                wash = QColor(theme.current_tokens()[self._washToken])
+                wash = self._washColor()
                 wash.setAlpha(self._wash)
                 painter.fillRect(inner, wash)
             if filling:

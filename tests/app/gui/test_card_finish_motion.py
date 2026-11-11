@@ -391,6 +391,39 @@ class TestInterruptions:
         assert card.contentFrame.property("tint") == "finished"
 
 
+class TestHoveredMotion:
+    """호버한 카드의 모션 색 — 끝난 뒤 QSS 색조(호버 단계)와 같은 색으로 간다."""
+
+    def test_hovered_card_reaches_the_hover_tint_before_the_motion_ends(self, qapp) -> None:
+        """호버한 받는 중 카드가 완료되면 400ms(색조 세기 1)의 면 화소가 cardTintFinishedHover여야 한다.
+
+        막대 방식 · 애니메이션 켬 · 호버, 40% -> 완료, 400ms · 끝 -> 막대 위 빈 자리 화소 ==
+        cardTintFinishedHover
+        """
+        _display(animations=True)
+        card = _running()
+        card.setHovered(True)
+        motion = _become(card, D.FINISHED)
+        frame = card.contentFrame
+        y = card.progressBar.geometry().top() - 2  # 막대 바로 위 안쪽 여백 — 글 · 썸네일 · 막대 밖
+        _at(motion, FINISH_MOTION_MS)
+        assert _close(_pixel(frame, frame.width() // 2, y), _token("cardTintFinishedHover"))
+        _at(motion, motion.duration())
+        assert card.contentFrame.property("hover") is True, "전제: 호버가 남아 있다"
+        assert _close(_pixel(frame, frame.width() // 2, y), _token("cardTintFinishedHover"))
+
+    def test_hovered_fill_card_turns_into_the_hover_tint(self, qapp) -> None:
+        """배경 채움 방식에서 호버한 카드가 완료되면 399ms 채움 화소가 cardTintFinishedHover여야 한다."""
+        _display(progress="fill", animations=True)
+        card = _running()
+        card.setHovered(True)
+        motion = _become(card, D.FINISHED)
+        frame = card.contentFrame
+        _at(motion, FINISH_MOTION_MS - 1)
+        y = card.progressBar.geometry().top() - 2
+        assert _close(_pixel(frame, frame.width() // 2, y), _token("cardTintFinishedHover"))
+
+
 class TestGeometryKept:
     @pytest.mark.parametrize("state", (D.FINISHED, D.FAILED))
     def test_card_height_and_minimum_width_do_not_change(self, qapp, state: DownloadState) -> None:
