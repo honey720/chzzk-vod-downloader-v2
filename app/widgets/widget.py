@@ -1337,7 +1337,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
 
         완료: 막대 방식은 막대가 그려진 값에서 끝까지 차며 앞 상태 색 → 완료 색으로 바뀌고 같은 시간에 카드
         색조가 0에서 나타난다(`FINISH_MOTION_MS`). 그 뒤 막대가 `BAR_FADE_MS`에 흐려진다. 배경 채움
-        방식은 채움이 끝까지 차며 완료 색조로 바뀐다 — 다 찬 채움이 곧 카드 전체 색조다.
+        방식은 채움이 끝까지 차며 완료 색조로 바뀐다 — 다 찬 채움이 곧 카드 전체 색조다. 채움이 없던 대기
+        카드는 채울 색이 없어 카드 색조만 나타난다.
 
         실패: 끝까지 채우지 않는다. 막대 방식은 막대가 제자리에서 실패 색으로 바뀌며 사라지고, 배경 채움
         방식은 채움이 제자리에서 사라진다. 어느 방식이든 같은 시간에 카드 색조가 나타난다(`FAIL_MOTION_MS`).
@@ -1371,7 +1372,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
 
         def step(ms: float) -> None:
             t = _MOTION_EASING.valueForProgress(min(1.0, ms / main))
-            if fill and finished:
+            if fill and finished and old_fill:
                 frame.setFill(_snapped(start + (1.0 - start) * t, frame.width() - 2), old_fill)
                 frame.setFillLook(tint, t, 1.0)
                 return

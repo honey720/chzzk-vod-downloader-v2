@@ -209,6 +209,19 @@ class TestFinishMotionFill:
         toward, blend, _ = card.contentFrame.fillLook()
         assert toward == "cardTintFinished" and blend > 0.99
 
+    def test_waiting_card_shows_the_tint_growing(self, qapp) -> None:
+        """채움 방식에서 대기 카드가 완료되면 모션 가운데에 카드 색조 세기가 0과 1 사이여야 한다.
+
+        배경 채움 · 애니메이션 켬, 대기 -> 완료, 200ms -> 색조 cardTintFinished · 세기 0 < 값 < 1
+        """
+        _display(progress="fill", animations=True)
+        card = _card(_item(D.WAITING))
+        motion = _become(card, D.FINISHED)
+        assert motion is not None
+        _at(motion, 200)
+        token, strength = card.contentFrame.wash()
+        assert token == "cardTintFinished" and 0.0 < strength < 1.0
+
     def test_after_the_motion_the_whole_card_is_tinted(self, qapp) -> None:
         """채움 방식 완료 모션이 끝나면 채움이 없고 QSS 색조가 걸리고 막대 자리 화소가 완료 색조여야 한다."""
         _display(progress="fill", animations=True)
