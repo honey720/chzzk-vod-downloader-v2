@@ -375,7 +375,7 @@ def _close(a: QColor, b: str) -> bool:
 
 
 @pytest.mark.parametrize(
-    "name", ["fetchButton", "menuSettingsButton", "sortButton", "clearFinishedButton"]
+    "name", ["fetchButton", "menuSettingsButton", "sortButton", "selectButton"]
 )
 def test_keyboard_focus_draws_an_accent_border(window: VodDownloader, name: str) -> None:
     """키보드 초점을 받은 바 컨트롤의 테두리는 강조색이어야 한다(초점 전에는 강조색이 아니다).
@@ -431,9 +431,9 @@ def test_clicking_a_bar_control_draws_no_accent_border(
 def test_tab_from_the_list_moves_focus_to_a_bar_control_with_an_accent_border(
     window: VodDownloader,
 ) -> None:
-    """시작 초점(목록)에서 Shift+Tab을 누르면 앞 바 컨트롤(완료 지우기)로 초점이 가고 테두리가 강조색이어야 한다.
+    """시작 초점(목록)에서 Shift+Tab을 누르면 앞 바 컨트롤(선택 버튼)으로 초점이 가고 테두리가 강조색이어야 한다.
 
-    탭 순서: … 정렬 → 완료 지우기 → 목록 → ▶ (#536)
+    탭 순서: … 정렬 → 선택 버튼 → 목록 → ▶ (#536 · #561)
     """
     from PySide6.QtTest import QTest
 
@@ -443,8 +443,8 @@ def test_tab_from_the_list_moves_focus_to_a_bar_control_with_an_accent_border(
     assert QApplication.focusWidget() is window.listView, "전제: 목록에 초점"
     QTest.keyClick(window.listView, Qt.Key.Key_Backtab, Qt.KeyboardModifier.ShiftModifier)
     _pump()
-    assert QApplication.focusWidget() is window.clearFinishedButton
-    assert _close(_top_border(window.clearFinishedButton), theme.current_tokens()["accent"])
+    assert QApplication.focusWidget() is window.selectButton
+    assert _close(_top_border(window.selectButton), theme.current_tokens()["accent"])
 
 
 def test_keyboard_focus_on_the_accent_button_draws_the_focus_on_accent_border(

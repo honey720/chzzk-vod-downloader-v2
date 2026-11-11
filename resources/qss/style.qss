@@ -59,7 +59,7 @@ QToolTip {
 /* ---------- 상·하단 패널 ---------- */
 
 /* 바는 창 끝까지 — 모서리 없이, 목록 쪽 한 줄만 경계선(#536 — 설계 §11.1, 프로토 11b .bar · .hdr · .foot).
- * 안쪽 여백은 QSS padding이 아니라 레이아웃 마진(theme.METRICS["barPadX"] · ["barPadY"],
+ * 안쪽 여백은 QSS padding이 아니라 레이아웃 마진(theme.METRICS["outerMargin"] · ["barPadY"],
  * app/views/mainWindow.py::_applyLayoutMetrics가 런타임에 건다)이 준다 — 바 안 내용 끝과
  * 카드 바깥 끝이 같은 두 선에 놓이게 하기 위해서다. */
 QFrame#headerFrame {
@@ -184,6 +184,20 @@ QLabel#thumbnailLabel {
     background-color: @cardTintFailedHover;
 }
 
+/* 눌린 카드(#561) — 호버에서 한 단계 더. `pressed`는 app/widgets/widget.py::_setPressed가 심는다(고르기를
+ * 시작한 누름 동안만). 호버와 함께 켜지므로 호버 규칙 뒤에 두고, 색조 카드는 속성 수가 같은 규칙으로 따로 둔다 */
+#contentFrame[pressed="true"] {
+    background-color: @cardPressedBg;
+}
+
+#contentFrame[tint="finished"][pressed="true"] {
+    background-color: @cardTintFinishedPressed;
+}
+
+#contentFrame[tint="failed"][pressed="true"] {
+    background-color: @cardTintFailedPressed;
+}
+
 /* 색조 위 상태 글 — 같은 색상의 밝기만 옮겨 4.5를 지키는 색(theme.py `…OnTint`) */
 #contentFrame[tint="finished"] #statusLabel[state="finished"] {
     color: @stateFinishedOnTint;
@@ -193,10 +207,8 @@ QLabel#thumbnailLabel {
     color: @stateFailedOnTint;
 }
 
-/* 키보드 초점 — 테두리만 강조색(#550). 마우스로는 초점을 받지 않는다(TabFocus) */
-#contentFrame[keyFocus="true"] {
-    border-color: @accent;
-}
+/* 카드의 키보드 초점은 카드 안에 그리지 않는다(#561) — 목록이 카드 바깥에 focus ring 하나를 그린다
+ * (app/widgets/focus_ring.py). 카드 테두리는 초점과 무관하게 평소 색 그대로다 */
 
 /* 카드 조작 아이콘(일시정지·재개·재시도·폴더·삭제)의 도형 색은 QSS가 아니라
  * content/icons.py::IconButton이 theme.py 토큰(textMuted / 호버 text·
@@ -375,18 +387,61 @@ QFrame#infoFrame QPushButton {
     border-radius: @controlRadius;
 }
 
-/* 완료 지우기 — 평소 테두리는 투명(자리만) — 초점 · 호버 때 테두리 색만 바뀌고 크기는 그대로 */
-QFrame#headerFrame QPushButton[role="subtle"] {
-    border: 1px solid transparent;
+/* 선택 버튼(#561) — 선택 모드 안에서는 눌린 모양(다시 누르면 나온다). 도형은 IconButton이 그린다 */
+QFrame#headerFrame QPushButton#selectButton {
+    padding: 0px;
 }
 
-QFrame#headerFrame QPushButton[role="subtle"]:hover {
-    border-color: @borderStrong;
-}
-
-QFrame#headerFrame QPushButton[role="subtle"]:pressed {
+QFrame#headerFrame QPushButton#selectButton[on="true"] {
     background-color: @surfacePressed;
     border-color: @borderStrong;
+}
+
+/* 눌린 모양 규칙이 초점 규칙보다 구체적이라 초점 테두리를 덮는다 — 그 뒤에 다시 건다 */
+QFrame#headerFrame QPushButton#selectButton[on="true"]:focus {
+    border-color: @accent;
+}
+
+/* 선택 줄(#561 — 설계 §12.1 「선택 모드」): 면 · 테두리는 SelectBar가 그린다(말풍선과 같은 떠 있는 면). 안 버튼은
+ * 평소 면 · 테두리 없음, 호버 · 누름만 면(테두리 안쪽 2px 들여 — 자리는 그대로). 지우기는 포인터가 오면 실패 색 면 */
+QWidget#selectBar QLabel#selectCount {
+    color: @text;
+    font-size: @fontSizeMeta;
+    padding: 0px 2px;
+}
+
+QWidget#selectBar QPushButton[role="selectIcon"] {
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: @controlRadius;
+    margin: 2px;
+    padding: 0px;
+}
+
+QWidget#selectBar QPushButton[role="selectIcon"]:hover {
+    background-color: @surfaceHover;
+}
+
+QWidget#selectBar QPushButton[role="selectIcon"]:pressed {
+    background-color: @surfacePressed;
+}
+
+QWidget#selectBar QPushButton[role="selectIcon"][danger="true"]:hover,
+QWidget#selectBar QPushButton[role="selectIcon"][danger="true"]:pressed {
+    background-color: @stateFailed;
+}
+
+QWidget#selectBar QPushButton[role="selectIcon"]:disabled {
+    background-color: transparent;
+}
+
+QWidget#selectBar QPushButton[role="selectIcon"]:focus {
+    border-color: @accent;
+}
+
+QWidget#selectBar QPushButton#selectCheck {
+    background: transparent;
+    border: none;
 }
 
 /* 메뉴바(#536 — 설계 §12.1 「셸 모양은 프로토대로」, 프로토 11b · 11k): 바 면 + 아래 경계선. 고른 메뉴는 버튼 면 ·

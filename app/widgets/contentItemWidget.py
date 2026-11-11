@@ -18,12 +18,14 @@
 ##        (그림만 — 클릭은 밑으로)
 ##   하단 progressBar: 카드 바닥 전체 폭 오버레이(받는 중 · 일시정지는 진행만큼, 완료 · 실패는 끝까지)
 ##   배경 채움(설정 키)이면 막대 대신 카드 면(CardFace)이 진행만큼 왼쪽부터 칠한다
+##   체크 원(#561): 선택 모드에서만 썸네일(CardThumbnail)이 왼쪽 위에 그린다 — 위젯이 아니라 그림이다.
+##        썸네일 위라 줄 자리 · 카드 폭은 그대로다
 ## 줄 높이는 고정이다 — 상태가 바뀌어도 줄 자리 · 카드 높이가 같다(목록이 들썩이면 안 된다).
 ## 크기 · 간격은 theme.METRICS, 글자 · 색은 전역 QSS(theme 토큰)가 정한다.
 ################################################################################
 
-from PySide6.QtCore import QCoreApplication, QMetaObject, QRectF, QSize, Qt
-from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPaintEvent
+from PySide6.QtCore import QCoreApplication, QMetaObject, QRect, QRectF, QSize, Qt
+from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPaintEvent, QPen
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -55,6 +57,17 @@ class CardFace(QFrame):
         super().__init__(parent)
         self._fill = 0.0  # 채운 비율 0 ~ 1
         self._fillToken = ""  # 채움 색 토큰 — 빈 글이면 채움 없음
+        self._selected = False  # 선택 모드에서 고른 카드 — 강조색 테두리(#561)
+
+    def isSelected(self) -> bool:
+        """고른 카드의 강조색 테두리를 그리는지."""
+        return self._selected
+
+    def setSelected(self, on: bool) -> None:
+        """고른 카드 테두리를 켜고 끈다 — 줄 배치는 그대로다(그리기만)."""
+        if on != self._selected:
+            self._selected = on
+            self.update()
 
     def fill(self) -> tuple[float, str]:
         """(채운 비율, 색 토큰)."""
@@ -79,33 +92,171 @@ class CardFace(QFrame):
         return round(1 + self._fill * (self.width() - 2)) if self._fillToken else 0
 
     def colorAt(self, x: int) -> QColor:
-        """면 좌표 `x`에서 보이는 바탕색 — 채움 · 색조 · 호버를 따른다(카드 버튼 덮개가 쓴다)."""
+        """면 좌표 `x`에서 보이는 바탕색 — 채움 · 색조 · 호버 · 눌림을 따른다(카드 버튼 덮개가 쓴다)."""
         tokens = theme.current_tokens()
+        pressed = self.property("pressed") is True
         if self._fillToken and x < self.fillRight():
-            return QColor(tokens[self._fillToken])
-        hovered = self.property("hover") is True
+            return QColor(tokens[self._fillToken + ("Pressed" if pressed else "")])
+        step = "Pressed" if pressed else "Hover" if self.property("hover") is True else ""
         tint = self.property("tint")
         if tint in ("finished", "failed"):
             name = "cardTintFinished" if tint == "finished" else "cardTintFailed"
-            return QColor(tokens[name + ("Hover" if hovered else "")])
-        return QColor(tokens["cardHoverBg" if hovered else "cardBg"])
+            return QColor(tokens[name + step])
+        return QColor(tokens["card" + step + "Bg"])  # cardBg · cardHoverBg · cardPressedBg
 
     def paintEvent(self, event: QPaintEvent) -> None:
-        """QSS 바탕 · 테두리를 그린 뒤 진행 채움을 테두리 안쪽에 그린다."""
+        """QSS 바탕 · 테두리 위에 진행 채움(테두리 안쪽)과 고른 카드의 강조색 테두리를 그린다."""
         super().paintEvent(event)
-        if not self._fillToken or self._fill <= 0:
+        if self._fillToken and self._fill > 0:
+            # 눌린 동안은 채움도 한 단계 더 간 색이다(#561 — QSS 바탕의 `pressed` 규칙과 같이 움직인다)
+            token = self._fillToken + ("Pressed" if self.property("pressed") is True else "")
+            radius = theme.METRICS["cardRadius"] - 1
+            inner = QRectF(1, 1, self.width() - 2, self.height() - 2)
+            path = QPainterPath()
+            path.addRoundedRect(inner, radius, radius)
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setClipPath(path)
+            painter.fillRect(
+                QRectF(1, 1, self._fill * inner.width(), inner.height()),
+                QColor(theme.current_tokens()[token]),
+            )
+            painter.end()
+        if self._selected:
+            painter = QPainter(self)
+            draw_picked_border(painter, QRectF(self.rect()))
+            painter.end()
+
+
+def draw_picked_border(painter: QPainter, card: QRectF) -> None:
+    """고른 카드의 강조색 테두리를 `card`(painter 좌표의 카드 면 사각형) 가장자리에 그린다 (#561).
+
+    테두리 1px 자리를 덮고 안쪽으로 1px 더 간다 — 호버 · 눌림이어도 강조색 그대로다(프로토 card.py). 카드
+    면과 그 위의 progress bar가 같은 모양을 각자 그린다 — progress bar는 카드 면의 자식이라 면이 그린 테두리의
+    아래 변을 가린다.
+    """
+    edge = theme.METRICS["cardSelectBorder"] / 2
+    radius = theme.METRICS["cardRadius"] - edge
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.setPen(QPen(QColor(theme.current_tokens()["accent"]), edge * 2))
+    painter.drawRoundedRect(card.adjusted(edge, edge, -edge, -edge), radius, radius)
+
+
+class CardProgress(QProgressBar):
+    """카드 바닥의 progress bar — 고른 카드면 자기 자리에 걸친 강조색 테두리를 덧그린다 (#561).
+
+    progress bar는 카드 면(`CardFace`)의 자식으로 면 위에 놓여, 면이 그린 고름 테두리의 아래 변 안쪽 1px과
+    양 끝을 가린다. 카드마다 위젯을 더하지 않고 이미 있는 progress bar가 같은 테두리를 자기 좌표로 옮겨
+    그린다 — 값 하나(`_picked`)만 든다.
+    """
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self._picked = False  # 카드를 골랐는지 — 강조색 테두리를 덧그린다
+
+    def isPicked(self) -> bool:
+        """고른 카드의 테두리를 덧그리는지."""
+        return self._picked
+
+    def setPicked(self, on: bool) -> None:
+        """고름 테두리 덧그리기를 켜고 끈다 — 카드가 `setSelected`에서 부른다."""
+        if on != self._picked:
+            self._picked = on
+            self.update()
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        """progress bar를 그린 뒤, 고른 카드면 카드 면 가장자리의 강조색 테두리를 그 위에 그린다."""
+        super().paintEvent(event)
+        if self._picked:
+            painter = QPainter(self)
+            painter.translate(-self.x(), -self.y())
+            draw_picked_border(painter, QRectF(self.parentWidget().rect()))
+            painter.end()
+
+
+class CardThumbnail(QLabel):
+    """카드 썸네일 — 선택 모드에서는 왼쪽 위에 체크 원을 얹어 그린다 (#561).
+
+    안 고른 카드는 빈 원(원 테두리 + 어두운 반투명 바탕), 고른 카드는 강조색 채움 + ✓ + 원 테두리다. 색은
+    그릴 때마다 theme 토큰을 읽는다(실행 중 테마 전환) — 색 리터럴은 없다. 원은 위젯이 아니라 썸네일이
+    그리는 그림이다 — 원 위를 눌러도 카드를 누른 것이고, 선택 모드를 드나들 때 카드마다 위젯을 만들거나
+    보이고 숨기지 않는다(카드가 많아도 선택 모드에 들어가는 시간이 늘지 않는다).
+    """
+
+    # ✓가 꺾이는 세 점 — 지름 20(cardPickMark) 격자의 좌표. 지름에 비례해 줄인다
+    CHECK = ((5.6, 10.4), (8.8, 13.6), (14.4, 7.0))
+
+    def __init__(self, parent: QWidget, compact: bool) -> None:
+        """체크 원 자리를 정한다 — 그리기는 카드가 켠다.
+
+        Args:
+            parent: 카드 면
+            compact: 썸네일 줄이기인지 — 참이면 작은 지름(cardPickMarkCompact)
+        """
+        super().__init__(parent)
+        self._markShown = False  # 체크 원을 그리는지 — 선택 모드
+        self._markPicked = False  # 고른 카드의 원인지 — 채움 · ✓
+        inset = theme.METRICS["cardPickMarkInset"]
+        side = theme.METRICS["cardPickMarkCompact" if compact else "cardPickMark"]
+        self._markRect = QRect(inset, inset, side, side)  # 원 자리(썸네일 좌표)
+
+    def hasPickMark(self) -> bool:
+        """체크 원을 그리는지 — 선택 모드에서만 참이다."""
+        return self._markShown
+
+    def isMarkPicked(self) -> bool:
+        """체크 원이 고른 모양(강조색 채움 + ✓)인지."""
+        return self._markPicked
+
+    def pickMarkRect(self) -> QRect:
+        """체크 원 자리(썸네일 좌표) — 원을 그리지 않을 때도 같은 자리다."""
+        return QRect(self._markRect)
+
+    def setPickMark(self, shown: bool, picked: bool) -> None:
+        """체크 원을 그릴지 · 고른 모양인지 정한다 — 바뀔 때만, 화면에 나와 있을 때만 원 자리를 다시 그린다.
+
+        선택 모드를 드나들면 목록의 모든 카드가 이 함수를 부른다. 스크롤 밖 카드까지 `update()`를 걸면 카드
+        1000장에서 들어가는 시간이 두 배가 넘게 든다 — 가려진 썸네일은 화면에 나올 때 새 모양으로 그려진다.
+        """
+        if (shown, picked) != (self._markShown, self._markPicked):
+            self._markShown, self._markPicked = shown, picked
+            if not self.visibleRegion().isEmpty():
+                self.update(self._markRect)
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        """썸네일을 그리고, 선택 모드면 그 위에 지금 테마 색으로 체크 원을 그린다."""
+        super().paintEvent(event)
+        if not self._markShown:
             return
-        radius = theme.METRICS["cardRadius"] - 1
-        inner = QRectF(1, 1, self.width() - 2, self.height() - 2)
-        path = QPainterPath()
-        path.addRoundedRect(inner, radius, radius)
+        tokens = theme.current_tokens()
+        ring = theme.PICK_MARK_RING_WIDTH
+        side = self._markRect.width()
+        if self._markPicked:
+            ground = QColor(tokens["accent"])
+        else:
+            ground = QColor(tokens["pickMarkScrim"])
+            ground.setAlphaF(theme.PICK_MARK_SCRIM_ALPHA)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setClipPath(path)
-        painter.fillRect(
-            QRectF(1, 1, self._fill * inner.width(), inner.height()),
-            QColor(theme.current_tokens()[self._fillToken]),
-        )
+        painter.translate(self._markRect.topLeft())
+        painter.setPen(QPen(QColor(tokens["pickMarkRing"]), ring))
+        painter.setBrush(ground)
+        painter.drawEllipse(QRectF(ring / 2, ring / 2, side - ring, side - ring))
+        if self._markPicked:
+            scale = side / theme.METRICS["cardPickMark"]
+            (start_x, start_y), *rest = self.CHECK
+            check = QPainterPath()
+            check.moveTo(start_x * scale, start_y * scale)
+            for x, y in rest:
+                check.lineTo(x * scale, y * scale)
+            pen = QPen(QColor(tokens["onAccent"]), theme.PICK_MARK_CHECK_WIDTH * scale)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPath(check)
+        painter.end()
 
 
 class ChannelAvatar(QLabel):
@@ -219,7 +370,7 @@ class Ui_ContentItemWidget(object):
 
         # 썸네일 — 110×62(줄이기면 68×38). 세로 그림(클립)은 상자 안에서 비율을 지키고 남는 자리를
         # 그림의 평균색으로 채운다(app/widgets/widget.py::_composeThumbnail)
-        self.thumbnailLabel = QLabel(self.contentFrame)
+        self.thumbnailLabel = CardThumbnail(self.contentFrame, self.compactThumbnail)
         self.thumbnailLabel.setObjectName("thumbnailLabel")
         self.thumbnailLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         if self.compactThumbnail:
@@ -347,7 +498,7 @@ class Ui_ContentItemWidget(object):
 
         # ---- 하단 진행바 — 카드 아래 가장자리에 딱 붙는 전체 폭 오버레이 ----
         # 레이아웃 행으로 넣으면 보일 때만 카드가 자라 높이 불변 규칙이 깨진다(#245)
-        self.progressBar = QProgressBar(self.contentFrame)
+        self.progressBar = CardProgress(self.contentFrame)
         self.progressBar.setObjectName("progressBar")
         self.progressBar.setMinimumSize(QSize(0, bar_h))
         self.progressBar.setMaximumSize(QSize(16777215, bar_h))

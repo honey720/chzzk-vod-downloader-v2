@@ -156,7 +156,7 @@ def _leaf_min(w) -> int:
 def _independent_content_minimum(win: VodDownloader) -> int:
     """콘텐츠 열 최소폭을 leaf 위젯 힌트로 **독립 합산**한다(제품의 `_contentMinimumWidth` 미사용).
 
-    메뉴바(#492): 「VOD 다운」 + 간격 + 「설정」(메뉴바 프레임은 테두리 · 안쪽 여백 0, 좌우 barPadX).
+    메뉴바(#492): 「VOD 다운」 + 간격 + 「설정」(메뉴바 프레임은 테두리 · 안쪽 여백 0, 좌우 outerMargin).
     헤더바(#492 · #495 · #529): max(1줄을 끝까지 줄인 모양 — URL 입력 최소폭 + 저장 위치 아이콘(버튼 높이의
     정사각) + VOD 추가 + 간격 2개, 2줄을 끝까지 줄인 모양 — 상태 드롭다운 + 칩 간격 + 실패 칩 + 정렬
     아이콘(버튼 높이의 정사각) + 완료 지우기 + 간격 2개) + 프레임 안쪽 여백·테두리.
@@ -165,7 +165,7 @@ def _independent_content_minimum(win: VodDownloader) -> int:
     열 = max(메뉴바 · 헤더바 · 하단바 각각, 목록 최소).
     바는 창 끝까지 붙고(바깥 여백 0) 좌우 테두리가 없다 — 테두리는 목록 쪽 한 줄뿐이다(#536 — 설계 §11.1).
     """
-    pad, outer = theme.METRICS["barPadX"], 0  # 바 안쪽 가로 여백 · 바깥 여백(#536 — 바는 창 끝까지)
+    pad, outer = theme.METRICS["outerMargin"], 0  # 바 안쪽 가로 여백 · 바깥 여백(#536 — 바는 창 끝까지)
     border = 0  # 바 좌우 테두리 — 목록 쪽 한 줄만 있다(#536)
     first = (
         _leaf_min(win.urlInput)
@@ -179,7 +179,7 @@ def _independent_content_minimum(win: VodDownloader) -> int:
         + _leaf_min(win.filterChips["failed"])
         + 2 * win.filterRowLayout.spacing()
         + win.sortButton.sizeHint().height()
-        + _leaf_min(win.clearFinishedButton)
+        + _leaf_min(win.selectButton)
     )
     header = max(first, second) + 2 * (pad + border)
     menu = (
@@ -204,7 +204,7 @@ def _independent_content_minimum(win: VodDownloader) -> int:
     )
     info += 3 * info_gap + 2 * (pad + border)  # 간격 셋 — 빈칸(크기 0)은 간격을 받지 않는다
     return max(
-        menu + 2 * theme.METRICS["barPadX"],
+        menu + 2 * theme.METRICS["outerMargin"],
         header + 2 * outer,
         info + 2 * outer,
         win.listView.minimumSizeHint().width(),
@@ -512,7 +512,7 @@ class TestWindowMinimumWidthHasAContentFloor:
                     win.fetchButton,
                     *win.filterChips.values(),
                     win.sortButton,
-                    win.clearFinishedButton,
+                    win.selectButton,
                 ),
             ),
             (

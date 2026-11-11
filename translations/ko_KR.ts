@@ -238,8 +238,16 @@
         <translation>받는 중인 VOD입니다. 다운로드를 멈추고 지울까요?</translation>
     </message>
     <message>
+        <source>%1 of the %2 selected VODs are downloading. Stop the download and delete them?</source>
+        <translation>고른 %2개 가운데 %1개가 받는 중입니다. 다운로드를 멈추고 지울까요?</translation>
+    </message>
+    <message>
         <source>Stop and delete</source>
         <translation>멈추고 지우기</translation>
+    </message>
+    <message>
+        <source>This deletes %1 VODs, including %2 that are not shown.</source>
+        <translation>보이지 않는 카드 %2개를 포함해 %1개를 지웁니다.</translation>
     </message>
     <message>
         <source>Drag the URL here.</source>
@@ -670,6 +678,25 @@ Check your connection and cookies, then open this window again.</source>
     </message>
 </context>
 <context>
+    <name>SelectBar</name>
+    <message>
+        <source>Select all</source>
+        <translation>모두 선택</translation>
+    </message>
+    <message>
+        <source>Delete</source>
+        <translation>지우기</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>취소</translation>
+    </message>
+    <message>
+        <source>%1 selected</source>
+        <translation>%1개 선택</translation>
+    </message>
+</context>
+<context>
     <name>SettingDialog</name>
     <message>
         <source>Settings</source>
@@ -853,6 +880,14 @@ Check your connection and cookies, then open this window again.</source>
         <translation>등록</translation>
     </message>
     <message>
+        <source>Select</source>
+        <translation>선택</translation>
+    </message>
+    <message>
+        <source>Finish selecting</source>
+        <translation>선택 끝내기</translation>
+    </message>
+    <message>
         <source>No VOD can be started right now.</source>
         <translation>지금 시작할 수 있는 VOD가 없습니다.</translation>
     </message>
@@ -920,10 +955,6 @@ Check your connection and cookies, then open this window again.</source>
     <message>
         <source>Settings</source>
         <translation>설정</translation>
-    </message>
-    <message>
-        <source>Clear Finished</source>
-        <translation>완료된 VOD 삭제</translation>
     </message>
     <message>
         <source>Stop</source>

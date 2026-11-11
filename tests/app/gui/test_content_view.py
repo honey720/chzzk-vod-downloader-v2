@@ -310,7 +310,7 @@ class TestCardNumberingFollowsPosition:
             model.addItem(it)
         qapp.processEvents()
 
-        # 0, 2, 4번을 지운다(비연속 위치) — clrearFinishedItems()가 하듯
+        # 0, 2, 4번을 지운다(비연속 위치) — 선택 지우기(removeItems)가 하듯
         # 뒤에서부터 지워 인덱스가 삭제 중간에 밀리지 않게 한다
         for it in (items[4], items[2], items[0]):
             model.removeRows(model.getRow(it), 1)

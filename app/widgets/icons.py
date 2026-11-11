@@ -44,7 +44,10 @@ import app.theme as theme
 #: plus = 헤더바 등록(+), chevron_down = 펼침 버튼의 ⌄, folder_outline = 메뉴 「폴더 찾기…」(테두리 폴더),
 #: link · memory · disk = 하단바 연결 · 메모리 · 여유 칸 — 프로토 그림을 옮겼다(#536).
 #: edit = 대기 카드의 카드 편집 창 열기(✎, #545).
+#: select = 헤더바 선택 버튼(체크박스 — 둥근 상자 + ✓), trash = 선택 줄 지우기(휴지통) — 프로토 그림(#561).
 ICON_NAMES = (
+    "select",
+    "trash",
     "edit",
     "plus",
     "chevron_down",
@@ -395,7 +398,48 @@ def _paint_edit(painter: QPainter, s: float, color: QColor, accent: QColor) -> N
     painter.drawLine(QPointF(s * 0.56, s * 0.28), QPointF(s * 0.72, s * 0.44))
 
 
+def _paint_select(painter: QPainter, s: float, color: QColor, accent: QColor) -> None:
+    """선택 — 둥근 상자 하나와 그 안의 ✓(#561). 좌표는 프로토 선택 버튼 그림이다."""
+    _stroke(painter, color, s * LINE_WIDTH)
+    painter.drawRoundedRect(QRectF(s * 0.16, s * 0.16, s * 0.68, s * 0.68), s * 0.12, s * 0.12)
+    painter.drawPolyline(
+        QPolygonF(
+            [QPointF(s * 0.32, s * 0.5), QPointF(s * 0.45, s * 0.63), QPointF(s * 0.68, s * 0.38)]
+        )
+    )
+
+
+def _paint_trash(painter: QPainter, s: float, color: QColor, accent: QColor) -> None:
+    """휴지통 — 뚜껑 · 손잡이 · 아래로 좁아지는 통 · 세로 줄 둘(#561). 좌표는 프로토 선택 줄 지우기 그림이다."""
+    _stroke(painter, color, s * LINE_WIDTH)
+    painter.drawLine(QPointF(s * 0.18, s * 0.28), QPointF(s * 0.82, s * 0.28))
+    painter.drawPolyline(
+        QPolygonF(
+            [
+                QPointF(s * 0.40, s * 0.28),
+                QPointF(s * 0.40, s * 0.16),
+                QPointF(s * 0.60, s * 0.16),
+                QPointF(s * 0.60, s * 0.28),
+            ]
+        )
+    )
+    painter.drawPolyline(
+        QPolygonF(
+            [
+                QPointF(s * 0.27, s * 0.28),
+                QPointF(s * 0.32, s * 0.86),
+                QPointF(s * 0.68, s * 0.86),
+                QPointF(s * 0.73, s * 0.28),
+            ]
+        )
+    )
+    painter.drawLine(QPointF(s * 0.44, s * 0.42), QPointF(s * 0.45, s * 0.72))
+    painter.drawLine(QPointF(s * 0.56, s * 0.42), QPointF(s * 0.55, s * 0.72))
+
+
 _PAINTERS = {
+    "select": _paint_select,
+    "trash": _paint_trash,
     "edit": _paint_edit,
     "plus": _paint_plus,
     "chevron_down": _paint_chevron_down,

@@ -238,7 +238,7 @@ class TestMinimumSize:
             "menuSettingsButton",
             "fetchButton",
             "saveLocationButton",
-            "clearFinishedButton",
+            "selectButton",
             "downloadButton",
             "stopButton",
         } <= names
