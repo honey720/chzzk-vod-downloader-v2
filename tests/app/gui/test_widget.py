@@ -29,7 +29,7 @@ from app.widgets.eliding_label import ElidingLabel
 from app.widgets.widget import ContentItemWidget
 from core.models.download_state import DownloadState
 from app.viewmodels.item_state import ItemState
-from tests.app.gui.card_helpers import hold_style
+from tests.app.gui.card_helpers import hold_style, unfold
 from typing import Never
 
 
@@ -159,10 +159,12 @@ class TestStatusAndFileSizeAreVisible:
         item.download_speed = "3.2 MB/s"
         item.download_progress = 42
         widget = _build_widget(item, qapp)
+        # 폭은 3줄이 안 접히는 가장 좁은 폭으로 유도한다 — 600 고정이면 글자가 넓은 글꼴에서
+        # 속도가 설계대로 접혀 빠진다(#555)
+        unfold(widget)
 
         # #245 상태별 슬롯: 진행 슬롯은 "%·속도·남은시간"이고 남은 시간은
-        # 짧은 표기(1:23)로 줄어든다. 파일형은 3행 우측에 "받은 크기 / 총 크기"를 보이고,
-        # 이 카드의 폭처럼 둘 다 들어가지 않으면 받은 크기만 남긴다 (#309)
+        # 짧은 표기(1:23)로 줄어든다. 파일형은 3행 우측에 "받은 크기 / 총 크기"를 보인다 (#309)
         rendered = _rendered(widget.statusLabel)
         assert "42.0%" in rendered
         assert "3.2 MB/s" in rendered

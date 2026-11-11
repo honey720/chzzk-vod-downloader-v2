@@ -34,7 +34,7 @@ from app.widgets import icons
 from app.viewmodels.data import ContentItem
 from app.widgets.widget import ContentItemWidget
 from core.models.download_state import DownloadState
-from tests.app.gui.card_helpers import hold_style
+from tests.app.gui.card_helpers import hold_style, unfold
 from typing import Never
 
 
@@ -497,7 +497,13 @@ class TestRightColumnResolutionAndSize:
 
     @pytest.mark.parametrize("state", (DownloadState.RUNNING, DownloadState.PAUSED))
     def test_running_and_paused_show_resolution_with_total_size(self, qapp, state) -> None:
+        """받는 중 · 일시정지 카드가 3줄이 안 접히는 폭이면 정보 글이 해상도 · 받은 크기 / 전체 크기여야 한다.
+
+        1080 · 받은 624,000,000바이트 · 전체 595.34 MB, 폭 = 3줄 독립 합산 + 3줄 밖 폭(#555)
+        -> "1080p · 595.09 MB / 595.34 MB"
+        """
         widget = _make_widget(qapp, state, PROGRESS[state])
+        unfold(widget)
         assert widget.fileSizeLabel.isVisible()
         assert widget.fileSizeLabel.text() == "1080p · 595.09 MB / 595.34 MB", (
             widget.fileSizeLabel.text()
