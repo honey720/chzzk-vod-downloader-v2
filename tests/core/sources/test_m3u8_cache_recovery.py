@@ -1,10 +1,11 @@
 """손상된 CDN 캐시의 제한된 재시도와 기존 정상 조각 보존을 검증한다."""
 
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from urllib.parse import urlsplit
 
 import pytest
+import requests
 
 import core.engine.base as base
 import core.sources.m3u8_downloader as module
@@ -354,3 +355,122 @@ def test_normal_responses_leave_no_corrupt_response_line(tmp_path, monkeypatch) 
 
     assert finished.is_set()
     assert [w for w in logger.warnings if "corrupt response" in w] == []
+
+
+# ================================================================ 초기화 세그먼트의 캐시 복구 (#375 ⑤)
+
+INIT_RECOVERY_WARNING = "Init segment: invalid cached body; retrying alternate resource path"
+
+
+def _init_session(damaged: Callable[[str], bool], requested: list[str]) -> type[M3U8Session]:
+    """init.m4s 요청의 경로를 `requested`에 적고, `damaged(경로)`가 참이면 손상 본문을 주는 세션."""
+
+    class Session(M3U8Session):
+        def get(self, url, **kwargs) -> StreamResponse | TextResponse:
+            if url.endswith("init.m4s"):
+                path = urlsplit(url).path
+                requested.append(path)
+                if damaged(path):
+                    return TextResponse(content=CORRUPT_BODY)
+            return super().get(url, **kwargs)
+
+    return Session
+
+
+def test_damaged_init_segment_is_fetched_again_on_the_recovery_path(tmp_path, monkeypatch) -> None:
+    """복구 대상 CDN의 초기화 세그먼트가 원래 경로에서 손상으로 오면 복구 경로로 다시 받아 완료돼야 한다.
+
+    init.m4s가 원래 경로에서 손상 본문, // 경로에서 정상
+    -> init.m4s 요청 경로 ["/hls/init.m4s", "/hls//init.m4s"], 복구 경고 1줄, 완료, 산출물 정상
+    """
+    engine, data, logger, output, finished, errors, _merges = _make_engine(tmp_path, monkeypatch)
+    data.base_url = HOST + "/hls/video.m3u8"
+    requested: list[str] = []
+    session = _init_session(lambda path: "//" not in path, requested)(3)
+    monkeypatch.setattr(module, "get_thread_session", lambda: session)
+    data.model.start()
+    engine.run()
+
+    assert requested == ["/hls/init.m4s", "/hls//init.m4s"]
+    assert logger.warnings.count(INIT_RECOVERY_WARNING) == 1
+    assert not errors and finished.is_set()
+    assert output.read_bytes() == _expected_output(3)
+
+
+def test_init_segment_damaged_on_both_paths_fails_at_the_same_limit(tmp_path, monkeypatch) -> None:
+    """초기화 세그먼트가 복구 경로에서도 손상이면 경로를 더 바꾸지 않고 같은 상한에서 실패해야 한다.
+
+    init.m4s가 두 경로 모두 손상, 다시 받는 상한 2
+    -> 요청 3회(원래 1 · // 2), 복구 경고 1줄, 실패 콜백 1회, 완료 없음
+    """
+    engine, data, logger, _output, finished, errors, _merges = _make_engine(tmp_path, monkeypatch)
+    data.base_url = HOST + "/hls/video.m3u8"
+    requested: list[str] = []
+    session = _init_session(lambda _path: True, requested)(3)
+    monkeypatch.setattr(module, "get_thread_session", lambda: session)
+    monkeypatch.setattr(base, "_TRANSIENT_ERROR_REQUEUE_LIMIT", 2)
+    data.model.start()
+    engine.run()
+
+    assert requested == ["/hls/init.m4s", "/hls//init.m4s", "/hls//init.m4s"]
+    assert logger.warnings.count(INIT_RECOVERY_WARNING) == 1
+    assert len(errors) == 1 and not finished.is_set()
+
+
+def test_damaged_init_segment_on_another_server_keeps_its_path(tmp_path, monkeypatch) -> None:
+    """복구 대상이 아닌 서버의 초기화 세그먼트가 손상으로 오면 같은 경로로만 다시 받아야 한다.
+
+    다른 서버(example.org), init.m4s가 처음 한 번 손상 · 그다음 정상
+    -> 요청 경로 ["/hls/init.m4s", "/hls/init.m4s"], 복구 경고 0줄, 완료
+    """
+    engine, data, logger, _output, finished, errors, _merges = _make_engine(tmp_path, monkeypatch)
+    data.base_url = "https://example.org/hls/video.m3u8"
+    requested: list[str] = []
+    session = _init_session(lambda _path: len(requested) == 1, requested)(3)
+    monkeypatch.setattr(module, "get_thread_session", lambda: session)
+    data.model.start()
+    engine.run()
+
+    assert requested == ["/hls/init.m4s", "/hls/init.m4s"]
+    assert INIT_RECOVERY_WARNING not in logger.warnings
+    assert any("Init segment incomplete" in e for e in logger.errors), (
+        "전제: 손상을 만나 다시 받았다"
+    )
+    assert not errors and finished.is_set()
+
+
+def test_init_segment_body_ending_early_keeps_its_path(tmp_path, monkeypatch) -> None:
+    """복구 대상 CDN이어도 초기화 세그먼트 본문이 읽다가 끊기면(구조 검사 전) 같은 경로로 다시 받아야 한다.
+
+    init.m4s 첫 요청의 본문 읽기가 ChunkedEncodingError, 그다음 정상
+    -> 요청 경로 ["/hls/init.m4s", "/hls/init.m4s"], 복구 경고 0줄, 완료
+    """
+    engine, data, logger, _output, finished, errors, _merges = _make_engine(tmp_path, monkeypatch)
+    data.base_url = HOST + "/hls/video.m3u8"
+    requested: list[str] = []
+
+    class _EndsEarly(TextResponse):
+        @property
+        def content(self) -> bytes:
+            raise requests.exceptions.ChunkedEncodingError("IncompleteRead")
+
+        @content.setter
+        def content(self, _value: bytes) -> None:
+            pass
+
+    class Session(M3U8Session):
+        def get(self, url, **kwargs) -> StreamResponse | TextResponse:
+            if url.endswith("init.m4s"):
+                requested.append(urlsplit(url).path)
+                if len(requested) == 1:
+                    return _EndsEarly()
+            return super().get(url, **kwargs)
+
+    session = Session(3)
+    monkeypatch.setattr(module, "get_thread_session", lambda: session)
+    data.model.start()
+    engine.run()
+
+    assert requested == ["/hls/init.m4s", "/hls/init.m4s"]
+    assert INIT_RECOVERY_WARNING not in logger.warnings
+    assert not errors and finished.is_set()

@@ -412,6 +412,11 @@ class M3U8Downloader(BaseDownloader):
         잘린 것으로 단정할 수 없다 — 잘림 실패(TruncatedSegmentError)는 내용 검사로
         확인된 경우에만 나간다. 미디어 세그먼트의 재큐와 같은 규칙이다.
 
+        내용 검사가 손상을 확인하면(TruncatedSegmentError) 미디어 세그먼트와 같이 확인된 CDN에
+        한해 그 뒤 요청을 캐시 복구 경로(_cache_recovery_url)로 받는다 (#375). 손상된 캐시는 같은
+        주소로 다시 받아도 같은 본문을 준다. 복구 경로로 바꾸는 것은 한 번이고, 다시 받는 횟수의
+        상한은 그대로다.
+
         Raises:
             TruncatedSegmentError: 다시 받아도 초기화 세그먼트의 구조가 계속 온전하지 않을 때
             requests.RequestException: 다시 받아도 본문을 끝까지 읽지 못할 때
@@ -420,10 +425,11 @@ class M3U8Downloader(BaseDownloader):
             self._prepare_section_output(self._head)
             return
         init_segment_path = os.path.join(self.temp_dir, f"{0:0{self.width}d}.m4s")
+        init_url = self._init_segment_url()
         retries = base_module._TRANSIENT_ERROR_REQUEUE_LIMIT
         for attempt in range(retries + 1):
             try:
-                self._receive_init_segment()
+                self._receive_init_segment(init_url)
                 with open(init_segment_path, "rb") as f:
                     integrity.check_fmp4_init_segment(f.read())
                 return
@@ -431,6 +437,20 @@ class M3U8Downloader(BaseDownloader):
                 if attempt == retries:
                     raise
                 self.logger.log_error("Init segment incomplete — retrying", e)
+                recovery_url = _cache_recovery_url(init_url)
+                if isinstance(e, integrity.TruncatedSegmentError) and recovery_url != init_url:
+                    init_url = recovery_url
+                    self.logger.warning(
+                        "Init segment: invalid cached body; retrying alternate resource path"
+                    )
+
+    def _init_segment_url(self) -> str:
+        """플레이리스트의 EXT-X-MAP이 가리키는 초기화 세그먼트의 주소."""
+        init_segment = None
+        for line in self._playlist_lines:
+            if line.startswith("#EXT-X-MAP:"):
+                init_segment = line.split("URI=")[1].strip('"')
+        return urljoin(self.s.base_url, init_segment)
 
     def _prepare_section_output(self, head: Fmp4Head) -> None:
         """구간 다운로드의 임시 폴더를 준비한다 — 받아 둔 세그먼트는 남기고 초기화 세그먼트를 쓴다.
@@ -450,18 +470,13 @@ class M3U8Downloader(BaseDownloader):
         with open(self._init_path(), "wb") as f:
             f.write(head.init_data)
 
-    def _receive_init_segment(self) -> None:
-        """임시 폴더를 재생성하고 초기화 세그먼트(EXT-X-MAP)를 받는다."""
+    def _receive_init_segment(self, init_url: str) -> None:
+        """임시 폴더를 재생성하고 초기화 세그먼트(EXT-X-MAP)를 `init_url`에서 받는다."""
         # 세그먼트 저장용 임시 폴더가 있다면 내용 포함 삭제 후 재생성
         if os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir)
         os.makedirs(self.temp_dir)
 
-        init_segment = None
-        for line in self._playlist_lines:
-            if line.startswith("#EXT-X-MAP:"):
-                init_segment = line.split("URI=")[1].strip('"')
-        init_url = urljoin(self.s.base_url, init_segment)
         init_segment_path = os.path.join(self.temp_dir, f"{0:0{self.width}d}.m4s")
         response = get_thread_session().get(init_url, timeout=REQUEST_TIMEOUT)
         # HTTP 오류는 그 오류로 실패시킨다 (#334) — 오류 본문을 쓰면 구조 검사가 잘림으로 보고
