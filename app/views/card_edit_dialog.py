@@ -130,7 +130,8 @@ class CardEditDialog(QDialog):
         self.titleLabel.setObjectName("cardEditTitle")
         self.titleLabel.setText(item.title)
         root.addWidget(self.titleLabel)
-        self.metaLabel = QLabel(self)
+        # 말줄임 라벨 — 채널 이름이 길어도 창 최소폭(`_fitMinimumWidth`)을 늘리지 않는다(#555)
+        self.metaLabel = ElidingLabel(self)
         self.metaLabel.setObjectName("cardEditMeta")
         root.addWidget(self.metaLabel)
 

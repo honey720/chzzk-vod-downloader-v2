@@ -615,6 +615,21 @@ class TestSectionButtonPlace:
             f"버튼 {button.width()} < 글 폭 {button.sizeHint().width()}"
         )
 
+    def test_long_channel_name_does_not_widen_the_minimum_width(self, qtbot, tmp_path) -> None:
+        """채널 이름이 아주 길어도 창 최소폭이 머리 줄 글 폭만큼 늘지 않아야 한다.
+
+        채널 이름 「채널」 200번 반복 -> 머리 줄 원문은 그대로, 창 최소폭 < 머리 줄 원문 글 폭 (#555)
+        """
+        item = _make_item(str(tmp_path))
+        item.channel_name = "채널" * 200
+        win = _window(tmp_path, item)
+        dialog = _open(win, item)
+        meta = dialog.metaLabel
+        assert meta.isVisible(), "전제: 머리 줄이 보인다"
+        assert meta.text().startswith(item.channel_name), "전제: 머리 줄 원문에 긴 채널 이름이 있다"
+        full = meta.fontMetrics().horizontalAdvance(meta.text())
+        assert dialog.minimumWidth() < full, f"창 최소폭 {dialog.minimumWidth()} ≥ 글 폭 {full}"
+
 
 class TestWaitingHint:
     """다운로드 차례가 이 카드를 기다리면 창 아래에 구간 창과 같은 안내가 뜬다."""
