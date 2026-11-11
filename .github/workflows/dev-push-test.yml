@@ -1,0 +1,44 @@
+name: dev push test
+
+# dev-* 에 머지된 뒤의 합쳐진 상태를 테스트한다 — PR CI는 PR 하나씩만 보므로,
+# 따로 통과한 두 PR이 합쳐져 깨지는 것(#556 + #558 → #559)을 여기서 잡는다.
+# ubuntu 하나만 돈다(3-OS는 PR CI가 맡는다). 단계는 ci.yml의 test job과 같게 둔다
+on:
+  push:
+    branches: ['dev-*']
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.2
+        with:
+          enable-cache: true
+          prune-cache: false
+          save-cache: false   # 저장은 uv-cache.yml
+
+      - name: Install Qt system deps
+        timeout-minutes: 5
+        run: |
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
+            xvfb libegl1 libgl1 libxkbcommon-x11-0 libxcb-icccm4 \
+            libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 \
+            libxcb-shape0 libxcb-xinerama0 libxcb-cursor0 libdbus-1-3 \
+            fonts-dejavu-core
+          fc-list : family | sort -u
+
+      - name: Sync dependencies
+        timeout-minutes: 5
+        run: uv sync || uv sync
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Test (xvfb)
+        run: xvfb-run -a uv run pytest --maxfail=5 -q -rs -n auto --dist loadfile --max-worker-restart 0 --durations=30
