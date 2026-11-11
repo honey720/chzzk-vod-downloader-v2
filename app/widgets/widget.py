@@ -39,6 +39,7 @@ from PySide6.QtWidgets import QLabel, QMessageBox, QWidget
 
 import app.theme as theme
 from app.network import REQUEST_TIMEOUT
+from app.system.thread_handoff import MainCall
 from app.viewmodels import card_display, card_text
 from app.viewmodels.card_text import (  # noqa: F401 — 바깥(footer_bar · 테스트)이 이 자리에서 import한다
     STATE_ICON,
@@ -231,6 +232,43 @@ def last_folder_name(path: str) -> str:
     return segments[-1] if segments else (root or path)
 
 
+def _fetch_rep_size(card: MainCall, index: int, base_url: str, segment_based: bool) -> None:
+    """해상도 하나의 파일 크기를 조회해 카드에 넘긴다 — 워커 스레드 (#168 · #564).
+
+    네트워크만 담당한다 — 위젯 · 아이템 반영은 카드의 `_onRepSizeFetched`(메인 스레드)가 한다.
+    카드는 `MainCall`로만 가리킨다. 조회 실패는 조용히 "Checking..."으로 남긴다(기존 동작).
+    """
+    size_text = ""
+    if not segment_based:
+        try:
+            resp = get_thread_session().head(base_url, timeout=REQUEST_TIMEOUT)
+            resp.raise_for_status()
+            size = int(resp.headers.get("content-length", 0))
+            if size == 0:
+                resp = get_thread_session().get(base_url, stream=True, timeout=REQUEST_TIMEOUT)
+                resp.raise_for_status()
+                size = int(resp.headers.get("content-length", 0))
+                resp.close()
+            size_text = card_text.size_text(size)
+        except Exception:
+            return
+    card("_repSizeFetched", index, size_text)
+
+
+def _fetch_image(card: MainCall, kind: str, url: str, max_height: int) -> None:
+    """이미지 바이트를 받아 카드에 넘긴다 — 워커 스레드 (#168 · #564).
+
+    QPixmap 생성 · 스케일 · setPixmap은 GUI 스레드 전용이라 여기서 하지 않는다. 디코드 이후는
+    카드의 `_onImageFetched`(메인 스레드)가 한다. 카드는 `MainCall`로만 가리킨다.
+    """
+    try:
+        response = get_thread_session().get(url, timeout=REQUEST_TIMEOUT)
+        response.raise_for_status()
+        card("_imageFetched", kind, response.content, url, max_height)
+    except Exception as e:
+        logger.error(f"Error loading image from {url}: {e}")
+
+
 class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     """목록의 카드 한 장 — 세 줄(채널 · 날짜 / 제목 / 상태 · 정보)과 카드 버튼 (#244 · #245 · #550).
 
@@ -249,11 +287,11 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     repSizeChanged = Signal(int, str)
     hoverChanged = Signal(bool)  # 호버가 켜지고 꺼졌다 — 목록이 포인터 밑 카드를 기억한다(#550)
 
-    # 워커 스레드 → 메인 스레드 중계 (#168). 위젯·아이템 조작은 반드시 메인
-    # 스레드 슬롯에서 한다 — download 경로가 DownloadViewModel로 세운 스레드 경계
-    # 규칙을 content 경로에도 적용한다
+    # 워커 스레드의 결과가 메인 스레드에서 들어오는 입구 (#168). 위젯·아이템 조작은 반드시 메인
+    # 스레드 슬롯에서 한다 — download 경로가 DownloadViewModel로 세운 스레드 경계 규칙을 content
+    # 경로에도 적용한다. 워커는 카드를 잡지 않고 `MainCall`로 이 시그널을 메인 스레드에서 낸다(#564)
     _repSizeFetched = Signal(int, str)  # (해상도 index, 크기 텍스트 — 세그먼트 기반이면 "")
-    _imageFetched = Signal(object, object, str, int, str)  # (label, bytes, url, maxHeight, type)
+    _imageFetched = Signal(str, object, str, int)  # (종류, bytes, url, maxHeight)
 
     def __init__(self, item: ContentItem, index: int = 0, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -275,6 +313,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self._stillAt = -float("inf")  # 애니메이션 끔에서 막대를 마지막으로 바꾼 때(ms, `_now_ms`)
         self._stillPending = False  # 애니메이션 끔에서 미룬 막대 바꾸기가 걸려 있는지
         self._previousState: object = None  # 직전 applyStateStyle의 상태 — 중지를 알아본다
+        self._imageLabels: dict[str, QLabel] = {}  # 이미지 종류 → 받은 그림을 놓을 라벨(#564)
         self.setupUi(self)
         # 카드 하나가 Tab 한 번이다. 마우스로는 초점을 받지 않는다 — 초점 테두리는 키보드 초점만
         self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
@@ -576,33 +615,16 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         return self._pickedIndex
 
     def _fetchRepSize(self, index: int, base_url: str) -> None:
-        """해상도 하나의 파일 크기를 워커 스레드에서 조회한다 — 결과는 `_onRepSizeFetched`로."""
+        """해상도 하나의 파일 크기를 워커 스레드에서 조회한다 — 결과는 `_onRepSizeFetched`로.
 
-        def fetch() -> None:
-            # 네트워크만 담당한다 — 위젯·아이템 반영은 _onRepSizeFetched(메인 스레드)로 (#168)
-            size_text = ""
-            if not self.item.is_segment_based:
-                try:
-                    resp = get_thread_session().head(base_url, timeout=REQUEST_TIMEOUT)
-                    resp.raise_for_status()
-                    size = int(resp.headers.get("content-length", 0))
-                    if size == 0:
-                        resp = get_thread_session().get(
-                            base_url, stream=True, timeout=REQUEST_TIMEOUT
-                        )
-                        resp.raise_for_status()
-                        size = int(resp.headers.get("content-length", 0))
-                        resp.close()
-                    size_text = self.setSize(size)
-                except Exception:
-                    # 기존 동작 유지: 조회 실패는 조용히 "Checking..."으로 남는다
-                    return
-            try:
-                self._repSizeFetched.emit(index, size_text)
-            except RuntimeError:
-                pass  # 위젯이 이미 파괴된 뒤의 늦은 완료
-
-        threading.Thread(target=fetch, daemon=True).start()
+        워커에는 값과 `MainCall`만 넘긴다 — 카드를 잡으면 카드가 워커 스레드에서 지워질 수
+        있다(#564). 카드가 결과보다 먼저 지워지면 결과는 버려진다.
+        """
+        threading.Thread(
+            target=_fetch_rep_size,
+            args=(MainCall(self), index, base_url, self.item.is_segment_based),
+            daemon=True,
+        ).start()
 
     def _onRepSizeFetched(self, index: int, size_text: str) -> None:
         """해상도 크기 조회 결과를 아이템에 반영한다 — 메인 스레드 (#168).
@@ -663,30 +685,15 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         if not url:
             label.clear()
             return
-        thread = threading.Thread(
-            target=self.fetchImage, args=(label, url, maxHeight, type), daemon=True
-        )
-        thread.start()
+        # 결과가 오면 종류로 라벨을 찾는다 — 워커에 라벨(카드의 자식)을 넘기지 않는다 (#564)
+        self._imageLabels[type] = label
+        threading.Thread(
+            target=_fetch_image, args=(MainCall(self), type, url, maxHeight), daemon=True
+        ).start()
 
-    def fetchImage(self, label: QLabel, url: str, maxHeight: int, type: str) -> None:
-        """이미지 바이트를 받아 메인 스레드로 중계한다 — 워커 스레드 (#168).
-
-        QPixmap 생성·스케일·setPixmap은 GUI 스레드 전용이라 여기서 하지
-        않는다. 디코드 이후는 _onImageFetched(메인 스레드)가 담당한다.
-        """
-        try:
-            response = get_thread_session().get(url, timeout=REQUEST_TIMEOUT)
-            response.raise_for_status()
-            self._imageFetched.emit(label, response.content, url, maxHeight, type)
-        except RuntimeError:
-            pass  # 위젯이 이미 파괴된 뒤의 늦은 완료
-        except Exception as e:
-            logger.error(f"Error loading image from {url}: {e}")
-
-    def _onImageFetched(
-        self, label: QLabel, data: bytes, url: str, maxHeight: int, type: str
-    ) -> None:
+    def _onImageFetched(self, type: str, data: bytes, url: str, maxHeight: int) -> None:
         """이미지 디코드·스케일·표시 — 메인 스레드 (#168)."""
+        label = self._imageLabels[type]
         try:
             image = QPixmap()
             image.loadFromData(data)
