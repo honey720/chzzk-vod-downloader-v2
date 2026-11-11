@@ -25,7 +25,8 @@ import re
 import shutil
 import tempfile
 import threading
-from collections.abc import Collection, Iterable
+from collections.abc import Collection, Iterable, Iterator
+from contextlib import contextmanager
 
 from core.utils.disk_speed import measure_write_speed
 from core.models.plan import MAX_SELECTIONS
@@ -168,14 +169,25 @@ def release_output_paths(paths: Iterable[str]) -> None:
             _reserved_paths.discard(_path_key(path))
 
 
-def is_output_reserved(path: str) -> bool:
-    """그 산출물 경로를 지금 어느 다운로드가 예약하고 있는지 — 그 이름에서 파생한 임시 파일의 주인을 가린다.
+@contextmanager
+def hold_output_paths(paths: Iterable[str]) -> Iterator[bool]:
+    """그 산출물 경로들이 모두 비어 있으면 함께 예약하고 참을 낸다 — 블록을 나가면 푼다 (#392).
 
-    재시도가 새 이름을 받은 구간의 옛 이름은 이 재시도가 예약하지 않는다. 그 옛 이름을 다른
-    다운로드가 예약했으면 그 이름의 본문 파일은 그 다운로드의 것일 수 있다 (#392).
+    하나라도 다른 다운로드가 예약하고 있으면 아무것도 예약하지 않고 거짓을 낸다. 검사와 예약이 한
+    잠금 안에서 끝나므로, 참을 받은 블록 안에서는 그 이름을 다른 다운로드가 배정받지 못한다 — 그
+    이름에서 파생한 임시 파일을 옮기거나 지우는 동안 쓴다.
     """
+    keys = {_path_key(path) for path in paths}
     with _reserved_lock:
-        return _path_key(path) in _reserved_paths
+        held = not keys & _reserved_paths
+        if held:
+            _reserved_paths.update(keys)
+    try:
+        yield held
+    finally:
+        if held:
+            with _reserved_lock:
+                _reserved_paths.difference_update(keys)
 
 
 def partial_source_path_for(output_path: str) -> str:

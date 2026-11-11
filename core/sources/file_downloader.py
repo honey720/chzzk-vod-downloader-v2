@@ -92,7 +92,7 @@ from core.sections.mp4_writer import (
 )
 from core.utils.paths import (
     cut_temp_dir_for,
-    is_output_reserved,
+    hold_output_paths,
     partial_source_path_for,
     release_output_paths,
     section_body_path_for,
@@ -832,10 +832,23 @@ class FileDownloader(BaseDownloader):
         옛 이름을 다른 다운로드가 예약하고 있으면 그 이름의 파일은 그 다운로드의 것일 수 있다 — 옮기지
         않고 None을 돌려준다. None이면 호출하는 쪽은 남긴 것을 쓰지 않고 다시 받는다. 일부만 옮긴
         뒤 실패했으면 옮긴 것은 새 이름에 있다 — 다시 받는 실행이 그 자리를 새로 연다.
+
+        옮기는 동안 옛 이름을 이 실행이 예약해 둔다(`hold_output_paths`) — 검사한 뒤 옮기기 전에 다른
+        다운로드가 그 이름을 배정받아 같은 이름의 임시 파일을 만들면 그 파일을 옮기게 된다.
         """
         renamed = self._renamed_sections(resume, paths, pending)
-        if any(is_output_reserved(resume.paths[number]) for number in renamed):
-            return None
+        old_names = {resume.paths[number] for number in renamed}
+        if paths[0] != resume.paths[0]:
+            old_names.add(resume.paths[0])  # 경계 원본의 이름은 첫 구간의 옛 이름에서 파생했다
+        with hold_output_paths(old_names) as held:
+            if not held:
+                return None
+            return self._move_kept_files(resume, paths, renamed)
+
+    def _move_kept_files(
+        self, resume: SectionResume, paths: tuple[str, ...], renamed: list[int]
+    ) -> str | None:
+        """`_adopt_kept_files`의 옮기기 — 옛 이름을 예약한 채로 부른다. 옮기지 못하면 None."""
         moves = []
         for number in renamed:
             current = section_body_path_for(paths[number])
@@ -869,26 +882,28 @@ class FileDownloader(BaseDownloader):
         지울 것이 없다. 새 이름을 받은 구간의 옛 본문과, 다른 자리의 경계 원본은 아무도 지우지 않아
         남는다. 옛 이름을 다른 다운로드가 예약하고 있으면 그 이름의 파일은 그 다운로드의 것일 수
         있어 지우지 않는다. 지우지 못해도 다운로드는 이어 간다 — 남는 것은 임시 파일뿐이다.
+
+        지우는 동안 그 옛 이름을 이 실행이 예약해 둔다(`hold_output_paths`) — 검사와 지우기 사이에 다른
+        다운로드가 그 이름을 배정받아 만든 임시 파일을 지우지 않게.
         """
+        # (지울 파일, 그 파일의 주인을 가리는 옛 이름 — 이번 실행의 이름이면 None)
         stale = [
-            section_body_path_for(resume.paths[number])
+            (section_body_path_for(resume.paths[number]), resume.paths[number])
             for number in self._renamed_sections(resume, paths, pending)
-            if not is_output_reserved(resume.paths[number])
         ]
         # 경계 원본의 이름은 기록의 첫 경로에서 파생했다. 그 경로가 이번 실행의 것이면 예약은 이번 실행의 것이다
-        held_elsewhere = resume.paths[0] != paths[0] and is_output_reserved(resume.paths[0])
-        if (
-            resume.source_path is not None
-            and resume.source_path != source_path
-            and not held_elsewhere
-        ):
-            stale.append(resume.source_path)
-        for path in stale:
-            try:
-                if os.path.exists(path):
-                    os.remove(path)
-            except OSError as e:
-                logger.warning("앞 실행의 임시 파일을 지우지 못함: %s", e)
+        if resume.source_path is not None and resume.source_path != source_path:
+            owner = resume.paths[0] if resume.paths[0] != paths[0] else None
+            stale.append((resume.source_path, owner))
+        for path, owner in stale:
+            with hold_output_paths([owner] if owner is not None else []) as held:
+                if not held:
+                    continue  # 다른 다운로드가 그 이름을 예약하고 있다 — 그 다운로드의 파일일 수 있다
+                try:
+                    if os.path.exists(path):
+                        os.remove(path)
+                except OSError as e:
+                    logger.warning("앞 실행의 임시 파일을 지우지 못함: %s", e)
 
     def _stored_layout(
         self,
