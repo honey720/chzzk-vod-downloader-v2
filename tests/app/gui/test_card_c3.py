@@ -14,7 +14,7 @@ from typing import Never
 
 import pytest
 from PySide6.QtCore import QEvent, QObject, QPoint, QVariantAnimation
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QGuiApplication
 from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
 import CVDv2 as main_module
@@ -128,10 +128,21 @@ def _card(item: ContentItem, width: int = 900) -> ContentItemWidget:
     return card
 
 
+def _settle_geometry() -> None:
+    """창 시스템이 앞서 받은 크기 변경 요청을 다 처리하고 그 결과가 위젯에 반영될 때까지 기다린다.
+
+    xcb(xvfb)는 최상위 창의 크기 변경 결과를 이벤트로 늦게 돌려준다. `processEvents()` 한 번이면
+    바로 앞 요청의 결과가 뒤늦게 반영돼 폭이 그 값(1px씩 좁힐 때 요청 + 1)으로 돌아갈 수 있다.
+    `QGuiApplication.sync()`는 창 시스템과 한 번 왕복한 뒤 쌓인 이벤트를 처리한다. offscreen에서는
+    `processEvents()`와 같다 (#569).
+    """
+    QGuiApplication.sync()
+
+
 def _at(card: ContentItemWidget, width: int) -> None:
     """카드를 `width`로 놓는다 — 실제 폭이 요청과 같은지 단언한다(클램프면 아무것도 안 잰다)."""
     card.resize(width, card.sizeHint().height())
-    QApplication.processEvents()
+    _settle_geometry()
     assert card.width() == width, f"요청 {width}px · 실제 {card.width()}px"
 
 
@@ -295,6 +306,7 @@ def _list(widths_cards: list[ContentItem], width: int = 900) -> tuple[ContentLis
 
 def _list_at(view: ContentListView, width: int) -> None:
     view.resize(width, 500)
+    _settle_geometry()
     for _ in range(3):
         QApplication.processEvents()
     assert view.width() == width
