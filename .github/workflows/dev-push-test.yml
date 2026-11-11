@@ -25,6 +25,9 @@ jobs:
       - name: Install Qt system deps
         timeout-minutes: 5
         run: |
+          # 러너 이미지의 1순위 미러(azure.archive.ubuntu.com)가 응답하지 않거나 느린 날이 있다
+          # (actions/runner-images #14594 · #14823). 맨 뒤 순위로 보내 archive.ubuntu.com에서 먼저 받는다
+          sudo sed -i '/azure\.archive\.ubuntu\.com/s/priority:[0-9]*/priority:9/' /etc/apt/apt-mirrors.txt || true
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
             xvfb libegl1 libgl1 libxkbcommon-x11-0 libxcb-icccm4 \
