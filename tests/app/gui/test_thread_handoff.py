@@ -10,13 +10,19 @@ import gc
 import threading
 import weakref
 from collections.abc import Callable, Iterator
+from fractions import Fraction
+from types import SimpleNamespace
+from typing import Never
 
 import pytest
-from PySide6.QtCore import QEvent, QObject, Qt
+from PySide6.QtCore import QEvent, QObject, Qt, QThreadPool
 from PySide6.QtWidgets import QApplication, QWidget
 
+import app.viewmodels.section_edit as sev
 from app.viewmodels.data import ContentItem
 from app.widgets.widget import ContentItemWidget
+from core.models.download_state import DownloadState
+from core.models.plan import TimeRange
 
 MAIN = threading.get_ident()  # 테스트가 도는 스레드 = Qt 메인 스레드
 URL = "https://v.invalid/720.mp4"  # 크기를 조회하는 해상도 주소
@@ -216,3 +222,144 @@ def test_size_result_after_qt_deleted_the_card_is_dropped(qtbot, parked) -> None
 
     assert item.unique_reps[0][-1] == "Checking..."
     assert card is not None  # 결과가 닿는 동안 카드의 파이썬 객체가 살아 있었다
+
+
+# ================================================================ 스레드 풀의 일
+
+
+def _parked_after_run(base: type) -> type:
+    """`run()`을 마친 뒤 `go`가 켜질 때까지 풀 스레드에 머무는 일 — 지워진 스레드를 적는다.
+
+    결과 시그널은 `run()` 안에서 이미 났다. 머무는 동안 메인이 결과를 받아 참조를 놓게 한 뒤
+    `go`를 켜면, 풀 스레드가 일을 놓는 차례가 메인보다 늦어진다.
+    """
+
+    class Parked(base):
+        go = threading.Event()  # 켜지면 풀 스레드가 run에서 나온다
+        deleted: list[int] = []  # 지워진 스레드의 id
+
+        def __init__(self, *args: object) -> None:
+            super().__init__(*args)
+            self.destroyed.connect(
+                lambda *_: Parked.deleted.append(threading.get_ident()),
+                Qt.ConnectionType.DirectConnection,
+            )
+
+        def run(self) -> None:
+            super().run()
+            assert Parked.go.wait(5), "대역의 문이 열리지 않았다"
+
+    return Parked
+
+
+def _stop(*args: object) -> Never:
+    # 실패(예외)는 로그의 traceback이 일을 붙잡아 지워지지 않는다 — 그만둠으로 끝낸다
+    raise sev.StopRequested()
+
+
+def _basis(item: object) -> SimpleNamespace:
+    """조회 대역 — 30fps · 1초, moov 없음."""
+    return SimpleNamespace(fps=Fraction(30), duration=1.0, mp4_head=None, mp4_pending=None)
+
+
+class _Item(SimpleNamespace):
+    """해시가 되는 카드 아이템 대역 — 결과를 받는 쪽이 카드를 사전의 키로 쓴다."""
+
+    __hash__ = object.__hash__
+
+
+class _NoRowModel:
+    """목록 모델 대역 — 카드가 이미 지워졌다(`getRow`가 None)."""
+
+    def getRow(self, item: object) -> None:
+        return None
+
+    def notifyChanged(self, item: object) -> None:
+        return None
+
+
+def _let_go_and_wait(qtbot, parked: type, pool: QThreadPool) -> None:
+    """풀 스레드를 풀고 일이 끝나기를 기다린 뒤, 일이 지워질 때까지 메인 이벤트를 돌린다."""
+    parked.go.set()
+    assert pool.waitForDone(5000), "전제: 풀의 일이 끝났다"
+    qtbot.waitUntil(lambda: bool(parked.deleted), timeout=3000)
+
+
+def test_basis_job_is_deleted_on_the_main_thread(qtbot, monkeypatch) -> None:
+    """편집 창의 기준값 조회가 끝나 뷰모델이 일을 놓은 뒤 풀 스레드가 나오면 일이 메인 스레드에서 지워져야 한다.
+
+    조회 대역이 30fps · 1초를 돌려줌 · 뷰모델이 결과를 받아 _job을 비운 뒤 풀 스레드가 run에서
+    나옴 -> 지워진 스레드 == [메인]
+    """
+    monkeypatch.setattr(sev.section_basis, "probe_section_basis", _basis)
+    parked = _parked_after_run(sev.SectionBasisJob)
+    monkeypatch.setattr(sev, "SectionBasisJob", parked)
+    pool = QThreadPool()
+    viewmodel = sev.SectionEditViewModel(
+        SimpleNamespace(vod_url="https://v.invalid/1", selections=())
+    )
+
+    viewmodel.start(pool)
+    qtbot.waitUntil(lambda: viewmodel.state == sev.STATE_READY, timeout=3000)
+    assert viewmodel._job is None, "전제: 뷰모델이 일을 놓았다"
+    _let_go_and_wait(qtbot, parked, pool)
+
+    assert parked.deleted == [MAIN]
+
+
+def test_refit_job_is_deleted_on_the_main_thread(qtbot, monkeypatch) -> None:
+    """해상도를 바꾼 뒤의 조회가 끝나 결과를 받은 쪽이 일을 놓은 뒤 풀 스레드가 나오면 일이 메인 스레드에서 지워져야 한다.
+
+    대기 카드 · 확인된 구간 하나(30fps) · 조회 대역이 그만둠 · 결과를 받아 대기 수 0이 된 뒤
+    풀 스레드가 run에서 나옴 -> 지워진 스레드 == [메인]
+    """
+    monkeypatch.setattr(sev.section_basis, "probe_section_basis", _stop)
+    parked = _parked_after_run(sev.SectionRefitJob)
+    monkeypatch.setattr(sev, "SectionRefitJob", parked)
+    pool = QThreadPool()
+    refitter = sev.SectionRefitter(_NoRowModel(), pool)
+    selections = (TimeRange(0.0, 1.0),)
+    item = _Item(
+        downloadState=DownloadState.WAITING,
+        selections=selections,
+        section_verified=(selections, SimpleNamespace(fps=Fraction(30))),
+        selected_frame_rate=None,
+        content_type="video",
+        base_url="https://v.invalid/720.mp4",
+        vod_url="https://v.invalid/1",
+        resolution=720,
+        stream=None,
+    )
+
+    refitter.request(item)
+    qtbot.waitUntil(lambda: refitter.pendingCount() == 0, timeout=3000)
+    _let_go_and_wait(qtbot, parked, pool)
+
+    assert parked.deleted == [MAIN]
+
+
+def test_size_job_is_deleted_on_the_main_thread(qtbot, monkeypatch) -> None:
+    """구간 크기 세기가 끝나 결과를 받은 쪽이 일을 놓은 뒤 풀 스레드가 나오면 일이 메인 스레드에서 지워져야 한다.
+
+    대기 카드 · 구간 하나 · 쥔 moov의 주소가 카드의 주소와 같음 · 세기 대역이 그만둠 · 결과를 받아
+    대기 수 0이 된 뒤 풀 스레드가 run에서 나옴 -> 지워진 스레드 == [메인]
+    """
+    monkeypatch.setattr(sev, "section_file_bytes_of", _stop)
+    parked = _parked_after_run(sev.SectionSizeJob)
+    monkeypatch.setattr(sev, "SectionSizeJob", parked)
+    pool = QThreadPool()
+    sizer = sev.SectionSizer(_NoRowModel(), pool)
+    item = _Item(
+        downloadState=DownloadState.WAITING,
+        selections=(TimeRange(0.0, 1.0),),
+        is_segment_based=False,
+        section_bytes=None,
+        section_head=("https://v.invalid/720.mp4", object()),  # (받은 주소, moov 대역)
+        base_url="https://v.invalid/720.mp4",
+    )
+
+    sizer.request(item)
+    qtbot.waitUntil(lambda: sizer.pendingCount() == 0, timeout=3000)
+    _let_go_and_wait(qtbot, parked, pool)
+
+    assert parked.deleted == [MAIN]
