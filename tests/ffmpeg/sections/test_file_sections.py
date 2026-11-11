@@ -833,7 +833,7 @@ def test_finished_run_releases_reserved_names(server, tmp_path, monkeypatch) -> 
     """다운로드가 끝나면(실패 포함) 배정받은 구간 파일명의 예약이 풀려야 한다.
 
     기본 입력, 구간 하나, 컷이 실패하도록 바꿈(구간 파일이 생기지 않는다)
-    -> 같은 제목으로 다시 배정하면 같은 `_1` 경로
+    -> 실행 뒤 그 `_1` 경로를 hold_output_paths로 잡으면 참(다른 다운로드의 예약 없음)
     """
 
     def broken(*args, **kwargs) -> Never:
@@ -846,7 +846,11 @@ def test_finished_run_releases_reserved_names(server, tmp_path, monkeypatch) -> 
 
     run.start()
 
-    assert build_section_output_paths(str(run.folder), "구간 시험", 144, 1) == run.paths
+    # 새 배정으로 재지 않는다 — 실패한 실행이 재시도에 쓰려고 남긴 임시 파일 때문에 새 배정은 그
+    # 이름을 피한다 (#392). 예약만 보는 hold_output_paths로 잰다
+    with hold_output_paths(run.paths) as free:
+        pass
+    assert free is True
 
 
 # ================================================================ 거부
@@ -1289,6 +1293,39 @@ def test_retry_leaves_the_old_body_alone_while_another_download_holds_the_old_na
     assert (again.finished, again.failures) == (1, [])
     assert server.requests[requests_before:], "남긴 본문을 쓰지 않고 다시 받아야 한다"
     assert os.path.isfile(old_body)
+
+
+def test_two_cards_failed_in_turn_retry_each_with_what_it_kept(
+    server, tmp_path, monkeypatch
+) -> None:
+    """같은 이름을 받을 두 카드가 차례로 일부 실패해도, 두 재시도가 각자 남긴 것을 다시 써야 한다 (#392).
+
+    같은 제목 · 해상도 · 저장 폴더의 카드 B · A. B는 첫 구간 컷이 실패(출력은 지워짐, 경계 원본 · 본문이
+    남음) → A를 새로 배정해 실행, 둘째 구간 컷이 실패 → B 재시도 → A 재시도
+    -> A의 경로는 모두 " (1)" 이름, A가 실행 중에 B가 남긴 경계 원본 · 본문을 건드리지 않음,
+       두 재시도의 요청 0건, 완료 1회 · 실패 0건씩, 끝난 뒤 저장 폴더에 `CVDv2_` 임시 파일 없음
+    """
+    cuts = CutCalls(monkeypatch, fd_module, "finish_section_file", source_arg=0)
+    cuts.fail_on = (1,)
+    card_b = _Run(server, "plain", tmp_path, _three()).start()
+    assert card_b.data.section_resume.done == frozenset({1, 2}), "전제: B는 첫 구간만 남았다"
+    kept_by_b = snapshot([card_b.source_path, section_body_path_for(card_b.paths[0])])
+    cuts.restart()
+    cuts.fail_on = (2,)
+    card_a = _Run(server, "plain", tmp_path, _three()).start()
+    assert card_a.data.section_resume.done == frozenset({0, 2}), "전제: A는 둘째 구간만 남았다"
+    cuts.restart()
+
+    assert card_a.paths == tuple(_renamed(path) for path in card_b.paths)
+    assert snapshot(kept_by_b) == kept_by_b
+    requests_before = len(server.requests)
+    retry_b = hand_over(card_b, _Run(server, "plain", tmp_path, _three())).start()
+    retry_a = hand_over(card_a, _Run(server, "plain", tmp_path, _three())).start()
+
+    assert server.requests[requests_before:] == []
+    assert (retry_b.finished, retry_b.failures) == (1, [])
+    assert (retry_a.finished, retry_a.failures) == (1, [])
+    assert not [name for name in retry_a.listing() if name.startswith("CVDv2_")]
 
 
 class _NameProbe:
