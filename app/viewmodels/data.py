@@ -123,7 +123,9 @@ class ContentItem:
         self.output_path = ""
 
         self.download_size = ""
-        self.download_progress = 0  # 다운로드 진행률 (0~100)
+        self.download_progress = 0  # 다운로드 진행률 (0~100, 소수 — #557)
+        # 속도 · 남은 시간 글을 마지막으로 바꾼 시각(단조 시계, 초) — 1초에 한 번만 바꾼다(#557). None이면 바로
+        self.rate_text_at: float | None = None
         self.download_speed = ""  # 다운로드 속도 (예: "2.5 MB/s")
         self.download_remain_time = ""  # 남은 다운로드 예상 시간 (예: "00:00:01")
         self.download_time = ""

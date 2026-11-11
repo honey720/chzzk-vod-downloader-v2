@@ -78,7 +78,7 @@ def test_bar_shows_100_only_when_every_stage_is_done() -> None:
     """막대는 모든 단계의 일이 끝났을 때만 100이고, 그 전에는 거의 다 해도 99여야 한다.
 
     받기 예상 1초 · 컷 예상 1000초. 컷만 1 · 받기 0.9999 → 받기 1
-    -> [99, 100]
+    -> [99.9, 100] — 끝나기 전에는 99.9에서 멈춤(#557 소수)
     """
     bar = StagedProgress(STAGES)
     seconds = {"transfer": 1.0, "cut": 1000.0}
@@ -86,7 +86,7 @@ def test_bar_shows_100_only_when_every_stage_is_done() -> None:
     almost = bar.update({"transfer": 0.9999, "cut": 1.0}, seconds)
     done = bar.update({"transfer": 1.0, "cut": 1.0}, seconds)
 
-    assert (almost, done) == (99, 100)
+    assert (almost, done) == (99.9, 100)
 
 
 def test_stage_without_an_estimate_takes_no_share_of_the_bar() -> None:
@@ -111,14 +111,14 @@ def test_changed_estimate_changes_only_the_slope_from_then_on() -> None:
     """두 단계가 남은 동안 예상이 바뀌어도 막대는 뛰거나 줄지 않고, 그때부터의 기울기만 바뀌어야 한다.
 
     컷 예상 20초. 받기 예상 80초로 받기 0.5(40) → 받기 예상이 120초로 늘고 받기 0.75
-    -> 둘째 값 == int(40 + 60 × (0.25 × 120) ÷ (0.5 × 120 + 20)) == 62 (줄지 않고, 뛰지도 않는다)
+    -> 둘째 값 == 40 + 60 × (0.25 × 120) ÷ (0.5 × 120 + 20) == 62.5 (줄지 않고, 뛰지도 않는다)
     """
     bar = StagedProgress(STAGES)
     first = bar.update({"transfer": 0.5}, {"transfer": 80.0, "cut": 20.0})
 
     second = bar.update({"transfer": 0.75}, {"transfer": 120.0, "cut": 20.0})
 
-    assert (first, second) == (40, 62)
+    assert (first, second) == (40, 62.5)
 
 
 def test_stage_names_must_not_repeat() -> None:

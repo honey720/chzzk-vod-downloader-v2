@@ -83,6 +83,8 @@ REFERENCE_CARD_METADATA = {
 
 WORST_SECTIONS = 99  # 견본 카드의 구간 수 — 상태 글의 「 · 99/99」가 두 자리일 때(#554)
 WORST_TIME = "99:59:59"  # 견본 카드의 남은 · 걸린 시간 — 짧은 표기에서 가장 긴 꼴(#554)
+# 견본 카드의 진행률 — 「99.9%」가 소수 진행률(#557)에서 가장 긴 꼴이다(「100%」보다 점 하나만큼 넓다)
+WORST_PROGRESS = 99.9
 WORST_RECEIVED = (
     1023 * 1024 * 1024 + 1000 * 1024
 )  # 견본 카드의 받은 바이트 — 「1023.98 MB」(MB 표기의 끝)
@@ -102,7 +104,7 @@ def _worst_card_items() -> list[ContentItem]:
         item.resolution = 1080
         item.total_size = "0000.00 MB"
         item.downloadState = state
-        item.download_progress = 100
+        item.download_progress = WORST_PROGRESS
         item.download_size = WORST_RECEIVED
         item.download_remain_time = WORST_TIME
         item.download_time = WORST_TIME

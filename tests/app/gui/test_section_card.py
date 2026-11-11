@@ -325,14 +325,14 @@ def test_combined_progress_rises_through_transfer_and_cut_to_100(card, monkeypat
     seen = []
     for fraction in (0.0, 0.3, 0.7):
         card.transfer(fraction)
-        seen.append(card.item.download_progress)
+        seen.append(int(card.item.download_progress))
     card.begin_cut()
     card.notify_cut()
-    seen.append(card.item.download_progress)
+    seen.append(int(card.item.download_progress))
     for done in (1, 2, 3):
         card.cut(done)
-        seen.append(card.item.download_progress)
-        assert card.widget.progressBar.value() == card.item.download_progress * 100  # 0.01% 단위
+        seen.append(int(card.item.download_progress))
+        assert card.widget.progressBar.value() == round(card.item.download_progress * 100)  # 0.01%
 
     assert seen == [0, 24, 56, 80, 86, 93, 100]
     assert seen == sorted(seen)
@@ -363,8 +363,8 @@ def test_done_count_is_hidden_while_transferring_and_shown_from_the_cut_stage(ca
     """완료 구간 수는 전송 중에는 숨기고, 컷 단계와 완료 카드의 상태 문구에 붙어야 한다.
 
     구간 셋. 전송 40% → 그 상태에서 일시정지 → 재개 → 컷 단계에서 구간 하나 끝남 → 셋 다 끝나고 완료 통지
-    -> 전송 중 == "32% · Downloading · 3.1 MB/s · 0:19 left"(수 없음), 전송 중 일시정지 == "32% · Paused"(수 없음),
-       컷 중 == "86% · Cutting · 1/3", 완료 == "Completed · 3/3 · 1:12"
+    -> 전송 중 == "32.0% · Downloading · 3.1 MB/s · 0:19 left"(수 없음), 전송 중 일시정지 == "32.0% · Paused"(수 없음),
+       컷 중 == "86.7% · Cutting · 1/3", 완료 == "Completed · 3/3 · 1:12"
     """
     card.start()
     card.transfer(0.4)
@@ -382,9 +382,9 @@ def test_done_count_is_hidden_while_transferring_and_shown_from_the_cut_stage(ca
     card.submission["on_finished"]()
     card.qapp.processEvents()
 
-    assert transferring == "32% · Downloading · 3.1 MB/s · 0:19 left"
-    assert paused == "32% · Paused"
-    assert cutting == "86% · Cutting · 1/3"
+    assert transferring == "32.0% · Downloading · 3.1 MB/s · 0:19 left"
+    assert paused == "32.0% · Paused"
+    assert cutting == "86.7% · Cutting · 1/3"
     assert card.item.downloadState is DownloadState.FINISHED
     assert card.status == "Completed · 3/3 · 1:12"
 
@@ -397,14 +397,14 @@ def test_cut_stage_shows_the_stage_text_instead_of_speed_and_remaining_time(card
     """컷 단계의 카드에는 속도 · 남은 시간이 아니라 단계 문구가 나와야 한다.
 
     구간 셋. 전송이 끝나고 컷 단계에서 구간 하나가 끝남(엔진은 속도 0의 진행을 보낸다)
-    -> 상태 문구 == "86% · Cutting · 1/3", "MB/s" · "N/A" · "left" 없음
+    -> 상태 문구 == "86.7% · Cutting · 1/3", "MB/s" · "N/A" · "left" 없음
     """
     card.start()
     card.begin_cut()
     card.cut(1)
 
     assert card.item.downloadState is DownloadState.RUNNING
-    assert card.status == "86% · Cutting · 1/3"
+    assert card.status == "86.7% · Cutting · 1/3"
     assert not any(text in card.status for text in ("MB/s", "N/A", "left"))
 
 
@@ -424,9 +424,10 @@ def test_cut_stage_says_preparing_while_the_engine_reads_the_segments(card) -> N
     card.data.cut_preparing = False
     card.notify_cut()
 
-    percent = card.item.download_progress
-    assert preparing == (True, f"{percent}% · Preparing to cut · 0/3")
-    assert (card.item.cut_preparing, card.status) == (False, f"{percent}% · Cutting · 0/3")
+    percent = preparing[1].split(" · ")[0]  # 「NN.N%」 — 두 문구가 같은 진행률인지만 본다
+    assert percent.endswith("%") and percent[:-1].replace(".", "").isdigit()
+    assert preparing == (True, f"{percent} · Preparing to cut · 0/3")
+    assert (card.item.cut_preparing, card.status) == (False, f"{percent} · Cutting · 0/3")
 
 
 # ================================================================ 일부 실패
@@ -444,9 +445,9 @@ def test_partial_failure_fails_the_card_only_after_the_remaining_sections_finish
     card.begin_cut()
     card.cut(1)
     card.cut(1, failed=1)
-    after_failure = (card.item.downloadState, card.item.download_progress)
+    after_failure = (card.item.downloadState, int(card.item.download_progress))
     card.cut(2, failed=1)
-    after_last = (card.item.downloadState, card.item.download_progress, card.status)
+    after_last = (card.item.downloadState, int(card.item.download_progress), card.status)
 
     error = PostprocessError("후처리(cut) 실패: 구간 1개")
     error.__cause__ = CutError(CUT_FAILED, "시험")
@@ -484,13 +485,13 @@ def test_waiting_card_shows_the_section_summary_in_the_info_text(card) -> None:
         (
             "hls_aes",
             "1080p · 2:00:00",
-            "40% · Downloading · 3.1 MB/s · 0:19 left",
-            "50% · Post-processing",
+            "40.0% · Downloading · 3.1 MB/s · 0:19 left",
+            "50.0% · Post-processing",
         ),
         (
             "video",
             "1080p · Checking... · 2:00:00",  # 크기 조회는 막혀 있다(조회 중 글)
-            "40% · Downloading · 3.1 MB/s · 0:19 left",
+            "40.0% · Downloading · 3.1 MB/s · 0:19 left",
             None,
         ),
     ],
@@ -626,7 +627,7 @@ def test_retry_bar_starts_from_zero_and_the_count_continues_from_the_finished_se
     구간 셋, 둘째만 실패 → ↻ → 시작. 엔진처럼 구간 상태를 (전체 3, 완료 2, 이어받음 2)로 적고
     전송 0% · 50% → 컷 단계 → 둘째 구간 끝남 → 완료 통지. 전송에 둘째 구간(11초)의 컷 예상
     시간의 4.02배가 걸림
-    -> 진행률 == [0, 40, 80, 100], 전송 중 문구에 구간 수 없음, 컷 단계 == "80% · Cutting · 2/3",
+    -> 진행률 == [0, 40, 80, 100], 전송 중 문구에 구간 수 없음, 컷 단계 == "80.0% · Cutting · 2/3",
        둘째가 끝난 뒤 == "100% · Cutting · 3/3", 완료 == "Completed · 3/3 · 1:12", 남긴 것이 지워진다
     """
     _fail_second_section(card)
@@ -637,21 +638,21 @@ def test_retry_bar_starts_from_zero_and_the_count_continues_from_the_finished_se
     seen = []
 
     card.transfer(0.0)
-    seen.append((card.item.download_progress, card.status))
+    seen.append((int(card.item.download_progress), card.status))
     card.transfer(0.5)
-    seen.append((card.item.download_progress, card.status))
+    seen.append((int(card.item.download_progress), card.status))
     card.begin_cut()
     card.notify_cut()
-    seen.append((card.item.download_progress, card.status))
+    seen.append((int(card.item.download_progress), card.status))
     card.cut(3)
-    seen.append((card.item.download_progress, card.status))
+    seen.append((int(card.item.download_progress), card.status))
     card.data.model.finish()
     card.submission["on_finished"]()
     card.qapp.processEvents()
 
     assert [progress for progress, _text in seen] == [0, 40, 80, 100]
     assert not re.search(r"\d+/\d+", seen[0][1] + seen[1][1])
-    assert [text for _progress, text in seen[2:]] == ["80% · Cutting · 2/3", "100% · Cutting · 3/3"]
+    assert [text for _progress, text in seen[2:]] == ["80.0% · Cutting · 2/3", "100% · Cutting · 3/3"]
     assert card.status == "Completed · 3/3 · 1:12"
     assert card.item.section_retry is None
 
@@ -786,7 +787,7 @@ def test_bar_rises_inside_a_section_while_it_is_being_cut(card) -> None:
 
     for progress in (0.1, 0.2, 0.3, 0.4):
         card.cut_inside(progress)
-        seen.append(card.item.download_progress)
+        seen.append(int(card.item.download_progress))
         assert card.status.endswith("Cutting · 0/3")
 
     assert seen == [82, 84, 86, 88]
@@ -804,7 +805,7 @@ def test_bar_never_goes_back_when_a_lower_cut_progress_arrives(card) -> None:
 
     for progress in (0.5, 0.2, 0.6):
         card.cut_inside(progress)
-        seen.append(card.item.download_progress)
+        seen.append(int(card.item.download_progress))
 
     assert seen == [90, 90, 92]
 
@@ -822,9 +823,9 @@ def test_bar_reaches_100_only_when_the_last_section_is_done(card) -> None:
 
     for progress in (0.999, 1.0):
         card.cut_inside(progress)
-        seen.append(card.item.download_progress)
+        seen.append(int(card.item.download_progress))
     card.cut(3)
-    seen.append(card.item.download_progress)
+    seen.append(int(card.item.download_progress))
 
     assert seen == [99, 99, 100]
 
@@ -848,7 +849,7 @@ def test_share_of_the_transfer_follows_how_long_the_transfer_took(
     card.begin_cut()
     card.notify_cut()
 
-    assert card.item.download_progress == at_cut_start
+    assert int(card.item.download_progress) == at_cut_start
 
 
 def test_bar_during_transfer_is_the_time_spent_over_the_expected_total(card) -> None:
@@ -862,7 +863,7 @@ def test_bar_during_transfer_is_the_time_spent_over_the_expected_total(card) -> 
 
     card.transfer(0.5)
 
-    assert card.item.download_progress == 40
+    assert int(card.item.download_progress) == 40
 
 
 # ================================================================ 받기가 멈출 때 · 재시도 (#390)
@@ -879,17 +880,17 @@ def test_bar_stands_still_while_nothing_is_received_and_then_goes_on_as_if_it_ha
     """
     card.start()
     card.transfer(0.3)
-    before = card.item.download_progress
+    before = int(card.item.download_progress)
     during = []
 
     for _ in range(3):
         card.wait(10, notifications=10)
-        during.append(card.item.download_progress)
+        during.append(int(card.item.download_progress))
     card.transfer(0.7)
 
     assert before == 24
     assert during == [24, 24, 24]
-    assert card.item.download_progress == 56
+    assert int(card.item.download_progress) == 56
 
 
 @pytest.mark.parametrize("card", ["m3u8", "hls_aes"], indirect=True)
@@ -916,7 +917,7 @@ def test_notifications_that_only_received_bytes_count_as_receiving_time(card) ->
         )
         card.qapp.processEvents()
         card.transfer(fraction)
-        seen[step] = card.item.download_progress
+        seen[step] = int(card.item.download_progress)
 
     assert (seen[3], seen[7]) == (24, 56)
 
@@ -930,13 +931,13 @@ def test_bar_does_not_jump_after_a_pause(card, paused_clock) -> None:
     """
     card.start()
     card.transfer(0.3)
-    seen = [card.item.download_progress]
+    seen = [int(card.item.download_progress)]
 
     paused_clock.paused += 60
     card.wait(60)
     for fraction in (0.4, 0.7):
         card.transfer(fraction)
-        seen.append(card.item.download_progress)
+        seen.append(int(card.item.download_progress))
 
     assert seen == [24, 32, 56]
 
@@ -956,18 +957,18 @@ def test_retry_that_reuses_stored_segments_fills_the_bar_from_zero_to_100(card) 
 
     card.data.completed_threads = card.data.reused_threads = 6
     card.wait(0.0, notifications=1)
-    seen.append(card.item.download_progress)
+    seen.append(int(card.item.download_progress))
     for received in (2, 4):
         _Clock.now = card._started_at + card.transfer_seconds * received / 4
         card.data.completed_threads = 6 + received
         card.wait(0.0, notifications=1)
-        seen.append(card.item.download_progress)
+        seen.append(int(card.item.download_progress))
     card.submission["on_merge_start"]()
     card.notify_cut()
-    seen.append(card.item.download_progress)
+    seen.append(int(card.item.download_progress))
     for done in (1, 2, 3):
         card.cut(done)
-        seen.append(card.item.download_progress)
+        seen.append(int(card.item.download_progress))
 
     assert seen == [0, 40, 80, 80, 86, 93, 100]
 
@@ -986,14 +987,14 @@ def test_retry_that_receives_nothing_fills_the_bar_with_the_cut_alone(card) -> N
         ProgressEvent(downloaded_size=0, total_size=0, speed=0.0, active_threads=0)
     )
     card.qapp.processEvents()
-    seen.append(card.item.download_progress)
+    seen.append(int(card.item.download_progress))
     card.submission["on_merge_start"]()
     card.notify_cut()
-    seen.append(card.item.download_progress)
+    seen.append(int(card.item.download_progress))
     card.cut_inside(0.5)
-    seen.append(card.item.download_progress)
+    seen.append(int(card.item.download_progress))
     card.cut(3)
-    seen.append(card.item.download_progress)
+    seen.append(int(card.item.download_progress))
 
     assert seen == [0, 0, 50, 100]
 
@@ -1011,13 +1012,13 @@ def test_cut_longer_or_shorter_than_its_estimate_neither_lowers_nor_jumps_the_ba
     card.start()
     card.begin_cut()
     card.notify_cut()
-    seen = [card.item.download_progress]
+    seen = [int(card.item.download_progress)]
 
     for progress in (0.25, 0.5, 0.75):
         _Clock.now += cut_estimate(6, 11, 29) * cut_takes / 4
         card.cut_inside(progress)
-        seen.append(card.item.download_progress)
+        seen.append(int(card.item.download_progress))
     card.cut(3)
-    seen.append(card.item.download_progress)
+    seen.append(int(card.item.download_progress))
 
     assert seen == [80, 85, 90, 95, 100]

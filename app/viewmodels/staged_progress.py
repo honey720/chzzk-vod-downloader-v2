@@ -20,11 +20,13 @@ Qt를 모른다 — 헤드리스 출력도 같은 계산을 쓸 수 있다. 여�
 import threading
 from collections.abc import Mapping, Sequence
 
+LAST_BEFORE_DONE = 99.9  # 모든 단계가 끝나기 전에 낼 수 있는 가장 큰 값(%) — 카드 글의 0.1% 단위
+
 
 class StagedProgress:
     """단계마다의 한 일과 예상 시간으로 진행 막대 값(0~100)을 낸다.
 
-    내는 값은 줄지 않는다. 100은 모든 단계의 일이 다 끝났을 때만 낸다 — 그 전에는 99에서 멈춘다.
+    내는 값은 줄지 않는다. 100은 모든 단계의 일이 다 끝났을 때만 낸다 — 그 전에는 99.9에서 멈춘다.
     단계를 더하려면(구간 없는 다운로드의 받기 → 합치기 등) 이름만 늘리면 된다.
     """
 
@@ -41,7 +43,7 @@ class StagedProgress:
         self._value = 0.0  # 막대의 값(0~100) — 소수까지 들고 있는다
         self._lock = threading.Lock()
 
-    def update(self, done: Mapping[str, float], seconds: Mapping[str, float]) -> int:
+    def update(self, done: Mapping[str, float], seconds: Mapping[str, float]) -> float:
         """이번 통지의 한 일과 예상 시간으로 막대를 올리고 보일 값을 돌려준다.
 
         Args:
@@ -51,7 +53,7 @@ class StagedProgress:
                 남은 몫을 나눌 때 그 단계의 몫이 없다
 
         Returns:
-            막대에 보일 값(0~100). 모든 단계의 한 일이 1일 때만 100
+            막대에 보일 값(0~100, 소수). 모든 단계의 한 일이 1일 때만 100
         """
         with self._lock:
             now = {
@@ -67,7 +69,8 @@ class StagedProgress:
             self._done = now
             return self._shown()
 
-    def _shown(self) -> int:
+    def _shown(self) -> float:
         if all(value >= 1.0 for value in self._done.values()):
-            return 100
-        return min(int(self._value), 99)
+            return 100.0
+        # 소수까지 낸다(카드가 0.1% 단위로 적는다, #557) — 끝나기 전에는 99.9에서 멈춘다
+        return min(self._value, LAST_BEFORE_DONE)

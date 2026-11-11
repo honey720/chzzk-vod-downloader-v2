@@ -154,8 +154,8 @@ class TestSlotTexts:
     def test_running_puts_progress_first_then_the_state_word(self) -> None:
         """받는 중 카드면 상태 글이 「% · Downloading · 속도 · 남은 시간 left」, 정보가 「해상도 · 받은 / 전체」, 아이콘 down이어야 한다.
 
-        42% · 2.5 MB/s · 00:03:12 · 받은 1024 / total_size "2.00 KB"
-        -> "42% · Downloading · 2.5 MB/s · 3:12 left", "1080p · 1.00 KB / 2.00 KB", "down"
+        42.0% · 2.5 MB/s · 00:03:12 · 받은 1024 / total_size "2.00 KB"
+        -> "42.0% · Downloading · 2.5 MB/s · 3:12 left", "1080p · 1.00 KB / 2.00 KB", "down"
         """
         item = _item(DownloadState.RUNNING)
         item.download_progress = 42
@@ -165,7 +165,7 @@ class TestSlotTexts:
         item.total_size = "2.00 KB"
         texts = card_text.slot_texts(item)
         assert (texts.status, texts.size, texts.icon) == (
-            "42% · Downloading · 2.5 MB/s · 3:12 left",
+            "42.0% · Downloading · 2.5 MB/s · 3:12 left",
             "1080p · 1.00 KB / 2.00 KB",
             "down",
         )
@@ -188,33 +188,33 @@ class TestSlotTexts:
     ) -> None:
         """구간을 자르는 단계면 상태 글이 「% · 단계 · 자른 수/전체」여야 한다.
 
-        구간 2개 · post_process · 자른 1개 · 92% · cut_preparing False/True
-        -> "92% · Cutting · 1/2", "92% · Preparing to cut · 1/2"
+        구간 2개 · post_process · 자른 1개 · 92.0% · cut_preparing False/True
+        -> "92.0% · Cutting · 1/2", "92.0% · Preparing to cut · 1/2"
         """
         item = _item(DownloadState.RUNNING, sections=((0, 60), (120, 180)))
         item.post_process = True
         item.sections_done = 1
         item.download_progress = 92
         item.cut_preparing = preparing
-        assert card_text.slot_texts(item).status == f"92% · {word} · 1/2"
+        assert card_text.slot_texts(item).status == f"92.0% · {word} · 1/2"
 
     def test_segment_post_processing_shows_the_stage(self) -> None:
         """세그먼트 카드가 후처리 중이면 상태 글이 「% · Post-processing」이어야 한다.
 
-        m3u8 · post_process · 94% -> "94% · Post-processing"
+        m3u8 · post_process · 94% -> "94.0% · Post-processing"
         """
         item = _item(DownloadState.RUNNING, content_type="m3u8")
         item.post_process = True
         item.download_progress = 94
-        assert card_text.slot_texts(item).status == "94% · Post-processing"
+        assert card_text.slot_texts(item).status == "94.0% · Post-processing"
 
-    @pytest.mark.parametrize(("pending", "expected"), [(False, "59% · Paused"), (True, "Paused")])
+    @pytest.mark.parametrize(("pending", "expected"), [(False, "59.0% · Paused"), (True, "Paused")])
     def test_paused_shows_progress_unless_paused_while_preparing(
         self, pending: bool, expected: str
     ) -> None:
         """일시정지 카드면 「% · Paused」(준비 중에 멈췄으면 「Paused」만), 아이콘 pause여야 한다.
 
-        59% · prepare_pending False/True -> "59% · Paused", "Paused"
+        59% · prepare_pending False/True -> "59.0% · Paused", "Paused"
         """
         item = _item(DownloadState.PAUSED)
         item.download_progress = 59

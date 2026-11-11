@@ -619,8 +619,11 @@ def test_monitor_logs_the_speed_over_the_time_spent_receiving_right_after_a_resu
     관측 루프를 돌림. 첫 측정 뒤 0.5초 동안 4MiB를 받고 → 일시정지 1.6초 → 재개
     (스레드 수 조정과 진행 통지는 대역이다 — 속도 측정과 그 줄만 본다)
     -> 재개 뒤 남은 속도 줄(log_thread_adjust) 1건, 그 속도가 4MiB ÷ 0.5초 = 8MB/s 둘레다(6 초과 10 미만).
-       틱 하나로 보면 4.0이다
+       sample 하나(1초)로 보면 4.0이다
     """
+    # 재개 측정의 나눗셈만 잰다 — 받은 4MiB가 재개 측정 하나에 다 들어가게 sample 간격을 1초로 둔다
+    # (0.25초면 일시정지 전의 sample이 먼저 받은 양을 가져간다, #557)
+    monkeypatch.setattr(base_module, "SAMPLE_SECONDS", 1.0)
     engine, data, _logger, _output, _finished, _failures = _recording_engine(
         tmp_path, monkeypatch, throttle=0.0
     )

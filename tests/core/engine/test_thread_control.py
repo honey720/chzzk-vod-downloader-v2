@@ -1,12 +1,12 @@
 """목표 스레드 조정기의 판정 (#347) — 표본 묶음 견주기 · 아래 수준 재확인 · 재탐침 간격.
 
-조정기에 1초 간격의 틱을 넣는다. 실제 시간과 네트워크는 쓰지 않는다. 틱의 속도는 "지금 목표가
-몇일 때 얼마가 나오는가"로 준다.
+조정기에 판정 sample 간격(`EVAL_SECONDS` — 1초)의 틱을 넣는다. 실제 시간과 네트워크는 쓰지 않는다.
+틱의 속도는 "지금 목표가 몇일 때 얼마가 나오는가"로 준다.
 """
 
 from collections.abc import Callable, Iterable, Iterator
 
-from core.engine.thread_control import ThreadController
+from core.engine.thread_control import EVAL_SECONDS, ThreadController
 
 
 class Line:
@@ -19,7 +19,7 @@ class Line:
         self.targets: list[int] = []  # 틱마다, 그 틱을 넣은 뒤의 목표
 
     def tick(self, speed: float) -> None:
-        self.now += 1.0
+        self.now += EVAL_SECONDS
         self.controller.step(self.now, speed)
         self.targets.append(self.controller.target)
 
