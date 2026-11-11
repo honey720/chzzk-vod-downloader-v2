@@ -30,6 +30,7 @@ import logging
 import os
 import tempfile
 import threading
+import time
 
 from PySide6.QtCore import QObject, QThreadPool, Signal
 
@@ -59,6 +60,12 @@ UNDO_LIMIT = 50  # 되살릴 수 있는 지우기 수(#561) — 한 번에 여�
 # 엔진이 쥔 카드의 상태(#561) — 받는 중(자르는 중 · 합치는 중 포함) · 일시정지. 지울 때 엔진을 멈추고, 되살리면 대기다.
 # 목록의 BUSY_STATES(app/widgets/widget.py)와 같은 값 — 뷰모델은 위젯 모듈을 import하지 않는다
 WORKING_STATES = (DownloadState.RUNNING, DownloadState.PAUSED)
+# 카드의 속도 · 남은 시간 글을 바꾸는 간격(초) — 진행 통지가 0.25초마다 와도 이 글은 1초에 한 번만
+# 바꾼다(읽기 쉽게, 오너 2026-11-10). 진행률 · 받은 크기 · 막대는 통지마다 바뀐다 (#557)
+RATE_TEXT_SECONDS = 1.0
+# 그 간격의 이 배가 지나면 바꾼다 — 통지 간격이 시계 단위만큼 흔들려도 넷째 통지에서 바뀌게
+RATE_TEXT_FILL = 0.9
+_clock = time.monotonic  # 속도 · 남은 시간 글의 시계 — 테스트가 바꿔 끼운다
 
 
 def probe_writable(directory: str, timeout_s: float = _WRITE_PROBE_TIMEOUT_S) -> tuple[bool, str]:
@@ -620,9 +627,16 @@ class ContentViewModel(QObject):
             self.downloadRequested.emit(item)
 
     def update_progress(self, rem, size, spd, prog, item: ContentItem) -> None:
-        item.download_remain_time = rem
+        """진행 통지 하나를 카드에 적는다 — 속도 · 남은 시간 글만 1초에 한 번 바꾼다 (#557)."""
+        now = _clock()
+        if (
+            item.rate_text_at is None
+            or now - item.rate_text_at >= RATE_TEXT_SECONDS * RATE_TEXT_FILL
+        ):
+            item.download_remain_time = rem
+            item.download_speed = spd
+            item.rate_text_at = now
         item.download_size = size
-        item.download_speed = spd
         item.download_progress = prog
 
         self.model.notifyChanged(item)

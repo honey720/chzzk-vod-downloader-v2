@@ -717,7 +717,7 @@ def test_preparing_card_shows_the_text_and_a_bar_without_a_value(qtbot) -> None:
     """준비 중인 카드는 "Preparing"을 적고 막대를 값 없는 상태(범위 0~0)로 둬야 한다.
 
     받는 중 카드에 preparing을 켬 -> 상태 문구 == "Preparing", 막대의 최대값 == 0
-    끔 -> 상태 문구가 "42%"로 시작, 막대의 최대값 == 100, 값 == 42
+    끔 -> 상태 문구가 "42.0%"로 시작, 막대의 최대값 == 100, 값 == 42
     """
     window, widget = _card("video", DownloadState.RUNNING, preparing=True)
     qtbot.addWidget(window)
@@ -730,7 +730,7 @@ def test_preparing_card_shows_the_text_and_a_bar_without_a_value(qtbot) -> None:
     widget.setData(widget.item, 0)
     _pump()
 
-    assert shown(widget.statusLabel).startswith("42%")
+    assert shown(widget.statusLabel).startswith("42.0%")
     assert (widget.progressBar.maximum(), widget.progressBar.value()) == (10000, 4200)
 
 
@@ -1297,7 +1297,7 @@ def test_card_shows_preparing_until_the_engine_reports_progress(qtbot, window, m
 
     "준비 중"을 켜는 지연을 0으로 둠. 전역 다운로드 → 타이머가 돈 뒤 → 첫 진행 통지
     -> 켜진 동안: preparing, 상태 문구 "Preparing", 막대의 최대값 0
-    -> 통지 뒤: preparing이 꺼짐, 상태 문구가 "0%"로 시작, 막대의 최대값 100
+    -> 통지 뒤: preparing이 꺼짐, 상태 문구가 "0.0%"로 시작, 막대의 최대값 100
     """
     win, item, engine = window
     win.downloadViewModel._prepareTimer.setInterval(0)
@@ -1313,7 +1313,7 @@ def test_card_shows_preparing_until_the_engine_reports_progress(qtbot, window, m
     qtbot.waitUntil(lambda: not item.preparing, timeout=3000)
     _pump()
 
-    assert shown(widget.statusLabel).startswith("0%")
+    assert shown(widget.statusLabel).startswith("0.0%")
     assert widget.progressBar.maximum() == 10000
 
 
@@ -1342,7 +1342,7 @@ def test_a_short_prepare_never_shows_preparing(qtbot, window) -> None:
     _pump()
 
     assert not item.preparing
-    assert shown(widget.statusLabel).startswith("0%")
+    assert shown(widget.statusLabel).startswith("0.0%")
 
 
 def test_preparing_is_cleared_when_the_download_fails_while_preparing(qtbot, window) -> None:
@@ -1412,7 +1412,7 @@ def test_restarted_card_shows_nothing_of_the_previous_run_while_preparing(qtbot,
     """중단한 카드를 다시 시작하면 준비가 끝날 때까지 지난 실행의 진행률 · 크기가 보이지 않아야 한다.
 
     지연 60초(준비 중 문구는 켜지지 않는다). 받기 시작 → 진행 400/1000 통지(40%) → 중단 → 다시 시작 → 카드를 다시 그리게 함
-    -> 다시 시작한 직후: download_progress == 0, 상태 문구가 "0%"로 시작한다, 크기에 "400.00 B"가 없다
+    -> 다시 시작한 직후: download_progress == 0, 상태 문구가 "0.0%"로 시작한다, 크기에 "400.00 B"가 없다
     """
     win, item, engine = window
     win.downloadViewModel._prepareTimer.setInterval(60_000)
@@ -1435,16 +1435,16 @@ def test_restarted_card_shows_nothing_of_the_previous_run_while_preparing(qtbot,
 
     assert item.downloadState == DownloadState.RUNNING and len(engine.submissions) == 2
     assert item.download_progress == 0
-    assert shown(widget.statusLabel).startswith("0%")
+    assert shown(widget.statusLabel).startswith("0.0%")
     assert "400.00 B" not in shown(widget.fileSizeLabel)
 
 
 def test_card_paused_while_preparing_says_paused_without_a_percent(qtbot, window) -> None:
-    """준비 중에 일시정지한 카드는 진행률 없이 "Paused"만 적고, 준비가 끝나면 "0% · Paused"여야 한다.
+    """준비 중에 일시정지한 카드는 진행률 없이 "Paused"만 적고, 준비가 끝나면 "0.0% · Paused"여야 한다.
 
     받기 시작 → 진행 400/1000(40%) → 중단 → 다시 시작 → 준비가 끝나기 전에 일시정지 → 준비 끝 통지
     -> 일시정지 직후: 카드 PAUSED, 상태 문구 == "Paused"
-    -> 준비 끝 통지 뒤: 카드 PAUSED, 상태 문구 == "0% · Paused"
+    -> 준비 끝 통지 뒤: 카드 PAUSED, 상태 문구 == "0.0% · Paused"
     """
     win, item, engine = window
     win.downloadViewModel._prepareTimer.setInterval(60_000)
@@ -1466,7 +1466,7 @@ def test_card_paused_while_preparing_says_paused_without_a_percent(qtbot, window
     _pump()
 
     assert while_preparing == (DownloadState.PAUSED, "Paused")
-    assert (item.downloadState, shown(widget.statusLabel)) == (DownloadState.PAUSED, "0% · Paused")
+    assert (item.downloadState, shown(widget.statusLabel)) == (DownloadState.PAUSED, "0.0% · Paused")
 
 
 def test_prepare_timer_is_stopped_when_the_work_is_cleaned_up(qtbot, window) -> None:

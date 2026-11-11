@@ -19,6 +19,7 @@ from collections.abc import Callable
 
 import pytest
 
+from core.engine.thread_control import EVAL_SECONDS
 from core.sources.file_downloader import FileDownloader
 from core.models.download_data import DownloadData
 
@@ -83,7 +84,7 @@ def simulate(
     rng = random.Random(seed)
     targets, speeds = [], []
     for tick in range(ticks):
-        clock[0] = float(tick + 1)  # 틱은 1초 간격이다
+        clock[0] = (tick + 1) * EVAL_SECONDS  # 틱 하나가 판정 sample 하나(1초)다 (#557)
         speed = min(data.adjust_threads * cap, band(tick) * jitter(rng))
         data.speed_mb = speed
         scaler._adjust_threads()

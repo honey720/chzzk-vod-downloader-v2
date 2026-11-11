@@ -71,6 +71,7 @@ import requests
 
 from core.engine.segment_space import SectionUse, SegmentSpace, check_space
 from core.engine.thread_control import (
+    EVAL_FILL,
     EVAL_SECONDS,
     TARGET_CAP,
     EvalBinner,
@@ -117,9 +118,11 @@ _RESTART_MARGIN = (
 # 다운로드가 실패하지도 못하고 멈춘다. 값은 범위 · 세그먼트 요청이 써 오던 그대로다.
 REQUEST_TIMEOUT = 30  # 초 — 연결과 응답 대기 각각의 한도
 _MONITOR_POLL_SECONDS = 0.1  # 관측 루프가 다음 표본을 기다리며 정지 · 상태 변화를 살피는 간격(초)
-# 관측 루프의 세 일 (#557) — 표본기 · 스레드 조정 · 진행 통지. 조정은 표본을 1초 묶음
-# (thread_control.EVAL_SECONDS)으로 받아 표본 간격과 무관하고, 통지는 자기 주기로 낸다
-SAMPLE_SECONDS = 1.0  # 표본기가 회선 바이트 · 속도를 재는 간격(초)
+# 관측 루프의 세 일 (#557) — sampler · 스레드 조정 · 진행 통지. 조정은 sample을 1초 evaluation
+# window(thread_control.EVAL_SECONDS)로 받아 sample 간격과 무관하고, 통지는 자기 주기로 낸다
+# sampler가 회선 바이트 · 속도를 재는 간격(초) — 진행 막대가 1%씩 끊기지 않게 자주 잰다(오너 2026-11-10).
+# 조정은 1초 window로, 통지의 속도 값은 최근 1초 평균이라 이 값과 무관하다
+SAMPLE_SECONDS = 0.25
 PROGRESS_SECONDS = SAMPLE_SECONDS  # 진행 통지(ProgressEvent) 간격(초) — 표본 간격의 정수배
 
 # ============ 오류 재큐 상한 (#131) ============
@@ -606,7 +609,12 @@ class BaseDownloader(ABC):
         # 표본을 조정기의 1초 판정 표본으로 묶는다 (#557) — 조정기와 함께 만든다
         self._binner: EvalBinner | None = None
         self._measured_at: float | None = None  # 속도를 마지막으로 잰 시각 (#347)
-        self._sample_seconds = SAMPLE_SECONDS  # 마지막 표본이 잰 시간(초) — 묶음의 가중치
+        # 마지막 sample이 잰 시간(초) — window의 가중치. 재기 전(관측 루프 밖에서 조정만 부르는 테스트 ·
+        # 시뮬레이션)에는 sample 하나를 1초로 본다 — 1초 틱으로 부르면 sample 하나가 window 하나다
+        self._sample_seconds = EVAL_SECONDS
+        # 최근 1초의 sample (잰 시간, 속도) — 통지의 속도 값(1초 평균)을 셈한다 (#557)
+        self._recent_samples: deque[tuple[float, float]] = deque()
+        self._logged_at: float | None = None  # 속도 줄을 마지막으로 남긴 시각 — 1초에 한 번
         # 슬롯 → (알린 시각, KB/s). 저속 판정이 다른 연결과 견주는 데 쓴다 (#347)
         self._conn_speeds: dict[int, tuple[float, float]] = {}
         self._on_progress: ProgressCallback = on_progress or (lambda event: None)
@@ -1910,15 +1918,15 @@ class BaseDownloader(ABC):
         if self._threads is None:
             cap = min(self.s.max_threads, TARGET_CAP)
             self._threads = ThreadController(self.s.adjust_threads, cap)
-            self._binner = EvalBinner(SAMPLE_SECONDS)
+            self._binner = EvalBinner()
         evaluation = self._binner.add(Sample(self._now(), total_speed, self._sample_seconds))
         if evaluation is None:
-            return  # 묶음이 아직 덜 찼다
+            return  # window가 아직 덜 찼다
         before = self._threads.target
         self._threads.step(evaluation.now, evaluation.speed)
         if self._threads.target != before:
             self.s.adjust_threads = self._threads.target
-            self.logger.log_thread_adjust(self.s.adjust_threads, total_speed)
+            self.logger.log_thread_adjust(self.s.adjust_threads, evaluation.speed)
 
     def measure_speed(self, since_pause: bool = False) -> None:
         """직전 측정 뒤로 받은 바이트를 그 사이의 실제 시간으로 나눠 속도(MB/s)를 계산한다.
@@ -1948,16 +1956,47 @@ class BaseDownloader(ABC):
         self._measured_at = now
         self._measured_paused = paused
 
-        with self.lock:
-            future_count = self.s.future_count
         if since_pause:
+            self._recent_samples.clear()  # 일시정지 앞의 sample은 통지 속도에 섞지 않는다
             if active is not None and active >= _MIN_ACTIVE_SECONDS:
                 self.s.speed_mb = speed / (1024 * 1024) / active
+                self._recent_samples.append((active, self.s.speed_mb))
+            self._log_speed(now, self.s.speed_mb)  # 재개 직후 한 줄
         else:
             # MB/s로 변환
             self.s.speed_mb = speed / (1024 * 1024)
-        avg_speed = self.s.speed_mb / future_count if future_count > 0 else 0
-        self.logger.log_thread_debug(future_count, self.s.speed_mb, avg_speed)
+            self._recent_samples.append((self._sample_seconds, self.s.speed_mb))
+            while (
+                len(self._recent_samples) > 1
+                and sum(s for s, _ in self._recent_samples) - self._recent_samples[0][0]
+                >= EVAL_SECONDS * EVAL_FILL
+            ):
+                self._recent_samples.popleft()  # 최근 1초만 남긴다
+            if self._logged_at is None or now - self._logged_at >= EVAL_SECONDS * EVAL_FILL:
+                self._log_speed(now, self.window_speed())  # 속도 줄은 1초에 한 번 — 최근 1초 값
+
+    def _log_speed(self, now: float, speed_mb: float) -> None:
+        """속도 줄(활성 수 · 총 속도 · 연결당 속도)을 남긴다 — 1초에 한 번 · 재개 때 (#557)."""
+        self._logged_at = now
+        with self.lock:
+            future_count = self.s.future_count
+        avg_speed = speed_mb / future_count if future_count > 0 else 0
+        self.logger.log_thread_debug(future_count, speed_mb, avg_speed)
+
+    def window_speed(self) -> float:
+        """최근 1초(``EVAL_SECONDS``)의 총 처리량(MB/s) — 진행 통지 · 남은 시간이 쓰는 속도 (#557).
+
+        sample 간격이 짧아도 표시 속도가 그 순간값으로 흔들리지 않게 시간 가중 평균을 낸다. sample이
+        하나뿐이면 그 값을 그대로 쓴다(sample 간격 1초에서는 나누기 전의 속도와 같다). 재기 전이면
+        ``speed_mb``다.
+        """
+        recent = self._recent_samples
+        if not recent:
+            return self.s.speed_mb
+        if len(recent) == 1:
+            return recent[0][1]
+        seconds = sum(s for s, _ in recent)
+        return sum(s * v for s, v in recent) / seconds if seconds > 0 else self.s.speed_mb
 
     # ============ 진행 상황 업데이트 ============
 
@@ -1987,7 +2026,7 @@ class BaseDownloader(ABC):
             ProgressEvent(
                 downloaded_size=self.s.total_downloaded_size,
                 total_size=self._progress_total_size(),
-                speed=self.s.speed_mb,
+                speed=self.window_speed(),
                 active_threads=future_count,
             )
         )

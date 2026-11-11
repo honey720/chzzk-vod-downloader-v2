@@ -18,6 +18,7 @@ import statistics
 from dataclasses import dataclass
 
 EVAL_SECONDS = 1.0  # 판정 표본 하나가 대표하는 시간(초) — 조정 규칙의 통계가 전제하는 1초 (#557)
+EVAL_FILL = 0.9  # 표본 시간의 합이 묶음 길이의 이 배에 닿으면 묶음이 찬다 — EvalBinner docstring
 CLIMB_STEP = 4  # 한 번에 올리는 목표 스레드 수 (#112)
 TARGET_CAP = 48  # 목표 스레드 상한 — 서버 부하 상한 (#112)
 # 인상 유효 판정의 요구폭: 선형 기대 이득(step/target)의 이 비율. 낮게 잡는 이유는 #112 —
@@ -66,20 +67,23 @@ class EvalBinner:
     조정 규칙(``ThreadController``)은 1초 표본을 전제한다. 표본기가 더 짧게 재도 이 묶음을 거쳐
     규칙에는 늘 1초 표본이 들어간다 — 표본 간격(``SAMPLE_SECONDS``)을 바꿔도 결정의 뜻이 같다.
 
-    묶음은 표본 개수로 센다: ``EVAL_SECONDS ÷ 표본 간격``(반올림, 1 이상). 표본기는 단조 시계의
-    마감으로 일정하게 재므로 개수가 곧 시간이다. 묶음의 처리량은 받은 양 ÷ 잰 시간(속도 × 시간의 합
-    ÷ 시간의 합)이다. 표본이 하나뿐이면 그 표본의 속도를 그대로 쓴다 — 곱하고 나누는 반올림이 없어
-    표본 간격이 1초일 때 지금까지와 같은 값이 규칙에 들어간다.
+    묶음은 표본이 잰 시간의 합으로 센다 — 합이 묶음 길이의 ``EVAL_FILL``배에 닿으면 찬다. 표본
+    간격이 0.25초면 넷, 1초면 하나다. 개수가 아니라 시간으로 세는 것은 표본 간격과 다른 간격으로
+    부르는 쪽(1초 틱으로 조정 규칙을 재는 테스트 · 시뮬레이션)에서도 같은 뜻이 되게 하려는 것이다.
+    ``EVAL_FILL``은 표본 간격이 시계 단위만큼 흔들려도(넷의 합이 0.96초) 차고, 표본 하나가 모자라면
+    (셋의 합 0.75초) 차지 않는 값이다. 묶음의 처리량은 받은 양 ÷ 잰 시간(속도 × 시간의 합 ÷ 시간의
+    합)이다. 표본이 하나뿐이면 그 표본의 속도를 그대로 쓴다 — 곱하고 나누는 반올림이 없어 표본 간격이
+    1초일 때 나누기 전과 같은 값이 규칙에 들어간다.
     """
 
-    def __init__(self, sample_seconds: float) -> None:
-        self._size = max(1, round(EVAL_SECONDS / sample_seconds))  # 묶음 하나의 표본 수
+    def __init__(self, window_seconds: float = EVAL_SECONDS) -> None:
+        self._window = window_seconds  # 묶음 길이(초)
         self._samples: list[Sample] = []
 
     def add(self, sample: Sample) -> Sample | None:
         """표본 하나를 넣는다 — 묶음이 차면 판정 표본(끝 시각 · 묶음 처리량 · 묶음 시간)을 돌려준다."""
         self._samples.append(sample)
-        if len(self._samples) < self._size:
+        if sum(s.seconds for s in self._samples) < self._window * EVAL_FILL:
             return None
         samples, self._samples = self._samples, []
         if len(samples) == 1:
