@@ -488,7 +488,8 @@ def test_ok_and_cancel_follow_the_style_order_and_ok_is_filled(qtbot, tmp_path, 
 
     def ground(button: QWidget) -> QColor:
         image = button.grab().toImage()
-        return image.pixelColor(4 * image.devicePixelRatio(), image.height() // 2)
+        x = round(4 * image.devicePixelRatio())  # 왼쪽 안쪽 4px — 좌표는 정수 화소
+        return image.pixelColor(x, image.height() // 2)
 
     assert ok.parent() is dialog.buttonBox and cancel.parent() is dialog.buttonBox
     assert (ok.x() < cancel.x()) == OK_FIRST[layout]
