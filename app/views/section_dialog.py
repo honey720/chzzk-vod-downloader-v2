@@ -251,6 +251,7 @@ class SectionRow(QWidget):
         self.numberLabel = QLabel(self)
         self.numberLabel.setObjectName("sectionNumberLabel")
         self.numberLabel.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.numberLabel.ensurePolished()  # 폭은 QSS 글꼴이 입혀진 뒤에 잰다
         self.numberLabel.setMinimumWidth(self.numberLabel.fontMetrics().horizontalAdvance("00"))
         layout.addWidget(self.numberLabel)
 
@@ -329,9 +330,10 @@ class SectionRow(QWidget):
         return edit
 
     def _rowButton(self, text: str, name: str) -> QPushButton:
+        # 면 · 테두리가 있는 상자 버튼 — 기본 버튼 규칙을 받고 크기만 #sectionDeleteButton이 줄인다
+        # (프로토 구간 행, #586). 흐린 글자 버튼(role="subtle")이 아니다
         button = QPushButton(text, self)
         button.setObjectName(name)
-        button.setProperty("role", "subtle")
         button.setAutoDefault(False)  # 칸에서 Enter를 눌러도 이 버튼이 눌리지 않는다
         button.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         return button
@@ -365,6 +367,8 @@ class SectionEditDialog(QDialog):
         self._dragTimer = QTimer(self)
         self._dragTimer.setInterval(DRAG_SCROLL_MS)
         self._dragTimer.timeout.connect(self._dragAutoScroll)
+        # 첫 초점을 아직 두지 않았는지 — 창이 보이고 행이 생긴 뒤 한 번 둔다(_placeFirstFocus)
+        self._firstFocusPending = True
         self.setObjectName("sectionEditDialog")
         self.setModal(True)
         self.setupUi()
@@ -520,6 +524,7 @@ class SectionEditDialog(QDialog):
         for widget in (self.headerLabel, self.addButton, self.scrollArea, self.hintLabel):
             widget.setVisible(ready)
         self._refresh()
+        self._placeFirstFocus()
 
     # ---- 끝을 맞췄다는 안내 ----
 
@@ -625,12 +630,46 @@ class SectionEditDialog(QDialog):
             row.handle.dropped.connect(self._dropAt)
             row.deleteButton.clicked.connect(lambda _=False, r=index: self._onDeleteOrClear(r))
             self._rowLayout.insertWidget(index, row)
+            # 바로 보이게 한다 — 레이아웃은 아직 안 보인 행을 건너뛰어, 그대로면 옮긴 행의 자리를
+            # 이번 차례에 잴 수 없다(_revealRow). 창이 숨어 있으면 창이 보일 때 함께 보인다
+            row.show()
             self._rows.append(row)
             install_tips(row)  # 새 행의 손잡이 · ✕ 툴팁도 말풍선으로(#550)
         # 목록의 값은 _refresh가 칸에 넣는다 — 빈 시각(빈 글)이 아닌 값은 새 칸의 값과 달라
         # 언제나 들어가고, 넣은 값은 0이어도 전부 밝게 보인다
         self._refresh()
         self._fitRowWidth()
+        self._placeFirstFocus()
+
+    def _placeFirstFocus(self) -> None:
+        """창을 연 뒤 첫 초점을 한 번 둔다 — 열자마자 친 Enter가 창을 닫지 않게(#586).
+
+        행이 있으면(조회가 끝남) 첫 행의 시작 시분초 칸이다. Tab으로 들어간 것과 같다 — 칸은 초점을 받으면
+        글 전체를 고른 상태가 된다. 조회 중 · 조회 실패면 창 자신에 둔다 — 버튼에 두면 Enter가 그 버튼을
+        누른다(취소면 창이 닫힌다). 창 자신의 Enter는 아무 일도 하지 않고(``keyPressEvent``) Esc는 취소다.
+        조회 중이었으면 조회가 끝나 행이 생길 때 다시 불려 첫 행 칸으로 옮긴다.
+
+        창이 보일 때(``showEvent``) · 조회 상태가 바뀔 때 · 행을 다시 만들 때 부른다. 첫 행 칸에 두면
+        그 뒤로는 아무것도 하지 않는다.
+        """
+        if not self._firstFocusPending or not self.isVisible():
+            return
+        if self._viewmodel.state == STATE_READY and self._rows:
+            self._firstFocusPending = False
+            self._rows[0].startEdit.clockEdit.setFocus(Qt.FocusReason.TabFocusReason)
+        else:
+            self.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _revealRow(self, index: int) -> None:
+        """그 행이 목록의 보이는 범위에 다 들어오게 스크롤한다 — 이미 다 보이면 움직이지 않는다(#586).
+
+        행을 옮긴 뒤(끌어 놓기 · Alt+↑/↓) 부른다. 행 위젯은 방금 다시 만들어졌으므로 레이아웃을 먼저
+        돌려 자리를 정한다.
+        """
+        if not 0 <= index < len(self._rows):
+            return
+        self._rowLayout.activate()
+        self.scrollArea.ensureWidgetVisible(self._rows[index], 0, 0)
 
     def _fitRowWidth(self) -> None:
         """스크롤 영역의 최소 폭을 행 하나가 다 들어가는 폭으로 둔다 — 창이 그보다 좁아지지 않는다.
@@ -802,7 +841,12 @@ class SectionEditDialog(QDialog):
         self._onInput()
         self._commitFocused()
         focused = self._partAt(self.focusWidget())
+        if focused is not None:
+            # 초점을 창에 잠시 맡긴다 — 맡기지 않으면 행을 다시 만들며 숨는 칸이 초점을 Tab 차례의 다음
+            # 칸으로 넘기고, 스크롤 영역이 그 칸 쪽으로 스크롤한다(이미 보이던 행인데 목록이 움직인다)
+            self.setFocus(Qt.FocusReason.OtherFocusReason)
         self._viewmodel.moveRow(row, target)
+        self._revealRow(target)  # 옮겨 간 행이 보이게 — 초점이 그 행의 칸으로 간다
         if focused is None:
             return
         at, column, part = focused
@@ -948,6 +992,7 @@ class SectionEditDialog(QDialog):
         super().showEvent(event)
         for button in (self.okButton, self.cancelButton):
             button.setDefault(False)
+        self._placeFirstFocus()
 
     def keyPressEvent(self, event) -> None:
         """Enter는 초점이 있는 버튼만 누른다. 그 밖의 Enter는 아무것도 하지 않는다.

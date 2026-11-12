@@ -569,7 +569,6 @@ QLineEdit[invalid="true"]:focus {
 #sectionHintLabel,
 #sectionWaitHintLabel,
 #cardEditWaitHintLabel,
-#sectionNumberLabel,
 #sectionNoticeLabel,
 #sectionNoteLabel,
 #sectionSumLabel,
@@ -581,6 +580,15 @@ QLineEdit[invalid="true"]:focus {
 #sectionErrorLabel {
     font-size: @fontSizeMeta;
     color: @stateFailed;
+}
+
+/* 구간 번호(#sectionNumberLabel)는 따로 적지 않는다 — 본문 색 · 보통 크기(QWidget 규칙, 프로토 구간 행 #586) */
+
+/* 구간 행 ✕ — 면 · 테두리 · 호버 · 눌림 · 꺼짐은 기본 버튼 규칙(QPushButton) 그대로, 글 크기와 여백만 줄인
+ * 작은 상자(프로토 구간 행 #586). 카드의 ✕(role="icon")와는 다른 버튼이다 */
+QPushButton#sectionDeleteButton {
+    font-size: @fontSizeMeta;
+    padding: 5px 10px;
 }
 
 /* 구간 길이의 합이 영상보다 길다는 알림 — 오류(빨강)보다 약하고 흐린 안내보다는 또렷하게 */
