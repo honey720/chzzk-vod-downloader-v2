@@ -3412,12 +3412,13 @@ def test_row_height_is_the_same_with_and_without_a_message(qtbot, tmp_path, basi
     assert dialog._rows[0].height() == plain and blank.height() == plain
 
 
-def test_message_line_sits_right_under_the_fields_with_no_gap(qtbot, tmp_path, basis) -> None:
-    """안내 줄은 칸의 줄 바로 아래에 붙어야 한다 — 그 사이에 간격이 없다.
+def test_message_line_sits_one_band_pad_under_the_fields(qtbot, tmp_path, basis) -> None:
+    """안내 줄은 칸의 줄 아래로 띠 여백(sectionRowHoverPad)만큼 떨어져야 한다.
 
     행 A(10분~20분) 하나
-    -> 행의 높이 == 위 빈 자리(sectionRowHoverPad) + 칸의 줄에서 가장 큰 위젯의 높이 + 안내 줄의 높이,
-       안내 줄의 위쪽 == 칸의 줄에서 가장 낮은 아래쪽 + 1
+    -> 행의 높이 == 위 빈 자리(sectionRowHoverPad) + 칸의 줄에서 가장 큰 위젯의 높이
+       + 안내 줄 위 간격(sectionRowHoverPad) + 안내 줄의 높이,
+       안내 줄의 위쪽 == 칸의 줄에서 가장 낮은 아래쪽 + 1 + sectionRowHoverPad
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -3439,9 +3440,9 @@ def test_message_line_sits_right_under_the_fields_with_no_gap(qtbot, tmp_path, b
     tallest = max(part.height() for part in line)
     lowest = max(part.geometry().bottom() for part in line)
 
-    pad = theme.METRICS["sectionRowHoverPad"]  # 호버 띠의 위 여백 자리(#586)
-    assert row.height() == pad + tallest + row.messageSlot.height()
-    assert row.messageSlot.y() == lowest + 1
+    pad = theme.METRICS["sectionRowHoverPad"]  # 호버 띠의 위 · 아래 여백 자리(#586)
+    assert row.height() == pad + tallest + pad + row.messageSlot.height()
+    assert row.messageSlot.y() == lowest + 1 + pad
 
 
 def test_a_message_too_long_for_the_row_is_elided_on_one_line(qtbot, tmp_path, basis) -> None:

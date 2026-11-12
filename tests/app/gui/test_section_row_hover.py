@@ -456,6 +456,37 @@ def test_the_band_height_is_the_same_with_and_without_a_message(
     assert heights[0] == heights[1]
 
 
+def test_the_message_glyphs_start_below_the_band_of_their_row(
+    qtbot, tmp_path, basis, scheme: str
+) -> None:  # noqa: F811
+    """오류 행에 들어가면 안내 글자 위 끝이 띠 아래 끝 + 2 이상이고 글자 줄에 띠 색 화소가 없어야 한다.
+
+    행 A · BAD(시작 ≥ 끝 오류) · C, 다크 · 라이트, 2번 행에 들어감
+    -> 글자가 있는 첫 y >= 띠 아래 끝 + 2,
+       글자가 있는 줄의 안내 라벨 자리 화소에 rowHoverBg가 없고 windowBg가 있음
+    """
+    dialog = _editor(qtbot, tmp_path, basis, [A, BAD, C])
+    row = dialog._rows[1]
+    _enter(row)
+    assert row.errorLabel.isVisible() and _hovered(dialog) == [1], "전제: 오류 행을 칠함"
+    image = _grab(dialog)
+    band = _band_rows(dialog, row, image)
+    ink = _ink_rows(dialog, row.errorLabel, image)
+    assert band and ink, "띠 · 글자가 칠해졌다"
+
+    assert ink[0] >= band[-1] + 2
+    tokens = theme.current_tokens()
+    hover, window = QColor(tokens["rowHoverBg"]), QColor(tokens["windowBg"])
+    label = row.errorLabel.mapTo(dialog, QPoint(0, 0))
+    behind = [
+        image.pixelColor(x, y)
+        for y in ink
+        for x in range(label.x(), label.x() + row.errorLabel.width())
+    ]
+    assert window in behind
+    assert hover not in behind
+
+
 def test_the_bands_of_the_first_and_last_rows_are_not_clipped(qtbot, tmp_path, basis) -> None:  # noqa: F811
     """목록 맨 위 행 · 맨 아래 행(안내 글 있음)의 띠가 목록 끝에서 잘리지 않아야 한다.
 
@@ -514,17 +545,17 @@ def test_the_hover_does_not_break_across_a_row_boundary(qtbot, tmp_path, basis) 
 def test_the_row_pad_keeps_the_window_minimum_width(
     qtbot, tmp_path, basis, monkeypatch: pytest.MonkeyPatch
 ) -> None:  # noqa: F811
-    """행 위 빈 자리는 행 높이만 4px 늘리고 창 최소폭은 그대로 두어야 한다.
+    """행 위 빈 자리 · 입력칸 줄과 안내 줄 사이는 행 높이만 4px씩 늘리고 창 최소폭은 그대로 두어야 한다.
 
     행 A · B, sectionRowHoverPad 4 · 0으로 각각 창을 엶
-    -> 행 높이 차 == 4, 창 minimumSizeHint 폭이 같음
+    -> 행 높이 차 == 8(위 빈 자리 4 + 안내 줄 위 간격 4), 창 minimumSizeHint 폭이 같음
     """
     dialog = _editor(qtbot, tmp_path, basis, [A, B])
     height = dialog._rows[1].height()
     monkeypatch.setitem(theme.METRICS, "sectionRowHoverPad", 0)
     bare = _editor(qtbot, tmp_path, basis, [A, B])
 
-    assert height - bare._rows[1].height() == PAD
+    assert height - bare._rows[1].height() == 2 * PAD
     assert dialog.minimumSizeHint().width() == bare.minimumSizeHint().width()
 
 
