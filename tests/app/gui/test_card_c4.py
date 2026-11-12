@@ -2401,3 +2401,91 @@ class TestOuterMargin:
         assert bar.isVisible(), "전제: 스크롤바가 보인다"
         room = _left(window, bar) - _right(window, _card(window, items[0]))
         assert room >= RING_REACH, f"카드 ↔ 스크롤바 {room}px"
+
+    def test_left_line_is_the_outer_margin(self, window: VodDownloader, qtbot: QtBot) -> None:
+        """메뉴바 첫 버튼 · 첫 카드의 왼쪽 끝은 창 왼쪽에서 12px이어야 한다(#580).
+
+        창 900, 카드 3장 -> 메뉴 첫 버튼 왼쪽 끝 == 12, 첫 카드 왼쪽 끝 == 12
+        """
+        items = _add(window, *[D.WAITING] * 3)
+        _show(window, qtbot)
+        _settle()
+        assert _left(window, window.menuDownloadButton) == OUTER_MARGIN
+        assert _left(window, _card(window, items[0])) == OUTER_MARGIN
+
+    def test_ring_does_not_reach_into_the_scrollbar(
+        self, window: VodDownloader, qtbot: QtBot
+    ) -> None:
+        """스크롤바가 보일 때 focus ring의 오른쪽 바깥 끝이 스크롤바 왼쪽 끝을 넘지 않아야 한다(#580).
+
+        창 900, 카드 12장, 첫째에 키보드 초점 -> focus ring 오른쪽 바깥 끝 <= 스크롤바 왼쪽 끝(창 좌표)
+        """
+        items = _add(window, *[D.WAITING] * 12)
+        _show(window, qtbot)
+        _settle()
+        bar = window.listView.verticalScrollBar()
+        assert bar.isVisible(), "전제: 스크롤바가 보인다"
+        _focus_by_key(qtbot, window, items[0])
+        ring = _ring(window)
+        qtbot.waitUntil(ring.isVisible)
+        assert _right(window, ring) <= _left(window, bar)
+
+
+# ---- 스크롤바 굵기 (#580, 오너 2026-11-11) ----
+
+OUTER_MARGIN = 12  # 창 좌우 바깥 여백(px) — 지시 값(제품 토큰을 읽지 않는다)
+SCROLLBAR_WIDTH = 8  # 세로 스크롤바 폭 · 가로 스크롤바 높이(px) — 지시 값
+
+
+class TestScrollBarWidth:
+    def test_vertical_scrollbar_is_8_wide_and_matches_the_token(
+        self, window: VodDownloader, qtbot: QtBot
+    ) -> None:
+        """카드 목록의 세로 스크롤바는 QSS로 적용된 폭이 8px이고 토큰 `scrollBarWidth`와 같아야 한다.
+
+        창 900, 카드 12장(스크롤바 보임) -> 스크롤바 width() == 8 == METRICS["scrollBarWidth"]
+        """
+        _add(window, *[D.WAITING] * 12)
+        _show(window, qtbot)
+        _settle()
+        bar = window.listView.verticalScrollBar()
+        assert bar.isVisible(), "전제: 스크롤바가 보인다"
+        assert bar.width() == SCROLLBAR_WIDTH
+        assert bar.width() == theme.METRICS["scrollBarWidth"]
+
+    def test_horizontal_scrollbar_is_as_thick_as_the_vertical(self, window: VodDownloader) -> None:
+        """메인 창 가로 스크롤바의 높이는 카드 목록 세로 스크롤바의 폭과 같아야 한다.
+
+        두 스크롤바의 크기 힌트(QSS 적용 뒤) -> 가로 높이 == 세로 폭 == 8
+        """
+        horizontal = window.windowScrollArea.horizontalScrollBar()
+        vertical = window.listView.verticalScrollBar()
+        for bar in (horizontal, vertical):
+            bar.ensurePolished()
+        assert horizontal.sizeHint().height() == vertical.sizeHint().width() == SCROLLBAR_WIDTH
+
+    def test_handle_corner_is_at_most_half_the_width(self) -> None:
+        """스크롤바 손잡이 모서리 반경은 스크롤바 폭의 절반 이하여야 한다.
+
+        METRICS["scrollHandleRadius"] * 2 <= METRICS["scrollBarWidth"]
+        """
+        assert theme.METRICS["scrollHandleRadius"] * 2 <= theme.METRICS["scrollBarWidth"]
+
+    def test_scrollbar_rules_read_only_the_tokens(self) -> None:
+        """style.qss의 스크롤바 폭 · 높이 · 손잡이 모서리는 토큰 자리표시자만 써야 한다.
+
+        style.qss의 QScrollBar 규칙 넷(세로 · 가로 막대, 세로 · 가로 손잡이)
+        -> width · height는 @scrollBarWidth, border-radius는 @scrollHandleRadius
+        """
+        path = main_module.resource_path(theme.QSS_RELATIVE_PATH)
+        with open(path, encoding="utf-8") as qss:
+            text = qss.read()
+        rules = {
+            "QScrollBar:vertical": ("width", "@scrollBarWidth"),
+            "QScrollBar:horizontal": ("height", "@scrollBarWidth"),
+            "QScrollBar::handle:vertical": ("border-radius", "@scrollHandleRadius"),
+            "QScrollBar::handle:horizontal": ("border-radius", "@scrollHandleRadius"),
+        }
+        for selector, (name, token) in rules.items():
+            body = text.split(f"\n{selector} {{", 1)[1].split("}", 1)[0]
+            assert f"{name}: {token};" in body, (selector, body)
