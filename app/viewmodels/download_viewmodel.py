@@ -225,9 +225,8 @@ class DownloadViewModel(QObject):
                 # 않고 그때의 경로를 그대로 쓴다. 새로 배정하면 남아 있는 구간 파일 때문에
                 # 모든 구간이 새 이름(" (n)")을 받는다
                 paths = reserve_section_output_paths(resume.paths, resume.done)
-                if paths != resume.paths:
-                    # 끝내지 않은 구간의 이름이 그사이 다른 것에 차지돼 바뀌었다 — 기록도 맞춘다
-                    resume = dataclasses.replace(resume, paths=paths)
+                # 끝내지 않은 구간의 이름이 그사이 다른 것에 차지돼 바뀌었어도 기록의 경로는 앞 실행의
+                # 것 그대로 넘긴다 — 엔진이 그 경로에서 남긴 본문을 찾아 새 이름으로 옮긴다 (#392)
                 item.sections_done = len(resume.done)
             else:
                 item.section_retry = None

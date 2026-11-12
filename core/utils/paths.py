@@ -25,7 +25,8 @@ import re
 import shutil
 import tempfile
 import threading
-from collections.abc import Collection, Iterable
+from collections.abc import Collection, Iterable, Iterator
+from contextlib import contextmanager
 
 from core.utils.disk_speed import measure_write_speed
 from core.models.plan import MAX_SELECTIONS
@@ -131,12 +132,20 @@ def build_section_output_paths(
     구간에만 " (n)"을 붙인다 — `{제목} 1080p_1 (1).mp4`. 다운로드를 시작할 때 부르고,
     그 다운로드가 끝나면(성공·실패·중단) ``release_output_paths``로 예약을 푼다 —
     file 다운로더는 run()이 끝날 때 스스로 푼다.
+
+    그 이름에서 파생한 임시 파일(``section_body_path_for`` · ``partial_source_path_for``)이 디스크에
+    있어도 " (n)"을 붙인다. 일부 구간이 실패한 다운로드는 예약을 푼 뒤에도 그 파일을 재시도에 쓰려고
+    남긴다 — 그 이름을 다른 카드가 받으면 같은 임시 파일을 열어 덮어쓰고, 그 카드의 재시도가 남의
+    파일을 옮기거나 지운다 (#392). 이름이 같은 자리의 기록을 쓰는 재시도는
+    ``reserve_section_output_paths``를 거치므로 자기 임시 파일 때문에 이름이 바뀌지 않는다.
     """
     paths = []
     with _reserved_lock:
         for number in range(1, count + 1):
             candidate = _candidate_path(directory, title, resolution, f"_{number}")
-            path = _first_free(candidate, lambda p: _path_key(p) in _reserved_paths)
+            path = _first_free(
+                candidate, lambda p: _path_key(p) in _reserved_paths or _has_kept_files(p)
+            )
             _reserved_paths.add(_path_key(path))
             paths.append(path)
     return tuple(paths)
@@ -168,12 +177,33 @@ def release_output_paths(paths: Iterable[str]) -> None:
             _reserved_paths.discard(_path_key(path))
 
 
+@contextmanager
+def hold_output_paths(paths: Iterable[str]) -> Iterator[bool]:
+    """그 산출물 경로들이 모두 비어 있으면 함께 예약하고 참을 낸다 — 블록을 나가면 푼다 (#392).
+
+    하나라도 다른 다운로드가 예약하고 있으면 아무것도 예약하지 않고 거짓을 낸다. 검사와 예약이 한
+    잠금 안에서 끝나므로, 참을 받은 블록 안에서는 그 이름을 다른 다운로드가 배정받지 못한다 — 그
+    이름에서 파생한 임시 파일을 옮기거나 지우는 동안 쓴다.
+    """
+    keys = {_path_key(path) for path in paths}
+    with _reserved_lock:
+        held = not keys & _reserved_paths
+        if held:
+            _reserved_paths.update(keys)
+    try:
+        yield held
+    finally:
+        if held:
+            with _reserved_lock:
+                _reserved_paths.difference_update(keys)
+
+
 def partial_source_path_for(output_path: str) -> str:
     """구간 다운로드가 받은 바이트를 모아 둘 임시 원본 파일의 경로를 산출물 파일명에서 파생한다 (#309).
 
     산출물과 같은 디렉토리에 둔다 — 크기가 구간들의 합만큼이라 유저가 고른 저장 위치의
-    공간을 쓴다. 첫 구간의 산출물 경로를 넘긴다 — 그 이름은 배정할 때 다른 다운로드와
-    겹치지 않게 정해졌으므로 임시 원본도 겹치지 않는다.
+    공간을 쓴다. 첫 구간의 산출물 경로를 넘긴다 — 그 이름은 배정할 때 다른 다운로드의 예약 ·
+    남긴 임시 파일과 겹치지 않게 정해졌으므로 임시 원본도 겹치지 않는다 (#392).
 
     접두사를 붙인 이름이 파일명 상한(255바이트)을 넘으면 산출물 이름을 잘라 맞추고
     자르기 전 이름의 해시 6자리를 붙인다 — 잘린 뒤 같아지는 이름끼리도 구분된다.
@@ -189,6 +219,13 @@ def section_body_path_for(output_path: str) -> str:
     디렉토리에 두어 이름 바꾸기가 같은 볼륨 안에서 끝난다.
     """
     return _prefixed_sibling(output_path, "CVDv2_body_")
+
+
+def _has_kept_files(output_path: str) -> bool:
+    """그 산출물 이름에서 파생한 본문 · 경계 원본 임시 파일이 디스크에 있는지 — 앞 실행이 남긴 것 (#392)."""
+    return os.path.exists(section_body_path_for(output_path)) or os.path.exists(
+        partial_source_path_for(output_path)
+    )
 
 
 def _prefixed_sibling(output_path: str, prefix: str) -> str:

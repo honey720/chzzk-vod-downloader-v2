@@ -92,6 +92,7 @@ from core.sections.mp4_writer import (
 )
 from core.utils.paths import (
     cut_temp_dir_for,
+    hold_output_paths,
     partial_source_path_for,
     release_output_paths,
     section_body_path_for,
@@ -430,7 +431,20 @@ class FileDownloader(BaseDownloader):
         source_path = partial_source_path_for(content.selection_paths[0])
         pending = frozenset(range(len(picked))) - self._done_before
         plans = self._section_plans(head, index, picked, pending)
-        stored = self._stored_layout(resume, index, picked, plans, head.data) if resume else None
+        stored = (
+            self._stored_layout(resume, content.selection_paths, index, picked, plans, head.data)
+            if resume is not None
+            else None
+        )
+        kept_source = (
+            self._adopt_kept_files(resume, content.selection_paths, pending)
+            if stored is not None
+            else None
+        )
+        if kept_source is None:
+            stored = None
+        if resume is not None and stored is None:
+            self._drop_kept_files(resume, content.selection_paths, pending, source_path)
         if resume is not None and stored is None and head is resume.mp4_head:
             # 남긴 것을 다시 쓸 수 없어 새로 받는다. 새로 받는 바이트는 지금의 파일의 것이다 —
             # 남겨 둔 moov가 아니라 지금의 moov로 범위를 정한다(그 사이 파일이 바뀌었을 수 있다)
@@ -442,7 +456,7 @@ class FileDownloader(BaseDownloader):
         if stored is not None:
             # 이전 실행이 전송을 끝낸 경계 원본과 본문을 그대로 쓴다 — 받지 않는다
             layout = stored
-            source_path = resume.source_path
+            source_path = kept_source
             self._source_sections = resume.source_sections
         else:
             # 끝나지 않은 구간의 범위만 받는다. 이전 실행이 없으면 모든 구간이다
@@ -786,9 +800,115 @@ class FileDownloader(BaseDownloader):
             raise Mp4Error(MP4_UNSUPPORTED, "moov가 파일 앞부분에 없다")
         return index, [selection_byte_ranges(index, selection) for selection in content.selections]
 
+    @staticmethod
+    def _renamed_sections(
+        resume: SectionResume, paths: tuple[str, ...], pending: frozenset[int]
+    ) -> list[int]:
+        """끝나지 않은 구간 가운데 이번 실행의 경로가 앞 실행의 경로와 다른 것 — 재시도가 새 이름을 줬다."""
+        return [number for number in sorted(pending) if paths[number] != resume.paths[number]]
+
+    @staticmethod
+    def _kept_at(recorded: str, current: str) -> str:
+        """남긴 파일이 있는 자리 — 기록의 경로에 없고 이번 실행 이름의 경로에 있으면 그쪽이다 (#392).
+
+        앞 실행이 남긴 것을 새 이름으로 옮긴 실행이 기록을 남기지 않고 끝나면(중단) 기록은 옛
+        경로를 가리킨 채이고 파일은 새 이름에 있다. 다음 재시도도 같은 새 이름을 받으므로 그쪽을 본다.
+        """
+        if not os.path.exists(recorded) and os.path.exists(current):
+            return current
+        return recorded
+
+    def _adopt_kept_files(
+        self, resume: SectionResume, paths: tuple[str, ...], pending: frozenset[int]
+    ) -> str | None:
+        """새 이름을 받은 구간의 남긴 본문 · 경계 원본을 이번 실행의 이름으로 옮기고, 쓸 경계 원본의 경로를 돌려준다 (#392).
+
+        재시도는 지우지 못한 출력 파일이 이름을 차지한 구간에 새 이름(" (n)")을 준다. 남긴 본문은
+        앞 실행의 이름에서 파생한 경로에 있다 — 그대로 두면 이번 실행이 찾지 못하고, 이번 실행이 또
+        실패하면 남기는 기록(이번 실행의 경로)으로도 찾지 못한다. 그래서 새 이름의 본문 경로로 옮긴다.
+        경계 원본은 첫 구간의 이름에서 파생한다 — 첫 구간이 새 이름을 받았으면 그것도 옮긴다. 그래야
+        기록의 첫 경로와 경계 원본의 이름이 늘 짝이 맞는다.
+
+        옛 이름을 다른 다운로드가 예약하고 있으면 그 이름의 파일은 그 다운로드의 것일 수 있다 — 옮기지
+        않고 None을 돌려준다. None이면 호출하는 쪽은 남긴 것을 쓰지 않고 다시 받는다. 일부만 옮긴
+        뒤 실패했으면 옮긴 것은 새 이름에 있다 — 다시 받는 실행이 그 자리를 새로 연다.
+
+        옮기는 동안 옛 이름을 이 실행이 예약해 둔다(`hold_output_paths`) — 검사한 뒤 옮기기 전에 다른
+        다운로드가 그 이름을 배정받아 같은 이름의 임시 파일을 만들면 그 파일을 옮기게 된다.
+        """
+        renamed = self._renamed_sections(resume, paths, pending)
+        old_names = {resume.paths[number] for number in renamed}
+        if paths[0] != resume.paths[0]:
+            old_names.add(resume.paths[0])  # 경계 원본의 이름은 첫 구간의 옛 이름에서 파생했다
+        with hold_output_paths(old_names) as held:
+            if not held:
+                return None
+            return self._move_kept_files(resume, paths, renamed)
+
+    def _move_kept_files(
+        self, resume: SectionResume, paths: tuple[str, ...], renamed: list[int]
+    ) -> str | None:
+        """`_adopt_kept_files`의 옮기기 — 옛 이름을 예약한 채로 부른다. 옮기지 못하면 None."""
+        moves = []
+        for number in renamed:
+            current = section_body_path_for(paths[number])
+            moves.append(
+                (self._kept_at(section_body_path_for(resume.paths[number]), current), current)
+            )
+        source = self._kept_at(resume.source_path, partial_source_path_for(paths[0]))
+        if paths[0] != resume.paths[0]:
+            moves.append((source, partial_source_path_for(paths[0])))
+            source = partial_source_path_for(paths[0])
+        for kept, current in moves:
+            if kept == current:
+                continue
+            try:
+                os.replace(kept, current)
+            except OSError as e:
+                logger.warning("남긴 임시 파일을 새 이름으로 옮기지 못함 — 다시 받는다: %s", e)
+                return None
+        return source
+
+    def _drop_kept_files(
+        self,
+        resume: SectionResume,
+        paths: tuple[str, ...],
+        pending: frozenset[int],
+        source_path: str,
+    ) -> None:
+        """남긴 것을 다시 쓰지 않을 때, 이번 실행이 덮어쓰지 않는 앞 실행의 본문 · 경계 원본을 지운다 (#392).
+
+        이름이 그대로인 구간의 본문과 같은 자리의 경계 원본은 이번 실행이 같은 경로에 새로 연다 —
+        지울 것이 없다. 새 이름을 받은 구간의 옛 본문과, 다른 자리의 경계 원본은 아무도 지우지 않아
+        남는다. 옛 이름을 다른 다운로드가 예약하고 있으면 그 이름의 파일은 그 다운로드의 것일 수
+        있어 지우지 않는다. 지우지 못해도 다운로드는 이어 간다 — 남는 것은 임시 파일뿐이다.
+
+        지우는 동안 그 옛 이름을 이 실행이 예약해 둔다(`hold_output_paths`) — 검사와 지우기 사이에 다른
+        다운로드가 그 이름을 배정받아 만든 임시 파일을 지우지 않게.
+        """
+        # (지울 파일, 그 파일의 주인을 가리는 옛 이름 — 이번 실행의 이름이면 None)
+        stale = [
+            (section_body_path_for(resume.paths[number]), resume.paths[number])
+            for number in self._renamed_sections(resume, paths, pending)
+        ]
+        # 경계 원본의 이름은 기록의 첫 경로에서 파생했다. 그 경로가 이번 실행의 것이면 예약은 이번 실행의 것이다
+        if resume.source_path is not None and resume.source_path != source_path:
+            owner = resume.paths[0] if resume.paths[0] != paths[0] else None
+            stale.append((resume.source_path, owner))
+        for path, owner in stale:
+            with hold_output_paths([owner] if owner is not None else []) as held:
+                if not held:
+                    continue  # 다른 다운로드가 그 이름을 예약하고 있다 — 그 다운로드의 파일일 수 있다
+                try:
+                    if os.path.exists(path):
+                        os.remove(path)
+                except OSError as e:
+                    logger.warning("앞 실행의 임시 파일을 지우지 못함: %s", e)
+
     def _stored_layout(
         self,
         resume: SectionResume,
+        paths: tuple[str, ...],
         index: Mp4Index,
         picked: list,
         plans: dict[int, SectionFilePlan | None],
@@ -800,6 +920,9 @@ class FileDownloader(BaseDownloader):
         남긴 크기 그대로 있고, 그 배치로 만든 머리와 파일의 앞부분이 같고, 끝나지 않은 구간마다
         본문 파일이 옮긴 바이트를 다 담은 크기로 있을 때다. 내용 검사는 없다 — 전송을 끝낸 실행이
         남긴 크기와 머리로 확인한다.
+
+        남긴 파일은 기록의 경로에서 찾고, 없으면 이번 실행의 이름(``paths``)에서 찾는다 —
+        ``_kept_at`` (#392). 읽기만 하고 옮기지 않는다.
         """
         if resume.source_path is None or resume.source_sections is None:
             return None
@@ -808,12 +931,13 @@ class FileDownloader(BaseDownloader):
             return None
         layout = plan_partial(index, self._boundary_ranges(index, picked, resume.source_sections))
         head = build_head(head_data, layout, index.moov_range)
+        source = self._kept_at(resume.source_path, partial_source_path_for(paths[0]))
         try:
-            if os.path.getsize(resume.source_path) != resume.source_size:
+            if os.path.getsize(source) != resume.source_size:
                 return None
             if resume.source_size != len(head) + layout.download_size:
                 return None
-            with open(resume.source_path, "rb") as f:
+            with open(source, "rb") as f:
                 if f.read(len(head)) != head:
                     return None
             for number in pending:
@@ -821,7 +945,10 @@ class FileDownloader(BaseDownloader):
                 # 영상 전체 구간은 받기만 하면 끝난다 — 끝나지 않았다면 다 받지 못한 것이다
                 if plan is None:
                     return None
-                body = section_body_path_for(resume.paths[number])
+                body = self._kept_at(
+                    section_body_path_for(resume.paths[number]),
+                    section_body_path_for(paths[number]),
+                )
                 if os.path.getsize(body) < plan.encoded_offset:
                     return None
         except OSError:
