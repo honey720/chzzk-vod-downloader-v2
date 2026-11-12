@@ -459,10 +459,10 @@ def test_the_band_height_is_the_same_with_and_without_a_message(
 def test_the_message_glyphs_start_below_the_band_of_their_row(
     qtbot, tmp_path, basis, scheme: str
 ) -> None:  # noqa: F811
-    """오류 행에 들어가면 안내 글자 위 끝이 띠 아래 끝 + 2 이상이고 글자 줄에 띠 색 화소가 없어야 한다.
+    """오류 행에 들어가면 안내 라벨이 띠 바로 밑에서 시작하고 글자 줄에 띠 색 화소가 없어야 한다.
 
     행 A · BAD(시작 ≥ 끝 오류) · C, 다크 · 라이트, 2번 행에 들어감
-    -> 글자가 있는 첫 y >= 띠 아래 끝 + 2,
+    -> 안내 라벨 위 끝 == 띠 아래 끝 + 1, 글자가 있는 첫 y > 띠 아래 끝,
        글자가 있는 줄의 안내 라벨 자리 화소에 rowHoverBg가 없고 windowBg가 있음
     """
     dialog = _editor(qtbot, tmp_path, basis, [A, BAD, C])
@@ -474,10 +474,12 @@ def test_the_message_glyphs_start_below_the_band_of_their_row(
     ink = _ink_rows(dialog, row.errorLabel, image)
     assert band and ink, "띠 · 글자가 칠해졌다"
 
-    assert ink[0] >= band[-1] + 2
+    label = row.errorLabel.mapTo(dialog, QPoint(0, 0))
+    # 글자가 라벨 위 끝에서 몇 px 아래에 그려지는지는 글꼴마다 다르다 — 라벨 자리로 잰다
+    assert label.y() == band[-1] + 1
+    assert ink[0] > band[-1]
     tokens = theme.current_tokens()
     hover, window = QColor(tokens["rowHoverBg"]), QColor(tokens["windowBg"])
-    label = row.errorLabel.mapTo(dialog, QPoint(0, 0))
     behind = [
         image.pixelColor(x, y)
         for y in ink
