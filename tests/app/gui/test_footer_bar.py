@@ -455,9 +455,11 @@ def test_changing_the_save_location_changes_only_the_free_space(
     other = tmp_path / "other"
     other.mkdir()
     slow_disk.free = 50 * GIB
-    with qtbot.waitSignal(win.freeSpace.measured, timeout=10000):
-        assert win.saveLocations.choose(str(other))
+    assert win.saveLocations.choose(str(other))
     assert win.saveLocations.current() == str(other), "전제: 저장 위치가 바뀌었다"
+    # measured는 경로를 가리지 않는다 — 1초 갱신이 시작한 앞 위치의 측정이 먼저 닿을 수 있어 새 위치의 값을 기다린다.
+    # 측정기는 값을 적은 뒤 같은 메인 스레드에서 measured를 내므로, 값이 보이면 하단바도 이미 고쳐졌다
+    qtbot.waitUntil(lambda: win.freeSpace.value(str(other)) == 50 * GIB)
     assert _footer_texts(win) == {**before, "free": "50.0 GB"}
 
 
