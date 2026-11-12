@@ -89,7 +89,7 @@ NEXT_AFTER_ENTER = "clock"
 MESSAGE_ERROR = "error"  # 오류 — 그 행을 확인할 수 없다
 MESSAGE_NOTICE = "notice"  # 끝이 영상 끝을 넘는 중 · 영상 끝으로 맞췄다는 안내
 MESSAGE_NOTE = "note"  # 무시 안내 — 완전히 빈 행
-_INITIAL_SIZE = (560, 420)  # 창의 첫 크기(px) — 행 여섯 개쯤이 스크롤 없이 보인다
+_INITIAL_SIZE = (560, 420)  # 창의 첫 크기(px) — 행 다섯 개쯤이 스크롤 없이 보인다(Malgun 4.9행)
 # 행 사이의 간격(px). 행마다 아래에 안내 줄 한 줄이 늘 서 있어 그 줄이 행 사이를 띄운다 —
 # 간격을 따로 두면 20행의 높이가 안내 줄만큼 더 길어진다
 _ROW_SPACING = 0
