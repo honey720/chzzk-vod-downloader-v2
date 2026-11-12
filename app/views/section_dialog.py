@@ -40,7 +40,7 @@
 import sys
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPaintEvent, QShowEvent
+from PySide6.QtGui import QColor, QEnterEvent, QMouseEvent, QPainter, QPaintEvent, QShowEvent
 from PySide6.QtWidgets import (
     QAbstractButton,
     QApplication,
@@ -73,6 +73,7 @@ from app.widgets.eliding_label import ElidingLabel, TwoLineLabel
 from app.widgets.scroll_padding import ScrollBarPadding
 from app.widgets.tip_bubble import install_tips
 from app.widgets.timecode_edit import TimecodeEdit, TimePointEdit
+from app.widgets import view as _pointer  # widget_under_pointer — 테스트가 그 모듈에서 갈아 끼운다
 
 # 칸의 폭을 재는 본보기 글자 — 칸에 깔리는 글자 그대로다
 _CLOCK_SAMPLE = "00:00:00"
@@ -234,10 +235,22 @@ class SectionRow(QWidget):
     사라져도, 안내가 바뀌어도 행의 높이가 같아 아래 행들이 오르내리지 않는다. 오류 · 끝을
     맞춘 안내 · 무시 안내가 이 한 줄을 함께 쓰고 한 번에 하나만 보인다(``showMessage``). 줄바꿈하지 않는다 —
     넘치는 글은 말줄임하고 전문은 툴팁에 둔다(``ElidingLabel``).
+
+    포인터가 있는 행은 바탕을 칠해 번호 · 시각 칸 · 길이 · ✕가 한 줄임을 보인다(행 호버, #586). 들어감 ·
+    나감은 ``hoverChanged``로 창에 알리고, 칠할지는 창이 정한다(``setHovered``) — 끄는 중 · 창이
+    비활성이면 칠하지 않고, 행을 다시 만든 뒤에는 창이 포인터 밑 행을 다시 맞춘다. 자식(칸 · ✕ · 손잡이)
+    위로 가도 Qt는 행에 나감을 보내지 않아 칠한 채 남는다.
     """
+
+    hoverChanged = Signal(bool)  # 포인터가 이 행에 들어왔다(True) · 나갔다(False)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setObjectName("sectionRow")
+        # 행 호버 바탕은 전역 QSS(#sectionRow[hover="true"])가 칠한다 — 평범한 QWidget은 QSS 바탕을
+        # 그리지 않아 이 속성이 있어야 한다
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        self._hovered = False
         column = QVBoxLayout(self)
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(_MESSAGE_GAP)
@@ -342,6 +355,26 @@ class SectionRow(QWidget):
         """칸 번호(START · END)의 시각 입력 — 시분초 칸과 프레임 칸의 묶음."""
         return self.startEdit if column == START else self.endEdit
 
+    def enterEvent(self, event: QEnterEvent) -> None:
+        super().enterEvent(event)
+        self.hoverChanged.emit(True)
+
+    def leaveEvent(self, event: QEvent) -> None:
+        super().leaveEvent(event)
+        self.hoverChanged.emit(False)
+
+    def isHovered(self) -> bool:
+        """행 호버 바탕을 칠한 상태인지."""
+        return self._hovered
+
+    def setHovered(self, hovered: bool) -> None:
+        """행 호버 바탕(``surface``)을 켜고 끈다 — 같은 값이면 아무것도 하지 않는다(#586)."""
+        if hovered == self._hovered:
+            return
+        self._hovered = hovered
+        self.setProperty("hover", hovered)
+        theme.repolish(self)
+
 
 class SectionEditDialog(QDialog):
     """구간 편집 창. 뷰모델의 상태를 그리고 입력을 뷰모델에 넘긴다."""
@@ -369,6 +402,10 @@ class SectionEditDialog(QDialog):
         self._dragTimer.timeout.connect(self._dragAutoScroll)
         # 첫 초점을 아직 두지 않았는지 — 창이 보이고 행이 생긴 뒤 한 번 둔다(_placeFirstFocus)
         self._firstFocusPending = True
+        # 호버 바탕을 칠한 행 — 늘 하나 이하다. 행을 다시 만든 뒤 · 굴린 뒤 · 창이 다시 활성일 때
+        # 다음 턴에 포인터 밑 행으로 다시 맞춘다(_scheduleRehover)
+        self._hoverRow: SectionRow | None = None
+        self._rehoverPending = False
         self.setObjectName("sectionEditDialog")
         self.setModal(True)
         self.setupUi()
@@ -431,6 +468,8 @@ class SectionEditDialog(QDialog):
         self._scrollPadding = ScrollBarPadding(self.scrollArea, self._rowLayout, right)
         # 행의 양옆에 드는 폭(px) — 왼쪽 여백 + 오른쪽 여백(스크롤바가 보이면 바가 그 자리에 든다)
         self._rowSideWidth = margins.left() + right
+        # 굴리면 포인터 밑의 행이 바뀐다 — 행 호버를 다시 맞춘다
+        bar.valueChanged.connect(self._scheduleRehover)
         layout.addWidget(self.scrollArea, 1)
         # 끄는 동안 들어갈 자리에 긋는 선 — 행 컨테이너 위에 겹쳐 놓는다(레이아웃에 들지 않는다).
         # 색은 전역 QSS가 칠한다(강조색)
@@ -603,6 +642,7 @@ class SectionEditDialog(QDialog):
         self._endDrag()  # 끌던 행이 사라진다 — 끌기를 버린다
         old, self._rows = self._rows, []  # 먼저 비운다 — 사라지는 칸의 알림을 받지 않는다
         self._typing = None
+        self._hoverRow = None  # 칠한 행도 사라진다 — 새 행 가운데 포인터 밑 행을 다음 턴에 맞춘다
         for row in old:
             self._rowLayout.removeWidget(row)
             row.hide()  # 부모를 떼지 않는다 — 떼면 파괴될 때까지 최상위 창이 된다
@@ -629,6 +669,7 @@ class SectionEditDialog(QDialog):
             row.handle.dragMoved.connect(self._dragMove)
             row.handle.dropped.connect(self._dropAt)
             row.deleteButton.clicked.connect(lambda _=False, r=index: self._onDeleteOrClear(r))
+            row.hoverChanged.connect(lambda on, r=row: self._onRowHover(r, on))
             self._rowLayout.insertWidget(index, row)
             # 바로 보이게 한다 — 레이아웃은 아직 안 보인 행을 건너뛰어, 그대로면 옮긴 행의 자리를
             # 이번 차례에 잴 수 없다(_revealRow). 창이 숨어 있으면 창이 보일 때 함께 보인다
@@ -640,6 +681,66 @@ class SectionEditDialog(QDialog):
         self._refresh()
         self._fitRowWidth()
         self._placeFirstFocus()
+        self._scheduleRehover()
+
+    # ---- 행 호버(#586) ----
+    # Qt는 포인터가 움직일 때만 들어감 · 나감을 보낸다. 행을 다시 만들거나(놓기 · Alt+↑/↓ · 추가 · 삭제)
+    # 목록을 굴리면 포인터 밑의 행이 바뀌어도 알림이 없다 — 그 뒤 포인터 밑 행을 다시 맞춘다
+
+    def _hoverAllowed(self) -> bool:
+        """지금 행 호버를 칠해도 되는지 — 끄는 중이 아니고 창이 보이며 활성이어야 한다."""
+        return self._drag is None and self.isVisible() and self.isActiveWindow()
+
+    def _setHoverRow(self, row: SectionRow | None) -> None:
+        """호버 바탕을 그 행 하나에만 칠한다 — None이면 모두 끈다."""
+        if row is self._hoverRow:
+            return
+        previous, self._hoverRow = self._hoverRow, row
+        if previous is not None and isValid(previous):
+            previous.setHovered(False)
+        if row is not None:
+            row.setHovered(True)
+
+    def hoverRow(self) -> SectionRow | None:
+        """호버 바탕을 칠한 행 — 없으면 None."""
+        return self._hoverRow
+
+    def _onRowHover(self, row: SectionRow, entered: bool) -> None:
+        """행의 들어감 · 나감 — 끄는 중 · 창이 비활성이면 칠하지 않는다."""
+        if row not in self._rows:
+            return  # 다시 만들며 사라지는 행이다
+        if entered:
+            if self._hoverAllowed():
+                self._setHoverRow(row)
+        elif self._hoverRow is row:
+            self._setHoverRow(None)
+
+    def _scheduleRehover(self) -> None:
+        """호버 다시 맞추기를 다음 이벤트 루프 턴에 한 번 돌린다 — 한 조작에서 여러 번 불려도 한 번."""
+        if not self._rehoverPending:
+            self._rehoverPending = True
+            QTimer.singleShot(0, self, self._rehover)
+
+    def _rehover(self) -> None:
+        """포인터 밑의 행을 칠하고 그 밖의 행은 끈다 — 끄는 중 · 창이 비활성이면 모두 끈다."""
+        self._rehoverPending = False
+        target = None
+        if self._hoverAllowed():
+            under = _pointer.widget_under_pointer()
+            while under is not None and not isinstance(under, SectionRow):
+                under = under.parentWidget()
+            if under in self._rows:
+                target = under
+        self._setHoverRow(target)
+
+    def changeEvent(self, event: QEvent) -> None:
+        """창이 비활성이 되면 행 호버를 끄고, 다시 활성이 되면 포인터 밑 행으로 맞춘다."""
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.ActivationChange:
+            if self.isActiveWindow():
+                self._scheduleRehover()
+            else:
+                self._setHoverRow(None)
 
     def _placeFirstFocus(self) -> None:
         """창을 연 뒤 첫 초점을 한 번 둔다 — 열자마자 친 Enter가 창을 닫지 않게(#586).
@@ -901,6 +1002,8 @@ class SectionEditDialog(QDialog):
             return
         self._onInput()
         self._commitFocused()
+        # 끄는 동안 행 호버를 끈다 — 들어갈 자리 선과 흐려진 행만 보인다(_hoverAllowed가 다시 켜지 않게 막는다)
+        self._setHoverRow(None)
         effect = QGraphicsOpacityEffect(row)
         effect.setOpacity(DRAG_OPACITY)
         row.setGraphicsEffect(effect)
@@ -959,6 +1062,8 @@ class SectionEditDialog(QDialog):
         self.dropLine.hide()
         if drag is not None and isValid(drag["row"]):
             drag["row"].setGraphicsEffect(None)
+        if drag is not None:
+            self._scheduleRehover()  # 놓거나 버린 뒤 포인터 밑 행을 다시 칠한다
         return drag
 
     def _dropAt(self, global_pos: QPoint) -> None:
