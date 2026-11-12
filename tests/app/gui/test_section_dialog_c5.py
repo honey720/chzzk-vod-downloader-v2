@@ -519,7 +519,8 @@ def test_rows_fit_inside_the_list_at_the_narrowest_window(qtbot, tmp_path, basis
 
     행 A · B. 창 폭을 1로 청함(최소폭으로 선다)
     -> 행마다 손잡이 · 번호 · 시작 · ~ · 끝 · 길이 · ✕가 왼쪽부터 차례로 놓이고 서로 겹치지 않음,
-       손잡이의 왼쪽 >= 0, ✕의 오른쪽 끝 <= 목록 뷰포트의 폭, ✕의 폭 >= 그 글자 폭
+       손잡이의 왼쪽 >= 0, ✕의 오른쪽 끝 <= 목록 뷰포트의 폭, ✕의 폭 >= 그 글자 폭,
+       길이 글("00:10:00.000" · "00:01:00.000")의 폭 >= 그 글자 폭(잘리지 않음)
     """
     dialog = _editor(qtbot, tmp_path, basis, [A, B])
     dialog.resize(1, 400)
@@ -545,3 +546,6 @@ def test_rows_fit_inside_the_list_at_the_narrowest_window(qtbot, tmp_path, basis
         assert corner.x() < viewport.width()
         button = row.deleteButton
         assert button.width() >= button.fontMetrics().horizontalAdvance(button.text())
+        length = row.infoLabel
+        assert length.text() in ("00:10:00.000", "00:01:00.000")
+        assert length.width() >= length.fontMetrics().horizontalAdvance(length.text())

@@ -77,6 +77,9 @@ from app.widgets.timecode_edit import TimecodeEdit, TimePointEdit
 # 칸의 폭을 재는 본보기 글자 — 칸에 깔리는 글자 그대로다
 _CLOCK_SAMPLE = "00:00:00"
 _FRAME_SAMPLE = "00"
+_LENGTH_SAMPLE = "00:00:00.000"  # 행의 길이 글 본보기 — 뷰모델 lengthText의 형식 그대로
+# 말줄임 라벨이 글 폭 그대로면 잘린 것으로 재는 몫(px) — ElidingLabel.sizeHint의 +4와 같다
+_LABEL_SLACK = 4
 _EDIT_PADDING = 22  # 칸의 글자 양옆 몫(px) — QSS의 padding과 테두리, 커서 한 줄
 # Enter를 친 뒤 포커스가 갈 곳 — "clock"이면 다음 시각의 시분초 칸(프레임 칸을 건너뛴다),
 # "frame"이면 같은 시각의 프레임 칸을 먼저 지난다. 바꾸기 쉽게 한 곳에 둔다
@@ -259,9 +262,14 @@ class SectionRow(QWidget):
         layout.addWidget(self.rangeLabel)
         layout.addWidget(self.endEdit)
 
-        # 구간 길이(밀리초 표기) — 좁으면 말줄임하고, 잘렸을 때만 전문을 툴팁에 둔다
+        # 구간 길이(밀리초 표기) — 최소폭은 본보기 글이 다 들어가는 폭이다. 창의 최소폭이 행에서
+        # 나오므로(_fitRowWidth) 가장 좁은 창에서도 길이가 잘리지 않는다(프로토 구간 행, #586).
+        # 더 긴 글(100시간 이상)만 말줄임하고, 잘렸을 때만 전문을 툴팁에 둔다
         self.infoLabel = ElidingLabel(self, tip_when_elided=True)
         self.infoLabel.setObjectName("sectionInfoLabel")
+        self.infoLabel.ensurePolished()  # 폭은 QSS 글꼴이 입혀진 뒤에 잰다
+        sample = self.infoLabel.fontMetrics().horizontalAdvance(_LENGTH_SAMPLE)
+        self.infoLabel.setMinimumWidth(sample + _LABEL_SLACK)
         layout.addWidget(self.infoLabel, 1)
 
         self.deleteButton = self._rowButton("✕", "sectionDeleteButton")
