@@ -44,6 +44,8 @@ PAIRS = [
     ("text", "cardPressedBg", 4.5, "카드 글 ↔ 눌린 카드(#561)"),
     ("text", "cardTintFinishedPressed", 4.5, "카드 글 ↔ 눌린 완료 카드(#561)"),
     ("text", "cardTintFailedPressed", 4.5, "카드 글 ↔ 눌린 실패 카드(#561)"),
+    ("text", "cardFillRunning", 4.5, "카드 글 ↔ 받는 중 채움(#582)"),
+    ("textMuted", "cardFillRunning", 4.5, "카드 흐린 글 ↔ 받는 중 채움(#582)"),
     ("text", "cardFillRunningPressed", 4.5, "카드 글 ↔ 눌린 받는 중 채움(#561)"),
     ("text", "cardFillPausedPressed", 4.5, "카드 글 ↔ 눌린 일시정지 채움(#561)"),
     # 흐린 글은 누르는 동안만 놓이는 바탕이라 그림 기준(3.0)으로 잰다 — 4.5에는 못 미치는 자리가 있다
@@ -322,3 +324,41 @@ def test_info_meets_the_bubble_conditions(scheme: str) -> None:
     grounds = [table[name] for name in BUBBLE_GROUNDS] + [OS_NOTICE_GROUND[scheme]]
     assert _contrast(table["onAccent"], table["stateInfo"]) >= 4.5
     assert min(_contrast(table["stateInfo"], g) for g in grounds) >= 3.0
+
+
+# ---------------------------------------------------------------------------
+# 받는 중 채움의 색상(#582)
+# ---------------------------------------------------------------------------
+
+FILL_HUE_TOLERANCE = 3.0  # 받는 중 채움 ↔ 강조색 색상각 허용 차(도) — 지시 값(오너 2026-11-12)
+
+
+def _hue_gap(first: float, second: float) -> float:
+    """두 색상각(도)의 차 — 0 ~ 180."""
+    return abs((first - second + 180) % 360 - 180)
+
+
+@pytest.mark.parametrize("scheme", SCHEMES)
+def test_running_fill_has_the_accent_hue(scheme: str) -> None:
+    """받는 중 채움은 강조색과 OKLCH 색상각이 3도 안이어야 한다.
+
+    두 테마의 cardFillRunning · accent -> |색상각 차| ≤ 3
+    """
+    table = SCHEMES[scheme]
+    gap = _hue_gap(_oklch_hue(table["cardFillRunning"]), _oklch_hue(table["accent"]))
+    assert gap <= FILL_HUE_TOLERANCE, f"{scheme}: {table['cardFillRunning']} 색상각 차 {gap:.1f}"
+
+
+def test_keep_hue_holds_the_hue_where_clipping_would_shift_it() -> None:
+    """채널을 자르면 색상각이 밀리는 색에서 keep_hue는 그 색상각을 3도 안으로 지켜야 한다.
+
+    흰 카드(#ffffff) · 라이트 stateRunning 색상각 · ΔE00 10 · 라이트 본문 · 보조 글
+    -> keep_hue 없이: 색상각 차 > 10(채널 자름으로 밀림 — 전제), keep_hue: 색상각 차 ≤ 3
+    """
+    table = theme.LIGHT
+    source = table["stateRunning"]
+    texts = (table["text"], table["textMuted"])
+    clipped = theme._tinted("#ffffff", source, 10.0, texts)
+    kept = theme._tinted("#ffffff", source, 10.0, texts, keep_hue=True)
+    assert _hue_gap(_oklch_hue(clipped), _oklch_hue(source)) > 10, f"전제: 자르면 밀린다 {clipped}"
+    assert _hue_gap(_oklch_hue(kept), _oklch_hue(source)) <= FILL_HUE_TOLERANCE, kept
