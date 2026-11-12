@@ -399,29 +399,61 @@ def test_a_band_without_a_message_has_equal_pads_around_the_field_line(
     assert all(image.pixelColor(x, y) == window for y in rest)
 
 
-def test_a_band_with_a_message_wraps_the_glyphs_and_keeps_off_the_next_field_line(
+def test_a_band_with_a_message_wraps_only_the_field_line(
     qtbot, tmp_path, basis, scheme: str
 ) -> None:  # noqa: F811
-    """안내 글 있는 행의 띠는 위 4px · 글자 아래 끝 + 4px이고 다음 행 입력칸 줄에 닿지 않아야 한다.
+    """안내 글 있는 행의 띠는 입력칸 줄 위아래 4px이고 그 아래 안내 글자 뒤는 창 바탕이어야 한다.
 
     행 A · BAD(시작 ≥ 끝 오류) · C, 다크 · 라이트, 2번 행에 들어감
-    -> 띠 위 끝 == 입력칸 줄 위 끝 − 4, 띠 아래 끝 == min(글자 아래 끝 + 4, 3번 행 입력칸 줄 위 끝 − 2),
-       띠 아래 끝 > 글자 아래 끝
+    -> 띠 위 끝 == 입력칸 줄 위 끝 − 4, 띠 아래 끝 == 입력칸 줄 아래 끝 + 4,
+       안내 라벨 자리에서 띠 아래 끝 밑의 화소에 rowHoverBg가 없고 windowBg가 있음
     """
     dialog = _editor(qtbot, tmp_path, basis, [A, BAD, C])
-    row, after = dialog._rows[1], dialog._rows[2]
+    row = dialog._rows[1]
     _enter(row)
     assert row.errorLabel.isVisible() and _hovered(dialog) == [1], "전제: 오류 행을 칠함"
     image = _grab(dialog)
     band = _band_rows(dialog, row, image)
     ink = _ink_rows(dialog, row.errorLabel, image)
+    top, bottom = _field_line(row)
     origin = row.mapTo(dialog, QPoint(0, 0)).y()
-    next_line = after.mapTo(dialog, QPoint(0, _field_line(after)[0])).y()
 
     assert band and ink, "띠 · 글자가 칠해졌다"
-    assert band[0] == origin + _field_line(row)[0] - PAD
-    assert band[-1] > ink[-1]
-    assert band[-1] == min(ink[-1] + PAD, next_line - 2)
+    assert band[0] == origin + top - PAD
+    assert band[-1] == origin + bottom + PAD
+    tokens = theme.current_tokens()
+    hover, window = QColor(tokens["rowHoverBg"]), QColor(tokens["windowBg"])
+    label = row.errorLabel.mapTo(dialog, QPoint(0, 0))
+    below = [
+        image.pixelColor(x, y)
+        for y in range(band[-1] + 1, label.y() + row.errorLabel.height())
+        for x in range(label.x(), label.x() + row.errorLabel.width())
+    ]
+    assert below, "전제: 띠 아래에 안내 라벨 자리가 있다"
+    assert window in below
+    assert hover not in below
+
+
+def test_the_band_height_is_the_same_with_and_without_a_message(
+    qtbot, tmp_path, basis, scheme: str
+) -> None:  # noqa: F811
+    """안내 글이 있는 행과 없는 행의 띠 높이가 같아야 한다.
+
+    행 A · BAD(시작 ≥ 끝 오류) · C, 다크 · 라이트, 1번 행에 들어가 잼 -> 2번 행에 들어가 잼
+    -> 두 띠의 칠한 줄 수가 같고 각각 끊김 없이 이어짐
+    """
+    dialog = _editor(qtbot, tmp_path, basis, [A, BAD, C])
+    plain, flagged = dialog._rows[0], dialog._rows[1]
+    heights = []
+    for index, row in ((0, plain), (1, flagged)):
+        _enter(row)
+        assert _hovered(dialog) == [index], "전제: 그 행을 칠함"
+        band = _band_rows(dialog, row, _grab(dialog))
+        assert band and band == list(range(band[0], band[-1] + 1)), "띠가 끊김 없이 칠해졌다"
+        heights.append(len(band))
+    assert not plain.shownMessage() and flagged.errorLabel.isVisible(), "전제: 안내 글 없음 · 있음"
+
+    assert heights[0] == heights[1]
 
 
 def test_the_bands_of_the_first_and_last_rows_are_not_clipped(qtbot, tmp_path, basis) -> None:  # noqa: F811
@@ -429,7 +461,7 @@ def test_the_bands_of_the_first_and_last_rows_are_not_clipped(qtbot, tmp_path, b
 
     행 C · A · B · BAD, 창 높이를 줄여 목록을 굴릴 수 있게 함
     -> 맨 위로 굴려 1번 행에 들어감: 띠 위 끝 == 입력칸 줄 위 끝 − 4 · 목록 보이는 범위 안,
-       맨 아래로 굴려 4번 행에 들어감: 띠 아래 끝 == 글자 아래 끝 + 4 · 목록 보이는 범위 안
+       맨 아래로 굴려 4번 행에 들어감: 띠 아래 끝 == 입력칸 줄 아래 끝 + 4 · 목록 보이는 범위 안
     """
     dialog = _editor(qtbot, tmp_path, basis, [C, A, B, BAD])
     dialog.resize(dialog.width(), dialog.minimumSizeHint().height())
@@ -456,8 +488,7 @@ def test_the_bands_of_the_first_and_last_rows_are_not_clipped(qtbot, tmp_path, b
     assert last.errorLabel.isVisible() and _hovered(dialog) == [3], "전제: 오류 행을 칠함"
     image = _grab(dialog)
     band = _band_rows(dialog, last, image)
-    ink = _ink_rows(dialog, last.errorLabel, image)
-    assert band and ink and band[-1] == ink[-1] + PAD
+    assert band and band[-1] == last.mapTo(dialog, QPoint(0, _field_line(last)[1])).y() + PAD
     assert band[-1] <= view_bottom
 
 
