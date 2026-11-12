@@ -66,6 +66,9 @@ QSS_RELATIVE_PATH = "resources/qss/style.qss"
 METRICS = {
     # ---- 구간 창 ----
     "sectionRowGap": 4,  # 구간 행 안 손잡이 · 번호 · 칸 · 길이 · ✕ 사이(px) — 프로토 구간 행(#586)
+    # 구간 행 호버 띠 ↔ 입력칸 줄 위아래 여백(px). 행 위에 이만큼 빈 자리를 두어 띠가 이웃 행의
+    # 입력칸 · 안내 글에 닿지 않는다(#586)
+    "sectionRowHoverPad": 4,
     # ---- 카드 ----
     "cardPadding": 8,  # 카드 안쪽 여백 — 썸네일·글이 테두리에서 떨어지는 거리
     "cardRowSpacing": 4,  # 카드 안 행 간격(4의 배수 권장) — 줄이면 카드가 낮아져 밀도↑
@@ -168,6 +171,7 @@ DARK = {
     "surfaceHover": "#383c44",
     "surfacePressed": "#282b31",
     "menuHover": "#2c2f35",  # 드롭다운 메뉴 호버 면 — 바 면(surface)에서 한 단계(ΔE00 약 2.9, #536)
+    "rowHoverBg": "#242629",  # 창 바탕 위 목록 행(구간 행) 호버 띠 — 창 바탕에서 밝게 한 단계(ΔE00 약 3.2, #586)
     "shadow": "#000000",  # 말풍선 그림자 — 그릴 때 불투명도를 낮춰 쓴다(#536)
     # 등록 오류 말풍선 면 — 실패 빨강의 색상을 옅게 띤 어두운 면. 글(text) 11.67 · 테두리(stateFailed) 5.10(#536)
     "errorTipBg": "#3d2326",
@@ -237,6 +241,7 @@ LIGHT = {
     "surfaceHover": "#e1e4e9",
     "surfacePressed": "#d5d9df",
     "menuHover": "#f0f1f3",  # 드롭다운 메뉴 호버 면 — 바 면(surface)에서 한 단계(ΔE00 약 3.0, #536)
+    "rowHoverBg": "#e4e5e6",  # 창 바탕 위 목록 행(구간 행) 호버 띠 — 창 바탕에서 어둡게 한 단계(ΔE00 약 3.0, #586)
     "shadow": "#000000",  # 말풍선 그림자 — 그릴 때 불투명도를 낮춰 쓴다(#536)
     # 등록 오류 말풍선 면 — 실패 빨강의 색상을 옅게 띤 밝은 면. 글(text) 14.61 · 테두리(stateFailed) 4.59(#536)
     "errorTipBg": "#fdecec",

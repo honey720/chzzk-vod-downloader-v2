@@ -39,7 +39,7 @@
 
 import sys
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRect, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QEnterEvent, QMouseEvent, QPainter, QPaintEvent, QShowEvent
 from PySide6.QtWidgets import (
     QAbstractButton,
@@ -89,7 +89,7 @@ NEXT_AFTER_ENTER = "clock"
 MESSAGE_ERROR = "error"  # 오류 — 그 행을 확인할 수 없다
 MESSAGE_NOTICE = "notice"  # 끝이 영상 끝을 넘는 중 · 영상 끝으로 맞췄다는 안내
 MESSAGE_NOTE = "note"  # 무시 안내 — 완전히 빈 행
-_INITIAL_SIZE = (560, 420)  # 창의 첫 크기(px) — 행 일곱 개쯤이 스크롤 없이 보인다
+_INITIAL_SIZE = (560, 420)  # 창의 첫 크기(px) — 행 여섯 개쯤이 스크롤 없이 보인다
 # 행 사이의 간격(px). 행마다 아래에 안내 줄 한 줄이 늘 서 있어 그 줄이 행 사이를 띄운다 —
 # 간격을 따로 두면 20행의 높이가 안내 줄만큼 더 길어진다
 _ROW_SPACING = 0
@@ -236,10 +236,15 @@ class SectionRow(QWidget):
     맞춘 안내 · 무시 안내가 이 한 줄을 함께 쓰고 한 번에 하나만 보인다(``showMessage``). 줄바꿈하지 않는다 —
     넘치는 글은 말줄임하고 전문은 툴팁에 둔다(``ElidingLabel``).
 
-    포인터가 있는 행은 바탕을 칠해 번호 · 시각 칸 · 길이 · ✕가 한 줄임을 보인다(행 호버, #586). 들어감 ·
+    포인터가 있는 행은 띠를 칠해 번호 · 시각 칸 · 길이 · ✕가 한 줄임을 보인다(행 호버, #586). 들어감 ·
     나감은 ``hoverChanged``로 창에 알리고, 칠할지는 창이 정한다(``setHovered``) — 끄는 중 · 창이
     비활성이면 칠하지 않고, 행을 다시 만든 뒤에는 창이 포인터 밑 행을 다시 맞춘다. 자식(칸 · ✕ · 손잡이)
     위로 가도 Qt는 행에 나감을 보내지 않아 칠한 채 남는다.
+
+    띠는 입력칸 줄 위아래로 ``sectionRowHoverPad``만큼이고, 안내 글이 보이면 그 글자 아래 끝 + 같은
+    여백까지 내려간다(``hoverBand``). 그 여백을 두려고 행 위에 같은 높이의 빈 자리를 둔다 — 안내 글이 있는
+    행의 띠는 다음 행의 이 빈 자리까지 걸치므로 행이 아니라 행 목록(``_RowList``)이 칠한다. 호버가 켜지는
+    범위는 행 전체 그대로다 — 행 사이에 틈이 없어 지날 때 깜박이지 않는다.
     """
 
     hoverChanged = Signal(bool)  # 포인터가 이 행에 들어왔다(True) · 나갔다(False)
@@ -247,17 +252,16 @@ class SectionRow(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("sectionRow")
-        # 행 호버 바탕은 전역 QSS(#sectionRow[hover="true"])가 칠한다 — 평범한 QWidget은 QSS 바탕을
-        # 그리지 않아 이 속성이 있어야 한다
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
         self._hovered = False
         column = QVBoxLayout(self)
-        column.setContentsMargins(0, 0, 0, 0)
+        # 위 빈 자리 = 호버 띠의 위 여백 — 띠 위 끝이 행 위 끝이라 첫 행에서도 잘리지 않는다
+        column.setContentsMargins(0, theme.METRICS["sectionRowHoverPad"], 0, 0)
         column.setSpacing(_MESSAGE_GAP)
         layout = QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(theme.METRICS["sectionRowGap"])  # 앱 스타일의 기본 간격은 0이다
         column.addLayout(layout)
+        self._fieldLine = layout  # 입력칸 줄 — 호버 띠의 기준(hoverBand)
 
         self.handle = DragHandle(self)
         layout.addWidget(self.handle)
@@ -364,16 +368,69 @@ class SectionRow(QWidget):
         self.hoverChanged.emit(False)
 
     def isHovered(self) -> bool:
-        """행 호버 바탕을 칠한 상태인지."""
+        """행 호버 띠를 칠한 상태인지."""
         return self._hovered
 
     def setHovered(self, hovered: bool) -> None:
-        """행 호버 바탕(``surface``)을 켜고 끈다 — 같은 값이면 아무것도 하지 않는다(#586)."""
-        if hovered == self._hovered:
-            return
+        """행 호버 띠를 칠한 상태로 적는다 — 칠하는 것은 행 목록이다(``_RowList``, #586)."""
         self._hovered = hovered
-        self.setProperty("hover", hovered)
-        theme.repolish(self)
+
+    def shownMessage(self) -> ElidingLabel | None:
+        """안내 줄에 보이는 글의 라벨 — 없으면 None."""
+        return next((label for _kind, label in self._messages if label.text()), None)
+
+    def hoverBand(self) -> QRect:
+        """호버 띠의 자리(행 좌표, 행 밖으로 걸칠 수 있다) — 폭은 행 전체다.
+
+        위 끝은 입력칸 줄 위 끝 − 여백(= 행 위 끝), 아래 끝은 입력칸 줄 아래 끝 + 여백이다. 안내 글이
+        보이면 아래 끝을 그 글자(잉크)의 아래 끝 + 여백까지 내린다 — 줄 상자가 아니라 글자에서 잰다. 줄
+        상자의 아래는 내려가는 글자(g · y)의 자리라 한국어 글에서는 여백이 넓어 보인다. 내린 끝은 다음 행
+        입력칸 줄(행 아래 끝 + 여백)에 닿지 않게 그 1px 위에서 자른다(#586).
+        """
+        pad = theme.METRICS["sectionRowHoverPad"]
+        line = self._fieldLine.geometry()
+        top = line.top() - pad
+        bottom = line.bottom() + 1 + pad  # 띠 아래 끝 바로 밑 줄(배타)
+        label = self.shownMessage()
+        if label is not None:
+            metrics = label.fontMetrics()
+            shown = QLabel.text(label)  # 말줄임한 뒤 보이는 글
+            ink = metrics.tightBoundingRect(shown)
+            origin = label.mapTo(self, QPoint(0, 0)).y()
+            baseline = origin + (label.height() - metrics.height()) // 2 + metrics.ascent()
+            ink_bottom = baseline + ink.y() + ink.height()  # 글자 아래 끝 바로 밑 줄(배타)
+            bottom = max(bottom, min(ink_bottom + pad, self.height() + pad - 1))
+        return QRect(0, top, self.width(), bottom - top)
+
+
+class _RowList(QWidget):
+    """구간 행을 담는 목록 — 호버 행의 띠를 행보다 먼저(행 밑에) 칠한다 (#586).
+
+    띠가 행 밖(다음 행의 위 빈 자리)까지 걸칠 수 있어 행이 아니라 여기서 칠한다. 칠할 행은 창이
+    정한다(``setHoverRow``). 색은 ``rowHoverBg``, 모서리는 ``menuHoverRadius``다.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._hoverRow: SectionRow | None = None
+
+    def setHoverRow(self, row: SectionRow | None) -> None:
+        """띠를 칠할 행을 정한다 — None이면 칠하지 않는다."""
+        self._hoverRow = row
+        self.update()
+
+    def paintEvent(self, _event: QPaintEvent) -> None:
+        row = self._hoverRow
+        if row is None or not isValid(row) or not row.isVisible():
+            return
+        band = row.hoverBand().translated(row.pos())
+        radius = theme.METRICS["menuHoverRadius"]
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(theme.current_tokens()["rowHoverBg"]))
+        painter.drawRoundedRect(QRectF(band), radius, radius)
+        painter.end()
 
 
 class SectionEditDialog(QDialog):
@@ -450,7 +507,7 @@ class SectionEditDialog(QDialog):
         self.scrollArea.setObjectName("sectionScrollArea")
         self.scrollArea.setWidgetResizable(True)
         self.scrollArea.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._rowContainer = QWidget(self.scrollArea)
+        self._rowContainer = _RowList(self.scrollArea)
         self._rowContainer.setObjectName("sectionRowContainer")
         self._rowLayout = QVBoxLayout(self._rowContainer)
         self._rowLayout.setSpacing(_ROW_SPACING)
@@ -464,7 +521,9 @@ class SectionEditDialog(QDialog):
         bar = self.scrollArea.verticalScrollBar()
         bar.ensurePolished()
         right = max(margins.right(), bar.sizeHint().width())
-        self._rowLayout.setContentsMargins(margins.left(), margins.top(), right, margins.bottom())
+        # 아래 여백은 호버 띠 여백 이상 — 마지막 행에 안내 글이 있으면 띠가 행 아래로 그만큼 걸친다
+        bottom = max(margins.bottom(), theme.METRICS["sectionRowHoverPad"])
+        self._rowLayout.setContentsMargins(margins.left(), margins.top(), right, bottom)
         self._scrollPadding = ScrollBarPadding(self.scrollArea, self._rowLayout, right)
         # 행의 양옆에 드는 폭(px) — 왼쪽 여백 + 오른쪽 여백(스크롤바가 보이면 바가 그 자리에 든다)
         self._rowSideWidth = margins.left() + right
@@ -643,6 +702,7 @@ class SectionEditDialog(QDialog):
         old, self._rows = self._rows, []  # 먼저 비운다 — 사라지는 칸의 알림을 받지 않는다
         self._typing = None
         self._hoverRow = None  # 칠한 행도 사라진다 — 새 행 가운데 포인터 밑 행을 다음 턴에 맞춘다
+        self._rowContainer.setHoverRow(None)
         for row in old:
             self._rowLayout.removeWidget(row)
             row.hide()  # 부모를 떼지 않는다 — 떼면 파괴될 때까지 최상위 창이 된다
@@ -692,7 +752,7 @@ class SectionEditDialog(QDialog):
         return self._drag is None and self.isVisible() and self.isActiveWindow()
 
     def _setHoverRow(self, row: SectionRow | None) -> None:
-        """호버 바탕을 그 행 하나에만 칠한다 — None이면 모두 끈다."""
+        """호버 띠를 그 행 하나에만 칠한다 — None이면 모두 끈다."""
         if row is self._hoverRow:
             return
         previous, self._hoverRow = self._hoverRow, row
@@ -700,6 +760,7 @@ class SectionEditDialog(QDialog):
             previous.setHovered(False)
         if row is not None:
             row.setHovered(True)
+        self._rowContainer.setHoverRow(row)
 
     def hoverRow(self) -> SectionRow | None:
         """호버 바탕을 칠한 행 — 없으면 None."""
@@ -894,6 +955,8 @@ class SectionEditDialog(QDialog):
             # 행이 하나뿐이면 옮길 곳이 없다 — 손잡이를 숨긴다(자리는 남는다)
             row.handle.setVisible(count > 1)
             row.handle.setToolTip(self.tr("Reorder · {0}").format(move_keys_text()))
+        if self._hoverRow is not None:
+            self._rowContainer.update()  # 안내 글이 바뀌면 호버 띠의 아래 끝도 바뀐다
         self.headerLabel.setText(viewmodel.headerText())
         ready = viewmodel.state == STATE_READY
         self.hintLabel.setText(

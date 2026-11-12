@@ -582,14 +582,8 @@ QLineEdit[invalid="true"]:focus {
     color: @stateFailed;
 }
 
-/* 구간 행 호버 — 포인터가 있는 행(안내 줄 포함)의 바탕(#586). 창 바탕(windowBg) 위라 카드 호버
- * (cardHoverBg)가 아니라 surface다 — 입력칸 · ✕ 면(surfaceAlt) · 흐린 글 · 오류 글이 그 위에서도 구분된다.
- * 라이트는 창 바탕보다 밝아진다. `hover`는 app/views/section_dialog.py::SectionRow.setHovered가 심는다 —
- * QSS :hover는 행을 다시 만든 뒤 포인터 밑 행을 다시 맞출 수 없다 */
-QWidget#sectionRow[hover="true"] {
-    background-color: @surface;
-    border-radius: @menuHoverRadius;
-}
+/* 구간 행 호버 띠는 QSS가 칠하지 않는다 — 띠가 행 밖(다음 행의 위 여백)까지 걸쳐 행 목록이 그린다.
+ * 색은 rowHoverBg, 모서리는 menuHoverRadius(app/views/section_dialog.py::_RowList, #586) */
 
 /* 구간 번호(#sectionNumberLabel)는 따로 적지 않는다 — 본문 색 · 보통 크기(QWidget 규칙, 프로토 구간 행 #586) */
 
