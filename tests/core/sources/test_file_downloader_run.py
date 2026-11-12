@@ -195,6 +195,117 @@ def _run_in_thread(engine) -> threading.Thread:
     return thread
 
 
+# ================================================================ 컨텐츠 타입별 파트 크기 (#584)
+
+CLIP_SIZE = int(4.86 * MB)  # #207의 클립 크기 — 1MB 파트면 5개, 해상도 분기(5MB · 10MB)면 1개
+VIDEO_SIZE = 12 * MB  # 720p 5MB 파트면 3개, 1080p 10MB 파트면 2개
+MEET_TIMEOUT = 5.0  # 처음 두 요청이 함께 들어오기를 기다리는 시간(초) — 넘으면 따로 온 것이다
+
+
+class RecordingRangeSession(RangeSession):
+    """받은 Range 요청을 기록하고, 처음 두 요청이 동시에 들어와 있는지 보는 가짜 세션."""
+
+    def __init__(self, content: bytes) -> None:
+        super().__init__(content)
+        self.ranges: list[tuple[int, int]] = []
+        self.overlapped = False  # 처음 두 요청이 같은 때에 열려 있었는가
+        self._lock = threading.Lock()
+        self._meet = threading.Barrier(2, timeout=MEET_TIMEOUT)
+
+    def get(self, url, headers=None, **kwargs) -> RangeResponse:
+        start, end = map(int, (headers or {})["Range"].removeprefix("bytes=").split("-"))
+        with self._lock:
+            self.ranges.append((start, end))
+            first_two = len(self.ranges) <= 2
+        if first_two:
+            try:
+                self._meet.wait()
+                self.overlapped = True
+            except threading.BrokenBarrierError:
+                pass  # 둘째 요청이 오지 않았다 — 연결 하나로 받는다
+        return super().get(url, headers, **kwargs)
+
+
+def _run_typed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, content_type: str, resolution: int, size: int
+) -> tuple[DownloadData, RecordingRangeSession, Path]:
+    """content_type · 해상도로 공유 데이터를 만들어 가짜 세션으로 끝까지 받는다."""
+    output = tmp_path / "out.mp4"
+    data = DownloadData(
+        base_url="https://example.invalid/video.mp4",
+        vod_url="https://chzzk.naver.com/clips/1",
+        output_path=str(output),
+        resolution=resolution,
+        content_type=content_type,
+    )
+    session = RecordingRangeSession(_content_bytes(size))
+    monkeypatch.setattr(fd_module, "get_thread_session", lambda: session)
+    finished = threading.Event()
+    failures: list[BaseException] = []
+
+    def on_finished() -> None:
+        data.model.finish()
+        finished.set()
+
+    engine = FileDownloader(data, RunLogger(), on_finished=on_finished, on_failed=failures.append)
+    data.model.start()
+    thread = _run_in_thread(engine)
+    assert finished.wait(timeout=60), "완료 콜백이 호출되지 않았다"
+    thread.join(timeout=10)
+    assert failures == []
+    return data, session, output
+
+
+@pytest.mark.parametrize("resolution", [720, 1080])
+def test_clip_is_received_in_1mb_parts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, resolution: int
+) -> None:
+    """클립은 해상도와 관계없이 1MB 파트로 나뉘어 받아져야 한다 (#584).
+
+    content_type "clip"(앱이 클립에 넘기는 값), 해상도 720 · 1080, 크기 4.86MB
+    -> Range 요청 5개, 각 1MB 이하, 산출물 == 원본
+    """
+    data, session, output = _run_typed(tmp_path, monkeypatch, "clip", resolution, CLIP_SIZE)
+
+    assert len(session.ranges) == 5
+    assert all(end - start + 1 <= MB for start, end in session.ranges)
+    assert output.read_bytes() == _content_bytes(CLIP_SIZE)
+
+
+@pytest.mark.parametrize("resolution", [720, 1080])
+def test_clip_connection_cap_is_its_part_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, resolution: int
+) -> None:
+    """4.86MB 클립은 연결 상한이 파트 수 5이고 처음 두 요청을 동시에 보내야 한다 (#584).
+
+    content_type "clip", 해상도 720 · 1080, 크기 4.86MB
+    -> max_threads == total_ranges == 5, 처음 두 Range 요청이 함께 열려 있음
+    """
+    data, session, _output = _run_typed(tmp_path, monkeypatch, "clip", resolution, CLIP_SIZE)
+
+    assert data.max_threads == data.total_ranges == 5
+    assert session.overlapped
+
+
+@pytest.mark.parametrize(
+    ("resolution", "part_size", "parts"), [(720, 5 * MB, 3), (1080, 10 * MB, 2)]
+)
+def test_video_keeps_the_part_size_by_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, resolution: int, part_size: int, parts: int
+) -> None:
+    """클립이 아닌 VOD는 해상도별 파트 크기를 그대로 받아야 한다 (#584).
+
+    content_type "video", 크기 12MB, 해상도 720 · 1080
+    -> 720: 5MB 파트 3개, 1080: 10MB 파트 2개, 연결 상한 == 파트 수
+    """
+    data, session, output = _run_typed(tmp_path, monkeypatch, "video", resolution, VIDEO_SIZE)
+
+    assert sorted(session.ranges)[0] == (0, part_size - 1)
+    assert len(session.ranges) == parts
+    assert data.max_threads == parts
+    assert output.read_bytes() == _content_bytes(VIDEO_SIZE)
+
+
 def test_run_downloads_file_byte_exact(tmp_path, monkeypatch) -> None:
     """전체 파이프라인이 원본과 동일한 파일을 만들고 완료 콜백을 1회 호출한다."""
     engine, data, logger, output, finished, failures = _make_engine(tmp_path, monkeypatch)

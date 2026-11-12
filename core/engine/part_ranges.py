@@ -3,15 +3,24 @@
 download/download.py에서 이동한 순수 함수 (#50).
 """
 
+from core.models.content import ContentType
+
 
 def decide_part_size(content_type: str, resolution: int) -> int:
     """
     해상도에 따라 파트 크기 가중치를 달리 부여한다.
 
     테스트를 위해 DownloadThread._decide_part_size에서 분리한 순수 함수 (#27).
+    클립은 해상도와 관계없이 1MB다. 클립 값은 ``ContentType``에서 읽는다 — 엔진에 오는 값은
+    URL의 ``"clips"``가 아니라 공유 데이터가 ``ContentType``을 거쳐 내는 값이다. 문자열을 따로
+    적어 두면 한쪽만 바뀌었을 때 분기가 소리 없이 닿지 않는다 (#584).
+
+    Args:
+        content_type: 공유 데이터의 컨텐츠 타입 값(``ContentType``의 value)
+        resolution: 세로 해상도(px)
     """
     base_part_size = 1024 * 1024  # 1MB
-    if content_type == "clips":
+    if content_type == ContentType.CHZZK_CLIP.value:
         return base_part_size * 1
     elif resolution == 144:
         return base_part_size * 1

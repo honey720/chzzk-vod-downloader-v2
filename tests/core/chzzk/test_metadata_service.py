@@ -13,7 +13,9 @@ import requests
 
 import app.network as network
 from app.network import NetworkManager
+from core.engine.part_ranges import decide_part_size
 from core.models.content import VideoInfo
+from core.models.download_data import DownloadData
 from core.chzzk.metadata_service import (
     MetadataError,
     fetch_clip,
@@ -135,6 +137,28 @@ def test_fetch_content_maps_clips_to_clip() -> None:
     assert result[0] == CLIP_URL
     assert result[3] == 720
     assert result[6] is None
+
+
+def test_clip_value_from_fetch_content_takes_the_clip_part_size() -> None:
+    """fetch_content가 낸 클립 값을 공유 데이터에 넣으면 파트 크기가 1MB여야 한다 (#584).
+
+    clips URL, 해상도 1080(해상도 분기라면 10MB)
+    -> DownloadData(content_type=조회 결과).content_type으로 decide_part_size == 1MB
+    """
+    api = FakeApi(
+        clip_info=("clip-video-id", "DONE", {"title": "c"}),
+        clip_manifest=(
+            [[1080, "https://example.invalid/1080"]],
+            1080,
+            "https://example.invalid/1080",
+            None,
+        ),
+    )
+    _result, content_type = fetch_content(CLIP_URL, COOKIES, DOWNLOAD_PATH, api=api)
+
+    data = DownloadData("https://example.invalid/1080", CLIP_URL, "out.mp4", 1080, content_type)
+
+    assert decide_part_size(data.content_type, data.resolution) == 1024 * 1024  # 1MB
 
 
 # ---------------------------------------------------------------- fetch_video 에러 분기 (#55)
