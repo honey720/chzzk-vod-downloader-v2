@@ -3416,7 +3416,7 @@ def test_message_line_sits_right_under_the_fields_with_no_gap(qtbot, tmp_path, b
     """안내 줄은 칸의 줄 바로 아래에 붙어야 한다 — 그 사이에 간격이 없다.
 
     행 A(10분~20분) 하나
-    -> 행의 높이 == 칸의 줄에서 가장 큰 위젯의 높이 + 안내 줄의 높이,
+    -> 행의 높이 == 위 빈 자리(sectionRowHoverPad) + 칸의 줄에서 가장 큰 위젯의 높이 + 안내 줄의 높이,
        안내 줄의 위쪽 == 칸의 줄에서 가장 낮은 아래쪽 + 1
     """
     item = _make_item(str(tmp_path))
@@ -3439,7 +3439,8 @@ def test_message_line_sits_right_under_the_fields_with_no_gap(qtbot, tmp_path, b
     tallest = max(part.height() for part in line)
     lowest = max(part.geometry().bottom() for part in line)
 
-    assert row.height() == tallest + row.messageSlot.height()
+    pad = theme.METRICS["sectionRowHoverPad"]  # 호버 띠의 위 여백 자리(#586)
+    assert row.height() == pad + tallest + row.messageSlot.height()
     assert row.messageSlot.y() == lowest + 1
 
 
