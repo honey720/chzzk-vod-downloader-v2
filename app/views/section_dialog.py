@@ -37,19 +37,10 @@
 버튼은 Qt 버튼 상자가 OS 관례 차례로 놓고, 확인이 주 동작(채움)이다(설계 §12.1).
 """
 
-import math
 import sys
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRect, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import (
-    QColor,
-    QEnterEvent,
-    QImage,
-    QMouseEvent,
-    QPainter,
-    QPaintEvent,
-    QShowEvent,
-)
+from PySide6.QtGui import QColor, QEnterEvent, QMouseEvent, QPainter, QPaintEvent, QShowEvent
 from PySide6.QtWidgets import (
     QAbstractButton,
     QApplication,
@@ -250,9 +241,8 @@ class SectionRow(QWidget):
     비활성이면 칠하지 않고, 행을 다시 만든 뒤에는 창이 포인터 밑 행을 다시 맞춘다. 자식(칸 · ✕ · 손잡이)
     위로 가도 Qt는 행에 나감을 보내지 않아 칠한 채 남는다.
 
-    띠는 입력칸 줄 위아래로 ``sectionRowHoverPad``만큼이고, 안내 글이 보이면 그 글자 아래 끝 + 같은
-    여백까지 내려간다(``hoverBand``). 그 여백을 두려고 행 위에 같은 높이의 빈 자리를 둔다 — 안내 글이 있는
-    행의 띠는 다음 행의 이 빈 자리까지 걸치므로 행이 아니라 행 목록(``_RowList``)이 칠한다. 호버가 켜지는
+    띠는 입력칸 줄 위아래로 ``sectionRowHoverPad``만큼이고 안내 글은 감싸지 않는다(``hoverBand``). 그
+    여백을 두려고 행 위에 같은 높이의 빈 자리를 둔다. 띠는 행 목록(``_RowList``)이 칠한다. 호버가 켜지는
     범위는 행 전체 그대로다 — 행 사이에 틈이 없어 지날 때 깜박이지 않는다.
     """
 
@@ -271,9 +261,6 @@ class SectionRow(QWidget):
         layout.setSpacing(theme.METRICS["sectionRowGap"])  # 앱 스타일의 기본 간격은 0이다
         column.addLayout(layout)
         self._fieldLine = layout  # 입력칸 줄 — 호버 띠의 기준(hoverBand)
-        self._inkCache: tuple[tuple, int] | None = (
-            None  # 안내 글 잉크 아래 끝 — (글 · 크기 · 글꼴, 값)
-        )
 
         self.handle = DragHandle(self)
         layout.addWidget(self.handle)
@@ -392,62 +379,22 @@ class SectionRow(QWidget):
         return next((label for _kind, label in self._messages if label.text()), None)
 
     def hoverBand(self) -> QRect:
-        """호버 띠의 자리(행 좌표, 행 밖으로 걸칠 수 있다) — 폭은 행 전체다.
+        """호버 띠의 자리(행 좌표) — 폭은 행 전체다.
 
         위 끝은 입력칸 줄 위 끝 − 여백(= 행 위 끝), 아래 끝은 입력칸 줄 아래 끝 + 여백이다. 안내 글이
-        보이면 아래 끝을 그 글자(잉크)의 아래 끝 + 여백까지 내린다 — 줄 상자가 아니라 글자에서 잰다. 줄
-        상자의 아래는 내려가는 글자(g · y)의 자리라 한국어 글에서는 여백이 넓어 보인다. 내린 끝은 다음 행
-        입력칸 줄(행 아래 끝 + 여백)에 닿지 않게 그 1px 위에서 자른다(#586).
+        있어도 띠는 입력칸 줄만 감싼다 — 안내 글은 띠 밖, 안내 줄 자리에 그대로 그려진다(#586).
         """
         pad = theme.METRICS["sectionRowHoverPad"]
         line = self._fieldLine.geometry()
         top = line.top() - pad
         bottom = line.bottom() + 1 + pad  # 띠 아래 끝 바로 밑 줄(배타)
-        label = self.shownMessage()
-        if label is not None:
-            ink_bottom = label.mapTo(self, QPoint(0, 0)).y() + self._inkBottom(label)
-            bottom = max(bottom, min(ink_bottom + pad, self.height() + pad - 1))
         return QRect(0, top, self.width(), bottom - top)
-
-    def _inkBottom(self, label: QLabel) -> int:
-        """label에 보이는 글자가 칠해진 가장 아래 줄 바로 밑(라벨 좌표, 배타) — 글자가 없으면 0.
-
-        글꼴 정보(``tightBoundingRect``)로 추정하지 않고 보이는 글을 이미지에 그려 잰다 — 글꼴 정보는 실제
-        화면의 Malgun에서 1px 아래를, 글자가 없는 글꼴의 상자(tofu)에서는 몇 px 아래를 돌려준다. 같은 글 ·
-        크기 · 글꼴이면 앞서 잰 값을 쓴다(띠를 칠할 때마다 그리지 않게).
-        """
-        shown = QLabel.text(label)  # 말줄임한 뒤 보이는 글
-        ratio = label.devicePixelRatioF()
-        key = (shown, label.width(), label.height(), label.font().key(), ratio)
-        if self._inkCache is not None and self._inkCache[0] == key:
-            return self._inkCache[1]
-        image = QImage(
-            round(label.width() * ratio),
-            round(label.height() * ratio),
-            QImage.Format.Format_ARGB32_Premultiplied,
-        )
-        image.setDevicePixelRatio(ratio)
-        image.fill(Qt.GlobalColor.transparent)
-        painter = QPainter(image)
-        painter.setFont(label.font())
-        painter.setPen(Qt.GlobalColor.black)
-        painter.drawText(label.contentsRect(), int(label.alignment()), shown)
-        painter.end()
-        rows = (
-            y
-            for y in range(image.height() - 1, -1, -1)
-            if any(image.pixelColor(x, y).alpha() for x in range(image.width()))
-        )
-        last = next(rows, None)
-        bottom = 0 if last is None else math.ceil((last + 1) / ratio)
-        self._inkCache = (key, bottom)
-        return bottom
 
 
 class _RowList(QWidget):
     """구간 행을 담는 목록 — 호버 행의 띠를 행보다 먼저(행 밑에) 칠한다 (#586).
 
-    띠가 행 밖(다음 행의 위 빈 자리)까지 걸칠 수 있어 행이 아니라 여기서 칠한다. 칠할 행은 창이
+    칠할 행은 창이
     정한다(``setHoverRow``). 색은 ``rowHoverBg``, 모서리는 ``menuHoverRadius``다.
     """
 
@@ -996,8 +943,6 @@ class SectionEditDialog(QDialog):
             # 행이 하나뿐이면 옮길 곳이 없다 — 손잡이를 숨긴다(자리는 남는다)
             row.handle.setVisible(count > 1)
             row.handle.setToolTip(self.tr("Reorder · {0}").format(move_keys_text()))
-        if self._hoverRow is not None:
-            self._rowContainer.update()  # 안내 글이 바뀌면 호버 띠의 아래 끝도 바뀐다
         self.headerLabel.setText(viewmodel.headerText())
         ready = viewmodel.state == STATE_READY
         self.hintLabel.setText(
