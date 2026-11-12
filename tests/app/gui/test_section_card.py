@@ -619,6 +619,25 @@ def test_retry_keeps_the_file_names_and_hands_over_what_the_failed_run_left(card
     assert (card.item.sections_done, card.item.sections_failed) == (2, 0)
 
 
+def test_retry_whose_failed_section_name_is_taken_hands_over_the_failed_runs_paths(card) -> None:
+    """실패한 구간의 이름을 남은 파일이 차지한 채 재시도하면 그 구간만 새 이름을 받고, 기록의 경로는 첫 실행의 것이어야 한다 (#392).
+
+    구간 셋, 둘째만 실패, 둘째 구간의 출력 파일이 디스크에 남음 → ↻ → 다운로드 시작
+    -> selection_paths == (첫 실행의 `_1`, `_2 (1)`, 첫 실행의 `_3`), section_resume.paths == 첫 실행의 경로
+    """
+    paths = _fail_second_section(card)
+    with open(paths[1], "wb") as f:
+        f.write(b"half")  # 첫 실행이 지우지 못한 반쯤 쓴 출력
+
+    card.retry()
+    card.restart()
+
+    content = card.submission["content"]
+    stem, ext = os.path.splitext(paths[1])
+    assert content.selection_paths == (paths[0], f"{stem} (1){ext}", paths[2])
+    assert content.section_resume.paths == paths
+
+
 def test_retry_bar_starts_from_zero_and_the_count_continues_from_the_finished_sections(
     card,
 ) -> None:

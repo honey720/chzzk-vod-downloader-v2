@@ -38,6 +38,7 @@ from PySide6.QtWidgets import QApplication
 
 import CVDv2 as main_module
 import app.theme as theme
+import app.widgets.view as view_module
 from app.system.free_space import FreeSpaceProbe
 from app.views.mainWindow import VodDownloader
 from app.widgets.widget import CARD_BUTTON_NAMES
@@ -105,6 +106,9 @@ def _theme_sandbox(qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> Itera
     # 측정이 끝나는 시점이 갈려 하단바만 다른 화소가 났다(#531). 하단바는 비교 범위에 그대로 둔다
     monkeypatch.setattr(FreeSpaceProbe, "request", lambda self, path: None)
     monkeypatch.setattr(FreeSpaceProbe, "value", lambda self, path: FIXED_FREE_BYTES)
+    # 카드 호버가 실제 포인터 위치를 따르지 않게 한다 — xvfb는 워커 모두가 포인터 하나를 써서, 다른 테스트가
+    # 옮긴 포인터 밑의 카드가 한 장면에서만 호버 바탕을 그렸다(#574). 호버는 장면이 정한다(Scene.snapshot)
+    monkeypatch.setattr(view_module, "widget_under_pointer", lambda: None)
     with theme_sandbox(qapp):
         yield
 
@@ -221,6 +225,14 @@ class Scene:
             parts[f"{prefix}.progressBar"] = card.progressBar
         return parts
 
+    def unhover(self) -> None:
+        """모든 카드의 호버를 끈다 — 창이 나타날 때 실제 포인터 밑에 있던 카드가 받은 호버를 걷는다.
+
+        찍는 동안에는 이벤트를 처리하지 않으므로 그 사이 포인터가 움직여도 호버가 다시 켜지지 않는다.
+        """
+        for state in STATES:
+            self.card(state).setHovered(False)
+
     def hovered_snapshot(self) -> dict:
         """카드를 하나씩 호버한 채 찍은 카드 면 · 카드 버튼의 렌더 픽셀 — 숨은 버튼은 `None`.
 
@@ -250,6 +262,7 @@ class Scene:
         안 바뀌었다"를 조건으로 기다린다.
         """
         _wait_render_settled(qtbot, self.window)
+        self.unhover()
         images = {
             name: (widget.grab().toImage() if widget.isVisible() else None)
             for name, widget in self.components().items()

@@ -435,9 +435,13 @@ class TestComboBoxDropDownStyle:
         combo.showPopup()
         view = combo.view()
         viewport = view.viewport()
-        QTest.mouseMove(viewport, viewport.rect().topLeft())
+        # 팝업 창(QWindow)에 합성 이벤트로 옮긴다 — QTest.mouseMove(QWidget)는 실제 포인터를 옮겨, xvfb에서는
+        # 같은 X 서버를 쓰는 다른 워커의 창 밑에 포인터가 남는다(#574 · .claude/rules/safety.md)
+        popup = viewport.window()
         rect0 = view.visualRect(view.model().index(0, 0))
-        QTest.mouseMove(viewport, rect0.center())  # currentIndex를 row0로 오염
+        for spot in (viewport.rect().topLeft(), rect0.center()):
+            QTest.mouseMove(popup.windowHandle(), viewport.mapTo(popup, spot))
+        assert view.currentIndex().row() == 0, "전제: 호버가 currentIndex를 row0로 옮겼다"
         combo.hidePopup()
 
         combo.showPopup()

@@ -759,13 +759,13 @@ QProgressBar[state="failed"]::chunk {
 
 QScrollBar:vertical {
     background: transparent;
-    width: 10px;
+    width: @scrollBarWidth;
     margin: 0px;
 }
 
 QScrollBar::handle:vertical {
     background: @scrollHandle;
-    border-radius: 5px;
+    border-radius: @scrollHandleRadius;
     min-height: 28px;
 }
 
@@ -775,13 +775,13 @@ QScrollBar::handle:vertical:hover {
 
 QScrollBar:horizontal {
     background: transparent;
-    height: 10px;
+    height: @scrollBarWidth;
     margin: 0px;
 }
 
 QScrollBar::handle:horizontal {
     background: @scrollHandle;
-    border-radius: 5px;
+    border-radius: @scrollHandleRadius;
     min-width: 28px;
 }
 

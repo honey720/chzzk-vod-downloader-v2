@@ -36,7 +36,7 @@ MANY = 40
 @pytest.fixture(autouse=True)
 def _apply_production_qss(qapp) -> None:
     """실제 전역 QSS·스타일을 태운다 — QSS 없이는 목록에 프레임(1~2px)과 Fusion 스크롤바(14px)가
-    붙어 제품(프레임 0, 스크롤바 10px)과 다른 기하가 나온다. ⚠️ function scope 유지."""
+    붙어 제품(프레임 0, 스크롤바 scrollBarWidth)과 다른 기하가 나온다. ⚠️ function scope 유지."""
     theme.set_color_scheme("dark")
     qapp.setStyle(hold_style(theme.build_style()))  # 참조 보관 — 이중 해제 우회 (#243)
     qapp.setPalette(theme.build_palette())
