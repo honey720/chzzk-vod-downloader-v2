@@ -745,6 +745,31 @@ class TestFill:
         assert _close(_pixel(frame, frame.width() // 5, y), _token(token))
         assert _close(_pixel(frame, frame.width() * 4 // 5, y), _token("cardBg"))
 
+    @pytest.mark.parametrize("scheme", ("dark", "light"))
+    def test_running_fill_pixel_has_the_target_strength(self, qapp, scheme: str) -> None:
+        """받는 중 채움 화소는 카드 바탕과 ΔE00 목표 −1.5 ~ +0.5여야 한다 (#582).
+
+        배경 채움 방식, 받는 중 40% 카드, 면의 20% 자리 화소 -> 다크 목표 12 · 라이트 목표 10
+        """
+        _display(progress="fill", animations=False)
+        theme.set_color_scheme(scheme)
+        qapp.setPalette(theme.build_palette())
+        qapp.setStyleSheet(
+            theme.load_stylesheet(main_module.resource_path(theme.QSS_RELATIVE_PATH))
+        )
+        try:
+            item = _item(DownloadState.RUNNING)
+            item.download_progress = 40
+            card = _card(item)
+            frame = card.contentFrame
+            pixel = _pixel(frame, frame.width() // 5, _empty_y(card))
+            assert _close(pixel, _token("cardFillRunning")), "전제: 채움 자리를 쟀다"
+            strength = _de00(pixel, _token("cardBg"))
+            target = TINT_TARGET[scheme]
+            assert target - 1.5 <= strength <= target + 0.5, f"ΔE00 {strength:.2f}"
+        finally:
+            theme.set_color_scheme("dark")
+
     @pytest.mark.parametrize("cut", (False, True), ids=["preparing", "preparing-to-cut"])
     def test_preparing_card_shows_a_bar_without_a_value_in_fill_mode(self, qapp, cut) -> None:
         """채움 방식에서도 준비 중 · 자르기 준비 중 카드는 값 없는 막대가 보이고 면은 채우지 않아야 한다.
