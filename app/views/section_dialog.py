@@ -93,9 +93,6 @@ _INITIAL_SIZE = (560, 420)  # 창의 첫 크기(px) — 행 다섯 개쯤이 스
 # 행 사이의 간격(px). 행마다 아래에 안내 줄 한 줄이 늘 서 있어 그 줄이 행 사이를 띄운다 —
 # 간격을 따로 두면 20행의 높이가 안내 줄만큼 더 길어진다
 _ROW_SPACING = 0
-# 칸의 줄과 그 아래 안내 줄 사이(px) — 띄우지 않는다. 안내 줄이 늘 한 줄을 차지해 행 사이를
-# 이미 띄우고, 2px씩이면 20행에서 40px이 더 든다
-_MESSAGE_GAP = 0
 DRAG_HANDLE_WIDTH = 16  # 손잡이 폭(px) — 아이콘 도형(16)과 같다(프로토 inbox 55)
 DRAG_EDGE = 24  # 끄는 중 목록 위 · 아래 끝에서 이 거리(px) 안이면 저절로 스크롤한다
 DRAG_SCROLL_STEP = 8  # 저절로 스크롤 한 번에 움직이는 거리(px) — DRAG_SCROLL_MS마다
@@ -242,7 +239,8 @@ class SectionRow(QWidget):
     위로 가도 Qt는 행에 나감을 보내지 않아 칠한 채 남는다.
 
     띠는 입력칸 줄 위아래로 ``sectionRowHoverPad``만큼이고 안내 글은 감싸지 않는다(``hoverBand``). 그
-    여백을 두려고 행 위에 같은 높이의 빈 자리를 둔다. 띠는 행 목록(``_RowList``)이 칠한다. 호버가 켜지는
+    여백을 두려고 행 위에 같은 높이의 빈 자리를 두고, 입력칸 줄과 안내 줄 사이도 같은 높이만큼 띄워
+    안내 줄이 띠 바로 밑에서 시작한다. 띠는 행 목록(``_RowList``)이 칠한다. 호버가 켜지는
     범위는 행 전체 그대로다 — 행 사이에 틈이 없어 지날 때 깜박이지 않는다.
     """
 
@@ -254,8 +252,11 @@ class SectionRow(QWidget):
         self._hovered = False
         column = QVBoxLayout(self)
         # 위 빈 자리 = 호버 띠의 위 여백 — 띠 위 끝이 행 위 끝이라 첫 행에서도 잘리지 않는다
-        column.setContentsMargins(0, theme.METRICS["sectionRowHoverPad"], 0, 0)
-        column.setSpacing(_MESSAGE_GAP)
+        pad = theme.METRICS["sectionRowHoverPad"]
+        column.setContentsMargins(0, pad, 0, 0)
+        # 입력칸 줄 ↔ 안내 줄 = 띠 아래 여백 — 안내 줄 위 끝이 띠 아래 끝 바로 밑이라 안내 글자가
+        # 띠에 걸치지 않는다(#586). 여백이 바뀌면 함께 따라간다
+        column.setSpacing(pad)
         layout = QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(theme.METRICS["sectionRowGap"])  # 앱 스타일의 기본 간격은 0이다
