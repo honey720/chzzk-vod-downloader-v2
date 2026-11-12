@@ -4,12 +4,15 @@
 실패는 대역이 받은 콜백(제품이 넘긴 것)을 불러 낸다. 1초 갱신은 타이머의 timeout 신호로 낸다.
 """
 
+import threading
+from collections import namedtuple
 from collections.abc import Iterator
 
 import pytest
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
 
+import app.system.free_space as free_space_module
 import app.theme as theme
 import CVDv2 as main_module
 from app.download.logger import DownloadLogger
@@ -30,6 +33,8 @@ from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, snapshot
 from typing import Never
 
 MIB = 1024 * 1024
+GIB = 1024 * MIB
+_Usage = namedtuple("_Usage", "total used free")  # shutil.disk_usage가 돌려주는 모양
 
 
 class _Engine:
@@ -334,6 +339,126 @@ def test_a_tick_redraws_only_the_footer(qtbot, tmp_path, answers, monkeypatch) -
     assert win.footerMonitor.shownKeys()[0] == "speed", "전제: 받는 중의 값이 보인다"
     assert changed.count() == 0
     assert whole_list == []
+
+
+class _SlowDisk:
+    """여유 공간 측정(`shutil.disk_usage`) 대역 — `hold()` 뒤의 측정은 `release()`까지 붙잡힌다."""
+
+    def __init__(self) -> None:
+        self.free = 100 * GIB  # 돌려줄 여유 공간(바이트) — 풀 때 읽는다
+        self.entered = threading.Event()  # 붙잡힌 측정이 대역에 들어왔다
+        self._open = threading.Event()
+        self._open.set()
+
+    def hold(self, free: int) -> None:
+        """다음 측정부터 붙잡고, 풀리면 `free`를 돌려준다."""
+        self.free = free
+        self.entered.clear()
+        self._open.clear()
+
+    def release(self) -> None:
+        self._open.set()
+
+    def disk_usage(self, path: str) -> _Usage:
+        if not self._open.is_set():
+            self.entered.set()
+        self._open.wait(20)
+        return _Usage(0, 0, self.free)
+
+
+@pytest.fixture
+def slow_disk(monkeypatch: pytest.MonkeyPatch) -> Iterator[_SlowDisk]:
+    """창을 만들기 전에 여유 공간 측정을 대역으로 바꾼다. 끝날 때 붙잡은 측정을 늘 푼다."""
+    disk = _SlowDisk()
+    monkeypatch.setattr(free_space_module.shutil, "disk_usage", disk.disk_usage)
+    yield disk
+    disk.release()
+
+
+def _footer_texts(win: VodDownloader) -> dict[str, str]:
+    """하단바 모니터링 칸 → 글(보이는 칸만)."""
+    labels = win.footerMonitor.labels
+    return {key: labels[key].text() for key in win.footerMonitor.shownKeys()}
+
+
+def _measure_lands_after_notices(
+    qtbot, tmp_path, slow_disk: _SlowDisk
+) -> tuple[VodDownloader, _Engine, dict[str, str]]:
+    """1초 갱신이 시작한 측정이 통지 셋 뒤에 끝나게 한다 — (창, 엔진, 측정이 끝나기 전 하단바 글).
+
+    여유 100 GiB · 받는 중 2.0 MB/s · 받은 0 / 10 MiB · 연결 4 통지 → 1초 갱신(측정을 붙잡음, 풀면
+    50 GiB) → 3.0 · 4.0 · 5.0 MB/s 통지(받은 크기 · 연결도 바뀐다) → 측정을 푼다.
+    """
+    win, _items, engine = _window(tmp_path)
+    _free_measured(qtbot, win)
+    win.downloadButton.click()
+    _pump()
+    _progress(engine, 0, 10 * MIB, 2.0, 4)
+    slow_disk.hold(50 * GIB)
+    _tick(win)
+    assert slow_disk.entered.wait(10), "전제: 1초 갱신이 시작한 측정이 붙잡혀 있다"
+    before = _footer_texts(win)
+    assert before["speed"] == "↓ 2.0 MB/s", "전제: 1초 갱신이 2.0 통지를 보였다"
+    assert before["free"] == "100.0 GB", "전제: 여유 공간은 앞 측정값"
+    for downloaded, speed, threads in ((2, 3.0, 5), (4, 4.0, 6), (5, 5.0, 8)):
+        _progress(engine, downloaded * MIB, 10 * MIB, speed, threads)
+    with qtbot.waitSignal(win.freeSpace.measured, timeout=10000):
+        slow_disk.release()
+    return win, engine, before
+
+
+def test_a_late_free_space_measure_changes_only_the_free_space(
+    qtbot, tmp_path, answers, slow_disk: _SlowDisk
+) -> None:
+    """1초 갱신이 시작한 여유 공간 측정이 다음 통지들 뒤에 끝나면 여유 공간 칸만 바뀌어야 한다.
+
+    1초 갱신 때 「↓ 2.0 MB/s」 · 「0:05 left」 · 연결 「4」 · 여유 「100.0 GB」 → 통지 셋 → 측정이 50 GiB로 끝남
+    -> 속도 · 남은 시간 · 연결 · 메모리 글은 1초 갱신 때 그대로, 여유 「50.0 GB」
+    """
+    win, _engine, before = _measure_lands_after_notices(qtbot, tmp_path, slow_disk)
+    assert _footer_texts(win) == {**before, "free": "50.0 GB"}
+
+
+def test_the_tick_after_a_late_measure_shows_the_last_notice(
+    qtbot, tmp_path, answers, slow_disk: _SlowDisk
+) -> None:
+    """늦게 끝난 측정 뒤의 1초 갱신은 마지막 통지 값을 보여야 한다.
+
+    측정이 통지 셋(마지막 5.0 MB/s · 받은 5 / 10 MiB · 연결 8) 뒤에 50 GiB로 끝남 → 1초 갱신
+    -> 「↓ 5.0 MB/s」 · 「0:01 left」 · 연결 「8」 · 여유 「50.0 GB」
+    """
+    win, _engine, _before = _measure_lands_after_notices(qtbot, tmp_path, slow_disk)
+    _tick(win)
+    texts = _footer_texts(win)
+    assert (texts["speed"], texts["remain"], texts["conn"]) == ("↓ 5.0 MB/s", "0:01 left", "8")
+    assert texts["free"] == "50.0 GB"
+
+
+def test_changing_the_save_location_changes_only_the_free_space(
+    qtbot, tmp_path, answers, slow_disk: _SlowDisk
+) -> None:
+    """받는 중 저장 위치를 바꾸면 하단바는 여유 공간 칸만 새 위치의 값으로 바뀌어야 한다.
+
+    1초 갱신 때 「↓ 2.0 MB/s」 · 여유 「100.0 GB」 → 5.0 MB/s 통지 → 다른 폴더를 고름(그 폴더 50 GiB)
+    -> 측정이 끝난 뒤 속도 · 남은 시간 · 연결 · 메모리 글은 1초 갱신 때 그대로, 여유 「50.0 GB」
+    """
+    win, _items, engine = _window(tmp_path)
+    _free_measured(qtbot, win)
+    win.downloadButton.click()
+    _pump()
+    _progress(engine, 0, 10 * MIB, 2.0, 4)
+    _tick(win)
+    before = _footer_texts(win)
+    assert before["speed"] == "↓ 2.0 MB/s", "전제: 1초 갱신이 2.0 통지를 보였다"
+    assert before["free"] == "100.0 GB", "전제: 여유 공간은 앞 측정값"
+    _progress(engine, 5 * MIB, 10 * MIB, 5.0, 8)
+    other = tmp_path / "other"
+    other.mkdir()
+    slow_disk.free = 50 * GIB
+    with qtbot.waitSignal(win.freeSpace.measured, timeout=10000):
+        assert win.saveLocations.choose(str(other))
+    assert win.saveLocations.current() == str(other), "전제: 저장 위치가 바뀌었다"
+    assert _footer_texts(win) == {**before, "free": "50.0 GB"}
 
 
 # ---------------------------------------------------------------------------

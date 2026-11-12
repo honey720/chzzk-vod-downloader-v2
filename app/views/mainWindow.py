@@ -1,6 +1,7 @@
 import logging
 import os
 import platform
+from dataclasses import replace
 from app.section_input.basis import SECTION_CONTENT_TYPES
 from app.system import settings
 
@@ -35,7 +36,7 @@ from PySide6.QtGui import QKeyEvent, QKeySequence, QResizeEvent
 from app.system.free_space import FreeSpaceProbe
 from app.system.process_memory import log_process_memory, resident_bytes
 from app.viewmodels.download_viewmodel import DownloadViewModel
-from app.viewmodels.footer_monitor import RunResult, combine_readings
+from app.viewmodels.footer_monitor import MonitorSnapshot, RunResult, combine_readings
 from app.viewmodels.menu_bubble import RESULT_STATES, MenuBubble
 from app.viewmodels.path_gates import check_fetch_path
 from app.viewmodels.save_location import SaveLocations
@@ -260,6 +261,8 @@ class VodDownloader(QMainWindow):
         self._showMenuBubble()
         # 창이 앞에 없을 때 다운로드 끝 OS 알림(#523, 설계 §8-11)
         self.downloadEndNotice = DownloadEndNotice(self, self._bringToFront, APP_DISPLAY_NAME)
+        # 하단바 모니터링에 마지막으로 넣은 값 — 여유 공간만 바뀔 때 나머지 칸을 이 값 그대로 둔다(#578)
+        self._footerSnapshot = MonitorSnapshot(receiving=False)
         self.freeSpace = FreeSpaceProbe(self)
         self.freeSpace.measured.connect(self._onFreeSpaceMeasured)
         self.monitorTimer = QTimer(self)
@@ -1378,9 +1381,10 @@ class VodDownloader(QMainWindow):
         path = self.saveLocations.current()
         logger.info("저장 위치 고름: %r", path)
         content_widget.set_global_download_path(path)
-        # 하단바 여유 공간은 새 위치의 것으로 — 다 재면 _onFreeSpaceMeasured가 보인다 (#504)
+        # 하단바 여유 공간은 새 위치의 것으로 — 다 재면 _onFreeSpaceMeasured가 보인다 (#504).
+        # 속도 · 남은 시간 · 연결 수는 1초 갱신 때만 바뀐다 — 여유 공간 칸만 고친다(#578)
         self.freeSpace.request(path)
-        self._showFooter()
+        self._showFreeSpace()
 
     def onStop(self) -> None:
         """
@@ -1449,13 +1453,28 @@ class VodDownloader(QMainWindow):
         readings = self.downloadViewModel.transferReadings()
         memory = resident_bytes() if readings else None
         free = self.freeSpace.value(self.saveLocations.current())
-        self.footerMonitor.setSnapshot(combine_readings(readings, memory, free))
-        self._applyFooterShape()  # 글 폭이 바뀌었을 수 있다 — 칸을 빼거나 되살린다(#529)
+        self._putFooter(combine_readings(readings, memory, free))
 
-    def _onFreeSpaceMeasured(self, path: str, _free) -> None:
-        """여유 공간을 다 쟀다 — 지금 위치의 것이면 바로 보인다."""
+    def _showFreeSpace(self) -> None:
+        """하단바 여유 공간 칸만 지금 위치의 마지막 측정값으로 고친다 (#578).
+
+        속도 · 남은 시간 · 연결 수 · 메모리는 마지막으로 넣은 값 그대로 둔다 — 하단바 모니터링은 1초에
+        한 번 바뀐다(#557). 측정이 늦게 끝나는 저장 위치(느린 디스크 · 네트워크 마운트)에서 측정이 1초
+        갱신 사이에 닿아도 그 시점의 진행 값이 끼어들지 않는다.
+        """
+        free = self.freeSpace.value(self.saveLocations.current())
+        self._putFooter(replace(self._footerSnapshot, free=free))
+
+    def _putFooter(self, snapshot: MonitorSnapshot) -> None:
+        """하단바 모니터링에 값을 넣고 기억한다 — 글 폭이 바뀌었을 수 있어 칸을 빼거나 되살린다(#529)."""
+        self._footerSnapshot = snapshot
+        self.footerMonitor.setSnapshot(snapshot)
+        self._applyFooterShape()
+
+    def _onFreeSpaceMeasured(self, path: str, _free: int | None) -> None:
+        """여유 공간을 다 쟀다 — 지금 위치의 것이면 여유 공간 칸만 바로 고친다(#578)."""
         if path == self.saveLocations.current():
-            self._showFooter()
+            self._showFreeSpace()
 
     def _showMenuBubble(self) -> None:
         """버블 상태 · 숫자가 바뀌었을 수 있다 — 버블과 툴팁을 고친다. 결과 버블이 사라지면 깜빡임도 멈춘다(#523)."""
