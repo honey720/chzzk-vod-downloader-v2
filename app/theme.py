@@ -64,6 +64,8 @@ QSS_RELATIVE_PATH = "resources/qss/style.qss"
 
 #: 크기·간격(px 정수). 다크/라이트 공통.
 METRICS = {
+    # ---- 구간 창 ----
+    "sectionRowGap": 4,  # 구간 행 안 손잡이 · 번호 · 칸 · 길이 · ✕ 사이(px) — 프로토 구간 행(#586)
     # ---- 카드 ----
     "cardPadding": 8,  # 카드 안쪽 여백 — 썸네일·글이 테두리에서 떨어지는 거리
     "cardRowSpacing": 4,  # 카드 안 행 간격(4의 배수 권장) — 줄이면 카드가 낮아져 밀도↑

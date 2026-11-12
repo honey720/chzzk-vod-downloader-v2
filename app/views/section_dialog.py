@@ -240,6 +240,7 @@ class SectionRow(QWidget):
         column.setSpacing(_MESSAGE_GAP)
         layout = QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(theme.METRICS["sectionRowGap"])  # 앱 스타일의 기본 간격은 0이다
         column.addLayout(layout)
 
         self.handle = DragHandle(self)
