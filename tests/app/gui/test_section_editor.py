@@ -12,6 +12,7 @@ config는 conftest가 격리한다.
 """
 
 import os
+import sys
 import threading
 from collections.abc import Callable, Iterator
 from fractions import Fraction
@@ -20,7 +21,7 @@ import pytest
 from PySide6.QtCore import QPoint, QRect, Qt
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtTest import QSignalSpy, QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
 import app.section_input.basis as section_basis
 import app.theme as theme
@@ -39,6 +40,7 @@ from core.utils.paths import release_output_paths
 from app.viewmodels.section_edit import SectionRefitter, refit_selections
 from tests.mocks.engine_side import engine_side
 from tests.app.gui.section_input import leave_time, type_clock, type_frame, type_time
+from tests.app.gui.section_reorder import alt_move, drag_handle
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, shown, snapshot_top_levels
 from typing import Never
 
@@ -923,13 +925,11 @@ def test_every_error_is_shown_at_once_when_the_window_opens(qtbot, tmp_path, bas
     assert not dialog.okButton.isEnabled()
 
 
-def test_typed_digits_reach_the_card_and_milliseconds_are_only_shown(
-    qtbot, tmp_path, basis
-) -> None:
-    """숫자만 쳐서 넣은 값이 카드에 쓰이고, 밀리초는 툴팁에만 나와야 한다.
+def test_typed_digits_reach_the_card_and_the_fields_have_no_tooltip(qtbot, tmp_path, basis) -> None:
+    """숫자만 쳐서 넣은 값이 카드에 쓰이고, 칸에는 툴팁이 없어야 한다 (#586).
 
     60fps. 시작의 시분초 칸에 503 · 프레임 칸에 30(00:05:03:30), 끝의 시분초 칸에 1000(00:10:00:00)을 치고 확인
-    -> 시작의 값 "00:05:03:30", 두 칸의 툴팁 "00:05:03.500", selections == ((303.5, 600),)
+    -> 시작의 값 "00:05:03:30", 두 칸의 툴팁 "", selections == ((303.5, 600),)
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -942,9 +942,9 @@ def test_typed_digits_reach_the_card_and_milliseconds_are_only_shown(
     leave(row.endEdit)
 
     assert row.startEdit.text() == "00:05:03:30"
-    # 툴팁의 첫 줄이 밀리초 표기다 — 그 아래는 칸을 쓰는 법이다
-    assert row.startEdit.clockEdit.toolTip().splitlines()[0] == "00:05:03.500"
-    assert row.startEdit.frameEdit.toolTip().splitlines()[0] == "00:05:03.500"
+    # 칸 툴팁(밀리초 · 쓰는 법)은 없앴다 — 입력법은 목록 아래 안내 한 줄이다(#586)
+    assert row.startEdit.clockEdit.toolTip() == ""
+    assert row.startEdit.frameEdit.toolTip() == ""
     press_ok(dialog)
     assert item.selections == (TimeRange(303.5, 600.0),)
 
@@ -992,8 +992,9 @@ def test_moved_rows_reach_the_engine_in_the_new_order_with_matching_file_numbers
 ) -> None:
     """위 · 아래로 바꾼 행의 순서가 엔진에 넘어가는 구간 순서이고 파일 이름의 _N이어야 한다.
 
-    행 A(600~1200) · B(1800~1860) · C(5~6)에서 C의 ▲를 두 번, A(이제 2번째)의 ▼를 한 번
-    -> 순서 C · B · A
+    행 A(600~1200) · B(1800~1860) · C(5~6)에서 C의 시작 칸 Alt+↑를 두 번, A(이제 2번째)의 시작 칸
+    Alt+↓를 한 번(#586 — ▲ ▼를 대신한다). 맨 위 행의 Alt+↑ · 맨 아래 행의 Alt+↓
+    -> 순서 C · B · A, 끝에서는 그대로
     -> 제출된 content.selections == (C, B, A), selection_paths의 이름 == "제목 1080p_1.mp4" ~ "_3.mp4"
     """
     submissions: list = []
@@ -1024,13 +1025,13 @@ def test_moved_rows_reach_the_engine_in_the_new_order_with_matching_file_numbers
         ],
     )
 
-    dialog._rows[2].upButton.click()
-    _pump()
-    dialog._rows[1].upButton.click()
-    _pump()
-    dialog._rows[1].downButton.click()
-    _pump()
-    assert not dialog._rows[0].upButton.isEnabled() and not dialog._rows[2].downButton.isEnabled()
+    alt_move(dialog._rows[2].startEdit.clockEdit, Qt.Key.Key_Up)
+    alt_move(dialog._rows[1].startEdit.clockEdit, Qt.Key.Key_Up)
+    alt_move(dialog._rows[1].startEdit.clockEdit, Qt.Key.Key_Down)
+    moved = [list(row) for row in dialog.viewModel().rows]
+    alt_move(dialog._rows[0].startEdit.clockEdit, Qt.Key.Key_Up)
+    alt_move(dialog._rows[2].startEdit.clockEdit, Qt.Key.Key_Down)
+    assert dialog.viewModel().rows == moved, "끝에서는 옮기지 않는다"
     press_ok(dialog)
 
     expected = (TimeRange(5.0, 6.0), TimeRange(1800.0, 1860.0), TimeRange(600.0, 1200.0))
@@ -2109,7 +2110,7 @@ def test_header_shows_the_end_of_the_video_only_after_the_lookup(qtbot, tmp_path
 
     조회를 붙잡아 둔 동안 -> 끝 타임코드 "" (모르는 값을 보이지 않는다), 머리줄 숨김
     60fps · 3600초로 조회가 끝남 -> 머리줄 "Sections 1 / 20 · 60fps · video ends at 01:00:00:00",
-    머리줄 툴팁(밀리초) "01:00:00.000"
+    머리줄 툴팁 ""
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -2124,7 +2125,8 @@ def test_header_shows_the_end_of_the_video_only_after_the_lookup(qtbot, tmp_path
     _pump()
 
     assert shown(dialog.headerLabel) == "Sections 1 / 20 · 60fps · video ends at 01:00:00:00"
-    assert dialog.headerLabel.toolTip().splitlines()[0] == "01:00:00.000"
+    # 머리줄 툴팁(밀리초 · 무엇을 적는지)은 없앴다 — 보이는 글을 되풀이한다(#586)
+    assert dialog.headerLabel.toolTip() == ""
 
 
 def test_no_end_is_shown_when_the_lookup_failed(qtbot, tmp_path, basis) -> None:
@@ -2280,23 +2282,38 @@ def test_enter_sets_digits_above_the_maximum_like_leaving_the_field(qtbot, tmp_p
     assert dialog.isVisible()
 
 
-def test_the_window_closes_only_through_the_ok_button(qtbot, tmp_path, basis) -> None:
-    """창은 확인 버튼으로만 닫혀야 한다 — 창이나 다른 버튼에 간 Enter는 닫지 않고, 확인 버튼에 포커스가 있을 때의 Enter는 닫는다.
+def test_enter_presses_only_the_focused_button(qtbot, tmp_path, basis) -> None:
+    """Enter는 초점이 있는 버튼만 눌러야 한다 — 칸의 Enter는 창을 닫지 않고, 확인에 초점이 있을 때의 Enter는 닫는다.
 
-    값이 유효한 창에서 창 자신과 구간 추가 버튼에 Enter를 보냄 -> 창 열림, 구간 그대로
-    확인 버튼에 포커스를 두고 Enter를 보냄 -> 창 닫힘, 구간이 쓰인다
+    카드 편집 창과 같은 규칙이다(#586). 값이 유효한 창에서
+    -> 확인 · 취소 모두 기본 버튼이 아니다
+    -> 끝 시분초 칸에서 Enter: 창 열림, 구간 그대로, 초점이 확인으로
+    -> 「+ 구간 추가」에 초점을 두고 Enter: 창 열림, 행 둘
+    -> 확인에 초점을 두고 Enter: 창 닫힘, 구간이 쓰인다
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
     dialog = open_editor(qtbot, win, item)
+    dialog.activateWindow()
+    QTest.qWaitForWindowActive(dialog)
     set_rows(dialog, [("00:10:00:00", "00:20:00:00")])
     assert not dialog.okButton.isDefault(), "기본 버튼이면 창 어디서든 Enter가 확인을 누른다"
+    assert not dialog.cancelButton.isDefault()
 
-    QTest.keyClick(dialog, Qt.Key.Key_Return)
-    QTest.keyClick(dialog.addButton, Qt.Key.Key_Return)
+    field = dialog._rows[0].endEdit.clockEdit
+    field.setFocus()
+    QTest.keyClick(field, Qt.Key.Key_Return)
     _pump()
     assert win._sectionDialog is dialog and dialog.isVisible()
     assert item.selections == ()
+    assert dialog.focusWidget() is dialog.okButton
+
+    dialog.addButton.setFocus()
+    QTest.keyClick(dialog.addButton, Qt.Key.Key_Return)
+    _pump()
+    assert win._sectionDialog is dialog and len(dialog._rows) == 2
+    dialog._rows[1].deleteButton.click()
+    _pump()
 
     dialog.okButton.setFocus()
     QTest.keyClick(dialog.okButton, Qt.Key.Key_Return)
@@ -3278,7 +3295,7 @@ def test_moving_a_row_while_a_field_has_focus_does_not_overwrite_the_row_that_to
 ) -> None:
     """칸에 포커스가 있는 채로 행의 순서를 바꿔도 그 자리에 온 행의 값이 덮이지 않아야 한다.
 
-    행 A(10분~20분) · B(30분~31분). B의 시작 시분초 칸에 포커스를 두고 B의 ▲
+    행 A(10분~20분) · B(30분~31분). B의 시작 시분초 칸에 포커스를 두고 그 칸에서 Alt+↑(#586 — ▲를 대신한다)
     -> 행 B · A, 값 그대로
     """
     item = _make_item(str(tmp_path))
@@ -3291,7 +3308,7 @@ def test_moving_a_row_while_a_field_has_focus_does_not_overwrite_the_row_that_to
     _pump()
     assert QApplication.focusWidget() is dialog._rows[1].startEdit.clockEdit, "전제: 포커스"
 
-    dialog._rows[1].upButton.click()
+    alt_move(dialog._rows[1].startEdit.clockEdit, Qt.Key.Key_Up)
     _pump()
 
     assert dialog.viewModel().rows == [
@@ -3403,14 +3420,13 @@ def test_message_line_sits_right_under_the_fields_with_no_gap(qtbot, tmp_path, b
     set_rows(dialog, [("00:10:00:00", "00:20:00:00")])
     _pump()
     row = dialog._rows[0]
+    # 손잡이는 행이 하나뿐이면 숨는다(자리는 남는다) — 보이는 것만 줄에 센다(#586)
     line = [
         row.numberLabel,
         row.startEdit,
         row.rangeLabel,
         row.endEdit,
         row.infoLabel,
-        row.upButton,
-        row.downButton,
         row.deleteButton,
     ]
     assert all(part.isVisible() for part in line) and row.messageSlot.isVisible()
@@ -3797,12 +3813,13 @@ def test_an_error_caused_by_setting_the_end_is_shown_instead_of_the_notice(
     assert notice_shown(second) == ""
 
 
-def test_a_row_button_settles_the_field_being_typed_before_it_moves_the_row(
+def test_moving_a_row_settles_the_field_being_typed_before_it_moves_the_row(
     qtbot, tmp_path, basis
 ) -> None:
-    """끝 칸을 치는 중 영상 끝을 넘은 채 행의 ▼를 눌러도, 그 칸을 끝으로 맞춘 뒤 행을 옮겨야 한다.
+    """끝 칸을 치는 중 영상 끝을 넘은 채 그 칸에서 Alt+↓를 눌러도, 그 칸을 끝으로 맞춘 뒤 행을 옮겨야 한다.
 
-    30분 영상 · 행 A(10분~) · B(20분~25분). A의 끝 시분초 칸에 010000을 친 채 A의 ▼
+    30분 영상 · 행 A(10분~) · B(20분~25분). A의 끝 시분초 칸에 010000을 친 채 그 칸에서 Alt+↓(#586 —
+    ▼를 대신한다)
     -> 행 B · A, A의 끝 == "00:30:00:00", 오류 없음
     """
     _win, _item, dialog = half_hour_editor(qtbot, tmp_path, basis, rows=2)
@@ -3812,7 +3829,7 @@ def test_a_row_button_settles_the_field_being_typed_before_it_moves_the_row(
     QTest.keyClicks(first.endEdit.clockEdit, "010000")
     _pump()
 
-    first.downButton.click()
+    alt_move(first.endEdit.clockEdit, Qt.Key.Key_Down)
     _pump()
 
     assert dialog.viewModel().rows == [
@@ -3908,59 +3925,69 @@ def test_a_saved_end_past_the_video_opens_as_an_error_on_the_end_and_is_set_when
     assert dialog.okButton.isEnabled()
 
 
-# ================================================================ 칸 · 버튼의 툴팁 (#309)
+# ================================================================ 툴팁은 손잡이와 ✕에만 (#586)
 
 
-def test_fields_and_buttons_say_how_they_work_in_their_tooltips(qtbot, tmp_path, basis) -> None:
-    """편집 창의 시분초 칸 · 프레임 칸 · 구간 추가 · ▲▼ · 머리줄은 쓰는 법을 툴팁에 적어야 하고, 그 숫자는 코드의 값과 같아야 한다.
+def test_only_the_handles_and_the_x_buttons_have_tooltips(qtbot, tmp_path, basis) -> None:
+    """준비된 창에서 툴팁이 있는 위젯은 행의 손잡이와 ✕뿐이어야 한다.
 
-    60fps · 3600초, 빈 행 하나
-    -> 시분초 칸: 받는 자릿수(칸의 maxDigits) · "0100 = 1 minute" · '.'이 프레임 칸으로 간다는 줄
-    -> 프레임 칸: "Frame number, 0 to 59"(프레임률 − 1)
-    -> 시작 칸: "Empty = start of the video", 끝 칸: "Empty = end of the video"
-    -> 구간 추가: "Add a section (up to N)"(N == 뷰모델의 최대 구간 수)
-    -> ▲▼: "Move up" · "Move down" 아래에 "The order is the file number (_N)"
-    -> 머리줄: 영상 끝의 밀리초 표기 아래에 머리줄이 무엇을 적는지
+    60fps · 3600초, 두 행(10분~20분 / 30분~31분) — 잘린 글이 없는 기본 크기
+    -> 툴팁이 빈 글이 아닌 보이는 위젯 == 행마다 손잡이 · ✕(4개)
+    -> 손잡이 "Reorder · Alt+↑↓"(macOS "Reorder · ⌥↑↓"), ✕ "Delete section"
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
     dialog = open_editor(qtbot, win, item)
-    row = dialog._rows[0]
-    viewmodel = dialog.viewModel()
+    set_rows(dialog, [("00:10:00:00", "00:20:00:00"), ("00:30:00:00", "00:31:00:00")])
+    _pump()
+    keys = "⌥↑↓" if sys.platform == "darwin" else "Alt+↑↓"
 
-    clock = row.startEdit.clockEdit.toolTip().splitlines()
-    frame = row.startEdit.frameEdit.toolTip().splitlines()
-    digits = row.startEdit.clockEdit.maxDigits()
+    with_tips = {
+        widget for widget in dialog.findChildren(QWidget) if widget.isVisible() and widget.toolTip()
+    }
 
-    assert (digits, viewmodel.topFrame(), viewmodel.maxSections()) == (6, 59, 20)
-    assert (
-        f"Digits fill from the right, up to {digits} (0100 = 1 minute) · "
-        "'.' moves to the frame field"
-    ) in clock
-    assert f"Frame number, 0 to {viewmodel.topFrame()}" in frame
-    assert "Empty = start of the video" in clock and "Empty = start of the video" in frame
-    assert "Empty = end of the video" in row.endEdit.clockEdit.toolTip().splitlines()
-    assert dialog.addButton.toolTip() == f"Add a section (up to {viewmodel.maxSections()})"
-    order_help = "The order is the file number (_N)"
-    assert row.upButton.toolTip().splitlines() == ["Move up", order_help]
-    assert row.downButton.toolTip().splitlines() == ["Move down", order_help]
-    assert dialog.headerLabel.toolTip().splitlines() == [
-        "01:00:00.000",
-        "Sections / maximum · frame rate · end of the video",
-    ]
+    expected = {row.handle for row in dialog._rows} | {row.deleteButton for row in dialog._rows}
+    assert with_tips == expected
+    assert [row.handle.toolTip() for row in dialog._rows] == [f"Reorder · {keys}"] * 2
+    assert [row.deleteButton.toolTip() for row in dialog._rows] == ["Delete section"] * 2
 
 
-def test_frame_field_tooltip_follows_the_frame_rate(qtbot, tmp_path, basis) -> None:
-    """프레임 칸의 툴팁에 적는 최대값은 조회한 프레임률 − 1이어야 한다.
+def test_the_input_hint_is_one_dim_line_under_the_list(qtbot, tmp_path, basis) -> None:
+    """시각 입력법 · 최대 개수는 목록 아래, 버튼 위의 한 줄이어야 한다.
 
-    30fps -> "Frame number, 0 to 29"
+    60fps · 3600초, 행 하나
+    -> 안내 == "Digits fill from the right · '.' goes to the frame field · empty = start/end of the video · up to 20 sections"
+    -> 안내의 위쪽 >= 목록의 아래쪽, 안내의 아래쪽 <= 버튼 상자의 위쪽, 높이 == 글 한 줄 높이 이하
     """
-    basis.fps = Fraction(30)
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
     dialog = open_editor(qtbot, win, item)
+    hint = dialog.hintLabel
 
-    assert "Frame number, 0 to 29" in dialog._rows[0].endEdit.frameEdit.toolTip().splitlines()
+    assert hint.isVisible()
+    assert hint.text() == (
+        "Digits fill from the right · '.' goes to the frame field · "
+        "empty = start/end of the video · up to 20 sections"
+    )
+    assert hint.geometry().top() >= dialog.scrollArea.geometry().bottom()
+    assert hint.geometry().bottom() <= dialog.buttonBox.geometry().top()
+    assert hint.height() <= 2 * hint.fontMetrics().height() - 1, "한 줄이다"
+
+
+def test_the_input_hint_is_hidden_while_the_lookup_runs(qtbot, tmp_path, basis) -> None:
+    """조회 중에는 입력법 안내가 보이지 않아야 한다.
+
+    조회를 붙잡아 둔 창 -> 안내 숨김, 글 ""
+    """
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    basis.gate.clear()
+    ask_section_editor(win, item)
+    dialog = win._sectionDialog
+    try:
+        assert not dialog.hintLabel.isVisible() and dialog.hintLabel.text() == ""
+    finally:
+        basis.gate.set()
 
 
 # ================================================================ 구간 길이의 합이 영상보다 길면 알린다 (#309)
@@ -4273,20 +4300,20 @@ def test_overlapping_rows_without_errors_both_count_in_the_total(qtbot, tmp_path
     assert total_shown(dialog) == TOTAL_OVER.format("01:20:00.000", "01:00:00.000")
 
 
-# ================================================================ 구간 길이의 합을 버튼 줄 왼쪽에 적는다 (#309)
+# ================================================================ 구간 길이의 합을 「+ 구간 추가」 오른쪽에 적는다 (#309 · #586)
 
 
 def sum_shown(dialog) -> str:
-    """버튼 줄 왼쪽 끝에 지금 보이는 합계. 없으면 빈 문자열."""
+    """「+ 구간 추가」 줄 오른쪽 끝에 지금 보이는 합계. 없으면 빈 문자열."""
     return dialog.sumLabel.text() if dialog.sumLabel.isVisible() else ""
 
 
-def test_sum_of_the_row_lengths_is_shown_left_of_the_buttons(qtbot, tmp_path, basis) -> None:
-    """편집 창은 버튼 줄 왼쪽에 행 길이의 합을 행 길이와 같은 표기로 적어야 한다.
+def test_sum_of_the_row_lengths_is_shown_right_of_the_add_button(qtbot, tmp_path, basis) -> None:
+    """편집 창은 목록 아래 「+ 구간 추가」 오른쪽에 행 길이의 합을 행 길이와 같은 표기로 적어야 한다.
 
     60fps · 3600초. 두 행: 00:10:00:00~00:20:00:30(10분 0.5초) / 00:30:00:00~00:31:00:00(1분)
     -> 행 길이 == ["00:10:00.500", "00:01:00.000"], 합계 == "Total 00:11:00.500"
-    -> 합계가 취소 버튼의 왼쪽, 취소 버튼과 같은 줄에 있다
+    -> 「+ 구간 추가」가 목록 아래 왼쪽, 합계가 그 오른쪽 · 같은 줄, 둘 다 버튼 상자 위 (#586)
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -4297,9 +4324,12 @@ def test_sum_of_the_row_lengths_is_shown_left_of_the_buttons(qtbot, tmp_path, ba
 
     assert [row.infoLabel.text() for row in dialog._rows] == ["00:10:00.500", "00:01:00.000"]
     assert sum_shown(dialog) == "Total 00:11:00.500"
-    label, cancel = dialog.sumLabel.geometry(), dialog.cancelButton.geometry()
-    assert label.right() < cancel.left()
-    assert cancel.top() <= label.center().y() <= cancel.bottom()
+    label, add = dialog.sumLabel.geometry(), dialog.addButton.geometry()
+    scroll, buttons = dialog.scrollArea.geometry(), dialog.buttonBox.geometry()
+    assert add.top() >= scroll.bottom() and add.left() <= scroll.left() + 1
+    assert add.right() < label.left()
+    assert add.top() <= label.center().y() <= add.bottom()
+    assert max(add.bottom(), label.bottom()) < buttons.top()
 
 
 def test_sum_follows_every_change_of_the_rows(qtbot, tmp_path, basis) -> None:
@@ -4332,8 +4362,7 @@ def test_sum_follows_every_change_of_the_rows(qtbot, tmp_path, basis) -> None:
     )
     _pump()
     seen.append(sum_shown(dialog))
-    dialog._rows[0].downButton.click()
-    _pump()
+    drag_handle(dialog, 0, gap=2)  # 첫 행을 한 칸 아래로 — 손잡이 끌기(#586 — ▼를 대신한다)
     seen.append(sum_shown(dialog))
     dialog._rows[0].deleteButton.click()
     _pump()
@@ -4469,7 +4498,8 @@ def test_dialog_at_its_narrowest_keeps_the_sum_and_both_buttons_inside(
     """창을 가장 좁게 줄여도 합계 · 취소 · 확인이 창 안에 다 보여야 한다.
 
     60fps · 3600초, 행 00:10:00:00~00:20:00:00. 창 폭을 1로 청함(최소 폭으로 선다)
-    -> 합계의 왼쪽 끝 >= 0, 합계의 폭 >= 그 글의 폭, 취소가 합계의 오른쪽, 확인의 오른쪽 끝 <= 창의 폭
+    -> 합계의 왼쪽 끝 >= 「+ 구간 추가」의 오른쪽, 합계의 폭 >= 그 글의 폭, 합계의 오른쪽 끝 <= 창의 폭,
+       취소 · 확인이 창 안(#586 — 합계는 목록 아래 줄로 옮겼다)
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -4481,7 +4511,9 @@ def test_dialog_at_its_narrowest_keeps_the_sum_and_both_buttons_inside(
 
     label = dialog.sumLabel
     assert label.isVisible() and label.text() == "Total 00:10:00.000"
-    assert label.geometry().left() >= 0
+    assert label.geometry().left() > dialog.addButton.geometry().right()
     assert label.width() >= label.fontMetrics().horizontalAdvance(label.text())
-    assert dialog.cancelButton.geometry().left() > label.geometry().right()
-    assert dialog.okButton.geometry().right() <= dialog.width()
+    assert label.geometry().right() <= dialog.width()
+    for button in (dialog.cancelButton, dialog.okButton):
+        corner = button.mapTo(dialog, button.rect().bottomRight())
+        assert button.mapTo(dialog, QPoint(0, 0)).x() >= 0 and corner.x() <= dialog.width()

@@ -13,7 +13,11 @@
 |---|---|---|
 | 조회 중 | "영상 정보를 읽는 중" 한 줄 | 꺼짐 |
 | 조회 실패 | 실패 안내 | 꺼짐 |
-| 준비됨 | 머리줄(구간 수 · 프레임률) · 구간 행 · 구간 추가 · 구간 길이의 합 | 오류가 없을 때만 켜짐 |
+| 준비됨 | 머리줄(구간 수 · 프레임률) · 구간 행 · 구간 추가 · 구간 길이의 합 · 입력법 안내 | 오류가 없을 때만 켜짐 |
+
+구간의 순서는 행 왼쪽 손잡이(⋮⋮)를 끌어 바꾸고, 키보드로는 시각 칸에서 Alt+↑/↓(macOS Option)로
+바꾼다(설계 §12.1 「카드 편집 창 · 구간 창」, #586). 순서가 구간 번호이고 파일 이름의 ``_N``이다.
+툴팁은 손잡이와 ✕에만 둔다 — 시각 입력법 · 최대 개수는 목록 아래 흐린 글 한 줄이다.
 
 오류는 팝업으로 띄우지 않는다 — 틀린 칸의 테두리와 그 행의 문구로 보인다. 값이 바뀔 때마다
 검사하고, 치고 있는 행의 오류를 바로 띄울지 칸을 떠날 때 띄울지는 뷰모델의 표
@@ -28,13 +32,22 @@
   시작 → 끝 → 다음 행의 시작, 마지막 행의 끝에서는 확인 버튼. ``NEXT_AFTER_ENTER``가 정한다
 - ".": 시분초 칸에서 같은 시각의 프레임 칸으로 간다
 
-**Enter는 창을 닫지 않는다** — 창은 확인 버튼으로만 닫는다(확인 버튼에 포커스가 있을 때의
-Enter · Space 포함). 그래서 창에 기본 버튼을 두지 않는다. Esc는 취소로 닫는다.
+**칸에서 친 Enter는 창을 닫지 않는다** — 초점이 있는 버튼에서 친 Enter만 그 버튼을 누른다(카드 편집
+창과 같은 규칙). 그래서 창에 기본 버튼을 두지 않는다. Esc는 취소로 닫는다 — 끄는 중이면 끌기만 버린다.
+버튼은 Qt 버튼 상자가 OS 관례 차례로 놓고, 확인이 주 동작(채움)이다(설계 §12.1).
 """
 
-from PySide6.QtCore import Qt, QTimer
+import sys
+
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPaintEvent, QShowEvent
 from PySide6.QtWidgets import (
+    QAbstractButton,
+    QApplication,
     QDialog,
+    QDialogButtonBox,
+    QFrame,
+    QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -79,10 +92,139 @@ _ROW_SPACING = 0
 # 칸의 줄과 그 아래 안내 줄 사이(px) — 띄우지 않는다. 안내 줄이 늘 한 줄을 차지해 행 사이를
 # 이미 띄우고, 2px씩이면 20행에서 40px이 더 든다
 _MESSAGE_GAP = 0
+DRAG_HANDLE_WIDTH = 16  # 손잡이 폭(px) — 아이콘 도형(16)과 같다(프로토 inbox 55)
+DRAG_EDGE = 24  # 끄는 중 목록 위 · 아래 끝에서 이 거리(px) 안이면 저절로 스크롤한다
+DRAG_SCROLL_STEP = 8  # 저절로 스크롤 한 번에 움직이는 거리(px) — DRAG_SCROLL_MS마다
+DRAG_SCROLL_MS = 30  # 저절로 스크롤 간격(ms)
+# 들어갈 자리 선 두께(px) — 칸의 focus ring(1)보다 한 단계 굵게, 행 사이 빈 줄에 묻히지 않게
+DRAG_LINE = 2
+# 끄는 행의 불투명도 — 자리는 비우지 않는다(끄는 동안 다른 행이 들썩이지 않게)
+DRAG_OPACITY = 0.4
+_DOT_RADIUS = 1.1  # 손잡이 점의 반지름(px) — 두 줄 × 세 점 = ⋮⋮
+_DOT_STEP_X = 2.5  # 손잡이 가운데에서 두 줄까지 가로 거리(px)
+_DOT_STEP_Y = 5.0  # 손잡이 점 사이 세로 거리(px)
+
+
+def move_keys_text() -> str:
+    """순서를 바꾸는 키 글 — macOS는 Option 기호(⌥)로 적는다."""
+    return "⌥↑↓" if sys.platform == "darwin" else "Alt+↑↓"
+
+
+def is_move_key(event: QEvent) -> bool:
+    """시각 칸에서 행을 옮기는 키(Alt+↑/↓, macOS Option)인지.
+
+    수정 키는 Alt 하나뿐이어야 한다 — 다른 수정 키가 함께 눌렸으면 칸에 맡긴다. macOS는 화살표에
+    키패드 수정자를 붙여 보내므로 그것은 세지 않는다.
+    """
+    if event.type() != QEvent.Type.KeyPress:
+        return False
+    if event.key() not in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+        return False
+    modifiers = event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier
+    return modifiers == Qt.KeyboardModifier.AltModifier
+
+
+class _MoveKeyFilter(QObject):
+    """시각 칸에 거는 Alt+↑/↓ 필터 — 받은 키를 창의 함수(``handler``)에 넘긴다.
+
+    창 자신을 필터로 걸지 않는다 — 창이 파괴되는 도중 자식 칸이 사라지며 보내는 이벤트가 반쯤 지워진
+    창의 파이썬 함수로 가서 예외가 난다. 이 객체는 창의 첫 자식이라 칸보다 먼저 사라지고, 사라진
+    필터는 Qt가 더 부르지 않는다.
+    """
+
+    def __init__(self, handler, parent: QObject) -> None:
+        super().__init__(parent)
+        self._handler = handler
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if is_move_key(event) and self._handler(watched, event):
+            return True
+        return super().eventFilter(watched, event)
+
+
+class DragHandle(QWidget):
+    """구간 행 왼쪽의 손잡이(⋮⋮) — 이것을 눌러 끌 때만 행이 옮겨진다 (#586).
+
+    시각 칸 · 번호 · 길이를 끌어서는 옮겨지지 않는다(글 고르기 · 칸 누르기와 겹치지 않게). 누르고
+    ``startDragDistance`` 넘게 움직이면 ``dragStarted``, 그 뒤 움직일 때마다 ``dragMoved``, 놓으면
+    ``dropped``를 낸다(전역 위치). 누른 동안은 Qt가 이 위젯에 포인터를 붙잡아 두어 창 밖의 움직임 ·
+    놓기도 여기로 온다. 초점은 받지 않는다 — 끌어도 칸의 초점이 그대로다.
+    """
+
+    dragStarted = Signal()
+    dragMoved = Signal(QPoint)
+    dropped = Signal(QPoint)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("sectionDragHandle")
+        self.setFixedWidth(DRAG_HANDLE_WIDTH)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover)
+        # 행이 하나뿐이면 숨는다 — 숨어도 자리는 남긴다(칸이 옆으로 흔들리지 않게)
+        policy = self.sizePolicy()
+        policy.setRetainSizeWhenHidden(True)
+        self.setSizePolicy(policy)
+        self._press: QPoint | None = None  # 누른 전역 위치 — 누르지 않았으면 None
+        self._dragging = False
+
+    def isDragging(self) -> bool:
+        """끄는 중인지 — 누르고 끌기 거리를 넘긴 뒤 놓기 전까지다."""
+        return self._dragging
+
+    def cancel(self) -> None:
+        """끌기를 버린다(Esc) — 다음 움직임 · 놓기는 아무 일도 하지 않는다."""
+        self._press = None
+        self._dragging = False
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        self.update()
+
+    def paintEvent(self, _event: QPaintEvent) -> None:
+        """⋮⋮를 그린다 — 평소 흐린 글 색, 포인터가 위에 있거나 끄는 중이면 본문 글 색."""
+        tokens = theme.current_tokens()
+        strong = self.underMouse() or self._dragging
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(tokens["text" if strong else "textMuted"]))
+        cx, cy = self.width() / 2, self.height() / 2
+        for dx in (-_DOT_STEP_X, _DOT_STEP_X):
+            for dy in (-_DOT_STEP_Y, 0.0, _DOT_STEP_Y):
+                painter.drawEllipse(QPointF(cx + dx, cy + dy), _DOT_RADIUS, _DOT_RADIUS)
+        painter.end()
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() != Qt.MouseButton.LeftButton:
+            super().mousePressEvent(event)
+            return
+        self._press = event.globalPosition().toPoint()
+        self.setCursor(Qt.CursorShape.ClosedHandCursor)
+        event.accept()
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if self._press is None:
+            return
+        where = event.globalPosition().toPoint()
+        if not self._dragging:
+            if (where - self._press).manhattanLength() < QApplication.startDragDistance():
+                return
+            self._dragging = True
+            self.update()
+            self.dragStarted.emit()
+        self.dragMoved.emit(where)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if event.button() != Qt.MouseButton.LeftButton or self._press is None:
+            return
+        dragging = self._dragging
+        self.cancel()
+        if dragging:
+            self.dropped.emit(event.globalPosition().toPoint())
 
 
 class SectionRow(QWidget):
-    """구간 한 행 — 번호 · [시작 시분초][프레임] ~ [끝 시분초][프레임] · 길이 · 위 · 아래 · 삭제,
+    """구간 한 행 — 손잡이 · 번호 · [시작 시분초][프레임] ~ [끝 시분초][프레임] · 길이 · 삭제,
     그 아래 안내 줄 한 줄.
 
     안내 줄(``messageSlot``)은 글이 없어도 **늘 한 줄의 높이를 차지한다** — 오류가 나고
@@ -100,6 +242,8 @@ class SectionRow(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         column.addLayout(layout)
 
+        self.handle = DragHandle(self)
+        layout.addWidget(self.handle)
         self.numberLabel = QLabel(self)
         self.numberLabel.setObjectName("sectionNumberLabel")
         self.numberLabel.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -114,22 +258,20 @@ class SectionRow(QWidget):
         layout.addWidget(self.rangeLabel)
         layout.addWidget(self.endEdit)
 
-        # 구간 길이(밀리초 표기) — 좁으면 말줄임하고 전문은 툴팁이다(ElidingLabel)
-        self.infoLabel = ElidingLabel(self)
+        # 구간 길이(밀리초 표기) — 좁으면 말줄임하고, 잘렸을 때만 전문을 툴팁에 둔다
+        self.infoLabel = ElidingLabel(self, tip_when_elided=True)
         self.infoLabel.setObjectName("sectionInfoLabel")
         layout.addWidget(self.infoLabel, 1)
 
-        self.upButton = self._rowButton("▲", "sectionUpButton")
-        self.downButton = self._rowButton("▼", "sectionDownButton")
         self.deleteButton = self._rowButton("✕", "sectionDeleteButton")
-        for button in (self.upButton, self.downButton, self.deleteButton):
-            layout.addWidget(button)
+        layout.addWidget(self.deleteButton)
 
-        # 안내 줄 — 글이 없어도 한 줄의 높이를 차지한다. 번호 폭만큼 들여 칸의 왼쪽 끝에 맞춘다
+        # 안내 줄 — 글이 없어도 한 줄의 높이를 차지한다. 손잡이 · 번호 폭만큼 들여 칸의 왼쪽 끝에 맞춘다
         self.messageSlot = QWidget(self)
         self.messageSlot.setObjectName("sectionMessageSlot")
         slot = QHBoxLayout(self.messageSlot)
-        slot.setContentsMargins(self.numberLabel.minimumWidth() + layout.spacing(), 0, 0, 0)
+        indent = DRAG_HANDLE_WIDTH + self.numberLabel.minimumWidth() + 2 * layout.spacing()
+        slot.setContentsMargins(indent, 0, 0, 0)
         slot.setSpacing(0)
         # 오류 문구 — 오류가 있을 때만 보인다
         self.errorLabel = self._messageLabel("sectionErrorLabel")
@@ -151,7 +293,8 @@ class SectionRow(QWidget):
         column.addWidget(self.messageSlot)
 
     def _messageLabel(self, name: str) -> ElidingLabel:
-        label = ElidingLabel(self.messageSlot)
+        # 잘렸을 때만 전문을 툴팁에 둔다 — 보이는 글을 되풀이하는 툴팁은 두지 않는다(설계 §12.1)
+        label = ElidingLabel(self.messageSlot, tip_when_elided=True)
         label.setObjectName(name)
         label.setWordWrap(False)  # 한 줄 — 줄바꿈하면 행의 높이가 글 길이에 따라 달라진다
         label.setVisible(False)
@@ -194,6 +337,8 @@ class SectionEditDialog(QDialog):
 
     def __init__(self, viewmodel: SectionEditViewModel, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        # 시각 칸의 Alt+↑/↓ 필터 — 칸보다 먼저 만들어 칸보다 먼저 사라지게 한다(_MoveKeyFilter)
+        self._moveKeys = _MoveKeyFilter(self._onMoveKey, self)
         self._viewmodel = viewmodel
         self._rows: list[SectionRow] = []
         # 숫자를 치고 있는 (행, 칸) — 그 행의 오류 가운데 일부는 칸을 떠날 때 띄운다. 없으면 None
@@ -205,6 +350,12 @@ class SectionEditDialog(QDialog):
         self._armTimer.setSingleShot(True)
         self._armTimer.setInterval(0)
         self._armTimer.timeout.connect(self._armClampNotice)
+        # 끄는 중인 행 — 끌기를 시작한 행 위젯, 들어갈 틈(0 = 맨 위 행 앞 ~ 행 수 = 맨 끝), 마지막
+        # 전역 위치. 끌지 않으면 None
+        self._drag: dict | None = None
+        self._dragTimer = QTimer(self)
+        self._dragTimer.setInterval(DRAG_SCROLL_MS)
+        self._dragTimer.timeout.connect(self._dragAutoScroll)
         self.setObjectName("sectionEditDialog")
         self.setModal(True)
         self.setupUi()
@@ -228,7 +379,8 @@ class SectionEditDialog(QDialog):
         """위젯을 만든다 — 글자는 ``retranslateUi``가 넣는다."""
         layout = QVBoxLayout(self)
 
-        self.titleLabel = ElidingLabel(self)
+        # 제목 — 잘렸을 때만 전문을 툴팁에 둔다(보이는 글을 되풀이하지 않는다, 설계 §12.1)
+        self.titleLabel = ElidingLabel(self, tip_when_elided=True)
         self.titleLabel.setObjectName("sectionTitleLabel")
         self.titleLabel.setText(self._viewmodel.item.title)
         layout.addWidget(self.titleLabel)
@@ -240,16 +392,9 @@ class SectionEditDialog(QDialog):
         self.statusLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.statusLabel, 1)
 
-        header = QHBoxLayout()
         self.headerLabel = QLabel(self)
         self.headerLabel.setObjectName("sectionHeaderLabel")
-        header.addWidget(self.headerLabel, 1)
-        self.addButton = QPushButton(self)
-        self.addButton.setObjectName("sectionAddButton")
-        self.addButton.setAutoDefault(False)
-        self.addButton.clicked.connect(self._onAdd)
-        header.addWidget(self.addButton)
-        layout.addLayout(header)
+        layout.addWidget(self.headerLabel)
 
         self.scrollArea = QScrollArea(self)
         self.scrollArea.setObjectName("sectionScrollArea")
@@ -274,6 +419,39 @@ class SectionEditDialog(QDialog):
         # 행의 양옆에 드는 폭(px) — 왼쪽 여백 + 오른쪽 여백(스크롤바가 보이면 바가 그 자리에 든다)
         self._rowSideWidth = margins.left() + right
         layout.addWidget(self.scrollArea, 1)
+        # 끄는 동안 들어갈 자리에 긋는 선 — 행 컨테이너 위에 겹쳐 놓는다(레이아웃에 들지 않는다).
+        # 색은 전역 QSS가 칠한다(강조색)
+        self.dropLine = QFrame(self._rowContainer)
+        self.dropLine.setObjectName("sectionDropLine")
+        self.dropLine.setFixedHeight(DRAG_LINE)
+        self.dropLine.hide()
+
+        under = QHBoxLayout()
+        # 「+ 구간 추가」 — 목록 아래 왼쪽(설계 §12.1)
+        self.addButton = QPushButton(self)
+        self.addButton.setObjectName("sectionAddButton")
+        self.addButton.setAutoDefault(False)
+        self.addButton.clicked.connect(self._onAdd)
+        under.addWidget(self.addButton)
+        # 구간 길이의 합이 영상보다 길다는 알림 — 「+ 구간 추가」 오른쪽의 남는 자리를 쓴다. 글이
+        # 없어도 그 자리를 차지해, 알림이 생기고 사라져도 행 영역과 버튼이 움직이지 않는다. 알림은
+        # 두 문장이다(무슨 일인지 · 숫자) — 들어가면 한 줄로 잇고, 좁으면 두 줄로 나눠 숫자
+        # 쪽만 줄인다. 전체 글은 늘 툴팁에 있다(TwoLineLabel)
+        self.totalLabel = TwoLineLabel(self)
+        self.totalLabel.setObjectName("sectionTotalLabel")
+        under.addWidget(self.totalLabel, 1)
+        # 구간 길이의 합("합계 11:20:16.000") — 「+ 구간 추가」 줄의 오른쪽 끝. 행의 길이 표기와
+        # 같은 형식이다. 합이 영상보다 길면 왼쪽의 알림이 그 합을 함께 적으므로 이 글은 숨는다(같은
+        # 값을 두 번 적지 않는다)
+        self.sumLabel = QLabel(self)
+        self.sumLabel.setObjectName("sectionSumLabel")
+        under.addWidget(self.sumLabel)
+        layout.addLayout(under)
+        # 시각 입력법 · 최대 개수 — 목록 아래 흐린 글 한 줄. 칸마다 걸던 툴팁을 여기 한 번으로
+        # 모았다(설계 §12.1). 좁으면 말줄임하고 잘렸을 때만 전문을 툴팁에 둔다
+        self.hintLabel = ElidingLabel(self, tip_when_elided=True)
+        self.hintLabel.setObjectName("sectionHintLabel")
+        layout.addWidget(self.hintLabel)
 
         # 받는 중인 배치가 이 카드를 기다릴 때만 보인다 — 창을 닫아야 이어 간다는 것을 알린다
         self.waitHintLabel = QLabel(self)
@@ -282,41 +460,31 @@ class SectionEditDialog(QDialog):
         self.waitHintLabel.setVisible(False)
         layout.addWidget(self.waitHintLabel)
 
-        buttons = QHBoxLayout()
-        # 구간 길이의 합("합계 11:20:16.000") — 버튼 줄의 왼쪽 끝. 행의 길이 표기와 같은 형식이다.
-        # 합이 영상보다 길면 아래의 알림이 그 합을 함께 적으므로 이 글은 숨는다(같은 값을 두 번
-        # 적지 않는다)
-        self.sumLabel = QLabel(self)
-        self.sumLabel.setObjectName("sectionSumLabel")
-        buttons.addWidget(self.sumLabel)
-        # 구간 길이의 합이 영상보다 길다는 알림 — 버튼 줄의 왼쪽 남는 자리를 쓴다. 글이 없어도
-        # 그 자리를 차지해, 알림이 생기고 사라져도 행 영역과 버튼이 움직이지 않는다. 알림은
-        # 두 문장이다(무슨 일인지 · 숫자) — 들어가면 한 줄로 잇고, 좁으면 두 줄로 나눠 숫자
-        # 쪽만 줄인다. 전체 글은 늘 툴팁에 있다(TwoLineLabel)
-        self.totalLabel = TwoLineLabel(self)
-        self.totalLabel.setObjectName("sectionTotalLabel")
-        buttons.addWidget(self.totalLabel, 1)
-        self.cancelButton = QPushButton(self)
-        self.cancelButton.setObjectName("sectionCancelButton")
-        self.cancelButton.setAutoDefault(False)
-        self.cancelButton.clicked.connect(self.reject)
-        self.okButton = QPushButton(self)
+        # 버튼 차례는 Qt 버튼 상자가 OS 관례로 정한다(설계 §12.1). 확인이 주 동작(채움 색 규칙)
+        self.buttonBox = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self
+        )
+        self.okButton = self.buttonBox.button(QDialogButtonBox.StandardButton.Ok)
         self.okButton.setObjectName("sectionOkButton")
+        self.okButton.setProperty("role", "primary")
+        # 버튼 상자가 만들며 이미 스타일을 입혔다 — 속성을 바꾼 뒤 다시 입힌다
+        theme.repolish(self.okButton)
+        self.cancelButton = self.buttonBox.button(QDialogButtonBox.StandardButton.Cancel)
+        self.cancelButton.setObjectName("sectionCancelButton")
         # 기본 버튼으로 두지 않는다 — 두면 창 어디서든 Enter가 확인을 누른다. autoDefault도
-        # 끈다(QDialog는 autoDefault 버튼을 스스로 기본 버튼으로 올린다). 포커스가 이 버튼에
-        # 있을 때의 Enter는 keyPressEvent가 받는다
-        self.okButton.setAutoDefault(False)
-        self.okButton.clicked.connect(self.accept)
-        buttons.addWidget(self.cancelButton)
-        buttons.addWidget(self.okButton)
-        layout.addLayout(buttons)
+        # 끈다(QDialog는 autoDefault 버튼을 스스로 기본 버튼으로 올린다). 초점이 있는 버튼의
+        # Enter는 keyPressEvent가 받는다
+        for button in (self.okButton, self.cancelButton):
+            button.setAutoDefault(False)
+            button.setDefault(False)
+        self.buttonBox.accepted.connect(self.accept)
+        self.buttonBox.rejected.connect(self.reject)
+        layout.addWidget(self.buttonBox)
 
     def retranslateUi(self) -> None:
-        """고정 글자를 넣는다."""
-        self.setWindowTitle(self.tr("Edit sections"))
+        """고정 글자를 넣는다. 확인 · 취소는 Qt 자체 카탈로그가 번역한다(표준 버튼)."""
+        self.setWindowTitle(self.tr("Sections"))
         self.addButton.setText(self.tr("+ Add section"))
-        self.cancelButton.setText(self.tr("Cancel"))
-        self.okButton.setText(self.tr("OK"))
         self.waitHintLabel.setText(
             self.tr("A download is waiting for this card — it continues when you close this window")
         )
@@ -340,7 +508,7 @@ class SectionEditDialog(QDialog):
             self.statusLabel.setProperty("status", status)
             theme.repolish(self.statusLabel)
         self.statusLabel.setVisible(not ready)
-        for widget in (self.headerLabel, self.addButton, self.scrollArea):
+        for widget in (self.headerLabel, self.addButton, self.scrollArea, self.hintLabel):
             widget.setVisible(ready)
         self._refresh()
 
@@ -418,6 +586,7 @@ class SectionEditDialog(QDialog):
 
     def _rebuildRows(self) -> None:
         """행 위젯을 뷰모델의 행 수 · 순서대로 다시 만든다."""
+        self._endDrag()  # 끌던 행이 사라진다 — 끌기를 버린다
         old, self._rows = self._rows, []  # 먼저 비운다 — 사라지는 칸의 알림을 받지 않는다
         self._typing = None
         for row in old:
@@ -439,13 +608,16 @@ class SectionEditDialog(QDialog):
                 edit.entered.connect(lambda r=index, c=column: self._onEntered(r, c))
                 edit.pasted.connect(lambda r=index, c=column, e=edit: self._onPasted(r, c, e))
                 edit.touched.connect(self._onInput)
-            moveRow = self._viewmodel.moveRow
-            row.upButton.clicked.connect(lambda _=False, r=index: self._rowAction(moveRow, r, -1))
-            row.downButton.clicked.connect(lambda _=False, r=index: self._rowAction(moveRow, r, 1))
+                # Alt+↑/↓ — 칸마다 거는 필터다(앱 전체 필터가 아니다)
+                for part in (edit.clockEdit, edit.frameEdit):
+                    part.installEventFilter(self._moveKeys)
+            row.handle.dragStarted.connect(lambda r=row: self._beginDrag(r))
+            row.handle.dragMoved.connect(self._dragMove)
+            row.handle.dropped.connect(self._dropAt)
             row.deleteButton.clicked.connect(lambda _=False, r=index: self._onDeleteOrClear(r))
             self._rowLayout.insertWidget(index, row)
             self._rows.append(row)
-            install_tips(row)  # 새 행의 버튼 · 칸 툴팁도 말풍선으로(#550)
+            install_tips(row)  # 새 행의 손잡이 · ✕ 툴팁도 말풍선으로(#550)
         # 목록의 값은 _refresh가 칸에 넣는다 — 빈 시각(빈 글)이 아닌 값은 새 칸의 값과 달라
         # 언제나 들어가고, 넣은 값은 0이어도 전부 밝게 보인다
         self._refresh()
@@ -547,11 +719,8 @@ class SectionEditDialog(QDialog):
                 # 입력 중인 시각은 건드리지 않는다 — 고쳐 쓴 표기는 편집을 끝낸 뒤에 넣는다
                 if not edit.hasEditFocus() and edit.text() != text:
                     edit.setText(text)
-                # 툴팁 — 첫 줄은 그 시각의 밀리초 표기(값이 읽힐 때), 그 아래는 칸을 쓰는 법이다
-                value = viewmodel.millisecondsText(index, column)
+                # 칸에는 툴팁을 두지 않는다 — 입력법은 목록 아래 안내 한 줄이다(설계 §12.1)
                 for part, widget in ((PART_CLOCK, edit.clockEdit), (PART_FRAME, edit.frameEdit)):
-                    lines = [value, self._fieldHelp(part, widget), self._emptyHelp(column)]
-                    widget.setToolTip("\n".join(line for line in lines if line))
                     # 오류가 난 칸만 붉게 — 초 · 분 넘침은 시분초 칸, 프레임 넘침은 프레임 칸,
                     # 시각 전체의 오류는 그 시각의 두 칸
                     self._setFlag(widget, "invalid", (column, part) in flagged)
@@ -570,22 +739,20 @@ class SectionEditDialog(QDialog):
             )
             # 하나뿐인 행은 지울 수 없다 — 값이 있으면 ✕가 그 값을 비운다(비어 있으면 꺼 둔다)
             row.deleteButton.setEnabled(viewmodel.canRemove() or viewmodel.canClear())
-            row.upButton.setEnabled(index > 0)
-            row.downButton.setEnabled(index < count - 1)
-            order_help = self.tr("The order is the file number (_N)")
-            row.upButton.setToolTip(self.tr("Move up") + "\n" + order_help)
-            row.downButton.setToolTip(self.tr("Move down") + "\n" + order_help)
             row.deleteButton.setToolTip(
                 self.tr("Delete section") if count > 1 else self.tr("Clear values")
             )
+            # 행이 하나뿐이면 옮길 곳이 없다 — 손잡이를 숨긴다(자리는 남는다)
+            row.handle.setVisible(count > 1)
+            row.handle.setToolTip(self.tr("Reorder · {0}").format(move_keys_text()))
         self.headerLabel.setText(viewmodel.headerText())
-        # 머리줄의 툴팁 — 첫 줄은 영상 끝의 밀리초 표기, 그 아래는 머리줄에 적힌 것이 무엇인지다
-        header_help = self.tr("Sections / maximum · frame rate · end of the video")
-        self.headerLabel.setToolTip(
-            "\n".join(line for line in (viewmodel.endMillisecondsText(), header_help) if line)
-        )
-        self.addButton.setToolTip(
-            self.tr("Add a section (up to {0})").format(viewmodel.maxSections())
+        ready = viewmodel.state == STATE_READY
+        self.hintLabel.setText(
+            self.tr(
+                "Digits fill from the right · '.' goes to the frame field · empty = start/end of the video · up to {0} sections"
+            ).format(viewmodel.maxSections())
+            if ready
+            else ""
         )
         self.addButton.setEnabled(viewmodel.canAdd())
         notice = viewmodel.totalNoticeText()
@@ -593,24 +760,8 @@ class SectionEditDialog(QDialog):
         total = "" if notice else viewmodel.totalText()
         self.sumLabel.setText(total)
         self.sumLabel.setVisible(bool(total))
-        self.sumLabel.setToolTip(self.tr("Sum of the section lengths") if total else "")
         # 끝 칸을 치는 중 끝만 영상 끝을 넘은 것은 확인을 막지 않는다 — 확인이 그 칸을 맞춘다
         self.okButton.setEnabled(viewmodel.canCommit(self._typing))
-
-    def _fieldHelp(self, part: str, widget: TimecodeEdit) -> str:
-        """칸을 쓰는 법 한 줄 — 숫자는 칸과 뷰모델의 값에서 가져온다."""
-        if part == PART_CLOCK:
-            return self.tr(
-                "Digits fill from the right, up to {0} (0100 = 1 minute) · '.' moves to the frame field"
-            ).format(widget.maxDigits())
-        top = self._viewmodel.topFrame()
-        return "" if top is None else self.tr("Frame number, 0 to {0}").format(top)
-
-    def _emptyHelp(self, column: int) -> str:
-        """빈 시각이 무엇을 뜻하는지 한 줄."""
-        if column == START:
-            return self.tr("Empty = start of the video")
-        return self.tr("Empty = end of the video")
 
     def _fullParts(self, index: int) -> frozenset[str]:
         """치고 있는 시각이 그 행의 것이면, 그 시각에서 자리를 다 채운 칸. 아니면 빈 집합."""
@@ -627,18 +778,184 @@ class SectionEditDialog(QDialog):
             widget.setProperty(name, on)
             theme.repolish(widget)
 
+    # ---- 순서 바꾸기(#586) ----
+
+    def moveRowTo(self, row: int, target: int) -> None:
+        """row 행을 target 자리로 옮긴다 — 손잡이 끌기와 Alt+↑/↓가 부른다.
+
+        치고 있는 칸의 편집을 먼저 끝낸다(그 값도 행과 함께 옮겨 간다). 초점이 시각 칸에 있었으면
+        옮긴 뒤에도 **같은 구간의 같은 칸**에 둔다 — 그 칸이 든 행이 옮겨 간 자리를 따라간다. 행 위젯은
+        뷰모델의 ``rowsReset``으로 다시 만들어진다.
+        """
+        count = len(self._rows)
+        if row == target or not (0 <= row < count and 0 <= target < count):
+            return
+        self._onInput()
+        self._commitFocused()
+        focused = self._partAt(self.focusWidget())
+        self._viewmodel.moveRow(row, target)
+        if focused is None:
+            return
+        at, column, part = focused
+        if at == row:
+            at = target
+        elif row < at <= target:
+            at -= 1
+        elif target <= at < row:
+            at += 1
+        edit = self._rows[at].edit(column)
+        widget = edit.clockEdit if part == PART_CLOCK else edit.frameEdit
+        widget.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _partAt(self, widget: QWidget | None) -> tuple[int, int, str] | None:
+        """그 위젯이 시각 칸이면 (행, 칸 번호, 시분초 · 프레임). 아니면 None."""
+        if widget is None:
+            return None
+        for index, row in enumerate(self._rows):
+            for column in (START, END):
+                edit = row.edit(column)
+                if widget is edit.clockEdit:
+                    return index, column, PART_CLOCK
+                if widget is edit.frameEdit:
+                    return index, column, PART_FRAME
+        return None
+
+    def _onMoveKey(self, watched: QObject, event: QEvent) -> bool:
+        """시각 칸의 Alt+↑/↓ — 그 행을 한 칸 위 · 아래로 옮긴다. 키를 받았으면 True.
+
+        맨 위 · 맨 아래에서는 아무 일도 없다(키는 받는다 — 칸이 커서를 옮기지 않게). 다른 수정 키가
+        함께 눌렸으면 필터가 여기로 넘기지 않는다(``is_move_key``). 끄는 중에는 옮기지 않는다.
+        """
+        where = self._partAt(watched)
+        if where is None:
+            return False
+        row = where[0]
+        target = row + (-1 if event.key() == Qt.Key.Key_Up else 1)
+        if self._drag is None and 0 <= target < len(self._rows):
+            self.moveRowTo(row, target)
+        return True
+
+    def isDragging(self) -> bool:
+        """손잡이로 행을 끄는 중인지."""
+        return self._drag is not None
+
+    def _beginDrag(self, row: SectionRow) -> None:
+        """손잡이를 끌기 시작했다 — 끄는 행을 흐리게 하고 저절로 스크롤을 켠다.
+
+        흐리게 하는 효과 객체는 끄는 행 하나에만 붙였다가 끌기가 끝나면 뗀다(행마다 붙이지 않는다).
+        """
+        if row not in self._rows or self._drag is not None:
+            return
+        self._onInput()
+        self._commitFocused()
+        effect = QGraphicsOpacityEffect(row)
+        effect.setOpacity(DRAG_OPACITY)
+        row.setGraphicsEffect(effect)
+        index = self._rows.index(row)
+        self._drag = {"row": row, "from": index, "gap": index, "pos": None}
+        self.dropLine.setFixedWidth(self._rowContainer.width())
+        self.dropLine.raise_()
+        self._dragTimer.start()
+
+    def dropGap(self, global_pos: QPoint) -> int:
+        """전역 위치가 가리키는 틈 — 0은 맨 위 행 앞, 행 수는 맨 끝. 행 가운데보다 위면 그 행 앞이다."""
+        y = self._rowContainer.mapFromGlobal(global_pos).y()
+        for index, row in enumerate(self._rows):
+            if y < row.y() + row.height() / 2:
+                return index
+        return len(self._rows)
+
+    def _dragMove(self, global_pos: QPoint) -> None:
+        """끄는 중 포인터가 움직였다 — 들어갈 틈을 다시 정하고 그 자리에 선을 긋는다.
+
+        옮겨도 그대로인 틈(끄는 행의 바로 위 · 아래)에는 선을 긋지 않는다.
+        """
+        drag = self._drag
+        if drag is None or not self._rows:
+            return
+        drag["pos"] = global_pos
+        gap = self.dropGap(global_pos)
+        drag["gap"] = gap
+        last = self._rows[-1]
+        y = self._rows[gap].y() if gap < len(self._rows) else last.y() + last.height()
+        # 선은 행 목록 안에 다 들어오게 — 맨 끝 틈에서 바닥에 반쯤 걸치면 잘린다
+        top = min(max(0, y - DRAG_LINE // 2), self._rowContainer.height() - DRAG_LINE)
+        self.dropLine.move(0, top)
+        self.dropLine.setVisible(gap not in (drag["from"], drag["from"] + 1))
+
+    def _dragAutoScroll(self) -> None:
+        """끄는 중 포인터가 목록 위 · 아래 끝(``DRAG_EDGE`` 안)에 있으면 그쪽으로 조금 스크롤한다."""
+        drag = self._drag
+        if drag is None or drag["pos"] is None:
+            return
+        viewport = self.scrollArea.viewport()
+        y = viewport.mapFromGlobal(drag["pos"]).y()
+        bar = self.scrollArea.verticalScrollBar()
+        if y < DRAG_EDGE:
+            bar.setValue(bar.value() - DRAG_SCROLL_STEP)
+        elif y > viewport.height() - DRAG_EDGE:
+            bar.setValue(bar.value() + DRAG_SCROLL_STEP)
+        else:
+            return
+        self._dragMove(drag["pos"])
+
+    def _endDrag(self) -> dict | None:
+        """끌기를 끝낸다 — 선 · 흐림 · 저절로 스크롤을 거둔다. 끌던 것이 없으면 None."""
+        drag, self._drag = self._drag, None
+        self._dragTimer.stop()
+        self.dropLine.hide()
+        if drag is not None and isValid(drag["row"]):
+            drag["row"].setGraphicsEffect(None)
+        return drag
+
+    def _dropAt(self, global_pos: QPoint) -> None:
+        """놓았다 — 창 밖이거나 같은 자리면 그대로, 아니면 그 틈으로 옮기고 번호를 다시 매긴다."""
+        if self._drag is None:
+            return
+        self._dragMove(global_pos)
+        drag = self._endDrag()
+        if not self.frameGeometry().contains(global_pos):
+            return
+        source, gap = drag["from"], drag["gap"]
+        target = gap if gap <= source else gap - 1
+        if target != source:
+            self.moveRowTo(source, target)
+
+    def _cancelDrag(self) -> None:
+        """끄는 중 Esc — 끌기만 버린다. 행은 그대로이고 창은 닫지 않는다."""
+        drag = self._endDrag()
+        if drag is not None and isValid(drag["row"]):
+            drag["row"].handle.cancel()
+
     # ---- 닫기 ----
 
+    def showEvent(self, event: QShowEvent) -> None:
+        """보일 때 버튼 상자가 확인을 기본 버튼으로 올린 것을 되돌린다.
+
+        ``QDialogButtonBox``는 처음 보일 때 기본 버튼이 없으면 첫 AcceptRole 버튼(확인)을 기본 버튼으로
+        올린다 — 기본 버튼이면 창 어디서든 Enter가 확인을 누를 수 있고, 기본 버튼 모양이 된다. 자식이 먼저
+        보이므로 여기서 되돌린다.
+        """
+        super().showEvent(event)
+        for button in (self.okButton, self.cancelButton):
+            button.setDefault(False)
+
     def keyPressEvent(self, event) -> None:
-        """Enter는 확인 버튼에 포커스가 있을 때만 확인을 누른다. 그 밖의 Enter는 아무것도 하지 않는다.
+        """Enter는 초점이 있는 버튼만 누른다. 그 밖의 Enter는 아무것도 하지 않는다.
 
         QDialog는 Enter를 받으면 기본 버튼을 누른다 — 창 어디서든 Enter가 창을 닫게 된다. 그 길을
-        막는다. Esc(취소)를 비롯한 다른 키는 QDialog에 맡긴다.
+        막는다(카드 편집 창과 같은 규칙). 끄는 중의 Esc는 끌기만 버린다. 그 밖의 Esc(취소)를 비롯한
+        다른 키는 QDialog에 맡긴다.
         """
+        if event.key() == Qt.Key.Key_Escape and self._drag is not None:
+            self._cancelDrag()
+            event.accept()
+            return
         self._onInput()  # 칸이 받지 않은 키 — 입력 하나로 센다
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            if self.focusWidget() is self.okButton and self.okButton.isEnabled():
-                self.okButton.click()
+            focused = self.focusWidget()
+            if isinstance(focused, QAbstractButton) and focused.isEnabled():
+                focused.click()
             event.accept()
             return
         super().keyPressEvent(event)

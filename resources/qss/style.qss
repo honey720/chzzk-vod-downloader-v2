@@ -566,6 +566,7 @@ QLineEdit[invalid="true"]:focus {
 }
 
 #sectionHeaderLabel,
+#sectionHintLabel,
 #sectionWaitHintLabel,
 #cardEditWaitHintLabel,
 #sectionNumberLabel,
@@ -606,6 +607,12 @@ QScrollArea#sectionScrollArea {
 QScrollArea#sectionScrollArea > QWidget#qt_scrollarea_viewport,
 QWidget#sectionRowContainer {
     background-color: transparent;
+}
+
+/* 손잡이로 행을 끄는 동안 들어갈 자리 선 — 두께는 app/views/section_dialog.py의 DRAG_LINE (#586) */
+QFrame#sectionDropLine {
+    background-color: @accent;
+    border: none;
 }
 
 /* `selection-background-color`/`selection-color`를 여기(QComboBox 자신)에

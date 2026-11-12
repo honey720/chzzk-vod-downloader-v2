@@ -533,36 +533,24 @@ Part of the video kept arriving incomplete from the server. Try again later.</tr
 <context>
     <name>SectionEditDialog</name>
     <message>
-        <source>Edit sections</source>
-        <translation>Edit sections</translation>
-    </message>
-    <message>
         <source>+ Add section</source>
         <translation>+ Add section</translation>
     </message>
     <message>
-        <source>Cancel</source>
-        <translation>Cancel</translation>
+        <source>Sections</source>
+        <translation>Sections</translation>
     </message>
     <message>
-        <source>OK</source>
-        <translation>OK</translation>
+        <source>Reorder · {0}</source>
+        <translation>Reorder · {0}</translation>
+    </message>
+    <message>
+        <source>Digits fill from the right · &apos;.&apos; goes to the frame field · empty = start/end of the video · up to {0} sections</source>
+        <translation>Digits fill from the right · &apos;.&apos; goes to the frame field · empty = start/end of the video · up to {0} sections</translation>
     </message>
     <message>
         <source>A download is waiting for this card — it continues when you close this window</source>
         <translation>A download is waiting for this card — it continues when you close this window</translation>
-    </message>
-    <message>
-        <source>The order is the file number (_N)</source>
-        <translation>The order is the file number (_N)</translation>
-    </message>
-    <message>
-        <source>Move up</source>
-        <translation>Move up</translation>
-    </message>
-    <message>
-        <source>Move down</source>
-        <translation>Move down</translation>
     </message>
     <message>
         <source>Delete section</source>
@@ -571,34 +559,6 @@ Part of the video kept arriving incomplete from the server. Try again later.</tr
     <message>
         <source>Clear values</source>
         <translation>Clear values</translation>
-    </message>
-    <message>
-        <source>Sections / maximum · frame rate · end of the video</source>
-        <translation>Sections / maximum · frame rate · end of the video</translation>
-    </message>
-    <message>
-        <source>Add a section (up to {0})</source>
-        <translation>Add a section (up to {0})</translation>
-    </message>
-    <message>
-        <source>Sum of the section lengths</source>
-        <translation>Sum of the section lengths</translation>
-    </message>
-    <message>
-        <source>Digits fill from the right, up to {0} (0100 = 1 minute) · &apos;.&apos; moves to the frame field</source>
-        <translation>Digits fill from the right, up to {0} (0100 = 1 minute) · &apos;.&apos; moves to the frame field</translation>
-    </message>
-    <message>
-        <source>Frame number, 0 to {0}</source>
-        <translation>Frame number, 0 to {0}</translation>
-    </message>
-    <message>
-        <source>Empty = start of the video</source>
-        <translation>Empty = start of the video</translation>
-    </message>
-    <message>
-        <source>Empty = end of the video</source>
-        <translation>Empty = end of the video</translation>
     </message>
 </context>
 <context>

@@ -595,14 +595,19 @@ class SectionEditViewModel(QObject):
         self._evaluate()
         self.rowsReset.emit()
 
-    def moveRow(self, row: int, step: int) -> None:
-        """행을 위(step=-1) · 아래(step=1)로 옮긴다. 행의 순서가 구간 번호이고 파일 이름의 번호다."""
-        target = row + step
-        if self.state != STATE_READY or not (
-            0 <= row < len(self.rows) and 0 <= target < len(self.rows)
+    def moveRow(self, row: int, target: int) -> None:
+        """행 하나를 target 자리로 옮긴다 — 사이의 행은 한 칸씩 밀린다. 행의 순서가 구간 번호이고 파일 이름의 번호다.
+
+        손잡이 끌기는 몇 칸이든 한 번에, Alt+↑/↓는 한 칸을 옮긴다(#586). 같은 자리 · 범위 밖이면
+        아무것도 하지 않는다. 옮긴 뒤 다시 검증하므로 오류 · 안내는 값을 따라 옮겨 간 행에 붙는다.
+        """
+        if (
+            self.state != STATE_READY
+            or row == target
+            or not (0 <= row < len(self.rows) and 0 <= target < len(self.rows))
         ):
             return
-        self.rows[row], self.rows[target] = self.rows[target], self.rows[row]
+        self.rows.insert(target, self.rows.pop(row))
         self._clamped = None  # 행 번호가 바뀐다
         self._evaluate()
         self.rowsReset.emit()

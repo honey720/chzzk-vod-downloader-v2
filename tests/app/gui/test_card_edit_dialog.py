@@ -695,9 +695,10 @@ class TestTipBubbles:
         tmp_path,
         basis,  # noqa: F811
     ) -> None:
-        """구간 창의 버튼 · 나중에 만든 행의 버튼에 들어가면 그 툴팁이 말풍선으로 떠야 한다.
+        """구간 창의 첫 행 ✕ · 나중에 만든 행의 손잡이에 들어가면 그 툴팁이 말풍선으로 떠야 한다.
 
-        편집 창 → 「구간 편집…」 · 조회 끝 -> 「구간 추가」와 첫 행 ✕에 들어가면 각자 툴팁이 말풍선, Qt 툴팁 안 뜸
+        편집 창 → 「구간 편집…」 · 조회 끝 · 「구간 추가」로 둘째 행 -> 첫 행 ✕와 둘째 행 손잡이에 들어가면
+        각자 툴팁이 말풍선, Qt 툴팁 안 뜸(#586 — 구간 창의 툴팁은 손잡이와 ✕에만 있다)
         """
         item = _make_item(str(tmp_path))
         win = _window(tmp_path, item)
@@ -708,7 +709,9 @@ class TestTipBubbles:
         assert sections is not None, "전제: 구간 창이 열렸다"
         qtbot.waitUntil(lambda: sections.viewModel().state != "loading", timeout=3000)
         _pump()
-        for widget in (sections.addButton, sections._rows[0].deleteButton):
+        sections.addButton.click()
+        _pump()
+        for widget in (sections._rows[0].deleteButton, sections._rows[1].handle):
             assert widget.toolTip(), f"전제: {widget.objectName()}에 툴팁이 있다"
             enter(widget)
             assert bubble_text_for(widget) == widget.toolTip()

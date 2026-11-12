@@ -32,6 +32,7 @@ from core.sections.hybrid import CUT_FAILED, CutError
 from core.utils.paths import release_output_paths
 from tests.mocks.engine_side import engine_side
 from tests.app.gui.section_input import enter_time
+from tests.app.gui.section_reorder import drag_handle
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
 from typing import Never
 
@@ -267,9 +268,7 @@ def test_reordered_sections_start_over_with_new_names(qtbot, failed_card) -> Non
     win, item, engine, _paths = failed_card
 
     dialog = _edit(qtbot, win, item, [None, None, None])
-    dialog._rows[0].downButton.click()
-    _pump()
-    dialog._rows[1].downButton.click()
+    drag_handle(dialog, 0, gap=3)  # 첫째 행을 맨 끝 틈으로 — 손잡이 끌기(#586 — ▼ 두 번을 대신한다)
     _pump()
     dialog.okButton.click()
     _pump()
