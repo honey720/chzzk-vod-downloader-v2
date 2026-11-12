@@ -12,7 +12,7 @@ from collections.abc import Iterator
 
 import pytest
 from PySide6.QtCore import QEvent, QPoint, Qt
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QPalette
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialogButtonBox, QStyle, QWidget
 
@@ -550,3 +550,345 @@ def test_rows_fit_inside_the_list_at_the_narrowest_window(qtbot, tmp_path, basis
         length = row.infoLabel
         assert length.text() in ("00:10:00.000", "00:01:00.000")
         assert length.width() >= length.fontMetrics().horizontalAdvance(length.text())
+
+
+# ================================================================ 옮긴 행이 보이게 스크롤
+
+
+#: 서로 다른 구간 8개 — 1분 ~ 1분 30초, 2분 ~ 2분 30초, …, 8분 ~ 8분 30초
+EIGHT = [(f"00:0{n}:00:00", f"00:0{n}:30:00") for n in range(1, 9)]
+LOW = 300  # 창 높이(px) — 행 8개가 목록에 다 들어가지 않는 높이
+
+
+def _low_editor(qtbot, tmp_path, basis) -> SectionEditDialog:  # noqa: F811
+    """행 8개(EIGHT)의 구간 창을 낮은 창(LOW)으로 연다 — 목록이 넘쳐 스크롤된다."""
+    dialog = _editor(qtbot, tmp_path, basis, EIGHT)
+    dialog.resize(dialog.width(), LOW)
+    _pump()
+    assert dialog.scrollArea.verticalScrollBar().maximum() > 0, "전제: 목록이 넘친다"
+    return dialog
+
+
+def _fully_visible(dialog: SectionEditDialog, widget: QWidget) -> bool:
+    """widget이 목록 뷰포트의 보이는 범위 안에 다 들어 있는지 — 위젯 사각형을 뷰포트 좌표로 옮겨 견준다."""
+    viewport = dialog.scrollArea.viewport()
+    top_left = widget.mapTo(viewport, QPoint(0, 0))
+    box = widget.rect().translated(top_left)
+    return viewport.rect().contains(box)
+
+
+@pytest.mark.parametrize(
+    ("key", "start", "steps"),
+    [(Qt.Key.Key_Down, 0, 7), (Qt.Key.Key_Up, 7, 7)],
+    ids=["down-to-bottom", "up-to-top"],
+)
+def test_alt_moves_keep_the_focused_field_inside_the_visible_list(
+    qtbot,
+    tmp_path,
+    basis,  # noqa: F811
+    key: Qt.Key,
+    start: int,
+    steps: int,
+) -> None:
+    """Alt+↑/↓로 행을 끝까지 옮기면 매번 초점 칸과 옮겨 간 행이 목록의 보이는 범위 안에 있어야 한다.
+
+    행 8개 · 창 높이 300. down: 맨 위 행을 보이게 둔 채 1번 행 시작 칸에서 Alt+↓ 7번,
+    up: 맨 아래 행을 보이게 둔 채 8번 행 시작 칸에서 Alt+↑ 7번
+    -> 매번 초점 == 옮겨 간 행의 시작 시분초 칸, 그 칸 · 그 행이 다 보임. 끝에서 그 구간이 맨 아래 · 맨 위
+    """
+    dialog = _low_editor(qtbot, tmp_path, basis)
+    moving = EIGHT[start]
+    dialog._rows[start].startEdit.clockEdit.setFocus()
+    _pump()
+    dialog.scrollArea.ensureWidgetVisible(dialog._rows[start], 0, 0)
+    _pump()
+    assert _fully_visible(dialog, dialog._rows[start]), "전제: 옮길 행이 보인다"
+    step = 1 if key == Qt.Key.Key_Down else -1
+
+    for done in range(1, steps + 1):
+        alt_move(QApplication.focusWidget(), key)
+        at = start + step * done
+        field = dialog._rows[at].startEdit.clockEdit
+        assert QApplication.focusWidget() is field, f"{done}번째: 초점이 옮겨 간 행에 없다"
+        assert _fully_visible(dialog, field), f"{done}번째: 초점 칸이 안 보인다"
+        assert _fully_visible(dialog, dialog._rows[at]), f"{done}번째: 옮겨 간 행이 안 보인다"
+
+    assert _values(dialog)[start + step * steps] == moving
+
+
+def test_a_dropped_row_is_scrolled_into_view(qtbot, tmp_path, basis) -> None:  # noqa: F811
+    """손잡이로 끌어 보이는 범위의 아래쪽 밖에 놓으면 놓은 행이 보이게 스크롤되어야 한다.
+
+    행 8개 · 창 높이 300 · 맨 위까지 스크롤. 아래 끝이 잘린 첫 행 r을 찾아 1번 행을 r + 1 틈에 놓음
+    (그 자리는 목록 아래 · 창 안) -> 옮겨 간 행(r) == 그 구간, 그 행이 다 보임, 스크롤 값 > 0
+    """
+    dialog = _low_editor(qtbot, tmp_path, basis)
+    bar = dialog.scrollArea.verticalScrollBar()
+    bar.setValue(0)
+    _pump()
+    cut = next(i for i, row in enumerate(dialog._rows) if not _fully_visible(dialog, row))
+    point = gap_point(dialog, cut + 1)
+    assert dialog.frameGeometry().contains(point), "전제: 놓을 자리가 창 안이다"
+
+    drag_handle(dialog, 0, to=point)
+
+    assert _values(dialog)[cut] == EIGHT[0]
+    assert _fully_visible(dialog, dialog._rows[cut])
+    assert bar.value() > 0
+
+
+@pytest.mark.parametrize("how", ["alt", "drag"])
+def test_moving_a_row_that_stays_visible_keeps_the_scroll_value(
+    qtbot,
+    tmp_path,
+    basis,  # noqa: F811
+    how: str,
+) -> None:
+    """옮기기 전 · 뒤 모두 다 보이는 행을 옮기면 스크롤 값이 그대로여야 한다.
+
+    행 8개 · 창 높이 300 · 스크롤 값 = 최대의 절반. 다 보이는 이웃 두 행 i · i + 1에서 i를 한 칸 아래로
+    (alt: i 시작 칸에서 Alt+↓, drag: i 손잡이를 i + 2 틈에 놓음) -> 값이 바뀜, 스크롤 값 == 옮기기 전 값
+    """
+    dialog = _low_editor(qtbot, tmp_path, basis)
+    bar = dialog.scrollArea.verticalScrollBar()
+    bar.setValue(bar.maximum() // 2)
+    _pump()
+    before = bar.value()
+    rows = dialog._rows
+    first = next(
+        i
+        for i in range(len(rows) - 1)
+        if _fully_visible(dialog, rows[i]) and _fully_visible(dialog, rows[i + 1])
+    )
+
+    if how == "alt":
+        rows[first].startEdit.clockEdit.setFocus()
+        _pump()
+        alt_move(rows[first].startEdit.clockEdit, Qt.Key.Key_Down)
+    else:
+        drag_handle(dialog, first, first + 2)
+
+    assert _values(dialog)[first + 1] == EIGHT[first]
+    assert bar.value() == before
+
+
+# ================================================================ 첫 초점
+
+
+def _open_fresh(qtbot, tmp_path, basis, *, wait: bool = True) -> SectionEditDialog:  # noqa: F811
+    """구간이 하나(A) 든 카드의 구간 창을 열고 활성으로 둔다 — 행을 고치지 않는다.
+
+    wait가 참이면 조회가 끝나기를 기다린다.
+    """
+    item = _make_item(str(tmp_path))
+    item.selections = (TimeRange(600.0, 1200.0),)  # A — 10분 ~ 20분
+    win = open_window(tmp_path, item)
+    _ALIVE.append(win)
+    win.onCardSectionEdit(item)
+    _pump()
+    dialog = win._sectionDialog
+    assert dialog is not None, "전제: 구간 창이 열렸다"
+    if wait:
+        qtbot.waitUntil(lambda: dialog.viewModel().state != "loading", timeout=3000)
+    dialog.activateWindow()
+    QTest.qWaitForWindowActive(dialog)
+    _pump()
+    return dialog
+
+
+def _press_enter_on_focus(dialog: SectionEditDialog) -> None:
+    """초점이 있는 위젯(없으면 창)에 Enter를 보낸다."""
+    QTest.keyClick(QApplication.focusWidget() or dialog, Qt.Key.Key_Return)
+    _pump()
+
+
+def test_opening_puts_focus_on_the_first_rows_start_field(qtbot, tmp_path, basis) -> None:  # noqa: F811
+    """구간 창을 열면 첫 행의 시작 시분초 칸에 초점이 있고, 숫자를 치면 그 칸 값을 새로 써야 한다.
+
+    구간 A(10분 ~ 20분)가 든 카드로 엶 -> 초점 == 1번 행 시작 시분초 칸.
+    이어 "5"를 침 -> 그 칸 == "00:00:05"(Tab으로 들어간 칸처럼 앞 값 00:10:00을 이어 쓰지 않는다)
+    """
+    dialog = _open_fresh(qtbot, tmp_path, basis)
+    field = dialog._rows[0].startEdit.clockEdit
+
+    assert QApplication.focusWidget() is field
+    QTest.keyClick(field, Qt.Key.Key_5)
+    _pump()
+    assert field.text() == "00:00:05"
+
+
+def test_enter_right_after_opening_does_not_close(qtbot, tmp_path, basis) -> None:  # noqa: F811
+    """구간 창을 열자마자 Enter를 쳐도 창이 닫히지 않아야 한다.
+
+    구간 A가 든 카드로 엶 -> 초점에 Enter -> 창 보임, 결과 코드 0(닫히지 않음), 카드 구간 그대로
+    """
+    dialog = _open_fresh(qtbot, tmp_path, basis)
+    item = dialog.viewModel().item
+
+    _press_enter_on_focus(dialog)
+
+    assert dialog.isVisible()
+    assert dialog.result() == 0
+    assert item.selections == (TimeRange(600.0, 1200.0),)
+
+
+def test_focus_moves_to_the_first_row_once_the_lookup_ends(qtbot, tmp_path, basis) -> None:  # noqa: F811
+    """조회 중으로 열린 창은 초점이 버튼에 없고 Enter로 닫히지 않으며, 조회가 끝나면 첫 행 시작 칸에 와야 한다.
+
+    조회를 붙잡고 엶 -> 초점 == 창 자신(버튼 아님), Enter -> 창 보임.
+    조회를 풂 -> 초점 == 1번 행 시작 시분초 칸, Enter -> 창 보임
+    """
+    basis.gate.clear()
+    try:
+        dialog = _open_fresh(qtbot, tmp_path, basis, wait=False)
+        assert dialog.viewModel().state == "loading", "전제: 조회 중이다"
+        assert QApplication.focusWidget() is dialog
+        _press_enter_on_focus(dialog)
+        assert dialog.isVisible()
+    finally:
+        basis.gate.set()
+
+    qtbot.waitUntil(lambda: dialog.viewModel().state == "ready", timeout=3000)
+    qtbot.waitUntil(
+        lambda: QApplication.focusWidget() is dialog._rows[0].startEdit.clockEdit, timeout=3000
+    )
+    _press_enter_on_focus(dialog)
+    assert dialog.isVisible()
+
+
+def test_a_failed_lookup_keeps_focus_off_the_buttons(qtbot, tmp_path, basis) -> None:  # noqa: F811
+    """조회가 실패한 창은 초점이 창 자신에 있고 Enter로 닫히지 않으며 Esc로는 닫혀야 한다.
+
+    조회 실패로 엶 -> 초점 == 창 자신, Enter -> 창 보임, Esc -> 창 숨음
+    """
+    basis.fail = True
+    dialog = _open_fresh(qtbot, tmp_path, basis)
+    assert dialog.viewModel().state == "failed", "전제: 조회가 실패했다"
+
+    assert QApplication.focusWidget() is dialog
+    _press_enter_on_focus(dialog)
+    assert dialog.isVisible()
+    QTest.keyClick(dialog, Qt.Key.Key_Escape)
+    _pump()
+    assert not dialog.isVisible()
+
+
+def test_opening_from_the_card_edit_dialog_puts_focus_on_the_first_row(
+    qtbot,
+    tmp_path,
+    basis,  # noqa: F811
+) -> None:
+    """카드 편집 창의 「구간 편집…」으로 연 구간 창도 첫 행 시작 칸에 초점이 있고 Enter로 닫히지 않아야 한다.
+
+    구간 A가 든 카드의 편집 창 → 「구간 편집…」 -> 초점 == 1번 행 시작 시분초 칸, Enter -> 구간 창 보임
+    """
+    from tests.app.gui.test_card_edit_dialog import _open as open_card_edit
+
+    item = _make_item(str(tmp_path))
+    item.selections = (TimeRange(600.0, 1200.0),)
+    win = open_window(tmp_path, item)
+    _ALIVE.append(win)
+    edit = open_card_edit(win, item)
+    edit.sectionButton.click()
+    _pump()
+    sections = edit.sectionDialog
+    assert sections is not None, "전제: 구간 창이 열렸다"
+    qtbot.waitUntil(lambda: sections.viewModel().state != "loading", timeout=3000)
+    sections.activateWindow()
+    QTest.qWaitForWindowActive(sections)
+    _pump()
+
+    assert QApplication.focusWidget() is sections._rows[0].startEdit.clockEdit
+    _press_enter_on_focus(sections)
+    assert sections.isVisible()
+
+
+# ================================================================ ✕ 상자 · 번호 글
+
+
+def _pixel(widget: QWidget, x: int, y: int) -> QColor:
+    """widget.grab()의 논리 좌표 (x, y) 화소 색 — 좌표는 정수 화소로 바꾼다."""
+    image = widget.grab().toImage()
+    ratio = image.devicePixelRatio()
+    return image.pixelColor(round(x * ratio), round(y * ratio))
+
+
+def test_the_delete_button_is_a_box_with_the_app_surface_tokens(qtbot, tmp_path, basis) -> None:  # noqa: F811
+    """구간 행 ✕는 면 · 테두리가 있는 상자이고 호버하면 면이 호버 색이어야 한다.
+
+    행 A · B, 다크 -> ✕ 왼쪽 안쪽 3px · 세로 가운데 화소 == surfaceAlt, 왼쪽 끝 0px 화소 == border.
+    창(QWindow)에 합성 포인터 이동으로 ✕ 가운데에 올림 -> 같은 화소 == surfaceHover, 왼쪽 끝 == borderStrong.
+    role 속성 없음(흐린 글자 버튼 아님), 글 크기 == fontSizeMeta
+    """
+    dialog = _editor(qtbot, tmp_path, basis, [A, B])
+    tokens = theme.current_tokens()
+    button = dialog._rows[0].deleteButton
+    middle = button.height() // 2
+
+    assert button.property("role") is None
+    assert f"{button.font().pixelSize()}px" == theme.FONTS["fontSizeMeta"]
+    assert _pixel(button, 3, middle) == QColor(tokens["surfaceAlt"])
+    assert _pixel(button, 0, middle) == QColor(tokens["border"])
+    # 합성 이벤트다 — 실제 포인터는 옮기지 않는다(QWindow에 보낸다, safety.md)
+    # 창 안의 다른 자리를 거쳐 옮긴다 — ✕ 가운데로 한 번만 옮기면 ✕가 포인터 아래로 잡히지 않았다(실측)
+    for spot in (QPoint(1, 1), button.mapTo(dialog, button.rect().center())):
+        QTest.mouseMove(dialog.windowHandle(), spot)
+        _pump()
+    qtbot.waitUntil(button.underMouse, timeout=3000)
+    assert _pixel(button, 3, middle) == QColor(tokens["surfaceHover"])
+    assert _pixel(button, 0, middle) == QColor(tokens["borderStrong"])
+
+
+def test_the_card_delete_button_keeps_its_icon_look(qtbot, tmp_path, basis) -> None:  # noqa: F811
+    """카드의 ✕는 구간 행 ✕의 상자 모양을 받지 않아야 한다 — 평소 면 · 테두리 없음.
+
+    대기 카드에 호버 -> 카드 ✕ role == "icon", 왼쪽 안쪽 3px 화소 != surfaceAlt, 왼쪽 끝 화소 != border
+    """
+    from tests.app.gui.test_card_edit_dialog import _hover
+
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    _ALIVE.append(win)
+    card = win.listView.widgetFor(item)
+    _hover(card)
+    button = card.deleteButton
+    assert button.isVisible(), "전제: 호버한 카드에 ✕가 보인다"
+    tokens = theme.current_tokens()
+    middle = button.height() // 2
+
+    assert button.property("role") == "icon"
+    assert _pixel(button, 3, middle) != QColor(tokens["surfaceAlt"])
+    assert _pixel(button, 0, middle) != QColor(tokens["border"])
+
+
+def test_row_numbers_use_the_body_text_color_and_size(qtbot, tmp_path, basis) -> None:  # noqa: F811
+    """구간 번호는 본문 색 · 보통 크기이고, 길이 글은 흐린 색 · 작은 글 그대로여야 한다.
+
+    행 A · B, 다크 -> 번호: 글꼴 크기 == fontSizeBase, 글 색(WindowText) == text, 그림의 가장 밝은 화소의
+    밝기 > textMuted 밝기(흐린 색으로는 나올 수 없는 밝기). 길이: 글꼴 크기 == fontSizeMeta, 글 색 == textMuted,
+    가장 밝은 화소의 밝기 <= textMuted 밝기
+    """
+    dialog = _editor(qtbot, tmp_path, basis, [A, B])
+    tokens = theme.current_tokens()
+    number = dialog._rows[0].numberLabel
+    length = dialog._rows[0].infoLabel
+    muted = QColor(tokens["textMuted"]).lightness()
+
+    def brightest(widget: QWidget) -> int:
+        image = widget.grab().toImage()
+        return max(
+            image.pixelColor(x, y).lightness()
+            for x in range(image.width())
+            for y in range(image.height())
+        )
+
+    def ink(widget: QWidget) -> QColor:
+        return widget.palette().color(QPalette.ColorRole.WindowText)
+
+    assert shown(number) == "1", "전제: 번호가 보인다"
+    assert f"{number.font().pixelSize()}px" == theme.FONTS["fontSizeBase"]
+    assert ink(number) == QColor(tokens["text"])
+    assert brightest(number) > muted
+    assert f"{length.font().pixelSize()}px" == theme.FONTS["fontSizeMeta"]
+    assert ink(length) == QColor(tokens["textMuted"])
+    assert brightest(length) <= muted
