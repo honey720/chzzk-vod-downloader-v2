@@ -33,6 +33,7 @@ from app.viewmodels.data import ContentItem
 from app.views import mainWindow as mw_mod
 from app.views.mainWindow import VodDownloader
 from app.views.section_dialog import SectionEditDialog
+from app.widgets.eliding_label import ElidingLabel
 from core.media.representations import StreamEntry
 from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
@@ -568,8 +569,12 @@ SET_TO_MAX = "Set to the maximum ({0})"
 
 
 def _notice(row) -> str:
-    """행 아래에 지금 보이는 흐린 안내. 보이지 않으면 빈 문자열."""
-    return shown(row.noticeLabel) if row.noticeLabel.isVisible() else ""
+    """행 아래에 지금 보이는 흐린 안내의 전문. 보이지 않으면 빈 문자열.
+
+    보이는 글이 아니라 전문을 읽는다 — 글꼴이 넓으면 안내가 말줄임되고(잘린 글은 툴팁), 말줄임 자체는
+    `test_a_message_too_long_for_the_row_is_elided_on_one_line`이 잰다(#586 — 손잡이만큼 안내 줄이 좁아졌다).
+    """
+    return row.noticeLabel.text() if row.noticeLabel.isVisible() else ""
 
 
 @pytest.mark.parametrize(
@@ -3493,8 +3498,8 @@ SET_TO_END = "Set to the end of the video ({0})"
 
 
 def notice_shown(row) -> str:
-    """행 아래에 지금 보이는 흐린 안내(넘음 · 맞춤). 보이지 않으면 빈 문자열."""
-    return shown(row.noticeLabel) if row.noticeLabel.isVisible() else ""
+    """행 아래에 지금 보이는 흐린 안내(넘음 · 맞춤)의 전문. 보이지 않으면 빈 문자열 — `_notice`와 같은 까닭(#586)."""
+    return _notice(row)
 
 
 def half_hour_editor(
@@ -3929,10 +3934,10 @@ def test_a_saved_end_past_the_video_opens_as_an_error_on_the_end_and_is_set_when
 
 
 def test_only_the_handles_and_the_x_buttons_have_tooltips(qtbot, tmp_path, basis) -> None:
-    """준비된 창에서 툴팁이 있는 위젯은 행의 손잡이와 ✕뿐이어야 한다.
+    """준비된 창에서 툴팁이 있는 위젯은 행의 손잡이와 ✕뿐이어야 한다 — 말줄임으로 잘린 글의 전문 툴팁은 뺀다.
 
-    60fps · 3600초, 두 행(10분~20분 / 30분~31분) — 잘린 글이 없는 기본 크기
-    -> 툴팁이 빈 글이 아닌 보이는 위젯 == 행마다 손잡이 · ✕(4개)
+    60fps · 3600초, 두 행(10분~20분 / 30분~31분), 기본 크기
+    -> 툴팁이 빈 글이 아닌 보이는 위젯(잘린 말줄임 라벨의 전문 툴팁 제외) == 행마다 손잡이 · ✕(4개)
     -> 손잡이 "Reorder · Alt+↑↓"(macOS "Reorder · ⌥↑↓"), ✕ "Delete section"
     """
     item = _make_item(str(tmp_path))
@@ -3942,8 +3947,18 @@ def test_only_the_handles_and_the_x_buttons_have_tooltips(qtbot, tmp_path, basis
     _pump()
     keys = "⌥↑↓" if sys.platform == "darwin" else "Alt+↑↓"
 
+    def elided_tip(widget: QWidget) -> bool:
+        """말줄임 라벨이 잘려 전문을 툴팁으로 단 것인지 — 글꼴이 넓으면 생긴다(설계 §12.1 허용)."""
+        return (
+            isinstance(widget, ElidingLabel)
+            and widget.isElided()
+            and widget.toolTip() == widget.text()
+        )
+
     with_tips = {
-        widget for widget in dialog.findChildren(QWidget) if widget.isVisible() and widget.toolTip()
+        widget
+        for widget in dialog.findChildren(QWidget)
+        if widget.isVisible() and widget.toolTip() and not elided_tip(widget)
     }
 
     expected = {row.handle for row in dialog._rows} | {row.deleteButton for row in dialog._rows}
