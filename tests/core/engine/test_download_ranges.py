@@ -18,9 +18,11 @@ class TestDecidePartSize:
     @pytest.mark.parametrize(
         ("content_type", "resolution", "expected"),
         [
-            # clips는 해상도와 무관하게 항상 1MB
-            ("clips", 1080, 1 * MB),
-            ("clips", 144, 1 * MB),
+            # clip은 해상도와 무관하게 항상 1MB. 엔진에 오는 클립 값은 URL의 "clips"가 아니라
+            # ContentType을 거친 "clip"이다 — "clips"를 박제해 분기가 닿지 않는 것을 놓쳤다 (#584)
+            ("clip", 1080, 1 * MB),
+            ("clip", 720, 1 * MB),
+            ("clip", 144, 1 * MB),
             # video는 해상도별 가중치
             ("video", 144, 1 * MB),
             ("video", 360, 2 * MB),
