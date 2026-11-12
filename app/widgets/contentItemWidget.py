@@ -16,7 +16,8 @@
 ##   카드 버튼: 1줄 오른쪽 끝(위끝 = 썸네일 위끝)에 겹쳐 놓는 상자. 평소 숨고, 호버 · 카드 안
 ##        키보드 초점 때 그 상태의 버튼을 보인다. 그 밑은 1줄 높이 덮개가 카드 바탕으로 덮는다
 ##        (그림만 — 클릭은 밑으로)
-##   하단 progressBar: 카드 바닥 전체 폭 오버레이(받는 중 · 일시정지는 진행만큼, 완료 · 실패는 끝까지)
+##   하단 progressBar: 카드 바닥 전체 폭 오버레이(받는 중 · 일시정지는 진행만큼, 완료 · 실패는 없음 —
+##        카드 전체 색조, #571)
 ##   배경 채움(설정 키)이면 막대 대신 카드 면(CardFace)이 진행만큼 왼쪽부터 칠한다
 ##   체크 원(#561): 선택 모드에서만 썸네일(CardThumbnail)이 왼쪽 위에 그린다 — 위젯이 아니라 그림이다.
 ##        썸네일 위라 줄 자리 · 카드 폭은 그대로다
@@ -33,6 +34,8 @@ from PySide6.QtWidgets import (
     QLabel,
     QProgressBar,
     QSizePolicy,
+    QStyle,
+    QStyleOptionProgressBar,
     QVBoxLayout,
     QWidget,
 )
@@ -44,13 +47,32 @@ from app.widgets.icons import IconButton
 from app.widgets.menu_button import StateBubble
 
 
+def _level(amount: float) -> int:
+    """0 ~ 1 비율을 0 ~ 255 단계로 묶는다 — 화면에 그려지는 색 단위다(그 밑의 변화는 화소가 같다)."""
+    return round(max(0.0, min(1.0, amount)) * 255)
+
+
+def mix(start: QColor, end: QColor, amount: float) -> QColor:
+    """`start`에서 `end`로 `amount`(0 ~ 1)만큼 간 색 — 불투명한 두 색의 sRGB 선형 섞기다 (#571)."""
+    t = max(0.0, min(1.0, amount))
+    return QColor.fromRgbF(
+        start.redF() + (end.redF() - start.redF()) * t,
+        start.greenF() + (end.greenF() - start.greenF()) * t,
+        start.blueF() + (end.blueF() - start.blueF()) * t,
+    )
+
+
 class CardFace(QFrame):
     """카드 면 — QSS가 바탕 · 테두리 · 색조를 그리고, 배경 채움 방식이면 그 위에 진행 채움을 그린다 (#554).
 
     채움은 진행만큼 왼쪽부터 카드 면 안쪽(테두리 안)을 칠한다 — 둥근 모서리로 잘라 낸다. 틱마다
     `setStyleSheet`를 쓰지 않고 `paintEvent`에서 그리며, 채움 끝이 움직이면 바뀐 띠만 다시 그린다
-    (설계 §8의 6). 진행 끝선은 강조하지 않는다(설계 §12.1). 카드마다 붙는 효과 객체가 아니라 값 둘
-    (채움 비율 · 색 토큰)만 든다.
+    (설계 §8의 6). 진행 끝선은 강조하지 않는다(설계 §12.1). 카드마다 붙는 효과 객체가 아니라 값 몇 개
+    (채움 비율 · 색 토큰, 모션 동안의 색조 세기 · 채움 색 섞기)만 든다.
+
+    완료 · 실패 모션(#571) 동안은 QSS 색조(`tint` 속성) 대신 면이 색조를 세기만큼 바탕 위에 칠한다
+    (`setWash`) — QSS는 속성 값마다 한 색이라 서서히 나타나게 할 수 없다. 모션이 끝나면 카드가 `tint`
+    속성을 걸고 칠하기를 걷는다. 세기 · 섞기는 1/255 단위로 묶어 화소가 바뀌지 않으면 다시 그리지 않는다.
     """
 
     def __init__(self, parent: QWidget) -> None:
@@ -58,6 +80,11 @@ class CardFace(QFrame):
         self._fill = 0.0  # 채운 비율 0 ~ 1
         self._fillToken = ""  # 채움 색 토큰 — 빈 글이면 채움 없음
         self._selected = False  # 선택 모드에서 고른 카드 — 강조색 테두리(#561)
+        self._washToken = ""  # 모션 동안 칠하는 색조 토큰 — 빈 글이면 없음(#571)
+        self._wash = 0  # 색조 세기 0 ~ 255
+        self._fillToward = ""  # 채움 색이 섞여 가는 토큰 — 빈 글이면 채움 색 그대로(#571)
+        self._fillBlend = 0  # 채움 색 섞기 0 ~ 255
+        self._fillAlpha = 255  # 채움 불투명도 0 ~ 255(#571)
 
     def isSelected(self) -> bool:
         """고른 카드의 강조색 테두리를 그리는지."""
@@ -91,25 +118,80 @@ class CardFace(QFrame):
         """채움의 오른쪽 끝(면 좌표 px). 채움이 없으면 0."""
         return round(1 + self._fill * (self.width() - 2)) if self._fillToken else 0
 
+    def wash(self) -> tuple[str, float]:
+        """(모션 동안 칠하는 색조 토큰, 세기 0 ~ 1) — 칠하지 않으면 ("", 0.0)."""
+        return self._washToken, self._wash / 255
+
+    def setWash(self, token: str, amount: float) -> None:
+        """색조 `token`을 세기 `amount`(0 ~ 1)로 바탕 위에 칠한다 — 토큰이 빈 글이거나 0이면 걷는다 (#571)."""
+        level = _level(amount) if token else 0
+        token = token if level else ""
+        if (token, level) != (self._washToken, self._wash):
+            self._washToken, self._wash = token, level
+            self.update()
+
+    def fillLook(self) -> tuple[str, float, float]:
+        """(채움 색이 섞여 가는 토큰, 섞기 0 ~ 1, 불투명도 0 ~ 1)."""
+        return self._fillToward, self._fillBlend / 255, self._fillAlpha / 255
+
+    def setFillLook(self, toward: str, blend: float, alpha: float) -> None:
+        """채움 색을 `toward` 색으로 `blend`만큼 섞고 불투명도를 `alpha`로 둔다 — 모션이 쓴다 (#571).
+
+        ("", 0, 1)이면 채움 색 그대로다. 채움 비율 · 토큰(`setFill`)은 바꾸지 않는다.
+        """
+        blend_level = _level(blend) if toward else 0
+        look = (toward if blend_level else "", blend_level, _level(alpha))
+        if look != (self._fillToward, self._fillBlend, self._fillAlpha):
+            self._fillToward, self._fillBlend, self._fillAlpha = look
+            self.update()
+
+    def _step(self) -> str:
+        """바탕의 호버 · 눌림 단계 — "Pressed" · "Hover" · "" (QSS 바탕 규칙과 같은 차례)."""
+        if self.property("pressed") is True:
+            return "Pressed"
+        return "Hover" if self.property("hover") is True else ""
+
+    def _fillColor(self, pressed: bool) -> QColor:
+        """채움이 칠하는 색 — 섞기 · 불투명도를 따른다(눌린 동안은 한 단계 더 간 색, #561).
+
+        섞여 가는 색조는 지금 호버 · 눌림 단계의 색조다 — 모션이 끝나 QSS 색조로 바뀔 때 색이 튀지 않게(#571).
+        """
+        tokens = theme.current_tokens()
+        color = QColor(tokens[self._fillToken + ("Pressed" if pressed else "")])
+        if self._fillToward:
+            toward = QColor(tokens[self._fillToward + self._step()])
+            color = mix(color, toward, self._fillBlend / 255)
+        color.setAlpha(self._fillAlpha)
+        return color
+
+    def _washColor(self) -> QColor:
+        """모션 동안 칠하는 색조 — 지금 호버 · 눌림 단계의 색조(QSS 색조 규칙과 같은 토큰, #571)."""
+        return QColor(theme.current_tokens()[self._washToken + self._step()])
+
     def colorAt(self, x: int) -> QColor:
         """면 좌표 `x`에서 보이는 바탕색 — 채움 · 색조 · 호버 · 눌림을 따른다(카드 버튼 덮개가 쓴다)."""
         tokens = theme.current_tokens()
         pressed = self.property("pressed") is True
-        if self._fillToken and x < self.fillRight():
-            return QColor(tokens[self._fillToken + ("Pressed" if pressed else "")])
-        step = "Pressed" if pressed else "Hover" if self.property("hover") is True else ""
+        step = self._step()
         tint = self.property("tint")
         if tint in ("finished", "failed"):
             name = "cardTintFinished" if tint == "finished" else "cardTintFailed"
-            return QColor(tokens[name + step])
-        return QColor(tokens["card" + step + "Bg"])  # cardBg · cardHoverBg · cardPressedBg
+            ground = QColor(tokens[name + step])
+        else:
+            ground = QColor(tokens["card" + step + "Bg"])  # cardBg · cardHoverBg · cardPressedBg
+        if self._washToken:
+            ground = mix(ground, self._washColor(), self._wash / 255)
+        if self._fillToken and x < self.fillRight():
+            fill = self._fillColor(pressed)
+            ground = mix(ground, fill, fill.alphaF())
+        return ground
 
     def paintEvent(self, event: QPaintEvent) -> None:
-        """QSS 바탕 · 테두리 위에 진행 채움(테두리 안쪽)과 고른 카드의 강조색 테두리를 그린다."""
+        """QSS 바탕 · 테두리 위에 모션 색조 · 진행 채움(테두리 안쪽)과 고른 카드의 강조색 테두리를 그린다."""
         super().paintEvent(event)
-        if self._fillToken and self._fill > 0:
-            # 눌린 동안은 채움도 한 단계 더 간 색이다(#561 — QSS 바탕의 `pressed` 규칙과 같이 움직인다)
-            token = self._fillToken + ("Pressed" if self.property("pressed") is True else "")
+        washing = bool(self._washToken)
+        filling = bool(self._fillToken) and self._fill > 0 and self._fillAlpha > 0
+        if washing or filling:
             radius = theme.METRICS["cardRadius"] - 1
             inner = QRectF(1, 1, self.width() - 2, self.height() - 2)
             path = QPainterPath()
@@ -117,10 +199,15 @@ class CardFace(QFrame):
             painter = QPainter(self)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             painter.setClipPath(path)
-            painter.fillRect(
-                QRectF(1, 1, self._fill * inner.width(), inner.height()),
-                QColor(theme.current_tokens()[token]),
-            )
+            if washing:
+                wash = self._washColor()
+                wash.setAlpha(self._wash)
+                painter.fillRect(inner, wash)
+            if filling:
+                painter.fillRect(
+                    QRectF(1, 1, self._fill * inner.width(), inner.height()),
+                    self._fillColor(self.property("pressed") is True),
+                )
             painter.end()
         if self._selected:
             painter = QPainter(self)
@@ -149,11 +236,30 @@ class CardProgress(QProgressBar):
     progress bar는 카드 면(`CardFace`)의 자식으로 면 위에 놓여, 면이 그린 고름 테두리의 아래 변 안쪽 1px과
     양 끝을 가린다. 카드마다 위젯을 더하지 않고 이미 있는 progress bar가 같은 테두리를 자기 좌표로 옮겨
     그린다 — 값 하나(`_picked`)만 든다.
+
+    완료 · 실패 모션(#571) 동안은 채운 몫에 새 상태 색을 섞기만큼 덧칠하고 막대 전체를 불투명도만큼 흐리게
+    그린다(`setLook`) — QSS는 상태마다 한 색이라 색이 서서히 바뀌게 할 수 없다. 카드마다 효과 객체를
+    붙이지 않고 값 셋(덧칠 토큰 · 섞기 · 불투명도)만 든다. 1/255 단위로 묶어 화소가 같으면 다시 그리지 않는다.
     """
 
     def __init__(self, parent: QWidget) -> None:
         super().__init__(parent)
         self._picked = False  # 카드를 골랐는지 — 강조색 테두리를 덧그린다
+        self._toward = ""  # 채운 몫에 덧칠하는 색 토큰 — 빈 글이면 덧칠 없음(#571)
+        self._blend = 0  # 덧칠 세기 0 ~ 255
+        self._opacity = 255  # 막대 불투명도 0 ~ 255(#571)
+
+    def look(self) -> tuple[str, float, float]:
+        """(덧칠 색 토큰, 덧칠 세기 0 ~ 1, 불투명도 0 ~ 1)."""
+        return self._toward, self._blend / 255, self._opacity / 255
+
+    def setLook(self, toward: str, blend: float, opacity: float) -> None:
+        """채운 몫에 `toward` 색을 `blend`만큼 덧칠하고 막대를 `opacity`로 그린다 — ("", 0, 1)이면 QSS 그대로."""
+        blend_level = _level(blend) if toward else 0
+        look = (toward if blend_level else "", blend_level, _level(opacity))
+        if look != (self._toward, self._blend, self._opacity):
+            self._toward, self._blend, self._opacity = look
+            self.update()
 
     def isPicked(self) -> bool:
         """고른 카드의 테두리를 덧그리는지."""
@@ -167,12 +273,42 @@ class CardProgress(QProgressBar):
 
     def paintEvent(self, event: QPaintEvent) -> None:
         """progress bar를 그린 뒤, 고른 카드면 카드 면 가장자리의 강조색 테두리를 그 위에 그린다."""
-        super().paintEvent(event)
+        if self._toward or self._opacity < 255:
+            self._paintLook()
+        else:
+            super().paintEvent(event)
         if self._picked:
             painter = QPainter(self)
             painter.translate(-self.x(), -self.y())
             draw_picked_border(painter, QRectF(self.parentWidget().rect()))
             painter.end()
+
+    def _paintLook(self) -> None:
+        """모션 동안의 막대 — QSS 막대를 불투명도로 그리고, 채운 몫에 덧칠 색을 섞기만큼 얹는다.
+
+        QSS 막대는 스타일에 그리게 한다(`CE_ProgressBar` — `QProgressBar.paintEvent`와 같은 그리기). 덧칠은
+        채운 몫의 사각형을 막대 아래 두 모서리(`cardRadius`)로 잘라 칠한다 — QSS 채운 몫과 같은 모양이다.
+        """
+        painter = QPainter(self)
+        painter.setOpacity(self._opacity / 255)
+        option = QStyleOptionProgressBar()
+        self.initStyleOption(option)
+        self.style().drawControl(QStyle.ControlElement.CE_ProgressBar, option, painter, self)
+        span = self.maximum() - self.minimum()
+        if self._toward and span > 0:
+            done = (self.value() - self.minimum()) / span * self.width()
+            radius = theme.METRICS["cardRadius"]
+            bar = QRectF(self.rect())
+            shape = QPainterPath()
+            shape.addRoundedRect(
+                bar.adjusted(0, -radius, 0, 0), radius, radius
+            )  # 아래 두 모서리만 둥글다
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setClipPath(shape)
+            color = QColor(theme.current_tokens()[self._toward])
+            color.setAlphaF(self._blend / 255)
+            painter.fillRect(QRectF(0, 0, done, bar.height()), color)
+        painter.end()
 
 
 class CardThumbnail(QLabel):

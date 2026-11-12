@@ -110,8 +110,13 @@ MATRIX = {
     DownloadState.WAITING: ("editButton", "edit", False, "waiting"),
     DownloadState.RUNNING: ("pauseButton", "pause", True, "running"),
     DownloadState.PAUSED: ("pauseButton", "resume", True, "paused"),
-    DownloadState.FINISHED: ("openDirectoryButton", "folder", True, "finished"),
-    DownloadState.FAILED: ("retryButton", "retry", True, "failed"),
+    DownloadState.FINISHED: (
+        "openDirectoryButton",
+        "folder",
+        False,
+        "finished",
+    ),  # 막대 없음 — 색조(#571)
+    DownloadState.FAILED: ("retryButton", "retry", False, "failed"),  # 막대 없음 — 색조(#571)
 }
 
 ACTION_BUTTONS = ("editButton", "pauseButton", "openDirectoryButton", "retryButton")

@@ -509,21 +509,28 @@ def _empty_y(card: ContentItemWidget) -> int:
 
 
 class TestProgressBar:
-    """막대 — 트랙은 카드 테두리 색, 받는 중 · 일시정지는 진행만큼, 완료 · 실패는 끝까지(상태 색)."""
+    """막대 — 트랙은 카드 테두리 색, 받는 중 · 일시정지는 진행만큼, 완료 · 실패는 막대 없음(#571)."""
 
+    @pytest.mark.parametrize("progress", ("bar", "fill"))
     @pytest.mark.parametrize(
         "state,token",
-        [(DownloadState.FINISHED, "stateFinished"), (DownloadState.FAILED, "stateFailed")],
+        [(DownloadState.FINISHED, "cardTintFinished"), (DownloadState.FAILED, "cardTintFailed")],
     )
-    def test_finished_and_failed_bars_are_full_in_the_state_colour(
-        self, qapp, state, token
+    def test_finished_and_failed_cards_have_no_bar_and_the_tint(
+        self, qapp, state, token, progress
     ) -> None:
-        """완료 · 실패 카드면 막대가 끝까지 차고 가운데 화소가 그 상태 색(상태 원과 같은 토큰)이어야 한다."""
+        """완료 · 실패 카드면 막대가 숨고 막대 자리 화소가 그 상태의 색조여야 한다 (#571).
+
+        막대 방식 · 배경 채움 방식, 처음부터 완료 · 실패인 카드 -> 막대 숨음, 막대가 있던 카드 아래 변
+        바로 위 가운데 화소 == cardTint… 토큰
+        """
+        _display(progress=progress)
         card = _card(_item(state))
-        bar = card.progressBar
-        assert bar.isVisible()
-        assert bar.value() == bar.maximum() == 10000
-        assert _close(_pixel(bar, bar.width() // 2, bar.height() // 2), _token(token))
+        bar, frame = card.progressBar, card.contentFrame
+        assert card.isVisible(), "전제: 카드가 보인다"
+        assert not bar.isVisible()
+        y = bar.geometry().top()  # 막대가 있던 자리 — 고른 카드 테두리(아래 1 ~ 2px)보다 위다
+        assert _close(_pixel(frame, frame.width() // 2, y), _token(token))
 
     def test_running_bar_shows_the_progress_over_the_border_coloured_track(self, qapp) -> None:
         """받는 중 30% 카드면 막대 10% 자리가 진행 색, 90% 자리가 카드 테두리 색이어야 한다."""

@@ -26,6 +26,7 @@ from PySide6.QtGui import (
     QEnterEvent,
     QFocusEvent,
     QFontMetricsF,
+    QHideEvent,
     QKeyEvent,
     QMouseEvent,
     QPainter,
@@ -183,6 +184,20 @@ TIP_LABEL_NAMES = (
 )
 
 STOP_MOTION_MS = 300  # 중지 모션 — 막대 · 채움이 왼쪽 끝까지 줄어드는 시간(ms, 설계 §12.1)
+# 완료 모션 — 막대 · 채움이 끝까지 차며 완료 색이 되고 카드 색조가 나타나는 시간(ms, 프로토 FILL_FINISH_MS, #571)
+FINISH_MOTION_MS = 400
+# 실패 모션 — 막대 · 채움이 제자리에서 실패 색이 되며 사라지고 카드 색조가 나타나는 시간(ms, 프로토
+# FILL_FAIL_MS). 프로토와 달리 끝까지 채우지 않는다 — 실패인데 다 받은 것처럼 보이지 않게(#571)
+FAIL_MOTION_MS = 400
+# 완료 모션 뒤 끝까지 찬 막대가 흐려지며 사라지는 시간(ms) — 프로토에 없는 단계(#571, 150 ~ 200에서 정함)
+BAR_FADE_MS = 200
+TINT_CLEAR_MS = 200  # 실패 → 대기(다시 시도) — 색조를 걷는 시간(ms, 프로토 FILL_CLEAR_MS, #571)
+TINT_STATES = (DownloadState.FINISHED, DownloadState.FAILED)  # 카드 전체 색조 · 막대 없음(#571)
+# 완료 · 실패 모션을 도는 앞 상태 — 그 밖(처음 뜬 카드 · 되살린 카드)은 모션 없이 바로 마지막 모양(#571)
+TINT_MOTION_FROM = (DownloadState.WAITING, DownloadState.RUNNING, DownloadState.PAUSED)
+_MOTION_EASING = QEasingCurve(
+    QEasingCurve.Type.InOutQuad
+)  # 완료 · 실패 · 색조 걷기 곡선(프로토와 같음)
 # 막대 · 배경 채움이 통지 사이를 이어 움직이는 시간(ms) — 엔진의 진행 통지 간격(`PROGRESS_SECONDS`)에서
 # 센다(card_display.PROGRESS_INTERVAL_MS, #557). 짧으면 움직이고 서기를 되풀이한다(오너 실기 2026-11-10).
 # 다음 통지가 먼저 오면 그려진 값에서 잇는다
@@ -321,6 +336,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self._showYear = True  # 날짜에 연도를 적는지 — 목록이 정한다
         self._shown = 0.0  # 막대 · 채움이 지금 보이는 진행 비율(0 ~ 1)
         self._motion: QVariantAnimation | None = None  # 도는 진행 모션 — 없으면 None
+        # 도는 모션이 완료 · 실패 · 색조 걷기면 그 모션이 가는 상태 — 아니면 None(#571)
+        self._motionGoal: DownloadState | None = None
         self._stillAt = -float("inf")  # 애니메이션 끔에서 막대를 마지막으로 바꾼 때(ms, `_now_ms`)
         self._stillPending = False  # 애니메이션 끔에서 미룬 막대 바꾸기가 걸려 있는지
         self._previousState: object = None  # 직전 applyStateStyle의 상태 — 중지를 알아본다
@@ -401,6 +418,11 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         # 누른 채 숨었다가(지우기 · 필터) 다시 보이는 카드에 눌린 바탕이 남지 않게 한다(#561)
         if self._armed or self._pressed:
             self._disarm()
+
+    def hideEvent(self, event: QHideEvent) -> None:
+        """숨는 카드(필터 · 지우기)는 완료 · 실패 · 색조 걷기 모션을 멈추고 마지막 모양으로 간다 (#571)."""
+        super().hideEvent(event)
+        self._finishStepMotion()
 
     # ---- 호버 · 키보드 초점 — 카드 버튼을 보이는 때 (#550) ----
 
@@ -583,6 +605,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """선택 모드를 켜고 끈다 — 목록이 부른다."""
         if on != self._picking:
             self._picking = on
+            self._finishStepMotion()  # 완료 · 실패 모션 도중이면 마지막 모양으로 바로(#571)
             self._syncCardButtons()
             self._syncPickMark()
 
@@ -1205,7 +1228,10 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     # ---- 진행 막대 · 배경 채움 · 색조 · 중지 모션 (#554) ----
 
     def _target(self) -> tuple[float, str, bool]:
-        """(보일 진행 비율, 상태 어휘, 값 없이 움직이는 막대인지) — 지금 아이템으로 정한다."""
+        """(보일 진행 비율, 상태 어휘, 값 없이 움직이는 막대인지) — 지금 아이템으로 정한다.
+
+        완료 · 실패는 0이다 — 막대 · 채움이 없고 카드 전체 색조가 상태를 알린다(#571).
+        """
         item = self.item
         raw = item.downloadState
         state = self._cardState()
@@ -1215,8 +1241,6 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             and bool(item.post_process)
             and bool(getattr(item, "cut_preparing", False))
         )
-        if raw in (DownloadState.FINISHED, DownloadState.FAILED):
-            return 1.0, state, False
         if raw in (DownloadState.RUNNING, DownloadState.PAUSED):
             return card_text.progress_value(item) / 100, state, busy
         return 0.0, state, False
@@ -1254,14 +1278,128 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             theme.repolish(bar)
 
     def motion(self) -> QVariantAnimation | None:
-        """지금 도는 진행 모션(중지 모션 · 틱 사이 이어 움직임) — 없으면 None. 테스트가 시간을 정한다."""
+        """지금 도는 진행 모션(중지 · 틱 사이 이어 움직임 · 완료 · 실패 · 색조 걷기) — 없으면 None.
+
+        테스트가 시간을 정한다(`setCurrentTime`).
+        """
         return self._motion
 
     def _stopMotion(self) -> None:
+        """도는 모션을 멈추고 지운다 — 완료 · 실패 모션이 칠하던 색조 · 덧칠도 걷는다(#571)."""
         if self._motion is not None:
             self._motion.stop()
             self._motion.deleteLater()
             self._motion = None
+        self._motionGoal = None
+        self.contentFrame.setWash("", 0.0)
+        self.contentFrame.setFillLook("", 0.0, 1.0)
+        self.progressBar.setLook("", 0.0, 1.0)
+
+    def _setTint(self, tint: str) -> None:
+        """카드 면의 QSS 색조(`tint` 속성 — "finished" · "failed" · "")를 건다."""
+        frame = self.contentFrame
+        if frame.property("tint") != tint:
+            frame.setProperty("tint", tint)
+            theme.repolish(frame)
+            # 상태 글의 「색조 위」 색은 카드 면의 속성을 보는 규칙이다 — 조상 속성이 바뀌어도 자식은 다시
+            # 계산되지 않는다(Qt 스타일시트). 빠뜨리면 새 카드만 옛 색으로 남고 테마 전환 뒤에야 맞는다
+            theme.repolish(self.statusLabel)
+            self.hoverShade.update()
+
+    def _startStepMotion(self, goal: DownloadState, duration: int, step) -> None:
+        """시간(ms)을 0 → `duration`으로 흘리며 `step(ms)`를 부르는 모션을 돈다 — 끝나면 마지막 모양.
+
+        완료 · 실패 · 색조 걷기가 쓴다(#571). 곡선은 `step`이 단계마다 정한다 — 모션 자체는 일정 속도다.
+        """
+        motion = QVariantAnimation(self)
+        motion.setStartValue(0.0)
+        motion.setEndValue(float(duration))
+        motion.setDuration(duration)
+        motion.valueChanged.connect(lambda value: step(float(value)))
+        motion.finished.connect(self._finishStepMotion)
+        self._motion, self._motionGoal = motion, goal
+        motion.start()
+
+    def _finishStepMotion(self) -> None:
+        """완료 · 실패 · 색조 걷기 모션을 끝낸다 — 모션을 지우고 지금 아이템의 마지막 모양으로 바로 간다.
+
+        모션이 끝났을 때와, 모션 도중 카드가 숨거나 선택 모드를 드나들 때 부른다(#571).
+        """
+        if self._motionGoal is None:
+            return
+        self._stopMotion()
+        raw = self.item.downloadState
+        self._setTint(self._cardState() if raw in TINT_STATES else "")
+        self._showProgress(*self._target())
+
+    def _startTintMotion(self, previous: DownloadState, finished: bool, fill: bool) -> None:
+        """받는 중 · 일시정지 · 대기 → 완료 · 실패 모션을 돈다 (#571).
+
+        완료: 막대 방식은 막대가 그려진 값에서 끝까지 차며 앞 상태 색 → 완료 색으로 바뀌고 같은 시간에 카드
+        색조가 0에서 나타난다(`FINISH_MOTION_MS`). 그 뒤 막대가 `BAR_FADE_MS`에 흐려진다. 배경 채움
+        방식은 채움이 끝까지 차며 완료 색조로 바뀐다 — 다 찬 채움이 곧 카드 전체 색조다. 채움이 없던 대기
+        카드는 채울 색이 없어 카드 색조만 나타난다.
+
+        실패: 끝까지 채우지 않는다. 막대 방식은 막대가 제자리에서 실패 색으로 바뀌며 사라지고, 배경 채움
+        방식은 채움이 제자리에서 사라진다. 어느 방식이든 같은 시간에 카드 색조가 나타난다(`FAIL_MOTION_MS`).
+
+        모션 동안 QSS 색조는 걸지 않고 면이 칠한다(`CardFace.setWash`). 끝나면 `_finishStepMotion`이
+        QSS 색조를 걸고 막대 · 채움을 없앤다.
+        """
+        start = self._shown
+        old_state = "paused" if previous == DownloadState.PAUSED else "running"
+        if previous == DownloadState.WAITING:
+            start, old_state = 0.0, "waiting"
+        old_fill = {"running": "cardFillRunning", "paused": "cardFillPaused"}.get(old_state, "")
+        name = "Finished" if finished else "Failed"
+        tint, color = f"cardTint{name}", f"state{name}"
+        frame, bar = self.contentFrame, self.progressBar
+        self._setTint("")
+        if fill:
+            bar.setVisible(False)
+            frame.setFill(start, old_fill)
+        else:
+            frame.setFill(0.0, "")
+            if bar.maximum() != PROGRESS_SCALE:
+                bar.setRange(0, PROGRESS_SCALE)
+            bar.setValue(round(start * PROGRESS_SCALE))
+            if bar.property("state") != old_state:
+                bar.setProperty("state", old_state)
+                theme.repolish(bar)
+            bar.setVisible(finished or start > 0)
+        main = FINISH_MOTION_MS if finished else FAIL_MOTION_MS
+        fade = BAR_FADE_MS if finished and not fill else 0
+
+        def step(ms: float) -> None:
+            t = _MOTION_EASING.valueForProgress(min(1.0, ms / main))
+            if fill and finished and old_fill:
+                frame.setFill(_snapped(start + (1.0 - start) * t, frame.width() - 2), old_fill)
+                frame.setFillLook(tint, t, 1.0)
+                return
+            frame.setWash(tint, t)
+            if fill:
+                frame.setFillLook("", 0.0, 1.0 - t)
+            elif finished:
+                bar.setValue(
+                    round(_snapped(start + (1.0 - start) * t, bar.width()) * PROGRESS_SCALE)
+                )
+                gone = _MOTION_EASING.valueForProgress(max(0.0, ms - main) / fade)
+                bar.setLook(color, t, 1.0 - gone)
+            else:
+                bar.setLook(color, t, 1.0 - t)
+
+        self._startStepMotion(self.item.downloadState, main + fade, step)
+
+    def _startClearMotion(self, tint: str) -> None:
+        """실패(완료) → 대기 — 카드 색조를 `TINT_CLEAR_MS`에 걷는다 (#571, 프로토 FILL_CLEAR_MS)."""
+        frame = self.contentFrame
+        token = "cardTintFinished" if tint == "finished" else "cardTintFailed"
+        frame.setWash(token, 1.0)
+
+        def step(ms: float) -> None:
+            frame.setWash(token, 1.0 - _MOTION_EASING.valueForProgress(ms / TINT_CLEAR_MS))
+
+        self._startStepMotion(self.item.downloadState, TINT_CLEAR_MS, step)
 
     def _animate(self, start: float, end: float, state: str, duration: int, easing) -> None:
         """진행 비율을 `start` → `end`로 움직인다 — 색(상태)은 그동안 `state` 그대로다."""
@@ -1292,19 +1430,35 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         `STOP_MOTION_MS`에 줄어든다(처음 빠르고 끝에서 느림, 그 카드의 지금 색). 애니메이션을 끄면 바로
         사라진다. 모션 도중 다시 시작하면 모션을 멈추고 새 진행을 따른다. 받는 중 진행은 막대 · 배경
         채움 어느 방식이든 틱 사이를 `TICK_MOTION_MS`에 이어 움직인다(애니메이션 켬일 때).
+
+        완료 · 실패가 되면 완료 · 실패 모션을 돌고(`_startTintMotion`), 실패 · 완료에서 다른 상태가 되면
+        색조를 걷는 모션을 돈다(`_startClearMotion`) — 애니메이션 켬이고 카드가 보일 때만(#571). 그 밖
+        (처음 뜬 카드 · 되살린 카드 · 애니메이션 끔)은 막대 없이 색조만 바로 건다. 이 모션 도중 상태가
+        또 바뀌면 모션을 멈추고 새 상태의 마지막 모양으로 바로 간다(새 모션을 돌지 않는다).
         """
         display = card_display.current()
         raw = self.item.downloadState
         fraction, state, busy = self._target()
-        tint = state if state in ("finished", "failed") else ""
-        frame = self.contentFrame
-        if frame.property("tint") != tint:
-            frame.setProperty("tint", tint)
-            theme.repolish(frame)
-            # 상태 글의 「색조 위」 색은 카드 면의 속성을 보는 규칙이다 — 조상 속성이 바뀌어도 자식은 다시
-            # 계산되지 않는다(Qt 스타일시트). 빠뜨리면 새 카드만 옛 색으로 남고 테마 전환 뒤에야 맞는다
-            theme.repolish(self.statusLabel)
-            self.hoverShade.update()
+        if self._motionGoal is not None:
+            if raw == self._motionGoal:
+                return  # 완료 · 실패 · 색조 걷기 모션 도중의 다시 그리기 — 모션을 둔다. 끝에서 맞춘다
+            # 모션 도중 상태가 또 바뀌었다(실패 직후 다시 시도 등) — 모션을 멈추고 마지막 상태의 모양으로
+            self._stopMotion()
+            self._setTint(state if raw in TINT_STATES else "")
+            self._showProgress(fraction, state, busy)
+            return
+        moving = display.animations and self.isVisible() and previous != raw
+        if moving and raw in TINT_STATES and previous in TINT_MOTION_FROM:
+            self._stopMotion()
+            self._startTintMotion(previous, raw == DownloadState.FINISHED, display.fill)
+            return
+        if moving and previous in TINT_STATES and raw not in TINT_STATES:
+            self._stopMotion()
+            self._setTint("")
+            self._showProgress(fraction, state, busy)
+            self._startClearMotion("finished" if previous == DownloadState.FINISHED else "failed")
+            return
+        self._setTint(state if raw in TINT_STATES else "")
         stopped = previous in BUSY_STATES and raw == DownloadState.WAITING and self._shown > 0
         if stopped and display.animations:
             old_state = "paused" if previous == DownloadState.PAUSED else "running"
@@ -1361,9 +1515,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         동적 속성(`state` · `tint`)만 바꾸고, 색은 전역 QSS 규칙이 고른다 — 속성만 바꾸면 이미 계산된
         스타일이 갱신되지 않으므로 theme.repolish()가 함께 필요하다.
 
-        진행 표시(#554): 막대 방식은 받는 중 · 일시정지가 진행만큼, 완료 · 실패는 끝까지 찬 막대(상태 색)다.
-        배경 채움 방식은 받는 중 · 일시정지를 카드 면에 칠한다. 어느 방식이든 완료 · 실패는 카드 전체
-        색조다. 준비 중 · 자르기 준비 중은 값 없이 움직이는 막대다.
+        진행 표시(#554): 막대 방식은 받는 중 · 일시정지가 진행만큼이다. 배경 채움 방식은 받는 중 · 일시정지를
+        카드 면에 칠한다. 어느 방식이든 완료 · 실패는 막대 · 채움 없이 카드 전체 색조다(#571). 준비 중 ·
+        자르기 준비 중은 값 없이 움직이는 막대다.
 
         카드 버튼은 `CARD_BUTTONS`가 상태마다 정한다. 줄 자리 · 카드 높이는 상태와 무관하다
         (목록이 들썩이면 안 된다). 일시정지의 조작은 **이어 받기**다 — 버튼 하나(pauseButton)가
