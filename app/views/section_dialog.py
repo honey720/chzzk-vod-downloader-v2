@@ -37,10 +37,19 @@
 버튼은 Qt 버튼 상자가 OS 관례 차례로 놓고, 확인이 주 동작(채움)이다(설계 §12.1).
 """
 
+import math
 import sys
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRect, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QEnterEvent, QMouseEvent, QPainter, QPaintEvent, QShowEvent
+from PySide6.QtGui import (
+    QColor,
+    QEnterEvent,
+    QImage,
+    QMouseEvent,
+    QPainter,
+    QPaintEvent,
+    QShowEvent,
+)
 from PySide6.QtWidgets import (
     QAbstractButton,
     QApplication,
@@ -262,6 +271,9 @@ class SectionRow(QWidget):
         layout.setSpacing(theme.METRICS["sectionRowGap"])  # 앱 스타일의 기본 간격은 0이다
         column.addLayout(layout)
         self._fieldLine = layout  # 입력칸 줄 — 호버 띠의 기준(hoverBand)
+        self._inkCache: tuple[tuple, int] | None = (
+            None  # 안내 글 잉크 아래 끝 — (글 · 크기 · 글꼴, 값)
+        )
 
         self.handle = DragHandle(self)
         layout.addWidget(self.handle)
@@ -393,14 +405,43 @@ class SectionRow(QWidget):
         bottom = line.bottom() + 1 + pad  # 띠 아래 끝 바로 밑 줄(배타)
         label = self.shownMessage()
         if label is not None:
-            metrics = label.fontMetrics()
-            shown = QLabel.text(label)  # 말줄임한 뒤 보이는 글
-            ink = metrics.tightBoundingRect(shown)
-            origin = label.mapTo(self, QPoint(0, 0)).y()
-            baseline = origin + (label.height() - metrics.height()) // 2 + metrics.ascent()
-            ink_bottom = baseline + ink.y() + ink.height()  # 글자 아래 끝 바로 밑 줄(배타)
+            ink_bottom = label.mapTo(self, QPoint(0, 0)).y() + self._inkBottom(label)
             bottom = max(bottom, min(ink_bottom + pad, self.height() + pad - 1))
         return QRect(0, top, self.width(), bottom - top)
+
+    def _inkBottom(self, label: QLabel) -> int:
+        """label에 보이는 글자가 칠해진 가장 아래 줄 바로 밑(라벨 좌표, 배타) — 글자가 없으면 0.
+
+        글꼴 정보(``tightBoundingRect``)로 추정하지 않고 보이는 글을 이미지에 그려 잰다 — 글꼴 정보는 실제
+        화면의 Malgun에서 1px 아래를, 글자가 없는 글꼴의 상자(tofu)에서는 몇 px 아래를 돌려준다. 같은 글 ·
+        크기 · 글꼴이면 앞서 잰 값을 쓴다(띠를 칠할 때마다 그리지 않게).
+        """
+        shown = QLabel.text(label)  # 말줄임한 뒤 보이는 글
+        ratio = label.devicePixelRatioF()
+        key = (shown, label.width(), label.height(), label.font().key(), ratio)
+        if self._inkCache is not None and self._inkCache[0] == key:
+            return self._inkCache[1]
+        image = QImage(
+            round(label.width() * ratio),
+            round(label.height() * ratio),
+            QImage.Format.Format_ARGB32_Premultiplied,
+        )
+        image.setDevicePixelRatio(ratio)
+        image.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(image)
+        painter.setFont(label.font())
+        painter.setPen(Qt.GlobalColor.black)
+        painter.drawText(label.contentsRect(), int(label.alignment()), shown)
+        painter.end()
+        rows = (
+            y
+            for y in range(image.height() - 1, -1, -1)
+            if any(image.pixelColor(x, y).alpha() for x in range(image.width()))
+        )
+        last = next(rows, None)
+        bottom = 0 if last is None else math.ceil((last + 1) / ratio)
+        self._inkCache = (key, bottom)
+        return bottom
 
 
 class _RowList(QWidget):
