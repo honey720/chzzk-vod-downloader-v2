@@ -9,7 +9,6 @@
 # ruff: noqa: F811
 
 from collections.abc import Callable, Iterator
-from pathlib import Path
 
 import pytest
 from pytestqt.qtbot import QtBot
@@ -27,7 +26,6 @@ from tests.app.gui.section_reorder import (
     alt_move,
     drag_handle,
     press_at,
-    release_buttons,
     send_mouse,
 )
 from tests.app.gui.test_section_dialog_c5 import (  # noqa: F401 — 픽스처는 이름으로 쓴다
@@ -56,15 +54,6 @@ def scheme(request: pytest.FixtureRequest, qapp: QApplication) -> Iterator[str]:
     theme.apply_color_scheme(qapp, request.param, QSS_PATH)
     yield request.param
     theme.apply_color_scheme(qapp, "dark", QSS_PATH)
-
-
-def _open(
-    qtbot: QtBot, tmp_path: Path, basis: type, rows: list[tuple[str, str]]
-) -> SectionEditDialog:
-    """구간 창을 열고, 앞 테스트가 남긴 눌린 마우스 버튼을 풀어 「버튼 없음」에서 시작한다(#586)."""
-    dialog = _editor(qtbot, tmp_path, basis, rows)
-    release_buttons(dialog)
-    return dialog
 
 
 def _ground(dialog: SectionEditDialog, row: SectionRow) -> QColor:
@@ -144,7 +133,7 @@ def test_a_hovered_row_paints_the_row_hover_ground_and_others_keep_the_window_gr
     행 A · B · C, 다크 · 라이트, 창에 합성 포인터 이동으로 2번 행 안내 줄 왼쪽에 둠
     -> 2번 행 바탕 화소 == rowHoverBg, 1 · 3번 행 == windowBg, 칠한 행 == [1]
     """
-    dialog = _open(qtbot, tmp_path, basis, [A, B, C])
+    dialog = _editor(qtbot, tmp_path, basis, [A, B, C])
     tokens = theme.current_tokens()
     rows = dialog._rows
     assert _ground(dialog, rows[1]) == QColor(tokens["windowBg"]), "전제: 호버 전 창 바탕"
@@ -165,7 +154,7 @@ def test_the_hover_stays_while_the_pointer_is_over_a_child_of_the_row(
     행 A · B, 합성 포인터 이동: 2번 행 바탕 -> 시작 시분초 칸 -> ✕ -> 손잡이
     -> 각 자리에서 칠한 행 == [1], 2번 행 바탕 화소 == rowHoverBg
     """
-    dialog = _open(qtbot, tmp_path, basis, [A, B])
+    dialog = _editor(qtbot, tmp_path, basis, [A, B])
     surface = QColor(theme.current_tokens()["rowHoverBg"])
     row = dialog._rows[1]
     _move_in(dialog, row.messageSlot, _slot_spot(row))
@@ -184,7 +173,7 @@ def test_the_hover_goes_off_when_the_pointer_leaves_the_rows(qtbot, tmp_path, ba
     행 A · B, 2번 행에 합성 포인터 이동 -> 칠한 행 == [1] -> 제목 글로 이동 -> 칠한 행 == [],
     2번 행 바탕 화소 == windowBg
     """
-    dialog = _open(qtbot, tmp_path, basis, [A, B])
+    dialog = _editor(qtbot, tmp_path, basis, [A, B])
     row = dialog._rows[1]
     _move_in(dialog, row.messageSlot, _slot_spot(row))
     _wait_hovered(qtbot, dialog, row)
@@ -202,7 +191,7 @@ def test_the_hover_goes_off_when_the_window_becomes_inactive(qtbot, tmp_path, ba
     행 A · B, 2번 행에 들어감 -> 칠한 행 == [1] -> 다른 최상위 창을 활성으로 -> 칠한 행 == [],
     1번 행에 들어감 -> 칠한 행 == []
     """
-    dialog = _open(qtbot, tmp_path, basis, [A, B])
+    dialog = _editor(qtbot, tmp_path, basis, [A, B])
     _enter(dialog._rows[1])
     assert _hovered(dialog) == [1], "전제: 활성 창에서 들어간 행을 칠한다"
     other = QWidget()
@@ -230,7 +219,7 @@ def test_no_other_row_is_hovered_while_a_row_is_dragged(
     3번 행에 들어감 -> []; 포인터 밑 대역 = 3번 행 길이 글, 목록을 굴림 -> [];
     3번 행 바탕 화소 == windowBg
     """
-    dialog = _open(qtbot, tmp_path, basis, [A, B, C])
+    dialog = _editor(qtbot, tmp_path, basis, [A, B, C])
     rows = dialog._rows
     _enter(rows[1])
     assert _hovered(dialog) == [1], "전제: 끌기 전에는 칠한다"
@@ -261,7 +250,7 @@ def test_after_a_drop_the_row_under_the_pointer_is_hovered(
     행 A · B · C, 포인터 밑 대역 = 지금 2번 행의 길이 글, 1번 행을 맨 끝 틈(3)으로 끌어 놓음
     -> 순서 B · C · A, 칠한 행 == [1], 2번 행 바탕 화소 == rowHoverBg
     """
-    dialog = _open(qtbot, tmp_path, basis, [A, B, C])
+    dialog = _editor(qtbot, tmp_path, basis, [A, B, C])
     _point_at(monkeypatch, lambda: dialog._rows[1].infoLabel)
 
     drag_handle(dialog, 0, 3)
@@ -280,7 +269,7 @@ def test_after_an_alt_move_the_row_under_the_pointer_is_hovered(
     행 A · B · C, 2번 행에 들어감(칠함), 포인터 밑 대역 = 지금 3번 행의 시작 시분초 칸,
     2번 행 시작 칸에서 Alt+↑ -> 순서 B · A · C, 칠한 행 == [2]
     """
-    dialog = _open(qtbot, tmp_path, basis, [A, B, C])
+    dialog = _editor(qtbot, tmp_path, basis, [A, B, C])
     _enter(dialog._rows[1])
     assert _hovered(dialog) == [1], "전제: 옮기기 전 2번 행을 칠한다"
     _point_at(monkeypatch, lambda: dialog._rows[2].startEdit.clockEdit)
@@ -302,7 +291,7 @@ def test_after_a_row_is_deleted_the_row_under_the_pointer_is_hovered(
     행 A · B · C, 포인터 밑 대역 = 지금 1번 행의 ✕, 1번 행 ✕ 누름 -> 순서 B · C, 칠한 행 == [0],
     1번 행 바탕 화소 == rowHoverBg
     """
-    dialog = _open(qtbot, tmp_path, basis, [A, B, C])
+    dialog = _editor(qtbot, tmp_path, basis, [A, B, C])
     _point_at(monkeypatch, lambda: dialog._rows[0].deleteButton)
 
     QTest.mouseClick(dialog._rows[0].deleteButton, Qt.MouseButton.LeftButton)
@@ -320,7 +309,7 @@ def test_hovering_keeps_the_row_height_and_the_window_minimum_width(
 
     행 A · B, 다크 · 라이트, 2번 행에 들어감 -> 2번 행 높이 · 창 minimumSizeHint 폭 == 호버 전 값
     """
-    dialog = _open(qtbot, tmp_path, basis, [A, B])
+    dialog = _editor(qtbot, tmp_path, basis, [A, B])
     row = dialog._rows[1]
     height, width = row.height(), dialog.minimumSizeHint().width()
 
@@ -337,7 +326,7 @@ def test_the_handle_dots_turn_body_text_color_under_the_pointer(qtbot, tmp_path,
     행 A · B, 다크 -> 1번 행 손잡이 그림의 가장 밝은 화소 밝기 <= textMuted 밝기,
     창에 합성 포인터 이동으로 손잡이에 둠 -> 가장 밝은 화소 밝기 > textMuted 밝기
     """
-    dialog = _open(qtbot, tmp_path, basis, [A, B])
+    dialog = _editor(qtbot, tmp_path, basis, [A, B])
     handle = dialog._rows[0].handle
     muted = QColor(theme.current_tokens()["textMuted"]).lightness()
 
@@ -420,7 +409,7 @@ def test_a_band_without_a_message_has_equal_pads_around_the_field_line(
     -> 띠 위 끝 == 입력칸 줄 위 끝 − 4, 띠 아래 끝 == 입력칸 줄 아래 끝 + 4,
        띠 밑 ~ 행 아래 끝 == windowBg
     """
-    dialog = _open(qtbot, tmp_path, basis, [A, B, C])
+    dialog = _editor(qtbot, tmp_path, basis, [A, B, C])
     row = dialog._rows[1]
     _enter(row)
     assert _hovered(dialog) == [1] and not row.shownMessage(), "전제: 안내 글 없는 행을 칠함"
@@ -448,7 +437,7 @@ def test_a_band_with_a_message_wraps_the_glyphs_and_keeps_off_the_next_field_lin
     -> 띠 위 끝 == 입력칸 줄 위 끝 − 4, 띠 아래 끝 == min(글자 아래 끝 + 4, 3번 행 입력칸 줄 위 끝 − 2),
        띠 아래 끝 > 글자 아래 끝
     """
-    dialog = _open(qtbot, tmp_path, basis, [A, BAD, C])
+    dialog = _editor(qtbot, tmp_path, basis, [A, BAD, C])
     row, after = dialog._rows[1], dialog._rows[2]
     _enter(row)
     assert row.errorLabel.isVisible() and _hovered(dialog) == [1], "전제: 오류 행을 칠함"
@@ -471,7 +460,7 @@ def test_the_bands_of_the_first_and_last_rows_are_not_clipped(qtbot, tmp_path, b
     -> 맨 위로 굴려 1번 행에 들어감: 띠 위 끝 == 입력칸 줄 위 끝 − 4 · 목록 보이는 범위 안,
        맨 아래로 굴려 4번 행에 들어감: 띠 아래 끝 == 글자 아래 끝 + 4 · 목록 보이는 범위 안
     """
-    dialog = _open(qtbot, tmp_path, basis, [C, A, B, BAD])
+    dialog = _editor(qtbot, tmp_path, basis, [C, A, B, BAD])
     dialog.resize(dialog.width(), dialog.minimumSizeHint().height())
     _pump()
     bar = dialog.scrollArea.verticalScrollBar()
@@ -508,7 +497,7 @@ def test_the_hover_does_not_break_across_a_row_boundary(qtbot, tmp_path, basis) 
     2번 행 아래 끝 1px -> 3번 행 위 끝 1px
     -> 칠한 행 == [0] -> [1] -> [1] -> [2]
     """
-    dialog = _open(qtbot, tmp_path, basis, [A, BAD, C])
+    dialog = _editor(qtbot, tmp_path, basis, [A, BAD, C])
     rows = dialog._rows
     x = rows[0].handle.geometry().center().x()
     _move_in(dialog, rows[0], QPoint(x, rows[0].height() // 2))
@@ -528,7 +517,7 @@ def test_the_row_pad_keeps_the_window_minimum_width(
     행 A · B, sectionRowHoverPad 4 · 0으로 각각 창을 엶
     -> 행 높이 차 == 4, 창 minimumSizeHint 폭이 같음
     """
-    dialog = _open(qtbot, tmp_path, basis, [A, B])
+    dialog = _editor(qtbot, tmp_path, basis, [A, B])
     height = dialog._rows[1].height()
     monkeypatch.setitem(theme.METRICS, "sectionRowHoverPad", 0)
     bare = _editor(qtbot, tmp_path, basis, [A, B])

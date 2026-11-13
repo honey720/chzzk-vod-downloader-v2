@@ -22,6 +22,7 @@ from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
 from app.widgets import tip_bubble
 from tests.app.gui.card_helpers import bubble_text_for, enter, shown, qt_tooltip_shown
+from tests.app.gui.mouse_buttons import double_click
 from tests.app.gui.test_section_editor import (  # noqa: F401 — 픽스처는 이름으로 쓴다
     _apply_production_qss,
     _destroy_windows,
@@ -153,7 +154,7 @@ class TestOpening:
         item.downloadState = state
         win = _window(tmp_path, item)
         card = win.listView.widgetFor(item)
-        QTest.mouseDClick(card.thumbnailLabel, Qt.MouseButton.LeftButton)
+        double_click(card.thumbnailLabel)
         _pump()
         assert (win._editDialog is not None) == (state == DownloadState.WAITING)
 
