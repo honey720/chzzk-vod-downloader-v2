@@ -54,7 +54,6 @@ def start_worker_display(environ: MutableMapping[str, str], platform: str) -> st
     Raises:
         WorkerDisplayError: Xvfb가 시작하지 못했거나 화면 번호를 알려 주지 않았을 때
     """
-    return None  # 결함 주입 (나): 워커 Xvfb를 띄우지 않는다
     if not platform.startswith("linux"):
         return None
     if not environ.get("CI"):
