@@ -459,9 +459,8 @@ class TestComboBoxDropDownStyle:
 
         combo.showPopup()
         view = combo.view()
-        qtbot.waitUntil(
-            view.isVisible
-        )  # 롤 효과가 끝나야 팝업이 보인다 — 효과가 없으면 바로 빠진다
+        # 롤 효과가 끝나야 팝업이 보인다 — 효과가 없으면 바로 빠진다
+        qtbot.waitUntil(view.isVisible)
         viewport = view.viewport()
         # 팝업 창(QWindow)에 합성 이벤트로 옮긴다 — QTest.mouseMove(QWidget)는 실제 포인터를 옮겨, xvfb에서는
         # 같은 X 서버를 쓰는 다른 워커의 창 밑에 포인터가 남는다(#574 · .claude/rules/safety.md)
