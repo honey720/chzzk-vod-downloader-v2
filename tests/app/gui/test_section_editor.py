@@ -4033,8 +4033,8 @@ def test_total_longer_than_the_video_is_noted_and_does_not_block_ok(qtbot, tmp_p
     """구간 길이의 합이 영상 길이보다 길면 버튼 줄 왼쪽에 알림이 보이고, 확인은 켜져 있어야 한다.
 
     60fps · 3600초. 세 행: 처음~10분 / 4분~끝 / 1분~끝(빈 끝 = 3600초)
-    -> 합 = 10분 + 56분 + 59분 = 02:05:00.000 > 영상 01:00:00.000
-    -> 알림 == "Sections add up to more than the video · Sections 02:05:00.000 · Video 01:00:00.000", 오류 없음, 확인 켜짐
+    -> 합 = 10분 + 56분 + 59분 = 02:05:00:00 > 영상 01:00:00:00
+    -> 알림 == "Sections add up to more than the video · Sections 02:05:00:00 · Video 01:00:00:00", 오류 없음, 확인 켜짐
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -4046,7 +4046,7 @@ def test_total_longer_than_the_video_is_noted_and_does_not_block_ok(qtbot, tmp_p
     )
     _pump()
 
-    assert total_shown(dialog) == TOTAL_OVER.format("02:05:00.000", "01:00:00.000")
+    assert total_shown(dialog) == TOTAL_OVER.format("02:05:00:00", "01:00:00:00")
     # 뷰모델이 주는 전체 글도 같은 글이다 — 두 문장을 같은 글자로 잇는다
     assert dialog.viewModel().totalNoticeText() == total_shown(dialog)
     assert [error_shown(row) for row in dialog._rows] == ["", "", ""]
@@ -4058,8 +4058,8 @@ def test_total_longer_than_the_video_is_noted_and_does_not_block_ok(qtbot, tmp_p
     [
         # 처음~30분(108000프레임) + 그 시각~끝(216000프레임째)
         ("00:30:00:00", ""),  # 108000 + 108000 = 216000 == 영상의 프레임 수 — 같으면 알리지 않는다
-        # 108000 + 108001 = 216001프레임 = 3600.0166…초
-        ("00:29:59:59", TOTAL_OVER.format("01:00:00.017", "01:00:00.000")),
+        # 108000 + 108001 = 216001프레임 = 01:00:00:01
+        ("00:29:59:59", TOTAL_OVER.format("01:00:00:01", "01:00:00:00")),
     ],
     ids=["합이 영상과 같다", "합이 한 프레임 길다"],
 )
@@ -4087,7 +4087,7 @@ def test_an_empty_row_is_left_out_of_the_total_and_an_empty_end_counts_to_the_en
 
     60fps · 3600초
     행 처음~00:59:00:00 과 완전히 빈 행 -> 알림 없음(빈 행을 영상 전체로 세면 넘는다)
-    그 빈 행의 시작에 00:50:00:00을 넣음(끝은 빈 채 — 영상 끝) -> 59분 + 10분 = 01:09:00.000
+    그 빈 행의 시작에 00:50:00:00을 넣음(끝은 빈 채 — 영상 끝) -> 59분 + 10분 = 01:09:00:00
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -4101,7 +4101,7 @@ def test_an_empty_row_is_left_out_of_the_total_and_an_empty_end_counts_to_the_en
     _pump()
 
     assert with_blank_row == ("", ["", IGNORED])
-    assert total_shown(dialog) == TOTAL_OVER.format("01:09:00.000", "01:00:00.000")
+    assert total_shown(dialog) == TOTAL_OVER.format("01:09:00:00", "01:00:00:00")
 
 
 def test_the_total_note_coming_and_going_moves_neither_the_rows_nor_the_buttons(
@@ -4233,7 +4233,7 @@ def test_total_notice_too_wide_for_one_line_is_split_into_its_two_sentences(
     win = open_window(tmp_path, item)
     dialog = open_editor(qtbot, win, item)
     set_rows(dialog, [("", "00:10:00:00"), ("00:04:00:00", ""), ("00:01:00:00", "")])
-    numbers = TOTAL_NUMBERS.format("02:05:00.000", "01:00:00.000")
+    numbers = TOTAL_NUMBERS.format("02:05:00:00", "01:00:00:00")
     whole = TOTAL_HEAD + " · " + numbers
     _set_notice_width(dialog, _notice_width(dialog, whole))
     fitting = shown(dialog.totalLabel)
@@ -4258,7 +4258,7 @@ def test_buttons_stay_where_they_are_when_the_total_notice_takes_two_lines(
     win = open_window(tmp_path, item)
     dialog = open_editor(qtbot, win, item)
     set_rows(dialog, [("", "00:10:00:00"), ("00:04:00:00", ""), ("00:01:00:00", "")])
-    whole = TOTAL_OVER.format("02:05:00.000", "01:00:00.000")
+    whole = TOTAL_OVER.format("02:05:00:00", "01:00:00:00")
     _set_notice_width(dialog, _notice_width(dialog, whole) - 1)
     assert "\n" in shown(dialog.totalLabel)  # 전제: 이 폭에서 알림은 두 줄이다
     parts = (dialog.okButton, dialog.cancelButton, dialog.scrollArea)
@@ -4313,7 +4313,7 @@ def test_overlapping_rows_without_errors_both_count_in_the_total(qtbot, tmp_path
     """겹치지만 오류가 아닌 두 행은 둘 다 합에 들어야 한다.
 
     60fps · 3600초. 행 처음~00:40:00:00(40분), 행 00:20:00:00~끝(40분) — 20분이 겹친다
-    -> 오류 없음, 알림 == "Sections add up to more than the video · Sections 01:20:00.000 · Video 01:00:00.000"
+    -> 오류 없음, 알림 == "Sections add up to more than the video · Sections 01:20:00:00 · Video 01:00:00:00"
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -4323,7 +4323,7 @@ def test_overlapping_rows_without_errors_both_count_in_the_total(qtbot, tmp_path
     _pump()
 
     assert [error_shown(row) for row in dialog._rows] == ["", ""]
-    assert total_shown(dialog) == TOTAL_OVER.format("01:20:00.000", "01:00:00.000")
+    assert total_shown(dialog) == TOTAL_OVER.format("01:20:00:00", "01:00:00:00")
 
 
 # ================================================================ 구간 길이의 합을 「+ 구간 추가」 오른쪽에 적는다 (#309 · #586)
@@ -4480,7 +4480,7 @@ def test_sum_gives_way_to_the_notice_that_already_carries_it(qtbot, tmp_path, ba
     """합이 영상보다 길어 알림이 뜨면 합계 글은 숨고 알림이 그 합을 적어야 한다.
 
     60fps · 3600초. 행 처음~00:40:00:00, 행 00:20:00:00~끝 (합 80분 > 60분)
-    -> 합계 없음, 알림 == "Sections add up to more than the video · Sections 01:20:00.000 · Video 01:00:00.000"
+    -> 합계 없음, 알림 == "Sections add up to more than the video · Sections 01:20:00:00 · Video 01:00:00:00"
     -> 둘째 행의 시작을 00:50:00:00으로(합 50분): 알림 없음, 합계 == "Total 00:50:00:00"
     """
     item = _make_item(str(tmp_path))
@@ -4494,7 +4494,7 @@ def test_sum_gives_way_to_the_notice_that_already_carries_it(qtbot, tmp_path, ba
     leave(dialog._rows[1].startEdit)
     _pump()
 
-    assert over == ("", TOTAL_OVER.format("01:20:00.000", "01:00:00.000"))
+    assert over == ("", TOTAL_OVER.format("01:20:00:00", "01:00:00:00"))
     assert (sum_shown(dialog), total_shown(dialog)) == ("Total 00:50:00:00", "")
 
 

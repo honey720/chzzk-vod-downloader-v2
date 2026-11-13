@@ -8,6 +8,7 @@
 # 픽스처(basis)는 test_section_editor에서 들여와 매개변수 이름으로 받는다 — 같은 이름의 재정의는 의도다
 # ruff: noqa: F811
 
+import re
 from collections.abc import Iterator
 from fractions import Fraction
 from pathlib import Path
@@ -1125,6 +1126,46 @@ def test_the_sum_carries_frames_into_seconds(qtbot: QtBot, tmp_path: Path, basis
     assert _lengths(dialog) == ["00:00:00:20", "00:00:00:50"]
     assert dialog.sumLabel.text() == "Total 00:00:01:10"
     assert dialog.sumLabel.toolTip() == "00:00:01.167"
+
+
+OVER_ROWS = [("", "00:40:00:00"), ("00:20:00:00", "00:50:00:00")]  # 40분 + 30분 = 70분 > 60분
+FRAME_FORM = r"\d\d:\d\d:\d\d:\d\d"  # 프레임 타임코드 HH:MM:SS:FF
+
+
+def _header_end(dialog: SectionEditDialog) -> str:
+    """머리줄에 보이는 영상 끝 타임코드 — 「… video ends at <끝>」의 끝."""
+    assert dialog.headerLabel.isVisible()
+    return dialog.headerLabel.text().rsplit("video ends at ", 1)[1]
+
+
+def _notice_numbers(dialog: SectionEditDialog) -> tuple[str, str]:
+    """합계 초과 알림의 (구간 합, 영상 길이) — 알림 전체 글에서 읽는다."""
+    assert dialog.totalLabel.isVisible()
+    match = re.fullmatch(
+        r"Sections add up to more than the video · Sections (\S+) · Video (\S+)",
+        dialog.totalLabel.text(),
+    )
+    assert match is not None, dialog.totalLabel.text()
+    return match.group(1), match.group(2)
+
+
+@pytest.mark.parametrize("fps", [Fraction(30), Fraction(2997, 50)], ids=["30fps", "59.94fps"])
+def test_the_over_total_notice_is_in_frames_with_the_header_end_as_the_video(
+    qtbot: QtBot, tmp_path: Path, basis: type, fps: Fraction
+) -> None:
+    """합계 초과 알림의 두 값은 프레임 타임코드이고 영상 길이는 머리줄의 영상 끝과 같아야 한다.
+
+    fps · 3600초, 행 처음 ~ 00:40:00:00, 행 00:20:00:00 ~ 00:50:00:00(합 70분)
+    -> 구간 합 == "01:10:00:00", 영상 길이는 HH:MM:SS:FF 꼴 == 머리줄 「video ends at」 뒤 글
+    """
+    basis.fps = fps
+    dialog = _editor(qtbot, tmp_path, basis, OVER_ROWS)
+
+    total, video = _notice_numbers(dialog)
+
+    assert total == "01:10:00:00"
+    assert re.fullmatch(FRAME_FORM, video), video
+    assert video == _header_end(dialog)
 
 
 def test_length_tooltips_follow_moves_and_value_changes(

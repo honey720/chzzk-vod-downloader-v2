@@ -1010,6 +1010,10 @@ class SectionEditViewModel(QObject):
         구간이 겹치면 합이 영상보다 길어질 수 있다 — 겹치는 부분을 구간마다 따로 만든다는 뜻이라
         확인은 막지 않고 알리기만 한다. 견주는 단위는 프레임이다(초로 더하면 끝자리가 흔들린다).
         영상 길이를 모르면(조회 전 · 실패) 알리지 않는다.
+
+        숫자는 길이 · 합계와 같은 프레임 타임코드 ``HH:MM:SS:FF``다. 영상 길이는 머리줄의 영상 끝
+        타임코드(``endTimecodeText``)와 같은 값을 적는다 — 한 창 안의 표기를 하나로 맞춘다
+        (오너 2026-11-13, #586).
         """
         if self.state != STATE_READY or self.fps is None or self.duration <= 0:
             return "", ""
@@ -1017,22 +1021,13 @@ class SectionEditViewModel(QObject):
         video_frames = round(self.duration * frame_rate(self.fps))
         if total_frames <= video_frames:
             return "", ""
-        total_seconds = float(total_frames / frame_rate(self.fps))
         return (
             self.tr("Sections add up to more than the video"),
             self.tr("Sections {0} · Video {1}").format(
-                format_milliseconds(total_seconds), format_milliseconds(self.duration)
+                format_timecode(self._framesSeconds(total_frames), self.fps),
+                self.endTimecodeText(),
             ),
         )
-
-    def millisecondsText(self, row: int, column: int) -> str:
-        """칸의 시각을 밀리초 표기로 — 표시만 한다. 해석되지 않는 칸 · 걸러 낸 행은 빈 문자열."""
-        if row in self._ignored:
-            return ""
-        try:
-            return format_milliseconds(self._seconds(column, self.rows[row][column]))
-        except TimecodeError:
-            return ""
 
     def topFrame(self) -> int | None:
         """프레임 칸에 넣을 수 있는 가장 큰 값 — 프레임률 − 1. 프레임률을 모르면 None."""
@@ -1070,11 +1065,6 @@ class SectionEditViewModel(QObject):
         """
         end = self.endSeconds()
         return "" if end is None else format_timecode(end, self.fps)
-
-    def endMillisecondsText(self) -> str:
-        """영상의 끝을 밀리초 표기로 — 표시만 한다. 조회가 끝나기 전에는 빈 문자열."""
-        end = self.endSeconds()
-        return "" if end is None else format_milliseconds(end)
 
     def canCommit(self, typing: tuple[int, int] | None = None) -> bool:
         """확인할 수 있는지 — 조회가 끝났고 오류가 없다.
