@@ -270,7 +270,7 @@ def test_after_an_alt_move_the_row_under_the_pointer_is_hovered(
     field = dialog._rows[1].startEdit.clockEdit
     field.setFocus()
 
-    alt_move(field, Qt.Key.Key_Up)
+    alt_move(qtbot, field, Qt.Key.Key_Up)
     _pump()
 
     assert [tuple(r) for r in dialog.viewModel().rows] == [B, A, C]

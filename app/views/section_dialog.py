@@ -521,6 +521,10 @@ class SectionEditDialog(QDialog):
         super().__init__(parent)
         # 시각 칸의 Alt+↑/↓ 필터 — 칸보다 먼저 만들어 칸보다 먼저 사라지게 한다(_MoveKeyFilter)
         self._moveKeys = _MoveKeyFilter(self._onMoveKey, self)
+        # 받았지만 아직 옮기지 않은 Alt+↑/↓ — 한 칸씩의 방향(-1 위 · 1 아래)과 첫 키를 받은 행.
+        # 옮기기는 키 처리가 끝난 다음 차례에 한다(_applyMoveKeys)
+        self._pendingMoves: list[int] = []
+        self._pendingFrom = 0
         self._viewmodel = viewmodel
         self._rows: list[SectionRow] = []
         # 숫자를 치고 있는 (행, 칸) — 그 행의 오류 가운데 일부는 칸을 떠날 때 띄운다. 없으면 None
@@ -1124,19 +1128,38 @@ class SectionEditDialog(QDialog):
         return None
 
     def _onMoveKey(self, watched: QObject, event: QEvent) -> bool:
-        """시각 칸의 Alt+↑/↓ — 그 행을 한 칸 위 · 아래로 옮긴다. 키를 받았으면 True.
+        """시각 칸의 Alt+↑/↓ — 그 행을 한 칸 위 · 아래로 옮기도록 맡긴다. 키를 받았으면 True.
 
-        맨 위 · 맨 아래에서는 아무 일도 없다(키는 받는다 — 칸이 커서를 옮기지 않게). 다른 수정 키가
-        함께 눌렸으면 필터가 여기로 넘기지 않는다(``is_move_key``). 끄는 중에는 옮기지 않는다.
+        키는 그 자리에서 받아 삼키고(칸이 커서를 옮기지 않게), 옮기기 · 다시 그리기 · 초점 · 스크롤은
+        키 처리가 끝난 다음 차례(``_applyMoveKeys``)에 한다 — 옮기기는 키를 받은 칸이 든 행을 다시
+        만든다. 그 칸의 키 처리 도중에 행을 다시 만들지 않는다(#586, ubuntu CI 충돌).
+        다음 차례 전에 키가 더 오면 차례대로 쌓는다. 다른 수정 키가 함께 눌렸으면 필터가 여기로 넘기지
+        않는다(``is_move_key``). 끄는 중에는 옮기지 않는다.
         """
         where = self._partAt(watched)
         if where is None:
             return False
-        row = where[0]
-        target = row + (-1 if event.key() == Qt.Key.Key_Up else 1)
-        if self._drag is None and 0 <= target < len(self._rows):
-            self.moveRowTo(row, target)
+        if self._drag is not None:
+            return True
+        if not self._pendingMoves:
+            self._pendingFrom = where[0]
+            QTimer.singleShot(0, self, self._applyMoveKeys)
+        self._pendingMoves.append(-1 if event.key() == Qt.Key.Key_Up else 1)
         return True
+
+    def _applyMoveKeys(self) -> None:
+        """받아 둔 Alt+↑/↓를 차례대로 옮긴다 — 맨 위 · 맨 아래를 넘는 것 · 끄는 중인 것은 건너뛴다."""
+        steps, self._pendingMoves = self._pendingMoves, []
+        row = self._pendingFrom
+        for step in steps:
+            target = row + step
+            if self._drag is None and 0 <= target < len(self._rows):
+                self.moveRowTo(row, target)
+                row = target
+
+    def isMovePending(self) -> bool:
+        """받았지만 아직 옮기지 않은 Alt+↑/↓가 있는지."""
+        return bool(self._pendingMoves)
 
     def isDragging(self) -> bool:
         """손잡이로 행을 끄는 중인지."""

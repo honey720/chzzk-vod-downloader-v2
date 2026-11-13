@@ -8,9 +8,11 @@ from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QWidget
+from pytestqt.qtbot import QtBot
 
 LEFT = Qt.MouseButton.LeftButton
 NO_BUTTON = Qt.MouseButton.NoButton
+MOVE_WAIT_MS = 2000  # Alt+↑/↓ 옮기기를 기다리는 한도(ms) — 다음 차례 한 번이면 끝난다
 
 
 def send_mouse(
@@ -70,10 +72,18 @@ def drag_handle(dialog, source: int, gap: int | None = None, to: QPoint | None =
     QApplication.processEvents()
 
 
-def alt_move(widget: QWidget, key: Qt.Key, extra: Qt.KeyboardModifier | None = None) -> None:
-    """시각 칸 widget에 Alt+↑/↓(extra가 있으면 그 수정 키도 함께)를 보낸다."""
+def alt_move(
+    qtbot: QtBot, widget: QWidget, key: Qt.Key, extra: Qt.KeyboardModifier | None = None
+) -> None:
+    """시각 칸 widget에 Alt+↑/↓(extra가 있으면 그 수정 키도 함께)를 보내고 옮기기가 끝날 때까지 기다린다.
+
+    창은 키를 받은 다음 차례에 행을 옮긴다 — 받아 둔 키가 없어질 때까지 조건 대기한다(옮기지 않는
+    키면 곧바로 끝난다). 옮긴 결과(초점 칸 · 행 순서)는 부른 테스트가 단언한다.
+    """
+    dialog = widget.window()
+    assert hasattr(dialog, "isMovePending"), "전제: widget이 구간 창 안의 칸이다"
     modifiers = Qt.KeyboardModifier.AltModifier
     if extra is not None:
         modifiers |= extra
     QTest.keyClick(widget, key, modifiers)
-    QApplication.processEvents()
+    qtbot.waitUntil(lambda: not dialog.isMovePending(), timeout=MOVE_WAIT_MS)
