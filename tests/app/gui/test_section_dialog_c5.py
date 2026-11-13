@@ -449,7 +449,7 @@ def test_alt_up_moves_the_row_and_keeps_focus_on_the_same_field(
     field.setFocus()
     _pump()
 
-    alt_move(qtbot, field, Qt.Key.Key_Up)
+    alt_move(field, Qt.Key.Key_Up)
 
     assert _values(dialog) == [A, C, B]
     assert QApplication.focusWidget() is pick(dialog._rows[1])
@@ -465,7 +465,7 @@ def test_alt_down_moves_the_row_down_and_keeps_focus(qtbot, tmp_path, basis) -> 
     field.setFocus()
     _pump()
 
-    alt_move(qtbot, field, Qt.Key.Key_Down)
+    alt_move(field, Qt.Key.Key_Down)
 
     assert _values(dialog) == [B, A, C]
     assert QApplication.focusWidget() is dialog._rows[1].startEdit.clockEdit
@@ -491,7 +491,7 @@ def test_alt_arrow_at_the_end_of_the_list_does_nothing(
     field.setFocus()
     _pump()
 
-    alt_move(qtbot, field, key)
+    alt_move(field, key)
 
     assert _values(dialog) == [A, B, C]
     assert dialog._rows == rows_before
@@ -518,7 +518,7 @@ def test_alt_arrow_with_another_modifier_does_not_move_the_row(
     field.setFocus()
     _pump()
 
-    alt_move(qtbot, field, Qt.Key.Key_Up, extra)
+    alt_move(field, Qt.Key.Key_Up, extra)
 
     assert _values(dialog) == [A, B, C]
 
@@ -667,7 +667,7 @@ def test_alt_moves_keep_the_focused_field_inside_the_visible_list(
     step = 1 if key == Qt.Key.Key_Down else -1
 
     for done in range(1, steps + 1):
-        alt_move(qtbot, QApplication.focusWidget(), key)
+        alt_move(QApplication.focusWidget(), key)
         at = start + step * done
         field = dialog._rows[at].startEdit.clockEdit
         assert QApplication.focusWidget() is field, f"{done}번째: 초점이 옮겨 간 행에 없다"
@@ -725,7 +725,7 @@ def test_moving_a_row_that_stays_visible_keeps_the_scroll_value(
     if how == "alt":
         rows[first].startEdit.clockEdit.setFocus()
         _pump()
-        alt_move(qtbot, rows[first].startEdit.clockEdit, Qt.Key.Key_Down)
+        alt_move(rows[first].startEdit.clockEdit, Qt.Key.Key_Down)
     else:
         drag_handle(dialog, first, first + 2)
 
@@ -1247,7 +1247,7 @@ def test_length_tooltips_follow_moves_and_value_changes(
 
     dialog = _editor(qtbot, tmp_path, basis, [A, B])
     before = (_length_tips(dialog), dialog.sumLabel.toolTip())
-    alt_move(qtbot, dialog._rows[0].startEdit.clockEdit, Qt.Key.Key_Down)
+    alt_move(dialog._rows[0].startEdit.clockEdit, Qt.Key.Key_Down)
     _pump()
     moved = (_length_tips(dialog), _lengths(dialog))
     type_into(dialog._rows[0].endEdit, "00:30:30:30")

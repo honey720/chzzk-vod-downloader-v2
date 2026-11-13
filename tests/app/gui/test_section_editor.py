@@ -1032,12 +1032,12 @@ def test_moved_rows_reach_the_engine_in_the_new_order_with_matching_file_numbers
         ],
     )
 
-    alt_move(qtbot, dialog._rows[2].startEdit.clockEdit, Qt.Key.Key_Up)
-    alt_move(qtbot, dialog._rows[1].startEdit.clockEdit, Qt.Key.Key_Up)
-    alt_move(qtbot, dialog._rows[1].startEdit.clockEdit, Qt.Key.Key_Down)
+    alt_move(dialog._rows[2].startEdit.clockEdit, Qt.Key.Key_Up)
+    alt_move(dialog._rows[1].startEdit.clockEdit, Qt.Key.Key_Up)
+    alt_move(dialog._rows[1].startEdit.clockEdit, Qt.Key.Key_Down)
     moved = [list(row) for row in dialog.viewModel().rows]
-    alt_move(qtbot, dialog._rows[0].startEdit.clockEdit, Qt.Key.Key_Up)
-    alt_move(qtbot, dialog._rows[2].startEdit.clockEdit, Qt.Key.Key_Down)
+    alt_move(dialog._rows[0].startEdit.clockEdit, Qt.Key.Key_Up)
+    alt_move(dialog._rows[2].startEdit.clockEdit, Qt.Key.Key_Down)
     assert dialog.viewModel().rows == moved, "끝에서는 옮기지 않는다"
     press_ok(dialog)
 
@@ -3315,7 +3315,7 @@ def test_moving_a_row_while_a_field_has_focus_does_not_overwrite_the_row_that_to
     _pump()
     assert QApplication.focusWidget() is dialog._rows[1].startEdit.clockEdit, "전제: 포커스"
 
-    alt_move(qtbot, dialog._rows[1].startEdit.clockEdit, Qt.Key.Key_Up)
+    alt_move(dialog._rows[1].startEdit.clockEdit, Qt.Key.Key_Up)
     _pump()
 
     assert dialog.viewModel().rows == [
@@ -3837,7 +3837,7 @@ def test_moving_a_row_settles_the_field_being_typed_before_it_moves_the_row(
     QTest.keyClicks(first.endEdit.clockEdit, "010000")
     _pump()
 
-    alt_move(qtbot, first.endEdit.clockEdit, Qt.Key.Key_Down)
+    alt_move(first.endEdit.clockEdit, Qt.Key.Key_Down)
     _pump()
 
     assert dialog.viewModel().rows == [
