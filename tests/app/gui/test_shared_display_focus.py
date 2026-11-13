@@ -93,7 +93,7 @@ def test_focus_stays_while_another_client_activates_on_the_shared_display(qtbot:
     _report_xvfb_run_args()
     win, field = _focused_field(qtbot)
     env = {k: v for k, v in os.environ.items() if k != "QT_QPA_PLATFORM"}
-    env["DISPLAY"] = os.environ[SHARED_DISPLAY]
+    env["DISPLAY"] = os.environ["DISPLAY"]  # 결함 주입 (가): 자식이 이 워커의 화면을 쓴다
     child = subprocess.Popen(
         [sys.executable, "-c", _STEALER, str(STEAL_SECONDS)],
         stdout=subprocess.PIPE,
