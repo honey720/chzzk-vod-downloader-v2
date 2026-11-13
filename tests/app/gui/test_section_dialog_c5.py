@@ -47,7 +47,6 @@ from tests.app.gui.section_reorder import (
     focused,
     gap_point,
     press_at,
-    release_buttons,
     send_mouse,
 )
 from tests.app.gui.test_section_editor import (  # noqa: F401 — 픽스처는 이름으로 쓴다
@@ -912,7 +911,6 @@ def test_the_delete_button_is_a_box_with_the_app_surface_tokens(qtbot, tmp_path,
     role 속성 없음(흐린 글자 버튼 아님), 글 크기 == fontSizeMeta
     """
     dialog = _editor(qtbot, tmp_path, basis, [A, B])
-    release_buttons(dialog)  # 앞 테스트가 남긴 눌린 버튼이 있으면 합성 이동이 끌기가 된다
     tokens = theme.current_tokens()
     button = dialog._rows[0].deleteButton
     middle = button.height() // 2

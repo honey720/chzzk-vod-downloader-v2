@@ -70,32 +70,6 @@ def drag_handle(dialog, source: int, gap: int | None = None, to: QPoint | None =
     QApplication.processEvents()
 
 
-PRESSABLE = (
-    Qt.MouseButton.LeftButton,
-    Qt.MouseButton.RightButton,
-    Qt.MouseButton.MiddleButton,
-)  # 풀어 줄 버튼 — 테스트가 누르는 버튼
-
-
-def release_buttons(window: QWidget) -> None:
-    """앱에 눌린 채 남은 마우스 버튼을 window에 합성 놓기로 풀고, 버튼 없음을 단언한다.
-
-    앞 테스트(위젯에 보낸 QTest 더블클릭 등)가 버튼을 눌린 상태로 남기면 뒤 테스트의 합성 포인터 이동이
-    끌기가 되어 호버가 켜지지 않는다(#586). 놓기는 창(QWindow) 왼쪽 위 (0, 0)에 보낸다 — 실제 포인터는
-    옮기지 않는다. (1, 1)에 놓으면 뒤에 (1, 1)을 거치는 첫 합성 이동이 같은 자리라 버려져 호버가 켜지지
-    않았다(로컬 재현). 호버를 재는 테스트는 창을 연 직후에 부른다.
-    """
-    handle = window.windowHandle()
-    assert handle is not None, "전제: 창이 떠 있다"
-    for button in PRESSABLE:
-        if QApplication.mouseButtons() & button:
-            QTest.mouseRelease(handle, button, Qt.KeyboardModifier.NoModifier, QPoint(0, 0))
-            QApplication.processEvents()
-    assert QApplication.mouseButtons() == NO_BUTTON, (
-        f"전제: 눌린 마우스 버튼이 없다 — {QApplication.mouseButtons()!r}"
-    )
-
-
 def focused(window: QWidget) -> QWidget:
     """window 안에서 초점이 있는 위젯을 돌려준다. 없으면 키를 보내기 전에 테스트를 실패시킨다.
 
