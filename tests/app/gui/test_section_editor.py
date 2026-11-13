@@ -3861,7 +3861,10 @@ def test_deleting_another_row_settles_the_field_being_typed_before_it_removes_th
     first.endEdit.clockEdit.setFocus()
     QTest.keyClicks(first.endEdit.clockEdit, "010000")
     _pump()
-    assert first.endEdit.clockEdit.hasFocus(), "전제: ✕는 초점을 가져가지 않는다(TabFocus)"
+    assert first.endEdit.clockEdit.hasFocus(), "전제: 끝 칸을 치는 중"
+    assert second.deleteButton.focusPolicy() == Qt.FocusPolicy.TabFocus, (
+        "전제: ✕는 눌러도 초점을 가져가지 않는다"
+    )
 
     second.deleteButton.click()
     _pump()
