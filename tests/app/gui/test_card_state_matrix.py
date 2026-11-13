@@ -34,7 +34,7 @@ from app.widgets import icons
 from app.viewmodels.data import ContentItem
 from app.widgets.widget import ContentItemWidget
 from core.models.download_state import DownloadState
-from tests.app.gui.card_helpers import hold_style, unfold
+from tests.app.gui.card_helpers import hold_style, hover_from_tests_only, unfold
 from typing import Never
 
 
@@ -61,6 +61,12 @@ def no_network(monkeypatch) -> None:
 
     monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
     monkeypatch.setattr("app.widgets.widget._global_download_path", "C:/dl")
+
+
+@pytest.fixture(autouse=True)
+def _hover_from_tests_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """카드 호버는 테스트가 정한다 — 실제 포인터 자리에 기대지 않는다 (#587)."""
+    hover_from_tests_only(monkeypatch)
 
 
 def _make_widget(qapp, state, progress=0, *, post_process=False) -> ContentItemWidget:

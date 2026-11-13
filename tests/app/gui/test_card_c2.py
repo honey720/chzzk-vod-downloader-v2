@@ -6,8 +6,8 @@ from collections.abc import Iterator
 from typing import Never
 
 import pytest
-from PySide6.QtCore import QEvent, QPoint, QPointF, Qt, QTimer
-from PySide6.QtGui import QColor, QEnterEvent, QFontMetrics
+from PySide6.QtCore import QPoint, Qt, QTimer
+from PySide6.QtGui import QColor, QFontMetrics
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
 
@@ -28,6 +28,8 @@ from tests.app.gui.card_helpers import (
     drop_new_top_levels,
     enter,
     hold_style,
+    hover_from_tests_only,
+    leave,
     qt_tooltip_shown,
     snapshot_top_levels,
 )
@@ -68,6 +70,12 @@ def no_network(monkeypatch) -> None:
     monkeypatch.setattr("app.widgets.widget._global_download_path", DEFAULT_DIR)
 
 
+@pytest.fixture(autouse=True)
+def _hover_from_tests_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """카드 호버는 테스트가 정한다 — 실제 포인터 자리에 기대지 않는다 (#587)."""
+    hover_from_tests_only(monkeypatch)
+
+
 def _item(state=DownloadState.WAITING, title: str = "제목", path: str = DEFAULT_DIR) -> ContentItem:
     item = ContentItem(
         "https://chzzk.naver.com/video/1",
@@ -104,15 +112,13 @@ def _card(state=DownloadState.WAITING, width: int = 700, **kwargs) -> ContentIte
 
 
 def _enter(card: ContentItemWidget) -> None:
-    """카드에 들어감 이벤트를 보낸다(포인터는 옮기지 않는다)."""
-    center = QPointF(card.rect().center())
-    QApplication.sendEvent(card, QEnterEvent(center, center, card.mapToGlobal(center)))
-    QApplication.processEvents()
+    """카드에 들어감 이벤트를 보낸다(포인터는 옮기지 않는다) — 호버 픽스처가 통과시키는 길로."""
+    enter(card)
 
 
 def _leave(card: ContentItemWidget) -> None:
-    QApplication.sendEvent(card, QEvent(QEvent.Type.Leave))
-    QApplication.processEvents()
+    """카드에 나감 이벤트를 보낸다 — 호버 픽스처가 통과시키는 길로."""
+    leave(card)
 
 
 STATE_BUTTONS = [
