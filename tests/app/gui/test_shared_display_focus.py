@@ -59,8 +59,12 @@ def _report_xvfb_run_args() -> None:
     warnings.warn(f"{found} XVFBARGS: {args}", stacklevel=1)
 
 
-def _focused_field(qtbot: QtBot) -> QLineEdit:
-    """창 하나를 띄워 활성이 될 때까지 기다린 뒤 입력칸에 초점을 주고 돌려준다."""
+def _focused_field(qtbot: QtBot) -> tuple[QWidget, QLineEdit]:
+    """창 하나를 띄워 활성이 될 때까지 기다린 뒤 입력칸에 초점을 주고 창과 입력칸을 돌려준다.
+
+    부르는 쪽이 창을 붙잡아야 한다 — ``qtbot.addWidget``은 창을 붙잡지 않아, 창이 GC로 지워지면 자식
+    입력칸도 함께 지워진다.
+    """
     win = QWidget()
     qtbot.addWidget(win)
     field = QLineEdit(win)
@@ -75,7 +79,7 @@ def _focused_field(qtbot: QtBot) -> QLineEdit:
         return field.hasFocus()
 
     qtbot.waitUntil(focused)
-    return field
+    return win, field
 
 
 @pytest.mark.skipif(SHARED_DISPLAY not in os.environ, reason="워커 Xvfb가 있는 Linux CI 워커만")
@@ -87,7 +91,7 @@ def test_focus_stays_while_another_client_activates_on_the_shared_display(qtbot:
     -> 자식 창은 공유 화면에서 활성이 됨, 이 워커의 입력칸은 그 동안 매 확인에서 hasFocus()
     """
     _report_xvfb_run_args()
-    field = _focused_field(qtbot)
+    win, field = _focused_field(qtbot)
     env = {k: v for k, v in os.environ.items() if k != "QT_QPA_PLATFORM"}
     env["DISPLAY"] = os.environ[SHARED_DISPLAY]
     child = subprocess.Popen(
