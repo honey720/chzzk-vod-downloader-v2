@@ -639,10 +639,12 @@ class SectionEditDialog(QDialog):
         self.sumLabel.setObjectName("sectionSumLabel")
         under.addWidget(self.sumLabel)
         layout.addLayout(under)
-        # 시각 입력법 · 최대 개수 — 목록 아래 흐린 글 한 줄. 칸마다 걸던 툴팁을 여기 한 번으로
-        # 모았다(설계 §12.1). 좁으면 말줄임하고 잘렸을 때만 전문을 툴팁에 둔다
-        self.hintLabel = ElidingLabel(self, tip_when_elided=True)
+        # 시각 입력법 · 최대 개수 — 목록 아래 흐린 글. 칸마다 걸던 툴팁을 여기 한 번으로
+        # 모았다(설계 §12.1). 한 줄에 다 들지 않으면 두 줄로 나눈다 — 말줄임하면 최대 개수가 잘린다
+        # (영어 · 창 처음 폭, 오너 실기 2026-11-13)
+        self.hintLabel = QLabel(self)
         self.hintLabel.setObjectName("sectionHintLabel")
+        self.hintLabel.setWordWrap(True)
         layout.addWidget(self.hintLabel)
 
         # 받는 중인 배치가 이 카드를 기다릴 때만 보인다 — 창을 닫아야 이어 간다는 것을 알린다
