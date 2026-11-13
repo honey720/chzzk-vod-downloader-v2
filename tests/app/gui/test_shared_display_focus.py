@@ -11,6 +11,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import warnings
 from pathlib import Path
@@ -59,6 +60,25 @@ def _report_xvfb_run_args() -> None:
     warnings.warn(f"{found} XVFBARGS: {args}", stacklevel=1)
 
 
+def _read_ready_line(child: subprocess.Popen[str], deadline: float) -> str | None:
+    """자식 stdout의 첫 줄을 마감 시각까지 기다려 돌려준다. 시간을 넘기면 자식을 죽이고 None을 돌려준다.
+
+    ``readline()``은 제한 시간이 없어, 자식이 Qt 초기화나 X 서버 연결에서 멈추면 테스트가 끝나지
+    않는다. 읽기는 별도 스레드가 하고, 시간을 넘기면 자식을 죽여 파이프가 닫힌 뒤 그 스레드를 회수한다.
+    """
+    assert child.stdout is not None
+    stdout = child.stdout
+    lines: list[str] = []
+    reader = threading.Thread(target=lambda: lines.append(stdout.readline()), daemon=True)
+    reader.start()
+    reader.join(max(0.0, deadline - time.monotonic()))
+    if reader.is_alive():
+        child.kill()
+        reader.join()
+        return None
+    return lines[0]
+
+
 def _focused_field(qtbot: QtBot) -> tuple[QWidget, QLineEdit]:
     """창 하나를 띄워 활성이 될 때까지 기다린 뒤 입력칸에 초점을 주고 창과 입력칸을 돌려준다.
 
@@ -94,6 +114,7 @@ def test_focus_stays_while_another_client_activates_on_the_shared_display(qtbot:
     win, field = _focused_field(qtbot)
     env = {k: v for k, v in os.environ.items() if k != "QT_QPA_PLATFORM"}
     env["DISPLAY"] = os.environ[SHARED_DISPLAY]
+    ready_deadline = time.monotonic() + CHILD_TIMEOUT
     child = subprocess.Popen(
         [sys.executable, "-c", _STEALER, str(STEAL_SECONDS)],
         stdout=subprocess.PIPE,
@@ -103,8 +124,11 @@ def test_focus_stays_while_another_client_activates_on_the_shared_display(qtbot:
         env=env,
     )
     try:
-        assert child.stdout is not None
-        assert child.stdout.readline().strip() == "ready", child.stderr.read()
+        ready = _read_ready_line(child, ready_deadline)
+        if ready is None:
+            _, err = child.communicate()
+            pytest.fail(f"준비 신호를 {CHILD_TIMEOUT:.0f}초 안에 받지 못했다\n{err}")
+        assert ready.strip() == "ready", child.stderr.read()
         checks = 0
         lost = 0
         deadline = time.monotonic() + CHILD_TIMEOUT
