@@ -74,7 +74,7 @@ def focused(window: QWidget) -> QWidget:
     """window 안에서 초점이 있는 위젯을 돌려준다. 없으면 키를 보내기 전에 테스트를 실패시킨다.
 
     앱 전체 초점(``QApplication.focusWidget()``)은 창이 활성일 때만 그 창의 위젯이다. 공유 화면에서 창이
-    활성을 잃으면 None이 되고, None에 키를 보내면 QTest가 프로세스를 abort한다(#586). 창의 초점 위젯
+    활성을 잃으면 None이 되고, 활성 창도 없을 때 None에 키를 보내면 QTest가 프로세스를 abort한다(#586). 창의 초점 위젯
     (``window.focusWidget()``)은 활성과 상관없이 그 창에서 초점을 받을 위젯이다.
     """
     widget = window.focusWidget()
@@ -85,8 +85,8 @@ def focused(window: QWidget) -> QWidget:
 def alt_move(widget: QWidget, key: Qt.Key, extra: Qt.KeyboardModifier | None = None) -> None:
     """시각 칸 widget에 Alt+↑/↓(extra가 있으면 그 수정 키도 함께)를 보낸다.
 
-    widget이 None이면 키를 보내지 않고 실패한다 — QTest는 대상이 None이면 앱 전체 초점에 보내고, 그것도
-    None이면 프로세스를 abort한다(#586).
+    widget이 None이면 키를 보내지 않고 실패한다 — QTest는 대상이 None이면 앱 전체 초점 · 활성 창 차례로
+    보내고(다른 창이 활성이면 그 창이 키를 받는다), 둘 다 없으면 프로세스를 abort한다(#586).
     """
     assert widget is not None, "키를 보낼 위젯이 None이다 — 키를 보내지 않는다"
     modifiers = Qt.KeyboardModifier.AltModifier
