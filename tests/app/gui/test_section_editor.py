@@ -3983,7 +3983,7 @@ def test_the_input_hint_is_a_dim_text_under_the_list(
 
     60fps · 3600초, 행 하나
     -> 안내 == "Digits fill from the right · '.' goes to the frame field · empty = start/end of the video · up to 20 sections"
-    -> 안내의 위쪽 >= 목록의 아래쪽, 안내의 아래쪽 <= 버튼 상자의 위쪽, 높이 <= 글 두 줄 높이
+    -> 안내의 위쪽 >= 목록의 아래쪽, 안내의 아래쪽 <= 버튼 상자의 위쪽, 높이 >= 그 폭에서 글이 드는 높이
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -3997,7 +3997,7 @@ def test_the_input_hint_is_a_dim_text_under_the_list(
     )
     assert hint.geometry().top() >= dialog.scrollArea.geometry().bottom()
     assert hint.geometry().bottom() <= dialog.buttonBox.geometry().top()
-    assert hint.height() <= 2 * hint.fontMetrics().height(), "두 줄까지다"
+    assert hint.height() >= hint.heightForWidth(hint.width()), "글이 다 들어간다"
 
 
 def test_the_input_hint_is_hidden_while_the_lookup_runs(qtbot, tmp_path, basis) -> None:

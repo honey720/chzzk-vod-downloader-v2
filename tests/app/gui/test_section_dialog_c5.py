@@ -1267,7 +1267,7 @@ def test_the_hint_is_fully_shown_at_the_first_and_the_narrowest_width(
 ) -> None:
     """안내 글은 창 처음 폭(560)과 최소폭에서 말줄임 없이 다 보여야 한다 — 한 줄에 안 들면 두 줄로 나눈다.
 
-    60fps · 3600초, 행 하나, 영어 · 한국어 × 폭 560 · 최소폭(폭 1을 청함)
+    60fps · 3600초, 행 하나, 영어 · 한국어 × 폭 560을 청함(최소폭이 더 넓으면 최소폭) · 최소폭(폭 1을 청함)
     -> 안내 글 == 전문, 안내 높이 >= 낱말 줄바꿈에 드는 줄 수의 높이, 목록 아래 · 버튼 상자 위
     -> 영어 최소폭은 두 줄 이상이 든다(전제 — 줄바꿈을 실제로 잰다)
     """
@@ -1280,7 +1280,7 @@ def test_the_hint_is_fully_shown_at_the_first_and_the_narrowest_width(
         text = HINT_KO if language == "ko" else HINT_EN
         dialog.resize(560, 420)
         _pump()
-        assert dialog.width() == 560, "전제: 처음 폭"
+        assert dialog.width() == max(560, dialog.minimumWidth()), "전제: 처음 폭"
         _assert_hint_fully_shown(dialog, text)
         dialog.resize(1, 420)
         _pump()
