@@ -9,17 +9,23 @@
 # ruff: noqa: F811
 
 from collections.abc import Iterator
+from fractions import Fraction
+from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QEvent, QPoint, Qt
-from PySide6.QtGui import QColor, QPalette
+from pytestqt.qtbot import QtBot
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, Qt, QTranslator
+from PySide6.QtGui import QColor, QImage, QPainter, QPalette, QPen, QPixmap
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialogButtonBox, QStyle, QWidget
 
 import app.theme as theme
+import CVDv2 as main_module
 from app.views.section_dialog import DRAG_EDGE, SectionEditDialog
+from app.widgets import tip_bubble
+from app.widgets.icons import action_pixmap
 from core.models.plan import TimeRange
-from tests.app.gui.card_helpers import shown
+from tests.app.gui.card_helpers import bubble_text_for, enter, qt_tooltip_shown, shown
 from tests.app.gui.section_reorder import (
     LEFT,
     NO_BUTTON,
@@ -520,8 +526,8 @@ def test_rows_fit_inside_the_list_at_the_narrowest_window(qtbot, tmp_path, basis
 
     행 A · B. 창 폭을 1로 청함(최소폭으로 선다)
     -> 행마다 손잡이 · 번호 · 시작 · ~ · 끝 · 길이 · ✕가 왼쪽부터 차례로 놓이고 서로 겹치지 않음,
-       손잡이의 왼쪽 >= 0, ✕의 오른쪽 끝 <= 목록 뷰포트의 폭, ✕의 폭 >= 그 글자 폭,
-       길이 글("00:10:00.000" · "00:01:00.000")의 폭 >= 그 글자 폭(잘리지 않음)
+       손잡이의 왼쪽 >= 0, ✕의 오른쪽 끝 <= 목록 뷰포트의 폭, ✕의 폭 >= 그 도형 한 변,
+       길이 글("00:10:00:00" · "00:01:00:00")의 폭 >= 그 글자 폭(잘리지 않음)
     """
     dialog = _editor(qtbot, tmp_path, basis, [A, B])
     dialog.resize(1, 400)
@@ -546,9 +552,9 @@ def test_rows_fit_inside_the_list_at_the_narrowest_window(qtbot, tmp_path, basis
         corner = row.mapTo(viewport, boxes[-1].bottomRight())
         assert corner.x() < viewport.width()
         button = row.deleteButton
-        assert button.width() >= button.fontMetrics().horizontalAdvance(button.text())
+        assert button.width() >= button.glyphSize()
         length = row.infoLabel
-        assert length.text() in ("00:10:00.000", "00:01:00.000")
+        assert length.text() in ("00:10:00:00", "00:01:00:00")
         assert length.width() >= length.fontMetrics().horizontalAdvance(length.text())
 
 
@@ -892,3 +898,424 @@ def test_row_numbers_use_the_body_text_color_and_size(qtbot, tmp_path, basis) ->
     assert f"{length.font().pixelSize()}px" == theme.FONTS["fontSizeMeta"]
     assert ink(length) == QColor(tokens["textMuted"])
     assert brightest(length) <= muted
+
+
+# ================================================================ ✕는 그린 대각선 둘 (inbox 159i)
+
+
+def _reference_cross(color: QColor, size: int, ratio: float) -> QPixmap:
+    """카드 ✕와 같은 대각선 둘을 테스트가 따로 그린 픽스맵 — 한 변 size, 선 굵기 0.16, 둥근 끝, 22% ~ 78%.
+
+    제품의 그리기 함수(``action_pixmap``)를 부르지 않는다 — 제품이 모양을 바꾸면 여기와 달라진다.
+    """
+    pixmap = QPixmap(round(size * ratio), round(size * ratio))
+    pixmap.setDevicePixelRatio(ratio)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    pen = QPen(color, size * 0.16)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    s = float(size)
+    painter.drawLine(QPointF(s * 0.22, s * 0.22), QPointF(s * 0.78, s * 0.78))
+    painter.drawLine(QPointF(s * 0.78, s * 0.22), QPointF(s * 0.22, s * 0.78))
+    painter.end()
+    return pixmap
+
+
+def _glyph_origin(button: QWidget) -> QPoint:
+    """버튼 가운데에 놓인 도형 정사각의 왼쪽 위(논리 좌표)."""
+    size = theme.METRICS["actionGlyph"]
+    return QPoint((button.width() - size) // 2, (button.height() - size) // 2)
+
+
+def _inked(color: QColor, ink: QColor, ground: QColor) -> bool:
+    """화소가 바탕보다 도형 색에 가까운지(RGB 거리)."""
+
+    def distance(a: QColor, b: QColor) -> int:
+        return abs(a.red() - b.red()) + abs(a.green() - b.green()) + abs(a.blue() - b.blue())
+
+    return distance(color, ink) < distance(color, ground)
+
+
+def _worst_channel_gap(first: QImage, second: QImage, rect: QRect, alpha: bool = False) -> int:
+    """두 그림의 rect(화소 좌표) 안에서 채널마다의 차 가운데 가장 큰 값."""
+    worst = 0
+    for x in range(rect.left(), rect.left() + rect.width()):
+        for y in range(rect.top(), rect.top() + rect.height()):
+            a, b = first.pixelColor(x, y), second.pixelColor(x, y)
+            gaps = [abs(a.red() - b.red()), abs(a.green() - b.green()), abs(a.blue() - b.blue())]
+            if alpha:
+                gaps.append(abs(a.alpha() - b.alpha()))
+            worst = max(worst, *gaps)
+    return worst
+
+
+def test_the_section_x_is_two_painted_diagonals(qtbot: QtBot, tmp_path: Path, basis: type) -> None:
+    """구간 행 ✕는 글자가 아니라 대각선 둘이어야 한다 — 가운데 · 네 모서리 근처는 칠하고 네 변 가운데는 비운다.
+
+    행 A · B, 다크, 포인터 없음 -> ✕ 글 == "", 도형 정사각(actionGlyph 한 변, 버튼 가운데)에서
+    (0.5, 0.5) · (0.3, 0.3) · (0.7, 0.3) · (0.3, 0.7) · (0.7, 0.7) 화소는 text 색에 가깝고,
+    (0.5, 0.2) · (0.2, 0.5) · (0.8, 0.5) · (0.5, 0.8) 화소는 바탕(surfaceAlt)에 가깝다
+    """
+    dialog = _editor(qtbot, tmp_path, basis, [A, B])
+    button = dialog._rows[0].deleteButton
+    tokens = theme.current_tokens()
+    ink, ground = QColor(tokens["text"]), QColor(tokens["surfaceAlt"])
+    origin = _glyph_origin(button)
+    size = theme.METRICS["actionGlyph"]
+
+    def at(fx: float, fy: float) -> QColor:
+        return _pixel(button, int(origin.x() + fx * size), int(origin.y() + fy * size))
+
+    assert button.text() == ""
+    assert not button.underMouse(), "전제: 포인터가 ✕ 위에 없다"
+    for spot in ((0.5, 0.5), (0.3, 0.3), (0.7, 0.3), (0.3, 0.7), (0.7, 0.7)):
+        assert _inked(at(*spot), ink, ground), f"{spot}가 칠해지지 않았다"
+    for spot in ((0.5, 0.2), (0.2, 0.5), (0.8, 0.5), (0.5, 0.8)):
+        assert not _inked(at(*spot), ink, ground), f"{spot}가 칠해졌다"
+
+
+def test_the_section_x_matches_the_card_x_drawing_regardless_of_the_font(
+    qtbot: QtBot, tmp_path: Path, basis: type
+) -> None:
+    """구간 행 ✕의 도형 자리 화소는 바탕 위에 카드 ✕ 모양을 그린 것과 같아야 한다 — 글꼴과 무관하다.
+
+    행 A · B, 다크 -> ✕ 그림의 도형 정사각 화소 == surfaceAlt로 채운 그림에 테스트가 그린 대각선 둘
+    (text 색, 한 변 actionGlyph)을 같은 자리에 얹은 것(채널마다 차 <= 2)
+    """
+    dialog = _editor(qtbot, tmp_path, basis, [A, B])
+    button = dialog._rows[0].deleteButton
+    tokens = theme.current_tokens()
+    image = button.grab().toImage()
+    ratio = image.devicePixelRatio()
+    size = theme.METRICS["actionGlyph"]
+    origin = _glyph_origin(button)
+    expected = QImage(image.size(), QImage.Format.Format_ARGB32_Premultiplied)
+    expected.setDevicePixelRatio(ratio)
+    expected.fill(QColor(tokens["surfaceAlt"]))
+    painter = QPainter(expected)
+    painter.drawPixmap(origin, _reference_cross(QColor(tokens["text"]), size, ratio))
+    painter.end()
+    side = round(size * ratio)
+    square = QRect(round(origin.x() * ratio), round(origin.y() * ratio), side, side)
+
+    assert not button.underMouse(), "전제: 포인터가 ✕ 위에 없다"
+    assert _worst_channel_gap(image, expected, square) <= 2
+
+
+def test_a_disabled_section_x_is_drawn_in_the_disabled_text_color(
+    qtbot: QtBot, tmp_path: Path, basis: type
+) -> None:
+    """꺼진 ✕(하나뿐인 빈 행)의 대각선은 text가 아니라 textDisabled 색에 가까워야 한다.
+
+    빈 행 하나 -> ✕ 꺼짐, 도형 가운데 화소가 text보다 textDisabled에 가깝다
+    """
+    dialog = _editor(qtbot, tmp_path, basis, [("", "")])
+    button = dialog._rows[0].deleteButton
+    tokens = theme.current_tokens()
+    origin = _glyph_origin(button)
+    size = theme.METRICS["actionGlyph"]
+    middle = _pixel(button, origin.x() + size // 2, origin.y() + size // 2)
+
+    assert not button.isEnabled(), "전제: 하나뿐인 빈 행의 ✕는 꺼져 있다"
+    assert _inked(middle, QColor(tokens["textDisabled"]), QColor(tokens["text"]))
+
+
+def test_the_card_x_still_uses_the_same_cross(qtbot: QtBot, tmp_path: Path, basis: type) -> None:
+    """카드 ✕의 도형은 테스트가 따로 그린 대각선 둘과 같아야 한다 — 카드 ✕ 모양은 바뀌지 않는다.
+
+    대기 카드 -> 카드 ✕ 도형 이름 "delete", 한 변 actionGlyph, 그 픽스맵 화소 == 테스트가 그린 대각선
+    둘(같은 색 · 한 변 · 배율, 채널 · 알파마다 차 <= 2)
+    """
+    from tests.app.gui.test_card_edit_dialog import _hover
+
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    _ALIVE.append(win)
+    card = win.listView.widgetFor(item)
+    _hover(card)
+    button = card.deleteButton
+    color = theme.current_tokens()[button.colorToken()]
+    ratio = button.devicePixelRatioF()
+    size = button.glyphSize()
+    drawn = action_pixmap(button.iconName(), color, size, ratio).toImage()
+    reference = _reference_cross(QColor(color), size, ratio).toImage()
+
+    assert button.iconName() == "delete"
+    assert size == theme.METRICS["actionGlyph"]
+    assert drawn.size() == reference.size()
+    assert _worst_channel_gap(drawn, reference, drawn.rect(), alpha=True) <= 2
+
+
+# ================================================================ 길이 · 합계는 프레임 타임코드 (inbox 159i)
+
+
+def _lengths(dialog: SectionEditDialog) -> list[str]:
+    return [row.infoLabel.text() for row in dialog._rows]
+
+
+def _length_tips(dialog: SectionEditDialog) -> list[str]:
+    return [row.infoLabel.toolTip() for row in dialog._rows]
+
+
+def test_a_27_frame_length_at_60fps_ends_in_27(qtbot: QtBot, tmp_path: Path, basis: type) -> None:
+    """60fps에서 27프레임짜리 구간의 길이는 「:27」로 끝나고 툴팁은 같은 시간의 밀리초여야 한다.
+
+    60fps · 3600초, 행 00:00:10:00 ~ 00:00:10:27
+    -> 길이 == "00:00:00:27", 길이 툴팁 == "00:00:00.450"(27 ÷ 60초), 합계 == "Total 00:00:00:27",
+       합계 툴팁 == "00:00:00.450"
+    """
+    dialog = _editor(qtbot, tmp_path, basis, [("00:00:10:00", "00:00:10:27")])
+
+    assert _lengths(dialog) == ["00:00:00:27"]
+    assert _length_tips(dialog) == ["00:00:00.450"]
+    assert dialog.sumLabel.text() == "Total 00:00:00:27"
+    assert dialog.sumLabel.toolTip() == "00:00:00.450"
+
+
+def test_lengths_at_30fps_use_30_frames_per_second(
+    qtbot: QtBot, tmp_path: Path, basis: type
+) -> None:
+    """30fps 영상의 길이는 프레임 칸이 30마다 초로 넘어가야 한다.
+
+    30fps · 3600초, 행 00:00:10:00 ~ 00:00:11:15(45프레임), 행 00:01:00:20 ~ 00:01:02:05(45프레임)
+    -> 길이 == ["00:00:01:15", "00:00:01:15"], 툴팁 == ["00:00:01.500", "00:00:01.500"],
+       합계 == "Total 00:00:03:00"(90프레임), 합계 툴팁 == "00:00:03.000"
+    """
+    basis.fps = Fraction(30)
+    dialog = _editor(
+        qtbot, tmp_path, basis, [("00:00:10:00", "00:00:11:15"), ("00:01:00:20", "00:01:02:05")]
+    )
+
+    assert _lengths(dialog) == ["00:00:01:15", "00:00:01:15"]
+    assert _length_tips(dialog) == ["00:00:01.500", "00:00:01.500"]
+    assert dialog.sumLabel.text() == "Total 00:00:03:00"
+    assert dialog.sumLabel.toolTip() == "00:00:03.000"
+
+
+def test_lengths_at_59_94fps_follow_the_input_timecode(
+    qtbot: QtBot, tmp_path: Path, basis: type
+) -> None:
+    """59.94fps 영상의 길이는 입력 칸의 타임코드 차와 같아야 한다 — 프레임 칸은 60개(00 ~ 59)다.
+
+    59.94fps(2997/50) · 3600초, 행 00:00:00:30 ~ 00:00:01:59(프레임 30 ~ 119, 89프레임)
+    -> 길이 == "00:00:01:29", 툴팁 == "00:00:01.485"(89 ÷ 59.94초), 합계 == "Total 00:00:01:29"
+    """
+    basis.fps = Fraction(2997, 50)
+    dialog = _editor(qtbot, tmp_path, basis, [("00:00:00:30", "00:00:01:59")])
+
+    assert _lengths(dialog) == ["00:00:01:29"]
+    assert _length_tips(dialog) == ["00:00:01.485"]
+    assert dialog.sumLabel.text() == "Total 00:00:01:29"
+
+
+def test_the_sum_carries_frames_into_seconds(qtbot: QtBot, tmp_path: Path, basis: type) -> None:
+    """합계는 행 길이의 프레임을 더해 60프레임마다 초로 넘겨야 한다.
+
+    60fps · 3600초, 행 00:00:00:40 ~ 00:00:01:00(20프레임), 행 00:00:02:00 ~ 00:00:02:50(50프레임)
+    -> 길이 == ["00:00:00:20", "00:00:00:50"], 합계 == "Total 00:00:01:10"(70프레임),
+       합계 툴팁 == "00:00:01.167"
+    """
+    dialog = _editor(
+        qtbot, tmp_path, basis, [("00:00:00:40", "00:00:01:00"), ("00:00:02:00", "00:00:02:50")]
+    )
+
+    assert _lengths(dialog) == ["00:00:00:20", "00:00:00:50"]
+    assert dialog.sumLabel.text() == "Total 00:00:01:10"
+    assert dialog.sumLabel.toolTip() == "00:00:01.167"
+
+
+def test_length_tooltips_follow_moves_and_value_changes(
+    qtbot: QtBot, tmp_path: Path, basis: type
+) -> None:
+    """길이 · 합계 툴팁은 행을 옮기거나 값을 바꾸면 그 행의 값으로 따라 바뀌어야 한다.
+
+    60fps · 3600초, 행 A(10분) · B(1분)
+    -> 툴팁 ["00:10:00.000", "00:01:00.000"], 합계 툴팁 "00:11:00.000"
+    -> 첫 행 시작 칸에서 Alt+↓: 툴팁 ["00:01:00.000", "00:10:00.000"], 길이 ["00:01:00:00", "00:10:00:00"]
+    -> 첫 행(B)의 끝을 00:30:30:30으로: 툴팁 ["00:00:30.500", "00:10:00.000"], 합계 툴팁 "00:10:30.500"
+    """
+    from tests.app.gui.test_section_editor import leave, type_into
+
+    dialog = _editor(qtbot, tmp_path, basis, [A, B])
+    before = (_length_tips(dialog), dialog.sumLabel.toolTip())
+    alt_move(dialog._rows[0].startEdit.clockEdit, Qt.Key.Key_Down)
+    _pump()
+    moved = (_length_tips(dialog), _lengths(dialog))
+    type_into(dialog._rows[0].endEdit, "00:30:30:30")
+    leave(dialog._rows[0].endEdit)
+    _pump()
+
+    assert before == (["00:10:00.000", "00:01:00.000"], "00:11:00.000")
+    assert moved == (["00:01:00.000", "00:10:00.000"], ["00:01:00:00", "00:10:00:00"])
+    assert _length_tips(dialog) == ["00:00:30.500", "00:10:00.000"]
+    assert dialog.sumLabel.toolTip() == "00:10:30.500"
+
+
+def test_an_error_row_has_no_length_and_no_length_tooltip(
+    qtbot: QtBot, tmp_path: Path, basis: type
+) -> None:
+    """오류 행은 길이 글도 길이 툴팁도 없어야 하고, 합계와 그 툴팁에서 빠져야 한다.
+
+    60fps · 3600초, 행 A(10분) · 오류 행(시작 > 끝)
+    -> 길이 ["00:10:00:00", ""], 툴팁 ["00:10:00.000", ""], 합계 "Total 00:10:00:00", 합계 툴팁 "00:10:00.000"
+    """
+    dialog = _editor(qtbot, tmp_path, basis, [A, BAD])
+
+    assert error_shown(dialog._rows[1]) == ORDER_ERROR, "전제: 둘째 행이 오류다"
+    assert _lengths(dialog) == ["00:10:00:00", ""]
+    assert _length_tips(dialog) == ["00:10:00.000", ""]
+    assert dialog.sumLabel.text() == "Total 00:10:00:00"
+    assert dialog.sumLabel.toolTip() == "00:10:00.000"
+
+
+@pytest.mark.parametrize("failed", (False, True), ids=("loading", "failed"))
+def test_no_length_or_sum_is_shown_before_the_frame_rate_is_known(
+    qtbot: QtBot, tmp_path: Path, basis: type, failed: bool
+) -> None:
+    """프레임률을 모르는 동안(조회 중 · 조회 실패)에는 행 · 길이 · 합계와 그 툴팁이 없어야 한다.
+
+    조회를 붙잡아 둔 창(loading) · 조회가 실패한 창(failed) -> 행 0개, 합계 숨김 · 글 "" · 툴팁 ""
+    """
+    from tests.app.gui.test_section_editor import ask_section_editor
+
+    item = _make_item(str(tmp_path))
+    win = open_window(tmp_path, item)
+    _ALIVE.append(win)
+    if failed:
+        basis.fail = True
+    else:
+        basis.gate.clear()
+    try:
+        ask_section_editor(win, item)
+        dialog = win._sectionDialog
+        if failed:
+            qtbot.waitUntil(lambda: dialog.viewModel().state == "failed", timeout=3000)
+        _pump()
+        assert dialog.viewModel().state == ("failed" if failed else "loading")
+        assert dialog._rows == []
+        assert not dialog.sumLabel.isVisible()
+        assert (dialog.sumLabel.text(), dialog.sumLabel.toolTip()) == ("", "")
+    finally:
+        basis.gate.set()
+
+
+class TestLengthTipBubbles:
+    """길이 · 합계 툴팁은 앱의 말풍선으로 뜨고 Qt 기본 툴팁은 뜨지 않는다 (inbox 159i)."""
+
+    @pytest.fixture(autouse=True)
+    def _hide_bubble(self) -> Iterator[None]:
+        tip_bubble.hide_tip()
+        yield
+        tip_bubble.hide_tip()
+
+    def test_length_and_sum_show_milliseconds_in_the_bubble(
+        self, qtbot: QtBot, tmp_path: Path, basis: type
+    ) -> None:
+        """길이 글 · 합계 글에 들어가면 밀리초 툴팁이 말풍선으로 떠야 한다.
+
+        60fps · 3600초, 행 A · B -> 첫 행 길이에 들어감: 말풍선 "00:10:00.000", 합계에 들어감: 말풍선
+        "00:11:00.000", 둘 다 Qt 툴팁 안 뜸
+        """
+        dialog = _editor(qtbot, tmp_path, basis, [A, B])
+        seen = []
+        for widget in (dialog._rows[0].infoLabel, dialog.sumLabel):
+            enter(widget)
+            seen.append((bubble_text_for(widget), qt_tooltip_shown(widget)))
+
+        assert seen == [("00:10:00.000", False), ("00:11:00.000", False)]
+
+
+# ================================================================ 안내는 말줄임 없이 다 보인다 (inbox 159i)
+
+HINT_EN = (
+    "Digits fill from the right · '.' goes to the frame field · "
+    "empty = start/end of the video · up to 20 sections"
+)
+HINT_KO = "숫자는 오른쪽부터 채움 · '.'는 프레임 칸 · 비우면 영상 처음/끝 · 최대 20개"
+
+
+def _hint_lines_needed(label: QWidget, text: str) -> int:
+    """그 글을 label 폭에 낱말 단위로 줄바꿈하면 드는 줄 수 — 테스트가 글꼴 정보로 따로 센다."""
+    metrics = label.fontMetrics()
+    box = metrics.boundingRect(
+        QRect(0, 0, label.contentsRect().width(), 10_000), Qt.TextFlag.TextWordWrap, text
+    )
+    return max(1, round(box.height() / metrics.lineSpacing()))
+
+
+def _assert_hint_fully_shown(dialog: SectionEditDialog, text: str) -> int:
+    """안내가 보이고 글이 전문이며 줄바꿈에 드는 줄이 다 들어가는 높이인지 단언한다 — 든 줄 수를 돌려준다."""
+    hint = dialog.hintLabel
+    lines = _hint_lines_needed(hint, text)
+    metrics = hint.fontMetrics()
+    assert hint.isVisible()
+    assert hint.text() == text
+    # 줄 상자의 높이 — 한 줄이면 글 높이, 그 뒤 줄마다 줄 간격이 더해진다
+    needed = metrics.height() + (lines - 1) * metrics.lineSpacing()
+    assert hint.contentsRect().height() >= needed, f"{lines}줄이 들 높이가 아니다"
+    assert hint.geometry().top() >= dialog.scrollArea.geometry().bottom()
+    assert hint.geometry().bottom() <= dialog.buttonBox.geometry().top()
+    return lines
+
+
+@pytest.mark.parametrize("language", ("en", "ko"))
+def test_the_hint_is_fully_shown_at_the_first_and_the_narrowest_width(
+    qtbot: QtBot, tmp_path: Path, basis: type, qapp: QApplication, language: str
+) -> None:
+    """안내 글은 창 처음 폭(560)과 최소폭에서 말줄임 없이 다 보여야 한다 — 한 줄에 안 들면 두 줄로 나눈다.
+
+    60fps · 3600초, 행 하나, 영어 · 한국어 × 폭 560 · 최소폭(폭 1을 청함)
+    -> 안내 글 == 전문, 안내 높이 >= 낱말 줄바꿈에 드는 줄 수의 높이, 목록 아래 · 버튼 상자 위
+    -> 영어 최소폭은 두 줄 이상이 든다(전제 — 줄바꿈을 실제로 잰다)
+    """
+    translator = QTranslator()
+    if language == "ko":
+        assert translator.load(main_module.resource_path("translations/ko_KR.qm"))
+        qapp.installTranslator(translator)
+    try:
+        dialog = _editor(qtbot, tmp_path, basis, [A])
+        text = HINT_KO if language == "ko" else HINT_EN
+        dialog.resize(560, 420)
+        _pump()
+        assert dialog.width() == 560, "전제: 처음 폭"
+        _assert_hint_fully_shown(dialog, text)
+        dialog.resize(1, 420)
+        _pump()
+        assert dialog.width() == dialog.minimumWidth(), "전제: 최소폭"
+        lines = _assert_hint_fully_shown(dialog, text)
+        if language == "en":
+            assert lines >= 2, "전제: 최소폭의 영어 안내는 한 줄에 들지 않는다"
+    finally:
+        qapp.removeTranslator(translator)
+
+
+def test_the_hint_wraps_without_moving_the_buttons_or_the_minimum_size(
+    qtbot: QtBot, tmp_path: Path, basis: type
+) -> None:
+    """안내가 두 줄이 되어도 창 최소 높이와 버튼 상자 자리는 그대로이고, 늘어난 줄은 목록이 내줘야 한다.
+
+    60fps · 3600초, 행 하나, 영어. 폭 2000 · 높이 420 -> 안내 한 줄. 폭 1 · 높이 420 -> 안내 두 줄 이상
+    -> 두 경우 버튼 상자 위 끝이 같고, 창 최소 높이가 같고, 목록 높이 차 == 안내 높이 차
+    """
+    dialog = _editor(qtbot, tmp_path, basis, [A])
+    hint = dialog.hintLabel
+    seen = {}
+    for width in (2000, 1):
+        dialog.resize(width, 420)
+        _pump()
+        seen[width] = (
+            _hint_lines_needed(hint, HINT_EN),
+            dialog.buttonBox.geometry().top(),
+            dialog.minimumSizeHint().height(),
+            dialog.scrollArea.height(),
+            hint.height(),
+        )
+    wide, narrow = seen[2000], seen[1]
+
+    assert (wide[0], narrow[0] >= 2) == (1, True), "전제: 넓으면 한 줄, 최소폭이면 두 줄 이상"
+    assert narrow[1] == wide[1]
+    assert narrow[2] == wide[2]
+    assert wide[3] - narrow[3] == narrow[4] - wide[4]

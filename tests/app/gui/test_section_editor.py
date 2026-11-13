@@ -16,8 +16,10 @@ import sys
 import threading
 from collections.abc import Callable, Iterator
 from fractions import Fraction
+from pathlib import Path
 
 import pytest
+from pytestqt.qtbot import QtBot
 from PySide6.QtCore import QPoint, QRect, Qt
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtTest import QSignalSpy, QTest
@@ -3931,15 +3933,18 @@ def test_a_saved_end_past_the_video_opens_as_an_error_on_the_end_and_is_set_when
     assert dialog.okButton.isEnabled()
 
 
-# ================================================================ 툴팁은 손잡이와 ✕에만 (#586)
+# ================================================================ 툴팁은 손잡이 · ✕ · 길이 · 합계에만 (#586)
 
 
-def test_only_the_handles_and_the_x_buttons_have_tooltips(qtbot, tmp_path, basis) -> None:
-    """준비된 창에서 툴팁이 있는 위젯은 행의 손잡이와 ✕뿐이어야 한다 — 말줄임으로 잘린 글의 전문 툴팁은 뺀다.
+def test_only_handles_x_buttons_lengths_and_the_sum_have_tooltips(
+    qtbot: QtBot, tmp_path: Path, basis: type
+) -> None:
+    """준비된 창에서 툴팁이 있는 위젯은 행의 손잡이 · ✕ · 길이와 합계뿐이어야 한다 — 말줄임으로 잘린 글의 전문 툴팁은 뺀다.
 
     60fps · 3600초, 두 행(10분~20분 / 30분~31분), 기본 크기
-    -> 툴팁이 빈 글이 아닌 보이는 위젯(잘린 말줄임 라벨의 전문 툴팁 제외) == 행마다 손잡이 · ✕(4개)
-    -> 손잡이 "Reorder · Alt+↑↓"(macOS "Reorder · ⌥↑↓"), ✕ "Delete section"
+    -> 툴팁이 빈 글이 아닌 보이는 위젯(잘린 말줄임 라벨의 전문 툴팁 제외) == 행마다 손잡이 · ✕ · 길이, 합계(7개)
+    -> 손잡이 "Reorder · Alt+↑↓"(macOS "Reorder · ⌥↑↓"), ✕ "Delete section",
+       길이 "00:10:00.000" · "00:01:00.000", 합계 "00:11:00.000"(밀리초 표기 — 오너 2026-11-13, #586)
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -3963,17 +3968,22 @@ def test_only_the_handles_and_the_x_buttons_have_tooltips(qtbot, tmp_path, basis
     }
 
     expected = {row.handle for row in dialog._rows} | {row.deleteButton for row in dialog._rows}
+    expected |= {row.infoLabel for row in dialog._rows} | {dialog.sumLabel}
     assert with_tips == expected
     assert [row.handle.toolTip() for row in dialog._rows] == [f"Reorder · {keys}"] * 2
     assert [row.deleteButton.toolTip() for row in dialog._rows] == ["Delete section"] * 2
+    assert [row.infoLabel.toolTip() for row in dialog._rows] == ["00:10:00.000", "00:01:00.000"]
+    assert dialog.sumLabel.toolTip() == "00:11:00.000"
 
 
-def test_the_input_hint_is_one_dim_line_under_the_list(qtbot, tmp_path, basis) -> None:
-    """시각 입력법 · 최대 개수는 목록 아래, 버튼 위의 한 줄이어야 한다.
+def test_the_input_hint_is_a_dim_text_under_the_list(
+    qtbot: QtBot, tmp_path: Path, basis: type
+) -> None:
+    """시각 입력법 · 최대 개수는 목록 아래, 버튼 위의 흐린 글이어야 한다.
 
     60fps · 3600초, 행 하나
     -> 안내 == "Digits fill from the right · '.' goes to the frame field · empty = start/end of the video · up to 20 sections"
-    -> 안내의 위쪽 >= 목록의 아래쪽, 안내의 아래쪽 <= 버튼 상자의 위쪽, 높이 == 글 한 줄 높이 이하
+    -> 안내의 위쪽 >= 목록의 아래쪽, 안내의 아래쪽 <= 버튼 상자의 위쪽, 높이 <= 글 두 줄 높이
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -3987,7 +3997,7 @@ def test_the_input_hint_is_one_dim_line_under_the_list(qtbot, tmp_path, basis) -
     )
     assert hint.geometry().top() >= dialog.scrollArea.geometry().bottom()
     assert hint.geometry().bottom() <= dialog.buttonBox.geometry().top()
-    assert hint.height() <= 2 * hint.fontMetrics().height() - 1, "한 줄이다"
+    assert hint.height() <= 2 * hint.fontMetrics().height(), "두 줄까지다"
 
 
 def test_the_input_hint_is_hidden_while_the_lookup_runs(qtbot, tmp_path, basis) -> None:
@@ -4327,8 +4337,8 @@ def sum_shown(dialog) -> str:
 def test_sum_of_the_row_lengths_is_shown_right_of_the_add_button(qtbot, tmp_path, basis) -> None:
     """편집 창은 목록 아래 「+ 구간 추가」 오른쪽에 행 길이의 합을 행 길이와 같은 표기로 적어야 한다.
 
-    60fps · 3600초. 두 행: 00:10:00:00~00:20:00:30(10분 0.5초) / 00:30:00:00~00:31:00:00(1분)
-    -> 행 길이 == ["00:10:00.500", "00:01:00.000"], 합계 == "Total 00:11:00.500"
+    60fps · 3600초. 두 행: 00:10:00:00~00:20:00:30(10분 30프레임) / 00:30:00:00~00:31:00:00(1분)
+    -> 행 길이 == ["00:10:00:30", "00:01:00:00"], 합계 == "Total 00:11:00:30"
     -> 「+ 구간 추가」가 목록 아래 왼쪽, 합계가 그 오른쪽 · 같은 줄, 둘 다 버튼 상자 위 (#586)
     """
     item = _make_item(str(tmp_path))
@@ -4338,8 +4348,8 @@ def test_sum_of_the_row_lengths_is_shown_right_of_the_add_button(qtbot, tmp_path
     set_rows(dialog, [("00:10:00:00", "00:20:00:30"), ("00:30:00:00", "00:31:00:00")])
     _pump()
 
-    assert [row.infoLabel.text() for row in dialog._rows] == ["00:10:00.500", "00:01:00.000"]
-    assert sum_shown(dialog) == "Total 00:11:00.500"
+    assert [row.infoLabel.text() for row in dialog._rows] == ["00:10:00:30", "00:01:00:00"]
+    assert sum_shown(dialog) == "Total 00:11:00:30"
     label, add = dialog.sumLabel.geometry(), dialog.addButton.geometry()
     scroll, buttons = dialog.scrollArea.geometry(), dialog.buttonBox.geometry()
     assert add.top() >= scroll.bottom() and add.left() <= scroll.left() + 1
@@ -4352,10 +4362,10 @@ def test_sum_follows_every_change_of_the_rows(qtbot, tmp_path, basis) -> None:
     """칸의 값 · 구간 추가 · 삭제 · 순서 바꿈이 있을 때마다 합계가 바로 바뀌어야 한다.
 
     60fps · 3600초. 처음: 00:10:00:00~00:20:00:00(10분) / 00:30:00:00~00:31:00:00(1분) -> 11분
-    -> 첫 행의 끝을 00:25:00:00으로(15분): "Total 00:16:00.000"
-    -> 셋째 행 00:40:00:00~00:40:30:00(30초)을 더함: "Total 00:16:30.000"
-    -> 첫 행을 아래로 옮김: 그대로 "Total 00:16:30.000"
-    -> 맨 위 행(1분짜리)을 지움: "Total 00:15:30.000"
+    -> 첫 행의 끝을 00:25:00:00으로(15분): "Total 00:16:00:00"
+    -> 셋째 행 00:40:00:00~00:40:30:00(30초)을 더함: "Total 00:16:30:00"
+    -> 첫 행을 아래로 옮김: 그대로 "Total 00:16:30:00"
+    -> 맨 위 행(1분짜리)을 지움: "Total 00:15:30:00"
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -4385,11 +4395,11 @@ def test_sum_follows_every_change_of_the_rows(qtbot, tmp_path, basis) -> None:
     seen.append(sum_shown(dialog))
 
     assert seen == [
-        "Total 00:11:00.000",
-        "Total 00:16:00.000",
-        "Total 00:16:30.000",
-        "Total 00:16:30.000",
-        "Total 00:15:30.000",
+        "Total 00:11:00:00",
+        "Total 00:16:00:00",
+        "Total 00:16:30:00",
+        "Total 00:16:30:00",
+        "Total 00:15:30:00",
     ]
 
 
@@ -4397,19 +4407,19 @@ def test_sum_changes_while_a_value_is_being_typed(qtbot, tmp_path, basis) -> Non
     """칸을 떠나지 않아도 친 값이 합계에 바로 반영돼야 한다.
 
     60fps · 3600초. 행 00:10:00:00~00:20:00:00(10분). 끝 칸에 00:21:00:00을 치고 떠나지 않음
-    -> 합계 == "Total 00:11:00.000"
+    -> 합계 == "Total 00:11:00:00"
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
     dialog = open_editor(qtbot, win, item)
     set_rows(dialog, [("00:10:00:00", "00:20:00:00")])
     _pump()
-    assert sum_shown(dialog) == "Total 00:10:00.000"
+    assert sum_shown(dialog) == "Total 00:10:00:00"
 
     type_into(dialog._rows[0].endEdit, "00:21:00:00")
     _pump()
 
-    assert sum_shown(dialog) == "Total 00:11:00.000"
+    assert sum_shown(dialog) == "Total 00:11:00:00"
 
 
 def test_rows_with_an_error_and_empty_rows_are_left_out_of_the_sum(qtbot, tmp_path, basis) -> None:
@@ -4417,7 +4427,7 @@ def test_rows_with_an_error_and_empty_rows_are_left_out_of_the_sum(qtbot, tmp_pa
 
     60fps · 3600초. 네 행: 00:10:00:00~00:20:00:00(10분) / 00:30:00:00~00:25:00:00(시작이 끝보다
     늦다) / 01:10:00:00~01:20:00:00(영상 밖) / 완전히 빈 행
-    -> 행 길이 == ["00:10:00.000", "", "", ""], 합계 == "Total 00:10:00.000"
+    -> 행 길이 == ["00:10:00:00", "", "", ""], 합계 == "Total 00:10:00:00"
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -4435,15 +4445,16 @@ def test_rows_with_an_error_and_empty_rows_are_left_out_of_the_sum(qtbot, tmp_pa
     _pump()
 
     assert [error_shown(row) != "" for row in dialog._rows] == [False, True, True, False]
-    assert [row.infoLabel.text() for row in dialog._rows] == ["00:10:00.000", "", "", ""]
-    assert sum_shown(dialog) == "Total 00:10:00.000"
+    assert [row.infoLabel.text() for row in dialog._rows] == ["00:10:00:00", "", "", ""]
+    assert sum_shown(dialog) == "Total 00:10:00:00"
 
 
 def test_sum_is_added_in_frames_not_in_rounded_row_lengths(qtbot, tmp_path, basis) -> None:
     """합계는 프레임으로 더한 값이어야 한다 — 행마다 밀리초로 반올림한 길이를 더한 값이 아니다.
 
-    60fps · 3600초. 한 프레임짜리 행 셋(00:00:01:00~00:00:01:01 등) — 행 길이는 저마다 "00:00:00.017"
-    -> 합계 == "Total 00:00:00.050" (3프레임 = 0.05초. 0.017을 세 번 더하면 0.051이다)
+    60fps · 3600초. 한 프레임짜리 행 셋(00:00:01:00~00:00:01:01 등)
+    -> 행 길이 == "00:00:00:01" 셋, 행 길이 툴팁 == "00:00:00.017" 셋
+    -> 합계 == "Total 00:00:00:03", 합계 툴팁 == "00:00:00.050" (3프레임 = 0.05초. 0.017을 세 번 더하면 0.051이다)
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -4459,8 +4470,10 @@ def test_sum_is_added_in_frames_not_in_rounded_row_lengths(qtbot, tmp_path, basi
     )
     _pump()
 
-    assert [row.infoLabel.text() for row in dialog._rows] == ["00:00:00.017"] * 3
-    assert sum_shown(dialog) == "Total 00:00:00.050"
+    assert [row.infoLabel.text() for row in dialog._rows] == ["00:00:00:01"] * 3
+    assert [row.infoLabel.toolTip() for row in dialog._rows] == ["00:00:00.017"] * 3
+    assert sum_shown(dialog) == "Total 00:00:00:03"
+    assert dialog.sumLabel.toolTip() == "00:00:00.050"
 
 
 def test_sum_gives_way_to_the_notice_that_already_carries_it(qtbot, tmp_path, basis) -> None:
@@ -4468,7 +4481,7 @@ def test_sum_gives_way_to_the_notice_that_already_carries_it(qtbot, tmp_path, ba
 
     60fps · 3600초. 행 처음~00:40:00:00, 행 00:20:00:00~끝 (합 80분 > 60분)
     -> 합계 없음, 알림 == "Sections add up to more than the video · Sections 01:20:00.000 · Video 01:00:00.000"
-    -> 둘째 행의 시작을 00:50:00:00으로(합 50분): 알림 없음, 합계 == "Total 00:50:00.000"
+    -> 둘째 행의 시작을 00:50:00:00으로(합 50분): 알림 없음, 합계 == "Total 00:50:00:00"
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -4482,14 +4495,14 @@ def test_sum_gives_way_to_the_notice_that_already_carries_it(qtbot, tmp_path, ba
     _pump()
 
     assert over == ("", TOTAL_OVER.format("01:20:00.000", "01:00:00.000"))
-    assert (sum_shown(dialog), total_shown(dialog)) == ("Total 00:50:00.000", "")
+    assert (sum_shown(dialog), total_shown(dialog)) == ("Total 00:50:00:00", "")
 
 
 def test_sum_is_not_shown_until_the_lookup_ends(qtbot, tmp_path, basis) -> None:
     """조회가 끝나기 전에는 합계를 적지 않아야 하고, 끝나면 적어야 한다.
 
     조회를 막아 둔 채 편집 창을 엶 -> 합계 없음
-    조회를 풂 -> 행 길이 == "01:00:00.000"(하나뿐인 빈 행은 처음~끝이다), 합계 == "Total 01:00:00.000"
+    조회를 풂 -> 행 길이 == "01:00:00:00"(하나뿐인 빈 행은 처음~끝이다), 합계 == "Total 01:00:00:00"
     """
     basis.gate.clear()
     item = _make_item(str(tmp_path))
@@ -4504,8 +4517,8 @@ def test_sum_is_not_shown_until_the_lookup_ends(qtbot, tmp_path, basis) -> None:
     _pump()
 
     assert before == ""
-    assert dialog._rows[0].infoLabel.text() == "01:00:00.000"
-    assert sum_shown(dialog) == "Total 01:00:00.000"
+    assert dialog._rows[0].infoLabel.text() == "01:00:00:00"
+    assert sum_shown(dialog) == "Total 01:00:00:00"
 
 
 def test_dialog_at_its_narrowest_keeps_the_sum_and_both_buttons_inside(
@@ -4526,7 +4539,7 @@ def test_dialog_at_its_narrowest_keeps_the_sum_and_both_buttons_inside(
     _pump()
 
     label = dialog.sumLabel
-    assert label.isVisible() and label.text() == "Total 00:10:00.000"
+    assert label.isVisible() and label.text() == "Total 00:10:00:00"
     assert label.geometry().left() > dialog.addButton.geometry().right()
     assert label.width() >= label.fontMetrics().horizontalAdvance(label.text())
     assert label.geometry().right() <= dialog.width()
