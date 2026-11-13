@@ -40,7 +40,18 @@
 import math
 import sys
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRect, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import (
+    QEvent,
+    QObject,
+    QPoint,
+    QPointF,
+    QRect,
+    QRectF,
+    QSize,
+    Qt,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import (
     QColor,
     QEnterEvent,
@@ -61,6 +72,8 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
+    QStyle,
+    QStyleOptionButton,
     QVBoxLayout,
     QWidget,
 )
@@ -79,6 +92,7 @@ from app.viewmodels.section_edit import (
     SectionEditViewModel,
 )
 from app.widgets.eliding_label import ElidingLabel, TwoLineLabel
+from app.widgets.icons import IconButton
 from app.widgets.scroll_padding import ScrollBarPadding
 from app.widgets.tip_bubble import install_tips
 from app.widgets.timecode_edit import TimecodeEdit, TimePointEdit
@@ -236,6 +250,40 @@ class DragHandle(QWidget):
             self.dropped.emit(event.globalPosition().toPoint())
 
 
+class SectionDeleteButton(IconButton):
+    """구간 행의 ✕ — 면 · 테두리가 있는 상자 안에 대각선 둘을 그린다 (#586).
+
+    ✕를 글자로 쓰지 않는다 — 글자의 모양은 글꼴이 정해 실기에서 이상하게 보였다(오너 2026-11-13). 카드 ✕와
+    같은 도형(``action_pixmap("delete")``, 둥근 끝 · 굵기는 한 변의 0.16)을 같은 크기(``actionGlyph``)로 그린다.
+    상자는 기본 버튼 규칙을 받고 크기만 ``#sectionDeleteButton``이 줄인다(프로토 구간 행). 흐린 아이콘
+    버튼(role="icon")이 아니다. 도형 색은 글자였을 때와 같다 — 평소 · 호버 ``text``, 꺼지면 ``textDisabled``.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("sectionDeleteButton")
+        self.setIconName("delete")
+        self.setIdleToken("text")
+        self.setHoverToken("text")
+        self.setAutoDefault(False)  # 칸에서 Enter를 눌러도 이 버튼이 눌리지 않는다
+        self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+
+    def sizeHint(self) -> QSize:
+        """글자 한 줄 높이 × 도형 폭을 내용으로 친 상자 크기 — 글자 ✕였을 때와 같은 셈이다.
+
+        글이 비면 QPushButton은 「XXXX」 폭을 내용으로 친다. 그 대신 도형 한 변을 넣는다.
+        """
+        option = QStyleOptionButton()
+        self.initStyleOption(option)
+        contents = QSize(self.glyphSize(), self.fontMetrics().height())
+        return self.style().sizeFromContents(
+            QStyle.ContentsType.CT_PushButton, option, contents, self
+        )
+
+    def minimumSizeHint(self) -> QSize:
+        return self.sizeHint()
+
+
 class SectionRow(QWidget):
     """구간 한 행 — 손잡이 · 번호 · [시작 시분초][프레임] ~ [끝 시분초][프레임] · 길이 · 삭제,
     그 아래 안내 줄 한 줄.
@@ -302,7 +350,7 @@ class SectionRow(QWidget):
         self.infoLabel.setMinimumWidth(sample + _LABEL_SLACK)
         layout.addWidget(self.infoLabel, 1)
 
-        self.deleteButton = self._rowButton("✕", "sectionDeleteButton")
+        self.deleteButton = SectionDeleteButton(self)
         layout.addWidget(self.deleteButton)
 
         # 안내 줄 — 글이 없어도 한 줄의 높이를 차지한다. 손잡이 · 번호 폭만큼 들여 칸의 왼쪽 끝에 맞춘다
@@ -357,15 +405,6 @@ class SectionRow(QWidget):
         for part, sample in ((edit.clockEdit, _CLOCK_SAMPLE), (edit.frameEdit, _FRAME_SAMPLE)):
             part.setFixedWidth(part.fontMetrics().horizontalAdvance(sample) + _EDIT_PADDING)
         return edit
-
-    def _rowButton(self, text: str, name: str) -> QPushButton:
-        # 면 · 테두리가 있는 상자 버튼 — 기본 버튼 규칙을 받고 크기만 #sectionDeleteButton이 줄인다
-        # (프로토 구간 행, #586). 흐린 글자 버튼(role="subtle")이 아니다
-        button = QPushButton(text, self)
-        button.setObjectName(name)
-        button.setAutoDefault(False)  # 칸에서 Enter를 눌러도 이 버튼이 눌리지 않는다
-        button.setFocusPolicy(Qt.FocusPolicy.TabFocus)
-        return button
 
     def edit(self, column: int) -> TimePointEdit:
         """칸 번호(START · END)의 시각 입력 — 시분초 칸과 프레임 칸의 묶음."""
@@ -990,9 +1029,9 @@ class SectionEditDialog(QDialog):
             )
             # 하나뿐인 행은 지울 수 없다 — 값이 있으면 ✕가 그 값을 비운다(비어 있으면 꺼 둔다)
             row.deleteButton.setEnabled(viewmodel.canRemove() or viewmodel.canClear())
-            row.deleteButton.setToolTip(
-                self.tr("Delete section") if count > 1 else self.tr("Clear values")
-            )
+            delete_text = self.tr("Delete section") if count > 1 else self.tr("Clear values")
+            row.deleteButton.setToolTip(delete_text)
+            row.deleteButton.setAccessibleName(delete_text)  # 글이 없는 버튼 — 화면 낭독기가 읽는다
             # 행이 하나뿐이면 옮길 곳이 없다 — 손잡이를 숨긴다(자리는 남는다)
             row.handle.setVisible(count > 1)
             row.handle.setToolTip(self.tr("Reorder · {0}").format(move_keys_text()))
