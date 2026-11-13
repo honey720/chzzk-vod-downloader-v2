@@ -36,11 +36,15 @@ if str(ROOT_DIR) not in sys.path:
 
 from tests.qt_platform import NATIVE_SWITCH  # noqa: E402
 from tests.qt_platform import apply as apply_qt_platform_defaults  # noqa: E402
+from tests.qt_platform import start_worker_display  # noqa: E402
 
 # 로컬 테스트가 Qt 창을 실제 화면에 띄우지 않게 한다 (#399) — 값을 정하지 않은 로컬 실행만
 # offscreen으로(CVDV2_TEST_NATIVE=1이면 실제 플랫폼, CI · 이미 정한 값은 그대로). Qt는 앱을 만들 때
 # 이 값을 읽으므로 어느 테스트 모듈이 앱을 만들기 전, 여기서 정한다
 apply_qt_platform_defaults(os.environ, sys.platform)
+# Linux CI의 xdist 워커는 워커마다 따로 Xvfb를 쓴다 (#592) — 한 X 서버를 함께 쓰면 다른 워커의
+# activateWindow()가 이 워커 창의 초점을 빼앗는다. 그 밖의 실행에서는 아무것도 하지 않는다
+start_worker_display(os.environ, sys.platform)
 
 import app.system.settings as settings_module  # noqa: E402 — sys.path 삽입 후에 와야 한다
 import app.viewmodels.card_display as card_display  # noqa: E402
