@@ -33,6 +33,7 @@ from tests.app.gui.card_helpers import (
     qt_tooltip_shown,
     snapshot_top_levels,
 )
+from tests.app.gui.mouse_buttons import double_click
 
 DEFAULT_DIR = "C:/dl"  # 전역 저장 위치 — 카드의 저장 위치가 이것이면 3줄에 보이지 않는다
 # 대체 글꼴(빈 글꼴 폴더)에서도 3줄이 접히지 않는 카드 폭(px) — 저장 위치 이름이 보여야 하는 테스트가 쓴다(#554)
@@ -575,7 +576,7 @@ class TestActivate:
         """
         card = _card()
         with qtbot.waitSignal(card.editRequest, timeout=1000):
-            qtbot.mouseDClick(card.contentFrame, Qt.MouseButton.LeftButton, pos=QPoint(4, 4))
+            double_click(card.contentFrame, QPoint(4, 4))
 
     def test_double_clicking_a_finished_card_opens_the_file_in_its_folder(
         self, qapp, qtbot, tmp_path, monkeypatch
@@ -589,7 +590,7 @@ class TestActivate:
         output = tmp_path / "제목 1080p.mp4"
         output.write_bytes(b"x")
         card.item.output_path = str(output)
-        qtbot.mouseDClick(card.contentFrame, Qt.MouseButton.LeftButton, pos=QPoint(4, 4))
+        double_click(card.contentFrame, QPoint(4, 4))
         assert [os.path.normcase(os.path.abspath(p)) for p in opened] == [
             os.path.normcase(str(output))
         ]
@@ -651,7 +652,7 @@ class TestActivate:
         card = _card(state)
         asked: list = []
         card.editRequest.connect(lambda: asked.append(1))
-        qtbot.mouseDClick(card.contentFrame, Qt.MouseButton.LeftButton, pos=QPoint(4, 4))
+        double_click(card.contentFrame, QPoint(4, 4))
         assert (asked, opened) == ([], [])
 
     def test_enter_on_a_focused_waiting_card_asks_for_the_editor(self, qapp, qtbot) -> None:

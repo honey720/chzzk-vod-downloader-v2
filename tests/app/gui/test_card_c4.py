@@ -28,6 +28,7 @@ from app.widgets.focus_ring import FocusRing
 from app.widgets.widget import ContentItemWidget
 from core.models.download_state import DownloadState
 from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
+from tests.app.gui.mouse_buttons import double_click
 
 D = DownloadState
 CTRL = Qt.KeyboardModifier.ControlModifier
@@ -516,9 +517,7 @@ class TestCardInSelectMode:
         monkeypatch.setattr(card, "requestOpenDir", lambda: opened.append(1))
         window.selectButton.click()
         _settle()
-        QTest.mouseDClick(
-            card.contentFrame, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, FACE
-        )
+        double_click(card.contentFrame, FACE)
         _settle()
         assert (edits, opened) == ([], [])
 
@@ -532,9 +531,7 @@ class TestCardInSelectMode:
         window.listView.editRequested.disconnect()
         window.listView.editRequested.connect(edits.append)
         card = _card(window, items[0])
-        QTest.mouseDClick(
-            card.contentFrame, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, FACE
-        )
+        double_click(card.contentFrame, FACE)
         _settle()
         assert edits == [items[0]]
 
