@@ -44,6 +44,7 @@ from tests.app.gui.section_reorder import (
     NO_BUTTON,
     alt_move,
     drag_handle,
+    focused,
     gap_point,
     press_at,
     send_mouse,
@@ -132,7 +133,7 @@ def _qt_messages_to_stderr(request: pytest.FixtureRequest) -> Iterator[None]:
 
 
 def _editor(qtbot, tmp_path, basis, rows: list[tuple[str, str]]) -> SectionEditDialog:  # noqa: F811
-    """카드 하나의 구간 창을 열어 행을 rows로 채운다 — 창을 활성으로 둔다(초점 단언 전제)."""
+    """카드 하나의 구간 창을 열어 행을 rows로 채운다 — 창을 활성으로 둔다."""
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
     _ALIVE.append(win)
@@ -403,7 +404,7 @@ def test_a_field_with_focus_keeps_it_on_its_own_row_after_another_row_is_dropped
     drag_handle(dialog, 2, 0)
 
     assert _values(dialog)[1] == A
-    assert QApplication.focusWidget() is dialog._rows[1].endEdit.frameEdit
+    assert dialog.focusWidget() is dialog._rows[1].endEdit.frameEdit
 
 
 def test_a_single_row_hides_its_handle_but_keeps_its_place(qtbot, tmp_path, basis) -> None:  # noqa: F811
@@ -452,7 +453,7 @@ def test_alt_up_moves_the_row_and_keeps_focus_on_the_same_field(
     alt_move(field, Qt.Key.Key_Up)
 
     assert _values(dialog) == [A, C, B]
-    assert QApplication.focusWidget() is pick(dialog._rows[1])
+    assert dialog.focusWidget() is pick(dialog._rows[1])
 
 
 def test_alt_down_moves_the_row_down_and_keeps_focus(qtbot, tmp_path, basis) -> None:  # noqa: F811
@@ -468,7 +469,7 @@ def test_alt_down_moves_the_row_down_and_keeps_focus(qtbot, tmp_path, basis) -> 
     alt_move(field, Qt.Key.Key_Down)
 
     assert _values(dialog) == [B, A, C]
-    assert QApplication.focusWidget() is dialog._rows[1].startEdit.clockEdit
+    assert dialog.focusWidget() is dialog._rows[1].startEdit.clockEdit
 
 
 @pytest.mark.parametrize(
@@ -495,7 +496,7 @@ def test_alt_arrow_at_the_end_of_the_list_does_nothing(
 
     assert _values(dialog) == [A, B, C]
     assert dialog._rows == rows_before
-    assert QApplication.focusWidget() is field
+    assert dialog.focusWidget() is field
 
 
 @pytest.mark.parametrize(
@@ -573,7 +574,7 @@ def test_enter_in_a_field_moves_on_and_does_not_close(qtbot, tmp_path, basis) ->
     _pump()
 
     assert dialog.isVisible()
-    assert QApplication.focusWidget() is dialog._rows[0].endEdit.clockEdit
+    assert dialog.focusWidget() is dialog._rows[0].endEdit.clockEdit
 
 
 def test_rows_fit_inside_the_list_at_the_narrowest_window(qtbot, tmp_path, basis) -> None:  # noqa: F811
@@ -667,10 +668,10 @@ def test_alt_moves_keep_the_focused_field_inside_the_visible_list(
     step = 1 if key == Qt.Key.Key_Down else -1
 
     for done in range(1, steps + 1):
-        alt_move(QApplication.focusWidget(), key)
+        alt_move(focused(dialog), key)
         at = start + step * done
         field = dialog._rows[at].startEdit.clockEdit
-        assert QApplication.focusWidget() is field, f"{done}번째: 초점이 옮겨 간 행에 없다"
+        assert dialog.focusWidget() is field, f"{done}번째: 초점이 옮겨 간 행에 없다"
         assert _fully_visible(dialog, field), f"{done}번째: 초점 칸이 안 보인다"
         assert _fully_visible(dialog, dialog._rows[at]), f"{done}번째: 옮겨 간 행이 안 보인다"
 
@@ -758,8 +759,8 @@ def _open_fresh(qtbot, tmp_path, basis, *, wait: bool = True) -> SectionEditDial
 
 
 def _press_enter_on_focus(dialog: SectionEditDialog) -> None:
-    """초점이 있는 위젯(없으면 창)에 Enter를 보낸다."""
-    QTest.keyClick(QApplication.focusWidget() or dialog, Qt.Key.Key_Return)
+    """창의 초점 위젯(창 자신일 수 있다)에 Enter를 보낸다. 초점 위젯이 없으면 실패한다."""
+    QTest.keyClick(focused(dialog), Qt.Key.Key_Return)
     _pump()
 
 
@@ -772,7 +773,7 @@ def test_opening_puts_focus_on_the_first_rows_start_field(qtbot, tmp_path, basis
     dialog = _open_fresh(qtbot, tmp_path, basis)
     field = dialog._rows[0].startEdit.clockEdit
 
-    assert QApplication.focusWidget() is field
+    assert dialog.focusWidget() is field
     QTest.keyClick(field, Qt.Key.Key_5)
     _pump()
     assert field.text() == "00:00:05"
@@ -803,7 +804,7 @@ def test_focus_moves_to_the_first_row_once_the_lookup_ends(qtbot, tmp_path, basi
     try:
         dialog = _open_fresh(qtbot, tmp_path, basis, wait=False)
         assert dialog.viewModel().state == "loading", "전제: 조회 중이다"
-        assert QApplication.focusWidget() is dialog
+        assert dialog.focusWidget() is dialog
         _press_enter_on_focus(dialog)
         assert dialog.isVisible()
     finally:
@@ -811,7 +812,7 @@ def test_focus_moves_to_the_first_row_once_the_lookup_ends(qtbot, tmp_path, basi
 
     qtbot.waitUntil(lambda: dialog.viewModel().state == "ready", timeout=3000)
     qtbot.waitUntil(
-        lambda: QApplication.focusWidget() is dialog._rows[0].startEdit.clockEdit, timeout=3000
+        lambda: dialog.focusWidget() is dialog._rows[0].startEdit.clockEdit, timeout=3000
     )
     _press_enter_on_focus(dialog)
     assert dialog.isVisible()
@@ -826,7 +827,7 @@ def test_a_failed_lookup_keeps_focus_off_the_buttons(qtbot, tmp_path, basis) -> 
     dialog = _open_fresh(qtbot, tmp_path, basis)
     assert dialog.viewModel().state == "failed", "전제: 조회가 실패했다"
 
-    assert QApplication.focusWidget() is dialog
+    assert dialog.focusWidget() is dialog
     _press_enter_on_focus(dialog)
     assert dialog.isVisible()
     QTest.keyClick(dialog, Qt.Key.Key_Escape)
@@ -859,7 +860,7 @@ def test_opening_from_the_card_edit_dialog_puts_focus_on_the_first_row(
     QTest.qWaitForWindowActive(sections)
     _pump()
 
-    assert QApplication.focusWidget() is sections._rows[0].startEdit.clockEdit
+    assert sections.focusWidget() is sections._rows[0].startEdit.clockEdit
     _press_enter_on_focus(sections)
     assert sections.isVisible()
 

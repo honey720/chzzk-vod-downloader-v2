@@ -2933,7 +2933,7 @@ def test_clearing_the_only_row_leaves_it_like_a_fresh_empty_row_and_focuses_its_
     assert before == (True, False)
     assert shown_error(row) == "" and notes(dialog) == [""]
     assert dialog.okButton.isEnabled()
-    assert QApplication.focusWidget() is row.startEdit.clockEdit
+    assert dialog.focusWidget() is row.startEdit.clockEdit
     press_ok(dialog)
     assert item.selections == ()
 
@@ -3000,14 +3000,14 @@ def test_adding_a_section_gives_an_empty_row_and_focuses_its_start_clock_field(
     win = open_window(tmp_path, item)
     dialog = open_editor(qtbot, win, item)
     dialog.activateWindow()
-    QTest.qWaitForWindowActive(dialog)  # 활성 창이어야 앱의 포커스 위젯이 이 창의 것이다
+    QTest.qWaitForWindowActive(dialog)
     set_rows(dialog, [("00:10:00:00", "00:20:00:00")])
 
     dialog.addButton.click()
     _pump()
 
     assert texts(dialog) == [("00:10:00:00", "00:20:00:00"), ("", "")]
-    assert QApplication.focusWidget() is dialog._rows[1].startEdit.clockEdit
+    assert dialog.focusWidget() is dialog._rows[1].startEdit.clockEdit
 
 
 @pytest.mark.parametrize(
@@ -3309,11 +3309,11 @@ def test_moving_a_row_while_a_field_has_focus_does_not_overwrite_the_row_that_to
     win = open_window(tmp_path, item)
     dialog = open_editor(qtbot, win, item)
     dialog.activateWindow()
-    QTest.qWaitForWindowActive(dialog)  # 활성 창이어야 앱의 포커스 위젯이 이 창의 것이다
+    QTest.qWaitForWindowActive(dialog)
     set_rows(dialog, [("00:10:00:00", "00:20:00:00"), ("00:30:00:00", "00:31:00:00")])
     dialog._rows[1].startEdit.clockEdit.setFocus()
     _pump()
-    assert QApplication.focusWidget() is dialog._rows[1].startEdit.clockEdit, "전제: 포커스"
+    assert dialog.focusWidget() is dialog._rows[1].startEdit.clockEdit, "전제: 포커스"
 
     alt_move(dialog._rows[1].startEdit.clockEdit, Qt.Key.Key_Up)
     _pump()
@@ -3563,7 +3563,7 @@ def test_enter_sets_an_end_past_the_video_to_the_end_and_moves_on(qtbot, tmp_pat
     """
     _win, _item, dialog = half_hour_editor(qtbot, tmp_path, basis, rows=2)
     dialog.activateWindow()
-    QTest.qWaitForWindowActive(dialog)  # 활성 창이어야 앱의 포커스 위젯이 이 창의 것이다
+    QTest.qWaitForWindowActive(dialog)
     row = dialog._rows[0]
     row.endEdit.clockEdit.setFocus()
     QTest.keyClicks(row.endEdit.clockEdit, "010000")
@@ -3573,7 +3573,7 @@ def test_enter_sets_an_end_past_the_video_to_the_end_and_moves_on(qtbot, tmp_pat
 
     assert row.endEdit.text() == "00:30:00:00"
     assert notice_shown(row) == SET_TO_END.format("00:30:00:00")
-    assert QApplication.focusWidget() is dialog._rows[1].startEdit.clockEdit
+    assert dialog.focusWidget() is dialog._rows[1].startEdit.clockEdit
 
 
 def test_pasting_an_end_past_the_video_sets_it_to_the_end_at_once(
@@ -3696,14 +3696,14 @@ def test_the_set_notice_stays_through_the_click_that_caused_it_and_goes_with_the
     """
     _win, _item, dialog = half_hour_editor(qtbot, tmp_path, basis)
     dialog.activateWindow()
-    QTest.qWaitForWindowActive(dialog)  # 활성 창이어야 앱의 포커스 위젯이 이 창의 것이다
+    QTest.qWaitForWindowActive(dialog)
     row = dialog._rows[0]
     row.endEdit.clockEdit.setFocus()
     QTest.keyClicks(row.endEdit.clockEdit, "010000")
 
     QTest.mouseClick(row.startEdit.clockEdit, Qt.MouseButton.LeftButton)
     _pump()
-    after_first = (row.endEdit.text(), notice_shown(row), QApplication.focusWidget())
+    after_first = (row.endEdit.text(), notice_shown(row), dialog.focusWidget())
     wait_armed(qtbot, dialog)
     QTest.mouseClick(row.endEdit.frameEdit, Qt.MouseButton.LeftButton)
     _pump()
@@ -3714,7 +3714,7 @@ def test_the_set_notice_stays_through_the_click_that_caused_it_and_goes_with_the
         row.startEdit.clockEdit,
     )
     assert notice_shown(row) == ""
-    assert QApplication.focusWidget() is row.endEdit.frameEdit
+    assert dialog.focusWidget() is row.endEdit.frameEdit
 
 
 def test_an_end_inside_the_video_gets_no_notice(qtbot, tmp_path, basis) -> None:
