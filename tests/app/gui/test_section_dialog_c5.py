@@ -678,6 +678,34 @@ def test_alt_moves_keep_the_focused_field_inside_the_visible_list(
     assert _values(dialog)[start + step * steps] == moving
 
 
+def test_alt_moves_work_while_the_window_is_inactive(qtbot, tmp_path, basis) -> None:  # noqa: F811
+    """구간 창이 활성을 잃어도 창의 초점 칸에 보낸 Alt+↑/↓가 행을 옮기고 초점을 따라 옮겨야 한다.
+
+    행 A · B · C, 3번 행 시작 시분초 칸에 초점 -> 다른 최상위 창을 활성으로(구간 창 비활성) ->
+    창의 초점 위젯에 Alt+↑ 두 번 -> 값 [C, A, B], 창의 초점 위젯 == 1번 행 시작 시분초 칸 (#586)
+    """
+    dialog = _editor(qtbot, tmp_path, basis, [A, B, C])
+    dialog._rows[2].startEdit.clockEdit.setFocus()
+    _pump()
+    other = QWidget()
+    other.setWindowFlag(Qt.WindowType.WindowDoesNotAcceptFocus, False)
+    other.show()
+    other.activateWindow()
+    QTest.qWaitForWindowActive(other)
+    try:
+        qtbot.waitUntil(lambda: not dialog.isActiveWindow(), timeout=3000)
+        _pump()
+
+        alt_move(focused(dialog), Qt.Key.Key_Up)
+        alt_move(focused(dialog), Qt.Key.Key_Up)
+
+        assert _values(dialog) == [C, A, B]
+        assert dialog.focusWidget() is dialog._rows[0].startEdit.clockEdit
+    finally:
+        other.hide()
+        other.deleteLater()
+
+
 def test_a_dropped_row_is_scrolled_into_view(qtbot, tmp_path, basis) -> None:  # noqa: F811
     """손잡이로 끌어 보이는 범위의 아래쪽 밖에 놓으면 놓은 행이 보이게 스크롤되어야 한다.
 
