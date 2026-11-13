@@ -591,7 +591,7 @@ QLineEdit[invalid="true"]:focus {
  * 작은 상자(프로토 구간 행 #586). 카드의 ✕(role="icon")와는 다른 버튼이다 */
 QPushButton#sectionDeleteButton {
     font-size: @fontSizeMeta;
-    padding: 5px 10px;
+    padding: @sectionDeletePadY @sectionDeletePadX;
 }
 
 /* 구간 길이의 합이 영상보다 길다는 알림 — 오류(빨강)보다 약하고 흐린 안내보다는 또렷하게 */
