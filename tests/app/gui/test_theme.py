@@ -19,6 +19,8 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPalette
+from PySide6.QtWidgets import QApplication
+from pytestqt.qtbot import QtBot
 
 import CVDv2 as main
 import app.theme as theme
@@ -413,17 +415,40 @@ class TestComboBoxDropDownStyle:
 
         assert popup_pos == combo_bottom
 
-    def test_popup_placement_is_stable_across_a_stray_hover_and_reopen(self, qapp) -> None:
+    @pytest.mark.parametrize("roll", (False, True), ids=["roll-off", "roll-on"])
+    def test_popup_placement_is_stable_across_a_stray_hover_and_reopen(
+        self, qapp: QApplication, qtbot: QtBot, roll: bool
+    ) -> None:
         """드롭다운으로 고정하면 배치가 currentIndex를 아예 안 보므로,
         호버로 뷰의 currentIndex가 옮겨가도 팝업 위치 자체는 안 흔들려야
         한다 — 강조 복원(_ComboBoxPopupHighlightResync)과 별개로, 배치
-        문제 자체가 currentIndex 오염에 애초에 영향을 안 받는지 확인."""
-        from PySide6.QtWidgets import QComboBox
-        from PySide6.QtTest import QTest
+        문제 자체가 currentIndex 오염에 애초에 영향을 안 받는지 확인.
 
+        팝업 롤 효과(`UI_AnimateCombo`)는 OS 설정을 따른다 — Windows 실제 화면은 켜져 있으면 `showPopup()`
+        직후 팝업이 아직 안 보여 그때 보낸 호버가 닿지 않는다. 두 경우를 세 플랫폼에서 같게 재려고 효과를
+        테스트가 정하고, 팝업이 보일 때까지 기다린 뒤 호버를 보낸다 (#587)
+        """
         qapp.setStyle(
             hold_style(theme.build_style())
         )  # 참조 보관 — 이중 해제 우회 (#243, card_helpers.hold_style)
+        effects = {
+            effect: QApplication.isEffectEnabled(effect)
+            for effect in (Qt.UIEffect.UI_General, Qt.UIEffect.UI_AnimateCombo)
+        }
+        QApplication.setEffectEnabled(Qt.UIEffect.UI_General, roll)
+        QApplication.setEffectEnabled(Qt.UIEffect.UI_AnimateCombo, roll)
+        try:
+            self._hover_and_reopen(qapp, qtbot, roll)
+        finally:
+            for effect, enabled in effects.items():
+                QApplication.setEffectEnabled(effect, enabled)
+
+    @staticmethod
+    def _hover_and_reopen(qapp: QApplication, qtbot: QtBot, roll: bool) -> None:
+        from PySide6.QtWidgets import QComboBox
+        from PySide6.QtTest import QTest
+
+        assert QApplication.isEffectEnabled(Qt.UIEffect.UI_AnimateCombo) is roll, "전제: 롤 효과"
         combo = QComboBox()
         combo.addItems(["Alpha", "Beta", "Gamma", "Delta", "Epsilon"])
         combo.setCurrentIndex(3)
@@ -434,6 +459,9 @@ class TestComboBoxDropDownStyle:
 
         combo.showPopup()
         view = combo.view()
+        qtbot.waitUntil(
+            view.isVisible
+        )  # 롤 효과가 끝나야 팝업이 보인다 — 효과가 없으면 바로 빠진다
         viewport = view.viewport()
         # 팝업 창(QWindow)에 합성 이벤트로 옮긴다 — QTest.mouseMove(QWidget)는 실제 포인터를 옮겨, xvfb에서는
         # 같은 X 서버를 쓰는 다른 워커의 창 밑에 포인터가 남는다(#574 · .claude/rules/safety.md)

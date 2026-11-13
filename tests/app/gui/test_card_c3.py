@@ -36,7 +36,12 @@ from app.widgets.widget import STILL_STEP_MS, STOP_MOTION_MS, ContentItemWidget
 from core.engine.base import PROGRESS_SECONDS
 from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
-from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
+from tests.app.gui.card_helpers import (
+    drop_new_top_levels,
+    hold_style,
+    hover_from_tests_only,
+    snapshot_top_levels,
+)
 from tests.app.gui.card_helpers import row3_need as _row3_need
 from tests.app.gui.test_header_layout import _font_whose_rounded_width_elides
 from tests.app.gui.test_shell_layout import WORST_SAMPLES
@@ -82,6 +87,12 @@ def no_network(monkeypatch) -> None:
 
     monkeypatch.setattr("app.widgets.widget.get_thread_session", lambda: _FailingSession())
     monkeypatch.setattr("app.widgets.widget._global_download_path", DEFAULT_DIR)
+
+
+@pytest.fixture(autouse=True)
+def _hover_from_tests_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """카드 호버는 테스트가 정한다 — 실제 포인터 자리에 기대지 않는다 (#587)."""
+    hover_from_tests_only(monkeypatch)
 
 
 def _display(**fields: object) -> None:

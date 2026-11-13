@@ -14,6 +14,7 @@
 쓰지 못하게 한다. 폭은 절대 px가 아니라 카드 자체 기하로 유도한 값을 넣는다.
 """
 
+import pytest
 from PySide6.QtCore import QEvent, QPoint, QPointF
 from PySide6.QtGui import QEnterEvent, QHelpEvent
 from PySide6.QtWidgets import QApplication, QLabel, QStyle, QToolTip, QWidget
@@ -137,11 +138,63 @@ def drop_new_top_levels(before: set) -> None:
     QApplication.processEvents()
 
 
+_SENDING_POINTER_EVENT = [
+    0
+]  # 테스트가 들어감 · 나감을 보내는 중인 깊이 — 0이면 창 시스템이 보낸 것
+
+
 def enter(widget: QWidget) -> None:
     """위젯에 들어감 이벤트를 보낸다(포인터는 옮기지 않는다 — safety 규칙)."""
     center = QPointF(widget.rect().center())
-    QApplication.sendEvent(widget, QEnterEvent(center, center, widget.mapToGlobal(center)))
+    _send_pointer_event(widget, QEnterEvent(center, center, widget.mapToGlobal(center)))
     QApplication.processEvents()
+
+
+def leave(widget: QWidget) -> None:
+    """위젯에 나감 이벤트를 보낸다(포인터는 옮기지 않는다 — safety 규칙)."""
+    _send_pointer_event(widget, QEvent(QEvent.Type.Leave))
+    QApplication.processEvents()
+
+
+def _send_pointer_event(widget: QWidget, event: QEvent) -> None:
+    """테스트가 보낸 것으로 표시하고 들어감 · 나감을 보낸다 — `hover_from_tests_only`가 이것만 통과시킨다."""
+    _SENDING_POINTER_EVENT[0] += 1
+    try:
+        QApplication.sendEvent(widget, event)
+    finally:
+        _SENDING_POINTER_EVENT[0] -= 1
+
+
+def hover_from_tests_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """카드 호버가 실제 포인터 자리를 따르지 않게 한다 — 호버는 테스트가 정한다 (#587).
+
+    실제 화면에서는 테스트 창이 실제 포인터 밑에 뜨면 창 시스템이 들어감을 보내고, 그 이벤트는 창이
+    뜬 뒤 몇 턴 늦게 올 수 있다 — 테스트가 `setHovered(False)`로 호버를 끈 뒤 이벤트를 처리하면 다시
+    켜져, 호버 없는 모양을 재던 단언이 호버 바탕 · 카드 버튼을 쟀다. Qt가 창 시스템의 들어감을 위젯에
+    넘길 때도 `spontaneous()`가 거짓이라 이벤트로는 가를 수 없어, 테스트가 보낸 것(`enter` · `leave`)만
+    카드의 들어감 · 나감 처리에 닿게 한다. 목록의 호버 다시 맞추기는 포인터 밑에 카드가 없다고 본다
+    (#575의 `test_theme_switch.py`와 같은 방식). 실제 포인터는 옮기지 않는다.
+
+    호버를 재는 파일의 autouse 픽스처에서 부른다. `QTest`로 창에 합성 마우스 이벤트를 보내 누름 ·
+    호버를 재는 테스트에는 쓰지 않는다 — 그 이벤트가 만드는 들어감도 막힌다.
+    """
+    from app.widgets import view as view_module
+    from app.widgets.widget import ContentItemWidget
+
+    monkeypatch.setattr(view_module, "widget_under_pointer", lambda: None)
+    original_enter = ContentItemWidget.enterEvent
+    original_leave = ContentItemWidget.leaveEvent
+
+    def enter_from_tests(card: ContentItemWidget, event: QEnterEvent) -> None:
+        if _SENDING_POINTER_EVENT[0]:
+            original_enter(card, event)
+
+    def leave_from_tests(card: ContentItemWidget, event: QEvent) -> None:
+        if _SENDING_POINTER_EVENT[0]:
+            original_leave(card, event)
+
+    monkeypatch.setattr(ContentItemWidget, "enterEvent", enter_from_tests)
+    monkeypatch.setattr(ContentItemWidget, "leaveEvent", leave_from_tests)
 
 
 TOOLTIP_SENTINEL = "⁣tooltip-sentinel"  # Qt 툴팁에 미리 넣는 글 — 위젯 툴팁과 겹치지 않는다
