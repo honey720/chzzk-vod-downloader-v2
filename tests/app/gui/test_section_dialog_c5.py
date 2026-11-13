@@ -1149,22 +1149,33 @@ def _notice_numbers(dialog: SectionEditDialog) -> tuple[str, str]:
     return match.group(1), match.group(2)
 
 
-@pytest.mark.parametrize("fps", [Fraction(30), Fraction(2997, 50)], ids=["30fps", "59.94fps"])
+@pytest.mark.parametrize(
+    ("fps", "end"),
+    [
+        (Fraction(30), "00:59:59:29"),  # 107999프레임 — 108000프레임째(3600초)는 길이를 넘는다
+        # 215783프레임(3599.983초) — 3599초가 시작되는 215724프레임에서 59프레임 뒤
+        (Fraction(2997, 50), "00:59:59:59"),
+    ],
+    ids=["30fps", "59.94fps"],
+)
 def test_the_over_total_notice_is_in_frames_with_the_header_end_as_the_video(
-    qtbot: QtBot, tmp_path: Path, basis: type, fps: Fraction
+    qtbot: QtBot, tmp_path: Path, basis: type, fps: Fraction, end: str
 ) -> None:
     """합계 초과 알림의 두 값은 프레임 타임코드이고 영상 길이는 머리줄의 영상 끝과 같아야 한다.
 
-    fps · 3600초, 행 처음 ~ 00:40:00:00, 행 00:20:00:00 ~ 00:50:00:00(합 70분)
-    -> 구간 합 == "01:10:00:00", 영상 길이는 HH:MM:SS:FF 꼴 == 머리줄 「video ends at」 뒤 글
+    fps · 3599.995초, 행 처음 ~ 00:40:00:00, 행 00:20:00:00 ~ 00:50:00:00(합 70분)
+    -> 구간 합 == "01:10:00:00", 영상 길이 == end(HH:MM:SS:FF 꼴) == 머리줄 「video ends at」 뒤 글
     """
     basis.fps = fps
+    # 프레임 경계가 아닌 길이 — 반올림하면 01:00:00:00이고, 길이를 넘지 않는 마지막 프레임은 그 앞이다
+    basis.duration = 3599.995
     dialog = _editor(qtbot, tmp_path, basis, OVER_ROWS)
 
     total, video = _notice_numbers(dialog)
 
     assert total == "01:10:00:00"
     assert re.fullmatch(FRAME_FORM, video), video
+    assert video == end
     assert video == _header_end(dialog)
 
 
