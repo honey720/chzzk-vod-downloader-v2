@@ -11,6 +11,7 @@
 from collections.abc import Callable, Iterator
 
 import pytest
+from pytestqt.qtbot import QtBot
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
 from PySide6.QtGui import QColor, QEnterEvent, QImage
 from PySide6.QtTest import QTest
@@ -96,6 +97,28 @@ def _hovered(dialog: SectionEditDialog) -> list[int]:
     return [index for index, row in enumerate(dialog._rows) if row.isHovered()]
 
 
+def _pointer_state(dialog: SectionEditDialog) -> str:
+    """합성 포인터 이동이 행에 닿지 않았을 때 볼 상태 — 팝업 · 눌린 버튼 · 포인터 밑 위젯 · 창."""
+    under = [
+        w.objectName() or type(w).__name__ for w in dialog.findChildren(QWidget) if w.underMouse()
+    ]
+    window = dialog.windowHandle()
+    return (
+        f"popup={QApplication.activePopupWidget()!r} buttons={QApplication.mouseButtons()!r} "
+        f"modal={QApplication.activeModalWidget()!r} active={QApplication.activeWindow()!r} "
+        f"exposed={window.isExposed() if window else None} dialog={dialog.geometry()!r} "
+        f"under={under} hovered={_hovered(dialog)}"
+    )
+
+
+def _wait_hovered(qtbot: QtBot, dialog: SectionEditDialog, row: SectionRow) -> None:
+    """row가 호버 상태가 될 때까지 기다린다 — 시간을 넘기면 포인터 상태를 실패 글에 싣는다."""
+    try:
+        qtbot.waitUntil(row.isHovered, timeout=3000)
+    except qtbot.TimeoutError as error:
+        raise AssertionError(f"행 호버가 켜지지 않았다: {_pointer_state(dialog)}") from error
+
+
 def test_a_hovered_row_paints_the_row_hover_ground_and_others_keep_the_window_ground(
     qtbot, tmp_path, basis, scheme: str
 ) -> None:  # noqa: F811
@@ -109,7 +132,7 @@ def test_a_hovered_row_paints_the_row_hover_ground_and_others_keep_the_window_gr
     rows = dialog._rows
     assert _ground(dialog, rows[1]) == QColor(tokens["windowBg"]), "전제: 호버 전 창 바탕"
     _move_in(dialog, rows[1].messageSlot, _slot_spot(rows[1]))
-    qtbot.waitUntil(lambda: rows[1].isHovered(), timeout=3000)
+    _wait_hovered(qtbot, dialog, rows[1])
 
     assert _hovered(dialog) == [1]
     assert _ground(dialog, rows[1]) == QColor(tokens["rowHoverBg"])
@@ -129,7 +152,7 @@ def test_the_hover_stays_while_the_pointer_is_over_a_child_of_the_row(
     surface = QColor(theme.current_tokens()["rowHoverBg"])
     row = dialog._rows[1]
     _move_in(dialog, row.messageSlot, _slot_spot(row))
-    qtbot.waitUntil(row.isHovered, timeout=3000)
+    _wait_hovered(qtbot, dialog, row)
 
     for child in (row.startEdit.clockEdit, row.deleteButton, row.handle):
         _move(dialog, child)
@@ -147,7 +170,7 @@ def test_the_hover_goes_off_when_the_pointer_leaves_the_rows(qtbot, tmp_path, ba
     dialog = _editor(qtbot, tmp_path, basis, [A, B])
     row = dialog._rows[1]
     _move_in(dialog, row.messageSlot, _slot_spot(row))
-    qtbot.waitUntil(row.isHovered, timeout=3000)
+    _wait_hovered(qtbot, dialog, row)
 
     _move(dialog, dialog.titleLabel)
 

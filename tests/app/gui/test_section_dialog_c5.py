@@ -1289,24 +1289,25 @@ HINT_EN = (
 HINT_KO = "숫자는 오른쪽부터 채움 · '.'는 프레임 칸 · 비우면 영상 처음/끝 · 최대 20개"
 
 
-def _hint_lines_needed(label: QWidget, text: str) -> int:
-    """그 글을 label 폭에 낱말 단위로 줄바꿈하면 드는 줄 수 — 테스트가 글꼴 정보로 따로 센다."""
+def _hint_wrapped_box(label: QWidget, text: str) -> tuple[int, int]:
+    """그 글을 label 폭에 낱말 단위로 줄바꿈한 (줄 수, 높이) — 테스트가 글꼴 정보로 따로 잰다.
+
+    높이는 줄바꿈한 글 상자의 높이다(글자만 있는 QLabel도 이 상자로 높이를 정한다). 글꼴 높이
+    (``height()``)로 셈하지 않는다 — CI macOS 한국어에서 라벨 높이 12 · 글꼴 높이 15로 어긋났다.
+    """
     metrics = label.fontMetrics()
     box = metrics.boundingRect(
         QRect(0, 0, label.contentsRect().width(), 10_000), Qt.TextFlag.TextWordWrap, text
     )
-    return max(1, round(box.height() / metrics.lineSpacing()))
+    return max(1, round(box.height() / metrics.lineSpacing())), box.height()
 
 
 def _assert_hint_fully_shown(dialog: SectionEditDialog, text: str) -> int:
     """안내가 보이고 글이 전문이며 줄바꿈에 드는 줄이 다 들어가는 높이인지 단언한다 — 든 줄 수를 돌려준다."""
     hint = dialog.hintLabel
-    lines = _hint_lines_needed(hint, text)
-    metrics = hint.fontMetrics()
+    lines, needed = _hint_wrapped_box(hint, text)
     assert hint.isVisible()
     assert hint.text() == text
-    # 줄 상자의 높이 — 한 줄이면 글 높이, 그 뒤 줄마다 줄 간격이 더해진다
-    needed = metrics.height() + (lines - 1) * metrics.lineSpacing()
     assert hint.contentsRect().height() >= needed, f"{lines}줄이 들 높이가 아니다"
     assert hint.geometry().top() >= dialog.scrollArea.geometry().bottom()
     assert hint.geometry().bottom() <= dialog.buttonBox.geometry().top()
@@ -1359,7 +1360,7 @@ def test_the_hint_wraps_without_moving_the_buttons_or_the_minimum_size(
         dialog.resize(width, 420)
         _pump()
         seen[width] = (
-            _hint_lines_needed(hint, HINT_EN),
+            _hint_wrapped_box(hint, HINT_EN)[0],
             dialog.buttonBox.geometry().top(),
             dialog.minimumSizeHint().height(),
             dialog.scrollArea.height(),
