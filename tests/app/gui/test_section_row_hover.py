@@ -9,6 +9,7 @@
 # ruff: noqa: F811
 
 from collections.abc import Callable, Iterator
+from pathlib import Path
 
 import pytest
 from pytestqt.qtbot import QtBot
@@ -66,11 +67,46 @@ def _ground(dialog: SectionEditDialog, row: SectionRow) -> QColor:
     return _pixel(dialog, spot.x(), spot.y())
 
 
+_SENDING_ENTER = [0]  # `_enter`가 들어감을 보내는 중이면 1 이상 — `_rows_follow_tests_only`가 본다
+
+
 def _enter(widget: QWidget) -> None:
     """widget에 들어감 이벤트를 보낸다 — 포인터는 옮기지 않는다."""
     center = QPointF(widget.rect().center())
-    QApplication.sendEvent(widget, QEnterEvent(center, center, widget.mapToGlobal(center)))
+    _SENDING_ENTER[0] += 1
+    try:
+        QApplication.sendEvent(widget, QEnterEvent(center, center, widget.mapToGlobal(center)))
+    finally:
+        _SENDING_ENTER[0] -= 1
     _pump()
+
+
+def _rows_follow_tests_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """행 호버가 실제 포인터 자리를 따르지 않게 한다 — `_enter`가 보낸 들어감만 행에 닿는다.
+
+    실제 화면에서는 실제 포인터가 창 밖에 있으면 창 시스템이 창에 나감을 보낼 수 있고, 그 이벤트는
+    `_enter` 뒤 몇 턴 늦게 오기도 한다 — Qt가 그것을 행 · 창의 나감으로 넘겨 `_enter`로 켠 호버가
+    꺼졌다. Qt가 넘긴 나감은 `spontaneous()`가 거짓이라 이벤트로는 가를 수 없어, `_enter`가 보낸 것만
+    행의 들어감 · 나감 처리에 닿게 한다. 목록의 호버 다시 맞추기는 포인터 밑에 행이 없다고 본다
+    (#587 `hover_from_tests_only`와 같은 방식). 실제 포인터는 옮기지 않는다.
+
+    `_enter`로 호버를 켜는 테스트에서 부른다. 창에 합성 포인터 이동(`_move` · `_move_in`)을 보내는
+    테스트에는 쓰지 않는다 — 그 이동이 만드는 들어감도 막힌다.
+    """
+    monkeypatch.setattr(view_module, "widget_under_pointer", lambda: None)
+    original_enter = SectionRow.enterEvent
+    original_leave = SectionRow.leaveEvent
+
+    def enter_from_tests(row: SectionRow, event: QEnterEvent) -> None:
+        if _SENDING_ENTER[0]:
+            original_enter(row, event)
+
+    def leave_from_tests(row: SectionRow, event: QEvent) -> None:
+        if _SENDING_ENTER[0]:
+            original_leave(row, event)
+
+    monkeypatch.setattr(SectionRow, "enterEvent", enter_from_tests)
+    monkeypatch.setattr(SectionRow, "leaveEvent", leave_from_tests)
 
 
 def _move(dialog: SectionEditDialog, widget: QWidget, at: QPoint | None = None) -> None:
@@ -453,13 +489,19 @@ def test_a_band_with_a_message_wraps_the_glyphs_and_keeps_off_the_next_field_lin
     assert band[-1] == min(ink[-1] + PAD, next_line - 2)
 
 
-def test_the_bands_of_the_first_and_last_rows_are_not_clipped(qtbot, tmp_path, basis) -> None:  # noqa: F811
+def test_the_bands_of_the_first_and_last_rows_are_not_clipped(
+    qtbot: QtBot,
+    tmp_path: Path,
+    basis: type,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """목록 맨 위 행 · 맨 아래 행(안내 글 있음)의 띠가 목록 끝에서 잘리지 않아야 한다.
 
-    행 C · A · B · BAD, 창 높이를 줄여 목록을 굴릴 수 있게 함
+    행 C · A · B · BAD, 창 높이를 줄여 목록을 굴릴 수 있게 함, 행 호버는 `_enter`가 보낸 들어감만 따름
     -> 맨 위로 굴려 1번 행에 들어감: 띠 위 끝 == 입력칸 줄 위 끝 − 4 · 목록 보이는 범위 안,
        맨 아래로 굴려 4번 행에 들어감: 띠 아래 끝 == 글자 아래 끝 + 4 · 목록 보이는 범위 안
     """
+    _rows_follow_tests_only(monkeypatch)
     dialog = _editor(qtbot, tmp_path, basis, [C, A, B, BAD])
     dialog.resize(dialog.width(), dialog.minimumSizeHint().height())
     _pump()

@@ -3847,6 +3847,32 @@ def test_moving_a_row_settles_the_field_being_typed_before_it_moves_the_row(
     assert [error_shown(row) for row in dialog._rows] == ["", ""]
 
 
+def test_deleting_another_row_settles_the_field_being_typed_before_it_removes_the_row(
+    qtbot: QtBot, tmp_path: Path, basis: type
+) -> None:
+    """끝 칸을 치는 중 영상 끝을 넘은 채 다른 행의 ✕를 눌러도, 그 칸을 끝으로 맞춘 뒤 행을 지워야 한다.
+
+    30분 영상 · 행 A(10분~) · B(20분~25분). A의 끝 시분초 칸에 010000을 친 채 B의 ✕
+    -> 행 A 하나, A의 끝 == "00:30:00:00", 오류 없음
+    """
+    _win, _item, dialog = half_hour_editor(qtbot, tmp_path, basis, rows=2)
+    set_rows(dialog, [("00:10:00:00", "00:20:00:00"), ("00:20:00:00", "00:25:00:00")])
+    first, second = dialog._rows
+    first.endEdit.clockEdit.setFocus()
+    QTest.keyClicks(first.endEdit.clockEdit, "010000")
+    _pump()
+    assert first.endEdit.clockEdit.hasFocus(), "전제: 끝 칸을 치는 중"
+    assert second.deleteButton.focusPolicy() == Qt.FocusPolicy.TabFocus, (
+        "전제: ✕는 눌러도 초점을 가져가지 않는다"
+    )
+
+    second.deleteButton.click()
+    _pump()
+
+    assert dialog.viewModel().rows == [["00:10:00:00", "00:30:00:00"]]
+    assert [error_shown(row) for row in dialog._rows] == [""]
+
+
 def test_an_end_set_to_the_end_reopens_empty_and_follows_a_new_resolution_without_a_notice(
     qtbot, tmp_path, basis
 ) -> None:
