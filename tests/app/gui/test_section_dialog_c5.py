@@ -8,14 +8,26 @@
 # 픽스처(basis)는 test_section_editor에서 들여와 매개변수 이름으로 받는다 — 같은 이름의 재정의는 의도다
 # ruff: noqa: F811
 
+import os
 import re
 from collections.abc import Iterator
 from fractions import Fraction
 from pathlib import Path
 
 import pytest
+from _pytest.faulthandler import fault_handler_stderr_fd_key
 from pytestqt.qtbot import QtBot
-from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, Qt, QTranslator
+from PySide6.QtCore import (
+    QEvent,
+    QMessageLogContext,
+    QPoint,
+    QPointF,
+    QRect,
+    Qt,
+    QtMsgType,
+    QTranslator,
+    qInstallMessageHandler,
+)
 from PySide6.QtGui import QColor, QImage, QPainter, QPalette, QPen, QPixmap
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialogButtonBox, QStyle, QWidget
@@ -75,6 +87,48 @@ def _keep_windows() -> Iterator[None]:
     """`_editor`가 연 메인 창을 테스트가 끝날 때까지 붙잡고, 끝나면 놓는다(파괴는 `_destroy_windows`)."""
     yield
     _ALIVE.clear()
+
+
+#: 바로 내보내지 않는 Qt 메시지 — offscreen 플랫폼이 창을 띄울 때마다 내는 경고(앞의 핸들러에는 넘긴다)
+QT_NOISE = frozenset({"This plugin does not support propagateSizeHints()"})
+
+
+def _write_qt_message(fd: int, kind: QtMsgType, context: QMessageLogContext, message: str) -> None:
+    """Qt 메시지 한 줄을 파일 디스크립터 fd에 곧바로 쓴다 — 파이썬 버퍼를 거치지 않는다."""
+    where = f"{context.file}:{context.line} {context.function}" if context.file else "-"
+    line = f"[Qt {kind.name}] {where}: {message}\n"
+    os.write(fd, line.encode("utf-8", "backslashreplace"))
+
+
+@pytest.fixture(autouse=True)
+def _qt_messages_to_stderr(request: pytest.FixtureRequest) -> Iterator[None]:
+    """이 파일의 테스트 동안 Qt 메시지를 실제 표준 오류로 곧바로 내보낸다 — 앞의 핸들러에도 넘긴다.
+
+    ubuntu CI에서 Alt 이동 테스트 도중 워커가 Python 예외 없이 abort로 죽었다(#586). pytest-qt는 Qt
+    메시지를 모았다가 테스트가 실패했을 때만 보이고, pytest는 fd 2를 캡처한다 — 프로세스가 죽으면 둘
+    다 사라진다. pytest의 faulthandler가 스택(모든 스레드)을 쓰는 fd에 같이 쓴다 — xdist 워커가
+    죽어도 그 스택은 CI 로그에 남았다. qFatal 등 abort 직전의 글이 그 스택 바로 앞에 남는다.
+    그 fd가 없으면(``-p no:faulthandler``) 캡처를 잠시 끈 채 복제한 fd 2에 쓴다.
+    """
+    fd = request.config.stash.get(fault_handler_stderr_fd_key, None)
+    owned = fd is None
+    if owned:
+        capture = request.config.pluginmanager.getplugin("capturemanager")
+        with capture.global_and_fixture_disabled():
+            fd = os.dup(2)
+    previous: list = []
+
+    def handler(kind: QtMsgType, context: QMessageLogContext, message: str) -> None:
+        if message not in QT_NOISE:
+            _write_qt_message(fd, kind, context, message)
+        if previous and previous[0] is not None:
+            previous[0](kind, context, message)
+
+    previous.append(qInstallMessageHandler(handler))
+    yield
+    qInstallMessageHandler(previous[0])
+    if owned:
+        os.close(fd)
 
 
 def _editor(qtbot, tmp_path, basis, rows: list[tuple[str, str]]) -> SectionEditDialog:  # noqa: F811
