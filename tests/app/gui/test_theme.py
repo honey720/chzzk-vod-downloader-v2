@@ -431,17 +431,17 @@ class TestComboBoxDropDownStyle:
         qapp.setStyle(
             hold_style(theme.build_style())
         )  # 참조 보관 — 이중 해제 우회 (#243, card_helpers.hold_style)
-        effects = {
-            effect: QApplication.isEffectEnabled(effect)
-            for effect in (Qt.UIEffect.UI_General, Qt.UIEffect.UI_AnimateCombo)
-        }
+        # 개별 효과는 전체 효과(UI_General)가 꺼져 있으면 늘 꺼짐으로 읽혀, 전체를 잠시 켜고 읽는다
+        general = QApplication.isEffectEnabled(Qt.UIEffect.UI_General)
+        QApplication.setEffectEnabled(Qt.UIEffect.UI_General, True)
+        combo_roll = QApplication.isEffectEnabled(Qt.UIEffect.UI_AnimateCombo)
         QApplication.setEffectEnabled(Qt.UIEffect.UI_General, roll)
         QApplication.setEffectEnabled(Qt.UIEffect.UI_AnimateCombo, roll)
         try:
             self._hover_and_reopen(qapp, qtbot, roll)
         finally:
-            for effect, enabled in effects.items():
-                QApplication.setEffectEnabled(effect, enabled)
+            QApplication.setEffectEnabled(Qt.UIEffect.UI_AnimateCombo, combo_roll)
+            QApplication.setEffectEnabled(Qt.UIEffect.UI_General, general)
 
     @staticmethod
     def _hover_and_reopen(qapp: QApplication, qtbot: QtBot, roll: bool) -> None:
@@ -470,8 +470,10 @@ class TestComboBoxDropDownStyle:
             QTest.mouseMove(popup.windowHandle(), viewport.mapTo(popup, spot))
         assert view.currentIndex().row() == 0, "전제: 호버가 currentIndex를 row0로 옮겼다"
         combo.hidePopup()
+        qtbot.waitUntil(lambda: not view.isVisible())
 
         combo.showPopup()
+        qtbot.waitUntil(view.isVisible)
         popup_pos = combo.view().window().pos()
         combo.hidePopup()
 
