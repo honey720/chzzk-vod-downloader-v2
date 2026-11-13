@@ -101,7 +101,7 @@ from app.widgets import view as _pointer  # widget_under_pointer — 테스트�
 # 칸의 폭을 재는 본보기 글자 — 칸에 깔리는 글자 그대로다
 _CLOCK_SAMPLE = "00:00:00"
 _FRAME_SAMPLE = "00"
-_LENGTH_SAMPLE = "00:00:00.000"  # 행의 길이 글 본보기 — 뷰모델 lengthText의 형식 그대로
+_LENGTH_SAMPLE = "00:00:00:00"  # 행의 길이 글 본보기 — 뷰모델 lengthText의 프레임 타임코드
 # 말줄임 라벨이 글 폭 그대로면 잘린 것으로 재는 몫(px) — ElidingLabel.sizeHint의 +4와 같다
 _LABEL_SLACK = 4
 _EDIT_PADDING = 22  # 칸의 글자 양옆 몫(px) — QSS의 padding과 테두리, 커서 한 줄
@@ -340,9 +340,10 @@ class SectionRow(QWidget):
         layout.addWidget(self.rangeLabel)
         layout.addWidget(self.endEdit)
 
-        # 구간 길이(밀리초 표기) — 최소폭은 본보기 글이 다 들어가는 폭이다. 창의 최소폭이 행에서
-        # 나오므로(_fitRowWidth) 가장 좁은 창에서도 길이가 잘리지 않는다(프로토 구간 행, #586).
-        # 더 긴 글(100시간 이상)만 말줄임하고, 잘렸을 때만 전문을 툴팁에 둔다
+        # 구간 길이(프레임 타임코드 — 입력 칸과 같은 꼴) — 최소폭은 본보기 글이 다 들어가는 폭이다. 창의
+        # 최소폭이 행에서 나오므로(_fitRowWidth) 가장 좁은 창에서도 길이가 잘리지 않는다(프로토 구간 행,
+        # #586). 더 긴 글(100시간 이상)만 말줄임한다. 툴팁은 같은 길이의 밀리초 표기다(_refresh, 오너
+        # 2026-11-13 — 보이는 글을 되풀이하지 않고 다른 꼴을 보인다)
         self.infoLabel = ElidingLabel(self, tip_when_elided=True)
         self.infoLabel.setObjectName("sectionInfoLabel")
         self.infoLabel.ensurePolished()  # 폭은 QSS 글꼴이 입혀진 뒤에 잰다
@@ -631,8 +632,8 @@ class SectionEditDialog(QDialog):
         self.totalLabel = TwoLineLabel(self)
         self.totalLabel.setObjectName("sectionTotalLabel")
         under.addWidget(self.totalLabel, 1)
-        # 구간 길이의 합("합계 11:20:16.000") — 「+ 구간 추가」 줄의 오른쪽 끝. 행의 길이 표기와
-        # 같은 형식이다. 합이 영상보다 길면 왼쪽의 알림이 그 합을 함께 적으므로 이 글은 숨는다(같은
+        # 구간 길이의 합("합계 11:20:16:30") — 「+ 구간 추가」 줄의 오른쪽 끝. 행의 길이 표기와
+        # 같은 형식이고 툴팁은 밀리초 표기다. 합이 영상보다 길면 왼쪽의 알림이 그 합을 함께 적으므로 이 글은 숨는다(같은
         # 값을 두 번 적지 않는다)
         self.sumLabel = QLabel(self)
         self.sumLabel.setObjectName("sectionSumLabel")
@@ -1017,6 +1018,8 @@ class SectionEditDialog(QDialog):
                 # 묶음에도 적어 둔다 — 그 시각의 어느 칸이든 칠해졌는지(스타일에는 쓰지 않는다)
                 edit.setProperty("invalid", any(key[0] == column for key in flagged))
             row.infoLabel.setText(viewmodel.lengthText(index))
+            # 툴팁은 같은 길이의 밀리초 표기 — 잘렸어도 이것을 단다(프레임 글은 칸과 같은 꼴이라 따로 안 적는다)
+            row.infoLabel.setDetailTip(viewmodel.lengthMillisecondsText(index))
             ignored = viewmodel.isIgnored(index)
             row.showMessage(
                 {
@@ -1051,6 +1054,7 @@ class SectionEditDialog(QDialog):
         self.totalLabel.setLines(*viewmodel.totalNoticeLines())
         total = "" if notice else viewmodel.totalText()
         self.sumLabel.setText(total)
+        self.sumLabel.setToolTip(viewmodel.totalMillisecondsText() if total else "")
         self.sumLabel.setVisible(bool(total))
         # 끝 칸을 치는 중 끝만 영상 끝을 넘은 것은 확인을 막지 않는다 — 확인이 그 칸을 맞춘다
         self.okButton.setEnabled(viewmodel.canCommit(self._typing))

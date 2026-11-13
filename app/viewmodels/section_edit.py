@@ -938,12 +938,33 @@ class SectionEditViewModel(QObject):
         """구간으로 세는 행의 수 — 걸러 낸 행을 뺀다."""
         return len(self.rows) - len(self._ignored)
 
-    def lengthText(self, row: int) -> str:
-        """행의 구간 길이 — ``HH:MM:SS.mmm``. 오류가 있는 행 · 걸러 낸 행은 빈 문자열."""
+    def _lengthFrames(self, row: int) -> int | None:
+        """행의 구간 길이(프레임). 오류가 있는 행 · 걸러 낸 행은 None."""
         if row in self._errors or row not in self._pairs:
-            return ""
+            return None
         start, end = self._pairs[row]
-        return format_milliseconds(end - start)
+        return frame_index(end, self.fps) - frame_index(start, self.fps)
+
+    def _framesSeconds(self, frames: int) -> float:
+        """프레임 수를 명목 시각(초)으로 — 타임코드 · 밀리초 표기의 입력이다."""
+        return float(Fraction(frames) / frame_rate(self.fps))
+
+    def lengthText(self, row: int) -> str:
+        """행의 구간 길이 — 입력 칸과 같은 프레임 타임코드 ``HH:MM:SS:FF``. 오류가 있는 행 · 걸러 낸 행은 빈 문자열.
+
+        시작 · 끝을 프레임 번호로 바꾼 차이를 그 영상의 프레임률로 적는다 — 60fps에서 27프레임은
+        「00:00:00:27」이다. 밀리초 표기는 툴팁(``lengthMillisecondsText``)에 있다(오너 2026-11-13, #586).
+        """
+        frames = self._lengthFrames(row)
+        return "" if frames is None else format_timecode(self._framesSeconds(frames), self.fps)
+
+    def lengthMillisecondsText(self, row: int) -> str:
+        """행의 구간 길이를 밀리초 표기 ``HH:MM:SS.mmm``로 — 길이 글의 툴팁. 길이가 없으면 빈 문자열.
+
+        ``lengthText``와 같은 프레임 수에서 적는다 — 두 표기가 늘 같은 시간을 가리킨다.
+        """
+        frames = self._lengthFrames(row)
+        return "" if frames is None else format_milliseconds(self._framesSeconds(frames))
 
     def _totalFrames(self) -> int:
         """오류가 없는 행의 길이의 합(프레임) — 걸러 낸 행 · 오류인 행은 세지 않는다."""
@@ -954,18 +975,24 @@ class SectionEditViewModel(QObject):
         )
 
     def totalText(self) -> str:
-        """구간 길이의 합 — "Total HH:MM:SS.mmm". 조회가 끝나기 전에는 빈 글이다 (#309).
+        """구간 길이의 합 — "Total HH:MM:SS:FF"(행의 길이와 같은 표기). 조회가 끝나기 전에는 빈 글이다 (#309).
 
         행마다의 길이 표시(``lengthText``)와 같은 기준으로 더한다: 길이가 적히는 행만 센다.
         오류인 행(시작 ≥ 끝 · 영상 밖 · 중복 · 개수 초과)과 걸러 낸 빈 행은 길이가 적히지 않고
         합에도 들지 않는다. 빈 시각은 처음 · 끝으로 푼 값이다. 겹치는 자리는 구간마다 센다.
-        더하는 단위는 프레임이다 — 행마다 밀리초로 반올림한 값을 더하면 끝자리가 어긋난다.
-        셀 행이 없으면 0이다.
+        더하는 단위는 프레임이다 — 프레임이 프레임률만큼 차면 초로 넘긴다. 셀 행이 없으면 0이다.
+        밀리초 표기는 툴팁(``totalMillisecondsText``)에 있다(오너 2026-11-13, #586).
         """
         if self.state != STATE_READY or self.fps is None:
             return ""
-        seconds = float(self._totalFrames() / frame_rate(self.fps))
-        return self.tr("Total {0}").format(format_milliseconds(seconds))
+        seconds = self._framesSeconds(self._totalFrames())
+        return self.tr("Total {0}").format(format_timecode(seconds, self.fps))
+
+    def totalMillisecondsText(self) -> str:
+        """구간 길이의 합을 밀리초 표기 ``HH:MM:SS.mmm``로 — 합계 글의 툴팁. 조회가 끝나기 전에는 빈 글."""
+        if self.state != STATE_READY or self.fps is None:
+            return ""
+        return format_milliseconds(self._framesSeconds(self._totalFrames()))
 
     def totalNoticeText(self) -> str:
         """구간 길이의 합이 영상 길이보다 길 때의 알림 전체 — 두 문장을 " · "로 이은 글. 없으면 빈 글."""
