@@ -4,12 +4,14 @@
 
 핵심 계약:
 - 잠근 형식 밖의 컨테이너를 pipe remux에 넣으면 실패한다
+- pipe 입력에 미디어가 아닌 바이트를 계속 넣으면 공급 앞부분에서 실패한다
 - 잠근 코덱 밖의 영상을 경계 다시 인코딩에 넣으면 실패한다
 - concat 목록 안의 허용 밖 형식은 열리지 않는다
 - 잠금을 붙여도 산출물의 패킷(framecrc)은 잠금 없는 ffmpeg의 산출물과 같다
 """
 
 import subprocess
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 
 import pytest
@@ -21,10 +23,12 @@ from core.sections.cut import CutFrames, CutPiece
 from core.sections.hybrid import CutError, cut_frames_from_mp4
 from core.utils.ffmpeg import (
     RemuxError,
+    extract_audio_stream,
     get_ffmpeg_exe,
     input_lock,
     read_in_chunks,
     remux_stream,
+    remux_through,
     run_ffmpeg,
 )
 
@@ -128,6 +132,68 @@ def test_remux_stream_fails_when_the_container_is_not_the_locked_format(
     assert not out.exists()
 
 
+# ================================================================ pipe 입력 — 미디어가 아닌 바이트
+
+
+_NOT_MEDIA_SEGMENT = b"not media " * 6554  # 미디어가 아닌 바이트 약 64KB — 세그먼트 하나
+_NOT_MEDIA_COUNT = 200  # 넘길 세그먼트 수 — 모두 약 13MB, ffmpeg의 probe 창(약 1MB)보다 훨씬 크다
+
+
+def _through(chunks: Iterable[bytes], out: Path, input_format: str) -> None:
+    """변환 ffmpeg(pipe → 조각난 mp4) → 잇는 ffmpeg(concat 목록의 pipe:0)로 remux한다."""
+    (out.parent / "list.txt").write_text(
+        "ffconcat version 1.0\nfile pipe:0\n", encoding="utf-8", newline="\n"
+    )
+    remux_through(
+        chunks,
+        [
+            "-i", "pipe:0", "-map", "0:v:0", "-c", "copy",
+            "-movflags", "frag_keyframe+empty_moov+default_base_moof", "-f", "mp4", "pipe:1",
+        ],
+        [
+            "-protocol_whitelist", "file,pipe,fd", *input_lock("concat", piped=False),
+            "-safe", "0", "-i", "list.txt", "-map", "0:v:0", "-c", "copy", "-f", "mp4", str(out),
+        ],
+        str(out),
+        input_format=input_format,
+        cwd=str(out.parent),
+    )  # fmt: skip
+
+
+_PIPED_REMUXERS: dict[str, Callable[[Iterable[bytes], Path, str], None]] = {
+    "remux_stream": lambda chunks, out, fmt: remux_stream(chunks, str(out), input_format=fmt),
+    "extract_audio_stream": lambda chunks, out, fmt: extract_audio_stream(
+        chunks, str(out), input_format=fmt
+    ),
+    "remux_through": _through,
+}
+
+
+@pytest.mark.parametrize("input_format", ["mov", "mpegts"])
+@pytest.mark.parametrize("remux", list(_PIPED_REMUXERS))
+def test_piped_input_of_non_media_bytes_fails_before_the_feed_ends(
+    tmp_path: Path, remux: str, input_format: str
+) -> None:
+    """pipe 입력에 미디어가 아닌 바이트를 이어 넣으면 세그먼트를 다 넘기기 전에 RemuxError여야 한다.
+
+    공급: 미디어가 아닌 약 64KB 세그먼트 200개. remux_stream · extract_audio_stream ·
+    remux_through, 잠금 형식 mov · mpegts
+    -> RemuxError, 넘긴 세그먼트 수 < 200
+    """
+    passed = 0
+
+    def feed() -> Iterator[bytes]:
+        nonlocal passed
+        for _ in range(_NOT_MEDIA_COUNT):
+            passed += 1
+            yield _NOT_MEDIA_SEGMENT
+
+    with pytest.raises(RemuxError):
+        _PIPED_REMUXERS[remux](feed(), tmp_path / "out.mp4", input_format)
+
+    assert 1 <= passed < _NOT_MEDIA_COUNT
+
+
 # ================================================================ 코덱 잠금 — 경계 다시 인코딩
 
 
@@ -171,7 +237,7 @@ def test_concat_join_fails_when_the_listed_file_is_not_the_locked_format(
     """concat 목록의 첫 파일이 잠근 형식(mov) 밖이면 잇기가 0이 아닌 코드로 끝나야 한다.
 
     목록: mkv(h264 + aac) → mp4(h264 + aac). 구간 잇기와 같은 입력 옵션
-    (-protocol_whitelist file,pipe,fd + input_lock("concat") + -safe 0)
+    (-protocol_whitelist file,pipe,fd + input_lock("concat", piped=False) + -safe 0)
     -> 종료 코드 != 0, stderr에 "not on whitelist". 목록을 mp4 → mp4로 바꾸면 종료 코드 0
     """
     for name in ("mkv", "mp4"):
@@ -187,7 +253,7 @@ def test_concat_join_fails_when_the_listed_file_is_not_the_locked_format(
         return run_ffmpeg(
             [
                 "-v", "warning", "-y",
-                "-protocol_whitelist", "file,pipe,fd", *input_lock("concat"), "-safe", "0",
+                "-protocol_whitelist", "file,pipe,fd", *input_lock("concat", piped=False), "-safe", "0",
                 "-i", listed, "-map", "0:v:0", "-c", "copy", "-f", "mp4", "out.mp4",
             ],
             timeout=60,
@@ -235,8 +301,8 @@ def test_locked_remux_writes_the_same_packets_as_an_unlocked_ffmpeg(
 def test_input_lock_rejects_an_unknown_format() -> None:
     """input_lock에 잠금 표에 없는 형식을 넘기면 ValueError여야 한다.
 
-    input_lock("matroska")
+    input_lock("matroska", piped=False)
     -> ValueError
     """
     with pytest.raises(ValueError):
-        input_lock("matroska")
+        input_lock("matroska", piped=False)
