@@ -475,7 +475,11 @@ def _cut(
             "-ss", hc._seconds(start), "-t", hc._seconds(length),
             *input_lock("mov", piped=False), "-i", _AUDIO_FILE,
         ]  # fmt: skip
+    # -xerror: concat은 목록의 다음 파일을 그 차례가 와서야 연다. 첫 파일이 아닌 조각을 열지 못하면
+    # 경고만 남기고 종료 코드 0으로 끝나 영상이 짧은 구간 파일이 남는다 (#602). 출력의 DTS가 뒤로
+    # 가는 것(조각을 잇는 곳의 시각 어긋남)도 같은 옵션으로 0이 아닌 코드가 된다
     join = [
+        "-xerror",
         *video_input,
         *audio_input,
         "-map", "0:v:0", *(["-map", "1:a:0"] if has_audio else []),
@@ -497,7 +501,7 @@ def _cut(
                 "-movflags", _FRAGMENTED, "-f", "mp4", "pipe:1",
             ]  # fmt: skip
             try:
-                warnings = remux_through(
+                remux_through(
                     _feed(given.prefix, [paths[n] for n in piped], fed),
                     convert,
                     join,
@@ -516,9 +520,7 @@ def _cut(
             except FFmpegError as e:
                 raise CutError(CUT_FAILED, str(e)) from e
         else:
-            warnings = hc._run(join, hc._COPY_TIMEOUT, work_dir)
-    if "Non-monotonic DTS" in warnings:
-        raise CutError(CUT_FAILED, "조각을 잇는 곳에서 DTS가 뒤로 간다")
+            hc._run(join, hc._COPY_TIMEOUT, work_dir)
     progress.finish("join")
     plan = CutPlan(first, last, tuple(CutPiece(kind, a, b) for kind, _name, a, b, _made in pieces))
     overhang = given.audio_overhang if has_audio else 0.0

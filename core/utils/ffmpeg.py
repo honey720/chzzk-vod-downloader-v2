@@ -703,7 +703,7 @@ def remux_through(
         should_pause: 주면 같은 간격으로 부른다. 참인 동안 두 프로세스를 멈춰 둔다
 
     Returns:
-        잇는 ffmpeg가 낸 경고(stderr) — 조각을 잇는 곳의 시각이 어긋났는지 부르는 쪽이 본다
+        잇는 ffmpeg가 낸 경고(stderr)
 
     Raises:
         FFmpegNotFoundError: ffmpeg 실행 파일을 찾지 못한 경우
@@ -720,7 +720,7 @@ def remux_through(
     ]  # fmt: skip
     try:
         join = subprocess.Popen(
-            # 잇는 쪽은 경고까지 받는다 — DTS가 뒤로 가도 ffmpeg는 0으로 끝난다
+            # 잇는 쪽은 경고까지 받는다 — 실패할 때 오류 줄 앞의 경고가 까닭을 보여 준다
             [exe, "-hide_banner", "-loglevel", "warning", "-nostdin", "-y", *join_args],
             stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
