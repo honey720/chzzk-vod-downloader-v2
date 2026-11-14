@@ -329,7 +329,7 @@ def test_remux_through_starts_no_ffmpeg_when_input_lock_fails(
 ) -> None:
     """remux_through에 잠금 표에 없는 형식을 넘기면 ffmpeg 프로세스를 하나도 띄우지 않고 ValueError여야 한다.
 
-    input_format="matroska", subprocess.Popen 대역이 호출 수를 셈
+    input_format="matroska", get_ffmpeg_exe 대역(고정 경로) · subprocess.Popen 대역(호출을 셈)
     -> ValueError, Popen 호출 0번
     """
     started: list[Sequence[str]] = []
@@ -338,6 +338,8 @@ def test_remux_through_starts_no_ffmpeg_when_input_lock_fails(
         started.append(args)
         raise AssertionError("ffmpeg를 띄웠다")
 
+    # 실행 파일 탐색은 처음 부를 때 ffmpeg -version을 띄운다 — 고정 경로로 탐색을 건너뛴다
+    monkeypatch.setattr(ffmpeg_module, "get_ffmpeg_exe", lambda: "ffmpeg")
     monkeypatch.setattr(ffmpeg_module.subprocess, "Popen", popen)
 
     with pytest.raises(ValueError):
