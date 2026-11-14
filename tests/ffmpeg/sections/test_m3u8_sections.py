@@ -42,10 +42,12 @@
 대조는 파일 바이트가 아니라 패킷(시각 + 내용의 CRC)으로 한다.
 """
 
+import ctypes
 import os
 import struct
 import subprocess
-from collections.abc import Callable
+import sys
+from collections.abc import Callable, Iterator
 from fractions import Fraction
 from pathlib import Path
 
@@ -57,6 +59,7 @@ import core.sources.m3u8_downloader as m3u8_module
 import core.engine.segment_space as space_module
 import core.utils.ffmpeg as ffmpeg_module
 import core.sections.fmp4_cut as fmp4_cut_module
+import core.sections.hybrid as hybrid_module
 from core.media.fmp4_index import Fmp4Head
 from core.media.fmp4 import build_fmp4_index, fmp4_origin, parse_init_segment, parse_media_segment
 from core.media.hls import parse_media_playlist
@@ -1930,3 +1933,185 @@ def test_remux_that_hits_the_file_size_limit_carries_a_key_by_the_filesystem(
     assert [type(e) for e in run.failures] == [PostprocessError]
     assert getattr(run.failures[0], "space_key", None) == expected
     assert (run.finished, os.path.exists(run.data.output_path)) == (0, False)
+
+
+# ================================================================ 잇기에서 조각을 못 열면 그 구간은 실패 (#602)
+
+if sys.platform == "win32":
+    from ctypes import wintypes
+
+    _KERNEL32 = ctypes.WinDLL("kernel32", use_last_error=True)  # DLL 객체는 모듈에서 한 번만 만든다
+    _KERNEL32.CreateFileW.argtypes = [
+        wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+        wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE,
+    ]  # fmt: skip
+    _KERNEL32.CreateFileW.restype = wintypes.HANDLE
+    _KERNEL32.CloseHandle.argtypes = [wintypes.HANDLE]
+    _GENERIC_READ = 0x80000000  # CreateFileW 접근 권한 — 읽기
+    _OPEN_EXISTING = 3  # CreateFileW 생성 방식 — 있는 파일만 연다
+    _INVALID_HANDLE = wintypes.HANDLE(-1).value  # CreateFileW가 실패하면 돌려주는 값
+
+_WINDOWS_LOCK = pytest.mark.skipif(
+    sys.platform != "win32", reason="공유 모드 0 잠금은 Windows 전용"
+)
+
+
+class _JoinTrouble:
+    """잇는 ffmpeg가 뜨기 직전(또는 세그먼트를 넘기는 도중)에 작업 폴더의 조각 하나를 지우거나 잠근다.
+
+    파이프가 있는 잇기는 ``remux_through``를, 없는 잇기는 ``hybrid._run``(인자에 목록 파일이 든
+    호출만)을 감싼다. 한 일을 ``done``에 적는다 — 주입이 실제로 일어났는지 단언하는 데 쓴다.
+
+    action: None(아무것도 안 함) · "delete" · "lock"(공유 모드 0, 잇기가 끝나면 푼다) ·
+    "delete_while_feeding"(잇는 ffmpeg가 뜬 뒤 첫 세그먼트 조각을 넘긴 다음에 지운다)
+    """
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, action: str | None, name: str) -> None:
+        self.action, self.name = action, name
+        self.done: list[str] = []
+        self.joins = 0  # 잇는 ffmpeg를 부른 수
+        self._handles: list[int] = []
+        real_remux, real_run = fmp4_cut_module.remux_through, hybrid_module._run
+
+        def remux(chunks: Iterator[bytes], *args: object, **kwargs: object) -> str:
+            self.joins += 1
+            if action == "delete_while_feeding":
+                chunks = self._late(chunks, str(kwargs["cwd"]))
+            else:
+                self._before(str(kwargs["cwd"]))
+            try:
+                return real_remux(chunks, *args, **kwargs)
+            finally:
+                self._release()
+
+        def run(args: list[str], timeout: float, cwd: str, **kwargs: int | None) -> str:
+            if "list.txt" not in args:
+                return real_run(args, timeout, cwd, **kwargs)
+            self.joins += 1
+            self._before(cwd)
+            try:
+                return real_run(args, timeout, cwd, **kwargs)
+            finally:
+                self._release()
+
+        monkeypatch.setattr(fmp4_cut_module, "remux_through", remux)
+        monkeypatch.setattr(hybrid_module, "_run", run)
+
+    def _before(self, cwd: str) -> None:
+        path = os.path.join(cwd, self.name)
+        if self.action == "delete":
+            os.remove(path)
+        elif self.action == "lock":
+            handle = _KERNEL32.CreateFileW(path, _GENERIC_READ, 0, None, _OPEN_EXISTING, 0, None)
+            assert handle != _INVALID_HANDLE, ctypes.get_last_error()
+            self._handles.append(handle)
+        else:
+            return
+        self.done.append(self.name)
+
+    def _late(self, chunks: Iterator[bytes], cwd: str) -> Iterator[bytes]:
+        for number, chunk in enumerate(chunks):
+            yield chunk
+            if number == 1:  # 초기화 세그먼트와 첫 조각을 넘겼다 — 잇는 ffmpeg는 이미 돈다
+                os.remove(os.path.join(cwd, self.name))
+                self.done.append(self.name)
+
+    def _release(self) -> None:
+        while self._handles:
+            _KERNEL32.CloseHandle(self._handles.pop())
+
+
+# (구간 프레임, 할 일, 대상 조각) — 40~100은 목록이 0_head · pipe:0 · 4_tail(파이프가 있는 잇기),
+# 2~40은 0_head · 3_lead · 4_tail(파이프가 없는 잇기)이다
+_MISSING_PIECE = pytest.mark.parametrize(
+    "first, last, action, name",
+    [
+        pytest.param(40, 100, "delete", "4_tail.mp4", id="piped-delete-tail"),
+        pytest.param(40, 100, "lock", "4_tail.mp4", id="piped-lock-tail", marks=_WINDOWS_LOCK),
+        pytest.param(40, 100, "delete_while_feeding", "4_tail.mp4", id="piped-delete-tail-late"),
+        pytest.param(40, 100, "delete", "0_head.mp4", id="piped-delete-head"),
+        pytest.param(2, 40, "delete", "3_lead.mp4", id="list-delete-lead"),
+        pytest.param(2, 40, "delete", "4_tail.mp4", id="list-delete-tail"),
+        pytest.param(2, 40, "lock", "3_lead.mp4", id="list-lock-lead", marks=_WINDOWS_LOCK),
+        pytest.param(2, 40, "delete", "0_head.mp4", id="list-delete-head"),
+    ],
+)
+
+
+def _cut_failure_texts(run: _Run) -> list[str]:
+    """엔진이 남긴 "Cut failed" 오류 로그의 예외 글."""
+    return [
+        str(args[1])
+        for name, args in run.logger.calls
+        if name == "log_error" and args[0].startswith("Cut failed")
+    ]
+
+
+@_MISSING_PIECE
+def test_section_fails_when_the_join_cannot_open_a_piece(
+    host, sources, tmp_path, monkeypatch, first: int, last: int, action: str, name: str
+) -> None:
+    """잇는 ffmpeg가 목록의 조각 하나를 열지 못하면 그 구간은 실패하고 구간 파일이 남지 않아야 한다.
+
+    plain, 구간 하나. 잇는 ffmpeg가 뜨기 직전(delete_while_feeding은 뜬 뒤)에 작업 폴더의 조각을
+    지우거나 공유 모드 0으로 잠금
+    -> 주입 1회, 완료 0회, 실패 1건(PostprocessError, 원인 CutError(CUT_FAILED)),
+       구간 상태 == (완료 0, 실패 1), 구간 파일 없음
+    """
+    trouble = _JoinTrouble(monkeypatch, action, name)
+
+    run = _Run(host, tmp_path, [sources["plain"].selection(first, last)]).start()
+
+    assert trouble.done == [name]
+    assert run.finished == 0
+    assert [type(e) for e in run.failures] == [PostprocessError]
+    cause = run.failures[0].__cause__
+    assert isinstance(cause, CutError) and cause.message_key == CUT_FAILED
+    assert (run.data.sections_done, run.data.sections_failed) == (0, 1)
+    assert not os.path.exists(run.paths[0])
+
+
+@_MISSING_PIECE
+def test_join_failure_log_carries_the_ffmpeg_error_without_absolute_paths(
+    host, sources, tmp_path, monkeypatch, first: int, last: int, action: str, name: str
+) -> None:
+    """잇기가 조각을 못 열어 실패하면 오류 로그에 ffmpeg stderr의 그 줄이 작업 폴더 안 이름으로 남아야 한다.
+
+    plain, 구간 하나. 위 테스트와 같은 주입
+    -> "Cut failed" 오류 로그 1건, 그 글에 "Impossible to open"과 조각 이름이 있고 테스트 임시
+       폴더의 절대 경로(두 가지 경로 구분자 모두)는 없다
+    """
+    _JoinTrouble(monkeypatch, action, name)
+
+    run = _Run(host, tmp_path, [sources["plain"].selection(first, last)]).start()
+
+    texts = _cut_failure_texts(run)
+    assert len(texts) == 1
+    assert "Impossible to open" in texts[0] and name in texts[0]
+    for absolute in (str(tmp_path), str(tmp_path).replace("\\", "/")):
+        assert absolute not in texts[0]
+
+
+@pytest.mark.parametrize(
+    "first, last", [pytest.param(40, 100, id="piped"), pytest.param(2, 40, id="list")]
+)
+def test_join_that_opens_every_piece_completes_without_error_log(
+    host, sources, tmp_path, monkeypatch, first: int, last: int
+) -> None:
+    """잇기가 목록의 조각을 모두 열면 구간이 완료되고 오류 로그가 없어야 한다.
+
+    plain, 구간 하나, 조각을 건드리지 않음(잇기 호출만 셈)
+    -> 잇기 1회, 완료 1회, 실패 0건, 구간 상태 == (완료 1, 실패 0), 구간 파일 있음,
+       완료 로그(log_download_complete)는 있고 오류 로그(log_error)는 없다
+    """
+    trouble = _JoinTrouble(monkeypatch, None, "")
+
+    run = _Run(host, tmp_path, [sources["plain"].selection(first, last)]).start()
+
+    assert trouble.joins == 1
+    assert (run.finished, run.failures) == (1, [])
+    assert (run.data.sections_done, run.data.sections_failed) == (1, 0)
+    assert os.path.isfile(run.paths[0])
+    names = [name for name, _args in run.logger.calls]
+    assert "log_download_complete" in names  # 로그 기록이 살아 있다
+    assert "log_error" not in names
