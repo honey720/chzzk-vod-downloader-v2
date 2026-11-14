@@ -76,7 +76,7 @@ def check_cut(frames: CutFrames, result: CutResult) -> CutCheck:
     # "non monotonically increasing dts"가 오류 출력에 섞인다(원본을 그대로 읽어도 나온다)
     try:
         done = run_ffmpeg(
-            ["-v", "error", *input_lock("mov"), "-i", result.output_path]
+            ["-v", "error", *input_lock("mov", piped=False), "-i", result.output_path]
             + ["-enc_time_base:v", f"1:{frames.timescale}", "-f", "null", "-"],
             timeout=_DECODE_TIMEOUT,
         )

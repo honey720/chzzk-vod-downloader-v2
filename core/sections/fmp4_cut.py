@@ -451,8 +451,9 @@ def _cut(
     # ---- 3. 잇기 — 조각 · 파이프 · 조각을 잇고, 뽑아 둔 오디오를 구간 시작 ~ 끝으로 잘라 함께 넣는다
     if len(pieces) == 1:
         # 조각이 하나면 concat을 거치지 않는다 — concat은 키프레임마다 SPS · PPS를 패킷 안에
-        # 끼워 넣는다. 통째로 흘리는 구간의 패킷이 원본 그대로 남는다
-        video_input = [*input_lock("mov"), "-i", pieces[0][1] or "pipe:0"]
+        # 끼워 넣는다. 통째로 흘리는 구간의 패킷이 원본 그대로 남는다. pipe:0이어도 변환 ffmpeg가
+        # 쓴 끝이 있는 mp4라 파일 입력처럼 -f까지 잠근다 (#600)
+        video_input = [*input_lock("mov", piped=False), "-i", pieces[0][1] or "pipe:0"]
     else:
         lines = ["ffconcat version 1.0"]
         for number, (_kind, name, piece_first, piece_end, _made) in enumerate(pieces):
@@ -464,7 +465,7 @@ def _cut(
             f.write("\n".join(lines) + "\n")
         # 목록 안의 파일(조각 mp4 · 변환 쪽의 조각난 mp4)도 concat의 format_whitelist로 잠긴다 (#600)
         video_input = [
-            "-protocol_whitelist", "file,pipe,fd", *input_lock("concat"), "-safe", "0",
+            "-protocol_whitelist", "file,pipe,fd", *input_lock("concat", piped=False), "-safe", "0",
             "-i", _LIST_FILE,
         ]  # fmt: skip
     scale = ["-video_track_timescale", str(frames.timescale)]
@@ -472,7 +473,7 @@ def _cut(
     if has_audio:
         audio_input = [
             "-ss", hc._seconds(start), "-t", hc._seconds(length),
-            *input_lock("mov"), "-i", _AUDIO_FILE,
+            *input_lock("mov", piped=False), "-i", _AUDIO_FILE,
         ]  # fmt: skip
     join = [
         *video_input,

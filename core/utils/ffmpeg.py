@@ -91,29 +91,38 @@ _LOCKED_CODECS = "h264,aac"
 _LOCKED_FORMATS = {"mov": "mov", "mpegts": "mpegts", "concat": "concat,mov"}
 
 
-def input_lock(input_format: str) -> list[str]:
+def input_lock(input_format: str, *, piped: bool) -> list[str]:
     """입력 하나에 붙일 잠금 옵션을 돌려준다 — ``-i`` 바로 앞에 넣는다 (#600).
 
     ffmpeg는 형식을 정하지 않으면 입력 바이트의 내용으로 demuxer를 고르고, 입력 정보를 읽는
     단계에서 스트림마다 decoder를 연다(``-c copy``여도). 그래서 잠그지 않으면 조작된 입력이
     앱이 쓰지 않는 demuxer · decoder에 닿는다. 셋이 막는 것이 다르다 — ``-f``는 내용으로
-    고르기를, ``-format_whitelist``는 concat 목록 안의 파일 형식을, ``-codec_whitelist``는
-    decoder를 막는다. 허용 밖이면 ffmpeg가 0이 아닌 코드로 끝난다.
+    고르기를, ``-format_whitelist``는 그 밖의 demuxer(concat 목록 안의 파일 포함)를,
+    ``-codec_whitelist``는 decoder를 막는다. 허용 밖이면 ffmpeg가 0이 아닌 코드로 끝난다.
+
+    세그먼트를 표준 입력으로 흘려 넣는 입력에는 ``-f``를 붙이지 않는다. ``-f``가 있으면
+    demuxer가 미디어가 아닌 바이트를 끝까지 읽으며 다음 상자 · 동기 바이트를 찾아, 실패가
+    공급이 끝날 때까지 늦어진다 — 넘긴 세그먼트를 바로 지우는 공급(#389)이면 다 지운 뒤에야
+    실패한다. ``-f``가 없으면 probe 창 안에서 형식을 못 찾고 바로 끝난다. 파일 입력은 끝이
+    있어 셋 다 붙인다.
 
     Args:
         input_format: ``_LOCKED_FORMATS``의 키 — fMP4 · mp4는 ``"mov"``, MPEG-TS는
             ``"mpegts"``, concat 목록은 ``"concat"``
+        piped: 세그먼트를 표준 입력으로 흘려 넣는 입력이면 참 — ``-f``를 빼고 whitelist 둘만
 
     Raises:
         ValueError: 모르는 입력 형식인 경우
     """
     if input_format not in _LOCKED_FORMATS:
         raise ValueError(f"잠글 수 없는 입력 형식: {input_format}")
-    return [
-        "-f", input_format,
+    whitelists = [
         "-format_whitelist", _LOCKED_FORMATS[input_format],
         "-codec_whitelist", _LOCKED_CODECS,
     ]  # fmt: skip
+    if piped:
+        return whitelists
+    return ["-f", input_format, *whitelists]
 
 
 @functools.lru_cache(maxsize=1)
@@ -458,8 +467,9 @@ def remux_stream(
     옵션 근거 (#88·#92 실측 — 치지직 실스트림으로 확인):
     - ``-i pipe:0``: 세그먼트 바이트 연결 스트림을 그대로 공급받는다(중간 파일
       없음). fMP4·TS는 스트리밍 컨테이너라 파이프 입력으로 정상 판별된다
-    - 입력 잠금(``input_lock``, #600): 형식을 내용으로 고르지 않고 부르는 쪽이 정한다 —
-      다운로더가 받는 형식은 다운로더 종류로 정해진다(m3u8 = fMP4, 암호화 = MPEG-TS)
+    - 입력 잠금(``input_lock``, #600): 그 형식의 demuxer와 h264 · aac decoder만 연다 —
+      다운로더가 받는 형식은 다운로더 종류로 정해진다(m3u8 = fMP4, 암호화 = MPEG-TS).
+      pipe 입력이라 ``-f``는 붙이지 않는다(미디어가 아닌 바이트에서 바로 실패하게)
     - ``-c copy``: 재인코딩 금지. 화질 무손실
     - 타임스탬프 0 정규화는 ffmpeg 기본 동작(-copyts 미지정) — 별도 옵션 불필요
     - ``+faststart``는 쓰지 않는다(#108) — moov를 선두로 옮기는 2차 패스가
@@ -571,7 +581,7 @@ def _copy_piped(
 ) -> None:
     """stdin의 바이트 스트림을 스트림 복사로 dst_path에 mp4로 쓴다. selection은 스트림을 고르는 옵션이다.
 
-    입력은 input_format으로 잠근다(``input_lock``).
+    입력은 input_format으로 잠근다(``input_lock``의 pipe 입력 — whitelist 둘).
 
     timeout · should_stop · should_pause는 바이트를 다 넣은 뒤의 기다림에 건다(``_await_end``).
     """
@@ -582,7 +592,7 @@ def _copy_piped(
         "-loglevel",
         "error",
         "-y",
-        *input_lock(input_format),
+        *input_lock(input_format, piped=True),
         "-i",
         "pipe:0",
         *selection,
@@ -678,7 +688,7 @@ def remux_through(
     Args:
         chunks: 변환 ffmpeg의 표준 입력으로 넣을 바이트
         convert_args: 변환 ffmpeg의 인자 — 입력은 ``pipe:0``, 출력은 ``pipe:1``이어야 한다.
-            입력 잠금(``input_lock``)은 붙여 준다
+            입력 잠금(``input_lock``의 pipe 입력 — whitelist 둘)은 붙여 준다
         join_args: 잇는 ffmpeg의 인자 — 출력 경로까지 든 것. ``-nostdin``은 붙여 준다(없으면
             ffmpeg가 표준 입력에서 키 입력을 읽으며 파이프의 바이트를 집어 간다). 입력마다
             잠금(``input_lock``)을 부르는 쪽이 넣는다 — 입력이 여럿이고 형식이 다르다
@@ -720,7 +730,7 @@ def remux_through(
     _end_with_parent(join)
     try:
         convert = subprocess.Popen(
-            [*head, *input_lock(input_format), *convert_args],
+            [*head, *input_lock(input_format, piped=True), *convert_args],
             stdin=subprocess.PIPE,
             stdout=join.stdin,
             stderr=subprocess.PIPE,

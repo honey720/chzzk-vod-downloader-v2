@@ -122,7 +122,7 @@ _TS_SYNC_BYTE = 0x47
 
 # 파일 입력의 잠금 옵션 — 이 모듈이 읽는 파일은 mp4 · fMP4뿐이다. MPEG-TS는
 # _reject_transport_stream이 먼저 거부하고, TS 구간은 mp4로 다시 싼 뒤에 온다 (#600)
-_FILE_LOCK = tuple(input_lock("mov"))
+_FILE_LOCK = tuple(input_lock("mov", piped=False))
 
 _X264_PROFILES = {66: "baseline", 77: "main", 100: "high"}  # profile_idc → -profile:v 값
 _HIDDEN_PACKET = 0x4  # framecrc의 F= 값에서 편집 목록이 가린 패킷을 뜻하는 비트
