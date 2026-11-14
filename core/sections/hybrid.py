@@ -67,6 +67,7 @@ from core.utils.ffmpeg import (
     FFmpegCancelledError,
     FFmpegError,
     FFmpegTimeoutError,
+    error_lines,
     error_tail,
     input_lock,
     run_ffmpeg,
@@ -442,10 +443,14 @@ def _stage(
             on_stage(name, time.perf_counter() - started)
 
 
-def _run(args: list[str], timeout: float, cwd: str) -> str:
+def _run(args: list[str], timeout: float, cwd: str, *, error_line_count: int | None = None) -> str:
     """ffmpeg를 실행하고 stderr를 돌려준다. 실패·시간 초과는 CutError로 바꾼다.
 
     도는 단계가 진행을 받기로 했으면(``_out_time_sink``) ffmpeg의 출력 시각을 그리로 넘긴다.
+
+    Args:
+        error_line_count: 주면 실패 글에 stderr의 끝을 글자 수(500) 대신 이 줄 수만큼 붙인다 —
+            조각을 잇는 ffmpeg가 쓴다 (#602)
     """
     sink = _out_time_sink.get()
     extra = {} if sink is None else {"on_out_time": sink}
@@ -456,7 +461,11 @@ def _run(args: list[str], timeout: float, cwd: str) -> str:
     except FFmpegError as e:
         raise CutError(CUT_FAILED, str(e)) from e
     if done.returncode != 0:
-        raise CutError(CUT_FAILED, f"exit {done.returncode}: {error_tail(done.stderr, 500)}")
+        if error_line_count is None:
+            tail = error_tail(done.stderr, 500)
+        else:
+            tail = error_lines(done.stderr, error_line_count)
+        raise CutError(CUT_FAILED, f"exit {done.returncode}: {tail}")
     return done.stderr
 
 

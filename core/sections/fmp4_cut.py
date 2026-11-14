@@ -48,6 +48,7 @@ from core.utils.ffmpeg import (
     FFmpegCancelledError,
     FFmpegError,
     FFmpegTimeoutError,
+    JOIN_ERROR_LINES,
     extract_audio_stream,
     input_lock,
     read_in_chunks,
@@ -520,7 +521,7 @@ def _cut(
             except FFmpegError as e:
                 raise CutError(CUT_FAILED, str(e)) from e
         else:
-            hc._run(join, hc._COPY_TIMEOUT, work_dir)
+            hc._run(join, hc._COPY_TIMEOUT, work_dir, error_line_count=JOIN_ERROR_LINES)
     progress.finish("join")
     plan = CutPlan(first, last, tuple(CutPiece(kind, a, b) for kind, _name, a, b, _made in pieces))
     overhang = given.audio_overhang if has_audio else 0.0

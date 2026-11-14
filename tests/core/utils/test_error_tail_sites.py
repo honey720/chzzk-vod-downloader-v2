@@ -75,6 +75,24 @@ def test_cut_failure_text_keeps_the_whole_path_where_its_tail_is_cut(
     assert FAILED_PATH in str(info.value)
 
 
+def test_cut_run_given_a_line_count_carries_that_many_last_lines(monkeypatch) -> None:
+    """hybrid_cut._run에 error_line_count를 주면 실패 글에 stderr의 끝 그만큼의 줄이 통째로 붙어야 한다 (#602).
+
+    ffmpeg 실행 대역이 returncode 1과 "first\\nkeep me\\n" + 600글자 한 줄 + "\\nlast"를 냄,
+    error_line_count=3 (글자 수 500으로 자르면 "keep me"가 빠진다)
+    -> CutError의 글에 "keep me" · 600글자 줄 · "last"가 있고 "first"는 없다
+    """
+    long_line = "x" * 600
+    monkeypatch.setattr(hybrid_cut, "_ffmpeg", _failed(f"first\nkeep me\n{long_line}\nlast"))
+
+    with pytest.raises(CutError) as info:
+        hybrid_cut._run(["-i", "list.txt", "out.mp4"], 10, ".", error_line_count=3)
+
+    text = str(info.value)
+    assert "keep me" in text and long_line in text and text.endswith("last")
+    assert "first" not in text
+
+
 _FAKE_FFMPEG = textwrap.dedent(
     """
     import os

@@ -84,6 +84,11 @@ class FFmpegCancelledError(Exception):
 # (그동안 GUI가 선다) 그보다 훨씬 짧아야 한다
 _STOP_POLL_SECONDS = 0.05
 
+# 잇기(remux_through)가 실패할 때 실패 글에 붙이는 ffmpeg stderr의 끝 줄 수 (#602). 동봉 7.1이
+# 조각을 못 열 때 내는 줄이 넷이다 — 오류 앞의 경고 · 옛 판의 다른 문구까지 두 배로 둔다.
+# ffmpeg 로그 한 줄은 1024바이트를 넘지 않는다(av_log의 줄 버퍼)
+JOIN_ERROR_LINES = 8
+
 # 입력 잠금이 decoder를 열게 두는 코덱 — 치지직 VOD는 h264 영상 + aac 오디오다 (#600)
 _LOCKED_CODECS = "h264,aac"
 # 입력 형식(-f) → 그 입력이 열 수 있는 형식(-format_whitelist). concat은 목록 안의 파일
@@ -798,7 +803,7 @@ def remux_through(
     if any(codes):
         _remove_quietly(dst_path)
         tail = " | ".join(
-            error_tail(errors.get(name, b"").decode(errors="replace"), 250)
+            error_lines(errors.get(name, b"").decode(errors="replace"), JOIN_ERROR_LINES)
             for name in ("convert", "join")
         )
         raise RemuxError(f"ffmpeg remux 실패 (변환 exit {codes[0]} · 잇기 exit {codes[1]}): {tail}")
@@ -891,6 +896,17 @@ def parse_out_time(line: str) -> float | None:
         return int(value) / 1_000_000
     except ValueError:
         return None
+
+
+def error_lines(text: str, count: int) -> str:
+    """오류 글(ffmpeg의 stderr)의 끝 ``count`` 줄을 돌려준다 (#602).
+
+    줄째로 자르므로 경로 한가운데서 시작하지 않는다 — ``error_tail``이 글자 수로 자르면서 지키는
+    규칙(#397)이 따로 필요 없다. 글자 수로 자르면 줄이 긴 판에서 까닭이 적힌 줄(조각을 못 연 줄)이
+    잘려 나간다. 빈 줄은 세지 않는다.
+    """
+    lines = [line for line in text.strip().splitlines() if line.strip()]
+    return "\n".join(lines[-count:])
 
 
 def error_tail(text: str, limit: int) -> str:
