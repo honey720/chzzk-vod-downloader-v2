@@ -287,7 +287,7 @@ def test_remux_stream_produces_mp4_with_moov_and_no_second_pass(tmp_path) -> Non
     dst = tmp_path / "dst.mp4"
     _make_tiny_fmp4(src)
 
-    remux_stream(read_in_chunks(str(src)), str(dst))
+    remux_stream(read_in_chunks(str(src)), str(dst), input_format="mov")
 
     boxes = _top_level_boxes(dst)
     assert "moov" in boxes and "mdat" in boxes  # 전역 인덱스 존재 (#88의 본질)
@@ -307,7 +307,7 @@ def test_remux_stream_ts_input_produces_mp4(tmp_path) -> None:
     dst = tmp_path / "dst.mp4"
     _make_tiny_ts(src)
 
-    remux_stream(read_in_chunks(str(src)), str(dst))
+    remux_stream(read_in_chunks(str(src)), str(dst), input_format="mpegts")
 
     boxes = _top_level_boxes(dst)
     assert "moov" in boxes and "mdat" in boxes
@@ -321,7 +321,7 @@ def test_remux_stream_writes_mp4_regardless_of_extension(tmp_path) -> None:
     dst = tmp_path / "이름을 바꾼 산출물.mkv"
     _make_tiny_fmp4(src)
 
-    remux_stream(read_in_chunks(str(src)), str(dst))
+    remux_stream(read_in_chunks(str(src)), str(dst), input_format="mov")
 
     assert _top_level_boxes(dst)[0] == "ftyp"  # mp4 계열 시그니처
 
@@ -331,7 +331,7 @@ def test_remux_stream_invalid_input_raises_and_leaves_no_output(tmp_path) -> Non
     dst = tmp_path / "dst.mp4"
 
     with pytest.raises(RemuxError):
-        remux_stream(iter([b"this is not media data" * 100]), str(dst))
+        remux_stream(iter([b"this is not media data" * 100]), str(dst), input_format="mov")
     assert not dst.exists()  # 무음 실패 금지·쓰레기 산출물 금지
 
 
@@ -349,7 +349,7 @@ def test_remux_stream_feed_exception_propagates_and_cleans_output(tmp_path) -> N
         raise FeedAborted
 
     with pytest.raises(FeedAborted):
-        remux_stream(feed(), str(dst))
+        remux_stream(feed(), str(dst), input_format="mov")
     assert not dst.exists()  # 중단 시 불완전 산출물 미잔류
 
 
@@ -398,7 +398,7 @@ def test_streamed_failure_raises_postprocess_error_and_preserves_segments(
     monkeypatch.setattr(base_module, "remux_stream", broken_remux_stream)
 
     with pytest.raises(PostprocessError):
-        BaseDownloader._remux_streamed(fake, [str(s) for s in segs])
+        BaseDownloader._remux_streamed(fake, [str(s) for s in segs], "mov")
 
     assert all(s.exists() for s in segs)  # 넘기지 않은 세그먼트는 건드리지 않는다
     assert fake.errors  # 원인 로그 존재 (무음 실패 금지)
@@ -425,7 +425,7 @@ def test_streamed_success_feeds_in_order_and_counts_segments(tmp_path, monkeypat
                 f.write(chunk)
 
     monkeypatch.setattr(base_module, "remux_stream", passthrough)
-    BaseDownloader._remux_streamed(fake, segs)
+    BaseDownloader._remux_streamed(fake, segs, "mov")
 
     assert (tmp_path / "out.mp4").read_bytes() == b"\x01" * 10 + b"\x02" * 10 + b"\x03" * 10
     assert fake.s.merged_segments == 3
@@ -453,7 +453,7 @@ def test_streamed_feed_removes_each_segment_once_the_next_one_is_asked_for(
             seen.append([os.path.exists(s) for s in segs])
 
     monkeypatch.setattr(base_module, "remux_stream", watching)
-    BaseDownloader._remux_streamed(fake, segs)
+    BaseDownloader._remux_streamed(fake, segs, "mov")
 
     assert seen == [[True, True, True], [False, True, True], [False, False, True]]
 
@@ -490,7 +490,7 @@ def test_streamed_feed_removes_a_segment_only_after_its_last_chunk(tmp_path, mon
     monkeypatch.setattr(base_module, "read_in_chunks", small_chunks)
     monkeypatch.setattr(base_module, "_remove_fed_segment", recording_remove)
     monkeypatch.setattr(base_module, "remux_stream", watching)
-    BaseDownloader._remux_streamed(fake, segs)
+    BaseDownloader._remux_streamed(fake, segs, "mov")
 
     assert len(received) == 9, "전제: 세그먼트마다 조각이 셋이다"
     assert all(received)
@@ -524,7 +524,7 @@ def test_streamed_failure_midway_leaves_only_the_segments_not_yet_fed(
     monkeypatch.setattr(base_module, "remux_stream", fails_after_two)
 
     with pytest.raises(PostprocessError):
-        BaseDownloader._remux_streamed(fake, segs)
+        BaseDownloader._remux_streamed(fake, segs, "mov")
 
     assert [os.path.exists(s) for s in segs] == [False, True, True]
     assert fake.errors
@@ -552,7 +552,7 @@ def test_streamed_feed_goes_on_when_a_fed_segment_cannot_be_removed(tmp_path, mo
 
     monkeypatch.setattr(base_module, "remux_stream", passthrough)
     monkeypatch.setattr(base_module.os, "remove", locked)
-    BaseDownloader._remux_streamed(fake, segs)
+    BaseDownloader._remux_streamed(fake, segs, "mov")
 
     assert (tmp_path / "out.mp4").read_bytes() == b"\x01" * 10 + b"\x02" * 10 + b"\x03" * 10
     assert fake.s.merged_segments == 3
@@ -583,7 +583,7 @@ def _run_streamed_in_thread(fake, paths) -> tuple[threading.Thread, list[BaseExc
 
     def target() -> None:
         try:
-            BaseDownloader._remux_streamed(fake, paths)
+            BaseDownloader._remux_streamed(fake, paths, "mov")
         except BaseException as e:  # noqa: BLE001 — 검증용 수집
             raised.append(e)
 
@@ -726,7 +726,7 @@ def test_remux_stream_passes_guard_env_to_subprocess(tmp_path, monkeypatch) -> N
     monkeypatch.setattr(ffmpeg_module, "_subprocess_env", lambda exe: sentinel_env)
     monkeypatch.setattr(ffmpeg_module.subprocess, "Popen", _FakePopen)
 
-    remux_stream(iter([b"x"]), str(tmp_path / "out.mp4"))
+    remux_stream(iter([b"x"]), str(tmp_path / "out.mp4"), input_format="mov")
 
     assert captured["env"] is sentinel_env
 
@@ -750,7 +750,7 @@ def test_bundled_ts_remux_succeeds_with_guard(tmp_path, monkeypatch) -> None:
     dst = tmp_path / "dst.mp4"
     _make_tiny_ts(src)  # SDT 포함 — 가드 없이는 크래시하는 입력
 
-    remux_stream(read_in_chunks(str(src)), str(dst))
+    remux_stream(read_in_chunks(str(src)), str(dst), input_format="mpegts")
 
     boxes = _top_level_boxes(dst)
     assert "moov" in boxes and "mdat" in boxes  # 정상 remux 완주 (moov 위치는 #108)
@@ -775,14 +775,16 @@ def test_guard_output_is_byte_identical(tmp_path, monkeypatch) -> None:
     ts_nosdt = tmp_path / "nosdt.ts"
     _strip_sdt(ts_full, ts_nosdt)
 
-    for src in (fmp4, ts_nosdt):
+    for src, input_format in ((fmp4, "mov"), (ts_nosdt, "mpegts")):
         guarded = tmp_path / f"{src.stem}_guarded.mp4"
-        remux_stream(read_in_chunks(str(src)), str(guarded))  # 가드 자동 적용
+        remux_stream(
+            read_in_chunks(str(src)), str(guarded), input_format=input_format
+        )  # 가드 자동 적용
 
         unguarded = tmp_path / f"{src.stem}_unguarded.mp4"
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(ffmpeg_module, "_subprocess_env", lambda exe: None)
-            remux_stream(read_in_chunks(str(src)), str(unguarded))
+            remux_stream(read_in_chunks(str(src)), str(unguarded), input_format=input_format)
 
         assert guarded.read_bytes() == unguarded.read_bytes(), f"{src.name} 산출물 상이"
 
@@ -829,10 +831,15 @@ def test_remux_through_makes_the_same_video_as_remuxing_directly(tmp_path) -> No
     step = len(data) // 3 + 1
     chunks = [data[i : i + step] for i in range(0, len(data), step)]
     direct, through = tmp_path / "direct.mp4", tmp_path / "through.mp4"
-    remux_stream(iter(chunks), str(direct))
+    remux_stream(iter(chunks), str(direct), input_format="mov")
 
     ffmpeg_module.remux_through(
-        iter(chunks), _CONVERT, _join_args(tmp_path, through), str(through), cwd=str(tmp_path)
+        iter(chunks),
+        _CONVERT,
+        _join_args(tmp_path, through),
+        str(through),
+        cwd=str(tmp_path),
+        input_format="mov",
     )
 
     stamps = _video_stamps(through)
@@ -854,6 +861,7 @@ def test_remux_through_fails_and_leaves_no_output_when_the_input_is_not_media(tm
             _join_args(tmp_path, out),
             str(out),
             cwd=str(tmp_path),
+            input_format="mov",
         )
 
     assert not out.exists()
@@ -886,7 +894,12 @@ def test_remux_through_ends_both_processes_and_cleans_up_when_the_feed_raises(
 
     with pytest.raises(RuntimeError, match="공급 중단"):
         ffmpeg_module.remux_through(
-            feed(), _CONVERT, _join_args(tmp_path, out), str(out), cwd=str(tmp_path)
+            feed(),
+            _CONVERT,
+            _join_args(tmp_path, out),
+            str(out),
+            cwd=str(tmp_path),
+            input_format="mov",
         )
 
     assert len(launched) == 2
@@ -908,7 +921,12 @@ def test_remux_through_fails_when_only_the_join_side_fails(tmp_path) -> None:
 
     with pytest.raises(RemuxError):
         ffmpeg_module.remux_through(
-            iter([src.read_bytes()]), _CONVERT, join, str(out), cwd=str(tmp_path)
+            iter([src.read_bytes()]),
+            _CONVERT,
+            join,
+            str(out),
+            cwd=str(tmp_path),
+            input_format="mov",
         )
 
     assert not out.exists()
@@ -918,11 +936,13 @@ _NOT_MEDIA = b"not media " * 6554  # 미디어가 아닌 바이트 약 64KB — 
 
 
 def _remux_in_one_step(chunks, out, work) -> None:
-    remux_stream(chunks, str(out))
+    remux_stream(chunks, str(out), input_format="mov")
 
 
 def _remux_in_two_steps(chunks, out, work) -> None:
-    ffmpeg_module.remux_through(chunks, _CONVERT, _join_args(work, out), str(out), cwd=str(work))
+    ffmpeg_module.remux_through(
+        chunks, _CONVERT, _join_args(work, out), str(out), cwd=str(work), input_format="mov"
+    )
 
 
 _REMUXERS = pytest.mark.parametrize(
@@ -991,6 +1011,7 @@ def test_segment_feed_left_midway_closes_the_reader_of_every_segment_it_opened(
             _join_args(tmp_path, out),
             str(out),
             cwd=str(tmp_path),
+            input_format="mov",
         )
 
     assert raised.value.__traceback__ is not None
@@ -1062,7 +1083,7 @@ def test_remux_through_with_both_sides_succeeding_keeps_the_output(tmp_path, mon
     out = tmp_path / "out.mp4"
     _fake_pair(monkeypatch, out, convert_code=0, join_code=0)
 
-    ffmpeg_module.remux_through(iter([b"abc" * 1000]), [], [], str(out))
+    ffmpeg_module.remux_through(iter([b"abc" * 1000]), [], [], str(out), input_format="mov")
 
     assert out.read_bytes() == b"partial"
 
@@ -1079,7 +1100,7 @@ def test_remux_through_removes_the_output_the_join_side_made_when_the_convert_si
     _fake_pair(monkeypatch, out, convert_code=1, join_code=0)
 
     with pytest.raises(RemuxError):
-        ffmpeg_module.remux_through(iter([b"abc" * 1000]), [], [], str(out))
+        ffmpeg_module.remux_through(iter([b"abc" * 1000]), [], [], str(out), input_format="mov")
 
     assert (tmp_path / "out.mp4.made").exists(), "전제: 잇는 쪽이 산출물을 만들었다"
     assert not out.exists()
@@ -1098,7 +1119,7 @@ def test_remux_through_fails_when_the_join_side_fails_after_the_convert_side_end
     _fake_pair(monkeypatch, out, convert_code=0, join_code=1)
 
     with pytest.raises(RemuxError):
-        ffmpeg_module.remux_through(iter([b"abc" * 1000]), [], [], str(out))
+        ffmpeg_module.remux_through(iter([b"abc" * 1000]), [], [], str(out), input_format="mov")
 
     assert (tmp_path / "out.mp4.made").exists(), "전제: 잇는 쪽이 산출물을 만들었다"
     assert not out.exists()
@@ -1131,7 +1152,9 @@ def test_remux_through_returns_the_warnings_of_the_join_side_and_asks_it_for_the
 
     monkeypatch.setattr(ffmpeg_module.subprocess, "Popen", fake)
 
-    warnings = ffmpeg_module.remux_through(iter([b"abc" * 1000]), [], [], str(out))
+    warnings = ffmpeg_module.remux_through(
+        iter([b"abc" * 1000]), [], [], str(out), input_format="mov"
+    )
 
     assert "DTS mark" in warnings
     joined = next(command for command in commands if "-nostdin" in command)
@@ -1314,7 +1337,7 @@ def test_remux_through_stops_waiting_when_asked_to_stop_after_the_input_ended(
 
     with pytest.raises(ffmpeg_module.FFmpegCancelledError):
         ffmpeg_module.remux_through(
-            iter([b"abc" * 1000]), [], [], str(out), should_stop=lambda: True
+            iter([b"abc" * 1000]), [], [], str(out), should_stop=lambda: True, input_format="mov"
         )
 
     assert sorted(started) == ["convert", "join"]
@@ -1334,7 +1357,9 @@ def test_remux_through_gives_up_when_the_processes_outlive_the_timeout_after_the
     started = _lingering_pair(monkeypatch, out, linger=8)
 
     with pytest.raises(ffmpeg_module.FFmpegTimeoutError):
-        ffmpeg_module.remux_through(iter([b"abc" * 1000]), [], [], str(out), timeout=0.5)
+        ffmpeg_module.remux_through(
+            iter([b"abc" * 1000]), [], [], str(out), timeout=0.5, input_format="mov"
+        )
 
     assert sorted(started) == ["convert", "join"]
     assert all(process.poll() is not None for process in started.values())
@@ -1355,7 +1380,9 @@ def test_remux_through_holds_the_processes_while_paused_and_does_not_count_that_
     pause = _HoldOnce(out, begin=lambda: started["convert"].poll() is not None)
     feed = _feed_when_ready(_marker(out, ".ready"), _marker(out, ".convert-ready"))
 
-    ffmpeg_module.remux_through(feed, [], [], str(out), timeout=LIMIT, should_pause=pause)
+    ffmpeg_module.remux_through(
+        feed, [], [], str(out), timeout=LIMIT, should_pause=pause, input_format="mov"
+    )
 
     assert pause.held_for() >= HOLD > LIMIT
     assert not pause.finished_while_held, "일시정지 동안 잇기 대역이 끝까지 갔다"
@@ -1401,7 +1428,9 @@ def test_remux_stream_stops_waiting_when_asked_to_stop_after_the_input_ended(
     started = _lingering_one(monkeypatch, linger=8)
 
     with pytest.raises(ffmpeg_module.FFmpegCancelledError):
-        ffmpeg_module.remux_stream(iter([b"abc" * 1000]), str(out), should_stop=lambda: True)
+        ffmpeg_module.remux_stream(
+            iter([b"abc" * 1000]), str(out), should_stop=lambda: True, input_format="mov"
+        )
 
     assert len(started) == 1 and started[0].poll() is not None
     assert not out.exists() and not (tmp_path / "out.mp4.done").exists()
@@ -1419,7 +1448,7 @@ def test_remux_stream_gives_up_when_ffmpeg_outlives_the_timeout_after_the_input_
     started = _lingering_one(monkeypatch, linger=8)
 
     with pytest.raises(ffmpeg_module.FFmpegTimeoutError):
-        ffmpeg_module.remux_stream(iter([b"abc" * 1000]), str(out), timeout=0.5)
+        ffmpeg_module.remux_stream(iter([b"abc" * 1000]), str(out), timeout=0.5, input_format="mov")
 
     assert len(started) == 1 and started[0].poll() is not None
     assert not out.exists()
@@ -1439,7 +1468,11 @@ def test_remux_stream_holds_ffmpeg_while_paused_and_does_not_count_that_time(
     pause = _HoldOnce(out)
 
     ffmpeg_module.remux_stream(
-        _feed_when_ready(_marker(out, ".ready")), str(out), timeout=LIMIT, should_pause=pause
+        _feed_when_ready(_marker(out, ".ready")),
+        str(out),
+        timeout=LIMIT,
+        should_pause=pause,
+        input_format="mov",
     )
 
     assert pause.held_for() >= HOLD > LIMIT
@@ -1472,7 +1505,7 @@ def test_streamed_remux_waits_under_the_stop_pause_and_time_limit_of_the_downloa
 
     monkeypatch.setattr(base_module, "remux_stream", asking)
 
-    BaseDownloader._remux_streamed(fake, [str(segment)])
+    BaseDownloader._remux_streamed(fake, [str(segment)], "mov")
 
     assert seen == {
         "timeout": 3600,
@@ -1496,7 +1529,7 @@ def test_streamed_remux_stopped_while_waiting_ends_without_a_failure(tmp_path, m
 
     monkeypatch.setattr(base_module, "remux_stream", cancelled)
 
-    BaseDownloader._remux_streamed(fake, [str(segment)])
+    BaseDownloader._remux_streamed(fake, [str(segment)], "mov")
 
     assert fake.errors == []
 

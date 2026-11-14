@@ -47,7 +47,7 @@ class JoinedSource:
 
     def __init__(self, plain_segments: list[bytes], folder, audio_rate: int = 48000) -> None:
         self.path = str(folder / "all_segments.mp4")
-        remux_stream(iter(plain_segments), self.path)
+        remux_stream(iter(plain_segments), self.path, input_format="mpegts")
 
         def read(offset: int, size: int) -> bytes:
             with open(self.path, "rb") as f:

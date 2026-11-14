@@ -68,6 +68,7 @@ from core.utils.ffmpeg import (
     FFmpegError,
     FFmpegTimeoutError,
     error_tail,
+    input_lock,
     run_ffmpeg,
 )
 
@@ -118,6 +119,10 @@ _out_time_sink: ContextVar[Callable[[float], None] | None] = ContextVar(
 
 _TS_PACKET_SIZE = 188  # MPEG-TS 패킷 길이 — 입력이 TS인지 가릴 때 쓴다
 _TS_SYNC_BYTE = 0x47
+
+# 파일 입력의 잠금 옵션 — 이 모듈이 읽는 파일은 mp4 · fMP4뿐이다. MPEG-TS는
+# _reject_transport_stream이 먼저 거부하고, TS 구간은 mp4로 다시 싼 뒤에 온다 (#600)
+_FILE_LOCK = tuple(input_lock("mov"))
 
 _X264_PROFILES = {66: "baseline", 77: "main", 100: "high"}  # profile_idc → -profile:v 값
 _HIDDEN_PACKET = 0x4  # framecrc의 F= 값에서 편집 목록이 가린 패킷을 뜻하는 비트
@@ -494,7 +499,7 @@ def _encode_command(
     length = _end_of(frames, piece.end) - seek - margin
     return [
         *(["-ss", _seconds(seek)] if seek > 0 else []),
-        "-i", source_path,
+        *_FILE_LOCK, "-i", source_path,
         "-t", _seconds(length),
         "-map", "0:v:0", "-an",
         *_x264_args(video, frames.timescale, parameter_set_id),
@@ -536,7 +541,7 @@ def _copy_command(source_path: str, frames: CutFrames, piece: CutPiece, name: st
     stop = (end_dts + previous_dts) / 2 - frames.input_start
     return [
         *(["-ss", _seconds(seek)] if seek > 0 else []),
-        "-i", source_path,
+        *_FILE_LOCK, "-i", source_path,
         "-t", _seconds(stop - max(seek, 0.0)),
         "-map", "0:v:0", "-an", "-c:v", "copy",
         "-video_track_timescale", str(frames.timescale),
@@ -549,7 +554,7 @@ def _copy_rest_command(source_path: str, frames: CutFrames, first: int, name: st
     seek = _start_of(frames, first)  # 여유 없이 키프레임 시각 그대로
     return [
         *(["-ss", _seconds(seek)] if seek > 0 else []),
-        "-i", source_path,
+        *_FILE_LOCK, "-i", source_path,
         "-map", "0:v:0", "-an", "-c:v", "copy",
         "-video_track_timescale", str(frames.timescale),
         "-f", "mp4", name,
@@ -655,7 +660,7 @@ def _read_params(path: str, reorder_delay: int) -> VideoParams:
     """
     try:
         done = _ffmpeg(
-            ["-v", "info", "-i", path, "-map", "0:v:0", "-c", "copy", "-frames:v", "1",
+            ["-v", "info", *_FILE_LOCK, "-i", path, "-map", "0:v:0", "-c", "copy", "-frames:v", "1",
              "-bsf:v", "trace_headers", "-f", "null", "-"],
             timeout=_PROBE_TIMEOUT,
         )  # fmt: skip
@@ -725,7 +730,8 @@ def read_packets(
     """
     try:
         done = _ffmpeg(
-            ["-v", "error", *extra, "-i", path, "-map", f"0:{stream}", "-c", "copy", "-f", "framecrc", "-"],
+            ["-v", "error", *extra, *_FILE_LOCK, "-i", path, "-map", f"0:{stream}", "-c", "copy",
+             "-f", "framecrc", "-"],
             timeout=_COPY_TIMEOUT,
         )  # fmt: skip
     except FFmpegTimeoutError as e:

@@ -127,7 +127,7 @@ def test_remux_through_failure_text_keeps_the_whole_path_where_its_tail_is_cut(
     with pytest.raises(RemuxError) as info:
         ffmpeg_module.remux_through(
             [], ["-i", "pipe:0", "pipe:1"], ["-i", "pipe:0", str(tmp_path / "out.mp4")],
-            str(tmp_path / "out.mp4"), timeout=30,
+            str(tmp_path / "out.mp4"), timeout=30, input_format="mov",
         )  # fmt: skip
 
     assert str(info.value).count(FAILED_PATH) == 2

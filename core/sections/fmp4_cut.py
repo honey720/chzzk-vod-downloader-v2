@@ -49,6 +49,7 @@ from core.utils.ffmpeg import (
     FFmpegError,
     FFmpegTimeoutError,
     extract_audio_stream,
+    input_lock,
     read_in_chunks,
     remux_through,
 )
@@ -92,6 +93,8 @@ class SegmentSource:
     frame_counts: Sequence[int]  # 세그먼트마다의 영상 프레임 수
     key_starts: Sequence[bool]  # 세그먼트마다 — 키프레임으로 시작하는가(영상이 없으면 참)
     prefix: bytes  # 세그먼트들 앞에 한 번 넘기는 바이트 — fMP4의 초기화 세그먼트. 없으면 빈 것
+    # 세그먼트를 흘려 넣는 ffmpeg의 입력 형식(input_lock의 인자) — fMP4는 "mov", TS는 "mpegts" (#600)
+    input_format: str
     # (만들 파일 이름, 세그먼트의 자리) → (ffmpeg가 탐색할 수 있는 입력 파일, 그 파일의 프레임 정보).
     # 경계 조각을 만들 세그먼트에만 부른다. 파일은 작업 폴더에 만든다
     boundary: Callable[[str, int], tuple[str, CutFrames]]
@@ -174,6 +177,7 @@ def cut_fmp4_section(
                 for segment in parsed
             ),
             prefix=head.init_data,
+            input_format="mov",
             boundary=lambda name, position: (
                 _joined(work_dir, name, head, paths[position]),
                 _segment_frames(head, parsed[position], section),
@@ -406,6 +410,7 @@ def _cut(
                         (lambda number: passed(number + 1)) if passed is not None else None,
                     ),
                     os.path.join(work_dir, _AUDIO_FILE),
+                    input_format=given.input_format,
                     timeout=hc._COPY_TIMEOUT,
                     should_stop=hc._stop_check.get(),
                     should_pause=hc._pause_check.get(),
@@ -447,7 +452,7 @@ def _cut(
     if len(pieces) == 1:
         # 조각이 하나면 concat을 거치지 않는다 — concat은 키프레임마다 SPS · PPS를 패킷 안에
         # 끼워 넣는다. 통째로 흘리는 구간의 패킷이 원본 그대로 남는다
-        video_input = ["-i", pieces[0][1] or "pipe:0"]
+        video_input = [*input_lock("mov"), "-i", pieces[0][1] or "pipe:0"]
     else:
         lines = ["ffconcat version 1.0"]
         for number, (_kind, name, piece_first, piece_end, _made) in enumerate(pieces):
@@ -457,15 +462,18 @@ def _cut(
                 lines.append(f"duration {hc._seconds(span)}")
         with open(os.path.join(work_dir, _LIST_FILE), "w", encoding="utf-8", newline="\n") as f:
             f.write("\n".join(lines) + "\n")
+        # 목록 안의 파일(조각 mp4 · 변환 쪽의 조각난 mp4)도 concat의 format_whitelist로 잠긴다 (#600)
         video_input = [
-            "-protocol_whitelist", "file,pipe,fd", "-f", "concat", "-safe", "0", "-i", _LIST_FILE,
+            "-protocol_whitelist", "file,pipe,fd", *input_lock("concat"), "-safe", "0",
+            "-i", _LIST_FILE,
         ]  # fmt: skip
     scale = ["-video_track_timescale", str(frames.timescale)]
-    audio_input = (
-        ["-ss", hc._seconds(start), "-t", hc._seconds(length), "-i", _AUDIO_FILE]
-        if has_audio
-        else []
-    )
+    audio_input = []
+    if has_audio:
+        audio_input = [
+            "-ss", hc._seconds(start), "-t", hc._seconds(length),
+            *input_lock("mov"), "-i", _AUDIO_FILE,
+        ]  # fmt: skip
     join = [
         *video_input,
         *audio_input,
@@ -493,6 +501,7 @@ def _cut(
                     convert,
                     join,
                     output_path,
+                    input_format=given.input_format,
                     cwd=work_dir,
                     # 세그먼트를 다 넘긴 뒤의 기다림도 다른 단계와 같은 제한 시간 · 멈춤 · 일시정지를 따른다
                     timeout=hc._COPY_TIMEOUT,

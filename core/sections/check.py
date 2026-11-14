@@ -23,7 +23,7 @@ A/V는 컨테이너에 적힌 시각으로 잰다. 디코드한 샘플 수로 �
 """
 
 from core.sections.cut import CutCheck, CutFrames, CutResult
-from core.utils.ffmpeg import FFmpegError, error_head, run_ffmpeg
+from core.utils.ffmpeg import FFmpegError, error_head, input_lock, run_ffmpeg
 from core.sections.hybrid import CUT_FAILED, CutError, expected_end, frame_ticks, read_packets
 
 # PTS를 틱으로 견줄 때 허용하는 차이(틱) — 초 단위 float를 틱으로 되돌릴 때의 반올림
@@ -76,7 +76,7 @@ def check_cut(frames: CutFrames, result: CutResult) -> CutCheck:
     # "non monotonically increasing dts"가 오류 출력에 섞인다(원본을 그대로 읽어도 나온다)
     try:
         done = run_ffmpeg(
-            ["-v", "error", "-i", result.output_path]
+            ["-v", "error", *input_lock("mov"), "-i", result.output_path]
             + ["-enc_time_base:v", f"1:{frames.timescale}", "-f", "null", "-"],
             timeout=_DECODE_TIMEOUT,
         )
