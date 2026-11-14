@@ -37,20 +37,22 @@ def _git_tracked_top_level_names() -> frozenset[str] | None:
     """
     try:
         result = subprocess.run(
-            ["git", "ls-files", "--", "*.py"],
+            ["git", "ls-files", "-z", "--", "*.py"],
             cwd=ROOT_DIR,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=10,
             check=True,
         )
     except (OSError, subprocess.SubprocessError):
         return None
     names: set[str] = set()
-    for line in result.stdout.splitlines():
-        if not line.strip():
+    # -z: 비ASCII 경로를 따옴표로 감싸지 않게 한다 — 감싸면 첫 조각이 `"app`이 되어 식별자 검사에서 빠진다(#597)
+    for line in result.stdout.split("\0"):
+        if not line:
             continue
-        path = Path(line.strip())
+        path = Path(line)
         name = path.parts[0] if len(path.parts) > 1 else path.stem
         if name.isidentifier():
             names.add(name)
