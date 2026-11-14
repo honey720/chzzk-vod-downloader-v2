@@ -29,24 +29,33 @@ def forbidden_for_core() -> frozenset[str]:
 
 
 def _git_tracked_top_level_names() -> frozenset[str] | None:
-    """git이 아는 `.py`에서 같은 방식으로 뽑은 최상위 이름 — 독립 대조 출처. git이 없으면 None."""
+    """git이 아는 `.py`에서 같은 방식으로 뽑은 최상위 이름 — 독립 대조 출처. git이 없으면 None.
+
+    최상위 이름이 파이썬 식별자가 아니면(`.github` 등) 뺀다. import할 수 없는 이름은 core가
+    import할 수도 없어 방향 규칙의 대상이 아니다(#597). 이 기준은 파이썬 문법에서 가져오고
+    `is_skipped_dir`을 쓰지 않는다 — 같은 출처로 거르면 유도가 넓게 건너뛸 때 비교도 같이 좁아진다.
+    """
     try:
         result = subprocess.run(
-            ["git", "ls-files", "--", "*.py"],
+            ["git", "ls-files", "-z", "--", "*.py"],
             cwd=ROOT_DIR,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=10,
             check=True,
         )
     except (OSError, subprocess.SubprocessError):
         return None
     names: set[str] = set()
-    for line in result.stdout.splitlines():
-        if not line.strip():
+    # -z: 비ASCII 경로를 따옴표로 감싸지 않게 한다 — 감싸면 첫 조각이 `"app`이 되어 식별자 검사에서 빠진다(#597)
+    for line in result.stdout.split("\0"):
+        if not line:
             continue
-        path = Path(line.strip())
-        names.add(path.parts[0] if len(path.parts) > 1 else path.stem)
+        path = Path(line)
+        name = path.parts[0] if len(path.parts) > 1 else path.stem
+        if name.isidentifier():
+            names.add(name)
     return frozenset(names)
 
 

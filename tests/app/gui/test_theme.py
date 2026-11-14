@@ -170,24 +170,34 @@ def _git_tracked_sources() -> list[Path] | None:
     대조도 같이 좁아져 동어반복이 된다(고장 주입 ①b에서 실측). 여기의 기준은 "왜 제외하는가"의
     최소 집합(tests · theme 정의처)이고, 제외 목록에 그 밖의 것을 넣으면 이 대조가 시끄럽게
     실패해야 맞다. theme 정의처는 계층 정의(`is_theme`) 하나를 양쪽이 같이 읽는다.
+
+    최상위 디렉토리 이름이 파이썬 식별자가 아닌 경로(`.github/scripts/` 등)도 뺀다. import할 수
+    없는 디렉토리는 앱 소스 트리가 아니다(#597). 이 기준도 `_is_skipped_dir`이 아니라 파이썬
+    문법에서 가져온다.
     """
     import subprocess
 
     try:
         result = subprocess.run(
-            ["git", "ls-files", "--", "*.py", "*.ui"],
+            ["git", "ls-files", "-z", "--", "*.py", "*.ui"],
             cwd=ROOT_DIR,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=10,
             check=True,
         )
     except (OSError, subprocess.SubprocessError):
         return None
     tracked = []
-    for line in result.stdout.splitlines():
-        path = Path(line.strip())
-        if not line.strip() or "tests" in path.parts or is_theme(ROOT_DIR / path):
+    # -z: 비ASCII 경로를 따옴표로 감싸지 않게 한다 — 감싸면 첫 조각이 `"app`이 되어 식별자 검사에서 빠진다(#597)
+    for line in result.stdout.split("\0"):
+        if not line:
+            continue
+        path = Path(line)
+        if "tests" in path.parts or is_theme(ROOT_DIR / path):
+            continue
+        if len(path.parts) > 1 and not path.parts[0].isidentifier():
             continue
         tracked.append(ROOT_DIR / path)
     return tracked
