@@ -523,7 +523,8 @@ class HlsAesDownloader(BaseDownloader):
             self._cut_sections()
             return
         segment_files = self._list_segment_files((".ts",))
-        self._remux_streamed([os.path.join(self.temp_dir, f) for f in segment_files])
+        # 복호화한 세그먼트는 MPEG-TS다 — mpegts demuxer로만 연다 (#600)
+        self._remux_streamed([os.path.join(self.temp_dir, f) for f in segment_files], "mpegts")
 
     # ============ 구간 다운로드의 후처리 (#309) ============
 

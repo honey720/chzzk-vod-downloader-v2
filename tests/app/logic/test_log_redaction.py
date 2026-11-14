@@ -482,7 +482,7 @@ def test_ffmpeg_error_whose_tail_starts_inside_the_home_leaves_no_part_of_the_na
     monkeypatch.setattr(ffmpeg_module, "get_ffmpeg_exe", lambda: "ffmpeg")  # 찾기도 대역을 띄운다
     monkeypatch.setattr(ffmpeg_module.subprocess, "Popen", fake)
     with pytest.raises(ffmpeg_module.RemuxError) as raised:
-        ffmpeg_module.remux_stream(iter([b"x"]), str(tmp_path / "out.mp4"))
+        ffmpeg_module.remux_stream(iter([b"x"]), str(tmp_path / "out.mp4"), input_format="mov")
     assert stderr.strip()[-500:].startswith(WINDOWS_HOME[cut_at:])  # 글자 수 자리가 맞다
 
     logging.getLogger("test.redaction").error("BEGIN397 %s END397", raised.value)

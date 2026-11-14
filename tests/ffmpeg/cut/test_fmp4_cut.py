@@ -316,7 +316,7 @@ def test_extract_audio_stream_copies_the_audio_packets_and_drops_the_video(made,
     _folder, source = made["plain"]
     out = str(tmp_path / "audio.m4a")
 
-    extract_audio_stream(read_in_chunks(source.joined, 4096), out)
+    extract_audio_stream(read_in_chunks(source.joined, 4096), out, input_format="mov")
 
     probe = subprocess.run(
         [get_ffmpeg_exe(), "-hide_banner", "-i", out], capture_output=True, text=True

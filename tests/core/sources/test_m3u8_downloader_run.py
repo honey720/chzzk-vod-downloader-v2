@@ -472,7 +472,7 @@ def test_postprocess_progress_throttled_to_percent_changes(tmp_path, monkeypatch
     engine.set_on_progress(lambda event: events.append(event))
     data.model.start()
 
-    engine._remux_streamed(paths)
+    engine._remux_streamed(paths, "mov")
 
     assert data.merged_segments == 300
     # int(k/300*100), k=1..300은 0~100의 정수를 모두 한 번씩 지난다 → 정확히 101회

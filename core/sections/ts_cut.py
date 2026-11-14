@@ -129,6 +129,7 @@ def cut_ts_section(
                 for streams in segments
             ],
             prefix=b"",
+            input_format="mpegts",
             boundary=boundary,
             # 오디오만 뽑은 파일의 0초 = 넘긴 세그먼트들의 첫 오디오 덩어리
             audio_origin=ts_frames.audio_start,
@@ -190,6 +191,7 @@ def _remux(
         remux_stream(
             feed(),
             joined_path,
+            input_format="mpegts",
             timeout=hc._COPY_TIMEOUT,
             should_stop=should_stop,
             should_pause=should_pause,

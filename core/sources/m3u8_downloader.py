@@ -550,7 +550,8 @@ class M3U8Downloader(BaseDownloader):
             self._cut_sections()
             return
         segment_files = self._list_segment_files((".m4s", ".m4v"))
-        self._remux_streamed([os.path.join(self.temp_dir, f) for f in segment_files])
+        # 세그먼트는 늘 fMP4다(EXT-X-MAP의 초기화 세그먼트 + m4s) — mov demuxer로만 연다 (#600)
+        self._remux_streamed([os.path.join(self.temp_dir, f) for f in segment_files], "mov")
 
     # ============ 구간 다운로드의 후처리 (#309) ============
 

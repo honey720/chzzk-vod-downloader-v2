@@ -1025,8 +1025,11 @@ class BaseDownloader(ABC):
             )
         return matched
 
-    def _remux_streamed(self, segment_paths: list[str]) -> None:
+    def _remux_streamed(self, segment_paths: list[str], input_format: str) -> None:
         """세그먼트 파일들을 순서대로 ffmpeg stdin에 흘려 산출물을 만든다 (#92).
+
+        input_format은 세그먼트의 형식이다(``core.utils.ffmpeg.input_lock``의 인자, #600) —
+        받는 형식은 다운로더 종류로 정해지므로 하위 다운로더가 넘긴다.
 
         중간 병합 파일을 만들지 않는 단일 패스다 — fMP4·TS는 바이트 연결이
         곧 유효한 스트림이라 파이프 공급이 병합 의미를 정확히 보존한다.
@@ -1090,6 +1093,7 @@ class BaseDownloader(ABC):
             remux_stream(
                 feed(),
                 self.s.output_path,
+                input_format=input_format,
                 # 세그먼트를 다 넘긴 뒤 ffmpeg가 끝나기를 기다리는 동안에도 중단 · 일시정지를 따른다
                 timeout=_REMUX_END_TIMEOUT,
                 should_stop=lambda: self.state == DownloadState.WAITING,

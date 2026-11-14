@@ -75,7 +75,7 @@ def _run_download_tail(directory: str, fmp4_input: str) -> str:
     out = build_output_path(directory, "제목 스페이스 검증", 1080)
     temp_dir = temp_dir_for(out)
     os.makedirs(temp_dir)  # 엔진과 동일하게 exist_ok 없이 (m3u8 _prepare_output과 같은 조건)
-    remux_stream(read_in_chunks(fmp4_input), out)
+    remux_stream(read_in_chunks(fmp4_input), out, input_format="mov")
     assert os.path.getsize(out) > 0
     return out
 
