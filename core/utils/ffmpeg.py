@@ -713,7 +713,11 @@ def remux_through(
     """
     exe = get_ffmpeg_exe()
     creationflags = _CREATE_NO_WINDOW if sys.platform == "win32" else 0
-    head = [exe, "-hide_banner", "-loglevel", "error"]
+    # 잠금은 두 프로세스를 띄우기 전에 만든다 — 형식이 틀려 ValueError면 하나도 띄우지 않는다
+    convert_command = [
+        exe, "-hide_banner", "-loglevel", "error",
+        *input_lock(input_format, piped=True), *convert_args,
+    ]  # fmt: skip
     try:
         join = subprocess.Popen(
             # 잇는 쪽은 경고까지 받는다 — DTS가 뒤로 가도 ffmpeg는 0으로 끝난다
@@ -730,7 +734,7 @@ def remux_through(
     _end_with_parent(join)
     try:
         convert = subprocess.Popen(
-            [*head, *input_lock(input_format, piped=True), *convert_args],
+            convert_command,
             stdin=subprocess.PIPE,
             stdout=join.stdin,
             stderr=subprocess.PIPE,

@@ -11,8 +11,9 @@
 """
 
 import subprocess
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from pathlib import Path
+from typing import NoReturn
 
 import pytest
 
@@ -321,3 +322,31 @@ def test_input_lock_rejects_an_unknown_format() -> None:
     """
     with pytest.raises(ValueError):
         input_lock("matroska", piped=False)
+
+
+def test_remux_through_starts_no_ffmpeg_when_input_lock_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """remux_through에 잠금 표에 없는 형식을 넘기면 ffmpeg 프로세스를 하나도 띄우지 않고 ValueError여야 한다.
+
+    input_format="matroska", subprocess.Popen 대역이 호출 수를 셈
+    -> ValueError, Popen 호출 0번
+    """
+    started: list[Sequence[str]] = []
+
+    def popen(args: Sequence[str], *_: object, **__: object) -> NoReturn:
+        started.append(args)
+        raise AssertionError("ffmpeg를 띄웠다")
+
+    monkeypatch.setattr(ffmpeg_module.subprocess, "Popen", popen)
+
+    with pytest.raises(ValueError):
+        remux_through(
+            iter([b"x"]),
+            ["-i", "pipe:0", "-f", "mp4", "pipe:1"],
+            ["-i", "pipe:0", "-f", "mp4", str(tmp_path / "out.mp4")],
+            str(tmp_path / "out.mp4"),
+            input_format="matroska",
+        )
+
+    assert started == []
