@@ -1613,6 +1613,38 @@ def test_error_tail_in_a_long_line_drops_the_rest_of_a_word_whose_head_is_too_fa
     assert ffmpeg_module.error_tail(text, 12) == "end tail"
 
 
+# ============ 오류 글의 끝 줄 (#602)
+
+
+def test_error_lines_keeps_only_the_last_count_lines_whole() -> None:
+    """error_lines는 끝에서 count 줄만 줄째로 남겨야 한다 (#602).
+
+    "a\\r\\nbb\\r\\n" + "c" * 600 + "\\r\\nd", count=2 (줄 바꿈은 Windows 바이트 그대로)
+    -> "c" * 600 + "\\nd" (긴 줄도 자르지 않는다, \\r 없음)
+    """
+    text = "a\r\nbb\r\n" + "c" * 600 + "\r\nd"
+
+    assert ffmpeg_module.error_lines(text, 2) == "c" * 600 + "\nd"
+
+
+def test_error_lines_skips_blank_lines() -> None:
+    """error_lines는 빈 줄을 세지 않아야 한다 (#602).
+
+    "one\\n\\n  \\ntwo\\nthree\\n\\n", count=2
+    -> "two\\nthree"
+    """
+    assert ffmpeg_module.error_lines("one\n\n  \ntwo\nthree\n\n", 2) == "two\nthree"
+
+
+def test_error_lines_of_fewer_lines_than_count_is_every_line() -> None:
+    """줄이 count보다 적으면 error_lines는 모든 줄이어야 한다 (#602).
+
+    "  only\\n", count=8
+    -> "only"
+    """
+    assert ffmpeg_module.error_lines("  only\n", 8) == "only"
+
+
 # ============ 오류 글의 머리 (#397)
 
 

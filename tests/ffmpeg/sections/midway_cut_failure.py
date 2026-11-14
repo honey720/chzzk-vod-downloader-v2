@@ -38,9 +38,9 @@ class MidwayCutFailure:
         self.output_path = os.path.abspath(output_path)
         self._armed = True
 
-    def _run(self, args: list[str], timeout: float, cwd: str) -> str:
+    def _run(self, args: list[str], timeout: float, cwd: str, **kwargs: int | None) -> str:
         if not self._armed:
-            return self._real_run(args, timeout, cwd)
+            return self._real_run(args, timeout, cwd, **kwargs)
         self._armed = False
         self.fired += 1
         self.work_dir = cwd
