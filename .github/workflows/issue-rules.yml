@@ -1,0 +1,30 @@
+name: Issue rules
+
+# 소유자 이슈의 제목 접두 · 폼 절 · 종류 라벨 · 마일스톤 · 공개 금지 꼴을 검사한다.
+# 알림은 이 실행 로그(warning 주석)로만 남긴다 — 라벨 · 코멘트를 달지 않고, 실패로 끝내지 않는다.
+# 사용자 이슈에는 아무것도 하지 않는다(잡 자체를 건너뛴다).
+# issues 이벤트는 기본 브랜치(main)에 이 파일이 있을 때만 돈다 — dev-*에 넣은 뒤 첫 정식 릴리즈부터 동작한다.
+on:
+  issues:
+    types: [opened, edited, reopened, labeled, unlabeled, milestoned, demilestoned]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue-rules-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  issue-rules:
+    if: github.event.issue.user.login == github.repository_owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          sparse-checkout: .github/scripts
+      - name: Check issue
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: python3 -X utf8 .github/scripts/issue_rules.py

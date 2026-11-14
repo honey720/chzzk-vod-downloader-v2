@@ -169,9 +169,19 @@ jobs:
             echo ''
             echo "Release 워크플로가 자동 생성했습니다 — [실행 기록]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)"
           } > "$RUNNER_TEMP/body.md"
+          # 마일스톤은 dev-X.Y.Z의 vX.Y.Z(rc 판도 같다). 열린 마일스톤이 없으면 경고만 남기고 없이 만든다 — 릴리즈를 멈추지 않는다
+          MILESTONE="v${BASE#dev-}"
+          MS_ARGS=()
+          if gh api "repos/$GITHUB_REPOSITORY/milestones?state=open&per_page=100" --paginate \
+               --jq '.[].title' 2>/dev/null | grep -qxF "$MILESTONE"; then
+            MS_ARGS=(--milestone "$MILESTONE")
+          else
+            echo "::warning::열린 마일스톤 $MILESTONE 이 없어 범프 PR에 마일스톤을 달지 않았다 — 만든 뒤 PR에 손으로 단다"
+          fi
           gh pr create --base "$BASE" --head "$BRANCH" \
             --title "chore: v$VERSION" \
             --label chore \
+            "${MS_ARGS[@]}" \
             --body-file "$RUNNER_TEMP/body.md"
 
   deploy:
@@ -284,8 +294,17 @@ jobs:
             echo ''
             echo "Release 워크플로가 자동 생성했습니다 — [실행 기록]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)"
           } > "$RUNNER_TEMP/body.md"
+          # 릴리즈 PR도 범프 PR과 같은 마일스톤. 열린 마일스톤이 없으면 경고만 남기고 없이 만든다
+          MILESTONE="v${BRANCH#dev-}"
+          MS_ARGS=()
+          if gh api "repos/$GITHUB_REPOSITORY/milestones?state=open&per_page=100" --paginate \
+               --jq '.[].title' 2>/dev/null | grep -qxF "$MILESTONE"; then
+            MS_ARGS=(--milestone "$MILESTONE")
+          else
+            echo "::warning::열린 마일스톤 $MILESTONE 이 없어 릴리즈 PR에 마일스톤을 달지 않았다 — 만든 뒤 PR에 손으로 단다"
+          fi
           if ! URL=$(gh pr create --base main --head "$BRANCH" --title "chore: v$VERSION 릴리즈" \
-                --label chore --body-file "$RUNNER_TEMP/body.md"); then
+                --label chore "${MS_ARGS[@]}" --body-file "$RUNNER_TEMP/body.md"); then
             echo "$BRANCH → main PR을 만들지 못했다" > "$REASON_FILE"; exit 1
           fi
           echo "url=$URL" >> "$GITHUB_OUTPUT"
