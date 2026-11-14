@@ -100,13 +100,24 @@ def sources(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
         "ts": _make(folder / "source.ts", *_H264, "-f", "mpegts"),
         "mp4": _make(folder / "source.mp4", *_H264, "-f", "mp4"),
         "mkv": _make(folder / "source.mkv", *_H264, "-f", "matroska"),
-        "mjpeg": _make(folder / "source_mjpeg.mp4", "-c:v", "mjpeg", "-f", "mp4"),
     }
     if _has_encoder("libx265"):
         made["hevc"] = _make(
             folder / "source_hevc.mp4", "-c:v", "libx265", "-preset", "ultrafast", "-f", "mp4"
         )
     return made
+
+
+@pytest.fixture(scope="module")
+def mjpeg_source(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """같은 lavfi 소스의 영상을 MJPEG(full-range yuvj420p)로 쓴 mp4.
+
+    ubuntu의 ffmpeg는 MJPEG에 yuv420p를 거부한다(#600). ``sources``와 따로 둔다 —
+    이 입력을 못 만들어도 다른 입력을 쓰는 테스트는 setup에서 같이 실패하지 않는다.
+    """
+    path = tmp_path_factory.mktemp("input_lock_mjpeg") / "source_mjpeg.mp4"
+    # 뒤에 준 -pix_fmt가 _SOURCE의 yuv420p를 대신한다
+    return _make(path, "-c:v", "mjpeg", "-pix_fmt", "yuvj420p", "-f", "mp4")
 
 
 # ================================================================ 형식 잠금 — pipe remux
@@ -199,14 +210,18 @@ def test_piped_input_of_non_media_bytes_fails_before_the_feed_ends(
 
 @pytest.mark.parametrize("codec", ["hevc", "mjpeg"])
 def test_boundary_reencode_fails_when_the_video_codec_is_not_locked(
-    sources: dict[str, Path], tmp_path: Path, codec: str
+    sources: dict[str, Path], request: pytest.FixtureRequest, tmp_path: Path, codec: str
 ) -> None:
     """경계 다시 인코딩에 h264 · aac가 아닌 영상이 든 mp4를 넣으면 CutError여야 한다.
 
     lavfi로 만든 HEVC(libx265) · MJPEG 영상 mp4. 프레임 정보 · SPS는 같은 소스의 h264 mp4에서 읽음
     -> CutError. 같은 명령에 h264 mp4를 넣으면 조각이 생긴다
     """
-    if codec not in sources:
+    if codec == "mjpeg":
+        given = request.getfixturevalue("mjpeg_source")
+    elif codec in sources:
+        given = sources[codec]
+    else:
         pytest.skip(f"이 ffmpeg에는 {codec} 테스트 입력을 만드는 인코더가 없다")
     h264 = sources["mp4"]
     frames = _mp4_frames(h264)
@@ -215,7 +230,7 @@ def test_boundary_reencode_fails_when_the_video_codec_is_not_locked(
 
     with pytest.raises(CutError):
         hybrid_module._run(
-            hybrid_module._encode_command(str(sources[codec]), frames, piece, video, "locked.mp4"),
+            hybrid_module._encode_command(str(given), frames, piece, video, "locked.mp4"),
             hybrid_module._ENCODE_TIMEOUT,
             str(tmp_path),
         )
