@@ -625,8 +625,10 @@ class Ui_ContentItemWidget(object):
             self.hoverLayout.addWidget(b)
             return b
 
-        # 차례: 대기 ✎ ✕ · 받는 중 ‖ ✕ · 일시정지 ▶ ✕ · 완료 폴더 ✕ · 실패 다시 시도 ✕ · 조회 중 ✕
+        # 차례: 대기 ✎ ✂ ✕ · 받는 중 ‖ ✕ · 일시정지 ▶ ✕ · 완료 폴더 ✕ · 실패 다시 시도 ✕ · 조회 중 ✕
+        # (✂ 구간 편집은 구간을 받을 수 있는 종류만 — #599)
         self.editButton = card_button("editButton")
+        self.sectionButton = card_button("sectionButton")
         self.pauseButton = card_button("pauseButton")
         self.openDirectoryButton = card_button("openDirectoryButton")
         self.retryButton = card_button("retryButton")
@@ -657,6 +659,9 @@ class Ui_ContentItemWidget(object):
             QCoreApplication.translate("ContentItemWidget", "ContentItemWidget", None)
         )
         self.editButton.setToolTip(QCoreApplication.translate("ContentItemWidget", "Edit", None))
+        self.sectionButton.setToolTip(
+            QCoreApplication.translate("ContentItemWidget", "Edit sections", None)
+        )
         self.pauseButton.setToolTip(QCoreApplication.translate("ContentItemWidget", "Pause", None))
         self.openDirectoryButton.setToolTip(
             QCoreApplication.translate("ContentItemWidget", "Open directory", None)

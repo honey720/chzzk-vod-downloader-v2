@@ -199,6 +199,10 @@
         <translation>컨텐츠위젯</translation>
     </message>
     <message>
+        <source>Edit sections</source>
+        <translation>구간 편집</translation>
+    </message>
+    <message>
         <source>Delete</source>
         <translation>삭제</translation>
     </message>

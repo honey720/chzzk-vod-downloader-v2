@@ -125,7 +125,15 @@ MATRIX = {
     DownloadState.FAILED: ("retryButton", "retry", False, "failed"),  # 막대 없음 — 색조(#571)
 }
 
-ACTION_BUTTONS = ("editButton", "pauseButton", "openDirectoryButton", "retryButton")
+ACTION_BUTTONS = (
+    "editButton",
+    "sectionButton",
+    "pauseButton",
+    "openDirectoryButton",
+    "retryButton",
+)
+#: 상태 → MATRIX 조작 뒤에 더 보이는 조작 — 대기 카드의 ✂ 구간 편집(#599)
+MORE_ACTIONS = {DownloadState.WAITING: ("sectionButton",)}
 
 #: 상태 → 3줄 상태 원의 그림(StateBubble.state()) — 대기는 그림이 없다
 STATUS_ICON = {
@@ -413,17 +421,19 @@ class TestActionColumn:
 
     @pytest.mark.parametrize("state", list(MATRIX))
     def test_exactly_the_matrix_action_is_visible(self, qapp, state) -> None:
-        """호버한 카드는 상태마다 MATRIX의 조작 하나와 삭제만 보여야 한다.
+        """호버한 카드는 상태마다 MATRIX의 조작(대기는 ✂도)과 삭제만 보여야 한다.
 
-        상태마다 카드 하나 → 호버 -> 보이는 버튼 == [MATRIX 조작, "deleteButton"], 조작 도형 == MATRIX 도형
+        상태마다 카드 하나 → 호버 -> 보이는 버튼 == [MATRIX 조작, *MORE_ACTIONS, "deleteButton"],
+        조작 도형 == MATRIX 도형
         """
         button_name, icon, _, _ = MATRIX[state]
+        more = list(MORE_ACTIONS.get(state, ()))
         widget = _make_widget(qapp, state, PROGRESS.get(state, 0))
-        assert widget.visibleCardButtons() == [button_name, "deleteButton"]
+        assert widget.visibleCardButtons() == [button_name, *more, "deleteButton"]
         widget.setHovered(True)
         QApplication.processEvents()
         visible = [name for name in ACTION_BUTTONS if getattr(widget, name).isVisible()]
-        assert visible == [button_name], (
+        assert visible == [button_name, *more], (
             f"{state.name}: 보이는 조작 {visible} — 매트릭스는 {button_name}"
         )
         assert widget.deleteButton.isVisible(), f"{state.name}: 삭제는 늘 함께 보여야 한다"
@@ -439,13 +449,14 @@ class TestActionColumn:
         """
         widget = _make_widget(qapp, state, PROGRESS.get(state, 0))
         button_name = MATRIX[state][0]
+        more = list(MORE_ACTIONS.get(state, ()))
         widget.clearFocus()
         widget.setHovered(False)
         QApplication.processEvents()
         assert not widget.hasKeyFocus() and not widget.isHovered(), "전제: 호버 · 초점이 없다"
         names = ACTION_BUTTONS + ("deleteButton",)
         assert not any(getattr(widget, name).isVisible() for name in names)
-        assert widget.visibleCardButtons() == [button_name, "deleteButton"]
+        assert widget.visibleCardButtons() == [button_name, *more, "deleteButton"]
 
     def test_paused_offers_resume_not_pause_again(self, qapp) -> None:
         """멈춰 있는데 일시정지 버튼이 그대로면 이미 한 일을 또 권하는 것이다."""

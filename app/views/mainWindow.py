@@ -1042,6 +1042,7 @@ class VodDownloader(QMainWindow):
         self.listView.pauseRequested.connect(self.onCardPause)
         self.listView.retryRequested.connect(self.onCardRetry)
         self.listView.editRequested.connect(self.onCardEdit)
+        self.listView.sectionEditRequested.connect(self.onCardSectionEdit)
         self.listView.stopAndDeleteRequested.connect(self.onCardStopAndDelete)
         self.listView.stopAndRemoveRequested.connect(self.onStopAndRemove)
 
@@ -1197,7 +1198,9 @@ class VodDownloader(QMainWindow):
         self.contentManager.model.notifyChanged(item)
 
     def onCardSectionEdit(self, item: ContentItem) -> None:
-        """대기 카드의 구간 요약 클릭 — 구간 편집 창을 모달로 연다 (#309).
+        """대기 카드의 ✂(구간 편집) — 구간 편집 창을 모달로 연다 (#309 · #599).
+
+        카드 편집 창을 거치지 않는다. 구간이 없는 카드도 연다 — 구간을 처음 넣는 길이다.
 
         창이 열려 있는 동안 그 카드는 다운로드 대상에서 빠진다(``beginSectionEdit``). 받는
         중인 배치에서 그 카드의 차례가 오면 건너뛰고 다음 카드로 가며, 창을 닫으면 다시

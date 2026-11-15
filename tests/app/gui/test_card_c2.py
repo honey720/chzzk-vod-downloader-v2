@@ -123,7 +123,7 @@ def _leave(card: ContentItemWidget) -> None:
 
 
 STATE_BUTTONS = [
-    (DownloadState.WAITING, ["editButton", "deleteButton"]),
+    (DownloadState.WAITING, ["editButton", "sectionButton", "deleteButton"]),
     (DownloadState.RUNNING, ["pauseButton", "deleteButton"]),
     (DownloadState.PAUSED, ["pauseButton", "deleteButton"]),
     (DownloadState.FINISHED, ["openDirectoryButton", "deleteButton"]),

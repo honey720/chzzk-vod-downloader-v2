@@ -199,6 +199,10 @@
         <translation>ContentItemWidget</translation>
     </message>
     <message>
+        <source>Edit sections</source>
+        <translation>Edit sections</translation>
+    </message>
+    <message>
         <source>Delete</source>
         <translation>Delete</translation>
     </message>

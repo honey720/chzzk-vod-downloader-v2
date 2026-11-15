@@ -155,6 +155,7 @@ class ContentListView(QScrollArea):
     # 받는 중 카드의 ✕에서 「멈추고 지우기」를 골랐다 (#550) — 엔진을 멈추는 쪽(mainWindow)이 받는다
     stopAndDeleteRequested = Signal(object)
     editRequested = Signal(object)  # 대기 카드의 ✎ · 더블 클릭 — 카드 편집 창 (#545)
+    sectionEditRequested = Signal(object)  # 대기 카드의 ✂ — 구간 창을 바로 연다 (#599)
     # 선택 지우기(#561) — 여러 장을 한 번에(되돌리기 한 번에 함께 되살아난다). 받는 중 카드가 섞였으면 엔진을
     # 멈추는 쪽(mainWindow)이 받는 stopAndRemoveRequested, 아니면 removeRequested
     removeRequested = Signal(list)
@@ -807,6 +808,7 @@ class ContentListView(QScrollArea):
         widget.pauseRequest.connect(lambda it=item: self.pauseRequested.emit(it))
         widget.retryRequest.connect(lambda it=item: self.retryRequested.emit(it))
         widget.editRequest.connect(lambda it=item: self.editRequested.emit(it))
+        widget.sectionEditRequest.connect(lambda it=item: self.sectionEditRequested.emit(it))
         widget.hoverChanged.connect(lambda hovered, w=widget: self._onCardHover(w, hovered))
         widget.loadRepresentations()
         widget.setShowYear(self._showYear)

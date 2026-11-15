@@ -22,14 +22,18 @@ from app.widgets.widget import ContentItemWidget
 from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
 from tests.app.gui import card_helpers
-from tests.app.gui.card_helpers import resize_to, shown, unfold
+from tests.app.gui.card_helpers import enter, resize_to, shown, unfold
 from tests.app.gui.test_section_editor import (  # noqa: F401 — 픽스처는 이름으로 쓴다
     _apply_production_qss,
     _destroy_windows,
     _make_item,
     _no_network,
     _pump,
+    basis,
     open_window,
+    press_cancel,
+    press_ok,
+    set_rows,
 )
 
 OUTER_MARGIN = 12  # 창 바깥 좌우 여백(px) — 카드 왼쪽 끝 ↔ 목록 왼쪽 끝(#580)
@@ -483,3 +487,147 @@ class TestInfoTip:
         lines = card.fileSizeLabel.toolTip().split("\n")
         assert lines[-len(TIP_LINES) :] == TIP_LINES
         assert UNVERIFIED not in lines
+
+
+# ---- 구간 편집 버튼(✂) (#599) ----
+
+NOT_WAITING = (
+    DownloadState.RUNNING,
+    DownloadState.PAUSED,
+    DownloadState.FINISHED,
+    DownloadState.FAILED,
+)
+
+
+def _hovered_card(win: VodDownloader, item: ContentItem) -> ContentItemWidget:
+    """목록의 그 카드에 들어감 이벤트를 보내 카드 버튼을 보인다(포인터는 옮기지 않는다)."""
+    card = _card_any(win, item)
+    assert card.isVisible(), "전제: 카드가 보인다"
+    enter(card)
+    _pump()
+    return card
+
+
+def _click_section_button(card: ContentItemWidget) -> None:
+    """✂를 마우스로 누른다 — 카드 시그널 → 목록 릴레이 → 메인 창 길을 탄다."""
+    assert card.sectionButton.isVisible(), "전제: ✂가 보인다"
+    QTest.mouseClick(card.sectionButton, Qt.MouseButton.LeftButton)
+    _pump()
+
+
+class TestSectionButton:
+    """대기 카드 버튼 줄의 ✂ — 구간 창을 바로 연다(오너 2026-11-15)."""
+
+    @pytest.mark.parametrize("sections", [(), TIP_SECTIONS], ids=["구간 없음", "구간 넷"])
+    def test_hovered_waiting_card_shows_the_section_button_between_edit_and_delete(
+        self, tmp_path: Path, sections: tuple
+    ) -> None:
+        """호버한 대기 카드는 구간이 있든 없든 ✎ · ✂ · ✕ 차례로 버튼을 보여야 하고 ✂ 도형은 가위여야 한다.
+
+        대기 카드(구간 없음 / 구간 넷) · 들어감 -> 놓인 버튼 ["editButton", "sectionButton", "deleteButton"],
+        ✂ 보임, 도형 "scissors", 툴팁 "Edit sections"
+        """
+        item = _make_item(str(tmp_path))
+        item.selections = sections
+        win = open_window(tmp_path, item)
+        card = _hovered_card(win, item)
+        assert card.visibleCardButtons() == ["editButton", "sectionButton", "deleteButton"]
+        assert card.sectionButton.isVisible()
+        assert card.sectionButton.iconName() == "scissors"
+        assert card.sectionButton.toolTip() == "Edit sections"
+
+    @pytest.mark.parametrize("state", NOT_WAITING, ids=[s.name for s in NOT_WAITING])
+    def test_cards_past_waiting_have_no_section_button(
+        self, tmp_path: Path, state: DownloadState
+    ) -> None:
+        """대기가 아닌 카드는 호버해도 ✂가 없어야 한다.
+
+        받는 중 / 일시정지 / 완료 / 실패 카드 · 들어감 -> 놓인 버튼에 "sectionButton" 없음, ✂ 숨음
+        """
+        item = _make_item(str(tmp_path))
+        item.downloadState = state
+        win = open_window(tmp_path, item)
+        card = _hovered_card(win, item)
+        assert card.hoverBox.isVisible(), "전제: 카드 버튼 상자가 보인다"
+        assert "sectionButton" not in card.visibleCardButtons()
+        assert not card.sectionButton.isVisible()
+
+    def test_waiting_clip_card_has_no_section_button(self, tmp_path: Path) -> None:
+        """구간을 받을 수 없는 종류(클립)의 대기 카드는 ✂가 없어야 한다.
+
+        대기 클립 카드 · 들어감 -> 놓인 버튼 ["editButton", "deleteButton"]
+        """
+        item = _make_item(str(tmp_path), content_type="clip")
+        win = open_window(tmp_path, item)
+        card = _hovered_card(win, item)
+        assert card.visibleCardButtons() == ["editButton", "deleteButton"]
+
+    @pytest.mark.usefixtures("basis")
+    @pytest.mark.parametrize("sections", [(), TIP_SECTIONS], ids=["구간 없음", "구간 넷"])
+    def test_clicking_the_section_button_opens_the_section_dialog_not_the_card_editor(
+        self, qtbot: QtBot, tmp_path: Path, sections: tuple
+    ) -> None:
+        """✂를 누르면 카드 편집 창 없이 그 카드의 구간 창이 열려야 한다.
+
+        대기 카드(구간 없음 / 구간 넷) · 들어감 · ✂ 누름 -> 구간 창 열림(그 카드), 카드 편집 창 없음
+        """
+        item = _make_item(str(tmp_path))
+        item.selections = sections
+        win = open_window(tmp_path, item)
+        _click_section_button(_hovered_card(win, item))
+        assert win._sectionDialog is not None
+        assert win._sectionEditItem is item
+        assert win._editDialog is None
+        dialog = win._sectionDialog
+        qtbot.waitUntil(lambda: dialog.viewModel().state != "loading", timeout=3000)
+        press_cancel(dialog)
+
+    @pytest.mark.usefixtures("basis")
+    def test_confirming_the_dialog_opened_by_the_button_updates_the_info_text_and_tip(
+        self, qtbot: QtBot, tmp_path: Path
+    ) -> None:
+        """✂로 연 구간 창에서 구간 둘을 넣고 확인하면 카드 정보 글 · 툴팁이 새 구간을 따라야 한다.
+
+        구간 없는 대기 카드 · ✂ · 행 00:10:00:00~00:20:00:00 · 00:30:00:30~00:31:00:00 · 확인
+        -> 정보 글 끝 「 · Sections 2」, 툴팁 첫 두 줄
+           "1 · 00:10:00:00 ~ 00:20:00:00 · 00:10:00:00", "2 · 00:30:00:30 ~ 00:31:00:00 · 00:00:59:30"
+        """
+        item = _make_item(str(tmp_path))
+        win = open_window(tmp_path, item)
+        _click_section_button(_hovered_card(win, item))
+        dialog = win._sectionDialog
+        assert dialog is not None, "전제: 구간 창이 열렸다"
+        qtbot.waitUntil(lambda: dialog.viewModel().state != "loading", timeout=3000)
+        set_rows(dialog, [("00:10:00:00", "00:20:00:00"), ("00:30:00:30", "00:31:00:00")])
+        press_ok(dialog)
+        card = _card_any(win, item)
+        assert shown(card.fileSizeLabel).endswith(" · Sections 2")
+        assert card.fileSizeLabel.toolTip().split("\n")[:2] == [
+            "1 · 00:10:00:00 ~ 00:20:00:00 · 00:10:00:00",
+            "2 · 00:30:00:30 ~ 00:31:00:00 · 00:00:59:30",  # 111630 − 108030 = 3570프레임
+        ]
+
+    @pytest.mark.usefixtures("basis")
+    def test_cancelling_the_dialog_opened_by_the_button_leaves_the_card_as_it_was(
+        self, qtbot: QtBot, tmp_path: Path
+    ) -> None:
+        """✂로 연 구간 창에서 행을 바꾸고 취소하면 카드 정보 글 · 툴팁이 그대로여야 한다.
+
+        구간 넷 대기 카드 · ✂ · 행을 00:10:00:00~00:20:00:00 하나로 바꿈 · 취소
+        -> 구간 넷 그대로, 정보 글 · 툴팁이 열기 전과 같다
+        """
+        item = _make_item(str(tmp_path))
+        item.selections = TIP_SECTIONS
+        item.section_frame_rate = Fraction(60)
+        win = open_window(tmp_path, item)
+        card = _hovered_card(win, item)
+        before = (shown(card.fileSizeLabel), card.fileSizeLabel.toolTip())
+        _click_section_button(card)
+        dialog = win._sectionDialog
+        assert dialog is not None, "전제: 구간 창이 열렸다"
+        qtbot.waitUntil(lambda: dialog.viewModel().state != "loading", timeout=3000)
+        set_rows(dialog, [("00:10:00:00", "00:20:00:00")])
+        press_cancel(dialog)
+        card = _card_any(win, item)
+        assert item.selections == TIP_SECTIONS
+        assert (shown(card.fileSizeLabel), card.fileSizeLabel.toolTip()) == before

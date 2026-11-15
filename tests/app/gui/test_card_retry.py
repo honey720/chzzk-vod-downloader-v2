@@ -216,16 +216,16 @@ class TestControlsFollowTheState:
     """§3.4 — 상태가 바뀌면 카드 버튼 · 3줄 글 · 툴팁이 전부 따라온다."""
 
     def test_retry_button_goes_and_the_waiting_controls_come(self, tmp_path, started) -> None:
-        """실패 카드가 ↻로 되돌려지면 카드 버튼이 ✎ · ✕가 되고 3줄이 대기 글이어야 한다.
+        """실패 카드가 ↻로 되돌려지면 카드 버튼이 ✎ · ✂ · ✕가 되고 3줄이 대기 글이어야 한다.
 
         실패 카드(버튼 ↻ · ✕, 사유 "Failed to save file") → ↻
-        -> 버튼 ["editButton", "deleteButton"], 상태 글 "Download waiting", 정보 칸 보임,
+        -> 버튼 ["editButton", "sectionButton", "deleteButton"], 상태 글 "Download waiting", 정보 칸 보임,
         진행바 상태 "waiting"
         """
         win, item, widget = open_window_with_a_failed_card(tmp_path)
         assert widget.statusLabel.text() == "Failed to save file"
         click_retry(widget)
-        assert widget.visibleCardButtons() == ["editButton", "deleteButton"]
+        assert widget.visibleCardButtons() == ["editButton", "sectionButton", "deleteButton"]
         hover_card(widget)
         assert widget.editButton.isVisible(), "호버한 대기 카드에 ✎가 안 보인다"
         assert not widget.retryButton.isVisible(), "대기 카드에 ↻가 남아 있다"
