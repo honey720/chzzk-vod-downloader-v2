@@ -291,18 +291,17 @@ LIGHT = {
     "scrollHandleHover": "#aeb3bb",
 }
 
-# ---- 카드 색조 · 채움 색(#554 — 설계 §8의 6 · §12.1) ----
-# 완료 · 실패 색조와 배경 채움 색은 리터럴로 적지 않고 카드 면 · 상태 색에서 셈한다. 색상은 상태 색의
+# ---- 카드 색조(#554 — 설계 §8의 6 · §12.1) ----
+# 완료 · 실패 색조는 리터럴로 적지 않고 카드 면 · 상태 색에서 셈한다. 색상은 상태 색의
 # OKLCH 색상각 그대로, 밝기는 카드 면과 같게 두고 채도로 세기(카드 면과의 ΔE00)를 맞춘다 — 투명도로
 # 섞으면 카드 면의 기운 때문에 색상이 상태 색에서 어긋난다. 그 위 글(본문 · 보조 · 상태 글)은 4.5를 지킨다.
 TINT_DE00 = {
     "dark": 12.0,
     "light": 10.0,
-}  # 색조 · 채움 ↔ 카드 면 ΔE00 목표 — 설계 §8의 6(오너 2026-11-02)
-TINT_TEXT_CONTRAST = 4.5  # 색조 · 채움 위 글의 대비 하한 — 설계 §11.5
+}  # 색조 ↔ 카드 면 ΔE00 목표 — 설계 §8의 6(오너 2026-11-02)
+TINT_TEXT_CONTRAST = 4.5  # 색조 위 글의 대비 하한 — 설계 §11.5
 # 눌린 카드 바탕 ↔ 호버 바탕 ΔE00 목표 — 카드 면 → 호버와 같은 크기로 한 단계 더(#561)
 PRESS_DE00 = 3.0
-SRGB_EPSILON = 1e-6  # sRGB 범위 판정 허용 오차 — 0 · 1 끝 채널이 셈 오차로 밖이 되지 않게
 
 # ---- 선택 모드의 체크 원(#561) ----
 # 정수 px가 아닌 값이라 METRICS(QSS에 "Npx"로 들어간다)에 두지 않는다
@@ -359,11 +358,6 @@ def _oklab_to_linear(lab: tuple[float, float, float]) -> tuple[float, float, flo
         -1.2684380046 * l_ + 2.6097574011 * m_ - 0.3413193965 * s_,
         -0.0041960863 * l_ - 0.7034186147 * m_ + 1.7076147010 * s_,
     )
-
-
-def _in_srgb(lab: tuple[float, float, float]) -> bool:
-    """OKLab 색이 sRGB 범위 안인지 — 채널을 자르지 않고 그대로 나타낼 수 있는지."""
-    return all(-SRGB_EPSILON <= value <= 1 + SRGB_EPSILON for value in _oklab_to_linear(lab))
 
 
 def _from_oklab(lab: tuple[float, float, float]) -> str:
@@ -438,33 +432,22 @@ def contrast_ratio(first: str, second: str) -> float:
 
 def _tinted(
     base: str,
-    hue_from: str | None,
+    hue_from: str,
     target: float,
     texts: tuple[str, ...],
-    keep_hue: bool = False,
 ) -> str:
     """`base`에서 `hue_from`의 색상각으로 채도만 올려 ΔE00 `target`이 되는 색 — 글 대비를 지키는 만큼만.
 
-    `hue_from`이 None이면 무채색 그대로 밝기만 옮긴다(일시정지 회색 채움 — 어두운 면이면 밝게, 밝은
-    면이면 어둡게). 밝은 면(흰 카드)은 밝기를 그대로 두고 채도만 올리면 sRGB 밖으로 나가 잘리므로, 채도를
-    올린 만큼의 절반을 밝기에서 뺀다. 이분 탐색으로 정하고, `texts`의 글이 4.5 아래로 내려가면 그 아래
-    세기에서 멈춘다.
-
-    `keep_hue`면 그래도 sRGB 밖으로 나가는 색은 채널을 자르지 않고 채도를 그 색상각에서 들어가는 만큼으로
-    줄인다 — 채널을 자르면 색상각이 밀린다(라이트 받는 중 채움이 하늘색 쪽으로 41° 밀렸다, #582). 지금은
-    받는 중 채움만 쓴다 — 다른 색조에 넣으면 라이트 실패 색조가 ΔE00 1 넘게 바뀐다.
+    밝은 면(흰 카드)은 밝기를 그대로 두고 채도만 올리면 sRGB 밖으로 나가 잘리므로, 채도를 올린 만큼의
+    절반을 밝기에서 뺀다. 이분 탐색으로 정하고, `texts`의 글이 4.5 아래로 내려가면 그 아래 세기에서 멈춘다.
     """
     big_l, _a, _b = _oklab(base)
 
     def color_at(amount: float) -> str:
-        if hue_from is None:
-            step = amount if big_l < 0.6 else -amount
-            return _from_oklab((big_l + step, 0.0, 0.0))
         _l, ha, hb = _oklab(hue_from)
         hue = math.atan2(hb, ha)
         lightness = big_l - amount / 2 if big_l > 0.85 else big_l
-        chroma = _chroma_in_srgb(lightness, hue, amount) if keep_hue else amount
-        return _from_oklab((lightness, chroma * math.cos(hue), chroma * math.sin(hue)))
+        return _from_oklab((lightness, amount * math.cos(hue), amount * math.sin(hue)))
 
     def readable(color: str) -> bool:
         return all(contrast_ratio(text, color) >= TINT_TEXT_CONTRAST for text in texts)
@@ -478,24 +461,6 @@ def _tinted(
         else:
             high = middle
     return color_at(low)
-
-
-def _chroma_in_srgb(lightness: float, hue: float, chroma: float) -> float:
-    """그 밝기 · 색상각(라디안)에서 `chroma`를 넘지 않고 sRGB 안에 드는 가장 큰 채도 — 이분 탐색."""
-
-    def fits(value: float) -> bool:
-        return _in_srgb((lightness, value * math.cos(hue), value * math.sin(hue)))
-
-    if fits(chroma):
-        return chroma
-    low, high = 0.0, chroma
-    for _ in range(40):
-        middle = (low + high) / 2
-        if fits(middle):
-            low = middle
-        else:
-            high = middle
-    return low
 
 
 def _hover_of(tint: str, card: str, hover: str) -> str:
@@ -540,14 +505,14 @@ def _readable_on(color: str, grounds: tuple[str, ...]) -> str:
 
 
 def _card_tints(table: dict, scheme: str) -> None:
-    """완료 · 실패 색조(+ 호버 · 그 위 상태 글 색)와 받는 중 · 일시정지 채움 색을 표에 더한다.
+    """완료 · 실패 색조(+ 호버 · 눌림 · 그 위 상태 글 색)를 표에 더한다.
 
     색조 세기는 목표(ΔE00)를 먼저 정한다(설계 §8의 6). 본문 · 보조 글은 그 세기에서 4.5를 지키는지
     본다. 상태 글(완료 초록 · 실패 빨강)은 색조 위에서 4.5가 되게 같은 색상의 밝기만 옮긴 색을 따로 둔다
     (`state…OnTint`) — 라이트의 완료 초록은 흰 카드에서 이미 4.5라 색조가 조금만 생겨도 4.5 아래로 내려간다.
 
-    눌린 바탕(`…Pressed`, #561)은 호버에서 한 단계 더 간 색이다 — 색조는 카드 면 → 눌린 바탕의 밝기 차를,
-    채움은 호버 → 눌린 바탕의 밝기 차를 옮긴다(채움은 호버에서 바뀌지 않아 한 단계만 간다). 누르는 동안만
+    눌린 바탕(`…Pressed`, #561)은 호버에서 한 단계 더 간 색이다 — 색조는 카드 면 → 눌린 바탕의 밝기 차를
+    옮긴다. 누르는 동안만
     보이는 면이라 세기(`PRESS_DE00`)를 먼저 지킨다 — 본문 글은 4.5를 지키고 보조 글은 그 아래로 내려간다
     (tests/app/gui/test_theme_contrast.py가 하한을 잰다).
     """
@@ -561,14 +526,6 @@ def _card_tints(table: dict, scheme: str) -> None:
         table[f"cardTint{name}Hover"] = _hover_of(tint, card, hover)
         table[f"cardTint{name}Pressed"] = _hover_of(tint, card, pressed)
         table[f"{state}OnTint"] = _readable_on(table[state], (tint, table[f"cardTint{name}Hover"]))
-    # 배경 채움 위의 상태 색(상태 원 · 상태 글)은 대비 조건 밖이다 — 설정에서 고르는 선택의 예외(설계 §12.1
-    # 상태 색). 본문 · 보조 글만 4.5를 지킨다
-    # 받는 중 채움은 강조색의 색상각이다 — 상태 글 · 막대(stateRunning)의 색상각이면 다크가 청록 쪽으로
-    # 보였다. 라이트는 sRGB 밖으로 나가므로 채널을 자르지 않고 채도를 줄여 색상각을 지킨다(오너 2026-11-12, #582)
-    table["cardFillRunning"] = _tinted(card, table["accent"], target, texts, keep_hue=True)
-    table["cardFillPaused"] = _tinted(card, None, target, texts)
-    for name in ("Running", "Paused"):
-        table[f"cardFill{name}Pressed"] = _hover_of(table[f"cardFill{name}"], hover, pressed)
 
 
 # METRICS(정수)와 FONTS(문자열)를 두 색 표에 자동 주입한다 — .qss는

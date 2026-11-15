@@ -32,7 +32,7 @@ from app.viewmodels.model import ContentListModel
 from app.views.card_edit_dialog import CardEditDialog
 from app.views.mainWindow import VodDownloader
 from app.widgets.view import ContentListView
-from app.widgets.widget import STILL_STEP_MS, STOP_MOTION_MS, ContentItemWidget
+from app.widgets.widget import STILL_STEP_MS, STOP_MOTION_MS, TICK_MOTION_MS, ContentItemWidget
 from core.engine.base import PROGRESS_SECONDS
 from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
@@ -522,20 +522,16 @@ def _empty_y(card: ContentItemWidget) -> int:
 class TestProgressBar:
     """막대 — 트랙은 카드 테두리 색, 받는 중 · 일시정지는 진행만큼, 완료 · 실패는 막대 없음(#571)."""
 
-    @pytest.mark.parametrize("progress", ("bar", "fill"))
     @pytest.mark.parametrize(
         "state,token",
         [(DownloadState.FINISHED, "cardTintFinished"), (DownloadState.FAILED, "cardTintFailed")],
     )
-    def test_finished_and_failed_cards_have_no_bar_and_the_tint(
-        self, qapp, state, token, progress
-    ) -> None:
+    def test_finished_and_failed_cards_have_no_bar_and_the_tint(self, qapp, state, token) -> None:
         """완료 · 실패 카드면 막대가 숨고 막대 자리 화소가 그 상태의 색조여야 한다 (#571).
 
-        막대 방식 · 배경 채움 방식, 처음부터 완료 · 실패인 카드 -> 막대 숨음, 막대가 있던 카드 아래 변
-        바로 위 가운데 화소 == cardTint… 토큰
+        처음부터 완료 · 실패인 카드 -> 막대 숨음, 막대가 있던 카드 아래 변 바로 위 가운데 화소 == cardTint… 토큰
         """
-        _display(progress=progress)
+        _display()
         card = _card(_item(state))
         bar, frame = card.progressBar, card.contentFrame
         assert card.isVisible(), "전제: 카드가 보인다"
@@ -737,94 +733,20 @@ class TestTint:
         assert _close(_pixel(frame, frame.width() // 2, _empty_y(card)), _token("cardBg"))
 
 
-class TestFill:
-    """배경 채움(설정 키 cardProgress = fill) — 받는 중은 진행만큼, 일시정지는 회색."""
-
-    @pytest.mark.parametrize(
-        "state,token",
-        [(DownloadState.RUNNING, "cardFillRunning"), (DownloadState.PAUSED, "cardFillPaused")],
-    )
-    def test_fill_paints_the_progress_from_the_left(self, qapp, state, token) -> None:
-        """채움 방식에서 40% 카드면 면의 20% 자리가 채움 색, 80% 자리가 카드 바탕, 막대는 숨어야 한다."""
-        _display(progress="fill", animations=False)
-        item = _item(state)
-        item.download_progress = 40
-        card = _card(item)
-        frame = card.contentFrame
-        y = _empty_y(card)
-        assert not card.progressBar.isVisible()
-        assert _close(_pixel(frame, frame.width() // 5, y), _token(token))
-        assert _close(_pixel(frame, frame.width() * 4 // 5, y), _token("cardBg"))
-
-    @pytest.mark.parametrize("scheme", ("dark", "light"))
-    def test_running_fill_pixel_has_the_target_strength(self, qapp, scheme: str) -> None:
-        """받는 중 채움 화소는 카드 바탕과 ΔE00 목표 −1.5 ~ +0.5여야 한다 (#582).
-
-        배경 채움 방식, 받는 중 40% 카드, 면의 20% 자리 화소 -> 다크 목표 12 · 라이트 목표 10
-        """
-        _display(progress="fill", animations=False)
-        theme.set_color_scheme(scheme)
-        qapp.setPalette(theme.build_palette())
-        qapp.setStyleSheet(
-            theme.load_stylesheet(main_module.resource_path(theme.QSS_RELATIVE_PATH))
-        )
-        try:
-            item = _item(DownloadState.RUNNING)
-            item.download_progress = 40
-            card = _card(item)
-            frame = card.contentFrame
-            pixel = _pixel(frame, frame.width() // 5, _empty_y(card))
-            assert _close(pixel, _token("cardFillRunning")), "전제: 채움 자리를 쟀다"
-            strength = _de00(pixel, _token("cardBg"))
-            target = TINT_TARGET[scheme]
-            assert target - 1.5 <= strength <= target + 0.5, f"ΔE00 {strength:.2f}"
-        finally:
-            theme.set_color_scheme("dark")
-
-    @pytest.mark.parametrize("cut", (False, True), ids=["preparing", "preparing-to-cut"])
-    def test_preparing_card_shows_a_bar_without_a_value_in_fill_mode(self, qapp, cut) -> None:
-        """채움 방식에서도 준비 중 · 자르기 준비 중 카드는 값 없는 막대가 보이고 면은 채우지 않아야 한다.
-
-        배경 채움 방식, 받는 중 + 준비 중(또는 구간 자르기 준비 중) -> 막대 보임 · 범위 0~0 · 채움 0
-        """
-        _display(progress="fill", animations=False)
-        item = _item(DownloadState.RUNNING)
-        if cut:
-            item.selections = TWO_SECTIONS
-            item.post_process = True
-            item.cut_preparing = True
-        else:
-            item.preparing = True
-        card = _card(item)
-        assert card.progressBar.isVisible()
-        assert card.progressBar.maximum() == 0
-        assert card.contentFrame.fill()[0] == 0.0
+class TestBarOnly:
+    """진행 표시는 막대 하나 — 카드 면은 진행을 칠하지 않는다(설계 §13, #611)."""
 
     def test_bar_mode_does_not_fill(self, qapp) -> None:
-        """막대 방식(기본)에서 40% 받는 중 카드면 면의 20% 자리가 카드 바탕이어야 한다."""
+        """40% 받는 중 카드면 면의 20% 자리가 카드 바탕이어야 한다."""
         item = _item(DownloadState.RUNNING)
         item.download_progress = 40
         card = _card(item)
         frame = card.contentFrame
         assert _close(_pixel(frame, frame.width() // 5, _empty_y(card)), _token("cardBg"))
 
-    def test_fill_moves_between_ticks_when_animations_are_on(self, qapp) -> None:
-        """애니메이션 켬이면 40% → 60% 틱에서 채움이 이어 움직이고, 반쯤 시간에 40과 60 사이여야 한다."""
-        _display(progress="fill", animations=True)
-        item = _item(DownloadState.RUNNING)
-        item.download_progress = 40
-        card = _card(item)
-        item.download_progress = 60
-        card.setData(item, 0)
-        motion = card.motion()
-        assert motion is not None
-        motion.setCurrentTime(motion.duration() // 2)
-        fraction, _ = card.contentFrame.fill()
-        assert 0.4 < fraction < 0.6
-
 
 class TestStopMotion:
-    """중지 모션 — 대기로 돌아가는 카드의 막대 · 채움이 지금 색으로 왼쪽 끝까지 줄어든다."""
+    """중지 모션 — 대기로 돌아가는 카드의 막대가 지금 색으로 왼쪽 끝까지 줄어든다."""
 
     def _stopped(self, progress: int = 60) -> ContentItemWidget:
         item = _item(DownloadState.RUNNING)
@@ -861,12 +783,12 @@ class TestStopMotion:
         assert card.motion() is None
         assert not card.progressBar.isVisible()
 
-    def test_finished_fill_motions_do_not_pile_up_on_the_card(self, qapp) -> None:
-        """채움 방식에서 틱 다섯 번의 모션이 끝나면 카드에 남은 모션 객체가 0개여야 한다.
+    def test_finished_tick_motions_do_not_pile_up_on_the_card(self, qapp) -> None:
+        """틱 다섯 번의 막대 모션이 끝나면 카드에 남은 모션 객체가 0개여야 한다.
 
         받는 중 10% → 20 · 30 · 40 · 50 · 60%, 틱마다 모션을 끝까지 돌림 -> QVariantAnimation 자식 0개
         """
-        _display(progress="fill", animations=True)
+        _display(animations=True)
         item = _item(DownloadState.RUNNING)
         item.download_progress = 10
         card = _card(item)
@@ -912,7 +834,7 @@ class TestStopMotion:
 
 
 class TestBarTickMotion:
-    """막대 방식(기본)도 받는 중 진행이 틱 사이를 이어 움직인다 — 배경 채움과 같은 방식 · 같은 시간."""
+    """받는 중 막대가 틱 사이를 이어 움직인다 — 엔진의 진행 통지 간격 동안."""
 
     def _ticked(self) -> ContentItemWidget:
         """받는 중 40% 카드에 60% 틱을 준다."""
@@ -926,16 +848,14 @@ class TestBarTickMotion:
     def test_bar_moves_between_ticks_when_animations_are_on(self, qapp) -> None:
         """애니메이션 켬이면 40% → 60% 틱에서 막대가 반쯤 시간에 40%와 60% 사이, 끝에 60%여야 한다.
 
-        막대 방식 · 애니메이션 켬, 모션 시간 = 채움과 같은 시간의 절반 -> 4000 < 값 < 6000(0.01% 단위),
+        애니메이션 켬, 모션 시간 = TICK_MOTION_MS, 그 절반 -> 4000 < 값 < 6000(0.01% 단위),
         끝 -> 6000 · 모션 없음
         """
-        _display(progress="fill", animations=True)
-        fill_duration = self._ticked().motion().duration()
         _display(animations=True)
         card = self._ticked()
         motion = card.motion()
         assert motion is not None
-        assert motion.duration() == fill_duration
+        assert motion.duration() == TICK_MOTION_MS
         bar = card.progressBar
         motion.setCurrentTime(motion.duration() // 2)
         assert bar.isVisible() and 4000 < bar.value() < 6000

@@ -1977,34 +1977,6 @@ class TestPickOnRelease:
         assert not _is(_edge(card, 3), pressed, 8)
         _release(window, items[1])
 
-    @pytest.mark.parametrize(
-        ("state", "token"),
-        [(D.RUNNING, "cardFillRunning"), (D.PAUSED, "cardFillPaused")],
-    )
-    def test_pressed_fill_is_the_pressed_fill_token(
-        self, window: VodDownloader, state: DownloadState, token: str
-    ) -> None:
-        """배경 채움 방식에서 누르고 있는 카드의 채운 자리는 채움의 눌린 색이어야 한다.
-
-        배경 채움 · 선택 모드, 40% 받는 중 · 일시정지 카드 -> 면 왼쪽에서 넷째 화소 ≈ 채움 색
-        -> 누름 -> ≈ 채움의 눌린 색(한도 8), 채움 색은 아님
-        """
-        card_display.use(card_display.CardDisplay(animations=False, progress="fill"))
-        item = _item("채움 카드", state)
-        item.download_progress = 40
-        window.contentManager.model.addItem(item)
-        _settle()
-        _toggle_select_mode(window, True)
-        card = _card(window, item)
-        tokens = theme.current_tokens()
-        assert _gap(QColor(tokens[token]), QColor(tokens[token + "Pressed"])) > 16
-        assert _is(_edge(card, 3), token, 8), "전제: 누르기 전은 채움 색이다"
-        _press(window, item)
-        assert card.isPressed(), "전제: 눌린 표시가 켜졌다"
-        assert _is(_edge(card, 3), token + "Pressed", 8)
-        assert not _is(_edge(card, 3), token, 8)
-        _release(window, item)
-
     def test_shift_range_is_added_on_release_with_the_modifier_of_the_press(
         self, window: VodDownloader
     ) -> None:

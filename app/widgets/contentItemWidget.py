@@ -63,12 +63,10 @@ def mix(start: QColor, end: QColor, amount: float) -> QColor:
 
 
 class CardFace(QFrame):
-    """카드 면 — QSS가 바탕 · 테두리 · 색조를 그리고, 배경 채움 방식이면 그 위에 진행 채움을 그린다 (#554).
+    """카드 면 — QSS가 바탕 · 테두리 · 색조를 그리고, 그 위에 모션 색조와 고른 카드 표시를 그린다 (#554).
 
-    채움은 진행만큼 왼쪽부터 카드 면 안쪽(테두리 안)을 칠한다 — 둥근 모서리로 잘라 낸다. 틱마다
-    `setStyleSheet`를 쓰지 않고 `paintEvent`에서 그리며, 채움 끝이 움직이면 바뀐 띠만 다시 그린다
-    (설계 §8의 6). 진행 끝선은 강조하지 않는다(설계 §12.1). 카드마다 붙는 효과 객체가 아니라 값 몇 개
-    (채움 비율 · 색 토큰, 모션 동안의 색조 세기 · 채움 색 섞기)만 든다.
+    카드마다 붙는 효과 객체가 아니라 값 몇 개(고름, 모션 동안의 색조 토큰 · 세기)만 든다. 진행 표시는
+    카드 아래끝 막대 하나다 — 배경 채움 방식은 없앴다(설계 §13, #611).
 
     완료 · 실패 모션(#571) 동안은 QSS 색조(`tint` 속성) 대신 면이 색조를 세기만큼 바탕 위에 칠한다
     (`setWash`) — QSS는 속성 값마다 한 색이라 서서히 나타나게 할 수 없다. 모션이 끝나면 카드가 `tint`
@@ -77,14 +75,9 @@ class CardFace(QFrame):
 
     def __init__(self, parent: QWidget) -> None:
         super().__init__(parent)
-        self._fill = 0.0  # 채운 비율 0 ~ 1
-        self._fillToken = ""  # 채움 색 토큰 — 빈 글이면 채움 없음
         self._selected = False  # 선택 모드에서 고른 카드 — 강조색 테두리(#561)
         self._washToken = ""  # 모션 동안 칠하는 색조 토큰 — 빈 글이면 없음(#571)
         self._wash = 0  # 색조 세기 0 ~ 255
-        self._fillToward = ""  # 채움 색이 섞여 가는 토큰 — 빈 글이면 채움 색 그대로(#571)
-        self._fillBlend = 0  # 채움 색 섞기 0 ~ 255
-        self._fillAlpha = 255  # 채움 불투명도 0 ~ 255(#571)
 
     def isSelected(self) -> bool:
         """고른 카드의 강조색 테두리를 그리는지."""
@@ -95,28 +88,6 @@ class CardFace(QFrame):
         if on != self._selected:
             self._selected = on
             self.update()
-
-    def fill(self) -> tuple[float, str]:
-        """(채운 비율, 색 토큰)."""
-        return self._fill, self._fillToken
-
-    def setFill(self, fraction: float, token: str) -> None:
-        """채움을 바꾼다 — 바뀐 띠만 다시 그린다. 토큰이 빈 글이면 채움 없음."""
-        fraction = max(0.0, min(1.0, fraction)) if token else 0.0
-        if (fraction, token) == (self._fill, self._fillToken):
-            return
-        if token != self._fillToken:
-            self._fill, self._fillToken = fraction, token
-            self.update()
-            return
-        left, right = sorted((self._fill, fraction))
-        self._fill = fraction
-        inner = self.width() - 2
-        self.update(int(left * inner), 0, int((right - left) * inner) + 3, self.height())
-
-    def fillRight(self) -> int:
-        """채움의 오른쪽 끝(면 좌표 px). 채움이 없으면 0."""
-        return round(1 + self._fill * (self.width() - 2)) if self._fillToken else 0
 
     def wash(self) -> tuple[str, float]:
         """(모션 동안 칠하는 색조 토큰, 세기 0 ~ 1) — 칠하지 않으면 ("", 0.0)."""
@@ -130,48 +101,19 @@ class CardFace(QFrame):
             self._washToken, self._wash = token, level
             self.update()
 
-    def fillLook(self) -> tuple[str, float, float]:
-        """(채움 색이 섞여 가는 토큰, 섞기 0 ~ 1, 불투명도 0 ~ 1)."""
-        return self._fillToward, self._fillBlend / 255, self._fillAlpha / 255
-
-    def setFillLook(self, toward: str, blend: float, alpha: float) -> None:
-        """채움 색을 `toward` 색으로 `blend`만큼 섞고 불투명도를 `alpha`로 둔다 — 모션이 쓴다 (#571).
-
-        ("", 0, 1)이면 채움 색 그대로다. 채움 비율 · 토큰(`setFill`)은 바꾸지 않는다.
-        """
-        blend_level = _level(blend) if toward else 0
-        look = (toward if blend_level else "", blend_level, _level(alpha))
-        if look != (self._fillToward, self._fillBlend, self._fillAlpha):
-            self._fillToward, self._fillBlend, self._fillAlpha = look
-            self.update()
-
     def _step(self) -> str:
         """바탕의 호버 · 눌림 단계 — "Pressed" · "Hover" · "" (QSS 바탕 규칙과 같은 차례)."""
         if self.property("pressed") is True:
             return "Pressed"
         return "Hover" if self.property("hover") is True else ""
 
-    def _fillColor(self, pressed: bool) -> QColor:
-        """채움이 칠하는 색 — 섞기 · 불투명도를 따른다(눌린 동안은 한 단계 더 간 색, #561).
-
-        섞여 가는 색조는 지금 호버 · 눌림 단계의 색조다 — 모션이 끝나 QSS 색조로 바뀔 때 색이 튀지 않게(#571).
-        """
-        tokens = theme.current_tokens()
-        color = QColor(tokens[self._fillToken + ("Pressed" if pressed else "")])
-        if self._fillToward:
-            toward = QColor(tokens[self._fillToward + self._step()])
-            color = mix(color, toward, self._fillBlend / 255)
-        color.setAlpha(self._fillAlpha)
-        return color
-
     def _washColor(self) -> QColor:
         """모션 동안 칠하는 색조 — 지금 호버 · 눌림 단계의 색조(QSS 색조 규칙과 같은 토큰, #571)."""
         return QColor(theme.current_tokens()[self._washToken + self._step()])
 
     def colorAt(self, x: int) -> QColor:
-        """면 좌표 `x`에서 보이는 바탕색 — 채움 · 색조 · 호버 · 눌림을 따른다(카드 버튼 덮개가 쓴다)."""
+        """면 좌표 `x`에서 보이는 바탕색 — 색조 · 호버 · 눌림을 따른다(카드 버튼 덮개가 쓴다)."""
         tokens = theme.current_tokens()
-        pressed = self.property("pressed") is True
         step = self._step()
         tint = self.property("tint")
         if tint in ("finished", "failed"):
@@ -181,17 +123,12 @@ class CardFace(QFrame):
             ground = QColor(tokens["card" + step + "Bg"])  # cardBg · cardHoverBg · cardPressedBg
         if self._washToken:
             ground = mix(ground, self._washColor(), self._wash / 255)
-        if self._fillToken and x < self.fillRight():
-            fill = self._fillColor(pressed)
-            ground = mix(ground, fill, fill.alphaF())
         return ground
 
     def paintEvent(self, event: QPaintEvent) -> None:
-        """QSS 바탕 · 테두리 위에 모션 색조 · 진행 채움(테두리 안쪽)과 고른 카드의 강조색 테두리를 그린다."""
+        """QSS 바탕 · 테두리 위에 모션 색조(테두리 안쪽)와 고른 카드의 강조색 테두리를 그린다."""
         super().paintEvent(event)
-        washing = bool(self._washToken)
-        filling = bool(self._fillToken) and self._fill > 0 and self._fillAlpha > 0
-        if washing or filling:
+        if self._washToken:
             radius = theme.METRICS["cardRadius"] - 1
             inner = QRectF(1, 1, self.width() - 2, self.height() - 2)
             path = QPainterPath()
@@ -199,15 +136,9 @@ class CardFace(QFrame):
             painter = QPainter(self)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             painter.setClipPath(path)
-            if washing:
-                wash = self._washColor()
-                wash.setAlpha(self._wash)
-                painter.fillRect(inner, wash)
-            if filling:
-                painter.fillRect(
-                    QRectF(1, 1, self._fill * inner.width(), inner.height()),
-                    self._fillColor(self.property("pressed") is True),
-                )
+            wash = self._washColor()
+            wash.setAlpha(self._wash)
+            painter.fillRect(inner, wash)
             painter.end()
         if self._selected:
             painter = QPainter(self)
@@ -434,7 +365,7 @@ class HoverShade(QWidget):
     """카드 버튼 밑의 1줄 글을 카드 바탕으로 덮는 오버레이 — 그림만, 마우스는 밑으로 간다 (#550).
 
     왼쪽 ``FADE``는 투명 → 바탕색으로 흐려지고, 그 오른쪽은 바탕색으로 채운다. 바탕색은 그 자리에서
-    보이는 카드 면의 색이다(호버 · 완료 · 실패 색조 · 배경 채움, `CardFace.colorAt`) — 그릴 때 읽는다.
+    보이는 카드 면의 색이다(호버 · 완료 · 실패 색조, `CardFace.colorAt`) — 그릴 때 읽는다.
     카드마다 붙는 효과 객체(QGraphicsEffect)가 아니라 그리기만 하는 위젯이다.
     """
 

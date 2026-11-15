@@ -186,10 +186,10 @@ TIP_LABEL_NAMES = (
     "pathIcon",
 )
 
-STOP_MOTION_MS = 300  # 중지 모션 — 막대 · 채움이 왼쪽 끝까지 줄어드는 시간(ms, 설계 §12.1)
-# 완료 모션 — 막대 · 채움이 끝까지 차며 완료 색이 되고 카드 색조가 나타나는 시간(ms, 프로토 FILL_FINISH_MS, #571)
+STOP_MOTION_MS = 300  # 중지 모션 — 막대가 왼쪽 끝까지 줄어드는 시간(ms, 설계 §12.1)
+# 완료 모션 — 막대가 끝까지 차며 완료 색이 되고 카드 색조가 나타나는 시간(ms, 프로토 FILL_FINISH_MS, #571)
 FINISH_MOTION_MS = 400
-# 실패 모션 — 막대 · 채움이 제자리에서 실패 색이 되며 사라지고 카드 색조가 나타나는 시간(ms, 프로토
+# 실패 모션 — 막대가 제자리에서 실패 색이 되며 사라지고 카드 색조가 나타나는 시간(ms, 프로토
 # FILL_FAIL_MS). 프로토와 달리 끝까지 채우지 않는다 — 실패인데 다 받은 것처럼 보이지 않게(#571)
 FAIL_MOTION_MS = 400
 # 완료 모션 뒤 끝까지 찬 막대가 흐려지며 사라지는 시간(ms) — 프로토에 없는 단계(#571, 150 ~ 200에서 정함)
@@ -201,7 +201,7 @@ TINT_MOTION_FROM = (DownloadState.WAITING, DownloadState.RUNNING, DownloadState.
 _MOTION_EASING = QEasingCurve(
     QEasingCurve.Type.InOutQuad
 )  # 완료 · 실패 · 색조 걷기 곡선(프로토와 같음)
-# 막대 · 배경 채움이 통지 사이를 이어 움직이는 시간(ms) — 엔진의 진행 통지 간격(`PROGRESS_SECONDS`)에서
+# 막대가 통지 사이를 이어 움직이는 시간(ms) — 엔진의 진행 통지 간격(`PROGRESS_SECONDS`)에서
 # 센다(card_display.PROGRESS_INTERVAL_MS, #557). 짧으면 움직이고 서기를 되풀이한다(오너 실기 2026-11-10).
 # 다음 통지가 먼저 오면 그려진 값에서 잇는다
 TICK_MOTION_MS = card_display.PROGRESS_INTERVAL_MS
@@ -339,7 +339,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self._level = 0  # 지금 3줄 접는 단계
         self._appliedLevel = -1  # 라벨에 놓은 단계 — 다르면 글을 다시 놓는다
         self._showYear = True  # 날짜에 연도를 적는지 — 목록이 정한다
-        self._shown = 0.0  # 막대 · 채움이 지금 보이는 진행 비율(0 ~ 1)
+        self._shown = 0.0  # 막대가 지금 보이는 진행 비율(0 ~ 1)
         self._motion: QVariantAnimation | None = None  # 도는 진행 모션 — 없으면 None
         # 도는 모션이 완료 · 실패 · 색조 걷기면 그 모션이 가는 상태 — 아니면 None(#571)
         self._motionGoal: DownloadState | None = None
@@ -650,7 +650,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         frame = self.contentFrame
         frame.setProperty("pressed", on)
         theme.repolish(frame)
-        frame.update()  # 배경 채움은 면이 직접 그린다 — 속성만 바뀌면 다시 그리지 않을 수 있다
+        frame.update()  # 모션 색조는 면이 직접 그린다 — 속성만 바뀌면 다시 그리지 않을 수 있다
         if self.hoverShade.isVisibleTo(self):
             self.hoverShade.update()
 
@@ -1210,12 +1210,12 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             return max(inset + self._thumbColumn() + row1, inset + row3)
         return inset + self._thumbColumn() + max(row1, row3)
 
-    # ---- 진행 막대 · 배경 채움 · 색조 · 중지 모션 (#554) ----
+    # ---- 진행 막대 · 색조 · 중지 모션 (#554) ----
 
     def _target(self) -> tuple[float, str, bool]:
         """(보일 진행 비율, 상태 어휘, 값 없이 움직이는 막대인지) — 지금 아이템으로 정한다.
 
-        완료 · 실패는 0이다 — 막대 · 채움이 없고 카드 전체 색조가 상태를 알린다(#571).
+        완료 · 실패는 0이다 — 막대가 없고 카드 전체 색조가 상태를 알린다(#571).
         """
         item = self.item
         raw = item.downloadState
@@ -1231,26 +1231,14 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         return 0.0, state, False
 
     def _showProgress(self, fraction: float, state: str, busy: bool, snap: bool = False) -> None:
-        """막대 · 채움에 진행을 그린다 — 진행 표시 방식(설정 키)을 따른다.
-
-        값 없이 움직이는 막대(준비 중 · 자르기 준비 중)는 배경 채움 방식에서도 막대로 보인다 — 채울
-        값이 없어 채움으로는 아무것도 안 보인다(#554 리뷰).
+        """카드 아래끝 막대에 진행을 그린다 — 준비 중 · 자르기 준비 중은 값 없이 움직이는 막대다.
 
         `snap`이면(모션 프레임) 그리는 값을 그 폭의 1px 단위로 묶는다 — 화소가 바뀌지 않는 프레임은
         값이 같아 다시 그리지 않는다(오너 2026-11-10, 0.01% 단위의 프레임마다 다시 그리기를 막음).
         폭은 그릴 때마다 지금 폭으로 센다. 멈춘 값(틱 · 모션 끝)은 묶지 않는다.
         """
         self._shown = fraction
-        display = card_display.current()
         bar = self.progressBar
-        if display.fill and not busy:
-            bar.setVisible(False)
-            token = {"running": "cardFillRunning", "paused": "cardFillPaused"}.get(state, "")
-            frame = self.contentFrame
-            drawn = _snapped(fraction, frame.width() - 2) if snap else fraction
-            frame.setFill(drawn, token)
-            return
-        self.contentFrame.setFill(0.0, "")
         maximum = 0 if busy else PROGRESS_SCALE
         if bar.maximum() != maximum:
             bar.setRange(0, maximum)
@@ -1277,7 +1265,6 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             self._motion = None
         self._motionGoal = None
         self.contentFrame.setWash("", 0.0)
-        self.contentFrame.setFillLook("", 0.0, 1.0)
         self.progressBar.setLook("", 0.0, 1.0)
 
     def _setTint(self, tint: str) -> None:
@@ -1317,54 +1304,40 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self._setTint(self._cardState() if raw in TINT_STATES else "")
         self._showProgress(*self._target())
 
-    def _startTintMotion(self, previous: DownloadState, finished: bool, fill: bool) -> None:
+    def _startTintMotion(self, previous: DownloadState, finished: bool) -> None:
         """받는 중 · 일시정지 · 대기 → 완료 · 실패 모션을 돈다 (#571).
 
-        완료: 막대 방식은 막대가 그려진 값에서 끝까지 차며 앞 상태 색 → 완료 색으로 바뀌고 같은 시간에 카드
-        색조가 0에서 나타난다(`FINISH_MOTION_MS`). 그 뒤 막대가 `BAR_FADE_MS`에 흐려진다. 배경 채움
-        방식은 채움이 끝까지 차며 완료 색조로 바뀐다 — 다 찬 채움이 곧 카드 전체 색조다. 채움이 없던 대기
-        카드는 채울 색이 없어 카드 색조만 나타난다.
+        완료: 막대가 그려진 값에서 끝까지 차며 앞 상태 색 → 완료 색으로 바뀌고 같은 시간에 카드 색조가
+        0에서 나타난다(`FINISH_MOTION_MS`). 그 뒤 막대가 `BAR_FADE_MS`에 흐려진다.
 
-        실패: 끝까지 채우지 않는다. 막대 방식은 막대가 제자리에서 실패 색으로 바뀌며 사라지고, 배경 채움
-        방식은 채움이 제자리에서 사라진다. 어느 방식이든 같은 시간에 카드 색조가 나타난다(`FAIL_MOTION_MS`).
+        실패: 끝까지 채우지 않는다. 막대가 제자리에서 실패 색으로 바뀌며 사라지고, 같은 시간에 카드 색조가
+        나타난다(`FAIL_MOTION_MS`).
 
         모션 동안 QSS 색조는 걸지 않고 면이 칠한다(`CardFace.setWash`). 끝나면 `_finishStepMotion`이
-        QSS 색조를 걸고 막대 · 채움을 없앤다.
+        QSS 색조를 걸고 막대를 없앤다.
         """
         start = self._shown
         old_state = "paused" if previous == DownloadState.PAUSED else "running"
         if previous == DownloadState.WAITING:
             start, old_state = 0.0, "waiting"
-        old_fill = {"running": "cardFillRunning", "paused": "cardFillPaused"}.get(old_state, "")
         name = "Finished" if finished else "Failed"
         tint, color = f"cardTint{name}", f"state{name}"
         frame, bar = self.contentFrame, self.progressBar
         self._setTint("")
-        if fill:
-            bar.setVisible(False)
-            frame.setFill(start, old_fill)
-        else:
-            frame.setFill(0.0, "")
-            if bar.maximum() != PROGRESS_SCALE:
-                bar.setRange(0, PROGRESS_SCALE)
-            bar.setValue(round(start * PROGRESS_SCALE))
-            if bar.property("state") != old_state:
-                bar.setProperty("state", old_state)
-                theme.repolish(bar)
-            bar.setVisible(finished or start > 0)
+        if bar.maximum() != PROGRESS_SCALE:
+            bar.setRange(0, PROGRESS_SCALE)
+        bar.setValue(round(start * PROGRESS_SCALE))
+        if bar.property("state") != old_state:
+            bar.setProperty("state", old_state)
+            theme.repolish(bar)
+        bar.setVisible(finished or start > 0)
         main = FINISH_MOTION_MS if finished else FAIL_MOTION_MS
-        fade = BAR_FADE_MS if finished and not fill else 0
+        fade = BAR_FADE_MS if finished else 0
 
         def step(ms: float) -> None:
             t = _MOTION_EASING.valueForProgress(min(1.0, ms / main))
-            if fill and finished and old_fill:
-                frame.setFill(_snapped(start + (1.0 - start) * t, frame.width() - 2), old_fill)
-                frame.setFillLook(tint, t, 1.0)
-                return
             frame.setWash(tint, t)
-            if fill:
-                frame.setFillLook("", 0.0, 1.0 - t)
-            elif finished:
+            if finished:
                 bar.setValue(
                     round(_snapped(start + (1.0 - start) * t, bar.width()) * PROGRESS_SCALE)
                 )
@@ -1402,19 +1375,19 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         motion.start()
 
     def _onMotionFinished(self) -> None:
-        """모션이 끝났다 — 지금 아이템의 진행으로 맞춘다(중지 모션이면 대기 — 막대 · 채움 없음)."""
+        """모션이 끝났다 — 지금 아이템의 진행으로 맞춘다(중지 모션이면 대기 — 막대 없음)."""
         motion, self._motion = self._motion, None
         if motion is not None:
             motion.deleteLater()  # 끝난 모션이 카드의 자식으로 쌓이지 않게(이어 움직임은 틱마다 하나)
         self._showProgress(*self._target())
 
     def _applyProgress(self, previous: object) -> None:
-        """상태가 바뀐 뒤 막대 · 채움 · 색조를 맞춘다 — 중지면 줄어드는 모션을 돈다(설계 §12.1 중지 모션).
+        """상태가 바뀐 뒤 막대 · 색조를 맞춘다 — 중지면 줄어드는 모션을 돈다(설계 §12.1 중지 모션).
 
-        중지 확인 뒤 대기로 돌아가는 카드(받는 중 · 일시정지)는 막대 · 채움이 지금 자리에서 왼쪽 끝까지
+        중지 확인 뒤 대기로 돌아가는 카드(받는 중 · 일시정지)는 막대가 지금 자리에서 왼쪽 끝까지
         `STOP_MOTION_MS`에 줄어든다(처음 빠르고 끝에서 느림, 그 카드의 지금 색). 애니메이션을 끄면 바로
-        사라진다. 모션 도중 다시 시작하면 모션을 멈추고 새 진행을 따른다. 받는 중 진행은 막대 · 배경
-        채움 어느 방식이든 틱 사이를 `TICK_MOTION_MS`에 이어 움직인다(애니메이션 켬일 때).
+        사라진다. 모션 도중 다시 시작하면 모션을 멈추고 새 진행을 따른다. 받는 중 막대는 틱 사이를
+        `TICK_MOTION_MS`에 이어 움직인다(애니메이션 켬일 때).
 
         완료 · 실패가 되면 완료 · 실패 모션을 돌고(`_startTintMotion`), 실패 · 완료에서 다른 상태가 되면
         색조를 걷는 모션을 돈다(`_startClearMotion`) — 애니메이션 켬이고 카드가 보일 때만(#571). 그 밖
@@ -1435,7 +1408,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         moving = display.animations and self.isVisible() and previous != raw
         if moving and raw in TINT_STATES and previous in TINT_MOTION_FROM:
             self._stopMotion()
-            self._startTintMotion(previous, raw == DownloadState.FINISHED, display.fill)
+            self._startTintMotion(previous, raw == DownloadState.FINISHED)
             return
         if moving and previous in TINT_STATES and raw not in TINT_STATES:
             self._stopMotion()
@@ -1500,8 +1473,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         동적 속성(`state` · `tint`)만 바꾸고, 색은 전역 QSS 규칙이 고른다 — 속성만 바꾸면 이미 계산된
         스타일이 갱신되지 않으므로 theme.repolish()가 함께 필요하다.
 
-        진행 표시(#554): 막대 방식은 받는 중 · 일시정지가 진행만큼이다. 배경 채움 방식은 받는 중 · 일시정지를
-        카드 면에 칠한다. 어느 방식이든 완료 · 실패는 막대 · 채움 없이 카드 전체 색조다(#571). 준비 중 ·
+        진행 표시(#554 · #611): 막대 하나 — 받는 중 · 일시정지가 진행만큼이다. 완료 · 실패는 막대 없이
+        카드 전체 색조다(#571). 준비 중 ·
         자르기 준비 중은 값 없이 움직이는 막대다.
 
         카드 버튼은 `CARD_BUTTONS`가 상태마다 정한다. 줄 자리 · 카드 높이는 상태와 무관하다
