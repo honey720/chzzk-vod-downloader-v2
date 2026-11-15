@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMessageBox,
-    QPushButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
@@ -31,7 +30,7 @@ from PySide6.QtCore import (
     Qt,
     QTimer,
 )
-from PySide6.QtGui import QKeyEvent, QKeySequence, QResizeEvent
+from PySide6.QtGui import QKeyEvent, QKeySequence, QResizeEvent, QShortcut
 
 from app.system.free_space import FreeSpaceProbe
 from app.system.process_memory import log_process_memory, resident_bytes
@@ -66,6 +65,8 @@ logger = logging.getLogger(__name__)
 FRAME_RETRY_MS = 50  # 표시 뒤 프레임 여백을 다시 보는 간격(ms) — X11 창 관리자는 테두리를 표시 뒤 비동기로 붙인다 (#487)
 FRAME_RETRIES = 10  # 그만큼(약 0.5초) 기다려도 여백이 없으면 그만둔다 — 창 관리자가 없는 X 서버 등
 MONITOR_INTERVAL_MS = 1000  # 하단바 모니터링을 고치는 간격(ms) — 설계 §2 「1초마다」 (#504)
+# 설정 창 단축키 — Ctrl+,(macOS는 Qt가 Cmd+,로 읽고 그린다, #611). 툴팁도 이 값을 그 OS의 표기로 적는다
+SETTINGS_SHORTCUT = QKeySequence("Ctrl+,")
 URL_MIN_WIDTH = (
     160  # URL 칸 최소폭(px) — 이보다 좁아지기 전에 저장 위치 버튼을 아이콘으로(프로토 11v, #529)
 )
@@ -343,14 +344,16 @@ class VodDownloader(QMainWindow):
         self.menuDownloadButton.setProperty("on", True)
         self.menuDownloadButton.toggled.connect(self._onMenuToggled)
         self.appMenuLayout.addWidget(self.menuDownloadButton)
-        self.menuSettingsButton = QPushButton(self.appMenuBar)
-        self.menuSettingsButton.setObjectName("menuSettingsButton")
-        self.menuSettingsButton.setProperty("role", "menu")
-        self.menuSettingsButton.setProperty("on", False)
-        self.appMenuLayout.addWidget(self.menuSettingsButton)
         self.appMenuLayout.addStretch(1)
-        # 고른 화면 메뉴는 하나 — 그룹이 배타라 눌린 「VOD 다운」을 다시 눌러도 풀리지 않는다.
-        # 「설정」은 화면이 아니라 창을 여는 메뉴라 그룹에 넣지 않는다(설정 화면 개편 전까지)
+        # 설정 — 메뉴바 오른쪽 끝 톱니바퀴 버튼이 설정 창(모달)을 연다. 메뉴바 탭은 작업 화면만 둔다(설계 §4 ·
+        # §13, #611). 이름은 툴팁 「설정 · Ctrl+,」, 단축키는 setupSignals가 건다
+        self.settingsButton = IconButton(self.appMenuBar)
+        self.settingsButton.setObjectName("settingsButton")
+        self.settingsButton.setIconName("gear")
+        self.settingsButton.setGlyphMetric("narrowIcon")
+        self.settingsButton.setIdleToken("text")
+        self.appMenuLayout.addWidget(self.settingsButton)
+        # 고른 화면 메뉴는 하나 — 그룹이 배타라 눌린 「VOD 다운」을 다시 눌러도 풀리지 않는다
         self.appMenuGroup = QButtonGroup(window)
         self.appMenuGroup.setExclusive(True)
         self.appMenuGroup.addButton(self.menuDownloadButton)
@@ -475,8 +478,8 @@ class VodDownloader(QMainWindow):
         self.windowScrollArea.setWidget(self.contentColumn)
         window.setCentralWidget(self.windowScrollArea)
         # 탭 순서 = 화면 순서(위 → 아래, 왼쪽 → 오른쪽): 메뉴 · 헤더 1줄 · 목록 · 하단
-        QWidget.setTabOrder(self.menuDownloadButton, self.menuSettingsButton)
-        QWidget.setTabOrder(self.menuSettingsButton, self.urlInput)
+        QWidget.setTabOrder(self.menuDownloadButton, self.settingsButton)
+        QWidget.setTabOrder(self.settingsButton, self.urlInput)
         QWidget.setTabOrder(self.urlInput, self.saveLocationButton)
         QWidget.setTabOrder(self.saveLocationButton, self.fetchButton)
         # 좁은 폭 상태 드롭다운은 칩 앞 — 보이는 모양의 것만 Tab이 들른다(숨은 위젯은 건너뛴다)
@@ -501,7 +504,9 @@ class VodDownloader(QMainWindow):
         """
         window.setWindowTitle(window_title(config.get_app_version()))
         self.menuDownloadButton.setText(self.tr("VOD Download"))
-        self.menuSettingsButton.setText(self.tr("Settings"))
+        self.settingsButton.setToolTip(
+            shortcut_tip(self.tr("Settings"), SETTINGS_SHORTCUT.toString(QKeySequence.NativeText))
+        )
         self.urlInput.setPlaceholderText(self.tr("Enter Chzzk URL · Enter to add"))
         # 등록은 「+」 아이콘 버튼 — 이름 · 단축키는 툴팁(#536 — 설계 §12.1, 프로토 「등록 · Enter」)
         self.fetchButton.setToolTip(shortcut_tip(self.tr("Add"), "Enter"))
@@ -561,7 +566,7 @@ class VodDownloader(QMainWindow):
         """메뉴바 · 헤더바 · 하단바에서 누르거나 쓰는 컨트롤 — 높이 · 커서 · 초점 · 말풍선 규칙이 같다 (#536)."""
         return [
             self.menuDownloadButton,
-            self.menuSettingsButton,
+            self.settingsButton,
             self.urlInput,
             self.saveLocationButton,
             self.fetchButton,
@@ -978,9 +983,14 @@ class VodDownloader(QMainWindow):
         self.fetchButton.setFixedWidth(self.fetchButton.reservedWidth())
 
     def _squareFooterButtons(self) -> None:
-        """아이콘 버튼(하단 둘 · 헤더바 선택)을 바 컨트롤 높이의 정사각으로 건다 (#504 · #536 · #561 — 설계 §11.3)."""
+        """아이콘 버튼(하단 둘 · 헤더바 선택 · 메뉴바 설정)을 바 컨트롤 높이의 정사각으로 건다 (#504 · #536 · #561 · #611)."""
         side = theme.METRICS["barControl"]
-        for button in (self.downloadButton, self.stopButton, self.selectButton):
+        for button in (
+            self.downloadButton,
+            self.stopButton,
+            self.selectButton,
+            self.settingsButton,
+        ):
             button.setFixedSize(side, side)
 
     def _showRegisterError(self, text: str) -> None:
@@ -1032,7 +1042,10 @@ class VodDownloader(QMainWindow):
         self.urlInput.textChanged.connect(self._clearRegisterError)
         self.urlInput.textChanged.connect(self._syncFetchButton)
         self._syncFetchButton()
-        self.menuSettingsButton.clicked.connect(self.onSetting)
+        self.settingsButton.clicked.connect(self.onSetting)
+        # 설정 창 단축키 — Ctrl+,(macOS는 Qt가 Cmd+,로 바꾼다, #611)
+        self.settingsShortcut = QShortcut(SETTINGS_SHORTCUT, self)
+        self.settingsShortcut.activated.connect(self.onSetting)
         # 「VOD 다운」을 눌렀다 — 결과를 봤다(#523)
         self.menuDownloadButton.clicked.connect(self.menuDownloadButton.stopBlink)
         self._setupSelection()

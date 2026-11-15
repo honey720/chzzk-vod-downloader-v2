@@ -350,14 +350,14 @@ def test_hidden_bubble_keeps_the_menu_bar_in_place(tmp_path: Path) -> None:
     win, _items = _window_with(tmp_path, [])
     assert _bubble(win) == "", "전제: 버블이 없다"
     win._contentMinimumWidth()  # 레이아웃을 다시 셈한다
-    hidden = (win.menuDownloadButton.width(), win.menuSettingsButton.x())
+    hidden = (win.menuDownloadButton.width(), win.settingsButton.x())
     item = footer._card(str(tmp_path), 1)
     item.downloadState = R
     win.contentManager.model.addItem(item)
     footer._pump()
     assert _bubble(win) == "running", "전제: 버블이 보인다"
     win._contentMinimumWidth()
-    shown = (win.menuDownloadButton.width(), win.menuSettingsButton.x())
+    shown = (win.menuDownloadButton.width(), win.settingsButton.x())
     assert shown == hidden
 
 

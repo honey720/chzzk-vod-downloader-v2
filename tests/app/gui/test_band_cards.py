@@ -273,3 +273,61 @@ class TestBarButtons:
         for button in (win.saveLocationButton, win.fetchButton, win.selectButton, win.sortButton):
             rect = _rect(win, button)
             assert _is(_pixel(image, rect.center().x(), rect.top()), "surface"), button.objectName()
+
+
+class TestSettingsGear:
+    """설정은 메뉴바 오른쪽 끝 톱니바퀴 · Ctrl+,로 여는 모달 창 — 메뉴바 탭은 작업 화면만(설계 §4 · §13)."""
+
+    @pytest.fixture
+    def opened(self, monkeypatch: pytest.MonkeyPatch) -> list:
+        """설정 창 `exec_`를 가로채 연 창을 모은다(실제 모달을 띄우지 않는다)."""
+        import app.views.mainWindow as main_window_module
+
+        seen: list = []
+        monkeypatch.setattr(
+            main_window_module.SettingDialog, "exec_", lambda self: seen.append(self) or 0
+        )
+        return seen
+
+    def test_gear_sits_at_the_right_end_of_the_menu_bar(self, window) -> None:
+        """톱니바퀴는 메뉴바 오른쪽 끝(창 폭 − 12)의 32 정사각이고, 메뉴바 탭은 「VOD 다운」 하나여야 한다.
+
+        창 폭 900 -> 톱니바퀴 오른쪽 끝 888 · 크기 32×32 · 글 없음 · 툴팁 「Settings」로 시작, 메뉴바 글 버튼은
+        menuDownloadButton 하나
+        """
+        from PySide6.QtWidgets import QPushButton
+
+        win = window(DownloadState.WAITING)
+        gear = win.settingsButton
+        rect = _rect(win, gear)
+        assert rect.right() == win.width() - OUTER - 1
+        assert (gear.width(), gear.height()) == (32, 32)
+        assert gear.text() == "" and gear.toolTip().startswith("Settings")
+        texts = [b.objectName() for b in win.appMenuBar.findChildren(QPushButton) if b.text()]
+        assert texts == ["menuDownloadButton"]
+
+    def test_gear_opens_the_settings_dialog(self, window, opened: list) -> None:
+        """톱니바퀴를 누르면 설정 창이 한 번 열려야 한다.
+
+        톱니바퀴 클릭 -> 설정 창 exec_ 1번, 고른 메뉴는 「VOD 다운」 그대로
+        """
+        win = window(DownloadState.WAITING)
+        win.settingsButton.click()
+        _pump()
+        assert len(opened) == 1
+        assert win.menuDownloadButton.isChecked()
+
+    def test_ctrl_comma_opens_the_settings_dialog(self, window, opened: list, qtbot) -> None:
+        """Ctrl+,(macOS는 Cmd+,)를 누르면 설정 창이 한 번 열려야 한다.
+
+        창 활성 · 목록에 초점, Ctrl+, 키 -> 설정 창 exec_ 1번
+        """
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+
+        win = window(DownloadState.WAITING)
+        win.activateWindow()
+        qtbot.waitUntil(win.isActiveWindow, timeout=3000)
+        QTest.keyClick(win.listView, Qt.Key.Key_Comma, Qt.KeyboardModifier.ControlModifier)
+        _pump()
+        assert len(opened) == 1

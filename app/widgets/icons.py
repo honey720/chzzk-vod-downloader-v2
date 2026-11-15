@@ -17,6 +17,8 @@
 전역 QSS의 `QPushButton[role="icon"]` 규칙이 그대로 담당한다.
 """
 
+import math
+
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import (
     QColor,
@@ -45,7 +47,9 @@ import app.theme as theme
 #: link · memory · disk = 하단바 연결 · 메모리 · 여유 칸 — 프로토 그림을 옮겼다(#536).
 #: edit = 대기 카드의 카드 편집 창 열기(✎, #545).
 #: select = 헤더바 선택 버튼(체크박스 — 둥근 상자 + ✓), trash = 선택 줄 지우기(휴지통) — 프로토 그림(#561).
+#: gear = 메뉴바 오른쪽 끝 설정 버튼(톱니바퀴 — 바퀴 · 축 구멍 · 톱니 여덟, #611).
 ICON_NAMES = (
+    "gear",
     "select",
     "trash",
     "edit",
@@ -398,6 +402,22 @@ def _paint_edit(painter: QPainter, s: float, color: QColor, accent: QColor) -> N
     painter.drawLine(QPointF(s * 0.56, s * 0.28), QPointF(s * 0.72, s * 0.44))
 
 
+def _paint_gear(painter: QPainter, s: float, color: QColor, accent: QColor) -> None:
+    """톱니바퀴 — 바퀴 원 · 축 구멍 · 바깥 톱니 여덟(설정, #611). 선은 아이콘 한 벌의 굵기, 톱니는 조금 굵게."""
+    center = s / 2
+    _stroke(painter, color, s * LINE_WIDTH)
+    painter.drawEllipse(QPointF(center, center), s * 0.27, s * 0.27)
+    painter.drawEllipse(QPointF(center, center), s * 0.11, s * 0.11)
+    _stroke(painter, color, s * 0.15)
+    for k in range(8):
+        angle = math.pi / 4 * k + math.pi / 8
+        dx, dy = math.cos(angle), math.sin(angle)
+        painter.drawLine(
+            QPointF(center + dx * s * 0.33, center + dy * s * 0.33),
+            QPointF(center + dx * s * 0.42, center + dy * s * 0.42),
+        )
+
+
 def _paint_select(painter: QPainter, s: float, color: QColor, accent: QColor) -> None:
     """선택 — 둥근 상자 하나와 그 안의 ✓(#561). 좌표는 프로토 선택 버튼 그림이다."""
     _stroke(painter, color, s * LINE_WIDTH)
@@ -438,6 +458,7 @@ def _paint_trash(painter: QPainter, s: float, color: QColor, accent: QColor) -> 
 
 
 _PAINTERS = {
+    "gear": _paint_gear,
     "select": _paint_select,
     "trash": _paint_trash,
     "edit": _paint_edit,

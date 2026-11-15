@@ -185,7 +185,7 @@ def _independent_content_minimum(win: VodDownloader) -> int:
     menu = (
         _leaf_min(win.menuDownloadButton)
         + win.appMenuLayout.spacing()
-        + _leaf_min(win.menuSettingsButton)
+        + _leaf_min(win.settingsButton)
     )
     info_gap = win.infoLayout.spacing()
     speed = win.footerMonitor.labels["speed"]
@@ -503,7 +503,7 @@ class TestWindowMinimumWidthHasAContentFloor:
         win = _window(cards=2)
         _at_width(win, win.minimumWidth())
         for frame, widgets in (
-            (win.appMenuBar, (win.menuDownloadButton, win.menuSettingsButton)),  # 메뉴바(#492)
+            (win.appMenuBar, (win.menuDownloadButton, win.settingsButton)),  # 메뉴바(#492)
             (
                 win.headerFrame,
                 (

@@ -147,12 +147,13 @@ class TestFourZones:
             assert upper.bottom() < lower.top(), f"칸이 겹치거나 차례가 다르다: {upper} / {lower}"
 
     def test_the_menu_holds_vod_download_then_settings(self) -> None:
-        """메뉴바에는 왼쪽부터 「VOD 다운」 · 「설정」이 있고 「VOD 다운」이 고른 상태여야 한다."""
+        """메뉴바에는 왼쪽에 「VOD 다운」, 오른쪽 끝에 글 없는 설정 톱니바퀴(툴팁 「Settings · …」)가 있고 「VOD 다운」이 고른 상태여야 한다(#611)."""
         win = _window()
         win.show()
         QApplication.processEvents()
-        download, settings_button = win.menuDownloadButton, win.menuSettingsButton
-        assert (download.text(), settings_button.text()) == ("VOD Download", "Settings")
+        download, settings_button = win.menuDownloadButton, win.settingsButton
+        assert download.text() == "VOD Download"
+        assert settings_button.text() == "" and settings_button.toolTip().startswith("Settings")
         assert download.x() < settings_button.x()
         assert download.isChecked()
 
@@ -193,7 +194,7 @@ class TestWindowTitle:
         qapp.installTranslator(translator)
         try:
             win = _window()
-            assert win.menuSettingsButton.text() == "설정", "전제: 한국어 번역이 적용돼야 한다"
+            assert win.menuDownloadButton.text() == "VOD 다운", "전제: 한국어 번역이 적용돼야 한다"
             assert win.windowTitle() == "Chzzk VOD Downloader 2.12.0"
         finally:
             qapp.removeTranslator(translator)
@@ -209,11 +210,11 @@ class TestMenuSettings:
             main_window_module.SettingDialog, "exec_", lambda self: opened.append(self) or 0
         )
         win = _window()
-        win.menuSettingsButton.click()
+        win.settingsButton.click()
         QApplication.processEvents()
         assert len(opened) == 1 and isinstance(opened[0], main_window_module.SettingDialog)
         assert win.menuDownloadButton.isChecked()
-        assert not win.menuSettingsButton.isCheckable()
+        assert not win.settingsButton.isCheckable()
 
     def test_pressing_vod_download_again_keeps_it_chosen(self) -> None:
         """고른 「VOD 다운」을 다시 눌러도 고른 상태가 풀리지 않아야 한다."""
@@ -235,7 +236,7 @@ class TestMinimumSize:
         names = {b.objectName() for b in buttons}
         assert {
             "menuDownloadButton",
-            "menuSettingsButton",
+            "settingsButton",
             "fetchButton",
             "saveLocationButton",
             "selectButton",

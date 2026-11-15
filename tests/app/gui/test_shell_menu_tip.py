@@ -374,9 +374,7 @@ def _close(a: QColor, b: str) -> bool:
     return abs(a.red() - c.red()) + abs(a.green() - c.green()) + abs(a.blue() - c.blue()) <= 24
 
 
-@pytest.mark.parametrize(
-    "name", ["fetchButton", "menuSettingsButton", "sortButton", "selectButton"]
-)
+@pytest.mark.parametrize("name", ["fetchButton", "settingsButton", "sortButton", "selectButton"])
 def test_keyboard_focus_draws_an_accent_border(window: VodDownloader, name: str) -> None:
     """키보드 초점을 받은 바 컨트롤의 테두리는 강조색이어야 한다(초점 전에는 강조색이 아니다).
 
@@ -407,7 +405,7 @@ def test_the_list_has_focus_when_the_window_opens(qapp: QApplication) -> None:
     assert not _close(_top_border(win.menuDownloadButton), theme.current_tokens()["accent"])
 
 
-@pytest.mark.parametrize("name", ["menuDownloadButton", "menuSettingsButton"])
+@pytest.mark.parametrize("name", ["menuDownloadButton", "settingsButton"])
 def test_clicking_a_bar_control_draws_no_accent_border(
     window: VodDownloader, name: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -418,7 +416,7 @@ def test_clicking_a_bar_control_draws_no_accent_border(
     from PySide6.QtTest import QTest
 
     monkeypatch.setattr(window, "onSetting", lambda: None)
-    window.menuSettingsButton.clicked.disconnect()
+    window.settingsButton.clicked.disconnect()
     widget = getattr(window, name)
     window.activateWindow()
     _pump()
@@ -520,8 +518,8 @@ def test_the_header_bar_is_two_rows_high_with_a_bottom_line(window: VodDownloade
 
 
 def test_an_unselected_menu_is_muted_text_without_a_face_or_border(window: VodDownloader) -> None:
-    """고르지 않은 메뉴(「설정」)는 면 · 테두리 없이 바 면 위 글만이어야 한다 — 위 테두리 · 왼쪽 안 = 바 면."""
-    button = window.menuSettingsButton
+    """메뉴바 오른쪽 끝 설정 톱니바퀴는 면 · 테두리 없이 바 면 위 그림만이어야 한다 — 위 테두리 · 왼쪽 안 = 바 면(#611)."""
+    button = window.settingsButton
     surface = theme.current_tokens()["surface"]
     assert not button.isChecked()
     assert _close(_pixel(button, button.width() // 2, 0), surface)
