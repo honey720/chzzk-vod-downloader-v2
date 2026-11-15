@@ -103,8 +103,12 @@ def test_bubble_fades_out_then_hides(qtbot: QtBot, buttons) -> None:
     bubble = _show_fully(qtbot, first)
     leave(first)
     assert bubble.isVisible() and bubble.isFadingOut()
-    qtbot.waitUntil(lambda: bubble.opacity() < 1.0 or not bubble.isVisible(), timeout=2000)
+    fade = bubble.fade()
+    assert fade is not None, "전제: 닫힘 페이드가 걸렸다"
+    steps: list[float] = []
+    fade.valueChanged.connect(lambda _value: steps.append(bubble.opacity()))
     qtbot.waitUntil(lambda: not bubble.isVisible(), timeout=2000)
+    assert any(step < 1.0 for step in steps)
     assert bubble.target is None
 
 
@@ -161,26 +165,31 @@ def test_fade_animation_lives_only_while_moving(qtbot: QtBot, buttons) -> None:
     assert _animations(bubble) == []
 
 
-def test_delayed_tip_fades_in_after_the_delay(qtbot: QtBot, buttons) -> None:
+def test_delayed_tip_fades_in_after_the_delay(
+    qtbot: QtBot, buttons, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """지연을 건 위젯은 지연 동안 말풍선이 없고, 지연 뒤 투명에서 나타나야 한다(#599 지연 + #610 페이드).
 
-    지연 30ms · 첫째에 지연 걸고 들어감 -> 말풍선 없음, 지연 뒤 보임 · 불투명도 0에서 시작 · 끝나면 1
+    지연 30ms · 첫째에 지연 걸고 들어감 -> 말풍선 없음 · 기다리는 위젯 = 첫째,
+    지연 끝에 말풍선을 띄운 바로 그때 보임 · 불투명도 0 · 페이드 있음, 페이드 끝나면 1
     """
     first, _second = buttons
     first.setProperty("tipDelayed", True)
+    at_show: list[tuple[bool, float, bool]] = []
+    show_tip = tip_bubble.show_tip
+
+    def show_and_record(target: QWidget, text: str, rect=None) -> None:
+        show_tip(target, text, rect)
+        bubble = _bubble()
+        at_show.append((bubble.isVisible(), bubble.opacity(), bubble.fade() is not None))
+
+    monkeypatch.setattr(tip_bubble, "show_tip", show_and_record)
     enter(first)
     bubble = tip_bubble.current_bubble()
     assert bubble is None or not bubble.isVisible()
-    starts: list[float] = []
-    qtbot.waitUntil(
-        lambda: (
-            (b := tip_bubble.current_bubble()) is not None
-            and b.isVisible()
-            and (starts.append(b.opacity()) or True)
-        ),
-        timeout=2000,
-    )
-    assert starts[0] < 1.0
+    assert tip_bubble.tip_filter().pending() is first
+    qtbot.waitUntil(lambda: bool(at_show), timeout=2000)
+    assert at_show == [(True, 0.0, True)]
     bubble = _bubble()
     qtbot.waitUntil(lambda: bubble.fade() is None, timeout=2000)
     assert bubble.opacity() == 1.0
