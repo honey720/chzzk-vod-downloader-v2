@@ -27,7 +27,7 @@ from app.views.mainWindow import VodDownloader
 from app.widgets.focus_ring import FocusRing
 from app.widgets.widget import ContentItemWidget
 from core.models.download_state import DownloadState
-from tests.app.gui.card_helpers import drop_new_top_levels, hold_style, snapshot_top_levels
+from tests.app.gui.card_helpers import drop_new_top_levels, enter, hold_style, snapshot_top_levels
 from tests.app.gui.mouse_buttons import double_click
 
 D = DownloadState
@@ -1397,7 +1397,7 @@ class TestFocusRing:
         부모 = 카드의 부모(카드 컨테이너)
         """
         items = _add(window, D.WAITING, D.WAITING, D.WAITING)
-        assert not window.listView.verticalScrollBar().isVisible(), "전제: 스크롤바가 없다"
+        assert not window.listView.overlayScrollBar().isVisible(), "전제: 스크롤바가 없다"
         card = _focus_by_key(qtbot, window, items[1])
         qtbot.waitUntil(lambda: _ring_wraps(window, card))
         assert _ring(window).geometry() == card.geometry().adjusted(0, 0, 0, -SEPARATOR)
@@ -1465,11 +1465,11 @@ class TestFocusRing:
     ) -> None:
         """스크롤바가 보여도 focus ring은 행 안쪽(구분선 위)에 그대로 놓여야 한다(#611).
 
-        카드 12장(스크롤바가 보임), 첫째에 키보드 초점 -> 행 오른쪽 끝 = 컨테이너 오른쪽 끝(스크롤바 앞),
+        카드 12장(스크롤바가 있음), 첫째에 키보드 초점 -> 행 오른쪽 끝 = 컨테이너 오른쪽 끝,
         focus ring = 행에서 아래 구분선 1px를 뺀 사각형
         """
         items = _add(window, *[D.WAITING] * 12)
-        assert window.listView.verticalScrollBar().isVisible(), "전제: 스크롤바가 보인다"
+        assert window.listView.overlayScrollBar().isVisible(), "전제: 스크롤바가 있다"
         card = _focus_by_key(qtbot, window, items[0])
         ring = _ring(window)
         qtbot.waitUntil(ring.isVisible)
@@ -2349,7 +2349,7 @@ class TestOuterMargin:
         items = _add(window, *[D.WAITING] * cards)
         _show(window, qtbot)
         _settle()
-        shows = window.listView.verticalScrollBar().isVisible()
+        shows = window.listView.overlayScrollBar().isVisible()
         assert shows is (cards == 12), "전제: 스크롤바는 12장일 때만 보인다"
         card = _card(window, items[0])
         lefts = {
@@ -2369,20 +2369,23 @@ class TestOuterMargin:
         assert len(set(rights.values())) == 1, rights
         assert lefts["카드 썸네일"] == window.width() - rights["카드 3줄"]
 
-    def test_card_and_scrollbar_leave_room_for_the_focus_ring(
+    def test_card_reaches_the_window_edge_under_the_scrollbar(
         self, window: VodDownloader, qtbot: QtBot
     ) -> None:
-        """스크롤바가 보일 때 카드 행 오른쪽 끝이 스크롤바 왼쪽 끝에 붙어야 한다(띠 행 — 고리는 행 안쪽, #611).
+        """스크롤바가 있을 때 카드 행은 창 오른쪽 끝까지 가고 스크롤바는 그 위 행 안쪽 여백 자리에 놓여야 한다(#611).
 
-        창 900, 카드 12장 -> 스크롤바 왼쪽 끝 − 첫 카드 오른쪽 끝 == 0
+        창 900, 카드 12장 -> 첫 카드 오른쪽 끝 == 창 폭, 스크롤바 = 창 오른쪽 끝 12px 자리(창 폭 − 12 ~ 창 폭)
         """
         items = _add(window, *[D.WAITING] * 12)
         _show(window, qtbot)
         _settle()
-        bar = window.listView.verticalScrollBar()
-        assert bar.isVisible(), "전제: 스크롤바가 보인다"
-        room = _left(window, bar) - _right(window, _card(window, items[0]))
-        assert room == 0, f"카드 ↔ 스크롤바 {room}px"
+        bar = window.listView.overlayScrollBar()
+        assert bar.isVisible(), "전제: 스크롤바가 있다"
+        assert _right(window, _card(window, items[0])) == window.width()
+        assert (_left(window, bar), _right(window, bar)) == (
+            window.width() - OUTER_MARGIN,
+            window.width(),
+        )
 
     def test_left_line_is_the_outer_margin(self, window: VodDownloader, qtbot: QtBot) -> None:
         """메뉴바 첫 버튼 · 첫 카드 썸네일의 왼쪽 끝은 창 왼쪽에서 12px, 카드 행 왼쪽 끝은 0이어야 한다(#580 · #611).
@@ -2397,22 +2400,21 @@ class TestOuterMargin:
         assert _left(window, card.thumbnailLabel) == OUTER_MARGIN
         assert _left(window, card) == 0
 
-    def test_ring_does_not_reach_into_the_scrollbar(
+    def test_ring_does_not_reach_past_the_window_edge(
         self, window: VodDownloader, qtbot: QtBot
     ) -> None:
-        """스크롤바가 보일 때 focus ring의 오른쪽 바깥 끝이 스크롤바 왼쪽 끝을 넘지 않아야 한다(#580).
+        """스크롤바가 있을 때 focus ring의 오른쪽 바깥 끝이 창 오른쪽 끝을 넘지 않아야 한다(#580 · #611).
 
-        창 900, 카드 12장, 첫째에 키보드 초점 -> focus ring 오른쪽 바깥 끝 <= 스크롤바 왼쪽 끝(창 좌표)
+        창 900, 카드 12장, 첫째에 키보드 초점 -> focus ring 오른쪽 바깥 끝 <= 창 폭(창 좌표)
         """
         items = _add(window, *[D.WAITING] * 12)
         _show(window, qtbot)
         _settle()
-        bar = window.listView.verticalScrollBar()
-        assert bar.isVisible(), "전제: 스크롤바가 보인다"
+        assert window.listView.overlayScrollBar().isVisible(), "전제: 스크롤바가 있다"
         _focus_by_key(qtbot, window, items[0])
         ring = _ring(window)
         qtbot.waitUntil(ring.isVisible)
-        assert _right(window, ring) <= _left(window, bar)
+        assert _right(window, ring) <= window.width()
 
 
 # ---- 스크롤바 굵기 (#580, 오너 2026-11-11) ----
@@ -2422,23 +2424,24 @@ SCROLLBAR_WIDTH = 8  # 세로 스크롤바 폭 · 가로 스크롤바 높이(px)
 
 
 class TestScrollBarWidth:
-    def test_vertical_scrollbar_is_8_wide_and_matches_the_token(
+    def test_list_scrollbar_is_8_thick_under_the_pointer(
         self, window: VodDownloader, qtbot: QtBot
     ) -> None:
-        """카드 목록의 세로 스크롤바는 QSS로 적용된 폭이 8px이고 토큰 `scrollBarWidth`와 같아야 한다.
+        """카드 목록의 겹친 스크롤바는 포인터를 대면 8px 굵기여야 하고 토큰 `scrollBarWidth`와 같아야 한다(#611).
 
-        창 900, 카드 12장(스크롤바 보임) -> 스크롤바 width() == 8 == METRICS["scrollBarWidth"]
+        창 900, 카드 12장(스크롤바 있음), 막대 자리에 들어감 -> 굵기 8 == METRICS["scrollBarWidth"]
         """
         _add(window, *[D.WAITING] * 12)
         _show(window, qtbot)
         _settle()
-        bar = window.listView.verticalScrollBar()
-        assert bar.isVisible(), "전제: 스크롤바가 보인다"
-        assert bar.width() == SCROLLBAR_WIDTH
-        assert bar.width() == theme.METRICS["scrollBarWidth"]
+        bar = window.listView.overlayScrollBar()
+        assert bar.isVisible(), "전제: 스크롤바가 있다"
+        enter(bar)
+        qtbot.waitUntil(lambda: bar.handleRect().width() == SCROLLBAR_WIDTH)
+        assert bar.handleRect().width() == theme.METRICS["scrollBarWidth"]
 
     def test_horizontal_scrollbar_is_as_thick_as_the_vertical(self, window: VodDownloader) -> None:
-        """메인 창 가로 스크롤바의 높이는 카드 목록 세로 스크롤바의 폭과 같아야 한다.
+        """메인 창 가로 스크롤바의 높이는 원래 세로 스크롤바(카드 목록 밖 QSS 규칙)의 폭과 같아야 한다.
 
         두 스크롤바의 크기 힌트(QSS 적용 뒤) -> 가로 높이 == 세로 폭 == 8
         """

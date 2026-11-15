@@ -1,10 +1,9 @@
 """카드 목록 스크롤바 재배치 + 카드 폭 고정 + 칩 숫자 자릿수 게이트 (v2.10.1 · #495).
 
 오너가 정한 것:
-  ① 세로 스크롤바 유무로 카드 행 안 내용(썸네일 왼쪽 끝 · 3줄 오른쪽 끝)이 움직이지 않는다. 정책은
-     AsNeeded(필요할 때만 보인다 — 항상 켜 두는 안은 빈 목록에도 바가 보여 기각)이고, 띠 행은 목록 끝(스크롤바가
-     보이면 그 앞)까지 가며 스크롤바가 보이는 동안은 행 안쪽 오른쪽 여백에서 그 폭을 뺀다(설계 §13, #611).
-     **이 파일의 핵심 게이트.**
+  ① 세로 스크롤바 유무로 카드 행 안 내용(썸네일 왼쪽 끝 · 3줄 오른쪽 끝)이 움직이지 않는다. 스크롤바는 필요할
+     때만 보이고(항상 켜 두는 안은 빈 목록에도 바가 보여 기각), 행 위에 겹쳐 그려져 자리를 차지하지 않는다 —
+     띠 행은 늘 목록 끝까지 간다(설계 §13, #611 · 오너 실기 2026-11-15). **이 파일의 핵심 게이트.**
   ② 목록 · 카드 행은 창 좌우 끝까지 가서 스크롤바가 창 우측 끝에 붙고, 행 안 내용은 좌우 outerMargin 안쪽이다.
      바(메뉴바 · 헤더바 · 하단바)도 창 끝까지 가고, 바 안 내용 끝과 카드 행 안 내용 끝이 같은 두 선이다
      (#536 · #611).
@@ -12,7 +11,7 @@
      시작 때 고정된 창 최소폭을 숫자가 넘어 좌우 스크롤 안전망이 뜨던 결함(v2.10.1 하단 카운트)을
      #495에서 카운트 대신 칩이 이어 받는다. 창 최소폭을 내용 따라 다시 재지 않는다.
 
-전부 폰트 무의존 기하 관계로 잰다. 결함 주입: 스크롤바 폭 보정을 빼면 ①이, 행 안쪽 좌우 여백을
+전부 폰트 무의존 기하 관계로 잰다. 결함 주입: 스크롤바가 자리를 차지하면 ①이, 행 안쪽 좌우 여백을
 바꾸면 ②가, 칩의 세 자리 예약을 빼면 ③이 실패한다.
 """
 
@@ -116,18 +115,22 @@ def _content_span(win: VodDownloader, card: ContentItemWidget) -> tuple[int, int
 
 
 def test_vertical_scrollbar_appears_only_when_the_list_overflows(make_window) -> None:
-    """스크롤바는 필요할 때만 보인다(AsNeeded) — 항상 켜 두는 안은 빈 목록에도 바가 보여 기각."""
+    """겹친 스크롤바는 목록이 넘칠 때만 있어야 하고 원래 스크롤바는 늘 숨어야 한다(#611).
+
+    카드 1장 · 40장 -> 겹친 막대 1장 숨음 · 40장 보임, 원래 스크롤바 정책 AlwaysOff · 둘 다 숨음
+    """
     few, many = make_window(cards=1), make_window(cards=MANY)
-    assert few.listView.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded
-    assert not few.listView.verticalScrollBar().isVisible(), "카드 1장인데 스크롤바가 보인다"
-    assert many.listView.verticalScrollBar().isVisible(), "40장인데 스크롤바가 없다"
+    for win in (few, many):
+        assert win.listView.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        assert not win.listView.verticalScrollBar().isVisible(), "원래 스크롤바가 보인다"
+    assert not few.listView.overlayScrollBar().isVisible(), "카드 1장인데 스크롤바가 있다"
+    assert many.listView.overlayScrollBar().isVisible(), "40장인데 스크롤바가 없다"
 
 
 def test_card_width_is_the_same_whether_or_not_the_list_overflows(make_window) -> None:
     """카드가 뷰포트에 다 들어갈 때(1장)와 넘칠 때(40장) 카드 행 안 내용의 두 끝이 같다 — 이 작업의 목적.
 
-    AsNeeded는 넘치는 순간 스크롤바 폭만큼 뷰포트가 좁아진다. 띠 행은 그만큼 좁아지고, 행 안쪽 오른쪽 여백을
-    그만큼 줄여 3줄 오른쪽 끝은 움직이지 않는다(#611).
+    스크롤바는 행 위에 겹쳐 그려져 뷰포트 폭을 바꾸지 않는다(#611).
     """
     few, many = make_window(cards=1), make_window(cards=MANY)
     assert few.width() == many.width(), "전제 — 두 창의 폭이 같아야 비교가 된다"
@@ -144,10 +147,11 @@ def test_card_width_is_the_same_whether_or_not_the_list_overflows(make_window) -
 def test_scrollbar_hugs_the_window_edge_and_cards_keep_the_outer_margin(
     make_window, width_extra, cards
 ) -> None:
-    """목록 · 카드 행은 창 좌우 끝까지, 행 안 내용은 좌우 outerMargin 안쪽에, 스크롤바(보일 때)는 창 우측 끝에.
+    """목록 · 카드 행은 창 좌우 끝까지, 행 안 내용은 좌우 outerMargin 안쪽에, 스크롤바(있을 때)는 창 우측 끝에.
 
-    카드 1장 · 40장, 창 폭 최소폭 + 0 · 300 -> 목록 (0, 창 폭), 행 왼쪽 0 · 오른쪽 끝 = 창 폭(스크롤바가 보이면
-    스크롤바 왼쪽 끝), 썸네일 왼쪽 = outerMargin, 3줄 오른쪽 끝 = 창 폭 − outerMargin, 세 바 (0, 창 폭)
+    카드 1장 · 40장, 창 폭 최소폭 + 0 · 300 -> 목록 (0, 창 폭), 행 왼쪽 0 · 오른쪽 끝 = 창 폭, 썸네일 왼쪽 =
+    outerMargin, 3줄 오른쪽 끝 = 창 폭 − outerMargin, 겹친 막대(40장) 오른쪽 끝 = 창 폭 · 왼쪽 끝 ≥ 3줄 오른쪽 끝,
+    세 바 (0, 창 폭)
     """
     win = make_window(cards=cards, width_extra=width_extra)
     outer = theme.METRICS["outerMargin"]
@@ -155,17 +159,17 @@ def test_scrollbar_hugs_the_window_edge_and_cards_keep_the_outer_margin(
     assert (lst.left(), lst.width()) == (0, win.width()), f"목록이 창 끝까지 안 간다: {lst}"
     card = _in_window(win, _first_card(win))
     assert card.left() == 0, f"카드 행이 창 왼쪽 끝에서 시작하지 않는다: {card}"
-    bar_widget = win.listView.verticalScrollBar()
-    row_end = win.width() - (bar_widget.width() if bar_widget.isVisible() else 0)
-    assert card.right() + 1 == row_end, f"카드 행 오른쪽 끝이 {row_end}이 아니다: {card}"
+    assert card.right() + 1 == win.width(), f"카드 행 오른쪽 끝이 창 폭이 아니다: {card}"
     assert _content_span(win, _first_card(win)) == (outer, win.width() - outer), (
         f"행 안 내용이 좌우 outerMargin({outer}) 안쪽이 아니다"
     )
+    bar_widget = win.listView.overlayScrollBar()
+    assert bar_widget.isVisible() is (cards == MANY), "전제: 넘칠 때만 스크롤바가 있다"
     if bar_widget.isVisible():
         bar = _in_window(win, bar_widget)
         assert bar.right() + 1 == win.width(), f"스크롤바가 창 우측 끝에 안 붙는다: {bar}"
-        assert bar.left() >= card.right() + 1, (
-            f"스크롤바가 카드를 덮는다: 카드 {card}, 스크롤바 {bar}"
+        assert bar.left() >= _content_span(win, _first_card(win))[1], (
+            f"스크롤바 자리가 행 안 내용을 덮는다: 스크롤바 {bar}"
         )
     # 바는 창 끝까지 간다 — 바깥 여백 0(#536 — 설계 §11.1)
     for frame in (win.appMenuBar, win.headerFrame, win.infoFrame):

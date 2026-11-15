@@ -759,8 +759,8 @@ class VodDownloader(QMainWindow):
             "헤더바 1줄": self.headerRow1Needs()[-1] + header,
             "헤더바 2줄": self.headerRow2Needs(True)[-1] + header,
             "목록": self.listView.minimumSizeHint().width(),
-            # 띠 행은 목록 좌우 끝까지 간다(바깥 여백 0, #611). 스크롤바가 보이면 행 오른쪽 안쪽 여백이 그 폭만큼
-            # 줄어(`rowRightPad`) 다 접은 카드 폭이 그대로 창 몫이다
+            # 띠 행은 목록 좌우 끝까지 간다(바깥 여백 0, #611). 스크롤바는 행 위에 겹쳐 그려져 자리를 차지하지
+            # 않으므로 다 접은 카드 폭이 그대로 창 몫이다
             "카드": self._referenceCardWidth(),
             "하단바": sum(footer_items) + gap * (len(footer_items) - 1) + footer,
         }

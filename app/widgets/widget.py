@@ -1146,17 +1146,6 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """날짜에 연도를 적고 있는지."""
         return self._showYear
 
-    def setRowPadRight(self, pad: int) -> None:
-        """행 안쪽 오른쪽 여백을 바꾼다 — 목록이 스크롤바 유무에 맞춰 준다(`ContentListView.rowRightPad`, #611).
-
-        3줄이 쓸 폭이 바뀌므로 접는 단계를 다시 고른다. 같은 값이면 아무것도 하지 않는다.
-        """
-        margins = self.bodyLayout.contentsMargins()
-        if margins.right() == pad:
-            return
-        self.bodyLayout.setContentsMargins(margins.left(), margins.top(), pad, margins.bottom())
-        self._fitRow3()
-
     def setShowYear(self, show: bool) -> None:
         """날짜의 연도를 적거나 뺀다 — 목록(`ContentListView`)이 모든 카드에 같은 값을 준다."""
         if show == self._showYear:

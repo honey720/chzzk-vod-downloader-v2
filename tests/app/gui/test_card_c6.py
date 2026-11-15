@@ -199,7 +199,7 @@ class TestListScroll:
         """카드 목록이 굴러가는 중에 온 휠은 앞 목표에 칸을 더해야 한다.
 
         SCROLL_ANIMATION_MS 120 · 카드 30 · 아래로 1칸 -> 굴리는 중 · 목표 81 · 값 81 미만,
-        굴리는 중 아래로 2칸 -> 목표 276, 끝나면 276 · 목록 아래 애니메이션 0개
+        굴리는 중 아래로 2칸 -> 목표 276, 끝나면 276 · 목록 바로 아래 애니메이션 0개
         """
         monkeypatch.setattr(step_scroll, "SCROLL_ANIMATION_MS", ANIMATION_MS)
         win = open_window(tmp_path, *_plain_items(tmp_path, 30))
@@ -213,17 +213,21 @@ class TestListScroll:
         qtbot.waitUntil(lambda: not view.isAnimating(), timeout=2000)
         assert bar.value() == 3 * CELL
         QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-        assert view.findChildren(QVariantAnimation) == []
+        # 굴리기 애니메이션은 목록 바로 아래 자식이다 — 겹친 스크롤바의 나타남은 그 막대의 자식이라 따로 잰다(#611)
+        direct = Qt.FindChildOption.FindDirectChildrenOnly
+        assert view.findChildren(QVariantAnimation, options=direct) == []
 
     def test_wheel_over_the_scroll_bar_moves_one_card_cell(self, tmp_path: Path) -> None:
-        """카드 목록 스크롤바 위의 휠 한 칸도 카드 한 칸(81)만큼 움직여야 한다 (#608 리뷰).
+        """카드 목록 스크롤바 위의 휠 한 칸도 카드 한 칸(81)만큼 움직여야 한다 (#608 리뷰 · #611).
 
-        카드 30 · 스크롤바 위(가운데 x · y=30)에 창 경로로 아래로 1칸 -> 81
+        카드 30 · 겹친 스크롤바 위(가운데 x · y=30)에 창 경로로 아래로 1칸 -> 81
         """
         win = open_window(tmp_path, *_plain_items(tmp_path, 30))
+        overlay = win.listView.overlayScrollBar()
         bar = win.listView.verticalScrollBar()
-        assert bar.isVisible(), "전제: 스크롤바가 보인다"
-        pos = QPointF(bar.mapTo(win, QPoint(bar.width() // 2, 30)))
+        assert overlay.isVisible(), "전제: 스크롤바가 있다"
+        pos = QPointF(overlay.mapTo(win, QPoint(overlay.width() // 2, 30)))
+        assert win.childAt(pos.toPoint()) is overlay, "전제: 그 자리는 겹친 스크롤바다"
         QTest.wheelEvent(win.windowHandle(), pos, QPoint(0, -WHEEL_NOTCH), QPoint(0, 0))
         _pump()
         assert bar.value() == CELL
