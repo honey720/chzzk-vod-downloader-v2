@@ -358,14 +358,14 @@ def test_waiting_section_card_marks_overlap_only_when_sections_overlap(
     assert shown(widget.fileSizeLabel) == summary
 
 
-def test_waiting_section_card_with_overlap_has_no_sum_or_overlap_lines_in_the_tooltip(
+def test_waiting_section_card_with_overlap_marks_the_section_lines_in_the_tooltip(
     qtbot,
 ) -> None:
-    """겹침이 있는 대기 구간 카드의 툴팁에 받을 양 · 구간 길이의 합 · 한 번만 받는다는 줄이 없어야 한다.
+    """겹침이 있는 대기 구간 카드의 툴팁은 겹친 구간 줄 끝에 「· overlap」이고 합 · 받을 양 줄이 없어야 한다.
 
-    처음~10분 · 4분~20분 · 1분~20분(합 45분 · 합친 범위 20분), 크기 200 MiB
-    -> 툴팁의 줄에 "To receive: 20:00", "Sections add up to 45:00",
-       "Overlapping parts are received once", "Overlapping sections"로 시작하는 줄이 없다 (#599)
+    처음~10분 · 4분~20분 · 1분~20분(셋 다 서로 겹침, 합 45분 · 합친 범위 20분), 크기 200 MiB, 프레임률 모름
+    -> 툴팁의 줄 == 구간 줄 셋(밀리초 표기, 모두 끝에 " · overlap"), "To receive: 20:00" ·
+       "Sections add up to 45:00" · "Overlapping parts are received once" 없음 (#599)
     """
     selections = (TimeRange(0.0, 600.0), TimeRange(240.0, 1200.0), TimeRange(60.0, 1200.0))
     window, widget = _card(
@@ -381,7 +381,11 @@ def test_waiting_section_card_with_overlap_has_no_sum_or_overlap_lines_in_the_to
         "Overlapping parts are received once",
     ]
     assert [line for line in lines if line in gone] == []
-    assert not any(line.startswith("Overlapping sections") for line in lines)
+    assert lines == [
+        "1 · 00:00:00.000 ~ 00:10:00.000 · 00:10:00.000 · overlap",
+        "2 · 00:04:00.000 ~ 00:20:00.000 · 00:16:00.000 · overlap",
+        "3 · 00:01:00.000 ~ 00:20:00.000 · 00:19:00.000 · overlap",
+    ]
 
 
 def test_waiting_section_card_without_overlap_has_no_sum_line_in_the_tooltip(qtbot) -> None:
