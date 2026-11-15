@@ -360,11 +360,13 @@ class TestDropFields:
     def test_caret_sits_at_the_right_inner_end(self, window, name: str) -> None:
         """⌄ 오른쪽 끝은 칸 오른쪽 안쪽 끝에서 FIELD_PAD 안이고, 그 자리에 ⌄가 그려지고, 글과 떨어져야 한다.
 
-        창 폭 900 -> (칸 폭 − 2) − caretRect.right() == 10, caretRect 안에 surfaceAlt 아닌 화소(⌄)가 있다,
-        caretRect 왼쪽 끝 > 그린 글 오른쪽 끝
+        창 폭 900, 글 "A"(칸 폭보다 훨씬 짧은 값) -> (칸 폭 − 2) − caretRect.right() == 10, caretRect 안에
+        surfaceAlt 아닌 화소(⌄)가 있다, caretRect 왼쪽 끝 > 그린 글 오른쪽 끝
         """
         win = window(DownloadState.WAITING)
         button = getattr(win, name)
+        button.setFullText("A")  # 글 바로 뒤 자리와 칸 오른쪽 안쪽 끝 자리가 갈린다
+        _pump()
         caret = button.caretRect()
         assert (button.width() - 2) - caret.right() == FIELD_PAD
         image = button.grab().toImage()
