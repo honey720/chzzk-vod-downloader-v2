@@ -83,7 +83,9 @@ METRICS = {
     "cardRow1Height": 16,  # 카드 1줄(채널 그림 · 채널명 · 날짜) 높이(px)
     "cardRow2Height": 18,  # 카드 2줄(제목) 높이(px)
     "cardRow3Height": 20,  # 카드 3줄(상태 · 정보) 높이(px) — 설계 §11.3 「3줄 20」
-    "cardGap": 8,  # 카드 사이(px) — 설계 §11.2(#550)
+    # 카드 사이(px) — 창 바깥 좌우 여백(outerMargin 12)과 같다. 좌우 여백과 같게 두면 카드끼리 구분이 더
+    # 또렷하다(오너 2026-11-15, #599). 카드 목록 위아래 여백도 이 값이다(app/widgets/view.py)
+    "cardGap": 12,
     "cardButton": 20,  # 카드 버튼 한 변(px) — 지금 앱과 같은 20×20(설계 §12.1 카드 배치)
     "cardStatusIcon": 16,  # 3줄 상태 원 아이콘 지름(px) — 메뉴 버블과 같은 그림
     # 고른 카드 테두리 두께(px) — 테두리 1px 자리를 강조색으로 덮고 안쪽으로 1px 더(프로토 SELECT_BORDER, #561).
@@ -94,7 +96,7 @@ METRICS = {
     "cardPickMarkCompact": 16,  # 썸네일 줄이기의 체크 원 지름(px) — 썸네일 높이 38에서 그림을 덜 가린다
     "cardPickMarkInset": 4,  # 썸네일 왼쪽 · 위 끝 ↔ 체크 원(px)
     # 카드의 키보드 focus ring(#561) — 목록이 초점 카드 바깥에 하나만 그린다(app/widgets/focus_ring.py).
-    # 띄움 + 굵기 = 4 — 카드 사이(cardGap 8)의 절반을 쓴다
+    # 띄움 + 굵기 = 4 — 카드 사이(cardGap 12) 안에 든다
     "focusRingGap": 2,  # 카드 테두리 바깥 끝 ↔ focus ring(px)
     "focusRingWidth": 2,  # focus ring 굵기(px)
     # ---- 선택 줄(#561 — 설계 §12.1 「선택 모드」, 프로토 shell.py SELECT_*) ----

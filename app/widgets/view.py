@@ -9,6 +9,7 @@ from PySide6.QtGui import (
     QDragLeaveEvent,
     QDropEvent,
     QKeyEvent,
+    QWheelEvent,
     QKeySequence,
     QPainter,
     QColor,
@@ -17,9 +18,22 @@ import app.theme as theme
 from app.widgets.focus_ring import FocusRing
 from app.widgets.narrow_steps import RETURN_SLACK
 from app.widgets.scroll_padding import ScrollBarPadding
+from app.widgets.step_scroll import StepScroller
 from app.widgets.widget import BUSY_STATES, ContentItemWidget
 from app.viewmodels import card_text
 from app.viewmodels.data import ContentItem
+
+CARD_BORDER = 1  # 카드 면 테두리 두께(px) — style.qss `#contentFrame`의 border 1px
+# 카드 높이(px) — 테두리 · 안쪽 여백 위아래 + 세 줄(16 · 18 · 20) + 줄 사이 둘 = 80(설계 §11.3)
+CARD_HEIGHT = (
+    2 * (CARD_BORDER + theme.METRICS["cardPadding"])
+    + theme.METRICS["cardRow1Height"]
+    + theme.METRICS["cardRow2Height"]
+    + theme.METRICS["cardRow3Height"]
+    + 2 * theme.METRICS["cardRowSpacing"]
+)
+# 카드 목록의 한 칸(px) — 카드 하나 + 카드 사이 = 92. 목록의 휠 · 스크롤 위치가 이 단위다(#599)
+CARD_CELL = CARD_HEIGHT + theme.METRICS["cardGap"]
 
 
 def widget_under_pointer() -> QWidget | None:
@@ -141,6 +155,7 @@ class ContentListView(QScrollArea):
     # 받는 중 카드의 ✕에서 「멈추고 지우기」를 골랐다 (#550) — 엔진을 멈추는 쪽(mainWindow)이 받는다
     stopAndDeleteRequested = Signal(object)
     editRequested = Signal(object)  # 대기 카드의 ✎ · 더블 클릭 — 카드 편집 창 (#545)
+    sectionEditRequested = Signal(object)  # 대기 카드의 ✂ — 구간 창을 바로 연다 (#599)
     # 선택 지우기(#561) — 여러 장을 한 번에(되돌리기 한 번에 함께 되살아난다). 받는 중 카드가 섞였으면 엔진을
     # 멈추는 쪽(mainWindow)이 받는 stopAndRemoveRequested, 아니면 removeRequested
     removeRequested = Signal(list)
@@ -161,6 +176,9 @@ class ContentListView(QScrollArea):
         # transient(오버레이) 힌트는 QSS로 스타일된 스크롤바에 Qt가 적용하지 않는다(실측 —
         # 위젯 기준 styleHint가 0). 카드 높이는 폭과 무관하므로 되먹임 진동은 없다(실측).
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        # 휠 · 스크롤바는 카드 한 칸(카드 + 카드 사이 = 92) 단위다(오너 2026-11-14, #599). 맨 끝에 있던 목록은
+        # 창 크기 · 카드 수가 바뀌어도 맨 끝에 남는다 — 마지막 카드가 다 보이는 것이 우선(오너 2026-11-14)
+        self._scroller = StepScroller(self, CARD_CELL)
 
         self._container = QWidget()
         self._layout = QVBoxLayout(self._container)
@@ -272,6 +290,18 @@ class ContentListView(QScrollArea):
             for widget in self._widgets.values():
                 widget.setShowYear(show)
 
+    def wheelEvent(self, event: QWheelEvent) -> None:
+        """휠 한 칸에 카드 한 칸씩 움직인다 — 끝이면 받지 않는다(`StepScroller.wheel`)."""
+        self._scroller.wheel(event)
+
+    def scrollTarget(self) -> int:
+        """휠이 가려는 스크롤 위치 — 굴리는 중이면 가는 자리, 아니면 지금 위치."""
+        return self._scroller.target()
+
+    def isAnimating(self) -> bool:
+        """휠로 옮긴 칸으로 아직 미끄러져 가는 중인지."""
+        return self._scroller.isAnimating()
+
     def scrollContentsBy(self, dx: int, dy: int) -> None:
         super().scrollContentsBy(dx, dy)
         self._scheduleRehover()  # 굴리면 포인터 밑 카드가 바뀐다
@@ -333,9 +363,19 @@ class ContentListView(QScrollArea):
         """초점을 받은 카드를 굴려 보이게 한다 — 키보드 초점이면 카드 바깥의 focus ring까지 보이게 한다 (#561).
 
         마우스로 온 초점은 고리를 그리지 않으므로 카드만 보이면 된다.
+
+        스크롤 위치는 칸 경계로 맞춘다(#599) — 카드가 위로 벗어났으면 그 카드의 칸 경계, 아래로 벗어났으면 카드
+        아래 끝(· 고리)이 들어오는 가장 가까운 칸 경계. 애니메이션 없이 바로 옮긴다 — 초점과 고리가 바로 옮겨
+        가고, 키를 누르고 있으면 다음 카드가 이어 오기 때문이다.
         """
         ring = theme.METRICS["focusRingGap"] + theme.METRICS["focusRingWidth"]
-        self.ensureWidgetVisible(card, 0, ring if card.hasKeyFocus() else 0)
+        reach = ring if card.hasKeyFocus() else 0
+        top = card.y() - reach
+        bottom = card.y() + card.height() + reach
+        self._scroller.finish()
+        place = self._scroller.revealPlace(top, bottom)
+        if place != self.verticalScrollBar().value():
+            self._scroller.scrollTo(place, animate=False)
 
     def _focusCard(self, card: ContentItemWidget, reason: Qt.FocusReason) -> None:
         self._steppingFocus = True
@@ -768,6 +808,7 @@ class ContentListView(QScrollArea):
         widget.pauseRequest.connect(lambda it=item: self.pauseRequested.emit(it))
         widget.retryRequest.connect(lambda it=item: self.retryRequested.emit(it))
         widget.editRequest.connect(lambda it=item: self.editRequested.emit(it))
+        widget.sectionEditRequest.connect(lambda it=item: self.sectionEditRequested.emit(it))
         widget.hoverChanged.connect(lambda hovered, w=widget: self._onCardHover(w, hovered))
         widget.loadRepresentations()
         widget.setShowYear(self._showYear)

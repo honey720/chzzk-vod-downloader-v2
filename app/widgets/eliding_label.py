@@ -28,18 +28,22 @@ class ElidingLabel(QLabel):
         parent=None,
         elide_mode: Qt.TextElideMode = Qt.TextElideMode.ElideRight,
         tip_when_elided: bool = False,
+        with_tip: bool = True,
     ) -> None:
         """말줄임 라벨을 만든다.
 
         Args:
             tip_when_elided: 참이면 툴팁을 글이 잘렸을 때만 단다 — 보이는 글을 되풀이하는 툴팁을
                 없앤다(#550). 거짓이면 늘 전체 글을 툴팁으로 단다(기존 동작)
+            with_tip: 거짓이면 툴팁을 달지 않는다 — 잘려도 그렇다. 카드 제목 · 정보 글이 쓴다(오너
+                2026-11-15 「카드 정보는 툴팁에 숨기지 않는다」, #599)
         """
         super().__init__(parent)
         self._elide_mode = elide_mode
         self._full_text = ""
         self._last_elide_width = -1
         self._tip_when_elided = tip_when_elided
+        self._with_tip = with_tip
         self._detail_tip = ""  # 잘렸는지와 무관하게 다는 툴팁(setDetailTip)
         # Ignored였던 첫 시도는 실제로 폭 0에 눌렸다(PR #229 오너 실기 확인 후속 실측 — 아래 참고).
         # Preferred(QLabel 기본값)를 유지하되 sizeHint를 작고 고정된 값으로
@@ -83,7 +87,7 @@ class ElidingLabel(QLabel):
 
     def setText(self, text: str) -> None:
         self._full_text = text
-        if not self._tip_when_elided:
+        if self._with_tip and not self._tip_when_elided:
             self.setToolTip(text)
         self._applyElide(force=True)
 
@@ -105,7 +109,7 @@ class ElidingLabel(QLabel):
 
     def _syncElidedTip(self) -> None:
         """잘렸을 때만 툴팁을 다는 라벨이면 툴팁을 지금 표시에 맞춘다."""
-        if self._tip_when_elided:
+        if self._with_tip and self._tip_when_elided:
             elided = self._full_text if self.isElided() else ""
             tip = self._detail_tip or elided
             if tip != self.toolTip():

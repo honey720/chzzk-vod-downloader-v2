@@ -146,8 +146,9 @@ class TestRowOneAtTheNarrowestCard:
         widget.setHovered(True)
         _pump()
         buttons = [getattr(widget, name) for name in widget.visibleCardButtons()]
-        assert len(buttons) == 2 and all(b.isVisible() for b in buttons), (
-            f"{state.name}: 전제 — 호버한 카드에 버튼 둘이 보인다"
+        count = 3 if state == DownloadState.WAITING else 2  # 대기는 ✎ ✂ ✕(#599), 그 밖은 둘
+        assert len(buttons) == count and all(b.isVisible() for b in buttons), (
+            f"{state.name}: 전제 — 호버한 카드에 버튼 {count}개가 보인다"
         )
 
         spans = [_span(widget, b) for b in buttons]

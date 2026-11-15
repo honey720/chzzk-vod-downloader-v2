@@ -4,6 +4,14 @@
 <context>
     <name>CardEditDialog</name>
     <message>
+        <source>Sections outside the video are skipped.</source>
+        <translation>영상 밖 구간은 받지 않습니다.</translation>
+    </message>
+    <message>
+        <source>Open the section editor to check the length again.</source>
+        <translation>구간 창을 열면 길이를 다시 확인합니다.</translation>
+    </message>
+    <message>
         <source>Edit</source>
         <translation>편집</translation>
     </message>
@@ -71,24 +79,8 @@
         <translation>받을 수 없는 구간 {0}개</translation>
     </message>
     <message>
-        <source>This resolution is shorter. Sections now end at the end of the video.</source>
-        <translation>이 해상도는 영상이 더 짧습니다. 영상 길이를 넘는 구간의 끝을 영상 끝으로 당겼습니다.</translation>
-    </message>
-    <message>
-        <source>This resolution is longer. Sections that reached the end now reach it.</source>
-        <translation>이 해상도는 영상이 더 깁니다. 영상 끝까지 받던 구간을 새 끝까지 늘렸습니다.</translation>
-    </message>
-    <message>
-        <source>Some sections start after the end of this resolution. They will be skipped. Edit the sections to fix them.</source>
-        <translation>이 해상도의 영상이 끝난 뒤에서 시작하는 구간이 있습니다. 그 구간은 받지 않습니다. 구간을 고쳐 주세요.</translation>
-    </message>
-    <message>
         <source>Sections {0} · {1}</source>
         <translation>구간 {0}개 · {1}</translation>
-    </message>
-    <message>
-        <source>Sections were moved to the frames of the new frame rate.</source>
-        <translation>해상도를 바꿔 프레임률이 달라져, 구간을 새 프레임에 맞게 옮겼습니다.</translation>
     </message>
     <message>
         <source>Edit</source>
@@ -103,32 +95,12 @@
         <translation>길이 미확인</translation>
     </message>
     <message>
-        <source>Checking the length of this resolution...</source>
-        <translation>이 해상도의 영상 길이를 확인하는 중...</translation>
-    </message>
-    <message>
-        <source>Could not check the length of this resolution. Open the section editor to check again.</source>
-        <translation>이 해상도의 영상 길이를 확인하지 못했습니다. 구간 편집 창을 열면 다시 확인합니다.</translation>
-    </message>
-    <message>
         <source>overlap</source>
         <translation>겹침</translation>
     </message>
     <message>
         <source>Sections {0}</source>
         <translation>구간 {0}개</translation>
-    </message>
-    <message>
-        <source>To receive: {0}</source>
-        <translation>받을 양: {0}</translation>
-    </message>
-    <message>
-        <source>Sections add up to {0}</source>
-        <translation>구간 길이의 합: {0}</translation>
-    </message>
-    <message>
-        <source>Overlapping parts are received once</source>
-        <translation>겹치는 구간은 한 번만 받습니다</translation>
     </message>
     <message>
         <source>Preparing</source>
@@ -205,6 +177,10 @@
     <message>
         <source>ContentItemWidget</source>
         <translation>컨텐츠위젯</translation>
+    </message>
+    <message>
+        <source>Edit sections</source>
+        <translation>구간 편집</translation>
     </message>
     <message>
         <source>Delete</source>

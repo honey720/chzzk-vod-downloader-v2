@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (
 import app.theme as theme
 from app.section_input.basis import SECTION_CONTENT_TYPES
 from app.viewmodels import card_text
-from app.viewmodels.data import ContentItem
+from app.viewmodels.data import SECTION_CHECK_UNVERIFIED, ContentItem
 from app.viewmodels.section_edit import SectionEditViewModel, keep_section_head
 from app.views.section_dialog import SectionEditDialog
 from app.widgets.eliding_label import ElidingLabel, PathLabel
@@ -341,11 +341,26 @@ class CardEditDialog(QDialog):
         draft = self._draft
         if card_text.section_count(draft):
             self.sectionSummaryLabel.setText(card_text.section_summary(draft))
-            self.sectionLinesLabel.setText("\n".join(card_text.section_lines(draft)))
+            lines = [*card_text.section_lines(draft), *self._sectionNoticeLines()]
+            self.sectionLinesLabel.setText("\n".join(lines))
             self.sectionLinesLabel.setVisible(True)
         else:
             self.sectionSummaryLabel.setText(self.tr("Whole video"))
             self.sectionLinesLabel.setVisible(False)
+
+    def _sectionNoticeLines(self) -> list[str]:
+        """구간 줄 뒤에 붙이는 안내 — 영상 밖 구간 · 길이 미확인일 때 무엇이 되는지 한 줄씩 (#599).
+
+        카드 정보 글의 짧은 알림(「N개 영상 밖」 · 「길이 미확인」)만으로는 뜻이 다 서지 않는다. 그 뜻은 카드
+        툴팁에 있었는데 카드 툴팁을 없앴으므로 여기서 본다(오너 2026-11-15 — 카드에 안 보이는 정보는 편집 창에서).
+        """
+        draft = self._draft
+        lines = []
+        if getattr(draft, "section_unfit", ()):
+            lines.append(self.tr("Sections outside the video are skipped."))
+        if getattr(draft, "section_check", "") == SECTION_CHECK_UNVERIFIED:
+            lines.append(self.tr("Open the section editor to check the length again."))
+        return lines
 
     def _refreshPath(self) -> None:
         self.pathLabel.setPathParts(*path_display_parts(self._path))
