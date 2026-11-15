@@ -72,9 +72,14 @@ METRICS = {
     "sectionDeletePadY": 5,  # 구간 행 ✕ 상자 위아래 안쪽 여백(px) — 상자 높이 = 글 한 줄 + 2 × 이 값 + 테두리(#586)
     "sectionDeletePadX": 10,  # 구간 행 ✕ 상자 좌우 안쪽 여백(px) — 상자 폭 = 도형 한 변 + 2 × 이 값 + 테두리(#586)
     # ---- 카드 ----
-    "cardPadding": 8,  # 카드 안쪽 여백 — 썸네일·글이 테두리에서 떨어지는 거리
+    # 카드 행 안쪽 좌우 여백(px) — 창 바깥 좌우 여백(outerMargin)과 같아 썸네일 왼쪽 끝이 헤더 URL 칸 왼쪽 끝과 같은
+    # x다(설계 §13, #611). 오른쪽은 스크롤바가 보이면 그 폭만큼 줄어 글 끝이 바 안 내용 끝과 같은 x다(view.py)
+    "cardPadding": 12,
+    # 카드 행 안쪽 위아래 여백(px) — 행 80 = 9 + 세 줄(62) + 9, 그 밑 구분선 1(설계 §13, #611)
+    "cardPadY": 9,
+    "cardSeparator": 1,  # 카드 행 사이 구분선 두께(px) — 행 아래끝(카드 면의 아래 테두리, 설계 §13)
     "cardRowSpacing": 4,  # 카드 안 행 간격(4의 배수 권장) — 줄이면 카드가 낮아져 밀도↑
-    "cardRadius": 8,  # 카드 모서리 둥글기 — 카드 · 메뉴 창 8(설계 §11.7, #550)
+    "cardRadius": 0,  # 카드 모서리 둥글기 — 띠 목록이라 0(설계 §13, #611 — §11.7의 카드 8을 대체)
     "cardThumbWidth": 110,  # 카드 썸네일 폭(px) — 글 묶음 높이(62)에 맞춘 16:9(설계 §11.1, #550)
     "cardThumbHeight": 62,  # 카드 썸네일 높이(px) — 1줄 위끝 ~ 3줄 아래끝
     "cardThumbCompactWidth": 68,  # 썸네일 줄이기의 폭(px) — 위 두 줄 높이(38)에 맞춘 16:9(설계 §12.1, #554)
@@ -83,21 +88,20 @@ METRICS = {
     "cardRow1Height": 16,  # 카드 1줄(채널 그림 · 채널명 · 날짜) 높이(px)
     "cardRow2Height": 18,  # 카드 2줄(제목) 높이(px)
     "cardRow3Height": 20,  # 카드 3줄(상태 · 정보) 높이(px) — 설계 §11.3 「3줄 20」
-    # 카드 사이(px) — 창 바깥 좌우 여백(outerMargin 12)과 같다. 좌우 여백과 같게 두면 카드끼리 구분이 더
-    # 또렷하다(오너 2026-11-15, #599). 카드 목록 위아래 여백도 이 값이다(app/widgets/view.py)
-    "cardGap": 12,
+    # 카드 사이(px) — 띠 목록이라 0이다. 행은 구분선(cardSeparator) 하나로 나눈다(설계 §13, #611). 카드 목록
+    # 위아래 여백도 이 값이다(app/widgets/view.py)
+    "cardGap": 0,
     "cardButton": 20,  # 카드 버튼 한 변(px) — 지금 앱과 같은 20×20(설계 §12.1 카드 배치)
     "cardStatusIcon": 16,  # 3줄 상태 원 아이콘 지름(px) — 메뉴 버블과 같은 그림
-    # 고른 카드 테두리 두께(px) — 테두리 1px 자리를 강조색으로 덮고 안쪽으로 1px 더(프로토 SELECT_BORDER, #561).
-    # 카드 면이 그린다 — QSS 테두리 폭을 바꾸면 안쪽 자리가 줄어 줄 배치가 1px 움직인다
-    "cardSelectBorder": 2,
+    # 고른 행 왼쪽 끝 강조색 세로 띠 폭(px) — 행 바탕 한 단계와 함께 고름을 알린다(설계 §13, #611). 카드 면과
+    # progress bar가 그린다 — 줄 배치는 그대로다
+    "cardSelectBar": 3,
     # 선택 모드의 체크 원(#561) — 썸네일 왼쪽 위에 얹는다. 썸네일 위라 카드 폭 · 줄 배치는 그대로다
     "cardPickMark": 20,  # 체크 원 지름(px) — 카드 버튼(cardButton)과 같은 크기
     "cardPickMarkCompact": 16,  # 썸네일 줄이기의 체크 원 지름(px) — 썸네일 높이 38에서 그림을 덜 가린다
     "cardPickMarkInset": 4,  # 썸네일 왼쪽 · 위 끝 ↔ 체크 원(px)
-    # 카드의 키보드 focus ring(#561) — 목록이 초점 카드 바깥에 하나만 그린다(app/widgets/focus_ring.py).
-    # 띄움 + 굵기 = 4 — 카드 사이(cardGap 12) 안에 든다
-    "focusRingGap": 2,  # 카드 테두리 바깥 끝 ↔ focus ring(px)
+    # 카드의 키보드 focus ring(#561) — 목록이 초점 행 안쪽 가장자리에 하나만 그린다(app/widgets/focus_ring.py,
+    # 설계 §13 · #611). 행끼리 붙어 바깥에 띄울 자리가 없다
     "focusRingWidth": 2,  # focus ring 굵기(px)
     # ---- 선택 줄(#561 — 설계 §12.1 「선택 모드」, 프로토 shell.py SELECT_*) ----
     "selectBarGap": 4,  # 헤더바 아래끝 ↔ 선택 줄 위끝 — 말풍선 ↔ 대상(tipGap)과 같은 떠 있는 것 간격

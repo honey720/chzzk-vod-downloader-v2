@@ -144,19 +144,16 @@ QLabel#thumbnailLabel {
     color: @textMuted;
 }
 
-/* 카드 테두리 — 항상 중립색이다(#244). 상태는 상태 아이콘·상태 텍스트·
- * (진행분이 있을 때 — 진행·일시정지 — 보이는) 하단 진행바가 알린다 — 카드 프레임 자체는
- * state 동적 속성을 안 본다.
+/* 카드 행 — 띠 목록(설계 §13, #611): 테두리 · 모서리 없이 아래 구분선 하나(@border, 행 사이 선). 구분선은 항상
+ * 중립색이다(#244) — 상태는 상태 아이콘 · 상태 글 · (진행분이 있을 때) 하단 진행바가 알린다.
  *
- * padding은 QSS가 아니라 카드 내부 레이아웃 마진(theme.METRICS["cardPadding"])
- * 이 준다 — 하단 진행바가 카드 가장자리에 딱 붙어야 해서(padding이 있으면
- * 바가 테두리에서 떨어진다) 프레임 자체는 0으로 둔다. 가로 0 규칙(#227
- * PR #234의 3-OS 폭 회귀)은 tests/app/gui/test_widget_theme.py::
- * TestCardInnerWidthIsUnchanged가 새 기준으로 계속 고정한다. */
+ * padding은 QSS가 아니라 카드 내부 레이아웃 마진(theme.METRICS["cardPadding"] · ["cardPadY"])이 준다 — 하단
+ * 진행바가 행 아래끝에 딱 붙어야 해서 프레임 자체는 0으로 둔다. */
 #contentFrame {
     background-color: @cardBg;
-    border: 1px solid @border;
-    border-radius: @cardRadius;
+    border: none;
+    border-bottom: 1px solid @border;
+    border-radius: 0px;
     padding: 0px;
 }
 
@@ -181,6 +178,20 @@ QLabel#thumbnailLabel {
 }
 
 #contentFrame[tint="failed"][hover="true"] {
+    background-color: @cardTintFailedHover;
+}
+
+/* 고른 행(선택 모드, #611 — 설계 §13): 행 바탕 한 단계(호버와 같은 색). 왼쪽 강조색 띠는 카드 면이 그린다.
+ * `picked`는 app/widgets/contentItemWidget.py::CardFace.setSelected가 심는다. 눌린 바탕이 앞서도록 눌림 규칙 앞에 둔다 */
+#contentFrame[picked="true"] {
+    background-color: @cardHoverBg;
+}
+
+#contentFrame[tint="finished"][picked="true"] {
+    background-color: @cardTintFinishedHover;
+}
+
+#contentFrame[tint="failed"][picked="true"] {
     background-color: @cardTintFailedHover;
 }
 
@@ -734,23 +745,16 @@ QProgressBar::chunk {
     border-radius: @barRadius;
 }
 
-/* 카드 하단 진행바(#244 재설계) — 카드 아래 가장자리에 딱 붙는 전체 폭
- * 막대(진행분이 있을 때 — 진행·일시정지 — 보임; 가시성은
- * content/widget.py::applyStateStyle). 일시정지에서는 [state="paused"]의
- * muted 색으로 "돌고 있지 않다"를 알린다.
- * ⚠️ 여기 border-radius는 카드 곡률을 못 따라간다 — 높이(@barHeight)가 작아
- * Qt가 반지름을 높이 절반으로 눌러 그리고, 그 결과 막대 양끝이 카드의 둥근
- * 모서리 바깥으로 튀어나온다(실기 렌더 실측). 카드 곡률로 잘라내는 것은
- * content/widget.py::_placeProgressBar의 마스크가 한다. */
+/* 카드 하단 진행바(#244 재설계 · #611) — 행 아래끝(구분선 자리)에 겹치는 전체 폭 막대(진행분이 있을 때 — 진행 ·
+ * 일시정지 — 보임; 자리는 app/widgets/widget.py::_placeProgressBar). 트랙은 그리지 않는다 — 구분선이 트랙이다
+ * (설계 §13). 일시정지에서는 [state="paused"]의 muted 색으로 "돌고 있지 않다"를 알린다. */
 #contentFrame QProgressBar {
+    background-color: transparent;
     border-radius: 0px;
-    border-bottom-left-radius: @cardRadius;
-    border-bottom-right-radius: @cardRadius;
 }
 
 #contentFrame QProgressBar::chunk {
     border-radius: 0px;
-    border-bottom-left-radius: @cardRadius;
 }
 
 QProgressBar[state="waiting"]::chunk {

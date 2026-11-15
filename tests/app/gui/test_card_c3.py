@@ -540,14 +540,14 @@ class TestProgressBar:
         assert _close(_pixel(frame, frame.width() // 2, y), _token(token))
 
     def test_running_bar_shows_the_progress_over_the_border_coloured_track(self, qapp) -> None:
-        """받는 중 30% 카드면 막대 10% 자리가 진행 색, 90% 자리가 카드 테두리 색이어야 한다."""
+        """받는 중 30% 카드면 막대 10% 자리가 진행 색, 90% 자리는 막대가 그리지 않아야 한다(트랙 없음 — 구분선이 트랙, #611)."""
         item = _item(DownloadState.RUNNING)
         item.download_progress = 30
         card = _card(item)
         bar = card.progressBar
         y = bar.height() // 2
         assert _close(_pixel(bar, bar.width() // 10, y), _token("stateRunning"))
-        assert _close(_pixel(bar, bar.width() * 9 // 10, y), _token("border"))
+        assert _pixel(bar, bar.width() * 9 // 10, y).alpha() == 0
 
     def test_paused_bar_keeps_the_value_in_the_paused_colour(self, qapp) -> None:
         """일시정지 54% 카드면 막대 값 54 · 10% 자리가 일시정지 색이어야 한다."""
@@ -993,7 +993,7 @@ class TestBarTickMotion:
         )
         y = bar.height() // 2
         assert _close(_pixel(bar, int(edge) - 2, y), _token("stateRunning"))
-        assert _close(_pixel(bar, int(edge) + 2, y), _token("border"))
+        assert _pixel(bar, int(edge) + 2, y).alpha() == 0  # 트랙 없음 — 구분선이 트랙(#611)
 
     def test_motion_frames_redraw_only_when_a_pixel_changes(self, qapp) -> None:
         """37% → 38% 모션을 1ms씩 돌리면 막대 값이 1px씩만 바뀌고 다시 그리기가 화소 수 남짓이어야 한다.

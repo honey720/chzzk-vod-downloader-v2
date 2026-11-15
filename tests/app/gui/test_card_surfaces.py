@@ -137,7 +137,7 @@ class TestRowOneAtTheNarrowestCard:
 
         상태마다 카드를 그 카드의 최소 폭으로 줄이고 호버
         -> 보이는 버튼이 왼쪽부터 겹치지 않고, 첫 버튼 왼쪽 끝 >= 1줄 왼쪽 끝,
-           마지막 버튼 오른쪽 끝 == 1줄 오른쪽 끝 == 카드 폭 − (테두리 1 + cardPadding),
+           마지막 버튼 오른쪽 끝 == 1줄 오른쪽 끝 == 카드 폭 − cardPadding(띠 행은 좌우 테두리 없음, #611),
            버튼 위끝 == 썸네일 위끝, 오버레이는 1줄 안
         """
         window, widget = make_card(state)
@@ -156,7 +156,7 @@ class TestRowOneAtTheNarrowestCard:
         for (_left, right), (next_left, _next_right) in zip(spans, spans[1:]):
             assert right <= next_left, f"{state.name}: 버튼끼리 겹친다 {spans}"
         assert spans[0][0] >= row_left, f"{state.name}: 버튼이 1줄 왼쪽 밖이다 {spans}"
-        inset = 1 + theme.METRICS["cardPadding"]  # 테두리 1 + 안쪽 여백
+        inset = theme.METRICS["cardPadding"]  # 안쪽 여백(띠 행은 좌우 테두리 없음, #611)
         assert spans[-1][1] == row_right == widget.width() - inset, (
             f"{state.name}: 마지막 버튼 {spans[-1]}가 1줄 오른쪽 끝 {row_right}에 붙지 않았다"
         )

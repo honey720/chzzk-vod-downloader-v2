@@ -84,10 +84,11 @@ class CardFace(QFrame):
         return self._selected
 
     def setSelected(self, on: bool) -> None:
-        """고른 카드 테두리를 켜고 끈다 — 줄 배치는 그대로다(그리기만)."""
+        """고른 행 표시를 켜고 끈다 — 행 바탕 한 단계(QSS `picked`)와 왼쪽 강조색 띠. 줄 배치는 그대로다."""
         if on != self._selected:
             self._selected = on
-            self.update()
+            self.setProperty("picked", on)
+            theme.repolish(self)
 
     def wash(self) -> tuple[str, float]:
         """(모션 동안 칠하는 색조 토큰, 세기 0 ~ 1) — 칠하지 않으면 ("", 0.0)."""
@@ -102,10 +103,10 @@ class CardFace(QFrame):
             self.update()
 
     def _step(self) -> str:
-        """바탕의 호버 · 눌림 단계 — "Pressed" · "Hover" · "" (QSS 바탕 규칙과 같은 차례)."""
+        """바탕의 호버 · 눌림 단계 — "Pressed" · "Hover" · "" (QSS 바탕 규칙과 같은 차례, 고른 행은 호버 단계)."""
         if self.property("pressed") is True:
             return "Pressed"
-        return "Hover" if self.property("hover") is True else ""
+        return "Hover" if self.property("hover") is True or self._selected else ""
 
     def _washColor(self) -> QColor:
         """모션 동안 칠하는 색조 — 지금 호버 · 눌림 단계의 색조(QSS 색조 규칙과 같은 토큰, #571)."""
@@ -126,16 +127,11 @@ class CardFace(QFrame):
         return ground
 
     def paintEvent(self, event: QPaintEvent) -> None:
-        """QSS 바탕 · 테두리 위에 모션 색조(테두리 안쪽)와 고른 카드의 강조색 테두리를 그린다."""
+        """QSS 바탕 · 구분선 위에 모션 색조(행 전체, 구분선 위)와 고른 행의 왼쪽 강조색 띠를 그린다."""
         super().paintEvent(event)
         if self._washToken:
-            radius = theme.METRICS["cardRadius"] - 1
-            inner = QRectF(1, 1, self.width() - 2, self.height() - 2)
-            path = QPainterPath()
-            path.addRoundedRect(inner, radius, radius)
+            inner = QRectF(0, 0, self.width(), self.height() - theme.METRICS["cardSeparator"])
             painter = QPainter(self)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            painter.setClipPath(path)
             wash = self._washColor()
             wash.setAlpha(self._wash)
             painter.fillRect(inner, wash)
@@ -147,18 +143,16 @@ class CardFace(QFrame):
 
 
 def draw_picked_border(painter: QPainter, card: QRectF) -> None:
-    """고른 카드의 강조색 테두리를 `card`(painter 좌표의 카드 면 사각형) 가장자리에 그린다 (#561).
+    """고른 행의 왼쪽 끝 강조색 세로 띠를 `card`(painter 좌표의 카드 면 사각형)에 그린다 (#561 · #611).
 
-    테두리 1px 자리를 덮고 안쪽으로 1px 더 간다 — 호버 · 눌림이어도 강조색 그대로다(프로토 card.py). 카드
-    면과 그 위의 progress bar가 같은 모양을 각자 그린다 — progress bar는 카드 면의 자식이라 면이 그린 테두리의
-    아래 변을 가린다.
+    띠는 행 위끝부터 구분선 위까지다 — 호버 · 눌림이어도 강조색 그대로다. 카드 면과 그 위의 progress bar가
+    같은 띠를 각자 그린다 — progress bar는 카드 면의 자식이라 면이 그린 띠의 아래 끝을 가린다.
     """
-    edge = theme.METRICS["cardSelectBorder"] / 2
-    radius = theme.METRICS["cardRadius"] - edge
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setBrush(Qt.BrushStyle.NoBrush)
-    painter.setPen(QPen(QColor(theme.current_tokens()["accent"]), edge * 2))
-    painter.drawRoundedRect(card.adjusted(edge, edge, -edge, -edge), radius, radius)
+    width = theme.METRICS["cardSelectBar"]
+    height = card.height() - theme.METRICS["cardSeparator"]
+    painter.fillRect(
+        QRectF(card.left(), card.top(), width, height), QColor(theme.current_tokens()["accent"])
+    )
 
 
 class CardProgress(QProgressBar):
@@ -411,6 +405,7 @@ class Ui_ContentItemWidget(object):
         ContentItemWidget.resize(600, 80)
 
         pad = theme.METRICS["cardPadding"]
+        pad_y = theme.METRICS["cardPadY"]
         gap = theme.METRICS["cardRowSpacing"]
         bar_h = theme.METRICS["barHeight"]
         button = theme.METRICS["cardButton"]
@@ -430,7 +425,7 @@ class Ui_ContentItemWidget(object):
         self.compactThumbnail = card_display.current().compact_thumbnail
         self.bodyLayout = QGridLayout(self.contentFrame)
         self.bodyLayout.setObjectName("bodyLayout")
-        self.bodyLayout.setContentsMargins(pad, pad, pad, pad)
+        self.bodyLayout.setContentsMargins(pad, pad_y, pad, pad_y)
         self.bodyLayout.setHorizontalSpacing(theme.METRICS["cardThumbGap"])
         self.bodyLayout.setVerticalSpacing(gap)
         self.bodyLayout.setColumnStretch(1, 1)

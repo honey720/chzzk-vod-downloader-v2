@@ -1,7 +1,7 @@
 import sys
 
 from PySide6.QtWidgets import QApplication, QMessageBox, QScrollArea, QWidget, QVBoxLayout
-from PySide6.QtCore import QCoreApplication, Qt, QTimer, Signal
+from PySide6.QtCore import QCoreApplication, QEvent, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QCursor,
     QDragEnterEvent,
@@ -17,22 +17,22 @@ from PySide6.QtGui import (
 import app.theme as theme
 from app.widgets.focus_ring import FocusRing
 from app.widgets.narrow_steps import RETURN_SLACK
-from app.widgets.scroll_padding import ScrollBarPadding
 from app.widgets.step_scroll import StepScroller
 from app.widgets.widget import BUSY_STATES, ContentItemWidget
 from app.viewmodels import card_text
 from app.viewmodels.data import ContentItem
 
-CARD_BORDER = 1  # 카드 면 테두리 두께(px) — style.qss `#contentFrame`의 border 1px
-# 카드 높이(px) — 테두리 · 안쪽 여백 위아래 + 세 줄(16 · 18 · 20) + 줄 사이 둘 = 80(설계 §11.3)
+# 카드 높이(px) — 안쪽 여백 위아래 + 세 줄(16 · 18 · 20) + 줄 사이 둘 = 행 80, 그 밑 구분선 1 = 81(설계 §13).
+# 구분선은 카드 면의 아래 테두리다(style.qss `#contentFrame`)
 CARD_HEIGHT = (
-    2 * (CARD_BORDER + theme.METRICS["cardPadding"])
+    theme.METRICS["cardSeparator"]
+    + 2 * theme.METRICS["cardPadY"]
     + theme.METRICS["cardRow1Height"]
     + theme.METRICS["cardRow2Height"]
     + theme.METRICS["cardRow3Height"]
     + 2 * theme.METRICS["cardRowSpacing"]
 )
-# 카드 목록의 한 칸(px) — 카드 하나 + 카드 사이 = 92. 목록의 휠 · 스크롤 위치가 이 단위다(#599)
+# 카드 목록의 한 칸(px) — 행 80 + 구분선 1 = 81(카드 사이 0). 목록의 휠 · 스크롤 위치가 이 단위다(#599 · #611)
 CARD_CELL = CARD_HEIGHT + theme.METRICS["cardGap"]
 
 
@@ -169,10 +169,9 @@ class ContentListView(QScrollArea):
         # 카드는 창 폭에 맞춰야 한다 — 넘치는 제목·경로·상태 문구는 ElidingLabel이
         # 알아서 잘라 보여준다(PR #229 후속). 가로 스크롤은 그 자체가 버그였다.
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        # 세로 스크롤바는 필요할 때만(AsNeeded). 다만 스크롤바가 보이는 동안은 카드 컨테이너의
-        # 오른쪽 패딩에서 스크롤바 폭을 빼서(`_fitPaddingAroundScrollBar`) 스크롤바가 카드
-        # 오른쪽 여백(outerMargin) 안에 들어가게 한다 — 카드 폭·위치가 스크롤바 유무와
-        # 무관해진다(v2.10.1). 항상 켜 두는 안(AlwaysOn)은 빈 목록에도 바가 보여 기각(오너).
+        # 세로 스크롤바는 필요할 때만(AsNeeded). 행은 목록 좌우 끝까지 가고, 스크롤바가 보이는 동안은 행 안쪽
+        # 오른쪽 여백에서 스크롤바 폭을 뺀다(`rowRightPad`) — 글 끝이 스크롤바 유무와 무관하게 바 안 내용 끝과
+        # 같은 x다(설계 §13, #611). 항상 켜 두는 안(AlwaysOn)은 빈 목록에도 바가 보여 기각(오너).
         # transient(오버레이) 힌트는 QSS로 스타일된 스크롤바에 Qt가 적용하지 않는다(실측 —
         # 위젯 기준 styleHint가 0). 카드 높이는 폭과 무관하므로 되먹임 진동은 없다(실측).
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -182,23 +181,16 @@ class ContentListView(QScrollArea):
 
         self._container = QWidget()
         self._layout = QVBoxLayout(self._container)
-        # 좌우 여백은 창(contentColumn)이 아니라 여기 카드 컨테이너가 진다(v2.10.1).
-        # 목록 자체는 창 좌우 끝까지 가서 스크롤바가 창 끝에 붙고, 카드 프레임은
-        # 이 패딩만큼 안쪽에 놓여 상단·하단 바와 같은 좌측 정렬선(outerMargin)을
-        # 지킨다 — 값이 바뀐 게 아니라 자리가 옮겨진 것이다(#244 정렬선 유지).
-        # 위 여백: 헤더바와 목록 사이에 간격이 없어(바는 경계선 하나로만 나눈다, #536) 헤더바 ↔ 첫 카드
-        # 사이를 이 여백이 진다 — 카드 사이와 같은 cardGap(설계 §11.2, 프로토 CARD_GAP)
-        outer = theme.METRICS["outerMargin"]
+        # 띠 목록 — 카드 행이 목록 좌우 끝까지 가고(바깥 여백 0), 행 사이 · 위아래 여백도 0이다. 행은 아래
+        # 구분선 하나로 나뉜다(설계 §13, #611). 썸네일 · 글의 정렬선은 행 안쪽 여백이 진다
         gap = theme.METRICS["cardGap"]
-        self._layout.setContentsMargins(outer, gap, outer, gap)
-        # 스크롤바의 Show/Hide에 맞춰 오른쪽 패딩을 고친다 — 편집 창의 구간 목록과 함께 쓴다
-        self._scrollPadding = ScrollBarPadding(self, self._layout, outer)
-        # 카드 사이 — 카드 자체는 바깥 여백이 없다(#550). 카드 폭에는 영향을 주지 않는 값이라
-        # ElidingLabel 폭 계산과 무관하다
+        self._layout.setContentsMargins(0, gap, 0, gap)
         self._layout.setSpacing(gap)
+        # 스크롤바가 나타나고 숨을 때 행 안쪽 오른쪽 여백을 고친다(`_fitRowPads`)
+        self.verticalScrollBar().installEventFilter(self)
         self._layout.addStretch(1)  # 카드는 항상 이 스트레치 앞에 insertWidget된다
         self.setWidget(self._container)
-        # 키보드 초점 카드의 바깥 고리(#561) — 목록에 하나뿐이다. 컨테이너의 자식이라 카드와 함께 굴러가고
+        # 키보드 초점 행의 안쪽 고리(#561 · #611) — 목록에 하나뿐이다. 컨테이너의 자식이라 카드와 함께 굴러가고
         # 뷰포트에 잘리며, 목록 밖의 선택 줄보다 아래다. 레이아웃에는 넣지 않는다(카드 자리를 따라 스스로 놓인다)
         self._ring = FocusRing(self._container)
 
@@ -360,18 +352,14 @@ class ContentListView(QScrollArea):
         return None
 
     def _revealCard(self, card: ContentItemWidget) -> None:
-        """초점을 받은 카드를 굴려 보이게 한다 — 키보드 초점이면 카드 바깥의 focus ring까지 보이게 한다 (#561).
-
-        마우스로 온 초점은 고리를 그리지 않으므로 카드만 보이면 된다.
+        """초점을 받은 카드를 굴려 보이게 한다 — focus ring은 행 안쪽이라 행만 보이면 된다 (#561 · #611).
 
         스크롤 위치는 칸 경계로 맞춘다(#599) — 카드가 위로 벗어났으면 그 카드의 칸 경계, 아래로 벗어났으면 카드
-        아래 끝(· 고리)이 들어오는 가장 가까운 칸 경계. 애니메이션 없이 바로 옮긴다 — 초점과 고리가 바로 옮겨
+        아래 끝이 들어오는 가장 가까운 칸 경계. 애니메이션 없이 바로 옮긴다 — 초점과 고리가 바로 옮겨
         가고, 키를 누르고 있으면 다음 카드가 이어 오기 때문이다.
         """
-        ring = theme.METRICS["focusRingGap"] + theme.METRICS["focusRingWidth"]
-        reach = ring if card.hasKeyFocus() else 0
-        top = card.y() - reach
-        bottom = card.y() + card.height() + reach
+        top = card.y()
+        bottom = card.y() + card.height()
         self._scroller.finish()
         place = self._scroller.revealPlace(top, bottom)
         if place != self.verticalScrollBar().value():
@@ -685,14 +673,33 @@ class ContentListView(QScrollArea):
         if card.item not in self._widgets and after is not None and after.item in self._widgets:
             self._focusCard(after, Qt.FocusReason.TabFocusReason)
 
-    def _fitPaddingAroundScrollBar(self) -> None:
-        """스크롤바가 보이면 컨테이너 오른쪽 패딩에서 그 폭을 빼고, 숨으면 되돌린다 (v2.10.1).
+    def rowRightPad(self) -> int:
+        """행 안쪽 오른쪽 여백 — 행 안쪽 좌우 여백에서 보이는 스크롤바 폭을 뺀 값(0 아래로는 가지 않는다).
 
-        카드 오른쪽 끝은 스크롤바 유무와 무관하게 항상 목록 오른쪽 끝 − outerMargin이다 —
-        스크롤바는 그 여백 안에 들어간다. 스크롤바가 여백보다 넓으면 패딩은 0에서 멈춘다.
-        하는 일은 ``ScrollBarPadding``에 있다.
+        행은 목록 오른쪽 끝(스크롤바가 보이면 그 왼쪽)까지 간다. 글 · 버튼의 오른쪽 끝은 스크롤바 유무와 무관하게
+        목록 오른쪽 끝 − 행 안쪽 좌우 여백이다 — 헤더바 안 내용 끝과 같은 x다(설계 §13, #611).
         """
-        self._scrollPadding.fit()
+        bar = self.verticalScrollBar()
+        taken = bar.width() if bar.isVisible() else 0
+        return max(0, theme.METRICS["cardPadding"] - taken)
+
+    def _fitRowPads(self) -> None:
+        """모든 행(되살릴 수 있게 들고 있는 행 포함)의 안쪽 오른쪽 여백을 지금 스크롤바에 맞춘다.
+
+        스크롤바가 나타나거나 숨을 때만 불린다 — 행 수만큼 돌지만 드물다.
+        """
+        pad = self.rowRightPad()
+        for widget in (*self._widgets.values(), *self._parked.values()):
+            widget.setRowPadRight(pad)
+
+    def eventFilter(self, watched, event) -> bool:
+        """세로 스크롤바가 나타나거나 숨으면 행 안쪽 오른쪽 여백을 고친다."""
+        if watched is self.verticalScrollBar() and event.type() in (
+            QEvent.Type.Show,
+            QEvent.Type.Hide,
+        ):
+            self._fitRowPads()
+        return super().eventFilter(watched, event)
 
     def setModel(self, model) -> None:
         """✅ 모델을 설정하고 위젯을 자동으로 연결"""
@@ -813,6 +820,7 @@ class ContentListView(QScrollArea):
         widget.loadRepresentations()
         widget.setShowYear(self._showYear)
         widget.setPicking(self._selecting)
+        widget.setRowPadRight(self.rowRightPad())
         self._layout.insertWidget(self._placeOf(item, row), widget)
         widget.setVisible(self._accepts(item))
         self._widgets[item] = widget
@@ -826,6 +834,7 @@ class ContentListView(QScrollArea):
         """들고 있던 위젯을 되살린 카드의 자리에 다시 끼운다 (#561) — 위젯을 새로 만들지 않는다."""
         widget.setShowYear(self._showYear)
         widget.setPicking(self._selecting)
+        widget.setRowPadRight(self.rowRightPad())
         widget.setSelected(False)
         widget.setData(item, row)
         self._layout.insertWidget(self._placeOf(item, row), widget)

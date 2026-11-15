@@ -13,7 +13,6 @@ from PySide6.QtCore import (
     QEasingCurve,
     QEvent,
     QProcess,
-    QRectF,
     QSize,
     Qt,
     QTimer,
@@ -32,7 +31,6 @@ from PySide6.QtGui import (
     QPainter,
     QPainterPath,
     QPixmap,
-    QRegion,
     QResizeEvent,
     QShowEvent,
 )
@@ -367,20 +365,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """
         bar_h = theme.METRICS["barHeight"]
         frame = self.contentFrame
-        bar_y = frame.height() - bar_h - 1
-        self.progressBar.setGeometry(1, bar_y, frame.width() - 2, bar_h)
-        # 카드 곡률로 잘라낸다 — 바 자체의 QSS border-radius는 높이(4px)에
-        # 눌려 카드 반지름을 못 따라가고, 그 결과 막대 양끝이 카드의
-        # 둥근 모서리 바깥으로 튀어나온다(실기 렌더 실측 — 바닥 모서리에
-        # 트랙·진행색 조각이 카드 몸통 밖에 남는다). 프레임 테두리 안쪽의
-        # 둥근 사각형을 바 좌표계로 옮겨 마스크로 건다. 값(QRegion)이라
-        # 카드에 상주하는 파이썬 객체가 아니다.
-        radius = theme.METRICS["cardRadius"] - 1
-        path = QPainterPath()
-        path.addRoundedRect(
-            QRectF(0, 1 - bar_y, frame.width() - 2, frame.height() - 2), radius, radius
-        )
-        self.progressBar.setMask(QRegion(path.toFillPolygon().toPolygon(), Qt.FillRule.WindingFill))
+        # 행 아래끝에 놓는다 — 아래 끝이 구분선 자리와 겹치고, 트랙은 그리지 않는다(구분선이 트랙, 설계 §13 ·
+        # #611). 행 좌우 끝까지다(모서리 0이라 잘라 낼 것이 없다)
+        self.progressBar.setGeometry(0, frame.height() - bar_h, frame.width(), bar_h)
         self.progressBar.raise_()
 
     def _placeCardButtons(self) -> None:
@@ -1143,9 +1130,11 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         return max(self.width() - inset, 0)
 
     def _frameInset(self) -> int:
-        """카드 폭 − 안쪽 폭 — 테두리 둘 + 안쪽 여백 둘."""
+        """카드 폭 − 안쪽 폭 — 좌우 테두리(띠 행은 0) + 안쪽 좌우 여백."""
         margins = self.bodyLayout.contentsMargins()
-        return 2 * self.contentFrame.frameWidth() + margins.left() + margins.right()
+        frame = self.contentFrame
+        borders = frame.width() - frame.contentsRect().width()
+        return borders + margins.left() + margins.right()
 
     def _thumbColumn(self) -> int:
         """썸네일 열 — 썸네일 폭 + 썸네일 ↔ 글 간격."""
@@ -1156,6 +1145,17 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     def showsYear(self) -> bool:
         """날짜에 연도를 적고 있는지."""
         return self._showYear
+
+    def setRowPadRight(self, pad: int) -> None:
+        """행 안쪽 오른쪽 여백을 바꾼다 — 목록이 스크롤바 유무에 맞춰 준다(`ContentListView.rowRightPad`, #611).
+
+        3줄이 쓸 폭이 바뀌므로 접는 단계를 다시 고른다. 같은 값이면 아무것도 하지 않는다.
+        """
+        margins = self.bodyLayout.contentsMargins()
+        if margins.right() == pad:
+            return
+        self.bodyLayout.setContentsMargins(margins.left(), margins.top(), pad, margins.bottom())
+        self._fitRow3()
 
     def setShowYear(self, show: bool) -> None:
         """날짜의 연도를 적거나 뺀다 — 목록(`ContentListView`)이 모든 카드에 같은 값을 준다."""

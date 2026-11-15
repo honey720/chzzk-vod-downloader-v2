@@ -214,13 +214,13 @@ class TestRows:
         )
 
     def test_card_is_80_high_with_a_110_by_62_thumbnail(self, qapp) -> None:
-        """카드 높이가 80, 썸네일이 110×62, 썸네일 ↔ 글이 12여야 한다.
+        """카드 높이가 81(행 80 + 구분선 1), 썸네일이 110×62, 썸네일 ↔ 글이 12여야 한다(#611).
 
-        대기 카드 -> 80, (110, 62), 1줄 왼끝 − 썸네일 오른끝 = 12
+        대기 카드 -> 81, (110, 62), 1줄 왼끝 − 썸네일 오른끝 = 12
         """
         card = _card()
         thumb = card.thumbnailLabel.geometry()
-        assert card.height() == 80
+        assert card.height() == 81
         assert (thumb.width(), thumb.height()) == (110, 62)
         assert card.topRow.geometry().left() - (thumb.right() + 1) == 12
 
@@ -346,7 +346,9 @@ class TestRows:
         # 상태 원 16 · 간격 4 · 줄여도 남는 상태 글(앞 세 글자 + 「…」, #554)
         kept = status.fontMetrics().horizontalAdvance(status.text()[:3] + "…") + 4
         row = 16 + 4 + kept + 4 + info_full + 10
-        card.resize(row + 2 + 16 + 110 + 12, card.height())
+        card.resize(
+            row + 2 * 12 + 110 + 12, card.height()
+        )  # 행 안쪽 좌우 12(띠 행 — 테두리 없음, #611)
         QApplication.processEvents()
         assert card.statusRow.width() == row, "전제: 3줄 폭이 계산한 폭이다"
         assert not info.isElided(), "정보 글이 상태 글보다 먼저 잘렸다"
