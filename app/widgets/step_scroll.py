@@ -9,7 +9,7 @@
 
 import math
 
-from PySide6.QtCore import QAbstractAnimation, QEasingCurve, QObject, QVariantAnimation
+from PySide6.QtCore import QAbstractAnimation, QEasingCurve, QEvent, QObject, QVariantAnimation
 from PySide6.QtGui import QWheelEvent
 from PySide6.QtWidgets import QAbstractScrollArea, QAbstractSlider
 
@@ -36,8 +36,9 @@ _STEPS_UP = (
 class StepScroller(QObject):
     """스크롤 영역 하나의 세로 스크롤을 칸 단위로 맡는다.
 
-    영역이 `wheelEvent`에서 `wheel`을 부른다. 그 밖(스크롤바 화살표 · 손잡이 · 바탕 누름 · 범위 바뀜)은
-    스스로 스크롤바 시그널에 건다.
+    영역이 `wheelEvent`에서 `wheel`을 부른다. 스크롤바 위의 휠은 스크롤바가 받으므로(한 번에 휠 줄 수 ×
+    singleStep만큼 간다) 스크롤바에 건 이벤트 필터가 `wheel`로 돌린다(#608 리뷰). 그 밖(스크롤바 화살표 ·
+    손잡이 · 바탕 누름 · 범위 바뀜)은 스스로 스크롤바 시그널에 건다.
 
     - 휠: 한 칸(`WHEEL_NOTCH`)에 한 칸. pixelDelta가 있으면(터치패드 등) 칸 높이만큼의 픽셀을, 없으면
       angleDelta를 한 칸만큼 모은다. 방향이나 단위가 바뀌면 모은 값을 버린다. 이 방향으로 더 움직일 수
@@ -67,6 +68,14 @@ class StepScroller(QObject):
         bar.sliderPressed.connect(self.stop)
         bar.actionTriggered.connect(self._onBarAction)
         bar.rangeChanged.connect(self._onRangeChanged)
+        bar.installEventFilter(self)  # 스크롤바 위의 휠 — 이 스크롤바 하나에만 건다
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        """스크롤바 위의 휠을 `wheel`로 돌린다 — 받았으면 스크롤바의 기본 처리(여러 줄 이동)를 막는다."""
+        if event.type() == QEvent.Type.Wheel and obj is self._bar():
+            self.wheel(event)
+            return event.isAccepted()
+        return False
 
     # ---- 칸 경계 ----
 
@@ -240,12 +249,20 @@ class StepScroller(QObject):
         """범위가 바뀌었다 — 손잡이를 끄는 중이 아니고 굴리는 중도 아니면 가까운 칸 경계로 바로 옮긴다.
 
         앞 범위의 맨 끝(0보다 큼)에 있었으면 새 맨 끝으로 옮긴다. 굴리는 중이면 끝날 때
-        맞춘다(`_onAnimationFinished`). 신호가 올 때 값은 아직 앞 범위의 값이다 — Qt는 이 신호 뒤에 값을 새
-        범위로 다시 자르고, 여기서 고친 값은 범위 안이라 그대로 남는다.
+        맞춘다(`_onAnimationFinished`) — 다만 앞 맨 끝으로 가던 중이면 목표를 새 맨 끝으로 바꾼다. 그대로 두면
+        앞 맨 끝에 선 뒤 새 범위의 칸 경계로 되돌아가 맨 끝에 남지 않는다(#608 리뷰). 신호가 올 때 값은 아직
+        앞 범위의 값이다 — Qt는 이 신호 뒤에 값을 새 범위로 다시 자르고, 여기서 고친 값은 범위 안이라 그대로
+        남는다.
         """
         bar = self._bar()
         was_end = self._lastMaximum > 0 and bar.value() >= self._lastMaximum
+        heading_end = (
+            self.isAnimating() and self._lastMaximum > 0 and self._target >= self._lastMaximum
+        )
         self._lastMaximum = bar.maximum()
+        if heading_end and self._target != bar.maximum():
+            self._target = bar.maximum()
+            self._animation.setEndValue(self._target)
         if bar.isSliderDown() or self.isAnimating():
             return
         if was_end:

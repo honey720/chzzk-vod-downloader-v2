@@ -215,6 +215,44 @@ class TestListScroll:
         QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
         assert view.findChildren(QVariantAnimation) == []
 
+    def test_wheel_over_the_scroll_bar_moves_one_card_cell(self, tmp_path: Path) -> None:
+        """카드 목록 스크롤바 위의 휠 한 칸도 카드 한 칸(92)만큼 움직여야 한다 (#608 리뷰).
+
+        카드 30 · 스크롤바 위(가운데 x · y=30)에 창 경로로 아래로 1칸 -> 92
+        """
+        win = open_window(tmp_path, *_plain_items(tmp_path, 30))
+        bar = win.listView.verticalScrollBar()
+        assert bar.isVisible(), "전제: 스크롤바가 보인다"
+        pos = QPointF(bar.mapTo(win, QPoint(bar.width() // 2, 30)))
+        QTest.wheelEvent(win.windowHandle(), pos, QPoint(0, -WHEEL_NOTCH), QPoint(0, 0))
+        _pump()
+        assert bar.value() == CELL
+
+    def test_slide_to_the_end_follows_a_new_end(
+        self, qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """맨 끝으로 굴러가는 중에 카드가 늘면 새 맨 끝에 멈춰야 한다 (#608 리뷰).
+
+        SCROLL_ANIMATION_MS 120 · 카드 30 · 맨 끝이 칸 경계가 아닌 창 높이 · 맨 끝 앞 칸 경계에서 아래로 1칸
+        -> 굴리는 중 · 목표 = 맨 끝, 굴리는 중 카드 하나 더함 -> 끝나면 위치 = 새 맨 끝
+        """
+        monkeypatch.setattr(step_scroll, "SCROLL_ANIMATION_MS", ANIMATION_MS)
+        win = open_window(tmp_path, *_plain_items(tmp_path, 30))
+        _off_grid_end(win)
+        view = win.listView
+        bar = view.verticalScrollBar()
+        bar.setValue(bar.maximum() // CELL * CELL)
+        _pump()
+        _list_wheel(win, -1)
+        old_end = bar.maximum()
+        assert view.isAnimating() and view.scrollTarget() == old_end, "전제: 맨 끝으로 굴러간다"
+        win.contentManager.model.addItem(_make_item(str(tmp_path), title="더한 카드"))
+        _pump()
+        assert bar.maximum() > old_end, "전제: 맨 끝이 늘었다"
+        qtbot.waitUntil(lambda: not view.isAnimating(), timeout=2000)
+        _pump()
+        assert bar.value() == bar.maximum()
+
     def test_pressing_the_handle_while_sliding_stops_the_slide(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -627,6 +665,34 @@ class TestCardTextTipDelay:
         qtbot.waitUntil(
             lambda: card_helpers.bubble_text_for(label) == label.toolTip(), timeout=2000
         )
+
+    def test_window_switch_before_the_delay_shows_nothing(
+        self, qtbot: QtBot, tmp_path: Path
+    ) -> None:
+        """지연 전에 다른 창이 활성이 되면(나감 없이) 지연이 지나도 말풍선이 뜨지 않아야 한다 (#608 리뷰).
+
+        지연 40ms · 본 창 활성 · 대기 카드 ✎ 들어감 -> 다른 창 활성 -> 기다리는 위젯 없음,
+        지연의 세 배를 기다림 -> 말풍선 없음
+        """
+        item = _make_item(str(tmp_path))
+        win = open_window(tmp_path, item)
+        win.activateWindow()
+        qtbot.waitUntil(win.isActiveWindow, timeout=3000)
+        card = _hovered_card(win, item)
+        enter(card.editButton)
+        assert tip_bubble.tip_filter().pending() is card.editButton, "전제: ✎를 기다린다"
+        other = QWidget()
+        other.resize(120, 80)
+        other.show()
+        other.activateWindow()
+        try:
+            qtbot.waitUntil(lambda: QApplication.activeWindow() is other, timeout=3000)
+            assert tip_bubble.tip_filter().pending() is None
+            qtbot.wait(3 * TEST_TIP_DELAY_MS)
+            assert not _bubble_shown()
+        finally:
+            other.hide()
+            other.deleteLater()
 
 
 # ---- 구간 편집 버튼(✂) (#599) ----

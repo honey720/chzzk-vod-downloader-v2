@@ -342,8 +342,9 @@ def close_floats_if_left(window: QWidget) -> None:
     """창을 떠났으면(다른 창이 활성 · 최소화) 말풍선과 열린 메뉴를 닫는다 (#536 오너 실기).
 
     창의 활성 · 상태 변화(`changeEvent`)에서 부른다. 포인터를 대상에 둔 채 Alt+Tab 하면 나감 이벤트가 오지 않아
-    따로 뜬 말풍선 · 메뉴가 다른 창 위에 남는다. 그 창이 연 메뉴가 활성을 가져간 경우(활성 창이 메뉴)는 떠난
-    것이 아니다. 등록 오류 말풍선(`ErrorTip`)은 창의 자식이라 창과 함께 뒤로 가므로 닫지 않는다.
+    따로 뜬 말풍선 · 메뉴가 다른 창 위에 남는다. 지연 뒤에 뜰 말풍선(카드 위 툴팁)의 기다림도 그만둔다. 그
+    창이 연 메뉴가 활성을 가져간 경우(활성 창이 메뉴)는 떠난 것이 아니다. 등록 오류 말풍선(`ErrorTip`)은 창의
+    자식이라 창과 함께 뒤로 가므로 닫지 않는다.
     """
     active = QApplication.activeWindow()
     popup = QApplication.activePopupWidget()
@@ -352,6 +353,9 @@ def close_floats_if_left(window: QWidget) -> None:
     )
     if not left:
         return
+    # 지연 뒤에 뜰 말풍선도 그만둔다 — 나감 없이 떠났으면 그대로 두면 다른 창 위에 뜬다(#608 리뷰)
+    if _FILTER["filter"] is not None:
+        _FILTER["filter"].cancelPending()
     hide_tip()
     if popup is not None:
         popup.close()
@@ -403,6 +407,11 @@ class TipFilter(QObject):
         if self._pending is not None and not shiboken6.isValid(self._pending):
             self._pending = None
         return self._pending if self._timer.isActive() else None
+
+    def cancelPending(self) -> None:
+        """기다리는 말풍선을 그만둔다 — 기다리는 위젯이 없으면 아무것도 하지 않는다."""
+        self._timer.stop()
+        self._pending = None
 
     def _cancel(self, widget: QObject) -> None:
         """그 위젯을 기다리고 있으면 그만둔다 — 다른 위젯을 기다리는 중이면 그대로 둔다."""
