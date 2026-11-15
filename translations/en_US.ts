@@ -95,34 +95,6 @@
         <translation>Sections {0}</translation>
     </message>
     <message>
-        <source>The frame rate changed, so sections were fitted to it.</source>
-        <translation>The frame rate changed, so sections were fitted to it.</translation>
-    </message>
-    <message>
-        <source>This resolution is shorter, so sections now end at its end.</source>
-        <translation>This resolution is shorter, so sections now end at its end.</translation>
-    </message>
-    <message>
-        <source>This resolution is longer, so sections to the end now reach its end.</source>
-        <translation>This resolution is longer, so sections to the end now reach its end.</translation>
-    </message>
-    <message>
-        <source>Sections that start after this resolution ends are skipped. Edit them.</source>
-        <translation>Sections that start after this resolution ends are skipped. Edit them.</translation>
-    </message>
-    <message>
-        <source>Checking this resolution&apos;s length...</source>
-        <translation>Checking this resolution&apos;s length...</translation>
-    </message>
-    <message>
-        <source>Couldn&apos;t check this resolution&apos;s length. Open the section editor to retry.</source>
-        <translation>Couldn&apos;t check this resolution&apos;s length. Open the section editor to retry.</translation>
-    </message>
-    <message>
-        <source>and {0} more</source>
-        <translation>and {0} more</translation>
-    </message>
-    <message>
         <source>Preparing</source>
         <translation>Preparing</translation>
     </message>

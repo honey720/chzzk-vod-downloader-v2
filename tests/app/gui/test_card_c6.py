@@ -1,4 +1,4 @@
-"""카드 C6 — 카드 사이 간격 · 카드 목록 한 칸 스크롤 · 구간 편집 버튼 · 정보 글 툴팁 (#599).
+"""카드 C6 — 카드 사이 간격 · 카드 목록 한 칸 스크롤 · 구간 편집 버튼 · 카드 툴팁 (#599).
 
 실제 배선을 탄다: 휠은 창 경로(`QTest.wheelEvent`), 카드 버튼은 마우스 클릭 → 카드 시그널 → 목록 릴레이 →
 `VodDownloader.onCardSectionEdit` → 구간 창. 구간 창의 기준값 조회는 대역(`basis`, 60fps · 1시간)이다.
@@ -408,30 +408,24 @@ class TestListScroll:
         assert bar.value() == 3 * CELL
 
 
-# ---- 정보 글 툴팁 (#599) ----
+# ---- 카드 정보 글 툴팁 없음 (#599) ----
 
 # 구간 넷 — 60fps에서 프레임 경계인 시각(초). ①과 ②가 겹친다
-TIP_SECTIONS = (
+FOUR_SECTIONS = (
     TimeRange(0.0, 60.0),
     TimeRange(30.0, 90.0),
     TimeRange(120.0, 130.0),
     TimeRange(200.0, 210.0),
 )
-# TIP_SECTIONS 카드 툴팁의 구간 줄 — 3줄 + 「외 1개」, 겹친 ① · ②는 줄 끝에 「· overlap」
-TIP_LINES = [
-    "1 · 00:00:00:00 ~ 00:01:00:00 · 00:01:00:00 · overlap",
-    "2 · 00:00:30:00 ~ 00:01:30:00 · 00:01:00:00 · overlap",
-    "3 · 00:02:00:00 ~ 00:02:10:00 · 00:00:10:00",
-    "and 1 more",
-]
-# 길이를 확인하지 못한 구간 카드의 경고 전문(section_check UNVERIFIED)
-UNVERIFIED = "Couldn't check this resolution's length. Open the section editor to retry."
+UNVERIFIED_SHORT = (
+    "length not checked"  # 길이를 확인하지 못한 구간 카드가 정보 글 끝에 다는 짧은 경고
+)
 
 
-def _tip_card(tmp_path: Path, state: DownloadState) -> ContentItemWidget:
-    """TIP_SECTIONS(60fps)를 든, 길이를 확인하지 못한 구간 카드 하나를 띄운다."""
+def _unverified_card(tmp_path: Path, state: DownloadState) -> ContentItemWidget:
+    """FOUR_SECTIONS(60fps)를 든, 길이를 확인하지 못한 구간 카드 하나를 띄운다."""
     item = _make_item(str(tmp_path))
-    item.selections = TIP_SECTIONS
+    item.selections = FOUR_SECTIONS
     item.section_frame_rate = Fraction(60)
     item.section_check = SECTION_CHECK_UNVERIFIED
     item.downloadState = state
@@ -441,52 +435,53 @@ def _tip_card(tmp_path: Path, state: DownloadState) -> ContentItemWidget:
     return card
 
 
-class TestInfoTip:
-    """정보 글 툴팁 차례 — (잘렸으면 전체 정보 글) → 구간 줄 → 경고(대기 카드만)."""
+class TestNoInfoTip:
+    """카드 정보 글에는 툴팁이 없다 — 잘려도, 경고가 있어도(오너 2026-11-15)."""
 
-    def test_unelided_info_tip_is_section_lines_then_the_warning(self, tmp_path: Path) -> None:
-        """정보 글이 다 보이는 대기 구간 카드의 툴팁은 구간 줄 뒤에 경고여야 한다.
+    def test_unfolded_waiting_info_shows_the_short_warning_and_has_no_tooltip(
+        self, tmp_path: Path
+    ) -> None:
+        """정보 글이 다 보이는 대기 구간 카드는 정보 글에 짧은 경고가 있고 툴팁이 없어야 한다.
 
         구간 넷(① · ② 겹침) · 길이 미확인 · 3줄이 접히지 않는 가장 좁은 폭
-        -> 툴팁의 줄 == TIP_LINES + [UNVERIFIED]
+        -> 정보 글 끝 " · length not checked", 정보 글 툴팁 ""
         """
-        card = _tip_card(tmp_path, DownloadState.WAITING)
+        card = _unverified_card(tmp_path, DownloadState.WAITING)
         unfold(card)
         info = card.fileSizeLabel
         assert info.isVisible(), "전제: 정보 글이 보인다"
-        assert info.toolTip().split("\n") == TIP_LINES + [UNVERIFIED]
+        assert shown(info).endswith(" · " + UNVERIFIED_SHORT)
+        assert info.toolTip() == ""
 
-    def test_elided_info_tip_starts_with_the_whole_info_text(self, tmp_path: Path) -> None:
-        """정보 글이 접혀 줄어든 대기 구간 카드의 툴팁은 전체 정보 글 → 구간 줄 → 경고 차례여야 한다.
+    def test_folded_waiting_info_has_no_tooltip(self, tmp_path: Path) -> None:
+        """정보 글이 접혀 줄어든 대기 구간 카드의 정보 글에도 툴팁이 없어야 한다.
 
         구간 넷 · 길이 미확인 · 접히지 않는 가장 좁은 폭에서 본 정보 글 = 전체, 그 폭 − 1
-        -> 보이는 정보 글 ≠ 전체, 툴팁의 줄 == [전체] + TIP_LINES + [UNVERIFIED]
+        -> 보이는 정보 글 ≠ 전체, 정보 글 툴팁 ""
         """
-        card = _tip_card(tmp_path, DownloadState.WAITING)
+        card = _unverified_card(tmp_path, DownloadState.WAITING)
         width = unfold(card)
         full = shown(card.fileSizeLabel)
         resize_to(card, width - 1)
         info = card.fileSizeLabel
         assert info.isVisible(), "전제: 정보 글이 보인다"
         assert shown(info) != full, "전제: 정보 글이 접혀 줄었다"
-        assert info.toolTip().split("\n") == [full] + TIP_LINES + [UNVERIFIED]
+        assert info.toolTip() == ""
 
     @pytest.mark.parametrize(
         "state", [DownloadState.RUNNING, DownloadState.PAUSED, DownloadState.FINISHED]
     )
-    def test_cards_past_waiting_show_section_lines_without_the_warning(
+    def test_cards_past_waiting_have_no_info_tooltip(
         self, tmp_path: Path, state: DownloadState
     ) -> None:
-        """대기가 아닌 구간 카드의 툴팁에는 구간 줄만 있고 경고가 없어야 한다.
+        """대기가 아닌 구간 카드의 정보 글에 툴팁이 없어야 한다.
 
-        구간 넷 · 길이 미확인 · 받는 중 / 일시정지 / 완료 · 넓은 폭
-        -> 툴팁 줄에 TIP_LINES가 이 차례로 있고, UNVERIFIED는 없다
+        구간 넷 · 길이 미확인 · 받는 중 / 일시정지 / 완료 · 넓은 폭 -> 정보 글 보임, 툴팁 ""
         """
-        card = _tip_card(tmp_path, state)
+        card = _unverified_card(tmp_path, state)
         resize_to(card, card_helpers.ROOMY_WIDTH)
-        lines = card.fileSizeLabel.toolTip().split("\n")
-        assert lines[-len(TIP_LINES) :] == TIP_LINES
-        assert UNVERIFIED not in lines
+        assert card.fileSizeLabel.isVisible(), "전제: 정보 글이 보인다"
+        assert card.fileSizeLabel.toolTip() == ""
 
 
 # ---- 구간 편집 버튼(✂) (#599) ----
@@ -518,7 +513,7 @@ def _click_section_button(card: ContentItemWidget) -> None:
 class TestSectionButton:
     """대기 카드 버튼 줄의 ✂ — 구간 창을 바로 연다(오너 2026-11-15)."""
 
-    @pytest.mark.parametrize("sections", [(), TIP_SECTIONS], ids=["구간 없음", "구간 넷"])
+    @pytest.mark.parametrize("sections", [(), FOUR_SECTIONS], ids=["구간 없음", "구간 넷"])
     def test_hovered_waiting_card_shows_the_section_button_between_edit_and_delete(
         self, tmp_path: Path, sections: tuple
     ) -> None:
@@ -563,7 +558,7 @@ class TestSectionButton:
         assert card.visibleCardButtons() == ["editButton", "deleteButton"]
 
     @pytest.mark.usefixtures("basis")
-    @pytest.mark.parametrize("sections", [(), TIP_SECTIONS], ids=["구간 없음", "구간 넷"])
+    @pytest.mark.parametrize("sections", [(), FOUR_SECTIONS], ids=["구간 없음", "구간 넷"])
     def test_clicking_the_section_button_opens_the_section_dialog_not_the_card_editor(
         self, qtbot: QtBot, tmp_path: Path, sections: tuple
     ) -> None:
@@ -583,14 +578,13 @@ class TestSectionButton:
         press_cancel(dialog)
 
     @pytest.mark.usefixtures("basis")
-    def test_confirming_the_dialog_opened_by_the_button_updates_the_info_text_and_tip(
+    def test_confirming_the_dialog_opened_by_the_button_updates_the_info_text(
         self, qtbot: QtBot, tmp_path: Path
     ) -> None:
-        """✂로 연 구간 창에서 구간 둘을 넣고 확인하면 카드 정보 글 · 툴팁이 새 구간을 따라야 한다.
+        """✂로 연 구간 창에서 구간 둘을 넣고 확인하면 카드 정보 글이 새 구간을 따라야 한다.
 
         구간 없는 대기 카드 · ✂ · 행 00:10:00:00~00:20:00:00 · 00:30:00:30~00:31:00:00 · 확인
-        -> 정보 글 끝 「 · Sections 2」, 툴팁 첫 두 줄
-           "1 · 00:10:00:00 ~ 00:20:00:00 · 00:10:00:00", "2 · 00:30:00:30 ~ 00:31:00:00 · 00:00:59:30"
+        -> 구간 둘, 정보 글 끝 「 · Sections 2」, 정보 글 툴팁 ""
         """
         item = _make_item(str(tmp_path))
         win = open_window(tmp_path, item)
@@ -601,11 +595,9 @@ class TestSectionButton:
         set_rows(dialog, [("00:10:00:00", "00:20:00:00"), ("00:30:00:30", "00:31:00:00")])
         press_ok(dialog)
         card = _card_any(win, item)
+        assert len(item.selections) == 2
         assert shown(card.fileSizeLabel).endswith(" · Sections 2")
-        assert card.fileSizeLabel.toolTip().split("\n")[:2] == [
-            "1 · 00:10:00:00 ~ 00:20:00:00 · 00:10:00:00",
-            "2 · 00:30:00:30 ~ 00:31:00:00 · 00:00:59:30",  # 111630 − 108030 = 3570프레임
-        ]
+        assert card.fileSizeLabel.toolTip() == ""
 
     @pytest.mark.usefixtures("basis")
     def test_cancelling_the_dialog_opened_by_the_button_leaves_the_card_as_it_was(
@@ -617,7 +609,7 @@ class TestSectionButton:
         -> 구간 넷 그대로, 정보 글 · 툴팁이 열기 전과 같다
         """
         item = _make_item(str(tmp_path))
-        item.selections = TIP_SECTIONS
+        item.selections = FOUR_SECTIONS
         item.section_frame_rate = Fraction(60)
         win = open_window(tmp_path, item)
         card = _hovered_card(win, item)
@@ -629,5 +621,5 @@ class TestSectionButton:
         set_rows(dialog, [("00:10:00:00", "00:20:00:00")])
         press_cancel(dialog)
         card = _card_any(win, item)
-        assert item.selections == TIP_SECTIONS
+        assert item.selections == FOUR_SECTIONS
         assert (shown(card.fileSizeLabel), card.fileSizeLabel.toolTip()) == before

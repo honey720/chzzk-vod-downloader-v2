@@ -176,12 +176,12 @@ CARD_BUTTONS = {
     DownloadState.FAILED: ("retryButton", "deleteButton"),
 }
 
-# 툴팁이 달릴 수 있는 카드 글 위젯 — 잘린 제목 · 채널명 · 상태 글 · 정보 글 · 저장 위치(글 · 아이콘)
+# 툴팁이 달릴 수 있는 카드 글 위젯 — 잘린 채널명 · 상태 글(실패 사유 전문) · 저장 위치(글 · 아이콘).
+# 제목 · 정보 글은 툴팁이 없다 — 카드 정보는 툴팁에 숨기지 않고 카드 편집 창 · 구간 창에서 본다(오너
+# 2026-11-15, #599)
 TIP_LABEL_NAMES = (
-    "titleLabel",
     "channelNameLabel",
     "statusLabel",
-    "fileSizeLabel",
     "directoryLabel",
     "pathIcon",
 )
@@ -1092,7 +1092,6 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             info = self.fileSizeLabel
             info.setText(texts.size or "")
             info.setVisible(bool(texts.size))
-            info.setDetailTip(self._infoTip(texts.size or ""))
             path_shown = self._pathShown()
             self.pathIcon.setVisible(path_shown and level < card_text.LEVEL_PATH_GONE)
             self.directoryLabel.setVisible(path_shown and level < card_text.LEVEL_PATH_ICON)
@@ -1149,22 +1148,6 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     def _thumbColumn(self) -> int:
         """썸네일 열 — 썸네일 폭 + 썸네일 ↔ 글 간격."""
         return self.thumbnailLabel.width() + self.bodyLayout.horizontalSpacing()
-
-    def _infoTip(self, shown: str) -> str:
-        """정보 글의 툴팁 — (잘렸으면 전체 정보 글) → 구간 줄 → 경고 차례. 없으면 빈 글.
-
-        보이는 글을 그대로 되풀이하는 툴팁은 달지 않는다(#550). 구간 카드면 구간 줄을 3줄까지 적는다
-        (`card_text.section_tip_lines`, 오너 2026-11-15). 경고는 대기 카드에만이다. 구간 길이의 합은 적지 않는다 —
-        구간 창의 「합계」에서 본다(오너 2026-11-14 「툴팁 하나가 가리는 게 너무 많다」, #599).
-        """
-        item = self.item
-        full = self._levelTexts[0].size or "" if self._levelTexts else ""
-        lines = [full] if full and shown != full else []
-        if card_text.section_count(item):
-            lines.extend(card_text.section_tip_lines(item))
-            if item.downloadState == DownloadState.WAITING:
-                lines.extend(card_text.section_notice_detail(item))
-        return "\n".join(lines)
 
     # ---- 날짜 연도 — 목록 전체가 함께 정한다 (#554) ----
 

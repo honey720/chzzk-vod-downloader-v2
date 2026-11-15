@@ -57,11 +57,6 @@ from typing import Never, Self
 MB = 1024 * 1024
 OTHER_PATH = "D:/vod/archive/2026/summer/finals/T1-vs-GEN-full-set-highlights-and-interviews"
 TWO_SECTIONS = (TimeRange(600.0, 1200.0), TimeRange(1800.0, 2400.0))  # 합 20분
-# TWO_SECTIONS 카드 정보 글 툴팁의 구간 줄 — 프레임률을 모르는 카드라 밀리초 표기(#599)
-TWO_TIP = [
-    "1 · 00:10:00.000 ~ 00:20:00.000 · 00:10:00.000",
-    "2 · 00:30:00.000 ~ 00:40:00.000 · 00:10:00.000",
-]
 TWO_TAIL = " · 20:00 · Sections 2"  # TWO_SECTIONS 카드 정보 글의 끝 — 받을 길이 · 구간 수
 WHOLE_TAIL = " · 8:00:00"  # _card의 구간 없는 대기 · 완료 카드 정보 글의 끝 — 영상 길이 28800초
 # 실제 창 카드의 구간 0.2~1.0초 정보 글의 끝 — 받을 길이 0.8초(초 아래는 버린다) · 구간 하나
@@ -358,14 +353,11 @@ def test_waiting_section_card_marks_overlap_only_when_sections_overlap(
     assert shown(widget.fileSizeLabel) == summary
 
 
-def test_waiting_section_card_with_overlap_marks_the_section_lines_in_the_tooltip(
-    qtbot,
-) -> None:
-    """겹침이 있는 대기 구간 카드의 툴팁은 겹친 구간 줄 끝에 「· overlap」이고 합 · 받을 양 줄이 없어야 한다.
+def test_waiting_section_card_with_overlap_has_no_tooltip(qtbot) -> None:
+    """겹침이 있는 대기 구간 카드의 정보 글에 툴팁이 없어야 한다 (#599).
 
-    처음~10분 · 4분~20분 · 1분~20분(셋 다 서로 겹침, 합 45분 · 합친 범위 20분), 크기 200 MiB, 프레임률 모름
-    -> 툴팁의 줄 == 구간 줄 셋(밀리초 표기, 모두 끝에 " · overlap"), "To receive: 20:00" ·
-       "Sections add up to 45:00" · "Overlapping parts are received once" 없음 (#599)
+    처음~10분 · 4분~20분 · 1분~20분(셋 다 서로 겹침), 크기 200 MiB
+    -> 정보 글 보임, 정보 글 툴팁 ""
     """
     selections = (TimeRange(0.0, 600.0), TimeRange(240.0, 1200.0), TimeRange(60.0, 1200.0))
     window, widget = _card(
@@ -374,25 +366,14 @@ def test_waiting_section_card_with_overlap_marks_the_section_lines_in_the_toolti
     qtbot.addWidget(window)
 
     assert widget.fileSizeLabel.isVisible()
-    lines = widget.fileSizeLabel.toolTip().split("\n")
-    gone = [
-        "To receive: 20:00",
-        "Sections add up to 45:00",
-        "Overlapping parts are received once",
-    ]
-    assert [line for line in lines if line in gone] == []
-    assert lines == [
-        "1 · 00:00:00.000 ~ 00:10:00.000 · 00:10:00.000 · overlap",
-        "2 · 00:04:00.000 ~ 00:20:00.000 · 00:16:00.000 · overlap",
-        "3 · 00:01:00.000 ~ 00:20:00.000 · 00:19:00.000 · overlap",
-    ]
+    assert widget.fileSizeLabel.toolTip() == ""
 
 
-def test_waiting_section_card_without_overlap_has_no_sum_line_in_the_tooltip(qtbot) -> None:
-    """겹침이 없는 대기 mp4 구간 카드의 툴팁은 구간 줄뿐이고 구간 길이의 합 줄이 없어야 한다.
+def test_waiting_section_card_without_overlap_has_no_tooltip(qtbot) -> None:
+    """겹침이 없는 대기 mp4 구간 카드의 정보 글에 툴팁이 없어야 한다 (#599).
 
     구간 둘(10~20분 · 30~40분 — 합 20분), 받을 합 200 MiB, 넓은 창(정보 글을 줄이지 않았다)
-    -> 툴팁의 줄 == TWO_TIP(보이는 정보 글을 툴팁에 되풀이하지 않는다 — #550, 합 줄은 뺐다 — #599)
+    -> 정보 글 == "1080p · 200.00 MB · 20:00 · Sections 2", 툴팁 ""
     """
     window, widget = _card(
         "video", DownloadState.WAITING, selections=TWO_SECTIONS, section_bytes=200 * MB
@@ -400,7 +381,7 @@ def test_waiting_section_card_without_overlap_has_no_sum_line_in_the_tooltip(qtb
     qtbot.addWidget(window)
 
     assert shown(widget.fileSizeLabel) == "1080p · 200.00 MB · 20:00 · Sections 2"
-    assert widget.fileSizeLabel.toolTip().split("\n") == TWO_TIP
+    assert widget.fileSizeLabel.toolTip() == ""
 
 
 def test_waiting_mp4_section_card_shows_the_length_to_receive_with_or_without_a_size(
@@ -427,16 +408,16 @@ def test_waiting_mp4_section_card_shows_the_length_to_receive_with_or_without_a_
 def test_waiting_segment_section_card_keeps_the_total_time_and_its_tooltip(
     qtbot, content_type
 ) -> None:
-    """대기 중인 세그먼트 방식의 구간 카드는 정보 글에 받을 길이를 적고, 툴팁에 길이 합의 줄을 더하지 않아야 한다.
+    """대기 중인 세그먼트 방식의 구간 카드는 정보 글에 받을 길이를 적고, 툴팁이 없어야 한다.
 
     구간 둘(10~20분 · 30~40분 — 합 20분), 넓은 창
-    -> 정보 글 == "1080p · 20:00 · Sections 2", 툴팁의 줄 == TWO_TIP(구간 줄만, #599)
+    -> 정보 글 == "1080p · 20:00 · Sections 2", 툴팁 == ""
     """
     window, widget = _card(content_type, DownloadState.WAITING, selections=TWO_SECTIONS)
     qtbot.addWidget(window)
 
     assert shown(widget.fileSizeLabel) == "1080p · 20:00 · Sections 2"
-    assert widget.fileSizeLabel.toolTip().split("\n") == TWO_TIP
+    assert widget.fileSizeLabel.toolTip() == ""
 
 
 @pytest.mark.parametrize(

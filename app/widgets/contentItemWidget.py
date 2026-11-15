@@ -550,7 +550,8 @@ class Ui_ContentItemWidget(object):
         self.titleRow, self.titleLayout = _row(
             self.contentFrame, "titleRow", theme.METRICS["cardRow2Height"]
         )
-        self.titleLabel = ElidingLabel(self.titleRow, tip_when_elided=True)
+        # 제목 · 정보 글은 잘려도 툴팁을 달지 않는다 — 전체 값은 카드 편집 창에서 본다(오너 2026-11-15, #599)
+        self.titleLabel = ElidingLabel(self.titleRow, with_tip=False)
         self.titleLabel.setObjectName("titleLabel")
         self.titleLabel.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.titleLabel.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
@@ -591,7 +592,7 @@ class Ui_ContentItemWidget(object):
         self.resolutionLayout.addWidget(self.directoryLabel)
         # 정보(해상도 · 크기 · 길이 · 구간) — 무엇을 적을지는 app/widgets/widget.py::_fitRow3가 접는
         # 단계로 정한다(#554)
-        self.fileSizeLabel = ElidingLabel(self.statusRow, tip_when_elided=True)
+        self.fileSizeLabel = ElidingLabel(self.statusRow, with_tip=False)
         self.fileSizeLabel.setObjectName("fileSizeLabel")
         self.fileSizeLabel.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.resolutionLayout.addWidget(self.fileSizeLabel)

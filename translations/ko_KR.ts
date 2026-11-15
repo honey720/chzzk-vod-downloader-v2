@@ -95,34 +95,6 @@
         <translation>구간 {0}개</translation>
     </message>
     <message>
-        <source>The frame rate changed, so sections were fitted to it.</source>
-        <translation>프레임률이 바뀌어 구간을 새 프레임에 맞췄습니다.</translation>
-    </message>
-    <message>
-        <source>This resolution is shorter, so sections now end at its end.</source>
-        <translation>이 해상도는 영상이 더 짧아 구간 끝을 영상 끝으로 당겼습니다.</translation>
-    </message>
-    <message>
-        <source>This resolution is longer, so sections to the end now reach its end.</source>
-        <translation>이 해상도는 영상이 더 길어 끝까지 받던 구간을 새 끝까지 늘렸습니다.</translation>
-    </message>
-    <message>
-        <source>Sections that start after this resolution ends are skipped. Edit them.</source>
-        <translation>이 해상도의 영상 끝 뒤에서 시작하는 구간은 받지 않습니다. 구간을 고쳐 주세요.</translation>
-    </message>
-    <message>
-        <source>Checking this resolution&apos;s length...</source>
-        <translation>이 해상도의 길이를 확인하는 중...</translation>
-    </message>
-    <message>
-        <source>Couldn&apos;t check this resolution&apos;s length. Open the section editor to retry.</source>
-        <translation>이 해상도의 길이를 확인하지 못했습니다. 구간 편집 창을 열면 다시 확인합니다.</translation>
-    </message>
-    <message>
-        <source>and {0} more</source>
-        <translation>외 {0}개</translation>
-    </message>
-    <message>
         <source>Preparing</source>
         <translation>준비 중</translation>
     </message>

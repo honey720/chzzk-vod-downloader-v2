@@ -345,15 +345,6 @@ class TestSectionText:
         item = _item(sections=((300, 400), (0, 100), (50, 350), (400, 500)))
         assert card_text.section_overlap_pairs(item) == [(1, 3), (2, 3)]
 
-    def test_overlap_numbers_name_only_the_overlapping_sections(self) -> None:
-        """겹침에 든 구간 번호는 겹치는 구간만 번호 차례로여야 한다 — 겹치지 않는 구간은 뺀다.
-
-        구간 ① 300~400 · ② 0~100 · ③ 50~350 · ④ 400~500(①과 맞닿기만) · ⑤ 900~950(홀로)
-        -> [1, 2, 3]
-        """
-        item = _item(sections=((300, 400), (0, 100), (50, 350), (400, 500), (900, 950)))
-        assert card_text.section_overlap_numbers(item) == [1, 2, 3]
-
     def test_tiny_overlaps_that_add_up_past_the_slack_are_not_an_overlap(self) -> None:
         """쌍마다 1ms 이하로 겹친 구간은 그 합이 1ms를 넘어도 겹침이 아니어야 한다.
 
@@ -406,19 +397,15 @@ class TestSectionText:
             card_text.section_notice(item, warnings_only=True)
             == "1 outside the video · checking length"
         )
-        assert len(card_text.section_notice_detail(item)) == 5
 
     def test_unverified_length_has_its_own_notice(self) -> None:
-        """길이를 확인하지 못했으면 알림이 「length not checked」, 툴팁 줄이 다시 확인 안내여야 한다.
+        """길이를 확인하지 못했으면 알림이 「length not checked」여야 한다.
 
-        section_check UNVERIFIED -> "length not checked", ["Couldn't check … to retry."]
+        section_check UNVERIFIED -> "length not checked"
         """
         item = _item(sections=((0, 60),))
         item.section_check = SECTION_CHECK_UNVERIFIED
         assert card_text.section_notice(item) == "length not checked"
-        assert card_text.section_notice_detail(item) == [
-            "Couldn't check this resolution's length. Open the section editor to retry."
-        ]
 
     def test_summary_carries_the_notice_after_the_size(self) -> None:
         """구간 요약이 「수 · 크기 · 알림」 차례여야 하고, with_notice False면 알림을 빼야 한다.
@@ -622,103 +609,10 @@ class TestSectionLengthPlaces:
         ],
     )
     def test_overlap_span_and_total(self, length: float, span: str, total: str) -> None:
-        """겹치는 구간의 받을 양 · 구간 합 표기가 규칙대로여야 한다(툴팁 줄은 #599에서 뺐다).
+        """겹치는 구간의 받을 양 · 구간 합 표기가 규칙대로여야 한다.
 
         같은 구간 10 ~ 10+길이 둘 -> 받을 양 <받을 양>, 합 <합>
         """
         item = _item(sections=((10.0, 10.0 + length), (10.0, 10.0 + length)))
         assert card_text.section_clock(card_text.section_span(item)) == span
         assert card_text.section_clock(card_text.section_total(item)) == total
-
-
-# ---- 정보 글 툴팁의 구간 줄 (#599) ----
-
-# 구간 셋 — 60fps에서 프레임 경계인 시각(초)
-TIP_SECTIONS = ((65.5, 330.0), (600.0, 1200.25), (1800.0, 1860.0))
-# TIP_SECTIONS의 줄 — 번호 · 「시작 ~ 끝」 · 길이, 60fps 프레임 타임코드 HH:MM:SS:FF
-TIP_LINES = [
-    "1 · 00:01:05:30 ~ 00:05:30:00 · 00:04:24:30",  # 3930 ~ 19800프레임, 길이 15870프레임
-    "2 · 00:10:00:00 ~ 00:20:00:15 · 00:10:00:15",  # 36000 ~ 72015프레임, 길이 36015프레임
-    "3 · 00:30:00:00 ~ 00:31:00:00 · 00:01:00:00",  # 108000 ~ 111600프레임, 길이 3600프레임
-]
-
-
-def _tip_item(sections: tuple[tuple[float, float], ...]) -> ContentItem:
-    """구간을 60fps에 맞춘 대기 카드 데이터."""
-    item = _item(sections=sections)
-    item.section_frame_rate = Fraction(60)
-    return item
-
-
-class TestSectionTipLines:
-    """정보 글 툴팁의 구간 줄 — 3줄까지, 넘으면 「외 N개」, 겹친 구간은 줄 끝에 「· 겹침」."""
-
-    def test_one_section_is_one_line(self) -> None:
-        """구간 하나면 줄 하나여야 한다.
-
-        60fps · 구간 65.5~330 -> [TIP_LINES[0]]
-        """
-        assert card_text.section_tip_lines(_tip_item(TIP_SECTIONS[:1])) == TIP_LINES[:1]
-
-    def test_three_sections_are_three_lines_without_a_more_line(self) -> None:
-        """구간 셋이면 줄 셋이고 「외 N개」 줄이 없어야 한다.
-
-        60fps · TIP_SECTIONS -> TIP_LINES
-        """
-        assert card_text.section_tip_lines(_tip_item(TIP_SECTIONS)) == TIP_LINES
-
-    @pytest.mark.parametrize(("count", "rest"), [(4, 1), (20, 17)])
-    def test_more_than_three_sections_stop_at_three_lines_and_a_more_line(
-        self, count: int, rest: int
-    ) -> None:
-        """구간이 셋보다 많으면 앞 세 구간의 줄 뒤에 「and N more」 한 줄로 끝나야 한다.
-
-        60fps · TIP_SECTIONS 뒤에 2000+10k ~ 2005+10k초 구간을 더해 count개
-        -> 4개: TIP_LINES + ["and 1 more"], 20개: TIP_LINES + ["and 17 more"]
-        """
-        extra = tuple((2000.0 + 10 * k, 2005.0 + 10 * k) for k in range(count - 3))
-        lines = card_text.section_tip_lines(_tip_item(TIP_SECTIONS + extra))
-        assert lines == TIP_LINES + [f"and {rest} more"]
-
-    def test_overlapping_sections_end_their_lines_with_the_overlap_mark(self) -> None:
-        """다른 구간과 겹치는 구간의 줄만 끝에 「· overlap」이 붙어야 한다.
-
-        60fps · 구간 0~60 · 30~90 · 120~130
-        -> ["1 · 00:00:00:00 ~ 00:01:00:00 · 00:01:00:00 · overlap",
-            "2 · 00:00:30:00 ~ 00:01:30:00 · 00:01:00:00 · overlap",
-            "3 · 00:02:00:00 ~ 00:02:10:00 · 00:00:10:00"]
-        """
-        lines = card_text.section_tip_lines(_tip_item(((0, 60), (30, 90), (120, 130))))
-        assert lines == [
-            "1 · 00:00:00:00 ~ 00:01:00:00 · 00:01:00:00 · overlap",
-            "2 · 00:00:30:00 ~ 00:01:30:00 · 00:01:00:00 · overlap",
-            "3 · 00:02:00:00 ~ 00:02:10:00 · 00:00:10:00",
-        ]
-
-    def test_a_shown_section_overlapping_a_hidden_one_is_marked(self) -> None:
-        """보이는 줄의 구간이 「외 N개」에 든 구간과 겹쳐도 그 줄에 「· overlap」이 붙어야 한다.
-
-        60fps · 구간 0~60 · 100~110 · 200~210 · 30~40(①과 겹침)
-        -> 첫 줄 끝 「 · overlap」, 둘째 · 셋째 줄 끝 아님, 마지막 줄 "and 1 more"
-        """
-        lines = card_text.section_tip_lines(_tip_item(((0, 60), (100, 110), (200, 210), (30, 40))))
-        assert lines[0].endswith(" · overlap")
-        assert not lines[1].endswith(" · overlap") and not lines[2].endswith(" · overlap")
-        assert lines[3] == "and 1 more"
-
-    def test_lines_use_milliseconds_when_the_frame_rate_is_unknown(self) -> None:
-        """프레임률을 모르는 카드의 줄은 밀리초 표기 HH:MM:SS.mmm여야 한다.
-
-        프레임률 없음 · 구간 65.5~330 -> ["1 · 00:01:05.500 ~ 00:05:30.000 · 00:04:24.500"]
-        """
-        item = _item(sections=TIP_SECTIONS[:1])
-        assert card_text.section_tip_lines(item) == [
-            "1 · 00:01:05.500 ~ 00:05:30.000 · 00:04:24.500"
-        ]
-
-    def test_a_card_without_sections_has_no_lines(self) -> None:
-        """구간이 없는 카드는 구간 줄이 없어야 한다.
-
-        구간 없음 -> []
-        """
-        assert card_text.section_tip_lines(_item()) == []
