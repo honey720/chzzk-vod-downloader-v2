@@ -331,39 +331,6 @@ QPushButton[role="filter"] {
     color: @textMuted;
 }
 
-/* 펼침 버튼(#495 — 헤더바 저장 위치 · 정렬) — QToolButton + QMenu. 바탕 · 테두리만 여기서
- * 칠하고 도형 · 글 · ▾는 app/widgets/header_controls.py::DropButton.paintEvent가 그린다.
- * `role`은 그 클래스가 심는다. 스타일의 펼침 표시(::menu-indicator)는 지운다 — 하나라도
- * 빼면 그 부분만 네이티브로 남는다. */
-QToolButton[role="drop"] {
-    background-color: @surfaceAlt;
-    color: @text;
-    border: 1px solid @border;
-    border-radius: @radius;
-    padding: 0px;
-}
-
-QToolButton[role="drop"]:hover {
-    background-color: @surfaceHover;
-    border-color: @borderStrong;
-}
-
-QToolButton[role="drop"]:pressed,
-QToolButton[role="drop"]:open {
-    background-color: @surfacePressed;
-    border-color: @borderStrong;
-}
-
-QToolButton[role="drop"]:disabled {
-    background-color: @surface;
-    border-color: @border;
-}
-
-QToolButton[role="drop"]::menu-indicator {
-    image: none;
-    width: 0px;
-}
-
 /* 부차 조작(완료된 VOD 삭제 등) — 주요 버튼과 같은 무게로 두지 않는다
  * (#244 하단 재설계). 평소엔 테두리 없는 muted 텍스트, 호버에서만 살아난다. */
 QPushButton[role="subtle"] {
@@ -388,9 +355,10 @@ QPushButton[role="subtle"]:disabled {
 /* ---------- 셸 바 컨트롤 모양 · 상태 (#536 — 설계 §11.3 · §11.5 · §11.7) ----------
  * 메뉴바 · 헤더바 · 하단바 안의 컨트롤만 — 설정 창 · 편집 창은 설정 메뉴 단계에서 맞춘다.
  * 높이(@barControl)는 코드가 건다(mainWindow._applyBarControls). 모서리는 컨트롤 반경, 칩도 같다.
- * 버튼은 한 규칙(설계 §13, #611): 평소 면 · 테두리 없음, 호버 = 면 surfaceHover, 눌림 = 면 surfacePressed, 고른 칩 ·
- * 고른 메뉴 · 켠 선택 버튼 = 면 surfaceAlt(테두리 없음), 키보드 초점 = 테두리 강조색. 테두리가 늘 보이는 것은 URL 입력칸
- * 하나다. 주 동작(▶ · ‖ — 다운로드 버튼)은 강조색 채움 그대로다.
+ * 누르면 바로 일이 일어나는 버튼(동작 버튼)은 한 규칙(설계 §13, #611): 평소 면 · 테두리 없음, 호버 = 면 surfaceHover,
+ * 눌림 = 면 surfacePressed, 고른 칩 · 고른 메뉴 · 켠 선택 버튼 = 면 surfaceAlt(테두리 없음), 키보드 초점 = 테두리 강조색.
+ * 테두리가 늘 보이는 것은 입력 칸 — URL 입력창과 값을 고르는 펼침 버튼(입력 칸 절)뿐이다. 주 동작(▶ · ‖ — 다운로드
+ * 버튼)은 강조색 채움 그대로다.
  * 초점은 키보드로만 받는다(초점 정책 Tab — 마우스로 누른 뒤 테두리가 남지 않는다). */
 QFrame#appMenuBar QPushButton,
 QFrame#headerFrame QPushButton,
@@ -403,7 +371,6 @@ QFrame#infoFrame QPushButton {
 /* 바 버튼 평소 · 호버 · 눌림 · 꺼짐(#611) — 투명 테두리 1px는 자리만 잡는다(focus ring 테두리가 켜져도 크기가 같다) */
 QFrame#appMenuBar QPushButton,
 QFrame#headerFrame QPushButton,
-QFrame#headerFrame QToolButton[role="drop"],
 QFrame#infoFrame QPushButton {
     background-color: transparent;
     border: 1px solid transparent;
@@ -411,7 +378,6 @@ QFrame#infoFrame QPushButton {
 
 QFrame#appMenuBar QPushButton:hover,
 QFrame#headerFrame QPushButton:hover,
-QFrame#headerFrame QToolButton[role="drop"]:hover,
 QFrame#infoFrame QPushButton:hover {
     background-color: @surfaceHover;
     border-color: transparent;
@@ -419,8 +385,6 @@ QFrame#infoFrame QPushButton:hover {
 
 QFrame#appMenuBar QPushButton:pressed,
 QFrame#headerFrame QPushButton:pressed,
-QFrame#headerFrame QToolButton[role="drop"]:pressed,
-QFrame#headerFrame QToolButton[role="drop"]:open,
 QFrame#infoFrame QPushButton:pressed {
     background-color: @surfacePressed;
     border-color: transparent;
@@ -428,7 +392,6 @@ QFrame#infoFrame QPushButton:pressed {
 
 QFrame#appMenuBar QPushButton:disabled,
 QFrame#headerFrame QPushButton:disabled,
-QFrame#headerFrame QToolButton[role="drop"]:disabled,
 QFrame#infoFrame QPushButton:disabled {
     background-color: transparent;
     border-color: transparent;
@@ -599,24 +562,50 @@ QFrame#infoFrame QPushButton#downloadButton:focus {
     border-color: @focusOnAccent;
 }
 
-/* ---------- 입력창 ---------- */
-
-QLineEdit {
+/* ---------- 입력 칸 — 값을 쓰는 칸 · 값을 고르는 칸 (#611 — 설계 §13) ----------
+ * 입력창(QLineEdit)과 펼침 버튼(role="drop" — 저장 위치 · 정렬 · 좁은 폭의 상태 드롭다운, 아이콘 모양 포함)은 한
+ * 모양이다: 면 surfaceAlt · 테두리 border 1px · 모서리 radius(바 안에서는 controlRadius — 셸 바 절). 펼침 버튼은
+ * 바탕 · 테두리만 여기서 칠하고 도형 · 글 · ⌄는 app/widgets/header_controls.py::DropButton.paintEvent가 그린다.
+ * 설정 단계의 공용 선택 칸도 이 규칙을 쓴다. 상태: 호버 = 테두리 borderStrong(펼침 버튼 — 누르는 칸이라 알린다),
+ * 초점 · 펼친 동안 · 눌림 = 테두리 강조색(입력창 초점과 같다), 꺼짐 = 글만 textDisabled(면 · 테두리 그대로). */
+QLineEdit,
+QToolButton[role="drop"] {
     background-color: @surfaceAlt;
     color: @text;
     border: 1px solid @border;
     border-radius: @radius;
+}
+
+QLineEdit {
     padding: 5px 8px;
     selection-background-color: @accent;
     selection-color: @onAccent;
 }
 
-QLineEdit:focus {
+QToolButton[role="drop"] {
+    padding: 0px;
+}
+
+QToolButton[role="drop"]:hover {
+    border-color: @borderStrong;
+}
+
+QLineEdit:focus,
+QToolButton[role="drop"]:focus,
+QToolButton[role="drop"]:pressed,
+QToolButton[role="drop"]:open {
     border-color: @accent;
 }
 
-QLineEdit:disabled {
+QLineEdit:disabled,
+QToolButton[role="drop"]:disabled {
     color: @textDisabled;
+}
+
+/* 스타일의 펼침 표시는 지운다 — 하나라도 빼면 그 부분만 네이티브로 남는다 */
+QToolButton[role="drop"]::menu-indicator {
+    image: none;
+    width: 0px;
 }
 
 /* ---------- 구간 편집 창 (#309) ---------- */

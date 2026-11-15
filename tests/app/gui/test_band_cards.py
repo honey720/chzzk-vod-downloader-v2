@@ -238,15 +238,19 @@ class TestBarLines:
         assert _rect(win, _card(win, 0)).top() == header.bottom() + 1
 
 
-BAR_BUTTONS = ["saveLocationButton", "fetchButton", "selectButton", "stopButton"]
+BAR_BUTTONS = ["settingsButton", "fetchButton", "selectButton", "stopButton"]  # 동작 버튼(설계 §13)
+DROP_FIELDS = ["saveLocationButton", "sortButton"]  # 넓은 폭의 값 고르는 칸(#611)
+FIELD_PAD = (
+    10  # 펼침 칸 오른쪽 안쪽 여백(px) — ⌄ 오른쪽 끝 ↔ 칸 오른쪽 안쪽 끝(테두리 안쪽 첫 화소)
+)
 
 
 class TestBarButtons:
-    """바 버튼은 한 규칙 — 평소 면 · 테두리 없음, 호버 때 면, 테두리는 URL 입력칸만(설계 §13)."""
+    """동작 버튼은 한 규칙 — 평소 면 · 테두리 없음, 호버 때 면, 테두리는 입력 칸만(설계 §13)."""
 
     @pytest.mark.parametrize("name", BAR_BUTTONS)
     def test_bar_button_has_no_face_or_border_at_rest(self, window, name: str) -> None:
-        """평소의 바 버튼은 위 가장자리 · 왼쪽 안쪽 화소가 바 면 그대로여야 한다(테두리 · 면 없음).
+        """평소의 동작 버튼은 위 가장자리 · 왼쪽 안쪽 화소가 바 면 그대로여야 한다(테두리 · 면 없음).
 
         대기 카드 하나(■ 켬 — 받는 중 아님이라 꺼진 모양도 같은 규칙), 창 폭 900 -> 버튼 위 가장자리 가운데 ·
         왼쪽 안쪽 3px 자리 ≈ surface
@@ -261,7 +265,7 @@ class TestBarButtons:
 
     @pytest.mark.parametrize("name", BAR_BUTTONS[:3])
     def test_bar_button_shows_the_hover_face(self, window, name: str) -> None:
-        """포인터가 바 버튼 위에 오면 버튼 면이 surfaceHover여야 한다(테두리는 없음).
+        """포인터가 동작 버튼 위에 오면 버튼 면이 surfaceHover여야 한다(테두리는 없음).
 
         창에 합성 포인터 이동(버튼 가운데) -> 버튼 왼쪽 안쪽 3px 자리 ≈ surfaceHover, 위 가장자리 안쪽 2px 가운데 ≈
         surfaceHover(가장자리 줄은 둥근 면의 안티에일리어싱이 섞인다)
@@ -283,18 +287,178 @@ class TestBarButtons:
         assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surfaceHover")
         assert _is(_pixel(image, rect.center().x(), rect.top() + 2), "surfaceHover")
 
-    def test_only_the_url_input_has_a_border(self, window) -> None:
-        """헤더 컨트롤 가운데 테두리가 보이는 것은 URL 입력칸 하나여야 한다.
+    @pytest.mark.parametrize(
+        ("name", "edge"),
+        [
+            ("urlInput", "border"),
+            ("saveLocationButton", "border"),
+            ("sortButton", "border"),
+            ("settingsButton", "surface"),
+            ("fetchButton", "surface"),
+            ("selectButton", "surface"),
+            ("stopButton", "surface"),
+        ],
+    )
+    def test_only_input_fields_have_a_border(self, window, name: str, edge: str) -> None:
+        """평소 테두리가 보이는 것은 입력 칸(URL · 펼침 칸)뿐이고 동작 버튼은 바 면이어야 한다.
 
-        창 폭 900 -> URL 칸 위 가장자리 가운데 ≈ border, 저장 위치 · 등록 · 선택 · 정렬 버튼의 위 가장자리 ≈ surface
+        창 폭 900 -> 위 가장자리 가운데 화소: urlInput · saveLocationButton · sortButton ≈ border,
+        settingsButton · fetchButton · selectButton · stopButton ≈ surface
+        """
+        win = window(DownloadState.WAITING)
+        widget = getattr(win, name)
+        assert widget.isVisible(), "전제: 보인다"
+        rect = _rect(win, widget)
+        image = win.grab().toImage()
+        assert _is(_pixel(image, rect.center().x(), rect.top()), edge)
+
+
+def _corner(image: QImage, rect: QRect) -> list[QColor]:
+    """왼쪽 위 모서리 3×3 화소 — 모서리 반경이 같으면 같은 바 면 위에서 같은 화소가 나온다."""
+    return [_pixel(image, rect.left() + dx, rect.top() + dy) for dy in range(3) for dx in range(3)]
+
+
+def _same(a: QColor, b: QColor) -> bool:
+    gap = abs(a.red() - b.red()) + abs(a.green() - b.green()) + abs(a.blue() - b.blue())
+    return gap <= SLACK
+
+
+class TestDropFields:
+    """값을 고르는 칸(펼침 버튼)은 URL 입력칸과 같은 입력 칸 모양 — 테두리 · 면 · 모서리 · 높이(#611)."""
+
+    @pytest.mark.parametrize("name", DROP_FIELDS)
+    def test_drop_field_has_the_url_border_and_face_at_rest(self, window, name: str) -> None:
+        """평소의 펼침 칸은 위 가장자리 · 왼쪽 안쪽 화소가 URL 칸과 같아야 한다(border · surfaceAlt).
+
+        창 폭 900 -> 펼침 칸 위 가장자리 가운데 ≈ URL 칸 위 가장자리 가운데 ≈ border, 왼쪽 안쪽 3px 자리 ≈
+        URL 칸 왼쪽 안쪽 3px 자리 ≈ surfaceAlt
         """
         win = window(DownloadState.WAITING)
         image = win.grab().toImage()
-        url = _rect(win, win.urlInput)
-        assert _is(_pixel(image, url.center().x(), url.top()), "border")
-        for button in (win.saveLocationButton, win.fetchButton, win.selectButton, win.sortButton):
-            rect = _rect(win, button)
-            assert _is(_pixel(image, rect.center().x(), rect.top()), "surface"), button.objectName()
+        url, field = _rect(win, win.urlInput), _rect(win, getattr(win, name))
+        top = _pixel(image, field.center().x(), field.top())
+        face = _pixel(image, field.left() + 3, field.center().y())
+        assert _is(top, "border")
+        assert _same(top, _pixel(image, url.center().x(), url.top()))
+        assert _is(face, "surfaceAlt")
+        assert _same(face, _pixel(image, url.left() + 3, url.center().y()))
+
+    @pytest.mark.parametrize("name", DROP_FIELDS)
+    def test_drop_field_has_the_url_height_and_corner(self, window, name: str) -> None:
+        """펼침 칸은 URL 칸과 높이가 같고 왼쪽 위 모서리 3×3 화소가 같아야 한다(모서리 반경이 같다).
+
+        창 폭 900 -> 높이 == urlInput 높이, 모서리 3×3 화소 각각 ≈ URL 칸의 같은 자리
+        """
+        win = window(DownloadState.WAITING)
+        image = win.grab().toImage()
+        url, field = _rect(win, win.urlInput), _rect(win, getattr(win, name))
+        assert field.height() == url.height()
+        for got, want in zip(_corner(image, field), _corner(image, url), strict=True):
+            assert _same(got, want), (got.name(), want.name())
+
+    @pytest.mark.parametrize("name", DROP_FIELDS)
+    def test_caret_sits_at_the_right_inner_end(self, window, name: str) -> None:
+        """⌄ 오른쪽 끝은 칸 오른쪽 안쪽 끝에서 FIELD_PAD 안이고, 그 자리에 ⌄가 그려지고, 글과 떨어져야 한다.
+
+        창 폭 900 -> (칸 폭 − 2) − caretRect.right() == 10, caretRect 안에 surfaceAlt 아닌 화소(⌄)가 있다,
+        caretRect 왼쪽 끝 > 그린 글 오른쪽 끝
+        """
+        win = window(DownloadState.WAITING)
+        button = getattr(win, name)
+        caret = button.caretRect()
+        assert (button.width() - 2) - caret.right() == FIELD_PAD
+        image = button.grab().toImage()
+        ink = [
+            _pixel(image, x, y)
+            for x in range(caret.left(), caret.right() + 1)
+            for y in range(caret.top(), caret.bottom() + 1)
+        ]
+        assert any(not _is(colour, "surfaceAlt") for colour in ink), "⌄가 그 칸에 그려진다"
+        text_right = button._textRect().left() + button.fontMetrics().horizontalAdvance(
+            button.shownText()
+        )
+        assert caret.left() > text_right
+
+    def test_drop_field_hover_shows_the_strong_border(self, window) -> None:
+        """포인터가 펼침 칸 위에 오면 테두리가 borderStrong, 면은 surfaceAlt 그대로여야 한다.
+
+        창에 합성 포인터 이동(정렬 칸 가운데) -> 위 가장자리 가운데 ≈ borderStrong, 왼쪽 안쪽 3px ≈ surfaceAlt
+        """
+        from PySide6.QtTest import QTest
+
+        win = window(DownloadState.WAITING)
+        button = win.sortButton
+        rect = _rect(win, button)
+        QTest.mouseMove(win.windowHandle(), rect.center())
+        _pump()
+        assert button.underMouse(), "전제: 포인터가 칸 위다"
+        image = win.grab().toImage()
+        assert _is(_pixel(image, rect.center().x(), rect.top()), "borderStrong")
+        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surfaceAlt")
+
+    def test_pressed_drop_field_shows_the_accent_border(self, window) -> None:
+        """눌린 펼침 칸(펼친 동안과 같은 규칙)은 테두리가 accent, 면은 surfaceAlt여야 한다.
+
+        정렬 칸 setDown(True) -> 위 가장자리 가운데 ≈ accent, 왼쪽 안쪽 3px ≈ surfaceAlt
+        """
+        win = window(DownloadState.WAITING)
+        button = win.sortButton
+        button.setDown(True)
+        _pump()
+        assert button.isDown(), "전제: 눌린 상태다"
+        rect = _rect(win, button)
+        image = win.grab().toImage()
+        assert _is(_pixel(image, rect.center().x(), rect.top()), "accent")
+        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surfaceAlt")
+
+    def test_disabled_drop_field_keeps_the_field_border(self, window) -> None:
+        """꺼진 펼침 칸도 테두리 border · 면 surfaceAlt가 남아야 한다(글만 흐려진다).
+
+        정렬 칸 setEnabled(False) -> 위 가장자리 가운데 ≈ border, 왼쪽 안쪽 3px ≈ surfaceAlt
+        """
+        win = window(DownloadState.WAITING)
+        button = win.sortButton
+        button.setEnabled(False)
+        _pump()
+        rect = _rect(win, button)
+        image = win.grab().toImage()
+        assert _is(_pixel(image, rect.center().x(), rect.top()), "border")
+        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surfaceAlt")
+
+    @pytest.mark.parametrize("width", [600, "min"])
+    def test_narrow_status_dropdown_is_a_bordered_field(self, window, width: int | str) -> None:
+        """칩이 상태 드롭다운으로 바뀐 좁은 폭에서 그 드롭다운도 테두리 있는 입력 칸이어야 한다.
+
+        창 폭 600 · 최소폭 -> filterDropButton 보임, 위 가장자리 가운데 ≈ border · 왼쪽 안쪽 3px ≈ surfaceAlt
+        """
+        win = window(DownloadState.WAITING)
+        target = win.minimumWidth() if width == "min" else width
+        win.resize(target, 600)
+        _pump()
+        assert win.width() == target, "전제: 요청한 폭이다"
+        drop = win.filterChipBar.dropButton
+        assert drop.isVisible(), "전제: 상태 드롭다운이 보인다"
+        rect = _rect(win, drop)
+        image = win.grab().toImage()
+        assert _is(_pixel(image, rect.center().x(), rect.top()), "border")
+        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surfaceAlt")
+
+    @pytest.mark.parametrize("name", DROP_FIELDS)
+    def test_icon_drop_field_is_a_bordered_square(self, window, name: str) -> None:
+        """아이콘 모양 저장 위치 · 정렬 칸도 테두리 있는 정사각 입력 칸이어야 한다.
+
+        창 폭 900, setCompact(True) -> 폭 == 높이, 위 가장자리 가운데 ≈ border, 왼쪽 안쪽 3px ≈ surfaceAlt
+        """
+        win = window(DownloadState.WAITING)
+        button = getattr(win, name)
+        button.setCompact(True)
+        _pump()
+        assert button.isCompact(), "전제: 아이콘 모양이다"
+        rect = _rect(win, button)
+        assert rect.width() == rect.height()
+        image = win.grab().toImage()
+        assert _is(_pixel(image, rect.center().x(), rect.top()), "border")
+        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surfaceAlt")
 
 
 class TestSettingsGear:
