@@ -1,12 +1,13 @@
 """툴팁 꼬리와 몸통이 한 윤곽인지 — 꼬리 밑변에 테두리 줄이 없고 바깥 윤곽 테두리는 그대로 (#606).
 
-툴팁(`TipBubble`)을 대상 사각형 옆에 직접 띄우고 `grab()` 화소로 잰다(창 합성 경계는 재지 않는다 — 소유자 실기).
+툴팁(`TipBubble`)을 대상 사각형 옆에 직접 띄우고 배율 1 이미지에 `render()`한 화소로 잰다 — 화면 배율과
+무관하게 위젯 좌표가 화소 좌표다(#609 리뷰). 창 합성 경계는 재지 않는다 — 소유자 실기.
 """
 
 from collections.abc import Iterator
 
 import pytest
-from PySide6.QtCore import QRect
+from PySide6.QtCore import QRect, Qt
 from PySide6.QtGui import QColor, QImage
 from PySide6.QtWidgets import QApplication, QWidget
 
@@ -37,9 +38,16 @@ def _shown(qapp: QApplication, scheme: str, side: str) -> tuple[TipBubble, QImag
     bubble.showFor(host, "downloads 폴더 경로", rect=TARGET, side=side)
     qapp.processEvents()
     assert bubble.isVisible() and bubble.side == side, "전제: 바라는 방향으로 떴다"
-    image = bubble.grab().toImage()
-    assert image.devicePixelRatio() == 1.0, "전제: 배율 1"
-    return bubble, image
+    return bubble, _render(bubble)
+
+
+def _render(bubble: TipBubble) -> QImage:
+    """말풍선을 배율 1인 투명 이미지에 그린다 — `grab()`은 화면 배율(1.25 · 1.5)만큼 큰 이미지를 돌려준다."""
+    image = QImage(bubble.size(), QImage.Format.Format_ARGB32_Premultiplied)
+    image.setDevicePixelRatio(1.0)
+    image.fill(Qt.GlobalColor.transparent)
+    bubble.render(image)
+    return image
 
 
 def _border_share(pixel: QColor, scheme_tokens: dict) -> float:
