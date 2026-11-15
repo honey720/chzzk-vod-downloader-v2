@@ -4,6 +4,14 @@
 <context>
     <name>CardEditDialog</name>
     <message>
+        <source>Sections outside the video are skipped.</source>
+        <translation>Sections outside the video are skipped.</translation>
+    </message>
+    <message>
+        <source>Open the section editor to check the length again.</source>
+        <translation>Open the section editor to check the length again.</translation>
+    </message>
+    <message>
         <source>Edit</source>
         <translation>Edit</translation>
     </message>

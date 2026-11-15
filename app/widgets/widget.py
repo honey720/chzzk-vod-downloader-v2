@@ -462,9 +462,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     def _installTips(self) -> None:
         """툴팁이 달릴 수 있는 위젯에 말풍선 필터를 건다 — 카드마다 처음 호버할 때 한 번 (#550).
 
-        툴팁은 모두 말풍선으로 뜬다(설계 §12.1 「툴팁」). 카드 버튼은 `HOVER_TIP_DELAY_MS` 머문 뒤에만
-        뜬다 — 버튼 줄을 지나가는 포인터에는 뜨지 않는다(오너 2026-11-15 「카드에 툴팁이 뜨니까 지저분하다」,
-        #599). 글 위젯은 0ms 그대로다. 필터(#536)는 카드 버튼과 글 위젯에만
+        툴팁은 모두 말풍선으로 뜬다(설계 §12.1 「툴팁」). 카드 위 툴팁(버튼 · 채널명 · 상태 글 · 저장 위치)은
+        모두 `HOVER_TIP_DELAY_MS` 머문 뒤에만 뜬다 — 카드를 지나가는 포인터에는 뜨지 않는다(오너 2026-11-15
+        「카드에 툴팁이 뜨니까 지저분하다」, #599). 필터(#536)는 카드 버튼과 글 위젯에만
         건다 — 카드 전체 · 모든 자식에 걸면 그 위젯들의 모든 이벤트를 파이썬 필터로 끌어온다. 잘렸을
         때만 툴팁이 달리는 글도 미리 걸고, 툴팁이 비면 띄우지 않는다(`TipFilter._allowed`).
 
@@ -476,10 +476,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         if self._tipsInstalled:
             return
         self._tipsInstalled = True
-        for name in CARD_BUTTON_NAMES:
+        for name in (*CARD_BUTTON_NAMES, *TIP_LABEL_NAMES):
             install_tips(getattr(self, name), delayed=True)
-        for name in TIP_LABEL_NAMES:
-            install_tips(getattr(self, name))
 
     def hasKeyFocus(self) -> bool:
         """키보드 초점이 이 카드에 있는지 — focus ring · 카드 버튼을 보이는 때."""

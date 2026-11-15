@@ -4,6 +4,14 @@
 <context>
     <name>CardEditDialog</name>
     <message>
+        <source>Sections outside the video are skipped.</source>
+        <translation>영상 밖 구간은 받지 않습니다.</translation>
+    </message>
+    <message>
+        <source>Open the section editor to check the length again.</source>
+        <translation>구간 창을 열면 길이를 다시 확인합니다.</translation>
+    </message>
+    <message>
         <source>Edit</source>
         <translation>편집</translation>
     </message>

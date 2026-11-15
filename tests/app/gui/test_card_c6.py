@@ -578,6 +578,57 @@ class TestCardButtonTipDelay:
         assert tip_bubble.tip_filter().pending() is None
 
 
+LONG_CHANNEL = "이름이아주아주긴채널" * 6  # 채널명 칸(최대 150px)에서 잘리는 채널명
+
+
+def _text_tip_card(tmp_path: Path, which: str) -> tuple[VodDownloader, ContentItemWidget, QWidget]:
+    """툴팁이 달린 카드 글 하나를 든 카드를 창에 띄우고 (창, 카드, 그 글)을 돌려준다.
+
+    channel = 잘린 긴 채널명, status = 상세 줄이 있는 실패 사유, directory = 기본 위치와 다른 저장 위치
+    """
+    item = _make_item(str(tmp_path))
+    if which == "channel":
+        item.channel_name = LONG_CHANNEL
+    elif which == "status":
+        item.downloadState = DownloadState.FAILED
+        item.stateMessage = "파일을 저장하지 못했습니다\n상세 줄"
+    else:
+        other = tmp_path / "다른 곳"
+        other.mkdir()
+        item.download_path = str(other)
+    win = open_window(tmp_path, item)
+    card = _hovered_card(win, item)
+    label = {
+        "channel": card.channelNameLabel,
+        "status": card.statusLabel,
+        "directory": card.directoryLabel,
+    }[which]
+    assert label.isVisible() and label.toolTip(), f"전제: {which} 글이 보이고 툴팁이 있다"
+    return win, card, label
+
+
+@pytest.mark.usefixtures("_short_tip_delay")
+class TestCardTextTipDelay:
+    """카드 글 툴팁(채널명 · 상태 글 · 저장 위치)도 `HOVER_TIP_DELAY_MS` 머문 뒤에만 뜬다(오너 2026-11-15)."""
+
+    @pytest.mark.parametrize("which", ["channel", "status", "directory"])
+    def test_card_text_tip_shows_only_after_the_delay(
+        self, qtbot: QtBot, tmp_path: Path, which: str
+    ) -> None:
+        """카드 글에 들어가면 말풍선이 바로 뜨지 않고 지연 뒤에 그 글의 툴팁으로 떠야 한다.
+
+        지연 40ms · 카드 들어감 · 잘린 채널명 / 상세 줄 있는 실패 사유 / 다른 저장 위치 글 들어감
+        -> 들어감 직후 말풍선 없음 · 기다리는 위젯 = 그 글, 지연 뒤 말풍선 = 그 글의 툴팁
+        """
+        _win, _card, label = _text_tip_card(tmp_path, which)
+        enter(label)
+        assert not _bubble_shown()
+        assert tip_bubble.tip_filter().pending() is label
+        qtbot.waitUntil(
+            lambda: card_helpers.bubble_text_for(label) == label.toolTip(), timeout=2000
+        )
+
+
 # ---- 구간 편집 버튼(✂) (#599) ----
 
 NOT_WAITING = (

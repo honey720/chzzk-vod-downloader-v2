@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from typing import Never
 
 import pytest
+from pytestqt.qtbot import QtBot
 from PySide6.QtCore import QPoint, Qt, QTimer
 from PySide6.QtGui import QColor, QFontMetrics
 from PySide6.QtTest import QTest
@@ -837,11 +838,15 @@ class TestSectionLengthInTheInfoTip:
         assert not any(line.startswith("Sections add up to") for line in lines)
 
 
+TIP_DELAY_MS = 40  # 테스트가 줄여 거는 카드 툴팁 지연(ms) — 제품 값 600을 기다리지 않는다(#599)
+
+
 class TestTipBubbles:
-    """카드 글의 툴팁은 말풍선으로 바로 뜨고 Qt 기본 툴팁은 뜨지 않는다 (#550 inbox 128)."""
+    """카드 글의 툴팁은 머문 뒤 말풍선으로 뜨고 Qt 기본 툴팁은 뜨지 않는다 (#550 inbox 128 · #599)."""
 
     @pytest.fixture(autouse=True)
-    def _hide_bubble(self) -> Iterator[None]:
+    def _hide_bubble(self, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+        monkeypatch.setattr(tip_bubble, "HOVER_TIP_DELAY_MS", TIP_DELAY_MS)
         tip_bubble.hide_tip()
         yield
         tip_bubble.hide_tip()
@@ -859,11 +864,11 @@ class TestTipBubbles:
         QApplication.processEvents()
         assert qt_tooltip_shown(label)
 
-    def test_section_card_info_shows_no_tooltip(self, qapp) -> None:
+    def test_section_card_info_shows_no_tooltip(self, qapp, qtbot: QtBot) -> None:
         """구간 카드의 정보 글에 들어가면 말풍선도 Qt 툴팁도 뜨지 않아야 한다 (#599).
 
         mp4 구간 둘 · 저장 위치 "D:/vod/lck" 대기 카드 · 카드 들어감
-        저장 위치 글 들어감 -> 말풍선 "D:/vod/lck"(말풍선이 뜨는 상태임을 먼저 확인)
+        저장 위치 글 들어감 -> 지연 뒤 말풍선 "D:/vod/lck"(말풍선이 뜨는 상태임을 먼저 확인)
         저장 위치 글 나감 · 정보 글 들어감 -> 정보 글 툴팁 "", 말풍선 없음
         """
         card = _card(path="D:/vod/lck", width=WIDE)
@@ -872,27 +877,29 @@ class TestTipBubbles:
         QApplication.processEvents()
         enter(card)
         enter(card.directoryLabel)
-        assert bubble_text_for(card.directoryLabel) == "D:/vod/lck"
+        qtbot.waitUntil(lambda: bubble_text_for(card.directoryLabel) == "D:/vod/lck", timeout=2000)
         leave(card.directoryLabel)
         info = card.fileSizeLabel
         enter(info)
+        qtbot.wait(3 * TIP_DELAY_MS)  # 지연이 지나도 뜨지 않는지 본다
         assert info.toolTip() == ""
         assert tip_bubble.current_bubble() is None or not tip_bubble.current_bubble().isVisible()
 
-    def test_elided_title_shows_no_tooltip(self, qapp) -> None:
+    def test_elided_title_shows_no_tooltip(self, qapp, qtbot: QtBot) -> None:
         """잘린 제목에 들어가도 말풍선도 Qt 툴팁도 뜨지 않아야 한다 (#599).
 
         제목 "아주 긴 제목 " × 300 · 저장 위치 "D:/vod/lck" · 카드 폭 WIDE(저장 위치가 보인다) · 카드 들어감
-        저장 위치 글 들어감 -> 말풍선 "D:/vod/lck"(말풍선이 뜨는 상태임을 먼저 확인)
+        저장 위치 글 들어감 -> 지연 뒤 말풍선 "D:/vod/lck"(말풍선이 뜨는 상태임을 먼저 확인)
         저장 위치 글 나감 · 제목 들어감 -> 제목 잘림, 툴팁 "", 말풍선 없음
         """
         title = "아주 긴 제목 " * 300  # WIDE 폭에서도 잘린다
         card = _card(title=title, path="D:/vod/lck", width=WIDE)
         enter(card)
         enter(card.directoryLabel)
-        assert bubble_text_for(card.directoryLabel) == "D:/vod/lck"
+        qtbot.waitUntil(lambda: bubble_text_for(card.directoryLabel) == "D:/vod/lck", timeout=2000)
         leave(card.directoryLabel)
         enter(card.titleLabel)
+        qtbot.wait(3 * TIP_DELAY_MS)  # 지연이 지나도 뜨지 않는지 본다
         assert card.titleLabel.isElided() and card.titleLabel.toolTip() == ""
         assert tip_bubble.current_bubble() is None or not tip_bubble.current_bubble().isVisible()
 
@@ -907,12 +914,12 @@ class TestTipBubbles:
         assert bubble_text_for(card.titleLabel) is None
         assert not qt_tooltip_shown(card.titleLabel)  # 글이 없어 기본 툴팁도 없다
 
-    def test_save_location_shows_the_full_path_in_the_bubble(self, qapp) -> None:
+    def test_save_location_shows_the_full_path_in_the_bubble(self, qapp, qtbot: QtBot) -> None:
         """기본 위치와 다른 저장 위치의 폴더 글에 들어가면 전체 경로가 말풍선으로 떠야 한다.
 
-        "D:/vod/lck" 카드 · 카드 · 저장 위치 글 들어감 -> 말풍선 글 "D:/vod/lck"
+        "D:/vod/lck" 카드 · 카드 · 저장 위치 글 들어감 -> 지연 뒤 말풍선 글 "D:/vod/lck"
         """
         card = _card(path="D:/vod/lck", width=WIDE)
         enter(card)
         enter(card.directoryLabel)
-        assert bubble_text_for(card.directoryLabel) == "D:/vod/lck"
+        qtbot.waitUntil(lambda: bubble_text_for(card.directoryLabel) == "D:/vod/lck", timeout=2000)
