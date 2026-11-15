@@ -1388,7 +1388,7 @@ class TestFocusRing:
         _focus_by_key(qtbot, window, items[1])
         qtbot.waitUntil(_ring(window).isVisible)
 
-    def test_ring_wraps_the_key_focused_card_four_pixels_out(
+    def test_ring_lies_inside_the_key_focused_row_above_the_separator(
         self, window: VodDownloader, qtbot: QtBot
     ) -> None:
         """focus ring은 키보드 초점 행의 구분선 위 사각형에 놓여야 한다(행 안쪽 고리, #611).
@@ -1460,7 +1460,7 @@ class TestFocusRing:
         _settle()
         assert ring.visibleRegion().isEmpty()
 
-    def test_ring_has_room_on_every_side_while_the_scrollbar_shows(
+    def test_ring_stays_inside_the_row_while_the_scrollbar_shows(
         self, window: VodDownloader, qtbot: QtBot
     ) -> None:
         """스크롤바가 보여도 focus ring은 행 안쪽(구분선 위)에 그대로 놓여야 한다(#611).
@@ -1651,7 +1651,7 @@ class TestFocusRing:
         _settle()
         assert _picked(window) == [items[0]]
 
-    def test_ring_is_the_focus_token_colour_two_pixels_off_the_card(
+    def test_ring_is_a_two_pixel_focus_token_line_inside_the_row(
         self, window: VodDownloader, qtbot: QtBot
     ) -> None:
         """focus ring은 행 안쪽 가장자리의 2px 굵기 focusOnAccent 색 선이어야 한다(#611).
@@ -1709,7 +1709,7 @@ class TestFocusRing:
         bottom = _colour_at(face.grab().toImage(), face.width() / 2, face.height() - 1)
         assert _is(bottom, "border", 8)
 
-    def test_picked_and_focused_is_accent_border_gap_and_ring(
+    def test_picked_and_focused_shows_the_inner_ring_over_the_left_bar(
         self, window: VodDownloader, qtbot: QtBot
     ) -> None:
         """고른 카드가 키보드 초점을 받으면 안쪽 고리가 왼쪽 띠 위에 보이고 그 안쪽은 띠 · 고른 바탕이어야 한다.
@@ -1728,7 +1728,7 @@ class TestFocusRing:
         assert _is(_inside(window, card, 2), "accent")
         assert _is(_inside(window, card, 3), "cardHoverBg")
 
-    def test_picked_only_is_an_accent_border_two_wide(
+    def test_picked_only_is_a_left_accent_bar_on_the_picked_background(
         self, window: VodDownloader, qtbot: QtBot
     ) -> None:
         """고르기만 한(키보드 초점 없는) 카드는 왼쪽 끝 3px 강조색 띠와 고른 행 바탕이고 고리가 없어야 한다.
@@ -1819,7 +1819,7 @@ class TestFocusRingWidget:
         _settle()
         assert ring.geometry() == QRect(60, 100, 120, 39)
 
-    def test_side_without_room_is_attached_and_host_resize_replaces(self, host: QWidget) -> None:
+    def test_ring_stays_inside_a_widget_at_the_host_edge_across_resize(self, host: QWidget) -> None:
         """부모 가장자리에 붙은 위젯도 focus ring은 그 위젯 안(구분선 위)에 머물고, 부모 크기가 바뀌어도 그대로다.
 
         위젯 (0, 30, 200, 80) -> focus ring (0, 30, 200, 79) -> 부모 폭 200 -> focus ring (0, 30, 200, 79)
