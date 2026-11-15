@@ -71,24 +71,8 @@
         <translation>{0} outside the video</translation>
     </message>
     <message>
-        <source>This resolution is shorter. Sections now end at the end of the video.</source>
-        <translation>This resolution is shorter. Sections now end at the end of the video.</translation>
-    </message>
-    <message>
-        <source>This resolution is longer. Sections that reached the end now reach it.</source>
-        <translation>This resolution is longer. Sections that reached the end now reach it.</translation>
-    </message>
-    <message>
-        <source>Some sections start after the end of this resolution. They will be skipped. Edit the sections to fix them.</source>
-        <translation>Some sections start after the end of this resolution. They will be skipped. Edit the sections to fix them.</translation>
-    </message>
-    <message>
         <source>Sections {0} · {1}</source>
         <translation>Sections {0} · {1}</translation>
-    </message>
-    <message>
-        <source>Sections were moved to the frames of the new frame rate.</source>
-        <translation>Sections were moved to the frames of the new frame rate.</translation>
     </message>
     <message>
         <source>Edit</source>
@@ -103,14 +87,6 @@
         <translation>length not checked</translation>
     </message>
     <message>
-        <source>Checking the length of this resolution...</source>
-        <translation>Checking the length of this resolution...</translation>
-    </message>
-    <message>
-        <source>Could not check the length of this resolution. Open the section editor to check again.</source>
-        <translation>Could not check the length of this resolution. Open the section editor to check again.</translation>
-    </message>
-    <message>
         <source>overlap</source>
         <translation>overlap</translation>
     </message>
@@ -119,16 +95,28 @@
         <translation>Sections {0}</translation>
     </message>
     <message>
-        <source>To receive: {0}</source>
-        <translation>To receive: {0}</translation>
+        <source>The frame rate changed, so sections were fitted to it.</source>
+        <translation>The frame rate changed, so sections were fitted to it.</translation>
     </message>
     <message>
-        <source>Sections add up to {0}</source>
-        <translation>Sections add up to {0}</translation>
+        <source>This resolution is shorter, so sections now end at its end.</source>
+        <translation>This resolution is shorter, so sections now end at its end.</translation>
     </message>
     <message>
-        <source>Overlapping parts are received once</source>
-        <translation>Overlapping parts are received once</translation>
+        <source>This resolution is longer, so sections to the end now reach its end.</source>
+        <translation>This resolution is longer, so sections to the end now reach its end.</translation>
+    </message>
+    <message>
+        <source>Sections that start after this resolution ends are skipped. Edit them.</source>
+        <translation>Sections that start after this resolution ends are skipped. Edit them.</translation>
+    </message>
+    <message>
+        <source>Checking this resolution&apos;s length...</source>
+        <translation>Checking this resolution&apos;s length...</translation>
+    </message>
+    <message>
+        <source>Couldn&apos;t check this resolution&apos;s length. Open the section editor to retry.</source>
+        <translation>Couldn&apos;t check this resolution&apos;s length. Open the section editor to retry.</translation>
     </message>
     <message>
         <source>Preparing</source>

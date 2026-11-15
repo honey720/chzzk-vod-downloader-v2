@@ -353,13 +353,14 @@ def test_waiting_section_card_marks_overlap_only_when_sections_overlap(
     assert shown(widget.fileSizeLabel) == summary
 
 
-def test_waiting_section_card_with_overlap_explains_it_in_the_tooltip(qtbot) -> None:
-    """겹침이 있는 대기 구간 카드의 툴팁은 받을 양(길이) · 구간 길이의 합 · 한 번만 받는다는 말을 적어야 한다.
+def test_waiting_section_card_with_overlap_has_no_sum_or_overlap_lines_in_the_tooltip(
+    qtbot,
+) -> None:
+    """겹침이 있는 대기 구간 카드의 툴팁에 받을 양 · 구간 길이의 합 · 한 번만 받는다는 줄이 없어야 한다.
 
     처음~10분 · 4분~20분 · 1분~20분(합 45분 · 합친 범위 20분), 크기 200 MiB
     -> 툴팁의 줄에 "To receive: 20:00", "Sections add up to 45:00",
-       "Overlapping parts are received once"가 이 순서로 있다. 받을 양의 줄에 크기는 없다 —
-       카드의 크기는 구간 파일 크기의 합이라 받을 양의 크기가 아니다
+       "Overlapping parts are received once", "Overlapping sections"로 시작하는 줄이 없다 (#599)
     """
     selections = (TimeRange(0.0, 600.0), TimeRange(240.0, 1200.0), TimeRange(60.0, 1200.0))
     window, widget = _card(
@@ -369,21 +370,20 @@ def test_waiting_section_card_with_overlap_explains_it_in_the_tooltip(qtbot) -> 
 
     assert widget.fileSizeLabel.isVisible()
     lines = widget.fileSizeLabel.toolTip().split("\n")
-    wanted = [
+    gone = [
         "To receive: 20:00",
         "Sections add up to 45:00",
         "Overlapping parts are received once",
     ]
-    assert [line for line in lines if line in wanted] == wanted
-    assert not any(line.startswith("To receive") and "MB" in line for line in lines)
+    assert [line for line in lines if line in gone] == []
+    assert not any(line.startswith("Overlapping sections") for line in lines)
 
 
-def test_waiting_section_card_without_overlap_says_nothing_of_overlap_in_the_tooltip(qtbot) -> None:
-    """겹침이 없는 대기 mp4 구간 카드의 툴팁은 구간 길이의 합 한 줄뿐이어야 한다.
+def test_waiting_section_card_without_overlap_has_no_sum_line_in_the_tooltip(qtbot) -> None:
+    """겹침이 없는 대기 mp4 구간 카드의 툴팁에 구간 길이의 합 줄이 없어야 한다.
 
     구간 둘(10~20분 · 30~40분 — 합 20분), 받을 합 200 MiB, 넓은 창(정보 글을 줄이지 않았다)
-    -> 툴팁의 줄 == ["Sections add up to 20:00"]
-       ("received once" · "To receive"는 없다. 보이는 정보 글을 툴팁에 되풀이하지 않는다 — #550)
+    -> 툴팁 == ""(보이는 정보 글을 툴팁에 되풀이하지 않는다 — #550, 합 줄은 뺐다 — #599)
     """
     window, widget = _card(
         "video", DownloadState.WAITING, selections=TWO_SECTIONS, section_bytes=200 * MB
@@ -391,7 +391,7 @@ def test_waiting_section_card_without_overlap_says_nothing_of_overlap_in_the_too
     qtbot.addWidget(window)
 
     assert shown(widget.fileSizeLabel) == "1080p · 200.00 MB · 20:00 · Sections 2"
-    assert widget.fileSizeLabel.toolTip().split("\n") == ["Sections add up to 20:00"]
+    assert widget.fileSizeLabel.toolTip() == ""
 
 
 def test_waiting_mp4_section_card_shows_the_length_to_receive_with_or_without_a_size(
@@ -1466,7 +1466,10 @@ def test_card_paused_while_preparing_says_paused_without_a_percent(qtbot, window
     _pump()
 
     assert while_preparing == (DownloadState.PAUSED, "Paused")
-    assert (item.downloadState, shown(widget.statusLabel)) == (DownloadState.PAUSED, "0.0% · Paused")
+    assert (item.downloadState, shown(widget.statusLabel)) == (
+        DownloadState.PAUSED,
+        "0.0% · Paused",
+    )
 
 
 def test_prepare_timer_is_stopped_when_the_work_is_cleaned_up(qtbot, window) -> None:

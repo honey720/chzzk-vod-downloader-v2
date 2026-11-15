@@ -818,22 +818,24 @@ class TestResolutionStaysOnTheCard:
 
 
 class TestSectionLengthInTheInfoTip:
-    """카드 정보 글 툴팁의 구간 합 — 1초 미만인 0 아닌 길이만 「0:01」 (#550)."""
+    """카드 정보 글 툴팁 — 겹치지 않는 mp4 구간 카드에도 구간 길이의 합 줄을 적지 않는다 (#550 · #599)."""
 
     @pytest.mark.parametrize(
         ("total", "expected"),
         [(0.2, "0:01"), (0.999, "0:01"), (1.0, "0:01"), (1.5, "0:01"), (265.5, "4:25")],
     )
     def test_info_tip_section_total(self, qapp, total: float, expected: str) -> None:
-        """겹치지 않는 mp4 구간 카드의 정보 글 툴팁 「Sections add up to」가 규칙대로여야 한다.
+        """겹치지 않는 mp4 구간 카드의 정보 글 툴팁에는 구간 길이의 합 줄이 없어야 한다.
 
-        구간 10 ~ 10+합 하나 -> 툴팁에 "Sections add up to <표기>"
+        구간 10 ~ 10+합 하나 -> 어느 줄에도 "Sections add up to <표기>" 없음 (#599)
         """
         card = _card()
         card.item.selections = (TimeRange(10.0, 10.0 + total),)
         card.setData(card.item, 0)
         QApplication.processEvents()
-        assert f"Sections add up to {expected}" in card.fileSizeLabel.toolTip().splitlines()
+        lines = card.fileSizeLabel.toolTip().splitlines()
+        assert f"Sections add up to {expected}" not in lines
+        assert not any(line.startswith("Sections add up to") for line in lines)
 
 
 class TestTipBubbles:
@@ -859,20 +861,20 @@ class TestTipBubbles:
         assert qt_tooltip_shown(label)
 
     def test_section_card_info_shows_its_tooltip_in_the_bubble(self, qapp) -> None:
-        """구간 카드에 호버하고 정보 글에 들어가면 그 툴팁이 말풍선으로 바로 뜨고 Qt 툴팁은 뜨지 않아야 한다.
+        """겹침 없는 구간 카드의 정보 글에 들어가면 툴팁이 없어 말풍선도 Qt 툴팁도 뜨지 않아야 한다.
 
         mp4 구간 둘(합 20:00) 대기 카드 · 카드 들어감 · 정보 글 들어감
-        -> 말풍선 글 = 정보 글 툴팁(「Sections add up to 20:00」 포함), Qt 툴팁 안 뜸
+        -> 정보 글 툴팁 빈 글, 말풍선 없음, Qt 툴팁 안 뜸 (합 줄을 뺐다 — #599)
         """
         item_card = _card()
         item_card.item.selections = (TimeRange(0, 600), TimeRange(1200, 1800))
         item_card.setData(item_card.item, 0)
         QApplication.processEvents()
         info = item_card.fileSizeLabel
-        assert "Sections add up to 20:00" in info.toolTip()
+        assert info.toolTip() == ""
         enter(item_card)
         enter(info)
-        assert bubble_text_for(info) == info.toolTip()
+        assert bubble_text_for(info) is None
         assert not qt_tooltip_shown(info)
 
     def test_elided_title_shows_the_full_title_in_the_bubble(self, qapp) -> None:

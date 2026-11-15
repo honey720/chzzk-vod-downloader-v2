@@ -33,7 +33,7 @@ STATE_ICON = {
     "failed": "✕",  # 엑스 — 실패 (U+2715)
 }
 
-# 구간 길이의 합이 합친 범위의 길이보다 이만큼(초) 넘게 길어야 겹침으로 본다 — 1ms.
+# 두 구간이 이만큼(초) 넘게 겹쳐야 겹침으로 본다 — 1ms.
 # 가장 짧은 프레임(120fps ≈ 8.3ms)보다 훨씬 짧고, 소수 초 덧셈의 오차보다는 훨씬 길다
 OVERLAP_SLACK = 0.001
 
@@ -212,31 +212,36 @@ def section_span(item: ContentItem) -> float:
 
 
 def sections_overlap(item: ContentItem) -> bool:
-    """구간끼리 겹치는 자리가 있는지 — 길이의 합이 합친 범위의 길이보다 길다 (#309).
+    """구간끼리 겹치는 자리가 있는지 — 겹치는 쌍이 하나라도 있다 (#309).
 
     맞닿기만 한 구간(앞의 끝 = 뒤의 시작)은 겹침이 아니다. 판정은 프레임 하나보다 훨씬 짧은
-    여유를 둔다 — 소수 초의 덧셈 오차를 겹침으로 읽지 않는다.
+    여유를 둔다 — 소수 초의 덧셈 오차를 겹침으로 읽지 않는다. 쌍 판정(`section_overlap_pairs`)
+    하나를 쓴다 — 정보 글의 「겹침」과 툴팁 구간 줄의 「겹침」이 늘 같은 결과다(#599). 전에는 길이의
+    합 − 합친 범위로 쟀는데, 여유보다 짧은 겹침이 여럿이면 합만 여유를 넘어 어느 구간도 겹치지 않는
+    「겹침」이 났다.
     """
-    return section_total(item) - section_span(item) > OVERLAP_SLACK
+    return bool(section_overlap_pairs(item))
 
 
-def section_overlap_detail(item: ContentItem) -> list[str]:
-    """겹침이 있는 구간 카드의 툴팁에 더하는 줄 — 받을 양(길이) · 구간 길이의 합 · 한 번만 받는다.
+def section_overlap_pairs(item: ContentItem) -> list[tuple[int, int]]:
+    """서로 겹치는 구간 쌍 — 구간 번호(1부터, 구간 차례)의 쌍을 번호 차례로.
 
-    받을 양은 길이로만 적는다. 카드의 크기는 구간 파일 크기의 합(겹치는 자리를 구간마다
-    센다)이라 받을 양의 크기가 아니다.
+    맞닿기만 한 쌍(앞의 끝 = 뒤의 시작)과 `OVERLAP_SLACK` 이하로 겹친 쌍은 겹침이 아니다.
     """
-    if not sections_overlap(item):
-        return []
-    return [
-        QCoreApplication.translate("ContentItemWidget", "To receive: {0}").format(
-            section_clock(section_span(item))
-        ),
-        QCoreApplication.translate("ContentItemWidget", "Sections add up to {0}").format(
-            section_clock(section_total(item))
-        ),
-        QCoreApplication.translate("ContentItemWidget", "Overlapping parts are received once"),
-    ]
+    spans = sorted((s.start, s.end, number) for number, s in enumerate(item.selections, 1))
+    pairs = []
+    for index, (_start, end, number) in enumerate(spans):
+        for other_start, other_end, other in spans[index + 1 :]:
+            if other_start >= end - OVERLAP_SLACK:
+                break  # 뒤는 시작이 더 늦다 — 이 구간과 겹치는 것이 더 없다
+            if min(end, other_end) - other_start > OVERLAP_SLACK:
+                pairs.append((min(number, other), max(number, other)))
+    return sorted(pairs)
+
+
+def section_overlap_numbers(item: ContentItem) -> list[int]:
+    """겹침에 든 구간의 번호(1부터) — 번호 차례로."""
+    return sorted({number for pair in section_overlap_pairs(item) for number in pair})
 
 
 def section_notice(item: ContentItem, warnings_only: bool = False) -> str:
@@ -286,44 +291,40 @@ def section_notice_detail(item: ContentItem) -> list[str]:
     if getattr(item, "section_refit_fps", None) is not None:
         lines.append(
             QCoreApplication.translate(
-                "ContentItemWidget", "Sections were moved to the frames of the new frame rate."
+                "ContentItemWidget", "The frame rate changed, so sections were fitted to it."
             )
         )
     if getattr(item, "section_end_pulled", False):
         lines.append(
             QCoreApplication.translate(
                 "ContentItemWidget",
-                "This resolution is shorter. Sections now end at the end of the video.",
+                "This resolution is shorter, so sections now end at its end.",
             )
         )
     if getattr(item, "section_end_extended", False):
         lines.append(
             QCoreApplication.translate(
                 "ContentItemWidget",
-                "This resolution is longer. Sections that reached the end now reach it.",
+                "This resolution is longer, so sections to the end now reach its end.",
             )
         )
     if getattr(item, "section_unfit", ()):
         lines.append(
             QCoreApplication.translate(
                 "ContentItemWidget",
-                "Some sections start after the end of this resolution. "
-                "They will be skipped. Edit the sections to fix them.",
+                "Sections that start after this resolution ends are skipped. Edit them.",
             )
         )
     check = getattr(item, "section_check", "")
     if check == SECTION_CHECK_PENDING:
         lines.append(
-            QCoreApplication.translate(
-                "ContentItemWidget", "Checking the length of this resolution..."
-            )
+            QCoreApplication.translate("ContentItemWidget", "Checking this resolution's length...")
         )
     elif check == SECTION_CHECK_UNVERIFIED:
         lines.append(
             QCoreApplication.translate(
                 "ContentItemWidget",
-                "Could not check the length of this resolution. "
-                "Open the section editor to check again.",
+                "Couldn't check this resolution's length. Open the section editor to retry.",
             )
         )
     return lines

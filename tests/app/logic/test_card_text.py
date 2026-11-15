@@ -327,19 +327,43 @@ class TestSizeText:
 class TestSectionText:
     """구간 요약 · 겹침 · 경고 안내."""
 
-    def test_overlapping_sections_are_marked_and_explained(self) -> None:
-        """겹치는 구간이면 요약에 「overlap」, 툴팁 줄에 받을 양 · 합 · 한 번만 받음이어야 한다.
+    def test_overlapping_sections_are_marked(self) -> None:
+        """겹치는 구간이면 요약에 「overlap」이 붙고 겹친 쌍이 (1, 2)여야 한다.
 
-        m3u8 · 구간 0~60 · 30~90 -> "Sections 2 · overlap · 1:30",
-        ["To receive: 1:30", "Sections add up to 2:00", "Overlapping parts are received once"]
+        m3u8 · 구간 0~60 · 30~90 -> "Sections 2 · overlap · 1:30", 쌍 [(1, 2)]
         """
         item = _item(content_type="m3u8", sections=((0, 60), (30, 90)))
         assert card_text.section_summary(item) == "Sections 2 · overlap · 1:30"
-        assert card_text.section_overlap_detail(item) == [
-            "To receive: 1:30",
-            "Sections add up to 2:00",
-            "Overlapping parts are received once",
-        ]
+        assert card_text.section_overlap_pairs(item) == [(1, 2)]
+
+    def test_overlap_pairs_are_named_by_section_number_in_number_order(self) -> None:
+        """겹친 쌍은 구간 차례의 번호로, 번호 차례로 적혀야 한다 — 시각 차례가 아니다.
+
+        구간 ① 300~400 · ② 0~100 · ③ 50~350 · ④ 400~500(①과 맞닿기만)
+        -> [(1, 3), (2, 3)]
+        """
+        item = _item(sections=((300, 400), (0, 100), (50, 350), (400, 500)))
+        assert card_text.section_overlap_pairs(item) == [(1, 3), (2, 3)]
+
+    def test_overlap_numbers_name_only_the_overlapping_sections(self) -> None:
+        """겹침에 든 구간 번호는 겹치는 구간만 번호 차례로여야 한다 — 겹치지 않는 구간은 뺀다.
+
+        구간 ① 300~400 · ② 0~100 · ③ 50~350 · ④ 400~500(①과 맞닿기만) · ⑤ 900~950(홀로)
+        -> [1, 2, 3]
+        """
+        item = _item(sections=((300, 400), (0, 100), (50, 350), (400, 500), (900, 950)))
+        assert card_text.section_overlap_numbers(item) == [1, 2, 3]
+
+    def test_tiny_overlaps_that_add_up_past_the_slack_are_not_an_overlap(self) -> None:
+        """쌍마다 1ms 이하로 겹친 구간은 그 합이 1ms를 넘어도 겹침이 아니어야 한다.
+
+        구간 0~1 · 0.9994~2 · 1.9994~3(쌍마다 0.6ms, 합 1.2ms)
+        -> sections_overlap False, 겹친 쌍 [], 요약에 「overlap」 없음
+        """
+        item = _item(sections=((0.0, 1.0), (0.9994, 2.0), (1.9994, 3.0)))
+        assert not card_text.sections_overlap(item)
+        assert card_text.section_overlap_pairs(item) == []
+        assert "overlap" not in card_text.section_summary(item)
 
     def test_touching_sections_do_not_overlap(self) -> None:
         """맞닿기만 한 구간이면 겹침이 아니어야 한다.
@@ -387,13 +411,13 @@ class TestSectionText:
     def test_unverified_length_has_its_own_notice(self) -> None:
         """길이를 확인하지 못했으면 알림이 「length not checked」, 툴팁 줄이 다시 확인 안내여야 한다.
 
-        section_check UNVERIFIED -> "length not checked", ["Could not check … check again."]
+        section_check UNVERIFIED -> "length not checked", ["Couldn't check … to retry."]
         """
         item = _item(sections=((0, 60),))
         item.section_check = SECTION_CHECK_UNVERIFIED
         assert card_text.section_notice(item) == "length not checked"
         assert card_text.section_notice_detail(item) == [
-            "Could not check the length of this resolution. Open the section editor to check again."
+            "Couldn't check this resolution's length. Open the section editor to retry."
         ]
 
     def test_summary_carries_the_notice_after_the_size(self) -> None:
@@ -597,11 +621,11 @@ class TestSectionLengthPlaces:
             (265.5, "4:25", "8:51"),  # 합 531
         ],
     )
-    def test_overlap_tooltip(self, length: float, span: str, total: str) -> None:
-        """겹치는 구간 카드 툴팁의 받을 양 · 구간 합이 규칙대로여야 한다.
+    def test_overlap_span_and_total(self, length: float, span: str, total: str) -> None:
+        """겹치는 구간의 받을 양 · 구간 합 표기가 규칙대로여야 한다(툴팁 줄은 #599에서 뺐다).
 
-        같은 구간 10 ~ 10+길이 둘 -> 「To receive: <받을 양>」 · 「Sections add up to <합>」
+        같은 구간 10 ~ 10+길이 둘 -> 받을 양 <받을 양>, 합 <합>
         """
         item = _item(sections=((10.0, 10.0 + length), (10.0, 10.0 + length)))
-        lines = card_text.section_overlap_detail(item)
-        assert lines[:2] == [f"To receive: {span}", f"Sections add up to {total}"]
+        assert card_text.section_clock(card_text.section_span(item)) == span
+        assert card_text.section_clock(card_text.section_total(item)) == total

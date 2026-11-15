@@ -1364,9 +1364,9 @@ def tooltip_of(win: VodDownloader, item: ContentItem) -> str:
     return win.listView.widgetFor(item).fileSizeLabel.toolTip()
 
 
-PULLED = "This resolution is shorter. Sections now end at the end of the video."
-EXTENDED = "This resolution is longer. Sections that reached the end now reach it."
-UNFIT = "Some sections start after the end of this resolution."
+PULLED = "This resolution is shorter, so sections now end at its end."
+EXTENDED = "This resolution is longer, so sections to the end now reach its end."
+UNFIT = "Sections that start after this resolution ends are skipped."
 
 
 def test_a_section_that_reached_the_end_is_pulled_to_the_shorter_end(
@@ -1715,7 +1715,7 @@ def test_notice_gives_way_when_it_does_not_fit_in_the_row(qtbot, tmp_path, basis
 
     assert summary_text(win, item).endswith(" · Sections 1")
     tooltip = widget.fileSizeLabel.toolTip()
-    assert "Sections were moved to the frames of the new frame rate." in tooltip
+    assert "The frame rate changed, so sections were fitted to it." in tooltip
     info = widget.fileSizeLabel
     assert info.width() >= info.fontMetrics().horizontalAdvance(info.text())
     assert widget.width() <= win.listView.viewport().width()

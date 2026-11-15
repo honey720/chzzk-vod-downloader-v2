@@ -1144,26 +1144,17 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         return self.thumbnailLabel.width() + self.bodyLayout.horizontalSpacing()
 
     def _infoTip(self, shown: str) -> str:
-        """정보 글의 툴팁 — 접혀 줄었으면 전체 글, 구간 카드면 구간 설명 줄. 없으면 빈 글.
+        """정보 글의 툴팁 — 접혀 줄었으면 전체 글, 대기 구간 카드면 경고. 없으면 빈 글.
 
-        보이는 글을 그대로 되풀이하는 툴팁은 달지 않는다(#550).
+        보이는 글을 그대로 되풀이하는 툴팁은 달지 않는다(#550). 툴팁에는 카드에서 잘려 안 보이는 것과
+        경고만 둔다(오너 2026-11-14 「툴팁 하나가 가리는 게 너무 많다」, #599) — 구간 길이의 합은 구간 창의
+        「합계」에서 본다.
         """
         item = self.item
         full = self._levelTexts[0].size or "" if self._levelTexts else ""
         lines = [full] if full and shown != full else []
-        if card_text.section_count(item):
-            detail = card_text.section_overlap_detail(item)
-            if not detail and not item.is_segment_based:
-                # mp4 구간 카드는 정보 글의 길이가 받을 양(합친 범위)이다 — 구간 길이의 합을 알린다.
-                # 겹침이 있으면 겹침의 설명이 같은 줄을 이미 담고 있다
-                detail = [
-                    self.tr("Sections add up to {0}").format(
-                        card_text.section_clock(card_text.section_total(item))
-                    )
-                ]
-            lines.extend(detail)
-            if item.downloadState == DownloadState.WAITING:
-                lines.extend(card_text.section_notice_detail(item))
+        if card_text.section_count(item) and item.downloadState == DownloadState.WAITING:
+            lines.extend(card_text.section_notice_detail(item))
         return "\n".join(lines)
 
     # ---- 날짜 연도 — 목록 전체가 함께 정한다 (#554) ----
