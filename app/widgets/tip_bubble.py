@@ -13,6 +13,11 @@ Qt 기본 툴팁(`QToolTip`)은 기다림이 있고, 대상을 가릴 수 있고
   채널명 · 상태 글 · 저장 위치)이 쓴다(오너 2026-11-15 「카드에 툴팁이 뜨니까 지저분하다」, #599).
   그 전에 나가거나 누르거나 숨으면 뜨지 않는다. 다른 버튼으로 옮기면 지연을 다시 건다 — 버튼 줄을
   훑고 지나갈 때도 뜨지 않게
+- 나타날 때 `TIP_FADE_IN_MS` 동안 투명에서 불투명으로(처음 빠르고 끝 느림), 닫힐 때 `TIP_FADE_OUT_MS` 동안
+  사라진다(오너 2026-11-15, #610). 사라지는 중에 새 툴팁이 뜨면 사라지던 것은 바로 지우고 새 것만 나타난다
+  (말풍선은 하나라 그 자리에서 다시 0부터 나타난다). 설정의 애니메이션 끔(`card_display` `animations`)이면 바로
+  뜨고 바로 사라진다. 페이드는 창 불투명도가 아니라 그리기 알파다 — 등록 오류 말풍선은 본 창의 자식 위젯이라
+  창 불투명도가 듣지 않는다
 - 필터는 앱 전체가 아니라 위젯마다 건다(`install_tips`) — 앱 전체에 거는 파이썬 이벤트 필터는 모든 위젯의 모든
   이벤트를 파이썬으로 끌어와 느리고, 전체 테스트에서 접근 위반으로 죽은 적이 있다
 
@@ -22,7 +27,18 @@ Qt 기본 툴팁(`QToolTip`)은 기다림이 있고, 대상을 가릴 수 있고
 import html
 
 import shiboken6
-from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QSize, Qt, QTimer
+from PySide6.QtCore import (
+    QEasingCurve,
+    QEvent,
+    QObject,
+    QPoint,
+    QRect,
+    QRectF,
+    QSize,
+    Qt,
+    QTimer,
+    QVariantAnimation,
+)
 from PySide6.QtGui import (
     QAbstractTextDocumentLayout,
     QColor,
@@ -38,6 +54,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QApplication, QWidget
 
 import app.theme as theme
+from app.viewmodels import card_display
 
 _FLIP = {"below": "above", "above": "below", "left": "right", "right": "left"}
 _SIDEWAYS = {
@@ -52,6 +69,10 @@ _SHADOW_ALPHA = 0.05  # 그림자 가장 안쪽 한 겹의 불투명도 — 바�
 # 머무를 때만 뜨는 툴팁의 지연(ms) — 카드 위 툴팁(`install_tips(..., delayed=True)`). 포인터가 지나갈 때는 안 뜨고
 # 머무를 때만 뜨는 값으로 오너가 정했다(2026-11-15 「약 600ms」, #599). 그 밖의 툴팁은 0ms
 HOVER_TIP_DELAY_MS = 600
+# 말풍선이 나타날 때 투명 → 불투명(ms, ease-out) · 닫힐 때 불투명 → 투명(ms) — 오너 2026-11-15(약 120 · 약 80,
+# #610). 0이면 바로 뜨고 바로 사라진다. 상수는 쓸 때마다 읽는다(테스트가 줄인다)
+TIP_FADE_IN_MS = 120
+TIP_FADE_OUT_MS = 80
 KEY_SEP = "\t"  # 툴팁 글의 이름 ↔ 단축키 구분 — 말풍선이 「이름 · 단축키」로 그리고 단축키는 흐린 색(#536)
 # 말풍선 색 묶음 — (면, 테두리, 글) 토큰. 툴팁은 바보다 한 단계 떠 있는 면 · 진한 테두리(프로토 demoFloat),
 # 등록 오류는 실패 색 계열(설계 §2 알림 자리, #536)
@@ -207,10 +228,27 @@ class TipBubble(QWidget):
         self.text = ""  # 지금 띄운 글
         self.targetRect = QRect()  # 대상 사각형(전역) — 시험이 겹침을 잰다
         self._tail = 0  # 꼬리 끝 위치(가로지르는 축, 위젯 좌표)
+        self._opacity = 1.0  # 그리는 불투명도 0 ~ 1 — 페이드 동안만 1보다 작다(#610)
+        self._fade: QVariantAnimation | None = None  # 페이드 애니메이션 — 움직이는 동안만 있다
+        self._fadingOut = False  # 닫히는 페이드 중인지 — 끝나면 숨는다
 
     def showing(self, target: QWidget, text: str) -> bool:
-        """그 대상에 그 글로 이미 떠 있는지."""
-        return self.isVisible() and self.target is target and self.text == text
+        """그 대상에 그 글로 이미 떠 있는지 — 사라지는 중이면 떠 있지 않은 것으로 본다."""
+        return (
+            self.isVisible() and not self._fadingOut and self.target is target and self.text == text
+        )
+
+    def opacity(self) -> float:
+        """지금 그리는 불투명도(0 ~ 1)."""
+        return self._opacity
+
+    def fade(self) -> QVariantAnimation | None:
+        """움직이는 페이드 애니메이션(없으면 None)."""
+        return self._fade
+
+    def isFadingOut(self) -> bool:
+        """닫히는 페이드 중인지."""
+        return self._fadingOut
 
     def margins(self) -> tuple[int, int, int, int]:
         """(왼, 위, 오른, 아래) 여백 — 꼬리 쪽은 꼬리, 나머지는 그림자 자리."""
@@ -247,12 +285,23 @@ class TipBubble(QWidget):
         return QSize(round(width) + 2 * pad_x + 2, round(self._doc.size().height()) + 2 * pad_y + 2)
 
     def showFor(
-        self, target: QWidget, text: str, rect: QRect | None = None, side: str | None = None
+        self,
+        target: QWidget,
+        text: str,
+        rect: QRect | None = None,
+        side: str | None = None,
+        fade: bool = True,
     ) -> None:
         """대상 옆에 띄운다 — `rect`(전역)를 주면 그 사각형(메뉴 항목 등)을 대상으로 본다.
 
         `side`를 주면 창의 경계 대신 그 방향을 바란다(등록 오류는 늘 URL 칸 아래 — #536). 화면 밖이면 반대쪽이다.
+
+        숨어 있었거나 사라지는 중이었으면 투명에서 나타난다(`fade`가 거짓이거나 애니메이션 끔이면 바로) — 사라지던
+        것은 그 자리에서 지워진다. 이미 떠 있으면(대상 · 글만 바뀜, 창 크기에 따라 다시 놓음) 불투명 그대로 옮긴다
+        — 떠 있는 말풍선이 깜빡이지 않게(#610).
         """
+        appear = fade and (not self.isVisible() or self._fadingOut)
+        self._stopFade()
         self.target = target
         self.text = text
         self._setText(text)
@@ -281,16 +330,69 @@ class TipBubble(QWidget):
         if host is not None:
             geometry.translate(-screen.topLeft())
         self.setGeometry(geometry)
+        self._opacity = 1.0
+        if appear and _animated(TIP_FADE_IN_MS):
+            self._startFade(0.0, 1.0, TIP_FADE_IN_MS, QEasingCurve.Type.OutCubic)
         self.update()
         self.show()
         self.raise_()
+
+    def fadeOut(self) -> None:
+        """닫는다 — `TIP_FADE_OUT_MS` 동안 사라진 뒤 숨는다(애니메이션 끔이면 바로).
+
+        숨어 있거나 이미 사라지는 중이면 아무것도 하지 않는다.
+        """
+        if not self.isVisible() or self._fadingOut:
+            return
+        if not _animated(TIP_FADE_OUT_MS):
+            self.hideNow()
+            return
+        start = self._opacity
+        self._stopFade()
+        self._fadingOut = True
+        self._startFade(start, 0.0, TIP_FADE_OUT_MS, QEasingCurve.Type.Linear)
+
+    def _startFade(self, start: float, end: float, ms: int, curve: QEasingCurve.Type) -> None:
+        """불투명도를 start → end로 ms 동안 바꾸는 애니메이션을 건다 — 끝나면 지운다(움직이는 동안만 있다)."""
+        self._opacity = start
+        animation = self._fade = QVariantAnimation(self)
+        animation.setStartValue(start)
+        animation.setEndValue(end)
+        animation.setDuration(ms)
+        animation.setEasingCurve(curve)
+        animation.valueChanged.connect(self._onFadeStep)
+        animation.finished.connect(self._onFadeFinished)
+        animation.start()
+
+    def _onFadeStep(self, value: float) -> None:
+        self._opacity = float(value)
+        self.update()
+
+    def _onFadeFinished(self) -> None:
+        """페이드가 끝났다 — 닫히는 중이었으면 숨고, 나타나는 중이었으면 불투명으로 두고 애니메이션을 지운다."""
+        if self._fadingOut:
+            self.hideNow()
+            return
+        self._opacity = 1.0
+        self._stopFade()
+        self.update()
+
+    def _stopFade(self) -> None:
+        """페이드를 그 자리에서 멈추고 애니메이션을 지운다 — 닫히는 중이었으면 그만둔다."""
+        animation, self._fade = self._fade, None
+        self._fadingOut = False
+        if animation is not None:
+            animation.stop()
+            animation.deleteLater()
 
     def globalRect(self) -> QRect:
         """말풍선 사각형(전역) — 따로 뜬 창이든 자식이든 같은 좌표로 잰다."""
         return QRect(self.mapToGlobal(QPoint(0, 0)), self.size())
 
     def hideNow(self) -> None:
-        """바로 숨긴다."""
+        """바로 숨긴다 — 페이드 중이면 멈춘다."""
+        self._stopFade()
+        self._opacity = 1.0
         self.hide()
         self.target = None
 
@@ -305,6 +407,7 @@ class TipBubble(QWidget):
         half = theme.METRICS["tipTailWidth"] / 2
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setOpacity(self._opacity)  # 페이드 — 그림자 · 면 · 글을 함께 옅게(#610)
         body = self.bodyRect()
         low = radius + half
         if self.side in ("below", "above"):
@@ -365,10 +468,15 @@ def show_tip(target: QWidget, text: str, rect: QRect | None = None) -> None:
 
 
 def hide_tip(target: QWidget | None = None) -> None:
-    """말풍선을 닫는다 — `target`을 주면 그 대상에 떠 있을 때만."""
+    """말풍선을 닫는다(사라지는 페이드) — `target`을 주면 그 대상에 떠 있을 때만."""
     bubble = current_bubble()
     if bubble is not None and (target is None or bubble.target is target):
-        bubble.hideNow()
+        bubble.fadeOut()
+
+
+def _animated(ms: int) -> bool:
+    """그 시간의 페이드를 할지 — 시간이 0보다 크고 설정의 애니메이션이 켜져 있을 때."""
+    return ms > 0 and card_display.current().animations
 
 
 def close_floats_if_left(window: QWidget) -> None:
@@ -520,9 +628,9 @@ class ErrorTip(QObject):
         return self._bubble
 
     def isShowing(self) -> bool:
-        """말풍선이 보이는지."""
+        """말풍선이 보이는지 — 사라지는 중이면 닫힌 것으로 본다."""
         bubble = self.bubble()
-        return bubble is not None and bubble.isVisible()
+        return bubble is not None and bubble.isVisible() and not bubble.isFadingOut()
 
     def text(self) -> str:
         """지금 보이는 오류 글(닫혀 있으면 빈 글)."""
@@ -545,7 +653,7 @@ class ErrorTip(QObject):
         self._text = ""
         bubble = self.bubble()
         if bubble is not None and bubble.isVisible():
-            bubble.hideNow()
+            bubble.fadeOut()
 
     def _watch(self) -> None:
         if self._watched:
@@ -573,5 +681,5 @@ class ErrorTip(QObject):
             self.hide()
         elif kind == QEvent.Type.Resize and obj.isWidgetType():
             if self.isShowing():
-                self.bubble().showFor(self._target, self._text, side="below")
+                self.bubble().showFor(self._target, self._text, side="below", fade=False)
         return False
