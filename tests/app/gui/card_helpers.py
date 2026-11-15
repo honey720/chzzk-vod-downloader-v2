@@ -144,10 +144,15 @@ _SENDING_POINTER_EVENT = [
 
 
 def enter(widget: QWidget) -> None:
-    """위젯에 들어감 이벤트를 보낸다(포인터는 옮기지 않는다 — safety 규칙)."""
+    """위젯에 들어감 이벤트를 보내고 쌓인 이벤트를 처리한다(포인터는 옮기지 않는다 — safety 규칙)."""
+    send_enter(widget)
+    QApplication.processEvents()
+
+
+def send_enter(widget: QWidget) -> None:
+    """위젯에 들어감 이벤트만 보낸다 — 이벤트 루프를 돌리지 않아 0ms 타이머도 아직 터지지 않는다(#610)."""
     center = QPointF(widget.rect().center())
     _send_pointer_event(widget, QEnterEvent(center, center, widget.mapToGlobal(center)))
-    QApplication.processEvents()
 
 
 def leave(widget: QWidget) -> None:

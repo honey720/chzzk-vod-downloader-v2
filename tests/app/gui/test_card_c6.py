@@ -724,8 +724,8 @@ class TestCardTipsAtOnce:
         """기본 지연에서 카드 버튼 · 카드 글에 들어가면 말풍선이 바로 불투명도 0에서 나타나기 시작해야 한다.
 
         나타남 60ms · 카드 들어감 · ✎ / 잘린 채널명 / 상세 줄 있는 실패 사유 / 다른 저장 위치 글 들어감
-        -> 들어감 직후 기다리는 위젯 없음 · 말풍선 보임 · 대상 = 그 위젯 · 불투명도 0 · 페이드 있음,
-        페이드 뒤 불투명도 1 · 말풍선 글 = 그 위젯의 툴팁
+        -> 들어감을 보낸 직후(이벤트 루프 전) 기다리는 위젯 없음 · 말풍선 보임 · 대상 = 그 위젯 · 불투명도 0 ·
+        페이드 있음, 페이드 뒤 불투명도 1 · 말풍선 글 = 그 위젯의 툴팁
         """
         if which == "edit":
             item = _make_item(str(tmp_path))
@@ -733,7 +733,7 @@ class TestCardTipsAtOnce:
             target = _hovered_card(win, item).editButton
         else:
             _win, _card, target = _text_tip_card(tmp_path, which)
-        enter(target)
+        card_helpers.send_enter(target)  # 0ms 타이머로 미뤄 띄우면 여기서는 아직 안 떠 있다
         assert tip_bubble.tip_filter().pending() is None
         bubble = tip_bubble.current_bubble()
         assert bubble is not None and bubble.isVisible() and bubble.target is target
