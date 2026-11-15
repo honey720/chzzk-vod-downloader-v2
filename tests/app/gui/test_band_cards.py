@@ -331,3 +331,31 @@ class TestSettingsGear:
         QTest.keyClick(win.listView, Qt.Key.Key_Comma, Qt.KeyboardModifier.ControlModifier)
         _pump()
         assert len(opened) == 1
+
+
+class TestBarOnlyProgress:
+    """진행 표시는 막대 하나 — 배경 채움 방식과 그 설정 키는 없다(설계 §13)."""
+
+    def test_a_leftover_fill_row_still_shows_the_bar(self, window) -> None:
+        """설정 DB에 옛 `cardProgress` = "fill" 행이 남아 있어도 받는 중 카드는 막대를 보이고 면을 칠하지 않아야 한다.
+
+        DB 행 cardProgress = "fill"(JSON) · 카드 화면 설정 다시 읽음, 받는 중 50% 카드 -> 막대 보임 · 막대 값 5000,
+        카드 면 25% 자리(막대 위 글 밖) ≈ cardBg, 그 행은 지워지지 않고 남음(읽을 때 버린다)
+        """
+        import app.viewmodels.card_display as card_display
+        from tests.support.settings_db import read_rows, write_rows
+
+        write_rows({"cardProgress": '"fill"'})
+        card_display.use(None)
+        try:
+            win = window(DownloadState.RUNNING)
+            card = _card(win, 0)
+            assert card.progressBar.isVisible()
+            assert card.progressBar.value() == 5000
+            frame = card.contentFrame
+            rect = _rect(win, frame)
+            image = win.grab().toImage()
+            assert _is(_pixel(image, rect.left() + rect.width() // 4, rect.top() + 4), "cardBg")
+            assert read_rows().get("cardProgress") == '"fill"'
+        finally:
+            card_display.use(None)
