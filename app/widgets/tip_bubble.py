@@ -9,6 +9,9 @@ Qt 기본 툴팁(`QToolTip`)은 기다림이 있고, 대상을 가릴 수 있고
 - 대상과 꼬리 끝 사이는 `tipGap` — 대상 사각형과 겹치지 않는다
 - 들어오면 바로(0ms) 뜨고, 나가거나 누르거나 대상이 숨으면 바로 닫힌다. 누른 뒤에는 나갈 때까지 다시 띄우지
   않는다. 드롭다운 메뉴가 열려 있는 동안에는 띄우지 않는다
+- `install_tips(..., delayed=True)`로 건 위젯은 `HOVER_TIP_DELAY_MS` 머문 뒤에 뜬다 — 카드 버튼만 쓴다
+  (오너 2026-11-15 「카드에 툴팁이 뜨니까 지저분하다」, #599). 그 전에 나가거나 누르거나 숨으면 뜨지 않는다.
+  다른 버튼으로 옮기면 지연을 다시 건다 — 버튼 줄을 훑고 지나갈 때도 뜨지 않게
 - 필터는 앱 전체가 아니라 위젯마다 건다(`install_tips`) — 앱 전체에 거는 파이썬 이벤트 필터는 모든 위젯의 모든
   이벤트를 파이썬으로 끌어와 느리고, 전체 테스트에서 접근 위반으로 죽은 적이 있다
 
@@ -18,7 +21,7 @@ Qt 기본 툴팁(`QToolTip`)은 기다림이 있고, 대상을 가릴 수 있고
 import html
 
 import shiboken6
-from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QSize, Qt
+from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QSize, Qt, QTimer
 from PySide6.QtGui import (
     QAbstractTextDocumentLayout,
     QColor,
@@ -45,6 +48,9 @@ _SIDEWAYS = {
 _FACING = {"below": "top", "above": "bottom", "right": "left", "left": "right"}  # 꼬리가 나는 쪽
 _TIP_WEIGHT = 600  # 말풍선 글 굵기 — 굵게(설계 §12.1 「툴팁 글은 굵게」)
 _SHADOW_ALPHA = 0.05  # 그림자 가장 안쪽 한 겹의 불투명도 — 바깥으로 갈수록 옅다
+# 머무를 때만 뜨는 툴팁의 지연(ms) — 카드 버튼(`install_tips(..., delayed=True)`). 포인터가 지나갈 때는 안 뜨고
+# 머무를 때만 뜨는 값으로 오너가 정했다(2026-11-15 「약 600ms」, #599). 그 밖의 툴팁은 0ms
+HOVER_TIP_DELAY_MS = 600
 KEY_SEP = "\t"  # 툴팁 글의 이름 ↔ 단축키 구분 — 말풍선이 「이름 · 단축키」로 그리고 단축키는 흐린 색(#536)
 # 말풍선 색 묶음 — (면, 테두리, 글) 토큰. 툴팁은 바보다 한 단계 떠 있는 면 · 진한 테두리(프로토 demoFloat),
 # 등록 오류는 실패 색 계열(설계 §2 알림 자리, #536)
@@ -354,7 +360,18 @@ class TipFilter(QObject):
     """위젯마다 거는 이벤트 필터 — 들어오면 그 위젯의 툴팁을 말풍선으로 바로 띄우고, 나가거나 누르면 닫는다.
 
     Qt의 툴팁 이벤트(`QEvent.ToolTip`)는 툴팁 글이 있으면 삼킨다 — 기본 툴팁이 함께 뜨지 않게.
+
+    `tipDelayed` 속성이 참인 위젯(`install_tips(..., delayed=True)`)은 들어감에서 바로 띄우지 않고 타이머
+    하나로 `HOVER_TIP_DELAY_MS` 뒤에 띄운다. 기다리는 대상은 하나다 — 다른 위젯에 들어가면 그 위젯으로
+    바뀌고, 기다리던 위젯에서 나가거나 누르거나 숨으면 그만둔다.
     """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self._showPending)
+        self._pending: QWidget | None = None  # 지연 뒤에 띄울 위젯
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
         kind = event.type()
@@ -362,18 +379,40 @@ class TipFilter(QObject):
             return False
         if kind == QEvent.Type.MouseButtonPress:
             obj.setProperty("tipPressed", True)  # 누른 뒤에는 나갈 때까지 다시 띄우지 않는다
+            self._cancel(obj)
             hide_tip(obj)
             return False
         if kind == QEvent.Type.ToolTip:
             return bool(obj.toolTip())
         if kind == QEvent.Type.Enter:
-            if self._allowed(obj):
+            if obj.property("tipDelayed"):
+                self._pending = obj
+                self._timer.start(HOVER_TIP_DELAY_MS)  # 상수는 걸 때마다 읽는다(테스트가 줄인다)
+            elif self._allowed(obj):
                 show_tip(obj, obj.toolTip())
             return False
         if kind in (QEvent.Type.Leave, QEvent.Type.Hide):
             obj.setProperty("tipPressed", False)
+            self._cancel(obj)
             hide_tip(obj)
         return False
+
+    def pending(self) -> QWidget | None:
+        """지연 뒤에 띄우려고 기다리는 위젯(없으면 None)."""
+        if self._pending is not None and not shiboken6.isValid(self._pending):
+            self._pending = None
+        return self._pending if self._timer.isActive() else None
+
+    def _cancel(self, widget: QObject) -> None:
+        """그 위젯을 기다리고 있으면 그만둔다 — 다른 위젯을 기다리는 중이면 그대로 둔다."""
+        if self._pending is widget:
+            self._timer.stop()
+            self._pending = None
+
+    def _showPending(self) -> None:
+        widget, self._pending = self._pending, None
+        if widget is not None and shiboken6.isValid(widget) and self._allowed(widget):
+            show_tip(widget, widget.toolTip())
 
     @staticmethod
     def _allowed(widget: QWidget) -> bool:
@@ -386,13 +425,25 @@ class TipFilter(QObject):
 _FILTER: dict[str, TipFilter | None] = {"filter": None}  # 위젯들이 함께 쓰는 필터 하나
 
 
-def install_tips(root: QWidget) -> None:
-    """root와 그 아래 위젯마다 말풍선 필터를 건다 — 여러 번 불러도 위젯마다 한 번만 건다."""
+def tip_filter() -> TipFilter:
+    """위젯들이 함께 쓰는 말풍선 필터 — 처음 부를 때 만든다."""
     if _FILTER["filter"] is None:
         _FILTER["filter"] = TipFilter()
+    return _FILTER["filter"]
+
+
+def install_tips(root: QWidget, delayed: bool = False) -> None:
+    """root와 그 아래 위젯마다 말풍선 필터를 건다 — 여러 번 불러도 위젯마다 한 번만 건다.
+
+    Args:
+        delayed: 참이면 그 위젯들의 툴팁은 `HOVER_TIP_DELAY_MS` 머문 뒤에 뜬다(카드 버튼, #599)
+    """
+    shared = tip_filter()
     for widget in (root, *root.findChildren(QWidget)):
+        if delayed:
+            widget.setProperty("tipDelayed", True)
         if not widget.property("tipInstalled"):
-            widget.installEventFilter(_FILTER["filter"])
+            widget.installEventFilter(shared)
             widget.setProperty("tipInstalled", True)
 
 

@@ -6,6 +6,7 @@
 기대값은 손으로 계산한 값이다 — 제품의 표기 함수로 만들지 않는다.
 """
 
+from collections.abc import Iterator
 from fractions import Fraction
 from pathlib import Path
 
@@ -17,7 +18,7 @@ from PySide6.QtWidgets import QAbstractSlider, QApplication, QWidget
 
 from app.viewmodels.data import SECTION_CHECK_UNVERIFIED, ContentItem
 from app.views.mainWindow import VodDownloader
-from app.widgets import step_scroll
+from app.widgets import step_scroll, tip_bubble
 from app.widgets.widget import ContentItemWidget
 from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
@@ -408,7 +409,7 @@ class TestListScroll:
         assert bar.value() == 3 * CELL
 
 
-# ---- 카드 정보 글 툴팁 없음 (#599) ----
+# ---- 카드 툴팁 — 정보 글 · 제목에는 없고, 카드 버튼은 머문 뒤에만 (#599) ----
 
 # 구간 넷 — 60fps에서 프레임 경계인 시각(초). ①과 ②가 겹친다
 FOUR_SECTIONS = (
@@ -420,6 +421,21 @@ FOUR_SECTIONS = (
 UNVERIFIED_SHORT = (
     "length not checked"  # 길이를 확인하지 못한 구간 카드가 정보 글 끝에 다는 짧은 경고
 )
+TEST_TIP_DELAY_MS = 40  # 테스트가 줄여 거는 카드 버튼 툴팁 지연(ms) — 제품 값 600을 기다리지 않는다
+
+
+@pytest.fixture
+def _short_tip_delay(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """카드 버튼 툴팁 지연을 `TEST_TIP_DELAY_MS`로 줄이고, 앞뒤로 말풍선을 닫는다."""
+    monkeypatch.setattr(tip_bubble, "HOVER_TIP_DELAY_MS", TEST_TIP_DELAY_MS)
+    tip_bubble.hide_tip()
+    yield
+    tip_bubble.hide_tip()
+
+
+def _bubble_shown() -> bool:
+    bubble = tip_bubble.current_bubble()
+    return bubble is not None and bubble.isVisible()
 
 
 def _unverified_card(tmp_path: Path, state: DownloadState) -> ContentItemWidget:
@@ -482,6 +498,84 @@ class TestNoInfoTip:
         resize_to(card, card_helpers.ROOMY_WIDTH)
         assert card.fileSizeLabel.isVisible(), "전제: 정보 글이 보인다"
         assert card.fileSizeLabel.toolTip() == ""
+
+
+@pytest.mark.usefixtures("_short_tip_delay")
+class TestCardButtonTipDelay:
+    """카드 버튼 툴팁은 `HOVER_TIP_DELAY_MS` 머문 뒤에만 뜬다 — 헤더바는 바로(오너 2026-11-15)."""
+
+    def test_card_button_tip_shows_only_after_the_delay(self, qtbot: QtBot, tmp_path: Path) -> None:
+        """카드 버튼에 들어가면 말풍선이 바로 뜨지 않고 지연 뒤에 그 버튼 이름으로 떠야 한다.
+
+        지연 40ms · 대기 카드 들어감 · ✎ 들어감
+        -> 들어감 직후 말풍선 없음 · 기다리는 위젯 = ✎, 지연 뒤 말풍선 "Edit"(✎ 대상)
+        """
+        item = _make_item(str(tmp_path))
+        win = open_window(tmp_path, item)
+        card = _hovered_card(win, item)
+        enter(card.editButton)
+        assert not _bubble_shown()
+        assert tip_bubble.tip_filter().pending() is card.editButton
+        qtbot.waitUntil(
+            lambda: card_helpers.bubble_text_for(card.editButton) == "Edit", timeout=2000
+        )
+
+    def test_leaving_before_the_delay_shows_nothing(self, qtbot: QtBot, tmp_path: Path) -> None:
+        """지연 전에 카드 버튼에서 나가면 지연이 지나도 말풍선이 뜨지 않아야 한다.
+
+        지연 40ms · 대기 카드 들어감 · ✎ 들어감 · 바로 나감 · 지연의 세 배를 기다림
+        -> 기다리는 위젯 없음, 말풍선 없음
+        다시 ✎ 들어감 -> 지연 뒤 말풍선 "Edit"(말풍선이 뜨는 상태임을 확인)
+        """
+        item = _make_item(str(tmp_path))
+        win = open_window(tmp_path, item)
+        card = _hovered_card(win, item)
+        enter(card.editButton)
+        card_helpers.leave(card.editButton)
+        assert tip_bubble.tip_filter().pending() is None
+        qtbot.wait(3 * TEST_TIP_DELAY_MS)
+        assert not _bubble_shown()
+        enter(card.editButton)
+        qtbot.waitUntil(
+            lambda: card_helpers.bubble_text_for(card.editButton) == "Edit", timeout=2000
+        )
+
+    def test_moving_to_another_button_waits_again(self, qtbot: QtBot, tmp_path: Path) -> None:
+        """말풍선이 떠 있는 카드 버튼에서 옆 버튼으로 옮기면 지연을 다시 기다린 뒤 새 이름으로 떠야 한다.
+
+        지연 40ms · 대기 카드 · ✎ 들어감 → 말풍선 "Edit" · ✎ 나감 · ✕ 들어감
+        -> 들어감 직후 말풍선 없음 · 기다리는 위젯 = ✕, 지연 뒤 말풍선 "Delete"(✕ 대상)
+        """
+        item = _make_item(str(tmp_path))
+        win = open_window(tmp_path, item)
+        card = _hovered_card(win, item)
+        enter(card.editButton)
+        qtbot.waitUntil(
+            lambda: card_helpers.bubble_text_for(card.editButton) == "Edit", timeout=2000
+        )
+        card_helpers.leave(card.editButton)
+        enter(card.deleteButton)
+        assert not _bubble_shown()
+        assert tip_bubble.tip_filter().pending() is card.deleteButton
+        qtbot.waitUntil(
+            lambda: card_helpers.bubble_text_for(card.deleteButton) == "Delete", timeout=2000
+        )
+
+    def test_header_button_tip_shows_at_once(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """헤더바 버튼의 툴팁은 카드 버튼 지연과 무관하게 들어가자마자 떠야 한다.
+
+        카드 버튼 지연 10000ms · 등록 버튼(툴팁 있음) 들어감
+        -> 들어감 직후 말풍선 = 등록 버튼 툴팁, 기다리는 위젯 없음
+        """
+        monkeypatch.setattr(tip_bubble, "HOVER_TIP_DELAY_MS", 10_000)
+        win = open_window(tmp_path)
+        button = win.fetchButton
+        assert button.isVisible() and button.toolTip(), "전제: 등록 버튼이 보이고 툴팁이 있다"
+        enter(button)
+        assert card_helpers.bubble_text_for(button) == button.toolTip()
+        assert tip_bubble.tip_filter().pending() is None
 
 
 # ---- 구간 편집 버튼(✂) (#599) ----
