@@ -119,6 +119,10 @@
         <translation>Couldn&apos;t check this resolution&apos;s length. Open the section editor to retry.</translation>
     </message>
     <message>
+        <source>and {0} more</source>
+        <translation>and {0} more</translation>
+    </message>
+    <message>
         <source>Preparing</source>
         <translation>Preparing</translation>
     </message>

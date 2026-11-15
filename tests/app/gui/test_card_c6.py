@@ -6,6 +6,7 @@
 기대값은 손으로 계산한 값이다 — 제품의 표기 함수로 만들지 않는다.
 """
 
+from fractions import Fraction
 from pathlib import Path
 
 import pytest
@@ -14,12 +15,14 @@ from PySide6.QtCore import QEvent, QPoint, QPointF, Qt, QVariantAnimation
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QAbstractSlider, QApplication, QWidget
 
-from app.viewmodels.data import ContentItem
+from app.viewmodels.data import SECTION_CHECK_UNVERIFIED, ContentItem
 from app.views.mainWindow import VodDownloader
 from app.widgets import step_scroll
 from app.widgets.widget import ContentItemWidget
 from core.models.download_state import DownloadState
+from core.models.plan import TimeRange
 from tests.app.gui import card_helpers
+from tests.app.gui.card_helpers import resize_to, shown, unfold
 from tests.app.gui.test_section_editor import (  # noqa: F401 — 픽스처는 이름으로 쓴다
     _apply_production_qss,
     _destroy_windows,
@@ -399,3 +402,84 @@ class TestListScroll:
         win.resize(win.width(), win.height() - 53)
         _pump()
         assert bar.value() == 3 * CELL
+
+
+# ---- 정보 글 툴팁 (#599) ----
+
+# 구간 넷 — 60fps에서 프레임 경계인 시각(초). ①과 ②가 겹친다
+TIP_SECTIONS = (
+    TimeRange(0.0, 60.0),
+    TimeRange(30.0, 90.0),
+    TimeRange(120.0, 130.0),
+    TimeRange(200.0, 210.0),
+)
+# TIP_SECTIONS 카드 툴팁의 구간 줄 — 3줄 + 「외 1개」, 겹친 ① · ②는 줄 끝에 「· overlap」
+TIP_LINES = [
+    "1 · 00:00:00:00 ~ 00:01:00:00 · 00:01:00:00 · overlap",
+    "2 · 00:00:30:00 ~ 00:01:30:00 · 00:01:00:00 · overlap",
+    "3 · 00:02:00:00 ~ 00:02:10:00 · 00:00:10:00",
+    "and 1 more",
+]
+# 길이를 확인하지 못한 구간 카드의 경고 전문(section_check UNVERIFIED)
+UNVERIFIED = "Couldn't check this resolution's length. Open the section editor to retry."
+
+
+def _tip_card(tmp_path: Path, state: DownloadState) -> ContentItemWidget:
+    """TIP_SECTIONS(60fps)를 든, 길이를 확인하지 못한 구간 카드 하나를 띄운다."""
+    item = _make_item(str(tmp_path))
+    item.selections = TIP_SECTIONS
+    item.section_frame_rate = Fraction(60)
+    item.section_check = SECTION_CHECK_UNVERIFIED
+    item.downloadState = state
+    card = ContentItemWidget(item, 0)
+    card.loadRepresentations()
+    card.setData(item, 0)
+    return card
+
+
+class TestInfoTip:
+    """정보 글 툴팁 차례 — (잘렸으면 전체 정보 글) → 구간 줄 → 경고(대기 카드만)."""
+
+    def test_unelided_info_tip_is_section_lines_then_the_warning(self, tmp_path: Path) -> None:
+        """정보 글이 다 보이는 대기 구간 카드의 툴팁은 구간 줄 뒤에 경고여야 한다.
+
+        구간 넷(① · ② 겹침) · 길이 미확인 · 3줄이 접히지 않는 가장 좁은 폭
+        -> 툴팁의 줄 == TIP_LINES + [UNVERIFIED]
+        """
+        card = _tip_card(tmp_path, DownloadState.WAITING)
+        unfold(card)
+        info = card.fileSizeLabel
+        assert info.isVisible(), "전제: 정보 글이 보인다"
+        assert info.toolTip().split("\n") == TIP_LINES + [UNVERIFIED]
+
+    def test_elided_info_tip_starts_with_the_whole_info_text(self, tmp_path: Path) -> None:
+        """정보 글이 접혀 줄어든 대기 구간 카드의 툴팁은 전체 정보 글 → 구간 줄 → 경고 차례여야 한다.
+
+        구간 넷 · 길이 미확인 · 접히지 않는 가장 좁은 폭에서 본 정보 글 = 전체, 그 폭 − 1
+        -> 보이는 정보 글 ≠ 전체, 툴팁의 줄 == [전체] + TIP_LINES + [UNVERIFIED]
+        """
+        card = _tip_card(tmp_path, DownloadState.WAITING)
+        width = unfold(card)
+        full = shown(card.fileSizeLabel)
+        resize_to(card, width - 1)
+        info = card.fileSizeLabel
+        assert info.isVisible(), "전제: 정보 글이 보인다"
+        assert shown(info) != full, "전제: 정보 글이 접혀 줄었다"
+        assert info.toolTip().split("\n") == [full] + TIP_LINES + [UNVERIFIED]
+
+    @pytest.mark.parametrize(
+        "state", [DownloadState.RUNNING, DownloadState.PAUSED, DownloadState.FINISHED]
+    )
+    def test_cards_past_waiting_show_section_lines_without_the_warning(
+        self, tmp_path: Path, state: DownloadState
+    ) -> None:
+        """대기가 아닌 구간 카드의 툴팁에는 구간 줄만 있고 경고가 없어야 한다.
+
+        구간 넷 · 길이 미확인 · 받는 중 / 일시정지 / 완료 · 넓은 폭
+        -> 툴팁 줄에 TIP_LINES가 이 차례로 있고, UNVERIFIED는 없다
+        """
+        card = _tip_card(tmp_path, state)
+        resize_to(card, card_helpers.ROOMY_WIDTH)
+        lines = card.fileSizeLabel.toolTip().split("\n")
+        assert lines[-len(TIP_LINES) :] == TIP_LINES
+        assert UNVERIFIED not in lines

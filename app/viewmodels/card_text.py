@@ -11,6 +11,7 @@
 import math
 import os
 from dataclasses import dataclass
+from fractions import Fraction
 
 from PySide6.QtCore import QCoreApplication
 
@@ -23,6 +24,13 @@ from app.viewmodels.data import (
 from app.viewmodels.item_state import ItemState
 from app.viewmodels.section_edit import format_fps
 from core.models.download_state import DownloadState
+from core.sections.timecode import (
+    FrameRate,
+    format_milliseconds,
+    format_timecode,
+    frame_index,
+    frame_rate,
+)
 
 # 3행 슬롯 텍스트의 상태 접두(완료/실패 표시). 텍스트 안에 들어가는 글자라
 # 폰트 문자를 쓴다 — 둘 다 기본 문장부호 블록(Dingbats)의 흔한 글리프다.
@@ -36,6 +44,10 @@ STATE_ICON = {
 # 두 구간이 이만큼(초) 넘게 겹쳐야 겹침으로 본다 — 1ms.
 # 가장 짧은 프레임(120fps ≈ 8.3ms)보다 훨씬 짧고, 소수 초 덧셈의 오차보다는 훨씬 길다
 OVERLAP_SLACK = 0.001
+
+# 정보 글 툴팁에 적는 구간 줄의 최대 수 — 넘으면 「외 N개」 한 줄로 끝낸다. 툴팁이 카드 목록을 많이
+# 가리지 않게(오너 2026-11-15, #599). 나머지 구간은 구간 창에서 본다
+SECTION_TIP_ROWS = 3
 
 # 3줄 접는 단계의 끝 — 0이 가장 넓은 모양이다(#554, 설계 §3 「3행 상태 보호」 · 프로토 card.py 가 levelTexts).
 # 단계가 오를수록 이 차례로 뺀다: ⓪(1) 실패 사유 뒤 · 구간 알림 → ①(2) 저장 위치 이름 → 아이콘만 →
@@ -406,6 +418,45 @@ def section_lines(item: ContentItem) -> list[str]:
         f"{number}. {clock(s.start)} ~ {clock(s.end)} ({section_clock(max(s.end - s.start, 0.0))})"
         for number, s in enumerate(item.selections, 1)
     ]
+
+
+def _section_tip_span(start: float, end: float, fps: FrameRate | None) -> tuple[str, str]:
+    """구간 하나의 「시작 ~ 끝」과 길이 — 구간 창(#586)과 같은 표기.
+
+    프레임률을 알면 프레임 타임코드 ``HH:MM:SS:FF``이고, 길이는 구간 창처럼 시작 · 끝을 프레임 번호로 바꾼
+    차이다 — 두 곳이 같은 구간에 같은 길이를 적는다. 프레임률을 모르면(구간을 확인하기 전에 저장된
+    아이템) 밀리초 표기 ``HH:MM:SS.mmm``다.
+    """
+    if fps is None:
+        span = f"{format_milliseconds(start)} ~ {format_milliseconds(end)}"
+        return span, format_milliseconds(end - start)
+    frames = frame_index(end, fps) - frame_index(start, fps)
+    length = float(Fraction(frames) / frame_rate(fps))
+    span = f"{format_timecode(start, fps)} ~ {format_timecode(end, fps)}"
+    return span, format_timecode(length, fps)
+
+
+def section_tip_lines(item: ContentItem) -> list[str]:
+    """정보 글 툴팁의 구간 줄 — 「1 · 00:01:05:30 ~ 00:05:30:00 · 00:04:24:30」 (#599).
+
+    구간 차례로 `SECTION_TIP_ROWS`줄까지 적고, 넘으면 「외 N개」 한 줄로 끝낸다(오너 2026-11-15 「많이
+    가리지 않는 선에서」). 다른 구간과 겹치는 구간은 줄 끝에 「· 겹침」을 단다 — 정보 글의 「· 겹침」과
+    같은 말이고 같은 판정(`section_overlap_numbers`)이다. 구간이 없으면 빈 목록이다.
+    """
+    fps = getattr(item, "section_frame_rate", None)
+    overlapping = set(section_overlap_numbers(item))
+    marker = QCoreApplication.translate("ContentItemWidget", "overlap")
+    lines = []
+    for number, section in enumerate(item.selections[:SECTION_TIP_ROWS], 1):
+        span, length = _section_tip_span(section.start, max(section.end, section.start), fps)
+        line = f"{number} · {span} · {length}"
+        if number in overlapping:
+            line = f"{line} · {marker}"
+        lines.append(line)
+    rest = len(item.selections) - SECTION_TIP_ROWS
+    if rest > 0:
+        lines.append(QCoreApplication.translate("ContentItemWidget", "and {0} more").format(rest))
+    return lines
 
 
 def file_tail(resolution, tag: str, sections: int) -> str:

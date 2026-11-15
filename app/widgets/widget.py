@@ -1144,17 +1144,19 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         return self.thumbnailLabel.width() + self.bodyLayout.horizontalSpacing()
 
     def _infoTip(self, shown: str) -> str:
-        """정보 글의 툴팁 — 접혀 줄었으면 전체 글, 대기 구간 카드면 경고. 없으면 빈 글.
+        """정보 글의 툴팁 — (잘렸으면 전체 정보 글) → 구간 줄 → 경고 차례. 없으면 빈 글.
 
-        보이는 글을 그대로 되풀이하는 툴팁은 달지 않는다(#550). 툴팁에는 카드에서 잘려 안 보이는 것과
-        경고만 둔다(오너 2026-11-14 「툴팁 하나가 가리는 게 너무 많다」, #599) — 구간 길이의 합은 구간 창의
-        「합계」에서 본다.
+        보이는 글을 그대로 되풀이하는 툴팁은 달지 않는다(#550). 구간 카드면 구간 줄을 3줄까지 적는다
+        (`card_text.section_tip_lines`, 오너 2026-11-15). 경고는 대기 카드에만이다. 구간 길이의 합은 적지 않는다 —
+        구간 창의 「합계」에서 본다(오너 2026-11-14 「툴팁 하나가 가리는 게 너무 많다」, #599).
         """
         item = self.item
         full = self._levelTexts[0].size or "" if self._levelTexts else ""
         lines = [full] if full and shown != full else []
-        if card_text.section_count(item) and item.downloadState == DownloadState.WAITING:
-            lines.extend(card_text.section_notice_detail(item))
+        if card_text.section_count(item):
+            lines.extend(card_text.section_tip_lines(item))
+            if item.downloadState == DownloadState.WAITING:
+                lines.extend(card_text.section_notice_detail(item))
         return "\n".join(lines)
 
     # ---- 날짜 연도 — 목록 전체가 함께 정한다 (#554) ----

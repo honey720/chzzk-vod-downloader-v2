@@ -861,20 +861,20 @@ class TestTipBubbles:
         assert qt_tooltip_shown(label)
 
     def test_section_card_info_shows_its_tooltip_in_the_bubble(self, qapp) -> None:
-        """겹침 없는 구간 카드의 정보 글에 들어가면 툴팁이 없어 말풍선도 Qt 툴팁도 뜨지 않아야 한다.
+        """구간 카드에 호버하고 정보 글에 들어가면 그 툴팁이 말풍선으로 바로 뜨고 Qt 툴팁은 뜨지 않아야 한다.
 
         mp4 구간 둘(합 20:00) 대기 카드 · 카드 들어감 · 정보 글 들어감
-        -> 정보 글 툴팁 빈 글, 말풍선 없음, Qt 툴팁 안 뜸 (합 줄을 뺐다 — #599)
+        -> 말풍선 글 = 정보 글 툴팁(구간 줄 둘 — #599), Qt 툴팁 안 뜸
         """
         item_card = _card()
         item_card.item.selections = (TimeRange(0, 600), TimeRange(1200, 1800))
         item_card.setData(item_card.item, 0)
         QApplication.processEvents()
         info = item_card.fileSizeLabel
-        assert info.toolTip() == ""
+        assert len(info.toolTip().splitlines()) == 2
         enter(item_card)
         enter(info)
-        assert bubble_text_for(info) is None
+        assert bubble_text_for(info) == info.toolTip()
         assert not qt_tooltip_shown(info)
 
     def test_elided_title_shows_the_full_title_in_the_bubble(self, qapp) -> None:

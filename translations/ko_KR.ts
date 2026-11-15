@@ -119,6 +119,10 @@
         <translation>이 해상도의 길이를 확인하지 못했습니다. 구간 편집 창을 열면 다시 확인합니다.</translation>
     </message>
     <message>
+        <source>and {0} more</source>
+        <translation>외 {0}개</translation>
+    </message>
+    <message>
         <source>Preparing</source>
         <translation>준비 중</translation>
     </message>
