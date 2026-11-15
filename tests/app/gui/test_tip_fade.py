@@ -15,7 +15,7 @@ from PySide6.QtWidgets import QApplication, QHBoxLayout, QLineEdit, QPushButton,
 import app.viewmodels.card_display as card_display
 from app.widgets import tip_bubble
 from app.widgets.tip_bubble import ErrorTip, TipBubble, install_tips
-from tests.app.gui.card_helpers import enter, leave, shows_at_delay_end
+from tests.app.gui.card_helpers import enter, leave, send_enter, shows_at_delay_end
 
 FADE_IN_MS = 60  # 테스트가 거는 나타남 시간(ms)
 FADE_OUT_MS = 40  # 테스트가 거는 닫힘 시간(ms)
@@ -174,7 +174,7 @@ def test_delayed_tip_fades_in_after_the_delay(qtbot: QtBot, buttons) -> None:
     first, _second = buttons
     first.setProperty("tipDelayed", True)
     with shows_at_delay_end() as shows:
-        enter(first)
+        send_enter(first)
         bubble = tip_bubble.current_bubble()
         assert bubble is None or not bubble.isVisible()
         assert tip_bubble.tip_filter().pending() is first

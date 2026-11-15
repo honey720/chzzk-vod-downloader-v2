@@ -554,7 +554,7 @@ class TestCardButtonTipDelay:
         item = _make_item(str(tmp_path))
         win = open_window(tmp_path, item)
         card = _hovered_card(win, item)
-        enter(card.editButton)
+        card_helpers.send_enter(card.editButton)
         assert not _bubble_shown()
         assert tip_bubble.tip_filter().pending() is card.editButton
         qtbot.waitUntil(
@@ -571,7 +571,7 @@ class TestCardButtonTipDelay:
         item = _make_item(str(tmp_path))
         win = open_window(tmp_path, item)
         card = _hovered_card(win, item)
-        enter(card.editButton)
+        card_helpers.send_enter(card.editButton)
         card_helpers.leave(card.editButton)
         assert tip_bubble.tip_filter().pending() is None
         qtbot.wait(3 * TEST_TIP_DELAY_MS)
@@ -595,7 +595,7 @@ class TestCardButtonTipDelay:
             lambda: card_helpers.bubble_text_for(card.editButton) == "Edit", timeout=2000
         )
         card_helpers.leave(card.editButton)
-        enter(card.deleteButton)
+        card_helpers.send_enter(card.deleteButton)
         assert not _bubble_shown()
         assert tip_bubble.tip_filter().pending() is card.deleteButton
         qtbot.waitUntil(
@@ -668,7 +668,7 @@ class TestCardTextTipDelay:
         -> 들어감 직후 말풍선 없음 · 기다리는 위젯 = 그 글, 지연 뒤 말풍선 = 그 글의 툴팁
         """
         _win, _card, label = _text_tip_card(tmp_path, which)
-        enter(label)
+        card_helpers.send_enter(label)
         assert not _bubble_shown()
         assert tip_bubble.tip_filter().pending() is label
         qtbot.waitUntil(
@@ -688,7 +688,7 @@ class TestCardTextTipDelay:
         win.activateWindow()
         qtbot.waitUntil(win.isActiveWindow, timeout=3000)
         card = _hovered_card(win, item)
-        enter(card.editButton)
+        card_helpers.send_enter(card.editButton)
         assert tip_bubble.tip_filter().pending() is card.editButton, "전제: ✎를 기다린다"
         other = QWidget()
         other.resize(120, 80)
