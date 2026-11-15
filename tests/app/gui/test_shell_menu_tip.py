@@ -492,15 +492,15 @@ def _inked(widget: QWidget, rect: QRect, color: str) -> int:
 
 
 def test_the_menu_bar_has_the_bar_face_and_a_bottom_line(window: VodDownloader) -> None:
-    """메뉴바는 높이 = 안쪽 여백 위아래 + 바 컨트롤 + 경계선 1, 빈 자리는 바 면, 맨 아래 줄은 테두리 색이어야 한다.
+    """메뉴바는 높이 = 안쪽 여백 위아래 + 바 컨트롤이고 맨 아래 줄까지 바 면이어야 한다 — 헤더바와 한 덩어리(#611).
 
-    barPadY 8 · barControl 32 -> 높이 49, 오른쪽 빈 자리 = surface, 맨 아래 줄 = border
+    barPadY 8 · barControl 32 -> 높이 48, 가운데 빈 자리 = surface, 맨 아래 줄 = surface(경계선 없음)
     """
     bar = window.appMenuBar
     tokens = theme.current_tokens()
-    assert bar.height() == 2 * theme.METRICS["barPadY"] + theme.METRICS["barControl"] + 1
-    assert _close(_pixel(bar, bar.width() - 4, bar.height() // 2), tokens["surface"])
-    assert _close(_pixel(bar, bar.width() // 2, bar.height() - 1), tokens["border"])
+    assert bar.height() == 2 * theme.METRICS["barPadY"] + theme.METRICS["barControl"]
+    assert _close(_pixel(bar, bar.width() // 2, bar.height() // 2), tokens["surface"])
+    assert _close(_pixel(bar, bar.width() // 2, bar.height() - 1), tokens["surface"])
 
 
 def test_the_header_bar_is_two_rows_high_with_a_bottom_line(window: VodDownloader) -> None:

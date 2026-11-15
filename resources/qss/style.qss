@@ -58,7 +58,8 @@ QToolTip {
 
 /* ---------- 상·하단 패널 ---------- */
 
-/* 바는 창 끝까지 — 모서리 없이, 목록 쪽 한 줄만 경계선(#536 — 설계 §11.1, 프로토 11b .bar · .hdr · .foot).
+/* 바는 창 끝까지 — 모서리 없이, 목록 쪽 한 줄만 경계선(#536 — 설계 §11.1, 프로토 11b .bar · .hdr · .foot). 헤더바 아래 ·
+ * 하단바 위 선은 카드 행 사이 구분선과 같은 선이다(설계 §13, #611).
  * 안쪽 여백은 QSS padding이 아니라 레이아웃 마진(theme.METRICS["outerMargin"] · ["barPadY"],
  * app/views/mainWindow.py::_applyLayoutMetrics가 런타임에 건다)이 준다 — 바 안 내용 끝과
  * 카드 바깥 끝이 같은 두 선에 놓이게 하기 위해서다. */
@@ -455,13 +456,13 @@ QWidget#selectBar QPushButton#selectCheck {
     border: none;
 }
 
-/* 메뉴바(#536 — 설계 §12.1 「셸 모양은 프로토대로」, 프로토 11b · 11k): 바 면 + 아래 경계선. 고른 메뉴는 버튼 면 ·
+/* 메뉴바(#536 — 설계 §12.1 「셸 모양은 프로토대로」, 프로토 11b · 11k): 바 면만 — 아래 경계선은 두지 않는다. 메뉴바와
+ * 헤더바는 같은 바 면 한 덩어리이고, 바 ↔ 목록 경계는 헤더바 아래 선 하나다(설계 §13, #611). 고른 메뉴는 버튼 면 ·
  * 굵은 글(속성 on — :checked 글꼴은 크기 힌트에 들지 않는다), 고르지 않은 메뉴는 면 · 테두리 없는 흐린 글. 평소에도
  * 투명 테두리 1px — 호버 · 초점 때 크기가 바뀌지 않는다. 상태는 셸 바 규칙 그대로 */
 QFrame#appMenuBar {
     background-color: @surface;
     border: none;
-    border-bottom: 1px solid @border;
     border-radius: 0px;
 }
 

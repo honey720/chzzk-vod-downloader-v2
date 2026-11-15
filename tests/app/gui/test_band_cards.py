@@ -191,3 +191,26 @@ class TestBandRows:
         middle = rect.top() + ROW // 2
         assert _is(_pixel(image, rect.left(), middle), token)
         assert _is(_pixel(image, rect.right(), middle), token)
+
+
+class TestBarLines:
+    """바 ↔ 목록 경계는 헤더바 아래 · 하단바 위 선 한 줄씩, 메뉴바 ↔ 헤더바 사이는 선 없음(설계 §13)."""
+
+    def test_header_bottom_and_footer_top_are_lines_and_the_menu_bar_has_none(self, window) -> None:
+        """헤더바 맨 아래 줄 · 하단바 맨 위 줄은 border, 메뉴바 맨 아래 줄은 바 면이어야 한다.
+
+        대기 카드 둘, 창 폭 900 -> 헤더바 아래 줄 ≈ border, 하단바 위 줄 ≈ border, 메뉴바 아래 줄 ≈ surface,
+        첫 행 윗선 = 헤더바 아래 끝 + 1(목록 위 여백 0)
+        """
+        win = window(DownloadState.WAITING, DownloadState.WAITING)
+        image = win.grab().toImage()
+        x = win.width() // 2
+        header, footer, menu = (
+            _rect(win, win.headerFrame),
+            _rect(win, win.infoFrame),
+            _rect(win, win.appMenuBar),
+        )
+        assert _is(_pixel(image, x, header.bottom()), "border")
+        assert _is(_pixel(image, x, footer.top()), "border")
+        assert _is(_pixel(image, x, menu.bottom()), "surface")
+        assert _rect(win, _card(win, 0)).top() == header.bottom() + 1
