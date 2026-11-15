@@ -214,3 +214,62 @@ class TestBarLines:
         assert _is(_pixel(image, x, footer.top()), "border")
         assert _is(_pixel(image, x, menu.bottom()), "surface")
         assert _rect(win, _card(win, 0)).top() == header.bottom() + 1
+
+
+BAR_BUTTONS = ["saveLocationButton", "fetchButton", "selectButton", "stopButton"]
+
+
+class TestBarButtons:
+    """바 버튼은 한 규칙 — 평소 면 · 테두리 없음, 호버 때 면, 테두리는 URL 입력칸만(설계 §13)."""
+
+    @pytest.mark.parametrize("name", BAR_BUTTONS)
+    def test_bar_button_has_no_face_or_border_at_rest(self, window, name: str) -> None:
+        """평소의 바 버튼은 위 가장자리 · 왼쪽 안쪽 화소가 바 면 그대로여야 한다(테두리 · 면 없음).
+
+        대기 카드 하나(■ 켬 — 받는 중 아님이라 꺼진 모양도 같은 규칙), 창 폭 900 -> 버튼 위 가장자리 가운데 ·
+        왼쪽 안쪽 3px 자리 ≈ surface
+        """
+        win = window(DownloadState.WAITING)
+        button = getattr(win, name)
+        assert button.isVisible(), "전제: 버튼이 보인다"
+        rect = _rect(win, button)
+        image = win.grab().toImage()
+        assert _is(_pixel(image, rect.center().x(), rect.top()), "surface")
+        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surface")
+
+    @pytest.mark.parametrize("name", BAR_BUTTONS[:3])
+    def test_bar_button_shows_the_hover_face(self, window, name: str) -> None:
+        """포인터가 바 버튼 위에 오면 버튼 면이 surfaceHover여야 한다(테두리는 없음).
+
+        창에 합성 포인터 이동(버튼 가운데) -> 버튼 왼쪽 안쪽 3px 자리 ≈ surfaceHover, 위 가장자리 안쪽 2px 가운데 ≈
+        surfaceHover(가장자리 줄은 둥근 면의 안티에일리어싱이 섞인다)
+        """
+        from PySide6.QtTest import QTest
+
+        win = window(DownloadState.WAITING)
+        win.urlInput.setText(
+            "https://chzzk.naver.com/video/1"
+        )  # 등록 버튼이 켜진다(빈 칸이면 꺼짐)
+        _pump()
+        button = getattr(win, name)
+        assert button.isEnabled(), "전제: 버튼이 켜져 있다"
+        rect = _rect(win, button)
+        QTest.mouseMove(win.windowHandle(), rect.center())
+        _pump()
+        assert button.underMouse(), "전제: 포인터가 버튼 위다"
+        image = win.grab().toImage()
+        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surfaceHover")
+        assert _is(_pixel(image, rect.center().x(), rect.top() + 2), "surfaceHover")
+
+    def test_only_the_url_input_has_a_border(self, window) -> None:
+        """헤더 컨트롤 가운데 테두리가 보이는 것은 URL 입력칸 하나여야 한다.
+
+        창 폭 900 -> URL 칸 위 가장자리 가운데 ≈ border, 저장 위치 · 등록 · 선택 · 정렬 버튼의 위 가장자리 ≈ surface
+        """
+        win = window(DownloadState.WAITING)
+        image = win.grab().toImage()
+        url = _rect(win, win.urlInput)
+        assert _is(_pixel(image, url.center().x(), url.top()), "border")
+        for button in (win.saveLocationButton, win.fetchButton, win.selectButton, win.sortButton):
+            rect = _rect(win, button)
+            assert _is(_pixel(image, rect.center().x(), rect.top()), "surface"), button.objectName()

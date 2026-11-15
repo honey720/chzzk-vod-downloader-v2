@@ -388,8 +388,9 @@ QPushButton[role="subtle"]:disabled {
 /* ---------- 셸 바 컨트롤 모양 · 상태 (#536 — 설계 §11.3 · §11.5 · §11.7) ----------
  * 메뉴바 · 헤더바 · 하단바 안의 컨트롤만 — 설정 창 · 편집 창은 설정 메뉴 단계에서 맞춘다.
  * 높이(@barControl)는 코드가 건다(mainWindow._applyBarControls). 모서리는 컨트롤 반경, 칩도 같다.
- * 상태는 모든 바 컨트롤이 같은 규칙: 호버 = 바탕 surfaceHover · 테두리 borderStrong, 눌림 = surfacePressed ·
- * borderStrong, 키보드 초점 = 테두리 강조색, 꺼짐 = 바탕 surface · 글 textDisabled · 테두리 border.
+ * 버튼은 한 규칙(설계 §13, #611): 평소 면 · 테두리 없음, 호버 = 면 surfaceHover, 눌림 = 면 surfacePressed, 고른 칩 ·
+ * 고른 메뉴 · 켠 선택 버튼 = 면 surfaceAlt(테두리 없음), 키보드 초점 = 테두리 강조색. 테두리가 늘 보이는 것은 URL 입력칸
+ * 하나다. 주 동작(▶ · ‖ — 다운로드 버튼)은 강조색 채움 그대로다.
  * 초점은 키보드로만 받는다(초점 정책 Tab — 마우스로 누른 뒤 테두리가 남지 않는다). */
 QFrame#appMenuBar QPushButton,
 QFrame#headerFrame QPushButton,
@@ -399,14 +400,69 @@ QFrame#infoFrame QPushButton {
     border-radius: @controlRadius;
 }
 
-/* 선택 버튼(#561) — 선택 모드 안에서는 눌린 모양(다시 누르면 나온다). 도형은 IconButton이 그린다 */
+/* 바 버튼 평소 · 호버 · 눌림 · 꺼짐(#611) — 투명 테두리 1px는 자리만 잡는다(focus ring 테두리가 켜져도 크기가 같다) */
+QFrame#appMenuBar QPushButton,
+QFrame#headerFrame QPushButton,
+QFrame#headerFrame QToolButton[role="drop"],
+QFrame#infoFrame QPushButton {
+    background-color: transparent;
+    border: 1px solid transparent;
+}
+
+QFrame#appMenuBar QPushButton:hover,
+QFrame#headerFrame QPushButton:hover,
+QFrame#headerFrame QToolButton[role="drop"]:hover,
+QFrame#infoFrame QPushButton:hover {
+    background-color: @surfaceHover;
+    border-color: transparent;
+}
+
+QFrame#appMenuBar QPushButton:pressed,
+QFrame#headerFrame QPushButton:pressed,
+QFrame#headerFrame QToolButton[role="drop"]:pressed,
+QFrame#headerFrame QToolButton[role="drop"]:open,
+QFrame#infoFrame QPushButton:pressed {
+    background-color: @surfacePressed;
+    border-color: transparent;
+}
+
+QFrame#appMenuBar QPushButton:disabled,
+QFrame#headerFrame QPushButton:disabled,
+QFrame#headerFrame QToolButton[role="drop"]:disabled,
+QFrame#infoFrame QPushButton:disabled {
+    background-color: transparent;
+    border-color: transparent;
+}
+
+/* 주 동작(▶ · ‖) — 강조색 채움 그대로(위 바 버튼 규칙보다 구체적으로 다시 건다) */
+QFrame#infoFrame QPushButton#downloadButton {
+    background-color: @accent;
+    border-color: @accent;
+}
+
+QFrame#infoFrame QPushButton#downloadButton:hover {
+    background-color: @accentHover;
+    border-color: @accentHover;
+}
+
+QFrame#infoFrame QPushButton#downloadButton:pressed {
+    background-color: @accentPressed;
+    border-color: @accentPressed;
+}
+
+QFrame#infoFrame QPushButton#downloadButton:disabled {
+    background-color: @surface;
+    border-color: @border;
+}
+
+/* 선택 버튼(#561) — 선택 모드 안에서는 켠 모양(면 surfaceAlt, 테두리 없음 — #611). 도형은 IconButton이 그린다 */
 QFrame#headerFrame QPushButton#selectButton {
     padding: 0px;
 }
 
 QFrame#headerFrame QPushButton#selectButton[on="true"] {
-    background-color: @surfacePressed;
-    border-color: @borderStrong;
+    background-color: @surfaceAlt;
+    border-color: transparent;
 }
 
 /* 눌린 모양 규칙이 초점 규칙보다 구체적이라 초점 테두리를 덮는다 — 그 뒤에 다시 건다 */
@@ -478,19 +534,19 @@ QFrame#appMenuBar QPushButton[role="menu"][on="true"] {
 
 QFrame#appMenuBar QPushButton[role="menu"]:checked {
     background-color: @surfaceAlt;
-    border-color: @border;
+    border-color: transparent;
     color: @text;
 }
 
 QFrame#appMenuBar QPushButton[role="menu"]:hover {
     background-color: @surfaceHover;
-    border-color: @borderStrong;
+    border-color: transparent;
     color: @text;
 }
 
 QFrame#appMenuBar QPushButton[role="menu"]:pressed {
     background-color: @surfacePressed;
-    border-color: @borderStrong;
+    border-color: transparent;
     color: @text;
 }
 
@@ -498,8 +554,8 @@ QFrame#appMenuBar QPushButton[role="menu"]:focus {
     border-color: @accent;
 }
 
-/* 상태 필터 칩(#536 — 설계 §12.1, 프로토 11k): 고른 칩 = 바 면 + 테두리(강조색 채움 아님 — 채운 강조 버튼은
- * 다운로드 하나, §11.6), 나머지 = 면 · 테두리 없는 글(투명 테두리 1px로 자리만). 실패 칩 글은 실패 색 — 고른 칩 ·
+/* 상태 필터 칩(#536 · #611 — 설계 §13): 고른 칩 = 면 surfaceAlt만(테두리 없음, 강조색 채움 아님 — 채운 강조 버튼은
+ * 다운로드 하나), 나머지 = 면 · 테두리 없는 글(투명 테두리 1px로 자리만). 실패 칩 글은 실패 색 — 고른 칩 ·
  * 호버에서도(아래 [alert] 규칙을 상태 규칙 뒤에 둔다) */
 QFrame#headerFrame QPushButton[role="filter"] {
     background-color: transparent;
@@ -507,20 +563,20 @@ QFrame#headerFrame QPushButton[role="filter"] {
 }
 
 QFrame#headerFrame QPushButton[role="filter"]:checked {
-    background-color: @surface;
-    border-color: @border;
+    background-color: @surfaceAlt;
+    border-color: transparent;
     color: @text;
 }
 
 QFrame#headerFrame QPushButton[role="filter"]:hover {
     background-color: @surfaceHover;
-    border-color: @borderStrong;
+    border-color: transparent;
     color: @text;
 }
 
 QFrame#headerFrame QPushButton[role="filter"]:pressed {
     background-color: @surfacePressed;
-    border-color: @borderStrong;
+    border-color: transparent;
 }
 
 QFrame#headerFrame QPushButton[role="filter"]:focus {

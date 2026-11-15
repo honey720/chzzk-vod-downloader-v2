@@ -538,15 +538,15 @@ def test_the_selected_menu_keeps_its_face_and_bold_text(window: VodDownloader) -
 def test_the_chosen_chip_has_the_bar_face_and_a_border_and_no_accent_fill(
     window: VodDownloader,
 ) -> None:
-    """고른 칩(전체)은 바 면 + 테두리, 고르지 않은 칩(대기)은 면 · 테두리 없이 바 면이고 칩 줄에 강조색이 없어야 한다."""
+    """고른 칩(전체)은 면 surfaceAlt만(테두리 없음), 고르지 않은 칩(대기)은 면 · 테두리 없이 바 면이고 칩 줄에 강조색이 없어야 한다(#611)."""
     tokens = theme.current_tokens()
     window.resize(window.minimumWidth() + 900, 600)  # 칩 모양이 보이는 폭
     _pump()
     chosen, other = window.filterChips["all"], window.filterChips["waiting"]
     assert chosen.isVisible() and other.isVisible(), "전제: 칩 모양"
     assert chosen.isChecked() and not other.isChecked()
-    assert _close(_pixel(chosen, 3, chosen.height() // 2), tokens["surface"])
-    assert _close(_pixel(chosen, chosen.width() // 2, 0), tokens["border"])
+    assert _close(_pixel(chosen, 3, chosen.height() // 2), tokens["surfaceAlt"])
+    assert _close(_pixel(chosen, chosen.width() // 2, 0), tokens["surfaceAlt"])
     assert _close(_pixel(other, other.width() // 2, 0), tokens["surface"])
     assert _close(_pixel(other, 3, other.height() // 2), tokens["surface"])
     bar = window.filterChipBar

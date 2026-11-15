@@ -392,7 +392,8 @@ class TestFaultInjection:
         stale = _differences(fresh, switched)
         assert "card[running].progressBar" in stale  # [state="running"] 진행바 색
         assert "card[running].frame" in stale  # 카드 배경(#contentFrame)
-        assert "header.fetchButton" in stale  # 버튼 QSS
+        # 입력칸 QSS — 바 버튼은 평소 면 · 테두리가 없어 그 자체로는 안 바뀐다(#611)
+        assert "header.urlInput" in stale
 
     def test_skipping_the_palette_leaves_palette_driven_parts_stale(self, qapp, qtbot) -> None:
         def apply_without_palette(scheme) -> None:
