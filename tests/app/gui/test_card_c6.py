@@ -753,28 +753,13 @@ AFTER_TEXT_DELAY_MS = (
 )
 
 
-def _record_show(monkeypatch: pytest.MonkeyPatch) -> list[tuple[QWidget, bool, float, bool]]:
-    """`show_tip`을 감싸, 말풍선을 띄운 바로 그때의 (대상, 보임, 불투명도, 페이드 있음)을 적는 목록을 돌려준다."""
-    shows: list[tuple[QWidget, bool, float, bool]] = []
-    show_tip = tip_bubble.show_tip
-
-    def show_and_record(target: QWidget, text: str, rect=None) -> None:
-        show_tip(target, text, rect)
-        bubble = tip_bubble.current_bubble()
-        assert bubble is not None
-        shows.append((target, bubble.isVisible(), bubble.opacity(), bubble.fade() is not None))
-
-    monkeypatch.setattr(tip_bubble, "show_tip", show_and_record)
-    return shows
-
-
 @pytest.mark.usefixtures("_default_delay_with_fade")
 class TestCardTextTipsAfterDelay:
     """기본값에서 카드 글 툴팁은 600ms 머문 뒤 페이드로 나타나고, 잘리지 않은 제목에는 없다(오너 2026-11-15, #610)."""
 
     @pytest.mark.parametrize("which", ["title", "channel", "status", "directory"])
     def test_card_text_tip_fades_in_after_the_text_delay(
-        self, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, which: str
+        self, qtbot: QtBot, tmp_path: Path, which: str
     ) -> None:
         """기본 지연에서 카드 글에 들어가면 300ms 동안 말풍선이 없고, 그 뒤 투명에서 그 글의 툴팁으로 떠야 한다.
 
@@ -783,13 +768,13 @@ class TestCardTextTipsAfterDelay:
         띄운 바로 그때 대상 = 그 글 · 보임 · 불투명도 0 · 페이드 있음, 페이드 뒤 불투명도 1 · 말풍선 글 = 그 글의 툴팁
         """
         _win, _card, label = _text_tip_card(tmp_path, which)
-        shows = _record_show(monkeypatch)
-        card_helpers.send_enter(label)
-        assert tip_bubble.tip_filter().pending() is label
-        qtbot.wait(BEFORE_TEXT_DELAY_MS)
-        assert not _bubble_shown() and shows == []
-        assert tip_bubble.tip_filter().pending() is label
-        qtbot.waitUntil(lambda: bool(shows), timeout=3000)
+        with card_helpers.shows_at_delay_end() as shows:
+            card_helpers.send_enter(label)
+            assert tip_bubble.tip_filter().pending() is label
+            qtbot.wait(BEFORE_TEXT_DELAY_MS)
+            assert not _bubble_shown() and shows == []
+            assert tip_bubble.tip_filter().pending() is label
+            qtbot.waitUntil(lambda: bool(shows), timeout=3000)
         assert shows == [(label, True, 0.0, True)]
         bubble = tip_bubble.current_bubble()
         assert bubble is not None

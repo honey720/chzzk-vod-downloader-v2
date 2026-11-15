@@ -14,6 +14,9 @@
 쓰지 못하게 한다. 폭은 절대 px가 아니라 카드 자체 기하로 유도한 값을 넣는다.
 """
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+
 import pytest
 from PySide6.QtCore import QEvent, QPoint, QPointF
 from PySide6.QtGui import QEnterEvent, QHelpEvent
@@ -230,3 +233,35 @@ def bubble_text_for(widget: QWidget) -> str | None:
     if bubble is None or not bubble.isVisible() or bubble.target is not widget:
         return None
     return bubble.text
+
+
+# 지연 끝에 띄운 바로 그때의 말풍선 — (대상, 보임, 불투명도, 페이드 있음). 말풍선이 없으면 None
+DelayedShow = tuple[QWidget | None, bool, float, bool] | None
+
+
+@contextmanager
+def shows_at_delay_end() -> Iterator[list[DelayedShow]]:
+    """툴팁 지연이 끝나 말풍선을 띄운 바로 그때의 말풍선 상태를 적는 목록을 돌려준다(#610).
+
+    지연 타이머의 timeout에 `TipFilter._showPending` 뒤로 슬롯 하나를 더 잇는다 — 같은 시그널의 슬롯은 이은
+    차례로 돌므로, 이벤트 루프가 페이드를 한 단계라도 움직이기 전의 값이다. 폴링으로 첫 값을 재면 폴링 간격이
+    페이드보다 길 때 첫 관측이 이미 1일 수 있다. 블록을 나가면 슬롯을 뗀다(필터는 테스트 사이에 남는다).
+    """
+    from app.widgets import tip_bubble
+
+    shows: list[DelayedShow] = []
+
+    def record() -> None:
+        bubble = tip_bubble.current_bubble()
+        shows.append(
+            None
+            if bubble is None
+            else (bubble.target, bubble.isVisible(), bubble.opacity(), bubble.fade() is not None)
+        )
+
+    timer = tip_bubble.tip_filter()._timer  # 지연 타이머 — 제품에 공개 이름이 없다
+    timer.timeout.connect(record)
+    try:
+        yield shows
+    finally:
+        timer.timeout.disconnect(record)
