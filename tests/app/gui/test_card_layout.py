@@ -315,10 +315,10 @@ class TestRowOneClusters:
 
     @pytest.mark.parametrize("width", WIDTHS)
     def test_right_edge_holds_with_every_button_shown(self, qapp, width) -> None:
-        """카드 버튼 다섯이 한꺼번에 보여도 우측 끝선과 카드 높이가 그대로여야 한다.
+        """카드 버튼 여섯이 한꺼번에 보여도 우측 끝선과 카드 높이가 그대로여야 한다.
 
-        호버한 대기 카드에서 editButton · pauseButton · openDirectoryButton · retryButton을 강제로
-        보이고 카드 폭을 560 · 900 · 1600(+1)으로 놓음
+        호버한 대기 카드에서 editButton · sectionButton · pauseButton · openDirectoryButton ·
+        retryButton을 강제로 보이고 카드 폭을 560 · 900 · 1600(+1)으로 놓음
         -> deleteButton 오른쪽 끝 == fileSizeLabel 오른쪽 끝, 카드 높이 불변
         """
         widget = _make_widget(qapp)
@@ -327,18 +327,19 @@ class TestRowOneClusters:
         _hover(widget)
         for button in (
             widget.editButton,
+            widget.sectionButton,
             widget.pauseButton,
             widget.openDirectoryButton,
             widget.retryButton,
         ):
             button.setVisible(True)
         resize_to(widget, width + 1)  # 버튼 상자가 보이는 동안의 크기 바뀜 — 상자를 다시 놓는다
-        assert len(widget.visibleCardButtons()) == 5, "전제: 버튼 다섯이 상자에 놓였다"
+        assert len(widget.visibleCardButtons()) == 6, "전제: 버튼 여섯이 상자에 놓였다"
         assert widget.deleteButton.isVisible(), "전제: 호버 때 삭제 버튼이 보인다"
         assert _right(widget, widget.deleteButton) == _right(widget, widget.fileSizeLabel), (
-            "버튼 다섯에서 우측 끝선이 깨졌다"
+            "버튼 여섯에서 우측 끝선이 깨졌다"
         )
-        assert widget.height() == height_before, "버튼 다섯에서 카드 높이가 변했다"
+        assert widget.height() == height_before, "버튼 여섯에서 카드 높이가 변했다"
 
 
 class TestStatusRow:

@@ -40,6 +40,7 @@ from PySide6.QtWidgets import QLabel, QMessageBox, QWidget
 
 import app.theme as theme
 from app.network import REQUEST_TIMEOUT
+from app.section_input.basis import SECTION_CONTENT_TYPES
 from app.system.thread_handoff import MainCall
 from app.viewmodels import card_display, card_text
 from app.viewmodels.card_text import (  # noqa: F401 — 바깥(footer_bar · 테스트)이 이 자리에서 import한다
@@ -157,6 +158,7 @@ _STATUS_BUBBLE = {"down": "running", "pause": "paused", "ok": "done", "err": "al
 # 카드 버튼 전부 — 왼쪽부터의 자리 차례(contentItemWidget.py가 이 차례로 놓는다)
 CARD_BUTTON_NAMES = (
     "editButton",
+    "sectionButton",
     "pauseButton",
     "openDirectoryButton",
     "retryButton",
@@ -164,21 +166,22 @@ CARD_BUTTON_NAMES = (
 )
 
 # 상태마다 보이는 카드 버튼(설계 §12.1 카드 배치, #550). 자르는 중 · 합치는 중은 받는 중(RUNNING)이다.
-# 표에 없는 상태(조회 중 LOADING)는 ✕만이다
+# 표에 없는 상태(조회 중 LOADING)는 ✕만이다. 구간 편집(✂)은 대기 카드 가운데 구간을 받을 수 있는 종류만이다
+# (`SECTION_CONTENT_TYPES` — 클립은 빠진다, #599)
 CARD_BUTTONS = {
-    DownloadState.WAITING: ("editButton", "deleteButton"),
+    DownloadState.WAITING: ("editButton", "sectionButton", "deleteButton"),
     DownloadState.RUNNING: ("pauseButton", "deleteButton"),
     DownloadState.PAUSED: ("pauseButton", "deleteButton"),
     DownloadState.FINISHED: ("openDirectoryButton", "deleteButton"),
     DownloadState.FAILED: ("retryButton", "deleteButton"),
 }
 
-# 툴팁이 달릴 수 있는 카드 글 위젯 — 잘린 제목 · 채널명 · 상태 글 · 정보 글 · 저장 위치(글 · 아이콘)
+# 툴팁이 달릴 수 있는 카드 글 위젯 — 잘린 채널명 · 상태 글(실패 사유 전문) · 저장 위치(글 · 아이콘).
+# 제목 · 정보 글은 툴팁이 없다 — 카드 정보는 툴팁에 숨기지 않고 카드 편집 창 · 구간 창에서 본다(오너
+# 2026-11-15, #599)
 TIP_LABEL_NAMES = (
-    "titleLabel",
     "channelNameLabel",
     "statusLabel",
-    "fileSizeLabel",
     "directoryLabel",
     "pathIcon",
 )
@@ -297,6 +300,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     pauseRequest = Signal()  # ‖ · ▶ — 전역 일시정지 · 이어 받기와 같다(#245)
     retryRequest = Signal()  # 실패 카드의 다시 시도 — 실패한 구간만 다시 받는다(#309)
     editRequest = Signal()  # 대기 카드의 ✎ · 더블 클릭 · Enter — 카드 편집 창 (#545)
+    # 대기 카드의 ✂ — 구간 창을 바로 연다. 카드 편집 창을 거치지 않는다(오너 2026-11-15, #599)
+    sectionEditRequest = Signal()
     # 해상도 크기 조회 결과가 아이템에 들어갔다 (#545) — (해상도 목록 번호, 크기 글). 열린 카드
     # 편집 창이 해상도 목록의 크기를 고친다. 창이 닫혀 지워진 뒤에 와도 연결이 함께 끊긴다
     repSizeChanged = Signal(int, str)
@@ -457,7 +462,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     def _installTips(self) -> None:
         """툴팁이 달릴 수 있는 위젯에 말풍선 필터를 건다 — 카드마다 처음 호버할 때 한 번 (#550).
 
-        툴팁은 모두 말풍선(0ms)으로 뜬다(설계 §12.1 「툴팁」). 필터(#536)는 카드 버튼과 글 위젯에만
+        툴팁은 모두 말풍선으로 뜬다(설계 §12.1 「툴팁」). 카드 위 툴팁(버튼 · 채널명 · 상태 글 · 저장 위치)은
+        모두 `HOVER_TIP_DELAY_MS` 머문 뒤에만 뜬다 — 카드를 지나가는 포인터에는 뜨지 않는다(오너 2026-11-15
+        「카드에 툴팁이 뜨니까 지저분하다」, #599). 필터(#536)는 카드 버튼과 글 위젯에만
         건다 — 카드 전체 · 모든 자식에 걸면 그 위젯들의 모든 이벤트를 파이썬 필터로 끌어온다. 잘렸을
         때만 툴팁이 달리는 글도 미리 걸고, 툴팁이 비면 띄우지 않는다(`TipFilter._allowed`).
 
@@ -469,8 +476,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         if self._tipsInstalled:
             return
         self._tipsInstalled = True
-        for name in CARD_BUTTON_NAMES + TIP_LABEL_NAMES:
-            install_tips(getattr(self, name))
+        for name in (*CARD_BUTTON_NAMES, *TIP_LABEL_NAMES):
+            install_tips(getattr(self, name), delayed=True)
 
     def hasKeyFocus(self) -> bool:
         """키보드 초점이 이 카드에 있는지 — focus ring · 카드 버튼을 보이는 때."""
@@ -763,6 +770,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.retryButton.setIconName("retry")
         self.openDirectoryButton.setIconName("folder")
         self.editButton.setIconName("edit")  # 카드 편집 창 (#545)
+        self.sectionButton.setIconName("scissors")  # 구간 창 (#599)
         self.pathIcon.setIconName("folder_outline")
         self._applyHeader()
         self.applyStateStyle()  # setData 전에도 카드가 무스타일로 보이지 않게 (#227)
@@ -800,6 +808,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     def setupSignals(self) -> None:
         self.deleteButton.clicked.connect(self.requestDelete)
         self.editButton.clicked.connect(self.requestEdit)
+        self.sectionButton.clicked.connect(self.requestSectionEdit)
         self.openDirectoryButton.clicked.connect(self.requestOpenDir)
         self.pauseButton.clicked.connect(self.pauseRequest.emit)
         self.retryButton.clicked.connect(self.retryRequest.emit)
@@ -1085,7 +1094,6 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             info = self.fileSizeLabel
             info.setText(texts.size or "")
             info.setVisible(bool(texts.size))
-            info.setDetailTip(self._infoTip(texts.size or ""))
             path_shown = self._pathShown()
             self.pathIcon.setVisible(path_shown and level < card_text.LEVEL_PATH_GONE)
             self.directoryLabel.setVisible(path_shown and level < card_text.LEVEL_PATH_ICON)
@@ -1142,29 +1150,6 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     def _thumbColumn(self) -> int:
         """썸네일 열 — 썸네일 폭 + 썸네일 ↔ 글 간격."""
         return self.thumbnailLabel.width() + self.bodyLayout.horizontalSpacing()
-
-    def _infoTip(self, shown: str) -> str:
-        """정보 글의 툴팁 — 접혀 줄었으면 전체 글, 구간 카드면 구간 설명 줄. 없으면 빈 글.
-
-        보이는 글을 그대로 되풀이하는 툴팁은 달지 않는다(#550).
-        """
-        item = self.item
-        full = self._levelTexts[0].size or "" if self._levelTexts else ""
-        lines = [full] if full and shown != full else []
-        if card_text.section_count(item):
-            detail = card_text.section_overlap_detail(item)
-            if not detail and not item.is_segment_based:
-                # mp4 구간 카드는 정보 글의 길이가 받을 양(합친 범위)이다 — 구간 길이의 합을 알린다.
-                # 겹침이 있으면 겹침의 설명이 같은 줄을 이미 담고 있다
-                detail = [
-                    self.tr("Sections add up to {0}").format(
-                        card_text.section_clock(card_text.section_total(item))
-                    )
-                ]
-            lines.extend(detail)
-            if item.downloadState == DownloadState.WAITING:
-                lines.extend(card_text.section_notice_detail(item))
-        return "\n".join(lines)
 
     # ---- 날짜 연도 — 목록 전체가 함께 정한다 (#554) ----
 
@@ -1538,6 +1523,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             self.pauseButton.setIconName("pause")
             self.pauseButton.setToolTip(self.tr("Pause"))
         shown = CARD_BUTTONS.get(raw, ("deleteButton",))
+        if self.item.content_type not in SECTION_CONTENT_TYPES:
+            shown = tuple(name for name in shown if name != "sectionButton")
         for name in CARD_BUTTON_NAMES:
             getattr(self, name).setVisible(name in shown)
         self._applyTexts()
@@ -1555,6 +1542,18 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         if self.item.downloadState != DownloadState.WAITING:
             return
         self.editRequest.emit()
+
+    def requestSectionEdit(self) -> None:
+        """구간 창을 청한다 — 구간을 받을 수 있는 대기 카드에서만 (#599). ✂가 부른다.
+
+        구간이 없는 대기 카드도 청한다 — 구간을 처음 넣는 길이다. 창을 여는 쪽(mainWindow)이 같은 검사를
+        한 번 더 한다(`VodDownloader.onCardSectionEdit`).
+        """
+        if self.item.downloadState != DownloadState.WAITING:
+            return
+        if self.item.content_type not in SECTION_CONTENT_TYPES:
+            return
+        self.sectionEditRequest.emit()
 
     def activate(self) -> None:
         """더블 클릭 · Enter의 일 — 대기 카드는 편집 창, 완료 카드는 폴더 열기 (#545 · #550).

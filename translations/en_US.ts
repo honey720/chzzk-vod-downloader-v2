@@ -4,6 +4,14 @@
 <context>
     <name>CardEditDialog</name>
     <message>
+        <source>Sections outside the video are skipped.</source>
+        <translation>Sections outside the video are skipped.</translation>
+    </message>
+    <message>
+        <source>Open the section editor to check the length again.</source>
+        <translation>Open the section editor to check the length again.</translation>
+    </message>
+    <message>
         <source>Edit</source>
         <translation>Edit</translation>
     </message>
@@ -71,24 +79,8 @@
         <translation>{0} outside the video</translation>
     </message>
     <message>
-        <source>This resolution is shorter. Sections now end at the end of the video.</source>
-        <translation>This resolution is shorter. Sections now end at the end of the video.</translation>
-    </message>
-    <message>
-        <source>This resolution is longer. Sections that reached the end now reach it.</source>
-        <translation>This resolution is longer. Sections that reached the end now reach it.</translation>
-    </message>
-    <message>
-        <source>Some sections start after the end of this resolution. They will be skipped. Edit the sections to fix them.</source>
-        <translation>Some sections start after the end of this resolution. They will be skipped. Edit the sections to fix them.</translation>
-    </message>
-    <message>
         <source>Sections {0} · {1}</source>
         <translation>Sections {0} · {1}</translation>
-    </message>
-    <message>
-        <source>Sections were moved to the frames of the new frame rate.</source>
-        <translation>Sections were moved to the frames of the new frame rate.</translation>
     </message>
     <message>
         <source>Edit</source>
@@ -103,32 +95,12 @@
         <translation>length not checked</translation>
     </message>
     <message>
-        <source>Checking the length of this resolution...</source>
-        <translation>Checking the length of this resolution...</translation>
-    </message>
-    <message>
-        <source>Could not check the length of this resolution. Open the section editor to check again.</source>
-        <translation>Could not check the length of this resolution. Open the section editor to check again.</translation>
-    </message>
-    <message>
         <source>overlap</source>
         <translation>overlap</translation>
     </message>
     <message>
         <source>Sections {0}</source>
         <translation>Sections {0}</translation>
-    </message>
-    <message>
-        <source>To receive: {0}</source>
-        <translation>To receive: {0}</translation>
-    </message>
-    <message>
-        <source>Sections add up to {0}</source>
-        <translation>Sections add up to {0}</translation>
-    </message>
-    <message>
-        <source>Overlapping parts are received once</source>
-        <translation>Overlapping parts are received once</translation>
     </message>
     <message>
         <source>Preparing</source>
@@ -205,6 +177,10 @@
     <message>
         <source>ContentItemWidget</source>
         <translation>ContentItemWidget</translation>
+    </message>
+    <message>
+        <source>Edit sections</source>
+        <translation>Edit sections</translation>
     </message>
     <message>
         <source>Delete</source>

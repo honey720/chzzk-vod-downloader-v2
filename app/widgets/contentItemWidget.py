@@ -550,7 +550,8 @@ class Ui_ContentItemWidget(object):
         self.titleRow, self.titleLayout = _row(
             self.contentFrame, "titleRow", theme.METRICS["cardRow2Height"]
         )
-        self.titleLabel = ElidingLabel(self.titleRow, tip_when_elided=True)
+        # 제목 · 정보 글은 잘려도 툴팁을 달지 않는다 — 전체 값은 카드 편집 창에서 본다(오너 2026-11-15, #599)
+        self.titleLabel = ElidingLabel(self.titleRow, with_tip=False)
         self.titleLabel.setObjectName("titleLabel")
         self.titleLabel.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.titleLabel.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
@@ -591,7 +592,7 @@ class Ui_ContentItemWidget(object):
         self.resolutionLayout.addWidget(self.directoryLabel)
         # 정보(해상도 · 크기 · 길이 · 구간) — 무엇을 적을지는 app/widgets/widget.py::_fitRow3가 접는
         # 단계로 정한다(#554)
-        self.fileSizeLabel = ElidingLabel(self.statusRow, tip_when_elided=True)
+        self.fileSizeLabel = ElidingLabel(self.statusRow, with_tip=False)
         self.fileSizeLabel.setObjectName("fileSizeLabel")
         self.fileSizeLabel.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.resolutionLayout.addWidget(self.fileSizeLabel)
@@ -625,8 +626,10 @@ class Ui_ContentItemWidget(object):
             self.hoverLayout.addWidget(b)
             return b
 
-        # 차례: 대기 ✎ ✕ · 받는 중 ‖ ✕ · 일시정지 ▶ ✕ · 완료 폴더 ✕ · 실패 다시 시도 ✕ · 조회 중 ✕
+        # 차례: 대기 ✎ ✂ ✕ · 받는 중 ‖ ✕ · 일시정지 ▶ ✕ · 완료 폴더 ✕ · 실패 다시 시도 ✕ · 조회 중 ✕
+        # (✂ 구간 편집은 구간을 받을 수 있는 종류만 — #599)
         self.editButton = card_button("editButton")
+        self.sectionButton = card_button("sectionButton")
         self.pauseButton = card_button("pauseButton")
         self.openDirectoryButton = card_button("openDirectoryButton")
         self.retryButton = card_button("retryButton")
@@ -657,6 +660,9 @@ class Ui_ContentItemWidget(object):
             QCoreApplication.translate("ContentItemWidget", "ContentItemWidget", None)
         )
         self.editButton.setToolTip(QCoreApplication.translate("ContentItemWidget", "Edit", None))
+        self.sectionButton.setToolTip(
+            QCoreApplication.translate("ContentItemWidget", "Edit sections", None)
+        )
         self.pauseButton.setToolTip(QCoreApplication.translate("ContentItemWidget", "Pause", None))
         self.openDirectoryButton.setToolTip(
             QCoreApplication.translate("ContentItemWidget", "Open directory", None)

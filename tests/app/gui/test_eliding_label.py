@@ -197,3 +197,31 @@ class TestTipWhenElided:
         label.setText(self.TEXT)
         self._resize(label, self._wide(label))
         assert label.toolTip() == self.TEXT
+
+
+class TestWithoutTip:
+    """툴팁을 달지 않는 라벨 — 카드 제목 · 정보 글 (#599)."""
+
+    TEXT = TestTipWhenElided.TEXT
+
+    def test_elided_label_without_tip_has_no_tooltip(self, qapp) -> None:
+        """with_tip=False 라벨은 잘려도 툴팁이 없어야 한다.
+
+        with_tip=False · 폭 60 -> 잘림, 툴팁 ""
+        """
+        label = ElidingLabel(with_tip=False)
+        label.setText(self.TEXT)
+        TestTipWhenElided._resize(label, 60)
+        assert label.isElided()
+        assert label.toolTip() == ""
+
+    def test_label_without_tip_ignores_the_detail_tip(self, qapp) -> None:
+        """with_tip=False · tip_when_elided=True 라벨은 정한 툴팁(setDetailTip)도 달지 않아야 한다.
+
+        setDetailTip("자세히") · 폭 60 -> 툴팁 ""
+        """
+        label = ElidingLabel(tip_when_elided=True, with_tip=False)
+        label.setText(self.TEXT)
+        TestTipWhenElided._resize(label, 60)
+        label.setDetailTip("자세히")
+        assert label.toolTip() == ""

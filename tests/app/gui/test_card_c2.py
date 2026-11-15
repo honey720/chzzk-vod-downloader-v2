@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from typing import Never
 
 import pytest
+from pytestqt.qtbot import QtBot
 from PySide6.QtCore import QPoint, Qt, QTimer
 from PySide6.QtGui import QColor, QFontMetrics
 from PySide6.QtTest import QTest
@@ -123,7 +124,7 @@ def _leave(card: ContentItemWidget) -> None:
 
 
 STATE_BUTTONS = [
-    (DownloadState.WAITING, ["editButton", "deleteButton"]),
+    (DownloadState.WAITING, ["editButton", "sectionButton", "deleteButton"]),
     (DownloadState.RUNNING, ["pauseButton", "deleteButton"]),
     (DownloadState.PAUSED, ["pauseButton", "deleteButton"]),
     (DownloadState.FINISHED, ["openDirectoryButton", "deleteButton"]),
@@ -253,15 +254,15 @@ class TestRows:
         assert label.width() == expected
         assert label.toolTip() == ""
 
-    def test_elided_title_carries_the_full_title_in_the_tooltip(self, qapp) -> None:
-        """잘린 제목이면 툴팁이 전체 제목이어야 한다.
+    def test_elided_title_has_no_tooltip(self, qapp) -> None:
+        """잘린 제목에도 툴팁이 없어야 한다 (#599).
 
-        제목 = "아주 긴 제목 " × 30 · 카드 폭 400 -> 보이는 글 ≠ 제목, 툴팁 = 제목
+        제목 = "아주 긴 제목 " × 30 · 카드 폭 400 -> 보이는 글 ≠ 제목, 툴팁 ""
         """
         title = "아주 긴 제목 " * 30
         card = _card(title=title, width=400)
         assert card.titleLabel.isElided()
-        assert card.titleLabel.toolTip() == title
+        assert card.titleLabel.toolTip() == ""
 
     def test_path_shows_only_when_it_differs_from_the_default(self, qapp) -> None:
         """저장 위치가 기본 위치면 숨고, 다르면 마지막 폴더 이름과 전체 경로 툴팁으로 보여야 한다.
@@ -294,8 +295,8 @@ class TestRows:
         """좁은 목록에서 정보 글이 줄에 안 들어가면 카드가 목록 밖으로 넘치지 않고 정보 글이 줄 안에서 잘려야 한다.
 
         구간 셋 · 다른 저장 위치 대기 카드 · 목록 폭 = 카드가 자기 최소폭을 받는 폭
-        -> 카드 오른쪽 끝 ≤ 뷰포트 폭, 정보 글 오른쪽 끝 ≤ 3줄 폭, 정보 글 툴팁 첫 줄 = 넓은 목록
-        (800)에서 보이던 전체 글(#554 — 좁으면 접힌 글이 보인다)
+        -> 카드 오른쪽 끝 ≤ 뷰포트 폭, 정보 글 오른쪽 끝 ≤ 3줄 폭, 정보 글이 잘림, 정보 글 툴팁 ""
+        (#554 · #599)
         """
         view = ContentListView()
         model = ContentListModel()
@@ -307,7 +308,6 @@ class TestRows:
         view.show()
         QApplication.processEvents()
         card = view.widgetFor(item)
-        wide_info = card.fileSizeLabel.text()
         around = view.width() - card.width()  # 목록 폭 − 카드 폭(바깥 여백 · 테두리)
         # 카드 최소폭보다 좁은 창은 없다 — 카드가 최소폭을 받는 폭에서 잰다(글꼴과 무관)
         view.resize(card.minimumSizeHint().width() + around, 400)
@@ -318,7 +318,7 @@ class TestRows:
         assert card.geometry().right() < view.viewport().width()
         assert info.geometry().right() < card.statusRow.width()
         assert info.isElided()
-        assert info.toolTip().splitlines()[0] == wide_info
+        assert info.toolTip() == ""
 
     def test_status_text_gives_way_before_the_info_text(self, qapp) -> None:
         """다 접은 줄이 정보 글과 「…」까지 준 상태 글만큼이면 상태 글이 먼저 잘리고 정보 글은 온전해야 한다.
@@ -818,29 +818,35 @@ class TestResolutionStaysOnTheCard:
 
 
 class TestSectionLengthInTheInfoTip:
-    """카드 정보 글 툴팁의 구간 합 — 1초 미만인 0 아닌 길이만 「0:01」 (#550)."""
+    """카드 정보 글 툴팁 — 겹치지 않는 mp4 구간 카드에도 구간 길이의 합 줄을 적지 않는다 (#550 · #599)."""
 
     @pytest.mark.parametrize(
         ("total", "expected"),
         [(0.2, "0:01"), (0.999, "0:01"), (1.0, "0:01"), (1.5, "0:01"), (265.5, "4:25")],
     )
     def test_info_tip_section_total(self, qapp, total: float, expected: str) -> None:
-        """겹치지 않는 mp4 구간 카드의 정보 글 툴팁 「Sections add up to」가 규칙대로여야 한다.
+        """겹치지 않는 mp4 구간 카드의 정보 글 툴팁에는 구간 길이의 합 줄이 없어야 한다.
 
-        구간 10 ~ 10+합 하나 -> 툴팁에 "Sections add up to <표기>"
+        구간 10 ~ 10+합 하나 -> 어느 줄에도 "Sections add up to <표기>" 없음 (#599)
         """
         card = _card()
         card.item.selections = (TimeRange(10.0, 10.0 + total),)
         card.setData(card.item, 0)
         QApplication.processEvents()
-        assert f"Sections add up to {expected}" in card.fileSizeLabel.toolTip().splitlines()
+        lines = card.fileSizeLabel.toolTip().splitlines()
+        assert f"Sections add up to {expected}" not in lines
+        assert not any(line.startswith("Sections add up to") for line in lines)
+
+
+TIP_DELAY_MS = 40  # 테스트가 줄여 거는 카드 툴팁 지연(ms) — 제품 값 600을 기다리지 않는다(#599)
 
 
 class TestTipBubbles:
-    """카드 글의 툴팁은 말풍선으로 바로 뜨고 Qt 기본 툴팁은 뜨지 않는다 (#550 inbox 128)."""
+    """카드 글의 툴팁은 머문 뒤 말풍선으로 뜨고 Qt 기본 툴팁은 뜨지 않는다 (#550 inbox 128 · #599)."""
 
     @pytest.fixture(autouse=True)
-    def _hide_bubble(self) -> Iterator[None]:
+    def _hide_bubble(self, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+        monkeypatch.setattr(tip_bubble, "HOVER_TIP_DELAY_MS", TIP_DELAY_MS)
         tip_bubble.hide_tip()
         yield
         tip_bubble.hide_tip()
@@ -858,34 +864,44 @@ class TestTipBubbles:
         QApplication.processEvents()
         assert qt_tooltip_shown(label)
 
-    def test_section_card_info_shows_its_tooltip_in_the_bubble(self, qapp) -> None:
-        """구간 카드에 호버하고 정보 글에 들어가면 그 툴팁이 말풍선으로 바로 뜨고 Qt 툴팁은 뜨지 않아야 한다.
+    def test_section_card_info_shows_no_tooltip(self, qapp, qtbot: QtBot) -> None:
+        """구간 카드의 정보 글에 들어가면 말풍선도 Qt 툴팁도 뜨지 않아야 한다 (#599).
 
-        mp4 구간 둘(합 20:00) 대기 카드 · 카드 들어감 · 정보 글 들어감
-        -> 말풍선 글 = 정보 글 툴팁(「Sections add up to 20:00」 포함), Qt 툴팁 안 뜸
+        mp4 구간 둘 · 저장 위치 "D:/vod/lck" 대기 카드 · 카드 들어감
+        저장 위치 글 들어감 -> 지연 뒤 말풍선 "D:/vod/lck"(말풍선이 뜨는 상태임을 먼저 확인)
+        저장 위치 글 나감 · 정보 글 들어감 -> 정보 글 툴팁 "", 말풍선 없음
         """
-        item_card = _card()
-        item_card.item.selections = (TimeRange(0, 600), TimeRange(1200, 1800))
-        item_card.setData(item_card.item, 0)
+        card = _card(path="D:/vod/lck", width=WIDE)
+        card.item.selections = (TimeRange(0, 600), TimeRange(1200, 1800))
+        card.setData(card.item, 0)
         QApplication.processEvents()
-        info = item_card.fileSizeLabel
-        assert "Sections add up to 20:00" in info.toolTip()
-        enter(item_card)
-        enter(info)
-        assert bubble_text_for(info) == info.toolTip()
-        assert not qt_tooltip_shown(info)
-
-    def test_elided_title_shows_the_full_title_in_the_bubble(self, qapp) -> None:
-        """잘린 제목에 들어가면 전체 제목이 말풍선으로 떠야 한다.
-
-        제목 "아주 긴 제목 " × 30 · 카드 폭 400 · 카드 · 제목 들어감 -> 말풍선 글 = 전체 제목
-        """
-        title = "아주 긴 제목 " * 30
-        card = _card(title=title, width=400)
         enter(card)
+        enter(card.directoryLabel)
+        qtbot.waitUntil(lambda: bubble_text_for(card.directoryLabel) == "D:/vod/lck", timeout=2000)
+        leave(card.directoryLabel)
+        info = card.fileSizeLabel
+        enter(info)
+        qtbot.wait(3 * TIP_DELAY_MS)  # 지연이 지나도 뜨지 않는지 본다
+        assert info.toolTip() == ""
+        assert tip_bubble.current_bubble() is None or not tip_bubble.current_bubble().isVisible()
+
+    def test_elided_title_shows_no_tooltip(self, qapp, qtbot: QtBot) -> None:
+        """잘린 제목에 들어가도 말풍선도 Qt 툴팁도 뜨지 않아야 한다 (#599).
+
+        제목 "아주 긴 제목 " × 300 · 저장 위치 "D:/vod/lck" · 카드 폭 WIDE(저장 위치가 보인다) · 카드 들어감
+        저장 위치 글 들어감 -> 지연 뒤 말풍선 "D:/vod/lck"(말풍선이 뜨는 상태임을 먼저 확인)
+        저장 위치 글 나감 · 제목 들어감 -> 제목 잘림, 툴팁 "", 말풍선 없음
+        """
+        title = "아주 긴 제목 " * 300  # WIDE 폭에서도 잘린다
+        card = _card(title=title, path="D:/vod/lck", width=WIDE)
+        enter(card)
+        enter(card.directoryLabel)
+        qtbot.waitUntil(lambda: bubble_text_for(card.directoryLabel) == "D:/vod/lck", timeout=2000)
+        leave(card.directoryLabel)
         enter(card.titleLabel)
-        assert bubble_text_for(card.titleLabel) == title
-        assert not qt_tooltip_shown(card.titleLabel)
+        qtbot.wait(3 * TIP_DELAY_MS)  # 지연이 지나도 뜨지 않는지 본다
+        assert card.titleLabel.isElided() and card.titleLabel.toolTip() == ""
+        assert tip_bubble.current_bubble() is None or not tip_bubble.current_bubble().isVisible()
 
     def test_fitting_title_shows_nothing(self, qapp) -> None:
         """다 보이는 제목에 들어가면 말풍선도 Qt 툴팁도 뜨지 않아야 한다.
@@ -898,12 +914,12 @@ class TestTipBubbles:
         assert bubble_text_for(card.titleLabel) is None
         assert not qt_tooltip_shown(card.titleLabel)  # 글이 없어 기본 툴팁도 없다
 
-    def test_save_location_shows_the_full_path_in_the_bubble(self, qapp) -> None:
+    def test_save_location_shows_the_full_path_in_the_bubble(self, qapp, qtbot: QtBot) -> None:
         """기본 위치와 다른 저장 위치의 폴더 글에 들어가면 전체 경로가 말풍선으로 떠야 한다.
 
-        "D:/vod/lck" 카드 · 카드 · 저장 위치 글 들어감 -> 말풍선 글 "D:/vod/lck"
+        "D:/vod/lck" 카드 · 카드 · 저장 위치 글 들어감 -> 지연 뒤 말풍선 글 "D:/vod/lck"
         """
         card = _card(path="D:/vod/lck", width=WIDE)
         enter(card)
         enter(card.directoryLabel)
-        assert bubble_text_for(card.directoryLabel) == "D:/vod/lck"
+        qtbot.waitUntil(lambda: bubble_text_for(card.directoryLabel) == "D:/vod/lck", timeout=2000)

@@ -1359,14 +1359,18 @@ def test_same_frame_rate_and_length_change_nothing(qtbot, tmp_path, basis) -> No
     assert summary_text(win, item).endswith(" · Sections 1")
 
 
-def tooltip_of(win: VodDownloader, item: ContentItem) -> str:
-    """구간 요약 자리의 툴팁 — 알림의 전문이 폭과 무관하게 여기에 있다."""
-    return win.listView.widgetFor(item).fileSizeLabel.toolTip()
+def edit_summary_of(win: VodDownloader, item: ContentItem) -> str:
+    """카드 편집 창의 구간 요약 — 카드 폭과 무관하게 알림이 붙는다(카드 정보 글에는 툴팁이 없다, #599).
+
+    카드 정보 글은 툴팁을 달지 않는다.
+    """
+    assert win.listView.widgetFor(item).fileSizeLabel.toolTip() == ""
+    return card_text.section_summary(item)  # 편집 창 sectionSummaryLabel이 적는 글
 
 
-PULLED = "This resolution is shorter. Sections now end at the end of the video."
-EXTENDED = "This resolution is longer. Sections that reached the end now reach it."
-UNFIT = "Some sections start after the end of this resolution."
+PULLED = "end pulled to the video length"
+EXTENDED = "end extended to the video length"
+UNFIT = "outside the video"
 
 
 def test_a_section_that_reached_the_end_is_pulled_to_the_shorter_end(
@@ -1375,7 +1379,7 @@ def test_a_section_that_reached_the_end_is_pulled_to_the_shorter_end(
     """옛 영상의 끝에 닿아 있던 구간은 더 짧은 새 영상의 끝으로 당겨지고 카드에 적혀야 한다.
 
     60fps · 3600초에서 3540~3600초(끝 = 영상 끝)를 정함. 480p의 조회값 30fps · 3590초
-    -> 구간 == (3540, 3590), section_end_pulled, 늘림 · 받을 수 없는 구간 없음, 툴팁에 당겼다는 문장
+    -> 구간 == (3540, 3590), section_end_pulled, 늘림 · 받을 수 없는 구간 없음, 편집 창 요약에 당김 알림
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -1388,7 +1392,7 @@ def test_a_section_that_reached_the_end_is_pulled_to_the_shorter_end(
     assert item.selections == (TimeRange(3540.0, 3590.0),)
     assert item.section_end_pulled and not item.section_end_extended
     assert item.section_unfit == frozenset()
-    assert PULLED in tooltip_of(win, item)
+    assert PULLED in edit_summary_of(win, item)
 
 
 def test_a_section_past_the_new_length_is_pulled_and_sections_inside_stay(
@@ -1397,7 +1401,7 @@ def test_a_section_past_the_new_length_is_pulled_and_sections_inside_stay(
     """끝이 새 길이를 넘는 구간은 새 영상의 끝으로 당겨지고, 길이 안의 구간은 그대로여야 한다.
 
     60fps · 3600초에서 600~1200초와 3500~3595초를 정함. 480p의 조회값 30fps · 3590초
-    -> 구간 == ((600, 1200), (3500, 3590)), section_end_pulled, 툴팁에 당겼다는 문장
+    -> 구간 == ((600, 1200), (3500, 3590)), section_end_pulled, 편집 창 요약에 당김 알림
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -1412,7 +1416,7 @@ def test_a_section_past_the_new_length_is_pulled_and_sections_inside_stay(
     assert item.selections == (TimeRange(600.0, 1200.0), TimeRange(3500.0, 3590.0))
     assert item.section_end_pulled and not item.section_end_extended
     assert item.section_unfit == frozenset()
-    assert PULLED in tooltip_of(win, item)
+    assert PULLED in edit_summary_of(win, item)
 
 
 def test_only_the_section_that_reached_the_end_grows_with_a_longer_video(
@@ -1421,7 +1425,7 @@ def test_only_the_section_that_reached_the_end_grows_with_a_longer_video(
     """새 영상이 더 길면 옛 영상의 끝에 닿아 있던 구간만 늘어나고 그 밖의 구간은 그대로여야 한다.
 
     60fps · 3600초에서 600~1200초와 3540~3600초(끝 = 영상 끝)를 정함. 480p의 조회값 30fps · 3700초
-    -> 구간 == ((600, 1200), (3540, 3700)), section_end_extended, 당김 없음, 툴팁에 늘렸다는 문장
+    -> 구간 == ((600, 1200), (3540, 3700)), section_end_extended, 당김 없음, 편집 창 요약에 늘림 알림
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -1435,7 +1439,7 @@ def test_only_the_section_that_reached_the_end_grows_with_a_longer_video(
 
     assert item.selections == (TimeRange(600.0, 1200.0), TimeRange(3540.0, 3700.0))
     assert item.section_end_extended and not item.section_end_pulled
-    assert EXTENDED in tooltip_of(win, item)
+    assert EXTENDED in edit_summary_of(win, item)
 
 
 def test_a_section_that_starts_after_the_new_end_is_kept_and_flagged(
@@ -1445,7 +1449,7 @@ def test_a_section_that_starts_after_the_new_end_is_kept_and_flagged(
 
     60fps · 3600초에서 600~1200초와 3595~3599초를 정함. 480p의 조회값 30fps · 3590초
     -> 구간 == ((600, 1200), (3595, 3599)), section_unfit == {1}, 당김 없음,
-       경고 알림 == "1 outside the video", 툴팁에 받을 수 없다는 문장
+       경고 알림 == "1 outside the video", 편집 창 요약에 같은 경고
     """
     item = _make_item(str(tmp_path))
     win = open_window(tmp_path, item)
@@ -1462,7 +1466,7 @@ def test_a_section_that_starts_after_the_new_end_is_kept_and_flagged(
     assert not item.section_end_pulled and not item.section_end_extended
     assert card_text.section_notice(item, warnings_only=True) == "1 outside the video"
     assert notice_of(win, item) == "refit to 30fps · 1 outside the video"
-    assert UNFIT in tooltip_of(win, item)
+    assert UNFIT in edit_summary_of(win, item)
 
 
 def test_a_failed_lookup_keeps_the_declared_refit_and_says_the_length_is_unchecked(
@@ -1701,7 +1705,7 @@ def test_notice_gives_way_when_it_does_not_fit_in_the_row(qtbot, tmp_path, basis
     """알림까지 붙인 요약이 3행에 안 들어가면 알림을 떼고 요약만 적어야 한다.
 
     구간 하나인 대기 카드의 알림을 어떤 창 폭보다도 긴 글(프레임률 숫자 400자리)로 둠
-    -> 정보 글 끝 == 「 · Sections 1」(알림 없음), 툴팁에는 알림 문장이 남는다
+    -> 정보 글 끝 == 「 · Sections 1」(알림 없음), 정보 글 툴팁 없음, 편집 창 요약에는 알림이 남는다
     -> 정보 글이 제 폭보다 좁게 눌리지 않고, 카드가 목록 폭을 넘지 않는다(카드의 해상도 버튼은 #550에서 없어졌다)
     """
     item = _make_item(str(tmp_path))
@@ -1714,8 +1718,7 @@ def test_notice_gives_way_when_it_does_not_fit_in_the_row(qtbot, tmp_path, basis
     _pump()
 
     assert summary_text(win, item).endswith(" · Sections 1")
-    tooltip = widget.fileSizeLabel.toolTip()
-    assert "Sections were moved to the frames of the new frame rate." in tooltip
+    assert "refit to " in edit_summary_of(win, item)
     info = widget.fileSizeLabel
     assert info.width() >= info.fontMetrics().horizontalAdvance(info.text())
     assert widget.width() <= win.listView.viewport().width()

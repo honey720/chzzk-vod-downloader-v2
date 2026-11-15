@@ -33,7 +33,7 @@ STATE_ICON = {
     "failed": "✕",  # 엑스 — 실패 (U+2715)
 }
 
-# 구간 길이의 합이 합친 범위의 길이보다 이만큼(초) 넘게 길어야 겹침으로 본다 — 1ms.
+# 두 구간이 이만큼(초) 넘게 겹쳐야 겹침으로 본다 — 1ms.
 # 가장 짧은 프레임(120fps ≈ 8.3ms)보다 훨씬 짧고, 소수 초 덧셈의 오차보다는 훨씬 길다
 OVERLAP_SLACK = 0.001
 
@@ -113,7 +113,7 @@ def section_clock(seconds: float) -> str:
     1초보다 짧은 구간이 「0:00」으로 보이면 비어 있는 구간으로 읽힌다. 그래서 0보다 길고 1초보다
     짧으면 「0:01」로 적는다. 1초 이상은 `clock`처럼 초 아래를 버린다 — 시작 · 끝 시각이 버림이라 길이만
     올리면 「0:10 ~ 0:14 (0:05)」처럼 앞뒤가 맞지 않게 보인다. 구간 길이를 적는 자리(카드 정보 글 ·
-    툴팁 · 편집 창 요약)에만 쓴다.
+    편집 창 요약)에만 쓴다.
 
     실수 오차를 따로 다루지 않는다 — 1초 이상은 버림이라 오차가 1초를 더하지 않고, 구간은 시작 < 끝
     (`TimeRange`)이라 길이가 0보다 크다(실제로는 한 프레임 이상).
@@ -212,31 +212,30 @@ def section_span(item: ContentItem) -> float:
 
 
 def sections_overlap(item: ContentItem) -> bool:
-    """구간끼리 겹치는 자리가 있는지 — 길이의 합이 합친 범위의 길이보다 길다 (#309).
+    """구간끼리 겹치는 자리가 있는지 — 겹치는 쌍이 하나라도 있다 (#309).
 
     맞닿기만 한 구간(앞의 끝 = 뒤의 시작)은 겹침이 아니다. 판정은 프레임 하나보다 훨씬 짧은
-    여유를 둔다 — 소수 초의 덧셈 오차를 겹침으로 읽지 않는다.
+    여유를 둔다 — 소수 초의 덧셈 오차를 겹침으로 읽지 않는다. 쌍 판정(`section_overlap_pairs`)으로
+    잰다(#599). 전에는 길이의 합 − 합친 범위로 쟀는데, 여유보다 짧은 겹침이 여럿이면 합만 여유를 넘어 어느 구간도 겹치지 않는
+    「겹침」이 났다.
     """
-    return section_total(item) - section_span(item) > OVERLAP_SLACK
+    return bool(section_overlap_pairs(item))
 
 
-def section_overlap_detail(item: ContentItem) -> list[str]:
-    """겹침이 있는 구간 카드의 툴팁에 더하는 줄 — 받을 양(길이) · 구간 길이의 합 · 한 번만 받는다.
+def section_overlap_pairs(item: ContentItem) -> list[tuple[int, int]]:
+    """서로 겹치는 구간 쌍 — 구간 번호(1부터, 구간 차례)의 쌍을 번호 차례로.
 
-    받을 양은 길이로만 적는다. 카드의 크기는 구간 파일 크기의 합(겹치는 자리를 구간마다
-    센다)이라 받을 양의 크기가 아니다.
+    맞닿기만 한 쌍(앞의 끝 = 뒤의 시작)과 `OVERLAP_SLACK` 이하로 겹친 쌍은 겹침이 아니다.
     """
-    if not sections_overlap(item):
-        return []
-    return [
-        QCoreApplication.translate("ContentItemWidget", "To receive: {0}").format(
-            section_clock(section_span(item))
-        ),
-        QCoreApplication.translate("ContentItemWidget", "Sections add up to {0}").format(
-            section_clock(section_total(item))
-        ),
-        QCoreApplication.translate("ContentItemWidget", "Overlapping parts are received once"),
-    ]
+    spans = sorted((s.start, s.end, number) for number, s in enumerate(item.selections, 1))
+    pairs = []
+    for index, (_start, end, number) in enumerate(spans):
+        for other_start, other_end, other in spans[index + 1 :]:
+            if other_start >= end - OVERLAP_SLACK:
+                break  # 뒤는 시작이 더 늦다 — 이 구간과 겹치는 것이 더 없다
+            if min(end, other_end) - other_start > OVERLAP_SLACK:
+                pairs.append((min(number, other), max(number, other)))
+    return sorted(pairs)
 
 
 def section_notice(item: ContentItem, warnings_only: bool = False) -> str:
@@ -280,55 +279,6 @@ def section_notice(item: ContentItem, warnings_only: bool = False) -> str:
     return " · ".join(parts)
 
 
-def section_notice_detail(item: ContentItem) -> list[str]:
-    """알림의 전문 — 툴팁에 한 줄씩 적는다. 좁은 폭에서 알림을 떼도 여기에는 남는다."""
-    lines = []
-    if getattr(item, "section_refit_fps", None) is not None:
-        lines.append(
-            QCoreApplication.translate(
-                "ContentItemWidget", "Sections were moved to the frames of the new frame rate."
-            )
-        )
-    if getattr(item, "section_end_pulled", False):
-        lines.append(
-            QCoreApplication.translate(
-                "ContentItemWidget",
-                "This resolution is shorter. Sections now end at the end of the video.",
-            )
-        )
-    if getattr(item, "section_end_extended", False):
-        lines.append(
-            QCoreApplication.translate(
-                "ContentItemWidget",
-                "This resolution is longer. Sections that reached the end now reach it.",
-            )
-        )
-    if getattr(item, "section_unfit", ()):
-        lines.append(
-            QCoreApplication.translate(
-                "ContentItemWidget",
-                "Some sections start after the end of this resolution. "
-                "They will be skipped. Edit the sections to fix them.",
-            )
-        )
-    check = getattr(item, "section_check", "")
-    if check == SECTION_CHECK_PENDING:
-        lines.append(
-            QCoreApplication.translate(
-                "ContentItemWidget", "Checking the length of this resolution..."
-            )
-        )
-    elif check == SECTION_CHECK_UNVERIFIED:
-        lines.append(
-            QCoreApplication.translate(
-                "ContentItemWidget",
-                "Could not check the length of this resolution. "
-                "Open the section editor to check again.",
-            )
-        )
-    return lines
-
-
 def section_size_text(item: ContentItem) -> str:
     """구간 카드의 크기 — 저장소에 생길 구간 파일 크기의 합(추정). 모르면 빈 글이다 (#309).
 
@@ -366,7 +316,7 @@ def section_summary(
     - 세그먼트 방식(fMP4 · TS): 구간 수와 길이 — "구간 2개 · 20:00". 받을 크기를 미리 알 수
       없어 길이로 양을 알린다. 길이는 남은 시간과 같은 짧은 표기("3:12" · "1:02:03")다
     - 인코딩 완료 VOD(mp4): 구간 수와 크기 — "구간 2개 · 200.00 MB". 길이는 적지 않는다 —
-      카드 툴팁과 편집 창의 합계에 있다
+      구간 창의 합계에 있다
 
     구간을 다시 맞춘 알림이 있으면 그 뒤에 붙인다 — 좁은 폭에서는 카드가 알림과 크기를 뗀다.
     """

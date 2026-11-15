@@ -15,7 +15,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialogButtonBox, QStyle
 
 import app.views.card_edit_dialog as dialog_mod
-from app.viewmodels.data import ContentItem
+from app.viewmodels.data import SECTION_CHECK_UNVERIFIED, ContentItem
 from app.views.card_edit_dialog import CardEditDialog
 from app.views.mainWindow import VodDownloader
 from core.models.download_state import DownloadState
@@ -527,6 +527,44 @@ def _with_sections(item: ContentItem, count: int) -> ContentItem:
     """구간 count개(1분씩, 2분 간격)를 넣는다."""
     item.selections = tuple(TimeRange(120.0 * n, 120.0 * n + 60.0) for n in range(count))
     return item
+
+
+UNFIT_LINE = "Sections outside the video are skipped."  # 영상 밖 구간이 있을 때 구간 줄 뒤 안내
+UNVERIFIED_LINE = "Open the section editor to check the length again."  # 길이 미확인일 때 안내
+
+
+class TestSectionNotices:
+    """편집 창 구간 요약은 영상 밖 구간 · 길이 미확인의 뜻을 구간 줄 뒤에 한 줄씩 적는다(오너 2026-11-15)."""
+
+    @pytest.mark.parametrize(
+        ("unfit", "unverified", "tail"),
+        [
+            (True, False, [UNFIT_LINE]),
+            (False, True, [UNVERIFIED_LINE]),
+            (True, True, [UNFIT_LINE, UNVERIFIED_LINE]),
+            (False, False, []),
+        ],
+        ids=["영상 밖", "길이 미확인", "둘 다", "없음"],
+    )
+    def test_section_lines_end_with_the_notices(
+        self, tmp_path, unfit: bool, unverified: bool, tail: list[str]
+    ) -> None:
+        """구간 요약의 구간 줄 뒤에 그 카드에 해당하는 안내만 차례로 붙어야 한다.
+
+        구간 둘 대기 카드 · 영상 밖 구간(②) 있음/없음 · 길이 미확인 예/아니오
+        -> 구간 줄 2줄("1. " · "2. "로 시작) 뒤에 안내 tail
+        """
+        item = _with_sections(_make_item(str(tmp_path)), 2)
+        if unfit:
+            item.section_unfit = frozenset({1})
+        if unverified:
+            item.section_check = SECTION_CHECK_UNVERIFIED
+        win = _window(tmp_path, item)
+        dialog = _open(win, item)
+        lines = dialog.sectionLinesLabel.text().split("\n")
+        assert dialog.sectionLinesLabel.isVisible()
+        assert [line[:3] for line in lines[:2]] == ["1. ", "2. "]
+        assert lines[2:] == tail
 
 
 class TestSectionButtonPlace:

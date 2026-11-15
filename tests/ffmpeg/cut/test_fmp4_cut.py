@@ -13,6 +13,7 @@ import dataclasses
 import os
 import shutil
 import subprocess
+from collections.abc import Iterator
 
 import pytest
 
@@ -25,6 +26,7 @@ from core.sections.check import check_cut
 from core.utils.ffmpeg import (
     FFmpegCancelledError,
     FFmpegTimeoutError,
+    RemuxError,
     extract_audio_stream,
     get_ffmpeg_exe,
     read_in_chunks,
@@ -230,28 +232,38 @@ def test_segment_that_does_not_start_with_a_keyframe_is_unsupported(made, tmp_pa
     assert all(os.path.exists(path) for path in cut.paths)
 
 
-def test_dts_warning_from_the_joining_ffmpeg_fails_the_cut(made, tmp_path, monkeypatch) -> None:
-    """잇는 ffmpeg가 DTS가 뒤로 간다고 경고하면 CutError(CUT_FAILED)이고 구간 파일이 남지 않아야 한다.
+def test_dts_going_back_at_a_joint_fails_the_cut(made, tmp_path, monkeypatch) -> None:
+    """조각을 잇는 곳에서 DTS가 뒤로 가면 잇는 ffmpeg가 실패하고 CutError(CUT_FAILED)이며 구간 파일이 남지 않아야 한다.
 
-    plain, 구간 프레임 40~100. remux_through가 구간 파일을 다 쓴 뒤 경고 문구를 돌려주게 바꿈
-    -> 경고를 돌려주기 전에 구간 파일이 있었다, CutError(CUT_FAILED), 구간 파일 없음
+    plain, 구간 프레임 40~100(목록 0_head · pipe:0 · 4_tail). 잇는 ffmpeg가 뜨기 직전에 목록의
+    duration을 모두 절반으로 고침 — 다음 파일이 앞 파일의 끝보다 이른 시각에 놓인다
+    -> 목록이 실제로 바뀌었다, CutError(CUT_FAILED), 원인 RemuxError, 구간 파일 없음
     """
     cut = _Cut(made["plain"], tmp_path, 40, 100, (0, 3))
     real = fmp4_cut_module.remux_through
-    existed = []
+    halved = []
 
-    def warns(*args, **kwargs) -> str:
-        real(*args, **kwargs)
-        existed.append(os.path.exists(cut.output))
-        return "[mp4 @ 0] Non-monotonic DTS in output stream 0:0; previous: 10, current: 5"
+    def shrinks(chunks: Iterator[bytes], *args: object, **kwargs: object) -> str:
+        listed = os.path.join(str(kwargs["cwd"]), "list.txt")
+        with open(listed, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+        changed = [
+            f"duration {float(line.split()[1]) / 2:.6f}" if line.startswith("duration ") else line
+            for line in lines
+        ]
+        with open(listed, "w", encoding="utf-8", newline="\n") as f:
+            f.write("\n".join(changed) + "\n")
+        halved.append(changed != lines)
+        return real(chunks, *args, **kwargs)
 
-    monkeypatch.setattr(fmp4_cut_module, "remux_through", warns)
+    monkeypatch.setattr(fmp4_cut_module, "remux_through", shrinks)
 
     with pytest.raises(CutError) as caught:
         cut.run()
 
-    assert existed == [True]
+    assert halved == [True]
     assert caught.value.message_key == CUT_FAILED
+    assert isinstance(caught.value.__cause__, RemuxError)
     assert not os.path.exists(cut.output)
 
 
