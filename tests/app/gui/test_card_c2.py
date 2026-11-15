@@ -838,7 +838,8 @@ class TestSectionLengthInTheInfoTip:
         assert not any(line.startswith("Sections add up to") for line in lines)
 
 
-TIP_DELAY_MS = 40  # 테스트가 줄여 거는 카드 툴팁 지연(ms) — 제품 값 600을 기다리지 않는다(#599)
+# 테스트가 거는 카드 툴팁 지연(ms) — 제품 값은 0, 지연 장치를 탄 경로를 잰다(#599 · #610)
+TIP_DELAY_MS = 40
 
 
 class TestTipBubbles:

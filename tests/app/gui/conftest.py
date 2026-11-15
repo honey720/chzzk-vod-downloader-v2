@@ -4,7 +4,19 @@ from collections.abc import Iterator
 
 import pytest
 
+from app.widgets import tip_bubble
 from tests.app.gui.mouse_buttons import release_left_by
+
+
+@pytest.fixture(autouse=True)
+def _no_tip_fade(monkeypatch: pytest.MonkeyPatch) -> None:
+    """말풍선 페이드 시간을 0으로 둔다 — 바로 뜨고 바로 닫힌다(#610).
+
+    말풍선이 뜨고 닫히는 자리 · 글을 재는 테스트는 페이드를 기다리지 않는다. 페이드를 재는 테스트는 스스로
+    시간을 다시 건다(`tests/app/gui/test_tip_fade.py`).
+    """
+    monkeypatch.setattr(tip_bubble, "TIP_FADE_IN_MS", 0)
+    monkeypatch.setattr(tip_bubble, "TIP_FADE_OUT_MS", 0)
 
 
 @pytest.fixture(autouse=True)

@@ -16,6 +16,7 @@ from PySide6.QtCore import QEvent, QPoint, QPointF, Qt, QVariantAnimation
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QAbstractSlider, QApplication, QWidget
 
+import app.viewmodels.card_display as card_display
 from app.viewmodels.data import SECTION_CHECK_UNVERIFIED, ContentItem
 from app.views.mainWindow import VodDownloader
 from app.widgets import step_scroll, tip_bubble
@@ -459,12 +460,13 @@ FOUR_SECTIONS = (
 UNVERIFIED_SHORT = (
     "length not checked"  # 길이를 확인하지 못한 구간 카드가 정보 글 끝에 다는 짧은 경고
 )
-TEST_TIP_DELAY_MS = 40  # 테스트가 줄여 거는 카드 버튼 툴팁 지연(ms) — 제품 값 600을 기다리지 않는다
+# 테스트가 거는 카드 툴팁 지연(ms) — 제품 값은 0이라 지연 장치를 재려고 양수로 건다(#610)
+TEST_TIP_DELAY_MS = 40
 
 
 @pytest.fixture
 def _short_tip_delay(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """카드 버튼 툴팁 지연을 `TEST_TIP_DELAY_MS`로 줄이고, 앞뒤로 말풍선을 닫는다."""
+    """카드 툴팁 지연을 `TEST_TIP_DELAY_MS`로 걸고(지연 장치 재기), 앞뒤로 말풍선을 닫는다."""
     monkeypatch.setattr(tip_bubble, "HOVER_TIP_DELAY_MS", TEST_TIP_DELAY_MS)
     tip_bubble.hide_tip()
     yield
@@ -540,7 +542,7 @@ class TestNoInfoTip:
 
 @pytest.mark.usefixtures("_short_tip_delay")
 class TestCardButtonTipDelay:
-    """카드 버튼 툴팁은 `HOVER_TIP_DELAY_MS` 머문 뒤에만 뜬다 — 헤더바는 바로(오너 2026-11-15)."""
+    """지연을 양수로 걸면 카드 버튼 툴팁은 그만큼 머문 뒤에만 뜬다 — 헤더바는 바로(#599 장치, 기본값 0은 #610)."""
 
     def test_card_button_tip_shows_only_after_the_delay(self, qtbot: QtBot, tmp_path: Path) -> None:
         """카드 버튼에 들어가면 말풍선이 바로 뜨지 않고 지연 뒤에 그 버튼 이름으로 떠야 한다.
@@ -647,7 +649,7 @@ def _text_tip_card(tmp_path: Path, which: str) -> tuple[VodDownloader, ContentIt
 
 @pytest.mark.usefixtures("_short_tip_delay")
 class TestCardTextTipDelay:
-    """카드 글 툴팁(채널명 · 상태 글 · 저장 위치)도 `HOVER_TIP_DELAY_MS` 머문 뒤에만 뜬다(오너 2026-11-15)."""
+    """지연을 양수로 걸면 카드 글 툴팁(채널명 · 상태 글 · 저장 위치)도 그만큼 머문 뒤에만 뜬다(#599 장치)."""
 
     @pytest.mark.parametrize("which", ["channel", "status", "directory"])
     def test_card_text_tip_shows_only_after_the_delay(
@@ -693,6 +695,53 @@ class TestCardTextTipDelay:
         finally:
             other.hide()
             other.deleteLater()
+
+
+FADE_IN_MS = 60  # 바로 뜨는 툴팁 테스트가 거는 나타남 페이드 시간(ms) — 공통 픽스처의 0을 덮는다
+
+
+@pytest.fixture
+def _default_delay_with_fade(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """카드 툴팁 지연은 제품 기본값 그대로, 나타남 페이드를 켠다(애니메이션 켬) — 앞뒤로 말풍선을 닫는다."""
+    monkeypatch.setattr(tip_bubble, "TIP_FADE_IN_MS", FADE_IN_MS)
+    card_display.use(card_display.CardDisplay(animations=True))
+    tip_bubble.hide_tip()
+    yield
+    bubble = tip_bubble.current_bubble()
+    if bubble is not None:
+        bubble.hideNow()
+    card_display.use(None)
+
+
+@pytest.mark.usefixtures("_default_delay_with_fade")
+class TestCardTipsAtOnce:
+    """기본값에서 카드 버튼 · 카드 글 툴팁은 지연 없이 바로 페이드로 나타난다(오너 2026-11-15 실기, #610)."""
+
+    @pytest.mark.parametrize("which", ["edit", "channel", "status", "directory"])
+    def test_card_tip_starts_fading_in_on_enter(
+        self, qtbot: QtBot, tmp_path: Path, which: str
+    ) -> None:
+        """기본 지연에서 카드 버튼 · 카드 글에 들어가면 말풍선이 바로 불투명도 0에서 나타나기 시작해야 한다.
+
+        나타남 60ms · 카드 들어감 · ✎ / 잘린 채널명 / 상세 줄 있는 실패 사유 / 다른 저장 위치 글 들어감
+        -> 들어감을 보낸 직후(이벤트 루프 전) 기다리는 위젯 없음 · 말풍선 보임 · 대상 = 그 위젯 · 불투명도 0 ·
+        페이드 있음, 페이드 뒤 불투명도 1 · 말풍선 글 = 그 위젯의 툴팁
+        """
+        if which == "edit":
+            item = _make_item(str(tmp_path))
+            win = open_window(tmp_path, item)
+            target = _hovered_card(win, item).editButton
+        else:
+            _win, _card, target = _text_tip_card(tmp_path, which)
+        card_helpers.send_enter(target)  # 0ms 타이머로 미뤄 띄우면 여기서는 아직 안 떠 있다
+        assert tip_bubble.tip_filter().pending() is None
+        bubble = tip_bubble.current_bubble()
+        assert bubble is not None and bubble.isVisible() and bubble.target is target
+        assert bubble.opacity() == 0.0
+        assert bubble.fade() is not None
+        qtbot.waitUntil(lambda: bubble.fade() is None, timeout=2000)
+        assert bubble.opacity() == 1.0
+        assert card_helpers.bubble_text_for(target) == target.toolTip()
 
 
 # ---- 구간 편집 버튼(✂) (#599) ----
