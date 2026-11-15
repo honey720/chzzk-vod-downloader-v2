@@ -162,7 +162,8 @@ def _independent_content_minimum(win: VodDownloader) -> int:
     아이콘(버튼 높이의 정사각) + 완료 지우기 + 간격 2개) + 프레임 안쪽 여백·테두리.
     하단바(#529): 끝까지 줄인 모양 — 전체 속도 견본 글 + 실행 결과 견본 글 + 다운로드 + 중지 + 간격 3개
     + 프레임 안쪽 여백·테두리.
-    열 = max(메뉴바 · 헤더바 · 하단바 각각, 목록 최소).
+    카드(#554 · #611): 다 접은 가장 나쁜 견본 카드 + 목록 레이아웃 좌우 여백(띠 행은 0).
+    열 = max(메뉴바 · 헤더바 · 하단바 각각, 목록 최소, 카드).
     바는 창 끝까지 붙고(바깥 여백 0) 좌우 테두리가 없다 — 테두리는 목록 쪽 한 줄뿐이다(#536 — 설계 §11.1).
     """
     pad, outer = theme.METRICS["outerMargin"], 0  # 바 안쪽 가로 여백 · 바깥 여백(#536 — 바는 창 끝까지)
@@ -203,12 +204,15 @@ def _independent_content_minimum(win: VodDownloader) -> int:
         + _leaf_min(win.stopButton)
     )
     info += 3 * info_gap + 2 * (pad + border)  # 간격 셋 — 빈칸(크기 0)은 간격을 받지 않는다
+    # 카드 행 바깥 좌우 — 목록 레이아웃의 좌우 여백(띠 행은 0, #611). 스크롤바 폭은 행 오른쪽 안쪽 여백이 낸다
+    list_margins = win.listView._layout.contentsMargins()
+    list_sides = list_margins.left() + list_margins.right()
     return max(
         menu + 2 * theme.METRICS["outerMargin"],
         header + 2 * outer,
         info + 2 * outer,
         win.listView.minimumSizeHint().width(),
-        _worst_folded_card_minimum() + 2 * theme.METRICS["outerMargin"],
+        _worst_folded_card_minimum() + list_sides,
     )
 
 

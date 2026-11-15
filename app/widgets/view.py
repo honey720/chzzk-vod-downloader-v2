@@ -175,7 +175,7 @@ class ContentListView(QScrollArea):
         # transient(오버레이) 힌트는 QSS로 스타일된 스크롤바에 Qt가 적용하지 않는다(실측 —
         # 위젯 기준 styleHint가 0). 카드 높이는 폭과 무관하므로 되먹임 진동은 없다(실측).
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        # 휠 · 스크롤바는 카드 한 칸(카드 + 카드 사이 = 92) 단위다(오너 2026-11-14, #599). 맨 끝에 있던 목록은
+        # 휠 · 스크롤바는 카드 한 칸(행 80 + 구분선 1 = 81 — #611) 단위다(오너 2026-11-14, #599). 맨 끝에 있던 목록은
         # 창 크기 · 카드 수가 바뀌어도 맨 끝에 남는다 — 마지막 카드가 다 보이는 것이 우선(오너 2026-11-14)
         self._scroller = StepScroller(self, CARD_CELL)
 

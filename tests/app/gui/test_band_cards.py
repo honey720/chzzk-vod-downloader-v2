@@ -157,6 +157,28 @@ class TestBandRows:
         assert row.right() == fetch.right() == win.width() - OUTER - 1
         assert _rect(win, card).left() == 0
 
+    @pytest.mark.parametrize("cards", [2, MANY], ids=["스크롤바 없음", "스크롤바 보임"])
+    def test_rows_span_the_list_at_the_minimum_window_width(self, window, cards: int) -> None:
+        """창이 최소폭이어도 행은 창 왼쪽 끝부터 목록 오른쪽 끝(스크롤바가 보이면 그 왼쪽)까지 가야 한다.
+
+        받는 중 카드 2장 · 12장, 창 폭 = 최소폭 -> 행 왼쪽 끝 0, 행 폭 + 보이는 스크롤바 폭 = 창 폭,
+        3줄 오른쪽 끝 = 창 폭 − 12 − 1, 가로 스크롤 없음
+        """
+        win = window(*[DownloadState.RUNNING] * cards)
+        win.resize(win.minimumWidth(), 600)
+        _pump()
+        assert win.width() == win.minimumWidth(), "전제: 창이 최소폭이다"
+        bar = win.listView.verticalScrollBar()
+        assert bar.isVisible() == (cards == MANY), "전제: 스크롤바 보임 여부"
+        bar_width = bar.width() if bar.isVisible() else 0
+        for row in range(cards):
+            card = _card(win, row)
+            rect = _rect(win, card)
+            assert rect.left() == 0
+            assert rect.width() + bar_width == win.width()
+            assert _rect(win, card.statusRow).right() == win.width() - OUTER - 1
+        assert win.windowScrollArea.horizontalScrollBar().maximum() == 0
+
     @pytest.mark.parametrize("state", [DownloadState.RUNNING, DownloadState.PAUSED])
     def test_progress_bar_lies_on_the_separator_without_a_track(self, window, state) -> None:
         """진행 막대는 행 아래끝(구분선 자리)에 겹치고 트랙을 그리지 않아야 한다.
