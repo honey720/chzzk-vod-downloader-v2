@@ -427,16 +427,24 @@ class TestDropFields:
         assert _is(_pixel(image, rect.center().x(), rect.top()), "border")
         assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surfaceAlt")
 
-    @pytest.mark.parametrize("width", [600, "min"])
-    def test_narrow_status_dropdown_is_a_bordered_field(self, window, width: int | str) -> None:
+    @pytest.mark.parametrize("width", ["first", "min"])
+    def test_narrow_status_dropdown_is_a_bordered_field(self, window, width: str) -> None:
         """칩이 상태 드롭다운으로 바뀐 좁은 폭에서 그 드롭다운도 테두리 있는 입력 칸이어야 한다.
 
-        창 폭 600 · 최소폭 -> filterDropButton 보임, 위 가장자리 가운데 ≈ border · 왼쪽 안쪽 3px ≈ surfaceAlt
+        창 폭 = 칩이 드롭다운으로 바뀌는 첫 폭(900에서 2px씩 줄여 찾음) · 최소폭 -> filterDropButton 보임,
+        위 가장자리 가운데 ≈ border · 왼쪽 안쪽 3px ≈ surfaceAlt
         """
         win = window(DownloadState.WAITING)
-        target = win.minimumWidth() if width == "min" else width
-        win.resize(target, 600)
-        _pump()
+        if width == "min":
+            target = win.minimumWidth()
+            win.resize(target, 600)
+            _pump()
+        else:
+            target = 900
+            while not win.filterChipBar.isCompact() and target > win.minimumWidth():
+                target -= 2
+                win.resize(target, 600)
+                _pump()
         assert win.width() == target, "전제: 요청한 폭이다"
         drop = win.filterChipBar.dropButton
         assert drop.isVisible(), "전제: 상태 드롭다운이 보인다"
