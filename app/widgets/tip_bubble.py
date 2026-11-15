@@ -107,6 +107,53 @@ def tip_rect(target: QRect, size: QSize, side: str, screen: QRect) -> tuple[QRec
     return rect, chosen
 
 
+def bubble_outline(
+    body: QRectF, radius: float, facing: str, center: float, half: float, length: float
+) -> QPainterPath:
+    """몸통 둥근 사각형과 꼬리를 한 윤곽으로 그린 경로 — 몸통 둘레를 시계 방향으로 돌며 꼬리 변에 꼬리를 끼운다.
+
+    몸통과 꼬리를 따로 만들어 `QPainterPath.united()`로 합치면 두 도형이 꼬리 밑변에서 넓이 0으로 맞닿기만
+    하므로 합쳐지지 않고 두 subpath로 남는다. 그러면 테두리 펜이 꼬리 밑변까지 그어 몸통과 꼬리 사이에 줄이
+    생긴다(#606). 한 윤곽이면 꼬리 밑변은 경로에 없다.
+
+    Args:
+        facing: 꼬리가 나는 변 — "top" · "bottom" · "left" · "right"
+        center: 꼬리 가운데 위치(그 변을 따라가는 축, 위젯 좌표)
+        half: 꼬리 밑변 폭의 절반
+        length: 꼬리 길이(밑변에서 끝까지)
+    """
+    left, top, right, bottom = body.left(), body.top(), body.right(), body.bottom()
+    diameter = 2 * radius
+    path = QPainterPath()
+    path.moveTo(left + radius, top)
+    if facing == "top":
+        path.lineTo(center - half, top)
+        path.lineTo(center, top - length)
+        path.lineTo(center + half, top)
+    path.lineTo(right - radius, top)
+    path.arcTo(QRectF(right - diameter, top, diameter, diameter), 90, -90)
+    if facing == "right":
+        path.lineTo(right, center - half)
+        path.lineTo(right + length, center)
+        path.lineTo(right, center + half)
+    path.lineTo(right, bottom - radius)
+    path.arcTo(QRectF(right - diameter, bottom - diameter, diameter, diameter), 0, -90)
+    if facing == "bottom":
+        path.lineTo(center + half, bottom)
+        path.lineTo(center, bottom + length)
+        path.lineTo(center - half, bottom)
+    path.lineTo(left + radius, bottom)
+    path.arcTo(QRectF(left, bottom - diameter, diameter, diameter), 270, -90)
+    if facing == "left":
+        path.lineTo(left, center + half)
+        path.lineTo(left - length, center)
+        path.lineTo(left, center - half)
+    path.lineTo(left, top + radius)
+    path.arcTo(QRectF(left, top, diameter, diameter), 180, -90)
+    path.closeSubpath()
+    return path
+
+
 def tip_side(target: QWidget) -> str:
     """바라는 방향 — 창의 경계(`tipBoundary()`, 전역 y)보다 대상 가운데가 위면 아래로, 아니면 위로.
 
@@ -259,26 +306,12 @@ class TipBubble(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         body = self.bodyRect()
-        shape = QPainterPath()
-        shape.addRoundedRect(body, radius, radius)
-        tail = QPainterPath()
         low = radius + half
         if self.side in ("below", "above"):
-            cx = max(body.left() + low, min(self._tail, body.right() - low))
-            edge = body.top() if self.side == "below" else body.bottom()
-            tip = edge - tail_len if self.side == "below" else edge + tail_len
-            tail.moveTo(cx - half, edge)
-            tail.lineTo(cx, tip)
-            tail.lineTo(cx + half, edge)
+            center = max(body.left() + low, min(self._tail, body.right() - low))
         else:
-            cy = max(body.top() + low, min(self._tail, body.bottom() - low))
-            edge = body.left() if self.side == "right" else body.right()
-            tip = edge - tail_len if self.side == "right" else edge + tail_len
-            tail.moveTo(edge, cy - half)
-            tail.lineTo(tip, cy)
-            tail.lineTo(edge, cy + half)
-        tail.closeSubpath()
-        shape = shape.united(tail)
+            center = max(body.top() + low, min(self._tail, body.bottom() - low))
+        shape = bubble_outline(body, radius, _FACING[self.side], center, half, tail_len)
         layers = theme.METRICS["tipShadow"]
         for i in range(layers, 0, -1):  # 그림자 — 바깥으로 갈수록 옅게
             shadow = QColor(tokens["shadow"])
