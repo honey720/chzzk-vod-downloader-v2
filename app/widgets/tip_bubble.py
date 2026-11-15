@@ -9,10 +9,10 @@ Qt 기본 툴팁(`QToolTip`)은 기다림이 있고, 대상을 가릴 수 있고
 - 대상과 꼬리 끝 사이는 `tipGap` — 대상 사각형과 겹치지 않는다
 - 들어오면 바로(0ms) 뜨고, 나가거나 누르거나 대상이 숨으면 바로 닫힌다. 누른 뒤에는 나갈 때까지 다시 띄우지
   않는다. 드롭다운 메뉴가 열려 있는 동안에는 띄우지 않는다
-- `install_tips(..., delayed=True)`로 건 위젯(카드 위 툴팁 — 버튼 · 채널명 · 상태 글 · 저장 위치)은
-  `HOVER_TIP_DELAY_MS` 머문 뒤에 뜬다. 지금 값은 0이라 다른 툴팁처럼 바로 페이드로 뜬다 — 페이드가 생겨 지연을
-  없앴다(오너 2026-11-15 실기, #610). 지연 장치는 값 하나로 다시 시험할 수 있게 남긴다(#599): 값이 양수면 그 전에
-  나가거나 누르거나 숨으면 뜨지 않고, 다른 버튼으로 옮기면 지연을 다시 건다
+- `install_tips(..., delayed=True)`로 건 위젯(카드 위 툴팁)은 머문 뒤에 뜬다 — 카드 버튼은
+  `CARD_BUTTON_TIP_DELAY_MS`(0, 바로), 카드 글(`text=True` — 잘린 제목 · 잘린 채널명 · 실패 사유 · 다른 저장
+  위치)은 `CARD_TEXT_TIP_DELAY_MS`(600) 뒤에 페이드로 뜬다(오너 2026-11-15, #610). 지연이 양수면 그 전에 나가거나
+  누르거나 숨으면 뜨지 않고, 다른 위젯으로 옮기면 지연을 다시 건다(#599)
 - 나타날 때 `TIP_FADE_IN_MS` 동안 투명에서 불투명으로(처음 빠르고 끝 느림), 닫힐 때 `TIP_FADE_OUT_MS` 동안
   사라진다(오너 2026-11-15, #610). 사라지는 중에 새 툴팁이 뜨면 사라지던 것은 바로 지우고 새 것만 나타난다
   (말풍선은 하나라 그 자리에서 다시 0부터 나타난다). 설정의 애니메이션 끔(`card_display` `animations`)이면 바로
@@ -66,9 +66,11 @@ _SIDEWAYS = {
 _FACING = {"below": "top", "above": "bottom", "right": "left", "left": "right"}  # 꼬리가 나는 쪽
 _TIP_WEIGHT = 600  # 말풍선 글 굵기 — 굵게(설계 §12.1 「툴팁 글은 굵게」)
 _SHADOW_ALPHA = 0.05  # 그림자 가장 안쪽 한 겹의 불투명도 — 바깥으로 갈수록 옅다
-# 카드 위 툴팁(`install_tips(..., delayed=True)`)의 지연(ms). 0이면 타이머 없이 바로 뜬다 — 페이드가 생겨 0으로
-# 했다(오너 2026-11-15 실기, #610 — 그 전 600은 #599). 양수로 두면 머무를 때만 뜨는 장치가 다시 켜진다
-HOVER_TIP_DELAY_MS = 0
+# 카드 버튼 툴팁(`install_tips(..., delayed=True)`)의 지연(ms). 0이면 타이머 없이 바로 뜬다(오너 2026-11-15, #610)
+CARD_BUTTON_TIP_DELAY_MS = 0
+# 카드 글 툴팁(`install_tips(..., delayed=True, text=True)` — 잘린 글 · 실패 사유 · 저장 위치)의 지연(ms).
+# 카드를 지나가는 포인터에는 뜨지 않게 한다(오너 2026-11-15 「제목이 잘린다면 호버 딜레이를 넣자」, #599 · #610)
+CARD_TEXT_TIP_DELAY_MS = 600
 # 말풍선이 나타날 때 투명 → 불투명(ms, ease-out) · 닫힐 때 불투명 → 투명(ms) — 오너 2026-11-15(약 120 · 약 80,
 # #610). 0이면 바로 뜨고 바로 사라진다. 상수는 쓸 때마다 읽는다(테스트가 줄인다)
 TIP_FADE_IN_MS = 120
@@ -507,8 +509,9 @@ class TipFilter(QObject):
 
     Qt의 툴팁 이벤트(`QEvent.ToolTip`)는 툴팁 글이 있으면 삼킨다 — 기본 툴팁이 함께 뜨지 않게.
 
-    `tipDelayed` 속성이 참인 위젯(`install_tips(..., delayed=True)`)은 `HOVER_TIP_DELAY_MS`가 양수일 때
-    들어감에서 바로 띄우지 않고 타이머 하나로 그 뒤에 띄운다. 0이면 다른 위젯처럼 바로 띄운다(#610).
+    `tipDelayed` 속성이 참인 위젯(`install_tips(..., delayed=True)`)은 지연(카드 버튼 `CARD_BUTTON_TIP_DELAY_MS`,
+    `tipText`가 참인 카드 글 `CARD_TEXT_TIP_DELAY_MS`)이 양수일 때 들어감에서 바로 띄우지 않고 타이머 하나로
+    그 뒤에 띄운다. 0이면 다른 위젯처럼 바로 띄운다(#610).
     기다리는 대상은 하나다 — 다른 위젯에 들어가면 그 위젯으로 바뀌고, 기다리던 위젯에서 나가거나 누르거나
     숨으면 그만둔다.
     """
@@ -532,10 +535,9 @@ class TipFilter(QObject):
         if kind == QEvent.Type.ToolTip:
             return bool(obj.toolTip())
         if kind == QEvent.Type.Enter:
-            delay = HOVER_TIP_DELAY_MS  # 상수는 걸 때마다 읽는다(테스트가 바꾼다)
-            if obj.property("tipDelayed") and delay > 0:
+            if obj.property("tipDelayed") and _delay_for(obj) > 0:
                 self._pending = obj
-                self._timer.start(delay)
+                self._timer.start(_delay_for(obj))
             elif self._allowed(obj):
                 show_tip(obj, obj.toolTip())
             return False
@@ -575,6 +577,11 @@ class TipFilter(QObject):
         return QApplication.activePopupWidget() is None
 
 
+def _delay_for(widget: QObject) -> int:
+    """지연을 건 위젯의 지연(ms) — 카드 글이면 글 지연, 그 밖은 버튼 지연. 상수는 부를 때마다 읽는다(테스트가 바꾼다)."""
+    return CARD_TEXT_TIP_DELAY_MS if widget.property("tipText") else CARD_BUTTON_TIP_DELAY_MS
+
+
 _FILTER: dict[str, TipFilter | None] = {"filter": None}  # 위젯들이 함께 쓰는 필터 하나
 
 
@@ -585,17 +592,19 @@ def tip_filter() -> TipFilter:
     return _FILTER["filter"]
 
 
-def install_tips(root: QWidget, delayed: bool = False) -> None:
+def install_tips(root: QWidget, delayed: bool = False, text: bool = False) -> None:
     """root와 그 아래 위젯마다 말풍선 필터를 건다 — 여러 번 불러도 위젯마다 한 번만 건다.
 
     Args:
-        delayed: 참이면 그 위젯들의 툴팁은 `HOVER_TIP_DELAY_MS` 머문 뒤에 뜬다(카드 위 툴팁, #599 —
-            지금 값 0이면 바로, #610)
+        delayed: 참이면 그 위젯들의 툴팁은 카드 위 툴팁 지연 뒤에 뜬다(#599) — 버튼은
+            `CARD_BUTTON_TIP_DELAY_MS`(0이면 바로)
+        text: `delayed`와 함께 참이면 카드 글로 보고 `CARD_TEXT_TIP_DELAY_MS` 뒤에 뜬다(#610)
     """
     shared = tip_filter()
     for widget in (root, *root.findChildren(QWidget)):
         if delayed:
             widget.setProperty("tipDelayed", True)
+            widget.setProperty("tipText", text)
         if not widget.property("tipInstalled"):
             widget.installEventFilter(shared)
             widget.setProperty("tipInstalled", True)

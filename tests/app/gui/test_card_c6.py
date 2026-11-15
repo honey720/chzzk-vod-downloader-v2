@@ -460,14 +460,15 @@ FOUR_SECTIONS = (
 UNVERIFIED_SHORT = (
     "length not checked"  # 길이를 확인하지 못한 구간 카드가 정보 글 끝에 다는 짧은 경고
 )
-# 테스트가 거는 카드 툴팁 지연(ms) — 제품 값은 0이라 지연 장치를 재려고 양수로 건다(#610)
+# 테스트가 거는 카드 툴팁 지연(ms) — 버튼 · 글 둘 다. 제품 값(버튼 0 · 글 600) 대신 지연 장치를 짧게 잰다(#610)
 TEST_TIP_DELAY_MS = 40
 
 
 @pytest.fixture
 def _short_tip_delay(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """카드 툴팁 지연을 `TEST_TIP_DELAY_MS`로 걸고(지연 장치 재기), 앞뒤로 말풍선을 닫는다."""
-    monkeypatch.setattr(tip_bubble, "HOVER_TIP_DELAY_MS", TEST_TIP_DELAY_MS)
+    """카드 버튼 · 글 툴팁 지연을 `TEST_TIP_DELAY_MS`로 걸고(지연 장치 재기), 앞뒤로 말풍선을 닫는다."""
+    monkeypatch.setattr(tip_bubble, "CARD_BUTTON_TIP_DELAY_MS", TEST_TIP_DELAY_MS)
+    monkeypatch.setattr(tip_bubble, "CARD_TEXT_TIP_DELAY_MS", TEST_TIP_DELAY_MS)
     tip_bubble.hide_tip()
     yield
     tip_bubble.hide_tip()
@@ -542,7 +543,7 @@ class TestNoInfoTip:
 
 @pytest.mark.usefixtures("_short_tip_delay")
 class TestCardButtonTipDelay:
-    """지연을 양수로 걸면 카드 버튼 툴팁은 그만큼 머문 뒤에만 뜬다 — 헤더바는 바로(#599 장치, 기본값 0은 #610)."""
+    """버튼 지연을 양수로 걸면 카드 버튼 툴팁은 그만큼 머문 뒤에만 뜬다 — 헤더바는 바로(#599 장치, 기본값 0은 #610)."""
 
     def test_card_button_tip_shows_only_after_the_delay(self, qtbot: QtBot, tmp_path: Path) -> None:
         """카드 버튼에 들어가면 말풍선이 바로 뜨지 않고 지연 뒤에 그 버튼 이름으로 떠야 한다.
@@ -609,7 +610,8 @@ class TestCardButtonTipDelay:
         카드 버튼 지연 10000ms · 등록 버튼(툴팁 있음) 들어감
         -> 들어감 직후 말풍선 = 등록 버튼 툴팁, 기다리는 위젯 없음
         """
-        monkeypatch.setattr(tip_bubble, "HOVER_TIP_DELAY_MS", 10_000)
+        monkeypatch.setattr(tip_bubble, "CARD_BUTTON_TIP_DELAY_MS", 10_000)
+        monkeypatch.setattr(tip_bubble, "CARD_TEXT_TIP_DELAY_MS", 10_000)
         win = open_window(tmp_path)
         button = win.fetchButton
         assert button.isVisible() and button.toolTip(), "전제: 등록 버튼이 보이고 툴팁이 있다"
@@ -619,15 +621,19 @@ class TestCardButtonTipDelay:
 
 
 LONG_CHANNEL = "이름이아주아주긴채널" * 6  # 채널명 칸(최대 150px)에서 잘리는 채널명
+LONG_TITLE = "아주 긴 다시보기 제목 " * 300  # 어느 창 폭에서도 잘리는 제목
 
 
 def _text_tip_card(tmp_path: Path, which: str) -> tuple[VodDownloader, ContentItemWidget, QWidget]:
     """툴팁이 달린 카드 글 하나를 든 카드를 창에 띄우고 (창, 카드, 그 글)을 돌려준다.
 
-    channel = 잘린 긴 채널명, status = 상세 줄이 있는 실패 사유, directory = 기본 위치와 다른 저장 위치
+    channel = 잘린 긴 채널명, status = 상세 줄이 있는 실패 사유, directory = 기본 위치와 다른 저장 위치,
+    title = 잘린 긴 제목
     """
     item = _make_item(str(tmp_path))
-    if which == "channel":
+    if which == "title":
+        item.title = LONG_TITLE
+    elif which == "channel":
         item.channel_name = LONG_CHANNEL
     elif which == "status":
         item.downloadState = DownloadState.FAILED
@@ -642,6 +648,7 @@ def _text_tip_card(tmp_path: Path, which: str) -> tuple[VodDownloader, ContentIt
         "channel": card.channelNameLabel,
         "status": card.statusLabel,
         "directory": card.directoryLabel,
+        "title": card.titleLabel,
     }[which]
     assert label.isVisible() and label.toolTip(), f"전제: {which} 글이 보이고 툴팁이 있다"
     return win, card, label
@@ -649,15 +656,15 @@ def _text_tip_card(tmp_path: Path, which: str) -> tuple[VodDownloader, ContentIt
 
 @pytest.mark.usefixtures("_short_tip_delay")
 class TestCardTextTipDelay:
-    """지연을 양수로 걸면 카드 글 툴팁(채널명 · 상태 글 · 저장 위치)도 그만큼 머문 뒤에만 뜬다(#599 장치)."""
+    """글 지연을 양수로 걸면 카드 글 툴팁(제목 · 채널명 · 상태 글 · 저장 위치)도 그만큼 머문 뒤에만 뜬다(#599 장치)."""
 
-    @pytest.mark.parametrize("which", ["channel", "status", "directory"])
+    @pytest.mark.parametrize("which", ["title", "channel", "status", "directory"])
     def test_card_text_tip_shows_only_after_the_delay(
         self, qtbot: QtBot, tmp_path: Path, which: str
     ) -> None:
         """카드 글에 들어가면 말풍선이 바로 뜨지 않고 지연 뒤에 그 글의 툴팁으로 떠야 한다.
 
-        지연 40ms · 카드 들어감 · 잘린 채널명 / 상세 줄 있는 실패 사유 / 다른 저장 위치 글 들어감
+        지연 40ms · 카드 들어감 · 잘린 제목 / 잘린 채널명 / 상세 줄 있는 실패 사유 / 다른 저장 위치 글 들어감
         -> 들어감 직후 말풍선 없음 · 기다리는 위젯 = 그 글, 지연 뒤 말풍선 = 그 글의 툴팁
         """
         _win, _card, label = _text_tip_card(tmp_path, which)
@@ -714,25 +721,19 @@ def _default_delay_with_fade(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
 
 @pytest.mark.usefixtures("_default_delay_with_fade")
-class TestCardTipsAtOnce:
-    """기본값에서 카드 버튼 · 카드 글 툴팁은 지연 없이 바로 페이드로 나타난다(오너 2026-11-15 실기, #610)."""
+class TestCardButtonTipsAtOnce:
+    """기본값에서 카드 버튼 툴팁은 지연 없이 바로 페이드로 나타난다(오너 2026-11-15, #610)."""
 
-    @pytest.mark.parametrize("which", ["edit", "channel", "status", "directory"])
-    def test_card_tip_starts_fading_in_on_enter(
-        self, qtbot: QtBot, tmp_path: Path, which: str
-    ) -> None:
-        """기본 지연에서 카드 버튼 · 카드 글에 들어가면 말풍선이 바로 불투명도 0에서 나타나기 시작해야 한다.
+    def test_card_button_tip_starts_fading_in_on_enter(self, qtbot: QtBot, tmp_path: Path) -> None:
+        """기본 지연에서 카드 버튼에 들어가면 말풍선이 바로 불투명도 0에서 나타나기 시작해야 한다.
 
-        나타남 60ms · 카드 들어감 · ✎ / 잘린 채널명 / 상세 줄 있는 실패 사유 / 다른 저장 위치 글 들어감
-        -> 들어감을 보낸 직후(이벤트 루프 전) 기다리는 위젯 없음 · 말풍선 보임 · 대상 = 그 위젯 · 불투명도 0 ·
-        페이드 있음, 페이드 뒤 불투명도 1 · 말풍선 글 = 그 위젯의 툴팁
+        나타남 60ms · 대기 카드 들어감 · ✎ 들어감
+        -> 들어감을 보낸 직후(이벤트 루프 전) 기다리는 위젯 없음 · 말풍선 보임 · 대상 = ✎ · 불투명도 0 ·
+        페이드 있음, 페이드 뒤 불투명도 1 · 말풍선 글 = ✎ 툴팁
         """
-        if which == "edit":
-            item = _make_item(str(tmp_path))
-            win = open_window(tmp_path, item)
-            target = _hovered_card(win, item).editButton
-        else:
-            _win, _card, target = _text_tip_card(tmp_path, which)
+        item = _make_item(str(tmp_path))
+        win = open_window(tmp_path, item)
+        target = _hovered_card(win, item).editButton
         card_helpers.send_enter(target)  # 0ms 타이머로 미뤄 띄우면 여기서는 아직 안 떠 있다
         assert tip_bubble.tip_filter().pending() is None
         bubble = tip_bubble.current_bubble()
@@ -742,6 +743,110 @@ class TestCardTipsAtOnce:
         qtbot.waitUntil(lambda: bubble.fade() is None, timeout=2000)
         assert bubble.opacity() == 1.0
         assert card_helpers.bubble_text_for(target) == target.toolTip()
+
+
+BEFORE_TEXT_DELAY_MS = (
+    300  # 글 툴팁 지연(600ms)보다 짧게 기다리는 시간(ms) — 그 동안 뜨지 않아야 한다
+)
+AFTER_TEXT_DELAY_MS = (
+    900  # 글 툴팁 지연(600ms)보다 길게 기다리는 시간(ms) — 그 뒤에도 뜨지 않아야 한다
+)
+
+
+def _record_show(monkeypatch: pytest.MonkeyPatch) -> list[tuple[QWidget, bool, float, bool]]:
+    """`show_tip`을 감싸, 말풍선을 띄운 바로 그때의 (대상, 보임, 불투명도, 페이드 있음)을 적는 목록을 돌려준다."""
+    shows: list[tuple[QWidget, bool, float, bool]] = []
+    show_tip = tip_bubble.show_tip
+
+    def show_and_record(target: QWidget, text: str, rect=None) -> None:
+        show_tip(target, text, rect)
+        bubble = tip_bubble.current_bubble()
+        assert bubble is not None
+        shows.append((target, bubble.isVisible(), bubble.opacity(), bubble.fade() is not None))
+
+    monkeypatch.setattr(tip_bubble, "show_tip", show_and_record)
+    return shows
+
+
+@pytest.mark.usefixtures("_default_delay_with_fade")
+class TestCardTextTipsAfterDelay:
+    """기본값에서 카드 글 툴팁은 600ms 머문 뒤 페이드로 나타나고, 잘리지 않은 제목에는 없다(오너 2026-11-15, #610)."""
+
+    @pytest.mark.parametrize("which", ["title", "channel", "status", "directory"])
+    def test_card_text_tip_fades_in_after_the_text_delay(
+        self, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, which: str
+    ) -> None:
+        """기본 지연에서 카드 글에 들어가면 300ms 동안 말풍선이 없고, 그 뒤 투명에서 그 글의 툴팁으로 떠야 한다.
+
+        나타남 60ms · 카드 들어감 · 잘린 제목 / 잘린 채널명 / 상세 줄 있는 실패 사유 / 다른 저장 위치 글 들어감
+        -> 기다리는 위젯 = 그 글 · 300ms 뒤에도 말풍선 없음 · 기다리는 위젯 = 그 글,
+        띄운 바로 그때 대상 = 그 글 · 보임 · 불투명도 0 · 페이드 있음, 페이드 뒤 불투명도 1 · 말풍선 글 = 그 글의 툴팁
+        """
+        _win, _card, label = _text_tip_card(tmp_path, which)
+        shows = _record_show(monkeypatch)
+        card_helpers.send_enter(label)
+        assert tip_bubble.tip_filter().pending() is label
+        qtbot.wait(BEFORE_TEXT_DELAY_MS)
+        assert not _bubble_shown() and shows == []
+        assert tip_bubble.tip_filter().pending() is label
+        qtbot.waitUntil(lambda: bool(shows), timeout=3000)
+        assert shows == [(label, True, 0.0, True)]
+        bubble = tip_bubble.current_bubble()
+        assert bubble is not None
+        qtbot.waitUntil(lambda: bubble.fade() is None, timeout=2000)
+        assert bubble.opacity() == 1.0
+        assert card_helpers.bubble_text_for(label) == label.toolTip()
+
+    def test_elided_title_tip_is_the_whole_title(self, tmp_path: Path) -> None:
+        """잘린 제목의 툴팁은 제목 전체여야 한다.
+
+        제목 LONG_TITLE -> 보이는 제목 ≠ 전체, 제목 툴팁 = LONG_TITLE
+        """
+        _win, card, label = _text_tip_card(tmp_path, "title")
+        assert card.titleLabel.isElided()
+        assert label.toolTip() == LONG_TITLE
+
+    def test_fitting_title_has_no_tip(self, qtbot: QtBot, tmp_path: Path) -> None:
+        """잘리지 않은 제목은 툴팁이 없고, 들어가 글 지연이 지나도 말풍선이 뜨지 않아야 한다.
+
+        기본 제목 · 창 폭 ROOMY_WIDTH · 카드 들어감 · 제목 들어감 -> 제목 안 잘림 · 툴팁 "", 900ms 뒤 말풍선 없음
+        """
+        item = _make_item(str(tmp_path))
+        win = open_window(tmp_path, item)
+        win.resize(card_helpers.ROOMY_WIDTH, win.height())
+        QApplication.processEvents()
+        card = _hovered_card(win, item)
+        title = card.titleLabel
+        assert title.isVisible() and not title.isElided(), "전제: 제목이 보이고 다 보인다"
+        assert title.toolTip() == ""
+        enter(title)
+        qtbot.wait(AFTER_TEXT_DELAY_MS)
+        assert not _bubble_shown()
+
+    def test_widening_until_the_title_fits_removes_the_tip(
+        self, qtbot: QtBot, tmp_path: Path
+    ) -> None:
+        """창을 넓혀 제목이 다 보이게 되면 제목 툴팁이 없어지고 말풍선도 뜨지 않아야 한다.
+
+        제목 "넓히면 다 보이는 제목 " × 6 · 창을 최소폭으로 -> 제목 잘림 · 툴팁 = 제목 전체,
+        창 폭 ROOMY_WIDTH -> 제목 안 잘림 · 툴팁 "", 제목 들어감 · 900ms 뒤 말풍선 없음
+        """
+        item = _make_item(str(tmp_path))
+        item.title = "넓히면 다 보이는 제목 " * 6
+        win = open_window(tmp_path, item)
+        win.resize(win.minimumSizeHint().width(), win.height())
+        QApplication.processEvents()
+        card = _hovered_card(win, item)
+        title = card.titleLabel
+        assert title.isVisible() and title.isElided(), "전제: 좁은 창에서 제목이 잘린다"
+        assert title.toolTip() == item.title
+        win.resize(card_helpers.ROOMY_WIDTH, win.height())
+        QApplication.processEvents()
+        assert not title.isElided(), "전제: 넓힌 창에서 제목이 다 보인다"
+        assert title.toolTip() == ""
+        enter(title)
+        qtbot.wait(AFTER_TEXT_DELAY_MS)
+        assert not _bubble_shown()
 
 
 # ---- 구간 편집 버튼(✂) (#599) ----

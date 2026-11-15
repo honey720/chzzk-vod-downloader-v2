@@ -176,10 +176,11 @@ CARD_BUTTONS = {
     DownloadState.FAILED: ("retryButton", "deleteButton"),
 }
 
-# 툴팁이 달릴 수 있는 카드 글 위젯 — 잘린 채널명 · 상태 글(실패 사유 전문) · 저장 위치(글 · 아이콘).
-# 제목 · 정보 글은 툴팁이 없다 — 카드 정보는 툴팁에 숨기지 않고 카드 편집 창 · 구간 창에서 본다(오너
-# 2026-11-15, #599)
+# 툴팁이 달릴 수 있는 카드 글 위젯 — 잘린 제목(제목 전체) · 잘린 채널명 · 상태 글(실패 사유 전문) · 저장
+# 위치(글 · 아이콘). 제목은 잘렸을 때만 툴팁이 있다(오너 2026-11-15, #610). 정보 글은 툴팁이 없다 — 카드 정보는
+# 툴팁에 숨기지 않고 카드 편집 창 · 구간 창에서 본다(#599)
 TIP_LABEL_NAMES = (
+    "titleLabel",
     "channelNameLabel",
     "statusLabel",
     "directoryLabel",
@@ -462,9 +463,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
     def _installTips(self) -> None:
         """툴팁이 달릴 수 있는 위젯에 말풍선 필터를 건다 — 카드마다 처음 호버할 때 한 번 (#550).
 
-        툴팁은 모두 말풍선으로 뜬다(설계 §12.1 「툴팁」). 카드 위 툴팁(버튼 · 채널명 · 상태 글 · 저장 위치)은
-        지연 장치(`HOVER_TIP_DELAY_MS`, #599)를 거는데, 그 값이 지금 0이라 다른 툴팁처럼 바로 페이드로
-        뜬다(오너 2026-11-15 실기, #610). 필터(#536)는 카드 버튼과 글 위젯에만
+        툴팁은 모두 말풍선으로 뜬다(설계 §12.1 「툴팁」). 카드 버튼 툴팁은 바로(`CARD_BUTTON_TIP_DELAY_MS` 0),
+        카드 글 툴팁(잘린 제목 · 잘린 채널명 · 실패 사유 · 다른 저장 위치)은 `CARD_TEXT_TIP_DELAY_MS`(600) 머문 뒤에
+        페이드로 뜬다(오너 2026-11-15, #599 · #610). 필터(#536)는 카드 버튼과 글 위젯에만
         건다 — 카드 전체 · 모든 자식에 걸면 그 위젯들의 모든 이벤트를 파이썬 필터로 끌어온다. 잘렸을
         때만 툴팁이 달리는 글도 미리 걸고, 툴팁이 비면 띄우지 않는다(`TipFilter._allowed`).
 
@@ -476,8 +477,10 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         if self._tipsInstalled:
             return
         self._tipsInstalled = True
-        for name in (*CARD_BUTTON_NAMES, *TIP_LABEL_NAMES):
+        for name in CARD_BUTTON_NAMES:
             install_tips(getattr(self, name), delayed=True)
+        for name in TIP_LABEL_NAMES:
+            install_tips(getattr(self, name), delayed=True, text=True)
 
     def hasKeyFocus(self) -> bool:
         """키보드 초점이 이 카드에 있는지 — focus ring · 카드 버튼을 보이는 때."""
