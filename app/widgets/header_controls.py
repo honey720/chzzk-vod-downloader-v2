@@ -408,14 +408,14 @@ class DropButton(QToolButton):
 
     def _chrome(self) -> int:
         """글 밖의 폭 — 테두리 둘 · 좌우 여백 · 도형과 그 간격 · ▾와 그 간격."""
-        glyph = theme.METRICS["narrowIcon"] + GLYPH_GAP if self._glyph else 0
+        glyph = theme.METRICS["menuIcon"] + GLYPH_GAP if self._glyph else 0
         return 2 + 2 * BUTTON_PADDING + glyph + CARET_GAP + CARET_WIDTH
 
     def _textRect(self) -> QRect:
         """글을 그리는 칸."""
         left = 1 + BUTTON_PADDING
         if self._glyph:
-            left += theme.METRICS["narrowIcon"] + GLYPH_GAP
+            left += theme.METRICS["menuIcon"] + GLYPH_GAP
         right = 1 + BUTTON_PADDING + CARET_WIDTH + CARET_GAP
         return QRect(left, 0, self.width() - left - right, self.height())
 
@@ -430,9 +430,8 @@ class DropButton(QToolButton):
         tokens = theme.current_tokens()
         enabled = self.isEnabled()
         if self._glyph:
-            size = theme.METRICS[
-                "narrowIcon"
-            ]  # 바 그림 칸 — 카드 버튼 그림(actionGlyph)과 따로(176j)
+            # 글 옆 그림은 글 크기(menuIcon) — 아이콘만인 좁은 폭(_paintIcon)은 narrowIcon(176k)
+            size = theme.METRICS["menuIcon"]
             glyph_color = tokens[self.glyphToken if enabled else "textDisabled"]
             pixmap = action_pixmap(self._glyph, glyph_color, size, self.devicePixelRatioF())
             painter.drawPixmap(1 + BUTTON_PADDING, (self.height() - size) // 2, pixmap)

@@ -661,6 +661,80 @@ class TestDropFields:
         assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "fieldBg")
 
 
+FOLDER_LEFT = 11  # 넓은 폭 📁 그림 칸 왼쪽 끝(px) — 테두리 1 + 안쪽 여백 10
+FOLDER_CELL = 16  # 넓은 폭 📁 그림 칸(px) — 글 옆 그림은 글 크기(176k 지시 값)
+FOLDER_GAP = 6  # 📁 ↔ 글(px)
+NARROW_CELL = 20  # 아이콘만인 좁은 폭 📁 그림 칸(px) — 옆 ＋ · 선택과 같다(176k 지시 값)
+
+
+def _ink_columns(image: QImage, width: int, height: int) -> list[int]:
+    """바탕(왼쪽 안쪽 3px 자리 색)과 다른 화소가 있는 열 — 가운데 위아래 10px 띠만 본다(모서리 테두리 제외)."""
+    face = _pixel(image, 3, height // 2)
+    columns = []
+    for x in range(3, width - 3):
+        for y in range(height // 2 - 10, height // 2 + 10):
+            c = _pixel(image, x, y)
+            gap = (
+                abs(c.red() - face.red())
+                + abs(c.green() - face.green())
+                + abs(c.blue() - face.blue())
+            )
+            if gap > SLACK:
+                columns.append(x)
+                break
+    return columns
+
+
+def _first_run(columns: list[int]) -> tuple[int, int]:
+    """처음 이어진 잉크 열 묶음의 (첫 열, 끝 열) — 빈 열 셋 이상에서 끊는다."""
+    start = end = columns[0]
+    for x in columns[1:]:
+        if x - end > 3:
+            break
+        end = x
+    return start, end
+
+
+class TestFolderGlyphSize:
+    """저장 위치 드롭다운 📁 — 넓은 폭(그림 + 글)은 글 크기 16, 좁은 폭(그림만)은 바 그림 칸 20(176k)."""
+
+    def test_wide_folder_glyph_fits_the_16_cell_and_text_follows_it(self, window) -> None:
+        """넓은 폭 📁 잉크가 그림 칸 16 안에 있고 글이 그 칸 + 6 뒤에서 시작해야 한다.
+
+        창 폭 900, 저장 위치 칸 넓은 폭(그림 + 글) -> 📁 잉크 열 ⊂ [11, 27), 글 첫 잉크 열 ∈ [33, 36)
+        (글 왼쪽 여백 0 ~ 2px — 그림 칸이 20이면 37부터)
+        """
+        win = window(DownloadState.WAITING)
+        button = win.saveLocationButton
+        assert button.isVisible() and not button.isCompact(), "전제: 넓은 폭이다"
+        image = button.grab().toImage()
+        columns = _ink_columns(image, button.width(), button.height())
+        start, end = _first_run(columns)
+        assert FOLDER_LEFT <= start and end < FOLDER_LEFT + FOLDER_CELL
+        text_start = min(x for x in columns if x > end)
+        text_left = FOLDER_LEFT + FOLDER_CELL + FOLDER_GAP
+        assert text_left <= text_start < text_left + 3
+
+    def test_narrow_folder_glyph_is_larger_than_the_wide_one(self, window) -> None:
+        """아이콘만인 📁 잉크 폭이 넓은 폭 📁보다 그림 칸 비(20 / 16)만큼 커야 한다.
+
+        창 폭 900, 넓은 폭 잉크 폭 w16 · setCompact(True) 뒤 잉크 폭 w20 -> w20 ≥ w16 × 20 / 16 − 1,
+        w20 ≤ 20
+        """
+        win = window(DownloadState.WAITING)
+        button = win.saveLocationButton
+        image = button.grab().toImage()
+        start, end = _first_run(_ink_columns(image, button.width(), button.height()))
+        wide = end - start + 1
+        button.setCompact(True)
+        _pump()
+        assert button.isCompact(), "전제: 아이콘 모양이다"
+        image = button.grab().toImage()
+        start, end = _first_run(_ink_columns(image, button.width(), button.height()))
+        narrow = end - start + 1
+        assert wide * NARROW_CELL / FOLDER_CELL - 1 <= narrow <= NARROW_CELL
+
+
 class TestSettingsGear:
     """설정은 메뉴바 오른쪽 끝 톱니바퀴 · Ctrl+,로 여는 모달 창 — 메뉴바 탭은 작업 화면만(설계 §4 · §13)."""
 
