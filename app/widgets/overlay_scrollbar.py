@@ -6,9 +6,12 @@
 
 - 평소에는 얇게(`thin`), 막대 자리에 포인터를 대거나 끄는 동안은 굵게(`thick`) 그린다. 둘 다 `zone`의
   가운데에 놓인다 — 내용은 `zone` 안쪽에 두면 막대와 겹치지 않는다
-- 굴리면(값이 바뀌면) 나타나고, 가만히 두면 `HIDE_DELAY_MS` 뒤 흐려진다. 포인터가 막대 자리에 있거나
-  끄는 동안은 흐려지지 않는다
-- 애니메이션을 끄면(`animate`가 거짓) 늘 보이는 막대다 — 굵기도 바로 바뀐다
+- 포인터가 영역(뷰포트) 안에 들어오면 나타나고, 안에 있는 동안은 흐려지지 않는다. 밖으로 나가면
+  `HIDE_DELAY_MS` 뒤 흐려진다(Windows 11 겹친 스크롤바와 같은 동작, 오너 2026-11-15)
+- 포인터가 밖에 있을 때 굴리면(값이 바뀌면) 나타나고, 가만히 두면 `HIDE_DELAY_MS` 뒤 흐려진다. 포인터가
+  막대 자리에 있거나 끄는 동안도 흐려지지 않는다
+- 애니메이션을 끄면(`animate`가 거짓) 늘 보이는 막대다 — 굵기도 바로 바뀐다. 고대비 설정도 같은 길이다
+  (`high_contrast`)
 - 스크롤 범위가 없으면(내용이 다 보이면) 막대도 막대 자리도 없다 — 아래 내용이 포인터를 받는다
 
 막대를 끄는 동작 · 바탕 누름 · 휠은 원래 스크롤바로 보낸다 — `sliderPressed` · `sliderReleased` ·
@@ -22,7 +25,15 @@
 from collections.abc import Callable
 
 from PySide6.QtCore import QEasingCurve, QEvent, QObject, QRectF, Qt, QTimer, QVariantAnimation
-from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPainterPath, QPaintEvent, QWheelEvent
+from PySide6.QtGui import (
+    QColor,
+    QGuiApplication,
+    QMouseEvent,
+    QPainter,
+    QPainterPath,
+    QPaintEvent,
+    QWheelEvent,
+)
 from PySide6.QtWidgets import QAbstractScrollArea, QAbstractSlider, QApplication, QWidget
 
 import app.theme as theme
@@ -34,6 +45,20 @@ FADE_IN_MS = 120  # 나타나는 시간 — 툴팁 나타남과 같은 값(#610)
 FADE_OUT_MS = 240  # 흐려지는 시간 — 나타남보다 느리게 해 갑자기 꺼지는 느낌을 덜어 낸다
 THICKEN_MS = 120  # 얇음 ↔ 굵음 시간
 MIN_HANDLE = 28  # 손잡이 최소 길이(px) — style.qss QScrollBar::handle의 min-height와 같다
+
+
+def high_contrast() -> bool:
+    """OS가 고대비를 쓰는지 — Qt 6.10+ `QStyleHints.accessibility().contrastPreference()` (#611).
+
+    앱 객체가 없으면 거짓이다.
+    """
+    if QGuiApplication.instance() is None:
+        return False
+    # 스타일 힌트를 변수에 잡아 둔다 — `styleHints().accessibility()`를 한 식으로 이어 부르면 PySide가 스타일
+    # 힌트 래퍼를 먼저 놓아 접근성 힌트가 이미 지워진 객체가 된다(PySide6 6.11.2 실측 — RuntimeError)
+    style_hints = QGuiApplication.styleHints()
+    preference = style_hints.accessibility().contrastPreference()
+    return preference == Qt.ContrastPreference.HighContrast
 
 
 class OverlayScrollBar(QWidget):
@@ -57,17 +82,19 @@ class OverlayScrollBar(QWidget):
             zone: 막대 자리의 폭(px) — 뷰포트 오른쪽 끝에서 이만큼. 포인터를 받는 자리다
             thin: 평소 막대 굵기(px)
             thick: 포인터를 대거나 끄는 동안의 굵기(px) — `zone` 이하
-            animate: 부를 때마다 애니메이션을 쓸지 답한다(설정이 바뀌면 다음 동작부터 따른다)
+            animate: 부를 때마다 애니메이션을 쓸지 답한다(설정이 바뀌면 다음 동작부터 따른다). 거짓이거나
+                OS가 고대비면 늘 보이는 막대다
         """
         super().__init__(area)
         self._area = area
         self._zone = zone
         self._thin = thin
         self._thick = thick
-        self._animate = animate
-        self._opacity = 0.0 if animate() else 1.0  # 0 ~ 1 — 흐려짐 · 나타남
+        self._wantsAnimation = animate
+        self._opacity = 0.0 if self._animate() else 1.0  # 0 ~ 1 — 흐려짐 · 나타남
         self._thickness = float(thin)  # 지금 그리는 굵기(px)
         self._hovered = False  # 포인터가 막대 자리에 있는지
+        self._inside = False  # 포인터가 영역(뷰포트) 안에 있는지 — 그동안은 흐려지지 않는다
         self._dragOffset: float | None = None  # 끄는 중이면 누른 자리 ↔ 손잡이 위끝(px)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
         area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -83,9 +110,25 @@ class OverlayScrollBar(QWidget):
         bar.rangeChanged.connect(self._onRangeChanged)
         bar.valueChanged.connect(self._onValueChanged)
         self._viewport = area.viewport()
-        self._viewport.installEventFilter(self)  # 뷰포트 크기 · 자리 → 막대 자리
+        self._viewport.installEventFilter(self)  # 뷰포트 크기 · 자리 → 막대 자리, 들어옴 · 나감
+        # 고대비 설정이 실행 중에 바뀌면 따라간다 — 켜지면 늘 보이고, 꺼지면 다음 가만히 둠부터 흐려진다
+        # 래퍼를 붙잡아 둔다 — 스타일 힌트 래퍼가 사라지면 접근성 힌트 래퍼도 지워진 객체가 된다(high_contrast)
+        self._styleHints = QGuiApplication.styleHints()
+        self._accessibility = self._styleHints.accessibility()
+        self._accessibility.contrastPreferenceChanged.connect(self._onContrastChanged)
         self._place()
         self._onRangeChanged(bar.minimum(), bar.maximum())
+
+    def _animate(self) -> bool:
+        """흐려짐 · 굵기 애니메이션을 쓰는지 — 애니메이션 설정이 켜져 있고 고대비가 아닐 때."""
+        return self._wantsAnimation() and not high_contrast()
+
+    def _onContrastChanged(self, _preference: Qt.ContrastPreference) -> None:
+        if not self._animate():
+            self._fadeTo(1.0)  # 늘 보이는 막대
+            self._growTo(self._thick if self._busy() else self._thin)
+        elif not self._busy():
+            self._hideTimer.start()
 
     # ---- 읽기(테스트 · 그림) ----
 
@@ -112,11 +155,30 @@ class OverlayScrollBar(QWidget):
     # ---- 자리 · 보임 ----
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        """뷰포트의 크기 · 자리가 바뀌면 막대 자리를 따라 옮긴다."""
+        """뷰포트의 크기 · 자리가 바뀌면 막대 자리를 따라 옮기고, 포인터가 드나들면 나타나고 흐려진다."""
         # 종류부터 본다 — 영역이 지워지는 동안 오는 이벤트에서 영역(C++ 객체가 이미 없음)을 건드리지 않는다
-        if event.type() in (QEvent.Type.Resize, QEvent.Type.Move) and watched is self._viewport:
+        kind = event.type()
+        if kind in (QEvent.Type.Resize, QEvent.Type.Move) and watched is self._viewport:
             self._place()
+        elif kind == QEvent.Type.Enter and watched is self._viewport:
+            self._setInside(True)
+        elif kind == QEvent.Type.Leave and watched is self._viewport:
+            self._setInside(False)
         return False
+
+    def _setInside(self, inside: bool) -> None:
+        """포인터가 영역에 들어왔다 · 나갔다 — 막대 자리로 옮겨 가는 것도 나감이다(막대는 뷰포트 밖 형제).
+
+        막대 자리에서 흐려지지 않는 것은 `_hovered`가 맡는다. 나가면 `reveal`과 같이 흐려지는 시계를 건다.
+        """
+        self._inside = inside
+        if self.isHidden():
+            return  # 굴릴 게 없다 — 들어와도 나타나지 않는다
+        if inside:
+            self._hideTimer.stop()
+            self._fadeTo(1.0)
+        elif not self._busy():
+            self._hideTimer.start()
 
     def _place(self) -> None:
         """뷰포트 오른쪽 끝 `zone` 폭 자리에 놓고 맨 위로 올린다."""
@@ -138,9 +200,12 @@ class OverlayScrollBar(QWidget):
         self._hovered = False
         self._dragOffset = None
         self._thickness = float(self._thin)
-        # 새로 생긴 막대는 흐린 채로 시작한다(굴려야 나타난다) — 애니메이션이 꺼져 있으면 늘 보인다
+        # 새로 생긴 막대는 흐린 채로 시작한다(굴리거나 포인터가 들어와야 나타난다) — 애니메이션이 꺼져 있으면
+        # 늘 보인다. 포인터가 이미 영역 안이면 바로 나타난다
         self._opacity = 0.0 if self._animate() else 1.0
         self.setVisible(needed)
+        if needed and self._inside:
+            self._fadeTo(1.0)
         self.update()
 
     def _onValueChanged(self, _value: int) -> None:
@@ -157,8 +222,8 @@ class OverlayScrollBar(QWidget):
             self._hideTimer.start()
 
     def _busy(self) -> bool:
-        """포인터가 막대 자리에 있거나 끄는 중인지 — 그동안은 흐려지지 않는다."""
-        return self._hovered or self._dragOffset is not None
+        """포인터가 영역 · 막대 자리에 있거나 끄는 중인지 — 그동안은 흐려지지 않는다."""
+        return self._inside or self._hovered or self._dragOffset is not None
 
     def _fadeOutIfIdle(self) -> None:
         if not self._busy():

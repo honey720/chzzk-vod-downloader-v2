@@ -367,3 +367,156 @@ class TestDrive:
         QTest.wheelEvent(win.windowHandle(), pos, QPoint(0, -WHEEL_NOTCH), QPoint(0, 0))
         _pump()
         assert win.listView.verticalScrollBar().value() == CELL
+
+
+# ---------------------------------------------------------------- 목록 안 포인터 (오너 2026-11-15)
+
+
+class TestPointerInList:
+    def test_entering_the_list_reveals_the_thin_bar(
+        self,
+        build: Callable[..., VodDownloader],
+        animations: Callable[[bool], None],
+        qtbot: QtBot,
+    ) -> None:
+        """포인터가 카드 목록(뷰포트)에 들어가면 흐려져 있던 막대가 얇은 굵기로 나타나야 한다.
+
+        애니메이션 켬 · 카드 40장, 불투명도 0, 뷰포트에 들어감 -> 불투명도 1, 굵기 6
+        """
+        animations(True)
+        win = build(cards=MANY)
+        bar = _overlay(win)
+        assert bar.isVisible() and bar.opacity() == 0.0, "전제: 흐려져 있다"
+        enter(win.listView.viewport())
+        qtbot.waitUntil(lambda: bar.opacity() == 1.0)
+        assert bar.thickness() == THIN
+
+    def test_bar_does_not_fade_while_the_pointer_stays_in_the_list(
+        self,
+        build: Callable[..., VodDownloader],
+        animations: Callable[[bool], None],
+        qtbot: QtBot,
+    ) -> None:
+        """포인터가 목록 안에 있는 동안은 가만히 두어도 · 굴려도 막대가 흐려지지 않아야 한다.
+
+        애니메이션 켬 · 카드 40장, 뷰포트에 들어감 -> 불투명도 1, 흐려지기 전 대기의 4배 -> 1,
+        휠 아래로 1칸 · 다시 4배 -> 1
+        """
+        animations(True)
+        win = build(cards=MANY)
+        bar = _overlay(win)
+        enter(win.listView.viewport())
+        qtbot.waitUntil(lambda: bar.opacity() == 1.0)
+        qtbot.wait(HIDE_MS * 4)
+        assert bar.opacity() == 1.0
+        _wheel_list(win, -1)
+        assert win.listView.verticalScrollBar().value() == CELL, "전제: 굴렀다"
+        qtbot.wait(HIDE_MS * 4)
+        assert bar.opacity() == 1.0
+
+    def test_leaving_the_list_fades_the_bar(
+        self,
+        build: Callable[..., VodDownloader],
+        animations: Callable[[bool], None],
+        qtbot: QtBot,
+    ) -> None:
+        """포인터가 목록 밖으로 나가면 막대가 흐려져야 한다.
+
+        애니메이션 켬 · 카드 40장, 뷰포트에 들어감 -> 불투명도 1, 뷰포트에서 나감 -> 0
+        """
+        animations(True)
+        win = build(cards=MANY)
+        bar = _overlay(win)
+        enter(win.listView.viewport())
+        qtbot.waitUntil(lambda: bar.opacity() == 1.0)
+        leave(win.listView.viewport())
+        qtbot.waitUntil(lambda: bar.opacity() == 0.0)
+
+    def test_moving_from_the_list_onto_the_bar_keeps_it_shown(
+        self,
+        build: Callable[..., VodDownloader],
+        animations: Callable[[bool], None],
+        qtbot: QtBot,
+    ) -> None:
+        """목록에서 막대 자리로 옮겨 가면(뷰포트 나감 → 막대 들어감) 막대가 흐려지지 않고 굵어져야 한다.
+
+        애니메이션 켬 · 카드 40장, 뷰포트 들어감 -> 1, 뷰포트 나감 · 막대 들어감 -> 굵기 8,
+        흐려지기 전 대기의 4배 -> 불투명도 1
+        """
+        animations(True)
+        win = build(cards=MANY)
+        bar = _overlay(win)
+        enter(win.listView.viewport())
+        qtbot.waitUntil(lambda: bar.opacity() == 1.0)
+        leave(win.listView.viewport())
+        enter(bar)
+        qtbot.waitUntil(lambda: bar.thickness() == THICK)
+        qtbot.wait(HIDE_MS * 4)
+        assert bar.opacity() == 1.0
+
+    def test_nothing_to_scroll_shows_no_bar_when_the_pointer_enters(
+        self,
+        build: Callable[..., VodDownloader],
+        animations: Callable[[bool], None],
+        qtbot: QtBot,
+    ) -> None:
+        """카드가 다 보여 굴릴 게 없으면 포인터가 목록에 들어가도 막대가 나타나지 않아야 한다.
+
+        애니메이션 켬 · 카드 2장(범위 없음), 뷰포트에 들어감 · 흐려지기 전 대기의 2배 -> 막대 숨음 · 불투명도 0
+        """
+        animations(True)
+        win = build(cards=2)
+        bar = _overlay(win)
+        scroll = win.listView.verticalScrollBar()
+        assert scroll.maximum() == scroll.minimum(), "전제: 굴릴 게 없다"
+        enter(win.listView.viewport())
+        qtbot.wait(HIDE_MS * 2)
+        assert not bar.isVisible()
+        assert bar.opacity() == 0.0
+
+
+# ---------------------------------------------------------------- 고대비
+
+
+class TestHighContrast:
+    def test_high_contrast_keeps_the_bar_fully_shown(
+        self,
+        build: Callable[..., VodDownloader],
+        animations: Callable[[bool], None],
+        monkeypatch: pytest.MonkeyPatch,
+        qtbot: QtBot,
+    ) -> None:
+        """OS가 고대비면 애니메이션이 켜져 있어도 막대가 늘 불투명도 1이어야 한다.
+
+        고대비 참 · 애니메이션 켬 · 카드 40장 -> 불투명도 1, 휠 뒤 흐려지기 전 대기의 4배 -> 1
+        """
+        monkeypatch.setattr(overlay_scrollbar, "high_contrast", lambda: True)
+        animations(True)
+        win = build(cards=MANY)
+        bar = _overlay(win)
+        assert bar.opacity() == 1.0
+        _wheel_list(win, -1)
+        qtbot.wait(HIDE_MS * 4)
+        assert bar.opacity() == 1.0
+
+    def test_turning_high_contrast_on_while_running_shows_the_bar(
+        self,
+        build: Callable[..., VodDownloader],
+        animations: Callable[[bool], None],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """실행 중에 고대비가 켜지면(설정 바뀜 시그널) 흐려져 있던 막대가 바로 불투명도 1이어야 한다.
+
+        고대비 거짓 · 애니메이션 켬 · 카드 40장 -> 0, 고대비 참 · contrastPreferenceChanged(HighContrast) -> 1
+        """
+        contrast = [False]
+        monkeypatch.setattr(overlay_scrollbar, "high_contrast", lambda: contrast[0])
+        animations(True)
+        win = build(cards=MANY)
+        bar = _overlay(win)
+        assert bar.opacity() == 0.0, "전제: 흐려져 있다"
+        contrast[0] = True
+        hints = QApplication.styleHints()
+        hints.accessibility().contrastPreferenceChanged.emit(Qt.ContrastPreference.HighContrast)
+        _pump()
+        assert bar.opacity() == 1.0
