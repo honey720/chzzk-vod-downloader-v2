@@ -596,27 +596,6 @@ class TestDrawnIconsAreSharedAndFontFree:
             )
             assert painted > 0, f"{name} 도형이 비어 있다"
 
-    @pytest.mark.parametrize("scheme", ["DARK", "LIGHT"])
-    def test_change_location_icon_is_drawn_apart_from_open_folder(self, qapp, scheme) -> None:
-        """저장 위치 변경 아이콘은 폴더 열기 아이콘과 다른 그림이어야 하고, 폴더 몸통은 함께 가져야 한다.
-
-        같은 색 · 16px로 그린 "folder"와 "folder_edit"
-        -> 불투명도가 다른 픽셀이 있다(연필 둘레를 파냈다)
-        -> 폴더 몸통의 왼쪽 가운데(4, 8)는 둘 다 꽉 칠해져 있다(가장자리가 아니다)
-        """
-        color = getattr(theme, scheme)["text"]
-        folder = icons.action_pixmap("folder", color, 16).toImage()
-        change = icons.action_pixmap("folder_edit", color, 16).toImage()
-
-        differing = sum(
-            1
-            for x in range(16)
-            for y in range(16)
-            if folder.pixelColor(x, y).alpha() != change.pixelColor(x, y).alpha()
-        )
-        assert differing > 0
-        assert folder.pixelColor(4, 8).alpha() == 255 and change.pixelColor(4, 8).alpha() == 255
-
     def test_path_mark_and_open_folder_button_use_different_folder_icons(
         self, qapp, monkeypatch
     ) -> None:

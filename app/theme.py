@@ -112,7 +112,7 @@ METRICS = {
     "thumbRadius": 8,  # 썸네일 모서리 — 카드보다 작아야 안쪽이 자연스럽다
     "barHeight": 4,  # 하단 진행바 두께(진행분이 있을 때 — 진행·일시정지 — 보임)
     "actionGlyph": 12,  # 조작 아이콘(일시정지·재개·재시도·폴더·삭제) 도형 한 변 — cardButton 버튼 안에 그려진다
-    "barGlyph": 14,  # 하단바 아이콘 버튼(▶ ‖ ■) 도형 한 변 — 버튼은 글 버튼 높이의 정사각이다(#504)
+    "barGlyph": 16,  # 바 아이콘 칸(하단바 ▶ ‖ ■ 등) 도형 한 변 — 상자 32 안, narrowIcon · menuIcon과 같다(inbox 177)
     # ---- 메뉴바 상태 버블(#523, 설계 §2) — 메뉴 버튼 오른쪽 안쪽 여백에 늘 잡아 두는 자리 ----
     # 수치는 프로토(shell.py BADGE_SIDE 16 · 버블 자리 여백 29 · 버튼 오른끝 ↔ 버블 7)를 따른다(오너 실기 2026-11-07)
     "menuBubble": 16,  # 버블(원) 지름 — 기호는 16 격자에 그려 이 크기에서 프로토와 같다
@@ -316,7 +316,6 @@ PRESS_DE00 = 3.0
 # 정수 px가 아닌 값이라 METRICS(QSS에 "Npx"로 들어간다)에 두지 않는다
 PICK_MARK_RING_WIDTH = 1.5  # 체크 원 테두리 두께(px) — 1은 밝은 썸네일에 묻힌다
 PICK_MARK_SCRIM_ALPHA = 0.5  # 안 고른 원 바탕의 불투명도 — 흰 썸네일 위에서도 테두리와 3.0 이상이다
-PICK_MARK_CHECK_WIDTH = 2.0  # ✓ 선 굵기(px) — 지름 20일 때. 지름에 비례해 줄인다
 
 
 def _linear(value: float) -> float:

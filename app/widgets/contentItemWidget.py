@@ -53,7 +53,7 @@ from PySide6.QtWidgets import (
 import app.theme as theme
 from app.viewmodels import card_display
 from app.widgets.eliding_label import ElidingLabel
-from app.widgets.icons import IconButton
+from app.widgets.icons import STATUS_GRID, STATUS_STROKE, IconButton
 from app.widgets.menu_button import StateBubble
 
 
@@ -411,7 +411,9 @@ class CardThumbnail(QLabel):
             check.moveTo(start_x * scale, start_y * scale)
             for x, y in rest:
                 check.lineTo(x * scale, y * scale)
-            pen = QPen(QColor(tokens["onAccent"]), theme.PICK_MARK_CHECK_WIDTH * scale)
+            # ✓ 선 — 상태 아이콘 규칙(16 격자에서 STATUS_STROKE)을 지름에 비례해 키운다(inbox 177)
+            check_width = STATUS_STROKE * side / STATUS_GRID
+            pen = QPen(QColor(tokens["onAccent"]), check_width)
             pen.setCapStyle(Qt.PenCapStyle.RoundCap)
             pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
             painter.setPen(pen)

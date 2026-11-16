@@ -38,7 +38,7 @@ import app.theme as theme
 from app.viewmodels.card_order import FILTER_KEYS, SORT_KEYS
 from app.viewmodels.save_location import SaveLocations, folder_name
 from app.widgets.widget import abbreviate_path, path_display_parts
-from app.widgets.icons import action_pixmap
+from app.widgets.icons import STROKE, action_pixmap
 from app.widgets.tip_bubble import hide_tip, show_tip
 
 BUTTON_PADDING = 10  # 펼침 버튼 안쪽 좌우 여백(px) — 프로토 v8 저장 위치 버튼
@@ -995,7 +995,7 @@ class BusyButton(QPushButton):
             )
             painter.end()
             return
-        pen = QPen(QColor(color), 1.5)
+        pen = QPen(QColor(color), STROKE)  # 아이콘 규칙의 선 굵기(inbox 177)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         painter.setPen(pen)
         painter.drawArc(rect.adjusted(1, 1, -1, -1), -self._step * SPIN_STEP_DEGREES * 16, 270 * 16)

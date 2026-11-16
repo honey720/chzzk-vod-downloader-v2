@@ -254,7 +254,7 @@ class SectionDeleteButton(IconButton):
     """구간 행의 ✕ — 면 · 테두리가 있는 상자 안에 대각선 둘을 그린다 (#586).
 
     ✕를 글자로 쓰지 않는다 — 글자의 모양은 글꼴이 정해 실기에서 이상하게 보였다(오너 2026-11-13). 카드 ✕와
-    같은 도형(``action_pixmap("delete")``, 둥근 끝 · 굵기는 한 변의 0.16)을 같은 크기(``actionGlyph``)로 그린다.
+    같은 도형(``action_pixmap("delete")``, 둥근 끝 · 굵기는 아이콘 규칙의 ``STROKE``)을 같은 크기(``actionGlyph``)로 그린다.
     상자는 기본 버튼 규칙을 받고 크기만 ``#sectionDeleteButton``이 줄인다(프로토 구간 행). 흐린 아이콘
     버튼(role="icon")이 아니다. 도형 색은 글자였을 때와 같다 — 평소 · 호버 ``text``, 꺼지면 ``textDisabled``.
     """

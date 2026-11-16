@@ -988,7 +988,7 @@ def test_row_numbers_use_the_body_text_color_and_size(qtbot, tmp_path, basis) ->
 
 
 def _reference_cross(color: QColor, size: int, ratio: float) -> QPixmap:
-    """카드 ✕와 같은 대각선 둘을 테스트가 따로 그린 픽스맵 — 한 변 size, 선 굵기 0.16, 둥근 끝, 22% ~ 78%.
+    """카드 ✕와 같은 대각선 둘을 테스트가 따로 그린 픽스맵 — 한 변 size, 선 굵기 1.75px, 둥근 끝, 18% ~ 82%.
 
     제품의 그리기 함수(``action_pixmap``)를 부르지 않는다 — 제품이 모양을 바꾸면 여기와 달라진다.
     """
@@ -997,13 +997,13 @@ def _reference_cross(color: QColor, size: int, ratio: float) -> QPixmap:
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    pen = QPen(color, size * 0.16)
+    pen = QPen(color, 1.75)  # 아이콘 규칙의 선 굵기 — 칸 크기와 무관한 px(inbox 177)
     pen.setCapStyle(Qt.PenCapStyle.RoundCap)
     pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
     painter.setPen(pen)
     s = float(size)
-    painter.drawLine(QPointF(s * 0.22, s * 0.22), QPointF(s * 0.78, s * 0.78))
-    painter.drawLine(QPointF(s * 0.78, s * 0.22), QPointF(s * 0.22, s * 0.78))
+    painter.drawLine(QPointF(s * 0.18, s * 0.18), QPointF(s * 0.82, s * 0.82))
+    painter.drawLine(QPointF(s * 0.82, s * 0.18), QPointF(s * 0.18, s * 0.82))
     painter.end()
     return pixmap
 
