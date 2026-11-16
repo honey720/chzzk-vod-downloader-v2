@@ -482,16 +482,27 @@ def test_pressing_a_bar_button_takes_the_focus_without_an_accent_border(
 ) -> None:
     """URL 칸에 초점이 있을 때 헤더바 버튼을 누르면 초점이 버튼으로 오고 테두리는 강조색이 아니어야 한다(#611).
 
-    창 폭 1200, URL 칸에 글을 넣고(「+」가 켜짐) Tab 초점 → 버튼(선택 · 「+」 · 둘째 상태 칩) 가운데 합성
-    클릭(누름 동작은 끊음) -> 초점 = 버튼 · keyFocus 거짓 · 위 테두리 ≉ accent
+    창 폭 1200, URL 칸에 글을 넣고(「+」가 켜짐) Tab 초점 → 버튼(선택 · 「+」 · 둘째 상태 칩 — 접혔으면 상태
+    드롭다운) 가운데 합성 클릭(누름 동작은 끊음) -> 초점 = 버튼 · keyFocus 거짓 · 위 테두리 ≉ accent
     """
     window.resize(1200, 600)
     window.urlInput.setText("https://chzzk.naver.com/video/1")
     _focus_url(window)
-    widget = list(window.filterChips.values())[1] if name == "chip" else getattr(window, name)
+    drop = window.filterChipBar.dropButton
+    if name != "chip":
+        widget = getattr(window, name)
+    elif window.filterChipBar.isCompact():
+        widget = drop  # 글꼴이 넓으면 칩이 상태 드롭다운으로 접힌다 — 그 드롭다운을 잰다
+        _close_popup_soon()
+    else:
+        widget = list(window.filterChips.values())[1]
     assert widget.isVisible(), "전제: 버튼이 보인다"
-    widget.clicked.disconnect()  # 등록 · 선택 모드는 이 테스트가 재는 것이 아니다
+    if widget is not drop:  # 드롭다운은 누름 연결이 없고 메뉴만 연다
+        widget.clicked.disconnect()  # 등록 · 선택 모드 · 칩 고르기는 이 테스트가 재는 것이 아니다
     _click_in_window(window, widget)
+    if widget is drop:
+        window.activateWindow()  # 메뉴가 닫힌 뒤 창 활성은 offscreen이 돌려주지 않는다
+        _pump()
     assert QApplication.focusWidget() is widget
     assert widget.property("keyFocus") is False
     assert not _close(_top_border(widget), theme.current_tokens()["accent"])
