@@ -585,14 +585,14 @@ QToolButton[role="drop"] {
 }
 
 QLineEdit {
-    padding: 5px 8px;
+    padding: @fieldPadY 8px;
     selection-background-color: @accent;
     selection-color: @onAccent;
 }
 
 /* URL 입력창 안쪽 좌우 여백 — 펼침 버튼(header_controls.BUTTON_PADDING 10)과 같게(#611) */
 QLineEdit#urlInput {
-    padding: 5px @fieldPadX;
+    padding: @fieldPadY @fieldPadX;
 }
 
 QToolButton[role="drop"] {
@@ -615,11 +615,11 @@ QToolButton[role="drop"]:open {
 }
 
 QLineEdit:focus {
-    padding-bottom: 4px;
+    padding-bottom: @fieldPadYFocus;
 }
 
 QLineEdit#urlInput:focus {
-    padding-bottom: 4px;
+    padding-bottom: @fieldPadYFocus;
 }
 
 QLineEdit:disabled,
@@ -722,7 +722,7 @@ QComboBox {
     border: 1px solid @borderStrong;
     border-bottom-color: @fieldBorder;
     border-radius: @radius;
-    padding: 5px 8px;
+    padding: @fieldPadY 8px;
     selection-background-color: @accent;
     selection-color: @onAccent;
 }
@@ -737,14 +737,14 @@ QComboBox:focus,
 QComboBox:on {
     border-color: @borderStrong;
     border-bottom: 2px solid @accent;
-    padding-bottom: 4px;
+    padding-bottom: @fieldPadYFocus;
 }
 
 /* 꺼진 콤보 — 입력 칸과 같이 테두리 옅은 border · 글 textDisabled(#611). 면은 그대로 */
 QComboBox:disabled {
     color: @textDisabled;
     border: 1px solid @border;
-    padding-bottom: 5px;
+    padding-bottom: @fieldPadY;
 }
 
 /* 닫힌 화살표 버튼(#240 감사 항목 1) — 여기를 비워두면 Fusion 기본 버튼

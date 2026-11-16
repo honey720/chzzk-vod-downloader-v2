@@ -171,6 +171,7 @@ METRICS = {
     "buttonPadX": 14,  # 기본 버튼 좌우 안쪽 여백
     # URL 입력창 안쪽 좌우 여백 — 펼침 버튼(app/widgets/header_controls.py BUTTON_PADDING)과 같은 값(#611)
     "fieldPadX": 10,
+    "fieldPadY": 5,  # 입력창 · 콤보 안쪽 위아래 여백 — 초점 때 아래는 1 줄인다(fieldPadYFocus, #611 176g)
 }
 
 #: 글자 위계 — 위(제목)에서 아래(경로)로 무게가 내려간다. 값은 QSS 문자열.
@@ -566,6 +567,8 @@ for _table in (DARK, LIGHT):
     _table.update({_name: f"{_value}px" for _name, _value in METRICS.items()})
     _table.update(FONTS)
     _table["barRadius"] = f"{METRICS['barHeight'] // 2}px"
+    # 초점 때 아래 안쪽 여백 — 아래 변이 1px → 2px로 굵어진 만큼 줄여 칸 높이 · 글 자리를 지킨다(#611 176g)
+    _table["fieldPadYFocus"] = f"{METRICS['fieldPadY'] - 1}px"
     _table["menuButtonPadRight"] = f"{MENU_BUTTON_PAD_RIGHT}px"
 _card_tints(DARK, "dark")
 _card_tints(LIGHT, "light")
