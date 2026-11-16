@@ -337,11 +337,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self._picking = (
             False  # 목록이 선택 모드다 — 카드 버튼을 숨기고 누름 · 더블 클릭이 고르기다(#561)
         )
-        self._armed = False  # 고르기를 시작한 Space 누름이 이어지는 중 — 떼면 고른다(#561)
-        self._armedModifiers = Qt.KeyboardModifier.NoModifier  # 그 누름 때의 수정자
-        # 그 누름을 시작한 것 — "key"(Space)뿐이다. 마우스는 누를 때 바로 고르므로 기다리지 않는다(#611)
-        self._armedBy = ""
-        self._pressed = False  # 프레임의 pressed 속성(눌린 바탕)을 켰는지(#561)
+        # 고르기를 한 Space를 누르고 있는지 — 그동안 오는 키 반복 · 마우스 누름은 고르지 않는다(#561 · #611)
+        self._spaceHeld = False
         # 왼쪽 버튼을 누른 채인지 — 그동안 Space는 무시한다(먼저 시작한 누름만 따른다, #561 · #611)
         self._mouseHeld = False
         self._tipsInstalled = False  # 말풍선 필터를 걸었는지 — 처음 호버할 때 건다
@@ -420,9 +417,8 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """
         super().showEvent(event)
         self._fitRow3()
-        # 누른 채 숨었다가(지우기 · 필터) 다시 보이는 카드에 눌린 바탕이 남지 않게 한다(#561)
-        if self._armed or self._pressed:
-            self._disarm()
+        # 누른 채 숨었다가(지우기 · 필터) 다시 보이는 카드는 Space를 떼지 않은 것으로 남지 않게 한다(#561)
+        self._spaceHeld = False
 
     def hideEvent(self, event: QHideEvent) -> None:
         """숨는 카드(필터 · 지우기)는 완료 · 실패 · 색조 걷기 모션을 멈추고 마지막 모양으로 간다 (#571)."""
@@ -529,8 +525,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         Space를 누른 채 초점이 나가면(↑↓ · Tab · 다른 곳 클릭 · 창 비활성) 그 누름은 고르지 않고 끝낸다.
         """
         super().focusOutEvent(event)
-        if self._armedBy == "key":
-            self._disarm()
+        self._spaceHeld = False  # 뗌은 이 카드로 오지 않는다
         leaving = event.reason() == Qt.FocusReason.ActiveWindowFocusReason
         self._focusBeforeLeaving = self._keyFocus if leaving else None
         self._setKeyFocus(False)
@@ -560,10 +555,10 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         Enter는 더블 클릭과 같은 일(대기 = 편집 창, 완료 = 폴더 열기)이고, 실패 카드에서는 다시 시도다(버튼이
         Tab 차례 밖이라 키보드로 다시 시도할 길이 이것뿐이다). 선택 모드에서는 Enter가 아무것도 열지 않는다.
         ↑↓는 보이는 차례로 앞 · 뒤 카드에 초점을 옮긴다 — 끝에서는 그대로다. Delete는 목록의 단축키가 받는다.
-        선택 모드의 Space는 이 카드를 클릭한 것과 같다(Shift+Space = Shift+클릭) — 클릭과 같이 누르면
-        눌린 바탕만 켜고, 떼면(`keyReleaseEvent`) 목록의 `cardPicked`로 간다(#561). 누른 채 초점이 다른
-        곳으로 가면 고르지 않는다(`focusOutEvent`). 선택 모드 밖의 Space는 받지 않는다 — Shift가 붙어도
-        선택 모드로 들어가지 않는다.
+        선택 모드의 Space는 이 카드를 클릭한 것과 같다(Shift+Space = Shift+클릭) — 마우스와 같이 누르는
+        순간 목록의 `cardPicked`로 가고 눌린 바탕은 없다(#611 오너 재실기). 누르고 있어 오는 키 반복은
+        고르지 않는다 — 처음 누름 한 번만. 선택 모드 밖의 Space는 받지 않는다 — Shift가 붙어도 선택 모드로
+        들어가지 않는다.
         """
         key = event.key()
         if key == Qt.Key.Key_Space and self._picking:
@@ -571,8 +566,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
             if owner is not None:
                 event.accept()
                 # 누르고 있을 때 오는 키 반복은 넘긴다. 마우스로 누른 채면 먼저 시작한 마우스만 따른다(이미 골랐다)
-                if not event.isAutoRepeat() and not self._armed and not self._mouseHeld:
-                    self._arm(True, event.modifiers(), "key")
+                if not event.isAutoRepeat() and not self._spaceHeld and not self._mouseHeld:
+                    self._spaceHeld = True
+                    owner.cardPicked(self, event.modifiers())
                 return
         if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             event.accept()
@@ -594,16 +590,11 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         super().keyPressEvent(event)
 
     def keyReleaseEvent(self, event: QKeyEvent) -> None:
-        """Space로 시작한 누름을 떼면 목록에 고르기를 알린다 — 수정자는 누를 때의 값이다 (#561)."""
-        if event.key() == Qt.Key.Key_Space and self._armedBy == "key":
+        """고르기를 한 Space를 떼면 누르고 있음만 끝낸다 — 고르기는 누를 때 끝났다 (#561 · #611)."""
+        if event.key() == Qt.Key.Key_Space and self._spaceHeld:
             event.accept()
-            if event.isAutoRepeat():
-                return  # 누르고 있을 때 오는 키 반복의 뗌 — 아직 누르고 있다
-            modifiers = self._armedModifiers
-            self._disarm()
-            owner = self._listOwner()
-            if owner is not None and self._picking:
-                owner.cardPicked(self, modifiers)
+            if not event.isAutoRepeat():  # 키 반복의 뗌은 아직 누르고 있는 것이다
+                self._spaceHeld = False
             return
         super().keyReleaseEvent(event)
 
@@ -640,43 +631,15 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         self.progressBar.setPicked(on)
         self._syncPickMark()
 
-    # ---- 고르기 — 마우스는 누를 때, Space는 뗄 때 (#561 · #611) ----
-    # 마우스 왼쪽 버튼은 누르는 순간 고르거나 푼다(Windows 탐색기 등 표준 동작, 오너 실기 2026-11-16) — 눌린 바탕은
-    # 켜지 않는다. Space는 누르면 눌린 바탕만 켜고 떼면 고른다(#561 그대로).
+    # ---- 고르기 — 마우스 · Space 모두 누를 때 (#561 · #611) ----
+    # 마우스 왼쪽 버튼과 Space는 누르는 순간 고르거나 푼다(Windows 탐색기 등 표준 동작, 오너 실기 2026-11-16) —
+    # 눌린 바탕은 켜지 않는다. 둘 중 먼저 누른 것만 따르고, 누르고 있는 동안 다른 쪽 누름은 고르지 않는다.
     # 드래그로 순서 바꾸기(2.13.0)가 들어오면 이미 고른 카드를 누를 때만 고르기를 뗄 때로 미룬다 — 누름이
     # 끌기의 시작일 수 있어서다. 고르지 않은 카드는 그때도 누를 때 고른다
 
     def isPressed(self) -> bool:
-        """눌린 바탕이 켜져 있는지 — Space를 누르고 있는 동안."""
-        return self._pressed
-
-    def _setPressed(self, on: bool) -> None:
-        """눌린 바탕(`cardPressedBg` 등)을 켜고 끈다 — 모션 없이 바로 바뀐다."""
-        if on == self._pressed:
-            return
-        self._pressed = on
-        frame = self.contentFrame
-        frame.setProperty("pressed", on)
-        theme.repolish(frame)
-        frame.update()  # 모션 색조는 면이 직접 그린다 — 속성만 바뀌면 다시 그리지 않을 수 있다
-        if self.hoverShade.isVisibleTo(self):
-            self.hoverShade.update()
-
-    def _arm(self, on: bool, modifiers: Qt.KeyboardModifier, source: str = "key") -> None:
-        """고르기를 시작한 Space 누름이면 뗌을 기다린다 — 수정자는 누를 때의 값을 든다.
-
-        Args:
-            source: 누름을 시작한 것 — 지금은 "key"(Space)뿐이다
-        """
-        self._armed = on
-        self._armedModifiers = modifiers
-        self._armedBy = source if on else ""
-        self._setPressed(on)
-
-    def _disarm(self) -> None:
-        self._armed = False
-        self._armedBy = ""
-        self._setPressed(False)
+        """눌린 바탕(프레임의 `pressed` 속성)이 켜져 있는지 — 고르기가 누를 때라 켜는 곳이 없다(#611)."""
+        return self.contentFrame.property("pressed") is True
 
     def _pressPick(self, event: QMouseEvent) -> None:
         """왼쪽 버튼 누름을 목록에 알리고, 고르기를 시작하는 누름이면 바로 고른다(#611).
@@ -685,7 +648,7 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         `cardPicked`를 부른다. Space를 누른 채면 먼저 시작한 Space만 따른다(두 번 고르지 않는다).
         """
         owner = self._listOwner()
-        if owner is None or self._armedBy == "key":
+        if owner is None or self._spaceHeld:
             return
         modifiers = event.modifiers()
         if owner.cardPressed(self, modifiers):

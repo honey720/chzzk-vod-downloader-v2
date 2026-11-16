@@ -2052,7 +2052,7 @@ class TestPickOnPress:
         assert window.listView.isSelecting(), "전제: 선택 모드는 그대로다"
 
 
-# ---- Space도 뗄 때 고르기 (#561, 오너 2026-11-11) ----
+# ---- Space도 누를 때 고르기 (#561 · #611 오너 재실기 2026-11-16) ----
 
 
 def _space(
@@ -2070,7 +2070,7 @@ PRESS = QEvent.Type.KeyPress
 LIFT = QEvent.Type.KeyRelease
 
 
-class TestSpaceOnRelease:
+class TestSpaceOnPress:
     """Space 누름 · 뗌을 따로 보내 잰다 — 키 이벤트는 초점 위젯에 바로 보낸다.
 
     누른 채 초점이 옮겨 가는 것을 재므로 초점 이벤트가 와야 한다 — 창을 띄우고 활성이 된 뒤에 첫 카드에
@@ -2089,52 +2089,70 @@ class TestSpaceOnRelease:
         _settle()
         return items
 
-    def test_pressing_space_only_shows_the_pressed_ground(self, window: VodDownloader) -> None:
-        """선택 모드에서 초점 카드에 Space를 누르기만 하면 고르지 않고 눌린 바탕만 켜야 한다.
+    def _changes(self, win: VodDownloader) -> list[list[ContentItem]]:
+        seen: list[list[ContentItem]] = []
+        win.listView.selectionChanged.connect(lambda: seen.append(_picked(win)))
+        return seen
 
-        선택 모드, 카드 둘, 첫째에 초점, Space 누름 -> 고른 카드 없음 · 첫째 눌린 바탕 켜짐
-        """
-        items = self._picking(window, 2)
-        card = _card(window, items[0])
-        _space(card, PRESS)
-        assert _picked(window) == []
-        assert card.isPressed()
-
-    def test_releasing_space_picks_and_clears_the_pressed_ground(
+    def test_pressing_space_picks_at_once_without_a_pressed_ground(
         self, window: VodDownloader
     ) -> None:
-        """Space를 누른 뒤 떼면 그때 초점 카드를 고르고 눌린 바탕을 꺼야 한다.
+        """선택 모드에서 초점 카드에 Space를 누르는 순간 골라야 하고 눌린 바탕은 없어야 한다(#611).
 
-        선택 모드, 첫째에 초점, Space 누름 → 뗌 -> [첫째] · 눌린 바탕 꺼짐
+        선택 모드, 카드 둘, 첫째에 초점, Space 누름 -> [첫째] · 첫째 눌린 바탕 없음
         """
         items = self._picking(window, 2)
         card = _card(window, items[0])
         _space(card, PRESS)
-        _space(card, LIFT)
         assert _picked(window) == [items[0]]
         assert not card.isPressed()
 
-    def test_moving_focus_while_holding_space_picks_nothing(self, window: VodDownloader) -> None:
-        """Space를 누른 채 ↓로 초점을 옮기면 눌린 바탕이 꺼지고, 그 뒤에 떼도 아무 카드도 고르지 않아야 한다.
+    def test_releasing_space_changes_nothing(self, window: VodDownloader) -> None:
+        """Space를 누른 뒤 떼면 고름이 그대로여야 한다 — 고르기는 누를 때 끝났다.
 
-        선택 모드, 카드 둘, 첫째에 초점, Space 누름 · ↓ -> 초점 = 둘째, 첫째 눌린 바탕 꺼짐,
-        둘째에서 Space 뗌 -> 고른 카드 없음
+        선택 모드, 첫째에 초점, Space 누름 · 뗌 -> [첫째], 고름이 바뀐 횟수 1
+        """
+        items = self._picking(window, 2)
+        card = _card(window, items[0])
+        seen = self._changes(window)
+        _space(card, PRESS)
+        _space(card, LIFT)
+        assert _picked(window) == [items[0]]
+        assert seen == [[items[0]]]
+
+    def test_pressing_space_on_a_picked_card_unpicks_it(self, window: VodDownloader) -> None:
+        """고른 카드에서 Space를 다시 누르면 누르는 순간 풀려야 한다.
+
+        선택 모드, 첫째에 초점, Space 누름 · 뗌 · 누름 -> []
+        """
+        items = self._picking(window, 1)
+        card = _card(window, items[0])
+        _space(card, PRESS)
+        _space(card, LIFT)
+        _space(card, PRESS)
+        assert _picked(window) == []
+
+    def test_moving_focus_while_holding_space_keeps_the_first_pick(
+        self, window: VodDownloader
+    ) -> None:
+        """Space를 누른 채 ↓로 초점을 옮기고 둘째에서 떼면 첫째만 골라져 있어야 한다.
+
+        선택 모드, 카드 둘, 첫째에 초점, Space 누름 -> [첫째], ↓ -> 초점 = 둘째, 둘째에서 Space 뗌 -> [첫째]
         """
         items = self._picking(window, 2)
         first, second = _card(window, items[0]), _card(window, items[1])
         _space(first, PRESS)
+        assert _picked(window) == [items[0]]
         _key(first, Qt.Key.Key_Down)
         assert window.focusWidget() is second, "전제: 초점이 둘째로 갔다"
-        assert not first.isPressed()
         _space(second, LIFT)
-        assert _picked(window) == []
-        assert not second.isPressed()
+        assert _picked(window) == [items[0]]
 
-    def test_shift_space_range_is_added_on_release(self, window: VodDownloader) -> None:
-        """Shift+Space 범위는 누를 때가 아니라 뗄 때 더해야 하고, 수정자는 누를 때의 값이어야 한다.
+    def test_shift_space_range_is_added_on_press(self, window: VodDownloader) -> None:
+        """Shift+Space 범위는 누르는 순간 더해야 한다.
 
-        선택 모드, 카드 셋, 첫째 Space(누름 · 뗌) · ↓ · ↓, Shift+Space 누름 -> [첫째] 그대로,
-        수정자 없이 뗌 -> [첫째, 둘째, 셋째]
+        선택 모드, 카드 셋, 첫째 Space(누름 · 뗌) · ↓ · ↓, Shift+Space 누름 -> [첫째, 둘째, 셋째],
+        뗌 -> 그대로
         """
         items = self._picking(window, 3)
         first = _card(window, items[0])
@@ -2145,60 +2163,73 @@ class TestSpaceOnRelease:
         last = _card(window, items[2])
         assert window.focusWidget() is last, "전제: 초점이 셋째로 갔다"
         _space(last, PRESS, SHIFT)
-        assert _picked(window) == [items[0]]
+        assert _picked(window) == items
         _space(last, LIFT)
         assert _picked(window) == items
 
-    def test_auto_repeat_while_holding_does_not_pick(self, window: VodDownloader) -> None:
-        """Space를 누르고 있어 오는 키 반복(뗌 · 누름 짝)은 고르지 않고, 손을 뗄 때 한 번만 골라야 한다.
+    def test_auto_repeat_while_holding_picks_only_once(self, window: VodDownloader) -> None:
+        """Space를 누르고 있어 오는 키 반복(뗌 · 누름 짝)은 고르기를 바꾸지 않아야 한다 — 처음 누름 한 번만.
 
-        선택 모드, 첫째에 초점, Space 누름 · 키 반복 뗌 · 누름 두 번 -> 한 번마다 고른 카드 없음 · 눌린 바탕
-        켜짐, 뗌 -> [첫째]
+        선택 모드, 첫째에 초점, Space 누름 -> [첫째], 키 반복 뗌 · 누름 두 번 -> 한 번마다 [첫째],
+        뗌 -> 고름이 바뀐 횟수 1
         """
         items = self._picking(window, 1)
         card = _card(window, items[0])
+        seen = self._changes(window)
         _space(card, PRESS)
         for _ in range(2):
             _space(card, LIFT, repeat=True)
             _space(card, PRESS, repeat=True)
-            # 한 번마다 본다 — 두 번 뒤에만 보면 골랐다가 다시 푼 것도 같은 값이다
-            assert _picked(window) == []
-            assert card.isPressed()
+            # 한 번마다 본다 — 두 번 뒤에만 보면 풀었다가 다시 고른 것도 같은 값이다
+            assert _picked(window) == [items[0]]
         _space(card, LIFT)
+        assert seen == [[items[0]]]
+
+    def test_auto_repeat_arriving_on_a_new_card_does_not_pick(self, window: VodDownloader) -> None:
+        """Space를 누른 채 초점이 옮겨 간 카드에 키 반복 누름만 오면 그 카드를 고르지 않아야 한다.
+
+        선택 모드, 카드 둘, 첫째 Space 누름 · ↓ · 둘째에 키 반복 누름 두 번 -> [첫째]
+        """
+        items = self._picking(window, 2)
+        first = _card(window, items[0])
+        _space(first, PRESS)
+        _key(first, Qt.Key.Key_Down)
+        second = _card(window, items[1])
+        assert window.focusWidget() is second, "전제: 초점이 둘째로 갔다"
+        _space(second, PRESS, repeat=True)
+        _space(second, PRESS, repeat=True)
         assert _picked(window) == [items[0]]
 
     def test_mouse_press_while_holding_space_picks_once(self, window: VodDownloader) -> None:
-        """Space를 누른 채 같은 카드를 마우스로 누르고 떼도 Space를 뗄 때 한 번만 골라야 한다.
+        """Space를 누른 채 같은 카드를 마우스로 누르고 떼도 고름은 Space를 누를 때 한 번이어야 한다.
 
-        선택 모드, 첫째에 초점, Space 누름 · 첫째를 마우스로 누름 · 뗌 -> 고른 카드 없음,
-        Space 뗌 -> [첫째](고름이 바뀐 횟수 1)
+        선택 모드, 첫째에 초점, Space 누름 -> [첫째], 첫째를 마우스로 누름 · 뗌 -> [첫째],
+        Space 뗌 -> 고름이 바뀐 횟수 1
         """
         items = self._picking(window, 1)
         card = _card(window, items[0])
-        seen: list[list[ContentItem]] = []
-        window.listView.selectionChanged.connect(lambda: seen.append(_picked(window)))
+        seen = self._changes(window)
         _space(card, PRESS)
         _press(window, items[0])
         _release(window, items[0])
-        assert _picked(window) == []
+        assert _picked(window) == [items[0]]
         _space(card, LIFT)
         assert seen == [[items[0]]]
 
     def test_double_click_while_holding_space_picks_once(self, window: VodDownloader) -> None:
-        """Space를 누른 채 같은 카드를 더블 클릭해도 Space를 뗄 때 한 번만 골라야 한다.
+        """Space를 누른 채 같은 카드를 더블 클릭해도 고름은 Space를 누를 때 한 번이어야 한다.
 
-        선택 모드, 첫째에 초점, Space 누름 · 첫째 더블 클릭 -> 고른 카드 없음 · 눌린 바탕 켜짐,
-        Space 뗌 -> [첫째](고름이 바뀐 횟수 1)
+        선택 모드, 첫째에 초점, Space 누름 · 첫째 더블 클릭 -> [첫째] · 눌린 바탕 없음,
+        Space 뗌 -> 고름이 바뀐 횟수 1
         """
         items = self._picking(window, 1)
         card = _card(window, items[0])
-        seen: list[list[ContentItem]] = []
-        window.listView.selectionChanged.connect(lambda: seen.append(_picked(window)))
+        seen = self._changes(window)
         _space(card, PRESS)
         QTest.mouseDClick(window.windowHandle(), LEFT, NO_MODIFIER, _spot(window, items[0]))
         _settle()
-        assert _picked(window) == []
-        assert card.isPressed(), "전제: Space 누름이 이어진다"
+        assert _picked(window) == [items[0]]
+        assert not card.isPressed()
         _space(card, LIFT)
         assert seen == [[items[0]]]
 
@@ -2210,8 +2241,7 @@ class TestSpaceOnRelease:
         """
         items = self._picking(window, 1)
         card = _card(window, items[0])
-        seen: list[list[ContentItem]] = []
-        window.listView.selectionChanged.connect(lambda: seen.append(_picked(window)))
+        seen = self._changes(window)
         _press(window, items[0])
         focused = window.focusWidget()
         _space(focused, PRESS)

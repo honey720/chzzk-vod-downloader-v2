@@ -615,7 +615,7 @@ class ContentListView(QScrollArea):
     def cardPicked(self, widget: ContentItemWidget, modifiers: Qt.KeyboardModifier) -> None:
         """카드를 골랐다 — 선택 모드면 고르고, 아니면 Ctrl/⌘ · Shift가 선택 모드로 들어가며 고른다.
 
-        카드가 부른다 — 왼쪽 버튼을 누를 때, 선택 모드의 Space를 뗄 때(수정자는 누를 때의 값). 선택
+        카드가 부른다 — 왼쪽 버튼을 누를 때, 선택 모드의 Space를 누를 때(#611). 선택
         모드 안에서는 그 카드를 고르거나 풀고, Shift는 기준 카드부터 그 카드까지(보이는 차례)를 더한다.
         """
         item = widget.item
