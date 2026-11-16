@@ -407,18 +407,14 @@ def test_bar_controls_are_bar_control_high(window: VodDownloader) -> None:
 def test_pressable_bar_controls_show_a_hand_and_take_focus_by_the_bar_rule(
     window: VodDownloader,
 ) -> None:
-    """누르는 바 컨트롤은 손 모양 커서이고, 메뉴바는 키보드로만 · 헤더바 · 하단바는 누를 때도 초점을 받아야 한다.
+    """누르는 바 컨트롤은 손 모양 커서이고 메뉴바 · 헤더바 · 하단바 모두 누를 때도 초점을 받아야 한다.
 
-    메뉴바(「VOD 다운」 · 톱니바퀴) -> TabFocus, 그 밖(입력칸 제외) -> StrongFocus, 입력칸 -> StrongFocus(#611)
+    메뉴바(「VOD 다운」 · 톱니바퀴) · 그 밖(입력칸 제외) -> StrongFocus, 입력칸 -> StrongFocus(#611 176i)
     """
-    menu_bar = (window.menuDownloadButton, window.settingsButton)
     for widget in window.barControls():
-        if widget is window.urlInput:
-            assert widget.focusPolicy() == Qt.FocusPolicy.StrongFocus
-            continue
-        assert widget.cursor().shape() == Qt.CursorShape.PointingHandCursor, widget.objectName()
-        wanted = Qt.FocusPolicy.TabFocus if widget in menu_bar else Qt.FocusPolicy.StrongFocus
-        assert widget.focusPolicy() == wanted, widget.objectName()
+        if widget is not window.urlInput:
+            assert widget.cursor().shape() == Qt.CursorShape.PointingHandCursor, widget.objectName()
+        assert widget.focusPolicy() == Qt.FocusPolicy.StrongFocus, widget.objectName()
 
 
 def _focus_url(window: VodDownloader) -> None:
@@ -512,6 +508,79 @@ def test_pressing_a_bar_button_takes_the_focus_without_an_accent_border(
     assert QApplication.focusWidget() is widget
     assert widget.property("keyFocus") is False
     assert not _close(_top_border(widget), theme.current_tokens()["accent"])
+
+
+def _focus_box_edge(tab: QWidget) -> QColor:
+    """메뉴 탭 초점 상자 왼쪽 변 · 세로 가운데 화소 — 상자가 없으면 바 면이다.
+
+    탭은 면이 투명이라 창을 grab해 읽는다.
+    """
+    window = tab.window()
+    image = window.grab().toImage()
+    ratio = image.devicePixelRatio()
+    box = tab.focusRect()
+    point = tab.mapTo(window, QPoint(int(box.left()), int(box.center().y())))
+    return image.pixelColor(int(point.x() * ratio), int(point.y() * ratio))
+
+
+def _disconnect_clicked(widget: QWidget) -> None:
+    """누름 연결을 끊는다 — 탭 바꾸기 · 설정 창 열기는 이 테스트가 재는 것이 아니다."""
+    try:
+        widget.clicked.disconnect()
+    except (RuntimeError, TypeError):
+        pass  # 연결이 없다
+
+
+def test_pressing_the_menu_tab_takes_the_focus_without_a_focus_box(window: VodDownloader) -> None:
+    """URL 칸에 초점이 있을 때 메뉴 탭을 누르면 초점이 탭으로 오고 초점 상자는 없어야 한다(#611 176i).
+
+    URL 칸 Tab 초점 → 「VOD 다운」 가운데 합성 클릭(누름 동작은 끊음) -> 초점 = 탭 · URL 칸 초점 없음 ·
+    keyFocus 거짓, 초점 상자 왼쪽 변 ≈ barBg · ≉ accent
+    """
+    _focus_url(window)
+    tab = window.menuDownloadButton
+    _disconnect_clicked(tab)
+    _click_in_window(window, tab)
+    assert QApplication.focusWidget() is tab
+    assert not window.urlInput.hasFocus()
+    assert tab.property("keyFocus") is False
+    tokens = theme.current_tokens()
+    assert not _close(_focus_box_edge(tab), tokens["accent"])
+    assert _close(_focus_box_edge(tab), tokens["barBg"])
+
+
+def test_keyboard_focus_on_the_menu_tab_draws_the_focus_box(window: VodDownloader) -> None:
+    """메뉴 탭이 마우스로 초점을 받은 뒤 키보드(Tab)로 다시 받으면 초점 상자가 강조색이어야 한다(#611 176i).
+
+    「VOD 다운」 합성 클릭 → 목록에 초점 → 탭에 Tab 초점 -> keyFocus 참 · 초점 상자 왼쪽 변 ≈ accent
+    """
+    window.activateWindow()
+    _pump()
+    tab = window.menuDownloadButton
+    _disconnect_clicked(tab)
+    _click_in_window(window, tab)
+    assert tab.property("keyFocus") is False, "전제: 마우스 초점"
+    window.listView.setFocus(Qt.FocusReason.OtherFocusReason)
+    tab.setFocus(Qt.FocusReason.TabFocusReason)
+    _pump()
+    assert tab.property("keyFocus") is True
+    assert _close(_focus_box_edge(tab), theme.current_tokens()["accent"])
+
+
+def test_pressing_the_gear_takes_the_focus_without_an_accent_border(window: VodDownloader) -> None:
+    """URL 칸에 초점이 있을 때 톱니바퀴를 누르면 초점이 톱니바퀴로 오고 테두리는 강조색이 아니어야 한다(#611 176i).
+
+    URL 칸 Tab 초점 → 톱니바퀴 가운데 합성 클릭(설정 창 열기는 끊음) -> 초점 = 톱니바퀴 · URL 칸 초점 없음 ·
+    keyFocus 거짓 · 위 테두리 ≉ accent
+    """
+    _focus_url(window)
+    gear = window.settingsButton
+    _disconnect_clicked(gear)
+    _click_in_window(window, gear)
+    assert QApplication.focusWidget() is gear
+    assert not window.urlInput.hasFocus()
+    assert gear.property("keyFocus") is False
+    assert not _close(_top_border(gear), theme.current_tokens()["accent"])
 
 
 def test_keyboard_focus_after_a_mouse_focus_draws_the_accent_border(window: VodDownloader) -> None:
@@ -619,9 +688,10 @@ def test_the_list_has_focus_when_the_window_opens(qapp: QApplication) -> None:
 def test_clicking_a_bar_control_draws_no_accent_border(
     window: VodDownloader, name: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """바 컨트롤을 마우스로 누르면 초점이 옮겨 가지 않고 테두리가 강조색이 아니어야 한다(#536 — §11.5).
+    """메뉴바 컨트롤을 마우스로 누르면 초점이 그 컨트롤로 오고 테두리가 강조색이 아니어야 한다(#536 · #611 176i).
 
     누름 = QTest.mouseClick(실제 마우스 이벤트 경로 — 누름 초점 처리를 탄다), 「설정」 창 열기는 막는다
+    -> 초점 = 그 컨트롤 · keyFocus 거짓 · 위 테두리 ≉ accent
     """
     from PySide6.QtTest import QTest
 
@@ -632,7 +702,8 @@ def test_clicking_a_bar_control_draws_no_accent_border(
     _pump()
     QTest.mouseClick(widget, Qt.MouseButton.LeftButton)
     _pump()
-    assert QApplication.focusWidget() is not widget
+    assert QApplication.focusWidget() is widget
+    assert widget.property("keyFocus") is False
     assert not _close(_top_border(widget), theme.current_tokens()["accent"])
 
 

@@ -621,25 +621,20 @@ class VodDownloader(QMainWindow):
     def _applyBarControls(self) -> None:
         """바 컨트롤의 높이 · 커서 · 초점 정책을 건다 (#536 — 설계 §11.3 · §11.7 · §2 「말풍선」).
 
-        높이는 바 컨트롤 높이(`barControl`). 누르는 컨트롤은 손 모양 커서다. 헤더바 · 하단바 컨트롤(드롭다운 ·
-        버튼)은 마우스로 누르면 초점을 받는다(Windows 콤보박스와 같음 — 누르는 순간 URL 칸 초점이 풀린다, #611 오너
-        재실기). 강조색 focus ring은 키보드로 받은 초점에만 그린다(`KeyFocusMarker`). 메뉴바 탭 · 톱니바퀴는
-        초점을 키보드(Tab)로만 받는다 — 탭은 작업 화면을 바꾸는 것이라 누름이 입력 중인 칸의 초점을 빼앗지 않는다.
+        높이는 바 컨트롤 높이(`barControl`). 누르는 컨트롤은 손 모양 커서다. 바 컨트롤(메뉴바 탭 · 톱니바퀴 ·
+        드롭다운 · 버튼)은 마우스로 누르면 초점을 받는다(Windows 콤보박스와 같음 — 누르는 순간 URL 칸 초점이 풀린다,
+        #611 176h · 176i 오너 결정). 강조색 focus ring은 키보드로 받은 초점에만 그린다(`KeyFocusMarker`).
         입력칸은 눌러서 쓰는 곳이라 초점 정책을 그대로 둔다.
         """
         control = theme.METRICS["barControl"]
-        menu_bar = (self.menuDownloadButton, self.settingsButton)
         self._keyFocus = KeyFocusMarker(self)
         for widget in self.barControls():
             widget.setFixedHeight(control)
             if widget is self.urlInput:
                 continue
             widget.setCursor(Qt.CursorShape.PointingHandCursor)
-            if widget in menu_bar:
-                widget.setFocusPolicy(Qt.FocusPolicy.TabFocus)
-            else:
-                widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-                self._keyFocus.watch(widget)
+            widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            self._keyFocus.watch(widget)
 
     def _onMenuToggled(self, on: bool) -> None:
         """「VOD 다운」 고름이 바뀌면 굵은 글 속성을 따라 바꾼다(전역 QSS `[on="true"]`, #536)."""

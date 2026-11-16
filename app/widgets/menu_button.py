@@ -184,7 +184,10 @@ class MenuButton(QPushButton):
     def paintEvent(self, event: QPaintEvent) -> None:
         """QSS 모양 위에 고른 탭 밑줄 · 키보드 초점 상자를 덧그린다 — 색은 그릴 때마다 토큰을 읽는다."""
         super().paintEvent(event)
-        checked, focused = self.isChecked(), self.hasFocus()
+        # 마우스로 받은 초점에는 상자가 없다 — `keyFocus`는 KeyFocusMarker가 심는다(심지 않았으면 초점이면 그린다,
+        # #611 176i)
+        checked = self.isChecked()
+        focused = self.hasFocus() and self.property("keyFocus") is not False
         if not (checked or focused):
             return
         accent = QColor(theme.current_tokens()["accent"])

@@ -560,9 +560,11 @@ QFrame#infoFrame QPushButton#downloadButton:focus {
     border-color: @focusOnAccent;
 }
 
-/* 마우스로 받은 초점에는 강조색 테두리가 없다(#611 176h). `keyFocus`는 app/widgets/focus_ring.py::KeyFocusMarker가
- * 헤더바 · 하단바 컨트롤에 심는다("false" = 마우스 · 그 밖). 위 초점 규칙보다 구체적으로 평소 테두리로 되돌린다 —
- * 버튼은 테두리 없음(면으로 모양), 펼침 칸은 입력 칸 테두리(호버 · 눌림은 입력 칸 규칙 그대로) */
+/* 마우스로 받은 초점에는 강조색 테두리가 없다(#611 176h · 176i). `keyFocus`는 app/widgets/focus_ring.py::KeyFocusMarker가
+ * 바 컨트롤(메뉴바 · 헤더바 · 하단바)에 심는다("false" = 마우스 · 그 밖). 위 초점 규칙보다 구체적으로 평소 테두리로
+ * 되돌린다 — 버튼은 테두리 없음(면으로 모양), 펼침 칸은 입력 칸 테두리(호버 · 눌림은 입력 칸 규칙 그대로). 메뉴 탭의
+ * 초점 상자는 그리기 코드가 같은 속성을 읽는다 */
+QFrame#appMenuBar QPushButton[keyFocus="false"]:focus,
 QFrame#headerFrame QPushButton[keyFocus="false"]:focus,
 QFrame#infoFrame QPushButton[keyFocus="false"]:focus,
 QFrame#headerFrame QPushButton#selectButton[on="true"][keyFocus="false"]:focus,
