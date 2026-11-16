@@ -239,6 +239,60 @@ def test_leaving_closes_the_bubble(window: VodDownloader) -> None:
     assert not _bubble().isVisible()
 
 
+def _global_rect(widget: QWidget) -> QRect:
+    return QRect(widget.mapToGlobal(QPoint(0, 0)), widget.size())
+
+
+def _move_in_window(window: VodDownloader, point: QPoint) -> None:
+    """창(QWindow)에 합성 포인터 이동을 보낸다 — 실기 커서를 옮기지 않는다."""
+    QTest.mouseMove(window.windowHandle(), point)
+    _pump()
+
+
+@pytest.mark.parametrize("animated", [True, False])
+def test_moving_from_the_add_tip_onto_the_select_button_shows_the_select_tip(
+    window: VodDownloader, qtbot, animated: bool
+) -> None:
+    """「+」 툴팁이 덮은 선택 버튼 자리로 바로 옮기면 선택 버튼 툴팁이 떠서 다 보여야 한다(#611 176h).
+
+    애니메이션 켬 · 끔, 창 폭 최소폭 + 100, URL 칸에 글(「+」 켜짐), 창 밖 → 「+」 가운데 합성 이동 -> 「+」 툴팁(아래로)이 선택 버튼과
+    겹친다, 겹친 자리 가운데로 합성 이동 -> 말풍선 대상 = 선택 버튼 · 닫히는 중 아님 · 불투명도 1까지 간다
+    """
+    import app.viewmodels.card_display as card_display
+
+    card_display.use(card_display.CardDisplay(animations=animated))
+    try:
+        # 화면 안에 들어오는 폭 — offscreen 화면은 배율 1.5면 논리 533px라 넓은 창의 말풍선은 화면 안으로 밀린다
+        window.resize(window.minimumWidth() + 100, 500)
+        window.urlInput.setText("https://chzzk.naver.com/video/1")
+        window.activateWindow()
+        qtbot.waitUntil(window.isActiveWindow, timeout=3000)
+        _move_in_window(window, QPoint(1, 1))
+        add, select = window.fetchButton, window.selectButton
+        _move_in_window(window, add.mapTo(window, add.rect().center()))
+        bubble = _bubble()
+        assert bubble.target is add and bubble.side == "below", "전제: 「+」 툴팁이 아래로 떴다"
+        overlap = bubble.globalRect().intersected(_global_rect(select))
+        assert not overlap.isEmpty(), "전제: 「+」 툴팁이 선택 버튼을 덮는다"
+        _move_in_window(window, window.mapFromGlobal(overlap.center()))
+        assert select.underMouse(), "전제: 포인터가 선택 버튼 위다"
+        assert bubble.target is select
+        assert bubble.isVisible() and not bubble.isFadingOut()
+        qtbot.waitUntil(lambda: bubble.opacity() == 1.0, timeout=2000)
+    finally:
+        card_display.use(None)
+
+
+def test_the_tip_bubble_never_takes_the_pointer() -> None:
+    """툴팁 말풍선은 창 · 위젯 모두 포인터 입력을 받지 않아야 한다 — 밑의 대상이 들어감 · 누름을 받는다(#611).
+
+    공용 말풍선 -> 창 플래그 WindowTransparentForInput · WA_TransparentForMouseEvents 둘 다 있음
+    """
+    bubble = tip_bubble.tip_bubble()
+    assert bubble.windowFlags() & Qt.WindowType.WindowTransparentForInput
+    assert bubble.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+
 def test_pressing_closes_the_bubble_until_the_pointer_leaves(window: VodDownloader) -> None:
     """대상을 누르면 말풍선이 닫히고, 나갔다 들어오기 전에는 다시 뜨지 않아야 한다."""
     target = window.stopButton
