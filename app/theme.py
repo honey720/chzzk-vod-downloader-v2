@@ -204,6 +204,9 @@ DARK = {
     # 이상(WCAG 1.4.11, #611). 구분선(border)은 그대로 옅게 둔다
     "fieldBorder": "#797b81",
     "fieldBorderStrong": "#8c8e93",  # 입력 칸 호버 — fieldBorder에서 한 단계(border → borderStrong과 같은 ΔE00 약 7)
+    # 입력 칸 위 · 좌 · 우 변 호버 — 평소 변(borderStrong)에서 밝게 한 단계(ΔE00 6.8, border → borderStrong과 같은
+    # 크기). 아래 변만 fieldBorder로 칸을 알린다(Fluent 2 입력 칸, #611 176g)
+    "fieldEdgeHover": "#5e646e",
     "text": "#e6e8ec",
     "textMuted": "#a0a6b0",
     "textDisabled": "#6b7078",
@@ -277,6 +280,7 @@ LIGHT = {
     # 입력 칸 테두리 — 바 면 · 칸 면 모두와 3.0 이상(#611)
     "fieldBorder": "#86888c",
     "fieldBorderStrong": "#747679",  # 입력 칸 호버 — fieldBorder에서 한 단계(ΔE00 약 7)
+    "fieldEdgeHover": "#a2a6af",  # 입력 칸 위 · 좌 · 우 변 호버 — borderStrong에서 어둡게 한 단계(ΔE00 6.6)
     "text": "#1c1e22",
     "textMuted": "#5b6069",
     "textDisabled": "#9a9fa8",

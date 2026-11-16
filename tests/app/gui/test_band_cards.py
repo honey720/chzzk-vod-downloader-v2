@@ -291,9 +291,9 @@ class TestBarButtons:
     @pytest.mark.parametrize(
         ("name", "edge"),
         [
-            ("urlInput", "fieldBorder"),
-            ("saveLocationButton", "fieldBorder"),
-            ("sortButton", "fieldBorder"),
+            ("urlInput", "borderStrong"),  # 위 변 — 아래 변만 fieldBorder(#611 176g)
+            ("saveLocationButton", "borderStrong"),
+            ("sortButton", "borderStrong"),
             ("settingsButton", "surface"),
             ("fetchButton", "surface"),
             ("selectButton", "surface"),
@@ -303,7 +303,7 @@ class TestBarButtons:
     def test_only_input_fields_have_a_border(self, window, name: str, edge: str) -> None:
         """평소 테두리가 보이는 것은 입력 칸(URL · 펼침 칸)뿐이고 동작 버튼은 바 면이어야 한다.
 
-        창 폭 900 -> 위 가장자리 가운데 화소: urlInput · saveLocationButton · sortButton ≈ fieldBorder,
+        창 폭 900 -> 위 가장자리 가운데 화소: urlInput · saveLocationButton · sortButton ≈ borderStrong,
         settingsButton · fetchButton · selectButton · stopButton ≈ surface
         """
         win = window(DownloadState.WAITING)
@@ -430,7 +430,8 @@ class TestUrlField:
     ) -> None:
         """포인터가 URL 칸 위에 오면 테두리가 fieldBorderStrong, 면은 surfaceAlt 그대로여야 한다.
 
-        창에 합성 포인터 이동(URL 칸 가운데) -> 위 가장자리 가운데 ≈ fieldBorderStrong, 왼쪽 안쪽 3px ≈ surfaceAlt
+        창에 합성 포인터 이동(URL 칸 가운데) -> 위 가장자리 가운데 ≈ fieldEdgeHover, 아래 가장자리 가운데 ≈
+        fieldBorderStrong, 왼쪽 안쪽 3px ≈ surfaceAlt
         """
         from PySide6.QtTest import QTest
 
@@ -444,7 +445,8 @@ class TestUrlField:
         _pump()
         assert field.underMouse() and not field.hasFocus(), "전제: 포인터만 칸 위다"
         image = win.grab().toImage()
-        assert _is(_pixel(image, rect.center().x(), rect.top()), "fieldBorderStrong")
+        assert _is(_pixel(image, rect.center().x(), rect.top()), "fieldEdgeHover")
+        assert _is(_pixel(image, rect.center().x(), rect.bottom()), "fieldBorderStrong")
         assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surfaceAlt")
 
     def test_focus_beats_hover_on_the_url_field(
@@ -452,7 +454,8 @@ class TestUrlField:
     ) -> None:
         """초점이 있는 URL 칸은 포인터가 올라 있어도 테두리가 accent여야 한다.
 
-        창 활성 · URL 칸 초점 · 합성 포인터 이동(칸 가운데) -> 위 가장자리 가운데 ≈ accent
+        창 활성 · URL 칸 초점 · 합성 포인터 이동(칸 가운데) -> 아래 두 줄 가운데 ≈ accent,
+        위 가장자리 가운데 ≈ borderStrong(호버 전 색)
         """
         from PySide6.QtTest import QTest
 
@@ -470,7 +473,9 @@ class TestUrlField:
         _pump()
         assert field.underMouse(), "전제: 포인터가 칸 위다"
         image = win.grab().toImage()
-        assert _is(_pixel(image, rect.center().x(), rect.top()), "accent")
+        for y in (rect.bottom(), rect.bottom() - 1):
+            assert _is(_pixel(image, rect.center().x(), y), "accent"), y
+        assert _is(_pixel(image, rect.center().x(), rect.top()), "borderStrong")
 
     def test_url_field_inner_side_padding_is_10(self, window: Callable[..., VodDownloader]) -> None:
         """URL 칸의 글 자리는 테두리 1px + 안쪽 여백 10 = 칸 왼쪽 · 오른쪽 끝에서 11 안이어야 한다.
@@ -505,17 +510,20 @@ class TestDropFields:
 
     @pytest.mark.parametrize("name", DROP_FIELDS)
     def test_drop_field_has_the_url_border_and_face_at_rest(self, window, name: str) -> None:
-        """평소의 펼침 칸은 위 가장자리 · 왼쪽 안쪽 화소가 URL 칸과 같아야 한다(fieldBorder · surfaceAlt).
+        """평소의 펼침 칸은 위 · 아래 가장자리 · 왼쪽 안쪽 화소가 URL 칸과 같아야 한다.
 
-        창 폭 900 -> 펼침 칸 위 가장자리 가운데 ≈ URL 칸 위 가장자리 가운데 ≈ fieldBorder, 왼쪽 안쪽 3px 자리 ≈
-        URL 칸 왼쪽 안쪽 3px 자리 ≈ surfaceAlt
+        창 폭 900 -> 펼침 칸 아래 가장자리 가운데 ≈ URL 칸 아래 가장자리 가운데 ≈ fieldBorder, 위 가장자리 가운데
+        ≈ URL 칸 위 가장자리 가운데 ≈ borderStrong, 왼쪽 안쪽 3px 자리 ≈ URL 칸 왼쪽 안쪽 3px 자리 ≈ surfaceAlt
         """
         win = window(DownloadState.WAITING)
         image = win.grab().toImage()
         url, field = _rect(win, win.urlInput), _rect(win, getattr(win, name))
         top = _pixel(image, field.center().x(), field.top())
+        bottom = _pixel(image, field.center().x(), field.bottom())
         face = _pixel(image, field.left() + 3, field.center().y())
-        assert _is(top, "fieldBorder")
+        assert _is(bottom, "fieldBorder")
+        assert _same(bottom, _pixel(image, url.center().x(), url.bottom()))
+        assert _is(top, "borderStrong")
         assert _same(top, _pixel(image, url.center().x(), url.top()))
         assert _is(face, "surfaceAlt")
         assert _same(face, _pixel(image, url.left() + 3, url.center().y()))
@@ -561,7 +569,8 @@ class TestDropFields:
     def test_drop_field_hover_shows_the_strong_border(self, window) -> None:
         """포인터가 펼침 칸 위에 오면 테두리가 fieldBorderStrong, 면은 surfaceAlt 그대로여야 한다.
 
-        창에 합성 포인터 이동(정렬 칸 가운데) -> 위 가장자리 가운데 ≈ fieldBorderStrong, 왼쪽 안쪽 3px ≈ surfaceAlt
+        창에 합성 포인터 이동(정렬 칸 가운데) -> 위 가장자리 가운데 ≈ fieldEdgeHover, 아래 가장자리 가운데 ≈
+        fieldBorderStrong, 왼쪽 안쪽 3px ≈ surfaceAlt
         """
         from PySide6.QtTest import QTest
 
@@ -572,13 +581,15 @@ class TestDropFields:
         _pump()
         assert button.underMouse(), "전제: 포인터가 칸 위다"
         image = win.grab().toImage()
-        assert _is(_pixel(image, rect.center().x(), rect.top()), "fieldBorderStrong")
+        assert _is(_pixel(image, rect.center().x(), rect.top()), "fieldEdgeHover")
+        assert _is(_pixel(image, rect.center().x(), rect.bottom()), "fieldBorderStrong")
         assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surfaceAlt")
 
     def test_pressed_drop_field_shows_the_accent_border(self, window) -> None:
         """눌린 펼침 칸(펼친 동안과 같은 규칙)은 테두리가 accent, 면은 surfaceAlt여야 한다.
 
-        정렬 칸 setDown(True) -> 위 가장자리 가운데 ≈ accent, 왼쪽 안쪽 3px ≈ surfaceAlt
+        정렬 칸 setDown(True) -> 아래 두 줄 가운데 ≈ accent, 위 가장자리 가운데 ≈ borderStrong,
+        왼쪽 안쪽 3px ≈ surfaceAlt
         """
         win = window(DownloadState.WAITING)
         button = win.sortButton
@@ -587,13 +598,15 @@ class TestDropFields:
         assert button.isDown(), "전제: 눌린 상태다"
         rect = _rect(win, button)
         image = win.grab().toImage()
-        assert _is(_pixel(image, rect.center().x(), rect.top()), "accent")
+        for y in (rect.bottom(), rect.bottom() - 1):
+            assert _is(_pixel(image, rect.center().x(), y), "accent"), y
+        assert _is(_pixel(image, rect.center().x(), rect.top()), "borderStrong")
         assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surfaceAlt")
 
     def test_disabled_drop_field_has_the_faint_border(self, window) -> None:
         """꺼진 펼침 칸은 테두리가 옅은 border이고 면 surfaceAlt는 남아야 한다(#611 176f).
 
-        정렬 칸 setEnabled(False) -> 위 가장자리 가운데 ≈ border, 왼쪽 안쪽 3px ≈ surfaceAlt
+        정렬 칸 setEnabled(False) -> 위 · 아래 가장자리 가운데 ≈ border, 왼쪽 안쪽 3px ≈ surfaceAlt
         """
         win = window(DownloadState.WAITING)
         button = win.sortButton
@@ -603,6 +616,7 @@ class TestDropFields:
         rect = _rect(win, button)
         image = win.grab().toImage()
         assert _is(_pixel(image, rect.center().x(), rect.top()), "border")
+        assert _is(_pixel(image, rect.center().x(), rect.bottom()), "border")
         assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surfaceAlt")
 
     @pytest.mark.parametrize("width", ["first", "min"])
@@ -610,7 +624,7 @@ class TestDropFields:
         """칩이 상태 드롭다운으로 바뀐 좁은 폭에서 그 드롭다운도 테두리 있는 입력 칸이어야 한다.
 
         창 폭 = 칩이 드롭다운으로 바뀌는 첫 폭(900에서 2px씩 줄여 찾음) · 최소폭 -> filterDropButton 보임,
-        위 가장자리 가운데 ≈ fieldBorder · 왼쪽 안쪽 3px ≈ surfaceAlt
+        아래 가장자리 가운데 ≈ fieldBorder · 왼쪽 안쪽 3px ≈ surfaceAlt
         """
         win = window(DownloadState.WAITING)
         if width == "min":
@@ -628,14 +642,14 @@ class TestDropFields:
         assert drop.isVisible(), "전제: 상태 드롭다운이 보인다"
         rect = _rect(win, drop)
         image = win.grab().toImage()
-        assert _is(_pixel(image, rect.center().x(), rect.top()), "fieldBorder")
+        assert _is(_pixel(image, rect.center().x(), rect.bottom()), "fieldBorder")
         assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surfaceAlt")
 
     @pytest.mark.parametrize("name", DROP_FIELDS)
     def test_icon_drop_field_is_a_bordered_square(self, window, name: str) -> None:
         """아이콘 모양 저장 위치 · 정렬 칸도 테두리 있는 정사각 입력 칸이어야 한다.
 
-        창 폭 900, setCompact(True) -> 폭 == 높이, 위 가장자리 가운데 ≈ fieldBorder, 왼쪽 안쪽 3px ≈ surfaceAlt
+        창 폭 900, setCompact(True) -> 폭 == 높이, 아래 가장자리 가운데 ≈ fieldBorder, 왼쪽 안쪽 3px ≈ surfaceAlt
         """
         win = window(DownloadState.WAITING)
         button = getattr(win, name)
@@ -645,7 +659,7 @@ class TestDropFields:
         rect = _rect(win, button)
         assert rect.width() == rect.height()
         image = win.grab().toImage()
-        assert _is(_pixel(image, rect.center().x(), rect.top()), "fieldBorder")
+        assert _is(_pixel(image, rect.center().x(), rect.bottom()), "fieldBorder")
         assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surfaceAlt")
 
 
@@ -952,15 +966,15 @@ class TestFieldBorderToken:
     def test_url_field_uses_field_border_and_the_header_line_uses_border(
         self, window: Callable[..., VodDownloader]
     ) -> None:
-        """URL 칸 위 가장자리는 fieldBorder, 헤더바 아래 선은 border여야 한다.
+        """URL 칸 아래 가장자리는 fieldBorder, 헤더바 아래 선은 border여야 한다.
 
-        대기 카드 하나, 창 폭 900 -> URL 칸 위 가장자리 가운데 ≈ fieldBorder · ≉ border,
+        대기 카드 하나, 창 폭 900 -> URL 칸 아래 가장자리 가운데 ≈ fieldBorder · ≉ border,
         헤더바 아래 줄(URL 칸 가운데 x) ≈ border · ≉ fieldBorder
         """
         win = window(DownloadState.WAITING)
         url, header = _rect(win, win.urlInput), _rect(win, win.headerFrame)
         image = win.grab().toImage()
-        edge = _pixel(image, url.center().x(), url.top())
+        edge = _pixel(image, url.center().x(), url.bottom())
         line = _pixel(image, url.center().x(), header.bottom())
         assert _is(edge, "fieldBorder") and not _is(edge, "border")
         assert _is(line, "border") and not _is(line, "fieldBorder")
@@ -1011,13 +1025,17 @@ def field(window: Callable[..., VodDownloader]) -> Callable[[str], tuple[QWidget
         if name != "combo":
             win = window(DownloadState.WAITING)
             return win, getattr(win, name)
+        from PySide6.QtWidgets import QPushButton
+
         holder = QWidget()
         held.append(holder)
         layout = QVBoxLayout(holder)
+        # 창이 처음 받는 초점을 콤보 앞 버튼이 갖는다 — 콤보가 초점(아래 변 강조색)을 받지 않은 평소 모양을 잰다
+        layout.addWidget(QPushButton("x", holder))
         combo = QComboBox(holder)
         combo.addItems(["A", "B"])
         layout.addWidget(combo)
-        holder.resize(300, 80)
+        holder.resize(300, 120)
         holder.show()
         _pump()
         return holder, combo
@@ -1028,20 +1046,20 @@ def field(window: Callable[..., VodDownloader]) -> Callable[[str], tuple[QWidget
 
 
 class TestDisabledFields:
-    """꺼진 입력 칸 테두리는 옅은 border, 켜진 칸은 fieldBorder 그대로(#611 176f)."""
+    """꺼진 입력 칸 테두리는 네 변 옅은 border, 켜진 칸 아래 변은 fieldBorder 그대로(#611 176f · 176g)."""
 
     @pytest.mark.parametrize("name", FIELDS)
     def test_enabled_field_keeps_the_field_border(
         self, field: Callable[[str], tuple[QWidget, QWidget]], name: str
     ) -> None:
-        """켜진 입력 칸의 위 가장자리는 fieldBorder이고 border가 아니어야 한다.
+        """켜진 입력 칸의 아래 가장자리는 fieldBorder이고 border가 아니어야 한다.
 
-        URL 칸 · 정렬 칸 · 콤보, 켜짐 -> 위 가장자리 가운데 ≈ fieldBorder · ≉ border
+        URL 칸 · 정렬 칸 · 콤보, 켜짐 -> 아래 가장자리 가운데 ≈ fieldBorder · ≉ border
         """
         host, widget = field(name)
         assert widget.isVisible() and widget.isEnabled(), "전제: 보이고 켜져 있다"
         rect = _rect(host, widget)
-        edge = _pixel(host.grab().toImage(), rect.center().x(), rect.top())
+        edge = _pixel(host.grab().toImage(), rect.center().x(), rect.bottom())
         assert _is(edge, "fieldBorder")
         assert not _is(edge, "border")
 
@@ -1049,18 +1067,20 @@ class TestDisabledFields:
     def test_disabled_field_has_the_faint_border(
         self, field: Callable[[str], tuple[QWidget, QWidget]], name: str
     ) -> None:
-        """꺼진 입력 칸의 위 가장자리는 border이고 fieldBorder가 아니어야 한다.
+        """꺼진 입력 칸의 위 · 아래 가장자리는 border이고 fieldBorder가 아니어야 한다.
 
-        URL 칸 · 정렬 칸 · 콤보, setEnabled(False) -> 위 가장자리 가운데 ≈ border · ≉ fieldBorder
+        URL 칸 · 정렬 칸 · 콤보, setEnabled(False) -> 위 · 아래 가장자리 가운데 ≈ border · ≉ fieldBorder
         """
         host, widget = field(name)
         widget.setEnabled(False)
         _pump()
         assert widget.isVisible() and not widget.isEnabled(), "전제: 보이고 꺼져 있다"
         rect = _rect(host, widget)
-        edge = _pixel(host.grab().toImage(), rect.center().x(), rect.top())
-        assert _is(edge, "border")
-        assert not _is(edge, "fieldBorder")
+        image = host.grab().toImage()
+        for y in (rect.top(), rect.bottom()):
+            edge = _pixel(image, rect.center().x(), y)
+            assert _is(edge, "border"), y
+            assert not _is(edge, "fieldBorder"), y
 
     @pytest.mark.parametrize("enabled", [True, False])
     def test_combo_text_is_dimmed_only_when_disabled(
@@ -1306,3 +1326,130 @@ class TestBarEmptyPressFocusesList:
         _press_window(win, _empty_spot(win, win.headerFrame))
         assert view.selectedItems() == picked
         assert QApplication.focusWidget() is card
+
+
+def _edges(host: QWidget, widget: QWidget) -> dict[str, QColor]:
+    """입력 칸 네 변의 가운데 화소(모서리 둥글림 밖) — 위 · 왼쪽 · 오른쪽 · 아래 · 아래 안쪽 한 줄."""
+    rect = _rect(host, widget)
+    image = host.grab().toImage()
+    x, y = rect.center().x(), rect.center().y()
+    return {
+        "top": _pixel(image, x, rect.top()),
+        "left": _pixel(image, rect.left(), y),
+        "right": _pixel(image, rect.right(), y),
+        "bottom": _pixel(image, x, rect.bottom()),
+        "above_bottom": _pixel(image, x, rect.bottom() - 1),
+    }
+
+
+def _activate_and_focus(host: QWidget, widget: QWidget, qtbot) -> None:
+    def focused() -> bool:
+        if not host.isActiveWindow():
+            host.activateWindow()
+            return False
+        widget.setFocus(Qt.FocusReason.TabFocusReason)
+        return widget.hasFocus()
+
+    qtbot.waitUntil(focused, timeout=3000)
+    _pump()
+
+
+def _text_place(widget: QWidget) -> tuple[int, QRect]:
+    """칸 높이와 글이 놓이는 사각형 — QLineEdit은 글 자리(SE_LineEditContents), 콤보는 편집 칸, 펼침 칸은 글 칸."""
+    from PySide6.QtWidgets import (
+        QComboBox,
+        QLineEdit,
+        QStyle,
+        QStyleOptionComboBox,
+        QStyleOptionFrame,
+    )
+
+    if isinstance(widget, QLineEdit):
+        option = QStyleOptionFrame()
+        widget.initStyleOption(option)
+        place = widget.style().subElementRect(QStyle.SubElement.SE_LineEditContents, option, widget)
+    elif isinstance(widget, QComboBox):
+        option = QStyleOptionComboBox()
+        widget.initStyleOption(option)
+        place = widget.style().subControlRect(
+            QStyle.ComplexControl.CC_ComboBox,
+            option,
+            QStyle.SubControl.SC_ComboBoxEditField,
+            widget,
+        )
+    else:
+        place = widget._textRect()
+    return widget.height(), place
+
+
+class TestFieldEdges:
+    """입력 칸 테두리는 Fluent 2 방식 — 위 · 좌 · 우 borderStrong, 아래 변만 fieldBorder, 초점은 아래 변 강조색 2px
+    (#611 176g)."""
+
+    @pytest.mark.parametrize("name", FIELDS)
+    def test_only_the_bottom_edge_is_the_field_border_at_rest(
+        self, field: Callable[[str], tuple[QWidget, QWidget]], name: str
+    ) -> None:
+        """평소 입력 칸은 위 · 왼쪽 · 오른쪽 변이 borderStrong이고 아래 변만 fieldBorder여야 한다.
+
+        URL 칸 · 정렬 칸 · 콤보, 켜짐 · 초점 없음 -> 위 · 왼쪽 · 오른쪽 가운데 ≈ borderStrong · ≉ fieldBorder,
+        아래 가운데 ≈ fieldBorder, 아래 바로 위 줄 ≈ surfaceAlt
+        """
+        host, widget = field(name)
+        assert widget.isVisible() and not widget.hasFocus(), "전제: 보이고 초점이 없다"
+        edges = _edges(host, widget)
+        for side in ("top", "left", "right"):
+            assert _is(edges[side], "borderStrong"), (side, edges[side].name())
+            assert not _is(edges[side], "fieldBorder"), side
+        assert _is(edges["bottom"], "fieldBorder")
+        assert _is(edges["above_bottom"], "surfaceAlt")
+
+    @pytest.mark.parametrize("name", FIELDS)
+    def test_focus_draws_a_two_pixel_accent_bottom_and_keeps_the_other_edges(
+        self, field: Callable[[str], tuple[QWidget, QWidget]], qtbot, name: str
+    ) -> None:
+        """초점을 받은 입력 칸은 아래 두 줄이 accent이고 나머지 변은 borderStrong이어야 한다.
+
+        URL 칸 · 정렬 칸 · 콤보에 Tab 초점 -> 아래 가운데 · 그 위 줄 ≈ accent, 위 · 왼쪽 · 오른쪽 ≈ borderStrong
+        """
+        host, widget = field(name)
+        _activate_and_focus(host, widget, qtbot)
+        edges = _edges(host, widget)
+        assert _is(edges["bottom"], "accent")
+        assert _is(edges["above_bottom"], "accent")
+        for side in ("top", "left", "right"):
+            assert _is(edges[side], "borderStrong"), (side, edges[side].name())
+
+    @pytest.mark.parametrize("name", FIELDS)
+    def test_focus_keeps_the_height_and_the_text_place(
+        self, field: Callable[[str], tuple[QWidget, QWidget]], qtbot, name: str
+    ) -> None:
+        """아래 변이 2px가 되어도 칸 높이와 글이 놓이는 자리가 초점 전과 같아야 한다.
+
+        URL 칸 · 정렬 칸 · 콤보, 초점 전 (높이, 글 자리 사각형) == Tab 초점 뒤 (높이, 글 자리 사각형)
+        """
+        host, widget = field(name)
+        before = _text_place(widget)
+        _activate_and_focus(host, widget, qtbot)
+        assert widget.hasFocus(), "전제: 초점을 받았다"
+        assert _text_place(widget) == before
+
+    def test_open_combo_has_the_focus_bottom(
+        self, field: Callable[[str], tuple[QWidget, QWidget]], qtbot
+    ) -> None:
+        """펼친 콤보는 초점과 같게 아래 두 줄이 accent여야 한다.
+
+        콤보 showPopup() -> 아래 가운데 · 그 위 줄 ≈ accent, 위 가운데 ≈ borderStrong
+        """
+        host, combo = field("combo")
+        _activate_and_focus(host, combo, qtbot)
+        combo.showPopup()
+        qtbot.waitUntil(lambda: combo.view().isVisible(), timeout=3000)
+        try:
+            edges = _edges(host, combo)
+            assert _is(edges["bottom"], "accent")
+            assert _is(edges["above_bottom"], "accent")
+            assert _is(edges["top"], "borderStrong")
+        finally:
+            combo.hidePopup()
+            _pump()
