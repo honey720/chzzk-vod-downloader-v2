@@ -764,8 +764,10 @@ class TestComboBoxSubcontrols:
         raw = _raw_qss()
         arrow_block = _rule_block(raw, "QComboBox::down-arrow")
         drop_down_block = _rule_block(raw, "QComboBox::drop-down")
-        assert "@surfaceAlt" in arrow_block
-        assert "background-color: @surfaceAlt" in drop_down_block
+        face = re.search(r"background-color: (@\w+);", drop_down_block)
+        assert face is not None
+        assert f"border-left: 4px solid {face.group(1)};" in arrow_block
+        assert f"border-right: 4px solid {face.group(1)};" in arrow_block
 
     def test_selection_colours_are_declared_on_combobox_itself(self) -> None:
         """`selection-background-color`/`selection-color`는 QComboBox 자신에 둬야

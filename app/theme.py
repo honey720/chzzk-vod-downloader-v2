@@ -185,8 +185,12 @@ FONTS = {
 DARK = {
     # ---- 바탕 ----
     "windowBg": "#1b1c1f",  # 창 배경
-    "surface": "#24262b",  # 헤더·하단 바 같은 패널
-    "surfaceAlt": "#2f3239",  # 기본 버튼·입력창 바탕
+    "surface": "#24262b",  # 떠 있는 패널 — 드롭다운 메뉴 · 콤보 팝업 · 설정 창 그룹 상자
+    # 메뉴바 · 헤더바 · 하단바 면 — 카드 면(cardBg)에서 카드 호버 한 단계(ΔE00 약 3.0)만큼 어둡게. 헤더가 목록 첫
+    # 행처럼 읽히지 않게 바를 목록과 다른 면으로 둔다(#611 176i — 176h 바 면 (A)안)
+    "barBg": "#222329",
+    "surfaceAlt": "#2f3239",  # 기본 버튼 · 고른 칩 · 켠 선택 버튼 바탕
+    "fieldBg": "#2f3239",  # 입력 칸(URL 칸 · 펼침 칸 · QComboBox) 면 — 다크는 surfaceAlt와 같다(#611 176i)
     "surfaceHover": "#383c44",
     "surfacePressed": "#282b31",
     "menuHover": "#2c2f35",  # 드롭다운 메뉴 호버 면 — 바 면(surface)에서 한 단계(ΔE00 약 2.9, #536)
@@ -259,7 +263,11 @@ LIGHT = {
     # ---- 바탕 ----
     "windowBg": "#f2f3f5",
     "surface": "#ffffff",
+    "barBg": "#f0f0f0",  # 바 면 — 흰 카드 면에서 ΔE00 약 3.0 어둡게(#611 176i)
     "surfaceAlt": "#eceef1",
+    # 입력 칸 면 — 회색 바 위 흰 칸(Fluent 2 · Windows 11). surfaceAlt로 두면 바 면과 1.02라 칸 면이 안 보인다
+    # (#611 176i)
+    "fieldBg": "#ffffff",
     "surfaceHover": "#e1e4e9",
     "surfacePressed": "#d5d9df",
     "menuHover": "#f0f1f3",  # 드롭다운 메뉴 호버 면 — 바 면(surface)에서 한 단계(ΔE00 약 3.0, #536)
@@ -580,8 +588,8 @@ for _table in (DARK, LIGHT):
     _table["menuButtonPadRight"] = f"{MENU_BUTTON_PAD_RIGHT}px"
 _card_tints(DARK, "dark")
 _card_tints(LIGHT, "light")
-DARK["fieldEdgeHover"] = _field_hover(DARK["fieldEdge"], DARK["surfaceAlt"])
-LIGHT["fieldEdgeHover"] = _field_hover(LIGHT["fieldEdge"], LIGHT["surfaceAlt"])
+DARK["fieldEdgeHover"] = _field_hover(DARK["fieldEdge"], DARK["fieldBg"])
+LIGHT["fieldEdgeHover"] = _field_hover(LIGHT["fieldEdge"], LIGHT["fieldBg"])
 
 #: 카드 상태 이름 — 파이썬(`setProperty`)과 QSS(`[state="..."]`)가 공유하는 어휘.
 #: 상태 아이콘·진행바 둘 다 이 값을 그대로 `state` 동적 속성에 써서

@@ -59,19 +59,20 @@ QToolTip {
 /* ---------- 상·하단 패널 ---------- */
 
 /* 바는 창 끝까지 — 모서리 없이, 목록 쪽 한 줄만 경계선(#536 — 설계 §11.1, 프로토 11b .bar · .hdr · .foot). 헤더바 아래 ·
- * 하단바 위 선은 카드 행 사이 구분선과 같은 선이다(설계 §13, #611).
+ * 하단바 위 선은 카드 행 사이 구분선과 같은 선이다(설계 §13, #611). 바 면(@barBg)은 카드 면에서 한 단계 다른 면이다
+ * (#611 176i).
  * 안쪽 여백은 QSS padding이 아니라 레이아웃 마진(theme.METRICS["outerMargin"] · ["barPadY"],
  * app/views/mainWindow.py::_applyLayoutMetrics가 런타임에 건다)이 준다 — 바 안 내용 끝과
  * 카드 바깥 끝이 같은 두 선에 놓이게 하기 위해서다. */
 QFrame#headerFrame {
-    background-color: @surface;
+    background-color: @barBg;
     border: none;
     border-bottom: 1px solid @border;
     border-radius: 0px;
 }
 
 QFrame#infoFrame {
-    background-color: @surface;
+    background-color: @barBg;
     border: none;
     border-top: 1px solid @border;
     border-radius: 0px;
@@ -485,7 +486,7 @@ QWidget#selectBar QPushButton#selectCheck {
  * 키보드 초점 상자(밑줄과 겹치지 않는 글 둘레)는 app/widgets/menu_button.py::MenuButton.paintEvent가 그린다 —
  * QSS 테두리는 네 변이 한 색이라 밑줄과 초점을 가를 수 없다. 투명 테두리 1px는 늘 둔다(버블 자리 계산이 센다) */
 QFrame#appMenuBar {
-    background-color: @surface;
+    background-color: @barBg;
     border: none;
     border-radius: 0px;
 }
@@ -593,7 +594,7 @@ QFrame#headerFrame QToolButton[role="drop"][keyFocus="false"]:focus:open {
  * 대상이 아니다). 테두리를 그리는 것은 이 입력 칸뿐이다 — 버튼은 면으로 모양을 낸다(꺼짐 포함). */
 QLineEdit,
 QToolButton[role="drop"] {
-    background-color: @surfaceAlt;
+    background-color: @fieldBg;
     color: @text;
     border: 1px solid @fieldEdge;
     border-radius: @radius;
@@ -721,7 +722,7 @@ QFrame#sectionDropLine {
  * 다시 산다), 그 대체 경로가 정확히 이 프로퍼티들이다. Qt 공식 스타일시트
  * 레퍼런스가 QComboBox 프로퍼티로 문서화해 둔 경로와 일치한다. */
 QComboBox {
-    background-color: @surfaceAlt;
+    background-color: @fieldBg;
     color: @text;
     border: 1px solid @fieldEdge;
     border-radius: @radius;
@@ -755,7 +756,7 @@ QComboBox::drop-down {
     subcontrol-position: top right;
     width: 20px;
     border-left: 1px solid @border;
-    background-color: @surfaceAlt;
+    background-color: @fieldBg;
 }
 
 QComboBox::drop-down:hover {
@@ -772,8 +773,8 @@ QComboBox::drop-down:hover {
 QComboBox::down-arrow {
     width: 0px;
     height: 0px;
-    border-left: 4px solid @surfaceAlt;
-    border-right: 4px solid @surfaceAlt;
+    border-left: 4px solid @fieldBg;
+    border-right: 4px solid @fieldBg;
     border-top: 5px solid @textMuted;
 }
 

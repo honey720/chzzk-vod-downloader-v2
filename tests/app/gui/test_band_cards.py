@@ -220,7 +220,7 @@ class TestBarLines:
     def test_header_bottom_and_footer_top_are_lines_and_the_menu_bar_has_none(self, window) -> None:
         """헤더바 맨 아래 줄 · 하단바 맨 위 줄은 border, 메뉴바 맨 아래 줄은 바 면이어야 한다.
 
-        대기 카드 둘, 창 폭 900 -> 헤더바 아래 줄 ≈ border, 하단바 위 줄 ≈ border, 메뉴바 아래 줄 ≈ surface,
+        대기 카드 둘, 창 폭 900 -> 헤더바 아래 줄 ≈ border, 하단바 위 줄 ≈ border, 메뉴바 아래 줄 ≈ barBg,
         첫 행 윗선 = 헤더바 아래 끝 + 1(목록 위 여백 0)
         """
         win = window(DownloadState.WAITING, DownloadState.WAITING)
@@ -233,7 +233,7 @@ class TestBarLines:
         )
         assert _is(_pixel(image, x, header.bottom()), "border")
         assert _is(_pixel(image, x, footer.top()), "border")
-        assert _is(_pixel(image, x, menu.bottom()), "surface")
+        assert _is(_pixel(image, x, menu.bottom()), "barBg")
         assert _rect(win, _card(win, 0)).top() == header.bottom() + 1
 
 
@@ -254,15 +254,15 @@ class TestBarButtons:
         """평소의 동작 버튼은 위 가장자리 · 왼쪽 안쪽 화소가 바 면 그대로여야 한다(테두리 · 면 없음).
 
         대기 카드 하나(■ 켬 — 받는 중 아님이라 꺼진 모양도 같은 규칙), 창 폭 900 -> 버튼 위 가장자리 가운데 ·
-        왼쪽 안쪽 3px 자리 ≈ surface
+        왼쪽 안쪽 3px 자리 ≈ barBg
         """
         win = window(DownloadState.WAITING)
         button = getattr(win, name)
         assert button.isVisible(), "전제: 버튼이 보인다"
         rect = _rect(win, button)
         image = win.grab().toImage()
-        assert _is(_pixel(image, rect.center().x(), rect.top()), "surface")
-        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surface")
+        assert _is(_pixel(image, rect.center().x(), rect.top()), "barBg")
+        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "barBg")
 
     @pytest.mark.parametrize("name", BAR_BUTTONS[:3])
     def test_bar_button_shows_the_hover_face(self, window, name: str) -> None:
@@ -294,17 +294,17 @@ class TestBarButtons:
             ("urlInput", "fieldEdge"),  # 네 변 같은 테두리(#611 176h)
             ("saveLocationButton", "fieldEdge"),
             ("sortButton", "fieldEdge"),
-            ("settingsButton", "surface"),
-            ("fetchButton", "surface"),
-            ("selectButton", "surface"),
-            ("stopButton", "surface"),
+            ("settingsButton", "barBg"),
+            ("fetchButton", "barBg"),
+            ("selectButton", "barBg"),
+            ("stopButton", "barBg"),
         ],
     )
     def test_only_input_fields_have_a_border(self, window, name: str, edge: str) -> None:
         """평소 테두리가 보이는 것은 입력 칸(URL · 펼침 칸)뿐이고 동작 버튼은 바 면이어야 한다.
 
         창 폭 900 -> 위 가장자리 가운데 화소: urlInput · saveLocationButton · sortButton ≈ fieldEdge,
-        settingsButton · fetchButton · selectButton · stopButton ≈ surface
+        settingsButton · fetchButton · selectButton · stopButton ≈ barBg
         """
         win = window(DownloadState.WAITING)
         widget = getattr(win, name)
@@ -317,7 +317,7 @@ class TestBarButtons:
         ("name", "edge"),
         [
             ("downloadButton", "surfaceAlt"),  # ▶ 꺼짐 — 면만(#611 오너 실기 2026-11-15)
-            ("stopButton", "surface"),  # ■ 꺼짐 — 면 · 테두리 없음
+            ("stopButton", "barBg"),  # ■ 꺼짐 — 면 · 테두리 없음
             (
                 "sortButton",
                 "border",
@@ -330,7 +330,7 @@ class TestBarButtons:
         """꺼진 상태에서도 테두리는 입력 칸에만 있고 꺼진 ▶은 면 surfaceAlt · ■은 바 면이어야 한다.
 
         창 폭 900, 위젯 setEnabled(False) -> 위 가장자리 가운데 화소: downloadButton ≈ surfaceAlt,
-        stopButton ≈ surface, sortButton ≈ border
+        stopButton ≈ barBg, sortButton ≈ border
         """
         win = window(DownloadState.WAITING)
         widget = getattr(win, name)
@@ -428,9 +428,9 @@ class TestUrlField:
     def test_url_field_hover_shows_the_strong_border(
         self, window: Callable[..., VodDownloader]
     ) -> None:
-        """포인터가 URL 칸 위에 오면 네 변 테두리가 fieldEdgeHover, 면은 surfaceAlt 그대로여야 한다.
+        """포인터가 URL 칸 위에 오면 네 변 테두리가 fieldEdgeHover, 면은 fieldBg 그대로여야 한다.
 
-        창에 합성 포인터 이동(URL 칸 가운데) -> 위 · 아래 가장자리 가운데 ≈ fieldEdgeHover, 왼쪽 안쪽 3px ≈ surfaceAlt
+        창에 합성 포인터 이동(URL 칸 가운데) -> 위 · 아래 가장자리 가운데 ≈ fieldEdgeHover, 왼쪽 안쪽 3px ≈ fieldBg
         """
         from PySide6.QtTest import QTest
 
@@ -446,7 +446,7 @@ class TestUrlField:
         image = win.grab().toImage()
         assert _is(_pixel(image, rect.center().x(), rect.top()), "fieldEdgeHover")
         assert _is(_pixel(image, rect.center().x(), rect.bottom()), "fieldEdgeHover")
-        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surfaceAlt")
+        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "fieldBg")
 
     def test_focus_beats_hover_on_the_url_field(
         self, window: Callable[..., VodDownloader], qtbot
@@ -454,7 +454,7 @@ class TestUrlField:
         """초점이 있는 URL 칸은 포인터가 올라 있어도 테두리가 accent여야 한다.
 
         창 활성 · URL 칸 초점 · 합성 포인터 이동(칸 가운데) -> 위 · 아래 가장자리 가운데 ≈ accent,
-        아래 바로 위 줄 ≈ surfaceAlt(1px)
+        아래 바로 위 줄 ≈ fieldBg(1px)
         """
         from PySide6.QtTest import QTest
 
@@ -474,7 +474,7 @@ class TestUrlField:
         image = win.grab().toImage()
         for y in (rect.top(), rect.bottom()):
             assert _is(_pixel(image, rect.center().x(), y), "accent"), y
-        assert _is(_pixel(image, rect.center().x(), rect.bottom() - 1), "surfaceAlt")
+        assert _is(_pixel(image, rect.center().x(), rect.bottom() - 1), "fieldBg")
 
     def test_url_field_inner_side_padding_is_10(self, window: Callable[..., VodDownloader]) -> None:
         """URL 칸의 글 자리는 테두리 1px + 안쪽 여백 10 = 칸 왼쪽 · 오른쪽 끝에서 11 안이어야 한다.
@@ -512,7 +512,7 @@ class TestDropFields:
         """평소의 펼침 칸은 위 · 아래 가장자리 · 왼쪽 안쪽 화소가 URL 칸과 같아야 한다.
 
         창 폭 900 -> 펼침 칸 아래 가장자리 가운데 ≈ URL 칸 아래 가장자리 가운데 ≈ fieldEdge, 위 가장자리 가운데
-        ≈ URL 칸 위 가장자리 가운데 ≈ fieldEdge, 왼쪽 안쪽 3px 자리 ≈ URL 칸 왼쪽 안쪽 3px 자리 ≈ surfaceAlt
+        ≈ URL 칸 위 가장자리 가운데 ≈ fieldEdge, 왼쪽 안쪽 3px 자리 ≈ URL 칸 왼쪽 안쪽 3px 자리 ≈ fieldBg
         """
         win = window(DownloadState.WAITING)
         image = win.grab().toImage()
@@ -524,7 +524,7 @@ class TestDropFields:
         assert _same(bottom, _pixel(image, url.center().x(), url.bottom()))
         assert _is(top, "fieldEdge")
         assert _same(top, _pixel(image, url.center().x(), url.top()))
-        assert _is(face, "surfaceAlt")
+        assert _is(face, "fieldBg")
         assert _same(face, _pixel(image, url.left() + 3, url.center().y()))
 
     @pytest.mark.parametrize("name", DROP_FIELDS)
@@ -545,7 +545,7 @@ class TestDropFields:
         """⌄ 오른쪽 끝은 칸 오른쪽 안쪽 끝에서 FIELD_PAD 안이고, 그 자리에 ⌄가 그려지고, 글과 떨어져야 한다.
 
         창 폭 900, 글 "A"(칸 폭보다 훨씬 짧은 값) -> (칸 폭 − 2) − caretRect.right() == 10, caretRect 안에
-        surfaceAlt 아닌 화소(⌄)가 있다, caretRect 왼쪽 끝 > 그린 글 오른쪽 끝
+        fieldBg 아닌 화소(⌄)가 있다, caretRect 왼쪽 끝 > 그린 글 오른쪽 끝
         """
         win = window(DownloadState.WAITING)
         button = getattr(win, name)
@@ -559,16 +559,16 @@ class TestDropFields:
             for x in range(caret.left(), caret.right() + 1)
             for y in range(caret.top(), caret.bottom() + 1)
         ]
-        assert any(not _is(colour, "surfaceAlt") for colour in ink), "⌄가 그 칸에 그려진다"
+        assert any(not _is(colour, "fieldBg") for colour in ink), "⌄가 그 칸에 그려진다"
         text_right = button._textRect().left() + button.fontMetrics().horizontalAdvance(
             button.shownText()
         )
         assert caret.left() > text_right
 
     def test_drop_field_hover_shows_the_strong_border(self, window) -> None:
-        """포인터가 펼침 칸 위에 오면 네 변 테두리가 fieldEdgeHover, 면은 surfaceAlt 그대로여야 한다.
+        """포인터가 펼침 칸 위에 오면 네 변 테두리가 fieldEdgeHover, 면은 fieldBg 그대로여야 한다.
 
-        창에 합성 포인터 이동(정렬 칸 가운데) -> 위 · 아래 가장자리 가운데 ≈ fieldEdgeHover, 왼쪽 안쪽 3px ≈ surfaceAlt
+        창에 합성 포인터 이동(정렬 칸 가운데) -> 위 · 아래 가장자리 가운데 ≈ fieldEdgeHover, 왼쪽 안쪽 3px ≈ fieldBg
         """
         from PySide6.QtTest import QTest
 
@@ -581,13 +581,13 @@ class TestDropFields:
         image = win.grab().toImage()
         assert _is(_pixel(image, rect.center().x(), rect.top()), "fieldEdgeHover")
         assert _is(_pixel(image, rect.center().x(), rect.bottom()), "fieldEdgeHover")
-        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surfaceAlt")
+        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "fieldBg")
 
     def test_pressed_drop_field_shows_the_accent_border(self, window) -> None:
-        """눌린 펼침 칸(펼친 동안과 같은 규칙)은 테두리가 accent, 면은 surfaceAlt여야 한다.
+        """눌린 펼침 칸(펼친 동안과 같은 규칙)은 테두리가 accent, 면은 fieldBg여야 한다.
 
-        정렬 칸 setDown(True) -> 위 · 아래 가장자리 가운데 ≈ accent, 아래 바로 위 줄 ≈ surfaceAlt(1px),
-        왼쪽 안쪽 3px ≈ surfaceAlt
+        정렬 칸 setDown(True) -> 위 · 아래 가장자리 가운데 ≈ accent, 아래 바로 위 줄 ≈ fieldBg(1px),
+        왼쪽 안쪽 3px ≈ fieldBg
         """
         win = window(DownloadState.WAITING)
         button = win.sortButton
@@ -598,13 +598,13 @@ class TestDropFields:
         image = win.grab().toImage()
         for y in (rect.top(), rect.bottom()):
             assert _is(_pixel(image, rect.center().x(), y), "accent"), y
-        assert _is(_pixel(image, rect.center().x(), rect.bottom() - 1), "surfaceAlt")
-        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surfaceAlt")
+        assert _is(_pixel(image, rect.center().x(), rect.bottom() - 1), "fieldBg")
+        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "fieldBg")
 
     def test_disabled_drop_field_has_the_faint_border(self, window) -> None:
-        """꺼진 펼침 칸은 테두리가 옅은 border이고 면 surfaceAlt는 남아야 한다(#611 176f).
+        """꺼진 펼침 칸은 테두리가 옅은 border이고 면 fieldBg는 남아야 한다(#611 176f).
 
-        정렬 칸 setEnabled(False) -> 위 · 아래 가장자리 가운데 ≈ border, 왼쪽 안쪽 3px ≈ surfaceAlt
+        정렬 칸 setEnabled(False) -> 위 · 아래 가장자리 가운데 ≈ border, 왼쪽 안쪽 3px ≈ fieldBg
         """
         win = window(DownloadState.WAITING)
         button = win.sortButton
@@ -615,14 +615,14 @@ class TestDropFields:
         image = win.grab().toImage()
         assert _is(_pixel(image, rect.center().x(), rect.top()), "border")
         assert _is(_pixel(image, rect.center().x(), rect.bottom()), "border")
-        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surfaceAlt")
+        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "fieldBg")
 
     @pytest.mark.parametrize("width", ["first", "min"])
     def test_narrow_status_dropdown_is_a_bordered_field(self, window, width: str) -> None:
         """칩이 상태 드롭다운으로 바뀐 좁은 폭에서 그 드롭다운도 테두리 있는 입력 칸이어야 한다.
 
         창 폭 = 칩이 드롭다운으로 바뀌는 첫 폭(900에서 2px씩 줄여 찾음) · 최소폭 -> filterDropButton 보임,
-        아래 가장자리 가운데 ≈ fieldEdge · 왼쪽 안쪽 3px ≈ surfaceAlt
+        아래 가장자리 가운데 ≈ fieldEdge · 왼쪽 안쪽 3px ≈ fieldBg
         """
         win = window(DownloadState.WAITING)
         if width == "min":
@@ -641,13 +641,13 @@ class TestDropFields:
         rect = _rect(win, drop)
         image = win.grab().toImage()
         assert _is(_pixel(image, rect.center().x(), rect.bottom()), "fieldEdge")
-        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surfaceAlt")
+        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "fieldBg")
 
     @pytest.mark.parametrize("name", DROP_FIELDS)
     def test_icon_drop_field_is_a_bordered_square(self, window, name: str) -> None:
         """아이콘 모양 저장 위치 · 정렬 칸도 테두리 있는 정사각 입력 칸이어야 한다.
 
-        창 폭 900, setCompact(True) -> 폭 == 높이, 아래 가장자리 가운데 ≈ fieldEdge, 왼쪽 안쪽 3px ≈ surfaceAlt
+        창 폭 900, setCompact(True) -> 폭 == 높이, 아래 가장자리 가운데 ≈ fieldEdge, 왼쪽 안쪽 3px ≈ fieldBg
         """
         win = window(DownloadState.WAITING)
         button = getattr(win, name)
@@ -658,7 +658,7 @@ class TestDropFields:
         assert rect.width() == rect.height()
         image = win.grab().toImage()
         assert _is(_pixel(image, rect.center().x(), rect.bottom()), "fieldEdge")
-        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surfaceAlt")
+        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "fieldBg")
 
 
 class TestSettingsGear:
@@ -801,7 +801,7 @@ class TestMenuTabs:
     ) -> None:
         """고른 탭의 맨 아래 두 줄은 강조색이고 그 위 줄은 바 면이어야 한다.
 
-        창 폭 900 -> 「VOD 다운」 아래끝 줄 · 그 위 줄 가운데 ≈ accent, 아래끝 − 2 줄 가운데 ≈ surface
+        창 폭 900 -> 「VOD 다운」 아래끝 줄 · 그 위 줄 가운데 ≈ accent, 아래끝 − 2 줄 가운데 ≈ barBg
         """
         win = window(DownloadState.WAITING)
         tab = win.menuDownloadButton
@@ -811,7 +811,7 @@ class TestMenuTabs:
         x = rect.center().x()
         for y in range(rect.bottom() - UNDERLINE + 1, rect.bottom() + 1):
             assert _is(_pixel(image, x, y), "accent"), y
-        assert _is(_pixel(image, x, rect.bottom() - UNDERLINE), "surface")
+        assert _is(_pixel(image, x, rect.bottom() - UNDERLINE), "barBg")
 
     def test_underline_spans_the_text_advance(self, window: Callable[..., VodDownloader]) -> None:
         """고른 탭 밑줄은 글 왼쪽 끝 ~ 글 진행 폭 끝이어야 한다(#611 176g).
@@ -862,20 +862,20 @@ class TestMenuTabs:
     def test_selected_tab_has_no_face(self, window: Callable[..., VodDownloader]) -> None:
         """고른 탭은 면 없이 바 면 위 굵은 글이어야 한다.
 
-        창 폭 900 -> 「VOD 다운」 굵은 글꼴, 왼쪽 안쪽 3px 가운데 · 위 가장자리 가운데 ≈ surface
+        창 폭 900 -> 「VOD 다운」 굵은 글꼴, 왼쪽 안쪽 3px 가운데 · 위 가장자리 가운데 ≈ barBg
         """
         win = window(DownloadState.WAITING)
         tab = win.menuDownloadButton
         rect = _rect(win, tab)
         image = win.grab().toImage()
         assert tab.font().bold()
-        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surface")
-        assert _is(_pixel(image, rect.center().x(), rect.top()), "surface")
+        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "barBg")
+        assert _is(_pixel(image, rect.center().x(), rect.top()), "barBg")
 
     def test_unselected_tab_has_no_underline(self, window: Callable[..., VodDownloader]) -> None:
         """고르지 않은 탭은 아래 줄에 강조색이 없고 면도 없어야 한다.
 
-        탭 「Tab」을 더함(고르지 않음) -> 그 탭 아래 두 줄 어디에도 accent 화소가 없다, 왼쪽 안쪽 3px ≈ surface
+        탭 「Tab」을 더함(고르지 않음) -> 그 탭 아래 두 줄 어디에도 accent 화소가 없다, 왼쪽 안쪽 3px ≈ barBg
         """
         win = window(DownloadState.WAITING)
         _, other = _tab_strip(win)
@@ -888,12 +888,12 @@ class TestMenuTabs:
             for y in range(rect.bottom() - UNDERLINE + 1, rect.bottom() + 1)
         ]
         assert not any(_is(colour, "accent") for colour in bottom)
-        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surface")
+        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "barBg")
 
     def test_hovered_unselected_tab_has_no_face(self, window: Callable[..., VodDownloader]) -> None:
         """포인터가 올라간 고르지 않은 탭도 면 · 밑줄 없이 바 면이어야 한다.
 
-        창에 합성 포인터 이동(「Tab」 가운데) -> underMouse, 왼쪽 안쪽 3px ≈ surface, 아래끝 줄 가운데 ≈ surface
+        창에 합성 포인터 이동(「Tab」 가운데) -> underMouse, 왼쪽 안쪽 3px ≈ barBg, 아래끝 줄 가운데 ≈ barBg
         """
         from PySide6.QtTest import QTest
 
@@ -905,8 +905,8 @@ class TestMenuTabs:
         _pump()
         assert other.underMouse(), "전제: 포인터가 탭 위다"
         image = win.grab().toImage()
-        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surface")
-        assert _is(_pixel(image, rect.center().x(), rect.bottom()), "surface")
+        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "barBg")
+        assert _is(_pixel(image, rect.center().x(), rect.bottom()), "barBg")
 
     @pytest.mark.parametrize("which", ["selected", "unselected"])
     def test_keyboard_focus_draws_a_box_around_the_text_above_the_underline(
@@ -916,7 +916,7 @@ class TestMenuTabs:
 
         탭에 Tab 초점 -> 탭 세로 가운데 줄의 accent 화소 맨 왼쪽 < 글 화소 맨 왼쪽, 맨 오른쪽 > 글 화소 맨 오른쪽,
         상자 가로 가운데 열: 세로 가운데 ~ 밑줄 위 두 줄 사이에 accent(상자 아래 변)가 있고 밑줄 바로 위 두 줄
-        (아래끝 − 2 · − 3) ≈ surface, 초점 전에는 세로 가운데 줄에 accent 화소가 없다
+        (아래끝 − 2 · − 3) ≈ barBg, 초점 전에는 세로 가운데 줄에 accent 화소가 없다
         """
         win = window(DownloadState.WAITING)
         selected, other = _tab_strip(win)
@@ -945,7 +945,7 @@ class TestMenuTabs:
             for x in range(rect.left(), rect.right() + 1)
             # 초점 상자의 둥근 모서리(위아래 끝에서 6줄 안) 밖 — 모서리 안티에일리어싱 화소를 글로 세지 않는다
             for y in range(rect.top() + 8, rect.bottom() - 8)
-            if not _is(_pixel(image, x, y), "surface") and not _is(_pixel(image, x, y), "accent")
+            if not _is(_pixel(image, x, y), "barBg") and not _is(_pixel(image, x, y), "accent")
         ]
         assert ink, "전제: 글 화소가 있다"
         assert min(box) < min(ink) and max(box) > max(ink)
@@ -955,7 +955,7 @@ class TestMenuTabs:
             "상자 아래 변이 밑줄 자리 위에 있다"
         )
         for y in gap:
-            assert _is(_pixel(image, x, y), "surface"), y
+            assert _is(_pixel(image, x, y), "barBg"), y
 
 
 class TestFieldBorderToken:
@@ -1087,7 +1087,7 @@ class TestDisabledFields:
         """콤보 글은 켜졌을 때 text, 꺼졌을 때 textDisabled 색이어야 한다(#611 176g).
 
         콤보 글 「█」(글꼴 크기 28px — 획 가운데 화소가 바탕과 섞이지 않게), 켬 · setEnabled(False)
-        -> 칸 안쪽(테두리 · 화살표 칸 밖)에서 surfaceAlt와 가장 먼 화소 ≈ text(켬) · textDisabled(끔)
+        -> 칸 안쪽(테두리 · 화살표 칸 밖)에서 fieldBg와 가장 먼 화소 ≈ text(켬) · textDisabled(끔)
         """
         _, combo = field("combo")
         font = combo.font()
@@ -1099,7 +1099,7 @@ class TestDisabledFields:
         _pump()
         assert combo.isVisible() and combo.isEnabled() == enabled, "전제: 보이고 켜짐 · 꺼짐이 맞다"
         image = combo.grab().toImage()
-        ground = QColor(theme.current_tokens()["surfaceAlt"])
+        ground = QColor(theme.current_tokens()["fieldBg"])
 
         def gap(colour: QColor) -> int:
             return (
@@ -1136,7 +1136,7 @@ def _box_and_ink(
     image = win.grab().toImage()
     rect = _rect(win, tab)
     bubble = _rect(win, tab.bubble) if tab.bubble.isVisible() else QRect()
-    surface = QColor(theme.current_tokens()["surface"])
+    face = QColor(theme.current_tokens()["barBg"])
     box = [
         x
         for x in range(rect.left(), rect.right() + 1)
@@ -1148,14 +1148,14 @@ def _box_and_ink(
         # 초점 상자의 둥근 모서리(위아래 끝에서 6줄 안) 밖 — 모서리 안티에일리어싱 화소를 글로 세지 않는다
         for y in range(rect.top() + 8, rect.bottom() - 8)
         if not bubble.contains(x, y)
-        and not _is(_pixel(image, x, y), "surface")
+        and not _is(_pixel(image, x, y), "barBg")
         and not _is(_pixel(image, x, y), "accent")
     ]
     dots = [
         (x, y)
         for x in range(bubble.left(), bubble.right() + 1)
         for y in range(bubble.top(), bubble.bottom() + 1)
-        if _pixel(image, x, y) != surface  # 원 가장자리의 옅은 안티에일리어싱 화소까지 버블로 센다
+        if _pixel(image, x, y) != face  # 원 가장자리의 옅은 안티에일리어싱 화소까지 버블로 센다
     ]
     return box, text, dots
 
@@ -1389,14 +1389,14 @@ class TestFieldEdges:
     ) -> None:
         """평소 입력 칸은 위 · 왼쪽 · 오른쪽 · 아래 변이 모두 fieldEdge여야 한다.
 
-        URL 칸 · 정렬 칸 · 콤보, 켜짐 · 초점 없음 -> 네 변 가운데 ≈ fieldEdge, 아래 바로 위 줄 ≈ surfaceAlt
+        URL 칸 · 정렬 칸 · 콤보, 켜짐 · 초점 없음 -> 네 변 가운데 ≈ fieldEdge, 아래 바로 위 줄 ≈ fieldBg
         """
         host, widget = field(name)
         assert widget.isVisible() and not widget.hasFocus(), "전제: 보이고 초점이 없다"
         edges = _edges(host, widget)
         for side in ("top", "left", "right", "bottom"):
             assert _is(edges[side], "fieldEdge"), (side, edges[side].name())
-        assert _is(edges["above_bottom"], "surfaceAlt")
+        assert _is(edges["above_bottom"], "fieldBg")
 
     @pytest.mark.parametrize("name", FIELDS)
     def test_focus_draws_a_one_pixel_accent_on_all_four_edges(
@@ -1404,14 +1404,14 @@ class TestFieldEdges:
     ) -> None:
         """초점을 받은 입력 칸은 네 변이 accent 1px여야 한다 — 아래 2px 막대는 없다.
 
-        URL 칸 · 정렬 칸 · 콤보에 Tab 초점 -> 네 변 가운데 ≈ accent, 아래 바로 위 줄 ≈ surfaceAlt
+        URL 칸 · 정렬 칸 · 콤보에 Tab 초점 -> 네 변 가운데 ≈ accent, 아래 바로 위 줄 ≈ fieldBg
         """
         host, widget = field(name)
         _activate_and_focus(host, widget, qtbot)
         edges = _edges(host, widget)
         for side in ("top", "left", "right", "bottom"):
             assert _is(edges[side], "accent"), (side, edges[side].name())
-        assert _is(edges["above_bottom"], "surfaceAlt")
+        assert _is(edges["above_bottom"], "fieldBg")
 
     @pytest.mark.parametrize("name", FIELDS)
     def test_focus_keeps_the_height_and_the_text_place(
@@ -1432,7 +1432,7 @@ class TestFieldEdges:
     ) -> None:
         """펼친 콤보는 초점과 같게 네 변이 accent 1px여야 한다.
 
-        콤보 showPopup() -> 위 · 아래 가운데 ≈ accent, 아래 바로 위 줄 ≈ surfaceAlt
+        콤보 showPopup() -> 위 · 아래 가운데 ≈ accent, 아래 바로 위 줄 ≈ fieldBg
         """
         host, combo = field("combo")
         _activate_and_focus(host, combo, qtbot)
@@ -1442,7 +1442,61 @@ class TestFieldEdges:
             edges = _edges(host, combo)
             assert _is(edges["bottom"], "accent")
             assert _is(edges["top"], "accent")
-            assert _is(edges["above_bottom"], "surfaceAlt")
+            assert _is(edges["above_bottom"], "fieldBg")
         finally:
             combo.hidePopup()
             _pump()
+
+
+@pytest.fixture(params=["dark", "light"])
+def scheme(request, qapp: QApplication) -> Iterator[str]:
+    """그 색 체계의 전역 QSS · 팔레트를 세우고 끝나면 다크로 되돌린다."""
+
+    def apply(name: str) -> None:
+        theme.set_color_scheme(name)
+        qapp.setPalette(theme.build_palette())
+        qapp.setStyleSheet(
+            theme.load_stylesheet(main_module.resource_path(theme.QSS_RELATIVE_PATH))
+        )
+
+    apply(request.param)
+    yield request.param
+    apply("dark")
+
+
+BAR_FRAMES = ["appMenuBar", "headerFrame", "infoFrame"]  # 메뉴바 · 헤더바 · 하단바
+
+
+class TestBarFaces:
+    """바 면은 카드 면과 한 단계 다른 barBg, 입력 칸 면은 fieldBg(라이트 흰색)다(#611 176i)."""
+
+    @pytest.mark.parametrize("name", BAR_FRAMES)
+    def test_bar_face_is_bar_bg_and_not_the_card_face(self, window, scheme: str, name: str) -> None:
+        """바의 빈 자리는 barBg이고 같은 창 카드 면(cardBg)과 달라야 한다.
+
+        대기 카드 하나, 창 폭 900 -> 바 왼쪽 끝 2px · 세로 가운데 ≈ barBg, 카드 왼쪽 안쪽 가운데 ≈ cardBg,
+        두 화소가 다르다
+        """
+        win = window(DownloadState.WAITING)
+        image = win.grab().toImage()
+        bar = _rect(win, getattr(win, name))
+        card = _rect(win, _card(win, 0))
+        face = _pixel(image, bar.left() + 2, bar.center().y())
+        assert _is(_pixel(image, card.left() + 2, card.center().y()), "cardBg"), "전제: 카드 면"
+        assert _is(face, "barBg"), f"{scheme} {name}: {face.name()}"
+        assert not _is(face, "cardBg"), f"{scheme} {name}: {face.name()}"
+
+    @pytest.mark.parametrize("name", ["urlInput", "sortButton"])
+    def test_field_face_is_field_bg(self, window, scheme: str, name: str) -> None:
+        """바 위 입력 칸의 면은 fieldBg여야 한다 — 라이트는 흰색이라 바 면 · surfaceAlt와 다르다.
+
+        창 폭 900 -> 칸 왼쪽 안쪽 3px · 세로 가운데 ≈ fieldBg, 라이트에서는 surfaceAlt · barBg가 아니다
+        """
+        win = window(DownloadState.WAITING)
+        image = win.grab().toImage()
+        field = _rect(win, getattr(win, name))
+        face = _pixel(image, field.left() + 3, field.center().y())
+        assert _is(face, "fieldBg"), f"{scheme} {name}: {face.name()}"
+        if scheme == "light":
+            assert not _is(face, "surfaceAlt"), face.name()
+            assert not _is(face, "barBg"), face.name()

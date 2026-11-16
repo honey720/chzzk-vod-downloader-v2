@@ -27,16 +27,19 @@ PAIRS = [
     ("statePaused", "cardBg", 4.5, "일시정지 상태 글 ↔ 카드"),
     ("stateFinished", "cardBg", 4.5, "완료 상태 글 ↔ 카드"),
     ("stateFailed", "cardBg", 4.5, "실패 상태 글 ↔ 카드"),
-    ("stateFailed", "surface", 4.5, "실패 칩 글 ↔ 헤더바(칩 면 없음 · 고른 칩 바 면 — #536)"),
+    ("stateFailed", "barBg", 4.5, "실패 칩 글 ↔ 헤더바(칩 면 없음 — #536 · #611)"),
+    ("text", "barBg", 4.5, "바 글 ↔ 바 면(#611 176i)"),
+    ("textMuted", "barBg", 4.5, "바 흐린 글(안 고른 탭 · 하단 글) ↔ 바 면(#611 176i)"),
+    ("text", "fieldBg", 4.5, "입력 칸 글 ↔ 칸 면(#611 176i)"),
     ("text", "errorTipBg", 4.5, "등록 오류 말풍선 글 ↔ 면(#536)"),
     ("text", "tipBg", 4.5, "말풍선 글 ↔ 떠 있는 면(#536)"),
     ("textMuted", "tipBg", 4.5, "말풍선 단축키(흐린 글) ↔ 떠 있는 면(#536)"),
     ("stateFailed", "errorTipBg", 3.0, "등록 오류 말풍선 테두리 ↔ 면 — 그림(#536)"),
     ("stateFailed", "surfaceAlt", 4.5, "실패 칩 글 ↔ 칩(버튼 면)"),
     ("textMuted", "surfaceAlt", 4.5, "꺼진 칩 글 ↔ 칩(버튼 면)"),
-    ("accent", "surface", 3.0, "강조 채움(하단 다운로드) ↔ 하단바 — 그림"),
+    ("accent", "barBg", 3.0, "강조 채움(하단 다운로드) ↔ 하단바 — 그림"),
     ("focusOnAccent", "accent", 3.0, "강조 채움 버튼의 초점 테두리 ↔ 채움(#536)"),
-    ("focusOnAccent", "surface", 3.0, "강조 채움 버튼의 초점 테두리 ↔ 바 면(#536)"),
+    ("focusOnAccent", "barBg", 3.0, "강조 채움 버튼의 초점 테두리 ↔ 바 면(#536)"),
     ("text", "menuHover", 4.5, "메뉴 항목 이름 ↔ 메뉴 호버 면(#536)"),
     ("textMuted", "menuHover", 4.5, "메뉴 흐린 경로 · 머리글 ↔ 메뉴 호버 면(#536)"),
     ("textMuted", "surface", 4.5, "메뉴 흐린 경로 · 머리글 ↔ 메뉴 면(#536)"),
@@ -65,6 +68,8 @@ SURFACES = {
         "windowBg": "#1b1c1f",
         "surface": "#24262b",
         "surfaceAlt": "#2f3239",
+        "barBg": "#222329",  # 바 면 (A)안 — 오너 결정(2026-11-16, #611 176i)
+        "fieldBg": "#2f3239",
         "surfaceHover": "#383c44",
         "surfacePressed": "#282b31",
         "thumbBg": "#1f2126",
@@ -80,6 +85,8 @@ SURFACES = {
         "windowBg": "#f2f3f5",
         "surface": "#ffffff",
         "surfaceAlt": "#eceef1",
+        "barBg": "#f0f0f0",  # 바 면 (A)안 — 오너 결정(2026-11-16, #611 176i)
+        "fieldBg": "#ffffff",  # 회색 바 위 흰 입력 칸 — 오너 결정(2026-11-16, #611 176i)
         "surfaceHover": "#e1e4e9",
         "surfacePressed": "#d5d9df",
         "thumbBg": "#e6e8ec",
@@ -129,20 +136,22 @@ def test_pair_meets_its_contrast(
     )
 
 
-FIELD_EDGE_FACE = 2.4  # 입력 칸 테두리 (나) ↔ 칸 면 대비 목표(#611 176h · 176i)
+# 입력 칸 테두리 (나) ↔ 칸 면 대비 — 176h에서 칸 면 surfaceAlt 위 2.4로 정한 값. 176i에서 라이트 칸 면만 흰색이 돼
+# 라이트는 2.79다(테두리 값은 그대로)
+FIELD_EDGE_FACE = {"dark": 2.4, "light": 2.79}
 FIELD_EDGE_SLACK = 0.05  # 목표 대비의 허용 폭 — 16진 색 반올림
 
 
 @pytest.mark.parametrize("scheme", SCHEMES)
 def test_field_edge_keeps_the_chosen_contrast(scheme: str) -> None:
-    """입력 칸 테두리(fieldEdge)는 칸 면과 약 2.4이고 borderStrong보다 진해야 한다(#611).
+    """입력 칸 테두리(fieldEdge)는 칸 면과 정한 대비이고 borderStrong보다 진해야 한다(#611).
 
-    fieldEdge ↔ surfaceAlt = 2.4 ± 0.05, borderStrong ↔ surfaceAlt < 그 값
+    fieldEdge ↔ fieldBg = 다크 2.4 · 라이트 2.79 ± 0.05, borderStrong ↔ fieldBg < 그 값
     """
     table = SCHEMES[scheme]
-    face = table["surfaceAlt"]
+    face = table["fieldBg"]
     ratio = _contrast(table["fieldEdge"], face)
-    assert abs(ratio - FIELD_EDGE_FACE) <= FIELD_EDGE_SLACK, f"{scheme}: {ratio:.2f}"
+    assert abs(ratio - FIELD_EDGE_FACE[scheme]) <= FIELD_EDGE_SLACK, f"{scheme}: {ratio:.2f}"
     assert _contrast(table["borderStrong"], face) < ratio
 
 
@@ -150,10 +159,10 @@ def test_field_edge_keeps_the_chosen_contrast(scheme: str) -> None:
 def test_field_edge_hover_is_one_step_further_from_the_face(scheme: str) -> None:
     """입력 칸 호버 테두리는 평소 테두리보다 칸 면 · 바 면과 대비가 커야 한다(한 단계 진하게, #611).
 
-    fieldEdgeHover ↔ surfaceAlt · surface > fieldEdge ↔ 같은 면
+    fieldEdgeHover ↔ fieldBg · barBg > fieldEdge ↔ 같은 면
     """
     table = SCHEMES[scheme]
-    for ground in ("surfaceAlt", "surface"):
+    for ground in ("fieldBg", "barBg"):
         assert _contrast(table["fieldEdgeHover"], table[ground]) > _contrast(
             table["fieldEdge"], table[ground]
         ), ground
@@ -265,9 +274,9 @@ BUBBLE_FILLS = ("stateRunning", "statePaused", "stateFailed", "stateWarning", "s
 #: OS 알림 바탕 — 설계 §12.1이 정한 값(라이트 흰색 · 다크 #2c2c2c).
 OS_NOTICE_GROUND = {"dark": "#2c2c2c", "light": "#ffffff"}
 
-#: 원이 놓이는 평소 바탕 토큰 — 메뉴바(바 면 — #536부터, 그 전 창 배경) · 고른 메뉴(버튼 면).
-#: 창 배경은 메뉴바가 바 면이 된 뒤에도 남겨 둔다(기준을 줄이지 않는다).
-BUBBLE_GROUNDS = ("windowBg", "surface", "surfaceAlt")
+#: 원이 놓이는 평소 바탕 토큰 — 메뉴바(바 면 barBg — #611 176i부터, 그 전 surface · 창 배경) · 고른 메뉴(버튼 면).
+#: 창 배경 · surface는 메뉴바 면이 바뀐 뒤에도 남겨 둔다(기준을 줄이지 않는다).
+BUBBLE_GROUNDS = ("windowBg", "surface", "barBg", "surfaceAlt")
 
 #: 경고 · 정보 토큰의 원래 색 — 색상각이 같아야 한다(밝기만 옮긴다). 정보 = 진행 색.
 WARNING_ORIGINAL = "#f0a33c"

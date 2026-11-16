@@ -702,13 +702,13 @@ def _inked(widget: QWidget, rect: QRect, color: str) -> int:
 def test_the_menu_bar_has_the_bar_face_and_a_bottom_line(window: VodDownloader) -> None:
     """메뉴바는 높이 = 안쪽 여백 위아래 + 바 컨트롤이고 맨 아래 줄까지 바 면이어야 한다 — 헤더바와 한 덩어리(#611).
 
-    barPadY 8 · barControl 32 -> 높이 48, 가운데 빈 자리 = surface, 맨 아래 줄 = surface(경계선 없음)
+    barPadY 8 · barControl 32 -> 높이 48, 가운데 빈 자리 = barBg, 맨 아래 줄 = barBg(경계선 없음)
     """
     bar = window.appMenuBar
     tokens = theme.current_tokens()
     assert bar.height() == 2 * theme.METRICS["barPadY"] + theme.METRICS["barControl"]
-    assert _close(_pixel(bar, bar.width() // 2, bar.height() // 2), tokens["surface"])
-    assert _close(_pixel(bar, bar.width() // 2, bar.height() - 1), tokens["surface"])
+    assert _close(_pixel(bar, bar.width() // 2, bar.height() // 2), tokens["barBg"])
+    assert _close(_pixel(bar, bar.width() // 2, bar.height() - 1), tokens["barBg"])
 
 
 def test_the_header_bar_is_two_rows_high_with_a_bottom_line(window: VodDownloader) -> None:
@@ -730,17 +730,17 @@ def test_the_header_bar_is_two_rows_high_with_a_bottom_line(window: VodDownloade
 def test_an_unselected_menu_is_muted_text_without_a_face_or_border(window: VodDownloader) -> None:
     """메뉴바 오른쪽 끝 설정 톱니바퀴는 면 · 테두리 없이 바 면 위 그림만이어야 한다 — 위 테두리 · 왼쪽 안 = 바 면(#611)."""
     button = window.settingsButton
-    surface = theme.current_tokens()["surface"]
+    surface = theme.current_tokens()["barBg"]
     assert not button.isChecked()
     assert _close(_pixel(button, button.width() // 2, 0), surface)
     assert _close(_pixel(button, 3, button.height() // 2), surface)
 
 
 def test_the_selected_menu_has_bold_text_and_no_face(window: VodDownloader) -> None:
-    """고른 메뉴(「VOD 다운」)는 면 없이 바 면(surface) 위 굵은 글이어야 한다(밑줄 탭, #611)."""
+    """고른 메뉴(「VOD 다운」)는 면 없이 바 면(barBg) 위 굵은 글이어야 한다(밑줄 탭, #611)."""
     button = window.menuDownloadButton
     assert button.isChecked() and button.font().bold()
-    assert _close(_pixel(button, 3, button.height() // 2), theme.current_tokens()["surface"])
+    assert _close(_pixel(button, 3, button.height() // 2), theme.current_tokens()["barBg"])
 
 
 def test_the_chosen_chip_has_the_bar_face_and_a_border_and_no_accent_fill(
@@ -755,8 +755,8 @@ def test_the_chosen_chip_has_the_bar_face_and_a_border_and_no_accent_fill(
     assert chosen.isChecked() and not other.isChecked()
     assert _close(_pixel(chosen, 3, chosen.height() // 2), tokens["surfaceAlt"])
     assert _close(_pixel(chosen, chosen.width() // 2, 0), tokens["surfaceAlt"])
-    assert _close(_pixel(other, other.width() // 2, 0), tokens["surface"])
-    assert _close(_pixel(other, 3, other.height() // 2), tokens["surface"])
+    assert _close(_pixel(other, other.width() // 2, 0), tokens["barBg"])
+    assert _close(_pixel(other, 3, other.height() // 2), tokens["barBg"])
     bar = window.filterChipBar
     assert _inked(bar, bar.rect(), tokens["accent"]) == 0
 
@@ -881,7 +881,7 @@ def test_the_tip_bubble_floats_on_its_own_face(window: VodDownloader) -> None:
     ratio = image.devicePixelRatio()
     corner = image.pixelColor(int((body.left() + 3) * ratio), int(body.center().y() * ratio))
     tokens = theme.current_tokens()
-    assert not _close(QColor(tokens["tipBg"]), tokens["surface"]), (
+    assert not _close(QColor(tokens["tipBg"]), tokens["barBg"]), (
         "전제(다크): 떠 있는 면은 바 면과 다르다"
     )
     assert _close(corner, tokens["tipBg"])
