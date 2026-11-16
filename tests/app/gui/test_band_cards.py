@@ -266,10 +266,10 @@ class TestBarButtons:
 
     @pytest.mark.parametrize("name", BAR_BUTTONS[:3])
     def test_bar_button_shows_the_hover_face(self, window, name: str) -> None:
-        """포인터가 동작 버튼 위에 오면 버튼 면이 surfaceHover여야 한다(테두리는 없음).
+        """포인터가 동작 버튼 위에 오면 버튼 면이 barHover여야 한다(테두리는 없음).
 
-        창에 합성 포인터 이동(버튼 가운데) -> 버튼 왼쪽 안쪽 3px 자리 ≈ surfaceHover, 위 가장자리 안쪽 2px 가운데 ≈
-        surfaceHover(가장자리 줄은 둥근 면의 안티에일리어싱이 섞인다)
+        창에 합성 포인터 이동(버튼 가운데) -> 버튼 왼쪽 안쪽 3px 자리 ≈ barHover, 위 가장자리 안쪽 2px 가운데 ≈
+        barHover(가장자리 줄은 둥근 면의 안티에일리어싱이 섞인다) (176k)
         """
         from PySide6.QtTest import QTest
 
@@ -285,8 +285,8 @@ class TestBarButtons:
         _pump()
         assert button.underMouse(), "전제: 포인터가 버튼 위다"
         image = win.grab().toImage()
-        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surfaceHover")
-        assert _is(_pixel(image, rect.center().x(), rect.top() + 2), "surfaceHover")
+        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "barHover")
+        assert _is(_pixel(image, rect.center().x(), rect.top() + 2), "barHover")
 
     @pytest.mark.parametrize(
         ("name", "edge"),
@@ -1612,3 +1612,103 @@ class TestBarFaces:
         if scheme == "light":
             assert not _is(face, "barBg"), face.name()
             assert not _is(face, "surfaceAlt"), face.name()
+
+
+def _hover(win: VodDownloader, widget: QWidget, fresh: bool = True) -> QRect:
+    """창에 합성 포인터 이동으로 위젯 가운데에 올리고 그 자리(창 좌표)를 돌려준다.
+
+    fresh면 먼저 창 왼쪽 위 (1, 1)로 옮긴다(앞 테스트의 포인터 자리와 다르게). 카드 위에서 카드 버튼으로 옮길
+    때는 False — 카드를 벗어나면 버튼이 숨는다.
+    """
+    from PySide6.QtTest import QTest
+
+    if fresh:
+        QTest.mouseMove(win.windowHandle(), QPoint(1, 1))
+    rect = _rect(win, widget)
+    QTest.mouseMove(win.windowHandle(), rect.center())
+    _pump()
+    assert widget.underMouse(), "전제: 포인터가 위젯 위다"
+    return rect
+
+
+class TestBarHoverFaces:
+    """바 위 동작 버튼의 호버 · 눌림 면은 바 전용 barHover · barPressed, 카드 버튼은 surfaceHover 그대로(176k)."""
+
+    @pytest.mark.parametrize("name", ["settingsButton", "fetchButton", "selectButton"])
+    def test_bar_button_hover_face_is_bar_hover(self, window, scheme: str, name: str) -> None:
+        """바 동작 버튼 호버 면은 barHover이고 surfaceHover가 아니어야 한다.
+
+        대기 카드 하나, URL 칸에 글(「+」 켬), 합성 포인터 이동(버튼 가운데) -> 왼쪽 안쪽 3px · 세로 가운데 ≈
+        barHover, ≉ surfaceHover
+        """
+        win = window(DownloadState.WAITING)
+        win.urlInput.setText("https://chzzk.naver.com/video/1")
+        _pump()
+        rect = _hover(win, getattr(win, name))
+        face = _pixel(win.grab().toImage(), rect.left() + 3, rect.center().y())
+        assert _is(face, "barHover"), f"{scheme} {name}: {face.name()}"
+        assert not _is(face, "surfaceHover"), f"{scheme} {name}: {face.name()}"
+
+    def test_unchosen_chip_hover_face_is_bar_hover(self, window, scheme: str) -> None:
+        """안 고른 칩(「대기」) 호버 면은 barHover이고 surfaceHover가 아니어야 한다.
+
+        창 폭 = 최소폭 + 900(칩 모양), 합성 포인터 이동(「대기」 가운데) -> 왼쪽 안쪽 3px · 세로 가운데 ≈ barHover,
+        ≉ surfaceHover
+        """
+        win = window(DownloadState.WAITING)
+        win.resize(win.minimumWidth() + 900, 600)
+        _pump()
+        chip = win.filterChips["waiting"]
+        assert chip.isVisible() and not chip.isChecked(), "전제: 칩 모양 · 안 고른 칩"
+        rect = _hover(win, chip)
+        face = _pixel(win.grab().toImage(), rect.left() + 3, rect.center().y())
+        assert _is(face, "barHover"), f"{scheme}: {face.name()}"
+        assert not _is(face, "surfaceHover"), f"{scheme}: {face.name()}"
+
+    def test_pressed_bar_button_face_is_bar_pressed(self, window, scheme: str) -> None:
+        """누르고 있는 바 동작 버튼(선택) 면은 barPressed이고 surfacePressed가 아니어야 한다.
+
+        대기 카드 하나, 합성 포인터 이동 · 누름(선택 버튼 가운데) -> 왼쪽 안쪽 3px · 세로 가운데 ≈ barPressed,
+        ≉ surfacePressed, 끝나면 뗀다
+        """
+        from PySide6.QtTest import QTest
+
+        win = window(DownloadState.WAITING)
+        button = win.selectButton
+        rect = _hover(win, button)
+        QTest.mousePress(
+            win.windowHandle(),
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+            rect.center(),
+        )
+        _pump()
+        try:
+            assert button.isDown(), "전제: 눌린 채다"
+            face = _pixel(win.grab().toImage(), rect.left() + 3, rect.center().y())
+            assert _is(face, "barPressed"), f"{scheme}: {face.name()}"
+            assert not _is(face, "surfacePressed"), f"{scheme}: {face.name()}"
+        finally:
+            QTest.mouseRelease(
+                win.windowHandle(),
+                Qt.MouseButton.LeftButton,
+                Qt.KeyboardModifier.NoModifier,
+                rect.center(),
+            )
+            _pump()
+
+    def test_card_button_hover_face_stays_surface_hover(self, window, scheme: str) -> None:
+        """카드 ✎ 버튼 호버 면은 surfaceHover 그대로이고 barHover가 아니어야 한다.
+
+        대기 카드 하나, 합성 포인터 이동(카드 가운데 -> ✎ 가운데) -> 왼쪽 안쪽 3px · 세로 가운데 ≈ surfaceHover,
+        ≉ barHover
+        """
+        win = window(DownloadState.WAITING)
+        card = _card(win, 0)
+        _hover(win, card)
+        button = card.editButton
+        assert button.isVisible(), "전제: 카드 버튼이 보인다"
+        rect = _hover(win, button, fresh=False)
+        face = _pixel(win.grab().toImage(), rect.left() + 3, rect.center().y())
+        assert _is(face, "surfaceHover"), f"{scheme}: {face.name()}"
+        assert not _is(face, "barHover"), f"{scheme}: {face.name()}"

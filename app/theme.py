@@ -200,6 +200,11 @@ DARK = {
     "fieldBg": "#2f3239",
     "surfaceHover": "#383c44",
     "surfacePressed": "#282b31",
+    # 바(메뉴바 · 헤더바 · 하단바 · 선택 줄) 위 동작 버튼의 호버 · 눌림 면 — surfaceHover · surfacePressed에서 바 면
+    # 반대쪽(다크 밝게)으로 ΔE00 한 단계(FIELD_HOVER_DE00) 더. 바 면이 카드 면보다 어두워 카드 호버 면으로는
+    # 안 보였다(대비 1.42, #611 176k). 색상 · 채도는 원래 토큰 그대로(OKLab 밝기만)
+    "barHover": "#4c5159",
+    "barPressed": "#3d4147",
     "menuHover": "#2c2f35",  # 드롭다운 메뉴 호버 면 — 바 면(surface)에서 한 단계(ΔE00 약 2.9, #536)
     "rowHoverBg": "#242629",  # 창 바탕 위 목록 행(구간 행) 호버 띠 — 창 바탕에서 밝게 한 단계(ΔE00 약 3.2, #586)
     "shadow": "#000000",  # 말풍선 그림자 — 그릴 때 불투명도를 낮춰 쓴다(#536)
@@ -277,6 +282,10 @@ LIGHT = {
     "fieldBg": "#ffffff",
     "surfaceHover": "#e1e4e9",
     "surfacePressed": "#d5d9df",
+    # 바 위 동작 버튼의 호버 · 눌림 면 — 다크와 같은 규칙(라이트는 어둡게). 회색 바 면 위에서 surfaceHover는
+    # 대비 1.12였다(#611 176k)
+    "barHover": "#c2c5c9",
+    "barPressed": "#b8bbc1",
     "menuHover": "#f0f1f3",  # 드롭다운 메뉴 호버 면 — 바 면(surface)에서 한 단계(ΔE00 약 3.0, #536)
     "rowHoverBg": "#e4e5e6",  # 창 바탕 위 목록 행(구간 행) 호버 띠 — 창 바탕에서 어둡게 한 단계(ΔE00 약 3.0, #586)
     "shadow": "#000000",  # 말풍선 그림자 — 그릴 때 불투명도를 낮춰 쓴다(#536)

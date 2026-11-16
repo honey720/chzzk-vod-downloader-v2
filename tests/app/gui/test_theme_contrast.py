@@ -40,6 +40,10 @@ PAIRS = [
     ("accent", "barBg", 3.0, "강조 채움(하단 다운로드) ↔ 하단바 — 그림"),
     ("focusOnAccent", "accent", 3.0, "강조 채움 버튼의 초점 테두리 ↔ 채움(#536)"),
     ("focusOnAccent", "barBg", 3.0, "강조 채움 버튼의 초점 테두리 ↔ 바 면(#536)"),
+    ("text", "barHover", 4.5, "바 버튼 · 칩 글 ↔ 바 버튼 호버 면(#611 176k)"),
+    ("text", "barPressed", 4.5, "바 버튼 · 칩 글 ↔ 바 버튼 눌림 면(#611 176k)"),
+    ("textMuted", "barHover", 3.0, "바 아이콘(흐린 색) ↔ 바 버튼 호버 면 — 그림(#611 176k)"),
+    ("textMuted", "barPressed", 3.0, "바 아이콘(흐린 색) ↔ 바 버튼 눌림 면 — 그림(#611 176k)"),
     ("text", "menuHover", 4.5, "메뉴 항목 이름 ↔ 메뉴 호버 면(#536)"),
     ("textMuted", "menuHover", 4.5, "메뉴 흐린 경로 · 머리글 ↔ 메뉴 호버 면(#536)"),
     ("textMuted", "surface", 4.5, "메뉴 흐린 경로 · 머리글 ↔ 메뉴 면(#536)"),
@@ -151,6 +155,21 @@ def test_field_edge_hover_is_one_step_further_from_the_face(scheme: str) -> None
         assert _contrast(table["fieldEdgeHover"], table[ground]) > _contrast(
             table["fieldEdge"], table[ground]
         ), ground
+
+
+@pytest.mark.parametrize("scheme", SCHEMES)
+@pytest.mark.parametrize(
+    ("bar", "card"), [("barHover", "surfaceHover"), ("barPressed", "surfacePressed")]
+)
+def test_bar_button_face_is_further_from_the_bar_than_the_card_face(
+    scheme: str, bar: str, card: str
+) -> None:
+    """바 버튼 호버 · 눌림 면은 카드 쪽 같은 면보다 바 면과 대비가 커야 한다(한 단계 더, #611 176k).
+
+    barHover ↔ barBg > surfaceHover ↔ barBg, barPressed ↔ barBg > surfacePressed ↔ barBg
+    """
+    table = SCHEMES[scheme]
+    assert _contrast(table[bar], table["barBg"]) > _contrast(table[card], table["barBg"])
 
 
 @pytest.mark.parametrize("scheme", SCHEMES)
