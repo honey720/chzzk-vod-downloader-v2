@@ -133,6 +133,33 @@ def test_action_icon_ink_takes_the_same_share_of_its_grid(
     assert 0.72 <= span <= 0.95, f"{name} 칸 {side}: {span:.3f}"
 
 
+GEAR_TEETH = 6  # 톱니바퀴 톱니 수 — 지시 값(#611 176g, 여덟에서 줄임)
+GEAR_INK_MAX = 0.82  # 톱니바퀴 잉크 긴 변 / 칸 16 상한 — 지시 「0.8 안팎」(옛 그림 0.875)
+
+
+def test_gear_has_six_short_teeth_and_lighter_ink(qapp: QApplication) -> None:
+    """톱니바퀴는 톱니가 여섯이고 칸 16에서 잉크 긴 변이 0.82 이하여야 한다.
+
+    칸 16 · 배율 4 그림, 가운데에서 반지름 6px(톱니 몸통만 지나는 원)을 720점 돌며 잉크(불투명도 0.25 초과)가
+    이어진 덩어리 수 == 6, 잉크 긴 변 / 칸 <= 0.82
+    """
+    import math
+
+    side, scale = 16, 4
+    image = icons.action_pixmap("gear", "#ffffff", side, float(scale)).toImage()
+    centre = side * scale / 2
+    radius = 6.0 * scale
+    marks = []
+    for step in range(720):
+        angle = 2 * math.pi * step / 720
+        x = int(centre + radius * math.cos(angle))
+        y = int(centre + radius * math.sin(angle))
+        marks.append(image.pixelColor(x, y).alphaF() > 0.25)
+    runs = sum(1 for i, inked in enumerate(marks) if inked and not marks[i - 1])
+    assert runs == GEAR_TEETH
+    assert _ink_span("gear", side) <= GEAR_INK_MAX
+
+
 def test_open_folder_and_closed_folder_are_different_drawings(qapp: QApplication) -> None:
     """폴더 열기(folder)와 저장 위치 표시(folder_outline)는 둘 다 선 그림이어도 화소가 달라야 한다.
 

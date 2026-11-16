@@ -46,7 +46,7 @@ import app.theme as theme
 #: download = 하단바 전체 속도 칸의 ↓ — 글자 대신 그린다(inbox 177).
 #: edit = 대기 카드의 카드 편집 창 열기(✎, #545).
 #: select = 헤더바 선택 버튼(체크박스 — 둥근 상자 + ✓), trash = 선택 줄 지우기(휴지통) — 프로토 그림(#561).
-#: gear = 메뉴바 오른쪽 끝 설정 버튼(톱니바퀴 — 바퀴 · 축 구멍 · 톱니 여덟, #611).
+#: gear = 메뉴바 오른쪽 끝 설정 버튼(톱니바퀴 — 바퀴 · 축 구멍 · 톱니 여섯, #611).
 ICON_NAMES = (
     "gear",
     "select",
@@ -390,14 +390,18 @@ def _paint_edit(painter: QPainter, s: float, color: QColor, accent: QColor) -> N
 
 
 def _paint_gear(painter: QPainter, s: float, color: QColor, accent: QColor) -> None:
-    """톱니바퀴 — 톱니 여덟을 두른 바퀴 윤곽 한 줄과 축 구멍(설정, #611)."""
+    """톱니바퀴 — 톱니 여섯을 두른 바퀴 윤곽 한 줄과 축 구멍(설정, #611).
+
+    톱니 여덟 · 작은 축 구멍은 16px에서 선이 몰려 다른 아이콘보다 무거워 보였다(오너 실기 2026-11-16). 톱니를
+    여섯으로 줄이고 짧게 해 골 사이를 넓히고, 축 구멍을 키웠다 — 잉크 긴 변은 칸의 0.78(16) · 0.83(12)이다.
+    """
     _stroke(painter, color)
     center = s / 2
-    outer, inner = s * 0.38, s * 0.29  # 톱니 끝 · 골 반지름
-    tip, root = math.radians(11), math.radians(17)  # 톱니 끝 · 뿌리의 반각
+    outer, inner = s * 0.35, s * 0.28  # 톱니 끝 · 골 반지름 — 톱니 높이 0.07(16에서 1.1px)
+    tip, root = math.radians(14), math.radians(22)  # 톱니 끝 · 뿌리의 반각 — 톱니 사이 60°
     points = []
-    for k in range(8):
-        middle = math.pi / 4 * k
+    for k in range(6):
+        middle = math.pi / 3 * k - math.pi / 2  # 맨 위에 톱니 하나
         for radius, angle in (
             (inner, middle - root),
             (outer, middle - tip),
@@ -408,7 +412,7 @@ def _paint_gear(painter: QPainter, s: float, color: QColor, accent: QColor) -> N
                 QPointF(center + radius * math.cos(angle), center + radius * math.sin(angle))
             )
     painter.drawPolygon(QPolygonF(points))
-    painter.drawEllipse(QPointF(center, center), s * 0.12, s * 0.12)
+    painter.drawEllipse(QPointF(center, center), s * 0.13, s * 0.13)
 
 
 def _paint_select(painter: QPainter, s: float, color: QColor, accent: QColor) -> None:
