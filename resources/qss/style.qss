@@ -307,9 +307,10 @@ QPushButton[role="icon"] {
     border-color: transparent;
 }
 
+/* 호버는 면만 — 테두리는 투명 그대로(바 버튼 규칙과 같다, #611) */
 QPushButton[role="icon"]:hover {
     background-color: @surfaceHover;
-    border-color: @borderStrong;
+    border-color: transparent;
 }
 
 QPushButton[role="icon"]:pressed {

@@ -911,3 +911,34 @@ class TestFieldBorderToken:
         line = _pixel(image, url.center().x(), header.bottom())
         assert _is(edge, "fieldBorder") and not _is(edge, "border")
         assert _is(line, "border") and not _is(line, "fieldBorder")
+
+
+class TestCardIconHover:
+    """카드 행 아이콘 버튼(role=icon) 호버는 면만 — 테두리 투명(바 버튼 규칙과 같다, #611)."""
+
+    def test_hovered_card_icon_button_has_a_face_and_no_border(
+        self, window: Callable[..., VodDownloader]
+    ) -> None:
+        """포인터가 카드의 ✎ 버튼 위에 오면 면은 surfaceHover이고 위 · 왼쪽 가장자리가 borderStrong이 아니어야 한다.
+
+        대기 카드 하나, 창에 합성 포인터 이동(카드 가운데 -> ✎ 가운데) -> underMouse, 왼쪽 안쪽 3px ≈ surfaceHover,
+        위 가장자리 안쪽 2px 가운데 ≈ surfaceHover, 위 가장자리 가운데 · 왼쪽 가장자리 가운데 ≉ borderStrong
+        """
+        from PySide6.QtTest import QTest
+
+        win = window(DownloadState.WAITING)
+        card = _card(win, 0)
+        QTest.mouseMove(win.windowHandle(), QPoint(1, 1))  # 앞 테스트의 포인터 자리와 다르게
+        QTest.mouseMove(win.windowHandle(), _rect(win, card).center())
+        _pump()
+        button = card.editButton
+        assert button.isVisible(), "전제: 카드 버튼이 보인다"
+        rect = _rect(win, button)
+        QTest.mouseMove(win.windowHandle(), rect.center())
+        _pump()
+        assert button.underMouse(), "전제: 포인터가 버튼 위다"
+        image = win.grab().toImage()
+        assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surfaceHover")
+        assert _is(_pixel(image, rect.center().x(), rect.top() + 2), "surfaceHover")
+        assert not _is(_pixel(image, rect.center().x(), rect.top()), "borderStrong")
+        assert not _is(_pixel(image, rect.left(), rect.center().y()), "borderStrong")
