@@ -4,7 +4,7 @@
 버블이 숨어도 그대로라 메뉴바가 움직이지 않는다. 버블 · 테두리는 마우스를 받지 않는 자식 위젯이 그린다 —
 틱마다 `setStyleSheet`을 쓰지 않는다. 색은 테마 토큰으로만 고른다(이 파일에 색 리터럴이 없다).
 
-탭 모양은 밑줄 탭이다(#611): 고른 탭 아래끝에 강조색 밑줄, 키보드 초점은 밑줄과 겹치지 않는 탭 내용(글 + 버블)
+탭 모양은 밑줄 탭이다(#611): 고른 탭 아래끝 글 폭만큼 강조색 밑줄, 키보드 초점은 밑줄과 겹치지 않는 탭 내용(글 + 버블)
 둘레 상자.
 둘 다 이 버튼이 그린다 — QSS 테두리는 네 변이 한 색이라 밑줄과 초점을 함께 보일 수 없다.
 """
@@ -146,10 +146,22 @@ class MenuButton(QPushButton):
         """한 주기 안의 자리(0 ~ 1) → 세기 — 0에서 시작해 가운데에서 가장 짙고 끝에서 다시 0(코사인)."""
         self.blinkBorder.setLevel(0.5 - 0.5 * math.cos(2 * math.pi * progress))
 
+    def _textSpan(self) -> tuple[int, int]:
+        """글이 놓이는 왼쪽 끝 x와 글 진행 폭(px) — QSS 여백 안 내용 자리의 가운데에 놓인다."""
+        border = 1  # QSS 투명 테두리(style.qss 메뉴바 절)
+        text_width = QFontMetrics(self.font()).horizontalAdvance(self.text())
+        content_left = border + theme.METRICS["menuTabPadX"]
+        content_right = self.width() - border - theme.MENU_BUTTON_PAD_RIGHT
+        return content_left + max(0, (content_right - content_left - text_width) // 2), text_width
+
     def underlineRect(self) -> QRectF:
-        """고른 탭 밑줄 자리 — 버튼 아래끝, 버튼 폭 그대로(왼쪽 끝 = 탭 왼쪽 끝)."""
+        """고른 탭 밑줄 자리 — 버튼 아래끝, 글 왼쪽 끝 ~ 글 오른쪽 끝(글 진행 폭).
+
+        버블 아래로는 뻗지 않는다 — 밑줄은 고른 탭의 이름을 가리킨다(오너 실기 2026-11-16, #611).
+        """
         thick = theme.METRICS["menuUnderline"]
-        return QRectF(0, self.height() - thick, self.width(), thick)
+        left, width = self._textSpan()
+        return QRectF(left, self.height() - thick, width, thick)
 
     def focusRect(self) -> QRectF:
         """키보드 초점 상자 — 탭 내용(글 + 버블)을 둘러싼다(#611).
@@ -159,11 +171,7 @@ class MenuButton(QPushButton):
         밑줄과 겹치지 않는다(1px 선의 바깥 끝 기준). 버블 상태로 고르므로 버블이 바뀌면 상자도 따라간다.
         """
         m = theme.METRICS
-        border = 1  # QSS 투명 테두리(style.qss 메뉴바 절)
-        text_width = QFontMetrics(self.font()).horizontalAdvance(self.text())
-        content_left = border + m["menuTabPadX"]
-        content_right = self.width() - border - theme.MENU_BUTTON_PAD_RIGHT
-        text_left = content_left + max(0, (content_right - content_left - text_width) // 2)
+        text_left, text_width = self._textSpan()
         content_end = text_left + text_width
         if self.bubble.state():
             content_end = self.bubble.geometry().x() + self.bubble.width()

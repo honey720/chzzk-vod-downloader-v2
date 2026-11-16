@@ -7,7 +7,7 @@ from collections.abc import Callable, Iterator
 
 import pytest
 from PySide6.QtCore import QPoint, QRect, Qt
-from PySide6.QtGui import QColor, QImage
+from PySide6.QtGui import QColor, QFontMetrics, QImage
 from PySide6.QtWidgets import QApplication, QWidget
 
 import app.theme as theme
@@ -753,7 +753,17 @@ class TestBarOnlyProgress:
 
 
 UNDERLINE = 2  # 고른 탭 밑줄 굵기(px) — 지시 값(#611 176e)
-TAB_LEFT = 12  # 고른 탭 밑줄 왼쪽 끝(창 x) — 지시 값 = 바깥 여백
+
+
+def _underline_columns(win: VodDownloader, tab: QWidget) -> list[int]:
+    """탭 아래끝 줄에서 accent인 화소의 창 x — 왼쪽부터."""
+    rect = _rect(win, tab)
+    image = win.grab().toImage()
+    return [
+        x
+        for x in range(rect.left(), rect.right() + 1)
+        if _is(_pixel(image, x, rect.bottom()), "accent")
+    ]
 
 
 def _tab_strip(win: VodDownloader) -> tuple[QWidget, QWidget]:
@@ -772,7 +782,7 @@ def _tab_strip(win: VodDownloader) -> tuple[QWidget, QWidget]:
 
 
 class TestMenuTabs:
-    """메뉴바 탭은 밑줄 탭 — 고른 탭만 아래 2px 강조색 밑줄(왼쪽 끝 12), 면 없음, 초점은 글 둘레 상자(#611)."""
+    """메뉴바 탭은 밑줄 탭 — 고른 탭만 아래 2px 강조색 밑줄(글 진행 폭), 면 없음, 초점은 글 둘레 상자(#611)."""
 
     def test_selected_tab_has_a_two_pixel_accent_underline(
         self, window: Callable[..., VodDownloader]
@@ -791,18 +801,51 @@ class TestMenuTabs:
             assert _is(_pixel(image, x, y), "accent"), y
         assert _is(_pixel(image, x, rect.bottom() - UNDERLINE), "surface")
 
-    def test_underline_starts_at_the_outer_margin(
-        self, window: Callable[..., VodDownloader]
-    ) -> None:
-        """고른 탭 밑줄의 왼쪽 끝은 창 x 12여야 한다.
+    def test_underline_spans_the_text_advance(self, window: Callable[..., VodDownloader]) -> None:
+        """고른 탭 밑줄은 글 왼쪽 끝 ~ 글 진행 폭 끝이어야 한다(#611 176g).
 
-        창 폭 900 -> 탭 아래끝 줄: x 12 ≈ accent, x 11 ≈ surface
+        창 폭 900, 버블 없음 -> 탭 아래끝 줄의 accent 화소 열이 끊김 없이 이어지고, 맨 왼쪽 == 탭 x + 1 + menuTabPadX
+        + (내용 자리 폭 − 진행 폭) // 2, 열 수 == QFontMetrics.horizontalAdvance(탭 글)
         """
         win = window(DownloadState.WAITING)
-        rect = _rect(win, win.menuDownloadButton)
+        tab = win.menuDownloadButton
+        assert tab.isVisible() and tab.isChecked(), "전제: 보이는 고른 탭"
+        cols = _underline_columns(win, tab)
+        advance = QFontMetrics(tab.font()).horizontalAdvance(tab.text())
+        pad = theme.METRICS["menuTabPadX"]
+        room = (
+            tab.width() - 1 - pad - 1 - theme.MENU_BUTTON_PAD_RIGHT
+        )  # 테두리 1 · 왼쪽 여백 · 오른쪽 여백
+        left = _rect(win, tab).left() + 1 + pad + max(0, (room - advance) // 2)
+        assert cols == list(range(cols[0], cols[0] + len(cols))), "끊김 없이 이어진다"
+        assert cols[0] == left
+        assert len(cols) == advance
+
+    def test_underline_does_not_run_under_the_bubble(
+        self, window: Callable[..., VodDownloader]
+    ) -> None:
+        """버블이 보여도 밑줄은 글 진행 폭 끝에서 멈추고 버블 아래에 밑줄 화소가 없어야 한다.
+
+        setBubble("done") -> 탭 아래 두 줄에서 버블 화소 왼쪽 끝 ~ 탭 오른쪽 끝 사이에 accent 없음,
+        아래끝 줄 accent 열 수 == 글 진행 폭(버블 없을 때와 같다)
+        """
+        win = window(DownloadState.WAITING)
+        tab = win.menuDownloadButton
+        before = _underline_columns(win, tab)
+        tab.setBubble("done")
+        _pump()
+        assert tab.bubble.isVisible(), "전제: 버블이 보인다"
+        bubble = _rect(win, tab.bubble)
+        rect = _rect(win, tab)
         image = win.grab().toImage()
-        assert _is(_pixel(image, TAB_LEFT, rect.bottom()), "accent")
-        assert _is(_pixel(image, TAB_LEFT - 1, rect.bottom()), "surface")
+        under = [
+            x
+            for x in range(bubble.left(), rect.right() + 1)
+            for y in range(rect.bottom() - UNDERLINE + 1, rect.bottom() + 1)
+            if _is(_pixel(image, x, y), "accent")
+        ]
+        assert under == []
+        assert _underline_columns(win, tab) == before
 
     def test_selected_tab_has_no_face(self, window: Callable[..., VodDownloader]) -> None:
         """고른 탭은 면 없이 바 면 위 굵은 글이어야 한다.
