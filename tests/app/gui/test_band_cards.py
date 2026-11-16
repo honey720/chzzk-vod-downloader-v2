@@ -318,7 +318,10 @@ class TestBarButtons:
         [
             ("downloadButton", "surfaceAlt"),  # ▶ 꺼짐 — 면만(#611 오너 실기 2026-11-15)
             ("stopButton", "surface"),  # ■ 꺼짐 — 면 · 테두리 없음
-            ("sortButton", "fieldBorder"),  # 드롭다운 꺼짐 — 입력 칸이라 테두리 그대로
+            (
+                "sortButton",
+                "border",
+            ),  # 드롭다운 꺼짐 — 입력 칸이라 테두리는 남되 옅은 border(#611 176f)
         ],
     )
     def test_only_input_fields_have_a_border_when_disabled(
@@ -327,7 +330,7 @@ class TestBarButtons:
         """꺼진 상태에서도 테두리는 입력 칸에만 있고 꺼진 ▶은 면 surfaceAlt · ■은 바 면이어야 한다.
 
         창 폭 900, 위젯 setEnabled(False) -> 위 가장자리 가운데 화소: downloadButton ≈ surfaceAlt,
-        stopButton ≈ surface, sortButton ≈ fieldBorder
+        stopButton ≈ surface, sortButton ≈ border
         """
         win = window(DownloadState.WAITING)
         widget = getattr(win, name)
@@ -587,18 +590,19 @@ class TestDropFields:
         assert _is(_pixel(image, rect.center().x(), rect.top()), "accent")
         assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surfaceAlt")
 
-    def test_disabled_drop_field_keeps_the_field_border(self, window) -> None:
-        """꺼진 펼침 칸도 테두리 fieldBorder · 면 surfaceAlt가 남아야 한다(글만 흐려진다).
+    def test_disabled_drop_field_has_the_faint_border(self, window) -> None:
+        """꺼진 펼침 칸은 테두리가 옅은 border이고 면 surfaceAlt는 남아야 한다(#611 176f).
 
-        정렬 칸 setEnabled(False) -> 위 가장자리 가운데 ≈ fieldBorder, 왼쪽 안쪽 3px ≈ surfaceAlt
+        정렬 칸 setEnabled(False) -> 위 가장자리 가운데 ≈ border, 왼쪽 안쪽 3px ≈ surfaceAlt
         """
         win = window(DownloadState.WAITING)
         button = win.sortButton
         button.setEnabled(False)
         _pump()
+        assert button.isVisible() and not button.isEnabled(), "전제: 보이고 꺼져 있다"
         rect = _rect(win, button)
         image = win.grab().toImage()
-        assert _is(_pixel(image, rect.center().x(), rect.top()), "fieldBorder")
+        assert _is(_pixel(image, rect.center().x(), rect.top()), "border")
         assert _is(_pixel(image, rect.left() + 3, rect.center().y()), "surfaceAlt")
 
     @pytest.mark.parametrize("width", ["first", "min"])
@@ -948,3 +952,69 @@ class TestCardIconHover:
         assert _is(_pixel(image, rect.center().x(), rect.top() + 2), "surfaceHover")
         assert not _is(_pixel(image, rect.center().x(), rect.top()), "borderStrong")
         assert not _is(_pixel(image, rect.left(), rect.center().y()), "borderStrong")
+
+
+FIELDS = ["urlInput", "sortButton", "combo"]  # URL 칸 · 펼침 칸 · 콤보(설정 창 등의 공용 선택 칸)
+
+
+@pytest.fixture
+def field(window: Callable[..., VodDownloader]) -> Callable[[str], tuple[QWidget, QWidget]]:
+    """이름으로 입력 칸과 그 칸을 그릴 창을 돌려주는 함수 — 「combo」는 전역 QSS 아래 콤보 하나를 띄운다."""
+    from PySide6.QtWidgets import QComboBox, QVBoxLayout
+
+    held: list[QWidget] = []
+
+    def build(name: str) -> tuple[QWidget, QWidget]:
+        if name != "combo":
+            win = window(DownloadState.WAITING)
+            return win, getattr(win, name)
+        holder = QWidget()
+        held.append(holder)
+        layout = QVBoxLayout(holder)
+        combo = QComboBox(holder)
+        combo.addItems(["A", "B"])
+        layout.addWidget(combo)
+        holder.resize(300, 80)
+        holder.show()
+        _pump()
+        return holder, combo
+
+    yield build
+    for holder in held:
+        holder.hide()
+
+
+class TestDisabledFields:
+    """꺼진 입력 칸 테두리는 옅은 border, 켜진 칸은 fieldBorder 그대로(#611 176f)."""
+
+    @pytest.mark.parametrize("name", FIELDS)
+    def test_enabled_field_keeps_the_field_border(
+        self, field: Callable[[str], tuple[QWidget, QWidget]], name: str
+    ) -> None:
+        """켜진 입력 칸의 위 가장자리는 fieldBorder이고 border가 아니어야 한다.
+
+        URL 칸 · 정렬 칸 · 콤보, 켜짐 -> 위 가장자리 가운데 ≈ fieldBorder · ≉ border
+        """
+        host, widget = field(name)
+        assert widget.isVisible() and widget.isEnabled(), "전제: 보이고 켜져 있다"
+        rect = _rect(host, widget)
+        edge = _pixel(host.grab().toImage(), rect.center().x(), rect.top())
+        assert _is(edge, "fieldBorder")
+        assert not _is(edge, "border")
+
+    @pytest.mark.parametrize("name", FIELDS)
+    def test_disabled_field_has_the_faint_border(
+        self, field: Callable[[str], tuple[QWidget, QWidget]], name: str
+    ) -> None:
+        """꺼진 입력 칸의 위 가장자리는 border이고 fieldBorder가 아니어야 한다.
+
+        URL 칸 · 정렬 칸 · 콤보, setEnabled(False) -> 위 가장자리 가운데 ≈ border · ≉ fieldBorder
+        """
+        host, widget = field(name)
+        widget.setEnabled(False)
+        _pump()
+        assert widget.isVisible() and not widget.isEnabled(), "전제: 보이고 꺼져 있다"
+        rect = _rect(host, widget)
+        edge = _pixel(host.grab().toImage(), rect.center().x(), rect.top())
+        assert _is(edge, "border")
+        assert not _is(edge, "fieldBorder")

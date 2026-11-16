@@ -565,8 +565,9 @@ QFrame#infoFrame QPushButton#downloadButton:focus {
  * radius(바 안에서는 controlRadius — 셸 바 절). 펼침 버튼은
  * 바탕 · 테두리만 여기서 칠하고 도형 · 글 · ⌄는 app/widgets/header_controls.py::DropButton.paintEvent가 그린다.
  * 설정 단계의 공용 선택 칸도 이 규칙을 쓴다. 상태: 호버 = 테두리 fieldBorderStrong(입력창 · 펼침 버튼 같게, #611),
- * 초점 · 펼친 동안 · 눌림 = 테두리 강조색(호버보다 뒤에 두어 초점이 앞선다), 꺼짐 = 글만 textDisabled(면 · 테두리
- * 그대로). 테두리를 그리는 것은 이 입력 칸뿐이다 — 버튼은 면으로 모양을 낸다(꺼짐 포함). */
+ * 초점 · 펼친 동안 · 눌림 = 테두리 강조색(호버보다 뒤에 두어 초점이 앞선다), 꺼짐 = 테두리 옅은 border · 글
+ * textDisabled(면 그대로 — 꺼진 칸은 대비 3:1 대상이 아니라 켜진 칸과 구분되게 낮춘다, #611). 테두리를 그리는
+ * 것은 이 입력 칸뿐이다 — 버튼은 면으로 모양을 낸다(꺼짐 포함). */
 QLineEdit,
 QToolButton[role="drop"] {
     background-color: @surfaceAlt;
@@ -605,6 +606,7 @@ QToolButton[role="drop"]:open {
 QLineEdit:disabled,
 QToolButton[role="drop"]:disabled {
     color: @textDisabled;
+    border-color: @border;
 }
 
 /* 스타일의 펼침 표시는 지운다 — 하나라도 빼면 그 부분만 네이티브로 남는다 */
@@ -707,6 +709,11 @@ QComboBox {
 
 QComboBox:hover {
     border-color: @fieldBorderStrong;
+}
+
+/* 꺼진 콤보 — 입력 칸과 같이 테두리만 옅은 border로(#611). 면 · 글은 그대로 */
+QComboBox:disabled {
+    border-color: @border;
 }
 
 /* 닫힌 화살표 버튼(#240 감사 항목 1) — 여기를 비워두면 Fusion 기본 버튼
