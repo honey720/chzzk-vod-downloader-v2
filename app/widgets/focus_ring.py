@@ -1,4 +1,7 @@
-"""카드 목록의 focus ring — 키보드 초점이 있는 행 안쪽 가장자리에 그리는 고리 하나 (#561 · #611).
+"""키보드 초점 표시 — 카드 목록의 focus ring과 바 컨트롤의 키보드 초점 표시 (#561 · #611).
+
+카드 목록의 focus ring은 키보드 초점이 있는 행 안쪽 가장자리에 그리는 고리 하나다(`FocusRing`). 바
+컨트롤은 받은 초점이 키보드로 왔을 때만 강조색 테두리를 그린다(`KeyFocusMarker`).
 
 카드 목록은 띠다(설계 §13) — 행끼리 붙어 있어 행 바깥에 고리를 띄울 자리가 없고, 바깥에 그리면 이웃 행을
 덮는다. 그래서 고리는 행 안쪽 가장자리(구분선 위)에 굵기 `focusRingWidth`로 그린다. 초점 표시는 카드가 아니라
@@ -79,3 +82,48 @@ class FocusRing(QWidget):
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRect(line)
         painter.end()
+
+
+# 키보드로 받은 초점 — 이 까닭으로 받은 초점만 강조색 테두리를 그린다(Tab · Shift+Tab · 단축키)
+_KEY_REASONS = (
+    Qt.FocusReason.TabFocusReason,
+    Qt.FocusReason.BacktabFocusReason,
+    Qt.FocusReason.ShortcutFocusReason,
+)
+# 받기 전 종류를 그대로 두는 초점 변화 — 창을 오감 · 펼친 메뉴가 닫혀 초점이 돌아옴
+_KEEP_REASONS = (Qt.FocusReason.ActiveWindowFocusReason, Qt.FocusReason.PopupFocusReason)
+
+
+class KeyFocusMarker(QObject):
+    """바 컨트롤이 받은 초점이 키보드로 왔는지를 `keyFocus` 동적 속성("true" · "false")으로 적는다 (#611).
+
+    바 버튼 · 드롭다운은 마우스로 누르면 초점을 받는다(Windows 콤보박스와 같음, 오너 재실기 2026-11-16) — 누르는
+    순간 URL 칸 초점이 풀린다. 강조색 focus ring은 키보드로 받은 초점에만 그린다: 전역 QSS가
+    `[keyFocus="false"]:focus`를 평소 테두리로 되돌린다. 창을 오가거나 펼친 메뉴가 닫혀 초점이 돌아올 때는 받기
+    전 종류를 그대로 둔다 — 마우스로 연 드롭다운은 메뉴가 닫힌 뒤에도 강조색이 없고, 키보드로 연 것은 남는다.
+
+    위젯마다 건다(`watch`) — 앱 전체 필터가 아니다.
+    """
+
+    def watch(self, widget: QWidget) -> None:
+        """그 위젯의 초점 들어옴 · 나감을 지켜본다 — 처음에는 키보드 초점이 아닌 것으로 둔다.
+
+        속성을 심은 뒤 스타일을 다시 계산한다 — 크기를 재느라 이미 polish된 위젯(아이콘 버튼)은 새 속성 선택자를
+        다시 계산하기 전까지 모른다.
+        """
+        widget.setProperty("keyFocus", False)
+        theme.repolish(widget)
+        widget.installEventFilter(self)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        kind = event.type()
+        if kind not in (QEvent.Type.FocusIn, QEvent.Type.FocusOut) or not watched.isWidgetType():
+            return False
+        reason = event.reason()
+        if reason in _KEEP_REASONS:
+            return False
+        keyboard = kind == QEvent.Type.FocusIn and reason in _KEY_REASONS
+        if watched.property("keyFocus") is not keyboard:
+            watched.setProperty("keyFocus", keyboard)
+            theme.repolish(watched)
+        return False

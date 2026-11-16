@@ -350,16 +350,134 @@ def test_bar_controls_are_bar_control_high(window: VodDownloader) -> None:
         assert widget.height() == theme.METRICS["barControl"], widget.objectName()
 
 
-def test_pressable_bar_controls_show_a_hand_and_take_focus_by_keyboard_only(
+def test_pressable_bar_controls_show_a_hand_and_take_focus_by_the_bar_rule(
     window: VodDownloader,
 ) -> None:
-    """누르는 바 컨트롤은 손 모양 커서이고 초점은 키보드(Tab)로만 받아야 한다 — 입력칸은 그대로다."""
+    """누르는 바 컨트롤은 손 모양 커서이고, 메뉴바는 키보드로만 · 헤더바 · 하단바는 누를 때도 초점을 받아야 한다.
+
+    메뉴바(「VOD 다운」 · 톱니바퀴) -> TabFocus, 그 밖(입력칸 제외) -> StrongFocus, 입력칸 -> StrongFocus(#611)
+    """
+    menu_bar = (window.menuDownloadButton, window.settingsButton)
     for widget in window.barControls():
         if widget is window.urlInput:
             assert widget.focusPolicy() == Qt.FocusPolicy.StrongFocus
             continue
         assert widget.cursor().shape() == Qt.CursorShape.PointingHandCursor, widget.objectName()
-        assert widget.focusPolicy() == Qt.FocusPolicy.TabFocus, widget.objectName()
+        wanted = Qt.FocusPolicy.TabFocus if widget in menu_bar else Qt.FocusPolicy.StrongFocus
+        assert widget.focusPolicy() == wanted, widget.objectName()
+
+
+def _focus_url(window: VodDownloader) -> None:
+    """창을 활성으로 하고 URL 칸에 Tab 초점을 준다."""
+    window.activateWindow()
+    window.urlInput.setFocus(Qt.FocusReason.TabFocusReason)
+    _pump()
+    assert window.urlInput.hasFocus(), "전제: URL 칸에 초점"
+
+
+def _click_in_window(window: VodDownloader, widget: QWidget) -> None:
+    """그 위젯 가운데를 창(QWindow)에 합성 클릭한다 — 실기 커서를 옮기지 않는다."""
+    point = widget.mapTo(window, widget.rect().center())
+    QTest.mouseClick(
+        window.windowHandle(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, point
+    )
+    _pump()
+
+
+def _close_popup_soon() -> None:
+    """열릴 메뉴를 이벤트 루프가 돌자마자 닫는다 — 드롭다운 메뉴는 열린 동안 호출이 돌아오지 않는다."""
+    from PySide6.QtCore import QTimer
+
+    def close() -> None:
+        popup = QApplication.activePopupWidget()
+        if popup is not None:
+            popup.close()
+        else:
+            QTimer.singleShot(10, close)
+
+    QTimer.singleShot(0, close)
+
+
+@pytest.mark.parametrize("name", ["saveLocationButton", "sortButton"])
+def test_pressing_a_drop_field_takes_the_focus_and_keeps_it_after_the_menu(
+    window: VodDownloader, name: str
+) -> None:
+    """URL 칸에 초점이 있을 때 드롭다운을 누르면 초점이 드롭다운으로 와서 메뉴가 닫힌 뒤에도 남아야 한다(#611).
+
+    URL 칸 Tab 초점 → 드롭다운 가운데 합성 클릭(메뉴는 열리자마자 닫음) -> 초점 = 드롭다운 · URL 칸 초점 없음,
+    keyFocus 거짓, 위 테두리 가운데 ≈ fieldEdge · ≉ accent
+    """
+    _focus_url(window)
+    widget = getattr(window, name)
+    _close_popup_soon()
+    _click_in_window(window, widget)
+    assert window.focusWidget() is widget
+    window.activateWindow()  # 메뉴가 닫힌 뒤 창 활성은 offscreen이 돌려주지 않는다 — 초점 위젯은 창이 기억한다
+    _pump()
+    assert widget.hasFocus(), "전제: 창이 다시 활성이고 초점이 드롭다운에 있다"
+    assert not window.urlInput.hasFocus()
+    assert widget.property("keyFocus") is False
+    tokens = theme.current_tokens()
+    assert _close(_top_border(widget), tokens["fieldEdge"])
+    assert not _close(_top_border(widget), tokens["accent"])
+
+
+@pytest.mark.parametrize("name", ["selectButton", "fetchButton", "chip"])
+def test_pressing_a_bar_button_takes_the_focus_without_an_accent_border(
+    window: VodDownloader, name: str
+) -> None:
+    """URL 칸에 초점이 있을 때 헤더바 버튼을 누르면 초점이 버튼으로 오고 테두리는 강조색이 아니어야 한다(#611).
+
+    창 폭 1200, URL 칸에 글을 넣고(「+」가 켜짐) Tab 초점 → 버튼(선택 · 「+」 · 둘째 상태 칩) 가운데 합성
+    클릭(누름 동작은 끊음) -> 초점 = 버튼 · keyFocus 거짓 · 위 테두리 ≉ accent
+    """
+    window.resize(1200, 600)
+    window.urlInput.setText("https://chzzk.naver.com/video/1")
+    _focus_url(window)
+    widget = list(window.filterChips.values())[1] if name == "chip" else getattr(window, name)
+    assert widget.isVisible(), "전제: 버튼이 보인다"
+    widget.clicked.disconnect()  # 등록 · 선택 모드는 이 테스트가 재는 것이 아니다
+    _click_in_window(window, widget)
+    assert QApplication.focusWidget() is widget
+    assert widget.property("keyFocus") is False
+    assert not _close(_top_border(widget), theme.current_tokens()["accent"])
+
+
+def test_keyboard_focus_after_a_mouse_focus_draws_the_accent_border(window: VodDownloader) -> None:
+    """마우스로 초점을 받은 버튼도 키보드(Tab)로 다시 받으면 테두리가 강조색이어야 한다(#611).
+
+    선택 버튼 합성 클릭(누름 동작은 끊음) → 목록에 초점 → 선택 버튼에 Tab 초점 -> keyFocus 참 · 위 테두리 ≈ accent
+    """
+    window.activateWindow()
+    _pump()
+    widget = window.selectButton
+    widget.clicked.disconnect()
+    _click_in_window(window, widget)
+    assert widget.property("keyFocus") is False, "전제: 마우스 초점"
+    window.listView.setFocus(Qt.FocusReason.OtherFocusReason)
+    widget.setFocus(Qt.FocusReason.TabFocusReason)
+    _pump()
+    assert widget.property("keyFocus") is True
+    assert _close(_top_border(widget), theme.current_tokens()["accent"])
+
+
+@pytest.mark.parametrize("keyboard", [True, False])
+def test_a_menu_closing_keeps_the_focus_kind(window: VodDownloader, keyboard: bool) -> None:
+    """펼친 메뉴가 닫혀 초점이 돌아와도(PopupFocusReason) 받기 전 초점 종류가 그대로여야 한다(#611).
+
+    정렬 칸에 Tab · 마우스 초점 → FocusOut · FocusIn(PopupFocusReason) 보냄 -> keyFocus 그대로(참 · 거짓)
+    """
+    from PySide6.QtGui import QFocusEvent
+
+    window.activateWindow()
+    widget = window.sortButton
+    reason = Qt.FocusReason.TabFocusReason if keyboard else Qt.FocusReason.MouseFocusReason
+    widget.setFocus(reason)
+    _pump()
+    assert widget.property("keyFocus") is keyboard, "전제: 받은 초점 종류"
+    for kind in (QEvent.Type.FocusOut, QEvent.Type.FocusIn):
+        QApplication.sendEvent(widget, QFocusEvent(kind, Qt.FocusReason.PopupFocusReason))
+    assert widget.property("keyFocus") is keyboard
 
 
 def _top_border(widget: QWidget) -> QColor:
