@@ -123,8 +123,8 @@ def test_rate_texts_change_once_a_second_while_progress_changes_every_notice(mon
 def test_footer_changes_once_a_second_not_on_every_notice(qtbot, tmp_path, answers) -> None:  # noqa: F811 — 픽스처
     """하단바 속도는 진행 통지마다가 아니라 1초 갱신 때만 바뀌어야 한다.
 
-    받는 중 2.0 MB/s 통지 → 1초 갱신 → 3.0 · 4.0 · 5.0 MB/s 통지 셋 -> 「↓ 2.0 MB/s」 그대로,
-    1초 갱신 -> 「↓ 5.0 MB/s」
+    받는 중 2.0 MB/s 통지 → 1초 갱신 → 3.0 · 4.0 · 5.0 MB/s 통지 셋 -> 「2.0 MB/s」 그대로,
+    1초 갱신 -> 「5.0 MB/s」
     """
     win, _items, engine = _window(tmp_path)
     _free_measured(qtbot, win)
@@ -133,14 +133,14 @@ def test_footer_changes_once_a_second_not_on_every_notice(qtbot, tmp_path, answe
     _progress(engine, 0, 10 * MIB, 2.0, 4)
     _tick(win)
     speed = win.footerMonitor.labels["speed"]
-    assert speed.text() == "↓ 2.0 MB/s"
+    assert speed.text() == "2.0 MB/s"
 
     for value in (3.0, 4.0, 5.0):
         _progress(engine, 0, 10 * MIB, value, 4)
-    assert speed.text() == "↓ 2.0 MB/s"
+    assert speed.text() == "2.0 MB/s"
 
     _tick(win)
-    assert speed.text() == "↓ 5.0 MB/s"
+    assert speed.text() == "5.0 MB/s"
 
 
 # ================================================================ 막대 모션 · 애니메이션 끔

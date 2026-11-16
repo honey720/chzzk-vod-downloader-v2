@@ -21,10 +21,11 @@ from app.widgets.widget import short_time
 
 MONITOR_KEYS = ("speed", "remain", "conn", "mem", "free")  # 모니터링 칸의 화면 차례
 # 이름 글 대신 아이콘을 두는 칸 — 뜻은 툴팁(설계 §2 「연결 · 메모리 · 여유에는 툴팁으로 뜻」, 프로토 11v, #536)
-MONITOR_ICONS = {"conn": "link", "mem": "memory", "free": "disk"}
+# 속도 칸의 ↓도 글자가 아니라 그린 아이콘이다(inbox 177 — 글자 기호 아이콘을 두지 않는다)
+MONITOR_ICONS = {"speed": "download", "conn": "link", "mem": "memory", "free": "disk"}
 ICON_GAP = 4  # 칸 아이콘 ↔ 값(px) — 설계 §11.2, 프로토 MonitorLabel
 DROP_ORDER = ("conn", "mem", "remain", "free")  # 좁은 폭에서 빼는 칸 차례 — 설계 §2
-SPEED_SAMPLE = "↓ 999.9 MB/s"  # 창 최소폭에 넣는 전체 속도 칸의 글 — 값과 무관한 고정 견본
+SPEED_SAMPLE = "999.9 MB/s"  # 창 최소폭에 넣는 전체 속도 칸의 글 — 값과 무관한 고정 견본(아이콘 폭은 따로 센다)
 MONITOR_GAP = 8  # 모니터링 칸 사이 간격(px) — 하단바 버튼 사이 간격과 같다(설계 §11.2)
 _MEBIBYTE = 1024 * 1024  # 속도 · 메모리의 MB — 카드의 속도 글과 같다
 _GIBIBYTE = 1024 * 1024 * 1024  # 여유 공간의 GB
@@ -114,10 +115,10 @@ class FooterMonitor(QWidget):
         return sum(widths) + MONITOR_GAP * max(0, len(widths) - 1)
 
     def sampleWidth(self) -> int:
-        """칸을 끝까지 뺀 모양(전체 속도 하나)의 폭 — 값과 무관한 견본 글(`SPEED_SAMPLE`)로 잰다."""
+        """칸을 끝까지 뺀 모양(전체 속도 하나)의 폭 — 아이콘 자리 + 값과 무관한 견본 글(`SPEED_SAMPLE`)."""
         label = self.labels["speed"]
         label.ensurePolished()
-        return text_width(label.fontMetrics(), SPEED_SAMPLE)
+        return label.contentsMargins().left() + text_width(label.fontMetrics(), SPEED_SAMPLE)
 
     def _keysFor(self, dropped: int) -> list[str]:
         """`dropped`칸을 뺐을 때 보일 칸 — 화면 차례."""
@@ -138,7 +139,7 @@ class FooterMonitor(QWidget):
         texts: dict[str, tuple[str, str]] = {}
         if snapshot.receiving:
             speed = f"{snapshot.speed / _MEBIBYTE:.1f} MB/s"
-            texts["speed"] = (f"↓ {speed}", self.tr("Speed · {0}").format(speed))
+            texts["speed"] = (speed, self.tr("Speed · {0}").format(speed))
             if snapshot.remaining_seconds is not None:
                 remain = short_time(clock_text(snapshot.remaining_seconds))
                 # 카드의 남은 시간과 같은 글 — 카드의 번역(ContentItemWidget 컨텍스트)을 그대로 쓴다

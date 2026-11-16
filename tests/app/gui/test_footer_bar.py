@@ -264,8 +264,8 @@ def test_footer_while_receiving_shows_all_five_values(qtbot, tmp_path, answers) 
     """받을 크기를 아는 카드를 받는 중이면 다섯 칸이 다 보이고 값이 통지를 따라야 한다.
 
     받을 크기 10 MiB · 받은 크기 0 · 속도 2.0 MB/s · 연결 4 통지
-    -> 칸 speed · remain · conn · mem · free, "↓ 2.0 MB/s", "0:05 left", 연결 "4" · 메모리 "… MB"(이름 대신
-    아이콘, 이름은 툴팁 — #536)
+    -> 칸 speed · remain · conn · mem · free, "2.0 MB/s", "0:05 left", 연결 "4" · 메모리 "… MB"(이름 대신
+    아이콘, 이름은 툴팁 — #536), 아이콘 연결 link · 메모리 memory · 속도 download(↓ 글자 대신 — inbox 177)
     """
     win, _items, engine = _window(tmp_path)
     _free_measured(qtbot, win)
@@ -275,14 +275,18 @@ def test_footer_while_receiving_shows_all_five_values(qtbot, tmp_path, answers) 
     _tick(win)
     labels = win.footerMonitor.labels
     assert win.footerMonitor.shownKeys() == ["speed", "remain", "conn", "mem", "free"]
-    assert labels["speed"].text() == "↓ 2.0 MB/s"
+    assert labels["speed"].text() == "2.0 MB/s"
     assert labels["speed"].toolTip() == "Speed · 2.0 MB/s"
     assert labels["remain"].text() == "0:05 left"
     assert labels["conn"].text() == "4"
     assert labels["conn"].toolTip() == "Connections · 4"
     assert labels["mem"].text()[0].isdigit() and labels["mem"].text().endswith(" MB")
     assert labels["mem"].toolTip().startswith("Memory · ")
-    assert (labels["conn"].icon, labels["mem"].icon, labels["speed"].icon) == ("link", "memory", "")
+    assert (labels["conn"].icon, labels["mem"].icon, labels["speed"].icon) == (
+        "link",
+        "memory",
+        "download",
+    )
 
 
 def test_footer_drops_the_time_left_when_the_size_is_unknown(qtbot, tmp_path, answers) -> None:
@@ -398,7 +402,7 @@ def _measure_lands_after_notices(
     _tick(win)
     assert slow_disk.entered.wait(10), "전제: 1초 갱신이 시작한 측정이 붙잡혀 있다"
     before = _footer_texts(win)
-    assert before["speed"] == "↓ 2.0 MB/s", "전제: 1초 갱신이 2.0 통지를 보였다"
+    assert before["speed"] == "2.0 MB/s", "전제: 1초 갱신이 2.0 통지를 보였다"
     assert before["free"] == "100.0 GB", "전제: 여유 공간은 앞 측정값"
     for downloaded, speed, threads in ((2, 3.0, 5), (4, 4.0, 6), (5, 5.0, 8)):
         _progress(engine, downloaded * MIB, 10 * MIB, speed, threads)
@@ -412,7 +416,7 @@ def test_a_late_free_space_measure_changes_only_the_free_space(
 ) -> None:
     """1초 갱신이 시작한 여유 공간 측정이 다음 통지들 뒤에 끝나면 여유 공간 칸만 바뀌어야 한다.
 
-    1초 갱신 때 「↓ 2.0 MB/s」 · 「0:05 left」 · 연결 「4」 · 여유 「100.0 GB」 → 통지 셋 → 측정이 50 GiB로 끝남
+    1초 갱신 때 「2.0 MB/s」 · 「0:05 left」 · 연결 「4」 · 여유 「100.0 GB」 → 통지 셋 → 측정이 50 GiB로 끝남
     -> 속도 · 남은 시간 · 연결 · 메모리 글은 1초 갱신 때 그대로, 여유 「50.0 GB」
     """
     win, _engine, before = _measure_lands_after_notices(qtbot, tmp_path, slow_disk)
@@ -425,12 +429,12 @@ def test_the_tick_after_a_late_measure_shows_the_last_notice(
     """늦게 끝난 측정 뒤의 1초 갱신은 마지막 통지 값을 보여야 한다.
 
     측정이 통지 셋(마지막 5.0 MB/s · 받은 5 / 10 MiB · 연결 8) 뒤에 50 GiB로 끝남 → 1초 갱신
-    -> 「↓ 5.0 MB/s」 · 「0:01 left」 · 연결 「8」 · 여유 「50.0 GB」
+    -> 「5.0 MB/s」 · 「0:01 left」 · 연결 「8」 · 여유 「50.0 GB」
     """
     win, _engine, _before = _measure_lands_after_notices(qtbot, tmp_path, slow_disk)
     _tick(win)
     texts = _footer_texts(win)
-    assert (texts["speed"], texts["remain"], texts["conn"]) == ("↓ 5.0 MB/s", "0:01 left", "8")
+    assert (texts["speed"], texts["remain"], texts["conn"]) == ("5.0 MB/s", "0:01 left", "8")
     assert texts["free"] == "50.0 GB"
 
 
@@ -439,7 +443,7 @@ def test_changing_the_save_location_changes_only_the_free_space(
 ) -> None:
     """받는 중 저장 위치를 바꾸면 하단바는 여유 공간 칸만 새 위치의 값으로 바뀌어야 한다.
 
-    1초 갱신 때 「↓ 2.0 MB/s」 · 여유 「100.0 GB」 → 5.0 MB/s 통지 → 다른 폴더를 고름(그 폴더 50 GiB)
+    1초 갱신 때 「2.0 MB/s」 · 여유 「100.0 GB」 → 5.0 MB/s 통지 → 다른 폴더를 고름(그 폴더 50 GiB)
     -> 측정이 끝난 뒤 속도 · 남은 시간 · 연결 · 메모리 글은 1초 갱신 때 그대로, 여유 「50.0 GB」
     """
     win, _items, engine = _window(tmp_path)
@@ -449,7 +453,7 @@ def test_changing_the_save_location_changes_only_the_free_space(
     _progress(engine, 0, 10 * MIB, 2.0, 4)
     _tick(win)
     before = _footer_texts(win)
-    assert before["speed"] == "↓ 2.0 MB/s", "전제: 1초 갱신이 2.0 통지를 보였다"
+    assert before["speed"] == "2.0 MB/s", "전제: 1초 갱신이 2.0 통지를 보였다"
     assert before["free"] == "100.0 GB", "전제: 여유 공간은 앞 측정값"
     _progress(engine, 5 * MIB, 10 * MIB, 5.0, 8)
     other = tmp_path / "other"

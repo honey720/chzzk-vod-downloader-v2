@@ -24,15 +24,6 @@ from app.viewmodels.item_state import ItemState
 from app.viewmodels.section_edit import format_fps
 from core.models.download_state import DownloadState
 
-# 3행 슬롯 텍스트의 상태 접두(완료/실패 표시). 텍스트 안에 들어가는 글자라
-# 폰트 문자를 쓴다 — 둘 다 기본 문장부호 블록(Dingbats)의 흔한 글리프다.
-# 색은 파이썬이 아니라 전역 QSS `#statusLabel[state=...]`가 theme.py
-# 토큰으로 정한다.
-STATE_ICON = {
-    "finished": "✓",  # 체크 — 완료 (U+2713)
-    "failed": "✕",  # 엑스 — 실패 (U+2715)
-}
-
 # 두 구간이 이만큼(초) 넘게 겹쳐야 겹침으로 본다 — 1ms.
 # 가장 짧은 프레임(120fps ≈ 8.3ms)보다 훨씬 짧고, 소수 초 덧셈의 오차보다는 훨씬 길다
 OVERLAP_SLACK = 0.001

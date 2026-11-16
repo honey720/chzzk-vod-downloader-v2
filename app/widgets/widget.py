@@ -41,10 +41,7 @@ from app.network import REQUEST_TIMEOUT
 from app.section_input.basis import SECTION_CONTENT_TYPES
 from app.system.thread_handoff import MainCall
 from app.viewmodels import card_display, card_text
-from app.viewmodels.card_text import (  # noqa: F401 — 바깥(footer_bar · 테스트)이 이 자리에서 import한다
-    STATE_ICON,
-    short_time,
-)
+from app.viewmodels.card_text import short_time  # noqa: F401 — 바깥(footer_bar · 테스트)이 이 자리에서 import한다
 from app.viewmodels.data import ContentItem
 from app.widgets.contentItemWidget import HoverShade, Ui_ContentItemWidget
 from app.widgets.narrow_steps import step_level

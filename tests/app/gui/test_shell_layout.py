@@ -37,7 +37,7 @@ import CVDv2 as main_module
 import app.theme as theme
 from app.views.mainWindow import VodDownloader
 from app.viewmodels.data import ContentItem
-from app.widgets.footer_bar import SPEED_SAMPLE
+from app.widgets.footer_bar import ICON_GAP, SPEED_SAMPLE
 from app.widgets.widget import ContentItemWidget
 from core.models.download_state import DownloadState
 from core.models.plan import TimeRange
@@ -166,7 +166,10 @@ def _independent_content_minimum(win: VodDownloader) -> int:
     열 = max(메뉴바 · 헤더바 · 하단바 각각, 목록 최소, 카드).
     바는 창 끝까지 붙고(바깥 여백 0) 좌우 테두리가 없다 — 테두리는 목록 쪽 한 줄뿐이다(#536 — 설계 §11.1).
     """
-    pad, outer = theme.METRICS["outerMargin"], 0  # 바 안쪽 가로 여백 · 바깥 여백(#536 — 바는 창 끝까지)
+    pad, outer = (
+        theme.METRICS["outerMargin"],
+        0,
+    )  # 바 안쪽 가로 여백 · 바깥 여백(#536 — 바는 창 끝까지)
     border = 0  # 바 좌우 테두리 — 목록 쪽 한 줄만 있다(#536)
     first = (
         _leaf_min(win.urlInput)
@@ -198,7 +201,9 @@ def _independent_content_minimum(win: VodDownloader) -> int:
         + win.runResultLabel.tr("Failed {0}").format(999)
     )
     info = (
-        math.ceil(QFontMetricsF(speed.font()).horizontalAdvance(SPEED_SAMPLE))
+        theme.METRICS["narrowIcon"]  # 속도 칸 앞 ↓ 아이콘(inbox 177)
+        + ICON_GAP
+        + math.ceil(QFontMetricsF(speed.font()).horizontalAdvance(SPEED_SAMPLE))
         + math.ceil(QFontMetricsF(win.runResultLabel.font()).horizontalAdvance(result_sample))
         + _leaf_min(win.downloadButton)
         + _leaf_min(win.stopButton)

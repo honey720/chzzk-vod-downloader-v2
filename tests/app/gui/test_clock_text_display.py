@@ -112,4 +112,4 @@ def test_a_negative_time_left_still_updates_the_card_and_the_footer(qtbot, tmp_p
     footer._progress(engine, 2 * MIB, MIB, 1.0, 4)
     footer._tick(win)
     assert "0:00 left" in win.listView.widgetFor(items[0]).statusLabel.text()
-    assert win.footerMonitor.labels["speed"].text() == "↓ 1.0 MB/s"
+    assert win.footerMonitor.labels["speed"].text() == "1.0 MB/s"
