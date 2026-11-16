@@ -225,6 +225,10 @@ class OverlayScrollBar(QWidget):
         """포인터가 영역 · 막대 자리에 있거나 끄는 중인지 — 그동안은 흐려지지 않는다."""
         return self._inside or self._hovered or self._dragOffset is not None
 
+    def _pointed(self) -> bool:
+        """포인터가 막대 자리에 있거나 끄는 중인지 — 그동안만 막대를 호버 색으로 그린다."""
+        return self._hovered or self._dragOffset is not None
+
     def _fadeOutIfIdle(self) -> None:
         if not self._busy():
             self._fadeTo(0.0)
@@ -308,7 +312,9 @@ class OverlayScrollBar(QWidget):
         rect = self._handleRect(self._thickness)
         if rect.isEmpty():
             return
-        token = "scrollHandleHover" if self._busy() else "scrollHandle"
+        # 호버 색은 막대 자체를 가리키거나 끄는 동안만이다 — 포인터가 목록(카드) 위에 있는 것만으로 바꾸면
+        # 카드에 포인터를 올릴 때마다 막대 색이 카드 호버를 따라 바뀌어 보인다(오너 실기 2026-11-16, #611)
+        token = "scrollHandleHover" if self._pointed() else "scrollHandle"
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setOpacity(opacity)

@@ -520,3 +520,102 @@ class TestHighContrast:
         hints.accessibility().contrastPreferenceChanged.emit(Qt.ContrastPreference.HighContrast)
         _pump()
         assert bar.opacity() == 1.0
+
+
+# ---------------------------------------------------------------- 색
+
+
+def _handle_row(win: VodDownloader) -> list[str]:
+    """손잡이 세로 가운데 줄의 안쪽 화소 색(왼쪽 끝 · 오른쪽 끝 한 칸씩 뺌) — 창을 그려서 읽는다."""
+    bar = _overlay(win)
+    assert bar.isVisible() and bar.opacity() == 1.0, "전제: 막대가 다 보인다"
+    rect = bar.handleRect()
+    image = win.grab().toImage()
+    ratio = image.devicePixelRatio()
+    y = int(rect.center().y())
+    colours = []
+    for x in range(int(rect.left()) + 1, int(rect.right()) - 1):
+        point = bar.mapTo(win, QPoint(x, y))
+        colours.append(image.pixelColor(int(point.x() * ratio), int(point.y() * ratio)).name())
+    assert colours, "전제: 손잡이 안쪽 화소가 있다"
+    return colours
+
+
+def _card_under_handle(win: VodDownloader) -> QWidget:
+    """손잡이 세로 가운데 바로 아래(겹쳐 그려진 자리)에 놓인 카드."""
+    bar = _overlay(win)
+    viewport = win.listView.viewport()
+    point = bar.mapTo(viewport, bar.handleRect().center().toPoint())
+    card = next(
+        (
+            c
+            for c in (
+                win.listView.widgetFor(win.contentManager.model.itemAt(r)) for r in range(MANY)
+            )
+            if c is not None
+            and c.isVisible()
+            and c.geometry().contains(c.parentWidget().mapFrom(viewport, point))
+        ),
+        None,
+    )
+    assert card is not None, "전제: 손잡이 아래에 카드가 있다"
+    return card
+
+
+class TestHandleColour:
+    def test_handle_colour_is_the_same_over_a_plain_hovered_and_picked_card(
+        self,
+        build: Callable[..., VodDownloader],
+        animations: Callable[[bool], None],
+    ) -> None:
+        """손잡이 화소는 아래 카드가 평소 · 호버 · 고름 · 고름+호버여도 평소 손잡이 색 그대로여야 한다(#611 176g).
+
+        애니메이션 끔 · 카드 40장, 아래로 10칸 굴림(손잡이가 선택 줄 아래 목록 가운데로),
+        포인터 목록 밖 -> 손잡이 안쪽 화소 전부 scrollHandle,
+        뷰포트 · 손잡이 아래 카드에 들어감 -> 같음, 선택 모드 · 그 카드 고름 -> 같음, 카드에서 나감 -> 같음
+        """
+        from app.theme import current_tokens
+
+        animations(False)
+        win = build(cards=MANY)
+        _wheel_list(win, -10)
+        assert win.listView.verticalScrollBar().value() == CELL * 10, "전제: 굴렀다"
+        want = current_tokens()["scrollHandle"]
+        plain = _handle_row(win)
+        assert set(plain) == {want}
+        card = _card_under_handle(win)
+        enter(win.listView.viewport())
+        enter(card)
+        _pump()
+        assert win.listView.hoverCard() is card, "전제: 손잡이 아래 카드가 호버다"
+        assert _handle_row(win) == plain, "카드 호버"
+        win.listView.setSelecting(True)
+        win.listView.cardPicked(card, Qt.KeyboardModifier.NoModifier)
+        _pump()
+        assert card.isSelected(), "전제: 손잡이 아래 카드를 골랐다"
+        assert _handle_row(win) == plain, "고름 + 호버"
+        leave(card)
+        _pump()
+        assert _handle_row(win) == plain, "고름"
+
+    def test_handle_turns_the_hover_colour_only_when_the_bar_itself_is_pointed(
+        self,
+        build: Callable[..., VodDownloader],
+        animations: Callable[[bool], None],
+    ) -> None:
+        """손잡이는 포인터가 막대 자리에 들어왔을 때만 scrollHandleHover여야 한다.
+
+        애니메이션 끔 · 카드 40장, 뷰포트에 들어감 -> scrollHandle, 뷰포트 나감 · 막대에 들어감 -> scrollHandleHover
+        """
+        from app.theme import current_tokens
+
+        animations(False)
+        win = build(cards=MANY)
+        tokens = current_tokens()
+        enter(win.listView.viewport())
+        _pump()
+        assert set(_handle_row(win)) == {tokens["scrollHandle"]}
+        leave(win.listView.viewport())
+        enter(_overlay(win))
+        _pump()
+        assert set(_handle_row(win)) == {tokens["scrollHandleHover"]}
