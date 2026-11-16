@@ -218,7 +218,8 @@ def test_fade_follows_only_the_app_setting(
     """OS가 고대비 · UI 효과 끔이어도 앱 설정이 켜짐이면 나타남 · 닫힘 모두 중간 불투명도를 지나야 한다(#611).
 
     animations=True, overlay_scrollbar.high_contrast -> 참, QApplication.isEffectEnabled -> 거짓
-    첫째 들어감 -> 0 < 불투명도 < 1인 단계가 있음, 나감 -> 0 < 불투명도 < 1인 단계가 있고 숨음
+    첫째 들어감 → 페이드를 멈추고 절반 시점 -> 0 < 불투명도 < 1, 이어서 끝 -> 1,
+    나감 → 멈추고 절반 시점 -> 0 < 불투명도 < 1, 이어서 숨음
     """
     from app.widgets import overlay_scrollbar
 
@@ -229,14 +230,17 @@ def test_fade_follows_only_the_app_setting(
     bubble = _bubble()
     fade_in = bubble.fade()
     assert fade_in is not None, "나타남 페이드가 걸려야 한다"
-    rising: list[float] = []
-    fade_in.valueChanged.connect(lambda _value: rising.append(bubble.opacity()))
+    fade_in.pause()  # 실행 시간과 떼어 놓는다 — 절반 시점을 직접 고른다
+    fade_in.setCurrentTime(FADE_IN_MS // 2)
+    assert 0.0 < bubble.opacity() < 1.0, f"나타남 절반: {bubble.opacity()}"
+    fade_in.resume()
     qtbot.waitUntil(lambda: bubble.fade() is None, timeout=2000)
-    assert any(0.0 < step < 1.0 for step in rising), f"나타남 중간값 없음: {rising}"
+    assert bubble.opacity() == 1.0
     leave(first)
     fade_out = bubble.fade()
     assert fade_out is not None, "닫힘 페이드가 걸려야 한다"
-    falling: list[float] = []
-    fade_out.valueChanged.connect(lambda _value: falling.append(bubble.opacity()))
+    fade_out.pause()
+    fade_out.setCurrentTime(FADE_OUT_MS // 2)
+    assert 0.0 < bubble.opacity() < 1.0, f"닫힘 절반: {bubble.opacity()}"
+    fade_out.resume()
     qtbot.waitUntil(lambda: not bubble.isVisible(), timeout=2000)
-    assert any(0.0 < step < 1.0 for step in falling), f"닫힘 중간값 없음: {falling}"

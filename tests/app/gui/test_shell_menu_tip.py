@@ -438,18 +438,24 @@ def _click_in_window(window: VodDownloader, widget: QWidget) -> None:
     _pump()
 
 
+POPUP_TRIES = 50  # 메뉴 닫기를 다시 해 보는 횟수(10ms 간격 — 0.5초)
+
+
 def _close_popup_soon() -> None:
-    """열릴 메뉴를 이벤트 루프가 돌자마자 닫는다 — 드롭다운 메뉴는 열린 동안 호출이 돌아오지 않는다."""
+    """열릴 메뉴를 이벤트 루프가 돌자마자 닫는다 — 드롭다운 메뉴는 열린 동안 호출이 돌아오지 않는다.
+
+    메뉴가 끝내 열리지 않으면 `POPUP_TRIES`번(10ms 간격) 뒤 그만둔다 — 다음 테스트의 팝업을 닫지 않게.
+    """
     from PySide6.QtCore import QTimer
 
-    def close() -> None:
+    def close(left: int) -> None:
         popup = QApplication.activePopupWidget()
         if popup is not None:
             popup.close()
-        else:
-            QTimer.singleShot(10, close)
+        elif left > 0:
+            QTimer.singleShot(10, lambda: close(left - 1))
 
-    QTimer.singleShot(0, close)
+    QTimer.singleShot(0, lambda: close(POPUP_TRIES))
 
 
 @pytest.mark.parametrize("name", ["saveLocationButton", "sortButton"])
