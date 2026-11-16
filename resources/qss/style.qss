@@ -587,7 +587,7 @@ QLineEdit {
 
 /* URL 입력창 안쪽 좌우 여백 — 펼침 버튼(header_controls.BUTTON_PADDING 10)과 같게(#611) */
 QLineEdit#urlInput {
-    padding: 5px 10px;
+    padding: 5px @fieldPadX;
 }
 
 QToolButton[role="drop"] {

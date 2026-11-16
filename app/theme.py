@@ -164,6 +164,8 @@ METRICS = {
     # ---- 공통 형태 ----
     "radius": 8,  # 버튼·입력창 등 일반 모서리
     "buttonPadX": 14,  # 기본 버튼 좌우 안쪽 여백
+    # URL 입력창 안쪽 좌우 여백 — 펼침 버튼(app/widgets/header_controls.py BUTTON_PADDING)과 같은 값(#611)
+    "fieldPadX": 10,
 }
 
 #: 글자 위계 — 위(제목)에서 아래(경로)로 무게가 내려간다. 값은 QSS 문자열.
