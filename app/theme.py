@@ -193,8 +193,12 @@ DARK = {
     "tipBg": "#393b43",
     "thumbBg": "#1f2126",  # 썸네일 자리표시 바탕
     # ---- 선·글자 ----
-    "border": "#3a3d45",
+    "border": "#3a3d45",  # 구분선 · 툴팁 · 그룹 상자 · 기본 버튼 테두리
     "borderStrong": "#4c515b",
+    # 입력 칸(URL 칸 · 펼침 칸 · QComboBox) 테두리 — 바 면(surface) · 칸 면(surfaceAlt) 모두와 비텍스트 대비 3.0
+    # 이상(WCAG 1.4.11, #611). 구분선(border)은 그대로 옅게 둔다
+    "fieldBorder": "#797b81",
+    "fieldBorderStrong": "#8c8e93",  # 입력 칸 호버 — fieldBorder에서 한 단계(border → borderStrong과 같은 ΔE00 약 7)
     "text": "#e6e8ec",
     "textMuted": "#a0a6b0",
     "textDisabled": "#6b7078",
@@ -263,8 +267,11 @@ LIGHT = {
     "tipBg": "#ffffff",
     "thumbBg": "#e6e8ec",
     # ---- 선·글자 ----
-    "border": "#d5d8de",
+    "border": "#d5d8de",  # 구분선 · 툴팁 · 그룹 상자 · 기본 버튼 테두리
     "borderStrong": "#b9bec7",
+    # 입력 칸 테두리 — 바 면 · 칸 면 모두와 3.0 이상(#611)
+    "fieldBorder": "#86888c",
+    "fieldBorderStrong": "#747679",  # 입력 칸 호버 — fieldBorder에서 한 단계(ΔE00 약 7)
     "text": "#1c1e22",
     "textMuted": "#5b6069",
     "textDisabled": "#9a9fa8",

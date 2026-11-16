@@ -49,6 +49,10 @@ PAIRS = [
     ("textMuted", "cardTintFinishedPressed", 3.0, "카드 흐린 글 ↔ 눌린 완료 카드(#561)"),
     ("textMuted", "cardTintFailedPressed", 3.0, "카드 흐린 글 ↔ 눌린 실패 카드(#561)"),
     ("pickMarkRing", "accent", 3.0, "고른 체크 원의 테두리 ↔ 강조색 채움 — 그림(#561)"),
+    ("fieldBorder", "surface", 3.0, "입력 칸 테두리 ↔ 바 면 — 그림(#611)"),
+    ("fieldBorder", "surfaceAlt", 3.0, "입력 칸 테두리 ↔ 칸 면 — 그림(#611)"),
+    ("fieldBorderStrong", "surface", 3.0, "입력 칸 호버 테두리 ↔ 바 면 — 그림(#611)"),
+    ("fieldBorderStrong", "surfaceAlt", 3.0, "입력 칸 호버 테두리 ↔ 칸 면 — 그림(#611)"),
 ]
 
 # 눌린 카드 바탕(#561) — (평소, 호버, 눌림). 채움은 호버 토큰이 없어 None이다
