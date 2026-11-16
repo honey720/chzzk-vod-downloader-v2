@@ -427,6 +427,9 @@ class ContentItemWidget(QWidget, Ui_ContentItemWidget):
         """숨는 카드(필터 · 지우기)는 완료 · 실패 · 색조 걷기 모션을 멈추고 마지막 모양으로 간다 (#571)."""
         super().hideEvent(event)
         self._finishStepMotion()
+        # 누른 채 숨으면(Ctrl+누름 뒤 Delete 등) Qt가 누름 대상을 풀어 뗌이 오지 않는다 — 되살린 카드의 Space가
+        # 막히지 않게 지운다(#611)
+        self._mouseHeld = False
 
     # ---- 호버 · 키보드 초점 — 카드 버튼을 보이는 때 (#550) ----
 

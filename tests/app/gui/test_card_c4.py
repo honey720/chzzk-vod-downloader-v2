@@ -2221,6 +2221,28 @@ class TestSpaceOnRelease:
         _release(window, items[0])
         assert seen == [[items[0]]]
 
+    def test_space_works_on_a_card_hidden_and_shown_while_the_mouse_was_held(
+        self, window: VodDownloader
+    ) -> None:
+        """마우스를 누른 채 카드가 숨었다가 다시 보이면 그 카드의 Space가 다시 고르기를 바꿔야 한다(#611).
+
+        선택 모드, 첫째를 마우스로 누름 -> [첫째], 떼지 않고 첫째 hide() · show() -> 첫째에 초점,
+        Space 누름 · 뗌 -> []
+        """
+        items = self._picking(window, 1)
+        card = _card(window, items[0])
+        _press(window, items[0])
+        assert _picked(window) == [items[0]], "전제: 눌러서 골랐다"
+        card.hide()
+        _settle()
+        card.show()
+        _settle()
+        _focus(self._qtbot, window, card, Qt.FocusReason.OtherFocusReason)
+        _space(card, PRESS)
+        _space(card, LIFT)
+        assert _picked(window) == []
+        _release(window, items[0])
+
 
 # ---- 창을 오간 뒤의 초점 종류 (#561, 141a 정할 것 3) ----
 
