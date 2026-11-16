@@ -4,7 +4,8 @@
 버블이 숨어도 그대로라 메뉴바가 움직이지 않는다. 버블 · 테두리는 마우스를 받지 않는 자식 위젯이 그린다 —
 틱마다 `setStyleSheet`을 쓰지 않는다. 색은 테마 토큰으로만 고른다(이 파일에 색 리터럴이 없다).
 
-탭 모양은 밑줄 탭이다(#611): 고른 탭 아래끝에 강조색 밑줄, 키보드 초점은 밑줄과 겹치지 않는 글 둘레 상자.
+탭 모양은 밑줄 탭이다(#611): 고른 탭 아래끝에 강조색 밑줄, 키보드 초점은 밑줄과 겹치지 않는 탭 내용(글 + 버블)
+둘레 상자.
 둘 다 이 버튼이 그린다 — QSS 테두리는 네 변이 한 색이라 밑줄과 초점을 함께 보일 수 없다.
 """
 
@@ -115,8 +116,12 @@ class MenuButton(QPushButton):
         self._blink.valueChanged.connect(self._onBlinkStep)
 
     def setBubble(self, state: str) -> None:
-        """버블 상태를 바꾼다 — 빈 글이면 숨는다(자리는 QSS 여백이 그대로 둔다)."""
+        """버블 상태를 바꾼다 — 빈 글이면 숨는다(자리는 QSS 여백이 그대로 둔다).
+
+        초점 상자가 버블까지 둘러싸므로 버블이 나타나거나 사라지면 버튼도 다시 그린다(#611).
+        """
         self.bubble.setState(state)
+        self.update()
 
     def isBlinking(self) -> bool:
         """테두리가 깜빡이는 중인지."""
@@ -147,22 +152,26 @@ class MenuButton(QPushButton):
         return QRectF(0, self.height() - thick, self.width(), thick)
 
     def focusRect(self) -> QRectF:
-        """키보드 초점 상자 — 글 좌우로 `menuFocusPadX`, 위는 탭 위끝에서 `menuFocusPadY`, 아래는 밑줄 자리 위
-        `menuFocusPadY`까지. 밑줄과 겹치지 않는다(1px 선의 바깥 끝 기준)."""
+        """키보드 초점 상자 — 탭 내용(글 + 버블)을 둘러싼다(#611).
+
+        왼쪽은 글 왼쪽에서 `menuFocusPadX` 밖, 오른쪽은 버블이 보이면 버블 오른쪽에서 · 없으면 글 오른쪽에서
+        `menuFocusPadX` 밖이다. 위는 탭 위끝에서 `menuFocusPadY`, 아래는 밑줄 자리 위 `menuFocusPadY`까지라
+        밑줄과 겹치지 않는다(1px 선의 바깥 끝 기준). 버블 상태로 고르므로 버블이 바뀌면 상자도 따라간다.
+        """
         m = theme.METRICS
         border = 1  # QSS 투명 테두리(style.qss 메뉴바 절)
         text_width = QFontMetrics(self.font()).horizontalAdvance(self.text())
         content_left = border + m["menuTabPadX"]
         content_right = self.width() - border - theme.MENU_BUTTON_PAD_RIGHT
         text_left = content_left + max(0, (content_right - content_left - text_width) // 2)
+        content_end = text_left + text_width
+        if self.bubble.state():
+            content_end = self.bubble.geometry().x() + self.bubble.width()
+        left = text_left - m["menuFocusPadX"]
+        right = content_end + m["menuFocusPadX"]
         top = m["menuFocusPadY"]
         bottom = self.height() - m["menuUnderline"] - m["menuFocusPadY"]
-        return QRectF(
-            text_left - m["menuFocusPadX"],
-            top,
-            text_width + 2 * m["menuFocusPadX"],
-            bottom - top,
-        )
+        return QRectF(left, top, right - left, bottom - top)
 
     def paintEvent(self, event: QPaintEvent) -> None:
         """QSS 모양 위에 고른 탭 밑줄 · 키보드 초점 상자를 덧그린다 — 색은 그릴 때마다 토큰을 읽는다."""

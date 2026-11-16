@@ -1018,3 +1018,130 @@ class TestDisabledFields:
         edge = _pixel(host.grab().toImage(), rect.center().x(), rect.top())
         assert _is(edge, "border")
         assert not _is(edge, "fieldBorder")
+
+
+FOCUS_PAD = 4  # 초점 상자 ↔ 탭 내용(글 · 버블) 좌우 간격(px) — 지시 값(#611 176f)
+BUBBLE_STATE = "done"  # 버블 색(stateFinished)이 강조색과 달라 상자 화소와 섞이지 않는 상태
+
+
+def _focus(win: VodDownloader, tab: QWidget, qtbot) -> None:
+    win.activateWindow()
+    qtbot.waitUntil(win.isActiveWindow, timeout=3000)
+    tab.setFocus(Qt.FocusReason.TabFocusReason)
+    qtbot.waitUntil(tab.hasFocus, timeout=3000)
+    _pump()
+
+
+def _box_and_ink(
+    win: VodDownloader, tab: QWidget
+) -> tuple[list[int], list[int], list[tuple[int, int]]]:
+    """탭 세로 가운데 줄의 강조색 열 · 버블 밖 글 화소 열 · 버블 화소 (x, y)를 창 좌표로 센다."""
+    image = win.grab().toImage()
+    rect = _rect(win, tab)
+    bubble = _rect(win, tab.bubble) if tab.bubble.isVisible() else QRect()
+    surface = QColor(theme.current_tokens()["surface"])
+    box = [
+        x
+        for x in range(rect.left(), rect.right() + 1)
+        if _is(_pixel(image, x, rect.center().y()), "accent")
+    ]
+    text = [
+        x
+        for x in range(rect.left(), rect.right() + 1)
+        # 초점 상자의 둥근 모서리(위아래 끝에서 6줄 안) 밖 — 모서리 안티에일리어싱 화소를 글로 세지 않는다
+        for y in range(rect.top() + 8, rect.bottom() - 8)
+        if not bubble.contains(x, y)
+        and not _is(_pixel(image, x, y), "surface")
+        and not _is(_pixel(image, x, y), "accent")
+    ]
+    dots = [
+        (x, y)
+        for x in range(bubble.left(), bubble.right() + 1)
+        for y in range(bubble.top(), bubble.bottom() + 1)
+        if _pixel(image, x, y) != surface  # 원 가장자리의 옅은 안티에일리어싱 화소까지 버블로 센다
+    ]
+    return box, text, dots
+
+
+def _box_rows(win: VodDownloader, tab: QWidget, x: int) -> list[int]:
+    """열 x에서 밑줄 자리 위의 강조색 줄(상자 위 · 아래 변)을 창 좌표로 센다."""
+    image = win.grab().toImage()
+    rect = _rect(win, tab)
+    return [
+        y
+        for y in range(rect.top(), rect.bottom() - UNDERLINE + 1)
+        if _is(_pixel(image, x, y), "accent")
+    ]
+
+
+class TestMenuTabFocusBox:
+    """탭 키보드 초점 상자는 탭 내용(글 + 버블)을 둘러싼다 — 오른쪽 변은 버블이 있으면 버블, 없으면 글 + 4(#611 176f)."""
+
+    def test_focus_box_ends_four_past_the_text_without_a_bubble(
+        self, window: Callable[..., VodDownloader], qtbot
+    ) -> None:
+        """버블이 없으면 초점 상자 좌우 변 사이가 글 진행 폭 + 4 + 4이고 글 화소를 둘러싸야 한다.
+
+        버블 없음, 「VOD 다운」에 Tab 초점 -> 세로 가운데 줄 accent 맨 오른쪽 − 맨 왼쪽 + 1
+        == QFontMetrics.horizontalAdvance(탭 글) + 8, accent 맨 왼쪽 < 글 화소 맨 왼쪽, 맨 오른쪽 > 글 화소 맨 오른쪽
+        """
+        from PySide6.QtGui import QFontMetrics
+
+        win = window(DownloadState.WAITING)
+        tab = win.menuDownloadButton
+        assert tab.bubble.state() == "" and not tab.bubble.isVisible(), "전제: 버블이 없다"
+        _focus(win, tab, qtbot)
+        box, text, _ = _box_and_ink(win, tab)
+        assert box and text, "전제: 상자 · 글 화소가 있다"
+        # 글 화소 끝은 글꼴마다 진행 폭 끝과 다르다(빈 글꼴 폴더에서 4px 차) — 폭은 진행 폭으로 잰다
+        advance = QFontMetrics(tab.font()).horizontalAdvance(tab.text())
+        assert max(box) - min(box) + 1 == advance + 2 * FOCUS_PAD
+        assert min(box) < min(text) and max(box) > max(text)
+
+    def test_focus_box_wraps_the_bubble(self, window: Callable[..., VodDownloader], qtbot) -> None:
+        """버블이 보이면 초점 상자 오른쪽 변이 버블 화소 오른쪽 끝 + 4이고 버블 화소가 모두 상자 안이어야 한다.
+
+        setBubble("done"), 「VOD 다운」에 Tab 초점 -> 세로 가운데 줄 accent 맨 오른쪽 == 버블 화소 맨 오른쪽 + 4,
+        accent 맨 왼쪽 < 글 화소 맨 왼쪽, 버블 가운데 열의 상자 위 변 < 버블 화소 맨 위 · 아래 변 > 맨 아래,
+        상자 좌우 변 사이에 버블 화소 열이 모두 있다
+        """
+        win = window(DownloadState.WAITING)
+        tab = win.menuDownloadButton
+        tab.setBubble(BUBBLE_STATE)
+        _pump()
+        assert tab.bubble.isVisible(), "전제: 버블이 보인다"
+        _focus(win, tab, qtbot)
+        box, text, dots = _box_and_ink(win, tab)
+        assert box and text and dots, "전제: 상자 · 글 · 버블 화소가 있다"
+        xs = [x for x, _ in dots]
+        ys = [y for _, y in dots]
+        assert max(box) == max(xs) + FOCUS_PAD
+        assert min(box) < min(text) and min(box) < min(xs)
+        rows = _box_rows(win, tab, (min(xs) + max(xs)) // 2)
+        assert rows, "전제: 버블 가운데 열에 상자 위 · 아래 변이 있다"
+        assert min(rows) < min(ys) and max(rows) > max(ys)
+
+    def test_focus_box_follows_the_bubble_coming_and_going(
+        self, window: Callable[..., VodDownloader], qtbot
+    ) -> None:
+        """초점이 있는 채 버블이 나타나면 상자가 버블까지 늘고 사라지면 처음 폭으로 돌아와야 한다.
+
+        「VOD 다운」에 Tab 초점(버블 없음) -> setBubble("done") -> setBubble(""):
+        accent 맨 오른쪽이 처음 < 버블 화소 맨 오른쪽 + 4 == 버블 있을 때, 버블을 지운 뒤 == 처음
+        """
+        win = window(DownloadState.WAITING)
+        tab = win.menuDownloadButton
+        _focus(win, tab, qtbot)
+        before, _, _ = _box_and_ink(win, tab)
+        tab.setBubble(BUBBLE_STATE)
+        _pump()
+        assert tab.bubble.isVisible() and tab.hasFocus(), "전제: 버블이 보이고 초점이 남아 있다"
+        shown, _, dots = _box_and_ink(win, tab)
+        tab.setBubble("")
+        _pump()
+        assert not tab.bubble.isVisible() and tab.hasFocus(), "전제: 버블이 숨고 초점이 남아 있다"
+        after, _, _ = _box_and_ink(win, tab)
+        assert before and shown and after and dots, "전제: 상자 · 버블 화소가 있다"
+        assert max(shown) == max(x for x, _ in dots) + FOCUS_PAD
+        assert max(before) < max(shown)
+        assert max(after) == max(before)
